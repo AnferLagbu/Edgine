@@ -216,11 +216,6 @@ pub fn register(name: &str, proto: Proto, driver_data: *mut u8) -> ChitinResult<
     }
 }
 
-/// 按 ID 查找
-pub fn find_by_id(id: DeviceId) -> Option<usize> {
-    chitin::chitin_find_by_id(id.0)
-}
-
 /// 按名称查找
 pub fn find_by_name(name: &str) -> Option<usize> {
     chitin::chitin_find_by_name(name)
@@ -255,19 +250,6 @@ pub fn list() -> Vec<DeviceInfo> {
 /// 设备总数
 pub fn count() -> usize {
     chitin::chitin_count()
-}
-
-/// 按协议计数
-pub fn count_by_proto(proto: Proto) -> usize {
-    let p = match proto {
-        Proto::Block => chitin::ChitinProto::Block,
-        Proto::Char => chitin::ChitinProto::Char,
-        Proto::Net => chitin::ChitinProto::Net,
-        Proto::Input => chitin::ChitinProto::Input,
-        Proto::Bus => chitin::ChitinProto::Bus,
-        Proto::Other => chitin::ChitinProto::Other,
-    };
-    chitin::chitin_count_by_proto(p)
 }
 
 /// 查找网络设备 (返回 (`NetOps`, `driver_data`, mac))
@@ -353,21 +335,6 @@ pub fn blk_total_sectors(drive: u8) -> u64 {
     chitin::chitin_blk_total_sectors(drive)
 }
 
-/// 块设备名称
-pub fn blk_name(drive: u8) -> Option<alloc::string::String> {
-    chitin::chitin_blk_name(drive).map(alloc::string::String::from)
-}
-
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
-/// 块设备信息
-pub fn blk_info(drive: u8) -> Option<(alloc::string::String, bool, u64)> {
-    let (name, present, sectors) = chitin::chitin_blk_info(drive);
-    Some((alloc::string::String::from(name), present, sectors))
-}
-
 /// 块设备总数
 pub fn blk_count() -> usize {
     chitin::chitin_blk_count()
@@ -385,18 +352,4 @@ pub fn char_write(data: &[u8]) {
 /// 字符设备读
 pub fn char_read(buf: &mut [u8]) -> usize {
     chitin::chitin_char_read(buf)
-}
-
-// ============================================================================
-// 输入设备
-// ============================================================================
-
-/// 输入设备读 (非阻塞)
-pub fn input_read() -> Option<u8> {
-    chitin::chitin_input_read()
-}
-
-/// 输入设备是否有数据
-pub fn input_has_data() -> bool {
-    chitin::chitin_input_has_data()
 }

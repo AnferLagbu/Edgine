@@ -150,21 +150,9 @@ pub fn init() {
     crate::framework::proc::session::init();
 }
 
-/// 初始化指定 CPU 的每 CPU 调度队列
-///
-/// 由 SMP 启动代码在每个 CPU 上调用一次。
-pub fn init_per_cpu(cpu_id: u32) {
-    crate::framework::proc::init_per_cpu_sched(cpu_id);
-}
-
 // ============================================================================
 // 调度器状态
 // ============================================================================
-
-/// 调度器是否已就绪
-pub fn scheduler_ready() -> bool {
-    crate::framework::proc::SCHEDULER_READY.load(core::sync::atomic::Ordering::Acquire)
-}
 
 /// 触发调度 (在 timer tick 或阻塞唤醒后调用)
 ///
@@ -190,32 +178,4 @@ pub fn state_from_u32(v: u32) -> ProcessState {
 /// 从优先级数值构造 `ProcessPriority`
 pub fn priority_from_u32(v: u32) -> ProcessPriority {
     ProcessPriority::from_u32(v)
-}
-
-// ============================================================================
-// 进程 ID 转换
-// ============================================================================
-
-/// `u32` → `ProcessId` (零成本包装)
-#[inline]
-pub const fn pid_new(raw: u32) -> ProcessId {
-    ProcessId(raw)
-}
-
-/// `ProcessId` → `u32`
-#[inline]
-pub const fn pid_raw(id: ProcessId) -> u32 {
-    id.0
-}
-
-/// `u32` → `ThreadId`
-#[inline]
-pub const fn tid_new(raw: u32) -> ThreadId {
-    ThreadId(raw)
-}
-
-/// `ThreadId` → `u32`
-#[inline]
-pub const fn tid_raw(id: ThreadId) -> u32 {
-    id.0
 }

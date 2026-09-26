@@ -882,9 +882,9 @@ T7 (预存登记)
 
 #### B-6. R1 已分类清单（机器可读区块；B09-21 数据源）
 
-> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**496 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
+> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**475 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
 >
-> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝分册 9 项 2「`kmalloc_slab.rs` 孤岛删除」**（被删 2 项原为 HIGH / **未入块** ⇒ 本区块计数**不变**，仍 496 项；见 **B-10.10**；上一轮为项 5 批 B「豁免面收窄」新增 67 项，429 → 496，见 **B-10.9**；更早为本批「七次修订裁定落地」移除 4 项已删除条目，见 **B-10.8**）。
+> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝项 5 批 C「67 项逐项分流」**（21 项判定为可删并已删除 ⇒ 本区块移除对应 21 条目，496 → 475；其余 46 项保留 `pub` 并留块登记，见 **B-10.11**；上一轮为项 2「`kmalloc_slab.rs` 孤岛删除」，被删 2 项原为 HIGH / **未入块** ⇒ 计数不变，见 **B-10.10**；更早为项 5 批 B「豁免面收窄」新增 67 项，429 → 496，见 **B-10.9**）。
 >
 > **口径说明（2026-09-26 订正）**：本区块与 `audit_unwired_pub_fn.py` 的「零引用」判定均为**按名计数**（`rg -c -w`），因而存在两类已知偏差，本区块**不承诺**与脚本输出逐项等同：① **同名遮蔽**（文档注释 / 局部变量出现同名字符串即计入引用 ⇒ 真零引用项可能**漏报**，实例见 **B-10.3** 的 `slab_init` / `services/driver/acpi.rs::lapic_base`）；② **已失效条目**（被接线或删除后不再零引用，需人工同步移除，本期移除 6 项见 B-10.4）。
 
@@ -961,7 +961,6 @@ src/kernel/framework/barrier/snapshot.rs::test_registry_register
 src/kernel/framework/barrier/snapshot.rs::test_snapshot_basic
 src/kernel/framework/chitin/composite.rs::compatible_str
 src/kernel/framework/chitin/devtree.rs::as_bool
-src/kernel/framework/chitin/mod.rs::chitin_device_list
 src/kernel/framework/chitin/mod.rs::chitin_with_device_map
 src/kernel/framework/chitin/mod.rs::driver_as_mut
 src/kernel/framework/chitin/user_driver.rs::chitin_forward_irq
@@ -1039,8 +1038,6 @@ src/kernel/framework/driver/usb/xhci.rs::init_command_ring
 src/kernel/framework/driver/usb/xhci.rs::recover_endpoint
 src/kernel/framework/driver/virtio/mod.rs::read_config64
 src/kernel/framework/driver/virtio/mod.rs::set_status
-src/kernel/framework/driver/virtio/mod.rs::setup_vq
-src/kernel/framework/driver/virtio/mod.rs::setup_vq_legacy
 src/kernel/framework/frame.rs::set_meta
 src/kernel/framework/fs/devfs/mod.rs::is_physical
 src/kernel/framework/fs/devfs/mod.rs::is_virtual
@@ -1082,12 +1079,6 @@ src/kernel/framework/mm/kpti.rs::invpcid_flush_single
 src/kernel/framework/mm/kpti.rs::kpti_kernel_pml4
 src/kernel/framework/mm/kpti.rs::kpti_user_pml4_or_kernel
 src/kernel/framework/mm/kpti.rs::pcid_is_enabled
-src/kernel/framework/mm/mod.rs::is_accessed
-src/kernel/framework/mm/mod.rs::is_dirty
-src/kernel/framework/mm/mod.rs::is_nx
-src/kernel/framework/mm/mod.rs::set_accessed
-src/kernel/framework/mm/mod.rs::set_dirty
-src/kernel/framework/mm/mod.rs::set_nx
 src/kernel/framework/mm/numa.rs::all_nodes
 src/kernel/framework/mm/numa.rs::best_alloc_node
 src/kernel/framework/mm/numa.rs::contains_cpu
@@ -1195,16 +1186,10 @@ src/kernel/framework/timer/time_sync.rs::client_request
 src/kernel/framework/vmspace.rs::map_huge
 src/kernel/services/barrier/audit_export.rs::count_failure
 src/kernel/services/barrier/audit_export.rs::count_success
-src/kernel/services/chitin/mod.rs::blk_info
-src/kernel/services/chitin/mod.rs::blk_name
 src/kernel/services/chitin/mod.rs::char_read
 src/kernel/services/chitin/mod.rs::char_write
-src/kernel/services/chitin/mod.rs::count_by_proto
-src/kernel/services/chitin/mod.rs::find_by_id
 src/kernel/services/chitin/mod.rs::find_by_proto
 src/kernel/services/chitin/mod.rs::find_net_device
-src/kernel/services/chitin/mod.rs::input_has_data
-src/kernel/services/chitin/mod.rs::input_read
 src/kernel/services/config/sysctl.rs::write_to
 src/kernel/services/credo/crypto.rs::as_bytes_mut
 src/kernel/services/credo/crypto.rs::ct_eq_password
@@ -1368,13 +1353,7 @@ src/kernel/services/net/unix.rs::uds_parse_path
 src/kernel/services/net/unix.rs::uds_recv_with_creds
 src/kernel/services/proc/canary.rs::get_canary_u64
 src/kernel/services/proc/elf.rs::is_executable
-src/kernel/services/proc/mod.rs::init_per_cpu
-src/kernel/services/proc/mod.rs::pid_new
-src/kernel/services/proc/mod.rs::pid_raw
 src/kernel/services/proc/mod.rs::priority_from_u32
-src/kernel/services/proc/mod.rs::scheduler_ready
-src/kernel/services/proc/mod.rs::tid_new
-src/kernel/services/proc/mod.rs::tid_raw
 src/kernel/services/proc/shadow_stack.rs::cet_syscall
 src/kernel/services/proc/signal.rs::cont
 src/kernel/services/syscall/mod.rs::dispatch_from_ctx_typed
@@ -1646,7 +1625,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 - **口径更正（本次实测）**：首次度量误用 `cross_file == 0` 得 115 项 —— R1 真实口径为 `actual_callers == 0`（即 `total == 1`，仅声明自身）⇒ 正确值为 **67 项**。差值 48 项为「同文件内有多处引用但跨文件为 0」者（如 `framework/sync/mod.rs` 内 `pub(crate) mod raw` 的 helper，由同文件调用，非零引用）。
 - **代表性条目**：`framework/klog/mod.rs::{log_warn,log_debug,log_crit,klog_set_level,klog_get_level}`、`framework/mm/mod.rs::{is_dirty,set_dirty,is_accessed,set_accessed,is_nx,set_nx}`、`framework/pci/mod.rs::{set_ecam_base,get_ecam_base,get_device_list,find_by_vendor,find_device}`、`services/proc/mod.rs::{pid_new,pid_raw,tid_new,tid_raw,...}`、`services/chitin/mod.rs` 10 项、`framework/driver/virtio/mod.rs` 4 项、`framework/idt/types.rs::{error_code_flags,dump_registers,set_handler}`。
 - **失败关闭不变**：`load_classified_set()` 的 fail-closed 六条路径未改动；区块行格式校验（`^src/[^\s:]+\.rs::\w+$`）与唯一性校验保持。
-- **待办（批 C）**：67 项逐项收敛 —— 判定为**内部实现**者改 `pub` → `pub(crate)`（须同步核对该项是否落在 `pub(crate) mod` 内，避免收缩无效），确无价值者删除，属公共 API 面者保留登记。
+- **待办（批 C）**：67 项逐项收敛 —— 原估三条路径（内部实现改 `pub(crate)` / 无价值者删除 / API 面保留登记）中的**「改 `pub(crate)`」经批 C 实测判定为不可行**（触发 `dead_code` ⇒ 违 F5；补 allow 又违 F9），仅余**删除**与**保留 `pub` 并登记**两类；**已于批 C 执行完毕**（21 删 / 46 留），见 **B-10.11**。
 
 **B-10.10 项 2 档 1 — `kmalloc_slab.rs` 零引用孤岛整文件删除**
 
@@ -1665,6 +1644,52 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 - **B-6 区块同步**：**无需同步**（清单仍 **496** 项）—— 本轮删除的 2 项原为 **HIGH（未入块）**，故区块计数不变；裁定询问稿中「清单 496 → 494」系误估，已按脚本实测订正。
 - **门槛**：双架构 0w0e（`Passed 5 / Failed 0`）/ fmt `--check` 0 差异 / clippy pedantic（lib + `kernel_test` + `host-test` 三维）/ 核心审计 quick exit 0（0 处 `✗`）/ host-tests 全绿 / kernel-host **817 → 816 passed 0 failed**（核销 1 个源侧用例）/ QEMU `make` + `make test-unit` **exit 33（ALL TESTS PASSED）** —— 全过。
 - **R1 实测（脚本正向复跑）**：`已分类清单 496 项` / 汇总 **`CRITICAL=2 / HIGH=0 / WARN=0 / INFO=496`**（`rc=1`，CRITICAL 2 为 R2 预存 `process_vm_*`，与本批无关）—— **HIGH 首次清零**。
+
+**B-10.11 项 5 批 C — 67 项逐项分流（21 项删除 / 46 项保留登记；496 → 475）**
+
+> 来源：[audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md) **B09-21**。批 B「豁免按文件名 → 按路径」收窄后，新暴露 67 项「零引用 pub fn」（批 B 前被文件名豁免静默吞掉，见 **B-10.9**）。本批按裁定「逐项分流」路径处置：先出逐项判定表，再施工。
+
+**B-10.11.1 决定性约束 — 「内部化」路径技术上不可行（实测）**
+
+| 路径 | 实测结果 | 结论 |
+|---|---|---|
+| `pub` → `pub(crate)`（零引用项） | 以 `framework/klog/mod.rs::klog_get_level` 试改后 `cargo check --release` 报 `warning: function klog_get_level is never used`（`#[warn(dead_code)]` 默认开启） | 违反 **F5（0 warning）**；实验已回退（仓库 clean） |
+| 补 `#[allow(dead_code)]` 消警告 | **F9** 零容忍禁止任何类型死代码 allow（无豁免、无例外） | 不可用 |
+| 结论 | 批 C 原定「可见性收窄/内部化」**无合法路径**，仅余**删除**与**保留 `pub` 并登记**两类处置 | 本批据此分流 |
+
+- **旁证**：`audit_unwired_pub_fn.py` 的 `collect_pub_fns` 正则本身**会**匹配 `pub(crate) fn`（`pub(?:\([^)]+\))?`），故「改窄可见性以退出 R1」亦不成立——名字仍会被计入 R1；B-6 区块 496 项实测亦**全为 plain `pub`**（`pub(crate)` 0 项）。
+
+**B-10.11.2 三桶分流（67 项；判据＝「三合一」：①该构建维零引用 ②存在能力等价的公共入口 ③非 API/FFI/feature/硬件原语面）**
+
+| 桶 | 项数 | 处置 | 构成 |
+|---|---|---|---|
+| A 可删 | **21** | 删除 | 见 B-10.11.3 |
+| B1 保留（删之生孤儿） | 10 | 保留 `pub` + 留块登记 | `services/chitin::{find_by_proto, find_net_device, char_write, char_read}`；`services/proc::priority_from_u32`；`services/syscall::dispatch_from_ctx_typed`；`services/debug::kgdb_is_active`；`services/net::{start_dhcp, static_ip, reset_state}` —— 均为其 framework 对应项的**唯一调用方**，删除将使 framework 侧入口失去全部调用链（新 R1 孤儿） |
+| B2 保留（无等价活入口 / API·机制面） | 27 | 保留 `pub` + 留块登记 | `klog::{log_warn, log_debug, log_crit, klog_set_level, klog_get_level}`（`MIN_LEVEL` 私有，无等价入口）；`chitin::{driver_as_mut, chitin_with_device_map}`；`credo::{umask_get, to_uid, get_creator_pwm}`；`debug::kgdb_break_now`；`driver::list_devices`；`irq::{register_tasklet, schedule_tasklet}`（`TASKLETS` 私有）；`proc/types::{thaw_target_state, set_user_mode}`；`smp::broadcast_reschedule`；`pci::{register_scanner, set_ecam_base, get_ecam_base, get_device_list, find_by_vendor, find_device}`；`net/api::{init_network_now, status_snapshot}`；`wasm::{as_i64, wasi_function_table}` |
+| B3 保留（硬件原语面，判据③不满足） | 9 | 保留 `pub` + 留块登记 | `virtio::{set_status, read_config64}`；`idt/types::{error_code_flags, dump_registers, set_handler}`；`fs/vfs/types::inode_arc`；`driver/storage::xhci_read_trb`；`fs/devfs::{is_virtual, is_physical}` |
+
+**B-10.11.3 桶 A 已删除 21 项（含必删连带）**
+
+| 组 | 项 | 等能力活入口（证据） |
+|---|---|---|
+| A1（6） | `framework/mm/mod.rs`：`is_dirty` / `set_dirty` / `is_accessed` / `set_accessed` / `is_nx` / `set_nx` | 同文件 `flags()`（L701）+ `set_flags()` + `PageFlags::{ACCESSED, DIRTY, NX}` —— 能力完全重叠；活调用点 20 处（`vmm_x86_64.rs`） |
+| A2（2） | `framework/driver/virtio/mod.rs`：`setup_vq` / `setup_vq_legacy` | 细粒度组合 `select_queue` + `setup_queue_addrs` / `setup_queue_legacy` + `set_queue_ready`（`services/driver/virtio/{net,blk}.rs` 生产路径已用后者） |
+| A3（1） | `framework/chitin/mod.rs::chitin_device_list` | 纯别名转调 `chitin_list`（`framework/driver/mod.rs` 活） |
+| A4（6） | `services/chitin/mod.rs`：`find_by_id` / `count_by_proto` / `blk_name` / `blk_info` / `input_read` / `input_has_data` | 其 framework 对应项**另有独立活调用点**（`composite.rs` / `lib.rs` / `block.rs` / `keyboard.rs`）⇒ 删 wrapper 不产孤儿 |
+| A5（6） | `services/proc/mod.rs`：`init_per_cpu` / `scheduler_ready` / `pid_new` / `pid_raw` / `tid_new` / `tid_raw` | framework 侧另有活入口（`init_per_cpu_sched` / `SCHEDULER_READY` 为 pub static）；`ProcessId(pub Pid)` / `ThreadId(pub Tid)` 字段公开 ⇒ `ProcessId(x)` / `x.0` 直接可用 |
+
+- **必删连带（本次删除直接导致的死代码，非工程外）**：`framework/driver/virtio/mod.rs` 的 `const QUEUE_NUM: usize = 0x038` —— 唯一使用点为 `setup_vq` / `setup_vq_legacy` 两函数体，删函数后成死常量（`dead_code` ⇒ F5），按 §9.3「硬件规范常量须通过实现使用路径消除」随之删除；同时移除两函数各自的 `#[expect(clippy::unnecessary_wraps)]`（避免 `unfulfilled_lint_expectations`）。
+- **未涉及**：`QUEUE_PFN`（`setup_queue_legacy` 仍用）、`QUEUE_READY`（`set_queue_ready` 仍用）、`pub mod queue`（host-tests `framekernel_bench.rs` 消费 `VirtQueue` 等，仍被引用 ⇒ 无 R3 WARN）。
+
+**B-10.11.4 B-6 区块同步**
+
+- 本批删除的 21 项**原已在块内**（批 B 新暴露并登记，`r1_classified_downgraded: 67`）⇒ 区块**逐项移除 21 条**：**496 → 475**（保持字典序、无重复、格式合法，已校验）。
+- 其余 46 项**留块不动**（保留 `pub`；登记口径＝「零引用事实保留 + 未来功能 / API 面」）。
+
+**B-10.11.5 门槛与 R1 实测**
+
+- **门槛**：双架构 0w0e（`./ci/build.sh all` → `Passed 5 / Failed 0`）/ fmt `--check` 0 差异 / clippy pedantic（lib + `kernel_test` + `host-test` 三维）/ `./ci/audit.sh quick` **exit 0（0 处 `✗`）** / `make test-host` 全绿 / `make test-kernel-host` **816 passed 0 failed**（与上批持平，本批未增删源侧用例）/ QEMU `make` + `make test-unit` **exit 33（ALL TESTS PASSED）** —— 全过。
+- **R1 实测（脚本正向复跑）**：`已分类清单 475 项` / 汇总 **`CRITICAL=2 / HIGH=0 / WARN=0 / INFO=475`**（INFO 496 → 475，**恰为 −21**）/ `R4 = 0` / `R3 = 0` —— 删除未引入任何新零引用项（HIGH / WARN / R4 均保持 0）。
 
 #### C. 原「接线」142 项（重划：仅 8 项留「接线」，其余 134 项入「未来功能」）
 

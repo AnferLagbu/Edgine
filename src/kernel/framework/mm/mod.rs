@@ -672,38 +672,6 @@ impl PageTableEntry {
         self.bits.store(val, Ordering::Release);
     }
 
-    /// Is dirty?
-    pub fn is_dirty(&self) -> bool {
-        self.bits.load(Ordering::Acquire) & (1 << 6) != 0
-    }
-
-    /// 设置 Dirty 标志位.
-    pub fn set_dirty(&self, dirty: bool) {
-        let mut val = self.bits.load(Ordering::Acquire);
-        if dirty {
-            val |= 1 << 6;
-        } else {
-            val &= !(1 << 6);
-        }
-        self.bits.store(val, Ordering::Release);
-    }
-
-    /// Is accessed?
-    pub fn is_accessed(&self) -> bool {
-        self.bits.load(Ordering::Acquire) & (1 << 5) != 0
-    }
-
-    /// 设置 Accessed 标志位.
-    pub fn set_accessed(&self, accessed: bool) {
-        let mut val = self.bits.load(Ordering::Acquire);
-        if accessed {
-            val |= 1 << 5;
-        } else {
-            val &= !(1 << 5);
-        }
-        self.bits.store(val, Ordering::Release);
-    }
-
     /// Is huge page?
     pub fn is_huge(&self) -> bool {
         self.bits.load(Ordering::Acquire) & PAGE_HUGE != 0
@@ -726,22 +694,6 @@ impl PageTableEntry {
     pub fn set_frame(&self, frame: PhysAddr) {
         let mut val = self.bits.load(Ordering::Acquire);
         val = (val & !0x000FFFFFFFFFF000) | (frame.0 & 0x000FFFFFFFFFF000);
-        self.bits.store(val, Ordering::Release);
-    }
-
-    /// Is no-execute?
-    pub fn is_nx(&self) -> bool {
-        self.bits.load(Ordering::Acquire) & PAGE_NX != 0
-    }
-
-    /// 设置 No-Execute 标志位.
-    pub fn set_nx(&self, nx: bool) {
-        let mut val = self.bits.load(Ordering::Acquire);
-        if nx {
-            val |= PAGE_NX;
-        } else {
-            val &= !PAGE_NX;
-        }
         self.bits.store(val, Ordering::Release);
     }
 

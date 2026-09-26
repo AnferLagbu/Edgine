@@ -54,7 +54,6 @@ const DRIVER_FEATURES: usize = 0x020;
 const DRIVER_FEATURES_SEL: usize = 0x024;
 const QUEUE_SEL: usize = 0x030;
 const QUEUE_NUM_MAX: usize = 0x034;
-const QUEUE_NUM: usize = 0x038;
 const QUEUE_READY: usize = 0x044;
 const QUEUE_PFN: usize = 0x040; // 传统模式 (Legacy): QueuePFN (队列物理页号)
 const QUEUE_NOTIFY: usize = 0x050;
@@ -398,93 +397,6 @@ impl VirtioMmioDevice {
             STATUS,
             STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
         );
-    }
-
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
-    /// 在此设备上配置 virtqueue.
-    /// # Errors
-    /// 队列配置失败时返回 Err。
-    pub fn setup_vq(&self, vq_index: u16, vq: &queue::VirtQueue) -> Result<(), ()> {
-        // 选中 virtqueue
-        self.write32(QUEUE_SEL, u32::from(vq_index));
-
-        // 检查最大队列大小
-        let max_size = self.read32(QUEUE_NUM_MAX);
-        if u32::from(vq.queue_size) > max_size {
-            klog_warn!(
-                Driver,
-                "virtio: queue size {} exceeds max {}",
-                vq.queue_size,
-                max_size
-            );
-        }
-        klog_info!(Driver, "virtio: vq{} max_size={}", vq_index, max_size);
-
-        // Set queue size
-        self.write32(QUEUE_NUM, u32::from(vq.queue_size));
-        klog_info!(
-            Driver,
-            "virtio: vq{} QUEUE_NUM set, writing desc={:#x}",
-            vq_index,
-            vq.desc_paddr()
-        );
-
-        // 设置三段 ring 的物理地址
-        self.write64(QUEUE_DESC_LOW, QUEUE_DESC_HIGH, vq.desc_paddr());
-        klog_info!(Driver, "virtio: vq{} desc written", vq_index);
-        self.write64(QUEUE_DRIVER_LOW, QUEUE_DRIVER_HIGH, vq.avail_paddr());
-        klog_info!(Driver, "virtio: vq{} avail written", vq_index);
-        self.write64(QUEUE_DEVICE_LOW, QUEUE_DEVICE_HIGH, vq.used_paddr());
-        klog_info!(Driver, "virtio: vq{} used written", vq_index);
-
-        // Mark queue as ready
-        self.write32(QUEUE_READY, 1);
-        klog_info!(Driver, "virtio: vq{} ready", vq_index);
-
-        Ok(())
-    }
-
-    /// 使用传统 `QueuePFN` 接口配置 virtqueue (`VirtIO` 0.9.5).
-    /// 当 `VIRTIO_F_VERSION_1` 未协商时使用 (传统/旧版设备).
-    /// # Errors
-    /// 队列配置失败时返回 Err。
-    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(clippy::cast_possible_truncation)]
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
-    pub fn setup_vq_legacy(&self, vq_index: u16, vq: &queue::VirtQueue) -> Result<(), ()> {
-        self.write32(QUEUE_SEL, u32::from(vq_index));
-
-        let max_size = self.read32(QUEUE_NUM_MAX);
-        if u32::from(vq.queue_size) > max_size {
-            klog_warn!(
-                Driver,
-                "virtio: legacy queue size {} exceeds max {}",
-                vq.queue_size,
-                max_size
-            );
-        }
-
-        self.write32(QUEUE_NUM, u32::from(vq.queue_size));
-
-        // 传统: 写队列的客户机物理页号
-        // 队列 (desc + avail + used) 在单页内连续布局
-        let pfn = (vq.desc_paddr() >> 12) as u32;
-        self.write32(QUEUE_PFN, pfn);
-
-        klog_info!(
-            Driver,
-            "virtio: legacy vq{} pfn={:#x} (desc={:#x})",
-            vq_index,
-            pfn,
-            vq.desc_paddr()
-        );
-        Ok(())
     }
 
     /// 通知设备新的描述符已在 virtqueue 上可用.

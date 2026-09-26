@@ -845,10 +845,6 @@ pub fn chitin_shutdown_all() {
     }
 }
 
-pub fn chitin_device_list() -> Vec<(u32, &'static str, ChitinProto, DeviceState)> {
-    chitin_list()
-}
-
 // ── 单元测试 ──
 
 #[cfg(test)]
