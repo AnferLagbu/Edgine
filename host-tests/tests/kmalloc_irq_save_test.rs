@@ -1,10 +1,12 @@
-//! kmalloc/slab 中断安全锁契约测试 (P1-I-28)
+//! kmalloc 中断安全锁契约测试 (P1-I-28)
 //!
 //! 验证:
 //! 1. kmalloc.rs::acquire_lock/release_lock 签名变更为 (无) -> IrqSaveFlags / (&flags) -> ()
-//! 2. kmalloc_slab.rs::slab_lock/slab_unlock 同上
-//! 3. 源码静态扫描确认调用点一致 (let flags = self.acquire_lock(); ... self.release_lock(&flags);)
-//! 4. 中断安全锁配对契约: lock_irqsave 返回 flags, unlock_irqrestore 接 flags
+//! 2. 源码静态扫描确认调用点一致 (let flags = self.acquire_lock(); ... self.release_lock(&flags);)
+//! 3. 中断安全锁配对契约: lock_irqsave 返回 flags, unlock_irqrestore 接 flags
+//!
+//! 分册 9 项 2 (B09-21): 原第 2 条 (kmalloc_slab.rs 源文本静态扫描) 随
+//! `framework/mm/kmalloc_slab.rs` 零引用孤岛整体删除而移除.
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `IrqSaveFlags` / `IRQ_DISABLED` / `disable_interrupts` /
@@ -37,7 +39,7 @@ fn lock_acquire_release_paired_with_flags() {
 
 #[test]
 fn irq_spinlock_guards_critical_section() {
-    // P1-I-28: IrqSpinLock 是 kmalloc_slab SLAB_CACHES 的锁类型,
+    // P1-I-28: IrqSpinLock 是内核临界区的锁类型,
     // RAII guard 持锁期间屏蔽中断, Drop 自动释放.
     let data = IrqSpinLock::new(0u32);
     data.with_mut(|v| *v += 1);
@@ -103,29 +105,5 @@ fn kmalloc_source_uses_irq_save_flags_signature() {
     assert!(
         has_disable_then_cas,
         "P1-I-28: kmalloc.rs acquire_lock 必须先 disable_interrupts 再 CAS"
-    );
-}
-
-#[test]
-fn kmalloc_slab_source_uses_irq_save_flags_signature() {
-    // P1-I-28 验收: kmalloc_slab.rs 必须使用 IrqSpinLock 保护 SLAB_CACHES
-    let source = include_str!("../../src/kernel/framework/mm/kmalloc_slab.rs");
-    // 新模式: SLAB_CACHES 使用 IrqSpinLock 包装, 通过 .lock() 访问
-    assert!(
-        source.contains("static SLAB_CACHES: crate::framework::sync::IrqSpinLock<"),
-        "P1-I-28: kmalloc_slab.rs::SLAB_CACHES 必须使用 IrqSpinLock 包装"
-    );
-    assert!(
-        source.contains("SLAB_CACHES.lock()"),
-        "P1-I-28: kmalloc_slab.rs 必须通过 SLAB_CACHES.lock() 访问"
-    );
-    // 旧模式不应存在
-    assert!(
-        !source.contains("fn slab_lock()"),
-        "P1-I-28: kmalloc_slab.rs 不应包含旧的 slab_lock 函数"
-    );
-    assert!(
-        !source.contains("static SLAB_LOCK: AtomicBool"),
-        "P1-I-28: kmalloc_slab.rs 不应包含旧的 SLAB_LOCK AtomicBool"
     );
 }

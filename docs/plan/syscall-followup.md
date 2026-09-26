@@ -884,7 +884,7 @@ T7 (预存登记)
 
 > 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**496 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
 >
-> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝分册 9 项 5 批 B「豁免面收窄」**（豁免规则由「按文件名」改为「按路径」，连带暴露 67 项原先被静默豁免的零引用 pub fn，全部登记入本区块；逐项与依据见 **B-10.9**；上一轮为本批「七次修订裁定落地」移除 4 项已删除条目，见 **B-10.8**）。
+> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝分册 9 项 2「`kmalloc_slab.rs` 孤岛删除」**（被删 2 项原为 HIGH / **未入块** ⇒ 本区块计数**不变**，仍 496 项；见 **B-10.10**；上一轮为项 5 批 B「豁免面收窄」新增 67 项，429 → 496，见 **B-10.9**；更早为本批「七次修订裁定落地」移除 4 项已删除条目，见 **B-10.8**）。
 >
 > **口径说明（2026-09-26 订正）**：本区块与 `audit_unwired_pub_fn.py` 的「零引用」判定均为**按名计数**（`rg -c -w`），因而存在两类已知偏差，本区块**不承诺**与脚本输出逐项等同：① **同名遮蔽**（文档注释 / 局部变量出现同名字符串即计入引用 ⇒ 真零引用项可能**漏报**，实例见 **B-10.3** 的 `slab_init` / `services/driver/acpi.rs::lapic_base`）；② **已失效条目**（被接线或删除后不再零引用，需人工同步移除，本期移除 6 项见 B-10.4）。
 
@@ -1624,7 +1624,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 | 项 | 裁定 | 落地 |
 |---|---|---|
 | `kpti_aarch64.rs::kpti_kernel_ttbr0` / `::kpti_user_ttbr0` | B-10.3 候选 ② **删除** | **扩至整族删除**：4 getter（+ 同族已在 B-6 区块的 `kpti_kernel_ttbr1` / `kpti_trampoline_ttbr1`）+ `kpti_enter_kernel` / `kpti_exit_to_user` 对。**机制本身保留**（`KPTI_GLOBALS` 由异常入口/出口汇编按 `offset_of!` 锁定偏移直读；`kpti_is_active` / `kpti_set_user_ttbr0` / `kpti_init` / `kpti_trampoline_ttbr1_or_kernel` 全在用）。**B 条件（符号级零消费）已核实**：全仓无 `.S` / `.ld` / `global_asm!` 按名引用上述各项 |
-| `kmalloc_slab.rs::slab_kmalloc` / `::slab_kfree` | B-10.3 候选 ① 接线 / ② 删除 —— **仍挂起** | 只读核实发现删除面远超原估（`slab.rs` 的 `KmemCache` 唯一消费者即本模块；`slab_trait.rs` 查询侧全死但**注册侧 `services/mm/slab_policy.rs` 为活代码**，属 T2-3「策略-机制分离」架构面；`alloc/slab_alloc.rs` trait 面）⇒ 超出「3 文件 / 5 入口」授权范围，**不自主处置**，另单列裁定 |
+| `kmalloc_slab.rs::slab_kmalloc` / `::slab_kfree` | B-10.3 候选 ② **删除**（分册 9 项 2 档 1 裁定） | **整文件删除**（含同族 `slab_init` —— 三者全仓均零调用者）。原「3 文件 / 5 入口」口径经只读复核**收窄为 1 文件**：`slab.rs` 的 `slab_system_init` / `slab_alloc` / `slab_free` 为 `#[unsafe(no_mangle)] pub extern "C"` ⇒ **FFI 面**，按「三合一」判据**非删候选**（且删除会连带 `SLAB_INITIALIZED` / `find_general_cache_index` 级联，并使 procfs slab 统计来源结构性空置）；`alloc/slab_alloc.rs` 唯一引用为 `prelude.rs` re-export ⇒ **API 面**，亦不删。逐项见 **B-10.10** |
 | `services/fs/ramfs.rs::split_path` / `::validate_path` | 定型「冗余」+ reviewer 授权 ⇒ **删除** | 三合一判据全过（零引用 + 下层 VFS 等价校验 + services 层非 API/FFI/硬件原语面）；连带 `VFS_MAX_PATH` / `alloc::string::String` 去接线、host-tests `td18` 源文本下界 10 → 8 |
 
 - **B-6 区块同步**：移除 4 行（`kpti_aarch64` ttbr1 ×2 + `ramfs` ×2）⇒ 已分类清单 433 → **429** 项（脚本实测口径）。
@@ -1647,6 +1647,24 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 - **代表性条目**：`framework/klog/mod.rs::{log_warn,log_debug,log_crit,klog_set_level,klog_get_level}`、`framework/mm/mod.rs::{is_dirty,set_dirty,is_accessed,set_accessed,is_nx,set_nx}`、`framework/pci/mod.rs::{set_ecam_base,get_ecam_base,get_device_list,find_by_vendor,find_device}`、`services/proc/mod.rs::{pid_new,pid_raw,tid_new,tid_raw,...}`、`services/chitin/mod.rs` 10 项、`framework/driver/virtio/mod.rs` 4 项、`framework/idt/types.rs::{error_code_flags,dump_registers,set_handler}`。
 - **失败关闭不变**：`load_classified_set()` 的 fail-closed 六条路径未改动；区块行格式校验（`^src/[^\s:]+\.rs::\w+$`）与唯一性校验保持。
 - **待办（批 C）**：67 项逐项收敛 —— 判定为**内部实现**者改 `pub` → `pub(crate)`（须同步核对该项是否落在 `pub(crate) mod` 内，避免收缩无效），确无价值者删除，属公共 API 面者保留登记。
+
+**B-10.10 项 2 档 1 — `kmalloc_slab.rs` 零引用孤岛整文件删除**
+
+> 来源：[audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md) **B09-21**（B-10.3 表中同项条目）。本轮经只读复核后按「三合一」判据**收窄删除面**，仅处置真孤岛。
+
+| 阶段 | 内容 | 实测 |
+|---|---|---|
+| 删除前 | `framework/mm/kmalloc_slab.rs`（126 行；3 个 `pub fn` 全零调用者：`slab_init` / `slab_kmalloc` / `slab_kfree`；1 个 `#[cfg(test)]` 用例 `test_cache_index_selection`） | HIGH = **2** / INFO = 496 / 清单 496 |
+| 删除后 | 整文件删除 + `mm/mod.rs` 模块声明移除 + host-tests 源文本用例与注释连带 + 审计脚本名单/守卫清理 | HIGH = **0** / INFO = 496 / 清单 496 |
+
+- **删除面只读复核结论（推翻原估）**：
+  - `slab_init` 之所以**未**被脚本报为 HIGH —— 同文件文档注释含该名，脚本按 `rg -c` 计**行数** ⇒ `total=2` ⇒ `actual_callers=1`，构成**同名遮蔽漏报**（与 B-10.3 记录的 `services/driver/acpi.rs::lapic_base` 同类；该盲区机制本批未改，仍是已知残余风险）。
+  - `slab.rs` 的 `slab_system_init` / `slab_alloc` / `slab_free`：`#[unsafe(no_mangle)] pub extern "C"` ⇒ **FFI 边界导出**，脚本本就豁免；按「三合一」判据（须「非 API/FFI/feature/硬件原语面」）**非删候选**。若删，将连带 `SLAB_INITIALIZED`（唯一写入点）与 `find_general_cache_index`（唯一 Rust 调用点，仅余源侧用例）沦为死代码，并使 `/proc/slabinfo`（`services/fs/procfs_core.rs`）与 `/proc/meminfo` Slab 行的唯一数据来源**结构性空置**（`GENERAL_CACHES` 目前仅由零调用的 `slab_system_init` 写入，运行期已恒为空）⇒ 属 FFI 面与能力面变更，需另立裁定（裁定六）。
+  - `alloc/slab_alloc.rs` 的 `SlabAlloc` trait 与 `KmallocSlabAlloc`：全仓唯一引用为 `framework/prelude.rs` re-export ⇒ **API 面**，不删。
+- **连带清理**（均为本次删除直接导致，非工程外）：`framework/mm/mod.rs` 去 `pub mod kmalloc_slab;`；`host-tests/tests/kmalloc_irq_save_test.rs` 删 `kmalloc_slab_source_uses_irq_save_flags_signature`（`include_str!` 该文件，否则编译失败）+ 头部条目与注释改写；`scripts/audit_c_naming.py` 去 `LEGACY_KMALLOC_NAMES` 的 `slab_kmalloc` / `slab_kfree` 与 `mm/kmalloc_slab` 路径判据；`scripts/audit_coupling.py` 去 `framework::mm::kmalloc_slab` 守卫模式；`framework/tests/test_new_features.rs` 顶部 UT-07 注记追加后续处置。
+- **B-6 区块同步**：**无需同步**（清单仍 **496** 项）—— 本轮删除的 2 项原为 **HIGH（未入块）**，故区块计数不变；裁定询问稿中「清单 496 → 494」系误估，已按脚本实测订正。
+- **门槛**：双架构 0w0e（`Passed 5 / Failed 0`）/ fmt `--check` 0 差异 / clippy pedantic（lib + `kernel_test` + `host-test` 三维）/ 核心审计 quick exit 0（0 处 `✗`）/ host-tests 全绿 / kernel-host **817 → 816 passed 0 failed**（核销 1 个源侧用例）/ QEMU `make` + `make test-unit` **exit 33（ALL TESTS PASSED）** —— 全过。
+- **R1 实测（脚本正向复跑）**：`已分类清单 496 项` / 汇总 **`CRITICAL=2 / HIGH=0 / WARN=0 / INFO=496`**（`rc=1`，CRITICAL 2 为 R2 预存 `process_vm_*`，与本批无关）—— **HIGH 首次清零**。
 
 #### C. 原「接线」142 项（重划：仅 8 项留「接线」，其余 134 项入「未来功能」）
 

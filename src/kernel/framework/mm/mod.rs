@@ -60,7 +60,6 @@ pub mod copy_user;
 pub mod cow;
 pub mod frame;
 pub mod kmalloc;
-pub mod kmalloc_slab;
 /// L-03: 机制 API 集中导出 — 供 services 层策略实现调用
 pub mod mechanism;
 /// D3: NUMA 拓扑感知与内存策略

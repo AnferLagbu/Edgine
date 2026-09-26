@@ -37,8 +37,6 @@ FN_C_NAMING = re.compile(r"\bfn\s+[a-zA-Z_]*?(kfree|kmalloc)\b")
 # 仅在 mm 命名空间下视为允许
 LEGACY_KMALLOC_NAMES = frozenset({
     "get_kmalloc",
-    "slab_kmalloc",
-    "slab_kfree",
 })
 
 # 驼峰命名 (用于函数名): [a-z]+[A-Z]
@@ -125,7 +123,7 @@ def main() -> int:
                     m = FN_C_NAMING.search(line)
                     if m:
                         # 项目内部保留名 (mm 命名空间下)
-                        if "mm/kmalloc" in str(rel) or "mm/kmalloc_slab" in str(rel) or "mm/api.rs" in str(rel):
+                        if "mm/kmalloc" in str(rel) or "mm/api.rs" in str(rel):
                             # 提取完整 fn 名
                             full_match = re.search(r"\bfn\s+([a-zA-Z_][a-zA-Z0-9_]*)\b", line)
                             if full_match and full_match.group(1) in LEGACY_KMALLOC_NAMES:

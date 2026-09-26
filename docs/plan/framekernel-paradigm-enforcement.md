@@ -189,7 +189,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | config（11）| 全部（boot_image/capacity/caps/error/kaslr/memory/procfs/sched/slab/validate + mod）|
 | debug（2）| mod / api |
 | barrier（4）| mod / types / reset/mod / reset/config |
-| mm（5）| mod / api / mechanism / numa / pressure / kmalloc_slab |
+| mm（5）| mod / api / mechanism / numa / pressure |
 | timer（1）| mod |
 
 ### 6.6 保留 framework（机制/TCB）——200 文件

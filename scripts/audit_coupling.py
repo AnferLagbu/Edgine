@@ -57,7 +57,6 @@ INTERNAL_PATTERNS = [
     r'framework::mm::vmm_aarch64',
     r'framework::mm::slab',
     r'framework::mm::frame',
-    r'framework::mm::kmalloc_slab',
     r'framework::mm::cow',
     r'framework::mm::pcache',
     r'framework::mm::kpti_aarch64',
