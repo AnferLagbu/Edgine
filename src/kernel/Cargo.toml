@@ -78,7 +78,6 @@ lock_stats = []
 debug_mutex = []
 # initramfs: 从 build/user/initramfs.cpio 加载根文件系统
 initramfs = []
-atomic_stats = []
 log = []
 json_export = []
 ipv6 = []

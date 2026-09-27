@@ -523,7 +523,7 @@ T7 (预存登记)
 |---|---|---|
 | `framework/driver/bus/pci.rs::pci_scan()` | 能力与 `pci::scan_all_buses()`（已被 `services/driver/storage/mod.rs:182` 等使用）重叠，但含设备日志输出，属驱动**诊断面** | 待裁（接线 vs 删） |
 | `fs/{sysfs,cgroupfs,configfs,virtiofs}::umount_*` 等占位实现 | `umount_sysfs` 恒 `Ok(())`、`umount_devpts` 误调 `mount_devpts` —— 属 FS API 面**半成品**，删除会移除 API 面 | 登记预存缺陷，待 VFS mount 集成时修实装 |
-| `sync/atomic.rs` `record_*` 四项 | 计数本应被原子操作调用（`dump_stats` 已在用），当前计数恒 0 —— 属**半接线缺陷** | 待裁（接线会增热路径开销 vs 删计数面） |
+| `sync/atomic.rs` `record_*` 四项 | 计数本应被原子操作调用（`dump_stats` 已在用），当前计数恒 0 —— 属**半接线缺陷** | **已决（本批）＝删除 feature**（按职责判定：非内核所需 + 零履行 + 已有 `*_dump_stats` 等价诊断 idiom，见 B-5.2 / B-5.3 G2） |
 
 **R1 台账（批 1 后 438 项，按子系统分类）**：
 
@@ -570,7 +570,7 @@ T7 (预存登记)
 | 误判源 | 实例 | 后果 |
 |---|---|---|
 | 声明侧 `#[cfg(target_arch = "…")]` | [mm/mod.rs:51-53](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/mod.rs#L51-L53) 以 `#[path = "vmm_aarch64.rs"]` 门控 `pub mod vmm`；`arch/aarch64/**` 同理 | 非本维编译的模块被判「无调用者」= **构造性结果**，非死代码证据 |
-| 声明侧 `#[cfg(feature = "…")]` | [sync/atomic.rs:182](file:///home/anfer/Code/QueenX/src/kernel/framework/sync/atomic.rs#L182) `#[cfg(feature = "atomic_stats")] mod stats` | feature 门控代码被判「死」，实为「默认维未启用」 |
+| 声明侧 `#[cfg(feature = "…")]` | 原实例 `sync/atomic.rs` `#[cfg(feature = "atomic_stats")] mod stats`（原链接已随本批 feature 删除失效） | feature 门控代码被判「死」，实为「默认维未启用」；**该实例本批已消解**（feature 删除，见 B-5.2 / B-5.3 G2）。**类别本身仍适用**（现存同类如 `#[cfg(feature = "kernel_test")]` / `#[cfg(feature = "alloc")]`） |
 | `#[cfg(feature = "kernel_test")]` 测试模块 | `barrier/snapshot.rs` / `barrier/reset/layered.rs` 的 `pub mod tests` | 测试用例被判「未接线」 |
 
 ③ 表补充：**单维甄别的结果仅在该维有效**，跨维完备性需逐维复核（遗留 1 裁定：属**漏项风险**，非误删风险——甄别所在维中 x86_64 专属项*有*引用，不会被误列删候选；误删方向已由「aarch64 门控」属性隔离）。
@@ -767,7 +767,7 @@ T7 (预存登记)
 | 文件 | 项 | 待裁点 |
 |---|---|---|
 | `framework/arch/aarch64/mmu.rs` + `framework/mm/vmm_aarch64.rs` | 2：`diagnose_permission` / `diagnose_descriptor` | **aarch64 专属 + 诊断类**（[mm/mod.rs:51-53](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/mod.rs#L51-L53) 门控）⇒ x86_64 维下整模块不编译，「零引用」为**构造性结果**；另 10 项 aarch64 项因「硬件原语」优先级已归 A-1（见该桶优先级裁定） |
-| `framework/sync/atomic.rs` | 4：`record_inc` `record_dec` `record_cmpxchg_success` `record_cmpxchg_fail` | 位于 `#[cfg(feature = "atomic_stats")]`（[atomic.rs:182](file:///home/anfer/Code/QueenX/src/kernel/framework/sync/atomic.rs#L182)），**feature 门控代码非死代码**；既有登记 [subsystem-sync.md §9.3 [P2]](archive/audit-2026-08-14/subsystem-sync.md#L1075-L1092)「`atomic_stats` 引用 `println!` — no_std 不支持」⇒ 处置＝**修 feature 或删 feature（用户决策）** |
+| `framework/sync/atomic.rs` | 4：`record_inc` `record_dec` `record_cmpxchg_success` `record_cmpxchg_fail` | ~~原位于 `#[cfg(feature = "atomic_stats")]`~~，**feature 门控代码非死代码**；既有登记 [subsystem-sync.md §9.3 [P2]](archive/audit-2026-08-14/subsystem-sync.md#L1075-L1092)「`atomic_stats` 引用 `println!` — no_std 不支持」⇒ **本批处置＝删除 feature**（按职责判定：非内核所需 + 零履行 + 已有 `*_dump_stats` 等价诊断 idiom，见 B-5.2 / B-5.3 G2），4 项随 feature 消失 |
 
 **B-2 原有（21 项）**
 
@@ -839,7 +839,7 @@ T7 (预存登记)
 | 定型组 | 项（文件::符号） | 补齐判据（② 等价入口 / ③ 面属性 / 族） | 定桶 |
 |---|---|---|---|
 | **G1 aarch64 门控诊断**（2） | `arch/aarch64/mmu.rs::diagnose_permission`、`mm/vmm_aarch64.rs::diagnose_descriptor` | ② **不成立**——aarch64 专属诊断输出（非原语），x86_64 维下 `mm/mod.rs:51-53` 整模块门控，**「零引用」为构造性结果**；③ aarch64 架构门控诊断面；族（aarch64 诊断/内省族）完整 | 完整性保留（aarch64 门控诊断面） |
-| **G2 feature 门控**（4） | `sync/atomic.rs::record_inc` / `record_dec` / `record_cmpxchg_success` / `record_cmpxchg_fail` | ② **不适用**（feature 门控代码非死代码，`atomic.rs:182` `#[cfg(feature = "atomic_stats")]`）；③ feature 面 | 完整性保留（feature 门控面） |
+| **G2 feature 门控**（4 ⇒ **0**） | `sync/atomic.rs::record_inc` / `record_dec` / `record_cmpxchg_success` / `record_cmpxchg_fail` | ② **不适用**（feature 门控代码非死代码）；③ feature 面。**本批已按职责判定删除 feature**（非内核所需 + 零履行 + 已有 `*_dump_stats` 等价诊断 idiom）⇒ 4 项随 feature 消失 | **已删（feature 去留裁定：删），4 项归零** |
 | **G3 机制原语 / 安全加固 / TCB**（3） | `barrier/recoverable.rs::lock_fast`、`cpu/cpuid.rs::cpuid_checked`、`arch/x86_64/gdt.rs::get_gdt_table` | ② **不成立**——`lock_fast` 为免 checkpoint 快速路径（与常规 `lock` 路径能力不同）；`cpuid_checked` 为**叶范围校验安全变体**（裸 `cpuid` 无校验，非等价）；`get_gdt_table` 注释自述 `/// 获取 GDT 表的引用 (调试用途)`（退桶时已引原文核对）；③ 机制原语 / 安全加固 / **TCB 核心**（GDT，裁定六）面 | 完整性保留 |
 | **G4 驱动 / 统计 / 诊断 API 面**（4） | `driver/bus/pci.rs::pci_scan`、`barrier/reset/audit.rs::count_by_result`、`mm/page_fault.rs::page_fault_count`、`mm/slab.rs::utilization` | ② **不成立（能力重叠但非等价）**——`pci_scan`（`driver/bus/pci.rs:75-90`）唯一实现体调用在用 `pci::scan_all_buses`（`pci/mod.rs:518`，3 处在用），**差异能力＝逐设备 `klog_info!` 输出**（与 A-6 `format_duration` 的「`core::fmt` 非等价」同款判据）；`count_by_result` 与同文件 `count_by_layer` 为**不同维度**；`page_fault_count` 的 `PAGE_FAULT_COUNT` 为 `pub static`（并行读法非等价封装）；`utilization` 需调用方自行除法（部分等价）；③ 驱动 / 统计 / 诊断 API 面 | 完整性保留 |
 | **G5 FS mount-unmount 面 + Plan B FD 表**（9） | `services/fs/{sysfs,cgroupfs,configfs,virtiofs,systree}.rs::umount_*`（5）、`services/fs/devpts.rs::umount_devpts`、`services/fs/process_fd_table.rs::get_fd` / `close_cloexec_fds` / `clear_non_cloexec`（3） | ② **不成立**——各 FS 的 unmount 面唯一（无等价入口），与 C-2 `mount_*` 5 项为同批「待 VFS mount 集成」；`umount_devpts`（`devpts.rs:237-243`）实现体**误调 `mount_devpts`**、注释自述「当前实现恒返回 `Ok(())`」⇒ **已知缺陷形态（缺陷档）**，但**无调用链且非安全面** ⇒ 不删；`process_fd_table.rs` 3 项属**未采用的 Plan B 并行 FD 表**（`services/fs/mod.rs:43` 模块已注册）；③ FS / 进程 API 面 | 完整性保留 |
@@ -852,7 +852,7 @@ T7 (预存登记)
 | 定型组 | 等待原因 | 解锁条件 | 责任方 |
 |---|---|---|---|
 | G1 aarch64 门控诊断 | x86_64 维零引用为**构造性结果**，不可作为删据；且未取得等价入口证据 | aarch64 专项复核（若裁定 aarch64 诊断面无保留价值 ⇒ **新增删候选，按裁定六须授权**） | 用户（aarch64 面裁定） |
-| G2 feature 门控 | `atomic_stats` feature **自身待处置**——既有登记 [subsystem-sync.md §9.3 [P2]](archive/audit-2026-08-14/subsystem-sync.md#L1075-L1092)「`atomic_stats` 引用 `println!` — no_std 不支持」 | 用户裁定 `atomic_stats` feature 去留（**修 feature** 或 **删 feature**）；feature 未决则本 4 项随 feature 保留 | 用户（feature 决策） |
+| G2 feature 门控 | `atomic_stats` feature **已裁定**——既有登记 [subsystem-sync.md §9.3 [P2]](archive/audit-2026-08-14/subsystem-sync.md#L1075-L1092)「`atomic_stats` 引用 `println!` — no_std 不支持」；本批经**职责四维核验**（是否内核所需 / 履行度 / 是否已有等价承担者 / 保留代价）判定＝**删除** | ✅ **已解锁（本批删除）**——`mod stats` 私有且 `atomic.rs` 内无调用点（即便启用 feature 亦触发 `dead_code`）＋ `dump_stats` 引用 no_std 不可用的 `println!` 本就无法编译 ⇒ 4 项随 feature 消失 | 用户（feature 决策，**已决**） |
 | G3 机制 / 安全 / TCB | 属机制设计决策（`lock_fast` 优化路径）与安全加固变体（`cpuid_checked` 叶范围校验）；`get_gdt_table` 属 **TCB 核心**（GDT）⇒ 裁定六 | 若 reviewer 判非保留 ⇒ 须**先经安全面 / TCB 复核**并授权（不得走试删兜底，见 ⑦ 原理性盲区） | 用户 |
 | G4 驱动 / 统计 / 诊断面 | ② 仅「能力重叠」而非「能力等价」（差异能力＝日志/维度/封装层级），零引用不构成删据 | reviewer 复核 `pci_scan` 是否属冗余档（**若判冗余 ⇒ 新增删候选，须授权**）；其余 3 项保留无附加依赖 | 用户 |
 | G5 FS 面 + Plan B FD 表 | unmount 面待 **VFS mount 集成**（与 C-2 `mount_*` 同批）；`umount_devpts` 的误调缺陷待该集成统一修正；Plan B FD 表属**「消除并行实现」议程**（项目规则：内核内并行实现须归一到唯一权威实现），**非 T5 甄别范畴** | VFS mount/unmount 集成排期（`umount_devpts` 修正随该集成）；Plan B FD 表归属由 [eliminate-parallel-implementations.md](eliminate-parallel-implementations.md) 工程裁定 | 用户（VFS 集成排期 + 并行实现议程） |
@@ -879,12 +879,14 @@ T7 (预存登记)
 | 合计 | **436** | — | ＝ 0 + 75 + 2 + 0 + 359（**算术闭合**；438 − 1（`write_log_line` 已删除）− 1（`set_fd` 已接线 ⇒ 不再零引用）） |
 
 > **B-5 结论**：**待裁 47 已全部归零为三态**（13 等路线图 / 32 判据待补已定桶 / 2 安全面待 T3）⇒ **裁定四.2「无裸待裁」达成**、**裁定四.3「桶数算术闭合 + 转移可逐项追」达成**。**剩余阻塞（不改判据、只待授权 / 排期）**：① ramfs 2 项**待 reviewer 授权**方可进删候选（裁定六安全面）；② 潜在新增删候选（`pci_scan` / aarch64 诊断 2 项 / `format_duration` 若 `core::fmt` 判等价）**已按裁定六上报，未自主处置**；③ `umount_devpts` 误调 `mount_devpts` 缺陷已登记（G5），修正随 VFS mount 集成。
+>
+> **本批变更（`atomic_stats` feature 删除）**：B-5.2 **G2** 4 项 `record_inc` / `record_dec` / `record_cmpxchg_success` / `record_cmpxchg_fail` 随 `atomic_stats` feature 删除而消失（处置依据＝按职责判定「非内核所需 + 零履行 + 已有 `*_dump_stats` 等价诊断 idiom」，详见 **B-5.2 / B-5.3 G2**）⇒ 上表 **完整性保留 75 → 71**（B-5.2 判据待补 32 → 28）、**T5 内合计 77 → 73**、**合计 436 → 432**；审计侧 **B-6 区块 466 → 462**（见 B-6 维护说明），脚本 `INFO` 相应降 4。
 
 #### B-6. R1 已分类清单（机器可读区块；B09-21 数据源）
 
-> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**466 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
+> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**462 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
 >
-> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝per-process fd 表全量下沉（**B-11**）**（10 项因本工程接线 / 删除而不再零引用 ⇒ 本区块移除：`framework/fs/vfs/handle.rs::vfs_get_fd_handle`（poll 改源）、`framework/proc/fd_table.rs` 4 项（`get_handle_id` / `is_cloexec` / `set_cloexec` / `get_cloexec_fds` 接线）、`framework/proc/scheduler.rs::get_current_process`（`with_current_fd_table` 取当前进程）、`services/fs/process_fd_table.rs` 4 项（Plan B 表文件删除）⇒ **476 → 466**；编辑前实测区块为 **476** 行，区块说明原记 475（差 1，前批计数笔误，本次以实测为准）。另有 2 条**既有偏差**（`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`：脚本按名计数，其内联测试即计入引用 ⇒ 恒不在 INFO 集，见上述口径说明②）经本批复核确认，**非本工程引入，不属本批处置面**）。**上一轮同步＝项 5 批 C「67 项逐项分流」**（21 项判定为可删并已删除 ⇒ 本区块移除对应 21 条目，496 → 475；其余 46 项保留 `pub` 并留块登记，见 **B-10.11**；上一轮为项 2「`kmalloc_slab.rs` 孤岛删除」，被删 2 项原为 HIGH / **未入块** ⇒ 计数不变，见 **B-10.10**；更早为项 5 批 B「豁免面收窄」新增 67 项，429 → 496，见 **B-10.9**）。
+> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝`atomic_stats` feature 删除（本批）**（`framework/sync/atomic.rs` 4 项 `record_*` 随 feature 删除而消失 ⇒ 本区块移除 4 条目，**466 → 462**；处置依据＝按职责判定「非内核所需 + 零履行 + 已有 `*_dump_stats` 等价诊断 idiom」，见 **B-5.2 / B-5.3 G2**）。**上一轮同步＝per-process fd 表全量下沉（**B-11**）**（10 项因本工程接线 / 删除而不再零引用 ⇒ 本区块移除：`framework/fs/vfs/handle.rs::vfs_get_fd_handle`（poll 改源）、`framework/proc/fd_table.rs` 4 项（`get_handle_id` / `is_cloexec` / `set_cloexec` / `get_cloexec_fds` 接线）、`framework/proc/scheduler.rs::get_current_process`（`with_current_fd_table` 取当前进程）、`services/fs/process_fd_table.rs` 4 项（Plan B 表文件删除）⇒ **476 → 466**；编辑前实测区块为 **476** 行，区块说明原记 475（差 1，前批计数笔误，本次以实测为准）。另有 2 条**既有偏差**（`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`：脚本按名计数，其内联测试即计入引用 ⇒ 恒不在 INFO 集，见上述口径说明②）经本批复核确认，**非本工程引入，不属本批处置面**）。**上一轮同步＝项 5 批 C「67 项逐项分流」**（21 项判定为可删并已删除 ⇒ 本区块移除对应 21 条目，496 → 475；其余 46 项保留 `pub` 并留块登记，见 **B-10.11**；上一轮为项 2「`kmalloc_slab.rs` 孤岛删除」，被删 2 项原为 HIGH / **未入块** ⇒ 计数不变，见 **B-10.10**；更早为项 5 批 B「豁免面收窄」新增 67 项，429 → 496，见 **B-10.9**）。
 >
 > **口径说明（2026-09-26 订正）**：本区块与 `audit_unwired_pub_fn.py` 的「零引用」判定均为**按名计数**（`rg -c -w`），因而存在两类已知偏差，本区块**不承诺**与脚本输出逐项等同：① **同名遮蔽**（文档注释 / 局部变量出现同名字符串即计入引用 ⇒ 真零引用项可能**漏报**，实例见 **B-10.3** 的 `slab_init` / `services/driver/acpi.rs::lapic_base`）；② **已失效条目**（被接线或删除后不再零引用，需人工同步移除，本期移除 6 项见 B-10.4）。
 
@@ -1152,10 +1154,6 @@ src/kernel/framework/proc/types.rs::set_user_mode
 src/kernel/framework/proc/types.rs::thaw_target_state
 src/kernel/framework/proc/user_proc.rs::create_from_binary
 src/kernel/framework/smp/mod.rs::broadcast_reschedule
-src/kernel/framework/sync/atomic.rs::record_cmpxchg_fail
-src/kernel/framework/sync/atomic.rs::record_cmpxchg_success
-src/kernel/framework/sync/atomic.rs::record_dec
-src/kernel/framework/sync/atomic.rs::record_inc
 src/kernel/framework/sync/mutex.rs::wait_timeout
 src/kernel/framework/sync/pi_mutex.rs::get_ceiling
 src/kernel/framework/sync/pi_mutex.rs::get_protocol
@@ -1885,7 +1883,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 1. **元信息已补（E.1）**：① 判定工具＝`scripts/audit_unwired_pub_fn.py` R1（`rg -c -w` 文本并集，声明侧无 cfg 感知）；② 判定构建维＝**无单一构建维**，未做逐维交集 ⇒ 原「零引用」口径不可复核。③④⑤ 见上「方法与限制」。
 2. **桶边界已重划并重算（E.2 + 三处核对① + 第二轮二次修订 + 第三轮三次修订 + 第四轮四次修订，暂定值）**：删候选 70 → 23 → **11** → **2**（二次修订：安全面 4 转 A-3、判据不成立 8 退桶入 B-3；**四次修订：试删前逐项复核退桶 9 入待裁，见 A-5 / 12**）；**硬件原语完整性保留 41 → 43**（x86_64 侧 31 + aarch64 侧 10，优先级＝**硬件原语保留 > aarch64 门控 > 删候选**；三次修订并入安全面**族残缺**档 2 ＝`ct_eq_salt`/`ct_eq_password`）；接线 142 → **8**（逐项独立判定）；未来功能 **339**（**来源合成，非实测**：原接线剩余 134 ＝142−8 排除法 + 原预留 205）；待裁 21 → 27 → 35 → **37** → **46**（三次修订并入安全面**待 T3 结论**档 2 ＝`split_path`/`validate_path`，B-4；**四次修订并入 A-5 退桶 9**）。**原「安全面待确认 4」桶三次修订后清零**（三档分流完毕）。合计 438（算术已核对闭合：2+43+8+339+46）。三处核对 ②③ 的来源标记已就地标注。**五次修订（删候选清零）与六次修订（B-5 待裁归零）为最新口径，见 12 / 13**：删候选 **0** / 完整性保留 **75** / 待裁 **2** / 接线 8 / 未来功能 **352**，合计 **437**（`write_log_line` 已删除）——**以 13 为准，本条保留历次修订轨迹**。
-3. **`atomic_stats` 已退回待裁（E.3）**：`sync/atomic.rs` 4 项 `record_*` 属 `#[cfg(feature = "atomic_stats")]` 门控，**非死代码**；援引既有登记 [subsystem-sync.md §9.3 [P2]](archive/audit-2026-08-14/subsystem-sync.md#L1075-L1092)。
+3. **`atomic_stats` feature 已裁定删除并结项（E.3 结项）**：`sync/atomic.rs` 4 项 `record_*` 原属 `#[cfg(feature = "atomic_stats")]` 门控（**非死代码**，援引既有登记 [subsystem-sync.md §9.3 [P2]](archive/audit-2026-08-14/subsystem-sync.md#L1075-L1092)）；本批按**职责判定**处置＝**删除 feature**（依据＝① 非内核所需；② 零履行——`mod stats` 为私有且 `atomic.rs` 内无调用点，即便启用 feature 亦触发 `dead_code`；③ 已有 `*_dump_stats` 等价诊断 idiom；另 `dump_stats` 引用 no_std 不可用的 `println!`，本就无法编译）⇒ 4 项随 feature 删除而消失，B-6 区块 466 → 462；明细见 **B-5.2 / B-5.3 G2**。
 4. **删候选施工＝试删（E.4 + 遗留 2 裁定，不立项新工具）**：二次分类已移出 43 项硬件原语（含族残缺 2）、**且已移出安全面 4 项（不走试删）**；余 **11 项**（A-2；**四次修订后为 2 项**，见 12）按 ⑥「**逐项试删 → 跑既有五条门槛 → 任一维硬失败即回退**」推进（`build.sh all` / clippy `kernel_test` 维 / clippy `host-test` 维 / `make test-host` / QEMU `kernel_test`+boot），**编译/链接器即权威判据**，不新建调用图分析器。**第三轮已授予开工**（解锁五条逐条核销见 ⑧），执行约束：逐项独立提交 / 每项全量五门槛 / QEMU boot 硬闸门 / ramfs 2 项不入本批。
 5. **遗留 1 已降级为方法学注释（不专项量化）**：x86_64 专属项面未量化属**漏项风险（完备性）而非误删风险（正确性）**——已在 ③ 补注「单维甄别的结果仅在该维有效，跨维完备性需逐维复核」。
 6. **第二轮复核：A-2 已退回重做（reviewer，12/23 项判据站不住）**——原 23 项按四档处置，逐档有据：① **判据仅「零消费」7 项** → 补齐证据或退桶，结果 **7 项全退**（3 项同文件整组统一、1 项已登记路线图项、3 项属统计/诊断 API 面且未取得等价入口证据）；② **安全敏感 4 项** → 转 A-3 安全面二次分桶，**不走试删**；③ **注释待核 1 项**（`get_gdt_table`）→ 引注释原文核对＝`/// 获取 GDT 表的引用 (调试用途)`，**非死代码**，退桶；④ **判据较强 11 项** → 保留为 A-2。算术：23 − 4 − 8 = **11**。

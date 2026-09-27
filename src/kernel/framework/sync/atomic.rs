@@ -7,7 +7,6 @@
 //! - **类型安全**: 泛型 `Atomic<T>` 避免类型转换错误
 //! - **内存顺序**: 支持 Relaxed/Acquire/Release/SeqCst
 //! - **编译期检查**: 防止对非原子类型的误用
-//! - **统计功能**: 可选的原子操作计数
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -172,44 +171,6 @@ pub unsafe extern "C" fn atomic_read(ptr: *const i32) -> i32 {
     unsafe {
         let atomic = &*(ptr as *const core::sync::atomic::AtomicI32);
         atomic.load(Ordering::SeqCst)
-    }
-}
-
-// ============================================================================
-// 统计功能 (可选)
-// ============================================================================
-
-#[cfg(feature = "atomic_stats")]
-mod stats {
-    use super::*;
-
-    static TOTAL_INC: AtomicU64 = AtomicU64::new(0);
-    static TOTAL_DEC: AtomicU64 = AtomicU64::new(0);
-    static CMPXCHG_SUCCESS: AtomicU64 = AtomicU64::new(0);
-    static CMPXCHG_FAIL: AtomicU64 = AtomicU64::new(0);
-
-    pub fn record_inc() {
-        TOTAL_INC.fetch_add(1, Ordering::Relaxed);
-    }
-    pub fn record_dec() {
-        TOTAL_DEC.fetch_add(1, Ordering::Relaxed);
-    }
-    pub fn record_cmpxchg_success() {
-        CMPXCHG_SUCCESS.fetch_add(1, Ordering::Relaxed);
-    }
-    pub fn record_cmpxchg_fail() {
-        CMPXCHG_FAIL.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn dump_stats() {
-        println!("=== Atomic Operation Statistics ===");
-        println!("  inc operations: {}", TOTAL_INC.load(Ordering::Relaxed));
-        println!("  dec operations: {}", TOTAL_DEC.load(Ordering::Relaxed));
-        println!(
-            "  cmpxchg success: {}",
-            CMPXCHG_SUCCESS.load(Ordering::Relaxed)
-        );
-        println!("  cmpxchg fail: {}", CMPXCHG_FAIL.load(Ordering::Relaxed));
     }
 }
 
