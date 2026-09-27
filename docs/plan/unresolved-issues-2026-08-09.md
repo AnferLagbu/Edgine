@@ -34,10 +34,10 @@
 | 审计基线待清零 (2026-08-23) | 2 | F2×12 + F7×67 | 🔄 已处理 (2026-08-30) |
 | 分册 3 归档遗留 (2026-08-23) | 3 | 遗留×3 | ❌ 待下轮 |
 | lint 副作用 (已修复) | 2 | — | 🔄 已修复 |
-| 迁移中子系统状态 (2026-08-31) | 7 | MIG×7 | ⚠️ 迁移中 (有意识中间态) |
+| 迁移中子系统状态 (2026-08-31) | 8 | MIG×8 | ⚠️ 迁移中 (有意识中间态) |
 | 分册 6 调研预存问题 (2026-08-31) | 3 | B06-PRE×3 (1 安全) | ❌ 用户裁决登记待后续 |
 | socket_max_sockets flaky 排查 (2026-08-31) | 1 | B06-PRE-004 | ✅ 已修复 (非内核问题) |
-| **总计** | **~81 项** | — | — |
+| **总计** | **~82 项** | — | — |
 
 ---
 
@@ -476,11 +476,12 @@
 | MIG-003 | 缺 pl011（ARM 串口）安全代理 | `services/driver/char/` | char/mod.rs 头注释自标"后续添加"（Phase 2.1.5 后续） |
 | MIG-004 | 缺 proto_* + user_driver 安全代理 | `services/chitin/` | framework 已实现，services 无安全封装；若用户态驱动/协议族需开放，先评估边界 |
 | MIG-005 | 双份代码/边界未理清 | `framework/driver/storage/` ↔ `services/driver/storage/` | nvme/ahci 两边并存（framework 含 nvme_block.rs/ahci_block.rs/ata_block.rs 完整实现 + services 业务层）；需明确"机制/策略"各自归属，消除重复 |
-| | | `framework/driver/display/hdmi/` ↔ `services/driver/display/hdmi.rs` | HDMI 实现双份（framework 子目录 7 文件 vs services 业务层），边界待理清 |
+| | | `framework/driver/display/hdmi/` ↔ `services/driver/display/hdmi.rs` | framework 侧孤儿目录（8 文件 1537 行）已随 DECISION-K 第二十七批删除，双份消解；services 侧残留缺口（控制器未接入启动路径）转记 MIG-008 |
 | MIG-006 | 迁移方向变化未入文档 | [archive/driver-service-migration.md](./archive/driver-service-migration.md) | 文档标记"✅ 已完成"但 B04 后方向反转（E1000 回迁 framework），需补注 B04 后的状态 |
 | MIG-007 | host-tests 无 chitin 专项集成测试 | `host-tests/tests/` | 已有 driver_display / driver_e1000_eeprom / nvme_ahci_activation / i43_block_bridge / virtio_net_arch_unify / nic_probe_arch_neutral，但 chitin 注册表/IO 无专项覆盖 |
+| MIG-008 | services 侧 HDMI/DP 控制器未接入驱动框架/启动路径 | [services/driver/display/hdmi.rs:699](file:///home/anfer/Code/QueenX/src/kernel/services/driver/display/hdmi.rs#L699) / [dp.rs:500](file:///home/anfer/Code/QueenX/src/kernel/services/driver/display/dp.rs#L500) | `HdmiController`/`DpController` 内核内零调用者（仅模块内测试与 host-tests）；显示子系统启动实际走 framework framebuffer（[framework/driver/display/mod.rs:299](file:///home/anfer/Code/QueenX/src/kernel/framework/driver/display/mod.rs#L299) `display_init()`）。TMDS 输出使能与同步极性在 services 已实现（[hdmi.rs:56-58](file:///home/anfer/Code/QueenX/src/kernel/services/driver/display/hdmi.rs#L56-L58) 0x079/0x078），DP OUTPUT_ENABLE 亦已实现（[dp.rs:1188](file:///home/anfer/Code/QueenX/src/kernel/services/driver/display/dp.rs#L1188)）；缺失项为驱动注册/工厂接入路径，及厂商 PHY/DPLL 差异（Intel/AMD/Synopsys）实装——后者待真实硬件接入时按 DECISION-K 注册契约在 services 侧重立 |
 
-> **后续行动建议**：MIG-001/002 为纯注释同步（低风险，可随下次 driver 改动顺手修复）；MIG-003/004 属功能补齐（需按 §12.3 评估"是否需要"——若当前无调用方，登记即可不施工）；MIG-005/006/007 属架构边界治理（涉及 framework/services 归属决策，按 AGENTS.md §12.1 决策灰色地带处理，需用户裁决）。
+> **后续行动建议**：MIG-001/002 为纯注释同步（低风险，可随下次 driver 改动顺手修复）；MIG-003/004 属功能补齐（需按 §12.3 评估"是否需要"——若当前无调用方，登记即可不施工）；MIG-005/006/007 属架构边界治理（涉及 framework/services 归属决策，按 AGENTS.md §12.1 决策灰色地带处理，需用户裁决）；MIG-008 属接线补齐（控制器与 TMDS/DP 输出使能已实现，仅缺驱动注册/工厂接入面，需驱动注册面决策）。
 
 ---
 
