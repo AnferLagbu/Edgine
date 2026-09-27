@@ -14,6 +14,12 @@ use crate::framework::fs::vfs::dcache;
 use crate::framework::fs::{VFS_MAX_NAME, VfsFileType, VfsSeekWhence, VfsStat};
 
 pub struct RamFsData {
+    /// 文件系统实例标识 (dcache/icache 命名空间, 0 = 未挂载)
+    ///
+    /// 多个 `RamFsData` 实例 (全局 `RAMFS_DATA` / overlay 内嵌 upper/work 层 /
+    /// `SafeRamFs` / `TmpFsData`) 根 inode 同为 1、节点号重叠, 独立的 `fs_id`
+    /// 使共享的全局 dcache/icache 不会跨实例污染.
+    pub fs_id: u32,
     pub nodes: [RamFsNode; RAMFS_MAX_NODES],
     pub data_area: [u8; RAMFS_MAX_BLOCKS * RAMFS_BLOCK_SIZE],
     pub node_bitmap: [u8; RAMFS_MAX_NODES / 8],
@@ -28,6 +34,19 @@ pub struct RamFsData {
 
 // RamFsData 全部字段自动实现 Send + Sync, 无需手动 impl.
 
+/// 全局 fs 实例标识分配器 (从 1 开始, 0 保留表示"未挂载")
+static NEXT_FS_ID: AtomicU32 = AtomicU32::new(1);
+
+/// 分配全局唯一的 fs 实例标识
+///
+/// 每次 `RamFsData` 挂载时调用一次, 用于隔离共享 dcache/icache 的命名空间.
+/// 回绕到 0 时跳过 (0 保留给"未挂载").
+fn alloc_fs_id() -> u32 {
+    let id = NEXT_FS_ID.fetch_add(1, Ordering::SeqCst);
+    // 回绕到 0 时改发 1 (0 保留给"未挂载")
+    if id == 0 { 1 } else { id }
+}
+
 impl RamFsData {
     #[expect(
         clippy::large_stack_arrays,
@@ -35,6 +54,7 @@ impl RamFsData {
     )]
     pub const fn new() -> Self {
         Self {
+            fs_id: 0,
             nodes: [RamFsNode::new(); RAMFS_MAX_NODES],
             data_area: [0; RAMFS_MAX_BLOCKS * RAMFS_BLOCK_SIZE],
             node_bitmap: [0; RAMFS_MAX_NODES / 8],
@@ -365,7 +385,7 @@ impl RamFsData {
             }
 
             // dcache 快速路径
-            match dcache::dcache_lookup(current, component) {
+            match dcache::dcache_lookup(self.fs_id, current, component) {
                 dcache::DCacheResult::Hit { ino, file_type: _ } => {
                     current = ino;
                     continue;
@@ -406,14 +426,20 @@ impl RamFsData {
                     if name == component {
                         current = entry.node;
                         found = true;
-                        dcache::dcache_insert(node.node_id, component, entry.node, entry.file_type);
+                        dcache::dcache_insert(
+                            self.fs_id,
+                            node.node_id,
+                            component,
+                            entry.node,
+                            entry.file_type,
+                        );
                         break;
                     }
                 }
             }
 
             if !found {
-                dcache::dcache_insert_negative(node.node_id, component);
+                dcache::dcache_insert_negative(self.fs_id, node.node_id, component);
                 return None;
             }
         }
@@ -422,6 +448,8 @@ impl RamFsData {
     }
 
     pub fn mount(&mut self, _path: &str) -> i32 {
+        // 分配全局唯一的 fs 实例标识, 使共享的 dcache/icache 按实例隔离
+        self.fs_id = alloc_fs_id();
         // 使用 fill(0) 替代逐字节循环——编译器会优化为高效的 memset
         self.nodes.fill(RamFsNode::new());
         self.data_area.fill(0);
@@ -625,7 +653,7 @@ impl RamFsData {
 
         self.nodes[node_id as usize].mtime = Self::get_time();
 
-        dcache::icache_invalidate(node_id);
+        dcache::icache_invalidate(self.fs_id, node_id);
 
         bytes_written as i32
     }
@@ -749,7 +777,7 @@ impl RamFsData {
 
         self.nodes[node_id as usize].mtime = Self::get_time();
 
-        dcache::icache_invalidate(node_id);
+        dcache::icache_invalidate(self.fs_id, node_id);
 
         (bytes_written, current_offset)
     }
@@ -940,7 +968,7 @@ impl RamFsData {
         node.size = new_size as u32;
         node.mtime = Self::get_time();
 
-        dcache::icache_invalidate(node_id);
+        dcache::icache_invalidate(self.fs_id, node_id);
 
         0
     }
@@ -1003,8 +1031,8 @@ impl RamFsData {
             node.owner_pwm = 0;
         }
 
-        dcache::dcache_invalidate_parent(parent_num);
-        dcache::icache_invalidate(node_id);
+        dcache::dcache_invalidate_parent(self.fs_id, parent_num);
+        dcache::icache_invalidate(self.fs_id, node_id);
 
         0
     }
@@ -1078,7 +1106,7 @@ impl RamFsData {
         self.nodes[parent_num as usize].link_count += 1;
         self.nodes[parent_num as usize].mtime = Self::get_time();
 
-        dcache::dcache_invalidate_parent(parent_num);
+        dcache::dcache_invalidate_parent(self.fs_id, parent_num);
 
         Some(new_node_id)
     }
@@ -1185,7 +1213,7 @@ impl RamFsData {
         self.nodes[parent_num as usize].link_count += 1;
         self.nodes[parent_num as usize].mtime = Self::get_time();
 
-        dcache::dcache_invalidate_parent(parent_num);
+        dcache::dcache_invalidate_parent(self.fs_id, parent_num);
 
         0
     }
@@ -1377,7 +1405,7 @@ impl RamFsData {
         self.nodes[parent_node as usize].mtime = Self::get_time();
         self.nodes[target_node as usize].link_count += 1;
 
-        dcache::dcache_invalidate_parent(parent_node);
+        dcache::dcache_invalidate_parent(self.fs_id, parent_node);
 
         0
     }
@@ -1470,7 +1498,7 @@ impl RamFsData {
         self.nodes[parent_num as usize].link_count += 1;
         self.nodes[parent_num as usize].mtime = now;
 
-        dcache::dcache_invalidate_parent(parent_num);
+        dcache::dcache_invalidate_parent(self.fs_id, parent_num);
 
         new_id as i32
     }

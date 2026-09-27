@@ -102,7 +102,7 @@ fn test_fs_backend_registered_make_inode() -> TestResult {
     crate::services::fs::init();
     // 钩子必须返回真实 Inode — FallbackFsBackend 恒 Err, 本断言锁定回归
     let result =
-        crate::framework::fs::vfs::backend_trait::current_fs_backend().make_ramfs_inode(0, 0);
+        crate::framework::fs::vfs::backend_trait::current_fs_backend().make_ramfs_inode(0, 0, 0);
     check!(
         result.is_ok(),
         "make_ramfs_inode 命中回退策略 — services::fs::init 未生效"

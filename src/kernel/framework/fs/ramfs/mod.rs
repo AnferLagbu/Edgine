@@ -59,8 +59,12 @@ pub fn init() {
 /// 经 backend 工厂钩子构造 RamFS Inode (具象实现由 services 注入)
 ///
 /// 后端未注册 (早期启动) 或构造失败时返回 Err, fail-closed.
-fn make_inode(inode_id: u32, mount_idx: u32) -> KernelResult<alloc::sync::Arc<dyn Inode>> {
-    current_fs_backend().make_ramfs_inode(inode_id, mount_idx)
+fn make_inode(
+    inode_id: u32,
+    mount_idx: u32,
+    fs_id: u32,
+) -> KernelResult<alloc::sync::Arc<dyn Inode>> {
+    current_fs_backend().make_ramfs_inode(inode_id, mount_idx, fs_id)
 }
 
 impl FileSystem for RamFsData {
@@ -88,13 +92,14 @@ impl FileSystem for RamFsData {
     ) -> KernelResult<alloc::sync::Arc<dyn Inode>> {
         let mount_idx = 0; // RamFs 默认挂载索引
         let mut ramfs = RAMFS_DATA.lock();
+        let fs_id = ramfs.fs_id;
         match ramfs.open(rel_path, flags, pwm) {
             Some((node_id, _offset, _file_type)) => {
                 if (flags & VfsOpenFlags::TRUNC.bits()) != 0 {
                     ramfs.truncate(node_id, 0, pwm);
                 }
                 drop(ramfs);
-                make_inode(node_id, mount_idx)
+                make_inode(node_id, mount_idx, fs_id)
             }
             None => Err(KernelError::FileNotFound),
         }
@@ -128,10 +133,13 @@ impl FileSystem for RamFsData {
 
     fn fs_stat(&self, rel_path: &str, _pwm: u64) -> KernelResult<VfsStat> {
         let ramfs = RAMFS_DATA.lock();
+        let fs_id = ramfs.fs_id;
         match ramfs.resolve_path(rel_path) {
             Some(node_id) => {
                 drop(ramfs); // 释放锁, 尝试 icache
-                if let Some(cached) = crate::framework::fs::vfs::dcache::icache_lookup(node_id) {
+                if let Some(cached) =
+                    crate::framework::fs::vfs::dcache::icache_lookup(fs_id, node_id)
+                {
                     return Ok(VfsStat {
                         node_id: cached.ino,
                         file_type: cached.file_type,
@@ -149,6 +157,7 @@ impl FileSystem for RamFsData {
                     .stat(node_id)
                     .inspect(|st| {
                         crate::framework::fs::vfs::dcache::icache_insert(
+                            fs_id,
                             node_id,
                             st.file_type,
                             st.perm,
@@ -400,11 +409,12 @@ impl FileSystem for RamFsData {
     ) -> KernelResult<alloc::sync::Arc<dyn Inode>> {
         let mount_idx = 0;
         let mut ramfs = RAMFS_DATA.lock();
+        let fs_id = ramfs.fs_id;
         ramfs
             .create_file(parent_path, name, pwm)
             .map_or(Err(KernelError::NoSpace), |new_inode| {
                 drop(ramfs);
-                make_inode(new_inode, mount_idx)
+                make_inode(new_inode, mount_idx, fs_id)
             })
     }
 
@@ -413,6 +423,8 @@ impl FileSystem for RamFsData {
         inode_id: u32,
         mount_idx: u32,
     ) -> Option<alloc::sync::Arc<dyn Inode>> {
-        make_inode(inode_id, mount_idx).ok()
+        // fs_resolve_inode 无路径上下文, 取全局实例的 fs_id (RAMFS_DATA 单例)
+        let fs_id = RAMFS_DATA.lock().fs_id;
+        make_inode(inode_id, mount_idx, fs_id).ok()
     }
 }

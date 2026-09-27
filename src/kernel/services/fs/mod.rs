@@ -1,8 +1,9 @@
 #![deny(unsafe_code)]
 //! 文件系统 — services 层策略主体
 //!
-//! VFS Manager + Inode trait 抽象. 7 个原生 FS (ramfs/devfs/procfs/ext2/
-//! exfat/tmpfs/overlayfs) + NestFS 在 services::fs::inode 实现 Plan B 契约.
+//! VFS Manager + Inode trait 抽象, services 侧原生 FS 模块: ramfs/tmpfs/overlayfs
+//! /procfs/devfs/sysfs/systree/cgroupfs/configfs/devpts/anonymous 等, 以及
+//! virtiofs/ext2/exfat/nestfs 共 15 个. Plan B 契约实现在 services::fs::inode.
 //! 0 unsafe, 全部块设备/页缓存底层走 framework.
 //!
 //! 历史: 2026-06 之前 v2.5 状态评估已过时, 当前已远超当时范围. 详细
@@ -102,11 +103,12 @@ impl FsBackend for ServicesFsBackend {
         &self,
         inode_id: u32,
         mount_idx: u32,
+        fs_id: u32,
     ) -> Result<alloc::sync::Arc<dyn Inode>, KernelError> {
         // 具象 RamFsInode 归 services (DECISION-K 项 5): framework RamFsData
         // 经此工厂钩子请求 services 构造 Inode trait object.
         Ok(crate::services::fs::inode::new_ramfs_inode(
-            inode_id, mount_idx,
+            inode_id, mount_idx, fs_id,
         ))
     }
 

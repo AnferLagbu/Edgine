@@ -112,14 +112,17 @@ impl Inode for AnonymousInode {
 pub struct RamFsInode {
     inode_id: u32,
     mount_idx: u32,
+    /// dcache/icache 命名空间标识 (所属 RamFS 实例)
+    fs_id: u32,
 }
 
 impl RamFsInode {
     /// 创建新的 `RamFS` Inode
-    pub fn new(inode_id: u32, mount_idx: u32) -> Self {
+    pub fn new(inode_id: u32, mount_idx: u32, fs_id: u32) -> Self {
         Self {
             inode_id,
             mount_idx,
+            fs_id,
         }
     }
 }
@@ -156,7 +159,8 @@ impl Inode for RamFsInode {
     )]
     fn stat(&self, pwm: u64) -> KernelResult<VfsStat> {
         // icache 快速路径: 避免 RAMFS_DATA 锁
-        if let Some(cached) = crate::services::fs::dcache::icache_lookup(self.inode_id) {
+        if let Some(cached) = crate::services::fs::dcache::icache_lookup(self.fs_id, self.inode_id)
+        {
             return Ok(VfsStat {
                 node_id: cached.ino,
                 file_type: cached.file_type,
@@ -175,6 +179,7 @@ impl Inode for RamFsInode {
         let st = ramfs.get_stat(self.inode_id, pwm)?;
         // 填充 icache
         crate::services::fs::dcache::icache_insert(
+            self.fs_id,
             self.inode_id,
             st.file_type,
             st.perm,
@@ -436,6 +441,6 @@ pub fn new_anonymous_inode(inode_id: u32) -> Arc<dyn Inode> {
 }
 
 /// 创建 `RamFS` Inode 的 Arc 包装
-pub fn new_ramfs_inode(inode_id: u32, mount_idx: u32) -> Arc<dyn Inode> {
-    Arc::new(RamFsInode::new(inode_id, mount_idx))
+pub fn new_ramfs_inode(inode_id: u32, mount_idx: u32, fs_id: u32) -> Arc<dyn Inode> {
+    Arc::new(RamFsInode::new(inode_id, mount_idx, fs_id))
 }

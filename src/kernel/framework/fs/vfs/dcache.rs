@@ -12,14 +12,14 @@
 //!
 //! 当前 `resolve_path` 每次从根目录逐级线性扫描目录项, O(n) 复杂度.
 //! 对于 `/usr/bin/ls` 这样的路径, 需要 3 次目录扫描, 每次遍历所有目录项.
-//! dcache 将 (`parent_ino`, name) → inode 的映射缓存起来, 将路径解析从
-//! O(depth × `entries_per_dir`) 降至 O(depth).
+//! dcache 将 (`fs_id`, `parent_ino`, name) → inode 的映射缓存起来, 将路径
+//! 解析从 O(depth × `entries_per_dir`) 降至 O(depth).
 //!
 //! ## 架构
 //!
 //! ```text
-//! dcache: (parent_ino, name) → DCacheEntry { ino, file_type, valid }
-//! icache: ino → ICacheEntry { ino, file_type, size, perm, valid }
+//! dcache: (fs_id, parent_ino, name) → DCacheEntry { ino, file_type, valid }
+//! icache: (fs_id, ino) → ICacheEntry { ino, file_type, size, perm, valid }
 //! ```
 //!
 //! ## 设计决策
@@ -27,7 +27,12 @@
 //! - **开放寻址哈希表**: 固定大小数组, 无堆分配, 适合 `no_std` 内核
 //! - **Robin Hood 哈希**: 减少探查链长度, 查找方差小
 //! - **负缓存**: 查找失败也记录, 避免重复扫描不存在的路径
-//! - **简单失效**: 文件创建/删除/重命名时按 `parent_ino` 失效相关条目
+//! - **fs 实例命名空间**: 键首维为文件系统实例标识 `fs_id`. 多个 `RamFsData`
+//!   实例 (全局 `RAMFS_DATA` / overlay 内嵌 upper/work 层 / `SafeRamFs` /
+//!   `TmpFsData`) 根 inode 同为 1、节点号重叠, 若不带实例维度则跨实例相互
+//!   污染 (负缓存串扰 / 命中他实例 ino). `fs_id` 由实例挂载时分配, 0 表示
+//!   未挂载.
+//! - **简单失效**: 文件创建/删除/重命名时按 (`fs_id`, `parent_ino`) 失效相关条目
 //! - **单核假设**: 当前用 `IrqSpinLock` 保护, 后续 per-CPU 时可去锁
 //!
 //! ## 与 Linux 的差异
@@ -71,6 +76,8 @@ const NEGATIVE_INO: u32 = u32::MAX - 1;
 /// 目录项缓存条目
 #[derive(Clone, Copy)]
 struct DCacheEntry {
+    /// 文件系统实例标识 (命名空间, 0 = 未挂载)
+    fs_id: u32,
     /// 父目录 inode 号
     parent_ino: u32,
     /// 目录项名称
@@ -90,6 +97,7 @@ struct DCacheEntry {
 impl Default for DCacheEntry {
     fn default() -> Self {
         Self {
+            fs_id: 0,
             parent_ino: EMPTY_INO,
             name: [0; DCACHE_NAME_LEN],
             name_len: 0,
@@ -108,6 +116,8 @@ impl Default for DCacheEntry {
 /// inode 缓存条目
 #[derive(Clone, Copy)]
 struct ICacheEntry {
+    /// 文件系统实例标识 (命名空间, 0 = 未挂载)
+    fs_id: u32,
     /// inode 号
     ino: u32,
     /// 文件类型
@@ -135,6 +145,7 @@ struct ICacheEntry {
 impl Default for ICacheEntry {
     fn default() -> Self {
         Self {
+            fs_id: 0,
             ino: EMPTY_INO,
             file_type: 0,
             perm: 0,
@@ -181,6 +192,7 @@ impl DCache {
     const fn new() -> Self {
         Self {
             entries: [DCacheEntry {
+                fs_id: 0,
                 parent_ino: EMPTY_INO,
                 name: [0; DCACHE_NAME_LEN],
                 name_len: 0,
@@ -197,9 +209,14 @@ impl DCache {
         clippy::unreadable_literal,
         reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
     )]
-    /// FNV-1a 哈希: (`parent_ino`, name) → u64
-    fn hash_key(parent_ino: u32, name: &str) -> u64 {
+    /// FNV-1a 哈希: (`fs_id`, `parent_ino`, name) → u64
+    fn hash_key(fs_id: u32, parent_ino: u32, name: &str) -> u64 {
         let mut h: u64 = 14695981039346656037;
+        // 混入 fs_id (实例命名空间)
+        for &b in &fs_id.to_le_bytes() {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(1099511628211);
+        }
         // 混入 parent_ino
         for &b in &parent_ino.to_le_bytes() {
             h ^= u64::from(b);
@@ -213,18 +230,18 @@ impl DCache {
         h
     }
 
-    /// 查找 (`parent_ino`, name) → (ino, `file_type`)
+    /// 查找 (`fs_id`, `parent_ino`, name) → (ino, `file_type`)
     ///
     /// 返回:
     /// - `Some((ino, file_type))`: 正缓存命中
     /// - `Some((NEGATIVE_INO, _))`: 负缓存命中 (该路径不存在)
     /// - `None`: 缓存未命中
-    fn lookup(&self, parent_ino: u32, name: &str) -> Option<(u32, u8)> {
+    fn lookup(&self, fs_id: u32, parent_ino: u32, name: &str) -> Option<(u32, u8)> {
         if name.is_empty() || name.len() > DCACHE_NAME_LEN {
             return None;
         }
 
-        let hash = Self::hash_key(parent_ino, name);
+        let hash = Self::hash_key(fs_id, parent_ino, name);
         let start = (hash % DCACHE_SIZE as u64) as usize;
 
         for distance in 0..DCACHE_SIZE {
@@ -243,6 +260,7 @@ impl DCache {
 
             // 匹配检查
             if entry.valid
+                && entry.fs_id == fs_id
                 && entry.parent_ino == parent_ino
                 && entry.name_len as usize == name.len()
                 && &entry.name[..entry.name_len as usize] == name.as_bytes()
@@ -254,18 +272,19 @@ impl DCache {
         None
     }
 
-    /// 插入 (`parent_ino`, name) → (ino, `file_type`)
+    /// 插入 (`fs_id`, `parent_ino`, name) → (ino, `file_type`)
     ///
     /// ino = `NEGATIVE_INO` 表示负缓存
-    fn insert(&mut self, parent_ino: u32, name: &str, ino: u32, file_type: u8) {
+    fn insert(&mut self, fs_id: u32, parent_ino: u32, name: &str, ino: u32, file_type: u8) {
         if name.is_empty() || name.len() > DCACHE_NAME_LEN {
             return;
         }
 
-        let hash = Self::hash_key(parent_ino, name);
+        let hash = Self::hash_key(fs_id, parent_ino, name);
         let start = (hash % DCACHE_SIZE as u64) as usize;
 
         let mut new_entry = DCacheEntry {
+            fs_id,
             parent_ino,
             name: [0; DCACHE_NAME_LEN],
             name_len: name.len() as u8,
@@ -292,7 +311,8 @@ impl DCache {
             }
 
             // 已存在相同 key: 更新
-            if entry.parent_ino == parent_ino
+            if entry.fs_id == fs_id
+                && entry.parent_ino == parent_ino
                 && entry.name_len as usize == name.len()
                 && &entry.name[..entry.name_len as usize] == name.as_bytes()
             {
@@ -316,12 +336,12 @@ impl DCache {
         // 表满: 丢弃新条目 (不应发生, DCACHE_SIZE 足够大)
     }
 
-    /// 失效指定父目录下的所有条目
+    /// 失效指定实例下某父目录的所有条目
     ///
     /// 文件创建/删除/重命名时调用, 确保一致性.
-    fn invalidate_parent(&mut self, parent_ino: u32) {
+    fn invalidate_parent(&mut self, fs_id: u32, parent_ino: u32) {
         for entry in &mut self.entries {
-            if entry.valid && entry.parent_ino == parent_ino {
+            if entry.valid && entry.fs_id == fs_id && entry.parent_ino == parent_ino {
                 entry.valid = false;
                 entry.parent_ino = EMPTY_INO;
                 self.count -= 1;
@@ -370,6 +390,7 @@ impl ICache {
     const fn new() -> Self {
         Self {
             entries: [ICacheEntry {
+                fs_id: 0,
                 ino: EMPTY_INO,
                 file_type: 0,
                 perm: 0,
@@ -390,9 +411,13 @@ impl ICache {
         clippy::unreadable_literal,
         reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
     )]
-    /// FNV-1a 哈希: ino → u64
-    fn hash_key(ino: u32) -> u64 {
+    /// FNV-1a 哈希: (`fs_id`, ino) → u64
+    fn hash_key(fs_id: u32, ino: u32) -> u64 {
         let mut h: u64 = 14695981039346656037;
+        for &b in &fs_id.to_le_bytes() {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(1099511628211);
+        }
         for &b in &ino.to_le_bytes() {
             h ^= u64::from(b);
             h = h.wrapping_mul(1099511628211);
@@ -401,12 +426,12 @@ impl ICache {
     }
 
     /// 查找 inode 缓存
-    fn lookup(&self, ino: u32) -> Option<ICacheEntry> {
+    fn lookup(&self, fs_id: u32, ino: u32) -> Option<ICacheEntry> {
         if ino == EMPTY_INO || ino == NEGATIVE_INO {
             return None;
         }
 
-        let hash = Self::hash_key(ino);
+        let hash = Self::hash_key(fs_id, ino);
         let start = (hash % ICACHE_SIZE as u64) as usize;
 
         for distance in 0..ICACHE_SIZE {
@@ -421,7 +446,7 @@ impl ICache {
                 return None;
             }
 
-            if entry.valid && entry.ino == ino {
+            if entry.valid && entry.fs_id == fs_id && entry.ino == ino {
                 return Some(*entry);
             }
         }
@@ -430,8 +455,13 @@ impl ICache {
     }
 
     /// 插入/更新 inode 缓存
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "too_many_arguments: icache 需完整 VfsStat 字段, 拆结构体收益不抵改动面; 当前优先 expect"
+    )]
     fn insert(
         &mut self,
+        fs_id: u32,
         ino: u32,
         file_type: u8,
         perm: u16,
@@ -445,10 +475,11 @@ impl ICache {
             return;
         }
 
-        let hash = Self::hash_key(ino);
+        let hash = Self::hash_key(fs_id, ino);
         let start = (hash % ICACHE_SIZE as u64) as usize;
 
         let mut new_entry = ICacheEntry {
+            fs_id,
             ino,
             file_type,
             perm,
@@ -479,7 +510,7 @@ impl ICache {
             }
 
             // 已存在: 更新
-            if entry.ino == ino {
+            if entry.fs_id == fs_id && entry.ino == ino {
                 entry.file_type = file_type;
                 entry.perm = perm;
                 entry.size = size;
@@ -500,13 +531,13 @@ impl ICache {
         }
     }
 
-    /// 失效指定 inode
-    fn invalidate(&mut self, ino: u32) {
+    /// 失效指定实例的 inode
+    fn invalidate(&mut self, fs_id: u32, ino: u32) {
         if ino == EMPTY_INO {
             return;
         }
 
-        let hash = Self::hash_key(ino);
+        let hash = Self::hash_key(fs_id, ino);
         let start = (hash % ICACHE_SIZE as u64) as usize;
 
         for distance in 0..ICACHE_SIZE {
@@ -521,7 +552,7 @@ impl ICache {
                 return;
             }
 
-            if entry.valid && entry.ino == ino {
+            if entry.valid && entry.fs_id == fs_id && entry.ino == ino {
                 entry.valid = false;
                 entry.ino = EMPTY_INO;
                 self.count -= 1;
@@ -531,38 +562,38 @@ impl ICache {
     }
 
     /// 增加引用计数
-    fn ref_inc(&mut self, ino: u32) {
-        if let Some(idx) = self.lookup_index(ino) {
+    fn ref_inc(&mut self, fs_id: u32, ino: u32) {
+        if let Some(idx) = self.lookup_index(fs_id, ino) {
             self.entries[idx].ref_count = self.entries[idx].ref_count.saturating_add(1);
         }
     }
 
     /// 减少引用计数
-    fn ref_dec(&mut self, ino: u32) {
-        if let Some(idx) = self.lookup_index(ino) {
+    fn ref_dec(&mut self, fs_id: u32, ino: u32) {
+        if let Some(idx) = self.lookup_index(fs_id, ino) {
             self.entries[idx].ref_count = self.entries[idx].ref_count.saturating_sub(1);
         }
     }
 
     /// 检查引用计数是否为零
-    fn is_ref_zero(&self, ino: u32) -> bool {
-        self.lookup_index(ino)
+    fn is_ref_zero(&self, fs_id: u32, ino: u32) -> bool {
+        self.lookup_index(fs_id, ino)
             .is_none_or(|idx| self.entries[idx].ref_count == 0)
     }
 
     /// 获取引用计数
-    fn get_ref_count(&self, ino: u32) -> u32 {
-        self.lookup_index(ino)
+    fn get_ref_count(&self, fs_id: u32, ino: u32) -> u32 {
+        self.lookup_index(fs_id, ino)
             .map_or(0, |idx| self.entries[idx].ref_count)
     }
 
     /// 可变查找 (返回索引)
-    fn lookup_index(&self, ino: u32) -> Option<usize> {
+    fn lookup_index(&self, fs_id: u32, ino: u32) -> Option<usize> {
         if ino == EMPTY_INO || ino == NEGATIVE_INO {
             return None;
         }
 
-        let hash = Self::hash_key(ino);
+        let hash = Self::hash_key(fs_id, ino);
         let start = (hash % ICACHE_SIZE as u64) as usize;
 
         for distance in 0..ICACHE_SIZE {
@@ -577,7 +608,7 @@ impl ICache {
                 return None;
             }
 
-            if entry.valid && entry.ino == ino {
+            if entry.valid && entry.fs_id == fs_id && entry.ino == ino {
                 return Some(idx);
             }
         }
@@ -644,11 +675,11 @@ pub struct ICacheResult {
 }
 
 /// dcache 查找
-pub fn dcache_lookup(parent_ino: u32, name: &str) -> DCacheResult {
+pub fn dcache_lookup(fs_id: u32, parent_ino: u32, name: &str) -> DCacheResult {
     DCACHE_LOOKUPS.fetch_add(1, Ordering::Relaxed);
 
     let dcache = DCACHE.lock();
-    match dcache.lookup(parent_ino, name) {
+    match dcache.lookup(fs_id, parent_ino, name) {
         Some((ino, ft)) => {
             DCACHE_HITS.fetch_add(1, Ordering::Relaxed);
             if ino == NEGATIVE_INO {
@@ -662,24 +693,24 @@ pub fn dcache_lookup(parent_ino: u32, name: &str) -> DCacheResult {
 }
 
 /// dcache 插入 (正缓存)
-pub fn dcache_insert(parent_ino: u32, name: &str, ino: u32, file_type: u8) {
+pub fn dcache_insert(fs_id: u32, parent_ino: u32, name: &str, ino: u32, file_type: u8) {
     let mut dcache = DCACHE.lock();
-    dcache.insert(parent_ino, name, ino, file_type);
+    dcache.insert(fs_id, parent_ino, name, ino, file_type);
     // 同时更新 icache 引用计数
     let mut icache = ICACHE.lock();
-    icache.ref_inc(ino);
+    icache.ref_inc(fs_id, ino);
 }
 
 /// dcache 插入 (负缓存: 该路径不存在)
-pub fn dcache_insert_negative(parent_ino: u32, name: &str) {
+pub fn dcache_insert_negative(fs_id: u32, parent_ino: u32, name: &str) {
     let mut dcache = DCACHE.lock();
-    dcache.insert(parent_ino, name, NEGATIVE_INO, 0);
+    dcache.insert(fs_id, parent_ino, name, NEGATIVE_INO, 0);
 }
 
-/// dcache 失效: 指定父目录下所有条目
-pub fn dcache_invalidate_parent(parent_ino: u32) {
+/// dcache 失效: 指定实例下父目录的所有条目
+pub fn dcache_invalidate_parent(fs_id: u32, parent_ino: u32) {
     let mut dcache = DCACHE.lock();
-    dcache.invalidate_parent(parent_ino);
+    dcache.invalidate_parent(fs_id, parent_ino);
 }
 
 /// dcache 清空
@@ -691,14 +722,14 @@ pub fn dcache_flush() {
 }
 
 /// icache 查找
-pub fn icache_lookup(ino: u32) -> Option<ICacheResult> {
+pub fn icache_lookup(fs_id: u32, ino: u32) -> Option<ICacheResult> {
     ICACHE_LOOKUPS.fetch_add(1, Ordering::Relaxed);
 
     let mut icache = ICACHE.lock();
-    icache.lookup(ino).map(|entry| {
+    icache.lookup(fs_id, ino).map(|entry| {
         ICACHE_HITS.fetch_add(1, Ordering::Relaxed);
         // 增加引用计数
-        icache.ref_inc(ino);
+        icache.ref_inc(fs_id, ino);
         ICacheResult {
             ino: entry.ino,
             file_type: entry.file_type,
@@ -714,6 +745,7 @@ pub fn icache_lookup(ino: u32) -> Option<ICacheResult> {
 
 /// icache 插入/更新
 pub fn icache_insert(
+    fs_id: u32,
     ino: u32,
     file_type: u8,
     perm: u16,
@@ -725,25 +757,25 @@ pub fn icache_insert(
 ) {
     let mut icache = ICACHE.lock();
     icache.insert(
-        ino, file_type, perm, size, mtime, ctime, owner_pwm, group_pwm,
+        fs_id, ino, file_type, perm, size, mtime, ctime, owner_pwm, group_pwm,
     );
 }
 
 /// icache 失效
-pub fn icache_invalidate(ino: u32) {
+pub fn icache_invalidate(fs_id: u32, ino: u32) {
     let mut icache = ICACHE.lock();
     // 减少引用计数
-    icache.ref_dec(ino);
+    icache.ref_dec(fs_id, ino);
     // 如果引用计数为零, 可以安全失效
-    if icache.is_ref_zero(ino) {
-        icache.invalidate(ino);
+    if icache.is_ref_zero(fs_id, ino) {
+        icache.invalidate(fs_id, ino);
     }
 }
 
 /// 获取 icache 条目的引用计数 (诊断接口)
-pub fn icache_get_ref_count(ino: u32) -> u32 {
+pub fn icache_get_ref_count(fs_id: u32, ino: u32) -> u32 {
     let icache = ICACHE.lock();
-    icache.get_ref_count(ino)
+    icache.get_ref_count(fs_id, ino)
 }
 
 /// icache 清空
@@ -809,69 +841,115 @@ mod tests {
     #[test]
     fn test_dcache_insert_lookup() {
         let mut dcache = DCache::new();
-        dcache.insert(1, "bin", 10, 1);
-        assert!(matches!(dcache.lookup(1, "bin"), Some((10, 1))));
+        dcache.insert(0, 1, "bin", 10, 1);
+        assert!(matches!(dcache.lookup(0, 1, "bin"), Some((10, 1))));
     }
 
     #[test]
     fn test_dcache_miss() {
         let dcache = DCache::new();
-        assert!(dcache.lookup(1, "nonexist").is_none());
+        assert!(dcache.lookup(0, 1, "nonexist").is_none());
     }
 
     #[test]
     fn test_dcache_negative() {
         let mut dcache = DCache::new();
-        dcache.insert(1, "gone", NEGATIVE_INO, 0);
-        assert!(matches!(dcache.lookup(1, "gone"), Some((NEGATIVE_INO, 0))));
+        dcache.insert(0, 1, "gone", NEGATIVE_INO, 0);
+        assert!(matches!(
+            dcache.lookup(0, 1, "gone"),
+            Some((NEGATIVE_INO, 0))
+        ));
     }
 
     #[test]
     fn test_dcache_invalidate_parent() {
         let mut dcache = DCache::new();
-        dcache.insert(1, "a", 10, 0);
-        dcache.insert(1, "b", 20, 0);
-        dcache.insert(2, "c", 30, 0);
-        dcache.invalidate_parent(1);
-        assert!(dcache.lookup(1, "a").is_none());
-        assert!(dcache.lookup(1, "b").is_none());
-        assert!(matches!(dcache.lookup(2, "c"), Some((30, 0))));
+        dcache.insert(0, 1, "a", 10, 0);
+        dcache.insert(0, 1, "b", 20, 0);
+        dcache.insert(0, 2, "c", 30, 0);
+        dcache.invalidate_parent(0, 1);
+        assert!(dcache.lookup(0, 1, "a").is_none());
+        assert!(dcache.lookup(0, 1, "b").is_none());
+        assert!(matches!(dcache.lookup(0, 2, "c"), Some((30, 0))));
     }
 
     #[test]
     fn test_dcache_update() {
         let mut dcache = DCache::new();
-        dcache.insert(1, "file", 10, 0);
-        dcache.insert(1, "file", 20, 1);
-        assert!(matches!(dcache.lookup(1, "file"), Some((20, 1))));
+        dcache.insert(0, 1, "file", 10, 0);
+        dcache.insert(0, 1, "file", 20, 1);
+        assert!(matches!(dcache.lookup(0, 1, "file"), Some((20, 1))));
+    }
+
+    /// 回归: 不同 fs 实例的相同 (parent_ino, name) 必须互不干扰
+    ///
+    /// 修复前全局 dcache 键为 (`parent_ino`, name), 多 `RamFsData` 实例根 inode
+    /// 同为 1、节点号重叠时会跨实例污染 (负缓存串扰 / 命中他实例 ino).
+    #[test]
+    fn test_dcache_fs_instance_isolation() {
+        let mut dcache = DCache::new();
+        // 实例 1: /dir 存在; 实例 2: 同名路径为负缓存
+        dcache.insert(1, 1, "dir", 10, 1);
+        dcache.insert(2, 1, "dir", NEGATIVE_INO, 0);
+
+        assert!(matches!(dcache.lookup(1, 1, "dir"), Some((10, 1))));
+        assert!(matches!(
+            dcache.lookup(2, 1, "dir"),
+            Some((NEGATIVE_INO, 0))
+        ));
+        // 未插入的实例 3 应未命中
+        assert!(dcache.lookup(3, 1, "dir").is_none());
+
+        // 失效实例 1 不影响实例 2
+        dcache.invalidate_parent(1, 1);
+        assert!(dcache.lookup(1, 1, "dir").is_none());
+        assert!(matches!(
+            dcache.lookup(2, 1, "dir"),
+            Some((NEGATIVE_INO, 0))
+        ));
     }
 
     #[test]
     fn test_icache_insert_lookup() {
         let mut icache = ICache::new();
-        icache.insert(10, 1, 0o755, 4096, 1000, 1000, 0, 0);
-        let entry = icache.lookup(10).unwrap();
+        icache.insert(0, 10, 1, 0o755, 4096, 1000, 1000, 0, 0);
+        let entry = icache.lookup(0, 10).unwrap();
         assert_eq!(entry.ino, 10);
         assert_eq!(entry.file_type, 1);
         assert_eq!(entry.size, 4096);
     }
 
+    /// 回归: 不同 fs 实例的同号 inode 必须互不干扰
+    #[test]
+    fn test_icache_fs_instance_isolation() {
+        let mut icache = ICache::new();
+        icache.insert(1, 10, 1, 0o644, 512, 1000, 1000, 0, 0);
+        icache.insert(2, 10, 2, 0o755, 4096, 2000, 2000, 0, 0);
+
+        assert_eq!(icache.lookup(1, 10).unwrap().size, 512);
+        assert_eq!(icache.lookup(2, 10).unwrap().size, 4096);
+
+        icache.invalidate(1, 10);
+        assert!(icache.lookup(1, 10).is_none());
+        assert_eq!(icache.lookup(2, 10).unwrap().size, 4096);
+    }
+
     #[test]
     fn test_icache_invalidate() {
         let mut icache = ICache::new();
-        icache.insert(10, 1, 0o755, 4096, 1000, 1000, 0, 0);
-        icache.invalidate(10);
-        assert!(icache.lookup(10).is_none());
+        icache.insert(0, 10, 1, 0o755, 4096, 1000, 1000, 0, 0);
+        icache.invalidate(0, 10);
+        assert!(icache.lookup(0, 10).is_none());
     }
 
     #[test]
     fn test_dcache_flush() {
         let mut dcache = DCache::new();
-        dcache.insert(1, "a", 10, 0);
-        dcache.insert(1, "b", 20, 0);
+        dcache.insert(0, 1, "a", 10, 0);
+        dcache.insert(0, 1, "b", 20, 0);
         dcache.flush();
         assert_eq!(dcache.len(), 0);
-        assert!(dcache.lookup(1, "a").is_none());
+        assert!(dcache.lookup(0, 1, "a").is_none());
     }
 
     #[test]
@@ -880,12 +958,12 @@ mod tests {
         // 插入足够多的条目验证 Robin Hood 行为
         for i in 0..50u32 {
             let name = alloc::format!("file_{}", i);
-            dcache.insert(1, &name, 100 + i, 0);
+            dcache.insert(0, 1, &name, 100 + i, 0);
         }
         for i in 0..50u32 {
             let name = alloc::format!("file_{}", i);
             assert!(matches!(
-                dcache.lookup(1, &name),
+                dcache.lookup(0, 1, &name),
                 Some((ino, 0)) if ino == 100 + i
             ));
         }

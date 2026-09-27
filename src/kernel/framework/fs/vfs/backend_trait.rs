@@ -50,12 +50,14 @@ pub trait FsBackend: Send + Sync {
     /// framework `RamFsData` (机制) 在 fs_open / fs_create / fs_resolve_inode
     /// 中需要产出 Inode trait object; 具象 `RamFsInode` 是 services 层实现,
     /// framework 不直接依赖, 经由此钩子由 services 构造注入.
+    /// `fs_id` 为该 RamFS 实例的 dcache/icache 命名空间标识 (随实例挂载分配).
     /// # Errors
     /// 后端未注册或拒绝构造时返回 Err (回退策略 fail-closed)。
     fn make_ramfs_inode(
         &self,
         inode_id: u32,
         mount_idx: u32,
+        fs_id: u32,
     ) -> Result<alloc::sync::Arc<dyn Inode>, KernelError>;
 
     /// 按名称解析文件系统实例 (services 文件系统注册表)
@@ -89,6 +91,7 @@ impl FsBackend for FallbackFsBackend {
         &self,
         _inode_id: u32,
         _mount_idx: u32,
+        _fs_id: u32,
     ) -> Result<alloc::sync::Arc<dyn Inode>, KernelError> {
         Err(KernelError::NotInitialized)
     }
