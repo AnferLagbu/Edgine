@@ -57,6 +57,13 @@ pub trait FsBackend: Send + Sync {
         inode_id: u32,
         mount_idx: u32,
     ) -> Result<alloc::sync::Arc<dyn Inode>, KernelError>;
+
+    /// 按名称解析文件系统实例 (services 文件系统注册表)
+    ///
+    /// services 维护 `fs_name -> &'static dyn FileSystem` 注册表; framework
+    /// 挂载路径经此解析 trait object, 无需认识任何具体文件系统类型。
+    /// 未注册的名称返回 `None` (fail-closed)。
+    fn resolve_fs(&self, fs_name: &str) -> Option<&'static dyn FileSystem>;
 }
 
 // ============================================================================
@@ -84,6 +91,10 @@ impl FsBackend for FallbackFsBackend {
         _mount_idx: u32,
     ) -> Result<alloc::sync::Arc<dyn Inode>, KernelError> {
         Err(KernelError::NotInitialized)
+    }
+
+    fn resolve_fs(&self, _fs_name: &str) -> Option<&'static dyn FileSystem> {
+        None
     }
 }
 

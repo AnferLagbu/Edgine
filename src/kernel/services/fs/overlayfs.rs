@@ -303,6 +303,10 @@ impl FileSystem for OverlayFsFileSystem {
         // 解析挂载选项 (upperdir, lowerdir, workdir)
         // 这里简化处理，实际需要解析 mount 命令的选项
         let mut fs = OVERLAY_FS.lock();
+        // 幂等守卫: 重复挂载直接返回, 避免重复初始化 upper/work 层。
+        if fs.mounted {
+            return Ok(());
+        }
         // 就地写小 String 字段, 避免按值构造约 16 MiB 的 `OverlayFsData` 栈临时。
         fs.mount.upperdir = String::from("/upper");
         fs.mount.lowerdir = String::from("/lower");
@@ -525,4 +529,12 @@ impl FileSystem for OverlayFsFileSystem {
 /// 初始化 overlayfs 文件系统
 pub fn init() {
     // overlayfs 需要手动挂载
+}
+
+/// overlayfs FileSystem 全局实例 (供 services 注册表经 `overlay_fs()` 暴露)
+static OVERLAY_FS_INSTANCE: OverlayFsFileSystem = OverlayFsFileSystem;
+
+/// 获取 overlayfs FileSystem trait object (services 注册表用)
+pub fn overlay_fs() -> &'static dyn FileSystem {
+    &OVERLAY_FS_INSTANCE
 }

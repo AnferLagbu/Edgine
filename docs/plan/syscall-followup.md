@@ -781,7 +781,7 @@ T7 (预存登记)
 | `framework/driver/bus/pci.rs` | `pci_scan`(75) | 与在用 `scan_all_buses` 能力重叠且带日志（批 1 已登记） |
 | `services/fs/sysfs.rs` / `cgroupfs.rs` / `configfs.rs` / `virtiofs.rs` / `systree.rs` | `umount_sysfs`(189) `umount_cgroupfs`(389) `umount_configfs`(361) `umount_virtiofs`(314) `umount_systree`(505) | 占位半成品（恒 `Ok(())` / 常量清零）；删则移除 FS API 面 |
 | `services/fs/devpts.rs` | `umount_devpts`(241) | 误调 `mount_devpts` 的半成品 |
-| `services/fs/process_fd_table.rs` | `get_fd`(96) `close_cloexec_fds`(174) `clear_non_cloexec`(186) | Plan B 并行 FD 表整体未采用，删/接线待裁 |
+| `services/fs/process_fd_table.rs` | `new_default`(55) `get_fd`(96) `close_cloexec_fds`(174) `clear_non_cloexec`(186) | Plan B 并行 FD 表整体未采用，删/接线待裁 |
 
 **B-3 由 A-2 退桶并入（8 项；reviewer 第二轮裁定）**
 
@@ -1315,6 +1315,7 @@ src/kernel/services/fs/nestfs/zil_persist.rs::as_static_str
 src/kernel/services/fs/process_fd_table.rs::clear_non_cloexec
 src/kernel/services/fs/process_fd_table.rs::close_cloexec_fds
 src/kernel/services/fs/process_fd_table.rs::get_fd
+src/kernel/services/fs/process_fd_table.rs::new_default
 src/kernel/services/fs/ramfs.rs::is_read_only
 src/kernel/services/fs/sysfs.rs::has_node
 src/kernel/services/fs/sysfs.rs::mount_sysfs

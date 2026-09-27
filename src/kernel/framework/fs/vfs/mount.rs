@@ -6,7 +6,7 @@
 //! (`#[no_mangle]` 全局符号不受模块位置影响).
 
 use super::api::ptr_to_str;
-use super::backend_trait::nestfs_fs;
+use super::backend_trait::{current_fs_backend, nestfs_fs};
 use super::types::{FileSystem, FsType, IntoI32, KernelError, VFS_MAX_MOUNTS};
 use super::vfs::VFS_MANAGER;
 use crate::framework::fs::devfs::{DEVFS_DATA, DevfsData};
@@ -72,11 +72,17 @@ pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32
         FsType::ExFat => {
             // exfat 挂载由 ExfatFileSystem::fs_mount 处理
         }
-        FsType::TmpFs => {
-            // tmpfs 挂载由 TmpFsFileSystem::fs_mount 处理
-        }
-        FsType::OverlayFs => {
-            // overlayfs 挂载由 OverlayFsFileSystem::fs_mount 处理
+        FsType::TmpFs | FsType::OverlayFs => {
+            // tmpfs/overlayfs 挂载策略归 services: 经注册表解析 FileSystem trait object
+            // 并调用其 fs_mount 完成挂载; 未注册 (services::fs::init 之前) 时 fail-closed.
+            match current_fs_backend().resolve_fs(fs_name) {
+                Some(fs) => {
+                    if fs.fs_mount(path).is_err() {
+                        return KernelError::Io.as_i32();
+                    }
+                }
+                None => return KernelError::NotInitialized.as_i32(),
+            }
         }
 
         FsType::Unknown => return KernelError::NotSupported.as_i32(),
@@ -107,6 +113,11 @@ pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32
             // SAFETY: DEVFS_DATA 是全局静态变量, &DEVFS_DATA 生命周期为 'static
             unsafe { &*(&DEVFS_DATA as *const DevfsData) }
         }
+        FsType::TmpFs | FsType::OverlayFs => match current_fs_backend().resolve_fs(fs_name) {
+            Some(fs) => fs,
+            // fail-closed: services::fs::init 注册前不可挂载
+            None => return KernelError::NotInitialized.as_i32(),
+        },
         _ => return VFS_MANAGER.mount(path, fs_name).as_i32(),
     };
     crate::klog_boot_info!("[VFS] vfs_mount_internal: calling VFS_MANAGER.mount_with_fs");

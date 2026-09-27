@@ -53,6 +53,8 @@ pub mod stat;
 pub mod sysfs;
 /// G9: 动态系统树
 pub mod systree;
+/// tmpfs 临时文件系统 (基于 ramfs 的内存文件系统)
+pub mod tmpfs;
 /// VFS 管理器 (挂载表 + FD 表 + 路径解析)
 pub mod vfs_manager;
 pub mod vfs_poll_policy;
@@ -71,7 +73,7 @@ use crate::framework::fs::vfs::backend_trait::{
     FsBackend, register_fs_backend, register_nestfs_fs,
 };
 use crate::framework::fs::vfs::inode::Inode;
-use crate::services::fs::vfs_types::KernelError;
+use crate::services::fs::vfs_types::{FileSystem, KernelError};
 
 /// services 层 VFS 后端决策策略
 ///
@@ -106,6 +108,16 @@ impl FsBackend for ServicesFsBackend {
         Ok(crate::services::fs::inode::new_ramfs_inode(
             inode_id, mount_idx,
         ))
+    }
+
+    fn resolve_fs(&self, fs_name: &str) -> Option<&'static dyn FileSystem> {
+        // services 文件系统注册表: 按 fs_type 名称返回对应 FileSystem 实例.
+        // 新增文件系统仅需在此增加一行映射, framework 无需改动.
+        match fs_name {
+            "tmpfs" => Some(crate::services::fs::tmpfs::tmpfs_fs()),
+            "overlay" => Some(crate::services::fs::overlayfs::overlay_fs()),
+            _ => None,
+        }
     }
 }
 
