@@ -58,6 +58,7 @@ pub mod api;
 pub mod arch;
 pub mod copy_user;
 pub mod cow;
+pub mod cross_process;
 pub mod frame;
 pub mod kmalloc;
 /// L-03: 机制 API 集中导出 — 供 services 层策略实现调用
@@ -95,11 +96,11 @@ pub use vmm::*;
 // api 公共接口 re-export — 避免跨子系统直接访问 mm::api 内部
 // 注意: 不使用 glob re-export 因与 vmm::* 有名称冲突 (vmm_init 等)
 pub use api::{
-    KmallocStats, PageFaultInfo, PfResult, copy_from_user, copy_to_user, handle_page_fault,
-    handle_user_page_fault, is_user_buf, k_free, k_malloc, kfree, kmalloc_stats,
-    pmm_alloc_huge_page, pmm_alloc_huge_page_phys, pmm_alloc_page, pmm_alloc_page_phys,
-    pmm_alloc_pages, pmm_alloc_pages_phys, pmm_dump_stats, pmm_free_huge_page, pmm_free_page,
-    pmm_free_page_phys, pmm_free_pages, pmm_free_pages_phys, pmm_get_free_pages,
+    KmallocStats, PageFaultInfo, PfResult, copy_from_user, copy_from_user_in_mm, copy_to_user,
+    copy_to_user_in_mm, handle_page_fault, handle_user_page_fault, is_user_buf, k_free, k_malloc,
+    kfree, kmalloc_stats, pmm_alloc_huge_page, pmm_alloc_huge_page_phys, pmm_alloc_page,
+    pmm_alloc_page_phys, pmm_alloc_pages, pmm_alloc_pages_phys, pmm_dump_stats, pmm_free_huge_page,
+    pmm_free_page, pmm_free_page_phys, pmm_free_pages, pmm_free_pages_phys, pmm_get_free_pages,
     pmm_get_total_pages, pmm_get_used_pages, pmm_init, pmm_init_bitmap, pmm_is_aligned_for_huge,
     vma_get_current_mm, vma_set_current_mm, vmm_clone_user_page_table_cow, vmm_destroy_page_table,
     vmm_switch_page_table,
@@ -252,6 +253,20 @@ pub(crate) fn is_user_leaf(entry: u64) -> bool {
     {
         entry & 0b11 == 0b11 && entry & (1 << 6) != 0
     }
+}
+
+/// 单级页表翻译结果: 目标虚拟地址对应的物理地址 + 叶子项是否可写.
+///
+/// 供跨进程用户内存代理 (`mm::cross_process`) 判定目标页的写权限:
+/// 读方向只需 `phys`, 写方向必须额外校验 `writable` (只读页拒绝写入).
+/// `writable` 取自叶子表项 (4KB PTE / 2MB 或 1GB 大页) 的写位, 各架构布局不同,
+/// 由 `vmm::translate_in_pml4` 按架构填值.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PageTranslation {
+    /// 翻译得到的物理地址 (含页内偏移)
+    pub phys: PhysAddr,
+    /// 叶子表项是否允许写 (x86_64: PTE.W; aarch64: `AP[2] == 0`)
+    pub writable: bool,
 }
 
 /// 归还一个物理帧 —— **要求调用方已持 `VMM_LOCK`**

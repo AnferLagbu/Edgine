@@ -16,8 +16,8 @@
 // 说明: `super::kpti::kpti_init` 走显式路径, 无需在此导入 (PA→VA 换算见上方
 // `super::phys_to_virt`, L1-04 收敛后不再本地重复定义).
 use super::{
-    PAGE_NX, PAGE_SIZE, PAGE_USER, PAGE_WRITABLE, PageFlags, PageSize, PhysAddr, VirtAddr, get_pmm,
-    is_user_leaf, phys_to_virt,
+    PAGE_NX, PAGE_SIZE, PAGE_USER, PAGE_WRITABLE, PageFlags, PageSize, PageTranslation, PhysAddr,
+    VirtAddr, get_pmm, is_user_leaf, phys_to_virt,
 };
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -1204,11 +1204,28 @@ impl Aarch64Vmm {
         self.get_physical_in_pml4(self.kernel_l0, virt)
     }
 
+    /// 在指定页表中翻译虚拟地址, 仅返回物理地址 (丢弃叶子项写位).
+    ///
+    /// 委托 [`Self::translate_in_pml4`], 供仅需物理地址的既有调用点使用.
+    pub fn get_physical_in_pml4(&self, root_paddr: u64, virt: VirtAddr) -> Option<PhysAddr> {
+        self.translate_in_pml4(root_paddr, virt).map(|t| t.phys)
+    }
+
     #[expect(
         clippy::unused_self,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
-    pub fn get_physical_in_pml4(&self, root_paddr: u64, virt: VirtAddr) -> Option<PhysAddr> {
+    /// 在指定页表中翻译虚拟地址, 返回物理地址与叶子项可写标志.
+    ///
+    /// 与 [`Self::get_physical_in_pml4`] 同一遍历逻辑, 额外透出叶子表项的写位,
+    /// 供跨进程写路径判定目标页可写 (只读页拒绝写入). 未映射返回 `None`.
+    ///
+    /// 可写判据: 叶子描述符 `AP[2]` (bit 7) == 0 表示可写.
+    pub fn translate_in_pml4(&self, root_paddr: u64, virt: VirtAddr) -> Option<PageTranslation> {
+        if root_paddr == 0 {
+            return None;
+        }
+
         let vaddr = virt.as_u64();
 
         let l0 = root_paddr as *const u64;
@@ -1225,9 +1242,10 @@ impl Aarch64Vmm {
         let l1_entry = unsafe { ptr::read_volatile(l1.add(l1_idx)) };
         if l1_entry & 0b11 == 0b01 {
             // L1 block (1GB)
-            return Some(PhysAddr(
-                (l1_entry & 0x0000_FFFF_C000_0000) | (vaddr & 0x3FFF_FFFF),
-            ));
+            return Some(PageTranslation {
+                phys: PhysAddr((l1_entry & 0x0000_FFFF_C000_0000) | (vaddr & 0x3FFF_FFFF)),
+                writable: (l1_entry & (1 << 7)) == 0,
+            });
         }
         if l1_entry & 0b11 != 0b11 {
             return None;
@@ -1239,9 +1257,10 @@ impl Aarch64Vmm {
         let l2_entry = unsafe { ptr::read_volatile(l2.add(l2_idx)) };
         if l2_entry & 0b11 == 0b01 {
             // L2 block (2MB)
-            return Some(PhysAddr(
-                (l2_entry & 0x0000_FFFF_FFE0_0000) | (vaddr & 0x1F_FFFF),
-            ));
+            return Some(PageTranslation {
+                phys: PhysAddr((l2_entry & 0x0000_FFFF_FFE0_0000) | (vaddr & 0x1F_FFFF)),
+                writable: (l2_entry & (1 << 7)) == 0,
+            });
         }
         if l2_entry & 0b11 != 0b11 {
             return None;
@@ -1255,9 +1274,10 @@ impl Aarch64Vmm {
             return None;
         }
 
-        Some(PhysAddr(
-            (l3_entry & 0x0000_FFFF_FFFF_F000) | (vaddr & 0xFFF),
-        ))
+        Some(PageTranslation {
+            phys: PhysAddr((l3_entry & 0x0000_FFFF_FFFF_F000) | (vaddr & 0xFFF)),
+            writable: (l3_entry & (1 << 7)) == 0,
+        })
     }
 
     #[expect(

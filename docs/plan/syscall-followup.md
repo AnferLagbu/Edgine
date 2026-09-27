@@ -1580,9 +1580,9 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 | `SYS_fdatasync` | 未实装（同族近似） | **接线（复用）** | 与 `fsync` 同语义复用 `fs::misc::fsync_syscall`（VFS 整体同步，无数据/元数据区分，与 `fsync` 的 SIMPLIFIED 口径一致） |
 | `SYS_arch_prctl` | **原裁定 ENOSYS 保留，本轮改判实装** | **最小实装** | framework 新增 `sys_arch_prctl`（`ARCH_SET_FS` 归档 `Process.tls_base` + 当前进程立即写 `MSR_FS_BASE`；`ARCH_GET_FS` 经 `raw::write_u64_to_user` 回读）；services `proc::clone::arch_prctl_syscall` 代理 |
 | `SYS_capget` / `SYS_capset` | **原裁定 ENOSYS 保留，本轮改判实装** | **ABI 映射层实装** | services `credo::auth::{capget,capset}_syscall` 建 credo↔Linux cap ABI 映射（`_LINUX_CAPABILITY_VERSION_3`，SYSTEM 域 64 位 ↔ 2×`cap_data`）；capset 经 framework 新增受约束 setter `credo::api::pwm_set_current_capability_raw`（**子集 + 不破 `VIABLE_FLOOR`**，不接受 pwm 参数 ⇒ 无法跨进程篡改） |
-| `SYS_process_vm_readv` / `SYS_process_vm_writev` | 真未实装（安全面） | **不实装 · 上报** | 跨进程内存读写需 ptrace 级权限模型，属裁定六安全面 ⇒ 保持 R2 CRITICAL，归 **D-2** |
+| `SYS_process_vm_readv` / `SYS_process_vm_writev` | **原裁定「不实装 · 上报」，本轮改判实装** | **相对完整实装** | framework 新增跨进程用户内存 safe 代理（`mm::cross_process`：`copy_{from,to}_user_in_mm` 逐页翻译目标 CR3 + 写权限校验 + SAFETY）；services 新建 `proc::process_vm`（iovec 解析 + 权限判定 + 分块拷贝 + 全错误分支，0 unsafe）；dispatch 接线；详见 **B-10.12** |
 
-- **实测（脚本正向复跑）**：`python3 scripts/audit_unwired_pub_fn.py` ⇒ 汇总 **`CRITICAL=2 / HIGH=4 / WARN=0 / INFO=434`**（`rc=1`，仅 CRITICAL 非零）。R2 **7 → 2**（余 `process_vm_readv` / `process_vm_writev`）。
+- **实测（脚本正向复跑）**：`python3 scripts/audit_unwired_pub_fn.py` ⇒ 汇总 **`CRITICAL=2 / HIGH=4 / WARN=0 / INFO=434`**（`rc=1`，仅 CRITICAL 非零）。R2 **7 → 2**（余 `process_vm_readv` / `process_vm_writev`；**余 2 项已于 B-10.12 实装核销**）。
 - **B-6 区块同步**：`services/proc/signal.rs::sigaltstack_syscall` 接线后不再零引用 ⇒ 移除该行 ⇒ 清单 **434 → 433**（脚本 INFO 同期 435 → 433，差额 1 项为已接线移出 + 1 项为 HIGH/INFO 分级口径差）。
 - **新增 pub fn 未进 R1**：本轮新增 `proc::clone::arch_prctl_syscall` / `credo::auth::{capget,capset}_syscall` 均**已被 dispatch 引用**，非零引用，无需登记 B-6。
 - **原裁定溯源**：`capget`/`capset`/`arch_prctl` 此前按「无凭证能力模型 / 无 arch 相关用户态需求」判 **ENOSYS 保留**（见本台账「实现路径裁定」段）；批次 3 经用户裁定改为实装，**原判定作废**，相关 ENOSYS 回退说明同步失效。
@@ -1609,7 +1609,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 - **B-6 区块同步**：移除 4 行（`kpti_aarch64` ttbr1 ×2 + `ramfs` ×2）⇒ 已分类清单 433 → **429** 项（脚本实测口径）。
 - **门槛**：双架构 0w0e / fmt / clippy pedantic（lib + `kernel_test` + `host-test` 三维）/ 核心审计（SAFETY 1937 → **1933**，覆盖仍 100%）/ host-tests 全绿 / kernel-host **817 passed 0 failed** / QEMU `kernel_test` exit 33 —— 全过。
-- **R1 实测（脚本正向复跑）**：`已分类清单 429 项` / 汇总 **`CRITICAL=2 / HIGH=2 / WARN=0 / INFO=429`**（`rc=1`，CRITICAL 2 为 R2 预存 `process_vm_*`，与本批无关；HIGH 4 → 2，余 2 项为 `kmalloc_slab.rs` 孤岛）。**零引用事实随删除同步核销**，非仅改分级。
+- **R1 实测（脚本正向复跑）**：`已分类清单 429 项` / 汇总 **`CRITICAL=2 / HIGH=2 / WARN=0 / INFO=429`**（`rc=1`，CRITICAL 2 为 R2 预存 `process_vm_*`，与本批无关；HIGH 4 → 2，余 2 项为 `kmalloc_slab.rs` 孤岛）。**零引用事实随删除同步核销**，非仅改分级。（该 CRITICAL 2 已于 **B-10.12** 实装核销）
 - 对 B-9.3 的时序说明：B-9.3 记录的「HIGH 0 / INFO 435 / 清单 436」为**甲批后基线**；其后 UT-07 收敛、批次 3/4 接线实装与本次 D-9-6 改动使若干条目接线 / 遮蔽 / 消失，故本期基线为「HIGH 2 / INFO 429 / 清单 429」。
 
 **B-10.9 项 5 批 B — B09-21 豁免面收窄（按文件名 → 按路径；+67 项）**
@@ -1644,7 +1644,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 - **连带清理**（均为本次删除直接导致，非工程外）：`framework/mm/mod.rs` 去 `pub mod kmalloc_slab;`；`host-tests/tests/kmalloc_irq_save_test.rs` 删 `kmalloc_slab_source_uses_irq_save_flags_signature`（`include_str!` 该文件，否则编译失败）+ 头部条目与注释改写；`scripts/audit_c_naming.py` 去 `LEGACY_KMALLOC_NAMES` 的 `slab_kmalloc` / `slab_kfree` 与 `mm/kmalloc_slab` 路径判据；`scripts/audit_coupling.py` 去 `framework::mm::kmalloc_slab` 守卫模式；`framework/tests/test_new_features.rs` 顶部 UT-07 注记追加后续处置。
 - **B-6 区块同步**：**无需同步**（清单仍 **496** 项）—— 本轮删除的 2 项原为 **HIGH（未入块）**，故区块计数不变；裁定询问稿中「清单 496 → 494」系误估，已按脚本实测订正。
 - **门槛**：双架构 0w0e（`Passed 5 / Failed 0`）/ fmt `--check` 0 差异 / clippy pedantic（lib + `kernel_test` + `host-test` 三维）/ 核心审计 quick exit 0（0 处 `✗`）/ host-tests 全绿 / kernel-host **817 → 816 passed 0 failed**（核销 1 个源侧用例）/ QEMU `make` + `make test-unit` **exit 33（ALL TESTS PASSED）** —— 全过。
-- **R1 实测（脚本正向复跑）**：`已分类清单 496 项` / 汇总 **`CRITICAL=2 / HIGH=0 / WARN=0 / INFO=496`**（`rc=1`，CRITICAL 2 为 R2 预存 `process_vm_*`，与本批无关）—— **HIGH 首次清零**。
+- **R1 实测（脚本正向复跑）**：`已分类清单 496 项` / 汇总 **`CRITICAL=2 / HIGH=0 / WARN=0 / INFO=496`**（`rc=1`，CRITICAL 2 为 R2 预存 `process_vm_*`，与本批无关）—— **HIGH 首次清零**。（该 CRITICAL 2 已于 **B-10.12** 实装核销）
 
 **B-10.11 项 5 批 C — 67 项逐项分流（21 项删除 / 46 项保留登记；496 → 475）**
 
@@ -1690,7 +1690,22 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 **B-10.11.5 门槛与 R1 实测**
 
 - **门槛**：双架构 0w0e（`./ci/build.sh all` → `Passed 5 / Failed 0`）/ fmt `--check` 0 差异 / clippy pedantic（lib + `kernel_test` + `host-test` 三维）/ `./ci/audit.sh quick` **exit 0（0 处 `✗`）** / `make test-host` 全绿 / `make test-kernel-host` **816 passed 0 failed**（与上批持平，本批未增删源侧用例）/ QEMU `make` + `make test-unit` **exit 33（ALL TESTS PASSED）** —— 全过。
-- **R1 实测（脚本正向复跑）**：`已分类清单 475 项` / 汇总 **`CRITICAL=2 / HIGH=0 / WARN=0 / INFO=475`**（INFO 496 → 475，**恰为 −21**）/ `R4 = 0` / `R3 = 0` —— 删除未引入任何新零引用项（HIGH / WARN / R4 均保持 0）。
+- **R1 实测（脚本正向复跑）**：`已分类清单 475 项` / 汇总 **`CRITICAL=2 / HIGH=0 / WARN=0 / INFO=475`**（INFO 496 → 475，**恰为 −21**）/ `R4 = 0` / `R3 = 0` —— 删除未引入任何新零引用项（HIGH / WARN / R4 均保持 0）。（该 CRITICAL 2 已于 **B-10.12** 实装核销）
+
+**B-10.12 process_vm_readv / process_vm_writev 实装（R2 2 → 0，未接线 syscall 首次清零；B-6 区块不变 ⇒ `475`）**
+
+> 来源：[audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md) **D-2**（列于下方「未实装 syscall 处置」）。**原裁定「不实装 · 上报」**（须 ptrace 级权限模型，属裁定六安全面），本轮经用户裁定改判**实装**，取**相对完整**路径（路径/边界/错误分支闭合 + 单测覆盖）。**本条核销**上列 B-9.7 / B-10.6 / B-10.8 / B-10.10 / B-10.11.5 各实测记录中「CRITICAL=2 为 R2 预存 `process_vm_*` 待裁项」的悬挂标记。
+
+- **架构方向**：**不切 CR3**（KPTI 下以用户 CR3 执行内核代码不安全），改为逐页经 `translate_in_pml4` 把目标地址翻译为 `PhysAddr`，再取 **HHDM 别名**访问；HHDM 对用户页 PTE 的 U/S=0，故 SMAP 不拦截，无需 `smap_begin` 或异常恢复点。
+- **归属（§4.1 判据）**：机制（跨 CR3 页翻译 + 写权限位）留 framework，新增 safe 代理 [framework/mm/cross_process.rs](../../src/kernel/framework/mm/cross_process.rs)（`copy_from_user_in_mm` / `copy_to_user_in_mm`；逐页翻译 + `PageTranslation.writable` 写校验 + 3 处 `// SAFETY:` + 4 内联单测；经 [mm/api.rs](../../src/kernel/framework/mm/api.rs) 与 [mm/mod.rs](../../src/kernel/framework/mm/mod.rs) 顶层 re-export）；功能（iovec 解析 / 权限判定 / 分块拷贝 / 错误分支，**0 unsafe**）落 services 新建 [services/proc/process_vm.rs](../../src/kernel/services/proc/process_vm.rs)。
+- **写权限校验**：`PageTranslation.writable`（[vmm_x86_64.rs](../../src/kernel/framework/mm/vmm_x86_64.rs) 取 `PAGE_WRITABLE`；[vmm_aarch64.rs](../../src/kernel/framework/mm/vmm_aarch64.rs) 取 AP[2] `(entry & (1 << 7)) == 0`）；写目标页不可写即 EFAULT（`copy_in_mm` 内 `write_to_target && !t.writable` 判定）。
+- **权限判定**：`check_access` 三档——自身（pid == 当前）/ `pwm_check_privilege(current, target)` 特权 / uid 相等（`pwm_get_uid`）。**SIMPLIFIED 注释已标**（未实现 `/proc/pid/mem` 式 `PTRACE_MODE_ATTACH_FSCREDS` 完整判据；后续引入 LSM / 能力模型时在 `check_access` 处接入）。
+- **复用**：local iovec 复用 [services/fs/io.rs](../../src/kernel/services/fs/io.rs) 的 `read_iovecs`（`pub(crate)` 化，`IOV_MAX` 同步 `pub(crate)`）；remote iovec 自建读取器（先读 `[u8;16]` 再按字节重组 u64，避免 services 用 unsafe）。
+- **错误面（全闭合）**：`flags != 0` → EINVAL；`iovcnt > IOV_MAX` → EINVAL；`iovcnt == 0` → `Ok(0)`；`pid <= 0` / 进程不存在（`process_try_inc_ref` 失败 / 无 pwm / 无 cr3）→ ESRCH；权限不足 → EPERM；局部失败已传字节 → 返回已传部分，否则 EFAULT（`partial_or`）；`drop` 经 `ProcRef` RAII 减引用。
+- **接线**：[dispatch.rs](../../src/kernel/services/syscall/dispatch.rs) use 列表 + `SYS_process_vm_readv` / `SYS_process_vm_writev` 分派臂（arm 消费第 6 参数 `a5` ⇒ `let [a0, a1, a2, a3, a4, a5] = args;`）。
+- **测试**：services 内联单测 4 项（`flags != 0` / `iovcnt > IOV_MAX` / 零 iovcnt / 无效 pid，均在触碰页表 / 调度器前失败）；framework `cross_process` 内联单测 4 项；host 契约测试 6 项（[process_vm_wiring_test.rs](../../host-tests/tests/process_vm_wiring_test.rs)：mm 顶层 re-export / 写校验 + SAFETY / services 0 unsafe + 4 拷贝原语 / 模块注册 / dispatch 接线 / iovec 助手可见性）。
+- **门槛**：双架构 0w0e（`./ci/build.sh all` → `Passed 5 / Failed 0`）/ fmt `--check` FMT_OK / clippy pedantic 0 warning（x86_64）/ `./ci/audit.sh quick` exit 0（FP-06 通过）/ `make test-host` 全绿（含新 6 项）/ `make test-kernel-host` **836 passed 0 failed**（828 → 836，+8 = 4 process_vm + 4 cross_process）—— 全过。
+- **R1 实测（脚本正向复跑）**：汇总 **`CRITICAL=0 / HIGH=0 / WARN=0 / INFO=474`**（`rc=0`，**R2 未接线 syscall 首次清零**）/ `R3 = 0` / `R4 = 0`。
 
 #### C. 原「接线」142 项（重划：仅 8 项留「接线」，其余 134 项入「未来功能」）
 

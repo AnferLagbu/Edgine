@@ -614,5 +614,8 @@ pub fn vma_set_current_mm(mm: *const super::vma::MmStruct) {
 // copy_user re-export — 避免跨子系统直接引用 mm::copy_user 内部
 pub use super::copy_user::{copy_from_user, copy_to_user, is_user_buf};
 
+// cross_process re-export — 跨进程用户内存代理 (process_vm_readv/writev 底座)
+pub use super::cross_process::{copy_from_user_in_mm, copy_to_user_in_mm};
+
 // page_fault re-export — 避免跨子系统直接引用 mm::page_fault 内部
 pub use super::page_fault::{PageFaultInfo, PfResult, handle_page_fault, handle_user_page_fault};

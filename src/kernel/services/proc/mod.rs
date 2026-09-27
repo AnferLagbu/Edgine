@@ -38,6 +38,8 @@ pub mod pidfd;
 pub mod priority;
 /// 进程管理策略 — proc_list / proc_setpri / credo_proc_cputime
 pub mod proc_mgmt;
+/// process_vm_readv / process_vm_writev — 跨进程用户内存向量读写
+pub mod process_vm;
 pub mod rlimit;
 pub mod sched;
 /// D3: CFS 调度策略 (权重表 + vruntime + 时间片 + CFS/DL 运行队列)

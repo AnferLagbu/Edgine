@@ -355,7 +355,7 @@ pub fn copy_file_range_syscall(
 // ============================================================================
 
 /// Linux `IOV_MAX` — 单次向量 I/O 的最大 iovec 数
-const IOV_MAX: u64 = 1024;
+pub(crate) const IOV_MAX: u64 = 1024;
 
 /// 从用户空间读取 iovec 数组 (每项 `{iov_base: u64, iov_len: u64}` 共 16 字节)
 ///
@@ -365,7 +365,7 @@ const IOV_MAX: u64 = 1024;
 /// # Errors
 /// - `iovcnt` 超 `IOV_MAX` → `EINVAL` (Linux 语义)
 /// - `iov_ptr` 无效或读取失败 → `EFAULT`
-fn read_iovecs(iov_ptr: u64, iovcnt: u64) -> Result<alloc::vec::Vec<(u64, u64)>, Errno> {
+pub(crate) fn read_iovecs(iov_ptr: u64, iovcnt: u64) -> Result<alloc::vec::Vec<(u64, u64)>, Errno> {
     if iovcnt > IOV_MAX {
         return Err(Errno::EINVAL);
     }

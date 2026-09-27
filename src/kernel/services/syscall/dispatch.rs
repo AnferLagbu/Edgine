@@ -354,14 +354,14 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_execveat, SYS_exit, SYS_exit_group, SYS_fork, SYS_get_robust_list, SYS_getpgid,
         SYS_getpid, SYS_getppid, SYS_getpriority, SYS_getrlimit, SYS_getrusage, SYS_getsid,
         SYS_gettid, SYS_gettimeofday, SYS_kill, SYS_memfd_create, SYS_nanosleep, SYS_nice,
-        SYS_pidfd_getfd, SYS_pidfd_open, SYS_pidfd_send_signal, SYS_prctl, SYS_reboot,
-        SYS_rt_sigaction, SYS_rt_sigprocmask, SYS_sched_getaffinity, SYS_sched_setaffinity,
-        SYS_sched_yield, SYS_seccomp, SYS_set_robust_list, SYS_setdomainname, SYS_sethostname,
-        SYS_setns, SYS_setpgid, SYS_setpriority, SYS_setrlimit, SYS_setsid, SYS_settimeofday,
-        SYS_sigaltstack, SYS_sysinfo, SYS_tcgetpgrp, SYS_tcsetpgrp, SYS_tgkill, SYS_uname,
-        SYS_unshare, SYS_wait4, SYS_waitid,
+        SYS_pidfd_getfd, SYS_pidfd_open, SYS_pidfd_send_signal, SYS_prctl, SYS_process_vm_readv,
+        SYS_process_vm_writev, SYS_reboot, SYS_rt_sigaction, SYS_rt_sigprocmask,
+        SYS_sched_getaffinity, SYS_sched_setaffinity, SYS_sched_yield, SYS_seccomp,
+        SYS_set_robust_list, SYS_setdomainname, SYS_sethostname, SYS_setns, SYS_setpgid,
+        SYS_setpriority, SYS_setrlimit, SYS_setsid, SYS_settimeofday, SYS_sigaltstack, SYS_sysinfo,
+        SYS_tcgetpgrp, SYS_tcsetpgrp, SYS_tgkill, SYS_uname, SYS_unshare, SYS_wait4, SYS_waitid,
     };
-    let [a0, a1, a2, a3, a4, _a5] = args;
+    let [a0, a1, a2, a3, a4, a5] = args;
 
     Some(match num {
         // 进程信息
@@ -517,6 +517,18 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_memfd_create => as_ret(crate::services::proc::memfd::memfd_create_syscall(
             a0, a1 as u32,
         )),
+
+        // process_vm (T1 G2): 跨进程用户内存向量读写
+        SYS_process_vm_readv => {
+            as_ret(crate::services::proc::process_vm::process_vm_readv_syscall(
+                a0 as i32, a1, a2, a3, a4, a5,
+            ))
+        }
+        SYS_process_vm_writev => as_ret(
+            crate::services::proc::process_vm::process_vm_writev_syscall(
+                a0 as i32, a1, a2, a3, a4, a5,
+            ),
+        ),
 
         // pidfd
         SYS_pidfd_open => as_ret(crate::services::proc::pidfd::pidfd_open(

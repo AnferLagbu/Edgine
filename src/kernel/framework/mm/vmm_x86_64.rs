@@ -41,7 +41,8 @@
 
 use super::{
     HUGE_PAGE_1G_SIZE, HUGE_PAGE_2M_SIZE, KERNEL_BASE, PAGE_NX, PAGE_PRESENT, PAGE_SIZE, PAGE_USER,
-    PAGE_WRITABLE, PageFlags, PageSize, PageTableEntry, PhysAddr, VirtAddr, get_pmm,
+    PAGE_WRITABLE, PageFlags, PageSize, PageTableEntry, PageTranslation, PhysAddr, VirtAddr,
+    get_pmm,
 };
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -702,6 +703,13 @@ impl VirtualMemoryManager {
         self.get_physical_in_pml4(KERNEL_PML4.load(Ordering::Acquire), virt)
     }
 
+    /// 在指定页表中翻译虚拟地址, 仅返回物理地址 (丢弃叶子项写位).
+    ///
+    /// 委托 [`Self::translate_in_pml4`], 供仅需物理地址的既有调用点使用.
+    pub fn get_physical_in_pml4(&self, pml4: u64, virt: VirtAddr) -> Option<PhysAddr> {
+        self.translate_in_pml4(pml4, virt).map(|t| t.phys)
+    }
+
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
@@ -714,7 +722,11 @@ impl VirtualMemoryManager {
         clippy::unreadable_literal,
         reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
     )]
-    pub fn get_physical_in_pml4(&self, pml4: u64, virt: VirtAddr) -> Option<PhysAddr> {
+    /// 在指定页表中翻译虚拟地址, 返回物理地址与叶子项可写标志.
+    ///
+    /// 与 [`Self::get_physical_in_pml4`] 同一遍历逻辑, 额外透出叶子表项的写位,
+    /// 供跨进程写路径判定目标页可写 (只读页拒绝写入). 未映射返回 `None`.
+    pub fn translate_in_pml4(&self, pml4: u64, virt: VirtAddr) -> Option<PageTranslation> {
         if pml4 == 0 {
             return None;
         }
@@ -741,7 +753,10 @@ impl VirtualMemoryManager {
             if (pdpte & 0x80) != 0 {
                 let frame = pdpte & 0x000FFFFFFFFFF000;
                 let offset = virt.0 & (HUGE_PAGE_1G_SIZE - 1);
-                return Some(PhysAddr(frame + offset));
+                return Some(PageTranslation {
+                    phys: PhysAddr(frame + offset),
+                    writable: (pdpte & PAGE_WRITABLE) != 0,
+                });
             }
 
             // SAFETY: pdpte present && !huge → valid PD pointer
@@ -755,7 +770,10 @@ impl VirtualMemoryManager {
             if (pde & 0x80) != 0 {
                 let frame = pde & 0x000FFFFFFFFFF000;
                 let offset = virt.0 & (HUGE_PAGE_2M_SIZE - 1);
-                return Some(PhysAddr(frame + offset));
+                return Some(PageTranslation {
+                    phys: PhysAddr(frame + offset),
+                    writable: (pde & PAGE_WRITABLE) != 0,
+                });
             }
 
             // SAFETY: pde present && !huge → valid PT pointer
@@ -768,7 +786,10 @@ impl VirtualMemoryManager {
 
             let frame = pte & 0x000FFFFFFFFFF000;
             let offset = virt.0 & (PAGE_SIZE - 1);
-            Some(PhysAddr(frame + offset))
+            Some(PageTranslation {
+                phys: PhysAddr(frame + offset),
+                writable: (pte & PAGE_WRITABLE) != 0,
+            })
         }
     }
 

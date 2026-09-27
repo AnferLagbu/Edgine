@@ -135,6 +135,7 @@
   - **2026-09-26 批次 3（R2 处置后复跑）**：`python3 scripts/audit_unwired_pub_fn.py` ⇒ **R2 = 2（CRITICAL，余 `SYS_process_vm_readv` / `SYS_process_vm_writev`）/ R1 = 437（HIGH 4 + INFO 433）/ R3 = 0（WARN）/ R4 = 1（INFO，DomainFlags）**，汇总 `CRITICAL=2 / HIGH=4 / WARN=0 / INFO=434`（`rc=1`，仅 CRITICAL 非零）。B-6 区块 **434 → 433 项**（`services/proc/signal.rs::sigaltstack_syscall` 接线后移出）。**HIGH 4 项仍为批次 2 上报的 TCB 待裁项**（`kpti_aarch64` ttbr0 ×2 + `kmalloc_slab` ×2），用户裁定「先不动，继续按序推进」⇒ 保持待裁。明细见 [syscall-followup.md](syscall-followup.md) **B-10.6**。
   - **2026-09-26 批次 4（R4 处置后复跑）**：`python3 scripts/audit_unwired_pub_fn.py` ⇒ **R2 = 2（CRITICAL，余 `SYS_process_vm_readv` / `SYS_process_vm_writev`）/ R1 = 437（HIGH 4 + INFO 433）/ R3 = 0（WARN）/ R4 = 0（INFO）**，汇总 `CRITICAL=2 / HIGH=4 / WARN=0 / INFO=433`。**R4 1 → 0**：唯一项 `DomainFlags` 由批次 4 裁决实装为域级行为门控（非删除）⇒ 退出零引用清单；新增 `SYS_CREDO_GET_DOMAIN_FLAGS` / `SYS_CREDO_SET_DOMAIN_FLAGS` 已接线，故 R2 未新增。**HIGH 4 项仍为批次 2 上报的 TCB 待裁项**（`kpti_aarch64` ttbr0 ×2 + `kmalloc_slab` ×2），用户裁定「先不动，继续按序推进」⇒ 保持待裁。
   - **2026-09-26 批次 5（F9 unused 族清理后复跑）**：`python3 scripts/audit_unwired_pub_fn.py` ⇒ **R2 = 2（CRITICAL）/ R1 = 437（HIGH 4 + INFO 433）/ R3 = 0（WARN）/ R4 = 0（INFO）**，汇总 `CRITICAL=2 / HIGH=4 / WARN=0 / INFO=433`——与批次 4 **完全一致**（批次 5 属 F9 allow 清理 + klog 宏安全入口改道，不触碰 pub 面：新增的 `log_filtered` 被 `klog_fmt!` 宏引用、22 个 `kernel_test` 桩被包装器引用，均非零引用）。**HIGH 4 项**仍为批次 2 上报的 TCB 待裁项，继续保持待裁。
+  - **2026-09-27 批次 6（process_vm 实装后复跑；R2 清零）**：`python3 scripts/audit_unwired_pub_fn.py` ⇒ **R2 = 0（CRITICAL 清零）/ R1 = 474（HIGH 0 + INFO 474）/ R3 = 0（WARN）/ R4 = 0（INFO）**，汇总 `CRITICAL=0 / HIGH=0 / WARN=0 / INFO=474`（`rc=0`）。末 2 项 `SYS_process_vm_readv` / `SYS_process_vm_writev` 经用户裁定改判**实装**（相对完整路径，见 **D-2** / [syscall-followup.md](syscall-followup.md) **B-10.12**）⇒ **R2 未接线 syscall 首次清零**；HIGH 4 项 TCB 待裁项已由批次 7/8（`kpti_aarch64` ttbr0 族删除）/ 项 2 档 1（`kmalloc_slab.rs` 整文件删除）消解 ⇒ **HIGH 清零**。INFO 计数期间经 B-10.8/9/10/11（豁免面收窄 + 逐项分流）多次变动，终态口径见 B-10.11.5。
 
 - **B09-19. 内核源码 `#[cfg(test)]` 内联单元测试迁移（孤儿测试治理，2026-09-11 登记）**
   - 描述：实测 2026-09-11 完整扫描（排除 vendored smoltcp ~14 处）——内核源码 **~81 处** `#[cfg(test)] mod tests` 内联单元测试（framework：sync 原语/mm/lib/idt/proc/driver/net/timer/ipc/chitin/cpu/arch + driver 深层 storage/display/usb/e1000 + net/save；services：credo/barrier/sync/net/mm/proc/config/debug/driver + fs/nestfs traits×9 + vfs_poll_policy/wait_queue/smoltcp_impl），因 `[lib] test = false`（Cargo.toml:19）+ 依赖 crate 不激活 `cfg(test)`，**从不编译、从不执行**（孤儿测试）。项目已确立演进方向：`cfg(test)` → register 模式（framework/tests/ 载体 + `check!`/`assert_eq_test!` + `register_tests_inner!`，经 `register_all_tests()` QEMU/host 双跑）；部分源文件 cfg(test) 为"迁移后未删旧副本"（如 string.rs 的 strlen/strcmp/strncmp 断言与 framework/tests/string.rs 内容一致）。
@@ -279,16 +280,19 @@
 
 > 注：编号归位争议项（RT_SIGRETURN/KEXEC/IO_URING_*）以 B09-17 应转 SYS_* 为准，不入本组。
 
-### D-2. R2 未实现 SYS_*（**2 项**，Linux 标准编号功能缺口）
+### D-2. R2 未实现 SYS_*（**2 项 → 0 项，已清零**，Linux 标准编号功能缺口）
 
 > Linux 有标准编号但未实装，POSIX 兼容必需——转正式功能开发规划（独立工程，非清理范畴）。
 > 处置：**实现治理**（实装对应 syscall，独立功能工程）。
 >
 > **2026-09-26 批次 3 订正（原登记 ~33 项清单已失效）**：逐项核对 [dispatch.rs](../../src/kernel/services/syscall/dispatch.rs)，原清单**除下列 2 项外均已有分发臂且指向 services 真实实现模块**（非 ENOSYS 桩——全文件 `ENOSYS` 仅 5 处命中，其中实际桩仅 `SYS_CREDO_DISK_INSTALL`），即 T1/T2 及更早批次已陆续落地；R2 实测亦为 2 项（见 **B09-05** / **B09-18**）。
+>
+> **2026-09-27 清零**：下列末 2 项经用户裁定改判**实装**（相对完整路径），R2 未接线 syscall 由 2 → **0**（**首次清零**）。施工记录见 [syscall-followup.md](syscall-followup.md) **B-10.12**。
 
 - **进程间内存读写**：`SYS_process_vm_readv` / `SYS_process_vm_writev`
-  - 状态：**未实装 · 待裁（裁定六安全面）**——跨进程读写需 ptrace 级权限模型（Linux 要求 `PTRACE_MODE_ATTACH_REALCREDS` + 目标进程可访问性判定），当前无 ptrace/uid 权限模型 ⇒ 需用户裁定后单开工程实装；本批**不实装**。
-  - 实测依据：`python3 scripts/audit_unwired_pub_fn.py` ⇒ `[CRITICAL] R2 未接线 syscall: 2 项`（仅此 2 项）。
+  - 状态：**已实装（本批 2026-09-27）**——framework 新增跨进程用户内存 safe 代理 [`mm::cross_process`](../../src/kernel/framework/mm/cross_process.rs)（`copy_{from,to}_user_in_mm` 逐页翻译目标 CR3 + 写权限校验 + `// SAFETY:`）；services 新建 [`proc::process_vm`](../../src/kernel/services/proc/process_vm.rs)（iovec 解析 + 权限判定 + 分块拷贝 + 全错误分支，0 unsafe）；dispatch 接线 `SYS_process_vm_readv` / `SYS_process_vm_writev`。
+  - **原裁定作废**：原「须 ptrace 级权限模型（`PTRACE_MODE_ATTACH_REALCREDS`）⇒ 不实装」的判定作废；现权限取「自身 / `pwm_check_privilege` 特权 / uid 相等」三档，`PTRACE_MODE_ATTACH_FSCREDS` 完整判据以 `SIMPLIFIED` 注释标记（后续引 LSM / 能力模型时接入 `check_access`）。
+  - 实测依据：`python3 scripts/audit_unwired_pub_fn.py` ⇒ `[CRITICAL] R2 未接线 syscall: 0 项`（汇总 `CRITICAL=0 / HIGH=0 / WARN=0 / INFO=474`，`rc=0`）。
 
 > **移出本组的原清单项**（均已接线/实装）：preadv / pwritev / readv / writev / sendfile / fallocate / statx / fchownat / utimensat / close_range / waitid / prctl / set_robust_list / get_robust_list / recvmmsg / sendmmsg / socketpair / mbind / userfaultfd / inotify_init / epoll_pwait / ppoll / clock_nanosleep / settimeofday / adjtimex / pivot_root / chroot / setdomainname / execveat（以上于 T1/T2 及更早批次落地）、**arch_prctl / capget / capset（本批 2026-09-26 落地，见 B09-05）**。
 
