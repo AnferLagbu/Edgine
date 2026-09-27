@@ -22,11 +22,33 @@
 //! 本模块属于 framework/TCB, 允许 unsafe.
 //! UEFI 运行时服务调用涉及物理地址映射和固件调用.
 
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use crate::framework::sync::IrqSpinLock;
 use alloc::vec;
 use alloc::vec::Vec;
+
+// ============================================================================
+// EFI_SYSTEM_TABLE 布局 (x86_64 UEFI 2.x, 物理地址视图)
+// ============================================================================
+
+/// EFI_SYSTEM_TABLE 签名 — "IBI SYST"
+pub const EFI_SYSTEM_TABLE_SIGNATURE: u64 = 0x5453595320494249;
+
+/// `EFI_TABLE_HEADER.Signature` 偏移 (0x00)
+const ST_OFF_SIGNATURE: u64 = 0x00;
+/// `FirmwareVendor` (CHAR16*) 偏移 (0x18)
+const ST_OFF_FIRMWARE_VENDOR: u64 = 0x18;
+/// `FirmwareRevision` (UINT32) 偏移 (0x20)
+const ST_OFF_FIRMWARE_REVISION: u64 = 0x20;
+/// `RuntimeServices` (EFI_RUNTIME_SERVICES*) 偏移 (0x58)
+const ST_OFF_RUNTIME_SERVICES: u64 = 0x58;
+/// `BootServices` (EFI_BOOT_SERVICES*) 偏移 (0x60)
+const ST_OFF_BOOT_SERVICES: u64 = 0x60;
+/// `NumberOfTableEntries` (UINTN) 偏移 (0x68)
+const ST_OFF_NUM_TABLE_ENTRIES: u64 = 0x68;
+/// `ConfigurationTable` (EFI_CONFIGURATION_TABLE*) 偏移 (0x70)
+const ST_OFF_CONFIG_TABLE: u64 = 0x70;
 
 // ============================================================================
 // 常量
@@ -87,6 +109,54 @@ impl EfiTime {
             + u64::from(self.minute) * 60
             + u64::from(self.second);
         unix_secs * 1_000_000_000 + u64::from(self.nanosecond)
+    }
+
+    /// 从 Unix 纳秒构造 `EfiTime` (`to_unix_ns` 的逆运算)。
+    ///
+    /// 供 `set_time` 系统调用 (ns 语义) 与 `get_time` (epoch 基准换算) 使用。
+    /// 年份换算以公历推进, 年份达 `u16::MAX` 时截断 (u64 纳秒量程远超 u16 年份)。
+    pub fn from_unix_ns(ns: u64) -> Self {
+        let secs = ns / 1_000_000_000;
+        let nanosecond = (ns % 1_000_000_000) as u32;
+        let days = secs / 86400;
+        let time_of_day = secs % 86400;
+
+        let mut year = 1970u16;
+        let mut remaining = days;
+        loop {
+            let days_in_year = if is_leap_year(year) { 366 } else { 365 };
+            if remaining < days_in_year || year == u16::MAX {
+                break;
+            }
+            remaining -= days_in_year;
+            year += 1;
+        }
+
+        let days_in_months = if is_leap_year(year) {
+            [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        } else {
+            [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        };
+        let mut month = 1u8;
+        for &dim in &days_in_months {
+            if remaining < dim {
+                break;
+            }
+            remaining -= dim;
+            month = month.saturating_add(1);
+        }
+
+        Self {
+            year,
+            month,
+            day: (remaining + 1) as u8,
+            hour: (time_of_day / 3600) as u8,
+            minute: ((time_of_day % 3600) / 60) as u8,
+            second: (time_of_day % 60) as u8,
+            nanosecond,
+            timezone: 0,
+            daylight: 0,
+        }
     }
 }
 
@@ -202,6 +272,20 @@ pub struct EfiVariable {
 pub struct UefiSubsystem {
     /// 系统表物理地址
     system_table_addr: AtomicU64,
+    /// EFI_RUNTIME_SERVICES 指针 (从系统表 0x58 提取)
+    runtime_services_addr: AtomicU64,
+    /// EFI_BOOT_SERVICES 指针 (从系统表 0x60 提取)
+    boot_services_addr: AtomicU64,
+    /// EFI_CONFIGURATION_TABLE 指针 (从系统表 0x70 提取)
+    config_table_addr: AtomicU64,
+    /// 配置表条目数 (从系统表 0x68 提取)
+    config_table_entries: AtomicU32,
+    /// 固件厂商字符串 (CHAR16*) 指针 (从系统表 0x18 提取)
+    firmware_vendor_addr: AtomicU64,
+    /// 固件修订版本 (从系统表 0x20 提取)
+    firmware_revision: AtomicU32,
+    /// 墙上时钟 epoch 偏移 (纳秒) — `set_time` 写入后 `get_time` 反映设定值
+    epoch_offset_ns: AtomicU64,
     /// GOP 模式信息
     gop_mode: IrqSpinLock<Option<EfiGopModeInfo>>,
     /// UEFI 变量存储 (软件模拟)
@@ -218,6 +302,13 @@ impl UefiSubsystem {
     pub const fn new() -> Self {
         Self {
             system_table_addr: AtomicU64::new(0),
+            runtime_services_addr: AtomicU64::new(0),
+            boot_services_addr: AtomicU64::new(0),
+            config_table_addr: AtomicU64::new(0),
+            config_table_entries: AtomicU32::new(0),
+            firmware_vendor_addr: AtomicU64::new(0),
+            firmware_revision: AtomicU32::new(0),
+            epoch_offset_ns: AtomicU64::new(0),
             gop_mode: IrqSpinLock::new(None),
             variables: IrqSpinLock::new(Vec::new()),
             memory_map: IrqSpinLock::new(Vec::new()),
@@ -249,22 +340,53 @@ impl UefiSubsystem {
         self.initialized.store(true, Ordering::Release);
         crate::klog_ffi!(
             klog_ffi_info,
-            "[UEFI] initialized: system_table={:#x}, has_firmware={}",
+            "[UEFI] initialized: system_table={:#x}, has_firmware={}, runtime={:#x}, boot={:#x}, cfg_entries={}, fw_rev={:#x}",
             system_table_addr,
-            system_table_addr != 0
+            system_table_addr != 0,
+            self.runtime_services_addr.load(Ordering::Acquire),
+            self.boot_services_addr.load(Ordering::Acquire),
+            self.config_table_entries.load(Ordering::Acquire),
+            self.firmware_revision.load(Ordering::Acquire),
         );
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    /// 解析系统表 (简化)
-    fn parse_system_table(&self, _addr: u64) {
-        // 1. 验证签名 (0x5453595320494249)
-        // 2. 提取 RuntimeServices 指针
-        // 3. 提取 BootServices (ExitBootServices 前可用)
-        // 4. 提取 ConfigurationTable (ACPI, SMBIOS 等)
+    /// 解析 EFI_SYSTEM_TABLE — 验证签名 + 提取运行时/引导服务与配置表入口。
+    ///
+    /// 仅做**只读解析与记录**, 不调用任何 UEFI 运行时服务 (调用需固件仍处
+    /// BootServices 生命周期且内存 1:1 映射). 签名不匹配视为非 EFI 系统表,
+    /// fail-closed: `has_uefi` 置 false, 提取字段保持 0.
+    fn parse_system_table(&self, addr: u64) {
+        if addr == 0 {
+            return;
+        }
+        // SAFETY: `addr` 由引导加载器经 `uefi_init` 传入, 指向固件保留的
+        // EFI_SYSTEM_TABLE 物理内存 (或 0); 仅读取定长字段, 不触碰指针目标.
+        let signature =
+            unsafe { core::ptr::read_volatile((addr + ST_OFF_SIGNATURE) as *const u64) };
+        if signature != EFI_SYSTEM_TABLE_SIGNATURE {
+            self.has_uefi.store(false, Ordering::Release);
+            return;
+        }
+        // SAFETY: 同上 — 已通过签名校验, 系统表结构有效, 读取定长字段.
+        let runtime =
+            unsafe { core::ptr::read_volatile((addr + ST_OFF_RUNTIME_SERVICES) as *const u64) };
+        let boot = unsafe { core::ptr::read_volatile((addr + ST_OFF_BOOT_SERVICES) as *const u64) };
+        let entries =
+            unsafe { core::ptr::read_volatile((addr + ST_OFF_NUM_TABLE_ENTRIES) as *const u64) };
+        let config =
+            unsafe { core::ptr::read_volatile((addr + ST_OFF_CONFIG_TABLE) as *const u64) };
+        let vendor =
+            unsafe { core::ptr::read_volatile((addr + ST_OFF_FIRMWARE_VENDOR) as *const u64) };
+        let fw_rev =
+            unsafe { core::ptr::read_volatile((addr + ST_OFF_FIRMWARE_REVISION) as *const u32) };
+
+        self.runtime_services_addr.store(runtime, Ordering::Release);
+        self.boot_services_addr.store(boot, Ordering::Release);
+        self.config_table_addr.store(config, Ordering::Release);
+        self.config_table_entries
+            .store(entries.min(u64::from(u32::MAX)) as u32, Ordering::Release);
+        self.firmware_vendor_addr.store(vendor, Ordering::Release);
+        self.firmware_revision.store(fw_rev, Ordering::Release);
     }
 
     /// 初始化默认变量
@@ -363,73 +485,30 @@ impl UefiSubsystem {
     }
 
     /// 获取时间
-    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(clippy::cast_possible_truncation)]
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     pub fn get_time(&self) -> EfiTime {
-        // 简化: 从内核时钟转换
+        // 墙上时钟 = epoch 基准 (set_time 写入) + 自开机起的单调时间
         let ns = crate::framework::timer::ticks_to_ns(crate::framework::timer::get_ticks());
-        let secs = ns / 1_000_000_000;
-        let nsec = (ns % 1_000_000_000) as u32;
-
-        // Unix 时间戳转日期 (简化)
-        let days = secs / 86400;
-        let time_of_day = secs % 86400;
-
-        // 简单的日期计算
-        let mut year = 1970u16;
-        let mut remaining_days = days;
-        loop {
-            let days_in_year = if is_leap_year(year) { 366 } else { 365 };
-            if remaining_days < days_in_year {
-                break;
-            }
-            remaining_days -= days_in_year;
-            year += 1;
-        }
-
-        let days_in_months = if is_leap_year(year) {
-            [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-        } else {
-            [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-        };
-
-        let mut month = 1u8;
-        for &dim in &days_in_months {
-            if remaining_days < dim {
-                break;
-            }
-            remaining_days -= dim;
-            month += 1;
-        }
-
-        EfiTime {
-            year,
-            month,
-            day: (remaining_days + 1) as u8,
-            hour: (time_of_day / 3600) as u8,
-            minute: ((time_of_day % 3600) / 60) as u8,
-            second: (time_of_day % 60) as u8,
-            nanosecond: nsec,
-            timezone: 0, // UTC
-            daylight: 0,
-        }
+        let wall_ns = self
+            .epoch_offset_ns
+            .load(Ordering::Acquire)
+            .saturating_add(ns);
+        EfiTime::from_unix_ns(wall_ns)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
-    /// 设置时间 (软件模拟)
-    pub fn set_time(&self, _time: &EfiTime) -> bool {
-        // 在软件模拟中, 这需要调整内核时钟
+    /// 设置时间 — 写入 epoch 基准使 `get_time` 返回设定时刻
+    ///
+    /// 软件模拟语义: 将 `time` 转 Unix 纳秒后, 减去当前单调时间得到
+    /// `epoch_offset_ns`; 之后 `get_time` = 设定值 + 已流逝的单调时间.
+    /// 返回 `true` (无固件写入失败路径).
+    pub fn set_time(&self, time: &EfiTime) -> bool {
+        let now_ns = crate::framework::timer::ticks_to_ns(crate::framework::timer::get_ticks());
+        let target_ns = time.to_unix_ns();
+        self.epoch_offset_ns
+            .store(target_ns.saturating_sub(now_ns), Ordering::Release);
         true
     }
 
@@ -541,9 +620,8 @@ pub extern "C" fn sys_uefi(cmd: u64, a1: u64, a2: u64) -> i64 {
             time.to_unix_ns() as i64
         }
         4 => {
-            // set_time
-            let _ = a1;
-            0
+            // set_time(ns: a1) — 写入 epoch 基准, 使后续 get_time 反映设定时刻
+            i64::from(uefi_subsystem().set_time(&EfiTime::from_unix_ns(a1)))
         }
         5 => {
             // get_gop_mode → fb_base
@@ -564,5 +642,96 @@ pub extern "C" fn sys_uefi(cmd: u64, a1: u64, a2: u64) -> i64 {
             i64::from(uefi_is_initialized())
         }
         _ => -(38i64), // ENOSYS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 合成有效的 EFI_SYSTEM_TABLE (x86_64 UEFI 2.x 布局)。
+    fn valid_table() -> [u8; 0x80] {
+        let mut t = [0u8; 0x80];
+        t[..8].copy_from_slice(&EFI_SYSTEM_TABLE_SIGNATURE.to_le_bytes());
+        t[0x18..0x20].copy_from_slice(&0x1000_3000u64.to_le_bytes()); // FirmwareVendor
+        t[0x20..0x24].copy_from_slice(&0x0001_0002u32.to_le_bytes()); // FirmwareRevision
+        t[0x58..0x60].copy_from_slice(&0x1000_0000u64.to_le_bytes()); // RuntimeServices
+        t[0x60..0x68].copy_from_slice(&0x1000_1000u64.to_le_bytes()); // BootServices
+        t[0x68..0x70].copy_from_slice(&2u64.to_le_bytes()); // NumberOfTableEntries
+        t[0x70..0x78].copy_from_slice(&0x1000_2000u64.to_le_bytes()); // ConfigurationTable
+        t
+    }
+
+    /// 有效签名: 解析并提取全部字段, `has_uefi` 置 true。
+    #[test]
+    fn parse_valid_table_sets_firmware_and_fields() {
+        let table = valid_table();
+        let sub = UefiSubsystem::new();
+        sub.init(table.as_ptr() as u64);
+        assert!(sub.has_uefi(), "有效签名应置 has_uefi");
+        assert_eq!(
+            sub.runtime_services_addr.load(Ordering::Acquire),
+            0x1000_0000
+        );
+        assert_eq!(sub.boot_services_addr.load(Ordering::Acquire), 0x1000_1000);
+        assert_eq!(sub.config_table_addr.load(Ordering::Acquire), 0x1000_2000);
+        assert_eq!(sub.config_table_entries.load(Ordering::Acquire), 2);
+        assert_eq!(
+            sub.firmware_vendor_addr.load(Ordering::Acquire),
+            0x1000_3000
+        );
+        assert_eq!(sub.firmware_revision.load(Ordering::Acquire), 0x0001_0002);
+    }
+
+    /// 签名不匹配: fail-closed, `has_uefi` 置 false 且提取字段保持 0。
+    #[test]
+    fn parse_invalid_signature_fail_closed() {
+        let mut table = valid_table();
+        table[0] ^= 0xFF; // 破坏签名
+        let sub = UefiSubsystem::new();
+        sub.init(table.as_ptr() as u64);
+        assert!(!sub.has_uefi(), "签名不匹配应 fail-closed");
+        assert_eq!(sub.runtime_services_addr.load(Ordering::Acquire), 0);
+    }
+
+    /// `from_unix_ns`/`to_unix_ns` 往返恒等 (日期换算双向一致)。
+    #[test]
+    fn efi_time_round_trip() {
+        for ns in [
+            0u64,
+            1_577_836_800_000_000_000, // 2020-01-01T00:00:00Z
+            1_609_459_200_000_000_000, // 2021-01-01T00:00:00Z (平年)
+            1_757_606_400_000_000_000, // 2025-09-08T00:00:00Z
+            4_102_444_800_000_000_000, // 2100-01-01T00:00:00Z (非闰世纪年)
+        ] {
+            let t = EfiTime::from_unix_ns(ns);
+            assert_eq!(t.to_unix_ns(), ns, "往返恒等失败: {ns}");
+        }
+    }
+
+    /// `set_time` 写入 epoch 基准, `get_time` 反映设定时刻 (host-test 下
+    /// 单调 tick 恒 0, 偏差仅来自测试运行间隔)。
+    #[test]
+    fn set_time_epoch_makes_get_time_reflect() {
+        let sub = UefiSubsystem::new();
+        let target = EfiTime {
+            year: 2020,
+            month: 1,
+            day: 1,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            nanosecond: 0,
+            timezone: 0,
+            daylight: 0,
+        };
+        let target_ns = target.to_unix_ns();
+        assert!(sub.set_time(&target));
+        let got_ns = sub.get_time().to_unix_ns();
+        assert!(
+            got_ns >= target_ns,
+            "get_time 应不低于设定时刻: got={got_ns} target={target_ns}"
+        );
+        assert!(got_ns - target_ns < 2_000_000_000, "偏差应 < 2s");
     }
 }

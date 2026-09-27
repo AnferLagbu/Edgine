@@ -1057,8 +1057,8 @@ mod tests {
     /// 返回原始指针, 调用方在 `Box::from_raw` 之后确保唯一所有权。
     /// 为安全 Rust 接口, 测试需要 `unsafe` 包装 (无法避免原始指针)。
     fn make_test_thread(tid: u32, pid: u32, priority: ThreadPriority) -> *mut Thread {
-        // SAFETY: Box::into_raw 转移所有权到调用方
-        let t = unsafe { Box::into_raw(Box::new(Thread::new(tid, pid))) };
+        // `Box::into_raw` 为安全接口: 转移所有权到调用方, 返回原始指针
+        let t = Box::into_raw(Box::new(Thread::new(tid, pid)));
         // SAFETY: t 来自 Box::into_raw 立即调用, 分配有效
         let tr = unsafe { ThreadRef::new_unchecked(t) };
         tr.store_priority(priority as u32);

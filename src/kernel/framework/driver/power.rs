@@ -358,6 +358,7 @@ impl CpuFreqDriver {
                 best_idx = i;
             }
         }
+        let best_freq_mhz = table[best_idx].freq_mhz;
         drop(table);
 
         let indices = self.per_cpu_freq_idx.lock();
@@ -365,6 +366,10 @@ impl CpuFreqDriver {
             return false;
         }
         indices[cpu_id as usize].store(best_idx as u32, Ordering::Release);
+        drop(indices);
+
+        // 软件表更新后下写硬件调频寄存器 (x86_64 MSR; 其他架构/host-test no-op)
+        apply_hw_freq(cpu_id, best_freq_mhz);
         true
     }
 
@@ -426,6 +431,47 @@ impl CpuFreqDriver {
             }
         }
     }
+}
+
+// ============================================================================
+// 调频硬件下写 — 频率控制机制
+// ============================================================================
+
+/// 将目标频率下写到硬件调频寄存器 (调频机制, 由 `set_freq` 在软件表更新后调用)。
+///
+/// x86_64: 写 `IA32_PERF_CTL` (0x199)。bits 15:0 为 P-state 控制值,
+/// bits 15:8 = 目标比率, 以 100 MHz 基准时钟为单位折算。
+/// aarch64 / host-test: 无统一调频 MSR (aarch64 走 PSCI/CPPC 平台协议;
+/// host-test 执行 `wrmsr` 属特权指令会触发 #GP), 保持软件表权威 (no-op)。
+///
+/// # 失败语义
+/// 硬件写失败不影响 `get_freq` 结果 (软件表仍为权威), 仅记录日志。
+// SIMPLIFIED: P-state 比率按 100 MHz 基准时钟折算 (freq_mhz / 100 << 8), 仅适配
+//             现代 Intel/AMD 主流约定; 影响面 = 非 100 MHz 基准时钟的硬件上
+//             比率偏差 (软件表权威, get_freq 不受影响); 待接入 CPUID 基准时钟
+//             探测后收敛编码.
+#[cfg(all(target_arch = "x86_64", not(feature = "host-test")))]
+fn apply_hw_freq(cpu_id: u32, freq_mhz: u32) {
+    let ratio = (freq_mhz / 100).min(0xFF);
+    let value = u64::from(ratio) << 8;
+    // SAFETY: 真实内核态 (Ring 0) 下写 IA32_PERF_CTL; host-test 已被 cfg 排除,
+    // 非法/不支持的 MSR 由 CPU 以 #GP 异常拒收 (与 `cpu_write_msr` 白名单同语义).
+    unsafe {
+        crate::framework::cpu::msr::write_msr(0x199, value);
+    }
+    crate::klog_ffi!(
+        klog_ffi_info,
+        "[PM] CPU{} freq -> {} MHz (IA32_PERF_CTL ratio={})",
+        cpu_id,
+        freq_mhz,
+        ratio
+    );
+}
+
+/// 非 x86_64 或 host-test 变体: 软件表已更新, 硬件写 no-op。
+#[cfg(not(all(target_arch = "x86_64", not(feature = "host-test"))))]
+fn apply_hw_freq(cpu_id: u32, freq_mhz: u32) {
+    let _ = (cpu_id, freq_mhz);
 }
 
 // ============================================================================
@@ -758,4 +804,48 @@ pub fn sys_pm_dispatch(pm: &PmSubsystem, cmd: u64, a1: u64, a2: u64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn sys_pm(cmd: u64, a1: u64, a2: u64) -> i64 {
     sys_pm_dispatch(&PM_SUBSYSTEM, cmd, a1, a2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `set_freq` 软件表: 就近匹配 + 索引更新 + `get_freq` 可观测;
+    /// host-test 下 `apply_hw_freq` 为 no-op, 不触碰特权指令.
+    #[test]
+    fn set_freq_software_table_and_observability() {
+        let driver = CpuFreqDriver::new();
+        driver.init(
+            vec![
+                FreqLevel {
+                    freq_mhz: 3000,
+                    voltage_mv: 1200,
+                },
+                FreqLevel {
+                    freq_mhz: 2500,
+                    voltage_mv: 1100,
+                },
+                FreqLevel {
+                    freq_mhz: 2000,
+                    voltage_mv: 1000,
+                },
+            ],
+            2,
+        );
+
+        // 就近匹配: 2600 → 2500 档
+        assert!(driver.set_freq(0, 2600));
+        assert_eq!(driver.get_freq(0), 2500);
+        // 目标低于最低档 → 就近最低
+        assert!(driver.set_freq(0, 500));
+        assert_eq!(driver.get_freq(0), 2000);
+        // 目标高于最高档 → 就近最高
+        assert!(driver.set_freq(0, 5000));
+        assert_eq!(driver.get_freq(0), 3000);
+        // cpu_id 越界 → false
+        assert!(!driver.set_freq(99, 2500));
+        // 未初始化 (空表) → false
+        let empty = CpuFreqDriver::new();
+        assert!(!empty.set_freq(0, 2500));
+    }
 }
