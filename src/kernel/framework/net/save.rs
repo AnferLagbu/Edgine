@@ -202,6 +202,11 @@ pub fn clear() {
 mod tests {
     use super::*;
 
+    /// 全局快照串行锁: `save` / `load` / `clear` 作用于同一 `NET_SNAPSHOT_LOCK`
+    /// 静态快照, 而 `cargo test` 默认多线程并行, 用例间会互相覆盖快照导致偶发
+    /// 断言失败. 触及全局状态的用例须先获取本锁串行执行 (仅测试期存在).
+    static SNAPSHOT_TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn empty_snapshot_is_invalid() {
         let s = NetSnapshot::empty();
@@ -242,6 +247,10 @@ mod tests {
 
     #[test]
     fn save_load_roundtrip() {
+        // 触及全局快照, 与同模块用例串行
+        let _serial = SNAPSHOT_TEST_SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // 清空初始
         clear();
         save(|s| {
@@ -264,6 +273,10 @@ mod tests {
 
     #[test]
     fn fd_table_persists_through_save() {
+        // 触及全局快照, 与同模块用例串行
+        let _serial = SNAPSHOT_TEST_SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         clear();
         save(|s| {
             s.fd_types = [0, 1, 1, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];

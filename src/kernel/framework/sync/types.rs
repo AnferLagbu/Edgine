@@ -241,39 +241,6 @@ impl IrqSaveFlags {
     }
 }
 
-/// 锁统计信息 (可选功能)
-#[cfg(feature = "lock_stats")]
-#[derive(Debug)]
-pub struct LockStatistics {
-    /// 总获取次数
-    pub total_acquires: AtomicU64,
-    /// 总释放次数
-    pub total_releases: AtomicU64,
-    /// 总竞争次数 (需要等待)
-    pub contentions: AtomicU64,
-    /// 最大等待时间 (TSC cycles)
-    pub max_wait_time: AtomicU64,
-    /// 当前持有者
-    pub current_holder: AtomicI32,
-}
-
-#[cfg(feature = "lock_stats")]
-impl Default for LockStatistics {
-    #[expect(
-        clippy::pub_underscore_fields,
-        reason = "pub_underscore_fields: pub _xxx 是模块内约定 (如 _inner); 当前优先 expect"
-    )]
-    fn default() -> Self {
-        Self {
-            total_acquires: AtomicU64::new(0),
-            total_releases: AtomicU64::new(0),
-            contentions: AtomicU64::new(0),
-            max_wait_time: AtomicU64::new(0),
-            current_holder: AtomicI32::new(-1),
-        }
-    }
-}
-
 /// 锁守卫 (RAII wrapper for `SpinLock`)
 ///
 /// 当 Guard 被 drop 时自动释放锁，

@@ -132,3 +132,24 @@ K-01 → K-02 → K-03 → K-04 → K-05
 ## 7. 变更历史
 
 - **2026-09-08**：创建本工程（从分册 8 独立成档）。用户决策 D1-D6 确认；线程映射模型定为 1:1；调研结论登记；阶段拆分 K-01~K-07 建立。
+
+## 8. 并发安全能力现状与缺口（登记）
+
+> 现状三层防线：**L1 构造性排除**（锁纪律 + `Mutex<T>` 数据封装 + services `#![deny(unsafe_code)]` + IrqSpinLock 加锁即关中断，永远生效）→ **L2 CI 静态审计**（audit_deadlock_matrix / audit_invariants / audit_static_mut / audit_volatile_access / audit_tlb_receive_order）→ **L3 运行时 lockdep**（仅 debug）。下列为本轮核对发现的缺口，登记为待办。
+
+- **A-1. lockdep 在生产 release 构建被编译掉（运行时零检测）**
+  - 描述：lockdep 所有调用点均为 `#[cfg(debug_assertions)]` 门控（[spinlock.rs:83-86](../../src/kernel/framework/sync/spinlock.rs#L83-L86)、[rwlock.rs:240](../../src/kernel/framework/sync/rwlock.rs#L240)、[mutex.rs:237](../../src/kernel/framework/sync/mutex.rs#L237)，pi_mutex 同理）。release 生产构建 `debug_assertions` 关闭 → AB-BA / 递归 / 中断睡眠锁等运行时检测全部消失；[lockdep.rs:29-34](../../src/kernel/framework/sync/lockdep.rs#L29-L34) 自认此为刻意零开销取舍。release 上的并发安全实际只依赖 L1 结构性保证。
+  - 方案：评估 release + `feature = "lockdep"` 的可选检测通路（与 A-2 协同），并在文档明确「release 无运行时锁检测」这一事实及由此产生的风险面。
+  - 状态：[]
+- **A-2. lockdep 文档与实现口径不一致（`feature = "lockdep"` 未接线）**
+  - 描述：[lockdep.rs:3](../../src/kernel/framework/sync/lockdep.rs#L3) 声明「`debug_assertions` **或** `feature = "lockdep"` 启用时」生效，但调用点仅 `#[cfg(debug_assertions)]`，无 `feature = "lockdep"` 分支 → 该 feature 实际不启用任何检测，声明与实现不一致。
+  - 方案：二选一——① 调用点改 `#[cfg(any(debug_assertions, feature = "lockdep"))]`，使声明成立并保留生产可选检测能力（倾向）；② 修订文档删除该 feature 说法。
+  - 状态：[]
+- **A-3. AB-BA 死锁的静态检测未实现**
+  - 描述：[audit_deadlock_matrix.py:12-14](../../scripts/audit_deadlock_matrix.py#L12-L14) 自认「AB-BA 死锁环检测：需先建立锁顺序声明机制」为未实现项，脚本仅覆盖中断上下文非法锁 / 非中断安全锁 / sleep 锁原子上下文。故 F8 静态面对 AB-BA 无兜底，叠加上 A-1 后 release 上 AB-BA 无任何自动检测。
+  - 方案：建立锁顺序声明机制（锁类序表 / annotation）+ 静态环检测；或明确降级为「仅 debug 期 lockdep 覆盖」并在文档登记该边界。
+  - 状态：[]
+- **A-4. 缺数据竞争检测器与内存序自动证明**
+  - 描述：无 KASAN/TSAN 类工具；无 Acquire/Release 内存序的自动证明；volatile / static mut / LTO 布局仅靠模式审计（audit_volatile_access / audit_static_mut / audit_repr_c）。
+  - 方案：随本工程（多线程启用前）评估引入 debug 期内存序断言 hook 等轻量增强；对无法自动化的盲区在文档登记为已知覆盖边界。
+  - 状态：[]

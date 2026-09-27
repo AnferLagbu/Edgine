@@ -42,10 +42,6 @@ pub use types::{CondVarInner, MutexInner, RwLockInner, SpinLockInner};
 /// 中断保存标志
 pub use types::IrqSaveFlags;
 
-/// 锁统计信息 (仅 `lock_stats` feature 启用时可用)
-#[cfg(feature = "lock_stats")]
-pub use types::LockStatistics;
-
 // ============================================================================
 // RAII Guard (类型安全, 替代裸 lock/unlock 配对)
 // ============================================================================

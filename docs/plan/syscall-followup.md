@@ -1879,7 +1879,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 | `services/barrier/audit_export.rs` / `config/sysctl.rs` | 3 | 审计导出统计 + sysctl 序列化面 |
 | `services/proc/{canary,elf,shadow_stack,signal}.rs` / `timer/*` / `net/unix.rs` / `wasm/*` | 12 | 查询面 + safe 代理壳 + wasm 运行时 API 面 |
 
-#### 登记结论（修订版：E.1-E.4 + 第二 / 三 / 四轮裁定 + 甲批；**第 14 条为甲批 C-1 最新口径**）
+#### 登记结论（修订版：E.1-E.4 + 第二 / 三 / 四轮裁定 + 甲批 + 本批 feature 去留；**第 15 条为最新口径**）
 
 1. **元信息已补（E.1）**：① 判定工具＝`scripts/audit_unwired_pub_fn.py` R1（`rg -c -w` 文本并集，声明侧无 cfg 感知）；② 判定构建维＝**无单一构建维**，未做逐维交集 ⇒ 原「零引用」口径不可复核。③④⑤ 见上「方法与限制」。
 2. **桶边界已重划并重算（E.2 + 三处核对① + 第二轮二次修订 + 第三轮三次修订 + 第四轮四次修订，暂定值）**：删候选 70 → 23 → **11** → **2**（二次修订：安全面 4 转 A-3、判据不成立 8 退桶入 B-3；**四次修订：试删前逐项复核退桶 9 入待裁，见 A-5 / 12**）；**硬件原语完整性保留 41 → 43**（x86_64 侧 31 + aarch64 侧 10，优先级＝**硬件原语保留 > aarch64 门控 > 删候选**；三次修订并入安全面**族残缺**档 2 ＝`ct_eq_salt`/`ct_eq_password`）；接线 142 → **8**（逐项独立判定）；未来功能 **339**（**来源合成，非实测**：原接线剩余 134 ＝142−8 排除法 + 原预留 205）；待裁 21 → 27 → 35 → **37** → **46**（三次修订并入安全面**待 T3 结论**档 2 ＝`split_path`/`validate_path`，B-4；**四次修订并入 A-5 退桶 9**）。**原「安全面待确认 4」桶三次修订后清零**（三档分流完毕）。合计 438（算术已核对闭合：2+43+8+339+46）。三处核对 ②③ 的来源标记已就地标注。**五次修订（删候选清零）与六次修订（B-5 待裁归零）为最新口径，见 12 / 13**：删候选 **0** / 完整性保留 **75** / 待裁 **2** / 接线 8 / 未来功能 **352**，合计 **437**（`write_log_line` 已删除）——**以 13 为准，本条保留历次修订轨迹**。
@@ -1910,6 +1910,8 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
     - **判据不成立 7 项 ⇒ 转「未来功能」**（三字段见 B-8.2）：`vfs_get_fd_handle`（同能力调用点全在同模块直呼 manager，无独立调用点）/ `irqline.rs::is_registered`（`IrqLine` 全库 0 构造点）/ `frame.rs::set_meta`（读侧 `meta()` 同样零引用）/ `fd_table.rs` cloexec 4 项（`Process::fd_table` 从未被填充 ⇒ `cloexec[]` 恒 false，接线＝往死结构写值）。
     - **安全面单列（B-8.3）**：`fd_table.rs` cloexec 4 项的「exec 路径需用」判据经实测**不是「漏接一项」而是整条语义链缺失**——`fcntl` F_SETFD **静默返回 0 且无存储**、`O_CLOEXEC` 常量全库零引用、live fd 表 `VfsFile` **无 cloexec 字段**、`execve`/`execveat` → `proc_exec_replace` **全程不触碰 fd 表**、fd 表为**全局命名空间**。⇒ 修需 per-process fd 表 + `fcntl` 真实实现 + `VfsFile` 增字段 + exec 关闭遍历（跨 4 模块架构改动，属 TCB/VFS 核心面），**超出批次授权，未自主施工**；解锁＝**B-11** per-process fd 表；责任方＝reviewer。
     - **桶效应（甲批）**：接线 8 → **0**；未来功能 352 → **359**（+7）；**R1 437 → 436**（`set_fd` 不再零引用）；合计 **436**（0 + 75 + 2 + 0 + 359，算术闭合）。**五门槛全量见 B-8.5**。
+
+15. **`lock_stats` feature 已裁定删除并结项（本批）**：`framework/sync/types.rs::LockStatistics`（`#[cfg(feature = "lock_stats")]` 门控结构体 + `Default` impl）及其在 `services/sync/mod.rs` 的 re-export 属**账外项**（原未登记进 B-5.2 / B-5.3 G2 / B-6 区块）。按**职责判定**处置＝**删除 feature**（依据＝① **非内核所需**：全仓零实例化 / 零引用、无任何 `record_*` / `dump_*` 集成，无人递增计数器；② **零履行**：纯数据结构、无行为方法、无调用点；③ **已有等价承担者**：`framework/sync/lockdep.rs` 已完整接线（spinlock / rwlock / mutex / pi_mutex / irq_spinlock 均调用），提供锁类跟踪 + 违规 / 递归 / AB-BA 死锁检测 + State Dump，覆盖其「统计」职责）。与 `atomic_stats` 的差异：本项**可编译**（无 no_std 不可用 import / `println!`），且为 `pub` 项不触发 `dead_code` lint（F9 不适用）。⇒ 删除 `framework/sync/types.rs` 结构体 + `Default`、`services/sync/mod.rs` re-export、两处 `Cargo.toml` feature 声明 / 转发；**桶数与 B-6 区块 462 不变**（账外项，非 R1 pub fn 分类面）。
 
 ## 详情
 
