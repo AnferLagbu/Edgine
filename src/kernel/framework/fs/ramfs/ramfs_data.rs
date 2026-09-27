@@ -1303,6 +1303,44 @@ impl RamFsData {
         0
     }
 
+    /// 设置节点时间戳 (atime/mtime), `u64::MAX` 表示该字段不修改 (utimensat 的
+    /// `UTIME_OMIT` 语义)。
+    ///
+    /// 与 `chmod`/`chown` 同判据: 属主或特权级 0 方可写回, 判据与写回同锁域
+    /// (调用方持锁, 不引入二次路径解析, 无 TOCTOU 窗口)。任一字段实际变更时
+    /// 更新 `ctime` 为元数据变更时刻。
+    ///
+    /// # Errors
+    ///
+    /// - 节点号越界或节点未使用: `KernelError::FileNotFound`;
+    /// - 非属主且特权级非 0: `KernelError::PermissionDenied`。
+    pub fn set_times(&mut self, node_id: u32, atime: u64, mtime: u64, pwm: u64) -> i32 {
+        if node_id as usize >= RAMFS_MAX_NODES {
+            return KernelError::FileNotFound.as_i32();
+        }
+        let node = &mut self.nodes[node_id as usize];
+        if !node.used {
+            return KernelError::FileNotFound.as_i32();
+        }
+        if node.owner_pwm != pwm {
+            let level = pwm_api::pwm_get_privilege_level(pwm);
+            if level != 0 {
+                return KernelError::PermissionDenied.as_i32();
+            }
+        }
+        let changed = atime != u64::MAX || mtime != u64::MAX;
+        if atime != u64::MAX {
+            node.atime = atime;
+        }
+        if mtime != u64::MAX {
+            node.mtime = mtime;
+        }
+        if changed {
+            node.ctime = Self::get_time();
+        }
+        0
+    }
+
     pub fn seek(
         &self,
         node_id: u32,
@@ -1517,5 +1555,50 @@ impl RamFsData {
         }
         buf[..len].copy_from_slice(&self.symlink_targets[node_id as usize][..len]);
         len as i32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::framework::sync::IrqSpinLock as Mutex;
+
+    /// 测试专用 BSS 静态实例 — `RamFsData` 体量约 16 MiB, 不能在测试线程
+    /// 栈上按值构造 (与生产 `RAMFS_DATA` / overlay `OVERLAY_FS` 同范式)。
+    static TEST_FS: Mutex<RamFsData> = Mutex::new(RamFsData::new());
+
+    /// `set_times`: 属主写回 / UTIME_OMIT / 非属主拒绝 / 未使用节点拒绝。
+    #[test]
+    fn test_set_times_owner_omit_and_permission() {
+        let mut fs = TEST_FS.lock();
+        // 直接构造最小已用节点 (绕过 mount/alloc 路径)
+        {
+            let node = &mut fs.nodes[1];
+            node.node_id = 1;
+            node.owner_pwm = 7;
+            node.atime = 0;
+            node.mtime = 0;
+            node.used = true;
+        }
+
+        // 属主写回 + UTIME_OMIT: 仅 atime 更新, mtime 保持
+        assert_eq!(fs.set_times(1, 111, u64::MAX, 7), 0);
+        assert_eq!(fs.nodes[1].atime, 111);
+        assert_eq!(fs.nodes[1].mtime, 0);
+
+        // 非属主且特权级非 0 (未注册 pwm 恒 0xFF, fail-closed) → PermissionDenied
+        assert_eq!(
+            fs.set_times(1, 222, 222, 99),
+            KernelError::PermissionDenied.as_i32()
+        );
+        // 拒绝后时间戳保持
+        assert_eq!(fs.nodes[1].atime, 111);
+
+        // 未使用节点 → FileNotFound; 越界节点 → FileNotFound
+        assert_eq!(fs.set_times(2, 1, 1, 7), KernelError::FileNotFound.as_i32());
+        assert_eq!(
+            fs.set_times(RAMFS_MAX_NODES as u32, 1, 1, 7),
+            KernelError::FileNotFound.as_i32()
+        );
     }
 }

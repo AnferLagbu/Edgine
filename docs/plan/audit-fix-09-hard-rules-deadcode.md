@@ -351,7 +351,7 @@
 - tickless.rs（1 项）：3C4D67(hrtimer 集成)
 
 **普通 TODO（10 项，内核需要的功能缺口）**：
-- oomd.rs:94（OOM killer 实际发送 SIGKILL，安全关键）/ memfd.rs:60/77（per-process fd 表 + CLOEXEC）/ xhci.rs:670（Event Ring 处理）/ net/init.rs:610（skb 投递到 smoltcp，依赖 NAPI）/ pidfd.rs:172（依赖 Task 4 OpenFile 系统）/ overlayfs.rs:205（copy-up 写时复制 + 时间戳更新，overlayfs 核心语义——**2026-09-27 copy-up 已实装**（commit `67673a10`，lowerdir 只读直通 + 写时复制 + whiteout），**余时间戳更新待 S4 相对完整实装**）/ ext2·exfat·nestfs_inode 时间戳（3 处同类——**2026-09-09 判据确认内核需要**：POSIX stat mtime 语义完善项，低优先级）
+- oomd.rs:94（OOM killer 实际发送 SIGKILL，安全关键）/ memfd.rs:60/77（per-process fd 表 + CLOEXEC）/ xhci.rs:670（Event Ring 处理）/ net/init.rs:610（skb 投递到 smoltcp，依赖 NAPI）/ pidfd.rs:172（依赖 Task 4 OpenFile 系统）/ overlayfs.rs:205（copy-up 写时复制 + 时间戳更新，overlayfs 核心语义——**2026-09-27 copy-up 已实装**（commit `67673a10`，lowerdir 只读直通 + 写时复制 + whiteout），**时间戳更新已实装**（2026-09-27 S4 批：`RamFsData::set_times` + `OverlayFsInode::set_times` + `fs_utimensat` 层级路由，upper 写回/UTIME_OMIT/属主判据/lower-only 拒改））/ ext2·exfat·nestfs_inode 时间戳（3 处同类——**2026-09-09 判据确认内核需要**：POSIX stat mtime 语义完善项，低优先级）
 > **2026-09-27 dcache/icache 缺陷修复登记（S5 真实行为测试台暴露）**：全局 dcache/icache 键原为 `(parent_ino, name)`，缺 fs 实例维度 —— 多 RamFsData 实例（`RAMFS_DATA` / overlay upper/work / `SafeRamFs` / `TmpFsData`）根 inode 同为 1、节点号重叠，跨实例命名空间互相污染，overlay whiteout 测试暴露。处置：键首维引入 `fs_id`（`RamFsData` 挂载时经全局 `AtomicU32` 分配，0 保留"未挂载"），dcache/icache 全部键与公开 API 增 fs_id，`make_ramfs_inode` 工厂钩子透传至 `RamFsInode`；回归测试 2 项（dcache/icache 各 1：跨实例正/负缓存隔离 + invalidate 互不影响）。dcache 回归其「全局 VFS 缓存」机制定位（framework 机制层变更，services 0 unsafe 不变）。
 
 > 已确认无价值/随手的 TODO 不入清单，直接删除。

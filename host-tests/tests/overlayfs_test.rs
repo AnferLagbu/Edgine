@@ -6,6 +6,8 @@
 //! - 写意图 open 触发 `copy_up` (下层文件提升到 upperdir, 下层原文不动)
 //! - lower-only 文件 unlink 生成 whiteout 遮蔽下层
 //! - copy_up 后 unlink 补 whiteout 回归 (修复前会重新暴露下层同名副本)
+//! - `fs_utimensat` / `set_times` 时间戳写回 (upper 节点, 含 UTIME_OMIT 与属主判据)
+//! - `fs_utimensat` 层级路由 (lower-only 拒改 / whiteout / 不存在 → FileNotFound)
 //!
 //! ## 测试台搭建
 //! 本文件作为独立测试二进制运行, 其全局单例 (`VFS_MANAGER` / `RAMFS_DATA`
@@ -239,5 +241,109 @@ fn overlay_unlink_after_copy_up_masks_lower() {
     assert!(
         lower_ramfs().fs_stat(name, PWM).is_ok(),
         "whiteout 不得删除下层实体"
+    );
+}
+
+/// 时间戳写回: `fs_utimensat` / inode `set_times` 更新 upper 节点, `fs_stat` 可观测;
+/// 含 UTIME_OMIT (`u64::MAX`) 语义与属主/特权判据 (非属主且无特权 → PermissionDenied).
+#[test]
+fn overlay_utimensat_writes_times_with_owner_check() {
+    let _guard = OVERLAY_TEST_LOCK.lock().unwrap();
+    ensure_overlay_ready();
+
+    let name = "utimensat_case.txt";
+    create_lower_file(name, b"times-content");
+
+    let overlay = overlay_fs();
+    let path = format!("/{name}");
+
+    // 写打开触发 copy_up, 使文件进入 upper (时间戳写回作用于 upper 节点)
+    let inode = overlay
+        .fs_open(&path, O_WRONLY, PWM)
+        .expect("copy_up 失败");
+    inode.write(0, b"times-content", PWM).expect("写入失败");
+
+    // 1. 路径级 fs_utimensat: 非 OMIT 字段更新, fs_stat 可观测
+    const ATIME: u64 = 1000;
+    const MTIME: u64 = 2000;
+    overlay
+        .fs_utimensat(&path, ATIME, MTIME, PWM)
+        .expect("属主 utimensat 应成功");
+    let st = overlay.fs_stat(&path, PWM).expect("stat 失败");
+    assert_eq!(st.atime, ATIME, "atime 应写回");
+    assert_eq!(st.mtime, MTIME, "mtime 应写回");
+
+    // 2. UTIME_OMIT: u64::MAX 字段保持原值, 另一字段照常更新
+    overlay
+        .fs_utimensat(&path, u64::MAX, MTIME + 5, PWM)
+        .expect("OMIT atime 应成功");
+    let st = overlay.fs_stat(&path, PWM).expect("stat 失败");
+    assert_eq!(st.atime, ATIME, "OMIT atime 应保持原值");
+    assert_eq!(st.mtime, MTIME + 5, "mtime 应照常更新");
+
+    // 3. inode 级 set_times (OverlayFsInode) 亦写回 upper 节点
+    inode
+        .set_times(ATIME + 10, MTIME + 10, PWM)
+        .expect("inode 级 set_times 应成功");
+    let st = overlay.fs_stat(&path, PWM).expect("stat 失败");
+    assert_eq!(st.atime, ATIME + 10, "inode 级 set_times 应写回 atime");
+    assert_eq!(st.mtime, MTIME + 10, "inode 级 set_times 应写回 mtime");
+
+    // 4. 属主判据: 未注册非零 pwm (特权级 0xFF, fail-closed) 改他人文件时间戳被拒
+    const OTHER_PWM: u64 = 42;
+    assert_eq!(
+        overlay
+            .fs_utimensat(&path, ATIME + 1, MTIME + 1, OTHER_PWM)
+            .unwrap_err(),
+        KernelError::PermissionDenied,
+        "非属主且无特权应被拒"
+    );
+    // 拒绝后时间戳保持不变
+    let st = overlay.fs_stat(&path, PWM).expect("stat 失败");
+    assert_eq!(st.atime, ATIME + 10, "被拒后 atime 应不变");
+    assert_eq!(st.mtime, MTIME + 10, "被拒后 mtime 应不变");
+}
+
+/// `fs_utimensat` 层级路由: lower-only 文件只读拒改, whiteout / 不存在路径报
+/// FileNotFound.
+#[test]
+fn overlay_utimensat_layer_routing() {
+    let _guard = OVERLAY_TEST_LOCK.lock().unwrap();
+    ensure_overlay_ready();
+
+    let overlay = overlay_fs();
+
+    // 1. lower-only 文件: 只读直通, 时间戳不可改 (metadata copy-up 未实装 → 显式拒绝)
+    let name = "lower_only_utimensat.txt";
+    create_lower_file(name, b"lower");
+    assert_eq!(
+        overlay
+            .fs_utimensat(&format!("/{name}"), 1, 1, PWM)
+            .unwrap_err(),
+        KernelError::ReadOnlyFilesystem,
+        "lower-only 文件时间戳不可改"
+    );
+
+    // 2. 两层皆无: FileNotFound
+    assert_eq!(
+        overlay
+            .fs_utimensat("/no_such_utimensat.txt", 1, 1, PWM)
+            .unwrap_err(),
+        KernelError::FileNotFound,
+        "不存在路径应报 FileNotFound"
+    );
+
+    // 3. whiteout 遮蔽路径 (已删除): 视为不存在
+    let gone = "whiteout_utimensat.txt";
+    create_lower_file(gone, b"gone");
+    overlay
+        .fs_unlink(&format!("/{gone}"), PWM)
+        .expect("unlink 失败");
+    assert_eq!(
+        overlay
+            .fs_utimensat(&format!("/{gone}"), 1, 1, PWM)
+            .unwrap_err(),
+        KernelError::FileNotFound,
+        "whiteout 遮蔽路径应报 FileNotFound"
     );
 }

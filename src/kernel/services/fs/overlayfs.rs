@@ -419,10 +419,17 @@ impl Inode for OverlayFsInode {
         self.file_type == 1
     }
 
-    fn set_times(&self, _atime: u64, _mtime: u64, _pwm: u64) -> KernelResult<()> {
-        // OverlayFS: 委托给下层文件系统
-        // 未来可实现 copy-up + 时间戳更新 (登记分册 9 B09-10)
-        Ok(())
+    fn set_times(&self, atime: u64, mtime: u64, pwm: u64) -> KernelResult<()> {
+        // OverlayFS: 时间戳写回 upperdir 对应节点 (属主/特权判据由
+        // `RamFsData::set_times` 在锁域内完成, 与 chmod/chown 同源)。
+        let mut fs = OVERLAY_FS.lock();
+        fs.ensure_mounted()?;
+        let rc = fs.upper_data.set_times(self.node_id, atime, mtime, pwm);
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(KernelError::from_i32(-rc))
+        }
     }
 
     fn node_id(&self) -> u32 {
@@ -462,6 +469,11 @@ impl Inode for OverlayLowerInode {
     }
 
     fn truncate(&self, _size: u64, _pwm: u64) -> KernelResult<()> {
+        Err(KernelError::ReadOnlyFilesystem)
+    }
+
+    fn set_times(&self, _atime: u64, _mtime: u64, _pwm: u64) -> KernelResult<()> {
+        // 只读下层代理: 时间戳写回下层需 metadata copy-up (未实装), 显式拒绝.
         Err(KernelError::ReadOnlyFilesystem)
     }
 
@@ -666,6 +678,28 @@ impl FileSystem for OverlayFsFileSystem {
         _pwm: u64,
     ) -> KernelResult<()> {
         Err(KernelError::ReadOnlyFilesystem)
+    }
+
+    fn fs_utimensat(&self, rel_path: &str, atime: u64, mtime: u64, pwm: u64) -> KernelResult<()> {
+        let mut fs = OVERLAY_FS.lock();
+        fs.ensure_mounted()?;
+
+        // 层级路由: upper 命中 → 写 upper 节点; whiteout / 两层皆无 → 不存在;
+        // 仅存于 lower → 只读下层不可写时间戳 (metadata copy-up 未实装, 显式拒绝)。
+        let entry = fs.resolve_layer(rel_path, pwm);
+        match entry.upper_inode {
+            Some(node_id) => {
+                let rc = fs.upper_data.set_times(node_id, atime, mtime, pwm);
+                if rc == 0 {
+                    Ok(())
+                } else {
+                    Err(KernelError::from_i32(-rc))
+                }
+            }
+            None if entry.is_whiteout => Err(KernelError::FileNotFound),
+            None if entry.lower_inode.is_some() => Err(KernelError::ReadOnlyFilesystem),
+            None => Err(KernelError::FileNotFound),
+        }
     }
 
     fn fs_mkdir(&self, rel_path: &str, pwm: u64) -> KernelResult<()> {
