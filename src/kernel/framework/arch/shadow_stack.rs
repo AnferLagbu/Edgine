@@ -205,6 +205,41 @@ impl CetSubsystem {
     )]
     /// 检测 CPU CET 能力
     fn detect_capabilities(&self) -> CetCapabilities {
+        #[cfg(target_arch = "x86_64")]
+        {
+            // CPUID.07H.0 功能位: ECX[7]=CET_IBT, ECX[20]=CET_SS, EDX[14]=WRSS
+            let ecx = Self::cpuid_07_ecx();
+            let edx = Self::cpuid_07_edx();
+            Self::decode_cpuid_caps(ecx, edx)
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            // aarch64: 检查 ID_AA64ISAR1_EL1 的 PAC/BTI 位
+            // 简化: QEMU virt 默认支持 PAC
+            CetCapabilities {
+                shadow_stack: true, // PAC 作为等价
+                ibt: true,          // BTI 作为等价
+                wrss: false,
+                shadow_stack_enabled: false,
+                ibt_enabled: false,
+            }
+        }
+    }
+
+    /// 由 CPUID.07H:ECX/EDX 解码 CET 能力 (纯函数, 可单测)。
+    ///
+    /// Intel SDM 规范 (CPUID.07H.0 结构化扩展功能位):
+    /// - `ECX[7]`  = CET_IBT (间接分支跟踪 Indirect Branch Tracking)
+    /// - `ECX[20]` = CET_SS (影子栈 Shadow Stack)
+    /// - `EDX[14]` = WRSS (用户态影子栈写 User-mode Write to Shadow Stack)
+    ///
+    /// # 回归约束
+    /// 旧实现误用 `ECX[6]` (PREFETCHWT1) 判 shadow_stack, 会把含 PREFETCHWT1
+    /// 但无 CET 的 CPU 误判为支持 → 触发 `CR4.CET` 写入 #GP (boot 崩溃)。
+    /// 本函数是 `enable_kernel_shadow_stack` 写 CR4 前的唯一判定依据。
+    #[cfg(target_arch = "x86_64")]
+    fn decode_cpuid_caps(ecx: u32, edx: u32) -> CetCapabilities {
         let mut caps = CetCapabilities {
             shadow_stack: false,
             ibt: false,
@@ -212,28 +247,11 @@ impl CetSubsystem {
             shadow_stack_enabled: false,
             ibt_enabled: false,
         };
-
-        #[cfg(target_arch = "x86_64")]
-        {
-            // 检查 CPUID.07h:ECX[7] = CET_IBT, CPUID.07h:ECX[6] = CET_SHSTK
-            let ecx = Self::cpuid_07_ecx();
-            caps.ibt = (ecx >> 7) & 1 == 1;
-            caps.shadow_stack = (ecx >> 6) & 1 == 1;
-            if caps.shadow_stack {
-                // 检查 CPUID.07h:EDX[0] = WRSS
-                let edx = Self::cpuid_07_edx();
-                caps.wrss = edx & 1 == 1;
-            }
+        caps.ibt = (ecx >> 7) & 1 == 1;
+        caps.shadow_stack = (ecx >> 20) & 1 == 1;
+        if caps.shadow_stack {
+            caps.wrss = (edx >> 14) & 1 == 1;
         }
-
-        #[cfg(target_arch = "aarch64")]
-        {
-            // aarch64: 检查 ID_AA64ISAR1_EL1 的 PAC/BTI 位
-            // 简化: QEMU virt 默认支持 PAC
-            caps.shadow_stack = true; // PAC 作为等价
-            caps.ibt = true; // BTI 作为等价
-        }
-
         caps
     }
 
@@ -294,15 +312,17 @@ impl CetSubsystem {
         }
     }
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
     /// 为 CPU 分配内核 Shadow Stack
     pub fn alloc_kernel_shadow_stack(&self, cpu_id: u32) -> Option<u64> {
-        // 分配 Shadow Stack 内存 (简化: 使用物理页)
-        // 当前: 仅记录描述符, 不分配实际内存
-        let ss = ShadowStack::new(0, SHADOW_STACK_DEFAULT_SIZE as u64);
+        // 分配 Shadow Stack 物理页 (与 `create_user_shadow_stack` 同机制,
+        // 经 PMM 分配后映射到内核高半区)。
+        let pages_needed =
+            (SHADOW_STACK_DEFAULT_SIZE + SHADOW_STACK_PAGE_SIZE - 1) / SHADOW_STACK_PAGE_SIZE;
+        let phys_addr = crate::framework::mm::pmm_alloc_pages_phys(pages_needed)?;
+        let virt_addr = phys_addr.as_u64() + crate::framework::mm::KERNEL_BASE;
+
+        let ss = ShadowStack::new(virt_addr, SHADOW_STACK_DEFAULT_SIZE as u64);
+        ss.activate();
         let ssp = ss.get_ssp();
         let mut stacks = self.kernel_shadow_stacks.lock();
         if (cpu_id as usize) >= stacks.len() {
@@ -533,9 +553,9 @@ impl CetSubsystem {
 
     #[cfg(target_arch = "x86_64")]
     fn try_write_cr4(value: u64) -> bool {
-        // SAFETY: 写入 CR4 可能触发 #GP 如果位不被支持
-        // 使用 #GP 捕获来检测支持
-        // 简化: 直接尝试, 失败则回退
+        // SAFETY: 写入 CR4 前已由 `decode_cpuid_caps` 经 CPUID (ECX[20]=CET_SS)
+        // 确认硬件支持, 此处为最佳努力写入; 若固件/虚拟化与 CPUID 不一致仍
+        // 触发 #GP, 属硬件一致性异常, 不由本函数捕获 (会落入 IDT #GP 处理).
         unsafe { core::arch::asm!("mov cr4, {}", in(reg) value, options(nomem, nostack)) };
         true // 如果执行到这里说明成功
     }
@@ -611,5 +631,38 @@ pub extern "C" fn sys_cet(cmd: u64, a1: u64, _a2: u64) -> i64 {
             i64::from(cet_is_initialized())
         }
         _ => -(38i64), // ENOSYS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// CPUID 位解码 (仅 x86_64): ECX[20]=CET_SS, EDX[14]=WRSS, ECX[7]=CET_IBT。
+    ///
+    /// 回归: 旧实现误用 `ECX[6]` (PREFETCHWT1) 判 shadow_stack, 会把含
+    /// PREFETCHWT1 但无 CET 的 CPU 误判为支持 → `CR4.CET` 写入 #GP (boot 崩溃)。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn decode_cpuid_caps_spec_bits() {
+        // ECX[6]=1 (PREFETCHWT1) 但 ECX[20]=0: 不得判定为 shadow_stack 支持
+        let no_cet = CetSubsystem::decode_cpuid_caps(1 << 6, 0);
+        assert!(
+            !no_cet.shadow_stack,
+            "ECX[6] 是 PREFETCHWT1, 不得误判为 CET_SS"
+        );
+        assert!(!no_cet.ibt, "ECX[6] 不得误判为 CET_IBT");
+
+        // ECX[20]=1: CET_SS 支持; EDX[14]=1: WRSS
+        let cet = CetSubsystem::decode_cpuid_caps(1 << 20, 1 << 14);
+        assert!(cet.shadow_stack, "ECX[20] = CET_SS 应置位");
+        assert!(cet.wrss, "EDX[14] = WRSS 应置位 (CET_SS 下有效)");
+        assert!(!cet.ibt, "ECX[7] 未置位时 IBT 应为 false");
+
+        // ECX[7]=1: CET_IBT, 与 shadow_stack 独立
+        let ibt = CetSubsystem::decode_cpuid_caps(1 << 7, 0);
+        assert!(ibt.ibt, "ECX[7] = CET_IBT 应置位");
+        assert!(!ibt.shadow_stack, "IBT 独立于 CET_SS");
+        assert!(!ibt.wrss, "无 CET_SS 时 WRSS 应保持 false");
     }
 }

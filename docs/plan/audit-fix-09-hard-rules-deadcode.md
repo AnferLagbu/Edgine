@@ -343,9 +343,9 @@
 **TRACK- 追踪规划（23 项）**：
 - syscall/types.rs（7 项）：getitimer/setitimer/clone(线程创建)/hardlink/symlink/fchown/times——POSIX 兼容必需（mremap 90BFB0 已过期 → 删除，不入清单）
 - iouring.rs（4 项）：8B9CBC(VFS fd 集成)/9CADCD(网络异步)/ADBECDE(超时)/BECFEF(缓冲/文件注册)
-- ipc/signal.rs（4 项）：48CC21/614BD5/F806F4/3A9016（信号分发/blocked 位图）
+- ipc/signal.rs（4 项）：48CC21/614BD5/F806F4/3A9016（信号分发/blocked 位图）——**2026-09-27 已核实登记闭合**：机制在 framework 端到端实现——`rt_sigaction`→`set_sigaction`（处理注册）、`rt_sigprocmask`→`set_blocked_mask`/`sanitize_blocked_mask`（blocked 位图）、`kill`→`do_signal_send`（pending）、`do_signal_deliver` 分发尊重 `pending & ~blocked`。services/ipc/signal.rs 的 register/block/unblock/dispatch 为失联遗留桩（仅被 framework/ipc 测试引用），另行登记观察
 - uefi.rs（2 项）：4D5E78(EFI 表解析)/5E6F89(SetTime)——**2026-09-27 已实装**（T6 驱动面批：`parse_system_table` 签名校验 + 提取运行时/引导服务/配置表入口 + fail-closed；`set_time` epoch 基准使 `get_time` 反映设定值；`EfiTime::from_unix_ns` 逆运算；内联单测 4 项含合成系统表往返验证）
-- shadow_stack.rs（2 项）：4C9A12(PMM 物理页)/6E7C34(#GP 检测)
+- shadow_stack.rs（2 项）：4C9A12(PMM 物理页)/6E7C34(#GP 检测)——**2026-09-27 已实装修复**（T6 核实批：① 6E7C34 `detect_capabilities` CPUID 位修正——旧用 `ECX[6]`(PREFETCHWT1) 误判 CET_SS，会致 `CR4.CET` 写入 #GP boot 崩溃；改 `ECX[20]`=CET_SS、`EDX[14]`=WRSS，抽取 `decode_cpuid_caps` 纯函数可单测；② 4C9A12 `alloc_kernel_shadow_stack` 补 PMM 物理页分配（同 `create_user_shadow_stack` 机制）；③ `try_write_cr4` 注释订正——检测职责归 CPUID，非 #GP 捕获）
 - idt/safety.rs（1 项）：2B3C56(CPUID 完整解析)
 - power.rs（2 项）：6F7A9A(S3 挂起)/7A3B01(调频 MSR)——**2026-09-27 调频 MSR 已实装**（T6 驱动面批：`set_freq` 软件表更新后经 `apply_hw_freq` 写 `IA32_PERF_CTL`，x86_64 cfg 门控 + SIMPLIFIED 比率编码标注，aarch64/host-test no-op，软件表保持权威）；**S3 挂起转专项登记**（真实 S3 需 ACPI 唤醒向量 FACS + 实模式唤醒桩机械，现有 `arch_suspend_to_ram` halt 循环为有意安全回退）
 - tickless.rs（1 项）：3C4D67(hrtimer 集成)
