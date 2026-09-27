@@ -5,13 +5,22 @@
 use crate::framework::fs::KernelError;
 use crate::framework::fs::ramfs::RamFsDirEntry;
 use crate::framework::sync::IrqSpinLock as Mutex;
+use crate::services::fs::vfs_manager::VFS_MANAGER;
 use crate::services::fs::vfs_types::{
-    FileSystem, KernelResult, VFS_MAX_NAME, VfsDirEntry, VfsSeekWhence, VfsStat,
+    FileSystem, KernelResult, VFS_MAX_NAME, VfsDirEntry, VfsFileType, VfsSeekWhence, VfsStat,
 };
 use alloc::string::String;
 
 /// whiteout 文件标记 (文件名以 "." 开头表示已删除)
 const WHITEOUT_PREFIX: u8 = b'.';
+
+/// copy_up 分块复制块大小 — 用栈缓冲逐块搬运, 避免申请大块临时内存。
+const COPY_UP_CHUNK: usize = 4096;
+
+/// 写意图 open 标志掩码 (Linux 原生 flags: `O_WRONLY|O_RDWR|O_TRUNC|O_APPEND`)。
+///
+/// 命中即触发 copy_up; 仅以 `O_RDONLY` 打开时保持只读直通下层。
+const WRITE_INTENT_MASK: u32 = 0x0001 | 0x0002 | 0x0200 | 0x0400;
 
 /// 拆分路径为 (父目录, 名称) — 与 `ramfs::fs_mkdir` 同构。
 ///
@@ -24,6 +33,23 @@ fn split_parent_name(path: &str) -> (&str, &str) {
             (&path[..pos], &path[pos + 1..])
         }
     })
+}
+
+/// 在父目录路径下拼接子项, 返回形如 `/b` 或 `/a/b` 的绝对路径。
+///
+/// `parent_path` 取自 `split_parent_name`, 取值恒为 `/` 或以非 `/` 结尾的
+/// 绝对路径, 故无需处理尾部斜杠。
+fn join_child(parent_path: &str, name: &str) -> String {
+    if parent_path == "/" {
+        let mut p = String::from("/");
+        p.push_str(name);
+        p
+    } else {
+        let mut p = String::from(parent_path);
+        p.push('/');
+        p.push_str(name);
+        p
+    }
 }
 
 /// overlayfs 目录项
@@ -104,33 +130,99 @@ impl OverlayFsData {
         }
     }
 
+    /// 判定 upperdir 父目录下是否存在 `.<name>` whiteout 文件。
+    ///
+    /// whiteout 以 ".<原名>" 命名, 命中的路径在 merged 视图中视为已删除。
+    fn upper_has_whiteout(&self, parent_path: &str, name: &str) -> bool {
+        let mut whiteout_name = String::from(char::from(WHITEOUT_PREFIX));
+        whiteout_name.push_str(name);
+        let whiteout_path = join_child(parent_path, &whiteout_name);
+        match self.upper_data.resolve_path(&whiteout_path) {
+            Some(node_id) => self.upper_data.nodes[node_id as usize].used,
+            None => false,
+        }
+    }
+
+    /// 将 merged 相对路径映射为 lowerdir 的绝对路径。
+    ///
+    /// `lower_path` 为 lowerdir 挂载点 (如 `/lower`); `rel_path` 取自 VFS 相对
+    /// 路径 (如 `/a/b`)。返回形如 `/lower/a/b` 的绝对路径, 根路径返回挂载点本身。
+    fn lower_full_path(&self, rel_path: &str) -> String {
+        let rel = rel_path.trim_start_matches('/');
+        if rel.is_empty() {
+            return String::from(self.lower_path.as_str());
+        }
+        let mut full = String::from(self.lower_path.as_str());
+        full.push('/');
+        full.push_str(rel);
+        full
+    }
+
+    /// 定位 lowerdir 中的目标文件, 返回 (下层 FileSystem, 该挂载下的相对路径)。
+    ///
+    /// lowerdir 必须是真实挂载 (ramfs/tmpfs) 方可解析; 未挂载或注册为
+    /// 无 trait object 的旧式 FS 时返回 `None`。
+    fn lower_target(&self, rel_path: &str) -> Option<(&'static dyn FileSystem, String)> {
+        let lower_full = self.lower_full_path(rel_path);
+        let (mount_idx, _fs_type, fs) = VFS_MANAGER.resolve_mount_fs(&lower_full)?;
+        let fs = fs?;
+        let rel = VFS_MANAGER.get_relative_path(&lower_full, mount_idx);
+        Some((fs, String::from(rel)))
+    }
+
     /// 解析路径，确定文件来自哪个层
-    pub fn resolve_layer(&self, path: &str) -> OverlayEntry {
-        let (_, name) = split_parent_name(path);
-        // 1. 检查 upperdir
+    ///
+    /// 优先级: upperdir 命中 > upperdir whiteout 标记 > lowerdir 命中 > 未命中。
+    /// whiteout 命中表示该下层文件已被删除, 调用方应按 `FileNotFound` 处理。
+    pub fn resolve_layer(&self, path: &str, pwm: u64) -> OverlayEntry {
+        let (parent_path, name) = split_parent_name(path);
+
+        // 1. upperdir 命中 — 反映上层真实文件 (未命中再判定 whiteout。
+        //    被删除文件本身上层不存在, 仅留有 ".<name>" 兄弟节点)。
         if let Some(node_id) = self.upper_data.resolve_path(path) {
             let node = &self.upper_data.nodes[node_id as usize];
             if node.used {
-                // whiteout 判定: 只看文件名是否以 "." 开头, 而非整段路径。
-                let is_whiteout = name.starts_with(char::from(WHITEOUT_PREFIX));
                 return OverlayEntry {
                     name: String::from(name),
                     file_type: node.file_type,
                     in_upper: true,
-                    is_whiteout,
+                    is_whiteout: name.starts_with(char::from(WHITEOUT_PREFIX)),
                     lower_inode: None,
                     upper_inode: Some(node_id),
                 };
             }
         }
 
-        // 2. 检查 lowerdir (通过 VFS 接口)
-        // 注意: lowerdir 是只读的，需要通过 VFS 读取
-        // SIMPLIFIED: lowerdir 查询未接入 (需经 VFS_MANAGER 读下层挂载); 影响面 =
-        // merged 视图暂不反映下层文件; 待 copy_up 实装 (O-2) 时按挂载表补齐.
+        // 2. whiteout 判定 — upperdir 父目录下存在 ".<name>" 即视为已删除。
+        if self.upper_has_whiteout(parent_path, name) {
+            return OverlayEntry {
+                name: String::from(name),
+                file_type: 0,
+                in_upper: false,
+                is_whiteout: true,
+                lower_inode: None,
+                upper_inode: None,
+            };
+        }
+
+        // 3. lowerdir 命中 — 经 VFS_MANAGER 只读查询下层挂载。
+        if let Some((lower_fs, lower_rel)) = self.lower_target(path) {
+            if let Ok(st) = lower_fs.fs_stat(&lower_rel, pwm) {
+                return OverlayEntry {
+                    name: String::from(name),
+                    file_type: st.file_type,
+                    in_upper: false,
+                    is_whiteout: false,
+                    lower_inode: Some(st.node_id),
+                    upper_inode: None,
+                };
+            }
+        }
+
+        // 4. 未命中 — 两层均无此路径。
         OverlayEntry {
             name: String::from(name),
-            file_type: 0, // 默认文件
+            file_type: 0,
             in_upper: false,
             is_whiteout: false,
             lower_inode: None,
@@ -140,28 +232,80 @@ impl OverlayFsData {
 
     /// copy_up: 将文件从 lowerdir 复制到 upperdir
     ///
+    /// 幂等: upperdir 已存在同名文件时直接返回其节点号。仅支持普通文件
+    /// (目录递归复制未实装)。内容以 `COPY_UP_CHUNK` 为块用栈缓冲搬运, 避免
+    /// 申请大块临时内存; 复制完成后同步下层权限位与所有者。
+    ///
     /// # Errors
     ///
-    /// 当前为 O-2 占位实现, 恒返回 `KernelError::NotSupported`;
-    /// 待 O-2 实装后, lowerdir 缺失或下层读取失败时返回对应 `KernelError`。
-    pub fn copy_up(&mut self, path: &str) -> Result<u32, KernelError> {
-        // 1. 检查 upperdir 是否已存在
+    /// - 两层均无此路径时返回 `KernelError::FileNotFound`;
+    /// - 下层打开/读取失败时透传对应 `KernelError`;
+    /// - 目标非普通文件, 或 upperdir 缺失其父目录链时返回 `KernelError::NotSupported`;
+    /// - upperdir 空间不足时返回 `KernelError::NoSpace`。
+    pub fn copy_up(&mut self, path: &str, pwm: u64) -> Result<u32, KernelError> {
+        // 1. 幂等守卫: upperdir 已存在则直接返回。
         if let Some(node_id) = self.upper_data.resolve_path(path) {
-            let node = &self.upper_data.nodes[node_id as usize];
-            if node.used {
+            if self.upper_data.nodes[node_id as usize].used {
                 return Ok(node_id);
             }
         }
 
-        // 2. 从 lowerdir 读取文件内容
-        // 注意: 需要通过 VFS 读取 lowerdir 的文件
-        // 这里简化处理，实际需要调用 lowerdir 的 FileSystem trait
+        // 2. 定位并打开只读下层文件。
+        let (lower_fs, lower_rel) = self.lower_target(path).ok_or(KernelError::FileNotFound)?;
+        let lower_inode = lower_fs.fs_open(&lower_rel, 0, pwm)?;
 
-        // 3. 在 upperdir 创建新文件
-        // 4. 复制文件内容
-        // 5. 复制文件属性
+        // 3. 仅普通文件可拷贝。
+        // SIMPLIFIED: 目录/符号链接/设备的 copy_up 未实装 (目录需递归复制子树);
+        //            影响面 = 仅普通文件支持写打开; 待后续按需扩展目录复制.
+        let stat = lower_inode.stat(pwm)?;
+        if stat.file_type != VfsFileType::File.as_u8() {
+            return Err(KernelError::NotSupported);
+        }
 
-        Err(KernelError::NotSupported)
+        // 4. 在 upperdir 创建同名文件。父目录链必须已存在于 upperdir。
+        let (parent_path, name) = split_parent_name(path);
+        if self.upper_data.resolve_path(parent_path).is_none() {
+            // SIMPLIFIED: 目录 copy_up 未实装 — upperdir 缺失父目录链时无法落盘;
+            //            影响面 = 嵌套于纯下层目录的文件暂不支持写打开.
+            return Err(KernelError::NotSupported);
+        }
+        let new_node = self
+            .upper_data
+            .create_file(parent_path, name, pwm)
+            .ok_or(KernelError::NoSpace)?;
+
+        // 5. 分块复制内容 (4 KiB 栈缓冲)。
+        let size = u64::from(stat.size);
+        let mut offset = 0u64;
+        let mut buf = [0u8; COPY_UP_CHUNK];
+        while offset < size {
+            let want = core::cmp::min(COPY_UP_CHUNK as u64, size - offset) as usize;
+            let read = lower_inode.read(offset, &mut buf[..want], pwm)?;
+            if read == 0 {
+                break;
+            }
+            let mut write_off = offset;
+            let written = self
+                .upper_data
+                .write(new_node, &mut write_off, &buf[..read], pwm);
+            if written < 0 {
+                return Err(KernelError::PermissionDenied);
+            }
+            if written as usize != read {
+                return Err(KernelError::NoSpace);
+            }
+            offset += read as u64;
+        }
+
+        // 6. 复制文件属性 (权限位 / 所有者 / 组), 与下层保持一致。
+        {
+            let node = &mut self.upper_data.nodes[new_node as usize];
+            node.perm = stat.perm;
+            node.owner_pwm = stat.owner_pwm;
+            node.group_pwm = stat.group_pwm;
+        }
+
+        Ok(new_node)
     }
 
     /// 创建 whiteout 文件 (标记删除)
@@ -171,6 +315,9 @@ impl OverlayFsData {
     /// 当 upperdir 无法分配新节点 (空间不足) 时返回 `KernelError::NoSpace`。
     pub fn create_whiteout(&mut self, path: &str) -> Result<u32, KernelError> {
         // whiteout 是上层父目录下名为 ".<原名>" 的空文件。
+        // SIMPLIFIED: upperdir 父目录若仅存在于 lowerdir, 则无法创建 whiteout
+        //            (需目录 copy-up); 影响面 = 该类路径的删除会退化为 NoSpace;
+        //            待目录 copy-up 实装后补齐.
         let (parent_path, name) = split_parent_name(path);
         let mut whiteout_name = String::from(char::from(WHITEOUT_PREFIX));
         whiteout_name.push_str(name);
@@ -287,6 +434,62 @@ impl Inode for OverlayFsInode {
     }
 }
 
+// ============================================================================
+// OverlayLowerInode — 只读下层 Inode 代理
+// ============================================================================
+
+/// 只读下层 Inode 代理 — 包装 lowerdir 挂载的真实 inode。
+///
+/// 当 merged 视图中的文件仅存在于 lowerdir 且以只读方式打开时, 由本类型
+/// 直通下层 inode 完成读/属性/寻址, 不触碰 upperdir; 任何写操作显式返回
+/// `ReadOnlyFilesystem`。写打开应改走 copy_up 提升为 `OverlayFsInode`。
+struct OverlayLowerInode {
+    /// 下层挂载的真实 inode (经 `FileSystem::fs_open` 取得)
+    inner: alloc::sync::Arc<dyn Inode>,
+}
+
+impl Inode for OverlayLowerInode {
+    fn read(&self, offset: u64, buf: &mut [u8], pwm: u64) -> KernelResult<usize> {
+        self.inner.read(offset, buf, pwm)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8], _pwm: u64) -> KernelResult<usize> {
+        Err(KernelError::ReadOnlyFilesystem)
+    }
+
+    fn stat(&self, pwm: u64) -> KernelResult<VfsStat> {
+        self.inner.stat(pwm)
+    }
+
+    fn truncate(&self, _size: u64, _pwm: u64) -> KernelResult<()> {
+        Err(KernelError::ReadOnlyFilesystem)
+    }
+
+    fn seek(&self, offset: i64, whence: VfsSeekWhence, current_offset: u64) -> KernelResult<u64> {
+        self.inner.seek(offset, whence, current_offset)
+    }
+
+    fn is_dir(&self) -> bool {
+        self.inner.is_dir()
+    }
+
+    fn readdir(&self, offset: u64) -> KernelResult<(String, VfsFileType, bool)> {
+        self.inner.readdir(offset)
+    }
+
+    fn node_id(&self) -> u32 {
+        self.inner.node_id()
+    }
+
+    fn mount_idx(&self) -> u32 {
+        self.inner.mount_idx()
+    }
+
+    fn pread_inode(&self, offset: u64, buf: &mut [u8], pwm: u64) -> KernelResult<usize> {
+        self.inner.pread_inode(offset, buf, pwm)
+    }
+}
+
 /// overlayfs FileSystem trait 实现
 pub struct OverlayFsFileSystem;
 
@@ -325,31 +528,54 @@ impl FileSystem for OverlayFsFileSystem {
         &self,
         rel_path: &str,
         flags: u32,
-        _pwm: u64,
+        pwm: u64,
     ) -> KernelResult<alloc::sync::Arc<dyn crate::services::fs::inode::Inode>> {
         let mut fs = OVERLAY_FS.lock();
         fs.ensure_mounted()?;
 
-        let entry = fs.resolve_layer(rel_path);
+        let entry = fs.resolve_layer(rel_path, pwm);
 
         if entry.is_whiteout {
             return Err(KernelError::FileNotFound);
         }
 
-        if !entry.in_upper && (flags & 0x0003 != 0) {
-            fs.copy_up(rel_path)?;
-        }
-
+        // upper 命中: 直接返回上层 inode (读写皆走 upper).
         if entry.in_upper {
             let node_id = entry.upper_inode.unwrap_or(0);
-            Ok(alloc::sync::Arc::new(OverlayFsInode::new(
+            return Ok(alloc::sync::Arc::new(OverlayFsInode::new(
                 node_id,
                 0,
                 entry.file_type,
-            )))
-        } else {
-            Err(KernelError::NotSupported)
+            )));
         }
+
+        // 两层皆未命中.
+        if entry.lower_inode.is_none() {
+            return Err(KernelError::FileNotFound);
+        }
+
+        // 写意图: 触发 copy_up, 之后读写均作用于 upper 新节点.
+        // SIMPLIFIED: 写意图掩码沿用 Linux 原生 flags 编码 (RDONLY=0, WRONLY=1, RDWR=2,
+        //            CREAT=0x40, TRUNC=0x200, APPEND=0x400); 影响面 = 仅按 syscall 路径
+        //            传入的 flags 判定; 待统一 flags 编码后收敛.
+        let write_intent = flags & WRITE_INTENT_MASK != 0;
+        if write_intent {
+            if entry.file_type == VfsFileType::Dir.as_u8() {
+                // 目录不支持写打开 (无 IsADirectory 变体, 以 InvalidArgument 表达).
+                return Err(KernelError::InvalidArgument);
+            }
+            let node_id = fs.copy_up(rel_path, pwm)?;
+            return Ok(alloc::sync::Arc::new(OverlayFsInode::new(
+                node_id,
+                0,
+                entry.file_type,
+            )));
+        }
+
+        // 只读: 直通下层, 包装为只读 inode (不产生 upper 副本).
+        let (lower_fs, lower_rel) = fs.lower_target(rel_path).ok_or(KernelError::FileNotFound)?;
+        let inner = lower_fs.fs_open(&lower_rel, flags, pwm)?;
+        Ok(alloc::sync::Arc::new(OverlayLowerInode { inner }))
     }
 
     fn fs_close(&self, _handle: u32) -> KernelResult<()> {
@@ -384,12 +610,12 @@ impl FileSystem for OverlayFsFileSystem {
         }
     }
 
-    fn fs_stat(&self, rel_path: &str, _pwm: u64) -> KernelResult<VfsStat> {
+    fn fs_stat(&self, rel_path: &str, pwm: u64) -> KernelResult<VfsStat> {
         let fs = OVERLAY_FS.lock();
         fs.ensure_mounted()?;
 
         // 解析路径，获取文件属性
-        let entry = fs.resolve_layer(rel_path);
+        let entry = fs.resolve_layer(rel_path, pwm);
 
         if entry.is_whiteout {
             return Err(KernelError::FileNotFound);
@@ -418,9 +644,13 @@ impl FileSystem for OverlayFsFileSystem {
                 file_type: node.file_type,
                 sensitivity: 0,
             })
+        } else if entry.lower_inode.is_some() {
+            // 只命中 lowerdir: 经 VFS_MANAGER 委托下层 fs_stat.
+            let (lower_fs, lower_rel) =
+                fs.lower_target(rel_path).ok_or(KernelError::FileNotFound)?;
+            lower_fs.fs_stat(&lower_rel, pwm)
         } else {
-            // 从 lowerdir 获取属性 (需要通过 VFS)
-            Err(KernelError::NotSupported)
+            Err(KernelError::FileNotFound)
         }
     }
 
@@ -459,20 +689,31 @@ impl FileSystem for OverlayFsFileSystem {
         let mut fs = OVERLAY_FS.lock();
         fs.ensure_mounted()?;
 
-        // 检查文件是否在 lowerdir
-        let entry = fs.resolve_layer(rel_path);
-        if !entry.in_upper {
-            // 文件在 lowerdir，需要创建 whiteout
-            fs.create_whiteout(rel_path)?;
-            return Ok(());
+        let entry = fs.resolve_layer(rel_path, pwm);
+        // whiteout 命中 = 该路径已在 merged 视图被删除; 两层皆无 = 本就不存在.
+        if entry.is_whiteout || (!entry.in_upper && entry.lower_inode.is_none()) {
+            return Err(KernelError::FileNotFound);
         }
 
-        // 文件在 upperdir，直接删除
-        let result = fs.upper_data.unlink(rel_path, pwm);
-        if result == 0 {
+        if entry.in_upper {
+            // 文件在 upperdir，直接删除.
+            let result = fs.upper_data.unlink(rel_path, pwm);
+            if result != 0 {
+                return Err(KernelError::FileNotFound);
+            }
+            // upper 删除后若下层仍有同名副本, 必须补 whiteout 遮蔽,
+            // 否则 merged 视图会重新暴露被删的下层文件.
+            let lower_has_same = fs
+                .lower_target(rel_path)
+                .is_some_and(|(lower_fs, lower_rel)| lower_fs.fs_stat(&lower_rel, pwm).is_ok());
+            if lower_has_same {
+                fs.create_whiteout(rel_path)?;
+            }
             Ok(())
         } else {
-            Err(KernelError::FileNotFound)
+            // 文件仅在 lowerdir，创建 whiteout 遮蔽.
+            fs.create_whiteout(rel_path)?;
+            Ok(())
         }
     }
 
