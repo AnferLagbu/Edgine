@@ -230,11 +230,12 @@ impl TicklessSubsystem {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
-    /// 获取下一个定时器到期时间
+    /// 获取下一个定时器到期时间 (绝对纳秒, 单调时钟)
+    ///
+    /// 委托 hrtimer 子系统查询最早到期定时器; `0` 表示无待触发定时器
+    /// (进入 tickless 后无限期停 tick, 等外部/设备中断唤醒)。
     fn get_next_timer_expiry(&self, _cpu_id: u32) -> u64 {
-        // 查询 hrtimer 子系统的下一个到期时间
-        // 简化: 返回 0 (无定时器)
-        0
+        super::hrtimer::hrtimer_next_expiry().unwrap_or(0)
     }
 
     /// 设置 Per-CPU 模式
@@ -304,9 +305,13 @@ impl TicklessSubsystem {
     // 定时器编程 (架构相关)
     // ========================================================================
 
-    /// 读取当前时钟 (ns)
+    /// 读取当前时钟 (ns, 与 hrtimer 同源)
+    ///
+    /// hrtimer 到期时间为校准时钟 (TSC/CNTPCT) 上的绝对纳秒; tickless 的
+    /// 到期判断 (`next_expiry > now_ns`) 必须与 hrtimer 用同一时钟, 否则
+    /// 粗粒度 tick 时钟会误判到期/未到期。
     fn read_clock_ns() -> u64 {
-        crate::framework::timer::tick::ticks_to_ns(crate::framework::timer::tick::get_ticks())
+        super::hrtimer::hrtimer_clock_read()
     }
 
     /// 编程 one-shot 定时器
@@ -450,5 +455,50 @@ pub extern "C" fn sys_tickless(cmd: u64, a1: u64, a2: u64) -> i64 {
             i64::from(tickless_is_initialized())
         }
         _ => -(38i64), // ENOSYS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tickless 状态机 + hrtimer 接线 (host 可测的稳定态部分)。
+    ///
+    /// 正面路径 (有定时器时返回其到期时间) 依赖全局 hrtimer 队列, 与
+    /// `hrtimer::tests` 的 `hrtimer_init()` 清理存在跨模块并发竞争, 故本测试
+    /// 只覆盖稳定态: 空队列 enter 返回 0 / tick 停复 / 统计计数。
+    /// hrtimer 到期查询的正面路径由 `hrtimer::tests::test_queue_operations`
+    /// (kernel_test/QEMU) 覆盖。
+    #[test]
+    fn tickless_state_machine_and_hrtimer_wiring() {
+        super::super::hrtimer::hrtimer_init();
+        let tl = tickless_subsystem();
+        tl.init(1);
+
+        // 默认 NO_HZ_IDLE (全局模式)
+        assert_eq!(tl.get_global_mode(), TicklessMode::NoHzIdle);
+
+        // 空队列 (hrtimer_init 后无定时器): enter 返回 0, 进入 tickless
+        let exp = tl.enter_tickless(0);
+        assert_eq!(exp, 0, "空队列应返回 0 (无限期停 tick)");
+        let (enter1, exit1, _) = tl.get_cpu_stats(0).expect("cpu0 统计");
+        assert_eq!(enter1, 1, "enter 计数 +1");
+
+        // exit: 恢复周期 tick, 计数 +1, 空闲时间累计 (>= 0)
+        tl.exit_tickless(0);
+        let (enter2, exit2, idle_ns) = tl.get_cpu_stats(0).expect("cpu0 统计");
+        assert_eq!(enter2, 1, "enter 计数不变");
+        assert_eq!(exit2, exit1 + 1, "exit 计数 +1");
+        assert!(idle_ns >= 0, "空闲时间非负");
+
+        // 再次进入/退出: 状态机可重复
+        tl.enter_tickless(0);
+        tl.exit_tickless(0);
+        let (enter3, exit3, _) = tl.get_cpu_stats(0).expect("cpu0 统计");
+        assert_eq!(enter3, 2, "再次进入计数 +1");
+        assert_eq!(exit3, exit2 + 1, "再次退出计数 +1");
+
+        // 清理: 队列保持空 (避免污染其他 hrtimer 测试)
+        super::super::hrtimer::hrtimer_init();
     }
 }

@@ -348,7 +348,7 @@
 - shadow_stack.rs（2 项）：4C9A12(PMM 物理页)/6E7C34(#GP 检测)——**2026-09-27 已实装修复**（T6 核实批：① 6E7C34 `detect_capabilities` CPUID 位修正——旧用 `ECX[6]`(PREFETCHWT1) 误判 CET_SS，会致 `CR4.CET` 写入 #GP boot 崩溃；改 `ECX[20]`=CET_SS、`EDX[14]`=WRSS，抽取 `decode_cpuid_caps` 纯函数可单测；② 4C9A12 `alloc_kernel_shadow_stack` 补 PMM 物理页分配（同 `create_user_shadow_stack` 机制）；③ `try_write_cr4` 注释订正——检测职责归 CPUID，非 #GP 捕获）
 - idt/safety.rs（1 项）：2B3C56(CPUID 完整解析)
 - power.rs（2 项）：6F7A9A(S3 挂起)/7A3B01(调频 MSR)——**2026-09-27 调频 MSR 已实装**（T6 驱动面批：`set_freq` 软件表更新后经 `apply_hw_freq` 写 `IA32_PERF_CTL`，x86_64 cfg 门控 + SIMPLIFIED 比率编码标注，aarch64/host-test no-op，软件表保持权威）；**S3 挂起转专项登记**（真实 S3 需 ACPI 唤醒向量 FACS + 实模式唤醒桩机械，现有 `arch_suspend_to_ram` halt 循环为有意安全回退）
-- tickless.rs（1 项）：3C4D67(hrtimer 集成)
+- tickless.rs（1 项）：3C4D67(hrtimer 集成)——**2026-09-27 已实装**（`get_next_timer_expiry` 委托 `hrtimer_next_expiry()` 查询最早到期定时器，消除返回 0 的占位；`read_clock_ns` 改与 hrtimer 同源 `hrtimer_clock_read()` 保证到期判断时钟一致；host 状态机测试含 enter/exit 计数与空闲时间累计。注：enter/exit_tickless 与 pm_idle 均未接线到调度 idle 循环（idle_entry 为裸 sti;hlt），调度侧集成留待专项）
 
 **普通 TODO（10 项，内核需要的功能缺口）**：
 - oomd.rs:94（OOM killer 实际发送 SIGKILL，安全关键）/ memfd.rs:60/77（per-process fd 表 + CLOEXEC）/ xhci.rs:670（Event Ring 处理——**2026-09-27 转专项登记**：驱动尚无 Event Ring 基础设施（ERST/ERDP/ring 分配全缺，代码注释明示留 Phase E 第 4 组），非填桩，需专项立项）/ net/init.rs:610（skb 投递到 smoltcp，依赖 NAPI）/ pidfd.rs:172（依赖 Task 4 OpenFile 系统）/ overlayfs.rs:205（copy-up 写时复制 + 时间戳更新，overlayfs 核心语义——**2026-09-27 copy-up 已实装**（commit `67673a10`，lowerdir 只读直通 + 写时复制 + whiteout），**时间戳更新已实装**（2026-09-27 S4 批：`RamFsData::set_times` + `OverlayFsInode::set_times` + `fs_utimensat` 层级路由，upper 写回/UTIME_OMIT/属主判据/lower-only 拒改））/ ext2·exfat·nestfs_inode 时间戳（3 处同类——**2026-09-09 判据确认内核需要**：POSIX stat mtime 语义完善项，低优先级）
