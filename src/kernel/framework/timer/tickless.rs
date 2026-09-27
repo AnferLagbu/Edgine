@@ -484,12 +484,11 @@ mod tests {
         let (enter1, exit1, _) = tl.get_cpu_stats(0).expect("cpu0 统计");
         assert_eq!(enter1, 1, "enter 计数 +1");
 
-        // exit: 恢复周期 tick, 计数 +1, 空闲时间累计 (>= 0)
+        // exit: 恢复周期 tick, 计数 +1, 空闲时间累计
         tl.exit_tickless(0);
-        let (enter2, exit2, idle_ns) = tl.get_cpu_stats(0).expect("cpu0 统计");
+        let (enter2, exit2, _idle_ns) = tl.get_cpu_stats(0).expect("cpu0 统计");
         assert_eq!(enter2, 1, "enter 计数不变");
         assert_eq!(exit2, exit1 + 1, "exit 计数 +1");
-        assert!(idle_ns >= 0, "空闲时间非负");
 
         // 再次进入/退出: 状态机可重复
         tl.enter_tickless(0);
