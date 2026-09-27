@@ -36,12 +36,12 @@
 - **B10-02. SAFETY 真实缺失 20 处逐点补注释**
   - 描述：工具修复后剩余 20 处真实缺失（`unsafe fn`/`unsafe extern "C"`/`ref` 函数指针/`block`），分布于 nvme、barrier、sleep、slab、vmm、scheduler、scheduler_ex、firmware、e1000、keyboard、exception、x86_64/mod、uart、psci 等。
   - 方案：在声明行正上方补真实 `// SAFETY:` 注释（声明级 + 内部 block 经窗口机制自动覆盖）；nvme 私有 `unsafe fn` 的 SAFETY 与其 pub 包装器 `# Safety` 契约一致。
-  - 状态：[X]（framework 全量 2042/2042 100% 覆盖，缺 SAFETY = 0）
+  - 状态：[X]（framework 全量 SAFETY 覆盖 100%，缺 SAFETY = 0）
 
 - **B10-03. TD-22 预存英文注释 67 处中文化（用户授权修复）**
   - 描述：`audit_comment_language.py` 报 67 处纯英文段落注释（34 文件），全部为历史遗留预存问题（HEAD 即存在，源自 DECISION-039 UserContext 迁移等），非本次引入，但阻断 audit.sh 与 CI comment-language job。
   - 方案：按用户 2026-08-30 授权，逐处翻译为中文化（技术术语保留英文 + 中文说明）；services 子树仅改注释不改逻辑。
-  - 状态：[X]（TD-22 0 违规；"扫描 735 个 .rs 文件, 0 违规"）
+  - 状态：[X]（TD-22 0 违规）
 
 - **B10-04. clippy pedantic 预存 26 处修复（用户授权修复）**
   - 描述：CI 标准 `-D clippy::pedantic -A cast_*` 报 26 处错误（ref_as_ptr×6、manual_let_else×5、missing_panics_doc×3、similar_names×3、used_underscore_binding×2、items_after_statements×2、large_stack_arrays、cast_lossless、unnecessary_wraps、trivially_copy_pass_by_ref、missing_errors_doc），14 文件，HEAD 即存在。
@@ -50,10 +50,10 @@
 
 ### 待办
 
-- **B10-05. build.sh forbidden asm 检查 fail-open 现状**
-  - 描述：`ci/build.sh` `check_forbidden_patterns` 对无 cfg 门控的裸 `asm!` 仅打印警告并 `return 0`（fail-open）；当前检出 1 处预存违规：`src/kernel/framework/driver/storage/mod.rs:207` `core::arch::asm!("pushfq; pop {0}")` 无 cfg 门控。
-  - 方案：**登记不实施**（DECISION-076 C 项）；storage/mod.rs:207 裸 asm 作为预存问题登记，后续独立处理。
-  - 状态：[]（登记，未实施）
+- **B10-05. build.sh forbidden asm 检查 fail-open → fail-closed**
+  - 描述：`ci/build.sh` `check_forbidden_patterns` 对无 cfg 门控的裸 `asm!` 原仅打印警告并 `return 0`（fail-open），无法阻断 CI；登记时的触发源（`framework/driver/storage/mod.rs` 处裸 `asm!("pushfq; pop {0}")`，无 cfg 门控）已在后续 storage 重构中消除。
+  - 方案：改为 **fail-closed**（DECISION-076 C 项修订）：检出无 cfg 门控裸 asm 时 `return 1` 阻断 CI；同时排除 cargo 构建产物 `target/`（vendored 依赖 `probe.rs` 非本仓库源码，否则误判）。
+  - 状态：[X]（实测：真实仓库 clean→RC=0；合成未门控 asm→RC=1；`./ci/build.sh all` 通过）
 
 ## 工程计划 C: 边界豁免与驱动/同步抽象
 
@@ -64,10 +64,10 @@
   - 方案：新增 `PROXY_ALLOWANCE` 白名单（文件 + 禁条组合，与 VENDORED_EXCLUDE 同机制精细豁免）。
   - 状态：[X]（boundary 审计 0 违规）
 
-- **B10-07. nvme×2 裸 asm hlt → framework::cpu::arch::halt**
-  - 描述：nvme.rs 两处 `core::arch::asm!("hlt")` 裸汇编在双架构驱动层，绕过架构抽象。
-  - 方案：替换为 `crate::kernel::framework::cpu::arch::halt()`（arch 抽象，双架构可用）。
-  - 状态：[X]（QEMU x86_64 启动验证通过，VFS ready + Ring 3 init）
+- **B10-07. storage 驱动裸 asm hlt → framework::cpu::arch::halt**
+  - 描述：storage 驱动内 `core::arch::asm!("hlt")` 裸汇编在双架构驱动层，绕过架构抽象。
+  - 方案：替换为 `crate::framework::cpu::arch::halt()`（arch 抽象，双架构可用）。
+  - 状态：[X]（替换点现位于 `services/driver/storage/mod.rs`；QEMU x86_64 启动验证通过，VFS ready + Ring 3 init）
 
 - **B10-08. audit_volatile_access.py pi_mutex 原子访问模式对齐**
   - 描述：`audit_volatile_access.py` 对 pi_mutex `effective_priority`（AtomicU32）按 `self.field.get()`（UnsafeCell 模式）检测，找不到访问而 fail-closed 误报。
@@ -76,9 +76,9 @@
 
 ## DECISION-076（2026-08-30）
 
-- **C 项：build.sh asm 检查 fail-closed 调整 — 登记不实施**
-  - 背景：`ci/build.sh check_forbidden_patterns` 对无 cfg 门控裸 asm 仅警告 fail-open；此前曾计划改 fail-closed（发现违规 return 1）。
-  - 决策：维持 fail-open，**登记不实施**（B10-05）。原因：当前 1 处预存裸 asm（storage/mod.rs:207）非本次工程引入，改 fail-closed 会无谓阻断现有 CI；作为预存问题登记，待独立处理。
+- **C 项：build.sh asm 检查 fail-closed 调整 — 已实施**
+  - 背景：`ci/build.sh check_forbidden_patterns` 对无 cfg 门控裸 asm 原仅警告 fail-open；曾计划改 fail-closed（发现违规 return 1）。
+  - 决策：改为 fail-closed（B10-05）。原登记时唯一预存裸 asm（storage/mod.rs:207）已在后续 storage 重构消除，改造不再阻断现有 CI；并排除构建产物 `target/`（vendored `probe.rs` 非源码）。
 - **TCB 占比搁置**
   - 背景：`audit_tcb_ratio.py` 显示 TCB 61.2%，超过软目标 30%。
   - 决策：延续 DECISION-070（不以 TCB 占比为指标，以可维护性为目标），本会话确认搁置，不为此引入架构改动。

@@ -2852,7 +2852,7 @@ match crate::kernel::services::proc::table::with(pid, |_p| ()) {
 
 - `tools/auto_replace_spin.py:70-72` 注释自承认函数有不严谨
 - `host-tests/benches/baseline.json` 11 项 `ns_per_op_frac=0.0` 已无效化
-- `ci/build.sh:82-132` `check_forbidden_patterns` 始终 return 0
+- `ci/build.sh:82-132` `check_forbidden_patterns` 始终 return 0 —— ⚠️ 已修复（B10-05 / DECISION-076 C 项：改为 fail-closed，检出无 cfg 门控裸 `asm!` 即 `return 1` 阻断 CI；并排除 `target/` 构建产物误报。函数现位于 `ci/build.sh:91-161`）
 - `tools/check_tcb.sh:86` 硬编码 20% 阈值（与 AGENTS.md 30% 不一致）
 - `Makefile:195` `$(shell find ...)` 每次 make 触发全量重编译
 

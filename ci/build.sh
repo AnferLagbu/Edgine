@@ -94,8 +94,10 @@ check_forbidden_patterns() {
     # 查找所有 asm! 调用（排除架构特定目录和文件）
     # 架构特定目录: arch/x86_64/, arch/aarch64/, boot/aarch64/
     # 这些目录内的代码天然受模块系统 cfg 约束
+    # 排除 cargo 构建产物 target/（vendored 依赖生成的 probe.rs 非本仓库源码）
     local matches
     matches=$(grep -rFn 'asm!("' src/kernel/ --include='*.rs' 2>/dev/null \
+        | grep -v '/target/' \
         | grep -v 'arch/x86_64/' \
         | grep -v 'arch/aarch64/' \
         | grep -v 'boot/aarch64/' \
@@ -155,8 +157,8 @@ check_forbidden_patterns() {
     done
     local count
     count=$(echo "$filtered" | grep -c '.' || true)
-    echo -e "${YELLOW}[CI] Forbidden patterns: found ${count} asm! calls without cfg gating (above). Verify cfg gating.${NC}"
-    return 0
+    echo -e "${RED}[CI] Forbidden patterns: found ${count} asm! calls without cfg gating (above). Verify cfg gating.${NC}"
+    return 1
 }
 
 # ============================================================================
