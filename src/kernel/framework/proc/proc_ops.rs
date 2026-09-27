@@ -650,6 +650,9 @@ pub extern "C" fn proc_exec_replace(path: *const u8, argv: *const *const u8, arg
     // 5a. I-48: 重置信号状态 (execve 后信号处理 = 默认)
     crate::framework::proc::reset_signal_state_on_exec(current_pid);
 
+    // 5b. POSIX close-on-exec: 关闭所有标记 CLOEXEC 的 fd
+    crate::framework::fs::vfs_close_cloexec_fds();
+
     // 6. 同步当前进程信息
     C_CURRENT_PROCESS.map_mut(|p| {
         p.pid = u64::from(current_pid);

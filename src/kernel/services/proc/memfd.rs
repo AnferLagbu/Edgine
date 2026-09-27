@@ -73,9 +73,10 @@ pub fn memfd_create_syscall(_name_ptr: u64, flags: u32) -> Result<usize, Errno> 
     // 设置 handle_id
     crate::framework::fs::api::vfs_set_fd_handle(fd as usize, handle_id);
 
-    // 如果设置了 CLOEXEC, 标记 fd
-    let _ = flags & MFD_CLOEXEC;
-    // fd CLOEXEC 标记待实现 (登记分册 9 B09-10)
+    // 若设置 MFD_CLOEXEC, 标记该 fd 在 execve 成功后由内核关闭
+    if flags & MFD_CLOEXEC != 0 {
+        crate::framework::fs::VFS_MANAGER.set_fd_cloexec(fd as usize, true);
+    }
 
     Ok(fd as usize)
 }

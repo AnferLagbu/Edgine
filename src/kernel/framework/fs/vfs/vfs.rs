@@ -99,6 +99,8 @@ pub struct VfsFile {
     /// `OpenFile` `handle_id` (POSIX 打开文件描述)
     /// `u32::MAX` 表示未使用 `OpenFile`
     pub handle_id: u32,
+    /// close-on-exec 标志: execve 成功时关闭该 fd
+    pub cloexec: bool,
 }
 
 impl Clone for VfsFile {
@@ -113,6 +115,7 @@ impl Clone for VfsFile {
             file_type: self.file_type,
             path: self.path,
             handle_id: self.handle_id,
+            cloexec: self.cloexec,
         }
     }
 }
@@ -129,6 +132,7 @@ impl VfsFile {
             file_type: 0,
             path: [0; VFS_MAX_PATH],
             handle_id: u32::MAX,
+            cloexec: false,
         }
     }
 
@@ -381,6 +385,7 @@ impl VfsManager {
             fd_table[idx].fd = 0;
             fd_table[idx].node_id = 0;
             fd_table[idx].offset = 0;
+            fd_table[idx].cloexec = false;
         }
     }
 
@@ -422,6 +427,23 @@ impl VfsManager {
         } else {
             None
         }
+    }
+
+    /// 设置 fd 的 close-on-exec 标志
+    ///
+    /// `memfd_create(MFD_CLOEXEC)` / `open(O_CLOEXEC)` / `dup3(O_CLOEXEC)`
+    /// 等路径设置; execve 成功时由 `vfs_close_cloexec_fds` 统一关闭。
+    pub fn set_fd_cloexec(&self, idx: usize, cloexec: bool) {
+        let mut fd_table = self.fd_table.lock();
+        if idx < VFS_MAX_FDS && fd_table[idx].used {
+            fd_table[idx].cloexec = cloexec;
+        }
+    }
+
+    /// 获取 fd 的 close-on-exec 标志
+    pub fn get_fd_cloexec(&self, idx: usize) -> bool {
+        let fd_table = self.fd_table.lock();
+        idx < VFS_MAX_FDS && fd_table[idx].used && fd_table[idx].cloexec
     }
 
     pub fn get_fd_info(&self, idx: usize) -> Option<(u32, u64, u64)> {
@@ -763,4 +785,51 @@ fn vfs_barrier_capture_cb() {
 fn vfs_barrier_rollback_cb() -> bool {
     VFS_MANAGER.restore_from_snapshot();
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// fd close-on-exec 标志的设置/查询/释放清零语义.
+    ///
+    /// 使用函数内 `static` 独立 fd 表实例, 避免污染 `VFS_MANAGER` 全局状态.
+    #[test]
+    fn test_fd_cloexec_set_get_and_clear_on_free() {
+        static MGR: VfsManager = VfsManager::new();
+
+        let idx = MGR.alloc_fd().expect("alloc_fd 应成功");
+        // 新分配 fd 默认不带 CLOEXEC
+        assert!(!MGR.get_fd_cloexec(idx));
+
+        // 置位后可查询
+        MGR.set_fd_cloexec(idx, true);
+        assert!(MGR.get_fd_cloexec(idx));
+
+        // 显式清零
+        MGR.set_fd_cloexec(idx, false);
+        assert!(!MGR.get_fd_cloexec(idx));
+
+        // 释放后标志必须清零 — 复用同一槽位的 fd 不应残留 CLOEXEC
+        MGR.set_fd_cloexec(idx, true);
+        MGR.free_fd(idx);
+        assert!(!MGR.get_fd_cloexec(idx));
+        let idx2 = MGR.alloc_fd().expect("复用槽位");
+        assert_eq!(idx2, idx, "first-fit 应复用刚释放的槽位");
+        assert!(!MGR.get_fd_cloexec(idx2), "复用槽位不得残留 CLOEXEC");
+    }
+
+    /// 未使用 fd 与越界索引的 set/get 均为安全空操作.
+    #[test]
+    fn test_fd_cloexec_unused_or_out_of_range_is_noop() {
+        static MGR: VfsManager = VfsManager::new();
+
+        // 未分配槽位: set 不生效
+        MGR.set_fd_cloexec(0, true);
+        assert!(!MGR.get_fd_cloexec(0));
+
+        // 越界索引: set/get 均安全返回
+        MGR.set_fd_cloexec(VFS_MAX_FDS + 1, true);
+        assert!(!MGR.get_fd_cloexec(VFS_MAX_FDS + 1));
+    }
 }

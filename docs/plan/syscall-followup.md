@@ -1435,6 +1435,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 **上报**：按批次「涉安全面」条款单列于此，**未自主施工**。
 **解锁条件**：per-process fd 表（B09-10）落地后，`FdTable` 的 cloexec 4 项即为该表的**自然消费方**（届时从「未来功能」转「接线」），并可在该结构上补 exec 关闭回归测试。
 **责任方**：reviewer（是否立项 per-process fd 表 + FD_CLOEXEC 语义）。
+**2026-09-27 部分兑现**：CLOEXEC 语义已在**现有全局 fd 表**上落地最小件（`VfsFile.cloexec` 位 + `set_fd_cloexec`/`get_fd_cloexec` + `vfs_close_cloexec_fds` 于 exec 关闭 + memfd `MFD_CLOEXEC` 置位）⇒ 本表「存储位」「exec 时关闭」两行缺口闭合；**「标记来源（fcntl/open）」「fd 命名空间（per-process）」两行仍缺**，详情见 **B-9.7**。
 
 **B-8.4 R1 清单数与算术闭合**
 
@@ -1511,6 +1512,18 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 - **引用错配（须 reviewer 裁定）**：B-8.3 与本文件多处以「**B09-10（per-process fd 表）**」指代该路线图，但 [audit-fix-09](./audit-fix-09-hard-rules-deadcode.md) 的 **B09-10 实为「28 处 TODO(TRACK-...) 注释」治理任务（已 `[X]`）**，非 per-process fd 表工程；`handle.rs:61` 注释同样挂在 B09-10 名下 ⇒ **标签错配**，三项引用需统一改指新编号。
 - **能力冗余线索（影响成本评估）**：[`services/fs/process_fd_table.rs`](../../src/kernel/services/fs/process_fd_table.rs) **已完整实装** Plan B per-process fd 表（`FdEntry.cloexec` 字段 + `alloc_fd` / `alloc_fd_at` / [`close_cloexec_fds`](../../src/kernel/services/fs/process_fd_table.rs#L174-L183) / [`clear_non_cloexec`](../../src/kernel/services/fs/process_fd_table.rs#L186-L195)），全库**零引用**（台账 B-5 记「Plan B 并行 FD 表整体未采用，删/接线待裁」）⇒ 解锁路径可能是「**启用既有 Plan B 表 + 接线**」而非「从零新建」，B-8.3 的修复成本评估应据此下修。
 - **本条即本项的独立登记条目**（编号待 reviewer 分配，命名建议「per-process fd 表 + FD_CLOEXEC 语义」；绑定关系＝B-8.3 解锁条件）。**未自行在 audit-fix-09 新增 B09-xx 编号**（属已登记路线图地基，按四类上报）。
+
+**B-9.7 CLOEXEC 最小件实装（2026-09-27，本项部分兑现；per-process fd 表部分转本条专项）**
+
+- **范围裁定**：B-8.3 的修复面跨「per-process fd 表 + `fcntl` F_SETFD + `VfsFile` 增字段 + exec 关闭遍历」四环。本批**只拆最小件**——在**现有全局 fd 表**（`VFS_MANAGER.fd_table`）上落地 CLOEXEC 语义（fd 表版本位 + 标记/查询 API + exec 关闭 + memfd 置位）；**per-process fd 表命名空间部分本批不改**（仍为全局 fd 命名空间），**留驻本条 B-9.5 专项**。
+- **已实装（4 处）**：
+  - **存储位**：[`VfsFile`](../../src/kernel/framework/fs/vfs/vfs.rs) 末字段 `pub cloexec: bool`，`Clone` / `const fn new()` / `free_fd` 重置三处同步；
+  - **标记/查询 API**：`VfsManager::set_fd_cloexec(idx, bool)` / `get_fd_cloexec(idx) -> bool`（越界/未分配安全空操作）；
+  - **exec 关闭**：新增 `vfs_close_cloexec_fds()`（[handle.rs](../../src/kernel/framework/fs/vfs/handle.rs)，**先收集再逐个 `vfs_close_internal`**，避免持 `fd_table` 锁递归自锁死），经 `framework/fs` 顶层 re-export（F2 合规），在 [`proc_exec_replace`](../../src/kernel/framework/proc/proc_ops.rs) 的 `reset_signal_state_on_exec` 之后接线；
+  - **标记来源（最小）**：[`memfd_create_syscall`](../../src/kernel/services/proc/memfd.rs) 依 `MFD_CLOEXEC` 置位（原「fd CLOEXEC 标记待实现」占位消除）。**`fcntl(F_SETFD, FD_CLOEXEC)` / `open(O_CLOEXEC)` / `dup3` / `pipe2` 的 CLOEXEC 仍为待扩展注释**（[framework/syscall/io.rs](../../src/kernel/framework/syscall/io.rs) / [services/fs/io.rs](../../src/kernel/services/fs/io.rs)），未在本批范围。
+- **测试**：内联单测 2 项（`fd_cloexec` 模块：置位/查询/清零/free 后清零/first-fit 复用不残留 + 未分配/越界安全空操作，函数内 `static VfsManager` 独立实例规避全局污染与栈溢出）；host 契约测试 4 项（[fd_cloexec_test.rs](../../host-tests/tests/fd_cloexec_test.rs)：先收集后关闭的顺序、顶层 re-export、exec 接线、memfd 置位）。
+- **仍留本条专项（per-process fd 表命名空间）**：全局 `VFS_MANAGER` 单例 + `next_fd` 计数器不改 ⇒ **fd 跨进程仍可见**（POSIX per-process 语义未隔离）；B-8.3 表「fd 命名空间」行与 B-8.2 的 `FdTable` 4 项（`get_handle_id`/`is_cloexec`/`set_cloexec`/`get_cloexec_fds`）仍待该专项落地；上文「能力冗余线索」的 Plan B `process_fd_table.rs` 仍为零引用（启用/接线待裁）。
+- **门槛**：`./ci/build.sh all` Passed 5 / Failed 0；clippy `-D warnings` 0 warning；`./ci/audit.sh quick` 全绿（经 `build.sh aarch64` 收尾以避 FP-06）；`make test-host` 全过；`make test-kernel-host` 828 passed / 0 failed；`audit_unwired_pub_fn.py` **HIGH=0**（CRITICAL=2 为既有 process_vm 待裁项；**该 2 项已于 B-10.12 实装核销 ⇒ 未接线 syscall 清零**）。
 
 **B-9.6 门槛（五条全量；日志 `build/log/yi_batch_c1_gates.log`，`RC=0`）**
 

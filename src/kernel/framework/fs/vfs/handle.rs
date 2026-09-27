@@ -159,6 +159,7 @@ pub fn vfs_close_internal(fd_idx: u32) -> i32 {
             fd_table[fd_idx_us].node_id = 0;
             fd_table[fd_idx_us].offset = 0;
             fd_table[fd_idx_us].handle_id = u32::MAX;
+            fd_table[fd_idx_us].cloexec = false;
             Some(snap)
         } else {
             None // 已关闭或未使用, 直接返回 0
@@ -187,6 +188,26 @@ pub fn vfs_close_internal(fd_idx: u32) -> i32 {
     // C1: fd 关闭 → 唤醒该 fd 注册的所有 epoll 等待者 (EPOLLHUP|EPOLLERR)
     fd_notify::notify_fd_close(fd_idx as i32);
     0
+}
+
+/// 关闭全部标记 CLOEXEC 的 fd — execve 成功路径调用 (POSIX close-on-exec)。
+///
+/// 带 `FD_CLOEXEC` 的 fd 在 exec 成功后关闭, 其余保留。
+/// 先收集 CLOEXEC fd 索引再逐个 `vfs_close_internal`, 避免持 `fd_table`
+/// 锁递归 (vfs_close_internal 内部会再次获取同一把锁 → 自锁死)。
+pub fn vfs_close_cloexec_fds() {
+    let targets: alloc::vec::Vec<u32> = {
+        let fd_table = VFS_MANAGER.fd_table.lock();
+        fd_table
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.used && f.cloexec)
+            .map(|(i, _)| i as u32)
+            .collect()
+    };
+    for fd in targets {
+        vfs_close_internal(fd);
+    }
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
