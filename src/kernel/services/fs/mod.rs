@@ -38,6 +38,8 @@ pub mod nestfs;
 pub mod open;
 /// 全局 OpenFile 表 (POSIX 打开文件描述)
 pub mod open_file_table;
+/// overlayfs 联合文件系统 (upperdir/lowerdir 合并视图)
+pub mod overlayfs;
 pub mod path;
 /// Per-process FD 表
 pub mod process_fd_table;
