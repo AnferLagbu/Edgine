@@ -648,7 +648,7 @@ T7 (预存登记)
 | **判据待补** | 族残缺 / 事实待核 | **补齐后定桶**；补不出即转「**完整性保留**」 |
 | **安全面待 T3** | 路径校验 / 常数时间比较等 | **留在待裁**，挂 T3 依赖并标注 |
 
-> **裁定四（T5 关闭验收标准，五条缺一不可）**：① **删候选桶清零**（试删通过提交 / 失败退桶）——**已达成**；② **待裁 47 项全部带三字段，无裸待裁**（**T5-B 已达成**：B-5 归零表，47 → 13 等路线图 + 32 判据待补定桶 + 2 安全面待 T3，逐项三字段齐备）；③ **桶数算术闭合且桶间转移路径可在台账明细逐项追**（438 → **437**；本轮 11 → 2 的 −9 逐项列于 A-5、2 → 0 的 −2 列于 A-2 / A-6、**47 → 2 的 −45 逐项列于 B-5.1 / B-5.2 / B-5.3**，桶效应见 B-5「桶数六次修订」）；④ **审计噪音治理落地**（裁定五，单开任务，**当前未落地** ⇒ 见 T5-C）；⑤ **文档同步**：R1 状态行 + 与 [audit-fix-09 D-4](audit-fix-09-hard-rules-deadcode.md) 的**双向引用**（**已达成**，见两处六次修订状态注）。
+> **裁定四（T5 关闭验收标准，五条缺一不可）**：① **删候选桶清零**（试删通过提交 / 失败退桶）——**已达成**；② **待裁 47 项全部带三字段，无裸待裁**（**T5-B 已达成**：B-5 归零表，47 → 13 等路线图 + 32 判据待补定桶 + 2 安全面待 T3，逐项三字段齐备）；③ **桶数算术闭合且桶间转移路径可在台账明细逐项追**（438 → **437**；本轮 11 → 2 的 −9 逐项列于 A-5、2 → 0 的 −2 列于 A-2 / A-6、**47 → 2 的 −45 逐项列于 B-5.1 / B-5.2 / B-5.3**，桶效应见 B-5「桶数六次修订」）；④ **审计噪音治理落地**（裁定五，单开任务，**当前未落地** ⇒ 见 T5-C）；⑤ **文档同步**：R1 状态行 + 与 [audit-fix-09 D-4](archive/audit-fix-09-hard-rules-deadcode.md) 的**双向引用**（**已达成**，见两处六次修订状态注）。
 
 > **裁定五（审计噪音治理——单开任务，最小形态）**：`scripts/audit_unwired_pub_fn.py`（R1）在 CI 反复报零引用 pub fn，T5 关闭后若不治理则**成果无法固化、清单必漂移**。裁定：给 R1 增加「已分类清单」数据源，**不新建独立文件**，清单以**台账内机器可读区块**承载——以 `audit-classified-begin` / `audit-classified-end` 两个 HTML 注释标记圈定（**实际区块见 B-6**）；审计脚本读该区块作为「已知分类」集合，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败视同未分类（仍报）；**只降噪不豁免**＝不改变「零引用」事实判定，只改变报告分级。定位＝**单开任务**，**不作为 T5 前置**（T5 可先完成甄别），但**是 T5 关闭条件之一**。
 
@@ -827,7 +827,7 @@ T7 (预存登记)
 
 | 路线图 | 登记处（核实结论） | 项（文件::符号） | 等待原因 | 解锁条件 | 责任方 |
 |---|---|---|---|---|---|
-| **CET 子系统**（Shadow Stack / IBT / PAC-BTI） | ① `src/kernel/framework/arch/shadow_stack.rs:26-31`——文件头「当前实现状态」自述未完成面（IBT 仅定义未启用、PAC/BTI 仅定义未启用）；② [audit-fix-09](audit-fix-09-hard-rules-deadcode.md) B09-10「16 处转 plan」含 shadow_stack PMM 物理页（TRACK-4C9A12）+ CR4 #GP 检测（TRACK-6E7C34）；③ [unresolved-issues-2026-08-09.md](unresolved-issues-2026-08-09.md) ISSUE-SRC-001 / ISSUE-SRC-018 | `arch/shadow_stack.rs::set_ssp` / `alloc_kernel_shadow_stack` / `configure_user_cet_msr` / `configure_interrupt_ssp_table` / `is_ssp_valid`（**5 项整组统一**） | CET 硬件面未完成：影子栈物理页分配、#GP 安全检测、中断 SSP 表 IDT 集成都未落地（函数族存在但无消费链路） | CET 路线图排期（ISSUE-SRC-001 + ISSUE-SRC-018 实装并接入 `cet_init`/IDT） | 用户（路线图排期） |
+| **CET 子系统**（Shadow Stack / IBT / PAC-BTI） | ① `src/kernel/framework/arch/shadow_stack.rs:26-31`——文件头「当前实现状态」自述未完成面（IBT 仅定义未启用、PAC/BTI 仅定义未启用）；② [audit-fix-09](archive/audit-fix-09-hard-rules-deadcode.md) B09-10「16 处转 plan」含 shadow_stack PMM 物理页（TRACK-4C9A12）+ CR4 #GP 检测（TRACK-6E7C34）；③ [unresolved-issues-2026-08-09.md](unresolved-issues-2026-08-09.md) ISSUE-SRC-001 / ISSUE-SRC-018 | `arch/shadow_stack.rs::set_ssp` / `alloc_kernel_shadow_stack` / `configure_user_cet_msr` / `configure_interrupt_ssp_table` / `is_ssp_valid`（**5 项整组统一**） | CET 硬件面未完成：影子栈物理页分配、#GP 安全检测、中断 SSP 表 IDT 集成都未落地（函数族存在但无消费链路） | CET 路线图排期（ISSUE-SRC-001 + ISSUE-SRC-018 实装并接入 `cet_init`/IDT） | 用户（路线图排期） |
 | **NUMA 子系统** | ① `src/kernel/framework/mm/numa.rs:1-10`——DECISION-J 归属反转记录（`NumaMempolicy` 被 framework proc/process 持有、`numa_init` 被 framework mm 调用 ⇒ 机制已实装）；② [archive/subsystem-bootstrap-sequence-2026-06.md](archive/subsystem-bootstrap-sequence-2026-06.md) D3（NumaNode/NumaTopology + 距离矩阵，**已归档快照**）；③ 本台账 T1 G4 记录（`mbind` / `set_mempolicy` 已接线 + `NumaPolicy::from_linux_mode`） | `mm/numa.rs::set_distance` / `best_alloc_node` / `nearest_free_node` / `contains_cpu` / `all_nodes`（**5 项整组统一**） | 拓扑/距离矩阵与跨节点分配策略**未接入 PMM 分配路径**（策略面已实装，消费面缺） | NUMA 分配策略集成排期（PMM 按节点分配 + SLIT 距离矩阵消费） | 用户（路线图排期） |
 | **PCID / INVPCID 优化** | ① `src/kernel/framework/mm/kpti.rs:23-31`——文件头「未完成」清单明载「**PCID/INVPCID 优化**：当前每次切换 CR3 都 TLB 全清，高频 syscall 性能损失 5-15%」；② [kpti-complete-project.md](kpti-complete-project.md)（活跃 KPTI 完整化工程 Phase 0-3） | `mm/kpti.rs::pcid_is_enabled`（1） | KPTI 完整化工程 Phase 2/3 未启动（PCID 化须待 `.text` 收窄与 USER_PML4 高半区复制移除后实施） | KPTI 完整化工程 Phase 2 排期（KPTI-07/KPTI-08） | 用户（工程排期） |
 | **IOMMU / VT-d（DMAR 消费）** | ① `AGENTS.md` §4.2 **I6**「外设 DMA 不可写入内核内存」＝全项目硬不变式（未落地即为欠账）；② [archive/framekernel-compliance.md](archive/framekernel-compliance.md) E8「IOMMU 不变式强制」；③ `src/kernel/framework/arch/x86_64/acpi.rs:783-884`——DMAR 表**已解析**入 `DMAR_DRHD_LIST` / `DMAR_HOST_ADDR_WIDTH`，**无任何消费方** | `arch/x86_64/acpi.rs::get_dmar_drhd_list` / `get_dmar_host_addr_width`（2） | DMAR 已解析但 IOMMU 重映射未实装 ⇒ DRHD 数据无消费链路（I6 强制未落地） | IOMMU/VT-d 集成排期（DRHD 消费 + DMA 重映射域，落地 I6） | 用户（路线图排期） |
@@ -1357,7 +1357,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 #### B-7. T5-C 关闭记录（裁定四「五条验收」核销）
 
-> 本段为 [audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md) B09-06 / B09-21 所引 **B-7** / **B-7.2** 的落点（此前该锚点缺失 ⇒ 已就地补建）。
+> 本段为 [audit-fix-09-hard-rules-deadcode.md](archive/audit-fix-09-hard-rules-deadcode.md) B09-06 / B09-21 所引 **B-7** / **B-7.2** 的落点（此前该锚点缺失 ⇒ 已就地补建）。
 
 | # | 验收条 | 状态 | 证据 |
 |---|---|---|---|
@@ -1365,7 +1365,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 | ② | 待裁 47 项全部带三字段、无裸待裁 | ✅ | **B-5** 归零表（13 等路线图 / 32 判据待补定桶 / 2 安全面待 T3） |
 | ③ | 桶数算术闭合 + 转移可逐项追 | ✅ | 6 次修订后 **437**（见 B-5）；**甲批 C-1 后 436**（见 **B-8.4**） |
 | ④ | 审计噪音治理落地 | ✅ | 见 **B-7.2** |
-| ⑤ | 文档同步：R1 状态行 + 与 audit-fix-09 **D-4** 双向引用 | ✅ | 本台账状态行 + **B-6** / **B-8** 与 [audit-fix-09](audit-fix-09-hard-rules-deadcode.md) B09-06 / B09-21 互引 |
+| ⑤ | 文档同步：R1 状态行 + 与 audit-fix-09 **D-4** 双向引用 | ✅ | 本台账状态行 + **B-6** / **B-8** 与 [audit-fix-09](archive/audit-fix-09-hard-rules-deadcode.md) B09-06 / B09-21 互引 |
 
 **B-7.1 T5 置 `[X]`**：五条全部达成 ⇒ 状态行 `- [X] T5`。**QEMU boot 通过**为该判定的硬闸门（本项改动为文档 + `set_fd` 接线，QEMU boot 与 kernel_test 均须实跑，见 B-8.5）。
 
@@ -1497,7 +1497,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 - **现状核实**：**未**存在以 per-process fd 表／FD_CLOEXEC 为题的**独立工程项**。仅有两处登记：
   - [unresolved-issues-2026-08-09.md](./unresolved-issues-2026-08-09.md) 的 `ISSUE-SRC-024`（memfd per-process fd 表）与 `ISSUE-SRC-028`（vfs/api.rs per-process fd 表）——**2026-08-09 快照 backlog**，非活看板；
   - 本台账 **B-8.3** 的「解锁条件 / 责任方」段。
-- **引用错配（须 reviewer 裁定）**：B-8.3 与本文件多处以「**B09-10（per-process fd 表）**」指代该路线图，但 [audit-fix-09](./audit-fix-09-hard-rules-deadcode.md) 的 **B09-10 实为「28 处 TODO(TRACK-...) 注释」治理任务（已 `[X]`）**，非 per-process fd 表工程；`handle.rs:61` 注释同样挂在 B09-10 名下 ⇒ **标签错配**，三项引用需统一改指新编号。
+- **引用错配（须 reviewer 裁定）**：B-8.3 与本文件多处以「**B09-10（per-process fd 表）**」指代该路线图，但 [audit-fix-09](./archive/audit-fix-09-hard-rules-deadcode.md) 的 **B09-10 实为「28 处 TODO(TRACK-...) 注释」治理任务（已 `[X]`）**，非 per-process fd 表工程；`handle.rs:61` 注释同样挂在 B09-10 名下 ⇒ **标签错配**，三项引用需统一改指新编号。
 - **能力冗余线索（影响成本评估）**：[`services/fs/process_fd_table.rs`](../../src/kernel/services/fs/process_fd_table.rs) **已完整实装** Plan B per-process fd 表（`FdEntry.cloexec` 字段 + `alloc_fd` / `alloc_fd_at` / [`close_cloexec_fds`](../../src/kernel/services/fs/process_fd_table.rs#L174-L183) / [`clear_non_cloexec`](../../src/kernel/services/fs/process_fd_table.rs#L186-L195)），全库**零引用**（台账 B-5 记「Plan B 并行 FD 表整体未采用，删/接线待裁」）⇒ 解锁路径可能是「**启用既有 Plan B 表 + 接线**」而非「从零新建」，B-8.3 的修复成本评估应据此下修。
 - **本条即本项的独立登记条目**（编号待 reviewer 分配，命名建议「per-process fd 表 + FD_CLOEXEC 语义」；绑定关系＝B-8.3 解锁条件）。**未自行在 audit-fix-09 新增 B09-xx 编号**（属已登记路线图地基，按四类上报）。
 - **2026-09-27 实施记录（本项已被用户裁定立项并落地）**：用户裁定「相对完整」「全量下沉 VFS 管理面」⇒ 本项由 reviewer 待裁转**实施完成**，详见 **B-11**。三处遗留随之收口：
@@ -1530,7 +1530,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 #### B-10. 分册 9 批次 2：R1 复查 8 项未分类甄别（4 项登记 + 4 项 TCB 上报）
 
-> 来源：[audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md) **B09-18** 2026-09-26 全量实测列出的「新增未分类 HIGH 8 项」（B-6 区块外）。
+> 来源：[audit-fix-09-hard-rules-deadcode.md](archive/audit-fix-09-hard-rules-deadcode.md) **B09-18** 2026-09-26 全量实测列出的「新增未分类 HIGH 8 项」（B-6 区块外）。
 > 本批**只做甄别与登记，不删任何代码**；涉 TCB 的 4 项按**裁定六**上报待裁、不自主处置。
 
 **B-10.1 逐项三档定性（引用计数口径同 R1 ＝ `rg -c -w`）**
@@ -1578,7 +1578,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 **B-10.6 R2 接线（分册 9 批次 3；R2 7 → 2 / B-6 移除 1 项 ⇒ `433`）**
 
-> 来源：[audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md) **B09-05**。R2 口径为「`types.rs` 声明 `SYS_*` 但 `services/syscall/dispatch.rs` / `framework/syscall/dispatch.rs` 文本未出现该常量名」⇒ 本轮 5 项以**接线 / 实装**消解（用户裁定：全部通过实现功能或修改代码解决）。
+> 来源：[audit-fix-09-hard-rules-deadcode.md](archive/audit-fix-09-hard-rules-deadcode.md) **B09-05**。R2 口径为「`types.rs` 声明 `SYS_*` 但 `services/syscall/dispatch.rs` / `framework/syscall/dispatch.rs` 文本未出现该常量名」⇒ 本轮 5 项以**接线 / 实装**消解（用户裁定：全部通过实现功能或修改代码解决）。
 
 | 项 | 类别 | 处置 | 落点 |
 |---|---|---|---|
@@ -1595,7 +1595,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 **B-10.7 R4 实装（分册 9 批次 4；R4 1 → 0 / B-6 区块不变 ⇒ `433`）**
 
-> 来源：[audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md) **B09-08**。R4 口径为「`mod.rs` / `api.rs` / `types.rs` 中 pub struct/enum 零跨文件引用且总引用 ≤ 1」⇒ 唯一项 `DomainFlags` 经用户裁定**实装**（非删除）消解。
+> 来源：[audit-fix-09-hard-rules-deadcode.md](archive/audit-fix-09-hard-rules-deadcode.md) **B09-08**。R4 口径为「`mod.rs` / `api.rs` / `types.rs` 中 pub struct/enum 零跨文件引用且总引用 ≤ 1」⇒ 唯一项 `DomainFlags` 经用户裁定**实装**（非删除）消解。
 
 | 项 | 类别 | 处置 | 落点 |
 |---|---|---|---|
@@ -1620,7 +1620,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 **B-10.9 项 5 批 B — B09-21 豁免面收窄（按文件名 → 按路径；+67 项）**
 
-> 来源：[audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md) **B09-21**。原 `EXEMPT_FILENAMES` **按文件名**豁免 ⇒ 全仓**任意同名文件**（`mod.rs` / `api.rs` / `types.rs` / `lib.rs` / `prelude.rs` / `dispatch.rs`）内的一切 `pub fn` 均被静默豁免，构成**结构性漏报面**。
+> 来源：[audit-fix-09-hard-rules-deadcode.md](archive/audit-fix-09-hard-rules-deadcode.md) **B09-21**。原 `EXEMPT_FILENAMES` **按文件名**豁免 ⇒ 全仓**任意同名文件**（`mod.rs` / `api.rs` / `types.rs` / `lib.rs` / `prelude.rs` / `dispatch.rs`）内的一切 `pub fn` 均被静默豁免，构成**结构性漏报面**。
 
 | 阶段 | 动作 | 实测 |
 |---|---|---|
@@ -1636,7 +1636,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 **B-10.10 项 2 档 1 — `kmalloc_slab.rs` 零引用孤岛整文件删除**
 
-> 来源：[audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md) **B09-21**（B-10.3 表中同项条目）。本轮经只读复核后按「三合一」判据**收窄删除面**，仅处置真孤岛。
+> 来源：[audit-fix-09-hard-rules-deadcode.md](archive/audit-fix-09-hard-rules-deadcode.md) **B09-21**（B-10.3 表中同项条目）。本轮经只读复核后按「三合一」判据**收窄删除面**，仅处置真孤岛。
 
 | 阶段 | 内容 | 实测 |
 |---|---|---|
@@ -1654,7 +1654,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 **B-10.11 项 5 批 C — 67 项逐项分流（21 项删除 / 46 项保留登记；496 → 475）**
 
-> 来源：[audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md) **B09-21**。批 B「豁免按文件名 → 按路径」收窄后，新暴露 67 项「零引用 pub fn」（批 B 前被文件名豁免静默吞掉，见 **B-10.9**）。本批按裁定「逐项分流」路径处置：先出逐项判定表，再施工。
+> 来源：[audit-fix-09-hard-rules-deadcode.md](archive/audit-fix-09-hard-rules-deadcode.md) **B09-21**。批 B「豁免按文件名 → 按路径」收窄后，新暴露 67 项「零引用 pub fn」（批 B 前被文件名豁免静默吞掉，见 **B-10.9**）。本批按裁定「逐项分流」路径处置：先出逐项判定表，再施工。
 
 **B-10.11.1 决定性约束 — 「内部化」路径技术上不可行（实测）**
 
@@ -1700,7 +1700,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 **B-10.12 process_vm_readv / process_vm_writev 实装（R2 2 → 0，未接线 syscall 首次清零；B-6 区块不变 ⇒ `475`）**
 
-> 来源：[audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md) **D-2**（列于下方「未实装 syscall 处置」）。**原裁定「不实装 · 上报」**（须 ptrace 级权限模型，属裁定六安全面），本轮经用户裁定改判**实装**，取**相对完整**路径（路径/边界/错误分支闭合 + 单测覆盖）。**本条核销**上列 B-9.7 / B-10.6 / B-10.8 / B-10.10 / B-10.11.5 各实测记录中「CRITICAL=2 为 R2 预存 `process_vm_*` 待裁项」的悬挂标记。
+> 来源：[audit-fix-09-hard-rules-deadcode.md](archive/audit-fix-09-hard-rules-deadcode.md) **D-2**（列于下方「未实装 syscall 处置」）。**原裁定「不实装 · 上报」**（须 ptrace 级权限模型，属裁定六安全面），本轮经用户裁定改判**实装**，取**相对完整**路径（路径/边界/错误分支闭合 + 单测覆盖）。**本条核销**上列 B-9.7 / B-10.6 / B-10.8 / B-10.10 / B-10.11.5 各实测记录中「CRITICAL=2 为 R2 预存 `process_vm_*` 待裁项」的悬挂标记。
 
 - **架构方向**：**不切 CR3**（KPTI 下以用户 CR3 执行内核代码不安全），改为逐页经 `translate_in_pml4` 把目标地址翻译为 `PhysAddr`，再取 **HHDM 别名**访问；HHDM 对用户页 PTE 的 U/S=0，故 SMAP 不拦截，无需 `smap_begin` 或异常恢复点。
 - **归属（§4.1 判据）**：机制（跨 CR3 页翻译 + 写权限位）留 framework，新增 safe 代理 [framework/mm/cross_process.rs](../../src/kernel/framework/mm/cross_process.rs)（`copy_from_user_in_mm` / `copy_to_user_in_mm`；逐页翻译 + `PageTranslation.writable` 写校验 + 3 处 `// SAFETY:` + 4 内联单测；经 [mm/api.rs](../../src/kernel/framework/mm/api.rs) 与 [mm/mod.rs](../../src/kernel/framework/mm/mod.rs) 顶层 re-export）；功能（iovec 解析 / 权限判定 / 分块拷贝 / 错误分支，**0 unsafe**）落 services 新建 [services/proc/process_vm.rs](../../src/kernel/services/proc/process_vm.rs)。
@@ -1723,7 +1723,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 - **获取路径**：新增 [`with_current_fd_table<F, R>`](../../src/kernel/framework/proc/proc_ops.rs)（取当前进程 fd 表并施加闭包），`framework/fs` 侧经此访问，**不新增 `fs → proc` 内部 use**（F2 合规）。
 - **落地面**：open / close / dup / dup2 / fcntl / read / write / lseek / readdir / truncate / fstat / fchmod / fchown / sendfile / epoll / poll / close_range / mmap / memfd 全接线 + fork / exec / exit 接线。
 - **退役**：全局 `VfsManager.fd_table`（含 `VfsFile.cloexec` 最小件、`set_fd_cloexec`/`get_fd_cloexec`）**删除**。
-- **排除面（用户裁定「只登记不处置」）**：另 6 套并行子系统 fd 表、`cwd`/`root`/`umask`、`CLONE_FILES` —— 登记入 [audit-fix-09](./audit-fix-09-hard-rules-deadcode.md) **D-10**，本批不动。
+- **排除面（用户裁定「只登记不处置」）**：另 6 套并行子系统 fd 表、`cwd`/`root`/`umask`、`CLONE_FILES` —— 登记入 [audit-fix-09](./archive/audit-fix-09-hard-rules-deadcode.md) **D-10**，本批不动。
 
 **B-11.2 CLOEXEC 全链路兑现（B-8.3 五环闭合）**
 

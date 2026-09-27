@@ -78,7 +78,7 @@ impl Inode for ExfatInode {
     // 伪装成功 (与 B1 同类"静默成功"风险) — 删覆写后落回 trait 默认
     // `Err(KernelError::NotSupported)`, 如实上报"不支持"。
     //
-    // exFAT 正式任务 (C1/T6-③; 登记 docs/plan/audit-fix-09-hard-rules-deadcode.md D-5)
+    // exFAT 正式任务 (C1/T6-③; 登记 docs/plan/archive/audit-fix-09-hard-rules-deadcode.md D-5)
     // 三项前置仍缺:
     //   1. 无目录项定位 — `ExfatFs::lookup_path` 只返回首簇号, 丢弃目录项
     //      所在扇区偏移, 无法回写条目 (exfat/read.rs);

@@ -4,7 +4,7 @@
 >
 > **目标**：使 IPI 在 2 核及以上（含 3/4 核）配置下**不崩溃、不挂死、且语义正确**——远程 TLB 失效带完成确认，被失效帧不得在确认前被重新分配。
 >
-> **来源**：分册 9 ledger 的 D-9-3 / D-9-5 登记项（[audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md)），因涉及协议设计与锁纪律变更，提升为独立工程。
+> **来源**：分册 9 ledger 的 D-9-3 / D-9-5 登记项（[audit-fix-09-hard-rules-deadcode.md](archive/audit-fix-09-hard-rules-deadcode.md)），因涉及协议设计与锁纪律变更，提升为独立工程。
 >
 > **关联**：D-9-3（`0xFD`/`0xFE` 无 IDT 门）/ D-9-5（跨核 TLB shootdown 门控首次生效）/ D-9-7（aarch64 SMP 不对称）/ D-8（TLB shootdown 锁序论证前提失实）。
 >
@@ -141,7 +141,7 @@
   - 描述：台账 D-9-3 / D-9-5 / D-9-7 与本工程状态需一致（§9.2）。
   - 方案：本工程完成后更新 D-9-3（`0xFD`/`0xFE` 门与处理程序已补）、D-9-5（跨核 shootdown 门控语义已复核，指向本文档）、D-9-7（aarch64 差异标注指向本文档 §5.3）；`docs/explain/` 如需描述 IPI 协议则用自由描述风格（禁用结构化字段）。
   - 状态：[X]
-  - 详情：台账 D-9-3 / D-9-5 / D-9-7 经核对**均已为 `[X]`**（[audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md)），三者详情均已写明「归属转移 —— 本项由 [tlb-shootdown-epoch.md](./tlb-shootdown-epoch.md) 承接」；D-9-3 详情并已回填本工程 §4 注入验证结论（「注入 1（前半）复验使 `test-smp` FAIL，判别力成立」）。本文件 §5.3 的 aarch64 不可运行验证标注即 D-9-7 的指向目标，双侧一致。
+  - 详情：台账 D-9-3 / D-9-5 / D-9-7 经核对**均已为 `[X]`**（[audit-fix-09-hard-rules-deadcode.md](archive/audit-fix-09-hard-rules-deadcode.md)），三者详情均已写明「归属转移 —— 本项由 [tlb-shootdown-epoch.md](./tlb-shootdown-epoch.md) 承接」；D-9-3 详情并已回填本工程 §4 注入验证结论（「注入 1（前半）复验使 `test-smp` FAIL，判别力成立」）。本文件 §5.3 的 aarch64 不可运行验证标注即 D-9-7 的指向目标，双侧一致。
 
 ## 4. 验证门槛（§2.3 五条底线 + 本工程附加项）
 
