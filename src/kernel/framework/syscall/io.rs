@@ -110,24 +110,55 @@ const F_SETFD: i32 = 2;
 const F_GETFL: i32 = 3;
 const F_SETFL: i32 = 4;
 
-#[expect(
-    clippy::match_same_arms,
-    reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-)]
+/// fd 级 close-on-exec 标志位 (F_GETFD/F_SETFD 的掩码, 与 POSIX `FD_CLOEXEC` 一致)
+const FD_CLOEXEC: u64 = 1;
+
 /// fcntl 系统调用
 pub fn sys_fcntl(fd: i32, cmd: i32, arg: u64) -> i64 {
     if fd < 0 {
         return Errno::EBADF.as_ret();
     }
     match cmd {
-        F_GETFD => 0,
-        F_SETFD => 0,
+        F_GETFD => {
+            // B-9.5/B-8.3: fd 级标志改源 per-process FdTable.cloexec (权威表);
+            // FD_CLOEXEC 为唯一 fd 级标志, 仅当 fd 已分配时返回, 否则 EBADF.
+            let result = crate::framework::proc::with_current_fd_table(|t| {
+                t.get_handle_id(fd as usize)?;
+                Some(if t.is_cloexec(fd as usize) {
+                    FD_CLOEXEC
+                } else {
+                    0
+                })
+            })
+            .flatten();
+            match result {
+                Some(bits) => bits as i64,
+                None => Errno::EBADF.as_ret(),
+            }
+        }
+        F_SETFD => {
+            // B-9.5/B-8.3: 写入 per-process FdTable.cloexec; fd 未分配返回 EBADF.
+            let result = crate::framework::proc::with_current_fd_table(|t| {
+                t.get_handle_id(fd as usize)?;
+                t.set_cloexec(fd as usize, (arg & FD_CLOEXEC) != 0);
+                Some(0)
+            })
+            .flatten();
+            match result {
+                Some(_) => 0,
+                None => Errno::EBADF.as_ret(),
+            }
+        }
         F_GETFL => {
-            let fd_table = crate::framework::fs::VFS_MANAGER.fd_table.lock();
-            if (fd as usize) < 256 && fd_table[fd as usize].used {
-                i64::from(fd_table[fd as usize].flags)
-            } else {
-                Errno::EBADF.as_ret()
+            // B-9.5: fd 元数据改源 OpenFile (per-process fd 表取 handle_id)
+            let Some(handle_id) = vfs_api::vfs_get_fd_handle(fd as usize) else {
+                return Errno::EBADF.as_ret();
+            };
+            match crate::framework::fs::OPEN_FILE_TABLE
+                .with_file(handle_id, vfs_api::OpenFile::get_flags)
+            {
+                Some(flags) => i64::from(flags),
+                None => Errno::EBADF.as_ret(),
             }
         }
         F_SETFL => 0,
@@ -199,25 +230,33 @@ fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> i64 {
         return Errno::EINVAL.as_ret();
     }
 
-    // 获取 fd 对应的 inode 号
+    // 获取 fd 对应的 inode 号 (B-9.5: per-process fd 表 → OpenFile)
     let ino = {
-        let fd_table = crate::framework::fs::VFS_MANAGER.fd_table.lock();
-        if (fd as usize) >= crate::framework::fs::VFS_MAX_FDS || !fd_table[fd as usize].used {
+        let Some(handle_id) = vfs_api::vfs_get_fd_handle(fd as usize) else {
             return Errno::EBADF.as_ret();
+        };
+        match crate::framework::fs::OPEN_FILE_TABLE
+            .with_file(handle_id, crate::framework::fs::OpenFile::inode_id)
+        {
+            Some(ino) => ino,
+            None => return Errno::EBADF.as_ret(),
         }
-        fd_table[fd as usize].node_id
     };
 
     // 计算 l_start (基于 l_whence)
     let start = match l_whence {
         0 => l_start as u64, // SEEK_SET
         1 => {
-            // SEEK_CUR: 当前 offset + l_start
-            let fd_table = crate::framework::fs::VFS_MANAGER.fd_table.lock();
-            if (fd as usize) >= crate::framework::fs::VFS_MAX_FDS {
+            // SEEK_CUR: 当前 offset + l_start (B-9.5: offset 源自共享 OpenFile)
+            let Some(handle_id) = vfs_api::vfs_get_fd_handle(fd as usize) else {
                 return Errno::EBADF.as_ret();
+            };
+            match crate::framework::fs::OPEN_FILE_TABLE
+                .with_file(handle_id, crate::framework::fs::OpenFile::get_offset)
+            {
+                Some(offset) => (offset as i64 + l_start) as u64,
+                None => return Errno::EBADF.as_ret(),
             }
-            (fd_table[fd as usize].offset as i64 + l_start) as u64
         }
         2 => {
             // SEEK_END: v1 简化, 不支持 (需要文件大小)

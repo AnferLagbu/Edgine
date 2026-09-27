@@ -46,18 +46,41 @@ fn test_vfs_resolve_mount() -> TestResult {
     TestResult::Pass
 }
 
-fn test_vfs_fd_alloc_free() -> TestResult {
-    let mgr = VfsManager::new();
-    let fd1 = mgr.alloc_fd();
-    check!(fd1.is_some(), "first alloc should succeed");
+/// per-process fd 表 (B-9.5): first-fit 分配 + close 后槽位复用 + dup 共享 handle
+fn test_fd_table_alloc_close() -> TestResult {
+    use crate::framework::proc::fd_table::FdTable;
 
-    let fd2 = mgr.alloc_fd();
+    let table = FdTable::new();
+    let fd1 = table.alloc_fd(7, false);
+    check!(fd1.is_some(), "first alloc should succeed");
+    let fd2 = table.alloc_fd(8, false);
     check!(fd2.is_some(), "second alloc should succeed");
     check!(fd1.unwrap() != fd2.unwrap(), "fds should be different");
+    check!(
+        table.get_handle_id(fd1.unwrap()) == Some(7)
+            && table.get_handle_id(fd2.unwrap()) == Some(8),
+        "本地 fd 应映射到各自 handle_id"
+    );
 
-    mgr.free_fd(fd1.unwrap());
-    let fd3 = mgr.alloc_fd();
-    check!(fd3.is_some(), "alloc after free should succeed");
+    // close 后槽位空闲, 下一次分配复用最小空闲槽位 (first-fit)
+    check!(
+        table.close_fd(fd1.unwrap()) == Some(7),
+        "close 应返回被关闭的 handle"
+    );
+    check!(
+        table.get_handle_id(fd1.unwrap()).is_none(),
+        "已关闭 fd 应无映射"
+    );
+    let fd3 = table.alloc_fd(9, false);
+    check!(fd3 == fd1, "first-fit 应复用刚释放的槽位");
+
+    // dup 语义: 两个本地 fd 共享同一 handle (offset 由 OpenFile 承载)
+    let dup_fd = table.alloc_fd(9, false);
+    check!(dup_fd.is_some(), "dup slot alloc 应成功");
+    check!(
+        table.get_handle_id(dup_fd.unwrap()) == table.get_handle_id(fd3.unwrap()),
+        "dup 出的两个 fd 应共享同一 handle"
+    );
     TestResult::Pass
 }
 
@@ -149,13 +172,48 @@ fn test_ramfs_fs_open_via_backend_hook() -> TestResult {
     TestResult::Pass
 }
 
+/// B-9.5: fd 分配已下沉到 per-process `FdTable` (`with_current_fd_table`),
+/// 依赖当前进程上下文。host 侧共享测试集无当前进程 ⇒ open 恒失败。
+///
+/// 本辅助临时安装一个当前进程 (含独立 FdTable), 执行闭包后无条件拆除现场
+/// (恢复调度器当前进程 → 摘表 → 释放描述符 → 回收 pid)。
+/// 安装/拆除模式参照 [test_proc.rs] 的 `test_fork_cow_failure_rolls_back`。
+fn with_temp_process<F: FnOnce() -> TestResult>(name: &str, f: F) -> TestResult {
+    use crate::framework::proc::raw;
+    use crate::framework::proc::{PROCESS_TABLE, SCHEDULER};
+
+    let Some(pid) = PROCESS_TABLE.allocate_pid() else {
+        return TestResult::Fail("临时进程: 无空闲 pid");
+    };
+    let proc_ptr = raw::alloc_process(pid, name, None);
+    if !PROCESS_TABLE.insert(proc_ptr) {
+        raw::drop_boxed_process(proc_ptr);
+        PROCESS_TABLE.free_pid(pid);
+        return TestResult::Fail("临时进程: 插入进程表失败");
+    }
+
+    let prev_current = SCHEDULER.current();
+    SCHEDULER.set_current(pid);
+
+    let result = f();
+
+    SCHEDULER.set_current(prev_current.unwrap_or(0));
+    let _ = PROCESS_TABLE.remove(pid);
+    raw::drop_boxed_process(proc_ptr);
+    PROCESS_TABLE.free_pid(pid);
+    result
+}
+
 /// T5 甲批 C-1 接线证据: 真实 open 路径 (`open_syscall` → `vfs_open` →
-/// `vfs_open_internal`) 必须把 fd 表元数据写全, 否则 `get_fd_info`
+/// `vfs_open_internal`) 必须把 fd 表元数据写全, 否则
 /// (flock 的 ino / mmap-by-fd 的 `fd_to_inode_id`) 恒得 0,
-/// `get_fd_mount_idx` 因 path 为空反查失败。
+/// 挂载点反查失败。
+///
+/// B-9.5: 元数据源已由全局 `VfsManager.fd_table` 改源为 per-process fd 表
+/// (fd → `OpenFileTable` handle) + `OpenFile` 自身元数据。
 fn test_open_populates_fd_metadata() -> TestResult {
     use crate::framework::fs::ramfs::{RAMFS_DATA, init as ramfs_init};
-    use crate::framework::fs::{VFS_MANAGER, api};
+    use crate::framework::fs::{OPEN_FILE_TABLE, api, vfs_get_fd_handle};
 
     crate::services::fs::init();
     ramfs_init();
@@ -164,32 +222,39 @@ fn test_open_populates_fd_metadata() -> TestResult {
     // boot / host 均已挂载 "/" 时返回负值, 忽略即可.
     let _ = api::vfs_mount_safe("/", "ramfs");
 
-    let created = {
-        let mut ramfs = RAMFS_DATA.lock();
-        ramfs.create_file("/", "fd_meta_t", 0)
-    };
-    let Some(node_id) = created else {
-        return TestResult::Fail("create_file 失败");
-    };
-    check!(node_id != 0, "inode 编号不应为 0 (0 是未填充哨兵)");
+    with_temp_process("fd-meta-t", || {
+        let created = {
+            let mut ramfs = RAMFS_DATA.lock();
+            ramfs.create_file("/", "fd_meta_t", 0)
+        };
+        let Some(node_id) = created else {
+            return TestResult::Fail("create_file 失败");
+        };
+        check!(node_id != 0, "inode 编号不应为 0 (0 是未填充哨兵)");
 
-    let fd = api::vfs_open_safe("/fd_meta_t", 0, 0);
-    check!(fd >= 0, "open /fd_meta_t 应成功");
+        let fd = api::vfs_open_safe("/fd_meta_t", 0, 0);
+        check!(fd >= 0, "open /fd_meta_t 应成功");
 
-    let Some((fd_node_id, _offset, _pwm)) = VFS_MANAGER.get_fd_info(fd as usize) else {
-        return TestResult::Fail("fd 表应含该 fd 条目");
-    };
-    check!(
-        fd_node_id == node_id,
-        "fd 表 node_id 应为真实 inode (元数据未接线时恒为 0)"
-    );
-    check!(
-        VFS_MANAGER.get_fd_mount_idx(fd as usize).is_some(),
-        "fd 表 path 应已填充, 可反查挂载点 (mmap-by-fd 依赖)"
-    );
+        let Some(handle_id) = vfs_get_fd_handle(fd as usize) else {
+            return TestResult::Fail("per-process fd 表应含该 fd 条目");
+        };
+        let Some((fd_node_id, fd_mount_idx)) =
+            OPEN_FILE_TABLE.with_file(handle_id, |of| (of.inode_id(), of.mount_idx()))
+        else {
+            return TestResult::Fail("OpenFile 表应含该 handle");
+        };
+        check!(
+            fd_node_id == node_id,
+            "fd 元数据 node_id 应为真实 inode (元数据未接线时恒为 0)"
+        );
+        check!(
+            usize::try_from(fd_mount_idx).is_ok(),
+            "fd 元数据应携带挂载点索引, 可反查 (mmap-by-fd 依赖)"
+        );
 
-    check!(api::vfs_close_safe(fd as u32) == 0, "close 应成功");
-    TestResult::Pass
+        check!(api::vfs_close_safe(fd as u32) == 0, "close 应成功");
+        TestResult::Pass
+    })
 }
 
 /// T5 乙批（C-1 证据补齐）: `set_fd` 接线的**下游链路**验证 —— 证明修的是下游
@@ -197,11 +262,11 @@ fn test_open_populates_fd_metadata() -> TestResult {
 ///
 /// 下游消费者: `services::mm::mmap::fd_to_inode_id` 是 `mmap_syscall` 文件映射
 /// 的**唯一** inode 来源, 取 0 时直接返回 `EBADF` (mmap.rs:134-137);
-/// `fd_to_mount_idx` 为其挂载点来源。二者均经 `VFS_MANAGER.get_fd_info` /
-/// `get_fd_mount_idx` 读本接线填充的同一行 fd 表条目。
+/// `fd_to_mount_idx` 为其挂载点来源。二者均经 per-process fd 表 (fd →
+/// `OpenFileTable` handle) 读 `OpenFile` 元数据。
 fn test_fd_to_inode_id_downstream() -> TestResult {
     use crate::framework::fs::ramfs::{RAMFS_DATA, init as ramfs_init};
-    use crate::framework::fs::{VFS_MANAGER, api};
+    use crate::framework::fs::{api, vfs_get_fd_handle};
     use crate::services::mm::mmap::{fd_to_inode_id, fd_to_mount_idx};
 
     crate::services::fs::init();
@@ -209,35 +274,37 @@ fn test_fd_to_inode_id_downstream() -> TestResult {
     // 真实挂载入口 (挂 trait object); 已挂载时返回负值, 忽略.
     let _ = api::vfs_mount_safe("/", "ramfs");
 
-    let created = {
-        let mut ramfs = RAMFS_DATA.lock();
-        ramfs.create_file("/", "fd_down_t", 0)
-    };
-    let Some(node_id) = created else {
-        return TestResult::Fail("create_file 失败");
-    };
-    check!(node_id != 0, "inode 编号不应为 0");
+    with_temp_process("fd-down-t", || {
+        let created = {
+            let mut ramfs = RAMFS_DATA.lock();
+            ramfs.create_file("/", "fd_down_t", 0)
+        };
+        let Some(node_id) = created else {
+            return TestResult::Fail("create_file 失败");
+        };
+        check!(node_id != 0, "inode 编号不应为 0");
 
-    let fd = api::vfs_open_safe("/fd_down_t", 0, 0);
-    check!(fd >= 0, "open /fd_down_t 应成功");
+        let fd = api::vfs_open_safe("/fd_down_t", 0, 0);
+        check!(fd >= 0, "open /fd_down_t 应成功");
 
-    // 下游消费者 1: mmap 文件映射的 inode 来源 — 未接线时恒 0 ⇒ mmap 恒 EBADF
-    check!(
-        fd_to_inode_id(fd) == node_id,
-        "fd_to_inode_id 应为真实 inode (未接线时恒 0 ⇒ mmap 文件映射恒 EBADF)"
-    );
-    // 下游消费者 2: mmap 的挂载点反查 — 未接线时 path 为空 ⇒ None
-    check!(
-        fd_to_mount_idx(fd).is_some(),
-        "fd_to_mount_idx 应可反查挂载点 (未接线时为 None)"
-    );
-    check!(
-        VFS_MANAGER.get_fd_info(fd as usize).is_some(),
-        "fd 表条目应存在"
-    );
+        // 下游消费者 1: mmap 文件映射的 inode 来源 — 未接线时恒 0 ⇒ mmap 恒 EBADF
+        check!(
+            fd_to_inode_id(fd) == node_id,
+            "fd_to_inode_id 应为真实 inode (未接线时恒 0 ⇒ mmap 文件映射恒 EBADF)"
+        );
+        // 下游消费者 2: mmap 的挂载点反查 — 未接线时 path 为空 ⇒ None
+        check!(
+            fd_to_mount_idx(fd).is_some(),
+            "fd_to_mount_idx 应可反查挂载点 (未接线时为 None)"
+        );
+        check!(
+            vfs_get_fd_handle(fd as usize).is_some(),
+            "per-process fd 表条目应存在"
+        );
 
-    check!(api::vfs_close_safe(fd as u32) == 0, "close 应成功");
-    TestResult::Pass
+        check!(api::vfs_close_safe(fd as u32) == 0, "close 应成功");
+        TestResult::Pass
+    })
 }
 
 fn test_nestfs_fs_registered() -> TestResult {
@@ -463,13 +530,13 @@ pub fn register_vfs_tests() {
         "vfs::mgr": {
             "mount_unmount": test_vfs_mount_unmount,
             "resolve_mount": test_vfs_resolve_mount,
-            "fd_alloc_free": test_vfs_fd_alloc_free,
             "cwd": test_vfs_cwd,
             "snapshot_restore": test_vfs_snapshot_restore,
             "resolve_default_root": test_resolve_default_root,
             "resolve_dot_components": test_resolve_dot_components,
             "resolve_relative_to_cwd": test_resolve_relative_to_cwd,
             "resolve_with_root_prefix": test_resolve_with_root_prefix,
+            "fd_table_alloc_close": test_fd_table_alloc_close,
         },
         "vfs::backend": {
             "fs_backend_registered_make_inode": test_fs_backend_registered_make_inode,

@@ -438,7 +438,7 @@ pub fn writev_syscall(fd: i32, iov_ptr: u64, iovcnt: u64) -> Result<usize, Errno
 
 /// close_range(first, last, flags) — 批量关闭 fd (T1 G1 实装)
 ///
-/// 遍历 VFS 全局 fd 表 `[first, last]` 中占用条目, 逐个 `vfs_close`
+/// 遍历当前进程 fd 表 `[first, last]` 中占用条目, 逐个 `vfs_close`
 /// (原子 claim-and-clear + inotify/epoll 通知, 机制在 framework).
 ///
 /// # Errors
@@ -446,7 +446,7 @@ pub fn writev_syscall(fd: i32, iov_ptr: u64, iovcnt: u64) -> Result<usize, Errno
 /// - `flags` 含未知位 → `EINVAL`
 /// - `flags` 为 `CLOSE_RANGE_UNSHARE`/`CLOSE_RANGE_CLOEXEC` → `ENOSYS`
 ///   (SIMPLIFIED: 仅支持直接关闭; UNSHARE (复制 fd 表后关) 与 CLOEXEC
-///   (置 close-on-exec) 需 per-process fd 表支持, 引入后扩展)
+///   (置 close-on-exec) 超出本工程范围, 后续扩展)
 pub fn close_range_syscall(first: u32, last: u32, flags: u32) -> Result<usize, Errno> {
     const CLOSE_RANGE_UNSHARE: u32 = 1 << 1;
     const CLOSE_RANGE_CLOEXEC: u32 = 1 << 2;
@@ -463,16 +463,15 @@ pub fn close_range_syscall(first: u32, last: u32, flags: u32) -> Result<usize, E
         return Err(Errno::ENOSYS);
     }
 
-    let max_fd = crate::framework::fs::VFS_MAX_FDS as u32;
     // 先收集占用 fd 列表 (释放表锁后再逐个关闭, vfs_close 内部自锁避免死锁)
     let mut fds = alloc::vec::Vec::new();
+    if let Some(all) =
+        crate::framework::proc::with_current_fd_table(crate::framework::proc::FdTable::get_all_fds)
     {
-        let table = crate::framework::fs::VFS_MANAGER.fd_table.lock();
-        for fd in first..=last {
-            if fd >= max_fd {
-                break;
-            }
-            if table[fd as usize].used {
+        for (local, _handle) in all {
+            // 有意窄化: 本地 fd 编号 (< MAX_FDS_PER_PROCESS) 截断到 u32
+            let fd = local as u32;
+            if fd >= first && fd <= last {
                 fds.push(fd);
             }
         }

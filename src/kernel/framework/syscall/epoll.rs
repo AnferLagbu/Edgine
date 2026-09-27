@@ -499,18 +499,14 @@ fn check_fd_ready(fd: i32, events: u32) -> u32 {
     }
 
     // 4. VFS fd 空间 — REVAL-6.1: 委托给 VfsPollPolicy
-    use crate::framework::fs::VFS_MANAGER;
     use crate::framework::fs::VfsFileType;
 
-    // 查询 VFS 真实状态
-    let (valid, file_type) = {
-        let fd_table = VFS_MANAGER.fd_table.lock();
-        if (fd as usize) >= fd_table.len() {
-            (false, 0u8)
-        } else {
-            let f = &fd_table[fd as usize];
-            (f.used, f.file_type)
-        }
+    // 查询 VFS 真实状态 (经当前进程 fd 表 → OpenFile 元数据源)
+    let (valid, file_type) = match crate::framework::fs::vfs_get_fd_handle(fd as usize) {
+        Some(handle_id) => crate::framework::fs::OPEN_FILE_TABLE
+            .with_file(handle_id, |of| (true, of.file_type))
+            .unwrap_or((false, 0u8)),
+        None => (false, 0u8),
     };
 
     // M6: 处理非法 file_type

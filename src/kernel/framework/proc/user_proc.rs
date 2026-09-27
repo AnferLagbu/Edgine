@@ -703,11 +703,10 @@ pub(crate) mod raw {
                 0,
                 core::mem::size_of::<Mutex<ProcessContext>>(),
             );
-            core::ptr::write_bytes(
-                &mut (*kproc_ptr).fd_table as *mut _ as *mut u8,
-                0,
-                core::mem::size_of::<FdTable>(),
-            );
+            // fd_table 不能零初始化: entries 全 0 会被 FdTable 误判为
+            // "全 64 个 slot 已占用 handle_id=0". 必须显式初始化为空闲态 (u32::MAX).
+            // 先例同下方 `namespaces` (同样用 ptr::write 覆盖零初始值).
+            core::ptr::write(&mut (*kproc_ptr).fd_table, FdTable::new());
             // TRACK-INIT-RING3-FORK: alloc_kernel_process 清零分配 (不走 Process::new),
             // 因此 `namespaces` (Mutex<NamespaceSet>) 保持全零 (7 个 NULL Arc).
             // fork 时 NamespaceSet::fork_from 对 NULL Arc 执行 Arc::clone → 地址 0 递增

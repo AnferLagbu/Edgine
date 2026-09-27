@@ -15,7 +15,6 @@
 
 pub const VFS_MAX_PATH: usize = 128;
 pub const VFS_MAX_NAME: usize = 64;
-pub const VFS_MAX_FDS: usize = 32;
 pub const VFS_MAX_MOUNTS: usize = 8;
 
 // 统一到 framework::error (P0-2 迁回)
@@ -94,6 +93,9 @@ bitflags::bitflags! {
         const CREAT  = 0x0100;
         const TRUNC  = 0x0200;
         const APPEND = 0x0400;
+        /// fd 级 close-on-exec 标志 (对应 O_CLOEXEC, 与 Linux 数值一致);
+        /// 由 `vfs_open_internal` 消费后从文件状态标志中剥离.
+        const CLOEXEC = 0x0008_0000;
     }
 }
 

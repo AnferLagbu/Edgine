@@ -105,11 +105,8 @@ pub fn poll_syscall(fds_ptr: u64, nfds: u32, _timeout: i32) -> i64 {
             continue;
         }
         if pfd.events & POLLIN != 0 {
-            let fd_table = crate::framework::fs::VFS_MANAGER.fd_table.lock();
-            // B06-07: fd 上限用 VFS_MAX_FDS (32) 而非硬编码 256, 防止越界索引 32 长数组
-            if (pfd.fd as usize) < crate::framework::fs::VFS_MAX_FDS
-                && fd_table[pfd.fd as usize].used
-            {
+            // fd 有效性改由 per-process fd 表判定 (fd → OpenFileTable handle 映射存在即有效)
+            if crate::framework::fs::vfs_get_fd_handle(pfd.fd as usize).is_some() {
                 pfd.revents |= POLLIN;
                 ready += 1;
             }
@@ -280,12 +277,17 @@ pub fn flock_syscall(fd: i32, operation: i32) -> i64 {
         return Errno::EBADF.as_ret();
     }
 
+    // inode 号改由 OpenFile 元数据源提供 (fd → handle → OpenFile.inode_id)
     let ino = {
-        let fd_table = crate::framework::fs::VFS_MANAGER.fd_table.lock();
-        if (fd as usize) >= crate::framework::fs::VFS_MAX_FDS || !fd_table[fd as usize].used {
+        let Some(handle_id) = crate::framework::fs::vfs_get_fd_handle(fd as usize) else {
             return Errno::EBADF.as_ret();
+        };
+        match crate::framework::fs::OPEN_FILE_TABLE
+            .with_file(handle_id, crate::framework::fs::OpenFile::inode_id)
+        {
+            Some(node_id) => node_id,
+            None => return Errno::EBADF.as_ret(),
         }
-        fd_table[fd as usize].node_id
     };
 
     let pid = crate::framework::proc::process_get_current_pid();

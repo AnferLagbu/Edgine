@@ -27,12 +27,13 @@ pub use vfs::*;
 
 // 公共接口 re-export — 避免跨子系统直接访问内部子模块
 pub use api::{
-    vfs_chmod, vfs_chown, vfs_chown_ext, vfs_close, vfs_close_cloexec_fds, vfs_dup, vfs_dup2,
-    vfs_fchmod, vfs_fchown, vfs_fstat, vfs_get_cwd, vfs_link, vfs_mkdir, vfs_mount, vfs_mount_safe,
-    vfs_open, vfs_pread, vfs_pread_inode, vfs_pwrite, vfs_read, vfs_read_internal, vfs_read_safe,
-    vfs_readdir, vfs_readlink, vfs_rename, vfs_rmdir, vfs_seek, vfs_set_cwd, vfs_stat,
-    vfs_stat_internal, vfs_symlink, vfs_sync, vfs_truncate_internal, vfs_umount, vfs_unlink,
-    vfs_utimensat_safe, vfs_write, vfs_write_internal, vfs_write_safe,
+    vfs_chmod, vfs_chown, vfs_chown_ext, vfs_close, vfs_close_all_fds, vfs_close_cloexec_fds,
+    vfs_dup, vfs_dup2, vfs_fchmod, vfs_fchown, vfs_fstat, vfs_get_cwd, vfs_get_fd_handle, vfs_link,
+    vfs_mkdir, vfs_mount, vfs_mount_safe, vfs_open, vfs_pread, vfs_pread_inode, vfs_pwrite,
+    vfs_read, vfs_read_internal, vfs_read_safe, vfs_readdir, vfs_readlink, vfs_rename, vfs_rmdir,
+    vfs_seek, vfs_set_cwd, vfs_stat, vfs_stat_internal, vfs_symlink, vfs_sync,
+    vfs_truncate_internal, vfs_umount, vfs_unlink, vfs_utimensat_safe, vfs_write,
+    vfs_write_internal, vfs_write_safe,
 };
 pub use flock::{
     F_GETLK, F_SETLK, F_SETLKW, FlockResult, PosixLockConflict, PosixLockResult, flock_release_fd,

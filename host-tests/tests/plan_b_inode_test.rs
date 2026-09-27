@@ -1,9 +1,9 @@
-//! Plan B Inode trait + OpenFile + ProcessFdTable 契约测试
+//! Plan B Inode trait + OpenFile + per-process FdTable 契约测试
 //!
 //! 验证 Plan B 架构变更的静态契约:
 //! 1. Inode trait 定义在 services/fs/inode.rs
 //! 2. OpenFile 持有 Arc<dyn Inode> (非 inode_id: u32)
-//! 3. ProcessFdTable 使用 Vec (非固定数组)
+//! 3. per-process FdTable 定义在 framework/proc/fd_table.rs, 仅存 handle_id (u32)
 //! 4. FileSystem::fs_open 返回 Arc<dyn Inode> (非 FsOpenResult)
 //! 5. 7 个 FS 均有原生 Inode 实现 (非 LegacyInode)
 
@@ -64,34 +64,38 @@ fn open_file_has_debug_impl() {
 }
 
 // ============================================================================
-// 3. ProcessFdTable 使用 Vec
+// 3. per-process FdTable 契约 (B-9.5: 原 ProcessFdTable 由 framework/proc/fd_table.rs 承接)
 // ============================================================================
 
 #[test]
-fn process_fd_table_uses_vec() {
-    let src = read_file("services/fs/process_fd_table.rs");
-    assert!(src.contains("Vec<Option<FdEntry>>"), "ProcessFdTable 必须使用 Vec<Option<FdEntry>>");
-    assert!(!src.contains("[FdEntry; MAX_FD_PER_PROCESS]"), "ProcessFdTable 不应使用固定数组");
+fn process_fd_table_stores_handle_ids() {
+    // B-9.5: per-process fd 表仅存指向全局 OpenFile 的 handle_id (u32), 不持有 Arc<OpenFile>;
+    // 以定长数组承载 (MAX_FDS_PER_PROCESS), u32::MAX 表示空闲槽位.
+    let src = read_file("framework/proc/fd_table.rs");
+    assert!(src.contains("[u32; MAX_FDS_PER_PROCESS]"), "FdTable 必须以 u32 handle_id 定长数组承载");
+    assert!(!src.contains("Arc<OpenFile>"), "FdTable 不应持有 Arc<OpenFile> (offset/flags 归 OpenFile)");
+    assert!(src.contains("u32::MAX"), "FdTable 必须以 u32::MAX 表示空闲槽位");
 }
 
 #[test]
-fn process_fd_table_holds_arc_open_file() {
-    let src = read_file("services/fs/process_fd_table.rs");
-    assert!(src.contains("pub open_file: Arc<OpenFile>"), "FdEntry 必须持有 Arc<OpenFile>");
-    assert!(!src.contains("pub handle_id: u32"), "FdEntry 不应有 handle_id 字段");
+fn process_fd_table_exposes_handle_lookup() {
+    let src = read_file("framework/proc/fd_table.rs");
+    assert!(src.contains("pub fn get_handle_id"), "FdTable 必须提供 get_handle_id (fd → handle_id)");
+    assert!(src.contains("pub fn alloc_fd"), "FdTable 必须提供 alloc_fd");
+    assert!(src.contains("pub fn close_fd"), "FdTable 必须提供 close_fd");
 }
 
 #[test]
-fn process_fd_table_lowest_available() {
-    let src = read_file("services/fs/process_fd_table.rs");
-    // 应使用 lowest-available 策略 (从 3 开始搜索)
-    assert!(src.contains("for fd in 3.."), "alloc_fd 必须从 fd 3 开始搜索");
+fn process_fd_table_alloc_is_first_fit() {
+    let src = read_file("framework/proc/fd_table.rs");
+    // first-fit: 从 0 起线性扫描首个空闲槽位
+    assert!(src.contains("for i in 0..MAX_FDS_PER_PROCESS"), "alloc_fd 必须 first-fit 线性扫描");
 }
 
 #[test]
 fn process_fd_table_deny_unsafe() {
-    let src = read_file("services/fs/process_fd_table.rs");
-    assert!(src.contains("#![deny(unsafe_code)]"), "process_fd_table.rs 必须 #![deny(unsafe_code)]");
+    let src = read_file("framework/proc/fd_table.rs");
+    assert!(src.contains("#![deny(unsafe_code)]"), "framework/proc/fd_table.rs 必须 #![deny(unsafe_code)]");
 }
 
 // ============================================================================
@@ -325,8 +329,9 @@ fn open_by_handle_at_uses_fs_resolve_inode() {
         src.contains("fs.fs_resolve_inode(inode_id, mount_idx)"),
         "open_by_handle_at 必须使用 fs_resolve_inode 获取原生 Inode"
     );
+    // B-9.5: fd 分配改经 per-process fd 表 (原 VFS_MANAGER.alloc_fd() 已随全局 fd 表退役)
     assert!(
-        src.contains("VFS_MANAGER.alloc_fd()"),
-        "open_by_handle_at 必须通过 VFS 分配 fd"
+        src.contains("with_current_fd_table(|t| t.alloc_fd(handle_id, false))"),
+        "open_by_handle_at 必须通过 per-process fd 表分配 fd (B-9.5)"
     );
 }

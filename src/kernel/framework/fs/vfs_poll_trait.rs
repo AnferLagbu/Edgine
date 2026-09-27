@@ -53,7 +53,7 @@ pub const EPOLLHUP: u32 = 0x010;
 /// 不持有 fd 引用, 仅描述当前 fd 的 VFS 状态.
 #[derive(Debug, Clone, Copy)]
 pub struct VfsPollContext {
-    /// fd 是否有效 (`VFS_MANAGER.fd_table` 中有映射)
+    /// fd 是否有效 (当前进程 per-process fd 表中有映射)
     pub valid: bool,
     /// VFS 文件类型 (File/Dir/Dev/Symlink)
     pub file_type: VfsFileType,

@@ -3,18 +3,18 @@
 //! 验收:
 //!   - chown_syscall: UID/GID 未注册返回 EINVAL, 不再回退 root (B06-02)
 //!   - open_by_handle_at_syscall: 无 CAP_SYS_ADMIN (SYSTEM 域 0x01) 返回 EPERM (B06-03)
-//!   - poll_syscall: fd 上限用 VFS_MAX_FDS (32) 而非 256, 防越界索引 32 长数组 (B06-07)
+//!   - poll_syscall: fd 有效性由 per-process fd 表判定, 无全局数值上限 (B06-07/B-9.5)
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 原镜像三个 syscall 的纯判定逻辑已改引内核真实 API:
 //! - chown_syscall 的 UID 判定 → `identity::get_table().find_by_uid` (真实身份表)
 //! - open_by_handle_at_syscall 的 CAP_SYS_ADMIN 判定 → `framework::credo::pwm_has_capability`
-//! - poll_syscall 的 fd 上限 → 内核常量 `framework::fs::VFS_MAX_FDS`
+//! - poll_syscall 的 fd 有效性判定 → `framework::fs::vfs_get_fd_handle` (per-process fd 表)
 //!
 //! ## 因内核 host 不可测已移除 (syscall 完整路径)
 //! 三个 syscall 完整函数 (chown_syscall / open_by_handle_at_syscall / poll_syscall) 依赖
 //! 进程凭证上下文 (pwm_get_current / session::get_current_pwm) 与 VFS 全局状态
-//! (VFS_MANAGER.fd_table / vfs_chown_ext), 且 open_by_handle_at / poll 走
+//! (vfs_chown_ext / per-process fd 表), 且 open_by_handle_at / poll 走
 //! copy_from_user / read_struct_from_user (SMAP stac/clac 指令, host 不可用),
 //! host 上不可直接调用. 完整路径回归保留在 QEMU 集成测试.
 //!
@@ -27,7 +27,6 @@ use std::sync::OnceLock;
 
 use queenx::kernel::framework::credo::identity;
 use queenx::kernel::framework::credo::pwm_has_capability;
-use queenx::kernel::framework::fs::VFS_MAX_FDS;
 use queenx::kernel::services::credo::capability::CAP_DOMAIN_SYSTEM;
 use queenx::kernel::services::credo::types::{CapBits, CapDomain};
 
@@ -131,20 +130,49 @@ fn open_by_handle_grant_sys_admin_allows() {
 }
 
 // ============================================================================
-// B06-07: poll_syscall fd 上限判定 (改引内核 VFS_MAX_FDS 常量)
+// B06-07 / B-9.5: poll_syscall fd 有效性判定 (per-process fd 表)
 // ============================================================================
 
-/// 内核 [services/fs/file_ops.rs::poll_syscall] 的 fd 上限 (B06-07 修复后):
+/// 提取 `src` 中列首 `pub fn` 起始的顶层函数体 (至下一个列首 `pub fn` / `fn` 前)
+fn pub_fn_body<'a>(src: &'a str, sig: &str) -> &'a str {
+    let start = src
+        .find(sig)
+        .unwrap_or_else(|| panic!("未找到函数签名: {sig}"));
+    let rest = &src[start + sig.len()..];
+    let mut end = rest.len();
+    for pat in ["\npub fn ", "\nfn "] {
+        if let Some(i) = rest.find(pat) {
+            end = end.min(i + 1);
+        }
+    }
+    &src[start..start + sig.len() + end]
+}
+
+/// 内核 [services/fs/file_ops.rs::poll_syscall] 的 fd 有效性判定 (B06-07 → B-9.5):
 ///
 /// 原实现用硬编码 `< 256` 做上限后直接索引 32 长 fd_table, fd∈[32,255] 越界 panic;
-/// 修复后上限改用 `VFS_MAX_FDS` (32), fd≥32 一律视为"不就绪"且不越界.
-/// poll_syscall 完整路径依赖 read_struct_from_user (SMAP stac/clac) 与
-/// VFS_MANAGER.fd_table, host 不可直接调用; 此处验证内核常量契约
-/// `framework::fs::VFS_MAX_FDS == 32` (VFS_MANAGER.fd_table 即为 32 长数组,
-/// 编译期保证 fd≥32 不越界).
+/// B-9.5 per-process fd 表全量下沉后, 全局数值上限 (VFS_MAX_FDS / 256) 随全局 fd 表
+/// 一并退役, fd 有效性改由 `vfs_get_fd_handle(fd)` 查 per-process fd 表 →
+/// OpenFileTable 句柄映射判定: 映射存在即有效, 不存在则视为不就绪. 无任何定长数组
+/// 索引 → 无越界风险. poll_syscall 完整路径依赖 read_struct_from_user (SMAP
+/// stac/clac) 与进程上下文, host 不可直接调用; 此处作静态契约扫描.
 #[test]
-fn poll_vfs_max_fds_is_32() {
-    assert_eq!(VFS_MAX_FDS, 32, "B06-07: fd 上限必须为 VFS_MAX_FDS=32, 而非 256");
+fn poll_syscall_validates_fd_via_per_process_fd_table() {
+    let path = Path::new("../src/kernel/services/fs/file_ops.rs");
+    let src = fs::read_to_string(path).expect("读取 services/fs/file_ops.rs 失败");
+    let body = pub_fn_body(&src, "pub fn poll_syscall");
+    assert!(
+        body.contains("vfs_get_fd_handle(pfd.fd as usize)"),
+        "poll_syscall 必须以 per-process fd 表判定 fd 有效性 (B-9.5):\n{body}"
+    );
+    assert!(
+        !body.contains("VFS_MAX_FDS"),
+        "poll_syscall 不得再引用已退役的 VFS_MAX_FDS (B-9.5):\n{body}"
+    );
+    assert!(
+        !body.contains("256"),
+        "poll_syscall 不得残留硬编码 fd 上限 256 (B06-07):\n{body}"
+    );
 }
 
 // ============================================================================

@@ -211,10 +211,14 @@ pub fn open_by_handle_at_syscall(
     // 插入全局 OpenFile 表
     let handle_id = OPEN_FILE_TABLE.alloc(open_file).ok_or(Errno::ENOMEM)?;
 
-    // 分配 fd (使用 VFS_MANAGER 全局 fd 表)
-    let fd_idx = VFS_MANAGER.alloc_fd().ok_or(Errno::EMFILE)?;
-
-    VFS_MANAGER.set_fd_handle(fd_idx, handle_id);
+    // 分配 fd (写入当前进程 per-process fd 表)
+    let Some(fd_idx) =
+        crate::framework::proc::with_current_fd_table(|t| t.alloc_fd(handle_id, false)).flatten()
+    else {
+        // fd 表满或当前进程不可用: 回收已分配的 OpenFile handle, 避免泄漏
+        OPEN_FILE_TABLE.close(handle_id);
+        return Err(Errno::EMFILE);
+    };
 
     Ok(fd_idx as i64)
 }

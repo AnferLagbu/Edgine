@@ -18,10 +18,6 @@ const MFD_ALLOW_SEALING: u32 = 0x0002;
 /// `MFD_HUGE_16GB` 标志位 (简化: 不支持大页)
 const MFD_HUGE_MASK: u32 = 0x3F << 26;
 
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 /// `memfd_create` — 创建匿名内存文件
 ///
 /// # Errors
@@ -57,26 +53,15 @@ pub fn memfd_create_syscall(_name_ptr: u64, flags: u32) -> Result<usize, Errno> 
     // 插入全局 OpenFile 表
     let handle_id = OPEN_FILE_TABLE.alloc(open_file).ok_or(Errno::ENOMEM)?;
 
-    // 在当前进程 fd 表中分配 fd
-    // per-process fd 表待实现 (登记分册 9 B09-10)
-    let fd = crate::framework::fs::api::vfs_open(
-        b"/dev/null\0".as_ptr() as *const u8,
-        0x0003, // O_RDWR
-        0,
-    );
-
-    if fd < 0 {
+    // 在当前进程 fd 表中分配 fd (MFD_CLOEXEC 决定该 fd 是否随 exec 关闭)
+    let Some(fd) = crate::framework::proc::with_current_fd_table(|t| {
+        t.alloc_fd(handle_id, flags & MFD_CLOEXEC != 0)
+    })
+    .flatten() else {
+        // fd 表满或当前进程不可用: 回收已分配的 OpenFile handle, 避免泄漏
         OPEN_FILE_TABLE.close(handle_id);
         return Err(Errno::ENOMEM);
-    }
+    };
 
-    // 设置 handle_id
-    crate::framework::fs::api::vfs_set_fd_handle(fd as usize, handle_id);
-
-    // 若设置 MFD_CLOEXEC, 标记该 fd 在 execve 成功后由内核关闭
-    if flags & MFD_CLOEXEC != 0 {
-        crate::framework::fs::VFS_MANAGER.set_fd_cloexec(fd as usize, true);
-    }
-
-    Ok(fd as usize)
+    Ok(fd)
 }

@@ -882,9 +882,9 @@ T7 (预存登记)
 
 #### B-6. R1 已分类清单（机器可读区块；B09-21 数据源）
 
-> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**475 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
+> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**466 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
 >
-> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝项 5 批 C「67 项逐项分流」**（21 项判定为可删并已删除 ⇒ 本区块移除对应 21 条目，496 → 475；其余 46 项保留 `pub` 并留块登记，见 **B-10.11**；上一轮为项 2「`kmalloc_slab.rs` 孤岛删除」，被删 2 项原为 HIGH / **未入块** ⇒ 计数不变，见 **B-10.10**；更早为项 5 批 B「豁免面收窄」新增 67 项，429 → 496，见 **B-10.9**）。
+> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝per-process fd 表全量下沉（**B-11**）**（10 项因本工程接线 / 删除而不再零引用 ⇒ 本区块移除：`framework/fs/vfs/handle.rs::vfs_get_fd_handle`（poll 改源）、`framework/proc/fd_table.rs` 4 项（`get_handle_id` / `is_cloexec` / `set_cloexec` / `get_cloexec_fds` 接线）、`framework/proc/scheduler.rs::get_current_process`（`with_current_fd_table` 取当前进程）、`services/fs/process_fd_table.rs` 4 项（Plan B 表文件删除）⇒ **476 → 466**；编辑前实测区块为 **476** 行，区块说明原记 475（差 1，前批计数笔误，本次以实测为准）。另有 2 条**既有偏差**（`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`：脚本按名计数，其内联测试即计入引用 ⇒ 恒不在 INFO 集，见上述口径说明②）经本批复核确认，**非本工程引入，不属本批处置面**）。**上一轮同步＝项 5 批 C「67 项逐项分流」**（21 项判定为可删并已删除 ⇒ 本区块移除对应 21 条目，496 → 475；其余 46 项保留 `pub` 并留块登记，见 **B-10.11**；上一轮为项 2「`kmalloc_slab.rs` 孤岛删除」，被删 2 项原为 HIGH / **未入块** ⇒ 计数不变，见 **B-10.10**；更早为项 5 批 B「豁免面收窄」新增 67 项，429 → 496，见 **B-10.9**）。
 >
 > **口径说明（2026-09-26 订正）**：本区块与 `audit_unwired_pub_fn.py` 的「零引用」判定均为**按名计数**（`rg -c -w`），因而存在两类已知偏差，本区块**不承诺**与脚本输出逐项等同：① **同名遮蔽**（文档注释 / 局部变量出现同名字符串即计入引用 ⇒ 真零引用项可能**漏报**，实例见 **B-10.3** 的 `slab_init` / `services/driver/acpi.rs::lapic_base`）；② **已失效条目**（被接线或删除后不再零引用，需人工同步移除，本期移除 6 项见 B-10.4）。
 
@@ -1046,7 +1046,6 @@ src/kernel/framework/fs/vfs/flock.rs::flock_count
 src/kernel/framework/fs/vfs/flock.rs::flock_ops
 src/kernel/framework/fs/vfs/flock.rs::posix_lock_count
 src/kernel/framework/fs/vfs/flock.rs::posix_lock_ops
-src/kernel/framework/fs/vfs/handle.rs::vfs_get_fd_handle
 src/kernel/framework/fs/vfs/handle.rs::vfs_readdir_safe
 src/kernel/framework/fs/vfs/handle.rs::vfs_seek_safe
 src/kernel/framework/fs/vfs/inotify.rs::inotify_fd_readable
@@ -1126,10 +1125,6 @@ src/kernel/framework/proc/cgroup.rs::period_reset
 src/kernel/framework/proc/cgroup.rs::try_charge
 src/kernel/framework/proc/cgroup.rs::uncharge
 src/kernel/framework/proc/cpu_queue.rs::register_sched_softirq
-src/kernel/framework/proc/fd_table.rs::get_cloexec_fds
-src/kernel/framework/proc/fd_table.rs::get_handle_id
-src/kernel/framework/proc/fd_table.rs::is_cloexec
-src/kernel/framework/proc/fd_table.rs::set_cloexec
 src/kernel/framework/proc/namespace.rs::map_gid
 src/kernel/framework/proc/namespace.rs::map_uid
 src/kernel/framework/proc/namespace.rs::to_clone_flag
@@ -1141,7 +1136,6 @@ src/kernel/framework/proc/rlimit.rs::check_nofile_exceeded
 src/kernel/framework/proc/rlimit.rs::check_nproc_exceeded
 src/kernel/framework/proc/rlimit.rs::get_nofile_limit
 src/kernel/framework/proc/rlimit.rs::get_stack_limit
-src/kernel/framework/proc/scheduler.rs::get_current_process
 src/kernel/framework/proc/scheduler.rs::set_deadline_params
 src/kernel/framework/proc/scheduler_ex.rs::exit_thread
 src/kernel/framework/proc/scheduler_ex.rs::freeze_all
@@ -1312,10 +1306,6 @@ src/kernel/services/fs/nestfs/txg.rs::get_open_txg_mut
 src/kernel/services/fs/nestfs/zil.rs::new_dedup_unref
 src/kernel/services/fs/nestfs/zil.rs::new_setattr
 src/kernel/services/fs/nestfs/zil_persist.rs::as_static_str
-src/kernel/services/fs/process_fd_table.rs::clear_non_cloexec
-src/kernel/services/fs/process_fd_table.rs::close_cloexec_fds
-src/kernel/services/fs/process_fd_table.rs::get_fd
-src/kernel/services/fs/process_fd_table.rs::new_default
 src/kernel/services/fs/ramfs.rs::is_read_only
 src/kernel/services/fs/sysfs.rs::has_node
 src/kernel/services/fs/sysfs.rs::mount_sysfs
@@ -1403,19 +1393,19 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 | [mmap.rs:54-59](file:///home/anfer/Code/QueenX/src/kernel/services/mm/mmap.rs#L54-L59) `fd_to_mount_idx` | `path` 为空 ⇒ `find_mount` 反查失败 ⇒ VMA 无 `mount_idx` |
 | [handle.rs:143-180](file:///home/anfer/Code/QueenX/src/kernel/framework/fs/vfs/handle.rs#L143-L180) `vfs_close_internal` | pcache 失效按 `node_id = 0` 执行 ⇒ 关联 inode 缓存页不释放 |
 
-**B-8.2 判据不成立 ⇒ 转「未来功能」（7 项；三字段）**
+**B-8.2 判据不成立 ⇒ 转「未来功能」（7 项；三字段）——其中 5 项已于 2026-09-27 兑现（见 **B-11**），余 2 项仍为未来功能**
 
 | 文件 / 项 | 等待原因（判据不成立的事实） | 解锁条件 | 责任方 |
 |---|---|---|---|
-| `framework/fs/vfs/handle.rs::vfs_get_fd_handle` | 同能力 `VFS_MANAGER.get_fd_handle` 的调用点**全在同模块内直呼 manager**，无独立调用点；非 FFI 面（无 `no_mangle`） | 出现**跨模块** FD→句柄访问需求（如 services 侧 fd 查询代理） | reviewer 排期 |
+| `framework/fs/vfs/handle.rs::vfs_get_fd_handle` | ~~同能力 `VFS_MANAGER.get_fd_handle` 的调用点全在同模块内直呼 manager，无独立调用点~~ ⇒ **2026-09-27 已接线**：services [file_ops.rs `poll_syscall`](file:///home/anfer/Code/QueenX/src/kernel/services/fs/file_ops.rs) 改源为 `vfs_get_fd_handle`（原直查已退役的 `VFS_MANAGER.fd_table` / `VFS_MAX_FDS` 全局表）⇒ 出现**跨模块** FD→句柄访问需求（如 services 侧 fd 查询代理）**已成立** | **已兑现**（见 **B-11**） | — |
 | `framework/irqline.rs::is_registered` | `IrqLine` 类型全库 **0 构造点**（在用者仅 `idt.rs::dispatch_irq`）⇒ 无对象可查 | 中断处理切到 `IrqLine` 抽象（`services/driver/mod.rs:21` 已登记的路线图项） | 路线图（driver 中断抽象） |
 | `framework/frame.rs::set_meta` | 读侧 `Frame::meta()` 同样**零引用**，无消费方；文档自述「预留元数据槽位」 | services 侧需给页帧挂自定义状态（回写 / 迁移标记） | reviewer 排期 |
-| `framework/proc/fd_table.rs::get_handle_id` | `Process::fd_table` **从未被填充**（`FdTable::alloc_fd` 全库零引用；在用者仅 `proc.fd_table.init()` + procfs `get_all_fds()`）⇒ 恒 `None` | per-process fd 表落地（登记分册 9 **B09-10**；现为全局 fd 命名空间） | 路线图 B09-10 |
-| 同上 `::is_cloexec` | 同上 ⇒ `cloexec[]` 恒 `false` | 同上 + FD_CLOEXEC 语义落地（见 B-8.3） | 路线图 B09-10 |
-| 同上 `::set_cloexec` | 同上 ⇒ 写入**无任何消费方**的死结构 | 同上 | 路线图 B09-10 |
-| 同上 `::get_cloexec_fds` | 同上 ⇒ 恒空集 | 同上 | 路线图 B09-10 |
+| `framework/proc/fd_table.rs::get_handle_id` | ~~`Process::fd_table` 从未被填充（`alloc_fd` 全库零引用）⇒ 恒 `None`~~ ⇒ **2026-09-27 全量兑现**：`Process.fd_table(FdTable)` 权威化，`alloc_fd` 经 `vfs_open_internal` 两分支接线，本函数成为 `vfs_get_fd_handle` / `vfs_dup` / `vfs_dup2` / `fcntl(F_GETFD)` 的统一取句柄入口 | **已兑现**（见 **B-11**） | — |
+| 同上 `::is_cloexec` | ~~`cloexec[]` 恒 `false`~~ ⇒ **2026-09-27 全量兑现**：`fcntl(F_GETFD)` 经此查询 `FD_CLOEXEC` | **已兑现**（见 **B-11**） | — |
+| 同上 `::set_cloexec` | ~~写入无任何消费方的死结构~~ ⇒ **2026-09-27 全量兑现**：`fcntl(F_SETFD)` 经此置位（本项为 `cloexec[]` 唯一写入者） | **已兑现**（见 **B-11**） | — |
+| 同上 `::get_cloexec_fds` | ~~恒空集~~ ⇒ **2026-09-27 全量兑现**：`vfs_close_cloexec_fds` 经此收集 exec 时需关闭的本地 fd | **已兑现**（见 **B-11**） | — |
 
-> 结论：本组若「补调用」＝**往死结构写值**（写入的 `cloexec[]` 无消费方、`get_cloexec_fds()` 无读者），按批次规则退桶，**不硬接线**。
+> 结论（本批复核更新）：原判定「补调用＝**往死结构写值**」的前提是 `Process.fd_table` **无权威数据源**；本专项将该表升为权威后，下列 5 项（`vfs_get_fd_handle` + `fd_table.rs` 4 项）**均有真实消费方**（poll 查询 / open 分配 / dup·dup2·fcntl 读写 / exec 关闭）⇒ 从「未来功能」转**接线兑现**，其区块条目已随之移除（见 **B-6** 维护说明）。余下 `irqline.rs::is_registered` / `frame.rs::set_meta` **2 项维持未来功能**（判据仍不成立，未动）。
 
 **B-8.3 安全面单列：FD_CLOEXEC 全链路缺失（fd 跨 exec 可见性）**
 
@@ -1423,19 +1413,19 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 | 链路环节 | 实测（源码定位） | 缺口后果 |
 |---|---|---|
-| 标记来源 `fcntl(F_SETFD, FD_CLOEXEC)` | [framework/syscall/io.rs:108-124](file:///home/anfer/Code/QueenX/src/kernel/framework/syscall/io.rs#L108-L124)：`F_GETFD => 0`、`F_SETFD => 0` **静默返回成功** | 用户设 CLOEXEC **无任何存储**，且**不报错**（虚假成功） |
-| 打开时携带 `O_CLOEXEC` | `services/fs/open.rs:44 pub const O_CLOEXEC` 全库**零引用** | open 无法携带 cloexec |
-| 存储位 | live fd 表 `VFS_MANAGER.fd_table: [VfsFile; VFS_MAX_FDS]` 的 `VfsFile` **无 cloexec 字段** | 无处存放标记 |
-| exec 时关闭 | `services/proc/exec.rs` `execve_syscall` / `execveat_syscall` → `proc_ops.rs::proc_exec_replace`（transactional：加载 ELF → `replace_user_space` → argv → 信号复位）**全程不触碰 fd 表** | exec 后**所有 fd 原样保留** |
-| fd 命名空间 | fd 表为**全局**（`VFS_MANAGER` 单例 + 全局 `next_fd` 计数器） | fd 跨进程可见（POSIX per-process fd 语义未隔离） |
+| 标记来源 `fcntl(F_SETFD, FD_CLOEXEC)` | [framework/syscall/io.rs:108-124](file:///home/anfer/Code/QueenX/src/kernel/framework/syscall/io.rs#L108-L124)：`F_GETFD => 0`、`F_SETFD => 0` **静默返回成功** | 用户设 CLOEXEC **无任何存储**，且**不报错**（虚假成功） ⇒ **2026-09-27 全量兑现**：`F_GETFD`/`F_SETFD` 接 `FdTable::is_cloexec`/`set_cloexec` |
+| 打开时携带 `O_CLOEXEC` | `services/fs/open.rs:44 pub const O_CLOEXEC` 全库**零引用** | open 无法携带 cloexec ⇒ **2026-09-27 全量兑现**：`vfs_open_internal` 消费 `O_CLOEXEC`（剥离后经 `alloc_fd(handle_id, cloexec)` 入表） |
+| 存储位 | live fd 表 `VFS_MANAGER.fd_table: [VfsFile; VFS_MAX_FDS]` 的 `VfsFile` **无 cloexec 字段** | 无处存放标记 ⇒ **2026-09-27 全量兑现**：标记位改存 per-process `FdTable.cloexec`（原 `VfsManager` 全局表版 `VfsFile.cloexec` 最小件随之退役） |
+| exec 时关闭 | `services/proc/exec.rs` `execve_syscall` / `execveat_syscall` → `proc_ops.rs::proc_exec_replace`（transactional：加载 ELF → `replace_user_space` → argv → 信号复位）**全程不触碰 fd 表** | exec 后**所有 fd 原样保留** ⇒ **2026-09-27 全量兑现**：exec 经 `vfs_close_cloexec_fds`→`FdTable::get_cloexec_fds` 关闭已标记本地 fd |
+| fd 命名空间 | fd 表为**全局**（`VFS_MANAGER` 单例 + 全局 `next_fd` 计数器） | fd 跨进程可见（POSIX per-process fd 语义未隔离） ⇒ **2026-09-27 全量兑现**：fd 命名空间改 per-process（`Process.fd_table`）；全局 `VfsManager.fd_table` 退役删除 |
 
 **判定**：⇒ **不是「C-1 少接一项」，而是 FD_CLOEXEC / per-process fd 语义整体未落地**（安全面）。
-**为何不由本批修复**：修复须先有 per-process fd 表（B09-10）+ `fcntl` F_SETFD 真实实现 + `VfsFile` 增字段 + exec 关闭遍历 —— **跨 4 个模块的架构改动**，属 **TCB / VFS 核心面**，**超出批次授权**；且此处亦**无「能力等价的公共入口」**可依（三合一判据不成立）。
+**为何不由本批修复**：修复须先有 per-process fd 表（**B-11**）+ `fcntl` F_SETFD 真实实现 + `VfsFile` 增字段 + exec 关闭遍历 —— **跨 4 个模块的架构改动**，属 **TCB / VFS 核心面**，**超出批次授权**；且此处亦**无「能力等价的公共入口」**可依（三合一判据不成立）。
 **回归测试说明（如实登记）**：reviewer 要求「exec 后 cloexec fd 不可见」的回归测试 —— 因标记**当前无处可设**（`F_SETFD` 不存储、无 `cloexec` 字段），该测试**在现有结构上无法构造**（无 API 能产生一个「已标记 CLOEXEC 的 fd」）；若强行写「未标记 fd 仍可见」的断言，通过也不构成对缺陷的覆盖。故本项**按缺陷单列上报，不附伪测试**。
 **上报**：按批次「涉安全面」条款单列于此，**未自主施工**。
-**解锁条件**：per-process fd 表（B09-10）落地后，`FdTable` 的 cloexec 4 项即为该表的**自然消费方**（届时从「未来功能」转「接线」），并可在该结构上补 exec 关闭回归测试。
+**解锁条件**：per-process fd 表（**B-11**）落地后，`FdTable` 的 cloexec 4 项即为该表的**自然消费方**（届时从「未来功能」转「接线」），并可在该结构上补 exec 关闭回归测试。
 **责任方**：reviewer（是否立项 per-process fd 表 + FD_CLOEXEC 语义）。
-**2026-09-27 部分兑现**：CLOEXEC 语义已在**现有全局 fd 表**上落地最小件（`VfsFile.cloexec` 位 + `set_fd_cloexec`/`get_fd_cloexec` + `vfs_close_cloexec_fds` 于 exec 关闭 + memfd `MFD_CLOEXEC` 置位）⇒ 本表「存储位」「exec 时关闭」两行缺口闭合；**「标记来源（fcntl/open）」「fd 命名空间（per-process）」两行仍缺**，详情见 **B-9.7**。
+**2026-09-27 全量兑现**：本表 5 行缺口已由 **B-11**「per-process fd 表全量下沉 VFS 管理面」专项全部闭合 —— 标记来源接 `fcntl(F_GETFD/F_SETFD)` → `FdTable::is_cloexec`/`set_cloexec`；打开时 `vfs_open_internal` 消费 `O_CLOEXEC` 经 `alloc_fd(handle_id, cloexec)` 入表；存储位改 per-process `FdTable.cloexec`（早期在**全局** fd 表落地的 `VfsFile.cloexec` 最小件已随全局表退役删除）；exec 经 `vfs_close_cloexec_fds`→`FdTable::get_cloexec_fds` 关闭；fd 命名空间改 per-process，`VfsManager.fd_table` 退役。上文「判定 / 为何不由本批修复 / 回归测试说明 / 解锁条件 / 责任方」保留为**历史判定快照**（当时前提成立），本条为其兑现记录。
 
 **B-8.4 R1 清单数与算术闭合**
 
@@ -1512,6 +1502,10 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 - **引用错配（须 reviewer 裁定）**：B-8.3 与本文件多处以「**B09-10（per-process fd 表）**」指代该路线图，但 [audit-fix-09](./audit-fix-09-hard-rules-deadcode.md) 的 **B09-10 实为「28 处 TODO(TRACK-...) 注释」治理任务（已 `[X]`）**，非 per-process fd 表工程；`handle.rs:61` 注释同样挂在 B09-10 名下 ⇒ **标签错配**，三项引用需统一改指新编号。
 - **能力冗余线索（影响成本评估）**：[`services/fs/process_fd_table.rs`](../../src/kernel/services/fs/process_fd_table.rs) **已完整实装** Plan B per-process fd 表（`FdEntry.cloexec` 字段 + `alloc_fd` / `alloc_fd_at` / [`close_cloexec_fds`](../../src/kernel/services/fs/process_fd_table.rs#L174-L183) / [`clear_non_cloexec`](../../src/kernel/services/fs/process_fd_table.rs#L186-L195)），全库**零引用**（台账 B-5 记「Plan B 并行 FD 表整体未采用，删/接线待裁」）⇒ 解锁路径可能是「**启用既有 Plan B 表 + 接线**」而非「从零新建」，B-8.3 的修复成本评估应据此下修。
 - **本条即本项的独立登记条目**（编号待 reviewer 分配，命名建议「per-process fd 表 + FD_CLOEXEC 语义」；绑定关系＝B-8.3 解锁条件）。**未自行在 audit-fix-09 新增 B09-xx 编号**（属已登记路线图地基，按四类上报）。
+- **2026-09-27 实施记录（本项已被用户裁定立项并落地）**：用户裁定「相对完整」「全量下沉 VFS 管理面」⇒ 本项由 reviewer 待裁转**实施完成**，详见 **B-11**。三处遗留随之收口：
+  - **标签错配**：B-8.3 及本文件多处的「B09-10」指代错误，现统一改指本专项编号 **B-11**（不再回填 audit-fix-09 的 B09-10，后者确为 TODO 注释治理任务）；
+  - **能力冗余线索（Plan B `process_fd_table.rs`）**：该文件（`FdEntry.cloexec` + `alloc_fd`/`alloc_fd_at`/`close_cloexec_fds`/`clear_non_cloexec`）经复核**未采用**，用户裁定以 `framework/proc/fd_table.rs::FdTable` 为权威实装（新建而非启用 Plan B 表）⇒ 该文件**已删除**，能力冗余线索终结（台账 B-5 的「删/接线待裁」同步核销）；
+  - **本项命名建议「per-process fd 表 + FD_CLOEXEC 语义」**：实装后 B-8.3 五环全部闭合（见 **B-11**）。
 
 **B-9.7 CLOEXEC 最小件实装（2026-09-27，本项部分兑现；per-process fd 表部分转本条专项）**
 
@@ -1524,6 +1518,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 - **测试**：内联单测 2 项（`fd_cloexec` 模块：置位/查询/清零/free 后清零/first-fit 复用不残留 + 未分配/越界安全空操作，函数内 `static VfsManager` 独立实例规避全局污染与栈溢出）；host 契约测试 4 项（[fd_cloexec_test.rs](../../host-tests/tests/fd_cloexec_test.rs)：先收集后关闭的顺序、顶层 re-export、exec 接线、memfd 置位）。
 - **仍留本条专项（per-process fd 表命名空间）**：全局 `VFS_MANAGER` 单例 + `next_fd` 计数器不改 ⇒ **fd 跨进程仍可见**（POSIX per-process 语义未隔离）；B-8.3 表「fd 命名空间」行与 B-8.2 的 `FdTable` 4 项（`get_handle_id`/`is_cloexec`/`set_cloexec`/`get_cloexec_fds`）仍待该专项落地；上文「能力冗余线索」的 Plan B `process_fd_table.rs` 仍为零引用（启用/接线待裁）。
 - **门槛**：`./ci/build.sh all` Passed 5 / Failed 0；clippy `-D warnings` 0 warning；`./ci/audit.sh quick` 全绿（经 `build.sh aarch64` 收尾以避 FP-06）；`make test-host` 全过；`make test-kernel-host` 828 passed / 0 failed；`audit_unwired_pub_fn.py` **HIGH=0**（CRITICAL=2 为既有 process_vm 待裁项；**该 2 项已于 B-10.12 实装核销 ⇒ 未接线 syscall 清零**）。
+- **2026-09-27 全局表版已退役（本最小件被 per-process 表取代）**：本条在**全局 `VfsManager.fd_table`** 上落地的 CLOEXEC 最小件（`VfsFile.cloexec` 字段 + `VfsManager::set_fd_cloexec`/`get_fd_cloexec`）已随**全局 fd 表退役删除**——per-process 专项 **B-11** 将存储位迁至 `FdTable.cloexec`，`fcntl`/`open`/`dup3`/`pipe2` 的 CLOEXEC 标记来源全部接线，B-8.3「fd 命名空间」行亦随 per-process 命名空间闭合。本条保留为**分阶段实施的历史快照**（全局表最小件 → per-process 全量），现网唯一权威为 `Process.fd_table(FdTable)`。
 
 **B-9.6 门槛（五条全量；日志 `build/log/yi_batch_c1_gates.log`，`RC=0`）**
 
@@ -1720,6 +1715,58 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 - **门槛**：双架构 0w0e（`./ci/build.sh all` → `Passed 5 / Failed 0`）/ fmt `--check` FMT_OK / clippy pedantic 0 warning（x86_64）/ `./ci/audit.sh quick` exit 0（FP-06 通过）/ `make test-host` 全绿（含新 6 项）/ `make test-kernel-host` **836 passed 0 failed**（828 → 836，+8 = 4 process_vm + 4 cross_process）—— 全过。
 - **R1 实测（脚本正向复跑）**：汇总 **`CRITICAL=0 / HIGH=0 / WARN=0 / INFO=474`**（`rc=0`，**R2 未接线 syscall 首次清零**）/ `R3 = 0` / `R4 = 0`。
 
+#### B-11. per-process fd 表全量下沉 VFS 管理面（2026-09-27；B-9.5 专项落地）
+
+> 来源：**B-8.3** 解锁条件 + **B-9.5** 独立登记条目（per-process fd 表 + FD_CLOEXEC 语义）+ **B-8.2** 的 `FdTable` 4 项 + **B-9.7** 全局表版最小件。用户裁定：**相对完整**路径 / **全量下沉 VFS 管理面** / CLOEXEC 标记来源**接线** / `OpenFileTable.next_id` 隐患**随本工程修正**。本条为上述各登记项的**兑现记录**（原判定快照保留于各条，不删）。
+
+**B-11.1 范围（「全量下沉 VFS 管理面」边界）**
+
+- **权威化**：`Process.fd_table(FdTable)` 成为 fd 表唯一权威（[_fd_table.rs_](../../src/kernel/framework/proc/fd_table.rs)：`MAX_FDS_PER_PROCESS = 64`；`entries: IrqSpinLock<[u32; 64]>` 存 handle_id（`u32::MAX` 空闲）+ `cloexec: IrqSpinLock<[bool; 64]>`）。
+- **获取路径**：新增 [`with_current_fd_table<F, R>`](../../src/kernel/framework/proc/proc_ops.rs)（取当前进程 fd 表并施加闭包），`framework/fs` 侧经此访问，**不新增 `fs → proc` 内部 use**（F2 合规）。
+- **落地面**：open / close / dup / dup2 / fcntl / read / write / lseek / readdir / truncate / fstat / fchmod / fchown / sendfile / epoll / poll / close_range / mmap / memfd 全接线 + fork / exec / exit 接线。
+- **退役**：全局 `VfsManager.fd_table`（含 `VfsFile.cloexec` 最小件、`set_fd_cloexec`/`get_fd_cloexec`）**删除**。
+- **排除面（用户裁定「只登记不处置」）**：另 6 套并行子系统 fd 表、`cwd`/`root`/`umask`、`CLONE_FILES` —— 登记入 [audit-fix-09](./audit-fix-09-hard-rules-deadcode.md) **D-10**，本批不动。
+
+**B-11.2 CLOEXEC 全链路兑现（B-8.3 五环闭合）**
+
+- **标记来源**：`fcntl` `F_GETFD` → `FdTable::is_cloexec`、`F_SETFD` → `FdTable::set_cloexec`（[framework/syscall/io.rs](../../src/kernel/framework/syscall/io.rs)；`F_GETFL` 改源 `OpenFile::get_flags`）。
+- **打开时携带**：[`vfs_open_internal`](../../src/kernel/framework/fs/vfs/handle.rs) 两分支解析并**剥离** `VfsOpenFlags::CLOEXEC`，经 `with_current_fd_table(|t| t.alloc_fd(handle_id, cloexec))` 入表。
+- **存储位**：`FdTable.cloexec`（替代原全局 `VfsFile.cloexec`）。
+- **exec 时关闭**：[`vfs_close_cloexec_fds`](../../src/kernel/framework/fs/vfs/handle.rs) 经 `FdTable::get_cloexec_fds` **先收集再逐个 `vfs_close_internal`**（避免持 `fd_table` 锁递归自锁死），在 [`proc_exec_replace`](../../src/kernel/framework/proc/proc_ops.rs) 的 `reset_signal_state_on_exec` 之后接线。
+- **fd 命名空间**：改 per-process；**fd 跨进程不再可见**（POSIX per-process 语义隔离）。
+- **memfd**：[`memfd_create_syscall`](../../src/kernel/services/proc/memfd.rs) 依 `MFD_CLOEXEC` 置位经同一 `alloc_fd(handle_id, cloexec)` 路径。
+
+**B-11.3 顺带修正（用户裁定「随本工程」）**
+
+- **dup2 上限**：[`vfs_dup2`](../../src/kernel/framework/fs/vfs/handle.rs#L815-L820) 的 `new_usize >= MAX_FDS_PER_PROCESS` 检查，**256 → 64**（原 `256` 硬编码与 per-process 表容量不符，会误放行 `64..256` 的越界 newfd）。
+- **`OpenFileTable` 句柄泄漏**：[open_file_table.rs](../../src/kernel/framework/fs/vfs/open_file_table.rs) `alloc` 由原 `next_id` 单调递增改 **first-fit 复用空闲槽位**（原实现单调递增不回收 ⇒ 系统级 `OpenFile` 槽位泄漏；`MAX_OPEN_FILES = 256` 不变）。
+- **`VFS_MAX_FDS` 退役删除**：原全局 fd 表尺寸常量随之删除，上限唯一由 `MAX_FDS_PER_PROCESS` 承载（[vfs.rs](../../src/kernel/framework/fs/vfs/vfs.rs) 头注释已声明）。
+- **`services/fs/process_fd_table.rs` 删除**：Plan B 并行 fd 表（B-9.5「能力冗余线索」）经复核**未采用**，以 `FdTable` 为权威实装 ⇒ 文件删除，该线索终结（台账 B-5「删/接线待裁」同步核销）。
+
+**B-11.4 门槛（§2.3 六条 + fmt + 审计，全绿）**
+
+| # | 门槛 | 结果 |
+|---|---|---|
+| 1 | `./ci/build.sh all` | ✅ `Passed: 5 / Failed: 0`（x86_64 + aarch64 + host-tests + link） |
+| 2 | clippy pedantic `-D warnings` | ✅ 0 warning（lib + `kernel_test` + `host-test` 三维） |
+| 3 | `./ci/audit.sh quick` | ✅ `EXIT=0`（经 `./ci/build.sh aarch64` 收尾以避 FP-06） |
+| 4 | `make test-host` | ✅ 退出 0 |
+| 5 | `make test-kernel-host` | ✅ **834 passed / 0 failed** |
+| 6 | `./scripts/qemu_boot_test.sh x86_64` | ✅ `找到里程碑: 'VFS ready'` / `1/1 通过` |
+| 附 | `cargo fmt --check`（kernel manifest） | ✅ `EXIT=0` |
+
+**B-11.5 R1 实测与 B-6 区块同步**
+
+- **B-6 区块（B09-21 数据源）**：移除 10 条因本工程「接线 / 删除」而**不再零引用**的条目（`vfs_get_fd_handle` 1 条 + `fd_table.rs` 4 条 + `get_current_process` 1 条 + Plan B `process_fd_table.rs` 4 条）⇒ 计数 **476 → 466**（区块头部原记 475 为前批计数笔误，已订正）。
+- **脚本正向复跑**：`已分类清单 (B09-21 数据源): 466 项` / `[HIGH] R1 未分类零引用 pub fn: 0 项` / `[INFO] R1 已分类: 464 项` / 汇总 **`CRITICAL=0 / HIGH=0 / WARN=0 / INFO=464`**（466 − 2 = 464；余 2 条**既有偏差** `framework/timer/tickless.rs::enter_tickless` / `::exit_tickless` 因内联测试即为引用方而恒不入 INFO 集，**非本工程引入**，不属本批处置面）。
+- **R3 / R4**：`0` / `0`。
+
+**B-11.6 测试覆盖**
+
+- **内联单测**：`FdTable` first-fit 分配 / `get_entry` / `set_fd_at` / `copy_from` / `close_fd`（原子 claim-and-clear）/ `is_cloexec` / `set_cloexec` / `get_all_fds` / `get_cloexec_fds`；`OpenFileTable` first-fit 复用。
+- **host 契约测试**：[fd_cloexec_test.rs](../../host-tests/tests/fd_cloexec_test.rs)（先收集后关闭顺序 / 顶层 re-export / exec 接线 / memfd 置位）、[fs_permissions_regression_test.rs](../../host-tests/tests/fs_permissions_regression_test.rs)（新增静态契约 `poll_syscall_validates_fd_via_per_process_fd_table`）、td03_atomic_close_test.rs、plan_b_inode_test.rs。
+- **fmt 噪音处置**：96 个与本工程无关的 `host-tests/` 纯 fmt 文件按用户裁定**还原至 HEAD**（其中 3 个含本工程语义改动的文件已按新架构重写语义断言，非盲还原）。
+
 #### C. 原「接线」142 项（重划：仅 8 项留「接线」，其余 134 项入「未来功能」）
 
 **C-1 接线（8 项；判据＝同族入口已在调用链中使用，仅缺此半 —— 可施工子清单）**
@@ -1863,7 +1910,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 14. **甲批 C-1 接线批次（reviewer 甲批开工单，8 项；最新口径）**：核心约束＝**每项须指明具体调用点**，「仅缺此半」是待验证断言，**找不到调用点即退「未来功能」，禁止为接线造无意义调用**。逐项核定结果（明细见 **B-8**）：
     - **接线落地 1 项**：`framework/fs/vfs/vfs.rs::set_fd`——调用点＝`vfs_open_internal` 两分支（live 路径 `open_syscall` → `vfs_open_safe` → `vfs_open_internal`）；补调用后 `get_fd_info`（flock 的 ino / mmap-by-fd 的 `fd_to_inode_id`）、`get_fd_mount_idx`、close 时 pcache 失效才按真实 inode 生效。生效证据＝kernel_test `vfs::backend::open_populates_fd_metadata`（断言 fd 表 `node_id` ＝真实 inode、path 可反查挂载点）。
     - **判据不成立 7 项 ⇒ 转「未来功能」**（三字段见 B-8.2）：`vfs_get_fd_handle`（同能力调用点全在同模块直呼 manager，无独立调用点）/ `irqline.rs::is_registered`（`IrqLine` 全库 0 构造点）/ `frame.rs::set_meta`（读侧 `meta()` 同样零引用）/ `fd_table.rs` cloexec 4 项（`Process::fd_table` 从未被填充 ⇒ `cloexec[]` 恒 false，接线＝往死结构写值）。
-    - **安全面单列（B-8.3）**：`fd_table.rs` cloexec 4 项的「exec 路径需用」判据经实测**不是「漏接一项」而是整条语义链缺失**——`fcntl` F_SETFD **静默返回 0 且无存储**、`O_CLOEXEC` 常量全库零引用、live fd 表 `VfsFile` **无 cloexec 字段**、`execve`/`execveat` → `proc_exec_replace` **全程不触碰 fd 表**、fd 表为**全局命名空间**。⇒ 修需 per-process fd 表 + `fcntl` 真实实现 + `VfsFile` 增字段 + exec 关闭遍历（跨 4 模块架构改动，属 TCB/VFS 核心面），**超出批次授权，未自主施工**；解锁＝B09-10 per-process fd 表；责任方＝reviewer。
+    - **安全面单列（B-8.3）**：`fd_table.rs` cloexec 4 项的「exec 路径需用」判据经实测**不是「漏接一项」而是整条语义链缺失**——`fcntl` F_SETFD **静默返回 0 且无存储**、`O_CLOEXEC` 常量全库零引用、live fd 表 `VfsFile` **无 cloexec 字段**、`execve`/`execveat` → `proc_exec_replace` **全程不触碰 fd 表**、fd 表为**全局命名空间**。⇒ 修需 per-process fd 表 + `fcntl` 真实实现 + `VfsFile` 增字段 + exec 关闭遍历（跨 4 模块架构改动，属 TCB/VFS 核心面），**超出批次授权，未自主施工**；解锁＝**B-11** per-process fd 表；责任方＝reviewer。
     - **桶效应（甲批）**：接线 8 → **0**；未来功能 352 → **359**（+7）；**R1 437 → 436**（`set_fd` 不再零引用）；合计 **436**（0 + 75 + 2 + 0 + 359，算术闭合）。**五门槛全量见 B-8.5**。
 
 ## 详情

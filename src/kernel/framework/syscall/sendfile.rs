@@ -12,7 +12,7 @@
 //!
 //! ## FD 类型识别
 //!
-//! - VFS fd: fd ∈ [3, `VFS_MAX_FDS`) 且 `fd_table` `[`fd`].used
+//! - VFS fd: 当前进程 fd 表中有映射 (fd → `OpenFileTable` handle 存在)
 //! - Pipe fd: 由 `ipc_pipe` 分配 (`pipe_id` * 2 / `pipe_id` * 2 + 1)
 //! - Eventfd/Signalfd/Timerfd/Inotify: 各自独立 FD 空间, 不参与 sendfile/splice
 //!
@@ -22,9 +22,9 @@
 //! - 所有 fd 验证在操作前完成
 //! - offset 更新在传输成功后
 
-use crate::framework::fs::VFS_MANAGER;
-use crate::framework::fs::VFS_MAX_FDS;
+use crate::framework::fs::OPEN_FILE_TABLE;
 use crate::framework::fs::vfs as vfs_api;
+use crate::framework::fs::vfs_get_fd_handle;
 use crate::framework::ipc::IPC_NAMESPACE;
 use crate::framework::ipc::current_ipc_strategy;
 use crate::framework::ipc::pipe as ipc_pipe;
@@ -49,9 +49,6 @@ fn is_vfs_file_fd(fd: i32) -> bool {
         return false;
     }
     let fd_usize = fd as usize;
-    if fd_usize >= VFS_MAX_FDS {
-        return false;
-    }
     // 排除特殊 FD 空间
     if (100..116).contains(&fd) {
         return false; // UDS
@@ -68,9 +65,8 @@ fn is_vfs_file_fd(fd: i32) -> bool {
     if crate::framework::fs::inotify::is_inotify_fd(fd) {
         return false;
     }
-    // 检查 VFS fd_table
-    let fd_table = VFS_MANAGER.fd_table.lock();
-    fd_table[fd_usize].used
+    // 检查当前进程 fd 表 (fd → OpenFileTable handle 映射存在即有效)
+    vfs_get_fd_handle(fd_usize).is_some()
 }
 
 /// 判断 fd 是否为 pipe fd
@@ -113,6 +109,11 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
         return Errno::ENOSYS.as_ret();
     };
 
+    // in_fd 的 OpenFile handle (offset 读写经 OpenFile 元数据源)
+    let Some(in_handle) = vfs_get_fd_handle(in_fd as usize) else {
+        return Errno::EBADF.as_ret();
+    };
+
     // 读取用户空间 offset (若提供)
     let mut offset: u64 = if offset_ptr != 0 {
         if !crate::framework::syscall::raw::check_user_buf(offset_ptr, 8) {
@@ -122,12 +123,11 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
         let bytes: [u8; 8] = unsafe { core::ptr::read(offset_ptr as *const [u8; 8]) };
         u64::from_ne_bytes(bytes)
     } else {
-        // 使用 fd 当前偏移
-        let fd_table = VFS_MANAGER.fd_table.lock();
-        if (in_fd as usize) >= VFS_MAX_FDS || !fd_table[in_fd as usize].used {
-            return Errno::EBADF.as_ret();
+        // 使用 fd 当前偏移 (OpenFile 元数据源)
+        match OPEN_FILE_TABLE.with_file(in_handle, crate::framework::fs::OpenFile::get_offset) {
+            Some(off) => off,
+            None => return Errno::EBADF.as_ret(),
         }
-        fd_table[in_fd as usize].offset
     };
 
     let mut total_sent: usize = 0;
@@ -137,8 +137,8 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
         let chunk = core::cmp::min(BOUNCE_SIZE, count - total_sent);
 
         // 1. 从 in_fd 读取到 bounce buffer
-        // 临时设置 in_fd 的 offset
-        VFS_MANAGER.set_fd_offset(in_fd as usize, offset);
+        // 临时设置 in_fd 的 offset (OpenFile 元数据源)
+        let _ = OPEN_FILE_TABLE.with_file(in_handle, |of| of.set_offset(offset));
         let nread = vfs_api::vfs_read_internal(in_fd as u32, bounce.as_mut_ptr(), chunk as u32);
         if nread <= 0 {
             break; // EOF 或错误
@@ -157,7 +157,7 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
 
         if nwritten <= 0 {
             // 写入失败, 但已从 in_fd 读取, 需要回退 offset
-            VFS_MANAGER.set_fd_offset(in_fd as usize, offset);
+            let _ = OPEN_FILE_TABLE.with_file(in_handle, |of| of.set_offset(offset));
             break;
         }
 

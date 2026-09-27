@@ -1,23 +1,27 @@
-//! VFS 管理器 (挂载表 + FD 表 + 路径解析) — framework 层完整实现
+//! VFS 管理器 (挂载表 + 路径解析) — framework 层完整实现
 //!
 //! ## B09-12/DECISION-H13 P1-B4 迁移记录 (2026-08-31)
 //!
-//! VfsManager 是 VFS 核心机制 (挂载点表 + FD 表 + 路径解析), 按"机制归
+//! VfsManager 是 VFS 核心机制 (挂载点表 + 路径解析), 按"机制归
 //! framework"原则从 `services::fs::vfs_manager` 迁回本文件. 0 语义变更.
 //! `services::fs::vfs_manager` 改为 re-export 本文件保持调用方兼容.
 //!
 //! ## 架构
 //!
-//! VfsManager 管理挂载点表、FD 表和当前工作目录,
-//! 提供 mount/unmount/resolve/alloc_fd 等纯机制操作。
+//! VfsManager 管理挂载点表、当前工作目录与根前缀,
+//! 提供 mount/unmount/resolve 等纯机制操作。
 //! 不含 unsafe, 不直接操作硬件。
+//!
+//! per-process fd 表 (B-9.5) 已下沉至 `Process.fd_table` (`framework::proc`),
+//! 本文件不再持有 fd 表; fd→`OpenFile` 映射经 `framework::fs::vfs_get_fd_handle`
+//! 读取当前进程 fd 表. 原全局 fd 表尺寸常量 `VFS_MAX_FDS` 已随其退役删除,
+//! fd 上限唯一由 `framework::proc::fd_table::MAX_FDS_PER_PROCESS` 承载.
 
 use crate::framework::fs::vfs::types::{
-    FileSystem, FsType, KernelError, VFS_MAX_FDS, VFS_MAX_MOUNTS, VFS_MAX_PATH,
+    FileSystem, FsType, KernelError, VFS_MAX_MOUNTS, VFS_MAX_PATH,
 };
 use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::string::String;
-use core::sync::atomic::{AtomicU32, Ordering};
 
 pub struct VfsMount {
     pub path: [u8; VFS_MAX_PATH],
@@ -87,72 +91,6 @@ impl VfsMount {
     }
 }
 
-pub struct VfsFile {
-    pub fd: u32,
-    pub node_id: u32,
-    pub offset: u64,
-    pub flags: u32,
-    pub pwm: u64,
-    pub used: bool,
-    pub file_type: u8,
-    pub path: [u8; VFS_MAX_PATH],
-    /// `OpenFile` `handle_id` (POSIX 打开文件描述)
-    /// `u32::MAX` 表示未使用 `OpenFile`
-    pub handle_id: u32,
-    /// close-on-exec 标志: execve 成功时关闭该 fd
-    pub cloexec: bool,
-}
-
-impl Clone for VfsFile {
-    fn clone(&self) -> Self {
-        Self {
-            fd: self.fd,
-            node_id: self.node_id,
-            offset: self.offset,
-            flags: self.flags,
-            pwm: self.pwm,
-            used: self.used,
-            file_type: self.file_type,
-            path: self.path,
-            handle_id: self.handle_id,
-            cloexec: self.cloexec,
-        }
-    }
-}
-
-impl VfsFile {
-    pub const fn new() -> Self {
-        Self {
-            fd: 0,
-            node_id: 0,
-            offset: 0,
-            flags: 0,
-            pwm: 0,
-            used: false,
-            file_type: 0,
-            path: [0; VFS_MAX_PATH],
-            handle_id: u32::MAX,
-            cloexec: false,
-        }
-    }
-
-    pub fn set_path(&mut self, path: &str) {
-        let bytes = path.as_bytes();
-        let len = bytes.len().min(VFS_MAX_PATH - 1);
-        self.path[..len].copy_from_slice(&bytes[..len]);
-        self.path[len] = 0;
-    }
-
-    pub fn get_path(&self) -> &str {
-        let end = self
-            .path
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(VFS_MAX_PATH);
-        core::str::from_utf8(&self.path[..end]).unwrap_or("")
-    }
-}
-
 pub struct ResolvedMount {
     pub mount_idx: usize,
     pub rel_path: &'static str,
@@ -163,8 +101,6 @@ pub struct ResolvedMount {
 
 pub struct VfsManager {
     pub mounts: Mutex<[VfsMount; VFS_MAX_MOUNTS]>,
-    pub fd_table: Mutex<[VfsFile; VFS_MAX_FDS]>,
-    next_fd: AtomicU32,
     cwd: Mutex<[u8; VFS_MAX_PATH]>,
     /// 根前缀 (`chroot` / `pivot_root` 机制) — 用户视图 "/" 对应的真实路径
     root: Mutex<[u8; VFS_MAX_PATH]>,
@@ -182,10 +118,8 @@ const DEFAULT_ROOT: [u8; VFS_MAX_PATH] = {
 #[derive(Clone)]
 struct VfsSnapshot {
     mounts: [VfsMount; VFS_MAX_MOUNTS],
-    fd_table: [VfsFile; VFS_MAX_FDS],
     cwd: [u8; VFS_MAX_PATH],
     root: [u8; VFS_MAX_PATH],
-    next_fd: u32,
 }
 
 /// 返回无尾斜杠路径 `s` 的父路径长度; 根之下统一收敛到 1 ("/")
@@ -209,41 +143,6 @@ impl VfsManager {
                 VfsMount::new(),
                 VfsMount::new(),
             ]),
-            fd_table: Mutex::new([
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-                VfsFile::new(),
-            ]),
-            next_fd: AtomicU32::new(3),
             cwd: Mutex::new([0; VFS_MAX_PATH]),
             root: Mutex::new(DEFAULT_ROOT),
             initialized: Mutex::new(false),
@@ -259,18 +158,6 @@ impl VfsManager {
             mount.fs_type = FsType::Unknown;
         }
 
-        let mut fd_table = self.fd_table.lock();
-        for fd in fd_table.iter_mut() {
-            fd.used = false;
-            fd.fd = 0;
-            fd.node_id = 0;
-            fd.offset = 0;
-            fd.flags = 0;
-            fd.pwm = 0;
-            fd.file_type = 0;
-            fd.set_path("");
-        }
-
         let mut cwd = self.cwd.lock();
         cwd[0] = b'/';
         cwd[1] = 0;
@@ -279,8 +166,6 @@ impl VfsManager {
         let mut root = self.root.lock();
         root[0] = b'/';
         root[1] = 0;
-
-        self.next_fd.store(3, Ordering::SeqCst);
 
         *self.initialized.lock() = true;
     }
@@ -364,125 +249,6 @@ impl VfsManager {
             return None;
         }
         Some((mount_idx, fs_type, fs))
-    }
-
-    pub fn alloc_fd(&self) -> Option<usize> {
-        let mut fd_table = self.fd_table.lock();
-        for (i, fd) in fd_table.iter_mut().enumerate() {
-            if !fd.used {
-                fd.used = true;
-                fd.fd = self.next_fd.fetch_add(1, Ordering::SeqCst);
-                return Some(i);
-            }
-        }
-        None
-    }
-
-    pub fn free_fd(&self, idx: usize) {
-        let mut fd_table = self.fd_table.lock();
-        if idx < VFS_MAX_FDS {
-            fd_table[idx].used = false;
-            fd_table[idx].fd = 0;
-            fd_table[idx].node_id = 0;
-            fd_table[idx].offset = 0;
-            fd_table[idx].cloexec = false;
-        }
-    }
-
-    pub fn set_fd(
-        &self,
-        idx: usize,
-        node_id: u32,
-        offset: u64,
-        flags: u32,
-        pwm: u64,
-        file_type: u8,
-        path: &str,
-    ) {
-        let mut fd_table = self.fd_table.lock();
-        if idx < VFS_MAX_FDS {
-            fd_table[idx].node_id = node_id;
-            fd_table[idx].offset = offset;
-            fd_table[idx].flags = flags;
-            fd_table[idx].pwm = pwm;
-            fd_table[idx].file_type = file_type;
-            fd_table[idx].set_path(path);
-        }
-    }
-
-    /// 设置 fd 的 `OpenFile` `handle_id` (POSIX 打开文件描述)
-    pub fn set_fd_handle(&self, idx: usize, handle_id: u32) {
-        let mut fd_table = self.fd_table.lock();
-        if idx < VFS_MAX_FDS {
-            fd_table[idx].handle_id = handle_id;
-        }
-    }
-
-    /// 获取 fd 的 `OpenFile` `handle_id`
-    pub fn get_fd_handle(&self, idx: usize) -> Option<u32> {
-        let fd_table = self.fd_table.lock();
-        if idx < VFS_MAX_FDS && fd_table[idx].used {
-            let hid = fd_table[idx].handle_id;
-            if hid == u32::MAX { None } else { Some(hid) }
-        } else {
-            None
-        }
-    }
-
-    /// 设置 fd 的 close-on-exec 标志
-    ///
-    /// `memfd_create(MFD_CLOEXEC)` / `open(O_CLOEXEC)` / `dup3(O_CLOEXEC)`
-    /// 等路径设置; execve 成功时由 `vfs_close_cloexec_fds` 统一关闭。
-    pub fn set_fd_cloexec(&self, idx: usize, cloexec: bool) {
-        let mut fd_table = self.fd_table.lock();
-        if idx < VFS_MAX_FDS && fd_table[idx].used {
-            fd_table[idx].cloexec = cloexec;
-        }
-    }
-
-    /// 获取 fd 的 close-on-exec 标志
-    pub fn get_fd_cloexec(&self, idx: usize) -> bool {
-        let fd_table = self.fd_table.lock();
-        idx < VFS_MAX_FDS && fd_table[idx].used && fd_table[idx].cloexec
-    }
-
-    pub fn get_fd_info(&self, idx: usize) -> Option<(u32, u64, u64)> {
-        let fd_table = self.fd_table.lock();
-        if idx < VFS_MAX_FDS && fd_table[idx].used {
-            Some((
-                fd_table[idx].node_id,
-                fd_table[idx].offset,
-                fd_table[idx].pwm,
-            ))
-        } else {
-            None
-        }
-    }
-
-    /// 通过 fd 查找其所属挂载点索引 (供 mmap 反查用)
-    pub fn get_fd_mount_idx(&self, idx: usize) -> Option<usize> {
-        let path_buf: [u8; VFS_MAX_PATH] = {
-            let fd_table = self.fd_table.lock();
-            if idx >= VFS_MAX_FDS || !fd_table[idx].used {
-                return None;
-            }
-            let mut buf = [0u8; VFS_MAX_PATH];
-            buf.copy_from_slice(&fd_table[idx].path);
-            buf
-        };
-        let path_end = path_buf
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(VFS_MAX_PATH);
-        let path_str = core::str::from_utf8(&path_buf[..path_end]).unwrap_or("");
-        self.find_mount(path_str)
-    }
-
-    pub fn set_fd_offset(&self, idx: usize, offset: u64) {
-        let mut fd_table = self.fd_table.lock();
-        if idx < VFS_MAX_FDS {
-            fd_table[idx].offset = offset;
-        }
     }
 
     /// 挂载文件系统到指定路径.
@@ -732,19 +498,12 @@ impl VfsManager {
             let m = self.mounts.lock();
             m.clone()
         };
-        let fd_data = {
-            let f = self.fd_table.lock();
-            f.clone()
-        };
         let cwd_data = *self.cwd.lock();
         let root_data = *self.root.lock();
-        let nf = self.next_fd.load(Ordering::SeqCst);
         *self.snapshot.lock() = Some(VfsSnapshot {
             mounts: mounts_data,
-            fd_table: fd_data,
             cwd: cwd_data,
             root: root_data,
-            next_fd: nf,
         });
     }
 
@@ -755,10 +514,8 @@ impl VfsManager {
     pub fn restore_from_snapshot(&self) {
         if let Some(ref snap) = *self.snapshot.lock() {
             *self.mounts.lock() = snap.mounts.clone();
-            *self.fd_table.lock() = snap.fd_table.clone();
             *self.cwd.lock() = snap.cwd;
             *self.root.lock() = snap.root;
-            self.next_fd.store(snap.next_fd, Ordering::SeqCst);
         }
     }
 }
@@ -785,51 +542,4 @@ fn vfs_barrier_capture_cb() {
 fn vfs_barrier_rollback_cb() -> bool {
     VFS_MANAGER.restore_from_snapshot();
     true
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// fd close-on-exec 标志的设置/查询/释放清零语义.
-    ///
-    /// 使用函数内 `static` 独立 fd 表实例, 避免污染 `VFS_MANAGER` 全局状态.
-    #[test]
-    fn test_fd_cloexec_set_get_and_clear_on_free() {
-        static MGR: VfsManager = VfsManager::new();
-
-        let idx = MGR.alloc_fd().expect("alloc_fd 应成功");
-        // 新分配 fd 默认不带 CLOEXEC
-        assert!(!MGR.get_fd_cloexec(idx));
-
-        // 置位后可查询
-        MGR.set_fd_cloexec(idx, true);
-        assert!(MGR.get_fd_cloexec(idx));
-
-        // 显式清零
-        MGR.set_fd_cloexec(idx, false);
-        assert!(!MGR.get_fd_cloexec(idx));
-
-        // 释放后标志必须清零 — 复用同一槽位的 fd 不应残留 CLOEXEC
-        MGR.set_fd_cloexec(idx, true);
-        MGR.free_fd(idx);
-        assert!(!MGR.get_fd_cloexec(idx));
-        let idx2 = MGR.alloc_fd().expect("复用槽位");
-        assert_eq!(idx2, idx, "first-fit 应复用刚释放的槽位");
-        assert!(!MGR.get_fd_cloexec(idx2), "复用槽位不得残留 CLOEXEC");
-    }
-
-    /// 未使用 fd 与越界索引的 set/get 均为安全空操作.
-    #[test]
-    fn test_fd_cloexec_unused_or_out_of_range_is_noop() {
-        static MGR: VfsManager = VfsManager::new();
-
-        // 未分配槽位: set 不生效
-        MGR.set_fd_cloexec(0, true);
-        assert!(!MGR.get_fd_cloexec(0));
-
-        // 越界索引: set/get 均安全返回
-        MGR.set_fd_cloexec(VFS_MAX_FDS + 1, true);
-        assert!(!MGR.get_fd_cloexec(VFS_MAX_FDS + 1));
-    }
 }

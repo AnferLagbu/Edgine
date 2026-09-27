@@ -42,8 +42,6 @@ pub mod open_file_table;
 /// overlayfs 联合文件系统 (upperdir/lowerdir 合并视图)
 pub mod overlayfs;
 pub mod path;
-/// Per-process FD 表
-pub mod process_fd_table;
 pub mod procfs;
 pub mod procfs_core;
 pub mod ramfs;

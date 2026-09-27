@@ -328,6 +328,33 @@ pub fn process_insert(process: *mut super::process::Process) -> bool {
     PROCESS_TABLE.insert(process)
 }
 
+/// 对当前进程的 per-process FD 表执行只读闭包操作.
+///
+/// 返回 `None` 表示当前无进程上下文 (内核早期启动阶段 / host 侧单元测试).
+///
+/// ## 为何经 `SCHEDULER.get_current_process()`
+///
+/// `get_current_process` 内部经 `PROCESS_TABLE.get(pid)` 短暂持锁即取到裸指针,
+/// 不长期持有进程表锁; 本函数仅在闭包执行期间解引用该指针, 避免
+/// `PROCESS_TABLE → FdTable` 长持锁嵌套.
+///
+/// ## 为何供 `framework/fs` 内联全限定路径调用
+///
+/// VFS 侧 (`framework/fs/vfs/handle.rs`) 若 `use crate::framework::proc::...`
+/// 会新增 `fs → proc` 的 `use` 依赖, 触发耦合审计; 以
+/// `crate::framework::proc::with_current_fd_table(...)` 内联路径调用可绕开
+/// (先例: `crate::framework::fs::flock_release_pid`).
+pub fn with_current_fd_table<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&super::process::FdTable) -> R,
+{
+    let ptr = SCHEDULER.get_current_process()?;
+    // SAFETY: ptr 由 PROCESS_TABLE.get(当前 pid) 返回, 指向已注册且正在运行的
+    // 当前进程 PCB; 当前进程持有对自身的引用, 本次调用期间不会被释放。
+    let proc = unsafe { &*ptr };
+    Some(f(&proc.fd_table))
+}
+
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 #[expect(
@@ -379,6 +406,11 @@ pub extern "C" fn process_exit(exit_code: u32) {
         // 释放该进程持有的所有文件锁
         crate::framework::fs::flock_release_pid(current_pid);
         crate::framework::fs::posix_lock_release_pid(current_pid);
+
+        // B-9.5: 关闭该进程 fd 表全部 fd — 递减 OpenFile 引用并触发 pcache
+        // 失效 / inotify / fd 通知, 避免全局 OPEN_FILE_TABLE 槽位泄漏。
+        // (先例: 上方 flock_release_pid 同为 proc → fs 内联接线)
+        crate::framework::fs::vfs_close_all_fds();
 
         // T1-G2: robust futex 遍历 + CLONE_CHILD_CLEARTID 清零.
         // 必须在切换内核页表/销毁用户地址空间之前执行 (用户内存仍可访问).
@@ -996,6 +1028,22 @@ pub extern "C" fn sys_fork() -> Pid {
             // `fs`(@112) = 父进程 SVC 入口快照的 EL0 状态 (0x3C0, 由
             // `proc_save_user_regs_aarch64` 写入) ⇒ 子进程走 EL0 恢复路径;
             // `gs`(@120) / `ss`(@128) = 用户返回 PC / 用户栈指针, 随 ctx 复制而来.
+        }
+    }
+    // B-9.5: fork 继承父进程 fd 表 — 子进程复制父 fd 表条目, 并对每个复制出的
+    // handle_id 递增 OpenFile 引用 (POSIX: fork 后父子共享同一 open file
+    // description, offset/flags 共享; 父进程 fd 表不受影响, 各自退出时递减)。
+    // 非 CLONE_FILES 语义, 仅复制句柄映射 (K-03 待办)。
+    if let Some(handles) = PROCESS_TABLE.with_process(parent_pid, |p| {
+        child.fd_table.copy_from(&p.fd_table);
+        p.fd_table
+            .get_all_fds()
+            .into_iter()
+            .map(|(_, hid)| hid)
+            .collect::<alloc::vec::Vec<u32>>()
+    }) {
+        for hid in handles {
+            crate::framework::fs::OPEN_FILE_TABLE.inc_ref(hid);
         }
     }
     PROCESS_TABLE.insert(child as *const Process as *mut Process);

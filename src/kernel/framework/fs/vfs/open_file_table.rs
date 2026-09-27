@@ -11,7 +11,6 @@
 
 use super::types::OpenFile;
 use crate::framework::sync::IrqSpinLock;
-use core::sync::atomic::{AtomicU32, Ordering};
 
 /// 全局 `OpenFile` 表上限
 const MAX_OPEN_FILES: usize = 256;
@@ -20,8 +19,6 @@ const MAX_OPEN_FILES: usize = 256;
 pub struct OpenFileTable {
     /// `OpenFile` 存储 (通过 `handle_id` 索引)
     files: IrqSpinLock<[Option<OpenFile>; MAX_OPEN_FILES]>,
-    /// 下一个可用的 `handle_id` (从 1 开始, 0 保留为空闲标记)
-    next_id: AtomicU32,
 }
 
 impl OpenFileTable {
@@ -29,20 +26,25 @@ impl OpenFileTable {
     pub const fn new() -> Self {
         Self {
             files: IrqSpinLock::new([const { None }; MAX_OPEN_FILES]),
-            next_id: AtomicU32::new(1),
         }
     }
 
-    /// 分配一个新的 `OpenFile`, 返回 `handle_id`
+    /// 分配一个新的 `OpenFile`, 返回 `handle_id` (即数组索引).
+    ///
+    /// ## 分配策略
+    ///
+    /// first-fit 复用空闲槽位. 原实现用单调递增 `next_id`, 累计
+    /// `MAX_OPEN_FILES` 次 open 后永久返回 `None` (永不回绕), 属系统级
+    /// 资源泄漏; 改为扫描首个空闲槽位, 槽位随 close 回收后可再分配.
     pub fn alloc(&self, file: OpenFile) -> Option<u32> {
-        let handle_id = self.next_id.fetch_add(1, Ordering::AcqRel);
-        if handle_id as usize >= MAX_OPEN_FILES {
-            return None;
-        }
-
         let mut files = self.files.lock();
-        files[handle_id as usize] = Some(file);
-        Some(handle_id)
+        for (i, slot) in files.iter_mut().enumerate() {
+            if slot.is_none() {
+                *slot = Some(file);
+                return Some(i as u32);
+            }
+        }
+        None
     }
 
     /// 获取 `OpenFile` 的引用 (通过闭包安全访问)

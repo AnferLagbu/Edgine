@@ -465,3 +465,25 @@
   - 方案：明确 aarch64 SMP 上线路径是否在计划内；若不实现，需在文档标注平台差异。
   - 状态：[X]
   - 详情：**归属转移**——本项已由 [tlb-shootdown-epoch.md](./tlb-shootdown-epoch.md) 与 [smp-ipi-protocol.md](./smp-ipi-protocol.md) §5.3 承接并**明确标注**：aarch64 侧本轮实现接收侧 SGI 分支（同语义），但因无 AP 上线路径，`SMP_ENABLED` 恒 false、`CPU_COUNT` 恒 1，IPI 路径**在 aarch64 上不可运行验证，仅编译验证**，不得标注为已验证。
+
+### D-10. per-process fd 表全量下沉的边界登记（2026-09-27）
+
+> 判据：per-process fd 表全量下沉 VFS 管理面（[syscall-followup.md](./syscall-followup.md) **B-11**）落地过程中暴露的**边界面**——本批完成 VFS 管理面（`Process.fd_table`）的权威化与全接线，但并行子系统 fd 表、进程 cwd/root/umask、`CLONE_FILES` 语义未纳入（用户裁定「只登记不处置」），须登记留痕。
+
+- **D-10-1. `VFS_MAX_FDS` 常量退役删除**
+  - 描述：全局 fd 表尺寸常量 `VFS_MAX_FDS` 原为全局 `VfsManager.fd_table` 的容量载体；全局表退役后该常量失去唯一使用路径，保留即成死常量（F9 死代码零容忍）。
+  - 方案：删除 `VFS_MAX_FDS`，fd 上限唯一由 `framework::proc::fd_table::MAX_FDS_PER_PROCESS` 承载，并在 `vfs.rs` 头注释声明唯一来源。
+  - 状态：[X]（2026-09-27 实装：[vfs.rs](../../src/kernel/framework/fs/vfs/vfs.rs#L15-L18) 头注释声明「原全局 fd 表尺寸常量 `VFS_MAX_FDS` 已随其退役删除，fd 上限唯一由 `framework::proc::fd_table::MAX_FDS_PER_PROCESS` 承载」；全库 `VFS_MAX_FDS` **无定义残留**，host-tests 相关 import 同步移除）
+  - 详情：见 [syscall-followup.md](./syscall-followup.md) **B-11.3**。
+
+- **D-10-2. 并行子系统 fd 表（只登记不处置）**
+  - 描述：全库除 VFS 管理面 fd 表外，另有多套**并列的子系统级 fd 表实现**（与 fd 语义相关但各自独立，用户口径为「**7 套并行表**」）。本批仅将 VFS 管理面（`Process.fd_table`）权威化，其余各套未纳入。
+  - 方案：本批**只登记不处置**（用户裁定）；待各子系统各自收口时，再统一评估是否并入 `Process.fd_table`。
+  - 状态：[X]（登记项，本批**无代码改动**）
+  - 详情：属后续演进面；本批面见 [syscall-followup.md](./syscall-followup.md) **B-11.1「排除面」**。另 Plan B 的 `services/fs/process_fd_table.rs`（原并行表候选）已确认不用并**删除**（**B-11.3**）。
+
+- **D-10-3. `dup2` 上限 `256 → 64`（随本工程修正）**
+  - 描述：`vfs_dup2` 对 `newfd` 的越界检查原硬编码 `256`，与 per-process fd 表容量（`MAX_FDS_PER_PROCESS = 64`）不符 ⇒ 会**误放行 `64..256` 的越界 newfd**（全局表时代遗留）。
+  - 方案：改判据为 `new_usize >= MAX_FDS_PER_PROCESS`，与 per-process 表容量对齐。
+  - 状态：[X]（2026-09-27 实装：[handle.rs](../../src/kernel/framework/fs/vfs/handle.rs#L815-L820)）
+  - 详情：见 [syscall-followup.md](./syscall-followup.md) **B-11.3**。

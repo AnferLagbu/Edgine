@@ -39,23 +39,29 @@ pub const SYS_MMAP_FLAGS: u64 = 0;
 
 /// 从 fd 获取 `inode_id`
 ///
-/// 通过进程文件描述符表查找对应的 inode 编号.
-/// 此函数属于 services 层, 因为它涉及 VFS fdtable 查找.
+/// B-9.5: 经 per-process fd 表取 `OpenFile` handle, 再由 `OpenFile` 读 inode 编号.
+/// 此函数属于 services 层, 因为它涉及 VFS fd 查找.
 pub fn fd_to_inode_id(fd: i32) -> u32 {
     if fd < 0 {
         return 0;
     }
-    crate::framework::fs::VFS_MANAGER
-        .get_fd_info(fd as usize)
-        .map_or(0, |(node_id, _, _)| node_id)
+    let Some(handle_id) = crate::framework::fs::vfs_get_fd_handle(fd as usize) else {
+        return 0;
+    };
+    crate::framework::fs::OPEN_FILE_TABLE
+        .with_file(handle_id, crate::framework::fs::OpenFile::inode_id)
+        .unwrap_or(0)
 }
 
-/// 通过 `VFS_MANAGER` 把 fd 反查为挂载点索引.
+/// 把 fd 反查为挂载点索引 (经 `OpenFile` 的 inode).
 pub fn fd_to_mount_idx(fd: i32) -> Option<usize> {
     if fd < 0 {
         return None;
     }
-    crate::framework::fs::VFS_MANAGER.get_fd_mount_idx(fd as usize)
+    let handle_id = crate::framework::fs::vfs_get_fd_handle(fd as usize)?;
+    crate::framework::fs::OPEN_FILE_TABLE
+        .with_file(handle_id, crate::framework::fs::OpenFile::mount_idx)
+        .and_then(|idx| usize::try_from(idx).ok())
 }
 
 // ============================================================================

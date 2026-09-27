@@ -36,15 +36,13 @@ fn test_vfs_close_uses_atomic_claim_and_clear() {
     // 验: 函数体内不能再调用 get_fd_info (V2 bug 的根源)
     assert!(!body.contains("get_fd_info("),
         "vfs_close_internal 不应再调用 get_fd_info (TD-03 原子化后快照内置):\n{}", body);
-    // 验: 函数体内必须含 let mut fd_table = VFS_MANAGER.fd_table.lock();
-    assert!(body.contains("let mut fd_table = VFS_MANAGER.fd_table.lock();"),
-        "vfs_close_internal 必须使用 let mut fd_table 拿写锁 (TD-03 原子化)");
-    // 验: 锁内必须同时含 used 检查与清零
-    let lock_idx = body.find("let mut fd_table = VFS_MANAGER.fd_table.lock();")
-        .expect("锁位置");
-    let lock_block = &body[lock_idx..lock_idx.saturating_add(800).min(body.len())];
-    assert!(lock_block.contains(".used = false"),
-        "TD-03: 锁内必须清零 used 标志 (原子回收)");
+    // 验: 必须经 per-process FdTable::close_fd 的单一临界区原子 claim-and-clear
+    // (B-9.5 全量下沉: 原 VFS_MANAGER.fd_table 已退役, fd 表归 Process.fd_table)
+    assert!(body.contains("with_current_fd_table(|t| t.close_fd(fd_idx_us))"),
+        "vfs_close_internal 必须经 FdTable::close_fd 单临界区原子回收 (TD-03 / B-9.5)");
+    // 验: 快照为空 (未使用 fd / 无进程上下文) 必须提前返回 0, 跳过副作用
+    assert!(body.contains("None | Some(None) => return 0,"),
+        "TD-03: 快照为空时必须 return 0, 跳过 pcache/inotify (原子回收后幂等)");
 }
 
 #[test]
@@ -71,10 +69,10 @@ fn test_vfs_close_second_call_is_noop() {
     let src = read(VFS_HANDLE);
     let body_start = src.find("pub fn vfs_close_internal").unwrap();
     let body = &src[body_start..];
-    // 必须有 snapshot 模式 + match
-    assert!(body.contains("let snapshot = {"),
+    // 必须有 snapshot 模式 + match (B-9.5: 快照取自 per-process FdTable::close_fd)
+    assert!(body.contains("let snapshot = crate::framework::proc::with_current_fd_table("),
         "vfs_close_internal 必须用 snapshot 模式 (TD-03 原子 claim-and-clear)");
-    // snapshot 返回 None 时必须 return 0 (跳过副作用)
-    assert!(body.contains("None => return 0,"),
-        "TD-03: snapshot None 时必须 return 0, 跳过 pcache/inotify");
+    // snapshot 为空时必须 return 0 (跳过副作用)
+    assert!(body.contains("None | Some(None) => return 0,"),
+        "TD-03: snapshot 为空时必须 return 0, 跳过 pcache/inotify");
 }

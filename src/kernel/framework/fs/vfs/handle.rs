@@ -10,13 +10,20 @@ use super::api::{
 };
 use super::open_file_table::OPEN_FILE_TABLE;
 use super::types::{
-    KernelError, OpenFile, VFS_MAX_FDS, VFS_MAX_PATH, VfsDirEntry, VfsOpenFlags, VfsSeekWhence,
-    VfsStat,
+    KernelError, OpenFile, VFS_MAX_PATH, VfsDirEntry, VfsOpenFlags, VfsSeekWhence, VfsStat,
 };
 use super::vfs::VFS_MANAGER;
 use crate::framework::fd_notify;
 use crate::framework::mm::{PAGE_SIZE, pcache};
 use crate::framework::userptr::{UserReadPtr, UserRefMut, UserWritePtr};
+
+/// 通过本地 fd 取当前进程 fd 表 (权威表) 的 `OpenFile` `handle_id`.
+///
+/// 内联全限定路径调用 `framework::proc::with_current_fd_table`, 避免新增
+/// `fs → proc` 的 `use` 依赖 (耦合审计)。无进程上下文 (host 侧单测) 返回 None。
+fn current_fd_handle(fd_idx: usize) -> Option<u32> {
+    crate::framework::proc::with_current_fd_table(|t| t.get_handle_id(fd_idx)).flatten()
+}
 
 // ============================================================================
 // VFS 核心接口 (内部)
@@ -31,6 +38,10 @@ use crate::framework::userptr::{UserReadPtr, UserRefMut, UserWritePtr};
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
 pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i32 {
+    // CLOEXEC 是 fd 级标志 (fcntl F_GETFD/F_SETFD 语义), 不属于文件状态标志;
+    // 从 flags 中剥离, 避免其经 OpenFile::get_flags 被 F_GETFL 误报.
+    let cloexec = (flags & VfsOpenFlags::CLOEXEC.bits()) != 0;
+    let flags = flags & !VfsOpenFlags::CLOEXEC.bits();
     let path = ptr_to_str(path);
     let mut pbuf = [0u8; VFS_MAX_PATH];
     let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
@@ -48,7 +59,6 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
         match fs.fs_open(rel_path, flags, pwm) {
             Ok(inode) => {
                 // Plan B: fs_open 直接返回 Inode trait object
-                let node_id = inode.node_id();
                 let file_type = inode.stat(pwm).map_or(0, |s| s.file_type);
                 let open_file = OpenFile::new(inode, flags, pwm, file_type);
 
@@ -58,22 +68,19 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
                     None => return -1,
                 };
 
-                // 在进程 fd 表中分配 fd (per-process fd 表待实现, 登记分册 9 B09-10)
-                // 当前简化: 使用全局 fd 索引
-                let fd_idx = if let Some(i) = VFS_MANAGER.alloc_fd() {
+                // B-9.5: 在 per-process fd 表 (Process.fd_table, 权威表) 分配本地 fd.
+                // 元数据 (node_id/flags/offset) 统一由共享 OpenFile 承载, 不再写入
+                // 全局 VfsManager.fd_table. 无进程上下文 (host 侧单测) 时返回 -1.
+                let fd_idx = if let Some(i) = crate::framework::proc::with_current_fd_table(|t| {
+                    t.alloc_fd(handle_id, cloexec)
+                })
+                .flatten()
+                {
                     i
                 } else {
                     OPEN_FILE_TABLE.close(handle_id);
                     return -1;
                 };
-
-                // 存储 handle_id 到 fd 表
-                VFS_MANAGER.set_fd_handle(fd_idx, handle_id);
-                // T5 甲批 C-1: 填充 fd 表元数据。缺此半则 `get_fd_info`
-                // (flock 的 ino 识别 / mmap-by-fd 的 fd_to_inode_id) 恒得 0,
-                // `get_fd_mount_idx` 因 path 为空而反查失败, close 时
-                // pcache 失效也按 node 0 执行。
-                VFS_MANAGER.set_fd(fd_idx, node_id, 0, flags, pwm, file_type, path);
 
                 fd_idx as i32
             }
@@ -91,16 +98,18 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
                             None => return -1,
                         };
 
-                        let fd_idx = if let Some(i) = VFS_MANAGER.alloc_fd() {
+                        // B-9.5: 同 fs_open 分支, per-process fd 表分配 (元数据改源 OpenFile)
+                        let fd_idx = if let Some(i) =
+                            crate::framework::proc::with_current_fd_table(|t| {
+                                t.alloc_fd(handle_id, cloexec)
+                            })
+                            .flatten()
+                        {
                             i
                         } else {
                             OPEN_FILE_TABLE.close(handle_id);
                             return -1;
                         };
-
-                        VFS_MANAGER.set_fd_handle(fd_idx, handle_id);
-                        // T5 甲批 C-1: 同 fs_open 分支, 填充 fd 表元数据
-                        VFS_MANAGER.set_fd(fd_idx, inode_id, 0, flags, pwm, file_type, path);
 
                         // inotify: 父目录 IN_CREATE + 新文件 IN_OPEN
                         let parent_ino = fs.fs_resolve_path(parent_path).unwrap_or(0);
@@ -140,40 +149,23 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
 )]
 pub fn vfs_close_internal(fd_idx: u32) -> i32 {
     let fd_idx_us = fd_idx as usize;
-    if fd_idx_us >= VFS_MAX_FDS {
-        return -1;
-    }
-    // TD-03: 原子 claim-and-clear — 同一把锁内同时快照 node_id/flags/handle_id 并清 used,
-    // 避免双核同时 close 同一 fd 导致 pcache/inotify 二次触发.
-    let snapshot = {
-        let mut fd_table = VFS_MANAGER.fd_table.lock();
-        if fd_table[fd_idx_us].used {
-            let snap = (
-                fd_table[fd_idx_us].node_id,
-                fd_table[fd_idx_us].flags,
-                fd_table[fd_idx_us].handle_id,
-            );
-            // 在锁内清零 used 标志 — 后续 alloc 不会复用, 杜绝双 close 穿透
-            fd_table[fd_idx_us].used = false;
-            fd_table[fd_idx_us].fd = 0;
-            fd_table[fd_idx_us].node_id = 0;
-            fd_table[fd_idx_us].offset = 0;
-            fd_table[fd_idx_us].handle_id = u32::MAX;
-            fd_table[fd_idx_us].cloexec = false;
-            Some(snap)
-        } else {
-            None // 已关闭或未使用, 直接返回 0
-        }
-    };
-    let (node_id, flags, handle_id) = match snapshot {
-        Some(s) => s,
-        None => return 0,
+    // TD-03: 原子 claim-and-clear — FdTable::close_fd 在同一临界区内快照 handle_id
+    // 并清空槽位 (entries→u32::MAX, cloexec→false), 避免双核同时 close 同一 fd
+    // 导致 pcache/inotify 二次触发. 未使用 fd 或越界返回 None, 天然保持幂等.
+    let snapshot = crate::framework::proc::with_current_fd_table(|t| t.close_fd(fd_idx_us));
+    let handle_id = match snapshot {
+        Some(Some(hid)) => hid,
+        // 无进程上下文 (host 侧单测), 或 fd 已关闭/未使用 → 跳过全部副作用
+        None | Some(None) => return 0,
     };
 
+    // B-9.5: 元数据改源 OpenFile (退役全局 VfsManager.fd_table 的 node_id/flags 副本)
+    let (node_id, flags) = OPEN_FILE_TABLE
+        .with_file(handle_id, |of| (of.inode_id(), of.get_flags()))
+        .unwrap_or((0, 0));
+
     // 减少 OpenFile 引用计数 (POSIX dup 语义)
-    if handle_id != u32::MAX {
-        OPEN_FILE_TABLE.close(handle_id);
-    }
+    OPEN_FILE_TABLE.close(handle_id);
 
     // B2: 释放该 fd 关联 inode 的全部 pcache 缓存页, 避免内存泄漏
     pcache::pcache_invalidate_inode(node_id);
@@ -193,18 +185,35 @@ pub fn vfs_close_internal(fd_idx: u32) -> i32 {
 /// 关闭全部标记 CLOEXEC 的 fd — execve 成功路径调用 (POSIX close-on-exec)。
 ///
 /// 带 `FD_CLOEXEC` 的 fd 在 exec 成功后关闭, 其余保留。
-/// 先收集 CLOEXEC fd 索引再逐个 `vfs_close_internal`, 避免持 `fd_table`
+/// 先收集 CLOEXEC fd 索引再逐个 `vfs_close_internal`, 避免持 `FdTable`
 /// 锁递归 (vfs_close_internal 内部会再次获取同一把锁 → 自锁死)。
 pub fn vfs_close_cloexec_fds() {
-    let targets: alloc::vec::Vec<u32> = {
-        let fd_table = VFS_MANAGER.fd_table.lock();
-        fd_table
-            .iter()
-            .enumerate()
-            .filter(|(_, f)| f.used && f.cloexec)
-            .map(|(i, _)| i as u32)
-            .collect()
-    };
+    let targets: alloc::vec::Vec<u32> = crate::framework::proc::with_current_fd_table(
+        crate::framework::proc::FdTable::get_cloexec_fds,
+    )
+    .unwrap_or_default()
+    .into_iter()
+    .map(|i| i as u32)
+    .collect();
+    for fd in targets {
+        vfs_close_internal(fd);
+    }
+}
+
+/// 关闭当前进程 fd 表的全部 fd — 进程退出路径调用。
+///
+/// B-9.5: per-process fd 表权威化后, 进程退出须逐 fd 释放 OpenFile 引用
+/// (递减引用计数) 并触发 pcache 失效 / inotify / fd 通知, 否则全局
+/// `OPEN_FILE_TABLE` 槽位泄漏。先收集 fd 索引再逐个 `vfs_close_internal`,
+/// 避免持 `FdTable` 锁递归 (vfs_close_internal 内部会再次获取同一把锁)。
+/// 无进程上下文时为空操作。
+pub fn vfs_close_all_fds() {
+    let targets: alloc::vec::Vec<u32> =
+        crate::framework::proc::with_current_fd_table(crate::framework::proc::FdTable::get_all_fds)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(local, _)| local as u32)
+            .collect();
     for fd in targets {
         vfs_close_internal(fd);
     }
@@ -224,8 +233,8 @@ pub extern "C" fn vfs_read_internal(fd_idx: u32, buf: *mut u8, count: u32) -> i3
     }
 
     // Plan B: 通过 OpenFile 的 Inode trait 执行 I/O
-    // 获取 handle_id
-    let handle_id = match VFS_MANAGER.get_fd_handle(fd_idx as usize) {
+    // 获取 handle_id (B-9.5: 源自 per-process fd 表, 权威表)
+    let handle_id = match current_fd_handle(fd_idx as usize) {
         Some(hid) => hid,
         None => return -1,
     };
@@ -356,13 +365,10 @@ pub fn vfs_pread_inode(
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
 pub extern "C" fn vfs_truncate_internal(fd: u32, size: u64) -> i32 {
-    let fd_idx = fd as usize;
-    if fd_idx >= VFS_MAX_FDS {
-        return -1;
-    }
-
+    // B-9.5: 边界由 per-process fd 表 (MAX_FDS_PER_PROCESS) 承担, 不再用
+    // 全局 VFS_MAX_FDS=32 检查 (否则会误拒 32..64 的合法 per-process fd).
     // Plan B: 通过 OpenFile 的 Inode trait 执行
-    let handle_id = match VFS_MANAGER.get_fd_handle(fd_idx as usize) {
+    let handle_id = match current_fd_handle(fd as usize) {
         Some(hid) => hid,
         None => return -1,
     };
@@ -396,7 +402,7 @@ pub extern "C" fn vfs_write_internal(fd_idx: u32, buf: *const u8, count: u32) ->
     }
 
     // Plan B: 通过 OpenFile 的 Inode trait 执行 I/O
-    let handle_id = match VFS_MANAGER.get_fd_handle(fd_idx as usize) {
+    let handle_id = match current_fd_handle(fd_idx as usize) {
         Some(hid) => hid,
         None => return -1,
     };
@@ -445,7 +451,7 @@ pub extern "C" fn vfs_readdir_internal(fd: u32, entry: *mut VfsDirEntry) -> i32 
     }
 
     // Plan B: 通过 OpenFile 的 Inode trait 执行
-    let handle_id = match VFS_MANAGER.get_fd_handle(fd as usize) {
+    let handle_id = match current_fd_handle(fd as usize) {
         Some(hid) => hid,
         None => return -1,
     };
@@ -516,7 +522,7 @@ pub fn vfs_pread(fd: u32, buf: *mut u8, count: u32, offset: u64) -> i32 {
     if buf.is_null() || count == 0 {
         return -1;
     }
-    let Some(handle_id) = VFS_MANAGER.get_fd_handle(fd as usize) else {
+    let Some(handle_id) = current_fd_handle(fd as usize) else {
         return -1;
     };
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -541,7 +547,7 @@ pub fn vfs_pwrite(fd: u32, buf: *const u8, count: u32, offset: u64) -> i32 {
     if buf.is_null() || count == 0 {
         return -1;
     }
-    let Some(handle_id) = VFS_MANAGER.get_fd_handle(fd as usize) else {
+    let Some(handle_id) = current_fd_handle(fd as usize) else {
         return -1;
     };
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -624,7 +630,7 @@ pub extern "C" fn vfs_readdir(fd: u32, entry: *mut VfsDirEntry) -> i32 {
 )]
 pub extern "C" fn vfs_fchmod(fd: u32, mode: u16) -> i32 {
     // Plan B: 通过 OpenFile 的 Inode trait 执行
-    let handle_id = match VFS_MANAGER.get_fd_handle(fd as usize) {
+    let handle_id = match current_fd_handle(fd as usize) {
         Some(hid) => hid,
         None => return -9,
     };
@@ -651,7 +657,7 @@ pub extern "C" fn vfs_fchmod(fd: u32, mode: u16) -> i32 {
 )]
 pub extern "C" fn vfs_fchown(fd: u32, owner_pwm: u64, group_pwm: u64, pwm: u64) -> i32 {
     // Plan B: 通过 OpenFile 的 Inode trait 执行
-    let handle_id = match VFS_MANAGER.get_fd_handle(fd as usize) {
+    let handle_id = match current_fd_handle(fd as usize) {
         Some(hid) => hid,
         None => return -9,
     };
@@ -681,7 +687,7 @@ pub extern "C" fn vfs_seek(fd: u32, offset: i32, whence: u32) -> i32 {
     };
 
     // Plan B: 通过 OpenFile 的 Inode trait 执行
-    let handle_id = match VFS_MANAGER.get_fd_handle(fd as usize) {
+    let handle_id = match current_fd_handle(fd as usize) {
         Some(hid) => hid,
         None => return KernelError::InvalidArgument.as_i32(),
     };
@@ -700,16 +706,6 @@ pub extern "C" fn vfs_seek(fd: u32, offset: i32, whence: u32) -> i32 {
     result.unwrap_or(KernelError::InvalidArgument.as_i32())
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-pub extern "C" fn vfs_fd_table() -> *const u8 {
-    VFS_MANAGER.fd_table.lock().as_ptr() as *const u8
-}
-
 // ============================================================================
 // fstat — 从 fd 获取文件属性
 // ============================================================================
@@ -726,7 +722,7 @@ pub extern "C" fn vfs_fstat(fd: u32, st: *mut VfsStat, _pwm: u64) -> i32 {
     }
 
     // Plan B: 通过 OpenFile 的 Inode trait 执行
-    let handle_id = match VFS_MANAGER.get_fd_handle(fd as usize) {
+    let handle_id = match current_fd_handle(fd as usize) {
         Some(hid) => hid,
         None => return -9,
     };
@@ -772,14 +768,9 @@ pub fn vfs_fstat_safe(fd: u32, pwm: u64) -> Option<VfsStat> {
 // fd handle_id 操作 (POSIX 打开文件描述)
 // ============================================================================
 
-/// 设置 fd 的 `OpenFile` `handle_id`
-pub fn vfs_set_fd_handle(fd_idx: usize, handle_id: u32) {
-    VFS_MANAGER.set_fd_handle(fd_idx, handle_id);
-}
-
-/// 获取 fd 的 `OpenFile` `handle_id`
+/// 获取本地 fd 的 `OpenFile` `handle_id` (B-9.5: 源自 per-process fd 表).
 pub fn vfs_get_fd_handle(fd_idx: usize) -> Option<u32> {
-    VFS_MANAGER.get_fd_handle(fd_idx)
+    current_fd_handle(fd_idx)
 }
 
 // ============================================================================
@@ -792,69 +783,59 @@ pub fn vfs_get_fd_handle(fd_idx: usize) -> Option<u32> {
 #[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn vfs_dup(oldfd: u32) -> i32 {
     let old_usize = oldfd as usize;
-    if old_usize >= 256 {
-        return -9;
-    }
-    let mut fd_table = VFS_MANAGER.fd_table.lock();
-    if !fd_table[old_usize].used {
-        return -9;
-    }
+    // B-9.5: 源 fd 取自 per-process fd 表; 无效 → EBADF
+    let Some((handle_id, _)) =
+        crate::framework::proc::with_current_fd_table(|t| t.get_entry(old_usize)).flatten()
+    else {
+        return -9; // EBADF
+    };
 
-    // POSIX dup: 共享 OpenFile (offset/flags 共享)
-    let handle_id = fd_table[old_usize].handle_id;
+    // POSIX dup: 新 fd 与 oldfd 共享同一 OpenFile (offset/flags 共享), 无 CLOEXEC
+    let Some(new_fd) =
+        crate::framework::proc::with_current_fd_table(|t| t.alloc_fd(handle_id, false)).flatten()
+    else {
+        return -24; // EMFILE: per-process fd 表已满
+    };
 
-    for i in 0..256usize {
-        if !fd_table[i].used {
-            // 复制 fd 表条目, 但共享同一个 OpenFile
-            fd_table[i] = fd_table[old_usize].clone();
-            fd_table[i].fd = i as u32;
-            // 增加 OpenFile 引用计数
-            if handle_id != u32::MAX {
-                OPEN_FILE_TABLE.inc_ref(handle_id);
-            }
-            return i as i32;
-        }
-    }
-    -24 // EMFILE
+    // 增加 OpenFile 引用计数 (POSIX dup 语义)
+    OPEN_FILE_TABLE.inc_ref(handle_id);
+    new_fd as i32
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn vfs_dup2(oldfd: u32, newfd: u32) -> i32 {
     let old_usize = oldfd as usize;
     let new_usize = newfd as usize;
-    if old_usize >= 256 || new_usize >= 256 {
-        return -9;
-    }
-    let mut fd_table = VFS_MANAGER.fd_table.lock();
-    if !fd_table[old_usize].used {
-        return -9;
+
+    // B-9.5: 源 fd 取自 per-process fd 表; 无效 → EBADF
+    let Some((old_handle_id, _)) =
+        crate::framework::proc::with_current_fd_table(|t| t.get_entry(old_usize)).flatten()
+    else {
+        return -9; // EBADF
+    };
+    // newfd 超出 per-process fd 表容量 → EBADF
+    if new_usize >= crate::framework::proc::fd_table::MAX_FDS_PER_PROCESS {
+        return -9; // EBADF
     }
     if new_usize == old_usize {
         return newfd as i32;
     }
 
-    // POSIX dup2: 关闭旧 newfd (如果有), 然后共享 OpenFile
-    let old_handle_id = fd_table[old_usize].handle_id;
+    // POSIX dup2: 原子替换 newfd 槽位 (结果为无 CLOEXEC 的副本, 共享同一 OpenFile).
+    // set_fd_at 返回被覆盖的原 handle_id (None 表示原槽位空闲).
+    let prev = crate::framework::proc::with_current_fd_table(|t| {
+        t.set_fd_at(new_usize, old_handle_id, false)
+    });
+    let Some(prev) = prev else {
+        return -9; // EBADF: 无进程上下文
+    };
 
-    // 如果 newfd 已使用, 先关闭它
-    if fd_table[new_usize].used {
-        let old_new_handle_id = fd_table[new_usize].handle_id;
-        if old_new_handle_id != u32::MAX {
-            OPEN_FILE_TABLE.close(old_new_handle_id);
-        }
+    // 若 newfd 原本已打开, 先释放其 OpenFile 引用 (POSIX: dup2 先关闭 newfd)
+    if let Some(prev_hid) = prev {
+        OPEN_FILE_TABLE.close(prev_hid);
     }
-
-    // 复制 fd 表条目, 共享同一个 OpenFile
-    fd_table[new_usize] = fd_table[old_usize].clone();
-    fd_table[new_usize].fd = new_usize as u32;
-
-    // 增加 OpenFile 引用计数
-    if old_handle_id != u32::MAX {
-        OPEN_FILE_TABLE.inc_ref(old_handle_id);
-    }
-
+    // 共享 OpenFile: 增加引用计数
+    OPEN_FILE_TABLE.inc_ref(old_handle_id);
     newfd as i32
 }
