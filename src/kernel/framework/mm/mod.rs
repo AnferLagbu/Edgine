@@ -102,8 +102,8 @@ pub use api::{
     pmm_alloc_page_phys, pmm_alloc_pages, pmm_alloc_pages_phys, pmm_dump_stats, pmm_free_huge_page,
     pmm_free_page, pmm_free_page_phys, pmm_free_pages, pmm_free_pages_phys, pmm_get_free_pages,
     pmm_get_total_pages, pmm_get_used_pages, pmm_init, pmm_init_bitmap, pmm_is_aligned_for_huge,
-    vma_get_current_mm, vma_set_current_mm, vmm_clone_user_page_table_cow, vmm_destroy_page_table,
-    vmm_switch_page_table,
+    VmaInfo, vma_get_current_mm, vma_set_current_mm, vma_snapshot_current,
+    vmm_clone_user_page_table_cow, vmm_destroy_page_table, vmm_switch_page_table,
 };
 
 // vma 公共类型 re-export — 避免跨子系统直接访问 mm::vma 内部

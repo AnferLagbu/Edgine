@@ -145,6 +145,10 @@ pub fn init() {
     // 启动期重复注册是配置错误, panic 暴露 (B05-44 返工).
     signal::register_standard_signal_policy()
         .expect("proc::init: 信号策略重复注册 (framework 契约: 仅注册一次)");
+    // 2J-C: 注册 services 层 coredump sink (框架 signal 经 trait 回调)
+    // 启动期重复注册是配置错误, panic 暴露 (framework 契约: 仅注册一次).
+    coredump::register_standard_coredump_sink()
+        .expect("proc::init: coredump sink 重复注册 (framework 契约: 仅注册一次)");
 
     crate::framework::proc::thread::init();
     crate::framework::proc::scheduler::init();

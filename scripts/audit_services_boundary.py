@@ -38,9 +38,10 @@ FRAMEWORK_BASE = Path('src/kernel/framework')
 #   framework::proc_elf (Elf)
 #
 # 禁止直接访问的内部模块 (实现细节):
-# B01-04 修复: 补全缺失项 — ipc::msgq::raw / syscall::types / proc::coredump
+# B01-04 修复: 补全缺失项 — ipc::msgq::raw / syscall::types
 # 等, 实测 services 穿透访问未被报; 同时新增 mm::errno / driver::idt::irq_trait /
 # debug::ebpf / debug::opcode / debug::fnv1a_32 / debug::TraceEvent 等反向依赖点.
+# 2J-C: coredump 已下沉 services/proc (经 coredump_trait 注入), 原 'proc::coredump' 禁条移除.
 FORBIDDEN_FRAMEWORK_MODULES = [
     # 同步原语 implementation details (应通过 services/sync/* 代理)
     'framework::sync::raw',
@@ -84,8 +85,6 @@ FORBIDDEN_FRAMEWORK_MODULES = [
     'framework::ipc::msgq::raw',
     # syscall 内部 (类型/API 应通过 services/syscall 顶层)
     'framework::syscall::types',
-    # proc 内部 (coredump 应通过 services/proc 顶层)
-    'framework::proc::coredump',
     # errno 不列入禁止: framework::errno 是刻意的中性 re-export
     # (实际定义在 services::syscall::types, 见 framework/errno.rs 头注释),
     # 用于消除 proc/mm/fs/io 对 syscall 子系统的直接依赖.
@@ -335,8 +334,6 @@ PROXY_ALLOWANCE = [
     ('src/kernel/services/debug/ebpf_verifier.rs', 'framework::debug::opcode'),
     # ipc 子系统: msgq.rs 转发 raw 层消息类型 (MessageRef)
     ('src/kernel/services/ipc/msgq.rs', 'framework::ipc::msgq::raw'),
-    # proc 子系统: coredump.rs 代理 framework::proc::coredump
-    ('src/kernel/services/proc/coredump.rs', 'framework::proc::coredump'),
     # DECISION-N (2026-09-13): DECISION-J 反转批次的 re-export 代理壳
     # (纯 `pub use framework::...::*`, 无业务逻辑, 属机制安全导出面的合法转发).
     # sync 子系统: types.rs 代理 framework::sync::types (锁状态/守卫/统计)

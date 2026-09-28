@@ -33,7 +33,7 @@ pub use api::{
     vfs_read, vfs_read_internal, vfs_read_safe, vfs_readdir, vfs_readlink, vfs_rename, vfs_rmdir,
     vfs_seek, vfs_set_cwd, vfs_stat, vfs_stat_internal, vfs_symlink, vfs_sync,
     vfs_truncate_internal, vfs_umount, vfs_unlink, vfs_utimensat_safe, vfs_write,
-    vfs_write_internal, vfs_write_safe,
+    vfs_write_internal, vfs_write_pod, vfs_write_safe,
 };
 pub use flock::{
     F_GETLK, F_SETLK, F_SETLKW, FlockResult, PosixLockConflict, PosixLockResult, flock_release_fd,

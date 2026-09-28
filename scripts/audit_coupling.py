@@ -63,7 +63,6 @@ INTERNAL_PATTERNS = [
     r'framework::mm::numa',
     r'framework::mm::arch',
     # proc 内部 — api/signal/rlimit/fd_alloc/seccomp/namespace/cgroup/elf/madvise_mlock/cpu_queue/session/thread/scheduler/scheduler_ex/process/canary/posix_timer/user_proc 已 re-export
-    r'framework::proc::coredump',
     r'framework::proc::oomd',
     r'framework::proc::cfs',
     # syscall 内部 — types/epoll/api 已 re-export
@@ -78,8 +77,6 @@ INTERNAL_PATTERNS = [
     r'framework::syscall::madvise_mlock',
     r'framework::syscall::brk',
     r'framework::syscall::clone',
-    r'framework::syscall::wait4',
-    r'framework::syscall::info',
     r'framework::syscall::posix_timer',
     r'framework::syscall::canary',
     r'framework::syscall::raw',

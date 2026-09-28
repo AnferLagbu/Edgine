@@ -27,6 +27,7 @@ use crate::framework::mm::{MmStruct, Vma, VmaType};
 use crate::framework::mm::{PAGE_SIZE, PageFlags, VirtAddr};
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Elf64Header {
     pub e_ident: [u8; 16],
     pub e_type: u16,
@@ -45,6 +46,7 @@ pub struct Elf64Header {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Elf64Phdr {
     pub p_type: u32,
     pub p_flags: u32,

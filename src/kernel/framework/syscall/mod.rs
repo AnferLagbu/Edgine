@@ -5,11 +5,9 @@ pub mod dispatch_trait;
 pub mod epoll;
 pub mod eventfd;
 pub mod futex;
-pub mod info;
 pub mod madvise_mlock;
 pub mod signalfd;
 pub mod timerfd;
-pub mod wait4;
 
 /// Syscall 模块 — `QueenX` 原生系统调用分发
 ///

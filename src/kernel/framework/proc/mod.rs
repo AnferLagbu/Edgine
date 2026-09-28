@@ -44,7 +44,7 @@ pub mod api;
 pub mod canary;
 pub mod cfs;
 pub mod cgroup;
-pub mod coredump;
+pub mod coredump_trait;
 pub mod cpu_queue;
 /// Credo 域级行为门控 (`DomainFlags`) 机制 + 状态读写
 pub mod domain;
@@ -82,6 +82,9 @@ pub mod user_proc;
 // init: scheduler vs user_proc
 pub use crate::framework::barrier::*;
 pub use canary::*;
+pub use coredump_trait::{
+    CoredumpSink, RegSnapshot, current_coredump_sink, read_interrupt_regs, register_coredump_sink,
+};
 pub use posix_timer::*;
 pub use process::*;
 pub use scheduler::*;

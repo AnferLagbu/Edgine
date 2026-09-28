@@ -507,6 +507,23 @@ pub fn vfs_write_safe(fd: u32, buf: &[u8]) -> i32 {
     vfs_write(fd, buf.as_ptr(), buf.len() as u32)
 }
 
+/// Safe 包装: 把 POD 结构体按位写入 fd (供 coredump 等序列化场景)
+///
+/// 以 `&T` 的只读字节视图调用 `vfs_write_safe`, 不产生对齐/别名假设;
+/// 仅要求 `T: Copy` (无 Drop, 位视图读取安全).
+pub fn vfs_write_pod<T: Copy>(fd: u32, val: &T) -> i32 {
+    let size = core::mem::size_of::<T>();
+    if size == 0 {
+        return 0;
+    }
+    // SAFETY: val 是有效 &T; size = size_of::<T>() 完全落在 val 内存范围内;
+    //         from_raw_parts 仅构造只读 u8 视图供 vfs_write 读取, 不越界.
+    let bytes = unsafe {
+        core::slice::from_raw_parts(core::ptr::from_ref(val).cast::<u8>(), size)
+    };
+    vfs_write_safe(fd, bytes)
+}
+
 // ============================================================================
 // pread / pwrite — 显式 offset I/O (T1 G1, preadv/pwritev 机制)
 // ============================================================================

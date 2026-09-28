@@ -449,8 +449,8 @@ pub fn do_signal_default_action(pid: Pid, sig: u8, frame_addr: u64) {
             }
         }
         SignalDefaultAction::Core => {
-            // 生成 core dump
-            super::coredump::do_coredump(pid, sig, frame_addr);
+            // 生成 core dump (策略实现在 services, 经 CoredumpSink 注入)
+            super::coredump_trait::current_coredump_sink().coredump(pid, sig, frame_addr);
             if let Some(proc_ptr) = PROCESS_TABLE.get(pid) {
                 // SAFETY: `proc_ptr` 由调用方保证为有效指针; 只读访问
                 let proc = unsafe { &*proc_ptr };

@@ -32,6 +32,7 @@ use super::{
     PageFlags, PageSize, PhysAddr, VirtAddr, get_kmalloc, get_kmalloc_mut, get_pmm, get_vmm,
 };
 use core::sync::atomic::AtomicU64;
+use alloc::vec::Vec;
 
 /// 内核 malloc 统计结构 (C 兼容)
 #[repr(C)]
@@ -611,6 +612,45 @@ pub fn vma_set_current_mm(mm: *const super::vma::MmStruct) {
     super::vma::set_current_mm(mm);
 }
 
+/// VMA 的 POD 快照 — 供 services 层安全消费 (纯数据, 不含裸指针 / 锁).
+///
+/// `flags_bits` 为 `PageFlags` 的原始位掩码, 由 services 自行映射为上层
+/// 语义 (如 ELF `PF_R`/`PF_W`/`PF_X`), 避免框架内嵌上层格式知识.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VmaInfo {
+    /// 起始地址 (含)
+    pub start: u64,
+    /// 结束地址 (不含)
+    pub end: u64,
+    /// `PageFlags` 原始位掩码
+    pub flags_bits: u64,
+}
+
+/// 采集指定 mm 全部 VMA 的 POD 快照 (保持 `vmas` 列表顺序).
+fn snapshot_mm(mm: &super::vma::MmStruct) -> Vec<VmaInfo> {
+    let vmas = mm.vmas.lock();
+    let mut out = Vec::with_capacity(vmas.len());
+    for v in vmas.iter() {
+        out.push(VmaInfo {
+            start: v.start as u64,
+            end: v.end as u64,
+            flags_bits: v.flags.bits(),
+        });
+    }
+    out
+}
+
+/// 采集当前进程全部 VMA 的 POD 快照.
+///
+/// 无当前 mm 时返回空表. services 可在持锁语义之外安全遍历返回的纯数据,
+/// 避免直接触碰 `MmStruct::vmas` 的 `Mutex`.
+pub fn vma_snapshot_current() -> Vec<VmaInfo> {
+    match vma_get_current_mm() {
+        Some(mm) => snapshot_mm(mm),
+        None => Vec::new(),
+    }
+}
+
 // copy_user re-export — 避免跨子系统直接引用 mm::copy_user 内部
 pub use super::copy_user::{copy_from_user, copy_to_user, is_user_buf};
 
@@ -619,3 +659,42 @@ pub use super::cross_process::{copy_from_user_in_mm, copy_to_user_in_mm};
 
 // page_fault re-export — 避免跨子系统直接引用 mm::page_fault 内部
 pub use super::page_fault::{PageFaultInfo, PfResult, handle_page_fault, handle_user_page_fault};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::framework::mm::vma::{MmStruct, Vma, VmaType};
+
+    #[test]
+    fn test_vma_snapshot_empty_mm() {
+        let mm = MmStruct::new();
+        assert!(snapshot_mm(&mm).is_empty());
+    }
+
+    #[test]
+    fn test_vma_snapshot_preserves_order_and_flags() {
+        let mm = MmStruct::new();
+        {
+            let mut vmas = mm.vmas.lock();
+            vmas.push(Vma::new(
+                0x1000,
+                0x2000,
+                PageFlags::PRESENT | PageFlags::WRITABLE,
+                VmaType::Anonymous,
+            ));
+            vmas.push(Vma::new(0x3000, 0x4000, PageFlags::PRESENT, VmaType::Stack));
+        }
+
+        let snap = snapshot_mm(&mm);
+        assert_eq!(snap.len(), 2);
+        assert_eq!(snap[0].start, 0x1000);
+        assert_eq!(snap[0].end, 0x2000);
+        assert_eq!(
+            snap[0].flags_bits,
+            (PageFlags::PRESENT | PageFlags::WRITABLE).bits()
+        );
+        assert_eq!(snap[1].start, 0x3000);
+        assert_eq!(snap[1].end, 0x4000);
+        assert_eq!(snap[1].flags_bits, PageFlags::PRESENT.bits());
+    }
+}
