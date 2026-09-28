@@ -22,8 +22,8 @@
 //!
 //! - **零 unsafe**: 所有类型定义 + 逻辑均不含 unsafe
 //! - **MMIO 代理**: `xhci.rs` 通过 `IoMem` 安全访问寄存器
-//! - **重导出**: `usb_core` / `enumerate` / `ring` / `hid` / `mass_storage` 重导出
-//!   framework 中 0 unsafe 模块的公共类型
+//! - **迁移中**: `enumerate` / `ring` / `hid` / `mass_storage` 已实装于 services (0 unsafe);
+//!   `usb_core` 暂重导出 framework 类型, 待封装 2 处 unsafe 后实装
 //!
 //! ## 后续添加
 //!
