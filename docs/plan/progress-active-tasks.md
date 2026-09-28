@@ -46,7 +46,7 @@
 >
 > **2026-09-25 更新**: 新增活跃工程 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md)（内核单元测试 harness 统一，承接 audit-fix-09 的 B09-19）。其 UT-01..UT-06 / UT-08 / UT-10 已完成并过 §2.3 六门槛，仅余 UT-07 双轨收敛未开工。本文件工程计划 C 的门槛引用同步为现行 §2.3 六条（历史验证记录行不改）。【订正】UT-07 双轨收敛已于后续批次收口并置 `[X]`，本工程 UT-01..UT-10 全部完成 ⇒ 上句「仅余 UT-07 未开工」失效。
 >
-> **2026-09-26 文档漂移收敛 (逐项源码复验)**: 对本工程计划全部自称 `[X]`/`[]` 项回源码复验, 修正 3 类偏差 — (a) A2 遗留未清: `host-tests/README.md` 残留 3 处 `docs/CHANGELOG.md` 引用, 本轮按 DECISION-038 删除/改写 (已清零); (b) B4 表述过时: 当前 expect 注释为**双模板并存** (`// 有意窄化: <原因>` 237 处 + `reason = "<lint名>: ..."` 347 处), 非历史记载的"3 场景 + 1 兜底"单模板, 实况见 §方案 B4; (c) A1/B3/B5.2 待修对象 moot: `vision-hope.md` 已整篇重写 (无"风险 2"节)、`README.md` 已整篇重写为 18 行 (原 :21/:71 不复存在)、`barrier/api.rs` B5.2 目标函数形态已正确。另修正 §交叉引用 clippy-pedantic-cleanup.md 失效链接 (已归档 → archive/)。
+> **2026-09-26 文档漂移收敛 (逐项源码复验)**: 对本工程计划全部自称 `[X]`/`[]` 项回源码复验, 修正 3 类偏差 — (a) A2 遗留未清: `host-tests/README.md` 残留 3 处 `docs/CHANGELOG.md` 引用, 本轮按 DECISION-038 删除/改写 (已清零); (b) B4 表述过时: 当前 expect 注释为**双模板并存** (`// 有意窄化: <原因>` 237 处 + `reason = "<lint名>: ..."` 347 处), 非历史记载的"3 场景 + 1 兜底"单模板, 实况见 §方案 B4; (c) A1/B3/B5.2 待修对象 moot: `vision-hope.md` 已整篇重写 (无"风险 2"节)、`README.md` 已整篇重写为 18 行 (原 :21/:71 不复存在; 【订正】实测为 23 行, "18 行"为漂移)、`barrier/api.rs` B5.2 目标函数形态已正确。另修正 §交叉引用 clippy-pedantic-cleanup.md 失效链接 (已归档 → archive/)。
 
 - **活跃 plan 文档与实装对齐总览**
   - 描述: 5 份文档 — ipv6-dual-stack 与源码完全对齐; test-compile-issues 已归档; clippy-pedantic-cleanup 已 DEPRECATED (被 stage-engineering-master.md 取代, 收敛至 0 警告); code-review-2026-08-01 8 项已落地; future-roadmap 远期未启动 (与实装吻合)
@@ -477,7 +477,7 @@
   - 方案:
     - **A1/A3 复验属实**: `framework/syscall/mod.rs:22-30` 注释为 DECISION-037 立场; `framework/userctx.rs:28/55` 两处 `#[repr(C)] UserContext` + `services/userctx.rs:11` 反向 re-export — 与记载一致.
     - **A2 遗留补清**: `host-tests/README.md` 实测残留 3 处 `docs/CHANGELOG.md` 引用 (原 DECISION-038 记载"2 处"), 本轮按 B 方案改写/删除; 现全仓除归档文档与 `scan_antx_residue.py` 白名单外 0 引用.
-    - **B1/B2/B3/B5/B6 复验属实**: `framework/mod.rs:10` 无 LoC 数字; 三 services 头注释已换真实状态; `README.md` 已整篇重写为 18 行 (原 :21/:71 moot); `barrier/api.rs:310/317` 两函数为 `#[unsafe(no_mangle)] pub extern "C" fn`; `iomem.rs` 16 处 `debug_assert!` + `constants/limits.rs` 三常量.
+    - **B1/B2/B3/B5/B6 复验属实**: `framework/mod.rs:10` 无 LoC 数字; 三 services 头注释已换真实状态; `README.md` 已整篇重写为 18 行 (原 :21/:71 moot; 【订正】实测为 23 行); `barrier/api.rs:310/317` 两函数为 `#[unsafe(no_mangle)] pub extern "C" fn`; `iomem.rs` 16 处 `debug_assert!` + `constants/limits.rs` 三常量.
     - **B4 实况订正**: 当前 expect 注释为双模板并存 (`// 有意窄化` 237 处 + `reason = "<lint名>: ..."` 347 处), 非历史记载的单模板"3 场景 + 1 兜底".
     - **交叉引用修正**: clippy-pedantic-cleanup 链接由失效的 `./clippy-pedantic-cleanup.md` 改为 `./archive/...` 并指 `stage-engineering-master.md`; AGENTS.md 章节号由 §6/§10/§15 更正为 §5/§9/§12.
     - **工程计划 B/C 状态回写**: 原遗留 `[]` 项 (B 的背景/目标/方案/待办, C 的背景/目标/方案/待办) 全部改为 `[X]`.
