@@ -154,28 +154,30 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | framework/driver/display/framebuffer.rs（+ font/self_test）| Framebuffer 绘图策略（set_pixel/fill/fill_rect/draw_line/blend/aa 等）迁 services；IoMem 映射、`FB_PHYS_ADDR`/`FB_PHYS_SIZE`、`get_framebuffer` 机制原语保留 | ⚠ 2-E 后续（登记项，见 §11 DECISION-S）：**前置**需先解除 `gfx_console` 对 `*mut Framebuffer` 的裸指针绑定（klog/panic 机制经 trait 注入或回调注册消费绘图能力），再将绘图策略拆至 services + framework 留机制原语 |
 | framework/credo/storage.rs（2-F 后续登记）| 序列化算法（0 unsafe 纯函数）+ `save/load/remove_database` 编排（功能）整体迁 `services/credo/persist`；`vfs_*_internal` C FFI 留 framework 薄层 | ⚠ **前置**：阶段 4 VFS safe API 面就绪；另需承接 `credo/api.rs` 三处 FFI（安全导出面绑定）并解绑序列化对 credo TCB `PwmEntry` 原子字段的直读（判据见 §11 DECISION-T）|
 
-### 6.4 双份合并（services 权威，framework 删业务）——20 文件 → usb×5 已随 2-D 整体下沉收口（framework 侧删除），余 15 ⛔ 暂缓（DECISION-G 复核后方向待裁决）
+### 6.4 双份合并（services 权威，framework 删业务）——20 文件
 
-| framework 文件 | services 权威 |
+> 状态（按 DECISION-G「直接方案 B」方向裁决 + 批次 X/Y/Z 执行）：**✅ 已收口 14 项** —— usb×5（随 2-D 整体下沉）、char `serial`+`vga`（批次 X，`9ba997e3`）、virtio `blk`+`net`（批次 Z③ transport 去重 + Z④ NetOps 桥）、storage `mod`+`ahci`+`ahci_block`+`nvme`+`nvme_block`（批次 Y，`storage_init` 退位：`_block` 适配层删除，`ahci`/`nvme`/`mod` 保留机制 wire 类型薄层）；**⛔ 未收口 2 项** —— storage `ata`+`ata_block`（framework ATA PIO 回退路径暂留，登记 storage 专项后续子步迁 services）；**🔒 复核保留 framework 4 项** —— chitin `composite`/`devtree` + credo `grant`/`session`（framework 机制 + services 策略/安全代理正确形态，见 DECISION-G 项 2/3，非「删业务」对象）。display/hdmi×7 孤儿另计已删。
+
+| framework 文件 | services 权威 / 处置 |
 |---|---|
-| driver/char/serial.rs | services/driver/char/serial（0 unsafe 完整实现）|
-| driver/char/vga.rs | services/driver/char/vga |
-| driver/storage/mod.rs | services/driver/storage |
-| driver/storage/ahci.rs + ahci_block.rs | services/driver/storage/ahci |
-| driver/storage/ata.rs + ata_block.rs | services/driver/storage/ata |
-| driver/storage/nvme.rs + nvme_block.rs | services/driver/storage/nvme |
+| driver/char/serial.rs | services/driver/char/serial（0 unsafe 完整实现）—— ✅ 批次 X 收口（framework 侧已删，仅留 aarch64 pl011）|
+| driver/char/vga.rs | services/driver/char/vga —— ✅ 批次 X 收口（framework 侧已删）|
+| driver/storage/mod.rs | services/driver/storage —— ⚠ 机制薄层保留（业务已退位 services `storage_init`）|
+| driver/storage/ahci.rs + ahci_block.rs | services/driver/storage/ahci —— ⚠ `ahci_block.rs` 已删（批次 Y）；`ahci.rs` 保留机制 wire 类型薄层 |
+| driver/storage/ata.rs + ata_block.rs | services/driver/storage/ata —— ⛔ 未收口（framework ATA PIO 回退路径暂留，登记 storage 后续子步）|
+| driver/storage/nvme.rs + nvme_block.rs | services/driver/storage/nvme —— ⚠ `nvme_block.rs` 已删（批次 Y）；`nvme.rs` 保留机制 wire 类型薄层 |
 | driver/usb/enumerate.rs | services/driver/usb/enumerate（✅ 已随 2-D 整体下沉删除 framework 侧）|
 | driver/usb/hid.rs | services/driver/usb/hid（✅ 已随 2-D 整体下沉删除 framework 侧）|
 | driver/usb/mass_storage.rs | services/driver/usb/mass_storage（✅ 已随 2-D 整体下沉删除 framework 侧）|
 | driver/usb/ring.rs | services/driver/usb/ring（✅ 已随 2-D 整体下沉删除 framework 侧）|
 | driver/usb/usb_core.rs | services/driver/usb/usb_core（✅ 已随 2-D 整体下沉删除 framework 侧）|
-| driver/virtio/blk.rs | services/driver/virtio/blk |
-| driver/virtio/net.rs | services/driver/virtio/net |
-| chitin/composite.rs | services/chitin/composite |
-| chitin/devtree.rs | services/chitin/devtree |
-| credo/grant.rs | services/credo/grants |
-| credo/session.rs | services/credo/sessions |
-| （备注）driver/display/hdmi/ 7 文件 | **整目录未挂载孤儿**，services/driver/display/hdmi 权威，直接删除 |
+| driver/virtio/blk.rs | services/driver/virtio/blk —— ✅ 批次 Z③ 收口（transport 去重：framework 侧 blk 业务已删，留机制薄层；IRQ 路径见 DECISION-I 专项登记后续）|
+| driver/virtio/net.rs | services/driver/virtio/net —— ✅ 批次 Z④ 收口（NetOps 桥，framework 侧删除业务）|
+| chitin/composite.rs | services/chitin/composite —— 🔒 framework 机制保留（RAID0/RAID1 组装 `CompositeType`）+ services 安全代理 `probe` |
+| chitin/devtree.rs | services/chitin/devtree —— 🔒 framework 机制保留（设备树拓扑 `ChitinNode`/`CHITIN_ROOT`）+ services 安全代理转发 |
+| credo/grant.rs | services/credo/grants —— 🔒 framework 机制保留（`GRANT_RECORDS` 原语）+ services 策略层（链式委托）|
+| credo/session.rs | services/credo/sessions —— 🔒 framework 机制保留（P2-I-30 后绑定 `Process` 字段）+ services 策略层（会话生命周期）|
+| （备注）driver/display/hdmi/ 7 文件 | **整目录未挂载孤儿**，services/driver/display/hdmi 权威 —— ✅ 已删除 |
 
 ### 6.5 壳删除（re-export 兼容层）——82 文件
 
