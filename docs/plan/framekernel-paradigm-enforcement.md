@@ -102,26 +102,26 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 > **复核终局（DECISION-F）**：上述 ⚠ 待定项经逐文件核查"framework 侧保留代码是否直接调用"，全部判定保留（见 DECISION-F §6.1 复核终局）——§6.1 收口为 **3 下沉 + 17 保留**。
 
-### 6.2 封装+下沉（safe API 后迁）——23 文件 → 3 完成（2-A）+ 20 待推进
+### 6.2 封装+下沉（safe API 后迁）——23 文件 → 3 完成（2-A）+ 4 复核保留（2-B）+ 16 待推进
 
 > 复核纪律（DECISION-F）：本表 0 unsafe 项**先按服务对象准则（§2）查服务对象再动工**（安全导出面 → 保留；仅 services 消费 → 下沉；被 framework 机制直接调用 → 接口化后下沉或保留）；含 unsafe 的按原"封装+下沉"路径。
 >
-> 进度（批次 2-A syscall fd/pipe 组）：clone / io / sendfile 三文件完成，标 ✅；剩余 20 文件按 2-B（fd 事件族）/ 2-C（char/input）/ 2-D（usb）/ 2-E（display）/ 2-F（credo/storage+net query）/ firmware·ftrace 分批推进。
+> 进度（批次 2-A syscall fd/pipe 组）：clone / io / sendfile 三文件完成，标 ✅。批次 2-B（fd 事件族）：epoll / eventfd / signalfd / timerfd 四文件经复核**保留 framework**（耦合判据见 §11 DECISION-P），标 🔒；剩余 16 文件按 2-C（char/input）/ 2-D（usb）/ 2-E（display）/ 2-F（credo/storage+net query）/ firmware·ftrace 分批推进。
 
 | 文件 | 下沉目标 | 依据 |
 |---|---|---|
 | framework/proc/coredump.rs | services/proc/coredump | 732 行，unsafe 仅 klog FFI |
 | framework/proc/rlimit.rs | services/proc/rlimit | write_volatile 改 copy_to_user |
 | framework/syscall/clone.rs | services/proc/clone（已存在）| ✅ 已完成：`sys_clone` 迁移至 services/proc/clone.rs `clone_impl`（0 unsafe，用户指针写改 `api::write_struct_to_user`）；framework 源文件已删 |
-| framework/syscall/epoll.rs | services/syscall/epoll | 588 行，4 unsafe 可封装 |
-| framework/syscall/eventfd.rs | services/syscall/eventfd | 446 行，1 unsafe |
+| framework/syscall/epoll.rs | services/syscall/epoll | 🔒 保留 framework（2-B）：epoll 本身即机制（wait_queue + 阻塞调度 + 中断 pwake），`epoll_pwake` 被 framework `fd_notify` / `timerfd` / `inotify` 直接调用，`check_fd_ready` 又耦合 eventfd/signalfd/timerfd。services 侧 `services/sync/epoll.rs` 为薄代理壳。【复核】原表列 `services/syscall/epoll`，实际壳落点 `services/sync/epoll` |
+| framework/syscall/eventfd.rs | services/syscall/eventfd | 🔒 保留 framework（2-B）：被 epoll 机制 `check_fd_ready` 直接调用（同类耦合），close 路径调 `epoll_pwake`；1 unsafe 为 read 用户指针写。【复核】实际壳落点 `services/sync/eventfd` |
 | framework/syscall/firmware.rs | services/syscall/firmware | 11 unsafe 集中用户指针拷贝 |
 | framework/syscall/ftrace_kgdb.rs | services/syscall | 用户指针读写改 safe API |
 | framework/syscall/info.rs | services/proc/info（已存在）| 用户指针写改 safe API |
 | framework/syscall/io.rs | services/fs/io | ✅ 已完成：用户指针/fcntl 拷贝改 safe API。【复核】实际落点 `services/fs/io`（原表列 `services/syscall/io`）；framework 源文件已删 |
 | framework/syscall/sendfile.rs | services/fs/sendfile | ✅ 已完成：2 unsafe 改 VFS/pipe safe API。【复核】实际落点 `services/fs/sendfile`（原表列 `services/syscall/sendfile`）；framework 源文件已删 |
-| framework/syscall/signalfd.rs | services/syscall/signalfd | 482 行，用户指针写 |
-| framework/syscall/timerfd.rs | services/syscall/timerfd | 617 行，hrtimer safe API |
+| framework/syscall/signalfd.rs | services/syscall/signalfd | 🔒 保留 framework（2-B）：被 epoll 机制 `check_fd_ready` 直接调用（同类耦合），close 路径调 `epoll_pwake`；2 unsafe 为用户指针读写。【复核】实际壳落点 `services/sync/signalfd` |
+| framework/syscall/timerfd.rs | services/syscall/timerfd | 🔒 保留 framework（2-B）：`timerfd_callback(&HrTimer)` 依赖 container_of 反推 `TimerFdSlot`（同 `framework/proc/posix_timer.rs` 先例），回调整体不可 safe 化；经用户裁定否决"扩展 `HrTimer` 增 safe cookie"的 TCB 改动。【复核】实际壳落点 `services/timer/timerfd` |
 | framework/syscall/wait4.rs | services/proc/wait4（已存在）| 2 unsafe 用户指针写 |
 | framework/net/init/query.rs | services/net/query | 查询纯 Atomic；reset 薄层留 |
 | framework/driver/char/pl011.rs | services/driver/char/pl011 | MMIO 改 IoMem 封装 |
@@ -310,7 +310,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - 📝 **FFI 薄层分离**：随阶段 6.2/6.3 下沉实施（syscall 用户指针拷贝集中框架）
   - 📝 **calibration 采样回调**：boot 早期路径，随阶段 6.3 timer 部分下沉实施
 - 阶段 1：**纯策略下沉**（§6.1 20 文件）。[X] 收口——3 确认下沉（syscall×3，已提交）+ 17 保留（服务对象准则复核终局，DECISION-F）
-- 阶段 2：**封装+下沉**（§6.2 23 文件）。[] 进行中——2-A syscall fd/pipe 组完成 3 文件（clone/io/sendfile，0 unsafe 落地 services）；剩余 20 文件按 2-B～2-F + firmware·ftrace 分批推进
+- 阶段 2：**封装+下沉**（§6.2 23 文件）。[] 进行中——2-A syscall fd/pipe 组完成 3 文件（clone/io/sendfile，0 unsafe 落地 services）；2-B fd 事件族 4 文件（epoll/eventfd/signalfd/timerfd）经复核**保留 framework**（耦合判据见 §11 DECISION-P）；剩余 16 文件按 2-C～2-F + firmware·ftrace 分批推进
 - 阶段 3：**驱动双份合并 + E1000 回迁**（§6.4 20 文件 + DECISION-B）。[]
 - 阶段 4：**VFS 4 文件下沉 + backend_trait 扩展**（DECISION-A）。[]
 - 阶段 5：**壳删除 82 + 直接 use trait 化 20 + 保留文件 43 处收敛**（§7.5，ipc 24 第一优先）。[]
@@ -1102,3 +1102,17 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | host-tests | ✅ 全过（exit 0）——首次全量并行 `test_fsx_stress` 偶发失败（单独跑 33s 通过，全量重跑通过），判定为并行负载 flaky，非本次改动引入 |
 
 > 备注：`scripts/audit_coupling.py` 中 `framework::syscall::{brk,canary,posix_timer}` 检测模式随文件删除失效（不再匹配），无害保留。
+
+### DECISION-P: 2-B fd 事件族复核（epoll/eventfd/signalfd/timerfd 保留 framework）
+
+> **背景**：§6.2 批次 2-B 目标为 fd 事件族 4 文件（`epoll.rs` 588 行 / `eventfd.rs` 446 行 / `signalfd.rs` 482 行 / `timerfd.rs` 617 行）「封装+下沉」。按 §6.2 复核纪律（DECISION-F）逐文件核查"framework 侧保留代码是否被机制直接调用"后，判定四文件**全部保留 framework**，本批零代码下沉。
+
+**裁决**：
+1. **epoll 本身即机制**：`EpollInstance`（wait_queue）承载进程阻塞/唤醒调度（`process_block`/`scheduler_unblock`），`epoll_pwake(fd)` 由源码自述为"机制层职责"，且被 framework `fd_notify` 注册、`timerfd.rs:480`、`inotify.rs:588` 直接调用——下沉将造成 framework→services 反向依赖（违反 §6.3 禁止反向调用原则）。
+2. **eventfd / signalfd 被 epoll 机制直接调用**：framework `epoll::check_fd_ready` 直接调用 `eventfd::is_eventfd_fd` / `signalfd::is_signalfd_fd` 及各 poll 函数取事件位；二者 close 路径亦调 `epoll_pwake`。单独下沉同样引入反向依赖。
+3. **timerfd 回调整体不可 safe 化**：`timerfd_callback(&HrTimer)` 经 container_of 反推 `TimerFdSlot`（`HrTimer` 为首字段），与 `framework/proc/posix_timer.rs` 先例同构；`TimerFdSlot` 出表销毁依赖同一机制，回调保留 framework。
+4. **否决"扩展 `HrTimer` 增 safe cookie"方案**（用户裁定）：为下沉 4 文件而给 `HrTimer` 增字段属 TCB 改动，收益不抵 TCB 上升与回归风险，不予采纳。
+5. **收口为「经复核保留」**：四文件保留 framework；services 侧 `services/sync/{epoll,eventfd,signalfd}.rs` 与 `services/timer/timerfd.rs` 维持现有薄代理壳（转发 framework syscall 实现），不作为实装载体。
+6. **路径订正**：§6.2 原表列目标 `services/syscall/{epoll,eventfd,signalfd,timerfd}`，实际壳落点为 `services/sync/{epoll,eventfd,signalfd}` + `services/timer/timerfd`，表内已标【复核】。
+
+**状态**: [X]（裁决完成；四文件保留 framework，2-B 无代码变更，转推 2-C char/input）
