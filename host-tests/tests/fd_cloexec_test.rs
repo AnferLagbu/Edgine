@@ -18,7 +18,7 @@ use std::path::Path;
 const VFS_HANDLE: &str = "src/kernel/framework/fs/vfs/handle.rs";
 const VFS_MOD: &str = "src/kernel/framework/fs/vfs/mod.rs";
 const VFS_TYPES: &str = "src/kernel/framework/fs/vfs/types.rs";
-const SYS_IO: &str = "src/kernel/framework/syscall/io.rs";
+const SYS_IO: &str = "src/kernel/services/fs/io.rs";
 const PROC_OPS: &str = "src/kernel/framework/proc/proc_ops.rs";
 const MEMFD: &str = "src/kernel/services/proc/memfd.rs";
 
@@ -142,7 +142,9 @@ fn test_vfs_open_internal_consumes_cloexec() {
 #[test]
 fn test_sys_fcntl_wires_fd_cloexec_flag() {
     let src = read(SYS_IO);
-    let body_start = src.find("pub fn sys_fcntl").expect("sys_fcntl 必须存在");
+    let body_start = src
+        .find("pub fn fcntl_syscall")
+        .expect("fcntl_syscall 必须存在");
     let after = &src[body_start..];
     let next_fn = after[1..]
         .find("\npub ")

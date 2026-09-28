@@ -390,8 +390,9 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
 
         // ==================== sendfile / splice ====================
         // T2 批 3 (syscall-followup): SYS_sendfile / SYS_splice 分支已迁至
-        // services (services::fs::sendfile::sys_sendfile / sys_splice), 委托
-        // framework 机制 (framework::syscall::sendfile::sys_sendfile / sys_splice).
+        // services (services::fs::sendfile::sys_sendfile / sys_splice).
+        // 阶段 2-A (framekernel 范式): 该实现已完整下沉 services (0 unsafe),
+        // framework 侧 sendfile 机制与其 re-export 已删除.
 
         // ==================== Credo 私有 syscall ====================
         // T2 批 5 (syscall-followup): SYS_CREDO_DISK_INSTALL / SYS_CREDO_HOTPLUG_STATUS

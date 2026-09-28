@@ -102,22 +102,24 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 > **复核终局（DECISION-F）**：上述 ⚠ 待定项经逐文件核查"framework 侧保留代码是否直接调用"，全部判定保留（见 DECISION-F §6.1 复核终局）——§6.1 收口为 **3 下沉 + 17 保留**。
 
-### 6.2 封装+下沉（safe API 后迁）——23 文件
+### 6.2 封装+下沉（safe API 后迁）——23 文件 → 3 完成（2-A）+ 20 待推进
 
 > 复核纪律（DECISION-F）：本表 0 unsafe 项**先按服务对象准则（§2）查服务对象再动工**（安全导出面 → 保留；仅 services 消费 → 下沉；被 framework 机制直接调用 → 接口化后下沉或保留）；含 unsafe 的按原"封装+下沉"路径。
+>
+> 进度（批次 2-A syscall fd/pipe 组）：clone / io / sendfile 三文件完成，标 ✅；剩余 20 文件按 2-B（fd 事件族）/ 2-C（char/input）/ 2-D（usb）/ 2-E（display）/ 2-F（credo/storage+net query）/ firmware·ftrace 分批推进。
 
 | 文件 | 下沉目标 | 依据 |
 |---|---|---|
 | framework/proc/coredump.rs | services/proc/coredump | 732 行，unsafe 仅 klog FFI |
 | framework/proc/rlimit.rs | services/proc/rlimit | write_volatile 改 copy_to_user |
-| framework/syscall/clone.rs | services/proc/clone（已存在）| 2 unsafe 可封装 |
+| framework/syscall/clone.rs | services/proc/clone（已存在）| ✅ 已完成：`sys_clone` 迁移至 services/proc/clone.rs `clone_impl`（0 unsafe，用户指针写改 `api::write_struct_to_user`）；framework 源文件已删 |
 | framework/syscall/epoll.rs | services/syscall/epoll | 588 行，4 unsafe 可封装 |
 | framework/syscall/eventfd.rs | services/syscall/eventfd | 446 行，1 unsafe |
 | framework/syscall/firmware.rs | services/syscall/firmware | 11 unsafe 集中用户指针拷贝 |
 | framework/syscall/ftrace_kgdb.rs | services/syscall | 用户指针读写改 safe API |
 | framework/syscall/info.rs | services/proc/info（已存在）| 用户指针写改 safe API |
-| framework/syscall/io.rs | services/syscall/io | 用户指针/fcntl 拷贝 safe API |
-| framework/syscall/sendfile.rs | services/syscall/sendfile | 2 unsafe，VFS/pipe safe API |
+| framework/syscall/io.rs | services/fs/io | ✅ 已完成：用户指针/fcntl 拷贝改 safe API。【复核】实际落点 `services/fs/io`（原表列 `services/syscall/io`）；framework 源文件已删 |
+| framework/syscall/sendfile.rs | services/fs/sendfile | ✅ 已完成：2 unsafe 改 VFS/pipe safe API。【复核】实际落点 `services/fs/sendfile`（原表列 `services/syscall/sendfile`）；framework 源文件已删 |
 | framework/syscall/signalfd.rs | services/syscall/signalfd | 482 行，用户指针写 |
 | framework/syscall/timerfd.rs | services/syscall/timerfd | 617 行，hrtimer safe API |
 | framework/syscall/wait4.rs | services/proc/wait4（已存在）| 2 unsafe 用户指针写 |
@@ -308,7 +310,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - 📝 **FFI 薄层分离**：随阶段 6.2/6.3 下沉实施（syscall 用户指针拷贝集中框架）
   - 📝 **calibration 采样回调**：boot 早期路径，随阶段 6.3 timer 部分下沉实施
 - 阶段 1：**纯策略下沉**（§6.1 20 文件）。[X] 收口——3 确认下沉（syscall×3，已提交）+ 17 保留（服务对象准则复核终局，DECISION-F）
-- 阶段 2：**封装+下沉**（§6.2 23 文件）。[]
+- 阶段 2：**封装+下沉**（§6.2 23 文件）。[] 进行中——2-A syscall fd/pipe 组完成 3 文件（clone/io/sendfile，0 unsafe 落地 services）；剩余 20 文件按 2-B～2-F + firmware·ftrace 分批推进
 - 阶段 3：**驱动双份合并 + E1000 回迁**（§6.4 20 文件 + DECISION-B）。[]
 - 阶段 4：**VFS 4 文件下沉 + backend_trait 扩展**（DECISION-A）。[]
 - 阶段 5：**壳删除 82 + 直接 use trait 化 20 + 保留文件 43 处收敛**（§7.5，ipc 24 第一优先）。[]

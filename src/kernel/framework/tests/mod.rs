@@ -522,7 +522,7 @@ pub fn register_all_tests() {
         crate::framework::syscall::eventfd::register_eventfd_tests();
         crate::framework::syscall::signalfd::register_signalfd_tests();
         crate::framework::syscall::timerfd::register_timerfd_tests();
-        crate::framework::syscall::sendfile::register_sendfile_tests();
+        crate::services::fs::sendfile::register_sendfile_tests();
     }
 }
 

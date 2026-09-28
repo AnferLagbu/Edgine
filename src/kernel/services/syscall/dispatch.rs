@@ -274,8 +274,9 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
             a3,
             a4 as usize,
         )),
-        // sendfile / splice (T2 批 3, syscall-followup): 零拷贝数据传输,
-        // 委托 framework 机制 (VFS/IPC/pipe 访问), services 封装类型安全 API
+        // sendfile / splice (T2 批 3, syscall-followup; 阶段 2-A framekernel):
+        // 零拷贝数据传输, 权威实现已完整下沉 services::fs::sendfile (0 unsafe),
+        // 用户指针经 framework 安全 API, VFS/IPC 经 framework 公开 safe API.
         SYS_sendfile => {
             crate::services::fs::sendfile::sys_sendfile(a0 as i32, a1 as i32, a2, a3 as usize)
         }

@@ -1,5 +1,4 @@
 pub mod api;
-pub mod clone;
 pub mod dispatch;
 /// T-03: 系统调用分发决策 trait
 pub mod dispatch_trait;
@@ -9,9 +8,7 @@ pub mod firmware;
 pub mod ftrace_kgdb;
 pub mod futex;
 pub mod info;
-pub mod io;
 pub mod madvise_mlock;
-pub mod sendfile;
 pub mod signalfd;
 pub mod timerfd;
 pub mod wait4;
@@ -40,9 +37,6 @@ pub mod wait4;
 /// - 编号常量唯一定义于 `types.rs` (B09-17 归位), 禁止在其他文件重复定义.
 // 公共接口 re-export — 避免跨子系统直接访问内部子模块
 pub use epoll::{EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, EPOLLRDHUP, epoll_pwake};
-pub use sendfile::{
-    SPLICE_F_GIFT, SPLICE_F_MORE, SPLICE_F_MOVE, SPLICE_F_NONBLOCK, sys_sendfile, sys_splice,
-};
 pub use types::Errno;
 pub use types::*;
 
@@ -146,14 +140,6 @@ pub(crate) mod raw {
     }
 
     // ============= 用户态读写助手（unsafe 集中点） =============
-
-    /// 写一个 u32 到用户指针。
-    /// # Safety
-    /// 调用方必须先调用 `check_user_buf(ptr as u64, 4)` 验证。
-    pub unsafe fn write_u32(ptr: *mut u32, val: u32) {
-        // SAFETY: 调用方已验证 ptr 对齐到 4 字节且指向 4 字节可写用户空间。
-        unsafe { core::ptr::write_volatile(ptr, val) }
-    }
 
     /// 写一个 u64 到用户指针。
     /// # Safety
