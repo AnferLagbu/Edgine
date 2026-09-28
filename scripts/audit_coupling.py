@@ -80,8 +80,6 @@ INTERNAL_PATTERNS = [
     r'framework::syscall::clone',
     r'framework::syscall::wait4',
     r'framework::syscall::info',
-    r'framework::syscall::firmware',
-    r'framework::syscall::ftrace_kgdb',
     r'framework::syscall::posix_timer',
     r'framework::syscall::canary',
     r'framework::syscall::raw',

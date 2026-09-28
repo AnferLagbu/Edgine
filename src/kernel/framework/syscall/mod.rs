@@ -4,8 +4,6 @@ pub mod dispatch;
 pub mod dispatch_trait;
 pub mod epoll;
 pub mod eventfd;
-pub mod firmware;
-pub mod ftrace_kgdb;
 pub mod futex;
 pub mod info;
 pub mod madvise_mlock;
@@ -30,10 +28,12 @@ pub mod wait4;
 ///
 /// 调用链: 中断入口 → services 策略分发 (优先) → 返回 ENOSYS 时 framework 回退层兜底.
 ///
-/// - **回退层内容限定**: 仅允许 "机制独有 (QX_*) + 未迁移项 (SYS_*/CREDO/FB) + ENOSYS 哨兵",
+/// - **回退层内容限定**: 仅允许 "框架机制资源 (QX_*) + 未迁移项 (SYS_*/CREDO/FB) + ENOSYS 哨兵",
 ///   **禁止新增与 services 重叠的真实实现分支** (重叠分支 = services 优先命中下的死代码).
 /// - **新 syscall 归属规范**: Linux 标准编号 (`SYS_*`) → 实现在 services;
-///   QX 独有机制 (固件/ftrace/cgroup/PM 等) → 实现在 framework 回退层.
+///   QX 独有编号 (`QX_*`) 按"机制资源 / 处理策略"二分归属:
+///   框架持有的机制资源 (页表 / 中断 / 上下文 / 硬件原语) 留 framework 回退层;
+///   仅做参数校验 + 编排的处理策略 (可 0-unsafe 且不直接调用 framework 内部机制) 迁 services.
 /// - 编号常量唯一定义于 `types.rs` (B09-17 归位), 禁止在其他文件重复定义.
 // 公共接口 re-export — 避免跨子系统直接访问内部子模块
 pub use epoll::{EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, EPOLLRDHUP, epoll_pwake};

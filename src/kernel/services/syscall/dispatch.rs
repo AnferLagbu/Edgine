@@ -22,9 +22,10 @@
 //!   eventfd/signalfd/timerfd, io_uring (setup/enter) 与 eBPF (bpf),
 //!   kexec (kexec_load) 等, Credo 私有 syscall (含 disk_install/hotplug),
 //!   帧缓冲 (fb_open/fb_mmap/fb_release), 存储设备, inotify,
-//!   内存建议与锁定, 进程创建/等待, 系统信息, CPU 亲和性, 进程优先级
-//! - 待迁移: firmware, ftrace/kgdb,
-//!   路由/Netfilter, cgroup, NUMA, PM, TPM,
+//!   内存建议与锁定, 进程创建/等待, 系统信息, CPU 亲和性, 进程优先级,
+//!   设备固件 (fw_load/fw_get/fw_get_info/fw_detach),
+//!   内核调试跟踪 (ftrace_enable/disable/read/stat, kgdb_enter)
+//! - 待迁移: 路由/Netfilter, cgroup, NUMA, PM, TPM,
 //!   CET, tickless, timesync, UEFI 等
 //!
 //! 评估日期: 2026-06-19
@@ -885,9 +886,11 @@ fn dispatch_credo(num: u64, args: [u64; 6]) -> Option<i64> {
 /// 其他系统调用 (POSIX Timer, 熵源等)
 fn dispatch_other(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
-        QX_GET_CANARY, SYS_FB_MMAP, SYS_FB_OPEN, SYS_FB_RELEASE, SYS_bpf, SYS_clock_getres,
-        SYS_getrandom, SYS_io_uring_enter, SYS_io_uring_setup, SYS_kexec_load, SYS_timer_create,
-        SYS_timer_delete, SYS_timer_getoverrun, SYS_timer_gettime, SYS_timer_settime,
+        QX_FTRACE_DISABLE, QX_FTRACE_ENABLE, QX_FTRACE_READ, QX_FTRACE_STAT, QX_FW_DETACH,
+        QX_FW_GET, QX_FW_GET_INFO, QX_FW_LOAD, QX_GET_CANARY, QX_KGDB_ENTER, SYS_FB_MMAP,
+        SYS_FB_OPEN, SYS_FB_RELEASE, SYS_bpf, SYS_clock_getres, SYS_getrandom, SYS_io_uring_enter,
+        SYS_io_uring_setup, SYS_kexec_load, SYS_timer_create, SYS_timer_delete,
+        SYS_timer_getoverrun, SYS_timer_gettime, SYS_timer_settime,
     };
     let [a0, a1, a2, a3, _a4, _a5] = args;
 
@@ -921,6 +924,19 @@ fn dispatch_other(num: u64, args: [u64; 6]) -> Option<i64> {
         // 熵源 / Stack Canary (§6.1 下沉 services/syscall/canary)
         SYS_getrandom => crate::services::syscall::canary::sys_getrandom(a0, a1, a2),
         QX_GET_CANARY => crate::services::syscall::canary::sys_get_canary(a0, a1),
+
+        // 设备固件加载 (§6.2 下沉 services/syscall/firmware)
+        QX_FW_LOAD => crate::services::syscall::firmware::sys_fw_load(a0, a1, a2, a3),
+        QX_FW_GET => crate::services::syscall::firmware::sys_fw_get(a0, a1, a2, a3),
+        QX_FW_GET_INFO => crate::services::syscall::firmware::sys_fw_get_info(a0, a1),
+        QX_FW_DETACH => crate::services::syscall::firmware::sys_fw_detach(a0),
+
+        // 内核调试 / 跟踪 (§6.2 下沉 services/syscall/ftrace)
+        QX_FTRACE_ENABLE => crate::services::syscall::ftrace::sys_ftrace_enable(),
+        QX_FTRACE_DISABLE => crate::services::syscall::ftrace::sys_ftrace_disable(),
+        QX_FTRACE_READ => crate::services::syscall::ftrace::sys_ftrace_read(a0),
+        QX_FTRACE_STAT => crate::services::syscall::ftrace::sys_ftrace_stat(a0),
+        QX_KGDB_ENTER => crate::services::syscall::ftrace::sys_kgdb_enter(),
 
         _ => return None,
     })

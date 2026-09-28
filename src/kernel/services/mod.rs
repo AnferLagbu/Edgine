@@ -100,7 +100,7 @@ pub mod wasm;
 
 /// 内核调试 / 跟踪 — ftrace / KGDB 安全封装
 ///
-/// 底层实现见 `framework::debug` (TCB) 与 `framework::syscall::ftrace_kgdb` (TCB);
+/// 底层实现见 `framework::debug` (TCB); 系统调用包装见 `services::syscall::ftrace`;
 /// 本模块提供 services 层的安全抽象与系统调用包装 (0 unsafe)。
 pub mod debug;
 

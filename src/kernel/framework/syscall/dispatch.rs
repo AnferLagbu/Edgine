@@ -9,12 +9,10 @@ use core::sync::atomic::Ordering;
 use super::raw;
 use super::types::{
     Errno, QX_CET, QX_CGROUP_ATTACH, QX_CGROUP_CREATE, QX_CGROUP_DESTROY, QX_CGROUP_GET_STAT,
-    QX_CGROUP_SET_LIMIT, QX_FTRACE_DISABLE, QX_FTRACE_ENABLE, QX_FTRACE_READ, QX_FTRACE_STAT,
-    QX_FW_DETACH, QX_FW_GET, QX_FW_GET_INFO, QX_FW_LOAD, QX_IO_URING_SUBMIT, QX_KGDB_ENTER,
-    QX_NF_ADD_RULE, QX_NF_DEL_RULE, QX_PM, QX_ROUTE_ADD, QX_ROUTE_DEL, QX_ROUTE_QUERY,
-    QX_SECURE_BOOT, QX_TICKLESS, QX_TIMESYNC, QX_TPM, QX_UEFI, SYS_accept, SYS_bind, SYS_connect,
-    SYS_getpeername, SYS_getsockname, SYS_getsockopt, SYS_listen, SYS_recvfrom, SYS_recvmsg,
-    SYS_sendmsg, SYS_sendto, SYS_setsockopt, SYS_shutdown, SYS_socket,
+    QX_CGROUP_SET_LIMIT, QX_IO_URING_SUBMIT, QX_NF_ADD_RULE, QX_NF_DEL_RULE, QX_PM, QX_ROUTE_ADD,
+    QX_ROUTE_DEL, QX_ROUTE_QUERY, QX_SECURE_BOOT, QX_TICKLESS, QX_TIMESYNC, QX_TPM, QX_UEFI,
+    SYS_accept, SYS_bind, SYS_connect, SYS_getpeername, SYS_getsockname, SYS_getsockopt, SYS_listen,
+    SYS_recvfrom, SYS_recvmsg, SYS_sendmsg, SYS_sendto, SYS_setsockopt, SYS_shutdown, SYS_socket,
 };
 // SYS_CREDO_DISK_INSTALL 分支已迁至 services (T2 批 5), 编号常量仅在 types.rs 保留
 // (aarch64 生产构建不引用, 与迁移前 cfg 门控语义一致)
@@ -190,10 +188,6 @@ pub unsafe extern "C" fn syscall_dispatch(
     result
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-)]
 fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> i64 {
     // 直接 Linux ABI: syscall 编号直接使用 Linux 标准编号, 无需翻译
 
@@ -219,46 +213,6 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         // ==================== 信号 ====================
         // T3 (syscall-followup): SYS_rt_sigreturn 分支已删除——pre-dispatch 特殊路径
         // (L89-119) 无条件拦截编号 15 并直接恢复 sigframe 返回, 本分发器永不可达.
-
-        // ==================== 设备固件加载 ====================
-        QX_FW_LOAD => dispatch!(
-            crate::framework::syscall::firmware::sys_fw_load(a0, a1, a2, a3),
-            b"fw_load\0"
-        ),
-        QX_FW_GET => dispatch!(
-            crate::framework::syscall::firmware::sys_fw_get(a0, a1, a2, a3),
-            b"fw_get\0"
-        ),
-        QX_FW_GET_INFO => dispatch!(
-            crate::framework::syscall::firmware::sys_fw_get_info(a0, a1),
-            b"fw_get_info\0"
-        ),
-        QX_FW_DETACH => dispatch!(
-            crate::framework::syscall::firmware::sys_fw_detach(a0),
-            b"fw_detach\0"
-        ),
-
-        // ==================== 调试 / 跟踪 ====================
-        QX_FTRACE_ENABLE => dispatch!(
-            crate::framework::syscall::ftrace_kgdb::sys_ftrace_enable(),
-            b"ftrace_enable\0"
-        ),
-        QX_FTRACE_DISABLE => dispatch!(
-            crate::framework::syscall::ftrace_kgdb::sys_ftrace_disable(),
-            b"ftrace_disable\0"
-        ),
-        QX_FTRACE_READ => dispatch!(
-            crate::framework::syscall::ftrace_kgdb::sys_ftrace_read(a0),
-            b"ftrace_read\0"
-        ),
-        QX_FTRACE_STAT => dispatch!(
-            crate::framework::syscall::ftrace_kgdb::sys_ftrace_stat(a0),
-            b"ftrace_stat\0"
-        ),
-        QX_KGDB_ENTER => dispatch!(
-            crate::framework::syscall::ftrace_kgdb::sys_kgdb_enter(),
-            b"kgdb_enter\0"
-        ),
 
         // ==================== C7: Seccomp / prctl ====================
         // T2 批 2 (syscall-followup): SYS_seccomp / SYS_prctl 分支已迁至

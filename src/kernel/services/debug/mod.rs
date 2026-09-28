@@ -1,8 +1,8 @@
 #![deny(unsafe_code)]
 //! 内核调试 / 跟踪 — services 层安全代理
 //!
-//! 将 `framework::debug` (TCB) 与 `framework::syscall::ftrace_kgdb` 的 unsafe
-//! 系统调用接口封装为 100% safe Rust API, 供用户态 / 业务模块使用。
+//! 将 `framework::debug` (TCB) 的 unsafe 原语封装为 100% safe Rust API,
+//! 供用户态 / 业务模块使用。
 //!
 //! ## 子能力
 //!
@@ -39,8 +39,7 @@
 //!
 //! ## 安全契约
 //!
-//! - 本模块零 unsafe, 所有 unsafe 操作在 `framework::debug` /
-//!   `framework::syscall::ftrace_kgdb` 中完成
+//! - 本模块零 unsafe, 所有 unsafe 操作在 `framework::debug` 中完成
 //! - `kgdb_enter` 在用户态串口未注册时返回 false (而非阻塞)
 
 // Re-export 关键类型
@@ -63,12 +62,12 @@ pub mod ebpf_verifier;
 
 /// 启用 ftrace 全局开关
 pub fn ftrace_enable() {
-    crate::framework::syscall::ftrace_kgdb::sys_ftrace_enable();
+    crate::framework::debug::ftrace_enable();
 }
 
 /// 禁用 ftrace 全局开关
 pub fn ftrace_disable() {
-    crate::framework::syscall::ftrace_kgdb::sys_ftrace_disable();
+    crate::framework::debug::ftrace_disable();
 }
 
 /// 查询 ftrace 启用状态
@@ -105,7 +104,12 @@ pub fn ftrace_register(name: &'static str) -> bool {
 /// - 串口未注册时: 返回 false, 不阻塞
 /// - 串口已注册时: 阻塞与外部 gdb 通信, 返回 true 表示 KGDB 已返回
 pub fn kgdb_enter() -> bool {
-    crate::framework::syscall::ftrace_kgdb::sys_kgdb_enter() == 0
+    if !crate::framework::debug::kgdb_serial_ready() {
+        return false;
+    }
+    let mut regs = KgdbRegs::default();
+    crate::framework::debug::kgdb_breakpoint(&mut regs);
+    true
 }
 
 /// 当前是否在 KGDB 主循环中

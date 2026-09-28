@@ -102,11 +102,11 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 > **复核终局（DECISION-F）**：上述 ⚠ 待定项经逐文件核查"framework 侧保留代码是否直接调用"，全部判定保留（见 DECISION-F §6.1 复核终局）——§6.1 收口为 **3 下沉 + 17 保留**。
 
-### 6.2 封装+下沉（safe API 后迁）——23 文件 → 3 完成（2-A）+ 4 复核保留（2-B）+ 2 复核保留（2-C）+ 2 完成（2-D usb）+ 1 完成（2-E display）+ 2 复核保留（2-F credo/storage+net query）+ 9 待推进
+### 6.2 封装+下沉（safe API 后迁）——23 文件 → 3 完成（2-A）+ 4 复核保留（2-B）+ 2 复核保留（2-C）+ 2 完成（2-D usb）+ 1 完成（2-E display）+ 2 复核保留（2-F credo/storage+net query）+ 2 完成（2-G firmware·ftrace）+ 7 待推进
 
 > 复核纪律（DECISION-F）：本表 0 unsafe 项**先按服务对象准则（§2）查服务对象再动工**（安全导出面 → 保留；仅 services 消费 → 下沉；被 framework 机制直接调用 → 接口化后下沉或保留）；含 unsafe 的按原"封装+下沉"路径。
 >
-> 进度（批次 2-A syscall fd/pipe 组）：clone / io / sendfile 三文件完成，标 ✅。批次 2-B（fd 事件族）：epoll / eventfd / signalfd / timerfd 四文件经复核**保留 framework**（耦合判据见 §11 DECISION-P），标 🔒；批次 2-C（char/input）：pl011 / keyboard 二文件经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），标 🔒，并订正 `input_init` 重复注册（同批）；批次 2-D（usb）：framework/driver/usb 二文件经用户裁定改走 **USB 整体下沉**（覆盖原「20 unsafe 集中，机制留框架」处方），三子步收口——4 个 0-unsafe 文件下沉 + usb_core/xhci safe 权威实装 + framework 侧整目录删除（判据见 §11 DECISION-R），标 ✅；批次 2-E（display）：`framework/driver/display/mod.rs` 经复核**部分下沉**——`controller.rs` 管理策略（0 unsafe、无框架机制消费者）迁 `services/driver/display/controller`，VBE 原语 / framebuffer / font 因被 `gfx_console`（klog/panic 机制）与 `syscall/dispatch`（fb_open/fb_mmap）直接绑定而保留框架（判据见 §11 DECISION-S），标 ✅（后续 Framebuffer 机制/策略拆分登记 §6.3）；批次 2-F（credo/storage + net query）：`framework/credo/storage.rs` 与 `framework/net/init/query.rs` 二文件经复核**均保留 framework**——credo/storage 因 framework 无 VFS safe API 面（属阶段 4）+ `credo/api.rs` 三处 FFI 直接绑定 storage + 序列化直读 credo TCB `PwmEntry` 原子字段，**登记后续条目**（前置＝阶段 4 VFS safe API 就绪后「编排+序列化」整体下沉 `services/credo/persist`）；net query 为 net TCB 状态（DHCP 状态机写入的全局 Atomic）**只读访问面**，按「状态只读访问器与状态定义同层」判据应留 framework（判据见 §11 DECISION-T），标 🔒；剩余 9 文件按 2-G（firmware·ftrace）/ 后续分批推进。
+> 进度（批次 2-A syscall fd/pipe 组）：clone / io / sendfile 三文件完成，标 ✅。批次 2-B（fd 事件族）：epoll / eventfd / signalfd / timerfd 四文件经复核**保留 framework**（耦合判据见 §11 DECISION-P），标 🔒；批次 2-C（char/input）：pl011 / keyboard 二文件经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），标 🔒，并订正 `input_init` 重复注册（同批）；批次 2-D（usb）：framework/driver/usb 二文件经用户裁定改走 **USB 整体下沉**（覆盖原「20 unsafe 集中，机制留框架」处方），三子步收口——4 个 0-unsafe 文件下沉 + usb_core/xhci safe 权威实装 + framework 侧整目录删除（判据见 §11 DECISION-R），标 ✅；批次 2-E（display）：`framework/driver/display/mod.rs` 经复核**部分下沉**——`controller.rs` 管理策略（0 unsafe、无框架机制消费者）迁 `services/driver/display/controller`，VBE 原语 / framebuffer / font 因被 `gfx_console`（klog/panic 机制）与 `syscall/dispatch`（fb_open/fb_mmap）直接绑定而保留框架（判据见 §11 DECISION-S），标 ✅（后续 Framebuffer 机制/策略拆分登记 §6.3）；批次 2-F（credo/storage + net query）：`framework/credo/storage.rs` 与 `framework/net/init/query.rs` 二文件经复核**均保留 framework**——credo/storage 因 framework 无 VFS safe API 面（属阶段 4）+ `credo/api.rs` 三处 FFI 直接绑定 storage + 序列化直读 credo TCB `PwmEntry` 原子字段，**登记后续条目**（前置＝阶段 4 VFS safe API 就绪后「编排+序列化」整体下沉 `services/credo/persist`）；net query 为 net TCB 状态（DHCP 状态机写入的全局 Atomic）**只读访问面**，按「状态只读访问器与状态定义同层」判据应留 framework（判据见 §11 DECISION-T），标 🔒；批次 2-G（firmware·ftrace）：`framework/syscall/firmware.rs` 与 `framework/syscall/ftrace_kgdb.rs` 二文件经复核**下沉 services**——11+ 处用户指针拷贝改造为 framework safe API（`copy_from_user`/`copy_to_user`），处理策略（参数校验 + 编排 + 逐字段序列化）可 0-unsafe 化且不直接调用 framework 内部机制（判据见 §11 DECISION-U），标 ✅（framework 侧源文件已删）；剩余 7 文件（coredump/rlimit/info/wait4/e1000/e1000_io/virtio）按后续分批推进。
 
 | 文件 | 下沉目标 | 依据 |
 |---|---|---|
@@ -115,8 +115,8 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | framework/syscall/clone.rs | services/proc/clone（已存在）| ✅ 已完成：`sys_clone` 迁移至 services/proc/clone.rs `clone_impl`（0 unsafe，用户指针写改 `api::write_struct_to_user`）；framework 源文件已删 |
 | framework/syscall/epoll.rs | services/syscall/epoll | 🔒 保留 framework（2-B）：epoll 本身即机制（wait_queue + 阻塞调度 + 中断 pwake），`epoll_pwake` 被 framework `fd_notify` / `timerfd` / `inotify` 直接调用，`check_fd_ready` 又耦合 eventfd/signalfd/timerfd。services 侧 `services/sync/epoll.rs` 为薄代理壳。【复核】原表列 `services/syscall/epoll`，实际壳落点 `services/sync/epoll` |
 | framework/syscall/eventfd.rs | services/syscall/eventfd | 🔒 保留 framework（2-B）：被 epoll 机制 `check_fd_ready` 直接调用（同类耦合），close 路径调 `epoll_pwake`；1 unsafe 为 read 用户指针写。【复核】实际壳落点 `services/sync/eventfd` |
-| framework/syscall/firmware.rs | services/syscall/firmware | 11 unsafe 集中用户指针拷贝 |
-| framework/syscall/ftrace_kgdb.rs | services/syscall | 用户指针读写改 safe API |
+| framework/syscall/firmware.rs | services/syscall/firmware | ✅ 已完成（2-G）：`sys_fw_load/get/get_info/detach` 下沉 `services/syscall/firmware.rs`（0 unsafe，用户指针拷贝改 `copy_from_user`/`copy_to_user`，`FirmwareInfo` 逐字段 `to_ne_bytes` 序列化，无对齐假设）；framework 源文件已删（判据见 §11 DECISION-U）|
+| framework/syscall/ftrace_kgdb.rs | services/syscall/ftrace | ✅ 已完成（2-G）：`sys_ftrace_enable/disable/read/stat` + `sys_kgdb_enter` 下沉 `services/syscall/ftrace.rs`（0 unsafe，`TraceEvent`/统计逐字段 `to_ne_bytes` 序列化；KGDB 经 `framework::debug` 机制原语）；framework 源文件已删（判据见 §11 DECISION-U）|
 | framework/syscall/info.rs | services/proc/info（已存在）| 用户指针写改 safe API |
 | framework/syscall/io.rs | services/fs/io | ✅ 已完成：用户指针/fcntl 拷贝改 safe API。【复核】实际落点 `services/fs/io`（原表列 `services/syscall/io`）；framework 源文件已删 |
 | framework/syscall/sendfile.rs | services/fs/sendfile | ✅ 已完成：2 unsafe 改 VFS/pipe safe API。【复核】实际落点 `services/fs/sendfile`（原表列 `services/syscall/sendfile`）；framework 源文件已删 |
@@ -312,7 +312,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - 📝 **FFI 薄层分离**：随阶段 6.2/6.3 下沉实施（syscall 用户指针拷贝集中框架）
   - 📝 **calibration 采样回调**：boot 早期路径，随阶段 6.3 timer 部分下沉实施
 - 阶段 1：**纯策略下沉**（§6.1 20 文件）。[X] 收口——3 确认下沉（syscall×3，已提交）+ 17 保留（服务对象准则复核终局，DECISION-F）
-- 阶段 2：**封装+下沉**（§6.2 23 文件）。[] 进行中——2-A syscall fd/pipe 组完成 3 文件（clone/io/sendfile，0 unsafe 落地 services）；2-B fd 事件族 4 文件（epoll/eventfd/signalfd/timerfd）经复核**保留 framework**（耦合判据见 §11 DECISION-P）；2-C char/input 2 文件（pl011/keyboard）经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），并订正 `input_init` 重复注册；2-D usb 2 文件经裁定改走 **USB 整体下沉**（三子步收口，framework 侧整目录删除，判据见 §11 DECISION-R）；2-E display 经复核**部分下沉**（`controller.rs` 管理策略迁 services，VBE 原语/framebuffer/font 保留框架，判据见 §11 DECISION-S）；2-F credo/storage+net query 二文件经复核**均保留 framework**（credo/storage 登记后续条目（前置＝阶段 4 VFS safe API），net query 为 net TCB 状态只读访问面，判据见 §11 DECISION-T）；剩余 9 文件按 2-G（firmware·ftrace）/ 后续分批推进
+- 阶段 2：**封装+下沉**（§6.2 23 文件）。[] 进行中——2-A syscall fd/pipe 组完成 3 文件（clone/io/sendfile，0 unsafe 落地 services）；2-B fd 事件族 4 文件（epoll/eventfd/signalfd/timerfd）经复核**保留 framework**（耦合判据见 §11 DECISION-P）；2-C char/input 2 文件（pl011/keyboard）经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），并订正 `input_init` 重复注册；2-D usb 2 文件经裁定改走 **USB 整体下沉**（三子步收口，framework 侧整目录删除，判据见 §11 DECISION-R）；2-E display 经复核**部分下沉**（`controller.rs` 管理策略迁 services，VBE 原语/framebuffer/font 保留框架，判据见 §11 DECISION-S）；2-F credo/storage+net query 二文件经复核**均保留 framework**（credo/storage 登记后续条目（前置＝阶段 4 VFS safe API），net query 为 net TCB 状态只读访问面，判据见 §11 DECISION-T）；2-G firmware·ftrace 二文件（`framework/syscall/firmware.rs` + `ftrace_kgdb.rs`）经复核**下沉 services**（`services/syscall/firmware.rs` + `ftrace.rs`，11+ 处 unsafe 用户指针拷贝改 framework safe API，framework 侧源文件删除，判据见 §11 DECISION-U）；剩余 7 文件（coredump/rlimit/info/wait4/e1000/e1000_io/virtio）后续分批推进
 - 阶段 3：**驱动双份合并 + E1000 回迁**（§6.4 20 文件 → usb×5 已随 2-D 整体下沉收口，余 15 + DECISION-B）。[]
 - 阶段 4：**VFS 4 文件下沉 + backend_trait 扩展**（DECISION-A）。[]
 - 阶段 5：**壳删除 82 + 直接 use trait 化 20 + 保留文件 43 处收敛**（§7.5，ipc 24 第一优先）。[]
@@ -1204,3 +1204,40 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 **影响面**：§6.2 计数 23 → 3 完成(2-A) + 4 保留(2-B) + 2 保留(2-C) + 2 完成(2-D) + 1 完成(2-E) + 2 保留(2-F) + 9 待推进；§6.3 新增 credo/storage 后续登记条目；framework 侧文件数不变（零下沉）；TCB 占比不变。
 
 **状态**: [X]（2-F 复核收口；credo/storage + net query 均保留 framework，2-F 无代码下沉；credo/storage 登记后续条目；转推 2-G firmware·ftrace）
+
+### DECISION-U: 2-G firmware·ftrace 下沉 services（契约措辞细化 + 11+ unsafe 消除）
+
+> **背景**：§6.2 批次 2-G 目标为 `framework/syscall/firmware.rs`（固件加载/查询/分离）与 `framework/syscall/ftrace_kgdb.rs`（ftrace 使能/读取/统计 + KGDB 进入）。按 §6.2 复核纪律（DECISION-F）先查服务对象（§2），再按「机制资源 vs 处理策略」二分定归属。
+
+**长期演进分析（内核终局视角）**：
+
+1. **两文件均为"处理策略"，非"机制资源"**——内容全部是"参数校验 + 用户指针拷贝 + 编排调用 framework 机制 + 错误码组装"，不直接触碰页表/中断/上下文切换/硬件原语。固件 blob 的权威存储与元数据管理在 `framework/chitin`（机制），各类机制原语（`vfs_open_safe`/`vfs_read_safe`/`copy_from_user`/`copy_to_user`/`ftrace_*`/`kgdb_*`）均已由 framework 提供 safe API 面。按 §4.1 归属决策树，机制留 framework、处理策略迁 services（0 unsafe），符合 B09-18 契约（§6.2 头注：`QX_*` 按机制资源 / 处理策略二分归属）。
+
+2. **消除 11+ 处 unsafe 与跨层调用**——原 framework 侧 `firmware.rs`/`ftrace_kgdb.rs` 集中大量 `unsafe` 用户指针拷贝；下沉后改为 `copy_from_user`/`copy_to_user`（framework 安全代理，内部含 `is_user_buf` 校验 + 异常表兜底 + SMAP），services 侧达成 100% safe（F1）。同时 `services/debug/mod.rs` 原先反向调用 `framework::syscall::ftrace_kgdb::sys_ftrace_*`（跨层调 framework 内部 syscall 实现），改指向 `framework::debug` 机制原语，消除跨层耦合。
+
+3. **契约措辞需细化**（B09-18 活契约，`framework/syscall/mod.rs` 头注）——原措辞"QX 独有编号留 framework 回退层"过于笼统，导致 `QX_*` 一律滞留 framework；细化为"框架持有的机制资源（页表/中断/上下文/硬件原语）留 framework 回退层；仅做参数校验 + 编排的处理策略（可 0-unsafe 且不直接调用 framework 内部机制）迁 services"，为后续 `QX_*` 归属提供明确判据。
+
+4. **对齐问题解法**——保持"无对齐假设"：用户结构写入采用 `[u8; N]`（align 1）+ `copy_to_user`，字段用 `to_ne_bytes()` 逐字段序列化（先例 `services/fs/io.rs`、`services/fs/file_handle.rs`），避免依赖用户缓冲对齐。
+
+**裁决（用户）**：采纳「**下沉 services + 细化契约**」——按 §6.2 处方把 firmware/ftrace 处理策略下沉 `services/syscall`，消除 11+ 处 unsafe 与跨层调用；同时把 B09-18 措辞细化为「机制资源留 framework / 处理策略可 safe 化则迁 services」。
+
+**方案**：
+
+1. **新建** `services/syscall/firmware.rs`（0 unsafe）：`sys_fw_load`/`sys_fw_get`/`sys_fw_get_info`/`sys_fw_detach`；用户指针经 `super::check_user_ptr`/`check_user_buf` 校验 + `copy_from_user`/`copy_to_user`；`FirmwareInfo` 经 `fw_info_bytes` 逐字段 `to_ne_bytes` 序列化（附单测）；私有 `read_path_data` 经 `vfs_open_safe`/`vfs_read_safe` 读取（上限 `MAX_FIRMWARE_SIZE`）。
+2. **新建** `services/syscall/ftrace.rs`（0 unsafe）：`sys_ftrace_enable`/`disable`/`read`/`stat` + `sys_kgdb_enter`；`TraceEvent`（48 字节，6×`u64`）/统计（16 字节）经 `trace_event_bytes`/`ftrace_stat_bytes` 逐字段序列化（附单测）；KGDB 经 `framework::debug::kgdb_serial_ready`/`kgdb_breakpoint` 机制原语。
+3. **services 接入**：`services/syscall/mod.rs` 挂 `pub mod firmware;` + `pub mod ftrace;`；`services/syscall/dispatch.rs` `dispatch_other` 接入 9 个 `QX_*`（`QX_FW_LOAD/GET/GET_INFO/DETACH`、`QX_FTRACE_ENABLE/DISABLE/READ/STAT`、`QX_KGDB_ENTER`）+ 头注"已迁移/待迁移"列表更新。
+4. **services/debug 去跨层**：`ftrace_enable`/`ftrace_disable`/`kgdb_enter` 改指 `framework::debug` 机制原语（原指 `framework::syscall::ftrace_kgdb::sys_ftrace_*`）；头注与安全契约同步。
+5. **framework 侧清理**：`framework/syscall/mod.rs` 删 `pub mod firmware;`/`pub mod ftrace_kgdb;`；`framework/syscall/dispatch.rs` 删 9 个回退分支 + import 去对应 `QX_*`；因函数体降至阈值内，删 `#[expect(clippy::too_many_lines)]`；删除源文件 `firmware.rs`/`ftrace_kgdb.rs`；`scripts/audit_coupling.py` 删悬空黑名单条目 `framework::syscall::firmware`/`ftrace_kgdb`。
+6. **契约细化**：`framework/syscall/mod.rs` L29-40 头注 B09-18 措辞细化（机制资源 / 处理策略二分）。
+7. `services/mod.rs` 悬空注释同步（去掉 `framework::syscall::ftrace_kgdb` 引用）。
+
+**影响面**：
+
+- §6.2 计数 23 → 3 完成(2-A) + 4 保留(2-B) + 2 保留(2-C) + 2 完成(2-D) + 1 完成(2-E) + 2 保留(2-F) + 2 完成(2-G) + 7 待推进。
+- framework 侧 `syscall` 文件数 -2（`firmware.rs`/`ftrace_kgdb.rs` 删除）；TCB 侧 unsafe 下降（11+ 处用户指针拷贝迁出），services 侧新增 2 文件均 0 unsafe。
+- 编号权威仍在 `framework/syscall/types.rs`（`QX_FW_*` = 730-733、`QX_FTRACE_*` = 800-803、`QX_KGDB_ENTER` = 804，本批次不动）。
+- 预存项不动：`framework/syscall/api.rs` L40-46 `QX_*` re-export 为既有孤儿（全代码库无 `api::QX_` 用户），按 §12.2 不属本批次，未处理。
+
+**验证**：§2.3 六门槛全绿——`./ci/build.sh all` 5/5（双架构 0 error/0 warning）+ `./ci/audit.sh quick`（clippy pedantic 三维 0、核心审计含 `audit_coupling`/`audit_services_boundary`/FP-06 全过）+ `make test-host`（全绿）+ `make test-kernel-host`（831 passed / 0 failed，含新增 5 单测）+ QEMU x86_64 boot 至 `VFS ready` + KPTI 断言。
+
+**状态**: [X]（2-G 收口；firmware·ftrace 处理策略落 services（0 unsafe），framework 侧源文件删除，B09-18 契约措辞细化；转推 §6.2 剩余 7 文件）
