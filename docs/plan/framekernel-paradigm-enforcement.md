@@ -102,11 +102,11 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 > **复核终局（DECISION-F）**：上述 ⚠ 待定项经逐文件核查"framework 侧保留代码是否直接调用"，全部判定保留（见 DECISION-F §6.1 复核终局）——§6.1 收口为 **3 下沉 + 17 保留**。
 
-### 6.2 封装+下沉（safe API 后迁）——23 文件 → 3 完成（2-A）+ 4 复核保留（2-B）+ 16 待推进
+### 6.2 封装+下沉（safe API 后迁）——23 文件 → 3 完成（2-A）+ 4 复核保留（2-B）+ 2 复核保留（2-C）+ 14 待推进
 
 > 复核纪律（DECISION-F）：本表 0 unsafe 项**先按服务对象准则（§2）查服务对象再动工**（安全导出面 → 保留；仅 services 消费 → 下沉；被 framework 机制直接调用 → 接口化后下沉或保留）；含 unsafe 的按原"封装+下沉"路径。
 >
-> 进度（批次 2-A syscall fd/pipe 组）：clone / io / sendfile 三文件完成，标 ✅。批次 2-B（fd 事件族）：epoll / eventfd / signalfd / timerfd 四文件经复核**保留 framework**（耦合判据见 §11 DECISION-P），标 🔒；剩余 16 文件按 2-C（char/input）/ 2-D（usb）/ 2-E（display）/ 2-F（credo/storage+net query）/ firmware·ftrace 分批推进。
+> 进度（批次 2-A syscall fd/pipe 组）：clone / io / sendfile 三文件完成，标 ✅。批次 2-B（fd 事件族）：epoll / eventfd / signalfd / timerfd 四文件经复核**保留 framework**（耦合判据见 §11 DECISION-P），标 🔒；批次 2-C（char/input）：pl011 / keyboard 二文件经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），标 🔒，并订正 `input_init` 重复注册（同批）；剩余 14 文件按 2-D（usb）/ 2-E（display）/ 2-F（credo/storage+net query）/ firmware·ftrace 分批推进。
 
 | 文件 | 下沉目标 | 依据 |
 |---|---|---|
@@ -124,9 +124,9 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | framework/syscall/timerfd.rs | services/syscall/timerfd | 🔒 保留 framework（2-B）：`timerfd_callback(&HrTimer)` 依赖 container_of 反推 `TimerFdSlot`（同 `framework/proc/posix_timer.rs` 先例），回调整体不可 safe 化；经用户裁定否决"扩展 `HrTimer` 增 safe cookie"的 TCB 改动。【复核】实际壳落点 `services/timer/timerfd` |
 | framework/syscall/wait4.rs | services/proc/wait4（已存在）| 2 unsafe 用户指针写 |
 | framework/net/init/query.rs | services/net/query | 查询纯 Atomic；reset 薄层留 |
-| framework/driver/char/pl011.rs | services/driver/char/pl011 | MMIO 改 IoMem 封装 |
+| framework/driver/char/pl011.rs | services/driver/char/pl011 | 🔒 保留 framework（2-C）：`arch::uart` 为 boot 早期控制台机制（klog/panic 依赖）必须留框架；`pl011_read/write` CharOps FFI 桥（裸指针 `driver_data`）不可 safe 化；PL011 为固定平台基址（非 PCI），`IoMem` 无固定基址 safe 构造器。【复核】原表列「MMIO 改 IoMem 封装」，实不可行 |
 | framework/driver/display/mod.rs | services/driver/display | VBE 原语留框架，管理迁出 |
-| framework/driver/input/keyboard.rs | services/driver/input | IoPort 原语留框架，scancode 迁出 |
+| framework/driver/input/keyboard.rs | services/driver/input | 🔒 保留 framework（2-C）：`kb_input_read/has/irq` InputOps FFI 桥（裸指针 `driver_data as *mut KeyboardDriver`）不可 safe 化；`read_line` 依赖 `unsafe extern "C" scheduler_yield_ex`；纯 scancode/shift 表可 safe 化但无独立价值。【复核】原表列「scancode 迁出」，实为 FFI 桥绑定整体 |
 | framework/driver/net/e1000.rs | services/driver/net/e1000（回迁）| DECISION-B，框架留 DMA 环 |
 | framework/driver/net/e1000_io.rs | services/driver/net/e1000 | E1000Io 留框架，Driver 业务迁出 |
 | framework/driver/usb/mod.rs | services/driver/usb | IoMem::from_pci_bar 后迁 |
@@ -310,7 +310,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - 📝 **FFI 薄层分离**：随阶段 6.2/6.3 下沉实施（syscall 用户指针拷贝集中框架）
   - 📝 **calibration 采样回调**：boot 早期路径，随阶段 6.3 timer 部分下沉实施
 - 阶段 1：**纯策略下沉**（§6.1 20 文件）。[X] 收口——3 确认下沉（syscall×3，已提交）+ 17 保留（服务对象准则复核终局，DECISION-F）
-- 阶段 2：**封装+下沉**（§6.2 23 文件）。[] 进行中——2-A syscall fd/pipe 组完成 3 文件（clone/io/sendfile，0 unsafe 落地 services）；2-B fd 事件族 4 文件（epoll/eventfd/signalfd/timerfd）经复核**保留 framework**（耦合判据见 §11 DECISION-P）；剩余 16 文件按 2-C～2-F + firmware·ftrace 分批推进
+- 阶段 2：**封装+下沉**（§6.2 23 文件）。[] 进行中——2-A syscall fd/pipe 组完成 3 文件（clone/io/sendfile，0 unsafe 落地 services）；2-B fd 事件族 4 文件（epoll/eventfd/signalfd/timerfd）经复核**保留 framework**（耦合判据见 §11 DECISION-P）；2-C char/input 2 文件（pl011/keyboard）经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），并订正 `input_init` 重复注册；剩余 14 文件按 2-D～2-F + firmware·ftrace 分批推进
 - 阶段 3：**驱动双份合并 + E1000 回迁**（§6.4 20 文件 + DECISION-B）。[]
 - 阶段 4：**VFS 4 文件下沉 + backend_trait 扩展**（DECISION-A）。[]
 - 阶段 5：**壳删除 82 + 直接 use trait 化 20 + 保留文件 43 处收敛**（§7.5，ipc 24 第一优先）。[]
@@ -1116,3 +1116,15 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 6. **路径订正**：§6.2 原表列目标 `services/syscall/{epoll,eventfd,signalfd,timerfd}`，实际壳落点为 `services/sync/{epoll,eventfd,signalfd}` + `services/timer/timerfd`，表内已标【复核】。
 
 **状态**: [X]（裁决完成；四文件保留 framework，2-B 无代码变更，转推 2-C char/input）
+
+### DECISION-Q: 2-C char/input 复核（pl011/keyboard 保留 framework）+ input_init 重复注册订正
+
+> **背景**：§6.2 批次 2-C 目标为 char/input 二文件（`framework/driver/char/pl011.rs` 183 行 / `framework/driver/input/keyboard.rs` 1015 行）「封装+下沉」。按 §6.2 复核纪律（DECISION-F）逐文件核查「framework 侧保留代码是否被机制/FFI 桥直接绑定」后，判定二文件**全部保留 framework**，本批零代码下沉；另订正 `input_init()` 的重复注册（同批）。
+
+**裁决**：
+1. **pl011 保留 framework**：① `framework::arch::uart` 是 boot 早期控制台机制（klog/panic 输出依赖 `unsafe fn init/putc/getc`），必须留 framework；② `pl011_read`/`pl011_write` 为 `CharOps` FFI 桥（`extern "C" fn(driver_data: *mut u8, ...)`，裸指针），不可 safe 化，桥体须操作 `Pl011Driver` 类型——若类型下沉 services 则 framework 桥反向依赖 services（违 §6.3）；③ PL011 为固定平台基址（非 PCI），`IoMem` 唯一 safe 构造器 `from_pci_bar` 不适用（无固定基址 safe 构造器）。
+2. **keyboard 保留 framework**：① `kb_input_read`/`kb_input_has`/`kb_input_irq` 为 `InputOps` FFI 桥（裸指针 `driver_data as *mut KeyboardDriver`），同 pl011 不可 safe 化；② `read_line` 依赖 `unsafe extern "C" scheduler_yield_ex`（调度器外部符号）；③ `SCANCODE_TABLE`/`SHIFT_TABLE` 等纯逻辑虽可 safe 化，但与硬件状态机 `KeyboardDriver` 强绑定且无独立价值。
+3. **路径取舍**：下沉前提是新建 `CharOps`/`InputOps` **trait 注入机制**（同 DECISION-K `IpcStrategy` 模式），而当前 char/input ops **无活跃生产消费者**（`services/driver/char` 读写路径休眠，见其 SIMPLIFIED 注释）——为休眠路径新增 TCB trait 机制，收益不抵 TCB 上升与回归风险。与 2-B（DECISION-P）同源判据：**FFI ABI 桥 → framework 薄层**。
+4. **订正 `input_init()` 重复注册**：原 `input_init()` 先调 `keyboard::keyboard_init()`（经 `chitin_register_with_ops` 注册 `ps2_keyboard` + `InputOps` + IRQ1），再调 `chitin_register_driver("ps2_keyboard", ...)` 二次注册同名无 ops 设备。Chitin 注册表**不按名去重**（`chitin_register*` 直接 `devices.push`），且 `chitin_register_driver` 内部会跑 `driver.init()`——二次注册既产生同名设备节点，又对新建实例重跑 PS/2 自检/扫描码协商（硬件副作用）。已删除该冗余调用，保留 `keyboard_init()` 为唯一注册入口（[input/mod.rs](../../src/kernel/framework/driver/input/mod.rs)）。
+
+**状态**: [X]（裁决完成；pl011/keyboard 保留 framework，2-C 无代码下沉；`input_init()` 重复注册已订正；转推 2-D usb）
