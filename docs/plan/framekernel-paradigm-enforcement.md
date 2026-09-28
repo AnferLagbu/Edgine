@@ -102,11 +102,11 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 > **复核终局（DECISION-F）**：上述 ⚠ 待定项经逐文件核查"framework 侧保留代码是否直接调用"，全部判定保留（见 DECISION-F §6.1 复核终局）——§6.1 收口为 **3 下沉 + 17 保留**。
 
-### 6.2 封装+下沉（safe API 后迁）——23 文件 → 3 完成（2-A）+ 4 复核保留（2-B）+ 2 复核保留（2-C）+ 2 完成（2-D usb）+ 1 完成（2-E display）+ 11 待推进
+### 6.2 封装+下沉（safe API 后迁）——23 文件 → 3 完成（2-A）+ 4 复核保留（2-B）+ 2 复核保留（2-C）+ 2 完成（2-D usb）+ 1 完成（2-E display）+ 2 复核保留（2-F credo/storage+net query）+ 9 待推进
 
 > 复核纪律（DECISION-F）：本表 0 unsafe 项**先按服务对象准则（§2）查服务对象再动工**（安全导出面 → 保留；仅 services 消费 → 下沉；被 framework 机制直接调用 → 接口化后下沉或保留）；含 unsafe 的按原"封装+下沉"路径。
 >
-> 进度（批次 2-A syscall fd/pipe 组）：clone / io / sendfile 三文件完成，标 ✅。批次 2-B（fd 事件族）：epoll / eventfd / signalfd / timerfd 四文件经复核**保留 framework**（耦合判据见 §11 DECISION-P），标 🔒；批次 2-C（char/input）：pl011 / keyboard 二文件经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），标 🔒，并订正 `input_init` 重复注册（同批）；批次 2-D（usb）：framework/driver/usb 二文件经用户裁定改走 **USB 整体下沉**（覆盖原「20 unsafe 集中，机制留框架」处方），三子步收口——4 个 0-unsafe 文件下沉 + usb_core/xhci safe 权威实装 + framework 侧整目录删除（判据见 §11 DECISION-R），标 ✅；批次 2-E（display）：`framework/driver/display/mod.rs` 经复核**部分下沉**——`controller.rs` 管理策略（0 unsafe、无框架机制消费者）迁 `services/driver/display/controller`，VBE 原语 / framebuffer / font 因被 `gfx_console`（klog/panic 机制）与 `syscall/dispatch`（fb_open/fb_mmap）直接绑定而保留框架（判据见 §11 DECISION-S），标 ✅（后续 Framebuffer 机制/策略拆分登记 §6.3）；剩余 11 文件按 2-F（credo/storage+net query）/ firmware·ftrace 分批推进。
+> 进度（批次 2-A syscall fd/pipe 组）：clone / io / sendfile 三文件完成，标 ✅。批次 2-B（fd 事件族）：epoll / eventfd / signalfd / timerfd 四文件经复核**保留 framework**（耦合判据见 §11 DECISION-P），标 🔒；批次 2-C（char/input）：pl011 / keyboard 二文件经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），标 🔒，并订正 `input_init` 重复注册（同批）；批次 2-D（usb）：framework/driver/usb 二文件经用户裁定改走 **USB 整体下沉**（覆盖原「20 unsafe 集中，机制留框架」处方），三子步收口——4 个 0-unsafe 文件下沉 + usb_core/xhci safe 权威实装 + framework 侧整目录删除（判据见 §11 DECISION-R），标 ✅；批次 2-E（display）：`framework/driver/display/mod.rs` 经复核**部分下沉**——`controller.rs` 管理策略（0 unsafe、无框架机制消费者）迁 `services/driver/display/controller`，VBE 原语 / framebuffer / font 因被 `gfx_console`（klog/panic 机制）与 `syscall/dispatch`（fb_open/fb_mmap）直接绑定而保留框架（判据见 §11 DECISION-S），标 ✅（后续 Framebuffer 机制/策略拆分登记 §6.3）；批次 2-F（credo/storage + net query）：`framework/credo/storage.rs` 与 `framework/net/init/query.rs` 二文件经复核**均保留 framework**——credo/storage 因 framework 无 VFS safe API 面（属阶段 4）+ `credo/api.rs` 三处 FFI 直接绑定 storage + 序列化直读 credo TCB `PwmEntry` 原子字段，**登记后续条目**（前置＝阶段 4 VFS safe API 就绪后「编排+序列化」整体下沉 `services/credo/persist`）；net query 为 net TCB 状态（DHCP 状态机写入的全局 Atomic）**只读访问面**，按「状态只读访问器与状态定义同层」判据应留 framework（判据见 §11 DECISION-T），标 🔒；剩余 9 文件按 2-G（firmware·ftrace）/ 后续分批推进。
 
 | 文件 | 下沉目标 | 依据 |
 |---|---|---|
@@ -123,7 +123,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | framework/syscall/signalfd.rs | services/syscall/signalfd | 🔒 保留 framework（2-B）：被 epoll 机制 `check_fd_ready` 直接调用（同类耦合），close 路径调 `epoll_pwake`；2 unsafe 为用户指针读写。【复核】实际壳落点 `services/sync/signalfd` |
 | framework/syscall/timerfd.rs | services/syscall/timerfd | 🔒 保留 framework（2-B）：`timerfd_callback(&HrTimer)` 依赖 container_of 反推 `TimerFdSlot`（同 `framework/proc/posix_timer.rs` 先例），回调整体不可 safe 化；经用户裁定否决"扩展 `HrTimer` 增 safe cookie"的 TCB 改动。【复核】实际壳落点 `services/timer/timerfd` |
 | framework/syscall/wait4.rs | services/proc/wait4（已存在）| 2 unsafe 用户指针写 |
-| framework/net/init/query.rs | services/net/query | 查询纯 Atomic；reset 薄层留 |
+| framework/net/init/query.rs | services/net/query | 🔒 保留 framework（2-F）：查询函数为 framework net TCB 状态（`G_INIT_STATE`/`G_MAC`/`G_IPV4`/`G_GATEWAY`/`G_DNS`，由 DHCP 状态机写入的全局 Atomic）的**只读访问面**，按「状态只读访问器应与状态定义同层」判据应留 framework；且被 `net/api.rs`（契约面）与 `net/init/sm_fi.rs`（启动编排）直接调用（先例 `net_socket.rs::reset_network_state`）。【复核】原表列「查询纯 Atomic → 可迁」，实为 TCB 状态访问面，终局保留非权宜（判据见 §11 DECISION-T）|
 | framework/driver/char/pl011.rs | services/driver/char/pl011 | 🔒 保留 framework（2-C）：`arch::uart` 为 boot 早期控制台机制（klog/panic 依赖）必须留框架；`pl011_read/write` CharOps FFI 桥（裸指针 `driver_data`）不可 safe 化；PL011 为固定平台基址（非 PCI），`IoMem` 无固定基址 safe 构造器。【复核】原表列「MMIO 改 IoMem 封装」，实不可行 |
 | framework/driver/display/mod.rs | services/driver/display | ✅ 已完成（2-E）：`controller.rs` 管理策略（`DisplayController`/`DisplayManager`/`DisplayMode`/`MonitorInfo`/`DisplayOutput`，0 unsafe 且无框架机制消费者）整体迁 `services/driver/display/controller`；framework 侧删 `pub mod controller` + re-export + `display_init` 内 `let _manager` 死语句，`driver/mod.rs` 补 re-export `PixelFormat`。VBE 原语 / framebuffer / font / 自检 / `FB_PHYS_ADDR` / `get_framebuffer` 因被 `gfx_console` 与 `syscall/dispatch` 直接绑定而保留框架（判据见 §11 DECISION-S）|
 | framework/driver/input/keyboard.rs | services/driver/input | 🔒 保留 framework（2-C）：`kb_input_read/has/irq` InputOps FFI 桥（裸指针 `driver_data as *mut KeyboardDriver`）不可 safe 化；`read_line` 依赖 `unsafe extern "C" scheduler_yield_ex`；纯 scancode/shift 表可 safe 化但无独立价值。【复核】原表列「scancode 迁出」，实为 FFI 桥绑定整体 |
@@ -132,9 +132,9 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | framework/driver/usb/mod.rs | services/driver/usb | ✅ 已完成（2-D）：PCI 发现 + `usb_init` 迁 services（chitin proto=Bus），framework 源文件已删 |
 | framework/driver/usb/xhci.rs | services/driver/usb/xhci | ✅ 已完成（2-D）：xhci/枚举/类驱动**整体下沉**（原「20 unsafe 集中，机制留框架」处方经裁定覆盖，见 DECISION-R），framework 源文件已删 |
 | framework/driver/virtio/mod.rs | services/virtio/transport | 0 unsafe 已可下沉 |
-| framework/credo/storage.rs | services/credo/storage | vfs C FFI 留薄层，序列化迁出 |
+| framework/credo/storage.rs | services/credo/persist | 🔄 复核保留（2-F）+ 登记后续：`w8/w16/w32/…` 序列化算法（0 unsafe 纯函数）与 `save/load/remove_database` 编排（功能）终局应整体迁 `services/credo/persist`，仅 `vfs_*_internal` C FFI 留 framework 薄层。**前置缺失**：framework 当前无 VFS safe API 面（属阶段 4），强行只迁序列化会强加仅为过渡存在的 trait 注入（违 §12.3）；且 `credo/api.rs` 三处 FFI 直接调 `storage::{save,load,remove}_database`（安全导出面绑定）+ 序列化直读 credo TCB `PwmEntry` 原子字段。**登记后续条目（前置＝阶段 4 VFS safe API 就绪 → 编排+序列化整体下沉）**。【复核】原目标路径 `services/credo/storage` 已被块设备代理占用（`services/credo/storage/`），订正为 `services/credo/persist`（判据见 §11 DECISION-T）|
 
-### 6.3 部分下沉（机制文件内策略拆分）——11 文件 + 1 后续登记（display，2-E）
+### 6.3 部分下沉（机制文件内策略拆分）——11 文件 + 2 后续登记（display 2-E / credo-storage 2-F）
 
 > **拆分接口原则**：迁出的策略函数与 framework 机制的交互必须显式化——中断/panic 上下文经 **trait 注入**（framework 定义契约 + services 注册，OnceLock 全局，只读原子访问）；boot 早期经**回调注册**；普通路径经 **framework 机制 API**。禁止 framework 直接调用 services 函数（反向依赖）。
 
@@ -152,6 +152,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | framework/barrier/reset/bsr.rs | freeze/unfreeze/rollback 编排迁出；mmio_write32 机制保留 | 编排经 framework 恢复机制 API（RECOVERY_MANAGER）；mmio 写留框架 |
 | framework/debug/ebpf.rs | 验证器策略已 trait 化（services）；解释执行引擎保留 | ✅ 已有 BpfVerifier trait（services/ebpf_verifier 权威）|
 | framework/driver/display/framebuffer.rs（+ font/self_test）| Framebuffer 绘图策略（set_pixel/fill/fill_rect/draw_line/blend/aa 等）迁 services；IoMem 映射、`FB_PHYS_ADDR`/`FB_PHYS_SIZE`、`get_framebuffer` 机制原语保留 | ⚠ 2-E 后续（登记项，见 §11 DECISION-S）：**前置**需先解除 `gfx_console` 对 `*mut Framebuffer` 的裸指针绑定（klog/panic 机制经 trait 注入或回调注册消费绘图能力），再将绘图策略拆至 services + framework 留机制原语 |
+| framework/credo/storage.rs（2-F 后续登记）| 序列化算法（0 unsafe 纯函数）+ `save/load/remove_database` 编排（功能）整体迁 `services/credo/persist`；`vfs_*_internal` C FFI 留 framework 薄层 | ⚠ **前置**：阶段 4 VFS safe API 面就绪；另需承接 `credo/api.rs` 三处 FFI（安全导出面绑定）并解绑序列化对 credo TCB `PwmEntry` 原子字段的直读（判据见 §11 DECISION-T）|
 
 ### 6.4 双份合并（services 权威，framework 删业务）——20 文件 → usb×5 已随 2-D 整体下沉收口（framework 侧删除），余 15 ⛔ 暂缓（DECISION-G 复核后方向待裁决）
 
@@ -311,7 +312,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - 📝 **FFI 薄层分离**：随阶段 6.2/6.3 下沉实施（syscall 用户指针拷贝集中框架）
   - 📝 **calibration 采样回调**：boot 早期路径，随阶段 6.3 timer 部分下沉实施
 - 阶段 1：**纯策略下沉**（§6.1 20 文件）。[X] 收口——3 确认下沉（syscall×3，已提交）+ 17 保留（服务对象准则复核终局，DECISION-F）
-- 阶段 2：**封装+下沉**（§6.2 23 文件）。[] 进行中——2-A syscall fd/pipe 组完成 3 文件（clone/io/sendfile，0 unsafe 落地 services）；2-B fd 事件族 4 文件（epoll/eventfd/signalfd/timerfd）经复核**保留 framework**（耦合判据见 §11 DECISION-P）；2-C char/input 2 文件（pl011/keyboard）经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），并订正 `input_init` 重复注册；2-D usb 2 文件经裁定改走 **USB 整体下沉**（三子步收口，framework 侧整目录删除，判据见 §11 DECISION-R）；2-E display 经复核**部分下沉**（`controller.rs` 管理策略迁 services，VBE 原语/framebuffer/font 保留框架，判据见 §11 DECISION-S）；剩余 11 文件按 2-F（credo/storage+net query）+ firmware·ftrace 分批推进
+- 阶段 2：**封装+下沉**（§6.2 23 文件）。[] 进行中——2-A syscall fd/pipe 组完成 3 文件（clone/io/sendfile，0 unsafe 落地 services）；2-B fd 事件族 4 文件（epoll/eventfd/signalfd/timerfd）经复核**保留 framework**（耦合判据见 §11 DECISION-P）；2-C char/input 2 文件（pl011/keyboard）经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），并订正 `input_init` 重复注册；2-D usb 2 文件经裁定改走 **USB 整体下沉**（三子步收口，framework 侧整目录删除，判据见 §11 DECISION-R）；2-E display 经复核**部分下沉**（`controller.rs` 管理策略迁 services，VBE 原语/framebuffer/font 保留框架，判据见 §11 DECISION-S）；2-F credo/storage+net query 二文件经复核**均保留 framework**（credo/storage 登记后续条目（前置＝阶段 4 VFS safe API），net query 为 net TCB 状态只读访问面，判据见 §11 DECISION-T）；剩余 9 文件按 2-G（firmware·ftrace）/ 后续分批推进
 - 阶段 3：**驱动双份合并 + E1000 回迁**（§6.4 20 文件 → usb×5 已随 2-D 整体下沉收口，余 15 + DECISION-B）。[]
 - 阶段 4：**VFS 4 文件下沉 + backend_trait 扩展**（DECISION-A）。[]
 - 阶段 5：**壳删除 82 + 直接 use trait 化 20 + 保留文件 43 处收敛**（§7.5，ipc 24 第一优先）。[]
@@ -1184,3 +1185,22 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 **验证**：§2.3 六门槛全绿——`./ci/build.sh all` 5/5（双架构 0 error/0 warning）+ `./ci/audit.sh quick`（clippy pedantic 0、核心审计含 FP-06 全过）+ `make test-host`（8+11 passed）+ `make test-kernel-host`（826 passed / 0 failed）+ QEMU x86_64 boot 至 `VFS ready` + KPTI 断言。
 
 **状态**: [X]（2-E 收口；controller 管理策略落 services，VBE 原语/framebuffer/font 保留框架；Framebuffer 机制/策略拆分登记 §6.3 后续）
+
+### DECISION-T: 2-F 复核（credo/storage + net query 保留 framework；credo/storage 登记后续）
+
+> **背景**：§6.2 批次 2-F 目标为 `framework/credo/storage.rs`（433 行）与 `framework/net/init/query.rs`（162 行）。按 §6.2 复核纪律（DECISION-F）先查服务对象，再定归属。
+
+**长期演进分析（内核终局视角）**：
+
+1. **net/query — 终局保留 framework（非权宜）**：`is_network_initialized` / `is_network_configured` / `get_init_state` / `NetStatus::capture` / `get_mac_address` / `get_ipv4_address` / `get_default_gateway` / `get_dns_servers` 本质是 framework net TCB 状态（`G_INIT_STATE` / `G_MAC` / `G_IPV4` / `G_GATEWAY` / `G_DNS`，由 DHCP 状态机在 framework 内写入的全局 Atomic）的**只读访问面**。框内核范式下「状态的只读访问器应与状态定义同层」——若迁 services，则 services 须穿透读 framework 内部字段（违 F2 边界精神）。先例：`framework/net_socket.rs::reset_network_state` 即 framework 已向 services 提供的 safe 访问面。另 `net/api.rs`（对外契约面）与 `net/init/sm_fi.rs`（启动编排）均直接调用查询 → 属 framework 机制自身需求。
+2. **credo/storage — 本轮保留 + 登记后续（终局应下沉，受前置阻塞）**：文件三部分组成——① 序列化算法（`w8/w16/w32/w64`/`r8…`/`serialize`/`deserialize` + v4→v5 迁移，0 unsafe 纯函数 = 策略）；② VFS I/O（`raw` 子模块 5 个 `unsafe extern "C"` 包装 `vfs_*_internal` = 机制）；③ 编排（`save/load/remove_database` = 功能）。按归属决策树，② 属机制留 framework，①③ 终局应迁 services。**但前置缺失**：framework 当前无 VFS safe API 面（属阶段 4 VFS 下沉），强行只迁 ① 需新增仅为过渡存在的 trait 注入，违 §12.3「不为将来预留扩展点」；且 `credo/api.rs` 三处 FFI（`pwm_try_load` / `pwm_save_to_disk` / `pwm_load_from_disk`）直接调 `storage::*`（安全导出面绑定），序列化又直读 credo TCB `PwmEntry` 全部原子字段——在 VFS safe 面就绪前整体迁出将造成 framework→services 反向依赖或大面积 TCB 字段穿透。
+
+**裁决（用户）**：采纳「**保留 + 登记**」——2-F 本轮**零代码下沉**；`net/init/query.rs` 标 🔒（终局保留 framework）；`credo/storage.rs` 标 🔄（本轮保留）+ 登记 §6.3 后续条目（前置＝阶段 4 VFS safe API 就绪 → 编排+序列化整体下沉 `services/credo/persist`）。
+
+**订正**：
+1. §6.2 表 `framework/credo/storage.rs` 原目标路径 `services/credo/storage` **已被块设备代理占用**（`services/credo/storage/`：`disk.rs`+`mod.rs`，语义为块设备/格式化/分区），订正为 `services/credo/persist`。
+2. §6.2 表 `framework/net/init/query.rs` 原依据「查询纯 Atomic；reset 薄层留」订正为「TCB 状态只读访问面，终局保留 framework」。
+
+**影响面**：§6.2 计数 23 → 3 完成(2-A) + 4 保留(2-B) + 2 保留(2-C) + 2 完成(2-D) + 1 完成(2-E) + 2 保留(2-F) + 9 待推进；§6.3 新增 credo/storage 后续登记条目；framework 侧文件数不变（零下沉）；TCB 占比不变。
+
+**状态**: [X]（2-F 复核收口；credo/storage + net query 均保留 framework，2-F 无代码下沉；credo/storage 登记后续条目；转推 2-G firmware·ftrace）
