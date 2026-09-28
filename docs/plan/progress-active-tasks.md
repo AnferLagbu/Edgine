@@ -44,7 +44,7 @@
 >
 > **2026-08-09 更新** (`a656c91e`): option_if_let_else 全部根治 (185 → 0) + 10 处永久 expect 兜底全部消除. DECISION-044 nursery 评估结论推翻. stage-engineering-master.md 阶段 17 已同步更新.
 >
-> **2026-09-25 更新**: 新增活跃工程 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md)（内核单元测试 harness 统一，承接 audit-fix-09 的 B09-19）。其 UT-01..UT-06 / UT-08 / UT-10 已完成并过 §2.3 六门槛，仅余 UT-07 双轨收敛未开工。本文件工程计划 C 的门槛引用同步为现行 §2.3 六条（历史验证记录行不改）。
+> **2026-09-25 更新**: 新增活跃工程 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md)（内核单元测试 harness 统一，承接 audit-fix-09 的 B09-19）。其 UT-01..UT-06 / UT-08 / UT-10 已完成并过 §2.3 六门槛，仅余 UT-07 双轨收敛未开工。本文件工程计划 C 的门槛引用同步为现行 §2.3 六条（历史验证记录行不改）。【订正】UT-07 双轨收敛已于后续批次收口并置 `[X]`，本工程 UT-01..UT-10 全部完成 ⇒ 上句「仅余 UT-07 未开工」失效。
 >
 > **2026-09-26 文档漂移收敛 (逐项源码复验)**: 对本工程计划全部自称 `[X]`/`[]` 项回源码复验, 修正 3 类偏差 — (a) A2 遗留未清: `host-tests/README.md` 残留 3 处 `docs/CHANGELOG.md` 引用, 本轮按 DECISION-038 删除/改写 (已清零); (b) B4 表述过时: 当前 expect 注释为**双模板并存** (`// 有意窄化: <原因>` 237 处 + `reason = "<lint名>: ..."` 347 处), 非历史记载的"3 场景 + 1 兜底"单模板, 实况见 §方案 B4; (c) A1/B3/B5.2 待修对象 moot: `vision-hope.md` 已整篇重写 (无"风险 2"节)、`README.md` 已整篇重写为 18 行 (原 :21/:71 不复存在)、`barrier/api.rs` B5.2 目标函数形态已正确。另修正 §交叉引用 clippy-pedantic-cleanup.md 失效链接 (已归档 → archive/)。
 

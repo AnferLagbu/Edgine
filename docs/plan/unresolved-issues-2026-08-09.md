@@ -37,7 +37,19 @@
 | 迁移中子系统状态 (2026-08-31) | 8 | MIG×8 | ⚠️ 迁移中 (有意识中间态) |
 | 分册 6 调研预存问题 (2026-08-31) | 3 | B06-PRE×3 (1 安全) | ❌ 用户裁决登记待后续 |
 | socket_max_sockets flaky 排查 (2026-08-31) | 1 | B06-PRE-004 | ✅ 已修复 (非内核问题) |
-| **总计** | **~82 项** | — | — |
+| **总计** | **~82 项 (2026-08-09 原登记)** | — | **复验订正: 真正仍开放 ≈ 24 项 + 3 项刻意维持** |
+
+> **【本轮复验订正】** 按当前源码状态逐类复核 (原登记数保留上表, 不涂改):
+> - **源码未实现 (TODO)**: 原 ~43 项 → 实测**仅剩 1 项**真实 TODO ([framework/net/init.rs:601](file:///home/anfer/Code/QueenX/src/kernel/framework/net/init.rs#L601), 即原 ISSUE-SRC-008, 行号由 `:822` 漂移); 另 1 项 ISSUE-SRC-028 所在文件 `services/fs/vfs/api.rs` 已不存在 (拆分迁至 `handle.rs`). 其余 41 项全部消除 (源码仅残留 `TRACK-xxxxxx 消除` 说明注释).
+> - **跨文档矛盾**: 8 项实现侧均已落地 (见 §3), 归档快照按 §6 冻结 → 仍开放 **0**.
+> - **审计基线**: 实测 [audit_services_boundary.py](file:///home/anfer/Code/QueenX/scripts/audit_services_boundary.py) **EXIT=0 / 0 违规**、`audit_comment_language.py` **724 文件 0 违规** → 仍开放 **0**.
+> - **运行时已知问题**: 3 项仍成立 (RT-001 见 [qemu_boot_test.sh:168](file:///home/anfer/Code/QueenX/scripts/qemu_boot_test.sh#L168) 注释; RT-002 未修复但 `.gdb_debug_gic` 证据失效; RT-003 未运行).
+> - **构建/工具**: TOOL-001 已修复; TOOL-002 QEMU 侧陈旧检测已实装 ([check_kernel_fresh](file:///home/anfer/Code/QueenX/scripts/qemu_boot_test.sh#L133)); TOOL-003 的 E0152 前提已根治 (2026-09-14 build-std 显式化) → 待按新状态重评.
+> - **分册 3 归档遗留**: 3 项均仍成立 (COW TOCTOU 见 [cow.rs:464](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/cow.rs#L464); pmm/swap 与多核 tick 的 host-tests 缺口均无对应用例).
+> - **迁移中子系统**: MIG-001/002/003/004/006/007/008 仍成立; MIG-005 文件名漂移 (framework 侧实为 `ata.rs`/`nvme.rs`/`ahci.rs`/`ata_block.rs`, **无** `nvme_block.rs`/`ahci_block.rs`).
+> - **分册 6 预存问题**: B06-PRE-001 已失效 (tmpfs 改用 `nodes.len()` + `VfsFileType::Dir.as_u8()`); B06-PRE-002 仍成立 (安全缺陷); B06-PRE-003 行号漂移.
+> - **远期工程**: FUT-001~005 未启动; FUT-006 (WASM WASI) 已完成.
+> - **刻意维持**: DEC-046 计数 1354/166 → **1406/173**; DEC-005 计数 345 → **492** (逐项见各节).
 
 ---
 
@@ -55,6 +67,7 @@
 | **文件** | `services/debug/ebpf_verifier.rs`、`debug/mod.rs`、`io/iouring.rs`、`ipc/msgq.rs`、`mm/madvise_mlock.rs`、`proc/coredump.rs`、`proc/memfd.rs`、`proc/pidfd.rs`、`syscall/dispatch.rs`、`syscall/mod.rs` |
 | **分册覆盖核查（2026-08-23）** | 分册 03-09 无条目明确负责修复这些文件的 F2 边界违规（各分册条目只修功能/逻辑，如 B05-32 pidfd、B07-18 ebpf）；分册 09 B09-11/12/13 的"F2 治理"仅覆盖 **framework→services 反向依赖（D8）**，方向相反不覆盖本项 |
 | **处理（2026-08-30）** | 🔄 已处理——5 处代理层自拦截误报经 `PROXY_ALLOWANCE` 豁免（[audit_services_boundary.py](file:///home/anfer/Code/QueenX/scripts/audit_services_boundary.py) 白名单：debug/mod.rs、ebpf_verifier.rs、ipc/msgq.rs、proc/coredump.rs）；实测 `audit_services_boundary.py` 当前 **0 违规**（黑名单补全后剩余 HIGH 均已合规或经豁免），见分册 10 B10-06 |
+| **【本轮复验订正】** | `PROXY_ALLOWANCE` 实测为 **8 条**（原记"5 处"为 2026-08-30 首次登记数，后经 DECISION-J 第十七批等扩容：debug/mod.rs、ebpf_verifier.rs×2、ipc/msgq.rs、proc/coredump.rs、sync/types.rs、barrier/reset_config.rs、syscall/types.rs）；本轮实测 `python3 scripts/audit_services_boundary.py` **EXIT=0 / 0 违规**（另 2 项 MEDIUM `UNLISTED_INTER_MODULE_DEP` 非边界违规） |
 | **来源** | archive/audit-fix-01 L227 + archive/audit-fix-02 L339/394 |
 
 ### BASELINE-F7-067: audit_comment_language 67 处违规（F7 中文注释强制）
@@ -66,6 +79,7 @@
 | **分布** | framework 全树英文注释（acpi/uart/gic/mmu/edid 等，见 `audit_comment_language.py` 输出） |
 | **分册覆盖核查（2026-08-23）** | 分册 03-09 无英文注释翻译条目；分册 01 声称"后续 commit 手工翻译"未落实；分册 09 仅覆盖 F1/F9/F2/D8 死代码，无 F7 条目 |
 | **处理（2026-08-30）** | 🔄 已修复——按用户授权逐处中文化（34 文件，技术术语保留英文 + 中文说明），实测 `audit_comment_language.py` **0 违规**（"扫描 735 个 .rs 文件, 0 违规"），见分册 10 B10-03 |
+| **【本轮复验订正】** | 实测输出为 "扫描 **724** 个 .rs 文件, 0 违规"（原记"735"随文件增删漂移）；结论（0 违规）不变 |
 | **来源** | archive/audit-fix-01 L221 + archive/audit-fix-02 L342 |
 
 ---
@@ -134,6 +148,11 @@
 | **现状** | 代码 Ordering 修复完成（516a64d6），host-tests 无多核用例（host 单核难以覆盖） |
 | **建议方案** | QEMU SMP kernel_test 补多核 tick 可见性测试，或按 ROE（Return-On-Effort）说明豁免 |
 
+> **【本轮复验订正】** 3 项遗留均仍成立:
+> - B03-LEGACY-001: [cow.rs:464](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/cow.rs#L464) 的 `frame_ref_count` 判定与 [cow.rs:470](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/cow.rs#L470) 的 `map_page_in_table` 映射仍不在同一临界区，TOCTOU 窗口存在.
+> - B03-LEGACY-002: host-tests 全树无 `find_contig_range`/`reserve_range`/`unreserve_range` 用例（grep 0 命中），缺口成立.
+> - B03-LEGACY-003: [tick.rs:165](file:///home/anfer/Code/QueenX/src/kernel/framework/timer/tick.rs#L165) 已为 `AcqRel`，但无多核 host 用例（host 单核），缺口成立.
+
 ---
 
 ## 🔴 第 1 类：运行时已知问题 (3 项)
@@ -167,6 +186,7 @@
 | **调试方式** | GDB 调试 (`.gdb_debug_gic` 文件) |
 | **源码位置** | `src/kernel/framework/arch/aarch64/gic.rs` (GICv3 初始化), `src/kernel/framework/arch/aarch64/barrier/mod.rs` (SGI 7 使能) |
 | **用户当前活动** | 用户 IDE 打开 `.gdb_debug_gic` 文件表明**正在 GDB 调试 GICv3 挂起** |
+| **【本轮复验订正】** | 现象与源码位置仍成立；但 `.gdb_debug_gic` 文件**当前不存在**于工作区（glob 0 命中），"用户 IDE 打开 `.gdb_debug_gic`"的活动证据已失效——「用户当前调试」应以用户实际状态为准，本台账不据过时证据断言 |
 | **建议方案** | (1) GDB `break gic_init` 单步跟踪; (2) 检查 GICR_SGI_BASE 寄存器访问; (3) 检查 SGI 7 触发时 Redistributor 状态 |
 | **工作量** | 估计 3-5 天 |
 
@@ -186,6 +206,12 @@
 ---
 
 ## 🟠 第 2 类：源码未实现 (~43 个 TODO)
+
+> **【本轮复验订正】** 逐条回源码复验（命令：`grep -rn "TODO\|FIXME\|XXX" src/kernel --include="*.rs" | grep -v "src/kernel/services/net/smoltcp/"`，含 smoltcp 全树共 47 行，**排除 smoltcp 后仅 2 行**）:
+> - **41 项已消除**——源码仅残留 `TRACK-xxxxxx 消除/解决` 说明注释（`grep TRACK-[0-9A-Fa-f]{6}` = 18 行，全为消除说明，无活跃 `TODO(TRACK-*)`）.
+> - **1 项仍存在**: ISSUE-SRC-008（`framework/net/init.rs` 的 skb 投递 TODO），行号由原记 `:822` 漂移为 **[:601](file:///home/anfer/Code/QueenX/src/kernel/framework/net/init.rs#L601)**；它是当前 qx 自有代码中**唯一**真实 TODO.
+> - **1 项文件已不存在**: ISSUE-SRC-028 所在 `services/fs/vfs/api.rs` 已不存在（拆分迁至 `handle.rs`）.
+> - **说明**: `framework/config/mod.rs:75` 的 `XXX` 为路径占位符（`use crate::framework::config::XXX`），**非 TODO**，不计入.
 
 ### 2.1 P1 严重 — 阻塞核心功能
 
@@ -246,6 +272,8 @@
 | ISSUE-SRC-043 | `services/fs/devfs.rs` | (类似时间戳项) |
 
 > **说明**: P2/P3 的具体位置可通过 `grep -rn "TODO\|FIXME\|XXX" src/kernel --include="*.rs" | grep -v "src/kernel/services/net/smoltcp/"` 重新生成. qx 自有代码中**约 43 个 TODO** (排除 smoltcp vendored 527 个).
+>
+> **【本轮复验订正】** 上表为 **2026-08-09 原登记快照**（保留不涂改）；按当前源码状态复验，上表中除 ISSUE-SRC-008 外的条目均已消除，ISSUE-SRC-028 路径已不存在——详见本节开头【本轮复验订正】. 重新生成命令实测（排除 smoltcp）仅 2 行（1 占位符 + 1 真 TODO），非"约 43 个".
 
 ---
 
@@ -266,6 +294,7 @@
 | **冲突点** | README.md:11/163/210 + AGENTS.md:48/363 引用不存在的 `docs/CHANGELOG.md` |
 | **方案** | (b) 删除全部引用 (采纳). git commit 本身即变更日志 |
 | **落地** | DECISION-038 (2026-08-03). 2026-09-26 复验: README.md / AGENTS.md / scripts / ci 均已无引用; `host-tests/README.md` 实际残留 3 处 (原记载"2 处"不准), 本轮已归零 |
+| **【本轮复验订正】** | 断链 (指向不存在的 `docs/CHANGELOG.md`) 确已清零；但 `host-tests/README.md:309/317` 与 `scripts/scan_antx_residue.py:116/118` 仍含 `CHANGELOG.md` **合法字样**（描述性文字/扫描规则，非文件引用），故"全仓 0 引用"表述不准，应理解为"0 处失效链接" |
 | **归档快照** | `archive/code-review-findings-2026-08-01.md` 保持 `[]` (AGENTS.md §6 冻结) |
 
 #### REVIEW-FINDING-025: syscall 编号空间立场两份权威文档互相矛盾
@@ -312,7 +341,8 @@
 |---|---|
 | **状态** | ✅ 已修复 (2026-09-26 复验) |
 | **冲突点** | README.md:21 `git remote rename origin Gitee` 矛盾 + README.md:71 失效链接 `kernel-roadmap.md` |
-| **落地** | progress B3 (2026-08-04); README.md 后续已整篇重写为 18 行 (无 `git remote` 指令、无 `kernel-roadmap.md` 链接), 原 :21/:71 不复存在 |
+| **落地** | progress B3 (2026-08-04); README.md 后续已整篇重写 (无 `git remote` 指令、无 `kernel-roadmap.md` 链接), 原 :21/:71 不复存在 |
+| **【本轮复验订正】** | README.md 实测为 **23 行**（原记"18 行"漂移）；重写与失效链接清除的结论不变 |
 
 ### 3.3 P3 已知未完成 (2 项) — ✅ 已修复 (2026-09-26 源码复验)
 
@@ -359,6 +389,7 @@
 |---|---|
 | **状态** | ⏸️ `[~]` DECISION-046 维持原状 |
 | **数量** | 1354 个跨 166 文件 (含 527 个 smoltcp vendored) |
+| **【本轮复验订正】** | 实测 kernel `#[test]` 现为 **1406 处 / 173 文件**（原记 1354/166 随代码增删漂移）；维持原状的理由（ROI 不匹配）不受影响 |
 | **理由** | 范畴属测试架构工程非静态检查工程; ROI 不匹配 (仅 ~70 个纯算法值得迁移) |
 | **commit** | `ebb985c0` |
 | **未来可选** | 迁移 USB HID/MassStorage/XHCI/Enumerate/Ring 5 文件 ~70 个纯算法测试 (~5-7 天) |
@@ -378,6 +409,7 @@
 |---|---|
 | **状态** | ⏸️ `[~]` 维持现状 |
 | **数量** | `src.find()` 37 处 (高风险) + `src.contains()` 308 处 (中风险) = 345 处 |
+| **【本轮复验订正】** | 实测 host-tests 现为 `src.find(` = **52** + `src.contains(` = **440** = **492 处**（原记 37+308=345 随测试增删漂移）；维持现状策略不变 |
 | **策略** | 不批量机械改 (易引入 false negative); 仅在**真实测试失败时**针对性改用 `split_whitespace + 关键 token 匹配` |
 | **已修复** | 2 处 (`vfs_read/write_uses_inode_trait`, commit `4f1a9d3e`) |
 | **真实风险分布** | td19_proc_kernel_error_test 8 处, usermode_ring3_test 6 处, td10/td09 各 4 处, 其他各 1-3 处 |
@@ -400,20 +432,22 @@
 
 | 字段 | 数据 |
 |---|---|
-| **状态** | ❌ 未修复 |
+| **状态** | ⚠️ 部分落地 (QEMU 侧已实装陈旧检测; Makefile 侧未改) |
 | **现象** | lint 修复后旧 kernel.flat 仍存在, QEMU 启动"日志为空, 内核未进入 Rust 入口" |
 | **临时处理** | 手动 `make ARCH=x86_64 all` |
 | **建议方案** | Makefile 加入文件 mtime 检查, 或 QEMU 启动脚本加入图像陈旧检测 |
+| **【本轮复验订正】** | 建议方案的第 2 条已实装: [qemu_boot_test.sh](file:///home/anfer/Code/QueenX/scripts/qemu_boot_test.sh#L133) 新增 `check_kernel_fresh()`（`:133` 定义），当图像早于源码时告警/重建；但**仅 aarch64 分支调用**（`:204`），x86_64 路径未接入。Makefile 侧 mtime 检查仍未做 → 状态由 ❌ 上调为 ⚠️ |
 | **工作量** | 估计 0.5 天 |
 
 ### ISSUE-TOOL-003: cargo test --tests 在裸机 target 失败
 
 | 字段 | 数据 |
 |---|---|
-| **状态** | ❌ 未解决 (与 lint 修复正交) |
+| **状态** | ⚠️ 前提已变 (E0152 整族已根治; 本条待按新状态重评) |
 | **现象** | E0152 duplicate lang item (zerocopy/bitflags/byteorder/managed) |
 | **应对** | 实际测试在 host-side 跑, lint-only 检查通过 |
 | **建议方案** | 用 `#[cfg(target_os = "none")]` 隔离测试, 或 host-tests 引入独立测试目标 |
+| **【本轮复验订正】** | E0152 整族已根治（2026-09-14 build-std 显式化，见 [src/kernel/Cargo.toml:17](file:///home/anfer/Code/QueenX/src/kernel/Cargo.toml#L17) 与 [framekernel-paradigm-enforcement.md:431](file:///home/anfer/Code/QueenX/docs/plan/framekernel-paradigm-enforcement.md#L431)）；`test = false` 相关前提亦已移除。原"裸机 target 失败"现象不再必然复现 → 本条前提已变，待按新状态重评是否需要 |
 | **工作量** | 估计 1 天 |
 
 ---
@@ -481,6 +515,10 @@
 | MIG-007 | host-tests 无 chitin 专项集成测试 | `host-tests/tests/` | 已有 driver_display / driver_e1000_eeprom / nvme_ahci_activation / i43_block_bridge / virtio_net_arch_unify / nic_probe_arch_neutral，但 chitin 注册表/IO 无专项覆盖 |
 | MIG-008 | services 侧 HDMI/DP 控制器未接入驱动框架/启动路径 | [services/driver/display/hdmi.rs:699](file:///home/anfer/Code/QueenX/src/kernel/services/driver/display/hdmi.rs#L699) / [dp.rs:500](file:///home/anfer/Code/QueenX/src/kernel/services/driver/display/dp.rs#L500) | `HdmiController`/`DpController` 内核内零调用者（仅模块内测试与 host-tests）；显示子系统启动实际走 framework framebuffer（[framework/driver/display/mod.rs:299](file:///home/anfer/Code/QueenX/src/kernel/framework/driver/display/mod.rs#L299) `display_init()`）。TMDS 输出使能与同步极性在 services 已实现（[hdmi.rs:56-58](file:///home/anfer/Code/QueenX/src/kernel/services/driver/display/hdmi.rs#L56-L58) 0x079/0x078），DP OUTPUT_ENABLE 亦已实现（[dp.rs:1188](file:///home/anfer/Code/QueenX/src/kernel/services/driver/display/dp.rs#L1188)）；缺失项为驱动注册/工厂接入路径，及厂商 PHY/DPLL 差异（Intel/AMD/Synopsys）实装——后者待真实硬件接入时按 DECISION-K 注册契约在 services 侧重立 |
 
+> **【本轮复验订正】** 逐项复验（保留原表不涂改）:
+> - **MIG-005 文件名漂移**: framework 侧实际为 [ata.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/driver/storage/ata.rs)/[nvme.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/driver/storage/nvme.rs)/[ahci.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/driver/storage/ahci.rs)/ata_block.rs，**无** `nvme_block.rs`/`ahci_block.rs`；"双份代码/边界未理清"的结论仍成立.
+> - **MIG-001/002/003/004/006/007/008 仍成立**: [services/driver/mod.rs:4-35](file:///home/anfer/Code/QueenX/src/kernel/services/driver/mod.rs#L4-L35) 与 [services/chitin/mod.rs:4-11](file:///home/anfer/Code/QueenX/src/kernel/services/chitin/mod.rs#L4-L11) 头注释仍为 2026-06-04 旧状态；pl011/proto_*+user_driver 安全代理仍缺；迁移文档未补注 B04；chitin 无专项 host-tests；services 侧 HDMI/DP 控制器仍零调用者.
+>
 > **后续行动建议**：MIG-001/002 为纯注释同步（低风险，可随下次 driver 改动顺手修复）；MIG-003/004 属功能补齐（需按 §12.3 评估"是否需要"——若当前无调用方，登记即可不施工）；MIG-005/006/007 属架构边界治理（涉及 framework/services 归属决策，按 AGENTS.md §12.1 决策灰色地带处理，需用户裁决）；MIG-008 属接线补齐（控制器与 TMDS/DP 输出使能已实现，仅缺驱动注册/工厂接入面，需驱动注册面决策）。
 
 ---
@@ -496,7 +534,8 @@
 | **位置** | [services/fs/tmpfs.rs:79](file:///home/anfer/Code/QueenX/src/kernel/services/fs/tmpfs.rs#L79) |
 | **问题** | `TmpFsInode::is_dir` 用硬编码 `< 256` 判断 inode 范围 + `fs.inner.nodes[...].file_type == 1` 魔法数，与 B06-09 修复前的 RamFsInode 同款缺陷（B06-09 只修了 ramfs，未修 tmpfs） |
 | **建议** | 与 B06-09 同法：硬编码 256 → `RAMFS_MAX_NODES` 常量，魔法数 1 → `VfsFileType::Dir.as_u8()` |
-| **状态** | ❌ 登记待后续（低风险：tmpfs 复用 RamFsData，256 实际即 RAMFS_MAX_NODES，语义正确仅风格问题） |
+| **状态** | 🔄 已失效 (本轮复验: 源码已改为 `nodes.len()` + `VfsFileType::Dir.as_u8()`) |
+| **【本轮复验订正】** | [tmpfs.rs:91-96](file:///home/anfer/Code/QueenX/src/kernel/services/fs/tmpfs.rs#L91-L96) 现为 `idx < fs.inner.nodes.len() && fs.inner.nodes[idx].file_type == VfsFileType::Dir.as_u8()`（注释：越界节点一律视为非目录，避免索引 panic）——硬编码 `<256` 与魔法数 `1` 均已消除，本条缺陷已不复存在 |
 
 ### B06-PRE-002: fchown_syscall 缺权限校验（安全缺陷）
 
@@ -507,6 +546,7 @@
 | **影响** | 权限语义缺失（非直接提权，但违背"能力制"权限模型） |
 | **建议** | 与 B06-02 对齐：fchown 前置 `FS_CAP_CHOWN` (bit5) 能力检查，或按提权语义评估 |
 | **状态** | ❌ 登记待后续（**安全缺陷，优先级建议 P1**） |
+| **【本轮复验订正】** | 仍成立：[misc.rs:115-126](file:///home/anfer/Code/QueenX/src/kernel/services/fs/misc.rs#L115-L126) 的 `fchown_syscall` 仍无 `FS_CAP_CHOWN` 校验，owner/group 直接透传底层 `Inode::chown` |
 
 ### B06-PRE-003: LegacyInode 删除时机（架构清理）
 
@@ -516,6 +556,7 @@
 | **问题** | B06-12 方案 C（废弃标记 + 推动消除）落地：LegacyInode 已加废弃标记，当前全部 8 个 FS 均实现 `fs_resolve_inode`，LegacyInode 仅作 `open_by_handle_at` 防御性回退（正常路径不触发） |
 | **建议** | 未来移除 `open_by_handle_at` 的 LegacyInode 回退分支（file_handle.rs:187）后删除整个 LegacyInode 类型；需确认各 FS `fs_resolve_inode` 覆盖所有挂载场景 |
 | **状态** | ❌ 登记待后续（架构清理，非紧急） |
+| **【本轮复验订正】** | 结论仍成立，**行号漂移**: `LegacyInode` 定义现位于 [inode.rs:268](file:///home/anfer/Code/QueenX/src/kernel/services/fs/inode.rs#L268)，废弃标记注释在 `:260-264`（原记 `:415-424` 现为 `set_times`/`pread_inode`）；[file_handle.rs:199-205](file:///home/anfer/Code/QueenX/src/kernel/services/fs/file_handle.rs#L199-L205) 回退分支仍在（原记 `:187` 漂移） |
 
 ### B06-PRE-004: socket_max_sockets_test flaky（已排查确认非内核问题，测试已修复）
 
@@ -528,6 +569,7 @@
 | **修复** | 删除共享 static，辅助函数参数化接收 `&AtomicUsize`，每测试独立实例（commit 28fd91d0） |
 | **启示** | host-tests 镜像测试"复刻逻辑但不复刻锁/原子性"，镜像测试 flaky 优先怀疑"镜像丢了并发保护"而非内核缺陷 |
 | **状态** | ✅ 已修复 (2026-08-31, commit 28fd91d0) |
+| **【本轮复验订正】** | 当前测试形态已进一步收敛为**单一顺序测试** `max_sockets_config_semantics`（[socket_max_sockets_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/socket_max_sockets_test.rs)，随 B08-20 迁移），共享 static 并行覆盖的根因不再存在 |
 
 ---
 
@@ -553,6 +595,12 @@
 ---
 
 ## 🎯 优先级建议 (用户决策参考)
+
+> **【本轮复验订正】** 下方 P0-P3 为 **2026-08-09 原登记**（保留不涂改）；按当前源码状态复验后，其中 **REVIEW-FINDING-026/027/028/029** 与 **ISSUE-SRC-001~016** 均已落地/消除，应从待办移出. 当前实际开放项建议排序如下:
+> - **P0**: ISSUE-RT-002（aarch64 GICv3 挂起，未修复；`.gdb_debug_gic` 证据已失效，以用户实际状态为准）.
+> - **P1**: ISSUE-RT-001（x86_64 e1000/smoltcp 挂起）; B06-PRE-002（fchown 缺权限校验，**安全缺陷**）; ISSUE-RT-003（真实硬件验证）.
+> - **P2**: 第 8 类 MIG 边界治理（MIG-005/006/007）/注释同步（MIG-001/002）; 第 0B 类 B03-LEGACY-001/002/003（COW TOCTOU + host-tests 缺口）; ISSUE-TOOL-002（x86_64 侧陈旧检测）.
+> - **P3**: 第 4 类远期工程 F1-F5; B06-PRE-003（LegacyInode 清理）; MIG-003/004/008; 刻意维持项 DEC-046/041/005.
 
 ### P0 — 立即关注 (1 项)
 
@@ -592,6 +640,14 @@
 
 ## 变更历史
 
+- **本轮复验（源码状态核实）**: 按当前源码状态逐条复核本文档，保留原登记不涂改，各节追加【本轮复验订正】标记
+  - 第 2 类 41 项 TODO 已消除 / 1 项仍存在（ISSUE-SRC-008 行号 822→601）/ 1 项文件不存在（ISSUE-SRC-028 `vfs/api.rs`）
+  - 第 0 类审计基线 EXIT=0 / 0 违规（PROXY_ALLOWANCE 实测 8 条，原记 5 处）；comment_language 724 文件 0 违规（原记 735）
+  - 第 1 类 RT-001/RT-003 仍成立，RT-002 未修复但 `.gdb_debug_gic` 证据失效
+  - 第 6 类 TOOL-001 已修复；TOOL-002 QEMU 侧已实装 `check_kernel_fresh`（仅 aarch64 调用）；TOOL-003 E0152 前提已根治
+  - 第 8 类 MIG-001~008 仍成立，MIG-005 文件名漂移；第 9 类 B06-PRE-001 已失效 / 002 仍成立 / 003 行号漂移 / 004 已修复
+  - 第 3 类 024「全仓 0 引用」与 029「18 行」表述漂移；第 5 类 DEC-046 计数 1354/166→1406/173，DEC-005 计数 345→492
+  - 文末优先级建议段已订正（移出已修复项，给出当前 P0-P3）
 - **2026-08-31**: 新增 B06-PRE-004（socket_max_sockets flaky 排查）
   - 根因确认为测试自身共享镜像 static（非内核缺陷），内核侧 AtomicUsize + NET_LOCK 临界区均安全
   - 测试已修复（commit 28fd91d0）；总览计数 ~80 → ~81
