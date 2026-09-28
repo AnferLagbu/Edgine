@@ -175,6 +175,12 @@ pub struct ChitinDevice {
     pub io_base: Option<u64>,
     pub irq: Option<u8>,
     pub driver_data: *mut u8,
+    /// 驱动所有权标记: `true` 表示 `driver_data` 指向 Chitin 自有的 `DriverObject`
+    /// (经 `chitin_register_driver` / `chitin_register_driver_with_ops` 注册),
+    /// 由 Chitin 负责 `init`/`shutdown`/`drop`; `false` 表示 `driver_data` 为调用方
+    /// 自持的裸驱动指针 (经 `chitin_register` / `chitin_register_with_ops` 注册),
+    /// Chitin 不管理其生命周期 (避免 `driver_from_obj` 类型混淆)。
+    pub driver_owned: bool,
     pub ops: Option<ChitinOps>,
     /// 块设备 trait 引用
     /// 当 `proto == ChitinProto::Block` 且驱动通过 `register_block_device` 注册时,
@@ -290,6 +296,7 @@ pub fn chitin_register(
         io_base,
         irq,
         driver_data,
+        driver_owned: false,
         ops: None,
         block_dev: None,
     };
@@ -322,6 +329,7 @@ pub fn chitin_register_with_ops(
         io_base,
         irq,
         driver_data,
+        driver_owned: false,
         ops: Some(ops),
         block_dev: None,
     };
@@ -363,6 +371,7 @@ pub fn chitin_register_block_dev(
         io_base,
         irq,
         driver_data: core::ptr::null_mut(), // 不再使用, 改用 block_dev
+        driver_owned: false,
         ops: None,                          // 不再使用, 改用 block_dev
         block_dev: Some(dev),
     };
@@ -737,6 +746,7 @@ pub fn chitin_register_driver(
         io_base,
         irq,
         driver_data: obj_ptr,
+        driver_owned: true,
         ops: None,
         block_dev: None,
     };
@@ -774,6 +784,7 @@ pub fn chitin_register_driver_with_ops(
         io_base,
         irq,
         driver_data: obj_ptr,
+        driver_owned: true,
         ops: Some(ops),
         block_dev: None,
     };
@@ -811,7 +822,7 @@ pub fn chitin_init_all() {
 
     let mut devices = CHITIN_DEVICES.lock();
     for dev in devices.iter_mut() {
-        if dev.state == DeviceState::Uninit && !dev.driver_data.is_null() {
+        if dev.state == DeviceState::Uninit && dev.driver_owned && !dev.driver_data.is_null() {
             let driver = driver_from_obj(dev.driver_data);
             let _ = driver.init();
             dev.state = DeviceState::Ready;
@@ -830,13 +841,15 @@ pub fn chitin_init_all() {
 pub fn chitin_shutdown_all() {
     let mut devices = CHITIN_DEVICES.lock();
     for dev in devices.iter_mut() {
-        if dev.state == DeviceState::Ready && !dev.driver_data.is_null() {
+        if dev.state == DeviceState::Ready && dev.driver_owned && !dev.driver_data.is_null() {
             {
                 let driver = driver_from_obj(dev.driver_data);
                 let _ = driver.shutdown();
             }
             dev.state = DeviceState::Failed;
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: `dev.driver_owned` 为真, 保证 `driver_data` 由
+            // `chitin_register_driver*` 经 `Box::into_raw(DriverObject)` 写入,
+            // 类型一致且归 Chitin 所有; 非空已由上方条件校验。
             unsafe {
                 drop(Box::from_raw(dev.driver_data as *mut DriverObject));
             }

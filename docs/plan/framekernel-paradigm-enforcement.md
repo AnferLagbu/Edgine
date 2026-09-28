@@ -1128,3 +1128,14 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 4. **订正 `input_init()` 重复注册**：原 `input_init()` 先调 `keyboard::keyboard_init()`（经 `chitin_register_with_ops` 注册 `ps2_keyboard` + `InputOps` + IRQ1），再调 `chitin_register_driver("ps2_keyboard", ...)` 二次注册同名无 ops 设备。Chitin 注册表**不按名去重**（`chitin_register*` 直接 `devices.push`），且 `chitin_register_driver` 内部会跑 `driver.init()`——二次注册既产生同名设备节点，又对新建实例重跑 PS/2 自检/扫描码协商（硬件副作用）。已删除该冗余调用，保留 `keyboard_init()` 为唯一注册入口（[input/mod.rs](../../src/kernel/framework/driver/input/mod.rs)）。
 
 **状态**: [X]（裁决完成；pl011/keyboard 保留 framework，2-C 无代码下沉；`input_init()` 重复注册已订正；转推 2-D usb）
+
+#### 附录订正: chitin_shutdown_all 类型混淆（同批发现的独立缺陷）
+
+> **背景**：2-C 施工调研中发现 `chitin_shutdown_all()` 对**裸指针设备**误用 `driver_from_obj()`：`chitin_register_with_ops`（keyboard / e1000 路径）存入的 `driver_data` 为调用方自持的裸驱动指针（`*mut KeyboardDriver` / `*mut E1000Driver`），而 `chitin_shutdown_all()` 无条件将其强转为 `*mut DriverObject` 解引用 → 类型混淆 UB（经 poweroff / kexec 路径触发）。与 2-C 无因果关系，经用户裁定「本轮一并订正」。
+
+**订正**：
+1. **新增 `ChitinDevice::driver_owned: bool` 字段**区分驱动所有权：`chitin_register_driver` / `chitin_register_driver_with_ops` → `true`（`driver_data` 指向 Chitin 自有 `DriverObject`，经 `Box::into_raw` 写入）；`chitin_register` / `chitin_register_with_ops` / `chitin_register_block_dev` → `false`（`driver_data` 为调用方自持裸指针，Chitin 不管理其生命周期）。
+2. **`chitin_init_all()` / `chitin_shutdown_all()` 增加 `driver_owned` 守卫**：仅对 `driver_owned == true` 的设备执行 `driver_from_obj` 解引用 / `init()` / `shutdown()` / `Box::from_raw` 回收；裸指针设备跳过（其生命周期由 E1000_DEVICE / KEYBOARD_DEVICE 等调用方全局自持）。
+3. **SAFETY 注释更新**：`chitin_shutdown_all` 的 `Box::from_raw` 安全依据改写为基于 `driver_owned` 不变式（保证 `driver_data` 由 `chitin_register_driver*` 经 `Box::into_raw(DriverObject)` 写入，类型一致且归 Chitin 所有）。
+
+**状态**: [X]（订正完成；六门槛全过）
