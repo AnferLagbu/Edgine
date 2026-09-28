@@ -2,27 +2,25 @@
 //!
 //! 提供完整的显示支持：
 //! - **Framebuffer**: 帧缓冲驱动
-//! - **显示控制器**: 统一的显示管理
-//! - **多显示器**: 支持多个显示设备
+//! - **VBE 原语**: 显示模式探测与帧缓冲映射
 //!
 //! ## 架构
 //!
 //! ```text
 //! Display Subsystem
-//! ├── framebuffer.rs  # Framebuffer驱动
-//! └── controller.rs   # 显示控制器抽象
+//! └── framebuffer.rs  # Framebuffer驱动
 //! ```
+//!
+//! 显示控制器管理策略 (`controller.rs`) 已于 2-E 批次迁至
+//! `services::driver::display::controller`; framebuffer/font 因被
+//! framework 图形控制台机制 (gfx_console) 直接绑定而保留于此。
 
-pub mod controller;
 pub mod font;
 pub mod framebuffer;
 pub mod self_test;
 
 // 导出Framebuffer类型
 pub use framebuffer::{Color, Framebuffer, PixelFormat, Point, Rect, colors};
-
-// 导出控制器类型
-pub use controller::{DisplayController, DisplayManager, DisplayMode, DisplayOutput, MonitorInfo};
 
 use super::framework;
 use super::framework::{Driver, DriverError};
@@ -385,8 +383,6 @@ pub fn display_init() -> framework::Result<()> {
             crate::klog_info!(Driver, "[DISPLAY] GfxConsole initialized");
         }
     });
-
-    let _manager = DisplayManager::new();
 
     crate::framework::chitin::chitin_register_driver(
         "vga-display",

@@ -5,9 +5,15 @@
 //! - **显示模式管理**: 分辨率和刷新率切换
 //! - **热插拔支持**: 显示器动态连接
 //! - **显示输出路由**: 控制输出到哪个显示器
+//!
+//! 原始实装: `kernel::framework::driver::display::controller` (0 unsafe,
+//! 纯管理策略), 2-E 批次按「VBE 原语留框架, 管理迁出」处方迁至 services。
+//! framebuffer/font 等被 framework 图形控制台机制 (gfx_console) 直接绑定的
+//! 原语仍留 framework。
 
-use super::super::framework::{DeviceInfo, DeviceType, Driver, DriverError, Result};
-use super::framebuffer::{Framebuffer, PixelFormat};
+use crate::framework::driver::{
+    DeviceInfo, DeviceType, Driver, DriverError, DriverResult as Result, Framebuffer, PixelFormat,
+};
 use alloc::vec::Vec;
 
 // ============================================================================

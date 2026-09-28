@@ -108,7 +108,7 @@ pub use block::{
 
 // --- 显示设备导出 ---
 pub use display::font::Font;
-pub use display::framebuffer::{Color, Framebuffer, Rect, colors};
+pub use display::framebuffer::{Color, Framebuffer, PixelFormat, Rect, colors};
 pub use display::{FB_PHYS_ADDR, FB_PHYS_SIZE, display_init, get_framebuffer};
 
 // --- 总线驱动导出 ---

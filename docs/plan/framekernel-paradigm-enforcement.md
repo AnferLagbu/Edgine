@@ -102,11 +102,11 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 > **复核终局（DECISION-F）**：上述 ⚠ 待定项经逐文件核查"framework 侧保留代码是否直接调用"，全部判定保留（见 DECISION-F §6.1 复核终局）——§6.1 收口为 **3 下沉 + 17 保留**。
 
-### 6.2 封装+下沉（safe API 后迁）——23 文件 → 3 完成（2-A）+ 4 复核保留（2-B）+ 2 复核保留（2-C）+ 2 完成（2-D usb）+ 12 待推进
+### 6.2 封装+下沉（safe API 后迁）——23 文件 → 3 完成（2-A）+ 4 复核保留（2-B）+ 2 复核保留（2-C）+ 2 完成（2-D usb）+ 1 完成（2-E display）+ 11 待推进
 
 > 复核纪律（DECISION-F）：本表 0 unsafe 项**先按服务对象准则（§2）查服务对象再动工**（安全导出面 → 保留；仅 services 消费 → 下沉；被 framework 机制直接调用 → 接口化后下沉或保留）；含 unsafe 的按原"封装+下沉"路径。
 >
-> 进度（批次 2-A syscall fd/pipe 组）：clone / io / sendfile 三文件完成，标 ✅。批次 2-B（fd 事件族）：epoll / eventfd / signalfd / timerfd 四文件经复核**保留 framework**（耦合判据见 §11 DECISION-P），标 🔒；批次 2-C（char/input）：pl011 / keyboard 二文件经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），标 🔒，并订正 `input_init` 重复注册（同批）；批次 2-D（usb）：framework/driver/usb 二文件经用户裁定改走 **USB 整体下沉**（覆盖原「20 unsafe 集中，机制留框架」处方），三子步收口——4 个 0-unsafe 文件下沉 + usb_core/xhci safe 权威实装 + framework 侧整目录删除（判据见 §11 DECISION-R），标 ✅；剩余 12 文件按 2-E（display）/ 2-F（credo/storage+net query）/ firmware·ftrace 分批推进。
+> 进度（批次 2-A syscall fd/pipe 组）：clone / io / sendfile 三文件完成，标 ✅。批次 2-B（fd 事件族）：epoll / eventfd / signalfd / timerfd 四文件经复核**保留 framework**（耦合判据见 §11 DECISION-P），标 🔒；批次 2-C（char/input）：pl011 / keyboard 二文件经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），标 🔒，并订正 `input_init` 重复注册（同批）；批次 2-D（usb）：framework/driver/usb 二文件经用户裁定改走 **USB 整体下沉**（覆盖原「20 unsafe 集中，机制留框架」处方），三子步收口——4 个 0-unsafe 文件下沉 + usb_core/xhci safe 权威实装 + framework 侧整目录删除（判据见 §11 DECISION-R），标 ✅；批次 2-E（display）：`framework/driver/display/mod.rs` 经复核**部分下沉**——`controller.rs` 管理策略（0 unsafe、无框架机制消费者）迁 `services/driver/display/controller`，VBE 原语 / framebuffer / font 因被 `gfx_console`（klog/panic 机制）与 `syscall/dispatch`（fb_open/fb_mmap）直接绑定而保留框架（判据见 §11 DECISION-S），标 ✅（后续 Framebuffer 机制/策略拆分登记 §6.3）；剩余 11 文件按 2-F（credo/storage+net query）/ firmware·ftrace 分批推进。
 
 | 文件 | 下沉目标 | 依据 |
 |---|---|---|
@@ -125,7 +125,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | framework/syscall/wait4.rs | services/proc/wait4（已存在）| 2 unsafe 用户指针写 |
 | framework/net/init/query.rs | services/net/query | 查询纯 Atomic；reset 薄层留 |
 | framework/driver/char/pl011.rs | services/driver/char/pl011 | 🔒 保留 framework（2-C）：`arch::uart` 为 boot 早期控制台机制（klog/panic 依赖）必须留框架；`pl011_read/write` CharOps FFI 桥（裸指针 `driver_data`）不可 safe 化；PL011 为固定平台基址（非 PCI），`IoMem` 无固定基址 safe 构造器。【复核】原表列「MMIO 改 IoMem 封装」，实不可行 |
-| framework/driver/display/mod.rs | services/driver/display | VBE 原语留框架，管理迁出 |
+| framework/driver/display/mod.rs | services/driver/display | ✅ 已完成（2-E）：`controller.rs` 管理策略（`DisplayController`/`DisplayManager`/`DisplayMode`/`MonitorInfo`/`DisplayOutput`，0 unsafe 且无框架机制消费者）整体迁 `services/driver/display/controller`；framework 侧删 `pub mod controller` + re-export + `display_init` 内 `let _manager` 死语句，`driver/mod.rs` 补 re-export `PixelFormat`。VBE 原语 / framebuffer / font / 自检 / `FB_PHYS_ADDR` / `get_framebuffer` 因被 `gfx_console` 与 `syscall/dispatch` 直接绑定而保留框架（判据见 §11 DECISION-S）|
 | framework/driver/input/keyboard.rs | services/driver/input | 🔒 保留 framework（2-C）：`kb_input_read/has/irq` InputOps FFI 桥（裸指针 `driver_data as *mut KeyboardDriver`）不可 safe 化；`read_line` 依赖 `unsafe extern "C" scheduler_yield_ex`；纯 scancode/shift 表可 safe 化但无独立价值。【复核】原表列「scancode 迁出」，实为 FFI 桥绑定整体 |
 | framework/driver/net/e1000.rs | services/driver/net/e1000（回迁）| DECISION-B，框架留 DMA 环 |
 | framework/driver/net/e1000_io.rs | services/driver/net/e1000 | E1000Io 留框架，Driver 业务迁出 |
@@ -134,7 +134,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | framework/driver/virtio/mod.rs | services/virtio/transport | 0 unsafe 已可下沉 |
 | framework/credo/storage.rs | services/credo/storage | vfs C FFI 留薄层，序列化迁出 |
 
-### 6.3 部分下沉（机制文件内策略拆分）——11 文件
+### 6.3 部分下沉（机制文件内策略拆分）——11 文件 + 1 后续登记（display，2-E）
 
 > **拆分接口原则**：迁出的策略函数与 framework 机制的交互必须显式化——中断/panic 上下文经 **trait 注入**（framework 定义契约 + services 注册，OnceLock 全局，只读原子访问）；boot 早期经**回调注册**；普通路径经 **framework 机制 API**。禁止 framework 直接调用 services 函数（反向依赖）。
 
@@ -151,6 +151,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | framework/barrier/domain.rs | apply_degradation 降级策略迁出；RecoveryDomain 状态机保留 | ⚠ **BarrierDegradePolicy trait 注入**（panic/中断上下文；framework 提供原子状态访问 API）|
 | framework/barrier/reset/bsr.rs | freeze/unfreeze/rollback 编排迁出；mmio_write32 机制保留 | 编排经 framework 恢复机制 API（RECOVERY_MANAGER）；mmio 写留框架 |
 | framework/debug/ebpf.rs | 验证器策略已 trait 化（services）；解释执行引擎保留 | ✅ 已有 BpfVerifier trait（services/ebpf_verifier 权威）|
+| framework/driver/display/framebuffer.rs（+ font/self_test）| Framebuffer 绘图策略（set_pixel/fill/fill_rect/draw_line/blend/aa 等）迁 services；IoMem 映射、`FB_PHYS_ADDR`/`FB_PHYS_SIZE`、`get_framebuffer` 机制原语保留 | ⚠ 2-E 后续（登记项，见 §11 DECISION-S）：**前置**需先解除 `gfx_console` 对 `*mut Framebuffer` 的裸指针绑定（klog/panic 机制经 trait 注入或回调注册消费绘图能力），再将绘图策略拆至 services + framework 留机制原语 |
 
 ### 6.4 双份合并（services 权威，framework 删业务）——20 文件 → usb×5 已随 2-D 整体下沉收口（framework 侧删除），余 15 ⛔ 暂缓（DECISION-G 复核后方向待裁决）
 
@@ -216,7 +217,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 ### 6.7 services 侧现状（260+ 文件确认）
 
 - **权威实现 ~89 文件**：T1-T9/E6 系列已完成（config 全、credo 类型层、ipc 策略/类型、mm 策略、net 策略、proc 策略、wasm、fs 伪文件系统 devfs/procfs_core/nestfs/flock/inotify/ramfs_core/iouring）。
-- **策略实现 ~90 文件**：exfat/ext2（独立 FS）、cgroupfs/configfs/devpts/sysfs/systree/virtiofs/overlayfs/tmpfs、wasi（9）、sync barrier/once/scoped、proc memfd/pidfd、driver display dp/ddc。
+- **策略实现 ~90 文件**：exfat/ext2（独立 FS）、cgroupfs/configfs/devpts/sysfs/systree/virtiofs/overlayfs/tmpfs、wasi（9）、sync barrier/once/scoped、proc memfd/pidfd、driver display dp/ddc/controller。
 - **壳/代理 ~63 文件**：framework 权威，services 薄层（chitin/credo 运行时/debug/ipc 命名空间/mm 物理层/net syscall/proc 进程表/sync/syscall/timer/klog 等）。
 - **影子双份**：driver char/storage/virtio + display/hdmi——即 §6.4 合并对象（usb 已随 2-D 整体下沉收口）。
 - 注意：B09-12 已把 fs 的 dcache/vfs_types/vfs_manager/open_file_table 迁回 framework——按 DECISION-A 重新下沉（§5）。
@@ -310,7 +311,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - 📝 **FFI 薄层分离**：随阶段 6.2/6.3 下沉实施（syscall 用户指针拷贝集中框架）
   - 📝 **calibration 采样回调**：boot 早期路径，随阶段 6.3 timer 部分下沉实施
 - 阶段 1：**纯策略下沉**（§6.1 20 文件）。[X] 收口——3 确认下沉（syscall×3，已提交）+ 17 保留（服务对象准则复核终局，DECISION-F）
-- 阶段 2：**封装+下沉**（§6.2 23 文件）。[] 进行中——2-A syscall fd/pipe 组完成 3 文件（clone/io/sendfile，0 unsafe 落地 services）；2-B fd 事件族 4 文件（epoll/eventfd/signalfd/timerfd）经复核**保留 framework**（耦合判据见 §11 DECISION-P）；2-C char/input 2 文件（pl011/keyboard）经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），并订正 `input_init` 重复注册；2-D usb 2 文件经裁定改走 **USB 整体下沉**（三子步收口，framework 侧整目录删除，判据见 §11 DECISION-R）；剩余 12 文件按 2-E（display）/ 2-F（credo/storage+net query）+ firmware·ftrace 分批推进
+- 阶段 2：**封装+下沉**（§6.2 23 文件）。[] 进行中——2-A syscall fd/pipe 组完成 3 文件（clone/io/sendfile，0 unsafe 落地 services）；2-B fd 事件族 4 文件（epoll/eventfd/signalfd/timerfd）经复核**保留 framework**（耦合判据见 §11 DECISION-P）；2-C char/input 2 文件（pl011/keyboard）经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），并订正 `input_init` 重复注册；2-D usb 2 文件经裁定改走 **USB 整体下沉**（三子步收口，framework 侧整目录删除，判据见 §11 DECISION-R）；2-E display 经复核**部分下沉**（`controller.rs` 管理策略迁 services，VBE 原语/framebuffer/font 保留框架，判据见 §11 DECISION-S）；剩余 11 文件按 2-F（credo/storage+net query）+ firmware·ftrace 分批推进
 - 阶段 3：**驱动双份合并 + E1000 回迁**（§6.4 20 文件 → usb×5 已随 2-D 整体下沉收口，余 15 + DECISION-B）。[]
 - 阶段 4：**VFS 4 文件下沉 + backend_trait 扩展**（DECISION-A）。[]
 - 阶段 5：**壳删除 82 + 直接 use trait 化 20 + 保留文件 43 处收敛**（§7.5，ipc 24 第一优先）。[]
@@ -1158,3 +1159,28 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 **验证**：§2.3 六门槛全绿——双架构 0 error/0 warning、clippy 0、核心审计（含 `audit_coupling` / `audit_services_boundary`）、host-tests、kernel-host（826 passed / 0 failed）、QEMU x86_64 boot 至 `VFS ready` + KPTI 断言。
 
 **状态**: [X]（2-D 收口；framework 侧 USB 权威实装清零）
+
+### DECISION-S: 2-E display 部分下沉（controller.rs 迁 services）+ Framebuffer 机制/策略拆分登记为后续
+
+> **背景**：§6.2 批次 2-E 目标为 `framework/driver/display/mod.rs`（428 行，9 处 unsafe），处方「VBE 原语留框架，管理迁出」。按 §6.2 复核纪律（DECISION-F）先查服务对象，再定归属。
+
+**长期演进分析（内核终局视角）**：
+1. **显示控制器属"驱动"**（§4.1 归属决策树 Q2=功能，非机制），正确归宿为 services；其共享契约 trait 应跟随实现者留 services。
+2. **framework 对 `controller.rs` 无机制需求**——`DisplayManager` 全仓无实现者/消费者（仅 `display_init` 内 `let _manager` 丢弃 + 自身内联测试），属空壳抽象。若保留框架即把管理策略错放进 TCB。
+3. **`Framebuffer`/`Font`/`Color`/`Rect`/`colors` 不可迁**——被 framework `gfx_console.rs`（klog/panic 机制）以裸指针 `*mut Framebuffer` 直接绑定；`FB_PHYS_ADDR`/`FB_PHYS_SIZE`/`get_framebuffer` 被 `framework/syscall/dispatch.rs`（`sys_fb_open`/`sys_fb_mmap`）绑定。迁出将造成 framework→services 反向依赖（违 §6.3 禁止反向调用）。
+4. **display 的 unsafe 全部集中于 `mod.rs`**（VBE 端口 I/O + MMIO）；`framebuffer.rs`（850 行）/ `font.rs` / `self_test.rs` 均 0 unsafe——即"机制原语 vs 绘图策略"已在文件粒度天然分层，是 §6.3 部分下沉的天然切口。
+
+**裁决（用户）**：采纳**方案 B（部分下沉）**——`controller.rs` 迁 services；并**登记** display §6.3 部分下沉（Framebuffer 机制/策略拆分 + gfx_console 去裸指针重构）为后续独立条目。否决方案 A（整体留框架，管理策略错置 TCB）与方案 C（删除 controller.rs，未来需重建）。
+
+**方案**：
+1. `framework/driver/display/controller.rs`（508 行）整体迁 `services/driver/display/controller.rs`；仅改头注（迁移说明）+ imports（`use crate::framework::driver::{DeviceInfo, DeviceType, Driver, DriverError, DriverResult as Result, Framebuffer, PixelFormat}` + `alloc::vec::Vec`），0 unsafe 保持。
+2. framework 侧清理：`display/mod.rs` 删 `pub mod controller` + 控制器 re-export + `display_init` 内 `let _manager = DisplayManager::new()` 死语句；`driver/mod.rs` 补 re-export `PixelFormat`（services controller 依赖）；删除 framework 源文件。
+3. `services/driver/display/mod.rs` 挂载 `pub mod controller;`；host-tests `driver_display_test.rs` 改引——`{Color, PixelFormat}` 留 framework，`DisplayMode` 改 `services::driver::display::controller`.
+
+**影响面**：
+- §6.2 display 标 ✅（23 文件收口进度：3 完成 2-A + 4 保留 2-B + 2 保留 2-C + 2 完成 2-D + 1 完成 2-E + 11 待推进）；§6.7 策略实现列表补 `controller`；§6.3 新增 display Framebuffer 拆分登记项。
+- framework `driver/display` 文件数 5→4（controller 移出）；TCB 侧 unsafe 不变（controller 本为 0 unsafe，9 处 unsafe 仍在 `mod.rs`）。
+
+**验证**：§2.3 六门槛全绿——`./ci/build.sh all` 5/5（双架构 0 error/0 warning）+ `./ci/audit.sh quick`（clippy pedantic 0、核心审计含 FP-06 全过）+ `make test-host`（8+11 passed）+ `make test-kernel-host`（826 passed / 0 failed）+ QEMU x86_64 boot 至 `VFS ready` + KPTI 断言。
+
+**状态**: [X]（2-E 收口；controller 管理策略落 services，VBE 原语/framebuffer/font 保留框架；Framebuffer 机制/策略拆分登记 §6.3 后续）

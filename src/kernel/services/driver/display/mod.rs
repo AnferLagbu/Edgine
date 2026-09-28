@@ -18,6 +18,9 @@ pub mod hdmi;
 /// DisplayPort 控制器驱动 (从 framework 迁移, 0 unsafe)
 pub mod dp;
 
+/// 显示控制器管理策略 (从 framework 迁移, 0 unsafe)
+pub mod controller;
+
 // 重新导出 DisplayPort 公共类型
 pub use dp::{
     AuxCommand, AuxTransaction, DpController, DpError, DpIo, Dpcd, LaneCount, LinkRate,
