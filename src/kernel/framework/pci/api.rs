@@ -8,7 +8,7 @@
 //! - `driver::net::e1000` —— E1000 网卡 probe
 //! - `driver::storage::nvme` —— `NVMe` SSD 初始化
 //! - `driver::storage::ahci` —— AHCI SATA 控制器初始化
-//! - `driver::usb::xhci` —— XHCI USB 控制器初始化
+//! - `services::driver::usb` —— XHCI USB 控制器探测 (2-D 下沉)
 //!
 //! ## 内部接口
 //! - `mod.rs` —— `read/write_config_byte/word/dword`, `pci_scan_all_buses`, `probe_device` 等接口

@@ -89,7 +89,6 @@ INTERNAL_PATTERNS = [
     r'framework::fs::ramfs',
     r'framework::fs::devfs',
     # driver 内部 — net/virtio/display/storage/char/input/power/kexec/uefi 已在 driver/mod.rs glob re-export
-    r'framework::driver::usb',
     # sync 内部 — spinlock/irq_spinlock/lockdep 已 re-export
     r'framework::sync::raw',
     r'framework::sync::arch',

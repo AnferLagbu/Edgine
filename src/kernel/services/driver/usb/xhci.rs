@@ -11,7 +11,6 @@
 //! - **零 unsafe**: 内部 `IoMem` 由 TCB 抽象, services 层只调用 safe 方法
 //! - **类型安全**: 寄存器位、TRB 类型用枚举/常量
 //! - **薄包装**: 暴露 Capability/Operational/Port/Doorbell 寄存器的安全访问
-//! - **可替代**: 原 `kernel/driver/usb/xhci.rs` 仍存在, 本文件是迁移目标
 //!
 //! ## 硬件接口
 //!

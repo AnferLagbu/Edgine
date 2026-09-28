@@ -102,11 +102,11 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 > **复核终局（DECISION-F）**：上述 ⚠ 待定项经逐文件核查"framework 侧保留代码是否直接调用"，全部判定保留（见 DECISION-F §6.1 复核终局）——§6.1 收口为 **3 下沉 + 17 保留**。
 
-### 6.2 封装+下沉（safe API 后迁）——23 文件 → 3 完成（2-A）+ 4 复核保留（2-B）+ 2 复核保留（2-C）+ 14 待推进
+### 6.2 封装+下沉（safe API 后迁）——23 文件 → 3 完成（2-A）+ 4 复核保留（2-B）+ 2 复核保留（2-C）+ 2 完成（2-D usb）+ 12 待推进
 
 > 复核纪律（DECISION-F）：本表 0 unsafe 项**先按服务对象准则（§2）查服务对象再动工**（安全导出面 → 保留；仅 services 消费 → 下沉；被 framework 机制直接调用 → 接口化后下沉或保留）；含 unsafe 的按原"封装+下沉"路径。
 >
-> 进度（批次 2-A syscall fd/pipe 组）：clone / io / sendfile 三文件完成，标 ✅。批次 2-B（fd 事件族）：epoll / eventfd / signalfd / timerfd 四文件经复核**保留 framework**（耦合判据见 §11 DECISION-P），标 🔒；批次 2-C（char/input）：pl011 / keyboard 二文件经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），标 🔒，并订正 `input_init` 重复注册（同批）；剩余 14 文件按 2-D（usb）/ 2-E（display）/ 2-F（credo/storage+net query）/ firmware·ftrace 分批推进。
+> 进度（批次 2-A syscall fd/pipe 组）：clone / io / sendfile 三文件完成，标 ✅。批次 2-B（fd 事件族）：epoll / eventfd / signalfd / timerfd 四文件经复核**保留 framework**（耦合判据见 §11 DECISION-P），标 🔒；批次 2-C（char/input）：pl011 / keyboard 二文件经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），标 🔒，并订正 `input_init` 重复注册（同批）；批次 2-D（usb）：framework/driver/usb 二文件经用户裁定改走 **USB 整体下沉**（覆盖原「20 unsafe 集中，机制留框架」处方），三子步收口——4 个 0-unsafe 文件下沉 + usb_core/xhci safe 权威实装 + framework 侧整目录删除（判据见 §11 DECISION-R），标 ✅；剩余 12 文件按 2-E（display）/ 2-F（credo/storage+net query）/ firmware·ftrace 分批推进。
 
 | 文件 | 下沉目标 | 依据 |
 |---|---|---|
@@ -129,8 +129,8 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | framework/driver/input/keyboard.rs | services/driver/input | 🔒 保留 framework（2-C）：`kb_input_read/has/irq` InputOps FFI 桥（裸指针 `driver_data as *mut KeyboardDriver`）不可 safe 化；`read_line` 依赖 `unsafe extern "C" scheduler_yield_ex`；纯 scancode/shift 表可 safe 化但无独立价值。【复核】原表列「scancode 迁出」，实为 FFI 桥绑定整体 |
 | framework/driver/net/e1000.rs | services/driver/net/e1000（回迁）| DECISION-B，框架留 DMA 环 |
 | framework/driver/net/e1000_io.rs | services/driver/net/e1000 | E1000Io 留框架，Driver 业务迁出 |
-| framework/driver/usb/mod.rs | services/driver/usb | IoMem::from_pci_bar 后迁 |
-| framework/driver/usb/xhci.rs | services/driver/usb/xhci | 20 unsafe 集中，机制留框架 |
+| framework/driver/usb/mod.rs | services/driver/usb | ✅ 已完成（2-D）：PCI 发现 + `usb_init` 迁 services（chitin proto=Bus），framework 源文件已删 |
+| framework/driver/usb/xhci.rs | services/driver/usb/xhci | ✅ 已完成（2-D）：xhci/枚举/类驱动**整体下沉**（原「20 unsafe 集中，机制留框架」处方经裁定覆盖，见 DECISION-R），framework 源文件已删 |
 | framework/driver/virtio/mod.rs | services/virtio/transport | 0 unsafe 已可下沉 |
 | framework/credo/storage.rs | services/credo/storage | vfs C FFI 留薄层，序列化迁出 |
 
@@ -152,7 +152,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | framework/barrier/reset/bsr.rs | freeze/unfreeze/rollback 编排迁出；mmio_write32 机制保留 | 编排经 framework 恢复机制 API（RECOVERY_MANAGER）；mmio 写留框架 |
 | framework/debug/ebpf.rs | 验证器策略已 trait 化（services）；解释执行引擎保留 | ✅ 已有 BpfVerifier trait（services/ebpf_verifier 权威）|
 
-### 6.4 双份合并（services 权威，framework 删业务）——20 文件 ⛔ 暂缓（DECISION-G 复核后方向待裁决）
+### 6.4 双份合并（services 权威，framework 删业务）——20 文件 → usb×5 已随 2-D 整体下沉收口（framework 侧删除），余 15 ⛔ 暂缓（DECISION-G 复核后方向待裁决）
 
 | framework 文件 | services 权威 |
 |---|---|
@@ -162,11 +162,11 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | driver/storage/ahci.rs + ahci_block.rs | services/driver/storage/ahci |
 | driver/storage/ata.rs + ata_block.rs | services/driver/storage/ata |
 | driver/storage/nvme.rs + nvme_block.rs | services/driver/storage/nvme |
-| driver/usb/enumerate.rs | services/driver/usb/enumerate |
-| driver/usb/hid.rs | services/driver/usb/hid |
-| driver/usb/mass_storage.rs | services/driver/usb/mass_storage |
-| driver/usb/ring.rs | services/driver/usb/ring |
-| driver/usb/usb_core.rs | services/driver/usb/usb_core |
+| driver/usb/enumerate.rs | services/driver/usb/enumerate（✅ 已随 2-D 整体下沉删除 framework 侧）|
+| driver/usb/hid.rs | services/driver/usb/hid（✅ 已随 2-D 整体下沉删除 framework 侧）|
+| driver/usb/mass_storage.rs | services/driver/usb/mass_storage（✅ 已随 2-D 整体下沉删除 framework 侧）|
+| driver/usb/ring.rs | services/driver/usb/ring（✅ 已随 2-D 整体下沉删除 framework 侧）|
+| driver/usb/usb_core.rs | services/driver/usb/usb_core（✅ 已随 2-D 整体下沉删除 framework 侧）|
 | driver/virtio/blk.rs | services/driver/virtio/blk |
 | driver/virtio/net.rs | services/driver/virtio/net |
 | chitin/composite.rs | services/chitin/composite |
@@ -218,7 +218,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **权威实现 ~89 文件**：T1-T9/E6 系列已完成（config 全、credo 类型层、ipc 策略/类型、mm 策略、net 策略、proc 策略、wasm、fs 伪文件系统 devfs/procfs_core/nestfs/flock/inotify/ramfs_core/iouring）。
 - **策略实现 ~90 文件**：exfat/ext2（独立 FS）、cgroupfs/configfs/devpts/sysfs/systree/virtiofs/overlayfs/tmpfs、wasi（9）、sync barrier/once/scoped、proc memfd/pidfd、driver display dp/ddc。
 - **壳/代理 ~63 文件**：framework 权威，services 薄层（chitin/credo 运行时/debug/ipc 命名空间/mm 物理层/net syscall/proc 进程表/sync/syscall/timer/klog 等）。
-- **影子双份**：driver char/storage/usb/virtio + display/hdmi——即 §6.4 合并对象。
+- **影子双份**：driver char/storage/virtio + display/hdmi——即 §6.4 合并对象（usb 已随 2-D 整体下沉收口）。
 - 注意：B09-12 已把 fs 的 dcache/vfs_types/vfs_manager/open_file_table 迁回 framework——按 DECISION-A 重新下沉（§5）。
 
 ## 7. trait 化改造清单（反向依赖全面整治）
@@ -310,8 +310,8 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - 📝 **FFI 薄层分离**：随阶段 6.2/6.3 下沉实施（syscall 用户指针拷贝集中框架）
   - 📝 **calibration 采样回调**：boot 早期路径，随阶段 6.3 timer 部分下沉实施
 - 阶段 1：**纯策略下沉**（§6.1 20 文件）。[X] 收口——3 确认下沉（syscall×3，已提交）+ 17 保留（服务对象准则复核终局，DECISION-F）
-- 阶段 2：**封装+下沉**（§6.2 23 文件）。[] 进行中——2-A syscall fd/pipe 组完成 3 文件（clone/io/sendfile，0 unsafe 落地 services）；2-B fd 事件族 4 文件（epoll/eventfd/signalfd/timerfd）经复核**保留 framework**（耦合判据见 §11 DECISION-P）；2-C char/input 2 文件（pl011/keyboard）经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），并订正 `input_init` 重复注册；剩余 14 文件按 2-D～2-F + firmware·ftrace 分批推进
-- 阶段 3：**驱动双份合并 + E1000 回迁**（§6.4 20 文件 + DECISION-B）。[]
+- 阶段 2：**封装+下沉**（§6.2 23 文件）。[] 进行中——2-A syscall fd/pipe 组完成 3 文件（clone/io/sendfile，0 unsafe 落地 services）；2-B fd 事件族 4 文件（epoll/eventfd/signalfd/timerfd）经复核**保留 framework**（耦合判据见 §11 DECISION-P）；2-C char/input 2 文件（pl011/keyboard）经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），并订正 `input_init` 重复注册；2-D usb 2 文件经裁定改走 **USB 整体下沉**（三子步收口，framework 侧整目录删除，判据见 §11 DECISION-R）；剩余 12 文件按 2-E（display）/ 2-F（credo/storage+net query）+ firmware·ftrace 分批推进
+- 阶段 3：**驱动双份合并 + E1000 回迁**（§6.4 20 文件 → usb×5 已随 2-D 整体下沉收口，余 15 + DECISION-B）。[]
 - 阶段 4：**VFS 4 文件下沉 + backend_trait 扩展**（DECISION-A）。[]
 - 阶段 5：**壳删除 82 + 直接 use trait 化 20 + 保留文件 43 处收敛**（§7.5，ipc 24 第一优先）。[]
 - 阶段 6：**全量验证**（§3 验收 + §9 门槛）。[]
@@ -1139,3 +1139,22 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 3. **SAFETY 注释更新**：`chitin_shutdown_all` 的 `Box::from_raw` 安全依据改写为基于 `driver_owned` 不变式（保证 `driver_data` 由 `chitin_register_driver*` 经 `Box::into_raw(DriverObject)` 写入，类型一致且归 Chitin 所有）。
 
 **状态**: [X]（订正完成；六门槛全过）
+
+### DECISION-R: 2-D USB 整体下沉（framework/driver/usb 整目录删除，services 权威）
+
+> **背景**：§6.2 原列 `framework/driver/usb/{mod,xhci}.rs` 二文件「封装+下沉」，其中 `xhci.rs` 旧处方为「20 unsafe 集中，机制留框架」。经用户裁定改走 **USB 整体下沉**——xHCI/枚举/类驱动权威实装全部落 `services/driver/usb`，framework 侧 `driver/usb` 整目录删除（覆盖上述旧处方）。同时收口 §6.4 原列 `driver/usb` 5 文件（DECISION-G 曾将其归类为「🔒 壳 → §6.5 删壳」，与整体下沉殊途同归——framework 侧清零，services 唯一权威）。
+
+**方案（分子步推进）**：
+1. **子步①**（commit 7183c545）：`enumerate` / `ring` / `hid` / `mass_storage` 4 个 0-unsafe 文件下沉 `services/driver/usb`，framework 侧暂留接线不动。
+2. **子步②**（commit daccd4ab）：`usb_core.rs` safe 权威实装 + `xhci.rs` 补 `Driver` / `HostController` trait impl + 4 纯逻辑单测；`services/driver/usb/mod.rs` 承接 PCI 发现 + `usb_init`（chitin proto=Bus）；crate root `lib.rs` 接线切换至 services `usb_init`（委托编排者），framework `driver/mod.rs` 移除旧 `usb_init` 调用。
+   - **safe 化三决策**：Q1=C（`Urb` 采用「物理地址 + 长度 + 方向」，避免 framework 裸指针导出）；Q2=A（`UsbCore.controllers` 用 `Vec<Box<dyn HostController>>` + `mem::take`，规避自引用）；Q3=A（子步② 即切换启动路径，保留 fallback）。
+3. **子步③**：删除 `framework/driver/usb/` 整目录（7 文件），清理残留引用——`framework/driver/mod.rs`（模块声明 + 文档树 + `init_all` 列表）、`framework/pci/api.rs` 文档契约、`services/driver/usb/xhci.rs` stale bullet；同步 `scripts/audit_coupling.py`（移除 stale `framework::driver::usb` 正则）；适配 `tests/integration/run_driver1_usb_xhci_test.py`（Layer 2 静态检查改指 services 权威位置）。
+
+**影响面**：
+- §6.2 usb 2 文件标 ✅；§6.4 原列 usb 5 文件一并收口（framework 侧删，services 唯一权威）；§6.7 影子双份列表移除 usb。
+- `make test-kernel-host` 用例数 903 → 826（减少 77 = framework 侧 USB 副本内联测试随目录删除；services 侧 USB 权威测试 69 项全通过，无有效覆盖损失）。
+- QEMU 冒烟确认 services 路径生效：`[USB] discovered 0 xHCI controller(s)`。
+
+**验证**：§2.3 六门槛全绿——双架构 0 error/0 warning、clippy 0、核心审计（含 `audit_coupling` / `audit_services_boundary`）、host-tests、kernel-host（826 passed / 0 failed）、QEMU x86_64 boot 至 `VFS ready` + KPTI 断言。
+
+**状态**: [X]（2-D 收口；framework 侧 USB 权威实装清零）

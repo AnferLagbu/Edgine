@@ -815,9 +815,9 @@ pub extern "C" fn kernel_init() {
         // 初始化与 Chitin 注册 (framework storage_init 仅余 ATA 回退路径)。
         #[cfg(target_arch = "x86_64")]
         crate::services::driver::storage::storage_init();
-        // 2-D USB 整体下沉子步②: xHCI 探测/注册权威迁 services,
+        // 2-D USB 整体下沉: xHCI 探测/注册权威实装于 services::driver::usb,
         // 由 crate root (合法双向编排者) 调用 services usb_init 接管
-        // PCI 发现 + Chitin 注册 (framework usb_init 调用已移除)。
+        // PCI 发现 + Chitin 注册 (framework 侧 usb 模块已删除)。
         crate::services::driver::usb::usb_init();
         crate::klog_boot_info!("Driver subsystem initialized");
         {

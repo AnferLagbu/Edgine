@@ -21,9 +21,9 @@ DRIVER-1 QEMU xHCI 集成测试 (USB xHCI 真机集成验证)
 
 ### Layer 2: 静态源码检查
 - usb/mod.rs 含 usb_init + discover_xhci_controllers
-- usb/xhci.rs 含 init_hardware + reset_controller + start_controller
+- usb/xhci.rs 含 init_hardware + reset + start (2-D 下沉后权威实装在 services)
 - usb/hid.rs + mass_storage.rs + enumerate.rs + ring.rs + usb_core.rs 完整
-- 0 处 TRACK 残留 (4 处 USB-1.1/1.2/1.3/1.4/1.6 消除标记)
+- USB 源码位于 services::driver::usb (framework 侧模块已随 2-D 下沉删除)
 
 ### Layer 3 (可选): 真 USB 透传
 - 需 QEMU -device usb-host 透传物理 USB 设备
@@ -149,7 +149,8 @@ def analyze_qemu_log(log_path: Path) -> dict:
 def static_check_usb_source() -> tuple[bool, list[str]]:
     """静态检查 DRIVER-1 USB 子系统源码完整性."""
     issues = []
-    usb_dir = PROJECT_ROOT / "src/kernel/framework/driver/usb"
+    # 2-D USB 整体下沉: USB 权威实装已由 framework 迁至 services
+    usb_dir = PROJECT_ROOT / "src/kernel/services/driver/usb"
 
     if not usb_dir.exists():
         return False, [f"usb 目录不存在: {usb_dir}"]
@@ -165,7 +166,8 @@ def static_check_usb_source() -> tuple[bool, list[str]]:
         if "discover_xhci_controllers" not in content:
             issues.append("usb/mod.rs 缺 discover_xhci_controllers 函数")
 
-    # 2. xhci.rs
+    # 2. xhci.rs (2-D 下沉后以 services 为权威; 原 framework 的
+    #    reset_controller/start_controller 在迁移时收敛为 reset/start)
     xhci_rs = usb_dir / "xhci.rs"
     if not xhci_rs.exists():
         issues.append("usb/xhci.rs 不存在")
@@ -173,17 +175,10 @@ def static_check_usb_source() -> tuple[bool, list[str]]:
         content = xhci_rs.read_text(encoding="utf-8", errors="replace")
         if "pub fn init_hardware" not in content:
             issues.append("usb/xhci.rs 缺 pub fn init_hardware")
-        if "reset_controller" not in content:
-            issues.append("usb/xhci.rs 缺 reset_controller")
-        if "start_controller" not in content:
-            issues.append("usb/xhci.rs 缺 start_controller")
-        # TRACK 消除标记
-        track_removed = re.findall(r"TRACK-\w+\s*消除", content)
-        if len(track_removed) < 3:
-            issues.append(
-                f"usb/xhci.rs TRACK-XXX 消除标记 {len(track_removed)} 处, "
-                f"应 ≥ 3 处 (USB-1.3/1.4×2)"
-            )
+        if "pub fn reset" not in content:
+            issues.append("usb/xhci.rs 缺 pub fn reset")
+        if "pub fn start" not in content:
+            issues.append("usb/xhci.rs 缺 pub fn start")
 
     # 3. 其他 USB 文件
     for fname in ["hid.rs", "mass_storage.rs", "enumerate.rs",
@@ -284,7 +279,7 @@ def main() -> int:
     if static_ok:
         print("  [PASS] DRIVER-1 子系统完整:")
         print("         ✓ usb/mod.rs (usb_init + discover_xhci_controllers)")
-        print("         ✓ usb/xhci.rs (init_hardware + reset + start, ≥3 TRACK 消除)")
+        print("         ✓ usb/xhci.rs (init_hardware + reset + start)")
         print("         ✓ usb/{hid,mass_storage,enumerate,ring,usb_core}.rs")
     else:
         print(f"  [FAIL] {len(static_issues)} 个问题:")

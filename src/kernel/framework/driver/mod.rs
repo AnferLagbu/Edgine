@@ -7,7 +7,6 @@
 //! - **输入设备**: 键盘、鼠标等输入设备
 //! - **存储设备**: NVMe、AHCI、ATA等存储设备
 //! - **显示设备**: HDMI、DisplayPort等显示接口
-//! - **USB设备**: USB主机控制器和设备
 //!
 //! ## 依赖声明
 //!
@@ -33,9 +32,6 @@
 //! ├── display/       # 显示设备驱动
 //! │   ├── hdmi.rs    # HDMI驱动
 //! │   └── dp.rs      # DisplayPort驱动
-//! └── usb/           # USB子系统
-//!     ├── usb_core.rs # USB核心
-//!     └── xhci.rs    # xHCI控制器
 //! ```
 //!
 //! ## 使用示例
@@ -76,9 +72,6 @@ pub mod storage;
 
 /// 显示设备驱动子系统
 pub mod display;
-
-/// USB 子系统
-pub mod usb;
 
 /// 网络设备驱动
 pub mod net;
@@ -178,8 +171,7 @@ pub use uefi::*;
 /// 3. 存储设备 (framework 仅 ATA 回退路径; PCI AHCI/NVMe 由 services 接管)
 /// 4. 输入设备 (键盘)
 /// 5. 显示设备 (HDMI、DP)
-/// 6. USB设备
-/// 7. 组合虚拟设备 (RAID0/RAID1)
+/// 6. 组合虚拟设备 (RAID0/RAID1)
 pub fn init_all() {
     #[cfg(target_arch = "x86_64")]
     {
@@ -196,8 +188,8 @@ pub fn init_all() {
     }
 
     let _ = display::display_init();
-    // 2-D USB 整体下沉子步②: framework usb_init 调用已移除,
-    // xHCI 探测/注册权威迁 services (crate root lib.rs 调用 services usb_init)。
+    // 2-D USB 整体下沉: USB (xHCI/枚举/类驱动) 权威实装已迁 services::driver::usb,
+    // 探测/注册由 crate root lib.rs 调用 services usb_init 接管, framework 侧无 usb 模块。
 
     hotplug::hotplug_init();
 
