@@ -4,7 +4,7 @@
 //      (B-9.5: 收集经 with_current_fd_table(|t| t.get_cloexec_fds()), 关闭循环在锁外,
 //       避免 vfs_close_internal 内重入同锁自锁死)
 //   2. framework::fs 顶层 re-export vfs_close_cloexec_fds (services 可经顶层 API 调用)
-//   3. proc_exec_replace 成功路径调用 vfs_close_cloexec_fds (POSIX close-on-exec)
+//   3. proc_exec_replace 成功路径调用 close_cloexec_fds (经 VfsOps 契约, POSIX close-on-exec)
 //   4. memfd_create 在 MFD_CLOEXEC 置位时以 cloexec=true 分配 fd
 //   5. open 消费 O_CLOEXEC: VfsOpenFlags 定义 CLOEXEC 位, vfs_open_internal 读取
 //      该位并在两处 alloc_fd 传入 cloexec (B-8.3: 标记来源 = open O_CLOEXEC)
@@ -81,8 +81,8 @@ fn test_proc_exec_replace_closes_cloexec_fds() {
         .expect("proc_exec_replace 必须存在");
     let body = &src[body_start..];
     assert!(
-        body.contains("vfs_close_cloexec_fds()"),
-        "proc_exec_replace 成功路径必须调用 vfs_close_cloexec_fds (POSIX close-on-exec)"
+        body.contains("close_cloexec_fds()"),
+        "proc_exec_replace 成功路径必须调用 close_cloexec_fds (经 VfsOps 契约, POSIX close-on-exec)"
     );
 }
 

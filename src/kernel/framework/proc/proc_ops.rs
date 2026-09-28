@@ -403,14 +403,13 @@ pub extern "C" fn process_create(name: *const u8, parent_pid: Pid, pwm: u64) -> 
 pub extern "C" fn process_exit(exit_code: u32) {
     let current_pid = SCHEDULER.current().unwrap_or(0);
     if current_pid != 0 {
-        // 释放该进程持有的所有文件锁
-        crate::framework::fs::flock_release_pid(current_pid);
-        crate::framework::fs::posix_lock_release_pid(current_pid);
+        // 释放该进程持有的所有文件锁 (flock + POSIX lock)
+        crate::framework::fs::current_vfs_ops().release_pid_locks(current_pid);
 
         // B-9.5: 关闭该进程 fd 表全部 fd — 递减 OpenFile 引用并触发 pcache
         // 失效 / inotify / fd 通知, 避免全局 OPEN_FILE_TABLE 槽位泄漏。
-        // (先例: 上方 flock_release_pid 同为 proc → fs 内联接线)
-        crate::framework::fs::vfs_close_all_fds();
+        // (先例: 上方 release_pid_locks 同为 proc → fs 经 VfsOps 契约接线)
+        crate::framework::fs::current_vfs_ops().close_all_fds();
 
         // T1-G2: robust futex 遍历 + CLONE_CHILD_CLEARTID 清零.
         // 必须在切换内核页表/销毁用户地址空间之前执行 (用户内存仍可访问).
@@ -683,7 +682,7 @@ pub extern "C" fn proc_exec_replace(path: *const u8, argv: *const *const u8, arg
     crate::framework::proc::reset_signal_state_on_exec(current_pid);
 
     // 5b. POSIX close-on-exec: 关闭所有标记 CLOEXEC 的 fd
-    crate::framework::fs::vfs_close_cloexec_fds();
+    crate::framework::fs::current_vfs_ops().close_cloexec_fds();
 
     // 6. 同步当前进程信息
     C_CURRENT_PROCESS.map_mut(|p| {
@@ -1043,7 +1042,7 @@ pub extern "C" fn sys_fork() -> Pid {
             .collect::<alloc::vec::Vec<u32>>()
     }) {
         for hid in handles {
-            crate::framework::fs::OPEN_FILE_TABLE.inc_ref(hid);
+            crate::framework::fs::current_vfs_ops().inc_open_file_ref(hid);
         }
     }
     PROCESS_TABLE.insert(child as *const Process as *mut Process);

@@ -13,6 +13,8 @@ pub mod inotify;
 pub mod mount;
 /// B09-12/P1-B5: 全局 OpenFile 表 (从 services 迁回)
 pub mod open_file_table;
+/// T-05 阶段 4a: VFS 操作契约 trait (DECISION-W)
+pub mod ops_trait;
 /// B 方案拆分: 路径/目录/链接/元数据/cwd (从 api.rs 拆出)
 pub mod path;
 pub mod types;
@@ -48,3 +50,5 @@ pub use backend_trait::{
     FallbackFsBackend, FsBackend, current_fs_backend, nestfs_fs, register_fs_backend,
     register_nestfs_fs,
 };
+// T-05 阶段 4a: VFS 操作契约 re-export (DECISION-W)
+pub use ops_trait::{FallbackVfsOps, VfsOps, current_vfs_ops, register_vfs_ops};
