@@ -34,9 +34,16 @@
 //! Phase 2.1.6 任务: USB/XHCI 驱动迁移
 
 use crate::framework::dma_buf::DmaStream;
+use crate::framework::driver::framework::{
+    DeviceType, Driver, DriverError, Result as DriverResult,
+};
 use crate::framework::iomem::IoMem;
 use crate::framework::mm::PhysAddr;
 use crate::services::error::KernelError;
+
+use super::usb_core::{Direction, HostController, Urb, UsbSpeed};
+
+use alloc::vec::Vec;
 
 // ============================================================================
 // xHCI TRB 类型定义 (USB-1.5)
@@ -644,8 +651,8 @@ impl XhciController {
     /// # Errors
     /// 当控制器软复位、启动或中断使能过程中超时/无响应时返回 `Err`.
     pub fn init_hardware(&mut self) -> Result<(), KernelError> {
-        // 1. 软复位
-        self.reset();
+        // 1. 软复位 (UFCS 消歧: Driver trait 亦有 reset 方法)
+        XhciController::reset(self);
         // 2. 启动
         self.start();
         // 3. 启用中断
@@ -1058,5 +1065,180 @@ impl EndpointTransfer {
             direction,
             transfer_ring,
         })
+    }
+}
+
+// ============================================================================
+// Driver / HostController Trait 实现
+// ============================================================================
+
+impl Driver for XhciController {
+    fn name(&self) -> &'static str {
+        "xHCI Controller"
+    }
+
+    fn device_type(&self) -> DeviceType {
+        DeviceType::Bus
+    }
+
+    fn init(&mut self) -> DriverResult<()> {
+        // init_hardware 内部完成 reset + start 并置位 initialized
+        self.init_hardware().map_err(|_| DriverError::HardwareError)
+    }
+
+    fn shutdown(&mut self) -> DriverResult<()> {
+        self.stop();
+        self.initialized = false;
+        Ok(())
+    }
+
+    fn is_ready(&self) -> bool {
+        self.initialized
+    }
+
+    fn status(&self) -> &'static str {
+        if self.initialized {
+            "xHCI running"
+        } else {
+            "xHCI stopped"
+        }
+    }
+}
+
+impl HostController for XhciController {
+    fn supported_speeds(&self) -> Vec<UsbSpeed> {
+        alloc::vec![
+            UsbSpeed::Super,
+            UsbSpeed::High,
+            UsbSpeed::Full,
+            UsbSpeed::Low,
+        ]
+    }
+
+    fn num_ports(&self) -> usize {
+        usize::from(self.num_ports)
+    }
+
+    fn port_has_device(&self, port: usize) -> bool {
+        // 越界端口视为无设备 (trait 用 usize, 硬件字段为 u8)
+        match u8::try_from(port) {
+            Ok(p) if p < self.num_ports => self.port_connected(p),
+            _ => false,
+        }
+    }
+
+    fn reset_port(&mut self, port: usize) -> DriverResult<()> {
+        let Ok(p) = u8::try_from(port) else {
+            return Err(DriverError::InvalidParameter);
+        };
+        if p >= self.num_ports {
+            return Err(DriverError::InvalidParameter);
+        }
+        // 固有方法同名, 用 UFCS 消歧
+        XhciController::reset_port(self, p);
+        Ok(())
+    }
+
+    fn get_port_speed(&self, port: usize) -> UsbSpeed {
+        let Ok(p) = u8::try_from(port) else {
+            return UsbSpeed::Unknown;
+        };
+        if p >= self.num_ports {
+            return UsbSpeed::Unknown;
+        }
+        match self.port_status(p).speed {
+            SPEED_FULL => UsbSpeed::Full,
+            SPEED_LOW => UsbSpeed::Low,
+            SPEED_HIGH => UsbSpeed::High,
+            SPEED_SUPER => UsbSpeed::Super,
+            SPEED_SUPER_PLUS => UsbSpeed::SuperPlus,
+            _ => UsbSpeed::Unknown,
+        }
+    }
+
+    fn submit_urb(&mut self, urb: &Urb) -> DriverResult<()> {
+        if !self.initialized {
+            return Err(DriverError::NotInitialized);
+        }
+        if urb.device == 0 {
+            return Err(DriverError::InvalidParameter);
+        }
+        // 端点 0 为控制端点 (DCI=1) 合法; 1..=15 为普通端点
+        if urb.endpoint > 15 {
+            return Err(DriverError::InvalidParameter);
+        }
+        // 有数据阶段时物理地址不得为 0 (无数据阶段允许 length=0)
+        if urb.buffer_length > 0 && urb.buffer_phys == 0 {
+            return Err(DriverError::InvalidParameter);
+        }
+
+        // xHCI DCI: 控制端点 0 → 1; 端点 n>0 → n*2 + (IN ? 1 : 0)
+        let dci = if urb.endpoint == 0 {
+            1u32
+        } else {
+            u32::from(urb.endpoint) * 2 + u32::from(urb.direction == Direction::In)
+        };
+        self.ring_doorbell(urb.device, dci);
+
+        // SIMPLIFIED: 仅触发 Doorbell, 未写入 Transfer Ring TRB / 未跟踪 pending URB;
+        //   影响: 真实数据传输需调用方经 TransferRing::push_* 自行写入 TRB;
+        //   扩展时机: Phase E Event Ring 中断处理实装时接入完成回调与状态跟踪.
+        Ok(())
+    }
+
+    fn cancel_urb(&mut self, _urb_id: u32) -> DriverResult<()> {
+        Err(DriverError::UnsupportedOperation)
+    }
+
+    fn allocate_address(&mut self) -> DriverResult<u8> {
+        // 固有方法同名, 用 UFCS 消歧
+        XhciController::allocate_address(self).ok_or(DriverError::Busy)
+    }
+
+    fn free_address(&mut self, address: u8) {
+        XhciController::free_address(self, address);
+    }
+}
+
+// ============================================================================
+// 单元测试 (纯逻辑: 不构造控制器, 避免依赖 MMIO / DMA)
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_trb_type_decode() {
+        let trb = Trb::new(0, 0, (TrbType::SetupStage as u32) << 10);
+        assert_eq!(trb.trb_type(), TrbType::SetupStage);
+
+        let trb = Trb::new(0, 0, (TrbType::TransferEvent as u32) << 10);
+        assert_eq!(trb.trb_type(), TrbType::TransferEvent);
+    }
+
+    #[test]
+    fn test_trb_cycle_bit() {
+        assert!(Trb::new(0, 0, 1).cycle_bit());
+        assert!(!Trb::new(0, 0, 0).cycle_bit());
+    }
+
+    #[test]
+    fn test_port_status_decode() {
+        let val = PORTSC_CCS | PORTSC_PED | (u32::from(SPEED_HIGH) << PORTSC_SPEED_SHIFT);
+        let status = PortStatus::from_register(val);
+        assert!(status.connected);
+        assert!(status.enabled);
+        assert!(!status.reset);
+        assert_eq!(status.speed, SPEED_HIGH);
+    }
+
+    #[test]
+    fn test_structural_params1_decode() {
+        let val = 0x0F | (0x7FF << 8) | (0x10 << 24);
+        let params = StructuralParams1::from_register(val);
+        assert_eq!(params.max_device_slots, 0x0F);
+        assert_eq!(params.max_interrupters, 0x7FF);
+        assert_eq!(params.max_ports, 0x10);
     }
 }

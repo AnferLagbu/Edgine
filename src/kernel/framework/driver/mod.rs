@@ -196,7 +196,8 @@ pub fn init_all() {
     }
 
     let _ = display::display_init();
-    let _ = usb::usb_init();
+    // 2-D USB 整体下沉子步②: framework usb_init 调用已移除,
+    // xHCI 探测/注册权威迁 services (crate root lib.rs 调用 services usb_init)。
 
     hotplug::hotplug_init();
 
