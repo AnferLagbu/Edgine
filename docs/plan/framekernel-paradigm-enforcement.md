@@ -45,7 +45,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 描述：达成 Asterinas 范式对齐。
 方案：
 1. [ ] TCB 占比 < 30%（当前 60.1%，framework 123K vs services 71K LoC）
-2. [ ] framework→services 反向依赖 = 0（当前 136 处/78 文件）
+2. [X] framework→services 反向依赖 = 0（生产口径 = framework 生产代码引用 `crate::services`；经 `audit_reverse_deps.py` 核验 0 文件/0 行，原 136 处/78 文件已全部下沉/反转/收敛/按 §7.3 豁免）
 3. [ ] 功能层 services 权威（driver / fs 核心 / net 策略 / proc 策略 / syscall 业务）
 4. [ ] framework 仅机制/契约/安全代理（保留 200 文件，见 §6.6）
 5. [ ] services 保持 0 unsafe（F1 不回归）
@@ -320,7 +320,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - **4a 契约先行**：framework 新建 `VfsOps` 契约（`framework/fs/vfs/ops_trait.rs`）+ reroute 3 文件 6 处消费面（proc_ops/epoll/page_fault）；不改 TCB 归属、不改语义，仅新增契约面 + 间接层。[X]（完成：VfsOps + Fallback + register/current，6 处 reroute；§2.3 六门槛全绿，见 §11 DECISION-W）
   - **4b 实现下沉**：`framework/fs/vfs` 实现整体迁 `services/fs`（types/dcache/vfs/open_file_table + handle/mount/path/flock/inotify + ramfs/devfs/initramfs/nestfs）；services 于 `fs::init` 注册 `VfsOps` 实现替换 Fallback；framework 侧仅留 2 契约（`VfsOps` + `vfs_poll_trait`）+ POD `VfsFileType` + nestfs unsafe 机制适配层。同时 `framework/credo/storage.rs` 连锁（登记项 2-F）整体下沉 `services/credo/persist`。[X]（完成：无壳单批做尽，63 处 `#[unsafe(no_mangle)] vfs_*` 壳删除；§2.3 六门槛全绿，见 §11 DECISION-W 4b 实施记录）
   - **4c 边界收敛**：ramfs/devfs/initramfs 等 framework 内 fs 消费者路径重定向 + §6.6 fs 项收窄（6→2 契约）收口 + 全量验证。[X]（完成：陈旧 doc 注释路径改写 + fs 域内核测试载体归属收敛，见 §11 阶段 4c 实施记录）
-- 阶段 5：**壳删除 82 + 直接 use trait 化 20 + 保留文件 43 处收敛**（§7.5，ipc 24 第一优先）。[]
+- 阶段 5：**壳删除 82 + 直接 use trait 化 20 + 保留文件 43 处收敛**（§7.5，ipc 24 第一优先）。[X]（完成：framework 域生产反向依赖归零，经 DECISION-J→K 全序列第 1~27 批实施；见 §11「阶段 5 实施记录」）
 - 阶段 6：**全量验证**（§3 验收 + §9 门槛）。[]
 
 ### §7 DECISION-J 批次进度（2026-09-12 截止第八批）
@@ -403,7 +403,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 3. 核心审计全过（audit_services_boundary / audit_coupling / audit_tcb_ratio 关注 TCB 下降）
 4. host-tests 全过
 5. QEMU 集成测试（boot/驱动改动必跑）
-6. **反向依赖 grep 计数单调下降**（`kernel::services` 引用，136 → 0）
+6. **反向依赖计数单调下降至 0**（`crate::services` 引用，生产口径；起点 136 处/78 文件 → 0，核验脚本 `audit_reverse_deps.py`）
 7. **TCB 占比逐阶段下降**（60.1% → <30%）
 
 ## 10. 关联工程
@@ -1421,5 +1421,19 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 **预存问题（本批发现，未处置，待用户裁决）**：
 - `cargo fmt --check` 全仓 36 文件差异：本批新增 5 处已修，其余 36 文件为预存 repo-wide 违规；fmt 不属 §2.3 六门槛，故未擅自修改（§12.2/§12.5）。
 - 非 fs 域 doc 头注待核：framework 域 22 个源文件头注含「— framework 机制实现」字样（抽查为 4b 后准确描述，fs 域外、4b 未触碰）；如需全量复核属专项工作，非本批范围。
+
+状态：[X]
+
+### 阶段 5 实施记录（反向依赖整治收口 + 审计脚本维护）
+
+阶段 5（§8）为反向依赖整治收口——framework 域**生产**反向依赖归零。本批完成 §9.2 文档状态同步 + `audit_reverse_deps.py` 正则失效修复 + §2.3 六门槛复核。
+
+- **反向依赖整治全序列**：DECISION-J→K 第 1~27 批实施（含壳删除 82 文件、直接 use trait 化、保留文件收敛、HDMI 孤儿目录删除），framework 域生产反向依赖由 136 处/78 文件降至 0；终点批次为第二十七批 HDMI 专项（§11 记录，孤儿目录删除）。§7.3 测试上下文引用属合理豁免，不纳入验收。
+- **`audit_reverse_deps.py` 正则失效修复（本批核心工具维护）**：脚本原正则 `crate::kernel::services|kernel::services::` 在方案 D 独立 crate 化（commit `3578b4e8`，全仓 `crate::kernel::X` → `crate::X`）后失配，恒报「0 文件/0 行」——属**假阴性**（保护能力丧失，非真实归零）。修复：①正则改 `\bcrate::services\b`；②新增整行注释行排除（`//` / `///` / `//!` 与 `/* */` 嵌套；行内代码后注释不整行排除，fail-closed）；③`scan_file` 返回 (生产引用, 测试引用, 注释引用) 三分类，`main` 分别聚合输出。修复后核验：扫描 320 文件，**生产反向依赖 0 文件/0 行**，测试上下文引用 8 文件/30 行（§7.3 合理），注释引用 3 文件/3 行（`framework/fs/vfs/types_pod.rs` / `framework/lib/cstr.rs` / `framework/proc/proc_ops.rs` 各 1 行文档交叉引用，不计违规）。
+- **门禁 0.5j 权限缺陷（工程外预存，用户 `2bbdfb78` 引入）**：`ci/audit.sh` 0.5j 直执行 `scripts/audit_{repr_c,volatile_access,static_mut}.py`，但三脚本 git mode = 100644（非可执行），直执行返回 EACCES（rc=126），触发 `err()` 的 `exit 1` 阻塞门禁 ③。经用户裁定（方案 A）补执行位为 100755——对齐仓库其他直调用审计脚本惯例（均 100755）且三脚本自带 shebang；脚本逻辑本身手工 `python3` 运行 rc=0 无误，属"新脚本漏加执行位"。
+- **§9.2 文档同步**：§3 验收项 2（framework→services 反向依赖 = 0 → [X]，注明生产口径与核验脚本）、§8 阶段 5 状态（[] → [X]）、§9 门槛 6 口径（`kernel::services` → `crate::services`，生产口径 + 核验脚本）。
+- **§12.5 工程外问题（已发现，未处置）**：`audit_deadlock_matrix.py` L161-173 与 `audit_once_cell.py` L79/L83 仍含 crate 化前的陈旧 `crate::kernel::...` 前缀（前者有 `(?:crate::)?` 备选兜底、后者仅提示文案），未擅自修改，待用户裁定。
+
+验证：**§2.3 六门槛全绿**——双架构 0w0e（`./ci/build.sh all` Passed 5 / Failed 0：x86_64 + aarch64 构建、host-tests、forbidden patterns、x86_64 链接）✅ / clippy pedantic 三维（lib + kernel_test + host-test，`-D warnings`）✅ / 核心审计（`./ci/audit.sh quick`，含 0.5j 三内存安全脚本、6 不变式、F1-F9、TD-22）✅ / host-tests ✅ / kernel-host 947 passed / 0 failed ✅ / QEMU x86_64 完整启动（`VFS ready` + Ring 3 + KPTI）✅。
 
 状态：[X]
