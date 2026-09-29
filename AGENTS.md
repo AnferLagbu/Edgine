@@ -19,6 +19,7 @@
 | `host-tests/` | 主机端单元/集成测试（no_std + std） | AI 实施 / 用户 审查 |
 | `docs/plan/` | 工程与任务计划 | 用户 决策 + AI 撰写 |
 | `docs/explain/` | 项目引导与解释 | 用户 决策 + AI 撰写 |
+| `docs/report/` | 生命周期内的结果报告（诊断/审计/评估/测试/性能），作为制定计划与修复工程的输入；发布即冻结 | 用户 决策 + AI 撰写 |
 | `scripts/`, `ci/`, `tools/` | 工具与 CI 脚本 | AI 实施 / 用户 审查 |
 
 > **项目分工**: 用户 负责方向决策与边界约束，AI（LLM agent）负责具体实施. 见 §9.1.
@@ -37,20 +38,21 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 
 ### 2.2 核心审计脚本（硬规则门槛）
 
-| 脚本 | 作用 | 对应规则 |
-|---|---|---|
-| `audit_services_boundary.py` | services 0 unsafe + 顶层 re-export 强制 | F1 + F2 |
-| `audit_safety_coverage.py` | framework unsafe 块 SAFETY 100% 覆盖 | F4 |
-| `audit_deadlock_matrix.py` | 锁顺序 + 中断上下文 + 递归锁检测 | F8 |
-| `audit_coupling.py` | 跨模块循环依赖 | F3 |
-| `audit_comment_language.py` | 中文注释强制 | F7 |
-| `audit_once_cell.py` | OnceCell 模式统一 | F9 |
-| `audit_c_naming.py` | C 命名规范 | F10 |
-| `audit_invariants.py` | 6 安全不变式断言 | I1-I6 |
-| `audit_tcb_ratio.py` | TCB 占比统计（软 < 30%）| 软 |
-| `audit_repr_c.py` / `audit_volatile_access.py` / `audit_static_mut.py` | LTO 字段错位防线 + static mut | F11-F13 |
+| 脚本 | 作用 | 对应 §5 硬规则 | CI 门禁 |
+|---|---|---|---|
+| `audit_services_boundary.py` | services 0 unsafe + 顶层 re-export 强制 | F1 + F2 | 强制 |
+| `audit_safety_coverage.py` | framework unsafe 块 SAFETY 100% 覆盖 | F4 | 强制 |
+| `audit_deadlock_matrix.py` | 锁顺序 + 中断上下文 + 递归锁检测 | F8 | 强制 |
+| `audit_coupling.py` | 跨模块循环依赖 | F3 | 强制 |
+| `audit_comment_language.py` | 中文注释强制 | F7 | 强制 |
+| `audit_invariants.py` | 6 安全不变式断言 | I1-I6 | 强制 |
+| `audit_once_cell.py` | OnceCell 模式统一 | 附加门禁 | 强制 |
+| `audit_c_naming.py` | C 命名规范 | 附加门禁 | 强制 |
+| `audit_repr_c.py` / `audit_volatile_access.py` / `audit_static_mut.py` | repr(C) 字段错位 / volatile 访问 / static mut 防线 | 附加门禁 | 强制 |
+| `audit_tcb_ratio.py` | TCB 占比统计（软 < 30%）| 软约束 | 报告 |
 
-> **完整审计清单**: 14 个脚本. CI 仅强制上述硬规则，其余 5 个为扩展审计（仍建议跑）.
+> **附加门禁**：OnceCell / C 命名 / repr(C) / volatile / static_mut 已接入 CI 强制，但不占 §5 的 F1-F9 零容忍编号（属内存/风格专项防线，映射 I2/I5/I6 不变式）.
+> **完整清单**：仓库共 22 个 `audit_*.py`（本表为常用核心门禁项，非穷举）. `block_registration`(I-43) / `tlb_receive_order`(S-14) / `aarch64_kernel_fp_free`(FP-06) 等专项亦在 `ci/audit.sh` 强制但未列入本表; 其余为按需扩展审计（未接入 CI）.
 
 ### 2.3 验证门槛
 
@@ -127,7 +129,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 - **`docs/plan/`**（任务规划）：强制使用结构化格式 — 每条目 = `描述：` + `方案：` + `状态：[]/[X]` + 可选 `详情：`
 - **`docs/explain/`**（描述性说明）：**禁用**结构化字段；采用 H1/H2 + 自然段落 + 表格 + 代码片段 + 列表的自由描述风格
-- **`docs/report/`**（结果报告：诊断/审计/评估/测试/性能等）：内容描述规则与 explain 一致（自由描述风格，禁结构化字段与状态标记）；定位为"某次执行结果的一次性快照"，发布即冻结. 历史 audit-* 仍在 `docs/plan/` 原位保留, 新报告写 `docs/report/`
+- **`docs/report/`**（生命周期内的结果报告：诊断/审计/评估/测试/性能等）：用途是作为**制定 plan 与启动修复工程的输入依据**；内容描述规则与 explain 一致（自由描述风格，禁结构化字段与状态标记）；定位为"某次执行结果的一次性快照"，发布即冻结（冻结事实陈述，不冻结其指导价值）. 历史 audit-* 仍在 `docs/plan/` 原位保留, 新报告写 `docs/report/`
 - **`docs/plan/archive/`**：保留所有历史格式（含日期），作为历史快照不再修改
 
 **核心原则**: 文档状态由 git 提交历史承载（`git log -- <path>` / `git blame`），不在文档内写日期；文件名不带日期前缀.
@@ -271,7 +273,7 @@ AI 输出若不通过上述审查，视为预存问题，必须修复后才能�
 | 跨子系统硬编码常量 | 走 `framework::config` 或 `services::config` |
 | 测试代码 `unwrap()` | 测试允许，生产代码禁止 |
 | 提交前忘跑审计 | CI 会拦，不会合入 |
-| 顺手添加"灵活配置" | 禁止，准则 §0 严格适用 |
+| 顺手添加"灵活配置" | 禁止，spec-engineering.md 铁律 0 严格适用 |
 | 不读 AGENTS.md §12 AI 行为准则 | 必读！LLM 行为准则在此 |
 | 引入 `#[allow(dead_code)]` | 零容忍（§5 F9），必须通过实现使用路径消除 |
 | **跳过源码调研直接施工** | **§10 强制要求：调研 → 认知 → 规划 → 施工** |
@@ -315,7 +317,7 @@ AI 输出若不通过上述审查，视为预存问题，必须修复后才能�
 
 **默认路径：在保证质量的前提下采用简约实现.任何超出最小可行解的复杂度都需在代码中以 SIMPLIFIED 注释标记, 以便后续审查时识别简化意图与扩展边界.**
 
-- **简约实现细则**（与 §3 spec-engineering 一致）：
+- **简约实现细则**（与 docs/explain/spec-engineering.md 一致）：
 - 不为单次使用的代码创建抽象、不为"将来可能用到"预留扩展点.
 - 不加入超出当前需求范围的功能、可配置性、灵活性.
 - 三行重复代码优于一个过早抽象；自问"一个资深工程师会认为这太复杂了吗？".
