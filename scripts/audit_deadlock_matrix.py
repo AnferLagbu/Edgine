@@ -159,16 +159,16 @@ def scan_file(filepath):
     # IrqSpinLock 的类型别名 (services 层 re-export), 全路径声明同样视为安全.
     safe_lock_field_pattern = re.compile(
         r'\b(?:pub(?:\([^)]*\))?\s+)?(\w+)\s*:\s*'
-        r'(?:crate::kernel::framework::sync::irq_spinlock::|framework::sync::irq_spinlock::|'
-        r'crate::kernel::services::sync::irq_lock::|services::sync::irq_lock::)?'
+        r'(?:crate::framework::sync::irq_spinlock::|framework::sync::irq_spinlock::|'
+        r'crate::services::sync::irq_lock::|services::sync::irq_lock::)?'
         r'IrqSpinLock|FrameworkIrqSpinLock|'
         r'(?:crate::)?sync(?:::\s*\w+\s*)*::\s*'
         r'IrqSpinLock\b',
     )
     safe_lock_static_pattern = re.compile(
         r'\bstatic\s+(\w+)\s*:\s*'
-        r'(?:crate::kernel::framework::sync::irq_spinlock::|framework::sync::irq_spinlock::|'
-        r'crate::kernel::services::sync::irq_lock::|services::sync::irq_lock::)?'
+        r'(?:crate::framework::sync::irq_spinlock::|framework::sync::irq_spinlock::|'
+        r'crate::services::sync::irq_lock::|services::sync::irq_lock::)?'
         r'IrqSpinLock|FrameworkIrqSpinLock|'
         r'(?:crate::)?sync(?:::\s*\w+\s*)*::\s*'
         r'IrqSpinLock\b',
@@ -268,10 +268,10 @@ def scan_file(filepath):
             continue
         # 2026-09-13 扩展: services::sync 是 framework::sync 的 re-export 层
         # (DECISION-K 边界), 形如
-        # `use crate::kernel::services::sync::irq_lock::IrqSpinLock as Mutex;`
+        # `use crate::services::sync::irq_lock::IrqSpinLock as Mutex;`
         # 的导入按末段类型分类: IrqSpinLock → safe, 其余 → unsafe.
         m_use_services = re.search(
-            r'use\s+(?:crate::)?kernel::services::sync'
+            r'use\s+(?:crate::)?services::sync'
             r'(?:::\s*\w+\s*)*'
             r'::\s*(\w+)\s*(?:\s+as\s+(\w+))?\s*;',
             line,
@@ -435,7 +435,7 @@ def scan_file(filepath):
     # framework 的安全锁 (不应被报告)
     framework_lock_patterns = [
         re.compile(r'\bframework::sync::(irq_spinlock|spinlock|mutex|rwlock|seqlock|once_lock|once_cell)\b'),
-        re.compile(r'\bcrate::kernel::framework::sync::(irq_spinlock|spinlock|mutex|rwlock|seqlock|once_lock|once_cell)\b'),
+        re.compile(r'\bcrate::framework::sync::(irq_spinlock|spinlock|mutex|rwlock|seqlock|once_lock|once_cell)\b'),
         re.compile(r'\bsync::(irq_spinlock|spinlock|mutex|rwlock|seqlock|once_lock|once_cell)\b'),
     ]
 

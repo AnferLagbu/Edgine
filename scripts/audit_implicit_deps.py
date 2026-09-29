@@ -36,8 +36,8 @@ FRAMEWORK_GLOBALS = [
 
 # 允许的直接引用 (framework 层安全 API)
 ALLOWED_PATTERNS = [
-    r'crate::kernel::framework::fs::VFS_MANAGER',
-    r'crate::kernel::framework::ipc::IPC_NAMESPACE',
+    r'crate::services::fs::VFS_MANAGER',
+    r'crate::framework::ipc::IPC_NAMESPACE',
 ]
 
 def find_framework_globals():

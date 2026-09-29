@@ -54,7 +54,7 @@ def test_services_boundary() -> bool:
     """B01-24 fixture 测试 1: audit_services_boundary 识别 pub use 内部模块.
 
     Fixture 在 src/kernel/services/... 下创建临时 services 文件, 包含
-    `pub use crate::kernel::framework::sync::raw` 违规. 验证脚本能检测.
+    `pub use crate::framework::sync::raw` 违规. 验证脚本能检测.
     """
     print("\n[Test 1/4] audit_services_boundary.py")
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -65,7 +65,7 @@ def test_services_boundary() -> bool:
         # 故意使用禁止的内部模块
         (test_svc_dir / "mod.rs").write_text(
             "//! test\n"
-            "pub use crate::kernel::framework::sync::raw;\n"
+            "pub use crate::framework::sync::raw;\n"
             "pub fn foo() {}\n"
         )
 
@@ -90,7 +90,7 @@ def test_services_boundary() -> bool:
                         detected = True
                         break
         return _check("检测 pub use 禁止模块", detected,
-                       "fixture 含 'pub use crate::kernel::framework::sync::raw'")
+                       "fixture 含 'pub use crate::framework::sync::raw'")
 
 
 def test_deadlock_matrix() -> bool:

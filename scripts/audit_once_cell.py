@@ -77,7 +77,7 @@ def main() -> int:
             print(f"    ... 另有 {len(violations) - 20} 处省略")
         print("  " + "-" * 60)
         print("  ✗ services 层不应绕过项目自研 OnceCell 抽象")
-        print("  → 改用 `crate::kernel::services::sync::once::{Once, OnceCell}`")
+        print("  → 改用 `crate::services::sync::once::{Once, OnceCell}`")
         return 1
     else:
         print(f"  ✓ services 层 0 处 spin::Once 残留")
