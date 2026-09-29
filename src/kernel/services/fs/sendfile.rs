@@ -31,13 +31,13 @@
 
 #![deny(unsafe_code)]
 
-use crate::services::fs::OPEN_FILE_TABLE;
-use crate::services::fs::api as vfs_api;
-use crate::services::fs::vfs_get_fd_handle;
 use crate::framework::ipc::IPC_NAMESPACE;
 use crate::framework::ipc::current_ipc_strategy;
 use crate::framework::ipc::pipe as ipc_pipe;
 use crate::framework::syscall::Errno;
+use crate::services::fs::OPEN_FILE_TABLE;
+use crate::services::fs::api as vfs_api;
+use crate::services::fs::vfs_get_fd_handle;
 
 /// sendfile 传输的 bounce buffer 大小 (8KB)
 const BOUNCE_SIZE: usize = 8192;
@@ -310,47 +310,31 @@ pub fn sys_splice(
 // 内核测试
 // ============================================================================
 
-#[cfg(feature = "kernel_test")]
-pub(crate) mod tests {
-    use crate::framework::tests::{TestResult, check};
+// 阶段 4c: 原 kernel_test 注册回调 (register_sendfile_tests) 改写为源侧
+// #[cfg(test)] — fd/pipe/flags 校验均为纯逻辑断言, host 侧 cargo test 为唯一
+// 归属 (DECISION-080).
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    pub(crate) fn test_sendfile_ebadf() -> TestResult {
+    #[test]
+    fn test_sendfile_ebadf() {
         // in_fd 不是 VFS 文件 → EBADF
-        let result = super::sys_sendfile(1, -1, 0, 1024);
-        check!(result < 0, "sendfile with bad in_fd should fail");
-        TestResult::Pass
+        let result = sys_sendfile(1, -1, 0, 1024);
+        assert!(result < 0, "sendfile with bad in_fd should fail");
     }
 
-    pub(crate) fn test_splice_einval_no_pipe() -> TestResult {
+    #[test]
+    fn test_splice_einval_no_pipe() {
         // 两端都不是 pipe → EINVAL
-        let result = super::sys_splice(3, 0, 4, 0, 1024, 0);
-        check!(result < 0, "splice with no pipe end should fail");
-        TestResult::Pass
+        let result = sys_splice(3, 0, 4, 0, 1024, 0);
+        assert!(result < 0, "splice with no pipe end should fail");
     }
 
-    pub(crate) fn test_splice_einval_bad_flags() -> TestResult {
+    #[test]
+    fn test_splice_einval_bad_flags() {
         // 非法 flags → EINVAL
-        let result = super::sys_splice(0, 0, 0, 0, 1024, 0xFF);
-        check!(result < 0, "splice with bad flags should fail");
-        TestResult::Pass
-    }
-
-    pub fn register_sendfile_tests() {
-        use crate::framework::tests::{TestFn, runner};
-        let r = runner();
-        r.register("syscall::sendfile", "ebadf", test_sendfile_ebadf as TestFn);
-        r.register(
-            "syscall::splice",
-            "einval_no_pipe",
-            test_splice_einval_no_pipe as TestFn,
-        );
-        r.register(
-            "syscall::splice",
-            "einval_bad_flags",
-            test_splice_einval_bad_flags as TestFn,
-        );
+        let result = sys_splice(0, 0, 0, 0, 1024, 0xFF);
+        assert!(result < 0, "splice with bad flags should fail");
     }
 }
-
-#[cfg(feature = "kernel_test")]
-pub use tests::register_sendfile_tests;

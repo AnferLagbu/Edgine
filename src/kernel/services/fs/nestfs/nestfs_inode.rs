@@ -1,8 +1,8 @@
 #![deny(unsafe_code)]
 
 use super::nestfs_data::{NestfsData, get_nestfs};
-use crate::services::fs::{KernelError, KernelResult, VfsFileType, VfsSeekWhence, VfsStat};
 use crate::services::fs::inode::Inode;
+use crate::services::fs::{KernelError, KernelResult, VfsFileType, VfsSeekWhence, VfsStat};
 
 /// `NestFS` 文件 Inode — 直接持有 fd 编号
 pub struct NestfsInode {

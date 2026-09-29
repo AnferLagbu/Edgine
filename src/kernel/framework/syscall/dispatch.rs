@@ -11,8 +11,9 @@ use super::types::{
     Errno, QX_CET, QX_CGROUP_ATTACH, QX_CGROUP_CREATE, QX_CGROUP_DESTROY, QX_CGROUP_GET_STAT,
     QX_CGROUP_SET_LIMIT, QX_IO_URING_SUBMIT, QX_NF_ADD_RULE, QX_NF_DEL_RULE, QX_PM, QX_ROUTE_ADD,
     QX_ROUTE_DEL, QX_ROUTE_QUERY, QX_SECURE_BOOT, QX_TICKLESS, QX_TIMESYNC, QX_TPM, QX_UEFI,
-    SYS_accept, SYS_bind, SYS_connect, SYS_getpeername, SYS_getsockname, SYS_getsockopt, SYS_listen,
-    SYS_recvfrom, SYS_recvmsg, SYS_sendmsg, SYS_sendto, SYS_setsockopt, SYS_shutdown, SYS_socket,
+    SYS_accept, SYS_bind, SYS_connect, SYS_getpeername, SYS_getsockname, SYS_getsockopt,
+    SYS_listen, SYS_recvfrom, SYS_recvmsg, SYS_sendmsg, SYS_sendto, SYS_setsockopt, SYS_shutdown,
+    SYS_socket,
 };
 // SYS_CREDO_DISK_INSTALL 分支已迁至 services (T2 批 5), 编号常量仅在 types.rs 保留
 // (aarch64 生产构建不引用, 与迁移前 cfg 门控语义一致)

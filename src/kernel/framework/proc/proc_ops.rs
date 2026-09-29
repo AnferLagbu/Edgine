@@ -337,12 +337,12 @@ pub fn process_insert(process: *mut super::process::Process) -> bool {
 /// 不长期持有进程表锁; 本函数仅在闭包执行期间解引用该指针, 避免
 /// `PROCESS_TABLE → FdTable` 长持锁嵌套.
 ///
-/// ## 为何供 `framework/fs` 内联全限定路径调用
+/// ## 为何供 `services::fs` 内联全限定路径调用
 ///
-/// VFS 侧 (`framework/fs/vfs/handle.rs`) 若 `use crate::framework::proc::...`
+/// VFS 侧 (`services/fs/handle.rs`) 若 `use crate::framework::proc::...`
 /// 会新增 `fs → proc` 的 `use` 依赖, 触发耦合审计; 以
 /// `crate::framework::proc::with_current_fd_table(...)` 内联路径调用可绕开
-/// (先例: `crate::framework::fs::flock_release_pid`).
+/// (先例: `crate::services::fs::flock_release_pid`).
 pub fn with_current_fd_table<F, R>(f: F) -> Option<R>
 where
     F: FnOnce(&super::process::FdTable) -> R,

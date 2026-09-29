@@ -358,6 +358,9 @@ pub fn cont(pid: crate::framework::proc::Pid) -> SignalResult<()> {
 mod tests {
     use super::*;
 
+    /// 越界用户指针 (`>= USER_ADDR_MAX`): 被 `check_user_buf` 拒绝而非解引用
+    const BAD_USER_PTR: u64 = 0x8000_0000_0000_0000;
+
     #[test]
     fn signal_round_trip() {
         assert_eq!(Signal::standard(StandardSignal::Int).number(), 2);
@@ -419,6 +422,53 @@ mod tests {
 
         let rt = Signal::realtime(0);
         assert_eq!(rt.to_bit(), 1u64 << 32);
+    }
+
+    /// 临时信号屏蔽字替换/恢复 (`ppoll` / `epoll_pwait` 共用策略)
+    ///
+    /// 本用例读取/改写当前进程屏蔽字; 与 `services::fs` 的临时进程用例 (会改写
+    /// 全局 `SCHEDULER.current`) 由 cargo test runner 并行执行, 若读到正在拆除
+    /// 的临时进程将触发 use-after-free, 故共享 `FS_PROC_TEST_LOCK` 串行化.
+    #[test]
+    fn test_temporary_sigmask_swap() {
+        use crate::framework::proc::{
+            get_blocked_mask, process_get_current_pid, sanitize_blocked_mask, set_blocked_mask,
+        };
+
+        let _lock = crate::services::fs::FS_GLOBAL_TEST_LOCK.lock();
+
+        // sigmask == NULL: 直接执行, sigsetsize 不参与校验
+        assert_eq!(
+            with_temporary_sigmask(0, 99, || Ok(7)),
+            Ok(7),
+            "sigmask=NULL 应透传闭包结果"
+        );
+
+        // 不可屏蔽信号位被剔除
+        assert_eq!(
+            sanitize_blocked_mask(u64::MAX),
+            !((1u64 << 9) | (1u64 << 19)),
+            "SIGKILL/SIGSTOP 位应被剔除"
+        );
+
+        // 有当前进程时: 替换 → 闭包内可见新掩码 → 返回后恢复
+        let pid = process_get_current_pid();
+        if pid != 0 {
+            let original = get_blocked_mask(pid);
+            // sigmask 指针越界 → EFAULT (此处仅验证错误路径不污染原掩码)
+            let err = with_temporary_sigmask(BAD_USER_PTR, 8, || Ok(9));
+            assert!(err.is_err(), "非法 sigmask 指针应返回错误");
+            assert_eq!(get_blocked_mask(pid), original, "错误路径不应改变屏蔽字");
+        }
+        // sigsetsize != 8 → EINVAL (sigmask 非 NULL 时校验)
+        match with_temporary_sigmask(BAD_USER_PTR, 4, || Ok(9)) {
+            Err(crate::framework::syscall::Errno::EINVAL) => {}
+            _ => panic!("sigsetsize != 8 应返回 EINVAL"),
+        }
+        // 恢复现场 (测试自身不留残余屏蔽字)
+        if pid != 0 {
+            set_blocked_mask(pid, 0);
+        }
     }
 }
 

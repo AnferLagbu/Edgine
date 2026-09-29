@@ -1,10 +1,14 @@
-//! 全局 OpenFile 表 — framework 层完整实现
+//! 全局 OpenFile 表 — services 策略实现
 //!
-//! ## B09-12/DECISION-H13 P1-B5 迁移记录 (2026-08-31)
+//! ## 阶段 4b 归属收敛 (当前权威)
 //!
-//! OpenFileTable 是 VFS 打开文件表机制, 按"机制归 framework"原则从
-//! `services::fs::open_file_table` 迁回本文件. 0 语义变更.
-//! `services::fs::open_file_table` 改为 re-export 本文件保持调用方兼容.
+//! 自阶段 4b 起 OpenFileTable 实装归 `services::fs::open_file_table`,
+//! framework 侧不再持有打开文件表。
+//!
+//! ## B09-12/DECISION-H13 P1-B5 迁移记录 (2026-08-31) — 已被阶段 4b 取代
+//!
+//! 当时按"机制归 framework"原则将 OpenFileTable 迁回 framework; 阶段 4b
+//! 依 Minimalism 准则再次下沉 services, 上述归属已失效。
 //!
 //! 存储所有打开的文件描述 (OpenFile), 通过 handle_id 引用.
 //! dup() 通过引用计数共享 OpenFile, 实现 POSIX 共享 offset 语义.

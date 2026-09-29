@@ -220,13 +220,12 @@ pub fn wasi_fd_stat_get(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
     };
 
     // 调用 VFS fstat 获取文件信息
-    let stat =
-        if let Some(s) = crate::services::fs::api::vfs_fstat_safe(entry.inner_fd as u32, 0) {
-            s
-        } else {
-            interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
-            return Ok(());
-        };
+    let stat = if let Some(s) = crate::services::fs::api::vfs_fstat_safe(entry.inner_fd as u32, 0) {
+        s
+    } else {
+        interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
+        return Ok(());
+    };
 
     // 写入 WASI filestat 结构到线性内存
     // filestat: { dev: u64, ino: u64, filetype: u8, nlink: u64, size: u64, atim: u64, mtim: u64, ctim: u64 }
@@ -509,10 +508,8 @@ pub fn wasi_fd_allocate(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
     let current_size = stat.map_or(0, |s| u64::from(s.size));
     if current_size < target_size {
         // 文件需要扩展, 使用 truncate
-        let trunc_result = crate::services::fs::api::vfs_truncate_internal(
-            entry.inner_fd as u32,
-            target_size,
-        );
+        let trunc_result =
+            crate::services::fs::api::vfs_truncate_internal(entry.inner_fd as u32, target_size);
         if trunc_result < 0 {
             interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
             return Ok(());
@@ -630,10 +627,8 @@ pub fn wasi_fd_readdir(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resul
 
     // 调用 VFS readdir
     let mut dir_entry = crate::services::fs::vfs_types::VfsDirEntry::default();
-    let result = crate::services::fs::api::vfs_readdir(
-        entry.inner_fd as u32,
-        &mut dir_entry as *mut _,
-    );
+    let result =
+        crate::services::fs::api::vfs_readdir(entry.inner_fd as u32, &mut dir_entry as *mut _);
 
     if result < 0 {
         write_u32_to_memory(interp, buf_used_ptr, 0);

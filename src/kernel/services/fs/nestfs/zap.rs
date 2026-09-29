@@ -203,3 +203,95 @@ impl NestZap {
         self.entries.lock().clear();
     }
 }
+
+// DECISION-080: ZAP 纯逻辑断言 (插入/查询/删除/容量) 以本文件源侧 #[cfg(test)] 为唯一归属.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==== 基础插入 / 查询 ====
+
+    /// 插入后应能按名查回同一值.
+    #[test]
+    fn test_zap_insert_lookup() {
+        let zap = NestZap::new();
+        zap.insert_u64("key1", 42);
+        let Some(val) = zap.lookup_u64("key1") else {
+            panic!("key1 not found");
+        };
+        assert_eq!(val, 42, "value mismatch");
+    }
+
+    /// 重复插入同名键应覆盖旧值.
+    #[test]
+    fn test_zap_overwrite() {
+        let zap = NestZap::new();
+        zap.insert_u64("key1", 10);
+        zap.insert_u64("key1", 99);
+        let Some(val) = zap.lookup_u64("key1") else {
+            panic!("key1 not found after overwrite");
+        };
+        assert_eq!(val, 99, "overwrite should set 99");
+    }
+
+    /// 查询不存在的键应返回 None.
+    #[test]
+    fn test_zap_nonexistent() {
+        let zap = NestZap::new();
+        assert!(
+            zap.lookup_u64("no_such_key").is_none(),
+            "nonexistent should be None"
+        );
+    }
+
+    // ==== 删除 / 容量 / 清空 ====
+
+    /// remove 后键应不可查, 删除前应可查.
+    #[test]
+    fn test_zap_remove() {
+        let zap = NestZap::new();
+        zap.insert_u64("rm_me", 7);
+        assert!(
+            zap.lookup_u64("rm_me").is_some(),
+            "should exist before remove"
+        );
+        zap.remove("rm_me");
+        assert!(
+            zap.lookup_u64("rm_me").is_none(),
+            "should not exist after remove"
+        );
+    }
+
+    /// 大批量键插入后应全部可查回.
+    #[test]
+    fn test_zap_large_namespace() {
+        let zap = NestZap::with_capacity(64);
+        for i in 0..30u64 {
+            let key = alloc::format!("key_{i}");
+            zap.insert_u64(&key, i * 100);
+        }
+        assert_eq!(zap.len(), 30, "zap should have 30 entries");
+
+        for i in 0..30u64 {
+            let key = alloc::format!("key_{i}");
+            let Some(val) = zap.lookup_u64(&key) else {
+                panic!("key not found");
+            };
+            assert_eq!(val, i * 100, "value mismatch");
+        }
+    }
+
+    /// contains 与 clear 语义应一致.
+    #[test]
+    fn test_zap_contains_clear() {
+        let zap = NestZap::new();
+        zap.insert_u64("test", 42);
+        assert!(zap.contains("test"), "should contain test");
+        assert!(!zap.contains("other"), "should not contain other");
+        assert!(!zap.is_empty(), "should not be empty");
+
+        zap.clear();
+        assert!(zap.is_empty(), "should be empty after clear");
+        assert!(!zap.contains("test"), "should not contain after clear");
+    }
+}

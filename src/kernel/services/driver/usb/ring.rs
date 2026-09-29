@@ -31,8 +31,8 @@
 //!
 //! See also: `xhci.rs` 第 3 组 (USB-1.1~1.4) 寄存器操作 + `enumerate.rs` 第 4 组 (USB-1.6) 设备枚举
 
-use crate::framework::driver::framework::{DriverError, Result};
 use super::xhci::{Trb, TrbType};
+use crate::framework::driver::framework::{DriverError, Result};
 use alloc::vec;
 use alloc::vec::Vec;
 

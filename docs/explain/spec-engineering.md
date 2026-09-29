@@ -58,7 +58,7 @@
 
 ### 10 文档
 
-4 条文档规则：10.1 修改模块接口或依赖关系时，必须同步更新 guide-dev.md 和 audit-*.md；10.2 公共 API 必中文文档注释（clippy missing_docs_in_crate_items）；10.3 plan/ 文档按新规则（标题+章节+条目描述+方案+状态+详情）；10.4 commit message 记录变更。
+4 条文档规则：10.1 修改模块接口或依赖关系时，必须同步更新 guide-dev.md 和 audit-*.md（新审计/报告写 docs/report/, 历史文档留在 docs/plan/）；10.2 公共 API 必中文文档注释（clippy missing_docs_in_crate_items）；10.3 plan/ 文档按新规则（标题+章节+条目描述+方案+状态+详情）；10.4 commit message 记录变更。
 
 ### 11 多架构
 

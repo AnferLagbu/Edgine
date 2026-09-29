@@ -220,11 +220,7 @@ pub fn unpack(data: &[u8]) -> Result<usize, &'static str> {
                 // 符号链接: entry.data 是链接目标
                 // 真实实现: 在 linkpath 父目录下建 Symlink 类型新节点.
                 if !entry.data.is_empty() {
-                    crate::services::fs::vfs_symlink(
-                        entry.data.as_ptr(),
-                        path_buf.as_ptr(),
-                        pwm,
-                    );
+                    crate::services::fs::vfs_symlink(entry.data.as_ptr(), path_buf.as_ptr(), pwm);
                 }
             }
             _ => {
@@ -248,79 +244,72 @@ pub fn unpack(data: &[u8]) -> Result<usize, &'static str> {
 // 内核测试
 // ============================================================================
 
-#[cfg(feature = "kernel_test")]
-fn test_cpio_parse_hex() -> crate::framework::tests::TestResult {
-    use crate::framework::tests::{TestResult, assert_eq_test};
-    assert_eq_test!(parse_hex_field(b"00000000"), 0u32, "hex 0");
-    assert_eq_test!(parse_hex_field(b"00000001"), 1u32, "hex 1");
-    assert_eq_test!(parse_hex_field(b"0000000A"), 10u32, "hex A");
-    assert_eq_test!(parse_hex_field(b"00000100"), 256u32, "hex 100");
-    assert_eq_test!(parse_hex_field(b"000081A4"), 0x81A4u32, "hex 81A4");
-    TestResult::Pass
-}
+// 阶段 4c: 原 kernel_test 注册回调 (register_initramfs_tests) 改写为源侧
+// #[cfg(test)] — cpio 头解析/对齐均为纯逻辑断言, host 侧 cargo test 为唯一
+// 归属 (DECISION-080).
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[cfg(feature = "kernel_test")]
-fn test_cpio_align4() -> crate::framework::tests::TestResult {
-    use crate::framework::tests::{TestResult, assert_eq_test};
-    assert_eq_test!(align4(0), 0, "align4(0)");
-    assert_eq_test!(align4(1), 4, "align4(1)");
-    assert_eq_test!(align4(3), 4, "align4(3)");
-    assert_eq_test!(align4(4), 4, "align4(4)");
-    assert_eq_test!(align4(5), 8, "align4(5)");
-    assert_eq_test!(align4(110), 112, "align4(110)");
-    TestResult::Pass
-}
-
-#[cfg(feature = "kernel_test")]
-fn test_cpio_parse_minimal() -> crate::framework::tests::TestResult {
-    use crate::framework::tests::{TestResult, check};
-    // 构造一个最小的 cpio 归档: 一个空目录 + TRAILER
-    let mut archive = [0u8; 256];
-
-    // 目录 "test" 的 Header (namesize=5, mode=0o040755, filesize=0)
-    let header = &mut archive[0..110];
-    header[0..6].copy_from_slice(b"070701"); // magic
-    header[6..14].copy_from_slice(b"00000000"); // ino
-    header[14..22].copy_from_slice(b"000041ED"); // mode = 0o40755 = 0x41ED
-    header[22..30].copy_from_slice(b"00000000"); // uid
-    header[30..38].copy_from_slice(b"00000000"); // gid
-    header[38..46].copy_from_slice(b"00000002"); // nlink
-    header[46..54].copy_from_slice(b"00000000"); // mtime
-    header[54..62].copy_from_slice(b"00000000"); // filesize
-    header[62..70].copy_from_slice(b"00000000"); // devmajor
-    header[70..78].copy_from_slice(b"00000000"); // devminor
-    header[78..86].copy_from_slice(b"00000000"); // rdevmajor
-    header[86..94].copy_from_slice(b"00000000"); // rdevminor
-    header[94..102].copy_from_slice(b"00000005"); // namesize = 5
-    header[102..110].copy_from_slice(b"00000000"); // check
-
-    // Filename "test\0"
-    archive[110..115].copy_from_slice(b"test\0");
-
-    // TRAILER 条目位于偏移 116 (按 4 字节对齐: 110 + 5 + 1 = 116)
-    let trailer_offset = align4(110 + 5); // = 116
-    let trailer = &mut archive[trailer_offset..trailer_offset + 110];
-    trailer[0..6].copy_from_slice(b"070701");
-    // cpio newc 格式 namesize 含结尾 NUL: "TRAILER!!!"(10) + NUL = 11 = 0xB
-    trailer[94..102].copy_from_slice(b"0000000B"); // namesize = 11
-    // filename "TRAILER!!!\0" (11 字节)
-    archive[trailer_offset + 110..trailer_offset + 121].copy_from_slice(b"TRAILER!!!\0");
-
-    let result = parse_next_entry(&archive, 0);
-    check!(result.is_some(), "parse first entry");
-    if let Some((entry, _next)) = result {
-        check!(entry.name == b"test", "entry name = test");
-        check!((entry.mode & CPIO_S_IFMT) == CPIO_S_IFDIR, "entry is dir");
-        check!(entry.data.is_empty(), "dir has no data");
+    #[test]
+    fn test_cpio_parse_hex() {
+        assert_eq!(parse_hex_field(b"00000000"), 0u32, "hex 0");
+        assert_eq!(parse_hex_field(b"00000001"), 1u32, "hex 1");
+        assert_eq!(parse_hex_field(b"0000000A"), 10u32, "hex A");
+        assert_eq!(parse_hex_field(b"00000100"), 256u32, "hex 100");
+        assert_eq!(parse_hex_field(b"000081A4"), 0x81A4u32, "hex 81A4");
     }
-    TestResult::Pass
-}
 
-#[cfg(feature = "kernel_test")]
-pub fn register_initramfs_tests() {
-    use crate::framework::tests::runner;
-    let r = runner();
-    r.register("initramfs", "parse_hex", test_cpio_parse_hex);
-    r.register("initramfs", "align4", test_cpio_align4);
-    r.register("initramfs", "parse_minimal", test_cpio_parse_minimal);
+    #[test]
+    fn test_cpio_align4() {
+        assert_eq!(align4(0), 0, "align4(0)");
+        assert_eq!(align4(1), 4, "align4(1)");
+        assert_eq!(align4(3), 4, "align4(3)");
+        assert_eq!(align4(4), 4, "align4(4)");
+        assert_eq!(align4(5), 8, "align4(5)");
+        assert_eq!(align4(110), 112, "align4(110)");
+    }
+
+    #[test]
+    fn test_cpio_parse_minimal() {
+        // 构造一个最小的 cpio 归档: 一个空目录 + TRAILER
+        let mut archive = [0u8; 256];
+
+        // 目录 "test" 的 Header (namesize=5, mode=0o040755, filesize=0)
+        let header = &mut archive[0..110];
+        header[0..6].copy_from_slice(b"070701"); // magic
+        header[6..14].copy_from_slice(b"00000000"); // ino
+        header[14..22].copy_from_slice(b"000041ED"); // mode = 0o40755 = 0x41ED
+        header[22..30].copy_from_slice(b"00000000"); // uid
+        header[30..38].copy_from_slice(b"00000000"); // gid
+        header[38..46].copy_from_slice(b"00000002"); // nlink
+        header[46..54].copy_from_slice(b"00000000"); // mtime
+        header[54..62].copy_from_slice(b"00000000"); // filesize
+        header[62..70].copy_from_slice(b"00000000"); // devmajor
+        header[70..78].copy_from_slice(b"00000000"); // devminor
+        header[78..86].copy_from_slice(b"00000000"); // rdevmajor
+        header[86..94].copy_from_slice(b"00000000"); // rdevminor
+        header[94..102].copy_from_slice(b"00000005"); // namesize = 5
+        header[102..110].copy_from_slice(b"00000000"); // check
+
+        // Filename "test\0"
+        archive[110..115].copy_from_slice(b"test\0");
+
+        // TRAILER 条目位于偏移 116 (按 4 字节对齐: 110 + 5 + 1 = 116)
+        let trailer_offset = align4(110 + 5); // = 116
+        let trailer = &mut archive[trailer_offset..trailer_offset + 110];
+        trailer[0..6].copy_from_slice(b"070701");
+        // cpio newc 格式 namesize 含结尾 NUL: "TRAILER!!!"(10) + NUL = 11 = 0xB
+        trailer[94..102].copy_from_slice(b"0000000B"); // namesize = 11
+        // filename "TRAILER!!!\0" (11 字节)
+        archive[trailer_offset + 110..trailer_offset + 121].copy_from_slice(b"TRAILER!!!\0");
+
+        let result = parse_next_entry(&archive, 0);
+        assert!(result.is_some(), "parse first entry");
+        if let Some((entry, _next)) = result {
+            assert!(entry.name == b"test", "entry name = test");
+            assert!((entry.mode & CPIO_S_IFMT) == CPIO_S_IFDIR, "entry is dir");
+            assert!(entry.data.is_empty(), "dir has no data");
+        }
+    }
 }

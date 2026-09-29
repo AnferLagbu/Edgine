@@ -394,7 +394,8 @@ pub extern "C" fn vfs_write_internal(fd_idx: u32, buf: *const u8, count: u32) ->
 
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
         // O_APPEND: 写入前自动 seek 到文件末尾 (POSIX 原子 append)
-        let offset = if (open_file.get_flags() & super::vfs_types::VfsOpenFlags::APPEND.bits()) != 0 {
+        let offset = if (open_file.get_flags() & super::vfs_types::VfsOpenFlags::APPEND.bits()) != 0
+        {
             open_file
                 .inode()
                 .stat(open_file.pwm)

@@ -1,18 +1,19 @@
 #![deny(unsafe_code)]
 //! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 framework API。
-//! 设备文件系统 (`DevFS`) — framework 机制实现
+//! 设备文件系统 (`DevFS`) — services 策略实现
 //!
-//! ## DECISION-J 归属反转记录 (2026-09-13)
+//! ## 阶段 4b 归属收敛 (当前权威)
+//!
+//! 自阶段 4b 起 DevFS 实装归 `services::fs` (依 Minimalism 准则下沉),
+//! framework 侧不再持有设备表。依赖闭包: IrqSpinLock/OnceLock 经
+//! framework safe API, Inode trait 归 `services::fs::inode`, 0 unsafe。
+//!
+//! ## DECISION-J 归属反转记录 (2026-09-13) — 已被阶段 4b 取代
 //!
 //! 实现曾于 E6-7 (2026-06-10) 迁至 `services::fs::devfs`, framework 侧仅
-//! re-export。按"机制持有的数据结构归 framework"统一判据反转：DevFS 设备
-//! 表被 framework VFS 挂载机制内联消费 (vfs/mount.rs 直接引用
-//! `DEVFS_DATA`/`DevfsData`), 设备表是 VFS 机制状态的一部分 — 属机制项,
-//! 迁回。依赖闭包闭合: IrqSpinLock/OnceLock/Inode trait 均为 framework
-//! 项 (Inode trait 已于 B09-12 迁回 framework::fs::vfs::inode), 0 unsafe。
-//!
-//! services 侧改 `pub use crate::services::fs::devfs::*`
-//! 保持 API 兼容 (services→framework 合法方向)。
+//! re-export。当时按"机制持有的数据结构归 framework"统一判据反转, 将
+//! DevFS 设备表 (被 framework VFS 挂载机制内联消费) 迁回 framework; 阶段
+//! 4b 依 Minimalism 准则再次下沉 services, 上述反转已失效。
 //!
 //! ## 设计原则
 //!
@@ -869,5 +870,167 @@ impl FileSystem for DevfsData {
             inode_id as u8,
             mount_idx,
         )))
+    }
+}
+
+// ============================================================================
+// 单元测试 (仅纯逻辑, `cargo test --features host-test --lib` 唯一一份)
+// ============================================================================
+
+// 4c-B2: 由 framework/tests/test_devfs.rs 迁入。用例一律使用局部 `DevfsData::new()`
+// 实例, 不触碰全局 `DEVFS_DATA`, 故天然并行安全、顺序无关; 仅
+// `test_devfs_register_standard` 覆盖全局入口, 采用幂等注册 + 只读 open 断言。
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_devfs_mount() {
+        let devfs = DevfsData::new();
+        assert_eq!(devfs.mount("/dev"), 0, "devfs mount failed");
+        // E6-9a: mount 不再硬编码设备, 需显式注册标准设备
+        assert!(
+            devfs.register_device("null", DevKind::Null as u8).is_ok(),
+            "register null"
+        );
+        assert!(
+            devfs.register_device("zero", DevKind::Zero as u8).is_ok(),
+            "register zero"
+        );
+        assert!(
+            devfs
+                .register_device("console", DevKind::Console as u8)
+                .is_ok(),
+            "register console"
+        );
+        assert!(
+            devfs.register_device("tty", DevKind::Tty as u8).is_ok(),
+            "register tty"
+        );
+        assert!(
+            devfs.register_device("credo", DevKind::Credo as u8).is_ok(),
+            "register credo"
+        );
+        assert_eq!(devfs.device_count(), 5, "expected 5 standard devices");
+    }
+
+    #[test]
+    fn test_devfs_open_default_devices() {
+        let devfs = DevfsData::new();
+        assert!(devfs.register_device("null", DevKind::Null as u8).is_ok());
+        assert!(devfs.register_device("zero", DevKind::Zero as u8).is_ok());
+        assert!(
+            devfs
+                .register_device("console", DevKind::Console as u8)
+                .is_ok()
+        );
+        assert!(devfs.register_device("tty", DevKind::Tty as u8).is_ok());
+        assert!(devfs.open("null").is_some(), "should open null");
+        assert!(devfs.open("zero").is_some(), "should open zero");
+        assert!(devfs.open("console").is_some(), "should open console");
+        assert!(devfs.open("tty").is_some(), "should open tty");
+        assert!(
+            devfs.open("nonexistent").is_none(),
+            "should not open nonexistent device"
+        );
+    }
+
+    #[test]
+    fn test_devfs_read_null() {
+        let devfs = DevfsData::new();
+        let mut buf = [0xAAu8; 16];
+        let n = devfs.read(0, &mut buf);
+        assert_eq!(n, 0, "null device should return 0 bytes");
+    }
+
+    #[test]
+    fn test_devfs_read_zero() {
+        let devfs = DevfsData::new();
+        let mut buf = [0xFFu8; 16];
+        let n = devfs.read(1, &mut buf);
+        assert_eq!(n, 16, "zero device should fill buffer");
+        assert_eq!(buf, [0u8; 16], "zero device should fill with zeros");
+    }
+
+    #[test]
+    fn test_devfs_register_device() {
+        let devfs = DevfsData::new();
+        let count_before = devfs.device_count();
+        let result = devfs.register_device("testdev", 10);
+        // I-20: register_device 改 KernelResult, 0 → Ok(()), -1 → Err(_)
+        assert!(result.is_ok(), "register_device should succeed");
+        assert_eq!(
+            devfs.device_count(),
+            count_before + 1,
+            "device count should increase"
+        );
+        assert!(
+            devfs.open("testdev").is_some(),
+            "should open newly registered device"
+        );
+    }
+
+    #[test]
+    fn test_devfs_unregister_device() {
+        let devfs = DevfsData::new();
+        let _ = devfs.register_device("tempdev", 20);
+        let count_before = devfs.device_count();
+        let result = devfs.unregister_device("tempdev");
+        // I-20: unregister_device 改 KernelResult
+        assert!(result.is_ok(), "unregister_device should succeed");
+        assert_eq!(
+            devfs.device_count(),
+            count_before - 1,
+            "device count should decrease"
+        );
+        assert!(
+            devfs.open("tempdev").is_none(),
+            "should not open unregistered device"
+        );
+    }
+
+    #[test]
+    fn test_devfs_register_duplicate() {
+        let devfs = DevfsData::new();
+        assert!(devfs.register_device("null", 0).is_ok());
+        // I-20: 重复注册从 `== -1` 改为 AlreadyExists (KernelError 变体)
+        let result = devfs.register_device("null", 0);
+        assert!(
+            matches!(result, Err(KernelError::AlreadyExists)),
+            "registering duplicate should return AlreadyExists"
+        );
+    }
+
+    #[test]
+    fn test_devfs_unregister_nonexistent() {
+        let devfs = DevfsData::new();
+        // I-20: 注销不存在从 `== -1` 改为 NotFound
+        let result = devfs.unregister_device("nonexistent_dev");
+        assert!(
+            matches!(result, Err(KernelError::FileNotFound)),
+            "unregistering nonexistent should return NotFound"
+        );
+    }
+
+    #[test]
+    fn test_devfs_readdir() {
+        let devfs = DevfsData::new();
+        assert!(devfs.register_device("null", 0).is_ok());
+        let first = devfs.readdir(0);
+        assert!(first.is_some(), "readdir(0) should return a device");
+        let beyond = devfs.readdir(DEVFS_MAX_DEVICES + 10);
+        assert!(beyond.is_none(), "readdir beyond count should return None");
+    }
+
+    /// 全局 `register_standard()` 入口 — 幂等注册 + 只读 open 顺序无关断言。
+    #[test]
+    fn test_devfs_register_standard() {
+        init_global();
+        // 幂等: 重复注册返回 AlreadyExists, 由 register_standard 内部忽略
+        register_standard();
+        let g = global();
+        for name in ["null", "zero", "console", "tty", "credo"] {
+            assert!(g.open(name).is_ok(), "global devfs should open {name}");
+        }
     }
 }

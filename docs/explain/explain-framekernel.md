@@ -105,7 +105,7 @@ TCB 边界。TCB = framework 的所有 unsafe 块 + 围绕它们的 safe API 类
 
 ### 改 framework 是大改
 
-任何 framework 的 unsafe 块改动需重新审视下游 services。提交前补 docs/plan/audit-*.md 审计。
+任何 framework 的 unsafe 块改动需重新审视下游 services。提交前补 docs/report/audit-*.md 审计（历史审计文档仍在 docs/plan/ 原位保留）。
 
 ### 不要把内层抽象暴露成 framework 公开 API
 

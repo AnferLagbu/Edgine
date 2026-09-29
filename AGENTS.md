@@ -82,13 +82,13 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 
 ```
 Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
- ├─ 否 → services（纯策略/功能）✅
+ ├─ 否 → services（纯策略/功能）
  └─ 是 → Q2: 它是"机制"还是"功能"？
-       ├─ 机制（页表/上下文切换/寄存器原语/同步/安全代理）→ framework ✅
+       ├─ 机制（页表/上下文切换/寄存器原语/同步/安全代理）→ framework
        └─ 功能（驱动/文件系统/网络栈/进程/信号/syscall）→ Q3
              Q3: 能否封装为 safe API 供 services 用？
               ├─ 能 → framework 留机制原语 + 封装 safe API（IoMem/IoPort/
-             │        DmaStream/UserPtr），功能实现在 services（0 unsafe）✅
+             │        DmaStream/UserPtr），功能实现在 services（0 unsafe）
               └─ 不能（self-referential / FFI ABI / 中断上下文）→ framework 薄层
 ```
 
@@ -127,6 +127,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 - **`docs/plan/`**（任务规划）：强制使用结构化格式 — 每条目 = `描述：` + `方案：` + `状态：[]/[X]` + 可选 `详情：`
 - **`docs/explain/`**（描述性说明）：**禁用**结构化字段；采用 H1/H2 + 自然段落 + 表格 + 代码片段 + 列表的自由描述风格
+- **`docs/report/`**（结果报告：诊断/审计/评估/测试/性能等）：内容描述规则与 explain 一致（自由描述风格，禁结构化字段与状态标记）；定位为"某次执行结果的一次性快照"，发布即冻结. 历史 audit-* 仍在 `docs/plan/` 原位保留, 新报告写 `docs/report/`
 - **`docs/plan/archive/`**：保留所有历史格式（含日期），作为历史快照不再修改
 
 **核心原则**: 文档状态由 git 提交历史承载（`git log -- <path>` / `git blame`），不在文档内写日期；文件名不带日期前缀.
@@ -164,9 +165,9 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 **禁止行为**：
 
-- ❌ 在未查询状态下硬编码 `origin` / `main` / `git push` / `git pull --rebase` 等命令
-- ❌ 假设远程默认分支是 `main`（可能是 `master` / `develop` 等）
-- ❌ 假设 remote 名称（可能是 `origin` / `upstream` / 其他）
+- 在未查询状态下硬编码 `origin` / `main` / `git push` / `git pull --rebase` 等命令
+- 假设远程默认分支是 `main`（可能是 `master` / `develop` 等）
+- 假设 remote 名称（可能是 `origin` / `upstream` / 其他）
 
 **示例**（流程而非命令模板）：
 

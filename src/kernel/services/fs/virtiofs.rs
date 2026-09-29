@@ -2,7 +2,7 @@
 //! virtiofs — virtio 文件系统 (VM 通信)
 //!
 //! @SAFE: 本文件不含 unsafe 代码。
-//! 所有 unsafe 操作已委托至 `framework::fs::vfs::api`。
+//! 所有 unsafe 操作已委托至 `services::fs::api`。
 //!
 //! ## 职责
 //!

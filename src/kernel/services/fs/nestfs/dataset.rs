@@ -202,3 +202,34 @@ impl NestDataset {
         self.ref_count.load(Ordering::Relaxed)
     }
 }
+
+// DECISION-080: 数据集纯逻辑断言以本文件源侧 #[cfg(test)] 为唯一归属
+// (host 可编译, 不再占用 kernel_test 注册表轨).
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==== 数据集基础语义 ====
+
+    /// 新建数据集应为 Creating 状态, init 后转为 Active 且可写.
+    #[test]
+    fn test_dataset_create() {
+        let ds = NestDataset::new(1, "test-ds", 0);
+        assert_eq!(ds.get_name(), "test-ds", "dataset name mismatch");
+        assert!(
+            !ds.is_active(),
+            "new dataset should be Creating (not active)"
+        );
+        ds.init(0);
+        assert!(ds.is_active(), "dataset should be active after init");
+        assert!(ds.is_writeable(), "dataset should be writeable after init");
+    }
+
+    /// init 后应能读取已用空间.
+    #[test]
+    fn test_dataset_init() {
+        let ds = NestDataset::new(2, "init-ds", 0);
+        ds.init(0);
+        let _used = ds.get_used();
+    }
+}

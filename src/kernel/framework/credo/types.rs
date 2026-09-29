@@ -479,12 +479,16 @@ impl PwmEntry {
         PwmEntrySnapshot {
             pwm: self.pwm.load(core::sync::atomic::Ordering::Acquire),
             creator_pwm: self.creator_pwm.load(core::sync::atomic::Ordering::Acquire),
-            privilege_level: self.privilege_level.load(core::sync::atomic::Ordering::Acquire),
+            privilege_level: self
+                .privilege_level
+                .load(core::sync::atomic::Ordering::Acquire),
             flags: self.flags.load(core::sync::atomic::Ordering::Acquire),
             caps,
             note,
             password_hash,
-            created_time: self.created_time.load(core::sync::atomic::Ordering::Acquire),
+            created_time: self
+                .created_time
+                .load(core::sync::atomic::Ordering::Acquire),
             expires_at: self.expires_at.load(core::sync::atomic::Ordering::Acquire),
         }
     }

@@ -856,10 +856,8 @@ pub extern "C" fn kernel_init() {
                     .spa
                     .disk_present
                     .store(true, core::sync::atomic::Ordering::Release);
-                let r = crate::services::fs::api::vfs_mount_internal(
-                    b"/".as_ptr(),
-                    b"nestfs".as_ptr(),
-                );
+                let r =
+                    crate::services::fs::api::vfs_mount_internal(b"/".as_ptr(), b"nestfs".as_ptr());
                 if r == 0 {
                     let n_drives = crate::services::fs::nestfs::nestfs::get_nestfs()
                         .drives_discovered

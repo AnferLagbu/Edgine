@@ -306,3 +306,38 @@ impl NestZil {
         self.records.lock().len()
     }
 }
+
+// DECISION-080: ZIL 记录构造 / 提交纯逻辑断言以本文件源侧 #[cfg(test)] 为唯一归属.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 创建记录应带上正确的事务号与父对象.
+    #[test]
+    fn test_zil_record_create() {
+        let rec = NestZilRecord::new_create(1, 0, "test_file");
+        assert_eq!(rec.txg, 1, "txg mismatch");
+        assert_eq!(rec.obj_id, 0, "obj_id should be 0");
+    }
+
+    /// 写记录应带上正确的事务号与对象号.
+    #[test]
+    fn test_zil_record_write() {
+        let rec = NestZilRecord::new_write(2, 10, 0, 1024);
+        assert_eq!(rec.txg, 2, "txg mismatch");
+        assert_eq!(rec.obj_id, 10, "obj_id mismatch");
+    }
+
+    /// add_record + sync 后提交序号应推进.
+    #[test]
+    fn test_zil_add_and_sync() {
+        let zil = NestZil::new();
+        zil.init();
+        zil.add_record(NestZilRecord::new_write(1, 5, 0, 512));
+        zil.sync(1);
+        assert!(
+            zil.committed_seq.load(Ordering::SeqCst) >= 1,
+            "committed_seq should advance"
+        );
+    }
+}

@@ -252,3 +252,60 @@ impl NestTxgGroup {
         }
     }
 }
+
+// DECISION-080: TXG 事务组 / 状态机纯逻辑断言以本文件源侧 #[cfg(test)] 为唯一归属.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==== 事务组生命周期 ====
+
+    /// init 后 current txg 至少为起始值.
+    #[test]
+    fn test_txg_group_init() {
+        let mut tg = NestTxgGroup::new();
+        tg.init(1);
+        assert!(tg.current_txg() >= 1, "txg current should be at least 1");
+    }
+
+    /// transition 后 txg 应向前推进.
+    #[test]
+    fn test_txg_group_transition() {
+        let mut tg = NestTxgGroup::new();
+        tg.init(1);
+        let new_txg = tg.transition();
+        assert!(new_txg >= 2, "txg should advance");
+    }
+
+    // ==== 单个事务状态机 ====
+
+    /// 事务状态应随 open/quiesce/sync/commit 正确迁移.
+    #[test]
+    fn test_txg_states() {
+        let mut txg = NestTxg::new(1);
+        assert!(txg.is_open(), "new txg should default to Open");
+
+        txg.quiesce();
+        assert!(txg.is_quiescing(), "txg should be quiescing");
+
+        txg.sync_start();
+        assert!(txg.is_syncing(), "txg should be syncing");
+
+        txg.commit();
+        assert!(!txg.is_open(), "committed txg should not be open");
+    }
+
+    /// dirty 列表 drain 后应清空.
+    #[test]
+    fn test_txg_dirty_drain() {
+        let mut txg = NestTxg::new(1);
+        txg.open();
+        let bp = NestBlockPointer::null();
+        txg.add_dirty(bp);
+        txg.add_dirty(bp);
+        let dirty = txg.drain_dirty();
+        assert_eq!(dirty.len(), 2, "should have 2 dirty entries");
+        let dirty2 = txg.drain_dirty();
+        assert!(dirty2.is_empty(), "drain should clear entries");
+    }
+}

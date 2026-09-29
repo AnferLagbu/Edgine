@@ -30,8 +30,8 @@
 use super::{
     PageFlags, PageSize, PhysAddr, VirtAddr, get_kmalloc, get_kmalloc_mut, get_pmm, get_vmm,
 };
-use core::sync::atomic::AtomicU64;
 use alloc::vec::Vec;
+use core::sync::atomic::AtomicU64;
 
 /// 内核 malloc 统计结构 (C 兼容)
 #[repr(C)]

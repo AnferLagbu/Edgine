@@ -2,9 +2,9 @@
 //! @SAFE: 本文件不含 unsafe 代码。
 //! overlayfs 文件系统实现
 
+use crate::framework::sync::IrqSpinLock as Mutex;
 use crate::services::fs::KernelError;
 use crate::services::fs::ramfs_core::RamFsDirEntry;
-use crate::framework::sync::IrqSpinLock as Mutex;
 use crate::services::fs::vfs_manager::VFS_MANAGER;
 use crate::services::fs::vfs_types::{
     FileSystem, KernelResult, VFS_MAX_NAME, VfsDirEntry, VfsFileType, VfsSeekWhence, VfsStat,
@@ -329,7 +329,7 @@ impl OverlayFsData {
 
 /// overlayfs 文件系统实例 (全局单例)
 ///
-/// 用 `const fn empty()` 做 BSS 常量初始化 (同 `framework::fs::ramfs::RAMFS_DATA`
+/// 用 `const fn empty()` 做 BSS 常量初始化 (同 `services::fs::ramfs_core::RAMFS_DATA`
 /// 范式), 避免在内核栈上构造约 16 MiB 的 `OverlayFsData`。
 static OVERLAY_FS: Mutex<OverlayFsData> = Mutex::new(OverlayFsData::empty());
 

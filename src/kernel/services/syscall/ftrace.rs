@@ -30,8 +30,8 @@
 //! - `kgdb_enter` 要求串口已注册 (`kgdb_serial_ready`), 否则返回 `ENODEV`
 
 use crate::framework::debug::{
-    KgdbRegs, TraceEvent, ftrace_disable, ftrace_enable, ftrace_event_count,
-    ftrace_overflow_count, ftrace_pop_event, kgdb_breakpoint, kgdb_serial_ready,
+    KgdbRegs, TraceEvent, ftrace_disable, ftrace_enable, ftrace_event_count, ftrace_overflow_count,
+    ftrace_pop_event, kgdb_breakpoint, kgdb_serial_ready,
 };
 use crate::framework::mm::copy_user::copy_to_user;
 

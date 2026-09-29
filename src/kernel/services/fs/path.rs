@@ -19,10 +19,10 @@
 //! `resolve_user_path` 中先做视图归一化 (`..` 钳制在视图根内), 再拼接根前缀
 //! 得到真实路径. 默认根 "/" 时行为与改造前等价.
 
-use crate::services::fs::api as fw;
 use crate::framework::lib::CStrExt;
 use crate::framework::syscall::Errno;
 use crate::framework::syscall::raw;
+use crate::services::fs::api as fw;
 use crate::services::fs::vfs_manager::VFS_MANAGER;
 use crate::services::fs::vfs_types::{VFS_MAX_PATH, VfsFileType};
 

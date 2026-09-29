@@ -616,3 +616,32 @@ pub fn inotify_stats() -> (u64, u64) {
     let ops = INOTIFY_OPS.load(Ordering::Relaxed);
     (active, ops)
 }
+
+// ============================================================================
+// 单元测试 (DECISION-080 双轨: 纯逻辑测试归源侧 #[cfg(test)])
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::{IN_NONBLOCK, inotify_release, is_inotify_fd, sys_inotify_init1};
+
+    /// `inotify_init` 遗留接口等价 `inotify_init1(0)`
+    #[test]
+    fn test_inotify_init_legacy() {
+        let fd = sys_inotify_init1(0);
+        assert!(fd > 0, "inotify_init1(0) 应返回有效 fd");
+        assert!(is_inotify_fd(fd as i32), "fd 应为 inotify fd");
+        inotify_release(fd);
+
+        // flags 保留位非零 → EINVAL
+        assert_eq!(
+            sys_inotify_init1(IN_NONBLOCK | 0x10),
+            -22,
+            "非法 flags 应返回 EINVAL"
+        );
+        // IN_NONBLOCK 单独合法
+        let fd2 = sys_inotify_init1(IN_NONBLOCK);
+        assert!(fd2 > 0, "IN_NONBLOCK 应为合法 flags");
+        inotify_release(fd2);
+    }
+}

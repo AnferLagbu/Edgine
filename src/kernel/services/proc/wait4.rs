@@ -76,8 +76,11 @@ pub fn wait_reap(target_pid: i32, non_blocking: bool, keep_zombie: bool) -> Wait
         return WaitOutcome::NoChild;
     };
 
-    let state = api::process_with(child_pid, crate::framework::proc::process::Process::get_state)
-        .unwrap_or(ProcessState::Terminated);
+    let state = api::process_with(
+        child_pid,
+        crate::framework::proc::process::Process::get_state,
+    )
+    .unwrap_or(ProcessState::Terminated);
 
     if state != ProcessState::Zombie {
         if non_blocking {
@@ -87,9 +90,11 @@ pub fn wait_reap(target_pid: i32, non_blocking: bool, keep_zombie: bool) -> Wait
         // 影响面: 忙轮询带来额外调度开销, 无法精确唤醒; 何时需扩展: 引入进程级
         // wait_queue 后改为事件驱动唤醒.
         loop {
-            let state =
-                api::process_with(child_pid, crate::framework::proc::process::Process::get_state)
-                    .unwrap_or(ProcessState::Terminated);
+            let state = api::process_with(
+                child_pid,
+                crate::framework::proc::process::Process::get_state,
+            )
+            .unwrap_or(ProcessState::Terminated);
             if state == ProcessState::Zombie {
                 return reap_zombie(child_pid, keep_zombie);
             }
@@ -121,8 +126,11 @@ fn find_waitable_child(parent_pid: u32, target_pid: i32) -> Option<u32> {
 
     for &child in &children {
         let child_pid = child.0;
-        let state = api::process_with(child_pid, crate::framework::proc::process::Process::get_state)
-            .unwrap_or(ProcessState::Terminated);
+        let state = api::process_with(
+            child_pid,
+            crate::framework::proc::process::Process::get_state,
+        )
+        .unwrap_or(ProcessState::Terminated);
 
         // 只匹配未结束的子进程 (或 Zombie 用于收割)
         if state == ProcessState::Terminated {
@@ -367,10 +375,7 @@ mod tests {
         assert!(matches!(wait4_syscall(0x8000, 0, 0), Err(Errno::EINVAL)));
         assert!(matches!(wait4_syscall(-0x8001, 0, 0), Err(Errno::EINVAL)));
         // options 含非法位 → EINVAL
-        assert!(matches!(
-            wait4_syscall(-1, 0, 0x10),
-            Err(Errno::EINVAL)
-        ));
+        assert!(matches!(wait4_syscall(-1, 0, 0x10), Err(Errno::EINVAL)));
     }
 
     #[test]

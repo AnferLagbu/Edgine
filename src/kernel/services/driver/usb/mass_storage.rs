@@ -32,8 +32,8 @@
 //! - `usb/ring.rs` USB-1.5 (Bulk 端点 TRB 提交使用 Command Ring)
 //! - `services/driver/storage/ahci.rs` (ATA/SCSI 命令分发, 类似结构)
 
-use crate::framework::driver::framework::{DriverError, Result};
 use super::usb_core::{DeviceClass, UsbDevice};
+use crate::framework::driver::framework::{DriverError, Result};
 
 // ============================================================================
 // CBW / CSW 结构 (USB MSC BBB §3.1, §3.2)

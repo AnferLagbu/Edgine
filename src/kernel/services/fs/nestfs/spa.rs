@@ -466,3 +466,59 @@ impl NestSpa {
         self.txg_current.load(Ordering::Acquire)
     }
 }
+
+// DECISION-080: SPA 纯逻辑断言 (配置名 / uberblock) 以本文件源侧 #[cfg(test)] 为唯一归属.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==== SPA 配置 / Uberblock ====
+
+    /// 池名写入应以 NUL 截断并保留前缀.
+    #[test]
+    fn test_spa_config_name() {
+        let cfg = NestSpaConfig::new("test-pool");
+        let name = core::str::from_utf8(&cfg.name)
+            .unwrap_or("")
+            .trim_end_matches('\0');
+        assert!(name.starts_with("test-pool"), "expected test-pool prefix");
+    }
+
+    /// 空 uberblock magic 为 0, 应判定无效.
+    #[test]
+    fn test_spa_uberblock_null() {
+        let ub = NestUberblock::null();
+        assert!(!ub.is_valid(), "null uberblock should be invalid");
+    }
+
+    /// 计算校验和后应立即通过自校验.
+    #[test]
+    fn test_spa_uberblock_checksum() {
+        let mut ub = NestUberblock {
+            txg: 1,
+            root_bp: NestBlockPointer::null(),
+            timestamp: 100,
+            root_dataset_obj: 0,
+            pool_guid: 0xABCD,
+            checkpoint_txg: 0,
+            checksum: [0; 4],
+            magic: HV_SPA_MAGIC,
+            pwm_domain_id: 0,
+            _pad: [0; 2],
+        };
+        ub.compute_checksum();
+        assert!(ub.verify_checksum(), "checksum should verify");
+    }
+
+    /// magic 被篡改后应判定无效.
+    #[expect(
+        clippy::unreadable_literal,
+        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
+    )]
+    #[test]
+    fn test_spa_uberblock_invalid_magic() {
+        let mut ub = NestUberblock::null();
+        ub.magic = 0xDEADBEEF;
+        assert!(!ub.is_valid(), "wrong magic should be invalid");
+    }
+}

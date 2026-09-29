@@ -19,7 +19,7 @@
 //! - 中断/异常帧寄存器: [`read_interrupt_regs`] (framework 提供 POD 快照)
 //! - 当前进程 VMA 枚举: [`vma_snapshot_current`] (framework 提供 POD 快照)
 //! - 用户内存读取: [`copy_from_user_in_mm`] (跨进程安全代理)
-//! - core 文件写入: `framework::fs::vfs::api` 的 `vfs_*_safe` / `vfs_write_pod`
+//! - core 文件写入: `services::fs::api` 的 `vfs_*_safe` / `vfs_write_pod`
 //!
 //! ## 限制
 //!
@@ -34,12 +34,12 @@ use alloc::vec::Vec;
 use core::mem::size_of;
 use core::sync::atomic::Ordering;
 
-use crate::services::fs::api::{vfs_close_safe, vfs_open_safe, vfs_write_pod, vfs_write_safe};
 use crate::framework::mm::{PAGE_SIZE, PageFlags, copy_from_user_in_mm, vma_snapshot_current};
 use crate::framework::proc::{
     CoredumpSink, Elf64Header, Elf64Phdr, RLIM_INFINITY, RLIMIT_CORE, process_get_cr3,
     process_get_current_pid, process_with, read_interrupt_regs, register_coredump_sink,
 };
+use crate::services::fs::api::{vfs_close_safe, vfs_open_safe, vfs_write_pod, vfs_write_safe};
 
 // ============================================================================
 // ELF Core 常量
@@ -286,7 +286,11 @@ fn collect_segments() -> Vec<CoreSegment> {
         } else {
             0
         };
-        let pf_x = if flags.contains(PageFlags::NX) { 0 } else { PF_X };
+        let pf_x = if flags.contains(PageFlags::NX) {
+            0
+        } else {
+            PF_X
+        };
 
         // 跳过不可读段
         if pf_r == 0 {

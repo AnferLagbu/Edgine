@@ -198,3 +198,48 @@ impl Default for FdTable {
         Self::new()
     }
 }
+
+// ============================================================================
+// 单元测试 (DECISION-080 双轨: 纯逻辑测试归源侧 #[cfg(test)])
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::FdTable;
+
+    /// per-process fd 表 (B-9.5): first-fit 分配 + close 后槽位复用 + dup 共享 handle
+    #[test]
+    fn test_fd_table_alloc_close() {
+        let table = FdTable::new();
+        let fd1 = table.alloc_fd(7, false);
+        assert!(fd1.is_some(), "first alloc should succeed");
+        let fd2 = table.alloc_fd(8, false);
+        assert!(fd2.is_some(), "second alloc should succeed");
+        assert_ne!(fd1.unwrap(), fd2.unwrap(), "fds should be different");
+        assert_eq!(table.get_handle_id(fd1.unwrap()), Some(7));
+        assert_eq!(table.get_handle_id(fd2.unwrap()), Some(8));
+
+        // close 后槽位空闲, 下一次分配复用最小空闲槽位 (first-fit)
+        assert_eq!(
+            table.close_fd(fd1.unwrap()),
+            Some(7),
+            "close 应返回被关闭的 handle"
+        );
+        assert_eq!(
+            table.get_handle_id(fd1.unwrap()),
+            None,
+            "已关闭 fd 应无映射"
+        );
+        let fd3 = table.alloc_fd(9, false);
+        assert_eq!(fd3, fd1, "first-fit 应复用刚释放的槽位");
+
+        // dup 语义: 两个本地 fd 共享同一 handle (offset 由 OpenFile 承载)
+        let dup_fd = table.alloc_fd(9, false);
+        assert!(dup_fd.is_some(), "dup slot alloc 应成功");
+        assert_eq!(
+            table.get_handle_id(dup_fd.unwrap()),
+            table.get_handle_id(fd3.unwrap()),
+            "dup 出的两个 fd 应共享同一 handle"
+        );
+    }
+}

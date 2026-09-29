@@ -1,10 +1,14 @@
-//! VFS 管理器 (挂载表 + 路径解析) — framework 层完整实现
+//! VFS 管理器 (挂载表 + 路径解析) — services 策略实现
 //!
-//! ## B09-12/DECISION-H13 P1-B4 迁移记录 (2026-08-31)
+//! ## 阶段 4b 归属收敛 (当前权威)
 //!
-//! VfsManager 是 VFS 核心机制 (挂载点表 + 路径解析), 按"机制归
-//! framework"原则从 `services::fs::vfs_manager` 迁回本文件. 0 语义变更.
-//! `services::fs::vfs_manager` 改为 re-export 本文件保持调用方兼容.
+//! 自阶段 4b 起 VfsManager 实装归 `services::fs::vfs_manager`, framework
+//! 侧不再持有挂载表; 逻辑 0 unsafe, 不直接操作硬件。
+//!
+//! ## B09-12/DECISION-H13 P1-B4 迁移记录 (2026-08-31) — 已被阶段 4b 取代
+//!
+//! 当时按"机制归 framework"原则将 VfsManager 迁回 framework; 阶段 4b 依
+//! Minimalism 准则再次下沉 services, 上述归属已失效。
 //!
 //! ## 架构
 //!
@@ -13,14 +17,14 @@
 //! 不含 unsafe, 不直接操作硬件。
 //!
 //! per-process fd 表 (B-9.5) 已下沉至 `Process.fd_table` (`framework::proc`),
-//! 本文件不再持有 fd 表; fd→`OpenFile` 映射经 `framework::fs::vfs_get_fd_handle`
+//! 本文件不再持有 fd 表; fd→`OpenFile` 映射经 `services::fs::vfs_get_fd_handle`
 //! 读取当前进程 fd 表. 原全局 fd 表尺寸常量 `VFS_MAX_FDS` 已随其退役删除,
 //! fd 上限唯一由 `framework::proc::fd_table::MAX_FDS_PER_PROCESS` 承载.
 
+use crate::framework::sync::IrqSpinLock as Mutex;
 use crate::services::fs::vfs_types::{
     FileSystem, FsType, KernelError, VFS_MAX_MOUNTS, VFS_MAX_PATH,
 };
-use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::string::String;
 
 pub struct VfsMount {
@@ -542,4 +546,174 @@ fn vfs_barrier_capture_cb() {
 fn vfs_barrier_rollback_cb() -> bool {
     VFS_MANAGER.restore_from_snapshot();
     true
+}
+
+// ============================================================================
+// 单元测试 (DECISION-080 双轨: 纯逻辑测试归源侧 #[cfg(test)])
+// ============================================================================
+//
+// 全部用例使用局部 `VfsManager::new()` 实例, 不触碰全局 `VFS_MANAGER`.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 局部实例归一化比对 (栈上缓冲, 零分配)
+    fn resolve_is(mgr: &VfsManager, path: &str, expected: &str) -> bool {
+        let mut buf = [0u8; VFS_MAX_PATH];
+        mgr.resolve_user_path(path, &mut buf) == Some(expected)
+    }
+
+    #[test]
+    fn test_vfs_mount_unmount() {
+        let mgr = VfsManager::new();
+        let result = mgr.mount("/", "ramfs");
+        assert!(result.is_ok(), "mount / should succeed");
+
+        let dup = mgr.mount("/", "ramfs");
+        assert!(dup.is_err(), "duplicate mount should fail");
+
+        let found = mgr.find_mount("/");
+        assert!(found.is_some(), "should find / mount");
+
+        let unmount_result = mgr.unmount("/");
+        assert!(unmount_result.is_ok(), "unmount / should succeed");
+
+        let not_found = mgr.find_mount("/");
+        assert!(not_found.is_none(), "should not find / after unmount");
+    }
+
+    #[test]
+    fn test_vfs_resolve_mount() {
+        let mgr = VfsManager::new();
+        let _ = mgr.mount("/", "ramfs");
+        let _ = mgr.mount("/home", "nestfs");
+
+        let root = mgr.resolve_mount("/");
+        assert!(root.is_some(), "should resolve /");
+        let (_idx, fs_type) = root.unwrap();
+        assert_eq!(fs_type, FsType::RamFs, "/ should be RamFs");
+
+        let home = mgr.resolve_mount("/home/user/file.txt");
+        assert!(home.is_some(), "should resolve /home/user/file.txt");
+        let (_, home_fs) = home.unwrap();
+        assert_eq!(home_fs, FsType::NestFs, "/home should be NestFs");
+
+        let rel = mgr.get_relative_path("/home/user/file.txt", home.unwrap().0);
+        assert_eq!(rel, "user/file.txt", "relative path mismatch");
+    }
+
+    #[test]
+    fn test_vfs_cwd() {
+        let mgr = VfsManager::new();
+        mgr.set_cwd("/home/user");
+        let cwd = mgr.get_cwd();
+        assert_eq!(cwd, "/home/user", "cwd mismatch");
+    }
+
+    #[test]
+    fn test_vfs_snapshot_restore() {
+        let mgr = VfsManager::new();
+        let _ = mgr.mount("/", "ramfs");
+        mgr.capture_snapshot();
+
+        let _ = mgr.unmount("/");
+        assert!(
+            mgr.find_mount("/").is_none(),
+            "mount should be gone after unmount"
+        );
+
+        mgr.restore_from_snapshot();
+        let found = mgr.find_mount("/");
+        assert!(
+            found.is_some(),
+            "mount should be restored after snapshot restore"
+        );
+    }
+
+    // ========================================================================
+    // T1 G7: VFS 根前缀归一化 (chroot / pivot_root 机制)
+    // ========================================================================
+
+    /// 默认根: 绝对路径逐字节等价 (无点组件时与改造前一致)
+    #[test]
+    fn test_resolve_default_root() {
+        let mgr = VfsManager::new();
+        assert_eq!(mgr.get_root(), "/", "默认根应为 /");
+        assert!(
+            resolve_is(&mgr, "/home/user/file.txt", "/home/user/file.txt"),
+            "默认根下绝对路径应原样返回"
+        );
+    }
+
+    /// `.` / `..` 组件归一化 + 视图根内钳制 (逃逸防护)
+    #[test]
+    fn test_resolve_dot_components() {
+        let mgr = VfsManager::new();
+        assert!(resolve_is(&mgr, "/a/b/../c", "/a/c"), ".. 应上溯一级");
+        assert!(
+            resolve_is(&mgr, "/a/./b//c/", "/a/b/c"),
+            ". 与空组件应被忽略, 尾随 / 应去除"
+        );
+        assert!(
+            resolve_is(&mgr, "/../../x", "/x"),
+            ".. 应钳制在视图根内 (不可逃逸)"
+        );
+        assert!(resolve_is(&mgr, "/..", "/"), "根之上仍为根");
+        assert!(resolve_is(&mgr, "/", "/"), "根路径应归一化为 /");
+    }
+
+    /// 相对路径以视图 cwd 为基准
+    #[test]
+    fn test_resolve_relative_to_cwd() {
+        let mgr = VfsManager::new();
+        mgr.set_cwd("/home/user");
+        assert!(
+            resolve_is(&mgr, "file.txt", "/home/user/file.txt"),
+            "相对路径应拼接 cwd"
+        );
+        assert!(
+            resolve_is(&mgr, "../other", "/home/other"),
+            "相对路径 .. 应上溯 cwd 一级"
+        );
+
+        // chdir 经 resolve_view_path 存储 (视图路径, 无根前缀)
+        let mut buf = [0u8; VFS_MAX_PATH];
+        let view = mgr.resolve_view_path("/opt/./srv/../app", &mut buf);
+        assert_eq!(view, Some("/opt/app"), "resolve_view_path 应归一化视图路径");
+    }
+
+    /// 根前缀: 视图路径 → 真实路径拼接 + 切根后 cwd 重置
+    #[test]
+    fn test_resolve_with_root_prefix() {
+        let mgr = VfsManager::new();
+        assert!(resolve_is(&mgr, "/tmp", "/tmp"), "前置: 默认根下路径不变");
+
+        mgr.set_root("/jail");
+        assert_eq!(mgr.get_root(), "/jail", "切根后 root 应为 /jail");
+        assert_eq!(mgr.get_cwd(), "/", "切根后 cwd 应重置为 /");
+        assert!(
+            resolve_is(&mgr, "/etc/passwd", "/jail/etc/passwd"),
+            "视图路径应拼接根前缀"
+        );
+        assert!(
+            resolve_is(&mgr, "/../..", "/jail"),
+            "根前缀之外的 .. 不应逃逸 (钳制在视图根)"
+        );
+        assert!(resolve_is(&mgr, "/", "/jail"), "视图根应映射为根前缀自身");
+
+        // 相对路径基于视图 cwd (cwd 为视图路径, 与根前缀无关)
+        mgr.set_cwd("/sub");
+        assert!(
+            resolve_is(&mgr, "f", "/jail/sub/f"),
+            "切根后相对路径应为 根前缀 + 视图路径"
+        );
+
+        // 快照往返携带 root (barrier 回滚语义)
+        mgr.capture_snapshot();
+        mgr.set_root("/other");
+        assert_eq!(mgr.get_root(), "/other", "第二次切根应生效");
+        mgr.restore_from_snapshot();
+        assert_eq!(mgr.get_root(), "/jail", "快照恢复应还原根前缀");
+    }
 }

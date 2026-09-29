@@ -144,3 +144,36 @@ pub fn epoll_pwait_syscall(
         epoll_wait_syscall(epfd, events, maxevents, timeout)
     })
 }
+
+// ============================================================================
+// 单元测试 (DECISION-080 双轨: 纯逻辑测试归源侧 #[cfg(test)])
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::epoll_pwait_syscall;
+    use crate::framework::syscall::Errno;
+
+    /// 越界用户指针 (`>= USER_ADDR_MAX`): 被 `check_user_buf` 拒绝而非解引用
+    const BAD_USER_PTR: u64 = 0x8000_0000_0000_0000;
+
+    /// `epoll_pwait` 参数校验与 `epoll_wait` 委托 (sigmask == NULL)
+    #[test]
+    fn test_epoll_pwait_validation() {
+        // maxevents <= 0 → EINVAL (委托 epoll_wait 校验)
+        match epoll_pwait_syscall(-1, 0x1000, 0, 0, 0, 0) {
+            Err(Errno::EINVAL) => {}
+            _ => panic!("maxevents=0 应返回 EINVAL"),
+        }
+        // maxevents 合法 + epfd 非法 → EINVAL (framework 层 epfd <= 0)
+        match epoll_pwait_syscall(-1, 0x1000, 1, 0, 0, 0) {
+            Err(Errno::EINVAL) => {}
+            _ => panic!("epfd<0 应返回 EINVAL"),
+        }
+        // sigmask 越界指针 → 错误先于等待返回
+        assert!(
+            epoll_pwait_syscall(-1, 0x1000, 1, 0, BAD_USER_PTR, 8).is_err(),
+            "非法 sigmask 指针应返回错误"
+        );
+    }
+}

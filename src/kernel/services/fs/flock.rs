@@ -1,17 +1,18 @@
 #![deny(unsafe_code)]
 //! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 framework API。
-//! 文件锁 (flock + POSIX record locks) — framework 机制实现
+//! 文件锁 (flock + POSIX record locks) — services 策略实现
 //!
-//! ## DECISION-J 归属反转记录 (2026-09-13)
+//! ## 阶段 4b 归属收敛 (当前权威)
+//!
+//! 自阶段 4b 起 flock/POSIX 锁表实装归 `services::fs::flock`, framework
+//! 侧不再持有锁表; 依赖闭包仅 framework (IrqSpinLock + core 原子), 0 unsafe。
+//!
+//! ## DECISION-J 归属反转记录 (2026-09-13) — 已被阶段 4b 取代
 //!
 //! 本文件实现曾于 E6 系列迁至 `services::fs::flock`, framework 侧仅
-//! re-export。按"机制持有的数据结构/常量归 framework"统一判据反转：
-//! flock/POSIX 锁表被 framework VFS 机制内联消费 (vfs/path.rs inode 释放
-//! 路径调用 `posix_lock_release_inode`), 锁表是 VFS 机制状态的一部分 —
-//! 属机制项, 迁回。依赖闭包仅 framework (IrqSpinLock + core 原子), 0 unsafe。
-//!
-//! services 侧改 `pub use crate::services::fs::flock::*`
-//! 保持 API 兼容 (services→framework 合法方向)。
+//! re-export。当时按"机制持有的数据结构/常量归 framework"判据反转, 将
+//! 锁表 (被 framework VFS inode 释放路径内联消费) 迁回 framework; 阶段
+//! 4b 依 Minimalism 准则再次下沉 services, 上述反转已失效。
 //!
 //! ## 架构
 //!

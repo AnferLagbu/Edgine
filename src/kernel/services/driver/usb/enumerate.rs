@@ -23,11 +23,11 @@
 //!
 //! - **TRACK-832FCE**: 设备枚举 (本文件消除).
 
-use crate::framework::driver::framework::{DeviceInfo, DeviceType, DriverError, Result};
 use super::usb_core::{
     ConfigurationDescriptor, DeviceDescriptor, DeviceState, EndpointDescriptor,
     InterfaceDescriptor, StandardRequest, UsbDevice, UsbSetupPacket, UsbSpeed,
 };
+use crate::framework::driver::framework::{DeviceInfo, DeviceType, DriverError, Result};
 use alloc::vec::Vec;
 
 // ============================================================================

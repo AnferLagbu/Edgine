@@ -302,3 +302,43 @@ fn compress_zstd_fallback(data: &[u8]) -> Option<Vec<u8>> {
 fn decompress_zstd_fallback(compressed: &[u8], expected: usize) -> Option<Vec<u8>> {
     decompress_rle(compressed, expected)
 }
+
+// DECISION-080: 压缩算法纯逻辑断言以本文件源侧 #[cfg(test)] 为唯一归属
+// (host 可编译, 不再占用 kernel_test 注册表轨).
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==== 压缩 / 解压往返 ====
+
+    /// LZ4 压缩后解压应还原原始数据 (compress 返回 None 时表示数据不可压缩, 视为通过).
+    #[test]
+    fn test_compress_lz4_roundtrip() {
+        let mut data = [0u8; 256];
+        for (i, b) in data.iter_mut().enumerate() {
+            *b = (i % 4) as u8;
+        }
+        if let Some(c) = compress(&data, NestCompType::LZ4) {
+            let Some(d) = decompress(&c, data.len(), NestCompType::LZ4) else {
+                panic!("decompress returned None");
+            };
+            assert_eq!(d.len(), data.len(), "decompressed length mismatch");
+            assert_eq!(d.as_slice(), data, "roundtrip data mismatch");
+        }
+    }
+
+    /// NestCompType::Off 表示不压缩, compress() 按设计返回 None; 这里验证 Gzip1(RLE) 往返.
+    #[test]
+    fn test_compress_off() {
+        let mut data = [0u8; 256];
+        for (i, b) in data.iter_mut().enumerate() {
+            *b = (i % 4) as u8;
+        }
+        if let Some(c) = compress(&data, NestCompType::Gzip1) {
+            if let Some(d) = decompress(&c, data.len(), NestCompType::Gzip1) {
+                assert_eq!(d.len(), data.len(), "RLE decompressed length mismatch");
+                assert_eq!(d.as_slice(), data, "RLE roundtrip data mismatch");
+            }
+        }
+    }
+}

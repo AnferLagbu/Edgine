@@ -303,3 +303,42 @@ impl NestBlockPointer {
         Some(bp)
     }
 }
+
+// DECISION-080: 块指针纯逻辑断言以本文件源侧 #[cfg(test)] 为唯一归属
+// (host 可编译, 不再占用 kernel_test 注册表轨).
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==== 块指针基础语义 ====
+
+    /// 空块指针应为 null, 且无有效 DVA.
+    #[test]
+    fn test_bp_null() {
+        let bp = NestBlockPointer::null();
+        assert!(bp.is_null(), "null bp should be null");
+        assert!(bp.get_dva(0).is_none(), "null bp dva should be None");
+    }
+
+    /// set_dva / get_dva 往返应保持一致.
+    #[test]
+    fn test_bp_dva_set_get() {
+        let mut bp = NestBlockPointer::null();
+        let dva = NestDva::new(0, 4096, 8192);
+        bp.set_dva(0, dva);
+        let Some(got) = bp.get_dva(0) else {
+            panic!("dva not set");
+        };
+        assert_eq!(got.vdev_id, 0, "vdev_id mismatch");
+        assert_eq!(got.offset, 4096, "offset mismatch");
+        assert_eq!(got.asize, 8192, "asize mismatch");
+    }
+
+    /// set_birth 应写入 birth_txg.
+    #[test]
+    fn test_bp_birth_txg() {
+        let mut bp = NestBlockPointer::null();
+        bp.set_birth(42);
+        assert_eq!(bp.birth_txg, 42, "birth txg mismatch");
+    }
+}

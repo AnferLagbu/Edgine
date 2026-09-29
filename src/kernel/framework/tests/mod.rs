@@ -33,20 +33,14 @@ pub mod test_barrier_ext;
 pub mod test_config;
 // UT-07 (2026-09-26): test_credo 注册载体已删 — services::credo::policy
 // (CapBits/CapMatrix/InMemoryMatrix) 纯逻辑断言以该文件源侧 #[cfg(test)] 为唯一归属.
-pub mod test_devfs;
 pub mod test_ipc;
 pub mod test_mm;
-#[cfg(target_arch = "x86_64")]
-pub mod test_nestfs;
-#[cfg(target_arch = "x86_64")]
-pub mod test_nestfs_ext;
 pub mod test_new_features;
 pub mod test_pi_mutex;
 pub mod test_proc;
 pub mod test_pwm;
 pub mod test_smp;
 pub mod test_uds;
-pub mod test_vfs;
 
 pub type TestFn = fn() -> TestResult;
 
@@ -462,18 +456,11 @@ pub fn register_all_tests() {
     test_barrier::register_barrier_tests();
     test_barrier_ext::register_barrier_ext_tests();
     test_config::register_config_tests();
-    #[cfg(target_arch = "x86_64")]
-    {
-        test_nestfs::register_nestfs_tests();
-        test_nestfs_ext::register_nestfs_ext_tests();
-    }
     test_pwm::register_pwm_tests();
     test_mm::register_mm_tests();
-    test_vfs::register_vfs_tests();
     test_ipc::register_ipc_tests();
     test_uds::register_uds_tests();
     test_pi_mutex::register_pi_mutex_tests();
-    test_devfs::register_devfs_tests();
     test_proc::register_proc_tests();
     test_new_features::register_new_tests();
     test_smp::register_smp_tests();
@@ -512,7 +499,6 @@ pub fn register_all_tests() {
         crate::framework::timer::hrtimer::register_hrtimer_tests();
         crate::framework::proc::signal::register_signal_tests();
         crate::framework::config::memory::register_aslr_tests();
-        crate::services::fs::initramfs::register_initramfs_tests();
         crate::framework::syscall::futex::register_futex_tests();
         crate::framework::proc::robust::register_robust_tests();
         crate::framework::mm::pcache::register_pcache_tests();
@@ -522,7 +508,6 @@ pub fn register_all_tests() {
         crate::framework::syscall::eventfd::register_eventfd_tests();
         crate::framework::syscall::signalfd::register_signalfd_tests();
         crate::framework::syscall::timerfd::register_timerfd_tests();
-        crate::services::fs::sendfile::register_sendfile_tests();
     }
 }
 

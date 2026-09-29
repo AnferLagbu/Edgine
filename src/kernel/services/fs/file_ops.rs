@@ -300,3 +300,34 @@ pub fn flock_syscall(fd: i32, operation: i32) -> i64 {
         FlockResult::NotHeld => Errno::EINVAL.as_ret(),
     }
 }
+
+// ============================================================================
+// 单元测试 (DECISION-080 双轨: 纯逻辑测试归源侧 #[cfg(test)])
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::ppoll_syscall;
+
+    /// 越界用户指针 (`>= USER_ADDR_MAX`): 被 `check_user_buf` 拒绝而非解引用
+    const BAD_USER_PTR: u64 = 0x8000_0000_0000_0000;
+
+    /// `ppoll` 参数校验 (nfds == 0 短路 / sigsetsize 校验)
+    #[test]
+    fn test_ppoll_arg_validation() {
+        // nfds == 0 → 0 (无 fd 可扫)
+        assert_eq!(ppoll_syscall(0, 0, 0, 0, 0), 0, "nfds=0 应返回 0");
+        // 非法 sigsetsize → EINVAL
+        assert_eq!(
+            ppoll_syscall(0, 0, 0, BAD_USER_PTR, 4),
+            -22,
+            "sigsetsize != 8 应返回 EINVAL"
+        );
+        // 越界 timespec 指针 → EFAULT
+        assert_eq!(
+            ppoll_syscall(0, 0, BAD_USER_PTR, 0, 0),
+            -14,
+            "非法 timespec 指针应返回 EFAULT"
+        );
+    }
+}

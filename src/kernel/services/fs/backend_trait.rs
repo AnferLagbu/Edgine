@@ -157,3 +157,41 @@ pub fn nestfs_fs() -> Option<&'static dyn FileSystem> {
         None => None,
     }
 }
+
+// ============================================================================
+// 单元测试 (DECISION-080 双轨: 纯逻辑测试归源侧 #[cfg(test)])
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // DECISION-K 项 6 回归测试 (第二十四批): services::fs::init 注册激活
+    //
+    // 回归背景: services::fs::init 此前全库无调用者, 第二十三批 ramfs 回迁引入
+    // 的 make_ramfs_inode 钩子恒命中 FallbackFsBackend → Err(NotInitialized),
+    // ramfs open/create 生产路径被回退策略拦截.
+
+    #[test]
+    fn test_fs_backend_registered_make_inode() {
+        // 激活注册 (幂等: 重复注册 Err 被忽略)
+        crate::services::fs::init();
+        // 钩子必须返回真实 Inode — FallbackFsBackend 恒 Err, 本断言锁定回归
+        let result = current_fs_backend().make_ramfs_inode(0, 0, 0);
+        assert!(
+            result.is_ok(),
+            "make_ramfs_inode 命中回退策略 — services::fs::init 未生效"
+        );
+    }
+
+    #[test]
+    fn test_nestfs_fs_registered() {
+        crate::services::fs::init();
+        let Some(fs) = nestfs_fs() else {
+            panic!("nestfs_fs() 未注册 — services::fs::init 未生效");
+        };
+        assert_eq!(fs.name(), "nestfs", "nestfs name mismatch");
+        // 注: fs_format 行为不在单测覆盖 (内存模式调 format_drive 有底层 IO 副作用),
+        // 语义等价性由 fsformat 路径代码搬移保证, QEMU boot 覆盖挂载分发链路
+    }
+}

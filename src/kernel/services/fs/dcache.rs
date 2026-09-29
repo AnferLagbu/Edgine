@@ -1,12 +1,15 @@
-//! 目录项缓存 (dcache) + inode 缓存 (icache) — framework 层完整实现
+//! 目录项缓存 (dcache) + inode 缓存 (icache) — services 策略实现
 //!
-//! ## B09-12/DECISION-H13 P1-B1 迁移记录 (2026-08-31)
+//! ## 阶段 4b 归属收敛 (当前权威)
 //!
-//! dcache/icache 是 VFS 缓存机制, 按"机制归 framework"原则从
-//! `services::fs::dcache` 迁回本文件. 0 语义变更, 仅锁路径由
-//! `services::sync::irq_lock::IrqSpinLock` 改为 `framework::sync::IrqSpinLock`
-//! (两者同一类型, 前者是后者的 type alias).
-//! `services::fs::dcache` 改为 re-export 本文件保持调用方兼容.
+//! 自阶段 4b 起 dcache/icache 实装归 `services::fs::dcache`, framework 侧
+//! 不再持有 VFS 缓存。
+//!
+//! ## B09-12/DECISION-H13 P1-B1 迁移记录 (2026-08-31) — 已被阶段 4b 取代
+//!
+//! 当时按"机制归 framework"原则将 dcache/icache 迁回 framework (仅锁路径
+//! 改为 `framework::sync::IrqSpinLock`); 阶段 4b 依 Minimalism 准则再次
+//! 下沉 services, 上述归属已失效。
 //!
 //! ## 动机
 //!

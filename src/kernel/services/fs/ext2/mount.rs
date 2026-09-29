@@ -4,8 +4,8 @@
 
 use super::read::Ext2Fs;
 use crate::framework::credo::api as pwm_api;
-use crate::services::fs::KernelError;
 use crate::framework::sync::IrqSpinLock as Mutex;
+use crate::services::fs::KernelError;
 use crate::services::fs::vfs_types::{
     FileSystem, KernelResult, VfsDirEntry, VfsSeekWhence, VfsStat,
 };

@@ -22,8 +22,8 @@
 //! - `usb/enumerate.rs` USB-1.6 设备枚举 (找到 HID Interface 后调用本驱动初始化)
 //! - `xhci.rs` USB-1.3 URB 提交 (本驱动使用 `submit_urb` 发送中断 IN 报告)
 
-use crate::framework::driver::framework::{DriverError, Result};
 use super::usb_core::{DeviceClass, UsbDevice, UsbSetupPacket};
+use crate::framework::driver::framework::{DriverError, Result};
 use alloc::vec::Vec;
 
 // ============================================================================

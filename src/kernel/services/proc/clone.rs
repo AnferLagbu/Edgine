@@ -93,7 +93,13 @@ pub fn clone_syscall(
 /// `tls`: TLS 地址
 ///
 /// 成功返回子进程 PID, 失败返回负 `Errno`.
-fn clone_impl(flags: u64, child_stack: u64, parent_tidptr: u64, child_tidptr: u64, tls: u64) -> i64 {
+fn clone_impl(
+    flags: u64,
+    child_stack: u64,
+    parent_tidptr: u64,
+    child_tidptr: u64,
+    tls: u64,
+) -> i64 {
     let parent_pid = match api::process_get_current_pid() {
         0 => return Errno::ECHILD.as_ret(),
         p => p,

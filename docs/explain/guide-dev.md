@@ -66,7 +66,7 @@ TCB 内部细节不能绕过顶层 API。例如 framework::sync::raw / framework
 
 ### 改 framework 是大改
 
-任何 framework 改动需重新审视下游 services。提交前补 docs/plan/audit-*.md 审计。
+任何 framework 改动需重新审视下游 services。提交前补 docs/report/audit-*.md 审计（历史审计文档仍在 docs/plan/ 原位保留）。
 
 ### 不为将来可能用预留 framework 模块
 

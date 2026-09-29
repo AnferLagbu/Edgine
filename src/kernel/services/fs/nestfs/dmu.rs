@@ -280,3 +280,97 @@ impl NestObjSet {
         self.objects.lock().iter().filter(|o| o.used).count() as u64
     }
 }
+
+// DECISION-080: DMU 对象 / ObjSet 纯逻辑断言以本文件源侧 #[cfg(test)] 为唯一归属.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==== DMU 对象基础语义 ====
+
+    /// 新建 File 对象应带上默认类型与零大小.
+    #[test]
+    fn test_dmu_object_default() {
+        let obj = NestDmuObject::new_file(1, 0);
+        assert_eq!(obj.obj_id, 1, "obj_id mismatch");
+        assert_eq!(obj.obj_type, NestObjType::File, "obj_type should be File");
+        assert_eq!(obj.size, 0, "new object size should be 0");
+    }
+
+    /// cow_bp 应更新 birth_txg.
+    #[test]
+    fn test_dmu_object_cow() {
+        let mut obj = NestDmuObject::new_file(2, 0);
+        let new_bp = NestBlockPointer::null();
+        obj.cow_bp(new_bp, 5);
+        assert_eq!(obj.birth_txg, 5, "birth txg should be 5");
+    }
+
+    /// 新建 Dir 对象应报告为目录类型.
+    #[test]
+    fn test_dmu_object_dir_type() {
+        let obj = NestDmuObject::new_dir(3, 0);
+        assert!(obj.is_dir(), "Dir should report as dir");
+    }
+
+    // ==== ObjSet 分配 / 释放 ====
+
+    /// alloc_obj 应返回有效 id 且可被 get_obj 取回.
+    #[test]
+    fn test_dmu_objset_alloc() {
+        let os = NestObjSet::new();
+        os.init(0);
+        let Some(id) = os.alloc_obj(NestObjType::File, 0) else {
+            panic!("alloc_obj should succeed");
+        };
+        assert!(id > 0, "allocated obj_id should be > 0");
+        let Some(o) = os.get_obj(id) else {
+            panic!("get_obj should find allocated object");
+        };
+        assert!(o.is_file(), "allocated type should be File");
+    }
+
+    /// alloc_obj 的 Dir 类型应被正确记录.
+    #[test]
+    fn test_dmu_objset_dir() {
+        let os = NestObjSet::new();
+        os.init(0);
+        let Some(obj_id) = os.alloc_obj(NestObjType::Dir, 0) else {
+            panic!("alloc_obj Dir should succeed");
+        };
+        let Some(o) = os.get_obj(obj_id) else {
+            panic!("get_obj should find Dir object");
+        };
+        assert!(o.is_dir(), "should be Dir type");
+        assert!(!o.is_file(), "Dir should not be File");
+    }
+
+    /// free_obj 后对象不应再被 get_obj 取回.
+    #[test]
+    fn test_dmu_objset_free() {
+        let os = NestObjSet::new();
+        os.init(0);
+        let Some(obj_id) = os.alloc_obj(NestObjType::File, 0) else {
+            panic!("alloc_obj should succeed");
+        };
+        let _count_before = os.obj_count();
+        assert!(os.free_obj(obj_id), "free_obj should succeed");
+        assert!(
+            os.get_obj(obj_id).is_none(),
+            "freed obj should not be found"
+        );
+    }
+
+    /// cow_bp 后旧 birth_txg 应被新值覆盖.
+    #[test]
+    fn test_dmu_cow_preserves_old() {
+        let mut obj = NestDmuObject::new_file(1, 0);
+        let old_bp = {
+            let mut bp = NestBlockPointer::null();
+            bp.set_birth(10);
+            bp
+        };
+        obj.cow_bp(old_bp, 20);
+        assert_eq!(obj.birth_txg, 20, "birth_txg should be 20 after cow");
+    }
+}

@@ -14,14 +14,14 @@
 //! - 用户态指针经 services `check_user_ptr` / `check_user_buf` 校验后, 交由
 //!   framework `mm::copy_user` (SMAP + 异常表兜底) 完成实际拷贝, 不假设用户内存对齐
 //! - 路径最长 4096 字节, 超过返回 `-EINVAL`
-//! - 读取走 framework `fs::vfs::api::{vfs_open_safe, vfs_read_safe}`
+//! - 读取走 services `fs::api::{vfs_open_safe, vfs_read_safe}`
 
 use crate::framework::chitin::{
     FW_ERR_IO, FW_ERR_NOT_FOUND, FW_ERR_TOO_LARGE, FirmwareInfo, MAX_FIRMWARE_SIZE,
     devtree_attach_firmware, devtree_detach_firmware, devtree_get_firmware, fnv1a_32,
 };
-use crate::services::fs::api::{vfs_open_safe, vfs_read_safe};
 use crate::framework::mm::copy_user::{copy_from_user, copy_to_user};
+use crate::services::fs::api::{vfs_open_safe, vfs_read_safe};
 use alloc::vec::Vec;
 
 const MAX_PATH_LEN: usize = 4096;

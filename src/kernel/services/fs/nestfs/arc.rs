@@ -497,3 +497,76 @@ impl NestArc {
         self.inner.lock().max_size as u64
     }
 }
+
+// DECISION-080: ARC 缓存纯逻辑断言 (初始化/查找/淘汰/dirty) 以本文件源侧 #[cfg(test)] 为唯一归属.
+// 注: 迁入 services (#![deny(unsafe_code)]) 后, 查找数据改用 safe 包装 `lookup_slice`,
+// 不再直接对裸指针做 `from_raw_parts`.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// init 后应报告已初始化.
+    #[test]
+    fn test_arc_init() {
+        let arc = NestArc::new();
+        arc.init(128);
+        assert!(arc.is_initialized(), "arc should be initialized");
+    }
+
+    /// 空缓存查找应返回 None.
+    #[test]
+    fn test_arc_lookup_miss() {
+        let arc = NestArc::new();
+        arc.init(128);
+        let key = NestArcKey::new(0, 0, 0);
+        assert!(arc.lookup(&key).is_none(), "empty arc should return None");
+    }
+
+    /// 插入后应能经 safe 切片接口查回同一数据.
+    #[test]
+    fn test_arc_insert_lookup() {
+        let arc = NestArc::new();
+        arc.init(128);
+        let key = NestArcKey::new(0, 4096, 1);
+        let data: [u8; 16] = [0xAA; 16];
+        let _ = arc.insert(key, &data, NestArcBufType::Data);
+        let Some(found) = arc.lookup_slice(&key, 16) else {
+            panic!("should find inserted entry");
+        };
+        assert_eq!(found[0], 0xAA, "data mismatch");
+    }
+
+    /// 多次插入后缓存应产生统计活动.
+    #[test]
+    fn test_arc_eviction() {
+        let arc = NestArc::new();
+        arc.init(8192);
+        for i in 0..5u64 {
+            let key = NestArcKey::new(0, i * 4096, 1);
+            let data: [u8; 64] = [i as u8; 64];
+            let _ = arc.insert(key, &data, NestArcBufType::Data);
+        }
+        let (hits, misses, size, _evicts) = arc.get_stats();
+        assert!(
+            size > 0 || hits > 0 || misses > 0,
+            "arc should have activity after inserts"
+        );
+    }
+
+    /// mark_dirty 后 flush_dirty 应统计到脏条目.
+    #[test]
+    fn test_arc_dirty_tracking() {
+        let arc = NestArc::new();
+        arc.init(256);
+        let key = NestArcKey::new(0, 0, 1);
+        let data: [u8; 32] = [0xBB; 32];
+        let _ = arc.insert(key, &data, NestArcBufType::Data);
+
+        arc.mark_dirty(&key);
+        let dirty_count = arc.flush_dirty();
+        assert!(
+            dirty_count > 0,
+            "should have dirty entries after mark_dirty"
+        );
+    }
+}

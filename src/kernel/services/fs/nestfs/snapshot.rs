@@ -148,3 +148,30 @@ impl NestSnapshotManager {
         self.snapshots.lock().len()
     }
 }
+
+// DECISION-080: 快照纯逻辑断言以本文件源侧 #[cfg(test)] 为唯一归属
+// (host 可编译, 不再占用 kernel_test 注册表轨).
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==== 快照基础语义 ====
+
+    /// 构造快照后应能读回名称.
+    #[test]
+    fn test_snapshot_create() {
+        let snap = NestSnapshot::new(1, 10, "test-snap", NestBlockPointer::null(), 5);
+        assert_eq!(snap.get_name(), "test-snap", "snapshot name mismatch");
+    }
+
+    /// 新建快照管理器应无任何快照.
+    #[test]
+    fn test_snapshot_manager() {
+        let mgr = NestSnapshotManager::new();
+        assert_eq!(
+            mgr.snapshot_count(),
+            0,
+            "new manager should have 0 snapshots"
+        );
+    }
+}

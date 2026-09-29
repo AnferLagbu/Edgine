@@ -21,6 +21,7 @@ pub mod ramfs_node;
 pub use ramfs_data::*;
 pub use ramfs_node::*;
 
+use crate::framework::sync::IrqSpinLock as Mutex;
 use crate::services::fs::KernelError;
 use crate::services::fs::backend_trait::current_fs_backend;
 use crate::services::fs::inode::Inode;
@@ -28,7 +29,6 @@ use crate::services::fs::{
     FileSystem, KernelResult, VFS_MAX_NAME, VfsDirEntry, VfsFileType, VfsOpenFlags, VfsSeekWhence,
     VfsStat,
 };
-use crate::framework::sync::IrqSpinLock as Mutex;
 
 pub(crate) const RAMFS_MAX_NODES: usize = 256;
 pub(crate) const RAMFS_MAX_BLOCKS: usize = 2048;
@@ -141,9 +141,7 @@ impl FileSystem for RamFsFileSystem {
         match ramfs.resolve_path(rel_path) {
             Some(node_id) => {
                 drop(ramfs); // 释放锁, 尝试 icache
-                if let Some(cached) =
-                    crate::services::fs::dcache::icache_lookup(fs_id, node_id)
-                {
+                if let Some(cached) = crate::services::fs::dcache::icache_lookup(fs_id, node_id) {
                     return Ok(VfsStat {
                         node_id: cached.ino,
                         file_type: cached.file_type,
@@ -439,4 +437,41 @@ static RAMFS_FS: RamFsFileSystem = RamFsFileSystem;
 /// 获取 RamFS FileSystem trait object (VFS 挂载路径用)
 pub fn ramfs_fs() -> &'static dyn FileSystem {
     &RAMFS_FS
+}
+
+// ============================================================================
+// 单元测试 (DECISION-080 双轨: 纯逻辑测试归源侧 #[cfg(test)])
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::{RAMFS_DATA, init, ramfs_fs};
+
+    /// DECISION-K 项 6 回归测试 (第二十四批): `fs_open` 经 `make_inode` 钩子
+    /// 返回真实 Inode; 命中 `FallbackFsBackend` 即回归 (services::fs::init 未生效).
+    #[test]
+    fn test_ramfs_fs_open_via_backend_hook() {
+        // init() 会清空全局 RAMFS_DATA, 须与其它触 RAMFS_DATA 的用例互斥 (见锁定义处文档).
+        let _lock = crate::services::fs::FS_GLOBAL_TEST_LOCK.lock();
+        crate::services::fs::init();
+        // 建根目录 (幂等): RAMFS_DATA 初始为空, resolve_path("/") 需先 mount
+        init();
+
+        // 在 RamFS 根目录建文件 (锁内操作, 作用域结束释放锁)
+        let created = {
+            let mut ramfs = RAMFS_DATA.lock();
+            ramfs.create_file("/", "backend_reg_t", 0)
+        };
+        let Some(_node_id) = created else {
+            panic!("create_file 失败");
+        };
+
+        // fs_open → make_inode 钩子 → services RamFsInode (回归路径本体)
+        // ramfs_fs() 返回 'static dyn FileSystem, 内部自查加锁, 无裸指针提升.
+        let opened = ramfs_fs().fs_open("/backend_reg_t", 0, 0);
+        assert!(
+            opened.is_ok(),
+            "fs_open 应经 backend 钩子返回 Inode (命中 Fallback 即回归)"
+        );
+    }
 }

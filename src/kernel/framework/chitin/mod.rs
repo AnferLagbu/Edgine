@@ -372,7 +372,7 @@ pub fn chitin_register_block_dev(
         irq,
         driver_data: core::ptr::null_mut(), // 不再使用, 改用 block_dev
         driver_owned: false,
-        ops: None,                          // 不再使用, 改用 block_dev
+        ops: None, // 不再使用, 改用 block_dev
         block_dev: Some(dev),
     };
     let idx;
@@ -491,7 +491,7 @@ pub fn chitin_set_state(id: u32, state: DeviceState) {
 /// `drive` 是设备在 `CHITIN_DEVICES` 中的索引。
 /// 仅对 `ChitinProto::Block` 且携带 `block_dev` 的设备有效。
 ///
-/// 返回值遵循 POSIX 约定: `0` = 成功, `-errno` = 失败 (与 `framework::fs::KernelError` 对齐)。
+/// 返回值遵循 POSIX 约定: `0` = 成功, `-errno` = 失败 (与 `framework::error::KernelError` 对齐)。
 pub fn chitin_blk_read(drive: u8, sector: u64, buf: &mut [u8]) -> i32 {
     if buf.len() < 512 {
         return KernelError::InvalidArgument.as_i32();
