@@ -10,7 +10,7 @@ use std::fs;
 use std::path::Path;
 
 // vfs_close_internal 已在 B 方案拆分第二步从 api.rs 物理迁至 handle.rs
-const VFS_HANDLE: &str = "src/kernel/framework/fs/vfs/handle.rs";
+const VFS_HANDLE: &str = "src/kernel/services/fs/handle.rs";
 const NESTFS: &str = "src/kernel/services/fs/nestfs/nestfs_data.rs";
 
 fn read(path: &str) -> String {

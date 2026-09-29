@@ -9,9 +9,9 @@ use super::{
     RAMFS_BLOCK_SIZE, RAMFS_MAX_ACES, RAMFS_MAX_BLOCKS, RAMFS_MAX_NODES, SENSITIVITY_PUBLIC,
 };
 use crate::framework::credo::api as pwm_api;
-use crate::framework::fs::KernelError;
-use crate::framework::fs::vfs::dcache;
-use crate::framework::fs::{VFS_MAX_NAME, VfsFileType, VfsSeekWhence, VfsStat};
+use crate::services::fs::KernelError;
+use crate::services::fs::dcache;
+use crate::services::fs::{VFS_MAX_NAME, VfsFileType, VfsSeekWhence, VfsStat};
 
 pub struct RamFsData {
     /// 文件系统实例标识 (dcache/icache 命名空间, 0 = 未挂载)
@@ -787,8 +787,8 @@ impl RamFsData {
     /// # Errors
     /// 当 `node_id` 超出节点表范围时返回 `InvalidArgument`;
     /// 当节点未使用 (不存在) 时返回 `FileNotFound`.
-    pub fn get_stat(&self, node_id: u32, _pwm: u64) -> crate::framework::fs::KernelResult<VfsStat> {
-        use crate::framework::fs::KernelError as KE;
+    pub fn get_stat(&self, node_id: u32, _pwm: u64) -> crate::services::fs::KernelResult<VfsStat> {
+        use crate::services::fs::KernelError as KE;
         if node_id as usize >= RAMFS_MAX_NODES {
             return Err(KE::InvalidArgument);
         }

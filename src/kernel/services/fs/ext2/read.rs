@@ -7,7 +7,7 @@ use super::dir::Ext2DirEntry;
 use super::inode::Ext2Inode;
 use super::super_block::Ext2SuperBlock;
 use crate::framework::driver::block::{read_sectors, with_device};
-use crate::framework::fs::KernelError;
+use crate::services::fs::KernelError;
 use alloc::format;
 use alloc::vec::Vec;
 

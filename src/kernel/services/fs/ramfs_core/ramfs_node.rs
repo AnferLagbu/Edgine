@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 
-use crate::framework::fs::VFS_MAX_NAME;
+use crate::services::fs::VFS_MAX_NAME;
 
 pub(crate) const DIRECT_BLOCKS: usize = 12;
 

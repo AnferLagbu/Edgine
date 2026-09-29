@@ -214,6 +214,13 @@ impl KernelError {
     }
 }
 
+/// 全内核统一 Result 别名 (默认错误类型为 `KernelError`).
+///
+/// 阶段 4b 由 `services::fs::vfs_types` 迁回 framework: 本别名被 framework
+/// 生产代码消费 (`driver/block.rs` 的 `KernelResult<()>`), 定义必须留在
+/// framework, services 侧经 re-export 保持既有路径兼容.
+pub type KernelResult<T> = Result<T, KernelError>;
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -43,11 +43,27 @@ pub fn read_user_cr3_asm() -> u64 {
     }
 }
 
+/// 将 `Copy` POD 值视为只读字节视图.
+///
+/// 供 services 层零 unsafe 序列化 POD 结构 (如写入 fd) 使用. `T: Copy`
+/// 保证无 `Drop` / 无内部可变别名, 按位读取安全.
+pub fn pod_as_bytes<T: Copy>(val: &T) -> &[u8] {
+    // SAFETY: val 是有效 `&T`; `size_of::<T>()` 字节完全落在 val 内存范围内;
+    // `from_raw_parts` 仅构造只读 u8 视图 (对齐要求 u8=1 恒满足), 不越界.
+    unsafe {
+        core::slice::from_raw_parts(
+            core::ptr::from_ref(val).cast::<u8>(),
+            core::mem::size_of::<T>(),
+        )
+    }
+}
+
 pub mod pmm;
 
 #[cfg(target_arch = "x86_64")]
 #[path = "vmm_x86_64.rs"]
 pub mod vmm;
+
 #[cfg(target_arch = "aarch64")]
 #[path = "vmm_aarch64.rs"]
 pub mod vmm;

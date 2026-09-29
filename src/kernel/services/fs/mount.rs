@@ -14,7 +14,7 @@
 //! - [`umount2_syscall`] target 必须非空, 需 `CAP_SYS_ADMIN`
 
 use crate::framework::credo;
-use crate::framework::fs::api as fw;
+use crate::services::fs::api as fw;
 use crate::framework::syscall::Errno;
 use crate::framework::syscall::raw;
 

@@ -7,7 +7,7 @@
 //! - 委托 `framework/fs/vfs::api` 完成
 
 use crate::framework::credo;
-use crate::framework::fs::api as fw;
+use crate::services::fs::api as fw;
 use crate::framework::syscall::Errno;
 use crate::framework::syscall::raw;
 

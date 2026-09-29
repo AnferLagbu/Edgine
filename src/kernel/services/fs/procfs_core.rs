@@ -670,7 +670,7 @@ impl ProcfsData {
         }
 
         // 未知 entry → ENOENT (VFS 边界约定, 不要返回裸 -1)
-        crate::framework::fs::KernelError::FileNotFound.as_i32()
+        crate::services::fs::KernelError::FileNotFound.as_i32()
     }
 
     pub fn readdir(&self, index: usize) -> Option<([u8; 32], u32, u8)> {

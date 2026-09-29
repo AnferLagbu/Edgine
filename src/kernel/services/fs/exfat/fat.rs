@@ -4,7 +4,7 @@
 
 use super::super_block::ExfatSuperBlock;
 use crate::framework::driver::block::{read_sectors, with_device};
-use crate::framework::fs::KernelError;
+use crate::services::fs::KernelError;
 
 /// FAT 表条目常量
 pub const FAT_FREE: u32 = 0x00000000;

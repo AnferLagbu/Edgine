@@ -14,7 +14,7 @@
 //! - [`creat_syscall`] 等价于 open(path, `O_WRONLY|O_CREAT|O_TRUNC`, mode)
 
 use crate::framework::credo;
-use crate::framework::fs::api as fw;
+use crate::services::fs::api as fw;
 use crate::framework::syscall::Errno;
 use crate::framework::syscall::raw;
 

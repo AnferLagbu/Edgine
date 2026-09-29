@@ -34,7 +34,7 @@ use alloc::vec::Vec;
 use core::mem::size_of;
 use core::sync::atomic::Ordering;
 
-use crate::framework::fs::vfs::api::{vfs_close_safe, vfs_open_safe, vfs_write_pod, vfs_write_safe};
+use crate::services::fs::api::{vfs_close_safe, vfs_open_safe, vfs_write_pod, vfs_write_safe};
 use crate::framework::mm::{PAGE_SIZE, PageFlags, copy_from_user_in_mm, vma_snapshot_current};
 use crate::framework::proc::{
     CoredumpSink, Elf64Header, Elf64Phdr, RLIM_INFINITY, RLIMIT_CORE, process_get_cr3,

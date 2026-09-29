@@ -5,7 +5,7 @@
 use super::dir::ExfatDirEntry;
 use super::super_block::ExfatSuperBlock;
 use crate::framework::driver::block::{read_sectors, with_device};
-use crate::framework::fs::KernelError;
+use crate::services::fs::KernelError;
 use alloc::string::String;
 use alloc::vec::Vec;
 

@@ -2,8 +2,8 @@
 //! @SAFE: 本文件不含 unsafe 代码。
 //! overlayfs 文件系统实现
 
-use crate::framework::fs::KernelError;
-use crate::framework::fs::ramfs::RamFsDirEntry;
+use crate::services::fs::KernelError;
+use crate::services::fs::ramfs_core::RamFsDirEntry;
 use crate::framework::sync::IrqSpinLock as Mutex;
 use crate::services::fs::vfs_manager::VFS_MANAGER;
 use crate::services::fs::vfs_types::{
@@ -87,9 +87,9 @@ pub struct OverlayFsData {
     /// 挂载配置
     pub mount: OverlayMount,
     /// upperdir 的 ramfs 数据
-    pub upper_data: crate::framework::fs::ramfs::RamFsData,
+    pub upper_data: crate::services::fs::ramfs_core::RamFsData,
     /// workdir 的 ramfs 数据
-    pub work_data: crate::framework::fs::ramfs::RamFsData,
+    pub work_data: crate::services::fs::ramfs_core::RamFsData,
     /// lowerdir 路径 (只读引用)
     pub lower_path: String,
     /// 是否已挂载 (替代 `Option` 的 `None` 语义, 作为 `NotInitialized` 判据)
@@ -110,8 +110,8 @@ impl OverlayFsData {
                 workdir: String::new(),
                 merged: String::new(),
             },
-            upper_data: crate::framework::fs::ramfs::RamFsData::new(),
-            work_data: crate::framework::fs::ramfs::RamFsData::new(),
+            upper_data: crate::services::fs::ramfs_core::RamFsData::new(),
+            work_data: crate::services::fs::ramfs_core::RamFsData::new(),
             lower_path: String::new(),
             mounted: false,
         }

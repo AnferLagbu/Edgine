@@ -1,5 +1,5 @@
 use super::check;
-use crate::framework::fs::devfs::{DEVFS_DATA, DEVFS_MAX_DEVICES};
+use crate::services::fs::devfs::{DEVFS_DATA, DEVFS_MAX_DEVICES};
 use crate::framework::tests::{TestResult, runner};
 use crate::register_tests_inner;
 use crate::services::fs::devfs;
@@ -82,7 +82,7 @@ fn test_devfs_register_duplicate() -> TestResult {
     check!(
         matches!(
             result,
-            Err(crate::framework::fs::vfs::types::KernelError::AlreadyExists)
+            Err(crate::services::fs::vfs_types::KernelError::AlreadyExists)
         ),
         "registering duplicate should return AlreadyExists"
     );
@@ -95,7 +95,7 @@ fn test_devfs_unregister_nonexistent() -> TestResult {
     check!(
         matches!(
             result,
-            Err(crate::framework::fs::vfs::types::KernelError::FileNotFound)
+            Err(crate::services::fs::vfs_types::KernelError::FileNotFound)
         ),
         "unregistering nonexistent should return NotFound"
     );

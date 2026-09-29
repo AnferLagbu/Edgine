@@ -684,7 +684,7 @@ fn nestfs_fd_management() {
 ///   3. 路径不存在 → 返回错误
 #[test]
 fn nestfs_utimensat_writes_back_times() {
-    use queenx::kernel::framework::fs::FileSystem;
+    use queenx::kernel::services::fs::FileSystem;
 
     let _guard = NESTFS_TEST_LOCK.lock().unwrap();
     ensure_nestfs_init();

@@ -91,7 +91,7 @@ pub fn wasi_path_open(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
     let vfs_flags = wasi_o_flags_to_vfs(o_flags);
 
     // 使用 safe wrapper 调用 VFS
-    let vfs_fd = crate::framework::fs::vfs::api::vfs_open_safe(&abs_path, vfs_flags, 0);
+    let vfs_fd = crate::services::fs::api::vfs_open_safe(&abs_path, vfs_flags, 0);
 
     if vfs_fd < 0 {
         interp
@@ -135,7 +135,7 @@ pub fn wasi_path_create_directory(
     let path = read_path(interp, path_ptr, path_len)?;
     let abs_path = resolve_path(ctx, dirfd, &path)?;
 
-    let result = crate::framework::fs::vfs::api::vfs_mkdir_safe(&abs_path, 0);
+    let result = crate::services::fs::api::vfs_mkdir_safe(&abs_path, 0);
 
     if result < 0 {
         interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
@@ -161,7 +161,7 @@ pub fn wasi_path_remove_directory(
     let path = read_path(interp, path_ptr, path_len)?;
     let abs_path = resolve_path(ctx, dirfd, &path)?;
 
-    let result = crate::framework::fs::vfs::api::vfs_rmdir_safe(&abs_path, 0);
+    let result = crate::services::fs::api::vfs_rmdir_safe(&abs_path, 0);
 
     if result < 0 {
         interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
@@ -187,7 +187,7 @@ pub fn wasi_path_unlink_file(
     let path = read_path(interp, path_ptr, path_len)?;
     let abs_path = resolve_path(ctx, dirfd, &path)?;
 
-    let result = crate::framework::fs::vfs::api::vfs_unlink_safe(&abs_path, 0);
+    let result = crate::services::fs::api::vfs_unlink_safe(&abs_path, 0);
 
     if result < 0 {
         interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
@@ -214,7 +214,7 @@ pub fn wasi_path_symlink(ctx: &mut WasiContext, interp: &mut Interpreter) -> Res
     let _abs_new = resolve_path(ctx, dirfd, &new_path)?;
 
     // WASI: old_path = target, new_path = linkpath
-    let result = crate::framework::fs::vfs::api::vfs_symlink_safe(&old_path, &new_path, 0);
+    let result = crate::services::fs::api::vfs_symlink_safe(&old_path, &new_path, 0);
 
     if result < 0 {
         interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
@@ -246,7 +246,7 @@ pub fn wasi_path_readlink(
 
     // 分配临时缓冲区接收 readlink 结果
     let mut link_buf = alloc::vec![0u8; buf_len as usize];
-    let result = crate::framework::fs::vfs::api::vfs_readlink_safe(&abs_path, &mut link_buf, 0);
+    let result = crate::services::fs::api::vfs_readlink_safe(&abs_path, &mut link_buf, 0);
 
     if result < 0 {
         interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
@@ -281,7 +281,7 @@ pub fn wasi_path_rename(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
     let old_abs = resolve_path(ctx, old_dirfd, &old_path)?;
     let new_abs = resolve_path(ctx, new_dirfd, &new_path)?;
 
-    let result = crate::framework::fs::vfs::api::vfs_rename_safe(&old_abs, &new_abs, 0);
+    let result = crate::services::fs::api::vfs_rename_safe(&old_abs, &new_abs, 0);
 
     if result < 0 {
         interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
@@ -314,8 +314,8 @@ pub fn wasi_path_filestat_get(
     let path = read_path(interp, path_ptr, path_len)?;
     let abs_path = resolve_path(ctx, dirfd, &path)?;
 
-    let stat = crate::framework::fs::vfs::api::with_cstr(&abs_path, |ptr| {
-        crate::framework::fs::vfs::api::vfs_stat_safe(ptr, 0)
+    let stat = crate::services::fs::api::with_cstr(&abs_path, |ptr| {
+        crate::services::fs::api::vfs_stat_safe(ptr, 0)
     });
     let stat = if let Some(s) = stat {
         s
@@ -370,7 +370,7 @@ pub fn wasi_path_filestat_set_times(
     let path = read_path(interp, path_ptr, path_len)?;
     let abs_path = resolve_path(ctx, dirfd, &path)?;
 
-    let result = crate::framework::fs::vfs::api::vfs_utimensat_safe(&abs_path, atim, mtim, 0);
+    let result = crate::services::fs::api::vfs_utimensat_safe(&abs_path, atim, mtim, 0);
 
     if result < 0 {
         interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
@@ -399,7 +399,7 @@ pub fn wasi_path_link(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
     let old_abs = resolve_path(ctx, old_dirfd, &old_path)?;
     let new_abs = resolve_path(ctx, new_dirfd, &new_path)?;
 
-    let result = crate::framework::fs::vfs::api::vfs_link_safe(&old_abs, &new_abs, 0);
+    let result = crate::services::fs::api::vfs_link_safe(&old_abs, &new_abs, 0);
 
     if result < 0 {
         interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;

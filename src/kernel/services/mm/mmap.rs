@@ -45,11 +45,11 @@ pub fn fd_to_inode_id(fd: i32) -> u32 {
     if fd < 0 {
         return 0;
     }
-    let Some(handle_id) = crate::framework::fs::vfs_get_fd_handle(fd as usize) else {
+    let Some(handle_id) = crate::services::fs::vfs_get_fd_handle(fd as usize) else {
         return 0;
     };
-    crate::framework::fs::OPEN_FILE_TABLE
-        .with_file(handle_id, crate::framework::fs::OpenFile::inode_id)
+    crate::services::fs::OPEN_FILE_TABLE
+        .with_file(handle_id, crate::services::fs::OpenFile::inode_id)
         .unwrap_or(0)
 }
 
@@ -58,9 +58,9 @@ pub fn fd_to_mount_idx(fd: i32) -> Option<usize> {
     if fd < 0 {
         return None;
     }
-    let handle_id = crate::framework::fs::vfs_get_fd_handle(fd as usize)?;
-    crate::framework::fs::OPEN_FILE_TABLE
-        .with_file(handle_id, crate::framework::fs::OpenFile::mount_idx)
+    let handle_id = crate::services::fs::vfs_get_fd_handle(fd as usize)?;
+    crate::services::fs::OPEN_FILE_TABLE
+        .with_file(handle_id, crate::services::fs::OpenFile::mount_idx)
         .and_then(|idx| usize::try_from(idx).ok())
 }
 

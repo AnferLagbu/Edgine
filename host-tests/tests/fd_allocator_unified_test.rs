@@ -100,7 +100,7 @@ fn test_v2_subsystems_reference_fdplan() {
         ("UDS_FD_BASE",       "src/kernel/services/net/unix.rs",              "crate::framework::proc::FdPlan::UDS.base"),
         ("EFD_FD_BASE",       "src/kernel/framework/syscall/eventfd.rs",  "crate::framework::proc::FdPlan::EVENT_FD.base"),
         ("SFD_FD_BASE",       "src/kernel/framework/syscall/signalfd.rs", "crate::framework::proc::FdPlan::SIGNAL_FD.base"),
-        ("INOTIFY_FD_BASE",   "src/kernel/framework/fs/vfs/inotify.rs",  "crate::framework::proc::FdPlan::INOTIFY.base"),
+        ("INOTIFY_FD_BASE",   "src/kernel/services/fs/inotify.rs",  "crate::framework::proc::FdPlan::INOTIFY.base"),
     ];
     for (const_name, rel_path, expected_ref) in cases {
         let p = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -150,7 +150,7 @@ fn test_v3_subsystems_use_fd_at_not_base_plus() {
         ("src/kernel/services/net/unix.rs",              "fd_at"),
         ("src/kernel/framework/syscall/eventfd.rs",     "fd_at"),
         ("src/kernel/framework/syscall/signalfd.rs",    "fd_at"),
-        ("src/kernel/framework/fs/vfs/inotify.rs",      "fd_at"),
+        ("src/kernel/services/fs/inotify.rs",      "fd_at"),
     ];
     for (path, expected) in cases {
         let p = Path::new(env!("CARGO_MANIFEST_DIR"))

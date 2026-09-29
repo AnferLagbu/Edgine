@@ -75,8 +75,8 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
             fd, buf,
         ));
     }
-    if crate::framework::fs::is_inotify_fd(fd) {
-        return ret_to_result(crate::framework::fs::sys_inotify_read(
+    if crate::services::fs::is_inotify_fd(fd) {
+        return ret_to_result(crate::services::fs::sys_inotify_read(
             i64::from(fd),
             buf as *mut u8,
             count as usize,
@@ -87,7 +87,7 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
         return crate::services::mm::uffd::read_event(fd, buf, count);
     }
     // 常规 VFS 读 (vfs_read 将数据写入调用方地址空间的 buf)
-    ret_to_result(i64::from(crate::framework::fs::api::vfs_read(
+    ret_to_result(i64::from(crate::services::fs::api::vfs_read(
         fd as u32,
         buf as *mut u8,
         count as u32,
@@ -160,7 +160,7 @@ pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
             Ok(n) if n > 0 => n,
             _ => break,
         };
-        let n = crate::framework::fs::api::vfs_write_safe(fd as u32, &kernel_buf[..copied]);
+        let n = crate::services::fs::api::vfs_write_safe(fd as u32, &kernel_buf[..copied]);
         if n < 0 {
             return Err(Errno::from_ret(i64::from(n)));
         }
@@ -219,7 +219,7 @@ pub fn dup_syscall(oldfd: i32) -> Result<usize, Errno> {
     if oldfd < 0 {
         return Err(Errno::EBADF);
     }
-    ret_to_result(i64::from(crate::framework::fs::vfs::vfs_dup(oldfd as u32)))
+    ret_to_result(i64::from(crate::services::fs::vfs_dup(oldfd as u32)))
 }
 
 /// dup2 系统调用 — 复制文件描述符到 `newfd`
@@ -235,7 +235,7 @@ pub fn dup2_syscall(oldfd: i32, newfd: i32) -> Result<usize, Errno> {
     if oldfd == newfd {
         return Ok(newfd as usize);
     }
-    let result = crate::framework::fs::vfs::vfs_dup2(oldfd as u32, newfd as u32);
+    let result = crate::services::fs::vfs_dup2(oldfd as u32, newfd as u32);
     if result < 0 {
         return Err(Errno::EBADF);
     }
@@ -256,7 +256,7 @@ pub fn dup3_syscall(oldfd: i32, newfd: i32, flags: i32) -> Result<usize, Errno> 
     }
     // flags 当前被忽略 (未实现 O_CLOEXEC 处理)
     let _ = flags;
-    let result = crate::framework::fs::vfs::vfs_dup2(oldfd as u32, newfd as u32);
+    let result = crate::services::fs::vfs_dup2(oldfd as u32, newfd as u32);
     if result < 0 {
         return Err(Errno::EBADF);
     }
@@ -318,11 +318,11 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
         }
         F_GETFL => {
             // B-9.5: fd 元数据改源 OpenFile (per-process fd 表取 handle_id)
-            let Some(handle_id) = crate::framework::fs::vfs::vfs_get_fd_handle(fd as usize) else {
+            let Some(handle_id) = crate::services::fs::vfs_get_fd_handle(fd as usize) else {
                 return Err(Errno::EBADF);
             };
-            match crate::framework::fs::OPEN_FILE_TABLE
-                .with_file(handle_id, crate::framework::fs::OpenFile::get_flags)
+            match crate::services::fs::OPEN_FILE_TABLE
+                .with_file(handle_id, crate::services::fs::OpenFile::get_flags)
             {
                 Some(flags) => ret_to_result(i64::from(flags)),
                 None => Err(Errno::EBADF),
@@ -353,7 +353,7 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
 /// 用户缓冲区未通过校验 → `EFAULT`; 参数非法 → `EINVAL`;
 /// 锁冲突 (`F_SETLK`) → `EAGAIN`; 锁表耗尽 → `ENOLCK`.
 fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
-    use crate::framework::fs::{F_GETLK, PosixLockResult, sys_posix_lock};
+    use crate::services::fs::{F_GETLK, PosixLockResult, sys_posix_lock};
 
     // flock 结构体布局 (与 Linux 兼容):
     // offset 0:  l_type   i16
@@ -385,11 +385,11 @@ fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
 
     // 获取 fd 对应的 inode 号 (B-9.5: per-process fd 表 → OpenFile)
     let ino = {
-        let Some(handle_id) = crate::framework::fs::vfs::vfs_get_fd_handle(fd as usize) else {
+        let Some(handle_id) = crate::services::fs::vfs_get_fd_handle(fd as usize) else {
             return Err(Errno::EBADF);
         };
-        match crate::framework::fs::OPEN_FILE_TABLE
-            .with_file(handle_id, crate::framework::fs::OpenFile::inode_id)
+        match crate::services::fs::OPEN_FILE_TABLE
+            .with_file(handle_id, crate::services::fs::OpenFile::inode_id)
         {
             Some(ino) => ino,
             None => return Err(Errno::EBADF),
@@ -401,11 +401,11 @@ fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
         0 => l_start as u64, // SEEK_SET
         1 => {
             // SEEK_CUR: 当前 offset + l_start (B-9.5: offset 源自共享 OpenFile)
-            let Some(handle_id) = crate::framework::fs::vfs::vfs_get_fd_handle(fd as usize) else {
+            let Some(handle_id) = crate::services::fs::vfs_get_fd_handle(fd as usize) else {
                 return Err(Errno::EBADF);
             };
-            match crate::framework::fs::OPEN_FILE_TABLE
-                .with_file(handle_id, crate::framework::fs::OpenFile::get_offset)
+            match crate::services::fs::OPEN_FILE_TABLE
+                .with_file(handle_id, crate::services::fs::OpenFile::get_offset)
             {
                 Some(offset) => (offset as i64 + l_start) as u64,
                 None => return Err(Errno::EBADF),
@@ -501,7 +501,7 @@ pub fn copy_file_range_syscall(
 
         // 从源 fd 读取
         let read_ret =
-            crate::framework::fs::api::vfs_read(fd_in as u32, buf.as_mut_ptr(), to_read as u32);
+            crate::services::fs::api::vfs_read(fd_in as u32, buf.as_mut_ptr(), to_read as u32);
         if read_ret < 0 {
             if total_copied > 0 {
                 return Ok(total_copied);
@@ -515,7 +515,7 @@ pub fn copy_file_range_syscall(
 
         // 写入目标 fd
         let write_ret =
-            crate::framework::fs::api::vfs_write(fd_out as u32, buf.as_ptr(), bytes_read as u32);
+            crate::services::fs::api::vfs_write(fd_out as u32, buf.as_ptr(), bytes_read as u32);
         if write_ret < 0 {
             if total_copied > 0 {
                 return Ok(total_copied);
@@ -662,7 +662,7 @@ pub fn close_range_syscall(first: u32, last: u32, flags: u32) -> Result<usize, E
     }
     let mut closed = 0usize;
     for fd in fds {
-        crate::framework::fs::api::vfs_close(fd);
+        crate::services::fs::api::vfs_close(fd);
         closed += 1;
     }
     Ok(closed)
@@ -692,7 +692,7 @@ pub fn preadv_syscall(fd: i32, iov_ptr: u64, iovcnt: u64, pos: i64) -> Result<us
         }
         // 有意窄化: 资源类型转换, 单段长度截断到 u32 (与 vfs_read 一致)
         let count = core::cmp::min(len, u64::from(u32::MAX)) as u32;
-        let n = crate::framework::fs::api::vfs_pread(fd as u32, base as *mut u8, count, offset);
+        let n = crate::services::fs::api::vfs_pread(fd as u32, base as *mut u8, count, offset);
         if n < 0 {
             if total > 0 {
                 break;
@@ -732,7 +732,7 @@ pub fn pwritev_syscall(fd: i32, iov_ptr: u64, iovcnt: u64, pos: i64) -> Result<u
         }
         // 有意窄化: 资源类型转换, 单段长度截断到 u32 (与 vfs_write 一致)
         let count = core::cmp::min(len, u64::from(u32::MAX)) as u32;
-        let n = crate::framework::fs::api::vfs_pwrite(fd as u32, base as *const u8, count, offset);
+        let n = crate::services::fs::api::vfs_pwrite(fd as u32, base as *const u8, count, offset);
         if n < 0 {
             if total > 0 {
                 break;

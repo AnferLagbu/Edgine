@@ -49,7 +49,7 @@
 //! ```
 
 use super::driver::Driver;
-use crate::framework::fs::KernelError;
+use crate::framework::error::KernelError;
 use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::boxed::Box;
 use alloc::vec::Vec;

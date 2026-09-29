@@ -5,7 +5,7 @@
 use super::fat::FAT_END;
 use super::super_block::ExfatSuperBlock;
 use crate::framework::driver::block::{read_sectors, with_device};
-use crate::framework::fs::KernelError;
+use crate::services::fs::KernelError;
 use alloc::vec;
 
 /// 分配一个空闲簇

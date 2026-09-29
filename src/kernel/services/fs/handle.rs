@@ -1,21 +1,20 @@
 //! VFS 句柄 (fd) 操作 — 从 `api.rs` 拆出的物理子模块
 //!
-//! 归属: fd 句柄相关 `#[no_mangle] pub extern "C"` 函数 (open/close/read/
-//! write/seek/readdir/truncate/fstat/fchmod/fchown/dup/dup2) 及其 safe 包装
-//! 与 fd 表操作. `api.rs` 通过 `pub use handle::*;` 保持对外符号名与调用
-//! 路径不变 (`#[no_mangle]` 全局符号不受模块位置影响).
+//! 归属: fd 句柄相关函数 (open/close/read/write/seek/readdir/truncate/
+//! fstat/fchmod/fchown/dup/dup2) 及其 safe 包装与 fd 表操作. `api.rs` 通过
+//! `pub use handle::*;` 保持对外调用路径不变.
 
 use super::api::{
     PCACHE_FAST_MAX_BYTES, PCACHE_FAST_MIN_BYTES, ptr_to_str, split_parent_name, with_cstr,
 };
 use super::open_file_table::OPEN_FILE_TABLE;
-use super::types::{
+use super::vfs_manager::VFS_MANAGER;
+use super::vfs_types::{
     KernelError, OpenFile, VFS_MAX_PATH, VfsDirEntry, VfsOpenFlags, VfsSeekWhence, VfsStat,
 };
-use super::vfs::VFS_MANAGER;
 use crate::framework::fd_notify;
 use crate::framework::mm::{PAGE_SIZE, pcache};
-use crate::framework::userptr::{UserReadPtr, UserRefMut, UserWritePtr};
+use crate::framework::userptr::{UserReadPtr, UserWritePtr};
 
 /// 通过本地 fd 取当前进程 fd 表 (权威表) 的 `OpenFile` `handle_id`.
 ///
@@ -29,8 +28,6 @@ fn current_fd_handle(fd_idx: usize) -> Option<u32> {
 // VFS 核心接口 (内部)
 // ============================================================================
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
 #[expect(
@@ -138,11 +135,8 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
     }
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 // 注意: 保持 Rust ABI — vfs_close_internal 为内核内部调用 (fd 表原子回收),
 //        TD-03 契约测试按 Rust ABI 签名匹配该函数体.
-#[unsafe(no_mangle)]
-#[expect(clippy::no_mangle_with_rust_abi)]
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -219,8 +213,6 @@ pub fn vfs_close_all_fds() {
     }
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 // 有意窄化: 用户内存代理, 指针/长度上下文保证
 #[expect(clippy::cast_possible_truncation)]
 #[expect(
@@ -239,8 +231,10 @@ pub extern "C" fn vfs_read_internal(fd_idx: u32, buf: *mut u8, count: u32) -> i3
         None => return -1,
     };
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    let mut user_buf = unsafe { UserWritePtr::new(buf, count as usize) };
+    // I4: 用户内存经 framework 安全代理 (范围校验后构造可写视图)
+    let Some(mut user_buf) = UserWritePtr::checked_new(buf, count as usize) else {
+        return -1;
+    };
 
     // 通过 OpenFile 获取 offset 和 Inode
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
@@ -270,13 +264,9 @@ pub extern "C" fn vfs_read_internal(fd_idx: u32, buf: *mut u8, count: u32) -> i3
             if all_hit {
                 let mut all_ok = true;
                 for i in 0..npages {
-                    // SAFETY: 4KB 对齐保证 buf.add(i*PAGE_SIZE) 落在 [buf, buf+count) 内
-                    let dst = unsafe {
-                        core::slice::from_raw_parts_mut(
-                            buf.add(i * PAGE_SIZE as usize),
-                            PAGE_SIZE as usize,
-                        )
-                    };
+                    // 4KB 对齐保证该分片落在 [buf, buf+count) 内
+                    let dst = &mut user_buf.as_mut_slice()
+                        [i * PAGE_SIZE as usize..(i + 1) * PAGE_SIZE as usize];
                     if !pcache::pcache_read_to_slice(node_id, first_pi + i as u64, dst) {
                         all_ok = false;
                         break;
@@ -315,10 +305,7 @@ pub extern "C" fn vfs_read_internal(fd_idx: u32, buf: *mut u8, count: u32) -> i3
 ///   0 表示无会话,framework 层 ramfs.read 应当返回 EACCES 而非降级为管理员。
 ///
 /// 返回: 实际读取字节数, 负数表示错误.
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 // 注意: 保持 Rust ABI — 参数含 `Option<usize>` / `&mut [u8]` 等非 FFI-safe 类型
-#[unsafe(no_mangle)]
-#[expect(clippy::no_mangle_with_rust_abi)]
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
 #[expect(
@@ -332,9 +319,6 @@ pub fn vfs_pread_inode(
     dst: &mut [u8],
     pwm: u64,
 ) -> i32 {
-    // SAFETY: 调用方保证 dst 在生命周期内有效; 长度由调用方控制.
-    let mut user_buf = unsafe { UserWritePtr::new(dst.as_mut_ptr(), dst.len()) };
-
     // P3-I-19: 走 FileSystem trait 分发. 旧实现直接访问 RAMFS_DATA,
     // 非 RamFS (NestFS/DevFS 等) 挂载 mmap 时无法工作. 现按 mount_idx
     // 派发, 无挂载则返回 -1 (EIO). mmap prewarm 由 page_fault 传入
@@ -354,12 +338,10 @@ pub fn vfs_pread_inode(
         Some(f) => f,
         None => return -1,
     };
-    fs.fs_pread_inode(node_id, file_offset, user_buf.as_mut_slice(), pwm)
+    fs.fs_pread_inode(node_id, file_offset, dst, pwm)
         .map_or(-1, |n| n as i32)
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -388,8 +370,6 @@ pub extern "C" fn vfs_truncate_internal(fd: u32, size: u64) -> i32 {
     result.unwrap_or(-1)
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
 #[expect(
@@ -407,12 +387,14 @@ pub extern "C" fn vfs_write_internal(fd_idx: u32, buf: *const u8, count: u32) ->
         None => return -1,
     };
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    let user_buf = unsafe { UserReadPtr::new(buf, count as usize) };
+    // I4: 用户内存经 framework 安全代理 (范围校验后构造只读视图)
+    let Some(user_buf) = UserReadPtr::checked_new(buf, count as usize) else {
+        return -1;
+    };
 
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
         // O_APPEND: 写入前自动 seek 到文件末尾 (POSIX 原子 append)
-        let offset = if (open_file.get_flags() & super::types::VfsOpenFlags::APPEND.bits()) != 0 {
+        let offset = if (open_file.get_flags() & super::vfs_types::VfsOpenFlags::APPEND.bits()) != 0 {
             open_file
                 .inode()
                 .stat(open_file.pwm)
@@ -439,8 +421,6 @@ pub extern "C" fn vfs_write_internal(fd_idx: u32, buf: *const u8, count: u32) ->
     result.unwrap_or(-1)
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -467,11 +447,12 @@ pub extern "C" fn vfs_readdir_internal(fd: u32, entry: *mut VfsDirEntry) -> i32 
                 let mut dir_entry = VfsDirEntry::default();
                 dir_entry.set_name(&name);
                 dir_entry.file_type = file_type.as_u8();
-                // SAFETY: 调用方保证指针/类型有效
-                let mut entry_ref = unsafe { UserRefMut::new(entry) };
-                *entry_ref.as_mut() = dir_entry;
+                // I4: 用户内存经 framework 安全代理 (范围校验后写入)
+                if !crate::framework::userptr::write_struct_to_user(entry as u64, &dir_entry) {
+                    return -1;
+                }
                 let new_offset = offset
-                    + core::mem::size_of::<crate::framework::fs::ramfs::RamFsDirEntry>() as u64;
+                    + core::mem::size_of::<crate::services::fs::ramfs_core::RamFsDirEntry>() as u64;
                 open_file.set_offset(new_offset);
                 1
             }
@@ -516,11 +497,8 @@ pub fn vfs_write_pod<T: Copy>(fd: u32, val: &T) -> i32 {
     if size == 0 {
         return 0;
     }
-    // SAFETY: val 是有效 &T; size = size_of::<T>() 完全落在 val 内存范围内;
-    //         from_raw_parts 仅构造只读 u8 视图供 vfs_write 读取, 不越界.
-    let bytes = unsafe {
-        core::slice::from_raw_parts(core::ptr::from_ref(val).cast::<u8>(), size)
-    };
+    // I4: POD 字节视图经 framework 安全辅助构造 (无对齐/别名假设)
+    let bytes = crate::framework::mm::pod_as_bytes(val);
     vfs_write_safe(fd, bytes)
 }
 
@@ -542,8 +520,10 @@ pub fn vfs_pread(fd: u32, buf: *mut u8, count: u32, offset: u64) -> i32 {
     let Some(handle_id) = current_fd_handle(fd as usize) else {
         return -1;
     };
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    let mut user_buf = unsafe { UserWritePtr::new(buf, count as usize) };
+    // I4: 用户内存经 framework 安全代理 (范围校验后构造可写视图)
+    let Some(mut user_buf) = UserWritePtr::checked_new(buf, count as usize) else {
+        return -1;
+    };
     OPEN_FILE_TABLE
         .with_file(handle_id, |open_file| {
             let pwm = open_file.pwm;
@@ -567,8 +547,10 @@ pub fn vfs_pwrite(fd: u32, buf: *const u8, count: u32, offset: u64) -> i32 {
     let Some(handle_id) = current_fd_handle(fd as usize) else {
         return -1;
     };
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    let user_buf = unsafe { UserReadPtr::new(buf, count as usize) };
+    // I4: 用户内存经 framework 安全代理 (范围校验后构造只读视图)
+    let Some(user_buf) = UserReadPtr::checked_new(buf, count as usize) else {
+        return -1;
+    };
     OPEN_FILE_TABLE
         .with_file(handle_id, |open_file| {
             let pwm = open_file.pwm;
@@ -600,37 +582,27 @@ pub fn vfs_seek_safe(fd: u32, offset: i32, whence: u32) -> i32 {
     reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
 )]
 /// Safe 包装: `vfs_readdir`
-pub fn vfs_readdir_safe(fd: u32, entry: &mut super::types::VfsDirEntry) -> i32 {
+pub fn vfs_readdir_safe(fd: u32, entry: &mut super::vfs_types::VfsDirEntry) -> i32 {
     // SAFETY: entry 是调用方拥有的有效可写结构体
     vfs_readdir(fd, entry as *mut _)
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 pub extern "C" fn vfs_open(path: *const u8, flags: u32, pwm: u64) -> i32 {
     vfs_open_internal(path, flags, pwm)
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 pub extern "C" fn vfs_close(fd: u32) -> i32 {
     vfs_close_internal(fd)
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 pub extern "C" fn vfs_read(fd: u32, buf: *mut u8, count: u32) -> i32 {
     vfs_read_internal(fd, buf, count)
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 pub extern "C" fn vfs_write(fd: u32, buf: *const u8, count: u32) -> i32 {
     vfs_write_internal(fd, buf, count)
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 pub extern "C" fn vfs_readdir(fd: u32, entry: *mut VfsDirEntry) -> i32 {
     vfs_readdir_internal(fd, entry)
 }
@@ -639,8 +611,6 @@ pub extern "C" fn vfs_readdir(fd: u32, entry: *mut VfsDirEntry) -> i32 {
 // fchmod — 按 fd 修改文件权限
 // ============================================================================
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -666,8 +636,6 @@ pub extern "C" fn vfs_fchmod(fd: u32, mode: u16) -> i32 {
 // fchown — 按 fd 修改文件所有者
 // ============================================================================
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -689,8 +657,6 @@ pub extern "C" fn vfs_fchown(fd: u32, owner_pwm: u64, group_pwm: u64, pwm: u64) 
     result.unwrap_or(-9)
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
 #[expect(
@@ -727,8 +693,6 @@ pub extern "C" fn vfs_seek(fd: u32, offset: i32, whence: u32) -> i32 {
 // fstat — 从 fd 获取文件属性
 // ============================================================================
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -744,30 +708,27 @@ pub extern "C" fn vfs_fstat(fd: u32, st: *mut VfsStat, _pwm: u64) -> i32 {
         None => return -9,
     };
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    let mut st_ref = unsafe { UserRefMut::new(st) };
-
+    // I4: 用户内存经 framework 安全代理 (范围校验后写入)
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
         let pwm = open_file.pwm;
         open_file.inode().stat(pwm).map_or(-1, |stat| {
-            *st_ref.as_mut() = stat;
-            0
+            // credo 身份映射: 把 pwm 归属的 uid/gid 写入最终 stat (先算后写, 免二次回读)
+            let mut stat = stat;
+            let tbl = crate::framework::credo::identity::get_table();
+            stat.uid = tbl.uid_of(stat.owner_pwm);
+            stat.gid = tbl.gid_of(stat.group_pwm);
+            if stat.gid == 0xFFFF_FFFF {
+                stat.gid = stat.uid;
+            }
+            if crate::framework::userptr::write_struct_to_user(st as u64, &stat) {
+                0
+            } else {
+                -1
+            }
         })
     });
 
-    let result = result.unwrap_or(-1);
-
-    if result == 0 {
-        let tbl = crate::framework::credo::identity::get_table();
-        let r = st_ref.as_mut();
-        r.uid = tbl.uid_of(r.owner_pwm);
-        r.gid = tbl.gid_of(r.group_pwm);
-        if r.gid == 0xFFFF_FFFF {
-            r.gid = r.uid;
-        }
-    }
-
-    result
+    result.unwrap_or(-1)
 }
 
 #[expect(
@@ -794,8 +755,6 @@ pub fn vfs_get_fd_handle(fd_idx: usize) -> Option<u32> {
 // dup / dup2 — 文件描述符复制
 // ============================================================================
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn vfs_dup(oldfd: u32) -> i32 {
@@ -819,8 +778,6 @@ pub extern "C" fn vfs_dup(oldfd: u32) -> i32 {
     new_fd as i32
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 pub extern "C" fn vfs_dup2(oldfd: u32, newfd: u32) -> i32 {
     let old_usize = oldfd as usize;
     let new_usize = newfd as usize;

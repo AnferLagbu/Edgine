@@ -106,7 +106,7 @@ pub fn poll_syscall(fds_ptr: u64, nfds: u32, _timeout: i32) -> i64 {
         }
         if pfd.events & POLLIN != 0 {
             // fd 有效性改由 per-process fd 表判定 (fd → OpenFileTable handle 映射存在即有效)
-            if crate::framework::fs::vfs_get_fd_handle(pfd.fd as usize).is_some() {
+            if crate::services::fs::vfs_get_fd_handle(pfd.fd as usize).is_some() {
                 pfd.revents |= POLLIN;
                 ready += 1;
             }
@@ -190,7 +190,7 @@ pub fn chown_syscall(path_ptr: u64, uid: u32, gid: u32) -> i64 {
         None => return Errno::EINVAL.as_ret(),
     };
     let pwm = crate::framework::credo::pwm_get_current();
-    i64::from(crate::framework::fs::vfs_chown_ext(
+    i64::from(crate::services::fs::vfs_chown_ext(
         path, owner_pwm, group_pwm, pwm,
     ))
 }
@@ -201,12 +201,12 @@ pub fn truncate_syscall(path_ptr: u64, length: i64) -> i64 {
         return Errno::EINVAL.as_ret();
     }
     let path = path_ptr as *const u8;
-    let fd = crate::framework::fs::vfs_open(path, 0o2, crate::framework::credo::pwm_get_current());
+    let fd = crate::services::fs::vfs_open(path, 0o2, crate::framework::credo::pwm_get_current());
     if fd < 0 {
         return Errno::ENOENT.as_ret();
     }
-    let result = crate::framework::fs::vfs_truncate_internal(fd as u32, length as u64);
-    crate::framework::fs::vfs_close(fd as u32);
+    let result = crate::services::fs::vfs_truncate_internal(fd as u32, length as u64);
+    crate::services::fs::vfs_close(fd as u32);
     if result < 0 { Errno::EIO.as_ret() } else { 0 }
 }
 
@@ -215,7 +215,7 @@ pub fn ftruncate_syscall(fd: i32, length: i64) -> i64 {
     if fd < 0 || length < 0 {
         return Errno::EINVAL.as_ret();
     }
-    let result = crate::framework::fs::vfs_truncate_internal(fd as u32, length as u64);
+    let result = crate::services::fs::vfs_truncate_internal(fd as u32, length as u64);
     if result < 0 { Errno::EIO.as_ret() } else { 0 }
 }
 
@@ -251,13 +251,13 @@ pub fn fallocate_syscall(fd: i32, mode: i32, offset: u64, len: u64) -> i64 {
         return Errno::EFBIG.as_ret();
     };
     // 仅扩展不缩小: 目标大小超过当前 size 时才截断扩展
-    let cur_size = crate::framework::fs::api::vfs_fstat_safe(
+    let cur_size = crate::services::fs::api::vfs_fstat_safe(
         fd as u32,
         crate::framework::credo::pwm_get_current(),
     )
     .map_or(0, |st| u64::from(st.size));
     if end > cur_size {
-        let r = crate::framework::fs::vfs_truncate_internal(fd as u32, end);
+        let r = crate::services::fs::vfs_truncate_internal(fd as u32, end);
         if r < 0 {
             return Errno::EIO.as_ret();
         }
@@ -271,7 +271,7 @@ pub fn fallocate_syscall(fd: i32, mode: i32, offset: u64, len: u64) -> i64 {
 )]
 /// flock(fd, operation) 策略
 pub fn flock_syscall(fd: i32, operation: i32) -> i64 {
-    use crate::framework::fs::{FlockResult, sys_flock as do_flock};
+    use crate::services::fs::{FlockResult, sys_flock as do_flock};
 
     if fd < 0 {
         return Errno::EBADF.as_ret();
@@ -279,11 +279,11 @@ pub fn flock_syscall(fd: i32, operation: i32) -> i64 {
 
     // inode 号改由 OpenFile 元数据源提供 (fd → handle → OpenFile.inode_id)
     let ino = {
-        let Some(handle_id) = crate::framework::fs::vfs_get_fd_handle(fd as usize) else {
+        let Some(handle_id) = crate::services::fs::vfs_get_fd_handle(fd as usize) else {
             return Errno::EBADF.as_ret();
         };
-        match crate::framework::fs::OPEN_FILE_TABLE
-            .with_file(handle_id, crate::framework::fs::OpenFile::inode_id)
+        match crate::services::fs::OPEN_FILE_TABLE
+            .with_file(handle_id, crate::services::fs::OpenFile::inode_id)
         {
             Some(node_id) => node_id,
             None => return Errno::EBADF.as_ret(),

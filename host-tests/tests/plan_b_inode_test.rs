@@ -20,9 +20,9 @@ fn read_file(relative_path: &str) -> String {
 
 #[test]
 fn inode_trait_defined_in_services() {
-    // B09-12/P1-B3: Inode trait 已迁回 framework/fs/vfs/inode.rs
-    let src = read_file("framework/fs/vfs/inode.rs");
-    assert!(src.contains("pub trait Inode: Send + Sync"), "Inode trait 必须定义在 framework/fs/vfs/inode.rs");
+    // 阶段 4b: Inode trait 已随 VFS 完整下沉迁至 services/fs/inode.rs
+    let src = read_file("services/fs/inode.rs");
+    assert!(src.contains("pub trait Inode: Send + Sync"), "Inode trait 必须定义在 services/fs/inode.rs");
     assert!(src.contains("fn read(&self, offset: u64, buf: &mut [u8], pwm: u64)"), "Inode::read 必须接收 offset 参数");
     assert!(src.contains("fn write(&self, offset: u64, buf: &[u8], pwm: u64)"), "Inode::write 必须接收 offset 参数");
     assert!(src.contains("fn stat(&self, pwm: u64)"), "Inode::stat 必须存在");
@@ -32,12 +32,11 @@ fn inode_trait_defined_in_services() {
 
 #[test]
 fn inode_trait_deny_unsafe() {
-    // B09-12/P1-B3: Inode trait 定义在 framework (0 unsafe), 具象实现在 services 保留 deny
-    let src = read_file("framework/fs/vfs/inode.rs");
-    assert!(src.contains("pub trait Inode: Send + Sync"), "framework/fs/vfs/inode.rs 必须定义 Inode trait");
-    assert!(!src.contains("unsafe"), "framework/fs/vfs/inode.rs 不应含 unsafe");
-    let svc = read_file("services/fs/inode.rs");
-    assert!(svc.contains("#![deny(unsafe_code)]"), "services/fs/inode.rs 必须 #![deny(unsafe_code)]");
+    // 阶段 4b: Inode trait 与具象实现均下沉 services, 由 deny(unsafe_code) 保证 0 unsafe
+    let src = read_file("services/fs/inode.rs");
+    assert!(src.contains("pub trait Inode: Send + Sync"), "services/fs/inode.rs 必须定义 Inode trait");
+    assert!(src.contains("#![deny(unsafe_code)]"), "services/fs/inode.rs 必须 #![deny(unsafe_code)]");
+    assert!(!src.contains("unsafe {"), "services/fs/inode.rs 不应含实际 unsafe 块");
 }
 
 // ============================================================================
@@ -46,8 +45,8 @@ fn inode_trait_deny_unsafe() {
 
 #[test]
 fn open_file_uses_arc_dyn_inode() {
-    // B09-12/P1-B3: OpenFile 定义已迁回 framework/fs/vfs/types.rs
-    let src = read_file("framework/fs/vfs/types.rs");
+    // 阶段 4b: OpenFile 定义已随 VFS 完整下沉迁至 services/fs/vfs_types.rs
+    let src = read_file("services/fs/vfs_types.rs");
     // OpenFile 应持有 Arc<dyn Inode> 而非 inode_id: u32
     assert!(src.contains("inode: Arc<dyn Inode>"), "OpenFile 必须持有 Arc<dyn Inode>");
     // 不应有 inode_id 字段
@@ -58,8 +57,8 @@ fn open_file_uses_arc_dyn_inode() {
 
 #[test]
 fn open_file_has_debug_impl() {
-    // B09-12/P1-B3: OpenFile 定义已迁回 framework/fs/vfs/types.rs
-    let src = read_file("framework/fs/vfs/types.rs");
+    // 阶段 4b: OpenFile 定义已随 VFS 完整下沉迁至 services/fs/vfs_types.rs
+    let src = read_file("services/fs/vfs_types.rs");
     assert!(src.contains("impl core::fmt::Debug for OpenFile"), "OpenFile 必须实现 Debug");
 }
 
@@ -104,8 +103,8 @@ fn process_fd_table_deny_unsafe() {
 
 #[test]
 fn filesystem_fs_open_returns_arc_inode() {
-    // B09-12/P1-B3: FileSystem trait 已迁回 framework/fs/vfs/types.rs
-    let src = read_file("framework/fs/vfs/types.rs");
+    // 阶段 4b: FileSystem trait 已随 VFS 完整下沉迁至 services/fs/vfs_types.rs
+    let src = read_file("services/fs/vfs_types.rs");
     assert!(
         src.contains("fn fs_open(&self, rel_path: &str, flags: u32, pwm: u64) -> KernelResult<Arc<dyn Inode>>"),
         "FileSystem::fs_open 必须返回 Arc<dyn Inode>"
@@ -118,8 +117,8 @@ fn filesystem_fs_open_returns_arc_inode() {
 
 #[test]
 fn filesystem_fs_create_returns_arc_inode() {
-    // B09-12/P1-B3: FileSystem trait 已迁回 framework/fs/vfs/types.rs
-    let src = read_file("framework/fs/vfs/types.rs");
+    // 阶段 4b: FileSystem trait 已随 VFS 完整下沉迁至 services/fs/vfs_types.rs
+    let src = read_file("services/fs/vfs_types.rs");
     assert!(
         src.contains("fn fs_create(&self, parent_path: &str, name: &str, pwm: u64) -> KernelResult<Arc<dyn Inode>>"),
         "FileSystem::fs_create 必须返回 Arc<dyn Inode>"
@@ -139,8 +138,8 @@ fn ramfs_has_native_inode() {
 
 #[test]
 fn devfs_has_native_inode() {
-    // DECISION-J 第二十一批: devfs 实现迁回 framework/fs/devfs/mod.rs
-    let src = read_file("framework/fs/devfs/mod.rs");
+    // 阶段 4b: devfs 实现已下沉 services/fs/devfs.rs
+    let src = read_file("services/fs/devfs.rs");
     assert!(src.contains("pub struct DevFsInode"), "DevFS 必须有原生 DevFsInode");
     assert!(src.contains("impl Inode for DevFsInode"), "DevFsInode 必须 impl Inode");
 }
@@ -186,8 +185,8 @@ fn exfat_has_native_inode() {
 
 #[test]
 fn vfs_read_uses_inode_trait() {
-    // B 方案拆分第二步: vfs_read_internal 已从 api.rs 迁至 handle.rs
-    let src = read_file("framework/fs/vfs/handle.rs");
+    // 阶段 4b: vfs_read_internal 已随 VFS 完整下沉迁至 services/fs/handle.rs
+    let src = read_file("services/fs/handle.rs");
     // 鲁棒匹配: rustfmt 拆行时链式调用分散在多行, 用独立子串 + 同函数体检查
     assert!(
         src.contains(".inode()") && src.contains(".read(") && src.contains("open_file"),
@@ -198,8 +197,8 @@ fn vfs_read_uses_inode_trait() {
 
 #[test]
 fn vfs_write_uses_inode_trait() {
-    // B 方案拆分第二步: vfs_write_internal 已从 api.rs 迁至 handle.rs
-    let src = read_file("framework/fs/vfs/handle.rs");
+    // 阶段 4b: vfs_write_internal 已随 VFS 完整下沉迁至 services/fs/handle.rs
+    let src = read_file("services/fs/handle.rs");
     // 鲁棒匹配: rustfmt 拆行时链式调用分散在多行, 用独立子串 + 同函数体检查
     assert!(
         src.contains(".inode()") && src.contains(".write(") && src.contains("open_file"),
@@ -210,15 +209,15 @@ fn vfs_write_uses_inode_trait() {
 
 #[test]
 fn vfs_fstat_uses_inode_trait() {
-    // B 方案拆分第二步: vfs_fstat 已从 api.rs 迁至 handle.rs
-    let src = read_file("framework/fs/vfs/handle.rs");
+    // 阶段 4b: vfs_fstat 已随 VFS 完整下沉迁至 services/fs/handle.rs
+    let src = read_file("services/fs/handle.rs");
     assert!(src.contains("open_file.inode().stat("), "vfs_fstat 必须使用 Inode::stat");
 }
 
 #[test]
 fn vfs_seek_uses_inode_trait() {
-    // B 方案拆分第二步: vfs_seek 已从 api.rs 迁至 handle.rs
-    let src = read_file("framework/fs/vfs/handle.rs");
+    // 阶段 4b: vfs_seek 已随 VFS 完整下沉迁至 services/fs/handle.rs
+    let src = read_file("services/fs/handle.rs");
     // rustfmt 可能将链式调用拆为多行; 匹配 `.inode()` 与 `.seek(` 在同一函数体内
     // (两者间隔 ≤ 200 字符, 适配 rustfmt 拆行格式).
     assert!(
@@ -229,8 +228,8 @@ fn vfs_seek_uses_inode_trait() {
 
 #[test]
 fn vfs_truncate_uses_inode_trait() {
-    // B 方案拆分第二步: vfs_truncate_internal 已从 api.rs 迁至 handle.rs
-    let src = read_file("framework/fs/vfs/handle.rs");
+    // 阶段 4b: vfs_truncate_internal 已随 VFS 完整下沉迁至 services/fs/handle.rs
+    let src = read_file("services/fs/handle.rs");
     // 鲁棒匹配: rustfmt 拆行时链式调用分散在多行, 用独立子串 + 同函数体检查
     assert!(
         src.contains(".inode()") && src.contains(".truncate(") && src.contains("open_file"),
@@ -240,8 +239,8 @@ fn vfs_truncate_uses_inode_trait() {
 
 #[test]
 fn get_fd_info_removed() {
-    // B 方案拆分第二步: fd 句柄操作已迁至 handle.rs
-    let src = read_file("framework/fs/vfs/handle.rs");
+    // 阶段 4b: fd 句柄操作已随 VFS 完整下沉迁至 services/fs/handle.rs
+    let src = read_file("services/fs/handle.rs");
     assert!(!src.contains("fn get_fd_info"), "旧的 get_fd_info 函数应已删除");
 }
 
@@ -262,8 +261,8 @@ fn anonymous_inode_exists() {
 
 #[test]
 fn filesystem_has_fs_resolve_inode() {
-    // B09-12/P1-B3: FileSystem trait 已迁回 framework/fs/vfs/types.rs
-    let src = read_file("framework/fs/vfs/types.rs");
+    // 阶段 4b: FileSystem trait 已随 VFS 完整下沉迁至 services/fs/vfs_types.rs
+    let src = read_file("services/fs/vfs_types.rs");
     assert!(
         src.contains("fn fs_resolve_inode(&self"),
         "FileSystem trait 必须有 fs_resolve_inode 方法"
@@ -272,8 +271,8 @@ fn filesystem_has_fs_resolve_inode() {
 
 #[test]
 fn ramfs_implements_fs_resolve_inode() {
-    // DECISION-K 项 5: ramfs 实现回迁 framework/fs/ramfs/mod.rs
-    let src = read_file("framework/fs/ramfs/mod.rs");
+    // 阶段 4b: ramfs 实现已下沉 services/fs/ramfs_core/mod.rs
+    let src = read_file("services/fs/ramfs_core/mod.rs");
     assert!(src.contains("fn fs_resolve_inode"), "RamFs 必须实现 fs_resolve_inode");
 }
 
@@ -289,8 +288,8 @@ fn ext2_implements_fs_resolve_inode() {
 
 #[test]
 fn vfs_write_checks_append_flag() {
-    // B 方案拆分第二步: vfs_write_internal 已从 api.rs 迁至 handle.rs
-    let src = read_file("framework/fs/vfs/handle.rs");
+    // 阶段 4b: vfs_write_internal 已随 VFS 完整下沉迁至 services/fs/handle.rs
+    let src = read_file("services/fs/handle.rs");
     assert!(
         src.contains("VfsOpenFlags::APPEND"),
         "vfs_write_internal 必须检查 O_APPEND flag"

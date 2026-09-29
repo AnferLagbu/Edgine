@@ -5,14 +5,15 @@
 //!
 //! ```text
 //! framework/credo/                  ← TCB (unsafe 允许)
-//!   ├─ atomic_matrix.rs              ← 16×64 AtomicU64 物理存储
-//!   ├─ password.rs                   ← SHA-256 + 常数时间比较
-//!   └─ persist.rs                    ← 磁盘序列化
+//!   ├─ identity.rs                   ← 身份表 (全原子字段)
+//!   ├─ capability.rs                 ← 能力矩阵
+//!   └─ types.rs                      ← PWM 类型定义
 //!
 //! services/credo/ (本模块)         ← 100% safe Rust
 //!   ├─ policy.rs                     ← 能力检查策略 ✅
 //!   ├─ grants.rs                     ← 委托规则 ✅
 //!   ├─ sessions.rs                   ← 会话生命周期 ✅
+//!   ├─ persist.rs                    ← 磁盘序列化编排 ✅
 //!   └─ audit.rs                      ← 审计日志生成 ✅
 //! ```
 //!
@@ -29,6 +30,8 @@ pub mod crypto;
 pub mod domain;
 pub mod grants;
 pub mod identity;
+/// 持久化存储编排 — PWM 数据库 save/load/remove (原 framework/credo/storage.rs 下沉)
+pub mod persist;
 pub mod policy;
 /// D6: 安全启动 + TPM 安全封装
 pub mod secure_boot;

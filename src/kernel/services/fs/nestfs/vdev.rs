@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 use crate::framework::driver::block;
-use crate::framework::fs::KernelError;
+use crate::services::fs::KernelError;
 use alloc::vec::Vec;
 
 pub const HV_VDEV_MAX: usize = 8;

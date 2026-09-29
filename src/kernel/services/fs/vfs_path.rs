@@ -1,14 +1,13 @@
 //! VFS 路径 / 目录 / 链接 / 元数据 / cwd 操作 — 从 `api.rs` 拆出的物理子模块
 //!
-//! 归属: 路径相关 `#[no_mangle] pub extern "C"` 函数 (mkdir/rmdir/unlink/
-//! link/symlink/readlink/rename/chmod/chown/utimensat/stat/cwd) 及其 safe
-//! 包装. `api.rs` 通过 `pub use path::*;` 保持对外符号名与调用路径不变
-//! (`#[no_mangle]` 全局符号不受模块位置影响).
+//! 归属: 路径相关函数 (mkdir/rmdir/unlink/link/symlink/readlink/rename/
+//! chmod/chown/utimensat/stat/cwd) 及其 safe 包装. `api.rs` 通过
+//! `pub use vfs_path::*;` 保持对外调用路径不变.
 
 use super::api::{ptr_to_str, split_parent_name, with_cstr};
-use super::types::{VFS_MAX_PATH, VfsStat};
-use super::vfs::VFS_MANAGER;
-use crate::framework::userptr::{UserRefMut, UserWritePtr};
+use super::vfs_manager::VFS_MANAGER;
+use super::vfs_types::{VFS_MAX_PATH, VfsStat};
+use crate::framework::userptr::{UserReadPtr, UserWritePtr};
 
 // ============================================================================
 // 用户路径归一化 (chroot / pivot_root 根语义的统一入口)
@@ -21,8 +20,6 @@ use crate::framework::userptr::{UserRefMut, UserWritePtr};
 // VFS 核心接口 (内部)
 // ============================================================================
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -50,7 +47,7 @@ pub extern "C" fn vfs_unlink_internal(path: *const u8, pwm: u64) -> i32 {
     // 文件删除成功后, 释放该 inode 上的 POSIX 锁 + inotify 通知
     if result == 0 {
         if let Some(ino) = ino_before {
-            crate::framework::fs::vfs::flock::posix_lock_release_inode(ino);
+            crate::services::fs::flock::posix_lock_release_inode(ino);
             let (parent_path, name) = split_parent_name(rel_path);
             let parent_ino = fs_opt.map_or(0, |fs| fs.fs_resolve_path(parent_path).unwrap_or(0));
             super::inotify::inotify_notify(parent_ino, super::inotify::IN_DELETE, name, false);
@@ -68,8 +65,6 @@ pub extern "C" fn vfs_unlink_internal(path: *const u8, pwm: u64) -> i32 {
 // 调整 framework 实现即可. 当前未保留 stub, 避免假实现.
 // ============================================================================
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -103,8 +98,6 @@ pub extern "C" fn vfs_mkdir_internal(path: *const u8, pwm: u64) -> i32 {
     })
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -128,8 +121,6 @@ pub extern "C" fn vfs_rmdir_internal(path: *const u8, pwm: u64) -> i32 {
     })
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -148,9 +139,6 @@ pub extern "C" fn vfs_stat_internal(path: *const u8, st: *mut VfsStat, pwm: u64)
     let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
         return -1;
     };
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    let mut st_ref = unsafe { UserRefMut::new(st) };
-
     let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
         Some(r) => r,
         None => return -1,
@@ -160,26 +148,25 @@ pub extern "C" fn vfs_stat_internal(path: *const u8, st: *mut VfsStat, pwm: u64)
     // E6-4: trait object 分发
     let result = fs_opt.map_or(-1, |fs| {
         fs.fs_stat(rel_path, pwm).map_or(-1, |stat| {
-            *st_ref.as_mut() = stat;
-            0
+            // credo 身份映射: 先算最终 stat 再经 framework 安全代理写入 (I4)
+            let mut stat = stat;
+            let tbl = crate::framework::credo::identity::get_table();
+            stat.uid = tbl.uid_of(stat.owner_pwm);
+            stat.gid = tbl.gid_of(stat.group_pwm);
+            if stat.gid == 0xFFFF_FFFF {
+                stat.gid = stat.uid;
+            }
+            if crate::framework::userptr::write_struct_to_user(st as u64, &stat) {
+                0
+            } else {
+                -1
+            }
         })
     });
-
-    if result == 0 {
-        let tbl = crate::framework::credo::identity::get_table();
-        let r = st_ref.as_mut();
-        r.uid = tbl.uid_of(r.owner_pwm);
-        r.gid = tbl.gid_of(r.group_pwm);
-        if r.gid == 0xFFFF_FFFF {
-            r.gid = r.uid;
-        }
-    }
 
     result
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 pub extern "C" fn vfs_set_cwd_internal(path: *const u8) {
     let path = ptr_to_str(path);
     // cwd 保存视图路径 (归一化但不加根前缀): 相对路径解析须以视图为基准,
@@ -193,14 +180,8 @@ pub extern "C" fn vfs_set_cwd_internal(path: *const u8) {
     }
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 pub extern "C" fn vfs_get_cwd_internal(buf: *mut u8, size: u32) -> i32 {
     if buf.is_null() || size == 0 {
         return -1;
@@ -208,8 +189,10 @@ pub extern "C" fn vfs_get_cwd_internal(buf: *mut u8, size: u32) -> i32 {
     let cwd = VFS_MANAGER.get_cwd();
     let bytes = cwd.as_bytes();
     let len = bytes.len().min((size - 1) as usize);
-    // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
-    let mut user_buf = unsafe { UserWritePtr::new(buf as *mut u8, size as usize) };
+    // I4: 用户内存经 framework 安全代理 (范围校验后构造可写视图)
+    let Some(mut user_buf) = UserWritePtr::checked_new(buf, size as usize) else {
+        return -1;
+    };
     let slice = user_buf.as_mut_slice();
     slice[..len].copy_from_slice(&bytes[..len]);
     slice[len] = 0;
@@ -217,7 +200,7 @@ pub extern "C" fn vfs_get_cwd_internal(buf: *mut u8, size: u32) -> i32 {
 }
 
 // ============================================================================
-// 公共 VFS API (safe 包装 + no_mangle 转发)
+// 公共 VFS API (safe 包装)
 // ============================================================================
 
 /// Safe 包装: `vfs_mkdir` (接受 &str 路径)
@@ -262,8 +245,6 @@ pub fn vfs_utimensat_safe(path: &str, atime: u64, mtime: u64, pwm: u64) -> i32 {
     with_cstr(path, |ptr| vfs_utimensat(ptr, atime, mtime, pwm))
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 pub extern "C" fn vfs_stat(path: *const u8, st: *mut VfsStat, pwm: u64) -> i32 {
     vfs_stat_internal(path, st, pwm)
 }
@@ -285,14 +266,10 @@ pub fn vfs_stat_safe(path: *const u8, pwm: u64) -> Option<VfsStat> {
     if r < 0 { None } else { Some(st) }
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 pub extern "C" fn vfs_mkdir(path: *const u8, pwm: u64) -> i32 {
     vfs_mkdir_internal(path, pwm)
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -316,14 +293,10 @@ pub extern "C" fn vfs_chmod(path: *const u8, mode: u16, pwm: u64) -> i32 {
     })
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 pub extern "C" fn vfs_chown(path: *const u8, owner_pwm: u64, pwm: u64) -> i32 {
     vfs_chown_ext(path, owner_pwm, 0, pwm)
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -355,8 +328,6 @@ pub extern "C" fn vfs_chown_ext(path: *const u8, owner_pwm: u64, group_pwm: u64,
 /// - `atime`: 访问时间 (纳秒), `u64::MAX` 表示不修改
 /// - `mtime`: 修改时间 (纳秒), `u64::MAX` 表示不修改
 /// - `pwm`: 权限凭证
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -381,16 +352,12 @@ pub extern "C" fn vfs_utimensat(path: *const u8, atime: u64, mtime: u64, pwm: u6
     })
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 pub extern "C" fn vfs_unlink(path: *const u8, pwm: u64) -> i32 {
     vfs_unlink_internal(path, pwm)
 }
 
 /// link(oldpath, newpath) — 创建硬链接.
 /// E6-5: 通过 trait object 分发
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -423,8 +390,6 @@ pub extern "C" fn vfs_link(oldpath: *const u8, newpath: *const u8, pwm: u64) -> 
 
 /// symlink(target, linkpath) — 创建符号链接.
 /// E6-5: 通过 trait object 分发
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -454,8 +419,6 @@ pub extern "C" fn vfs_symlink(target: *const u8, linkpath: *const u8, pwm: u64) 
 
 /// readlink(path, buf, bufsiz) — 读取符号链接目标.
 /// E6-5: 通过 trait object 分发
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 // 有意窄化: 用户内存代理, 指针/长度上下文保证
 #[expect(clippy::cast_possible_truncation)]
 #[expect(
@@ -481,17 +444,17 @@ pub extern "C" fn vfs_readlink(path: *const u8, buf: *mut u8, bufsiz: u64, pwm: 
         None => return -2,
     };
     fs_opt.map_or(-1, |fs| {
-        // SAFETY: buf 经调用方校验, bufsiz 字节可写.
-        let slice = unsafe { core::slice::from_raw_parts_mut(buf, bufsiz as usize) };
-        match fs.fs_readlink(p, slice) {
+        // I4: 用户内存经 framework 安全代理 (范围校验后构造可写视图)
+        let Some(mut user_buf) = UserWritePtr::checked_new(buf, bufsiz as usize) else {
+            return -1;
+        };
+        match fs.fs_readlink(p, user_buf.as_mut_slice()) {
             Ok(n) => n as i32,
             Err(e) => e.as_i32(),
         }
     })
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -532,20 +495,14 @@ pub extern "C" fn vfs_rename(old: *const u8, new: *const u8, pwm: u64) -> i32 {
     })
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 pub extern "C" fn vfs_rmdir(path: *const u8, pwm: u64) -> i32 {
     vfs_rmdir_internal(path, pwm)
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 pub extern "C" fn vfs_get_cwd(buf: *mut u8, size: u32) -> i32 {
     vfs_get_cwd_internal(buf, size)
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 pub extern "C" fn vfs_set_cwd(path: *const u8) {
     vfs_set_cwd_internal(path);
 }
@@ -555,8 +512,6 @@ pub extern "C" fn vfs_set_cwd(path: *const u8) {
 // ============================================================================
 
 /// 设置扩展属性
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -570,12 +525,16 @@ pub extern "C" fn vfs_setxattr_internal(
 ) -> i32 {
     let path = ptr_to_str(path);
     let name = ptr_to_str(name);
-    let value = if !value.is_null() && size > 0 {
-        // SAFETY: 调用方保证 value 指向有效的 size 字节缓冲区
-        unsafe { core::slice::from_raw_parts(value, size as usize) }
+    // I4: 用户内存经 framework 安全代理 (范围校验后构造只读视图)
+    let value_buf = if !value.is_null() && size > 0 {
+        match UserReadPtr::checked_new(value, size as usize) {
+            Some(p) => Some(p),
+            None => return -2, // EINVAL: 非法用户缓冲
+        }
     } else {
-        &[]
+        None
     };
+    let value: &[u8] = value_buf.as_ref().map_or(&[], UserReadPtr::as_slice);
     let mut pbuf = [0u8; VFS_MAX_PATH];
     let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
         return -2;
@@ -594,8 +553,6 @@ pub extern "C" fn vfs_setxattr_internal(
 }
 
 /// 获取扩展属性
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
 #[expect(
@@ -616,8 +573,11 @@ pub extern "C" fn vfs_getxattr_internal(
         return -1;
     }
 
-    // SAFETY: 调用方保证 value 指向有效的 size 字节缓冲区
-    let buf = unsafe { core::slice::from_raw_parts_mut(value, size as usize) };
+    // I4: 用户内存经 framework 安全代理 (范围校验后构造可写视图)
+    let Some(mut value_buf) = UserWritePtr::checked_new(value, size as usize) else {
+        return -1;
+    };
+    let buf = value_buf.as_mut_slice();
 
     let mut pbuf = [0u8; VFS_MAX_PATH];
     let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
@@ -637,8 +597,6 @@ pub extern "C" fn vfs_getxattr_internal(
 }
 
 /// 列出扩展属性
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
 #[expect(
@@ -657,8 +615,11 @@ pub extern "C" fn vfs_listxattr_internal(
         return -1;
     }
 
-    // SAFETY: 调用方保证 list 指向有效的 size 字节缓冲区
-    let buf = unsafe { core::slice::from_raw_parts_mut(list, size as usize) };
+    // I4: 用户内存经 framework 安全代理 (范围校验后构造可写视图)
+    let Some(mut list_buf) = UserWritePtr::checked_new(list, size as usize) else {
+        return -1;
+    };
+    let buf = list_buf.as_mut_slice();
 
     let mut pbuf = [0u8; VFS_MAX_PATH];
     let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
@@ -678,8 +639,6 @@ pub extern "C" fn vfs_listxattr_internal(
 }
 
 /// 删除扩展属性
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"

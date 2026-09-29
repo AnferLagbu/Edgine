@@ -9,7 +9,6 @@
 //! - `fs::ramfs` / `fs::nestfs` —— 文件系统页缓存分配 (`pmm_alloc_page` / `pmm_free_page`)
 //! - `ipc::shm` —— 共享内存段的物理页映射
 //! - `driver::*` —— 各驱动的 DMA 缓冲区分配
-//! - `credo::storage` —— 持久化数据写入时的内存申请
 //!
 //! ## 安全约束
 //! - 所有指针参数在函数入口处做 `is_null` 检查

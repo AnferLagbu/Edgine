@@ -9,7 +9,7 @@
 //! 原镜像三个 syscall 的纯判定逻辑已改引内核真实 API:
 //! - chown_syscall 的 UID 判定 → `identity::get_table().find_by_uid` (真实身份表)
 //! - open_by_handle_at_syscall 的 CAP_SYS_ADMIN 判定 → `framework::credo::pwm_has_capability`
-//! - poll_syscall 的 fd 有效性判定 → `framework::fs::vfs_get_fd_handle` (per-process fd 表)
+//! - poll_syscall 的 fd 有效性判定 → `services::fs::vfs_get_fd_handle` (per-process fd 表)
 //!
 //! ## 因内核 host 不可测已移除 (syscall 完整路径)
 //! 三个 syscall 完整函数 (chown_syscall / open_by_handle_at_syscall / poll_syscall) 依赖

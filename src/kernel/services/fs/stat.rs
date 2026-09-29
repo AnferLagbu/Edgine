@@ -14,8 +14,8 @@
 //! - [`fstat_syscall`] 按 FD 查询
 
 use crate::framework::credo;
-use crate::framework::fs::VfsStat;
-use crate::framework::fs::api as fw;
+use crate::services::fs::VfsStat;
+use crate::services::fs::api as fw;
 use crate::framework::syscall::Errno;
 use crate::framework::syscall::raw;
 
@@ -248,7 +248,7 @@ pub fn utimensat_syscall(dirfd: i32, path_ptr: u64, times_ptr: u64, _flags: i32)
         return Errno::EFAULT.as_ret();
     };
     let pwm = crate::framework::credo::pwm_get_current();
-    let r = crate::framework::fs::vfs_utimensat_safe(&path, atime, mtime, pwm);
+    let r = crate::services::fs::vfs_utimensat_safe(&path, atime, mtime, pwm);
     if r < 0 { Errno::EIO.as_ret() } else { 0 }
 }
 

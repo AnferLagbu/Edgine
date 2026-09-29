@@ -20,6 +20,9 @@ const AT_EMPTY_PATH: i32 = 0x1000;
 /// `execveat` 标志: 不跟随 `pathname` 末尾的符号链接
 const AT_SYMLINK_NOFOLLOW: i32 = 0x100;
 
+/// ELF 映像可读上限 (1 MiB) — 阶段 4b 自 framework::proc::api 下沉
+pub(crate) const ELF_MAX_SIZE: usize = 1024 * 1024;
+
 /// execve(path, argv, envp) 系统调用策略
 ///
 /// `path` / `argv` / `envp` 均为用户空间指针 (u64 形式); `envp` 当前忽略
@@ -68,17 +71,27 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
     }
 
     // SUID 处理: 可执行文件带 setuid 位且属主非 root 时提权
-    let mut st = crate::framework::fs::VfsStat::default();
+    let mut st = crate::services::fs::VfsStat::default();
     let current_pwm = crate::framework::credo::get_current_pwm();
     let stat_result =
-        crate::framework::fs::api::vfs_stat_internal(path as *const u8, &raw mut st, current_pwm);
+        crate::services::fs::api::vfs_stat_internal(path as *const u8, &raw mut st, current_pwm);
     if stat_result == 0 && (st.perm & 0o4000) != 0 && st.owner_pwm != 0 {
         crate::framework::credo::elevate_for_suid(st.owner_pwm);
     }
 
+    // 阶段 4b: ELF 文件 I/O 下沉 services — 读取字节 + PT_INTERP 改写,
+    // 再交 framework 纯机制 (进程替换/页表切换).
+    let Some(mut elf) =
+        crate::services::fs::api::read_file_to_vec(path as *const u8, current_pwm, ELF_MAX_SIZE)
+    else {
+        return Err(Errno::ENOENT);
+    };
+    crate::framework::proc::elf::prepare_elf_image(&mut elf);
+
     // 进程替换 (framework 机制: ELF 加载 + 地址空间切换)
     let result = crate::framework::proc::proc_exec_replace(
-        path as *const u8,
+        elf.as_ptr(),
+        elf.len() as u64,
         argv as *const *const u8,
         argc,
     );

@@ -1,6 +1,6 @@
 use super::check;
-use crate::framework::fs::vfs::types::{FsType, VFS_MAX_PATH};
-use crate::framework::fs::vfs::vfs::VfsManager;
+use crate::services::fs::vfs_manager::VfsManager;
+use crate::services::fs::vfs_types::{FsType, VFS_MAX_PATH};
 use crate::framework::tests::{TestResult, runner};
 use crate::register_tests_inner;
 
@@ -125,7 +125,7 @@ fn test_fs_backend_registered_make_inode() -> TestResult {
     crate::services::fs::init();
     // 钩子必须返回真实 Inode — FallbackFsBackend 恒 Err, 本断言锁定回归
     let result =
-        crate::framework::fs::vfs::backend_trait::current_fs_backend().make_ramfs_inode(0, 0, 0);
+        crate::services::fs::backend_trait::current_fs_backend().make_ramfs_inode(0, 0, 0);
     check!(
         result.is_ok(),
         "make_ramfs_inode 命中回退策略 — services::fs::init 未生效"
@@ -134,12 +134,11 @@ fn test_fs_backend_registered_make_inode() -> TestResult {
 }
 
 fn test_ramfs_fs_open_via_backend_hook() -> TestResult {
-    use crate::framework::fs::FileSystem;
-    use crate::framework::fs::ramfs::{RAMFS_DATA, RamFsData};
+    use crate::services::fs::ramfs_core::{RAMFS_DATA, ramfs_fs};
 
     crate::services::fs::init();
     // 建根目录 (幂等): RAMFS_DATA 初始为空, resolve_path("/") 需先 mount
-    crate::framework::fs::ramfs::init();
+    crate::services::fs::ramfs_core::init();
 
     // 在 RamFS 根目录建文件 (锁内操作, 作用域结束释放锁)
     let created = {
@@ -151,20 +150,9 @@ fn test_ramfs_fs_open_via_backend_hook() -> TestResult {
         return TestResult::Fail("create_file 失败");
     };
 
-    // SAFETY: 全局 static RAMFS_DATA 拥有 RamFsData, 裸指针提升后生命周期为
-    // 'static (mount.rs 同款手法); fs_open 内部自行加锁, 此处不持锁调用, 无死锁.
-    // 注意: 守卫必须收窄到块内 — rustc 1.98 nightly (RFC 3606 临时生命周期
-    // 延长) 下 `let p = &raw const *RAMFS_DATA.lock()` 会使守卫存活至绑定
-    // 作用域结束, fs_open 内部重入 lock() 将同线程自旋死锁 (cast 形式无此
-    // 延长, 块作用域强制语句末释放).
-    let ramfs_ptr: *const RamFsData = {
-        let guard = RAMFS_DATA.lock();
-        &raw const *guard
-    };
-    let fs: &'static RamFsData = unsafe { &*ramfs_ptr };
-
     // fs_open → make_inode 钩子 → services RamFsInode (回归路径本体)
-    let opened = fs.fs_open("/backend_reg_t", 0, 0);
+    // ramfs_fs() 返回 'static dyn FileSystem, 内部自查加锁, 无裸指针提升.
+    let opened = ramfs_fs().fs_open("/backend_reg_t", 0, 0);
     check!(
         opened.is_ok(),
         "fs_open 应经 backend 钩子返回 Inode (命中 Fallback 即回归)"
@@ -212,8 +200,8 @@ fn with_temp_process<F: FnOnce() -> TestResult>(name: &str, f: F) -> TestResult 
 /// B-9.5: 元数据源已由全局 `VfsManager.fd_table` 改源为 per-process fd 表
 /// (fd → `OpenFileTable` handle) + `OpenFile` 自身元数据。
 fn test_open_populates_fd_metadata() -> TestResult {
-    use crate::framework::fs::ramfs::{RAMFS_DATA, init as ramfs_init};
-    use crate::framework::fs::{OPEN_FILE_TABLE, api, vfs_get_fd_handle};
+    use crate::services::fs::ramfs_core::{RAMFS_DATA, init as ramfs_init};
+    use crate::services::fs::{OPEN_FILE_TABLE, api, vfs_get_fd_handle};
 
     crate::services::fs::init();
     ramfs_init();
@@ -265,8 +253,8 @@ fn test_open_populates_fd_metadata() -> TestResult {
 /// `fd_to_mount_idx` 为其挂载点来源。二者均经 per-process fd 表 (fd →
 /// `OpenFileTable` handle) 读 `OpenFile` 元数据。
 fn test_fd_to_inode_id_downstream() -> TestResult {
-    use crate::framework::fs::ramfs::{RAMFS_DATA, init as ramfs_init};
-    use crate::framework::fs::{api, vfs_get_fd_handle};
+    use crate::services::fs::ramfs_core::{RAMFS_DATA, init as ramfs_init};
+    use crate::services::fs::{api, vfs_get_fd_handle};
     use crate::services::mm::mmap::{fd_to_inode_id, fd_to_mount_idx};
 
     crate::services::fs::init();
@@ -309,7 +297,7 @@ fn test_fd_to_inode_id_downstream() -> TestResult {
 
 fn test_nestfs_fs_registered() -> TestResult {
     crate::services::fs::init();
-    let Some(fs) = crate::framework::fs::vfs::backend_trait::nestfs_fs() else {
+    let Some(fs) = crate::services::fs::backend_trait::nestfs_fs() else {
         return TestResult::Fail("nestfs_fs() 未注册 — services::fs::init 未生效");
     };
     check!(fs.name() == "nestfs", "nestfs name mismatch");
@@ -327,7 +315,7 @@ const BAD_USER_PTR: u64 = 0x8000_0000_0000_0000;
 
 /// `inotify_init` 遗留接口等价 `inotify_init1(0)`
 fn test_inotify_init_legacy() -> TestResult {
-    use crate::framework::fs::vfs::inotify::{
+    use crate::services::fs::inotify::{
         IN_NONBLOCK, inotify_release, is_inotify_fd, sys_inotify_init1,
     };
 

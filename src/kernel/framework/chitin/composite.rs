@@ -5,7 +5,7 @@ use crate::framework::chitin::{
 use crate::framework::chitin::{
     devtree_children, devtree_get_node, devtree_walk, register_block_device,
 };
-use crate::framework::fs::KernelError;
+use crate::framework::error::KernelError;
 use crate::klog_info;
 use crate::klog_warn;
 use core::sync::atomic::{AtomicU32, Ordering};

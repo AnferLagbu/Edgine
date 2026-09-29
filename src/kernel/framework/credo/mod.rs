@@ -22,7 +22,6 @@ pub mod identity;
 pub mod secure_boot;
 pub mod session;
 pub mod sha256;
-pub mod storage;
 pub mod types;
 
 pub use audit::AuditLog;

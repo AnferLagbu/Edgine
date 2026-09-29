@@ -15,7 +15,6 @@
 //! - `identity.rs` —— `IdentityTable`, PWM 生命周期管理
 //! - `engine.rs` —— 能力检查引擎 (`check`/`get_caps`/`grant`/`revoke`)
 //! - `session.rs` —— 会话管理器
-//! - `storage.rs` —— 持久化 (sha256 + 序列化)
 //! - `audit.rs` —— 审计日志
 //! - `capability.rs` —— `CapDomain` / `CapBits` 能力矩阵
 //!
@@ -41,7 +40,6 @@ use super::audit;
 use super::engine;
 use super::identity;
 use super::session;
-use super::storage;
 use super::types::{AuditAction, CapBits, CapDomain, PwmEntry};
 use crate::framework::lib::CStrExt;
 
@@ -70,12 +68,6 @@ pub extern "C" fn pwm_init() {
     let t = identity::get_table();
     t.init();
     klog_pwm!("PWM v5 initialized");
-}
-
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn pwm_try_load() -> i32 {
-    storage::load_database()
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
@@ -392,18 +384,6 @@ pub extern "C" fn pwm_clear_lockout(pwm: u64) -> i32 {
         Ok(()) => 0,
         Err(e) => e.as_i32(),
     }
-}
-
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn pwm_save_to_disk() -> i32 {
-    storage::save_database()
-}
-
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn pwm_load_from_disk() -> i32 {
-    storage::load_database()
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作

@@ -70,10 +70,10 @@ fn test_init_global_is_idempotent() {
     // 验收: devfs::init_global() 是幂等的 (OnceCell::get_or_init).
     // 多次调用不会 panic, 不会重置状态.
     // 主机端无 devfs 全局, 这里验证 init_global 签名可见且文档承诺幂等.
-    // DECISION-J 第二十一批: devfs 实现迁回 framework/fs/devfs/mod.rs
+    // 阶段 4b: devfs 实现已下沉 services/fs/devfs.rs
     let devfs_rs = fs::read_to_string(
-        "../src/kernel/framework/fs/devfs/mod.rs",
-    ).expect("无法读取 devfs mod.rs");
+        "../src/kernel/services/fs/devfs.rs",
+    ).expect("无法读取 devfs.rs");
     assert!(
         devfs_rs.contains("OnceCell::get_or_init") || devfs_rs.contains("get_or_init"),
         "devfs::init_global 应使用 OnceCell::get_or_init 保证幂等"

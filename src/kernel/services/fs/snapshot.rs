@@ -16,7 +16,7 @@ pub fn snapshot_create_syscall(name_ptr: u64) -> Result<usize, Errno> {
     }
 
     // 通过 framework 层获取快照名称
-    let name = crate::framework::fs::vfs::api::snapshot_get_name(name_ptr);
+    let name = crate::services::fs::api::snapshot_get_name(name_ptr);
     let result = crate::services::fs::nestfs::nestfs::get_nestfs().snapshot_create(&name);
 
     if result >= 0 {
@@ -64,7 +64,7 @@ pub fn snapshot_clone_syscall(snap_id: u64, name_ptr: u64) -> Result<usize, Errn
     }
 
     // 通过 framework 层获取克隆名称
-    let name = crate::framework::fs::vfs::api::snapshot_get_name(name_ptr);
+    let name = crate::services::fs::api::snapshot_get_name(name_ptr);
     let result = crate::services::fs::nestfs::nestfs::get_nestfs().clone_create(snap_id, &name);
 
     if result >= 0 {

@@ -6,7 +6,7 @@ use super::grant;
 use super::sha256;
 use super::types::{
     AuditAction, CapBits, CapDomain, GrantRecord, MAX_PWM_ENTRIES, PWM_DIGEST_LEN, PWM_NOTE_LEN,
-    PWM_SALT_LEN, PwmEntry, PwmError, PwmFlags, PwmId,
+    PWM_SALT_LEN, PwmEntry, PwmEntrySnapshot, PwmError, PwmFlags, PwmId,
 };
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
@@ -117,6 +117,41 @@ impl IdentityTable {
         self.any_identity_exists.store(false, Ordering::Release);
         self.modified.store(false, Ordering::Release);
         self.release();
+    }
+
+    /// 当前有效 (已占用) 条目数.
+    ///
+    /// 供持久化序列化编排使用, 避免 services 直读 `count` 原子字段.
+    pub fn valid_count(&self) -> usize {
+        self.count.load(Ordering::Acquire)
+    }
+
+    /// 遍历所有有效条目并回调其 [`PwmEntrySnapshot`].
+    ///
+    /// 供持久化序列化编排使用, 避免 services 直穿 `entries` 原子字段.
+    pub fn for_each_valid(&self, mut f: impl FnMut(&PwmEntrySnapshot)) {
+        for entry in &self.entries {
+            if entry.is_valid() {
+                let snap = entry.snapshot();
+                f(&snap);
+            }
+        }
+    }
+
+    /// 将快照载入首个空闲槽位 (供持久化反序列化编排).
+    ///
+    /// 成功返回 `true`; 表已满返回 `false`. 内部完成 `import` + `count`
+    /// 递增 + `any_identity_exists` 置位, 避免 services 直穿 TCB 内部字段.
+    pub fn load_entry(&self, snap: &PwmEntrySnapshot) -> bool {
+        for entry in &self.entries {
+            if !entry.is_valid() {
+                entry.import(snap);
+                self.count.fetch_add(1, Ordering::Relaxed);
+                self.any_identity_exists.store(true, Ordering::Release);
+                return true;
+            }
+        }
+        false
     }
 
     #[expect(

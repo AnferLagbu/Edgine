@@ -10,7 +10,7 @@
 //! `BlockDevice` trait 定义在 chitin (设备框架) 中, 本模块 re-export.
 //! `hdd_*` 函数提供向后兼容的 Chitin 代理.
 
-use crate::framework::fs::{KernelError, KernelResult};
+use crate::framework::error::{KernelError, KernelResult};
 use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::boxed::Box;
 use alloc::vec::Vec;

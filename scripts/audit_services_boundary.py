@@ -467,6 +467,8 @@ def check_services_inter_module_deps():
         ('fs', 'syscall'),
         # proc 依赖 fs 是合理的 (memfd_create 等需要 OpenFile/AnonymousFs)
         ('proc', 'fs'),
+        # credo 依赖 fs 是合理的 (持久化编排经 services::fs 的 VFS safe 包装读写 /pwm.db)
+        ('credo', 'fs'),
     }
 
     for mod in modules:

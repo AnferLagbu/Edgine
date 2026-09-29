@@ -2,7 +2,7 @@
 
 use crate::framework::credo::api as pwm_api;
 use crate::framework::driver::block;
-use crate::framework::fs::KernelError;
+use crate::services::fs::KernelError;
 use crate::services::fs::nestfs::arc::{NestArcBufType, NestArcKey};
 use crate::services::fs::nestfs::bp::{NestBlockPointer, NestCksumType, NestCompType};
 use crate::services::fs::nestfs::compress;

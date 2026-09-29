@@ -296,6 +296,50 @@ impl Default for PwmEntry {
     }
 }
 
+/// PWM 表条目的持久化快照 (纯 POD, 无原子字段).
+///
+/// 用于跨 TCB 边界传递序列化/反序列化所需的条目字段, 使 services 层无需
+/// 直读 [`PwmEntry`] 的原子字段. 字段集合与磁盘 v5 条目布局一致 (见
+/// `services::credo::persist` 的 `ENTRY_SZ`).
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct PwmEntrySnapshot {
+    /// PWM 标识 (0 表示空槽)
+    pub pwm: u64,
+    /// 创建者 PWM
+    pub creator_pwm: u64,
+    /// 特权级别
+    pub privilege_level: u8,
+    /// 标志位
+    pub flags: u16,
+    /// 能力矩阵 (16 个域)
+    pub caps: [u64; 16],
+    /// 备注
+    pub note: [u8; PWM_NOTE_LEN],
+    /// 密码哈希
+    pub password_hash: [u8; PWM_HASH_LEN],
+    /// 创建时间
+    pub created_time: u64,
+    /// 过期时间
+    pub expires_at: u64,
+}
+
+impl Default for PwmEntrySnapshot {
+    fn default() -> Self {
+        Self {
+            pwm: 0,
+            creator_pwm: 0,
+            privilege_level: 0xFF,
+            flags: 0,
+            caps: [0; 16],
+            note: [0; PWM_NOTE_LEN],
+            password_hash: [0; PWM_HASH_LEN],
+            created_time: 0,
+            expires_at: 0,
+        }
+    }
+}
+
 impl PwmEntry {
     pub fn new() -> Self {
         Self::default()
@@ -416,6 +460,60 @@ impl PwmEntry {
     pub fn set_gid(&self, gid: u32) {
         self.posix_gid
             .store(gid, core::sync::atomic::Ordering::Release);
+    }
+
+    /// 采集条目快照 (全字段 `Acquire` 读, 供持久化序列化).
+    pub fn snapshot(&self) -> PwmEntrySnapshot {
+        let mut caps = [0u64; 16];
+        for (i, c) in self.caps.iter().enumerate() {
+            caps[i] = c.load(core::sync::atomic::Ordering::Acquire);
+        }
+        let mut note = [0u8; PWM_NOTE_LEN];
+        for (i, b) in self.note.iter().enumerate() {
+            note[i] = b.load(core::sync::atomic::Ordering::Acquire);
+        }
+        let mut password_hash = [0u8; PWM_HASH_LEN];
+        for (i, b) in self.password_hash.iter().enumerate() {
+            password_hash[i] = b.load(core::sync::atomic::Ordering::Acquire);
+        }
+        PwmEntrySnapshot {
+            pwm: self.pwm.load(core::sync::atomic::Ordering::Acquire),
+            creator_pwm: self.creator_pwm.load(core::sync::atomic::Ordering::Acquire),
+            privilege_level: self.privilege_level.load(core::sync::atomic::Ordering::Acquire),
+            flags: self.flags.load(core::sync::atomic::Ordering::Acquire),
+            caps,
+            note,
+            password_hash,
+            created_time: self.created_time.load(core::sync::atomic::Ordering::Acquire),
+            expires_at: self.expires_at.load(core::sync::atomic::Ordering::Acquire),
+        }
+    }
+
+    /// 从快照恢复条目 (全字段 `Release` 写).
+    ///
+    /// `pwm` 最后写: `is_valid()` 依据 `pwm != 0`, 保证其余字段先就绪.
+    pub fn import(&self, snap: &PwmEntrySnapshot) {
+        self.creator_pwm
+            .store(snap.creator_pwm, core::sync::atomic::Ordering::Release);
+        self.privilege_level
+            .store(snap.privilege_level, core::sync::atomic::Ordering::Release);
+        self.flags
+            .store(snap.flags, core::sync::atomic::Ordering::Release);
+        for (i, c) in self.caps.iter().enumerate() {
+            c.store(snap.caps[i], core::sync::atomic::Ordering::Release);
+        }
+        for (i, b) in self.note.iter().enumerate() {
+            b.store(snap.note[i], core::sync::atomic::Ordering::Release);
+        }
+        for (i, b) in self.password_hash.iter().enumerate() {
+            b.store(snap.password_hash[i], core::sync::atomic::Ordering::Release);
+        }
+        self.created_time
+            .store(snap.created_time, core::sync::atomic::Ordering::Release);
+        self.expires_at
+            .store(snap.expires_at, core::sync::atomic::Ordering::Release);
+        self.pwm
+            .store(snap.pwm, core::sync::atomic::Ordering::Release);
     }
 }
 

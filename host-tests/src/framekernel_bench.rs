@@ -100,7 +100,8 @@ use queenx::kernel::framework::fs::vfs_poll_trait::{
 // `VfsPollPolicy` trait 仅单测直接调用策略方法时需在作用域
 #[cfg(test)]
 use queenx::kernel::framework::fs::vfs_poll_trait::VfsPollPolicy;
-use queenx::kernel::framework::fs::{KernelError, VfsFileType};
+use queenx::kernel::framework::error::KernelError;
+use queenx::kernel::framework::fs::VfsFileType;
 use queenx::kernel::services::fs::nestfs::arc::{NestArcBufType, NestArcKey};
 use queenx::kernel::services::fs::nestfs::arc_trait::{ArcCache, StandardArc};
 use queenx::kernel::services::fs::nestfs::bp::NestBlockPointer;

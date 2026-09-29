@@ -20,7 +20,7 @@
 //! 走 `caps == ALL` 分支), 无需注册身份或授权.
 
 use queenx::kernel::framework::error::KernelError;
-use queenx::kernel::framework::fs::{FileSystem, VFS_MANAGER, vfs_mount_safe};
+use queenx::kernel::services::fs::{FileSystem, VFS_MANAGER, vfs_mount_safe};
 use queenx::kernel::services::fs::init as fs_init;
 use queenx::kernel::services::fs::overlayfs::overlay_fs;
 use std::sync::{Mutex, Once};

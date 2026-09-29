@@ -432,6 +432,24 @@ pub unsafe fn rewrite_interp_path(elf_data: *mut u8, elf_size: u64) {
     }
 }
 
+/// 准备 ELF 映像: 检测并在必要时把 `PT_INTERP` 改写为 queenx 动态链接器路径.
+///
+/// 返回 `true` 表示发生了改写 (Linux 二进制), `false` 表示无需改写.
+///
+/// services 层通过本 safe 入口完成 `PT_INTERP` 改写, 无需接触裸指针.
+pub fn prepare_elf_image(elf: &mut [u8]) -> bool {
+    let size = elf.len() as u64;
+    if !needs_interp_rewrite(elf.as_ptr(), size) {
+        return false;
+    }
+    // SAFETY: elf 是可写的有效切片, size 为其真实字节长度;
+    // rewrite_interp_path 仅在该切片范围内原地改写 PT_INTERP 路径.
+    unsafe {
+        rewrite_interp_path(elf.as_mut_ptr(), size);
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -4,15 +4,15 @@
 //!
 //! framework 内部依赖: syscall, sync, proc, credo, driver
 //! services 依赖: `services::fs` (安全代理)
+//!
+//! ## 阶段 4b 变更
+//!
+//! VFS 具象实现 (vfs/ramfs/devfs/initramfs) 已下沉 `services::fs`;
+//! framework 仅保留契约机制面 (`vfs` 下的 `ops_trait` / `types_pod`)、
+//! 轮询策略契约 (`vfs_poll_trait`) 与 nestfs 的 unsafe 机制适配层 (`nestfs`).
 
-pub mod devfs;
-pub mod initramfs;
 pub mod nestfs;
-pub mod ramfs;
 pub mod vfs;
 pub mod vfs_poll_trait;
 
 pub use vfs::*;
-
-// DECOUPL-4: 顶层 re-export initramfs unpack 入口, 避免 framework 内部 3+ 层深度访问
-pub use initramfs::unpack;

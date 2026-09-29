@@ -104,10 +104,10 @@ pub fn init() {
 /// 尝试从磁盘恢复 (cold boot)
 ///
 /// # Errors
-/// 当底层 `pwm_try_load` 返回非零错误码 (如磁盘无有效数据库、校验失败) 时,
-/// 返回由该错误码转换得到的 `Err(PwmError)`.
+/// 当底层 `persist::load_database` 返回非零错误码 (如磁盘无有效数据库、
+/// 校验失败) 时, 返回由该错误码转换得到的 `Err(PwmError)`.
 pub fn try_load() -> PwmResult<()> {
-    let rc = credo::api::pwm_try_load();
+    let rc = super::persist::load_database();
     if rc == 0 {
         Ok(())
     } else {
@@ -441,10 +441,10 @@ pub fn audit(pwm: PwmId, action: u32, target: u64, details: u64) {
 /// 持久化到磁盘
 ///
 /// # Errors
-/// 当底层 `pwm_save_to_disk` 返回非零错误码 (如 IO 失败) 时, 返回由该错误码
-/// 转换得到的 `Err(PwmError)`.
+/// 当底层 `persist::save_database` 返回非零错误码 (如 IO 失败) 时, 返回由该
+/// 错误码转换得到的 `Err(PwmError)`.
 pub fn save_to_disk() -> PwmResult<()> {
-    let rc = credo::api::pwm_save_to_disk();
+    let rc = super::persist::save_database();
     if rc == 0 {
         Ok(())
     } else {
@@ -455,10 +455,10 @@ pub fn save_to_disk() -> PwmResult<()> {
 /// 从磁盘加载
 ///
 /// # Errors
-/// 当底层 `pwm_load_from_disk` 返回非零错误码 (如文件不存在、校验失败) 时,
+/// 当底层 `persist::load_database` 返回非零错误码 (如文件不存在、校验失败) 时,
 /// 返回由该错误码转换得到的 `Err(PwmError)`.
 pub fn load_from_disk() -> PwmResult<()> {
-    let rc = credo::api::pwm_load_from_disk();
+    let rc = super::persist::load_database();
     if rc == 0 {
         Ok(())
     } else {

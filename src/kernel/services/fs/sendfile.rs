@@ -31,9 +31,9 @@
 
 #![deny(unsafe_code)]
 
-use crate::framework::fs::OPEN_FILE_TABLE;
-use crate::framework::fs::vfs as vfs_api;
-use crate::framework::fs::vfs_get_fd_handle;
+use crate::services::fs::OPEN_FILE_TABLE;
+use crate::services::fs::api as vfs_api;
+use crate::services::fs::vfs_get_fd_handle;
 use crate::framework::ipc::IPC_NAMESPACE;
 use crate::framework::ipc::current_ipc_strategy;
 use crate::framework::ipc::pipe as ipc_pipe;
@@ -71,7 +71,7 @@ fn is_vfs_file_fd(fd: i32) -> bool {
     if (240..256).contains(&fd) {
         return false; // timerfd
     }
-    if crate::framework::fs::inotify::is_inotify_fd(fd) {
+    if crate::services::fs::inotify::is_inotify_fd(fd) {
         return false;
     }
     // 检查当前进程 fd 表 (fd → OpenFileTable handle 映射存在即有效)
@@ -131,7 +131,7 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
         }
     } else {
         // 使用 fd 当前偏移 (OpenFile 元数据源)
-        match OPEN_FILE_TABLE.with_file(in_handle, crate::framework::fs::OpenFile::get_offset) {
+        match OPEN_FILE_TABLE.with_file(in_handle, crate::services::fs::OpenFile::get_offset) {
             Some(off) => off,
             None => return Errno::EBADF.as_ret(),
         }

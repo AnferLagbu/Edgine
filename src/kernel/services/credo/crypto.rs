@@ -283,7 +283,7 @@ use crate::framework::syscall::Errno;
 /// 当底层 `save_database` 返回非零错误码 (如 IO 失败、校验和不匹配) 时,
 /// 返回由该错误码转换得到的 `Err(StorageError)`.
 pub fn save_database() -> StorageResult<()> {
-    let rc = credo::storage::save_database();
+    let rc = super::persist::save_database();
     if rc == 0 {
         Ok(())
     } else {
@@ -297,7 +297,7 @@ pub fn save_database() -> StorageResult<()> {
 /// 当底层 `load_database` 返回非零错误码 (如文件不存在、校验和不匹配) 时,
 /// 返回由该错误码转换得到的 `Err(StorageError)`.
 pub fn load_database() -> StorageResult<()> {
-    let rc = credo::storage::load_database();
+    let rc = super::persist::load_database();
     if rc == 0 {
         Ok(())
     } else {
@@ -311,7 +311,7 @@ pub fn load_database() -> StorageResult<()> {
 /// 当底层 `remove_database` 返回非零错误码 (如删除失败) 时, 返回由该错误码
 /// 转换得到的 `Err(StorageError)`.
 pub fn remove_database() -> StorageResult<()> {
-    let rc = credo::storage::remove_database();
+    let rc = super::persist::remove_database();
     if rc == 0 {
         Ok(())
     } else {

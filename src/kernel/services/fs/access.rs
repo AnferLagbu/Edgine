@@ -14,7 +14,7 @@
 
 use crate::framework::credo;
 use crate::framework::credo::capability::{FS_CAP_EXECUTE, FS_CAP_READ, FS_CAP_WRITE};
-use crate::framework::fs::api as fw;
+use crate::services::fs::api as fw;
 use crate::framework::syscall::Errno;
 use crate::framework::syscall::raw;
 

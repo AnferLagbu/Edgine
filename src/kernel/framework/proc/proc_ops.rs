@@ -13,7 +13,6 @@ use core::sync::atomic::Ordering;
 
 use super::process::{PROCESS_TABLE, Process};
 use super::scheduler::SCHEDULER;
-use super::session::SESSION_MANAGER;
 use super::types::{BlockReason, Pid, ProcessId, ProcessState};
 use super::user_proc::USER_PROC_MANAGER;
 pub use super::user_proc::proc_alloc_pid;
@@ -517,91 +516,16 @@ pub extern "C" fn proc_create_internal(name: *const u8, parent_pid: Pid, pwm: u6
     reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
 )]
 #[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-pub extern "C" fn proc_create_user(
-    path: *const u8,
-    argv: *const *const u8,
-    argc: u32,
-    pwm: u64,
-) -> Pid {
-    if path.is_null() {
-        return 0;
-    }
-
-    let parent_pid = SCHEDULER.current().unwrap_or(0);
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    let name_str = unsafe {
-        // SAFETY: path is non-null C string from caller (C ABI contract).
-        let cstr = core::ffi::CStr::from_ptr(path as *const core::ffi::c_char);
-        cstr.to_str().unwrap_or("user")
-    };
-
-    let child_pid = SCHEDULER
-        .create_process(
-            name_str,
-            if parent_pid != 0 {
-                Some(parent_pid)
-            } else {
-                None
-            },
-            pwm,
-        )
-        .unwrap_or(0);
-    if child_pid == 0 {
-        return 0;
-    }
-
-    // Create session for the new user process
-    if let Some(sid) = SESSION_MANAGER.create(pwm) {
-        PROCESS_TABLE.with_process(child_pid, |proc| {
-            proc.session_id.store(sid, Ordering::SeqCst);
-        });
-    }
-
-    // 初始化每进程的 fd_table
-    PROCESS_TABLE.with_process(child_pid, |proc| {
-        proc.fd_table.init();
-    });
-
-    let load_result = super::api::user_proc_load_elf(path, pwm);
-    if load_result < 0 {
-        let pid = child_pid;
-        let sid = PROCESS_TABLE
-            .with_process(pid, |p| p.session_id.load(Ordering::SeqCst))
-            .filter(|&s| s != 0);
-        PROCESS_TABLE.remove_and_free(pid);
-        if let Some(sid) = sid {
-            SESSION_MANAGER.destroy(sid);
-        }
-        USER_PROC_MANAGER.destroy_by_pid(pid);
-        return 0;
-    }
-
-    if !argv.is_null() && argc > 0 {
-        let envp: *const *const u8 = core::ptr::null();
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        unsafe {
-            super::api::user_proc_setup_argv(child_pid, argv, argc, envp, 0);
-        }
-    }
-
-    child_pid
-}
-
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
-#[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
-pub extern "C" fn proc_exec_replace(path: *const u8, argv: *const *const u8, argc: u32) -> i32 {
-    if path.is_null() {
+pub extern "C" fn proc_exec_replace(
+    elf_data: *const u8,
+    elf_size: u64,
+    argv: *const *const u8,
+    argc: u32,
+) -> i32 {
+    if elf_data.is_null() {
         return -1;
     }
 
@@ -614,7 +538,8 @@ pub extern "C" fn proc_exec_replace(path: *const u8, argv: *const *const u8, arg
 
     // P0-I-31 修复: transactional execve — 先在临时进程中加载并验证新 ELF,
     // 验证通过后将新地址空间转移到当前 PID, 保持 POSIX execve 语义 (PID 不变).
-    let new_pid = super::api::user_proc_load_elf(path, pwm);
+    // 阶段 4b: ELF 文件 I/O 下沉 services, framework 仅收字节并加载 (纯机制).
+    let new_pid = super::api::user_proc_load_elf_from_memory(elf_data, elf_size, pwm);
     if new_pid < 0 {
         return -1;
     }

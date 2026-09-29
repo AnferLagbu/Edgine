@@ -512,7 +512,7 @@ pub fn register_all_tests() {
         crate::framework::timer::hrtimer::register_hrtimer_tests();
         crate::framework::proc::signal::register_signal_tests();
         crate::framework::config::memory::register_aslr_tests();
-        crate::framework::fs::initramfs::register_initramfs_tests();
+        crate::services::fs::initramfs::register_initramfs_tests();
         crate::framework::syscall::futex::register_futex_tests();
         crate::framework::proc::robust::register_robust_tests();
         crate::framework::mm::pcache::register_pcache_tests();

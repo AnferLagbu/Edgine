@@ -24,7 +24,7 @@ pub fn wasi_fd_close(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
         Ok(entry) => {
             // 调用 VFS 关闭底层 fd
             if entry.inner_fd >= 0 {
-                crate::framework::fs::vfs::api::vfs_close(entry.inner_fd as u32);
+                crate::services::fs::api::vfs_close(entry.inner_fd as u32);
             }
             interp.stack.push(Value::I32(wasi_success()))?;
         }
@@ -58,7 +58,7 @@ pub fn wasi_fd_seek(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(
     };
 
     // 调用 VFS seek
-    let result = crate::framework::fs::vfs::api::vfs_seek(entry.inner_fd as u32, offset, whence);
+    let result = crate::services::fs::api::vfs_seek(entry.inner_fd as u32, offset, whence);
 
     if result < 0 {
         interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
@@ -87,7 +87,7 @@ pub fn wasi_fd_tell(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(
     };
 
     // seek(0, SEEK_CUR) 获取当前位置
-    let result = crate::framework::fs::vfs::api::vfs_seek(
+    let result = crate::services::fs::api::vfs_seek(
         entry.inner_fd as u32,
         0,
         1, // SEEK_CUR
@@ -113,7 +113,7 @@ pub fn wasi_fd_sync(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(
     match ctx.fd_table.get(fd) {
         Ok(_entry) => {
             // 调用 VFS sync (全局同步所有已打开的文件)
-            let result = crate::framework::fs::vfs::api::vfs_sync();
+            let result = crate::services::fs::api::vfs_sync();
             if result < 0 {
                 interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
             } else {
@@ -221,7 +221,7 @@ pub fn wasi_fd_stat_get(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
 
     // 调用 VFS fstat 获取文件信息
     let stat =
-        if let Some(s) = crate::framework::fs::vfs::api::vfs_fstat_safe(entry.inner_fd as u32, 0) {
+        if let Some(s) = crate::services::fs::api::vfs_fstat_safe(entry.inner_fd as u32, 0) {
             s
         } else {
             interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
@@ -304,7 +304,7 @@ pub fn wasi_fd_read(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(
             .map_err(|_| WasmError::MemoryOutOfBounds)?;
 
         // 使用 safe wrapper 调用 VFS read
-        let n = crate::framework::fs::vfs::api::vfs_read_safe(entry.inner_fd as u32, slice);
+        let n = crate::services::fs::api::vfs_read_safe(entry.inner_fd as u32, slice);
 
         if n < 0 {
             interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
@@ -354,7 +354,7 @@ pub fn wasi_fd_write(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
             .map_err(|_| WasmError::MemoryOutOfBounds)?;
 
         // 使用 safe wrapper 调用 VFS write
-        let n = crate::framework::fs::vfs::api::vfs_write_safe(entry.inner_fd as u32, slice);
+        let n = crate::services::fs::api::vfs_write_safe(entry.inner_fd as u32, slice);
 
         if n < 0 {
             interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
@@ -390,8 +390,8 @@ pub fn wasi_fd_pread(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
     };
 
     // 保存当前位置，seek 到 offset，读取，再 seek 回原位
-    let saved_pos = crate::framework::fs::vfs::api::vfs_seek(entry.inner_fd as u32, 0, 1);
-    let _ = crate::framework::fs::vfs::api::vfs_seek(entry.inner_fd as u32, offset, 0);
+    let saved_pos = crate::services::fs::api::vfs_seek(entry.inner_fd as u32, 0, 1);
+    let _ = crate::services::fs::api::vfs_seek(entry.inner_fd as u32, offset, 0);
 
     let iovecs = read_iovec_from_memory(interp, iovs_ptr, iovs_len)?;
     let mut total = 0u32;
@@ -406,9 +406,9 @@ pub fn wasi_fd_pread(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
             .ok_or(WasmError::MemoryOutOfBounds)?
             .get_slice_mut(iov.buf, iov.len)
             .map_err(|_| WasmError::MemoryOutOfBounds)?;
-        let n = crate::framework::fs::vfs::api::vfs_read_safe(entry.inner_fd as u32, slice);
+        let n = crate::services::fs::api::vfs_read_safe(entry.inner_fd as u32, slice);
         if n < 0 {
-            let _ = crate::framework::fs::vfs::api::vfs_seek(entry.inner_fd as u32, saved_pos, 0);
+            let _ = crate::services::fs::api::vfs_seek(entry.inner_fd as u32, saved_pos, 0);
             interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
             return Ok(());
         }
@@ -416,7 +416,7 @@ pub fn wasi_fd_pread(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
     }
 
     // 恢复原位置
-    let _ = crate::framework::fs::vfs::api::vfs_seek(entry.inner_fd as u32, saved_pos, 0);
+    let _ = crate::services::fs::api::vfs_seek(entry.inner_fd as u32, saved_pos, 0);
 
     write_u32_to_memory(interp, nread_ptr, total);
     interp.stack.push(Value::I32(wasi_success()))?;
@@ -445,8 +445,8 @@ pub fn wasi_fd_pwrite(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
     };
 
     // 保存当前位置，seek 到 offset，写入，再 seek 回原位
-    let saved_pos = crate::framework::fs::vfs::api::vfs_seek(entry.inner_fd as u32, 0, 1);
-    let _ = crate::framework::fs::vfs::api::vfs_seek(entry.inner_fd as u32, offset, 0);
+    let saved_pos = crate::services::fs::api::vfs_seek(entry.inner_fd as u32, 0, 1);
+    let _ = crate::services::fs::api::vfs_seek(entry.inner_fd as u32, offset, 0);
 
     let iovecs = read_iovec_from_memory(interp, iovs_ptr, iovs_len)?;
     let mut total = 0u32;
@@ -461,9 +461,9 @@ pub fn wasi_fd_pwrite(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
             .ok_or(WasmError::MemoryOutOfBounds)?
             .get_slice(iov.buf, iov.len)
             .map_err(|_| WasmError::MemoryOutOfBounds)?;
-        let n = crate::framework::fs::vfs::api::vfs_write_safe(entry.inner_fd as u32, slice);
+        let n = crate::services::fs::api::vfs_write_safe(entry.inner_fd as u32, slice);
         if n < 0 {
-            let _ = crate::framework::fs::vfs::api::vfs_seek(entry.inner_fd as u32, saved_pos, 0);
+            let _ = crate::services::fs::api::vfs_seek(entry.inner_fd as u32, saved_pos, 0);
             interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
             return Ok(());
         }
@@ -471,7 +471,7 @@ pub fn wasi_fd_pwrite(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
     }
 
     // 恢复原位置
-    let _ = crate::framework::fs::vfs::api::vfs_seek(entry.inner_fd as u32, saved_pos, 0);
+    let _ = crate::services::fs::api::vfs_seek(entry.inner_fd as u32, saved_pos, 0);
 
     write_u32_to_memory(interp, nwritten_ptr, total);
     interp.stack.push(Value::I32(wasi_success()))?;
@@ -504,12 +504,12 @@ pub fn wasi_fd_allocate(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
     let target_size = offset.saturating_add(len);
 
     // 获取当前文件大小
-    let stat = crate::framework::fs::vfs::api::vfs_fstat_safe(entry.inner_fd as u32, 0);
+    let stat = crate::services::fs::api::vfs_fstat_safe(entry.inner_fd as u32, 0);
 
     let current_size = stat.map_or(0, |s| u64::from(s.size));
     if current_size < target_size {
         // 文件需要扩展, 使用 truncate
-        let trunc_result = crate::framework::fs::vfs::api::vfs_truncate_internal(
+        let trunc_result = crate::services::fs::api::vfs_truncate_internal(
             entry.inner_fd as u32,
             target_size,
         );
@@ -630,7 +630,7 @@ pub fn wasi_fd_readdir(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resul
 
     // 调用 VFS readdir
     let mut dir_entry = crate::services::fs::vfs_types::VfsDirEntry::default();
-    let result = crate::framework::fs::vfs::api::vfs_readdir(
+    let result = crate::services::fs::api::vfs_readdir(
         entry.inner_fd as u32,
         &mut dir_entry as *mut _,
     );

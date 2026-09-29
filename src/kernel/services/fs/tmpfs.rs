@@ -7,8 +7,8 @@
 
 use alloc::sync::Arc;
 
-use crate::framework::fs::KernelError;
-use crate::framework::fs::ramfs::{RamFsData, RamFsDirEntry};
+use crate::services::fs::KernelError;
+use crate::services::fs::ramfs_core::{RamFsData, RamFsDirEntry};
 use crate::framework::sync::IrqSpinLock as Mutex;
 use crate::services::fs::inode::Inode;
 use crate::services::fs::vfs_types::{

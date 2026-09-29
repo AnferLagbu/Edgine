@@ -20,7 +20,7 @@ use crate::framework::chitin::{
     FW_ERR_IO, FW_ERR_NOT_FOUND, FW_ERR_TOO_LARGE, FirmwareInfo, MAX_FIRMWARE_SIZE,
     devtree_attach_firmware, devtree_detach_firmware, devtree_get_firmware, fnv1a_32,
 };
-use crate::framework::fs::vfs::api::{vfs_open_safe, vfs_read_safe};
+use crate::services::fs::api::{vfs_open_safe, vfs_read_safe};
 use crate::framework::mm::copy_user::{copy_from_user, copy_to_user};
 use alloc::vec::Vec;
 

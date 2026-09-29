@@ -1,20 +1,19 @@
 #![deny(unsafe_code)]
-//! `RamFS` 核心实现 — framework 层 (DECISION-K 项 5 回迁)
+//! `RamFS` 核心实现 — services 层 (VFS 完整下沉)
 //!
-//! RamFS 数据结构 (`RamFsData`) 是 VFS 挂载机制的底层基座
-//! (framework/fs/vfs/mount.rs 直接依赖), 按机制归属回迁 framework.
-//! 0 unsafe, 100% safe Rust.
+//! RamFS 数据结构 (`RamFsData`) 是 VFS 挂载机制的底层基座, 随 VFS 整体
+//! 下沉至 services. 0 unsafe, 100% safe Rust.
 //!
 //! ## 依赖注入边界
 //!
-//! 具象 `RamFsInode` 仍归 services (`services::fs::inode`), 本模块在
+//! 具象 `RamFsInode` 归 services (`services::fs::inode`), 本模块在
 //! fs_open / fs_create / fs_resolve_inode 中经 `FsBackend::make_ramfs_inode`
-//! 工厂钩子 (backend_trait) 由 services 构造注入, 保持 framework 不反向
-//! 依赖 services 具象类型.
+//! 工厂钩子 (backend_trait) 构造注入.
 //!
 //! ## 历史
 //! - E6-5: 迁至 services::fs::ramfs_core (0 unsafe 化)
 //! - DECISION-K 项 5: 回迁 framework, Inode 构造改走 backend 工厂钩子
+//! - VFS 完整下沉: 随 VFS 子系统整体下沉 services, 挂载点经 `ramfs_fs()` 暴露
 
 pub mod ramfs_data;
 pub mod ramfs_node;
@@ -22,10 +21,10 @@ pub mod ramfs_node;
 pub use ramfs_data::*;
 pub use ramfs_node::*;
 
-use crate::framework::fs::KernelError;
-use crate::framework::fs::vfs::backend_trait::current_fs_backend;
-use crate::framework::fs::vfs::inode::Inode;
-use crate::framework::fs::{
+use crate::services::fs::KernelError;
+use crate::services::fs::backend_trait::current_fs_backend;
+use crate::services::fs::inode::Inode;
+use crate::services::fs::{
     FileSystem, KernelResult, VFS_MAX_NAME, VfsDirEntry, VfsFileType, VfsOpenFlags, VfsSeekWhence,
     VfsStat,
 };
@@ -53,8 +52,13 @@ pub fn init() {
 }
 
 // ============================================================================
-// FileSystem trait 实现 (framework 层, Inode 经 backend 钩子由 services 注入)
+// FileSystem trait 实现 (Inode 经 backend 钩子由 services 注入)
 // ============================================================================
+
+/// RamFS FileSystem trait 实现的载体 (无状态句柄)
+///
+/// 全局数据经 `RAMFS_DATA` 单例访问, 句柄本身不持有状态.
+pub struct RamFsFileSystem;
 
 /// 经 backend 工厂钩子构造 RamFS Inode (具象实现由 services 注入)
 ///
@@ -67,7 +71,7 @@ fn make_inode(
     current_fs_backend().make_ramfs_inode(inode_id, mount_idx, fs_id)
 }
 
-impl FileSystem for RamFsData {
+impl FileSystem for RamFsFileSystem {
     fn name(&self) -> &'static str {
         "ramfs"
     }
@@ -138,7 +142,7 @@ impl FileSystem for RamFsData {
             Some(node_id) => {
                 drop(ramfs); // 释放锁, 尝试 icache
                 if let Some(cached) =
-                    crate::framework::fs::vfs::dcache::icache_lookup(fs_id, node_id)
+                    crate::services::fs::dcache::icache_lookup(fs_id, node_id)
                 {
                     return Ok(VfsStat {
                         node_id: cached.ino,
@@ -156,7 +160,7 @@ impl FileSystem for RamFsData {
                 ramfs
                     .stat(node_id)
                     .inspect(|st| {
-                        crate::framework::fs::vfs::dcache::icache_insert(
+                        crate::services::fs::dcache::icache_insert(
                             fs_id,
                             node_id,
                             st.file_type,
@@ -427,4 +431,12 @@ impl FileSystem for RamFsData {
         let fs_id = RAMFS_DATA.lock().fs_id;
         make_inode(inode_id, mount_idx, fs_id).ok()
     }
+}
+
+/// RamFS FileSystem 全局实例 (供挂载路径经 `ramfs_fs()` 暴露)
+static RAMFS_FS: RamFsFileSystem = RamFsFileSystem;
+
+/// 获取 RamFS FileSystem trait object (VFS 挂载路径用)
+pub fn ramfs_fs() -> &'static dyn FileSystem {
+    &RAMFS_FS
 }

@@ -106,7 +106,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 > 复核纪律（DECISION-F）：本表 0 unsafe 项**先按服务对象准则（§2）查服务对象再动工**（安全导出面 → 保留；仅 services 消费 → 下沉；被 framework 机制直接调用 → 接口化后下沉或保留）；含 unsafe 的按原"封装+下沉"路径。
 >
-> 进度（批次 2-A syscall fd/pipe 组）：clone / io / sendfile 三文件完成，标 ✅。批次 2-B（fd 事件族）：epoll / eventfd / signalfd / timerfd 四文件经复核**保留 framework**（耦合判据见 §11 DECISION-P），标 🔒；批次 2-C（char/input）：pl011 / keyboard 二文件经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），标 🔒，并订正 `input_init` 重复注册（同批）；批次 2-D（usb）：framework/driver/usb 二文件经用户裁定改走 **USB 整体下沉**（覆盖原「20 unsafe 集中，机制留框架」处方），三子步收口——4 个 0-unsafe 文件下沉 + usb_core/xhci safe 权威实装 + framework 侧整目录删除（判据见 §11 DECISION-R），标 ✅；批次 2-E（display）：`framework/driver/display/mod.rs` 经复核**部分下沉**——`controller.rs` 管理策略（0 unsafe、无框架机制消费者）迁 `services/driver/display/controller`，VBE 原语 / framebuffer / font 因被 `gfx_console`（klog/panic 机制）与 `syscall/dispatch`（fb_open/fb_mmap）直接绑定而保留框架（判据见 §11 DECISION-S），标 ✅（后续 Framebuffer 机制/策略拆分登记 §6.3）；批次 2-F（credo/storage + net query）：`framework/credo/storage.rs` 与 `framework/net/init/query.rs` 二文件经复核**均保留 framework**——credo/storage 因 framework 无 VFS safe API 面（属阶段 4）+ `credo/api.rs` 三处 FFI 直接绑定 storage + 序列化直读 credo TCB `PwmEntry` 原子字段，**登记后续条目**（前置＝阶段 4 VFS safe API 就绪后「编排+序列化」整体下沉 `services/credo/persist`）；net query 为 net TCB 状态（DHCP 状态机写入的全局 Atomic）**只读访问面**，按「状态只读访问器与状态定义同层」判据应留 framework（判据见 §11 DECISION-T），标 🔒；批次 2-G（firmware·ftrace）：`framework/syscall/firmware.rs` 与 `framework/syscall/ftrace_kgdb.rs` 二文件经复核**下沉 services**——11+ 处用户指针拷贝改造为 framework safe API（`copy_from_user`/`copy_to_user`），处理策略（参数校验 + 编排 + 逐字段序列化）可 0-unsafe 化且不直接调用 framework 内部机制（判据见 §11 DECISION-U），标 ✅（framework 侧源文件已删）；批次 2-H（info·wait4）：`framework/syscall/info.rs`（uname/sysinfo 处理策略）与 `framework/syscall/wait4.rs`（wait 机制编排 + `wait_reap`/`WaitOutcome` helper）二文件经复核**下沉 services**（`services/proc/info.rs` + `services/proc/wait4.rs`，用户指针写改 `api::write_struct_to_user` 等 safe 代理，framework 侧源文件已删），标 ✅；批次 2-J（coredump）：`framework/proc/coredump.rs` 经复核**整体下沉 services**（`services/proc/coredump.rs`，0 unsafe 完整实装——ELF Core 写出经 `framework::fs::vfs::api::{vfs_open_safe, vfs_write_pod, vfs_write_safe, vfs_close_safe}` 安全代理，signal→coredump 经 `coredump_trait` trait 注入 + OnceCell 注册，中断帧经 `read_interrupt_regs` POD 快照，VMA 枚举经 `vma_snapshot_current`；一并修正 P0-17/P0-20 + note name OOB 读），framework 侧源文件已删，标 ✅（判据见 §11 DECISION-V）；批次 2-K（末 4 文件复核保留）：`framework/proc/rlimit.rs`（`RlimitTable` 为 `Process` 机制字段，状态定义与访问面同层）、`framework/driver/net/e1000.rs` + `e1000_io.rs`（驱动整体在 framework，services 侧仅常量 + re-export 壳）、`framework/driver/virtio/*`（经用户裁定保留）经复核**保留 framework**（判据见 §11 DECISION-V），标 🔒。**§6.2 全表收口**：23 文件 = 11 完成下沉（2-A×3 clone/io/sendfile + 2-D×2 usb + 2-E×1 display + 2-G×2 firmware/ftrace + 2-H×2 info/wait4 + 2-J×1 coredump）+ 11 复核保留（2-B×4 epoll/eventfd/signalfd/timerfd + 2-C×2 pl011/keyboard + 2-F×1 net query + 2-K×4 rlimit/e1000/e1000_io/virtio）+ 1 复核保留并登记后续（2-F credo/storage）。
+> 进度（批次 2-A syscall fd/pipe 组）：clone / io / sendfile 三文件完成，标 ✅。批次 2-B（fd 事件族）：epoll / eventfd / signalfd / timerfd 四文件经复核**保留 framework**（耦合判据见 §11 DECISION-P），标 🔒；批次 2-C（char/input）：pl011 / keyboard 二文件经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），标 🔒，并订正 `input_init` 重复注册（同批）；批次 2-D（usb）：framework/driver/usb 二文件经用户裁定改走 **USB 整体下沉**（覆盖原「20 unsafe 集中，机制留框架」处方），三子步收口——4 个 0-unsafe 文件下沉 + usb_core/xhci safe 权威实装 + framework 侧整目录删除（判据见 §11 DECISION-R），标 ✅；批次 2-E（display）：`framework/driver/display/mod.rs` 经复核**部分下沉**——`controller.rs` 管理策略（0 unsafe、无框架机制消费者）迁 `services/driver/display/controller`，VBE 原语 / framebuffer / font 因被 `gfx_console`（klog/panic 机制）与 `syscall/dispatch`（fb_open/fb_mmap）直接绑定而保留框架（判据见 §11 DECISION-S），标 ✅（后续 Framebuffer 机制/策略拆分登记 §6.3）；批次 2-F（credo/storage + net query）：`framework/credo/storage.rs` 与 `framework/net/init/query.rs` 二文件经复核**均保留 framework**——credo/storage 因 framework 无 VFS safe API 面（属阶段 4）+ `credo/api.rs` 三处 FFI 直接绑定 storage + 序列化直读 credo TCB `PwmEntry` 原子字段，**登记后续条目**（前置＝阶段 4 VFS safe API 就绪后「编排+序列化」整体下沉 `services/credo/persist`）；net query 为 net TCB 状态（DHCP 状态机写入的全局 Atomic）**只读访问面**，按「状态只读访问器与状态定义同层」判据应留 framework（判据见 §11 DECISION-T），标 🔒；批次 2-G（firmware·ftrace）：`framework/syscall/firmware.rs` 与 `framework/syscall/ftrace_kgdb.rs` 二文件经复核**下沉 services**——11+ 处用户指针拷贝改造为 framework safe API（`copy_from_user`/`copy_to_user`），处理策略（参数校验 + 编排 + 逐字段序列化）可 0-unsafe 化且不直接调用 framework 内部机制（判据见 §11 DECISION-U），标 ✅（framework 侧源文件已删）；批次 2-H（info·wait4）：`framework/syscall/info.rs`（uname/sysinfo 处理策略）与 `framework/syscall/wait4.rs`（wait 机制编排 + `wait_reap`/`WaitOutcome` helper）二文件经复核**下沉 services**（`services/proc/info.rs` + `services/proc/wait4.rs`，用户指针写改 `api::write_struct_to_user` 等 safe 代理，framework 侧源文件已删），标 ✅；批次 2-J（coredump）：`framework/proc/coredump.rs` 经复核**整体下沉 services**（`services/proc/coredump.rs`，0 unsafe 完整实装——ELF Core 写出经 `framework::fs::vfs::api::{vfs_open_safe, vfs_write_pod, vfs_write_safe, vfs_close_safe}` 安全代理，signal→coredump 经 `coredump_trait` trait 注入 + OnceCell 注册，中断帧经 `read_interrupt_regs` POD 快照，VMA 枚举经 `vma_snapshot_current`；一并修正 P0-17/P0-20 + note name OOB 读），framework 侧源文件已删，标 ✅（判据见 §11 DECISION-V）；批次 2-K（末 4 文件复核保留）：`framework/proc/rlimit.rs`（`RlimitTable` 为 `Process` 机制字段，状态定义与访问面同层）、`framework/driver/net/e1000.rs` + `e1000_io.rs`（驱动整体在 framework，services 侧仅常量 + re-export 壳）、`framework/driver/virtio/*`（经用户裁定保留）经复核**保留 framework**（判据见 §11 DECISION-V），标 🔒。**§6.2 全表收口**：23 文件 = 11 完成下沉（2-A×3 clone/io/sendfile + 2-D×2 usb + 2-E×1 display + 2-G×2 firmware/ftrace + 2-H×2 info/wait4 + 2-J×1 coredump）+ 11 复核保留（2-B×4 epoll/eventfd/signalfd/timerfd + 2-C×2 pl011/keyboard + 2-F×1 net query + 2-K×4 rlimit/e1000/e1000_io/virtio）+ 1 复核保留并登记后续（2-F credo/storage）。（**后续更新**：2-F credo/storage 已由阶段 4b 全量下沉收口——`framework/credo/storage.rs` 删除，整体迁 `services/credo/persist`，见 §7 阶段 4b 实施记录）
 
 | 文件 | 下沉目标 | 依据 |
 |---|---|---|
@@ -152,7 +152,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | framework/barrier/reset/bsr.rs | freeze/unfreeze/rollback 编排迁出；mmio_write32 机制保留 | 编排经 framework 恢复机制 API（RECOVERY_MANAGER）；mmio 写留框架 |
 | framework/debug/ebpf.rs | 验证器策略已 trait 化（services）；解释执行引擎保留 | ✅ 已有 BpfVerifier trait（services/ebpf_verifier 权威）|
 | framework/driver/display/framebuffer.rs（+ font/self_test）| Framebuffer 绘图策略（set_pixel/fill/fill_rect/draw_line/blend/aa 等）迁 services；IoMem 映射、`FB_PHYS_ADDR`/`FB_PHYS_SIZE`、`get_framebuffer` 机制原语保留 | ⚠ 2-E 后续（登记项，见 §11 DECISION-S）：**前置**需先解除 `gfx_console` 对 `*mut Framebuffer` 的裸指针绑定（klog/panic 机制经 trait 注入或回调注册消费绘图能力），再将绘图策略拆至 services + framework 留机制原语 |
-| framework/credo/storage.rs（2-F 后续登记）| 序列化算法（0 unsafe 纯函数）+ `save/load/remove_database` 编排（功能）整体迁 `services/credo/persist`；`vfs_*_internal` C FFI 留 framework 薄层 | ⚠ **前置**：阶段 4 VFS safe API 面就绪；另需承接 `credo/api.rs` 三处 FFI（安全导出面绑定）并解绑序列化对 credo TCB `PwmEntry` 原子字段的直读（判据见 §11 DECISION-T）|
+| framework/credo/storage.rs（2-F 后续登记）| ✅ **已由阶段 4b 全量下沉收口**：序列化算法（0 unsafe 纯函数）+ `save/load/remove_database` 编排整体迁 `services/credo/persist`；framework 侧源文件删除，**无 `vfs_*_internal` C FFI 薄层残留**（63 处 `no_mangle` 壳随 4b 一并删除）；`PwmEntrySnapshot` POD 解绑序列化对 credo TCB `PwmEntry` 原子字段直读，`credo/api.rs` 三处 FFI 改调 services 编排 |（判据见 §11 DECISION-T）|
 
 ### 6.4 双份合并（services 权威，framework 删业务）——20 文件
 
@@ -206,7 +206,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **mm 机制（15）**：vmm 页表/copy_user/cow/frame/kmalloc/slab/pmm/kpti/arch + 4 trait 契约（alloc/pmm/slab/swap）
 - **proc 机制（16 + canary）**：process/thread/user_proc/scheduler/scheduler_ex/信号投递/elf 加载/cpu_queue/proc_ops/mechanism + **canary（安全 API，§6.1 重判）** + sched/signal/dispatch trait 契约
 - **syscall 入口（5）**：dispatch/api/mod（FFI + raw）/futex（用户原子）/dispatch_trait
-- **fs 契约（6 → 终局 3）**：backend_trait/inode/vfs_poll_trait/handle/mount/path（userptr + FFI 机制）。**DECISION-W 收窄**：终局仅留 3 契约（backend_trait/inode/vfs_poll_trait），handle/mount/path 随阶段 4b 下沉 services（userptr 收敛为 framework 通用 safe API），VFS 契约方法仅含 POD/framework 类型
+- **fs 契约（终局 2 + POD）**：`VfsOps`（framework 保留机制的消费契约，阶段 4a 新建于 `fs/vfs/ops_trait.rs`）+ `vfs_poll_trait`（`syscall/epoll.rs` 消费）+ POD `VfsFileType`（`fs/vfs/types_pod.rs`）。**DECISION-W + 4b 收窄**：终局仅留上述 2 契约（原 §6.6「3 契约」含 `backend_trait`/`inode` 的判定随阶段 4b 一并推翻——`FsBackend`/`Inode` 与具象类型随 VFS 完整下沉 services）；`handle`/`mount`/`path` 的 syscall 处理器与逻辑下沉 services（userptr 收敛为 framework 通用 safe API）；VFS 契约方法仅含 POD/framework 类型。
 - **net 集成（12）**：init 状态机/raw（static mut）/smoltcp_impl/sockets（self-referential）/sm_fi/syscall/save/iface_trait/api
 - **ipc 机制（6）**：mod（命名空间）/dynamic/msgq（侵入式链表）/pipe/shm FFI 薄层/api
 - **driver 机制（11 + 安全注册包装）**：mod/framework（端口 I/O 原语）/kexec/uefi/power 硬件原语/net/dma_ring/virtio/queue/chitin 注册表 + **安全注册包装（proto_block，§6.1 重判）** + proto 指针表（char/input/net）+ user_driver
@@ -314,12 +314,12 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - 📝 **FFI 薄层分离**：随阶段 6.2/6.3 下沉实施（syscall 用户指针拷贝集中框架）
   - 📝 **calibration 采样回调**：boot 早期路径，随阶段 6.3 timer 部分下沉实施
 - 阶段 1：**纯策略下沉**（§6.1 20 文件）。[X] 收口——3 确认下沉（syscall×3，已提交）+ 17 保留（服务对象准则复核终局，DECISION-F）
-- 阶段 2：**封装+下沉**（§6.2 23 文件）。[X] 收口——2-A syscall fd/pipe 组完成 3 文件（clone/io/sendfile，0 unsafe 落地 services）；2-B fd 事件族 4 文件（epoll/eventfd/signalfd/timerfd）经复核**保留 framework**（耦合判据见 §11 DECISION-P）；2-C char/input 2 文件（pl011/keyboard）经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），并订正 `input_init` 重复注册；2-D usb 2 文件经裁定改走 **USB 整体下沉**（三子步收口，framework 侧整目录删除，判据见 §11 DECISION-R）；2-E display 经复核**部分下沉**（`controller.rs` 管理策略迁 services，VBE 原语/framebuffer/font 保留框架，判据见 §11 DECISION-S）；2-F credo/storage+net query 二文件经复核**均保留 framework**（credo/storage 登记后续条目（前置＝阶段 4 VFS safe API），net query 为 net TCB 状态只读访问面，判据见 §11 DECISION-T）；2-G firmware·ftrace 二文件（`framework/syscall/firmware.rs` + `ftrace_kgdb.rs`）经复核**下沉 services**（`services/syscall/firmware.rs` + `ftrace.rs`，11+ 处 unsafe 用户指针拷贝改 framework safe API，framework 侧源文件删除，判据见 §11 DECISION-U）；2-H info·wait4 二文件（`framework/syscall/info.rs` + `wait4.rs`）经复核**下沉 services**（`services/proc/info.rs` + `wait4.rs`，用户指针写改 framework safe API，framework 侧源文件删除）；2-J coredump 一文件经复核**整体下沉 services**（`services/proc/coredump.rs` 0 unsafe 完整实装，经 `coredump_trait` 注入 + VFS POD safe API + `read_interrupt_regs`/`vma_snapshot_current` 快照，一并修正 P0-17/P0-20；判据见 §11 DECISION-V）；2-K 末 4 文件（rlimit/e1000/e1000_io/virtio）经复核**保留 framework**（判据见 §11 DECISION-V）。**§6.2 收口：23 = 11 完成下沉 + 11 复核保留 + 1 复核保留并登记后续（credo/storage）**
+- 阶段 2：**封装+下沉**（§6.2 23 文件）。[X] 收口——2-A syscall fd/pipe 组完成 3 文件（clone/io/sendfile，0 unsafe 落地 services）；2-B fd 事件族 4 文件（epoll/eventfd/signalfd/timerfd）经复核**保留 framework**（耦合判据见 §11 DECISION-P）；2-C char/input 2 文件（pl011/keyboard）经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），并订正 `input_init` 重复注册；2-D usb 2 文件经裁定改走 **USB 整体下沉**（三子步收口，framework 侧整目录删除，判据见 §11 DECISION-R）；2-E display 经复核**部分下沉**（`controller.rs` 管理策略迁 services，VBE 原语/framebuffer/font 保留框架，判据见 §11 DECISION-S）；2-F credo/storage+net query 二文件经复核**均保留 framework**（credo/storage 登记后续条目（前置＝阶段 4 VFS safe API），**已由阶段 4b 全量下沉收口**（`framework/credo/storage.rs` 删除，整体迁 `services/credo/persist`）；net query 为 net TCB 状态只读访问面，判据见 §11 DECISION-T）；2-G firmware·ftrace 二文件（`framework/syscall/firmware.rs` + `ftrace_kgdb.rs`）经复核**下沉 services**（`services/syscall/firmware.rs` + `ftrace.rs`，11+ 处 unsafe 用户指针拷贝改 framework safe API，framework 侧源文件删除，判据见 §11 DECISION-U）；2-H info·wait4 二文件（`framework/syscall/info.rs` + `wait4.rs`）经复核**下沉 services**（`services/proc/info.rs` + `wait4.rs`，用户指针写改 framework safe API，framework 侧源文件删除）；2-J coredump 一文件经复核**整体下沉 services**（`services/proc/coredump.rs` 0 unsafe 完整实装，经 `coredump_trait` 注入 + VFS POD safe API + `read_interrupt_regs`/`vma_snapshot_current` 快照，一并修正 P0-17/P0-20；判据见 §11 DECISION-V）；2-K 末 4 文件（rlimit/e1000/e1000_io/virtio）经复核**保留 framework**（判据见 §11 DECISION-V）。**§6.2 收口：23 = 12 完成下沉 + 11 复核保留（其中 credo/storage 登记后续，已由阶段 4b 全量下沉收口）**
 - 阶段 3：**驱动双份合并 + E1000 回迁**（§6.4 20 文件 → usb×5 已随 2-D 整体下沉收口，余 15 + DECISION-B）。[]
 - 阶段 4：**VFS 整体下沉**（终局 = Asterinas 对齐·完整下沉，DECISION-W 覆盖 DECISION-A 的「4 文件」口径）。[] 拆分三子批：
   - **4a 契约先行**：framework 新建 `VfsOps` 契约（`framework/fs/vfs/ops_trait.rs`）+ reroute 3 文件 6 处消费面（proc_ops/epoll/page_fault）；不改 TCB 归属、不改语义，仅新增契约面 + 间接层。[X]（完成：VfsOps + Fallback + register/current，6 处 reroute；§2.3 六门槛全绿，见 §11 DECISION-W）
-  - **4b 实现下沉**：`framework/fs/vfs` 实现整体迁 `services/fs`（types/dcache/vfs/open_file_table + handle/mount/path/flock/inotify）；services 于 `fs::init` 注册 `VfsOps` 实现替换 Fallback；framework 侧仅留 3 契约 + userptr 机制面。[]（前置：4a 完成 + `#[no_mangle]` `vfs_*` 符号 asm/链接依赖调研）
-  - **4c 边界收敛**：ramfs/devfs/initramfs 等 framework 内 fs 消费者路径重定向 + §6.6 fs 项收窄（6→3 契约）收口 + 全量验证。[]
+  - **4b 实现下沉**：`framework/fs/vfs` 实现整体迁 `services/fs`（types/dcache/vfs/open_file_table + handle/mount/path/flock/inotify + ramfs/devfs/initramfs/nestfs）；services 于 `fs::init` 注册 `VfsOps` 实现替换 Fallback；framework 侧仅留 2 契约（`VfsOps` + `vfs_poll_trait`）+ POD `VfsFileType` + nestfs unsafe 机制适配层。同时 `framework/credo/storage.rs` 连锁（登记项 2-F）整体下沉 `services/credo/persist`。[X]（完成：无壳单批做尽，63 处 `#[unsafe(no_mangle)] vfs_*` 壳删除；§2.3 六门槛全绿，见 §11 DECISION-W 4b 实施记录）
+  - **4c 边界收敛**：ramfs/devfs/initramfs 等 framework 内 fs 消费者路径重定向 + §6.6 fs 项收窄（6→2 契约）收口 + 全量验证。[]
 - 阶段 5：**壳删除 82 + 直接 use trait 化 20 + 保留文件 43 处收敛**（§7.5，ipc 24 第一优先）。[]
 - 阶段 6：**全量验证**（§3 验收 + §9 门槛）。[]
 
@@ -1208,7 +1208,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 **影响面**：§6.2 计数 23 → 3 完成(2-A) + 4 保留(2-B) + 2 保留(2-C) + 2 完成(2-D) + 1 完成(2-E) + 2 保留(2-F) + 9 待推进；§6.3 新增 credo/storage 后续登记条目；framework 侧文件数不变（零下沉）；TCB 占比不变。
 
-**状态**: [X]（2-F 复核收口；credo/storage + net query 均保留 framework，2-F 无代码下沉；credo/storage 登记后续条目；转推 2-G firmware·ftrace）
+**状态**: [X]（2-F 复核收口；credo/storage + net query 均保留 framework，2-F 无代码下沉；credo/storage 登记后续条目；转推 2-G firmware·ftrace）。**后续更新**：登记项 2-F 的 credo/storage 已由**阶段 4b 全量下沉收口**——`framework/credo/storage.rs` 删除，序列化 + `save/load/remove_database` 编排整体迁 `services/credo/persist`，framework 侧无 `vfs_*_internal` C FFI 薄层残留（见 §7 阶段 4b 实施记录）；`net/init/query.rs` 终局保留 framework 判定不变。
 
 ### DECISION-U: 2-G firmware·ftrace 下沉 services（契约措辞细化 + 11+ unsafe 消除）
 
@@ -1272,7 +1272,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 **影响面**：
 
-- §6.2 计数 23 → **11 完成下沉**（2-A×3 clone/io/sendfile + 2-D×2 usb + 2-E×1 display + 2-G×2 firmware/ftrace + 2-H×2 info/wait4 + 2-J×1 coredump）+ **11 复核保留**（2-B×4 epoll/eventfd/signalfd/timerfd + 2-C×2 pl011/keyboard + 2-F×1 net query + 2-K×4 rlimit/e1000/e1000_io/virtio）+ **1 复核保留并登记后续**（2-F credo/storage）。**§6.2 全表收口**。
+- §6.2 计数 23 → **11 完成下沉**（2-A×3 clone/io/sendfile + 2-D×2 usb + 2-E×1 display + 2-G×2 firmware/ftrace + 2-H×2 info/wait4 + 2-J×1 coredump）+ **11 复核保留**（2-B×4 epoll/eventfd/signalfd/timerfd + 2-C×2 pl011/keyboard + 2-F×1 net query + 2-K×4 rlimit/e1000/e1000_io/virtio）+ **1 复核保留并登记后续**（2-F credo/storage，**已由阶段 4b 全量下沉收口**）。**§6.2 全表收口**。
 - framework 侧 `syscall` 文件数 -2（info/wait4 删除）、`proc` 文件数 -1（coredump 删除）；services 侧新增/扩建 3 文件均 0 unsafe；framework 侧 unsafe 块下降（coredump 用户指针/内存访问迁出），TCB 侧新增机制原语（`coredump_trait` 注册面、`read_interrupt_regs`、`vma_snapshot_current`、`vfs_write_pod`）均为 safe 导出面。
 - 预存缺陷修正：P0-17（mm 选择）+ P0-20（core_limit 截断）+ note name OOB 读（属本轮改动直接触及路径）。
 - 编号权威仍在 framework（`QX_*` = `framework/syscall/types.rs`，本批次不动）。
@@ -1289,7 +1289,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 1. **Asterinas 参照系**：Asterinas 的 OSTD（=framework）不含任何文件系统抽象——只提供通用原语（UserPtr 安全读写 / 同步 / 内存 / interrupt / 锁），VFS + 各 FS + syscall 处理器全部位于 kernel（=services，`kernel/core/src/fs/vfs`）。
 2. **两种终局对比**：(a) 保守路线——仅下沉 `types/dcache/vfs/open_file_table` 四文件，handle/mount/path 因「userptr + FFI 机制」留 framework：TCB 削减有限，且与「types 无法单独下沉」冲突，实际须把 handle/mount/path 一并卷入；(b) **Asterinas 对齐·完整下沉**——framework 只留通用原语 + 契约 trait + ABI 边界，handle/mount/path 的 syscall 处理器与逻辑全部下沉 services（userptr 交 framework 通用 safe API）。裁定取 (b)：最贴 Asterinas、TCB 削减最大，且消解 §6.6 口径矛盾。
-3. **契约面必须留 framework（架构必需，非权宜）**：`backend_trait` / `inode` / `vfs_poll_trait` 是「services 向 framework 注册的契约」（framework 持 `OnceLock<&'static dyn Xxx>` + `register_`/`current_` + Fallback），是依赖方向单向的**必要条件**。据此 §6.6 L209 的「fs 契约（6）」终局收窄为 **3 契约**；handle/mount/path 的 userptr 机制收敛为 framework 通用 safe API。
+3. **契约面必须留 framework（架构必需，非权宜）**：`backend_trait` / `inode` / `vfs_poll_trait` 是「services 向 framework 注册的契约」（framework 持 `OnceLock<&'static dyn Xxx>` + `register_`/`current_` + Fallback），是依赖方向单向的**必要条件**。据此 §6.6 L209 的「fs 契约（6）」终局收窄为 **2 契约**（`VfsOps` + `vfs_poll_trait`；DECISION-W 4a 阶段曾列 3，阶段 4b 实测 `FsBackend`/`Inode` 随具象类型一并下沉）；handle/mount/path 的 userptr 机制收敛为 framework 通用 safe API。
 4. **契约 trait 只含 POD/framework 类型**：VFS 契约的方法签名不得引用 services 具象类型（如 `OpenFile`），否则 framework 契约反向依赖 services。故契约仅暴露 `u32/u64/usize/bool/&mut [u8]/Option<POD>` 等。
 5. **入口拆解参照阶段 1/2 已落地模式**：brk/clone/io/sendfile/firmware/info/wait4/coredump 等已借 `SyscallDispatch` dispatch_trait 或 framework safe API 下沉 services（0 unsafe），VFS 入口同理。
 6. **风险控制**：13 文件 + 71 userptr unsafe 一次性迁移风险高，按「契约先行 → 实现下沉 → 入口收敛」三批推进，每批独立跑 §2.3 门槛全绿。
@@ -1299,8 +1299,8 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 **子批拆分**：
 
 - **4a 契约先行（公共前置，不改文件归属，树绿）**：framework 新建 `VfsOps` 契约（`framework/fs/vfs/ops_trait.rs`：`pub trait VfsOps` + `OnceLock<&'static dyn VfsOps>` + `register_vfs_ops`/`current_vfs_ops` + `FallbackVfsOps`），方法集从 framework 保留机制的消费面客观推导（见下表）；Fallback 转发现有 `framework/fs` 函数；reroute 消费面（proc_ops/epoll/page_fault）。**4a 不改任何 TCB 归属、不改语义**，仅新增契约面 + 间接层。
-- **4b 实现下沉**：`framework/fs/vfs` 的 VFS 实现整体迁 `services/fs`（含 `vfs.rs`/`dcache.rs`/`types.rs`/`open_file_table.rs` + `handle`/`mount`/`path`/`flock`/`inotify`）；services 于 `fs::init` 注册 `VfsOps` 实现替换 Fallback；services 内部引用重定向（mm/fs/wasm/proc 等消费者改路径）；framework 侧仅留 3 契约 + userptr 机制面。**前置**：4a 完成 + 4b 前对 asm/链接依赖 `#[no_mangle]` `vfs_*` 符号的调研（决定入口薄壳保留形态）。
-- **4c 边界收敛**：ramfs/devfs/initramfs 等 framework 内 fs 消费者的路径重定向；§6.6 fs 项收窄（6→3 契约）收口；全量验证。
+- **4b 实现下沉**：`framework/fs/vfs` 的 VFS 实现整体迁 `services/fs`（含 `vfs.rs`/`dcache.rs`/`types.rs`/`open_file_table.rs` + `handle`/`mount`/`path`/`flock`/`inotify`）；services 于 `fs::init` 注册 `VfsOps` 实现替换 Fallback；services 内部引用重定向（mm/fs/wasm/proc 等消费者改路径）；framework 侧仅留 2 契约（`VfsOps` + `vfs_poll_trait`）+ POD `VfsFileType` + userptr 机制面。**前置**：4a 完成 + 4b 前对 asm/链接依赖 `#[no_mangle]` `vfs_*` 符号的调研（实测无 asm/链接脚本消费者，63 处壳删除）。
+- **4c 边界收敛**：ramfs/devfs/initramfs 等 framework 内 fs 消费者的路径重定向；§6.6 fs 项收窄（6→2 契约，随 4b 实测确定终局 2 契约）收口；全量验证。
 
 **4a 契约草案（VfsOps 方法集，从 3 处消费面 6 调用客观推导）**：
 
@@ -1319,4 +1319,74 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 **4a 实施记录**：新建 [framework/fs/vfs/ops_trait.rs](../../src/kernel/framework/fs/vfs/ops_trait.rs)（`VfsOps` + `FallbackVfsOps` + `register_vfs_ops`/`current_vfs_ops`，照抄 `backend_trait.rs` 范式；Fallback 转发现有 `framework/fs` 函数）；`vfs/mod.rs` 声明并顶层 re-export；reroute 消费面：`proc_ops.rs` 3 处（`release_pid_locks`/`close_all_fds`/`close_cloexec_fds`/`inc_open_file_ref`）→ 4 处契约调用、`epoll.rs` 1 处（`fd_file_type`）、`page_fault.rs` 1 处（`pread_inode`）。伴随修正 `host-tests/tests/fd_cloexec_test.rs` 静态契约扫描（`vfs_close_cloexec_fds()` → `close_cloexec_fds()`，随契约路由更新断言）。**§2.3 六门槛全绿**：双架构 0w0e ✅ / clippy pedantic（含 kernel_test + host-test 维）✅ / 核心审计（6 不变式 + F1-F9）✅ / host-tests ✅ / kernel-host 848 passed ✅ / QEMU x86_64 完整启动 ✅。
 
-**状态**: [X]（4a 契约先行完成并过 §2.3 六门槛；4b/4c 待续）
+**状态**: [X]（4a 契约先行 + 4b 实现下沉均完成并过 §2.3 六门槛，见阶段 4b 实施记录；4c 边界收敛待续）
+
+### 阶段 4b 实施计划（VFS 完整下沉 · 无壳单批）
+
+描述：按 DECISION-W + 用户裁定（逆转 DECISION-H13/DECISION-A；D2=A 完整下沉；D1=B 下沉编排；无壳单批做尽），把 `framework/fs` 的 VFS 实现整体下沉 `services/fs`。终局 framework fs 面仅剩 2 契约（`VfsOps` + `vfs_poll_trait`）+ POD `VfsFileType`；`ramfs`/`devfs`/`initramfs`/`nestfs` 与 `FileSystem`/`Inode`/`FsBackend` 具象类型及契约一并下沉。**登记：DECISION-W 覆盖 DECISION-H13（2026-08-31）/DECISION-A（「VFS 4 文件」口径）；§6.6 L209「终局 3 契约」修正为「终局 2 契约」。**
+
+方案：
+
+**（1）文件级迁移映射（framework/fs 合计 9702 行 → services/fs）**
+
+| framework 源 | 行 | services 落点 | 处置 |
+|---|---|---|---|
+| `fs/vfs/vfs.rs` | 545 | `services/fs/vfs_manager.rs`（替换壳） | VFS 管理器实现整体迁入 |
+| `fs/vfs/types.rs` | 717 | `services/fs/vfs_types.rs`（替换壳）+ `fs/vfs/types_pod.rs`（framework 新建） | POD `VfsFileType` 抽留 framework；`VfsStat`/`VfsDirEntry`/`VfsOpenFlags`/`VfsSeekWhence`/`FsType`/`FsOpenResult`/`FileSystem`/`OpenFile`/`KernelError` re-export 迁 services |
+| `fs/vfs/dcache.rs` | 971 | `services/fs/dcache.rs`（替换壳） | 迁入 |
+| `fs/vfs/open_file_table.rs` | 89 | `services/fs/open_file_table.rs`（替换壳） | 迁入 |
+| `fs/vfs/flock.rs` | 727 | `services/fs/flock.rs`（替换壳） | 迁入 |
+| `fs/vfs/inotify.rs` | 633 | `services/fs/inotify.rs`（替换壳） | 迁入 |
+| `fs/vfs/inode.rs` | 174 | `services/fs/inode.rs`（合并） | `Inode` trait 定义并入既有 services 具象实现（`RamFsInode`/`AnonymousInode`/`LegacyInode`） |
+| `fs/vfs/backend_trait.rs` | 159 | `services/fs/backend_trait.rs`（新建） | `FsBackend` 契约/注册表随具象 FS 下沉（framework 无残留消费者） |
+| `fs/vfs/handle.rs` | 858 | `services/fs/handle.rs`（新建） | fd 句柄 VFS 实现（open/close/read/write/seek/dup/fstat/fchmod/...） |
+| `fs/vfs/path.rs` | 722 | `services/fs/path.rs`（合并） | 路径/目录/链接/元数据/cwd 实现并入既有 services 处理器 |
+| `fs/vfs/mount.rs` | 271 | `services/fs/mount.rs`（合并） | 挂载/生命周期/同步/格式化实现并入 |
+| `fs/vfs/api.rs` | 104 | 拆解（`Vfs` trait 删；`ptr_to_str`/`split_parent_name`/`with_cstr`/`PCACHE_*` → `services/fs/api.rs` 新建） | `Vfs` trait = 声明性 dead code（F9）删除 |
+| `fs/ramfs/{mod,ramfs_data,ramfs_node}.rs` | 2150 | `services/fs/ramfs.rs`（合并） | 框架 RamFS 机制整体迁 services |
+| `fs/devfs/mod.rs` | 873 | `services/fs/devfs.rs`（替换壳） | 迁入 |
+| `fs/initramfs.rs` | 336 | `services/fs/initramfs.rs`（新建） | unpack 入口随迁 |
+| `fs/nestfs/{mod,arc_safe}.rs` | 34 | `services/fs/nestfs/`（合并）+ framework 保留 `nestfs/arc_safe.rs` | 具象 NestFS（29 文件）迁入 services；`arc_safe.rs`（ARC 裸指针→切片 safe 封装，框架层必要 unsafe）留 framework，services `arc.rs` 反向依赖（services→framework 合法方向）；framework `nestfs/mod.rs` 仅 `pub mod arc_safe;` |
+| `fs/vfs/ops_trait.rs` | 114 | **framework 保留** | 4a 契约 |
+| `fs/vfs_poll_trait.rs` | 153 | **framework 保留** | `epoll.rs` 消费 |
+| `fs/vfs/types_pod.rs`（新） | — | **framework 保留** | 仅 `VfsFileType` |
+
+**（2）framework POD 抽取**：framework 新建 `fs/vfs/types_pod.rs`，仅含 `VfsFileType`（`epoll.rs:502` 与 `vfs_poll_trait.rs:28` 消费）+ 必要 `impl`。`framework/fs/mod.rs` 收敛为 `pub mod nestfs; pub mod vfs; pub mod vfs_poll_trait;` + `pub use vfs::*`（`nestfs` 仅留 `arc_safe` 机制适配层）；`fs/vfs/mod.rs` 收敛为 `pub mod ops_trait; pub mod types_pod;` + 顶层 re-export。**删除 `pub use initramfs::unpack` 与 `pub mod {devfs,initramfs,ramfs}`（`nestfs` 仅保留 `arc_safe`）。**
+
+**（3）真 unsafe 块消除策略**（实测 framework/fs 真 unsafe 块 ~18-20 处；`unsafe|no_mangle` 合计 89 处 / 8 文件）：迁移函数保持裸指针入参（入参本身无需 unsafe），仅把**解引用**替换为 framework 安全通道：
+- 裸 C 字符串 → `CStrExt::as_kstr`（safe）/`as_kstr_opt`
+- 用户缓冲区读写 → `UserReadPtr/UserWritePtr::checked_new`（safe，返回 `Option`）+ safe 读写方法
+- 用户结构体 → 现有 `write_struct_to_user`/`read_struct_from_user`（safe）
+- `vfs_write_pod` 的 `from_raw_parts(ptr::from_ref(val).cast(), size)` → framework 新增 safe 辅助 `mm::pod_as_bytes<T: Copy>(&T) -> &[u8]`（若缺失）
+- `nestfs/arc_safe.rs` 的 `from_raw_parts`、`inotify.rs` 的 `ptr::write`、`mount.rs`/`devfs` 的 `&*(&STATIC as *const T)` → 经 framework safe 封装或直接 `&STATIC`
+- `#[unsafe(no_mangle)] vfs_*` 壳（path 27/handle 22/mount 14 = 63 处）**删除**，services 内调用方由 `fw::vfs_*` 改本地 `vfs_*`。依据：无 asm/链接脚本消费者，唯一非 Rust 消费者 `credo/storage.rs`（Rust，reroute）。services 层禁 `#[unsafe(no_mangle)]`（unsafe attribute，F1）。
+
+**（4）framework 内消费者处置（D1=B 下沉编排）**
+
+| 消费者 | 现状 | 处置 |
+|---|---|---|
+| `proc/api.rs::user_proc_load_elf` | `fs::vfs_stat/open/read/close` 编排 | ELF 文件 I/O 下沉 services（services 调 framework `load_elf_from_memory` 纯机制），framework 仅留 `user_proc_load_elf_from_memory` |
+| `proc/api.rs::launch_first_user_process` | `fs::vfs_mount(ramfs)` + `fs::unpack(initramfs)` | boot mount/unpack 编排下沉 services |
+| `credo/storage.rs` | VFS 文件 I/O 持久化 | 经 VfsOps 契约或 framework safe API，编排下沉 services |
+| `chitin/{composite,mod}.rs` | `fs::KernelError` | 重指向 `framework::error::KernelError` |
+| `driver/block.rs` | `fs::{KernelError,KernelResult}` | 重指向 `framework::error` |
+| `lib/cstr.rs:58` | 文档链接 `framework::fs::VFS_MAX_PATH` | 重指向 services 常量（或删除链接） |
+| `syscall/epoll.rs` | `VfsFileType` + `current_vfs_ops` + `vfs_poll_trait` | 不变（保留 framework） |
+| `proc/proc_ops.rs`、`mm/page_fault.rs` | 已 4a 契约化 | 不变 |
+| `lib.rs:784-785` | `fs::vfs::init()` boot 编排 | 改指 services |
+
+**（5）VfsOps 契约扩容复核**：4a 6 方法已覆盖 framework 残留消费面（proc_ops/page_fault/epoll）；`proc/api.rs` 编排下沉后 framework 无新增 VFS 需求 → **4b 实测为空操作**（迁移未暴露缺口，契约保持 6 方法无扩容）。
+
+**（6）services 壳替换映射**：`vfs_manager`/`vfs_types`/`dcache`/`open_file_table`/`flock`/`inotify`/`devfs` 7 壳由 `pub use framework::...` 替换为真实现；新增 `handle`/`backend_trait`/`initramfs`/`api`；合并 `inode`/`mount`/`path`/`ramfs`/`nestfs`。
+
+**（7）消费面 reroute**：services 侧 `crate::framework::fs::vfs::{...}` 71 处 / 22 文件 + `crate::framework::fs::{ramfs,devfs,initramfs,KernelError,...}` 改指本地 services 路径（机械替换）；`framework::fs::api as fw` 9 处改本地。全仓 312 处 / 97 文件（含 host-tests）复核。
+
+**（8）中间态保持树绿策略**：按「framework 新建 POD/收敛 → services 侧新增模块与实现（framework 原文件暂存）→ services 消费面切本地 → framework 原文件删除 → framework 内消费者 D1=B 下沉 → 全仓 reroute → 测试迁移」顺序推进，每阶段 `cargo check` 保证可编译，末段跑 §2.3 六门槛。**删除 89 处 `no_mangle`/framework 文件须在同一批次内原子完成**（否则符号消失导致链接断裂）。
+
+**（9）测试迁移**：`framework/tests/test_vfs.rs`、`test_devfs.rs` 迁 `host-tests/` 或随实现落 services 内联 `#[cfg(test)]`；`tests/mod.rs:515` `register_initramfs_tests()` 处置；`host-tests/tests/fs_sync_trait_test.rs`、`plan_b_inode_test.rs` 源码扫描断言随路径更新。
+
+**验证**：§2.3 六门槛全绿（双架构 0w0e / clippy pedantic / 核心审计 / host-tests / kernel-host / QEMU）。
+
+**4b 实施记录**：`framework/fs/vfs` 实现整体下沉 `services/fs`（`vfs_manager`/`vfs_types`/`dcache`/`open_file_table` 以真实现替换壳 + 新增 `handle`/`backend_trait`/`initramfs`/`api` + 合并 `inode`/`mount`/`path`/`ramfs`/`devfs`/`nestfs`）；**63 处 `#[unsafe(no_mangle)] vfs_*` 壳删除**（无 asm/链接脚本消费者，唯一非 Rust 消费者 `credo/storage.rs` 连锁下沉）。framework/fs 收敛为 4 文件 + 头注：`vfs/ops_trait.rs`（`VfsOps` 契约）+ `vfs_poll_trait.rs`（`epoll.rs` 消费）+ `vfs/types_pod.rs`（POD `VfsFileType`）+ `nestfs/arc_safe.rs`（ARC 裸指针→切片 safe 封装，framework 必要性 unsafe），`framework/fs/mod.rs` 仅 `pub mod nestfs; pub mod vfs; pub mod vfs_poll_trait; pub use vfs::*;`。**`credo/storage.rs` 连锁整体下沉 `services/credo/persist`**（登记项 2-F 收口；framework 侧源文件删除，无 `vfs_*_internal` C FFI 薄层残留）。**VfsOps 契约保持 6 方法无扩容**（framework 残留消费面 `proc_ops`/`page_fault`/`epoll` 已全覆盖）；`services/fs/mod.rs` 于 `fs::init` 注册 `VfsOps` 实现替换 Fallback。`audit_services_boundary.py` 白名单新增 `('credo','fs')`，登记 `services::fs ↔ services::credo` 双向依赖。**§2.3 六门槛全绿**：双架构 0w0e ✅ / clippy pedantic（含 kernel_test + host-test 维）✅ / 核心审计（6 不变式 + F1-F9 + TD-22）✅ / host-tests ✅ / kernel-host 848 passed ✅ / QEMU x86_64 完整启动（`VFS ready` + Ring 3 + KPTI）✅。
+
+状态：[X]

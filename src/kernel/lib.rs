@@ -782,7 +782,7 @@ pub extern "C" fn kernel_init() {
         // 恒命中 FallbackFsBackend Err(NotInitialized), ramfs open/create 路径
         // 在生产环境被回退策略拦截 — 本行注册为回归修复。
         crate::services::fs::init();
-        crate::framework::fs::vfs::init();
+        crate::services::fs::vfs_manager::init();
         crate::klog_boot_info!("VFS ready");
 
         // 9-1. UDS (AF_UNIX) — Phase C.3
@@ -856,7 +856,7 @@ pub extern "C" fn kernel_init() {
                     .spa
                     .disk_present
                     .store(true, core::sync::atomic::Ordering::Release);
-                let r = crate::framework::fs::vfs::api::vfs_mount_internal(
+                let r = crate::services::fs::api::vfs_mount_internal(
                     b"/".as_ptr(),
                     b"nestfs".as_ptr(),
                 );
@@ -918,7 +918,7 @@ pub extern "C" fn kernel_init() {
 
         // 12. Launch first user process
 
-        crate::framework::proc::api::launch_first_user_process();
+        crate::services::init::launch_first_user_process();
 
         // 不可达: launch_first_user_process 不会返回
     } // kernel_test 分支结束
