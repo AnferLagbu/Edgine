@@ -5,7 +5,7 @@
 use super::block_group::Ext2BlockGroupDescriptor;
 use super::inode::Ext2Inode;
 use super::super_block::Ext2SuperBlock;
-use crate::framework::driver::block::{read_sectors, with_device, write_sectors};
+use crate::framework::chitin::{chitin_blk_read_sectors, chitin_blk_write_sectors};
 use crate::services::fs::KernelError;
 
 /// 在指定块组中分配一个空闲块
@@ -26,12 +26,7 @@ pub fn alloc_block_in_group(
     let bitmap_sector_count = (block_size / 512).max(1) as u32;
     let mut bitmap_data = alloc::vec![0u8; block_size];
 
-    let result = with_device(device_idx as usize, |dev| {
-        read_sectors(dev, bitmap_sector, bitmap_sector_count, &mut bitmap_data)
-    });
-    if !matches!(result, Some(Ok(()))) {
-        return Err(KernelError::Io);
-    }
+    chitin_blk_read_sectors(device_idx, bitmap_sector, bitmap_sector_count, &mut bitmap_data)?;
 
     // 扫描位图寻找空闲块
     let blocks_per_group = super_block.s_blocks_per_group;
@@ -53,12 +48,7 @@ pub fn alloc_block_in_group(
                 bitmap_data[byte_idx] |= 1 << bit_idx;
 
                 // 写回位图
-                let result = with_device(device_idx as usize, |dev| {
-                    write_sectors(dev, bitmap_sector, bitmap_sector_count, &bitmap_data)
-                });
-                if !matches!(result, Some(Ok(()))) {
-                    return Err(KernelError::Io);
-                }
+                chitin_blk_write_sectors(device_idx, bitmap_sector, bitmap_sector_count, &bitmap_data)?;
 
                 return Ok(first_block + block_offset as u32);
             }
@@ -86,12 +76,7 @@ pub fn free_block(
     let bitmap_sector_count = (block_size / 512).max(1) as u32;
     let mut bitmap_data = alloc::vec![0u8; block_size];
 
-    let result = with_device(device_idx as usize, |dev| {
-        read_sectors(dev, bitmap_sector, bitmap_sector_count, &mut bitmap_data)
-    });
-    if !matches!(result, Some(Ok(()))) {
-        return Err(KernelError::Io);
-    }
+    chitin_blk_read_sectors(device_idx, bitmap_sector, bitmap_sector_count, &mut bitmap_data)?;
 
     // 清除位
     let byte_idx = (block_offset / 8) as usize;
@@ -99,12 +84,7 @@ pub fn free_block(
     bitmap_data[byte_idx] &= !(1 << bit_idx);
 
     // 写回位图
-    let result = with_device(device_idx as usize, |dev| {
-        write_sectors(dev, bitmap_sector, bitmap_sector_count, &bitmap_data)
-    });
-    if !matches!(result, Some(Ok(()))) {
-        return Err(KernelError::Io);
-    }
+    chitin_blk_write_sectors(device_idx, bitmap_sector, bitmap_sector_count, &bitmap_data)?;
 
     Ok(())
 }
@@ -131,14 +111,9 @@ pub fn write_block(
     let sector = u64::from(block_num) * block_size as u64 / 512;
     let sector_count = (block_size / 512) as u32;
 
-    let result = with_device(device_idx as usize, |dev| {
-        write_sectors(dev, sector, sector_count, &buf)
-    });
+    chitin_blk_write_sectors(device_idx, sector, sector_count, &buf)?;
 
-    match result {
-        Some(Ok(())) => Ok(()),
-        _ => Err(KernelError::Io),
-    }
+    Ok(())
 }
 
 /// 写入 inode 到磁盘
@@ -197,14 +172,9 @@ pub fn write_inode(
     let sector = inode_offset / 512;
     let sector_count = (inode_size / 512).max(1) as u32;
 
-    let result = with_device(device_idx as usize, |dev| {
-        write_sectors(dev, sector as u64, sector_count, &inode_data)
-    });
+    chitin_blk_write_sectors(device_idx, sector as u64, sector_count, &inode_data)?;
 
-    match result {
-        Some(Ok(())) => Ok(()),
-        _ => Err(KernelError::Io),
-    }
+    Ok(())
 }
 
 /// 在指定块组中分配一个空闲 inode
@@ -225,12 +195,7 @@ pub fn alloc_inode_in_group(
     let bitmap_sector_count = (block_size / 512).max(1) as u32;
     let mut bitmap_data = alloc::vec![0u8; block_size];
 
-    let result = with_device(device_idx as usize, |dev| {
-        read_sectors(dev, bitmap_sector, bitmap_sector_count, &mut bitmap_data)
-    });
-    if !matches!(result, Some(Ok(()))) {
-        return Err(KernelError::Io);
-    }
+    chitin_blk_read_sectors(device_idx, bitmap_sector, bitmap_sector_count, &mut bitmap_data)?;
 
     // 扫描位图寻找空闲 inode
     let inodes_per_group = super_block.s_inodes_per_group;
@@ -252,12 +217,7 @@ pub fn alloc_inode_in_group(
                 bitmap_data[byte_idx] |= 1 << bit_idx;
 
                 // 写回位图
-                let result = with_device(device_idx as usize, |dev| {
-                    write_sectors(dev, bitmap_sector, bitmap_sector_count, &bitmap_data)
-                });
-                if !matches!(result, Some(Ok(()))) {
-                    return Err(KernelError::Io);
-                }
+                chitin_blk_write_sectors(device_idx, bitmap_sector, bitmap_sector_count, &bitmap_data)?;
 
                 return Ok(first_inode + inode_offset as u32);
             }
@@ -285,12 +245,7 @@ pub fn free_inode(
     let bitmap_sector_count = (block_size / 512).max(1) as u32;
     let mut bitmap_data = alloc::vec![0u8; block_size];
 
-    let result = with_device(device_idx as usize, |dev| {
-        read_sectors(dev, bitmap_sector, bitmap_sector_count, &mut bitmap_data)
-    });
-    if !matches!(result, Some(Ok(()))) {
-        return Err(KernelError::Io);
-    }
+    chitin_blk_read_sectors(device_idx, bitmap_sector, bitmap_sector_count, &mut bitmap_data)?;
 
     // 清除位
     let byte_idx = (inode_offset / 8) as usize;
@@ -298,12 +253,7 @@ pub fn free_inode(
     bitmap_data[byte_idx] &= !(1 << bit_idx);
 
     // 写回位图
-    let result = with_device(device_idx as usize, |dev| {
-        write_sectors(dev, bitmap_sector, bitmap_sector_count, &bitmap_data)
-    });
-    if !matches!(result, Some(Ok(()))) {
-        return Err(KernelError::Io);
-    }
+    chitin_blk_write_sectors(device_idx, bitmap_sector, bitmap_sector_count, &bitmap_data)?;
 
     Ok(())
 }

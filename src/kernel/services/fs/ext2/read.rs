@@ -6,7 +6,7 @@ use super::block_group::Ext2BlockGroupDescriptor;
 use super::dir::Ext2DirEntry;
 use super::inode::Ext2Inode;
 use super::super_block::Ext2SuperBlock;
-use crate::framework::driver::block::{read_sectors, with_device};
+use crate::framework::chitin::chitin_blk_read_sectors;
 use crate::services::fs::KernelError;
 use alloc::format;
 use alloc::vec::Vec;
@@ -35,14 +35,7 @@ impl Ext2Fs {
         let sb_sector = 1024 / 512; // 扇区 2
         let sb_sector_count = 1024 / 512; // 2 扇区
 
-        let result = with_device(device_idx as usize, |dev| {
-            read_sectors(dev, sb_sector as u64, sb_sector_count, &mut sb_data)
-        });
-
-        match result {
-            Some(Ok(())) => {}
-            _ => return Err(KernelError::Io),
-        }
+        chitin_blk_read_sectors(device_idx, sb_sector as u64, sb_sector_count, &mut sb_data)?;
 
         // 解析超级块
         let super_block =
@@ -55,14 +48,7 @@ impl Ext2Fs {
         let bgd_sector_count = (block_size / 512).max(1) as u32;
 
         let mut bgd_data = alloc::vec![0u8; block_size];
-        let result = with_device(device_idx as usize, |dev| {
-            read_sectors(dev, bgd_sector, bgd_sector_count, &mut bgd_data)
-        });
-
-        match result {
-            Some(Ok(())) => {}
-            _ => return Err(KernelError::Io),
-        }
+        chitin_blk_read_sectors(device_idx, bgd_sector, bgd_sector_count, &mut bgd_data)?;
 
         let bg_count = super_block.block_group_count() as usize;
         let block_groups = Ext2BlockGroupDescriptor::from_table(&bgd_data, bg_count);
@@ -107,14 +93,7 @@ impl Ext2Fs {
         let sector_count = (inode_size / 512).max(1) as u32;
 
         let mut inode_data = alloc::vec![0u8; inode_size];
-        let result = with_device(self.device_idx as usize, |dev| {
-            read_sectors(dev, sector as u64, sector_count, &mut inode_data)
-        });
-
-        match result {
-            Some(Ok(())) => {}
-            _ => return Err(KernelError::Io),
-        }
+        chitin_blk_read_sectors(self.device_idx, sector as u64, sector_count, &mut inode_data)?;
 
         let inode = Ext2Inode::from_bytes(&inode_data).ok_or(KernelError::InvalidArgument)?;
 
@@ -135,14 +114,8 @@ impl Ext2Fs {
         let sector = u64::from(block_num) * block_size as u64 / 512;
         let sector_count = (block_size / 512) as u32;
 
-        let result = with_device(self.device_idx as usize, |dev| {
-            read_sectors(dev, sector, sector_count, &mut data)
-        });
-
-        match result {
-            Some(Ok(())) => Ok(data),
-            _ => Err(KernelError::Io),
-        }
+        chitin_blk_read_sectors(self.device_idx, sector, sector_count, &mut data)?;
+        Ok(data)
     }
 
     /// 读取目录内容

@@ -49,7 +49,7 @@
 //! ```
 
 use super::driver::Driver;
-use crate::framework::error::KernelError;
+use crate::framework::error::{KernelError, KernelResult};
 use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -560,6 +560,92 @@ pub fn chitin_blk_write(drive: u8, sector: u64, buf: &[u8]) -> i32 {
         return bd.blk_write(sector, buf);
     }
     KernelError::NotSupported.as_i32()
+}
+
+/// 通过 Chitin 连续读取多个扇区 (每扇区 512 字节)。
+///
+/// 与逐扇区调用 [`chitin_blk_read`] 不同, 本函数在**单次** `CHITIN_DEVICES`
+/// 锁持有期内完成整段读取: 既避免重复加锁, 也避免读取途中设备被墓碑化
+/// 而留下半段成功的数据。上层文件系统 (ext2/exFAT) 的元数据读取依赖该语义。
+///
+/// # Errors
+/// `buf` 长度不足以容纳 `count` 个扇区时返回 `InvalidArgument`;
+/// `drive` 越界 / 非块设备 / 缺少块设备实现时返回 `Io`;
+/// 设备处于非 `Ready` 状态 (已墓碑化) 时返回 `Busy`;
+/// 底层设备任一扇区读取失败时返回 `Io`。
+pub fn chitin_blk_read_sectors(
+    drive: u8,
+    start: u64,
+    count: u32,
+    buf: &mut [u8],
+) -> KernelResult<()> {
+    if (buf.len() as u64) < u64::from(count) * 512 {
+        return Err(KernelError::InvalidArgument);
+    }
+    let mut devices = CHITIN_DEVICES.lock();
+    let idx = drive as usize;
+    if idx >= devices.len() {
+        return Err(KernelError::Io);
+    }
+    let dev = &mut devices[idx];
+    if dev.proto != ChitinProto::Block {
+        return Err(KernelError::Io);
+    }
+    if dev.state != DeviceState::Ready {
+        return Err(KernelError::Busy);
+    }
+    let Some(bd) = dev.block_dev.as_mut() else {
+        return Err(KernelError::Io);
+    };
+    for i in 0..count {
+        let offset = i as usize * 512;
+        if bd.blk_read(start + u64::from(i), &mut buf[offset..offset + 512]) < 0 {
+            return Err(KernelError::Io);
+        }
+    }
+    Ok(())
+}
+
+/// 通过 Chitin 连续写入多个扇区 (每扇区 512 字节)。
+///
+/// 语义与 [`chitin_blk_read_sectors`] 对称: 单次持锁完成整段写入。
+///
+/// # Errors
+/// `buf` 长度不足以提供 `count` 个扇区时返回 `InvalidArgument`;
+/// `drive` 越界 / 非块设备 / 缺少块设备实现时返回 `Io`;
+/// 设备处于非 `Ready` 状态 (已墓碑化) 时返回 `Busy`;
+/// 底层设备任一扇区写入失败时返回 `Io`。
+pub fn chitin_blk_write_sectors(
+    drive: u8,
+    start: u64,
+    count: u32,
+    buf: &[u8],
+) -> KernelResult<()> {
+    if (buf.len() as u64) < u64::from(count) * 512 {
+        return Err(KernelError::InvalidArgument);
+    }
+    let mut devices = CHITIN_DEVICES.lock();
+    let idx = drive as usize;
+    if idx >= devices.len() {
+        return Err(KernelError::Io);
+    }
+    let dev = &mut devices[idx];
+    if dev.proto != ChitinProto::Block {
+        return Err(KernelError::Io);
+    }
+    if dev.state != DeviceState::Ready {
+        return Err(KernelError::Busy);
+    }
+    let Some(bd) = dev.block_dev.as_mut() else {
+        return Err(KernelError::Io);
+    };
+    for i in 0..count {
+        let offset = i as usize * 512;
+        if bd.blk_write(start + u64::from(i), &buf[offset..offset + 512]) < 0 {
+            return Err(KernelError::Io);
+        }
+    }
+    Ok(())
 }
 
 /// 通过 Chitin 检查块设备是否存在

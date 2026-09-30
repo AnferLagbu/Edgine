@@ -166,7 +166,7 @@ pub fn usb_init() {
     }
 
     // 注册端口轮询回调 (DECISION-K: framework 经 softirq 周期调用)
-    let _ = register_aux_poll(usb_port_poll);
+    register_aux_poll(usb_port_poll);
 
     enumerate_connected_devices();
 }

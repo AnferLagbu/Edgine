@@ -3,7 +3,7 @@
 //! exFAT FAT 表操作
 
 use super::super_block::ExfatSuperBlock;
-use crate::framework::driver::block::{read_sectors, with_device};
+use crate::framework::chitin::{chitin_blk_read_sectors, chitin_blk_write_sectors};
 use crate::services::fs::KernelError;
 
 /// FAT 表条目常量
@@ -44,11 +44,7 @@ pub fn read_fat_chain(
         let fat_offset = (current * 4) % bytes_per_sector;
 
         let mut sector_data = alloc::vec![0u8; bytes_per_sector as usize];
-        let result = with_device(device_idx as usize, |dev| {
-            read_sectors(dev, u64::from(fat_sector), 1, &mut sector_data)
-        });
-
-        if !matches!(result, Some(Ok(()))) {
+        if chitin_blk_read_sectors(device_idx, u64::from(fat_sector), 1, &mut sector_data).is_err() {
             break;
         }
 
@@ -88,13 +84,7 @@ pub fn write_fat_entry(
     let fat_offset = (cluster * 4) % bytes_per_sector;
 
     let mut sector_data = alloc::vec![0u8; bytes_per_sector as usize];
-    let result = with_device(device_idx as usize, |dev| {
-        read_sectors(dev, u64::from(fat_sector), 1, &mut sector_data)
-    });
-
-    if !matches!(result, Some(Ok(()))) {
-        return Err(KernelError::Io);
-    }
+    chitin_blk_read_sectors(device_idx, u64::from(fat_sector), 1, &mut sector_data)?;
 
     let bytes = value.to_le_bytes();
     sector_data[fat_offset as usize] = bytes[0];
@@ -102,12 +92,7 @@ pub fn write_fat_entry(
     sector_data[fat_offset as usize + 2] = bytes[2];
     sector_data[fat_offset as usize + 3] = bytes[3];
 
-    let result = with_device(device_idx as usize, |dev| {
-        crate::framework::driver::block::write_sectors(dev, u64::from(fat_sector), 1, &sector_data)
-    });
+    chitin_blk_write_sectors(device_idx, u64::from(fat_sector), 1, &sector_data)?;
 
-    match result {
-        Some(Ok(())) => Ok(()),
-        _ => Err(KernelError::Io),
-    }
+    Ok(())
 }

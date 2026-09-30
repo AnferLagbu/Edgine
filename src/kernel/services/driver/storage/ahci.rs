@@ -398,6 +398,8 @@ pub struct AhciPort {
     pub signature: u32,
     /// 设备类型
     pub device_kind: AhciDeviceKind,
+    /// 该端口对应的 Chitin 块设备下标 (无盘或未注册时为 `None`)
+    drive: Option<u8>,
     /// DMA 资源
     dma: Option<AhciPortDma>,
     /// 端口已初始化
@@ -413,9 +415,20 @@ impl AhciPort {
             device_present: false,
             signature: 0,
             device_kind: AhciDeviceKind::None,
+            drive: None,
             dma: None,
             port_initialized: false,
         }
+    }
+
+    /// 端口对应的 Chitin 块设备下标 (无盘/未注册为 `None`)
+    pub fn drive(&self) -> Option<u8> {
+        self.drive
+    }
+
+    /// 记录端口对应的 Chitin 块设备下标
+    pub fn set_drive(&mut self, drive: Option<u8>) {
+        self.drive = drive;
     }
 
     /// 端口 MMIO 基址偏移 (相对 ABAR)
@@ -1133,6 +1146,18 @@ pub struct AhciController {
     initialized: bool,
 }
 
+/// 端口扫描结果
+///
+/// 记录 [`AhciController::scan_ports`] 单次扫描发现的端口在位/离位变化,
+/// 供 services 侧热插拔分发使用。
+#[derive(Debug, Default)]
+pub struct PortChanges {
+    /// 新近在位的端口: (`port_index`, 硬件端口号)
+    pub added: alloc::vec::Vec<(usize, u8)>,
+    /// 新近离位的端口: (`port_index`, 硬件端口号, 已注册的 Chitin 块设备下标)
+    pub removed: alloc::vec::Vec<(usize, u8, u8)>,
+}
+
 impl AhciController {
     /// 创建 AHCI 控制器实例
     pub fn new(abar_phys: u64, len: usize) -> Option<Self> {
@@ -1160,6 +1185,54 @@ impl AhciController {
         self.ports.get_mut(index)
     }
 
+    /// 获取端口 (不可变引用)
+    pub fn port(&self, index: usize) -> Option<&AhciPort> {
+        self.ports.get(index)
+    }
+
+    /// 按硬件端口号查找 `ports` 下标
+    ///
+    /// `ports` 按下标与硬件端口号一一对应 (见 [`Self::init_controller`]),
+    /// 该映射用于把热插拔事件携带的硬件端口号还原为内部索引。
+    pub fn port_index_of(&self, port_num: u8) -> Option<usize> {
+        self.ports.iter().position(|p| p.port_num == port_num)
+    }
+
+    /// 上电单个端口并按需返回是否带盘就绪
+    ///
+    /// 检测序列 (AHCI 1.3.1 §3.3.4/§3.3.5): COMRESET 重建 PHY 链路 →
+    /// 分配端口 DMA → 使能 FIS 接收 (锁存 `PxSIG`) → 读 SSTS/SIG 判定
+    /// 在位与设备类型 → 启用端口。
+    ///
+    /// COMRESET 后 `PxSSTS.DET != 3` 即设备缺位, 此时在分配 DMA 之前
+    /// 短路返回, 避免为空端口浪费 DMA 资源 (QEMU ich9-ahci 默认实现 6 个
+    /// 端口, 逐一分配会产生无用占用)。
+    fn bring_up_port(port: &mut AhciPort, hba: &AhciHba) -> bool {
+        port.comreset(hba);
+        if !port.port_sata_status(hba).is_connected() {
+            port.device_present = false;
+            port.device_kind = AhciDeviceKind::None;
+            return false;
+        }
+
+        if port.setup_dma(hba)
+            && port.enable_fis_receive(hba)
+            && port.detect_device(hba)
+            && port.enable(hba)
+        {
+            slog_info!(
+                Driver,
+                "端口 {} 已启用 (sig={:08X}, kind={:?})",
+                port.port_num,
+                port.signature,
+                port.device_kind
+            );
+            return true;
+        }
+        slog_warn!(Driver, "端口 {} 启用失败", port.port_num);
+        false
+    }
+
     /// 初始化控制器 (HBA reset + 端口枚举)
     pub fn init_controller(&mut self) -> bool {
         // 确保 AHCI 模式已启用
@@ -1185,40 +1258,58 @@ impl AhciController {
             self.port_bitmap
         );
 
-        // 初始化每个端口
+        // 初始化每个端口: 无条件 push 全部已实现端口, 使 `ports` 下标与硬件
+        // 端口号一一对应 (固定槽位)。这样 `AhciBlockDevice.port_index` 在设备
+        // 热插拔前后保持有效, 而不会因中间端口无盘导致后续端口索引漂移。
         for i in 0..AHCI_MAX_PORTS {
             if self.port_bitmap & (1u32 << i) == 0 {
                 continue;
             }
-
             let mut port = AhciPort::new(i as u8);
-
-            // 检测序列 (AHCI 1.3.1 §3.3.4/§3.3.5): COMRESET 重建 PHY 链路
-            // → 分配端口 DMA → 使能 FIS 接收 (锁存 PxSIG) → 读 SSTS/SIG
-            // 判定在位与设备类型
-            port.comreset(&self.hba);
-            if port.setup_dma(&self.hba)
-                && port.enable_fis_receive(&self.hba)
-                && port.detect_device(&self.hba)
-            {
-                if port.enable(&self.hba) {
-                    slog_info!(
-                        Driver,
-                        "端口 {} 已启用 (sig={:08X}, kind={:?})",
-                        i,
-                        port.signature,
-                        port.device_kind
-                    );
-                    self.ports.push(port);
-                } else {
-                    slog_warn!(Driver, "端口 {} 启用失败", i);
-                }
-            }
+            Self::bring_up_port(&mut port, &self.hba);
+            self.ports.push(port);
         }
 
         self.initialized = true;
-        slog_info!(Driver, "控制器初始化完成, {} 端口活动", self.ports.len());
+        let active = self.ports.iter().filter(|p| p.device_present).count();
+        slog_info!(Driver, "控制器初始化完成, {} 端口活动", active);
         true
+    }
+
+    /// 扫描全部端口, 返回自上次扫描以来的在位/离位变化
+    ///
+    /// 用于 SATA 端口级热插拔: 逐端口读 `PxSSTS` 判定链路状态, 对新增在位
+    /// 端口执行上电检测, 对离位端口执行停止并按已注册的 Chitin 块设备下标
+    /// 记录移除。移除项的 `drive` 字段**保留不清**, 供后续分发阶段解析。
+    pub fn scan_ports(&mut self) -> PortChanges {
+        let mut changes = PortChanges::default();
+        if !self.initialized {
+            return changes;
+        }
+
+        let AhciController {
+            hba,
+            ports,
+            port_bitmap: _,
+            initialized: _,
+        } = self;
+
+        for pi in 0..ports.len() {
+            let connected = ports[pi].port_sata_status(hba).is_connected();
+            if connected && !ports[pi].device_present {
+                if Self::bring_up_port(&mut ports[pi], hba) {
+                    changes.added.push((pi, ports[pi].port_num));
+                }
+            } else if !connected && ports[pi].device_present {
+                ports[pi].disable(hba);
+                ports[pi].device_present = false;
+                ports[pi].device_kind = AhciDeviceKind::None;
+                if let Some(drive) = ports[pi].drive() {
+                    changes.removed.push((pi, ports[pi].port_num, drive));
+                }
+            }
+        }
+        changes
     }
 
     /// 关闭控制器
@@ -1439,5 +1530,27 @@ mod tests {
         assert_eq!(CMD_SLOTS, 32);
         assert_eq!(AHCI_MAX_PORTS, 32);
         assert_eq!(MAX_SECTORS_PER_CMD, 128);
+    }
+
+    #[test]
+    fn test_ahci_port_drive_mapping() {
+        // 端口 → Chitin 块设备下标的回写/读取/清除 (端口级热插拔墓碑化依赖)
+        let mut port = AhciPort::new(3);
+        assert_eq!(port.port_num, 3);
+        assert_eq!(port.port_offset(), PORT_REG_BASE + 3 * PORT_REG_STRIDE);
+        assert_eq!(port.drive(), None, "新建端口不应携带块设备下标");
+
+        port.set_drive(Some(7));
+        assert_eq!(port.drive(), Some(7), "应记录回写的块设备下标");
+
+        port.set_drive(None);
+        assert_eq!(port.drive(), None, "墓碑化后应清除块设备下标");
+    }
+
+    #[test]
+    fn test_port_changes_default_empty() {
+        let changes = PortChanges::default();
+        assert!(changes.added.is_empty(), "默认无新增端口");
+        assert!(changes.removed.is_empty(), "默认无移除端口");
     }
 }

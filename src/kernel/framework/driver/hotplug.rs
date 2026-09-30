@@ -33,6 +33,8 @@ pub enum BusType {
     Pcie,
     Usb,
     Virtio,
+    /// SATA (AHCI 端口级热插拔)
+    Sata,
 }
 
 /// 设备位置标识
@@ -289,24 +291,35 @@ fn dispatch_reenum(event: &HotplugEvent) {
     }
 }
 
-/// DECISION-K: services 侧辅助轮询回调 (无捕获函数指针)。
+/// DECISION-K: services 侧辅助轮询回调表 (无捕获函数指针)。
 ///
 /// 供 framework 自身无法探测、必须由 services 读取设备 MMIO 才能发现变化的
-/// 总线注册 (如 xHCI 端口状态变化)。framework 在每次 `poll()` 之后调用它,
-/// 未注册时 fail-quiet, 保证 framework 不依赖任何 services 符号。
-static HOTPLUG_AUX_POLL: OnceLock<fn()> = OnceLock::new();
-
-/// 注册辅助轮询回调 (由 services 侧调用, 注册一次)。
+/// 总线注册 (如 xHCI 端口状态变化、AHCI 端口插入/移除)。framework 在每次
+/// `poll()` 之后依次调用全部已注册回调; 表为空时 fail-quiet, 保证 framework
+/// 不依赖任何 services 符号。
 ///
-/// # Errors
-/// 若回调已被注册, 返回 `Err(hook)` 将本次传入的函数指针原样退回。
-pub fn register_aux_poll(hook: fn()) -> Result<(), fn()> {
-    HOTPLUG_AUX_POLL.set(hook)
+/// 采用多槽 (`Vec`) 而非单槽 (`OnceLock`), 允许多条总线各自注册自己的
+/// 端口轮询器; 回调仅在启动期注册, 分发时以只读遍历执行。
+static HOTPLUG_AUX_POLL: Mutex<Vec<fn()>> = Mutex::new(Vec::new());
+
+/// 注册辅助轮询回调 (由 services 侧调用)。
+///
+/// 支持多次注册 (每条总线一个); 同一函数指针重复注册会被忽略, 避免
+/// 重复轮询。启动期单线程调用, 无竞争。
+pub fn register_aux_poll(hook: fn()) {
+    let mut hooks = HOTPLUG_AUX_POLL.lock();
+    if !hooks.contains(&hook) {
+        hooks.push(hook);
+    }
 }
 
-/// 在 framework 轮询之后调用 services 辅助轮询回调 (若已注册)。
+/// 在 framework 轮询之后调用全部 services 辅助轮询回调。
+///
+/// 遍历时持锁执行 (回调不反向获取本表, 无死锁风险); 因回调仅在启动期
+/// 注册, 遍历期间表内容不会变化, 无需额外分配。
 fn dispatch_aux_poll() {
-    if let Some(hook) = HOTPLUG_AUX_POLL.get() {
+    let hooks = HOTPLUG_AUX_POLL.lock();
+    for hook in hooks.iter() {
         hook();
     }
 }

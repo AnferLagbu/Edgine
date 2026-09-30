@@ -4,7 +4,7 @@
 
 use super::fat::FAT_END;
 use super::super_block::ExfatSuperBlock;
-use crate::framework::driver::block::{read_sectors, with_device};
+use crate::framework::chitin::{chitin_blk_read_sectors, chitin_blk_write_sectors};
 use crate::services::fs::KernelError;
 use alloc::vec;
 
@@ -22,11 +22,7 @@ pub fn alloc_cluster(device_idx: u8, super_block: &ExfatSuperBlock) -> Result<u3
         let fat_offset = (cluster * 4) % bytes_per_sector as u32;
 
         let mut sector_data = vec![0u8; bytes_per_sector];
-        let result = with_device(device_idx as usize, |dev| {
-            read_sectors(dev, u64::from(fat_sector), 1, &mut sector_data)
-        });
-
-        if !matches!(result, Some(Ok(()))) {
+        if chitin_blk_read_sectors(device_idx, u64::from(fat_sector), 1, &mut sector_data).is_err() {
             continue;
         }
 
@@ -91,18 +87,12 @@ pub fn write_cluster(
 
     for i in 0..sectors_per_cluster {
         let offset = i * bytes_per_sector;
-        let result = with_device(device_idx as usize, |dev| {
-            crate::framework::driver::block::write_sectors(
-                dev,
-                u64::from(sector + i as u32),
-                1,
-                &buf[offset..offset + bytes_per_sector],
-            )
-        });
-
-        if !matches!(result, Some(Ok(()))) {
-            return Err(KernelError::Io);
-        }
+        chitin_blk_write_sectors(
+            device_idx,
+            u64::from(sector + i as u32),
+            1,
+            &buf[offset..offset + bytes_per_sector],
+        )?;
     }
 
     Ok(())
@@ -132,18 +122,12 @@ pub fn read_cluster(
 
     for i in 0..sectors_per_cluster {
         let offset = i * bytes_per_sector;
-        let result = with_device(device_idx as usize, |dev| {
-            read_sectors(
-                dev,
-                u64::from(sector + i as u32),
-                1,
-                &mut temp_buf[offset..offset + bytes_per_sector],
-            )
-        });
-
-        if !matches!(result, Some(Ok(()))) {
-            return Err(KernelError::Io);
-        }
+        chitin_blk_read_sectors(
+            device_idx,
+            u64::from(sector + i as u32),
+            1,
+            &mut temp_buf[offset..offset + bytes_per_sector],
+        )?;
     }
 
     let copy_len = buf.len().min(cluster_size);

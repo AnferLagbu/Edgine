@@ -76,6 +76,8 @@ struct ProbedController {
     bus: u8,
     device: u8,
     function: u8,
+    /// 是否为 AHCI 控制器 (用于把 SATA 端口级热插拔事件路由到控制器台账)。
+    ahci: bool,
     /// 控制器在 AHCI/NVMe 注册表中的槽位 (探测失败为 `None`)。
     slot: Option<usize>,
     /// 该控制器下已注册的 Chitin 块设备下标。
@@ -187,6 +189,14 @@ fn probe_ahci(dev: &crate::framework::pci::PciDevice, slot_hint: Option<usize>) 
             let dev_name = alloc::format!("ahci{ci}-p{pi}");
             let idx = register_block_device(dev_name.leak(), dev, None);
             drives.push(idx as u8);
+            // 回写端口 → Chitin 下标映射: 端口级热插拔移除时据此墓碑化块设备
+            if let Some(port) = AHCI_CONTROLLERS
+                .lock()
+                .get_mut(ci)
+                .and_then(|c| c.get_port(pi))
+            {
+                port.set_drive(Some(idx as u8));
+            }
             slog_info!(
                 Driver,
                 "AHCI: ctrl={} port={} registered, {} sectors",
@@ -391,6 +401,7 @@ fn storage_scan_with(devices: &[crate::framework::pci::PciDevice], run_selftest:
                 bus: dev.bus,
                 device: dev.device,
                 function: dev.function,
+                ahci: is_ahci,
                 slot: result.slot,
                 drives: result.drives,
                 installed: result.slot.is_some(),
@@ -461,38 +472,171 @@ fn event_location(event: &HotplugEvent) -> &DeviceLocation {
     }
 }
 
-/// 解析 PCIe 热插拔端口下的存储块设备 (Chitin 下标)。
+/// 解析热插拔事件位置下的存储块设备 (Chitin 下标)。
 ///
-/// `PcieHotplugSlot` 只识别 Root Port / Downstream Port, 故热插拔事件中的
-/// BDF 是**端口**的 BDF, 而存储控制器挂在该端口二级总线之下。此处读取端口
-/// 配置空间偏移 0x19 的 Secondary Bus Number, 再匹配台账中总线号一致的
-/// 控制器 (与 Linux `pciehp` 对端口 `secondary bus` 调 `pci_scan_slot` 同源)。
+/// - `Pcie`: `PcieHotplugSlot` 只识别 Root Port / Downstream Port, 故热插拔
+///   事件中的 BDF 是**端口**的 BDF, 而存储控制器挂在该端口二级总线之下。
+///   此处读取端口配置空间偏移 0x19 的 Secondary Bus Number, 再匹配台账中
+///   总线号一致的控制器 (与 Linux `pciehp` 对端口 `secondary bus` 调
+///   `pci_scan_slot` 同源)。
+/// - `Sata`: 端口级热插拔事件, `slot` 即硬件端口号, (`bus`, `device`,
+///   `function`) 为所属 AHCI 控制器 BDF。据此在台账中定位控制器槽位, 再经
+///   [`ahci::AhciController::port_index_of`] 还原端口索引并读取其块设备下标。
 ///
-/// 返回空表示该位置下无已注册的存储块设备 (或总线类型非 PCIe)。
+/// 返回空表示该位置下无已注册的存储块设备 (或总线类型不支持)。
 #[cfg(target_arch = "x86_64")]
 #[expect(
     clippy::trivially_copy_pass_by_ref,
     reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
 )]
 pub fn drives_for_location(location: &DeviceLocation) -> Vec<u8> {
-    if location.bus_type != BusType::Pcie {
-        return Vec::new();
+    match location.bus_type {
+        BusType::Pcie => {
+            let secondary = crate::framework::pci::read_config_byte(
+                location.bus,
+                location.device,
+                location.function,
+                PCI_CFG_SECONDARY_BUS,
+            );
+            if secondary == 0 {
+                return Vec::new();
+            }
+            PROBED
+                .lock()
+                .iter()
+                .filter(|r| r.bus == secondary)
+                .flat_map(|r| r.drives.iter().copied())
+                .collect()
+        }
+        BusType::Sata => {
+            let ci = PROBED
+                .lock()
+                .iter()
+                .find(|r| {
+                    r.ahci
+                        && r.bus == location.bus
+                        && r.device == location.device
+                        && r.function == location.function
+                })
+                .and_then(|r| r.slot);
+            let Some(ci) = ci else {
+                return Vec::new();
+            };
+            let ctrls = AHCI_CONTROLLERS.lock();
+            ctrls
+                .get(ci)
+                .and_then(|c| {
+                    c.port_index_of(location.slot)
+                        .and_then(|pi| c.port(pi))
+                        .and_then(ahci::AhciPort::drive)
+                })
+                .into_iter()
+                .collect()
+        }
+        BusType::Usb | BusType::Virtio => Vec::new(),
     }
-    let secondary = crate::framework::pci::read_config_byte(
-        location.bus,
-        location.device,
-        location.function,
-        PCI_CFG_SECONDARY_BUS,
-    );
-    if secondary == 0 {
-        return Vec::new();
-    }
-    PROBED
+}
+
+/// AHCI 端口级热插拔轮询 (DECISION-K 辅助轮询回调)。
+///
+/// SATA 端口插拔不产生 PCIe 热插拔事件, framework 无法自行探测; 本函数经
+/// framework softirq 周期调用, 逐控制器读 `PxSSTS` 检测端口链路变化, 对新增
+/// 在位端口注册块设备, 对离位端口墓碑化并以统一热插拔事件分发。
+///
+/// 三相位设计 (参照 `usb_port_poll`): 分相位持锁, 分发事件时不持任何存储锁
+/// (监听器可能反向访问 `AHCI_CONTROLLERS`)。锁序保持 `PROBED →
+/// AHCI_CONTROLLERS`, 与既有热插拔路径一致。
+#[cfg(target_arch = "x86_64")]
+// 有意窄化: Chitin 全局下标当前以 u8 表示块设备编号
+#[expect(clippy::cast_possible_truncation)]
+fn ahci_port_poll() {
+    use crate::framework::chitin::{chitin_unregister_block, register_block_device};
+    use crate::framework::driver::hotplug::HOTPLUG_MANAGER;
+
+    // Phase 1: 摘取在线 AHCI 控制器 (注册表槽位 + BDF), 释放 PROBED 锁。
+    let controllers: Vec<(usize, u8, u8, u8)> = PROBED
         .lock()
         .iter()
-        .filter(|r| r.bus == secondary)
-        .flat_map(|r| r.drives.iter().copied())
-        .collect()
+        .filter(|r| r.ahci && r.installed)
+        .filter_map(|r| r.slot.map(|slot| (slot, r.bus, r.device, r.function)))
+        .collect();
+    if controllers.is_empty() {
+        return;
+    }
+
+    // Phase 2: 扫描各控制器端口, 仅保留有变化的控制器; 释放 AHCI 锁。
+    let mut scanned: Vec<(usize, u8, u8, u8, ahci::PortChanges)> = Vec::new();
+    {
+        let mut ctrls = AHCI_CONTROLLERS.lock();
+        for &(ci, bus, device, function) in &controllers {
+            if let Some(ctrl) = ctrls.get_mut(ci) {
+                let changes = ctrl.scan_ports();
+                if !changes.added.is_empty() || !changes.removed.is_empty() {
+                    scanned.push((ci, bus, device, function, changes));
+                }
+            }
+        }
+    }
+    if scanned.is_empty() {
+        return;
+    }
+
+    // Phase 3: 锁外注册/注销块设备并分发事件。
+    for (ci, bus, device, function, changes) in scanned {
+        for (pi, port_num) in changes.added {
+            let location = DeviceLocation {
+                bus_type: BusType::Sata,
+                bus,
+                device,
+                function,
+                slot: port_num,
+            };
+            let Some(dev) = ahci::AhciBlockDevice::new(ci, pi) else {
+                continue;
+            };
+            let dev_name = alloc::format!("ahci{ci}-p{pi}");
+            let idx = register_block_device(dev_name.leak(), dev, None) as u8;
+            if let Some(port) = AHCI_CONTROLLERS
+                .lock()
+                .get_mut(ci)
+                .and_then(|c| c.get_port(pi))
+            {
+                port.set_drive(Some(idx));
+            }
+            slog_info!(Driver, "AHCI: ctrl={ci} port={port_num} hot-added, drive={idx}");
+            HOTPLUG_MANAGER.dispatch(&HotplugEvent::DeviceAdded { location });
+        }
+
+        let mut to_clear: Vec<usize> = Vec::new();
+        for (pi, port_num, drive) in changes.removed {
+            chitin_unregister_block(drive);
+            let location = DeviceLocation {
+                bus_type: BusType::Sata,
+                bus,
+                device,
+                function,
+                slot: port_num,
+            };
+            slog_info!(
+                Driver,
+                "AHCI: ctrl={ci} port={port_num} hot-removed, drive={drive}"
+            );
+            // 分发时监听器经 `drives_for_location` 仍能解析到 drive, 故
+            // 端口 → 下标映射待分发完成后再清除。
+            HOTPLUG_MANAGER.dispatch(&HotplugEvent::SurpriseRemoval { location });
+            to_clear.push(pi);
+        }
+        if !to_clear.is_empty() {
+            let mut ctrls = AHCI_CONTROLLERS.lock();
+            if let Some(ctrl) = ctrls.get_mut(ci) {
+                for pi in to_clear {
+                    if let Some(port) = ctrl.get_port(pi) {
+                        port.set_drive(None);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// aarch64 (QEMU virt) 无 PCIe 热插拔槽位, 恒返回空。
@@ -610,7 +754,7 @@ fn nvme_msix03_selftest(ci: usize) {
 /// SIMPLIFIED: 错误降级为日志不传播 (char_init 同模式, 逻辑错误降级原则)。
 #[cfg(target_arch = "x86_64")]
 pub fn storage_init() {
-    use crate::framework::driver::hotplug::register_reenum_hook;
+    use crate::framework::driver::hotplug::{register_aux_poll, register_reenum_hook};
     use crate::framework::pci;
 
     // Step 1: 确保 PCI 子系统已初始化 (幂等)
@@ -629,6 +773,10 @@ pub fn storage_init() {
     // 热插拔事件给监听器之前调用它, 触发 `storage_rescan` 增量重扫总线,
     // 保证监听器看到的 Chitin 块设备表与最新总线状态一致。
     let _ = register_reenum_hook(storage_reenum_hook);
+
+    // Step 2b: 注册 AHCI 端口级热插拔轮询回调 (DECISION-K 模式)。SATA 端口
+    // 插拔不产生 PCIe 热插拔事件, 由 services 读 PxSSTS 周期检测。
+    register_aux_poll(ahci_port_poll);
 
     // Step 3: 全量扫描 PCI 总线寻找存储控制器 (首次扫描附 NVMe MSIX-03 自测)
     let devices = pci::scan_all_buses();

@@ -4,7 +4,7 @@
 
 use super::dir::ExfatDirEntry;
 use super::super_block::ExfatSuperBlock;
-use crate::framework::driver::block::{read_sectors, with_device};
+use crate::framework::chitin::chitin_blk_read_sectors;
 use crate::services::fs::KernelError;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -23,14 +23,7 @@ impl ExfatFs {
     pub fn open(device_idx: u8) -> Result<Self, KernelError> {
         // 读取引导扇区 (偏移 0)
         let mut boot_data = [0u8; 512];
-        let result = with_device(device_idx as usize, |dev| {
-            read_sectors(dev, 0, 1, &mut boot_data)
-        });
-
-        match result {
-            Some(Ok(())) => {}
-            _ => return Err(KernelError::Io),
-        }
+        chitin_blk_read_sectors(device_idx, 0, 1, &mut boot_data)?;
 
         // 解析超级块
         let super_block =
