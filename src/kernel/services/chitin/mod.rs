@@ -1,14 +1,14 @@
 #![deny(unsafe_code)]
 //! Chitin 设备驱动框架 — services 层安全代理
 //!
-//! ## 状态 (v2.7, 2026-06-04)
+//! ## 状态
 //!
-//! 已完成 1/4 子系统迁移 (chitin 整体), 封装 `kernel::chitin::*` 老 API:
+//! 已完成 3/5 子系统迁移 (chitin 整体), 封装 `kernel::chitin::*` 老 API:
 //! - [x] chitin (本文件) — 设备注册表/查找/块设备 IO/字符设备 IO/输入设备
-//! - [ ] devtree — 设备树 (后续 Phase 2.4.x)
-//! - [ ] composite — 复合设备 (后续 Phase 2.4.x)
-//! - [ ] proto_* — 协议族 (后续 Phase 2.4.x)
-//! - [ ] user_driver — 用户态驱动 (后续 Phase 2.4.x)
+//! - [x] devtree — 设备树 (Phase 2.4 已迁移)
+//! - [x] composite — 复合设备 (Phase 2.4 已迁移)
+//! - [ ] proto_* — 协议族 (framework 内部函数指针表, 当前无 services 调用方)
+//! - [ ] user_driver — 用户态驱动 (framework 已实现, services 无封装)
 //!
 //! ## 迁移方法
 //!
@@ -16,8 +16,6 @@
 //! 2. 把设备 ID `u32` → `DeviceId` 新类型
 //! 3. 块设备 IO 用 `&mut [u8]`/`&[u8]` 切片替代裸指针
 //! 4. 0 unsafe 出现在 services 层
-//!
-//! 评估日期: 2026-06-04
 
 use alloc::vec::Vec;
 

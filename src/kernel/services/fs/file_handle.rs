@@ -190,19 +190,11 @@ pub fn open_by_handle_at_syscall(
         mounts[mount_idx as usize].get_fs().ok_or(Errno::EINVAL)?
     };
 
-    // 通过 FileSystem trait 构造正确的 Inode (非 LegacyInode)
-    // fs_resolve_inode 是 FileSystem trait 的可选方法, 各 FS 可 override
+    // 通过 FileSystem trait 构造原生 Inode
+    // fs_resolve_inode 返回原生 Arc<dyn Inode>; 句柄无法解析 (inode_id/mount_idx 失效)
+    // 时返回 EINVAL, 与相邻 mount_idx 校验一致。
     let pwm = crate::framework::credo::session::get_current_pwm();
-
-    // 尝试通过 fs_resolve_inode 获取原生 Inode
-    // 如果 FS 未实现, 回退到 LegacyInode
-    let inode: Arc<dyn Inode> = fs.fs_resolve_inode(inode_id, mount_idx).unwrap_or_else(|| {
-        // 回退: 使用 LegacyInode (stat/chmod 等需要路径的操作将不可用)
-        let rel_path = alloc::string::String::new();
-        Arc::new(crate::services::fs::inode::LegacyInode::from_fs_result(
-            inode_id, mount_idx, 0, &rel_path,
-        ))
-    });
+    let inode: Arc<dyn Inode> = fs.fs_resolve_inode(inode_id, mount_idx).ok_or(Errno::EINVAL)?;
 
     // 通过 stat 获取 file_type (避免硬编码)
     let file_type = inode.stat(pwm).map_or(0, |s| s.file_type);

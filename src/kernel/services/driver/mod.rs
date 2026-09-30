@@ -1,18 +1,22 @@
 #![deny(unsafe_code)]
 //! 设备驱动 — 网卡/存储/显示/输入 (services 层)
 //!
-//! ## 当前状态: 驱动 safe 层已落 services (Phase 2.1 在途)
+//! ## 当前状态: 驱动业务层落 services (0 unsafe); framework 保留机制原语
 //!
 //! services 侧安全驱动层 (0 unsafe):
-//! - [char/](file:///home/anfer/Code/QueenX/src/kernel/services/driver/char/) — 字符设备 (VGA/serial)
+//! - [char/](file:///home/anfer/Code/QueenX/src/kernel/services/driver/char/) — 字符设备 (VGA/serial, x86_64)
 //! - [display/](file:///home/anfer/Code/QueenX/src/kernel/services/driver/display/) — 显示 (HDMI/DP/DDC)
 //! - [net/e1000.rs](file:///home/anfer/Code/QueenX/src/kernel/services/driver/net/e1000.rs) — E1000 网卡
 //! - [storage/](file:///home/anfer/Code/QueenX/src/kernel/services/driver/storage/) — 存储 (NVMe/AHCI/ATA)
 //! - [virtio/](file:///home/anfer/Code/QueenX/src/kernel/services/driver/virtio/) — VirtIO 网卡/块设备
 //! - [usb/](file:///home/anfer/Code/QueenX/src/kernel/services/driver/usb/) — USB/XHCI (2-D 整体下沉, services 唯一权威)
 //!
-//! 注: `framework/driver/` 的 char/storage/virtio/display 仍保留对应实现 (影子双份),
-//! 待后续双份合并收口; usb 已随 2-D 整体下沉删除 framework 侧。
+//! 注: `framework/driver/` 对应模块**保留机制原语** (业务下沉后已非影子双份):
+//! MMIO 安全代理 (`net/e1000_io.rs`)、DMA 环机制 (`net/e1000.rs` + `net/dma_ring.rs`)、
+//! 存储 wire 类型与队列 safe wrapper (`storage/`)、VirtIO MMIO 传输 (`virtio/`)、
+//! aarch64 PL011 (`char/pl011.rs`); 业务/FFI 面均在 services。B04 审计
+//! (2026-08-24/25) 曾将 E1000 机制反向回迁 framework, 业务面随后再正式落 services
+//! (A 形态 + framework 机制)。usb 已随 2-D 整体下沉, framework 侧无 usb 模块。
 //!
 //! ## 迁移路径
 //!

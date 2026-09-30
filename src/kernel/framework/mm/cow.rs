@@ -442,15 +442,30 @@ fn release_child_table_frame(frame: u64) {
 /// COW fault 处理: 为写入分配新页
 ///
 /// # SMP Safety
-/// 所有页表修改通过 VMM 的 `map_page_in_table` 进行, 该函数内部持有 `VMM_LOCK`
-/// 并执行 TLB 刷新, 保证多核并发安全。
+/// 帧持有计数判定 (`frame_ref_count`) 与其后的映射/帧归还**在同一临界区内**完成
+/// (`VMM_LOCK`), 消除"判定与映射之间被他核并发建映射改变帧计数"的 TOCTOU 窗口。
+/// 已持锁的路径必须直接用 [`cow_handle_fault_locked`], 否则构成递归加锁
+/// (`VMM_LOCK` 非重入)。
+pub fn cow_handle_fault(pml4: u64, fault_addr: u64) -> Option<u64> {
+    let vmm_inst = vmm::get_vmm();
+    let lock_flags = vmm_inst.acquire_lock();
+    let result = cow_handle_fault_locked(pml4, fault_addr);
+    vmm_inst.release_lock(&lock_flags);
+    result
+}
+
+/// COW fault 处理 —— **要求调用方已持 `VMM_LOCK`**
+///
+/// 判定与映射同处一个临界区, 故须用 `map_page_in_table_locked` (不自取锁) 与
+/// `release_frame_locked` (不自取锁)。读路径 `get_physical_in_pml4` 只做只读遍历,
+/// 不取 `VMM_LOCK`, 可在持锁下安全调用。
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
 #[expect(
     clippy::unreadable_literal,
     reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
 )]
-pub fn cow_handle_fault(pml4: u64, fault_addr: u64) -> Option<u64> {
+fn cow_handle_fault_locked(pml4: u64, fault_addr: u64) -> Option<u64> {
     let vmm_inst = vmm::get_vmm();
     let page_aligned = fault_addr & !(PAGE_SIZE - 1);
 
@@ -465,9 +480,8 @@ pub fn cow_handle_fault(pml4: u64, fault_addr: u64) -> Option<u64> {
 
     if should_reuse {
         // 唯一引用: 直接恢复 WRITABLE 位, 无需分配新页
-        // map_page_in_table 内部持有 VMM_LOCK + TLB 刷新, SMP 安全
         let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
-        vmm_inst.map_page_in_table(pml4, VirtAddr(page_aligned), old_phys, flags);
+        vmm_inst.map_page_in_table_locked(pml4, VirtAddr(page_aligned), old_phys, flags);
         return Some(old_phys.as_u64());
     }
 
@@ -488,13 +502,12 @@ pub fn cow_handle_fault(pml4: u64, fault_addr: u64) -> Option<u64> {
     if pmm_inst.frame_dec(PhysAddr(old_frame)) {
         // 归零不等于"远端核 TLB 已失效": 若他核曾运行本进程, 其 TLB 仍缓存旧映射,
         // 立即归还后该帧可被重分配 ⇒ 他核经陈旧映射访问他人物理页 (UAF).
-        // 归还时机 (x86 延迟 / aarch64 立即) 与锁序见 `mm::release_frame`.
-        super::release_frame(PhysAddr(old_frame));
+        // 归还时机 (x86 延迟 / aarch64 立即) 与锁序见 `mm::release_frame_locked`.
+        super::release_frame_locked(PhysAddr(old_frame));
     }
 
     let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
-    // map_page_in_table 内部持有 VMM_LOCK + TLB 刷新, SMP 安全
-    vmm_inst.map_page_in_table(pml4, VirtAddr(page_aligned), new_phys, flags);
+    vmm_inst.map_page_in_table_locked(pml4, VirtAddr(page_aligned), new_phys, flags);
 
     Some(new_phys.as_u64())
 }

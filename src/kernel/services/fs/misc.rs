@@ -10,6 +10,7 @@
 //! - time 需校验 buf 长度 (8 字节)
 
 use crate::framework::credo;
+use crate::framework::credo::capability::FS_CAP_CHOWN;
 use crate::framework::proc::api as proc_fw;
 use crate::framework::syscall::Errno;
 use crate::framework::syscall::raw;
@@ -111,12 +112,18 @@ pub fn time_syscall(tloc_ptr: u64) -> Result<usize, Errno> {
 /// fchown(fd, owner, group) — 按 fd 修改文件所有者
 ///
 /// # Errors
-/// 当 `fd` 为负数时返回 `EBADF`; 其余错误 (如无权限等) 以对应的 `Errno` 返回.
+/// 当 `fd` 为负数时返回 `EBADF`; 当进程缺少 FS 域 `FS_CAP_CHOWN` 能力时
+/// 返回 `EPERM`; 其余错误 (如无权限等) 以对应的 `Errno` 返回.
 pub fn fchown_syscall(fd: i32, owner: u64, group: u64) -> Result<usize, Errno> {
     if fd < 0 {
         return Err(Errno::EBADF);
     }
     let pwm = current_pwm()?;
+    // B06-PRE-002: 前置 FS 域 CHOWN 能力校验 — 属主/属组变更是身份安全关键操作,
+    // 由专用能力位门控 (与 access/open 路径的 pwm_has_capability 语义一致).
+    if !credo::api::pwm_has_capability(pwm, credo::CAP_DOMAIN_FS, FS_CAP_CHOWN) {
+        return Err(Errno::EPERM);
+    }
     let r = fw::vfs_fchown(fd as u32, owner, group, pwm);
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))

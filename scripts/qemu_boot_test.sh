@@ -157,6 +157,9 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
     # (防止 aarch64 测试残留导致 EM 183 报错)
     sync_make_state "x86_64" || RESULT=1
 
+    # ISSUE-TOOL-002: x86_64 侧同样接入陈旧镜像检测 (与 aarch64 分支一致)
+    check_kernel_fresh || true
+
     if [ ! -f build/kernel.flat ]; then
         err "x86_64 kernel.flat 缺失, 跳过测试"
         RESULT=1

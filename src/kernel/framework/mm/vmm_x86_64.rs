@@ -986,15 +986,38 @@ impl VirtualMemoryManager {
         Some(pml4_phys.as_u64())
     }
 
-    #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
+    /// 映射单个页 —— **自持 `VMM_LOCK` 变体**
+    ///
+    /// 语义与锁序约束见 [`Self::map_page_in_table_locked`]; 本入口只负责加/解锁,
+    /// 供不持 `VMM_LOCK` 的路径使用。已持锁的路径必须直接用
+    /// [`Self::map_page_in_table_locked`], 否则构成递归加锁 (`VMM_LOCK` 非重入)。
     #[expect(
         clippy::used_underscore_binding,
         reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
     )]
     pub fn map_page_in_table(&self, pml4: u64, virt: VirtAddr, phys: PhysAddr, flags: PageFlags) {
+        let _flags = self.acquire_lock();
+        self.map_page_in_table_locked(pml4, virt, phys, flags);
+        self.release_lock(&_flags);
+    }
+
+    /// 映射单个页 —— **要求调用方已持 `VMM_LOCK`**
+    ///
+    /// 完整 4 级页表遍历 (按需创建中间级), 写入叶项并按"是否替换既有映射"决定
+    /// 本地/远程 TLB 失效。`flush_tlb_remote` 只置位"本临界区需远程失效"标志,
+    /// 实际代发布与定向 IPI 在 `release_lock` 出口统一进行, 故本函数可安全用于
+    /// 持锁路径 (如 COW fault 的判定-映射原子化)。
+    #[expect(
+        clippy::similar_names,
+        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
+    )]
+    pub(crate) fn map_page_in_table_locked(
+        &self,
+        pml4: u64,
+        virt: VirtAddr,
+        phys: PhysAddr,
+        flags: PageFlags,
+    ) {
         if pml4 == 0 {
             return;
         }
@@ -1014,8 +1037,6 @@ impl VirtualMemoryManager {
             return;
         }
 
-        let _flags = self.acquire_lock();
-
         // SAFETY: pml4 is a valid PML4 address; VMM_LOCK held
         let pml4_virt = PhysAddr(pml4).to_virt();
 
@@ -1027,14 +1048,12 @@ impl VirtualMemoryManager {
             let (pdpt, split_pdpt) =
                 self.get_or_create_table_entry(pml4_ptr.add(virt.pml4_idx()), true, 0);
             if pdpt.is_null() {
-                self.release_lock(&_flags);
                 return;
             }
 
             let (pd, split_pd) =
                 self.get_or_create_table_entry(pdpt.add(virt.pdpt_idx()), true, HUGE_PAGE_2M_SIZE);
             if pd.is_null() {
-                self.release_lock(&_flags);
                 return;
             }
 
@@ -1045,7 +1064,6 @@ impl VirtualMemoryManager {
                     "[VMM] map_page_in_table: failed to get/create PT for {:#x}",
                     virt.0
                 );
-                self.release_lock(&_flags);
                 return;
             }
 
@@ -1071,8 +1089,6 @@ impl VirtualMemoryManager {
                 self.flush_tlb_local(virt.0);
             }
         }
-
-        self.release_lock(&_flags);
     }
 
     #[expect(

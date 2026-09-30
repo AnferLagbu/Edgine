@@ -690,19 +690,15 @@ impl Aarch64Vmm {
 
     // ─── 页表遍历 / 映射 ───────────────────────────────────────
 
+    /// 从 `root_paddr` 遍历页表, 按需创建中间级, 设置最终页描述符 —— **自持 `VMM_LOCK` 变体**
+    ///
+    /// 语义与锁序约束见 [`Self::map_page_in_table_locked`]; 本入口只负责加/解锁,
+    /// 供不持 `VMM_LOCK` 的路径使用。已持锁的路径必须直接用
+    /// [`Self::map_page_in_table_locked`], 否则构成递归加锁 (`VMM_LOCK` 非重入)。
     #[expect(
         clippy::used_underscore_binding,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
-    #[expect(
-        clippy::manual_let_else,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
-    #[expect(
-        clippy::single_match_else,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
-    /// 从 `root_paddr` 遍历页表, 按需创建中间级, 设置最终页描述符.
     pub fn map_page_in_table(
         &self,
         root_paddr: u64,
@@ -711,7 +707,27 @@ impl Aarch64Vmm {
         flags: PageFlags,
     ) {
         let _lock_flags = self.acquire_lock();
+        self.map_page_in_table_locked(root_paddr, virt, phys, flags);
+        self.release_lock(&_lock_flags);
+    }
 
+    /// 从 `root_paddr` 遍历页表, 按需创建中间级, 设置最终页描述符 ——
+    /// **要求调用方已持 `VMM_LOCK`**
+    #[expect(
+        clippy::manual_let_else,
+        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
+    )]
+    #[expect(
+        clippy::single_match_else,
+        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
+    )]
+    pub(crate) fn map_page_in_table_locked(
+        &self,
+        root_paddr: u64,
+        virt: VirtAddr,
+        phys: PhysAddr,
+        flags: PageFlags,
+    ) {
         let vaddr = virt.as_u64();
         let paddr = phys.as_u64();
         let raw_flags = flags.bits();
@@ -722,7 +738,6 @@ impl Aarch64Vmm {
         let l1 = match self.ensure_next_level(l0, l0_idx) {
             Ok(t) => t,
             Err(_) => {
-                self.release_lock(&_lock_flags);
                 return;
             }
         };
@@ -734,7 +749,6 @@ impl Aarch64Vmm {
         let l2 = match self.ensure_next_level(l1, l1_idx) {
             Ok(t) => t,
             Err(_) => {
-                self.release_lock(&_lock_flags);
                 return;
             }
         };
@@ -743,7 +757,6 @@ impl Aarch64Vmm {
         let l3 = match self.ensure_next_level(l2, l2_idx) {
             Ok(t) => t,
             Err(_) => {
-                self.release_lock(&_lock_flags);
                 return;
             }
         };
@@ -761,8 +774,6 @@ impl Aarch64Vmm {
         unsafe {
             core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
         }
-
-        self.release_lock(&_lock_flags);
     }
 
     /// Ensure the next-level page table exists at `table[idx]`.

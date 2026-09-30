@@ -13,8 +13,10 @@
 //! 5. 帧持有计数语义 (cr3 所有权, `docs/plan/cr3-lifetime-ownership.md` §3.1/§5.6):
 //!    alloc 置 1、inc/dec 配对、归零恰好一次、未归零不归还、未计数帧拒绝登记、
 //!    `should_reuse` 判据边界 (§8.1)、pfn 越界 fail-closed (MMIO 地址)
+//! 6. 连续范围查找/预留/回滚 (B03-LEGACY-002): `find_contig_range` 连续扫描、
+//!    `reserve_range` 重叠与契约拒绝、`unreserve_range` 回滚语义 (swap init/deinit 依赖)
 
-use queenx::kernel::framework::mm::PhysAddr;
+use queenx::kernel::framework::mm::{PAGE_SIZE, PhysAddr};
 use queenx::kernel::framework::mm::pmm::{PhysicalMemoryManager, VecMetaStore};
 
 /// 模拟物理内存 64MB (buddy 完整覆盖 order-0..9)
@@ -222,4 +224,111 @@ fn pmm_frame_uncounted_block_rejected() {
     assert!(!pmm.frame_inc(blk), "未计数帧不得被登记持有者");
     assert!(!pmm.frame_dec(blk), "未计数帧不得报告归零 (防止误销毁)");
     pmm.free_pages(blk, ORDER9_PAGES);
+}
+
+// ---- 连续范围查找/预留/回滚 (B03-LEGACY-002) ----
+// swap.rs::init 走 find_contig_range + reserve_range, deinit 走 unreserve_range 回滚.
+// 三者在 host 侧独立验证 (不依赖 get_pmm 全局实例与恒等映射).
+
+#[test]
+fn pmm_find_contig_range_scan_and_reject() {
+    let pmm = setup_pmm(0);
+    // 单页请求: 命中内核保留区之上的空闲页, 基址页对齐
+    let base = pmm
+        .find_contig_range(PAGE_SIZE as usize)
+        .expect("应存在空闲页");
+    assert!(base.0 >= KERNEL_END, "不得返回内核保留区内的地址");
+    assert_eq!(base.0 % PAGE_SIZE, 0, "返回基址必须页对齐");
+    // 大块连续请求 (2MB): 空闲区远大于此, 应成功
+    assert!(
+        pmm.find_contig_range(2 * 1024 * 1024).is_some(),
+        "连续空闲区应支持 2MB 请求"
+    );
+    // size==0 / 非页对齐: 契约直接拒绝
+    assert!(pmm.find_contig_range(0).is_none(), "size==0 不得返回范围");
+    assert!(
+        pmm.find_contig_range(PAGE_SIZE as usize + 1).is_none(),
+        "非页对齐 size 不得返回范围"
+    );
+    // 超出总空闲 (请求整个物理内存): 内核区 + 元数据区已占用, 必无解
+    assert!(
+        pmm.find_contig_range(MEM_SIZE as usize).is_none(),
+        "请求超过总空闲内存应返回 None"
+    );
+}
+
+#[test]
+fn pmm_reserve_range_rejects_overlap_and_misuse() {
+    let pmm = setup_pmm(0);
+    let size = 2 * 1024 * 1024;
+    // 合法预留: 取一段空闲连续区并声明独占
+    let base = pmm.find_contig_range(size).expect("应存在 2MB 连续区");
+    assert!(pmm.reserve_range(base, size).is_ok(), "空闲范围应可预留");
+    // 重叠拒绝: 同范围重复预留
+    assert!(
+        pmm.reserve_range(base, size).is_err(),
+        "重复预留同一范围应被拒绝"
+    );
+    // 重叠拒绝: 预留已分配页
+    let a = pmm.alloc_page().expect("应可分配一页");
+    assert!(
+        pmm.reserve_range(a, PAGE_SIZE as usize).is_err(),
+        "预留已分配页应被拒绝"
+    );
+    // 重叠拒绝: 预留内核保留区
+    assert!(
+        pmm.reserve_range(PhysAddr(0), PAGE_SIZE as usize).is_err(),
+        "预留内核保留区应被拒绝"
+    );
+    // 契约校验: size==0 / base 未页对齐 / size 非页对齐 / 越界
+    assert!(pmm.reserve_range(base, 0).is_err(), "size==0 应被拒绝");
+    assert!(
+        pmm.reserve_range(PhysAddr(base.0 + 1), PAGE_SIZE as usize).is_err(),
+        "base 未页对齐应被拒绝"
+    );
+    assert!(
+        pmm.reserve_range(base, PAGE_SIZE as usize + 1).is_err(),
+        "size 非页对齐应被拒绝"
+    );
+    assert!(
+        pmm.reserve_range(PhysAddr(MEM_SIZE), PAGE_SIZE as usize).is_err(),
+        "越界范围应被拒绝"
+    );
+    // 收尾: 释放分配页并回滚预留
+    pmm.free_page(a);
+    assert!(pmm.unreserve_range(base, size).is_ok(), "回滚预留应成功");
+}
+
+#[test]
+fn pmm_unreserve_range_rolls_back() {
+    let pmm = setup_pmm(0);
+    let size = 2 * 1024 * 1024;
+    let base = pmm.find_contig_range(size).expect("应存在 2MB 连续区");
+    // 预留 → 回滚: 该范围应重新回到空闲池 (deinit 依赖的语义)
+    assert!(pmm.reserve_range(base, size).is_ok(), "预留应成功");
+    assert!(pmm.unreserve_range(base, size).is_ok(), "回滚预留应成功");
+    // 回滚后再查: 同一基址应重新被 find_contig_range 命中
+    assert_eq!(
+        pmm.find_contig_range(size),
+        Some(base),
+        "回滚后范围应重新回到空闲池 (基址一致)"
+    );
+    // 重复回滚拒绝: 范围已非 reserved
+    assert!(
+        pmm.unreserve_range(base, size).is_err(),
+        "对非预留范围回滚应被拒绝"
+    );
+    // 对从未预留的空闲范围回滚: 同样拒绝
+    let free_base = pmm
+        .find_contig_range(PAGE_SIZE as usize)
+        .expect("应存在空闲页");
+    assert!(
+        pmm.unreserve_range(free_base, PAGE_SIZE as usize).is_err(),
+        "对空闲页回滚应被拒绝"
+    );
+    // 契约校验: 越界
+    assert!(
+        pmm.unreserve_range(PhysAddr(MEM_SIZE), PAGE_SIZE as usize).is_err(),
+        "越界回滚应被拒绝"
+    );
 }

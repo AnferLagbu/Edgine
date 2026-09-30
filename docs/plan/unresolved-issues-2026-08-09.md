@@ -152,6 +152,11 @@
 > - B03-LEGACY-001: [cow.rs:464](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/cow.rs#L464) 的 `frame_ref_count` 判定与 [cow.rs:470](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/cow.rs#L470) 的 `map_page_in_table` 映射仍不在同一临界区，TOCTOU 窗口存在.
 > - B03-LEGACY-002: host-tests 全树无 `find_contig_range`/`reserve_range`/`unreserve_range` 用例（grep 0 命中），缺口成立.
 > - B03-LEGACY-003: [tick.rs:165](file:///home/anfer/Code/QueenX/src/kernel/framework/timer/tick.rs#L165) 已为 `AcqRel`，但无多核 host 用例（host 单核），缺口成立.
+>
+> **【本轮修复（修遗留工程）】** 3 项遗留已全部结案:
+> - **B03-LEGACY-001**: [cow.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/cow.rs) 将 `cow_handle_fault` 拆为"取锁外壳 + `cow_handle_fault_locked`（要求调用方已持 `VMM_LOCK`）"两层; 帧计数判定 (`frame_ref_count`) 与其后的映射 (`map_page_in_table_locked`)、帧归还 (`release_frame_locked`) 现**在同一临界区内**完成, TOCTOU 窗口消除. 配套在 [vmm_x86_64.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/vmm_x86_64.rs) / [vmm_aarch64.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/vmm_aarch64.rs) 增设 `*_locked` 不自取锁变体（非重入 `VMM_LOCK` 保护）; 已持锁的调用点直接走 `_locked`.
+> - **B03-LEGACY-002**: [pmm_buddy_host_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/pmm_buddy_host_test.rs) 新增 3 个用例 — `pmm_find_contig_range_scan_and_reject`（连续扫描 + 契约拒绝: size==0 / 非页对齐 / 超总空闲）、`pmm_reserve_range_rejects_overlap_and_misuse`（重叠/已分配/内核区/越界拒绝）、`pmm_unreserve_range_rolls_back`（预留→回滚→重新命中空闲池 + 重复回滚拒绝），覆盖 swap `init`/`deinit` 依赖路径.
+> - **B03-LEGACY-003**: 新增 [timer_tick_concurrency_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/timer_tick_concurrency_test.rs) — host 真多核上直接驱动内核真实 `on_timer_interrupt()` 路径, 4 写线程并发递增 + 2 读线程并发校验, 断言读-读单调不回退与终值精确（无丢失更新）; 文件头以「判别力边界」显式声明: 本用例为并发健壮性 + 回归防护, **不声称**证明 `AcqRel` 相对 `Relaxed` 的必要性（x86_64 TSO 下 `lock` RMW 即全屏障, 二者运行时不可区分）, 弱序语义判别待 aarch64 SMP 落地后补.
 
 ---
 
@@ -432,22 +437,24 @@
 
 | 字段 | 数据 |
 |---|---|
-| **状态** | ⚠️ 部分落地 (QEMU 侧已实装陈旧检测; Makefile 侧未改) |
+| **状态** | 🔄 已修复 (QEMU 脚本双架构均接入陈旧检测; Makefile 侧按需不做) |
 | **现象** | lint 修复后旧 kernel.flat 仍存在, QEMU 启动"日志为空, 内核未进入 Rust 入口" |
 | **临时处理** | 手动 `make ARCH=x86_64 all` |
 | **建议方案** | Makefile 加入文件 mtime 检查, 或 QEMU 启动脚本加入图像陈旧检测 |
 | **【本轮复验订正】** | 建议方案的第 2 条已实装: [qemu_boot_test.sh](file:///home/anfer/Code/QueenX/scripts/qemu_boot_test.sh#L133) 新增 `check_kernel_fresh()`（`:133` 定义），当图像早于源码时告警/重建；但**仅 aarch64 分支调用**（`:204`），x86_64 路径未接入。Makefile 侧 mtime 检查仍未做 → 状态由 ❌ 上调为 ⚠️ |
+| **【本轮修复（修遗留工程）】** | x86_64 分支已接入 `check_kernel_fresh`（[qemu_boot_test.sh](file:///home/anfer/Code/QueenX/scripts/qemu_boot_test.sh) x86_64 段 `sync_make_state` 后新增 `check_kernel_fresh \|\| true`），与 aarch64 分支口径一致 — QEMU 侧双架构陈旧检测已闭环。Makefile 侧 mtime 检查仍未做（保持不做，QEMU 脚本入口已覆盖实际触发场景）。 |
 | **工作量** | 估计 0.5 天 |
 
 ### ISSUE-TOOL-003: cargo test --tests 在裸机 target 失败
 
 | 字段 | 数据 |
 |---|---|
-| **状态** | ⚠️ 前提已变 (E0152 整族已根治; 本条待按新状态重评) |
+| **状态** | ✅ 已结案 (前提已变; E0152 整族根治后原建议无必要, 重评不施工) |
 | **现象** | E0152 duplicate lang item (zerocopy/bitflags/byteorder/managed) |
 | **应对** | 实际测试在 host-side 跑, lint-only 检查通过 |
 | **建议方案** | 用 `#[cfg(target_os = "none")]` 隔离测试, 或 host-tests 引入独立测试目标 |
 | **【本轮复验订正】** | E0152 整族已根治（2026-09-14 build-std 显式化，见 [src/kernel/Cargo.toml:17](file:///home/anfer/Code/QueenX/src/kernel/Cargo.toml#L17) 与 [framekernel-paradigm-enforcement.md:431](file:///home/anfer/Code/QueenX/docs/plan/framekernel-paradigm-enforcement.md#L431)）；`test = false` 相关前提亦已移除。原"裸机 target 失败"现象不再必然复现 → 本条前提已变，待按新状态重评是否需要 |
+| **【本轮修复（修遗留工程）】** | 重评结案: E0152 整族根治后, 内核测试实际一直在 host 侧（`--features host-test`）运行并全绿（`make test-kernel-host` 941 passed），《`test = false` 隔离 host target》的原建议已无必要 — 无需再引入 `#[cfg(target_os = "none")]` 隔离或独立 host 测试目标。本条**结案, 不施工**。 |
 | **工作量** | 估计 1 天 |
 
 ---
@@ -520,6 +527,11 @@
 > - **MIG-001/002/003/004/006/007/008 仍成立**: [services/driver/mod.rs:4-35](file:///home/anfer/Code/QueenX/src/kernel/services/driver/mod.rs#L4-L35) 与 [services/chitin/mod.rs:4-11](file:///home/anfer/Code/QueenX/src/kernel/services/chitin/mod.rs#L4-L11) 头注释仍为 2026-06-04 旧状态；pl011/proto_*+user_driver 安全代理仍缺；迁移文档未补注 B04；chitin 无专项 host-tests；services 侧 HDMI/DP 控制器仍零调用者.
 >
 > **后续行动建议**：MIG-001/002 为纯注释同步（低风险，可随下次 driver 改动顺手修复）；MIG-003/004 属功能补齐（需按 §12.3 评估"是否需要"——若当前无调用方，登记即可不施工）；MIG-005/006/007 属架构边界治理（涉及 framework/services 归属决策，按 AGENTS.md §12.1 决策灰色地带处理，需用户裁决）；MIG-008 属接线补齐（控制器与 TMDS/DP 输出使能已实现，仅缺驱动注册/工厂接入面，需驱动注册面决策）。
+>
+> **【本轮修复（修遗留工程）】** MIG-001/002/006/007 已结案:
+> - **MIG-001/002 注释同步**: [services/driver/mod.rs](file:///home/anfer/Code/QueenX/src/kernel/services/driver/mod.rs#L1-L22) 头注释由旧状态表（"Phase 2.1 在途" + E1000 "影子双份"）改写为当前形态（驱动业务层落 services、0 unsafe；framework 保留 MMIO/DMA 环/存储 wire/PL011 等**机制原语**，非影子双份；并补记 B04 反转）；[services/chitin/mod.rs](file:///home/anfer/Code/QueenX/src/kernel/services/chitin/mod.rs#L1-L20) 头注释由"已完成 1/4"更正为"3/5"（devtree/composite 标记已迁；proto_*/user_driver 注明 framework 内部函数指针表 / framework 已实现但 services 无封装），并移除"评估日期"。
+> - **MIG-006 结案（不改 archive）**: 依 AGENTS.md §6「archive/ 为历史快照不再修改」，[archive/driver-service-migration.md](./archive/driver-service-migration.md) **有意保持冻结**（已按 commit `fae02a38` 归档、标记"✅ 已完成"）。B04 反转已由 live 文档完整承载（services/driver/mod.rs 头注释 + §8.1 三阶段历史表），故本条**据 live 文档结案**，不修改归档快照。
+> - **MIG-007 补测**: 新增 [chitin_registry_io_host_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/chitin_registry_io_host_test.rs) — 覆盖 services/chitin 注册表语义（`register`/`find_by_name`/`find_by_proto`/`list`/`count`/`set_state`/`unregister`）+ 块设备 IO dispatch（`blk_read`/`blk_write` 成功 round-trip 与 3 类错误路径 + `blk_is_present`/`blk_total_sectors`/`blk_count`）；以进程内 `Mutex` 串行化规避全局 `CHITIN_DEVICES` 并行竞争。**2 passed**。
 
 ---
 
@@ -545,8 +557,9 @@
 | **问题** | `fchown(fd, owner, group)` 直接把 owner/group 透传给底层 `Inode::chown`，**无任何权限校验**——任意进程可对自己已打开的 fd 修改为任意 owner/group（B06-02 修了 `chown` 的 uid 回退，但 `fchown` 路径的 owner 是 pwm 值、无"未注册回退"问题，却缺失"是否有权修改属主"的检查） |
 | **影响** | 权限语义缺失（非直接提权，但违背"能力制"权限模型） |
 | **建议** | 与 B06-02 对齐：fchown 前置 `FS_CAP_CHOWN` (bit5) 能力检查，或按提权语义评估 |
-| **状态** | ❌ 登记待后续（**安全缺陷，优先级建议 P1**） |
+| **状态** | ✅ 已修复（本轮: fchown 前置 `FS_CAP_CHOWN` 能力校验） |
 | **【本轮复验订正】** | 仍成立：[misc.rs:115-126](file:///home/anfer/Code/QueenX/src/kernel/services/fs/misc.rs#L115-L126) 的 `fchown_syscall` 仍无 `FS_CAP_CHOWN` 校验，owner/group 直接透传底层 `Inode::chown` |
+| **【本轮修复（修遗留工程）】** | [misc.rs](file:///home/anfer/Code/QueenX/src/kernel/services/fs/misc.rs) `fchown_syscall` 在 `current_pwm()` 之后、透传底层前新增 `pwm_has_capability(pwm, CAP_DOMAIN_FS, FS_CAP_CHOWN)` 前置校验，缺失即返回 `EPERM`（与 access/open 路径能力语义一致）；`# Errors` 文档注释同步更新。 |
 
 ### B06-PRE-003: LegacyInode 删除时机（架构清理）
 
@@ -555,8 +568,9 @@
 | **位置** | [services/fs/inode.rs:415-424](file:///home/anfer/Code/QueenX/src/kernel/services/fs/inode.rs#L415-L424) |
 | **问题** | B06-12 方案 C（废弃标记 + 推动消除）落地：LegacyInode 已加废弃标记，当前全部 8 个 FS 均实现 `fs_resolve_inode`，LegacyInode 仅作 `open_by_handle_at` 防御性回退（正常路径不触发） |
 | **建议** | 未来移除 `open_by_handle_at` 的 LegacyInode 回退分支（file_handle.rs:187）后删除整个 LegacyInode 类型；需确认各 FS `fs_resolve_inode` 覆盖所有挂载场景 |
-| **状态** | ❌ 登记待后续（架构清理，非紧急） |
+| **状态** | ✅ 已修复（本轮: 移除 `open_by_handle_at` 回退分支 + 删除 `LegacyInode` 类型） |
 | **【本轮复验订正】** | 结论仍成立，**行号漂移**: `LegacyInode` 定义现位于 [inode.rs:268](file:///home/anfer/Code/QueenX/src/kernel/services/fs/inode.rs#L268)，废弃标记注释在 `:260-264`（原记 `:415-424` 现为 `set_times`/`pread_inode`）；[file_handle.rs:199-205](file:///home/anfer/Code/QueenX/src/kernel/services/fs/file_handle.rs#L199-L205) 回退分支仍在（原记 `:187` 漂移） |
+| **【本轮修复（修遗留工程）】** | [file_handle.rs](file:///home/anfer/Code/QueenX/src/kernel/services/fs/file_handle.rs) `open_by_handle_at_syscall` 移除 `fs_resolve_inode(...).unwrap_or_else(|| LegacyInode ...)` 防御性回退，改为 `.ok_or(Errno::EINVAL)?`（句柄失效即 EINVAL，与相邻 `mount_idx` 校验一致）；[inode.rs](file:///home/anfer/Code/QueenX/src/kernel/services/fs/inode.rs) 删除整个 `LegacyInode` 类型及其 `impl Inode`（-186 行），文件头"具象实现"注释同步去掉 `LegacyInode`。 |
 
 ### B06-PRE-004: socket_max_sockets_test flaky（已排查确认非内核问题，测试已修复）
 
@@ -601,6 +615,8 @@
 > - **P1**: ISSUE-RT-001（x86_64 e1000/smoltcp 挂起）; B06-PRE-002（fchown 缺权限校验，**安全缺陷**）; ISSUE-RT-003（真实硬件验证）.
 > - **P2**: 第 8 类 MIG 边界治理（MIG-005/006/007）/注释同步（MIG-001/002）; 第 0B 类 B03-LEGACY-001/002/003（COW TOCTOU + host-tests 缺口）; ISSUE-TOOL-002（x86_64 侧陈旧检测）.
 > - **P3**: 第 4 类远期工程 F1-F5; B06-PRE-003（LegacyInode 清理）; MIG-003/004/008; 刻意维持项 DEC-046/041/005.
+>
+> **【本轮修复（修遗留工程）后开放项变化】**: 下列项已从本节待办移出 — **B06-PRE-002**（fchown 能力校验，P1）、**B03-LEGACY-001/002/003**（COW TOCTOU + host-tests 缺口，P2）、**ISSUE-TOOL-002**（x86_64 侧陈旧检测，P2）、**B06-PRE-003**（LegacyInode 清理，P3）、**MIG-006/007**（迁移文档补注 / chitin 测试缺口，P2）；**ISSUE-TOOL-003** 重评结案不施工；**MIG-001/002** 注释同步完成。仍未闭合: **ISSUE-RT-001/002/003**（运行时挂起/真机验证）、**MIG-003/004/005/008**、第 4 类远期工程 F1-F5、刻意维持项.
 
 ### P0 — 立即关注 (1 项)
 
@@ -640,6 +656,11 @@
 
 ## 变更历史
 
+- **本轮（修遗留工程）**: 按用户授权批量修复登记遗留项，逐条追加【本轮修复（修遗留工程）】标记；§2.3 六门槛全量验证通过（双架构 build 5/0、clippy + audit quick 全绿、`make test-host` 0 failed、`make test-kernel-host` 941 passed、QEMU x86_64 1/1）
+  - 第 0B 类 3 项结案: B03-LEGACY-001（COW 判定+映射并入同一 `VMM_LOCK` 临界区，配套 `*_locked` 变体）/ B03-LEGACY-002（pmm `find_contig_range`/`reserve_range`/`unreserve_range` host 用例 ×3）/ B03-LEGACY-003（新增定时器 tick 并发 host 冒烟 + 文件头标注判别力边界，弱序语义判别待 aarch64 SMP）
+  - 第 6 类: ISSUE-TOOL-002 x86_64 分支接入 `check_kernel_fresh`（QEMU 侧双架构闭环）；ISSUE-TOOL-003 重评结案（E0152 整族根治后原建议无必要，不施工）
+  - 第 8 类: MIG-001/002 头注释同步（driver/chitin 头状态改写为当前形态）；MIG-006 据 live 文档结案（尊重 §6 archive 冻结，不改归档快照）；MIG-007 新增 chitin 注册表/IO 专项 host 测试（2 passed）
+  - 第 9 类: B06-PRE-002 fchown 前置 `FS_CAP_CHOWN` 能力校验（安全缺陷修复）；B06-PRE-003 移除 `open_by_handle_at` LegacyInode 回退分支 + 删除 `LegacyInode` 类型
 - **本轮复验（源码状态核实）**: 按当前源码状态逐条复核本文档，保留原登记不涂改，各节追加【本轮复验订正】标记
   - 第 2 类 41 项 TODO 已消除 / 1 项仍存在（ISSUE-SRC-008 行号 822→601）/ 1 项文件不存在（ISSUE-SRC-028 `vfs/api.rs`）
   - 第 0 类审计基线 EXIT=0 / 0 违规（PROXY_ALLOWANCE 实测 8 条，原记 5 处）；comment_language 724 文件 0 违规（原记 735）
