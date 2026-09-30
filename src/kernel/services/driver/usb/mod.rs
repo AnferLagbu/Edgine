@@ -45,6 +45,15 @@ pub mod xhci;
 
 use xhci::XhciController;
 
+use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
+
+/// services 自持的 xHCI 控制器列表 (供端口变化轮询).
+///
+/// 控制器同时以裸指针登记进 Chitin 设备表 (proto=Bus) 供统一展示, 但 Chitin
+/// 只持有指针不拥有对象; `Box::leak` 得到的 `&'static mut` 由本表持有, 保证
+/// 轮询时可安全访问 PORTSC。
+static USB_CONTROLLERS: Mutex<Vec<&'static mut XhciController>> = Mutex::new(Vec::new());
+
 // ============================================================================
 // xHCI PCI 发现 (USB-1.2)
 // ============================================================================
@@ -126,10 +135,12 @@ fn is_xhci_device(dev: &crate::framework::pci::PciDevice) -> bool {
 
 /// 初始化 USB 子系统.
 ///
-/// 发现系统 xHCI 控制器并注册到 Chitin 设备表 (proto=Bus);
-/// `chitin_register_driver` 内部触发 `Driver::init` (`init_hardware` 完成 reset + start).
+/// 发现系统 xHCI 控制器, 逐个 `init_hardware` (reset + start) 后登记到 Chitin
+/// 设备表 (proto=Bus), 并由 services 自持控制器所有权以支持端口变化轮询。
+/// 最后注册 xHCI 端口轮询回调 (framework 无法自行探测 USB 端口变化)。
 pub fn usb_init() {
-    use crate::framework::chitin::{ChitinProto, chitin_register_driver};
+    use crate::framework::chitin::{ChitinProto, chitin_register};
+    use crate::framework::driver::hotplug::register_aux_poll;
 
     let controllers = discover_xhci_controllers();
     crate::slog_info!(
@@ -138,11 +149,83 @@ pub fn usb_init() {
         controllers.len()
     );
 
-    for ctrl in controllers {
-        chitin_register_driver("xhci", ChitinProto::Bus, None, None, Box::new(ctrl));
+    for mut ctrl in controllers {
+        let _ = ctrl.init_hardware();
+        // 所有权移交 services (Box::leak); Chitin 仅登记裸指针 (非所有权)
+        let leaked: &'static mut XhciController = Box::leak(Box::new(ctrl));
+        chitin_register(
+            "xhci",
+            ChitinProto::Bus,
+            None,
+            None,
+            core::ptr::from_mut(leaked).cast::<u8>(),
+        );
+        if leaked.is_initialized() {
+            USB_CONTROLLERS.lock().push(leaked);
+        }
     }
 
+    // 注册端口轮询回调 (DECISION-K: framework 经 softirq 周期调用)
+    let _ = register_aux_poll(usb_port_poll);
+
     enumerate_connected_devices();
+}
+
+/// xHCI 端口变化轮询 (DECISION-K 辅助轮询回调).
+///
+/// USB 端口插拔不产生 PCIe 热插拔事件, framework 无法自行探测; 本函数读取各
+/// 控制器 PORTSC 的变化位 (CSC/PEC/OCC/RC), 应答后以统一的热插拔事件分发
+/// (复用重枚举先行的时序)。仅在检测到变化时才触碰事件通路。
+fn usb_port_poll() {
+    use crate::framework::driver::hotplug::{
+        BusType, DeviceLocation, HOTPLUG_MANAGER, HotplugEvent,
+    };
+    use xhci::{PORTSC_CCS, PORTSC_CSC, PORTSC_OCC, PORTSC_PEC, PORTSC_RC};
+
+    // 变化位集合 (RW1CS: 写 1 应答)
+    const CHANGE_BITS: u32 = PORTSC_CSC | PORTSC_PEC | PORTSC_OCC | PORTSC_RC;
+
+    // 先收集事件并在锁内应答, 释放锁后再分发 (分发会进入 storage/NestFS 等
+    // 子系统并获取其锁, 不在持 USB 锁时跨界)。
+    let mut events = Vec::new();
+    {
+        let controllers = USB_CONTROLLERS.lock();
+        for ctrl in controllers.iter() {
+            if !ctrl.has_port_change() {
+                continue;
+            }
+            for port in 1..=ctrl.num_ports() {
+                let sc = ctrl.portsc(port);
+                if sc & CHANGE_BITS == 0 {
+                    continue;
+                }
+                ctrl.ack_port_change(port, sc & CHANGE_BITS);
+                let location = DeviceLocation {
+                    bus_type: BusType::Usb,
+                    bus: 0,
+                    device: 0,
+                    function: 0,
+                    slot: port,
+                };
+                let attached = sc & PORTSC_CCS != 0;
+                crate::slog_info!(
+                    Driver,
+                    "[USB] port {} change: {}",
+                    port,
+                    if attached { "attached" } else { "detached" }
+                );
+                events.push(if attached {
+                    HotplugEvent::DeviceAdded { location }
+                } else {
+                    HotplugEvent::DeviceRemoved { location }
+                });
+            }
+        }
+    }
+
+    for event in &events {
+        HOTPLUG_MANAGER.dispatch(event);
+    }
 }
 
 /// 枚举已连接 USB 设备 (USB-1.6).

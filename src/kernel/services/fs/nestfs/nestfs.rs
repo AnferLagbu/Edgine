@@ -15,27 +15,36 @@ struct NestfsHotplugListener;
 
 impl HotplugListener for NestfsHotplugListener {
     fn on_device_added(&self, event: &HotplugEvent) -> bool {
-        if let HotplugEvent::DeviceAdded { location } = event {
-            // 使用 slot 作为 drive_id (PCI 热插拔槽位号)
-            let drive_id = location.slot;
+        let HotplugEvent::DeviceAdded { location } = event else {
+            return false;
+        };
+        // 事件定位到的是 PCIe 端口 (端口 BDF), 块设备挂在该端口 secondary bus
+        // 上的存储控制器之后; 需先解析出对应的 Chitin 块设备编号再挂盘。
+        let drives = crate::services::driver::storage::drives_for_location(location);
+        let mut claimed = false;
+        for drive in drives {
             crate::slog_info!(
                 FS,
-                "[NestFS] HOTPLUG: device added (slot={}, bus={}/{}",
-                drive_id,
+                "[NestFS] HOTPLUG: device added at bus={}/{} -> drive={}",
                 location.bus,
-                location.device
+                location.device,
+                drive
             );
-            get_nestfs().hotplug_add_disk(drive_id)
-        } else {
-            false
+            claimed |= get_nestfs().hotplug_add_disk(drive);
         }
+        claimed
     }
 
     fn on_device_removed(&self, event: &HotplugEvent) {
-        if let HotplugEvent::DeviceRemoved { location } = event {
-            let drive_id = location.slot;
-            crate::slog_info!(FS, "[NestFS] HOTPLUG: device removed (slot={})", drive_id);
-            get_nestfs().hotplug_remove_disk(drive_id);
+        let location = match event {
+            HotplugEvent::DeviceRemoved { location }
+            | HotplugEvent::SurpriseRemoval { location } => location,
+            HotplugEvent::DeviceAdded { .. } => return,
+        };
+        let drives = crate::services::driver::storage::drives_for_location(location);
+        for drive in drives {
+            crate::slog_info!(FS, "[NestFS] HOTPLUG: device removed -> drive={}", drive);
+            get_nestfs().hotplug_remove_disk(drive);
         }
     }
 }

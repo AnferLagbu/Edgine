@@ -261,6 +261,14 @@ pub const PORTSC_OCC: u32 = 1 << 19;
 /// 复位变更
 pub const PORTSC_RC: u32 = 1 << 21;
 
+/// 回写 PORTSC 时须保留的 RWS 位掩码 (PLS[8:5] | PP[9] | PIC[14] | WCE[24])。
+///
+/// PORTSC 中 RW1CS 位 (PED/CSC/PEC/WRC/OCC/PRC/PLC) 写 1 会产生副作用,
+/// 因此"读-改-写"型更新 (如应答变化位) 必须先屏蔽掉这些位, 否则会把
+/// PED 等当前为 1 的位写回, 造成端口被误禁用 (参照 Linux
+/// `xhci_port_state_to_neutral` 的做法)。
+pub const PORTSC_RWS: u32 = (0xF << 5) | PORTSC_PP | (1 << 14) | (1 << 24);
+
 // ── PORTSC 速度 (PORTSC[10:13]) ──
 
 pub const PORTSC_SPEED_MASK: u32 = 0xF << 10;
@@ -610,10 +618,13 @@ impl XhciController {
         }
     }
 
-    /// 应答端口变化 (写 PORTSC.CSC|PEC|RC)
+    /// 应答端口变化 (写 PORTSC 的 CSC|PEC|RC 等 RW1CS 位)。
+    ///
+    /// 读-改-写时只保留 RWS 位 (见 `PORTSC_RWS`), 避免把 PED 等 RW1CS 位
+    /// 当前为 1 的值写回而产生副作用。
     pub fn ack_port_change(&self, port: u8, bits: u32) {
         let val = self.portsc(port);
-        self.set_portsc(port, val | bits);
+        self.set_portsc(port, (val & PORTSC_RWS) | bits);
     }
 
     // ── Doorbell 操作 ──

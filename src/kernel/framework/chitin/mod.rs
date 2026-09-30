@@ -477,6 +477,31 @@ pub fn chitin_unregister(id: u32) -> Option<*mut u8> {
     Some(dev.driver_data)
 }
 
+/// 注销块设备 (墓碑语义, 热插拔移除路径专用)。
+///
+/// `drive` 是设备在 `CHITIN_DEVICES` 中的索引。热插拔移除时**不物理删除**
+/// 条目, 而是将其标记为 `DeviceState::Removed` 并释放 `block_dev` 引用:
+/// 物理删除会使后续设备的索引整体前移, 导致已下发到上层 (如 NestFS vdev
+/// 映射) 的 `drive` 句柄指向错误设备。墓碑保持索引稳定, 后续 I/O 因状态
+/// 非 `Ready` 而安全失败 (`chitin_blk_read/write` 返回 `Busy`)。
+///
+/// 返回 `true` 表示该索引处存在块设备且已成功标记移除; 索引越界 / 非块
+/// 设备 / 已移除时返回 `false`。
+pub fn chitin_unregister_block(drive: u8) -> bool {
+    let mut devices = CHITIN_DEVICES.lock();
+    let idx = drive as usize;
+    if idx >= devices.len() {
+        return false;
+    }
+    let dev = &mut devices[idx];
+    if dev.proto != ChitinProto::Block || dev.state == DeviceState::Removed {
+        return false;
+    }
+    dev.state = DeviceState::Removed;
+    dev.block_dev = None;
+    true
+}
+
 pub fn chitin_set_state(id: u32, state: DeviceState) {
     let mut devices = CHITIN_DEVICES.lock();
     if let Some(dev) = devices.iter_mut().find(|d| d.id == id) {
@@ -598,6 +623,31 @@ pub fn chitin_blk_info(drive: u8) -> (&'static str, bool, u64) {
 /// 获取块设备数量
 pub fn chitin_blk_count() -> usize {
     chitin_count_by_proto(ChitinProto::Block)
+}
+
+/// 枚举所有块设备在 `CHITIN_DEVICES` 中的索引 (含已墓碑化的设备)。
+///
+/// 用于向热插拔状态上报逐设备状态: `drive` 必须与 `chitin_blk_read/write`
+/// 使用的索引一致, 因此按全局下标返回而非按块设备重新编号。
+pub fn chitin_blk_drives() -> Vec<u8> {
+    CHITIN_DEVICES
+        .lock()
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| d.proto == ChitinProto::Block)
+        .map(|(i, _)| i as u8)
+        .collect()
+}
+
+/// 查询块设备是否已被墓碑化移除。
+pub fn chitin_blk_is_removed(drive: u8) -> bool {
+    let devices = CHITIN_DEVICES.lock();
+    let idx = drive as usize;
+    if idx >= devices.len() {
+        return false;
+    }
+    let dev = &devices[idx];
+    dev.proto == ChitinProto::Block && dev.state == DeviceState::Removed
 }
 
 // ── 字符设备 I/O (统一入口) ──

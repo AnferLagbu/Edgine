@@ -884,9 +884,9 @@ T7 (预存登记)
 
 #### B-6. R1 已分类清单（机器可读区块；B09-21 数据源）
 
-> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**462 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
+> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**458 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
 >
-> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝`atomic_stats` feature 删除（本批）**（`framework/sync/atomic.rs` 4 项 `record_*` 随 feature 删除而消失 ⇒ 本区块移除 4 条目，**466 → 462**；处置依据＝按职责判定「非内核所需 + 零履行 + 已有 `*_dump_stats` 等价诊断 idiom」，见 **B-5.2 / B-5.3 G2**）。**上一轮同步＝per-process fd 表全量下沉（**B-11**）**（10 项因本工程接线 / 删除而不再零引用 ⇒ 本区块移除：`framework/fs/vfs/handle.rs::vfs_get_fd_handle`（poll 改源）、`framework/proc/fd_table.rs` 4 项（`get_handle_id` / `is_cloexec` / `set_cloexec` / `get_cloexec_fds` 接线）、`framework/proc/scheduler.rs::get_current_process`（`with_current_fd_table` 取当前进程）、`services/fs/process_fd_table.rs` 4 项（Plan B 表文件删除）⇒ **476 → 466**；编辑前实测区块为 **476** 行，区块说明原记 475（差 1，前批计数笔误，本次以实测为准）。另有 2 条**既有偏差**（`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`：脚本按名计数，其内联测试即计入引用 ⇒ 恒不在 INFO 集，见上述口径说明②）经本批复核确认，**非本工程引入，不属本批处置面**）。**上一轮同步＝项 5 批 C「67 项逐项分流」**（21 项判定为可删并已删除 ⇒ 本区块移除对应 21 条目，496 → 475；其余 46 项保留 `pub` 并留块登记，见 **B-10.11**；上一轮为项 2「`kmalloc_slab.rs` 孤岛删除」，被删 2 项原为 HIGH / **未入块** ⇒ 计数不变，见 **B-10.10**；更早为项 5 批 B「豁免面收窄」新增 67 项，429 → 496，见 **B-10.9**）。
+> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝热插拔运行时接线批次（**B-12**）**（4 项因本工程「接线 / 删除」而不再零引用 ⇒ 本区块移除：`framework/driver/hotplug.rs::hotplug_poll`（函数已不存在，由 `hotplug_wakeup` + softirq 轮询替代）、`services/driver/usb/xhci.rs::ack_port_change` / `::has_port_change`（已被 `usb_port_poll` 调用）、`framework/driver/block.rs::mark_removed`（函数已不存在，由 Chitin 墓碑协议 `chitin_blk_is_removed` 替代）⇒ **462 → 458**）。**上一轮同步＝`atomic_stats` feature 删除**（`framework/sync/atomic.rs` 4 项 `record_*` 随 feature 删除而消失 ⇒ 本区块移除 4 条目，**466 → 462**；处置依据＝按职责判定「非内核所需 + 零履行 + 已有 `*_dump_stats` 等价诊断 idiom」，见 **B-5.2 / B-5.3 G2**）。**更早同步＝per-process fd 表全量下沉（**B-11**）**（10 项因本工程接线 / 删除而不再零引用 ⇒ 本区块移除：`framework/fs/vfs/handle.rs::vfs_get_fd_handle`（poll 改源）、`framework/proc/fd_table.rs` 4 项（`get_handle_id` / `is_cloexec` / `set_cloexec` / `get_cloexec_fds` 接线）、`framework/proc/scheduler.rs::get_current_process`（`with_current_fd_table` 取当前进程）、`services/fs/process_fd_table.rs` 4 项（Plan B 表文件删除）⇒ **476 → 466**；编辑前实测区块为 **476** 行，区块说明原记 475（差 1，前批计数笔误，本次以实测为准）。另有 2 条**既有偏差**（`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`：脚本按名计数，其内联测试即计入引用 ⇒ 恒不在 INFO 集，见上述口径说明②）经本批复核确认，**非本工程引入，不属本批处置面**）。**更早同步＝项 5 批 C「67 项逐项分流」**（21 项判定为可删并已删除 ⇒ 本区块移除对应 21 条目，496 → 475；其余 46 项保留 `pub` 并留块登记，见 **B-10.11**；上一轮为项 2「`kmalloc_slab.rs` 孤岛删除」，被删 2 项原为 HIGH / **未入块** ⇒ 计数不变，见 **B-10.10**；更早为项 5 批 B「豁免面收窄」新增 67 项，429 → 496，见 **B-10.9**）。
 >
 > **口径说明（2026-09-26 订正）**：本区块与 `audit_unwired_pub_fn.py` 的「零引用」判定均为**按名计数**（`rg -c -w`），因而存在两类已知偏差，本区块**不承诺**与脚本输出逐项等同：① **同名遮蔽**（文档注释 / 局部变量出现同名字符串即计入引用 ⇒ 真零引用项可能**漏报**，实例见 **B-10.3** 的 `slab_init` / `services/driver/acpi.rs::lapic_base`）；② **已失效条目**（被接线或删除后不再零引用，需人工同步移除，本期移除 6 项见 B-10.4）。
 
@@ -994,7 +994,6 @@ src/kernel/framework/dma/engine.rs::sg_total_length
 src/kernel/framework/dma/engine.rs::submit_transfer_async
 src/kernel/framework/dma/engine.rs::sync_both
 src/kernel/framework/dma/engine.rs::unmap_single
-src/kernel/framework/driver/block.rs::mark_removed
 src/kernel/framework/driver/bus/pci.rs::pci_scan
 src/kernel/framework/driver/display/controller.rs::connected_count
 src/kernel/framework/driver/display/controller.rs::disable_monitor
@@ -1010,7 +1009,6 @@ src/kernel/framework/driver/display/controller.rs::set_primary_monitor
 src/kernel/framework/driver/display/framebuffer.rs::intersection
 src/kernel/framework/driver/framework.rs::inw
 src/kernel/framework/driver/framework.rs::outw
-src/kernel/framework/driver/hotplug.rs::hotplug_poll
 src/kernel/framework/driver/input/keyboard.rs::get_modifiers
 src/kernel/framework/driver/mod.rs::list_devices
 src/kernel/framework/driver/net/e1000_io.rs::install_rings
@@ -1233,10 +1231,8 @@ src/kernel/services/driver/storage/nvme.rs::ring_admin_sq
 src/kernel/services/driver/storage/nvme.rs::ring_cq_head
 src/kernel/services/driver/storage/nvme.rs::set_admin_cq_phase
 src/kernel/services/driver/uefi.rs::uefi_syscall
-src/kernel/services/driver/usb/xhci.rs::ack_port_change
 src/kernel/services/driver/usb/xhci.rs::crcr
 src/kernel/services/driver/usb/xhci.rs::enqueue_offset
-src/kernel/services/driver/usb/xhci.rs::has_port_change
 src/kernel/services/driver/usb/xhci.rs::is_halted
 src/kernel/services/driver/usb/xhci.rs::physical_address
 src/kernel/services/driver/usb/xhci.rs::port_connected
@@ -1765,6 +1761,54 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 - **host 契约测试**：[fd_cloexec_test.rs](../../host-tests/tests/fd_cloexec_test.rs)（先收集后关闭顺序 / 顶层 re-export / exec 接线 / memfd 置位）、[fs_permissions_regression_test.rs](../../host-tests/tests/fs_permissions_regression_test.rs)（新增静态契约 `poll_syscall_validates_fd_via_per_process_fd_table`）、td03_atomic_close_test.rs、plan_b_inode_test.rs。
 - **fmt 噪音处置**：96 个与本工程无关的 `host-tests/` 纯 fmt 文件按用户裁定**还原至 HEAD**（其中 3 个含本工程语义改动的文件已按新架构重写语义断言，非盲还原）。
 
+#### B-12. 热插拔运行时接线批次（方案 B：相对完整实现）
+
+> 来源：遗留调研结论「热插拔**基础设施已就位但运行时链路未接通**」（8 处断点）。用户裁定：**方案 B（相对完整实现）**；结构决策 **D1＝块设备移除协议迁移到 Chitin**、**D2＝检测 + 分发 + 日志**。本条为兑现记录。
+
+**B-12.1 背景（8 处断点）**
+
+`HotplugManager`（`slots`/`listeners`/`initialized` 三锁 + `HotplugEvent`/`HotplugListener`）与 PCIe Slot Capability/`PcieHotplugSlot::probe` 早已存在，但无运行时链路：① 无 softirq 唤醒；② 无调度 tick 触发；③ 无 services 侧总线重枚举回调契约；④ 无 Chitin 块设备移除协议；⑤ NestFS 监听器以端口 `location.slot` 误当 drive 号（语义错位）；⑥ storage 侧无重扫描；⑦ USB 端口变化无检测；⑧ USB 控制器无自持注册。本批接线使之端到端可用。
+
+**B-12.2 架构关键决策（用户裁定）**
+
+- **D1：块设备移除协议迁移到 Chitin**（[framework/chitin/mod.rs](../../src/kernel/framework/chitin/mod.rs)）。新增 `BlockDevice` trait（**定义在 chitin 而非 driver 模块，避免循环依赖 F3**）+ `chitin_register_block_dev` / `chitin_unregister_block` / `chitin_blk_read` / `chitin_blk_write` / `chitin_blk_is_present` / `chitin_blk_drives` / `chitin_blk_is_removed`。**墓碑（tombstone）语义**：移除**不物理删除** `CHITIN_DEVICES` 槽位，改置 `state = Removed` + `block_dev = None`，保证已下发 `drive` 句柄索引稳定（`AHCI_CONTROLLERS`/`NVME_CONTROLLERS` 为 `Vec` 且 `AhciBlockDevice`/`NvmeBlockDevice` 缓存 `controller_index: usize`，**不得从中间删除**）。`block_device_state` 迁移至 [framework/driver/block.rs](../../src/kernel/framework/driver/block.rs)（`(hdd_is_present, chitin_blk_is_removed, 0)`）。
+- **D2：检测 + 分发 + 日志**。USB 端口变化扫描 → 构造 `DeviceLocation` → `HOTPLUG_MANAGER.dispatch()`；storage 侧重扫描 + 分发（`drives_for_location`）；NestFS 监听器逐 drive 认领/移除 + `slog_info!` 记录。
+
+**B-12.3 framework 侧接线**
+
+- **softirq（kswapd 先例模式，QueenX 无 kthread 抽象）**：`SoftirqVec::Hotplug = 8`（[irq/mod.rs](../../src/kernel/framework/irq/mod.rs)；`MAX_SOFTIRQS = 10`）。`hotplug_wakeup()`（pending 标志去重 + `raise_softirq`）**替代原 `hotplug_poll`**（原函数已不存在）；`hotplug_softirq_handler` = 清 pending → `HOTPLUG_MANAGER.poll()` → `dispatch_aux_poll()`；调度 tick 周期 `HOTPLUG_TICK_INTERVAL = 100` 调 `hotplug_wakeup()`（[proc/scheduler.rs](../../src/kernel/framework/proc/scheduler.rs#L1176-L1177)）。
+- **DECISION-K 回调契约**（services → framework 单向注册无捕获函数指针，未注册 fail-quiet）：`register_reenum_hook`（总线重枚举，**先于**监听器分发）+ `register_aux_poll`（辅助轮询）。
+- **`HotplugManager::dispatch`**（[driver/hotplug.rs](../../src/kernel/framework/driver/hotplug.rs#L166)）：先 `dispatch_reenum(event)`，再 `listeners` 锁内按变体调 `on_device_added`（认领返回 `bool`）/ `on_device_removed`。
+
+**B-12.4 services 侧接线**
+
+- **storage**（[services/driver/storage/mod.rs](../../src/kernel/services/driver/storage/mod.rs)）：注册 `storage_reenum_hook`（L631）重扫描控制器，重插经 `install_controller(..., slot_hint, ...)` **复用槽位**；新增 `drives_for_location(location) -> Vec<u8>`（位置 → 已注册块设备，x86_64 实装 + aarch64 恒空 stub）；移除路径 `remove_stale_controllers`（L409）经 `chitin_unregister_block` 墓碑化。
+- **NestFS**（[services/fs/nestfs/nestfs.rs](../../src/kernel/services/fs/nestfs/nestfs.rs)）：`on_device_added` 仅认领 `DeviceAdded`，逐 `drives_for_location(location)` 调 `hotplug_add_disk`；`on_device_removed` 处理 `DeviceRemoved | SurpriseRemoval` 调 `hotplug_remove_disk`（**原 `location.slot` 直用为语义错位，本批修正**）。
+- **USB**（[services/driver/usb/mod.rs](../../src/kernel/services/driver/usb/mod.rs)）：`static USB_CONTROLLERS: Mutex<Vec<&'static mut XhciController>>`；`usb_init` 改为 `Box::leak` 自持控制器 + `chitin_register("xhci", ChitinProto::Bus, ...)` + `register_aux_poll(usb_port_poll)`；`usb_port_poll` 扫描 PORTSC 变化位（`CSC|PEC|OCC|RC`）→ `ack_port_change`（读-改-写屏蔽 RW1CS 位，`PORTSC_RWS`，参照 Linux `xhci_port_state_to_neutral`，[usb/xhci.rs](../../src/kernel/services/driver/usb/xhci.rs#L625)）→ **先释放 USB 锁再 `dispatch`**（避免持锁跨界）。
+
+**B-12.5 测试**
+
+- host 契约测试 [hotplug_reenum_contract_test.rs](../../host-tests/tests/hotplug_reenum_contract_test.rs)（2 passed / 0 failed）：① **Chitin 墓碑索引稳定**——交错注册（块/非块）→ 墓碑化块设备 → 读回存活设备数据 → 越界/非块/已移除边界；新注册**不回收墓碑槽位**；② **分发契约**——reenum hook 先于 listener；`DeviceAdded`/`DeviceRemoved`/`SurpriseRemoval` 分发计数正确。
+
+**B-12.6 门槛（§2.3 六条，全绿）**
+
+| # | 门槛 | 结果 |
+|---|---|---|
+| 1 | `./ci/build.sh all` | ✅ `Passed: 5 / Failed: 0`（x86_64 + aarch64 + host-tests + link） |
+| 2 | clippy pedantic `-D warnings` | ✅ 0 warning（lib + `kernel_test` + `host-test` 三维） |
+| 3 | `./ci/audit.sh quick`（经 `./ci/build.sh aarch64` 收尾以避 FP-06） | ✅ `Passed: 2 / Failed: 0` |
+| 4 | `make test-host` | ✅ 退出 0（含新契约测试 2 passed） |
+| 5 | `make test-kernel-host` | ✅ **949 passed / 0 failed** |
+| 6 | `./scripts/qemu_boot_test.sh x86_64` | ✅ `1/1 通过`（VFS ready / e1000 / Ring 3 init / KPTI 断言） |
+
+**B-12.7 R1 台账同步**
+
+- 移除 **4 条**因本工程「接线 / 删除」而不再零引用的条目：`framework/driver/hotplug.rs::hotplug_poll`（**函数已不存在**，由 `hotplug_wakeup` + softirq 轮询替代）、`services/driver/usb/xhci.rs::ack_port_change`、`::has_port_change`（**已被 `usb_port_poll` 调用**）、`framework/driver/block.rs::mark_removed`（**函数已不存在**，由 Chitin 墓碑协议 `chitin_blk_is_removed` 替代）⇒ **B-6 区块 462 → 458 项**（脚本正向复跑：`已分类清单: 458 项` / `HIGH 未分类: 49 项`，HIGH 均为**预存项**，本批新增/改动函数（`dispatch`/`register_reenum_hook`/`register_aux_poll`/`chitin_unregister_block`/`chitin_blk_drives`/`chitin_blk_is_removed`/`drives_for_location`/`ack_port_change`/`has_port_change`）**均已接线，未落 HIGH**）。
+
+**B-12.8 SIMPLIFIED 登记（§12.3）**
+
+- `is_present` 只比对 BDF，不校验类码；SATA 盘在已注册 AHCI 控制器上的插拔无 PCIe 事件 ⇒ 不追踪；移除后控制器槽位与 MMIO 映射**保留至重插复用**（不主动释放）。
+
 #### C. 原「接线」142 项（重划：仅 8 项留「接线」，其余 134 项入「未来功能」）
 
 **C-1 接线（8 项；判据＝同族入口已在调用链中使用，仅缺此半 —— 可施工子清单）**
@@ -1805,8 +1849,8 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 | `framework/credo/{audit,identity,secure_boot}.rs` | 3 | `get_entries` `find_mut` `add_trust_entry` |
 | `framework/debug/ebpf.rs` | 3 | `prog_run` `get_map` `get_prog` |
 | `framework/dma/engine.rs` | 5 | `unmap_single` `sync_both` `sg_init` `sg_add_entry` `sg_total_length` |
-| `framework/driver/block.rs` | 1 | `mark_removed` |
-| `framework/driver/hotplug.rs` | 1 | `hotplug_poll` |
+| `framework/driver/block.rs` | 1 | `mark_removed`（已由 Chitin 墓碑协议 `chitin_blk_is_removed` 替代，原函数不存在；见 B-12） |
+| `framework/driver/hotplug.rs` | 1 | `hotplug_poll`（已由 `hotplug_wakeup` + softirq 轮询替代，原函数不存在；见 B-12） |
 | `framework/driver/input/keyboard.rs` | 1 | `get_modifiers` |
 | `framework/driver/net/e1000_io.rs` | 5 | `set_ctrl` `set_rx_ctl` `set_tx_ctl` `set_ipg` `install_rings` |
 | `framework/driver/power.rs` | 4 | `ondemand_check` `register_notifier` `pm_subsystem` `pm_is_initialized` |

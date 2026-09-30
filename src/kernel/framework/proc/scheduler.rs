@@ -69,6 +69,11 @@ const RT_FIFO_WATCHDOG: u64 = 500;
 /// B3 完整实现: 周期触发 kswapd, 软中断上下文回收不活跃页面.
 const KSWAPD_TICK_INTERVAL: u64 = 100;
 
+/// hotplug softirq 唤醒周期 (ticks). 100 ticks @ 1kHz timer = 100ms.
+/// 周期触发热插拔槽位轮询 (softirq 上下文读取 PCIe Slot Status).
+/// 非热插拔场景下 poll 无任何 PCI 配置空间访问, 开销可忽略.
+const HOTPLUG_TICK_INTERVAL: u64 = 100;
+
 pub struct PwidQuota {
     pub pwm: u64,
     pub used: bool,
@@ -1164,6 +1169,12 @@ impl Scheduler {
         // (B3 完整实现: kswapd 走 softirq 路径, 由 scheduler tick 周期驱动)
         if new_tick.is_multiple_of(KSWAPD_TICK_INTERVAL) {
             crate::framework::mm::kswapd_wakeup();
+        }
+
+        // Periodic hotplug poll — 每 100 ticks 唤醒一次 PCIe/USB 热插拔槽位检查
+        // (softirq 路径, 由 scheduler tick 周期驱动)
+        if new_tick.is_multiple_of(HOTPLUG_TICK_INTERVAL) {
+            crate::framework::driver::hotplug::hotplug_wakeup();
         }
 
         // 周期性 CFS 提升 —— 防止 vruntime 饥饿

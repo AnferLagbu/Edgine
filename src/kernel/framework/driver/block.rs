@@ -14,21 +14,19 @@ use crate::framework::error::{KernelError, KernelResult};
 use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering, fence};
 
 // ── BlockDevice Trait (定义在 chitin, 此处 re-export) ──
 
 pub use crate::framework::chitin::BlockDevice;
 
-// ── SMP 安全基础设施 ──
+// ── 遗留注册表 ──
 //
-// 保留 REGISTRY 用于 safe_unregister 的设备移除协议.
-// I/O 主路径已迁移至 Chitin (chitin_blk_read/write).
+// REGISTRY 仅为 ext2/exfat 的 `with_device` 读路径保留; 设备注册/移除
+// 协议已统一迁移至 Chitin (chitin_register_block_dev / chitin_unregister_block),
+// 原 safe_unregister / IO_REFS / REMOVING 引用计数协议已删除。
 
 static REGISTRY: Mutex<Vec<Option<Mutex<Box<dyn BlockDevice>>>>> = Mutex::new(Vec::new());
 static DEVICE_NAMES: Mutex<Vec<Option<&'static str>>> = Mutex::new(Vec::new());
-static IO_REFS: Mutex<Vec<AtomicU32>> = Mutex::new(Vec::new());
-static REMOVING: Mutex<Vec<AtomicBool>> = Mutex::new(Vec::new());
 
 pub fn register_named(name: &'static str, dev: Box<dyn BlockDevice>) -> usize {
     let mut list = REGISTRY.lock();
@@ -36,8 +34,6 @@ pub fn register_named(name: &'static str, dev: Box<dyn BlockDevice>) -> usize {
     list.push(Some(Mutex::new(dev)));
     drop(list);
     DEVICE_NAMES.lock().push(Some(name));
-    IO_REFS.lock().push(AtomicU32::new(0));
-    REMOVING.lock().push(AtomicBool::new(false));
     idx
 }
 
@@ -53,90 +49,6 @@ pub fn with_device<R>(idx: usize, f: impl FnOnce(&mut dyn BlockDevice) -> R) -> 
     let slot = reg[idx].as_ref()?;
     let mut dev = slot.lock();
     Some(f(&mut **dev))
-}
-
-pub fn safe_unregister(idx: usize) -> Option<Box<dyn BlockDevice>> {
-    {
-        let reg = REGISTRY.lock();
-        if idx >= reg.len() {
-            return None;
-        }
-        if reg[idx].is_none() {
-            return None;
-        }
-        let removing = REMOVING.lock();
-        if idx < removing.len() {
-            removing[idx].store(true, Ordering::Release);
-        }
-    }
-    fence(Ordering::SeqCst);
-
-    loop {
-        let refs = IO_REFS.lock();
-        let current = if idx < refs.len() {
-            refs[idx].load(Ordering::Acquire)
-        } else {
-            0
-        };
-        drop(refs);
-        if current == 0 {
-            break;
-        }
-        core::hint::spin_loop();
-    }
-
-    let removed = {
-        let mut reg = REGISTRY.lock();
-        if idx >= reg.len() {
-            return None;
-        }
-        match reg[idx].take() {
-            // SAFETY: 设备注册表按槽位互斥访问, 取出时槽位已置 None, 无并发持有。
-            Some(m) => unsafe { m.into_inner() },
-            None => return None,
-        }
-    };
-
-    {
-        let mut names = DEVICE_NAMES.lock();
-        if idx < names.len() {
-            names[idx] = None;
-        }
-    }
-
-    Some(removed)
-}
-
-pub fn is_removing(idx: usize) -> bool {
-    let removing = REMOVING.lock();
-    if idx >= removing.len() {
-        return true;
-    }
-    removing[idx].load(Ordering::Acquire)
-}
-
-pub fn io_refcount(idx: usize) -> u32 {
-    let refs = IO_REFS.lock();
-    if idx >= refs.len() {
-        return 0;
-    }
-    refs[idx].load(Ordering::Acquire)
-}
-
-pub fn unregister(idx: usize) -> Option<Box<dyn BlockDevice>> {
-    safe_unregister(idx)
-}
-
-pub fn mark_removed(idx: usize) {
-    let reg = REGISTRY.lock();
-    if idx >= reg.len() {
-        return;
-    }
-    let removing = REMOVING.lock();
-    if idx < removing.len() {
-        removing[idx].store(true, Ordering::Release);
-    }
-    fence(Ordering::SeqCst);
 }
 
 pub fn registry() -> &'static Mutex<Vec<Option<Mutex<Box<dyn BlockDevice>>>>> {
@@ -247,10 +159,15 @@ pub fn block_device_list() -> Vec<(usize, &'static str, u64)> {
         .collect()
 }
 
+/// 查询块设备状态 (热插拔 syscall ABI)。
+///
+/// 返回 `(present, removing, io_count)`:
+/// - `present`: 该索引处存在 `Ready` 的块设备且硬件在位
+/// - `removing`: 该索引处的块设备已被墓碑化移除
+/// - `io_count`: 恒为 0 — Chitin 块设备 I/O 在 `CHITIN_DEVICES` 锁内同步
+///   完成, 不存在"静默在途 I/O", 故无需引用计数; 保留字段以维持 ABI 稳定。
 pub fn block_device_state(drive: u8) -> (bool, bool, u32) {
-    let idx = drive as usize;
     let present = hdd_is_present(drive);
-    let removing = is_removing(idx);
-    let io_count = io_refcount(idx);
-    (present, removing, io_count)
+    let removing = crate::framework::chitin::chitin_blk_is_removed(drive);
+    (present, removing, 0)
 }

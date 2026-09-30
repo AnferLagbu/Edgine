@@ -29,7 +29,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::framework::config::MAX_CPUS;
 
-const MAX_SOFTIRQS: usize = 9;
+const MAX_SOFTIRQS: usize = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -43,7 +43,9 @@ pub enum SoftirqVec {
     Sched = 6,
     /// Kswapd: 内存回收/页面换出 (B3 完整实现)
     Kswapd = 7,
-    Count = 8,
+    /// Hotplug: PCIe/USB 热插拔槽位轮询 (由 scheduler tick 周期驱动)
+    Hotplug = 8,
+    Count = 9,
 }
 
 impl SoftirqVec {
@@ -63,6 +65,7 @@ impl SoftirqVec {
             5 => Some(Self::Tasklet),
             6 => Some(Self::Sched),
             7 => Some(Self::Kswapd),
+            8 => Some(Self::Hotplug),
             _ => None,
         }
     }

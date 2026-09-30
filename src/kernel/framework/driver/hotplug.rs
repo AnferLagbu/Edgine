@@ -16,12 +16,15 @@
 //!       → 未来: 用户态通知 (/dev/hotplug)
 //! ```
 //!
-//! 不使用中断线程, 采用轮询模式 (在调度器 idle loop 中调用 poll)。
+//! 不使用中断线程, 采用轮询模式: 调度器 tick 周期唤醒, 由 softirq 上下文执行 poll。
 
+use crate::framework::irq::{self, SoftirqVec};
 use crate::framework::pci::PcieHotplugSlot;
 use crate::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::sync::OnceLock;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, Ordering};
 // ── 事件类型 ──
 
 /// 总线类型
@@ -119,13 +122,18 @@ impl HotplugManager {
     /// 轮询所有热插拔槽位, 检测事件变化并分发给监听器。
     ///
     /// 应在每个调度周期或 idle loop 中调用 (开销很低: 非热插拔场景下无任何 PCI 配置空间访问)。
+    ///
+    /// 每个事件在分发给 `HotplugListener` **之前**, 先调用 services 注册的
+    /// 重枚举回调 (见 `register_reenum_hook`), 使 services 有机会同步总线扫描
+    /// 与块设备注册/注销, 随后监听器才能基于最新的设备表处理事件。
+    ///
+    /// 注: 事件分发在 `slots` 锁之下进行 (热插拔事件罕见, 且回调内不反向
+    /// 获取本管理器的 `slots` 锁, 无死锁风险), 以简化锁边界。
     pub fn poll(&self) {
         let mut slots = self.slots.lock();
         if slots.is_empty() {
             return;
         }
-
-        let listeners = self.listeners.lock();
 
         for slot in slots.iter_mut() {
             let events = slot.read_and_clear_events();
@@ -142,22 +150,31 @@ impl HotplugManager {
             };
 
             if slot.has_surprise_removal(events) {
-                let evt = HotplugEvent::SurpriseRemoval { location };
-                for l in listeners.iter() {
-                    l.on_device_removed(&evt);
-                }
-                continue;
-            }
-
-            if slot.has_insertion_event(events) {
-                let evt = HotplugEvent::DeviceAdded { location };
-                for l in listeners.iter() {
-                    l.on_device_added(&evt);
-                }
+                self.dispatch(&HotplugEvent::SurpriseRemoval { location });
+            } else if slot.has_insertion_event(events) {
+                self.dispatch(&HotplugEvent::DeviceAdded { location });
             } else if slot.has_removal_event(events) {
-                let evt = HotplugEvent::DeviceRemoved { location };
+                self.dispatch(&HotplugEvent::DeviceRemoved { location });
+            }
+        }
+    }
+
+    /// 分发单个热插拔事件: 先调用 services 重枚举回调, 再通知所有监听器。
+    ///
+    /// 供自行检测到事件的总线驱动 (如 xHCI 端口变化) 直接调用, 复用与
+    /// `poll` 完全一致的分发语义, 保证"重枚举先行、监听器后处理"的时序。
+    pub fn dispatch(&self, event: &HotplugEvent) {
+        dispatch_reenum(event);
+        let listeners = self.listeners.lock();
+        match event {
+            HotplugEvent::DeviceAdded { .. } => {
                 for l in listeners.iter() {
-                    l.on_device_removed(&evt);
+                    l.on_device_added(event);
+                }
+            }
+            HotplugEvent::DeviceRemoved { .. } | HotplugEvent::SurpriseRemoval { .. } => {
+                for l in listeners.iter() {
+                    l.on_device_removed(event);
                 }
             }
         }
@@ -187,9 +204,11 @@ impl HotplugManager {
             .collect();
         drop(slots);
 
-        let blk_count = crate::framework::driver::block_device_count();
+        // 按 Chitin 全局下标枚举块设备 (含已墓碑化设备), 保证上报的 `drive`
+        // 与 `hdd_*` / `chitin_blk_*` 使用的索引一致。
+        let drives = crate::framework::chitin::chitin_blk_drives();
         let mut blk_states: Vec<BlockDeviceState> = Vec::new();
-        for d in 0..blk_count as u8 {
+        for d in drives {
             let (present, removing, io_count) = crate::framework::driver::block_device_state(d);
             blk_states.push(BlockDeviceState {
                 drive: d,
@@ -198,6 +217,7 @@ impl HotplugManager {
                 io_count,
             });
         }
+        let blk_count = blk_states.len();
 
         HotplugStatus {
             enabled,
@@ -246,12 +266,83 @@ pub struct HotplugStatus {
 
 pub static HOTPLUG_MANAGER: HotplugManager = HotplugManager::new();
 
+/// DECISION-K: services 侧总线重枚举回调 (无捕获函数指针)。
+///
+/// services 层在启动期通过 `register_reenum_hook` 注册回调; framework 在
+/// 分发每个 `HotplugEvent` 给监听器**之前**调用它, 使 services 有机会重新
+/// 扫描总线并完成块设备的注册/注销。未注册时 fail-quiet (与 NVMe MSIX
+/// dispatch 同模式), 保证 framework 不依赖任何 services 符号。
+static HOTPLUG_REENUM_HOOK: OnceLock<fn(&HotplugEvent)> = OnceLock::new();
+
+/// 注册总线重枚举回调 (由 services 侧调用, 注册一次)。
+///
+/// # Errors
+/// 若回调已被注册, 返回 `Err(hook)` 将本次传入的函数指针原样退回。
+pub fn register_reenum_hook(hook: fn(&HotplugEvent)) -> Result<(), fn(&HotplugEvent)> {
+    HOTPLUG_REENUM_HOOK.set(hook)
+}
+
+/// 在分发监听器之前调用 services 重枚举回调 (若已注册)。
+fn dispatch_reenum(event: &HotplugEvent) {
+    if let Some(hook) = HOTPLUG_REENUM_HOOK.get() {
+        hook(event);
+    }
+}
+
+/// DECISION-K: services 侧辅助轮询回调 (无捕获函数指针)。
+///
+/// 供 framework 自身无法探测、必须由 services 读取设备 MMIO 才能发现变化的
+/// 总线注册 (如 xHCI 端口状态变化)。framework 在每次 `poll()` 之后调用它,
+/// 未注册时 fail-quiet, 保证 framework 不依赖任何 services 符号。
+static HOTPLUG_AUX_POLL: OnceLock<fn()> = OnceLock::new();
+
+/// 注册辅助轮询回调 (由 services 侧调用, 注册一次)。
+///
+/// # Errors
+/// 若回调已被注册, 返回 `Err(hook)` 将本次传入的函数指针原样退回。
+pub fn register_aux_poll(hook: fn()) -> Result<(), fn()> {
+    HOTPLUG_AUX_POLL.set(hook)
+}
+
+/// 在 framework 轮询之后调用 services 辅助轮询回调 (若已注册)。
+fn dispatch_aux_poll() {
+    if let Some(hook) = HOTPLUG_AUX_POLL.get() {
+        hook();
+    }
+}
+
+/// 热插拔 softirq 唤醒去重标志 (参照 kswapd 模式)。
+///
+/// 同一周期内多次 `hotplug_wakeup` 只触发一次 softirq, 避免重复入队。
+static HOTPLUG_PENDING: AtomicBool = AtomicBool::new(false);
+
+/// 热插拔 softirq 处理程序: 在软中断上下文轮询所有热插拔槽位。
+///
+/// 软中断上下文可开中断但不可睡眠、不可长时间持锁, 因此仅做
+/// "读寄存器 + 分发监听器" 的短操作, 重枚举等重活由监听器/回调承担。
+fn hotplug_softirq_handler() {
+    HOTPLUG_PENDING.store(false, Ordering::Release);
+    HOTPLUG_MANAGER.poll();
+    dispatch_aux_poll();
+}
+
 /// 外部调用入口: 初始化热插拔管理器并注册核心监听器
 pub fn hotplug_init() {
     HOTPLUG_MANAGER.init();
+    // 注册 softirq 处理程序 (启动期单线程, 且本函数在 interrupt_late_init 之后调用)
+    irq::open_softirq(SoftirqVec::Hotplug, hotplug_softirq_handler);
 }
 
-/// 外部调用入口: 轮询热插拔事件 (由调度器 idle loop 或定时器触发)
-pub fn hotplug_poll() {
-    HOTPLUG_MANAGER.poll();
+/// 外部调用入口: 周期唤醒热插拔轮询 (由调度器 tick 调用)。
+///
+/// 采用 pending 标志去重 + softirq 延迟执行 (参照 kswapd 先例):
+/// 调度器 tick 只负责"唤醒", 真正的寄存器读取与事件分发在软中断
+/// 上下文完成, 避免在 tick 路径上长时间持锁。
+/// 非热插拔场景下 `poll` 不做任何 PCI 配置空间访问, 开销可忽略。
+pub fn hotplug_wakeup() {
+    if HOTPLUG_PENDING.load(Ordering::Acquire) {
+        return;
+    }
+    HOTPLUG_PENDING.store(true, Ordering::Release);
+    irq::raise_softirq(SoftirqVec::Hotplug);
 }
