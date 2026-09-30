@@ -3,7 +3,8 @@
 //! 验证退位后的状态契约 (services 权威, framework 机制保留):
 //! 1. framework `nvme.rs` 仅剩 wire 类型 (NvmeCommand/NvmeCompletion), 控制器业务已删
 //! 2. framework `ahci.rs` 仅剩 wire 命令结构 (H2dFis/命令头/命令表), HBA 寄存器布局已删
-//! 3. framework `storage_init` 仅 ATA 回退路径; PCI AHCI/NVMe 探测/注册由 services 接管
+//! 3. framework `storage_init` 已整体退位 (无 ATA 回退路径); PCI AHCI/NVMe + ATA
+//!    探测/注册全部由 services 接管
 //! 4. services `storage_init` 调用 `_block` 适配器注册 Chitin + MSI-X 接线
 //! 5. crate root lib.rs 编排 services storage_init (合法双向编排者)
 //! 6. 双侧均无文件级 dead_code 豁免 (I-49 契约延续)
@@ -78,21 +79,34 @@ fn test_framework_ahci_wire_types_only() {
 }
 
 #[test]
-fn test_framework_storage_init_ata_fallback_only() {
+fn test_framework_storage_init_removed() {
     let code = strip_comment_lines(&read_source(FRAMEWORK_DIR, "mod.rs"));
-    // ATA 回退路径保留
+    // framekernel 阶段 3: framework storage_init 整体退位 (ATA 回退路径已迁 services)
     assert!(
-        code.contains("ata_init") && code.contains("register_block_device"),
-        "framework storage_init 应保留 ATA 检测与注册"
+        !code.contains("pub fn storage_init"),
+        "framework storage_init 应已整体退位 (ATA 迁 services)"
+    );
+    assert!(
+        !code.contains("ata_init"),
+        "framework mod.rs 不应再含 ATA 检测 (应已迁 services)"
+    );
+    // 对应模块文件亦应删除
+    assert!(
+        !Path::new(FRAMEWORK_DIR).join("ata.rs").exists(),
+        "framework ata.rs 应已删除 (迁 services)"
+    );
+    assert!(
+        !Path::new(FRAMEWORK_DIR).join("ata_block.rs").exists(),
+        "framework ata_block.rs 应已删除 (迁 services)"
     );
     // PCI AHCI/NVMe 探测业务必须已退位
     assert!(
         !code.contains("scan_all_buses"),
-        "framework storage_init 仍做 PCI 扫描 (应已迁 services)"
+        "framework mod.rs 仍做 PCI 扫描 (应已迁 services)"
     );
     assert!(
         !code.contains("AhciController::new") && !code.contains("NvmeController::new"),
-        "framework storage_init 仍初始化控制器 (应已迁 services)"
+        "framework mod.rs 仍初始化控制器 (应已迁 services)"
     );
     // MSI-X ISR 编排机制保留 (注册契约槽 + ISR 注册入口)
     for sym in [
@@ -137,6 +151,10 @@ fn test_services_storage_init_uses_block_devices() {
         "services storage_init 未调用 NvmeBlockDevice::new"
     );
     assert!(
+        src.contains("AtaBlockDevice::new"),
+        "services storage_init 未调用 AtaBlockDevice::new (ATA 回迁后应注册 ata0-3)"
+    );
+    assert!(
         src.contains("register_block_device"),
         "services storage_init 未注册 block 设备到 Chitin"
     );
@@ -175,6 +193,7 @@ fn test_no_dead_code_allow_in_storage() {
         (SERVICES_DIR, "mod.rs"),
         (SERVICES_DIR, "nvme.rs"),
         (SERVICES_DIR, "ahci.rs"),
+        (SERVICES_DIR, "ata.rs"),
     ] {
         let src = read_source(dir, name);
         assert!(

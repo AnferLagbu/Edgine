@@ -26,9 +26,8 @@
 //! ├── input/         # 输入设备驱动
 //! │   └── keyboard.rs # 键盘驱动
 //! ├── storage/       # 存储设备驱动
-//! │   ├── nvme.rs    # NVMe驱动
-//! │   ├── ahci.rs    # AHCI/SATA驱动
-//! │   └── ata.rs     # ATA/IDE驱动
+//! │   ├── nvme.rs    # NVMe 机制 (wire 类型/safe wrapper)
+//! │   └── ahci.rs    # AHCI/SATA 机制 (DMA fill 原语)
 //! ├── display/       # 显示设备驱动
 //! │   ├── hdmi.rs    # HDMI驱动
 //! │   └── dp.rs      # DisplayPort驱动
@@ -40,9 +39,9 @@
 //! // 初始化所有驱动
 //! driver::init_all();
 //!
-//! // 使用存储驱动读取数据
+//! // 使用块设备读取数据 (控制器业务在 services, framework 提供安全代理)
 //! let mut buf = [0u8; 512];
-//! storage::ata::ata_read_sector(0, 0, buf.as_mut_ptr());
+//! driver::hdd_read_sector(0, 0, &mut buf);
 //!
 //! // 从键盘读取字符
 //! if input::keyboard::keyboard_has_char() > 0 {
@@ -122,16 +121,10 @@ pub use bus::pci;
 pub use char::pl011::Pl011Driver;
 
 // --- 网络设备导出 ---
-// e1000 内部函数 (`e1000_probe` 等) 在 e1000.rs 中以
-// `#[cfg(not(feature = "kernel_test"))]` 守卫 (kernel_test 无 PCI 总线);
-// 此处 re-export 必须同步 gate, 否则 kernel_test build 失败 (P0-1 修复).
-#[cfg(not(feature = "kernel_test"))]
-pub use net::e1000::{
-    e1000_net_get_mac, e1000_net_irq, e1000_net_recv, e1000_net_send, e1000_probe,
-    take_device as e1000_take_device,
-};
 // 批次 Z ④: 旧 framework virtio-net 驱动 (net.rs + virtio_net_* FFI) 已删除,
 // virtio-net 权威在 services (impl NetDeviceOps 经 NetOps 安全桥接入)。
+// framekernel 阶段 3: e1000 业务/FFI 面亦已迁 services::driver::net::e1000,
+// framework 仅保留环机制 (TxRing/RxRing), 无对外 re-export。
 
 // --- 输入设备导出 ---
 #[cfg(target_arch = "x86_64")]
@@ -139,20 +132,6 @@ pub use input::keyboard;
 
 // --- 存储设备导出 (DECISION-H 3 号子步: 控制器业务已迁 services, 仅 wire 类型) ---
 pub use storage::{H2dFis, NvmeCommand, NvmeCompletion};
-
-// 为了向后兼容，保留一些直接导入
-#[cfg(target_arch = "x86_64")]
-pub use storage::ata::{
-    ATA_PRIMARY_CTRL, ATA_PRIMARY_IO, ATA_SECONDARY_CTRL, ATA_SECONDARY_IO, AtaController,
-    AtaDevice, MAX_ATA_DEVICES, WORDS_PER_SECTOR, get_ctrl_base, get_io_base,
-};
-
-// --- e1000 内部细节 re-export (供测试使用) ---
-#[cfg(not(feature = "kernel_test"))]
-pub use net::e1000::{
-    E1000_RX_BUFFER_SIZE, E1000_RX_RING_SIZE, E1000_TX_RING_SIZE, E1000Device, E1000RxDesc,
-    E1000TxDesc,
-};
 
 // --- power/kexec/uefi 公共接口 re-export ---
 pub use kexec::*;
@@ -168,23 +147,24 @@ pub use uefi::*;
 /// 按照依赖顺序初始化各个子系统并注册到 Chitin 全局设备表：
 /// 1. 字符设备 (VGA、串口)
 /// 2. 总线驱动 (PCI)
-/// 3. 存储设备 (framework 仅 ATA 回退路径; PCI AHCI/NVMe 由 services 接管)
-/// 4. 输入设备 (键盘)
-/// 5. 显示设备 (HDMI、DP)
-/// 6. 组合虚拟设备 (RAID0/RAID1)
+/// 3. 输入设备 (键盘)
+/// 4. 显示设备 (HDMI、DP)
+/// 5. 组合虚拟设备 (RAID0/RAID1)
+///
+/// 存储设备控制器 (PCI AHCI/NVMe + ATA PIO) 探测/初始化/注册已整体下沉
+/// services (`services::driver::storage::storage_init`), 由 crate root
+/// lib.rs 编排调用; framework 侧不再持有 storage_init。
 pub fn init_all() {
     #[cfg(target_arch = "x86_64")]
     {
         // §6.4 直接方案 B: x86_64 字符设备 (vga/serial) 由 services::driver::char::char_init
         // 注册 (crate root lib.rs 编排), 此处不再调用 framework char_init.
         let _ = bus::bus_init();
-        let _ = storage::storage_init();
         input::input_init();
     }
     #[cfg(target_arch = "aarch64")]
     {
         char::char_init();
-        let _ = storage::storage_init();
     }
 
     let _ = display::display_init();
@@ -359,12 +339,35 @@ mod tests {
         }
     }
 
+    /// 测试用块设备驱动.
+    ///
+    /// framework 存储控制器业务 (AHCI/NVMe/ATA) 已整体下沉 services
+    /// (`services::driver::storage`), framework 不再持有可供测试的 Block 驱动
+    /// 实例; framework 测试不得反向依赖 services, 故此处以本地 mock 覆盖
+    /// `DeviceType::Block` 的 trait 分发路径.
+    struct MockBlockDriver;
+
+    impl Driver for MockBlockDriver {
+        fn name(&self) -> &'static str {
+            "mock-block"
+        }
+        fn device_type(&self) -> DeviceType {
+            DeviceType::Block
+        }
+        fn init(&mut self) -> DriverResult<()> {
+            Ok(())
+        }
+        fn shutdown(&mut self) -> DriverResult<()> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn test_module_structure() {
         assert_eq!(DeviceType::Block.to_string(), "Block");
         assert_eq!(DeviceType::Char.to_string(), "Char");
 
-        let _controller = AtaController::new();
+        let _controller = MockBlockDriver;
 
         let _driver = KeyboardDriver::new();
 
@@ -374,11 +377,11 @@ mod tests {
 
     #[test]
     fn test_driver_trait_polymorphism() {
-        let ata = AtaController::new();
+        let blk = MockBlockDriver;
         let kb = KeyboardDriver::new();
         let com = MockCharDriver;
 
-        let drivers: Vec<&dyn Driver> = vec![&ata, &kb, &com];
+        let drivers: Vec<&dyn Driver> = vec![&blk, &kb, &com];
 
         for driver in &drivers {
             assert!(driver.name().len() > 0);

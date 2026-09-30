@@ -28,9 +28,17 @@ pub mod net;
 /// 扫描 virtio-mmio 区域, 发现网络设备 (`VIRTIO_ID_NET`) 即创建 services
 /// `VirtioNetDriver`, 完成初始化 (`finalize`: vq0/vq1 MMIO 配置 +
 /// DRIVER_OK + RX 预填) 后经 framework `register_net_device` 桥接为
-/// `NetDeviceRegistration`。由 framework `nic_probe_all` 在 e1000 探测
-/// 失败后经槽位调用 (启动临界区单线程)。
-fn virtio_net_registration() -> Option<crate::framework::net::NetDeviceRegistration> {
+/// `NetDeviceRegistration`。由 services 复合探测 `net_services_probe`
+/// (位于 `services::driver::net`) 在 e1000 探测失败后回落调用
+/// (启动临界区单线程)。
+///
+/// ## 条件编译
+///
+/// 唯一消费者 `net_services_probe` 受 `#[cfg(not(feature = "kernel_test"))]`
+/// 门控, 故本函数同样门控以在 kernel_test 构建下不编译, 避免死代码
+/// (AGENTS.md §5 F9)。
+#[cfg(not(feature = "kernel_test"))]
+pub(crate) fn virtio_net_registration() -> Option<crate::framework::net::NetDeviceRegistration> {
     use crate::framework::driver::virtio::{
         VIRTIO_ID_NET, VIRTIO_MMIO_BASE, VIRTIO_MMIO_MAX_DEVICES, VIRTIO_MMIO_STRIDE,
         VirtioMmioDevice,
@@ -65,16 +73,6 @@ fn virtio_net_registration() -> Option<crate::framework::net::NetDeviceRegistrat
         return Some(reg);
     }
     None
-}
-
-/// 初始化 virtio-net (services 权威, 批次 Z ④ NetOps 安全桥)
-///
-/// DECISION-K 注册契约模式 (同 storage `NVME_SERVICES_DISPATCH`):
-/// 仅注册探测回调槽 (services→framework 单向, framework 不引用 services);
-/// framework `nic_probe_all` 在 e1000 探测失败后经槽位调用探测回调拉取
-/// `NetDeviceRegistration`。crate root lib.rs 在 `qx_net_init` 之前编排调用。
-pub fn net_init() {
-    let _ = crate::framework::net::net_register_services_driver(virtio_net_registration);
 }
 
 /// 初始化 VirtIO 块设备并注册到 Chitin (§6.4 直接方案 B: services 权威)

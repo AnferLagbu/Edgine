@@ -6,111 +6,30 @@
 //!   services 分发契约槽)
 //! - **业务退位**: PCI AHCI/NVMe 控制器探测、初始化、块设备注册已迁
 //!   `services::driver::storage::storage_init` (services 权威, crate root 编排)
-//! - **ATA 回退暂留**: 传统 ATA PIO 驱动仍由本层 `storage_init` 负责
-//!   (登记为 storage 专项后续子步: IoPort 重建迁 services)
+//! - **ATA 回迁**: 传统 ATA PIO 驱动已迁 `services::driver::storage::ata`
+//!   (经 framework `IoPort` safe 代理做端口 I/O)
 //!
 //! ## 初始化流程 (退位后)
 //!
 //! ```text
-//! storage_init()  [framework, x86_64]
-//!   └── ata::detect_drives() → ATA PIO 检测 + ata0-3 注册
 //! storage_init()  [services, x86_64]
 //!   ├── PCI::scan_all_buses()
 //!   ├── for each AHCI device  → services AhciController + AhciBlockDevice 注册
-//!   └── for each NVMe device  → services NvmeController (MSI-X) + NvmeBlockDevice 注册
+//!   ├── for each NVMe device  → services NvmeController (MSI-X) + NvmeBlockDevice 注册
+//!   └── ATA PIO 探测 → services AtaController + AtaBlockDevice 注册 (ata0-3)
 //! ```
 
 pub mod ahci;
-#[cfg(target_arch = "x86_64")]
-pub mod ata;
-#[cfg(target_arch = "x86_64")]
-pub mod ata_block;
 pub mod nvme;
 
 // 为 driver/mod.rs 方便而重导出关键类型 (机制 wire 类型; 控制器业务已迁 services)
 pub use ahci::H2dFis;
 pub use nvme::{NvmeCommand, NvmeCompletion};
 
-use super::framework;
 #[cfg(target_arch = "x86_64")]
 use crate::framework::arch::InterruptArch;
 use crate::framework::dma_buf::{DmaDirection, DmaStream};
 use crate::framework::iomem::IoMem;
-
-/// 初始化存储子系统 (framework 退位版: 仅 ATA 回退路径)
-///
-/// DECISION-H 3 号子步: PCI AHCI/NVMe 探测/初始化/块设备注册已迁 services
-/// (`services::driver::storage::storage_init`, crate root lib.rs 编排调用)。
-/// 本函数保留 ATA PIO 检测与注册 (登记后续子步迁 services)。
-/// # Errors
-/// ATA 初始化失败时返回 Err。
-#[cfg(target_arch = "x86_64")]
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "签名保持 Result 以兼容 init_all 调用链 (let _ = storage_init())"
-)]
-pub fn storage_init() -> framework::Result<()> {
-    // Step 1: 传统 ATA 检测 (回退路径, 不依赖 PCI)
-    // ATA 驱动使用内部全局单例, 通过 C FFI 接口初始化
-
-    crate::framework::driver::storage::ata::ata_init();
-
-    crate::framework::chitin::chitin_register_driver(
-        "ata_controller",
-        crate::framework::chitin::ChitinProto::Block,
-        None,
-        None,
-        alloc::boxed::Box::new(crate::framework::driver::storage::ata::AtaController::new()),
-    );
-
-    // Step 2: 将 ATA 磁盘注册到 Chitin (唯一注册入口)
-    {
-        use crate::framework::chitin::proto_block;
-        use crate::framework::driver::BlockDevice;
-        use crate::framework::driver::storage::ata_block::AtaBlockDevice;
-        for drive in 0..4u8 {
-            if let Some(dev) = AtaBlockDevice::new(drive) {
-                let sectors = dev.blk_total_sectors();
-                let dev_name = match drive {
-                    0 => "ata0",
-                    1 => "ata1",
-                    2 => "ata2",
-                    _ => "ata3",
-                };
-                proto_block::register_block_device(dev_name, dev, None);
-                crate::klog_info!(
-                    Driver,
-                    "ATA: drive {} registered, {} sectors ({} MB)",
-                    drive,
-                    sectors,
-                    // 整数除法 (消除内核侧浮点, 见 docs/plan/aarch64-kernel-fp-free.md)
-                    sectors * 512 / (1024 * 1024)
-                );
-            }
-        }
-    }
-
-    crate::klog_info!(Driver, "storage (framework): ATA fallback path ready");
-    Ok(())
-}
-
-/// AArch64 存储初始化 — 空操作 (§6.4 直接方案 B)
-///
-/// aarch64 (QEMU -M virt) 的 virtio-blk 探测/注册已迁
-/// `services::driver::virtio::blk_init` (services 权威, 由 crate root lib.rs 编排)。
-/// 此函数保持签名以兼容 `init_all` 调用链。
-#[cfg(not(target_arch = "x86_64"))]
-#[expect(
-    clippy::missing_errors_doc,
-    reason = "签名保持 Result 以兼容 init_all 调用链; 恒 Ok(()) 无真实错误路径"
-)]
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "签名保持 Result 以兼容 init_all 调用链 (let _ = storage_init())"
-)]
-pub fn storage_init() -> framework::Result<()> {
-    Ok(())
-}
 
 #[cfg(target_arch = "x86_64")]
 /// B07 MSI-X 完整接入: NVMe 中断路径 (端到端).

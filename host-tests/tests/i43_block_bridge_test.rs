@@ -89,7 +89,8 @@ fn test_block_drivers_use_register_block_device() {
         "framework/driver/virtio/blk.rs",
         "framework/driver/storage/ahci_block.rs",
         "framework/driver/storage/nvme_block.rs",
-        "framework/driver/storage/ata_block.rs",
+        // framekernel 阶段 3: ATA PIO 驱动的权威实装已迁 services
+        "services/driver/storage/ata.rs",
     ];
 
     for driver in &driver_files {

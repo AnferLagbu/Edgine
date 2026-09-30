@@ -65,7 +65,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 描述：本工程推翻既往两处治理方向（用户 2026-09-11 裁决）。
 方案：
 - **DECISION-A（VFS 4 文件下沉）**：`fs/vfs/vfs.rs`（VfsManager）、`dcache.rs`、`types.rs`、`open_file_table.rs` 按 Asterinas 严格判据下沉 services——**推翻 B09-12/DECISION-H13 的 VFS 迁回**（B09-12 中仅 Errno/error 基础库迁回 framework 正确，保留）。依据：Asterinas 的 VFS 在 kernel/services（`kernel/core/src/fs/vfs`），OSTD 不含文件系统抽象。
-- **DECISION-B（E1000 业务回迁）**：`driver/net/e1000.rs` 业务回迁 services，framework 留 `dma_ring.rs`（DMA 描述符机制）+ E1000Io（IoMem 封装）——**推翻 B04-AUDIT-005 的 E1000 上移**。依据：驱动是功能，经 safe API 在 services 实现。
+- **DECISION-B（E1000 业务回迁）**：`driver/net/e1000.rs` 业务回迁 services，framework 留 `dma_ring.rs`（DMA 描述符机制）+ E1000Io（IoMem 封装）——**推翻 B04-AUDIT-005 的 E1000 上移**。依据：驱动是功能，经 safe API 在 services 实现。**（阶段 3 落地：业务收敛为 services 单一 `E1000NetDriver`，见 §8「阶段 3 执行记录」）**
 - 统一原则：**依赖方向靠 trait 注入，不靠移动实现代码**。
 
 ## 6. 逐文件下沉清单（framework 363 + services 260+ 文件逐文件判定，2026-09-11 调研）
@@ -127,8 +127,8 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | framework/driver/char/pl011.rs | services/driver/char/pl011 | 🔒 保留 framework（2-C）：`arch::uart` 为 boot 早期控制台机制（klog/panic 依赖）必须留框架；`pl011_read/write` CharOps FFI 桥（裸指针 `driver_data`）不可 safe 化；PL011 为固定平台基址（非 PCI），`IoMem` 无固定基址 safe 构造器。【复核】原表列「MMIO 改 IoMem 封装」，实不可行 |
 | framework/driver/display/mod.rs | services/driver/display | ✅ 已完成（2-E）：`controller.rs` 管理策略（`DisplayController`/`DisplayManager`/`DisplayMode`/`MonitorInfo`/`DisplayOutput`，0 unsafe 且无框架机制消费者）整体迁 `services/driver/display/controller`；framework 侧删 `pub mod controller` + re-export + `display_init` 内 `let _manager` 死语句，`driver/mod.rs` 补 re-export `PixelFormat`。VBE 原语 / framebuffer / font / 自检 / `FB_PHYS_ADDR` / `get_framebuffer` 因被 `gfx_console` 与 `syscall/dispatch` 直接绑定而保留框架（判据见 §11 DECISION-S）|
 | framework/driver/input/keyboard.rs | services/driver/input | 🔒 保留 framework（2-C）：`kb_input_read/has/irq` InputOps FFI 桥（裸指针 `driver_data as *mut KeyboardDriver`）不可 safe 化；`read_line` 依赖 `unsafe extern "C" scheduler_yield_ex`；纯 scancode/shift 表可 safe 化但无独立价值。【复核】原表列「scancode 迁出」，实为 FFI 桥绑定整体 |
-| framework/driver/net/e1000.rs | services/driver/net/e1000（回迁）| 🔒 保留 framework（复核）：维持现状——E1000 驱动业务 + `dma_ring.rs` DMA 环机制 + `e1000_io.rs` MMIO 访问器整体位于 framework（B04-AUDIT-005 #4 v2 整体上移后未回迁），`Driver` 经 CharOps/NetOps FFI 桥绑定 `driver_data` 裸指针不可 safe 化；services 侧 `services/driver/net/e1000.rs` 仅保留描述符语义常量 + re-export 壳。DECISION-B 原「业务回迁 services」经复核不落地。|
-| framework/driver/net/e1000_io.rs | services/driver/net/e1000 | 🔒 保留 framework（复核）：`E1000Io` 为 `IoMem` MMIO 封装的安全导出面，供 framework `e1000` 驱动消费，维持 framework。|
+| framework/driver/net/e1000.rs | services/driver/net/e1000（回迁）| ✅ 阶段 3 收尾（**DECISION-B 落地，覆盖下文 2-K「复核保留」**）：E1000 业务（复位/链路探测/描述符环配置/收发）整体迁 `services/driver/net/e1000` 单一 `E1000NetDriver`（0 unsafe，impl `NetDeviceOps` 经泛型桥生成 extern "C" 回调 + `register_net_device`，PCI 探测经框架 safe API + 复合探测 `net_services_probe` e1000→virtio 回落）；framework 侧仅留 `dma_ring.rs` DMA 环机制 + `e1000_io.rs` MMIO 访问器。|
+| framework/driver/net/e1000_io.rs | services/driver/net/e1000 | 🔒 保留 framework（阶段 3 复核确认）：`E1000Io` 为 `IoMem` MMIO 封装的安全导出面，阶段 3 后消费方为 services `E1000NetDriver`（经 safe API 调用），维持 framework；模块经 `#[cfg(all(target_arch = "x86_64", not(feature = "kernel_test")))]` 门控避免非目标构建下寄存器常量死代码（F9）。|
 | framework/driver/usb/mod.rs | services/driver/usb | ✅ 已完成（2-D）：PCI 发现 + `usb_init` 迁 services（chitin proto=Bus），framework 源文件已删 |
 | framework/driver/usb/xhci.rs | services/driver/usb/xhci | ✅ 已完成（2-D）：xhci/枚举/类驱动**整体下沉**（原「20 unsafe 集中，机制留框架」处方经裁定覆盖，见 DECISION-R），framework 源文件已删 |
 | framework/driver/virtio/mod.rs | services/virtio/transport | 🔒 保留 framework（复核）：经用户裁定维持 framework——virtio transport（`mod.rs` + `queue.rs`）为设备发现/队列机制，与 framework driver/chitin 编排直接耦合，下沉将制造 framework→services 反向依赖。|
@@ -156,7 +156,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 ### 6.4 双份合并（services 权威，framework 删业务）——20 文件
 
-> 状态（按 DECISION-G「直接方案 B」方向裁决 + 批次 X/Y/Z 执行）：**✅ 已收口 14 项** —— usb×5（随 2-D 整体下沉）、char `serial`+`vga`（批次 X，`9ba997e3`）、virtio `blk`+`net`（批次 Z③ transport 去重 + Z④ NetOps 桥）、storage `mod`+`ahci`+`ahci_block`+`nvme`+`nvme_block`（批次 Y，`storage_init` 退位：`_block` 适配层删除，`ahci`/`nvme`/`mod` 保留机制 wire 类型薄层）；**⛔ 未收口 2 项** —— storage `ata`+`ata_block`（framework ATA PIO 回退路径暂留，登记 storage 专项后续子步迁 services）；**🔒 复核保留 framework 4 项** —— chitin `composite`/`devtree` + credo `grant`/`session`（framework 机制 + services 策略/安全代理正确形态，见 DECISION-G 项 2/3，非「删业务」对象）。display/hdmi×7 孤儿另计已删。
+> 状态（按 DECISION-G「直接方案 B」方向裁决 + 批次 X/Y/Z 执行 + 阶段 3 收尾）：**✅ 已收口 16 项** —— usb×5（随 2-D 整体下沉）、char `serial`+`vga`（批次 X，`9ba997e3`）、virtio `blk`+`net`（批次 Z③ transport 去重 + Z④ NetOps 桥）、storage `mod`+`ahci`+`ahci_block`+`nvme`+`nvme_block`（批次 Y，`storage_init` 退位：`_block` 适配层删除，`ahci`/`nvme`/`mod` 保留机制 wire 类型薄层）、storage `ata`+`ata_block`（阶段 3 收尾：framework ATA PIO 回退路径整体迁 `services/driver/storage/ata`，仅注册块设备 `ata0-3`）；**🔒 复核保留 framework 4 项** —— chitin `composite`/`devtree` + credo `grant`/`session`（framework 机制 + services 策略/安全代理正确形态，见 DECISION-G 项 2/3，非「删业务」对象）。display/hdmi×7 孤儿另计已删。**§6.4 全表收口**。DECISION-B E1000 业务回迁于阶段 3 一并落地（详下 E1000 净段）。
 
 | framework 文件 | services 权威 / 处置 |
 |---|---|
@@ -164,7 +164,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | driver/char/vga.rs | services/driver/char/vga —— ✅ 批次 X 收口（framework 侧已删）|
 | driver/storage/mod.rs | services/driver/storage —— ⚠ 机制薄层保留（业务已退位 services `storage_init`）|
 | driver/storage/ahci.rs + ahci_block.rs | services/driver/storage/ahci —— ⚠ `ahci_block.rs` 已删（批次 Y）；`ahci.rs` 保留机制 wire 类型薄层 |
-| driver/storage/ata.rs + ata_block.rs | services/driver/storage/ata —— ⛔ 未收口（framework ATA PIO 回退路径暂留，登记 storage 后续子步）|
+| driver/storage/ata.rs + ata_block.rs | services/driver/storage/ata —— ✅ 阶段 3 收尾（framework 两侧源文件已删；services 真实 PIO 驱动经 `IoPort::new_safe` 0 unsafe 实现，仅注册块设备 `ata0-3`，跟随 ahci/nvme 形态）|
 | driver/storage/nvme.rs + nvme_block.rs | services/driver/storage/nvme —— ⚠ `nvme_block.rs` 已删（批次 Y）；`nvme.rs` 保留机制 wire 类型薄层 |
 | driver/usb/enumerate.rs | services/driver/usb/enumerate（✅ 已随 2-D 整体下沉删除 framework 侧）|
 | driver/usb/hid.rs | services/driver/usb/hid（✅ 已随 2-D 整体下沉删除 framework 侧）|
@@ -315,7 +315,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - 📝 **calibration 采样回调**：boot 早期路径，随阶段 6.3 timer 部分下沉实施
 - 阶段 1：**纯策略下沉**（§6.1 20 文件）。[X] 收口——3 确认下沉（syscall×3，已提交）+ 17 保留（服务对象准则复核终局，DECISION-F）
 - 阶段 2：**封装+下沉**（§6.2 23 文件）。[X] 收口——2-A syscall fd/pipe 组完成 3 文件（clone/io/sendfile，0 unsafe 落地 services）；2-B fd 事件族 4 文件（epoll/eventfd/signalfd/timerfd）经复核**保留 framework**（耦合判据见 §11 DECISION-P）；2-C char/input 2 文件（pl011/keyboard）经复核**保留 framework**（FFI ops 桥判据见 §11 DECISION-Q），并订正 `input_init` 重复注册；2-D usb 2 文件经裁定改走 **USB 整体下沉**（三子步收口，framework 侧整目录删除，判据见 §11 DECISION-R）；2-E display 经复核**部分下沉**（`controller.rs` 管理策略迁 services，VBE 原语/framebuffer/font 保留框架，判据见 §11 DECISION-S）；2-F credo/storage+net query 二文件经复核**均保留 framework**（credo/storage 登记后续条目（前置＝阶段 4 VFS safe API），**已由阶段 4b 全量下沉收口**（`framework/credo/storage.rs` 删除，整体迁 `services/credo/persist`）；net query 为 net TCB 状态只读访问面，判据见 §11 DECISION-T）；2-G firmware·ftrace 二文件（`framework/syscall/firmware.rs` + `ftrace_kgdb.rs`）经复核**下沉 services**（`services/syscall/firmware.rs` + `ftrace.rs`，11+ 处 unsafe 用户指针拷贝改 framework safe API，framework 侧源文件删除，判据见 §11 DECISION-U）；2-H info·wait4 二文件（`framework/syscall/info.rs` + `wait4.rs`）经复核**下沉 services**（`services/proc/info.rs` + `wait4.rs`，用户指针写改 framework safe API，framework 侧源文件删除）；2-J coredump 一文件经复核**整体下沉 services**（`services/proc/coredump.rs` 0 unsafe 完整实装，经 `coredump_trait` 注入 + VFS POD safe API + `read_interrupt_regs`/`vma_snapshot_current` 快照，一并修正 P0-17/P0-20；判据见 §11 DECISION-V）；2-K 末 4 文件（rlimit/e1000/e1000_io/virtio）经复核**保留 framework**（判据见 §11 DECISION-V）。**§6.2 收口：23 = 12 完成下沉 + 11 复核保留（其中 credo/storage 登记后续，已由阶段 4b 全量下沉收口）**
-- 阶段 3：**驱动双份合并 + E1000 回迁**（§6.4 20 文件 → usb×5 已随 2-D 整体下沉收口，余 15 + DECISION-B）。[]
+- 阶段 3：**驱动双份合并 + E1000 回迁**（§6.4 20 文件）。[X] 收口——批次 X/Y/Z 逐项接线后（见 §8 各批记录），本阶段收尾 2 项：① storage `ata`+`ata_block`（framework ATA PIO 回退路径整体迁 `services/driver/storage/ata`，IoPort::new_safe 安全 PIO，仅注册块设备 `ata0-3`，跟随 ahci/nvme 形态）；② **DECISION-B E1000 业务回迁**（`framework/driver/net/e1000.rs` 业务迁 `services/driver/net/e1000` 单一 `E1000NetDriver`，framework 仅留 `dma_ring.rs` 环机制 + `e1000_io.rs` MMIO 访问器，复合探测 e1000→virtio 回落）。§6.4 全表收口（16 收口 + 4 机制保留）。见 §8「阶段 3 执行记录」。
 - 阶段 4：**VFS 整体下沉**（终局 = Asterinas 对齐·完整下沉，DECISION-W 覆盖 DECISION-A 的「4 文件」口径）。[X] 拆分三子批：
   - **4a 契约先行**：framework 新建 `VfsOps` 契约（`framework/fs/vfs/ops_trait.rs`）+ reroute 3 文件 6 处消费面（proc_ops/epoll/page_fault）；不改 TCB 归属、不改语义，仅新增契约面 + 间接层。[X]（完成：VfsOps + Fallback + register/current，6 处 reroute；§2.3 六门槛全绿，见 §11 DECISION-W）
   - **4b 实现下沉**：`framework/fs/vfs` 实现整体迁 `services/fs`（types/dcache/vfs/open_file_table + handle/mount/path/flock/inotify + ramfs/devfs/initramfs/nestfs）；services 于 `fs::init` 注册 `VfsOps` 实现替换 Fallback；framework 侧仅留 2 契约（`VfsOps` + `vfs_poll_trait`）+ POD `VfsFileType` + nestfs unsafe 机制适配层。同时 `framework/credo/storage.rs` 连锁（登记项 2-F）整体下沉 `services/credo/persist`。[X]（完成：无壳单批做尽，63 处 `#[unsafe(no_mangle)] vfs_*` 壳删除；§2.3 六门槛全绿，见 §11 DECISION-W 4b 实施记录）
@@ -364,7 +364,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - **0 号 identify helper**：`nvme_read_identify_*` 解析迁 services（`05c9a648`，见上文记录）。
   - **_block 适配器**：services 新增 `AhciBlockDevice`（端口 → `BlockDevice` 适配 + IDENTIFY 容量探测）与 `NvmeBlockDevice`（namespace → `BlockDevice`），统一经 Chitin `register_block_device` 注册（`ahci{ci}-p{pi}` / `nvme{ci}-ns{nsid}`）；framework 旧 `_block` 适配层删除（ahci_block.rs / nvme_block.rs 孤儿文件移除）。
   - **MSI-X/IRQ**：NVMe MSI-X 端到端实装——**I/O CQ 必须在 MSI-X 使能后创建**（QEMU `nvme_init_cq` 仅在 msix_enabled 时 `msix_vector_use`，时序颠倒则完成中断永不到达，冒烟实证）；framework MSI-X ISR 纯编排，经 services 分发契约转发（DECISION-K 注册契约模式）+ MSIX-03 受控自测；AHCI 保持轮询提交。
-  - **storage_init 退位**：framework 删 PCI AHCI/NVMe 探测/初始化/注册（约 470 行 storage_init + 约 1400 行控制器/寄存器代码），仅留 ATA 回退路径与机制原语（wire 类型 / DMA fill / MSI-X ISR 编排）；services `storage_init` 由 crate root lib.rs 编排调用（x86_64 门控）。
+  - **storage_init 退位**：framework 删 PCI AHCI/NVMe 探测/初始化/注册（约 470 行 storage_init + 约 1400 行控制器/寄存器代码），仅留 ATA 回退路径与机制原语（wire 类型 / DMA fill / MSI-X ISR 编排）；services `storage_init` 由 crate root lib.rs 编排调用（x86_64 门控）。（该 ATA 回退路径已于**阶段 3 收尾**整体迁 `services/driver/storage/ata`，见「阶段 3 执行记录」。）
   - **QEMU 存储冒烟**：NVMe MSI-X 端到端 Ok + PCI BAR5 解析修复（BAR 槽位保持）生效；AHCI 首次带盘冒烟暴露 4 项预存缺陷（见下），修复后双机型复验通过。
 - **AHCI 首次带盘发现与本批内修复**（用户裁决 B）：
   1. **COMRESET 缺失**：HBA 复位后未发 `PxSCTL.DET` COMRESET 序列，PHY 链路不重建，带盘端口扫描恒报"0 端口活动"（pc ich9-ahci 与 q35 内建 SATA 均复现；framework 被删版同构缺失，历史冒烟从未挂 AHCI 盘，非本批回归）。补 `comreset`（DET=1 保持 → 释放 → 轮询 DET=3）+ `enable_fis_receive`（FRE=1 → 等 FR → 锁存 PxSIG）。
@@ -393,6 +393,20 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **验证**：双架构 `build all` 0w0e ✅ / clippy `--release -D warnings` 双架构 0 ✅ / clippy pedantic (lib x86_64) 0 ✅ / clippy kernel_test 维 0 ✅ / 核心审计 + 8 项补充全绿 ✅ / host-tests 755/0（99 套件，含新增 `net_device_ops_bridge_test` 3 测试）✅ / **QEMU aarch64 virt 挂网卡冒烟**：`virtio-net: probed successfully (services bridge)` + Network Subsystem Ready ✅（`qemu_boot_test.sh` aarch64 段已加 `-device virtio-net-device` + 桥探测断言，P2-5）/ x86_64 boot 回归 1/1（Ring 3）✅。
 - **遗留修复**（实施期发现，批次 Y `4994cbba` 引入）：AHCI `identify` clippy pedantic 违规（similar-names + manual-let-else）→ 按审核裁决修复（let-else 根治 manual-let-else + `#[expect(clippy::similar_names, reason=...)]` 兑底，与同文件 read/write_dma 双 expect 模式一致；read/write_dma 预存不动，§12.2）。
 - **预存登记（实测修正）**：`--features host-test --lib` clippy 报 E0152 duplicate lang item `owned_box`——**环境条件触发**（cwd=src/rust 目录内时 rustup 加载 rust-toolchain.toml 的 rust-src 组件 → build-std 生效，与 host std 的 alloc 冲突；DECISION-021 同族工具链限制），与代码改动无关。**实测**：CI 等价命令（repo 根 + `--manifest-path`）与 audit.sh 2b 等价命令（repo 根 + `+nightly`）强制重编译均 0 error 通过；host-tests 从根构建不受影响——**验证链无碍，无代码/脚本缺陷**；根治走 §10「构建模式显式化工程」（可立即开工）。
+
+### 阶段 3 执行记录（驱动双份合并收尾 + E1000 回迁，实施：AI）
+
+- **目标**：§6.4 全表收口。批次 X/Y/Z 已逐项接线（char/virtio/storage 主体），本阶段收尾 2 项：① storage `ata`+`ata_block` 双份（framework ATA PIO 回退路径 → services）；② DECISION-B E1000 业务回迁（framework `driver/net/e1000` → services 单一驱动）。
+- **ATA 迁移（①）**：
+  - **framework 侧删除**：`framework/driver/storage/ata.rs` + `ata_block.rs` 整体删除；`framework/driver/storage/mod.rs` 移除 ATA 段与 `ata_block` 模块，仅留机制薄层；`framework/driver/mod.rs` 移除 ATA re-export。
+  - **services 侧实装**：`services/driver/storage/ata.rs` 为完整真实 PIO 驱动（端口 I/O 全经 framework safe 代理 `IoPort::new_safe`，0 unsafe），`AtaController` + `AtaBlockDevice`（块设备适配器经注册表查找控制器）；容量经 IDENTIFY word 100-103（LBA48）回落 word 60-61（LBA28），不做二分探测。
+  - **注册形态**：跟随 ahci/nvme 模式，`services/driver/storage/mod.rs` 新增 `ATA_CONTROLLERS` 注册表 + `storage_init` Step 5 仅注册块设备 `ata0-3`（不注册控制器设备、不 `impl Driver`）。
+- **E1000 回迁（②，DECISION-B 落地）**：
+  - **framework 收敛为机制层**：`framework/driver/net/e1000.rs` 裁剪至仅 `TxRing`/`RxRing` 环机制（DMA 环改用 `DmaEngine::alloc_coherent` + 补 `unsafe impl Send/Sync`）；`framework/driver/net/e1000_io.rs` 保留 `E1000Io` MMIO 安全访问器（原 `E1000Driver` 业务 / FFI 回调 / `no_mangle` 壳已删），模块经 `#[cfg(all(target_arch="x86_64", not(feature="kernel_test")))]` 门控（唯一消费者为 services x86_64 驱动，避免 aarch64/kernel_test 构建下寄存器常量死代码，F9）。
+  - **services 权威**：新增 `services/driver/net/e1000.rs` 单一 `E1000NetDriver`（0 unsafe，impl `NetDeviceOps` 经泛型桥生成 extern "C" 回调 + `register_net_device`，PCI 探测经 framework safe API），业务含复位 / 链路探测 / 描述符环配置 / 收发。
+  - **复合探测**：`services/driver/net/mod.rs` 新增 `net_services_probe`（`e1000_net_registration` 失败回落 `virtio_net_registration`），`net_init` 注册 DECISION-K 槽；非 x86_64 提供返回 `None` 的 e1000 桩。
+- **验证（§2.3 六门槛全绿）**：`./ci/build.sh all` Passed 5 / Failed 0（双架构 0 error / 0 kernel warning）✅ / `./ci/audit.sh quick` rc=0（0/6 TCB 边界、0.5b TCB 59.0%、0.5c 6 不变式、0.5 SAFETY 1822/1822 100%、0.5d~0.5j 补充防线、1/6 双架构 check、2/6 clippy pedantic、**2b/6 clippy kernel_test + host-test 双维**）✅ / `make test-host` 各套件 ok ✅ / `make test-kernel-host` 941 passed / 0 failed ✅ / `./scripts/qemu_boot_test.sh x86_64` 1/1（VFS ready + Ring 3 + KPTI-09）✅。
+- **实施期修复（本轮改动直接导致）**：① `services/driver/virtio/mod.rs::virtio_net_registration` 补 `#[cfg(not(feature="kernel_test"))]` 门控（唯一消费者 `net_services_probe` 同门控，避免 kernel_test 维死代码 → 门槛 2b 失败根因）；② `services/driver/storage/ata.rs::test_identify_capacity` 白盒期望字面量订正（原将 words[101] 误作位 48-63；实现符合 ATA 规范 word100 为最低 16 位，改为全 4 word 覆盖 → 门槛⑤ 失败根因）。
 
 ## 9. 验证门槛
 
@@ -1029,7 +1043,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | char | vga.rs | ✅ 0 unsafe；MMIO/PIO 经 `IoMem::from_pci_bar` + `IoPort::new_safe`；业务自含 | **直接接线** |
 | virtio | blk.rs / net.rs | ⚠ 依赖 `framework::driver::virtio::queue::{DmaBuffer, VirtQueue}`（DMA 环机制，合法机制依赖）；blk/net 业务已完整核实（net RX 半成品迁业务执行记录见下文 virtio 净段） | **已核实**（下文 virtio 净段两记录） |
 | storage | nvme.rs | ✅ 0 unsafe；wire 类型依赖可留；identify 解析 helper 迁 services（7 用例 host-test 通过）；MSI-X/IRQ 端到端实装（MSI-X 使能后建 I/O 队列时序契约 + services 分发契约）；NvmeBlockDevice 经 Chitin 注册 | **已核实**（批次 Y 完成，见执行记录） |
-| storage | ahci.rs / ata.rs / mod.rs | ✅ ahci 0 unsafe 自足（IoMem 安全代理）+ AhciBlockDevice 适配注册；COMRESET/命令头布局/DMA 虚拟地址等首次带盘缺陷已修（执行记录）；ata 仍为 framework 回退路径（登记 storage 后续子步迁 services） | **已核实**（批次 Y 完成，见执行记录） |
+| storage | ahci.rs / ata.rs / mod.rs | ✅ ahci 0 unsafe 自足（IoMem 安全代理）+ AhciBlockDevice 适配注册；COMRESET/命令头布局/DMA 虚拟地址等首次带盘缺陷已修（执行记录）；**ata 已于阶段 3 迁 services**（framework `ata.rs`/`ata_block.rs` 已删，services `ata.rs` 真实 PIO 驱动经 `IoPort::new_safe` 0 unsafe，仅注册块设备 `ata0-3`） | **已核实**（批次 Y 完成 + 阶段 3 收尾，见执行记录） |
 
 **接线改造的关键耦合点（步骤 2/3 设计确认）**：
 - Chitin 注册安全路径 = `chitin_register_driver(name, proto, io_base, irq, Box<dyn Driver>)`，`Driver` trait **全 safe 方法**（framework/driver/framework.rs:287）→ **services 可 0 unsafe impl Driver 并注册**（合法方向）。
@@ -1075,7 +1089,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 |---|---|---|
 | services nvme.rs | 依赖 framework C-FFI 机制（`nvme_submit_*_cmd`/`nvme_alloc_*`/`nvme_copy_*`，DMA/队列提交=机制留 framework 合理）+ `fw_nvme::NvmeCommand/Completion`（wire 类型）+ `fw_storage::nvme_read_identify_*`（解析 helper=业务，需迁 services）；**缺 MSI-X/IRQ 路径**（framework 版有 enable_msix + I-42 事件驱动） | 迁业务：identify helper + MSI-X |
 | services ahci.rs | 仅依赖 IoMem/PhysAddr（自足 ✓）；**缺 _block 适配器与接线**（framework ahci_block.rs 是 active 注册） | 迁业务：_block 适配器 + 接线 |
-| services ata.rs | **桩模块**（AtaController 极简）；framework ata.rs 是真实 PIO 驱动（C-FFI + BlockDevice 适配） | 迁业务：真实 ATA 驱动 |
+| services ata.rs | ✅ **阶段 3 收尾**：services `ata.rs` 已是真实 PIO 驱动（0 unsafe，经 `IoPort::new_safe`，`AtaBlockDevice` 适配 + 仅注册块设备 `ata0-3`）；framework `ata.rs`/`ata_block.rs` 已删 | **已完成**（阶段 3 迁移落地，见执行记录） |
 | services storage 整体 | **无 `impl BlockDevice`、无 `impl Driver`、无 init/注册入口**——控制器实现（队列/identify/I/O）与注册路径（_block 适配器）分离，注册全在 framework | 需补齐注册路径 |
 | framework storage_init | x86_64 巨大函数（PCI 扫描 + AHCI/NVMe 创建 + **MSI-X 接入** + MSIX-03 测试钩子 + I-42）；aarch64 已空操作（virtio-blk 迁出） | 退位后 x86_64 需迁出业务 |
 

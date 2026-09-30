@@ -5,7 +5,8 @@
 //!
 //! 描述符结构与状态/命令位掩码是硬件 DMA 格式, 归属 framework TCB 范畴
 //! (任何涉及 DMA 描述符 unsafe 操作的代码都引用此处).
-//! 服务层业务逻辑 (E1000Driver/E1000Io) 仍位于 services 层.
+//! 驱动业务逻辑 (services::driver::net::e1000 的 E1000NetDriver) 与 MMIO 安全访问器
+//! (framework::driver::net::e1000_io 的 E1000Io) 分居 services / framework 两侧.
 
 // ============================================================================
 // 描述符结构体 (硬件格式, repr(C))

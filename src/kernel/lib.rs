@@ -791,10 +791,10 @@ pub extern "C" fn kernel_init() {
 
         // 10. Network (smoltcp + 网卡驱动)
         {
-            // 批次 Z ④: virtio-net 权威迁 services (DECISION-K 注册契约)。
-            // net_init 仅注册探测回调槽 (services→framework 单向), 实际设备
-            // 探测在 qx_net_init → nic_probe_all e1000 失败后经槽位拉取。
-            crate::services::driver::virtio::net_init();
+            // 阶段 3 (驱动双份合并): services 网络驱动权威 (e1000 + virtio-net
+            // 复合探测) 注册探测回调槽 (services→framework 单向), 实际设备
+            // 探测在 qx_net_init → nic_probe_all 经槽位单向拉取。
+            crate::services::driver::net::net_init();
 
             crate::framework::net::init::qx_net_init();
 

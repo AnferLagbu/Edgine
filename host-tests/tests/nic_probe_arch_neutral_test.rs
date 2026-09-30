@@ -55,10 +55,12 @@ fn test_nic_probe_all_no_arch_mutex() {
     }
 
     // 同时验证关键驱动探测路径都在 nic_probe_all 中存在
-    // (批次 Z ④: virtio-net 权威迁 services, 探测经 DECISION-K 注册契约槽位
+    // (批次 Z ④: 网卡权威迁 services, 探测经 DECISION-K 注册契约槽位
     // net_services_driver 单向拉取, framework 不再直接调用驱动探测)
-    assert!(body.contains("e1000_probe"),
-        "nic_probe_all 缺失 e1000 探测调用 (I-53)");
+    // 阶段 3: e1000 与 virtio-net 的探测统一收敛于 services 复合探测,
+    // framework nic_probe_all 不再直接调用 e1000_probe。
+    assert!(!body.contains("e1000_probe"),
+        "nic_probe_all 不应直接调用 e1000_probe (阶段 3 收敛至 services 复合探测)");
     assert!(body.contains("net_services_driver"),
         "nic_probe_all 缺失 services 网络设备注册契约拉取 (批次 Z ④)");
 

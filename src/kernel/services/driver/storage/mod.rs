@@ -10,7 +10,7 @@
 //!
 //! - [nvme]  — `NVMe` 控制器 (Phase 2.1.3), 0 unsafe, 完整驱动逻辑
 //! - [ahci]  — AHCI SATA 控制器 (Phase 2.1.4), 0 unsafe, 完整驱动逻辑
-//! - [ata]   — 传统 ATA PIO 驱动 (Phase 2.1.4), 0 unsafe, 桩模块
+//! - [ata]   — 传统 ATA PIO 驱动 (framekernel 阶段 3 回迁), 0 unsafe, 真实驱动
 //!
 //! ## 架构
 //!
@@ -22,7 +22,7 @@
 //! 评估日期: 2026-06-04
 
 pub mod ahci;
-/// 传统 ATA PIO 驱动桩模块
+/// 传统 ATA PIO 驱动 (framekernel 阶段 3: framework PIO 驱动回迁 services)
 pub mod ata;
 pub mod nvme;
 
@@ -40,6 +40,9 @@ pub static NVME_CONTROLLERS: Mutex<Vec<nvme::NvmeController>> = Mutex::new(Vec::
 
 /// services 层 AHCI 控制器注册表
 pub static AHCI_CONTROLLERS: Mutex<Vec<ahci::AhciController>> = Mutex::new(Vec::new());
+
+/// services 层 ATA 控制器注册表 (framekernel 阶段 3: ATA PIO 驱动回迁)
+pub static ATA_CONTROLLERS: Mutex<Vec<ata::AtaController>> = Mutex::new(Vec::new());
 
 // ============================================================================
 // 存储子系统初始化 (DECISION-H storage 专项 1 号子步: services 注册路径)
@@ -149,12 +152,11 @@ fn nvme_msix03_selftest(ci: usize) {
 ///
 /// 扫描 PCI 发现 AHCI/NVMe 控制器 → services 控制器初始化 → 全局注册表 →
 /// `_block` 适配器注册 Chitin。NVMe 为 MSI-X 中断驱动 (启用/ISR 注册失败
-/// 回退轮询), 附 MSIX-03 受控自测。aarch64 (QEMU virt) 无 PCI AHCI/NVMe,
-/// virtio-blk 已由 services 编排。
+/// 回退轮询), 附 MSIX-03 受控自测。随后探测传统 ATA PIO 通道 (经由
+/// framework `IoPort` safe 代理) 并注册 `ata0-3`。aarch64 (QEMU virt)
+/// 无 PCI AHCI/NVMe/ATA, virtio-blk 已由 services 编排。
 ///
-/// SIMPLIFIED: 错误降级为日志不传播 (char_init 同模式, 逻辑错误降级原则);
-/// ATA 回退路径暂由 framework storage_init 负责, IoPort 重建后迁 services
-/// (登记为 storage 专项后续子步, 见 docs/plan DECISION-H)。
+/// SIMPLIFIED: 错误降级为日志不传播 (char_init 同模式, 逻辑错误降级原则)。
 #[cfg(target_arch = "x86_64")]
 // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
 #[expect(clippy::cast_possible_truncation)]
@@ -185,6 +187,7 @@ pub fn storage_init() {
 
     let mut ahci_found = 0u32;
     let mut nvme_found = 0u32;
+    let mut ata_found = 0u32;
     // 待注册端口/命名空间: (控制器索引, 端口索引) / (控制器索引, 命名空间 ID)
     let mut ahci_ports: Vec<(usize, usize)> = Vec::new();
     let mut nvme_ns: Vec<(usize, u32)> = Vec::new();
@@ -374,10 +377,37 @@ pub fn storage_init() {
         }
     }
 
+    // Step 5: 探测传统 ATA PIO 通道并注册块设备 (framekernel 阶段 3 回迁)
+    //
+    // ATA PIO 经 framework `IoPort` safe 代理访问端口 (services 0 unsafe)。
+    // 无 ATA 控制器 (典型: 仅有 AHCI/NVMe 的机器) 时探测落空, 静默跳过。
+    if let Some(mut controller) = ata::AtaController::new() {
+        if controller.init() {
+            ata_found = controller.detected_device_count() as u32;
+            // 先入册 (AtaBlockDevice 经注册表查找控制器), 再注册块设备
+            ATA_CONTROLLERS.lock().push(controller);
+            for drive in 0..ata::MAX_ATA_DEVICES as u8 {
+                if let Some(dev) = ata::AtaBlockDevice::new(drive) {
+                    let sectors = dev.blk_total_sectors();
+                    let dev_name = alloc::format!("ata{drive}");
+                    let name_leaked: &'static str = dev_name.leak();
+                    register_block_device(name_leaked, dev, None);
+                    slog_info!(
+                        Driver,
+                        "ATA: drive={} registered, {} sectors",
+                        drive,
+                        sectors
+                    );
+                }
+            }
+        }
+    }
+
     slog_info!(
         Driver,
-        "storage (services): {} AHCI, {} NVMe initialized (NVMe MSI-X if available)",
+        "storage (services): {} AHCI, {} NVMe, {} ATA initialized (NVMe MSI-X if available)",
         ahci_found,
-        nvme_found
+        nvme_found,
+        ata_found
     );
 }
