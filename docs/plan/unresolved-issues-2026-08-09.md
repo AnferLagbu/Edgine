@@ -25,7 +25,7 @@
 
 | 类别 | 数量 | 严重度分布 | 状态 |
 |---|---|---|---|
-| 运行时已知问题 | 3 | P0×1 + P1×2 | ❌ 未修复 |
+| 运行时已知问题 | 3 | P0×1 + P1×2 | 🔄 RT-001 已修复 (`[X]`); RT-002 压测不可复现 (保留); RT-003 交付物就绪 (真机执行待硬件) |
 | 源码未实现 (TODO) | ~43 | P1×16 + P2×22 + P3×5 | ❌ 未修复 |
 | 跨文档矛盾 (code-review) | 8 | P1×3 + P2×3 + P3×2 | 🔄 已修复 (2026-09-26 复验; 归档快照冻结) |
 | 远期工程 | 6 | 远期 | ❌ 未启动 |
@@ -167,17 +167,18 @@
 | 字段 | 数据 |
 |---|---|
 | **严重度** | P1 (阻塞 x86_64 进入 Ring 3) |
-| **状态** | ❌ 未修复 (`[]`) |
+| **状态** | 🔄 已修复 (`[X]`) |
 | **类型** | 运行时挂起 (网络栈初始化) |
 | **现象** | QEMU 默认 e1000 NIC 触发 smoltcp 栈初始化挂起 |
-| **触发条件** | x86_64 启动时不加 `-nic none` |
+| **触发条件** | 此前 x86_64 启动时不加 `-nic none` |
 | **影响** | x86_64 仅能到 Network Subsystem Init, **无法进入 Ring 3** |
-| **当前应对** | 启动脚本加 `-nic none` 隔离测试 |
-| **调试入口** | `src/kernel/framework/driver/net/e1000.rs` |
+| **当前应对** | 启动脚本恢复 QEMU 默认 e1000; 断言驱动初始化里程碑 (`e1000: 初始化完成`) + 完整进 Ring 3 |
+| **调试入口** | [e1000_io.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/driver/net/e1000_io.rs) (寄存器位域常量), [e1000.rs](file:///home/anfer/Code/QueenX/src/kernel/services/driver/net/e1000.rs) (驱动实装) |
 | **来源** | `scripts/qemu_boot_test.sh` 注释: "x86_64 走到 e1000 NIC 检测后因 smoltcp 初始化挂起, 已记录. e1000 调试见 driver/net/e1000.rs" |
 | **关联** | ISSUE-SRC-002 (skb 投递到 smoltcp 未实现) |
 | **建议方案** | (1) 隔离 NIC 后单独调试 smoltcp 初始化路径; (2) 检查 e1000 probe 与 smoltcp iface 创建的 race condition; (3) 逐步加 NIC 看具体哪个 packet 触发挂起 |
 | **工作量** | 估计 1-2 周 |
+| **【本轮结案】** | 根因为 [e1000_io.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/driver/net/e1000_io.rs) 三处寄存器位域常量写错: `E1000_CTRL_RST` 误用 bit31 (该位实为 `E1000_CTRL_PHY_RST` PHY 复位, 82540EM 不因它触发全局复位 -> 复位轮询超时) -> 修为 bit26 (`0x0400_0000`, Global Reset); `E1000_CTRL_FRCDPX` 误用 bit14 -> 修为 bit12 (Force Duplex); `E1000_RCTL_BSIZE_2048` 误用 bit25 (该位实为 `RCTL_BSEX` 缓冲区尺寸扩展位, 非尺寸编码) -> 修为 `0x0` (BSEX=0, BSIZE=00b -> 2048B). 修复后 [qemu_boot_test.sh](file:///home/anfer/Code/QueenX/scripts/qemu_boot_test.sh) 恢复 QEMU 默认 e1000 并新增 `e1000: 初始化完成` 回归断言; 静态契约回归用例 [driver_e1000_ctrl_bits_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/driver_e1000_ctrl_bits_test.rs) 固化上述三处位域值, 防止重现. 本轮 §2.3 六门槛复验: x86_64 侧 `FAIL_OK=0 ./scripts/qemu_boot_test.sh all` 通过 (VFS ready / `e1000: 初始化完成` / Entering Ring 3 / KPTI). |
 
 ### ISSUE-RT-002: aarch64 GICv3 挂起 ⚠️ **用户当前调试**
 
@@ -192,6 +193,7 @@
 | **源码位置** | `src/kernel/framework/arch/aarch64/gic.rs` (GICv3 初始化), `src/kernel/framework/arch/aarch64/barrier/mod.rs` (SGI 7 使能) |
 | **用户当前活动** | 用户 IDE 打开 `.gdb_debug_gic` 文件表明**正在 GDB 调试 GICv3 挂起** |
 | **【本轮复验订正】** | 现象与源码位置仍成立；但 `.gdb_debug_gic` 文件**当前不存在**于工作区（glob 0 命中），"用户 IDE 打开 `.gdb_debug_gic`"的活动证据已失效——「用户当前调试」应以用户实际状态为准，本台账不据过时证据断言 |
+| **【本轮压测复现】** | 本轮对 aarch64 启动连续压测 62 次（`./scripts/qemu_boot_test.sh aarch64`, QEMU TCG, 断言到 EL0）, **62/62 全部通过, 无一次触发 GICv3 挂起**. 结合原始现象为"偶发", 判断为 QEMU TCG 时序相关的偶发现象, 当前环境**不可稳定复现**. 挂起条目**不闭合**, 保留待 aarch64 SMP / 真机 / 更多时序场景复验. |
 | **建议方案** | (1) GDB `break gic_init` 单步跟踪; (2) 检查 GICR_SGI_BASE 寄存器访问; (3) 检查 SGI 7 触发时 Redistributor 状态 |
 | **工作量** | 估计 3-5 天 |
 
@@ -200,13 +202,14 @@
 | 字段 | 数据 |
 |---|---|
 | **严重度** | P1 |
-| **状态** | ❌ 未运行 (`[]`) |
+| **状态** | 🟡 交付物就绪 (`[X]` 工具/文档侧); 真机执行待硬件 |
 | **类型** | 运行时验证缺失 |
 | **现象** | 仅 QEMU 模拟启动, 真实硬件未验证 |
 | **影响** | 可能有 QEMU 兼容但真实硬件失败的问题 |
 | **来源** | stage-engineering-master.md:301 `[ ] QEMU 实际验证` |
 | **建议方案** | (1) 选定 x86_64 + aarch64 各一款硬件 (如 Intel NUC + Raspberry Pi); (2) 制作可启动介质; (3) 串口观察启动日志 |
 | **工作量** | 估计 2-4 周 (含硬件采购) |
+| **【本轮交付（三件套）】** | 本轮交付真机验证的**工具 + 指南 + 登记**三件套, 使真机验证可在拿到硬件后一次完成: ① 介质制作脚本 [make_boot_medium.sh](file:///home/anfer/Code/QueenX/scripts/make_boot_medium.sh)（统一入口, `x86_64` 产 GRUB2 混合 ISO / `aarch64` 产整盘 FAT32 + U-Boot distro boot 介质, 含写盘四重护栏与 fail-closed）; ② 真机验证权威指南 [guide-hardware-boot.md](file:///home/anfer/Code/QueenX/docs/explain/guide-hardware-boot.md)（介质制作 / 串口 checklist / aarch64 SoC 契约与边界 / 故障排查）; ③ 本台账登记. 真机**执行**本身依赖用户提供硬件, 故状态为"交付物就绪, 执行待硬件". |
 
 ---
 

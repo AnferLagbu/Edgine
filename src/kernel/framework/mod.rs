@@ -77,6 +77,8 @@ pub mod credo;
 pub mod debug;
 pub mod dma;
 pub mod driver;
+/// 扁平设备树 (FDT/DTB) 最小解析器 — aarch64 SoC 移植运行时硬件探测
+pub mod dtb;
 pub mod fs;
 pub mod idt;
 pub mod iobuf;

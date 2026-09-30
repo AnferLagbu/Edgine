@@ -112,7 +112,7 @@ sync_make_state() {
     fi
 
     if [ "$need_rebuild" = "1" ]; then
-        rm -f $asm_objs build/kernel.bin build/kernel.flat build/kernel.map build/stage1.bin
+        rm -f $asm_objs build/kernel.bin build/kernel.flat build/kernel-aarch64.img build/kernel.map build/stage1.bin
         rm -f build/user/*.bin 2>/dev/null || true
         if ! make ARCH="$target_arch" all 2>&1 | tail -3; then
             err "[$target_arch] make ARCH=$target_arch 失败"
@@ -125,18 +125,19 @@ sync_make_state() {
 }
 
 # ---------------------------------------------------------------------------
-# kernel.flat 陈旧检测 (B08-16 / ISSUE-TOOL-002)
+# 内核镜像陈旧检测 (B08-16 / ISSUE-TOOL-002)
 # Makefile 依赖已保证 make 层面自动重建, 此处为 QEMU 脚本独立防线:
 # 源码 (内核 + 用户态) 比镜像新时提示先 make, 避免跑陈旧镜像误判.
+# 参数: $1=镜像路径 (默认 build/kernel.flat, aarch64 传 build/kernel-aarch64.img)
 # 返回: 0 = 镜像新鲜或缺失, 1 = 镜像可能过期
 # ---------------------------------------------------------------------------
 check_kernel_fresh() {
-    local image="build/kernel.flat"
+    local image="${1:-build/kernel.flat}"
     [ -f "$image" ] || return 0
     local newest
     newest=$(find src/rust/src src/kernel src/user -name '*.rs' -newer "$image" 2>/dev/null | head -1)
     if [ -n "$newest" ]; then
-        warn "kernel.flat 可能过期 (源码 $newest 比镜像新), 建议先运行 make"
+        warn "$image 可能过期 (源码 $newest 比镜像新), 建议先运行 make"
         return 1
     fi
     return 0
@@ -165,16 +166,24 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
         RESULT=1
     else
         X64_LOG="$LOG_DIR/qemu_boot_x86_64.log"
+        # ISSUE-RT-001: 此前用 -nic none 隔离测试, 因 QEMU 默认 e1000 NIC 触发
+        # smoltcp 栈初始化挂起. 根因 (e1000_io.rs CTRL.RST 误用 bit31, 实为
+        # PHY_RST) 修复后, 恢复默认 e1000 并断言驱动初始化里程碑 + 完整进 Ring 3.
         if boot_and_check "x86_64" "$X64_LOG" "$TIMEOUT_QEMU" "VFS ready" \
-            -m 512 -nic none -kernel build/kernel.flat; then
+            -m 512 -kernel build/kernel.flat; then
+            # e1000 驱动初始化里程碑 (ISSUE-RT-001 回归断言)
+            if grep -q "e1000: 初始化完成" "$X64_LOG"; then
+                ok "[x86_64] e1000 驱动初始化完成 (ISSUE-RT-001 回归通过)"
+            else
+                warn "[x86_64] 未观察到 e1000 初始化完成 (默认 NIC 未挂载或驱动回归)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
             # v2.2: x86_64 无网络启动已修复 VGA 越界 bug, 完整进入 Ring 3
-            # 注: QEMU 默认 e1000 NIC 仍触发 smoltcp 栈初始化挂起 (v2.3 待修复),
-            #     故用 -nic none 隔离测试, e1000 调试见 driver/net/e1000.rs
             if grep -q "Entering Ring 3" "$X64_LOG"; then
                 ok "[x86_64] 完整启动成功! 进入 Ring 3 启动 init 进程 (v2.2 修复 VGA 越界)"
                 PASSED=$((PASSED+1))
             elif grep -q "Network Subsystem Init" "$X64_LOG"; then
-                warn "[x86_64] 启动到 Network Subsystem Init 但未到 Ring 3 (e1000 挂起未隔离, 见上)"
+                warn "[x86_64] 启动到 Network Subsystem Init 但未到 Ring 3"
                 PASSED=$((PASSED+1))
             else
                 warn "[x86_64] 未到达 Network Subsystem Init"
@@ -204,18 +213,20 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
     # (防止 x86_64 测试残留导致 EM 183 反向误用)
     sync_make_state "aarch64" || RESULT=1
 
-    check_kernel_fresh || true
+    check_kernel_fresh build/kernel-aarch64.img || true
 
-    if [ ! -f build/kernel.flat ]; then
-        err "aarch64 kernel.flat 缺失, 跳过测试"
+    if [ ! -f build/kernel-aarch64.img ]; then
+        err "aarch64 kernel-aarch64.img 缺失, 跳过测试"
         RESULT=1
     else
         A64_LOG="$LOG_DIR/qemu_boot_aarch64.log"
         # 批次 Z ④: virt 机型挂 virtio-net 网卡 (services 权威探测链路, 对齐
         # Y 批次挂盘冒烟配置). -netdev user 无 DHCP 服务, smoltcp 初始化
         # 偶发 "TX 超时" WARN 属预期, 不影响 boot 里程碑.
+        # 镜像为 arm64 Image (内嵌 Image 头, 见 Makefile/link/aarch64.ld),
+        # QEMU 经 Image 头 text_offset 定位入口, 与 U-Boot booti / 真机一致.
         if boot_and_check "aarch64" "$A64_LOG" "$TIMEOUT_QEMU" "VFS ready" \
-            -M virt,gic-version=3 -cpu max -m 512 -kernel build/kernel.flat \
+            -M virt,gic-version=3 -cpu max -m 512 -kernel build/kernel-aarch64.img \
             -device virtio-net-device,netdev=n0 \
             -netdev user,id=n0; then
             # 批次 Z ④: 验证 services virtio-net 经 NetOps 安全桥注册链路

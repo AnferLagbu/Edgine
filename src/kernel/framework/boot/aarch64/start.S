@@ -1,8 +1,8 @@
 /*
  * AArch64 启动入口 (汇编)
  *
- * QEMU virt (cortex-a72):
- *   入口 EL3 (0x40080000) → EL2 → EL1
+ * QEMU virt (cortex-a72) / 真机:
+ *   arm64 Image 头 (0x40080000, 64B) → _start (0x40080040): 入口 EL3 → EL2 → EL1
  *
  * 职责:
  *   1. 检测当前异常级别
@@ -11,22 +11,51 @@
  *   4. EL1: 建立引导页表 + 开启 MMU + 切至高半区内核 VMA, 跳转 Rust entry()
  */
 
+/*
+ * arm64 Linux Image 头 (64 字节, 位于镜像文件偏移 0 == 0x40080000)
+ *
+ * QEMU -kernel 与 U-Boot booti 以文件偏移 56 处的 "ARM\x64" 幻数识别本格式,
+ * 并按 text_offset 定位装载地址; U-Boot 另据 image_size 计算搬移长度. 字段
+ * 定义见 Linux Documentation/arm64/booting.rst. code0 为 `b _start`, 故真实
+ * 入口 `_start` 位于 0x40080040 (由 link/aarch64.ld 显式设定).
+ */
+.section .image_header, "a"
+.balign 8
+.global _image_header
+_image_header:
+    b     _start                // code0: 跳至真实入口 (0x40080040)
+    .word 0                     // code1: 保留
+    .quad 0x80000               // text_offset: 相对 2MiB 对齐基址的装载偏移
+    .quad _image_size           // image_size: 链接期由 aarch64.ld 解析
+    .quad 0                     // flags: Bit0=端序(0=LE), Bit1-2=页大小(0=4KiB)
+    .quad 0                     // res2: 保留
+    .quad 0                     // res3: 保留
+    .quad 0                     // res4: 保留
+    .word 0x644d5241            // magic: "ARM\x64" (小端存储)
+    .word 0                     // res5: 保留
+
 .section .text.boot
 .global _start
 _start:
+    // 保存 x0 (引导程序传入的设备树物理地址). arm64 引导约定: U-Boot booti /
+    // QEMU -kernel 均经 x0 传递 DTB 指针. 必须在任何覆盖 x0 的指令之前完成;
+    // `_fdt_addr` 位于 .bootbss (VMA==LMA==PA), MMU 未启用时经 PC 相对寻址写入.
+    adrp x1, _fdt_addr
+    add  x1, x1, #:lo12:_fdt_addr
+    str  x0, [x1]
 
 // ============================================================
-// 1. 确定当前异常级别
+// 1. 确定当前异常级别 (以 x9 暂存, 不破坏 x0 已保存的 DTB 语义)
 // ============================================================
-    mrs  x0, CurrentEL
-    lsr  x0, x0, #2        // EL = (CurrentEL >> 2) & 0x3
-    and  x0, x0, #0x3
+    mrs  x9, CurrentEL
+    lsr  x9, x9, #2        // EL = (CurrentEL >> 2) & 0x3
+    and  x9, x9, #0x3
 
-    cmp  x0, #3
+    cmp  x9, #3
     beq  el3_entry
-    cmp  x0, #2
+    cmp  x9, #2
     beq  el2_entry
-    cmp  x0, #1
+    cmp  x9, #1
     beq  el1_entry
 
     // 未知 EL: 进入死循环
@@ -117,11 +146,8 @@ el1_entry:
     add  x0, x0, #:lo12:_boot_stack_top
     mov  sp, x0
 
-    // 4.2 保存 x0 (可能包含 fdt 指针)
-    // QEMU 启动时 x0 可能包含设备树地址，暂存
-    adrp x1, _fdt_addr
-    add  x1, x1, #:lo12:_fdt_addr
-    str  x0, [x1]
+    // 4.2 (FDT 指针捕获已上移至 _start 首条指令: 此处 x0 已被 _boot_stack_top
+    //      覆盖, 不可再作为 DTB 来源)
 
     // 4.3 建立引导页表: L0 → L1 → L2, 覆盖低 2GB.
     //   - VA 0x0000_0000_0000_0000-0x0000_0000_4000_0000 → 低 1GB Device (2MB 粒度)
@@ -202,7 +228,7 @@ el1_entry:
 
     // 4.8 切至高半区内核 VMA. 内核区链接于高半区 (VMA = _kernel_base + LMA),
     //   故 entry 的符号地址远超 `bl` 的 ±128MB 范围, 必须经寄存器间接跳转.
-    //   x0 仍持有 fdt 指针, 故以 x9 承载目标地址.
+    //   (DTB 指针已由 _start 存入 _fdt_addr, 此处与 x0 无关.)
     ldr  x9, =entry
     br   x9
 

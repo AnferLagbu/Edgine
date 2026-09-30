@@ -24,13 +24,18 @@ use crate::framework::mm::PhysAddr;
 // framework 外部.
 // 中断原因 + RX tail 等外部确实需要的常量保留 `pub`.
 
-// 控制寄存器
+// 控制寄存器 (位定义对齐 Intel 8254x 数据手册 / e1000_defines.h)
 pub(crate) const E1000_CTRL: u32 = 0x0000;
-pub(crate) const E1000_CTRL_RST: u32 = 1 << 31;
+/// 全局复位 (Global reset, bit26).
+///
+/// ISSUE-RT-001: 早期误用 bit31 (0x8000_0000). 该位实为 `E1000_CTRL_PHY_RST`
+/// (PHY 复位), 82540EM 不会因它触发全局复位, 导致复位轮询超时 -> 初始化失败.
+pub(crate) const E1000_CTRL_RST: u32 = 1 << 26;
 pub(crate) const E1000_CTRL_SLU: u32 = 1 << 6;
 pub(crate) const E1000_CTRL_ASDE: u32 = 1 << 5;
 pub(crate) const E1000_CTRL_SPEED_1000: u32 = 2 << 8;
-pub(crate) const E1000_CTRL_FRCDPX: u32 = 1 << 14;
+/// 强制双工 (Force Duplex, bit12). 早期误用 bit14.
+pub(crate) const E1000_CTRL_FRCDPX: u32 = 1 << 12;
 pub(crate) const E1000_CTRL_FD: u32 = 1 << 0;
 pub(crate) const E1000_CTRL_FRCSPD: u32 = 1 << 11;
 
@@ -54,7 +59,12 @@ pub(crate) const E1000_RCTL_UPE: u32 = 1 << 3;
 pub(crate) const E1000_RCTL_MPE: u32 = 1 << 4;
 pub(crate) const E1000_RCTL_BAM: u32 = 1 << 15;
 pub(crate) const E1000_RCTL_SECRC: u32 = 1 << 26;
-pub(crate) const E1000_RCTL_BSIZE_2048: u32 = 1 << 25;
+/// RX 缓冲区尺寸字段 (RCTL.BSIZE, bits[17:16]): BSEX=0 时 00b 即 2048 字节.
+///
+/// 注意: bit25 是 `RCTL_BSEX` (缓冲区尺寸扩展), 并非尺寸编码. 早期误用
+/// `1 << 25` 会置位 BSEX 并把 BSIZE 留在保留组合 (BSEX=1, 00b), 与已分配的
+/// 2048 字节 RX 缓冲区不一致.
+pub(crate) const E1000_RCTL_BSIZE_2048: u32 = 0x0;
 
 // 发送控制
 pub(crate) const E1000_TCTL: u32 = 0x0400;

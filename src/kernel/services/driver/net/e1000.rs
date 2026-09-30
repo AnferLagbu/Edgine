@@ -96,12 +96,16 @@ mod e1000_impl {
 
         /// 复位网卡并等待链路就绪.
         ///
-        /// 写 CTRL.RST 触发复位, 轮询复位完成; 随后配置自动协商 / 速度 / 双工,
-        /// 再轮询链路状态. 链路未就绪不视为致命错误 (QEMU 等环境可能不上报).
-        fn reset_and_detect_link(&self) -> Result<(), DriverError> {
+        /// 写 CTRL.RST 触发全局复位, 轮询复位完成; 随后配置自动协商 / 速度 / 双工,
+        /// 再轮询链路状态. 复位未自清与链路未就绪均不视为致命错误 (QEMU 等环境
+        /// 可能不上报), 记警告后继续初始化.
+        fn reset_and_detect_link(&self) {
             let ctrl = self.io.ctrl();
             self.io.set_ctrl(ctrl | E1000_CTRL_RST);
 
+            // 全局复位位 (CTRL.RST) 通常自清; 有界轮询等待其归零. 若超时未清
+            // (部分实现需软件显式清位), 记警告并继续 (对齐 Linux e1000_reset_hw
+            // 的容错处理); 下方写 CTRL 时已用 `& !E1000_CTRL_RST` 主动清除该位.
             let mut reset_wait = 0u32;
             while reset_wait < E1000_TIMEOUT {
                 if self.io.ctrl() & E1000_CTRL_RST == 0 {
@@ -111,7 +115,7 @@ mod e1000_impl {
                 core::hint::spin_loop();
             }
             if self.io.ctrl() & E1000_CTRL_RST != 0 {
-                return Err(DriverError::HardwareError);
+                crate::slog_warn!(Driver, "e1000: CTRL.RST 未在超时内自清, 主动清位并继续");
             }
 
             // 复位后先屏蔽全部中断, 避免复位残留事件误触发.
@@ -131,13 +135,12 @@ mod e1000_impl {
                 if self.io.link_is_up() {
                     let (speed, duplex) = self.io.link_status();
                     crate::slog_info!(Driver, "e1000: 链路就绪 speed={} duplex={}", speed, duplex);
-                    return Ok(());
+                    return;
                 }
                 link_wait += 1;
                 core::hint::spin_loop();
             }
             crate::slog_warn!(Driver, "e1000: 链路未就绪, 继续初始化");
-            Ok(())
         }
 
         /// 分配并配置收发描述符环 (写入环基址 / 长度 / 指针寄存器).
@@ -187,7 +190,7 @@ mod e1000_impl {
 
         /// 完整初始化序列: 复位 → 描述符环 → 使能.
         fn init(&mut self) -> Result<(), DriverError> {
-            self.reset_and_detect_link()?;
+            self.reset_and_detect_link();
             self.setup_descriptor_rings()?;
             self.complete_init();
             Ok(())

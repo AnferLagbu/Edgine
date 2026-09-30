@@ -6,17 +6,30 @@
 
 use core::ptr::{read_volatile, write_volatile};
 
-/// PL011 寄存器基地址 (QEMU virt)
+/// PL011 寄存器基地址
 ///
-/// 启动阶段使用物理地址 0x0900_0000 (identity mapping),
-/// 用户态初始化后切换为 TTBR1 高半区地址 (0xFFFF_0000_0900_0000).
-/// 高半区地址确保在 TTBR0_EL1 切换到用户页表后仍可访问。
+/// 初值为 QEMU virt 的物理地址 0x0900_0000 (identity mapping);
+/// 引导期若从设备树探测到其他基址, 由 [`set_base`] 覆盖.
+/// 用户态初始化前经 [`switch_to_high_half`] 加 TTBR1 高半区别名
+/// (0xFFFF_0000_0900_0000), 确保在 TTBR0_EL1 切换到用户页表后仍可访问。
 pub static PL011_BASE: core::sync::atomic::AtomicU64 =
     core::sync::atomic::AtomicU64::new(0x0900_0000);
 
+/// 以物理地址设置 PL011 基址 (引导期由设备树探测结果调用)
+pub fn set_base(pa: u64) {
+    PL011_BASE.store(pa, core::sync::atomic::Ordering::Release);
+}
+
 /// 切换到 TTBR1 高半区地址 (在用户态初始化前调用)
+///
+/// 对当前基址取高半区别名 (VA = KERNEL_BASE + PA). 因按位或幂等,
+/// 在每次进入 EL0 前重复调用均安全。
 pub fn switch_to_high_half() {
-    PL011_BASE.store(0xFFFF_0000_0900_0000, core::sync::atomic::Ordering::Release);
+    let current = base();
+    PL011_BASE.store(
+        current | crate::framework::mm::KERNEL_BASE,
+        core::sync::atomic::Ordering::Release,
+    );
 }
 
 #[inline(always)]

@@ -56,7 +56,9 @@ ifeq ($(ARCH),aarch64)
     # AArch64: QEMU virt 机器，无 ISA debug-exit，无 PCI 网络
     QEMU_FLAGS := -M $(QEMU_MACHINE),gic-version=3 -cpu $(QEMU_CPU) -m 512 -no-reboot
     QEMU_NET :=
-    KERNEL_IMAGE := build/kernel.bin
+    # 内核产出统一为 arm64 Image (内嵌 Image 头, 见 link/aarch64.ld):
+    # QEMU -kernel 与 U-Boot booti / 真机引导共用同一制品.
+    KERNEL_IMAGE := build/kernel-aarch64.img
     QEMU_KERNEL_FLAG := -kernel
 else
     QEMU_FLAGS := -m 512 -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04
@@ -107,10 +109,15 @@ DISK_IMAGE = build/antx.img
 .PHONY: all clean run run-net debug log log-net iso run-iso disk run-disk user test test-host test-kernel-host test-unit test-integration test-smoke test-stress \
          test-all test-chaos test-smp test-smp-multicore
 
-all: build/kernel.bin build/kernel.flat
-
-# 同时构建 kernel.flat (qemu 直接使用的 raw 镜像),
+ifeq ($(ARCH),aarch64)
+# aarch64: 内核产出统一为 arm64 Image (build/kernel-aarch64.img), 供 QEMU -kernel
+# 与 U-Boot booti / 真机引导共用; 不再产出无 Image 头语义的 kernel.flat.
+all: build/kernel.bin build/kernel-aarch64.img
+else
+# x86_64: 同时构建 kernel.flat (qemu 直接使用的 raw 镜像),
 # 避免外部脚本在 make 完成后还需要二次 objcopy.
+all: build/kernel.bin build/kernel.flat
+endif
 
 # 跨架构构建时自动清理上架构产物, 避免 boot.o 等被新架构误用。
 # 通过 build/log/.arch 记录上次构建架构 (build/log/ 不被 clean 删除), 不匹配时强制 clean.
@@ -128,7 +135,7 @@ arch-switch-clean:
 	@echo "[make] cross-arch switch: $(PREVIOUS_ARCH) → $(ARCH), removing arch-specific build/ artifacts (preserving build/log/)"
 	@rm -f build/boot.o build/entry.o build/isr.o build/switch.o \
 	       build/arch/x86_64/trampoline.o build/gdt_asm.o \
-	       build/kernel.bin build/kernel.flat build/kernel.map
+	       build/kernel.bin build/kernel.flat build/kernel-aarch64.img build/kernel.map
 	@cd src/kernel && cargo clean >/dev/null 2>&1 || true
 	@cd src/user && cargo clean >/dev/null 2>&1 || true
 	@rm -f build/user/*.bin
@@ -184,6 +191,12 @@ build/kernel.bin: $(KERNEL_OBJS) $(RUST_LIB)
 
 build/kernel.flat: build/kernel.bin
 	$(OBJCOPY) -O binary $< $@
+
+# aarch64: objcopy 出 arm64 Image (内含 .image_header, 见 link/aarch64.ld).
+ifeq ($(ARCH),aarch64)
+build/kernel-aarch64.img: build/kernel.bin
+	$(OBJCOPY) -O binary $< $@
+endif
 
 # AArch64 用户程序: 使用 Cargo 编译 Rust 用户程序
 ifeq ($(ARCH),aarch64)

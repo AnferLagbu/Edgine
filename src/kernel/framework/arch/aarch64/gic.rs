@@ -7,20 +7,37 @@
 //! 本文件 cast 多为寄存器地址偏移 (u32 → u64) 与中断号 (SGI < 16 已知).
 
 use core::ptr::{read_volatile, write_volatile};
+use core::sync::atomic::{AtomicU64, Ordering};
 
 // ============================================================================
-// GICv3 寄存器地址 (QEMU virt)
+// GICv3 寄存器地址 (默认 QEMU virt, 可经设备树覆盖)
 // ============================================================================
 
 /// Distributor 基地址 (每个CPU共享)
 ///
-/// 使用 TTBR1_EL1 高半区地址 (0xFFFF_0000_0000_0000 + PA),
-/// 确保在 TTBR0_EL1 切换到用户页表后仍可访问。
-const GICD_BASE: u64 = 0xFFFF_0000_0800_0000;
+/// 初值为 QEMU virt 的 TTBR1_EL1 高半区别名 (KERNEL_BASE + 0x0800_0000),
+/// 确保在 TTBR0_EL1 切换到用户页表后仍可访问;
+/// 引导期若从设备树探测到其他基址, 由 [`set_bases`] 覆盖为对应高半区别名。
+static GICD_BASE: AtomicU64 = AtomicU64::new(0xFFFF_0000_0800_0000);
 /// Redistributor RD frame 基地址 (每个CPU独立)
-const GICR_BASE: u64 = 0xFFFF_0000_080A_0000;
+static GICR_BASE: AtomicU64 = AtomicU64::new(0xFFFF_0000_080A_0000);
 /// Redistributor SGI frame 基地址 (SGI/PPI registers)
-const GICR_SGI_BASE: u64 = 0xFFFF_0000_080B_0000;
+static GICR_SGI_BASE: AtomicU64 = AtomicU64::new(0xFFFF_0000_080B_0000);
+
+/// Redistributor RD frame 到 SGI frame 的偏移 (ARM GICv3: 相邻 64KiB)
+const GICR_SGI_OFFSET: u64 = 0x1_0000;
+
+/// 以物理地址设置 GICv3 基址 (引导期由设备树探测结果调用)
+///
+/// GIC 始终使用 TTBR1_EL1 高半区别名 (VA = KERNEL_BASE + PA),
+/// 确保在 TTBR0_EL1 切换到用户页表后仍可访问。
+/// SGI frame 由 RD frame 基址推算 (RD + [`GICR_SGI_OFFSET`])。
+pub fn set_bases(dist_pa: u64, redist_pa: u64) {
+    let base = crate::framework::mm::KERNEL_BASE;
+    GICD_BASE.store(base + dist_pa, Ordering::Release);
+    GICR_BASE.store(base + redist_pa, Ordering::Release);
+    GICR_SGI_BASE.store(base + redist_pa + GICR_SGI_OFFSET, Ordering::Release);
+}
 
 /// GICD 寄存器偏移
 const GICD_CTLR: u64 = 0x0000; // Distributor Control
@@ -60,7 +77,7 @@ const TIMER_PPI: u32 = 30; // CNTPNSIRQ
 unsafe fn gicd_read(offset: u64) -> u32 {
     unsafe {
         core::arch::asm!("dsb sy");
-        let val = read_volatile((GICD_BASE + offset) as *const u32);
+        let val = read_volatile((GICD_BASE.load(Ordering::Acquire) + offset) as *const u32);
         core::arch::asm!("dsb sy");
         val
     }
@@ -71,7 +88,7 @@ unsafe fn gicd_read(offset: u64) -> u32 {
 unsafe fn gicd_write(offset: u64, val: u32) {
     unsafe {
         core::arch::asm!("dsb sy");
-        write_volatile((GICD_BASE + offset) as *mut u32, val);
+        write_volatile((GICD_BASE.load(Ordering::Acquire) + offset) as *mut u32, val);
         core::arch::asm!("dsb sy");
     }
 }
@@ -81,7 +98,7 @@ unsafe fn gicd_write(offset: u64, val: u32) {
 unsafe fn gicr_read(offset: u64) -> u32 {
     unsafe {
         core::arch::asm!("dsb sy");
-        let val = read_volatile((GICR_BASE + offset) as *const u32);
+        let val = read_volatile((GICR_BASE.load(Ordering::Acquire) + offset) as *const u32);
         core::arch::asm!("dsb sy");
         val
     }
@@ -92,7 +109,7 @@ unsafe fn gicr_read(offset: u64) -> u32 {
 unsafe fn gicr_write(offset: u64, val: u32) {
     unsafe {
         core::arch::asm!("dsb sy");
-        write_volatile((GICR_BASE + offset) as *mut u32, val);
+        write_volatile((GICR_BASE.load(Ordering::Acquire) + offset) as *mut u32, val);
         core::arch::asm!("dsb sy");
     }
 }
@@ -106,7 +123,7 @@ unsafe fn gicr_write(offset: u64, val: u32) {
 pub unsafe fn gicr_sgi_read(offset: u64) -> u32 {
     unsafe {
         core::arch::asm!("dsb sy");
-        let val = read_volatile((GICR_SGI_BASE + offset) as *const u32);
+        let val = read_volatile((GICR_SGI_BASE.load(Ordering::Acquire) + offset) as *const u32);
         core::arch::asm!("dsb sy");
         val
     }
@@ -121,7 +138,7 @@ pub unsafe fn gicr_sgi_read(offset: u64) -> u32 {
 pub unsafe fn gicr_sgi_write(offset: u64, val: u32) {
     unsafe {
         core::arch::asm!("dsb sy");
-        write_volatile((GICR_SGI_BASE + offset) as *mut u32, val);
+        write_volatile((GICR_SGI_BASE.load(Ordering::Acquire) + offset) as *mut u32, val);
         core::arch::asm!("dsb sy");
     }
 }

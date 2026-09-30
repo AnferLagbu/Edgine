@@ -10,6 +10,15 @@
 //!   7. 跳转 kernel_init()
 
 use crate::framework::arch::uart;
+use crate::framework::dtb;
+
+/// 引导页表 (见 `arch/aarch64/mmu.rs`) 的 Device 映射窗口上界:
+/// Device 区仅覆盖 `[0, 0x4000_0000)`, 越界的设备基址一律拒绝.
+const DEVICE_WINDOW_END: u64 = 0x4000_0000;
+/// 引导页表 DRAM 映射窗口下界 (DRAM: `[0x4000_0000, 0x8000_0000)`).
+const DRAM_WINDOW_BASE: u64 = 0x4000_0000;
+/// 引导页表 DRAM 映射窗口上界.
+const DRAM_WINDOW_END: u64 = 0x8000_0000;
 
 // ============================================================================
 // 启动入口
@@ -44,9 +53,29 @@ pub unsafe extern "C" fn entry() -> ! {
         //    在 MMU 启用前该地址为无效物理地址, 会导致立即崩溃.
         crate::framework::arch::mmu::init();
 
+        // 2.1 从设备树 (DTB) 探测硬件资源并覆盖默认基址
+        //     须在 MMU 之后 (DTB 经高半区别名访问),
+        //     须在 UART 之前 (探测到的 UART 基址须在首次输出前生效).
+        let fdt_info = apply_fdt_overrides();
+
         // 3. 初始化 UART (使用 TTBR1 高半区地址, 依赖 MMU)
         uart::init();
         uart::puts("[BOOT] QueenX starting...");
+
+        // 3.0 输出设备树探测结果 (UART 已可用)
+        if let Some(info) = fdt_info {
+            crate::klog_ffi!(
+                klog_ffi_info,
+                "[BOOT] DTB: mem={:#x}+{:#x} uart={:#x?} gicd={:#x?} gicr={:#x?}",
+                info.memory_base,
+                info.memory_size,
+                info.uart_base,
+                info.gic_dist_base,
+                info.gic_redist_base
+            );
+        } else {
+            uart::puts("[BOOT] DTB unavailable, using built-in QEMU virt defaults");
+        }
 
         // 3.1 验证 canary (UART 已可用, 异常向量表尚未设置, 崩了就是真崩)
         let canary_ok = crate::framework::proc::check_boot_stack_canary();
@@ -77,6 +106,63 @@ pub unsafe extern "C" fn entry() -> ! {
         loop {
             crate::arch!(halt());
         }
+    }
+}
+
+// ============================================================================
+// 设备树 (DTB) 硬件探测
+// ============================================================================
+
+// SAFETY: C ABI 互操作; `fdt_addr_ptr` 由链接脚本 (`link/aarch64.ld`) 定义为
+// `.bootbss` 中 `_fdt_addr` 的高半区别名 (VA = KERNEL_BASE + PA),
+// 其内容为 `start.S` 保存的设备树物理地址.
+unsafe extern "C" {
+    static fdt_addr_ptr: u64;
+}
+
+/// 从引导程序传入的设备树探测并覆盖硬件基址
+///
+/// 读取 `start.S` 保存在 `.bootbss` 中的 DTB 物理地址, 经 TTBR1 高半区别名
+/// 解析出内存 / UART / GICv3 基址, 覆盖各子系统的默认 (QEMU virt) 基址.
+/// 任一环节不满足 (无 DTB / 地址越界 / 解析失败) 均返回 `None`, 内核继续沿用
+/// 内置默认值, 保证 QEMU virt 零回归.
+///
+/// # Safety
+///
+/// 调用前须完成 `mmu::init()`, 确保 `KERNEL_BASE + dtb_phys` 落在已映射的 DRAM 窗口.
+unsafe fn apply_fdt_overrides() -> Option<dtb::DtbInfo> {
+    unsafe {
+        // SAFETY: `fdt_addr_ptr` 内容为 start.S 保存的设备树物理地址;
+        // boot 阶段单核, volatile 读无数据竞争.
+        let dtb_phys = core::ptr::read_volatile(&raw const fdt_addr_ptr);
+        if !(DRAM_WINDOW_BASE..DRAM_WINDOW_END).contains(&dtb_phys) {
+            return None;
+        }
+        let dtb_mapped = crate::framework::mm::KERNEL_BASE + dtb_phys;
+
+        // SAFETY: `dtb_mapped` 位于已映射的 DRAM 窗口; 头部前缀只需前 8 字节
+        // (幻数 4 字节 + totalsize 4 字节).
+        let total =
+            dtb::decode_header_prefix(core::slice::from_raw_parts(dtb_mapped as *const u8, 8))?;
+        // 整棵树须完整落在 DRAM 窗口内.
+        if dtb_phys.checked_add(total as u64)? > DRAM_WINDOW_END {
+            return None;
+        }
+        // SAFETY: `total` 经 `decode_header_prefix` 校验 (头部长度 ≤ total ≤ 1 MiB),
+        // 且 `[dtb_mapped, dtb_mapped + total)` 已确认落在已映射的 DRAM 窗口内.
+        let blob = core::slice::from_raw_parts(dtb_mapped as *const u8, total);
+        let info = dtb::parse(blob)?;
+
+        // Device 窗口仅覆盖 [0, 0x4000_0000); 越界基址一律忽略, 沿用默认值.
+        if let Some(pa) = info.uart_base.filter(|pa| *pa < DEVICE_WINDOW_END) {
+            uart::set_base(pa);
+        }
+        let dist = info.gic_dist_base.filter(|pa| *pa < DEVICE_WINDOW_END);
+        let redist = info.gic_redist_base.filter(|pa| *pa < DEVICE_WINDOW_END);
+        if let (Some(dist), Some(redist)) = (dist, redist) {
+            crate::framework::arch::gic::set_bases(dist, redist);
+        }
+        Some(info)
     }
 }
 
