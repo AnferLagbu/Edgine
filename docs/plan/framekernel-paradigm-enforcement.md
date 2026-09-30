@@ -44,12 +44,12 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 描述：达成 Asterinas 范式对齐。
 方案：
-1. [ ] TCB 占比 < 30%（当前 60.1%，framework 123K vs services 71K LoC）
+1. [ ] TCB 占比 < 30%（阶段 6 实测 56.7%，未达标；framework 110,637 vs services 79,821 LoC raw，smoltcp 排除，见 `docs/report/framekernel-paradigm-validation.md`）
 2. [X] framework→services 反向依赖 = 0（生产口径 = framework 生产代码引用 `crate::services`；经 `audit_reverse_deps.py` 核验 0 文件/0 行，原 136 处/78 文件已全部下沉/反转/收敛/按 §7.3 豁免）
-3. [ ] 功能层 services 权威（driver / fs 核心 / net 策略 / proc 策略 / syscall 业务）
-4. [ ] framework 仅机制/契约/安全代理（保留 200 文件，见 §6.6）
-5. [ ] services 保持 0 unsafe（F1 不回归）
-6. [ ] §2.3 五条验证门槛（双架构 0w0e / clippy 0 / 核心审计 / host-tests / QEMU）
+3. [X] 功能层 services 权威（driver / fs 核心 / net 策略 / proc 策略 / syscall 业务；阶段 6 核验通过，见 `docs/report/framekernel-paradigm-validation.md`）
+4. [ ] framework 仅机制/契约/安全代理（阶段 6 实测 framework `.rs` 300 个，未收敛至 §6.6 规划的 200；见 §6.6）
+5. [X] services 保持 0 unsafe（F1 不回归；阶段 6 核验 0，真实 unsafe 仅 vendored smoltcp 3rd-party 锁定子树）
+6. [X] §2.3 五条验证门槛（双架构 0w0e / clippy 0 / 核心审计 / host-tests / QEMU；阶段 6 全绿）
 
 ## 4. 治理原则
 
@@ -321,7 +321,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - **4b 实现下沉**：`framework/fs/vfs` 实现整体迁 `services/fs`（types/dcache/vfs/open_file_table + handle/mount/path/flock/inotify + ramfs/devfs/initramfs/nestfs）；services 于 `fs::init` 注册 `VfsOps` 实现替换 Fallback；framework 侧仅留 2 契约（`VfsOps` + `vfs_poll_trait`）+ POD `VfsFileType` + nestfs unsafe 机制适配层。同时 `framework/credo/storage.rs` 连锁（登记项 2-F）整体下沉 `services/credo/persist`。[X]（完成：无壳单批做尽，63 处 `#[unsafe(no_mangle)] vfs_*` 壳删除；§2.3 六门槛全绿，见 §11 DECISION-W 4b 实施记录）
   - **4c 边界收敛**：ramfs/devfs/initramfs 等 framework 内 fs 消费者路径重定向 + §6.6 fs 项收窄（6→2 契约）收口 + 全量验证。[X]（完成：陈旧 doc 注释路径改写 + fs 域内核测试载体归属收敛，见 §11 阶段 4c 实施记录）
 - 阶段 5：**壳删除 82 + 直接 use trait 化 20 + 保留文件 43 处收敛**（§7.5，ipc 24 第一优先）。[X]（完成：framework 域生产反向依赖归零，经 DECISION-J→K 全序列第 1~27 批实施；见 §11「阶段 5 实施记录」）
-- 阶段 6：**全量验证**（§3 验收 + §9 门槛）。[]
+- 阶段 6：**全量验证**（§3 验收 + §9 门槛）。[X] 已执行——§9 七门槛 6 项达标（项 7 TCB 未达）+ §3 六项 4 项达标（项 1 TCB / 项 4 framework 文件数未达，见 §3）；本轮修复阶段 3 引入的 `scripts/qemu_boot_test.sh` 陈旧 grep 串回归。验证报告见 `docs/report/framekernel-paradigm-validation.md`。
 
 ### §7 DECISION-J 批次进度（2026-09-12 截止第八批）
 
@@ -1451,3 +1451,15 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 验证：**§2.3 六门槛全绿**——双架构 0w0e（`./ci/build.sh all` Passed 5 / Failed 0：x86_64 + aarch64 构建、host-tests、forbidden patterns、x86_64 链接）✅ / clippy pedantic 三维（lib + kernel_test + host-test，`-D warnings`）✅ / 核心审计（`./ci/audit.sh quick`，含 0.5j 三内存安全脚本、6 不变式、F1-F9、TD-22）✅ / host-tests ✅ / kernel-host 947 passed / 0 failed ✅ / QEMU x86_64 完整启动（`VFS ready` + Ring 3 + KPTI）✅。
 
 状态：[X]
+
+### 阶段 6 验证记录（全量验证 + 阶段 3 回归修复，实施：AI）
+
+阶段 6 按 §3 验收六项 + §9 门槛七项全量核验，产出验证报告 `docs/report/framekernel-paradigm-validation.md`（自由描述风格，冻结当时事实）。
+
+- **§9 七门槛**：达标 6 项——双架构 0w0e（`./ci/build.sh all` Passed 5 / Failed 0）；clippy pedantic 三维（`-D warnings`）0；核心审计全过；host-tests 全过 + `make test-kernel-host` **941 passed / 0 failed**；QEMU（`./scripts/qemu_boot_test.sh x86_64` 1/1 + `ci/audit.sh full` 7/7 双架构 2/2）；生产反向依赖 0 文件/0 行。未达标 1 项：TCB 占比 56.7% > 30%（`audit_tcb_ratio.py` Status EXCEEDED）。
+- **§3 验收六项**：达标 4 项（项 2 反向依赖 = 0 / 项 3 services 权威 / 项 5 services 0 unsafe / 项 6 §2.3 门槛）；未达标 2 项（项 1 TCB < 30%、项 4 framework `.rs` 300 个 vs §6.6 规划 200）。
+- **本轮修复（阶段 3 直接引入，§12.5 必修）**：`scripts/qemu_boot_test.sh` aarch64 分支批次 Z ④ 校验 grep 串 `"virtio-net: probed successfully (services bridge)"` 陈旧——阶段 3 收尾提交 `36b5de5d` 已将 framework 侧探测日志串改名为 `"nic: probed successfully (services bridge)"`（`framework/net/init/probe.rs:42`），致 `FAIL_OK=0` 下 `RESULT=1`、`ci/audit.sh full` `7/7` 误报"执行异常"。修复：脚本 grep 串对齐实际日志并补中文注释。复验 `ci/audit.sh full` `7/7` 恢复输出 "QEMU 双架构启动测试: 2/2 通过"。
+- **环境性非阻断项**：`4/6` Lockbud 未安装（warn）；`6/6` 模块级 SAFETY 不变式文件数 2 < 5（warn）；`audit_deadlock_matrix.py` 1 项 HIGH `framework/arch/x86_64/smp_init.rs:196 AP_STARTUP_LOCK`（既有项，阶段 0 记录已列）。
+- **门槛顺序敏感性登记**：`ci/audit.sh` 的 FP-06 读 `build/kernel.bin` 需 aarch64 链接产物，`1/6` 的 x86_64 维需 `build/stage1.bin` 存在；二者并存需 `./ci/build.sh aarch64` 后补 `make ARCH=x86_64 build/stage1.bin`（仅汇编引导码，不触碰 `kernel.bin`）。
+
+状态：[X]（验证执行完成；§3 项 1 / 项 4 未达标，后续收敛待裁决）

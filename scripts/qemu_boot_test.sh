@@ -216,7 +216,8 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
             -device virtio-net-device,netdev=n0 \
             -netdev user,id=n0; then
             # 批次 Z ④: 验证 services virtio-net 经 NetOps 安全桥注册链路
-            if grep -q "virtio-net: probed successfully (services bridge)" "$A64_LOG"; then
+            # (framework 侧单向拉取日志, 由 framework/net/init/probe.rs 输出)
+            if grep -q "nic: probed successfully (services bridge)" "$A64_LOG"; then
                 ok "[aarch64] virtio-net 经 NetOps 安全桥探测成功 (批次 Z ④)"
             else
                 warn "[aarch64] 未发现 virtio-net services bridge 探测日志 (Z ④ 链路未走通)"
