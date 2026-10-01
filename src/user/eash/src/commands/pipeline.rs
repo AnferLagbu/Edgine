@@ -182,10 +182,8 @@ pub fn execute_pipeline(input: &[u8]) {
         let mut cur_pipe: [i32; 2] = [-1, -1];
         let is_last = i == seg_count - 1;
 
-        if !is_last {
-            if pipe_create(&mut cur_pipe) < 0 {
-                println("eash: pipe() failed"); return;
-            }
+        if !is_last && pipe_create(&mut cur_pipe) < 0 {
+            println("eash: pipe() failed"); return;
         }
 
         let pid = fork() as i32;
@@ -269,7 +267,7 @@ pub fn execute_pipeline(input: &[u8]) {
     if prev_pipe[0] >= 0 { fs_close(prev_pipe[0]); fs_close(prev_pipe[1]); }
 
     // 等待所有子进程
-    for i in 0..seg_count {
-        if pids[i] >= 0 { wait_pid(pids[i]); }
+    for &pid in &pids[..seg_count] {
+        if pid >= 0 { wait_pid(pid); }
     }
 }

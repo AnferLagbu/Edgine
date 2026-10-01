@@ -13,6 +13,14 @@ const GLYPH_H: u32 = 16;
 #[derive(Clone, Copy)]
 enum PixelFmt { RGB565 = 16, RGB888 = 24, ARGB8888 = 32 }
 
+/// RGB 颜色分量 (每通道 0-255)
+#[derive(Clone, Copy)]
+struct Rgb { r: u8, g: u8, b: u8 }
+
+impl Rgb {
+    const fn new(r: u8, g: u8, b: u8) -> Self { Self { r, g, b } }
+}
+
 struct Terminal {
     fb: &'static mut [u8],
     width: u32,
@@ -61,17 +69,17 @@ impl Terminal {
         }
     }
 
-    fn fill_rect(&mut self, x: u32, y: u32, w: u32, h: u32, r: u8, g: u8, b: u8) {
+    fn fill_rect(&mut self, x: u32, y: u32, w: u32, h: u32, c: Rgb) {
         let start_y = y; let end_y = (y + h).min(self.height);
         let start_x = x; let end_x = (x + w).min(self.width);
         for py in start_y..end_y {
             for px in start_x..end_x {
-                self.put_pixel(px, py, r, g, b);
+                self.put_pixel(px, py, c.r, c.g, c.b);
             }
         }
     }
 
-    fn draw_glyph(&mut self, ch: u8, col: u32, row: u32, fg_r: u8, fg_g: u8, fg_b: u8, bg_r: u8, bg_g: u8, bg_b: u8) {
+    fn draw_glyph(&mut self, ch: u8, col: u32, row: u32, fg: Rgb, bg: Rgb) {
         if col >= self.cols || row >= self.rows { return; }
         let ox = col * GLYPH_W;
         let oy = row * GLYPH_H;
@@ -80,20 +88,20 @@ impl Terminal {
         for line in 0..GLYPH_H {
             let byte = FONT_DATA[glyph_off + line as usize];
             for bit in 0..GLYPH_W {
-                let (r, g, b) = if (byte >> (7 - bit)) & 1 != 0 { (fg_r, fg_g, fg_b) } else { (bg_r, bg_g, bg_b) };
-                self.put_pixel(ox + bit, oy + line, r, g, b);
+                let c = if (byte >> (7 - bit)) & 1 != 0 { fg } else { bg };
+                self.put_pixel(ox + bit, oy + line, c.r, c.g, c.b);
             }
         }
     }
 
     fn clear_screen(&mut self) {
-        self.fill_rect(0, 0, self.width, self.height, 20, 20, 28);
+        self.fill_rect(0, 0, self.width, self.height, Rgb::new(20, 20, 28));
     }
 
     fn clear_line(&mut self, row: u32) {
         if row >= self.rows { return; }
         let y0 = row * GLYPH_H;
-        self.fill_rect(0, y0, self.width, GLYPH_H, 20, 20, 28);
+        self.fill_rect(0, y0, self.width, GLYPH_H, Rgb::new(20, 20, 28));
     }
 
     fn scroll_up_one(&mut self) {
@@ -117,38 +125,38 @@ impl Terminal {
         self.scroll_top = 0;
     }
 
-    fn putchar(&mut self, ch: u8, fg_r: u8, fg_g: u8, fg_b: u8, bg_r: u8, bg_g: u8, bg_b: u8) {
+    fn putchar(&mut self, ch: u8, fg: Rgb, bg: Rgb) {
         match ch {
             b'\n' => self.newline(),
             b'\r' => self.cursor_col = 0,
             b'\x08' => {
                 if self.cursor_col > 0 { self.cursor_col -= 1; }
-                self.draw_glyph(b' ', self.cursor_col, self.cursor_row, fg_r, fg_g, fg_b, bg_r, bg_g, bg_b);
+                self.draw_glyph(b' ', self.cursor_col, self.cursor_row, fg, bg);
             }
             _ if ch >= b' ' => {
                 if self.cursor_col >= self.cols { self.newline(); }
-                self.draw_glyph(ch, self.cursor_col, self.cursor_row, fg_r, fg_g, fg_b, bg_r, bg_g, bg_b);
+                self.draw_glyph(ch, self.cursor_col, self.cursor_row, fg, bg);
                 self.cursor_col += 1;
             }
             _ => {}
         }
     }
 
-    fn write_str(&mut self, s: &str, fg_r: u8, fg_g: u8, fg_b: u8, bg_r: u8, bg_g: u8, bg_b: u8) {
-        for &b in s.as_bytes() { self.putchar(b, fg_r, fg_g, fg_b, bg_r, bg_g, bg_b); }
+    fn write_str(&mut self, s: &str, fg: Rgb, bg: Rgb) {
+        for &b in s.as_bytes() { self.putchar(b, fg, bg); }
     }
 
     fn show_prompt(&mut self) {
-        self.write_str(self.prompt, 100, 200, 100, 20, 20, 28);
+        self.write_str(self.prompt, Rgb::new(100, 200, 100), Rgb::new(20, 20, 28));
     }
 
     fn draw_status_bar(&mut self) {
         let y0 = (self.rows - 1) * GLYPH_H;
-        self.fill_rect(0, y0, self.width, GLYPH_H, 50, 50, 70);
+        self.fill_rect(0, y0, self.width, GLYPH_H, Rgb::new(50, 50, 70));
         let info = " fbterm v0.2 | QueenX User-Space Terminal ";
         let mut col = 0u32;
         for &b in info.as_bytes() {
-            if col < self.cols { self.draw_glyph(b, col, self.rows - 1, 180, 180, 200, 50, 50, 70); col += 1; }
+            if col < self.cols { self.draw_glyph(b, col, self.rows - 1, Rgb::new(180, 180, 200), Rgb::new(50, 50, 70)); col += 1; }
         }
     }
 
@@ -193,9 +201,9 @@ pub fn _start() -> ! {
 
     term.cursor_col = 0;
     term.cursor_row = 0;
-    term.write_str("*** QueenX fbterm v0.2 ***", 255, 255, 100, 20, 20, 28);
+    term.write_str("*** QueenX fbterm v0.2 ***", Rgb::new(255, 255, 100), Rgb::new(20, 20, 28));
     term.newline();
-    term.write_str("Keyboard-driven user-space terminal.", 180, 180, 200, 20, 20, 28);
+    term.write_str("Keyboard-driven user-space terminal.", Rgb::new(180, 180, 200), Rgb::new(20, 20, 28));
     term.newline();
     term.newline();
     term.show_prompt();
@@ -215,30 +223,30 @@ pub fn _start() -> ! {
                     let mut cmd_buf = [0u8; 256];
                     let cmd_len = term.line_len;
                     cmd_buf[..cmd_len].copy_from_slice(&term.line_buf[..cmd_len]);
-                    term.write_str("> ", 180, 180, 200, 20, 20, 28);
-                    for i in 0..cmd_len { term.putchar(cmd_buf[i], 255, 255, 255, 20, 20, 28); }
+                    term.write_str("> ", Rgb::new(180, 180, 200), Rgb::new(20, 20, 28));
+                    for &b in &cmd_buf[..cmd_len] { term.putchar(b, Rgb::new(255, 255, 255), Rgb::new(20, 20, 28)); }
                     term.newline();
 
                     if &cmd_buf[..cmd_len] == b"help" {
-                        term.write_str("  help   - Show this message", 200, 200, 220, 20, 20, 28);
+                        term.write_str("  help   - Show this message", Rgb::new(200, 200, 220), Rgb::new(20, 20, 28));
                         term.newline();
-                        term.write_str("  clear  - Clear screen", 200, 200, 220, 20, 20, 28);
+                        term.write_str("  clear  - Clear screen", Rgb::new(200, 200, 220), Rgb::new(20, 20, 28));
                         term.newline();
-                        term.write_str("  exit   - Quit fbterm", 200, 200, 220, 20, 20, 28);
+                        term.write_str("  exit   - Quit fbterm", Rgb::new(200, 200, 220), Rgb::new(20, 20, 28));
                         term.newline();
-                        term.write_str("  colors - Show color palette (WIP)", 200, 200, 220, 20, 20, 28);
+                        term.write_str("  colors - Show color palette (WIP)", Rgb::new(200, 200, 220), Rgb::new(20, 20, 28));
                         term.newline();
                     } else if &cmd_buf[..cmd_len] == b"clear" {
                         term.scroll_top = 0;
                         term.draw_screen();
                         term.cursor_row = 0;
                     } else if &cmd_buf[..cmd_len] == b"exit" {
-                        term.write_str("Goodbye.", 255, 200, 100, 20, 20, 28);
+                        term.write_str("Goodbye.", Rgb::new(255, 200, 100), Rgb::new(20, 20, 28));
                         term.newline();
                         break;
                     } else if cmd_len == 0 {
                     } else {
-                        term.write_str("Unknown command. Type 'help'.", 255, 150, 150, 20, 20, 28);
+                        term.write_str("Unknown command. Type 'help'.", Rgb::new(255, 150, 150), Rgb::new(20, 20, 28));
                         term.newline();
                     }
                     term.line_len = 0;
@@ -250,14 +258,14 @@ pub fn _start() -> ! {
                     term.line_len -= 1;
                     if term.cursor_col > term.prompt.len() as u32 {
                         term.cursor_col -= 1;
-                        term.draw_glyph(b' ', term.cursor_col, term.cursor_row, 255, 255, 255, 20, 20, 28);
+                        term.draw_glyph(b' ', term.cursor_col, term.cursor_row, Rgb::new(255, 255, 255), Rgb::new(20, 20, 28));
                     }
                 }
             }
             ch if ch >= b' ' && term.line_len < 255 => {
                 term.line_buf[term.line_len] = ch;
                 term.line_len += 1;
-                term.putchar(ch, 255, 255, 255, 20, 20, 28);
+                term.putchar(ch, Rgb::new(255, 255, 255), Rgb::new(20, 20, 28));
             }
             _ => {}
         }

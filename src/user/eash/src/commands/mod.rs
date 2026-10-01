@@ -148,7 +148,7 @@ fn run_external(cmd: &Cmd) {
     let mut argv_ptrs: [*const u8; 16] = [core::ptr::null(); 16];
 
     // 如果名称包含 / 则直接使用, 否则前缀 /usr/bin/
-    let path = if name.iter().any(|&b| b == b'/') {
+    let path = if name.contains(&b'/') {
         let len = name.len().min(255);
         path_buf[..len].copy_from_slice(name);
         path_buf[len] = 0;

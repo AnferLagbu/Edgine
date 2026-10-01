@@ -104,7 +104,7 @@ fn handle_client(fd: i32, resp: &mut [u8]) {
 
     fn print_path(b: &[u8]) {
         for &c in b {
-            if c <= 0x7F && c >= 0x20 { print_char(c); }
+            if (0x20..=0x7F).contains(&c) { print_char(c); }
         }
     }
     print_path(path);

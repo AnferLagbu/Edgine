@@ -27,7 +27,7 @@ pub fn selected() -> (u32, u64) {
 
 fn atoi(buf: &[u8], len: usize) -> i32 {
     let mut v: i32 = 0;
-    for i in 0..len { if buf[i] >= b'0' && buf[i] <= b'9' { v = v * 10 + (buf[i] - b'0') as i32; } }
+    for &c in &buf[..len] { if c.is_ascii_digit() { v = v * 10 + (c - b'0') as i32; } }
     v
 }
 

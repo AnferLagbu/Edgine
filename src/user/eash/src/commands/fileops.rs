@@ -77,9 +77,9 @@ pub fn del(cmd: &Cmd) {
 
 pub fn cp(cmd: &Cmd) {
     if cmd.n < 3 { println("cp: usage: cp <src> <dst>"); return; }
-    let src = path_arg(cmd).unwrap_or_else(|| [0u8; 256]);
+    let src = path_arg(cmd).unwrap_or([0u8; 256]);
     let dst = as_str(cmd.get(2));
-    let mut dst_buf = [0u8; 256]; let dbl = core::cmp::min(dst.as_bytes().len(), 255);
+    let mut dst_buf = [0u8; 256]; let dbl = core::cmp::min(dst.len(), 255);
     dst_buf[..dbl].copy_from_slice(&dst.as_bytes()[..dbl]); dst_buf[dbl] = 0;
 
     let fd_src = file_open(&src, O_RDONLY);
@@ -102,9 +102,9 @@ pub fn cp(cmd: &Cmd) {
 
 pub fn mv(cmd: &Cmd) {
     if cmd.n < 3 { println("mv: usage: mv <src> <dst>"); return; }
-    let src = path_arg(cmd).unwrap_or_else(|| [0u8; 256]);
+    let src = path_arg(cmd).unwrap_or([0u8; 256]);
     let dst = as_str(cmd.get(2));
-    let mut dst_buf = [0u8; 256]; let dbl = core::cmp::min(dst.as_bytes().len(), 255);
+    let mut dst_buf = [0u8; 256]; let dbl = core::cmp::min(dst.len(), 255);
     dst_buf[..dbl].copy_from_slice(&dst.as_bytes()[..dbl]); dst_buf[dbl] = 0;
 
     if fs_rename(&src, &dst_buf) < 0 {
