@@ -126,7 +126,7 @@ pub fn launch_first_user_process() -> ! {
 
         if bin.is_empty() {
             crate::klog_err!(Boot, "[USER] init binary is empty");
-            crate::framework::tests::qemu_exit(false);
+            crate::framework::debug::qemu_exit(false);
         }
 
         let pid = crate::framework::proc::mechanism::user_proc_load_elf_from_memory(
@@ -136,7 +136,7 @@ pub fn launch_first_user_process() -> ! {
         );
         if pid <= 0 {
             crate::klog_err!(Boot, "[USER] Failed to load init ELF, pid={}", pid);
-            crate::framework::tests::qemu_exit(false);
+            crate::framework::debug::qemu_exit(false);
         }
 
         crate::framework::proc::set_init_status(INIT_STATUS_RUNNING);

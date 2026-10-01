@@ -636,7 +636,7 @@ pub extern "C" fn kernel_init() {
 
         let r = crate::framework::tests::runner();
         let failed = r.failed.load(Ordering::SeqCst);
-        crate::framework::tests::qemu_exit(failed == 0);
+        crate::framework::debug::qemu_exit(failed == 0);
     }
 
     // 1. Boot Info — 获取内存布局
@@ -674,7 +674,7 @@ pub extern "C" fn kernel_init() {
             clippy::items_after_statements,
             reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
         )]
-        const KMALLOC_HEAP_SIZE: u64 = 16 * 1024 * 1024; // 16 MB
+        const KMALLOC_HEAP_SIZE: u64 = 8 * 1024 * 1024; // 8 MB (b4d: 实测全程峰值 16KB, 由 16MB 缩容)
         // 双架构统一为 KERNEL_BASE + 物理偏移: 堆的**物理布局**不变
         // (仍自 kernel_end + 0x200000 起), 仅访问别名改走高半区直射区,
         // 从而在 TTBR0/CR3 切至 per-process 视图时堆仍经内核高半区可达
@@ -699,7 +699,9 @@ pub extern "C" fn kernel_init() {
         // 还必须包含 heap_end 与位图之间的 2MB 间隙,
         // 否则位图与堆共享 2MB 大页, 堆
         // 扩容时的 2MB 大页拆分会覆盖位图 PTE.
-        // GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE = 0x200000 + 16MB + 0x200000 = 20MB
+        // GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE = 0x200000 + 8MB + 0x200000 = 10MB
+        // 注: 堆扩容自 heap_end 向上映射, 仅能吃到尾部 BITMAP_GAP_SIZE(2MB),
+        // 故堆最大容量 = KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE = 10MB.
         #[expect(
             clippy::items_after_statements,
             reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"

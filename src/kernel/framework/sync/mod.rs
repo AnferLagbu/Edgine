@@ -92,7 +92,8 @@ pub use irq_spinlock::IrqSpinLockGuard;
 pub use mutex::Mutex;
 pub use once_lock::OnceLock;
 pub use rcu::{
-    call_rcu, rcu_assign_pointer, rcu_dereference, rcu_read_lock, rcu_read_unlock, synchronize_rcu,
+    call_rcu, rcu_alloc_cpu, rcu_assign_pointer, rcu_dereference, rcu_read_lock, rcu_read_unlock,
+    synchronize_rcu,
 };
 pub use rwlock::RwLock;
 pub use seqlock::SeqLock;

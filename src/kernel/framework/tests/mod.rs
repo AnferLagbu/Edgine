@@ -537,27 +537,3 @@ pub fn host_test_runner_main() -> TestSummary {
         skipped: r.skipped.load(Ordering::Relaxed),
     }
 }
-
-pub fn qemu_exit(success: bool) -> ! {
-    #[cfg(target_arch = "x86_64")]
-    {
-        let exit_code = if success { 0x10 } else { 0x11 };
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        unsafe {
-            use core::arch::asm;
-            asm!(
-                "out dx, al",
-                in("dx") 0xf4u16,
-                in("al") exit_code as u8,
-                options(nomem, nostack)
-            );
-        }
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        let _ = success;
-    }
-    loop {
-        crate::arch!(halt());
-    }
-}

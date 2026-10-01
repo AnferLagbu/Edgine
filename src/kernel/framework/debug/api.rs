@@ -54,3 +54,35 @@ pub fn kgdb_break_now() {
     let mut regs = KgdbRegs::default();
     kgdb_breakpoint(&mut regs);
 }
+
+/// 请求虚拟机以给定状态退出 (ISA-debug-exit), 随后停机永不返回.
+///
+/// x86_64: 向 `0xf4` 端口写入 `0x10` (成功) / `0x11` (失败), QEMU 以
+/// `(exit_code << 1) | 1` 退出; 非 x86_64 目标忽略 `success` 并进入停机循环.
+///
+/// 原属 `framework::tests`; B4 内存过配治理将内核测试框架移出 release 后,
+/// 本函数迁至 `debug` 作为启动失败路径与测试运行器共用的终止原语.
+pub fn qemu_exit(success: bool) -> ! {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let exit_code = if success { 0x10 } else { 0x11 };
+        // SAFETY: 端口 0xf4 为 QEMU isa-debug-exit 设备端口; 写字节不访问内存,
+        // `options(nomem, nostack)` 与之一致; ring 0 上下文执行 `out` 合法.
+        unsafe {
+            use core::arch::asm;
+            asm!(
+                "out dx, al",
+                in("dx") 0xf4u16,
+                in("al") exit_code as u8,
+                options(nomem, nostack)
+            );
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = success;
+    }
+    loop {
+        crate::arch!(halt());
+    }
+}

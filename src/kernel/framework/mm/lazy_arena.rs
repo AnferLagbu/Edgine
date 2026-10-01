@@ -75,6 +75,23 @@ fn page_free(page_addr: usize) {
     unsafe { alloc::alloc::dealloc(page_addr as *mut u8, layout) };
 }
 
+/// 分配一个已清零的 4KB 物理页, 并以类型化指针形式返回其可直接解引用的地址.
+///
+/// 与 [`page_alloc`] 共用同一载体策略 (生产: PMM 物理页经 [`phys_to_virt`] 取
+/// 内核高半区别名; host: `alloc` 堆), 供 per-CPU 结构的惰性分配复用. 返回的页
+/// 已整体清零, 故 `T` 若为"全零构造"则无需再写入; 若为"非全零构造", 调用方须
+/// 在返回指针上 `write` 构造值覆盖首部.
+///
+/// 约束: `T` 不超出单页 (`size_of::<T>() <= PAGE_SIZE`), 分配失败返回 `None`.
+pub(crate) fn alloc_zeroed_page_as<T>() -> Option<*mut T> {
+    debug_assert!(
+        core::mem::size_of::<T>() <= PAGE_BYTES,
+        "alloc_zeroed_page_as: T 超出单页容量"
+    );
+    let addr = page_alloc()?;
+    Some(addr as *mut T)
+}
+
 /// 惰性页池 — 以 4KB 页为单位按需分配后备存储的字节区间容器.
 ///
 /// 静态体量为 `PAGES * 8` 字节 (槽表), 不含数据页本身. 未分配页的读取一律

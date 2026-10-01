@@ -24,10 +24,10 @@
 //! - `running` 标志防止重入
 //! - handlers 在 `open_softirq()` 时一次性注册，运行时只读
 
-use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 
 use crate::framework::config::MAX_CPUS;
+use crate::framework::racy_cell::RacyCell;
 
 const MAX_SOFTIRQS: usize = 10;
 
@@ -73,53 +73,109 @@ impl SoftirqVec {
 
 pub type SoftirqHandler = fn();
 
+/// 全局 softirq 处理程序表.
+///
+/// handlers 在 `open_softirq` (启动期单线程) 一次性注册, 运行期只读; 故该表
+/// 与具体 CPU 无关, 无需 per-CPU 复制 (原实现为每个 CPU 各存一份, 纯冗余).
+static SOFTIRQ_HANDLERS: RacyCell<[Option<SoftirqHandler>; MAX_SOFTIRQS]> =
+    RacyCell::new([None; MAX_SOFTIRQS]);
+
+/// 每 CPU softirq 状态 — 独立的 `pending` 位图 + `running` 标志.
+///
+/// `running` 防止同一 CPU 上的 softirq 重入; `pending` per-CPU 化后各 CPU
+/// 独立排程自己的软中断.
 struct SoftirqState {
     pending: AtomicU64,
-    handlers: UnsafeCell<[Option<SoftirqHandler>; MAX_SOFTIRQS]>,
     running: AtomicBool,
 }
 
-// SAFETY: SoftirqState 的 pending/running 使用 AtomicU64/AtomicBool.
-// handlers (UnsafeCell) 仅在注册期 (启动期) 修改,
-// 在 softirq 处理期 (中断上下文, 单线程) 读取.
-unsafe impl Sync for SoftirqState {}
+impl SoftirqState {
+    const fn new() -> Self {
+        Self {
+            pending: AtomicU64::new(0),
+            running: AtomicBool::new(false),
+        }
+    }
+}
 
-/// B03-11: 每 CPU 独立的 softirq 状态 — 让多核并行处理 softirq 而非全局锁。
-/// 每个 CPU 有独立的 pending 位图 + handlers + running 标记。
-/// `running` 防止同一 CPU 上的 softirq 重入（仍需保留）。
-/// `pending` per-CPU 化后, 各 CPU 独立排程自己的软中断。
-static SOFTIRQ: [SoftirqState; MAX_CPUS] = {
-    #[expect(
-        clippy::declare_interior_mutable_const,
-        reason = "declare_interior_mutable_const: 常量含 Atomic/UnsafeCell 字段; 作为每 CPU 状态模板复制到 static 数组, 保持 const 语义"
-    )]
-    const INIT: SoftirqState = SoftirqState {
-        pending: AtomicU64::new(0),
-        handlers: UnsafeCell::new([None; MAX_SOFTIRQS]),
-        running: AtomicBool::new(false),
-    };
-    [INIT; MAX_CPUS]
-};
+/// BSP 的静态 per-CPU softirq 状态 (`SoftirqState::new()` 全零, 落 `.bss`).
+static SOFTIRQ_BSP: RacyCell<SoftirqState> = RacyCell::new(SoftirqState::new());
+
+/// AP 的 per-CPU softirq 状态表 (按 `cpu_index` 索引, 槽位 0 保留给 BSP).
+///
+/// AP 的状态由 [`softirq_alloc_cpu`] 在 AP 上线前按需从页池分配, 以**内核高半区
+/// 直接映射别名**存放 —— aarch64 运行期 TTBR0 的每进程 EL1 视图刻意移除 DRAM
+/// 块, 低半区物理地址在运行期并非有效可解引用地址, 故必须走高半区别名.
+/// 槽位为 `null` 表示尚未分配.
+static SOFTIRQ_PER_CPU: [AtomicPtr<SoftirqState>; MAX_CPUS] =
+    [const { AtomicPtr::new(core::ptr::null_mut()) }; MAX_CPUS];
 
 #[inline]
 fn current_cpu_id() -> usize {
     crate::arch!(cpu_id()) as usize
 }
 
-pub fn open_softirq(nr: SoftirqVec, handler: SoftirqHandler) {
-    // B03-11: handlers 在所有 CPU 槽位都注册 (启动期单线程)。
-    for state in &SOFTIRQ {
-        // SAFETY: 启动期单线程, 无竞争访问同一槽位
-        let handlers = unsafe { &mut *state.handlers.get() };
-        handlers[nr.to_idx()] = Some(handler);
+/// 将 CPU 编号映射到 softirq 状态槽位下标.
+#[inline]
+fn softirq_slot(cpu: u32) -> usize {
+    (cpu as usize) % MAX_CPUS
+}
+
+/// 获取指定 CPU 的 softirq 状态引用.
+///
+/// # 不变量
+///
+/// 调用方保证目标槽位已分配 (启动时序: `softirq_alloc_cpu` 早于 AP 使用 softirq).
+/// 若槽位为 `null` (例如真机 LAPIC ID 与顺序 `cpu_index` 不一致导致查错槽位),
+/// 回退 BSP 状态以保证内存安全 —— 这是已知的预存问题 (见 `smp::get_current_cpu`
+/// 返回 LAPIC ID 的语义).
+#[inline]
+fn softirq_state(cpu: u32) -> &'static SoftirqState {
+    let idx = softirq_slot(cpu);
+    if idx == 0 {
+        // SAFETY: SOFTIRQ_BSP 为静态实例; 运行期经原子访问.
+        return unsafe { SOFTIRQ_BSP.get() };
     }
+    let ptr = SOFTIRQ_PER_CPU[idx].load(Ordering::Acquire);
+    if ptr.is_null() {
+        // SAFETY: 回退 BSP 仅用于避免 null 解引用 (见 doc 的预存问题).
+        return unsafe { SOFTIRQ_BSP.get() };
+    }
+    // SAFETY: 指针由 softirq_alloc_cpu 以 Release 发布, 指向页池分配且已清零的
+    // SoftirqState; 高半区直接映射使其运行期可访问; 只读/原子访问.
+    unsafe { &*ptr }
+}
+
+/// 为指定 `cpu_index` 分配 per-CPU softirq 状态 (幂等).
+///
+/// 槽位 0 为 BSP 静态实例, 直接返回 `true`. 返回 `false` 表示页池分配失败,
+/// 调用方应放弃启动该 AP.
+pub fn softirq_alloc_cpu(cpu_index: u32) -> bool {
+    let idx = softirq_slot(cpu_index);
+    if idx == 0 {
+        return true;
+    }
+    if !SOFTIRQ_PER_CPU[idx].load(Ordering::Acquire).is_null() {
+        return true;
+    }
+    let Some(ptr) = crate::framework::mm::alloc_zeroed_page_as::<SoftirqState>() else {
+        return false;
+    };
+    // 页已整体清零, SoftirqState 全零即 SoftirqState::new() 语义, 无需再 write.
+    SOFTIRQ_PER_CPU[idx].store(ptr, Ordering::Release);
+    true
+}
+
+pub fn open_softirq(nr: SoftirqVec, handler: SoftirqHandler) {
+    // handlers 全局唯一, 启动期单线程注册; get_mut 独占访问 (无并发写者).
+    SOFTIRQ_HANDLERS.get_mut()[nr.to_idx()] = Some(handler);
 }
 
 #[inline]
 pub fn raise_softirq(nr: SoftirqVec) {
     let cpu = current_cpu_id();
     if cpu < MAX_CPUS {
-        SOFTIRQ[cpu]
+        softirq_state(cpu as u32)
             .pending
             .fetch_or(1u64 << nr.to_idx(), Ordering::Release);
     }
@@ -130,7 +186,9 @@ pub fn raise_softirq(nr: SoftirqVec) {
 pub fn raise_softirq_mask(mask: u64) {
     let cpu = current_cpu_id();
     if cpu < MAX_CPUS {
-        SOFTIRQ[cpu].pending.fetch_or(mask, Ordering::Release);
+        softirq_state(cpu as u32)
+            .pending
+            .fetch_or(mask, Ordering::Release);
     }
 }
 
@@ -139,7 +197,7 @@ pub fn do_softirq() {
     if cpu >= MAX_CPUS {
         return;
     }
-    let state = &SOFTIRQ[cpu];
+    let state = softirq_state(cpu as u32);
 
     if state
         .running
@@ -149,8 +207,8 @@ pub fn do_softirq() {
         return;
     }
 
-    // SAFETY: handlers 在启动期已注册 (open_softirq 同步到所有 CPU), 运行时只读
-    let handlers = unsafe { &*state.handlers.get() };
+    // SAFETY: handlers 在启动期已注册 (open_softirq), 运行期只读.
+    let handlers = unsafe { SOFTIRQ_HANDLERS.get() };
 
     loop {
         let pending = state.pending.swap(0, Ordering::AcqRel);
@@ -179,7 +237,7 @@ pub fn do_softirq() {
 pub fn in_softirq() -> bool {
     let cpu = current_cpu_id();
     if cpu < MAX_CPUS {
-        SOFTIRQ[cpu].running.load(Ordering::Acquire)
+        softirq_state(cpu as u32).running.load(Ordering::Acquire)
     } else {
         false
     }
@@ -189,7 +247,7 @@ pub fn in_softirq() -> bool {
 pub fn pending_softirq() -> bool {
     let cpu = current_cpu_id();
     if cpu < MAX_CPUS {
-        SOFTIRQ[cpu].pending.load(Ordering::Acquire) != 0
+        softirq_state(cpu as u32).pending.load(Ordering::Acquire) != 0
     } else {
         false
     }

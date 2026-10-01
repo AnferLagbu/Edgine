@@ -22,7 +22,9 @@
 
 use core::cell::UnsafeCell;
 use core::ptr;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering, fence};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering, fence};
+
+use crate::framework::racy_cell::RacyCell;
 
 pub struct RcuHead {
     pub next: *mut Self,
@@ -65,28 +67,84 @@ impl PerCpuRcu {
 // SAFETY: PerCpuRcu 含 UnsafeCell, 但仅由对应 CPU 访问, UnsafeCell 为回调链表提供内部可变性.
 unsafe impl Sync for PerCpuRcu {}
 
+// SAFETY: PerCpuRcu 含裸指针 (callbacks/callback_tail), 裸指针本身非 Send; 但该
+// 结构仅在对应 CPU (或关中断的单线程上下文) 内访问, 回调链表指针的所有权始终
+// 在同一个 CPU 内部传递, 不跨线程共享裸指针. 故显式实现 Send, 以满足
+// `RacyCell<T: Send>` 对静态承载 `T` 的要求.
+unsafe impl Send for PerCpuRcu {}
+
 const GP_IDLE: u32 = 0;
 const GP_WAIT: u32 = 1;
 const GP_DONE: u32 = 2;
 
-struct RcuGlobal {
-    data: UnsafeCell<[PerCpuRcu; crate::framework::config::MAX_CPUS]>,
-}
+/// BSP 的静态 per-CPU RCU 状态.
+///
+/// RCU 在启动早期 (BSP 单线程) 即可能被使用, 故 BSP 槽位固定为静态实例.
+/// `PerCpuRcu::new()` 全零, 该实例落入 `.bss` (不占镜像 `.data`).
+static RCU_BSP: RacyCell<PerCpuRcu> = RacyCell::new(PerCpuRcu::new());
 
-// SAFETY: 每个 PerCpuRcu[i] 通常仅由 CPU i 访问.
-// SAFETY: RcuGlobal 含 UnsafeCell, 但对于 synchronize_rcu(), 跨 CPU 读取 nesting/gp_state 使用原子操作, 安全.
-unsafe impl Sync for RcuGlobal {}
-
-static RCU_GLOBAL: RcuGlobal = RcuGlobal {
-    data: UnsafeCell::new([const { PerCpuRcu::new() }; crate::framework::config::MAX_CPUS]),
-};
+/// AP 的 per-CPU RCU 状态表 (按 `cpu_index` 索引, 槽位 0 保留给 BSP).
+///
+/// AP 的状态由 [`rcu_alloc_cpu`] 在 AP 上线前按需从页池分配, 以**内核高半区
+/// 直接映射别名**存放 —— aarch64 运行期 TTBR0 的每进程 EL1 视图刻意移除 DRAM
+/// 块, 低半区物理地址在运行期并非有效可解引用地址, 故必须走高半区别名.
+/// 槽位为 `null` 表示尚未分配.
+static RCU_PER_CPU: [AtomicPtr<PerCpuRcu>; crate::framework::config::MAX_CPUS] =
+    [const { AtomicPtr::new(ptr::null_mut()) }; crate::framework::config::MAX_CPUS];
 
 static RCU_GP_COUNTER: AtomicU32 = AtomicU32::new(0);
 
+/// 将 CPU 编号映射到 per-CPU RCU 槽位下标.
+///
+/// 槽位容量与 `MAX_CPUS` 一致; 取模仅为防御越界 (越界时退化为槽位别名而非 UB).
+#[inline]
+fn rcu_slot(cpu: u32) -> usize {
+    (cpu as usize) % crate::framework::config::MAX_CPUS
+}
+
+/// 获取指定 CPU 的 per-CPU RCU 状态引用.
+///
+/// # 不变量
+///
+/// 调用方保证目标槽位已分配 (启动时序: `rcu_alloc_cpu` 早于 AP 使用 RCU).
+/// 若槽位为 `null` (例如真机 LAPIC ID 与顺序 `cpu_index` 不一致导致查错槽位),
+/// 回退 BSP 状态以保证内存安全 —— 这是已知的预存问题 (见 `smp::get_current_cpu`
+/// 返回 LAPIC ID 的语义).
 #[inline]
 fn rcu_data(cpu: u32) -> &'static PerCpuRcu {
-    // SAFETY: `RCU_GLOBAL` 由调用方保证为有效指针; 只读访问
-    unsafe { &(&*RCU_GLOBAL.data.get())[cpu as usize] }
+    let idx = rcu_slot(cpu);
+    if idx == 0 {
+        // SAFETY: RCU_BSP 为静态实例; 启动期单线程写入, 运行期只读/原子访问.
+        return unsafe { RCU_BSP.get() };
+    }
+    let ptr = RCU_PER_CPU[idx].load(Ordering::Acquire);
+    if ptr.is_null() {
+        // SAFETY: 回退 BSP 仅用于避免 null 解引用 (见 doc 的预存问题).
+        return unsafe { RCU_BSP.get() };
+    }
+    // SAFETY: 指针由 rcu_alloc_cpu 以 Release 发布, 指向页池分配且已清零的
+    // PerCpuRcu; 高半区直接映射使其运行期可访问; 只读/原子访问.
+    unsafe { &*ptr }
+}
+
+/// 为指定 `cpu_index` 分配 per-CPU RCU 状态 (幂等).
+///
+/// 槽位 0 为 BSP 静态实例, 直接返回 `true`. 返回 `false` 表示页池分配失败,
+/// 调用方应放弃启动该 AP.
+pub fn rcu_alloc_cpu(cpu_index: u32) -> bool {
+    let idx = rcu_slot(cpu_index);
+    if idx == 0 {
+        return true;
+    }
+    if !RCU_PER_CPU[idx].load(Ordering::Acquire).is_null() {
+        return true;
+    }
+    let Some(ptr) = crate::framework::mm::alloc_zeroed_page_as::<PerCpuRcu>() else {
+        return false;
+    };
+    // 页已整体清零, PerCpuRcu 全零即 PerCpuRcu::new() 语义, 无需再 write.
+    RCU_PER_CPU[idx].store(ptr, Ordering::Release);
+    true
 }
 
 #[inline]

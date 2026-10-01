@@ -548,6 +548,10 @@ impl<T: ?Sized> PiMutex<T> {
     /// 不可测. 该方法跳过 holder 检查, 让测试可以直接驱动 unlock 状态机.
     ///
     /// 生产代码 (`PiMutexGuard::drop`) 仍走 `unlock_internal`, 走 RAII 安全路径.
+    ///
+    /// B4 内存过配治理: 唯一调用方为 `framework::tests::test_pi_mutex`, 测试框架
+    /// 已移出 release ⇒ 本方法随 kernel_test/host-test 维度编译 (否则 release 死代码).
+    #[cfg(any(feature = "kernel_test", feature = "host-test"))]
     pub(crate) fn force_unlock(&self) {
         // Lockdep: 通知锁释放
         #[cfg(debug_assertions)]

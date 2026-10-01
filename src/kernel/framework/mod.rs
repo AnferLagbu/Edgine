@@ -94,6 +94,10 @@ pub mod sched;
 pub mod smp;
 pub mod sync;
 pub mod syscall;
+// B4 (内存过配治理): 内核测试框架 (TEST_RUNNER 等) 仅在 kernel_test / host-test
+// 维度编译, 绝不进入 release 及 host 生产构建. 生产路径所需的 qemu_exit 已迁往
+// framework::debug; 所有 register_*_tests 载体亦由 kernel_test 门控.
+#[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod tests;
 pub mod timer;
 

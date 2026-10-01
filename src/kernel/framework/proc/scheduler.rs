@@ -22,7 +22,7 @@
 
 use crate::framework::sync::{IrqSpinLock as Mutex, OnceLock};
 use alloc::collections::VecDeque;
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
 use super::cfs::{
     CFS_BOOST_INTERVAL_TICKS, CfsRunQueue, DL_MAX_UTILIZATION_PCT, DeadlineParams, DlRunQueue,
@@ -164,43 +164,114 @@ struct PerCpuSched {
 
 // 所有字段 (Mutex<VecDeque<Pid>>, Mutex<CfsRunQueue>, Mutex<DlRunQueue>, Atomic*) 自动实现 Send + Sync.
 
-static PER_CPU_SCHED: [OnceLock<PerCpuSched>; crate::framework::config::MAX_CPUS] =
-    [const { OnceLock::new() }; crate::framework::config::MAX_CPUS];
+/// BSP 的 per-CPU 调度状态 (静态实例).
+///
+/// BSP 的调度状态在启动期即需可用; 用 `OnceLock` 惰性构造 —— 因 `PerCpuSched`
+/// 含 CFS/DL 运行队列 (其 `new()` 非 `const`), 无法直接静态零初始化.
+static SCHED_BSP: OnceLock<PerCpuSched> = OnceLock::new();
 
-pub fn init_per_cpu_sched(cpu_id: u32) {
-    let idx = (cpu_id as usize) % crate::framework::config::MAX_CPUS;
-    PER_CPU_SCHED[idx].get_or_init(|slot| {
-        slot.write(PerCpuSched {
-            rt_queue: Mutex::new(VecDeque::new()),
-            cfs_rq: Mutex::new(CfsRunQueue::new()),
-            dl_rq: Mutex::new(DlRunQueue::new()),
-            current: AtomicU32::new(0),
-            idle: AtomicU32::new(0),
-            need_reschedule: AtomicBool::new(false),
-            rt_running: AtomicBool::new(false),
-            dl_running: AtomicBool::new(false),
-            fifo_watchdog: AtomicU64::new(0),
-        });
-    });
+/// AP 的 per-CPU 调度状态表 (按 `cpu_index` 索引, 槽位 0 保留给 BSP).
+///
+/// AP 的状态由 [`init_per_cpu_sched`] 在 AP 上线前按需从页池分配, 以**内核
+/// 高半区直接映射别名**存放 —— aarch64 运行期 TTBR0 的每进程 EL1 视图刻意移除
+/// DRAM 块, 低半区物理地址在运行期并非有效可解引用地址, 故必须走高半区别名.
+/// 槽位为 `null` 表示尚未分配.
+static PER_CPU_SCHED: [AtomicPtr<PerCpuSched>; crate::framework::config::MAX_CPUS] =
+    [const { AtomicPtr::new(core::ptr::null_mut()) }; crate::framework::config::MAX_CPUS];
+
+/// 构造一个新的 per-CPU 调度状态 (全字段初值).
+fn new_per_cpu_sched() -> PerCpuSched {
+    PerCpuSched {
+        rt_queue: Mutex::new(VecDeque::new()),
+        cfs_rq: Mutex::new(CfsRunQueue::new()),
+        dl_rq: Mutex::new(DlRunQueue::new()),
+        current: AtomicU32::new(0),
+        idle: AtomicU32::new(0),
+        need_reschedule: AtomicBool::new(false),
+        rt_running: AtomicBool::new(false),
+        dl_running: AtomicBool::new(false),
+        fifo_watchdog: AtomicU64::new(0),
+    }
+}
+
+/// 将 CPU 编号映射到 per-CPU 调度槽位下标.
+///
+/// 槽位容量与 `MAX_CPUS` 一致; 取模仅为防御越界 (越界时退化为槽位别名而非 UB).
+#[inline]
+fn sched_slot(cpu_id: u32) -> usize {
+    (cpu_id as usize) % crate::framework::config::MAX_CPUS
+}
+
+/// 获取 BSP 调度状态 (惰性构造, 幂等).
+#[inline]
+fn bsp_sched() -> &'static PerCpuSched {
+    SCHED_BSP.get_or_init(|slot| {
+        slot.write(new_per_cpu_sched());
+    })
+}
+
+/// 为指定 `cpu_index` 分配 per-CPU 调度状态 (幂等).
+///
+/// 槽位 0 走 BSP 静态实例. 返回 `false` 表示页池分配失败.
+fn sched_alloc_cpu(cpu_index: u32) -> bool {
+    let idx = sched_slot(cpu_index);
+    if idx == 0 {
+        bsp_sched();
+        return true;
+    }
+    if !PER_CPU_SCHED[idx].load(Ordering::Acquire).is_null() {
+        return true;
+    }
+    let Some(ptr) = crate::framework::mm::alloc_zeroed_page_as::<PerCpuSched>() else {
+        return false;
+    };
+    // 页已清零, 但 PerCpuSched 含非全零构造 (VecDeque/BTreeMap 元数据), 须就地构造.
+    // SAFETY: ptr 来自页池新分配页 (排他所有权), 高半区直接映射可写; 此路径在
+    // AP 启动期单线程执行, 无并发写入该槽位.
+    unsafe { ptr.write(new_per_cpu_sched()) };
+    PER_CPU_SCHED[idx].store(ptr, Ordering::Release);
+    true
+}
+
+/// 获取指定 CPU 的 per-CPU 调度状态引用.
+///
+/// # 不变量
+///
+/// 调用方保证目标槽位已分配 (启动时序: `init_per_cpu_sched` 早于该 CPU 使用
+/// 调度器). 若槽位为 `null` (例如真机 LAPIC ID 与顺序 `cpu_index` 不一致导致
+/// 查错槽位), 回退 BSP 状态以保证内存安全 —— 这是已知的预存问题 (见
+/// `smp::get_current_cpu` 返回 LAPIC ID 的语义).
+#[inline]
+fn sched_for(cpu_id: u32) -> &'static PerCpuSched {
+    let idx = sched_slot(cpu_id);
+    if idx == 0 {
+        return bsp_sched();
+    }
+    let ptr = PER_CPU_SCHED[idx].load(Ordering::Acquire);
+    if ptr.is_null() {
+        // SAFETY: 回退 BSP 仅用于避免 null 解引用 (见 doc 的预存问题).
+        return bsp_sched();
+    }
+    // SAFETY: 指针由 sched_alloc_cpu 以 Release 发布, 指向页池分配并已构造的
+    // PerCpuSched; 高半区直接映射使其运行期可访问; 只读/原子访问.
+    unsafe { &*ptr }
+}
+
+/// 初始化指定 `cpu_id` 的 per-CPU 调度状态 (上线前一次性, 幂等).
+///
+/// 返回 `false` 表示页池分配失败, 由调用方放弃启动该 AP.
+pub fn init_per_cpu_sched(cpu_id: u32) -> bool {
+    sched_alloc_cpu(cpu_id)
 }
 
 #[inline]
 fn per_cpu() -> &'static PerCpuSched {
-    let cpu = crate::framework::smp::get_current_cpu();
-    let idx = (cpu as usize) % crate::framework::config::MAX_CPUS;
-    // 确保已初始化 (幂等)
-    init_per_cpu_sched(cpu);
-    // SAFETY: init_per_cpu_sched 后 OnceLock 已初始化, get_or_init 返回 &'static 引用.
-    PER_CPU_SCHED[idx].get_or_init(|_| unreachable!())
+    sched_for(crate::framework::smp::get_current_cpu())
 }
 
 #[inline]
 fn per_cpu_for(cpu_id: u32) -> &'static PerCpuSched {
-    let idx = (cpu_id as usize) % crate::framework::config::MAX_CPUS;
-    // 确保已初始化 (幂等)
-    init_per_cpu_sched(cpu_id);
-    // SAFETY: init_per_cpu_sched 后 OnceLock 已初始化.
-    PER_CPU_SCHED[idx].get_or_init(|_| unreachable!())
+    sched_for(cpu_id)
 }
 
 /// 每 CPU idle 任务的入口: 无条件停机等待中断, 永不返回.
@@ -265,7 +336,7 @@ impl Scheduler {
     }
 
     pub fn init(&self) {
-        init_per_cpu_sched(0);
+        let _ = init_per_cpu_sched(0);
 
         self.initialized.store(true, Ordering::SeqCst);
 
@@ -665,7 +736,7 @@ impl Scheduler {
         //
         // 真实内核不会因"无任务可运行"而结束运行: 本地没有可调度任务时运行
         // 本 CPU 的 idle 任务 (等待中断/事件唤醒其它任务). 整机退出只由测试
-        // 框架 (framework/tests 的 qemu_exit) 承担, 不属调度器职责.
+        // 框架 (framework::debug 的 qemu_exit) 承担, 不属调度器职责.
         if next_pid.is_none() {
             let idle_pid = per_cpu.idle.load(Ordering::SeqCst);
             if idle_pid != 0 {
@@ -1060,7 +1131,7 @@ impl Scheduler {
 
         // 调度下一个任务. 生产路径不因"无任务可运行"而结束运行: 本 CPU 的
         // idle 任务保证 `schedule()` 在运行期永不为 None. 整机退出 (QEMU exit)
-        // 由测试框架承担 (`framework/tests` 的 `qemu_exit`), 不属调度器职责.
+        // 由测试框架承担 (`framework::debug` 的 `qemu_exit`), 不属调度器职责.
         let _ = self.schedule();
     }
 

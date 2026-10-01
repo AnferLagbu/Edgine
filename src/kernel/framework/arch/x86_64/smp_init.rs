@@ -320,11 +320,26 @@ extern "C" fn ap_entry(lapic_id: u32) -> ! {
         crate::framework::idt::load_idt_on_current_cpu();
     }
 
+    // 上线前一次性构造本核全部 per-CPU 状态 (CpuQueue / 调度器 / RCU / softirq,
+    // 均幂等)。任一步分配失败即放弃本 AP 上线: 不登记 CPU、不握手 done ——
+    // BSP 侧等待 done 超时后视本 AP 离线 (与上方 GDT 分配失败跳过本 AP 的语义
+    // 一致); 绝不静默回退 BSP 状态造成跨 CPU 混叠。
+    if !crate::framework::proc::init_cpu_queue(cpu_index, 0)
+        || !crate::framework::proc::init_per_cpu_sched(cpu_index)
+        || !crate::framework::sync::rcu_alloc_cpu(cpu_index)
+        || !crate::framework::irq::softirq_alloc_cpu(cpu_index)
+    {
+        crate::klog_err!(
+            Boot,
+            "[SMP] AP cpu_index={} per-CPU state alloc failed, abort bring-up",
+            cpu_index
+        );
+        loop {
+            crate::arch!(halt());
+        }
+    }
+
     crate::framework::smp::register_cpu(lapic_id);
-
-    crate::framework::proc::init_cpu_queue(cpu_index, 0);
-
-    crate::framework::proc::init_per_cpu_sched(cpu_index);
 
     // 本核 idle 任务: 与 BSP 一样, 每核都需一个 idle 兜底, 否则本核
     // `schedule()` 在无候选任务时会返回 None (BSP 的 idle 不属于本核).

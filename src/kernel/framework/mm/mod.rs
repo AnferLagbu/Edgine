@@ -109,6 +109,7 @@ pub mod kpti;
 // 重新导出常用类型
 pub use kmalloc::*;
 pub use lazy_arena::LazyPageArena;
+pub(crate) use lazy_arena::alloc_zeroed_page_as;
 pub use pmm::*;
 pub use vmm::*;
 
