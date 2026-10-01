@@ -1,8 +1,5 @@
 use super::check;
-use crate::framework::ipc::types::{
-    IPC_MAX_MSG_QUEUES, IPC_MAX_PIPES, IPC_MAX_SEMAPHORES, IPC_MAX_SHM_SEGS, IpcId, IpcNamespace,
-    MsgQueue, Pipe, Semaphore, ShmSegment,
-};
+use crate::framework::ipc::types::{IpcId, IpcNamespace};
 // T6-1: pipe/shm 策略函数已迁移到 services; DECISION-J: sem 壳已删, 亦走 services
 use crate::framework::tests::{TestResult, runner};
 use crate::register_tests_inner;
@@ -15,23 +12,10 @@ use crate::framework::ipc::dynamic::DynIpcNamespace;
 #[cfg(not(feature = "host-test"))]
 use crate::services::ipc::msgq;
 
-// J-01 (2026-09-08): large_stack_arrays expect 仅在裸机 (非测试模式) 生效 —
-// IPC_MAX_* 在 any(kernel_test, host-test) 下缩减至 2 (services/ipc/types.rs),
-// 数组随之变小不触发 lint; 裸机大值数组 (64×Pipe 等) 才需要 expect.
-#[cfg_attr(
-    not(any(feature = "kernel_test", feature = "host-test")),
-    expect(
-        clippy::large_stack_arrays,
-        reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
-    )
-)]
 fn create_test_namespace() -> IpcNamespace {
-    IpcNamespace {
-        pipes: [const { Pipe::new() }; IPC_MAX_PIPES],
-        shm_segs: [const { ShmSegment::new() }; IPC_MAX_SHM_SEGS],
-        msg_queues: [const { MsgQueue::new() }; IPC_MAX_MSG_QUEUES],
-        semaphores: [const { Semaphore::new() }; IPC_MAX_SEMAPHORES],
-    }
+    let mut ns = IpcNamespace::empty();
+    ns.allocate();
+    ns
 }
 
 #[expect(

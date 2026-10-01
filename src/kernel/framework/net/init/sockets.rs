@@ -5,6 +5,7 @@
 //! `configure_max_sockets` / `get_max_sockets` / `set_max_sockets`.
 //! 抽出为独立子模块后, init.rs 通过 `pub use sockets::*` re-export.
 
+use alloc::boxed::Box;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use smoltcp::iface::{SocketSet, SocketStorage};
 
@@ -15,13 +16,33 @@ use smoltcp::iface::{SocketSet, SocketStorage};
 // 改本值后须同步 SOCKET_STORAGE 的尺寸.
 pub const MAX_SOCKETS: usize = 256;
 
-// 以下 static mut 保留: SOCKET_STORAGE/SOCKET_SET 是自引用结构,
-// 初始化后只读, 无法安全放入 NetState (smoltcp SocketSet 借用 storage).
-pub static mut SOCKET_STORAGE: core::mem::MaybeUninit<[SocketStorage<'static>; MAX_SOCKETS]> =
-    core::mem::MaybeUninit::uninit();
+// SOCKET_STORAGE 改为惰性堆置指针容器 (原静态数组 144 KB BSS → 首次初始化时按需分配).
+// SOCKET_SET 是自引用结构 (smoltcp SocketSet 借用 storage), 无法安全放入 NetState, 保留 static mut.
+// 持有首个元素瘦指针 (切片长度恒为 MAX_SOCKETS, 由重建时显式给出).
+static mut SOCKET_STORAGE: *mut SocketStorage<'static> = core::ptr::null_mut();
 pub static mut SOCKET_SET: core::mem::MaybeUninit<SocketSet<'static>> =
     core::mem::MaybeUninit::uninit();
 pub static SOCKETS_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+/// 惰性获取 socket storage 堆切片: 首次调用分配 `MAX_SOCKETS` 项, 之后复用.
+///
+/// # Safety
+///
+/// - 调用方须持有 `NET_STATE` 锁, 保证 `SOCKET_STORAGE` 串行访问
+/// - 返回的 `&'static mut` 由 `SOCKET_SET` 长期借用, 调用方不得转作他用
+pub unsafe fn socket_storage() -> &'static mut [SocketStorage<'static>] {
+    // SAFETY: 调用方持有 NET_STATE 锁; 首次经 Box::into_raw 分配后指针在进程生命周期内
+    // 持续有效 (不释放), 长度恒为 MAX_SOCKETS, 故 from_raw_parts_mut 合法.
+    unsafe {
+        if SOCKET_STORAGE.is_null() {
+            let boxed = (0..MAX_SOCKETS)
+                .map(|_| SocketStorage::EMPTY)
+                .collect::<Box<[_]>>();
+            SOCKET_STORAGE = Box::into_raw(boxed) as *mut SocketStorage<'static>;
+        }
+        core::slice::from_raw_parts_mut(SOCKET_STORAGE, MAX_SOCKETS)
+    }
+}
 
 // ============================================================================
 // I-47: Socket 容量配置

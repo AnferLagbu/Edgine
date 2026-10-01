@@ -61,20 +61,13 @@ pub mod strategy;
 // ============================================================================
 
 use crate::framework::racy_cell::RacyCell;
-use types::{
-    IPC_MAX_MSG_QUEUES, IPC_MAX_PIPES, IPC_MAX_SEMAPHORES, IPC_MAX_SHM_SEGS, IpcNamespace,
-};
+use types::{IPC_MAX_MSG_QUEUES, IPC_MAX_PIPES, IPC_MAX_SEMAPHORES, IpcNamespace};
 
 /// IPC 命名空间 (全局资源容器)
 ///
-/// 存储所有 IPC 资源的静态数组。
-/// 在内核初始化时通过 `ipc_init()` 初始化。
-pub static IPC_NAMESPACE: RacyCell<IpcNamespace> = RacyCell::new(IpcNamespace {
-    pipes: [const { Pipe::new() }; IPC_MAX_PIPES],
-    shm_segs: [const { ShmSegment::new() }; IPC_MAX_SHM_SEGS],
-    msg_queues: [const { MsgQueue::new() }; IPC_MAX_MSG_QUEUES],
-    semaphores: [const { Semaphore::new() }; IPC_MAX_SEMAPHORES],
-});
+/// 存储所有 IPC 资源。资源数组在 kmalloc 堆上惰性分配,
+/// 由 `ipc_init()` 在初始化时填充槽位。
+pub static IPC_NAMESPACE: RacyCell<IpcNamespace> = RacyCell::new(IpcNamespace::empty());
 
 /// 全局 ID 分配器
 ///
@@ -97,6 +90,9 @@ pub extern "C" fn ipc_init() {
     NEXT_IPC_ID.map_mut(|id| *id = 1);
 
     IPC_NAMESPACE.map_mut(|ns| {
+        // 在 kmalloc 堆上分配全部资源槽位
+        ns.allocate();
+
         // 初始化管道等待队列
         for i in 0..IPC_MAX_PIPES {
             ns.pipes[i].id = 0;
@@ -156,12 +152,8 @@ mod tests {
 
     #[test]
     fn test_pipe_create_and_close() {
-        let mut ns = IpcNamespace {
-            pipes: [const { Pipe::new() }; IPC_MAX_PIPES],
-            shm_segs: [const { ShmSegment::new() }; IPC_MAX_SHM_SEGS],
-            msg_queues: [const { MsgQueue::new() }; IPC_MAX_MSG_QUEUES],
-            semaphores: [const { Semaphore::new() }; IPC_MAX_SEMAPHORES],
-        };
+        let mut ns = IpcNamespace::empty();
+        ns.allocate();
 
         let mut next_id: IpcId = 1;
         let pid: u32 = 100;
@@ -189,12 +181,8 @@ mod tests {
 
     #[test]
     fn test_msgq_send_recv() {
-        let mut ns = IpcNamespace {
-            pipes: [const { Pipe::new() }; IPC_MAX_PIPES],
-            shm_segs: [const { ShmSegment::new() }; IPC_MAX_SHM_SEGS],
-            msg_queues: [const { MsgQueue::new() }; IPC_MAX_MSG_QUEUES],
-            semaphores: [const { Semaphore::new() }; IPC_MAX_SEMAPHORES],
-        };
+        let mut ns = IpcNamespace::empty();
+        ns.allocate();
 
         let mut next_id: IpcId = 1;
         let pid: u32 = 300;
@@ -246,12 +234,8 @@ mod tests {
 
     #[test]
     fn test_semaphore_operations() {
-        let mut ns = IpcNamespace {
-            pipes: [const { Pipe::new() }; IPC_MAX_PIPES],
-            shm_segs: [const { ShmSegment::new() }; IPC_MAX_SHM_SEGS],
-            msg_queues: [const { MsgQueue::new() }; IPC_MAX_MSG_QUEUES],
-            semaphores: [const { Semaphore::new() }; IPC_MAX_SEMAPHORES],
-        };
+        let mut ns = IpcNamespace::empty();
+        ns.allocate();
 
         let mut next_id: IpcId = 1;
         let pid: u32 = 400;

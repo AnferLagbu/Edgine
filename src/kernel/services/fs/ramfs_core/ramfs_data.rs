@@ -21,14 +21,20 @@ pub struct RamFsData {
     /// `SafeRamFs` / `TmpFsData`) 根 inode 同为 1、节点号重叠, 独立的 `fs_id`
     /// 使共享的全局 dcache/icache 不会跨实例污染.
     pub fs_id: u32,
-    pub nodes: [RamFsNode; RAMFS_MAX_NODES],
+    /// 节点表 — 惰性堆置 (见 [`RamFsData::allocate`]), 避免 BSS 常驻大数组
+    pub nodes: Vec<RamFsNode>,
     /// 文件数据区 — 惰性页池 (每块 4KB, 首次写入时按需向 PMM 申请物理页)
     pub data_area: LazyPageArena<RAMFS_MAX_BLOCKS>,
-    pub node_bitmap: [u8; RAMFS_MAX_NODES / 8],
-    pub block_bitmap: [u8; RAMFS_MAX_BLOCKS / 8],
-    pub aces: [RamFsACE; RAMFS_MAX_ACES],
-    pub symlink_targets: [[u8; 128]; RAMFS_MAX_NODES],
-    pub symlink_lens: [u8; RAMFS_MAX_NODES],
+    /// 节点位图 — 惰性堆置
+    pub node_bitmap: Vec<u8>,
+    /// 数据块位图 — 惰性堆置
+    pub block_bitmap: Vec<u8>,
+    /// ACE 访问控制表 — 惰性堆置
+    pub aces: Vec<RamFsACE>,
+    /// 符号链接目标 — 惰性堆置
+    pub symlink_targets: Vec<[u8; 128]>,
+    /// 符号链接长度 — 惰性堆置
+    pub symlink_lens: Vec<u8>,
     pub root_node: u32,
     pub free_nodes: AtomicU32,
     pub free_blocks: AtomicU32,
@@ -50,23 +56,47 @@ fn alloc_fs_id() -> u32 {
 }
 
 impl RamFsData {
-    #[expect(
-        clippy::large_stack_arrays,
-        reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
-    )]
+    /// 构造空实例 (各表均为空 `Vec`, 不分配堆内存).
+    ///
+    /// 供 BSS 静态 (`RAMFS_DATA` / `TMPFS_DATA` / `OVERLAY_FS` / `ANONYMOUS_FS`)
+    /// 与 `#[cfg(test)]` 静态常量初始化使用. 真正的表内存由
+    /// [`RamFsData::allocate`] 在堆就绪后惰性分配.
     pub const fn new() -> Self {
         Self {
             fs_id: 0,
-            nodes: [RamFsNode::new(); RAMFS_MAX_NODES],
+            nodes: Vec::new(),
             data_area: LazyPageArena::new(),
-            node_bitmap: [0; RAMFS_MAX_NODES / 8],
-            block_bitmap: [0; RAMFS_MAX_BLOCKS / 8],
-            aces: [RamFsACE::new(); RAMFS_MAX_ACES],
-            symlink_targets: [[0u8; 128]; RAMFS_MAX_NODES],
-            symlink_lens: [0u8; RAMFS_MAX_NODES],
+            node_bitmap: Vec::new(),
+            block_bitmap: Vec::new(),
+            aces: Vec::new(),
+            symlink_targets: Vec::new(),
+            symlink_lens: Vec::new(),
             root_node: 0,
             free_nodes: AtomicU32::new(0),
             free_blocks: AtomicU32::new(0),
+        }
+    }
+
+    /// 惰性堆置: 将各表填满到各自容量 (与旧静态数组语义等价).
+    ///
+    /// 逐元素 `map + collect` 构造, 避免栈上大临时对象与 rodata 模板.
+    /// 由 [`RamFsData::mount`] 在挂载时调用, 或由无挂载路径的实例
+    /// (如 `ANONYMOUS_FS`) 通过 [`RamFsData::ensure_allocated`] 触发.
+    pub fn allocate(&mut self) {
+        self.nodes = (0..RAMFS_MAX_NODES).map(|_| RamFsNode::new()).collect();
+        self.node_bitmap = (0..RAMFS_MAX_NODES / 8).map(|_| 0u8).collect();
+        self.block_bitmap = (0..RAMFS_MAX_BLOCKS / 8).map(|_| 0u8).collect();
+        self.aces = (0..RAMFS_MAX_ACES).map(|_| RamFsACE::new()).collect();
+        self.symlink_targets = (0..RAMFS_MAX_NODES).map(|_| [0u8; 128]).collect();
+        self.symlink_lens = (0..RAMFS_MAX_NODES).map(|_| 0u8).collect();
+    }
+
+    /// 幂等惰性堆置: 若各表尚未分配则调用 [`RamFsData::allocate`].
+    ///
+    /// 供从不经 `mount` 的实例 (如 `ANONYMOUS_FS`) 在访问前确保表已就绪.
+    pub fn ensure_allocated(&mut self) {
+        if self.nodes.is_empty() {
+            self.allocate();
         }
     }
 
@@ -468,12 +498,9 @@ impl RamFsData {
     pub fn mount(&mut self, _path: &str) -> i32 {
         // 分配全局唯一的 fs 实例标识, 使共享的 dcache/icache 按实例隔离
         self.fs_id = alloc_fs_id();
-        // 使用 fill(0) 替代逐字节循环——编译器会优化为高效的 memset
-        self.nodes.fill(RamFsNode::new());
+        // 惰性堆置各表 (等价于旧 `fill` 逐表清零), 建立空表基线
+        self.allocate();
         self.data_area.clear();
-        self.node_bitmap.fill(0);
-        self.block_bitmap.fill(0);
-        self.aces.fill(RamFsACE::new());
 
         self.free_nodes
             .store((RAMFS_MAX_NODES - 1) as u32, Ordering::SeqCst);
@@ -1587,14 +1614,16 @@ mod tests {
     use super::*;
     use crate::framework::sync::IrqSpinLock as Mutex;
 
-    /// 测试专用 BSS 静态实例 — `RamFsData` 体量约 84 KiB, 不能在测试线程
-    /// 栈上按值构造 (与生产 `RAMFS_DATA` / overlay `OVERLAY_FS` 同范式)。
+    /// 测试专用静态实例 — 经 `RamFsData::new()` 常量初始化 (各表为空 `Vec`),
+    /// 表内存由测试内 `ensure_allocated()` 惰性堆置。
     static TEST_FS: Mutex<RamFsData> = Mutex::new(RamFsData::new());
 
     /// `set_times`: 属主写回 / UTIME_OMIT / 非属主拒绝 / 未使用节点拒绝。
     #[test]
     fn test_set_times_owner_omit_and_permission() {
         let mut fs = TEST_FS.lock();
+        // 惰性堆置各表 (避免空 Vec 索引越界)
+        fs.ensure_allocated();
         // 直接构造最小已用节点 (绕过 mount/alloc 路径)
         {
             let node = &mut fs.nodes[1];

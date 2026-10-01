@@ -99,9 +99,9 @@ pub struct OverlayFsData {
 impl OverlayFsData {
     /// BSS 常量初始化 — 全部字段置空, 仅供 `static` 初始化位置调用。
     ///
-    /// 关键约束: `OverlayFsData` 体量约 170 KiB (`upper_data` + `work_data` 各约
-    /// 84 KiB)。若在普通函数中按值构造会占用内核栈, 故 `fs_mount` 一律就地写
-    /// 字段, 不得按值构造本结构。
+    /// 关键约束: `OverlayFsData` 内含 `upper_data` + `work_data` 两个 `RamFsData`,
+    /// 其大表已改为惰性堆置, 静态体量主要来自各自内联页池索引 (`data_area`, 各约
+    /// 16 KiB)。故 `fs_mount` 一律就地写字段, 不得按值构造本结构。
     pub const fn empty() -> Self {
         Self {
             mount: OverlayMount {

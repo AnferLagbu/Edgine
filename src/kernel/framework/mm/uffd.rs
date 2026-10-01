@@ -41,8 +41,10 @@
 //! - 本模块 0 unsafe (仅用 `PhysAddr::to_virt` + `copy_nonoverlapping` 于
 //!   `fill_provided_page`, 已带 SAFETY 注释).
 
+use alloc::boxed::Box;
+
 use super::{PAGE_SIZE, PhysAddr};
-use crate::framework::sync::IrqSpinLock;
+use crate::framework::sync::{IrqSpinLock, OnceLock};
 
 // ============================================================================
 // Linux ABI 常量 (真实编码, 与 uapi/linux/userfaultfd.h 一致)
@@ -248,9 +250,22 @@ impl UffdInstance {
     }
 }
 
-/// 全局实例表 (中断安全: #PF 路径读取)
-static UFFD_TABLE: IrqSpinLock<[UffdInstance; MAX_INSTANCES]> =
-    IrqSpinLock::new([const { UffdInstance::empty() }; MAX_INSTANCES]);
+/// 全局实例表 (中断安全: #PF 路径读取) — 惰性堆置, 避免约 74 KB 常驻 BSS。
+///
+/// `OnceLock` 内联仅数十字节; 首次访问 (创建实例或 #PF 路径查询) 时在 kmalloc
+/// 堆上逐元素构造 `Box<[UffdInstance]>`。首次访问恒晚于 kmalloc 初始化。
+static UFFD_TABLE: OnceLock<IrqSpinLock<Box<[UffdInstance]>>> = OnceLock::new();
+
+/// 获取全局实例表的锁 (首次调用时惰性分配)。
+fn uffd_table() -> &'static IrqSpinLock<Box<[UffdInstance]>> {
+    UFFD_TABLE.get_or_init(|slot| {
+        slot.write(IrqSpinLock::new(
+            (0..MAX_INSTANCES)
+                .map(|_| UffdInstance::empty())
+                .collect::<Box<[_]>>(),
+        ));
+    })
+}
 
 /// 实例下标 (非 uffd fd 返回 `None`)
 fn instance_index(fd: i32) -> Option<usize> {
@@ -278,7 +293,7 @@ pub fn create(owner_pid: u32) -> Option<i32> {
         let _ = crate::framework::proc::fd_alloc::free_fd(FdSubsystem::UserFaultFd, fd);
         return None;
     };
-    let mut t = UFFD_TABLE.lock();
+    let mut t = uffd_table().lock();
     t[idx] = UffdInstance::empty();
     t[idx].used = true;
     t[idx].owner_pid = owner_pid;
@@ -291,7 +306,7 @@ pub fn release(fd: i32) -> bool {
         return false;
     };
     let (fault_pid, reader_pid) = {
-        let mut t = UFFD_TABLE.lock();
+        let mut t = uffd_table().lock();
         if !t[idx].used {
             return false;
         }
@@ -333,7 +348,7 @@ pub fn api_negotiate(
     if api != UFFD_API {
         return Err(Errno::EINVAL);
     }
-    let mut t = UFFD_TABLE.lock();
+    let mut t = uffd_table().lock();
     if !t[idx].used {
         return Err(Errno::EBADF);
     }
@@ -384,7 +399,7 @@ pub fn register(
         return Err(Errno::EFAULT);
     }
 
-    let mut t = UFFD_TABLE.lock();
+    let mut t = uffd_table().lock();
     if !t[idx].used {
         return Err(Errno::EBADF);
     }
@@ -410,7 +425,7 @@ pub fn unregister(fd: i32, start: u64, len: u64) -> Result<(), crate::framework:
         return Err(Errno::EBADF);
     };
     let end = start.checked_add(len).ok_or(Errno::EINVAL)?;
-    let mut t = UFFD_TABLE.lock();
+    let mut t = uffd_table().lock();
     if !t[idx].used {
         return Err(Errno::EBADF);
     }
@@ -450,7 +465,7 @@ pub fn wake(fd: i32, start: u64, len: u64) -> Result<bool, crate::framework::sys
     };
     let end = start.checked_add(len).ok_or(Errno::EINVAL)?;
     let pid = {
-        let mut t = UFFD_TABLE.lock();
+        let mut t = uffd_table().lock();
         if !t[idx].used {
             return Err(Errno::EBADF);
         }
@@ -502,7 +517,7 @@ pub fn provide_page(
         }
     }
     let pid = {
-        let mut t = UFFD_TABLE.lock();
+        let mut t = uffd_table().lock();
         if !t[idx].used {
             return Err(Errno::EBADF);
         }
@@ -548,7 +563,7 @@ pub fn fault_notify(page_addr: u64, flags: u64) -> UffdFaultOutcome {
     let mut wake_reader = 0u32;
 
     let outcome = {
-        let mut t = UFFD_TABLE.lock();
+        let mut t = uffd_table().lock();
         let mut found = None;
         for i in 0..MAX_INSTANCES {
             if t[i].used && t[i].covers(page_addr) {
@@ -603,7 +618,7 @@ pub fn fault_notify(page_addr: u64, flags: u64) -> UffdFaultOutcome {
 ///
 /// 成功后复位挂起状态; 返回是否填充成功 (状态不匹配返回 false).
 pub fn fill_provided_page(page_addr: u64, phys: PhysAddr) -> bool {
-    let mut t = UFFD_TABLE.lock();
+    let mut t = uffd_table().lock();
     let mut found = None;
     for i in 0..MAX_INSTANCES {
         if t[i].used && t[i].covers(page_addr) {
@@ -644,7 +659,7 @@ pub fn fill_provided_page(page_addr: u64, phys: PhysAddr) -> bool {
 /// 弹出队首事件 (非阻塞)
 pub fn pop_event(fd: i32) -> Option<UffdMsgPagefault> {
     let idx = instance_index(fd)?;
-    let mut t = UFFD_TABLE.lock();
+    let mut t = uffd_table().lock();
     if !t[idx].used || t[idx].ev_count == 0 {
         return None;
     }
@@ -659,7 +674,7 @@ pub fn pop_event(fd: i32) -> Option<UffdMsgPagefault> {
 /// 登记 `read()` 阻塞的线程 pid (供 `fault_notify` 唤醒)
 pub fn set_reader(fd: i32, pid: u32) {
     if let Some(idx) = instance_index(fd) {
-        let mut t = UFFD_TABLE.lock();
+        let mut t = uffd_table().lock();
         if t[idx].used {
             t[idx].reader_pid = pid;
         }
@@ -669,7 +684,7 @@ pub fn set_reader(fd: i32, pid: u32) {
 /// 注销 `read()` 阻塞的线程 pid
 pub fn clear_reader(fd: i32, pid: u32) {
     if let Some(idx) = instance_index(fd) {
-        let mut t = UFFD_TABLE.lock();
+        let mut t = uffd_table().lock();
         if t[idx].used && t[idx].reader_pid == pid {
             t[idx].reader_pid = 0;
         }
@@ -679,7 +694,7 @@ pub fn clear_reader(fd: i32, pid: u32) {
 /// 实例是否仍处于打开状态 (用于 `read()` 阻塞后被 close 唤醒时提前返回)
 pub fn is_open(fd: i32) -> bool {
     match instance_index(fd) {
-        Some(idx) => UFFD_TABLE.lock()[idx].used,
+        Some(idx) => uffd_table().lock()[idx].used,
         None => false,
     }
 }
@@ -688,7 +703,7 @@ pub fn is_open(fd: i32) -> bool {
 pub fn is_active(fd: i32) -> bool {
     match instance_index(fd) {
         Some(idx) => {
-            let t = UFFD_TABLE.lock();
+            let t = uffd_table().lock();
             t[idx].used && t[idx].api_negotiated && t[idx].range_count > 0
         }
         None => false,

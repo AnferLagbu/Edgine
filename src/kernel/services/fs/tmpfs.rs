@@ -127,8 +127,9 @@ pub struct TmpFsData {
 impl TmpFsData {
     /// BSS 常量初始化 — 全部字段置空, 仅供 `static` 初始化位置调用。
     ///
-    /// 关键约束: `TmpFsData` 体量约 84 KiB (内含 `RamFsData`)。若在普通函数中
-    /// 按值构造会占用内核栈, 故 `fs_mount` 一律就地写字段, 不得按值构造本结构。
+    /// 关键约束: `TmpFsData` 内含 `RamFsData`, 其大表 (节点/块/ACE/符号链接)
+    /// 已改为惰性堆置, 静态体量主要来自内联页池索引 (`data_area`, 约 16 KiB)。
+    /// 故 `fs_mount` 一律就地写字段, 不得按值构造本结构。
     pub const fn empty() -> Self {
         Self {
             inner: RamFsData::new(),

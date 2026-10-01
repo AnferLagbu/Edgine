@@ -310,10 +310,7 @@ mod boundary_tests {
 
 /// 创建测试用的 IPC 命名空间实例
 fn create_test_namespace() -> IpcNamespace {
-    IpcNamespace {
-        pipes: [const { Pipe::new() }; IPC_MAX_PIPES],
-        shm_segs: [const { ShmSegment::new() }; IPC_MAX_SHM_SEGS],
-        msg_queues: [const { MsgQueue::new() }; IPC_MAX_MSG_QUEUES],
-        semaphores: [const { Semaphore::new() }; IPC_MAX_SEMAPHORES],
-    }
+    let mut ns = IpcNamespace::empty();
+    ns.allocate();
+    ns
 }

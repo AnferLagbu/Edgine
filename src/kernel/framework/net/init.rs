@@ -2,7 +2,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::framework::klog::{klog_init_msg, klog_net, klog_net_err};
 use crate::framework::net::{ChitinNetDevice, NetworkStack};
-use smoltcp::iface::{SocketHandle, SocketSet, SocketStorage};
+use smoltcp::iface::{SocketHandle, SocketSet};
 use smoltcp::socket::dhcpv4;
 use smoltcp::socket::{tcp, udp};
 // W4.4: Ipv4Address/IpCidr/IpEndpoint/IpAddress 通过 NetStack trait 类型
@@ -70,14 +70,10 @@ pub use cmd::*;
 
 // B04-09 Step B: transition_state/set_failed 已移至 state.rs.
 
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 /// # Safety
 ///
 /// - 仅在内核启动网络子系统的临界区内调用一次
-/// - `SOCKET_STORAGE` 是 `MaybeUninit<[SocketStorage; MAX_SOCKETS]>` 静态变量, 由本函数独占初始化
+/// - `SOCKET_STORAGE` (惰性堆置切片) 由 `sockets::socket_storage()` 分配并初始化, 供 `SocketSet` 长期借用
 /// - `SOCKET_SET` 是 `UninitCell<SocketSet<'static>>`, 初始化后只读
 unsafe fn init_sockets() {
     unsafe {
@@ -85,12 +81,7 @@ unsafe fn init_sockets() {
             return;
         }
         configure_max_sockets();
-        let ptr = SOCKET_STORAGE.as_mut_ptr() as *mut SocketStorage<'static>;
-        for i in 0..MAX_SOCKETS {
-            core::ptr::write(ptr.add(i), SocketStorage::EMPTY);
-        }
-        let storage = SOCKET_STORAGE.assume_init_mut();
-        SOCKET_SET.write(SocketSet::new(&mut storage[..]));
+        SOCKET_SET.write(SocketSet::new(sockets::socket_storage()));
         SOCKETS_INITIALIZED.store(true, Ordering::Release);
     }
 }
@@ -468,6 +459,10 @@ pub extern "C" fn qx_net_init() {
                 return;
             }
         }
+
+        // 分配 NetState 的各 `TOTAL_SLOTS` 项 (惰性堆置), 以覆盖旧内容实现复位.
+        // 放在状态机确认 (重) 初始化之后, 避免 "already initialized" 早返回时误清空.
+        NET_STATE.lock().allocate();
 
         raw::klog_msg("Step1: hardware probe");
 

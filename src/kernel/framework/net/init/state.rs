@@ -5,6 +5,7 @@
 //! 抽出为独立子模块后, init.rs 通过 `pub use state::*` re-export,
 //! 保持 init 主体与子模块 (raw/sm_fi) 的 `super::NET_STATE` 等引用不变.
 
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 use crate::framework::net::{ChitinNetDevice, NetworkStack};
@@ -55,46 +56,66 @@ pub struct NetState {
     pub(crate) device: Option<ChitinNetDevice>,
     pub(crate) stack: Option<NetworkStack>,
     pub(crate) dhcp_handle: Option<SocketHandle>,
-    pub(crate) socket_table: [Option<SocketHandle>; TOTAL_SLOTS],
-    pub(crate) fd_types: [u8; TOTAL_SLOTS],
-    pub(crate) tcp_rx_bufs: [*mut u8; TOTAL_SLOTS],
-    pub(crate) tcp_tx_bufs: [*mut u8; TOTAL_SLOTS],
-    pub(crate) udp_rx_bufs: [*mut u8; TOTAL_SLOTS],
-    pub(crate) udp_tx_bufs: [*mut u8; TOTAL_SLOTS],
-    pub(crate) udp_rx_metas: [[udp::PacketMetadata; UDP_META_COUNT]; TOTAL_SLOTS],
-    pub(crate) udp_tx_metas: [[udp::PacketMetadata; UDP_META_COUNT]; TOTAL_SLOTS],
+    pub(crate) socket_table: Vec<Option<SocketHandle>>,
+    pub(crate) fd_types: Vec<u8>,
+    pub(crate) tcp_rx_bufs: Vec<*mut u8>,
+    pub(crate) tcp_tx_bufs: Vec<*mut u8>,
+    pub(crate) udp_rx_bufs: Vec<*mut u8>,
+    pub(crate) udp_tx_bufs: Vec<*mut u8>,
+    pub(crate) udp_rx_metas: Vec<[udp::PacketMetadata; UDP_META_COUNT]>,
+    pub(crate) udp_tx_metas: Vec<[udp::PacketMetadata; UDP_META_COUNT]>,
 }
 
 // SAFETY: NetState 包含 *mut u8 裸指针, 但所有指针由 k_malloc 分配、
 // 在 NET_STATE (IrqSpinLock) 保护下串行访问, 无跨线程共享裸指针.
+// 各字段为 Vec<T>, 满足 Send/Sync 所需的内层 T: Send 约束.
 unsafe impl Send for NetState {}
 unsafe impl Sync for NetState {}
 
 impl NetState {
-    #[expect(
-        clippy::large_stack_arrays,
-        reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
-    )]
-    pub const fn new() -> Self {
+    /// 构造空状态: 所有 `Vec` 字段为空 (零容量, 不分配).
+    ///
+    /// 必须在访问字段前调用 [`Self::allocate`] 填充 `TOTAL_SLOTS` 项.
+    /// 保持 `const fn` 以便 `static NET_STATE` 静态构造.
+    pub const fn empty() -> Self {
         Self {
             device: None,
             stack: None,
             dhcp_handle: None,
-            socket_table: [None; TOTAL_SLOTS],
-            fd_types: [0u8; TOTAL_SLOTS],
-            tcp_rx_bufs: [core::ptr::null_mut(); TOTAL_SLOTS],
-            tcp_tx_bufs: [core::ptr::null_mut(); TOTAL_SLOTS],
-            udp_rx_bufs: [core::ptr::null_mut(); TOTAL_SLOTS],
-            udp_tx_bufs: [core::ptr::null_mut(); TOTAL_SLOTS],
-            udp_rx_metas: [[udp::PacketMetadata::EMPTY; UDP_META_COUNT]; TOTAL_SLOTS],
-            udp_tx_metas: [[udp::PacketMetadata::EMPTY; UDP_META_COUNT]; TOTAL_SLOTS],
+            socket_table: Vec::new(),
+            fd_types: Vec::new(),
+            tcp_rx_bufs: Vec::new(),
+            tcp_tx_bufs: Vec::new(),
+            udp_rx_bufs: Vec::new(),
+            udp_tx_bufs: Vec::new(),
+            udp_rx_metas: Vec::new(),
+            udp_tx_metas: Vec::new(),
         }
+    }
+
+    /// 逐元素填充 `TOTAL_SLOTS` 项 (避免构造大栈临时数组).
+    ///
+    /// 每次网络 (重) 初始化时调用, 以 `Vec` 覆盖旧内容实现复位.
+    /// 调用方须持有 `NET_STATE` 锁.
+    pub fn allocate(&mut self) {
+        self.socket_table = (0..TOTAL_SLOTS).map(|_| None).collect();
+        self.fd_types = (0..TOTAL_SLOTS).map(|_| 0u8).collect();
+        self.tcp_rx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();
+        self.tcp_tx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();
+        self.udp_rx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();
+        self.udp_tx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();
+        self.udp_rx_metas = (0..TOTAL_SLOTS)
+            .map(|_| [udp::PacketMetadata::EMPTY; UDP_META_COUNT])
+            .collect();
+        self.udp_tx_metas = (0..TOTAL_SLOTS)
+            .map(|_| [udp::PacketMetadata::EMPTY; UDP_META_COUNT])
+            .collect();
     }
 }
 
 /// 全局网络状态, `IrqSpinLock` 保护 (替代原 `NET_LOCK` + 12 static mut).
 /// `poll_network` 使用 `try_lock()` 避免 ISR 上下文阻塞.
-pub static NET_STATE: Mutex<NetState> = Mutex::new(NetState::new());
+pub static NET_STATE: Mutex<NetState> = Mutex::new(NetState::empty());
 
 // ============================================================================
 // 辅助函数

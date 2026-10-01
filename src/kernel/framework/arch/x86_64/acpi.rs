@@ -27,7 +27,8 @@
 //!   0x09 — x2APIC
 //! ```
 
-use crate::framework::sync::IrqSpinLock;
+use crate::framework::sync::{IrqSpinLock, OnceLock};
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
@@ -69,8 +70,21 @@ static IOAPICS: IrqSpinLock<[Option<IoApicInfo>; MAX_IOAPICS]> =
 static IOAPIC_COUNT: AtomicU32 = AtomicU32::new(0);
 const MAX_IOAPICS: usize = 8;
 
-static AP_LIST: IrqSpinLock<[Option<ApInfo>; MAX_CPUS]> = IrqSpinLock::new([None; MAX_CPUS]);
+/// AP 列表 — 惰性堆置, 避免 `[Option<ApInfo>; MAX_CPUS]` (约 12 KB) 常驻 BSS。
+///
+/// `OnceLock` 内联仅数十字节; 首次访问 (MADT 解析前或查询时) 在 kmalloc 堆上
+/// 逐元素构造 `Box<[Option<ApInfo>]>`。首次访问恒晚于 kmalloc 初始化。
+static AP_LIST: OnceLock<IrqSpinLock<Box<[Option<ApInfo>]>>> = OnceLock::new();
 static AP_COUNT: AtomicU32 = AtomicU32::new(0);
+
+/// 获取 AP 列表 (首次调用时惰性分配)。
+fn ap_list() -> &'static IrqSpinLock<Box<[Option<ApInfo>]>> {
+    AP_LIST.get_or_init(|slot| {
+        slot.write(IrqSpinLock::new(
+            (0..MAX_CPUS).map(|_| None).collect::<Box<[_]>>(),
+        ));
+    })
+}
 
 // ============================================================================
 // RSDP 搜索
@@ -394,7 +408,7 @@ fn parse_madt_entries(madt_ptr: u64) {
                 let idx = AP_COUNT.load(Ordering::Acquire) as usize;
                 if idx < MAX_CPUS {
                     let enabled = (lapic.flags & 0x1) != 0;
-                    AP_LIST.lock()[idx] = Some(ApInfo {
+                    ap_list().lock()[idx] = Some(ApInfo {
                         lapic_id: u32::from(lapic.apic_id),
                         apic_id: u32::from(lapic.acpi_proc_id),
                         enabled,
@@ -446,12 +460,12 @@ pub fn get_ap_count() -> u32 {
     AP_COUNT.load(Ordering::Acquire)
 }
 
-pub fn get_ap_list() -> [Option<ApInfo>; MAX_CPUS] {
-    *AP_LIST.lock()
+pub fn get_ap_list() -> Box<[Option<ApInfo>]> {
+    ap_list().lock().clone()
 }
 
 pub fn get_ap(index: usize) -> Option<ApInfo> {
-    AP_LIST.lock()[index]
+    ap_list().lock()[index]
 }
 
 pub fn has_madt() -> bool {

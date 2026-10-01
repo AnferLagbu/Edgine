@@ -15,6 +15,8 @@
 //! - Linux sysfs 文档: Documentation/filesystems/sysfs.rst
 //! - Linux kobject 文档: Documentation/core-api/kobject.rst
 
+use alloc::vec::Vec;
+
 use crate::framework::sync::IrqSpinLock as Mutex;
 use crate::framework::sync::OnceLock;
 use crate::framework::syscall::Errno;
@@ -213,8 +215,8 @@ impl SystreeNode {
 
 /// 系统树
 pub struct Systree {
-    /// 节点表
-    pub nodes: [SystreeNode; MAX_NODES],
+    /// 节点表 (字段级堆化: 构造时按 `MAX_NODES` 预置容量)
+    pub nodes: Vec<SystreeNode>,
     /// 节点数量
     pub node_count: u32,
     /// 下一个可用节点 ID
@@ -222,13 +224,13 @@ pub struct Systree {
 }
 
 impl Systree {
-    #[expect(
-        clippy::large_stack_arrays,
-        reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
-    )]
-    pub const fn new() -> Self {
+    /// 构造系统树, 并预置 `MAX_NODES` 个空节点.
+    ///
+    /// 在 `get_systree()` 的 `OnceLock` 初始化闭包内调用 (堆已就绪),
+    /// 逐元素 collect 构造, 避免 BSS 常驻大数组与栈上大临时对象.
+    pub fn new() -> Self {
         Self {
-            nodes: [const { SystreeNode::new(0, 0) }; MAX_NODES],
+            nodes: (0..MAX_NODES).map(|_| SystreeNode::new(0, 0)).collect(),
             node_count: 0,
             next_id: 1,
         }

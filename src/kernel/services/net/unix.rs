@@ -8,6 +8,8 @@
 //! 纯策略代码 (socket CRUD + 路径绑定 + STREAM/DGRAM 数据传输), 0 unsafe.
 //! framework 仅保留 re-export.
 
+use alloc::vec::Vec;
+
 use crate::framework::sync::IrqSpinLock;
 use crate::framework::syscall::Errno;
 use crate::services::proc::fd_alloc::{FdSubsystem, free_fd};
@@ -172,20 +174,27 @@ impl UnixPathBinding {
 
 #[derive(Debug)]
 pub struct UdsState {
-    pub sockets: [UnixSocket; MAX_UDS_FD],
-    pub paths: [UnixPathBinding; UNIX_MAX_BINDINGS],
+    pub sockets: Vec<UnixSocket>,
+    pub paths: Vec<UnixPathBinding>,
 }
 
 impl UdsState {
-    #[expect(
-        clippy::large_stack_arrays,
-        reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
-    )]
-    pub const fn new() -> Self {
+    /// 构造空容器 (不含元素), 字段级堆化前置态.
+    pub const fn empty() -> Self {
         Self {
-            sockets: [const { UnixSocket::empty() }; MAX_UDS_FD],
-            paths: [const { UnixPathBinding::empty() }; UNIX_MAX_BINDINGS],
+            sockets: Vec::new(),
+            paths: Vec::new(),
         }
+    }
+
+    /// 惰性堆置: 将两个表填满到各自容量 (与旧静态数组语义等价).
+    ///
+    /// 在 `uds_init()` 时调用 (堆已就绪), 避免 BSS 常驻大数组.
+    pub fn allocate(&mut self) {
+        self.sockets = (0..MAX_UDS_FD).map(|_| UnixSocket::empty()).collect();
+        self.paths = (0..UNIX_MAX_BINDINGS)
+            .map(|_| UnixPathBinding::empty())
+            .collect();
     }
 
     fn find_free_path(&self) -> Option<u8> {
@@ -236,7 +245,7 @@ impl UdsState {
     }
 }
 
-pub static UDS_STATE: IrqSpinLock<UdsState> = IrqSpinLock::new(UdsState::new());
+pub static UDS_STATE: IrqSpinLock<UdsState> = IrqSpinLock::new(UdsState::empty());
 
 static NEXT_SOCK_ID: IrqSpinLock<u32> = IrqSpinLock::new(1);
 
@@ -265,6 +274,8 @@ fn fd_to_idx(fd: i32) -> Result<u8, UdsError> {
 // ============================================================================
 
 pub fn uds_init() {
+    // 惰性堆置: 在堆就绪后填充 sockets/paths 两表 (与旧静态数组语义等价).
+    UDS_STATE.with_mut(UdsState::allocate);
     NEXT_SOCK_ID.with_mut(|id| *id = 1);
     // 注册契约 (DECISION-K 统一模式: 机制 init 后注册策略, 第二十六批):
     // framework sm_setsockopt 的 SO_PASSCRED 路由经此钩子委托本模块,
@@ -1051,14 +1062,8 @@ pub fn uds_parse_path(path: &[u8]) -> Option<(&[u8], bool)> {
 }
 
 pub fn uds_reset_for_test() {
-    UDS_STATE.with_mut(|state| {
-        for s in &mut state.sockets {
-            *s = UnixSocket::empty();
-        }
-        for p in &mut state.paths {
-            *p = UnixPathBinding::empty();
-        }
-    });
+    // 惰性堆置等价语义: 直接重建两表 (保证已堆置且全部归零).
+    UDS_STATE.with_mut(UdsState::allocate);
     NEXT_SOCK_ID.with_mut(|id| *id = 1);
     // UT-06 (2026-09-24): 同步归零本子系统 FD 位图. 此前仅清 UDS_STATE,
     // 未回收 fd_alloc 位, 导致跨用例位图残留 (占满 16 槽后 alloc_fd 恒 None).

@@ -18,8 +18,11 @@
 //! - `uaddr` 必须是合法的用户空间指针, 在 syscall 入口已通过 `check_user_ptr` 验证
 //! - 原子比较使用 `AtomicU32` 访问用户空间, 需确保页表映射有效
 
+use alloc::boxed::Box;
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+use crate::framework::sync::OnceLock;
 
 // ============================================================================
 // Futex 操作码 (与 Linux 兼容)
@@ -114,27 +117,10 @@ struct FutexBucket {
 }
 
 impl FutexBucket {
-    #[cfg(feature = "kernel_test")]
-    const fn new() -> Self {
+    /// 创建空桶 (零等待者, `count=0`)。
+    const fn empty() -> Self {
         FutexBucket {
-            waiters: [
-                FutexWaiter::empty(),
-                FutexWaiter::empty(),
-                FutexWaiter::empty(),
-                FutexWaiter::empty(),
-                FutexWaiter::empty(),
-                FutexWaiter::empty(),
-                FutexWaiter::empty(),
-                FutexWaiter::empty(),
-                FutexWaiter::empty(),
-                FutexWaiter::empty(),
-                FutexWaiter::empty(),
-                FutexWaiter::empty(),
-                FutexWaiter::empty(),
-                FutexWaiter::empty(),
-                FutexWaiter::empty(),
-                FutexWaiter::empty(),
-            ],
+            waiters: [const { FutexWaiter::empty() }; FUTEX_BUCKET_CAPACITY],
             count: 0,
         }
     }
@@ -222,10 +208,10 @@ impl FutexBucket {
     }
 }
 
-/// 全局 futex 哈希表
+/// 全局 futex 哈希表 (桶数组与锁数组均在堆上, 避免约 16.5 KB 常驻 BSS)
 struct FutexHashTable {
-    locks: [SimpleSpinLock; FUTEX_HASH_BUCKETS],
-    buckets: [UnsafeCell<FutexBucket>; FUTEX_HASH_BUCKETS],
+    locks: Box<[SimpleSpinLock]>,
+    buckets: Box<[UnsafeCell<FutexBucket>]>,
 }
 
 // SAFETY: FutexHashTable 的每个桶由独立的 SimpleSpinLock 保护,
@@ -234,17 +220,26 @@ unsafe impl Sync for FutexHashTable {}
 // SAFETY: 同上, 桶级锁保证并发安全.
 unsafe impl Send for FutexHashTable {}
 
-static FUTEX_TABLE: FutexHashTable = FutexHashTable {
-    locks: unsafe {
-        // SAFETY: SimpleSpinLock 的零值是有效的 (AtomicBool 初始为 false = 未锁定).
-        core::mem::zeroed()
-    },
-    buckets: unsafe {
-        // SAFETY: UnsafeCell<FutexBucket> 的零值是有效的:
-        // FutexBucket 包含 FutexWaiter 数组 (零值 = 空) 和 count (0).
-        core::mem::zeroed()
-    },
-};
+/// 全局 futex 哈希表 — 惰性堆置, `OnceLock` 内联仅数十字节。
+///
+/// 首次 futex 系统调用时在 kmalloc 堆上逐元素构造两个桶数组。
+static FUTEX_TABLE: OnceLock<FutexHashTable> = OnceLock::new();
+
+/// 获取全局 futex 哈希表 (首次调用时惰性分配)。
+fn futex_table() -> &'static FutexHashTable {
+    FUTEX_TABLE.get_or_init(|slot| {
+        slot.write(FutexHashTable {
+            locks: (0..FUTEX_HASH_BUCKETS)
+                .map(|_| SimpleSpinLock {
+                    locked: AtomicBool::new(false),
+                })
+                .collect(),
+            buckets: (0..FUTEX_HASH_BUCKETS)
+                .map(|_| UnsafeCell::new(FutexBucket::empty()))
+                .collect(),
+        });
+    })
+}
 
 #[expect(
     clippy::unreadable_literal,
@@ -302,16 +297,17 @@ fn futex_wait(uaddr: u64, val: i32, _timeout: u64) -> i64 {
 
     // 4. 加入等待队列
     let bucket_idx = hash_uaddr(uaddr);
+    let table = futex_table();
     {
-        FUTEX_TABLE.locks[bucket_idx].lock();
+        table.locks[bucket_idx].lock();
         // SAFETY: 我们持有锁, 可以安全访问桶
-        let bucket = unsafe { &mut *FUTEX_TABLE.buckets[bucket_idx].get() };
+        let bucket = unsafe { &mut *table.buckets[bucket_idx].get() };
         let added = bucket.push(FutexWaiter {
             uaddr,
             pid: current_pid,
             woken: false,
         });
-        FUTEX_TABLE.locks[bucket_idx].unlock();
+        table.locks[bucket_idx].unlock();
         if !added {
             return -(11i64); // -EAGAIN: 桶满
         }
@@ -322,11 +318,11 @@ fn futex_wait(uaddr: u64, val: i32, _timeout: u64) -> i64 {
 
     // 6. 被唤醒后, 从等待队列中移除自己
     {
-        FUTEX_TABLE.locks[bucket_idx].lock();
-        // SAFETY: `FUTEX_TABLE` 由调用方保证为有效指针; 只读访问
-        let bucket = unsafe { &mut *FUTEX_TABLE.buckets[bucket_idx].get() };
+        table.locks[bucket_idx].lock();
+        // SAFETY: `table` 由 `futex_table()` 返回 `&'static`, 有效; 持锁下访问桶
+        let bucket = unsafe { &mut *table.buckets[bucket_idx].get() };
         bucket.remove_by_pid(current_pid);
-        FUTEX_TABLE.locks[bucket_idx].unlock();
+        table.locks[bucket_idx].unlock();
     }
 
     0
@@ -341,12 +337,13 @@ pub fn futex_wake(uaddr: u64, max_count: u32) -> i64 {
     }
 
     let bucket_idx = hash_uaddr(uaddr);
+    let table = futex_table();
     let woken = {
-        FUTEX_TABLE.locks[bucket_idx].lock();
-        // SAFETY: `FUTEX_TABLE` 由调用方保证为有效指针; 只读访问
-        let bucket = unsafe { &mut *FUTEX_TABLE.buckets[bucket_idx].get() };
+        table.locks[bucket_idx].lock();
+        // SAFETY: `table` 由 `futex_table()` 返回 `&'static`, 有效; 持锁下访问桶
+        let bucket = unsafe { &mut *table.buckets[bucket_idx].get() };
         let w = bucket.wake(uaddr, max_count);
-        FUTEX_TABLE.locks[bucket_idx].unlock();
+        table.locks[bucket_idx].unlock();
         w
     };
 
@@ -356,12 +353,13 @@ pub fn futex_wake(uaddr: u64, max_count: u32) -> i64 {
 /// `FUTEX_REQUEUE`: 迁移等待者
 fn futex_requeue(uaddr: u64, max_wake: u32, uaddr2: u64, max_requeue: u32) -> i64 {
     let bucket_idx = hash_uaddr(uaddr);
+    let table = futex_table();
     let (woken, requeued) = {
-        FUTEX_TABLE.locks[bucket_idx].lock();
-        // SAFETY: `FUTEX_TABLE` 由调用方保证为有效指针; 只读访问
-        let bucket = unsafe { &mut *FUTEX_TABLE.buckets[bucket_idx].get() };
+        table.locks[bucket_idx].lock();
+        // SAFETY: `table` 由 `futex_table()` 返回 `&'static`, 有效; 持锁下访问桶
+        let bucket = unsafe { &mut *table.buckets[bucket_idx].get() };
         let r = bucket.requeue(uaddr, max_wake, uaddr2, max_requeue);
-        FUTEX_TABLE.locks[bucket_idx].unlock();
+        table.locks[bucket_idx].unlock();
         r
     };
 
@@ -401,7 +399,7 @@ fn test_futex_hash() -> crate::framework::tests::TestResult {
 #[cfg(feature = "kernel_test")]
 fn test_futex_bucket_push_remove() -> crate::framework::tests::TestResult {
     use crate::framework::tests::{TestResult, check};
-    let mut bucket = FutexBucket::new();
+    let mut bucket = FutexBucket::empty();
     check!(bucket.count == 0, "empty bucket");
 
     let ok = bucket.push(FutexWaiter {

@@ -11,6 +11,7 @@
 //! services 侧改 `pub use crate::framework::ipc::types::*` 保持 API 兼容。
 //! 本文件 0 unsafe (纯类型定义 + 常量 + 等待队列机制)。
 
+use alloc::vec::Vec;
 use core::sync::atomic::AtomicPtr;
 
 /// IPC 资源 ID 类型 (全局唯一标识符)
@@ -530,16 +531,42 @@ impl Semaphore {
 /// 存储所有 IPC 资源的静态数组。
 /// 内部 NonNull 链表指针仅在持锁时访问 (Mutex 保护每个数组元素),
 /// 故 IPC 命名空间整体可安全跨线程传递。
+///
+/// 资源数组改为堆上 `Vec`, 静态实例经 [`IpcNamespace::empty`] 在 BSS
+/// 仅占 4 个 `Vec` 头部 (约 96 字节); 槽位由 [`IpcNamespace::allocate`]
+/// 在 kmalloc 堆上惰性分配, 避免约 275 KB 常驻 BSS。
 #[derive(Debug)]
 pub struct IpcNamespace {
     /// 管道数组
-    pub pipes: [Pipe; IPC_MAX_PIPES],
+    pub pipes: Vec<Pipe>,
     /// 共享内存段数组
-    pub shm_segs: [ShmSegment; IPC_MAX_SHM_SEGS],
+    pub shm_segs: Vec<ShmSegment>,
     /// 消息队列数组
-    pub msg_queues: [MsgQueue; IPC_MAX_MSG_QUEUES],
+    pub msg_queues: Vec<MsgQueue>,
     /// 信号量数组
-    pub semaphores: [Semaphore; IPC_MAX_SEMAPHORES],
+    pub semaphores: Vec<Semaphore>,
+}
+
+impl IpcNamespace {
+    /// 创建空命名空间 (所有资源数组为空 `Vec`)。
+    ///
+    /// 供静态实例 `const` 构造使用; 资源槽位需经 [`IpcNamespace::allocate`] 填充。
+    pub const fn empty() -> Self {
+        Self {
+            pipes: Vec::new(),
+            shm_segs: Vec::new(),
+            msg_queues: Vec::new(),
+            semaphores: Vec::new(),
+        }
+    }
+
+    /// 按 `IPC_MAX_*` 容量逐元素在 kmalloc 堆上分配全部资源槽位。
+    pub fn allocate(&mut self) {
+        self.pipes = (0..IPC_MAX_PIPES).map(|_| Pipe::new()).collect();
+        self.shm_segs = (0..IPC_MAX_SHM_SEGS).map(|_| ShmSegment::new()).collect();
+        self.msg_queues = (0..IPC_MAX_MSG_QUEUES).map(|_| MsgQueue::new()).collect();
+        self.semaphores = (0..IPC_MAX_SEMAPHORES).map(|_| Semaphore::new()).collect();
+    }
 }
 
 #[cfg(test)]
