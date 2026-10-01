@@ -37,8 +37,8 @@
 // ============================================================================
 
 /// Admin/I/O 队列深度 (wire 编码共用: create_cq/create_sq 的大小字段编码,
-/// 与 services 队列分配 `QUEUE_DEPTH` 及 framework wrapper `NVME_QD` 保持一致)
-const QUEUE_DEPTH: usize = 64;
+/// 亦为 framework wrapper `NVME_QD` 与 services 队列分配的唯一来源)
+pub(super) const QUEUE_DEPTH: usize = 64;
 
 /// Admin 命令操作码
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -310,6 +310,25 @@ mod tests {
         cq.status = 0x0003; // Phase=1, Status=1
         assert!(!cq.is_success());
         assert_eq!(cq.status_code(), 1);
+    }
+
+    #[test]
+    fn test_nvme_command_identify() {
+        // cns = 0x01 (Identify Controller, 控制器识别命令)
+        let cmd = NvmeCommand::identify(0, 0x01, 0x3000);
+        assert_eq!({ cmd.opcode }, NvmeAdminOpcode::Identify as u8);
+        assert_eq!({ cmd.cdw10 }, 0x01);
+        assert_eq!({ cmd.prp1 }, 0x3000);
+    }
+
+    #[test]
+    fn test_nvme_command_create_cq() {
+        let cmd = NvmeCommand::create_cq(1, 0x5000, 0);
+        assert_eq!({ cmd.opcode }, NvmeAdminOpcode::CreateCq as u8);
+        // cdw10 布局: ((depth-1) << 16) | qid = (63 << 16) | 1
+        assert_eq!({ cmd.cdw10 }, (63 << 16) | 1);
+        // cdw11 高 16 位为 MSI-X 向量索引, 低 3 位 PC+IEN
+        assert_eq!({ cmd.cdw11 }, 3);
     }
 
     #[test]

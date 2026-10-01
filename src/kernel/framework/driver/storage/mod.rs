@@ -134,22 +134,22 @@ pub fn nvme_register_msix_isr(msi_vector: u8) -> Result<(), &'static str> {
 // 使 services 层可执行完整的 NVMe/AHCI 驱动逻辑而不引入 unsafe。
 // ============================================================================
 
-// ── 本地常量 (来自 framework nvme.rs/ahci.rs 的私有常量副本) ──
+// ── 队列布局常量 (从 nvme.rs/ahci.rs 的权威定义派生, 避免副本漂移) ──
 
 /// Admin/I/O 队列深度
-const NVME_QD: u32 = 64;
+const NVME_QD: u32 = nvme::QUEUE_DEPTH as u32;
 /// SQ 条目大小
-const NVME_SQ_ENTRY: usize = 64;
+const NVME_SQ_ENTRY: usize = core::mem::size_of::<nvme::NvmeCommand>();
 /// CQ 条目大小
-const NVME_CQ_ENTRY: usize = 16;
+const NVME_CQ_ENTRY: usize = core::mem::size_of::<nvme::NvmeCompletion>();
 /// `NVMe` Doorbell 基址
 const NVME_DB_BASE: usize = 0x1000;
 /// AHCI 命令槽数量
 const AHCI_CMD_SLOTS: usize = 32;
 /// AHCI 命令头大小
-const AHCI_CMD_HDR_SIZE: usize = 32;
+const AHCI_CMD_HDR_SIZE: usize = core::mem::size_of::<ahci::AhciCommandHeader>();
 /// AHCI 命令表大小
-const AHCI_CMD_TBL_SIZE: usize = 256;
+const AHCI_CMD_TBL_SIZE: usize = core::mem::size_of::<ahci::AhciCommandTable>();
 
 /// 分配 `NVMe` Admin 队列 (SQ + CQ DMA 内存)
 ///

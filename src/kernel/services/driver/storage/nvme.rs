@@ -124,22 +124,6 @@ pub const SQ_SIZE_BYTES: u32 = 64 * 64;
 pub const CQ_SIZE_BYTES: u32 = 64 * 16;
 
 // ============================================================================
-// 命令操作码 (NVMe spec §6)
-// ============================================================================
-
-/// Admin Identify
-pub const OP_ADMIN_IDENTIFY: u8 = 0x06;
-/// Admin 创建 I/O 完成队列
-pub const OP_ADMIN_CREATE_IOCQ: u8 = 0x05;
-/// Admin 创建 I/O 提交队列
-pub const OP_ADMIN_CREATE_IOSQ: u8 = 0x01;
-
-/// I/O Read
-pub const OP_IO_READ: u8 = 0x02;
-/// I/O Write
-pub const OP_IO_WRITE: u8 = 0x01;
-
-// ============================================================================
 // Identify CNS
 // ============================================================================
 
@@ -198,156 +182,6 @@ impl ControllerStatus {
             shutdown: ((val & CSTS_SHST_MASK) >> 2) as u8,
             nssro: val & CSTS_NSSRO != 0,
         }
-    }
-}
-
-// ============================================================================
-// NVMe 命令条目 (services 层定义, 避免直接依赖 framework 内部类型)
-// ============================================================================
-
-/// `NVMe` 提交队列条目 (64 字节, 与 `NVMe` spec 一致)
-#[derive(Debug, Clone, Copy)]
-#[repr(C, packed)]
-pub struct NvmeCmdEntry {
-    pub opcode: u8,
-    pub flags: u8,
-    pub cid: u16,
-    pub nsid: u32,
-    pub cdw2: u32,
-    pub cdw3: u32,
-    pub mptr: u64,
-    pub prp1: u64,
-    pub prp2: u64,
-    pub cdw10: u32,
-    pub cdw11: u32,
-    pub cdw12: u32,
-    pub cdw13: u32,
-    pub cdw14: u32,
-    pub cdw15: u32,
-}
-
-impl NvmeCmdEntry {
-    /// 创建空命令
-    pub fn new() -> Self {
-        Self {
-            opcode: 0,
-            flags: 0,
-            cid: 0,
-            nsid: 0,
-            cdw2: 0,
-            cdw3: 0,
-            mptr: 0,
-            prp1: 0,
-            prp2: 0,
-            cdw10: 0,
-            cdw11: 0,
-            cdw12: 0,
-            cdw13: 0,
-            cdw14: 0,
-            cdw15: 0,
-        }
-    }
-
-    /// 创建读命令
-    pub fn read(nsid: u32, slba: u64, nlb: u16, prp1: u64) -> Self {
-        Self {
-            opcode: OP_IO_READ,
-            cid: 0,
-            nsid,
-            prp1,
-            cdw10: (slba & 0xFFFF_FFFF) as u32,
-            cdw11: ((slba >> 32) & 0xFFFF_FFFF) as u32,
-            cdw12: (u32::from(nlb) - 1) & 0xFFFF,
-            ..Self::new()
-        }
-    }
-
-    /// 创建写命令
-    pub fn write(nsid: u32, slba: u64, nlb: u16, prp1: u64) -> Self {
-        Self {
-            opcode: OP_IO_WRITE,
-            cid: 0,
-            nsid,
-            prp1,
-            cdw10: (slba & 0xFFFF_FFFF) as u32,
-            cdw11: ((slba >> 32) & 0xFFFF_FFFF) as u32,
-            cdw12: (u32::from(nlb) - 1) & 0xFFFF,
-            ..Self::new()
-        }
-    }
-
-    /// 创建 Identify 命令
-    pub fn identify(nsid: u32, cns: u8, prp1: u64) -> Self {
-        Self {
-            opcode: OP_ADMIN_IDENTIFY,
-            nsid,
-            prp1,
-            cdw10: u32::from(cns),
-            ..Self::new()
-        }
-    }
-
-    /// 创建 Create I/O Completion Queue 命令
-    pub fn create_cq(qid: u16, cq_phys: u64, depth: u16) -> Self {
-        Self {
-            opcode: OP_ADMIN_CREATE_IOCQ,
-            prp1: cq_phys,
-            cdw10: ((u32::from(depth) - 1) << 16) | u32::from(qid),
-            cdw11: 1, // PC=1 (physically contiguous)
-            ..Self::new()
-        }
-    }
-
-    /// 创建 Create I/O Submission Queue 命令
-    pub fn create_sq(qid: u16, cqid: u16, sq_phys: u64, depth: u16) -> Self {
-        Self {
-            opcode: OP_ADMIN_CREATE_IOSQ,
-            prp1: sq_phys,
-            cdw10: ((u32::from(depth) - 1) << 16) | u32::from(qid),
-            cdw11: u32::from(cqid) << 16 | 1, // CQID | PC
-            ..Self::new()
-        }
-    }
-}
-
-/// `NVMe` 完成队列条目 (16 字节)
-#[derive(Debug, Clone, Copy)]
-#[repr(C, packed)]
-pub struct NvmeCplEntry {
-    pub cdw0: u32,
-    pub rsvd1: u32,
-    pub sqhd: u16,
-    pub sqid: u16,
-    pub cid: u16,
-    pub status: u16,
-}
-
-impl NvmeCplEntry {
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    /// 阶段标记匹配 = 完成
-    pub fn is_completed(&self, phase: u16) -> bool {
-        (self.status & 0x01) == phase
-    }
-
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    /// 获取状态码
-    pub fn status_code(&self) -> u16 {
-        (self.status >> 1) & 0x7FF
-    }
-
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    /// 是否成功
-    pub fn is_success(&self) -> bool {
-        self.status_code() == 0
     }
 }
 
@@ -802,7 +636,7 @@ impl NvmeController {
 
         match result {
             Ok(_sc) => {
-                // 构造 NvmeCplEntry 返回给调用方
+                // 构造 framework 完成条目返回给调用方
                 Ok(fw_nvme::NvmeCompletion {
                     cdw0: 0,
                     rsvd1: 0,
@@ -1417,62 +1251,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_nvme_cmd_entry_read() {
-        let cmd = NvmeCmdEntry::read(1, 0, 1, 0x1000);
-        // NvmeCmdEntry 是 packed 结构: 多字节字段取引用会触发 E0793, 故按值取出再断言.
-        assert_eq!({ cmd.opcode }, OP_IO_READ);
-        assert_eq!({ cmd.nsid }, 1);
-        assert_eq!({ cmd.cdw12 }, 0); // NLB-1 = 0
-    }
-
-    #[test]
-    fn test_nvme_cmd_entry_write() {
-        let cmd = NvmeCmdEntry::write(1, 100, 8, 0x2000);
-        assert_eq!({ cmd.opcode }, OP_IO_WRITE);
-        assert_eq!({ cmd.cdw10 }, 100);
-        assert_eq!({ cmd.cdw12 }, 7); // 8 NLB -> 7
-    }
-
-    #[test]
-    fn test_nvme_cmd_entry_identify() {
-        let cmd = NvmeCmdEntry::identify(0, IDENTIFY_CNS_CONTROLLER, 0x3000);
-        assert_eq!({ cmd.opcode }, OP_ADMIN_IDENTIFY);
-        assert_eq!({ cmd.cdw10 }, IDENTIFY_CNS_CONTROLLER as u32);
-    }
-
-    #[test]
-    fn test_nvme_cmd_entry_create_cq() {
-        let cmd = NvmeCmdEntry::create_cq(1, 0x5000, 64);
-        assert_eq!({ cmd.opcode }, OP_ADMIN_CREATE_IOCQ);
-        // cdw10 低 16 位为 QID (QID=1), 高 16 位为 (depth-1)=63
-        // (原断言 `& 0xFFFF == 0` 与下一行 `== (63<<16)|1` 自相矛盾; 2026-09-24 UT-06 修正)
-        assert_eq!({ cmd.cdw10 } & 0xFFFF, 1);
-        // cdw10 布局: ((depth-1) << 16) | qid = (63 << 16) | 1
-        assert_eq!({ cmd.cdw10 }, (63 << 16) | 1);
-    }
-
-    #[test]
-    fn test_nvme_cpl_entry() {
-        let cpl = NvmeCplEntry {
-            cdw0: 0,
-            rsvd1: 0,
-            sqhd: 0,
-            sqid: 0,
-            cid: 0,
-            status: 0x0001, // Phase=1, SC=0
-        };
-        assert!(cpl.is_completed(1));
-        assert!(cpl.is_success());
-
-        let cpl_err = NvmeCplEntry {
-            status: 0x0003, // Phase=1, SC=1
-            ..cpl
-        };
-        assert!(!cpl_err.is_success());
-        assert_eq!(cpl_err.status_code(), 1);
-    }
-
-    #[test]
     fn test_controller_status_parse() {
         let st = ControllerStatus::from_register(CSTS_RDY | (2 << 2));
         assert!(st.ready);
@@ -1485,12 +1263,6 @@ mod tests {
         let cap = ControllerCapabilities::from_register((3 << 32) | 63);
         assert_eq!(cap.doorbell_stride, 3);
         assert_eq!(cap.max_queue_entries, 63);
-    }
-
-    #[test]
-    fn test_command_sizes() {
-        assert_eq!(core::mem::size_of::<NvmeCmdEntry>(), 64);
-        assert_eq!(core::mem::size_of::<NvmeCplEntry>(), 16);
     }
 
     #[test]

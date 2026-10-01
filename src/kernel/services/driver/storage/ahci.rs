@@ -37,6 +37,7 @@
 //! Phase 2.1.4 任务: 存储设备 (AHCI) 迁移
 
 use crate::framework::driver::BlockDevice;
+use crate::framework::driver::storage::H2dFis;
 use crate::framework::iomem::IoMem;
 use crate::framework::mm::PhysAddr;
 
@@ -262,105 +263,6 @@ impl SataStatus {
     /// 设备是否已建立通信 (PxSSTS.DET == 3)
     pub fn is_connected(&self) -> bool {
         self.device_detection == 3
-    }
-}
-
-// ============================================================================
-// H2D FIS (services 层定义)
-// ============================================================================
-
-/// 主机到设备 FIS (H2D Register FIS)
-#[derive(Debug, Clone, Copy)]
-#[repr(C, packed)]
-pub struct H2dFis {
-    pub fis_type: u8,
-    pub flags: u8,
-    pub command: u8,
-    pub feature0: u8,
-    pub lba0: u8,
-    pub lba1: u8,
-    pub lba2: u8,
-    pub lba3: u8,
-    pub device: u8,
-    pub lba4: u8,
-    pub lba5: u8,
-    pub feature1: u8,
-    pub count0: u8,
-    pub count1: u8,
-    pub icc: u8,
-    pub control: u8,
-    pub rsvd: [u32; 4],
-}
-
-impl H2dFis {
-    /// 创建空 FIS
-    pub fn new() -> Self {
-        Self {
-            fis_type: 0,
-            flags: 0,
-            command: 0,
-            feature0: 0,
-            feature1: 0,
-            lba0: 0,
-            lba1: 0,
-            lba2: 0,
-            lba3: 0,
-            lba4: 0,
-            lba5: 0,
-            device: 0,
-            count0: 0,
-            count1: 0,
-            icc: 0,
-            control: 0,
-            rsvd: [0; 4],
-        }
-    }
-
-    /// 创建读 DMA FIS (LBA48)
-    pub fn read_dma(lba: u64, count: u16) -> Self {
-        let mut fis = Self::new();
-        fis.fis_type = 0x27; // H2D Register FIS
-        fis.flags = 0x80; // 写命令
-        fis.command = 0x25; // READ DMA EXT
-        fis.device = 0x40; // LBA 模式
-        fis.lba0 = (lba & 0xFF) as u8;
-        fis.lba1 = ((lba >> 8) & 0xFF) as u8;
-        fis.lba2 = ((lba >> 16) & 0xFF) as u8;
-        fis.lba3 = ((lba >> 24) & 0xFF) as u8;
-        fis.lba4 = ((lba >> 32) & 0xFF) as u8;
-        fis.lba5 = ((lba >> 40) & 0xFF) as u8;
-        fis.count0 = (count & 0xFF) as u8;
-        fis.count1 = ((count >> 8) & 0xFF) as u8;
-        fis
-    }
-
-    /// 创建写 DMA FIS (LBA48)
-    pub fn write_dma(lba: u64, count: u16) -> Self {
-        let mut fis = Self::new();
-        fis.fis_type = 0x27;
-        fis.flags = 0x80;
-        fis.command = 0x35; // WRITE DMA EXT
-        fis.device = 0x40;
-        fis.lba0 = (lba & 0xFF) as u8;
-        fis.lba1 = ((lba >> 8) & 0xFF) as u8;
-        fis.lba2 = ((lba >> 16) & 0xFF) as u8;
-        fis.lba3 = ((lba >> 24) & 0xFF) as u8;
-        fis.lba4 = ((lba >> 32) & 0xFF) as u8;
-        fis.lba5 = ((lba >> 40) & 0xFF) as u8;
-        fis.count0 = (count & 0xFF) as u8;
-        fis.count1 = ((count >> 8) & 0xFF) as u8;
-        fis
-    }
-
-    /// 创建 Identify FIS
-    pub fn identify() -> Self {
-        let mut fis = Self::new();
-        fis.fis_type = 0x27;
-        fis.flags = 0x80;
-        fis.command = 0xEC; // IDENTIFY DEVICE
-        fis.device = 0xA0;
-        fis.count0 = 1;
-        fis
     }
 }
 
