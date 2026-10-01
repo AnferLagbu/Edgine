@@ -29,15 +29,16 @@
 //! ✅ TSS 描述符 (自动处理高32位)
 //! ✅ lgdt 汇编封装 (safe wrapper)
 
+use core::sync::atomic::{AtomicPtr, Ordering};
+
+use crate::framework::racy_cell::RacyCell;
+
 // ============================================================================
 // 常量定义
 // ============================================================================
 
 /// GDT 最大条目数 (x86-64 通常需要 7 个)
 pub const GDT_MAX_ENTRIES: usize = 7;
-
-/// Per-CPU GDT 最大 CPU 数
-const PER_CPU_MAX: usize = 256;
 
 /// Per-CPU IST 栈大小 (16KB)
 const PER_CPU_IST_SIZE: usize = 16384;
@@ -378,7 +379,7 @@ struct PerCpuGdt {
 impl PerCpuGdt {
     #[expect(
         clippy::large_stack_arrays,
-        reason = "PerCpuGdt 的 syscall/IST 栈数组布局于静态 PER_CPU_GDT, 非栈上分配"
+        reason = "PerCpuGdt 的 syscall/IST 栈数组布局于 BSP_GDT / PMM 分配的 AP GDT, 非栈上分配"
     )]
     const fn new() -> Self {
         Self {
@@ -406,33 +407,84 @@ impl PerCpuGdt {
 // 全局状态 (Per-CPU)
 // ============================================================================
 
-/// Per-CPU GDT 存储
+/// BSP 的静态 GDT 存储.
+///
+/// BSP 的 GDT 在启动早期 (页分配器就绪之前) 就必须可用, 故固定为静态实例.
+/// `PerCpuGdt::new()` 全零, 该实例落入 `.bss` (不占镜像 `.data`).
 ///
 /// # Safety 不变量
 ///
-/// - **写入时机**: SMP init 阶段, 每个 AP CPU 写入自己的槽位
-/// - **运行时**: 各 CPU 只读访问自己的 GDT
-/// - **并发**: 写入时 AP 串行启动 (SIPI 序列), 运行时各 CPU 独占自己的槽位
-/// - **索引**: `cpu_id % PER_CPU_MAX` 保证不越界
-static mut PER_CPU_GDT: [core::mem::MaybeUninit<PerCpuGdt>; PER_CPU_MAX] =
-    [const { core::mem::MaybeUninit::new(PerCpuGdt::new()) }; PER_CPU_MAX];
+/// - **写入时机**: 仅 `gdt_init` (BSP, 单线程早期) 写入
+/// - **运行时**: 各 CPU 只读访问; BSP 独占本槽位
+static BSP_GDT: RacyCell<PerCpuGdt> = RacyCell::new(PerCpuGdt::new());
+
+/// AP 的 GDT 物理地址表 (按 `cpu_index` 索引, 槽位 0 保留给 BSP).
+///
+/// AP 的 GDT 由 `alloc_ap_gdt` 在 SIPI 之前按需从 PMM 分配, 以**低半区物理地址**
+/// 存放 —— boot 建立的恒等映射 (phys 0..4GB) 与 `KERNEL_PML4` 保留的低半区使该
+/// 地址在 AP 运行期始终可访问, 且 `&gdt.syscall as u64 == phys` 与 KPTI 用户页表
+/// 的 "LMA 恒等" 映射自洽 (见 `per_cpu_gdt_head_range`).
+///
+/// 槽位为 `null` 表示尚未分配 (对应 AP 未上线).
+static AP_GDT: [AtomicPtr<PerCpuGdt>; crate::framework::config::MAX_CPUS] =
+    [const { AtomicPtr::new(core::ptr::null_mut()) }; crate::framework::config::MAX_CPUS];
 
 // ============================================================================
 // 内部辅助函数
 // ============================================================================
 
-/// 获取指定 CPU 的 GDT 不可变引用
+/// 将 CPU 编号映射到 GDT 槽位下标.
+///
+/// 槽位容量与 `MAX_CPUS` 一致; 取模仅为防御越界 (越界时退化为槽位别名而非 UB).
 #[inline]
-fn per_cpu_gdt(cpu: u32) -> &'static PerCpuGdt {
-    // SAFETY: `PER_CPU_GDT` 由调用方保证为有效指针; 只读访问
-    unsafe { &*PER_CPU_GDT[(cpu as usize) % PER_CPU_MAX].as_ptr() }
+fn gdt_slot(cpu: u32) -> usize {
+    (cpu as usize) % crate::framework::config::MAX_CPUS
 }
 
-/// 获取指定 CPU 的 GDT 可变引用
+/// 获取指定 CPU 的 GDT 不可变引用.
+///
+/// # 不变量
+///
+/// 调用方保证目标槽位已分配 (启动时序: `alloc_ap_gdt` 早于 SIPI, `register_cpu`
+/// 晚于 `gdt_init_ap`). 若 AP 槽位为 `null` (例如真机 LAPIC ID 与顺序 `cpu_index`
+/// 不一致导致查错槽位), 回退 BSP GDT 以保证内存安全 —— 这是已知的预存问题
+/// (见 `smp::get_current_cpu` 返回 LAPIC ID 的语义).
+#[inline]
+fn per_cpu_gdt(cpu: u32) -> &'static PerCpuGdt {
+    let idx = gdt_slot(cpu);
+    if idx == 0 {
+        // SAFETY: BSP_GDT 为静态实例; 启动期由 gdt_init 独占写入, 运行期只读.
+        return unsafe { BSP_GDT.get() };
+    }
+    let ptr = AP_GDT[idx].load(Ordering::Acquire);
+    if ptr.is_null() {
+        // SAFETY: 回退 BSP GDT 仅用于避免 null 解引用 (见 doc 的预存问题).
+        return unsafe { BSP_GDT.get() };
+    }
+    // SAFETY: 指针由 alloc_ap_gdt 以 Release 发布, 指向 PMM 分配且已清零的
+    // PerCpuGdt; 低半区恒等映射使其运行期始终可访问; 只读访问.
+    unsafe { &*ptr }
+}
+
+/// 获取指定 CPU 的 GDT 可变引用.
+///
+/// # 不变量
+///
+/// 同 `per_cpu_gdt`: 调用方保证对目标槽位独占访问 (启动期单线程 / 运行期本核).
 #[inline]
 fn per_cpu_gdt_mut(cpu: u32) -> &'static mut PerCpuGdt {
-    // SAFETY: `PER_CPU_GDT` 由调用方保证为有效指针; 只读访问
-    unsafe { &mut *PER_CPU_GDT[(cpu as usize) % PER_CPU_MAX].as_mut_ptr() }
+    let idx = gdt_slot(cpu);
+    if idx == 0 {
+        // SAFETY: BSP_GDT 为静态实例; 调用方保证该槽位独占访问.
+        return BSP_GDT.get_mut();
+    }
+    let ptr = AP_GDT[idx].load(Ordering::Acquire);
+    if ptr.is_null() {
+        // SAFETY: 回退 BSP GDT 仅用于避免 null 解引用 (见 per_cpu_gdt 的预存问题).
+        return BSP_GDT.get_mut();
+    }
+    // SAFETY: 指针由 alloc_ap_gdt 以 Release 发布; 调用方保证该槽位独占访问.
+    unsafe { &mut *ptr }
 }
 
 /// 获取当前 CPU 的 GDT 不可变引用
@@ -679,6 +731,45 @@ pub fn gdt_init() -> i32 {
     0
 }
 
+/// 为指定 AP 分配独立的 `PerCpuGdt` (SIPI 之前调用).
+///
+/// 从 PMM 分配连续物理页并以**低半区物理地址**登记到 `AP_GDT[cpu_index]`:
+/// boot 阶段的恒等映射 (phys 0..4GB) 与 `KERNEL_PML4` 保留的低半区使其在 AP
+/// 运行期始终可访问, 无需 `map_page` (内核高半区映射对已恒等的低地址是冗余的).
+/// 分配到的页清零, 与 `PerCpuGdt::new()` 的等价格式 (全零) 一致.
+///
+/// 返回 `false` 表示 PMM 分配失败 (无可用页), 调用方应放弃启动该 AP.
+///
+/// 取代原先 `static mut PER_CPU_GDT: [MaybeUninit<PerCpuGdt>; 256]` 的编译期
+/// 预置 (34MiB `.data`), 改为按在线核数按需分配.
+pub fn alloc_ap_gdt(cpu_index: u32) -> bool {
+    let idx = gdt_slot(cpu_index);
+    if idx == 0 {
+        // 槽位 0 保留给 BSP 静态实例.
+        return false;
+    }
+    if !AP_GDT[idx].load(Ordering::Acquire).is_null() {
+        return true;
+    }
+
+    let page = crate::framework::mm::PAGE_SIZE as usize;
+    let pages = core::mem::size_of::<PerCpuGdt>().div_ceil(page);
+    let Some(phys) = crate::framework::mm::pmm_alloc_pages_phys(pages) else {
+        return false;
+    };
+    let ptr = phys.0 as *mut PerCpuGdt;
+
+    // SAFETY: phys 是 PMM 新分配的连续页起点 (页对齐, 满足 PerCpuGdt 的 4096
+    // 对齐要求); 低半区恒等映射 (phys 0..4GB, boot 建立且 KERNEL_PML4 保留)
+    // 使其可直接写; 此路径在 AP 启动期单线程执行.
+    unsafe {
+        core::ptr::write_bytes(ptr.cast::<u8>(), 0, pages * page);
+    }
+
+    AP_GDT[idx].store(ptr, Ordering::Release);
+    true
+}
+
 /// 初始化 AP 的 per-CPU GDT 和独立 TSS
 ///
 /// Trampoline 已通过 `lgdt [gdt_ptr]` 加载了 BSP 的 GDT 作为过渡，
@@ -732,11 +823,15 @@ pub fn gdt_init_ap(cpu_index: u32) {
             + ap.syscall_stack.as_ptr() as u64
             + ap.syscall_stack.len() as u64;
 
-        // 读取当前 CR3 作为 PML4 初始值
-        // KPTI 激活后, kernel_pml4/user_pml4 已由 kpti_init 通过
-        // gdt_set_kpti_pml4 正确设置 (含 PCID 编码), 不应覆盖.
-        // 仅在 KPTI 未激活时用当前 CR3 初始化.
-        if !crate::framework::mm::kpti::kpti_is_active() {
+        // KPTI 激活后, 全局 kernel_pml4/user_pml4 (含 PCID 编码) 由 kpti_init 写入
+        // BSP GDT; AP 的动态 GDT 在 SIPI 之前才分配 (清零), 故从 BSP GDT 复制,
+        // 不能依赖 kpti_init 的广播 (其只覆盖启动期已存在的 BSP 实例).
+        // KPTI 未激活时用当前 CR3 初始化.
+        if crate::framework::mm::kpti::kpti_is_active() {
+            let bsp = per_cpu_gdt(0);
+            ap.syscall.kernel_pml4 = bsp.syscall.kernel_pml4;
+            ap.syscall.user_pml4 = bsp.syscall.user_pml4;
+        } else {
             let current_cr3: u64;
             core::arch::asm!("mov {}, cr3", out(reg) current_cr3, options(nomem, nostack));
             ap.syscall.kernel_pml4 = current_cr3;

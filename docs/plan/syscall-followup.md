@@ -884,9 +884,9 @@ T7 (预存登记)
 
 #### B-6. R1 已分类清单（机器可读区块；B09-21 数据源）
 
-> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**458 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
+> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**446 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
 >
-> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝B-12.8 遗留清理批次（**B-13**）**（本批改动**未改变** R1 零引用集合，以 HEAD 独立 worktree 对跑逐项一致 ⇒ 本区块计数**不变（458）**，见 **B-13.6**）。**上一轮同步＝热插拔运行时接线批次（**B-12**）**（4 项因本工程「接线 / 删除」而不再零引用 ⇒ 本区块移除：`framework/driver/hotplug.rs::hotplug_poll`（函数已不存在，由 `hotplug_wakeup` + softirq 轮询替代）、`services/driver/usb/xhci.rs::ack_port_change` / `::has_port_change`（已被 `usb_port_poll` 调用）、`framework/driver/block.rs::mark_removed`（函数已不存在，由 Chitin 墓碑协议 `chitin_blk_is_removed` 替代）⇒ **462 → 458**）。**上一轮同步＝`atomic_stats` feature 删除**（`framework/sync/atomic.rs` 4 项 `record_*` 随 feature 删除而消失 ⇒ 本区块移除 4 条目，**466 → 462**；处置依据＝按职责判定「非内核所需 + 零履行 + 已有 `*_dump_stats` 等价诊断 idiom」，见 **B-5.2 / B-5.3 G2**）。**更早同步＝per-process fd 表全量下沉（**B-11**）**（10 项因本工程接线 / 删除而不再零引用 ⇒ 本区块移除：`framework/fs/vfs/handle.rs::vfs_get_fd_handle`（poll 改源）、`framework/proc/fd_table.rs` 4 项（`get_handle_id` / `is_cloexec` / `set_cloexec` / `get_cloexec_fds` 接线）、`framework/proc/scheduler.rs::get_current_process`（`with_current_fd_table` 取当前进程）、`services/fs/process_fd_table.rs` 4 项（Plan B 表文件删除）⇒ **476 → 466**；编辑前实测区块为 **476** 行，区块说明原记 475（差 1，前批计数笔误，本次以实测为准）。另有 2 条**既有偏差**（`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`：脚本按名计数，其内联测试即计入引用 ⇒ 恒不在 INFO 集，见上述口径说明②）经本批复核确认，**非本工程引入，不属本批处置面**）。**更早同步＝项 5 批 C「67 项逐项分流」**（21 项判定为可删并已删除 ⇒ 本区块移除对应 21 条目，496 → 475；其余 46 项保留 `pub` 并留块登记，见 **B-10.11**；上一轮为项 2「`kmalloc_slab.rs` 孤岛删除」，被删 2 项原为 HIGH / **未入块** ⇒ 计数不变，见 **B-10.10**；更早为项 5 批 B「豁免面收窄」新增 67 项，429 → 496，见 **B-10.9**）。
+> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝B-6 区块路径漂移清理（**B-13.7**）**（R1 实测检出 43 项**失效条目**并逐项处置：31 项路径更新 `framework/...`→`services/...`（文件随框内核迁移下沉、函数仍零引用 ⇒ 原 framework 路径失效、现报 HIGH），12 项移除（已接线 / 已删 / 已豁免：`framework/driver/net/e1000_io.rs::install_rings`（已删）、`::set_ctrl` / `::set_ipg` / `::set_rx_ctl` / `::set_tx_ctl`（已被 `services/driver/net/e1000.rs` 调用）、`framework/driver/usb/xhci.rs::init_command_ring` / `::recover_endpoint`（已删）、`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`（内联测试引用）、`services/chitin/mod.rs::find_by_proto`（host 测试引用）、`services/driver/usb/xhci.rs::port_connected` / `::port_status`（内部调用））⇒ **458 → 446**；修复后实测区块 446 ＝ matched 446、stale 0、HIGH 18）。**上一轮同步＝B-12.8 遗留清理批次（**B-13**）**（本批改动**未改变** R1 零引用集合，以 HEAD 独立 worktree 对跑逐项一致 ⇒ 本区块计数**不变（458）**，见 **B-13.6**）。**上一轮同步＝热插拔运行时接线批次（**B-12**）**（4 项因本工程「接线 / 删除」而不再零引用 ⇒ 本区块移除：`framework/driver/hotplug.rs::hotplug_poll`（函数已不存在，由 `hotplug_wakeup` + softirq 轮询替代）、`services/driver/usb/xhci.rs::ack_port_change` / `::has_port_change`（已被 `usb_port_poll` 调用）、`framework/driver/block.rs::mark_removed`（函数已不存在，由 Chitin 墓碑协议 `chitin_blk_is_removed` 替代）⇒ **462 → 458**）。**上一轮同步＝`atomic_stats` feature 删除**（`framework/sync/atomic.rs` 4 项 `record_*` 随 feature 删除而消失 ⇒ 本区块移除 4 条目，**466 → 462**；处置依据＝按职责判定「非内核所需 + 零履行 + 已有 `*_dump_stats` 等价诊断 idiom」，见 **B-5.2 / B-5.3 G2**）。**更早同步＝per-process fd 表全量下沉（**B-11**）**（10 项因本工程接线 / 删除而不再零引用 ⇒ 本区块移除：`framework/fs/vfs/handle.rs::vfs_get_fd_handle`（poll 改源）、`framework/proc/fd_table.rs` 4 项（`get_handle_id` / `is_cloexec` / `set_cloexec` / `get_cloexec_fds` 接线）、`framework/proc/scheduler.rs::get_current_process`（`with_current_fd_table` 取当前进程）、`services/fs/process_fd_table.rs` 4 项（Plan B 表文件删除）⇒ **476 → 466**；编辑前实测区块为 **476** 行，区块说明原记 475（差 1，前批计数笔误，本次以实测为准）。另有 2 条**既有偏差**（`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`：脚本按名计数，其内联测试即计入引用 ⇒ 恒不在 INFO 集，见上述口径说明②）经本批复核确认，**非本工程引入，不属本批处置面**）。**更早同步＝项 5 批 C「67 项逐项分流」**（21 项判定为可删并已删除 ⇒ 本区块移除对应 21 条目，496 → 475；其余 46 项保留 `pub` 并留块登记，见 **B-10.11**；上一轮为项 2「`kmalloc_slab.rs` 孤岛删除」，被删 2 项原为 HIGH / **未入块** ⇒ 计数不变，见 **B-10.10**；更早为项 5 批 B「豁免面收窄」新增 67 项，429 → 496，见 **B-10.9**）。
 >
 > **口径说明（2026-09-26 订正）**：本区块与 `audit_unwired_pub_fn.py` 的「零引用」判定均为**按名计数**（`rg -c -w`），因而存在两类已知偏差，本区块**不承诺**与脚本输出逐项等同：① **同名遮蔽**（文档注释 / 局部变量出现同名字符串即计入引用 ⇒ 真零引用项可能**漏报**，实例见 **B-10.3** 的 `slab_init` / `services/driver/acpi.rs::lapic_base`）；② **已失效条目**（被接线或删除后不再零引用，需人工同步移除，本期移除 6 项见 B-10.4）。
 
@@ -995,27 +995,11 @@ src/kernel/framework/dma/engine.rs::submit_transfer_async
 src/kernel/framework/dma/engine.rs::sync_both
 src/kernel/framework/dma/engine.rs::unmap_single
 src/kernel/framework/driver/bus/pci.rs::pci_scan
-src/kernel/framework/driver/display/controller.rs::connected_count
-src/kernel/framework/driver/display/controller.rs::disable_monitor
-src/kernel/framework/driver/display/controller.rs::enabled_count
-src/kernel/framework/driver/display/controller.rs::get_active_monitor
-src/kernel/framework/driver/display/controller.rs::get_best_mode
-src/kernel/framework/driver/display/controller.rs::get_monitor_mut
-src/kernel/framework/driver/display/controller.rs::get_primary_monitor
-src/kernel/framework/driver/display/controller.rs::remove_monitor
-src/kernel/framework/driver/display/controller.rs::set_active_monitor
-src/kernel/framework/driver/display/controller.rs::set_display_mode
-src/kernel/framework/driver/display/controller.rs::set_primary_monitor
 src/kernel/framework/driver/display/framebuffer.rs::intersection
 src/kernel/framework/driver/framework.rs::inw
 src/kernel/framework/driver/framework.rs::outw
 src/kernel/framework/driver/input/keyboard.rs::get_modifiers
 src/kernel/framework/driver/mod.rs::list_devices
-src/kernel/framework/driver/net/e1000_io.rs::install_rings
-src/kernel/framework/driver/net/e1000_io.rs::set_ctrl
-src/kernel/framework/driver/net/e1000_io.rs::set_ipg
-src/kernel/framework/driver/net/e1000_io.rs::set_rx_ctl
-src/kernel/framework/driver/net/e1000_io.rs::set_tx_ctl
 src/kernel/framework/driver/power.rs::latency_us
 src/kernel/framework/driver/power.rs::ondemand_check
 src/kernel/framework/driver/power.rs::pm_is_initialized
@@ -1027,31 +1011,9 @@ src/kernel/framework/driver/uefi.rs::get_memory_map
 src/kernel/framework/driver/uefi.rs::set_gop_mode
 src/kernel/framework/driver/uefi.rs::set_memory_map
 src/kernel/framework/driver/uefi.rs::variable_count
-src/kernel/framework/driver/usb/mass_storage.rs::build_read_capacity_10_cbw
-src/kernel/framework/driver/usb/mass_storage.rs::build_request_sense_cbw
-src/kernel/framework/driver/usb/ring.rs::dequeue_pointer
-src/kernel/framework/driver/usb/ring.rs::enqueue_pointer
-src/kernel/framework/driver/usb/usb_core.rs::find_device_by_class
-src/kernel/framework/driver/usb/usb_core.rs::find_device_by_vid_pid
-src/kernel/framework/driver/usb/usb_core.rs::register_controller
-src/kernel/framework/driver/usb/xhci.rs::init_command_ring
-src/kernel/framework/driver/usb/xhci.rs::recover_endpoint
 src/kernel/framework/driver/virtio/mod.rs::read_config64
 src/kernel/framework/driver/virtio/mod.rs::set_status
 src/kernel/framework/frame.rs::set_meta
-src/kernel/framework/fs/devfs/mod.rs::is_physical
-src/kernel/framework/fs/devfs/mod.rs::is_virtual
-src/kernel/framework/fs/vfs/dcache.rs::icache_get_ref_count
-src/kernel/framework/fs/vfs/flock.rs::flock_count
-src/kernel/framework/fs/vfs/flock.rs::flock_ops
-src/kernel/framework/fs/vfs/flock.rs::posix_lock_count
-src/kernel/framework/fs/vfs/flock.rs::posix_lock_ops
-src/kernel/framework/fs/vfs/handle.rs::vfs_readdir_safe
-src/kernel/framework/fs/vfs/handle.rs::vfs_seek_safe
-src/kernel/framework/fs/vfs/inotify.rs::inotify_fd_readable
-src/kernel/framework/fs/vfs/inotify.rs::inotify_stats
-src/kernel/framework/fs/vfs/types.rs::inode_arc
-src/kernel/framework/fs/vfs/vfs.rs::get_fs_name
 src/kernel/framework/idt/handlers.rs::category_count
 src/kernel/framework/idt/idt.rs::set_exception_handler
 src/kernel/framework/idt/idt.rs::spurious_irq_count
@@ -1170,15 +1132,12 @@ src/kernel/framework/timer/hrtimer.rs::hrtimer_ns_to_cycles
 src/kernel/framework/timer/tick.rs::format_duration
 src/kernel/framework/timer/tick.rs::get_uptime_tsc
 src/kernel/framework/timer/tick.rs::reset_ticks
-src/kernel/framework/timer/tickless.rs::enter_tickless
-src/kernel/framework/timer/tickless.rs::exit_tickless
 src/kernel/framework/timer/time_sync.rs::client_request
 src/kernel/framework/vmspace.rs::map_huge
 src/kernel/services/barrier/audit_export.rs::count_failure
 src/kernel/services/barrier/audit_export.rs::count_success
 src/kernel/services/chitin/mod.rs::char_read
 src/kernel/services/chitin/mod.rs::char_write
-src/kernel/services/chitin/mod.rs::find_by_proto
 src/kernel/services/chitin/mod.rs::find_net_device
 src/kernel/services/config/sysctl.rs::write_to
 src/kernel/services/credo/crypto.rs::as_bytes_mut
@@ -1218,6 +1177,17 @@ src/kernel/services/driver/char/vga.rs::clear_row
 src/kernel/services/driver/char/vga.rs::read_cell
 src/kernel/services/driver/char/vga.rs::with_blink
 src/kernel/services/driver/char/vga.rs::write_string_at
+src/kernel/services/driver/display/controller.rs::connected_count
+src/kernel/services/driver/display/controller.rs::disable_monitor
+src/kernel/services/driver/display/controller.rs::enabled_count
+src/kernel/services/driver/display/controller.rs::get_active_monitor
+src/kernel/services/driver/display/controller.rs::get_best_mode
+src/kernel/services/driver/display/controller.rs::get_monitor_mut
+src/kernel/services/driver/display/controller.rs::get_primary_monitor
+src/kernel/services/driver/display/controller.rs::remove_monitor
+src/kernel/services/driver/display/controller.rs::set_active_monitor
+src/kernel/services/driver/display/controller.rs::set_display_mode
+src/kernel/services/driver/display/controller.rs::set_primary_monitor
 src/kernel/services/driver/display/dp.rs::from_iomem
 src/kernel/services/driver/display/dp.rs::read16
 src/kernel/services/driver/firmware.rs::firmware_name_hash
@@ -1231,13 +1201,18 @@ src/kernel/services/driver/storage/nvme.rs::ring_admin_sq
 src/kernel/services/driver/storage/nvme.rs::ring_cq_head
 src/kernel/services/driver/storage/nvme.rs::set_admin_cq_phase
 src/kernel/services/driver/uefi.rs::uefi_syscall
+src/kernel/services/driver/usb/mass_storage.rs::build_read_capacity_10_cbw
+src/kernel/services/driver/usb/mass_storage.rs::build_request_sense_cbw
+src/kernel/services/driver/usb/ring.rs::dequeue_pointer
+src/kernel/services/driver/usb/ring.rs::enqueue_pointer
+src/kernel/services/driver/usb/usb_core.rs::find_device_by_class
+src/kernel/services/driver/usb/usb_core.rs::find_device_by_vid_pid
+src/kernel/services/driver/usb/usb_core.rs::register_controller
 src/kernel/services/driver/usb/xhci.rs::crcr
 src/kernel/services/driver/usb/xhci.rs::enqueue_offset
 src/kernel/services/driver/usb/xhci.rs::is_halted
 src/kernel/services/driver/usb/xhci.rs::physical_address
-src/kernel/services/driver/usb/xhci.rs::port_connected
 src/kernel/services/driver/usb/xhci.rs::port_enabled
-src/kernel/services/driver/usb/xhci.rs::port_status
 src/kernel/services/driver/usb/xhci.rs::push_control_transfer
 src/kernel/services/driver/usb/xhci.rs::push_interrupt_transfer
 src/kernel/services/driver/usb/xhci.rs::set_command_ring
@@ -1251,6 +1226,9 @@ src/kernel/services/fs/cgroupfs.rs::umount_cgroupfs
 src/kernel/services/fs/configfs.rs::delete_dir
 src/kernel/services/fs/configfs.rs::mount_configfs
 src/kernel/services/fs/configfs.rs::umount_configfs
+src/kernel/services/fs/dcache.rs::icache_get_ref_count
+src/kernel/services/fs/devfs.rs::is_physical
+src/kernel/services/fs/devfs.rs::is_virtual
 src/kernel/services/fs/devpts.rs::alloc_pty
 src/kernel/services/fs/devpts.rs::free_pty
 src/kernel/services/fs/devpts.rs::get_pty
@@ -1265,6 +1243,14 @@ src/kernel/services/fs/exfat/super_block.rs::data_start_sector
 src/kernel/services/fs/ext2/bitmap.rs::count_free
 src/kernel/services/fs/ext2/bitmap.rs::is_set
 src/kernel/services/fs/ext2/inode.rs::get_block
+src/kernel/services/fs/flock.rs::flock_count
+src/kernel/services/fs/flock.rs::flock_ops
+src/kernel/services/fs/flock.rs::posix_lock_count
+src/kernel/services/fs/flock.rs::posix_lock_ops
+src/kernel/services/fs/handle.rs::vfs_readdir_safe
+src/kernel/services/fs/handle.rs::vfs_seek_safe
+src/kernel/services/fs/inotify.rs::inotify_fd_readable
+src/kernel/services/fs/inotify.rs::inotify_stats
 src/kernel/services/fs/nestfs/arc.rs::is_referenced
 src/kernel/services/fs/nestfs/bp.rs::is_data
 src/kernel/services/fs/nestfs/bp.rs::is_encrypted
@@ -1314,6 +1300,8 @@ src/kernel/services/fs/systree.rs::umount_systree
 src/kernel/services/fs/systree.rs::write_int_attr
 src/kernel/services/fs/tmpfs.rs::free_size
 src/kernel/services/fs/tmpfs.rs::sub_used
+src/kernel/services/fs/vfs_manager.rs::get_fs_name
+src/kernel/services/fs/vfs_types.rs::inode_arc
 src/kernel/services/fs/virtiofs.rs::mount_virtiofs
 src/kernel/services/fs/virtiofs.rs::umount_virtiofs
 src/kernel/services/ipc/async_ipc.rs::filter_by_type
@@ -1853,6 +1841,13 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 - 实测 `已分类清单: 458 项` / `[INFO] R1 已分类 415 项` / `[HIGH] 未分类 49 项`。以 HEAD 独立 worktree 对跑同一脚本得**逐项一致**结果 ⇒ 本次改动**未改变 R1 零引用集合**（删除的 7 个 pub fn 均不在 B-6 区块内；新增函数均已接线）⇒ **B-6 区块计数不变（458）**。
 - 458 声明 vs 415 实测交集 的 43 项偏差属**预存漂移**（历史累积），非本批引入，已登记待裁定（§12.5）。
+
+**B-13.7 R1 台账漂移修复（B-13.6 登记项处置）**
+
+- 依用户裁定「规划方案并修复」，对 B-13.6 登记的 **43 项预存漂移**逐项定位处置，根因＝**文件随框内核迁移从 `framework/...` 下沉至 `services/...`，区块仍记旧 framework 路径 ⇒ R1 按路径比对失配**（函数仍零引用，故报 HIGH）：
+  - **31 项路径更新**（`framework/...`→`services/...`）：`driver/display/controller.rs`(11)、`driver/usb/mass_storage.rs`(2) / `ring.rs`(2) / `usb_core.rs`(3)、`fs/devfs/mod.rs`(2)→`fs/devfs.rs`、`fs/vfs/flock.rs`(4)→`fs/flock.rs`、`fs/vfs/dcache.rs`(1)→`fs/dcache.rs`、`fs/vfs/handle.rs`(2)→`fs/handle.rs`、`fs/vfs/inotify.rs`(2)→`fs/inotify.rs`、`fs/vfs/types.rs`(1)→`fs/vfs_types.rs`、`fs/vfs/vfs.rs`(1)→`fs/vfs_manager.rs`。
+  - **12 项移除**（已接线 / 已删 / 已豁免）：`framework/driver/net/e1000_io.rs::install_rings`（已删）、`::set_ctrl` / `::set_ipg` / `::set_rx_ctl` / `::set_tx_ctl`（已被 `services/driver/net/e1000.rs` 调用）、`framework/driver/usb/xhci.rs::init_command_ring` / `::recover_endpoint`（已删）、`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`（内联测试引用）、`services/chitin/mod.rs::find_by_proto`（host 测试引用）、`services/driver/usb/xhci.rs::port_connected` / `::port_status`（内部调用）。
+- 复核：修复后 R1 实测 `已分类清单: 446 项` ＝ `[INFO] R1 已分类 446 项`（matched）、**stale 0**、`[HIGH] 未分类 18 项`（18 项均为**预存、不在 B-6 区块、与本批无关**：`framework/driver/net/e1000_io.rs` 5 项、`services/driver/usb/xhci.rs` 6 项、`services/fs/vfs_mount.rs` 5 项、`services/proc/coredump.rs` 2 项），脚本 EXIT=0。
 
 #### C. 原「接线」142 项（重划：仅 8 项留「接线」，其余 134 项入「未来功能」）
 

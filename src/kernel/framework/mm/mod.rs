@@ -77,6 +77,8 @@ pub mod cow;
 pub mod cross_process;
 pub mod frame;
 pub mod kmalloc;
+/// 惰性页池 — 按需分配 4KB 物理页的后备存储 (替代子系统级静态容量数组)
+pub mod lazy_arena;
 /// L-03: 机制 API 集中导出 — 供 services 层策略实现调用
 pub mod mechanism;
 /// D3: NUMA 拓扑感知与内存策略
@@ -106,6 +108,7 @@ pub mod kpti;
 
 // 重新导出常用类型
 pub use kmalloc::*;
+pub use lazy_arena::LazyPageArena;
 pub use pmm::*;
 pub use vmm::*;
 

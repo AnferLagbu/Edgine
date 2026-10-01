@@ -436,12 +436,12 @@ pub unsafe fn kpti_init(kernel_pml4: u64) {
         user_cr3
     );
 
+    // AP 的 GDT 在 SIPI 之前才按需分配 (见 gdt::alloc_ap_gdt), 此刻只存在 BSP
+    // 实例, 故仅写入 BSP 槽位; AP 槽位由 gdt_init_ap 从 BSP GDT 复制该组值.
     // SAFETY: boot 阶段单 CPU 执行, kernel_cr3/user_cr3 是合法 PML4 物理地址,
-    // gdt_set_kpti_pml4 是安全的 FFI 调用, cpu 索引 0..256 合法.
+    // gdt_set_kpti_pml4 是安全的 FFI 调用, cpu 索引 0 合法.
     unsafe {
-        for cpu in 0..256u32 {
-            crate::framework::arch::gdt::gdt_set_kpti_pml4(cpu, kernel_cr3, user_cr3);
-        }
+        crate::framework::arch::gdt::gdt_set_kpti_pml4(0, kernel_cr3, user_cr3);
     }
 
     // 7. 公开状态

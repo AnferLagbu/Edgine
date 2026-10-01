@@ -127,7 +127,7 @@ pub struct TmpFsData {
 impl TmpFsData {
     /// BSS 常量初始化 — 全部字段置空, 仅供 `static` 初始化位置调用。
     ///
-    /// 关键约束: `TmpFsData` 体量约 8 MiB (内含 `RamFsData`)。若在普通函数中
+    /// 关键约束: `TmpFsData` 体量约 84 KiB (内含 `RamFsData`)。若在普通函数中
     /// 按值构造会占用内核栈, 故 `fs_mount` 一律就地写字段, 不得按值构造本结构。
     pub const fn empty() -> Self {
         Self {

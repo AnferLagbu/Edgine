@@ -9,6 +9,7 @@ use super::{
     RAMFS_BLOCK_SIZE, RAMFS_MAX_ACES, RAMFS_MAX_BLOCKS, RAMFS_MAX_NODES, SENSITIVITY_PUBLIC,
 };
 use crate::framework::credo::api as pwm_api;
+use crate::framework::mm::LazyPageArena;
 use crate::services::fs::KernelError;
 use crate::services::fs::dcache;
 use crate::services::fs::{VFS_MAX_NAME, VfsFileType, VfsSeekWhence, VfsStat};
@@ -21,7 +22,8 @@ pub struct RamFsData {
     /// 使共享的全局 dcache/icache 不会跨实例污染.
     pub fs_id: u32,
     pub nodes: [RamFsNode; RAMFS_MAX_NODES],
-    pub data_area: [u8; RAMFS_MAX_BLOCKS * RAMFS_BLOCK_SIZE],
+    /// 文件数据区 — 惰性页池 (每块 4KB, 首次写入时按需向 PMM 申请物理页)
+    pub data_area: LazyPageArena<RAMFS_MAX_BLOCKS>,
     pub node_bitmap: [u8; RAMFS_MAX_NODES / 8],
     pub block_bitmap: [u8; RAMFS_MAX_BLOCKS / 8],
     pub aces: [RamFsACE; RAMFS_MAX_ACES],
@@ -56,7 +58,7 @@ impl RamFsData {
         Self {
             fs_id: 0,
             nodes: [RamFsNode::new(); RAMFS_MAX_NODES],
-            data_area: [0; RAMFS_MAX_BLOCKS * RAMFS_BLOCK_SIZE],
+            data_area: LazyPageArena::new(),
             node_bitmap: [0; RAMFS_MAX_NODES / 8],
             block_bitmap: [0; RAMFS_MAX_BLOCKS / 8],
             aces: [RamFsACE::new(); RAMFS_MAX_ACES],
@@ -103,7 +105,7 @@ impl RamFsData {
 
     fn get_or_alloc_block(
         node: &mut RamFsNode,
-        data_area: &mut [u8],
+        data_area: &mut LazyPageArena<RAMFS_MAX_BLOCKS>,
         block_bitmap: &mut [u8],
         free_blocks: &AtomicU32,
         block_idx: usize,
@@ -135,7 +137,7 @@ impl RamFsData {
             let indirect_ptr_addr =
                 node.indirect_block as usize * RAMFS_BLOCK_SIZE + indirect_offset * 4;
 
-            let existing_block: u32 = Self::read_u32(data_area, indirect_ptr_addr);
+            let existing_block: u32 = data_area.read_u32(indirect_ptr_addr);
 
             if existing_block == 0 {
                 let new_data_block =
@@ -144,7 +146,9 @@ impl RamFsData {
                     return None;
                 }
 
-                Self::write_u32(data_area, indirect_ptr_addr, new_data_block);
+                if !data_area.write_u32(indirect_ptr_addr, new_data_block) {
+                    return None;
+                }
 
                 Some(new_data_block)
             } else {
@@ -167,7 +171,7 @@ impl RamFsData {
             let indirect_ptr_addr =
                 node.double_indirect_block as usize * RAMFS_BLOCK_SIZE + indirect_index * 4;
 
-            let existing_indirect: u32 = Self::read_u32(data_area, indirect_ptr_addr);
+            let existing_indirect: u32 = data_area.read_u32(indirect_ptr_addr);
 
             let indirect_block_num = if existing_indirect == 0 {
                 let new_indirect = Self::alloc_block_internal(data_area, block_bitmap, free_blocks);
@@ -175,7 +179,9 @@ impl RamFsData {
                     return None;
                 }
 
-                Self::write_u32(data_area, indirect_ptr_addr, new_indirect);
+                if !data_area.write_u32(indirect_ptr_addr, new_indirect) {
+                    return None;
+                }
 
                 new_indirect
             } else {
@@ -185,7 +191,7 @@ impl RamFsData {
             let data_ptr_addr =
                 indirect_block_num as usize * RAMFS_BLOCK_SIZE + block_index_in_indirect * 4;
 
-            let existing_data: u32 = Self::read_u32(data_area, data_ptr_addr);
+            let existing_data: u32 = data_area.read_u32(data_ptr_addr);
 
             if existing_data == 0 {
                 let new_data_block =
@@ -194,7 +200,9 @@ impl RamFsData {
                     return None;
                 }
 
-                Self::write_u32(data_area, data_ptr_addr, new_data_block);
+                if !data_area.write_u32(data_ptr_addr, new_data_block) {
+                    return None;
+                }
 
                 Some(new_data_block)
             } else {
@@ -206,7 +214,7 @@ impl RamFsData {
     }
 
     fn alloc_block_internal(
-        data_area: &mut [u8],
+        data_area: &mut LazyPageArena<RAMFS_MAX_BLOCKS>,
         block_bitmap: &mut [u8],
         free_blocks: &AtomicU32,
     ) -> u32 {
@@ -217,9 +225,11 @@ impl RamFsData {
                 block_bitmap[byte_idx] |= 1 << bit_idx;
                 free_blocks.fetch_sub(1, Ordering::SeqCst);
 
-                let start = i * RAMFS_BLOCK_SIZE;
-                for b in &mut data_area[start..start + RAMFS_BLOCK_SIZE] {
-                    *b = 0;
+                // 页池分配失败时回滚位图与计数, 保持与原「无可用块」语义一致
+                if !data_area.zero(i * RAMFS_BLOCK_SIZE, RAMFS_BLOCK_SIZE) {
+                    block_bitmap[byte_idx] &= !(1 << bit_idx);
+                    free_blocks.fetch_add(1, Ordering::SeqCst);
+                    return u32::MAX;
                 }
                 return i as u32;
             }
@@ -231,9 +241,10 @@ impl RamFsData {
         for i in 0..RAMFS_MAX_BLOCKS {
             if self.block_is_free(i as u32) {
                 self.block_set_used(i as u32);
-                let start = i * RAMFS_BLOCK_SIZE;
-                for b in &mut self.data_area[start..start + RAMFS_BLOCK_SIZE] {
-                    *b = 0;
+                // 页池分配失败时回滚, 返回 u32::MAX (与原「无可用块」语义一致)
+                if !self.data_area.zero(i * RAMFS_BLOCK_SIZE, RAMFS_BLOCK_SIZE) {
+                    self.block_set_free(i as u32);
+                    return u32::MAX;
                 }
                 return i as u32;
             }
@@ -251,15 +262,22 @@ impl RamFsData {
         self.free_nodes.fetch_sub(1, Ordering::SeqCst);
     }
 
-    fn read_u32(data: &[u8], offset: usize) -> u32 {
-        let bytes: [u8; 4] = data[offset..offset + 4]
-            .try_into()
-            .expect("ramfs: read_u32 OOB");
-        u32::from_le_bytes(bytes)
+    /// 从页池读取一个目录项 (72 字节, 可能跨页, 经 72B 栈缓冲中转)
+    fn read_dirent(arena: &LazyPageArena<RAMFS_MAX_BLOCKS>, offset: usize) -> RamFsDirEntry {
+        let mut buf = [0u8; core::mem::size_of::<RamFsDirEntry>()];
+        arena.read(offset, &mut buf);
+        RamFsDirEntry::read_at(&buf, 0)
     }
 
-    fn write_u32(data: &mut [u8], offset: usize, val: u32) {
-        data[offset..offset + 4].copy_from_slice(&val.to_le_bytes());
+    /// 将目录项写入页池; 返回 `false` = 目标页分配失败
+    fn write_dirent(
+        arena: &mut LazyPageArena<RAMFS_MAX_BLOCKS>,
+        offset: usize,
+        entry: &RamFsDirEntry,
+    ) -> bool {
+        let mut buf = [0u8; core::mem::size_of::<RamFsDirEntry>()];
+        entry.write_at(&mut buf, 0);
+        arena.write(offset, &buf)
     }
 
     fn free_indirect_chain(&mut self, indirect_block: u32, start_idx: usize, end_idx: usize) {
@@ -269,7 +287,7 @@ impl RamFsData {
 
         for i in start_idx..end_idx.min(INDIRECT_BLOCKS_PER_BLOCK) {
             let ptr_addr = indirect_block as usize * RAMFS_BLOCK_SIZE + i * 4;
-            let block_num: u32 = Self::read_u32(&self.data_area, ptr_addr);
+            let block_num: u32 = self.data_area.read_u32(ptr_addr);
             if block_num != 0 {
                 self.block_set_free(block_num);
             }
@@ -295,7 +313,7 @@ impl RamFsData {
             let indirect_ptr_addr =
                 double_indirect_block as usize * RAMFS_BLOCK_SIZE + indirect_idx * 4;
 
-            let indirect_block_num: u32 = Self::read_u32(&self.data_area, indirect_ptr_addr);
+            let indirect_block_num: u32 = self.data_area.read_u32(indirect_ptr_addr);
 
             if indirect_block_num != 0 {
                 let local_start = if indirect_idx == start_indirect_idx {
@@ -414,7 +432,7 @@ impl RamFsData {
 
             for i in 0..num_entries {
                 let offset = (block_num as usize) * RAMFS_BLOCK_SIZE + i * dirent_size;
-                let entry = RamFsDirEntry::read_at(&self.data_area, offset);
+                let entry = Self::read_dirent(&self.data_area, offset);
 
                 if entry.node != 0 {
                     let end = entry
@@ -452,7 +470,7 @@ impl RamFsData {
         self.fs_id = alloc_fs_id();
         // 使用 fill(0) 替代逐字节循环——编译器会优化为高效的 memset
         self.nodes.fill(RamFsNode::new());
-        self.data_area.fill(0);
+        self.data_area.clear();
         self.node_bitmap.fill(0);
         self.block_bitmap.fill(0);
         self.aces.fill(RamFsACE::new());
@@ -487,17 +505,17 @@ impl RamFsData {
         let dirent_size = core::mem::size_of::<RamFsDirEntry>();
         let offset = (block as usize) * RAMFS_BLOCK_SIZE;
 
-        let mut dot = RamFsDirEntry::read_at(&self.data_area, offset);
+        let mut dot = Self::read_dirent(&self.data_area, offset);
         dot.node = 1;
         dot.file_type = VfsFileType::Dir as u8;
         dot.set_name(".");
-        dot.write_at(&mut self.data_area, offset);
+        Self::write_dirent(&mut self.data_area, offset, &dot);
 
-        let mut dotdot = RamFsDirEntry::read_at(&self.data_area, offset + dirent_size);
+        let mut dotdot = Self::read_dirent(&self.data_area, offset + dirent_size);
         dotdot.node = 1;
         dotdot.file_type = VfsFileType::Dir as u8;
         dotdot.set_name("..");
-        dotdot.write_at(&mut self.data_area, offset + dirent_size);
+        Self::write_dirent(&mut self.data_area, offset + dirent_size, &dotdot);
 
         0
     }
@@ -593,9 +611,9 @@ impl RamFsData {
 
             if let Some(block_num) = block_num {
                 let start = (block_num as usize) * RAMFS_BLOCK_SIZE + block_offset;
-                if start + bytes_to_read <= self.data_area.len() {
-                    buf[bytes_read..bytes_read + bytes_to_read]
-                        .copy_from_slice(&self.data_area[start..start + bytes_to_read]);
+                if start + bytes_to_read <= self.data_area.capacity_bytes() {
+                    self.data_area
+                        .read(start, &mut buf[bytes_read..bytes_read + bytes_to_read]);
                 }
             }
 
@@ -635,9 +653,12 @@ impl RamFsData {
             match block_num {
                 Some(block_num) => {
                     let start = (block_num as usize) * RAMFS_BLOCK_SIZE + block_offset;
-                    if start + bytes_to_write <= self.data_area.len() {
-                        self.data_area[start..start + bytes_to_write]
-                            .copy_from_slice(&buf[bytes_written..bytes_written + bytes_to_write]);
+                    if start + bytes_to_write <= self.data_area.capacity_bytes()
+                        && !self
+                            .data_area
+                            .write(start, &buf[bytes_written..bytes_written + bytes_to_write])
+                    {
+                        break;
                     }
                 }
                 None => break,
@@ -707,9 +728,9 @@ impl RamFsData {
 
             if let Some(block_num) = block_num {
                 let start = (block_num as usize) * RAMFS_BLOCK_SIZE + block_offset;
-                if start + bytes_to_read <= self.data_area.len() {
-                    buf[bytes_read..bytes_read + bytes_to_read]
-                        .copy_from_slice(&self.data_area[start..start + bytes_to_read]);
+                if start + bytes_to_read <= self.data_area.capacity_bytes() {
+                    self.data_area
+                        .read(start, &mut buf[bytes_read..bytes_read + bytes_to_read]);
                 }
             }
 
@@ -759,9 +780,12 @@ impl RamFsData {
             match block_num {
                 Some(block_num) => {
                     let start = (block_num as usize) * RAMFS_BLOCK_SIZE + block_offset;
-                    if start + bytes_to_write <= self.data_area.len() {
-                        self.data_area[start..start + bytes_to_write]
-                            .copy_from_slice(&buf[bytes_written..bytes_written + bytes_to_write]);
+                    if start + bytes_to_write <= self.data_area.capacity_bytes()
+                        && !self
+                            .data_area
+                            .write(start, &buf[bytes_written..bytes_written + bytes_to_write])
+                    {
+                        break;
                     }
                 }
                 None => break,
@@ -856,10 +880,10 @@ impl RamFsData {
                 if let Some(block_num) = block_num {
                     if block_num != 0 {
                         let start = block_num as usize * RAMFS_BLOCK_SIZE + offset_in_block + 1;
-                        let end = (block_num as usize + 1) * RAMFS_BLOCK_SIZE;
-                        let data_len = self.data_area.len();
-                        for byte in &mut self.data_area[start..end.min(data_len)] {
-                            *byte = 0;
+                        let end =
+                            ((block_num as usize + 1) * RAMFS_BLOCK_SIZE).min(self.data_area.capacity_bytes());
+                        if start < end {
+                            self.data_area.zero(start, end - start);
                         }
                     }
                 }
@@ -1013,10 +1037,10 @@ impl RamFsData {
 
             for i in 0..num_entries {
                 let offset = (parent_block as usize) * RAMFS_BLOCK_SIZE + i * dirent_size;
-                let mut entry = RamFsDirEntry::read_at(&self.data_area, offset);
+                let mut entry = Self::read_dirent(&self.data_area, offset);
                 if entry.node == node_id {
                     entry.node = 0;
-                    entry.write_at(&mut self.data_area, offset);
+                    Self::write_dirent(&mut self.data_area, offset, &entry);
                     break;
                 }
             }
@@ -1073,7 +1097,7 @@ impl RamFsData {
 
         for i in 0..num_entries {
             let offset = (parent_block as usize) * RAMFS_BLOCK_SIZE + i * dirent_size;
-            let entry = RamFsDirEntry::read_at(&self.data_area, offset);
+            let entry = Self::read_dirent(&self.data_area, offset);
             if entry.node != 0 {
                 let end = entry
                     .name
@@ -1092,7 +1116,7 @@ impl RamFsData {
         let num_entries = self.nodes[parent_num as usize].size as usize / dirent_size;
         let offset = (parent_block as usize) * RAMFS_BLOCK_SIZE + num_entries * dirent_size;
 
-        if offset + dirent_size > self.data_area.len() {
+        if offset + dirent_size > self.data_area.capacity_bytes() {
             return None;
         }
 
@@ -1100,7 +1124,7 @@ impl RamFsData {
         entry.node = new_node_id;
         entry.file_type = VfsFileType::File as u8;
         entry.set_name(name);
-        entry.write_at(&mut self.data_area, offset);
+        Self::write_dirent(&mut self.data_area, offset, &entry);
 
         self.nodes[parent_num as usize].size += dirent_size as u32;
         self.nodes[parent_num as usize].link_count += 1;
@@ -1151,7 +1175,7 @@ impl RamFsData {
 
         for i in 0..num_entries {
             let offset = (parent_block as usize) * RAMFS_BLOCK_SIZE + i * dirent_size;
-            let entry = RamFsDirEntry::read_at(&self.data_area, offset);
+            let entry = Self::read_dirent(&self.data_area, offset);
 
             if entry.node != 0 {
                 let end = entry
@@ -1181,13 +1205,13 @@ impl RamFsData {
         dot.node = new_node_id;
         dot.file_type = VfsFileType::Dir as u8;
         dot.set_name(".");
-        dot.write_at(&mut self.data_area, block_base);
+        Self::write_dirent(&mut self.data_area, block_base, &dot);
 
         let mut dotdot = RamFsDirEntry::new();
         dotdot.node = parent_num;
         dotdot.file_type = VfsFileType::Dir as u8;
         dotdot.set_name("..");
-        dotdot.write_at(&mut self.data_area, block_base + dirent_size);
+        Self::write_dirent(&mut self.data_area, block_base + dirent_size, &dotdot);
 
         self.nodes[new_node_id as usize].link_count = 2;
 
@@ -1199,7 +1223,7 @@ impl RamFsData {
         let num_entries = self.nodes[parent_num as usize].size as usize / dirent_size;
         let offset = (parent_block as usize) * RAMFS_BLOCK_SIZE + num_entries * dirent_size;
 
-        if offset + dirent_size > self.data_area.len() {
+        if offset + dirent_size > self.data_area.capacity_bytes() {
             return KernelError::NoSpace.as_i32();
         }
 
@@ -1207,7 +1231,7 @@ impl RamFsData {
         entry.node = new_node_id;
         entry.file_type = VfsFileType::Dir as u8;
         entry.set_name(name);
-        entry.write_at(&mut self.data_area, offset);
+        Self::write_dirent(&mut self.data_area, offset, &entry);
 
         self.nodes[parent_num as usize].size += dirent_size as u32;
         self.nodes[parent_num as usize].link_count += 1;
@@ -1413,7 +1437,7 @@ impl RamFsData {
 
         for i in 0..num_entries {
             let offset = (parent_block as usize) * RAMFS_BLOCK_SIZE + i * dirent_size;
-            let entry = RamFsDirEntry::read_at(&self.data_area, offset);
+            let entry = Self::read_dirent(&self.data_area, offset);
             if entry.node != 0 {
                 let end = entry
                     .name
@@ -1428,7 +1452,7 @@ impl RamFsData {
         }
 
         let offset = (parent_block as usize) * RAMFS_BLOCK_SIZE + num_entries * dirent_size;
-        if offset + dirent_size > self.data_area.len() {
+        if offset + dirent_size > self.data_area.capacity_bytes() {
             return KernelError::NoSpace.as_i32();
         }
 
@@ -1436,7 +1460,7 @@ impl RamFsData {
         entry.node = target_node;
         entry.file_type = self.nodes[target_node as usize].file_type;
         entry.set_name(name);
-        entry.write_at(&mut self.data_area, offset);
+        Self::write_dirent(&mut self.data_area, offset, &entry);
 
         self.nodes[parent_node as usize].size += dirent_size as u32;
         self.nodes[parent_node as usize].link_count += 1;
@@ -1481,7 +1505,7 @@ impl RamFsData {
         let num_entries = self.nodes[parent_num as usize].size as usize / dirent_size;
         for i in 0..num_entries {
             let offset = (parent_block as usize) * RAMFS_BLOCK_SIZE + i * dirent_size;
-            let entry = RamFsDirEntry::read_at(&self.data_area, offset);
+            let entry = Self::read_dirent(&self.data_area, offset);
             if entry.node != 0 {
                 let end = entry
                     .name
@@ -1518,7 +1542,7 @@ impl RamFsData {
         self.symlink_lens[new_id as usize] = target_len as u8;
 
         let offset = (parent_block as usize) * RAMFS_BLOCK_SIZE + num_entries * dirent_size;
-        if offset + dirent_size > self.data_area.len() {
+        if offset + dirent_size > self.data_area.capacity_bytes() {
             let n = &mut self.nodes[new_id as usize];
             n.used = false;
             n.file_type = 0;
@@ -1530,7 +1554,7 @@ impl RamFsData {
         entry.node = new_id;
         entry.file_type = VfsFileType::Symlink as u8;
         entry.set_name(name);
-        entry.write_at(&mut self.data_area, offset);
+        Self::write_dirent(&mut self.data_area, offset, &entry);
 
         self.nodes[parent_num as usize].size += dirent_size as u32;
         self.nodes[parent_num as usize].link_count += 1;
@@ -1563,7 +1587,7 @@ mod tests {
     use super::*;
     use crate::framework::sync::IrqSpinLock as Mutex;
 
-    /// 测试专用 BSS 静态实例 — `RamFsData` 体量约 16 MiB, 不能在测试线程
+    /// 测试专用 BSS 静态实例 — `RamFsData` 体量约 84 KiB, 不能在测试线程
     /// 栈上按值构造 (与生产 `RAMFS_DATA` / overlay `OVERLAY_FS` 同范式)。
     static TEST_FS: Mutex<RamFsData> = Mutex::new(RamFsData::new());
 

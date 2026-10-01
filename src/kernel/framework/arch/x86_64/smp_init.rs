@@ -195,6 +195,13 @@ unsafe fn start_ap(lapic_id: u32, cpu_index: u32) {
         // AP_STARTUP_LOCK 仅保护 BSP 串行启动 AP 的临界区, IRQ 安全不强制要求.
         let _lock = AP_STARTUP_LOCK.lock();
 
+        // AP 的 GDT 必须在该 CPU 进入长模式 (gdt_init_ap) 之前就绪, 故在 SIPI
+        // 之前按需分配; 分配失败 (PMM 无可用页) 则放弃启动本 AP.
+        if !super::gdt::alloc_ap_gdt(cpu_index) {
+            crate::klog_warn!(Boot, "[SMP] AP cpu_index={} GDT alloc failed, skip", cpu_index);
+            return;
+        }
+
         let per_cpu = alloc::boxed::Box::new(ApPerCpu {
             stack: [0u8; AP_STACK_SIZE],
         });

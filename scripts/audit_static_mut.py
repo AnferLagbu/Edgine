@@ -21,7 +21,6 @@ SRC = os.path.join(ROOT, "src/kernel/framework")
 SAFE_PATTERNS = [
     "GLOBAL_PMM",        # OnceLock 保护
     "GLOBAL_KMALLOC",    # 内部锁
-    "PER_CPU_GDT",       # 初始化期间独占
     "GRANT_RECORDS",     # GrateLock 保护
     "GLOBAL_TABLE",      # OnceLock 保护
     "GLOBAL_IPC",        # RacyCell 保护

@@ -99,8 +99,8 @@ pub struct OverlayFsData {
 impl OverlayFsData {
     /// BSS 常量初始化 — 全部字段置空, 仅供 `static` 初始化位置调用。
     ///
-    /// 关键约束: `OverlayFsData` 体量约 16 MiB (upper_data + work_data 各约
-    /// 8 MiB)。若在普通函数中按值构造会占用内核栈, 故 `fs_mount` 一律就地写
+    /// 关键约束: `OverlayFsData` 体量约 170 KiB (`upper_data` + `work_data` 各约
+    /// 84 KiB)。若在普通函数中按值构造会占用内核栈, 故 `fs_mount` 一律就地写
     /// 字段, 不得按值构造本结构。
     pub const fn empty() -> Self {
         Self {
@@ -330,7 +330,7 @@ impl OverlayFsData {
 /// overlayfs 文件系统实例 (全局单例)
 ///
 /// 用 `const fn empty()` 做 BSS 常量初始化 (同 `services::fs::ramfs_core::RAMFS_DATA`
-/// 范式), 避免在内核栈上构造约 16 MiB 的 `OverlayFsData`。
+/// 范式), 避免在内核栈上构造约 170 KiB 的 `OverlayFsData`。
 static OVERLAY_FS: Mutex<OverlayFsData> = Mutex::new(OverlayFsData::empty());
 
 // ============================================================================
@@ -522,7 +522,7 @@ impl FileSystem for OverlayFsFileSystem {
         if fs.mounted {
             return Ok(());
         }
-        // 就地写小 String 字段, 避免按值构造约 16 MiB 的 `OverlayFsData` 栈临时。
+        // 就地写小 String 字段, 避免按值构造约 170 KiB 的 `OverlayFsData` 栈临时。
         fs.mount.upperdir = String::from("/upper");
         fs.mount.lowerdir = String::from("/lower");
         fs.mount.workdir = String::from("/work");
