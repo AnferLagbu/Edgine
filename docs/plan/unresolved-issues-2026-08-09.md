@@ -526,7 +526,7 @@
 |---|---|---|---|
 | MIG-001 | 头注释过时：services/driver/mod.rs 声称"⏳ 5/6 未迁移" + E1000 "138 行"（2026-06-04 状态表） | [services/driver/mod.rs:4-35](file:///home/anfer/Code/QueenX/src/kernel/services/driver/mod.rs#L4-L35) | 同步为实际状态：多数模块已迁（A 形态）+ B04 后 E1000 为 re-export shim（B 形态） |
 | MIG-002 | 头注释过时：services/chitin/mod.rs 声称"已完成 1/4 子系统迁移" | [services/chitin/mod.rs:4-11](file:///home/anfer/Code/QueenX/src/kernel/services/chitin/mod.rs#L4-L11) | devtree/composite 实际已迁（devtree.rs 自标 3/4、composite.rs 自标 4/4），更新为"3/5" |
-| MIG-003 | 缺 pl011（ARM 串口）安全代理 | `services/driver/char/` | char/mod.rs 头注释自标"后续添加"（Phase 2.1.5 后续） |
+| MIG-003 | 缺 pl011（ARM 串口）安全代理 | `services/driver/char/` | ✅ 已结案（【本轮修复（修遗留工程）】完整迁移到 services：framework 删 pl011.rs、暴露 `pl011_phys_base()` safe 面 + `IoMem::from_platform_device` safe 构造器；services 新建 pl011.rs 0 unsafe 并经 chitin 注册） |
 | MIG-004 | 缺 proto_* + user_driver 安全代理 | `services/chitin/` | framework 已实现，services 无安全封装；若用户态驱动/协议族需开放，先评估边界 |
 | MIG-005 | 双份代码/边界未理清 | `framework/driver/storage/` ↔ `services/driver/storage/` | nvme/ahci 两边并存（framework 含 nvme_block.rs/ahci_block.rs/ata_block.rs 完整实现 + services 业务层）；需明确"机制/策略"各自归属，消除重复 |
 | | | `framework/driver/display/hdmi/` ↔ `services/driver/display/hdmi.rs` | framework 侧孤儿目录（8 文件 1537 行）已随 DECISION-K 第二十七批删除，双份消解；services 侧残留缺口（控制器未接入启动路径）转记 MIG-008 |
@@ -544,6 +544,8 @@
 > - **MIG-001/002 注释同步**: [services/driver/mod.rs](file:///home/anfer/Code/QueenX/src/kernel/services/driver/mod.rs#L1-L22) 头注释由旧状态表（"Phase 2.1 在途" + E1000 "影子双份"）改写为当前形态（驱动业务层落 services、0 unsafe；framework 保留 MMIO/DMA 环/存储 wire/PL011 等**机制原语**，非影子双份；并补记 B04 反转）；[services/chitin/mod.rs](file:///home/anfer/Code/QueenX/src/kernel/services/chitin/mod.rs#L1-L20) 头注释由"已完成 1/4"更正为"3/5"（devtree/composite 标记已迁；proto_*/user_driver 注明 framework 内部函数指针表 / framework 已实现但 services 无封装），并移除"评估日期"。
 > - **MIG-006 结案（不改 archive）**: 依 AGENTS.md §6「archive/ 为历史快照不再修改」，[archive/driver-service-migration.md](./archive/driver-service-migration.md) **有意保持冻结**（已按 commit `fae02a38` 归档、标记"✅ 已完成"）。B04 反转已由 live 文档完整承载（services/driver/mod.rs 头注释 + §8.1 三阶段历史表），故本条**据 live 文档结案**，不修改归档快照。
 > - **MIG-007 补测**: 新增 [chitin_registry_io_host_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/chitin_registry_io_host_test.rs) — 覆盖 services/chitin 注册表语义（`register`/`find_by_name`/`find_by_proto`/`list`/`count`/`set_state`/`unregister`）+ 块设备 IO dispatch（`blk_read`/`blk_write` 成功 round-trip 与 3 类错误路径 + `blk_is_present`/`blk_total_sectors`/`blk_count`）；以进程内 `Mutex` 串行化规避全局 `CHITIN_DEVICES` 并行竞争。**2 passed**。
+> - **MIG-008 结案（接线补齐）**: 依 commit `c677702d`，[framework/driver/display/mod.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/driver/display/mod.rs) 新增控制器工厂槽 `register_display_controller_factory` + 单向拉取入口 `display_probe_controllers`（DECISION-K 单向注册契约，`framework::driver` 顶层 re-export）；[services/driver/display/mod.rs](file:///home/anfer/Code/QueenX/src/kernel/services/driver/display/mod.rs) 的 `display_init` 注册无捕获工厂回调（HDMI/DP/DisplayManager 经 Chitin 注册，0 unsafe），由 crate root [lib.rs](file:///home/anfer/Code/QueenX/src/kernel/lib.rs) 在 `display_init` 后调用 `display_probe_controllers` 触发。原"控制器内核内零调用者"缺口已闭合。
+> - **MIG-003 结案（完整迁移到 services）**: 用户裁决「完整迁移到 services」。framework 侧删除 [framework/driver/char/pl011.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/driver/char/)（原 183 行 unsafe MMIO 实现）；[framework/driver/char/mod.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/driver/char/mod.rs) 暴露 aarch64 safe 面 `pl011_phys_base()`（`arch::uart::base() & !KERNEL_BASE` 归一为物理地址），[framework/iomem.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/iomem.rs) 新增 safe 构造器 `from_platform_device(phys,len,name)`（零基址校验 + `unsafe { Self::new }`）。services 侧新建 [services/driver/char/pl011.rs](file:///home/anfer/Code/QueenX/src/kernel/services/driver/char/pl011.rs)（0 unsafe，经 `IoMem` 安全代理访问 UARTDR/UARTFR/UARTCR/UARTIBRD/UARTFBRD/UARTLCR_H/UARTIMSC）；[services/driver/char/mod.rs](file:///home/anfer/Code/QueenX/src/kernel/services/driver/char/mod.rs) `char_init()` aarch64 分支经 `chitin_register_driver("pl011", ChitinProto::Char, ...)` 注册；[lib.rs](file:///home/anfer/Code/QueenX/src/kernel/lib.rs) 取消 x86_64-only 限制，双架构均调 `char_init()`。framework 保留 `arch::uart`（早期控制台，进入用户态前）。配套 host 用例并入 [mm_iomem_alias_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/mm_iomem_alias_test.rs)（`from_platform_device` 零基址拒绝 + 有效基址注册/字段断言/出作用域 unregister）。
 
 ---
 
@@ -629,6 +631,14 @@
 > - **P3**: 第 4 类远期工程 F1-F5; B06-PRE-003（LegacyInode 清理）; MIG-003/004/008; 刻意维持项 DEC-046/041/005.
 >
 > **【本轮修复（修遗留工程）后开放项变化】**: 下列项已从本节待办移出 — **B06-PRE-002**（fchown 能力校验，P1）、**B03-LEGACY-001/002/003**（COW TOCTOU + host-tests 缺口，P2）、**ISSUE-TOOL-002**（x86_64 侧陈旧检测，P2）、**B06-PRE-003**（LegacyInode 清理，P3）、**MIG-006/007**（迁移文档补注 / chitin 测试缺口，P2）；**ISSUE-TOOL-003** 重评结案不施工；**MIG-001/002** 注释同步完成。仍未闭合: **ISSUE-RT-001/002/003**（运行时挂起/真机验证）、**MIG-003/004/005/008**、第 4 类远期工程 F1-F5、刻意维持项.
+>
+> **【本轮结案同步（RT-001/003 + MIG-003/005/008）】**: 依 commit `8a10a36f`（结案运行时遗留 RT-001 并交付 aarch64 真机启动介质）、`c677702d`（MIG-008 显示控制器接线补齐）与 `cb086930`（存储驱动去类型副本，统一以 framework 权威定义为准），下列项状态收敛 —
+> - **ISSUE-RT-001 闭合**: 根因为 e1000 三处寄存器位域常量写错（`CTRL.RST` bit31→bit26 / `CTRL.FRCDPX` bit14→bit12 / `RCTL.BSIZE_2048` bit25 实为 BSEX→`0x0`），修复后 QEMU 默认 e1000 路径断言 `e1000: 初始化完成` + 完整进 Ring 3 通过；已由 [driver_e1000_ctrl_bits_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/driver_e1000_ctrl_bits_test.rs) 固化防回归。
+> - **ISSUE-RT-003 交付物就绪（执行待硬件）**: 真机验证三件套已交付 — [make_boot_medium.sh](file:///home/anfer/Code/QueenX/scripts/make_boot_medium.sh)（介质制作）+ [guide-hardware-boot.md](file:///home/anfer/Code/QueenX/docs/explain/guide-hardware-boot.md)（串口 checklist / SoC 契约）+ 台账登记；真机**执行**待用户提供硬件。
+> - **MIG-008 闭合**: 显示控制器经 DECISION-K 单向注册契约接线（framework 工厂槽 + `display_probe_controllers` 单向拉取；services `display_init` 注册无捕获回调），原"控制器零调用者"缺口消除。
+> - **MIG-005 边界已理清**: [framework/driver/storage/mod.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/driver/storage/mod.rs) 现仅保留机制原语（NVMe 队列 DMA 分配 / 提交与排空 safe wrapper / AHCI DMA fill / xHCI TRB / MSI-X ISR 编排 + wire 类型），业务（控制器探测/初始化/块设备注册）已退位 [services/driver/storage/mod.rs](file:///home/anfer/Code/QueenX/src/kernel/services/driver/storage/mod.rs)（0 unsafe，crate root 编排）；framework 侧无 `ata.rs`（ATA 已回迁 services）。framework 侧**无控制器/块设备实现**，"双份"不再存在，属机制/业务分野而非重复。
+>
+> **仍未闭合** 收敛为: **ISSUE-RT-002**（aarch64 GICv3 挂起，QEMU TCG 时序偶发不可复现，待 SMP/真机复验）、**MIG-004**（chitin proto_*+user_driver 安全代理，待按 §12.3 评估"是否需要"）、第 4 类远期工程 F1-F5、刻意维持项.
 
 ### P0 — 立即关注 (1 项)
 
@@ -668,6 +678,7 @@
 
 ## 变更历史
 
+- **本轮（MIG-003 完整迁移 + 台账同步）**: MIG-003 由「未闭合」移出 — framework 删 [pl011.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/driver/char/mod.rs) + 暴露 `pl011_phys_base()` safe 面 + [IoMem::from_platform_device](file:///home/anfer/Code/QueenX/src/kernel/framework/iomem.rs) safe 构造器；services 新建 [pl011.rs](file:///home/anfer/Code/QueenX/src/kernel/services/driver/char/pl011.rs)（0 unsafe）+ [char/mod.rs](file:///home/anfer/Code/QueenX/src/kernel/services/driver/char/mod.rs) aarch64 分支 chitin 注册 + [lib.rs](file:///home/anfer/Code/QueenX/src/kernel/lib.rs) 双架构调 `char_init()`。§2.3 六门槛全量验证通过（双架构 build 通过 / clippy + `audit.sh quick` 全绿 / `audit_services_boundary` 通过 / `audit_safety_coverage` 100% / `audit_comment_language` 0 违规 / `audit_deadlock_matrix` 无 CRITICAL / `make test-host` 全 ok / `make test-kernel-host` 947 passed / QEMU 2/2）。仍未闭合收敛为: ISSUE-RT-002、MIG-004、第 4 类远期工程 F1-F5、刻意维持项.
 - **本轮（修遗留工程）**: 按用户授权批量修复登记遗留项，逐条追加【本轮修复（修遗留工程）】标记；§2.3 六门槛全量验证通过（双架构 build 5/0、clippy + audit quick 全绿、`make test-host` 0 failed、`make test-kernel-host` 941 passed、QEMU x86_64 1/1）
   - 第 0B 类 3 项结案: B03-LEGACY-001（COW 判定+映射并入同一 `VMM_LOCK` 临界区，配套 `*_locked` 变体）/ B03-LEGACY-002（pmm `find_contig_range`/`reserve_range`/`unreserve_range` host 用例 ×3）/ B03-LEGACY-003（新增定时器 tick 并发 host 冒烟 + 文件头标注判别力边界，弱序语义判别待 aarch64 SMP）
   - 第 6 类: ISSUE-TOOL-002 x86_64 分支接入 `check_kernel_fresh`（QEMU 侧双架构闭环）；ISSUE-TOOL-003 重评结案（E0152 整族根治后原建议无必要，不施工）

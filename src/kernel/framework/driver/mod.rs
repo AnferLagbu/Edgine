@@ -117,10 +117,10 @@ pub use display::{display_probe_controllers, register_display_controller_factory
 pub use bus::pci;
 
 // --- 字符设备导出 ---
-// §6.4 直接方案 B (2026-09-12): x86_64 char 业务已迁 services/driver/char,
-// framework 仅保留 aarch64 pl011 (机制).
+// §6.4 直接方案 B (2026-09-12): 字符设备业务已整体迁 services/driver/char,
+// framework 仅保留 aarch64 PL011 早期控制台机制 (arch::uart) 与基址安全面。
 #[cfg(target_arch = "aarch64")]
-pub use char::pl011::Pl011Driver;
+pub use char::pl011_phys_base;
 
 // --- 网络设备导出 ---
 // 批次 Z ④: 旧 framework virtio-net 驱动 (net.rs + virtio_net_* FFI) 已删除,
@@ -164,10 +164,8 @@ pub fn init_all() {
         let _ = bus::bus_init();
         input::input_init();
     }
-    #[cfg(target_arch = "aarch64")]
-    {
-        char::char_init();
-    }
+    // MIG-003: aarch64 字符设备 (pl011) 亦已下沉 services::driver::char::char_init,
+    // 由 crate root lib.rs 统一编排; framework 侧不再持有 char_init.
 
     let _ = display::display_init();
     // 2-D USB 整体下沉: USB (xHCI/枚举/类驱动) 权威实装已迁 services::driver::usb,

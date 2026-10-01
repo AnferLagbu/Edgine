@@ -805,9 +805,8 @@ pub extern "C" fn kernel_init() {
 
         // 10-10.6. Driver subsystem init
         crate::framework::driver::init_all();
-        // §6.4 直接方案 B: x86_64 字符设备 (vga/serial) 权威迁 services,
+        // §6.4 直接方案 B: 字符设备 (x86_64 vga/serial + aarch64 pl011) 权威迁 services,
         // 由 crate root (合法双向编排者) 调用 services char_init 注册进 Chitin.
-        #[cfg(target_arch = "x86_64")]
         crate::services::driver::char::char_init();
         // §6.4 直接方案 B: virtio-blk 权威迁 services (aarch64 QEMU -M virt 主战场;
         // x86_64 走 PCI AHCI/NVMe, 此调用探测 virtio-mmio 无设备即跳过)

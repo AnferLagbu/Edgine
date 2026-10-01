@@ -193,6 +193,36 @@ impl IoMem {
         unsafe { Self::new(bar_phys, len, name) }
     }
 
+    /// 从平台设备物理基址创建 MMIO 句柄 (安全包装)。
+    ///
+    /// 平台设备 (非 PCI, 如 aarch64 PL011 UART) 的 MMIO 基址由设备树/平台常量固定,
+    /// 不参与 PCI BAR 枚举, 故无 `from_pci_bar` 的 BAR==0 特判, 但契约同等:
+    /// 调用方须保证 `phys..phys+len` 是平台设备真实独占的 MMIO 区域, 且已可在内核态访问。
+    /// services 层应使用此方法而非 `new`。
+    ///
+    /// # 参数
+    /// - `phys`: 平台设备 MMIO 基址 (由设备树/平台常量提供)
+    /// - `len`: MMIO 区域大小 (字节)
+    /// - `name`: 设备名称 (用于调试和别名检测)
+    /// # Errors
+    /// 物理基址为 0 或底层 `IoMem::new` 校验 (对齐/溢出/别名冲突) 失败时返回 Err。
+    pub fn from_platform_device(
+        phys: PhysAddr,
+        len: usize,
+        name: &'static str,
+    ) -> Result<Self, &'static str> {
+        if phys.as_u64() == 0 {
+            return Err("IoMem: platform device phys is zero");
+        }
+
+        // 本方法当前仅 aarch64 PL011 使用: MMIO 经 TTBR1 高半区别名 (0-1 GiB Device,
+        // 由 `mmu::init` 的 L2_DEVICE 静态建立), 无需动态补映射。
+        // 若未来在 x86_64 引入平台设备, 其基址须落在 boot.asm 已映射范围内,
+        // 否则需在此补 `ensure_mmio_mapped` 调用。
+        // SAFETY: 调用方契约保证 phys..phys+len 是平台设备有效 MMIO 区域且内核态可访问。
+        unsafe { Self::new(phys, len, name) }
+    }
+
     // x86_64 专属: aarch64 的 MMIO 经 TTBR1 高半区别名访问, 0-1 GiB Device 映射
     // 由 `mmu::init` 的 L2_DEVICE 静态提供, 不存在"需要动态补映射"的情形
     // (见 `mmio_virt`). 故整个函数在 aarch64 不参与编译, 避免死代码 (F9).

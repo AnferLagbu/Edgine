@@ -199,6 +199,22 @@ fn alias_registry_semantics() {
         let ok = unsafe { IoMem::new(PhysAddr(0x1000), 0x100, "before-overflow") };
         assert!(ok.is_ok());
     }
+
+    // ── from_platform_device: 零基址拒绝 + 合法平台设备注册 (MIG-003) ──
+    {
+        // 零基址: 平台设备未配置 → Err (不注册)
+        assert!(
+            IoMem::from_platform_device(PhysAddr(0), 0x1000, "pl011").is_err(),
+            "平台设备基址为 0 必须拒绝"
+        );
+        // 合法平台设备基址 (aarch64 PL011 0x0900_0000): 注册成功, 句柄字段正确
+        let m = IoMem::from_platform_device(PhysAddr(0x0900_0000), 0x1000, "pl011")
+            .expect("合法平台设备基址应注册成功");
+        assert_eq!(m.phys().as_u64(), 0x0900_0000);
+        assert_eq!(m.len(), 0x1000);
+        assert_eq!(m.name(), "pl011");
+        // m 出作用域 Drop → unregister, 不残留占用后续用例槽位
+    }
 }
 
 /// 内核 MAX_MMIO_MAPPINGS 常量 = 64 (与 iomem.rs AliasRegistry 固定数组容量一致)
