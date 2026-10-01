@@ -884,17 +884,15 @@ T7 (预存登记)
 
 #### B-6. R1 已分类清单（机器可读区块；B09-21 数据源）
 
-> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**446 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
+> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**440 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
 >
-> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝B-6 区块路径漂移清理（**B-13.7**）**（R1 实测检出 43 项**失效条目**并逐项处置：31 项路径更新 `framework/...`→`services/...`（文件随框内核迁移下沉、函数仍零引用 ⇒ 原 framework 路径失效、现报 HIGH），12 项移除（已接线 / 已删 / 已豁免：`framework/driver/net/e1000_io.rs::install_rings`（已删）、`::set_ctrl` / `::set_ipg` / `::set_rx_ctl` / `::set_tx_ctl`（已被 `services/driver/net/e1000.rs` 调用）、`framework/driver/usb/xhci.rs::init_command_ring` / `::recover_endpoint`（已删）、`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`（内联测试引用）、`services/chitin/mod.rs::find_by_proto`（host 测试引用）、`services/driver/usb/xhci.rs::port_connected` / `::port_status`（内部调用））⇒ **458 → 446**；修复后实测区块 446 ＝ matched 446、stale 0、HIGH 18）。**上一轮同步＝B-12.8 遗留清理批次（**B-13**）**（本批改动**未改变** R1 零引用集合，以 HEAD 独立 worktree 对跑逐项一致 ⇒ 本区块计数**不变（458）**，见 **B-13.6**）。**上一轮同步＝热插拔运行时接线批次（**B-12**）**（4 项因本工程「接线 / 删除」而不再零引用 ⇒ 本区块移除：`framework/driver/hotplug.rs::hotplug_poll`（函数已不存在，由 `hotplug_wakeup` + softirq 轮询替代）、`services/driver/usb/xhci.rs::ack_port_change` / `::has_port_change`（已被 `usb_port_poll` 调用）、`framework/driver/block.rs::mark_removed`（函数已不存在，由 Chitin 墓碑协议 `chitin_blk_is_removed` 替代）⇒ **462 → 458**）。**上一轮同步＝`atomic_stats` feature 删除**（`framework/sync/atomic.rs` 4 项 `record_*` 随 feature 删除而消失 ⇒ 本区块移除 4 条目，**466 → 462**；处置依据＝按职责判定「非内核所需 + 零履行 + 已有 `*_dump_stats` 等价诊断 idiom」，见 **B-5.2 / B-5.3 G2**）。**更早同步＝per-process fd 表全量下沉（**B-11**）**（10 项因本工程接线 / 删除而不再零引用 ⇒ 本区块移除：`framework/fs/vfs/handle.rs::vfs_get_fd_handle`（poll 改源）、`framework/proc/fd_table.rs` 4 项（`get_handle_id` / `is_cloexec` / `set_cloexec` / `get_cloexec_fds` 接线）、`framework/proc/scheduler.rs::get_current_process`（`with_current_fd_table` 取当前进程）、`services/fs/process_fd_table.rs` 4 项（Plan B 表文件删除）⇒ **476 → 466**；编辑前实测区块为 **476** 行，区块说明原记 475（差 1，前批计数笔误，本次以实测为准）。另有 2 条**既有偏差**（`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`：脚本按名计数，其内联测试即计入引用 ⇒ 恒不在 INFO 集，见上述口径说明②）经本批复核确认，**非本工程引入，不属本批处置面**）。**更早同步＝项 5 批 C「67 项逐项分流」**（21 项判定为可删并已删除 ⇒ 本区块移除对应 21 条目，496 → 475；其余 46 项保留 `pub` 并留块登记，见 **B-10.11**；上一轮为项 2「`kmalloc_slab.rs` 孤岛删除」，被删 2 项原为 HIGH / **未入块** ⇒ 计数不变，见 **B-10.10**；更早为项 5 批 B「豁免面收窄」新增 67 项，429 → 496，见 **B-10.9**）。
+> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝MIG-004 安全代理批次**（本轮 R1 复核检出 **6 项既有条目失效**并逐项移除：4 项因本工程而失效 —— 3 项 `framework/chitin/user_driver.rs::{chitin_forward_irq, devtree_map_user_device, devtree_unmap_user_device}` 因 services `chitin::user_driver` 强类型封装接线后不再零引用、1 项 `services/chitin/mod.rs::find_net_device` 因函数下沉至 `services/chitin/proto.rs` 并被 host-tests 调用；另 2 项**预存失效** `framework/arch/aarch64/gic.rs::{configure_spi_level, enable_spi}`（实为同文件私有 `configure_and_enable_device_spi` 内部调用 ⇒ refs=2）经用户裁决本轮一并清理 ⇒ **446 → 440**；同步改写 `services/chitin/proto.rs` 头注释、去除与 `char_read`/`char_write` 同名的字面量，使该两项恢复「真零引用」并被本区块正确命中；修复后实测区块 440 ＝ matched 440、stale 0、HIGH 18 不变）。**上一轮同步＝B-6 区块路径漂移清理（**B-13.7**）**（R1 实测检出 43 项**失效条目**并逐项处置：31 项路径更新 `framework/...`→`services/...`（文件随框内核迁移下沉、函数仍零引用 ⇒ 原 framework 路径失效、现报 HIGH），12 项移除（已接线 / 已删 / 已豁免：`framework/driver/net/e1000_io.rs::install_rings`（已删）、`::set_ctrl` / `::set_ipg` / `::set_rx_ctl` / `::set_tx_ctl`（已被 `services/driver/net/e1000.rs` 调用）、`framework/driver/usb/xhci.rs::init_command_ring` / `::recover_endpoint`（已删）、`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`（内联测试引用）、`services/chitin/mod.rs::find_by_proto`（host 测试引用）、`services/driver/usb/xhci.rs::port_connected` / `::port_status`（内部调用））⇒ **458 → 446**；修复后实测区块 446 ＝ matched 446、stale 0、HIGH 18）。**上一轮同步＝B-12.8 遗留清理批次（**B-13**）**（本批改动**未改变** R1 零引用集合，以 HEAD 独立 worktree 对跑逐项一致 ⇒ 本区块计数**不变（458）**，见 **B-13.6**）。**上一轮同步＝热插拔运行时接线批次（**B-12**）**（4 项因本工程「接线 / 删除」而不再零引用 ⇒ 本区块移除：`framework/driver/hotplug.rs::hotplug_poll`（函数已不存在，由 `hotplug_wakeup` + softirq 轮询替代）、`services/driver/usb/xhci.rs::ack_port_change` / `::has_port_change`（已被 `usb_port_poll` 调用）、`framework/driver/block.rs::mark_removed`（函数已不存在，由 Chitin 墓碑协议 `chitin_blk_is_removed` 替代）⇒ **462 → 458**）。**上一轮同步＝`atomic_stats` feature 删除**（`framework/sync/atomic.rs` 4 项 `record_*` 随 feature 删除而消失 ⇒ 本区块移除 4 条目，**466 → 462**；处置依据＝按职责判定「非内核所需 + 零履行 + 已有 `*_dump_stats` 等价诊断 idiom」，见 **B-5.2 / B-5.3 G2**）。**更早同步＝per-process fd 表全量下沉（**B-11**）**（10 项因本工程接线 / 删除而不再零引用 ⇒ 本区块移除：`framework/fs/vfs/handle.rs::vfs_get_fd_handle`（poll 改源）、`framework/proc/fd_table.rs` 4 项（`get_handle_id` / `is_cloexec` / `set_cloexec` / `get_cloexec_fds` 接线）、`framework/proc/scheduler.rs::get_current_process`（`with_current_fd_table` 取当前进程）、`services/fs/process_fd_table.rs` 4 项（Plan B 表文件删除）⇒ **476 → 466**；编辑前实测区块为 **476** 行，区块说明原记 475（差 1，前批计数笔误，本次以实测为准）。另有 2 条**既有偏差**（`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`：脚本按名计数，其内联测试即计入引用 ⇒ 恒不在 INFO 集，见上述口径说明②）经本批复核确认，**非本工程引入，不属本批处置面**）。**更早同步＝项 5 批 C「67 项逐项分流」**（21 项判定为可删并已删除 ⇒ 本区块移除对应 21 条目，496 → 475；其余 46 项保留 `pub` 并留块登记，见 **B-10.11**；上一轮为项 2「`kmalloc_slab.rs` 孤岛删除」，被删 2 项原为 HIGH / **未入块** ⇒ 计数不变，见 **B-10.10**；更早为项 5 批 B「豁免面收窄」新增 67 项，429 → 496，见 **B-10.9**）。
 >
 > **口径说明（2026-09-26 订正）**：本区块与 `audit_unwired_pub_fn.py` 的「零引用」判定均为**按名计数**（`rg -c -w`），因而存在两类已知偏差，本区块**不承诺**与脚本输出逐项等同：① **同名遮蔽**（文档注释 / 局部变量出现同名字符串即计入引用 ⇒ 真零引用项可能**漏报**，实例见 **B-10.3** 的 `slab_init` / `services/driver/acpi.rs::lapic_base`）；② **已失效条目**（被接线或删除后不再零引用，需人工同步移除，本期移除 6 项见 B-10.4）。
 
 <!-- audit-classified-begin -->
 src/kernel/framework/arch/aarch64/gic.rs::configure_spi_edge
-src/kernel/framework/arch/aarch64/gic.rs::configure_spi_level
 src/kernel/framework/arch/aarch64/gic.rs::disable_spi
-src/kernel/framework/arch/aarch64/gic.rs::enable_spi
 src/kernel/framework/arch/aarch64/gic.rs::is_ppi
 src/kernel/framework/arch/aarch64/gic.rs::is_spi_pending
 src/kernel/framework/arch/aarch64/gic.rs::is_valid_irq
@@ -965,9 +963,6 @@ src/kernel/framework/chitin/composite.rs::compatible_str
 src/kernel/framework/chitin/devtree.rs::as_bool
 src/kernel/framework/chitin/mod.rs::chitin_with_device_map
 src/kernel/framework/chitin/mod.rs::driver_as_mut
-src/kernel/framework/chitin/user_driver.rs::chitin_forward_irq
-src/kernel/framework/chitin/user_driver.rs::devtree_map_user_device
-src/kernel/framework/chitin/user_driver.rs::devtree_unmap_user_device
 src/kernel/framework/console/gfx_console.rs::set_colors
 src/kernel/framework/console/gfx_console.rs::set_margin
 src/kernel/framework/cpu/cpuid.rs::cpuid_checked
@@ -1138,7 +1133,6 @@ src/kernel/services/barrier/audit_export.rs::count_failure
 src/kernel/services/barrier/audit_export.rs::count_success
 src/kernel/services/chitin/mod.rs::char_read
 src/kernel/services/chitin/mod.rs::char_write
-src/kernel/services/chitin/mod.rs::find_net_device
 src/kernel/services/config/sysctl.rs::write_to
 src/kernel/services/credo/crypto.rs::as_bytes_mut
 src/kernel/services/credo/crypto.rs::ct_eq_password
@@ -1671,6 +1665,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 - **必删连带（本次删除直接导致的死代码，非工程外）**：`framework/driver/virtio/mod.rs` 的 `const QUEUE_NUM: usize = 0x038` —— 唯一使用点为 `setup_vq` / `setup_vq_legacy` 两函数体，删函数后成死常量（`dead_code` ⇒ F5），按 §9.3「硬件规范常量须通过实现使用路径消除」随之删除；同时移除两函数各自的 `#[expect(clippy::unnecessary_wraps)]`（避免 `unfulfilled_lint_expectations`）。
 - **未涉及**：`QUEUE_PFN`（`setup_queue_legacy` 仍用）、`QUEUE_READY`（`set_queue_ready` 仍用）、`pub mod queue`（host-tests `framekernel_bench.rs` 消费 `VirtQueue` 等，仍被引用 ⇒ 无 R3 WARN）。
+- **后续修订（MIG-004 边界治理批次）**：A4 中删除的 `services/chitin::{input_read, input_has_data}`「能力等价公共入口」结论**不变**（framework `chitin_input_read` / `chitin_input_has_data` 仍由 `framework/driver/input/keyboard.rs` 独立调用）。MIG-004 在 `services/chitin/proto.rs` **新建同名强类型安全代理**（与 `char`/`net`/`block` 协议族统一 `services::chitin` 出口、去裸指针、含 host-tests 覆盖），属**新增 API 面**而非恢复旧 wrapper；本区块删除结论不受影响，详见 `docs/plan/unresolved-issues-2026-08-09.md` 的 MIG-004 结案条目。
 
 **B-10.11.4 B-6 区块同步**
 

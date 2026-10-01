@@ -461,6 +461,8 @@ def check_services_inter_module_deps():
         ('driver', 'mm'),
         # driver 依赖 config 是合理的
         ('driver', 'config'),
+        # driver 依赖 chitin 是合理的 (块设备经 services::chitin 安全代理注册/注销)
+        ('driver', 'chitin'),
         # barrier 依赖 credo 是合理的 (故障恢复权限检查)
         ('barrier', 'credo'),
         # fs 依赖 syscall 是合理的 (fs 系统调用实现使用 syscall 的 Errno 类型)

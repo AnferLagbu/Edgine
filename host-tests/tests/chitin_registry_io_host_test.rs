@@ -123,10 +123,10 @@ fn chitin_registry_lifecycle() {
     let blk_after = after.iter().find(|i| i.id == id_blk).expect("list 应含块设备");
     assert_eq!(blk_after.state, DeviceState::Failed, "set_state 应生效");
 
-    // 注销: 首次成功 (返回原 driver_data), 再次返回 None。
-    assert!(unregister(id_blk).is_some(), "首次注销应成功");
+    // 注销: 首次成功, 再次返回 false。
+    assert!(unregister(id_blk), "首次注销应成功");
     assert_eq!(count(), 1, "注销后应剩 1 个设备");
-    assert!(unregister(id_blk).is_none(), "重复注销应返回 None");
+    assert!(!unregister(id_blk), "重复注销应返回 false");
 
     clear_registry();
 }

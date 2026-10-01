@@ -3,12 +3,12 @@
 //!
 //! ## 状态
 //!
-//! 已完成 3/5 子系统迁移 (chitin 整体), 封装 `kernel::chitin::*` 老 API:
-//! - [x] chitin (本文件) — 设备注册表/查找/块设备 IO/字符设备 IO/输入设备
+//! 已完成 5/5 子系统迁移 (chitin 整体), 封装 `kernel::chitin::*` 老 API:
+//! - [x] chitin (本文件) — 设备注册表/查找/块设备 IO/字符设备 IO/字符设备统一入口
 //! - [x] devtree — 设备树 (Phase 2.4 已迁移)
 //! - [x] composite — 复合设备 (Phase 2.4 已迁移)
-//! - [ ] proto_* — 协议族 (framework 内部函数指针表, 当前无 services 调用方)
-//! - [ ] user_driver — 用户态驱动 (framework 已实现, services 无封装)
+//! - [x] proto_* — 协议族 (block/net/input 见 [`proto`], MIG-004 已迁移)
+//! - [x] user_driver — 用户态驱动 (见 [`user_driver`], MIG-004 已迁移)
 //!
 //! ## 迁移方法
 //!
@@ -23,6 +23,8 @@ use crate::framework::chitin;
 
 pub mod composite;
 pub mod devtree;
+pub mod proto;
+pub mod user_driver;
 pub use composite::{probe as composite_probe, probe_init as composite_probe_init};
 pub use devtree::{
     ChitinNode, DevTreeError, DevTreeNodeId, DevTreeResult, NodeId, Property, PropertyValue,
@@ -30,6 +32,11 @@ pub use devtree::{
     find_compatible, get_node, get_user_mapped, init as devtree_init, print_tree, properties,
     read_addr, read_irq, root_id, set_compatible, set_user_mapped, walk,
 };
+pub use proto::{
+    BlockDevice, NetDevice, find_net_device, input_has_data, input_read, register_block_device,
+    unregister_block,
+};
+pub use user_driver::{UserDriverError, UserDriverResult};
 
 // ============================================================================
 // 错误
@@ -250,18 +257,11 @@ pub fn count() -> usize {
     chitin::chitin_count()
 }
 
-/// 查找网络设备 (返回 (`NetOps`, `driver_data`, mac))
-pub fn find_net_device() -> Option<(
-    &'static crate::framework::chitin::proto_net::NetOps,
-    *mut u8,
-    [u8; 6],
-)> {
-    chitin::chitin_find_net_device()
-}
-
 /// 注销设备
-pub fn unregister(id: DeviceId) -> Option<*mut u8> {
-    chitin::chitin_unregister(id.0)
+///
+/// 返回 `true` 表示注销成功 (返回了原驱动数据指针), `false` 表示设备不存在。
+pub fn unregister(id: DeviceId) -> bool {
+    chitin::chitin_unregister(id.0).is_some()
 }
 
 /// 设置设备状态

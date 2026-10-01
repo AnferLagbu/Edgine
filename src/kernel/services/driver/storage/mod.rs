@@ -135,8 +135,8 @@ impl ProbeResult {
 // 有意窄化: Chitin 全局下标当前以 u8 表示块设备编号
 #[expect(clippy::cast_possible_truncation)]
 fn probe_ahci(dev: &crate::framework::pci::PciDevice, slot_hint: Option<usize>) -> ProbeResult {
-    use crate::framework::chitin::register_block_device;
     use crate::framework::mm::PAGE_SIZE;
+    use crate::services::chitin::register_block_device;
 
     // AHCI 控制器 - 使用 BAR5 (偏移 0x24)
     let bar = dev.bars[5].base_addr;
@@ -225,8 +225,8 @@ fn probe_nvme(
     slot_hint: Option<usize>,
     run_selftest: bool,
 ) -> ProbeResult {
-    use crate::framework::chitin::register_block_device;
     use crate::framework::mm::PAGE_SIZE;
+    use crate::services::chitin::register_block_device;
 
     // NVMe 控制器 - 使用 BAR0
     let bar = dev.bars[0].base_addr;
@@ -418,7 +418,7 @@ fn storage_scan_with(devices: &[crate::framework::pci::PciDevice], run_selftest:
 /// 块设备列表供监听器在随后的事件分发中解析出待注销的驱动编号。
 #[cfg(target_arch = "x86_64")]
 fn remove_stale_controllers(devices: &[crate::framework::pci::PciDevice]) {
-    use crate::framework::chitin::chitin_unregister_block;
+    use crate::services::chitin::unregister_block;
 
     let mut probed = PROBED.lock();
     for r in probed.iter_mut() {
@@ -426,7 +426,7 @@ fn remove_stale_controllers(devices: &[crate::framework::pci::PciDevice]) {
             continue;
         }
         for &drive in &r.drives {
-            chitin_unregister_block(drive);
+            unregister_block(drive);
         }
         r.installed = false;
         slog_info!(
@@ -550,8 +550,8 @@ pub fn drives_for_location(location: &DeviceLocation) -> Vec<u8> {
 // 有意窄化: Chitin 全局下标当前以 u8 表示块设备编号
 #[expect(clippy::cast_possible_truncation)]
 fn ahci_port_poll() {
-    use crate::framework::chitin::{chitin_unregister_block, register_block_device};
     use crate::framework::driver::hotplug::HOTPLUG_MANAGER;
+    use crate::services::chitin::{register_block_device, unregister_block};
 
     // Phase 1: 摘取在线 AHCI 控制器 (注册表槽位 + BDF), 释放 PROBED 锁。
     let controllers: Vec<(usize, u8, u8, u8)> = PROBED
@@ -609,7 +609,7 @@ fn ahci_port_poll() {
 
         let mut to_clear: Vec<usize> = Vec::new();
         for (pi, port_num, drive) in changes.removed {
-            chitin_unregister_block(drive);
+            unregister_block(drive);
             let location = DeviceLocation {
                 bus_type: BusType::Sata,
                 bus,
@@ -805,7 +805,7 @@ pub fn storage_init() {
 // 有意窄化: `detected_device_count` 为 usize, 设备数远小于 u32 上限
 #[expect(clippy::cast_possible_truncation)]
 fn probe_ata() -> u32 {
-    use crate::framework::chitin::register_block_device;
+    use crate::services::chitin::register_block_device;
 
     let mut ata_found = 0u32;
     if let Some(mut controller) = ata::AtaController::new() {
