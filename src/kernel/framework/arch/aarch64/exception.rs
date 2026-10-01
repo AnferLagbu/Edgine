@@ -661,6 +661,9 @@ pub extern "C" fn irq_handler_el0(_frame: &ExceptionFrame) {
         }
     }
 
+    // 设备 SPI 分发 (须在 EOI 前: 电平触发中断需先完成设备侧 ack)
+    let _ = super::gic::dispatch_device_spi(intid);
+
     super::gic::end_of_interrupt(intid);
 
     crate::framework::irq::do_softirq();
@@ -888,7 +891,13 @@ pub extern "C" fn irq_handler(_frame: &ExceptionFrame) {
         }
     }
 
+    // 设备 SPI 分发 (须在 EOI 前: 电平触发中断需先完成设备侧 ack)
+    let _ = super::gic::dispatch_device_spi(intid);
+
     super::gic::end_of_interrupt(intid);
+
+    // 与 x86_64 IRQ 路径及 EL0 路径对齐: 中断退出前执行软中断底半部
+    crate::framework::irq::do_softirq();
 }
 
 /// 默认 FIQ 处理 (EL1h)

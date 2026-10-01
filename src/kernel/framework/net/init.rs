@@ -38,6 +38,9 @@ pub use query::*;
 // B04-09 优化 Step F: 设备探测拆至 probe.rs (仅 init 内部使用, 不 re-export).
 pub(crate) mod probe;
 
+// ISSUE-SRC-008: 网卡中断接线 (ISR 注册 + 设备侧 ack 分发 + NetRx 置位).
+pub(crate) mod irq;
+
 // B04-09 优化 Step G: 配置入口 (FFI) 拆至 cmd.rs.
 pub(crate) mod cmd;
 pub use cmd::*;
@@ -590,10 +593,15 @@ pub extern "C" fn qx_net_init() {
 }
 
 /// `NetRx` softirq 处理程序 — 网络包接收延迟处理
+///
+/// 由网卡中断 ISR (经 `irq::net_irq_dispatch` 置位) 触发, 在中断退出前的
+/// `do_softirq` 中执行: 轮询 smoltcp 栈完成收包与 DHCP 事件处理。
 fn net_rx_softirq_handler() {
-    // 当前 smoltcp 集成使用 poll 模式, 包处理在 poll_network() 中完成.
-    // 此 handler 为多核 + 中断驱动模式预留.
-    // TODO: 待 NAPI/中断驱动模式启用后, 此处实现 skb 投递到 smoltcp.
+    // SAFETY: poll_network 内部对 NET_STATE 使用 try_lock (非阻塞), 在
+    // 中断/软中断上下文安全; 若锁被普通上下文持有则直接返回, 不阻塞。
+    unsafe {
+        poll_network();
+    }
 }
 
 /// `NetTx` softirq 处理程序 — 网络发送完成回收

@@ -9,6 +9,8 @@
 use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicU64, Ordering};
 
+use crate::framework::racy_cell::RacyCell;
+
 // ============================================================================
 // GICv3 寄存器地址 (默认 QEMU virt, 可经设备树覆盖)
 // ============================================================================
@@ -49,6 +51,10 @@ const GICD_ISPENDR: u64 = 0x0200; // Interrupt Set-Pending
 const GICD_IPRIORITYR: u64 = 0x0400; // 中断优先级 (每路 8 bit)
 const GICD_ITARGETSR: u64 = 0x0800; // Interrupt Target
 const GICD_ICFGR: u64 = 0x0C00; // 中断配置 (电平/边沿触发)
+const GICD_IROUTER: u64 = 0x6000; // 亲和路由 (GICv3, 每中断 64 bit)
+
+/// `GICD_CTLR` 亲和路由使能位 (ARE_S bit4 / ARE_NS bit5)
+const GICD_CTLR_ARE_MASK: u32 = (1 << 4) | (1 << 5);
 
 /// GICR 寄存器偏移 (SGI + PPI)
 const GICR_CTLR: u64 = 0x0000; // Redistributor Control
@@ -478,4 +484,148 @@ pub fn is_spi_pending(irq: u32) -> bool {
     let bit = 1u32 << (irq % 32);
     // SAFETY: 读取 GICD 寄存器, 调用方保证 MMIO 已映射
     unsafe { gicd_read(reg_offset) & bit != 0 }
+}
+
+// ============================================================================
+// 设备 SPI 分发表 (中断驱动 I/O)
+// ============================================================================
+//
+// 承载 framework 内部各设备子系统 (网卡等) 的 SPI 中断处理程序:
+//   - 启动期由各子系统经 [`register_device_spi`] 单线程注册 (GIC 已初始化);
+//   - 运行期由 IRQ 异常路径经 [`dispatch_device_spi`] 在 ACK 之后、EOI 之前分发。
+
+/// 设备 SPI 分发表长度 (覆盖 INTID 32..288)
+const DEVICE_IRQ_TABLE_LEN: usize = 256;
+
+/// 设备 SPI handler 分发表; 索引 = INTID - [`SPI_BASE`].
+///
+/// 启动期单线程写入 ([`register_device_spi`]), 中断上下文只读
+/// ([`dispatch_device_spi`]); 二者天然串行, 无需加锁。
+static DEVICE_IRQ_HANDLERS: RacyCell<[Option<fn()>; DEVICE_IRQ_TABLE_LEN]> =
+    RacyCell::new([None; DEVICE_IRQ_TABLE_LEN]);
+
+/// 写入 64 位 GICD 寄存器 (GICv3 IROUTER 等)
+///
+/// # Safety
+///
+/// 调用前需确保 GICD MMIO 已映射。
+#[inline(always)]
+unsafe fn gicd_write64(offset: u64, val: u64) {
+    unsafe {
+        core::arch::asm!("dsb sy");
+        write_volatile((GICD_BASE.load(Ordering::Acquire) + offset) as *mut u64, val);
+        core::arch::asm!("dsb sy");
+    }
+}
+
+/// 将 SPI 路由到 CPU0
+///
+/// GICv3 的 SPI 路由寄存器取决于亲和路由是否使能:
+///   - ARE=1 (GICv3 原生): 64 位 `GICD_IROUTER`, 写 Affinity=0 → CPU0;
+///   - ARE=0 (GICv2 兼容): 8 位 `GICD_ITARGETSR`, bit0 → CPU0。
+///
+/// 读 `GICD_CTLR` 自校正选择, 兼容 QEMU 不同 gic-version 配置。
+///
+/// # Safety
+///
+/// 调用前需确保 Distributor 已初始化且 GICD MMIO 已映射。
+unsafe fn route_spi_to_cpu0(irq: u32) {
+    unsafe {
+        if gicd_read(GICD_CTLR) & GICD_CTLR_ARE_MASK != 0 {
+            // 亲和路由模式: IROUTER[irq] 为 64 位, Affinity 全 0 → CPU0
+            gicd_write64(GICD_IROUTER + u64::from(irq) * 8, 0);
+        } else {
+            // GICv2 兼容模式: ITARGETSR 每 SPI 8 bit, bit0 → CPU0
+            let reg = GICD_ITARGETSR + u64::from(irq / 4) * 4;
+            let shift = (irq % 4) * 8;
+            let val = gicd_read(reg);
+            gicd_write(reg, (val & !(0xFFu32 << shift)) | (0x01u32 << shift));
+        }
+    }
+}
+
+/// 配置并使能一个设备 SPI
+///
+/// 依次完成: Group 1 归组 / 优先级 0xA0 / 电平触发 / 路由 CPU0 / 使能。
+///
+/// # Safety
+///
+/// 调用前需确保 Distributor 已初始化且 GICD MMIO 已映射。
+unsafe fn configure_and_enable_device_spi(irq: u32) {
+    unsafe {
+        // 1. 分组 Group 1 (Non-secure, IRQ 信号). init_distributor 仅初始化了
+        //    int 0..63 的 IGROUPR, INTID >= 64 的 SPI 默认落 Group 0 (FIQ),
+        //    故按其所在 32 位字补写。
+        let group_reg = GICD_IGROUPR + u64::from(irq / 32) * 4;
+        let group_bit = 1u32 << (irq % 32);
+        gicd_write(group_reg, gicd_read(group_reg) | group_bit);
+
+        // 2. 优先级 0xA0 (与 init_distributor 全局默认一致)
+        let prio_reg = GICD_IPRIORITYR + u64::from(irq / 4) * 4;
+        let prio_shift = (irq % 4) * 8;
+        let prio = gicd_read(prio_reg);
+        gicd_write(prio_reg, (prio & !(0xFFu32 << prio_shift)) | (0xA0u32 << prio_shift));
+
+        // 3. 电平触发 (设备中断常规语义)
+        configure_spi_level(irq);
+
+        // 4. 路由至 CPU0
+        route_spi_to_cpu0(irq);
+
+        // 5. 使能
+        enable_spi(irq);
+    }
+}
+
+/// 注册设备 SPI 中断处理程序
+///
+/// 供 framework 内部设备子系统在启动期为其中断源登记 handler; 注册成功后
+/// 该 SPI 被配置为 Group 1 / 优先级 0xA0 / 电平触发 / 路由 CPU0 并使能。
+///
+/// # Errors
+///
+/// - `intid` 不在 SPI 范围 (< [`SPI_BASE`]);
+/// - `intid` 超出分发表范围;
+/// - 该 SPI 槽位已被占用。
+pub fn register_device_spi(intid: u32, handler: fn()) -> Result<(), &'static str> {
+    if !is_spi(intid) {
+        return Err("register_device_spi: intid 非 SPI");
+    }
+    let idx = (intid - SPI_BASE) as usize;
+    if idx >= DEVICE_IRQ_TABLE_LEN {
+        return Err("register_device_spi: intid 超出分发表范围");
+    }
+    let table = DEVICE_IRQ_HANDLERS.get_mut();
+    if table[idx].is_some() {
+        return Err("register_device_spi: SPI 槽位已被占用");
+    }
+    table[idx] = Some(handler);
+    // SAFETY: Distributor 已初始化且 GICD MMIO 已映射 (启动期早于本调用);
+    //         启动期为单线程, 无并发注册。
+    unsafe {
+        configure_and_enable_device_spi(intid);
+    }
+    Ok(())
+}
+
+/// 分发设备 SPI 中断到已注册 handler
+///
+/// 由 aarch64 IRQ 异常路径在 ACK 之后、EOI 之前调用
+/// (电平触发中断须在 EOI 前完成设备侧 ack, 否则 GIC 线路持续拉高)。
+/// 返回 `true` 表示已找到并执行 handler。
+pub fn dispatch_device_spi(intid: u32) -> bool {
+    if !is_spi(intid) {
+        return false;
+    }
+    let idx = (intid - SPI_BASE) as usize;
+    if idx >= DEVICE_IRQ_TABLE_LEN {
+        return false;
+    }
+    // 启动期注册完成后分发表不再写入, 中断上下文只读与注册天然串行。
+    if let Some(handler) = DEVICE_IRQ_HANDLERS.map(|table| table[idx]) {
+        handler();
+        true
+    } else {
+        false
+    }
 }

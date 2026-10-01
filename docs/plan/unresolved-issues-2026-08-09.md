@@ -41,6 +41,7 @@
 
 > **【本轮复验订正】** 按当前源码状态逐类复核 (原登记数保留上表, 不涂改):
 > - **源码未实现 (TODO)**: 原 ~43 项 → 实测**仅剩 1 项**真实 TODO ([framework/net/init.rs:601](file:///home/anfer/Code/QueenX/src/kernel/framework/net/init.rs#L601), 即原 ISSUE-SRC-008, 行号由 `:822` 漂移); 另 1 项 ISSUE-SRC-028 所在文件 `services/fs/vfs/api.rs` 已不存在 (拆分迁至 `handle.rs`). 其余 41 项全部消除 (源码仅残留 `TRACK-xxxxxx 消除` 说明注释).
+> - **【本轮修复（修遗留工程）】** 上条所述**唯一**真实 TODO **ISSUE-SRC-008 已修复** → 第 2 类源码未实现项**全部清零** (qx 自有代码 0 活跃 TODO).
 > - **跨文档矛盾**: 8 项实现侧均已落地 (见 §3), 归档快照按 §6 冻结 → 仍开放 **0**.
 > - **审计基线**: 实测 [audit_services_boundary.py](file:///home/anfer/Code/QueenX/scripts/audit_services_boundary.py) **EXIT=0 / 0 违规**、`audit_comment_language.py` **724 文件 0 违规** → 仍开放 **0**.
 > - **运行时已知问题**: 3 项仍成立 (RT-001 见 [qemu_boot_test.sh:168](file:///home/anfer/Code/QueenX/scripts/qemu_boot_test.sh#L168) 注释; RT-002 未修复但 `.gdb_debug_gic` 证据失效; RT-003 未运行).
@@ -221,6 +222,11 @@
 > - **1 项文件已不存在**: ISSUE-SRC-028 所在 `services/fs/vfs/api.rs` 已不存在（拆分迁至 `handle.rs`）.
 > - **说明**: `framework/config/mod.rs:75` 的 `XXX` 为路径占位符（`use crate::framework::config::XXX`），**非 TODO**，不计入.
 
+> **【本轮修复（修遗留工程）】** ISSUE-SRC-008 已修复，第 2 类源码未实现项**全部清零**:
+> - 重写 [init.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/net/init.rs) `net_rx_softirq_handler`（原空 TODO）→ 调用 `poll_network()`；触发侧新增 framework 机制层 [net/init/irq.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/net/init/irq.rs)（ISR → `raise_softirq(NetRx)` → 底半部收包），经 `framework::net` 顶层 re-export 暴露 0 unsafe 注册入口 `net_register_msix_isr` / `net_register_intx_isr`.
+> - services 侧接线: e1000 覆写 `handle_irq`（ICR ack）+ 探测时 `msix_enable(dev,1)` 后注册 MSI-X ISR；virtio-net 覆写 `handle_irq`（InterruptACK）+ aarch64 分支注册 GIC SPI ISR.
+> - 复核结论: 第 2 类原 ~43 项 → 41 项历史消除 + ISSUE-SRC-008 本轮修复 + ISSUE-SRC-028 文件不存在 → **0 活跃 TODO**（保留 `framework/config/mod.rs:75` 占位符说明，非 TODO）.
+
 ### 2.1 P1 严重 — 阻塞核心功能
 
 | # | 文件:行 | 描述 | 阻塞 |
@@ -233,6 +239,7 @@
 | ISSUE-SRC-006 | `framework/driver/uefi.rs:435` | TODO(TRACK-5E6F89): 调用 EFI_RUNTIME_SERVICES.SetTime | UEFI 时间服务 |
 | ISSUE-SRC-007 | `framework/driver/usb/xhci.rs:670` | TODO: 实现 Event Ring 处理 | xHCI USB 驱动 |
 | ISSUE-SRC-008 | `framework/net/init.rs:822` | TODO: 待 NAPI/中断驱动模式启用后, 此处实现 skb 投递到 smoltcp | **关联 ISSUE-RT-001** |
+| ↳ **【本轮修复（修遗留工程）】** | `framework/net/init.rs:601` | **已修复**: `net_rx_softirq_handler` → `poll_network()`；触发侧 framework 新增 ISR→softirq 机制 + services 侧 e1000/virtio-net 接线 ISR | — |
 | ISSUE-SRC-009 | `framework/timer/tickless.rs:237` | TODO(TRACK-3C4D67): 集成 hrtimer 获取最近到期时间 | tickless 模式 |
 | ISSUE-SRC-010 | `services/io/iouring.rs:314` | TODO(TRACK-8B9CBC): 集成 VFS fd 表 | io_uring VFS 集成 |
 | ISSUE-SRC-011 | `services/io/iouring.rs:319` | TODO(TRACK-9CADCD): 实现网络异步操作 | io_uring 网络 |
@@ -282,6 +289,8 @@
 > **说明**: P2/P3 的具体位置可通过 `grep -rn "TODO\|FIXME\|XXX" src/kernel --include="*.rs" | grep -v "src/kernel/services/net/smoltcp/"` 重新生成. qx 自有代码中**约 43 个 TODO** (排除 smoltcp vendored 527 个).
 >
 > **【本轮复验订正】** 上表为 **2026-08-09 原登记快照**（保留不涂改）；按当前源码状态复验，上表中除 ISSUE-SRC-008 外的条目均已消除，ISSUE-SRC-028 路径已不存在——详见本节开头【本轮复验订正】. 重新生成命令实测（排除 smoltcp）仅 2 行（1 占位符 + 1 真 TODO），非"约 43 个".
+>
+> **【本轮修复（修遗留工程）】** 上述残留的 1 项真 TODO ISSUE-SRC-008 本轮已修复；复验上表条目**全部结案**，qx 自有代码 0 活跃 TODO（详见本节开头【本轮修复（修遗留工程）】）.
 
 ---
 
@@ -664,6 +673,7 @@
   - 第 6 类: ISSUE-TOOL-002 x86_64 分支接入 `check_kernel_fresh`（QEMU 侧双架构闭环）；ISSUE-TOOL-003 重评结案（E0152 整族根治后原建议无必要，不施工）
   - 第 8 类: MIG-001/002 头注释同步（driver/chitin 头状态改写为当前形态）；MIG-006 据 live 文档结案（尊重 §6 archive 冻结，不改归档快照）；MIG-007 新增 chitin 注册表/IO 专项 host 测试（2 passed）
   - 第 9 类: B06-PRE-002 fchown 前置 `FS_CAP_CHOWN` 能力校验（安全缺陷修复）；B06-PRE-003 移除 `open_by_handle_at` LegacyInode 回退分支 + 删除 `LegacyInode` 类型
+  - 第 2 类: ISSUE-SRC-008 结案（原 qx 自有代码唯一真实 TODO）。处理侧 `net_rx_softirq_handler` → `poll_network()`；触发侧 framework 新增 ISR→softirq 机制层 `net/init/irq.rs`（x86_64 MSI-X / aarch64 GIC SPI 双架构），services 侧 e1000 + virtio-net 接线 ISR 与中断 ack。第 2 类源码未实现项**全部清零**（0 活跃 TODO）
 - **本轮复验（源码状态核实）**: 按当前源码状态逐条复核本文档，保留原登记不涂改，各节追加【本轮复验订正】标记
   - 第 2 类 41 项 TODO 已消除 / 1 项仍存在（ISSUE-SRC-008 行号 822→601）/ 1 项文件不存在（ISSUE-SRC-028 `vfs/api.rs`）
   - 第 0 类审计基线 EXIT=0 / 0 违规（PROXY_ALLOWANCE 实测 8 条，原记 5 处）；comment_language 724 文件 0 违规（原记 735）

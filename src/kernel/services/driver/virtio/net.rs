@@ -579,5 +579,13 @@ impl crate::framework::net::NetDeviceOps for VirtioNetDriver {
         *self.mac()
     }
 
-    // handle_irq: 默认空实现 (轮询模式; IRQ 驱动登记为后续子步)
+    /// 中断处理: 读取并回写 InterruptACK 清除设备中断状态 (virtio-mmio
+    /// 无独立中断掩码, 设备在 InterruptStatus != 0 时拉高 IRQ 线)。
+    ///
+    /// 由 framework 统一 ISR 在中断上下文调用; 清除中断源后底半部
+    /// (`NetRx` softirq) 经 `poll_network` 完成收包。丢弃返回值: 收包不
+    /// 依赖具体中断原因 (轮询式 `try_receive` 兜底)。
+    fn handle_irq(&mut self) {
+        let _ = self.ack_interrupt();
+    }
 }

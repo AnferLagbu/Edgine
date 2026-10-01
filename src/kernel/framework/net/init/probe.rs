@@ -38,6 +38,9 @@ pub(super) unsafe fn nic_probe_all() -> Option<ChitinNetDevice> {
     // 经 framework 槽位单向拉取 (framework 不引用 services, F2 合规)。
     // 未注册/探测失败返回 None → nic_probe_all 返回 None (与旧行为一致)。
     if let Some(reg) = crate::framework::net::net_device_ops::net_services_driver() {
+        // ISSUE-SRC-008: 接线设备中断 — ISR 经 ops.handle_irq 做设备侧 ack,
+        // 并置位 NetRx 软中断由 poll_network 完成收包 (启动临界区单次)。
+        super::irq::net_irq_install(reg.ops, reg.driver_data);
         let nic = ChitinNetDevice::new(reg.ops, reg.driver_data, reg.mac);
         raw::klog_msg("nic: probed successfully (services bridge)");
         return Some(nic);

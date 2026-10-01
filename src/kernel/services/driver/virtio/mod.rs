@@ -59,6 +59,18 @@ pub(crate) fn virtio_net_registration() -> Option<crate::framework::net::NetDevi
         };
         // 完成初始化: vq0/vq1 MMIO 配置 + DRIVER_OK + RX 预填 (设备进入 live)
         driver.finalize();
+
+        // ISSUE-SRC-008: aarch64 接线 virtio-mmio 中断 (GIC SPI)。
+        // SIMPLIFIED: QEMU virt 机型 virtio-mmio 槽位 i 的 SPI = 16+i, 故
+        // GIC INTID = 48+i 硬编码; 影响面仅 aarch64 经 MMIO 传输的 virtio-net;
+        // 若未来支持非 QEMU virt 平台 (SPI 号由 DT/ACPI 提供) 需改为设备树解析。
+        #[cfg(target_arch = "aarch64")]
+        {
+            if let Err(e) = crate::framework::net::net_register_intx_isr(48 + i) {
+                crate::slog_warn!(Driver, "virtio-net: GIC SPI ISR 注册失败 {:?}", e);
+            }
+        }
+
         let reg = register_net_device(alloc::boxed::Box::new(driver));
         crate::slog_info!(
             Driver,

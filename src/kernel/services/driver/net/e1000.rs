@@ -273,7 +273,14 @@ mod e1000_impl {
             self.mac
         }
 
-        // handle_irq: 采用默认空实现 (轮询模式).
+        /// 中断处理: 读取并回写 ICR 清除中断原因位 (write-1-to-clear)。
+        ///
+        /// 由 framework 统一 ISR 在中断上下文调用; 清除中断源后底半部
+        /// (`NetRx` softirq) 经 `poll_network` 完成收包。丢弃 ICR 读取值:
+        /// 收包不依赖具体中断原因 (轮询式 `try_receive` 兜底)。
+        fn handle_irq(&mut self) {
+            let _ = self.io.irq_ack();
+        }
     }
 
     // ========================================================================
@@ -366,6 +373,20 @@ mod e1000_impl {
             mac[4],
             mac[5]
         );
+
+        // ISSUE-SRC-008: 接线中断 — 使能 MSI-X 并注册网卡 ISR。中断到达时
+        // framework 统一分发做设备侧 ack (handle_irq) 并置位 NetRx 底半部,
+        // 由 poll_network 完成收包。启动临界区 IF=0, 不存在"中断先于 ISR
+        // 注册"的竞态窗口。MSI-X 不可用 (如 QEMU 82540EM) 时 fail-quiet
+        // 回落轮询模式, 不影响收包正确性。
+        if let Some(msix) = pci::msi::msix_enable(dev, 1) {
+            if let Err(e) = crate::framework::net::net_register_msix_isr(msix.base_vector) {
+                crate::slog_warn!(Driver, "e1000: MSI-X ISR 注册失败 {:?}, 回落轮询", e);
+            }
+        } else {
+            crate::slog_warn!(Driver, "e1000: MSI-X 不可用, 回落轮询模式");
+        }
+
         Some(register_net_device(Box::new(driver)))
     }
 }
