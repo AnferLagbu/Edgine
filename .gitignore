@@ -40,6 +40,9 @@ core.[0-9]*
 # 使用 globstar 模式覆盖所有 Cargo workspace 子项目
 # (历史上漏掉了 miri-tests/target/, 现统一用 **/target/ 防漏)
 **/target/
+# 别名/临时目标目录 (如 --target-dir target-kt 产生的一次性构建目录),
+# 防止构建产物漏出 (CACHEDIR.TAG 不被 git 识别)
+**/target-*/
 **/Cargo.lock.bak
 *.rs.bk
 
