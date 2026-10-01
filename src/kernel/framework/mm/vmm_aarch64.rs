@@ -717,10 +717,6 @@ impl Aarch64Vmm {
         clippy::manual_let_else,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
-    #[expect(
-        clippy::single_match_else,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
     pub(crate) fn map_page_in_table_locked(
         &self,
         root_paddr: u64,
