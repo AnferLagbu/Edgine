@@ -9,6 +9,7 @@
 //!
 //! 硬件寄存器访问通过 IoMem 安全代理, 无 unsafe.
 
+use crate::framework::driver::{DeviceType, Driver, DriverError, DriverResult};
 use crate::framework::iomem::IoMem;
 
 // ============================================================================
@@ -936,6 +937,40 @@ impl HdmiController {
     /// 是否已初始化
     pub fn is_initialized(&self) -> bool {
         self.initialized
+    }
+}
+
+/// MIG-008 接线补齐: HDMI 控制器接入 `Driver` 抽象, 供 Chitin 注册 (DECISION-K)
+///
+/// 委托 inherent 方法 (显式 `Type::method(self)` 路径, 规避同名解析歧义);
+/// 错误统一映射为 [`DriverError::HardwareError`].
+impl Driver for HdmiController {
+    fn name(&self) -> &'static str {
+        "HDMI Controller"
+    }
+
+    fn device_type(&self) -> DeviceType {
+        DeviceType::Other
+    }
+
+    fn init(&mut self) -> DriverResult<()> {
+        HdmiController::init(self).map_err(|_| DriverError::HardwareError)
+    }
+
+    fn shutdown(&mut self) -> DriverResult<()> {
+        HdmiController::shutdown(self).map_err(|_| DriverError::HardwareError)
+    }
+
+    fn is_ready(&self) -> bool {
+        self.is_initialized()
+    }
+
+    fn status(&self) -> &'static str {
+        if self.is_initialized() {
+            "HDMI Controller ready"
+        } else {
+            "HDMI Controller not initialized"
+        }
     }
 }
 

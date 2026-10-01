@@ -821,6 +821,12 @@ pub extern "C" fn kernel_init() {
         // 由 crate root (合法双向编排者) 调用 services usb_init 接管
         // PCI 发现 + Chitin 注册 (framework 侧 usb 模块已删除)。
         crate::services::driver::usb::usb_init();
+        // MIG-008 接线补齐: 显示控制器 (HDMI/DP/DisplayManager) 权威实装于
+        // services::driver::display, 由 crate root (合法双向编排者) 调用
+        // services display_init 注册工厂回调, 再经 framework display_probe_controllers
+        // 单向拉取触发 Chitin 注册 (DECISION-K 单向注册契约)。
+        crate::services::driver::display::display_init();
+        crate::framework::driver::display_probe_controllers();
         crate::klog_boot_info!("Driver subsystem initialized");
         {
             let chitin_count = crate::framework::chitin::chitin_count() as u64;

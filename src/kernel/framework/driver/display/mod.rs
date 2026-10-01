@@ -396,6 +396,38 @@ pub fn display_init() -> framework::Result<()> {
 }
 
 // ============================================================================
+// DECISION-K 单向注册契约: 显示控制器工厂槽 (MIG-008)
+// ============================================================================
+
+/// services 层显示控制器工厂回调槽 (DECISION-K 模式)
+///
+/// MIG-008 接线补齐: framework 持有本槽 + [`display_probe_controllers`] 机制,
+/// services 注册无捕获工厂函数指针 (在 services 侧构造 HDMI/DP/DisplayManager
+/// 并经 Chitin 注册)。未注册时 [`display_probe_controllers`] fail-quiet 跳过。
+static DISPLAY_CONTROLLER_FACTORY: crate::framework::sync::OnceLock<fn()> =
+    crate::framework::sync::OnceLock::new();
+
+/// 注册 services 层显示控制器工厂回调 (services 可调用的 0 unsafe 入口)
+///
+/// # Errors
+///
+/// 回调槽已被占用 (重复注册) 时返回 `Err(已注册回调)`.
+pub fn register_display_controller_factory(factory: fn()) -> core::result::Result<(), fn()> {
+    DISPLAY_CONTROLLER_FACTORY.set(factory)
+}
+
+/// 单向拉取 services 注册的显示控制器工厂 (crate root lib.rs 编排调用)
+///
+/// MIG-008: 帧缓冲初始化 ([`display_init`]) 完成后由 crate root 调用本函数,
+/// 触发 services 侧 HDMI/DP/DisplayManager 注册 (services→framework 注册槽,
+/// framework→services 单向拉取, 见 DECISION-K)。
+pub fn display_probe_controllers() {
+    if let Some(factory) = DISPLAY_CONTROLLER_FACTORY.get() {
+        factory();
+    }
+}
+
+// ============================================================================
 // 端口 I/O 辅助函数 (x86_64 专用)
 // ============================================================================
 

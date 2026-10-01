@@ -20,6 +20,7 @@
 //! └── DPCD: 显示端口配置数据
 //! ```
 
+use crate::framework::driver::{DeviceType, Driver, DriverResult};
 use crate::framework::iomem::IoMem;
 use crate::framework::mm::PhysAddr;
 use crate::services::error::KernelError;
@@ -1242,6 +1243,38 @@ impl DpController {
         }
 
         self.initialized = true;
+    }
+}
+
+/// MIG-008 接线补齐: `DisplayPort` 控制器接入 `Driver` 抽象, 供 Chitin 注册 (DECISION-K)
+///
+/// 委托 inherent 方法 (显式 `Type::method(self)` 路径, 规避同名解析歧义);
+/// inherent `init`/`shutdown` 返回 `()`, 此处按 trait 契约包装为 `Ok(())`.
+impl Driver for DpController {
+    fn name(&self) -> &'static str {
+        DpController::name(self)
+    }
+
+    fn device_type(&self) -> DeviceType {
+        DeviceType::Other
+    }
+
+    fn init(&mut self) -> DriverResult<()> {
+        DpController::init(self);
+        Ok(())
+    }
+
+    fn shutdown(&mut self) -> DriverResult<()> {
+        DpController::shutdown(self);
+        Ok(())
+    }
+
+    fn is_ready(&self) -> bool {
+        DpController::is_ready(self)
+    }
+
+    fn status(&self) -> &'static str {
+        DpController::status(self)
     }
 }
 
