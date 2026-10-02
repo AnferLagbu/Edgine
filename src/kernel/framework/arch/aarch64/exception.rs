@@ -921,7 +921,7 @@ pub extern "C" fn serror_handler(_frame: &ExceptionFrame) {
     clippy::borrow_as_ptr,
     reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
 )]
-/// 初始化异常: 设置 VBAR_EL1 指向向量表, 清除 DAIF
+/// 设置 VBAR_EL1 指向异常向量表 (仅设寄存器, 不开中断)
 ///
 /// # Safety
 ///
@@ -930,15 +930,32 @@ pub extern "C" fn serror_handler(_frame: &ExceptionFrame) {
 /// VBAR_EL1 必须使用 TTBR1 高地址 (0xFFFF_0000_...), 因为进入 EL0 后
 /// TTBR0_EL1 指向用户页表, 低地址无法通过 TTBR0 访问。
 /// 向量表链接于高半区 (VMA = PA + KERNEL_BASE), 符号地址本身即高地址。
-pub unsafe fn init() {
+///
+/// VBAR_EL1 是 **per-CPU** 寄存器: BSP 与每个 AP 均须各自调用本函数.
+/// AP 侧刻意不在此时开中断 (延后至 per-CPU 状态就绪, 见 `smp_init::ap_main`).
+pub unsafe fn init_vectors() {
     unsafe {
         let vbar = &exception_vector_table as *const u8 as u64;
         core::arch::asm!("msr vbar_el1, {}", in(reg) vbar);
 
-        // 清除 DAIF (Debug/SError/IRQ/FIQ 掩码), 使能中断
-        core::arch::asm!("msr daifclr, #0xF");
-
         // ISB 确保写 VBAR 在取指前完成
         core::arch::asm!("isb");
+    }
+}
+
+#[expect(
+    clippy::borrow_as_ptr,
+    reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
+)]
+/// 初始化异常: 设置 VBAR_EL1 指向向量表, 清除 DAIF (开中断)
+///
+/// # Safety
+///
+/// 仅在启动阶段调用，调用前需确保向量表已链接到内核镜像中。
+pub unsafe fn init() {
+    unsafe {
+        init_vectors();
+        // 清除 DAIF (Debug/SError/IRQ/FIQ 掩码), 使能中断
+        core::arch::asm!("msr daifclr, #0xF");
     }
 }

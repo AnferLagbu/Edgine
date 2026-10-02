@@ -29,6 +29,12 @@ static GICR_SGI_BASE: AtomicU64 = AtomicU64::new(0xFFFF_0000_080B_0000);
 /// Redistributor RD frame 到 SGI frame 的偏移 (ARM GICv3: 相邻 64KiB)
 const GICR_SGI_OFFSET: u64 = 0x1_0000;
 
+/// 每个 CPU 的 Redistributor 在 GICR 区域占用的步长
+///
+/// ARM GICv3 规定 GICR 区域内各 CPU 的 Redistributor 按 CPU 序号连续排布,
+/// 每个 CPU 占 128 KiB = RD frame (64 KiB) + SGI frame (64 KiB)。
+pub const GICR_STRIDE: u64 = 0x2_0000;
+
 /// 以物理地址设置 GICv3 基址 (引导期由设备树探测结果调用)
 ///
 /// GIC 始终使用 TTBR1_EL1 高半区别名 (VA = KERNEL_BASE + PA),
@@ -57,7 +63,9 @@ const GICD_IROUTER: u64 = 0x6000; // 亲和路由 (GICv3, 每中断 64 bit)
 const GICD_CTLR_ARE_MASK: u32 = (1 << 4) | (1 << 5);
 
 /// GICR 寄存器偏移 (SGI + PPI)
-const GICR_CTLR: u64 = 0x0000; // Redistributor Control
+///
+/// 注: 不定义 GICR_CTLR (0x0000) — 其 bit0 为 EnableLPIs (LPI 使能), 并非
+/// "Redistributor 使能"位; 本项目未使用 LPI, 故不访问该寄存器.
 const GICR_WAKER: u64 = 0x0014; // Wake
 const GICR_IGROUPR0: u64 = 0x0080; // SGI/PPI 中断分组
 pub const GICR_ISENABLER0: u64 = 0x0100; // SGI/PPI 中断使能
@@ -73,6 +81,11 @@ const SPI_BASE: u32 = 32;
 
 /// ARM 架构定时器 PPI (Non-secure Physical Timer)
 const TIMER_PPI: u32 = 30; // CNTPNSIRQ
+
+/// Redistributor 唤醒自旋上限.
+///
+/// 唤醒应在数十次读内完成; 超限即判定未唤醒, 由 [`init`] 显式报错而非静默继续.
+const REDIST_WAKE_SPIN_LIMIT: u32 = 1_000_000;
 
 // ============================================================================
 // 寄存器读写辅助
@@ -100,53 +113,55 @@ unsafe fn gicd_write(offset: u64, val: u32) {
 }
 
 #[inline(always)]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
-unsafe fn gicr_read(offset: u64) -> u32 {
+// SAFETY: 调用方保证 base 指向已映射的 GICR 帧 (RD/SGI), 类型有效。
+unsafe fn gicr_read_at(base: u64, offset: u64) -> u32 {
     unsafe {
         core::arch::asm!("dsb sy");
-        let val = read_volatile((GICR_BASE.load(Ordering::Acquire) + offset) as *const u32);
+        let val = read_volatile((base + offset) as *const u32);
         core::arch::asm!("dsb sy");
         val
     }
 }
 
 #[inline(always)]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
-unsafe fn gicr_write(offset: u64, val: u32) {
+// SAFETY: 调用方保证 base 指向已映射的 GICR 帧 (RD/SGI), 类型有效。
+unsafe fn gicr_write_at(base: u64, offset: u64, val: u32) {
     unsafe {
         core::arch::asm!("dsb sy");
-        write_volatile((GICR_BASE.load(Ordering::Acquire) + offset) as *mut u32, val);
+        write_volatile((base + offset) as *mut u32, val);
         core::arch::asm!("dsb sy");
     }
 }
 
+/// 计算指定 CPU 的 Redistributor RD / SGI 帧基地址。
+///
+/// GICv3 各 CPU 的 Redistributor 在 GICR 区域按 CPU 序号连续排布, 步长
+/// [`GICR_STRIDE`]; SGI 帧相对 RD 帧偏移 [`GICR_SGI_OFFSET`]。
+fn redist_frames(cpu_index: u32) -> (u64, u64) {
+    let rd = GICR_BASE.load(Ordering::Acquire) + GICR_STRIDE * u64::from(cpu_index);
+    (rd, rd + GICR_SGI_OFFSET)
+}
+
 #[inline(always)]
-/// 读取 GICv3 Redistributor SGI 帧寄存器。
+/// 读取 GICv3 Redistributor SGI 帧寄存器 (启动核 CPU0)。
 ///
 /// # Safety
 ///
 /// 调用者需确保 GICR_SGI_BASE (0x080B_0000) 已映射且 Redistributor 已唤醒。
 pub unsafe fn gicr_sgi_read(offset: u64) -> u32 {
-    unsafe {
-        core::arch::asm!("dsb sy");
-        let val = read_volatile((GICR_SGI_BASE.load(Ordering::Acquire) + offset) as *const u32);
-        core::arch::asm!("dsb sy");
-        val
-    }
+    // SAFETY: GICR_SGI_BASE 为引导期探测得到的 SGI 帧高半区别名, 已映射。
+    unsafe { gicr_read_at(GICR_SGI_BASE.load(Ordering::Acquire), offset) }
 }
 
 #[inline(always)]
-/// 写入 GICv3 Redistributor SGI 帧寄存器。
+/// 写入 GICv3 Redistributor SGI 帧寄存器 (启动核 CPU0)。
 ///
 /// # Safety
 ///
 /// 调用者需确保 GICR_SGI_BASE (0x080B_0000) 已映射且 Redistributor 已唤醒。
 pub unsafe fn gicr_sgi_write(offset: u64, val: u32) {
-    unsafe {
-        core::arch::asm!("dsb sy");
-        write_volatile((GICR_SGI_BASE.load(Ordering::Acquire) + offset) as *mut u32, val);
-        core::arch::asm!("dsb sy");
-    }
+    // SAFETY: GICR_SGI_BASE 为引导期探测得到的 SGI 帧高半区别名, 已映射。
+    unsafe { gicr_write_at(GICR_SGI_BASE.load(Ordering::Acquire), offset, val) }
 }
 
 // ============================================================================
@@ -198,6 +213,8 @@ pub unsafe fn init_distributor() {
         gicd_write(GICD_CTLR, 0x3);
 
         // 5. 设置 CPU interface target: PPIs to CPU0
+        // SIMPLIFIED: SPI/PPI 亲和路由固定为 CPU0 (硬编码); 影响: 次核上线后 SPI 仍只
+        //   投递至 CPU0; 需扩展: 引入多核 SPI 亲和路由时改经 GICD_IROUTER 按目标 CPU 分发。
         gicd_write(GICD_ITARGETSR, 0x0101_0101);
         gicd_write(GICD_ITARGETSR + 4, 0x0101_0101);
     }
@@ -207,59 +224,65 @@ pub unsafe fn init_distributor() {
     clippy::cast_lossless,
     reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
 )]
-/// 初始化 GICv3 Redistributor (当前 CPU):
+/// 初始化指定 CPU 的 GICv3 Redistributor:
 /// 1. 唤醒 redistributor
 /// 2. 配置 SGI/PPI 分组
 /// 3. 配置 PPI 触发模式
 /// 4. 为当前核启用 SGIs/PPIs
 ///
+/// `rd` / `sgi` 分别指向目标 CPU 的 RD 帧与 SGI 帧基地址 (由 `redist_frames` 推算)。
+///
+/// 返回 `Err(原因)` 表示 redistributor 唤醒未在限定自旋内完成。
+///
 /// # Safety
 ///
-/// 调用前需确保 Distributor 已初始化，GICR_BASE 已映射。
-pub unsafe fn init_redistributor() {
+/// 调用前需确保 Distributor 已初始化，`rd` / `sgi` 指向已映射的 GICR 帧。
+pub unsafe fn init_redistributor(rd: u64, sgi: u64) -> Result<(), &'static str> {
     unsafe {
         // 1. 唤醒 redistributor
-        let waker = gicr_read(GICR_WAKER);
+        let waker = gicr_read_at(rd, GICR_WAKER);
 
-        gicr_write(GICR_WAKER, waker & !(1 << 1)); // 清除 ProcessorSleep (bit 1)
+        gicr_write_at(rd, GICR_WAKER, waker & !(1 << 1)); // 清除 ProcessorSleep (bit 1)
 
-        // 等待 ChildrenAsleep == 0
-        let mut wait_count = 0;
-        while gicr_read(GICR_WAKER) & (1 << 2) != 0 {
+        // 等待 ChildrenAsleep == 0; 超限判定唤醒失败, 显式返回错误 (不静默继续)
+        let mut wait_count: u32 = 0;
+        while gicr_read_at(rd, GICR_WAKER) & (1 << 2) != 0 {
             wait_count += 1;
-            if wait_count > 1000000 {
-                break;
+            if wait_count > REDIST_WAKE_SPIN_LIMIT {
+                return Err("GICR_WAKER.ChildrenAsleep 未在限定自旋内清零");
             }
             core::hint::spin_loop();
         }
 
         // 2. 设置 PPI 优先级 (SGI frame)
-        gicr_sgi_write(GICR_IPRIORITYR, 0xA0A0_A0A0);
-        gicr_sgi_write(GICR_IPRIORITYR + 4, 0xA0A0_A0A0);
-        gicr_sgi_write(GICR_IPRIORITYR + 8, 0xA0A0_A0A0);
+        gicr_write_at(sgi, GICR_IPRIORITYR, 0xA0A0_A0A0);
+        gicr_write_at(sgi, GICR_IPRIORITYR + 4, 0xA0A0_A0A0);
+        gicr_write_at(sgi, GICR_IPRIORITYR + 8, 0xA0A0_A0A0);
 
         // 3. 配置 SGI/PPI 分组: 全部设为 Group 1 (Non-secure, IRQ 信号).
         //    Group 0 会触发 FIQ, 但 FIQ handler 仅为 unexpected_exception 桩.
         //    使用 Group 1 使 Timer PPI (30) 等中断走 handle_el1h_irq 正常路径.
-        gicr_sgi_write(GICR_IGROUPR0, 0xFFFF_FFFF);
+        gicr_write_at(sgi, GICR_IGROUPR0, 0xFFFF_FFFF);
 
         // 4. 配置 PPI 触发模式: Timer PPI 为 level-triggered
-        let icfgr1_val = gicr_sgi_read(GICR_ICFGR1);
+        let icfgr1_val = gicr_read_at(sgi, GICR_ICFGR1);
         // Timer PPI = 30, 在 ICFGR1 中 (PPI 16-31)
         // bit[31:30] 对应 PPI 31, bit[29:28] 对应 PPI 30
         // level-triggered = 0b00
         let ppi30_shift = ((30 - 16) * 2) as u64;
-        gicr_sgi_write(GICR_ICFGR1, icfgr1_val & !(0x3 << ppi30_shift));
+        gicr_write_at(sgi, GICR_ICFGR1, icfgr1_val & !(0x3 << ppi30_shift));
 
         // 5. Timer PPI 低优先级
         let prio_addr = GICR_IPRIORITYR + ((TIMER_PPI as u64 / 4) * 4);
-        let prio = gicr_sgi_read(prio_addr);
+        let prio = gicr_read_at(sgi, prio_addr);
         let shift = ((TIMER_PPI % 4) * 8) as u64;
-        gicr_sgi_write(prio_addr, (prio & !(0xFF << shift)) | (0x40 << shift));
+        gicr_write_at(sgi, prio_addr, (prio & !(0xFF << shift)) | (0x40 << shift));
 
-        // 6. Enable redistributor
-        gicr_write(GICR_CTLR, 0x1); // Enable
+        // 6. GICv3 redistributor 的"使能"由清 ProcessorSleep + ChildrenAsleep
+        //    归零完成, 无独立使能位. GICR_CTLR bit0 实为 EnableLPIs (LPI 使能),
+        //    本项目未使用 LPI (未配置 GICR_PROPBASER/PENDBASER), 故不写该寄存器.
     }
+    Ok(())
 }
 
 /// 使能 CPU Interface (ICC_* 系统寄存器)
@@ -286,16 +309,17 @@ pub unsafe fn init_cpu_interface() {
     }
 }
 
-/// 使能 Timer PPI 中断
+/// 使能指定 CPU 的 Timer PPI 中断
+///
+/// `sgi` 为目标 CPU 的 SGI 帧基地址 (由 `redist_frames` 推算)。
 ///
 /// # Safety
 ///
-/// 调用前需确保 CPU Interface 已初始化。
-pub unsafe fn enable_timer_ppi() {
+/// 调用前需确保 CPU Interface 已初始化，`sgi` 指向已映射的 GICR SGI 帧。
+pub unsafe fn enable_timer_ppi(sgi: u64) {
     unsafe {
-        let enable_offset = GICR_ISENABLER0;
         let bit = 1u32 << (TIMER_PPI % 32);
-        gicr_sgi_write(enable_offset, bit);
+        gicr_write_at(sgi, GICR_ISENABLER0, bit);
     }
 }
 
@@ -333,18 +357,75 @@ pub fn deactivate(intid: u32) {
     }
 }
 
+/// 初始化指定 CPU 的 GICv3 per-CPU 部分:
+/// Redistributor + CPU Interface + Timer PPI。
+///
+/// BSP 经 [`init`] 完成启动核初始化 (内含 `init_per_cpu(0)`);
+/// 次核上线后由 SMP 启动路径调用本函数, 以 `cpu_index` 定位自身 Redistributor 帧。
+///
+/// # Safety
+///
+/// 仅在目标 CPU 上调用，需确保 MMU 已启用且 GIC MMIO 区域已映射。
+pub unsafe fn init_per_cpu(cpu_index: u32) -> Result<(), &'static str> {
+    unsafe {
+        let (rd, sgi) = redist_frames(cpu_index);
+        init_redistributor(rd, sgi)?;
+        init_cpu_interface();
+        enable_timer_ppi(sgi);
+    }
+    Ok(())
+}
+
 /// 完整 GIC 初始化流程
+///
+/// 返回 `Ok(())` 表示全部初始化步骤完成且后置条件回读校验通过;
+/// 任一环节失败返回 `Err(原因)`, 由调用方 (boot 入口) fail-fast.
 ///
 /// # Safety
 ///
 /// 仅在启动阶段调用，需确保 MMU 已启用且 GIC MMIO 区域已映射。
-pub unsafe fn init() {
+pub unsafe fn init() -> Result<(), &'static str> {
     unsafe {
         init_distributor();
-        init_redistributor();
-        init_cpu_interface();
-        enable_timer_ppi();
+        init_per_cpu(0)?;
+        verify_post_conditions()
     }
+}
+
+/// GIC 初始化后置条件校验.
+///
+/// 逐项回读关键寄存器, 任一不符即返回明确原因, 由 [`init`] 向上传递.
+/// 目的是把"静默挂起"转化为"确定性报错", 为 SMP / 真机复现提供诊断锚点.
+///
+/// # Safety
+///
+/// 仅在 [`init`] 内部、全部配置写操作完成后调用;
+/// 需确保 MMU 已启用且 GIC MMIO 区域已映射。
+unsafe fn verify_post_conditions() -> Result<(), &'static str> {
+    unsafe {
+        // GICD_CTLR.EnableGrp1NS (bit1) 应已置位 (init_distributor 已写入 0x3)
+        if gicd_read(GICD_CTLR) & 0b10 == 0 {
+            return Err("GICD_CTLR.EnableGrp1 未置位");
+        }
+
+        // GICR_WAKER.ChildrenAsleep (bit2) 应已清零
+        if gicr_read_at(GICR_BASE.load(Ordering::Acquire), GICR_WAKER) & (1 << 2) != 0 {
+            return Err("GICR_WAKER.ChildrenAsleep 未清零");
+        }
+
+        // GICR_ISENABLER0 应已使能 Timer PPI (bit30)
+        if gicr_sgi_read(GICR_ISENABLER0) & (1u32 << (TIMER_PPI % 32)) == 0 {
+            return Err("GICR_ISENABLER0 未使能 Timer PPI");
+        }
+
+        // ICC_IGRPEN1_EL1.Enable (bit0) 应已使能
+        let igrpen1: u64;
+        core::arch::asm!("mrs {}, icc_igrpen1_el1", out(reg) igrpen1);
+        if igrpen1 & 0x1 == 0 {
+            return Err("ICC_IGRPEN1_EL1 未使能");
+        }
+    }
+    Ok(())
 }
 
 // ============================================================================

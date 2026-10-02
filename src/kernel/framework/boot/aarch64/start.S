@@ -237,6 +237,57 @@ el1_entry:
     b    .
 
 // ============================================================
+// 5. 次核 (AP) 入口 — PSCI `CPU_ON` 的 entry point
+// ============================================================
+// 次核以 MMU 关 / 物理地址 / 低半区进入 (PSCI 上电保证). 本 stub 位于
+// `.text.boot` (VMA == LMA == PA), 故 `adrp` 取得的是物理地址, 开 MMU 后该
+// 地址仍在恒等映射窗口内, x10 持续有效. x0 = context_id (= cpu_index).
+.global ap_entry_asm
+.type ap_entry_asm, %function
+ap_entry_asm:
+    adrp    x10, _ap_boot_info
+    add     x10, x10, #:lo12:_ap_boot_info
+    // 实测 CurrentEL 并落槽 (E7 诊断: 0b01=EL1 / 0b10=EL2 / 0b11=EL3)
+    mrs     x9, CurrentEL
+    lsr     x9, x9, #2
+    str     x9, [x10, #0x48]
+    cmp     x9, #1
+    b.ne    ap_bad_el
+    // 装入 BSP 预写的运行时 MMU 配置 (复用 BSP 页表物理基址, 见 DECISION-082 裁定 3)
+    ldr     x11, [x10, #0x00]
+    msr     ttbr0_el1, x11
+    ldr     x11, [x10, #0x08]
+    msr     ttbr1_el1, x11
+    ldr     x11, [x10, #0x10]
+    msr     mair_el1, x11
+    ldr     x11, [x10, #0x18]
+    msr     tcr_el1, x11
+    tlbi    vmalle1
+    dsb     sy
+    isb
+    // 次核独立栈 (高半区 VA)
+    ldr     x12, [x10, #0x28]
+    mov     sp, x12
+    // 开 MMU (SCTLR_EL1 的 M/C/I 已在槽内预置)
+    ldr     x13, [x10, #0x20]
+    msr     sctlr_el1, x13
+    dsb     sy
+    isb
+    // cpu_index → ap_main 第 1 参; ap_main 高半区 VA
+    ldr     x0, [x10, #0x38]
+    ldr     x14, [x10, #0x30]
+    br      x14
+
+// 占位分支: 次核未处于 EL1 时自旋 (PSCI 已上电但环境不满足).
+// SIMPLIFIED: 仅作 E7 诊断占位, 置 done=1 供 BSP 超时后读取 EL; 若实测为 EL2
+//   需在此补 el2→el1 降级序列; 影响面: 该 AP 不上线 (BSP 超时兜底不阻塞单核);
+//   何时需扩展: E7 实测确认次核 EL 级后按结论固化本分支.
+ap_bad_el:
+    mov     x15, #1
+    str     x15, [x10, #0x40]
+    b       ap_bad_el
+
+// ============================================================
 // 引导区数据/页表/栈 (NOLOAD, 低半区 VMA == LMA == PA)
 // ============================================================
 .section .bootbss, "aw", %nobits
@@ -246,6 +297,13 @@ el1_entry:
 .global _fdt_addr
 _fdt_addr:
     .space 8
+
+// 次核启动信息槽 (BSP 写 / AP 读); 布局见 arch/aarch64/smp_init.rs 的
+// `ApBootInfo` (10 × u64 = 80 字节, 编译期 size_of 断言).
+.align 3
+.global _ap_boot_info
+_ap_boot_info:
+    .space 80
 
 // 引导页表: L0 / L1 / L2 各 4KB, 连续排布 (4.3 的清零循环依赖连续性)
 .align 12

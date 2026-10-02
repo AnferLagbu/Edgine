@@ -225,10 +225,26 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
         # 偶发 "TX 超时" WARN 属预期, 不影响 boot 里程碑.
         # 镜像为 arm64 Image (内嵌 Image 头, 见 Makefile/link/aarch64.ld),
         # QEMU 经 Image 头 text_offset 定位入口, 与 U-Boot booti / 真机一致.
+        # SMP-09 (DECISION-082): 以 -smp 2 启动双核, 使 AP 上线路径进入 CI 门禁.
         if boot_and_check "aarch64" "$A64_LOG" "$TIMEOUT_QEMU" "VFS ready" \
-            -M virt,gic-version=3 -cpu max -m 512 -kernel build/kernel-aarch64.img \
+            -M virt,gic-version=3 -cpu max -m 512 -smp 2 -kernel build/kernel-aarch64.img \
             -device virtio-net-device,netdev=n0 \
             -netdev user,id=n0; then
+            # ISSUE-RT-002: GICv3 初始化成功里程碑 (初始化后置条件自检通过).
+            # 缺失即表示 GIC 初始化 fail-fast 或回退静默路径 (fail-closed).
+            if grep -q "GICv3 ready" "$A64_LOG"; then
+                ok "[aarch64] GICv3 初始化成功 (ISSUE-RT-002 回归通过)"
+            else
+                warn "[aarch64] 未观察到 GICv3 ready 里程碑 (ISSUE-RT-002 回归?)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
+            # SMP-09: 次核上线里程碑 (DECISION-082). 缺失即 AP 启动回归 (fail-closed).
+            if grep -q "\[SMP\] online CPUs: 2" "$A64_LOG"; then
+                ok "[aarch64] SMP 双核上线 (online CPUs: 2)"
+            else
+                warn "[aarch64] 未观察到 online CPUs: 2 (SMP 次核未上线?)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
             # 批次 Z ④: 验证 services virtio-net 经 NetOps 安全桥注册链路
             # (framework 侧单向拉取日志, 由 framework/net/init/probe.rs 输出)
             if grep -q "nic: probed successfully (services bridge)" "$A64_LOG"; then

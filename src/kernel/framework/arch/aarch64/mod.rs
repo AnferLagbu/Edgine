@@ -7,6 +7,7 @@
 //! - exception: 异常向量表 + handler (VBAR_EL1)
 //! - gic:       GICv3 中断控制器初始化
 //! - psci:      PSCI 电源管理 (关机/重启)
+//! - smp_init:  SMP 次核 (AP) 启动 (BSP init + AP ap_main)
 //! - timer:     ARM Generic Timer
 //! - uart:      PL011 UART 驱动
 //!
@@ -24,6 +25,7 @@ pub mod exception;
 pub mod gic;
 pub mod mmu;
 pub mod psci;
+pub mod smp_init;
 pub mod timer;
 pub mod uart;
 
@@ -240,7 +242,9 @@ impl InterruptArch for Aarch64 {
     }
 
     fn interrupt_late_init() {
-        // GICv3 + 异常向量 + 定时器已由 entry.rs 配置
+        // GICv3 + 异常向量 + 定时器已由 entry.rs 配置; 此处仅完成 SMP 次核启动。
+        crate::framework::smp::init();
+        smp_init::init();
     }
 }
 

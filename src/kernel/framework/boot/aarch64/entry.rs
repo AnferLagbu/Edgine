@@ -89,8 +89,17 @@ pub unsafe extern "C" fn entry() -> ! {
         crate::framework::arch::exception::init();
 
         // 5. 初始化 GICv3 (使用 TTBR1 高半区地址, 依赖 MMU)
+        //    初始化后置条件校验失败时 fail-fast, 避免带病启动导致静默挂起.
         uart::puts("[BOOT] Initializing GICv3...");
-        crate::framework::arch::gic::init();
+        if let Err(reason) = crate::framework::arch::gic::init() {
+            uart::puts("[BOOT] FATAL: GICv3 init failed: ");
+            uart::puts(reason);
+            uart::puts("\r\n");
+            loop {
+                crate::arch!(halt());
+            }
+        }
+        uart::puts("[BOOT] GICv3 ready\r\n");
 
         // 6. 初始化定时器 (仅配置, 不启用 — 稍后在 kernel_init 中启用)
         uart::puts("[BOOT] Initializing timer...");
@@ -152,6 +161,16 @@ unsafe fn apply_fdt_overrides() -> Option<dtb::DtbInfo> {
         // 且 `[dtb_mapped, dtb_mapped + total)` 已确认落在已映射的 DRAM 窗口内.
         let blob = core::slice::from_raw_parts(dtb_mapped as *const u8, total);
         let info = dtb::parse(blob)?;
+
+        // 持久化 CPU 拓扑供 SMP 次核启动消费 (DTB 解析结果本身仅在此处局部可见).
+        if let Some(topology) = info.cpus {
+            dtb::set_cpu_topology(topology);
+        }
+
+        // 持久化 PSCI conduit 供后续 CPU_ON / 关机 / 重启调用分派.
+        if let Some(method) = info.psci_method {
+            dtb::set_psci_method(method);
+        }
 
         // Device 窗口仅覆盖 [0, 0x4000_0000); 越界基址一律忽略, 沿用默认值.
         if let Some(pa) = info.uart_base.filter(|pa| *pa < DEVICE_WINDOW_END) {

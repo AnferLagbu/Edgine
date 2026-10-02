@@ -296,6 +296,17 @@ pub fn read_ttbr0() -> u64 {
     val
 }
 
+/// 读取 TTBR1_EL1 (高半区页表基址寄存器)
+#[inline(always)]
+pub fn read_ttbr1() -> u64 {
+    let val: u64;
+    // SAFETY: mrs ttbr1_el1 是只读系统寄存器读取, 无副作用.
+    unsafe {
+        core::arch::asm!("mrs {}, ttbr1_el1", out(reg) val);
+    }
+    val
+}
+
 #[inline(always)]
 pub fn write_ttbr0(val: u64) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -336,6 +347,39 @@ pub fn read_far() -> u64 {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
         core::arch::asm!("mrs {}, far_el1", out(reg) val);
+    }
+    val
+}
+
+/// 读取 MAIR_EL1 (内存属性间接寄存器)
+#[inline(always)]
+pub fn read_mair() -> u64 {
+    let val: u64;
+    // SAFETY: mrs mair_el1 是只读系统寄存器读取, 无副作用.
+    unsafe {
+        core::arch::asm!("mrs {}, mair_el1", out(reg) val);
+    }
+    val
+}
+
+/// 读取 TCR_EL1 (地址翻译控制寄存器)
+#[inline(always)]
+pub fn read_tcr() -> u64 {
+    let val: u64;
+    // SAFETY: mrs tcr_el1 是只读系统寄存器读取, 无副作用.
+    unsafe {
+        core::arch::asm!("mrs {}, tcr_el1", out(reg) val);
+    }
+    val
+}
+
+/// 读取 SCTLR_EL1 (系统控制寄存器, 含 MMU/Cache 使能位)
+#[inline(always)]
+pub fn read_sctlr() -> u64 {
+    let val: u64;
+    // SAFETY: mrs sctlr_el1 是只读系统寄存器读取, 无副作用.
+    unsafe {
+        core::arch::asm!("mrs {}, sctlr_el1", out(reg) val);
     }
     val
 }

@@ -61,6 +61,21 @@ SECTIONS
      * (VA = _kernel_base + PA) 供 Rust 侧经 TTBR1 读取. */
     fdt_addr_ptr = _kernel_base + _fdt_addr;
 
+    /* 次核启动槽 (`_ap_boot_info`) 的高半区别名 (`boot/aarch64/start.S` 的
+     * `ap_entry_asm` 与 `arch/aarch64/smp_init.rs` 共同使用).
+     * 与 `fdt_addr_ptr` 同理: `_ap_boot_info` 位于低半区 `.bootbss` (VMA == PA),
+     * 其符号距高半区内核代码超出 `adrp` 的 ±4GB 可达范围, 故暴露其**高半区别名**
+     * (VA = _kernel_base + PA) 供 Rust 侧经 TTBR1 读写. */
+    ap_boot_info_ptr = _kernel_base + _ap_boot_info;
+
+    /* 次核入口 stub (`ap_entry_asm`, 位于低半区 `.text.boot`) 的高半区别名
+     * (`arch/aarch64/smp_init.rs` 取址后减去 `_kernel_base` 得物理地址, 传入
+     * PSCI `CPU_ON` 的 entry point).
+     * 与 `ap_boot_info_ptr` 同理: `ap_entry_asm` 的符号地址在低半区, 距高半区内核
+     * 代码超出 `adrp` 的 ±4GB 可达范围, 故经链接脚本暴露其**高半区别名**
+     * (VA = _kernel_base + PA). */
+    ap_entry_asm_alias = _kernel_base + ap_entry_asm;
+
     /* ── 高半区内核区 (VMA = 高半区, LMA = 物理地址) ────────────────────
      * 内核代码/数据/向量表链接于高半区, 运行时经 TTBR1 取指取数; LMA 决定物理
      * 装载位置, 二者差值恒为 `_kernel_base`.

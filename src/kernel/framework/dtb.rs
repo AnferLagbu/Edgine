@@ -16,6 +16,8 @@
 //!   硬件探测, 无法支撑通用驱动树枚举; 何时需扩展: 引入多 SoC 驱动发现或需
 //!   解析时钟/电源等依赖关系时.
 
+use crate::framework::sync::OnceLock;
+
 /// FDT 头部幻数 ("d00dfeed", 大端)
 const FDT_MAGIC: u32 = 0xd00d_feed;
 
@@ -59,6 +61,27 @@ const ROOT_DEPTH: usize = 1;
 /// GICv3 `reg` 属性中重分发器 (GICR) 所在条目序号 (条目 0 为分发器 GICD)
 const GIC_REDIST_INDEX: usize = 1;
 
+/// `/cpus` 下可枚举的 CPU 上限 (防御畸形设备树造成的越界写)
+pub const CPU_MPIDR_MAX: usize = 8;
+
+/// CPU 拓扑 (自 `/cpus/cpu@N/reg` 首条目提取的 MPIDR 列表)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CpuTopology {
+    /// 已枚举的 CPU 数量 (不超过 [`CPU_MPIDR_MAX`])
+    pub count: u32,
+    /// 各 CPU 的 MPIDR (仅前 `count` 项有效)
+    pub mpidrs: [u64; CPU_MPIDR_MAX],
+}
+
+/// PSCI 调用通道 (conduit), 源自设备树 `/psci` 节点的 `method` 属性
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PsciMethod {
+    /// 经 `hvc` 指令调用 (QEMU virt 默认; PSCI 固件实现于 EL2)
+    Hvc,
+    /// 经 `smc` 指令调用 (多数真机; PSCI 固件实现于 EL3)
+    Smc,
+}
+
 /// 启动阶段从设备树提取的硬件资源物理基址
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DtbInfo {
@@ -72,6 +95,10 @@ pub struct DtbInfo {
     pub gic_dist_base: Option<u64>,
     /// GICv3 重分发器 (GICR) 基址
     pub gic_redist_base: Option<u64>,
+    /// CPU 拓扑 (`/cpus` 节点); 无该节点或解析失败时为 `None`
+    pub cpus: Option<CpuTopology>,
+    /// PSCI conduit (`/psci` 节点 `method` 属性); 无该节点或无法识别时为 `None`
+    pub psci_method: Option<PsciMethod>,
 }
 
 /// 解析 DTB 二进制块, 失败时返回 `None`
@@ -98,6 +125,32 @@ pub fn decode_header_prefix(header: &[u8]) -> Option<usize> {
     Some(totalsize)
 }
 
+/// 启动阶段探测到的 CPU 拓扑 (由引导路径在 DTB 解析后写入, 供 SMP 次核启动消费)
+static CPU_TOPOLOGY: OnceLock<CpuTopology> = OnceLock::new();
+
+/// 保存启动阶段探测到的 CPU 拓扑 (仅引导阶段调用一次, 重复写入被忽略)
+pub fn set_cpu_topology(topology: CpuTopology) {
+    let _ = CPU_TOPOLOGY.set(topology);
+}
+
+/// 读取启动阶段探测到的 CPU 拓扑; 未探测到时返回 `None`
+pub fn cpu_topology() -> Option<CpuTopology> {
+    CPU_TOPOLOGY.get().copied()
+}
+
+/// 启动阶段探测到的 PSCI conduit (由引导路径在 DTB 解析后写入, 供 PSCI 调用分派)
+static PSCI_METHOD: OnceLock<PsciMethod> = OnceLock::new();
+
+/// 保存启动阶段探测到的 PSCI conduit (仅引导阶段调用一次, 重复写入被忽略)
+pub fn set_psci_method(method: PsciMethod) {
+    let _ = PSCI_METHOD.set(method);
+}
+
+/// 读取启动阶段探测到的 PSCI conduit; 未探测到时返回 `None` (调用方自行回退)
+pub fn psci_method() -> Option<PsciMethod> {
+    PSCI_METHOD.get().copied()
+}
+
 /// 单个节点的属性切片集合 (仅在节点结束时用于资源识别)
 #[derive(Debug, Clone, Copy, Default)]
 struct NodeScan<'a> {
@@ -118,6 +171,16 @@ struct Parser<'a> {
     stack: [NodeScan<'a>; MAX_DEPTH],
     depth: usize,
     info: DtbInfo,
+    /// `/cpus` 节点自身属性所在深度 (0 = 尚未遇到 `/cpus`)
+    cpus_depth: usize,
+    /// `/cpus` 节点的 `#address-cells` (决定 `cpu@N` 的 `reg` 解码宽度)
+    cpus_addr_cells: u32,
+    /// `/psci` 节点自身属性所在深度 (0 = 尚未遇到 `/psci`)
+    psci_depth: usize,
+    /// 已枚举的 CPU 数量
+    cpus_count: u32,
+    /// 已枚举的 CPU MPIDR
+    cpus_mpidrs: [u64; CPU_MPIDR_MAX],
 }
 
 impl<'a> Parser<'a> {
@@ -160,7 +223,14 @@ impl<'a> Parser<'a> {
                 uart_base: None,
                 gic_dist_base: None,
                 gic_redist_base: None,
+                cpus: None,
+                psci_method: None,
             },
+            cpus_depth: 0,
+            cpus_addr_cells: 0,
+            psci_depth: 0,
+            cpus_count: 0,
+            cpus_mpidrs: [0; CPU_MPIDR_MAX],
         })
     }
 
@@ -175,6 +245,13 @@ impl<'a> Parser<'a> {
                 FDT_END => break,
                 _ => return None,
             }
+        }
+        // 仅在确实枚举到 `/cpus` 下的 CPU 节点时回填拓扑 (否则保持 None 供回退)
+        if self.cpus_depth != 0 && self.cpus_count > 0 {
+            self.info.cpus = Some(CpuTopology {
+                count: self.cpus_count,
+                mpidrs: self.cpus_mpidrs,
+            });
         }
         Some(self.info)
     }
@@ -215,6 +292,14 @@ impl<'a> Parser<'a> {
             return None;
         }
         let name = self.read_cstr_struct()?;
+        // 识别根的 `/cpus` 节点: 其自身 `#address-cells` 决定 `cpu@N` 的 reg 宽度
+        if self.depth == ROOT_DEPTH && name == b"cpus" {
+            self.cpus_depth = self.depth + 1;
+        }
+        // 识别根的 `/psci` 节点: 其 `method` 属性决定 PSCI 调用通道
+        if self.depth == ROOT_DEPTH && name == b"psci" {
+            self.psci_depth = self.depth + 1;
+        }
         self.stack[self.depth] = NodeScan {
             name,
             compatible: &[],
@@ -266,6 +351,20 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // `/cpus` 节点自身的 #address-cells 决定 `cpu@N` 的 reg 解码宽度
+        if self.cpus_depth != 0 && self.depth == self.cpus_depth && name == b"#address-cells" {
+            self.cpus_addr_cells = read_be32(value, 0)?;
+            return Some(());
+        }
+
+        // `/psci` 节点的 `method` 属性 (字符串) 决定 PSCI 调用通道
+        if self.psci_depth != 0 && self.depth == self.psci_depth && name == b"method" {
+            if self.info.psci_method.is_none() {
+                self.info.psci_method = decode_psci_method(value);
+            }
+            return Some(());
+        }
+
         let idx = self.depth.checked_sub(1)?;
         let scan = self.stack.get_mut(idx)?;
         if name == b"compatible" {
@@ -280,6 +379,23 @@ impl<'a> Parser<'a> {
 
     /// 依据节点属性识别并记录内存/UART/GICv3 资源
     fn record_node(&mut self, scan: &NodeScan<'a>) {
+        // `/cpus/cpu@N`: 记录 reg 首条目为 MPIDR; 缺属性/解析失败时回退 QEMU virt 约定 (Aff0 = 索引)
+        // SIMPLIFIED: CPU 枚举上限 CPU_MPIDR_MAX(=8), 超出不记录; 影响面: 仅覆盖 ≤8 核;
+        //   何时需扩展: 大核数 SoC 需改为动态/分页存储.
+        if self.cpus_depth != 0 && self.depth == self.cpus_depth && node_name_is(scan.name, b"cpu") {
+            if (self.cpus_count as usize) < CPU_MPIDR_MAX {
+                let index = u64::from(self.cpus_count);
+                let mpidr = if self.cpus_addr_cells == 0 {
+                    index
+                } else {
+                    read_be_cells(scan.reg, 0, self.cpus_addr_cells as usize).unwrap_or(index)
+                };
+                self.cpus_mpidrs[self.cpus_count as usize] = mpidr;
+                self.cpus_count += 1;
+            }
+            return;
+        }
+
         if self.info.memory_size == 0
             && (scan.device_type == b"memory" || node_name_is(scan.name, b"memory"))
         {
@@ -327,6 +443,20 @@ fn cstr_at(strings: &[u8], offset: usize) -> Option<&[u8]> {
     let rest = strings.get(offset..)?;
     let end = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
     Some(&rest[..end])
+}
+
+/// 解析 `/psci` 节点的 `method` 字符串属性为 [`PsciMethod`]
+///
+/// 属性值为 NUL 结尾字符串 (`"hvc"` / `"smc"`); 其他取值返回 `None`.
+fn decode_psci_method(value: &[u8]) -> Option<PsciMethod> {
+    let method = cstr_at(value, 0)?;
+    if method == b"hvc" {
+        Some(PsciMethod::Hvc)
+    } else if method == b"smc" {
+        Some(PsciMethod::Smc)
+    } else {
+        None
+    }
 }
 
 /// 判断以 NUL 分隔的字符串列表中是否包含目标字符串
@@ -491,6 +621,11 @@ mod tests {
         );
         b.end_node();
 
+        b.begin_node("psci");
+        b.prop("compatible", b"arm,psci-1.0\0arm,psci-0.2\0");
+        b.prop("method", b"hvc\0");
+        b.end_node();
+
         b.end_node();
         b.finish()
     }
@@ -503,6 +638,7 @@ mod tests {
         assert_eq!(info.uart_base, Some(0x0900_0000));
         assert_eq!(info.gic_dist_base, Some(0x0800_0000));
         assert_eq!(info.gic_redist_base, Some(0x080A_0000));
+        assert_eq!(info.psci_method, Some(PsciMethod::Hvc));
     }
 
     #[test]
@@ -515,6 +651,30 @@ mod tests {
         assert_eq!(info.uart_base, None);
         assert_eq!(info.gic_dist_base, None);
         assert_eq!(info.gic_redist_base, None);
+        assert_eq!(info.psci_method, None);
+    }
+
+    /// 构造带 `/psci { method = <method> }` 的最小设备树
+    fn psci_blob(method: &[u8]) -> Vec<u8> {
+        let mut b = BlobBuilder::new();
+        b.begin_node("");
+        b.begin_node("psci");
+        b.prop("method", method);
+        b.end_node();
+        b.end_node();
+        b.finish()
+    }
+
+    #[test]
+    fn parse_psci_method_smc() {
+        let info = parse(&psci_blob(b"smc\0")).expect("valid blob");
+        assert_eq!(info.psci_method, Some(PsciMethod::Smc));
+    }
+
+    #[test]
+    fn parse_psci_method_unknown_is_none() {
+        let info = parse(&psci_blob(b"hyp\0")).expect("valid blob");
+        assert_eq!(info.psci_method, None);
     }
 
     #[test]
