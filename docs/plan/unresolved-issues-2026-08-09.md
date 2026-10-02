@@ -195,6 +195,8 @@
 | **用户当前活动** | 用户 IDE 打开 `.gdb_debug_gic` 文件表明**正在 GDB 调试 GICv3 挂起** |
 | **【本轮复验订正】** | 现象与源码位置仍成立；但 `.gdb_debug_gic` 文件**当前不存在**于工作区（glob 0 命中），"用户 IDE 打开 `.gdb_debug_gic`"的活动证据已失效——「用户当前调试」应以用户实际状态为准，本台账不据过时证据断言 |
 | **【本轮压测复现】** | 本轮对 aarch64 启动连续压测 62 次（`./scripts/qemu_boot_test.sh aarch64`, QEMU TCG, 断言到 EL0）, **62/62 全部通过, 无一次触发 GICv3 挂起**. 结合原始现象为"偶发", 判断为 QEMU TCG 时序相关的偶发现象, 当前环境**不可稳定复现**. 挂起条目**不闭合**, 保留待 aarch64 SMP / 真机 / 更多时序场景复验. |
+| **【本轮复验装备与回归防护】** | 依用户裁决「方案 B 相对完整（A + 初始化自检）」, 本轮为不可稳定复现的挂起补足**复验装备 + 回归防护**, 把"静默挂起"转化为"确定性报错"; 条目**仍不闭合**, 保留待 aarch64 SMP / 真机复验. ① [gic.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/arch/aarch64/gic.rs) — `init()` 改 `-> Result<(), &'static str>`; redistributor 唤醒等待由静默 `break` 改为超限显式 `Err`（新增自旋上限 `REDIST_WAKE_SPIN_LIMIT`）; 新增 `verify_post_conditions()` 后置条件自检（回读 `GICD_CTLR.EnableGrp1` / `GICR_WAKER.ChildrenAsleep` / `GICR_ISENABLER0` Timer PPI / `ICC_IGRPEN1_EL1`）; 修正 `GICR_CTLR` 语义 — 其 bit0 实为 `EnableLPIs`（LPI 使能）而非 redistributor 使能位, 本项目未使用 LPI, 删除误写并移除随之失效的死常量（F9）. ② [entry.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/boot/aarch64/entry.rs) — GIC 初始化失败即 fail-fast（打印原因 + `halt`）, 成功打印 `GICv3 ready` 里程碑. ③ [qemu_boot_test.sh](file:///home/anfer/Code/QueenX/scripts/qemu_boot_test.sh) — aarch64 分支新增 `GICv3 ready` 回归断言（缺失即失败, fail-closed）. ④ 新增静态契约回归用例 [aarch64_gic_contract_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/aarch64_gic_contract_test.rs)（7 用例, 固化上述语义与自检项, 防重现）. ⑤ 新增启动压测脚本 [gic_stress_test.sh](file:///home/anfer/Code/QueenX/scripts/gic_stress_test.sh)（连续启动 + 里程碑判定, fail-closed）. 说明: aarch64 当前**无 SMP**（`smp::init` 仅登记 BSP, `CPU_COUNT=1`）, QEMU 单核, 故**真多核 GIC 压测待 SMP 落地**后补. |
+| **【DECISION-082 订正】** | 上段「aarch64 当前**无 SMP**（`smp::init` 仅登记 BSP, `CPU_COUNT=1`）, QEMU 单核, 故真多核 GIC 压测待 SMP 落地后补」的前提**已解除**：aarch64 SMP bring-up 已落地（[aarch64-smp-bringup.md](./aarch64-smp-bringup.md)，PSCI `CPU_ON` + `ap_entry_asm` + `ap_main` + `register_cpu`），`./scripts/qemu_boot_test.sh aarch64` 已改为 `-smp 2` 并断言 `[SMP] online CPUs: 2`（fail-closed）⇒ 真多核 GIC 压测自此**具备执行载体**（`scripts/gic_stress_test.sh` 的 `-smp` 升级为后续动作，不阻塞本工程）。本条目**仍不闭合**（原始偶发挂起未定位根因），保留待真多核 / 真机复验。 |
 | **建议方案** | (1) GDB `break gic_init` 单步跟踪; (2) 检查 GICR_SGI_BASE 寄存器访问; (3) 检查 SGI 7 触发时 Redistributor 状态 |
 | **工作量** | 估计 3-5 天 |
 
@@ -404,12 +406,13 @@
 
 | 字段 | 数据 |
 |---|---|
-| **状态** | ⏸️ `[~]` DECISION-046 维持原状 |
+| **状态** | ✅ `[X]` 结案（保留"维持原状不迁移"的裁定；其"未来可选"迁移路线已被 DECISION-080 吸收） |
 | **数量** | 1354 个跨 166 文件 (含 527 个 smoltcp vendored) |
 | **【本轮复验订正】** | 实测 kernel `#[test]` 现为 **1406 处 / 173 文件**（原记 1354/166 随代码增删漂移）；维持原状的理由（ROI 不匹配）不受影响 |
 | **理由** | 范畴属测试架构工程非静态检查工程; ROI 不匹配 (仅 ~70 个纯算法值得迁移) |
 | **commit** | `ebb985c0` |
-| **未来可选** | 迁移 USB HID/MassStorage/XHCI/Enumerate/Ring 5 文件 ~70 个纯算法测试 (~5-7 天) |
+| **未来可选** | ~~迁移 USB HID/MassStorage/XHCI/Enumerate/Ring 5 文件 ~70 个纯算法测试 (~5-7 天)~~ **【已被 DECISION-080 吸收，不再作为开放选项】** |
+| **【本轮结案】** | 依用户裁决「按 DECISION-080 结案」，与 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md) DECISION-080 裁定对齐：**纯逻辑（可在 host 编译）测试的唯一归属 = 源文件 `#[cfg(test)]`**。USB 5 文件 69 例（`xhci` 4 / `mass_storage` 19 / `usb_core` 5 / `ring` 11 / `hid` 18 / `enumerate` 12）**当前已全部位于源文件 `#[cfg(test)] mod tests`**，经 §2.3 门槛 6 `make test-kernel-host` 实际执行 ⇒ **已处于 DECISION-080 目标态**，无需迁移。原「未来可选：迁移到 host-tests」与 DECISION-080 终态方向相反，且 `ring.rs` 等用例直接断言私有字段（`trbs`/`enqueue_index`/`dequeue_index`/`cycle`），迁往独立 crate（仅见 `pub`）必致断言弱化（与 DECISION-080 第 4 条登记的「覆盖弱化」同型）；故该路线作废。**无代码改动**。 |
 
 ### ISSUE-DEC-041: cast 类 1700+ 处永久保留
 
@@ -639,7 +642,9 @@
 > - **MIG-008 闭合**: 显示控制器经 DECISION-K 单向注册契约接线（framework 工厂槽 + `display_probe_controllers` 单向拉取；services `display_init` 注册无捕获回调），原"控制器零调用者"缺口消除。
 > - **MIG-005 边界已理清**: [framework/driver/storage/mod.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/driver/storage/mod.rs) 现仅保留机制原语（NVMe 队列 DMA 分配 / 提交与排空 safe wrapper / AHCI DMA fill / xHCI TRB / MSI-X ISR 编排 + wire 类型），业务（控制器探测/初始化/块设备注册）已退位 [services/driver/storage/mod.rs](file:///home/anfer/Code/QueenX/src/kernel/services/driver/storage/mod.rs)（0 unsafe，crate root 编排）；framework 侧无 `ata.rs`（ATA 已回迁 services）。framework 侧**无控制器/块设备实现**，"双份"不再存在，属机制/业务分野而非重复。
 >
-> **仍未闭合** 收敛为: **ISSUE-RT-002**（aarch64 GICv3 挂起，QEMU TCG 时序偶发不可复现，待 SMP/真机复验）、**MIG-004**（chitin proto_*+user_driver 安全代理，待按 §12.3 评估"是否需要"）、第 4 类远期工程 F1-F5、刻意维持项.
+> **仍未闭合** 收敛为: **ISSUE-RT-002**（aarch64 GICv3 挂起，QEMU TCG 时序偶发不可复现，待 SMP/真机复验）、第 4 类远期工程 F1-F5、刻意维持项.
+>
+> **【MIG-004 收口同步】**: 依 commit `349167d5`，**MIG-004 已由「未闭合」移出** — 用户裁决「MIG-004 建安全代理（相对完整）」，services/chitin 新建 [proto.rs](file:///home/anfer/Code/QueenX/src/kernel/services/chitin/proto.rs)（block 直通 re-export / net `NetDevice` 去裸指针封装 / input 薄封装）与 [user_driver.rs](file:///home/anfer/Code/QueenX/src/kernel/services/chitin/user_driver.rs)（强类型 `UserDriverError` + `to_errno`），现有调用点改走 services 封装，[audit_services_boundary.py](file:///home/anfer/Code/QueenX/scripts/audit_services_boundary.py) 白名单补 `('driver','chitin')`，并补 host-tests（5 passed）。故本节"当前实际开放项"再收敛为: **ISSUE-RT-002** + 第 4 类远期工程 F1-F5 + 刻意维持项 DEC-046/041/005.
 
 ### P0 — 立即关注 (1 项)
 
@@ -679,6 +684,9 @@
 
 ## 变更历史
 
+- **本轮（DEC-046 结案 — 与 DECISION-080 对齐）**: 依用户裁决「按 DECISION-080 结案」，将第 5 类 **ISSUE-DEC-046** 结案 — 其「未来可选：迁移 USB HID/MassStorage/XHCI/Enumerate/Ring 5 文件 ~70 个纯算法测试到 host-tests」与 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md) DECISION-080「纯逻辑测试唯一归属 = 源文件 `#[cfg(test)]`」终态方向相悖；USB 5 文件 69 例（`xhci` 4 / `mass_storage` 19 / `usb_core` 5 / `ring` 11 / `hid` 18 / `enumerate` 12）**当前已全部位于源文件 `#[cfg(test)] mod tests`**，经 §2.3 门槛 6 `make test-kernel-host` 实际执行，**已处于目标态**，无需迁移；`ring.rs` 等用例直断私有字段，迁往独立 crate 会致覆盖弱化（与 DECISION-080 第 4 条登记同型）。**无代码改动**，仅台账同步。仍未闭合收敛为: ISSUE-RT-002、第 4 类远期工程 F1-F5、刻意维持项（DEC-041/DEC-005）.
+- **本轮（RT-002 复验装备与回归防护）**: 依用户裁决「启动 RT-002 复验工程」+「方案 B 相对完整（A + 初始化自检）」，为 QEMU TCG 下不可稳定复现的 aarch64 GICv3 挂起补足复验装备与回归防护（条目**不闭合**，保留待 SMP/真机复验）— [gic.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/arch/aarch64/gic.rs) `init()` 改 `Result` + redistributor 唤醒超时显式失败 + `verify_post_conditions()` 后置条件自检 + 修正 `GICR_CTLR` 语义（bit0 实为 EnableLPIs，删除误写与死常量）；[entry.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/boot/aarch64/entry.rs) GIC 初始化 fail-fast + `GICv3 ready` 里程碑；[qemu_boot_test.sh](file:///home/anfer/Code/QueenX/scripts/qemu_boot_test.sh) 新增里程碑断言；新增静态契约用例 [aarch64_gic_contract_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/aarch64_gic_contract_test.rs)（7 用例）与启动压测脚本 [gic_stress_test.sh](file:///home/anfer/Code/QueenX/scripts/gic_stress_test.sh)。仍未闭合收敛为: **ISSUE-RT-002**、第 4 类远期工程 F1-F5、刻意维持项.
+- **本轮（MIG-004 安全代理 + 台账收口）**: MIG-004 由「未闭合」移出 — 用户裁决「MIG-004 建安全代理（相对完整）」，services/chitin 新建 [proto.rs](file:///home/anfer/Code/QueenX/src/kernel/services/chitin/proto.rs)（block 直通 re-export / net `NetDevice` 去裸指针封装 / input 薄封装）+ [user_driver.rs](file:///home/anfer/Code/QueenX/src/kernel/services/chitin/user_driver.rs)（强类型 `UserDriverError` + `UserDriverResult<T>` + `to_errno`），现有调用点改走 services 封装（`unregister`/`unregister_block`/`find_net_device`）；[audit_services_boundary.py](file:///home/anfer/Code/QueenX/scripts/audit_services_boundary.py) 白名单补 `('driver','chitin')`；新增 host-tests [chitin_proto_proxy_host_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/chitin_proto_proxy_host_test.rs)（5 passed）。§2.3 六门槛复验通过（双架构 build / clippy + `audit.sh quick` 全绿 / `make test-host` / `make test-kernel-host` 947 passed）。同步 [syscall-followup.md](./syscall-followup.md) B-6 区块（446 → 440 项）. 仍未闭合收敛为: ISSUE-RT-002、第 4 类远期工程 F1-F5、刻意维持项.
 - **本轮（MIG-003 完整迁移 + 台账同步）**: MIG-003 由「未闭合」移出 — framework 删 [pl011.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/driver/char/mod.rs) + 暴露 `pl011_phys_base()` safe 面 + [IoMem::from_platform_device](file:///home/anfer/Code/QueenX/src/kernel/framework/iomem.rs) safe 构造器；services 新建 [pl011.rs](file:///home/anfer/Code/QueenX/src/kernel/services/driver/char/pl011.rs)（0 unsafe）+ [char/mod.rs](file:///home/anfer/Code/QueenX/src/kernel/services/driver/char/mod.rs) aarch64 分支 chitin 注册 + [lib.rs](file:///home/anfer/Code/QueenX/src/kernel/lib.rs) 双架构调 `char_init()`。§2.3 六门槛全量验证通过（双架构 build 通过 / clippy + `audit.sh quick` 全绿 / `audit_services_boundary` 通过 / `audit_safety_coverage` 100% / `audit_comment_language` 0 违规 / `audit_deadlock_matrix` 无 CRITICAL / `make test-host` 全 ok / `make test-kernel-host` 947 passed / QEMU 2/2）。仍未闭合收敛为: ISSUE-RT-002、MIG-004、第 4 类远期工程 F1-F5、刻意维持项.
 - **本轮（修遗留工程）**: 按用户授权批量修复登记遗留项，逐条追加【本轮修复（修遗留工程）】标记；§2.3 六门槛全量验证通过（双架构 build 5/0、clippy + audit quick 全绿、`make test-host` 0 failed、`make test-kernel-host` 941 passed、QEMU x86_64 1/1）
   - 第 0B 类 3 项结案: B03-LEGACY-001（COW 判定+映射并入同一 `VMM_LOCK` 临界区，配套 `*_locked` 变体）/ B03-LEGACY-002（pmm `find_contig_range`/`reserve_range`/`unreserve_range` host 用例 ×3）/ B03-LEGACY-003（新增定时器 tick 并发 host 冒烟 + 文件头标注判别力边界，弱序语义判别待 aarch64 SMP）
