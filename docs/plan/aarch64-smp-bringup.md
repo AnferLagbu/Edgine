@@ -138,7 +138,7 @@
   - 方案：`scripts/qemu_boot_test.sh` aarch64 分支的 `qemu-system-aarch64` 命令行加 `-smp 2`；在既有断言（`GICv3 ready` / `VFS ready` / EL0 / KPTI）之上新增：grep `[SMP] online CPUs: 2`，命中 ⇒ `ok`，未命中 ⇒ `warn`/`err`（与现有 RT-002 断言风格一致）。
   - 状态：[X]
   - 详情（施工结论）：aarch64 分支 QEMU 参数加 `-smp 2`（置于 `-m 512` 之后），并在 `GICv3 ready` 断言块之后新增 `online CPUs: 2` 里程碑断言（fail-closed，未命中置 `RESULT=1`）。实跑 `./scripts/qemu_boot_test.sh aarch64` = 1/1 通过，逐项命中 `VFS ready` / `GICv3 ready` / **`SMP 双核上线 (online CPUs: 2)`** / virtio-net services bridge / `Entering EL0` / KPTI-09，无回归。
-  - 详情（回归衔接）：本工程落地后，ISSUE-RT-002 的"真多核 GIC 压测"具备执行载体 —— 「风险与回退」登记压测脚本 `scripts/gic_stress_test.sh` 的 `-smp` 升级为后续动作（不阻塞本工程验收）。
+  - 详情（回归衔接）：本工程落地后，ISSUE-RT-002 的"真多核 GIC 压测"已具备执行载体 —— 压测脚本 `scripts/gic_stress_test.sh` 已完成 `-smp 2` 升级（见 SMP-10 后续项 ②），并以真多核载体完成 50 次启动压测（50/50 通过，详见 ISSUE-RT-002 台账「真多核压测复验」行）。
   - 详情（x86_64 分支不动）：`-smp` 仅加在 aarch64 分支；x86_64 分支的 `-smp` 现状保持（避免无关改动，§12.2）。
 
 - **SMP-10. §2.3 六门槛验证**
@@ -154,7 +154,7 @@
   - 详情（施工结论）：六门槛实测 —— ① `./ci/build.sh all` = Passed 5 / Failed 0；② clippy pedantic 三维（lib / kernel_test / host-test）全过；③ `./ci/build.sh aarch64 && ./ci/audit.sh` = `AUDIT_EXIT=0`（services 0 unsafe、6 不变式 PASS、framework SAFETY 覆盖 1867/1867 缺 0、FP-06 PASS）；④ `make test-host` = 116 个测试二进制全 ok、0 failed（含 SMP-08 契约 7 用例）；⑤ `make test-kernel-host` = 949 passed / 0 failed；⑥ `./scripts/qemu_boot_test.sh all` = 2/2 通过（x86_64：`VFS ready`/e1000/Ring 3/KPTI-09；aarch64：`VFS ready`/`GICv3 ready`/`SMP 双核上线 (online CPUs: 2)`/virtio-net bridge/`Entering EL0`/KPTI-09）。
   - 详情（专项判据实测）：`[SMP] online CPUs: 2` 由 aarch64 `smp_init::init()` 打印（取权威计数 `smp::get_cpu_count()`）⇒ `CPU_COUNT == 2` 直接可观测；`smp_is_enabled()` 为真由构造蕴含 —— `SMP_ENABLED` 与 `CPU_COUNT` 由 `smp::register_cpu` 同一调用路径唯一置位（`CPU_COUNT.fetch_add` 后 `SMP_ENABLED.store(true)`），且 AP 的上线自检 `is_cpu_online(idx)` 未触发 fail-fast（否则 BSP 超时、`online` 不会为 2）⇒ `CPU_COUNT == 2` 必然蕴含 `SMP_ENABLED == true`。（未新增内核代码使该布尔直接打印：本批为验证收口，遵 §12.2/§12.3 简约路径；如需直接实测该行，可单开一行 BSP 汇总日志。）
   - 详情（F9/F4）：`PsciError` 各变体、`cpu_mpidrs`、`GICR_STRIDE` 均经真实使用路径消费（无 `#[allow(dead_code)]`）；新增 `invoke` / 次核入口 unsafe 块的 `// SAFETY:` 覆盖计入 1867/1867。
-  - 详情（后续项，不阻塞收口）：① `kpti_aarch64.rs` 注释失真**已修正** + 全局量内存序**已复核**（结论见「风险与回退」与文末专项登记）；复核发现的结构性缺陷（入口/出口每核活跃值存单实例全局量）已**立项为独立专项（per-CPU 化）待排期**；② `scripts/gic_stress_test.sh` 的 `-smp` 升级；③ ISSUE-RT-002 原始偶发挂起根因未定位（条目不闭合）。
+  - 详情（后续项，不阻塞收口）：① `kpti_aarch64.rs` 注释失真**已修正** + 全局量内存序**已复核**（结论见「风险与回退」与文末专项登记）；复核发现的结构性缺陷（入口/出口每核活跃值存单实例全局量）已**立项为独立专项（per-CPU 化）待排期**；② `scripts/gic_stress_test.sh` 的 `-smp` 升级**已完成** —— 该脚本默认以真多核（`-smp 2`）启动，里程碑由单一 `GICv3 ready` 升级为 `GICv3 ready` && `[SMP] online CPUs: <N>` 双断言（fail-closed，等同覆盖 BSP 与全部 AP 的 per-CPU GIC），并新增 `GIC_STRESS_SMP`（核数）/ `GIC_STRESS_QEMU_EXTRA`（附加 QEMU 参数）两个旋钮以变换核数与时序；③ ISSUE-RT-002 原始偶发挂起**根因仍未定位**（条目不闭合）—— 已借真多核载体完成**有界时序搜索**（5 场景合计 96 次启动，96/96 通过、0 次触发挂起：`-smp 2/4/8` × {50,15,10} + `tcg,thread=single` × 15 + `-icount` × 6），未复现，结论进一步支持「QEMU TCG 时序偶发、当前环境不可稳定复现」，保留待真机 / 具复现样本的环境。
   - 详情（F9 死代码防线）：新增的 `PsciError` 各变体、`cpu_mpidrs`、`GICR_STRIDE` 等必须有**真实使用路径**（错误码经 `cpu_on` 返回并被 BSP 打印；`cpu_mpidrs` 被 `cpu_on` 消费；`GICR_STRIDE` 被 per-CPU 基址计算消费），不得靠 `#[allow(dead_code)]` 保留。
 
 ## 施工规划（具体工程）
