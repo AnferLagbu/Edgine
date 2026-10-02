@@ -28,7 +28,19 @@
 //! 隔离收益. 与 x86_64 的差异: x86 的用户 PML4 能映射高 VA, 故其 RSP0 栈页
 //! 仍走"映射进用户页表"形态 (见 `kpti::map_rsp0_page`).
 //!
-//! aarch64 无 SMP (`smp_init.rs` 仅 x86_64), 故全局量用普通 `AtomicU64` 即可.
+//! # SMP 前提 (DECISION-082 订正)
+//!
+//! 本模块的全局量 [`KPTI_GLOBALS`] 为**单实例** (汇编按固定字节偏移访问, 无按核
+//! 索引). aarch64 自 DECISION-082 起已具备次核上线路径 (`arch/aarch64/smp_init.rs`),
+//! 故须区分两类字段:
+//!
+//! - **boot 期一次性发布、此后只读**: `ready` / `kernel_ttbr0` / `kernel_ttbr1` /
+//!   `tramp_ttbr1` —— 核间共享安全 (发布由 `ready` 的 Release/Acquire 配对
+//!   保证, 见 [`kpti_init`]).
+//! - **每核活跃值**: `user_ttbr0` 与 `tramp_save0`/`tramp_save1` —— 由 EL0 入口/出口
+//!   汇编与任务切换路径按核读写, 单实例下**多核并发 EL0 会跨核改写** (入口保存的
+//!   `x3`/`x4` 与出口待恢复的用户页表可能被其他核覆盖). 当前 AP 未调度用户任务故
+//!   未触发; 拆分方案登记于 `docs/plan/aarch64-smp-bringup.md` 后续项.
 
 #![cfg(target_arch = "aarch64")]
 

@@ -646,6 +646,8 @@
 >
 > **【MIG-004 收口同步】**: 依 commit `349167d5`，**MIG-004 已由「未闭合」移出** — 用户裁决「MIG-004 建安全代理（相对完整）」，services/chitin 新建 [proto.rs](file:///home/anfer/Code/QueenX/src/kernel/services/chitin/proto.rs)（block 直通 re-export / net `NetDevice` 去裸指针封装 / input 薄封装）与 [user_driver.rs](file:///home/anfer/Code/QueenX/src/kernel/services/chitin/user_driver.rs)（强类型 `UserDriverError` + `to_errno`），现有调用点改走 services 封装，[audit_services_boundary.py](file:///home/anfer/Code/QueenX/scripts/audit_services_boundary.py) 白名单补 `('driver','chitin')`，并补 host-tests（5 passed）。故本节"当前实际开放项"再收敛为: **ISSUE-RT-002** + 第 4 类远期工程 F1-F5 + 刻意维持项 DEC-046/041/005.
 
+> **【DECISION-082 尾项登记（KPTI 单实例全局量）】**: aarch64 SMP bring-up（DECISION-082）收口时复核 [mm/kpti_aarch64.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/kpti_aarch64.rs) 的全局量内存序，发现**结构性缺陷** —— `user_ttbr0`（偏移 24）与 `tramp_save0`/`tramp_save1`（40/48）属**每核活跃状态**却置于单实例 `KPTI_GLOBALS`，入口/出口汇编按固定偏移 `str`/`ldr` 访问，多核并发 EL0 会**跨核互相覆盖**（用户 `x3`/`x4` 损坏 / 以他核页表 `eret`）。同库既有 per-CPU 范式为 [mm/copy_user.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/copy_user.rs) 的 `PER_CPU_EXCEPTION_CTX[cpu]`。boot 期发布字段（`ready`/`kernel_ttbr0`/`kernel_ttbr1`/`tramp_ttbr1`）经复核**内存序配对完整、通过**。当前 AP 停在 idle 未调度用户任务，故**潜伏未爆发**；用户已裁定**登记并立项**（本轮不改行为，AGENTS §9.1）。已在本轮修正 [kpti_aarch64.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/kpti_aarch64.rs) 的失真注释；专项（**KPTI-PCPU-01**，per-CPU 化）登记于 [aarch64-smp-bringup.md](./aarch64-smp-bringup.md)「后续专项登记」章节，**待排期**（前置依赖 = AP 参与用户态调度）。
+
 ### P0 — 立即关注 (1 项)
 
 - **ISSUE-RT-002** (aarch64 GICv3 挂起) — 用户当前 GDB 调试中
