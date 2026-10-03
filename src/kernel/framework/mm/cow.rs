@@ -502,7 +502,7 @@ fn cow_handle_fault_locked(pml4: u64, fault_addr: u64) -> Option<u64> {
     if pmm_inst.frame_dec(PhysAddr(old_frame)) {
         // 归零不等于"远端核 TLB 已失效": 若他核曾运行本进程, 其 TLB 仍缓存旧映射,
         // 立即归还后该帧可被重分配 ⇒ 他核经陈旧映射访问他人物理页 (UAF).
-        // 归还时机 (x86 延迟 / aarch64 立即) 与锁序见 `mm::release_frame_locked`.
+        // 归还时机 (两架构统一走延迟释放) 与锁序见 `mm::release_frame_locked`.
         super::release_frame_locked(PhysAddr(old_frame));
     }
 

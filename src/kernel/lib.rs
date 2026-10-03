@@ -721,10 +721,6 @@ pub extern "C" fn kernel_init() {
         // 不会与 RECOVERY_MANAGER 自旋锁上的域注册竞态
         crate::framework::mm::pmm::pmm_register_barrier_domain();
         crate::framework::proc::process::proc_register_barrier_domain();
-        #[cfg(target_arch = "aarch64")]
-        unsafe {
-            crate::framework::arch::aarch64::barrier::enable_barrier_sgi();
-        }
         crate::klog_boot_info!("Barrier-stack recovery domains registered (PMM=3, PROC=4)");
 
         // 5.5. Swap — 物理内存回收/换出 (B3 完整实现)

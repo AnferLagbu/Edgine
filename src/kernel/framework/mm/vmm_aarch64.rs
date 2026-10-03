@@ -282,12 +282,25 @@ impl Aarch64Vmm {
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
     pub fn release_lock(&self, flags: &IrqSaveFlags) {
+        // 仍持锁时读取并清除"本临界区需远程失效"标志: VMM_LOCK 是全局锁, 此刻本核
+        // 是唯一写者, 故读-清不会漏掉本临界区自身的置位.
+        let shootdown_needed = super::deferred_free::clear_shootdown_flag();
+
+        // 仍持锁时整条摘走本临界区批次链 (链头置 0). 摘走必须在同一临界区内完成:
+        // 先释放锁再摘会漏摘他核进入临界区后新增的帧.
+        let batch = super::deferred_free::take_batch();
+
         #[cfg(debug_assertions)]
         {
             VMM_LOCK_RECURSIVE.store(false, Ordering::Relaxed);
         }
         VMM_LOCK.store(false, Ordering::Release);
         restore_interrupts(flags);
+
+        // 释放锁且恢复中断之后再做收尾 (发布新代 + 定向 IPI + 机会式归还已追平帧):
+        // 与 x86_64 共用同一收尾 (见 [`super::deferred_free`] 模块级锁序约束);
+        // aarch64 的定向 IPI 编码为 SGI 13, 接收侧 `tlb_catch_up_local` 补上下文同步.
+        super::deferred_free::release_tail(shootdown_needed, batch);
     }
 
     // ─── 初始化 ──────────────────────────────────────────────
@@ -359,9 +372,34 @@ impl Aarch64Vmm {
         clippy::unused_self,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
+    /// 归还一个页表页 —— **立即归还变体** (调用方**不持** `VMM_LOCK`).
+    ///
+    /// 仅限"该页从未被任何核的页表遍历可达"的路径 (分配失败清理): 页刚由
+    /// [`Self::alloc_table`] 分配, 尚未安装进任何 `TTBR` / 未挂入任何父表项, 故任何
+    /// 远程核都不可能缓存其翻译 —— 立即 `free_page` 无 UAF 风险.
+    ///
+    /// 曾被其他核可达的页表页 (unmap / destroy) **必须**走 [`Self::free_table_locked`].
     fn free_table(&self, paddr: u64) {
         if paddr != 0 {
             get_pmm().free_page(PhysAddr(paddr));
+        }
+    }
+
+    /// 归还一个页表页 —— **延迟归还变体, 要求调用方已持 `VMM_LOCK`**.
+    ///
+    /// 用于"页表页曾被其他核的页表遍历可达"的路径 (unmap 递归回收 / destroy 整表):
+    /// 与数据帧同理, 立即归还的页被重分配后, 仍持有陈旧 TLB 的远程核可能经旧翻译
+    /// 访问他人物理页 (UAF). 故与帧归还统一走 [`super::deferred_free::defer_free`],
+    /// 等全部在线核 TLB 代追平后才真正归还 PMM.
+    ///
+    /// 锁序: 与数据帧归还一致, 须在持 `VMM_LOCK` 期间调用 (批次链单写者前提).
+    #[expect(
+        clippy::unused_self,
+        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
+    )]
+    fn free_table_locked(&self, paddr: u64) {
+        if paddr != 0 {
+            super::deferred_free::defer_free(paddr);
         }
     }
 
@@ -761,14 +799,28 @@ impl Aarch64Vmm {
         let desc = page_flags_to_descriptor(raw_flags, paddr);
         // SAFETY: l3 是 ensure_next_level 返回的 L3 页表基地址；
         // l3_idx < 512；write_volatile 写硬件页表。
-        unsafe {
+        let replaced = unsafe {
+            // 先读旧项: 判定本次是"替换既有翻译"还是"纯新建" (合法描述符 bit[1:0] != 0).
+            let old = ptr::read_volatile(l3.add(l3_idx));
             ptr::write_volatile(l3.add(l3_idx), desc);
-        }
+            old & 0b11 != 0
+        };
 
         // SAFETY: dsb ishst / tlbi vaae1is / dsb ish / isb 是 aarch64 标准
         // TLB 失效序列；ARM 架构要求 tlbi vaae1is 的操作数是虚拟地址右移12位（页帧号）。
         unsafe {
             core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
+        }
+
+        // 仅"替换/覆盖既有翻译"登记远程失效: 纯新建映射的 VA 此前无翻译, 远程核不可能
+        // 缓存条目 (若一律登记, 每次新建映射都会广播一轮 IPI —— 过度失效). aarch64 的
+        // `tlbi vaae1is` 虽已硬件广播覆盖映射变更本身, 但同一临界区内若有帧进入延迟
+        // 释放链 (如 COW 换叶), 仍须发布代并让对端 `dsb` 追平后才能安全回收该帧.
+        if replaced
+            && crate::framework::smp::is_enabled()
+            && crate::framework::smp::get_cpu_count() > 1
+        {
+            super::deferred_free::mark_remote_shootdown();
         }
     }
 
@@ -872,7 +924,7 @@ impl Aarch64Vmm {
             unsafe {
                 core::arch::asm!("dsb ishst");
             }
-            self.free_table(l3_paddr);
+            self.free_table_locked(l3_paddr);
 
             // Check L2 recursively
             if self.is_table_empty(l2) {
@@ -885,7 +937,7 @@ impl Aarch64Vmm {
                 unsafe {
                     core::arch::asm!("dsb ishst");
                 }
-                self.free_table(l2_paddr);
+                self.free_table_locked(l2_paddr);
 
                 // Check L1 recursively
                 if self.is_table_empty(l1) {
@@ -899,11 +951,20 @@ impl Aarch64Vmm {
                         core::arch::asm!("dsb ishst");
                     }
                     // KPTI 方案 S3: 清空必须同步到 EL1 视图 —— 否则视图残留指向即将
-                    // `free_table` 的 L1 页的陈旧表项 (UAF).
+                    // 归还的 L1 页的陈旧表项 (UAF).
                     Self::mirror_l0_slot_to_el1_view(l0, l0_idx);
-                    self.free_table(l1_paddr);
+                    self.free_table_locked(l1_paddr);
                 }
             }
+        }
+
+        // 拆除映射即移除既有翻译, 且本临界区可能已把数据帧 / 变空的页表页送入延迟释放链:
+        // 若在线他核仍持有经陈旧映射缓存的 TLB 项, 页被重分配后他核可能访问到他人占用
+        // 的物理页. 故登记"需远程失效", 由 release_lock 出临界区后发布新代 + 定向 IPI,
+        // 待全部在线核追平后再真正释放 (aarch64 的 `tlbi vaae1is` 只保证映射变更本身
+        // 对被遍历可见, 不保证已开始的 in-flight 遍历已完成 —— 需对端 `dsb` 追平).
+        if crate::framework::smp::is_enabled() && crate::framework::smp::get_cpu_count() > 1 {
+            super::deferred_free::mark_remote_shootdown();
         }
 
         self.release_lock(&_lock_flags);
@@ -1129,8 +1190,8 @@ impl Aarch64Vmm {
         // SAFETY: el1_l0 是本进程 EL1 视图根表页, 槽位 0 为 → L1_el1 的表描述符.
         let el1_l1 =
             unsafe { ptr::read_volatile(phys_to_virt(el1_l0) as *const u64) } & DESC_ADDR_MASK;
-        self.free_table(el1_l1);
-        self.free_table(el1_l0);
+        self.free_table_locked(el1_l1);
+        self.free_table_locked(el1_l0);
     }
 
     /// 把用户表 L0 的槽位 `idx` 镜像到本进程 EL1 视图的同一槽位 (KPTI 方案 S3 同步点).
@@ -1399,12 +1460,24 @@ impl Aarch64Vmm {
         Some(child_paddr)
     }
 
+    #[expect(
+        clippy::used_underscore_binding,
+        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
+    )]
     pub fn destroy_page_table(&self, root_paddr: u64) {
         if root_paddr == 0 {
             return;
         }
 
-        // 释放前先做一次系统级失效: 本函数会立即归还用户数据帧与各级页表帧,
+        // 埋点基线: 与函数末尾的差值为本次调用真正送入延迟释放链的帧数.
+        let admitted_before = super::deferred_free::admitted();
+
+        // 拆除整表会逐 leaf 注销帧引用并归还各级页表页 (经延迟释放, 见
+        // `free_table_locked`), 与 x86_64 的 `destroy_page_table` 同语义: 全程持
+        // `VMM_LOCK` 串行化页表改动, 并保证帧入批次链的"锁内单写者"前提.
+        let _lock_flags = self.acquire_lock();
+
+        // 释放前先做一次系统级失效: 本函数会归还用户数据帧与各级页表帧,
         // 必须确保所有核已停止用该页表 (复用 switch_page_table 的广播形态).
         // SAFETY: 标准系统级 TLB 失效序列, 不触及任何 Rust 内存.
         unsafe {
@@ -1430,7 +1503,27 @@ impl Aarch64Vmm {
         // 且保留槽 (EL1_VIEW_SLOT) 的位 [1:0] = 00 不满足 0b11 ⇒ 上面的遍历天然跳过它.
         self.destroy_el1_view(root_paddr);
 
-        self.free_table(root_paddr);
+        self.free_table_locked(root_paddr);
+
+        // 拆除地址空间页表即移除映射, 且上述帧/页表页已进入延迟释放队列: 若在线他核
+        // 仍持有经陈旧映射缓存的 TLB 项, 页被重分配后他核可能访问到他人占用的物理页.
+        // 故必须登记"需远程失效", 由 release_lock 出临界区后先发布新代 + 定向 IPI,
+        // 待全部在线核追平该代 (即均已彻底失效 TLB) 后再真正释放这些帧.
+        if crate::framework::smp::is_enabled() && crate::framework::smp::get_cpu_count() > 1 {
+            super::deferred_free::mark_remote_shootdown();
+        }
+
+        self.release_lock(&_lock_flags);
+
+        // 埋点 (见 docs/plan/tlb-shootdown-epoch.md S-10): "销毁路径是否被走到" 是释放
+        // 覆盖判别的第一分位 —— 整轮日志无本行 ⇒ 进程从未被回收, 而非"帧入链但代未追平".
+        // 本行 `deferred_in_call=0` 则说明走到了但无可延迟帧.
+        crate::klog_info!(
+            Memory,
+            "[VMM] destroy_page_table: cr3={:#X} deferred_in_call={}",
+            root_paddr,
+            super::deferred_free::admitted() - admitted_before
+        );
     }
 
     fn destroy_l1_table(&self, paddr: u64) {
@@ -1445,7 +1538,7 @@ impl Aarch64Vmm {
                 }
             }
         }
-        self.free_table(paddr);
+        self.free_table_locked(paddr);
     }
 
     fn destroy_l2_table(&self, paddr: u64) {
@@ -1460,14 +1553,15 @@ impl Aarch64Vmm {
                 }
             }
         }
-        self.free_table(paddr);
+        self.free_table_locked(paddr);
     }
 
     /// 销毁 L3 表: 逐**用户 leaf** 注销帧引用 (归零才释放), 随后释放 L3 页表页本身.
     ///
     /// §8.1 规则 3 的拆除侧: 每个用户 leaf 持有其帧一份引用 ⇒ 拆除即 `frame_dec`,
     /// 与 fork 的 +1 侧 (`cow::clone_user_page_table_cow_inner`) 同集.
-    /// 归零时的归还时机与语义见 `mm::release_frame_locked` (aarch64 立即归还).
+    /// 归零时的归还时机与语义见 `mm::release_frame_locked` (与 `x86_64` 统一走延迟
+    /// 释放, 由本函数调用方 `destroy_page_table` 持 `VMM_LOCK` 保证前置).
     /// 大页 leaf (L2 块描述符 `0b01`) 不参与计数, 与 `x86_64` 一致.
     fn destroy_l3_table(&self, paddr: u64) {
         let l3 = phys_to_virt(paddr) as *mut u64;
@@ -1481,7 +1575,7 @@ impl Aarch64Vmm {
                 }
             }
         }
-        self.free_table(paddr);
+        self.free_table_locked(paddr);
     }
 }
 

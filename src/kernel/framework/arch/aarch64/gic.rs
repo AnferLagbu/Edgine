@@ -82,6 +82,20 @@ const SPI_BASE: u32 = 32;
 /// ARM 架构定时器 PPI (Non-secure Physical Timer)
 const TIMER_PPI: u32 = 30; // CNTPNSIRQ
 
+/// 内核使用的 SGI 编号 (Software Generated Interrupt, GICv3 ID 0-15)。
+///
+/// SGI/PPI 的使能位属**每核 Redistributor** 私有状态 (`GICR_ISENABLER0`), 故全部
+/// 内核 SGI 必须由每核初始化入口 [`init_per_cpu`] 显式使能。编号集中定义于本模块
+/// (GIC 资源归属), 供 `exception` (接收路由) 与 `barrier` (触发) 复用, 避免编号分散
+/// 在多处导致某路 SGI 漏使能 (历史缺陷: SGI 13/14 从未使能, 接收侧永不响应)。
+pub const TLB_SHOOTDOWN_SGI: u32 = 0xFD & 0xF;
+
+/// 跨核重新调度 SGI 编号 (对应 x86_64 向量 `0xFE`, 低位 4 bit = 14)。
+pub const RESCHEDULE_SGI: u32 = 0xFE & 0xF;
+
+/// 栏栈恢复专用 SGI 编号 (`0x82` 语义的 aarch64 等价, 取 SGI 7)。
+pub const BARRIER_RECOVERY_SGI: u32 = 7;
+
 /// Redistributor 唤醒自旋上限.
 ///
 /// 唤醒应在数十次读内完成; 超限即判定未唤醒, 由 [`init`] 显式报错而非静默继续.
@@ -151,17 +165,6 @@ fn redist_frames(cpu_index: u32) -> (u64, u64) {
 pub unsafe fn gicr_sgi_read(offset: u64) -> u32 {
     // SAFETY: GICR_SGI_BASE 为引导期探测得到的 SGI 帧高半区别名, 已映射。
     unsafe { gicr_read_at(GICR_SGI_BASE.load(Ordering::Acquire), offset) }
-}
-
-#[inline(always)]
-/// 写入 GICv3 Redistributor SGI 帧寄存器 (启动核 CPU0)。
-///
-/// # Safety
-///
-/// 调用者需确保 GICR_SGI_BASE (0x080B_0000) 已映射且 Redistributor 已唤醒。
-pub unsafe fn gicr_sgi_write(offset: u64, val: u32) {
-    // SAFETY: GICR_SGI_BASE 为引导期探测得到的 SGI 帧高半区别名, 已映射。
-    unsafe { gicr_write_at(GICR_SGI_BASE.load(Ordering::Acquire), offset, val) }
 }
 
 // ============================================================================
@@ -323,6 +326,20 @@ pub unsafe fn enable_timer_ppi(sgi: u64) {
     }
 }
 
+/// 使能指定 CPU SGI 帧中的一路 SGI。
+///
+/// `sgi` 为目标 CPU 的 SGI 帧基地址 (由 [`redist_frames`] 推算); `intid` 为 SGI
+/// 编号 (0-15), 取自本模块的 `*_SGI` 常量。
+///
+/// # Safety
+///
+/// 调用前需确保 CPU Interface 已初始化，`sgi` 指向已映射的 GICR SGI 帧。
+pub unsafe fn enable_sgi(sgi: u64, intid: u32) {
+    unsafe {
+        gicr_write_at(sgi, GICR_ISENABLER0, 1u32 << (intid % 32));
+    }
+}
+
 /// 获取中断 ID (IAR) — 用于 IRQ handler
 pub fn acknowledge() -> u32 {
     let iar: u64;
@@ -358,10 +375,13 @@ pub fn deactivate(intid: u32) {
 }
 
 /// 初始化指定 CPU 的 GICv3 per-CPU 部分:
-/// Redistributor + CPU Interface + Timer PPI。
+/// Redistributor + CPU Interface + Timer PPI + 全部内核 SGI。
 ///
 /// BSP 经 [`init`] 完成启动核初始化 (内含 `init_per_cpu(0)`);
 /// 次核上线后由 SMP 启动路径调用本函数, 以 `cpu_index` 定位自身 Redistributor 帧。
+///
+/// 本函数是**每核中断能力的唯一入口**: 返回 `Ok` 后该核可接收定时器 PPI 与全部
+/// 内核 SGI (`TLB_SHOOTDOWN_SGI` / `RESCHEDULE_SGI` / `BARRIER_RECOVERY_SGI`)。
 ///
 /// # Safety
 ///
@@ -372,6 +392,13 @@ pub unsafe fn init_per_cpu(cpu_index: u32) -> Result<(), &'static str> {
         init_redistributor(rd, sgi)?;
         init_cpu_interface();
         enable_timer_ppi(sgi);
+        // 每核显式使能全部内核 SGI: SGI/PPI 使能位是 per-CPU Redistributor 私有
+        // 状态, 缺任一路则该核永不响应对应 IPI。BSP 与 AP 共用本入口, 避免"仅
+        // 启动核使能"的分散缺陷 (历史: SGI 13/14 从未使能 ⇒ 跨核 TLB 失效接收侧
+        // 不响应, 延迟释放帧永久滞留)。
+        enable_sgi(sgi, TLB_SHOOTDOWN_SGI);
+        enable_sgi(sgi, RESCHEDULE_SGI);
+        enable_sgi(sgi, BARRIER_RECOVERY_SGI);
     }
     Ok(())
 }

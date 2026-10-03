@@ -29,16 +29,13 @@
 //! - 栏栈域已注册 (PMM / PROC)
 //! - `src/kernel/barrier/` 模块可用 (跨架构通用)
 
-/// 栏栈恢复专用的 SGI ID (Software Generated Interrupt 7)
-///
-/// GICv3 定义 SGI ID 0-15 可用于 IPI, 此处选取 ID 7 作为栏栈恢复专用.
-/// 需确保不与调度器 IPI 等冲突.
-pub const BARRIER_RECOVERY_SGI: u64 = 7;
-
 /// 触发栏栈恢复 SGI (运行时使用)
 ///
 /// 向自身发送 SGI 7, 将由 IRQ handler 中的 `barrier_sgi_handler()` 处理.
 /// 调用后, 中断返回 (eret) 将回到本函数调用点.
+///
+/// SGI 编号取自 [`super::gic::BARRIER_RECOVERY_SGI`], 使能由每核入口
+/// [`super::gic::init_per_cpu`] 统一完成 (不再由本模块单独使能).
 ///
 /// # Safety
 ///
@@ -53,9 +50,13 @@ pub const BARRIER_RECOVERY_SGI: u64 = 7;
 pub fn barrier_trigger_recovery() {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
-        // SGI 7, 目标: 当前 CPU (Aff0), IRM=0 (不广播)
-        let sgi: u64 = (BARRIER_RECOVERY_SGI << 24)   // INTID = 7
-                      | (1u64 << 16); // TargetList: Aff0=0
+        // SGI 7 定向发往**当前 CPU** (IRM=0, 不广播)。ICC_SGI1R_EL1 的字段布局为
+        // INTID[27:24] / Aff1[23:16] / TargetList[15:0]: 目标的 Aff0 必须编码为
+        // TargetList 的对应位 (`1 << aff0`); 历史缺陷曾误置入 [23:16] (Aff1), 会
+        // 寻址到不存在的簇, SGI 永不投递 (与 `send_ipi` 同族, 已一并修正)。
+        let cpu = crate::framework::cpu::arch::cpu_id();
+        let sgi: u64 = (u64::from(super::gic::BARRIER_RECOVERY_SGI) << 24) // INTID = 7
+                      | (1u64 << (cpu & 0xF)); // TargetList: 当前核 Aff0
         core::arch::asm!(
             "msr icc_sgi1r_el1, {sgi}",
             "isb",
@@ -86,23 +87,4 @@ pub fn barrier_sgi_handler() -> i32 {
     }
     // SAFETY: `recovery_try_recover_from_idt` 是有效的 C ABI 函数指针; 参数列表与声明一致
     unsafe { recovery_try_recover_from_idt() }
-}
-
-/// 使能 GICv3 SGI 7 (栏栈恢复专用)
-///
-/// 在 GICv3 初始化完成后调用, 确保 SGI 7 可以触发 IRQ 中断.
-/// SGI 默认使能 (GICR_ISENABLER0 bit 7 = 1 需要通过 write_volatile 设置),
-/// 但为了安全性, 显式使能.
-///
-/// # Safety
-///
-/// 调用前需确保 GICv3 已初始化，Redistributor 寄存器 (GICR_SGI_BASE) 可访问。
-pub unsafe fn enable_barrier_sgi() {
-    unsafe {
-        // SGI 7 在 GICR_ISENABLER0 的第 7 位
-        // GICv3 规范: SGI 始终使能, 但显式设置确保万无一失
-        let enable_reg = super::gic::GICR_ISENABLER0;
-        let current = super::gic::gicr_sgi_read(enable_reg);
-        super::gic::gicr_sgi_write(enable_reg, current | (1u32 << 7));
-    }
 }

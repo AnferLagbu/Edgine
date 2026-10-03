@@ -18,7 +18,7 @@
 | D4 未追平帧存放 | **全局 pending 表（代随帧记录）** | 消除 A 档"缓冲溢出即立即释放"的正确性漏洞（§2.2 L1） |
 | D5 排空点 | **`release_lock` 出口唯一** | 额外排空点（tick / 返回用户态前）本轮不引入，登记为扩展项（§6） |
 | D6 编译门 | **`#[cfg(feature = "smp")]` → 运行时门控** | 全仓无任何构建启用 `smp`（§2.2 L2），不改为运行时门控则本工程**无运行验证载体** |
-| D7 aarch64 | **接收侧同语义；发送侧不建平行实现** | aarch64 无 AP 上线路径（`SMP_ENABLED` 恒 false），发送侧改动不可运行验证 |
+| D7 aarch64 | **接收侧同语义；发送侧不建平行实现** | ~~aarch64 无 AP 上线路径（`SMP_ENABLED` 恒 false），发送侧改动不可运行验证~~ **（前提已订正）** DECISION-082 使 aarch64 次核上线；DECISION-083 抽公共层 `mm/deferred_free.rs` 并接入发送侧，已在 QEMU `-smp 2` 运行验证（不建平行实现的约束仍有效） |
 | D8 `destroy_page_table` | **保持现状不动；缺口移交 D 立项** | 该路径的**框架**（帧数上界十万级 vs 定长缓冲）与"mm 生命周期契约"两项都已由 [cr3-lifetime-ownership.md](./cr3-lifetime-ownership.md) 承接（§3 S-6）。原"方案 A（保持现状即安全）"的前提（destroy 时机正确）经核实不成立 ⇒ 本工程不对该路径作任何处置 |
 | D9 与 D 档的次序 | **B 档（本文件）先行**，随后 D2+、再 D3 | ① 两者**正交**（见 §3 S-4 详情：`ref_count == 0` 与"TLB 已追平"须 AND），B 档不因 D2+ 返工；② HEAD 不含 `defer_free`（L1/L2/L3 由 A 档未提交改动引入）⇒ 先行即就地收口活跃缺陷；③ 约束不变：同在 framework 子树，**不可并行**。依据见 [cr3-lifetime-ownership.md](./cr3-lifetime-ownership.md) §7 |
 | D10 deferred 帧容器 | **侵入式帧链表（无容量上限）** | 取代原"栈上定长缓冲 + 溢出即释放"：定长容器在"锁内不能等"的约束下**不存在任何正确的溢出动作**（批次代只能在 `release_lock` 处发布，§2.3 P1；锁内等待会与 IF=0 自旋等锁的对端互等死锁，§2.4）⇒ 溢出帧除"记住"别无出路，**容器容量本身就是正确性问题**。帧自身即链表节点（经 `physmap` 写 `(gen, next)`），静态开销 O(1)，一次消除 §2.2 L1。依据：§7.4 A7-3①（外部对照亦要求"容器无上限"）+ §3 S-4 修订 + §6 路线次序 |
@@ -217,7 +217,7 @@
 - **ELF 装载器复用判据不校验 U 位（S-11 的放大器）**：`load_elf_from_memory` 以 `existing_phys = virt_to_phys(cr3, vaddr) != 0` 判定"复用现有页"并**跳过映射**，不校验目标 PTE 的 USER 位；一旦命中无 USER 的内核映射（S-11 情形），用户代码段即**静默**无映射。本轮**不修**：判据收紧（要求 U=1 且权限兼容）与 fork / CoW 复用路径耦合，须单独设计。
 - **`vmm_map_user_page` 污染内核页表（预存）**：该函数同时调 `vmm_map_page_in_table(cr3, …)` 与全局 `vmm_map_page(vaddr, …)`，把**用户 VA 映射写进内核页表**（boot 日志中可见针对内核高半区地址的 `huge split entry=0xFFFF80000…`，其归因未逐一核实）。本轮**不修**（与本次缺陷无因果关系）。
 - **TSS `RSP0` 与内核栈 VA 约定的复核（前序裁定登记，随 D5 已闭合）**：用户态返回路径 [switch.asm](../../src/kernel/framework/proc/switch.asm) 原对当前栈做 `add rsp, KERNEL_BASE` 别名修正（B05-55），而 `TSS.RSP0` 由 [user_proc.rs](../../src/kernel/framework/proc/user_proc.rs) / [scheduler.rs](../../src/kernel/framework/proc/scheduler.rs) / [scheduler_ex.rs](../../src/kernel/framework/proc/scheduler_ex.rs) 三处 `set_kernel_stack` 分别写入——三处是否恒为同一 VA 约定（高半区别名 vs 低 LMA）**未逐点核实**；若不一致，会在同一物理栈上产生双重别名位移。**D5 处置结果**：三处调用点已全部收敛到 [cpu/arch.rs](../../src/kernel/framework/cpu/arch.rs) 的 `set_kernel_stack`（单点同时写 `TSS.RSP0` 与 `SyscallPerCpu.kernel_rsp`，值恒为高半区 VA），别名修正改为**按 RSP 实际半区条件转换** ⇒ 双重位移前提消除，本项闭合（依据见 D5 方案 ① 与详情 ①）。
-- aarch64 无 AP 上线路径 ⇒ `SMP_ENABLED` 恒 false，本工程 aarch64 侧**仅编译验证**，不得标注为已验证。
+- ~~aarch64 无 AP 上线路径 ⇒ `SMP_ENABLED` 恒 false，本工程 aarch64 侧**仅编译验证**，不得标注为已验证。~~ **（前提已订正）** DECISION-082（aarch64 SMP bring-up）使 aarch64 次核上线，`SMP_ENABLED` 不再恒 false；DECISION-083（[aarch64-tlb-shootdown-send.md](./aarch64-tlb-shootdown-send.md)）将发送侧接入架构无关公共层 `mm/deferred_free.rs`，并在 QEMU `-smp 2` 下**运行验证**（`[SMP] TLB shootdown #N gen=… targets=…` 与 `IRQ: intid=13`）。**注意**：「可收 SGI 13」并非 DECISION-082 自动成立 —— 施工期实证发现 SGI 13/14 从未使能且 `send_ipi` 目标编码有误，由 DECISION-083 的 ST-09 修复（详见该文件前提订正）。
 - `vmm_x86_64.rs` 在 HEAD 即存在的 fmt 违规。
 - 扩展项：页级 shootdown（替代 `tlb_flush_all`）、额外排空点（tick / 返回用户态前）、`destroy_page_table` 的 mm 生命周期屏障。
 - 容器路线的**工程最优次序**（已裁定）：**甲（侵入式帧链表，即本工程 S-4）→ 乙（容器/所有权下沉 PMM，随 D2+ 一并做；届时 D5"排空点唯一在 `release_lock`"须一并重裁）→ 丁（`destroy_page_table` 分片重写：有界批量 + 批次间同步等待 + 可恢复四级遍历游标，即 Asterinas `Cursor` 形态，独立立项）**；**丙不采纳**（"定长表 + destroy 溢出即释放"不修复 L1，与 §7.4 A7-3①"容器无上限"的结论冲突）。

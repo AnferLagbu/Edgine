@@ -216,7 +216,14 @@ impl InterruptArch for Aarch64 {
     )]
     /// GICv3 SGI 单播 (ICC_SGI1R_EL1)。
     fn send_ipi(target_cpu: u32, vector: u8) {
-        let sgi: u64 = ((vector & 0xF) as u64) << 24 | (1u64 << (16 + (target_cpu & 0xF)));
+        // ICC_SGI1R_EL1 字段: INTID[27:24], Aff1[23:16], TargetList[15:0]。
+        // 同簇内按 Aff0 单播: 目标的 Aff0 编码为 **TargetList 的对应位**
+        // (Aff1/Aff2/Aff3 均为 0), 即 `1 << aff0`; 误置于 [23:16] (Aff1) 会
+        // 寻址到不存在的簇, SGI 永不投递。
+        // SIMPLIFIED: 仅按 Aff0 同簇寻址 (接口 `send_ipi` 目标参数窄化为低位);
+        //   影响面: 多簇 (>16 核带亲和性) 拓扑下无法寻址跨簇核; 何时需扩展:
+        //   引入 cpu_index↔(Aff0,Aff1,Aff2,Aff3) 映射, 按目标 MPIDR 填 Aff1/2/3。
+        let sgi: u64 = ((vector & 0xF) as u64) << 24 | (1u64 << (target_cpu & 0xF));
         // SAFETY: msr icc_sgi1r_el1 触发 GICv3 SGI；
         // 目标 CPU 与 vector 已 mask 至合法范围。
         unsafe {

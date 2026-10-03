@@ -245,6 +245,16 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 warn "[aarch64] 未观察到 online CPUs: 2 (SMP 次核未上线?)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+            # DECISION-083: aarch64 TLB shootdown 发送路径里程碑 (ST-07). 双核在线后
+            # 的页表拆除应发布新代并广播 SGI 13, 且接收侧 per-CPU SGI 使能后确实响应
+            # (历史缺陷: SGI 13/14 从未在 GICR_ISENABLER0 使能 ⇒ 接收侧静默, 缺失即
+            # 回归). 期望形如 `[SMP] TLB shootdown #N gen=… targets=…`.
+            if grep -q "\[SMP\] TLB shootdown" "$A64_LOG"; then
+                ok "[aarch64] TLB shootdown 发送路径生效 (DECISION-083)"
+            else
+                warn "[aarch64] 未观察到 TLB shootdown 里程碑 (发送路径未触发?)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
             # 批次 Z ④: 验证 services virtio-net 经 NetOps 安全桥注册链路
             # (framework 侧单向拉取日志, 由 framework/net/init/probe.rs 输出)
             if grep -q "nic: probed successfully (services bridge)" "$A64_LOG"; then
