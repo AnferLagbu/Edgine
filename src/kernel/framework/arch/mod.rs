@@ -51,6 +51,13 @@ pub mod x86_64;
 #[cfg(target_arch = "aarch64")]
 pub mod aarch64;
 
+/// GICv3 初始化判据 — 架构中立纯逻辑 (无 asm / MMIO)。
+///
+/// `aarch64/gic.rs` 读寄存器后交本模块判定; 门控含 `host-test` 以便 host 侧
+/// 逐支路单元测试失败/自校正判据 (ISSUE-RT-002)。
+#[cfg(any(target_arch = "aarch64", feature = "host-test"))]
+pub mod gic_logic;
+
 /// D7: Shadow Stack (CET) + 控制流完整性
 pub mod shadow_stack;
 

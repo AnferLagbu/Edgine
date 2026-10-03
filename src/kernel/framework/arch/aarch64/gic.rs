@@ -9,6 +9,7 @@
 use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicU64, Ordering};
 
+use crate::framework::arch::gic_logic;
 use crate::framework::racy_cell::RacyCell;
 
 // ============================================================================
@@ -59,9 +60,6 @@ const GICD_ITARGETSR: u64 = 0x0800; // Interrupt Target
 const GICD_ICFGR: u64 = 0x0C00; // 中断配置 (电平/边沿触发)
 const GICD_IROUTER: u64 = 0x6000; // 亲和路由 (GICv3, 每中断 64 bit)
 
-/// `GICD_CTLR` 亲和路由使能位 (ARE_S bit4 / ARE_NS bit5)
-const GICD_CTLR_ARE_MASK: u32 = (1 << 4) | (1 << 5);
-
 /// GICR 寄存器偏移 (SGI + PPI)
 ///
 /// 注: 不定义 GICR_CTLR (0x0000) — 其 bit0 为 EnableLPIs (LPI 使能), 并非
@@ -79,9 +77,6 @@ const GICR_ICFGR1: u64 = 0x0C04; // Configuration for PPIs
 const PPI_BASE: u32 = 16;
 const SPI_BASE: u32 = 32;
 
-/// ARM 架构定时器 PPI (Non-secure Physical Timer)
-const TIMER_PPI: u32 = 30; // CNTPNSIRQ
-
 /// 内核使用的 SGI 编号 (Software Generated Interrupt, GICv3 ID 0-15)。
 ///
 /// SGI/PPI 的使能位属**每核 Redistributor** 私有状态 (`GICR_ISENABLER0`), 故全部
@@ -95,11 +90,6 @@ pub const RESCHEDULE_SGI: u32 = 0xFE & 0xF;
 
 /// 栏栈恢复专用 SGI 编号 (`0x82` 语义的 aarch64 等价, 取 SGI 7)。
 pub const BARRIER_RECOVERY_SGI: u32 = 7;
-
-/// Redistributor 唤醒自旋上限.
-///
-/// 唤醒应在数十次读内完成; 超限即判定未唤醒, 由 [`init`] 显式报错而非静默继续.
-const REDIST_WAKE_SPIN_LIMIT: u32 = 1_000_000;
 
 // ============================================================================
 // 寄存器读写辅助
@@ -235,7 +225,11 @@ pub unsafe fn init_distributor() {
 ///
 /// `rd` / `sgi` 分别指向目标 CPU 的 RD 帧与 SGI 帧基地址 (由 `redist_frames` 推算)。
 ///
-/// 返回 `Err(原因)` 表示 redistributor 唤醒未在限定自旋内完成。
+/// # Errors
+///
+/// 返回 `Err(原因)` 表示 redistributor 唤醒未在限定自旋内完成
+/// (`GICR_WAKER.ChildrenAsleep` 未在 `REDIST_WAKE_SPIN_LIMIT` 内清零),
+/// `原因` 为中文诊断串, 由调用方 fail-fast。
 ///
 /// # Safety
 ///
@@ -247,11 +241,13 @@ pub unsafe fn init_redistributor(rd: u64, sgi: u64) -> Result<(), &'static str> 
 
         gicr_write_at(rd, GICR_WAKER, waker & !(1 << 1)); // 清除 ProcessorSleep (bit 1)
 
-        // 等待 ChildrenAsleep == 0; 超限判定唤醒失败, 显式返回错误 (不静默继续)
+        // 等待 ChildrenAsleep == 0; 超限判定唤醒失败, 显式返回错误 (不静默继续).
+        // 掩码与超限判据交由架构中立纯逻辑 [`gic_logic`] (host 侧可逐边界实证),
+        // 本处仅负责读寄存器与自旋.
         let mut wait_count: u32 = 0;
-        while gicr_read_at(rd, GICR_WAKER) & (1 << 2) != 0 {
+        while gicr_read_at(rd, GICR_WAKER) & gic_logic::GICR_WAKER_CHILDREN_ASLEEP_MASK != 0 {
             wait_count += 1;
-            if wait_count > REDIST_WAKE_SPIN_LIMIT {
+            if gic_logic::wake_timed_out(wait_count) {
                 return Err("GICR_WAKER.ChildrenAsleep 未在限定自旋内清零");
             }
             core::hint::spin_loop();
@@ -276,9 +272,9 @@ pub unsafe fn init_redistributor(rd: u64, sgi: u64) -> Result<(), &'static str> 
         gicr_write_at(sgi, GICR_ICFGR1, icfgr1_val & !(0x3 << ppi30_shift));
 
         // 5. Timer PPI 低优先级
-        let prio_addr = GICR_IPRIORITYR + ((TIMER_PPI as u64 / 4) * 4);
+        let prio_addr = GICR_IPRIORITYR + ((gic_logic::TIMER_PPI as u64 / 4) * 4);
         let prio = gicr_read_at(sgi, prio_addr);
-        let shift = ((TIMER_PPI % 4) * 8) as u64;
+        let shift = ((gic_logic::TIMER_PPI % 4) * 8) as u64;
         gicr_write_at(sgi, prio_addr, (prio & !(0xFF << shift)) | (0x40 << shift));
 
         // 6. GICv3 redistributor 的"使能"由清 ProcessorSleep + ChildrenAsleep
@@ -321,7 +317,7 @@ pub unsafe fn init_cpu_interface() {
 /// 调用前需确保 CPU Interface 已初始化，`sgi` 指向已映射的 GICR SGI 帧。
 pub unsafe fn enable_timer_ppi(sgi: u64) {
     unsafe {
-        let bit = 1u32 << (TIMER_PPI % 32);
+        let bit = 1u32 << (gic_logic::TIMER_PPI % 32);
         gicr_write_at(sgi, GICR_ISENABLER0, bit);
     }
 }
@@ -383,6 +379,11 @@ pub fn deactivate(intid: u32) {
 /// 本函数是**每核中断能力的唯一入口**: 返回 `Ok` 后该核可接收定时器 PPI 与全部
 /// 内核 SGI (`TLB_SHOOTDOWN_SGI` / `RESCHEDULE_SGI` / `BARRIER_RECOVERY_SGI`)。
 ///
+/// # Errors
+///
+/// 返回 `Err(原因)` 表示本核 redistributor 唤醒失败 (见 [`init_redistributor`]),
+/// 由调用方决定 fail-fast 或报错下线该核。
+///
 /// # Safety
 ///
 /// 仅在目标 CPU 上调用，需确保 MMU 已启用且 GIC MMIO 区域已映射。
@@ -405,8 +406,14 @@ pub unsafe fn init_per_cpu(cpu_index: u32) -> Result<(), &'static str> {
 
 /// 完整 GIC 初始化流程
 ///
-/// 返回 `Ok(())` 表示全部初始化步骤完成且后置条件回读校验通过;
-/// 任一环节失败返回 `Err(原因)`, 由调用方 (boot 入口) fail-fast.
+/// 返回 `Ok(())` 表示全部初始化步骤完成且后置条件回读校验通过。
+///
+/// # Errors
+///
+/// 任一环节失败返回 `Err(原因)`: per-CPU (redistributor) 初始化失败
+/// (见 [`init_per_cpu`]), 或后置条件回读校验未通过
+/// (见 [`gic_logic::verify_post_conditions`])。`原因` 为中文诊断串,
+/// 由调用方 (boot 入口) fail-fast。
 ///
 /// # Safety
 ///
@@ -430,29 +437,15 @@ pub unsafe fn init() -> Result<(), &'static str> {
 /// 需确保 MMU 已启用且 GIC MMIO 区域已映射。
 unsafe fn verify_post_conditions() -> Result<(), &'static str> {
     unsafe {
-        // GICD_CTLR.EnableGrp1NS (bit1) 应已置位 (init_distributor 已写入 0x3)
-        if gicd_read(GICD_CTLR) & 0b10 == 0 {
-            return Err("GICD_CTLR.EnableGrp1 未置位");
-        }
-
-        // GICR_WAKER.ChildrenAsleep (bit2) 应已清零
-        if gicr_read_at(GICR_BASE.load(Ordering::Acquire), GICR_WAKER) & (1 << 2) != 0 {
-            return Err("GICR_WAKER.ChildrenAsleep 未清零");
-        }
-
-        // GICR_ISENABLER0 应已使能 Timer PPI (bit30)
-        if gicr_sgi_read(GICR_ISENABLER0) & (1u32 << (TIMER_PPI % 32)) == 0 {
-            return Err("GICR_ISENABLER0 未使能 Timer PPI");
-        }
-
-        // ICC_IGRPEN1_EL1.Enable (bit0) 应已使能
+        // 逐项回读关键寄存器实测值, 判定交由架构中立纯逻辑 [`gic_logic`] ——
+        // 该判据在 host 侧被逐支路单元测试 (ISSUE-RT-002 确定性实证), 与本处同源.
+        let gicd_ctlr = gicd_read(GICD_CTLR);
+        let gicr_waker = gicr_read_at(GICR_BASE.load(Ordering::Acquire), GICR_WAKER);
+        let gicr_isenabler0 = gicr_sgi_read(GICR_ISENABLER0);
         let igrpen1: u64;
         core::arch::asm!("mrs {}, icc_igrpen1_el1", out(reg) igrpen1);
-        if igrpen1 & 0x1 == 0 {
-            return Err("ICC_IGRPEN1_EL1 未使能");
-        }
+        gic_logic::verify_post_conditions(gicd_ctlr, gicr_waker, gicr_isenabler0, igrpen1)
     }
-    Ok(())
 }
 
 // ============================================================================
@@ -639,7 +632,7 @@ unsafe fn gicd_write64(offset: u64, val: u64) {
 /// 调用前需确保 Distributor 已初始化且 GICD MMIO 已映射。
 unsafe fn route_spi_to_cpu0(irq: u32) {
     unsafe {
-        if gicd_read(GICD_CTLR) & GICD_CTLR_ARE_MASK != 0 {
+        if gic_logic::uses_affinity_routing(gicd_read(GICD_CTLR)) {
             // 亲和路由模式: IROUTER[irq] 为 64 位, Affinity 全 0 → CPU0
             gicd_write64(GICD_IROUTER + u64::from(irq) * 8, 0);
         } else {

@@ -111,6 +111,11 @@ impl PsciError {
 /// 上电 `mpidr` 指定的 CPU 至物理地址 `entry_pa`, `context_id` 透传至入口 x0
 ///
 /// 前置校验 PSCI 版本; 固件不支持时返回 [`PsciError::NotSupported`].
+///
+/// # Errors
+///
+/// 固件不支持 PSCI 时返回 [`PsciError::NotSupported`]; 否则返回 PSCI `CPU_ON`
+/// 调用码经 [`PsciError::from_i64`] 映射得到的错误。
 pub fn cpu_on(mpidr: u64, entry_pa: u64, context_id: u64) -> Result<(), PsciError> {
     if psci_version().is_none() {
         return Err(PsciError::NotSupported);
