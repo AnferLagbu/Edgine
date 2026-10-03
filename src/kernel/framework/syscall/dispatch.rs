@@ -30,6 +30,37 @@ use crate::framework::constants::limits::FB_MMAP_ADDR_MAX;
 static FIRST_USER_SYSCALL_LOGGED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// APS-05: 双核并发 EL0 观测计数 (每核一份, 有界).
+///
+/// 用户态 syscall 只能由 EL0 任务发起, 故"某核观测到 EL0 syscall"即"该核确有
+/// 用户任务运行于 EL0"的证据. 本计数使每核前 [`EL0_OBSERVE_LIMIT`] 次 syscall
+/// 各打印一行 `[SMP] EL0 pid=N cpu=M`; `scripts/qemu_boot_test.sh` 以 `-smp 2`
+/// 断言 `cpu=0` 与 `cpu=1` 成对出现 (双核并发 EL0 判据). 上限化避免忙等用户
+/// 任务刷屏; 索引 = `arch::cpu_id` 取模 `MAX_CPUS`.
+static EL0_OBSERVED_PER_CPU: [core::sync::atomic::AtomicU32; crate::framework::config::MAX_CPUS] =
+    [const { core::sync::atomic::AtomicU32::new(0) }; crate::framework::config::MAX_CPUS];
+
+/// 每核打印上限 (见 [`EL0_OBSERVED_PER_CPU`]).
+const EL0_OBSERVE_LIMIT: u32 = 4;
+
+/// 记录一次来自 EL0 的 syscall 观测 (有界诊断, 见 [`EL0_OBSERVED_PER_CPU`]).
+///
+/// 由两个架构的 EL0 syscall 入口调用: x86_64 `syscall_dispatch_from_frame`、
+/// aarch64 `arch/aarch64/exception.rs::svc_handler` (刻意不置于架构中立的
+/// `syscall_dispatch`, 以免内核侧 `usermode::dispatch_syscall` 调用混入观测).
+pub fn observe_el0_syscall() {
+    let cpu = crate::framework::cpu::arch::cpu_id() as usize % crate::framework::config::MAX_CPUS;
+    let counter = &EL0_OBSERVED_PER_CPU[cpu];
+    // 同核 syscall 路径不在中断中重入 ⇒ 计数无并发写者, load/store 足够.
+    let seen = counter.load(Ordering::Relaxed);
+    if seen >= EL0_OBSERVE_LIMIT {
+        return;
+    }
+    counter.store(seen + 1, Ordering::Relaxed);
+    let pid = crate::framework::proc::SCHEDULER.current().unwrap_or(0);
+    crate::klog_info!(Kernel, "[SMP] EL0 pid={} cpu={}", pid, cpu);
+}
+
 #[cfg(target_arch = "x86_64")]
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
@@ -38,6 +69,8 @@ static FIRST_USER_SYSCALL_LOGGED: core::sync::atomic::AtomicBool =
 ///
 /// 调用者处于内核上下文. `ptr` 是已校验的用户态字符串指针.
 pub unsafe extern "C" fn syscall_dispatch_from_frame(frame: *mut InterruptFrame) {
+    // APS-05: 双核并发 EL0 观测 (有界诊断, 见 `observe_el0_syscall`).
+    observe_el0_syscall();
     // ═══ 诊断: syscall dispatch 入口 (仅调试构建, 生产不包含) ═══
     #[cfg(all(target_arch = "x86_64", feature = "debug_syscall"))]
     unsafe {

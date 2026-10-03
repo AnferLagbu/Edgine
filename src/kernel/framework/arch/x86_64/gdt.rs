@@ -838,12 +838,25 @@ pub fn gdt_init_ap(cpu_index: u32) {
             ap.syscall.user_pml4 = current_cr3;
         }
 
+        // 内核态 GS 基址约定与 BSP `gdt_init` 完全一致 (见该处注释):
+        //   内核态: IA32_GS_BASE = per_cpu_addr, IA32_KERNEL_GS_BASE = 0
+        //   用户态: IA32_GS_BASE = 0,            IA32_KERNEL_GS_BASE = per_cpu_addr
+        // 此前本函数只写 IA32_KERNEL_GS_BASE, 使 AP 内核态 IA32_GS_BASE 保持
+        // `mov gs` 遗留的 0 ⇒ `process_switch_asm` 的 `[gs:TRAMPOLINE_TOP_OFF]`
+        // 读到线性地址 0x20 的垃圾值, 用户态出口栈错乱 (首次上下文切换即
+        // #PF → #DF); 且用户态 syscall 的 swapgs 也拿不到 per-CPU 基址。
+        #[expect(
+            clippy::items_after_statements,
+            reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
+        )]
+        const IA32_GS_BASE: u32 = 0xC0000101;
         #[expect(
             clippy::items_after_statements,
             reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
         )]
         const IA32_KERNEL_GS_BASE: u32 = 0xC0000102;
-        crate::framework::cpu::msr::write_msr(IA32_KERNEL_GS_BASE, &ap.syscall as *const _ as u64);
+        crate::framework::cpu::msr::write_msr(IA32_GS_BASE, &ap.syscall as *const _ as u64);
+        crate::framework::cpu::msr::write_msr(IA32_KERNEL_GS_BASE, 0);
     }
 }
 

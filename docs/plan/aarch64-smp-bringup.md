@@ -29,7 +29,7 @@
 |---|---|---|
 | E1 | aarch64 无 AP 上线路径 | **成立**。四处缺口见 §1（无 CPU_ON / 无次核汇编入口 / 无 `smp_init.rs` / BSP 未接 `smp::init()`） |
 | E2 | SMP 抽象层可复用（双架构共享） | **成立**。`framework/smp/mod.rs` 的 `init()` / `register_cpu()` / IPI 发送 / 代计数 / 探针全套与架构无关，仅 `arch!(cpu_id())` 经 `CoreArch` 抽象（aarch64 = `MPIDR_EL1` Aff0） |
-| E3 | SGI 响应分发已存在 | **成立**。`exception.rs::irq_handler()` 已分发 SGI 7（栏栈恢复）/ SGI 13（TLB）/ SGI 14（reschedule），缺的只是"能响应它们的核" |
+| E3 | SGI 响应分发已存在 | **成立（但分发不等于可响应，见订正）**。`exception.rs::irq_handler()` 已分发 SGI 7（栏栈恢复）/ SGI 13（TLB）/ SGI 14（reschedule）。订正（DECISION-083 施工期实证）：分发分支存在**并不等于** SGI 可达 —— SGI 13/14 从未在 per-CPU `GICR_ISENABLER0` 使能，接收侧 `intid == 13` 分支永不触发；且发送侧目标编码有误。二者由 DECISION-083 ST-09 修复（使能收敛到 `gic::init_per_cpu` + 修正 `ICC_SGI1R_EL1` 目标位） |
 | E4 | GIC 初始化函数可参数化复用 | **成立但需改造**。`gic.rs` 的 `init_distributor()` / `init_redistributor()` / `init_cpu_interface()` / `enable_timer_ppi()` 已拆分良好，但 `init_redistributor()` **仅作用于当前核单一 `GICR_BASE` 静态量**（未按 CPU 号偏移），次核需按 `GICR stride = 128 KiB` 定位自己的 RD/SGI frame |
 | E5 | BSP 运行时页表可供次核复用 | **成立**。`mmu.rs` 的运行时根表 [`L0_TABLE`](../../src/kernel/framework/arch/aarch64/mmu.rs#L49) 链接于高半区，`virt_to_phys(L0_TABLE...)` 可得其**物理基址**（[`alloc_user_page_table()`](../../src/kernel/framework/arch/aarch64/mmu.rs#L211-L217) 即此形态）。`start.S` 的引导页表 `_boot_l0`（`.bootbss`，VMA==LMA==PA）与运行时表映射等价 ⇒ 次核可复用 BSP 已建好的运行时表物理基址，**跳过 `mmu::init()`** |
 | E6 | 次核 MPIDR 目标来源需新增 | **成立**。`framework/dtb.rs` 的 [`DtbInfo`](../../src/kernel/framework/dtb.rs#L62-L74) 仅含 memory / uart / gic_dist / gic_redist，**无 CPU 节点枚举能力**。次核目标 MPIDR 须新增 DTB `/cpus/cpu@N/reg` 解析，或回退 QEMU virt 约定 `mpidr = cpu_index`（Aff0 = 索引） |
@@ -47,9 +47,10 @@
   3. **页表 = 复用 BSP 运行时表物理基址**（E5）：次核 stub 从固定位置读取 BSP 写入的 `TTBR0_EL1` 值（= `virt_to_phys(L0_TABLE)`）装入自己的 `TTBR0_EL1`/`TTBR1_EL1`，并同装 `MAIR_EL1`/`TCR_EL1`，直接开 MMU 切高半区。**不**新建次核独立页表（避免双表并对齐 BSP 的恒等+高半区别名等价性）。
   4. **GIC = 参数化复用**（E4）：把 `init_redistributor()` 等改为按 CPU 号定位 `GICR` frame（stride 128 KiB），BSP 与 AP 共用同一代码路径。
   5. **验证强度**：满足 §2.3 六门槛；专项判据 = QEMU `-smp 2` 下打印 `[SMP] online CPUs: 2` 且 `smp_is_enabled() == true`。
-- **状态**：[]
+- **状态**：[X]
+- **详情（施工结论）**：批次 A–E 全部落地，SMP-01..SMP-10 全 `[X]` 收口；六门槛实测结果见 SMP-10 详情；专项判据 `[SMP] online CPUs: 2` 已进 CI（SMP-09）。本工程的范围声明（aarch64 TLB shootdown **发送路径**与 IPI/TLB 运行期验证不在内）仍如 §1 关键认知与裁定 5 详情。
 - **详情（裁定 3 的理由）**：次核自建页表意味着要在汇编或早期 Rust 里重新构造两套等价映射，既放大出错面（E5 的历史教训：TTBR1 根表形态错误曾导致内核从未进过异常处理），又与 BSP 映射产生不一致风险。复用 BSP 运行时表物理基址把"页表正确性"收敛为**单点已验证事实**，符合 §12.3 简约默认。
-- **详情（范围边界声明）**：aarch64 侧 **TLB shootdown 发送路径不在本工程范围**（见 §1 关键认知）。本工程交付后，aarch64 具备"多核在线 + 能收到 SGI"，但"主动发 SGI 13 请求他核失效 TLB"的调用面仍缺，作为风险项登记。
+- **详情（范围边界声明）**：aarch64 侧 **TLB shootdown 发送路径不在本工程范围**（见 §1 关键认知）。本工程交付后 aarch64 具备"多核在线"；"主动发 SGI 13 请求他核失效 TLB"的调用面仍缺，作为风险项登记。**订正（DECISION-083 施工期实证）**：初稿同时宣称"能收到 SGI" —— 该前提**不成立**，SGI 13/14 实际从未使能（接收侧静默）；发送路径 + SGI 使能/编码由后续工程 DECISION-083（[aarch64-tlb-shootdown-send.md](./aarch64-tlb-shootdown-send.md)）一并实装并运行验证。
 
 ## 任务清单
 
@@ -469,7 +470,7 @@ pub unsafe extern "C" fn ap_main(cpu_index: u64) -> ! {
 - **`mm/kpti_aarch64.rs` 单核假设 — 已复核（注释已订正 + 内存序结论）**：原注释「aarch64 无 SMP（`smp_init.rs` 仅 x86_64），故全局量用普通 `AtomicU64` 即可」已修正为「SMP 前提」章节（区分 boot 期发布字段与每核活跃值）。复核结论二分为：
   - **boot 期一次性发布、此后只读**（`ready` / `kernel_ttbr0` / `kernel_ttbr1` / `tramp_ttbr1`）：内存序**配对完整、通过** —— `kpti_init()` 以 `Release` 依次存三表后 `ready.store(1, Release)`；汇编表切换序列 `dsb ish → msr → isb → tlbi vmalle1is` 符合 ARM ARM。
   - **★ 每核活跃值**（`user_ttbr0` 偏移 24 / `tramp_save0` 40 / `tramp_save1` 48）：**结构性缺陷** —— 这三者属"每核当前活跃状态"，却存放于**单实例** `KPTI_GLOBALS`，且入口/出口汇编用普通 `str`/`ldr` 按固定偏移访问。多核并发 EL0 时，A 核入口保存的 `x3`/`x4`（用户栈/返回 PC 中转）与 B 核写入的用户页表会**跨核互相覆盖** ⇒ 用户寄存器损坏、以他核页表 `eret`。反证：同库 `mm/copy_user.rs` 的 `PER_CPU_EXCEPTION_CTX[cpu]` 已采用按核数组范式。**当前未爆发**：AP 上线后停在 idle、未调度用户任务，故无并发 EL0。**已立项为独立专项**（KPTI 入口/出口状态 per-CPU 化，见文末「后续专项登记」），本轮不改行为（AGENTS §9.1）。
-- **aarch64 TLB shootdown 发送路径未覆盖**（§1 关键认知 / DECISION-082 范围声明）：本工程使 aarch64 具备多核在线 + 可收 SGI，但"主动广播 SGI 13 请求他核失效 TLB"的发送调用面仍缺。在多核下若 aarch64 有页表修改而依赖该广播，**可能产生 TLB 陈旧条目**。缓解：本工程不启用 aarch64 的多核 TLB 共享写路径；发送路径实装作为后续独立工程（与 ISSUE-RT-002 压测同批）。
+- **aarch64 TLB shootdown 发送路径未覆盖**（§1 关键认知 / DECISION-082 范围声明）：本工程使 aarch64 具备多核在线，但"主动广播 SGI 13 请求他核失效 TLB"的发送调用面当时仍缺。在多核下若 aarch64 有页表修改而依赖该广播，**可能产生 TLB 陈旧条目**。**处置（已闭合）**：由后续独立工程 DECISION-083（[aarch64-tlb-shootdown-send.md](./aarch64-tlb-shootdown-send.md)）实装发送路径并接入架构无关公共层 `mm/deferred_free.rs`；其施工期实证同时修复了 SGI 13/14 未使能与 `send_ipi` 目标编码两处缺陷（ST-09）。QEMU `-smp 2` 已验证 `[SMP] TLB shootdown #N` 与 `IRQ: intid=13`。
 - **QEMU PSCI 实现差异**：QEMU virt + `-cpu max` 的 PSCI 版本应为 v0.2/v1.x，`CPU_ON` 可用；若某环境返回 `NOT_SUPPORTED`，BSP 应打印并退化为单核（SMP-07 的失败路径），不得 panic。真机（若有）PSCI 差异须另行验证 —— 本工程验收以 QEMU 为准。
 - **次核栈分配**：`_boot_stack_top` 仅 256 KiB 单核栈，次核栈须独立分配。若分配失败，`cpu_on` 前应检测并跳过对应 AP（fail-fast 打印）。
 - **回退**：本工程按模块可独立回退 —— 撤 `interrupt_late_init()` 接线（SMP-06）+ 移除 `-smp 2`（SMP-09）即恢复单核行为；PSCI `CPU_ON` 封装、GIC 参数化、`smp_init.rs` 可保留为"未接线"状态（但须注意 F9：未接线的死代码不允许，故完整回退须整轮撤销）。
@@ -477,13 +478,15 @@ pub unsafe extern "C" fn ap_main(cpu_index: u64) -> ! {
 ## 后续专项登记：KPTI 入口/出口状态 per-CPU 化
 
 > 来源：本工程 SMP-10 收口时的 `mm/kpti_aarch64.rs` 内存序复核（见「风险与回退」末二条）。**本轮不改行为**（AGENTS §9.1 决策先记录再施工），仅登记立项待排期。
+>
+> **结案**：本专项已由后续独立工程 [smp-ap-user-scheduling.md](./smp-ap-user-scheduling.md)（**DECISION-084**，APS-04）落地 —— 该工程使双核并发 EL0 成为现实，故先修本缺陷。实现要点：每核活跃值（`user_ttbr0`/`tramp_save0`/`tramp_save1`）迁入 `KPTI_CPU_GLOBALS: KptiCpuStateArray`（按核数组，槽内偏移 0/8/16），槽基址经 `kpti_bind_cpu(cpu_index)` 写入 `TPIDR_EL1`（BSP 由 `kpti_init`、AP 由 `ap_main` 步骤 4.1 调用），入口/出口汇编一律 `mrs ... tpidr_el1` 取基址（不再现算 `MPIDR_EL1`，入口无空闲 GPR 可用）；boot 期只读字段仍留单实例 `KPTI_GLOBALS`。QEMU `-smp 2` 双核并发 EL0 通过，无跨核污染。
 
 - **KPTI-PCPU-01. KPTI 入口/出口每核活跃状态 per-CPU 化**
   - 描述：aarch64 KPTI 的入口/出口路径中，`user_ttbr0`（偏移 24）、`tramp_save0`（40）、`tramp_save1`（48）三个字段承载**每核当前活跃状态**（本核在 EL0 期间的用户页表，以及入口中转保存的用户 `x3`/`x4`），却与 boot 期只读字段同置于**单实例** `KPTI_GLOBALS`。多核并发 EL0 时相互覆盖，须按核隔离。
   - 方案（待排期细化）：
     1. **首选 = 按核数组**：对齐同库 `mm/copy_user.rs` 的 `PER_CPU_EXCEPTION_CTX[cpu]` 范式，把上述三字段改为 `[AtomicU64; MAX_CPUS]`，入口/出口汇编按 `MPIDR_EL1 & 0xFF`（Aff0，与 `smp::register_cpu` 的 `cpu_index` 一致）索引；boot 期只读字段仍留单实例。
     2. **备选 = `TPIDR_EL1` per-CPU 基址**：为每核在 `TPIDR_EL1` 存一份 KPTI 状态基址（aarch64 无专门的 per-CPU 基址寄存器约定，`TPIDR_EL1` 当前未使用；`TPIDRRO_EL0` 仅作入口临时中转且被清零），入口/出口经 `mrs tpidr_el1` 取得基址后偏移寻址。优点 = 汇编零 MPIDR 计算、扩展不再受 `MAX_CPUS` 数组上限约束；缺点 = 需在次核上线路径与 BSP 初始化中额外维护基址，且与调度切换路径（`context.rs` 刷新 `user_ttbr0` 的两处 `str x4, [x3, #24]`）须同步改造。
-  - 状态：[]
+  - 状态：[X]（由 DECISION-084 / APS-04 落地结案，见上「结案」）
   - 详情（根因）：复核对证据 —— `exception.rs` 的 `handle_el0_sync` / `handle_el0_irq` / `el0_return` / `kpti_enter_user_trampoline` 均以固定字节偏移访问 `KPTI_GLOBALS`（无按核索引）；`context.rs` 的内核续跑路径与 `.Lctx_enter_el0` 两处亦同。
   - 详情（影响面）：A 核入口保存的用户 `x3`/`x4` 被 B 核覆盖、或 A 核 `el0_return`/trampoline 读到 B 核写入的用户页表 ⇒ 用户寄存器损坏、以他核页表 `eret`（越权/崩溃）。**触发条件 = 两核同时处于 EL0**；当前 AP 上线后停在 idle、不调度用户任务，故潜伏未爆发。
   - 详情（验证门槛）：满足 §2.3 六门槛；**专项判据 = QEMU `-smp 2` 下双核并发 EL0**（需先具备"AP 参与用户态调度"能力，属本专项或其后继工程的前置），观测无跨核污染；静态侧 = 汇编偏移/索引与 Rust 布局的契约测试。

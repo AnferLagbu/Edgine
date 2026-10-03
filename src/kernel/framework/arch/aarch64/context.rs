@@ -89,11 +89,10 @@ context_switch_asm:
     mrs  x2, sp_el0
     str  x2, [x0, #128]
     // @136: 用户页表 (EL0 的 TTBR0). 异常入口汇编已把当前用户页表记录到
-    // KPTI_GLOBALS.user_ttbr0 (偏移 24), 此处快照进 ctx, 供 EL0 进入路径
-    // 与 fork 子进程继承使用.
-    adrp x2, {kpti_globals}
-    add  x2, x2, #:lo12:{kpti_globals}
-    ldr  x2, [x2, #24]
+    // **本核** KPTI 槽 (TPIDR_EL1 寻址, 偏移 0), 此处快照进 ctx, 供 EL0 进入
+    // 路径与 fork 子进程继承使用.
+    mrs  x2, tpidr_el1
+    ldr  x2, [x2, #0]
     str  x2, [x0, #136]
 
     // 保存 FPU/SIMD 状态 (V0-V31, FPCR, FPSR)
@@ -199,14 +198,13 @@ context_switch_asm:
     tlbi vmalle1is
     dsb  ish
     isb
-    // 刷新 KPTI_GLOBALS.user_ttbr0 = 本任务的用户页表 (@136).
-    // 必需: 被换出期间别的任务会把该全局槽改写成它们自己的用户表, 而本任务
+    // 刷新**本核** KPTI 槽 user_ttbr0 = 本任务的用户页表 (@136).
+    // 必需: 被换出期间别的任务会把本核该槽改写成它们自己的用户表, 而本任务
     // 续跑后必经 `el0_return` (它读该槽切 TTBR0 回 EL0) ⇒ 不刷新会 eret 到
     // EL0 时用错页表.
+    mrs  x3, tpidr_el1
     ldr  x4, [x1, #136]
-    adrp x3, {kpti_globals}
-    add  x3, x3, #:lo12:{kpti_globals}
-    str  x4, [x3, #24]
+    str  x4, [x3, #0]
     // P1.B + F-07: ARM ARM 规定 SPSR/ELR 写入后必须 isb 才能 eret,
     // 否则 CPU 可能用旧值 eret 导致上下文错位. 同步插入 isb.
     ldr  x2, [x1, #112]
@@ -220,12 +218,11 @@ context_switch_asm:
 
     // ---- EL0 首次进入路径 ----
 .Lctx_enter_el0:
-    // 刷新 KPTI_GLOBALS.user_ttbr0 = 本任务的用户页表 (@136); trampoline 读该槽
-    // 切 TTBR0.
+    // 刷新**本核** KPTI 槽 user_ttbr0 = 本任务的用户页表 (@136); trampoline 读
+    // 该槽切 TTBR0.
+    mrs  x3, tpidr_el1
     ldr  x4, [x1, #136]
-    adrp x3, {kpti_globals}
-    add  x3, x3, #:lo12:{kpti_globals}
-    str  x4, [x3, #24]
+    str  x4, [x3, #0]
     // 用户栈指针 / 用户返回 PC / 用户 PSTATE.
     ldr  x2, [x1, #128]
     msr  sp_el0, x2
@@ -253,7 +250,6 @@ context_switch_asm:
 .Lctx_tramp_hi:
     br   x11
 "#,
-    kpti_globals = sym crate::framework::mm::kpti::KPTI_GLOBALS,
     tramp = sym crate::framework::arch::aarch64::exception::kpti_enter_user_trampoline,
 );
 

@@ -169,8 +169,9 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
         # ISSUE-RT-001: 此前用 -nic none 隔离测试, 因 QEMU 默认 e1000 NIC 触发
         # smoltcp 栈初始化挂起. 根因 (e1000_io.rs CTRL.RST 误用 bit31, 实为
         # PHY_RST) 修复后, 恢复默认 e1000 并断言驱动初始化里程碑 + 完整进 Ring 3.
+        # APS-05 (DECISION-084): -smp 2 使次核上线路径与双核并发 EL0 进入门禁.
         if boot_and_check "x86_64" "$X64_LOG" "$TIMEOUT_QEMU" "VFS ready" \
-            -m 512 -kernel build/kernel.flat; then
+            -m 512 -smp 2 -kernel build/kernel.flat; then
             # e1000 驱动初始化里程碑 (ISSUE-RT-001 回归断言)
             if grep -q "e1000: 初始化完成" "$X64_LOG"; then
                 ok "[x86_64] e1000 驱动初始化完成 (ISSUE-RT-001 回归通过)"
@@ -197,6 +198,20 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 ok "[x86_64] KPTI 隔离断言通过: EL0 读内核高半区被内核终止 (KPTI-09)"
             else
                 warn "[x86_64] 未观察到 KPTI EL0 隔离断言 (KPTI-09)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
+            # APS-05 (DECISION-084): 双核并发 EL0 判据. 用户态 syscall 只能由 EL0
+            # 任务发起, 故每核有界打印 `[SMP] EL0 pid=N cpu=M` 中出现 cpu=0 与 cpu=1
+            # 即成对证明两核各自有用户任务运行于 EL0. 缺失即成对判据失败 (fail-closed).
+            # 注: 串口并发写可能在内核日志中插入 NUL 字节, 此时 grep 默认将该文件
+            #     视为二进制并只输出 "Binary file ... matches" 而不输出匹配行, 导致
+            #     EL0_CPUS 为空而误报. 故用 -a 强制按文本处理.
+            EL0_CPUS=$(grep -aoE "\[SMP\] EL0 pid=[0-9]+ cpu=[0-9]+" "$X64_LOG" 2>/dev/null \
+                | grep -aoE "cpu=[0-9]+" | sort -u | tr '\n' ' ' || true)
+            if echo "$EL0_CPUS" | grep -q "cpu=0" && echo "$EL0_CPUS" | grep -q "cpu=1"; then
+                ok "[x86_64] 双核并发 EL0 验证通过 (观察到 cpu=0 与 cpu=1): ${EL0_CPUS}"
+            else
+                warn "[x86_64] 未成对观察到 EL0 cpu=0/cpu=1 (实测: ${EL0_CPUS:-无})"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
         else
@@ -282,6 +297,18 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 ok "[aarch64] KPTI 隔离断言通过: EL0 读内核高半区被内核终止 (KPTI-09)"
             else
                 warn "[aarch64] 未观察到 KPTI EL0 隔离断言 (KPTI-09)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
+            # APS-05 (DECISION-084): 双核并发 EL0 判据 (与 x86_64 分支同构).
+            # 用户态 syscall 只能由 EL0 任务发起, `cpu=0` 与 `cpu=1` 成对出现即
+            # 证明两核各自有用户任务运行于 EL0. 缺失即 fail-closed.
+            # 注: 与 x86_64 分支同理, -a 避免日志含 NUL 字节时 grep 误判二进制.
+            EL0_CPUS=$(grep -aoE "\[SMP\] EL0 pid=[0-9]+ cpu=[0-9]+" "$A64_LOG" 2>/dev/null \
+                | grep -aoE "cpu=[0-9]+" | sort -u | tr '\n' ' ' || true)
+            if echo "$EL0_CPUS" | grep -q "cpu=0" && echo "$EL0_CPUS" | grep -q "cpu=1"; then
+                ok "[aarch64] 双核并发 EL0 验证通过 (观察到 cpu=0 与 cpu=1): ${EL0_CPUS}"
+            else
+                warn "[aarch64] 未成对观察到 EL0 cpu=0/cpu=1 (实测: ${EL0_CPUS:-无})"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
         else

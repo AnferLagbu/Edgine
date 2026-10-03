@@ -317,7 +317,7 @@ impl MmuArch for Aarch64 {
     /// 进入 EL0 (KPTI 全切换模型).
     ///
     /// 除装载用户态入口寄存器外, 还必须完成三件事:
-    /// 1. 记录用户 `TTBR0` 到 `KPTI_GLOBALS.user_ttbr0` (异常出口据此切回);
+    /// 1. 记录用户 `TTBR0` 到**本核** KPTI 槽 (异常出口据此切回);
     /// 2. 设置 `SP_EL1 = kstack` —— EL0→EL1 异常入口在切换 `TTBR0` **之前**
     ///    就把 280 字节异常帧压入内核栈, 故内核栈顶页必须提前就位;
     /// 3. 跳转到 `.vectors` 内的高半区 trampoline 完成 `TTBR0/TTBR1` 切换后 eret
@@ -333,7 +333,7 @@ impl MmuArch for Aarch64 {
         // EL1 入口汇编已把 TTBR1 切回完整内核表, 其 L1_IDMAP[0] → L2_DEVICE 覆盖 0-1 GiB.
         uart::switch_to_high_half();
 
-        // 记录用户页表: 异常出口 (el0_return) 与 trampoline 均从 KPTI_GLOBALS 读取
+        // 记录用户页表到本核 KPTI 槽: 异常出口 (el0_return) 与 trampoline 均从该槽读取
         crate::framework::mm::kpti::kpti_set_user_ttbr0(user_cr3);
         let tramp = exception::kpti_enter_user_trampoline_high();
 

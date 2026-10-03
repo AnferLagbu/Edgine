@@ -68,5 +68,30 @@ pub extern "C" fn _start() -> ! {
         print_dec(probe as i64);
         println(")");
     }
-    loop { proc_yield(); }
+
+    // ── APS-05: 双核并发 EL0 验证 ─────────────────────────────────────────
+    // fork 一个**不 yield** 的忙等子进程: 父子各自长期占用一核并停留在 EL0
+    // (fork 的任务投送路径会把子进程推到空闲次核). 忙等期间只以极低频率发
+    // syscall (print_char), 供内核每核有界诊断 `[SMP] EL0 pid=N cpu=M` 锚定
+    // "本核确有 EL0 任务在执行" —— syscall 只能由 EL0 任务发起. 内核侧上限
+    // 4 行/核, 故此处打印 8 次足以覆盖; 之后静默自增 (仍不 yield, 两核不空闲).
+    let busy = fork();
+    if busy == 0 {
+        busy_wait(b'.');
+    }
+    busy_wait(b'+');
+}
+
+/// 不 yield 的忙等 (APS-05): 仅低频发 syscall (打印 `mark`, 上限 8 次), 之后
+/// 静默自增 —— 目的是让本核长期持有可运行用户任务并停留在 EL0.
+fn busy_wait(mark: u8) -> ! {
+    let mut i: u64 = 0;
+    let mut printed: u32 = 0;
+    loop {
+        i = i.wrapping_add(1);
+        if printed < 8 && i.is_multiple_of(4_000_000) {
+            print_char(mark);
+            printed += 1;
+        }
+    }
 }

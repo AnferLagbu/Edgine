@@ -717,9 +717,13 @@ unsafe extern "C" {
     fn syscall_entry();
 }
 
-/// 初始化关键 MSR 寄存器
+/// 初始化关键 MSR 寄存器 (FPU/SSE 使能 + SYSCALL 入口 MSR).
+///
+/// 除 BSP 的 `cpu_init` 调用外, 次核 (AP) 上电路径亦须逐核调用: 这些 MSR
+/// (CR0/CR4 及 IA32_STAR/LSTAR/SFMASK/EFER) 均为 per-logical-processor 状态,
+/// BSP 的设置不随 AP 上电继承 (见 `arch/x86_64/smp_init.rs::ap_entry`)。
 #[cfg(target_arch = "x86_64")]
-fn init_msr(features: &CpuFeatures) -> Result<(), &'static str> {
+pub(crate) fn init_msr(features: &CpuFeatures) -> Result<(), &'static str> {
     // 检查 MSR 支持
     if !features.contains(CpuFeatures::MSR) {
         return Err("CPU does not support MSR");

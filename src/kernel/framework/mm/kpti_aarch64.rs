@@ -15,7 +15,7 @@
 //!   (`kernel_ttbr1`), **再**向内核栈压入 280 字节异常帧 —— 内核栈只经
 //!   TTBR1 可达 (其 VA 在高半区), 切表前压帧必然 Data Abort. 切换序列本身需
 //!   2 个 scratch 寄存器, 而入口时刻全部 GPR 都是用户态活跃值, 故先把它们存入
-//!   [`KPTI_GLOBALS`] 的暂存槽, 切表后取回.
+//!   **本核** KPTI 槽的暂存槽, 切表后取回.
 //! - **异常出口** (eret 前): 帧先读回 (切表后内核栈即不可达), 再切回
 //!   TTBR0 → 用户页表 (`user_ttbr0`), TTBR1 → trampoline 表.
 //!   切换代码必须位于高半区 (`.vectors`) —— TTBR0 切换后低半区代码即不可取指
@@ -28,24 +28,25 @@
 //! 隔离收益. 与 x86_64 的差异: x86 的用户 PML4 能映射高 VA, 故其 RSP0 栈页
 //! 仍走"映射进用户页表"形态 (见 `kpti::map_rsp0_page`).
 //!
-//! # SMP 前提 (DECISION-082 订正)
+//! # SMP 前提与每核隔离 (KPTI-PCPU-01, DECISION-084)
 //!
-//! 本模块的全局量 [`KPTI_GLOBALS`] 为**单实例** (汇编按固定字节偏移访问, 无按核
-//! 索引). aarch64 自 DECISION-082 起已具备次核上线路径 (`arch/aarch64/smp_init.rs`),
-//! 故须区分两类字段:
+//! 状态按访问面二分, 分置于两个全局量:
 //!
 //! - **boot 期一次性发布、此后只读**: `ready` / `kernel_ttbr0` / `kernel_ttbr1` /
-//!   `tramp_ttbr1` —— 核间共享安全 (发布由 `ready` 的 Release/Acquire 配对
-//!   保证, 见 [`kpti_init`]).
-//! - **每核活跃值**: `user_ttbr0` 与 `tramp_save0`/`tramp_save1` —— 由 EL0 入口/出口
-//!   汇编与任务切换路径按核读写, 单实例下**多核并发 EL0 会跨核改写** (入口保存的
-//!   `x3`/`x4` 与出口待恢复的用户页表可能被其他核覆盖). 当前 AP 未调度用户任务故
-//!   未触发; 拆分方案登记于 `docs/plan/aarch64-smp-bringup.md` 后续项.
+//!   `tramp_ttbr1`, 置于单实例 [`KPTI_GLOBALS`]; 核间共享安全 (发布由 `ready` 的
+//!   Release/Acquire 配对保证, 见 [`kpti_init`]).
+//! - **每核活跃值**: `user_ttbr0` 与 `tramp_save0`/`tramp_save1`, 置于按核数组
+//!   [`KPTI_CPU_GLOBALS`] —— 由 EL0 入口/出口汇编与任务切换路径按**本核**读写.
+//!   单实例时双核并发 EL0 会跨核改写 (入口暂存的用户 `x3`/`x4`、出口待恢复的用户
+//!   页表被他核覆盖), 故必须隔离. 每核槽地址在上电路径由 [`kpti_bind_cpu`] 一次性
+//!   写入 `TPIDR_EL1` (每 PE 私有、EL0 不可见), 汇编只 `mrs` 取基址 —— 入口时刻
+//!   x0-x30 全活, 无空闲 GPR 现算 `MPIDR` 索引与数组基址.
 
 #![cfg(target_arch = "aarch64")]
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
+use crate::framework::config::MAX_CPUS;
 use crate::framework::mm::PAGE_SIZE;
 use crate::framework::mm::phys_to_virt;
 use crate::framework::mm::pmm_alloc_page;
@@ -53,7 +54,7 @@ use crate::framework::mm::virt_to_phys;
 
 // ── 公共状态 ──────────────────────────────────────────────────────
 
-/// KPTI 全局量集合.
+/// KPTI boot 期全局量集合 (单实例, 发布后只读).
 ///
 /// 单独成页 (`repr(align(4096))`) 有两个作用:
 /// 1. trampoline 表以**页级最小化**映射本页, 使入口/出口汇编的
@@ -67,17 +68,8 @@ pub struct KptiGlobals {
     pub kernel_ttbr1: AtomicU64,
     /// 内核恒等 TTBR0_EL1 物理地址 (异常入口切回).
     pub kernel_ttbr0: AtomicU64,
-    /// 当前用户进程 TTBR0_EL1 物理地址 (异常出口 / 进入 EL0 时切回).
-    pub user_ttbr0: AtomicU64,
     /// KPTI 是否已初始化 (0 = 未就绪, 1 = 就绪).
     pub ready: AtomicU64,
-    /// 入口/出口暂存槽 0: 保住切换序列 clobber 掉的用户 `x4`.
-    ///
-    /// 入口时刻 `x0-x30` 全是用户态活跃值, 而切表需要 scratch 寄存器; 若无暂存槽
-    /// 则被 clobber 的用户值永久丢失 (帧尚未压入内核栈). 出口侧对称使用.
-    pub tramp_save0: AtomicU64,
-    /// 入口/出口暂存槽 1: 保住切换序列 clobber 掉的用户 `x3`.
-    pub tramp_save1: AtomicU64,
 }
 
 /// KPTI 全局状态实例. `#[unsafe(no_mangle)]` 供汇编按符号名/`sym` 操作数访问.
@@ -87,20 +79,68 @@ pub static KPTI_GLOBALS: KptiGlobals = KptiGlobals {
     tramp_ttbr1: AtomicU64::new(0),
     kernel_ttbr1: AtomicU64::new(0),
     kernel_ttbr0: AtomicU64::new(0),
-    user_ttbr0: AtomicU64::new(0),
     ready: AtomicU64::new(0),
-    tramp_save0: AtomicU64::new(0),
-    tramp_save1: AtomicU64::new(0),
 };
 
-// 汇编按字面偏移 (0/8/16/24/32/40/48) 访问上述字段; 调整字段顺序/宽度会在此编译失败.
+// 汇编按字面偏移 (0/8/16/24) 访问上述字段; 调整字段顺序/宽度会在此编译失败.
 const _: () = assert!(core::mem::offset_of!(KptiGlobals, tramp_ttbr1) == 0);
 const _: () = assert!(core::mem::offset_of!(KptiGlobals, kernel_ttbr1) == 8);
 const _: () = assert!(core::mem::offset_of!(KptiGlobals, kernel_ttbr0) == 16);
-const _: () = assert!(core::mem::offset_of!(KptiGlobals, user_ttbr0) == 24);
-const _: () = assert!(core::mem::offset_of!(KptiGlobals, ready) == 32);
-const _: () = assert!(core::mem::offset_of!(KptiGlobals, tramp_save0) == 40);
-const _: () = assert!(core::mem::offset_of!(KptiGlobals, tramp_save1) == 48);
+const _: () = assert!(core::mem::offset_of!(KptiGlobals, ready) == 24);
+
+/// KPTI 每核活跃状态 (元素 = 一个 CPU 的槽).
+///
+/// 三个字段都是"本核在 EL0 期间的活跃值", 双核并发 EL0 时必须互不可见:
+/// - `user_ttbr0`: 本核当前用户进程 TTBR0 (异常出口 / 进入 EL0 时切回);
+/// - `tramp_save0` / `tramp_save1`: 入口/出口暂存槽, 保住切表序列 clobber 掉的
+///   用户 `x4` / `x3` (入口时刻 `x0-x30` 全是用户态活跃值, 而切表需要 scratch
+///   寄存器; 若无暂存槽则被 clobber 的用户值永久丢失 —— 帧尚未压入内核栈).
+#[repr(C)]
+pub struct KptiCpuState {
+    /// 本核当前用户进程 TTBR0_EL1 物理地址.
+    pub user_ttbr0: AtomicU64,
+    /// 入口/出口暂存槽 0: 保住切换序列 clobber 掉的用户 `x4`.
+    pub tramp_save0: AtomicU64,
+    /// 入口/出口暂存槽 1: 保住切换序列 clobber 掉的用户 `x3`.
+    pub tramp_save1: AtomicU64,
+}
+
+/// 每核 KPTI 活跃状态数组 (索引 = `arch::cpu_id`, 即 `MPIDR_EL1 & 0xFF`, 取模 `MAX_CPUS`).
+///
+/// 薄载体 (`repr(align(4096))`) 使数组**按页对齐且大小为页整数倍**, 便于
+/// [`kpti_init`] 按整页精确映射进 trampoline 表 (不多映射相邻 `.bss` 页, 不扩大
+/// Meltdown 可见面). `#[repr(C)]` 保证元素间无填充 + 字段按声明序, 使汇编可按
+/// 固定字节偏移 (0/8/16) 与固定步长 (`size_of::<KptiCpuState>()`) 索引本核槽.
+#[repr(C, align(4096))]
+pub struct KptiCpuStateArray(pub [KptiCpuState; MAX_CPUS]);
+
+/// 每核 KPTI 活跃状态实例. `#[unsafe(no_mangle)]` 供汇编按符号名访问.
+// SAFETY: FFI 导出静态量，通过 C ABI 与汇编代码互操作
+#[unsafe(no_mangle)]
+pub static KPTI_CPU_GLOBALS: KptiCpuStateArray =
+    KptiCpuStateArray([const { KptiCpuState::new() }; MAX_CPUS]);
+
+impl KptiCpuState {
+    /// 全零初值 (const 上下文)。
+    const fn new() -> Self {
+        Self {
+            user_ttbr0: AtomicU64::new(0),
+            tramp_save0: AtomicU64::new(0),
+            tramp_save1: AtomicU64::new(0),
+        }
+    }
+}
+
+// 汇编按字面偏移 (0/8/16) + 步长索引元素; 布局漂移会在此编译失败.
+const _: () = assert!(core::mem::offset_of!(KptiCpuState, user_ttbr0) == 0);
+const _: () = assert!(core::mem::offset_of!(KptiCpuState, tramp_save0) == 8);
+const _: () = assert!(core::mem::offset_of!(KptiCpuState, tramp_save1) == 16);
+const _: () = assert!(core::mem::size_of::<KptiCpuState>() == 24);
+// 载体按页对齐 (汇编 `adrp` 取符号地址; `kpti_init` 按整页映射).
+const _: () = assert!(core::mem::align_of::<KptiCpuStateArray>() >= PAGE_SIZE as usize);
+const _: () = assert!(
+    core::mem::size_of::<KptiCpuStateArray>().is_multiple_of(PAGE_SIZE as usize)
+);
 
 // 高半区别名基数由 `mm::KERNEL_BASE` 单一提供 (L1-04 收敛: 迁移后二者同值,
 // 不再另设 `HIGH_ALIAS_BASE`), 换算统一走 `mm::phys_to_virt` / `mm::virt_to_phys`.
@@ -113,10 +153,41 @@ pub fn kpti_is_active() -> bool {
     KPTI_GLOBALS.ready.load(Ordering::Acquire) != 0
 }
 
-/// 记录当前用户进程 TTBR0 物理地址 (由 `enter_user` 在进入 EL0 前调用).
+/// 记录当前 CPU 的用户进程 TTBR0 物理地址 (由 `enter_user` 在进入 EL0 前调用).
 #[inline(always)]
 pub fn kpti_set_user_ttbr0(ttbr0: u64) {
-    KPTI_GLOBALS.user_ttbr0.store(ttbr0, Ordering::Release);
+    kpti_cpu_state().user_ttbr0.store(ttbr0, Ordering::Release);
+}
+
+/// 返回**本核** KPTI 活跃状态槽 (索引 = `MPIDR_EL1 & 0xFF`, 即 `arch::cpu_id`)。
+///
+/// 汇编侧改用 [`kpti_bind_cpu`] 写入 `TPIDR_EL1` 的**同一槽地址**寻址, 故 Rust 写
+/// 与汇编读必然落在同一槽 (入口切表前无空闲 GPR 现算 `MPIDR` 索引, 这是把索引
+/// 提前到上电路径的原因)。
+#[inline(always)]
+fn kpti_cpu_state() -> &'static KptiCpuState {
+    let cpu = (crate::framework::cpu::arch::cpu_id() as usize) % MAX_CPUS;
+    // SAFETY: 索引经 MAX_CPUS 取模, 恒在数组范围内; 静态量生命周期为 'static。
+    unsafe { KPTI_CPU_GLOBALS.0.get_unchecked(cpu) }
+}
+
+/// 绑定本核 KPTI 状态槽地址到 `TPIDR_EL1`.
+///
+/// 入口/出口汇编在切表前无空闲 GPR 可用, 无法现算 `MPIDR` 索引 —— 故由本函数在
+/// 上电路径把「本核槽的**高半区别名**地址」写进 `TPIDR_EL1` (每 PE 独立、EL0 不
+/// 可见), 汇编随后一律 `mrs x, tpidr_el1` 取基址。高半区别名是必需的: 切表后在
+/// trampoline 表 (页级最小化, 仅映射 `.vectors` / `KPTI_GLOBALS` / 本数组) 与完整
+/// 内核表下都必须可达。
+///
+/// BSP 由 [`kpti_init`] 调用, AP 由 `arch/aarch64/smp_init.rs::ap_main` 调用。
+pub fn kpti_bind_cpu(cpu_index: u32) {
+    let idx = (cpu_index as usize) % MAX_CPUS;
+    // 索引经取模恒在范围内; `addr_of!` 只取地址, 不读写元素 (无需 unsafe)。
+    let slot = core::ptr::addr_of!(KPTI_CPU_GLOBALS.0[idx]) as u64;
+    // SAFETY: tpidr_el1 为 EL1 私有寄存器, 仅本核可写; 写法即「本核槽基址」。
+    unsafe {
+        core::arch::asm!("msr tpidr_el1, {}", in(reg) slot, options(nomem, nostack));
+    }
 }
 
 // ── 初始化 ────────────────────────────────────────────────────────
@@ -205,6 +276,22 @@ pub unsafe fn kpti_init(vmm: &super::vmm::Aarch64Vmm, kernel_ttbr1: u64) {
         super::PageFlags::PRESENT | super::PageFlags::WRITABLE,
     );
 
+    // 3.1 每核活跃状态数组: 入口/出口在**切表前**就要读写本核槽 (暂存用户 x3/x4),
+    //     故整个数组必须落在 trampoline 表内。载体按页对齐且大小为页整数倍
+    //     (`KptiCpuStateArray` 的 repr(align) 断言锁定), 故这里是精确逐页映射.
+    let cpu_slots_pa = virt_to_phys(core::ptr::addr_of!(KPTI_CPU_GLOBALS) as u64);
+    let cpu_slots_end = cpu_slots_pa + core::mem::size_of::<KptiCpuStateArray>() as u64;
+    let mut pa = cpu_slots_pa;
+    while pa < cpu_slots_end {
+        vmm.map_page_in_table(
+            tramp_l0_phys,
+            super::VirtAddr(phys_to_virt(pa)),
+            super::PhysAddr(pa),
+            super::PageFlags::PRESENT | super::PageFlags::WRITABLE,
+        );
+        pa += PAGE_SIZE;
+    }
+
     // 4. 公开状态 (写入顺序: 先数据后 ready, ready 兼作 Release 屏障)
     KPTI_GLOBALS
         .kernel_ttbr0
@@ -216,6 +303,9 @@ pub unsafe fn kpti_init(vmm: &super::vmm::Aarch64Vmm, kernel_ttbr1: u64) {
         .tramp_ttbr1
         .store(tramp_l0_phys, Ordering::Release);
     KPTI_GLOBALS.ready.store(1, Ordering::Release);
+
+    // 5. 绑定**本核** (BSP) 的状态槽地址到 TPIDR_EL1 (AP 由 `ap_main` 各自绑定).
+    kpti_bind_cpu(crate::framework::cpu::arch::cpu_id());
 }
 
 /// KPTI 关闭时的占位: 返回 trampoline TTBR1, 未就绪时退回完整内核 TTBR1.

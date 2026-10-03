@@ -199,31 +199,36 @@ handle_el1h_irq:
 // -------- EL0 sync handler (SVC / 数据异常) --------
 // 入口时刻 (TTBR0 = 用户表, TTBR1 = tramp 表) 内核栈**不可达** —— 其 VA 在高半区,
 // 故必须**先切两条 TTBR 再压帧**. 本段位于 .vectors (高半区) ⇒ 切表后取指不受影响.
-// 切表序列需 2 个 scratch 寄存器, 而此刻 x0-x30 全是用户态活跃值 (帧尚未落栈),
-// 故先借 TPIDRRO_EL0 (EL1 可写 / EL0 只读, 内核无用途; `msr` 不消耗 GPR) 中转,
-// 把用户 x3/x4 存进全局量暂存槽, 切表后取回.
+// 切表序列需 2 个 scratch 寄存器 (x3/x4), 而此刻 x0-x30 全是用户态活跃值 (帧尚未
+// 落栈), 故先借 TPIDRRO_EL0 (EL1 可写 / EL0 只读, 内核无用途; `msr` 不消耗 GPR)
+// 中转用户 x3. 本核 KPTI 槽基址由 TPIDR_EL1 提供 (上电路径按核绑定, 见
+// `mm/kpti_aarch64.rs::kpti_bind_cpu`), 槽页在 trampoline 表内恒可达.
 handle_el0_sync:
     msr  tpidrro_el0, x3                // 中转保住用户 x3
-    adrp x3, {kpti_globals}
-    add  x3, x3, #:lo12:{kpti_globals}
-    str  x4, [x3, #40]                  // tramp_save0 ← 用户 x4
+    mrs  x3, tpidr_el1                  // x3 ← 本核 KPTI 槽基址 (用户 x3 已在 TPIDRRO)
+    str  x4, [x3, #8]                   // tramp_save0 ← 用户 x4
     mrs  x4, tpidrro_el0
-    str  x4, [x3, #48]                  // tramp_save1 ← 用户 x3
+    str  x4, [x3, #16]                  // tramp_save1 ← 用户 x3
     msr  tpidrro_el0, xzr               // 清中转 (防 EL0 经 TPIDRRO_EL0 读内核残留)
 
     // 第一步: 切完整内核表 (TTBR0) + 完整内核 TTBR1. 这是**读取保留槽的前提** ——
     // 此刻 TTBR0 仍指向用户表 (不含内核 DRAM 的恒等映射); TTBR1 仍是 tramp 表,
-    // 只映射 .vectors 与全局量页 ⇒ 高半区别名同样取不到用户表所在 PA. 只有先切
-    // 内核表, 内核映像/栈/页表所在物理页才可达.
+    // 只映射 .vectors / 全局量页 / 每核槽页 ⇒ 高半区别名同样取不到用户表所在 PA.
+    // 只有先切内核表, 内核映像/栈/页表所在物理页才可达.
     mrs  x4, ttbr0_el1                  // 旧 TTBR0 = 用户页表
-    str  x4, [x3, #24]                  // user_ttbr0
-    ldr  x4, [x3, #16]                  // kernel_ttbr0
+    str  x4, [x3, #0]                   // 本核 user_ttbr0
+    // kernel_ttbr0 / kernel_ttbr1 属 boot 期只读单实例全局量 (x4 兼作基址与取值).
+    adrp x4, {kpti_globals}
+    add  x4, x4, #:lo12:{kpti_globals}
+    ldr  x4, [x4, #16]                  // kernel_ttbr0
     cbz  x4, 1f
     dsb  ish
     msr  ttbr0_el1, x4
     isb
 1:
-    ldr  x4, [x3, #8]                   // kernel_ttbr1
+    adrp x4, {kpti_globals}
+    add  x4, x4, #:lo12:{kpti_globals}
+    ldr  x4, [x4, #8]                   // kernel_ttbr1
     cbz  x4, 2f
     dsb  ish
     msr  ttbr1_el1, x4
@@ -232,8 +237,8 @@ handle_el0_sync:
     tlbi vmalle1is
     dsb  ish
     isb
-    ldr  x4, [x3, #40]                  // 取回用户 x4
-    ldr  x3, [x3, #48]                  // 取回用户 x3
+    ldr  x4, [x3, #8]                   // 取回用户 x4
+    ldr  x3, [x3, #16]                  // 取回用户 x3
 
     // 第二步: 落异常帧 (280 字节). 此刻内核栈已可达 (见上), 帧内为真实用户值.
     sub  sp, sp, #(8 * 35)
@@ -266,9 +271,8 @@ handle_el0_sync:
     // 等直接解引用用户裸指针; 内核镜像/栈经 TTBR1 高半区可达, 不在本视图内 (L1-05).
     // 保留槽为 0 (视图未建) 时保持完整内核表 —— 退化为旧行为.
     // 注: TTBR0 仅承载 BADDR (本内核恒以 ASID=0 切表), 故 x2 可直接作地址基.
-    adrp x3, {kpti_globals}
-    add  x3, x3, #:lo12:{kpti_globals}
-    ldr  x2, [x3, #24]                  // user_ttbr0 (物理地址)
+    mrs  x3, tpidr_el1                  // x3 ← 本核 KPTI 槽基址
+    ldr  x2, [x3, #0]                   // 本核 user_ttbr0 (物理地址)
     // 用户表所在物理页经**高半区别名**读取 (此刻 TTBR1 已是完整内核表):
     // 表链接于高半区后, TTBR0 恒等面不再保证覆盖该 PA, 别名面则恒可达.
     movz x5, #0xFFFF, lsl #48
@@ -308,12 +312,11 @@ handle_svc:
 // 切表后内核栈即不可达 (其 VA 在高半区), 故**先**把帧读回; 唯独 x3/x4 (切表序列
 // 的 scratch) 先暂存进全局量槽, 切表后再从 (tramp 表映射的) 全局量页取回.
 el0_return:
-    adrp x3, {kpti_globals}
-    add  x3, x3, #:lo12:{kpti_globals}
+    mrs  x3, tpidr_el1                  // x3 ← 本核 KPTI 槽基址
     ldr  x4, [sp, #(8 * 4)]
-    str  x4, [x3, #40]                  // tramp_save0 ← 帧内用户 x4
+    str  x4, [x3, #8]                   // tramp_save0 ← 帧内用户 x4
     ldr  x4, [sp, #(8 * 3)]
-    str  x4, [x3, #48]                  // tramp_save1 ← 帧内用户 x3
+    str  x4, [x3, #16]                  // tramp_save1 ← 帧内用户 x3
 
     // 恢复除 x3/x4 外的全部寄存器 (此刻内核栈仍可达).
     ldr  x1, [sp, #(8 * 33)]
@@ -339,15 +342,18 @@ el0_return:
     ldp  x28, x29, [sp, #(8 * 28)]
     add  sp, sp, #(8 * 35)
 
-    // 切回 (用户表 + tramp 表). 本段位于 .vectors (高半区) ⇒ 切换后取指不受影响;
-    // 仅用 x4 作 scratch (用户 x3/x4 已入暂存槽).
-    ldr  x4, [x3, #0]                   // tramp_ttbr1 (切 TTBR1 前必须读出)
+    // 切回 (用户表 + tramp 表). tramp_ttbr1 属 boot 期只读单实例全局量;
+    // user_ttbr0 取自本核槽 (TPIDR_EL1 寻址). 本段位于 .vectors (高半区)
+    // ⇒ 切换后取指不受影响; 仅用 x4 作 scratch (用户 x3/x4 已入暂存槽).
+    adrp x4, {kpti_globals}
+    add  x4, x4, #:lo12:{kpti_globals}
+    ldr  x4, [x4, #0]                   // tramp_ttbr1 (切 TTBR1 前必须读出)
     cbz  x4, 3f
     dsb  ish
     msr  ttbr1_el1, x4
     isb
 3:
-    ldr  x4, [x3, #24]                  // user_ttbr0
+    ldr  x4, [x3, #0]                   // 本核 user_ttbr0
     cbz  x4, 4f
     dsb  ish
     msr  ttbr0_el1, x4
@@ -357,32 +363,35 @@ el0_return:
     dsb  ish
     isb
 
-    // 取回用户 x3/x4: 全局量页经 tramp 表仍可达 (x3 尚为全局量基址).
-    ldr  x4, [x3, #40]
-    ldr  x3, [x3, #48]
+    // 取回用户 x3/x4: 本核槽页经 tramp 表仍可达 (x3 尚为本核槽基址).
+    ldr  x4, [x3, #8]
+    ldr  x3, [x3, #16]
     eret
 
 // -------- EL0 IRQ handler --------
 handle_el0_irq:
     // KPTI 入口: 与 handle_el0_sync 同构 (先切两条 TTBR 再压帧; x3/x4 经
-    // TPIDRRO_EL0 中转存入全局量暂存槽).
+    // TPIDRRO_EL0 中转存入本核槽暂存槽; 本核槽基址由 TPIDR_EL1 提供).
     msr  tpidrro_el0, x3                // 中转保住用户 x3
-    adrp x3, {kpti_globals}
-    add  x3, x3, #:lo12:{kpti_globals}
-    str  x4, [x3, #40]                  // tramp_save0 ← 用户 x4
+    mrs  x3, tpidr_el1                  // x3 ← 本核 KPTI 槽基址
+    str  x4, [x3, #8]                   // tramp_save0 ← 用户 x4
     mrs  x4, tpidrro_el0
-    str  x4, [x3, #48]                  // tramp_save1 ← 用户 x3
+    str  x4, [x3, #16]                  // tramp_save1 ← 用户 x3
     msr  tpidrro_el0, xzr               // 清中转
 
     mrs  x4, ttbr0_el1                  // 旧 TTBR0 = 用户页表
-    str  x4, [x3, #24]                  // user_ttbr0
-    ldr  x4, [x3, #16]                  // kernel_ttbr0 (完整内核表)
+    str  x4, [x3, #0]                   // 本核 user_ttbr0
+    adrp x4, {kpti_globals}
+    add  x4, x4, #:lo12:{kpti_globals}
+    ldr  x4, [x4, #16]                  // kernel_ttbr0 (完整内核表)
     cbz  x4, 5f
     dsb  ish
     msr  ttbr0_el1, x4
     isb
 5:
-    ldr  x4, [x3, #8]                   // kernel_ttbr1
+    adrp x4, {kpti_globals}
+    add  x4, x4, #:lo12:{kpti_globals}
+    ldr  x4, [x4, #8]                   // kernel_ttbr1
     cbz  x4, 6f
     dsb  ish
     msr  ttbr1_el1, x4
@@ -391,8 +400,8 @@ handle_el0_irq:
     tlbi vmalle1is
     dsb  ish
     isb
-    ldr  x4, [x3, #40]                  // 取回用户 x4
-    ldr  x3, [x3, #48]                  // 取回用户 x3
+    ldr  x4, [x3, #8]                   // 取回用户 x4
+    ldr  x3, [x3, #16]                  // 取回用户 x3
 
     sub  sp, sp, #(8 * 35)
     stp  x0, x1, [sp, #(8 * 0)]
@@ -419,9 +428,8 @@ handle_el0_irq:
     str  x1, [sp, #(8 * 33)]
 
     // 第二步: TTBR0 精化为本进程 EL1 视图 (保留槽 index 1)
-    adrp x3, {kpti_globals}
-    add  x3, x3, #:lo12:{kpti_globals}
-    ldr  x2, [x3, #24]                  // user_ttbr0 (物理地址)
+    mrs  x3, tpidr_el1
+    ldr  x2, [x3, #0]                   // 本核 user_ttbr0 (物理地址)
     // 同 handle_el0_sync: 用户表页经高半区别名读取 (TTBR0 恒等面不再保证覆盖)
     movz x5, #0xFFFF, lsl #48
     add  x2, x2, x5
@@ -446,9 +454,10 @@ handle_el0_irq:
 // ============================================================
 .global kpti_enter_user_trampoline
 kpti_enter_user_trampoline:
+    mrs  x9, tpidr_el1                  // x9 ← 本核 KPTI 槽基址
+    ldr  x11, [x9, #0]                  // 本核 user_ttbr0
     adrp x9, {kpti_globals}
     add  x9, x9, #:lo12:{kpti_globals}
-    ldr  x11, [x9, #24]                 // user_ttbr0
     ldr  x10, [x9, #0]                  // tramp_ttbr1 (切 TTBR1 前必须读出)
     cbz  x11, 7f
     dsb  ish
@@ -557,6 +566,9 @@ pub fn kpti_enter_user_trampoline_high() -> u64 {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn svc_handler(frame: &mut ExceptionFrame) -> u64 {
+    // APS-05: 双核并发 EL0 观测 (有界诊断, 每核前若干次) —— EL0 syscall 入口.
+    crate::framework::syscall::observe_el0_syscall();
+
     let syscall_num = frame.x0;
 
     // KPTI-17 D1: 把 EL0 用户寄存器快照写入当前进程 Process.context.

@@ -7,9 +7,15 @@
 //   同集压帧.
 //
 // 契约 2 (L1-03b): 出入口改为「先切 TTBR 再压/读帧」后内核栈在切表后不可达, 故
-//   x3/x4 (切表序列的 scratch) 必须经 `KPTI_GLOBALS` 暂存槽 (偏移 40/48) 中转,
+//   x3/x4 (切表序列的 scratch) 必须经 KPTI 暂存槽 (偏移 8/16) 中转,
 //   且 `el0_return` 不得再从帧内直接恢复 x3/x4. 同时入口无空闲 GPR, 必须借
 //   `TPIDRRO_EL0` 中转自举.
+//
+// 契约 3 (KPTI-PCPU-01, DECISION-084): 暂存槽与 user_ttbr0 属**每核**活跃值,
+//   置于按核数组 `KPTI_CPU_GLOBALS`, 槽基址由 `TPIDR_EL1` 提供 (上电路径按核绑定);
+//   汇编不得再以 `{kpti_globals}` + 偏移 24/40/48 访问活跃值 (单实例会在双核并发
+//   EL0 时跨核覆盖). boot 期只读字段 (tramp_ttbr1 偏移 0 / kernel_ttbr1 偏移 8 /
+//   kernel_ttbr0 偏移 16) 仍走 `{kpti_globals}`.
 //
 // 运行期判据仍由 QEMU 承担 (EL0 → SVC → `el0_return` 往返, 见 qemu_boot_test.sh);
 // 本文件只锁定装配面契约, 防回归.
@@ -70,8 +76,8 @@ fn test_el0_entries_push_same_frame() {
     }
 }
 
-/// 2. L1-03b 入口契约: 借 `TPIDRRO_EL0` 中转 x3, 经暂存槽 (40/48) 保住 x3/x4,
-///    且在**切表之后**才压帧.
+/// 2. L1-03b + KPTI-PCPU-01 入口契约: 借 `TPIDRRO_EL0` 中转 x3, 以 `TPIDR_EL1`
+///    定位本核槽, 经暂存槽 (8/16) 保住 x3/x4, 且在**切表之后**才压帧.
 #[test]
 fn test_el0_entries_relay_via_tpidrro_and_stash() {
     let src = read();
@@ -82,12 +88,20 @@ fn test_el0_entries_relay_via_tpidrro_and_stash() {
             "{entry} 必须借 TPIDRRO_EL0 中转用户 x3 (入口无空闲 GPR)"
         );
         assert!(
-            window.contains(&norm("str x4, [x3, #40]")) && window.contains(&norm("str x4, [x3, #48]")),
-            "{entry} 必须把用户 x3/x4 存入暂存槽 (偏移 40/48)"
+            window.contains(&norm("mrs x3, tpidr_el1")),
+            "{entry} 必须以 TPIDR_EL1 取本核 KPTI 槽基址 (KPTI-PCPU-01)"
         );
         assert!(
-            window.contains(&norm("ldr x4, [x3, #40]")) && window.contains(&norm("ldr x3, [x3, #48]")),
-            "{entry} 必须在切表后取回用户 x3/x4"
+            window.contains(&norm("str x4, [x3, #8]")) && window.contains(&norm("str x4, [x3, #16]")),
+            "{entry} 必须把用户 x3/x4 存入本核槽暂存槽 (偏移 8/16)"
+        );
+        assert!(
+            window.contains(&norm("ldr x4, [x3, #8]")) && window.contains(&norm("ldr x3, [x3, #16]")),
+            "{entry} 必须在切表后从本核槽取回用户 x3/x4"
+        );
+        assert!(
+            !window.contains(&norm("str x4, [x3, #40]")) && !window.contains(&norm("str x4, [x3, #48]")),
+            "{entry} 不得再用单实例 KPTI_GLOBALS 暂存槽 (偏移 40/48): 双核并发会跨核覆盖"
         );
         // 先切 TTBR 再压帧: 压帧引用必须晚于 ttbr1_el1 切换.
         let i_ttbr1 = window
@@ -103,19 +117,24 @@ fn test_el0_entries_relay_via_tpidrro_and_stash() {
     }
 }
 
-/// 3. `el0_return` 出口契约: 先把帧内 x3/x4 搬进暂存槽, 切表后从暂存槽取回;
-///    不得再从帧内直接恢复 x3/x4 (会被切表序列的 scratch 值覆盖).
+/// 3. `el0_return` 出口契约: 以 `TPIDR_EL1` 定位本核槽, 先把帧内 x3/x4 搬进
+///    暂存槽 (偏移 8/16), 切表后从暂存槽取回; 不得再从帧内直接恢复 x3/x4
+///    (会被切表序列的 scratch 值覆盖).
 #[test]
 fn test_el0_return_restores_x3_x4_from_stash() {
     let src = read();
     let ret = norm(&slice_between(&src, "el0_return:", "eret"));
     assert!(
-        ret.contains(&norm("str x4, [x3, #40]")) && ret.contains(&norm("str x4, [x3, #48]")),
-        "el0_return 必须先把帧内 x4/x3 存入暂存槽 (切表后内核栈不可达)"
+        ret.contains(&norm("mrs x3, tpidr_el1")),
+        "el0_return 必须以 TPIDR_EL1 取本核 KPTI 槽基址 (KPTI-PCPU-01)"
     );
     assert!(
-        ret.contains(&norm("ldr x4, [x3, #40]")) && ret.contains(&norm("ldr x3, [x3, #48]")),
-        "el0_return 必须在切表后从暂存槽取回 x3/x4"
+        ret.contains(&norm("str x4, [x3, #8]")) && ret.contains(&norm("str x4, [x3, #16]")),
+        "el0_return 必须先把帧内 x4/x3 存入本核槽暂存槽 (切表后内核栈不可达)"
+    );
+    assert!(
+        ret.contains(&norm("ldr x4, [x3, #8]")) && ret.contains(&norm("ldr x3, [x3, #16]")),
+        "el0_return 必须在切表后从本核槽暂存槽取回 x3/x4"
     );
     for forbidden in ["ldp x2, x3, [sp, #(8 * 2)]", "ldp x4, x5, [sp, #(8 * 4)]"] {
         assert!(
@@ -126,8 +145,8 @@ fn test_el0_return_restores_x3_x4_from_stash() {
     }
     // 帧内 x3/x4 的暂存必须早于 x0-x29 的恢复.
     let i_stash = ret
-        .find("[x3, #48]")
-        .expect("el0_return 未使用暂存槽 #48");
+        .find("[x3, #16]")
+        .expect("el0_return 未使用本核槽暂存槽 #16");
     let i_restore = ret
         .find("ldr x5, [sp, #(8 * 5)]")
         .expect("el0_return 未恢复 x5");

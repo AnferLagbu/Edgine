@@ -463,6 +463,20 @@ impl Scheduler {
         Some(pid)
     }
 
+    /// 让指定 CPU 接管本核 idle 任务, 建立该核的调度身份.
+    ///
+    /// 次核上线时**必须**经此建立调度身份: 仅调用 [`Self::init_per_cpu_idle`]
+    /// 只创建 idle 进程并记录 `idle`, 而 `PerCpuSched.current` 仍为 0 ⇒
+    /// [`Self::schedule`] 中 `prev_ctx_ptr` 为 null, 永不执行上下文切换 (只更新
+    /// `current` 字段), 该核便无法真正切到其它任务.
+    ///
+    /// 返回被接管的 idle pid; `None` 表示 idle 创建失败, 调用方须放弃本核上线.
+    pub fn adopt_cpu_idle(&self, cpu_id: u32) -> Option<Pid> {
+        let idle_pid = self.init_per_cpu_idle(cpu_id)?;
+        per_cpu_for(cpu_id).current.store(idle_pid, Ordering::SeqCst);
+        Some(idle_pid)
+    }
+
     pub fn add(&self, pid: Pid) {
         self.cfs_enqueue(pid);
     }
@@ -481,13 +495,20 @@ impl Scheduler {
         });
     }
 
+    /// 将进程入队**当前核**的 CFS 运行队列.
+    fn cfs_enqueue(&self, pid: Pid) {
+        self.cfs_enqueue_to(pid, crate::framework::smp::get_current_cpu());
+    }
+
+    /// 将进程入队**指定核**的 CFS 运行队列.
+    ///
+    /// 与 [`Self::cfs_enqueue`] 的区别: 本函数可投送到目标核, 供跨核投送
+    /// (fork / 唤醒) 使用; 只持目标核的 `cfs_rq`, 不与其它核的队列锁嵌套.
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
-    /// 将进程入队 CFS 运行队列.
-    fn cfs_enqueue(&self, pid: Pid) {
-        let per_cpu = per_cpu();
+    fn cfs_enqueue_to(&self, pid: Pid, cpu_id: u32) {
         let vr = PROCESS_TABLE.with_process(pid, |p| {
             let _ = p.set_state_safe(ProcessState::Ready);
             let v = p.cfs_vruntime.load(Ordering::Acquire);
@@ -497,7 +518,10 @@ impl Scheduler {
         });
 
         if let Some((vruntime, weight)) = vr {
-            per_cpu.cfs_rq.lock().enqueue(pid, vruntime, weight);
+            per_cpu_for(cpu_id)
+                .cfs_rq
+                .lock()
+                .enqueue(pid, vruntime, weight);
         }
     }
 
@@ -1160,7 +1184,23 @@ impl Scheduler {
         // I-35: 重定向到 cfs_enqueue. 历史 MLFQ queues[0] 路径曾导致新进程
         // 永远不会被 pick_cfs_task 选中 (调度器只读 cfs_rq, 不读 queues[]).
         // 现在 add / add_to_run_queue 等价, 都走 vruntime 红黑树.
-        self.cfs_enqueue(pid);
+        //
+        // APS-03: 多核下把任务投送到**空闲核** (而非恒留当前核), 并在跨核时向
+        // 目标核发重调度 IPI 唤醒其 idle 调度循环; 单核 / 无空闲核时退化为本核
+        // 入队, 与既有一致 (E11: 目标核 CFS 成为入队对象 + IPI + AP 有调度身份 +
+        // AP 被唤醒 四者齐备, 任务才会真正落到 AP 上).
+        let this_cpu = crate::framework::smp::get_current_cpu();
+        let target = self.find_idle_cpu(pid, this_cpu);
+        self.cfs_enqueue_to(pid, target);
+        if target != this_cpu {
+            // 有界诊断 (仅前若干次): 供 `-smp 2` 验证观测跨核投送.
+            static MIGRATE_LOG: AtomicU64 = AtomicU64::new(0);
+            if MIGRATE_LOG.fetch_add(1, Ordering::Relaxed) < 8 {
+                crate::klog_info!(Kernel, "[SMP] migrate pid={} -> cpu={}", pid, target);
+            }
+            // 锁外发送 IPI: resched_cpu 内部锁 cpu_queue, 与 cfs_rq 锁无嵌套.
+            crate::framework::proc::cpu_queue::resched_cpu(target);
+        }
     }
 
     #[expect(
@@ -1524,6 +1564,33 @@ impl Scheduler {
             }
         }
         best_cpu
+    }
+
+    /// 在 allowed cpuset 内为 `pid` 挑选一个**空闲核**作为投送目标.
+    ///
+    /// 判据: 该核已建立调度身份 (`current == idle != 0`) 且 CFS 无待运行任务;
+    /// 命中即返回该核. 单核或找不到空闲核时返回 `hint` (通常为当前核), 保证
+    /// 退化路径仍可在当前核调度.
+    ///
+    /// **不复用 [`Self::select_cpu_for`]**: 后者优先返回 `hint`(当前核), 语义是
+    /// "缓存亲和", 与本函数"投送到空闲核"相反 (E6).
+    fn find_idle_cpu(&self, pid: Pid, hint: u32) -> u32 {
+        let cpu_count = crate::framework::smp::get_cpu_count();
+        if cpu_count <= 1 {
+            return hint;
+        }
+        for cpu in 0..cpu_count {
+            if cpu == hint || !self.is_cpu_allowed(pid, cpu) {
+                continue;
+            }
+            let sched = per_cpu_for(cpu);
+            let cur = sched.current.load(Ordering::SeqCst);
+            let idle = sched.idle.load(Ordering::SeqCst);
+            if cur != 0 && cur == idle && sched.cfs_rq.lock().is_empty() {
+                return cpu;
+            }
+        }
+        hint
     }
 
     #[expect(

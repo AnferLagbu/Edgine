@@ -311,6 +311,18 @@ extern "C" fn ap_entry(lapic_id: u32) -> ! {
 
     super::gdt::gdt_init_ap(cpu_index);
 
+    // AP 本核 CPU 特性初始化 (使能 FPU/SSE + 装载 SYSCALL 入口 MSR)。
+    // BSP 侧由 `cpu_init` → `init_msr` 完成, AP 上电路径此前遗漏: 这些状态
+    // (CR0/CR4 及 IA32_STAR/LSTAR/SFMASK/EFER.SCE) 均为 per-CPU, 不随 AP 上电
+    // 继承。缺失时 `process_switch_asm` 的 fxsave 在 CR4.OSFXSR=0 下触发 #UD →
+    // #DF, 使本核首次上下文切换即崩溃离线; SYSCALL MSR 未设则 AP 上用户态首个
+    // syscall 跳向无效入口。此处复用 BSP 探测到的特性集合, 仅作用于本核。
+    if let Some(info) = crate::framework::cpu::get_cpu_info() {
+        if let Err(e) = crate::framework::cpu::init_msr(&info.features) {
+            crate::klog_err!(Boot, "[SMP] AP cpu_index={} init_msr failed: {}", cpu_index, e);
+        }
+    }
+
     // AP 必须在本核加载 IDT 之后才能开中断: gdt_init_ap 只装 GDT+TSS,
     // 而 BSP 的 idt_init() 里的 lidt 只对 BSP 本核生效. 若 AP 在 IDTR.BASE=0
     // 状态下开中断, 首个定时器中断 (向量 0x20) 即触发 #GP → #DF → triple fault.
@@ -341,9 +353,22 @@ extern "C" fn ap_entry(lapic_id: u32) -> ! {
 
     crate::framework::smp::register_cpu(lapic_id);
 
-    // 本核 idle 任务: 与 BSP 一样, 每核都需一个 idle 兜底, 否则本核
-    // `schedule()` 在无候选任务时会返回 None (BSP 的 idle 不属于本核).
-    let _ = crate::framework::proc::SCHEDULER.init_per_cpu_idle(cpu_index as u32);
+    // 建立本核调度身份: 创建 (或复用) 本核 idle 并置 `current = idle`, 此后本核
+    // `schedule()` 才会真正执行上下文切换 (BSP 的 idle 不属于本核)。失败则放弃
+    // 上线: 不置 done, 由 BSP 等待超时后判定离线 (与 per-CPU 状态分配失败一致)。
+    if crate::framework::proc::SCHEDULER
+        .adopt_cpu_idle(cpu_index)
+        .is_none()
+    {
+        crate::klog_err!(
+            Boot,
+            "[SMP] AP cpu_index={} idle adopt failed, abort bring-up",
+            cpu_index
+        );
+        loop {
+            crate::arch!(halt());
+        }
+    }
 
     // SAFETY: TRAMPOLINE_BASE + AP_INFO_OFFSET + DONE_OFFSET 是 AP 握手内存布局中
     // 预留的 done 标志位, BSP 已映射该物理页, 写入对齐 u32 安全.
@@ -355,12 +380,19 @@ extern "C" fn ap_entry(lapic_id: u32) -> ! {
         core::ptr::write_volatile(done_ptr, 1);
     }
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    unsafe {
-        core::arch::asm!("sti", options(nomem, nostack));
-    }
-
+    // 进入本核 idle 调度循环。
+    //
+    // 每轮: 关中断 → `schedule()` (本地选任务 / 负载均衡, 必要时上下文切换到任务)
+    // → `sti; hlt` 融合体原子地开中断并停机。融合是必需的: ①AP 本核无周期定时器
+    // (PIT 仅 BSP 可用, LAPIC 周期定时器未标定), 唤醒靠 resched IPI 与其它核的负载
+    // 均衡, 开中断与 `hlt` 分离会丢掉窗口内到达的 IPI; ②`sti; hlt` 是 x86 的经典
+    // 原子等待序列 (STI 影子指令), 对齐 `idle_entry` 手法。
     loop {
-        crate::arch!(halt());
+        crate::arch!(interrupt_disable());
+        let _ = crate::framework::proc::SCHEDULER.schedule();
+        // SAFETY: sti/hlt 在 ring 0 合法; 不读写内存也不修改栈, options 与之一致.
+        unsafe {
+            core::arch::asm!("sti; hlt", options(nomem, nostack));
+        }
     }
 }
