@@ -619,17 +619,83 @@ pub extern "C" fn svc_handler(frame: &mut ExceptionFrame) -> u64 {
     result as u64
 }
 
-/// EL0 IRQ 处理器
-#[unsafe(no_mangle)]
-#[expect(
-    clippy::items_after_statements,
-    reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-)]
-pub extern "C" fn irq_handler_el0(_frame: &ExceptionFrame) {
-    // GIC ACK + handle + EOI
+/// 内核 IRQ 统一分发 (EL1h 与 EL0 两条异常路径的**唯一**实现)。
+///
+/// 中断可在核处于 EL1 (内核态) 或 EL0 (用户态) 时到达; SGI/PPI 的**接收语义与
+/// 异常级无关**, 二者必须等价处置。历史缺陷: EL0 路径曾自带一份裁剪过的分发
+/// (仅处理 Timer PPI 与设备 SPI), 丢弃内核 SGI 7/13/14 —— 目标核在 EL0 时跨核
+/// TLB 失效 (SGI 13) 被静默 ACK/EOI, 该核 `CPU_TLB_GEN` 永不推进, 以
+/// [`crate::framework::smp::tlb_gen_min_online`] 为判据的延迟释放页帧永久滞留
+/// (并保留陈旧 TLB 项)。收敛为单一入口后两条路径不可能再分叉。
+///
+/// `from_el0` 仅用于 Timer 诊断日志区分来源入口, 不改变任何路由或处置逻辑。
+fn handle_irq(from_el0: bool) {
+    // 诊断计数器置于语句之前 (避免 items_after_statements)。
+    static IRQ_COUNT: AtomicU64 = AtomicU64::new(0);
+    static TIMER_COUNT: AtomicU64 = AtomicU64::new(0);
+    static SGI_COUNT: AtomicU64 = AtomicU64::new(0);
+
+    // GIC ACK
     let intid = super::gic::acknowledge();
+
+    // 诊断: 记录前若干次 IRQ 以追踪崩溃点
+    let count = IRQ_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    if count <= 10 {
+        crate::klog_info!(Boot, "IRQ: intid={} count={}", intid, count);
+    }
+
     if intid >= 1020 {
         // 伪中断, 无需 EOI
+        return;
+    }
+
+    // 内核 SGI 接收诊断 (有界): 打印接收入口 (EL1h/EL0) 与 intid, 为
+    // ISSUE-RT-002 的"EL0 路径与内核态等价路由内核 SGI"提供正向运行期证据。
+    if intid == super::gic::BARRIER_RECOVERY_SGI
+        || intid == super::gic::TLB_SHOOTDOWN_SGI
+        || intid == super::gic::RESCHEDULE_SGI
+    {
+        let c = SGI_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        if c <= 10 {
+            crate::klog_info!(
+                Boot,
+                "SGI intid={} origin={} count={}",
+                intid,
+                if from_el0 { "EL0" } else { "EL1h" },
+                c
+            );
+        }
+    }
+
+    // ── 栏栈恢复 SGI 7 (aarch64 等价于 x86_64 int 0x82) ─────────────────
+    if intid == super::gic::BARRIER_RECOVERY_SGI {
+        let result = super::barrier::barrier_sgi_handler();
+        if result < 0 {
+            crate::klog_info!(Boot, "Barrier recovery SGI failed: {}", result);
+        }
+        super::gic::end_of_interrupt(intid);
+        return;
+    }
+
+    // ── 跨核 TLB 失效 SGI 13 (aarch64 等价于 x86_64 向量 0xFD) ──────────
+    if intid == super::gic::TLB_SHOOTDOWN_SGI {
+        // 收敛入口 `smp::tlb_catch_up_local` 完成
+        // "先读当前代 → 全量刷新本核 TLB → 声明本核已追平该代", 次序不可颠倒
+        // (先 flush 后读代会读到 flush 之后新发布的代, 把本次 flush 未覆盖的批次
+        // 误判为已追平); 随后登记运行期探针观测 (未装备时为空操作).
+        crate::framework::smp::tlb_catch_up_local();
+        crate::framework::smp::tlb_probe_report();
+        super::gic::end_of_interrupt(intid);
+        return;
+    }
+
+    // ── 跨核重新调度 SGI 14 (aarch64 等价于 x86_64 向量 0xFE) ───────────
+    if intid == super::gic::RESCHEDULE_SGI {
+        // 复用既有 IPI 入口登记本核挂起重调度 (fire-and-forget, 不等确认);
+        // EOI 之后经统一调度点执行切换 (见 `run_pending_resched` 文档).
+        crate::framework::proc::cpu_queue::resched_ipi_handler();
+        super::gic::end_of_interrupt(intid);
+        crate::framework::proc::cpu_queue::run_pending_resched();
         return;
     }
 
@@ -638,13 +704,13 @@ pub extern "C" fn irq_handler_el0(_frame: &ExceptionFrame) {
         // 重新装载定时器 (ARM Generic Timer 是一次性的)
         super::timer::reload(TIMER_INTERVAL_TICKS.load(Ordering::Relaxed));
 
-        static TIMER_COUNT_EL0: AtomicU64 = AtomicU64::new(0);
-        let el0count = TIMER_COUNT_EL0.fetch_add(1, Ordering::Relaxed) + 1;
-        if el0count <= 5 {
+        let tcount = TIMER_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        if tcount <= 5 {
             crate::klog_info!(
                 Boot,
-                "TIMER IRQ (EL0) count={} ready={}",
-                el0count,
+                "TIMER IRQ{} count={} ready={}",
+                if from_el0 { " (EL0)" } else { "" },
+                tcount,
                 crate::framework::net::NET_READY.load(core::sync::atomic::Ordering::Acquire)
             );
         }
@@ -679,6 +745,19 @@ pub extern "C" fn irq_handler_el0(_frame: &ExceptionFrame) {
     super::gic::end_of_interrupt(intid);
 
     crate::framework::irq::do_softirq();
+
+    // 中断退出前执行挂起重调度 (须在 do_softirq 返回之后, 见其文档)
+    crate::framework::proc::cpu_queue::run_pending_resched();
+}
+
+/// EL0 IRQ 处理器 (用户态中断入口)。
+///
+/// 与 EL1h 的 [`irq_handler`] 共用 [`handle_irq`]: 中断接收语义与异常级无关,
+/// EL0 期到达的内核 SGI (7/13/14) 必须与内核态同样处置 (历史缺陷见 [`handle_irq`])。
+// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+#[unsafe(no_mangle)]
+pub extern "C" fn irq_handler_el0(_frame: &ExceptionFrame) {
+    handle_irq(true);
 }
 
 /// 默认同步异常处理 (EL1h / EL0)
@@ -798,118 +877,19 @@ unsafe fn exc_puthex(val: u64) {
     }
 }
 
-/// 跨核 TLB 失效 SGI 编号 (aarch64 等价于 x86_64 向量 0xFD)
-///
-/// 发送侧 `send_ipi(target, 0xFD)` 把 `vector & 0xF` 编码进 `ICC_SGI1R_EL1[27:24]`
-/// (见 arch/aarch64/mod.rs 的 `send_ipi`), GIC 交付的 INTID 即低 4 位,
-/// 故接收侧 intid = 0xFD & 0xF = 13, 与栏栈 SGI 7 及 timer PPI 30 均不冲突.
-pub const TLB_SHOOTDOWN_SGI: u32 = 0xFD & 0xF;
+// 跨核 TLB 失效 / 重新调度 SGI 编号集中定义于 `gic` (GIC 资源归属), 见其 `*_SGI` 常量:
+// 发送侧 `send_ipi(target, 0xFD|0xFE)` 把 `vector & 0xF` 编码进 `ICC_SGI1R_EL1[27:24]`
+// (见 arch/aarch64/mod.rs 的 `send_ipi`), GIC 交付的 INTID 即低 4 位
+// (TLB 失效 = 13, 重新调度 = 14), 与栏栈 SGI 7 及 timer PPI 30 均不冲突。
+// 使能由每核入口 `gic::init_per_cpu` 统一完成, 本模块只负责接收路由。
 
-/// 跨核重新调度 SGI 编号 (aarch64 等价于 x86_64 向量 0xFE)
+/// 默认 IRQ 处理 (EL1h, 内核态中断入口)。
 ///
-/// 发送侧 `send_ipi(target, 0xFE)` 编码后接收侧 intid = 0xFE & 0xF = 14,
-/// 与 TLB 失效 SGI 13 及栏栈 SGI 7 均不冲突.
-pub const RESCHEDULE_SGI: u32 = 0xFE & 0xF;
-
-/// 默认 IRQ 处理 (EL1h)
+/// 与 EL0 的 [`irq_handler_el0`] 共用 [`handle_irq`]。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::items_after_statements,
-    reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-)]
 pub extern "C" fn irq_handler(_frame: &ExceptionFrame) {
-    // GIC ACK
-    let intid = super::gic::acknowledge();
-
-    // 诊断: 记录所有 IRQ 以追踪崩溃点
-    {
-        static IRQ_COUNT: AtomicU64 = AtomicU64::new(0);
-        let count = IRQ_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-        if count <= 10 {
-            crate::klog_info!(Boot, "IRQ: intid={} count={}", intid, count);
-        }
-    }
-
-    if intid >= 1020 {
-        return;
-    }
-
-    // ── 栏栈恢复 SGI 7 (aarch64 等价于 x86_64 int 0x82) ─────────────────
-    if intid == super::barrier::BARRIER_RECOVERY_SGI as u32 {
-        let result = super::barrier::barrier_sgi_handler();
-        if result < 0 {
-            crate::klog_info!(Boot, "Barrier recovery SGI failed: {}", result);
-        }
-        super::gic::end_of_interrupt(intid);
-        return;
-    }
-
-    // ── 跨核 TLB 失效 SGI 13 (aarch64 等价于 x86_64 向量 0xFD) ──────────
-    if intid == TLB_SHOOTDOWN_SGI {
-        // 收敛入口 `smp::tlb_catch_up_local` 完成
-        // "先读当前代 → 全量刷新本核 TLB → 声明本核已追平该代", 次序不可颠倒
-        // (先 flush 后读代会读到 flush 之后新发布的代, 把本次 flush 未覆盖的批次
-        // 误判为已追平); 随后登记运行期探针观测 (未装备时为空操作).
-        crate::framework::smp::tlb_catch_up_local();
-        crate::framework::smp::tlb_probe_report();
-        super::gic::end_of_interrupt(intid);
-        return;
-    }
-
-    // ── 跨核重新调度 SGI 14 (aarch64 等价于 x86_64 向量 0xFE) ───────────
-    if intid == RESCHEDULE_SGI {
-        // 复用既有 IPI 入口, 内部登记 Sched softirq (fire-and-forget, 不等确认)
-        crate::framework::proc::cpu_queue::resched_ipi_handler();
-        super::gic::end_of_interrupt(intid);
-        return;
-    }
-
-    // Timer interrupt (PPI 30 = non-secure physical timer)
-    if intid == 30 {
-        // 重新装载定时器 (ARM Generic Timer 是一次性的)
-        super::timer::reload(TIMER_INTERVAL_TICKS.load(Ordering::Relaxed));
-
-        static TIMER_COUNT: AtomicU64 = AtomicU64::new(0);
-        let tcount = TIMER_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-        if tcount <= 5 {
-            crate::klog_info!(
-                Boot,
-                "TIMER IRQ count={} ready={}",
-                tcount,
-                crate::framework::net::NET_READY.load(core::sync::atomic::Ordering::Acquire)
-            );
-        }
-
-        crate::framework::timer::on_timer_interrupt();
-
-        // 网络轮询
-        #[cfg(not(feature = "kernel_test"))]
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        unsafe {
-            crate::framework::net::poll_network();
-        }
-
-        // 仅当 scheduler 已初始化时触发调度
-        if crate::framework::proc::SCHEDULER_READY.load(core::sync::atomic::Ordering::Acquire) {
-            // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
-            unsafe extern "C" {
-                fn scheduler_tick();
-            }
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-            unsafe {
-                scheduler_tick();
-            }
-        }
-    }
-
-    // 设备 SPI 分发 (须在 EOI 前: 电平触发中断需先完成设备侧 ack)
-    let _ = super::gic::dispatch_device_spi(intid);
-
-    super::gic::end_of_interrupt(intid);
-
-    // 与 x86_64 IRQ 路径及 EL0 路径对齐: 中断退出前执行软中断底半部
-    crate::framework::irq::do_softirq();
+    handle_irq(false);
 }
 
 /// 默认 FIQ 处理 (EL1h)
@@ -955,10 +935,6 @@ pub unsafe fn init_vectors() {
     }
 }
 
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-)]
 /// 初始化异常: 设置 VBAR_EL1 指向向量表, 清除 DAIF (开中断)
 ///
 /// # Safety

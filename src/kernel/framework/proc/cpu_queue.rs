@@ -162,27 +162,37 @@ pub fn resched_cpu(target_cpu: u32) {
     }
 }
 
-/// IPI 重新调度入口 (由 IPI handler 调用，在目标 CPU 上执行)
-/// 通过 softirq 延迟执行 `schedule()`
+/// 在本核登记一次延迟重调度: 只置本核 `CpuQueue.need_reschedule`, 实际
+/// `schedule()` 交由中断退出路径的 [`run_pending_resched`] 执行.
+///
+/// 供中断上下文使用: 中断尚未 EOI 时应避免切换上下文 (会悬置本核 GIC/LAPIC
+/// 运行优先级, 阻断后续中断); 且切换后中断栈上未返回的代码不会继续执行,
+/// 故不能经由 softirq handler 承担切换 (见 `run_pending_resched` 文档).
+pub fn mark_resched_pending_local() {
+    current_cpu_queue().set_need_reschedule();
+}
+
+/// 中断退出路径的统一调度点 —— 在 `do_softirq()` 返回之后 (EOI 已发) 调用.
+///
+/// 本核确有挂起重调度时执行 `schedule()`.
+///
+/// 为什么不在 softirq handler 内调度: `do_softirq()` 以 per-CPU `running`
+/// 标志防止重入, 该标志在其主循环结束后才复位; 若 handler 内 `schedule()`
+/// 发生上下文切换, 本核将永远停在被切出的任务上, `running` 不复位 ⇒ 此后
+/// 本核所有 `do_softirq()` 直接返回, 重调度路径彻底失效 (ISSUE-RT-004 的
+/// 直接成因). 故调度点必须在 `do_softirq()` 完整返回之后.
+pub fn run_pending_resched() {
+    if current_cpu_queue().take_need_reschedule() {
+        super::scheduler::SCHEDULER.schedule();
+    }
+}
+
+/// IPI 重新调度入口 (由 IPI handler 调用，在目标 CPU 上执行): 登记本核挂起
+/// 重调度, 由调用方在 EOI 之后经 [`run_pending_resched`] 执行切换.
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn resched_ipi_handler() {
-    crate::framework::irq::raise_softirq(crate::framework::irq::SoftirqVec::Sched);
-}
-
-/// 注册 softirq Sched handler (在 scheduler init 时调用)
-pub fn register_sched_softirq() {
-    crate::framework::irq::open_softirq(
-        crate::framework::irq::SoftirqVec::Sched,
-        sched_softirq_handler,
-    );
-}
-
-fn sched_softirq_handler() {
-    let q = current_cpu_queue();
-    if q.take_need_reschedule() {
-        super::scheduler::SCHEDULER.schedule();
-    }
+    mark_resched_pending_local();
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作

@@ -1480,8 +1480,24 @@ impl Scheduler {
             }
         }
 
+        // 本核 current 为 idle 且存在可运行任务 ⇒ 必须重调度.
+        //
+        // idle 不在任何运行队列中, 上面基于 vruntime 的 CFS 抢占判据对它无意义:
+        // 当任务在 `schedule()` 末尾被重新入队 (`prev_requeue`) 而本核已切到 idle 时,
+        // 只有本判据能把它重新拉回运行 (否则该核永久停在 idle, 见 ISSUE-RT-004).
+        if current_pid != 0
+            && per_cpu.idle.load(Ordering::SeqCst) == current_pid
+            && self.has_runnable()
+        {
+            per_cpu.need_reschedule.store(true, Ordering::SeqCst);
+        }
+
+        // 本函数运行于定时器中断内且中断尚未 EOI, 此刻直接 `schedule()` 会悬置
+        // 本核 GIC/LAPIC 运行优先级, 阻断后续中断; 故只登记本核挂起重调度
+        // (见 `mark_resched_pending_local`), 实际切换交由中断退出路径在
+        // `do_softirq()` 返回之后经 `run_pending_resched` 执行.
         if per_cpu.need_reschedule.swap(false, Ordering::SeqCst) {
-            self.schedule();
+            crate::framework::proc::cpu_queue::mark_resched_pending_local();
         }
 
         crate::framework::sync::restore_interrupts(&flags);
@@ -1775,5 +1791,8 @@ pub static SCHEDULER_READY: AtomicBool = AtomicBool::new(false);
 
 pub fn init() {
     SCHEDULER.init();
+    // D6: 进程级 tick 与跨核 resched IPI 只登记重调度请求 (见
+    // `cpu_queue::mark_resched_pending_local`), 实际切换由中断退出路径在
+    // `do_softirq()` 返回后经 `cpu_queue::run_pending_resched` 执行.
     SCHEDULER_READY.store(true, Ordering::Release);
 }

@@ -20,7 +20,8 @@
 //! - 自检须覆盖 GICD_CTLR / GICR_WAKER / GICR_ISENABLER0 / ICC_IGRPEN1_EL1;
 //! - 不得再写 `GICR_CTLR` (其 bit0 实为 EnableLPIs, 非 redistributor 使能位);
 //! - boot 入口须 fail-fast 并打印 `GICv3 ready` 里程碑;
-//! - QEMU 启动脚本须断言该里程碑.
+//! - QEMU 启动脚本须断言该里程碑;
+//! - EL1h 与 EL0 两条 IRQ 路径须共用同一 SGI 分发 (防平行实现再次分叉).
 
 use std::fs;
 use std::path::Path;
@@ -52,6 +53,7 @@ fn slice_between<'a>(src: &'a str, begin: &str, end: &str) -> &'a str {
 
 const GIC_RS: &str = "src/kernel/framework/arch/aarch64/gic.rs";
 const ENTRY_RS: &str = "src/kernel/framework/boot/aarch64/entry.rs";
+const EXCEPTION_RS: &str = "src/kernel/framework/arch/aarch64/exception.rs";
 const QEMU_SH: &str = "scripts/qemu_boot_test.sh";
 
 #[test]
@@ -174,4 +176,53 @@ fn test_qemu_script_asserts_gic_marker() {
         src.contains("GICv3 ready"),
         "QEMU 启动脚本须断言 `GICv3 ready` 里程碑 (ISSUE-RT-002 回归防护)"
     );
+}
+
+/// 内核 SGI 接收路由必须在 EL1h 与 EL0 两条 IRQ 路径上**等价**。
+///
+/// 追踪: ISSUE-RT-002 (中断处理域)。历史缺陷: EL0 IRQ 路径自带一份裁剪过的分发
+/// (仅处理 Timer PPI 与设备 SPI), 丢弃内核 SGI 7/13/14 —— 目标核在 EL0 时跨核
+/// TLB 失效 (SGI 13) 被静默 ACK/EOI, 该核 `CPU_TLB_GEN` 永不推进, 以
+/// `smp::tlb_gen_min_online` 为判据的延迟释放页帧永久滞留。本契约固化:
+/// - 两条 IRQ 入口均委托同一 `handle_irq` (单一实现, 不得再有平行分派);
+/// - 共用分发须覆盖全部内核 SGI (barrier 7 / TLB 13 / resched 14)。
+#[test]
+fn test_el0_and_el1_irq_paths_share_sgi_dispatch() {
+    let src = read(EXCEPTION_RS);
+
+    // 两条入口必须委托到同一分发函数。
+    let el1 = slice_between(&src, "pub extern \"C\" fn irq_handler(", "\n}\n");
+    let el0 = slice_between(&src, "pub extern \"C\" fn irq_handler_el0(", "\n}\n");
+    assert!(
+        el1.contains("handle_irq(false)"),
+        "irq_handler (EL1h) 必须委托 handle_irq (单一分发)"
+    );
+    assert!(
+        el0.contains("handle_irq(true)"),
+        "irq_handler_el0 (EL0) 必须委托 handle_irq (单一分发)"
+    );
+    // EL0 入口不得自带任何独立分派逻辑 (否则平行实现分叉复发)。
+    assert!(
+        !el0.contains("if intid ==") && !el0.contains("acknowledge()"),
+        "irq_handler_el0 不得自带独立分发 (须复用 handle_irq)"
+    );
+
+    // 共用分发必须覆盖全部内核 SGI 的路由条件与接收处理。
+    let shared = slice_between(&src, "fn handle_irq(", "\n}\n");
+    for (cond, call) in [
+        ("super::gic::BARRIER_RECOVERY_SGI", "barrier_sgi_handler"),
+        ("super::gic::TLB_SHOOTDOWN_SGI", "tlb_catch_up_local"),
+        ("super::gic::RESCHEDULE_SGI", "resched_ipi_handler"),
+    ] {
+        assert!(
+            shared.contains(cond),
+            "handle_irq 必须路由内核 SGI 条件: {}",
+            cond
+        );
+        assert!(
+            shared.contains(call),
+            "handle_irq 必须调用接收处理: {}",
+            call
+        );
+    }
 }

@@ -92,7 +92,16 @@ pub extern "C" fn scheduler_add(pid: Pid) {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn scheduler_tick() {
-    SCHEDULER_EX.tick();
+    // D6: 定时器中断统一驱动**进程级**调度器 tick.
+    //
+    // 原实现只驱动线程级 `SCHEDULER_EX.tick()`; 而本项目 `ThreadManager::create_thread`
+    // 无调用者 (进程无对应 `Thread`), 线程级调度实际空转, 导致进程级 CFS 记账/
+    // 抢占判定/睡眠唤醒/zombie 回收/周期负载均衡全部不推进 —— aarch64 双核下表现为
+    // 任务被重新入队后本核永久停在 idle (ISSUE-RT-004).
+    //
+    // 线程级记账不丢失: `Scheduler::tick` 内部会调用 `SCHEDULER_EX.tick_accounting()`,
+    // 故此处只保留单一 tick 入口, 不重复记账.
+    SCHEDULER.tick(crate::framework::smp::get_current_cpu() as usize);
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作

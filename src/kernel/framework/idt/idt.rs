@@ -801,12 +801,13 @@ impl IdtManager {
             self.send_eoi(0);
             return;
         }
-        // 0xFE (reschedule): 接线既有 resched_ipi_handler (内部
-        // raise_softirq(Sched)); reschedule 天然 fire-and-forget, 不等 ack.
-        // 不进入 do_softirq/信号投递路径.
+        // 0xFE (reschedule): 接线既有 resched_ipi_handler 登记本核挂起重调度;
+        // reschedule 天然 fire-and-forget, 不等 ack. EOI 之后经统一调度点
+        // 执行切换 (本路径不进 do_softirq/信号投递).
         if vector == 0xFE {
             crate::framework::proc::cpu_queue::resched_ipi_handler();
             self.send_eoi(0);
+            crate::framework::proc::cpu_queue::run_pending_resched();
             return;
         }
 
@@ -845,6 +846,9 @@ impl IdtManager {
                     crate::framework::proc::do_signal_deliver(frame);
                 }
             }
+
+            // 中断退出前执行挂起重调度 (须在 do_softirq 返回之后)
+            crate::framework::proc::cpu_queue::run_pending_resched();
             return;
         }
 
@@ -902,6 +906,9 @@ impl IdtManager {
                     crate::framework::proc::do_signal_deliver(frame);
                 }
             }
+
+            // 中断退出前执行挂起重调度 (须在 do_softirq 返回之后)
+            crate::framework::proc::cpu_queue::run_pending_resched();
         } else {
             // MSI 向量 (0x40-0x7F → irq 0x10-0x3F): 通过 ISR_TABLE 分发
             crate::framework::irqline::dispatch_irq(vector);

@@ -25,7 +25,7 @@
 
 | 类别 | 数量 | 严重度分布 | 状态 |
 |---|---|---|---|
-| 运行时已知问题 | 3 | P0×1 + P1×2 | 🔄 RT-001 已修复 (`[X]`); RT-002 压测不可复现 (保留); RT-003 交付物就绪 (真机执行待硬件) |
+| 运行时已知问题 | 3 (+2 后续登记) | P0×1 + P1×2 (+P1×2) | 🔄 RT-001 已修复 (`[X]`); RT-002 压测不可复现 (保留; 本轮消除 EL0/EL1 分发分叉并复压 50/50, 仍开放); RT-003 交付物就绪 (真机执行待硬件); **RT-004 已修复 (`[X]`)**; **RT-005 新登记 (EL0 中断不可达)** |
 | 源码未实现 (TODO) | ~43 | P1×16 + P2×22 + P3×5 | ❌ 未修复 |
 | 跨文档矛盾 (code-review) | 8 | P1×3 + P2×3 + P3×2 | 🔄 已修复 (2026-09-26 复验; 归档快照冻结) |
 | 远期工程 | 6 | 远期 | ❌ 未启动 |
@@ -37,7 +37,7 @@
 | 迁移中子系统状态 (2026-08-31) | 8 | MIG×8 | ⚠️ 迁移中 (有意识中间态) |
 | 分册 6 调研预存问题 (2026-08-31) | 3 | B06-PRE×3 (1 安全) | ❌ 用户裁决登记待后续 |
 | socket_max_sockets flaky 排查 (2026-08-31) | 1 | B06-PRE-004 | ✅ 已修复 (非内核问题) |
-| **总计** | **~82 项 (2026-08-09 原登记)** | — | **复验订正: 真正仍开放 ≈ 24 项 + 3 项刻意维持** |
+| **总计** | **~82 项 (2026-08-09 原登记)** | — | **复验订正: 真正仍开放 ≈ 25 项 + 3 项刻意维持** |
 
 > **【本轮复验订正】** 按当前源码状态逐类复核 (原登记数保留上表, 不涂改):
 > - **源码未实现 (TODO)**: 原 ~43 项 → 实测**仅剩 1 项**真实 TODO ([framework/net/init.rs:601](file:///home/anfer/Code/QueenX/src/kernel/framework/net/init.rs#L601), 即原 ISSUE-SRC-008, 行号由 `:822` 漂移); 另 1 项 ISSUE-SRC-028 所在文件 `services/fs/vfs/api.rs` 已不存在 (拆分迁至 `handle.rs`). 其余 41 项全部消除 (源码仅残留 `TRACK-xxxxxx 消除` 说明注释).
@@ -161,7 +161,7 @@
 
 ---
 
-## 🔴 第 1 类：运行时已知问题 (3 项)
+## 🔴 第 1 类：运行时已知问题 (5 项)
 
 ### ISSUE-RT-001: x86_64 e1000 + smoltcp 初始化挂起
 
@@ -199,6 +199,7 @@
 | **【DECISION-082 订正】** | 上段「aarch64 当前**无 SMP**（`smp::init` 仅登记 BSP, `CPU_COUNT=1`）, QEMU 单核, 故真多核 GIC 压测待 SMP 落地后补」的前提**已解除**：aarch64 SMP bring-up 已落地（[aarch64-smp-bringup.md](./aarch64-smp-bringup.md)，PSCI `CPU_ON` + `ap_entry_asm` + `ap_main` + `register_cpu`），`./scripts/qemu_boot_test.sh aarch64` 已改为 `-smp 2` 并断言 `[SMP] online CPUs: 2`（fail-closed）⇒ 真多核 GIC 压测自此**具备执行载体**（`scripts/gic_stress_test.sh` 的 `-smp` 升级为后续动作，不阻塞本工程）。本条目**仍不闭合**（原始偶发挂起未定位根因），保留待真多核 / 真机复验。 |
 | **【真多核压测复验（载体升级完成）】** | 载体升级已落地：[gic_stress_test.sh](file:///home/anfer/Code/QueenX/scripts/gic_stress_test.sh) 由单核改以真多核（`-smp 2`）启动, 里程碑由单一 `GICv3 ready` 升级为 `GICv3 ready` && `[SMP] online CPUs: 2` **双断言**（fail-closed）。双断言即覆盖两核 GIC —— AP 的 per-CPU GIC（`gic::init_per_cpu`）初始化失败会 halt AP, BSP 有界自旋超时 ⇒ `online CPUs: 2` 不出现, 故该断言同时承载 AP 侧 GIC 健康。**实测 50 次, 50/50 全部通过, 无一次触发 GICv3 挂起**。结论与既有「QEMU TCG 时序偶发、当前环境不可稳定复现」一致；条目**仍不闭合**（根因未定位），保留待真机 / 更多时序场景。 |
 | **【有界时序搜索（RT-002 复现尝试）】** | 依用户裁决「追加有界时序搜索」, 在真多核载体上以变换时序的 QEMU 场景做**有界**复现尝试 —— 载体新增 `GIC_STRESS_SMP`（核数）与 `GIC_STRESS_QEMU_EXTRA`（附加 QEMU 参数）两个旋钮, 使搜索可复现。五场景合计 **96 次启动, 96/96 通过, 0 次触发挂起**: ① `-smp 2` × 50; ② `-smp 4` × 15; ③ `-smp 8` × 10; ④ `-smp 2 -accel tcg,thread=single`（TCG 串行化） × 15; ⑤ `-smp 2 -icount shift=6,align=off,sleep=off`（指令计数定时） × 6。结果进一步支持「QEMU TCG 时序偶发、当前环境不可稳定复现」结论; 条目**仍不闭合**（根因未定位）, 保留待真机 / 具复现样本的环境。 |
+| **【本轮复验（EL0/EL1 分发分叉消除 + 真多核压测 + 根因归属订正）】** | 依用户裁决「B 相对完整: 抽取单一 dispatch」, 本轮把 aarch64 两条 IRQ 路径收敛为**唯一实现** [handle_irq](file:///home/anfer/Code/QueenX/src/kernel/framework/arch/aarch64/exception.rs#L632)（`irq_handler` / `irq_handler_el0` 改为薄包装 `handle_irq(false)` / `handle_irq(true)`）, 消除 EL0 路径曾自带裁剪分发（仅 Timer PPI + 设备 SPI, 丢弃内核 SGI 7/13/14）的**平行实现分叉**; 新增静态契约回归 [aarch64_gic_contract_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/aarch64_gic_contract_test.rs) 固化"两入口共用分发 + 分发覆盖全部内核 SGI", 防分叉复发; 并补有界运行期 SGI 接收诊断（`SGI intid= origin= count=`）。复验: 六门槛全绿（双架构 0w0e、`./ci/audit.sh quick` EXIT=0、`make test-host`、`make test-kernel-host` 949/0、`TIMEOUT_QEMU=30 ./scripts/qemu_boot_test.sh all` 2/2）; [gic_stress_test.sh](file:///home/anfer/Code/QueenX/scripts/gic_stress_test.sh) 真多核（`-smp 2`）**50/50 通过, 0 次挂起**。**根因归属订正（关键）**: 本轮实证 aarch64 EL0 全程 `PSTATE.I=1`（`SPSR_EL1=0x3C0`, 见 [mod.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/arch/aarch64/mod.rs#L326-L328)）⇒ EL0 IRQ 入口**运行期不可达**（实测 `origin=EL0` 计数 0）⇒ 上述"SGI 丢弃"实为**潜在（不可达）缺陷**, **不可能是 RT-002 偶发挂起的实际根因**。故本条目**仍不闭合**（真根因未定位）, 保留待真机 / 具复现样本环境; 「EL0 中断不可达」另立 **ISSUE-RT-005**（见下, 本轮经用户裁定仅登记不实施）。 |
 | **建议方案** | (1) GDB `break gic_init` 单步跟踪; (2) 检查 GICR_SGI_BASE 寄存器访问; (3) 检查 SGI 7 触发时 Redistributor 状态 |
 | **工作量** | 估计 3-5 天 |
 
@@ -215,6 +216,41 @@
 | **建议方案** | (1) 选定 x86_64 + aarch64 各一款硬件 (如 Intel NUC + Raspberry Pi); (2) 制作可启动介质; (3) 串口观察启动日志 |
 | **工作量** | 估计 2-4 周 (含硬件采购) |
 | **【本轮交付（三件套）】** | 本轮交付真机验证的**工具 + 指南 + 登记**三件套, 使真机验证可在拿到硬件后一次完成: ① 介质制作脚本 [make_boot_medium.sh](file:///home/anfer/Code/QueenX/scripts/make_boot_medium.sh)（统一入口, `x86_64` 产 GRUB2 混合 ISO / `aarch64` 产整盘 FAT32 + U-Boot distro boot 介质, 含写盘四重护栏与 fail-closed）; ② 真机验证权威指南 [guide-hardware-boot.md](file:///home/anfer/Code/QueenX/docs/explain/guide-hardware-boot.md)（介质制作 / 串口 checklist / aarch64 SoC 契约与边界 / 故障排查）; ③ 本台账登记. 真机**执行**本身依赖用户提供硬件, 故状态为"交付物就绪, 执行待硬件". |
+
+### ISSUE-RT-004: aarch64 KPTI-09 里程碑未触发
+
+| 字段 | 数据 |
+|---|---|
+| **严重度** | P1 (CI full 模式硬失败) |
+| **状态** | ✅ 已修复 (`[X]`) |
+| **类型** | 验证里程碑缺失 (KPTI EL0 隔离断言未触发) |
+| **现象** | aarch64 QEMU `-smp 2` 启动日志中 KPTI 隔离相关的两类输出 (`[KPTI] EL0 kernel high-half access denied` 与 `[KPTI] FAIL: ...`) **出现次数均为 0**；而同源用例在 x86_64 上正常 (`[x86_64] KPTI 隔离断言通过`)。 |
+| **事实依据 (本次实测)** | [build/log/qemu_boot_aarch64.log](file:///home/anfer/Code/QueenX/build/log/qemu_boot_aarch64.log): `grep -ac "denied"` = **0**、`grep -ac "KPTI] FAIL"` = **0**，且 `[KPTI]` 开头的日志行总数亦为 **0**；同轮 [build/log/qemu_boot_x86_64.log](file:///home/anfer/Code/QueenX/build/log/qemu_boot_x86_64.log): `[KPTI] EL0 kernel high-half access denied` = 1。 |
+| **源码位置** | [src/user/init/src/main.rs](file:///home/anfer/Code/QueenX/src/user/init/src/main.rs) 的 KPTI 探针分支 —— 探针子进程以 EL0 读内核高半区别名，**两种结局各打印其一**: 被内核终止 ⇒ 父进程打印 `... denied`; 读到值 ⇒ 子进程打印 `FAIL: ... readable`, 父进程打印 `FAIL: ... NOT denied`。故两类计数皆 0 ⇒ 该分支的打印**丢失或被跳过**（探针路径未执行, 或输出未达串口）。 |
+| **独立性 (关键)** | 该现象**在 AP 崩溃修复前即存在**（次核未修复时 QEMU 在次核崩溃后仍由 BSP 续跑, 但在 aarch64 侧同样观察不到 KPTI-09 断言）—— 原先被崩溃掩盖, 属**独立于本次次核修复的预存问题**。 |
+| **CI 影响 (需优先处置)** | [ci/audit.sh](file:///home/anfer/Code/QueenX/ci/audit.sh) 的 QEMU 门禁**仅在 `full` 模式以 `FAIL_OK=0` 运行**（L297-301）; [qemu_boot_test.sh](file:///home/anfer/Code/QueenX/scripts/qemu_boot_test.sh) aarch64 分支的 KPTI-09 断言在 `FAIL_OK=0` 时置 `RESULT=1`（fail-closed）⇒ 该 `warn` 在 CI full 模式下**构成硬失败**。 |
+| **建议方案** | (1) 定位探针分支打印丢失/跳过点: 探针 `fork` 是否成功、`wait_pid` 返回值分支判定、aarch64 侧异常终止是否经父进程收割返回; (2) 比对 x86_64 与 aarch64 的进程终止/收割路径差异 (aarch64 终止路径是否因新增 AP 崩溃修复而变更); (3) 若确认探针路径未执行, 检查 init `_start` 在 aarch64 上的执行流是否提前中断。 |
+| **工作量** | 估计 2-4 天 |
+| **根因 (已定位)** | 探针分支本身无误 —— 真正成因是**调度链路断裂导致父进程饥饿**, 使 KPTI 探针的 `fork`/`wait` 路径根本没有推进到打印点。断链自洽为**双重缺陷**: ① **D6 tick 未接线**: `scheduler_tick()` 只驱线程级 `SCHEDULER_EX.tick()`, 而 `ThreadManager::create_thread` 无调用者 (进程无对应 `Thread`), 线程级实际空转 ⇒ 进程级 CFS 记账/抢占判定/睡眠唤醒/zombie 回收/周期均衡全部不推进; ② **softirq 内调度泄漏**: D6 接线后重调度经 `Sched` softirq handler 执行, 而 `do_softirq()` 以 per-CPU `running` 标志防重入且**在主循环结束后才复位**; handler 内 `schedule()` 一旦发生上下文切换, 本核将永远停在被切出任务上, `running` 不复位 ⇒ 此后本核所有 `do_softirq()` 直接 return, 重调度路径彻底失效。实测证据: `sched_softirq cpu=0 took=true` 后 `pick cpu=0 cur=5 -> next=3` 即切走, 此后 cpu=0 再无 `sched_softirq` 输出而 `mark_resched cpu=0` 持续登记请求。x86_64 因 resched IPI 分支本就不进 `do_softirq` 而未暴露该泄漏。 |
+| **修复方案** | **调度点后移到 `do_softirq()` 返回之后 (EOI 已发)** —— 统一为"中断退出路径的延迟调度点": (1) [sched_ops.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/proc/sched_ops.rs) `scheduler_tick()` 改为驱**进程级** `SCHEDULER.tick(get_current_cpu())` (内部仍调 `SCHEDULER_EX.tick_accounting()`, 线程级记账不丢失); (2) [scheduler.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/proc/scheduler.rs) `Scheduler::tick` 新增 idle 判据 (`per_cpu.idle == current_pid && has_runnable()`) 后仅 `mark_resched_pending_local()` 登记请求; (3) [cpu_queue.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/proc/cpu_queue.rs) 删除 `Sched` softirq 注册/handler, 新增 `run_pending_resched()` (`take_need_reschedule()` 为真则 `SCHEDULER.schedule()`); (4) 在 aarch64 [exception.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/arch/aarch64/exception.rs) (SGI14 分支 / `irq_handler` / `irq_handler_el0` 末尾) 与 x86_64 [idt.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/idt/idt.rs) (IPI 0xFE / MSI / IRQ<16 分支) `end_of_interrupt`/`send_eoi` 与 `do_softirq()` 之后统一调用 `run_pending_resched()`. |
+| **验证结果** | 六门槛全绿: 双架构 `./ci/build.sh all` 0 error/0 warning; `./ci/audit.sh quick` (clippy pedantic + 双架构 check + 全部核心审计) 通过; `make test-host` 通过; `make test-kernel-host` 949/0; `TIMEOUT_QEMU=30 ./scripts/qemu_boot_test.sh all` 2/2 通过 —— **aarch64 QEMU 双核已触发** `[KPTI] EL0 kernel high-half access denied (KPTI-09)`, 且 `online CPUs: 2`、APS-05 双核并发 EL0 (cpu=0/cpu=1) 均通过; x86_64 无回归 (KPTI-09 / APS-05 保持通过)。 |
+
+### ISSUE-RT-005: aarch64 EL0 中断不可达（用户态不可被抢占, 与 x86_64 不一致）
+
+| 字段 | 数据 |
+|---|---|
+| **严重度** | P1 (aarch64 用户态无抢占式多任务; 跨架构行为不一致) |
+| **状态** | ❌ 未修复 (`[]`) — 待专项工程 |
+| **类型** | 运行时能力缺失 (用户态中断投递) |
+| **现象** | aarch64 EL0 全程 `PSTATE.I=1`, IRQ 异常被屏蔽 ⇒ EL0 IRQ 向量入口 (`handle_el0_irq` → `irq_handler_el0`) **运行期不可达**; 用户态既无定时器中断也无跨核 SGI 投递, 与 x86_64 用户态 `RFLAGS.IF=1` 行为不一致。 |
+| **证据 (代码)** | ① [mod.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/arch/aarch64/mod.rs#L326-L328) `enter_user` 置 `SPSR_EL1 = 0x3C0`（EL0t + DAIF 全屏蔽, I=1）; ② [context.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/arch/aarch64/context.rs#L175-L176) 调度恢复路径亦按 `0x3C0` 恢复目标 EL0 状态; ③ 全仓无任何位置清 SPSR 的 I 位（`grep` 0 命中）; ④ 对照 [x86_64/mod.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/arch/x86_64/mod.rs#L644) 用户态 `RFLAGS=0x202`（IF=1）。 |
+| **证据 (实测)** | aarch64 QEMU 长跑以有界诊断观测: `origin=EL0` 计数 **0**、`TIMER IRQ (EL0)` 计数 **0**（全部 `origin=EL1h`）; 既有登记 [aarch64-high-half-migration.md](file:///home/anfer/Code/QueenX/docs/plan/aarch64-high-half-migration.md#L91) 亦称 `handle_el0_irq` 在既有用例中**未被触发**。 |
+| **影响** | ① aarch64 用户任务只在 syscall / 异常边界被动让出, **无时间片抢占**; ② EL0 期间到达的内核 SGI (7/13/14) 被 PSTATE 屏蔽, 延迟到本核回到 EL1 才投递（非丢失, 但引入额外延迟与不可预期性）; ③ x86_64 / aarch64 调度语义不一致。 |
+| **源码位置** | [arch/aarch64/mod.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/arch/aarch64/mod.rs#L325-L369) (`enter_user`), [arch/aarch64/context.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/arch/aarch64/context.rs#L172-L232) (恢复路径) |
+| **关联** | ISSUE-RT-002（本轮据此**订正其根因归属**: EL0 路径不可达 ⇒ SGI 丢弃非其实根因）; DECISION-084 (SMP AP user scheduling) |
+| **建议方案** | 进入 / 恢复 EL0 时把 SPSR 的 I 位清零（对齐 x86_64 `IF=1`）, 使 EL0 可收中断 / 被抢占; 并补 EL0 IRQ 入口回归用例（含跨核 SGI 在 EL0 期投递）。属**架构关键路径**（中断投递 / 抢占 / KPTI 再入）, 须先获用户授权并完整复跑 §2.3 六门槛。 |
+| **工作量** | 估计 3-5 天 (含回归用例与六门槛复验) |
+| **决策登记** | 本轮经用户裁定「登记为独立新问题, 本轮**不改代码**」—— 本轮**仅登记**, 不实施。 |
 
 ---
 
@@ -649,6 +685,19 @@
 > **【MIG-004 收口同步】**: 依 commit `349167d5`，**MIG-004 已由「未闭合」移出** — 用户裁决「MIG-004 建安全代理（相对完整）」，services/chitin 新建 [proto.rs](file:///home/anfer/Code/QueenX/src/kernel/services/chitin/proto.rs)（block 直通 re-export / net `NetDevice` 去裸指针封装 / input 薄封装）与 [user_driver.rs](file:///home/anfer/Code/QueenX/src/kernel/services/chitin/user_driver.rs)（强类型 `UserDriverError` + `to_errno`），现有调用点改走 services 封装，[audit_services_boundary.py](file:///home/anfer/Code/QueenX/scripts/audit_services_boundary.py) 白名单补 `('driver','chitin')`，并补 host-tests（5 passed）。故本节"当前实际开放项"再收敛为: **ISSUE-RT-002** + 第 4 类远期工程 F1-F5 + 刻意维持项 DEC-046/041/005.
 
 > **【DECISION-082 尾项登记（KPTI 单实例全局量）】**: aarch64 SMP bring-up（DECISION-082）收口时复核 [mm/kpti_aarch64.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/kpti_aarch64.rs) 的全局量内存序，发现**结构性缺陷** —— `user_ttbr0`（偏移 24）与 `tramp_save0`/`tramp_save1`（40/48）属**每核活跃状态**却置于单实例 `KPTI_GLOBALS`，入口/出口汇编按固定偏移 `str`/`ldr` 访问，多核并发 EL0 会**跨核互相覆盖**（用户 `x3`/`x4` 损坏 / 以他核页表 `eret`）。同库既有 per-CPU 范式为 [mm/copy_user.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/copy_user.rs) 的 `PER_CPU_EXCEPTION_CTX[cpu]`。boot 期发布字段（`ready`/`kernel_ttbr0`/`kernel_ttbr1`/`tramp_ttbr1`）经复核**内存序配对完整、通过**。当前 AP 停在 idle 未调度用户任务，故**潜伏未爆发**；用户已裁定**登记并立项**（本轮不改行为，AGENTS §9.1）。已在本轮修正 [kpti_aarch64.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/kpti_aarch64.rs) 的失真注释；专项（**KPTI-PCPU-01**，per-CPU 化）登记于 [aarch64-smp-bringup.md](./aarch64-smp-bringup.md)「后续专项登记」章节，**待排期**（前置依赖 = AP 参与用户态调度）。
+>
+> **【DECISION-083 施工期实证登记（SGI 使能 + 编码修复）】**: aarch64 TLB shootdown 发送路径工程（DECISION-083，[aarch64-tlb-shootdown-send.md](./aarch64-tlb-shootdown-send.md)）施工期，由 QEMU `-smp 2` 实证发现两条使该工程失效的前提缺陷，均按用户裁定「取长期最优」修复（ST-09）：
+> 1. **每核 SGI 从未使能**：SGI 13（TLB shootdown）/14（reschedule）/7（栏栈恢复）的使能位属 **per-CPU Redistributor 私有状态**（`GICR_ISENABLER0`，复位值 0），历史只在 BSP 侧经分散入口使能 Timer PPI 与 SGI 7，SGI 13/14 **从未置位** ⇒ AP 上线后接收侧 `intid == 13` 分支永不触发，延迟释放帧永久滞留。**修复**：SGI 编号集中定义于 [gic.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/arch/aarch64/gic.rs)，新增 `enable_sgi`，在**每核唯一中断入口** `gic::init_per_cpu` 内使能全部内核 SGI（BSP/AP 共用）；删除因此成为死代码的 `gic::gicr_sgi_write` 与 `barrier::enable_barrier_sgi`（F9）。
+> 2. **`ICC_SGI1R_EL1` 目标编码错误**：[arch/aarch64/mod.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/arch/aarch64/mod.rs) 的 `send_ipi` 把目标 Aff0 编入 `1 << (16 + aff0)`（实为 Aff1 字段，寻址到不存在的簇），SGI **永不投递**。**修复**：改为 `1 << (target_cpu & 0xF)`（TargetList[15:0] 的对应位），对齐 Linux `gic_send_sgi` 与 ICC_SGI1R_EL1 字段布局。
+> **验证**：QEMU `-smp 2` 出现 `IRQ: intid=13 count=2..5` 与 `[SMP] TLB shootdown #1/#2/#3 gen=1/2/3`（两核均追平）；[scripts/qemu_boot_test.sh](file:///home/anfer/Code/QueenX/scripts/qemu_boot_test.sh) aarch64 分支新增该里程碑断言（fail-closed）。
+> **工程外发现（§12.5 报告并经用户裁定「本轮一并修复」）**：① [arch/aarch64/barrier/mod.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/arch/aarch64/barrier/mod.rs) 的 `barrier_trigger_recovery` 曾以 `1u64 << 16` 编码目标（同上条同族缺陷，因 `barrier=off` 未触发），现改为按当前核 Aff0 编码 TargetList；② [exception.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/arch/aarch64/exception.rs) 第二处 `#[expect(clippy::borrow_as_ptr)]` 在 aarch64 clippy `-D warnings` 下报 unfulfilled（HEAD 即存在；CI 只跑 x86_64 clippy 故潜伏），现删除该过期 `#[expect]`。二者均为一行改动，修复后 aarch64 clippy `-D warnings` 通过。
+
+> **【DECISION-084 登记（AP 参与用户态调度 + KPTI-PCPU-01 落地）】**: 由 [smp-ap-user-scheduling.md](./smp-ap-user-scheduling.md)（**DECISION-084**，方案 C 相对完整）落地「AP 参与用户态调度」并结案 KPTI-PCPU-01 —— 该工程消除三处断链（AP 无调度身份 / 无 push 投送 / 无唤醒源），使 ≥2 个用户任务可在多核并发处于 EL0，并把 aarch64 KPTI 入口/出口每核活跃值 per-CPU 化。
+> 1. **AP 调度闭环**：`adopt_cpu_idle`（APS-01）、AP idle 调度循环 + per-CPU 定时器/Busy IPI 唤醒（APS-02）、`cfs_enqueue_to` + `find_idle_cpu` push 投送（APS-03）。
+> 2. **KPTI-PCPU-01 结案**（aarch64，APS-04）：`user_ttbr0`/`tramp_save0`/`tramp_save1` 迁入按核数组 `KPTI_CPU_GLOBALS`，槽基址经 `kpti_bind_cpu` 写入 `TPIDR_EL1`，汇编只 `mrs tpidr_el1` 取址；[aarch64-smp-bringup.md](./aarch64-smp-bringup.md) §「后续专项登记」的 KPTI-PCPU-01 已置结案。
+> 3. **收口期修复（次核 CPU 状态初始化，批次 P5）**：AP 上电路径遗漏 per-CPU CPU 状态初始化 —— aarch64 `ap_main` 补 `CPACR_EL1.FPEN=0b11`（缺则 `context_switch_asm` 首保存 V0-V31 触发 FP/ASIMD trap，`ESR_EL1.EC=0x07`，核永久离线）；x86_64 `ap_entry` 补 `cpu::init_msr`（CR4.OSFXSR/OSXMMEXCPT，缺则 `fxsave` #UD→#DF）并在 `gdt_init_ap` 补 `IA32_GS_BASE`（缺则内核态 `[gs:...]` 读垃圾）。修复后双架构 `-smp 2` 均出现 `[SMP] EL0 ... cpu=1`。
+> **验证**：§2.3 六门槛全过（`./ci/build.sh all` 5/0；`./ci/build.sh aarch64 && ./ci/audit.sh quick` EXIT=0；`make test-host` 通过；`make test-kernel-host` 949/0；`TIMEOUT_QEMU=30 ./scripts/qemu_boot_test.sh all` 2/2，双架构命中成对 EL0）。前述「仍未闭合」收敛为: 第 4 类远期工程 F1-F5、刻意维持项（APS-05 判据对 x86_64 的 grep 漏匹配已随 NUL 字节 `-a` 修复消除）。
+> **收口期新登记（独立于本修复）**：aarch64 `KPTI-09` 里程碑在本次实测中**未触发**（详见下方 **ISSUE-RT-004**）—— 该现象在 AP 崩溃修复前即被崩溃掩盖, 属预存问题。**后续已修复**：根因为调度链路断裂（D6 tick 未接线 + softirq 内调度泄漏 `do_softirq` 的 per-CPU `running` 标志），已按「调度点后移到 `do_softirq()` 之后」修复, aarch64 QEMU 双核已触发 KPTI-09。
 
 ### P0 — 立即关注 (1 项)
 
@@ -688,6 +737,9 @@
 
 ## 变更历史
 
+- **本轮（修复 ISSUE-RT-004 — 调度链路断裂）**: 第 1 类 **ISSUE-RT-004 结案**（`[X]`）。根因**非** KPTI 探针本身，而是调度链路断裂使父进程饥饿、探针 `fork`/`wait` 路径未推进到打印点；断链自洽为双重缺陷——① **D6 tick 未接线**（`scheduler_tick()` 只驱空转的线程级 `SCHEDULER_EX.tick()`，进程级 CFS 记账/抢占/睡眠唤醒/zombie 回收/均衡全不推进）；② **softirq 内调度泄漏**（`do_softirq()` 的 per-CPU `running` 标志在主循环结束后才复位，若 `Sched` handler 内 `schedule()` 切走则本核永久泄漏，此后所有 `do_softirq()` 直接返回）。修法 = **调度点后移到 `do_softirq()` 返回之后（EOI 已发）**：[sched_ops.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/proc/sched_ops.rs) `scheduler_tick()` 改驱进程级 `SCHEDULER.tick(get_current_cpu())`（内部仍调 `SCHEDULER_EX.tick_accounting()`）；[cpu_queue.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/proc/cpu_queue.rs) 删 `Sched` softirq 注册/handler、新增 `run_pending_resched()`；aarch64 [exception.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/arch/aarch64/exception.rs) ×3 与 x86_64 [idt.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/idt/idt.rs) ×3 在 EOI/`do_softirq()` 之后统一调用。§2.3 六门槛全过（双架构 build 0w0e、`audit.sh quick` 全绿、`make test-host`、`make test-kernel-host` 949/0、QEMU 2/2）—— **aarch64 QEMU 双核已触发 `[KPTI] EL0 kernel high-half access denied`**，x86_64 无回归。同步 [multithreading-project.md](./multithreading-project.md) D6（已提前理顺，D1 线程维度待办不变）与 [smp-ap-user-scheduling.md](./smp-ap-user-scheduling.md) 裁定 2（tick 部分由本工程接管）。仍未闭合收敛为: ISSUE-RT-002、第 4 类远期工程 F1-F5、刻意维持项.
+
+- **本轮（DECISION-084 登记 + 新增 ISSUE-RT-004）**: 登记「AP 参与用户态调度」工程（[smp-ap-user-scheduling.md](./smp-ap-user-scheduling.md)，DECISION-084）——AP 调度闭环（APS-01/02/03）+ KPTI-PCPU-01 按核化结案（APS-04，[aarch64-smp-bringup.md](./aarch64-smp-bringup.md) §「后续专项登记」同步结案）+ 收口期修复「次核 CPU 状态初始化」（批次 P5：aarch64 `CPACR_EL1.FPEN` / x86_64 `init_msr` + `IA32_GS_BASE`）；§2.3 六门槛全过（build 5/0、audit quick EXIT=0、`make test-host`、`make test-kernel-host` 949/0、QEMU 2/2 且双架构命中成对 EL0）。同时新增第 1 类 **ISSUE-RT-004**（aarch64 KPTI-09 里程碑未触发，独立于本修复的预存问题；CI full 模式下构成硬失败，需优先处置），第 1 类计数 3 → 4。仍未闭合收敛为: ISSUE-RT-002、ISSUE-RT-004、第 4 类远期工程 F1-F5、刻意维持项.
 - **本轮（DEC-046 结案 — 与 DECISION-080 对齐）**: 依用户裁决「按 DECISION-080 结案」，将第 5 类 **ISSUE-DEC-046** 结案 — 其「未来可选：迁移 USB HID/MassStorage/XHCI/Enumerate/Ring 5 文件 ~70 个纯算法测试到 host-tests」与 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md) DECISION-080「纯逻辑测试唯一归属 = 源文件 `#[cfg(test)]`」终态方向相悖；USB 5 文件 69 例（`xhci` 4 / `mass_storage` 19 / `usb_core` 5 / `ring` 11 / `hid` 18 / `enumerate` 12）**当前已全部位于源文件 `#[cfg(test)] mod tests`**，经 §2.3 门槛 6 `make test-kernel-host` 实际执行，**已处于目标态**，无需迁移；`ring.rs` 等用例直断私有字段，迁往独立 crate 会致覆盖弱化（与 DECISION-080 第 4 条登记同型）。**无代码改动**，仅台账同步。仍未闭合收敛为: ISSUE-RT-002、第 4 类远期工程 F1-F5、刻意维持项（DEC-041/DEC-005）.
 - **本轮（RT-002 复验装备与回归防护）**: 依用户裁决「启动 RT-002 复验工程」+「方案 B 相对完整（A + 初始化自检）」，为 QEMU TCG 下不可稳定复现的 aarch64 GICv3 挂起补足复验装备与回归防护（条目**不闭合**，保留待 SMP/真机复验）— [gic.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/arch/aarch64/gic.rs) `init()` 改 `Result` + redistributor 唤醒超时显式失败 + `verify_post_conditions()` 后置条件自检 + 修正 `GICR_CTLR` 语义（bit0 实为 EnableLPIs，删除误写与死常量）；[entry.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/boot/aarch64/entry.rs) GIC 初始化 fail-fast + `GICv3 ready` 里程碑；[qemu_boot_test.sh](file:///home/anfer/Code/QueenX/scripts/qemu_boot_test.sh) 新增里程碑断言；新增静态契约用例 [aarch64_gic_contract_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/aarch64_gic_contract_test.rs)（7 用例）与启动压测脚本 [gic_stress_test.sh](file:///home/anfer/Code/QueenX/scripts/gic_stress_test.sh)。仍未闭合收敛为: **ISSUE-RT-002**、第 4 类远期工程 F1-F5、刻意维持项.
 - **本轮（MIG-004 安全代理 + 台账收口）**: MIG-004 由「未闭合」移出 — 用户裁决「MIG-004 建安全代理（相对完整）」，services/chitin 新建 [proto.rs](file:///home/anfer/Code/QueenX/src/kernel/services/chitin/proto.rs)（block 直通 re-export / net `NetDevice` 去裸指针封装 / input 薄封装）+ [user_driver.rs](file:///home/anfer/Code/QueenX/src/kernel/services/chitin/user_driver.rs)（强类型 `UserDriverError` + `UserDriverResult<T>` + `to_errno`），现有调用点改走 services 封装（`unregister`/`unregister_block`/`find_net_device`）；[audit_services_boundary.py](file:///home/anfer/Code/QueenX/scripts/audit_services_boundary.py) 白名单补 `('driver','chitin')`；新增 host-tests [chitin_proto_proxy_host_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/chitin_proto_proxy_host_test.rs)（5 passed）。§2.3 六门槛复验通过（双架构 build / clippy + `audit.sh quick` 全绿 / `make test-host` / `make test-kernel-host` 947 passed）。同步 [syscall-followup.md](./syscall-followup.md) B-6 区块（446 → 440 项）. 仍未闭合收敛为: ISSUE-RT-002、第 4 类远期工程 F1-F5、刻意维持项.

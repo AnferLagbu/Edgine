@@ -17,7 +17,7 @@
 | D3 实施复杂度 | **循序渐进的相对完整** | 分阶段实施相对完整语义，每阶段验证 |
 | D4 资源共享 | **CLONE_VM + FILES + SIGHAND + FS + CLONE_PARENT_SETTID 等** | 完整 Linux clone 共享语义（pthread 必需）|
 | D5 tgid 结构 | **独立 ThreadGroup 结构** | 显式组对象，含组内线程列表 |
-| D6 tick 错位 | **一并处理** | 随 D1 调度统一时理顺 tick 链路 |
+| D6 tick 错位 | **一并处理** | 随 D1 调度统一时理顺 tick 链路（**已提前理顺**：见 §2 tick 错位条与 K-04 注）|
 
 **线程映射模型**（2026-09-08）：**1:1**（每用户线程 = 内核 Thread），与 Linux NPTL 对齐。超轻量并发留待用户态协程库（独立，不与内核线程模型耦合）。
 
@@ -28,7 +28,7 @@
 - **CLONE_THREAD 未处理**：[clone.rs:38](../../src/kernel/framework/syscall/clone.rs#L38) 只定义常量；CLONE_VM 分支创建独立 PID 的共享 CR3 进程（[clone.rs:150,163](../../src/kernel/framework/syscall/clone.rs#L150-L163)）。
 - **无 tgid/线程组**：[process.rs:107-255](../../src/kernel/framework/proc/process.rs#L107-L255) 无 tgid/thread_group/线程列表；`sys_gettid` = getpid（[info.rs:22-24](../../src/kernel/framework/syscall/info.rs#L22-L24)）。
 - **资源不共享**：fd_table/sigaction_table 挂 Process（[process.rs:167,189](../../src/kernel/framework/proc/process.rs#L167-L189)）。
-- **tick 错位**：PID 级 SCHEDULER.tick()（CFS vruntime/睡眠/zombie）未接入生产 timer，实际 timer 驱动线程级 SCHEDULER_EX.tick()（[sched_ops.rs:94-96](../../src/kernel/framework/proc/sched_ops.rs#L94-L96)）。
+- **tick 错位**（**已理顺**）：原 PID 级 SCHEDULER.tick()（CFS vruntime/睡眠/zombie）未接入生产 timer，实际 timer 驱动线程级 SCHEDULER_EX.tick()（[sched_ops.rs:94-96](../../src/kernel/framework/proc/sched_ops.rs#L94-L96)）。现 `scheduler_tick()` 改为驱**进程级** `SCHEDULER.tick(get_current_cpu())`（内部仍调 `SCHEDULER_EX.tick_accounting()`，线程级记账不丢失）；相应地重调度不再经 `Sched` softirq handler 执行（会永久泄漏 `do_softirq` 的 per-CPU `running` 标志），而统一在中断退出路径 `do_softirq()` 返回之后经 `run_pending_resched()` 执行。**该理顺不改变 D1 的"统一线程级"路线**——当前调度单位仍是进程（PID），K-04 的线程维度迁移照旧待办。详见 [ISSUE-RT-004](unresolved-issues-2026-08-09.md)。
 - **已登记线索**：code-audit:3826-3848 P1-A exit_group 线程组方案（DECISION-H21 → P1-L 未实施）。
 
 ## 3. 深入设计主题（独立设计过程，先设计后实施）
@@ -48,7 +48,7 @@
 - SCHEDULER（DL/RT/CFS）迁移到线程维度：调度字段（cfs_vruntime/rt_priority/dl_*）从 Process 迁 Thread
 - SCHEDULER_EX 合并/废弃策略：并入 SCHEDULER 还是 SCHEDULER 重写于 SCHEDULER_EX 之上？
 - current 统一：线程为唯一调度单位，进程 = 单线程线程组特例
-- tick 链路理顺（D6）：timer IRQ → 唯一调度器 tick（含 CFS vruntime/睡眠/zombie）
+- tick 链路理顺（D6）：timer IRQ → 唯一调度器 tick（含 CFS vruntime/睡眠/zombie）—— **已提前理顺（进程级）**，见 §2 tick 错位条；线程维度迁移随本主题其余项一并待办
 - 负载均衡：现 SCHEDULER 负载均衡迁移到线程维度
 - 设计待办：策略-机制分离（SchedDecision trait）如何与线程维度融合
 
@@ -93,6 +93,7 @@
   - 描述：SCHEDULER（PID 级 DL/RT/CFS）迁移到线程维度——调度字段（cfs_vruntime/rt_priority/dl_*）从 Process 迁 Thread；SCHEDULER_EX 合并/废弃；current 统一为线程；**tick 错位一并理顺（D6）**。
   - 方案：进程 = 单线程线程组特例；Linux CFS/EEVDF 线程级调度语义。
   - 状态：[]
+  - 详情：**D6 tick 错位已提前理顺（进程级）** —— timer IRQ 现驱动进程级 `SCHEDULER.tick()`，重调度统一在中断退出路径 `do_softirq()` 返回后执行（修 ISSUE-RT-004）。此项**不改变本阶段"统一线程级"路线**：调度单位从 Process 迁 Thread、SCHEDULER_EX 合并/废弃等仍照旧待办。
 - **K-05. G-17 迁移：Mutex owner → 线程指针（D2）**
   - 描述：Mutex 重入检测 owner 从 PID 迁移 `*mut Thread`（线程指针，唯一标识，TID 可复用）。依赖 K-04（线程 current 就绪）。
   - 方案：`raw_lock` owner 比较改线程指针；mutex_reentrant 测试更新；消除"PID 重入误判"架构假设（单线程模型依赖解除）。
