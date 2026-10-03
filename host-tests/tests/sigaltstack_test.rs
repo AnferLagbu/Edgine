@@ -54,9 +54,10 @@ fn source_syscall_clears_onstack_on_sigreturn() {
     let rt_sigreturn_start = source
         .find("if is_rt_sigreturn {")
         .expect("必须存在 rt_sigreturn 特殊处理路径");
-    let rt_sigreturn_block = &source[rt_sigreturn_start..source
-        .find("let a0 = f.rdi;")
-        .expect("必须存在 rt_sigreturn 块结束标记")];
+    let rt_sigreturn_block = &source[rt_sigreturn_start
+        ..source
+            .find("let a0 = f.rdi;")
+            .expect("必须存在 rt_sigreturn 块结束标记")];
     // 必须清 SS_ONSTACK
     assert!(
         rt_sigreturn_block.contains("sigaltstack_flags")

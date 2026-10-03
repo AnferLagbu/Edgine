@@ -13,10 +13,10 @@
 //!
 //! 评估日期: 2026-06-04 (pl011 于 MIG-003 补入)
 
-pub mod serial;
-pub mod vga;
 #[cfg(target_arch = "aarch64")]
 pub mod pl011;
+pub mod serial;
+pub mod vga;
 
 /// 初始化字符设备子系统并注册到 Chitin (§6.4 直接方案 B: services 权威)
 ///

@@ -26,8 +26,7 @@ fn read(p: &str) -> String {
         .parent()
         .unwrap()
         .join(p);
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e))
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e))
 }
 
 // B07-01: UDS 发送路径不得硬编码伪造 root 凭据

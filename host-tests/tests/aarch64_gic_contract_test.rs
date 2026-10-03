@@ -37,8 +37,7 @@ fn workspace_root() -> std::path::PathBuf {
 
 fn read(rel: &str) -> String {
     let path = workspace_root().join(rel);
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e))
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e))
 }
 
 /// 截取 `src` 中 `begin` 起点到其后首个 `end` 之间的片段.

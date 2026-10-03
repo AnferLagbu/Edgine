@@ -721,7 +721,9 @@ ${YELLOW}C 工具链 v3.2 决策:${NC}
   全 Rust 内核镜像需配合 ld + 启动汇编才能生成可执行 ELF/ISO.
 
 ${YELLOW}配置文件引用:${NC}
-  - rust-toolchain.toml  : nightly + rust-src + llvm-tools-preview
+  - rust-toolchain.toml  : nightly-2026-10-02 (仓库根, 全仓唯一来源)
+                           + rust-src / llvm-tools-preview / rustfmt / clippy
+                           + x86_64-unknown-none / aarch64-unknown-none(-softfloat)
   - .cargo/config.toml   : x86_64/aarch64 rustflags + build-std
   - clippy.toml          : deny all, 认知复杂度阈值 25
   - deny.toml            : 许可证 (MIT/Apache-2.0) + 多版本禁止

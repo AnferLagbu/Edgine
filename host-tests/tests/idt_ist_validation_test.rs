@@ -14,7 +14,7 @@
 //! 注: 内核 `TaskStateSegment` 为 `#[repr(C, packed)]`, 字段偏移/对齐语义由
 //! tss.rs 自身保证; host-test 只关心 `ist_validated` 判定与 `set_ist` 行为.
 
-use queenx::kernel::framework::arch::x86_64::tss::{TaskStateSegment, IST_COUNT};
+use queenx::kernel::framework::arch::x86_64::tss::{IST_COUNT, TaskStateSegment};
 
 #[test]
 fn test_ist_validated_all_set() {
@@ -86,7 +86,13 @@ fn test_idt_ist_to_tss_ist_mapping() {
     ];
     for (idt_ist, tss_idx) in mappings {
         // N → N-1
-        assert_eq!(idt_ist as usize - 1, tss_idx, "IDT IST={} should map to TSS ist[{}]", idt_ist, tss_idx);
+        assert_eq!(
+            idt_ist as usize - 1,
+            tss_idx,
+            "IDT IST={} should map to TSS ist[{}]",
+            idt_ist,
+            tss_idx
+        );
     }
 }
 

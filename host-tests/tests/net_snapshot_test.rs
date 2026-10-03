@@ -21,8 +21,7 @@ fn repo_root() -> PathBuf {
 
 fn read_src(rel: &str) -> String {
     let p = repo_root().join(rel);
-    fs::read_to_string(&p)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", p.display(), e))
+    fs::read_to_string(&p).unwrap_or_else(|e| panic!("无法读取 {}: {}", p.display(), e))
 }
 
 #[test]
@@ -33,7 +32,9 @@ fn save_module_exists() {
         "P2-I-44: save.rs 必须定义 pub struct NetSnapshot"
     );
     assert!(
-        src.contains("pub fn save<") && src.contains("pub fn load()") && src.contains("pub fn clear()"),
+        src.contains("pub fn save<")
+            && src.contains("pub fn load()")
+            && src.contains("pub fn clear()"),
         "P2-I-44: save.rs 必须暴露 save/load/clear 三个入口"
     );
 }
@@ -58,10 +59,7 @@ fn snapshot_fields_complete() {
         "checksum: u32",
     ];
     for f in required {
-        assert!(
-            src.contains(f),
-            "P2-I-44: NetSnapshot 缺少字段 `{f}`"
-        );
+        assert!(src.contains(f), "P2-I-44: NetSnapshot 缺少字段 `{f}`");
     }
 }
 

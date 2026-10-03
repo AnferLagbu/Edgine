@@ -45,7 +45,12 @@ fn tcgets_stub_returns_enosys_not_zero() {
     let mut ws = Box::new(Winsize::default());
     let arg = &mut *ws as *mut Winsize as u64;
     let ret = ioctl_syscall(1, TCGETS, arg);
-    assert_eq!(ret, Errno::ENOSYS.as_ret(), "P1-I-39: TCGETS stub 必须返回 -ENOSYS, 实际 = {}", ret);
+    assert_eq!(
+        ret,
+        Errno::ENOSYS.as_ret(),
+        "P1-I-39: TCGETS stub 必须返回 -ENOSYS, 实际 = {}",
+        ret
+    );
     // termios 缓冲区不被填充, 也不被破坏 (内核端 stub 路径无副作用)
     assert_eq!(ws.ws_row, 0, "P1-I-39: ENOSYS 路径不应修改 termios 缓冲区");
 }
@@ -56,7 +61,12 @@ fn tcgets_returns_enosys_for_any_fd() {
     for fd in [0i32, 1, 2, 100, -1] {
         let ws = Box::new(Winsize::default());
         let ret = ioctl_syscall(fd, TCGETS, &*ws as *const Winsize as u64);
-        assert_eq!(ret, Errno::ENOSYS.as_ret(), "P1-I-39: fd={} 调用 TCGETS 必须返回 -ENOSYS", fd);
+        assert_eq!(
+            ret,
+            Errno::ENOSYS.as_ret(),
+            "P1-I-39: fd={} 调用 TCGETS 必须返回 -ENOSYS",
+            fd
+        );
     }
 }
 
@@ -66,16 +76,28 @@ fn unknown_ioctl_returns_enotty() {
     let ws = Box::new(Winsize::default());
     let arg = &*ws as *const Winsize as u64;
     let ret = ioctl_syscall(0, FIONREAD, arg);
-    assert_eq!(ret, Errno::ENOTTY.as_ret(), "P1-I-39: 未知 ioctl 必须返回 -ENOTTY");
+    assert_eq!(
+        ret,
+        Errno::ENOTTY.as_ret(),
+        "P1-I-39: 未知 ioctl 必须返回 -ENOTTY"
+    );
     let ret = ioctl_syscall(0, TIOCSETAF, arg);
-    assert_eq!(ret, Errno::ENOTTY.as_ret(), "P1-I-39: 未知 ioctl 必须返回 -ENOTTY");
+    assert_eq!(
+        ret,
+        Errno::ENOTTY.as_ret(),
+        "P1-I-39: 未知 ioctl 必须返回 -ENOTTY"
+    );
 }
 
 #[test]
 fn arg_zero_returns_einval() {
     // arg=0 是无效指针, 必须返回 EINVAL
     let ret = ioctl_syscall(0, TIOCGWINSZ, 0);
-    assert_eq!(ret, Errno::EINVAL.as_ret(), "P1-I-39: arg=0 必须返回 -EINVAL");
+    assert_eq!(
+        ret,
+        Errno::EINVAL.as_ret(),
+        "P1-I-39: arg=0 必须返回 -EINVAL"
+    );
 }
 
 #[test]
@@ -98,7 +120,11 @@ fn tiocgwinsz_user_ptr_oob_returns_efault() {
     // USER_ADDR_MAX 内 (返回 0), 故使用确定性的内核空间地址.
     let kernel_addr: u64 = 0xFFFF_8000_DEAD_BEEF; // > USER_ADDR_MAX
     let ret = ioctl_syscall(1, TIOCGWINSZ, kernel_addr);
-    assert_eq!(ret, Errno::EFAULT.as_ret(), "P1-I-39: 超 USER_ADDR_MAX 的用户指针必须返回 -EFAULT");
+    assert_eq!(
+        ret,
+        Errno::EFAULT.as_ret(),
+        "P1-I-39: 超 USER_ADDR_MAX 的用户指针必须返回 -EFAULT"
+    );
 }
 
 #[test]
@@ -109,5 +135,8 @@ fn isatty_simulation_via_ioctl_return_code() {
     let fd = 99; // 非 tty fd
     let rc = ioctl_syscall(fd, TCGETS, &*ws as *const Winsize as u64);
     let isatty_result = if rc == 0 { 1 } else { 0 };
-    assert_eq!(isatty_result, 0, "P1-I-39: ioctl 失败时 isatty() 必须返回 0 (非终端)");
+    assert_eq!(
+        isatty_result, 0,
+        "P1-I-39: ioctl 失败时 isatty() 必须返回 0 (非终端)"
+    );
 }

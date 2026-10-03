@@ -60,9 +60,10 @@ fn matrix_viable_floor_is_minimal() {
     assert!(!cm.get(CapDomain::PROC).contains(CapBits(PROC_CAP_KILL)));
     // 内核差异: policy::VIABLE_FLOOR 追加 USER_MGMT::LIST (identity::create 初始化用
     // capability::VIABLE_FLOOR 无此位; 此处以 policy 权威实现为准)
-    assert!(cm
-        .get(CapDomain::USER_MGMT)
-        .contains(CapBits(USER_MGMT_CAP_LIST)));
+    assert!(
+        cm.get(CapDomain::USER_MGMT)
+            .contains(CapBits(USER_MGMT_CAP_LIST))
+    );
     // 其余 13 domain 全部为 0
     for d in [
         CapDomain::SYSTEM,
@@ -79,7 +80,11 @@ fn matrix_viable_floor_is_minimal() {
         CapDomain::DMA,
         CapDomain::RESERVED,
     ] {
-        assert!(cm.get(d).is_empty(), "domain {:?} 在 viable floor 必须为 0", d);
+        assert!(
+            cm.get(d).is_empty(),
+            "domain {:?} 在 viable floor 必须为 0",
+            d
+        );
     }
 }
 
@@ -113,32 +118,74 @@ fn matrix_grant_revoke_isolates_domains() {
     grant(&cm, CapDomain::USER_MGMT, USER_MGMT_CAP_LIST);
 
     // FS
-    assert!(cm.get(CapDomain::FS).unwrap().contains(CapBits(FS_CAP_READ)));
-    assert!(!cm.get(CapDomain::FS).unwrap().contains(CapBits(FS_CAP_WRITE)));
+    assert!(
+        cm.get(CapDomain::FS)
+            .unwrap()
+            .contains(CapBits(FS_CAP_READ))
+    );
+    assert!(
+        !cm.get(CapDomain::FS)
+            .unwrap()
+            .contains(CapBits(FS_CAP_WRITE))
+    );
     // NET
-    assert!(cm.get(CapDomain::NET).unwrap().contains(CapBits(NET_CAP_SEND)));
-    assert!(!cm.get(CapDomain::NET).unwrap().contains(CapBits(NET_CAP_RECV)));
+    assert!(
+        cm.get(CapDomain::NET)
+            .unwrap()
+            .contains(CapBits(NET_CAP_SEND))
+    );
+    assert!(
+        !cm.get(CapDomain::NET)
+            .unwrap()
+            .contains(CapBits(NET_CAP_RECV))
+    );
     // PROC
-    assert!(cm.get(CapDomain::PROC).unwrap().contains(CapBits(PROC_CAP_FORK)));
-    assert!(!cm.get(CapDomain::PROC).unwrap().contains(CapBits(PROC_CAP_EXEC)));
+    assert!(
+        cm.get(CapDomain::PROC)
+            .unwrap()
+            .contains(CapBits(PROC_CAP_FORK))
+    );
+    assert!(
+        !cm.get(CapDomain::PROC)
+            .unwrap()
+            .contains(CapBits(PROC_CAP_EXEC))
+    );
     // DEVICE
-    assert!(cm.get(CapDomain::DEVICE).unwrap().contains(CapBits(DEVICE_CAP_MMIO)));
-    assert!(!cm.get(CapDomain::DEVICE).unwrap().contains(CapBits(DEVICE_CAP_IRQ)));
+    assert!(
+        cm.get(CapDomain::DEVICE)
+            .unwrap()
+            .contains(CapBits(DEVICE_CAP_MMIO))
+    );
+    assert!(
+        !cm.get(CapDomain::DEVICE)
+            .unwrap()
+            .contains(CapBits(DEVICE_CAP_IRQ))
+    );
     // USER_MGMT
-    assert!(cm
-        .get(CapDomain::USER_MGMT)
-        .unwrap()
-        .contains(CapBits(USER_MGMT_CAP_LIST)));
-    assert!(!cm
-        .get(CapDomain::USER_MGMT)
-        .unwrap()
-        .contains(CapBits(USER_MGMT_CAP_CREATE)));
+    assert!(
+        cm.get(CapDomain::USER_MGMT)
+            .unwrap()
+            .contains(CapBits(USER_MGMT_CAP_LIST))
+    );
+    assert!(
+        !cm.get(CapDomain::USER_MGMT)
+            .unwrap()
+            .contains(CapBits(USER_MGMT_CAP_CREATE))
+    );
 
     // 撤销验证
     revoke(&cm, CapDomain::FS, FS_CAP_READ);
-    assert!(!cm.get(CapDomain::FS).unwrap().contains(CapBits(FS_CAP_READ)));
+    assert!(
+        !cm.get(CapDomain::FS)
+            .unwrap()
+            .contains(CapBits(FS_CAP_READ))
+    );
     revoke(&cm, CapDomain::NET, NET_CAP_SEND);
-    assert!(!cm.get(CapDomain::NET).unwrap().contains(CapBits(NET_CAP_SEND)));
+    assert!(
+        !cm.get(CapDomain::NET)
+            .unwrap()
+            .contains(CapBits(NET_CAP_SEND))
+    );
 }
 
 #[test]

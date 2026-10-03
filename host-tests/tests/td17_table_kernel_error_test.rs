@@ -58,8 +58,14 @@ fn table_error_preserves_three_table_specific_variants() {
     let src = read(TABLE_RS);
     // 表子系统特有错误保留
     assert!(src.contains("TableFull"), "TableFull 应保留");
-    assert!(src.contains("RefCountUnderflow"), "RefCountUnderflow 应保留");
-    assert!(src.contains("InvalidStateTransition"), "InvalidStateTransition 应保留");
+    assert!(
+        src.contains("RefCountUnderflow"),
+        "RefCountUnderflow 应保留"
+    );
+    assert!(
+        src.contains("InvalidStateTransition"),
+        "InvalidStateTransition 应保留"
+    );
 }
 
 #[test]
@@ -71,11 +77,14 @@ fn to_errno_method_present() {
         "TableError 必须有 to_errno() 方法 (4 变体全覆盖)"
     );
     // to_errno 必须处理 4 个变体
-    let to_errno_body_start = src
-        .find("pub fn to_errno(self)")
-        .expect("to_errno 存在");
+    let to_errno_body_start = src.find("pub fn to_errno(self)").expect("to_errno 存在");
     let to_errno_block = &src[to_errno_body_start..];
-    for variant in &["Self::TableFull", "Self::RefCountUnderflow", "Self::InvalidStateTransition", "Self::Kernel"] {
+    for variant in &[
+        "Self::TableFull",
+        "Self::RefCountUnderflow",
+        "Self::InvalidStateTransition",
+        "Self::Kernel",
+    ] {
         assert!(
             to_errno_block.contains(variant),
             "to_errno 必须映射 {} 变体",

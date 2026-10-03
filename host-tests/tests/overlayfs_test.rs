@@ -20,9 +20,9 @@
 //! 走 `caps == ALL` 分支), 无需注册身份或授权.
 
 use queenx::kernel::framework::error::KernelError;
-use queenx::kernel::services::fs::{FileSystem, VFS_MANAGER, vfs_mount_safe};
 use queenx::kernel::services::fs::init as fs_init;
 use queenx::kernel::services::fs::overlayfs::overlay_fs;
+use queenx::kernel::services::fs::{FileSystem, VFS_MANAGER, vfs_mount_safe};
 use std::sync::{Mutex, Once};
 
 /// bootstrap 身份 — 持全权, 免注册/免授权
@@ -51,11 +51,7 @@ fn ensure_overlay_ready() {
             "挂载 lower ramfs 失败"
         );
         // 3. overlay 合并视图: 经 VFS 注册表解析 "overlay" → overlay_fs()
-        assert_eq!(
-            vfs_mount_safe("/merged", "overlay"),
-            0,
-            "挂载 overlay 失败"
-        );
+        assert_eq!(vfs_mount_safe("/merged", "overlay"), 0, "挂载 overlay 失败");
     });
 }
 
@@ -112,7 +108,8 @@ fn overlay_lower_readonly_passthrough() {
     // 只读打开不应在 upperdir 产生副本: 重新解析仍命中 lower
     let entry_stat = overlay.fs_stat(&path, PWM).expect("stat 下层文件失败");
     assert_eq!(
-        entry_stat.node_id, inode.node_id(),
+        entry_stat.node_id,
+        inode.node_id(),
         "只读打开不得改变 merged 视图来源"
     );
 }
@@ -150,7 +147,9 @@ fn overlay_write_open_triggers_copy_up() {
         .fs_open(name, O_RDONLY, PWM)
         .expect("打开下层原文失败");
     let mut lbuf = [0u8; 32];
-    let ln = lower_inode.read(0, &mut lbuf, PWM).expect("读取下层原文失败");
+    let ln = lower_inode
+        .read(0, &mut lbuf, PWM)
+        .expect("读取下层原文失败");
     assert_eq!(&lbuf[..ln], lower, "copy_up 不得修改下层原文");
 }
 
@@ -215,9 +214,7 @@ fn overlay_unlink_after_copy_up_masks_lower() {
     let path = format!("/{name}");
 
     // 写打开触发 copy_up: upper 出现同名副本, lower 仍保留
-    let inode = overlay
-        .fs_open(&path, O_WRONLY, PWM)
-        .expect("copy_up 失败");
+    let inode = overlay.fs_open(&path, O_WRONLY, PWM).expect("copy_up 失败");
     inode.write(0, upper, PWM).expect("写入 upper 失败");
 
     // 删除: upper 删除后必须补 whiteout 遮蔽 lower 同名副本
@@ -258,9 +255,7 @@ fn overlay_utimensat_writes_times_with_owner_check() {
     let path = format!("/{name}");
 
     // 写打开触发 copy_up, 使文件进入 upper (时间戳写回作用于 upper 节点)
-    let inode = overlay
-        .fs_open(&path, O_WRONLY, PWM)
-        .expect("copy_up 失败");
+    let inode = overlay.fs_open(&path, O_WRONLY, PWM).expect("copy_up 失败");
     inode.write(0, b"times-content", PWM).expect("写入失败");
 
     // 1. 路径级 fs_utimensat: 非 OMIT 字段更新, fs_stat 可观测

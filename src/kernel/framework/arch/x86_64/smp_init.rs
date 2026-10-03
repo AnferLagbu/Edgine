@@ -198,7 +198,11 @@ unsafe fn start_ap(lapic_id: u32, cpu_index: u32) {
         // AP 的 GDT 必须在该 CPU 进入长模式 (gdt_init_ap) 之前就绪, 故在 SIPI
         // 之前按需分配; 分配失败 (PMM 无可用页) 则放弃启动本 AP.
         if !super::gdt::alloc_ap_gdt(cpu_index) {
-            crate::klog_warn!(Boot, "[SMP] AP cpu_index={} GDT alloc failed, skip", cpu_index);
+            crate::klog_warn!(
+                Boot,
+                "[SMP] AP cpu_index={} GDT alloc failed, skip",
+                cpu_index
+            );
             return;
         }
 
@@ -319,7 +323,12 @@ extern "C" fn ap_entry(lapic_id: u32) -> ! {
     // syscall 跳向无效入口。此处复用 BSP 探测到的特性集合, 仅作用于本核。
     if let Some(info) = crate::framework::cpu::get_cpu_info() {
         if let Err(e) = crate::framework::cpu::init_msr(&info.features) {
-            crate::klog_err!(Boot, "[SMP] AP cpu_index={} init_msr failed: {}", cpu_index, e);
+            crate::klog_err!(
+                Boot,
+                "[SMP] AP cpu_index={} init_msr failed: {}",
+                cpu_index,
+                e
+            );
         }
     }
 

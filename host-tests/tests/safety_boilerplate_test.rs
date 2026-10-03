@@ -23,7 +23,9 @@ fn count_safety_boilerplate(src: &str) -> HashMap<String, usize> {
         if trimmed.contains("SAFETY:") || trimmed.contains("# SAFETY") {
             // 提取 SAFETY 后面的内容作为分组 key
             // 统一空白, 忽略前后空格
-            let key = trimmed.split("SAFETY").nth(1)
+            let key = trimmed
+                .split("SAFETY")
+                .nth(1)
                 .map(|s| s.trim_start_matches(':').trim().to_string())
                 .unwrap_or_default();
             if !key.is_empty() {
@@ -36,11 +38,12 @@ fn count_safety_boilerplate(src: &str) -> HashMap<String, usize> {
 
 fn check_boilerplate(file: &str, top_dupes: &[(&str, usize)]) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap() // QueenX workspace root (host-tests' parent)
+        .parent()
+        .unwrap() // QueenX workspace root (host-tests' parent)
         .join("src/kernel/framework")
         .join(file);
-    let src = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
+    let src =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
     let counts = count_safety_boilerplate(&src);
 
@@ -54,7 +57,10 @@ fn check_boilerplate(file: &str, top_dupes: &[(&str, usize)]) {
             );
         }
     }
-    println!("{}: SAFETY 总数 {} (max dup ≤ {} ✓)", file, total, MAX_DUPLICATES);
+    println!(
+        "{}: SAFETY 总数 {} (max dup ≤ {} ✓)",
+        file, total, MAX_DUPLICATES
+    );
 
     // 额外检查: 给定 fixture 中的预期重复数
     for (text, expected) in top_dupes {
@@ -83,10 +89,7 @@ fn test_scheduler_ex_safety_diversity() {
 
 #[test]
 fn test_pmm_safety_diversity() {
-    check_boilerplate(
-        "mm/pmm.rs",
-        &[],
-    );
+    check_boilerplate("mm/pmm.rs", &[]);
 }
 
 #[test]
@@ -95,29 +98,35 @@ fn test_kernel_wide_boilerplate_inventory() {
     // 后续按 I-11 同方案逐个修复 (审计 5 原文提到仅这两个文件存在"行数过多").
     // 此测试报告但不强制 — 是 inventory 性质, 不 panic.
     let framework = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
+        .parent()
+        .unwrap()
         .join("src/kernel/framework");
     let mut report: Vec<String> = Vec::new();
     walk(&framework, &mut |path: &Path| {
-        if path.extension().and_then(|s| s.to_str()) != Some("rs") { return; }
-        let src = match fs::read_to_string(path) { Ok(s) => s, Err(_) => return };
+        if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+            return;
+        }
+        let src = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
         let counts = count_safety_boilerplate(&src);
-        let over: Vec<_> = counts.iter()
+        let over: Vec<_> = counts
+            .iter()
             .filter(|(_, c)| **c > MAX_DUPLICATES)
             .collect();
         if !over.is_empty() {
             let rel = path.strip_prefix(&framework).unwrap_or(path);
             for (text, count) in over {
-                report.push(format!(
-                    "{}: {:?} 重复 {} 次",
-                    rel.display(), text, count
-                ));
+                report.push(format!("{}: {:?} 重复 {} 次", rel.display(), text, count));
             }
         }
     });
     if !report.is_empty() {
-        println!("\n[I-11 inventory] 以下文件仍有 boilerplate SAFETY 注释 (待后续修复):\n  {}\n",
-                 report.join("\n  "));
+        println!(
+            "\n[I-11 inventory] 以下文件仍有 boilerplate SAFETY 注释 (待后续修复):\n  {}\n",
+            report.join("\n  ")
+        );
     }
     // 不强制 — 仅记录
 }

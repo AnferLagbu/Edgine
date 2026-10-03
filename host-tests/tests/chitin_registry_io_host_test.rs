@@ -22,9 +22,7 @@
 
 use std::sync::Mutex;
 
-use queenx::kernel::framework::chitin::{
-    BlockDevice, CHITIN_DEVICES, chitin_register_block_dev,
-};
+use queenx::kernel::framework::chitin::{BlockDevice, CHITIN_DEVICES, chitin_register_block_dev};
 use queenx::kernel::framework::error::KernelError as FwError;
 use queenx::kernel::services::chitin::{
     ChitinError, DeviceState, Proto, blk_count, blk_is_present, blk_read, blk_total_sectors,
@@ -95,24 +93,40 @@ fn chitin_registry_lifecycle() {
     clear_registry();
 
     // 注册两个设备 (driver_data 传空指针: 仅验证注册表语义, 无堆内存需释放)。
-    let id_blk = register("mock_blk0", Proto::Block, core::ptr::null_mut()).expect("注册块设备失败");
+    let id_blk =
+        register("mock_blk0", Proto::Block, core::ptr::null_mut()).expect("注册块设备失败");
     let id_char =
         register("mock_char0", Proto::Char, core::ptr::null_mut()).expect("注册字符设备失败");
     assert_ne!(id_blk.raw(), id_char.raw(), "两次注册应分配不同 DeviceId");
     assert_eq!(count(), 2, "注册后设备总数应为 2");
 
     // 按名称查找 (返回注册表下标, 非 DeviceId)。
-    assert!(find_by_name("mock_blk0").is_some(), "应能按名称找到已注册设备");
-    assert!(find_by_name("does_not_exist").is_none(), "未注册名称应返回 None");
+    assert!(
+        find_by_name("mock_blk0").is_some(),
+        "应能按名称找到已注册设备"
+    );
+    assert!(
+        find_by_name("does_not_exist").is_none(),
+        "未注册名称应返回 None"
+    );
 
     // 按协议查找。
-    assert!(find_by_proto(Proto::Block).is_some(), "应能按协议找到块设备");
-    assert!(find_by_proto(Proto::Net).is_none(), "无网络设备时应返回 None");
+    assert!(
+        find_by_proto(Proto::Block).is_some(),
+        "应能按协议找到块设备"
+    );
+    assert!(
+        find_by_proto(Proto::Net).is_none(),
+        "无网络设备时应返回 None"
+    );
 
     // 列举: 名称与协议应与注册一致。
     let infos = list();
     assert_eq!(infos.len(), 2);
-    let blk_info = infos.iter().find(|i| i.id == id_blk).expect("list 应含块设备");
+    let blk_info = infos
+        .iter()
+        .find(|i| i.id == id_blk)
+        .expect("list 应含块设备");
     assert_eq!(blk_info.name, "mock_blk0");
     assert_eq!(blk_info.proto, Proto::Block);
     assert_eq!(blk_info.state, DeviceState::Ready, "注册后状态应为 Ready");
@@ -120,7 +134,10 @@ fn chitin_registry_lifecycle() {
     // 改状态: 经 list 回查确认。
     set_state(id_blk, DeviceState::Failed);
     let after = list();
-    let blk_after = after.iter().find(|i| i.id == id_blk).expect("list 应含块设备");
+    let blk_after = after
+        .iter()
+        .find(|i| i.id == id_blk)
+        .expect("list 应含块设备");
     assert_eq!(blk_after.state, DeviceState::Failed, "set_state 应生效");
 
     // 注销: 首次成功, 再次返回 false。

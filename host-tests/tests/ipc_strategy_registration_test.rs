@@ -16,8 +16,7 @@ fn repo_root() -> PathBuf {
 
 fn read_src(rel: &str) -> String {
     let p = repo_root().join(rel);
-    fs::read_to_string(&p)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", p.display(), e))
+    fs::read_to_string(&p).unwrap_or_else(|e| panic!("无法读取 {}: {}", p.display(), e))
 }
 
 fn line_of(src: &str, needle: &str) -> usize {

@@ -59,7 +59,7 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 每轮开发完成，**必须** 全部满足：
 
 1. 双架构 `cargo check --release` 0 error / 0 warning
-2. clippy 0 warning (`cargo clippy --release -- -D warnings`)
+2. clippy 0 warning (`cargo clippy --release -- -D warnings`) + `cargo fmt --check` 0 漂移（kernel / host-tests / src/rust 三 crate，见 §3）
 3. 核心审计全部通过（见 §2.2）+ GitHub Actions
 4. host-tests 全部通过
 5. QEMU 集成测试通过（如改动 boot/架构相关）
@@ -67,10 +67,10 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 
 ## 3. 工具链
 
-- **Rust nightly** 锁定在 `src/rust/rust-toolchain.toml`
+- **Rust 工具链** 锁定在仓库根 `rust-toolchain.toml`（`nightly-2026-10-02`，含 rust-src / llvm-tools-preview / rustfmt / clippy 与三交叉目标；CI 与本地均以该文件为唯一来源）
 - **Edition：** 2024
 - **目标架构：** x86\_64（主）+ aarch64（次）
-- **`rustfmt.toml`：** `src/rust/rustfmt.toml`（4 空格缩进 + 垂直尾逗号）
+- **`rustfmt.toml`：** 仓库根 `rustfmt.toml`（4 空格缩进 + 垂直尾逗号；kernel / host-tests / src/rust 统一受检）
 - **Clippy 配置：** `src/rust/clippy.toml`（cognitive-complexity-threshold = 25）
 - **`cargo-deny` 配置：** `src/rust/deny.toml`（许可证/漏洞/版本治理）
 

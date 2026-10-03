@@ -50,21 +50,25 @@ fn cc_iosqes_iocqes_field_positions_match_nvme_spec() {
 #[test]
 fn cc_composed_value_decodes_to_required_entry_sizes() {
     use queenx::kernel::services::driver::storage::nvme::{
-        CC_AMS_RR, CC_EN, CC_IOCQES_MASK, CC_IOCQES_VAL, CC_IOSQES_MASK, CC_IOSQES_VAL,
-        CC_MPS_SHIFT, CC_CSS_NVM,
+        CC_AMS_RR, CC_CSS_NVM, CC_EN, CC_IOCQES_MASK, CC_IOCQES_VAL, CC_IOSQES_MASK, CC_IOSQES_VAL,
+        CC_MPS_SHIFT,
     };
 
     // 与 services nvme init_controller 的 CC 组成保持同构:
     // create_cq/create_sq 依赖 QEMU 侧检查 CC.IOSQES == 6 且 CC.IOCQES == 4
-    let cc = CC_EN
-        | CC_CSS_NVM
-        | (0u32 << CC_MPS_SHIFT)
-        | CC_AMS_RR
-        | CC_IOCQES_VAL
-        | CC_IOSQES_VAL;
+    let cc =
+        CC_EN | CC_CSS_NVM | (0u32 << CC_MPS_SHIFT) | CC_AMS_RR | CC_IOCQES_VAL | CC_IOSQES_VAL;
 
-    assert_eq!((cc & CC_IOSQES_MASK) >> 16, 6, "CC.IOSQES 必须为 6 (64B SQE)");
-    assert_eq!((cc & CC_IOCQES_MASK) >> 20, 4, "CC.IOCQES 必须为 4 (16B CQE)");
+    assert_eq!(
+        (cc & CC_IOSQES_MASK) >> 16,
+        6,
+        "CC.IOSQES 必须为 6 (64B SQE)"
+    );
+    assert_eq!(
+        (cc & CC_IOCQES_MASK) >> 20,
+        4,
+        "CC.IOCQES 必须为 4 (16B CQE)"
+    );
 }
 
 #[test]

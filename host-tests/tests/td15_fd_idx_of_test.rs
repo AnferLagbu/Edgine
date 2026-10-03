@@ -21,10 +21,10 @@ const UNIX: &str = "src/kernel/services/net/unix.rs";
 
 fn read(p: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
+        .parent()
+        .unwrap()
         .join(p);
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e))
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e))
 }
 
 #[test]
@@ -96,7 +96,8 @@ fn test_subsystem_local_fd_to_idx_uses_idx_of() {
         let src = read(path);
         // 抽取 fn fd_to_idx(...) 函数体
         let needle = "fn fd_to_idx(fd: i32)";
-        let pos = src.find(needle)
+        let pos = src
+            .find(needle)
             .unwrap_or_else(|| panic!("{}: 应有 fn fd_to_idx (TD-15)", path));
         let body_start = pos;
         // 找到函数体结束: 第一个匹配的 `}` 在不缩进的行
@@ -105,7 +106,10 @@ fn test_subsystem_local_fd_to_idx_uses_idx_of() {
         let mut in_fn = false;
         for (i, ch) in src[body_start..].char_indices() {
             match ch {
-                '{' => { depth += 1; in_fn = true; }
+                '{' => {
+                    depth += 1;
+                    in_fn = true;
+                }
                 '}' => {
                     depth -= 1;
                     if in_fn && depth == 0 {
@@ -129,7 +133,8 @@ fn test_subsystem_local_fd_to_idx_uses_idx_of() {
 fn test_timerfd_base_uses_fd_plan_not_literal_240() {
     // timerfd::TFD_FD_BASE 必须来自 FdPlan::TIMER_FD.base, 不是字面量 240
     let src = read(TIMERFD);
-    let line = src.lines()
+    let line = src
+        .lines()
         .find(|l| l.contains("TFD_FD_BASE: i32"))
         .expect("TFD_FD_BASE 定义必须存在");
     assert!(
@@ -150,8 +155,10 @@ fn test_fd_plan_invariant_still_holds() {
     // (此项由启动期 verify_plan() 在运行时校验, 静态契约保证)
     let src = read(FD_ALLOC);
     assert!(
-        src.contains("pub const ALL: &'static [FdRange] = &[\n        Self::SMOLTCP,") ||
-        src.lines().any(|l| l.contains("Self::SMOLTCP,") || l.contains("Self::UDS,")),
+        src.contains("pub const ALL: &'static [FdRange] = &[\n        Self::SMOLTCP,")
+            || src
+                .lines()
+                .any(|l| l.contains("Self::SMOLTCP,") || l.contains("Self::UDS,")),
         "ALL 数组必须包含全部 6 个子系统范围 (TD-15)"
     );
     // TIMER_FD 路径引用至少 2 次: range_for match 臂 + ALL 数组

@@ -22,7 +22,9 @@ struct TestProc {
 
 impl TestProc {
     fn new() -> Self {
-        let pid = PROCESS_TABLE.allocate_pid().expect("PROCESS_TABLE.allocate_pid 失败");
+        let pid = PROCESS_TABLE
+            .allocate_pid()
+            .expect("PROCESS_TABLE.allocate_pid 失败");
         let proc = Box::new(Process::new(pid, "execve-signal-test", None));
         PROCESS_TABLE.insert(Box::into_raw(proc));
         Self { pid }
@@ -170,7 +172,8 @@ fn test_linux_execve_signal_pendings_documented() {
     // 3. 挂起实时信号保留
     // QueenX 简化: 全新进程, 无保留. 此处记录差异, 不在运行时检查.
     const DOC_LINUX_BEHAVIOR: &str = "Linux: SA_RESETHAND resets; pendings preserved";
-    const DOC_QUEENX_BEHAVIOR: &str = "QueenX: fresh process via transactional replace, no carry-over";
+    const DOC_QUEENX_BEHAVIOR: &str =
+        "QueenX: fresh process via transactional replace, no carry-over";
     assert!(!DOC_LINUX_BEHAVIOR.is_empty());
     assert!(!DOC_QUEENX_BEHAVIOR.is_empty());
 }

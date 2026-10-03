@@ -43,14 +43,8 @@ fn test_ip_addr_enum_defined() {
         src.contains("pub enum IpAddr"),
         "统一地址类型 IpAddr 未定义"
     );
-    assert!(
-        src.contains("V4(Ipv4Addr)"),
-        "IpAddr::V4 变体未定义"
-    );
-    assert!(
-        src.contains("V6(Ipv6Addr)"),
-        "IpAddr::V6 变体未定义"
-    );
+    assert!(src.contains("V4(Ipv4Addr)"), "IpAddr::V4 变体未定义");
+    assert!(src.contains("V6(Ipv6Addr)"), "IpAddr::V6 变体未定义");
     // 判定方法
     assert!(src.contains("pub const fn is_v4"), "is_v4 未定义");
     assert!(src.contains("pub const fn is_v6"), "is_v6 未定义");
@@ -61,10 +55,7 @@ fn test_ip_addr_enum_defined() {
 #[test]
 fn test_ipv6_cidr_defined() {
     let src = read(IFACE_TRAIT_RS);
-    assert!(
-        src.contains("pub struct Ipv6Cidr"),
-        "Ipv6Cidr 未定义"
-    );
+    assert!(src.contains("pub struct Ipv6Cidr"), "Ipv6Cidr 未定义");
     assert!(
         src.contains("pub const fn new(address: Ipv6Addr, prefix_len: u8)"),
         "Ipv6Cidr::new 未定义"
@@ -75,8 +66,14 @@ fn test_ipv6_cidr_defined() {
 fn test_dual_stack_helpers_defined() {
     let src = read(IFACE_TRAIT_RS);
     // 迁移辅助: NetEndpoint::new_v4 / new_v6
-    assert!(src.contains("pub const fn new_v4"), "NetEndpoint::new_v4 未定义");
-    assert!(src.contains("pub const fn new_v6"), "NetEndpoint::new_v6 未定义");
+    assert!(
+        src.contains("pub const fn new_v4"),
+        "NetEndpoint::new_v4 未定义"
+    );
+    assert!(
+        src.contains("pub const fn new_v6"),
+        "NetEndpoint::new_v6 未定义"
+    );
     // Ipv4Addr / Ipv6Addr 提升为 IpAddr
     assert!(
         src.contains("pub const fn into_ip_addr(self) -> IpAddr"),
@@ -87,9 +84,18 @@ fn test_dual_stack_helpers_defined() {
 #[test]
 fn test_ipv6_predicates_defined() {
     let src = read(IFACE_TRAIT_RS);
-    assert!(src.contains("pub const fn is_unspecified"), "is_unspecified 未定义");
-    assert!(src.contains("pub const fn is_loopback"), "is_loopback 未定义");
-    assert!(src.contains("pub const fn is_multicast"), "is_multicast 未定义");
+    assert!(
+        src.contains("pub const fn is_unspecified"),
+        "is_unspecified 未定义"
+    );
+    assert!(
+        src.contains("pub const fn is_loopback"),
+        "is_loopback 未定义"
+    );
+    assert!(
+        src.contains("pub const fn is_multicast"),
+        "is_multicast 未定义"
+    );
 }
 
 #[test]
@@ -104,14 +110,8 @@ fn test_ipv6_unit_tests_exist() {
         src.contains("fn test_ipv6_addr_conversions"),
         "缺 test_ipv6_addr_conversions"
     );
-    assert!(
-        src.contains("fn test_ipv6_cidr"),
-        "缺 test_ipv6_cidr"
-    );
-    assert!(
-        src.contains("fn test_ip_addr_enum"),
-        "缺 test_ip_addr_enum"
-    );
+    assert!(src.contains("fn test_ipv6_cidr"), "缺 test_ipv6_cidr");
+    assert!(src.contains("fn test_ip_addr_enum"), "缺 test_ip_addr_enum");
 }
 
 #[test]

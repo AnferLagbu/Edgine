@@ -49,11 +49,12 @@ fn find_arch_mutex_let_assigns(src: &str) -> Vec<(usize, String)> {
 fn test_e1000_driver_arch_agnostic() {
     // e1000 驱动应当不包含任何 cfg(target_arch) — 全部走 IoMem 抽象
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
+        .parent()
+        .unwrap()
         .join(DRIVER_NET_DIR)
         .join("e1000.rs");
-    let src = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
+    let src =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
     // e1000_probe 中的 #[cfg(target_arch = "aarch64")] return -1 是合法例外:
     // aarch64 QEMU virt 无 PCI ECAM, e1000 probe 访问 0x3F000000 导致 Data Abort,
@@ -62,7 +63,10 @@ fn test_e1000_driver_arch_agnostic() {
     let arm = src.matches("cfg(target_arch = \"aarch64\")").count();
     // 允许 e1000_probe 中的 1 处 aarch64 guard (返回 -1)
     assert_eq!(x86, 0, "e1000.rs 不应硬编码 x86_64 cfg (I-53)");
-    assert!(arm <= 1, "e1000.rs 不应有多处 aarch64 cfg (I-53), 允许 e1000_probe 早期返回");
+    assert!(
+        arm <= 1,
+        "e1000.rs 不应有多处 aarch64 cfg (I-53), 允许 e1000_probe 早期返回"
+    );
 }
 
 #[test]
@@ -70,10 +74,11 @@ fn test_services_virtio_net_no_arch_mutex_let_assigns() {
     // services VirtioNetDriver (virtio-net 权威, 批次 Z ④) 中不应再有
     // `#[cfg(target_arch)] + let x = ...` 的架构互斥赋值.
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
+        .parent()
+        .unwrap()
         .join("src/kernel/services/driver/virtio/net.rs");
-    let src = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
+    let src =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
     let mutexes = find_arch_mutex_let_assigns(&src);
     assert!(

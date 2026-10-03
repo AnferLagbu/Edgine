@@ -46,7 +46,10 @@ fn bench_cfs_btreemap_1000_tasks_latency() {
 
     // 性能预算不强制 (这是 baseline, 不一定 < 10μs)
     // 仅记录结果供后续对比
-    assert!(total_us < 100_000, "BTreeMap 1000 次 enqueue+pick 应 < 100ms (兜底)");
+    assert!(
+        total_us < 100_000,
+        "BTreeMap 1000 次 enqueue+pick 应 < 100ms (兜底)"
+    );
 }
 
 /// 验证 BTreeMap 是当前 CFS 数据结构 (防止误改)
@@ -55,10 +58,10 @@ fn test_cfs_uses_btreemap_for_vrunqueue() {
     // 静态契约: framework/proc/cfs.rs 必须仍使用 BTreeMap<(u64, Pid), ()>
     // (DECISION-J 2026-09-13: sched_policy 反转迁回 framework/proc/cfs.rs)
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
+        .parent()
+        .unwrap()
         .join("src/kernel/framework/proc/cfs.rs");
-    let src = std::fs::read_to_string(&path)
-        .expect("无法读取 framework/proc/cfs.rs");
+    let src = std::fs::read_to_string(&path).expect("无法读取 framework/proc/cfs.rs");
 
     assert!(
         src.contains("BTreeMap<(u64, Pid), ()>"),
@@ -76,10 +79,10 @@ fn test_i34_deferred_with_rationale() {
     // I-34 在 maintenance-2026-06-11.md 中标记 "延后", 本测试固化该决策:
     // intrusive RB tree 实现工作量大, 风险高, 须先有 perf 数据支撑.
     let plan_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
+        .parent()
+        .unwrap()
         .join("docs/plan/archive/maintenance-2026-06-11.md");
-    let plan = std::fs::read_to_string(&plan_path)
-        .expect("无法读取 maintenance plan");
+    let plan = std::fs::read_to_string(&plan_path).expect("无法读取 maintenance plan");
     let i34_section: String = plan
         .lines()
         .skip_while(|l| !l.contains("I-34"))

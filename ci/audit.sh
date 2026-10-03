@@ -179,7 +179,7 @@ unset RUSTC_WRAPPER
 for target in x86_64-unknown-none aarch64-unknown-none-softfloat; do
     echo -e "${BLUE}[audit] target=${target}${NC}"
     # 方案 D: kernel 独立 crate, 裸机 check 指向 kernel manifest (queenx 壳仅 host).
-    if cargo +nightly check --manifest-path ../kernel/Cargo.toml --target "${target}" --target-dir target "${BUILD_STD_CFG[@]}" 2>&1 | tail -3; then
+    if cargo check --manifest-path ../kernel/Cargo.toml --target "${target}" --target-dir target "${BUILD_STD_CFG[@]}" 2>&1 | tail -3; then
         ok "${target}: check passed"
     else
         err "${target}: check FAILED"
@@ -199,7 +199,7 @@ unset RUSTC_WRAPPER
 # B01-16 修复: 加 -D warnings 让任何 warning 阻断 CI, 失败走 err 而非仅警告.
 # 原代码 `if cmd | tail; then ok; else warn; fi` 中 `tail` 退出 0 总是成功,
 # 即使 cargo clippy 失败也被掩盖 (P0-05 类问题).
-if cargo +nightly clippy --manifest-path ../kernel/Cargo.toml --release --lib --bins --examples --target x86_64-unknown-none --target-dir target \
+if cargo clippy --manifest-path ../kernel/Cargo.toml --release --lib --bins --examples --target x86_64-unknown-none --target-dir target \
     "${BUILD_STD_CFG[@]}" \
     -- -D warnings -D clippy::pedantic \
     -A clippy::cast_possible_truncation \
@@ -224,7 +224,7 @@ popd > /dev/null
 step "2b/6 Clippy feature 维 (kernel_test + host-test, host target)"
 for FEATURE in kernel_test host-test; do
     # 方案 D: feature 维 clippy 指向 kernel manifest (host target, 门控代码 lint)
-    if cargo +nightly clippy --manifest-path "$PROJECT_ROOT/src/kernel/Cargo.toml" --features "$FEATURE" --lib \
+    if cargo clippy --manifest-path "$PROJECT_ROOT/src/kernel/Cargo.toml" --features "$FEATURE" --lib \
         --target-dir "$PROJECT_ROOT/src/rust/target" \
         -- -D warnings -D clippy::pedantic \
         -A clippy::cast_possible_truncation \
@@ -239,6 +239,19 @@ for FEATURE in kernel_test host-test; do
         fi
     else
         err "clippy ${FEATURE} 维执行异常"
+    fi
+done
+
+# ── 2c. rustfmt 风格门禁 (全仓三 crate) ────────────────────────
+# 长期修复 (2026-10-03): 此前本地 audit 不跑 fmt, 导致 kernel 39 hunks 漂移长期
+# 不可见 (仅 CI 暴露且已被忽略). 现与 ci-x86.yml clippy-pedantic job 对齐, 覆盖
+# kernel / host-tests / queenx 壳; rustfmt.toml 与 rust-toolchain.toml 均在仓库根.
+step "2c/6 rustfmt 风格门禁 (kernel + host-tests + queenx 壳)"
+for FMT_MANIFEST in src/kernel/Cargo.toml host-tests/Cargo.toml src/rust/Cargo.toml; do
+    if cargo fmt --manifest-path "$FMT_MANIFEST" -- --check; then
+        ok "fmt: ${FMT_MANIFEST} 通过"
+    else
+        err "fmt: ${FMT_MANIFEST} 存在格式漂移 — 运行 cargo fmt --manifest-path ${FMT_MANIFEST} 修复"
     fi
 done
 
@@ -269,7 +282,7 @@ step "4/6 Lockbud 死锁/数据竞争扫描"
 pushd src/rust > /dev/null
 unset RUSTC_WRAPPER
 LOCKBUD_RESULT=0
-cargo +nightly lockbud --manifest-path ../kernel/Cargo.toml --target x86_64-unknown-none --target-dir target "${BUILD_STD_CFG[@]}" 2>&1 | tail -25 || LOCKBUD_RESULT=$?
+cargo lockbud --manifest-path ../kernel/Cargo.toml --target x86_64-unknown-none --target-dir target "${BUILD_STD_CFG[@]}" 2>&1 | tail -25 || LOCKBUD_RESULT=$?
 if [ $LOCKBUD_RESULT -eq 0 ]; then
     ok "lockbud: passed"
 else

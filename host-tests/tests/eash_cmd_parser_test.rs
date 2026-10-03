@@ -32,8 +32,16 @@ impl Cmd {
         let len = input.len().min(1023);
 
         // 复制输入 (去除尾随换行)
-        let end = if len > 0 && input[len - 1] == b'\n' { len - 1 } else { len };
-        let end = if end > 0 && input[end - 1] == b'\r' { end - 1 } else { end };
+        let end = if len > 0 && input[len - 1] == b'\n' {
+            len - 1
+        } else {
+            len
+        };
+        let end = if end > 0 && input[end - 1] == b'\r' {
+            end - 1
+        } else {
+            end
+        };
         let end = end.min(1023);
         args[..end].copy_from_slice(&input[..end]);
         args[end] = 0;
@@ -42,41 +50,64 @@ impl Cmd {
         let mut i = 0;
         while i < end {
             // 跳过空白
-            while i < end && (args[i] == b' ' || args[i] == b'\t') { i += 1; }
-            if i >= end { break; }
+            while i < end && (args[i] == b' ' || args[i] == b'\t') {
+                i += 1;
+            }
+            if i >= end {
+                break;
+            }
 
             // 引号处理
             if args[i] == b'"' {
                 i += 1;
                 offsets[n] = i;
-                while i < end && args[i] != b'"' { i += 1; }
-                if i < end { args[i] = 0; i += 1; }
+                while i < end && args[i] != b'"' {
+                    i += 1;
+                }
+                if i < end {
+                    args[i] = 0;
+                    i += 1;
+                }
             } else {
                 offsets[n] = i;
-                while i < end && args[i] != b' ' && args[i] != b'\t' { i += 1; }
-                if i < end { args[i] = 0; i += 1; }
+                while i < end && args[i] != b' ' && args[i] != b'\t' {
+                    i += 1;
+                }
+                if i < end {
+                    args[i] = 0;
+                    i += 1;
+                }
             }
             n += 1;
-            if n >= 32 { break; }
+            if n >= 32 {
+                break;
+            }
         }
         Self { n, args, offsets }
     }
 
     fn get(&self, idx: usize) -> &[u8] {
-        if idx >= self.n { return b""; }
+        if idx >= self.n {
+            return b"";
+        }
         let start = self.offsets[idx];
         // I-10: 镜像修复后版本 — 旧版本 `start + len` 又被 `start..start+end` 二次加,
         // 切到 `start..start+len` 避免双重计数
         let len = CStr::from_bytes_until_nul(&self.args[start..])
-            .map(|c| c.to_bytes().len()).unwrap_or(0);
+            .map(|c| c.to_bytes().len())
+            .unwrap_or(0);
         &self.args[start..start + len]
     }
 }
 
-fn as_str(slice: &[u8]) -> &str { std::str::from_utf8(slice).unwrap_or("") }
+fn as_str(slice: &[u8]) -> &str {
+    std::str::from_utf8(slice).unwrap_or("")
+}
 
 fn path_arg(cmd: &Cmd) -> Option<[u8; 256]> {
-    if cmd.n < 2 { return None; }
+    if cmd.n < 2 {
+        return None;
+    }
     let mut buf = [0u8; 256];
     let raw = cmd.get(1);
     let len = raw.len().min(255);
@@ -165,7 +196,9 @@ fn test_cmd_max_args_limit() {
     // 32 个参数上限
     let mut s = String::new();
     for i in 0..50 {
-        if i > 0 { s.push(' '); }
+        if i > 0 {
+            s.push(' ');
+        }
         s.push_str(&format!("a{}", i));
     }
     let cmd = Cmd::new(s.as_bytes());
@@ -255,10 +288,32 @@ fn test_eash_command_table_completeness() {
     // 验证 eash 命令注册表的核心命令都在 (eash 31 个内置命令的子集验证)
     // 完整列表参见 src/user/eash/src/commands/mod.rs 的 TABLE
     let known_commands: &[&[u8]] = &[
-        b"help", b"clear", b"echo", b"exit",
-        b"dir", b"cd", b"cat", b"cp", b"mv", b"rm", b"mkdir", b"rmdir", b"pwd",
-        b"ps", b"kill", b"uptime", b"uname", b"whoami", b"hostname", b"id",
-        b"reboot", b"shutdown", b"halt", b"date", b"env", b"set",
+        b"help",
+        b"clear",
+        b"echo",
+        b"exit",
+        b"dir",
+        b"cd",
+        b"cat",
+        b"cp",
+        b"mv",
+        b"rm",
+        b"mkdir",
+        b"rmdir",
+        b"pwd",
+        b"ps",
+        b"kill",
+        b"uptime",
+        b"uname",
+        b"whoami",
+        b"hostname",
+        b"id",
+        b"reboot",
+        b"shutdown",
+        b"halt",
+        b"date",
+        b"env",
+        b"set",
     ];
     for cmd_name in known_commands {
         let input = {

@@ -13,23 +13,26 @@ use std::path::Path;
 
 fn repo_root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
+        .parent()
+        .unwrap()
         .to_path_buf()
 }
 
 #[test]
 fn test_page_fault_uses_vma_flags_for_user_fault() {
     let path = repo_root().join("src/kernel/framework/mm/page_fault.rs");
-    let src = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
+    let src =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
     // 关键: handle_page_fault 函数体内, 在 fallthrough 到通用 alloc+map 之前,
     // 必须先调用 find_vma (或等价的 VMA 查询), 否则 read-only mmap 缺页
     // 会被错误授予写权限 (I-27 修复目标).
-    let fn_start = src.find("fn handle_page_fault(")
+    let fn_start = src
+        .find("fn handle_page_fault(")
         .expect("page_fault.rs 缺少 handle_page_fault");
     // 找函数体 — 假设缩进 4 空格, 函数体首行是 4 空格缩进
-    let body_lines: Vec<&str> = src[fn_start..].lines()
+    let body_lines: Vec<&str> = src[fn_start..]
+        .lines()
         .take_while(|_l| {
             // 截到下一个 `fn ` 顶层 (4 空格缩进才进入) 或文件末尾
             // 简化: 截到 200 行即可覆盖主函数
@@ -50,8 +53,8 @@ fn test_page_fault_uses_vma_flags_for_user_fault() {
 fn test_page_fault_mmap_path_uses_vma_flags_not_constants() {
     // 读 VMA 后, 新页 flags 应基于 vma.flags (而非硬编码常量)
     let path = repo_root().join("src/kernel/framework/mm/page_fault.rs");
-    let src = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
+    let src =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
     // 找到含 `let flags = ` 且上下文有 vma 关键词的代码段
     // 粗略检查: 在 handle_vma_fault_with_mm / handle_file_fault 等函数体内
@@ -76,8 +79,8 @@ fn test_page_fault_no_explicit_rwx_for_user_fault() {
     // 禁止: 通用 fallthrough 路径 (应走 VMA 查询)
 
     let path = repo_root().join("src/kernel/framework/mm/page_fault.rs");
-    let src = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
+    let src =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
     // 检查: 标记为 "P0-I-26 修复" 的注释存在, 表明 fallthrough 已上 VMA 查询
     let has_fix_marker = src.contains("P0-I-26")

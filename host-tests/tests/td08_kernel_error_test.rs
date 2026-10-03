@@ -32,7 +32,10 @@ fn variant_count(enum_body: &str) -> usize {
                 return false;
             }
             // 取第一个空白或符号前的部分
-            let head: String = t.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+            let head: String = t
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
             if head.is_empty() || !head.chars().next().unwrap().is_ascii_uppercase() {
                 return false;
             }
@@ -47,16 +50,28 @@ fn variant_count(enum_body: &str) -> usize {
 fn test_kernel_error_module_exists() {
     // B09-12 P0-2: KernelError 定义在 framework/error.rs, services/error.rs re-export
     let fw = read(FRAMEWORK_ERROR);
-    assert!(fw.contains("pub enum KernelError"), "framework/error.rs 必须定义 KernelError");
-    assert!(fw.contains("pub const fn from_i32"), "必须有 POSIX errno 映射");
-    assert!(fw.contains("pub const fn as_errno"), "必须有反向 errno 映射");
+    assert!(
+        fw.contains("pub enum KernelError"),
+        "framework/error.rs 必须定义 KernelError"
+    );
+    assert!(
+        fw.contains("pub const fn from_i32"),
+        "必须有 POSIX errno 映射"
+    );
+    assert!(
+        fw.contains("pub const fn as_errno"),
+        "必须有反向 errno 映射"
+    );
     // services/error.rs 必须是 re-export 壳 (单向依赖)
     let svc = read(SERVICES_ERROR);
     assert!(
         svc.contains("pub use crate::framework::error::KernelError"),
         "services/error.rs 必须 re-export framework KernelError"
     );
-    assert!(!svc.contains("pub enum KernelError"), "services/error.rs 不应再定义 KernelError");
+    assert!(
+        !svc.contains("pub enum KernelError"),
+        "services/error.rs 不应再定义 KernelError"
+    );
 }
 
 #[test]
@@ -86,7 +101,10 @@ fn test_unix_socket_error_has_at_most_2_variants() {
     let count = variant_count(body);
     assert!(count <= 2, "UnixSocketError 字段数={count} > 2, 验收失败");
     // 至少应有 PathNotFound + Kernel
-    assert!(body.contains("PathNotFound"), "必须保留 UDS 特有字段 PathNotFound");
+    assert!(
+        body.contains("PathNotFound"),
+        "必须保留 UDS 特有字段 PathNotFound"
+    );
     assert!(body.contains("Kernel("), "必须有 Kernel(KernelError) 包装");
 }
 
@@ -106,12 +124,19 @@ fn test_from_uds_error_covers_all_variants() {
     // 验证 UdsError 9 个变体都有对应分支
     // UdsError 已迁移到 services 本地, 可用 fw:: 或直接 UdsError:: 前缀
     for variant in [
-        "BadFd", "Again", "NoMem", "AddrFamily", "AddrInUse",
-        "ConnRefused", "Invalid", "NotFound", "NoSys",
+        "BadFd",
+        "Again",
+        "NoMem",
+        "AddrFamily",
+        "AddrInUse",
+        "ConnRefused",
+        "Invalid",
+        "NotFound",
+        "NoSys",
     ] {
         assert!(
             src.contains(&format!("fw::UdsError::{} =>", variant))
-            || src.contains(&format!("UdsError::{} =>", variant)),
+                || src.contains(&format!("UdsError::{} =>", variant)),
             "必须覆盖 UdsError::{}",
             variant
         );
@@ -121,7 +146,10 @@ fn test_from_uds_error_covers_all_variants() {
 #[test]
 fn test_kernel_error_exported_from_services_mod() {
     let src = fs::read_to_string("../src/kernel/services/mod.rs").expect("read services/mod.rs");
-    assert!(src.contains("pub mod error"), "services/mod.rs 必须导出 error 子模块");
+    assert!(
+        src.contains("pub mod error"),
+        "services/mod.rs 必须导出 error 子模块"
+    );
 }
 
 #[test]
@@ -129,5 +157,8 @@ fn test_socket_error_uses_kernel_error_in_path() {
     // 静态验证 socket.rs 路径: type alias -> KernelError
     let src = read(NET_SOCKET);
     let path_present = src.contains("services::error::KernelError");
-    assert!(path_present, "socket.rs 必须引用 services::error::KernelError");
+    assert!(
+        path_present,
+        "socket.rs 必须引用 services::error::KernelError"
+    );
 }

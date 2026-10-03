@@ -12,18 +12,20 @@ use std::path::Path;
 
 fn repo_root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
+        .parent()
+        .unwrap()
         .to_path_buf()
 }
 
 #[test]
 fn test_queenx_lib_rs_no_feature_asm() {
     let lib = repo_root().join("src/kernel/lib.rs");
-    let content = fs::read_to_string(&lib)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", lib.display(), e));
+    let content =
+        fs::read_to_string(&lib).unwrap_or_else(|e| panic!("无法读取 {}: {}", lib.display(), e));
 
     // 提取非注释行 (以 // 起始的行) — 注释里出现的文本是文档, 不算数
-    let non_comment: String = content.lines()
+    let non_comment: String = content
+        .lines()
         .filter(|l| !l.trim_start().starts_with("//"))
         .collect::<Vec<_>>()
         .join("\n");
@@ -42,11 +44,12 @@ fn test_queenx_lib_rs_no_feature_asm() {
 fn test_queenx_lib_rs_feature_count_minimal() {
     // queenx 内的 #![feature(...)] 数量应 ≤ 1 (仅 alloc_error_handler)
     let lib = repo_root().join("src/kernel/lib.rs");
-    let content = fs::read_to_string(&lib)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", lib.display(), e));
+    let content =
+        fs::read_to_string(&lib).unwrap_or_else(|e| panic!("无法读取 {}: {}", lib.display(), e));
 
     // 取非注释的前 30 行, 统计 feature( 出现次数
-    let head: String = content.lines()
+    let head: String = content
+        .lines()
         .filter(|l| !l.trim_start().starts_with("//"))
         .take(30)
         .collect::<Vec<_>>()
@@ -55,7 +58,8 @@ fn test_queenx_lib_rs_feature_count_minimal() {
     assert!(
         count <= 1,
         "queenx 顶层 #![feature(...)] 数量 = {} (> 1, I-09 要求最小化).\n当前:\n{}",
-        count, head
+        count,
+        head
     );
 }
 
@@ -81,28 +85,39 @@ fn test_kernel_uses_core_arch_asm_not_bare_asm() {
                     }
                     walk(&p, out, framework_root);
                 } else if p.extension().and_then(|s| s.to_str()) == Some("rs") {
-                    let src = match fs::read_to_string(&p) { Ok(s) => s, Err(_) => return };
+                    let src = match fs::read_to_string(&p) {
+                        Ok(s) => s,
+                        Err(_) => return,
+                    };
 
                     // 文件级导入: `use core::arch::asm;` 允许裸用
-                    let has_qualified_use = src.lines()
-                        .any(|l| l.trim_start().starts_with("use ")
-                            && l.contains("core::arch::asm"));
+                    let has_qualified_use = src.lines().any(|l| {
+                        l.trim_start().starts_with("use ") && l.contains("core::arch::asm")
+                    });
 
                     for (n, line) in src.lines().enumerate() {
                         let trimmed = line.trim_start();
                         // 跳过注释与字符串
-                        if trimmed.starts_with("//") { continue; }
+                        if trimmed.starts_with("//") {
+                            continue;
+                        }
                         // 检查裸 `asm!(...)` 调用
                         if trimmed.starts_with("asm!")
-                            && !line.contains("core::arch::") && !has_qualified_use {
-                                let rel = p.strip_prefix(framework_root).unwrap_or(&p);
-                                out.push(format!("{}:{}: {}", rel.display(), n + 1, line.trim()));
-                            }
+                            && !line.contains("core::arch::")
+                            && !has_qualified_use
+                        {
+                            let rel = p.strip_prefix(framework_root).unwrap_or(&p);
+                            out.push(format!("{}:{}: {}", rel.display(), n + 1, line.trim()));
+                        }
                         // 旧式 llvm_asm!
                         if trimmed.contains("llvm_asm!") {
                             let rel = p.strip_prefix(framework_root).unwrap_or(&p);
-                            out.push(format!("{}:{}: llvm_asm! (旧式 API, 已废弃): {}",
-                                rel.display(), n + 1, line.trim()));
+                            out.push(format!(
+                                "{}:{}: llvm_asm! (旧式 API, 已废弃): {}",
+                                rel.display(),
+                                n + 1,
+                                line.trim()
+                            ));
                         }
                     }
                 }

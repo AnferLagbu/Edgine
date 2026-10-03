@@ -277,10 +277,7 @@ fn session_error_uses_kernel_wrapper() {
 #[test]
 fn no_legacy_session_error_variants() {
     let src = read(SESSION_RS);
-    for legacy in &[
-        "SessionError::NotFound",
-        "SessionError::TooManySessions",
-    ] {
+    for legacy in &["SessionError::NotFound", "SessionError::TooManySessions"] {
         assert!(
             !src.contains(legacy),
             "{} 已废弃, 应改走 SessionError::Kernel(KernelError::...)",

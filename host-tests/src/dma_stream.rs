@@ -32,8 +32,8 @@ mod tests {
     #[test]
     fn from_aligned_page_ok() {
         // SAFETY: 页对齐物理地址, 见 frame() 说明
-        let d = DmaStream::from_frame(unsafe { frame(0x10000, 0) }, DmaDirection::ToDevice)
-            .unwrap();
+        let d =
+            DmaStream::from_frame(unsafe { frame(0x10000, 0) }, DmaDirection::ToDevice).unwrap();
         assert_eq!(d.dma_addr().as_u64(), 0x10000);
         assert_eq!(d.size(), 4096);
         assert_eq!(d.direction(), DmaDirection::ToDevice);
@@ -64,8 +64,8 @@ mod tests {
     #[test]
     fn to_device_lifecycle() {
         // SAFETY: 页对齐物理地址, 见 frame() 说明
-        let mut d = DmaStream::from_frame(unsafe { frame(0x10000, 0) }, DmaDirection::ToDevice)
-            .unwrap();
+        let mut d =
+            DmaStream::from_frame(unsafe { frame(0x10000, 0) }, DmaDirection::ToDevice).unwrap();
         assert_eq!(d.sync_state(), SyncState::CpuReady);
         // CPU 写完, 调 sync_for_device 进入 DeviceReady
         assert!(d.sync_for_device().is_ok());
@@ -80,8 +80,8 @@ mod tests {
     #[test]
     fn from_device_lifecycle() {
         // SAFETY: 页对齐物理地址, 见 frame() 说明
-        let mut d = DmaStream::from_frame(unsafe { frame(0x10000, 0) }, DmaDirection::FromDevice)
-            .unwrap();
+        let mut d =
+            DmaStream::from_frame(unsafe { frame(0x10000, 0) }, DmaDirection::FromDevice).unwrap();
         // FromDevice 初始为 DeviceReady (设备已写入)
         assert_eq!(d.sync_state(), SyncState::DeviceReady);
         // CPU 想读, 调 sync_for_cpu 进入 CpuReady
@@ -97,8 +97,8 @@ mod tests {
     #[test]
     fn to_device_cannot_sync_for_cpu() {
         // SAFETY: 页对齐物理地址, 见 frame() 说明
-        let mut d = DmaStream::from_frame(unsafe { frame(0x10000, 0) }, DmaDirection::ToDevice)
-            .unwrap();
+        let mut d =
+            DmaStream::from_frame(unsafe { frame(0x10000, 0) }, DmaDirection::ToDevice).unwrap();
         // ToDevice 不允许 sync_for_cpu
         assert_eq!(
             d.sync_for_cpu().unwrap_err(),
@@ -109,8 +109,8 @@ mod tests {
     #[test]
     fn from_device_cannot_sync_for_device() {
         // SAFETY: 页对齐物理地址, 见 frame() 说明
-        let mut d = DmaStream::from_frame(unsafe { frame(0x10000, 0) }, DmaDirection::FromDevice)
-            .unwrap();
+        let mut d =
+            DmaStream::from_frame(unsafe { frame(0x10000, 0) }, DmaDirection::FromDevice).unwrap();
         // FromDevice 不允许 sync_for_device
         assert_eq!(
             d.sync_for_device().unwrap_err(),
@@ -146,8 +146,8 @@ mod tests {
     fn frame_lifecycle() {
         // 创建后 drop 释放 (没有 panic 即说明 Frame 正确 Drop)
         // SAFETY: 页对齐物理地址, 见 frame() 说明
-        let d = DmaStream::from_frame(unsafe { frame(0x10000, 0) }, DmaDirection::ToDevice)
-            .unwrap();
+        let d =
+            DmaStream::from_frame(unsafe { frame(0x10000, 0) }, DmaDirection::ToDevice).unwrap();
         drop(d);
     }
 
@@ -170,8 +170,9 @@ mod tests {
     fn e1000_rx_desc_simulation() {
         // 模拟 e1000 接收描述符: FromDevice 方向
         // SAFETY: 页对齐物理地址, 见 frame() 说明
-        let mut d = DmaStream::from_frame(unsafe { frame(0xFEB_C1000, 0) }, DmaDirection::FromDevice)
-            .unwrap();
+        let mut d =
+            DmaStream::from_frame(unsafe { frame(0xFEB_C1000, 0) }, DmaDirection::FromDevice)
+                .unwrap();
         // 设备 DMA 完成后, CPU 读描述符
         assert!(d.sync_for_cpu().is_ok());
         assert_eq!(d.dma_addr().as_u64(), 0xFEB_C1000);
@@ -189,7 +190,8 @@ mod tests {
                 _ => DmaDirection::Bidirectional,
             };
             // SAFETY: paddr = i*0x100000 页对齐, 见 frame() 说明
-            let mut d = DmaStream::from_frame(unsafe { frame(paddr, 0) }, dir).expect("create failed");
+            let mut d =
+                DmaStream::from_frame(unsafe { frame(paddr, 0) }, dir).expect("create failed");
             // 完整同步周期
             for _ in 0..10 {
                 match dir {
@@ -230,8 +232,8 @@ mod tests {
         // 模拟 PCI BAR 分配的 DMA 缓冲区: 起始地址 4K 对齐, 8KB (order 1)
         let bar_base: u64 = 0xFEB_C0000; // 4K 对齐
         // SAFETY: 页对齐物理地址, 见 frame() 说明
-        let d = DmaStream::from_frame(unsafe { frame(bar_base, 1) }, DmaDirection::ToDevice)
-            .unwrap();
+        let d =
+            DmaStream::from_frame(unsafe { frame(bar_base, 1) }, DmaDirection::ToDevice).unwrap();
         assert_eq!(d.dma_addr().as_u64(), bar_base);
     }
 }

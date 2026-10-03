@@ -35,7 +35,8 @@ const EXPECTED_CPUID_SMAP_BIT: u32 = 1 << 21;
 #[test]
 fn cpu_features_smep_bit_position() {
     assert_eq!(
-        EXPECTED_SMEP_BIT, 1u128 << 30,
+        EXPECTED_SMEP_BIT,
+        1u128 << 30,
         "CpuFeatures SMEP bit position must be 1<<30 (avoid conflict with leaf1 ECX bit 20)"
     );
 }
@@ -43,7 +44,8 @@ fn cpu_features_smep_bit_position() {
 #[test]
 fn cpu_features_smap_bit_position() {
     assert_eq!(
-        EXPECTED_SMAP_BIT, 1u128 << 31,
+        EXPECTED_SMAP_BIT,
+        1u128 << 31,
         "CpuFeatures SMAP bit position must be 1<<31 (avoid conflict with leaf1 ECX bit 21)"
     );
 }

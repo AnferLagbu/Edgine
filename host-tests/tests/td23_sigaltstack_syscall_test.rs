@@ -54,5 +54,9 @@ fn sigaltstack_no_current_process_returns_esrch() {
     // → sys_sigaltstack 返回 -ESRCH (3). 这是内核 sys_sigaltstack 在 host
     // 环境下可到达的真实路径, 验证当前进程缺失时的契约.
     let ret = sys_sigaltstack(0, 0);
-    assert_eq!(ret, -3, "host 无当前进程时 sys_sigaltstack 应返回 -ESRCH, 实际 = {}", ret);
+    assert_eq!(
+        ret, -3,
+        "host 无当前进程时 sys_sigaltstack 应返回 -ESRCH, 实际 = {}",
+        ret
+    );
 }

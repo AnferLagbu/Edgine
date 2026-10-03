@@ -44,7 +44,8 @@ pub fn read_fat_chain(
         let fat_offset = (current * 4) % bytes_per_sector;
 
         let mut sector_data = alloc::vec![0u8; bytes_per_sector as usize];
-        if chitin_blk_read_sectors(device_idx, u64::from(fat_sector), 1, &mut sector_data).is_err() {
+        if chitin_blk_read_sectors(device_idx, u64::from(fat_sector), 1, &mut sector_data).is_err()
+        {
             break;
         }
 

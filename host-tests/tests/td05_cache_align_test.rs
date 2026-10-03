@@ -15,7 +15,9 @@ const STATE: &str = "src/kernel/framework/net/init/state.rs";
 
 fn read(path: &str) -> String {
     let p = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap().join(path);
+        .parent()
+        .unwrap()
+        .join(path);
     fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {}", path))
 }
 
@@ -30,22 +32,30 @@ fn read_net_state_sources() -> String {
 fn test_socket_table_in_net_state() {
     // TD-05: SOCKET_TABLE 必须是 NetState 结构体的字段
     let src = read_net_state_sources();
-    assert!(src.contains("socket_table:") || src.contains("socket_table: ["),
-        "TD-05: SOCKET_TABLE 必须是 NetState 的字段");
+    assert!(
+        src.contains("socket_table:") || src.contains("socket_table: ["),
+        "TD-05: SOCKET_TABLE 必须是 NetState 的字段"
+    );
     // 不再有独立的 static mut SOCKET_TABLE
-    assert!(!src.contains("static mut SOCKET_TABLE:"),
-        "TD-05: SOCKET_TABLE 不应再是独立的 static mut");
+    assert!(
+        !src.contains("static mut SOCKET_TABLE:"),
+        "TD-05: SOCKET_TABLE 不应再是独立的 static mut"
+    );
 }
 
 #[test]
 fn test_fd_types_in_net_state() {
     // TD-05: FD_TYPES 必须是 NetState 结构体的字段
     let src = read_net_state_sources();
-    assert!(src.contains("fd_types:") || src.contains("fd_types: ["),
-        "TD-05: FD_TYPES 必须是 NetState 的字段");
+    assert!(
+        src.contains("fd_types:") || src.contains("fd_types: ["),
+        "TD-05: FD_TYPES 必须是 NetState 的字段"
+    );
     // 不再有独立的 static mut FD_TYPES
-    assert!(!src.contains("static mut FD_TYPES:"),
-        "TD-05: FD_TYPES 不应再是独立的 static mut");
+    assert!(
+        !src.contains("static mut FD_TYPES:"),
+        "TD-05: FD_TYPES 不应再是独立的 static mut"
+    );
 }
 
 #[test]
@@ -59,14 +69,23 @@ fn test_no_raw_static_mut_access() {
             continue;
         }
         // 检查是否有直接的 SOCKET_TABLE[ 访问 (非 raw:: 前缀)
-        if trimmed.contains("SOCKET_TABLE[") && !trimmed.contains("raw::") && !trimmed.contains("//") {
-            panic!("TD-05: L{} 仍有直接 SOCKET_TABLE[ 访问, 应通过 raw:: 模块:\n{}",
-                idx + 1, line);
+        if trimmed.contains("SOCKET_TABLE[")
+            && !trimmed.contains("raw::")
+            && !trimmed.contains("//")
+        {
+            panic!(
+                "TD-05: L{} 仍有直接 SOCKET_TABLE[ 访问, 应通过 raw:: 模块:\n{}",
+                idx + 1,
+                line
+            );
         }
         // 检查是否有直接的 FD_TYPES[ 访问
         if trimmed.contains("FD_TYPES[") && !trimmed.contains("raw::") && !trimmed.contains("//") {
-            panic!("TD-05: L{} 仍有直接 FD_TYPES[ 访问, 应通过 raw:: 模块:\n{}",
-                idx + 1, line);
+            panic!(
+                "TD-05: L{} 仍有直接 FD_TYPES[ 访问, 应通过 raw:: 模块:\n{}",
+                idx + 1,
+                line
+            );
         }
     }
 }
@@ -75,6 +94,8 @@ fn test_no_raw_static_mut_access() {
 fn test_net_state_struct_documented() {
     // TD-05: NetState 结构体必须有文档说明
     let src = read_net_state_sources();
-    assert!(src.contains("struct NetState"),
-        "TD-05: 必须定义 NetState 结构体");
+    assert!(
+        src.contains("struct NetState"),
+        "TD-05: 必须定义 NetState 结构体"
+    );
 }

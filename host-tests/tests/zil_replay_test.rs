@@ -17,7 +17,7 @@
 //! 本文件断言与内核契约一致 (损坏 → 空, 不 panic). G-09 已随 J-04 修复关闭.
 
 use queenx::kernel::services::fs::nestfs::zil::{NestZil, NestZilRecord, NestZilRecordType};
-use queenx::kernel::services::fs::nestfs::zil_persist::{crc32_test_wrapper, NestZilPersist};
+use queenx::kernel::services::fs::nestfs::zil_persist::{NestZilPersist, crc32_test_wrapper};
 
 const REC_DISK_SIZE: usize = 256;
 const HEADER_SIZE: usize = 64;

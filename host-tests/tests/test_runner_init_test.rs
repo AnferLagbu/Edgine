@@ -19,9 +19,8 @@ use std::fs;
 const TESTS_MOD_PATH: &str = "../src/kernel/framework/tests/mod.rs";
 
 fn read_source() -> String {
-    fs::read_to_string(TESTS_MOD_PATH).unwrap_or_else(|e| {
-        panic!("无法读取 {}: {}", TESTS_MOD_PATH, e)
-    })
+    fs::read_to_string(TESTS_MOD_PATH)
+        .unwrap_or_else(|e| panic!("无法读取 {}: {}", TESTS_MOD_PATH, e))
 }
 
 #[test]
@@ -71,9 +70,8 @@ fn test_init_global_is_idempotent() {
     // 多次调用不会 panic, 不会重置状态.
     // 主机端无 devfs 全局, 这里验证 init_global 签名可见且文档承诺幂等.
     // 阶段 4b: devfs 实现已下沉 services/fs/devfs.rs
-    let devfs_rs = fs::read_to_string(
-        "../src/kernel/services/fs/devfs.rs",
-    ).expect("无法读取 devfs.rs");
+    let devfs_rs =
+        fs::read_to_string("../src/kernel/services/fs/devfs.rs").expect("无法读取 devfs.rs");
     assert!(
         devfs_rs.contains("OnceCell::get_or_init") || devfs_rs.contains("get_or_init"),
         "devfs::init_global 应使用 OnceCell::get_or_init 保证幂等"
@@ -83,9 +81,8 @@ fn test_init_global_is_idempotent() {
 #[test]
 fn test_smoltcp_impl_kernel_test_fw_init_stub() {
     // 验收: services/net/init (kernel_test 桩) 提供 smoltcp_net_stack_* stub
-    let services_mod = fs::read_to_string(
-        "../src/kernel/services/net/mod.rs",
-    ).expect("无法读取 services/net/mod.rs");
+    let services_mod = fs::read_to_string("../src/kernel/services/net/mod.rs")
+        .expect("无法读取 services/net/mod.rs");
     assert!(
         services_mod.contains("smoltcp_net_stack_socket_open")
             && services_mod.contains("smoltcp_net_stack_slot_base"),
@@ -93,9 +90,8 @@ fn test_smoltcp_impl_kernel_test_fw_init_stub() {
     );
 
     // smoltcp_impl.rs 必须 cfg-gate fw_init import
-    let smoltcp_impl = fs::read_to_string(
-        "../src/kernel/services/net/smoltcp_impl.rs",
-    ).expect("无法读取 smoltcp_impl.rs");
+    let smoltcp_impl = fs::read_to_string("../src/kernel/services/net/smoltcp_impl.rs")
+        .expect("无法读取 smoltcp_impl.rs");
     assert!(
         smoltcp_impl.contains("#[cfg(not(feature = \"kernel_test\"))]")
             && smoltcp_impl.contains("use crate::framework::net::init as fw_init"),

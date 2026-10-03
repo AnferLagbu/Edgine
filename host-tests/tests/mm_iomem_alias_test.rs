@@ -96,7 +96,10 @@ fn alias_registry_semantics() {
         let b = unsafe { IoMem::new(PhysAddr(0x1100), 0x100, "dev2") };
         // SAFETY: 同前
         let c = unsafe { IoMem::new(PhysAddr(0x1200), 0x100, "dev3") };
-        assert!(a.is_ok() && b.is_ok() && c.is_ok(), "紧邻区间不重叠应可注册");
+        assert!(
+            a.is_ok() && b.is_ok() && c.is_ok(),
+            "紧邻区间不重叠应可注册"
+        );
     }
 
     // ── unregister 后重新注册 (Drop 释放) ──
@@ -137,7 +140,11 @@ fn alias_registry_semantics() {
         let phys65 = 0x100000u64 + MAX_MMIO_MAPPINGS as u64 * 0x1000;
         // SAFETY: 同前
         let full = unsafe { IoMem::new(PhysAddr(phys65), 0x100, "dev") };
-        assert_eq!(full.err(), Some("MMIO alias registry full"), "满容量后必须拒绝");
+        assert_eq!(
+            full.err(),
+            Some("MMIO alias registry full"),
+            "满容量后必须拒绝"
+        );
         // held 出作用域 Drop → 全部 unregister
     }
 
@@ -193,7 +200,10 @@ fn alias_registry_semantics() {
         // phys 接近 u64::MAX, len 导致 end 溢出 u64 → IoMem::new 拒绝
         // SAFETY: 同前, 该路径在注册前即返回 Err, 无句柄产生
         let r = unsafe { IoMem::new(PhysAddr(0xFFFF_FFFF_FFFE_0000), 0x20000, "dev") };
-        assert!(r.is_err(), "phys+len 溢出 u64 必须拒绝 (内核 checked_add 语义)");
+        assert!(
+            r.is_err(),
+            "phys+len 溢出 u64 必须拒绝 (内核 checked_add 语义)"
+        );
         // 不溢出的小区间仍可注册 (注册表当前为空)
         // SAFETY: 同前
         let ok = unsafe { IoMem::new(PhysAddr(0x1000), 0x100, "before-overflow") };
@@ -220,5 +230,8 @@ fn alias_registry_semantics() {
 /// 内核 MAX_MMIO_MAPPINGS 常量 = 64 (与 iomem.rs AliasRegistry 固定数组容量一致)
 #[test]
 fn max_mmio_mappings_is_64() {
-    assert_eq!(MAX_MMIO_MAPPINGS, 64, "内核 constants::limits::MAX_MMIO_MAPPINGS = 64");
+    assert_eq!(
+        MAX_MMIO_MAPPINGS, 64,
+        "内核 constants::limits::MAX_MMIO_MAPPINGS = 64"
+    );
 }

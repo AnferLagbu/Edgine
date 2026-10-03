@@ -83,7 +83,12 @@ fn to_errno_method_present() {
     );
     let to_errno_block_start = src.find("pub fn to_errno(self)").expect("to_errno 存在");
     let to_errno_block = &src[to_errno_block_start..to_errno_block_start + 600];
-    for variant in &["Self::NotInitialized", "Self::IoError", "Self::Overflow", "Self::Kernel"] {
+    for variant in &[
+        "Self::NotInitialized",
+        "Self::IoError",
+        "Self::Overflow",
+        "Self::Kernel",
+    ] {
         assert!(
             to_errno_block.contains(variant),
             "to_errno 必须映射 {} 变体",
@@ -105,7 +110,9 @@ fn from_kernel_error_impl() {
 fn from_i32_delegates_to_kernel_error() {
     let src = read(RAMFS_RS);
     // from_i32 必须委托给 KernelError::from_i32
-    let from_i32_block_start = src.find("pub fn from_i32(code: i32) -> Self").expect("from_i32 存在");
+    let from_i32_block_start = src
+        .find("pub fn from_i32(code: i32) -> Self")
+        .expect("from_i32 存在");
     let from_i32_block = &src[from_i32_block_start..from_i32_block_start + 300];
     assert!(
         from_i32_block.contains("KernelError::from_i32(code)"),
@@ -157,7 +164,10 @@ fn usages_all_use_kernel_wrapper() {
     // 改为独立子串 count (klog 风格).
     // rustfmt 把 FsError::Kernel(crate::...::KernelError::Xxx) 拆为多行 (前缀和后缀各占一行).
     // 鲁棒计数: FsError::Kernel(\n (跨行) ...KernelError::\n 模式; 用前缀 (FsError::Kernel( 单 token) + 后缀 (KernelError:: 单 token) 最小值.
-    let kernel_count = src.matches("FsError::Kernel(").count().min(src.matches("KernelError::").count());
+    let kernel_count = src
+        .matches("FsError::Kernel(")
+        .count()
+        .min(src.matches("KernelError::").count());
     assert!(
         kernel_count >= 8,
         "FsError 至少应有 8 处用 Kernel(KernelError::...) 包装, 实际: {}",
@@ -169,7 +179,10 @@ fn usages_all_use_kernel_wrapper() {
 fn deny_unsafe_code_intact() {
     let src = read(RAMFS_RS);
     let first_line = src.lines().next().expect("non-empty");
-    assert!(first_line.contains("#![deny(unsafe_code)]"), "ramfs.rs 必须含 #![deny(unsafe_code)]");
+    assert!(
+        first_line.contains("#![deny(unsafe_code)]"),
+        "ramfs.rs 必须含 #![deny(unsafe_code)]"
+    );
     let unsafe_count = src.matches("unsafe {").count() + src.matches("unsafe fn").count();
     assert_eq!(unsafe_count, 0, "ramfs.rs 必须 0 unsafe 块");
 }

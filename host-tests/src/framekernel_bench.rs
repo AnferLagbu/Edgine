@@ -47,7 +47,9 @@ use queenx::kernel::framework::dma_buf::{DmaDirection, DmaStream, SyncState};
 use queenx::kernel::framework::frame::Frame;
 use queenx::kernel::framework::mm::{PageFlags, PageTableEntry, PhysAddr};
 use queenx::kernel::framework::net::wait_queue::{SocketWaitQueue, WakeReason};
-use queenx::kernel::services::barrier::attribution::{FaultAttribution, FaultAttributor, TcbModule};
+use queenx::kernel::services::barrier::attribution::{
+    FaultAttribution, FaultAttributor, TcbModule,
+};
 use queenx::kernel::services::barrier::recovery_policy::{
     FaultSignal, RecoveryAction, RecoveryPolicy,
 };
@@ -98,10 +100,10 @@ use queenx::kernel::framework::fs::vfs_poll_trait::{
     EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, VfsPollContext, VfsPollPolicyRef,
 };
 // `VfsPollPolicy` trait 仅单测直接调用策略方法时需在作用域
-#[cfg(test)]
-use queenx::kernel::framework::fs::vfs_poll_trait::VfsPollPolicy;
 use queenx::kernel::framework::error::KernelError;
 use queenx::kernel::framework::fs::VfsFileType;
+#[cfg(test)]
+use queenx::kernel::framework::fs::vfs_poll_trait::VfsPollPolicy;
 use queenx::kernel::services::fs::nestfs::arc::{NestArcBufType, NestArcKey};
 use queenx::kernel::services::fs::nestfs::arc_trait::{ArcCache, StandardArc};
 use queenx::kernel::services::fs::nestfs::bp::NestBlockPointer;
@@ -134,9 +136,15 @@ pub fn page_flags_bench(iters: u64) -> u128 {
     for i in 0..iters {
         let mut f = flags;
         for j in 0..PAGE_FLAGS_BATCH {
-            if (i + j) & 1 == 0 { f |= PageFlags::NX; }
-            if (i + j) & 3 == 0 { f |= PageFlags::GLOBAL; }
-            if (i + j) & 7 == 0 { f |= PageFlags::ACCESSED; }
+            if (i + j) & 1 == 0 {
+                f |= PageFlags::NX;
+            }
+            if (i + j) & 3 == 0 {
+                f |= PageFlags::GLOBAL;
+            }
+            if (i + j) & 7 == 0 {
+                f |= PageFlags::ACCESSED;
+            }
             sink ^= f.bits();
         }
     }
@@ -160,8 +168,12 @@ pub fn pte_set_flags_bench(iters: u64) -> u128 {
     let mut sink: u64 = 0;
     for i in 0..iters {
         pte.set_flags(flags);
-        if i & 1 == 0 { pte.set_flags(flags | PageFlags::USER); }
-        if pte.is_present() { sink ^= 1; }
+        if i & 1 == 0 {
+            pte.set_flags(flags | PageFlags::USER);
+        }
+        if pte.is_present() {
+            sink ^= 1;
+        }
     }
     std::hint::black_box(sink);
     // 归一化到 "单操作时间" (1 轮 = 1 次 PTE 位域更新), 转 ps 避免精度损失
@@ -199,7 +211,9 @@ pub fn iomem_alias_bench(iters: u64) -> u128 {
             {
                 // SAFETY: 同基线注册 (纯算术载体, 不触碰映射内存)
                 let m = unsafe { IoMem::new(PhysAddr(phys), 0x800, "bench.iomem") };
-                if m.is_err() { sink ^= 1; }
+                if m.is_err() {
+                    sink ^= 1;
+                }
                 // 句柄随本作用域结束 Drop → 注销, 注册表回到 30 条基线
             }
         }
@@ -252,7 +266,9 @@ pub fn capability_check_bench(iters: u64) -> u128 {
         for j in 0..BATCH {
             let dom = BENCH_CAP_DOMAINS[((i * BATCH + j) as usize) & 0xF];
             let bits = CapBits(1u64 << ((i + j) & 0x1F));
-            if engine.check(&m, dom, bits) == PolicyResult::Allow { sink ^= 1; }
+            if engine.check(&m, dom, bits) == PolicyResult::Allow {
+                sink ^= 1;
+            }
         }
     }
     std::hint::black_box(sink);
@@ -291,8 +307,12 @@ pub fn dma_state_machine_bench(iters: u64) -> u128 {
         // (实测未阻断时 12.8M 次迁移仅耗时 90ns, 记录值恒为 0)
         let s = std::hint::black_box(&mut s);
         for _ in 0..BATCH {
-            if s.sync_for_device().is_ok() { sink ^= 1; }
-            if s.sync_for_cpu().is_ok() { sink ^= 2; }
+            if s.sync_for_device().is_ok() {
+                sink ^= 1;
+            }
+            if s.sync_for_cpu().is_ok() {
+                sink ^= 2;
+            }
         }
     }
     sink ^= u64::from(s.sync_state() == SyncState::CpuReady);
@@ -440,7 +460,9 @@ pub fn bitmap_scan_bench(iters: u64) -> u128 {
         for j in 0..BATCH {
             if let Some(addr) = pmm.alloc_page() {
                 sink ^= addr.0;
-                if (i + j) & 1 == 0 { pmm.free_page(addr); }
+                if (i + j) & 1 == 0 {
+                    pmm.free_page(addr);
+                }
             }
         }
     }
@@ -470,9 +492,7 @@ pub fn bitmap_scan_bench(iters: u64) -> u128 {
 const MAX_SM_FD: usize = 16;
 
 pub fn socket_wait_queue_bench(iters: u64) -> u128 {
-    let queues: Vec<SocketWaitQueue> = (0..MAX_SM_FD)
-        .map(|_| SocketWaitQueue::new())
-        .collect();
+    let queues: Vec<SocketWaitQueue> = (0..MAX_SM_FD).map(|_| SocketWaitQueue::new()).collect();
     // 1 轮 (BATCH) = 1000 次并发 send/wake 路径 = 验收目标
     const BATCH: u64 = 1000;
     let start = Instant::now();
@@ -844,21 +864,35 @@ pub fn vfs_poll_dispatch_bench(iters: u64) -> u128 {
 
     // 预热
     for _ in 0..1000 {
-        let ctx = VfsPollContext { valid: true, file_type: VfsFileType::File };
+        let ctx = VfsPollContext {
+            valid: true,
+            file_type: VfsFileType::File,
+        };
         let _ = policy.events_for(ctx) & BENCH_EPOLL_MASK;
     }
 
     // 4 种 file_type 旋转
-    let fts = [VfsFileType::File, VfsFileType::Dir, VfsFileType::Dev, VfsFileType::Symlink];
+    let fts = [
+        VfsFileType::File,
+        VfsFileType::Dir,
+        VfsFileType::Dev,
+        VfsFileType::Symlink,
+    ];
     let start = Instant::now();
     let mut sink: u32 = 0;
     for r in 0..iters {
         let ft = fts[(r & 0x3) as usize];
-        let ctx = VfsPollContext { valid: true, file_type: ft };
+        let ctx = VfsPollContext {
+            valid: true,
+            file_type: ft,
+        };
         sink ^= policy.events_for(ctx) & BENCH_EPOLL_MASK;
         // 偶尔插入 invalid fd
         if r & 0xFF == 0 {
-            let inv_ctx = VfsPollContext { valid: false, file_type: VfsFileType::File };
+            let inv_ctx = VfsPollContext {
+                valid: false,
+                file_type: VfsFileType::File,
+            };
             sink ^= policy.events_for(inv_ctx) & BENCH_EPOLL_MASK;
         }
     }
@@ -1183,9 +1217,8 @@ pub fn zil_persist_dispatch_bench(iters: u64) -> u128 {
         } else if r & 0x3 == 1 {
             // deserialize
             if let Some(b) = &warm_block {
-                sink = sink.wrapping_add(
-                    NestZilPersist::deserialize_zil_from_block(b).len() as u64,
-                );
+                sink =
+                    sink.wrapping_add(NestZilPersist::deserialize_zil_from_block(b).len() as u64);
             }
         } else {
             // mark_written
@@ -1237,7 +1270,11 @@ fn measure<F: Fn(u64) -> u128>(name: &str, category: &str, iters: u64, f: F) -> 
     let total_ns = start.elapsed().as_nanos();
     let ns_per_op = ps_per_op / 1_000;
     let ns_per_op_frac = (ps_per_op as f64) / 1_000.0;
-    let ops_per_sec = if ns_per_op_frac > 0.0 { (1_000_000_000.0 / ns_per_op_frac) as u128 } else { 0 };
+    let ops_per_sec = if ns_per_op_frac > 0.0 {
+        (1_000_000_000.0 / ns_per_op_frac) as u128
+    } else {
+        0
+    };
     BenchEntry {
         name: name.to_string(),
         category: category.to_string(),
@@ -1256,41 +1293,129 @@ pub fn run_all() -> BenchReport {
     // 第三参数 = 该 bench 的执行轮数 (measure 记账用, 同时传给 bench 本体, 单一来源)
     results.push(measure("page_flags_bits", "mm", 100_000, page_flags_bench));
     results.push(measure("pte_set_flags", "mm", 100_000, pte_set_flags_bench));
-    results.push(measure("iomem_alias_check", "iomem", 100_000, iomem_alias_bench));
-    results.push(measure("capability_check", "credo", 100_000, capability_check_bench));
-    results.push(measure("dma_state_machine", "dma", 100_000, dma_state_machine_bench));
+    results.push(measure(
+        "iomem_alias_check",
+        "iomem",
+        100_000,
+        iomem_alias_bench,
+    ));
+    results.push(measure(
+        "capability_check",
+        "credo",
+        100_000,
+        capability_check_bench,
+    ));
+    results.push(measure(
+        "dma_state_machine",
+        "dma",
+        100_000,
+        dma_state_machine_bench,
+    ));
     results.push(measure("sha256_block", "credo", 1_000, sha256_block_bench));
-    results.push(measure("attribution_classify", "barrier", 100_000, attribution_classify_bench));
-    results.push(measure("recovery_decide", "barrier", 100_000, recovery_decide_bench));
+    results.push(measure(
+        "attribution_classify",
+        "barrier",
+        100_000,
+        attribution_classify_bench,
+    ));
+    results.push(measure(
+        "recovery_decide",
+        "barrier",
+        100_000,
+        recovery_decide_bench,
+    ));
     results.push(measure("bitmap_scan", "pmm", 100_000, bitmap_scan_bench));
-    results.push(measure("socket_wait_queue", "net", 10_000, socket_wait_queue_bench));
-    results.push(measure("virtio_blk_io", "storage", 10_000, virtio_blk_io_bench));
+    results.push(measure(
+        "socket_wait_queue",
+        "net",
+        10_000,
+        socket_wait_queue_bench,
+    ));
+    results.push(measure(
+        "virtio_blk_io",
+        "storage",
+        10_000,
+        virtio_blk_io_bench,
+    ));
     // EBPF-3: eBPF verifier trait dispatch bench
-    results.push(measure("bpf_verifier_dispatch", "ebpf", 100_000, bpf_verifier_dispatch_bench));
+    results.push(measure(
+        "bpf_verifier_dispatch",
+        "ebpf",
+        100_000,
+        bpf_verifier_dispatch_bench,
+    ));
     // SYSCTL-2: sysctl register/write bench
     results.push(measure("sysctl_rw", "config", 10_000, sysctl_bench));
     // T-4.1: BlockDevice trait dispatch bench (LEGACY-4 验证)
-    results.push(measure("blk_dev_dispatch", "block", 100_000, blk_dev_dispatch_bench));
+    results.push(measure(
+        "blk_dev_dispatch",
+        "block",
+        100_000,
+        blk_dev_dispatch_bench,
+    ));
     // REVAL-6.1: VfsPollPolicy dispatch bench
-    results.push(measure("vfs_poll_dispatch", "epoll", 100_000, vfs_poll_dispatch_bench));
+    results.push(measure(
+        "vfs_poll_dispatch",
+        "epoll",
+        100_000,
+        vfs_poll_dispatch_bench,
+    ));
     // LEGACY-5.1: ZAP dispatch bench (线性扫描 + 键名 format, 故缩小 iters)
-    results.push(measure("zap_dispatch", "nestfs", 10_000, zap_dispatch_bench));
+    results.push(measure(
+        "zap_dispatch",
+        "nestfs",
+        10_000,
+        zap_dispatch_bench,
+    ));
     // LEGACY-5.2: TXG dispatch bench (脏块 Vec 累积, 故缩小 iters)
-    results.push(measure("txg_dispatch", "nestfs", 10_000, txg_dispatch_bench));
+    results.push(measure(
+        "txg_dispatch",
+        "nestfs",
+        10_000,
+        txg_dispatch_bench,
+    ));
     // LEGACY-5.4: DMU dispatch bench (get_obj/obj_count 为 O(n) 线性扫描, 故缩小 iters)
     results.push(measure("dmu_dispatch", "nestfs", 1_000, dmu_dispatch_bench));
     // LEGACY-5.5: SPA dispatch bench
-    results.push(measure("spa_dispatch", "nestfs", 100_000, spa_dispatch_bench));
+    results.push(measure(
+        "spa_dispatch",
+        "nestfs",
+        100_000,
+        spa_dispatch_bench,
+    ));
     // LEGACY-5.7: RAID-Z 几何查询 dispatch bench
-    results.push(measure("raidz_dispatch", "nestfs", 100_000, raidz_dispatch_bench));
+    results.push(measure(
+        "raidz_dispatch",
+        "nestfs",
+        100_000,
+        raidz_dispatch_bench,
+    ));
     // LEGACY-5.8: ARC 缓存 dispatch bench
-    results.push(measure("arc_dispatch", "nestfs", 100_000, arc_dispatch_bench));
+    results.push(measure(
+        "arc_dispatch",
+        "nestfs",
+        100_000,
+        arc_dispatch_bench,
+    ));
     // LEGACY-5.10: ZIL 日志 dispatch bench
-    results.push(measure("zil_log_dispatch", "nestfs", 100_000, zil_log_dispatch_bench));
+    results.push(measure(
+        "zil_log_dispatch",
+        "nestfs",
+        100_000,
+        zil_log_dispatch_bench,
+    ));
     // LEGACY-5.11: ZIL 持久化 dispatch bench (含 CRC32 逐位计算, 故缩小 iters)
-    results.push(measure("zil_persist_dispatch", "nestfs", 1_000, zil_persist_dispatch_bench));
+    results.push(measure(
+        "zil_persist_dispatch",
+        "nestfs",
+        1_000,
+        zil_persist_dispatch_bench,
+    ));
 
-    BenchReport { version: 1, results }
+    BenchReport {
+        version: 1,
+        results,
+    }
 }
 
 // ====== 单元测试 (验证算法正确性, 不测时序) ======
@@ -1344,8 +1469,14 @@ mod tests {
         let _ = m.set(CapDomain::FS, CapBits(0b11));
         let engine = PolicyEngine::new();
         // 已授予且不含可行下界 (FS 下界 = READ|EXEC = 0b101) → 允许
-        assert_eq!(engine.check(&m, CapDomain::FS, CapBits(0b01)), PolicyResult::Allow);
-        assert_eq!(engine.check(&m, CapDomain::FS, CapBits(0b10)), PolicyResult::Allow);
+        assert_eq!(
+            engine.check(&m, CapDomain::FS, CapBits(0b01)),
+            PolicyResult::Allow
+        );
+        assert_eq!(
+            engine.check(&m, CapDomain::FS, CapBits(0b10)),
+            PolicyResult::Allow
+        );
         // 未授予位 → 无权限
         assert!(matches!(
             engine.check(&m, CapDomain::FS, CapBits(0b100)),
@@ -1649,10 +1780,16 @@ mod tests {
     #[test]
     fn test_vfs_poll_events_for_file_type() {
         let p = StandardVfsPollPolicy;
-        assert_eq!(p.events_for_file_type(VfsFileType::File), EPOLLIN | EPOLLOUT);
+        assert_eq!(
+            p.events_for_file_type(VfsFileType::File),
+            EPOLLIN | EPOLLOUT
+        );
         assert_eq!(p.events_for_file_type(VfsFileType::Dir), EPOLLIN);
         assert_eq!(p.events_for_file_type(VfsFileType::Dev), EPOLLHUP);
-        assert_eq!(p.events_for_file_type(VfsFileType::Symlink), EPOLLIN | EPOLLHUP);
+        assert_eq!(
+            p.events_for_file_type(VfsFileType::Symlink),
+            EPOLLIN | EPOLLHUP
+        );
     }
 
     #[test]
@@ -1664,9 +1801,15 @@ mod tests {
     #[test]
     fn test_vfs_poll_ref_registered_valid_file() {
         let policy = VfsPollPolicyRef::Registered(&BENCH_VFS_POLL_POLICY);
-        let ctx = VfsPollContext { valid: true, file_type: VfsFileType::File };
+        let ctx = VfsPollContext {
+            valid: true,
+            file_type: VfsFileType::File,
+        };
         // File → IN|OUT, 与 user 掩码 AND 后按关心位报告
-        assert_eq!(policy.events_for(ctx) & BENCH_EPOLL_MASK, EPOLLIN | EPOLLOUT);
+        assert_eq!(
+            policy.events_for(ctx) & BENCH_EPOLL_MASK,
+            EPOLLIN | EPOLLOUT
+        );
         assert_eq!(policy.events_for(ctx) & EPOLLIN, EPOLLIN);
         assert_eq!(policy.events_for(ctx) & EPOLLOUT, EPOLLOUT);
         // File 不报告 ERR
@@ -1676,9 +1819,15 @@ mod tests {
     #[test]
     fn test_vfs_poll_ref_registered_invalid_fd() {
         let policy = VfsPollPolicyRef::Registered(&BENCH_VFS_POLL_POLICY);
-        let ctx = VfsPollContext { valid: false, file_type: VfsFileType::File };
+        let ctx = VfsPollContext {
+            valid: false,
+            file_type: VfsFileType::File,
+        };
         // 无效 fd → ERR|HUP, 与 user 掩码 AND 后按关心位报告
-        assert_eq!(policy.events_for(ctx) & BENCH_EPOLL_MASK, EPOLLERR | EPOLLHUP);
+        assert_eq!(
+            policy.events_for(ctx) & BENCH_EPOLL_MASK,
+            EPOLLERR | EPOLLHUP
+        );
         assert_eq!(policy.events_for(ctx) & EPOLLIN, 0);
     }
 
@@ -1686,7 +1835,10 @@ mod tests {
     fn test_vfs_poll_ref_fallback_without_registered_policy() {
         // 未注册策略时 Fallback 分支仍给出事件位 (与原硬编码一致)
         let policy = VfsPollPolicyRef::Fallback;
-        let ctx = VfsPollContext { valid: true, file_type: VfsFileType::File };
+        let ctx = VfsPollContext {
+            valid: true,
+            file_type: VfsFileType::File,
+        };
         assert_ne!(policy.events_for(ctx) & BENCH_EPOLL_MASK, 0);
     }
 
@@ -1814,17 +1966,24 @@ mod tests {
     fn test_dmu_alloc_obj() {
         let dmu = NestObjSet::new();
         dmu.init(0x100);
-        let f = dmu.alloc_obj(NestObjType::File, 0x100).expect("File 分配成功");
+        let f = dmu
+            .alloc_obj(NestObjType::File, 0x100)
+            .expect("File 分配成功");
         // init 后 next_obj_id = root+2 = 4
         assert!(f >= 4);
-        assert_eq!(dmu.get_obj(f).expect("已分配对象可查").obj_type, NestObjType::File);
+        assert_eq!(
+            dmu.get_obj(f).expect("已分配对象可查").obj_type,
+            NestObjType::File
+        );
     }
 
     #[test]
     fn test_dmu_free_link_count() {
         let dmu = NestObjSet::new();
         dmu.init(0x100);
-        let f = dmu.alloc_obj(NestObjType::File, 0x100).expect("File 分配成功");
+        let f = dmu
+            .alloc_obj(NestObjType::File, 0x100)
+            .expect("File 分配成功");
         assert_eq!(dmu.get_obj(f).expect("对象可查").link_count, 1);
         assert!(dmu.free_obj(f));
         // link_count 归 0 → used=false, 查询不到

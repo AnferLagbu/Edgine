@@ -104,10 +104,7 @@ fn x86_64_has_no_local_mechanism_copy() {
 
 #[test]
 fn both_backends_release_lock_wire_to_common_tail() {
-    for (name, path) in [
-        ("x86_64", VMM_X86_64_RS),
-        ("aarch64", VMM_AARCH64_RS),
-    ] {
+    for (name, path) in [("x86_64", VMM_X86_64_RS), ("aarch64", VMM_AARCH64_RS)] {
         let src = read(path);
         let release = slice_between(&src, "pub fn release_lock", "\n    }");
         assert!(

@@ -61,7 +61,10 @@ fn test_strlen_stops_at_terminator() {
     buf.push(0);
     buf.extend(b"garbage".iter().map(|&b| b as i8));
     let len = unsafe { strlen(buf.as_ptr()) };
-    assert_eq!(len, 3, "strlen must stop at first NUL, ignore trailing garbage");
+    assert_eq!(
+        len, 3,
+        "strlen must stop at first NUL, ignore trailing garbage"
+    );
 }
 
 #[test]
@@ -69,7 +72,11 @@ fn test_strlen_under_max_returns_full_length() {
     // 长度 < STRLEN_MAX: 应当返回完整长度 (前提是 buf 实际以 \0 结尾)
     let s = to_cstr(&"x".repeat(STRLEN_MAX - 1));
     let len = unsafe { strlen(s.as_ptr()) };
-    assert_eq!(len, STRLEN_MAX - 1, "strlen below MAX must return full length");
+    assert_eq!(
+        len,
+        STRLEN_MAX - 1,
+        "strlen below MAX must return full length"
+    );
 }
 
 #[test]
@@ -179,7 +186,10 @@ fn test_strlen_c_and_safe_consistent_for_cstr() {
 fn test_strlen_max_is_1024() {
     // B04-07 决策点: STRLEN_MAX = 1024. 若此值变更, 需重新评估是否仍覆盖内核
     // 内部合法字符串 (路径 ≤ 256, 命令行 ≤ 256).
-    assert_eq!(STRLEN_MAX, 1024, "STRLEN_MAX must remain 1024 per DECISION-060");
+    assert_eq!(
+        STRLEN_MAX, 1024,
+        "STRLEN_MAX must remain 1024 per DECISION-060"
+    );
 }
 
 #[test]

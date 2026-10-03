@@ -382,7 +382,8 @@ impl<'a> Parser<'a> {
         // `/cpus/cpu@N`: 记录 reg 首条目为 MPIDR; 缺属性/解析失败时回退 QEMU virt 约定 (Aff0 = 索引)
         // SIMPLIFIED: CPU 枚举上限 CPU_MPIDR_MAX(=8), 超出不记录; 影响面: 仅覆盖 ≤8 核;
         //   何时需扩展: 大核数 SoC 需改为动态/分页存储.
-        if self.cpus_depth != 0 && self.depth == self.cpus_depth && node_name_is(scan.name, b"cpu") {
+        if self.cpus_depth != 0 && self.depth == self.cpus_depth && node_name_is(scan.name, b"cpu")
+        {
             if (self.cpus_count as usize) < CPU_MPIDR_MAX {
                 let index = u64::from(self.cpus_count);
                 let mpidr = if self.cpus_addr_cells == 0 {
@@ -477,7 +478,10 @@ fn cstr_list_contains(list: &[u8], needle: &[u8]) -> bool {
 
 /// 判断节点名 (忽略 `@` 后的单元地址) 是否等于目标名
 fn node_name_is(name: &[u8], target: &[u8]) -> bool {
-    let base = name.iter().position(|&b| b == b'@').map_or(name, |idx| &name[..idx]);
+    let base = name
+        .iter()
+        .position(|&b| b == b'@')
+        .map_or(name, |idx| &name[..idx]);
     base == target
 }
 
@@ -549,8 +553,10 @@ mod tests {
             self.strings.push(0);
 
             self.push_token(FDT_PROP);
-            self.block.extend_from_slice(&(value.len() as u32).to_be_bytes());
-            self.block.extend_from_slice(&(name_off as u32).to_be_bytes());
+            self.block
+                .extend_from_slice(&(value.len() as u32).to_be_bytes());
+            self.block
+                .extend_from_slice(&(name_off as u32).to_be_bytes());
             self.block.extend_from_slice(value);
             while self.block.len() % 4 != 0 {
                 self.block.push(0);

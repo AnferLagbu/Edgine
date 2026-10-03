@@ -23,8 +23,8 @@
 use queenx::kernel::services::fs::nestfs::bp::NestDva;
 use queenx::kernel::services::fs::nestfs::dataset::NestDataset;
 use queenx::kernel::services::fs::nestfs::snapshot::NestSnapshotManager;
-use queenx::kernel::services::fs::nestfs::zil::{NestZil, NestZilRecord, NestZilRecordType};
 use queenx::kernel::services::fs::nestfs::zap::NestZap;
+use queenx::kernel::services::fs::nestfs::zil::{NestZil, NestZilRecord, NestZilRecordType};
 use std::time::Instant;
 
 const ROOT_OWNER: u64 = 0;
@@ -114,8 +114,15 @@ fn e2e_crash_zil_replay() {
     zil.add_record(NestZilRecord::new_write(1, f2, 0, 200));
     zil.add_record(NestZilRecord::new_write(1, f3, 0, 300));
     zil.commit(1);
-    assert_eq!(zil.records.lock().len(), 0, "txg 1 commit 后 records 应清空");
-    assert_eq!(zil.committed_seq.load(std::sync::atomic::Ordering::Acquire), 3);
+    assert_eq!(
+        zil.records.lock().len(),
+        0,
+        "txg 1 commit 后 records 应清空"
+    );
+    assert_eq!(
+        zil.committed_seq.load(std::sync::atomic::Ordering::Acquire),
+        3
+    );
 
     // 3) 模拟崩溃: txg 2 写入部分 ZIL 记录, 未 commit
     zil.add_record(NestZilRecord::new_write(2, f1, 100, 50));
@@ -132,13 +139,23 @@ fn e2e_crash_zil_replay() {
     let objs: std::collections::HashSet<u64> = replayed.iter().map(|r| r.obj_id).collect();
     assert!(objs.contains(&f1));
     assert!(objs.contains(&f2));
-    assert!(!objs.contains(&f3), "f3 已在 txg 1 commit, 不应出现在 replay 中");
+    assert!(
+        !objs.contains(&f3),
+        "f3 已在 txg 1 commit, 不应出现在 replay 中"
+    );
 
     // 6) replay 之后: 模拟应用 replayed 记录后, commit 到 txg 2
     zil.commit(2);
-    assert_eq!(zil.records.lock().len(), 0, "txg 2 commit 后 records 应清空");
+    assert_eq!(
+        zil.records.lock().len(),
+        0,
+        "txg 2 commit 后 records 应清空"
+    );
     let seq_after = zil.committed_seq.load(std::sync::atomic::Ordering::Acquire);
-    assert!(seq_after >= 3, "committed_seq 至少为 3 (来自 txg 2 的 2 条 + txg 1 的 3 条 max)");
+    assert!(
+        seq_after >= 3,
+        "committed_seq 至少为 3 (来自 txg 2 的 2 条 + txg 1 的 3 条 max)"
+    );
 
     // 7) 继续追加: ZIL 不死锁, seq 继续推进
     let prev = zil.current_seq.load(std::sync::atomic::Ordering::Acquire);
@@ -179,8 +196,10 @@ fn e2e_thousand_files_scan_latency() {
         let name = format!("file_{:04}.dat", i);
         let looked_up = root.dir_zap.lookup_u64(&name);
         assert_eq!(
-            looked_up, Some(*expected_obj),
-            "file_{:04}.dat dir_zap 查找失败", i
+            looked_up,
+            Some(*expected_obj),
+            "file_{:04}.dat dir_zap 查找失败",
+            i
         );
         found += 1;
     }

@@ -77,8 +77,10 @@ fn nestfs_persistence_roundtrip() {
     // 原断言 (重复 init 后旧文件不可读) 已随 G-10 修复更新为数据保留语义.
     nestfs.init();
     assert!(nestfs.is_initialized(), "re-init should keep initialized");
-    assert!(nestfs.open("/file_0", 0x0001, pwm).is_ok(),
-        "重复 init 幂等, 数据保留 (旧文件仍可读)");
+    assert!(
+        nestfs.open("/file_0", 0x0001, pwm).is_ok(),
+        "重复 init 幂等, 数据保留 (旧文件仍可读)"
+    );
     println!("  Re-init idempotent, data preserved ✓");
 
     println!("\n=== Persistence Roundtrip Passed ===\n");

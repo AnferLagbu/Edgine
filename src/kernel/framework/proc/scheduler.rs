@@ -473,7 +473,9 @@ impl Scheduler {
     /// 返回被接管的 idle pid; `None` 表示 idle 创建失败, 调用方须放弃本核上线.
     pub fn adopt_cpu_idle(&self, cpu_id: u32) -> Option<Pid> {
         let idle_pid = self.init_per_cpu_idle(cpu_id)?;
-        per_cpu_for(cpu_id).current.store(idle_pid, Ordering::SeqCst);
+        per_cpu_for(cpu_id)
+            .current
+            .store(idle_pid, Ordering::SeqCst);
         Some(idle_pid)
     }
 

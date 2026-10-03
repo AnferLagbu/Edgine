@@ -84,7 +84,8 @@ fn sigill_related_signals_are_core() {
         assert_eq!(
             signal_default_action(sig),
             SignalDefaultAction::Core,
-            "sig={} 默认动作应为 Core", sig
+            "sig={} 默认动作应为 Core",
+            sig
         );
     }
 }

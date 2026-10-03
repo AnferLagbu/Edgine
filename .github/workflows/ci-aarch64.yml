@@ -20,11 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 Rust nightly + aarch64 target
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          targets: aarch64-unknown-none-softfloat
-          components: rust-src
+      - name: 安装 Rust 工具链 (rust-toolchain.toml 锁定)
+        run: rustup toolchain install --no-self-update
 
       - name: 缓存 cargo
         uses: actions/cache@v4
@@ -55,12 +52,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 Rust nightly + aarch64 target
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          # 内核走 softfloat (EL1 零 FP/SIMD); 用户态 (src/user) 仍用 aarch64-unknown-none
-          targets: aarch64-unknown-none aarch64-unknown-none-softfloat
-          components: rust-src
+      - name: 安装 Rust 工具链 (rust-toolchain.toml 锁定)
+        run: rustup toolchain install --no-self-update
 
       - name: 安装 QEMU
         run: |

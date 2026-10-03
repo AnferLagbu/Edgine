@@ -194,7 +194,11 @@ fn hotplug_dispatch_reenum_before_listener() {
 
     // DeviceAdded → 重枚举先行, 再走 on_device_added
     HOTPLUG_MANAGER.dispatch(&HotplugEvent::DeviceAdded { location });
-    assert_eq!(ADDED_CALLS.load(Ordering::SeqCst), 1, "应触发一次 on_device_added");
+    assert_eq!(
+        ADDED_CALLS.load(Ordering::SeqCst),
+        1,
+        "应触发一次 on_device_added"
+    );
     assert_eq!(REMOVED_CALLS.load(Ordering::SeqCst), 0);
     assert!(
         REENUM_SEQ.load(Ordering::SeqCst) < LISTENER_SEQ.load(Ordering::SeqCst),
@@ -209,5 +213,9 @@ fn hotplug_dispatch_reenum_before_listener() {
         2,
         "DeviceRemoved 与 SurpriseRemoval 均应路由到 on_device_removed"
     );
-    assert_eq!(ADDED_CALLS.load(Ordering::SeqCst), 1, "不应再触发 on_device_added");
+    assert_eq!(
+        ADDED_CALLS.load(Ordering::SeqCst),
+        1,
+        "不应再触发 on_device_added"
+    );
 }

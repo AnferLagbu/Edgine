@@ -907,8 +907,8 @@ impl RamFsData {
                 if let Some(block_num) = block_num {
                     if block_num != 0 {
                         let start = block_num as usize * RAMFS_BLOCK_SIZE + offset_in_block + 1;
-                        let end =
-                            ((block_num as usize + 1) * RAMFS_BLOCK_SIZE).min(self.data_area.capacity_bytes());
+                        let end = ((block_num as usize + 1) * RAMFS_BLOCK_SIZE)
+                            .min(self.data_area.capacity_bytes());
                         if start < end {
                             self.data_area.zero(start, end - start);
                         }

@@ -64,11 +64,7 @@ fn elf_error_preserves_seven_specific_variants() {
         "TooManyPhdr",
         "MapFailed",
     ] {
-        assert!(
-            src.contains(variant),
-            "ElfError 应保留 {} 变体",
-            variant
-        );
+        assert!(src.contains(variant), "ElfError 应保留 {} 变体", variant);
     }
 }
 
@@ -98,19 +94,32 @@ fn elf_error_to_errno_present() {
         );
     }
     // 验证 POSIX 目标: ENOEXEC=8, EINVAL=22, ENOMEM=12
-    assert!(block.contains("E::ENOEXEC"), "ElfError 格式错误应映射 ENOEXEC");
-    assert!(block.contains("E::EINVAL"), "ElfError 解析错误应映射 EINVAL");
-    assert!(block.contains("E::ENOMEM"), "ElfError::MapFailed 应映射 ENOMEM");
+    assert!(
+        block.contains("E::ENOEXEC"),
+        "ElfError 格式错误应映射 ENOEXEC"
+    );
+    assert!(
+        block.contains("E::EINVAL"),
+        "ElfError 解析错误应映射 EINVAL"
+    );
+    assert!(
+        block.contains("E::ENOMEM"),
+        "ElfError::MapFailed 应映射 ENOMEM"
+    );
 }
 
 #[test]
 fn elf_error_from_kernel_str_uses_kernel_wrapper() {
     let src = read(ELF_RS);
-    let from_block_start = src.find("pub fn from_kernel_str(s: &'static str) -> Self").expect("from_kernel_str 存在");
+    let from_block_start = src
+        .find("pub fn from_kernel_str(s: &'static str) -> Self")
+        .expect("from_kernel_str 存在");
     let block = &src[from_block_start..from_block_start + 800];
     // ELF 溢出错误应改走 Kernel(K::InvalidArgument) 包装
     let kernel_count = block.matches("Self::Kernel(K::").count()
-        + block.matches("Self::Kernel(crate::services::error::KernelError::").count();
+        + block
+            .matches("Self::Kernel(crate::services::error::KernelError::")
+            .count();
     assert!(
         kernel_count >= 2,
         "ElfError::from_kernel_str 至少应有 2 处使用 Kernel(K::...) 包装, 实际: {}",
@@ -145,7 +154,8 @@ fn no_legacy_mlock_error_variants() {
         // 禁用 MlockError::InvalidArgument / MlockError::OutOfMemory 等独立变体
         // 即: 在 MlockError 字段定义中, 不应再出现 "InvalidArgument," 等作为独立 enum 变体
         // 简化: 直接检查 .rs 文件中不存在 enum 字段变体声明
-        let has_variant_decl = src.contains(&format!("    {},\n", legacy.replace("MlockError::", "")))
+        let has_variant_decl = src
+            .contains(&format!("    {},\n", legacy.replace("MlockError::", "")))
             || src.contains(&format!("    {},", legacy.replace("MlockError::", "")));
         assert!(
             !has_variant_decl,
@@ -181,15 +191,26 @@ fn mlock_error_to_errno_present() {
     );
     let to_errno_block_start = src.find("pub fn to_errno(self)").expect("to_errno 存在");
     let block = &src[to_errno_block_start..to_errno_block_start + 400];
-    assert!(block.contains("Self::NotMapped"), "MlockError::to_errno 必须映射 NotMapped");
-    assert!(block.contains("Self::Kernel"), "MlockError::to_errno 必须映射 Kernel");
-    assert!(block.contains("E::ESRCH"), "MlockError::NotMapped 应映射 ESRCH");
+    assert!(
+        block.contains("Self::NotMapped"),
+        "MlockError::to_errno 必须映射 NotMapped"
+    );
+    assert!(
+        block.contains("Self::Kernel"),
+        "MlockError::to_errno 必须映射 Kernel"
+    );
+    assert!(
+        block.contains("E::ESRCH"),
+        "MlockError::NotMapped 应映射 ESRCH"
+    );
 }
 
 #[test]
 fn mlock_error_from_errno_uses_kernel_wrapper() {
     let src = read(MLOCK_RS);
-    let from_block_start = src.find("pub fn from_errno(e: Errno) -> Self").expect("from_errno 存在");
+    let from_block_start = src
+        .find("pub fn from_errno(e: Errno) -> Self")
+        .expect("from_errno 存在");
     let block = &src[from_block_start..from_block_start + 600];
     let kernel_count = block.matches("Self::Kernel(K::").count();
     assert!(
@@ -203,11 +224,12 @@ fn mlock_error_from_errno_uses_kernel_wrapper() {
 fn mlock_error_mincore_uses_kernel_wrapper() {
     let src = read(MLOCK_RS);
     // rustfmt 拆 MlockError::Kernel(crate::...::KernelError::InvalidArgument) 为多行;
-// contains() 不跨行, 用 normalized 字符串 (删除空白) 匹配.
-// 注意: rustfmt 在 InvalidArgument, 后再加 ), 所以匹配片段为 InvalidArgument,
+    // contains() 不跨行, 用 normalized 字符串 (删除空白) 匹配.
+    // 注意: rustfmt 在 InvalidArgument, 后再加 ), 所以匹配片段为 InvalidArgument,
     let normalized: String = src.split_whitespace().collect::<Vec<_>>().join("");
     assert!(
-        normalized.contains("MlockError::Kernel(crate::services::error::KernelError::InvalidArgument,"),
+        normalized
+            .contains("MlockError::Kernel(crate::services::error::KernelError::InvalidArgument,"),
         "mincore 函数中的 MlockError 使用点应改走 Kernel(K::InvalidArgument) 包装"
     );
 }
@@ -235,7 +257,8 @@ fn no_legacy_proc_error_variants() {
         "ProcError::InvalidArgument",
     ] {
         // 类似 MlockError 检查, 不在 enum 字段定义中出现
-        let has_variant_decl = src.contains(&format!("    {},\n", legacy.replace("ProcError::", "")))
+        let has_variant_decl = src
+            .contains(&format!("    {},\n", legacy.replace("ProcError::", "")))
             || src.contains(&format!("    {},", legacy.replace("ProcError::", "")));
         assert!(
             !has_variant_decl,
@@ -267,15 +290,23 @@ fn proc_error_to_errno_present() {
     );
     let to_errno_block_start = src.find("pub fn to_errno(self)").expect("to_errno 存在");
     let block = &src[to_errno_block_start..to_errno_block_start + 400];
-    assert!(block.contains("Self::Exited"), "ProcError::to_errno 必须映射 Exited");
-    assert!(block.contains("Self::Kernel"), "ProcError::to_errno 必须映射 Kernel");
+    assert!(
+        block.contains("Self::Exited"),
+        "ProcError::to_errno 必须映射 Exited"
+    );
+    assert!(
+        block.contains("Self::Kernel"),
+        "ProcError::to_errno 必须映射 Kernel"
+    );
     assert!(block.contains("E::ESRCH"), "ProcError::Exited 应映射 ESRCH");
 }
 
 #[test]
 fn proc_error_from_i32_uses_kernel_wrapper() {
     let src = read(PROC_MOD_RS);
-    let from_block_start = src.find("pub fn from_i32(rc: i32) -> Self").expect("from_i32 存在");
+    let from_block_start = src
+        .find("pub fn from_i32(rc: i32) -> Self")
+        .expect("from_i32 存在");
     let block = &src[from_block_start..from_block_start + 500];
     let kernel_count = block.matches("Self::Kernel(K::").count();
     assert!(
@@ -295,13 +326,23 @@ fn deny_unsafe_code_intact() {
     for (name, path) in &[("elf", ELF_RS), ("mlock", MLOCK_RS), ("proc", PROC_MOD_RS)] {
         let src = read(path);
         let first = src.lines().next().expect("non-empty");
-        assert!(first.contains("#![deny(unsafe_code)]"), "{} 顶部必须含 #![deny(unsafe_code)]", name);
+        assert!(
+            first.contains("#![deny(unsafe_code)]"),
+            "{} 顶部必须含 #![deny(unsafe_code)]",
+            name
+        );
         // 过滤 doc 注释行 (以 //! 开头) 避免误判
-        let code_lines: String = src.lines()
+        let code_lines: String = src
+            .lines()
             .filter(|l| !l.trim_start().starts_with("//!"))
             .collect::<Vec<_>>()
             .join("\n");
-        let unsafe_count = code_lines.matches("unsafe {").count() + code_lines.matches("unsafe fn").count();
-        assert_eq!(unsafe_count, 0, "{} 必须 0 unsafe 块 (code 区域, 排除 doc 注释)", name);
+        let unsafe_count =
+            code_lines.matches("unsafe {").count() + code_lines.matches("unsafe fn").count();
+        assert_eq!(
+            unsafe_count, 0,
+            "{} 必须 0 unsafe 块 (code 区域, 排除 doc 注释)",
+            name
+        );
     }
 }

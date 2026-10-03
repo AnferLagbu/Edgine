@@ -17,8 +17,6 @@ fn e04_shared_runner_zero_failed() {
     assert_eq!(
         summary.failed, 0,
         "host 侧共享测试集存在 FAILED: passed={}, failed={}, skipped={}",
-        summary.passed,
-        summary.failed,
-        summary.skipped
+        summary.passed, summary.failed, summary.skipped
     );
 }

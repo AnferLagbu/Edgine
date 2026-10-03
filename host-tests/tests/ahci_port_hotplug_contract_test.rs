@@ -21,8 +21,8 @@
 //! `HOTPLUG_MANAGER` / `PROBED` 均为进程内全局单例; 本文件为独立测试二进制,
 //! 不与其它测试共享全局状态。本文件内含 IO/探针的用例以 `MGR_LOCK` 串行执行。
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use queenx::kernel::framework::driver::hotplug::{
     BusType, DeviceLocation, HOTPLUG_MANAGER, HotplugEvent, HotplugListener,
@@ -119,7 +119,10 @@ fn drives_for_location_empty_without_controller() {
         function: 0,
         slot: 0,
     };
-    assert!(drives_for_location(&usb).is_empty(), "USB 总线不解析存储块设备");
+    assert!(
+        drives_for_location(&usb).is_empty(),
+        "USB 总线不解析存储块设备"
+    );
     assert!(
         drives_for_location(&virtio).is_empty(),
         "Virtio 总线不解析存储块设备"
@@ -142,7 +145,10 @@ fn ahci_port_hotplug_wiring_present() {
 
     let ahci = std::fs::read_to_string("../src/kernel/services/driver/storage/ahci.rs")
         .expect("读取 services ahci.rs 失败");
-    assert!(ahci.contains("pub fn scan_ports"), "缺 scan_ports 端口扫描入口");
+    assert!(
+        ahci.contains("pub fn scan_ports"),
+        "缺 scan_ports 端口扫描入口"
+    );
     assert!(
         ahci.contains("pub fn port_index_of"),
         "缺 port_index_of 硬件端口号→索引还原入口"

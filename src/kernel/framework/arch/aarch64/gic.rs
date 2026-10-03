@@ -111,7 +111,10 @@ unsafe fn gicd_read(offset: u64) -> u32 {
 unsafe fn gicd_write(offset: u64, val: u32) {
     unsafe {
         core::arch::asm!("dsb sy");
-        write_volatile((GICD_BASE.load(Ordering::Acquire) + offset) as *mut u32, val);
+        write_volatile(
+            (GICD_BASE.load(Ordering::Acquire) + offset) as *mut u32,
+            val,
+        );
         core::arch::asm!("dsb sy");
     }
 }
@@ -614,7 +617,10 @@ static DEVICE_IRQ_HANDLERS: RacyCell<[Option<fn()>; DEVICE_IRQ_TABLE_LEN]> =
 unsafe fn gicd_write64(offset: u64, val: u64) {
     unsafe {
         core::arch::asm!("dsb sy");
-        write_volatile((GICD_BASE.load(Ordering::Acquire) + offset) as *mut u64, val);
+        write_volatile(
+            (GICD_BASE.load(Ordering::Acquire) + offset) as *mut u64,
+            val,
+        );
         core::arch::asm!("dsb sy");
     }
 }
@@ -665,7 +671,10 @@ unsafe fn configure_and_enable_device_spi(irq: u32) {
         let prio_reg = GICD_IPRIORITYR + u64::from(irq / 4) * 4;
         let prio_shift = (irq % 4) * 8;
         let prio = gicd_read(prio_reg);
-        gicd_write(prio_reg, (prio & !(0xFFu32 << prio_shift)) | (0xA0u32 << prio_shift));
+        gicd_write(
+            prio_reg,
+            (prio & !(0xFFu32 << prio_shift)) | (0xA0u32 << prio_shift),
+        );
 
         // 3. 电平触发 (设备中断常规语义)
         configure_spi_level(irq);

@@ -115,7 +115,11 @@ fn test_pure_chinese_comment_passes() {
     )];
     let (code, stdout, _stderr) = run_audit_on_fixture(files);
     assert_eq!(code, 0, "纯中文注释不应报违规, stdout={}", stdout);
-    assert!(stdout.contains("PASSED"), "期望 PASSED 提示, stdout={}", stdout);
+    assert!(
+        stdout.contains("PASSED"),
+        "期望 PASSED 提示, stdout={}",
+        stdout
+    );
 }
 
 // ── 2. 纯英文段落: 报违规 ─────────────────────────────────────
@@ -132,8 +136,16 @@ fn test_pure_english_paragraph_violates() {
     )];
     let (code, stdout, _stderr) = run_audit_on_fixture(files);
     assert_eq!(code, 1, "纯英文段落应报违规, stdout={}", stdout);
-    assert!(stdout.contains("FAILED"), "期望 FAILED 提示, stdout={}", stdout);
-    assert!(stdout.contains("mod_b.rs"), "应包含违规文件路径, stdout={}", stdout);
+    assert!(
+        stdout.contains("FAILED"),
+        "期望 FAILED 提示, stdout={}",
+        stdout
+    );
+    assert!(
+        stdout.contains("mod_b.rs"),
+        "应包含违规文件路径, stdout={}",
+        stdout
+    );
 }
 
 // ── 3. 短英文注释: 不报违规 (引用/标识符/单词) ──────────────
@@ -235,11 +247,7 @@ fn test_block_comment_detected() {
 #[test]
 fn test_audit_script_executable() {
     let script = audit_script();
-    assert!(
-        script.exists(),
-        "audit 脚本不存在: {}",
-        script.display()
-    );
+    assert!(script.exists(), "audit 脚本不存在: {}", script.display());
 
     // 直接 --help 不支持, 改成空 fixture 跑 (0 违规)
     let files = &[(

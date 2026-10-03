@@ -65,7 +65,9 @@ fn test_td11_gpf_uses_klog_warn() {
 fn test_td11_double_fault_uses_klog_err() {
     let src = read(HANDLERS);
     let marker = "fn print_double_fault_context";
-    let pos = src.find(marker).expect("print_double_fault_context 必须存在");
+    let pos = src
+        .find(marker)
+        .expect("print_double_fault_context 必须存在");
     let body_end = find_block_end(&src, pos);
     let body = &src[pos..body_end];
     assert!(

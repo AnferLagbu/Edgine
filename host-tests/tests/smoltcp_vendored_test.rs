@@ -14,7 +14,8 @@ use std::process::Command;
 
 fn repo_root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
+        .parent()
+        .unwrap()
         .to_path_buf()
 }
 
@@ -22,13 +23,13 @@ fn repo_root() -> std::path::PathBuf {
 fn test_smoltcp_vendored_version_is_0_14() {
     // W3.1 (2026-06-24): smoltcp 从 framework/ 迁到 services/ (决策 3-B)
     // 2026-09-13: 0.13.1 → 0.14.0 升级
-    let manifest = repo_root()
-        .join("src/kernel/services/net/smoltcp/Cargo.toml");
+    let manifest = repo_root().join("src/kernel/services/net/smoltcp/Cargo.toml");
     let content = fs::read_to_string(&manifest)
         .unwrap_or_else(|e| panic!("无法读取 {}: {}", manifest.display(), e));
 
     // 直接读 Cargo.toml 确认 version
-    let version_line = content.lines()
+    let version_line = content
+        .lines()
         .find(|l| l.starts_with("version ="))
         .expect("smoltcp/Cargo.toml 缺少 version 字段");
     assert!(
@@ -92,8 +93,12 @@ fn test_no_uncommitted_local_patch_to_vendored_smoltcp() {
     // 这里只检测 "未提交修改" (working tree 不应改 smoltcp 源码)
     let root = repo_root();
     let status = Command::new("git")
-        .args(["status", "--porcelain", "--",
-               "src/kernel/services/net/smoltcp/"])
+        .args([
+            "status",
+            "--porcelain",
+            "--",
+            "src/kernel/services/net/smoltcp/",
+        ])
         .current_dir(&root)
         .output()
         .expect("git status 失败");

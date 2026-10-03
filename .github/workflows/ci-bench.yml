@@ -24,8 +24,8 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: 安装 Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+      - name: 安装 Rust 工具链 (rust-toolchain.toml 锁定)
+        run: rustup toolchain install --no-self-update
 
       - name: 缓存 cargo
         uses: actions/cache@v4
@@ -83,11 +83,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          targets: x86_64-unknown-none
-          components: rust-src
+      - name: 安装 Rust 工具链 (rust-toolchain.toml 锁定)
+        run: rustup toolchain install --no-self-update
 
       - name: 缓存 cargo
         uses: actions/cache@v4

@@ -27,7 +27,8 @@ fn read_usermode_rs() -> String {
 fn enter_user_mode_signature_is_noreturn() {
     // P1-I-02 验收: 签名必须是 `-> !`, 永不返回
     let src = read_usermode_rs();
-    let x86 = src.find("pub unsafe fn enter_user_mode")
+    let x86 = src
+        .find("pub unsafe fn enter_user_mode")
         .expect("enter_user_mode not found");
     let body = &src[x86..];
     let arch_specific = if cfg!(target_arch = "x86_64") {
@@ -60,7 +61,8 @@ fn x86_64_enter_user_mode_invokes_arch_enter_user() {
     if cfg!(target_arch = "x86_64") {
         let src = read_usermode_rs();
         // 取第一个 fn (x86_64 平台 cfg 命中)
-        let start = src.find("pub unsafe fn enter_user_mode")
+        let start = src
+            .find("pub unsafe fn enter_user_mode")
             .expect("x86 enter_user_mode");
         let body_start = src[start..].find('{').expect("missing {") + start;
         let body_end = find_matching_brace(&src, body_start);
@@ -77,7 +79,8 @@ fn aarch64_enter_user_mode_invokes_arch_enter_user() {
     // P1-I-02 验收: aarch64 路径必须调用 <Aarch64 as Arch>::enter_user
     if cfg!(target_arch = "aarch64") {
         let src = read_usermode_rs();
-        let start = src.find("pub unsafe fn enter_user_mode")
+        let start = src
+            .find("pub unsafe fn enter_user_mode")
             .expect("aarch64 enter_user_mode");
         let body_start = src[start..].find('{').expect("missing {") + start;
         let body_end = find_matching_brace(&src, body_start);
@@ -100,7 +103,10 @@ fn x86_64_uses_correct_ctx_fields() {
         let body = &src[body_start..=body_end];
         assert!(body.contains("ctx.rip"), "P1-I-02: x86_64 必传 ctx.rip");
         assert!(body.contains("ctx.rsp"), "P1-I-02: x86_64 必传 ctx.rsp");
-        assert!(body.contains("ctx.rdi"), "P1-I-02: x86_64 必传 ctx.rdi (arg0)");
+        assert!(
+            body.contains("ctx.rdi"),
+            "P1-I-02: x86_64 必传 ctx.rdi (arg0)"
+        );
     }
 }
 
@@ -113,9 +119,18 @@ fn aarch64_uses_correct_ctx_fields() {
         let body_start = src[start..].find('{').unwrap() + start;
         let body_end = find_matching_brace(&src, body_start);
         let body = &src[body_start..=body_end];
-        assert!(body.contains("ctx.elr_el1"), "P1-I-02: aarch64 必传 ctx.elr_el1");
-        assert!(body.contains("ctx.sp_el0"), "P1-I-02: aarch64 必传 ctx.sp_el0");
-        assert!(body.contains("ctx.x0"), "P1-I-02: aarch64 必传 ctx.x0 (arg0)");
+        assert!(
+            body.contains("ctx.elr_el1"),
+            "P1-I-02: aarch64 必传 ctx.elr_el1"
+        );
+        assert!(
+            body.contains("ctx.sp_el0"),
+            "P1-I-02: aarch64 必传 ctx.sp_el0"
+        );
+        assert!(
+            body.contains("ctx.x0"),
+            "P1-I-02: aarch64 必传 ctx.x0 (arg0)"
+        );
     }
 }
 

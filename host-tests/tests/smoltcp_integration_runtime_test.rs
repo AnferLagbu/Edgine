@@ -18,8 +18,7 @@ fn repo_root() -> PathBuf {
 
 fn read_src(rel: &str) -> String {
     let p = repo_root().join(rel);
-    fs::read_to_string(&p)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", p.display(), e))
+    fs::read_to_string(&p).unwrap_or_else(|e| panic!("无法读取 {}: {}", p.display(), e))
 }
 
 const SMOLTCP_IMPL_RS: &str = "src/kernel/services/net/smoltcp_impl.rs";
@@ -65,9 +64,7 @@ fn test_is_active_fd_method_exists() {
 #[test]
 fn test_is_active_fd_bounds_check() {
     let src = read_src(SMOLTCP_IMPL_RS);
-    let idx = src
-        .find("fn is_active_fd")
-        .expect("应存在 is_active_fd");
+    let idx = src.find("fn is_active_fd").expect("应存在 is_active_fd");
     let body = &src[idx..idx + 200];
     assert!(
         body.contains("idx < MAX_SOCKETS"),
@@ -165,9 +162,7 @@ fn test_all_fd_based_methods_have_validation() {
             .unwrap_or_else(|| panic!("应存在 {} 方法", method));
         // 取函数体直到下一个 pub fn, 检查 is_active_fd 调用
         let rest = &src[idx..];
-        let end = rest
-            .find("\npub fn ")
-            .unwrap_or(rest.len());
+        let end = rest.find("\npub fn ").unwrap_or(rest.len());
         let body = &rest[..end];
         assert!(
             body.contains("self.is_active_fd(fd)"),
@@ -186,9 +181,7 @@ fn test_all_fd_based_methods_have_validation() {
 fn test_poll_all_fd_has_no_fd_validation() {
     // poll_all_fd 不接受 fd 参数, 不需要 is_active_fd 校验
     let src = read_src(SMOLTCP_IMPL_RS);
-    let idx = src
-        .find("pub fn poll_all_fd")
-        .expect("应存在 poll_all_fd");
+    let idx = src.find("pub fn poll_all_fd").expect("应存在 poll_all_fd");
     let body = &src[idx..idx + 200];
     // poll_all_fd 不应有 is_active_fd 调用 (它轮询所有 fd)
     assert!(
@@ -264,10 +257,7 @@ fn test_fd_lifecycle_unit_tests_present() {
         "test_is_active_fd_rejects_invalid",
         "test_fd_based_methods_reject_inactive",
     ];
-    let found = fd_tests
-        .iter()
-        .filter(|t| src.contains(*t))
-        .count();
+    let found = fd_tests.iter().filter(|t| src.contains(*t)).count();
     assert!(
         found >= 3,
         "smoltcp_impl.rs 应有至少 3 个 fd 生命周期单元测试, 实测: {}",

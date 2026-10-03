@@ -18,15 +18,15 @@ fn repo_root() -> PathBuf {
 
 fn read_src(rel: &str) -> String {
     let p = repo_root().join(rel);
-    fs::read_to_string(&p)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", p.display(), e))
+    fs::read_to_string(&p).unwrap_or_else(|e| panic!("无法读取 {}: {}", p.display(), e))
 }
 
 #[test]
 fn wait_queue_module_exists() {
     let src = read_src("src/kernel/framework/net/wait_queue.rs");
     assert!(
-        src.contains("pub struct SocketWaitQueue") && src.contains("pub struct SocketWaitQueueTable"),
+        src.contains("pub struct SocketWaitQueue")
+            && src.contains("pub struct SocketWaitQueueTable"),
         "P2-I-41: wait_queue.rs 必须定义 SocketWaitQueue + SocketWaitQueueTable"
     );
 }
@@ -55,10 +55,7 @@ fn wake_reason_distinguishes_three_states() {
     let src = read_src("src/kernel/framework/net/wait_queue.rs");
     let variants = ["Readable", "Writable", "Closed"];
     for v in variants {
-        assert!(
-            src.contains(v),
-            "P2-I-41: WakeReason 缺少变体 {v}"
-        );
+        assert!(src.contains(v), "P2-I-41: WakeReason 缺少变体 {v}");
     }
 }
 

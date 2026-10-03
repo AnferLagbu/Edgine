@@ -12,8 +12,7 @@ use std::path::Path;
 const KERNEL_DIR: &str = "../src/kernel";
 
 fn read_source(path: &str) -> String {
-    std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("read {} failed: {}", path, e))
+    std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {} failed: {}", path, e))
 }
 
 /// 收集所有 .rs 文件 (递归)
@@ -25,9 +24,10 @@ fn collect_rs_files(dir: &Path) -> Vec<String> {
             if path.is_dir() {
                 result.extend(collect_rs_files(&path));
             } else if path.extension().is_some_and(|e| e == "rs")
-                && let Some(s) = path.to_str() {
-                    result.push(s.to_string());
-                }
+                && let Some(s) = path.to_str()
+            {
+                result.push(s.to_string());
+            }
         }
     }
     result
@@ -38,10 +38,7 @@ fn test_chitin_register_block_only_in_allowed_files() {
     // chitin_register_block 是低层桥接, 仅允许在以下文件中直接调用:
     // - chitin/mod.rs (定义 + 单元测试)
     // - chitin/proto_block.rs (桥接函数)
-    let allowed_suffixes = [
-        "/chitin/mod.rs",
-        "/chitin/proto_block.rs",
-    ];
+    let allowed_suffixes = ["/chitin/mod.rs", "/chitin/proto_block.rs"];
 
     let kernel_dir = Path::new(KERNEL_DIR);
     let all_rs = collect_rs_files(kernel_dir);
@@ -50,9 +47,9 @@ fn test_chitin_register_block_only_in_allowed_files() {
 
     for file_path in &all_rs {
         // 跳过允许文件
-        let is_allowed = allowed_suffixes.iter().any(|suffix| {
-            file_path.ends_with(suffix)
-        });
+        let is_allowed = allowed_suffixes
+            .iter()
+            .any(|suffix| file_path.ends_with(suffix));
         if is_allowed {
             continue;
         }
@@ -65,10 +62,7 @@ fn test_chitin_register_block_only_in_allowed_files() {
                 continue; // 跳过注释
             }
             if trimmed.contains("chitin_register_block(") {
-                violations.push(format!(
-                    "{}:{}: {}",
-                    file_path, i + 1, trimmed.trim()
-                ));
+                violations.push(format!("{}:{}: {}", file_path, i + 1, trimmed.trim()));
             }
         }
     }

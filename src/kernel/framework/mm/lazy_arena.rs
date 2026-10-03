@@ -134,7 +134,8 @@ impl<const PAGES: usize> LazyPageArena<PAGES> {
             } else {
                 // SAFETY: base 非 0 ⇒ 为 page_alloc 返回的有效页基址; 读取区间
                 // [in_page, in_page + n) 已按页边界截断, 完全落在本页内.
-                let src = unsafe { core::slice::from_raw_parts((base as *const u8).add(in_page), n) };
+                let src =
+                    unsafe { core::slice::from_raw_parts((base as *const u8).add(in_page), n) };
                 dst[done..done + n].copy_from_slice(src);
             }
             done += n;

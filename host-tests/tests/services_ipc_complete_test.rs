@@ -13,10 +13,11 @@ const SERVICES_IPC: &str = "src/kernel/services/ipc/mod.rs";
 fn test_services_ipc_4_subsystems_migrated() {
     // IpcLock + free functions 必须全部覆盖 pipe/shm/msgq/sem 4 子系统
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
+        .parent()
+        .unwrap()
         .join(SERVICES_IPC);
-    let src = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
+    let src =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
     // pipe/shm/msgq/sem 各自的 close/destroy 标识
     let close_fns: &[(&str, &str)] = &[
@@ -39,13 +40,17 @@ fn test_services_ipc_4_subsystems_migrated() {
 fn test_services_ipc_0_unsafe_blocks() {
     // services/ipc 必须 0 unsafe 代码块 (仅允许 #![deny(unsafe_code)] 属性)
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
+        .parent()
+        .unwrap()
         .join(SERVICES_IPC);
-    let src = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
+    let src =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
     assert!(
-        src.lines().next().unwrap_or("").contains("deny(unsafe_code)"),
+        src.lines()
+            .next()
+            .unwrap_or("")
+            .contains("deny(unsafe_code)"),
         "services/ipc 应启用 #![deny(unsafe_code)] (I-54)"
     );
 
@@ -74,10 +79,11 @@ fn test_services_ipc_uses_framework_safe_api() {
     // 1. services/ipc 有本地 pipe/shm/msgq 子模块声明
     // 2. 本地子模块通过 framework 机制 API (IPC_NAMESPACE, pmm_alloc_pages 等) 访问硬件
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
+        .parent()
+        .unwrap()
         .join(SERVICES_IPC);
-    let src = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
+    let src =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
     for sub in &["pipe", "shm", "msgq"] {
         let mod_decl = format!("pub mod {}", sub);

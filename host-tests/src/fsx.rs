@@ -186,12 +186,7 @@ impl FsxFs {
 
         match fs::write(&filepath, &content) {
             Ok(_) => {
-                self.files.insert(
-                    filename.clone(),
-                    FileData {
-                        content,
-                    },
-                );
+                self.files.insert(filename.clone(), FileData { content });
                 self.active_files.push(filename);
                 self.stats.creates += 1;
             }
@@ -256,10 +251,7 @@ impl FsxFs {
                 } else {
                     // 文件在磁盘上存在但不在跟踪表中 (不应该发生)
                     self.stats.errors += 1;
-                    eprintln!(
-                        "fsx: 文件未跟踪: {}",
-                        filepath.display()
-                    );
+                    eprintln!("fsx: 文件未跟踪: {}", filepath.display());
                 }
             }
             Err(_) => {
@@ -345,10 +337,7 @@ impl FsxFs {
                 } else {
                     // 文件不在跟踪表中 (不应该发生)
                     self.stats.errors += 1;
-                    eprintln!(
-                        "fsx: 重命名失败 - 文件未跟踪: {}",
-                        old_path.display()
-                    );
+                    eprintln!("fsx: 重命名失败 - 文件未跟踪: {}", old_path.display());
                 }
             }
             Err(_) => {

@@ -615,12 +615,7 @@ pub fn chitin_blk_read_sectors(
 /// `drive` 越界 / 非块设备 / 缺少块设备实现时返回 `Io`;
 /// 设备处于非 `Ready` 状态 (已墓碑化) 时返回 `Busy`;
 /// 底层设备任一扇区写入失败时返回 `Io`。
-pub fn chitin_blk_write_sectors(
-    drive: u8,
-    start: u64,
-    count: u32,
-    buf: &[u8],
-) -> KernelResult<()> {
+pub fn chitin_blk_write_sectors(drive: u8, start: u64, count: u32, buf: &[u8]) -> KernelResult<()> {
     if (buf.len() as u64) < u64::from(count) * 512 {
         return Err(KernelError::InvalidArgument);
     }

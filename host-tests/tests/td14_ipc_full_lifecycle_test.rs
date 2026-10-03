@@ -20,10 +20,10 @@ const SERVICES_IPC: &str = "src/kernel/services/ipc/mod.rs";
 
 fn read_services_ipc() -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
+        .parent()
+        .unwrap()
         .join(SERVICES_IPC);
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e))
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e))
 }
 
 #[test]
@@ -78,11 +78,7 @@ fn test_ipc_error_variants_complete() {
     // 必须保留的包装变体:
     //   - Kernel(crate::services::error::KernelError)
     //     单一来源, 与 TD-20 错误统一测试保持一致.
-    let invalid_op_needles = [
-        "    InvalidOp,\n",
-        "        InvalidOp,\n",
-        "    InvalidOp ",
-    ];
+    let invalid_op_needles = ["    InvalidOp,\n", "        InvalidOp,\n", "    InvalidOp "];
     assert!(
         invalid_op_needles.iter().any(|n| src.contains(n)),
         "IpcError 必须保留 InvalidOp 域语义变体 (TD-14 + TD-08 薄包装)"

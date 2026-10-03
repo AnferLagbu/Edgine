@@ -116,7 +116,9 @@ fn nestfs_comprehensive() {
     });
 
     test!(create_file_in_dir, {
-        let fd = nestfs.open("/mydir/nested.txt", 0x0102, test_pwm()).unwrap();
+        let fd = nestfs
+            .open("/mydir/nested.txt", 0x0102, test_pwm())
+            .unwrap();
         let data = b"nested content";
         let w = nestfs.write(fd as u32, data, data.len() as u32);
         assert_eq_nestfs!(w, data.len() as i32, "nested write count");
@@ -124,7 +126,9 @@ fn nestfs_comprehensive() {
     });
 
     test!(read_nested, {
-        let fd = nestfs.open("/mydir/nested.txt", 0x0001, test_pwm()).unwrap();
+        let fd = nestfs
+            .open("/mydir/nested.txt", 0x0001, test_pwm())
+            .unwrap();
         let mut buf = [0u8; 64];
         let r = nestfs.read(fd as u32, &mut buf, 64);
         assert!(r > 0, "nested read should return > 0");
@@ -265,21 +269,33 @@ fn nestfs_error_paths() {
     test!(close_invalid_fd, {
         // 内核差异: invalid fd 返回 InvalidArgument (-22, EINVAL), 测试版 mock 为 -1
         let r = nestfs.close(9999);
-        assert_eq_nestfs!(r, -22, "close invalid fd should return -22 (InvalidArgument)");
+        assert_eq_nestfs!(
+            r,
+            -22,
+            "close invalid fd should return -22 (InvalidArgument)"
+        );
     });
 
     test!(read_invalid_fd, {
         // 内核差异: invalid fd 返回 InvalidArgument (-22, EINVAL), 测试版 mock 为 -1
         let mut buf = [0u8; 64];
         let r = nestfs.read(9999, &mut buf, 64);
-        assert_eq_nestfs!(r, -22, "read invalid fd should return -22 (InvalidArgument)");
+        assert_eq_nestfs!(
+            r,
+            -22,
+            "read invalid fd should return -22 (InvalidArgument)"
+        );
     });
 
     test!(write_invalid_fd, {
         // 内核差异: invalid fd 返回 InvalidArgument (-22, EINVAL), 测试版 mock 为 -1
         let data = b"test";
         let r = nestfs.write(9999, data, data.len() as u32);
-        assert_eq_nestfs!(r, -22, "write invalid fd should return -22 (InvalidArgument)");
+        assert_eq_nestfs!(
+            r,
+            -22,
+            "write invalid fd should return -22 (InvalidArgument)"
+        );
     });
 
     test!(unlink_nonexistent, {
@@ -306,13 +322,21 @@ fn nestfs_error_paths() {
         nestfs.close(fd2 as u32);
         // 内核差异: rename 目标已存在返回 AlreadyExists (-17, EEXIST), 测试版 mock 为 -4
         let r = nestfs.rename("/rename_src.txt", "/rename_dst.txt", test_pwm());
-        assert_eq_nestfs!(r, -17, "rename to existing target should return -17 (AlreadyExists)");
+        assert_eq_nestfs!(
+            r,
+            -17,
+            "rename to existing target should return -17 (AlreadyExists)"
+        );
     });
 
     test!(seek_invalid_fd, {
         // 内核差异: invalid fd 返回 InvalidArgument (-22, EINVAL), 测试版 mock 为 -1
         let r = nestfs.seek(9999, 0, 0);
-        assert_eq_nestfs!(r, -22, "seek invalid fd should return -22 (InvalidArgument)");
+        assert_eq_nestfs!(
+            r,
+            -22,
+            "seek invalid fd should return -22 (InvalidArgument)"
+        );
     });
 
     test!(seek_set, {
@@ -332,11 +356,15 @@ fn nestfs_error_paths() {
     });
 
     test!(seek_cur, {
-        let fd = nestfs.open("/seek_cur_test.txt", 0x0102, test_pwm()).unwrap();
+        let fd = nestfs
+            .open("/seek_cur_test.txt", 0x0102, test_pwm())
+            .unwrap();
         nestfs.write(fd as u32, b"ABCDEFGHIJ", 10);
         nestfs.close(fd as u32);
 
-        let fd = nestfs.open("/seek_cur_test.txt", 0x0001, test_pwm()).unwrap();
+        let fd = nestfs
+            .open("/seek_cur_test.txt", 0x0001, test_pwm())
+            .unwrap();
         nestfs.seek(fd as u32, 2, 0);
         let pos = nestfs.seek(fd as u32, 3, 1);
         assert_eq_nestfs!(pos, 5, "seek CUR from 2 + 3 = 5");
@@ -348,11 +376,15 @@ fn nestfs_error_paths() {
     });
 
     test!(seek_end, {
-        let fd = nestfs.open("/seek_end_test.txt", 0x0102, test_pwm()).unwrap();
+        let fd = nestfs
+            .open("/seek_end_test.txt", 0x0102, test_pwm())
+            .unwrap();
         nestfs.write(fd as u32, b"HELLO", 5);
         nestfs.close(fd as u32);
 
-        let fd = nestfs.open("/seek_end_test.txt", 0x0001, test_pwm()).unwrap();
+        let fd = nestfs
+            .open("/seek_end_test.txt", 0x0001, test_pwm())
+            .unwrap();
         let pos = nestfs.seek(fd as u32, -2i64, 2);
         assert_eq_nestfs!(pos, 3, "seek END - 2 = 3");
         let mut buf = [0u8; 4];
@@ -383,7 +415,9 @@ fn nestfs_advanced_features() {
     });
 
     test!(hardlink_create, {
-        let fd = nestfs.open("/hardlink_src.txt", 0x0102, test_pwm()).unwrap();
+        let fd = nestfs
+            .open("/hardlink_src.txt", 0x0102, test_pwm())
+            .unwrap();
         nestfs.write(fd as u32, b"hardlink data", 13);
         nestfs.close(fd as u32);
 
@@ -392,16 +426,24 @@ fn nestfs_advanced_features() {
     });
 
     test!(hardlink_target_exists, {
-        let fd = nestfs.open("/hl_exist_src.txt", 0x0102, test_pwm()).unwrap();
+        let fd = nestfs
+            .open("/hl_exist_src.txt", 0x0102, test_pwm())
+            .unwrap();
         nestfs.write(fd as u32, b"src", 3);
         nestfs.close(fd as u32);
-        let fd2 = nestfs.open("/hl_exist_dst.txt", 0x0102, test_pwm()).unwrap();
+        let fd2 = nestfs
+            .open("/hl_exist_dst.txt", 0x0102, test_pwm())
+            .unwrap();
         nestfs.write(fd2 as u32, b"dst", 3);
         nestfs.close(fd2 as u32);
 
         // 内核差异: hardlink 目标已存在返回 AlreadyExists (-17, EEXIST), 测试版 mock 为 -4
         let r = nestfs.link("/hl_exist_src.txt", "/hl_exist_dst.txt", test_pwm());
-        assert_eq_nestfs!(r, -17, "hardlink to existing target should return -17 (AlreadyExists)");
+        assert_eq_nestfs!(
+            r,
+            -17,
+            "hardlink to existing target should return -17 (AlreadyExists)"
+        );
     });
 
     test!(hardlink_source_not_found, {
@@ -414,7 +456,12 @@ fn nestfs_advanced_features() {
         nestfs.write(fd as u32, b"xattr content", 13);
         nestfs.close(fd as u32);
 
-        let r = nestfs.setxattr("/xattr_test.txt", "user.comment", b"hello world", test_pwm());
+        let r = nestfs.setxattr(
+            "/xattr_test.txt",
+            "user.comment",
+            b"hello world",
+            test_pwm(),
+        );
         assert!(r >= 0, "setxattr should succeed, got {}", r);
 
         let mut buf = [0u8; 64];
@@ -535,7 +582,9 @@ fn nestfs_snapshot_clone() {
     });
 
     test!(snapshot_rollback, {
-        let fd = nestfs.open("/post_snap_file.txt", 0x0102, test_pwm()).unwrap();
+        let fd = nestfs
+            .open("/post_snap_file.txt", 0x0102, test_pwm())
+            .unwrap();
         nestfs.write(fd as u32, b"after snapshot", 14);
         nestfs.close(fd as u32);
 
@@ -590,7 +639,11 @@ fn nestfs_snapshot_clone() {
     test!(clone_from_nonexistent_snapshot, {
         // 内核差异: clone 不存在的快照返回 Io (-5, EIO), 测试版 mock 为 -1
         let r = nestfs.clone_create(99999, "bad_clone");
-        assert_eq_nestfs!(r, -5, "clone from nonexistent snapshot should fail with -5 (Io)");
+        assert_eq_nestfs!(
+            r,
+            -5,
+            "clone from nonexistent snapshot should fail with -5 (Io)"
+        );
     });
 
     println!("\n=== NestFS Snapshot & Clone Tests Passed ===\n");
@@ -611,10 +664,16 @@ fn nestfs_fd_management() {
 
         // 内核差异: O_APPEND (0x0400) open 后 fd offset 初始化为文件末尾 (真实 POSIX
         // 语义), 直接 read 返回 0 (offset == size)。seek(0) 后可读全文。
-        let fd = nestfs.open("/append_test.txt", 0x0100 | 0x0400, test_pwm()).unwrap();
+        let fd = nestfs
+            .open("/append_test.txt", 0x0100 | 0x0400, test_pwm())
+            .unwrap();
         let mut buf = [0u8; 32];
         let r = nestfs.read(fd as u32, &mut buf, 32);
-        assert_eq_nestfs!(r, 0, "append mode open 后 offset 在文件末尾 (内核 POSIX 语义)");
+        assert_eq_nestfs!(
+            r,
+            0,
+            "append mode open 后 offset 在文件末尾 (内核 POSIX 语义)"
+        );
         let pos = nestfs.seek(fd as u32, 0, 0);
         assert_eq_nestfs!(pos, 0, "seek back to 0");
         let r = nestfs.read(fd as u32, &mut buf, 32);
@@ -634,11 +693,17 @@ fn nestfs_fd_management() {
     });
 
     test!(close_twice, {
-        let fd = nestfs.open("/double_close.txt", 0x0102, test_pwm()).unwrap();
+        let fd = nestfs
+            .open("/double_close.txt", 0x0102, test_pwm())
+            .unwrap();
         nestfs.close(fd as u32);
         // 内核差异: 重复 close 返回 InvalidArgument (-22, EINVAL), 测试版 mock 为 -1
         let r = nestfs.close(fd as u32);
-        assert_eq_nestfs!(r, -22, "closing already-closed fd should return -22 (InvalidArgument)");
+        assert_eq_nestfs!(
+            r,
+            -22,
+            "closing already-closed fd should return -22 (InvalidArgument)"
+        );
     });
 
     test!(read_write_zero_bytes, {
@@ -715,7 +780,9 @@ fn nestfs_utimensat_writes_back_times() {
     assert_eq!(st.mtime, MTIME + 5, "mtime 必须更新");
 
     assert!(
-        nestfs.fs_utimensat("/no_such_file_utimensat.txt", 1, 1, pwm).is_err(),
+        nestfs
+            .fs_utimensat("/no_such_file_utimensat.txt", 1, 1, pwm)
+            .is_err(),
         "不存在的路径必须报错"
     );
 }

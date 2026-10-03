@@ -39,9 +39,18 @@ fn ioapic_info_fields_semantics() {
     assert_eq!(ioapic1.id, 1, "第二个 IOAPIC 的硬件 ID = 1");
     assert_ne!(ioapic0.id, ioapic1.id, "不同 IOAPIC 必须有不同硬件 ID");
     // base_addr: IOAPIC MMIO 寄存器基址 (Intel 默认 0xFEC00000, 第二路 +4KB)
-    assert_eq!(ioapic0.base_addr, 0xFEC00000, "IOAPIC 0 MMIO 基址 = 0xFEC00000");
-    assert_eq!(ioapic1.base_addr, 0xFEC01000, "IOAPIC 1 MMIO 基址 = 0xFEC01000 (偏移 4KB)");
-    assert_ne!(ioapic0.base_addr, ioapic1.base_addr, "不同 IOAPIC 必须有不同 MMIO 基址");
+    assert_eq!(
+        ioapic0.base_addr, 0xFEC00000,
+        "IOAPIC 0 MMIO 基址 = 0xFEC00000"
+    );
+    assert_eq!(
+        ioapic1.base_addr, 0xFEC01000,
+        "IOAPIC 1 MMIO 基址 = 0xFEC01000 (偏移 4KB)"
+    );
+    assert_ne!(
+        ioapic0.base_addr, ioapic1.base_addr,
+        "不同 IOAPIC 必须有不同 MMIO 基址"
+    );
     // gsi_base/max_irq: 路由区间 [gsi_base, gsi_base+max_irq) 语义
     assert_eq!(ioapic0.gsi_base, 0);
     assert_eq!(ioapic1.gsi_base, 24);

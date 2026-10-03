@@ -52,7 +52,8 @@ fn two_concurrent_loads_have_isolated_buffers() {
             v1,
             0x1_0000_0000u64 + i as u64,
             "P1-I-32: cpu1 第 {} 页 = base+{} (无 cpu0 数据污染)",
-            i, i
+            i,
+            i
         );
         assert_ne!(v0, v1, "P1-I-32: cpu0/cpu1 第 {} 页必须不同 (无串台)", i);
     }
@@ -76,7 +77,8 @@ fn eights_cpus_concurrent_have_isolated_buffers() {
                 v,
                 (cpu as u64) * 0x1_0000_0000 + i as u64,
                 "P1-I-32: cpu={} 第 {} 页数据未串台",
-                cpu, i
+                cpu,
+                i
             );
         }
     }

@@ -36,17 +36,13 @@ fn test_exfat_sector_size() {
 #[test]
 fn test_exfat_cluster_count() {
     let data = fs::read("exfat_test.img").unwrap();
-    let cluster_count = u32::from_le_bytes([
-        data[92], data[93], data[94], data[95],
-    ]);
+    let cluster_count = u32::from_le_bytes([data[92], data[93], data[94], data[95]]);
     assert!(cluster_count > 0, "簇数量为 0");
 }
 
 #[test]
 fn test_exfat_root_cluster() {
     let data = fs::read("exfat_test.img").unwrap();
-    let root_cluster = u32::from_le_bytes([
-        data[96], data[97], data[98], data[99],
-    ]);
+    let root_cluster = u32::from_le_bytes([data[96], data[97], data[98], data[99]]);
     assert!(root_cluster >= 2, "根目录簇号无效");
 }

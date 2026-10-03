@@ -1,6 +1,6 @@
-use crate::framework::mm::virt_to_phys;
 #[cfg(test)]
 use crate::framework::mm::KERNEL_BASE;
+use crate::framework::mm::virt_to_phys;
 use alloc::vec::Vec;
 
 // ============================================================================

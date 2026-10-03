@@ -225,11 +225,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Rust nightly 工具链安装
-        uses: dtolnay/rust-toolchain@nightly
-
-      - name: 添加 rust-src + rustfmt 组件
-        run: rustup component add rust-src rustfmt
+      - name: 安装 Rust 工具链 (rust-toolchain.toml 锁定)
+        run: rustup toolchain install --no-self-update
 
       - name: 双架构 rustdoc --no-deps 阻断 (0 源码 warnings)
         run: |

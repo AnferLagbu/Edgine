@@ -132,5 +132,9 @@ fn apstartup_info_offsets_are_strictly_increasing() {
     let ready = offset_of!(ApStartupInfo, ready);
     let done = offset_of!(ApStartupInfo, done);
     assert!(ready < done, "ready 偏移 < done 偏移");
-    assert_eq!(done - ready, 8, "ready 与 done 之间应 = 8 字节 (cpu_index + _pad)");
+    assert_eq!(
+        done - ready,
+        8,
+        "ready 与 done 之间应 = 8 字节 (cpu_index + _pad)"
+    );
 }

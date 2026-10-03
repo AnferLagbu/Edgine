@@ -165,7 +165,8 @@ fn start_ap(mpidr: u64) -> Result<(), ()> {
         return Err(());
     }
     // SAFETY: stack 非空且指向有效 ApStack 分配; 取 bytes 字段首地址作栈底.
-    let stack_top = unsafe { (&raw const (*stack).bytes).cast::<u8>() as u64 } + AP_STACK_SIZE as u64;
+    let stack_top =
+        unsafe { (&raw const (*stack).bytes).cast::<u8>() as u64 } + AP_STACK_SIZE as u64;
 
     let info = ApBootInfo {
         ttbr0: super::mmu::read_ttbr0(),
@@ -259,7 +260,12 @@ extern "C" fn ap_main(cpu_index: u64) -> ! {
     // 1. 本核 GICv3 重分发器/CPU 接口初始化 + 定时器 PPI 使能。
     // SAFETY: 仅在 AP 本核调用; 本核 MMU 已在 stub 中启用, GIC MMIO 已由 BSP 建立映射.
     if let Err(e) = unsafe { super::gic::init_per_cpu(idx) } {
-        crate::klog_err!(Boot, "[SMP] AP cpu_index={} gic init_per_cpu failed: {}", idx, e);
+        crate::klog_err!(
+            Boot,
+            "[SMP] AP cpu_index={} gic init_per_cpu failed: {}",
+            idx,
+            e
+        );
         loop {
             crate::arch!(halt());
         }
@@ -297,7 +303,10 @@ extern "C" fn ap_main(cpu_index: u64) -> ! {
     // 5. 建立本核调度身份: 创建 (或复用) 本核 idle 并置 `current = idle`。
     //    此后本核 `schedule()` 才会真正执行上下文切换 (BSP 的 idle 不属于本核);
     //    失败则放弃上线, 不置 done, 由 BSP 判定离线。
-    if crate::framework::proc::SCHEDULER.adopt_cpu_idle(idx).is_none() {
+    if crate::framework::proc::SCHEDULER
+        .adopt_cpu_idle(idx)
+        .is_none()
+    {
         crate::klog_err!(
             Boot,
             "[SMP] AP cpu_index={} idle adopt failed, abort bring-up",

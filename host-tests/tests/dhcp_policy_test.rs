@@ -25,10 +25,22 @@ fn read(path: &str) -> String {
 fn test_dhcp_policy_module_exists() {
     // 验证 dhcp_policy.rs 存在且包含核心 trait 定义
     let content = read(POLICY_RS);
-    assert!(content.contains("pub trait DhcpPolicy"), "应定义 DhcpPolicy trait");
-    assert!(content.contains("pub struct DefaultDhcpPolicy"), "应定义 DefaultDhcpPolicy");
-    assert!(content.contains("pub enum DhcpAction"), "应定义 DhcpAction 枚举");
-    assert!(content.contains("#![deny(unsafe_code)]"), "services 层应禁用 unsafe");
+    assert!(
+        content.contains("pub trait DhcpPolicy"),
+        "应定义 DhcpPolicy trait"
+    );
+    assert!(
+        content.contains("pub struct DefaultDhcpPolicy"),
+        "应定义 DefaultDhcpPolicy"
+    );
+    assert!(
+        content.contains("pub enum DhcpAction"),
+        "应定义 DhcpAction 枚举"
+    );
+    assert!(
+        content.contains("#![deny(unsafe_code)]"),
+        "services 层应禁用 unsafe"
+    );
 }
 
 #[test]
@@ -61,11 +73,7 @@ fn test_dhcp_policy_decide_signature() {
         "lease_duration_ms: u64",
     ];
     for p in &required_params {
-        assert!(
-            after.contains(p),
-            "decide 签名应包含参数: {}",
-            p
-        );
+        assert!(after.contains(p), "decide 签名应包含参数: {}", p);
     }
 }
 
@@ -76,7 +84,10 @@ fn test_default_policy_config_matches_rfc_2131() {
     assert!(content.contains("max_retries: 4"), "默认 max_retries = 4");
     assert!(content.contains("renew_t1_ratio: 5000"), "默认 T1 = 50%");
     assert!(content.contains("renew_t2_ratio: 8750"), "默认 T2 = 87.5%");
-    assert!(content.contains("fallback_to_static: true"), "默认 fallback 开启");
+    assert!(
+        content.contains("fallback_to_static: true"),
+        "默认 fallback 开启"
+    );
 }
 
 #[test]
@@ -258,9 +269,18 @@ fn test_dhcp_action_derives_eq_copy() {
     // 验证 DhcpAction 实现 Copy/PartialEq (便于策略层比较 + 复制)
     let content = read(POLICY_RS);
     // 找 DhcpAction 的定义前的 derive 行
-    let idx = content.find("pub enum DhcpAction").expect("应存在 DhcpAction 定义");
+    let idx = content
+        .find("pub enum DhcpAction")
+        .expect("应存在 DhcpAction 定义");
     // 用 chars 边界安全地向前切片
-    let prefix: String = content[..idx].chars().rev().take(400).collect::<String>().chars().rev().collect();
+    let prefix: String = content[..idx]
+        .chars()
+        .rev()
+        .take(400)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
     assert!(
         prefix.contains("#[derive"),
         "DhcpAction 前应有 #[derive(...)] 行, 实际: {}",
@@ -273,7 +293,10 @@ fn test_dhcp_action_derives_eq_copy() {
         .expect("应能找到 derive 行");
     assert!(derive_line.contains("Clone"), "DhcpAction 应 derive Clone");
     assert!(derive_line.contains("Copy"), "DhcpAction 应 derive Copy");
-    assert!(derive_line.contains("PartialEq"), "DhcpAction 应 derive PartialEq");
+    assert!(
+        derive_line.contains("PartialEq"),
+        "DhcpAction 应 derive PartialEq"
+    );
 }
 
 #[test]
@@ -295,4 +318,3 @@ fn test_dhcp_policy_trait_is_dynamic_dispatchable() {
         header
     );
 }
-

@@ -23,9 +23,9 @@
 
 use std::sync::atomic::Ordering;
 
+use queenx::kernel::framework::proc::ProcessState;
 use queenx::kernel::framework::proc::process::{PROCESS_TABLE, Process};
 use queenx::kernel::framework::proc::signal::do_signal_send;
-use queenx::kernel::framework::proc::ProcessState;
 
 /// 宿主进程句柄: 构造 + 插入全局 PROCESS_TABLE, Drop 时回收
 struct TestProc {
@@ -34,7 +34,9 @@ struct TestProc {
 
 impl TestProc {
     fn new(state: ProcessState) -> Self {
-        let pid = PROCESS_TABLE.allocate_pid().expect("PROCESS_TABLE.allocate_pid 失败");
+        let pid = PROCESS_TABLE
+            .allocate_pid()
+            .expect("PROCESS_TABLE.allocate_pid 失败");
         let proc = Box::new(Process::new(pid, "zombie-signal-test", None));
         proc.state.store(state as u32, Ordering::SeqCst);
         PROCESS_TABLE.insert(Box::into_raw(proc));
@@ -103,7 +105,11 @@ fn blocked_state_delivers_and_wakes() {
     let res = do_signal_send(proc.pid(), 9);
     assert!(res.is_ok());
     // 内核: Blocked 投递后状态转为 Ready
-    assert_eq!(proc.state(), ProcessState::Ready, "Blocked 投递后应唤醒为 Ready");
+    assert_eq!(
+        proc.state(),
+        ProcessState::Ready,
+        "Blocked 投递后应唤醒为 Ready"
+    );
     assert!(proc.pending() != 0);
 }
 

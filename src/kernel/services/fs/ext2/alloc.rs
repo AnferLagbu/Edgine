@@ -26,7 +26,12 @@ pub fn alloc_block_in_group(
     let bitmap_sector_count = (block_size / 512).max(1) as u32;
     let mut bitmap_data = alloc::vec![0u8; block_size];
 
-    chitin_blk_read_sectors(device_idx, bitmap_sector, bitmap_sector_count, &mut bitmap_data)?;
+    chitin_blk_read_sectors(
+        device_idx,
+        bitmap_sector,
+        bitmap_sector_count,
+        &mut bitmap_data,
+    )?;
 
     // 扫描位图寻找空闲块
     let blocks_per_group = super_block.s_blocks_per_group;
@@ -48,7 +53,12 @@ pub fn alloc_block_in_group(
                 bitmap_data[byte_idx] |= 1 << bit_idx;
 
                 // 写回位图
-                chitin_blk_write_sectors(device_idx, bitmap_sector, bitmap_sector_count, &bitmap_data)?;
+                chitin_blk_write_sectors(
+                    device_idx,
+                    bitmap_sector,
+                    bitmap_sector_count,
+                    &bitmap_data,
+                )?;
 
                 return Ok(first_block + block_offset as u32);
             }
@@ -76,7 +86,12 @@ pub fn free_block(
     let bitmap_sector_count = (block_size / 512).max(1) as u32;
     let mut bitmap_data = alloc::vec![0u8; block_size];
 
-    chitin_blk_read_sectors(device_idx, bitmap_sector, bitmap_sector_count, &mut bitmap_data)?;
+    chitin_blk_read_sectors(
+        device_idx,
+        bitmap_sector,
+        bitmap_sector_count,
+        &mut bitmap_data,
+    )?;
 
     // 清除位
     let byte_idx = (block_offset / 8) as usize;
@@ -195,7 +210,12 @@ pub fn alloc_inode_in_group(
     let bitmap_sector_count = (block_size / 512).max(1) as u32;
     let mut bitmap_data = alloc::vec![0u8; block_size];
 
-    chitin_blk_read_sectors(device_idx, bitmap_sector, bitmap_sector_count, &mut bitmap_data)?;
+    chitin_blk_read_sectors(
+        device_idx,
+        bitmap_sector,
+        bitmap_sector_count,
+        &mut bitmap_data,
+    )?;
 
     // 扫描位图寻找空闲 inode
     let inodes_per_group = super_block.s_inodes_per_group;
@@ -217,7 +237,12 @@ pub fn alloc_inode_in_group(
                 bitmap_data[byte_idx] |= 1 << bit_idx;
 
                 // 写回位图
-                chitin_blk_write_sectors(device_idx, bitmap_sector, bitmap_sector_count, &bitmap_data)?;
+                chitin_blk_write_sectors(
+                    device_idx,
+                    bitmap_sector,
+                    bitmap_sector_count,
+                    &bitmap_data,
+                )?;
 
                 return Ok(first_inode + inode_offset as u32);
             }
@@ -245,7 +270,12 @@ pub fn free_inode(
     let bitmap_sector_count = (block_size / 512).max(1) as u32;
     let mut bitmap_data = alloc::vec![0u8; block_size];
 
-    chitin_blk_read_sectors(device_idx, bitmap_sector, bitmap_sector_count, &mut bitmap_data)?;
+    chitin_blk_read_sectors(
+        device_idx,
+        bitmap_sector,
+        bitmap_sector_count,
+        &mut bitmap_data,
+    )?;
 
     // 清除位
     let byte_idx = (inode_offset / 8) as usize;

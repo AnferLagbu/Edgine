@@ -334,7 +334,12 @@ fn probe_nvme(
 /// SIMPLIFIED: 只比对 BDF, 不校验类码; 同一 BDF 被非存储设备复用的场景
 /// 在现实硬件上不会发生, 待出现多级 PCIe 交换机拓扑时再细化。
 #[cfg(target_arch = "x86_64")]
-fn is_present(devices: &[crate::framework::pci::PciDevice], bus: u8, device: u8, function: u8) -> bool {
+fn is_present(
+    devices: &[crate::framework::pci::PciDevice],
+    bus: u8,
+    device: u8,
+    function: u8,
+) -> bool {
     devices
         .iter()
         .any(|d| d.bus == bus && d.device == device && d.function == function)
@@ -344,7 +349,10 @@ fn is_present(devices: &[crate::framework::pci::PciDevice], bus: u8, device: u8,
 ///
 /// 返回 (`AHCI` 在线数, `NVMe` 在线数)。已在线的控制器直接跳过, 不重复初始化。
 #[cfg(target_arch = "x86_64")]
-fn storage_scan_with(devices: &[crate::framework::pci::PciDevice], run_selftest: bool) -> (u32, u32) {
+fn storage_scan_with(
+    devices: &[crate::framework::pci::PciDevice],
+    run_selftest: bool,
+) -> (u32, u32) {
     let mut ahci_found = 0u32;
     let mut nvme_found = 0u32;
 
@@ -390,9 +398,10 @@ fn storage_scan_with(devices: &[crate::framework::pci::PciDevice], run_selftest:
         }
 
         let mut probed = PROBED.lock();
-        if let Some(r) = probed.iter_mut().find(|r| {
-            r.bus == dev.bus && r.device == dev.device && r.function == dev.function
-        }) {
+        if let Some(r) = probed
+            .iter_mut()
+            .find(|r| r.bus == dev.bus && r.device == dev.device && r.function == dev.function)
+        {
             r.slot = result.slot;
             r.drives = result.drives;
             r.installed = result.slot.is_some();
@@ -603,7 +612,10 @@ fn ahci_port_poll() {
             {
                 port.set_drive(Some(idx));
             }
-            slog_info!(Driver, "AHCI: ctrl={ci} port={port_num} hot-added, drive={idx}");
+            slog_info!(
+                Driver,
+                "AHCI: ctrl={ci} port={port_num} hot-added, drive={idx}"
+            );
             HOTPLUG_MANAGER.dispatch(&HotplugEvent::DeviceAdded { location });
         }
 
@@ -819,7 +831,12 @@ fn probe_ata() -> u32 {
                     let dev_name = alloc::format!("ata{drive}");
                     let name_leaked: &'static str = dev_name.leak();
                     register_block_device(name_leaked, dev, None);
-                    slog_info!(Driver, "ATA: drive={} registered, {} sectors", drive, sectors);
+                    slog_info!(
+                        Driver,
+                        "ATA: drive={} registered, {} sectors",
+                        drive,
+                        sectors
+                    );
                 }
             }
         }

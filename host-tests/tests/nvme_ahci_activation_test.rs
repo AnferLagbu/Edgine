@@ -19,8 +19,7 @@ const SERVICES_DIR: &str = "../src/kernel/services/driver/storage";
 
 fn read_source(dir: &str, name: &str) -> String {
     let path = Path::new(dir).join(name);
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {} failed: {}", path.display(), e))
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {} failed: {}", path.display(), e))
 }
 
 /// 剥离 `//` 与 `//!` 注释行 — 静态契约只匹配真实代码, 不匹配文档图示
@@ -65,7 +64,11 @@ fn test_framework_ahci_wire_types_only() {
         assert!(src.contains(sym), "framework ahci.rs 缺失 {}", sym);
     }
     // HBA 寄存器布局与控制器业务必须已退位
-    for sym in ["pub struct AhciHbaGhc", "pub struct AhciPort", "pub struct AhciController"] {
+    for sym in [
+        "pub struct AhciHbaGhc",
+        "pub struct AhciPort",
+        "pub struct AhciController",
+    ] {
         assert!(
             !src.contains(sym),
             "framework ahci.rs 仍含 {} (应已迁 services)",
@@ -124,14 +127,23 @@ fn test_framework_storage_init_removed() {
 #[test]
 fn test_services_controllers_present() {
     let ahci = read_source(SERVICES_DIR, "ahci.rs");
-    assert!(ahci.contains("pub struct AhciController"), "services AhciController 缺失");
-    assert!(ahci.contains("pub struct AhciPort"), "services AhciPort 缺失");
+    assert!(
+        ahci.contains("pub struct AhciController"),
+        "services AhciController 缺失"
+    );
+    assert!(
+        ahci.contains("pub struct AhciPort"),
+        "services AhciPort 缺失"
+    );
     assert!(
         ahci.contains("#![deny(unsafe_code)]"),
         "services ahci.rs 必须 0 unsafe"
     );
     let nvme = read_source(SERVICES_DIR, "nvme.rs");
-    assert!(nvme.contains("pub struct NvmeController"), "services NvmeController 缺失");
+    assert!(
+        nvme.contains("pub struct NvmeController"),
+        "services NvmeController 缺失"
+    );
     assert!(
         nvme.contains("#![deny(unsafe_code)]"),
         "services nvme.rs 必须 0 unsafe"
@@ -172,8 +184,7 @@ fn test_services_storage_init_uses_block_devices() {
 #[test]
 fn test_lib_rs_orchestrates_services_storage_init() {
     // crate root (合法双向编排者) 必须调用 services storage_init (x86_64 门控)
-    let src =
-        fs::read_to_string("../src/kernel/lib.rs").expect("read lib.rs failed");
+    let src = fs::read_to_string("../src/kernel/lib.rs").expect("read lib.rs failed");
     assert!(
         src.contains("services::driver::storage::storage_init"),
         "crate root lib.rs 未编排 services storage_init"

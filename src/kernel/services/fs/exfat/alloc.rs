@@ -22,7 +22,8 @@ pub fn alloc_cluster(device_idx: u8, super_block: &ExfatSuperBlock) -> Result<u3
         let fat_offset = (cluster * 4) % bytes_per_sector as u32;
 
         let mut sector_data = vec![0u8; bytes_per_sector];
-        if chitin_blk_read_sectors(device_idx, u64::from(fat_sector), 1, &mut sector_data).is_err() {
+        if chitin_blk_read_sectors(device_idx, u64::from(fat_sector), 1, &mut sector_data).is_err()
+        {
             continue;
         }
 

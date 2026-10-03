@@ -93,7 +93,12 @@ impl Ext2Fs {
         let sector_count = (inode_size / 512).max(1) as u32;
 
         let mut inode_data = alloc::vec![0u8; inode_size];
-        chitin_blk_read_sectors(self.device_idx, sector as u64, sector_count, &mut inode_data)?;
+        chitin_blk_read_sectors(
+            self.device_idx,
+            sector as u64,
+            sector_count,
+            &mut inode_data,
+        )?;
 
         let inode = Ext2Inode::from_bytes(&inode_data).ok_or(KernelError::InvalidArgument)?;
 

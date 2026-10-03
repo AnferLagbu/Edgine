@@ -18,8 +18,7 @@ fn repo_root() -> PathBuf {
 
 fn read_src(rel: &str) -> String {
     let p = repo_root().join(rel);
-    fs::read_to_string(&p)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", p.display(), e))
+    fs::read_to_string(&p).unwrap_or_else(|e| panic!("无法读取 {}: {}", p.display(), e))
 }
 
 #[test]
@@ -178,7 +177,8 @@ fn trait_object_method_signature() {
         .map(|(_, b)| b)
         .unwrap_or("");
     let has_full_sig = trait_block.contains("fn fs_sync(&self) -> KernelResult<()>")
-        || trait_block.contains("fn fs_sync(&self) -> crate::services::fs::vfs_types::KernelResult<()>");
+        || trait_block
+            .contains("fn fs_sync(&self) -> crate::services::fs::vfs_types::KernelResult<()>");
     assert!(
         has_full_sig,
         "P3-I-18: fs_sync 签名必须符合 (KernelResult<()>)"

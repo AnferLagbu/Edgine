@@ -24,6 +24,7 @@
 mod e1000_impl {
     use alloc::boxed::Box;
 
+    use crate::framework::driver::DriverError;
     use crate::framework::driver::net::dma_ring::{
         E1000_RX_BUFFER_SIZE, E1000_RX_RING_SIZE, E1000_TX_RING_SIZE,
     };
@@ -35,7 +36,6 @@ mod e1000_impl {
         E1000_RCTL_SECRC, E1000_RCTL_UPE, E1000_TCTL_COLD_FD, E1000_TCTL_CT_FD, E1000_TCTL_EN,
         E1000_TCTL_PSP, E1000_TIMEOUT, E1000Io,
     };
-    use crate::framework::driver::DriverError;
     use crate::framework::mm::PhysAddr;
     use crate::framework::net::{NetDeviceOps, NetDeviceRegistration, register_net_device};
     use crate::framework::pci::{
@@ -169,9 +169,8 @@ mod e1000_impl {
 
         /// 使能收发引擎并写入 MAC / IPG / 中断掩码.
         fn complete_init(&self) {
-            self.io.set_tx_ctl(
-                E1000_TCTL_EN | E1000_TCTL_PSP | E1000_TCTL_COLD_FD | E1000_TCTL_CT_FD,
-            );
+            self.io
+                .set_tx_ctl(E1000_TCTL_EN | E1000_TCTL_PSP | E1000_TCTL_COLD_FD | E1000_TCTL_CT_FD);
             self.io.set_rx_ctl(
                 E1000_RCTL_EN
                     | E1000_RCTL_SBP
@@ -184,7 +183,8 @@ mod e1000_impl {
             self.io.set_mac(self.mac);
             self.io.set_rx_tail((E1000_RX_RING_SIZE - 1) as u32);
             self.io.set_ipg(E1000_IPG_DEFAULT);
-            self.io.irq_enable(E1000_ICR_RXT0 | E1000_ICR_RXDMT0 | E1000_ICR_LSC);
+            self.io
+                .irq_enable(E1000_ICR_RXT0 | E1000_ICR_RXDMT0 | E1000_ICR_LSC);
             crate::slog_info!(Driver, "e1000: 初始化完成");
         }
 

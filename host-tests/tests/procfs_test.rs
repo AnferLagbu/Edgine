@@ -12,7 +12,8 @@ fn test_procfs_cpuinfo_format() {
 #[test]
 fn test_procfs_meminfo_format() {
     // 验证 meminfo 输出格式
-    let meminfo = "MemTotal:        16384 kB\nMemFree:          8192 kB\nMemAvailable:     8192 kB\n";
+    let meminfo =
+        "MemTotal:        16384 kB\nMemFree:          8192 kB\nMemAvailable:     8192 kB\n";
     assert!(meminfo.contains("MemTotal"));
     assert!(meminfo.contains("MemFree"));
     assert!(meminfo.contains("MemAvailable"));

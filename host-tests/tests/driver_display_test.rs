@@ -89,12 +89,21 @@ fn test_hdmi_modes() {
     // 标准视频模式表: 内核 services hdmi.rs `STANDARD_VIDEO_MODES` (pub const, 10 个模式)
     assert!(!STANDARD_VIDEO_MODES.is_empty());
     // 覆盖常见分辨率: 640x480@60 / 800x600@60 / 1024x768@60 / 1280x720@60 / 1920x1080@60
-    for (w, h, r) in [(640u16, 480u16, 60u8), (800, 600, 60), (1024, 768, 60), (1280, 720, 60), (1920, 1080, 60)] {
+    for (w, h, r) in [
+        (640u16, 480u16, 60u8),
+        (800, 600, 60),
+        (1024, 768, 60),
+        (1280, 720, 60),
+        (1920, 1080, 60),
+    ] {
         assert!(
             STANDARD_VIDEO_MODES
                 .iter()
                 .any(|m| m.width == w && m.height == h && m.refresh_rate == r),
-            "标准模式表应包含 {}x{}@{}", w, h, r
+            "标准模式表应包含 {}x{}@{}",
+            w,
+            h,
+            r
         );
     }
 }

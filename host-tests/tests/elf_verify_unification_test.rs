@@ -25,7 +25,7 @@
 //! verify 子模块声明与委托) 为 B08-20 混合型文件的 include_str 部分, 原样保留.
 
 use queenx::kernel::framework::proc::elf::verify::{
-    verify_elf, VerifyError, VerifyResult, EM_AARCH64, EM_X86_64, ET_DYN,
+    EM_AARCH64, EM_X86_64, ET_DYN, VerifyError, VerifyResult, verify_elf,
 };
 use queenx::kernel::framework::proc::elf::{Elf64Header, Elf64Phdr};
 
@@ -124,7 +124,13 @@ fn user_proc_load_elf_uses_verify_submodule() {
 
 #[test]
 fn verify_x86_64_elf64_succeeds() {
-    let elf = make_elf(EM_X86_64, 2 /* ET_EXEC */, 1, 64, core::mem::size_of::<Elf64Phdr>() as u16);
+    let elf = make_elf(
+        EM_X86_64,
+        2, /* ET_EXEC */
+        1,
+        64,
+        core::mem::size_of::<Elf64Phdr>() as u16,
+    );
     // SAFETY: elf 是完整 host Vec
     let v = unsafe { call_verify_elf(&elf) }.expect("x86_64 ELF64 must verify");
     assert_eq!(v.machine, EM_X86_64);
@@ -135,7 +141,13 @@ fn verify_x86_64_elf64_succeeds() {
 
 #[test]
 fn verify_aarch64_elf64_succeeds() {
-    let elf = make_elf(EM_AARCH64, ET_DYN, 0, 64, core::mem::size_of::<Elf64Phdr>() as u16);
+    let elf = make_elf(
+        EM_AARCH64,
+        ET_DYN,
+        0,
+        64,
+        core::mem::size_of::<Elf64Phdr>() as u16,
+    );
     // SAFETY: elf 是完整 host Vec
     let v = unsafe { call_verify_elf(&elf) }.expect("aarch64 ELF64 must verify");
     assert_eq!(v.machine, EM_AARCH64);
@@ -145,18 +157,36 @@ fn verify_aarch64_elf64_succeeds() {
 
 #[test]
 fn verify_rejects_bad_magic() {
-    let mut elf = make_elf(EM_X86_64, 2, 0, 64, core::mem::size_of::<Elf64Phdr>() as u16);
+    let mut elf = make_elf(
+        EM_X86_64,
+        2,
+        0,
+        64,
+        core::mem::size_of::<Elf64Phdr>() as u16,
+    );
     elf[0] = b'X'; // 破坏 magic
     // SAFETY: elf 是完整 host Vec
-    assert_eq!(unsafe { call_verify_elf(&elf) }.unwrap_err(), VerifyError::BadMagic);
+    assert_eq!(
+        unsafe { call_verify_elf(&elf) }.unwrap_err(),
+        VerifyError::BadMagic
+    );
 }
 
 #[test]
 fn verify_rejects_bad_class() {
-    let mut elf = make_elf(EM_X86_64, 2, 0, 64, core::mem::size_of::<Elf64Phdr>() as u16);
+    let mut elf = make_elf(
+        EM_X86_64,
+        2,
+        0,
+        64,
+        core::mem::size_of::<Elf64Phdr>() as u16,
+    );
     elf[4] = 1; // ELFCLASS32
     // SAFETY: elf 是完整 host Vec
-    assert_eq!(unsafe { call_verify_elf(&elf) }.unwrap_err(), VerifyError::BadClass);
+    assert_eq!(
+        unsafe { call_verify_elf(&elf) }.unwrap_err(),
+        VerifyError::BadClass
+    );
 }
 
 #[test]
@@ -164,14 +194,20 @@ fn verify_rejects_bad_machine() {
     // 0x03 (i386) 不在白名单
     let elf = make_elf(0x03, 2, 0, 64, core::mem::size_of::<Elf64Phdr>() as u16);
     // SAFETY: elf 是完整 host Vec
-    assert_eq!(unsafe { call_verify_elf(&elf) }.unwrap_err(), VerifyError::BadMachine);
+    assert_eq!(
+        unsafe { call_verify_elf(&elf) }.unwrap_err(),
+        VerifyError::BadMachine
+    );
 }
 
 #[test]
 fn verify_rejects_bad_phentsize() {
     let elf = make_elf(EM_X86_64, 2, 0, 64, 32); // phentsize 错
     // SAFETY: elf 是完整 host Vec
-    assert_eq!(unsafe { call_verify_elf(&elf) }.unwrap_err(), VerifyError::BadPhentsize);
+    assert_eq!(
+        unsafe { call_verify_elf(&elf) }.unwrap_err(),
+        VerifyError::BadPhentsize
+    );
 }
 
 #[test]
@@ -184,7 +220,10 @@ fn verify_rejects_too_many_phdr() {
         core::mem::size_of::<Elf64Phdr>() as u16,
     );
     // SAFETY: elf 是完整 host Vec
-    assert_eq!(unsafe { call_verify_elf(&elf) }.unwrap_err(), VerifyError::TooManyPhdr);
+    assert_eq!(
+        unsafe { call_verify_elf(&elf) }.unwrap_err(),
+        VerifyError::TooManyPhdr
+    );
 }
 
 #[test]
@@ -202,19 +241,28 @@ fn verify_rejects_phdr_out_of_bounds() {
     header.e_phentsize = core::mem::size_of::<Elf64Phdr>() as u16;
     header.e_phnum = 2;
     // SAFETY: elf 是完整 host Vec
-    assert_eq!(unsafe { call_verify_elf(&elf) }.unwrap_err(), VerifyError::PhdrOutOfBounds);
+    assert_eq!(
+        unsafe { call_verify_elf(&elf) }.unwrap_err(),
+        VerifyError::PhdrOutOfBounds
+    );
 }
 
 #[test]
 fn verify_rejects_too_small() {
     let elf = vec![0u8; 10]; // 远小于 sizeof(Elf64Header)=64
     // SAFETY: elf 是完整 host Vec
-    assert_eq!(unsafe { call_verify_elf(&elf) }.unwrap_err(), VerifyError::TooSmall);
+    assert_eq!(
+        unsafe { call_verify_elf(&elf) }.unwrap_err(),
+        VerifyError::TooSmall
+    );
 }
 
 #[test]
 fn verify_null_ptr_is_too_small() {
     // 内核 verify_elf: null 指针 → TooSmall
     // SAFETY: 显式 null 检查路径
-    assert_eq!(unsafe { verify_elf(core::ptr::null(), 0) }.unwrap_err(), VerifyError::TooSmall);
+    assert_eq!(
+        unsafe { verify_elf(core::ptr::null(), 0) }.unwrap_err(),
+        VerifyError::TooSmall
+    );
 }

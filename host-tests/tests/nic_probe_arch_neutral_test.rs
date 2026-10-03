@@ -17,13 +17,15 @@ use std::path::Path;
 #[test]
 fn test_nic_probe_all_no_arch_mutex() {
     let probe_rs = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap() // QueenX workspace root
+        .parent()
+        .unwrap() // QueenX workspace root
         .join("src/kernel/framework/net/init/probe.rs");
     let src = fs::read_to_string(&probe_rs)
         .unwrap_or_else(|e| panic!("无法读取 {}: {}", probe_rs.display(), e));
 
     // 定位 nic_probe_all 函数体
-    let body_start = src.find("fn nic_probe_all()")
+    let body_start = src
+        .find("fn nic_probe_all()")
         .expect("net/init/probe.rs 缺少 nic_probe_all");
     // body 范围: 直到下一个顶级 `fn ` / `static ` / `unsafe fn` / 文件末尾
     let after = &src[body_start..];
@@ -31,9 +33,11 @@ fn test_nic_probe_all_no_arch_mutex() {
     let mut body_end = after.len();
     for marker in ["\nfn ", "\nstatic ", "\nunsafe fn ", "\nasync fn "] {
         if let Some(idx) = after.find(marker)
-            && idx > 0 && idx < body_end {
-                body_end = idx;
-            }
+            && idx > 0
+            && idx < body_end
+        {
+            body_end = idx;
+        }
     }
     let body = &after[..body_end];
 
@@ -59,14 +63,20 @@ fn test_nic_probe_all_no_arch_mutex() {
     // net_services_driver 单向拉取, framework 不再直接调用驱动探测)
     // 阶段 3: e1000 与 virtio-net 的探测统一收敛于 services 复合探测,
     // framework nic_probe_all 不再直接调用 e1000_probe。
-    assert!(!body.contains("e1000_probe"),
-        "nic_probe_all 不应直接调用 e1000_probe (阶段 3 收敛至 services 复合探测)");
-    assert!(body.contains("net_services_driver"),
-        "nic_probe_all 缺失 services 网络设备注册契约拉取 (批次 Z ④)");
+    assert!(
+        !body.contains("e1000_probe"),
+        "nic_probe_all 不应直接调用 e1000_probe (阶段 3 收敛至 services 复合探测)"
+    );
+    assert!(
+        body.contains("net_services_driver"),
+        "nic_probe_all 缺失 services 网络设备注册契约拉取 (批次 Z ④)"
+    );
 
     // 注释 / 文档确认
-    assert!(body.contains("I-53"),
-        "nic_probe_all 应含 I-53 修复说明 (注释里)");
+    assert!(
+        body.contains("I-53"),
+        "nic_probe_all 应含 I-53 修复说明 (注释里)"
+    );
 }
 
 #[test]
@@ -76,7 +86,8 @@ fn test_e1000_driver_no_arch_probe_mutex() {
     // 注意: 驱动内部允许有少量架构相关代码 (e.g. DMA 物理地址转换),
     // 这与 I-53 无关 — I-53 关注的是 *探测入口* 的互斥, 不是驱动内部实现.
     let e1000 = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
+        .parent()
+        .unwrap()
         .join("src/kernel/framework/driver/net/e1000.rs");
     let src = fs::read_to_string(&e1000)
         .unwrap_or_else(|e| panic!("无法读取 {}: {}", e1000.display(), e));
@@ -88,7 +99,11 @@ fn test_e1000_driver_no_arch_probe_mutex() {
         let mut body_end = after.len();
         for marker in ["\n    pub fn ", "\n    fn ", "\n    unsafe fn "] {
             if let Some(p) = after.find(marker)
-                && p > 0 && p < body_end { body_end = p; }
+                && p > 0
+                && p < body_end
+            {
+                body_end = p;
+            }
         }
         let body = &after[..body_end];
         let forbidden = ["cfg(target_arch", "cfg(arch"];

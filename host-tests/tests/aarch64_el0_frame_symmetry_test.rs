@@ -39,9 +39,7 @@ fn slice_between(src: &str, start: &str, end: &str) -> String {
         .find(start)
         .unwrap_or_else(|| panic!("未找到 {start:?}"));
     let rest = &src[i..];
-    let j = rest
-        .find(end)
-        .unwrap_or_else(|| panic!("未找到 {end:?}"));
+    let j = rest.find(end).unwrap_or_else(|| panic!("未找到 {end:?}"));
     rest[..j].to_string()
 }
 
@@ -92,15 +90,18 @@ fn test_el0_entries_relay_via_tpidrro_and_stash() {
             "{entry} 必须以 TPIDR_EL1 取本核 KPTI 槽基址 (KPTI-PCPU-01)"
         );
         assert!(
-            window.contains(&norm("str x4, [x3, #8]")) && window.contains(&norm("str x4, [x3, #16]")),
+            window.contains(&norm("str x4, [x3, #8]"))
+                && window.contains(&norm("str x4, [x3, #16]")),
             "{entry} 必须把用户 x3/x4 存入本核槽暂存槽 (偏移 8/16)"
         );
         assert!(
-            window.contains(&norm("ldr x4, [x3, #8]")) && window.contains(&norm("ldr x3, [x3, #16]")),
+            window.contains(&norm("ldr x4, [x3, #8]"))
+                && window.contains(&norm("ldr x3, [x3, #16]")),
             "{entry} 必须在切表后从本核槽取回用户 x3/x4"
         );
         assert!(
-            !window.contains(&norm("str x4, [x3, #40]")) && !window.contains(&norm("str x4, [x3, #48]")),
+            !window.contains(&norm("str x4, [x3, #40]"))
+                && !window.contains(&norm("str x4, [x3, #48]")),
             "{entry} 不得再用单实例 KPTI_GLOBALS 暂存槽 (偏移 40/48): 双核并发会跨核覆盖"
         );
         // 先切 TTBR 再压帧: 压帧引用必须晚于 ttbr1_el1 切换.

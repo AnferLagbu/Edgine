@@ -15,13 +15,16 @@ const SFD: &str = "src/kernel/framework/syscall/signalfd.rs";
 
 fn read(path: &str) -> String {
     let p = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap().join(path);
+        .parent()
+        .unwrap()
+        .join(path);
     fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {}", path))
 }
 
 /// 截取函数体, 范围: 从 fn 签名到下一个 #[no_mangle] fn / pub fn / 下一个大段注释
 fn extract_body(src: &str, sig: &str) -> String {
-    let start = src.find(sig)
+    let start = src
+        .find(sig)
         .unwrap_or_else(|| panic!("找不到签名: {}", sig));
     let after = &src[start..];
     let candidates = [
@@ -30,7 +33,8 @@ fn extract_body(src: &str, sig: &str) -> String {
         "\nfn ",
         "\n// =============", // 段落分隔
     ];
-    let end = candidates.iter()
+    let end = candidates
+        .iter()
         .filter_map(|c| after.find(c).map(|i| i + 1))
         .min()
         .unwrap_or(after.len());
@@ -42,17 +46,24 @@ fn test_efd_close_pwake_after_drop_lock() {
     // TD-04: EFD close 必须在 drop(table) 之后 epoll_pwake, 顺序敏感
     let src = read(EFD);
     let body = extract_body(&src, "pub fn sys_eventfd_close(");
-    assert!(body.contains("epoll_pwake"),
-        "TD-04: EFD sys_eventfd_close 必须调用 epoll_pwake, 防止 epoll_wait 睡在已关闭 fd 上:\n{}", body);
+    assert!(
+        body.contains("epoll_pwake"),
+        "TD-04: EFD sys_eventfd_close 必须调用 epoll_pwake, 防止 epoll_wait 睡在已关闭 fd 上:\n{}",
+        body
+    );
     // drop(table) 必须在 epoll_pwake 之前
-    let drop_idx = body.find("drop(table);")
+    let drop_idx = body
+        .find("drop(table);")
         .or_else(|| body.find("drop(table)"))
         .or_else(|| body.find("drop( table )"))
         .expect("TD-04: 必须有 drop(table) 显式释放锁, 顺序敏感");
-    let pwake_idx = body.find("epoll_pwake")
+    let pwake_idx = body
+        .find("epoll_pwake")
         .expect("TD-04: epoll_pwake 必须存在");
-    assert!(drop_idx < pwake_idx,
-        "TD-04: epoll_pwake 必须在 drop(table) 之后, 让 waiter 看到 slot.used=false");
+    assert!(
+        drop_idx < pwake_idx,
+        "TD-04: epoll_pwake 必须在 drop(table) 之后, 让 waiter 看到 slot.used=false"
+    );
 }
 
 #[test]
@@ -60,16 +71,23 @@ fn test_sfd_close_pwake_after_drop_lock() {
     // TD-04: SFD close 必须在 drop(table) 之后 epoll_pwake
     let src = read(SFD);
     let body = extract_body(&src, "pub fn sys_signalfd_close(");
-    assert!(body.contains("epoll_pwake"),
-        "TD-04: SFD sys_signalfd_close 必须调用 epoll_pwake, 防止 epoll_wait 睡在已关闭 fd 上:\n{}", body);
-    let drop_idx = body.find("drop(table);")
+    assert!(
+        body.contains("epoll_pwake"),
+        "TD-04: SFD sys_signalfd_close 必须调用 epoll_pwake, 防止 epoll_wait 睡在已关闭 fd 上:\n{}",
+        body
+    );
+    let drop_idx = body
+        .find("drop(table);")
         .or_else(|| body.find("drop(table)"))
         .or_else(|| body.find("drop( table )"))
         .expect("TD-04: 必须有 drop(table) 显式释放锁");
-    let pwake_idx = body.find("epoll_pwake")
+    let pwake_idx = body
+        .find("epoll_pwake")
         .expect("TD-04: epoll_pwake 必须存在");
-    assert!(drop_idx < pwake_idx,
-        "TD-04: epoll_pwake 必须在 drop(table) 之后, 让 waiter 看到 slot.used=false");
+    assert!(
+        drop_idx < pwake_idx,
+        "TD-04: epoll_pwake 必须在 drop(table) 之后, 让 waiter 看到 slot.used=false"
+    );
 }
 
 #[test]
@@ -78,8 +96,12 @@ fn test_efd_poll_returns_epollerr_on_freed_slot() {
     // 这样被 epoll_pwake 唤醒的 waiter 能识别"fd 已关闭" 状态.
     let src = read(EFD);
     let body = extract_body(&src, "pub fn eventfd_poll_events(");
-    assert!(body.contains("if !slot.used"),
-        "TD-04: eventfd_poll_events 必须检查 slot.used");
-    assert!(body.contains("EPOLLERR"),
-        "TD-04: 关闭态必须返回 EPOLLERR (与 epoll_pwake 配合触发 waiter 退出)");
+    assert!(
+        body.contains("if !slot.used"),
+        "TD-04: eventfd_poll_events 必须检查 slot.used"
+    );
+    assert!(
+        body.contains("EPOLLERR"),
+        "TD-04: 关闭态必须返回 EPOLLERR (与 epoll_pwake 配合触发 waiter 退出)"
+    );
 }

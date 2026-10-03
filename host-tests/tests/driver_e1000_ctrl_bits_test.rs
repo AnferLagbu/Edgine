@@ -38,8 +38,7 @@ fn workspace_root() -> std::path::PathBuf {
 
 fn read(rel: &str) -> String {
     let path = workspace_root().join(rel);
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e))
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e))
 }
 
 /// 取出指定常量的定义行 (含 `: u32 =`, 排除文档注释等提及处).

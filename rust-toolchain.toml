@@ -1,0 +1,6 @@
+# QueenX 全仓唯一工具链定义: 锁定带日期的 nightly, 消除 CI/本地滚动 nightly 漂移.
+# 仓库根生效, 覆盖 src/rust / src/kernel / host-tests 全部子 crate.
+[toolchain]
+channel = "nightly-2026-10-02"
+components = ["rust-src", "llvm-tools-preview", "rustfmt", "clippy"]
+targets = ["x86_64-unknown-none", "aarch64-unknown-none", "aarch64-unknown-none-softfloat"]

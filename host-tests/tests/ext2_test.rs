@@ -34,12 +34,8 @@ fn test_ext2_block_size() {
 #[test]
 fn test_ext2_inode_count() {
     let data = fs::read("ext2_test.img").unwrap();
-    let inode_count = u32::from_le_bytes([
-        data[1024],
-        data[1024 + 1],
-        data[1024 + 2],
-        data[1024 + 3],
-    ]);
+    let inode_count =
+        u32::from_le_bytes([data[1024], data[1024 + 1], data[1024 + 2], data[1024 + 3]]);
     assert!(inode_count > 0, "inode 数量为 0");
 }
 

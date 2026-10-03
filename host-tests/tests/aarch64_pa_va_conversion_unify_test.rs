@@ -82,7 +82,10 @@ fn test_aarch64_kernel_base_is_ttbr1_window_base() {
 #[test]
 fn test_pa_va_conversion_has_single_definition() {
     for file in rs_files(MM_DIR) {
-        if file.file_name().is_some_and(|n| n.to_str() == Some("mod.rs")) {
+        if file
+            .file_name()
+            .is_some_and(|n| n.to_str() == Some("mod.rs"))
+        {
             continue;
         }
         let src = read(&file.to_string_lossy());

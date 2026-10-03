@@ -114,8 +114,12 @@ fn test_no_duplicate_fallback_magic_numbers() {
                     depth = 0;
                     // 当前行的 { 计入深度
                     for c in line.chars() {
-                        if c == '{' { depth += 1; }
-                        if c == '}' { depth -= 1; }
+                        if c == '{' {
+                            depth += 1;
+                        }
+                        if c == '}' {
+                            depth -= 1;
+                        }
                     }
                     continue;
                 }
@@ -126,10 +130,14 @@ fn test_no_duplicate_fallback_magic_numbers() {
             }
             if in_test_block {
                 for c in line.chars() {
-                    if c == '{' { depth += 1; }
+                    if c == '{' {
+                        depth += 1;
+                    }
                     if c == '}' {
                         depth -= 1;
-                        if depth <= 0 { in_test_block = false; }
+                        if depth <= 0 {
+                            in_test_block = false;
+                        }
                     }
                 }
                 continue;

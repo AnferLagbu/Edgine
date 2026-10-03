@@ -72,10 +72,10 @@ pub use init::poll_network;
 #[cfg(not(feature = "kernel_test"))]
 pub(crate) use init::raw;
 // ISSUE-SRC-008: 网卡中断接线 — services 驱动探测时注册其 ISR (0 unsafe 入口)。
-#[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
-pub use init::irq::net_register_msix_isr;
 #[cfg(all(not(feature = "kernel_test"), target_arch = "aarch64"))]
 pub use init::irq::net_register_intx_isr;
+#[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
+pub use init::irq::net_register_msix_isr;
 #[cfg(not(feature = "kernel_test"))]
 pub use smoltcp_impl::{ChitinNetDevice, NetworkStack, init_stack, poll_stack};
 // NetOps 安全桥 (批次 Z ④): trait + 注册入口 + DECISION-K 单向拉取槽。

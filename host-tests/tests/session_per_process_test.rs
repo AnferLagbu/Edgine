@@ -27,8 +27,7 @@ fn repo_root() -> PathBuf {
 
 fn read_src(rel: &str) -> String {
     let p = repo_root().join(rel);
-    fs::read_to_string(&p)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", p.display(), e))
+    fs::read_to_string(&p).unwrap_or_else(|e| panic!("无法读取 {}: {}", p.display(), e))
 }
 
 #[test]
@@ -91,8 +90,7 @@ fn session_rs_no_unsafe_cell() {
 fn process_struct_has_session_fields() {
     let src = read_src("src/kernel/framework/proc/process.rs");
     assert!(
-        src.contains("pub session: Mutex<")
-            && src.contains("PwmContext"),
+        src.contains("pub session: Mutex<") && src.contains("PwmContext"),
         "P2-I-30: Process 缺少 `pub session: Mutex<PwmContext>` 字段"
     );
     assert!(

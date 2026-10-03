@@ -15,7 +15,9 @@ const NET_SOCKETS: &str = "src/kernel/framework/net/init/sockets.rs";
 
 fn read(path: &str) -> String {
     let p = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap().join(path);
+        .parent()
+        .unwrap()
+        .join(path);
     fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {}", path))
 }
 
@@ -30,11 +32,15 @@ fn read_socket_sources() -> String {
 fn test_max_sockets_is_256() {
     let src = read_socket_sources();
     // 验: MAX_SOCKETS 必须为 256
-    assert!(src.contains("const MAX_SOCKETS: usize = 256;"),
-        "TD-06: MAX_SOCKETS 必须为 256");
+    assert!(
+        src.contains("const MAX_SOCKETS: usize = 256;"),
+        "TD-06: MAX_SOCKETS 必须为 256"
+    );
     // 验: 注释必须提示用户改本值后须同步相关尺寸
-    assert!(src.contains("SOCKET_STORAGE"),
-        "TD-06: 注释必须提示改 MAX_SOCKETS 后须同步 SOCKET_STORAGE 尺寸");
+    assert!(
+        src.contains("SOCKET_STORAGE"),
+        "TD-06: 注释必须提示改 MAX_SOCKETS 后须同步 SOCKET_STORAGE 尺寸"
+    );
 }
 
 #[test]

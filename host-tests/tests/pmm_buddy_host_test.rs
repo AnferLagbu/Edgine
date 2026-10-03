@@ -16,8 +16,8 @@
 //! 6. 连续范围查找/预留/回滚 (B03-LEGACY-002): `find_contig_range` 连续扫描、
 //!    `reserve_range` 重叠与契约拒绝、`unreserve_range` 回滚语义 (swap init/deinit 依赖)
 
-use queenx::kernel::framework::mm::{PAGE_SIZE, PhysAddr};
 use queenx::kernel::framework::mm::pmm::{PhysicalMemoryManager, VecMetaStore};
+use queenx::kernel::framework::mm::{PAGE_SIZE, PhysAddr};
 
 /// 模拟物理内存 64MB (buddy 完整覆盖 order-0..9)
 const MEM_SIZE: u64 = 64 * 1024 * 1024;
@@ -67,9 +67,7 @@ fn pmm_alloc_never_returns_kernel_reserved() {
 fn pmm_buddy_merge_after_free() {
     let pmm = setup_pmm(0);
     // 分配 order-9 块 (2MB)
-    let a = pmm
-        .alloc_pages(ORDER9_PAGES)
-        .expect("order-9 分配应成功");
+    let a = pmm.alloc_pages(ORDER9_PAGES).expect("order-9 分配应成功");
     pmm.free_pages(a, ORDER9_PAGES);
     // 再次分配同大小块: 若 free 后 buddy 未正确合并则失败
     let b = pmm
@@ -191,10 +189,7 @@ fn pmm_should_reuse_predicate_boundary() {
     );
     // fork 的 COW 共享 (每 leaf 一次): 计数 1 -> 2 ⇒ 判据不成立 (必须复制)
     assert!(pmm.frame_inc(a), "登记共享持有者");
-    assert!(
-        pmm.frame_ref_count(a) > 1,
-        "共享后计数 > 1 ⇒ 不得就地可写"
-    );
+    assert!(pmm.frame_ref_count(a) > 1, "共享后计数 > 1 ⇒ 不得就地可写");
     // 复制分支对旧帧的净效果: 递减 1 (仍被原持有者引用, 不报告归零)
     assert!(!pmm.frame_dec(a), "复制后旧帧仍被原持有者引用");
     assert_eq!(pmm.frame_ref_count(a), 1, "旧帧计数应递减 1");
@@ -283,7 +278,8 @@ fn pmm_reserve_range_rejects_overlap_and_misuse() {
     // 契约校验: size==0 / base 未页对齐 / size 非页对齐 / 越界
     assert!(pmm.reserve_range(base, 0).is_err(), "size==0 应被拒绝");
     assert!(
-        pmm.reserve_range(PhysAddr(base.0 + 1), PAGE_SIZE as usize).is_err(),
+        pmm.reserve_range(PhysAddr(base.0 + 1), PAGE_SIZE as usize)
+            .is_err(),
         "base 未页对齐应被拒绝"
     );
     assert!(
@@ -291,7 +287,8 @@ fn pmm_reserve_range_rejects_overlap_and_misuse() {
         "size 非页对齐应被拒绝"
     );
     assert!(
-        pmm.reserve_range(PhysAddr(MEM_SIZE), PAGE_SIZE as usize).is_err(),
+        pmm.reserve_range(PhysAddr(MEM_SIZE), PAGE_SIZE as usize)
+            .is_err(),
         "越界范围应被拒绝"
     );
     // 收尾: 释放分配页并回滚预留
@@ -328,7 +325,8 @@ fn pmm_unreserve_range_rolls_back() {
     );
     // 契约校验: 越界
     assert!(
-        pmm.unreserve_range(PhysAddr(MEM_SIZE), PAGE_SIZE as usize).is_err(),
+        pmm.unreserve_range(PhysAddr(MEM_SIZE), PAGE_SIZE as usize)
+            .is_err(),
         "越界回滚应被拒绝"
     );
 }

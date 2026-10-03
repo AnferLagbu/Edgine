@@ -394,8 +394,8 @@ fn vmm_lock_acquire_stays_non_reentrant_spinlock() {
         "src/kernel/framework/mm/vmm_x86_64.rs",
         "src/kernel/framework/mm/vmm_aarch64.rs",
     ] {
-        let src =
-            fs::read_to_string(repo_root().join(file)).unwrap_or_else(|e| panic!("read {file}: {e}"));
+        let src = fs::read_to_string(repo_root().join(file))
+            .unwrap_or_else(|e| panic!("read {file}: {e}"));
 
         // 方法体内剔除注释行后再判定, 避免注释文本造成假通过.
         let code: String = method_body(&src, "pub fn acquire_lock(")

@@ -78,7 +78,9 @@ fn stack_region_detected() {
     let inside = (USER_STACK_TOP - 4096) as usize;
     let outside = (USER_STACK_TOP - USER_STACK_DEFAULT_SIZE - 4096) as usize;
     assert!((USER_STACK_TOP - USER_STACK_DEFAULT_SIZE..USER_STACK_TOP).contains(&(inside as u64)));
-    assert!(!(USER_STACK_TOP - USER_STACK_DEFAULT_SIZE..USER_STACK_TOP).contains(&(outside as u64)));
+    assert!(
+        !(USER_STACK_TOP - USER_STACK_DEFAULT_SIZE..USER_STACK_TOP).contains(&(outside as u64))
+    );
 }
 
 #[test]
@@ -110,7 +112,11 @@ fn vma_file_backed_fields_roundtrip() {
     assert_eq!(vma.start, 0x1000, "start 保留映射起始地址");
     assert_eq!(vma.end, 0x2000, "end 保留映射结束地址");
     assert_eq!(vma.end - vma.start, 0x1000, "end - start = 映射长度 4KB");
-    assert_eq!(vma.vma_type, VmaType::FileBacked, "vma_type 语义: FileBacked");
+    assert_eq!(
+        vma.vma_type,
+        VmaType::FileBacked,
+        "vma_type 语义: FileBacked"
+    );
     assert_eq!(vma.inode_id, 42, "inode_id 保留文件后端 inode 编号");
     assert!(vma.shared, "shared 标记共享映射");
     assert_eq!(vma.file_pwm, 0xCAFE, "file_pwm 保留进程凭证");

@@ -21,10 +21,7 @@ fn read(path: &str) -> String {
 #[test]
 fn test_sockaddr_in6_struct_defined() {
     let src = read(SM_FI_RS);
-    assert!(
-        src.contains("struct SockaddrIn6"),
-        "SockaddrIn6 结构未定义"
-    );
+    assert!(src.contains("struct SockaddrIn6"), "SockaddrIn6 结构未定义");
     assert!(
         src.contains("#[repr(C)]"),
         "SockaddrIn6 缺 #[repr(C)] (C ABI 兼容)"
@@ -64,14 +61,8 @@ fn test_write_sockaddr_dual_stack() {
         src.contains("pub(crate) unsafe fn write_sockaddr("),
         "write_sockaddr 函数未定义"
     );
-    assert!(
-        src.contains("IpAddr::V4(v4)"),
-        "write_sockaddr 缺 V4 分支"
-    );
-    assert!(
-        src.contains("IpAddr::V6(v6)"),
-        "write_sockaddr 缺 V6 分支"
-    );
+    assert!(src.contains("IpAddr::V4(v4)"), "write_sockaddr 缺 V4 分支");
+    assert!(src.contains("IpAddr::V6(v6)"), "write_sockaddr 缺 V6 分支");
 }
 
 #[test]

@@ -37,7 +37,14 @@ struct Vma {
 }
 
 impl Vma {
-    fn file_backed(start: usize, end: usize, offset: u64, inode_id: u32, pwm: u64, shared: bool) -> Self {
+    fn file_backed(
+        start: usize,
+        end: usize,
+        offset: u64,
+        inode_id: u32,
+        pwm: u64,
+        shared: bool,
+    ) -> Self {
         // 默认挂载根 (RamFS, mount_idx = 0), 与 queenx mmap 退到根一致.
         Self::file_backed_with_mount(start, end, offset, inode_id, pwm, shared, Some(0))
     }
@@ -108,7 +115,10 @@ fn mmap_syscall_passes_pwm_to_vma() {
     let pwm: u64 = 0x1234_5678_9ABC_DEF0;
     let vma = mock_mmap_file(0x8000, 0x4000, 5, pwm);
     // 关键: file_pwm 必须从入口参数透传到 Vma 存储
-    assert_eq!(vma.file_pwm, pwm, "pwm must round-trip through mmap_syscall");
+    assert_eq!(
+        vma.file_pwm, pwm,
+        "pwm must round-trip through mmap_syscall"
+    );
     // inode_id = fd + 1 (简化版, 待 fdtable 集成)
     assert_eq!(vma.inode_id, 6);
 }
@@ -141,7 +151,10 @@ fn vma_merge_requires_same_pwm() {
     let v2_same = Vma::file_backed(0x2000, 0x3000, 0, 1, pwm, true);
     let v2_diff = Vma::file_backed(0x2000, 0x3000, 0, 1, pwm + 1, true);
     assert!(should_merge(&v1, &v2_same), "same pwm 邻接可合并");
-    assert!(!should_merge(&v1, &v2_diff), "不同 pwm 邻接不可合并 (权限隔离)");
+    assert!(
+        !should_merge(&v1, &v2_diff),
+        "不同 pwm 邻接不可合并 (权限隔离)"
+    );
 }
 
 /// fork 后 Vma.file_pwm 继承 (vma.clone 镜像)
@@ -215,7 +228,10 @@ fn vma_preserves_file_offset() {
     // #PF miss 时: file_off = vma.offset + (fault_addr - vma.start)
     let fault_addr = 0x3000;
     let file_off = v.offset + (fault_addr - v.start) as u64;
-    assert_eq!(file_off, 0x4000, "file_off = offset + (fault - start) = 0x2000 + 0x2000");
+    assert_eq!(
+        file_off, 0x4000,
+        "file_off = offset + (fault - start) = 0x2000 + 0x2000"
+    );
 }
 
 /// 验证匿名 VMA 的 start/end/offset 默认语义

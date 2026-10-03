@@ -87,7 +87,10 @@ fn kernel_error_exposes_no_such_process() {
 fn signal_module_still_safe() {
     let src = read(SIGNAL_RS);
     // 顶层 deny 不可松
-    assert!(src.starts_with("#![deny(unsafe_code)]"), "signal.rs 必须保持 #![deny(unsafe_code)]");
+    assert!(
+        src.starts_with("#![deny(unsafe_code)]"),
+        "signal.rs 必须保持 #![deny(unsafe_code)]"
+    );
     // 全局 unsafe_code 标记必须为 0
     let unsafe_count = src.matches("unsafe {").count() + src.matches("unsafe fn").count();
     assert_eq!(unsafe_count, 0, "signal.rs 必须 0 unsafe 块");

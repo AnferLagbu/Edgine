@@ -72,8 +72,10 @@ fn chown_registered_uid_returns_pwm() {
     assert!(found.is_some(), "已注册身份应可通过 find_by_uid(0) 找到");
     let found_pwm = found.unwrap().get_pwm().0;
     assert_ne!(found_pwm, 0, "uid=0 映射的 pwm 必须非 0 (不回退 root)");
-    assert!(found_pwm == pwm || identity::find(pwm).is_some(),
-        "test_pwm 身份应已注册 (无论 find_by_uid 命中哪个 uid=0 条目)");
+    assert!(
+        found_pwm == pwm || identity::find(pwm).is_some(),
+        "test_pwm 身份应已注册 (无论 find_by_uid 命中哪个 uid=0 条目)"
+    );
 }
 
 #[test]
@@ -82,7 +84,11 @@ fn chown_unregistered_uid_returns_einval_not_root() {
     let tbl = identity::get_table();
     // 本测试进程仅注册 uid=0 的身份, 其余 uid 均未注册
     for uid in [42u32, 43, 1000, 2000] {
-        assert!(tbl.find_by_uid(uid).is_none(), "uid {} 未注册应返回 None", uid);
+        assert!(
+            tbl.find_by_uid(uid).is_none(),
+            "uid {} 未注册应返回 None",
+            uid
+        );
     }
 }
 

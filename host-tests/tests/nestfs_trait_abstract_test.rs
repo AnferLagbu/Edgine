@@ -12,15 +12,16 @@ use std::path::Path;
 
 fn repo_root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
+        .parent()
+        .unwrap()
         .to_path_buf()
 }
 
 #[test]
 fn test_nestfs_checksum_trait_exists() {
     let path = repo_root().join("src/kernel/services/fs/nestfs/checksum.rs");
-    let src = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
+    let src =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
     // I-04 要求各子系统有独立 trait
     assert!(
@@ -35,8 +36,8 @@ fn test_nestfs_checksum_trait_exists() {
 #[test]
 fn test_nestfs_checksum_trait_impl_for_hvchecksum() {
     let path = repo_root().join("src/kernel/services/fs/nestfs/checksum.rs");
-    let src = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
+    let src =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
     // 必须为现有 NestChecksum 提供 trait 实现
     assert!(
@@ -55,13 +56,28 @@ fn test_nestfs_no_cyclic_sibling_use() {
     // 由于 NestFS 18 文件关系复杂, 静态检查环代价大, 此处只做基础结构性检查:
     // 顶层 mod.rs 必须列出全部 18 子模块, 且不允许有 #[cfg(...)] 隐藏
     let path = repo_root().join("src/kernel/services/fs/nestfs/mod.rs");
-    let src = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
+    let src =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
     let expected = [
-        "arc", "bp", "checksum", "compress", "dataset", "dedup",
-        "dmu", "dva", "nestfs", "metaslab", "raidz", "snapshot",
-        "spa", "txg", "vdev", "zap", "zil", "zil_persist",
+        "arc",
+        "bp",
+        "checksum",
+        "compress",
+        "dataset",
+        "dedup",
+        "dmu",
+        "dva",
+        "nestfs",
+        "metaslab",
+        "raidz",
+        "snapshot",
+        "spa",
+        "txg",
+        "vdev",
+        "zap",
+        "zil",
+        "zil_persist",
     ];
 
     for mod_name in &expected {

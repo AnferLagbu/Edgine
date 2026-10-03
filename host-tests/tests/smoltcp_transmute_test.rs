@@ -34,9 +34,7 @@ fn test_no_unsafe_transmute_in_init_rs() {
     let content = read(&init_rs());
 
     // 匹配 `unsafe { core::mem::transmute(`
-    let unsafe_transmute_count = content
-        .matches("unsafe { core::mem::transmute(")
-        .count();
+    let unsafe_transmute_count = content.matches("unsafe { core::mem::transmute(").count();
     assert_eq!(
         unsafe_transmute_count, 0,
         "framework/net/init.rs 仍有 {} 处 unsafe transmute (W5 反模式), 应改用 transmute_copy",
@@ -50,9 +48,7 @@ fn test_only_transmute_copy_in_init_rs() {
     let content = read(&init_rs());
 
     // transmute_copy 必须存在 (W5 路径)
-    let transmute_copy_count = content
-        .matches("core::mem::transmute_copy")
-        .count();
+    let transmute_copy_count = content.matches("core::mem::transmute_copy").count();
     assert!(
         transmute_copy_count >= 2,
         "transmute_copy 应至少 2 处 (as_u32_handle + smol_handle_from_u32), 实测: {}",
@@ -68,7 +64,9 @@ fn test_smoltcp_net_stack_socket_open_uses_as_u32_handle() {
 
     // 找到 smoltcp_net_stack_socket_open 函数
     let sig = "fn smoltcp_net_stack_socket_open(";
-    let idx = content.find(sig).expect("应有 smoltcp_net_stack_socket_open 函数");
+    let idx = content
+        .find(sig)
+        .expect("应有 smoltcp_net_stack_socket_open 函数");
 
     // 找到函数体结束 (下一个顶层 fn 起始或文件结束)
     let body_end = content[idx..]
@@ -97,11 +95,13 @@ fn test_as_u32_handle_and_smol_handle_from_u32_both_use_transmute_copy() {
     let content = read(&init_rs());
 
     // as_u32_handle
-    let as_u32_idx = content.find("fn as_u32_handle(")
+    let as_u32_idx = content
+        .find("fn as_u32_handle(")
         .expect("应有 as_u32_handle 函数");
-    let as_u32_end = as_u32_idx + content[as_u32_idx..]
-        .find("\n}\n")
-        .expect("as_u32_handle 应有函数体");
+    let as_u32_end = as_u32_idx
+        + content[as_u32_idx..]
+            .find("\n}\n")
+            .expect("as_u32_handle 应有函数体");
     let as_u32_body = &content[as_u32_idx..as_u32_end + 1];
     assert!(
         as_u32_body.contains("transmute_copy(&h)"),
@@ -109,11 +109,13 @@ fn test_as_u32_handle_and_smol_handle_from_u32_both_use_transmute_copy() {
     );
 
     // smol_handle_from_u32
-    let from_u32_idx = content.find("fn smol_handle_from_u32(")
+    let from_u32_idx = content
+        .find("fn smol_handle_from_u32(")
         .expect("应有 smol_handle_from_u32 函数");
-    let from_u32_end = from_u32_idx + content[from_u32_idx..]
-        .find("\n}\n")
-        .expect("smol_handle_from_u32 应有函数体");
+    let from_u32_end = from_u32_idx
+        + content[from_u32_idx..]
+            .find("\n}\n")
+            .expect("smol_handle_from_u32 应有函数体");
     let from_u32_body = &content[from_u32_idx..from_u32_end + 1];
     assert!(
         from_u32_body.contains("transmute_copy::<usize"),

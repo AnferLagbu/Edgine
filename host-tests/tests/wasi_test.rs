@@ -138,8 +138,14 @@ fn test_filestat_all_fields_semantics() {
     }
 
     let stat = Filestat {
-        dev: 0x100, ino: 0xABCD_1234, filetype: 3, nlink: 5,
-        size: 4096, atim: 1_700_000_000_000_000, mtim: 1_700_000_001_000_000, ctim: 1_700_000_002_000_000,
+        dev: 0x100,
+        ino: 0xABCD_1234,
+        filetype: 3,
+        nlink: 5,
+        size: 4096,
+        atim: 1_700_000_000_000_000,
+        mtim: 1_700_000_001_000_000,
+        ctim: 1_700_000_002_000_000,
     };
     assert_eq!(stat.dev, 0x100, "dev = 设备 ID");
     assert_eq!(stat.ino, 0xABCD_1234, "ino = inode 编号");
@@ -148,7 +154,10 @@ fn test_filestat_all_fields_semantics() {
     assert_eq!(stat.size, 4096, "size = 文件大小");
     assert_eq!(stat.atim, 1_700_000_000_000_000, "atim = 访问时间 (纳秒)");
     assert_eq!(stat.mtim, 1_700_000_001_000_000, "mtim = 修改时间 (纳秒)");
-    assert_eq!(stat.ctim, 1_700_000_002_000_000, "ctim = 状态变更时间 (纳秒)");
+    assert_eq!(
+        stat.ctim, 1_700_000_002_000_000,
+        "ctim = 状态变更时间 (纳秒)"
+    );
 }
 
 // ============================================================================
@@ -173,7 +182,10 @@ fn test_wasi_errno_posix_alignment() {
 #[test]
 fn test_iovec_structure() {
     // SIMPLIFIED: WASI preview1 iovec_t 布局 (外部规范, 内核无对应导出结构)
-    struct IoVec { buf: u32, len: u32 }
+    struct IoVec {
+        buf: u32,
+        len: u32,
+    }
     let iovecs = [IoVec { buf: 100, len: 256 }, IoVec { buf: 400, len: 128 }];
     // 验证 buf 字段保留缓冲区起始地址
     assert_eq!(iovecs[0].buf, 100, "buf[0] 保留起始地址");
@@ -187,12 +199,24 @@ fn test_iovec_buf_pointer_semantics() {
     // SIMPLIFIED: WASI preview1 iovec_t 布局: buf (指针) + len (长度)
     // buf: 用户态缓冲区地址, len: 缓冲区长度
     // readv/writev 通过遍历 iovec 数组进行分散/聚集 I/O
-    struct IoVec { buf: u32, len: u32 }
+    struct IoVec {
+        buf: u32,
+        len: u32,
+    }
 
     let iovecs = [
-        IoVec { buf: 0x1000, len: 256 },
-        IoVec { buf: 0x2000, len: 128 },
-        IoVec { buf: 0x3000, len: 512 },
+        IoVec {
+            buf: 0x1000,
+            len: 256,
+        },
+        IoVec {
+            buf: 0x2000,
+            len: 128,
+        },
+        IoVec {
+            buf: 0x3000,
+            len: 512,
+        },
     ];
 
     // 验证 buf 字段: 每个缓冲区起始地址不同, 用于分散写入
@@ -201,9 +225,21 @@ fn test_iovec_buf_pointer_semantics() {
     assert_eq!(iovecs[2].buf, 0x3000, "buf[2] = 用户缓冲区 2 起始地址");
 
     // 验证 buf + len: 标记缓冲区结束地址
-    assert_eq!(iovecs[0].buf + iovecs[0].len, 0x1100, "buf[0] + len[0] = 缓冲区 0 末尾");
-    assert_eq!(iovecs[1].buf + iovecs[1].len, 0x2080, "buf[1] + len[1] = 缓冲区 1 末尾");
-    assert_eq!(iovecs[2].buf + iovecs[2].len, 0x3200, "buf[2] + len[2] = 缓冲区 2 末尾");
+    assert_eq!(
+        iovecs[0].buf + iovecs[0].len,
+        0x1100,
+        "buf[0] + len[0] = 缓冲区 0 末尾"
+    );
+    assert_eq!(
+        iovecs[1].buf + iovecs[1].len,
+        0x2080,
+        "buf[1] + len[1] = 缓冲区 1 末尾"
+    );
+    assert_eq!(
+        iovecs[2].buf + iovecs[2].len,
+        0x3200,
+        "buf[2] + len[2] = 缓冲区 2 末尾"
+    );
 
     // readv 总读取字节数 = sum(len)
     let total_read: u32 = iovecs.iter().map(|iov| iov.len).sum();

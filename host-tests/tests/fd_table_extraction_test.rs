@@ -129,9 +129,7 @@ fn fd_table_alloc_uses_first_fit_strategy() {
 fn fd_table_close_zeros_slot() {
     // P1-I-01 验收: close_fd 必清空 slot
     let src = framework_fd_table_rs();
-    let close_fn = src
-        .find("pub fn close_fd")
-        .expect("close_fd not found");
+    let close_fn = src.find("pub fn close_fd").expect("close_fd not found");
     let body_start = src[close_fn..].find('{').unwrap() + close_fn;
     let body = &src[body_start..];
     // 新实现使用 u32::MAX 表示空闲

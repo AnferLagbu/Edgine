@@ -21,7 +21,11 @@ use queenx::kernel::framework::net::init::{
 fn max_sockets_config_semantics() {
     // 默认值 1024 > 上限 256 → configure 截断为 MAX_SOCKETS
     configure_max_sockets();
-    assert_eq!(get_max_sockets(), MAX_SOCKETS, "DEFAULT(1024) > MAX(256) 应截断为 MAX");
+    assert_eq!(
+        get_max_sockets(),
+        MAX_SOCKETS,
+        "DEFAULT(1024) > MAX(256) 应截断为 MAX"
+    );
 
     // set(0) 拒绝, 返回当前值, 状态不变
     let current = get_max_sockets();
@@ -52,7 +56,10 @@ fn max_sockets_config_semantics() {
 /// 内核 MAX_SOCKETS 编译期常量 = 256
 #[test]
 fn max_sockets_const_is_256() {
-    assert_eq!(MAX_SOCKETS, 256, "内核 net/init/sockets.rs MAX_SOCKETS = 256");
+    assert_eq!(
+        MAX_SOCKETS, 256,
+        "内核 net/init/sockets.rs MAX_SOCKETS = 256"
+    );
 }
 
 #[test]
