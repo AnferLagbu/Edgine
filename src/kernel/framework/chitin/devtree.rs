@@ -263,8 +263,7 @@ pub fn devtree_children(node_id: NodeId) -> Vec<NodeId> {
     tree.nodes
         .iter()
         .find(|n| n.id == node_id)
-        .map(|n| n.children.clone())
-        .unwrap_or_default()
+        .map_or_default(|n| n.children.clone())
 }
 
 /// 获取节点

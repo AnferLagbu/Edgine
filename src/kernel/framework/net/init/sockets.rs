@@ -60,13 +60,7 @@ static G_MAX_SOCKETS: AtomicUsize = AtomicUsize::new(0);
 
 /// 启动期初始化 `G_MAX_SOCKETS`. 必须在 `init_sockets` 前调用一次.
 pub fn configure_max_sockets() {
-    let initial = if DEFAULT_MAX_SOCKETS > MAX_SOCKETS {
-        MAX_SOCKETS
-    } else if DEFAULT_MAX_SOCKETS == 0 {
-        1
-    } else {
-        DEFAULT_MAX_SOCKETS
-    };
+    let initial = DEFAULT_MAX_SOCKETS.clamp(1, MAX_SOCKETS);
     G_MAX_SOCKETS.store(initial, Ordering::Release);
 }
 

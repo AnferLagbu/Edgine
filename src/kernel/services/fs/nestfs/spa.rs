@@ -128,9 +128,8 @@ impl NestUberblock {
     }
 }
 
-const _UBERBLOCK_MAX_SIZE: usize = 512;
-const _ASSERT_UBERBLOCK_FITS: () =
-    assert!(core::mem::size_of::<NestUberblock>() <= _UBERBLOCK_MAX_SIZE);
+// 编译期断言: NestUberblock 必须装入 512 字节的 uberblock 区 (UBERBLOCK_MAX_SIZE).
+const _: () = assert!(core::mem::size_of::<NestUberblock>() <= 512);
 
 pub struct NestSpaConfig {
     pub name: [u8; HV_POOL_MAX_NAME],

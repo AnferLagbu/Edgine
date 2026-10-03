@@ -205,11 +205,7 @@ fn is_valid_rsdp(addr: u64) -> bool {
         for i in 0..20 {
             sum = sum.wrapping_add(ptr.add(i).read_volatile());
         }
-        if sum != 0 {
-            return false;
-        }
-
-        true
+        sum == 0
     }
 }
 

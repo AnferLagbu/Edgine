@@ -44,12 +44,12 @@ impl<const CAP: usize> RingBuffer<{ CAP }> {
     ///
     /// 若 CAP 不是 2 的幂则在 debug 构建中 panic, release 中依赖掩码
     /// 计算的正确性。
-    const fn _assert_power_of_two() {
+    const fn assert_power_of_two() {
         assert!(CAP > 0 && CAP.is_power_of_two(), "CAP must be power of 2");
     }
 
     pub const fn new() -> Self {
-        Self::_assert_power_of_two();
+        Self::assert_power_of_two();
         Self {
             data: [0u8; CAP],
             head: AtomicUsize::new(0),

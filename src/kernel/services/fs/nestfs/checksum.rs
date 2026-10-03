@@ -54,7 +54,7 @@ impl NestChecksum {
     }
 
     fn fletcher2(&mut self, data: &[u8]) {
-        let words = data.chunks_exact(8);
+        let (words, _) = data.as_chunks::<8>();
         let mut a: u64 = 0;
         let mut b: u64 = 0;
         for chunk in words {
@@ -84,7 +84,7 @@ impl NestChecksum {
         reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
     )]
     fn fletcher4(&mut self, data: &[u8]) {
-        let words = data.chunks_exact(8);
+        let (words, _) = data.as_chunks::<8>();
         let mut a: u64 = 0;
         let mut b: u64 = 0;
         let mut c: u64 = 0;
