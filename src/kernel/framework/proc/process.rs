@@ -597,7 +597,7 @@ impl Process {
 
     pub fn try_inc_ref(&self) -> bool {
         self.ref_count
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |v| {
                 if v > 0 { Some(v + 1) } else { None }
             })
             .is_ok()

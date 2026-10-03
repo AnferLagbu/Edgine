@@ -27,8 +27,12 @@ unsafe extern "C" {
     fn vmm_ensure_path_user(vaddr: u64);
     fn vmm_destroy_page_table(cr3: u64);
     fn vmm_get_physical_in_table(table: u64, vaddr: u64) -> u64;
-    fn memset(s: *mut u8, c: i32, n: u64);
-    fn memcpy(dest: *mut u8, src: *const u8, n: u64);
+    fn memset(s: *mut core::ffi::c_void, c: i32, n: usize) -> *mut core::ffi::c_void;
+    fn memcpy(
+        dest: *mut core::ffi::c_void,
+        src: *const core::ffi::c_void,
+        n: usize,
+    ) -> *mut core::ffi::c_void;
     fn kmalloc(size: u64) -> *mut u8;
 }
 
@@ -462,7 +466,9 @@ pub(crate) mod raw {
             return page;
         }
         // SAFETY: page 来自 alloc_phys_page, 大小为 PAGE_SIZE。
-        unsafe { memset(page, 0, PAGE_SIZE) }
+        unsafe {
+            memset(page.cast::<core::ffi::c_void>(), 0, PAGE_SIZE as usize);
+        }
         raw::vmm_map_user_page(cr3, vaddr, page as u64, flags);
         page
     }
@@ -485,7 +491,11 @@ pub(crate) mod raw {
         unsafe {
             let dest = raw::phys_to_kern_mut(page_phys, off_in_page);
             let src = raw::elf_ptr_at(elf_data, src_off);
-            memcpy(dest, src, chunk);
+            memcpy(
+                dest.cast::<core::ffi::c_void>(),
+                src.cast::<core::ffi::c_void>(),
+                chunk as usize,
+            );
         }
     }
 
@@ -506,7 +516,9 @@ pub(crate) mod raw {
         let page = raw::alloc_phys_page();
         if !page.is_null() {
             // SAFETY: page 来自 alloc_phys_page, 大小为 PAGE_SIZE。
-            unsafe { memset(page, 0, PAGE_SIZE) }
+            unsafe {
+                memset(page.cast::<core::ffi::c_void>(), 0, PAGE_SIZE as usize);
+            }
         }
         page
     }
@@ -532,7 +544,9 @@ pub(crate) mod raw {
         let ptr = unsafe { kmalloc(size) } as *mut u8;
         if !ptr.is_null() {
             // SAFETY: ptr 来自 kmalloc, 大小为 size, 清零区间 [ptr, ptr+size) 合法。
-            unsafe { memset(ptr, 0, size) }
+            unsafe {
+                memset(ptr.cast::<core::ffi::c_void>(), 0, size as usize);
+            }
         }
         ptr
     }
@@ -1884,10 +1898,6 @@ impl UserProcManager {
     }
 
     #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
-    #[expect(
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
@@ -1924,9 +1934,10 @@ impl UserProcManager {
             // SAFETY: page 来自 pmm_alloc_page, code 区间内可读。
             unsafe {
                 memcpy(
-                    page as *mut u8,
-                    code.add((i * PAGE_SIZE) as usize),
-                    copy_size,
+                    page.cast::<core::ffi::c_void>(),
+                    code.add((i * PAGE_SIZE) as usize)
+                        .cast::<core::ffi::c_void>(),
+                    copy_size as usize,
                 );
             }
 

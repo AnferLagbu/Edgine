@@ -1140,7 +1140,7 @@ impl MmStruct {
         }
         let _ = self
             .locked_vm
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |cur| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |cur| {
                 Some(cur.saturating_sub(total))
             });
         drop(vmas);

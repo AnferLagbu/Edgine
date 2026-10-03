@@ -51,7 +51,7 @@ const STRLEN_MAX: usize = 1024;
 /// # Safety
 /// 此函数通过 FFI 暴露给 C 代码使用
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn strlen(s: *const i8) -> usize {
+pub unsafe extern "C" fn strlen(s: *const core::ffi::c_char) -> usize {
     unsafe {
         if s.is_null() {
             return 0;
@@ -503,11 +503,11 @@ pub unsafe extern "C" fn strstr(haystack: *const i8, needle: *const i8) -> *mut 
     reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
 )]
 pub unsafe extern "C" fn memcpy(
-    dest: *mut u8,
-    src: *const u8,
+    dest: *mut core::ffi::c_void,
+    src: *const core::ffi::c_void,
     n: usize,
     // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
-) -> *mut u8 {
+) -> *mut core::ffi::c_void {
     unsafe {
         if dest.is_null() || src.is_null() || n == 0 {
             return dest;
@@ -549,7 +549,11 @@ pub unsafe extern "C" fn memcpy(
 /// # Safety
 ///
 /// `src` 与 `dst` 均为有效指针. `dst` 至少有 `n` 字节可写内存. 两个区域可重叠.
-pub unsafe extern "C" fn memmove(dest: *mut u8, src: *const u8, n: usize) -> *mut u8 {
+pub unsafe extern "C" fn memmove(
+    dest: *mut core::ffi::c_void,
+    src: *const core::ffi::c_void,
+    n: usize,
+) -> *mut core::ffi::c_void {
     unsafe {
         if dest.is_null() || src.is_null() || n == 0 {
             return dest;
@@ -592,7 +596,11 @@ pub unsafe extern "C" fn memmove(dest: *mut u8, src: *const u8, n: usize) -> *mu
 /// # Safety
 ///
 /// `src` 与 `dst` 均为有效指针. `dst` 至少有 `n` 字节可写内存. 两个区域不可重叠.
-pub unsafe extern "C" fn memset(s: *mut u8, c: i32, n: usize) -> *mut u8 {
+pub unsafe extern "C" fn memset(
+    s: *mut core::ffi::c_void,
+    c: i32,
+    n: usize,
+) -> *mut core::ffi::c_void {
     unsafe {
         if s.is_null() || n == 0 {
             return s;
@@ -601,7 +609,7 @@ pub unsafe extern "C" fn memset(s: *mut u8, c: i32, n: usize) -> *mut u8 {
         #[cfg(target_arch = "aarch64")]
         {
             let val = (c & 0xFF) as u8;
-            let mut dst = s;
+            let mut dst = s as *mut u8;
             let mut remaining = n;
 
             // 逐字节对齐到 16 字节边界
@@ -716,7 +724,11 @@ pub unsafe extern "C" fn memset_optimized(s: *mut u8, c: i32, n: usize) -> *mut 
 /// # Safety
 ///
 /// `dst` 是指向至少有 `n` 字节可写内存的有效指针. `value` 须能放入 `u8`.
-pub unsafe extern "C" fn memcmp(s1: *const u8, s2: *const u8, n: usize) -> i32 {
+pub unsafe extern "C" fn memcmp(
+    s1: *const core::ffi::c_void,
+    s2: *const core::ffi::c_void,
+    n: usize,
+) -> i32 {
     unsafe {
         if n == 0 {
             return 0;
@@ -1002,7 +1014,11 @@ mod tests {
             let src = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
             // 测试 memcpy
-            memcpy(dest.as_mut_ptr() as *mut u8, src.as_ptr() as *const u8, 10);
+            memcpy(
+                dest.as_mut_ptr().cast::<core::ffi::c_void>(),
+                src.as_ptr().cast::<core::ffi::c_void>(),
+                10,
+            );
             assert_eq!(dest, src);
 
             // 测试 memmove（重叠区域）
@@ -1011,8 +1027,8 @@ mod tests {
             let mut overlap = [1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
             // 将 overlap[2..] 移动到 overlap[0..]
             memmove(
-                overlap.as_mut_ptr() as *mut u8,
-                overlap.as_ptr().add(2) as *const u8,
+                overlap.as_mut_ptr().cast::<core::ffi::c_void>(),
+                overlap.as_ptr().add(2).cast::<core::ffi::c_void>(),
                 8,
             );
             assert_eq!(overlap, [3, 4, 5, 6, 7, 8, 9, 10, 9, 10]);
@@ -1026,11 +1042,11 @@ mod tests {
             let mut buffer = [0xABu8; 20];
 
             // 测试 memset
-            memset(buffer.as_mut_ptr() as *mut u8, 0x00, 20);
+            memset(buffer.as_mut_ptr().cast::<core::ffi::c_void>(), 0x00, 20);
             assert_eq!(buffer, [0u8; 20]);
 
             // 测试 memset with specific value
-            memset(buffer.as_mut_ptr() as *mut u8, 0xFF, 10);
+            memset(buffer.as_mut_ptr().cast::<core::ffi::c_void>(), 0xFF, 10);
             for i in 0..10 {
                 assert_eq!(buffer[i], 0xFF);
             }
@@ -1052,12 +1068,22 @@ mod tests {
 
             // 相等
             assert_eq!(
-                memcmp(a.as_ptr() as *const u8, b.as_ptr() as *const u8, 5),
+                memcmp(
+                    a.as_ptr().cast::<core::ffi::c_void>(),
+                    b.as_ptr().cast::<core::ffi::c_void>(),
+                    5
+                ),
                 0
             );
 
             // 小于
-            assert!(memcmp(a.as_ptr() as *const u8, c.as_ptr() as *const u8, 5) < 0);
+            assert!(
+                memcmp(
+                    a.as_ptr().cast::<core::ffi::c_void>(),
+                    c.as_ptr().cast::<core::ffi::c_void>(),
+                    5
+                ) < 0
+            );
         }
     }
 

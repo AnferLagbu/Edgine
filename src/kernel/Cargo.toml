@@ -37,9 +37,8 @@ debug = 2
 
 [dependencies]
 # 方案 D: kernel 直接依赖 (从 queenx Cargo.toml 迁移, 仅 kernel 实际使用).
-# spin/zerocopy/ed25519-dalek 由 kernel 代码直接引用; bitflags 经 `bitflags::bitflags!`
+# zerocopy/ed25519-dalek 由 kernel 代码直接引用; bitflags 经 `bitflags::bitflags!`
 # 宏调用 (mm/credo/cpu 等 7 文件); smoltcp 为 kernel 内部 vendored.
-spin = "0.9"
 bitflags = "2.4"
 zerocopy = { version = "0.8", default-features = false, features = ["derive"] }
 # DECISION-078: 真实 Ed25519 签名验证 (RFC 8032). BSD-3-Clause OR Apache-2.0.
@@ -59,6 +58,11 @@ smoltcp = { path = "services/net/smoltcp", default-features = false, features = 
     "socket-dhcpv4",
     "socket-dns",
 ] }
+
+# spin 仅在 x86_64 SMP 启动路径 (framework/arch/x86_64/smp_init.rs) 使用,
+# 声明为 x86_64 限定依赖, 消除 aarch64 构建的 cargo `unused_dependencies` 警告.
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+spin = "0.9"
 
 [features]
 default = []
