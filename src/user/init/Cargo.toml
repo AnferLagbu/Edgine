@@ -5,4 +5,3 @@ edition.workspace = true
 
 [dependencies]
 userlib = { path = "../lib" }
-install = { path = "../install" }
