@@ -161,7 +161,7 @@
 
 ---
 
-## 🔴 第 1 类：运行时已知问题 (5 项)
+## 🔴 第 1 类：运行时已知问题 (7 项)
 
 ### ISSUE-RT-001: x86_64 e1000 + smoltcp 初始化挂起
 
@@ -268,7 +268,24 @@
 | **回归测试** | [kpti_x86_user_table_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/kpti_x86_user_table_test.rs) 新增 `test_sys_fork_registers_child_in_user_proc_manager` —— 静态断言 `sys_fork` 在进程表插入之后经 `user_proc_clone` 注册子进程, 且失败分支回滚进程表条目。 |
 | **验证结果** | 六门槛全绿（双架构 `./ci/build.sh all` 5/0; `./ci/build.sh aarch64 && ./ci/audit.sh quick` EXIT=0; `make test-host` 通过; `make test-kernel-host` 949/0; `FAIL_OK=0 ./scripts/qemu_boot_test.sh all` 2/2）; **x86_64 连续 20 轮 `FAIL_OK=0` 全部通过**（20/20）, 失败日志转为正常 `migrate pid=6 -> cpu=1` → `EL0 pid=6 cpu=1` → `exit: pid=6 code=0`。 |
 | **关联** | APS-05 / P6 ([smp-ap-user-scheduling.md](./smp-ap-user-scheduling.md)); ISSUE-RT-004 (同属 SMP 调度链路修复链) |
-| **遗留** | 退出进程的 `USER_PROC_MANAGER` 镜像记录在生产路径无回收（`destroy_by_pid_no_kstack` 无调用者）—— 预存架构缺口, 本轮**仅登记**, 待独立处置。 |
+| **遗留** | ✅ 已修复：退出进程的 `USER_PROC_MANAGER` 镜像记录在生产路径无回收（原 `destroy_by_pid_no_kstack` 无调用者, 每次 fork 泄漏一条）。**修复**：于权威 `Process` 销毁唯一入口 [process.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/proc/process.rs) 的 `remove_and_free` / `dec_ref_and_maybe_free`「引用归零即释放」分支、`Box::from_raw` **之前** 调 `USER_PROC_MANAGER.destroy_by_pid(pid)`（INV-USER-PROC #2: 镜像须先于权威 `Process` 移除）；`destroy` 内用户栈释放提前到页表销毁前、取句柄与 `destroy` 锁分离（避免同锁自锁死）, 回收时释放内核栈。**回归测试**: [user_proc_reclaim_contract_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/user_proc_reclaim_contract_test.rs)。**暴露并修复** aarch64 VMM 根表裸解引用预存缺陷（见 ISSUE-RT-007）。 |
+
+---
+
+### ISSUE-RT-007: aarch64 VMM 页表遍历根表裸物理地址解引用（L0 未 `phys_to_virt`）
+
+| 字段 | 数据 |
+|---|---|
+| **严重度** | P0 (KPTI 激活后任何经 `cr3` 的页表遍历在 EL1 即数据 abort) |
+| **状态** | ✅ 已修复 (`[X]`) |
+| **类型** | 预存缺陷 (aarch64 VMM 误移植; 由 ISSUE-RT-006「镜像回收」接线新暴露) |
+| **现象** | aarch64 `-smp 2` 启动后进程退出回收路径调 `raw::virt_to_phys(cr3, stack_virt)` → EL1 数据 abort: `SYNC! ESR=0000000096000005 FAR=000000005FEC57F8 ELR=FFFF0000401465E8`; 随后 `[SMP] TLB shootdown` 与 `[KPTI] EL0 kernel high-half access denied` 里程碑**双双缺失**（进程继续以损坏状态运行）。修订前基线 (HEAD) aarch64 全里程碑通过, 故为本次接线触发。 |
+| **根因** | [vmm_aarch64.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/vmm_aarch64.rs) 的 `translate_in_pml4` / `get_pte_value` / `set_pte_value` 三处遍历入口, 其 L0 根表以 `root_paddr as *const u64` **裸解引用物理地址**, 而各层子表帧 (`l0_entry & mask` 等) 均统一走 `phys_to_virt`。`root_paddr` 的契约是**物理**地址（调用方传 `Process.cr3` / `kernel_l0`; 同文件其余函数均 `phys_to_virt(self.kernel_l0)`）。对照 x86_64 端口 [vmm_x86_64.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/vmm_x86_64.rs#L536-L537) 正确写法为 `PhysAddr(pml4).to_virt()` —— aarch64 系误移植。内核迁至高半区且 KPTI 激活后低物理地址无映射, 裸解引用即在 EL1 翻译故障。 |
+| **证据 (实测)** | 故障符号由 `build/kernel.map` 定位: `ELR=0xFFFF0000401465E8` = `Aarch64Vmm::translate_in_pml4`+8 (函数 `0x...65e0`, size `0xbc`)。创建期 `virt_to_phys` 不崩（当时低地址仍映射）, 仅在 EL0/KPTI 后崩 —— 故长期潜伏。 |
+| **修复方案** | 三处 L0 改为 `phys_to_virt(root_paddr)`（与各层子表帧、同文件其余入口、x86_64 端口一致, PA→VA 换算唯一入口）。 |
+| **回归测试** | [aarch64_pa_va_conversion_unify_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/aarch64_pa_va_conversion_unify_test.rs) 新增 `test_vmm_aarch64_root_table_converted_to_virt_before_deref` —— fail-closed: 禁 `root_paddr as *const/*mut` 裸解引用, 且要求 ≥3 处 `phys_to_virt(root_paddr)`。QEMU 端由 KPTI-09 / TLB shootdown 里程碑承担。 |
+| **验证结果** | 六门槛全绿（双架构 `./ci/build.sh all` 5/0; `./ci/build.sh aarch64 && ./ci/audit.sh quick` EXIT=0; `make test-host` 通过; `make test-kernel-host` 949/0; `FAIL_OK=0 ./scripts/qemu_boot_test.sh all` 2/2）; aarch64 日志恢复 `TLB shootdown #1..#3` 与 `KPTI ... denied`, 且仅剩 1 条预期 KPTI 探针故障 (`ESR=0x92000007`, from-lower-EL)。 |
+| **关联** | ISSUE-RT-006 (触发暴露); [cr3-lifetime-ownership.md](./cr3-lifetime-ownership.md); [aarch64_pa_va_conversion_unify_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/aarch64_pa_va_conversion_unify_test.rs) test 6 同族（`ESR=0x96000005` level-1 fault） |
 
 ---
 

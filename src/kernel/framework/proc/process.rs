@@ -784,6 +784,10 @@ impl ProcessTable {
                 if prev == 0 {
                     table[pid as usize] = None;
                     drop(table);
+                    // 回收 UserProc 镜像记录 — 必须先于 Process 析构: 镜像 destroy
+                    // 经 cr3 翻译用户栈/释放页表, 而 Process::drop 会销毁该页表
+                    // (INV-USER-PROC #2: 镜像须先于权威 Process 被移除).
+                    crate::framework::proc::user_proc::USER_PROC_MANAGER.destroy_by_pid(pid);
                     // SAFETY: nn 由 Box::into_raw 分配, 且我们持有唯一引用 (ref_count 归零).
                     unsafe {
                         let boxed = Box::from_raw(nn.as_ptr());
@@ -823,6 +827,9 @@ impl ProcessTable {
                 if prev == 0 && proc.pending_free.load(Ordering::Acquire) {
                     table[pid as usize] = None;
                     drop(table);
+                    // 回收 UserProc 镜像记录 (延迟释放分支): 同 remove_and_free,
+                    // 必须在 Process 析构 (销毁页表) 之前移除镜像.
+                    crate::framework::proc::user_proc::USER_PROC_MANAGER.destroy_by_pid(pid);
                     // SAFETY: nn 由 Box::into_raw 分配, 且我们持有唯一引用 (ref_count 归零).
                     unsafe {
                         let boxed = Box::from_raw(nn.as_ptr());

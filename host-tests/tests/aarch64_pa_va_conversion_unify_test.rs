@@ -17,6 +17,7 @@ use std::path::PathBuf;
 const KERNEL_DIR: &str = "../src/kernel";
 const MM_DIR: &str = "../src/kernel/framework/mm";
 const MM_MOD: &str = "../src/kernel/framework/mm/mod.rs";
+const VMM_AARCH64: &str = "../src/kernel/framework/mm/vmm_aarch64.rs";
 const IOMEM: &str = "../src/kernel/framework/iomem.rs";
 const PMM: &str = "../src/kernel/framework/mm/pmm.rs";
 const LIB: &str = "../src/kernel/lib.rs";
@@ -192,5 +193,35 @@ fn test_kmalloc_heap_base_goes_through_kernel_base() {
     assert!(
         found >= 2,
         "lib.rs 应有两处 heap_start (kernel_test 路径 + 真机路径), 实测 {found} 处"
+    );
+}
+
+/// 7. `vmm_aarch64.rs` 页表遍历的根表 (`root_paddr`) 必须先 `phys_to_virt` 再解引用.
+///
+/// `root_paddr` 是页表根表的**物理**地址 (调用方传 `Process.cr3` / `kernel_l0`); 各层
+/// 子表帧 (`l0_entry & mask` 等) 已统一走 `phys_to_virt`, 唯独根表曾直接
+/// `root_paddr as *const u64`. 内核迁至高半区且 KPTI 激活后低物理地址无映射, 该裸
+/// 解引用即在 EL1 触发 `ESR=0x96000005` level-1 翻译故障 (与 test 6 同族).
+/// 本文件 fail-closed 锁定: 任一页表遍历入口都不得再把 `root_paddr` 直接当指针.
+#[test]
+fn test_vmm_aarch64_root_table_converted_to_virt_before_deref() {
+    let src = read(VMM_AARCH64);
+    let mut converted = 0usize;
+
+    for (i, line) in src.lines().enumerate() {
+        let code = line.split("//").next().unwrap_or("");
+        assert!(
+            !code.contains("root_paddr as *const") && !code.contains("root_paddr as *mut"),
+            "vmm_aarch64.rs:{} 将物理 `root_paddr` 裸解引用为指针, 须先 `phys_to_virt` (PA→VA 唯一入口): {line}",
+            i + 1
+        );
+        if code.contains("phys_to_virt(root_paddr)") {
+            converted += 1;
+        }
+    }
+
+    assert!(
+        converted >= 3,
+        "vmm_aarch64.rs 应有至少 3 处页表遍历入口经 `phys_to_virt(root_paddr)` (translate_in_pml4 / get_pte_value / set_pte_value 等), 实测 {converted} 处"
     );
 }

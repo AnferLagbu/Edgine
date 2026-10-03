@@ -163,4 +163,7 @@
 ## 预存问题登记
 
 - **① x86_64 `cpu_index` 与 LAPIC ID 语义不一致**（见上）：`sched_for` 在非顺序 LAPIC ID 硬件上错槽并回退 BSP 状态（表面可用、实则跨核混叠）。本工程不修，登记待独立处置。
-- **② 退出进程 `UserProc` 镜像记录无回收路径**：`user_proc.rs::destroy_by_pid_no_kstack` 在生产路径无调用者 ⇒ 进程退出时 `USER_PROC_MANAGER` 镜像记录不被回收；P6 恢复 fork 注册后, 每次 fork 多一条不回收记录。属预存架构缺口（历史注册子进程时同样如此），本轮登记待独立处置（见 ISSUE-RT-006）。
+- **② 退出进程 `UserProc` 镜像记录无回收路径**（✅ 已修复）：`user_proc.rs::destroy_by_pid_no_kstack` 在生产路径无调用者 ⇒ 进程退出时 `USER_PROC_MANAGER` 镜像记录不被回收；P6 恢复 fork 注册后, 每次 fork 多一条不回收记录。属预存架构缺口（历史注册子进程时同样如此）。
+  - **修复**：在权威 `Process` 销毁唯一入口 [process.rs](../../src/kernel/framework/proc/process.rs) 的 `remove_and_free` / `dec_ref_and_maybe_free`「引用归零即释放」分支、`Box::from_raw` **之前** 调 `USER_PROC_MANAGER.destroy_by_pid(pid)`（镜像须先于权威 `Process` 被移除, 见 INV-USER-PROC #2；镜像 `destroy` 经 `cr3` 翻译用户栈, 而 `Process::drop` 会销毁该页表）。全部 reap 路径（scheduler 周期僵尸回收 / exit 孤儿回收 / wait4 / fork 回滚）均经此收口, 故为单一权威回收点。`destroy` 内用户栈释放提前到页表销毁**之前**（否则 `cr3` 失效 ⇒ 静默漏释放）, 并以独立语句取句柄、与 `destroy` 的锁分离（避免 `if let` scrutinee guard 存活到 then 块造成同锁自锁死）；回收时释放内核栈（`keep_kstack=false`）。
+  - **回归测试**：[user_proc_reclaim_contract_test.rs](../../host-tests/tests/user_proc_reclaim_contract_test.rs)（静态契约 fail-closed）。
+  - **副产物**：接线新暴露 aarch64 VMM 页表遍历根表裸物理地址解引用预存缺陷, 一并修复（见 ISSUE-RT-007）。

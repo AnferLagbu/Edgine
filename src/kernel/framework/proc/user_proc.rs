@@ -852,9 +852,24 @@ impl UserProcManager {
             return;
         }
 
+        let cr3 = proc_ref.load_cr3();
+
+        // 释放用户栈物理页 — 必须在销毁页表**之前**完成: 页表销毁后 `cr3` 不再
+        // 可翻译用户虚拟地址, 再释放会静默漏释放用户栈 (与 replace_user_space 同序).
+        let ustack = proc_ref.load_user_stack();
+        if ustack != 0 {
+            let stack_virt = USER_STACK_TOP - USER_STACK_SIZE - USER_STACK_GUARD;
+            for i in 0..(USER_STACK_SIZE / PAGE_SIZE) {
+                let svirt = stack_virt + USER_STACK_GUARD + i * PAGE_SIZE;
+                let phys = raw::virt_to_phys(cr3, svirt);
+                if phys != 0 {
+                    raw::free_phys_page(phys as *mut u8);
+                }
+            }
+        }
+
         // 计数归零才销毁: cr3 可能被 CLONE_VM 兄弟进程共享, 或已被 execve
         // 转移给其他进程 (转移时源已清空, 见 proc_ops::proc_exec_replace).
-        let cr3 = proc_ref.load_cr3();
         if cr3 != 0
             && crate::framework::mm::pmm::get_pmm().frame_dec(crate::framework::mm::PhysAddr(cr3))
         {
@@ -866,17 +881,6 @@ impl UserProcManager {
                 let kstack_base_virt = kstack - USER_KSTACK_SIZE;
                 let kstack_base_phys = kstack_base_virt - KERNEL_BASE;
                 raw::free_phys_pages(kstack_base_phys as *mut u8, USER_KSTACK_SIZE / PAGE_SIZE);
-            }
-        }
-        let ustack = proc_ref.load_user_stack();
-        if ustack != 0 {
-            let stack_virt = USER_STACK_TOP - USER_STACK_SIZE - USER_STACK_GUARD;
-            for i in 0..(USER_STACK_SIZE / PAGE_SIZE) {
-                let svirt = stack_virt + USER_STACK_GUARD + i * PAGE_SIZE;
-                let phys = raw::virt_to_phys(cr3, svirt);
-                if phys != 0 {
-                    raw::free_phys_page(phys as *mut u8);
-                }
             }
         }
         let pid = proc_ref.pid();
@@ -911,11 +915,14 @@ impl UserProcManager {
     }
 
     pub fn destroy_by_pid(&self, pid: u32) {
-        // SAFETY: get returns *mut from NonNull which is never null.
-        if let Some(proc) = self.processes.lock().get(&pid).copied() {
+        // 先在独立语句中取句柄 (guard 随该语句结束释放), 再进入 destroy —
+        // destroy 内部会重新获取同一把 IrqSpinLock; 若把取句柄写在 `if let`
+        // 的 scrutinee 中, guard 会存活到 then 块结束, 造成同锁自锁死.
+        let proc = self.processes.lock().get(&pid).copied();
+        if let Some(proc) = proc {
             // SAFETY: proc 来自 BTreeMap 中的 NonNull, 进程存活期间有效.
             let proc_ref = unsafe { raw::UserProcRef::new_unchecked(proc.as_ptr()) };
-            // 仅销毁非运行状态的进程
+            // 仅销毁非运行状态的进程 (Zombie/Terminated)
             if !proc_ref.is_running() {
                 self.destroy(proc, false);
             }
@@ -923,8 +930,9 @@ impl UserProcManager {
     }
 
     pub fn destroy_by_pid_no_kstack(&self, pid: u32) {
-        // SAFETY: get returns *mut from NonNull which is never null.
-        if let Some(proc) = self.processes.lock().get(&pid).copied() {
+        // 同 destroy_by_pid: 取句柄与 destroy 的锁必须分离, 避免同锁自锁死.
+        let proc = self.processes.lock().get(&pid).copied();
+        if let Some(proc) = proc {
             // SAFETY: proc 来自 BTreeMap 中的 NonNull, 进程存活期间有效.
             let proc_ref = unsafe { raw::UserProcRef::new_unchecked(proc.as_ptr()) };
             // 仅销毁已退出的进程

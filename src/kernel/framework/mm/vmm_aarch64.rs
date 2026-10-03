@@ -1296,7 +1296,7 @@ impl Aarch64Vmm {
 
         let vaddr = virt.as_u64();
 
-        let l0 = root_paddr as *const u64;
+        let l0 = phys_to_virt(root_paddr) as *const u64;
         let l0_idx = l0_index(vaddr);
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         let l0_entry = unsafe { ptr::read_volatile(l0.add(l0_idx)) };
@@ -1356,7 +1356,7 @@ impl Aarch64Vmm {
     pub fn get_pte_value(&self, root_paddr: u64, virt: VirtAddr) -> Option<u64> {
         let vaddr = virt.as_u64();
 
-        let l0 = root_paddr as *const u64;
+        let l0 = phys_to_virt(root_paddr) as *const u64;
         let l0_idx = l0_index(vaddr);
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         let l0_entry = unsafe { ptr::read_volatile(l0.add(l0_idx)) };
@@ -1404,7 +1404,7 @@ impl Aarch64Vmm {
 
         // SAFETY: VMM_LOCK held; 四级页表查找 PTE 并直接写入
         unsafe {
-            let l0 = root_paddr as *const u64;
+            let l0 = phys_to_virt(root_paddr) as *const u64;
             let l0_idx = l0_index(vaddr);
             let l0_entry = ptr::read_volatile(l0.add(l0_idx));
             if l0_entry & 0b11 != 0b11 {
