@@ -23,6 +23,7 @@
 //   6. 入口依赖面必需页 (USER_CR3_SAVE / IDT / per-CPU GDT 头区 / IST+栈顶页)
 //      仍由 `map_kpti_data_pages` 逐页映射
 //   7. `map_rsp0_page` 已接线到调度切换与用户态入口两条路径
+//   8. `sys_fork` 经 `user_proc_clone` 为子进程注册 `UserProc` 镜像 (APS-05 根因回归)
 
 use std::fs;
 
@@ -31,6 +32,7 @@ const VMM_X86: &str = "../src/kernel/framework/mm/vmm_x86_64.rs";
 const COW: &str = "../src/kernel/framework/mm/cow.rs";
 const SCHED: &str = "../src/kernel/framework/proc/scheduler.rs";
 const USER_PROC: &str = "../src/kernel/framework/proc/user_proc.rs";
+const PROC_OPS: &str = "../src/kernel/framework/proc/proc_ops.rs";
 const TSS: &str = "../src/kernel/framework/arch/x86_64/tss.rs";
 const LINKER_LD: &str = "../src/kernel/framework/link/x86_64.ld";
 
@@ -302,6 +304,42 @@ fn test_map_rsp0_page_is_wired_on_switch_and_enter() {
     assert!(
         !body.contains("0x7"),
         "map_rsp0_page 不得设 USER 位 (0x7) —— 内核栈暴露给用户态即提权"
+    );
+}
+
+#[test]
+fn test_sys_fork_registers_child_in_user_proc_manager() {
+    // APS-05 回归: `sys_fork` 必须为子进程创建 `UserProc` 镜像记录.
+    //
+    // 该注册是调度切换路径装配 per-CPU 用户 CR3 与"任务内核栈顶页"的门控
+    // (`Scheduler::schedule` 以 `USER_PROC_MANAGER.get(next)` 为前置): 子进程未
+    // 注册时被投送到次核, per-CPU user CR3 滞留旧值、其内核栈顶页也不在其用户
+    // 页表内 ⇒ 用户态被硬件中断打断按 TSS.RSP0 压帧即 #PF (cr2=内核栈顶-8).
+    // 该注册块曾在 4557cd30 重写 `sys_fork` 时被附带删除, 导致 x86_64 EL0 观测
+    // 偶发未成对; fail-closed: 注册失败须回滚进程表条目.
+    let src = code_only(&read(PROC_OPS));
+    let start = src
+        .find("pub extern \"C\" fn sys_fork()")
+        .expect("proc_ops.rs 必须定义 sys_fork");
+    let after = &src[start..];
+    let end = after
+        .find("\npub extern \"C\" fn proc_get_ppid")
+        .unwrap_or(after.len());
+    let body = &after[..end];
+
+    let insert = body
+        .find("PROCESS_TABLE.insert(child as *const Process as *mut Process);")
+        .expect("sys_fork 必须把子进程插入进程表");
+    let clone = body
+        .find("user_proc_clone(parent_pid, child_pid)")
+        .expect("sys_fork 必须经 user_proc_clone 为子进程注册 UserProc 镜像 (APS-05)");
+    assert!(
+        insert < clone,
+        "UserProc 注册必须在进程表插入之后 (此时子进程页表/kstack 已就绪)"
+    );
+    assert!(
+        body.contains("PROCESS_TABLE.remove_and_free(child_pid);"),
+        "user_proc_clone 失败必须 fail-closed 回滚进程表条目"
     );
 }
 

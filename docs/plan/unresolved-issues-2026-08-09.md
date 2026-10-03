@@ -253,6 +253,23 @@
 | **工作量** | 估计 3-5 天 (含回归用例与六门槛复验) |
 | **决策登记** | 本轮经用户裁定「登记为独立新问题, 本轮**不改代码**」—— 本轮**仅登记**, 不实施。 |
 
+### ISSUE-RT-006: x86_64 APS-05 偶发未成对观测（`sys_fork` 丢失 `UserProc` 注册）
+
+| 字段 | 数据 |
+|---|---|
+| **严重度** | P1 (APS-05 成对判据在 x86_64 `-smp 2` 下 fail-closed 偶发硬失败) |
+| **状态** | ✅ 已修复 (`[X]`) |
+| **类型** | 运行时回归 (fork 子进程未注册 `UserProc` 镜像 → 次核 KPTI 装配缺失) |
+| **现象** | x86_64 `-smp 2` 下 `[SMP] EL0 pid=N cpu=M` **偶发只出现 `cpu=0`**（未成对）; 失败率约 1/2 ~ 1/10, 非确定性。aarch64 不复发。 |
+| **根因 (已定位)** | [proc_ops.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/proc/proc_ops.rs) `sys_fork` 在 `PROCESS_TABLE.insert(...)` 后**未为子进程创建 `UserProc` 镜像记录**（未调用 `user_proc_clone(parent_pid, child_pid)`）。[scheduler.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/proc/scheduler.rs) `Scheduler::schedule` 的 per-CPU 装配块以 `USER_PROC_MANAGER.get(next)` 为门控: 未注册的子进程被投送到次核时, per-CPU 用户 CR3 滞留旧值, 其"内核栈顶页"也不在其用户页表内; 用户态被硬件中断/异常打断时, CPU 按 `TSS.RSP0` 压 5 项 iretq 帧（发生在任何软件切 CR3 之前）即 `#PF`。 |
+| **证据 (实测)** | 失败日志: `migrate pid=6 -> cpu=1` 后立即 `[IDT] user exception: vec=14 err=0x2 rip=0x400030 cr2=0xFFFF800007E2FFF8`（= 子进程内核栈顶-8）→ `exit: pid=6 code=6`（被内核终止; 正常应为 code=0）。 |
+| **回归来源** | 该注册块在 commit `4557cd30`（"fix(fork): 修复 fork 系统调用崩溃", COW 崩溃临时改用共享页表时重写 `sys_fork`）被**附带删除**; 其后 `4acc01f4` 又删除由此悬空的 `user_proc_clone` import。拆分前 `api.rs` 与拆分提交 `688798f1` 均含该块。 |
+| **修复方案** | 在 `sys_fork` 的 `PROCESS_TABLE.insert(...)` 之后恢复注册: `if USER_PROC_MANAGER.get(parent_pid).is_some() && user_proc_clone(parent_pid, child_pid) < 0 { PROCESS_TABLE.remove_and_free(child_pid); return 0; }`（fail-closed: 注册失败回滚进程表条目）。 |
+| **回归测试** | [kpti_x86_user_table_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/kpti_x86_user_table_test.rs) 新增 `test_sys_fork_registers_child_in_user_proc_manager` —— 静态断言 `sys_fork` 在进程表插入之后经 `user_proc_clone` 注册子进程, 且失败分支回滚进程表条目。 |
+| **验证结果** | 六门槛全绿（双架构 `./ci/build.sh all` 5/0; `./ci/build.sh aarch64 && ./ci/audit.sh quick` EXIT=0; `make test-host` 通过; `make test-kernel-host` 949/0; `FAIL_OK=0 ./scripts/qemu_boot_test.sh all` 2/2）; **x86_64 连续 20 轮 `FAIL_OK=0` 全部通过**（20/20）, 失败日志转为正常 `migrate pid=6 -> cpu=1` → `EL0 pid=6 cpu=1` → `exit: pid=6 code=0`。 |
+| **关联** | APS-05 / P6 ([smp-ap-user-scheduling.md](./smp-ap-user-scheduling.md)); ISSUE-RT-004 (同属 SMP 调度链路修复链) |
+| **遗留** | 退出进程的 `USER_PROC_MANAGER` 镜像记录在生产路径无回收（`destroy_by_pid_no_kstack` 无调用者）—— 预存架构缺口, 本轮**仅登记**, 待独立处置。 |
+
 ---
 
 ## 🟠 第 2 类：源码未实现 (~43 个 TODO)

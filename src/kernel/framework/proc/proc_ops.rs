@@ -14,8 +14,8 @@ use core::sync::atomic::Ordering;
 use super::process::{PROCESS_TABLE, Process};
 use super::scheduler::SCHEDULER;
 use super::types::{BlockReason, Pid, ProcessId, ProcessState};
-use super::user_proc::USER_PROC_MANAGER;
 pub use super::user_proc::proc_alloc_pid;
+use super::user_proc::{USER_PROC_MANAGER, user_proc_clone};
 use crate::framework::lib::CStrExt;
 use crate::framework::mm::{
     get_kernel_pml4, vmm_clone_user_page_table_cow, vmm_destroy_page_table, vmm_switch_page_table,
@@ -971,6 +971,19 @@ pub extern "C" fn sys_fork() -> Pid {
         }
     }
     PROCESS_TABLE.insert(child as *const Process as *mut Process);
+    // 为子进程创建 UserProc 镜像记录, 使 fork 子进程与父进程同源注册.
+    //
+    // 该注册是调度切换路径装配 per-CPU 用户 CR3 与"任务内核栈顶页"的前置条件:
+    // `Scheduler::schedule` 的装配块以 `USER_PROC_MANAGER.get(next)` 为门控,
+    // 未注册的子进程被投送到次核时 per-CPU user CR3 滞留旧值、其内核栈顶页也不
+    // 在其用户页表内 ⇒ 用户态被硬件中断/异常打断时按 TSS.RSP0 压帧即 #PF
+    // (cr2=内核栈顶-8). 这正是 APS-05 x86_64 偶发未成对观测的根因 —— 该注册块
+    // 在 4557cd30 重写 `sys_fork` (COW 崩溃临时改用共享页表) 时被附带删除.
+    // fail-closed: 注册失败 (内核堆 OOM) 时子进程不可投运, 回滚进程表条目.
+    if USER_PROC_MANAGER.get(parent_pid).is_some() && user_proc_clone(parent_pid, child_pid) < 0 {
+        PROCESS_TABLE.remove_and_free(child_pid);
+        return 0;
+    }
     PROCESS_TABLE.with_process(parent_pid, |p| {
         p.children.lock().push(ProcessId(child_pid));
     });

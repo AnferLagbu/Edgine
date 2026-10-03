@@ -110,8 +110,9 @@
 | **P3** | APS-04 | P1（可与 P2 并行） | KPTI 每核活跃值按核索引；host 契约（布局/索引）全过；六门槛全过 | [X] |
 | **P4** | APS-05 + APS-06 | P2 + P3 | `-smp 2` 成对出现 `EL0 ... cpu=0` 与 `cpu=1`；文档前提订正；六门槛全过 | [X] |
 | **P5** | 次核 CPU 状态初始化（本轮修复） | P4 | 双架构 `-smp 2` 出现 `[SMP] EL0 ... cpu=1`（次核不再崩溃离线）；六门槛全过 | [X] |
+| **P6** | APS-05 x86_64 偶发未成对根因修复 | P5 | x86_64 `-smp 2` 连续多轮成对观测无未成对；回归测试锁定；六门槛全过 | [X] |
 
-依赖：`P1 → {P2, P3} → P4 → P5`。
+依赖：`P1 → {P2, P3} → P4 → P5 → P6`。
 
 ### P5. 次核 CPU 状态初始化
 
@@ -125,6 +126,17 @@
 - 详情（修后实测）：双架构 `[SMP] EL0 ... cpu=1` 出现（次核承载 EL0 任务），`find_idle_cpu` 恢复复选次核，日志 `SYNC!`/`DoubleFault`/`BARRIER` 计数为 0。
 - 详情（门槛实测）：`./ci/build.sh all` 5/0；`./ci/build.sh aarch64 && ./ci/audit.sh quick` EXIT=0；`make test-host` 通过；`make test-kernel-host` 949/0；`TIMEOUT_QEMU=30 ./scripts/qemu_boot_test.sh all` 2/2 且双架构命中成对 EL0（`cpu=0` 与 `cpu=1`）。
 - 详情（判据健全性）：`scripts/qemu_boot_test.sh` 的 EL0 判据 grep 加 `-a` —— 日志含 NUL 字节（串口并发写）时 `grep` 默认按二进制处理、只输出 "Binary file ... matches" 而漏输出匹配行；加 `-a` 后判据如实反映内核行为（详见 APS-05 详情）。
+
+### P6. APS-05 x86_64 偶发未成对根因修复
+
+- 描述：APS-05 成对判据（`EL0 ... cpu=0` 与 `cpu=1` 成对）在 x86_64 `-smp 2` 下**偶发只观测到 `cpu=0`**（失败率约 1/2 ~ 1/10, 非确定性; aarch64 不复发）—— 即 P4/P5 收口后残留的 x86_64 侧偶发未成对。
+- 方案：恢复 `sys_fork` 为子进程调用 `user_proc_clone(parent_pid, child_pid)` 注册 `UserProc` 镜像记录, 并 fail-closed（注册失败回滚进程表条目）。**不采用**"扩大判据宽松度/掩盖偶发"的规避路径。
+- 状态：[X]
+- 详情（根因）：[proc_ops.rs](../../src/kernel/framework/proc/proc_ops.rs) `sys_fork` 在 `PROCESS_TABLE.insert(...)` 后**未注册子进程的 `UserProc` 镜像**（该注册块在 commit `4557cd30` 重写 `sys_fork`、COW 崩溃临时改用共享页表时被附带删除）。`Scheduler::schedule` 的 per-CPU 装配块以 `USER_PROC_MANAGER.get(next)` 为门控, 未注册的子进程被投送到次核时 per-CPU 用户 CR3 滞留旧值、其"内核栈顶页"也不在其用户页表内; 用户态被硬件中断/异常打断时 CPU 按 `TSS.RSP0` 压 5 项 iretq 帧（先于任何软件切 CR3）即 `#PF`（cr2 = 内核栈顶-8）⇒ 子进程被内核终止、次核 EL0 观测缺失。
+- 详情（证据）：失败日志 `migrate pid=6 -> cpu=1` 后立即 `[IDT] user exception: vec=14 err=0x2 rip=0x400030 cr2=0xFFFF800007E2FFF8`（= 子进程内核栈顶-8）→ `exit: pid=6 code=6`（被内核终止; 正常应为 code=0）。
+- 详情（回归测试）：[kpti_x86_user_table_test.rs](../../host-tests/tests/kpti_x86_user_table_test.rs) 新增 `test_sys_fork_registers_child_in_user_proc_manager` —— 静态断言 `sys_fork` 在进程表插入之后经 `user_proc_clone` 注册子进程, 且失败分支回滚进程表条目。
+- 详情（修后实测）：x86_64 **连续 20 轮 `FAIL_OK=0` 全部通过**（20/20）; 日志转为 `migrate pid=6 -> cpu=1` → `EL0 pid=6 cpu=1` → `exit: pid=6 code=0`（正常退出）。
+- 详情（门槛实测）：`./ci/build.sh all` 5/0; `./ci/build.sh aarch64 && ./ci/audit.sh quick` EXIT=0; `make test-host` 通过; `make test-kernel-host` 949/0; `FAIL_OK=0 ./scripts/qemu_boot_test.sh all` 2/2。
 
 ## 关键约束
 
@@ -151,3 +163,4 @@
 ## 预存问题登记
 
 - **① x86_64 `cpu_index` 与 LAPIC ID 语义不一致**（见上）：`sched_for` 在非顺序 LAPIC ID 硬件上错槽并回退 BSP 状态（表面可用、实则跨核混叠）。本工程不修，登记待独立处置。
+- **② 退出进程 `UserProc` 镜像记录无回收路径**：`user_proc.rs::destroy_by_pid_no_kstack` 在生产路径无调用者 ⇒ 进程退出时 `USER_PROC_MANAGER` 镜像记录不被回收；P6 恢复 fork 注册后, 每次 fork 多一条不回收记录。属预存架构缺口（历史注册子进程时同样如此），本轮登记待独立处置（见 ISSUE-RT-006）。
