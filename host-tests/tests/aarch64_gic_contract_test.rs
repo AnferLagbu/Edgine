@@ -17,7 +17,9 @@
 //!
 //! - redistributor 唤醒超时必须**显式失败** (不得静默 `break` 继续);
 //! - `init()` 必须返回 `Result` 并在末尾执行后置条件自检;
-//! - 自检须覆盖 GICD_CTLR / GICR_WAKER / GICR_ISENABLER0 / ICC_IGRPEN1_EL1;
+//! - 自检须回读 GICD_CTLR / GICR_WAKER / GICR_ISENABLER0 / ICC_IGRPEN1_EL1,
+//!   并委托架构中立纯逻辑 `gic_logic` 判定 (判据单源, host 侧可逐支路实证,
+//!   见 `aarch64_gic_logic_test.rs`); 唤醒超限判据同源;
 //! - 不得再写 `GICR_CTLR` (其 bit0 实为 EnableLPIs, 非 redistributor 使能位);
 //! - boot 入口须 fail-fast 并打印 `GICv3 ready` 里程碑;
 //! - QEMU 启动脚本须断言该里程碑;
@@ -52,16 +54,17 @@ fn slice_between<'a>(src: &'a str, begin: &str, end: &str) -> &'a str {
 }
 
 const GIC_RS: &str = "src/kernel/framework/arch/aarch64/gic.rs";
+const GIC_LOGIC_RS: &str = "src/kernel/framework/arch/gic_logic.rs";
 const ENTRY_RS: &str = "src/kernel/framework/boot/aarch64/entry.rs";
 const EXCEPTION_RS: &str = "src/kernel/framework/arch/aarch64/exception.rs";
 const QEMU_SH: &str = "scripts/qemu_boot_test.sh";
 
 #[test]
 fn test_redist_wake_spin_limit_defined() {
-    let src = read(GIC_RS);
+    let src = read(GIC_LOGIC_RS);
     assert!(
         src.contains("const REDIST_WAKE_SPIN_LIMIT: u32 = 1_000_000;"),
-        "必须定义 redistributor 唤醒自旋上限常量 REDIST_WAKE_SPIN_LIMIT"
+        "必须定义 redistributor 唤醒自旋上限常量 REDIST_WAKE_SPIN_LIMIT (单源: gic_logic)"
     );
 }
 
@@ -74,8 +77,8 @@ fn test_redist_wake_timeout_fails_explicitly() {
         "/// 使能 CPU Interface",
     );
     assert!(
-        body.contains("REDIST_WAKE_SPIN_LIMIT"),
-        "redistributor 唤醒自旋须以 REDIST_WAKE_SPIN_LIMIT 为上限"
+        body.contains("gic_logic::wake_timed_out("),
+        "redistributor 唤醒自旋须经纯逻辑超限判据 wake_timed_out (同源可测)"
     );
     assert!(
         body.contains("return Err("),
@@ -107,32 +110,36 @@ fn test_init_returns_result_and_verifies_post_conditions() {
 
 #[test]
 fn test_post_conditions_cover_key_registers() {
+    // aarch64 侧: 回读四项关键寄存器, 判定委托纯逻辑 (判据不重复实现)
     let src = read(GIC_RS);
     let body = slice_between(
         &src,
         "unsafe fn verify_post_conditions()",
         "// 中断管理 API",
     );
-    // GICD_CTLR.EnableGrp1NS (bit1)
+    for reg in [
+        "GICD_CTLR",
+        "GICR_WAKER",
+        "GICR_ISENABLER0",
+        "icc_igrpen1_el1",
+    ] {
+        assert!(body.contains(reg), "自检须回读寄存器: {}", reg);
+    }
     assert!(
-        body.contains("GICD_CTLR") && body.contains("0b10"),
-        "自检须校验 GICD_CTLR.EnableGrp1 (bit1)"
+        body.contains("gic_logic::verify_post_conditions("),
+        "自检判定须委托架构中立纯逻辑模块 (host 侧可逐支路实证)"
     );
-    // GICR_WAKER.ChildrenAsleep (bit2)
-    assert!(
-        body.contains("GICR_WAKER") && body.contains("(1 << 2)"),
-        "自检须校验 GICR_WAKER.ChildrenAsleep (bit2) 已清零"
-    );
-    // GICR_ISENABLER0 Timer PPI
-    assert!(
-        body.contains("GICR_ISENABLER0"),
-        "自检须校验 GICR_ISENABLER0 已使能 Timer PPI"
-    );
-    // ICC_IGRPEN1_EL1
-    assert!(
-        body.contains("icc_igrpen1_el1"),
-        "自检须校验 ICC_IGRPEN1_EL1 已使能"
-    );
+
+    // 纯逻辑侧: 承载四项后置条件的判定与错误文案 (逐字保留, 保证诊断锚点不变)
+    let logic = read(GIC_LOGIC_RS);
+    for msg in [
+        "GICD_CTLR.EnableGrp1 未置位",
+        "GICR_WAKER.ChildrenAsleep 未清零",
+        "GICR_ISENABLER0 未使能 Timer PPI",
+        "ICC_IGRPEN1_EL1 未使能",
+    ] {
+        assert!(logic.contains(msg), "纯逻辑须覆盖后置条件: {}", msg);
+    }
 }
 
 #[test]
