@@ -82,7 +82,7 @@
 
 ### 关联
 
-- 与 [DECISION-078](./archive/audit-fix-07-functions-net-ipc-credo.md) 常量准则（重要/特殊用途新增）互补：本裁决是**系统级归属**决策，DECISION-078 是**常量级命名**决策。
+- 与 [DECISION-078](./archive/audit-fix-07-services-net-ipc-credo.md) 常量准则（重要/特殊用途新增）互补：本裁决是**系统级归属**决策，DECISION-078 是**常量级命名**决策。
 
 ## 变更历史
 

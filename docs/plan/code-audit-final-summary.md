@@ -1284,7 +1284,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 **报告结束**
 # 附录 B：functions 层关键大文件深度审计
 
-> **原报告文件**：[`archive/audit-2026-08-14/functions-deep-audit-v2.1.md`](./archive/audit-2026-08-14/functions-deep-audit-v2.1.md)（1415 行）
+> **原报告文件**：[`archive/audit-2026-08-14/services-deep-audit-v2.1.md`](./archive/audit-2026-08-14/services-deep-audit-v2.1.md)（1415 行）
 > **审计范围**：functions 层 6 个关键大文件深度阅读 ≥80% 文件 / ≥60% 行数
 > **审计项数**：56 项（P0×5 / P1×25 / P2×26）
 
@@ -2707,28 +2707,28 @@ match crate::kernel::functions::proc::table::with(pid, |_p| ()) {
 
 - [subsystem-arch-net.md](./archive/audit-2026-08-14/subsystem-arch-net.md) — privileged/arch/ + privileged/net/ 子系统深度审计报告
 - [subsystem-driver.md](./archive/audit-2026-08-14/subsystem-driver.md) — privileged/driver + functions/driver 子系统深度审计报告
-- [subsystem-privileged-arch.md](./archive/audit-2026-08-14/subsystem-privileged-arch.md) — privileged/arch 子系统深度审计报告
-- [subsystem-privileged-cpu.md](./archive/audit-2026-08-14/subsystem-privileged-cpu.md) — privileged/cpu 子系统深度审计报告
-- [subsystem-privileged-credo.md](./archive/audit-2026-08-14/subsystem-privileged-credo.md) — privileged/sgeg 子系统深度审计报告
-- [subsystem-privileged-dma.md](./archive/audit-2026-08-14/subsystem-privileged-dma.md) — privileged/dma + dma_buf 子系统深度审计报告
-- [subsystem-privileged-fs-drivers.md](./archive/audit-2026-08-14/subsystem-privileged-fs-drivers.md) — privileged/fs (drivers 子模块) 深度审计报告
-- [subsystem-privileged-irq.md](./archive/audit-2026-08-14/subsystem-privileged-irq.md) — privileged/irq 子系统深度审计报告
-- [subsystem-privileged-misc.md](./archive/audit-2026-08-14/subsystem-privileged-misc.md) — privileged/freg + egdf + debug + klog + smp 子系统深度审计报告
-- [subsystem-privileged-mm-remaining.md](./archive/audit-2026-08-14/subsystem-privileged-mm-remaining.md) — privileged/mm 剩余文件深度审计报告
-- [subsystem-privileged-net.md](./archive/audit-2026-08-14/subsystem-privileged-net.md) — privileged/net 子系统深度审计报告
-- [subsystem-privileged-pci.md](./archive/audit-2026-08-14/subsystem-privileged-pci.md) — privileged/pci 子系统深度审计报告
-- [subsystem-privileged-proc-remaining.md](./archive/audit-2026-08-14/subsystem-privileged-proc-remaining.md) — privileged/proc 剩余文件深度审计报告
-- [subsystem-privileged-remaining-modules.md](./archive/audit-2026-08-14/subsystem-privileged-remaining-modules.md) — privileged 剩余模块（constants/console/io/alloc/link/lib）深度审计报告
-- [subsystem-privileged-tests.md](./archive/audit-2026-08-14/subsystem-privileged-tests.md) — privileged/tests 子系统深度审计报告
-- [subsystem-privileged-timer.md](./archive/audit-2026-08-14/subsystem-privileged-timer.md) — privileged/timer 子系统深度审计报告
-- [subsystem-privileged-toplevel.md](./archive/audit-2026-08-14/subsystem-privileged-toplevel.md) — privileged 顶层散 .rs 文件深度审计报告
+- [subsystem-framework-arch.md](./archive/audit-2026-08-14/subsystem-framework-arch.md) — privileged/arch 子系统深度审计报告
+- [subsystem-framework-cpu.md](./archive/audit-2026-08-14/subsystem-framework-cpu.md) — privileged/cpu 子系统深度审计报告
+- [subsystem-framework-credo.md](./archive/audit-2026-08-14/subsystem-framework-credo.md) — privileged/sgeg 子系统深度审计报告
+- [subsystem-framework-dma.md](./archive/audit-2026-08-14/subsystem-framework-dma.md) — privileged/dma + dma_buf 子系统深度审计报告
+- [subsystem-framework-fs-drivers.md](./archive/audit-2026-08-14/subsystem-framework-fs-drivers.md) — privileged/fs (drivers 子模块) 深度审计报告
+- [subsystem-framework-irq.md](./archive/audit-2026-08-14/subsystem-framework-irq.md) — privileged/irq 子系统深度审计报告
+- [subsystem-framework-misc.md](./archive/audit-2026-08-14/subsystem-framework-misc.md) — privileged/freg + egdf + debug + klog + smp 子系统深度审计报告
+- [subsystem-framework-mm-remaining.md](./archive/audit-2026-08-14/subsystem-framework-mm-remaining.md) — privileged/mm 剩余文件深度审计报告
+- [subsystem-framework-net.md](./archive/audit-2026-08-14/subsystem-framework-net.md) — privileged/net 子系统深度审计报告
+- [subsystem-framework-pci.md](./archive/audit-2026-08-14/subsystem-framework-pci.md) — privileged/pci 子系统深度审计报告
+- [subsystem-framework-proc-remaining.md](./archive/audit-2026-08-14/subsystem-framework-proc-remaining.md) — privileged/proc 剩余文件深度审计报告
+- [subsystem-framework-remaining-modules.md](./archive/audit-2026-08-14/subsystem-framework-remaining-modules.md) — privileged 剩余模块（constants/console/io/alloc/link/lib）深度审计报告
+- [subsystem-framework-tests.md](./archive/audit-2026-08-14/subsystem-framework-tests.md) — privileged/tests 子系统深度审计报告
+- [subsystem-framework-timer.md](./archive/audit-2026-08-14/subsystem-framework-timer.md) — privileged/timer 子系统深度审计报告
+- [subsystem-framework-toplevel.md](./archive/audit-2026-08-14/subsystem-framework-toplevel.md) — privileged 顶层散 .rs 文件深度审计报告
 - [subsystem-mm.md](./archive/audit-2026-08-14/subsystem-mm.md) — privileged/mm/ 子系统深度审计报告
 - [subsystem-proc.md](./archive/audit-2026-08-14/subsystem-proc.md) — privileged/proc/ 子系统深度审计报告
-- [subsystem-functions-fs.md](./archive/audit-2026-08-14/subsystem-functions-fs.md) — functions/fs 子系统深度审计报告
-- [subsystem-functions-misc.md](./archive/audit-2026-08-14/subsystem-functions-misc.md) — functions 多子目录深度审计报告
-- [subsystem-functions-net.md](./archive/audit-2026-08-14/subsystem-functions-net.md) — functions/net 顶层深度审计报告
-- [subsystem-functions-proc.md](./archive/audit-2026-08-14/subsystem-functions-proc.md) — functions/proc 子系统深度审计报告
-- [subsystem-functions-wasm-ipc-credo.md](./archive/audit-2026-08-14/subsystem-functions-wasm-ipc-credo.md) — functions/wasm + functions/ipc + functions/sgeg 子系统深度审计报告
+- [subsystem-services-fs.md](./archive/audit-2026-08-14/subsystem-services-fs.md) — functions/fs 子系统深度审计报告
+- [subsystem-services-misc.md](./archive/audit-2026-08-14/subsystem-services-misc.md) — functions 多子目录深度审计报告
+- [subsystem-services-net.md](./archive/audit-2026-08-14/subsystem-services-net.md) — functions/net 顶层深度审计报告
+- [subsystem-services-proc.md](./archive/audit-2026-08-14/subsystem-services-proc.md) — functions/proc 子系统深度审计报告
+- [subsystem-services-wasm-ipc-credo.md](./archive/audit-2026-08-14/subsystem-services-wasm-ipc-credo.md) — functions/wasm + functions/ipc + functions/sgeg 子系统深度审计报告
 - [subsystem-sync.md](./archive/audit-2026-08-14/subsystem-sync.md) — privileged/sync/ 子系统深度审计报告
 
 ---
@@ -3096,12 +3096,12 @@ isr.asm 36 次 IRQ 出口 → 0x3F8 UART 写 'Z'
 | 14 | `subsystem-proc.md` P0-19 | Scheduler::tick 硬编码 1..=255 PID 范围 |
 | 15 | `subsystem-proc.md` P0-20 | `let _ = core_limit;` 静默忽略 RLIMIT_CORE |
 | 16 | `subsystem-proc.md` P0-22 | `exit()` 自递归风险 |
-| 17 | `subsystem-functions-net.md` P0-2.3 | `socket.rs:140` IPv6 路径丢失（DECISION-032 违反）|
-| 18 | `subsystem-functions-net.md` P0-2.4 | `handle_to_fd` 线性扫描 + 死代码 |
-| 19 | `subsystem-functions-net.md` P0-2.5 | UDS FD 起点跨子系统硬编码（违反 F2）|
-| 20 | `subsystem-functions-net.md` P0-2.6 | `alloc_user_id` wrapping_add 重用 id=1（use-after-close）|
+| 17 | `subsystem-services-net.md` P0-2.3 | `socket.rs:140` IPv6 路径丢失（DECISION-032 违反）|
+| 18 | `subsystem-services-net.md` P0-2.4 | `handle_to_fd` 线性扫描 + 死代码 |
+| 19 | `subsystem-services-net.md` P0-2.5 | UDS FD 起点跨子系统硬编码（违反 F2）|
+| 20 | `subsystem-services-net.md` P0-2.6 | `alloc_user_id` wrapping_add 重用 id=1（use-after-close）|
 | 21 | `subsystem-driver.md` P0-2.4 | e1000 privileged ↔ functions 双向依赖循环（违反 F3）|
-| 22-24 | `subsystem-privileged-cpu.md` 5 项 P0 | 全未进入主报告（cpu/mod.rs 1554 行、cpu/msr.cs 等）|
+| 22-24 | `subsystem-framework-cpu.md` 5 项 P0 | 全未进入主报告（cpu/mod.rs 1554 行、cpu/msr.cs 等）|
 
 **修复建议 13 条**（约 10 工作日）：
 1. 建立 archive→主报告 P0 编号映射表
@@ -3109,8 +3109,8 @@ isr.asm 36 次 IRQ 出口 → 0x3F8 UART 写 'Z'
 3. 统一 P0 编号格式
 4. 建立 asm 严重度→P0/P1 映射
 5. functions-deep-audit §3.11 升 P2→P0
-6. `subsystem-functions-fs.md` 追加 inode.rs P0
-7. `subsystem-functions-net.md` 追加 dispatch.rs 部分
+6. `subsystem-services-fs.md` 追加 inode.rs P0
+7. `subsystem-services-net.md` 追加 dispatch.rs 部分
 8. 全部 5 项 cpu P0 纳入主报告
 9. wasm-ipc-sgeg §2.4 密码时间侧信道补行号
 10-13. 其他合并与同步

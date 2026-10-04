@@ -8,7 +8,7 @@
 //   - socket 句柄 alloc_user_id 无 wrapping 回绕复用 (冲突即报错)
 //   - pwm_set_syscall 须先校验 SYSTEM 域 SET_PWM 能力位 (防任意提权)
 //
-// 来源: docs/plan/audit-fix-07-functions-net-ipc-credo.md
+// 来源: docs/plan/archive/audit-fix-07-services-net-ipc-credo.md
 
 use std::fs;
 use std::path::Path;

@@ -120,7 +120,7 @@
 
 ## 🔵 第 0B 类：分册 3 归档遗留（2026-08-23 归档登记）
 
-> 分册 3（[archive/audit-fix-03-privileged-mm-sync.md](./archive/audit-fix-03-privileged-mm-sync.md)）归档时核查出 3 项"方案承诺未完全落地"的遗留，登记防止归档后丢失追踪。分册 3 主修复（B03-01~28）均已实装并通过验证门槛（双架构编译 0w0e + host-tests + 审计无回归）。
+> 分册 3（[archive/audit-fix-03-framework-mm-sync.md](./archive/audit-fix-03-framework-mm-sync.md)）归档时核查出 3 项"方案承诺未完全落地"的遗留，登记防止归档后丢失追踪。分册 3 主修复（B03-01~28）均已实装并通过验证门槛（双架构编译 0w0e + host-tests + 审计无回归）。
 
 ### B03-LEGACY-001: COW TOCTOU（cow_handle_fault 锁内判定+锁外执行）
 
@@ -560,7 +560,7 @@
 
 > 2026-08-31 追加：记录 driver / egdf 两个"迁移中"子系统的完整状态——历史脉络、当前形态、遗留事项。
 > 触发：用户要求"记录有关迁移中的完整信息（driver 和 egdf 等）"。
-> 来源：源码头注释（functions/driver/mod.rs + functions/egdf/mod.rs）+ [archive/driver-service-migration.md](./archive/driver-service-migration.md) + [archive/audit-fix-04-privileged-net-drivers.md](./archive/audit-fix-04-privileged-net-drivers.md) B04-19/D6。
+> 来源：源码头注释（functions/driver/mod.rs + functions/egdf/mod.rs）+ [archive/driver-service-migration.md](./archive/driver-service-migration.md) + [archive/audit-fix-04-framework-net-drivers.md](./archive/audit-fix-04-framework-net-drivers.md) B04-19/D6。
 > **关键认知**：迁移方向经历过一次反转——Phase 2.1/2.4 原方向为"privileged → functions"（业务逻辑迁往 functions 做成 safe API）；B04 审计（2026-08-24/25）纠正为"机制留 privileged + functions 安全代理"（E1000 反向回迁）。因此"未迁移"≠"待迁移到 functions"，多数模块的当前形态是**有意维持的中间态**。
 
 ### 8.1 迁移历史脉络（三阶段）
@@ -628,7 +628,7 @@
 
 ## 🟤 第 9 类：分册 6 调研预存问题（2026-08-31）
 
-> 2026-08-31 追加：分册 6（[audit-fix-06-functions-fs.md](./audit-fix-06-functions-fs.md)）实施过程中调研发现的 3 个**分册 6 范围外**预存问题。用户裁决（2026-08-31）：统一登记待后续处理（选项 3A），不在本分册修复。
+> 2026-08-31 追加：分册 6（[audit-fix-06-services-fs.md](./archive/audit-fix-06-services-fs.md)）实施过程中调研发现的 3 个**分册 6 范围外**预存问题。用户裁决（2026-08-31）：统一登记待后续处理（选项 3A），不在本分册修复。
 
 ### B06-PRE-001: tmpfs.rs `<256` 硬编码（与 B06-09 同款）
 

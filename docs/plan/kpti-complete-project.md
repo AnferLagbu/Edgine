@@ -1,6 +1,6 @@
 # KPTI 完整化工程（原 B02-39，独立工程）
 
-> 从 [audit-fix-02-privileged-arch-asm.md](./archive/audit-fix-02-privileged-arch-asm.md) B02-39 擢升为独立工程（2026-08-21 用户决策）。
+> 从 [audit-fix-02-framework-arch-asm.md](./archive/audit-fix-02-framework-arch-asm.md) B02-39 擢升为独立工程（2026-08-21 用户决策）。
 > 来源：审计附录 A F-04/F-08/F-10/F-16 + TOP 20 #3 + [code-audit-final-summary.md](./code-audit-final-summary.md)。
 > 复核结论：两架构 KPTI 均为"半 KPTI"（页表名目隔离 + U/S 位权限，映射面未缩小），Meltdown 侧信道防御未实现。
 
@@ -171,7 +171,7 @@
     - x86_64（[qemu_boot_x86_64.log](../../build/log/qemu_boot_x86_64.log)）：`[IDT] user exception: vec=14 err=0x4 rip=0x4000E7 cr2=0xFFFF800000100000` → `exit: pid=7 code=7` → `[KPTI] EL0 kernel high-half access denied (pid=7)`。`err=0x4`（USER 位置位、PRESENT 位清零）与 `cr2` = 探针地址精确吻合。同批日志显示四份用户页表（`0x4064000`/`0x5471000`/`0x546A000`/`0x7FC7000`）装配面恒等：`entry 0x12B000-0x12BA00 (1 pages); excluded kernel text 0x12BA00-0x2845B9 (345 pages)`。
     - aarch64（[qemu_boot_aarch64.log](../../build/log/qemu_boot_aarch64.log)）：`SYNC! ESR=0000000092000007 FAR=FFFF000040080000 ELR=0000000000400138` → `[ERR] [BOOT] EL0 sync fault: pid=7 ESR=0x92000007 FAR=0xFFFF000040080000 -> terminate` → `exit: pid=7 code=7` → 里程碑。`ESR=0x92000007` 解码 EC=0x24（**lower EL 数据异常**）、DFSC=0x07（level 3 翻译失败），`FAR` = 探针地址 ⇒ 证明 EL0 对高别名不可达而非"读到了值"。
     - **往返证据（关键）**：两架构均在探针子进程被终止**之后**由父进程继续执行并打印里程碑 ⇒ 完成"EL0 陷入 → 内核处理 → 调度切走 → 另一进程继续运行"的完整往返；aarch64 日志继续推进至 3.49s 的 `[NET] DHCP deconfigured` 计时器循环（1649+ 行），内核未挂起 ⇒ 顺带闭合分册 2 B02-25 的"用户态完整陷入/返回往返"缺口。
-    - 注：分册 2（[archive/audit-fix-02-privileged-arch-asm.md](./archive/audit-fix-02-privileged-arch-asm.md)）按 AGENTS §6 为**冻结历史快照**（不再修改），B02-39 / B02-25 的收口以本工程文档为准。
+    - 注：分册 2（[archive/audit-fix-02-framework-arch-asm.md](./archive/audit-fix-02-framework-arch-asm.md)）按 AGENTS §6 为**冻结历史快照**（不再修改），B02-39 / B02-25 的收口以本工程文档为准。
 
 ### 每进程一致性与强化验证（Phase 3）
 
@@ -195,7 +195,7 @@
   - 详情：
     1. **双架构 QEMU 完整回归**：`FAIL_OK=0 ./scripts/qemu_boot_test.sh` → **2/2 通过**。x86_64 达 `VFS ready` + `[USER] Entering Ring 3 (init pid=4)`；aarch64 达 `VFS ready` + `Entering EL0 (init pid=4)`。
     2. **用户态陷入/返回往返**（本条的关键判据）：由 KPTI-09 探针承担 —— 两架构的探针子进程（pid=7）在 EL0 触发异常 → 内核处理（x86_64 `#PF` → `TerminateProcess`；aarch64 同步异常 → `process_exit`）→ 调度切走 → **父进程继续执行并打印里程碑** `[KPTI] EL0 kernel high-half access denied`。aarch64 日志继续推进至 3.49s 的 `[NET] DHCP deconfigured` 计时器循环（1649+ 行，致命异常匹配数 0）⇒ 内核未挂起、往返闭合。该往返同时**闭合分册 2 B02-25** 的"用户态完整陷入/返回"缺口。
-    3. **docs 同步**：本工程文档 KPTI-07～KPTI-12 状态与详情、DECISION-065～068 均已回写；分册 2（[archive/audit-fix-02-privileged-arch-asm.md](./archive/audit-fix-02-privileged-arch-asm.md)）按 AGENTS §6 为**冻结历史快照（不再修改）**，其 B02-39 / B02-25 的收口状态**以本工程文档为准**，不在 archive 内改动。
+    3. **docs 同步**：本工程文档 KPTI-07～KPTI-12 状态与详情、DECISION-065～068 均已回写；分册 2（[archive/audit-fix-02-framework-arch-asm.md](./archive/audit-fix-02-framework-arch-asm.md)）按 AGENTS §6 为**冻结历史快照（不再修改）**，其 B02-39 / B02-25 的收口状态**以本工程文档为准**，不在 archive 内改动。
   - 验证门槛（§2.3 五条全过）：`./ci/build.sh all`（`Passed: 5 Failed: 0`）、`./ci/audit.sh quick`（`AUDIT_RC=0`）、`make test-host`（全绿）、`make test-unit`（`✅ ALL TESTS PASSED (QEMU exit: 33)`）、`FAIL_OK=0 ./scripts/qemu_boot_test.sh`（2/2）。
 
 ### 决策记录
