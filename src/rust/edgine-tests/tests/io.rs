@@ -1,6 +1,6 @@
 //! IO 系统调用服务层参数验证测试
 //!
-//! 覆盖 services/fs/io.rs 的纯标量验证逻辑:
+//! 覆盖 functions/fs/io.rs 的纯标量验证逻辑:
 //! - pipe: fds != 0
 //! - dup/dup2: oldfd/newfd >= 0
 //! - fcntl: fd >= 0
@@ -127,9 +127,9 @@ fn test_fcntl_arg_value() {
 }
 
 #[test]
-fn test_fcntl_invalid_cmd_not_validated_at_services() {
-    // cmd 验证由 framework 内部处理
-    // services 仅查 fd >= 0
+fn test_fcntl_invalid_cmd_not_validated_at_functions() {
+    // cmd 验证由 privileged 内部处理
+    // functions 仅查 fd >= 0
     assert_eq!(fcntl_validate(1, 999, 0), Ok(()));
     assert_eq!(fcntl_validate(1, -1, 0), Ok(()));
 }

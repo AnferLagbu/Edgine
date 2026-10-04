@@ -1,8 +1,8 @@
-# 重复实现收敛工程（帧归还语义单点化 + services 冗余代理清理）
+# 重复实现收敛工程（帧归还语义单点化 + functions 冗余代理清理）
 
-> **定位**：把「物理帧的归还时机」这一条语义从 8 处复制收敛为 framework/mm 的**两个入口**（自持锁 / 要求持锁），并清理 services 层对 `framework::mm::pcache` 的零调用者转发壳；同时把 `eliminate-parallel-implementations.md` 的 9 处失实状态归位。
+> **定位**：把「物理帧的归还时机」这一条语义从 8 处复制收敛为 privileged/mm 的**两个入口**（自持锁 / 要求持锁），并清理 functions 层对 `privileged::mm::pcache` 的零调用者转发壳；同时把 `eliminate-parallel-implementations.md` 的 9 处失实状态归位。
 >
-> **来源**：`pcache-frame-ownership.md` §6 登记项 2（`pcache_get` 的 services re-export 零调用者）与登记项 4（旧帧归零释放的形态重复，4→5 处），两项均标注「属 `eliminate-parallel-implementations.md` 范畴」。
+> **来源**：`pcache-frame-ownership.md` §6 登记项 2（`pcache_get` 的 functions re-export 零调用者）与登记项 4（旧帧归零释放的形态重复，4→5 处），两项均标注「属 `eliminate-parallel-implementations.md` 范畴」。
 >
 > **关系**：与 `eliminate-parallel-implementations.md`（host-tests 平行实现，已实质完成）**不重叠**——本工程收敛的是**内核内部**的重复形态，该文档的收尾（状态归位）并入本工程 D-7。
 >
@@ -35,26 +35,26 @@
 
 ## 2. 源码调研结论
 
-- **锁序事实**：`release_file_pages`（services）持 `VMM_LOCK` 前的 `mm.vmas.lock()`（VMA_LOCK）逐页调 `pcache_release_for_va`；`get_physical_in_pml4` **不取锁**（只读遍历）。既定锁序为 `VMA_LOCK → VMM_LOCK → pcache 桶锁 / PMM 锁`。故归还动作（需 VMM_LOCK）**必须在桶锁外**执行，否则构成 `桶锁 → VMM_LOCK` 反向嵌套。
+- **锁序事实**：`release_file_pages`（functions）持 `VMM_LOCK` 前的 `mm.vmas.lock()`（VMA_LOCK）逐页调 `pcache_release_for_va`；`get_physical_in_pml4` **不取锁**（只读遍历）。既定锁序为 `VMA_LOCK → VMM_LOCK → pcache 桶锁 / PMM 锁`。故归还动作（需 VMM_LOCK）**必须在桶锁外**执行，否则构成 `桶锁 → VMM_LOCK` 反向嵌套。
 - **`defer_free` 语义**（`vmm_x86_64.rs:2390`）：`pub(crate)`，纯头插入链 + `DEFERRED_FREE_ADMITTED` 计数，要求持 VMM_LOCK 作批次链单写者；真正归还在 TLB 代追平的 `release_lock` 路径。
 - **`frame_dec` 语义**：`cur == 0` ⇒ `false`（不动）；`cur == 1` ⇒ 写 0 且 `true`（唯一持有者）；否则递减且 `false`。⇒ **`true` 即「我是最后持有者」**，可作归还前置判据（比现行 `free_page` 的 "cur<=1 即真释放" 更严格、更 fail-closed）。
 - **测试断言约束**：kernel 自测 `test_pcache_ref_count_matches_mapping_matrix` 末段断言「末个映射注销后条目释放 + 帧归零（`frame_ref_count == 0`）」。`frame_dec` 写 0 后**立即**满足该断言，延迟释放只推迟 PMM 真正回收 ⇒ 该用例在改造后仍应通过（这是设计正确性的判别点之一）。
 - **判别力来源**：`DEFERRED_FREE_ADMITTED` 无公共访问器，仅经 klog 埋点输出（`vmm_x86_64.rs:2307`）。故延迟释放的**负向验证**以 `make test-smp-multicore` 解析 `admitted/released/pending` 承载，而不为测试新增访问器（避免为测试开 API 面）。
-- **services 转发壳判据（三合一）**：`src/kernel/services/mm/pcache.rs` 的 **5 个**（原文写「六个」）公开函数 `pcache_get` / `pcache_lookup` / `pcache_mark_dirty` / `pcache_put` / `pcache_invalidate_inode` 全仓零调用者；能力等价入口已存在（`framework::mm::pcache::*`）；非 API/FFI/feature/硬件原语面。且 `framework::mm::pcache` **不在** `audit_services_boundary.py` 的 `FORBIDDEN_FRAMEWORK_MODULES`（services 可直接调用，`services/mm/mmap.rs` 已如此），亦**不在** `PROXY_ALLOWANCE`（该壳不属被豁免的转发设计）。
+- **functions 转发壳判据（三合一）**：`src/kernel/functions/mm/pcache.rs` 的 **5 个**（原文写「六个」）公开函数 `pcache_get` / `pcache_lookup` / `pcache_mark_dirty` / `pcache_put` / `pcache_invalidate_inode` 全仓零调用者；能力等价入口已存在（`privileged::mm::pcache::*`）；非 API/FFI/feature/硬件原语面。且 `privileged::mm::pcache` **不在** `audit_functions_boundary.py` 的 `FORBIDDEN_PRIVILEGED_MODULES`（functions 可直接调用，`functions/mm/mmap.rs` 已如此），亦**不在** `PROXY_ALLOWANCE`（该壳不属被豁免的转发设计）。
 
 ## 3. 用户裁定
 
 | 项 | 裁定 |
 |---|---|
-| 工程范围 | **C + D + 文档订正**：C = services 冗余代理处置；D = 帧归还形态收敛；文档订正 = 两份 plan 状态归位 |
+| 工程范围 | **C + D + 文档订正**：C = functions 冗余代理处置；D = 帧归还形态收敛；文档订正 = 两份 plan 状态归位 |
 | D 实现路径 | **B 相对完整**：双入口（`release_frame_locked` 要求已持锁 + `release_frame` 自持锁）+ 架构语义注释单点化 |
 | `pcache::deref` | **纳入本轮**：改走统一入口（x86 延迟 / aarch64 立即） |
 
 ## 4. 任务分解
 
-- **D-1. framework/mm 双入口建立（语义单点化）**
-  - 描述：在 `framework/mm/mod.rs`（与既有唯一判据 `is_user_leaf` 同处）新增两个 `pub(crate)` 入口：`release_frame_locked(PhysAddr)`（要求调用方已持 VMM_LOCK）与 `release_frame(PhysAddr)`（自持锁包装）。语义注释一并收拢：为何 x86 必须延迟（他核 TLB 陈旧映射 ⇒ 帧重分配 ⇒ UAF）、为何 aarch64 可立即（TLB 代协议仅覆盖 x86_64，广播失效即追平）、以及「调用方不得在持有 pcache 桶锁时调用」的锁序约束。
-  - 方案：`release_frame_locked` 内 `#[cfg(target_arch = "x86_64")] vmm::get_vmm().defer_free(phys.0)` / `#[cfg(target_arch = "aarch64")] pmm::get_pmm().free_page(phys)`；`release_frame` = `acquire_lock` → `release_frame_locked` → `release_lock`。`pub(crate)` 非 `pub`（无 services / 跨子系统调用者）。
+- **D-1. privileged/mm 双入口建立（语义单点化）**
+  - 描述：在 `privileged/mm/mod.rs`（与既有唯一判据 `is_user_leaf` 同处）新增两个 `pub(crate)` 入口：`release_frame_locked(PhysAddr)`（要求调用方已持 VMM_LOCK）与 `release_frame(PhysAddr)`（自持锁包装）。语义注释一并收拢：为何 x86 必须延迟（他核 TLB 陈旧映射 ⇒ 帧重分配 ⇒ UAF）、为何 aarch64 可立即（TLB 代协议仅覆盖 x86_64，广播失效即追平）、以及「调用方不得在持有 pcache 桶锁时调用」的锁序约束。
+  - 方案：`release_frame_locked` 内 `#[cfg(target_arch = "x86_64")] vmm::get_vmm().defer_free(phys.0)` / `#[cfg(target_arch = "aarch64")] pmm::get_pmm().free_page(phys)`；`release_frame` = `acquire_lock` → `release_frame_locked` → `release_lock`。`pub(crate)` 非 `pub`（无 functions / 跨子系统调用者）。
   - 状态：[X]
 
 - **D-2. 跨架构分派点收敛（站点 1/2/3）**
@@ -72,9 +72,9 @@
   - 方案：`deref` 内 `let last = pmm::get_pmm().frame_dec(phys); ... return if last { Some(phys) } else { None };`（`frame_dec == false` 表示仍有其他持有者或契约违反 ⇒ 不归还，fail-closed）。`pcache_put` 在 `guard` 作用域结束后归还。锁序注释就近写明「桶锁内只改计数/条目，归还需 VMM_LOCK 故必须在出锁后」。
   - 状态：[X]
 
-- **D-5. services 冗余代理清理（C）**
-  - 描述：删除 `src/kernel/services/mm/pcache.rs`（5 个零调用者转发函数）与 `services/mm/mod.rs` 的 `pub mod pcache;` 声明。
-  - 方案：删除后 grep 复核 `services::mm::pcache` / `services/mm/pcache.rs` 零残留（archive 文档引用不动）；能力等价面为 `framework::mm::pcache::*`（services 已可直接调用，且边界审计未将其列为禁止）。
+- **D-5. functions 冗余代理清理（C）**
+  - 描述：删除 `src/kernel/functions/mm/pcache.rs`（5 个零调用者转发函数）与 `functions/mm/mod.rs` 的 `pub mod pcache;` 声明。
+  - 方案：删除后 grep 复核 `functions::mm::pcache` / `functions/mm/pcache.rs` 零残留（archive 文档引用不动）；能力等价面为 `privileged::mm::pcache::*`（functions 已可直接调用，且边界审计未将其列为禁止）。
   - 状态：[X]
 
 - **D-6. 验证门槛与负向验证**
@@ -109,5 +109,5 @@
 1. **`frame.rs` 的 `Frame` 句柄归还未经延迟释放**：`frame_dec` 归零后直接 `api::pmm_free_page_phys`。若该句柄将来用于「曾建映射」的帧，同样存在他核 TLB 陈旧访问前提；当前调用面（pcache 条目 / DMA）不属映射帧，故不动。
 2. **`pcache::invalidate_inode` 的条目释放仍是立即 `free_page`**：该集合在「无纯缓存引用」前提下恒空（`deref` 归零即移除条目），实际为守卫语义。若将来引入纯缓存引用，该路径须一并纳入统一入口，且归还仍需出桶锁执行（需批量收集）。
 3. **`DEFERRED_FREE_ADMITTED` 无公共访问器**：延迟释放的可观测性仅靠 klog 埋点，故内核自测无法直接断言「某次归零走了延迟」；本工程以 SMP 计数埋点承载判别力。若后续要求自测级判别，需为 VMM 增加只读统计入口（届时属独立小工程）。
-4. **`services/mm/pcache.rs` 删除后，services 对 pcache 的唯一路径是 `framework::mm::pcache`**：该模块在 `audit_coupling.py` 的 `INTERNAL_PATTERNS` 中（约束 framework 子系统间引用需经 `mm/mod.rs`），但不在 services 边界审计的禁止名单；若将来收紧 services 侧禁止面，须同步迁移到 `mm/mod.rs` 顶层 re-export。
+4. **`functions/mm/pcache.rs` 删除后，functions 对 pcache 的唯一路径是 `privileged::mm::pcache`**：该模块在 `audit_coupling.py` 的 `INTERNAL_PATTERNS` 中（约束 privileged 子系统间引用需经 `mm/mod.rs`），但不在 functions 边界审计的禁止名单；若将来收紧 functions 侧禁止面，须同步迁移到 `mm/mod.rs` 顶层 re-export。
 5. **`host-tests/src/hvfs/` 为空目录**（0 文件，git 不跟踪空目录 ⇒ 本地迁移残留）：属 §12.5 工程外预存问题，只报不动。

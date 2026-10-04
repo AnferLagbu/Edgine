@@ -6,7 +6,7 @@
 //! 3. SocketWaitQueueTable 边界 (16 项 + 越界返回 None)
 //! 4. poll_network 末尾调用 try_wake (静态契约)
 //! 5. 单元测试 (wait_queue.rs 内 #[cfg(test)]) 数量
-//! 6. 与框架/服务边界: SOCKET_WAIT_QUEUES 是 framework 内 static (不在 services 暴露)
+//! 6. 与框架/服务边界: SOCKET_WAIT_QUEUES 是 privileged 内 static (不在 functions 暴露)
 
 use std::fs;
 use std::path::PathBuf;
@@ -23,7 +23,7 @@ fn read_src(rel: &str) -> String {
 
 #[test]
 fn wait_queue_module_exists() {
-    let src = read_src("src/kernel/framework/net/wait_queue.rs");
+    let src = read_src("src/kernel/privileged/net/wait_queue.rs");
     assert!(
         src.contains("pub struct SocketWaitQueue")
             && src.contains("pub struct SocketWaitQueueTable"),
@@ -33,7 +33,7 @@ fn wait_queue_module_exists() {
 
 #[test]
 fn socket_wait_queue_exposes_required_api() {
-    let src = read_src("src/kernel/framework/net/wait_queue.rs");
+    let src = read_src("src/kernel/privileged/net/wait_queue.rs");
     let required = [
         "pub const fn new()",
         "pub fn mark_waiting",
@@ -52,7 +52,7 @@ fn socket_wait_queue_exposes_required_api() {
 
 #[test]
 fn wake_reason_distinguishes_three_states() {
-    let src = read_src("src/kernel/framework/net/wait_queue.rs");
+    let src = read_src("src/kernel/privileged/net/wait_queue.rs");
     let variants = ["Readable", "Writable", "Closed"];
     for v in variants {
         assert!(src.contains(v), "P2-I-41: WakeReason 缺少变体 {v}");
@@ -61,7 +61,7 @@ fn wake_reason_distinguishes_three_states() {
 
 #[test]
 fn socket_wait_queue_table_bounded_at_16() {
-    let src = read_src("src/kernel/framework/net/wait_queue.rs");
+    let src = read_src("src/kernel/privileged/net/wait_queue.rs");
     // 表格内 16 个 SocketWaitQueue
     assert!(
         src.contains("queues: [SocketWaitQueue; 16]"),
@@ -81,7 +81,7 @@ fn socket_wait_queue_table_bounded_at_16() {
 
 #[test]
 fn global_instance_exported() {
-    let src = read_src("src/kernel/framework/net/wait_queue.rs");
+    let src = read_src("src/kernel/privileged/net/wait_queue.rs");
     assert!(
         src.contains("pub static SOCKET_WAIT_QUEUES"),
         "P2-I-41: 必须暴露全局表 SOCKET_WAIT_QUEUES"
@@ -90,7 +90,7 @@ fn global_instance_exported() {
 
 #[test]
 fn poll_network_invokes_try_wake() {
-    let src = read_src("src/kernel/framework/net/init.rs");
+    let src = read_src("src/kernel/privileged/net/init.rs");
     let marker = "pub unsafe fn poll_network()";
     let start = src
         .find(marker)
@@ -112,7 +112,7 @@ fn poll_network_invokes_try_wake() {
 
 #[test]
 fn poll_network_uses_try_wake_not_blocking() {
-    let src = read_src("src/kernel/framework/net/init.rs");
+    let src = read_src("src/kernel/privileged/net/init.rs");
     // 强调 ISR 端用 try_wake (不阻塞), syscall 端才能用阻塞 wake
     let marker = "pub unsafe fn poll_network()";
     let start = src.find(marker).expect("missing poll_network");
@@ -134,7 +134,7 @@ fn poll_network_uses_try_wake_not_blocking() {
 
 #[test]
 fn wait_queue_module_registered_in_net_mod() {
-    let src = read_src("src/kernel/framework/net/mod.rs");
+    let src = read_src("src/kernel/privileged/net/mod.rs");
     assert!(
         src.contains("pub mod wait_queue"),
         "P2-I-41: net/mod.rs 必须 pub mod wait_queue"
@@ -143,17 +143,17 @@ fn wait_queue_module_registered_in_net_mod() {
 
 #[test]
 fn wait_queue_uses_irqspinlock_not_spin() {
-    let src = read_src("src/kernel/framework/net/wait_queue.rs");
+    let src = read_src("src/kernel/privileged/net/wait_queue.rs");
     assert!(
-        src.contains("use crate::framework::sync::irq_spinlock::IrqSpinLock as Mutex")
-            || src.contains("use crate::framework::sync::IrqSpinLock as Mutex"),
+        src.contains("use crate::privileged::sync::irq_spinlock::IrqSpinLock as Mutex")
+            || src.contains("use crate::privileged::sync::IrqSpinLock as Mutex"),
         "P2-I-41: wait_queue 必须使用 IrqSpinLock (关中断), 与框架同步原语保持一致"
     );
 }
 
 #[test]
 fn unit_tests_inside_wait_queue_module() {
-    let src = read_src("src/kernel/framework/net/wait_queue.rs");
+    let src = read_src("src/kernel/privileged/net/wait_queue.rs");
     let test_count = src.matches("#[test]").count();
     assert!(
         test_count >= 4,
@@ -163,7 +163,7 @@ fn unit_tests_inside_wait_queue_module() {
 
 #[test]
 fn wake_without_pending_does_not_count() {
-    let src = read_src("src/kernel/framework/net/wait_queue.rs");
+    let src = read_src("src/kernel/privileged/net/wait_queue.rs");
     // 行为契约: try_wake 无人等待时 wake_count 不递增
     let test_block = src
         .rsplit_once("#[cfg(test)]")

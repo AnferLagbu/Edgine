@@ -13,7 +13,7 @@
 
 use std::fs;
 
-const IFACE_TRAIT_RS: &str = "../src/kernel/framework/net/iface_trait.rs";
+const IFACE_TRAIT_RS: &str = "../src/kernel/privileged/net/iface_trait.rs";
 
 fn read(path: &str) -> String {
     fs::read_to_string(path).unwrap_or_else(|e| panic!("read {} failed: {}", path, e))

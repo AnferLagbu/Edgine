@@ -2,7 +2,7 @@
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `FakeProcess` / `reset` 平行实现, 改引内核真实源码
-//! `edgine::kernel::framework::proc::signal::reset_signal_state_on_exec`
+//! `edgine::kernel::privileged::proc::signal::reset_signal_state_on_exec`
 //! (全局 PROCESS_TABLE 查找 + 清零 pending/sigaction/blocked, 无效 PID 静默 no-op).
 //! 通过真实 `Process::new` + `PROCESS_TABLE.insert` 构造宿主进程, Drop 时回收.
 //!
@@ -12,8 +12,8 @@
 
 use std::sync::atomic::Ordering;
 
-use edgine::kernel::framework::proc::process::{PROCESS_TABLE, Process};
-use edgine::kernel::framework::proc::signal::reset_signal_state_on_exec;
+use edgine::kernel::privileged::proc::process::{PROCESS_TABLE, Process};
+use edgine::kernel::privileged::proc::signal::reset_signal_state_on_exec;
 
 /// 宿主进程句柄: 构造 + 插入全局 PROCESS_TABLE, Drop 时回收
 struct TestProc {

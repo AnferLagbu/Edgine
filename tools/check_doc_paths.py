@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-扫 docs/ 文档中提到的 src/kernel/framework/xxx.rs 路径, 检查实际是否存在.
+扫 docs/ 文档中提到的 src/kernel/privileged/xxx.rs 路径, 检查实际是否存在.
 标记漂移项 (文档里写但代码里没有的文件).
 """
 import re
@@ -17,9 +17,9 @@ PATH_PAT = re.compile(
     r"|(?:scripts/[A-Za-z0-9_./-]+\.(?:py|sh)))`"
 )
 
-# 简化: 也匹配省略 src/ 前缀的 framework/xxx.rs
+# 简化: 也匹配省略 src/ 前缀的 privileged/xxx.rs
 PATH_PAT2 = re.compile(
-    r"`((?:framework|services)/[A-Za-z0-9_./-]+\.(?:rs|md|toml|ld|S|asm))`"
+    r"`((?:privileged|functions)/[A-Za-z0-9_./-]+\.(?:rs|md|toml|ld|S|asm))`"
 )
 
 

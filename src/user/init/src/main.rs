@@ -11,11 +11,11 @@ use userlib::sys::*;
 /// 该地址在任何用户视图下都不得可读 —— 读到值即 KPTI 隔离失效。
 /// 基址取自各架构链接脚本把内核镜像放在物理 LMA 起点的约定：
 /// - x86_64: `KERNEL_BASE(0xFFFF_8000_0000_0000) + 0x100000`
-///   （见 `framework/link/x86_64.ld` 的 `. = 0x100000`，对应
-///   `framework/mm/mod.rs` 的 `KERNEL_BASE`）。
+///   （见 `privileged/link/x86_64.ld` 的 `. = 0x100000`，对应
+///   `privileged/mm/mod.rs` 的 `KERNEL_BASE`）。
 /// - aarch64: `KERNEL_BASE(0xFFFF_0000_0000_0000) + 0x4008_0000`
-///   （见 `framework/link/aarch64.ld` 的 `. = 0x40080000`，对应
-///   `framework/mm/mod.rs` 的 `KERNEL_BASE`）。
+///   （见 `privileged/link/aarch64.ld` 的 `. = 0x40080000`，对应
+///   `privileged/mm/mod.rs` 的 `KERNEL_BASE`）。
 #[cfg(target_arch = "x86_64")]
 const KERNEL_IMAGE_ALIAS: u64 = 0xFFFF_8000_0000_0000 + 0x10_0000;
 #[cfg(target_arch = "aarch64")]

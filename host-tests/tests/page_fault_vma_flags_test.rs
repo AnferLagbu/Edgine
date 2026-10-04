@@ -20,7 +20,7 @@ fn repo_root() -> std::path::PathBuf {
 
 #[test]
 fn test_page_fault_uses_vma_flags_for_user_fault() {
-    let path = repo_root().join("src/kernel/framework/mm/page_fault.rs");
+    let path = repo_root().join("src/kernel/privileged/mm/page_fault.rs");
     let src =
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
@@ -52,7 +52,7 @@ fn test_page_fault_uses_vma_flags_for_user_fault() {
 #[test]
 fn test_page_fault_mmap_path_uses_vma_flags_not_constants() {
     // 读 VMA 后, 新页 flags 应基于 vma.flags (而非硬编码常量)
-    let path = repo_root().join("src/kernel/framework/mm/page_fault.rs");
+    let path = repo_root().join("src/kernel/privileged/mm/page_fault.rs");
     let src =
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
@@ -78,7 +78,7 @@ fn test_page_fault_no_explicit_rwx_for_user_fault() {
     // 允许: 栈扩张 / COW 写入 (语义正确, 注释会说明)
     // 禁止: 通用 fallthrough 路径 (应走 VMA 查询)
 
-    let path = repo_root().join("src/kernel/framework/mm/page_fault.rs");
+    let path = repo_root().join("src/kernel/privileged/mm/page_fault.rs");
     let src =
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 

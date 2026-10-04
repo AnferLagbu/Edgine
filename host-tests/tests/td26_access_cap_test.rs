@@ -1,17 +1,17 @@
 //! TD-26: access_syscall 能力制校验回归 (B06-04 / DECISION-077 方案 A)
 //!
-//! 原镜像内核 [src/kernel/services/fs/access.rs] 的 mode→FS_CAP 映射逻辑,
+//! 原镜像内核 [src/kernel/functions/fs/access.rs] 的 mode→FS_CAP 映射逻辑,
 //! 现改引内核真实实现 (host-test feature 暴露), 验证:
 //!   1. `F_OK` (mode=0) 不要求任何能力
 //!   2. `R_OK`/`W_OK`/`X_OK` 正确映射到 `FS_CAP_READ/WRITE/EXECUTE`
 //!   3. 组合 mode (位或) 映射为组合能力位
-//!   4. 能力充足 → 放行; 能力不足 → EACCES (走内核 `framework::sgeg::pwm_has_capability`)
+//!   4. 能力充足 → 放行; 能力不足 → EACCES (走内核 `privileged::sgeg::pwm_has_capability`)
 //!   5. mode 越界 → EINVAL (与内核 `0..=0o7` 校验一致)
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `FS_CAP_*` 常量表与 `pwm_has_capability` mock 实现, 改引:
-//! - `framework::sgeg::pwm_has_capability` — 内核真实能力检查 (engine::check)
-//! - `services::sgeg::capability::{FS_CAP_*, CAP_DOMAIN_FS}` — 能力位/域常量
+//! - `privileged::sgeg::pwm_has_capability` — 内核真实能力检查 (engine::check)
+//! - `functions::sgeg::capability::{FS_CAP_*, CAP_DOMAIN_FS}` — 能力位/域常量
 //! - 测试身份经 `identity::get_table().create(..)` 真实注册 (初始 FS 能力 =
 //!   `capability::VIABLE_FLOOR` = READ|EXECUTE), 能力授予以 `PwmEntry::fetch_or_caps` 完成.
 //!
@@ -24,24 +24,24 @@
 
 use std::sync::OnceLock;
 
-use edgine::kernel::framework::sgeg::identity;
-use edgine::kernel::framework::sgeg::pwm_has_capability;
-use edgine::kernel::services::sgeg::capability::{
+use edgine::kernel::functions::sgeg::capability::{
     CAP_DOMAIN_FS, FS_CAP_EXECUTE, FS_CAP_READ, FS_CAP_WRITE,
 };
-use edgine::kernel::services::sgeg::types::{CapBits, CapDomain};
+use edgine::kernel::functions::sgeg::types::{CapBits, CapDomain};
+use edgine::kernel::privileged::sgeg::identity;
+use edgine::kernel::privileged::sgeg::pwm_has_capability;
 
 const EACCES: i32 = -13; // POSIX EACCES
 const EINVAL: i32 = -22; // POSIX EINVAL
 
-// 内核 [services/fs/access.rs] 的 R_OK/W_OK/X_OK/F_OK 常量
+// 内核 [functions/fs/access.rs] 的 R_OK/W_OK/X_OK/F_OK 常量
 const F_OK: i32 = 0;
 const R_OK: i32 = 4;
 const W_OK: i32 = 2;
 const X_OK: i32 = 1;
 
 /// 注册并缓存测试身份 (creator=0 → 最高特权级). 新身份的初始 FS 能力 =
-/// `services::sgeg::capability::VIABLE_FLOOR[FS]` = READ|EXECUTE (无 WRITE),
+/// `functions::sgeg::capability::VIABLE_FLOOR[FS]` = READ|EXECUTE (无 WRITE),
 /// 即内核"可行下界"进程的权限形态.
 fn test_pwm() -> u64 {
     static PWM: OnceLock<u64> = OnceLock::new();
@@ -63,7 +63,7 @@ fn write_pwm() -> u64 {
     })
 }
 
-/// 镜像 [services/fs/access.rs::access_syscall] 中 host 可测的判定片段:
+/// 镜像 [functions/fs/access.rs::access_syscall] 中 host 可测的判定片段:
 /// mode→FS_CAP 映射 + 内核 `pwm_has_capability` 能力制校验.
 /// 返回 None = 通过, Some(errno) = 拒绝.
 /// (内核 access_syscall 的 current_pwm / vfs_stat_safe 依赖进程与 VFS 上下文,

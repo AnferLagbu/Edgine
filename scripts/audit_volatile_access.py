@@ -26,10 +26,10 @@ SRC = os.path.join(ROOT, "src/kernel")
 #   Atomic 类型由编译器保证对齐, load/store 自带 volatile 语义与内存序,
 #   天然免疫 LTO 字段错位 (与 Ref 抽象同等安全, 优于 UnsafeCell+get()).
 RISKY_FIELDS = [
-    ("framework/mm/pmm.rs", "bitmap_size", None, "direct"),
-    ("framework/mm/kmalloc.rs", "free_list_head", "FreeListHeadRef", "ref"),
-    ("framework/mm/kmalloc.rs", "heap_end", "HeapEndRef", "ref"),
-    ("framework/sync/pi_mutex.rs", "effective_priority", None, "atomic"),
+    ("privileged/mm/pmm.rs", "bitmap_size", None, "direct"),
+    ("privileged/mm/kmalloc.rs", "free_list_head", "FreeListHeadRef", "ref"),
+    ("privileged/mm/kmalloc.rs", "heap_end", "HeapEndRef", "ref"),
+    ("privileged/sync/pi_mutex.rs", "effective_priority", None, "atomic"),
 ]
 
 # Ref 抽象使用模式: XxxRef::new(addr_of!(self.field))

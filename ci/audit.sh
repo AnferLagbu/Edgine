@@ -29,14 +29,14 @@ ok()   { echo -e "${GREEN}✓ $1${NC}"; }
 err()  { echo -e "${RED}✗ $1${NC}"; exit 1; }
 
 # ── 0. TCB 安全边界门禁 (M2 里程碑硬约束) ────────────────────
-# 服务层 (services/) 不允许任何 unsafe 代码。这是框内核架构的核心契约。
+# 服务层 (functions/) 不允许任何 unsafe 代码。这是框内核架构的核心契约。
 # check_tcb.sh 是 fail-fast 门禁: 一旦发现立即 exit 1, 整个 audit 终止。
 # 历史教训: 2026-06-03 审计发现 check_tcb.sh 正则有 bug (变长 lookbehind),
-# 导致 services/ 出现 8 处 unsafe 仍报 PASS。已修复, 见 tools/check_tcb.sh 顶部注释。
-step "0/6 TCB 安全边界门禁 (services/ 零 unsafe)"
+# 导致 functions/ 出现 8 处 unsafe 仍报 PASS。已修复, 见 tools/check_tcb.sh 顶部注释。
+step "0/6 TCB 安全边界门禁 (functions/ 零 unsafe)"
 if [ -x "$PROJECT_ROOT/tools/check_tcb.sh" ]; then
     if "$PROJECT_ROOT/tools/check_tcb.sh"; then
-        ok "TCB 边界: services/ 零 unsafe, framework/ 收敛"
+        ok "TCB 边界: functions/ 零 unsafe, privileged/ 收敛"
     else
         err "TCB 边界被破坏! 见上方 FAIL 输出"
     fi
@@ -73,25 +73,25 @@ if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_invar
     fi
 fi
 
-# framework 全量 SAFETY 注释覆盖审计
+# privileged 全量 SAFETY 注释覆盖审计
 # quick 模式也会跑 (核心 fail-fast 门禁, 不需要 Lockbud/Miri 等重工具)
 # B01-27 修复: audit_unsafe.py 窗口逻辑缺陷 (属性闭合行/多行属性误报) 已修复,
 # 原 127 处"缺失"中 108 处实为工具误报 (已有 SAFETY 注释但未识别),
 # 真实缺失 20 处已全部补齐, 基线归零 (0 容忍, 任何缺失即 CI 失败).
 EXPECTED_MAX_SAFETY_MISSING=0
 if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/tools/audit_unsafe.py" ]; then
-    step "0.5/6 Framework SAFETY 注释全量审计 (B01-27 工具修复, 基线 ≤${EXPECTED_MAX_SAFETY_MISSING})"
+    step "0.5/6 Privileged SAFETY 注释全量审计 (B01-27 工具修复, 基线 ≤${EXPECTED_MAX_SAFETY_MISSING})"
     AUDIT_RESULT=$("$PROJECT_ROOT/tools/audit_unsafe.py" --summary 2>&1 || true)
     echo "$AUDIT_RESULT" | tail -25
     MISSING=$(echo "$AUDIT_RESULT" | grep -E "缺 SAFETY:" | head -1 | awk '{print $NF}')
     # B01-16 修复: 当脚本输出为空或缺 "缺 SAFETY:" 行时, 视为异常 (fail-closed).
     # 原脚本静默通过 (无 ok 也无 err) 隐藏门禁失效.
     if [ -z "$AUDIT_RESULT" ]; then
-        err "audit_unsafe.py 输出为空 (脚本异常或 framework/ 为空)"
+        err "audit_unsafe.py 输出为空 (脚本异常或 privileged/ 为空)"
     elif [ -n "$MISSING" ] && [ "$MISSING" -le "$EXPECTED_MAX_SAFETY_MISSING" ]; then
-        ok "framework SAFETY 覆盖 (缺漏 $MISSING ≤ ${EXPECTED_MAX_SAFETY_MISSING} 基线)"
+        ok "privileged SAFETY 覆盖 (缺漏 $MISSING ≤ ${EXPECTED_MAX_SAFETY_MISSING} 基线)"
     elif [ -n "$MISSING" ] && [ "$MISSING" -gt "$EXPECTED_MAX_SAFETY_MISSING" ]; then
-        err "framework SAFETY 缺漏 $MISSING > 基线 ${EXPECTED_MAX_SAFETY_MISSING}, 需审查"
+        err "privileged SAFETY 缺漏 $MISSING > 基线 ${EXPECTED_MAX_SAFETY_MISSING}, 需审查"
     else
         # 输出非空但未匹配 "缺 SAFETY:" 行 — 视为脚本异常
         err "audit_unsafe.py 输出格式异常 (未找到 缺 SAFETY: 行)"
@@ -108,13 +108,13 @@ if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_block
     fi
 fi
 
-# I-16: services 层 OnceCell 抽象统一性 audit — 防 services 绕过 OnceCell 用 spin::Once
+# I-16: functions 层 OnceCell 抽象统一性 audit — 防 functions 绕过 OnceCell 用 spin::Once
 if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_once_cell.py" ]; then
-    step "0.5e/6 services OnceCell 单一抽象 (I-16)"
+    step "0.5e/6 functions OnceCell 单一抽象 (I-16)"
     if "$PROJECT_ROOT/scripts/audit_once_cell.py" 2>&1 | tail -8; then
-        ok "I-16: services 统一通过 sync::once::OnceCell"
+        ok "I-16: functions 统一通过 sync::once::OnceCell"
     else
-        err "I-16: 有 services 模块绕过 OnceCell 抽象用 spin::Once! 见上方输出"
+        err "I-16: 有 functions 模块绕过 OnceCell 抽象用 spin::Once! 见上方输出"
     fi
 fi
 

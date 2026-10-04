@@ -4,7 +4,7 @@
 #   make -f Makefile.ci ci              # Full CI flow
 #   make -f Makefile.ci ci-audit        # SAFETY + boundary + deadlock audit
 #   make -f Makefile.ci ci-cargo        # cargo check (x86_64 + aarch64)
-#   make -f Makefile.ci ci-unsafe-scan  # services 0-unsafe scan
+#   make -f Makefile.ci ci-unsafe-scan  # functions 0-unsafe scan
 #   make -f Makefile.ci ci-bench        # framekernel-bench + 回归检查
 #   make -f Makefile.ci ci-bench-record # 重新记录性能基线
 #   make -f Makefile.ci ci-test-host    # host-tests (单元 + 集成) 全量测试
@@ -21,7 +21,7 @@ help:
 	@echo "  make -f Makefile.ci ci                - Full CI flow"
 	@echo "  make -f Makefile.ci ci-audit          - SAFETY + boundary + deadlock audit"
 	@echo "  make -f Makefile.ci ci-cargo          - cargo check (x86_64 + aarch64)"
-	@echo "  make -f Makefile.ci ci-unsafe-scan    - services 0-unsafe scan"
+	@echo "  make -f Makefile.ci ci-unsafe-scan    - functions 0-unsafe scan"
 	@echo "  make -f Makefile.ci ci-bench          - framekernel-bench + 回归检查"
 	@echo "  make -f Makefile.ci ci-bench-record   - 重新记录性能基线"
 	@echo "  make -f Makefile.ci ci-test-host      - host-tests 单元+集成全量 (Cargo 自动发现)"
@@ -39,9 +39,9 @@ ci: ci-unsafe-scan ci-audit ci-cargo ci-bench ci-test-aarch64
 
 # Unsafe scan (uses Python script for accurate comment filtering)
 ci-unsafe-scan:
-	@echo "[1/3] services 0-unsafe scan..."
+	@echo "[1/3] functions 0-unsafe scan..."
 	@mkdir -p $(LOG_DIR)
-	@$(PY) scripts/ci_check_services_unsafe.py
+	@$(PY) scripts/ci_check_functions_unsafe.py
 
 # Audit
 ci-audit:
@@ -49,8 +49,8 @@ ci-audit:
 	@mkdir -p $(LOG_DIR)
 	@echo "  - SAFETY comment audit (M6.1)..."
 	@$(PY) scripts/audit_safety_coverage.py > $(LOG_DIR)/safety_audit.txt 2>&1
-	@echo "  - services->framework boundary (M6.3)..."
-	@$(PY) scripts/audit_services_boundary.py > $(LOG_DIR)/services_boundary.txt 2>&1
+	@echo "  - functions->privileged boundary (M6.3)..."
+	@$(PY) scripts/audit_functions_boundary.py > $(LOG_DIR)/functions_boundary.txt 2>&1
 	@echo "  - deadlock matrix (M6.2)..."
 	@$(PY) scripts/audit_deadlock_matrix.py > $(LOG_DIR)/deadlock_matrix.txt 2>&1
 	@if grep -q "CRITICAL" $(LOG_DIR)/deadlock_matrix.txt; then \

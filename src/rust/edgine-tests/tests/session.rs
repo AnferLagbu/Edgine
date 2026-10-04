@@ -1,6 +1,6 @@
 //! 会话/进程组系统调用服务层参数验证测试
 //!
-//! 覆盖 services/proc/session.rs 的标量验证逻辑:
+//! 覆盖 functions/proc/session.rs 的标量验证逻辑:
 //! - setsid: 无参数, 总是返回成功
 //! - getsid: pid >= 0
 //! - setpgid: pid >= 0 && pgid >= 0

@@ -8,10 +8,10 @@
 use std::fs;
 use std::path::Path;
 
-const INIT: &str = "src/kernel/framework/net/init.rs";
+const INIT: &str = "src/kernel/privileged/net/init.rs";
 // B04-09 (2026-08-25): NetState 结构体定义随拆分移至 init/state.rs,
 // init.rs 经 `pub use state::*` re-export. 契约扫描需同时覆盖两文件.
-const STATE: &str = "src/kernel/framework/net/init/state.rs";
+const STATE: &str = "src/kernel/privileged/net/init/state.rs";
 
 fn read(path: &str) -> String {
     let p = Path::new(env!("CARGO_MANIFEST_DIR"))

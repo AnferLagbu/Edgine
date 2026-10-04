@@ -108,5 +108,5 @@ Linux 验证过的成熟算法和设计模式可以在 Edgine 中使用：
 ## 五、交叉引用
 
 - [ref-naming.md](./ref-naming.md) — 命名与 ABI 兼容立场
-- [explain-framekernel.md](./explain-framekernel.md) — 框内核架构（framework/services 分层）
+- [explain-framekernel.md](./explain-framekernel.md) — 框内核架构（privileged/functions 分层）
 - [linux-compat-maintenance.md](../plan/linux-compat-maintenance.md) — Linux 兼容性维护工程

@@ -17,7 +17,7 @@ use std::fs;
 
 fn read_usermode_rs() -> String {
     let path = format!(
-        "{}/../src/kernel/framework/usermode.rs",
+        "{}/../src/kernel/privileged/usermode.rs",
         env!("CARGO_MANIFEST_DIR")
     );
     fs::read_to_string(&path).expect("read usermode.rs")

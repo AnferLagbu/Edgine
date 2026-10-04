@@ -4,7 +4,7 @@
 //!
 //! ## B08-21 布局校验保留 (F-1 规则 3, 跨语言 ABI)
 //!
-//! 本文件为**布局/常量镜像**: `framework::arch::x86_64::smp_init::ApStartupInfo`
+//! 本文件为**布局/常量镜像**: `privileged::arch::x86_64::smp_init::ApStartupInfo`
 //! (`#[repr(C, packed)]`) 与 `trampoline.asm` 之间的字节级一致性契约. 属跨语言
 //! ABI 契约 (Rust ↔ 汇编), 内核 .asm 无法在 host 引用, 按 B08-20/21 消并工程
 //! F-1 处置规则 3 保留本镜像并标注覆盖: 不做算法消并 (无平行算法), 仅重放
@@ -13,8 +13,8 @@
 //!
 //! ## 测试目的
 //!
-//! `framework::arch::x86_64::smp_init::ApStartupInfo` (`#[repr(C, packed)]`) 与
-//! `framework::arch::x86_64::trampoline.asm` 中 ApStartupInfo 必须**字节级一致**.
+//! `privileged::arch::x86_64::smp_init::ApStartupInfo` (`#[repr(C, packed)]`) 与
+//! `privileged::arch::x86_64::trampoline.asm` 中 ApStartupInfo 必须**字节级一致**.
 //! 任意一端修改字段顺序/类型后未同步另一端, BSP 将永远等不到 AP ready (固定循环
 //! 100ms 超时) 或 AP 等不到进入 64-bit 的入口.
 //!
@@ -39,7 +39,7 @@
 
 use std::mem::{offset_of, size_of};
 
-/// 复刻 `framework::arch::x86_64::smp_init::ApStartupInfo` 布局 (仅 std 测试可见).
+/// 复刻 `privileged::arch::x86_64::smp_init::ApStartupInfo` 布局 (仅 std 测试可见).
 ///
 /// 字段顺序、类型必须与 smp_init.rs + trampoline.asm 完全一致.
 /// 任一端修改后, 本测试 + smp_init.rs 编译期断言将同时失败.

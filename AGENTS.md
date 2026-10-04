@@ -12,9 +12,9 @@
 
 | 目录 | 用途 | 维护者 |
 |---|---|---|
-| `src/kernel/framework/` | TCB 子树（允许 unsafe，硬件抽象） | 用户 决策 / AI 实施 |
-| `src/kernel/services/` | 100% safe Rust 子树（策略与业务） | 用户 决策 / AI 实施 |
-| `src/kernel/services/net/smoltcp/` | smoltcp vendored（3rd-party，锁定） | 升级时 用户 授权 + AI |
+| `src/kernel/privileged/` | TCB 子树（允许 unsafe，硬件抽象） | 用户 决策 / AI 实施 |
+| `src/kernel/functions/` | 100% safe Rust 子树（策略与业务） | 用户 决策 / AI 实施 |
+| `src/kernel/functions/net/smoltcp/` | smoltcp vendored（3rd-party，锁定） | 升级时 用户 授权 + AI |
 | `src/user/`, `src/userland/`, `src/rust/` | 用户态程序与工具 | AI 实施 / 用户 审查 |
 | `host-tests/` | 主机端单元/集成测试（no_std + std） | AI 实施 / 用户 审查 |
 | `docs/plan/` | 工程与任务计划 | 用户 决策 + AI 撰写 |
@@ -40,8 +40,8 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 
 | 脚本 | 作用 | 对应 §5 硬规则 | CI 门禁 |
 |---|---|---|---|
-| `audit_services_boundary.py` | services 0 unsafe + 顶层 re-export 强制 | F1 + F2 | 强制 |
-| `audit_safety_coverage.py` | framework unsafe 块 SAFETY 100% 覆盖 | F4 | 强制 |
+| `audit_functions_boundary.py` | functions 0 unsafe + 顶层 re-export 强制 | F1 + F2 | 强制 |
+| `audit_safety_coverage.py` | privileged unsafe 块 SAFETY 100% 覆盖 | F4 | 强制 |
 | `audit_deadlock_matrix.py` | 锁顺序 + 中断上下文 + 递归锁检测 | F8 | 强制 |
 | `audit_coupling.py` | 跨模块循环依赖 | F3 | 强制 |
 | `audit_comment_language.py` | 中文注释强制 | F7 | 强制 |
@@ -78,33 +78,33 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 
 ### 4.1 一句话判据
 
-**要 unsafe 吗？要 → framework。不要 → services。涉及硬件/MMU/中断/上下文切换？→ framework。纯算法/策略/业务？→ services.**
+**要 unsafe 吗？要 → privileged。不要 → functions。涉及硬件/MMU/中断/上下文切换？→ privileged。纯算法/策略/业务？→ functions.**
 
 **归属决策树（2026-09-11 依 Asterinas framekernel 标准补全，TCB 最小化关键）**：
 
 ```
 Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
- ├─ 否 → services（纯策略/功能）
+ ├─ 否 → functions（纯策略/功能）
  └─ 是 → Q2: 它是"机制"还是"功能"？
-       ├─ 机制（页表/上下文切换/寄存器原语/同步/安全代理）→ framework
+       ├─ 机制（页表/上下文切换/寄存器原语/同步/安全代理）→ privileged
        └─ 功能（驱动/文件系统/网络栈/进程/信号/syscall）→ Q3
-             Q3: 能否封装为 safe API 供 services 用？
-              ├─ 能 → framework 留机制原语 + 封装 safe API（IoMem/IoPort/
-             │        DmaStream/UserPtr），功能实现在 services（0 unsafe）
-              └─ 不能（self-referential / FFI ABI / 中断上下文）→ framework 薄层
+             Q3: 能否封装为 safe API 供 functions 用？
+              ├─ 能 → privileged 留机制原语 + 封装 safe API（IoMem/IoPort/
+             │        DmaStream/UserPtr），功能实现在 functions（0 unsafe）
+              └─ 不能（self-referential / FFI ABI / 中断上下文）→ privileged 薄层
 ```
 
-> 要点：**"要 unsafe" ≠ "放 framework"**。驱动等要 unsafe 的**功能**应由 framework 封装 safe API 后实现在 services——这是 Minimalism 准则（TCB 最小化）的落地关键。
+> 要点：**"要 unsafe" ≠ "放 privileged"**。驱动等要 unsafe 的**功能**应由 privileged 封装 safe API 后实现在 functions——这是 Minimalism 准则（TCB 最小化）的落地关键。
 
 ### 4.2 6 安全不变式
 
-修改 framework 时必须逐项自检（详见 `docs/explain/explain-framekernel.md` 与 `docs/explain/spec-engineering.md`）：
+修改 privileged 时必须逐项自检（详见 `docs/explain/explain-framekernel.md` 与 `docs/explain/spec-engineering.md`）：
 
-- **I1** 内核态 CPU 状态不可被 services 篡改
-- **I2** 内核内存不可被 services 非法访问
-- **I3** 用户态 CPU 状态只能通过 framework 安全入口
-- **I4** 用户内存只能通过 framework 安全代理
-- **I5** 外设 MMIO/PIO 只能通过 framework 安全代理
+- **I1** 内核态 CPU 状态不可被 functions 篡改
+- **I2** 内核内存不可被 functions 非法访问
+- **I3** 用户态 CPU 状态只能通过 privileged 安全入口
+- **I4** 用户内存只能通过 privileged 安全代理
+- **I5** 外设 MMIO/PIO 只能通过 privileged 安全代理
 - **I6** 外设 DMA 不可写入内核内存
 
 > 违反任一不变式 = 重新设计（不允许补丁式补救）.
@@ -113,10 +113,10 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 | # | 规则 | 检查方式 |
 |---|---|---|
-| F1 | services 层 0 unsafe | `#![deny(unsafe_code)]` + `audit_services_boundary.py` |
-| F2 | services 禁止访问 framework 内部模块 | `audit_services_boundary.py` 黑名单 |
+| F1 | functions 层 0 unsafe | `#![deny(unsafe_code)]` + `audit_functions_boundary.py` |
+| F2 | functions 禁止访问 privileged 内部模块 | `audit_functions_boundary.py` 黑名单 |
 | F3 | 新增代码禁止引入模块间循环依赖 | `audit_coupling.py` |
-| F4 | framework 任何 unsafe 块必须配 `// SAFETY:` 注释 | `audit_safety_coverage.py` |
+| F4 | privileged 任何 unsafe 块必须配 `// SAFETY:` 注释 | `audit_safety_coverage.py` |
 | F5 | 双架构编译 0 warning 0 error | `./ci/build.sh all` |
 | F6 | 核心审计全部通过 | 见 §2.2 |
 | F7 | 中文注释强制 | `audit_comment_language.py` 0 violations |
@@ -146,7 +146,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 - 一个 PR 一个主题. CI 必须全部通过.
 - TCB 占比上升需在 PR 描述中说明原因与后续降低计划.
-- 新增 framework unsafe 块需 review 多名 reviewer.
+- 新增 privileged unsafe 块需 review 多名 reviewer.
 
 ### 7.3 Remote 操作约定
 
@@ -207,8 +207,8 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 任何 AI 输出（代码/文档/脚本）在合并前必须经用户审查：
 
-- **架构合规**：未越过 §5 硬规则（F1-F9），未引入 services unsafe
-- **安全注释**：framework `unsafe` 块都有 `// SAFETY:` 注释（F4）
+- **架构合规**：未越过 §5 硬规则（F1-F9），未引入 functions unsafe
+- **安全注释**：privileged `unsafe` 块都有 `// SAFETY:` 注释（F4）
 - **决策溯源**：关键设计选择有对应 commit 消息或 plan 文档记录
 - **测试覆盖**：新增代码有单元测试，跨模块接口有集成测试
 - **文档同步**：API 改动对应 docs/explain 或 docs/plan 同步更新
@@ -229,7 +229,7 @@ AI 输出若不通过上述审查，视为预存问题，必须修复后才能�
 调研范围（按工程相关性排序）：
 
 - **直接相关模块**：当前工程要修改/扩展的源文件、所在目录、相邻模块
-- **依赖模块**：被调用方、被调用方所在子树（framework / services）的公开 API
+- **依赖模块**：被调用方、被调用方所在子树（privileged / functions）的公开 API
 - **约束相关**：安全不变式（§4.2 I1-I6）、硬规则（§5 F1-F9）、编码规范（`docs/explain/spec-engineering.md`）
 - **相似工程**：git log 中同类工程的历史实现（`git log --oneline -- <related_path>`）
 - **设计文档**：`docs/explain/` 下相关章节，确认当前设计意图
@@ -264,13 +264,13 @@ AI 输出若不通过上述审查，视为预存问题，必须修复后才能�
 
 | 踩坑 | 解决 |
 |---|---|
-| 把 unsafe 写进 services/ | 编译失败，改用 framework 公开的 safe API |
-| 在 services/ 用 `println!` | no_std 不可用，改用 `klog::printk` 或 framework 日志 API |
+| 把 unsafe 写进 functions/ | 编译失败，改用 privileged 公开的 safe API |
+| 在 functions/ 用 `println!` | no_std 不可用，改用 `klog::printk` 或 privileged 日志 API |
 | 中断上下文持 Mutex 或分配 `GFP_KERNEL` | 死锁，中断路径只持自旋锁并 disable IRQ |
 | 修 bug 时顺手清理无关代码 | 禁止，每一行改动追溯到用户请求 |
-| 在 services/ 直接 `use framework::arch::x86_64` | 边界审计拒绝，走顶层 re-export 公共 API |
+| 在 functions/ 直接 `use privileged::arch::x86_64` | 边界审计拒绝，走顶层 re-export 公共 API |
 | 跳过 SAFETY 注释 | `audit_safety_coverage.py` 检测，100% 强制 |
-| 跨子系统硬编码常量 | 走 `framework::config` 或 `services::config` |
+| 跨子系统硬编码常量 | 走 `privileged::config` 或 `functions::config` |
 | 测试代码 `unwrap()` | 测试允许，生产代码禁止 |
 | 提交前忘跑审计 | CI 会拦，不会合入 |
 | 顺手添加"灵活配置" | 禁止，spec-engineering.md 铁律 0 严格适用 |

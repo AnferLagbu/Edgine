@@ -1,6 +1,6 @@
 //! mprotect 服务层参数验证测试
 //!
-//! 覆盖 services/mm/mprotect.rs 的纯标量验证逻辑.
+//! 覆盖 functions/mm/mprotect.rs 的纯标量验证逻辑.
 
 use edgine_tests::*;
 

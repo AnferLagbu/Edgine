@@ -13,10 +13,10 @@
 
 use std::fs;
 
-const KLOG: &str = "../src/kernel/framework/klog/mod.rs";
-const HANDLERS: &str = "../src/kernel/framework/idt/handlers.rs";
-const IDT: &str = "../src/kernel/framework/idt/idt.rs";
-const TIMER: &str = "../src/kernel/framework/timer/mod.rs";
+const KLOG: &str = "../src/kernel/privileged/klog/mod.rs";
+const HANDLERS: &str = "../src/kernel/privileged/idt/handlers.rs";
+const IDT: &str = "../src/kernel/privileged/idt/idt.rs";
+const TIMER: &str = "../src/kernel/privileged/timer/mod.rs";
 
 fn read(p: &str) -> String {
     fs::read_to_string(p).unwrap_or_else(|e| panic!("read {p}: {e}"))

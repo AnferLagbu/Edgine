@@ -26,7 +26,7 @@ fn read_src(rel: &str) -> String {
 
 #[test]
 fn save_module_exists() {
-    let src = read_src("src/kernel/framework/net/save.rs");
+    let src = read_src("src/kernel/privileged/net/save.rs");
     assert!(
         src.contains("pub struct NetSnapshot"),
         "P2-I-44: save.rs 必须定义 pub struct NetSnapshot"
@@ -41,7 +41,7 @@ fn save_module_exists() {
 
 #[test]
 fn snapshot_fields_complete() {
-    let src = read_src("src/kernel/framework/net/save.rs");
+    let src = read_src("src/kernel/privileged/net/save.rs");
     let required = [
         "magic: u32",
         "version: u32",
@@ -65,7 +65,7 @@ fn snapshot_fields_complete() {
 
 #[test]
 fn snapshot_has_magic_and_version() {
-    let src = read_src("src/kernel/framework/net/save.rs");
+    let src = read_src("src/kernel/privileged/net/save.rs");
     assert!(
         src.contains("NET_SNAPSHOT_MAGIC") && src.contains("NET_SNAPSHOT_VERSION"),
         "P2-I-44: 必须定义魔数与版本常量"
@@ -74,7 +74,7 @@ fn snapshot_has_magic_and_version() {
 
 #[test]
 fn is_valid_distinguishes_sealed_vs_empty() {
-    let src = read_src("src/kernel/framework/net/save.rs");
+    let src = read_src("src/kernel/privileged/net/save.rs");
     assert!(
         src.contains("pub fn is_valid(&self) -> bool"),
         "P2-I-44: NetSnapshot 必须有 is_valid 方法"
@@ -87,7 +87,7 @@ fn is_valid_distinguishes_sealed_vs_empty() {
 
 #[test]
 fn checksum_catches_tampering() {
-    let src = read_src("src/kernel/framework/net/save.rs");
+    let src = read_src("src/kernel/privileged/net/save.rs");
     assert!(
         src.contains("compute_checksum"),
         "P2-I-44: 必须实现 compute_checksum 用于篡改检测"
@@ -104,7 +104,7 @@ fn checksum_catches_tampering() {
 
 #[test]
 fn save_load_roundtrip_unit() {
-    let src = read_src("src/kernel/framework/net/save.rs");
+    let src = read_src("src/kernel/privileged/net/save.rs");
     let test_block = src
         .rsplit_once("#[cfg(test)]")
         .map(|(_, b)| b)
@@ -117,7 +117,7 @@ fn save_load_roundtrip_unit() {
 
 #[test]
 fn save_uses_internal_lock() {
-    let src = read_src("src/kernel/framework/net/save.rs");
+    let src = read_src("src/kernel/privileged/net/save.rs");
     assert!(
         src.contains("NET_SNAPSHOT_LOCK") && src.contains("IrqSpinLock"),
         "P2-I-44: 快照必须用独立 IrqSpinLock 保护 (与 NET_LOCK 死锁矩阵分析见 deadlock_matrix.py)"
@@ -126,7 +126,7 @@ fn save_uses_internal_lock() {
 
 #[test]
 fn net_save_not_empty_anymore() {
-    let src = read_src("src/kernel/framework/net/init.rs");
+    let src = read_src("src/kernel/privileged/net/init.rs");
     let marker = "unsafe fn net_save()";
     let start = src
         .find(marker)
@@ -153,7 +153,7 @@ fn net_save_not_empty_anymore() {
 
 #[test]
 fn net_restore_reads_snapshot() {
-    let src = read_src("src/kernel/framework/net/init.rs");
+    let src = read_src("src/kernel/privileged/net/init.rs");
     let marker = "unsafe fn net_restore()";
     let start = src
         .find(marker)
@@ -187,7 +187,7 @@ fn net_restore_reads_snapshot() {
 
 #[test]
 fn net_restore_restores_fd_table() {
-    let src = read_src("src/kernel/framework/net/init.rs");
+    let src = read_src("src/kernel/privileged/net/init.rs");
     let marker = "unsafe fn net_restore()";
     let start = src.find(marker).expect("missing net_restore");
     let body = &src[start..start + 5000];
@@ -203,7 +203,7 @@ fn net_restore_restores_fd_table() {
 
 #[test]
 fn save_module_registered() {
-    let src = read_src("src/kernel/framework/net/mod.rs");
+    let src = read_src("src/kernel/privileged/net/mod.rs");
     assert!(
         src.contains("pub mod save"),
         "P2-I-44: net/mod.rs 必须 pub mod save"
@@ -212,7 +212,7 @@ fn save_module_registered() {
 
 #[test]
 fn unit_tests_count() {
-    let src = read_src("src/kernel/framework/net/save.rs");
+    let src = read_src("src/kernel/privileged/net/save.rs");
     let count = src.matches("#[test]").count();
     assert!(
         count >= 5,
@@ -222,7 +222,7 @@ fn unit_tests_count() {
 
 #[test]
 fn fd_count_matches_max_sm_fd() {
-    let src = read_src("src/kernel/framework/net/save.rs");
+    let src = read_src("src/kernel/privileged/net/save.rs");
     assert!(
         src.contains("SNAPSHOT_FD_COUNT: usize = 16"),
         "P2-I-44: SNAPSHOT_FD_COUNT 必须 = 16 (与 MAX_SM_FD 对齐)"

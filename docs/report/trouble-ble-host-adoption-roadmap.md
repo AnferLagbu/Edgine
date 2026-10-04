@@ -2,7 +2,7 @@
 
 > 总体判断：TrouBLE 是一个 **BLE Host 上半层**（HCI 之上的 GAP/L2CAP/SMP/ATT/GATT），它**本身不等于"有蓝牙"**——没有外部 Controller（链路层 + 无线电固件）经 HCI 传输接入，它一条包也发不出去。因此引入 TrouBLE 的真实成本不在"这个 crate 好不好用"（它质量不错，Apache-2.0 OR MIT、`no_std`、async-first、22766 行 Rust / 43 文件），而在于它牵出的三件内核侧前置件：**HCI 传输的 safe 代理、内核 async 运行时、以及可执行的虚拟 Controller 验证路径**。据此，本报告的结论与第三方库选型评估一致：**暂缓、条件触发（触发条件：蓝牙需求）**；一旦蓝牙从"想做"变成"要做"，建议按本报告分阶段推进，且第一阶段先补验证基座、再谈协议栈落地。
 
-本报告是 Edgine 对 TrouBLE 引入路线与未来规划的一次性可行性快照。评估依据为 TrouBLE crates.io 官方元数据（`trouble-host` 0.8.0，2026-08-25 发布）与 Edgine 仓库当前事实（`src/kernel/Cargo.toml`、`scripts/audit_services_boundary.py`、`src/kernel/framework/` 与 `src/kernel/services/` 目录树）。作为后续制定 plan 与修复工程的输入依据。
+本报告是 Edgine 对 TrouBLE 引入路线与未来规划的一次性可行性快照。评估依据为 TrouBLE crates.io 官方元数据（`trouble-host` 0.8.0，2026-08-25 发布）与 Edgine 仓库当前事实（`src/kernel/Cargo.toml`、`scripts/audit_functions_boundary.py`、`src/kernel/privileged/` 与 `src/kernel/functions/` 目录树）。作为后续制定 plan 与修复工程的输入依据。
 
 ## 一、TrouBLE 本体事实
 
@@ -46,20 +46,20 @@ Linux 的蓝牙实现**横跨内核态与用户态**，且分界线与 TrouBLE �
 
 | 路线 | 落点 | 参照系 | 对 TCB 的影响 |
 |---|---|---|---|
-| A．整体落 `services/` | vendored `services/ble/trouble/`，0 unsafe | 接近 Linux（协议栈在核内），但整体更靠上 | TCB 不增（vendored 编译单元不算自有 TCB 代码），但需 `#![deny(unsafe_code)]` 边界确认 |
+| A．整体落 `functions/` | vendored `functions/ble/trouble/`，0 unsafe | 接近 Linux（协议栈在核内），但整体更靠上 | TCB 不增（vendored 编译单元不算自有 TCB 代码），但需 `#![deny(unsafe_code)]` 边界确认 |
 | B．整体落用户态 | 用户态进程内跑 TrouBLE，内核仅提供 HCI 传输通道 | 更接近 microkernel 式切分，TCB 更小 | 内核侧仅增 HCI 传输 safe 代理，TCB 增量最小 |
 
 两条路线在本项目均无既有否决项；选择取决于"Edgine 是否要走核内蓝牙"这一方向决策（属用户决策范畴，见 AGENTS.md §9.1），本报告不代替此决策。
 
 ## 四、framekernel 合规性
 
-**F1（services 0 unsafe）与 F2（services 禁访 framework 内部）均不构成阻断。** 依据：
+**F1（functions 0 unsafe）与 F2（functions 禁访 privileged 内部）均不构成阻断。** 依据：
 
-- 第三方 crate 是**独立编译单元**，`#![deny(unsafe_code)]` 只约束项目自有源码，不追溯依赖 crate。项目已有同型先例：vendored smoltcp 位于 `src/kernel/services/net/smoltcp/`。
-- 边界审计脚本 `scripts/audit_services_boundary.py` 已具备 vendored 豁免机制：L306-308 的 `VENDORED_EXCLUDE` 以绝对路径前缀匹配跳过整个 vendored 目录，注释明确"添加新 vendored 库时，追加 `Path` 即可"。引入 TrouBLE 若走路线 A，只需在此追加一条 `Path('src/kernel/services/ble/trouble')`。
-- services 侧已有可用的 framework 安全面：`SAFE_FRAMEWORK_APIS`（L119-150）白名单已含 `framework::timer`（时钟）、`framework::iomem`/`ioport`（MMIO/PIO 代理）、`framework::irqline`、`framework::dma_buf`——这些正是 HCI 传输（UART/USB 寄存器访问）所需的安全代理面。
+- 第三方 crate 是**独立编译单元**，`#![deny(unsafe_code)]` 只约束项目自有源码，不追溯依赖 crate。项目已有同型先例：vendored smoltcp 位于 `src/kernel/functions/net/smoltcp/`。
+- 边界审计脚本 `scripts/audit_functions_boundary.py` 已具备 vendored 豁免机制：L306-308 的 `VENDORED_EXCLUDE` 以绝对路径前缀匹配跳过整个 vendored 目录，注释明确"添加新 vendored 库时，追加 `Path` 即可"。引入 TrouBLE 若走路线 A，只需在此追加一条 `Path('src/kernel/functions/ble/trouble')`。
+- functions 侧已有可用的 privileged 安全面：`SAFE_PRIVILEGED_APIS`（L119-150）白名单已含 `privileged::timer`（时钟）、`privileged::iomem`/`ioport`（MMIO/PIO 代理）、`privileged::irqline`、`privileged::dma_buf`——这些正是 HCI 传输（UART/USB 寄存器访问）所需的安全代理面。
 
-**真正的约束来自 TCB 纪律（AGENTS.md §2.2、§4.1）与 F9（死代码零容忍）**，而非边界硬规则：若为 TrouBLE 在 `framework/` 新增 unsafe 层，需说明其对 TCB 占比的影响并配套 `// SAFETY:` 注释（F4）；若暂不启用某 feature 而引入其类型，须通过实现使用路径消除，不能留 `#[allow(dead_code)]`。
+**真正的约束来自 TCB 纪律（AGENTS.md §2.2、§4.1）与 F9（死代码零容忍）**，而非边界硬规则：若为 TrouBLE 在 `privileged/` 新增 unsafe 层，需说明其对 TCB 占比的影响并配套 `// SAFETY:` 注释（F4）；若暂不启用某 feature 而引入其类型，须通过实现使用路径消除，不能留 `#[allow(dead_code)]`。
 
 ## 五、落地缺口清单
 
@@ -67,10 +67,10 @@ Linux 的蓝牙实现**横跨内核态与用户态**，且分界线与 TrouBLE �
 
 | # | 缺口 | 现状证据 | 阻塞级 |
 |---|---|---|---|
-| 1 | **内核 async 运行时缺失** | `src/kernel` 全树 `Executor`/`block_on` 零命中；唯一 `wake_by_ref()` 在 `services/ipc/async_ipc.rs:93`，属手写 `Future`（`Poll::Ready`/`Poll::Pending` 均自带），无可复用调度器 | 阻塞 |
-| 2 | **中断 → waker 唤醒入口缺失** | 现有范式是同步轮询 + trait 注入（`services/net/smoltcp_impl.rs` 的 `poll(ts_ms)`/`poll_at()` + `framework/net/init.rs::poll_network()`），无"中断唤醒 executor"通路 | 阻塞 |
-| 3 | HCI 传输 safe 代理 | `framework::iomem`/`ioport`/`irqline` 已在 `SAFE_FRAMEWORK_APIS` 白名单；字符设备侧 `framework/driver/char/mod.rs` 已有物理基址查询面。基本就绪，缺的是把它组织成 HCI 传输抽象的薄层 | 非阻塞 |
-| 4 | HCI 所需时钟源 | `framework/timer` 已有 safe 时钟面：`get_time_ms()`/`get_uptime_ms()`（`calibration.rs` L311、`tick.rs` L316）、`get_adjusted_time_ns()`（`time_sync.rs` L364）。**缺口小于早前判断** | 非阻塞 |
+| 1 | **内核 async 运行时缺失** | `src/kernel` 全树 `Executor`/`block_on` 零命中；唯一 `wake_by_ref()` 在 `functions/ipc/async_ipc.rs:93`，属手写 `Future`（`Poll::Ready`/`Poll::Pending` 均自带），无可复用调度器 | 阻塞 |
+| 2 | **中断 → waker 唤醒入口缺失** | 现有范式是同步轮询 + trait 注入（`functions/net/smoltcp_impl.rs` 的 `poll(ts_ms)`/`poll_at()` + `privileged/net/init.rs::poll_network()`），无"中断唤醒 executor"通路 | 阻塞 |
+| 3 | HCI 传输 safe 代理 | `privileged::iomem`/`ioport`/`irqline` 已在 `SAFE_PRIVILEGED_APIS` 白名单；字符设备侧 `privileged/driver/char/mod.rs` 已有物理基址查询面。基本就绪，缺的是把它组织成 HCI 传输抽象的薄层 | 非阻塞 |
+| 4 | HCI 所需时钟源 | `privileged/timer` 已有 safe 时钟面：`get_time_ms()`/`get_uptime_ms()`（`calibration.rs` L311、`tick.rs` L316）、`get_adjusted_time_ns()`（`time_sync.rs` L364）。**缺口小于早前判断** | 非阻塞 |
 
 一句话：**缺的不是协议栈，是跑得动协议栈的运行时与中断唤醒通路。** 缺口 1、2 是 Edgine 目前完全不具备的能力，且与蓝牙本身无关——它们对任何 async 驱动（USB gadget、异步块设备）都是共用的。这提示一个正确的推进顺序：**若要为 TrouBLE 建 async 运行时，应作为一个独立的通用内核能力立项，而非夹带在蓝牙工程里。**
 
@@ -84,7 +84,7 @@ Linux 蓝牙测试体系给出的最有价值的一条经验是：**协议栈内
 
 映射到 Edgine 的门槛体系（AGENTS.md §2.3），可落地为：
 
-- `framework/` 侧做**虚拟 HCI 传输**（对应 `hci_vhci`），让 HCI 传输这层可在无真实无线电时被驱动。
+- `privileged/` 侧做**虚拟 HCI 传输**（对应 `hci_vhci`），让 HCI 传输这层可在无真实无线电时被驱动。
 - `host-tests/` 侧做**模拟 Controller**（对应 `btdev`/`bthost`），在标准测试进程内喂 HCI 事件与 ACL 数据，从而对 TrouBLE 的 GAP/L2CAP/ATT/GATT 逻辑做端到端测试。
 - QEMU 集成门槛（对应 `test-runner`）作为最终验收。
 
@@ -97,7 +97,7 @@ Linux 蓝牙测试体系给出的最有价值的一条经验是：**协议栈内
 触发后建议的分阶段路径（每阶段均以可验证目标收口，成功标准强度按 AGENTS.md §12.3 在开工前与用户确认）：
 
 - **阶段零（前置，与蓝牙解耦）**：以独立工程设计内核 async 运行时 + 中断唤醒通路（缺口 1、2）。这是通用能力，即使蓝牙最终不做也有价值。此阶段不引入 TrouBLE。
-- **阶段一（验证基座）**：实现虚拟 HCI 传输（framework 侧）+ 模拟 Controller（host-tests 侧），把 §2.3 的蓝牙验证门槛从"空"变成"可执行"。此阶段仍不引入 TrouBLE。
+- **阶段一（验证基座）**：实现虚拟 HCI 传输（privileged 侧）+ 模拟 Controller（host-tests 侧），把 §2.3 的蓝牙验证门槛从"空"变成"可执行"。此阶段仍不引入 TrouBLE。
 - **阶段二（协议栈落地）**：在阶段零、一的成果上引入 `trouble-host`，按 `default-features = false` + 显式 feature 列表接入；落点按第三节路线 A/B 由用户决策。以 `gatt`+`central`+`peripheral` 的最小可用形态起步，`security`/`legacy-pairing` 按需后置。
 - **阶段三（Controller 接入）**：真实 Controller 与 HCI 传输（UART/USB/IPC）接入。这一阶段的硬件依赖与固件依赖超出软件仓库范围，需单独立项。
 

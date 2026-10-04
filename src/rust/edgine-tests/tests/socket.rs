@@ -1,6 +1,6 @@
 //! Socket 系统调用服务层参数验证测试
 //!
-//! 覆盖 services/net/syscall.rs 的 10 个 pure-scalar 验证逻辑:
+//! 覆盖 functions/net/syscall.rs 的 10 个 pure-scalar 验证逻辑:
 //! - socket/bind/listen/accept/connect
 //! - sendto/recvfrom
 //! - setsockopt/getsockopt
@@ -307,7 +307,7 @@ fn test_sendmsg_validate_msg_null() {
 fn test_sendmsg_validate_iovlen_zero() {
     // 假设 iovlen=0 写在 msg+24, 设为 0 -> EINVAL
     // 但 msg_ptr 必须先有效: 此测试不依赖实际读, 用 dummy 范围.
-    // 实际场景: services 先 check_user_buf(msg,56) 才能 read u64.
+    // 实际场景: functions 先 check_user_buf(msg,56) 才能 read u64.
     // 这里简化为: 假定 msg_ptr=0x1000 范围不可读 -> EFAULT
     // 无法测 EINVAL 真实路径, 跳过.
 }

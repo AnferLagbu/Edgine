@@ -2,18 +2,18 @@
 //!
 //! ## 背景
 //!
-//! MIG-004 在 `services/egdf` 下补齐 `proto.rs` (block/net/input 协议族) 与
+//! MIG-004 在 `functions/egdf` 下补齐 `proto.rs` (block/net/input 协议族) 与
 //! `user_driver.rs` (用户态驱动) 的安全代理。此前生产代码直接经
-//! `framework::egdf::register_block_device` 等深路径调用, 绕开 services 出口。
+//! `privileged::egdf::register_block_device` 等深路径调用, 绕开 functions 出口。
 //! 本文件对该层代理补运行验证, 补齐 MIG-007 后仍缺的 proto_*/user_driver 缺口。
 //!
 //! ## 覆盖范围
 //!
 //! - proto_net: `find_net_device` 返回的 `NetDevice` 句柄 (mac/send/try_receive/
-//!   handle_irq), 经 framework `NetOps` 桥往返到设备
+//!   handle_irq), 经 privileged `NetOps` 桥往返到设备
 //! - proto_input: `input_read` / `input_has_data` 统一入口
 //! - proto_block: `unregister_block` 墓碑语义 (首次成功 / 重复 / 越界)
-//! - user_driver: `UserDriverError::{from_code,to_errno}` framework 私有码 →
+//! - user_driver: `UserDriverError::{from_code,to_errno}` privileged 私有码 →
 //!   强类型 → POSIX errno 全分支映射
 //! - 退化路径: 空注册表时 net/input 入口的安全返回
 //!
@@ -21,19 +21,19 @@
 //!
 //! `EGDF_DEVICES` 是进程内全局单例, 同一测试二进制内的 `#[test]` 默认并行执行。
 //! 故本文件所有用例统一持 `REGISTRY_LOCK` 串行执行, 并以 `clear_registry()` 开场
-//! (口径同 framework 侧 `EGDF_TEST_LOCK` 与 [egdf_registry_io_host_test.rs])。
+//! (口径同 privileged 侧 `EGDF_TEST_LOCK` 与 [egdf_registry_io_host_test.rs])。
 
 use std::sync::Mutex;
 
-use edgine::kernel::framework::egdf::user_driver as fw;
-use edgine::kernel::framework::egdf::{
-    EGDF_DEVICES, EGDFOps, EGDFProto, InputOps, egdf_register, egdf_register_with_ops,
-};
-use edgine::kernel::framework::net::{NetDeviceOps, register_net_device};
-use edgine::kernel::framework::syscall::Errno;
-use edgine::kernel::services::egdf::{
+use edgine::kernel::functions::egdf::{
     UserDriverError, find_net_device, input_has_data, input_read, unregister_block,
 };
+use edgine::kernel::privileged::egdf::user_driver as fw;
+use edgine::kernel::privileged::egdf::{
+    EGDF_DEVICES, EGDFOps, EGDFProto, InputOps, egdf_register, egdf_register_with_ops,
+};
+use edgine::kernel::privileged::net::{NetDeviceOps, register_net_device};
+use edgine::kernel::privileged::syscall::Errno;
 
 /// 注册表类用例的进程内串行锁 (见文件头「隔离说明」)。
 static REGISTRY_LOCK: Mutex<()> = Mutex::new(());
@@ -44,7 +44,7 @@ fn clear_registry() {
 }
 
 // ============================================================================
-// 网络设备桩 (经 framework NetOps 安全桥接入)
+// 网络设备桩 (经 privileged NetOps 安全桥接入)
 // ============================================================================
 
 /// 网络设备桩: 经 [`register_net_device`] 桥产出 `NetOps` 指针表。
@@ -55,7 +55,7 @@ struct MockNet {
 
 impl NetDeviceOps for MockNet {
     fn send(&mut self, data: &[u8]) -> i32 {
-        // 空帧由 framework 桥守卫拦截 (-1); 非空帧报告成功。
+        // 空帧由 privileged 桥守卫拦截 (-1); 非空帧报告成功。
         if data.is_empty() { -1 } else { 0 }
     }
 
@@ -125,7 +125,7 @@ fn proto_net_proxy_roundtrip() {
     let dev = find_net_device().expect("应找到就绪网络设备");
     assert_eq!(dev.mac(), mac, "MAC 应经 NetOps 桥读回");
 
-    // send: 非空帧成功, 空帧被 framework 桥守卫拒绝。
+    // send: 非空帧成功, 空帧被 privileged 桥守卫拒绝。
     assert_eq!(dev.send(&[0xFF; 6]), 0, "send 非空帧应成功");
     assert_eq!(dev.send(&[]), -1, "send 空帧应失败 (桥守卫)");
 
@@ -214,7 +214,7 @@ fn proxy_degraded_empty_registry() {
 // user_driver 错误映射
 // ============================================================================
 
-/// framework 私有码 → `UserDriverError` → POSIX errno 全分支映射。
+/// privileged 私有码 → `UserDriverError` → POSIX errno 全分支映射。
 #[test]
 fn user_driver_error_mapping() {
     // 私有码 → 强类型 (6 项已知 + 2 项未知)。

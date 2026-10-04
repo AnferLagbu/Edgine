@@ -6,13 +6,13 @@
 //! 防止后续重构时在网卡驱动路径上引入 `#[cfg(target_arch = "...")]` 互斥,
 //! 阻断单二进制双架构运行.
 //!
-//! 批次 Z ④: 旧 framework virtio-net 驱动已删除 (权威迁 services, 经
+//! 批次 Z ④: 旧 privileged virtio-net 驱动已删除 (权威迁 functions, 经
 //! NetOps 安全桥接入), 本文件仅保留 e1000 架构无关契约.
 
 use std::fs;
 use std::path::Path;
 
-const DRIVER_NET_DIR: &str = "src/kernel/framework/driver/net";
+const DRIVER_NET_DIR: &str = "src/kernel/privileged/driver/net";
 
 /// 收集 `#[cfg(target_arch = "...")]` 紧邻 `let mut xxx = ...` 的赋值 (排除模块/类型声明).
 fn find_arch_mutex_let_assigns(src: &str) -> Vec<(usize, String)> {
@@ -70,20 +70,20 @@ fn test_e1000_driver_arch_agnostic() {
 }
 
 #[test]
-fn test_services_virtio_net_no_arch_mutex_let_assigns() {
-    // services VirtioNetDriver (virtio-net 权威, 批次 Z ④) 中不应再有
+fn test_functions_virtio_net_no_arch_mutex_let_assigns() {
+    // functions VirtioNetDriver (virtio-net 权威, 批次 Z ④) 中不应再有
     // `#[cfg(target_arch)] + let x = ...` 的架构互斥赋值.
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("src/kernel/services/driver/virtio/net.rs");
+        .join("src/kernel/functions/driver/virtio/net.rs");
     let src =
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
     let mutexes = find_arch_mutex_let_assigns(&src);
     assert!(
         mutexes.is_empty(),
-        "services virtio/net.rs 仍存在编译时架构互斥的 let 赋值 (I-53): {:?}",
+        "functions virtio/net.rs 仍存在编译时架构互斥的 let 赋值 (I-53): {:?}",
         mutexes
     );
 }

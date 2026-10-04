@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""framework→services 生产反向依赖审计 (DECISION-J 验收口径).
+"""privileged→functions 生产反向依赖审计 (DECISION-J 验收口径).
 
 口径依据 (docs/plan/framekernel-paradigm-enforcement.md):
-- §7.3: framework/tests 测试载体访问 services 属合理, 不纳入整治;
-- §7 ipc 表: cfg(test) 测试代码访问 services 真实代码属合理 (§7.3 精神).
+- §7.3: privileged/tests 测试载体访问 functions 属合理, 不纳入整治;
+- §7 ipc 表: cfg(test) 测试代码访问 functions 真实代码属合理 (§7.3 精神).
 
-生产反向依赖 = 非测试、非注释上下文中的 `crate::services` 引用.
+生产反向依赖 = 非测试、非注释上下文中的 `crate::functions` 引用.
 
 口径说明:
 - 路径形式随方案 D (kernel 独立 crate 化, `crate::kernel::X` → `crate::X`) 更新为
-  `crate::services`; 旧形式 `crate::kernel::services` 在 crate 内不可编译, 无需再匹配.
+  `crate::functions`; 旧形式 `crate::kernel::functions` 在 crate 内不可编译, 无需再匹配.
 - 测试上下文判定 (fail-closed: 判定不了的按生产违规计):
-  1. framework/tests/ 目录整体 — feature (kernel_test|host-test) 门控测试载体;
+  1. privileged/tests/ 目录整体 — feature (kernel_test|host-test) 门控测试载体;
   2. `#[cfg(test)] mod X;` 引入的外部文件 — 该文件整体归测试;
   3. `#[cfg(test)] mod X { ... }` 内联模块 — 花括号深度跟踪到闭合;
   4. 上述规则无法解析的结构 (如 cfg(test) 属性后无 mod 声明) — 按生产违规计.
@@ -29,11 +29,11 @@ import re
 import sys
 from pathlib import Path
 
-BASE = Path(__file__).resolve().parent.parent / "src" / "kernel" / "framework"
+BASE = Path(__file__).resolve().parent.parent / "src" / "kernel" / "privileged"
 TESTS_DIR = BASE / "tests"
 
-# 引用模式 (方案 D 后统一为 crate::services; \b 防 services_v2 之类误匹配)
-RE_REF = re.compile(r"\bcrate::services\b")
+# 引用模式 (方案 D 后统一为 crate::functions; \b 防 functions_v2 之类误匹配)
+RE_REF = re.compile(r"\bcrate::functions\b")
 # cfg(test) 属性行 (含 all(test,...) 变体)
 RE_CFG_TEST_ATTR = re.compile(r'#\s*\[\s*cfg\s*\(\s*(all\s*\()?\s*test\b')
 # 外部模块声明 `mod X;`
@@ -182,7 +182,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if not BASE.is_dir():
-        print(f"[FAIL-CLOSED] framework 目录不存在: {BASE}", file=sys.stderr)
+        print(f"[FAIL-CLOSED] privileged 目录不存在: {BASE}", file=sys.stderr)
         return 1
 
     all_prod: dict[Path, list[dict]] = {}
@@ -208,7 +208,7 @@ def main() -> int:
     prod_files = len(all_prod)
 
     print("=" * 70)
-    print("framework→services 生产反向依赖审计 (audit_reverse_deps)")
+    print("privileged→functions 生产反向依赖审计 (audit_reverse_deps)")
     print("=" * 70)
     print(f"扫描文件数: {file_count}")
     print(f"生产反向依赖: {prod_files} 文件 / {prod_lines} 行")

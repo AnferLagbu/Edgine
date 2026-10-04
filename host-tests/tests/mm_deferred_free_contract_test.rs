@@ -6,12 +6,12 @@
 //! ## 背景
 //!
 //! 「代发布 + 批次链 + 页帧延迟回收」机制原为 `vmm_x86_64.rs` 私有。DECISION-083
-//! 把它抽到架构无关公共层 `framework/mm/deferred_free.rs`, x86_64 与 aarch64 共用
+//! 把它抽到架构无关公共层 `privileged/mm/deferred_free.rs`, x86_64 与 aarch64 共用
 //! 同一实现 (项目硬约束「内核内部并行实现必须统一为单一规范实现」)。
 //!
 //! ## 为何用静态契约
 //!
-//! `deferred_free` 与两个 VMM 后端均为 `framework` 内部实现, host-tests 无法直接
+//! `deferred_free` 与两个 VMM 后端均为 `privileged` 内部实现, host-tests 无法直接
 //! 调用 (需 PMM / SMP 运行期状态)。故本测试以**源码文本分析**固化契约 —— 与同类
 //! 测试 `aarch64_smp_contract_test.rs` 同手法, 不引入内核逻辑的平行实现。
 //!
@@ -51,10 +51,10 @@ fn slice_between<'a>(src: &'a str, begin: &str, end: &str) -> &'a str {
     &rest[..end_off]
 }
 
-const DEFERRED_FREE_RS: &str = "src/kernel/framework/mm/deferred_free.rs";
-const VMM_X86_64_RS: &str = "src/kernel/framework/mm/vmm_x86_64.rs";
-const VMM_AARCH64_RS: &str = "src/kernel/framework/mm/vmm_aarch64.rs";
-const MM_MOD_RS: &str = "src/kernel/framework/mm/mod.rs";
+const DEFERRED_FREE_RS: &str = "src/kernel/privileged/mm/deferred_free.rs";
+const VMM_X86_64_RS: &str = "src/kernel/privileged/mm/vmm_x86_64.rs";
+const VMM_AARCH64_RS: &str = "src/kernel/privileged/mm/vmm_aarch64.rs";
+const MM_MOD_RS: &str = "src/kernel/privileged/mm/mod.rs";
 
 /// 公共层对外暴露的 6 个接口 (签名逐字固化).
 const PUBLIC_API: [&str; 6] = [

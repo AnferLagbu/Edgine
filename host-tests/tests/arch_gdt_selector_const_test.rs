@@ -5,7 +5,7 @@
 //! ## 测试目的
 //!
 //! `isr.asm` / `switch.asm` / `enter_user_asm` 中硬编码 push 0x1B / push 0x23 /
-//! `mov ax, 0x23` 等选择子值，必须与 `framework::arch::x86_64::gdt.rs` 同步.
+//! `mov ax, 0x23` 等选择子值，必须与 `privileged::arch::x86_64::gdt.rs` 同步.
 //!
 //! 完整强绑定方案 (`extern SELECTOR_USER_DATA` 在汇编中引用链接脚本 ABSOLUTE
 //! 符号) 实施时遇到 Rust inline asm 不支持 NASM 注释符 `;` / `|` 位或运算符

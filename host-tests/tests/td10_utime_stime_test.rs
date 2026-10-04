@@ -10,10 +10,10 @@
 
 use std::fs;
 
-const PROC_API: &str = "../src/kernel/framework/proc/proc_ops.rs";
-const SCHED: &str = "../src/kernel/framework/proc/scheduler_ex.rs";
-const SYSCALL_MOD: &str = "../src/kernel/framework/syscall/dispatch.rs";
-const PROC_STRUCT: &str = "../src/kernel/framework/proc/process.rs";
+const PROC_API: &str = "../src/kernel/privileged/proc/proc_ops.rs";
+const SCHED: &str = "../src/kernel/privileged/proc/scheduler_ex.rs";
+const SYSCALL_MOD: &str = "../src/kernel/privileged/syscall/dispatch.rs";
+const PROC_STRUCT: &str = "../src/kernel/privileged/proc/process.rs";
 
 fn read(p: &str) -> String {
     fs::read_to_string(p).unwrap_or_else(|e| panic!("read {p}: {e}"))

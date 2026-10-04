@@ -34,7 +34,7 @@
 #
 # 与 QEMU 的关系:
 #   aarch64 的 Image 制品与 `make ARCH=aarch64 all` / QEMU `-kernel` 共用同一
-#   链接契约 (见 src/kernel/framework/link/aarch64.ld 内嵌 arm64 Image 头),
+#   链接契约 (见 src/kernel/privileged/link/aarch64.ld 内嵌 arm64 Image 头),
 #   故真机介质与 QEMU 验证路径保持单一来源, 避免双契约漂移.
 # ============================================================================
 

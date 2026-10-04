@@ -40,22 +40,22 @@ jobs:
             echo "$SAFETY_OUT" | head -20
             exit 1
           fi
-          echo "✅ SAFETY 注释审计通过 (framework 全部 unsafe 块均有 SAFETY 注释)"
+          echo "✅ SAFETY 注释审计通过 (privileged 全部 unsafe 块均有 SAFETY 注释)"
           echo ""
-          echo "=== Step 2: services→framework 边界渗透检查 (M6.3) ==="
+          echo "=== Step 2: functions→privileged 边界渗透检查 (M6.3) ==="
           # B01-25 模式同上 (B01-03: HIGH 必阻断).
           set +e
-          BOUNDARY_OUT=$(python3 scripts/audit_services_boundary.py 2>&1)
+          BOUNDARY_OUT=$(python3 scripts/audit_functions_boundary.py 2>&1)
           BOUNDARY_RC=$?
           set -e
-          echo "$BOUNDARY_OUT" | tee other/build/log/services_boundary.txt | tail -20
+          echo "$BOUNDARY_OUT" | tee other/build/log/functions_boundary.txt | tail -20
           if [ "$BOUNDARY_RC" -ne 0 ]; then
-            echo "::error::services→framework 边界渗透检查失败 (CRITICAL/HIGH 违规)"
+            echo "::error::functions→privileged 边界渗透检查失败 (CRITICAL/HIGH 违规)"
             echo "--- 违规详情 ---"
-            grep -A 4 'FORBIDDEN\|RAW_POINTER\|CRITICAL\|HIGH' other/build/log/services_boundary.txt | head -40
+            grep -A 4 'FORBIDDEN\|RAW_POINTER\|CRITICAL\|HIGH' other/build/log/functions_boundary.txt | head -40
             exit 1
           fi
-          echo "✅ 边界渗透检查通过 (services 无 framework 内部模块穿透)"
+          echo "✅ 边界渗透检查通过 (functions 无 privileged 内部模块穿透)"
           echo ""
           echo "=== Step 3: 死锁检测矩阵 (M6.2) ==="
           # B01-25 模式: 依赖脚本退出码 (CRITICAL > 0 时 exit 1).
@@ -76,16 +76,16 @@ jobs:
           name: audit-reports
           path: |
             other/build/log/safety_audit.txt
-            other/build/log/services_boundary.txt
+            other/build/log/functions_boundary.txt
             other/build/log/deadlock_matrix.txt
-            other/target/audit/services-boundary.json
+            other/target/audit/functions-boundary.json
           retention-days: 30
 
   # ========================================================================
-  # Job 2: services 层 unsafe 字符串扫描 (强约束)
+  # Job 2: functions 层 unsafe 字符串扫描 (强约束)
   # ========================================================================
-  services-no-unsafe:
-    name: services 层 0 unsafe 扫描
+  functions-no-unsafe:
+    name: functions 层 0 unsafe 扫描
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -95,13 +95,13 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: 扫描 services/ 中 unsafe 关键字 (Python 智能过滤注释)
+      - name: 扫描 functions/ 中 unsafe 关键字 (Python 智能过滤注释)
         run: |
           python3 <<'PYEOF'
           import re, sys
           from pathlib import Path
           issues = []
-          for f in Path('src/kernel/services').rglob('*.rs'):
+          for f in Path('src/kernel/functions').rglob('*.rs'):
               for ln, line in enumerate(f.read_text(errors='replace').splitlines(), 1):
                   stripped = line.strip()
                   if stripped.startswith('//') or stripped.startswith('*') or stripped.startswith('/*'):
@@ -116,9 +116,9 @@ jobs:
                       issues.append(f'{f}:{ln}: unsafe trait: {line.strip()[:80]}')
           if issues:
               for i in issues: print('  ' + i)
-              print('FAIL: unsafe found in services/')
+              print('FAIL: unsafe found in functions/')
               sys.exit(1)
-          print('PASS: services/ 0 unsafe')
+          print('PASS: functions/ 0 unsafe')
           PYEOF
 
   # ========================================================================
@@ -193,10 +193,10 @@ jobs:
           fi
 
   # ========================================================================
-  # Job 6: services OnceCell 单一抽象审计
+  # Job 6: functions OnceCell 单一抽象审计
   # ========================================================================
   once-cell:
-    name: services OnceCell 单一抽象审计
+    name: functions OnceCell 单一抽象审计
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -209,9 +209,9 @@ jobs:
       - name: 运行 OnceCell 审计
         run: |
           if python3 scripts/audit_once_cell.py 2>&1 | tail -8; then
-            echo "✅ services 统一通过 sync::once::OnceCell"
+            echo "✅ functions 统一通过 sync::once::OnceCell"
           else
-            echo "::error::有 services 模块绕过 OnceCell 抽象"
+            echo "::error::有 functions 模块绕过 OnceCell 抽象"
             exit 1
           fi
 

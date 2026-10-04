@@ -81,7 +81,7 @@ label edgine
 
 U-Boot 的 distro boot（`sysboot`）会自动在分区上扫描 `/extlinux/extlinux.conf`，按 `linux /Image` 找到 arm64 Image，据 Image 头 `text_offset` 把它放置到 DRAM 基址 + `text_offset`，随后经 `booti` 跳转。由于未在 `extlinux.conf` 中显式给出 `fdt` 行，`booti` 会使用 U-Boot 自身的控制设备树（`${fdtcontroladdr}`）——内核由此获得 DTB。
 
-`aarch64.ld` 与 QEMU `-kernel`、U-Boot `booti` 共用**同一个 Image 契约**（见 [aarch64.ld](../../src/kernel/framework/link/aarch64.ld)），因此真机介质与 QEMU 验证是单一来源，不存在两套启动约定漂移的问题：
+`aarch64.ld` 与 QEMU `-kernel`、U-Boot `booti` 共用**同一个 Image 契约**（见 [aarch64.ld](../../src/kernel/privileged/link/aarch64.ld)），因此真机介质与 QEMU 验证是单一来源，不存在两套启动约定漂移的问题：
 
 ```bash
 sudo ./scripts/make_boot_medium.sh aarch64 --load-addr 0x40080000 --write /dev/sdX
@@ -98,13 +98,13 @@ sudo ./scripts/make_boot_medium.sh aarch64 --load-addr 0x40080000 --write /dev/s
 | x86_64 | 主板 / 虚拟 COM 或 UEFI 串口 | 由固件 / GRUB 控制台决定；GRUB 控制台默认 `console` |
 | aarch64 | PL011（`arm,pl011`） | **115200-8N1**（固定） |
 
-aarch64 侧 PL011 波特率除数在 [uart.rs](../../src/kernel/framework/arch/aarch64/uart.rs) 中硬编码为 `UARTIBRD=13, UARTFBRD=0`，其前提是 **UARTCLK ≈ 24 MHz**（24000000 / (16 × 115200) ≈ 13.02）。若目标板 UART 时钟不是 24 MHz，串口会输出乱码或不输出——此时需按板的实际时钟重算除数。
+aarch64 侧 PL011 波特率除数在 [uart.rs](../../src/kernel/privileged/arch/aarch64/uart.rs) 中硬编码为 `UARTIBRD=13, UARTFBRD=0`，其前提是 **UARTCLK ≈ 24 MHz**（24000000 / (16 × 115200) ≈ 13.02）。若目标板 UART 时钟不是 24 MHz，串口会输出乱码或不输出——此时需按板的实际时钟重算除数。
 
 接线要点：USB-TTL 适配器（3.3V 电平），适配器 TX → 板 RX、适配器 RX → 板 TX、GND 共地，按目标板手册确认串口头（aarch64 常见 3-pin 或 4-pin）。
 
 ### 观察点
 
-aarch64 启动日志按以下顺序出现（前几行来自 [entry.rs](../../src/kernel/framework/boot/aarch64/entry.rs) 的 `uart::puts`）：
+aarch64 启动日志按以下顺序出现（前几行来自 [entry.rs](../../src/kernel/privileged/boot/aarch64/entry.rs) 的 `uart::puts`）：
 
 ```
 [BOOT] Edgine starting...
@@ -114,7 +114,7 @@ aarch64 启动日志按以下顺序出现（前几行来自 [entry.rs](../../src
 [BOOT] Booting kernel...
 ```
 
-随后进入统一内核初始化，直到出现子系统里程碑：`VFS ready` → `Entering EL0`（用户态 init 启动）。完整成功判据与 QEMU 一致：[qemu_boot_test.sh](../../scripts/qemu_boot_test.sh) 对 aarch64 断言 `VFS ready`、`nic: probed successfully (services bridge)`、`Entering EL0` 与 KPTI 隔离断言。
+随后进入统一内核初始化，直到出现子系统里程碑：`VFS ready` → `Entering EL0`（用户态 init 启动）。完整成功判据与 QEMU 一致：[qemu_boot_test.sh](../../scripts/qemu_boot_test.sh) 对 aarch64 断言 `VFS ready`、`nic: probed successfully (functions bridge)`、`Entering EL0` 与 KPTI 隔离断言。
 
 x86_64 侧关键里程碑为 `VFS ready` → `e1000: 初始化完成` → `Entering Ring 3`（以及 KPTI 断言）。
 
@@ -124,7 +124,7 @@ x86_64 侧关键里程碑为 `VFS ready` → `e1000: 初始化完成` → `Enter
 
 ### 引导入口与异常级
 
-镜像文件偏移 0 处是 **arm64 Linux Image 头**（64 字节），由 [start.S](../../src/kernel/framework/boot/aarch64/start.S) 的 `.image_header` 段定义、[aarch64.ld](../../src/kernel/framework/link/aarch64.ld) 固定其位置。头的关键字段：文件偏移 56 处为幻数 `ARM\x64`（`0x644d5241`），`code0` 为 `b _start`，`text_offset = 0x80000`，`image_size` 由链接期符号 `_image_size` 填充。
+镜像文件偏移 0 处是 **arm64 Linux Image 头**（64 字节），由 [start.S](../../src/kernel/privileged/boot/aarch64/start.S) 的 `.image_header` 段定义、[aarch64.ld](../../src/kernel/privileged/link/aarch64.ld) 固定其位置。头的关键字段：文件偏移 56 处为幻数 `ARM\x64`（`0x644d5241`），`code0` 为 `b _start`，`text_offset = 0x80000`，`image_size` 由链接期符号 `_image_size` 填充。
 
 因此：
 
@@ -133,11 +133,11 @@ x86_64 侧关键里程碑为 `VFS ready` → `e1000: 初始化完成` → `Enter
 
 `_start` 的**第一条指令**就把 **`x0`**（引导程序传入的设备树物理地址）存入低半区符号 `_fdt_addr`——这是 arm64 引导约定，U-Boot `booti` 与 QEMU `-kernel` 均经 `x0` 传递 DTB。
 
-[start.S](../../src/kernel/framework/boot/aarch64/start.S) 支持从 **EL3 / EL2 / EL1 任一异常级**进入：读 `CurrentEL` 后逐级下降（EL3 配 `SCR_EL3` → EL2 配 `HCR_EL2` → EL1），最终在 **EL1h** 建立引导页表（L0→L1→L2，覆盖低 2 GB：Device 低 1 GB + DRAM 1 GB），开启 MMU 后跳到高半区内核 VMA 的 `entry()`。这使内核既能跑在 QEMU（复位于 EL1）上，也能跑在常见从 EL2 或 EL3 入场的 SoC 上。
+[start.S](../../src/kernel/privileged/boot/aarch64/start.S) 支持从 **EL3 / EL2 / EL1 任一异常级**进入：读 `CurrentEL` 后逐级下降（EL3 配 `SCR_EL3` → EL2 配 `HCR_EL2` → EL1），最终在 **EL1h** 建立引导页表（L0→L1→L2，覆盖低 2 GB：Device 低 1 GB + DRAM 1 GB），开启 MMU 后跳到高半区内核 VMA 的 `entry()`。这使内核既能跑在 QEMU（复位于 EL1）上，也能跑在常见从 EL2 或 EL3 入场的 SoC 上。
 
 ### 设备树探测
 
-[dtb.rs](../../src/kernel/framework/dtb.rs) 是**最小** FDT 解析器（遵循 Devicetree Spec v0.4，FDT 版本 17），启动期只提取三类硬件资源：
+[dtb.rs](../../src/kernel/privileged/dtb.rs) 是**最小** FDT 解析器（遵循 Devicetree Spec v0.4，FDT 版本 17），启动期只提取三类硬件资源：
 
 | 资源 | 设备树匹配 | 用途 |
 |---|---|---|
@@ -145,7 +145,7 @@ x86_64 侧关键里程碑为 `VFS ready` → `e1000: 初始化完成` → `Enter
 | 串口 | `arm,pl011` | 覆盖 PL011 基址（`uart::set_base`） |
 | 中断控制器 | `arm,gic-v3` | 覆盖 GICD / GICR 基址（`gic::set_bases`） |
 
-应用条件（在 [entry.rs](../../src/kernel/framework/boot/aarch64/entry.rs) 的 `apply_fdt_overrides()` 中）：
+应用条件（在 [entry.rs](../../src/kernel/privileged/boot/aarch64/entry.rs) 的 `apply_fdt_overrides()` 中）：
 
 - **DTB 物理地址**必须落在 DRAM 窗口 `[0x4000_0000, 0x8000_0000)`，且整棵树不越出该窗口，否则探测直接放弃；
 - **UART / GIC 基址**必须 `< 0x4000_0000`（即落在 Device 窗口）才会被采纳，越界基址被忽略、沿用默认值。
@@ -156,7 +156,7 @@ x86_64 侧关键里程碑为 `VFS ready` → `e1000: 初始化完成` → `Enter
 
 ### 内存映射硬编码窗口
 
-引导页表（[mmu.rs](../../src/kernel/framework/arch/aarch64/mmu.rs) 与 [start.S](../../src/kernel/framework/boot/aarch64/start.S) 4.3 节一致）在启动期只映射两个窗口：
+引导页表（[mmu.rs](../../src/kernel/privileged/arch/aarch64/mmu.rs) 与 [start.S](../../src/kernel/privileged/boot/aarch64/start.S) 4.3 节一致）在启动期只映射两个窗口：
 
 | 窗口 | 虚拟 / 物理地址范围 | 属性 |
 |---|---|---|
@@ -173,11 +173,11 @@ x86_64 侧关键里程碑为 `VFS ready` → `e1000: 初始化完成` → `Enter
 
 | 限制 | 说明 | 相关源码 |
 |---|---|---|
-| 仅 GICv3 | 中断控制器必须是 `arm,gic-v3`；GICv2 无支持路径 | [gic.rs](../../src/kernel/framework/arch/aarch64/gic.rs) |
-| 仅 PL011 UART | 串口必须是 `arm,pl011`（ARM PrimeCell）；其他 IP（如 8250 / SBSA UART）需另写驱动 | [uart.rs](../../src/kernel/framework/arch/aarch64/uart.rs) |
-| DRAM 基址固定 `0x40000000` | 装载地址 `0x40080000` 是 `text_offset` 与 DRAM 基址的组合产物；基址不同需改链接脚本、引导页表与装载地址 | [aarch64.ld](../../src/kernel/framework/link/aarch64.ld) |
-| DRAM 窗口上限 512 MiB | 引导页表只映射 `[0x4000_0000, 0x8000_0000)`，更大内存需扩表 | [mmu.rs](../../src/kernel/framework/arch/aarch64/mmu.rs) |
-| 单核启动 | 引导路径为单核；未见 SMP 引导（secondary core dispatch）流程 | [start.S](../../src/kernel/framework/boot/aarch64/start.S) |
+| 仅 GICv3 | 中断控制器必须是 `arm,gic-v3`；GICv2 无支持路径 | [gic.rs](../../src/kernel/privileged/arch/aarch64/gic.rs) |
+| 仅 PL011 UART | 串口必须是 `arm,pl011`（ARM PrimeCell）；其他 IP（如 8250 / SBSA UART）需另写驱动 | [uart.rs](../../src/kernel/privileged/arch/aarch64/uart.rs) |
+| DRAM 基址固定 `0x40000000` | 装载地址 `0x40080000` 是 `text_offset` 与 DRAM 基址的组合产物；基址不同需改链接脚本、引导页表与装载地址 | [aarch64.ld](../../src/kernel/privileged/link/aarch64.ld) |
+| DRAM 窗口上限 512 MiB | 引导页表只映射 `[0x4000_0000, 0x8000_0000)`，更大内存需扩表 | [mmu.rs](../../src/kernel/privileged/arch/aarch64/mmu.rs) |
+| 单核启动 | 引导路径为单核；未见 SMP 引导（secondary core dispatch）流程 | [start.S](../../src/kernel/privileged/boot/aarch64/start.S) |
 | 需具备 distro boot 能力的 U-Boot | 介质依赖 `sysboot` / `booti`；无 U-Boot 的裸板需自备装载器并保证经 `x0` 传入合规 DTB | [make_boot_medium.sh](../../scripts/make_boot_medium.sh) |
 
 x86_64 侧无 DTB 契约，由 GRUB2 经 multiboot2 装载，真机仅需目标机支持 BIOS/UEFI 从 USB 或光驱引导。
@@ -213,12 +213,12 @@ booti ${AARCH64_LOAD_ADDR} - ${fdtcontroladdr}
 
 ## 关联文档与源码
 
-- [guide-dev.md](./guide-dev.md)：framework / services 代码归属与变更流程。
+- [guide-dev.md](./guide-dev.md)：privileged / functions 代码归属与变更流程。
 - [explain-framekernel.md](./explain-framekernel.md)：框内核架构与 6 条安全不变式（I1-I6）——真机路径同样受其约束。
 - [make_boot_medium.sh](../../scripts/make_boot_medium.sh)：双架构引导介质制作脚本。
 - [qemu_boot_test.sh](../../scripts/qemu_boot_test.sh)：QEMU 启动回归（真机验证的自动化对照）。
-- `src/kernel/framework/link/aarch64.ld`：arm64 Image 头与低半区引导区 / 高半区内核区的链接契约。
-- `src/kernel/framework/boot/aarch64/start.S`：Image 头、DTB 捕获、异常级降级、引导页表。
-- `src/kernel/framework/boot/aarch64/entry.rs`：DTB 应用与硬件基址覆盖、启动里程碑输出。
-- `src/kernel/framework/dtb.rs`：最小 FDT 解析器（memory / uart / gicv3）。
-- `src/kernel/framework/arch/aarch64/`：PL011 UART、GICv3、MMU、定时器的框架层实现。
+- `src/kernel/privileged/link/aarch64.ld`：arm64 Image 头与低半区引导区 / 高半区内核区的链接契约。
+- `src/kernel/privileged/boot/aarch64/start.S`：Image 头、DTB 捕获、异常级降级、引导页表。
+- `src/kernel/privileged/boot/aarch64/entry.rs`：DTB 应用与硬件基址覆盖、启动里程碑输出。
+- `src/kernel/privileged/dtb.rs`：最小 FDT 解析器（memory / uart / gicv3）。
+- `src/kernel/privileged/arch/aarch64/`：PL011 UART、GICv3、MMU、定时器的框架层实现。

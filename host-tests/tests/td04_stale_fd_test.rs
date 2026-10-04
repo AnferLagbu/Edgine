@@ -10,8 +10,8 @@
 use std::fs;
 use std::path::Path;
 
-const EFD: &str = "src/kernel/framework/syscall/eventfd.rs";
-const SFD: &str = "src/kernel/framework/syscall/signalfd.rs";
+const EFD: &str = "src/kernel/privileged/syscall/eventfd.rs";
+const SFD: &str = "src/kernel/privileged/syscall/signalfd.rs";
 
 fn read(path: &str) -> String {
     let p = Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -289,7 +289,7 @@ fn test_posix_signature_passes() {
 
 #[test]
 fn test_bare_signature_passes() {
-    // 无 POSIX 前缀的纯签名引用 (services/net/syscall.rs 常见)
+    // 无 POSIX 前缀的纯签名引用 (functions/net/syscall.rs 常见)
     let files = &[(
         "net.rs",
         "/// sendto(fd, buf, len, flags, dest_addr, addrlen)\n\
@@ -356,7 +356,7 @@ fn test_posix_marker_without_backtick_still_violates() {
 fn test_rust_code_example_passes() {
     let files = &[(
         "doc.rs",
-        "//! use crate::services::proc::posix_timer;\n\
+        "//! use crate::functions::proc::posix_timer;\n\
          //! let new_value = Itimerspec { it_interval_sec: 1, it_interval_nsec: 0 };\n\
          //! posix_timer::timer_settime(id, 0, Some(&new_value), None);\n\
          pub fn f() {}\n",

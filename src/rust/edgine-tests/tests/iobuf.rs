@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! iobuf 容量计算与页对齐单元测试
 //!
-//! 模拟 framework/iobuf::IobRegion::alloc 的前置逻辑 (总容量 + 页数).
+//! 模拟 privileged/iobuf::IobRegion::alloc 的前置逻辑 (总容量 + 页数).
 //! host 侧无法调 pmm_alloc_pages, 这里只测纯函数.
 
 use edgine_tests::{iobuf_pages, iobuf_total_capacity};

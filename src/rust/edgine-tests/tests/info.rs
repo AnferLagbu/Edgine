@@ -1,6 +1,6 @@
 //! 信息查询系统调用服务层参数验证测试
 //!
-//! 覆盖 services/proc/info.rs 的纯标量验证逻辑:
+//! 覆盖 functions/proc/info.rs 的纯标量验证逻辑:
 //! - getpgid: pid >= 0
 //! - uname: buf != 0
 //! - gettimeofday: tv != 0
@@ -54,8 +54,8 @@ fn test_uname_valid_buf() {
 
 #[test]
 fn test_uname_kernel_address() {
-    // 内核空间地址 (框架内 check_user_buf 会拒绝, services 仅查 0)
-    // services 层只检查 NULL, 不查范围
+    // 内核空间地址 (框架内 check_user_buf 会拒绝, functions 仅查 0)
+    // functions 层只检查 NULL, 不查范围
     assert_eq!(uname_validate(0xffff_8000_0000_0000), Ok(()));
 }
 
@@ -78,8 +78,8 @@ fn test_gettimeofday_valid_tv() {
 
 #[test]
 fn test_gettimeofday_zero_len_buffer() {
-    // 验证: 框架层 check_user_buf 会检查 16 字节可写, services 仅查 NULL
-    // services 0 是 EFAULT, 非 0 通过
+    // 验证: 框架层 check_user_buf 会检查 16 字节可写, functions 仅查 NULL
+    // functions 0 是 EFAULT, 非 0 通过
     assert_eq!(gettimeofday_validate(0), Err(Errno::EFAULT));
     assert_ne!(gettimeofday_validate(1), Err(Errno::EFAULT));
 }

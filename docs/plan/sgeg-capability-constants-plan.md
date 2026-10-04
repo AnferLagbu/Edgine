@@ -18,25 +18,25 @@
 
 | # | 先例 | 位置 | 使用位 | Linux 对应 | 处置 |
 |---|---|---|---|---|---|
-| A1 | mount / umount2 | `services/fs/mount.rs:52,86` | SYSTEM 域 `0x01` | CAP_SYS_ADMIN（同义） | 保持复用 ✅ |
-| A2 | setns | `services/proc/namespace.rs:812` | SYSTEM 域 `0x01` | CAP_SYS_ADMIN（同义） | 保持复用 ✅ |
-| A3 | ramfs/unkfs 文件权限 | `services/fs/ramfs_core/ramfs_data.rs:345`、`services/fs/unkfs/unkfs_data.rs:530` | `FS_CAP_*`/`PROC_CAP_*` 命名常量 | 能力制 | 保持复用 ✅（命名规范） |
+| A1 | mount / umount2 | `functions/fs/mount.rs:52,86` | SYSTEM 域 `0x01` | CAP_SYS_ADMIN（同义） | 保持复用 ✅ |
+| A2 | setns | `functions/proc/namespace.rs:812` | SYSTEM 域 `0x01` | CAP_SYS_ADMIN（同义） | 保持复用 ✅ |
+| A3 | ramfs/unkfs 文件权限 | `functions/fs/ramfs_core/ramfs_data.rs:345`、`functions/fs/unkfs/unkfs_data.rs:530` | `FS_CAP_*`/`PROC_CAP_*` 命名常量 | 能力制 | 保持复用 ✅（命名规范） |
 
 ### B 类：语义不精确 / 魔法数 / 缺命名 → 需治理（5 项）
 
 | # | 先例 | 位置 | 现状问题 | 治理决策 | 状态 |
 |---|---|---|---|---|---|
-| B1 | reboot（重启系统） | `services/proc/sysinfo.rs:155` | 复用 SYSTEM `0x01`，但重启是独立系统操作，Linux 语义应 CAP_SYS_BOOT | **新增专用能力位**（CAP_SYS_BOOT 语义） | [] 待实施 |
-| B2 | open_by_handle_at | `services/fs/file_handle.rs:150` | 复用 SYSTEM `0x01`（B06-03 曾裁决），但绕过路径直接开 inode 句柄属高敏操作，Linux 语义应 CAP_DAC_READ_SEARCH | **新增专用能力位**（CAP_DAC_READ_SEARCH 语义，回溯 B06-03 裁决） | [] 待实施 |
-| B3 | sethostname | `services/proc/sysinfo.rs:136` | **0x09 未命名魔法数**（=bit0\|bit3，非 0x01 也非命名常量），疑似 bug | **修复为命名常量**（新增 SET_HOSTNAME 位，或归入命名后的系统管理位） | [] 待实施 |
-| B4 | mmap | `services/mm/mmap.rs:304` | MEM 域 `0x01` **无命名常量**（capability.rs 无 MEM_CAP_* 定义） | **新增 MEM_CAP_* 命名位**（补 capability.rs MEM 域常量） | [] 待实施 |
-| B5 | sys_boot_install | `framework/syscall/dispatch.rs:1188` | `pwm_has_capability(pwm, 4, 0)` **required=0 可疑**（无实际位要求） | **留待澄清**——先确认意图（缺位 bug 还是有意为之）再定 | [] 待澄清 |
+| B1 | reboot（重启系统） | `functions/proc/sysinfo.rs:155` | 复用 SYSTEM `0x01`，但重启是独立系统操作，Linux 语义应 CAP_SYS_BOOT | **新增专用能力位**（CAP_SYS_BOOT 语义） | [] 待实施 |
+| B2 | open_by_handle_at | `functions/fs/file_handle.rs:150` | 复用 SYSTEM `0x01`（B06-03 曾裁决），但绕过路径直接开 inode 句柄属高敏操作，Linux 语义应 CAP_DAC_READ_SEARCH | **新增专用能力位**（CAP_DAC_READ_SEARCH 语义，回溯 B06-03 裁决） | [] 待实施 |
+| B3 | sethostname | `functions/proc/sysinfo.rs:136` | **0x09 未命名魔法数**（=bit0\|bit3，非 0x01 也非命名常量），疑似 bug | **修复为命名常量**（新增 SET_HOSTNAME 位，或归入命名后的系统管理位） | [] 待实施 |
+| B4 | mmap | `functions/mm/mmap.rs:304` | MEM 域 `0x01` **无命名常量**（capability.rs 无 MEM_CAP_* 定义） | **新增 MEM_CAP_* 命名位**（补 capability.rs MEM 域常量） | [] 待实施 |
+| B5 | sys_boot_install | `privileged/syscall/dispatch.rs:1188` | `pwm_has_capability(pwm, 4, 0)` **required=0 可疑**（无实际位要求） | **留待澄清**——先确认意图（缺位 bug 还是有意为之）再定 | [] 待澄清 |
 
 ### C 类：域号冲突 / 语义错位（2026-08-31 追加核实，比 B 类更严重）
 
 | # | 先例 | 位置 | 现状问题 | 治理决策 | 状态 |
 |---|---|---|---|---|---|
-| C1 | **sgeg disk storage 域冲突** | `services/sgeg/storage/disk.rs:23-24` | `PWM_DOMAIN_STORAGE = 4` 与 `CAP_DOMAIN_DEVICE = 4`（capability.rs:17）**编号冲突**——storage"域"实际就是 DEVICE 域；且用 `required=1`（= DEVICE_CAP_MMIO bit0）保护磁盘格式化，**语义错位**（格式化是存储操作，非 MMIO 访问） | **澄清 + 命名**：要么归属 DEVICE 域并新增 DEVICE_CAP_STORAGE 位，要么独立域；消除本地重复常量，改用公共命名 | [] 待澄清+实施 |
+| C1 | **sgeg disk storage 域冲突** | `functions/sgeg/storage/disk.rs:23-24` | `PWM_DOMAIN_STORAGE = 4` 与 `CAP_DOMAIN_DEVICE = 4`（capability.rs:17）**编号冲突**——storage"域"实际就是 DEVICE 域；且用 `required=1`（= DEVICE_CAP_MMIO bit0）保护磁盘格式化，**语义错位**（格式化是存储操作，非 MMIO 访问） | **澄清 + 命名**：要么归属 DEVICE 域并新增 DEVICE_CAP_STORAGE 位，要么独立域；消除本地重复常量，改用公共命名 | [] 待澄清+实施 |
 | C2 | **裸数字域号**（非语义 bug，规范问题） | `mount.rs:52/86`（0）、`namespace.rs:812`（0）、`file_handle.rs:150`（0）、`mmap.rs:304`（7）、`ramfs_data.rs:345`（1）、`unkfs_data.rs:530`（3）、`dispatch.rs:1188`（4）、`sysinfo.rs:136/155`（0） | 域号本身正确（0=SYSTEM,7=MEM,1=FS,3=PROC,4=DEVICE），但用**裸数字**而非 `CAP_DOMAIN_*` 命名常量，可读性差、易写错 | **统一改用 `CAP_DOMAIN_*` 命名常量**（纯规范，低风险） | [] 待实施 |
 
 > 注：C1 与 B5 同处 dispatch.rs:1188 的 `4` 域，合并排查。A/B/C 类合计，除已治理的 A 类 3 项外，待办共 B 类 5 项 + C 类 2 项。
@@ -53,8 +53,8 @@
 
 ### 验证门槛（实施时）
 
-1. `capability.rs` 新增常量后，`framework/sgeg/mod.rs` re-export 同步（若属公共 API）。
-2. 各调用点替换后，`audit_services_boundary.py` 0 违规（services 层引用合规）。
+1. `capability.rs` 新增常量后，`privileged/sgeg/mod.rs` re-export 同步（若属公共 API）。
+2. 各调用点替换后，`audit_functions_boundary.py` 0 违规（functions 层引用合规）。
 3. 双架构 `cargo check` + clippy（-D pedantic）0 error。
 4. host-tests 全量通过（cred 相关回归）。
 5. 涉及 B2 时，补充 open_by_handle_at 权限拒绝 host-tests（B06-03 已有先例）。
@@ -63,8 +63,8 @@
 
 ### 调研结论（两模型现状）
 
-- **privilege_level**：已属 sgeg 权威——定义于 [sgeg/types.rs:240](file:///home/anfer/Code/Edgine/src/kernel/services/sgeg/types.rs#L240)（PwmEntry 身份字段），API 由 sgeg 提供（[engine.rs:54](file:///home/anfer/Code/Edgine/src/kernel/framework/sgeg/engine.rs#L54)），ramfs/unkfs/signal 均为消费者（经 `pwm_get_privilege_level` 读取），**无副本**。现状已统一，无需处置。
-- **sensitivity**：真正独立模型——定义分散于各 FS 节点结构（[ramfs_node.rs:11](file:///home/anfer/Code/Edgine/src/kernel/services/fs/ramfs_core/ramfs_node.rs#L11)、unkfs dmu.rs:59、dataset.rs:30），**不在 sgeg 类型**；仅 ramfs/unkfs 实际使用（check_permission 的 clearance 比较），其余 FS（tmpfs/devfs/overlayfs/ext2/exfat）字段恒 0；cred 无敏感性概念。属类 Bell-LaPadula/MLS 多级安全模型，当前为半成品。
+- **privilege_level**：已属 sgeg 权威——定义于 [sgeg/types.rs:240](file:///home/anfer/Code/Edgine/src/kernel/functions/sgeg/types.rs#L240)（PwmEntry 身份字段），API 由 sgeg 提供（[engine.rs:54](file:///home/anfer/Code/Edgine/src/kernel/privileged/sgeg/engine.rs#L54)），ramfs/unkfs/signal 均为消费者（经 `pwm_get_privilege_level` 读取），**无副本**。现状已统一，无需处置。
+- **sensitivity**：真正独立模型——定义分散于各 FS 节点结构（[ramfs_node.rs:11](file:///home/anfer/Code/Edgine/src/kernel/functions/fs/ramfs_core/ramfs_node.rs#L11)、unkfs dmu.rs:59、dataset.rs:30），**不在 sgeg 类型**；仅 ramfs/unkfs 实际使用（check_permission 的 clearance 比较），其余 FS（tmpfs/devfs/overlayfs/ext2/exfat）字段恒 0；cred 无敏感性概念。属类 Bell-LaPadula/MLS 多级安全模型，当前为半成品。
 
 ### 方案评估（长期视角）
 
@@ -82,7 +82,7 @@
 
 ### 关联
 
-- 与 [DECISION-078](./archive/audit-fix-07-services-net-ipc-credo.md) 常量准则（重要/特殊用途新增）互补：本裁决是**系统级归属**决策，DECISION-078 是**常量级命名**决策。
+- 与 [DECISION-078](./archive/audit-fix-07-functions-net-ipc-credo.md) 常量准则（重要/特殊用途新增）互补：本裁决是**系统级归属**决策，DECISION-078 是**常量级命名**决策。
 
 ## 变更历史
 

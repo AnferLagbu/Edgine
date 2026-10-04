@@ -23,12 +23,12 @@
 
 ## 2. 调研结论（2026-09-08，源码依据）
 
-- **双轨调度器**：SCHEDULER（[scheduler.rs:1451](../../src/kernel/framework/proc/scheduler.rs#L1451)，PID 级 DL/RT/CFS 生产主路径）+ SCHEDULER_EX（[scheduler_ex.rs:900](../../src/kernel/framework/proc/scheduler_ex.rs#L900)，TID/Thread 级，生产下仅 idle 孤岛）；[scheduler.rs:590-592](../../src/kernel/framework/proc/scheduler.rs#L590-L592) 把 PID 单向写入 SCHEDULER_EX.current（伪同步）。
-- **Thread 基础设施孤岛**：[thread.rs:240](../../src/kernel/framework/proc/thread.rs#L240) `create_thread` 全仓库零调用；`THREAD_MANAGER.set_current/exit_current` 零调用；Thread 已具 tid/pid/context_ptr/独立栈/环形队列骨架。
-- **CLONE_THREAD 未处理**：[clone.rs:38](../../src/kernel/framework/syscall/clone.rs#L38) 只定义常量；CLONE_VM 分支创建独立 PID 的共享 CR3 进程（[clone.rs:150,163](../../src/kernel/framework/syscall/clone.rs#L150-L163)）。
-- **无 tgid/线程组**：[process.rs:107-255](../../src/kernel/framework/proc/process.rs#L107-L255) 无 tgid/thread_group/线程列表；`sys_gettid` = getpid（[info.rs:22-24](../../src/kernel/framework/syscall/info.rs#L22-L24)）。
-- **资源不共享**：fd_table/sigaction_table 挂 Process（[process.rs:167,189](../../src/kernel/framework/proc/process.rs#L167-L189)）。
-- **tick 错位**（**已理顺**）：原 PID 级 SCHEDULER.tick()（CFS vruntime/睡眠/zombie）未接入生产 timer，实际 timer 驱动线程级 SCHEDULER_EX.tick()（[sched_ops.rs:94-96](../../src/kernel/framework/proc/sched_ops.rs#L94-L96)）。现 `scheduler_tick()` 改为驱**进程级** `SCHEDULER.tick(get_current_cpu())`（内部仍调 `SCHEDULER_EX.tick_accounting()`，线程级记账不丢失）；相应地重调度不再经 `Sched` softirq handler 执行（会永久泄漏 `do_softirq` 的 per-CPU `running` 标志），而统一在中断退出路径 `do_softirq()` 返回之后经 `run_pending_resched()` 执行。**该理顺不改变 D1 的"统一线程级"路线**——当前调度单位仍是进程（PID），K-04 的线程维度迁移照旧待办。详见 [ISSUE-RT-004](unresolved-issues-2026-08-09.md)。
+- **双轨调度器**：SCHEDULER（[scheduler.rs:1451](../../src/kernel/privileged/proc/scheduler.rs#L1451)，PID 级 DL/RT/CFS 生产主路径）+ SCHEDULER_EX（[scheduler_ex.rs:900](../../src/kernel/privileged/proc/scheduler_ex.rs#L900)，TID/Thread 级，生产下仅 idle 孤岛）；[scheduler.rs:590-592](../../src/kernel/privileged/proc/scheduler.rs#L590-L592) 把 PID 单向写入 SCHEDULER_EX.current（伪同步）。
+- **Thread 基础设施孤岛**：[thread.rs:240](../../src/kernel/privileged/proc/thread.rs#L240) `create_thread` 全仓库零调用；`THREAD_MANAGER.set_current/exit_current` 零调用；Thread 已具 tid/pid/context_ptr/独立栈/环形队列骨架。
+- **CLONE_THREAD 未处理**：[clone.rs:38](../../src/kernel/privileged/syscall/clone.rs#L38) 只定义常量；CLONE_VM 分支创建独立 PID 的共享 CR3 进程（[clone.rs:150,163](../../src/kernel/privileged/syscall/clone.rs#L150-L163)）。
+- **无 tgid/线程组**：[process.rs:107-255](../../src/kernel/privileged/proc/process.rs#L107-L255) 无 tgid/thread_group/线程列表；`sys_gettid` = getpid（[info.rs:22-24](../../src/kernel/privileged/syscall/info.rs#L22-L24)）。
+- **资源不共享**：fd_table/sigaction_table 挂 Process（[process.rs:167,189](../../src/kernel/privileged/proc/process.rs#L167-L189)）。
+- **tick 错位**（**已理顺**）：原 PID 级 SCHEDULER.tick()（CFS vruntime/睡眠/zombie）未接入生产 timer，实际 timer 驱动线程级 SCHEDULER_EX.tick()（[sched_ops.rs:94-96](../../src/kernel/privileged/proc/sched_ops.rs#L94-L96)）。现 `scheduler_tick()` 改为驱**进程级** `SCHEDULER.tick(get_current_cpu())`（内部仍调 `SCHEDULER_EX.tick_accounting()`，线程级记账不丢失）；相应地重调度不再经 `Sched` softirq handler 执行（会永久泄漏 `do_softirq` 的 per-CPU `running` 标志），而统一在中断退出路径 `do_softirq()` 返回之后经 `run_pending_resched()` 执行。**该理顺不改变 D1 的"统一线程级"路线**——当前调度单位仍是进程（PID），K-04 的线程维度迁移照旧待办。详见 [ISSUE-RT-004](unresolved-issues-2026-08-09.md)。
 - **已登记线索**：code-audit:3826-3848 P1-A exit_group 线程组方案（DECISION-H21 → P1-L 未实施）。
 
 ## 3. 深入设计主题（独立设计过程，先设计后实施）
@@ -82,11 +82,11 @@
   - 方案：Process 关联 ThreadGroup；Thread 挂组；tgid 分配；`sys_gettid` 返回线程 TID（修正当前 = getpid）。
   - 状态：[]
 - **K-02. CLONE_THREAD 语义实现（线程创建接线）**
-  - 描述：clone.rs 处理 CLONE_THREAD——共享 tgid、加入线程组、独立 TID/内核栈/context；`create_thread`（[thread.rs:240](../../src/kernel/framework/proc/thread.rs#L240)）接线进 clone 路径（当前零调用孤岛）。
+  - 描述：clone.rs 处理 CLONE_THREAD——共享 tgid、加入线程组、独立 TID/内核栈/context；`create_thread`（[thread.rs:240](../../src/kernel/privileged/proc/thread.rs#L240)）接线进 clone 路径（当前零调用孤岛）。
   - 方案：clone(CLONE_THREAD|CLONE_VM|...) 创建真实线程而非"共享 CR3 的进程"；CLONE_PARENT_SETTID 等标志处理（D4）。
   - 状态：[]
 - **K-03. 共享资源语义（CLONE_FILES/SIGHAND/FS）**
-  - 描述：线程共享 fd 表/信号处理/fs 信息（D4，pthread 必需）。当前 fd_table/sigaction_table 挂 Process（[process.rs:167,189](../../src/kernel/framework/proc/process.rs#L167-L189)），线程无法共享。
+  - 描述：线程共享 fd 表/信号处理/fs 信息（D4，pthread 必需）。当前 fd_table/sigaction_table 挂 Process（[process.rs:167,189](../../src/kernel/privileged/proc/process.rs#L167-L189)），线程无法共享。
   - 方案：引用计数共享（Linux clone 语义）；线程组内共享访问。
   - 状态：[]
 - **K-04. 调度统一（D1=A：统一线程级）**
@@ -99,7 +99,7 @@
   - 方案：`raw_lock` owner 比较改线程指针；mutex_reentrant 测试更新；消除"PID 重入误判"架构假设（单线程模型依赖解除）。
   - 状态：[]
 - **K-06. 线程组语义系统调用**
-  - 描述：exit_group（组内全部线程终结，非仅当前进程，[dispatch.rs:375-378](../../src/kernel/services/syscall/dispatch.rs#L375-L378) SIMPLIFIED 修正）；信号组广播（kill 到 tgid）；tgkill/pthread_kill；waitpid 线程组语义；gettid 修正（K-01）。
+  - 描述：exit_group（组内全部线程终结，非仅当前进程，[dispatch.rs:375-378](../../src/kernel/functions/syscall/dispatch.rs#L375-L378) SIMPLIFIED 修正）；信号组广播（kill 到 tgid）；tgkill/pthread_kill；waitpid 线程组语义；gettid 修正（K-01）。
   - 方案：按 P1-A（code-audit:3826）方案实装。
   - 状态：[]
 - **K-07. 测试与验证收口**
@@ -136,14 +136,14 @@ K-01 → K-02 → K-03 → K-04 → K-05
 
 ## 8. 并发安全能力现状与缺口（登记）
 
-> 现状三层防线：**L1 构造性排除**（锁纪律 + `Mutex<T>` 数据封装 + services `#![deny(unsafe_code)]` + IrqSpinLock 加锁即关中断，永远生效）→ **L2 CI 静态审计**（audit_deadlock_matrix / audit_invariants / audit_static_mut / audit_volatile_access / audit_tlb_receive_order）→ **L3 运行时 lockdep**（仅 debug）。下列为本轮核对发现的缺口，登记为待办。
+> 现状三层防线：**L1 构造性排除**（锁纪律 + `Mutex<T>` 数据封装 + functions `#![deny(unsafe_code)]` + IrqSpinLock 加锁即关中断，永远生效）→ **L2 CI 静态审计**（audit_deadlock_matrix / audit_invariants / audit_static_mut / audit_volatile_access / audit_tlb_receive_order）→ **L3 运行时 lockdep**（仅 debug）。下列为本轮核对发现的缺口，登记为待办。
 
 - **A-1. lockdep 在生产 release 构建被编译掉（运行时零检测）**
-  - 描述：lockdep 所有调用点均为 `#[cfg(debug_assertions)]` 门控（[spinlock.rs:83-86](../../src/kernel/framework/sync/spinlock.rs#L83-L86)、[rwlock.rs:240](../../src/kernel/framework/sync/rwlock.rs#L240)、[mutex.rs:237](../../src/kernel/framework/sync/mutex.rs#L237)，pi_mutex 同理）。release 生产构建 `debug_assertions` 关闭 → AB-BA / 递归 / 中断睡眠锁等运行时检测全部消失；[lockdep.rs:29-34](../../src/kernel/framework/sync/lockdep.rs#L29-L34) 自认此为刻意零开销取舍。release 上的并发安全实际只依赖 L1 结构性保证。
+  - 描述：lockdep 所有调用点均为 `#[cfg(debug_assertions)]` 门控（[spinlock.rs:83-86](../../src/kernel/privileged/sync/spinlock.rs#L83-L86)、[rwlock.rs:240](../../src/kernel/privileged/sync/rwlock.rs#L240)、[mutex.rs:237](../../src/kernel/privileged/sync/mutex.rs#L237)，pi_mutex 同理）。release 生产构建 `debug_assertions` 关闭 → AB-BA / 递归 / 中断睡眠锁等运行时检测全部消失；[lockdep.rs:29-34](../../src/kernel/privileged/sync/lockdep.rs#L29-L34) 自认此为刻意零开销取舍。release 上的并发安全实际只依赖 L1 结构性保证。
   - 方案：评估 release + `feature = "lockdep"` 的可选检测通路（与 A-2 协同），并在文档明确「release 无运行时锁检测」这一事实及由此产生的风险面。
   - 状态：[]
 - **A-2. lockdep 文档与实现口径不一致（`feature = "lockdep"` 未接线）**
-  - 描述：[lockdep.rs:3](../../src/kernel/framework/sync/lockdep.rs#L3) 声明「`debug_assertions` **或** `feature = "lockdep"` 启用时」生效，但调用点仅 `#[cfg(debug_assertions)]`，无 `feature = "lockdep"` 分支 → 该 feature 实际不启用任何检测，声明与实现不一致。
+  - 描述：[lockdep.rs:3](../../src/kernel/privileged/sync/lockdep.rs#L3) 声明「`debug_assertions` **或** `feature = "lockdep"` 启用时」生效，但调用点仅 `#[cfg(debug_assertions)]`，无 `feature = "lockdep"` 分支 → 该 feature 实际不启用任何检测，声明与实现不一致。
   - 方案：二选一——① 调用点改 `#[cfg(any(debug_assertions, feature = "lockdep"))]`，使声明成立并保留生产可选检测能力（倾向）；② 修订文档删除该 feature 说法。
   - 状态：[]
 - **A-3. AB-BA 死锁的静态检测未实现**

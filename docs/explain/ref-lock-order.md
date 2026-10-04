@@ -1,7 +1,7 @@
 # 全局锁顺序
 
 > Edgine 内核锁获取的全局顺序约定。违反此顺序将导致 AB-BA 死锁。
-> 运行时检测由 `framework/sync/lockdep.rs`（Lockdep）提供。
+> 运行时检测由 `privileged/sync/lockdep.rs`（Lockdep）提供。
 
 ## 锁层级（从高到低）
 
@@ -101,7 +101,7 @@
 
 ## Lockdep 集成
 
-Lockdep（`framework/sync/lockdep.rs`）在 `debug_assertions` 或 `feature = "lockdep"` 启用时，
+Lockdep（`privileged/sync/lockdep.rs`）在 `debug_assertions` 或 `feature = "lockdep"` 启用时，
 跟踪每个锁的获取/释放，构建锁序图，检测：
 
 - **AB-BA 死锁**：线程 A 持锁 L1 再获取 L2，线程 B 持锁 L2 再获取 L1
@@ -116,4 +116,4 @@ Lockdep 类通过 `SpinLock::named()` / `Mutex::named()` / `RwLock::named()` 自
 
 - Linux kernel `Documentation/locking/lockdep-design.txt`
 - FreeBSD witness（`sys/kern/subr_witness.c`）
-- `framework/sync/lockdep.rs`（运行时检测器实现）
+- `privileged/sync/lockdep.rs`（运行时检测器实现）

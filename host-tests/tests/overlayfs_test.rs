@@ -1,7 +1,7 @@
 //! overlayfs 真实行为集成测试
 //!
 //! 替换早期仅"验证编译通过"的占位用例, 在 host 侧搭建真实测试台驱动内核
-//! `services::fs::overlayfs` 实现, 覆盖以下行为:
+//! `functions::fs::overlayfs` 实现, 覆盖以下行为:
 //! - lowerdir 只读直通 (`OverlayLowerInode`, 写操作显式 `ReadOnlyFilesystem`)
 //! - 写意图 open 触发 `copy_up` (下层文件提升到 upperdir, 下层原文不动)
 //! - lower-only 文件 unlink 生成 whiteout 遮蔽下层
@@ -12,17 +12,17 @@
 //! ## 测试台搭建
 //! 本文件作为独立测试二进制运行, 其全局单例 (`VFS_MANAGER` / `RAMFS_DATA`
 //! / `OVERLAY_FS`) 与其他测试文件天然隔离. 初始化链:
-//! `services::fs::init()` (注册后端) → `vfs_mount_safe("/lower", "ramfs")`
-//! → `vfs_mount_safe("/merged", "overlay")`. 后者经 services 注册表
+//! `functions::fs::init()` (注册后端) → `vfs_mount_safe("/lower", "ramfs")`
+//! → `vfs_mount_safe("/merged", "overlay")`. 后者经 functions 注册表
 //! `resolve_fs("overlay")` 解析 trait object, 顺带验证 Option C 注册接线.
 //!
 //! pwm 统一用 bootstrap 身份 `0` (`engine::check` 直通, ramfs `check_permission`
 //! 走 `caps == ALL` 分支), 无需注册身份或授权.
 
-use edgine::kernel::framework::error::KernelError;
-use edgine::kernel::services::fs::init as fs_init;
-use edgine::kernel::services::fs::overlayfs::overlay_fs;
-use edgine::kernel::services::fs::{FileSystem, VFS_MANAGER, vfs_mount_safe};
+use edgine::kernel::functions::fs::init as fs_init;
+use edgine::kernel::functions::fs::overlayfs::overlay_fs;
+use edgine::kernel::functions::fs::{FileSystem, VFS_MANAGER, vfs_mount_safe};
+use edgine::kernel::privileged::error::KernelError;
 use std::sync::{Mutex, Once};
 
 /// bootstrap 身份 — 持全权, 免注册/免授权
@@ -42,7 +42,7 @@ static OVERLAY_TEST_INIT: Once = Once::new();
 /// 搭建测试台 (幂等): 注册 fs 后端 → 挂载 lower ramfs → 挂载 overlay merged.
 fn ensure_overlay_ready() {
     OVERLAY_TEST_INIT.call_once(|| {
-        // 1. 注册 services fs 后端 (ramfs Inode 工厂 + overlay/tmpfs 注册表映射)
+        // 1. 注册 functions fs 后端 (ramfs Inode 工厂 + overlay/tmpfs 注册表映射)
         fs_init();
         // 2. lower 层: overlay 的 lower_path 硬编码为 "/lower", 必须挂在此处
         assert_eq!(

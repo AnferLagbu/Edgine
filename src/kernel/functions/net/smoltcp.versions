@@ -1,0 +1,42 @@
+# smoltcp vendored 锁文件
+# 由 scripts/vendor_smoltcp.sh lock 自动生成
+# 用于 CI 验证 vendored 源与上游 byte-level 一致 (排除本地化部分)
+#
+# 关联: docs/plan/smoltcp-framekernel-wrapper.md §同步机制
+# 模式: LOCALIZED_VENDORED (上游版本 + 13 个本地化 lint/SAFETY 注释 + no_std 适配)
+
+# 上游 tag (semver, 形如 v0.14.0)
+SMOLTCP_TAG=v0.14.0
+
+# 上游 tag 对应 commit SHA (待联网更新 — 本机离线重生成, 字段保留占位)
+SMOLTCP_SHA=PENDING_NETWORK
+
+# 上游 src/ 目录下所有 .rs 文件的合并 SHA256
+# 计算方法: LC_ALL=C find src -name '*.rs' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum
+# (2026-09-13: 由 other/smoltcp-0.14.0 解压目录相对路径 src 实测)
+SMOLTCP_UPSTREAM_SRC_HASH=f87551603f12bfc1a564ef1253d1f26af7f1befa99669d7bb0c77d9cc3f6973c
+
+# 本地 vendored 实际 src/ 合并 SHA256 (含 13 个本地化)
+# 计算方法: LC_ALL=C find src/kernel/functions/net/smoltcp/src -name '*.rs' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum
+SMOLTCP_LOCAL_SRC_HASH=57a4d89d100b50c001535bb8d8406f627fb87f04e44789bfd1d2fd57d6c72d4b
+
+# 锁定时间 (ISO 8601, 仅供人类阅读, CI 不读取)
+SMOLTCP_LOCKED_AT=2026-09-13T23:30:00Z
+
+# 锁定模式 (LOCALIZED_VENDORED)
+# 含义: vendored 副本在上游基础上包含本地化 (lint + SAFETY 注释 + no_std 适配)
+# CI 校验: 验证 LOCAL_SRC_HASH 与本地计算一致, UPSTREAM_SRC_HASH 验证上游 tag 字节级一致
+SMOLTCP_LOCK_MODE=LOCALIZED_VENDORED
+
+# 本地化文件清单 (13 个)
+# 12 个为 lint/SAFETY 注释层 (0 功能性修改);
+# cubic.rs 为 no_std 适配 (f64::powi/mul_add → 数学等价展开, core_float_math unstable 不可用)
+# 维护方式: scripts/smoltcp-localization/ 目录提供 patch 文件
+SMOLTCP_LOCALIZED_FILES="src/iface/interface/ipv4.rs src/iface/interface/ipv6.rs src/iface/interface/mod.rs src/iface/packet.rs src/phy/sys/bpf.rs src/phy/sys/mod.rs src/phy/sys/raw_socket.rs src/phy/sys/tuntap_interface.rs src/socket/dhcpv4.rs src/socket/dns.rs src/socket/tcp/congestion/cubic.rs src/wire/ipv6.rs src/wire/udp.rs"
+
+# 升级历史 (倒序)
+# 2026-09-13: v0.13.1 → v0.14.0 (0.14 重写: congestion API redesign RFC 9438 + defmt v1 + checksum 公开)
+#             - cubic.rs no_std 适配 (f64::powi/mul_add → 数学等价展开, 上游 0.14.0 未覆盖 no_std 目标)
+#             - ipv4.rs mut 修复 (上游 0.14.0 移除 #[allow(unused_mut)] 但 fragmentation 路径仍需 mut)
+# 2026-06-24: v0.13.0 → v0.13.1 (1 commit, 5 上游文件 + 12 本地化保留)
+# 2026-06-04: v0.13.0 首次 vendored (commit 34ee52b)

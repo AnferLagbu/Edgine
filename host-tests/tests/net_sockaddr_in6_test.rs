@@ -12,7 +12,7 @@
 
 use std::fs;
 
-const SM_FI_RS: &str = "../src/kernel/framework/net/init/sm_fi.rs";
+const SM_FI_RS: &str = "../src/kernel/privileged/net/init/sm_fi.rs";
 
 fn read(path: &str) -> String {
     fs::read_to_string(path).unwrap_or_else(|e| panic!("read {} failed: {}", path, e))

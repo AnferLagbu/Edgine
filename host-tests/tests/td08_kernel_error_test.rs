@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-// TD-08: services 错误统一契约测试.
+// TD-08: functions 错误统一契约测试.
 //
 // 验收:
 //   1. SocketError 字段数 ≤ 2 (现 = 0 字段, type alias to KernelError)
@@ -7,15 +7,15 @@
 //   3. KernelError 单一来源, 共享错误 (BadFd / WouldBlock 等) 跨 2 个枚举映射一致
 //   4. From<fw::UdsError> 单一映射, 9 个变体全数下沉
 //
-// B09-12/DECISION-H13 P0-2 更新: KernelError 定义已迁回 framework/error.rs,
-// services/error.rs 改为 re-export. 静态断言指向 framework/error.rs.
+// B09-12/DECISION-H13 P0-2 更新: KernelError 定义已迁回 privileged/error.rs,
+// functions/error.rs 改为 re-export. 静态断言指向 privileged/error.rs.
 
 use std::fs;
 
-const SERVICES_ERROR: &str = "../src/kernel/services/error.rs";
-const FRAMEWORK_ERROR: &str = "../src/kernel/framework/error.rs";
-const NET_SOCKET: &str = "../src/kernel/services/net/socket.rs";
-const NET_UNIX: &str = "../src/kernel/services/net/unix.rs";
+const FUNCTIONS_ERROR: &str = "../src/kernel/functions/error.rs";
+const PRIVILEGED_ERROR: &str = "../src/kernel/privileged/error.rs";
+const NET_SOCKET: &str = "../src/kernel/functions/net/socket.rs";
+const NET_UNIX: &str = "../src/kernel/functions/net/unix.rs";
 
 fn read(p: &str) -> String {
     fs::read_to_string(p).unwrap_or_else(|e| panic!("read {}: {e}", p))
@@ -48,11 +48,11 @@ fn variant_count(enum_body: &str) -> usize {
 
 #[test]
 fn test_kernel_error_module_exists() {
-    // B09-12 P0-2: KernelError 定义在 framework/error.rs, services/error.rs re-export
-    let fw = read(FRAMEWORK_ERROR);
+    // B09-12 P0-2: KernelError 定义在 privileged/error.rs, functions/error.rs re-export
+    let fw = read(PRIVILEGED_ERROR);
     assert!(
         fw.contains("pub enum KernelError"),
-        "framework/error.rs 必须定义 KernelError"
+        "privileged/error.rs 必须定义 KernelError"
     );
     assert!(
         fw.contains("pub const fn from_i32"),
@@ -62,15 +62,15 @@ fn test_kernel_error_module_exists() {
         fw.contains("pub const fn as_errno"),
         "必须有反向 errno 映射"
     );
-    // services/error.rs 必须是 re-export 壳 (单向依赖)
-    let svc = read(SERVICES_ERROR);
+    // functions/error.rs 必须是 re-export 壳 (单向依赖)
+    let svc = read(FUNCTIONS_ERROR);
     assert!(
-        svc.contains("pub use crate::framework::error::KernelError"),
-        "services/error.rs 必须 re-export framework KernelError"
+        svc.contains("pub use crate::privileged::error::KernelError"),
+        "functions/error.rs 必须 re-export privileged KernelError"
     );
     assert!(
         !svc.contains("pub enum KernelError"),
-        "services/error.rs 不应再定义 KernelError"
+        "functions/error.rs 不应再定义 KernelError"
     );
 }
 
@@ -79,8 +79,8 @@ fn test_socket_error_is_kernel_error_alias() {
     let src = read(NET_SOCKET);
     // SocketError 现为 type alias to KernelError, 字段数应为 0
     assert!(
-        src.contains("pub use crate::services::error::KernelError as SocketError")
-            || src.contains("pub use crate::services::error::KernelError as SocketError;"),
+        src.contains("pub use crate::functions::error::KernelError as SocketError")
+            || src.contains("pub use crate::functions::error::KernelError as SocketError;"),
         "SocketError 必须是 KernelError 的 type alias"
     );
     // 不再含独立 enum 定义
@@ -110,7 +110,7 @@ fn test_unix_socket_error_has_at_most_2_variants() {
 
 #[test]
 fn test_kernel_error_posix_round_trip() {
-    let src = read(FRAMEWORK_ERROR);
+    let src = read(PRIVILEGED_ERROR);
     // 验证关键共享 errno 都已映射: 1, 9, 11, 12, 14, 22, 95, 97, 98, 99, 104, 107, 111
     for raw in [1, 9, 11, 12, 14, 22, 95, 97, 98, 99, 104, 107, 111] {
         let needle = format!("{} => Self::", raw);
@@ -122,7 +122,7 @@ fn test_kernel_error_posix_round_trip() {
 fn test_from_uds_error_covers_all_variants() {
     let src = read(NET_UNIX);
     // 验证 UdsError 9 个变体都有对应分支
-    // UdsError 已迁移到 services 本地, 可用 fw:: 或直接 UdsError:: 前缀
+    // UdsError 已迁移到 functions 本地, 可用 fw:: 或直接 UdsError:: 前缀
     for variant in [
         "BadFd",
         "Again",
@@ -144,11 +144,11 @@ fn test_from_uds_error_covers_all_variants() {
 }
 
 #[test]
-fn test_kernel_error_exported_from_services_mod() {
-    let src = fs::read_to_string("../src/kernel/services/mod.rs").expect("read services/mod.rs");
+fn test_kernel_error_exported_from_functions_mod() {
+    let src = fs::read_to_string("../src/kernel/functions/mod.rs").expect("read functions/mod.rs");
     assert!(
         src.contains("pub mod error"),
-        "services/mod.rs 必须导出 error 子模块"
+        "functions/mod.rs 必须导出 error 子模块"
     );
 }
 
@@ -156,9 +156,9 @@ fn test_kernel_error_exported_from_services_mod() {
 fn test_socket_error_uses_kernel_error_in_path() {
     // 静态验证 socket.rs 路径: type alias -> KernelError
     let src = read(NET_SOCKET);
-    let path_present = src.contains("services::error::KernelError");
+    let path_present = src.contains("functions::error::KernelError");
     assert!(
         path_present,
-        "socket.rs 必须引用 services::error::KernelError"
+        "socket.rs 必须引用 functions::error::KernelError"
     );
 }

@@ -91,7 +91,7 @@ fn kernel_src_path(rel: &str) -> std::path::PathBuf {
 
 #[test]
 fn isr_asm_has_no_serial_diagnostic_remnants() {
-    let path = kernel_src_path("src/kernel/framework/boot/isr.asm");
+    let path = kernel_src_path("src/kernel/privileged/boot/isr.asm");
     let content = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("读取 {} 失败: {}", path.display(), e));
     assert!(
@@ -102,7 +102,7 @@ fn isr_asm_has_no_serial_diagnostic_remnants() {
 
 #[test]
 fn mod_rs_has_no_serial_diagnostic_remnants() {
-    let path = kernel_src_path("src/kernel/framework/arch/x86_64/mod.rs");
+    let path = kernel_src_path("src/kernel/privileged/arch/x86_64/mod.rs");
     let content = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("读取 {} 失败: {}", path.display(), e));
     assert!(
@@ -115,7 +115,7 @@ fn mod_rs_has_no_serial_diagnostic_remnants() {
 fn isr_asm_preserves_syscall_frame_and_dispatch() {
     // 整块删除诊断时不得误删结构化代码 (早期实验 clean4 曾误删 syscall 帧构建 +
     // dispatch, 仅编译通过、逻辑残废). 此处断言关键结构仍存在.
-    let path = kernel_src_path("src/kernel/framework/boot/isr.asm");
+    let path = kernel_src_path("src/kernel/privileged/boot/isr.asm");
     let content = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("读取 {} 失败: {}", path.display(), e));
     for (needle, desc) in [

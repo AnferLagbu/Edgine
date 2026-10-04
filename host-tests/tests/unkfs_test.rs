@@ -9,7 +9,7 @@
 //! - FD 管理 (O_APPEND / 重复 close / 越界读)
 //!
 //! ## B08-14 迁移 (2026-09-06)
-//! 改引内核 `services::fs::unkfs::unkfs_data` 真实实现 (host-test feature 暴露), 消除
+//! 改引内核 `functions::fs::unkfs::unkfs_data` 真实实现 (host-test feature 暴露), 消除
 //! 平行实现依赖. 主要差异:
 //! - pwm 参数必须是已注册身份 (`identity::get_table().create(..., 0)` 返回哈希,
 //!   creator=0 得最高特权级), 所有硬编码 pwm=1 替换为 `test_pwm()`.
@@ -20,13 +20,13 @@
 //!
 //! ## 测试组织
 //! 集成测试置于 `tests/` 目录, 由 Cargo 自动发现. 通过
-//! `use edgine::kernel::services::fs::unkfs::unkfs_data::get_unkfs` 访问内核
+//! `use edgine::kernel::functions::fs::unkfs::unkfs_data::get_unkfs` 访问内核
 //! 暴露的 UNKFS API.
 
-use edgine::kernel::framework::error::KernelError;
-use edgine::kernel::framework::sgeg::identity;
-use edgine::kernel::services::fs::unkfs::dataset::UnkfsDataset;
-use edgine::kernel::services::fs::unkfs::unkfs_data::get_unkfs;
+use edgine::kernel::functions::fs::unkfs::dataset::UnkfsDataset;
+use edgine::kernel::functions::fs::unkfs::unkfs_data::get_unkfs;
+use edgine::kernel::privileged::error::KernelError;
+use edgine::kernel::privileged::sgeg::identity;
 use std::sync::{Mutex, Once, OnceLock};
 
 // 5 个 #[test] 并行共享 get_unkfs() 全局单例 (fd 表/文件状态), 需串行化
@@ -737,7 +737,7 @@ fn unkfs_fd_management() {
 ///   3. 路径不存在 → 返回错误
 #[test]
 fn unkfs_utimensat_writes_back_times() {
-    use edgine::kernel::services::fs::FileSystem;
+    use edgine::kernel::functions::fs::FileSystem;
 
     let _guard = UNKFS_TEST_LOCK.lock().unwrap();
     ensure_unkfs_init();

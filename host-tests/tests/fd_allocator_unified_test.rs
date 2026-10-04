@@ -1,6 +1,6 @@
 //! TD-02: 统一 FdAllocator — 静态契约测试
 //!
-//! 验证 `framework/proc/fd_alloc.rs`:
+//! 验证 `privileged/proc/fd_alloc.rs`:
 //!   - FdPlan 5 个范围互不重叠
 //!   - 全部 ≥ MAX_SM_FD=256 (除 Smoltcp 自身)
 //!   - alloc_fd / free_fd / subsystem_of 行为正确
@@ -9,7 +9,7 @@
 use std::fs;
 use std::path::Path;
 
-const FD_ALLOC_RS: &str = "src/kernel/framework/proc/fd_alloc.rs";
+const FD_ALLOC_RS: &str = "src/kernel/privileged/proc/fd_alloc.rs";
 
 fn read_fd_alloc() -> String {
     fs::read_to_string(
@@ -130,23 +130,23 @@ fn test_v2_subsystems_reference_fdplan() {
     let cases: &[(&str, &str, &str)] = &[
         (
             "UDS_FD_BASE",
-            "src/kernel/services/net/unix.rs",
-            "crate::framework::proc::FdPlan::UDS.base",
+            "src/kernel/functions/net/unix.rs",
+            "crate::privileged::proc::FdPlan::UDS.base",
         ),
         (
             "EFD_FD_BASE",
-            "src/kernel/framework/syscall/eventfd.rs",
-            "crate::framework::proc::FdPlan::EVENT_FD.base",
+            "src/kernel/privileged/syscall/eventfd.rs",
+            "crate::privileged::proc::FdPlan::EVENT_FD.base",
         ),
         (
             "SFD_FD_BASE",
-            "src/kernel/framework/syscall/signalfd.rs",
-            "crate::framework::proc::FdPlan::SIGNAL_FD.base",
+            "src/kernel/privileged/syscall/signalfd.rs",
+            "crate::privileged::proc::FdPlan::SIGNAL_FD.base",
         ),
         (
             "INOTIFY_FD_BASE",
-            "src/kernel/services/fs/inotify.rs",
-            "crate::framework::proc::FdPlan::INOTIFY.base",
+            "src/kernel/functions/fs/inotify.rs",
+            "crate::privileged::proc::FdPlan::INOTIFY.base",
         ),
     ];
     for (const_name, rel_path, expected_ref) in cases {
@@ -176,10 +176,10 @@ fn test_v2_smoltcp_capacity_derived_from_fdplan() {
     let p = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("src/kernel/framework/net/init.rs");
+        .join("src/kernel/privileged/net/init.rs");
     let src = fs::read_to_string(&p).expect("读 init.rs");
     assert!(
-        src.contains("MAX_SM_FD: usize = crate::framework::proc::FdPlan::SMOLTCP.capacity"),
+        src.contains("MAX_SM_FD: usize = crate::privileged::proc::FdPlan::SMOLTCP.capacity"),
         "MAX_SM_FD 必须从 proc::FdPlan::SMOLTCP.capacity 派生 (TD-02 V2)"
     );
 }
@@ -208,10 +208,10 @@ fn test_v3_subsystems_use_fd_at_not_base_plus() {
     //   4. inotify.rs InotifyInstance::fd
     //   5. inotify.rs 通知循环 epoll_pwake
     let cases: &[(&str, &str)] = &[
-        ("src/kernel/services/net/unix.rs", "fd_at"),
-        ("src/kernel/framework/syscall/eventfd.rs", "fd_at"),
-        ("src/kernel/framework/syscall/signalfd.rs", "fd_at"),
-        ("src/kernel/services/fs/inotify.rs", "fd_at"),
+        ("src/kernel/functions/net/unix.rs", "fd_at"),
+        ("src/kernel/privileged/syscall/eventfd.rs", "fd_at"),
+        ("src/kernel/privileged/syscall/signalfd.rs", "fd_at"),
+        ("src/kernel/functions/fs/inotify.rs", "fd_at"),
     ];
     for (path, expected) in cases {
         let p = Path::new(env!("CARGO_MANIFEST_DIR"))

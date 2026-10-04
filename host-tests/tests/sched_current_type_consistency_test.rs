@@ -16,8 +16,8 @@
 
 use std::fs;
 
-const SCHEDULER: &str = "../src/kernel/framework/proc/scheduler.rs";
-const SCHEDULER_EX: &str = "../src/kernel/framework/proc/scheduler_ex.rs";
+const SCHEDULER: &str = "../src/kernel/privileged/proc/scheduler.rs";
+const SCHEDULER_EX: &str = "../src/kernel/privileged/proc/scheduler_ex.rs";
 
 fn read(p: &str) -> String {
     fs::read_to_string(p).unwrap_or_else(|e| panic!("read {p}: {e}"))

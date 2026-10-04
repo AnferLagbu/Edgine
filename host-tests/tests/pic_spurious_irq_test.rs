@@ -2,7 +2,7 @@
 //!
 //! ## B08-20 处置 (2026-09-06): host 不可测, 平行实现已移除
 //!
-//! 原镜像对象为 `framework/idt/idt.rs::detect_spurious_8259_irq` (I-25) 的
+//! 原镜像对象为 `privileged/idt/idt.rs::detect_spurious_8259_irq` (I-25) 的
 //! 位运算真值表 + EOI 决策. 评估结论: **内核该函数 host 不可测**, 原因:
 //!
 //! 1. `detect_spurious_8259_irq` 为**私有** `fn` (非 pub), host-tests 无法引用;

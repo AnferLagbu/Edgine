@@ -7,8 +7,8 @@
 //! - WASI errno 值与 POSIX 对齐
 //!
 //! ## B08-20 迁移 (2026-09-06)
-//! WasiFdTable 行为与 WasiContext 已改引内核 `services::wasm::wasi::fd_table` /
-//! `services::wasm::wasi::WasiContext` 真实实现, 删除本地 Vec<Option<u32>> 平行实现.
+//! WasiFdTable 行为与 WasiContext 已改引内核 `functions::wasm::wasi::fd_table` /
+//! `functions::wasm::wasi::WasiContext` 真实实现, 删除本地 Vec<Option<u32>> 平行实现.
 //! WASI ABI 常量 (rights 位 / filestat / iovec 布局) 为 preview1 外部规范,
 //! 非内核平行实现, 保留本地标注 (内核无对应导出结构).
 //! WASI errno 对齐改为直接验证内核 `WasiErrno` 枚举判别值.
@@ -17,8 +17,8 @@
 // WasiFdTable 行为测试 (改引内核真实实现)
 // ============================================================================
 
-use edgine::kernel::services::wasm::wasi::fd_table::{WasiFdEntry, WasiFdTable};
-use edgine::kernel::services::wasm::wasi::{WasiContext, WasiErrno, WasiFileType, WasiRights};
+use edgine::kernel::functions::wasm::wasi::fd_table::{WasiFdEntry, WasiFdTable};
+use edgine::kernel::functions::wasm::wasi::{WasiContext, WasiErrno, WasiFileType, WasiRights};
 
 fn entry(inner_fd: i32) -> WasiFdEntry {
     WasiFdEntry {

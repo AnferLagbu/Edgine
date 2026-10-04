@@ -12,13 +12,13 @@
 //!
 //! ## 为何可 host 测试
 //!
-//! 判据已从 `framework/arch/aarch64/gic.rs` 的 MMIO / 系统寄存器访问中剥离到架构
-//! 中立的 `framework/arch/gic_logic.rs` (纯函数, 无 asm)。生产路径仅"读寄存器 →
+//! 判据已从 `privileged/arch/aarch64/gic.rs` 的 MMIO / 系统寄存器访问中剥离到架构
+//! 中立的 `privileged/arch/gic_logic.rs` (纯函数, 无 asm)。生产路径仅"读寄存器 →
 //! 交给同一判据", 故 host 侧所测判据与 aarch64 生产路径**同源**, 无平行实现。
 //!
 //! 与之互补的**源码结构**回归防护见 `aarch64_gic_contract_test.rs`。
 
-use edgine::kernel::framework::arch::gic_logic::{
+use edgine::kernel::privileged::arch::gic_logic::{
     REDIST_WAKE_SPIN_LIMIT, uses_affinity_routing, verify_post_conditions, wake_timed_out,
 };
 

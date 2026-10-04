@@ -2,7 +2,7 @@
 
 > 总体判断：Edgine 现有 USB 子系统为**纯 Host 侧**，其**自持实现**是 framekernel 边界下唯一可行的路径，应当延续；**Device（gadget）侧**受"UDC 硬件存在性"与"QEMU 无虚拟 UDC"两项前置条件制约，**暂不自持，条件触发**。host 侧第三方库（`usb-host` 等）不可用，device 侧第三方库（`usb-device`）只覆盖上半层——两者均不建议引入。
 
-本报告是 Edgine 对 USB 主/从侧实现路线的一次性技术快照。评估依据为 Edgine 仓库当前事实（`src/kernel/services/driver/usb/`、`src/rust/deny.toml`、`docs/report/third-party-library-selection-assessment.md`）与 crates.io 官方元数据（`usb-device` 0.3.2、`usb-host` 0.1.3）。作为后续制定 plan 与修复工程的输入依据。
+本报告是 Edgine 对 USB 主/从侧实现路线的一次性技术快照。评估依据为 Edgine 仓库当前事实（`src/kernel/functions/driver/usb/`、`src/rust/deny.toml`、`docs/report/third-party-library-selection-assessment.md`）与 crates.io 官方元数据（`usb-device` 0.3.2、`usb-host` 0.1.3）。作为后续制定 plan 与修复工程的输入依据。
 
 ## 一、问题背景：USB 的硬性主从不对称
 
@@ -21,7 +21,7 @@ USB 总线在设计上规定了唯一的根主机（Host），其余节点全为
 
 ## 二、Edgine 现状：100% Host 侧、且已自持
 
-`src/kernel/services/driver/usb/` 全部为 Host 侧实现，落在 services 子树（0 unsafe），模块结构见 `services/driver/usb/mod.rs` L11-19：
+`src/kernel/functions/driver/usb/` 全部为 Host 侧实现，落在 functions 子树（0 unsafe），模块结构见 `functions/driver/usb/mod.rs` L11-19：
 
 | 文件 | 职责 |
 |---|---|
@@ -32,7 +32,7 @@ USB 总线在设计上规定了唯一的根主机（Host），其余节点全为
 | `hid.rs` | HID 类驱动（键盘 / 鼠标 Boot Protocol） |
 | `mass_storage.rs` | 大容量存储类驱动（BBB + SCSI） |
 
-其设计原则（`mod.rs` L23-25）已明确"零 unsafe / MMIO 经 `framework::IoMem` 代理 / DMA 经 framework 安全包装"；控制器列表由 services 自持（`mod.rs` L55），PCI 发现常量（`mod.rs` L68-72）与初始化入口 `usb_init()`（`mod.rs` L141）亦均在 services。后续计划文件为 `ehci.rs` / `uhci.rs` / `ohci.rs`（`mod.rs` L29-31），方向仍是 host 侧各代控制器。
+其设计原则（`mod.rs` L23-25）已明确"零 unsafe / MMIO 经 `privileged::IoMem` 代理 / DMA 经 privileged 安全包装"；控制器列表由 functions 自持（`mod.rs` L55），PCI 发现常量（`mod.rs` L68-72）与初始化入口 `usb_init()`（`mod.rs` L141）亦均在 functions。后续计划文件为 `ehci.rs` / `uhci.rs` / `ohci.rs`（`mod.rs` L29-31），方向仍是 host 侧各代控制器。
 
 结论：Edgine 的 USB 能力当前**只有一个方向**——作为主机去驱动外部设备；device 侧尚无任何代码。
 
@@ -40,7 +40,7 @@ USB 总线在设计上规定了唯一的根主机（Host），其余节点全为
 
 Host 侧不建议、也无必要改用第三方库，理由有三：
 
-**其一，framekernel 边界决定的。** 主机控制器驱动必须直接访问 MMIO（xHCI 寄存器组）并处理 DMA（Command/Event Ring、URB 缓冲）。按 `AGENTS.md` §4.1 归属决策树，这类机制必须由 framework 封装为 safe API（`IoMem` / DMA 包装），功能实现在 services。第三方库无法提供这种切分——它们通常整包携带自身的 `unsafe` 与硬件抽象，会把 TCB 边界搅乱。
+**其一，framekernel 边界决定的。** 主机控制器驱动必须直接访问 MMIO（xHCI 寄存器组）并处理 DMA（Command/Event Ring、URB 缓冲）。按 `AGENTS.md` §4.1 归属决策树，这类机制必须由 privileged 封装为 safe API（`IoMem` / DMA 包装），功能实现在 functions。第三方库无法提供这种切分——它们通常整包携带自身的 `unsafe` 与硬件抽象，会把 TCB 边界搅乱。
 
 **其二，host 侧无可用第三方库。** 详见第五节。
 
@@ -91,7 +91,7 @@ Host 侧不建议、也无必要改用第三方库，理由有三：
 
 ## 六、若将来推进 Device 侧
 
-一旦触发条件满足，正确路径应与 host 侧**同构**：由 framework 封装 UDC 原语（寄存器 / FIFO / 端点安全的 safe API），gadget 类功能实现在 services（0 unsafe）。这样可保持 F1 / F2 干净、TCB 不膨胀，并与现有 USB 栈风格一致——而非整包引入 `usb-device`。
+一旦触发条件满足，正确路径应与 host 侧**同构**：由 privileged 封装 UDC 原语（寄存器 / FIFO / 端点安全的 safe API），gadget 类功能实现在 functions（0 unsafe）。这样可保持 F1 / F2 干净、TCB 不膨胀，并与现有 USB 栈风格一致——而非整包引入 `usb-device`。
 
 ## 七、结论
 

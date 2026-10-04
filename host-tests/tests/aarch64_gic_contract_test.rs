@@ -12,7 +12,7 @@
 //!
 //! ## 为何用静态契约
 //!
-//! `framework/arch/aarch64/*` 为架构特有源码, host-tests (host 侧编译)
+//! `privileged/arch/aarch64/*` 为架构特有源码, host-tests (host 侧编译)
 //! 无法引用其符号; 故采用**源码文本分析**方式固化关键契约, 防止回归:
 //!
 //! - redistributor 唤醒超时必须**显式失败** (不得静默 `break` 继续);
@@ -52,10 +52,10 @@ fn slice_between<'a>(src: &'a str, begin: &str, end: &str) -> &'a str {
     &rest[..end_off]
 }
 
-const GIC_RS: &str = "src/kernel/framework/arch/aarch64/gic.rs";
-const GIC_LOGIC_RS: &str = "src/kernel/framework/arch/gic_logic.rs";
-const ENTRY_RS: &str = "src/kernel/framework/boot/aarch64/entry.rs";
-const EXCEPTION_RS: &str = "src/kernel/framework/arch/aarch64/exception.rs";
+const GIC_RS: &str = "src/kernel/privileged/arch/aarch64/gic.rs";
+const GIC_LOGIC_RS: &str = "src/kernel/privileged/arch/gic_logic.rs";
+const ENTRY_RS: &str = "src/kernel/privileged/boot/aarch64/entry.rs";
+const EXCEPTION_RS: &str = "src/kernel/privileged/arch/aarch64/exception.rs";
 const QEMU_SH: &str = "scripts/qemu_boot_test.sh";
 
 #[test]
@@ -158,11 +158,11 @@ fn test_no_write_to_gicr_ctlr() {
 fn test_boot_entry_fail_fast_and_marker() {
     let src = read(ENTRY_RS);
     assert!(
-        src.contains("crate::framework::arch::gic::init()"),
+        src.contains("crate::privileged::arch::gic::init()"),
         "boot 入口须调用 gic::init()"
     );
     assert!(
-        src.contains("if let Err(reason) = crate::framework::arch::gic::init()"),
+        src.contains("if let Err(reason) = crate::privileged::arch::gic::init()"),
         "boot 入口须对 gic::init() 失败 fail-fast"
     );
     assert!(

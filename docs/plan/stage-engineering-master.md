@@ -42,7 +42,7 @@
   - 方案:
     1. **批次 1 (清单分类)**: `cargo clippy --message-format=json -W clippy::pedantic` 解析 JSON, 按 lint 名 + 文件聚类, 输出 `lint_name: file:line:msg` 清单 (CSV), 41 唯一 lint / 64 文件.
     2. **批次 2 (自动修复)**: `cargo clippy --fix --allow-dirty --allow-staged` 排除会破坏编译的 cast/ptr 类, 验证编译 + 单测试. 272 处 no_mangle 补 `extern "C"` ABI 标注. 6 处 `#[expect]` 豁免 (clippy::needless_pass_by_value 等).
-    3. **批次 3 (文档类)**: doc_markdown 用 `cargo clippy --fix` 自动补反引号 (461 文件). missing_errors_doc/missing_panics_doc 4 组并行 worker 补中文文档 (按模块分组: framework/net, framework/mm, framework/driver, services).
+    3. **批次 3 (文档类)**: doc_markdown 用 `cargo clippy --fix` 自动补反引号 (461 文件). missing_errors_doc/missing_panics_doc 4 组并行 worker 补中文文档 (按模块分组: privileged/net, privileged/mm, privileged/driver, functions).
   - 状态: [X]
 
 - **工程计划 2: 批次 4 剩余 — cast 类 (截断/符号/回绕/精度)**
@@ -50,12 +50,12 @@
   - 内容: cast_possible_truncation 945 + cast_sign_loss 643 + cast_possible_wrap 285 + cast_ptr_alignment 89 + cast_precision_loss 43 = 2005 条 (后合并为 1910)
   - 方案: 按 DECISION-033 函数级 `#[expect(clippy::cast_*)]` + 中文注释 (注释格式 `// 有意窄化: <原因>, 调用方/上下文保证值域安全`)
   - 状态: [X]
-  - 详情: aa/ad/ae 组分布 (framework arch/driver/mm + framework sync + services driver/fs) + cast_ptr_alignment 89 条涉及裸指针, 部分场景改 `core::ptr::addr_of!` 而非 expect + DECISION-035 注释统一 + DECISION-036 按字节序列化禁用 cast expect
+  - 详情: aa/ad/ae 组分布 (privileged arch/driver/mm + privileged sync + functions driver/fs) + cast_ptr_alignment 89 条涉及裸指针, 部分场景改 `core::ptr::addr_of!` 而非 expect + DECISION-035 注释统一 + DECISION-036 按字节序列化禁用 cast expect
 
 - **工程计划 3: 批次 5 — 指针类**
   - 阶段: 8.10
   - 内容: ptr_as_ptr 640 + borrow_as_ptr 83 + ptr_cast_constness 33 + ref_as_ptr 32 = 788 条
-  - 方案: ptr_as_ptr 占 81%; 能重构用 `core::ptr::from_ref` / `from_mut` (no_std nightly); framework unsafe 块保留 + SAFETY 注释; services (0 unsafe) 必须重构
+  - 方案: ptr_as_ptr 占 81%; 能重构用 `core::ptr::from_ref` / `from_mut` (no_std nightly); privileged unsafe 块保留 + SAFETY 注释; functions (0 unsafe) 必须重构
   - 状态: [X]
 
 - **工程计划 4: 批次 6 — 风格类**
@@ -93,8 +93,8 @@
 ### 待办 (按时间窗口分组)
 
 - **短期待办 (1-2 周内可完成)**
-  - [x] ~~sgeg/storage.rs 3 处 expect 修复 (DECISION-036)~~ — **已完成**: 2026-08-04 阶段 7-8 期间 w32/w64/w16 函数已用位移形式 `v & 0xFF` / `(v >> 8) & 0xFF` 避免 cast 警告 (见 src/kernel/framework/sgeg/storage.rs:43-63). 当前 2 处剩余 expect 是 `save_database` 函数 (`disk_id as u8` 等) 资源类型转换, 不属于按字节序列化场景.
-  - [x] ~~freg/api.rs 2 处 no_mangle extern "C" 补全~~ — **已完成**: 阶段 7-8 期间已补全 `recovery_set_fault_rate` / `recovery_get_fault_rate` 两个 `#[cfg(feature = "fault_injection")]` 函数 (见 src/kernel/framework/freg/api.rs:308-310 / 314-317).
+  - [x] ~~sgeg/storage.rs 3 处 expect 修复 (DECISION-036)~~ — **已完成**: 2026-08-04 阶段 7-8 期间 w32/w64/w16 函数已用位移形式 `v & 0xFF` / `(v >> 8) & 0xFF` 避免 cast 警告 (见 src/kernel/privileged/sgeg/storage.rs:43-63). 当前 2 处剩余 expect 是 `save_database` 函数 (`disk_id as u8` 等) 资源类型转换, 不属于按字节序列化场景.
+  - [x] ~~freg/api.rs 2 处 no_mangle extern "C" 补全~~ — **已完成**: 阶段 7-8 期间已补全 `recovery_set_fault_rate` / `recovery_get_fault_rate` 两个 `#[cfg(feature = "fault_injection")]` 函数 (见 src/kernel/privileged/freg/api.rs:308-310 / 314-317).
   - [x] ~~ab/ac 组 191 处 expect 注释统一 (DECISION-035)~~ — **已完成**: 全仓 257 处 cast expect 注释统一为 `// 有意窄化: <具体原因>` 模板 (见 DECISION-035 治理成果).
   - 状态: [X] (3 项均已在阶段 7-8 期间完成, master 文档未同步)
 
@@ -253,7 +253,7 @@
   - 方案:
     - 14 处 HTML tag 加反引号 (`<T>` → `` `<T>` ``)
     - 27 文件 74 处 bit-field (`[63:32]` → `` `[63:32]` ``)
-    - 10 处真 link 错误: SINFO_GDT_LIMIT (过时名字) + framework:: → crate:: + PiMutex::update_waiter_priority 路径修正 + KERNEL_PML4[pml4_idx] 字面量转义
+    - 10 处真 link 错误: SINFO_GDT_LIMIT (过时名字) + privileged:: → crate:: + PiMutex::update_waiter_priority 路径修正 + KERNEL_PML4[pml4_idx] 字面量转义
     - 1 处 super::socket 同名冲突 (`[mod@super::socket]`)
     - 2 处 entries[i] 代码块字面量转义
   - commit: `1e00d842` (entries[i] 字面量转义) + `f1524e5a` (数组/位域反引号化)
@@ -351,7 +351,7 @@
 | --- | --- | --- | --- | --- |
 | 1 | 双架构 cargo check 0 error / 0 warning | `cargo check --release --target x86_64-unknown-none --lib --bins --examples` (aarch64 同) | ✓ 双架构 0w0e | N/A |
 | 2 | clippy -D pedantic 0 warning | `cargo clippy --release --lib --bins --examples -- -D clippy::pedantic -A clippy::cast_*` | ✓ 0 warning | ci-x86.yml `clippy-pedantic` job |
-| 3 | 三审计全过 | `python3 scripts/audit_services_boundary.py && audit_safety_coverage.py && audit_deadlock_matrix.py` | ✓ 全过 | ci-lint.yml `audit-unsafe` job |
+| 3 | 三审计全过 | `python3 scripts/audit_functions_boundary.py && audit_safety_coverage.py && audit_deadlock_matrix.py` | ✓ 全过 | ci-lint.yml `audit-unsafe` job |
 | 4 | host-tests 全过 | `cd host-tests && cargo test` | ✓ 838 passed / 0 failed | ci-x86.yml `host-tests` job |
 | 5 | QEMU 集成测试 | `make test` (x86_64 + aarch64) | N/A (本阶段未运行) | 无 |
 | 6 | cargo fmt --check | `cargo fmt -- --manifest-path src/rust/Cargo.toml --check` | ✓ 0 差异 | ci-lint.yml |
@@ -387,7 +387,7 @@
 | 双栈改造 (DECISION-032) | [ipv6-dual-stack.md](./ipv6-dual-stack.md) | IPv6/IPv4 双栈 |
 | 写作规范 | [docs/README.md](../README.md) | 文档格式/命名/章节结构 |
 | AI 行为准则 + 硬规则 | [AGENTS.md](../../AGENTS.md) | §2.4 验证门槛 / §6 硬规则 F1-F9 / §10 预存问题 / §15 AI 行为准则 |
-| framekernel 架构 | [explain-framekernel.md](../explain/explain-framekernel.md) | services→framework 单向数据流 |
+| framekernel 架构 | [explain-framekernel.md](../explain/explain-framekernel.md) | functions→privileged 单向数据流 |
 | 命名参考 | [ref-naming.md](../explain/ref-naming.md) | 命名约定 |
 | 愿景 | [vision-hope.md](../explain/vision-hope.md) | linuxulator 翻译层立场 |
 

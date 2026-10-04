@@ -7,14 +7,14 @@
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `TaskStateSegment` / `IST_COUNT` 平行镜像, 改引内核真实源码
-//! `edgine::kernel::framework::arch::x86_64::tss::{TaskStateSegment, IST_COUNT}`.
+//! `edgine::kernel::privileged::arch::x86_64::tss::{TaskStateSegment, IST_COUNT}`.
 //! 内核 `ist_validated` / `set_ist` / `zeroed` 均为 pub, host (x86_64) 可编译,
 //! 直接验证 4 字段同时非零的 AND 短路语义, 不再双维护.
 //!
 //! 注: 内核 `TaskStateSegment` 为 `#[repr(C, packed)]`, 字段偏移/对齐语义由
 //! tss.rs 自身保证; host-test 只关心 `ist_validated` 判定与 `set_ist` 行为.
 
-use edgine::kernel::framework::arch::x86_64::tss::{IST_COUNT, TaskStateSegment};
+use edgine::kernel::privileged::arch::x86_64::tss::{IST_COUNT, TaskStateSegment};
 
 #[test]
 fn test_ist_validated_all_set() {

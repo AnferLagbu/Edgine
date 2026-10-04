@@ -16,15 +16,15 @@
 //!   - UnkfsZil::replay(): 返回当前 records (模拟"重启后重放未提交日志")
 //!
 //! ## B08-14 迁移 (2026-09-06)
-//! 改引内核 `services::fs::unkfs` 真实实现 (host-test feature 暴露), 消除
+//! 改引内核 `functions::fs::unkfs` 真实实现 (host-test feature 暴露), 消除
 //! 平行实现依赖. API 与测试版同构 (UnkfsDataset/UnkfsSnapshotManager/UnkfsZil/UnkfsZap/
 //! UnkfsDva/UnkfsBlockPointer), 仅 import 路径变化.
 
-use edgine::kernel::services::fs::unkfs::bp::UnkfsDva;
-use edgine::kernel::services::fs::unkfs::dataset::UnkfsDataset;
-use edgine::kernel::services::fs::unkfs::snapshot::UnkfsSnapshotManager;
-use edgine::kernel::services::fs::unkfs::zap::UnkfsZap;
-use edgine::kernel::services::fs::unkfs::zil::{UnkfsZil, UnkfsZilRecord, UnkfsZilRecordType};
+use edgine::kernel::functions::fs::unkfs::bp::UnkfsDva;
+use edgine::kernel::functions::fs::unkfs::dataset::UnkfsDataset;
+use edgine::kernel::functions::fs::unkfs::snapshot::UnkfsSnapshotManager;
+use edgine::kernel::functions::fs::unkfs::zap::UnkfsZap;
+use edgine::kernel::functions::fs::unkfs::zil::{UnkfsZil, UnkfsZilRecord, UnkfsZilRecordType};
 use std::time::Instant;
 
 const ROOT_OWNER: u64 = 0;

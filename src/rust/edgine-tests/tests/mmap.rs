@@ -1,6 +1,6 @@
 //! mmap/munmap 系统调用服务层参数验证测试
 //!
-//! 覆盖 services/mm/mmap.rs 的标量验证逻辑:
+//! 覆盖 functions/mm/mmap.rs 的标量验证逻辑:
 //! - mmap: size > 0, prot 合法, MAP_SHARED/MAP_PRIVATE 二选一
 //! - munmap: addr != 0 && size > 0
 

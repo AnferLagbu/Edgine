@@ -8,13 +8,13 @@
 //! 5. `SmoltcpNetStack::dhcp_decide_default` 接入路径正确
 //!
 //! 注意: 本测试不依赖 `kernel_test` feature, 通过 `path` 引用 edgine
-//! 的 services/net 公共 API, 验证 trait 设计契约.
+//! 的 functions/net 公共 API, 验证 trait 设计契约.
 
 use std::fs;
 use std::path::Path;
 
-const POLICY_RS: &str = "../src/kernel/services/net/dhcp_policy.rs";
-const IMPL_RS: &str = "../src/kernel/services/net/smoltcp_impl.rs";
+const POLICY_RS: &str = "../src/kernel/functions/net/dhcp_policy.rs";
+const IMPL_RS: &str = "../src/kernel/functions/net/smoltcp_impl.rs";
 
 fn read(path: &str) -> String {
     fs::read_to_string(path)
@@ -39,7 +39,7 @@ fn test_dhcp_policy_module_exists() {
     );
     assert!(
         content.contains("#![deny(unsafe_code)]"),
-        "services 层应禁用 unsafe"
+        "functions 层应禁用 unsafe"
     );
 }
 
@@ -244,7 +244,7 @@ fn test_record_dhcp_bound_clears_retry() {
 
 #[test]
 fn test_no_unsafe_in_dhcp_policy() {
-    // 验证 services 层铁律: dhcp_policy.rs 0 unsafe
+    // 验证 functions 层铁律: dhcp_policy.rs 0 unsafe
     let content = read(POLICY_RS);
     assert!(
         content.contains("#![deny(unsafe_code)]"),

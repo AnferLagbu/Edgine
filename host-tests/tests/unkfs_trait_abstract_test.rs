@@ -19,7 +19,7 @@ fn repo_root() -> std::path::PathBuf {
 
 #[test]
 fn test_unkfs_checksum_trait_exists() {
-    let path = repo_root().join("src/kernel/services/fs/unkfs/checksum.rs");
+    let path = repo_root().join("src/kernel/functions/fs/unkfs/checksum.rs");
     let src =
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
@@ -35,7 +35,7 @@ fn test_unkfs_checksum_trait_exists() {
 
 #[test]
 fn test_unkfs_checksum_trait_impl_for_hvchecksum() {
-    let path = repo_root().join("src/kernel/services/fs/unkfs/checksum.rs");
+    let path = repo_root().join("src/kernel/functions/fs/unkfs/checksum.rs");
     let src =
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
@@ -55,7 +55,7 @@ fn test_unkfs_no_cyclic_sibling_use() {
     //
     // 由于 UNKFS 18 文件关系复杂, 静态检查环代价大, 此处只做基础结构性检查:
     // 顶层 mod.rs 必须列出全部 18 子模块, 且不允许有 #[cfg(...)] 隐藏
-    let path = repo_root().join("src/kernel/services/fs/unkfs/mod.rs");
+    let path = repo_root().join("src/kernel/functions/fs/unkfs/mod.rs");
     let src =
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 

@@ -8,15 +8,15 @@
 //! 2. 验证可读
 //!
 //! ## B08-14 迁移 (2026-09-06)
-//! 改引内核 `services::fs::unkfs` 真实实现 (host-test feature 暴露), 消除
+//! 改引内核 `functions::fs::unkfs` 真实实现 (host-test feature 暴露), 消除
 //! 平行实现依赖. 测试版 `UNKFS_DATA` 为 `Mutex<Option<Box>>` 可重置, 内核为
 //! `OnceCell` 不可重置 (用户决策: 移除重置用例). 原 Phase 3 (单例重置) /
 //! Phase 4 (重新 init 验证文件消失) 删除, 改为验证"已写文件可读 + 重复 init
 //! 幂等不破坏数据". pwm 参数使用注册身份 (`identity::get_table().create(..., 0)`,
 //! creator=0 得最高特权级).
 
-use edgine::kernel::framework::sgeg::identity;
-use edgine::kernel::services::fs::unkfs::unkfs_data::get_unkfs;
+use edgine::kernel::functions::fs::unkfs::unkfs_data::get_unkfs;
+use edgine::kernel::privileged::sgeg::identity;
 use std::sync::OnceLock;
 
 /// 注册并缓存一个测试身份 (creator=0 → 最高特权级), 供所有用例作为 pwm 参数.

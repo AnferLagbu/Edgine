@@ -37,27 +37,27 @@ use std::time::Instant;
 // 以下 bench 组不再本地复刻算法, 改为直接引用内核真实源码 (经 edgine 壳 crate 的
 // host-test feature 暴露面), 与 `src/kernel/**` 位一致. 各 bench 仅保留计时骨架,
 // 计算本身完全由内核实现承担 — 平行复刻体已删除.
-use edgine::kernel::framework::debug::{
+use edgine::kernel::privileged::debug::{
     BpfInsn, BpfProg, BpfProgType, BpfVerifier, VerifyResult, opcode,
 };
 // `BpfSubsystem` 仅单测使用 (bench 体走 `&dyn BpfVerifier`), 故 cfg(test) 门控.
-#[cfg(test)]
-use edgine::kernel::framework::debug::BpfSubsystem;
-use edgine::kernel::framework::dma_buf::{DmaDirection, DmaStream, SyncState};
-use edgine::kernel::framework::frame::Frame;
-use edgine::kernel::framework::mm::{PageFlags, PageTableEntry, PhysAddr};
-use edgine::kernel::framework::net::wait_queue::{SocketWaitQueue, WakeReason};
-use edgine::kernel::services::config::sysctl::{
+use edgine::kernel::functions::config::sysctl::{
     SysctlKind, SysctlValue, sysctl_register, sysctl_write,
 };
-use edgine::kernel::services::freg::attribution::{FaultAttribution, FaultAttributor, TcbModule};
-use edgine::kernel::services::freg::recovery_policy::{
+use edgine::kernel::functions::freg::attribution::{FaultAttribution, FaultAttributor, TcbModule};
+use edgine::kernel::functions::freg::recovery_policy::{
     FaultSignal, RecoveryAction, RecoveryPolicy,
 };
+#[cfg(test)]
+use edgine::kernel::privileged::debug::BpfSubsystem;
+use edgine::kernel::privileged::dma_buf::{DmaDirection, DmaStream, SyncState};
+use edgine::kernel::privileged::frame::Frame;
+use edgine::kernel::privileged::mm::{PageFlags, PageTableEntry, PhysAddr};
+use edgine::kernel::privileged::net::wait_queue::{SocketWaitQueue, WakeReason};
 // `sysctl_read`/`SysctlError` 仅单测使用 (bench 体只写), 故 cfg(test) 门控.
 #[cfg(test)]
-use edgine::kernel::services::config::sysctl::{SysctlError, sysctl_read};
-use edgine::kernel::services::debug::ebpf_verifier::STANDARD_VERIFIER;
+use edgine::kernel::functions::config::sysctl::{SysctlError, sysctl_read};
+use edgine::kernel::functions::debug::ebpf_verifier::STANDARD_VERIFIER;
 
 // ====== B 类: 内核真实实现直引 + 机制层载体注入 (G-07 消除 host 侧平行实现) ======
 //
@@ -66,63 +66,63 @@ use edgine::kernel::services::debug::ebpf_verifier::STANDARD_VERIFIER;
 //   与 `tests/pmm_buddy_host_test.rs` 一致)
 // - `IoMem`: 别名注册表唯一公共入口 (与 `tests/mm_iomem_alias_test.rs` 一致)
 // - `VirtQueue`: 描述符/环区操作用宿主堆块作 DMA 后备 (host 无 PMM, 见 §12 段注释)
-use edgine::kernel::framework::driver::virtio::queue::{
+use edgine::kernel::privileged::driver::virtio::queue::{
     VQ_SIZE, VirtQueue, VqAvail, VqDesc, VqUsed, VqUsedElem,
 };
-use edgine::kernel::framework::sgeg::sha256::sha256;
+use edgine::kernel::privileged::sgeg::sha256::sha256;
 // 描述符标志位仅单测断言使用 (bench 体经 `prepare_desc` 的 write 参数间接设置)
-#[cfg(test)]
-use edgine::kernel::framework::driver::virtio::queue::{VQ_DESC_F_NEXT, VQ_DESC_F_WRITE};
-use edgine::kernel::framework::iomem::IoMem;
-use edgine::kernel::framework::mm::pmm::{PhysicalMemoryManager, VecMetaStore};
-use edgine::kernel::services::sgeg::policy::{
+use edgine::kernel::functions::sgeg::policy::{
     CapBits, CapDomain, CapabilityMatrix, InMemoryMatrix, PolicyEngine, PolicyResult,
 };
+#[cfg(test)]
+use edgine::kernel::privileged::driver::virtio::queue::{VQ_DESC_F_NEXT, VQ_DESC_F_WRITE};
+use edgine::kernel::privileged::iomem::IoMem;
+use edgine::kernel::privileged::mm::pmm::{PhysicalMemoryManager, VecMetaStore};
 
 // ====== C 类: 内核真实实现直引 (G-07 遗留项: unkfs / egdf / epoll 策略面) ======
 //
 // 与 A/B 类同口径, 覆盖 G-07 遗留的三处平行实现:
 // - `egdf::BlockDevice` + `EGDF_DEVICES` 注册表: 块设备边界检查与 dispatch
 //   的唯一实现 (host 侧仅提供扇区存储载体 `BenchBlockDevice`)
-// - `framework::fs::vfs_poll_trait` (机制) + services `StandardVfsPollPolicy` (策略):
+// - `privileged::fs::vfs_poll_trait` (机制) + functions `StandardVfsPollPolicy` (策略):
 //   epoll `check_fd_ready` 事件位决策的唯一实现
 // - `unkfs::*`: Zap / TXG / DMU / SPA / RAID-Z / ARC / ZIL / ZIL-persist 八大子模块
 //   的唯一实现, 本地 `HostXxx` trait + `StandardHostXxx` 复刻体已全部删除
-use edgine::kernel::framework::egdf::{
+use edgine::kernel::privileged::egdf::{
     BlockDevice, egdf_blk_read, egdf_blk_write, egdf_register_block_dev,
 };
 // `egdf_blk_is_present` 仅单测断言使用 (bench 体只做读写)
 #[cfg(test)]
-use edgine::kernel::framework::egdf::egdf_blk_is_present;
-use edgine::kernel::framework::fs::vfs_poll_trait::{
+use edgine::kernel::privileged::egdf::egdf_blk_is_present;
+use edgine::kernel::privileged::fs::vfs_poll_trait::{
     EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, VfsPollContext, VfsPollPolicyRef,
 };
 // `VfsPollPolicy` trait 仅单测直接调用策略方法时需在作用域
-use edgine::kernel::framework::error::KernelError;
-use edgine::kernel::framework::fs::VfsFileType;
+use edgine::kernel::functions::fs::unkfs::arc::{UnkfsArcBufType, UnkfsArcKey};
+use edgine::kernel::functions::fs::unkfs::arc_trait::{ArcCache, StandardArc};
+use edgine::kernel::functions::fs::unkfs::bp::UnkfsBlockPointer;
+use edgine::kernel::functions::fs::unkfs::dmu::{UnkfsObjSet, UnkfsObjType};
+use edgine::kernel::functions::fs::unkfs::raidz::{UnkfsRaidzLevel, UnkfsRaidzMap};
+use edgine::kernel::privileged::error::KernelError;
+use edgine::kernel::privileged::fs::VfsFileType;
 #[cfg(test)]
-use edgine::kernel::framework::fs::vfs_poll_trait::VfsPollPolicy;
-use edgine::kernel::services::fs::unkfs::arc::{UnkfsArcBufType, UnkfsArcKey};
-use edgine::kernel::services::fs::unkfs::arc_trait::{ArcCache, StandardArc};
-use edgine::kernel::services::fs::unkfs::bp::UnkfsBlockPointer;
-use edgine::kernel::services::fs::unkfs::dmu::{UnkfsObjSet, UnkfsObjType};
-use edgine::kernel::services::fs::unkfs::raidz::{UnkfsRaidzLevel, UnkfsRaidzMap};
+use edgine::kernel::privileged::fs::vfs_poll_trait::VfsPollPolicy;
 // RAID-Z 列数上下限仅单测断言 clamp 行为时使用
 #[cfg(test)]
-use edgine::kernel::services::fs::unkfs::raidz::{HV_RAIDZ_MAX_COLS, HV_RAIDZ_MIN_COLS};
-use edgine::kernel::services::fs::unkfs::spa::UnkfsSpa;
-use edgine::kernel::services::fs::unkfs::txg::UnkfsTxgGroup;
-use edgine::kernel::services::fs::unkfs::vdev::UnkfsVdevConfig;
-use edgine::kernel::services::fs::unkfs::zap::UnkfsZap;
-use edgine::kernel::services::fs::unkfs::zil::{UnkfsZil, UnkfsZilRecord};
-use edgine::kernel::services::fs::unkfs::zil_persist::UnkfsZilPersist;
-use edgine::kernel::services::fs::vfs_poll_policy::StandardVfsPollPolicy;
+use edgine::kernel::functions::fs::unkfs::raidz::{HV_RAIDZ_MAX_COLS, HV_RAIDZ_MIN_COLS};
+use edgine::kernel::functions::fs::unkfs::spa::UnkfsSpa;
+use edgine::kernel::functions::fs::unkfs::txg::UnkfsTxgGroup;
+use edgine::kernel::functions::fs::unkfs::vdev::UnkfsVdevConfig;
+use edgine::kernel::functions::fs::unkfs::zap::UnkfsZap;
+use edgine::kernel::functions::fs::unkfs::zil::{UnkfsZil, UnkfsZilRecord};
+use edgine::kernel::functions::fs::unkfs::zil_persist::UnkfsZilPersist;
+use edgine::kernel::functions::fs::vfs_poll_policy::StandardVfsPollPolicy;
 use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
 
-// ====== 1. PageFlags 位运算 (来自 framework/mm/mod.rs) ======
+// ====== 1. PageFlags 位运算 (来自 privileged/mm/mod.rs) ======
 
-// G-07: 本地 `bitflags::bitflags!` 复刻已删除, 直引内核 `framework::mm::PageFlags`.
+// G-07: 本地 `bitflags::bitflags!` 复刻已删除, 直引内核 `privileged::mm::PageFlags`.
 
 /// 每轮执行 64 个位运算, 使每轮有可测量的耗时
 const PAGE_FLAGS_BATCH: u64 = 64;
@@ -153,9 +153,9 @@ pub fn page_flags_bench(iters: u64) -> u128 {
     elapsed.saturating_mul(1_000) / total_ops
 }
 
-// ====== 2. PTE set_flags (来自 framework/mm/mod.rs PageTableEntry) ======
+// ====== 2. PTE set_flags (来自 privileged/mm/mod.rs PageTableEntry) ======
 
-// G-07: 本地 `MockPte` 复刻已删除, 直引内核 `framework::mm::PageTableEntry`.
+// G-07: 本地 `MockPte` 复刻已删除, 直引内核 `privileged::mm::PageTableEntry`.
 // 注: 内核实现以 `AtomicU64` + Acquire/Release 承载位域, 且 `set_flags` 取 `&self`
 // 而非旧 mock 的裸 `u64` 写入 — 语义与性能特征以内核为准, 基线随实现重录.
 
@@ -179,10 +179,10 @@ pub fn pte_set_flags_bench(iters: u64) -> u128 {
     elapsed.saturating_mul(1_000) / iters as u128
 }
 
-// ====== 3. IoMem 别名区间注册 (来自 framework/iomem.rs) ======
+// ====== 3. IoMem 别名区间注册 (来自 privileged/iomem.rs) ======
 
 // G-07: 本地 `AliasEntry`/`AliasRegistry`/`MAX_MMIO_MAPPINGS` 复刻已删除, 直引内核
-// `framework::iomem::IoMem` — 别名注册表 (`ALIAS_REGISTRY`) 为私有全局态, 唯一公共
+// `privileged::iomem::IoMem` — 别名注册表 (`ALIAS_REGISTRY`) 为私有全局态, 唯一公共
 // 入口是 `IoMem::new` (注册) / `Drop` (注销), 用法与 `tests/mm_iomem_alias_test.rs` 一致.
 //
 // 语义与基线变更 (来源同 A 类): 旧 mock 只计时 `check_conflict` 单次扫描, 内核入口每次
@@ -223,10 +223,10 @@ pub fn iomem_alias_bench(iters: u64) -> u128 {
     elapsed.saturating_mul(1_000) / total_ops
 }
 
-// ====== 4. 能力矩阵域位检查 (来自 services/sgeg/policy.rs) ======
+// ====== 4. 能力矩阵域位检查 (来自 functions/sgeg/policy.rs) ======
 
 // G-07: 本地 `CapabilityMatrix`/`CAP_DOMAINS` 复刻已删除, 直引内核
-// `services::sgeg::policy` 的 `InMemoryMatrix` (16×AtomicU64) + `PolicyEngine::check`
+// `functions::sgeg::policy` 的 `InMemoryMatrix` (16×AtomicU64) + `PolicyEngine::check`
 // (域合法性 → 原子读 → 包含判定 → 可行下界保护).
 //
 // bench 域表按内核 16 域常量构造 (避免字面量映射).
@@ -275,10 +275,10 @@ pub fn capability_check_bench(iters: u64) -> u128 {
     elapsed.saturating_mul(1_000) / total_ops
 }
 
-// ====== 5. DmaStream 状态机 (来自 framework/dma_buf.rs) ======
+// ====== 5. DmaStream 状态机 (来自 privileged/dma_buf.rs) ======
 
 // G-07: 本地 `DmaStream`/`SyncState`/`transition` 复刻已删除, 直引内核
-// `framework::dma_buf::DmaStream`. 内核状态机不暴露 `transition`, 仅提供
+// `privileged::dma_buf::DmaStream`. 内核状态机不暴露 `transition`, 仅提供
 // `sync_for_device`/`sync_for_cpu`; 二者在 `Bidirectional` 流上可无限 ping-pong
 // (CpuReady ↔ DeviceReady), 故 bench 用单一双向流承载全部迁移操作.
 
@@ -321,10 +321,10 @@ pub fn dma_state_machine_bench(iters: u64) -> u128 {
     elapsed.saturating_mul(1_000) / total_ops
 }
 
-// ====== 6. SHA-256 哈希 (来自 framework/sgeg/sha256.rs) ======
+// ====== 6. SHA-256 哈希 (来自 privileged/sgeg/sha256.rs) ======
 
 // G-07: 本地 `K`/`rotr`/`sha256_transform` 复刻已删除, 直引内核
-// `framework::sgeg::sha256::sha256` — 消息填充 + 压缩函数 + 输出编码的唯一公共入口.
+// `privileged::sgeg::sha256::sha256` — 消息填充 + 压缩函数 + 输出编码的唯一公共入口.
 //
 // 语义与基线变更: 旧 mock 只做单 block 压缩 (无填充); 内核公共入口对 64B 输入做
 // 2 次压缩 (数据块 + 填充块) 并编码输出, 故 1 op 口径改为 1 次完整 `sha256` 调用.
@@ -343,22 +343,22 @@ pub fn sha256_block_bench(iters: u64) -> u128 {
     elapsed.saturating_mul(1_000) / iters as u128
 }
 
-// ====== 7. Attribution classify (来自 services/freg/attribution.rs) ======
+// ====== 7. Attribution classify (来自 functions/freg/attribution.rs) ======
 
 // G-07: 本地 `FaultAttribution`/`FaultRecord`/`classify` 复刻已删除, 直引内核
-// `services::freg::attribution::FaultAttributor::attribute(panic_rip)`.
+// `functions::freg::attribution::FaultAttributor::attribute(panic_rip)`.
 //
 // 语义对齐说明 (基线变更来源): 旧 mock 按 `FaultRecord` 的 in_interrupt /
-// holding_lock / in_services 标志位做规则判定; 内核真实入口的唯一入参是
+// holding_lock / in_functions 标志位做规则判定; 内核真实入口的唯一入参是
 // `panic_rip`, 按落入 `TCB_RANGES` / `SERVICE_RANGES` 静态地址区间判定归属,
 // 两者输入面不同. bench 现按内核契约以伪 RIP 序列驱动归属判定.
 
 pub fn attribution_classify_bench(iters: u64) -> u128 {
-    // 三类伪 RIP: TCB 区间 / Services 区间 / 两区间外 (Unknown)
+    // 三类伪 RIP: TCB 区间 / Functions 区间 / 两区间外 (Unknown)
     let rips: Vec<u64> = (0..256u64)
         .map(|i| match i % 3 {
             0 => 0xFFFF_FFFF_8000_0000 + i * 0x40, // TCB 区间起始段
-            1 => 0xFFFF_FFFF_0000_0000 + i * 0x40, // Services 区间起始段
+            1 => 0xFFFF_FFFF_0000_0000 + i * 0x40, // Functions 区间起始段
             _ => 0x0000_1000_0000_0000 + i * 0x40, // 两区间外 → Unknown
         })
         .collect();
@@ -378,10 +378,10 @@ pub fn attribution_classify_bench(iters: u64) -> u128 {
     elapsed.saturating_mul(1_000) / iters as u128
 }
 
-// ====== 8. Recovery decide (来自 services/freg/recovery_policy.rs) ======
+// ====== 8. Recovery decide (来自 functions/freg/recovery_policy.rs) ======
 
 // G-07: 本地 `FaultSignal`/`decide` 复刻已删除, 直引内核
-// `services::freg::recovery_policy::{FaultSignal, RecoveryAction, RecoveryPolicy}`.
+// `functions::freg::recovery_policy::{FaultSignal, RecoveryAction, RecoveryPolicy}`.
 // 入参构造改用内核 `FaultSignal::tcb` 与 `FaultAttribution::Service` 结构体字面量
 // (旧 mock 的 `is_tcb`/`retry` 字段名映射为 `attribution`/`retry_count`).
 
@@ -425,9 +425,9 @@ pub fn recovery_decide_bench(iters: u64) -> u128 {
     elapsed.saturating_mul(1_000) / (iters as u128)
 }
 
-// ====== 9. PMM 物理页分配 (来自 framework/mm/pmm.rs) ======
+// ====== 9. PMM 物理页分配 (来自 privileged/mm/pmm.rs) ======
 
-// G-07: 本地 `Bitmap` 复刻已删除, 直引内核 `framework::mm::pmm::PhysicalMemoryManager`
+// G-07: 本地 `Bitmap` 复刻已删除, 直引内核 `privileged::mm::pmm::PhysicalMemoryManager`
 // — 经 `MetaStore` 载体注入宿主 `VecMetaStore`, buddy 分配/合并走内核唯一实现
 // (装配方式与 `tests/pmm_buddy_host_test.rs` 一致, 无测试/生产分叉).
 
@@ -470,15 +470,15 @@ pub fn bitmap_scan_bench(iters: u64) -> u128 {
     elapsed.saturating_mul(1_000) / (iters as u128)
 }
 
-// ====== 11. Socket WaitQueue (来自 framework/net/wait_queue.rs) ======
+// ====== 11. Socket WaitQueue (来自 privileged/net/wait_queue.rs) ======
 //
 // 16 个 fd (MAX_SM_FD) 上的 mark_waiting → try_wake 循环.
 // 单次循环 = 1 个 fd 上的 1 次 send/wake 对应操作.
 // 验收: 1000 个并发 send 路径平均延迟 < 1μs (QEMU 环境 1000 < 1ms 目标换算).
 //
 // G-07: 本地 `MockSocketWaitQueue` 复刻已删除, 直引内核
-// `framework::net::wait_queue::SocketWaitQueue`. 原注释所写
-// services/net/wait_queue.rs 为失效路径 (DECISION-J 已将该基础设施归位 framework).
+// `privileged::net::wait_queue::SocketWaitQueue`. 原注释所写
+// functions/net/wait_queue.rs 为失效路径 (DECISION-J 已将该基础设施归位 privileged).
 //
 // 注: 内核版以 `IrqSpinLock` 保护 pending 状态 (host-test 下禁中断为 no-op),
 // 并以 `is_pending`/`wake_count`/`last_reason` 暴露观测面.
@@ -486,7 +486,7 @@ pub fn bitmap_scan_bench(iters: u64) -> u128 {
 // G-07 收口: 本地 mock 的 `StdMutex` 依赖已随 `MockBlockDevice` 等复刻体删除而移除,
 // 全部同步原语由内核实现承担 (host-test 下 `IrqSpinLock` 的禁中断为 no-op).
 
-/// MAX_SM_FD: 16 (与 services/net/socket.rs 的 fd 空间 [0, 16) 对齐)
+/// MAX_SM_FD: 16 (与 functions/net/socket.rs 的 fd 空间 [0, 16) 对齐)
 const MAX_SM_FD: usize = 16;
 
 pub fn socket_wait_queue_bench(iters: u64) -> u128 {
@@ -513,10 +513,10 @@ pub fn socket_wait_queue_bench(iters: u64) -> u128 {
     elapsed.saturating_mul(1_000) / total_ops
 }
 
-// ====== 12. virtio-blk I/O 路径 (来自 framework/driver/virtio/queue.rs) ======
+// ====== 12. virtio-blk I/O 路径 (来自 privileged/driver/virtio/queue.rs) ======
 //
 // G-07: 本地 `MockVqDesc`/`MockVirtQueue` 复刻已删除, 直引内核
-// `framework::driver::virtio::queue::VirtQueue` — 描述符准备/链接/提交/回收与已用环
+// `privileged::driver::virtio::queue::VirtQueue` — 描述符准备/链接/提交/回收与已用环
 // 弹出全部走内核实现. host 侧仅保留两处「装配与设备模拟」(非内核算法复刻):
 //   1. `bench_virtqueue`: 以宿主堆块充当环区后备 (host 无 PMM, `VirtQueue::new` 经
 //      extern `pmm_alloc_pages` + `phys_to_virt` 直写内核直映射, 在 host 不可运行)
@@ -626,10 +626,10 @@ pub fn virtio_blk_io_bench(iters: u64) -> u128 {
 //
 // G-07: 本地 `MockBpfProg`/`VerifyResult`/`BpfVerifier`/`MockBpfVerifier`/
 // `MockBpfSubsystem` 复刻已全部删除, 直引内核真实类型:
-//   - framework (机制): `framework::debug::{BpfProg, BpfInsn, BpfProgType,
+//   - privileged (机制): `privileged::debug::{BpfProg, BpfInsn, BpfProgType,
 //     BpfVerifier, VerifyResult}`
-//   - services (策略): `services::debug::ebpf_verifier::STANDARD_VERIFIER`
-//     (7 条验证规则的 services 实现)
+//   - functions (策略): `functions::debug::ebpf_verifier::STANDARD_VERIFIER`
+//     (7 条验证规则的 functions 实现)
 //
 // bench 测量 `&dyn BpfVerifier::verify` 动态分派 + 7 条规则全路径吞吐.
 
@@ -668,7 +668,7 @@ pub fn bpf_verifier_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `MockSysctlValue`/`MockSysctlKind`/`MockSysctlEntry`/`MockSysctlTable`
-// 复刻已全部删除, 直引内核 `services::config::sysctl`:
+// 复刻已全部删除, 直引内核 `functions::config::sysctl`:
 //   - 注册表: 内核 `SYSCTL_TABLE` 全局静态 (32 槽 `IrqSpinLock` + 原子字段)
 //   - API: `sysctl_register` / `sysctl_write` (host-test 下 `IrqSpinLock` 原子自旋
 //     互斥, 禁中断为 no-op)
@@ -755,7 +755,7 @@ pub fn sysctl_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `HostBlockDevice` / `MockEGDFDevice` 复刻已删除, 直引内核
-// `framework::egdf` — 设备注册 (`egdf_register_block_dev`)、协议/状态/长度
+// `privileged::egdf` — 设备注册 (`egdf_register_block_dev`)、协议/状态/长度
 // 边界检查与 trait dispatch (`egdf_blk_read`/`egdf_blk_write`) 全为内核唯一实现.
 // host 侧仅保留「设备载体」`BenchBlockDevice`: 提供扇区存储, 实现内核 `BlockDevice` 契约.
 
@@ -847,7 +847,7 @@ pub fn blk_dev_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `MockVfsFileType` / `MockVfsPollPolicy` / `MockEpollCheck` 复刻已删除,
-// 直引内核 `framework::fs::vfs_poll_trait` (机制) + services `StandardVfsPollPolicy`
+// 直引内核 `privileged::fs::vfs_poll_trait` (机制) + functions `StandardVfsPollPolicy`
 // (策略): `VfsPollPolicyRef::events_for` 即 epoll `check_fd_ready` 的唯一决策入口.
 
 /// bench 用 epoll 事件掩码 (与内核 `check_fd_ready` 的 user mask 语义一致)
@@ -904,7 +904,7 @@ pub fn vfs_poll_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `HostZapStore` / `StandardHostZap` (Mutex<HashMap>) 复刻已删除, 直引内核
-// `services::fs::unkfs::zap::UnkfsZap`. 注: 内核 ZAP 为线性扫描 (先比 hash 再比名字),
+// `functions::fs::unkfs::zap::UnkfsZap`. 注: 内核 ZAP 为线性扫描 (先比 hash 再比名字),
 // 与内核真实行为位一致.
 
 /// bench: ZAP insert / lookup / contains 路径 throughput
@@ -948,7 +948,7 @@ pub fn zap_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `MockTxgState` / `HostTxgManager` / `StandardHostTxg` 复刻已删除, 直引内核
-// `services::fs::unkfs::txg::UnkfsTxgGroup` — `init`/`transition`/`add_dirty_to_open`/
+// `functions::fs::unkfs::txg::UnkfsTxgGroup` — `init`/`transition`/`add_dirty_to_open`/
 // `current_txg` 的唯一实现. 事务组三态 (open/quiescing/syncing) 迁移与脏块登记
 // 均由内核承担.
 
@@ -986,7 +986,7 @@ pub fn txg_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `MockDmuObject` / `HostDmuManager` / `StandardHostDmu` (Mutex<HashMap>)
-// 复刻已删除, 直引内核 `services::fs::unkfs::dmu::UnkfsObjSet` — 对象分配/释放/查询/
+// 复刻已删除, 直引内核 `functions::fs::unkfs::dmu::UnkfsObjSet` — 对象分配/释放/查询/
 // 计数唯一实现 (内核为 `Mutex<Vec<UnkfsDmuObject>>`, 查询与计数为线性扫描).
 
 /// bench: DMU 对象分配 / 查询 路径 throughput
@@ -1030,7 +1030,7 @@ pub fn dmu_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `SpaState` / `HostSpaManager` / `StandardHostSpa` 复刻已删除, 直引内核
-// `services::fs::unkfs::spa::UnkfsSpa` — 池初始化 / vdev 装配 / 事务组推进 / 统计读取
+// `functions::fs::unkfs::spa::UnkfsSpa` — 池初始化 / vdev 装配 / 事务组推进 / 统计读取
 // 唯一实现. 注: 内核 vdev 上限为 `UnkfsSpaConfig::max_vdevs` (默认 8).
 
 /// bench: SPA 池状态读 + 事务组推进 路径 throughput
@@ -1068,7 +1068,7 @@ pub fn spa_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `MockRaidzLevel` / `HostRaidzEngine` / `StandardHostRaidz` 复刻已删除,
-// 直引内核 `services::fs::unkfs::raidz::UnkfsRaidzMap`. 注: 内核以 struct 字段
+// 直引内核 `functions::fs::unkfs::raidz::UnkfsRaidzMap`. 注: 内核以 struct 字段
 // (`ncols` / `nparity` / `ashift`) + `level` 枚举方法表达几何, 无 `is_single` /
 // `is_mirror` 谓词, 故此处按内核真实访问面测量.
 
@@ -1099,7 +1099,7 @@ pub fn raidz_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `MockArcKey` / `HostArcCache` / `StandardHostArc` / `ArcState`
-// (Mutex<HashMap>) 复刻已删除, 直引内核 `services::fs::unkfs::arc_trait::StandardArc`.
+// (Mutex<HashMap>) 复刻已删除, 直引内核 `functions::fs::unkfs::arc_trait::StandardArc`.
 // 注: 内核 `ArcCache::hit_rate()` 返回千分比 (u64), 且 `insert` 额外带
 // `UnkfsArcBufType` 参数.
 
@@ -1145,7 +1145,7 @@ pub fn arc_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `MockZilRecord` / `HostZilLog` / `StandardHostZil` / `ZilLogState`
-// 复刻已删除, 直引内核 `services::fs::unkfs::zil::UnkfsZil`. 注: 内核无
+// 复刻已删除, 直引内核 `functions::fs::unkfs::zil::UnkfsZil`. 注: 内核无
 // `is_enabled` / `set_enabled` / `current_seq()` / `committed_seq()` 访问器,
 // 序列号域为 `AtomicU64` 直读.
 
@@ -1184,7 +1184,7 @@ pub fn zil_log_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `HostZilPersist` / `StandardHostZilPersist` / `MockZilPersistState`
-// 复刻已删除, 直引内核 `services::fs::unkfs::zil_persist::UnkfsZilPersist`.
+// 复刻已删除, 直引内核 `functions::fs::unkfs::zil_persist::UnkfsZilPersist`.
 // 注: 内核 serialize/deserialize 为关联函数, 输入为真实 `UnkfsZil` 记录集
 // (每块上限 `ZIL_MAX_RECORDS_PER_BLOCK` = 15 条), 含 CRC32 逐位计算.
 
@@ -1492,7 +1492,7 @@ mod tests {
 
     #[test]
     fn test_sha256_known_digest() {
-        // G-07: 直引内核 sgeg `sha256` — 已知向量 "abc" (与 framework 侧单测同源)
+        // G-07: 直引内核 sgeg `sha256` — 已知向量 "abc" (与 privileged 侧单测同源)
         let expected: [u8; 32] = [
             0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae,
             0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61,
@@ -1508,7 +1508,7 @@ mod tests {
             FaultAttributor::attribute(0xFFFF_FFFF_8000_0000),
             FaultAttribution::Tcb { .. }
         ));
-        // Services 区间
+        // Functions 区间
         assert!(matches!(
             FaultAttributor::attribute(0xFFFF_FFFF_0000_0000),
             FaultAttribution::Service { .. }
@@ -1600,8 +1600,8 @@ mod tests {
     }
 
     // ====== EBPF-3: BpfVerifier trait dispatch + bench ======
-    // G-07: 直引内核真实实现 — framework 机制 (`BpfProg`/`BpfVerifier` trait/
-    // `BpfSubsystem`) + services 策略 (`STANDARD_VERIFIER`), 无本地 mock.
+    // G-07: 直引内核真实实现 — privileged 机制 (`BpfProg`/`BpfVerifier` trait/
+    // `BpfSubsystem`) + functions 策略 (`STANDARD_VERIFIER`), 无本地 mock.
 
     /// 构造最小合法程序: ALU64 MOV r0,0 + EXIT (通过内核 7 条规则)
     fn bench_min_valid_insns() -> Vec<BpfInsn> {
@@ -1653,7 +1653,7 @@ mod tests {
     }
 
     // ====== SYSCTL-2: 内核 sysctl 全局注册表单元测试 ======
-    // G-07: 直引内核 `services::config::sysctl` 真实实现 (无本地 mock).
+    // G-07: 直引内核 `functions::config::sysctl` 真实实现 (无本地 mock).
     // 命名空间用 `ut.sysctl.*` 与 bench 节点 `bench.sysctl.*` 隔离.
 
     #[test]

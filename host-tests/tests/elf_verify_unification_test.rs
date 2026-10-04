@@ -2,7 +2,7 @@
 //!
 //! ## 验证契约
 //!
-//! 1. **单一来源**: `framework::proc::elf::verify::verify_elf` 是 ELF magic / class / machine /
+//! 1. **单一来源**: `privileged::proc::elf::verify::verify_elf` 是 ELF magic / class / machine /
 //!    phentsize / phnum / phdr-bounds 校验的**唯一**入口, 旧版本在 `elf.rs::elf_validate` 与
 //!    `user_proc.rs::load_elf_from_memory` 各写一份, I-33 统一抽到 `verify.rs`.
 //! 2. **解析一致**: 两处实现不再独立 (host-test 通过源码静态文本扫描确认两份独立
@@ -13,7 +13,7 @@
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `verify_elf` 算法复刻 + `VerifyError` / `VerifyResult` / `Elf64Header`
-//! 平行镜像, 改引内核真实源码 `edgine::kernel::framework::proc::elf::verify::verify_elf`
+//! 平行镜像, 改引内核真实源码 `edgine::kernel::privileged::proc::elf::verify::verify_elf`
 //! (pub unsafe fn, host 可测, 传 host 缓冲区指针 + 长度). 内核 `verify_elf` 为
 //! **unsafe** 函数, 测试调用需 unsafe 块.
 //! - `EM_X86_64` / `EM_AARCH64` / `ET_DYN` 为内核 pub const, 直接引用.
@@ -24,10 +24,10 @@
 //! 静态契约用例 (源码文本扫描 user_proc.rs / elf/mod.rs 无重复 magic 字面量,
 //! verify 子模块声明与委托) 为 B08-20 混合型文件的 include_str 部分, 原样保留.
 
-use edgine::kernel::framework::proc::elf::verify::{
+use edgine::kernel::privileged::proc::elf::verify::{
     EM_AARCH64, EM_X86_64, ET_DYN, VerifyError, VerifyResult, verify_elf,
 };
-use edgine::kernel::framework::proc::elf::{Elf64Header, Elf64Phdr};
+use edgine::kernel::privileged::proc::elf::{Elf64Header, Elf64Phdr};
 
 // =============================================================================
 // 镜像内核私有常量 (verify.rs, 非 pub)
@@ -82,14 +82,14 @@ const USER_PROC_OLD_MAGIC_LITERALS: &str = "0x7F, b'E', b'L', b'F'";
 #[test]
 fn elf_source_files_do_not_duplicate_magic_literal() {
     // P1-I-33: 源码扫描 — user_proc.rs 不应再出现 4 字节独立 magic 字符串字面量
-    let user_proc = include_str!("../../src/kernel/framework/proc/user_proc.rs");
+    let user_proc = include_str!("../../src/kernel/privileged/proc/user_proc.rs");
     assert!(
         !user_proc.contains(USER_PROC_OLD_MAGIC_LITERALS),
         "P1-I-33: user_proc.rs 仍含独立 magic 字面量 `{USER_PROC_OLD_MAGIC_LITERALS}`, 需委托给 elf::verify::verify_elf"
     );
 
     // 同样 elf/mod.rs 的 elf_validate 不应再内联 magic/class/machine 检查
-    let elf_mod = include_str!("../../src/kernel/framework/proc/elf/mod.rs");
+    let elf_mod = include_str!("../../src/kernel/privileged/proc/elf/mod.rs");
     assert!(
         !elf_mod.contains("ELF_MAGIC") || elf_mod.contains("verify::verify_elf"),
         "P1-I-33: elf/mod.rs 仍内联 ELF_MAGIC 字面量, 应委托给 verify::verify_elf"
@@ -98,7 +98,7 @@ fn elf_source_files_do_not_duplicate_magic_literal() {
 
 #[test]
 fn elf_mod_declares_verify_submodule() {
-    let elf_mod = include_str!("../../src/kernel/framework/proc/elf/mod.rs");
+    let elf_mod = include_str!("../../src/kernel/privileged/proc/elf/mod.rs");
     assert!(
         elf_mod.contains("pub mod verify"),
         "P1-I-33: elf/mod.rs 必须声明 `pub mod verify`"
@@ -111,7 +111,7 @@ fn elf_mod_declares_verify_submodule() {
 
 #[test]
 fn user_proc_load_elf_uses_verify_submodule() {
-    let user_proc = include_str!("../../src/kernel/framework/proc/user_proc.rs");
+    let user_proc = include_str!("../../src/kernel/privileged/proc/user_proc.rs");
     assert!(
         user_proc.contains("elf::verify::verify_elf"),
         "P1-I-33: user_proc::load_elf_from_memory 必须调用 elf::verify::verify_elf"

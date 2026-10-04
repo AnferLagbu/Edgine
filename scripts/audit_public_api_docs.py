@@ -22,7 +22,7 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, "src/kernel/framework")
+SRC = os.path.join(ROOT, "src/kernel/privileged")
 
 # 中文字符正则
 CJK_RE = re.compile(r'[\u4e00-\u9fff]')

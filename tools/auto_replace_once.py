@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-将 framework 中所有 `spin::Once<T>` 替换为 framework::sync::once_lock::OnceLock<T>。
+将 privileged 中所有 `spin::Once<T>` 替换为 privileged::sync::once_lock::OnceLock<T>。
 
 替换规则:
-  1. `use spin::Once;` → `use crate::kernel::framework::sync::once_lock::OnceLock;`
+  1. `use spin::Once;` → `use crate::kernel::privileged::sync::once_lock::OnceLock;`
   2. `static X: spin::Once<T> = spin::Once::new();`
        → `static X: OnceLock<T> = OnceLock::new();`
   3. `X.call_once(|| init_expr)` → `X.get_or_init(|| init_expr)`
@@ -17,12 +17,12 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-USE_LINE = "use crate::kernel::framework::sync::once_lock::OnceLock;\n"
+USE_LINE = "use crate::kernel::privileged::sync::once_lock::OnceLock;\n"
 
 
 def list_files_using_once() -> list[Path]:
     out = subprocess.check_output(
-        ["grep", "-rln", "--include=*.rs", r"spin::Once", "src/kernel/framework"],
+        ["grep", "-rln", "--include=*.rs", r"spin::Once", "src/kernel/privileged"],
         cwd=PROJECT_ROOT, text=True,
     )
     return [Path(line) for line in out.splitlines() if line]
@@ -87,7 +87,7 @@ def patch_file(path: Path) -> tuple[int, str]:
     n += c
 
     # 5. 自动添加 use 语句 (若无)
-    if "OnceLock" in text and "use crate::kernel::framework::sync::once_lock::OnceLock" not in text:
+    if "OnceLock" in text and "use crate::kernel::privileged::sync::once_lock::OnceLock" not in text:
         m = re.search(r"^(use [^;]+;\s*\n)+", text, re.MULTILINE)
         if m:
             insert_pos = m.end()

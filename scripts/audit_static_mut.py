@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-audit_static_mut.py — framework 层 static mut 使用检查 (2026-07-03 新增)
+audit_static_mut.py — privileged 层 static mut 使用检查 (2026-07-03 新增)
 
-services 层有 ci_check_services_unsafe.py 检查, 但 framework 层无对应脚本.
+functions 层有 ci_check_functions_unsafe.py 检查, 但 privileged 层无对应脚本.
 static mut 在 no_std 内核中可能导致数据竞争, 需定期审查使用点.
 
 用法: python3 scripts/audit_static_mut.py
@@ -13,7 +13,7 @@ import sys
 import os
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, "src/kernel/framework")
+SRC = os.path.join(ROOT, "src/kernel/privileged")
 
 # 已知安全的 static mut 使用 (框架基础设施, 有外部锁保护或初始化后独占)
 # B01-17 修复: 改为精确匹配 (而非子串). 仅列出真正可能出现的 static mut 名名,
@@ -79,7 +79,7 @@ SAFE_PATTERNS = [
 
 def main():
     violations = []
-    # 扫描 framework 层所有 .rs 文件
+    # 扫描 privileged 层所有 .rs 文件
     for root, dirs, files in os.walk(SRC):
         for fname in files:
             if not fname.endswith('.rs'):
@@ -99,7 +99,7 @@ def main():
                 if not is_safe:
                     violations.append((rel_path, line_no, name))
 
-    print(f"=== audit_static_mut: 扫描 framework 层 static mut ===")
+    print(f"=== audit_static_mut: 扫描 privileged 层 static mut ===")
     if violations:
         print(f"  ✗ {len(violations)} 处未豁免的 static mut:")
         for path, line, name in violations:

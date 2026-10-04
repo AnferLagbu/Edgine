@@ -1,6 +1,6 @@
 # MSI-X 完整接入工程（原 B04-02，独立工程）
 
-> 从 [audit-fix-04-framework-net-drivers.md](./archive/audit-fix-04-framework-net-drivers.md) B04-02 擢升为独立工程（2026-08-25 用户决策"规划接入工程"）。
+> 从 [audit-fix-04-privileged-net-drivers.md](./archive/audit-fix-04-privileged-net-drivers.md) B04-02 擢升为独立工程（2026-08-25 用户决策"规划接入工程"）。
 > 来源：DECISION-061（用户 2026-08-23 裁决"一次性完整接入 NVMe/VirtIO"）+ TOP 20 #8 + [code-audit-final-summary.md](./code-audit-final-summary.md)。
 > 现状基线：分册 4 中间态（commit `57e39057`）已含 IDT 128 项 + `register_msi_irq` + NVMe `enable_msix` 端到端接入 + `MSI_VECTOR_COUNT=96`（与 IDT stub 一致）。本工程负责**验证与完整化**剩余路径。
 

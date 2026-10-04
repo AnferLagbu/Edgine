@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ⚠ DEPRECATED (B01-10, 2026-08-19)
 #
-# Edgine/Edgine Framework Unsafe 块 SAFETY 注释自动审计 (Bash 实现).
+# Edgine/Edgine Privileged Unsafe 块 SAFETY 注释自动审计 (Bash 实现).
 #
 # 本脚本已废弃, 统一使用 Python 实现:
 #   python3 tools/audit_unsafe.py                  # 人类可读
@@ -112,7 +112,7 @@ trap 'rm -f "$ALL"' EXIT
 find "$FW_DIR" -name "*.rs" -type f -print0 | \
     xargs -0 -I {} bash -c 'scan_unsafe "$@"' _ {} >> "$ALL" 2>/dev/null
 
-# 注意: 上面的 find 输出会带上 src/kernel/framework/ 前缀, 统一去掉
+# 注意: 上面的 find 输出会带上 src/kernel/privileged/ 前缀, 统一去掉
 ALL_REL=$(mktemp)
 sed "s|$PROJECT_ROOT/||" "$ALL" > "$ALL_REL"
 
@@ -137,7 +137,7 @@ case "$MODE" in
         fns=$(awk -F'\t' '$3 == "fn"' "$ALL_REL" | wc -l | tr -d ' ')
         impls=$(awk -F'\t' '$3 == "impl"' "$ALL_REL" | wc -l | tr -d ' ')
 
-        echo "=== Framework Unsafe 块 SAFETY 注释基线 ==="
+        echo "=== Privileged Unsafe 块 SAFETY 注释基线 ==="
         echo "扫描目录:     $FW_DIR"
         echo "扫描时间:     $(date -Iseconds)"
         echo ""
@@ -162,7 +162,7 @@ case "$MODE" in
 
     human|*)
         # 人类可读表格
-        echo "=== Framework Unsafe 块 SAFETY 注释基线 ==="
+        echo "=== Privileged Unsafe 块 SAFETY 注释基线 ==="
         echo "扫描目录: $FW_DIR"
         echo "扫描时间: $(date -Iseconds)"
         echo ""

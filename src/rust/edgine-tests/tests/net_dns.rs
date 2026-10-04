@@ -1,6 +1,6 @@
 //! 网络子系统参数验证测试 (D1.2)
 //!
-//! 覆盖 `framework::net::init` 的纯标量验证逻辑 (host-side 复刻):
+//! 覆盖 `privileged::net::init` 的纯标量验证逻辑 (host-side 复刻):
 //! - `parse_ipv4_literal` — IPv4 字面量解析
 //! - `dns_resolve`       — 简单 DNS 解析 (静态 hosts 表 + IPv4 fallback)
 //!

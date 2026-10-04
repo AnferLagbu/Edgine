@@ -20,10 +20,10 @@ SRC = os.path.join(ROOT, "src/kernel")
 # 高风险 struct: 有 UnsafeCell/Cell/NonNull 字段 + 用于静态实例的
 # 这些 struct 如果没有 repr(C), LTO 可能错位字段
 CRITICAL_STRUCTS = [
-    ("PhysicalMemoryManager", "src/kernel/framework/mm/pmm.rs", "bitmap/buddy_meta/buddy_heads 字段"),
-    ("KernelHeap", "src/kernel/framework/mm/kmalloc.rs", "free_list_head UnsafeCell 字段"),
+    ("PhysicalMemoryManager", "src/kernel/privileged/mm/pmm.rs", "bitmap/buddy_meta/buddy_heads 字段"),
+    ("KernelHeap", "src/kernel/privileged/mm/kmalloc.rs", "free_list_head UnsafeCell 字段"),
     # IdentityTable 已改为 Vec<PwmEntry> (heap 分配), 不再需要 repr(C)
-    # PiMutexInner 是 private struct, 在 framework 内部使用
+    # PiMutexInner 是 private struct, 在 privileged 内部使用
 ]
 
 def find_repr_c(filename, struct_name):

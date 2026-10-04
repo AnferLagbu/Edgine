@@ -39,44 +39,44 @@ FREG的起点，来自 Edgine 对嵌入式 / IoT 场景的故障恢复诉求：*
 
 ### 现状：恢复型FREG
 
-FREG当前是**恢复型**子系统：不做遏制，只做恢复。机制层在 `framework/freg/`（`RecoveryDomain`、`UndoLog` 字节级回滚、屏障快照、BBR/BSR/BHR 分层恢复），策略层在 `services/freg/`（`RecoveryPolicy` 决策矩阵、故障归属、健康监测、级联恢复）。
+FREG当前是**恢复型**子系统：不做遏制，只做恢复。机制层在 `privileged/freg/`（`RecoveryDomain`、`UndoLog` 字节级回滚、屏障快照、BBR/BSR/BHR 分层恢复），策略层在 `functions/freg/`（`RecoveryPolicy` 决策矩阵、故障归属、健康监测、级联恢复）。
 
-恢复的运作方式：域通过 `RecoverableMutex` 在加锁时把受保护值记入撤销日志（[recoverable.rs:60-73](src/kernel/framework/freg/recoverable.rs)），后台 tick 推进屏障快照，panic 时定位域并级联回滚到目标代，恢复失败逐层升级 BBR → BSR → BHR（[layered.rs](src/kernel/framework/freg/reset/layered.rs)）。
+恢复的运作方式：域通过 `RecoverableMutex` 在加锁时把受保护值记入撤销日志（[recoverable.rs:60-73](src/kernel/privileged/freg/recoverable.rs)），后台 tick 推进屏障快照，panic 时定位域并级联回滚到目标代，恢复失败逐层升级 BBR → BSR → BHR（[layered.rs](src/kernel/privileged/freg/reset/layered.rs)）。
 
 现状定位：这只是**预览版**。它证明了单地址空间内做模块级恢复可行，但没有遏制能力，安全性与 MINIX 级相去甚远。
 
 ### 恢复天花板：固有 bug 的终态是整机宕机
 
-回滚只能吸收**瞬态故障**（竞态、时序、偶发输入）。若域存在**固有 bug**——同一代码路径每次必然复现——回滚后重跑必然再次 panic。此时机制的行为（[domain.rs:107-140](src/kernel/framework/freg/domain.rs)）：
+回滚只能吸收**瞬态故障**（竞态、时序、偶发输入）。若域存在**固有 bug**——同一代码路径每次必然复现——回滚后重跑必然再次 panic。此时机制的行为（[domain.rs:107-140](src/kernel/privileged/freg/domain.rs)）：
 
 - 连续失败 ≥5 次 → 置 `Quarantined`，返回 false；
 - 指纹判重：`prev_fp == crash_fingerprint` → 直接把 failures 置 5 → 置 `Quarantined`，返回 false。
 
-指纹判重本是防崩溃循环的设计（对固有 bug，重试无意义且有 crash-loop 风险），但它的后果是：级联回滚找不到可回滚的域 → `recovery_try_recover_from_idt` 返回 -1（[api.rs:176](src/kernel/framework/freg/api.rs)）→ IDT handler 触发 `kernel_panic("Domain recovery failed")`（[idt.rs:695](src/kernel/framework/idt/idt.rs)）→ BSR 失败 → BHR 键盘复位 / 三重故障（[bhr.rs:38-53](src/kernel/framework/freg/reset/bhr.rs)），整机宕掉。
+指纹判重本是防崩溃循环的设计（对固有 bug，重试无意义且有 crash-loop 风险），但它的后果是：级联回滚找不到可回滚的域 → `recovery_try_recover_from_idt` 返回 -1（[api.rs:176](src/kernel/privileged/freg/api.rs)）→ IDT handler 触发 `kernel_panic("Domain recovery failed")`（[idt.rs:695](src/kernel/privileged/idt/idt.rs)）→ BSR 失败 → BHR 键盘复位 / 三重故障（[bhr.rs:38-53](src/kernel/privileged/freg/reset/bhr.rs)），整机宕掉。
 
 结论：**`Quarantined` 只阻止了"再尝试回滚"，没有消费这次 panic。** 一个服务域固有 bug 的终态不是"该域牺牲、系统降级继续跑"，而是整机宕机——这正是与 MINIX 的差距所在。
 
 ### undo 回滚的固有局限
 
 - 只回滚注册过的字段（加锁时记录的旧值），未记录的状态与外部副作用（设备寄存器、IPC 副作用、已落盘数据）不可回滚；
-- 回滚写回带校验和判断（[undo_log.rs:85-107](src/kernel/framework/freg/undo_log.rs)），尽力而为，不保证语义一致；
+- 回滚写回带校验和判断（[undo_log.rs:85-107](src/kernel/privileged/freg/undo_log.rs)），尽力而为，不保证语义一致；
 - 恢复正确性依赖"恢复代码写得对"，属于**靠代码尽力**，而非**靠结构保证**。
 
 ## 实证调研：可变性分布与恢复覆盖率的真实缺口
 
 "恢复范围封闭"要成为工程现实，先得回答一个诚实的问题：**当前代码里，到底有多少状态被 undo 日志覆盖？** 为回答它，我们对可变性做了两层审计——第一层数总量，第二层按"锁 vs 原子 vs 内部可变性"的交叉切面分类。结果直接改写了原始策略：**"全遏制"内部可变性既不可行，也不必要。**
 
-### 第一层：可变性总量分布（services 层口径）
+### 第一层：可变性总量分布（functions 层口径）
 
 | 可变性形态 | 数量 | 分布 | 说明 |
 |---|---|---|---|
 | 原子类型使用点（`Atomic*`） | 610 | 53 文件 | 含 import 与字段；**静态原子全局 21 处** |
 | 锁原语使用点（`IrqSpinLock`/`SpinLock`/`Mutex`/`RwLock`） | 425 | 61 文件 | 含 sync 模块自身定义；**静态锁容器 16 处** |
-| 内部可变性载体（`Cell`/`RefCell`/`OnceCell`/`UnsafeCell`） | 84 | 36 文件 | services 仅 9 处，多为 `OnceCell`（写一次） |
-| `static mut` 实际声明 | 0（services）/ 1（framework） | — | framework 1 处为 `smp_init` 的 `AP_PER_CPU`（TCB 启动期） |
-| `RecoverableMutex` | 定义 1 处 / **使用 0 处** | — | 仅 framework 定义 + re-export |
+| 内部可变性载体（`Cell`/`RefCell`/`OnceCell`/`UnsafeCell`） | 84 | 36 文件 | functions 仅 9 处，多为 `OnceCell`（写一次） |
+| `static mut` 实际声明 | 0（functions）/ 1（privileged） | — | privileged 1 处为 `smp_init` 的 `AP_PER_CPU`（TCB 启动期） |
+| `RecoverableMutex` | 定义 1 处 / **使用 0 处** | — | 仅 privileged 定义 + re-export |
 
-计数口径：本次 grep 的 services 层全量匹配；`Cell<`/`RefCell<` 为子串匹配，含 `OnceCell`/`UnsafeCell` 等衍生类型。
+计数口径：本次 grep 的 functions 层全量匹配；`Cell<`/`RefCell<` 为子串匹配，含 `OnceCell`/`UnsafeCell` 等衍生类型。
 
 ### 第二层：三类结构性发现
 
@@ -84,17 +84,17 @@ FREG当前是**恢复型**子系统：不做遏制，只做恢复。机制层在
 
 锁只保护"结构性元数据"（槽位、表项），值本身走无锁原子——这是性能刻意为之，但 undo 日志（加锁时记录旧值）**无法捕获这些原子写**：
 
-- [sysctl.rs:112-121](src/kernel/services/config/sysctl.rs)：`SysctlEntry` 的 `AtomicI64/AtomicU64/AtomicBool` 在 `IrqSpinLock<[Option<...>; 32]>` 内，锁只管槽位分配，读写路径无锁；
-- [iouring.rs:120-131](src/kernel/services/io/iouring.rs)：`RingBuffer<T>` 的 `head/tail: AtomicU32` 在 `IrqSpinLock` 内——SPSC 环形队列的头尾指针是**语义性无锁状态**；同文件 `IoUring.flags: AtomicU32` 同理。
+- [sysctl.rs:112-121](src/kernel/functions/config/sysctl.rs)：`SysctlEntry` 的 `AtomicI64/AtomicU64/AtomicBool` 在 `IrqSpinLock<[Option<...>; 32]>` 内，锁只管槽位分配，读写路径无锁；
+- [iouring.rs:120-131](src/kernel/functions/io/iouring.rs)：`RingBuffer<T>` 的 `head/tail: AtomicU32` 在 `IrqSpinLock` 内——SPSC 环形队列的头尾指针是**语义性无锁状态**；同文件 `IoUring.flags: AtomicU32` 同理。
 
 **发现二：无锁共享状态（越出恢复范围候选）——21 处静态原子全局，分四类**
 
 | 类别 | 实例 | 丢失 / 回退语义 |
 |---|---|---|
-| FREG自身恢复控制 | [reset_config.rs:108-114](src/kernel/services/freg/reset_config.rs) 的 `CURRENT_LAYER`/`RESET_IN_PROGRESS`/`BBR/BSR/BHR_ATTEMPT_COUNT`/`LAST_RESET_TICK`/`PARALLEL_ROLLBACK_ACTIVE`（7 处） | 不能回滚——它们是回滚动作的输入 |
+| FREG自身恢复控制 | [reset_config.rs:108-114](src/kernel/functions/freg/reset_config.rs) 的 `CURRENT_LAYER`/`RESET_IN_PROGRESS`/`BBR/BSR/BHR_ATTEMPT_COUNT`/`LAST_RESET_TICK`/`PARALLEL_ROLLBACK_ACTIVE`（7 处） | 不能回滚——它们是回滚动作的输入 |
 | ID / 统计计数器 | `NEXT_NS_ID`/`NEXT_URING_ID`/`NEXT_CGROUP_ID`/`FLOCK_OPS`/`POSIX_LOCK_OPS`（5 处） | 丢失可容忍（ID 用新值继续） |
 | 生命周期标志 | `NET_READY`/`NET_CONFIGURED`/`CGROUP_INITIALIZED`（3 处） | 重建时重置为已知初值 |
-| 语义性无锁状态 | [memory_pressure.rs:93-98](src/kernel/services/mm/memory_pressure.rs) 压力级 / 阈值（5 处）；`KASLR_BASE_OFFSET`（启动期定值） | 有协议保证，undo 会破坏其语义 |
+| 语义性无锁状态 | [memory_pressure.rs:93-98](src/kernel/functions/mm/memory_pressure.rs) 压力级 / 阈值（5 处）；`KASLR_BASE_OFFSET`（启动期定值） | 有协议保证，undo 会破坏其语义 |
 
 **发现三（最关键）：`RecoverableMutex` 全内核无使用点。**
 
@@ -137,7 +137,7 @@ FREG当前是**恢复型**子系统：不做遏制，只做恢复。机制层在
 - **判定口径**：**结构保证 > 代码复用**。能证明"恢复范围封闭"的形态优先于保留旧代码；复用旧代码若削弱结构性保证，则不复用。
 - **保留清单**（推倒重来不丢的）：理论主张（封闭定理）、已定决策（方案 A、三级分类、两条腿、TCB 受信任基座）、检测与策略理念（BBR/BSR/BHR 分层、健康监测、故障归属）——可移植、可保留。
 - **丢弃清单**：以 undo 为中心的机制本体（`RecoverableMutex` 注册、`UndoLog` 字节回滚）——若与胶囊重建的结构性强制冲突；已被审计证明 0 覆盖率的设施没有兼容义务。
-- **推倒重来的边界**：TCB 边界不变；framework 不可因FREG重建而扩大 unsafe 面；services 层 0 unsafe、F1-F9 硬规则不变。
+- **推倒重来的边界**：TCB 边界不变；privileged 不可因FREG重建而扩大 unsafe 面；functions 层 0 unsafe、F1-F9 硬规则不变。
 
 ## 设计目标与边界
 
@@ -151,9 +151,9 @@ FREG当前是**恢复型**子系统：不做遏制，只做恢复。机制层在
 
 ### 诚实边界：TCB 是受信任基座
 
-纯软件遏制无法约束 framework 的 unsafe 代码——TCB 内存一旦损坏，恢复机制本身运行在已损坏的内存上，不可信。因此软件隔离只作用于 services 层；framework（TCB）是**受信任基座**，TCB bug → BHR 是可接受的终态。
+纯软件遏制无法约束 privileged 的 unsafe 代码——TCB 内存一旦损坏，恢复机制本身运行在已损坏的内存上，不可信。因此软件隔离只作用于 functions 层；privileged（TCB）是**受信任基座**，TCB bug → BHR 是可接受的终态。
 
-这与 MINIX 一致：MINIX 的微内核同样受信任，其安全来自"内核之外的一切被隔离且可重启"。对应到 Edgine：**TCB（framework）受信任 + services 软件隔离**，而非把整个内核都塞进软件遏制。
+这与 MINIX 一致：MINIX 的微内核同样受信任，其安全来自"内核之外的一切被隔离且可重启"。对应到 Edgine：**TCB（privileged）受信任 + functions 软件隔离**，而非把整个内核都塞进软件遏制。
 
 ## 理论基础：两个先例与机制替代
 
@@ -173,7 +173,7 @@ Microsoft Research 的单地址空间 OS：不依赖 MMU，用类型安全语言
 
 | MINIX 靠硬件做到 | 纯软件替代 | 代价 |
 |---|---|---|
-| 遏制：MMU 隔离地址空间 | 所有权 / 类型系统强制：services 100% safe Rust + 跨域零共享可变状态 | 编译期不变式，**零运行时开销** |
+| 遏制：MMU 隔离地址空间 | 所有权 / 类型系统强制：functions 100% safe Rust + 跨域零共享可变状态 | 编译期不变式，**零运行时开销** |
 | 重启：进程拆除 | 域胶囊 drop + 重建（RAII） | 逐域改造 |
 | 通信：IPC 过内核 | 内核内显式消息传递（无硬件切换） | 低于真微内核 |
 | 检测：硬件异常 | 软件看门狗 / CPU 配额 / 心跳 / 不变式断言 | 需服务层配合 |
@@ -228,7 +228,7 @@ Rust 支撑本设计的关键，在于它把"遏制、回收、故障"三件事�
 
 | 特性 | 用法 |
 |---|---|
-| **`unsafe` 的封装性** | 只允许 framework 用 unsafe 并封装为 safe API；TCB 边界本身就是遏制边界 |
+| **`unsafe` 的封装性** | 只允许 privileged 用 unsafe 并封装为 safe API；TCB 边界本身就是遏制边界 |
 | **宏 / derive** | 把"域边界纪律"声明式化（自动生成胶囊骨架、IPC 协议），减少手写错误 |
 | **`cfg` 条件编译** | fault injection / 测试钩子（项目已有 `kernel_test` / `fault_injection` feature） |
 | **typestate / PhantomData（类型状态）** | 编码胶囊生命周期状态机（Running → Faulted → Rebuilt），非法转移在编译期拒绝 |
@@ -268,8 +268,8 @@ undo 成不了主机制的原因：外部副作用不可回滚、恢复范围依
 ### 无硬件检测
 
 - 死循环 → 软件看门狗 / 抢占超时；
-- CPU 占用 → 配额（现有 `cpu_quota_max` / `check_quota`，[domain.rs:286-296](src/kernel/framework/freg/domain.rs)）；
-- 心跳（现有 `heartbeat_max_gap` / `check_health`，[domain.rs:302-313](src/kernel/framework/freg/domain.rs)）；
+- CPU 占用 → 配额（现有 `cpu_quota_max` / `check_quota`，[domain.rs:286-296](src/kernel/privileged/freg/domain.rs)）；
+- 心跳（现有 `heartbeat_max_gap` / `check_health`，[domain.rs:302-313](src/kernel/privileged/freg/domain.rs)）；
 - 不变式断言（I1-I6，见 [explain-framekernel.md](./explain-framekernel.md)）。
 
 检测精度低于硬件，但服务层可用。
@@ -329,7 +329,7 @@ L4 BHR（仅 TCB）                 ← 受信任基座故障才允许整机宕�
 
 BCB（FREG Control Block）是FREG的**全局唯一控制中枢**——类比内核的进程表 / TCB 目录：一个结构承载FREG对全系统域的完整控制视图，替代散落各处的域元数据与FREG控制面。
 
-**动机**：路径 1（胶囊模型）与路径 2（Isolated 仲裁）都需要"对每个域看全、看一致"，而现状要跨 framework 层（`RecoveryDomain` / `RecoveryManager`）与策略层（`FaultAttribution` / `DomainTopology` / `HealthMonitor`）多个结构拼接。BCB 提供统一的**域控制事实源**，两条路径共享同一份元数据视图。
+**动机**：路径 1（胶囊模型）与路径 2（Isolated 仲裁）都需要"对每个域看全、看一致"，而现状要跨 privileged 层（`RecoveryDomain` / `RecoveryManager`）与策略层（`FaultAttribution` / `DomainTopology` / `HealthMonitor`）多个结构拼接。BCB 提供统一的**域控制事实源**，两条路径共享同一份元数据视图。
 
 **职责边界**：BCB 只做**控制面**（元数据）；域的实际业务状态在**胶囊**（数据面，RAII drop 总回收）。类比：TCB 只含线程元数据，不含线程栈。这条分离是 BCB 不膨胀、不引入热路径开销的前提。
 
@@ -338,7 +338,7 @@ BCB（FREG Control Block）是FREG的**全局唯一控制中枢**——类比内
 | 区 | 内容 | 落位 / 替代 |
 |---|---|---|
 | ① 全局身份与版本 | `magic` / `version`（防误用、防布局漂移）；工作模式 `mode`（Path1 / Path2 / Degraded，决定仲裁语义与能力适配档） | 新建 |
-| ② FREG控制面 | `current_layer` / `reset_in_progress` / `bbr/bsr/bhr_attempt_count` / `last_reset_tick` / `parallel_rollback_active` / 全局健康水位 | 归位 [reset_config.rs:108-114](src/kernel/services/freg/reset_config.rs) 散落原子 |
+| ② FREG控制面 | `current_layer` / `reset_in_progress` / `bbr/bsr/bhr_attempt_count` / `last_reset_tick` / `parallel_rollback_active` / 全局健康水位 | 归位 [reset_config.rs:108-114](src/kernel/functions/freg/reset_config.rs) 散落原子 |
 | ③ 域注册表 | 域槽位数组 + 空闲位图 + 查找索引；每域 `DomainEntry`（状态机 / 代 / 配额 / 心跳 / 恢复等级 / 是否 TCB 边界标记）；拓扑依赖 | 替代 `RecoveryManager` + `RecoveryDomain` 控制面部分 |
 | ④ 恢复范围登记表 | 每域三级分类 A/B/C 归属；已登记的无锁共享状态清单（A/B 类）；越出恢复范围的FREG自身状态标记；胶囊重建现场（重建语义 / 重置函数指针） | 三级分类与封闭定理的**工程落点** |
 | ⑤ 仲裁现场 | 现场快照入口（Inline 层维护、Isolated 层只读）；裁定结果 / 复位裁定历史 | 服务路径 2 的仲裁输入 |
@@ -403,9 +403,9 @@ pub struct FREGControlBlock {
 
 | 现状 | BCB 落位 |
 |---|---|
-| [reset_config.rs:108-114](src/kernel/services/freg/reset_config.rs) 7 个静态原子 | ② 控制面 |
-| [mod.rs:99](src/kernel/framework/freg/mod.rs) `RecoveryManager` | ③ 域注册表 |
-| [domain.rs:11](src/kernel/framework/freg/domain.rs) `RecoveryDomain` 控制面部分 | ③ `DomainEntry`（内嵌 undo 回调随推倒重来弃用） |
+| [reset_config.rs:108-114](src/kernel/functions/freg/reset_config.rs) 7 个静态原子 | ② 控制面 |
+| [mod.rs:99](src/kernel/privileged/freg/mod.rs) `RecoveryManager` | ③ 域注册表 |
+| [domain.rs:11](src/kernel/privileged/freg/domain.rs) `RecoveryDomain` 控制面部分 | ③ `DomainEntry`（内嵌 undo 回调随推倒重来弃用） |
 | 三级分类 + 封闭定理（设计层） | ④ 登记表（工程落点） |
 | Isolated 仲裁输入（设计层） | ⑤ 仲裁现场 |
 
@@ -510,7 +510,7 @@ Isolated 层所需的架构差异（专用核指派、地址空间切换、核�
 - **按需借核**（任何核皆可借 + 冷路径空间平时不映射 + 事件时按需变身 + 结束归还）作为主推档位，已定；
 - **事件源 = 标配硬件**（NMI / FIQ / 看门狗 / IPI，跨架构确认），不依赖特殊硬件，已定；
 - **能力适配**（特权扩展含单核 / 多核借核 / 富余核专用 / 单核无扩展看门狗回退）已定；
-- **裁决核心独立 crate 化**（<500 行、零依赖、`forbid(unsafe_code)`、纯函数裁决 + framework 执行判决）已定，见"裁决核心独立 Crate"章；
+- **裁决核心独立 crate 化**（<500 行、零依赖、`forbid(unsafe_code)`、纯函数裁决 + privileged 执行判决）已定，见"裁决核心独立 Crate"章；
 - **全 create 化恢复**（弃 undo / 弃 Drop，memset + `Domain::new()` + gen++）已定，见"全 create 化恢复模型"章；
 - **拉取式失效 + Handle+Gen 值语义跨域引用**已定；
 - **正确性四件套**（Park-and-Ack 静默协议 / InitCtx 受限 token / 裁决页表自笼头 / 二级 watchdog）已定，见"正确性补全协议"章；
@@ -519,7 +519,7 @@ Isolated 层所需的架构差异（专用核指派、地址空间切换、核�
 
 ### 开放议题（多数已由后续推演闭环）
 
-- **Isolated 层内部结构** → 已闭环：裁决逻辑 = 独立 crate 化的 <500 行纯函数状态机（见"裁决核心独立 Crate"章），执行权留 framework；
+- **Isolated 层内部结构** → 已闭环：裁决逻辑 = 独立 crate 化的 <500 行纯函数状态机（见"裁决核心独立 Crate"章），执行权留 privileged；
 - **被变身核持锁时的裁决纪律** → 已闭环：控制面全原子化（裁决路径这辈子不拿锁）+ Park-and-Ack 静默协议（见"正确性补全协议"章）；
 - **并发变身的主导-协作仲裁** → 已闭环：单核 CAS 抢占 `arbiter_claim`，wait-free；单机广播事件最多一个赢家，无需比 CAS 更强的共识；
 - **核间通信协议** → 已闭环：不建通道——Inline 层写原子槽位 / seq 快照，Isolated 层只读采集为 `ArbiterView`；
@@ -529,23 +529,23 @@ Isolated 层所需的架构差异（专用核指派、地址空间切换、核�
 
 MINIX 对本设计的根本诘难是：MMU 不管你的代码写没写对，越界就是硬件拦截；FREG能否做到"不管代码写没写对，都能执裁"？答案分两层。
 
-**遏制层：对 services 而言，100% safe Rust 不比 MMU 弱，甚至更强。**
+**遏制层：对 functions 而言，100% safe Rust 不比 MMU 弱，甚至更强。**
 
-| 破坏性操作 | MINIX / MMU | services 0 unsafe（编译器） |
+| 破坏性操作 | MINIX / MMU | functions 0 unsafe（编译器） |
 |---|---|---|
 | 越界读写 | 运行时 page fault 拦截 | 编译期拒绝，该代码不存在 |
 | use-after-free | MMU + 引用计数 | 所有权系统编译期拒绝 |
 | 数据竞态 | 进程隔离 + IPC 串行化 | Send/Sync + `&mut` 独占，编译期拒绝 |
 | 触碰裁决者内存 | ring 特权级不可达 | 裁决者字段跨 crate 不可见、不可命名、不可调用 |
 
-MMU 的保证是"你写错了运行时拦你"，Rust safe 代码的保证是"你写错了根本编译不出来"。对"services 代码写没写对"这个命题，编译期不变式是严格更强的断言。**所以执裁不需要假设故障域配合**——其破坏力在编译期已被消灭。
+MMU 的保证是"你写错了运行时拦你"，Rust safe 代码的保证是"你写错了根本编译不出来"。对"functions 代码写没写对"这个命题，编译期不变式是严格更强的断言。**所以执裁不需要假设故障域配合**——其破坏力在编译期已被消灭。
 
 **执裁层：残余的两个依赖，以及各自的消解方式。**
 
 1. **裁决者自身不能有 bug** → 以"小到不可能错"消解：裁决状态机独立 crate 化（见下章），<500 行、`forbid(unsafe_code)`、零依赖，人工可穷尽审查。MINIX 敢信任它的 6K 行微内核，理由同构——不是魔法，是小；
 2. **恢复不能执行故障代码** → 以全 create 化消解（见再下章）：不跑 Drop、不 undo，裁决者的全部动作是"清零一块 buffer + 调一次 new() + 原子改代"。
 
-两个消解完成后，FREG执裁的依赖集收敛为：**编译器 + 硬件 + 一个 <500 行状态机**——与 MINIX 的"硬件 + 微内核"假设数相同。真正的差距从来不在"services 代码对不对"（编译器管了），而在"裁决者自己够不够小"——这一点由 crate 化 + 极小化自己掌控，不依赖任何外部资源。
+两个消解完成后，FREG执裁的依赖集收敛为：**编译器 + 硬件 + 一个 <500 行状态机**——与 MINIX 的"硬件 + 微内核"假设数相同。真正的差距从来不在"functions 代码对不对"（编译器管了），而在"裁决者自己够不够小"——这一点由 crate 化 + 极小化自己掌控，不依赖任何外部资源。
 
 ## 裁决核心独立 Crate：第三个信任域
 
@@ -554,28 +554,28 @@ MMU 的保证是"你写错了运行时拦你"，Rust safe 代码的保证是"你
 ```text
 src/kernel/
 ├── arbiter/          ← 独立 crate：裁决状态机（<500 行，零依赖）
-├── framework/        ← TCB：BCB、Inline 快照、buffer 池、变身入口、判决执行
-└── services/         ← 策略层：健康判定规则、故障归属、级联（0 unsafe）
+├── privileged/        ← TCB：BCB、Inline 快照、buffer 池、变身入口、判决执行
+└── functions/         ← 策略层：健康判定规则、故障归属、级联（0 unsafe）
 ```
 
-依赖方向单一：`framework → arbiter`（framework 调用裁决函数并执行判决）；arbiter 不知道 framework 的存在——它的输入只是几个原子值快照（`ArbiterView`），输出只是一个 `Verdict` 枚举。裁决是纯函数：无锁、无分配、无副作用、步数有界，不可能死锁、不可能 panic。
+依赖方向单一：`privileged → arbiter`（privileged 调用裁决函数并执行判决）；arbiter 不知道 privileged 的存在——它的输入只是几个原子值快照（`ArbiterView`），输出只是一个 `Verdict` 枚举。裁决是纯函数：无锁、无分配、无副作用、步数有界，不可能死锁、不可能 panic。
 
 crate 边界提供而模块边界做不到的三件事：
 
 | 性质 | 强制机制 | 意义 |
 |---|---|---|
-| 对 framework 零依赖 | `arbiter/Cargo.toml` 的 `[dependencies]` 为空 | 编译器物理禁止 `use framework::...`，裁决者不可能误碰 139K 行 TCB 代码 |
+| 对 privileged 零依赖 | `arbiter/Cargo.toml` 的 `[dependencies]` 为空 | 编译器物理禁止 `use privileged::...`，裁决者不可能误碰 139K 行 TCB 代码 |
 | 无 unsafe | crate 级 `#![forbid(unsafe_code)]` | 由编译器证明，而非由审计脚本检查 |
 | 可验证 | 单 crate 500 行边界 | Kani / 模型检验可穷举全部路径；任何人 30 分钟从头看完 |
 
-**不拆的**：BCB / 注册表 / Inline 快照 / buffer 池留在 framework（要碰页表与硬件，必须 unsafe）；策略层留在 services（编译器已保护）。crate 化只切"做最终判决"这一最小单元——切的是信任链上需要独立自证的那一环，不是工程模块的整洁。
+**不拆的**：BCB / 注册表 / Inline 快照 / buffer 池留在 privileged（要碰页表与硬件，必须 unsafe）；策略层留在 functions（编译器已保护）。crate 化只切"做最终判决"这一最小单元——切的是信任链上需要独立自证的那一环，不是工程模块的整洁。
 
 ## 全 create 化恢复模型
 
 **已定决策：放弃修复式恢复（undo / Drop），恢复语义收敛为"整块清零 + 重新 create"。**
 
 ```text
-rebuild(id):                          ← framework 执行；arbiter 只给 Verdict::Rebuild
+rebuild(id):                          ← privileged 执行；arbiter 只给 Verdict::Rebuild
     memset(CAPSULE_POOL[id], 0)       ← 静态 buffer 池，零分配
     fresh = (registry[id].init_fn)()  ← 唯一入口 Domain::new()，跨 crate 类型不透明性强制
     bcb_release_external(id)          ← 代管资源（fd / slot）批量回收，不等域 Drop
@@ -584,10 +584,10 @@ rebuild(id):                          ← framework 执行；arbiter 只给 Verd
 
 四个支柱性质：
 
-- **恢复范围不再需要论证**。恢复边界 = buffer 边界，由 framework 静态分配时划定，不由代码行为决定。封闭定理的工程形态从"强制 C 类写路径登记"升级为更简单的结构——**整个 capsule 就是恢复单位**，不存在"漏登记"这个概念。
+- **恢复范围不再需要论证**。恢复边界 = buffer 边界，由 privileged 静态分配时划定，不由代码行为决定。封闭定理的工程形态从"强制 C 类写路径登记"升级为更简单的结构——**整个 capsule 就是恢复单位**，不存在"漏登记"这个概念。
 - **不跑 Drop**（abort without unwind）。故障域的析构器永不在裁决上下文执行，panic=abort 下的 Drop soundness 难题被移除出关键路径。
-- **拉取式失效 + Handle+Gen**。裁决者 gen++ 后不通知任何消费者。跨域引用一律值语义 `Handle { id, gen }`（禁裸指针与长生命周期引用），消费者经 framework lookup 时检查 gen，不匹配返回 `Err(Recovered)`——safe Rust 的 match 穷尽性把"处理域重建"变成编译期义务，想漏都漏不掉。失效传播是惰性、按需、强制的，这是"拉取式"相对"推送式回调"的核心优势：裁决者不需要知道谁在引用故障域。
-- **外部资源代管**。域不向外申请可变资源；fd 表、socket buffer 等由 framework 经 BCB 代管，生命周期归 BCB 不归域 Drop，create 后可批量回收。
+- **拉取式失效 + Handle+Gen**。裁决者 gen++ 后不通知任何消费者。跨域引用一律值语义 `Handle { id, gen }`（禁裸指针与长生命周期引用），消费者经 privileged lookup 时检查 gen，不匹配返回 `Err(Recovered)`——safe Rust 的 match 穷尽性把"处理域重建"变成编译期义务，想漏都漏不掉。失效传播是惰性、按需、强制的，这是"拉取式"相对"推送式回调"的核心优势：裁决者不需要知道谁在引用故障域。
+- **外部资源代管**。域不向外申请可变资源；fd 表、socket buffer 等由 privileged 经 BCB 代管，生命周期归 BCB 不归域 Drop，create 后可批量回收。
 
 ## 副作用一致性：三通道与设计规则（初步解）
 
@@ -600,7 +600,7 @@ rebuild(id):                          ← framework 执行；arbiter 只给 Verd
 | 通道 | 错位形态 | 解药 | FREG承诺 |
 |---|---|---|---|
 | 已发送（不可逆） | 对端收到重复/半截交互；本端连接态随胶囊死亡 | 对端视角"胶囊重生 ≡ 网络分区"：超时重传、seq 去重、应用层重连——分布式协议的日常业务 | 不承诺 exactly-once，只承诺"故障表现归入协议已训练的等价类" |
-| 已接收（真窗口） | 包已从硬件环取走、处理了、结果只存胶囊内存 → 重生即丢 | DMA 环 / RX 队列在 framework 代管区**跨代存活**，新胶囊从 head/tail 当前值继续排空；"取走未下沉"窗口用延迟消费语义压到单事务原子性尺度 | 已到达未处理不丢；丢的窗口有界且等于正常并发问题量级 |
+| 已接收（真窗口） | 包已从硬件环取走、处理了、结果只存胶囊内存 → 重生即丢 | DMA 环 / RX 队列在 privileged 代管区**跨代存活**，新胶囊从 head/tail 当前值继续排空；"取走未下沉"窗口用延迟消费语义压到单事务原子性尺度 | 已到达未处理不丢；丢的窗口有界且等于正常并发问题量级 |
 | 已落盘（可判定） | journal 半提交 / torn write / 在途块请求 | 磁盘状态机本来就有标准答案：FS 域的 new() 就是 mount + journal replay（重放已提交 / 丢弃未提交 / checksum 检出 torn 页）；在途 IO 靠第二拍设备 reset + 超时重试 | 落盘一致性由日志层担保，与不崩溃系统同构 |
 
 不可幂等的对外动作（控制命令、执行器指令）内核救不了，只能靠应用层幂等键/序列号——这是 End-to-End 论证的教科书案例，不是FREG的缺陷，是分布式的物理事实。
@@ -623,7 +623,7 @@ rebuild(id):                          ← framework 执行；arbiter 只给 Verd
 
 **① Park-and-Ack 静默协议（多核）**。Pause 清 run bit 只防"将来被调度"，防不了"正在执行的这个时间片"——若故障核仍在自旋读写 capsule，memset 就是数据竞争。协议：裁决核向故障核发定向 NMI → 故障核 park handler（十几行、0 unsafe：置位 + 自旋）置 `park_ack` → 裁决核有界等待（~100μs），等不到（连 NMI 都进不去 = TCB 级损坏）则降级 BHR；恢复完成后 IPI 唤醒 parked 核重定向到新入口。单核场景该协议天然退化掉：NMI 已物理抢占故障代码，静默自动成立。
 
-**② InitCtx 受限 token**。`Domain::new()` 在关中断的恢复上下文运行，必须禁拿共享锁 / 禁分配 / 禁碰他域——不靠纪律靠类型：init_fn 只收 framework 构造的 `&mut InitCtx<'_>`，token 只暴露"读 static 配置、写自己域的 slot 与 BCB 状态位"，不携带任何全局锁入口。**API 面即权限面**，new() 在恢复上下文死锁在结构上不可能。
+**② InitCtx 受限 token**。`Domain::new()` 在关中断的恢复上下文运行，必须禁拿共享锁 / 禁分配 / 禁碰他域——不靠纪律靠类型：init_fn 只收 privileged 构造的 `&mut InitCtx<'_>`，token 只暴露"读 static 配置、写自己域的 slot 与 BCB 状态位"，不携带任何全局锁入口。**API 面即权限面**，new() 在恢复上下文死锁在结构上不可能。
 
 **③ 裁决页表自笼头**。裁决页表只映射：BCB 原子槽位区 + 故障域 capsule buffer。即使那 500 行里真藏了 bug，想碰健康域的内存 = page fault——**静默损坏变成响亮失败**。这里 MMU 不做遏制（遏制归编译器），做的是对裁决者自身错误的第二道防线。
 
@@ -678,7 +678,7 @@ rebuild(id):                          ← framework 执行；arbiter 只给 Verd
 
 | 命题 | 内容 | 检验手段 | fault injection 的角色 |
 |---|---|---|---|
-| A 遏制层 | 故障域损坏不出自身 capsule | **静态**：services 0 unsafe 审计 + R5 边界审计 | 不归它管——遏制是编译期不变式，对抗性注入无法反驳一段编译不出来的代码 |
+| A 遏制层 | 故障域损坏不出自身 capsule | **静态**：functions 0 unsafe 审计 + R5 边界审计 | 不归它管——遏制是编译期不变式，对抗性注入无法反驳一段编译不出来的代码 |
 | B 机制活性 | 任意故障后裁决→重建→归还全流程跑通 | 受控注入（非随机采样） | 主场 |
 | C 语义正确性 | 重建后的世界 == 新启动 | 注入 + oracle | 主场，全部难度浓缩在 oracle 设计 |
 
@@ -713,7 +713,7 @@ fn livelock_inject() -> ! {
 
 | # | Oracle | 检验 | 实现成本 |
 |---|---|---|---|
-| 1 | **等价类**：恢复后 dump capsule buffer，与无故障对照 run 逐字节比对（哈希即可） | 命题 C 核心"恢复 == 新启动"；buffer 不等即暴露 R5 审计漏的状态逃逸 | 极低（buffer 是 framework 静态分配，内核自 dump） |
+| 1 | **等价类**：恢复后 dump capsule buffer，与无故障对照 run 逐字节比对（哈希即可） | 命题 C 核心"恢复 == 新启动"；buffer 不等即暴露 R5 审计漏的状态逃逸 | 极低（buffer 是 privileged 静态分配，内核自 dump） |
 | 2 | **不变式**：陈旧 Handle lookup 必 `Err(Recovered)`、gen 恰 +1、InitCtx token 未逃逸、未登记外部资源归 BCB 队列 | 信任链每一环 | 低（原子读检） |
 | 3 | **FS 差分**：每笔写 n 个边界逐点崩溃，恢复后跑文件一致性校验 | 通道 3（new() = journal replay） | 中（`host-tests/src/fsx.rs` 是现成模型，扩展"中途崩溃+恢复"即可） |
 | 4 | **网络分区模拟**：注入后掐断/延迟对端流量，验证会话重连 | 通道 1（已发送 ≡ 分区） | 中（smoltcp vendored 自带 phy 层 `FaultInjector`） |
@@ -742,7 +742,7 @@ fault injection 证不了遏制层（那是编译器的活，命题 A 静态审�
 
 ## 交叉引用
 
-- [explain-framekernel.md](./explain-framekernel.md)：框内核架构、framework/services 边界、6 条安全不变式——本设计的地基。
+- [explain-framekernel.md](./explain-framekernel.md)：框内核架构、privileged/functions 边界、6 条安全不变式——本设计的地基。
 - [vision-hope.md](./vision-hope.md)：Edgine 项目愿景，FREG故障恢复是嵌入式 / IoT 场景的契合点。
-- `src/kernel/framework/freg/`：FREG机制层（RecoveryDomain / UndoLog / 分层恢复）。
-- `src/kernel/services/freg/`：FREG策略层（RecoveryPolicy / 故障归属 / 健康监测 / 级联）。
+- `src/kernel/privileged/freg/`：FREG机制层（RecoveryDomain / UndoLog / 分层恢复）。
+- `src/kernel/functions/freg/`：FREG策略层（RecoveryPolicy / 故障归属 / 健康监测 / 级联）。

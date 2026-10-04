@@ -12,17 +12,17 @@ E-03 拆分后:
 
 约定扩展 (T1 G7 host 符号桩化, 2026-09-17):
   kt/ht 同属"测试环境", 真机路径门控语义 = `not(any(kernel_test, host-test))`.
-  framework 侧真机路径 (如 lib.rs kernel_init 引导链) 由 `not(kernel_test)` 推广为
-  `not(any(kernel_test, host-test))`; 本脚本检查面仍为 services/ + framework/tests/,
-  framework 侧的推广属既有约定表述扩展, 不改变本脚本的判定规则.
+  privileged 侧真机路径 (如 lib.rs kernel_init 引导链) 由 `not(kernel_test)` 推广为
+  `not(any(kernel_test, host-test))`; 本脚本检查面仍为 functions/ + privileged/tests/,
+  privileged 侧的推广属既有约定表述扩展, 不改变本脚本的判定规则.
 
 本脚本检查:
-  (1) services/ 下 kernel_test 门控出现位置 — 纯逻辑门控文件 (A 类已改 any)
+  (1) functions/ 下 kernel_test 门控出现位置 — 纯逻辑门控文件 (A 类已改 any)
       不得残留"仅 kernel_test"门控; B/C 类 (net 桩 smoltcp_impl.rs / net/mod.rs /
       config/caps.rs) 列入白名单允许
-  (2) framework/tests/mod.rs — 纯逻辑 mod 用 any(kernel_test, host-test) 门控,
+  (2) privileged/tests/mod.rs — 纯逻辑 mod 用 any(kernel_test, host-test) 门控,
       driver/net/idt/reset 用 kernel_test 门控, 两语义分离正确
-  (3) framework/tests/ 门控外 test_* 模块内部禁止 kernel_test 门控;
+  (3) privileged/tests/ 门控外 test_* 模块内部禁止 kernel_test 门控;
       any 门控的纯逻辑 mod 文件内部也禁止 kernel_test 门控 (host-test 下语义翻转)
 
 退出码: 0 = 通过, 1 = 有违规 (CRITICAL/HIGH 阻断), 2 = 扫描路径不存在
@@ -34,8 +34,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-BASE_SERVICES = Path('src/kernel/services')
-BASE_TESTS = Path('src/kernel/framework/tests')
+BASE_FUNCTIONS = Path('src/kernel/functions')
+BASE_TESTS = Path('src/kernel/privileged/tests')
 
 # kernel_test 门控匹配: 覆盖
 #   #[cfg(feature = "kernel_test")] / #[cfg(not(feature = "kernel_test"))]
@@ -52,24 +52,24 @@ ANY_GATE = re.compile(
 KT_CFG_ATTR = re.compile(r'#\[cfg\((?![^)]*host-test)[^)]*feature\s*=\s*"kernel_test"[^)]*\)\]')
 
 # ============================================================================
-# services 白名单 (B/C 类, 允许 kernel_test 门控)
+# functions 白名单 (B/C 类, 允许 kernel_test 门控)
 # ============================================================================
 # B 类: net 构建桩 — smoltcp_impl.rs 的 fw_init 别名切换 + net/mod.rs 的
 #       kernel_test stub 模块/From 转换/state() 分支, 均属硬件路径语义, 保持单端.
 # C 类: config/caps.rs — kpti 的 cfg!() 运行时宏 (裸机测试时禁用 KPTI), 属硬件路径.
-SERVICES_WHITELIST = [
-    'src/kernel/services/net/smoltcp_impl.rs',
-    'src/kernel/services/net/mod.rs',
-    'src/kernel/services/config/caps.rs',
+FUNCTIONS_WHITELIST = [
+    'src/kernel/functions/net/smoltcp_impl.rs',
+    'src/kernel/functions/net/mod.rs',
+    'src/kernel/functions/config/caps.rs',
 ]
 
-# Vendored 3rd-party 目录: 审计豁免 (同 audit_services_boundary.py)
+# Vendored 3rd-party 目录: 审计豁免 (同 audit_functions_boundary.py)
 VENDORED_EXCLUDE = [
-    Path('src/kernel/services/net/smoltcp'),
+    Path('src/kernel/functions/net/smoltcp'),
 ]
 
-# framework/tests 未门控模块内的运行时 cfg!() 断言豁免 (精确「文件 + 模式」组合).
-# 设计依据: 与 audit_services_boundary.py 的 PROXY_ALLOWANCE 同机制 —
+# privileged/tests 未门控模块内的运行时 cfg!() 断言豁免 (精确「文件 + 模式」组合).
+# 设计依据: 与 audit_functions_boundary.py 的 PROXY_ALLOWANCE 同机制 —
 # 仅豁免运行时断言, 不豁免编译期 #[cfg(...)] 门控 attribute.
 # 条目: test_config.rs L162 — 镜像 C 类 config/caps.rs 的 kpti 门控规则
 # (kpti = cfg!(all(x86_64, not(kernel_test))), 硬件路径 KPTI 能力报告, E-03 明确
@@ -77,7 +77,7 @@ VENDORED_EXCLUDE = [
 # C 类规则自洽 (host-test: kpti=true, 断言 expect_kpti=true, 通过), 不参与编译门控,
 # 故豁免并记录 INFO.
 TESTS_RUNTIME_CFG_ALLOWANCE = [
-    ('src/kernel/framework/tests/test_config.rs', 'cfg!(feature = "kernel_test")'),
+    ('src/kernel/privileged/tests/test_config.rs', 'cfg!(feature = "kernel_test")'),
 ]
 
 
@@ -128,22 +128,22 @@ def classify_cfg_attr(line):
 
 
 # ============================================================================
-# 检查 1: services/ kernel_test 门控扫描
+# 检查 1: functions/ kernel_test 门控扫描
 # ============================================================================
 
-def scan_services_kernel_test_gates():
-    """services 层 kernel_test 门控扫描.
+def scan_functions_kernel_test_gates():
+    """functions 层 kernel_test 门控扫描.
     白名单文件允许 (记录 INFO); 其余文件出现"仅 kernel_test"门控即违规 (HIGH).
     """
     issues = []
-    files = sorted(BASE_SERVICES.rglob('*.rs'))
+    files = sorted(BASE_FUNCTIONS.rglob('*.rs'))
     skipped = 0
     for f in files:
         if is_vendored(f):
             skipped += 1
             continue
         rel = str(f)
-        whitelisted = rel in SERVICES_WHITELIST
+        whitelisted = rel in FUNCTIONS_WHITELIST
         try:
             with open(f, 'r', encoding='utf-8', errors='replace') as fh:
                 lines = fh.readlines()
@@ -163,7 +163,7 @@ def scan_services_kernel_test_gates():
                     'file': rel,
                     'line': lineno,
                     'severity': 'INFO',
-                    'type': 'SERVICES_KERNEL_TEST_GATE_WHITELISTED',
+                    'type': 'FUNCTIONS_KERNEL_TEST_GATE_WHITELISTED',
                     'message': 'B/C 类硬件路径门控白名单文件, 允许 kernel_test 门控 (E-03 登记)',
                     'code': line.strip()[:200],
                 })
@@ -172,8 +172,8 @@ def scan_services_kernel_test_gates():
                     'file': rel,
                     'line': lineno,
                     'severity': 'HIGH',
-                    'type': 'SERVICES_KERNEL_TEST_ONLY_GATE',
-                    'message': 'services 纯逻辑门控文件残留"仅 kernel_test"门控, '
+                    'type': 'FUNCTIONS_KERNEL_TEST_ONLY_GATE',
+                    'message': 'functions 纯逻辑门控文件残留"仅 kernel_test"门控, '
                                '应按 E-03 改 any(kernel_test, host-test)',
                     'code': line.strip()[:200],
                 })
@@ -183,7 +183,7 @@ def scan_services_kernel_test_gates():
 
 
 # ============================================================================
-# 检查 2: framework/tests/mod.rs 门控分离
+# 检查 2: privileged/tests/mod.rs 门控分离
 # ============================================================================
 
 # E-03 语义拆分后的分类 (数据驱动, 新增 gated mod 需在此登记)
@@ -314,11 +314,11 @@ def check_mod_rs(mod_rs):
 
 
 # ============================================================================
-# 检查 3: framework/tests/ 其他文件 — 门控外/any 门控文件内部禁止 kernel_test 门控
+# 检查 3: privileged/tests/ 其他文件 — 门控外/any 门控文件内部禁止 kernel_test 门控
 # ============================================================================
 
 def scan_tests_files():
-    """framework/tests/ 非 mod.rs 文件扫描.
+    """privileged/tests/ 非 mod.rs 文件扫描.
     - any 门控纯逻辑 mod 文件 (arch/string/sched/sync/sys): 内部 kernel_test 门控
       会在 host-test 下语义翻转 → 违规 (HIGH)
     - 未门控 test_* 模块文件: kernel_test 门控 → 违规 (HIGH)
@@ -393,7 +393,7 @@ def scan_tests_files():
 # ============================================================================
 
 def generate_report(issues):
-    """生成报告 (仿 audit_services_boundary.py)."""
+    """生成报告 (仿 audit_functions_boundary.py)."""
     by_severity = defaultdict(list)
     for issue in issues:
         by_severity[issue['severity']].append(issue)
@@ -429,12 +429,12 @@ def generate_report(issues):
 
 
 def main():
-    if not BASE_SERVICES.exists() or not BASE_TESTS.exists():
-        print(f'ERROR: {BASE_SERVICES} 或 {BASE_TESTS} not found', file=sys.stderr)
+    if not BASE_FUNCTIONS.exists() or not BASE_TESTS.exists():
+        print(f'ERROR: {BASE_FUNCTIONS} 或 {BASE_TESTS} not found', file=sys.stderr)
         sys.exit(2)
 
     issues = []
-    issues.extend(scan_services_kernel_test_gates())
+    issues.extend(scan_functions_kernel_test_gates())
     issues.extend(check_mod_rs(BASE_TESTS / 'mod.rs'))
     issues.extend(scan_tests_files())
 

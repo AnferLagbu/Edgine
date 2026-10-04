@@ -173,7 +173,7 @@ criterion_main!(benches);
 | `eash_cmd_parser_test.rs` | eash 用户态 Shell | I-10 |
 | `cfs_btreemap_bench_test.rs` | CFS BTreeMap 性能基准 | I-34 |
 | `td14_ipc_full_lifecycle_test.rs` | IPC 全生命周期 | TD-14 |
-| `services_ipc_complete_test.rs` | services IPC 完整性 | I-14 |
+| `functions_ipc_complete_test.rs` | functions IPC 完整性 | I-14 |
 
 #### 信号
 
@@ -233,7 +233,7 @@ criterion_main!(benches);
 | `td16_signal_kernel_error_test.rs` | signal KernelError | TD-16 |
 | `td17_table_kernel_error_test.rs` | table KernelError | TD-17 |
 | `td19_proc_kernel_error_test.rs` | proc KernelError | TD-19 |
-| `td20_services_kernel_error_test.rs` | services KernelError | TD-20 |
+| `td20_functions_kernel_error_test.rs` | functions KernelError | TD-20 |
 
 #### 审计契约
 
@@ -247,7 +247,7 @@ criterion_main!(benches);
 | 文件 | 内容 | 追踪 |
 |------|------|------|
 | `ioctl_enosys_test.rs` | sys_ioctl 行为契约 | P1-I-39 |
-| `framework_spinlock_migration_test.rs` | framework spin::Mutex 迁移 | P1-I-17 |
+| `privileged_spinlock_migration_test.rs` | privileged spin::Mutex 迁移 | P1-I-17 |
 
 ## 当前规模
 

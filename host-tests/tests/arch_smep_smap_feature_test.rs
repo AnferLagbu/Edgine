@@ -4,7 +4,7 @@
 //!
 //! ## 测试目的
 //!
-//! 验证 `framework::arch::x86_64::cpu::CpuFeatures` 中 SMEP/SMAP bitflag 位置
+//! 验证 `privileged::arch::x86_64::cpu::CpuFeatures` 中 SMEP/SMAP bitflag 位置
 //! 正确, 与 CPUID Leaf 7 ECX bit 20/21 一一对应. 同时验证 `init_msr` 中
 //! CR4 bit 20/21 设置逻辑条件正确 (CPU 支持时才启用).
 //!

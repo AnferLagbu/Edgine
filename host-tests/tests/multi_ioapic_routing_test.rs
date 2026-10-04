@@ -6,7 +6,7 @@
 //! 的纯计算) 与全部路由测试. 经评估, 内核真实实现 **host 不可测**, 本地平行
 //! 实现已删除, 不保留镜像:
 //!
-//! - 内核权威实现为 `framework/arch/x86_64/acpi.rs::gsi_to_ioapic(gsi)` —
+//! - 内核权威实现为 `privileged/arch/x86_64/acpi.rs::gsi_to_ioapic(gsi)` —
 //!   **签名不同**: 无参数表入参, 直接读取**私有**全局 `static IOAPICS:
 //!   IrqSpinLock<[Option<IoApicInfo>; MAX_IOAPICS]>`.
 //! - 该全局仅能由 `parse_madt(multiboot2_info_ptr)` 填充 (需真实 ACPI MADT /
@@ -17,7 +17,7 @@
 //! 保留: 内核 `IoApicInfo` 为 `pub struct` (pub 字段 id/base_addr/gsi_base/max_irq),
 //! 纯数据可 host 构造, 其字段语义测试改引内核类型.
 
-use edgine::kernel::framework::arch::x86_64::acpi::IoApicInfo;
+use edgine::kernel::privileged::arch::x86_64::acpi::IoApicInfo;
 
 /// 双 IOAPIC 控制器场景 (多路服务器): id/base/gsi_base/max_irq 字段语义
 #[test]

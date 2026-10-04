@@ -24,8 +24,8 @@
 
 use std::fs;
 
-const PROCESS: &str = "../src/kernel/framework/proc/process.rs";
-const USER_PROC: &str = "../src/kernel/framework/proc/user_proc.rs";
+const PROCESS: &str = "../src/kernel/privileged/proc/process.rs";
+const USER_PROC: &str = "../src/kernel/privileged/proc/user_proc.rs";
 
 fn read(p: &str) -> String {
     fs::read_to_string(p).unwrap_or_else(|e| panic!("read {p}: {e}"))

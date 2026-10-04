@@ -1004,7 +1004,7 @@ fi
 if [ "$SKIP_OPTIONAL" = false ] && [ "$SKIP_C" = false ] && [ "$SKIP_C_LINKER" = false ]; then
     print_section "[5/8] C 链接层 (Linker) — 裸机链接 / 启动汇编"
     echo -e "  ${BLUE}说明: Edgine 源码已 100% Rust 化, C 链接层仅用于${NC}"
-    echo -e "  ${BLUE}       1. 裸机链接 (ld + 链接脚本 src/kernel/framework/link/*.ld)${NC}"
+    echo -e "  ${BLUE}       1. 裸机链接 (ld + 链接脚本 src/kernel/privileged/link/*.ld)${NC}"
     echo -e "  ${BLUE}       2. 启动汇编 (nasm x86_64 / aarch64-linux-gnu-as)${NC}"
     echo -e "  ${BLUE}       3. ELF→bin 转换 (objcopy, Makefile other/build/kernel.flat)${NC}"
     echo -e "  ${BLUE}  v3.2 决策: 全 Rust 化后已归类为可选, --skip-c-linker 可单独跳过${NC}"
@@ -1069,8 +1069,8 @@ fi
 if [ "$SKIP_OPTIONAL" = false ] && [ "$SKIP_PROJECT" = false ]; then
     print_section "[8/8] 项目本地工具 (Project Tools) — 框内核 TCB 审计"
     echo -e "  ${BLUE}说明: 项目根 tools/ 下的 TCB 审计脚本, 由 ci/audit.sh 引用${NC}"
-    echo -e "  ${BLUE}       1. tools/check_tcb.sh      - services/ 0 unsafe 强制门禁${NC}"
-    echo -e "  ${BLUE}       2. tools/audit_unsafe.sh   - framework/ SAFETY 注释覆盖率${NC}"
+    echo -e "  ${BLUE}       1. tools/check_tcb.sh      - functions/ 0 unsafe 强制门禁${NC}"
+    echo -e "  ${BLUE}       2. tools/audit_unsafe.sh   - privileged/ SAFETY 注释覆盖率${NC}"
     echo -e "  ${BLUE}       3. tools/audit_unsafe.py   - 上述 sh 的 Python 解析版${NC}"
     echo -e "  ${BLUE}  缺失这些工具时 ci/audit.sh 会失败, 建议保留${NC}"
     echo -e "  ${BLUE}  可通过 --skip-project 跳过此节${NC}"
@@ -1079,8 +1079,8 @@ if [ "$SKIP_OPTIONAL" = false ] && [ "$SKIP_PROJECT" = false ]; then
     check_project_tool "TCB 边界检查" "tools/check_tcb.sh"
 
     print_subsection "SAFETY 注释审计"
-    check_project_tool "framework/ SAFETY 审计 (Bash)" "tools/audit_unsafe.sh"
-    check_project_tool "framework/ SAFETY 审计 (Python)" "tools/audit_unsafe.py"
+    check_project_tool "privileged/ SAFETY 审计 (Bash)" "tools/audit_unsafe.sh"
+    check_project_tool "privileged/ SAFETY 审计 (Python)" "tools/audit_unsafe.py"
 fi
 
 # ==================== 第 7 部分: Python 模块 ====================
@@ -1447,7 +1447,7 @@ echo ""
 echo -e "  ${BOLD}测试验证 (Makefile.ci + cargo):${NC}"
 echo "    make -f Makefile.ci ci                  # Full CI flow"
 echo "    make -f Makefile.ci ci-audit            # SAFETY + boundary + deadlock"
-echo "    make -f Makefile.ci ci-unsafe-scan      # services 0 unsafe"
+echo "    make -f Makefile.ci ci-unsafe-scan      # functions 0 unsafe"
 echo "    make -f Makefile.ci ci-cargo            # cargo check (x86_64 + aarch64)"
 echo "    make -f Makefile.ci ci-bench            # framekernel-bench + 回归检查"
 echo "    make -f Makefile.ci ci-test-host        # host-tests 全量 (Cargo 自动发现)"

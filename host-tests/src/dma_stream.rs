@@ -1,7 +1,7 @@
 // B08-12 (DECISION-052 路线 C): DMA 流状态机消除平行实现.
 //
 // 本模块不再本地实现 DmaStream 模拟 (PhysPage/FrameRef 复刻已删除),
-// 回归测试重写为直接验证内核 `framework::dma_buf::DmaStream` 真实实现
+// 回归测试重写为直接验证内核 `privileged::dma_buf::DmaStream` 真实实现
 // (host-test feature 暴露): 经 `Frame::from_raw` 构造测试帧, 验证
 // 对齐/溢出/大小校验与 ToDevice/FromDevice/Bidirectional 状态机转换.
 //
@@ -13,9 +13,9 @@
 
 #[cfg(test)]
 mod tests {
-    use edgine::kernel::framework::dma_buf::{DmaDirection, DmaError, DmaStream, SyncState};
-    use edgine::kernel::framework::frame::Frame;
-    use edgine::kernel::framework::mm::PhysAddr;
+    use edgine::kernel::privileged::dma_buf::{DmaDirection, DmaError, DmaStream, SyncState};
+    use edgine::kernel::privileged::frame::Frame;
+    use edgine::kernel::privileged::mm::PhysAddr;
 
     /// 构造测试用 Frame (host 无真实物理页).
     ///

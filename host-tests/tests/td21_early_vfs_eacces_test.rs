@@ -1,22 +1,22 @@
 //! I-29 补充验收: 权限矩阵 16 domain 全覆盖
 //!
-//! 原镜像内核 [src/kernel/framework/sgeg/capability.rs] 的 16 domain 矩阵契约,
-//! 现改引内核 `services::sgeg::policy` 真实实现 (host-test feature 暴露).
+//! 原镜像内核 [src/kernel/privileged/sgeg/capability.rs] 的 16 domain 矩阵契约,
+//! 现改引内核 `functions::sgeg::policy` 真实实现 (host-test feature 暴露).
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 CapBits / CapabilityMatrix / VIABLE_FLOOR 平行实现, 改引内核
-//! `services::sgeg::policy::{CapBits, CapDomain, CapMatrix, InMemoryMatrix, VIABLE_FLOOR}`
-//! 与 `services::sgeg::capability` 能力位常量; 原 `#![allow(dead_code)]` (F9 违规)
+//! `functions::sgeg::policy::{CapBits, CapDomain, CapMatrix, InMemoryMatrix, VIABLE_FLOOR}`
+//! 与 `functions::sgeg::capability` 能力位常量; 原 `#![allow(dead_code)]` (F9 违规)
 //! 随常量表删除而消失.
 //!
 //! ## 因内核 host 不可测已移除 (current_pwm 部分)
-//! 原镜像 `services/fs/mount.rs::current_pwm` (pwm==0 → EACCES) 与
-//! `framework/sgeg/api.rs::pwm_has_capability` 简化判定已移除:
+//! 原镜像 `functions/fs/mount.rs::current_pwm` (pwm==0 → EACCES) 与
+//! `privileged/sgeg/api.rs::pwm_has_capability` 简化判定已移除:
 //! - 内核 `current_pwm()` 为私有函数 (`fn`), 依赖 `sgeg::api::pwm_get_current()`
 //!   (读取当前进程凭证, host 上无进程上下文), 无法直接调用;
 //! - 且真实内核语义与镜像相反: `engine::check(0, ...) == true` (pwm==0 是
-//!   bootstrap 全权身份), 不存在"pwm==0 → EACCES"的拦截逻辑 (见 framework/sgeg/engine.rs).
-//! - 内核 `services/fs/mount.rs::mount_syscall` 完整路径依赖 VFS 全局状态, host 不可测.
+//!   bootstrap 全权身份), 不存在"pwm==0 → EACCES"的拦截逻辑 (见 privileged/sgeg/engine.rs).
+//! - 内核 `functions/fs/mount.rs::mount_syscall` 完整路径依赖 VFS 全局状态, host 不可测.
 //!
 //! ## 覆盖
 //! 1. 16 个 domain 全部参与 (grant/revoke/has/superset 路径全覆盖)
@@ -24,12 +24,12 @@
 //!    (内核 policy::VIABLE_FLOOR 追加 USER_MGMT::LIST, 与 capability::VIABLE_FLOOR 不同)
 //! 3. 越界 domain 静默失败
 
-use edgine::kernel::services::sgeg::capability::{
+use edgine::kernel::functions::sgeg::capability::{
     DEVICE_CAP_IRQ, DEVICE_CAP_MMIO, FS_CAP_CREATE, FS_CAP_EXECUTE, FS_CAP_READ, FS_CAP_WRITE,
     NET_CAP_RECV, NET_CAP_SEND, PROC_CAP_EXEC, PROC_CAP_FORK, PROC_CAP_KILL, SYS_CAP_ALL,
     USER_MGMT_CAP_CREATE, USER_MGMT_CAP_LIST,
 };
-use edgine::kernel::services::sgeg::policy::{
+use edgine::kernel::functions::sgeg::policy::{
     CAP_DOMAINS, CapBits, CapDomain, CapMatrix, CapabilityMatrix, InMemoryMatrix, VIABLE_FLOOR,
 };
 

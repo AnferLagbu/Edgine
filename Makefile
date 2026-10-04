@@ -24,7 +24,7 @@ ifeq ($(ARCH),aarch64)
     QEMU = qemu-system-aarch64
     QEMU_MACHINE = virt
     QEMU_CPU := max
-    LDSCRIPT = src/kernel/framework/link/aarch64.ld
+    LDSCRIPT = src/kernel/privileged/link/aarch64.ld
     ASFLAGS = -march=armv8-a
     CFLAGS_BASE = -std=c11 -Wall -Wextra -nostdinc -nostdlib -fPIC -fno-stack-protector \
                   -fno-asynchronous-unwind-tables -fno-ident \
@@ -39,7 +39,7 @@ else
     RUST_TARGET_KERNEL = x86_64-unknown-none
     QEMU = qemu-system-x86_64
     QEMU_CPU ?= qemu64
-    LDSCRIPT = src/kernel/framework/link/x86_64.ld
+    LDSCRIPT = src/kernel/privileged/link/x86_64.ld
     ASFLAGS = -f elf64 -w-zeroing
     CFLAGS_BASE = -std=c11 -m64 -Wall -Wextra -nostdinc -nostdlib -fPIC -fno-stack-protector \
                   -fno-asynchronous-unwind-tables -fno-ident -mcmodel=medium \
@@ -47,8 +47,8 @@ else
 endif
 
 CFLAGS = $(CFLAGS_BASE) \
-         -Isrc/kernel/framework/lib \
-         -Isrc/kernel/framework/net -Isrc/kernel/framework/net/arch -Isrc/kernel/framework/net/driver
+         -Isrc/kernel/privileged/lib \
+         -Isrc/kernel/privileged/net -Isrc/kernel/privileged/net/arch -Isrc/kernel/privileged/net/driver
 
 # 构建模式显式化 (方案 B): 裸机构建显式注入 build-std (src/rust/.cargo/config.toml
 # 已删全局 [unstable] build-std). 避免 cwd 隐式加载 — src/rust 目录内 host-target
@@ -255,30 +255,30 @@ $(RUST_LIB_TEST_DEBUG):
 	@echo "Building Rust test kernel (debug profile)..."
 	cd src/kernel && cargo build --profile test-debug --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --features kernel_test --target-dir ../../other/target/test-debug
 
-$(BUILD_DIR)/%.o: src/kernel/framework/%.asm
+$(BUILD_DIR)/%.o: src/kernel/privileged/%.asm
 	@mkdir -p $(dir $@)
 	$(AS) $(ASFLAGS) $< -o $@
 
-$(STAGE1_BIN): src/kernel/framework/boot/stage1.asm
+$(STAGE1_BIN): src/kernel/privileged/boot/stage1.asm
 	@mkdir -p $(BUILD_DIR)
 	$(AS) -f bin $< -o $@
 
-$(BUILD_DIR)/%.o: src/kernel/framework/boot/%.asm
+$(BUILD_DIR)/%.o: src/kernel/privileged/boot/%.asm
 	@mkdir -p $(BUILD_DIR)
 	$(AS) $(ASFLAGS) $< -o $@
 
 # AArch64 启动汇编 (GNU as)
 ifeq ($(ARCH),aarch64)
-$(BUILD_DIR)/boot.o: src/kernel/framework/boot/aarch64/start.S
+$(BUILD_DIR)/boot.o: src/kernel/privileged/boot/aarch64/start.S
 	@mkdir -p $(BUILD_DIR)
 	$(AS) $(ASFLAGS) $< -o $@
 endif
 
-$(BUILD_DIR)/gdt_asm.o: src/kernel/framework/gdt.asm
+$(BUILD_DIR)/gdt_asm.o: src/kernel/privileged/gdt.asm
 	@mkdir -p $(BUILD_DIR)
 	$(AS) $(ASFLAGS) $< -o $@
 
-$(BUILD_DIR)/switch.o: src/kernel/framework/proc/switch.asm
+$(BUILD_DIR)/switch.o: src/kernel/privileged/proc/switch.asm
 	@mkdir -p $(BUILD_DIR)
 	$(AS) $(ASFLAGS) $< -o $@
 

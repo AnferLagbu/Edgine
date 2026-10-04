@@ -19,7 +19,7 @@ Edgine 是一个从零实现的内核，使用 Rust 编写，基于 Asterinas �
 
 **树内并入的第三方源码**
 
-- **smoltcp** — TCP/IP 协议栈，以 vendored（本地并入）方式引入本仓库，位于 [`src/kernel/services/net/smoltcp/`](src/kernel/services/net/smoltcp/)。版本 v0.14.0，采用 0BSD 许可（保留上游许可文件 `LICENSE-0BSD.txt`），并在上游基础上做了本地化适配（lint 抑制、`SAFETY` 注释、`no_std` 适配）。上游项目：<https://github.com/smoltcp-rs/smoltcp>。
+- **smoltcp** — TCP/IP 协议栈，以 vendored（本地并入）方式引入本仓库，位于 [`src/kernel/functions/net/smoltcp/`](src/kernel/functions/net/smoltcp/)。版本 v0.14.0，采用 0BSD 许可（保留上游许可文件 `LICENSE-0BSD.txt`），并在上游基础上做了本地化适配（lint 抑制、`SAFETY` 注释、`no_std` 适配）。上游项目：<https://github.com/smoltcp-rs/smoltcp>。
 
 **经 Cargo 依赖引入的第三方 crate**（不随本仓库分发）
 

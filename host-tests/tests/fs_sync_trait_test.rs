@@ -23,11 +23,11 @@ fn read_src(rel: &str) -> String {
 
 #[test]
 fn trait_has_fs_sync_default() {
-    // 阶段 4b: FileSystem trait 已随 VFS 完整下沉迁至 services/fs/vfs_types.rs
-    let src = read_src("src/kernel/services/fs/vfs_types.rs");
+    // 阶段 4b: FileSystem trait 已随 VFS 完整下沉迁至 functions/fs/vfs_types.rs
+    let src = read_src("src/kernel/functions/fs/vfs_types.rs");
     let required = [
         "fn fs_sync(&self) -> KernelResult<()>",
-        "fn fs_sync(&self) -> crate::services::fs::vfs_types::KernelResult<()>",
+        "fn fs_sync(&self) -> crate::functions::fs::vfs_types::KernelResult<()>",
     ];
     assert!(
         required.iter().any(|s| src.contains(s)),
@@ -47,9 +47,9 @@ fn trait_has_fs_sync_default() {
 #[test]
 fn unkfs_overrides_fs_sync() {
     // 拆分后 FileSystem impl 在 unkfs_inode.rs (原在 unkfs.rs)
-    let src = read_src("src/kernel/services/fs/unkfs/unkfs_inode.rs");
+    let src = read_src("src/kernel/functions/fs/unkfs/unkfs_inode.rs");
     let impl_block = src
-        .rsplit_once("impl crate::services::fs::FileSystem for UnkfsData")
+        .rsplit_once("impl crate::functions::fs::FileSystem for UnkfsData")
         .map(|(_, b)| b)
         .unwrap_or("");
     assert!(
@@ -64,8 +64,8 @@ fn unkfs_overrides_fs_sync() {
 
 #[test]
 fn ramfs_inherits_default() {
-    // 阶段 4b: ramfs 实现已下沉 services/fs/ramfs_core/mod.rs
-    let src = read_src("src/kernel/services/fs/ramfs_core/mod.rs");
+    // 阶段 4b: ramfs 实现已下沉 functions/fs/ramfs_core/mod.rs
+    let src = read_src("src/kernel/functions/fs/ramfs_core/mod.rs");
     let impl_block = src
         .rsplit_once("impl FileSystem for RamFsFileSystem")
         .map(|(_, b)| b)
@@ -79,8 +79,8 @@ fn ramfs_inherits_default() {
 
 #[test]
 fn devfs_inherits_default() {
-    // 阶段 4b: devfs 实现已下沉 services/fs/devfs.rs
-    let src = read_src("src/kernel/services/fs/devfs.rs");
+    // 阶段 4b: devfs 实现已下沉 functions/fs/devfs.rs
+    let src = read_src("src/kernel/functions/fs/devfs.rs");
     let impl_block = src
         .rsplit_once("impl FileSystem for DevfsData")
         .map(|(_, b)| b)
@@ -93,8 +93,8 @@ fn devfs_inherits_default() {
 
 #[test]
 fn vfs_sync_uses_trait_dispatch() {
-    // 阶段 4b: vfs_sync 已随 VFS 完整下沉迁至 services/fs/vfs_mount.rs
-    let src = read_src("src/kernel/services/fs/vfs_mount.rs");
+    // 阶段 4b: vfs_sync 已随 VFS 完整下沉迁至 functions/fs/vfs_mount.rs
+    let src = read_src("src/kernel/functions/fs/vfs_mount.rs");
     let marker = "pub fn vfs_sync() -> i32 {";
     let start = src.find(marker).expect("vfs_sync not found");
     // 找下一个 `pub extern "C" fn` 之前的范围 (4b 后已无 #[no_mangle])
@@ -133,8 +133,8 @@ fn vfs_sync_uses_trait_dispatch() {
 
 #[test]
 fn vfs_sync_continues_on_error() {
-    // 阶段 4b: vfs_sync 已随 VFS 完整下沉迁至 services/fs/vfs_mount.rs
-    let src = read_src("src/kernel/services/fs/vfs_mount.rs");
+    // 阶段 4b: vfs_sync 已随 VFS 完整下沉迁至 functions/fs/vfs_mount.rs
+    let src = read_src("src/kernel/functions/fs/vfs_mount.rs");
     let marker = "pub fn vfs_sync() -> i32 {";
     let start = src.find(marker).expect("vfs_sync not found");
     let next_fn = src[start..]
@@ -151,8 +151,8 @@ fn vfs_sync_continues_on_error() {
 
 #[test]
 fn no_naked_match_fs_type_in_vfs_sync() {
-    // 阶段 4b: vfs_sync 已随 VFS 完整下沉迁至 services/fs/vfs_mount.rs
-    let src = read_src("src/kernel/services/fs/vfs_mount.rs");
+    // 阶段 4b: vfs_sync 已随 VFS 完整下沉迁至 functions/fs/vfs_mount.rs
+    let src = read_src("src/kernel/functions/fs/vfs_mount.rs");
     let marker = "pub fn vfs_sync() -> i32 {";
     let start = src.find(marker).expect("vfs_sync not found");
     let next_fn = src[start..]
@@ -169,8 +169,8 @@ fn no_naked_match_fs_type_in_vfs_sync() {
 
 #[test]
 fn trait_object_method_signature() {
-    // 阶段 4b: FileSystem trait 已随 VFS 完整下沉迁至 services/fs/vfs_types.rs
-    let src = read_src("src/kernel/services/fs/vfs_types.rs");
+    // 阶段 4b: FileSystem trait 已随 VFS 完整下沉迁至 functions/fs/vfs_types.rs
+    let src = read_src("src/kernel/functions/fs/vfs_types.rs");
     // 简化版: 验证 trait 块里有 fs_sync + KernelResult<()> 两关键词同时出现
     let trait_block = src
         .split_once("pub trait FileSystem: Send + Sync")
@@ -178,7 +178,7 @@ fn trait_object_method_signature() {
         .unwrap_or("");
     let has_full_sig = trait_block.contains("fn fs_sync(&self) -> KernelResult<()>")
         || trait_block
-            .contains("fn fs_sync(&self) -> crate::services::fs::vfs_types::KernelResult<()>");
+            .contains("fn fs_sync(&self) -> crate::functions::fs::vfs_types::KernelResult<()>");
     assert!(
         has_full_sig,
         "P3-I-18: fs_sync 签名必须符合 (KernelResult<()>)"
@@ -188,9 +188,9 @@ fn trait_object_method_signature() {
 #[test]
 fn unkfs_sync_returns_ioerror_on_nonzero() {
     // 拆分后 FileSystem impl 在 unkfs_inode.rs
-    let src = read_src("src/kernel/services/fs/unkfs/unkfs_inode.rs");
+    let src = read_src("src/kernel/functions/fs/unkfs/unkfs_inode.rs");
     let impl_block = src
-        .rsplit_once("impl crate::services::fs::FileSystem for UnkfsData")
+        .rsplit_once("impl crate::functions::fs::FileSystem for UnkfsData")
         .map(|(_, b)| b)
         .unwrap_or("");
     // r == 0 → Ok(()); != 0 → Err(Io)

@@ -27,14 +27,14 @@
 
 use std::fs;
 
-const KPTI: &str = "../src/kernel/framework/mm/kpti.rs";
-const VMM_X86: &str = "../src/kernel/framework/mm/vmm_x86_64.rs";
-const COW: &str = "../src/kernel/framework/mm/cow.rs";
-const SCHED: &str = "../src/kernel/framework/proc/scheduler.rs";
-const USER_PROC: &str = "../src/kernel/framework/proc/user_proc.rs";
-const PROC_OPS: &str = "../src/kernel/framework/proc/proc_ops.rs";
-const TSS: &str = "../src/kernel/framework/arch/x86_64/tss.rs";
-const LINKER_LD: &str = "../src/kernel/framework/link/x86_64.ld";
+const KPTI: &str = "../src/kernel/privileged/mm/kpti.rs";
+const VMM_X86: &str = "../src/kernel/privileged/mm/vmm_x86_64.rs";
+const COW: &str = "../src/kernel/privileged/mm/cow.rs";
+const SCHED: &str = "../src/kernel/privileged/proc/scheduler.rs";
+const USER_PROC: &str = "../src/kernel/privileged/proc/user_proc.rs";
+const PROC_OPS: &str = "../src/kernel/privileged/proc/proc_ops.rs";
+const TSS: &str = "../src/kernel/privileged/arch/x86_64/tss.rs";
+const LINKER_LD: &str = "../src/kernel/privileged/link/x86_64.ld";
 
 fn read(p: &str) -> String {
     fs::read_to_string(p).unwrap_or_else(|e| panic!("read {p}: {e}"))

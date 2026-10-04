@@ -11,9 +11,9 @@
 
 /// Edgine 内核 (独立 crate, 方案 D)。
 ///
-/// 内核本体全部逻辑 (framework TCB + services 业务) 位于 `kernel` crate。
+/// 内核本体全部逻辑 (privileged TCB + functions 业务) 位于 `kernel` crate。
 pub use kernel;
 
 // 重新导出常用类型 (兼容 `edgine::CpuInfo` / `edgine::LogLevel` 直达路径)
-pub use kernel::framework::cpu::CpuInfo;
-pub use kernel::framework::klog::LogLevel;
+pub use kernel::privileged::cpu::CpuInfo;
+pub use kernel::privileged::klog::LogLevel;

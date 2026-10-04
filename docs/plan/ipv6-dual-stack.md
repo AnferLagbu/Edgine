@@ -144,7 +144,7 @@
 ### Phase 5: 实现层 (SmoltcpNetStack) 适配
 
 - **条目**: `SmoltcpNetStack::bind/connect/...` 支持 IpAddr
-- **描述**: services 层实现处理 V4/V6
+- **描述**: functions 层实现处理 V4/V6
 - **方案**:
   - 接受 `NetEndpoint` (内含 `IpAddr`)
   - 转换为 smoltcp `IpEndpoint` via `endpoint_to_smol`
@@ -172,7 +172,7 @@
 
 ### Phase 8: 测试覆盖
 
-- **条目**: host-tests + framework/tests IPv6 用例
+- **条目**: host-tests + privileged/tests IPv6 用例
 - **描述**: V6 地址构造/转换/sockaddr_in6 解析/双栈 socket
 - **方案**:
   - `ipv6_addr_test.rs`: Ipv6Addr 构造/转换/match
@@ -193,7 +193,7 @@
 | 5 | smoltcp_impl.rs | +80 | -30 | 中 |
 | 6 | (远期) dhcp_policy.rs | +500 | - | 高 |
 | 7 | route.rs | +100 | -50 | 中 |
-| 8 | host-tests/ + framework/tests/ | +300 | - | 低 |
+| 8 | host-tests/ + privileged/tests/ | +300 | - | 低 |
 | **总计** (excl. Phase 6) | **9 文件** | **~930 行** | **~-280 行** | **1-2 周** |
 
 ---
@@ -214,7 +214,7 @@
 
 1. 双架构 `./ci/build.sh all` 0 error / 0 warning
 2. clippy 0 warning (`cargo clippy --release -- -D warnings`)
-3. 三审计通过 (services_boundary + safety_coverage + deadlock_matrix)
+3. 三审计通过 (functions_boundary + safety_coverage + deadlock_matrix)
 4. host-tests 全通过 (含新增 V6 测试)
 5. QEMU 集成测试通过 (sm_socket(AF_INET6) + bind + 收发)
 
@@ -222,10 +222,10 @@
 
 ## 关联文档
 
-- [docs/explain/explain-framekernel.md](../explain/explain-framekernel.md) — framekernel 架构 (framework/services 边界)
+- [docs/explain/explain-framekernel.md](../explain/explain-framekernel.md) — framekernel 架构 (privileged/functions 边界)
 - [docs/plan/smoltcp-framekernel-wrapper.md](./archive/smoltcp-framekernel-wrapper.md) — smoltcp 适配层历史设计
-- [src/kernel/framework/net/iface_trait.rs](../../src/kernel/framework/net/iface_trait.rs) — NetStack trait 主定义
-- [src/kernel/framework/net/init/sm_fi.rs](../../src/kernel/framework/net/init/sm_fi.rs) — FFI 翻译层
+- [src/kernel/privileged/net/iface_trait.rs](../../src/kernel/privileged/net/iface_trait.rs) — NetStack trait 主定义
+- [src/kernel/privileged/net/init/sm_fi.rs](../../src/kernel/privileged/net/init/sm_fi.rs) — FFI 翻译层
 
 ---
 

@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-I-16 services 层 OnceCell 抽象统一性 audit
+I-16 functions 层 OnceCell 抽象统一性 audit
 
-目标: 防止 services 层绕过项目自研 `services::sync::once::OnceCell`,
+目标: 防止 functions 层绕过项目自研 `functions::sync::once::OnceCell`,
      直接使用第三方 `spin::Once` (即锁层与抽象都不一致).
 
 设计契约:
-  - services 层使用 `services::sync::once::{Once, OnceCell}` 一次性原语
-  - `OnceCell<T>` 是 `framework::sync::once_lock::OnceLock<T>` 的类型别名
-  - 全项目仅 1 种 OnceCell 实现 (除 framework 自身实现外)
+  - functions 层使用 `functions::sync::once::{Once, OnceCell}` 一次性原语
+  - `OnceCell<T>` 是 `privileged::sync::once_lock::OnceLock<T>` 的类型别名
+  - 全项目仅 1 种 OnceCell 实现 (除 privileged 自身实现外)
 
 规则:
-  - `use spin::Once;` / `use spin::{...Once...};` / `use spin::once::Once;` 不应在 services/ 出现
-  - `spin::Once` 在其他位置出现也作为 warning 报告 (但 framework boot 文档可豁免)
-  - `services::sync::once::Once` / `services::sync::once::OnceCell` 是唯一允许的入口
+  - `use spin::Once;` / `use spin::{...Once...};` / `use spin::once::Once;` 不应在 functions/ 出现
+  - `spin::Once` 在其他位置出现也作为 warning 报告 (但 privileged boot 文档可豁免)
+  - `functions::sync::once::Once` / `functions::sync::once::OnceCell` 是唯一允许的入口
 
 退出码: 0 = 通过, 1 = 有违规
 """
@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-BASE = PROJECT_ROOT / "src" / "kernel" / "services"
+BASE = PROJECT_ROOT / "src" / "kernel" / "functions"
 
 # B01-08 修复: 正则支持 `pub use spin::Once` / `use spin::OnceCell` / `use spin::once::Once`
 # 等形式. 原正则锚定 `^\s*use` 不匹配 `pub use`, `Once\b` 词边界不命中 `OnceCell`.
@@ -40,12 +40,12 @@ SPIN_ONCE_IN_CODE = re.compile(
 
 def main() -> int:
     if not BASE.exists():
-        print(f"[ERR] services/ 目录不存在: {BASE}")
+        print(f"[ERR] functions/ 目录不存在: {BASE}")
         return 1
 
     violations = []
     rs_files = list(BASE.rglob("*.rs"))
-    print(f"  扫描文件: {len(rs_files)} 个 .rs (services/)")
+    print(f"  扫描文件: {len(rs_files)} 个 .rs (functions/)")
     print(f"  检查模式: use spin::Once / spin::Once 残留")
     print("  " + "-" * 60)
 
@@ -76,12 +76,12 @@ def main() -> int:
         if len(violations) > 20:
             print(f"    ... 另有 {len(violations) - 20} 处省略")
         print("  " + "-" * 60)
-        print("  ✗ services 层不应绕过项目自研 OnceCell 抽象")
-        print("  → 改用 `crate::services::sync::once::{Once, OnceCell}`")
+        print("  ✗ functions 层不应绕过项目自研 OnceCell 抽象")
+        print("  → 改用 `crate::functions::sync::once::{Once, OnceCell}`")
         return 1
     else:
-        print(f"  ✓ services 层 0 处 spin::Once 残留")
-        print(f"  ✓ 全项目统一 OnceCell 抽象 (services::sync::once)")
+        print(f"  ✓ functions 层 0 处 spin::Once 残留")
+        print(f"  ✓ 全项目统一 OnceCell 抽象 (functions::sync::once)")
         return 0
 
 

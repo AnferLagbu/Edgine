@@ -5,7 +5,7 @@
 // 与 `vmm_aarch64.rs` 里各自私有的 `phys_to_virt` / `virt_to_phys` 副本、以及
 // `iomem.rs` 中按架构分派的 `HIGH_ALIAS_BASE + phys`. 内核迁至高半区
 // (`KERNEL_BASE = 0xFFFF_0000_0000_0000`) 后, 这些副本要么与唯一入口等价、要么
-// 因基数分裂而失效, 故收敛为唯一入口 `framework::mm::{phys_to_virt, virt_to_phys}`
+// 因基数分裂而失效, 故收敛为唯一入口 `privileged::mm::{phys_to_virt, virt_to_phys}`
 // (别名基数唯一来源 = `mm::KERNEL_BASE`, 独立常量 `HIGH_ALIAS_BASE` 已删除).
 //
 // 本文件锁定该收敛的装配面, 防副本回潮. 数值正确性由 QEMU 启动 (PMM 初始化 +
@@ -15,11 +15,11 @@ use std::fs;
 use std::path::PathBuf;
 
 const KERNEL_DIR: &str = "../src/kernel";
-const MM_DIR: &str = "../src/kernel/framework/mm";
-const MM_MOD: &str = "../src/kernel/framework/mm/mod.rs";
-const VMM_AARCH64: &str = "../src/kernel/framework/mm/vmm_aarch64.rs";
-const IOMEM: &str = "../src/kernel/framework/iomem.rs";
-const PMM: &str = "../src/kernel/framework/mm/pmm.rs";
+const MM_DIR: &str = "../src/kernel/privileged/mm";
+const MM_MOD: &str = "../src/kernel/privileged/mm/mod.rs";
+const VMM_AARCH64: &str = "../src/kernel/privileged/mm/vmm_aarch64.rs";
+const IOMEM: &str = "../src/kernel/privileged/iomem.rs";
+const PMM: &str = "../src/kernel/privileged/mm/pmm.rs";
 const LIB: &str = "../src/kernel/lib.rs";
 
 fn read(path: &str) -> String {
@@ -77,7 +77,7 @@ fn test_aarch64_kernel_base_is_ttbr1_window_base() {
     );
 }
 
-/// 2. `framework/mm/` 子树内 `phys_to_virt` / `virt_to_phys` 只准有 `mod.rs` 一处定义.
+/// 2. `privileged/mm/` 子树内 `phys_to_virt` / `virt_to_phys` 只准有 `mod.rs` 一处定义.
 ///
 /// 私有副本是迁移前"恒等映射下换算无代价"的产物; 基数变更后副本会成为静默漂移点.
 #[test]
@@ -94,7 +94,7 @@ fn test_pa_va_conversion_has_single_definition() {
             assert!(
                 !src.contains(def),
                 "{} 不得再定义 `{def}` —— PA→VA 换算唯一入口为 \
-                 `framework::mm::{{phys_to_virt, virt_to_phys}}` (L1-04)",
+                 `privileged::mm::{{phys_to_virt, virt_to_phys}}` (L1-04)",
                 file.display()
             );
         }

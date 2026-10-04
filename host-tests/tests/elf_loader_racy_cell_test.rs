@@ -1,7 +1,7 @@
 //! ELF loader RacyCell 静态分配器消除验证 (P1-I-32)
 //!
 //! 验证:
-//! 1. `src/kernel/framework/proc/user_proc.rs` 和 `src/kernel/framework/proc/elf.rs` 中
+//! 1. `src/kernel/privileged/proc/user_proc.rs` 和 `src/kernel/privileged/proc/elf.rs` 中
 //!    不再使用 `RacyCell` 或 `static mut` 静态分配器加载 ELF
 //! 2. 8KB [u64; 1024] 临时缓冲可成功在栈上分配 (编译期 + 运行时)
 //! 3. 双实例 (模拟 SMP 双核并发) 各自有独立 buffer, 数据不串台
@@ -105,8 +105,8 @@ fn stack_buffer_8kb_fits() {
 #[test]
 fn elf_loader_source_uses_no_racy_cell_or_static_mut() {
     // P1-I-32 验收: 源码静态扫描 (在 host 端做文本搜索模拟)
-    // 内核 `src/kernel/framework/proc/user_proc.rs` 不应再 import 或 use RacyCell 加载 ELF
-    let source = include_str!("../../src/kernel/framework/proc/user_proc.rs");
+    // 内核 `src/kernel/privileged/proc/user_proc.rs` 不应再 import 或 use RacyCell 加载 ELF
+    let source = include_str!("../../src/kernel/privileged/proc/user_proc.rs");
     // 注释中提及 RacyCell 是允许的 (解释为何不再用), 但实际声明/创建不应存在
     let has_racy_cell_decl = source.contains("RacyCell<[u64; 1024]>")
         || source.contains("RacyCell :: new([0; 1024])")

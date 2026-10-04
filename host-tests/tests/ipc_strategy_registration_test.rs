@@ -53,7 +53,7 @@ fn registration_has_contract_comment() {
 #[test]
 fn current_ipc_strategy_returns_option() {
     // DECISION-K: current_ipc_strategy() 返回 Option, 不 panic (逻辑错误降级原则)
-    let src = read_src("src/kernel/framework/ipc/strategy.rs");
+    let src = read_src("src/kernel/privileged/ipc/strategy.rs");
     assert!(
         src.contains("pub fn current_ipc_strategy() -> Option<&'static dyn IpcStrategy>"),
         "strategy.rs 必须返回 Option (未注册降级, 不 panic)"
@@ -71,9 +71,9 @@ fn current_ipc_strategy_returns_option() {
 #[test]
 fn ffi_call_sites_degrade_to_enosys() {
     // DECISION-K: 13 处 FFI 调用点未注册降级 ENOSYS (除 is_pipe_fd/create 类哨兵)
-    let pipe = read_src("src/kernel/framework/ipc/pipe.rs");
-    let shm = read_src("src/kernel/framework/ipc/shm.rs");
-    let msgq = read_src("src/kernel/framework/ipc/msgq.rs");
+    let pipe = read_src("src/kernel/privileged/ipc/pipe.rs");
+    let shm = read_src("src/kernel/privileged/ipc/shm.rs");
+    let msgq = read_src("src/kernel/privileged/ipc/msgq.rs");
     // 降级标记: 每处 let-else + klog_warn + ENOSYS/无效 id
     let ffi_degrades = [
         ("ipc_pipe_read", pipe.contains("ENOSYS")),

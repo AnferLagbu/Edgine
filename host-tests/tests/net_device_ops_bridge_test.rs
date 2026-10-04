@@ -1,15 +1,15 @@
 //! 批次 Z ④: NetOps 安全桥契约测试
 //!
-//! 验证 framework `net_device_ops` 桥 (src/kernel/framework/net/net_device_ops.rs):
+//! 验证 privileged `net_device_ops` 桥 (src/kernel/privileged/net/net_device_ops.rs):
 //! 1. `register_net_device::<T>` 产出可用 `NetOps` 指针表 (Box::leak + 泛型桥)
 //! 2. extern "C" 回调正确转发到 `T: NetDeviceOps` 方法 (send/try_receive/get_mac/handle_irq)
 //! 3. send null/len 守卫 (审核 P2-3): 空指针/零长 → -1
-//! 4. `net_register_services_driver` set-once 语义 (DECISION-K 注册契约槽)
+//! 4. `net_register_functions_driver` set-once 语义 (DECISION-K 注册契约槽)
 //!
 //! 直接引用内核真实源码 (host-test feature), mock 设备仅为本测试构造。
 
-use edgine::kernel::framework::net::{
-    NetDeviceOps, NetDeviceRegistration, net_register_services_driver, register_net_device,
+use edgine::kernel::privileged::net::{
+    NetDeviceOps, NetDeviceRegistration, net_register_functions_driver, register_net_device,
 };
 
 /// 桥契约测试用 mock 设备 (记录调用与数据往返)。
@@ -94,12 +94,12 @@ fn test_bridge_send_guards() {
 }
 
 #[test]
-fn test_services_driver_slot_set_once() {
+fn test_functions_driver_slot_set_once() {
     // DECISION-K 注册契约槽: 首次注册 Ok, 重复注册 Err (OnceLock set-once)。
     // 本测试是本二进制内唯一注册方, 避免并行测试竞争。
     fn probe_no_device() -> Option<NetDeviceRegistration> {
         None
     }
-    assert!(net_register_services_driver(probe_no_device).is_ok());
-    assert!(net_register_services_driver(probe_no_device).is_err());
+    assert!(net_register_functions_driver(probe_no_device).is_ok());
+    assert!(net_register_functions_driver(probe_no_device).is_err());
 }

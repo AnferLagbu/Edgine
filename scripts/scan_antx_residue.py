@@ -109,7 +109,7 @@ EXCLUDE_DIRS = {
 
 # smoltcp 是第三方 vendored, 排除
 THIRD_PARTY_DIRS = {
-    "src/kernel/services/net/smoltcp",  # smoltcp 0.13 vendored
+    "src/kernel/functions/net/smoltcp",  # smoltcp 0.13 vendored
 }
 
 # 历史归档: 保留 (不可改)

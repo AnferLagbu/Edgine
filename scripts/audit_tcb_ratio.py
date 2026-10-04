@@ -2,7 +2,7 @@
 """
 E10: TCB 度量自动化脚本
 
-统计 framework/ 和 services/ 的代码量, 计算 TCB 占比,
+统计 privileged/ 和 functions/ 的代码量, 计算 TCB 占比,
 输出结构化报告. 用于 CI 中监控 TCB 膨胀.
 
 退出码: 0 = 通过 (TCB < 30%), 1 = 超标
@@ -15,8 +15,8 @@ import subprocess
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent.parent
-FRAMEWORK = BASE / 'src' / 'kernel' / 'framework'
-SERVICES = BASE / 'src' / 'kernel' / 'services'
+PRIVILEGED = BASE / 'src' / 'kernel' / 'privileged'
+FUNCTIONS = BASE / 'src' / 'kernel' / 'functions'
 TARGET_DIR = BASE / 'other' / 'target' / 'audit'
 
 TCB_TARGET_RATIO = 30.0  # 目标: TCB 占比 < 30%
@@ -25,11 +25,11 @@ TCB_TARGET_RATIO = 30.0  # 目标: TCB 占比 < 30%
 def _should_exclude(rs: Path) -> bool:
     """判断文件是否应排除出 TCB 统计 (测试代码、第三方库)"""
     parts = rs.relative_to(BASE).parts
-    # framework/tests/ — 测试代码不参与运行时执行, 不是 TCB
+    # privileged/tests/ — 测试代码不参与运行时执行, 不是 TCB
     if 'tests' in parts:
         idx = parts.index('tests')
-        # framework/tests/ 下的测试文件
-        if idx > 0 and parts[idx - 1] == 'framework':
+        # privileged/tests/ 下的测试文件
+        if idx > 0 and parts[idx - 1] == 'privileged':
             return True
     # smoltcp 由单独逻辑排除
     if 'smoltcp' in parts:
@@ -141,14 +141,14 @@ def main():
                         help='严格阈值, 超标 exit 1')
     args = parser.parse_args()
 
-    fw_loc_raw = count_loc_raw(FRAMEWORK)
-    sv_loc_raw = count_loc_raw(SERVICES)
-    fw_loc = count_loc(FRAMEWORK)
-    sv_loc = count_loc(SERVICES)
-    fw_unsafe = count_unsafe(FRAMEWORK)
-    sv_unsafe = count_unsafe(SERVICES)
-    fw_pub_fn = count_pub_fn(FRAMEWORK)
-    sv_pub_fn = count_pub_fn(SERVICES)
+    fw_loc_raw = count_loc_raw(PRIVILEGED)
+    sv_loc_raw = count_loc_raw(FUNCTIONS)
+    fw_loc = count_loc(PRIVILEGED)
+    sv_loc = count_loc(FUNCTIONS)
+    fw_unsafe = count_unsafe(PRIVILEGED)
+    sv_unsafe = count_unsafe(FUNCTIONS)
+    fw_pub_fn = count_pub_fn(PRIVILEGED)
+    sv_pub_fn = count_pub_fn(FUNCTIONS)
 
     total_loc = fw_loc + sv_loc
     tcb_ratio = (fw_loc / total_loc * 100) if total_loc > 0 else 0
@@ -156,11 +156,11 @@ def main():
     # smoltcp / tests 排除后的自研 TCB
     # count_loc / count_loc_raw 已通过 _should_exclude 排除 smoltcp 和 tests,
     # fw_loc 即为自研非测试 effective 行数
-    # B01-12 修复: smoltcp 从 framework/net/ 迁移到 services/net/ (决策 3-B, 2026-06-24).
-    smoltcp_dir = SERVICES / 'net' / 'smoltcp'
+    # B01-12 修复: smoltcp 从 privileged/net/ 迁移到 functions/net/ (决策 3-B, 2026-06-24).
+    smoltcp_dir = FUNCTIONS / 'net' / 'smoltcp'
     smoltcp_loc = count_loc_raw(smoltcp_dir, apply_exclusions=False) if smoltcp_dir.is_dir() else 0
     smoltcp_loc_eff = count_loc(smoltcp_dir, apply_exclusions=False) if smoltcp_dir.is_dir() else 0
-    tests_dir = FRAMEWORK / 'tests'
+    tests_dir = PRIVILEGED / 'tests'
     tests_loc = count_loc_raw(tests_dir, apply_exclusions=False) if tests_dir.is_dir() else 0
     tests_loc_eff = count_loc(tests_dir, apply_exclusions=False) if tests_dir.is_dir() else 0
     self_fw_loc_raw = fw_loc_raw  # 已排除 smoltcp + tests
@@ -168,18 +168,18 @@ def main():
     self_tcb_ratio = (self_fw_loc / total_loc * 100) if total_loc > 0 else 0
 
     # 模块级分解
-    fw_modules = module_breakdown(FRAMEWORK)
-    sv_modules = module_breakdown(SERVICES)
+    fw_modules = module_breakdown(PRIVILEGED)
+    sv_modules = module_breakdown(FUNCTIONS)
 
     report = {
-        'framework': {
+        'privileged': {
             'loc_raw': fw_loc_raw,
             'loc': fw_loc,
             'unsafe_lines': fw_unsafe,
             'pub_fn': fw_pub_fn,
             'modules': fw_modules,
         },
-        'services': {
+        'functions': {
             'loc_raw': sv_loc_raw,
             'loc': sv_loc,
             'unsafe_lines': sv_unsafe,
@@ -200,20 +200,20 @@ def main():
     print("=" * 70)
     print("TCB Report")
     print("=" * 70)
-    print(f"  framework:  {fw_loc_raw:>10,} LoC (raw), {fw_loc:>10,} (effective)")
-    print(f"  services:   {sv_loc_raw:>10,} LoC (raw), {sv_loc:>10,} (effective)")
+    print(f"  privileged:  {fw_loc_raw:>10,} LoC (raw), {fw_loc:>10,} (effective)")
+    print(f"  functions:   {sv_loc_raw:>10,} LoC (raw), {sv_loc:>10,} (effective)")
     print(f"  smoltcp:    {smoltcp_loc:>10,} LoC (3rd-party, excluded from self-TCB)")
     print(f"  tests:      {tests_loc:>10,} LoC (test code, excluded from TCB)")
     print(f"  self-fw:    {self_fw_loc_raw:>10,} LoC (raw, excl. smoltcp+tests)")
-    print(f"  unsafe:     {fw_unsafe:>10,} lines (framework), {sv_unsafe:>5,} (services)")
-    print(f"  pub fn:     {fw_pub_fn:>10,} (framework), {sv_pub_fn:>5,} (services)")
+    print(f"  unsafe:     {fw_unsafe:>10,} lines (privileged), {sv_unsafe:>5,} (functions)")
+    print(f"  pub fn:     {fw_pub_fn:>10,} (privileged), {sv_pub_fn:>5,} (functions)")
     print(f"  TCB ratio:  {tcb_ratio:>10.1f}% (excl. smoltcp+tests)")
     print(f"  Target:     <{TCB_TARGET_RATIO:.0f}%")
     print(f"  Status:     {report['status']}")
     print("=" * 70)
 
-    # Top 10 framework 模块
-    print("\nTop framework modules (by LoC):")
+    # Top 10 privileged 模块
+    print("\nTop privileged modules (by LoC):")
     sorted_mods = sorted(fw_modules.items(), key=lambda x: x[1]['loc'], reverse=True)
     for name, data in sorted_mods[:10]:
         unsafe_str = f", {data['unsafe']} unsafe" if data['unsafe'] > 0 else ""

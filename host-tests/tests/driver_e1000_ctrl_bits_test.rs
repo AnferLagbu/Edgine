@@ -6,7 +6,7 @@
 //! ## 背景
 //!
 //! ISSUE-RT-001 根因: x86_64 + QEMU 默认 e1000 (82540EM, 8254x 家族) 初始化挂起.
-//! 定位为 `framework/driver/net/e1000_io.rs` 中若干寄存器**位域常量写错**:
+//! 定位为 `privileged/driver/net/e1000_io.rs` 中若干寄存器**位域常量写错**:
 //!
 //! - `E1000_CTRL_RST` 误用 `1 << 31`: 该位实为 `E1000_CTRL_PHY_RST` (PHY 复位),
 //!   82540EM 不会因它触发全局复位 -> 复位轮询超时 -> 初始化失败.
@@ -48,8 +48,8 @@ fn const_line<'a>(src: &'a str, name: &str) -> &'a str {
         .unwrap_or_else(|| panic!("未找到常量定义行: {}", name))
 }
 
-const IO_RS: &str = "src/kernel/framework/driver/net/e1000_io.rs";
-const DRIVER_RS: &str = "src/kernel/services/driver/net/e1000.rs";
+const IO_RS: &str = "src/kernel/privileged/driver/net/e1000_io.rs";
+const DRIVER_RS: &str = "src/kernel/functions/driver/net/e1000.rs";
 
 #[test]
 fn test_ctrl_rst_is_bit26_global_reset() {
@@ -101,13 +101,13 @@ fn test_rctl_bsize_2048_is_zero() {
 
 #[test]
 fn test_driver_still_references_these_constants() {
-    // 契约闭环: services 驱动仍引用这三个常量, 避免常量与实装脱节.
+    // 契约闭环: functions 驱动仍引用这三个常量, 避免常量与实装脱节.
     let src = read(DRIVER_RS);
     for name in [
         "E1000_CTRL_RST",
         "E1000_CTRL_FRCDPX",
         "E1000_RCTL_BSIZE_2048",
     ] {
-        assert!(src.contains(name), "services e1000.rs 未引用 {}", name);
+        assert!(src.contains(name), "functions e1000.rs 未引用 {}", name);
     }
 }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! services/mm/mremap 参数验证单元测试
+//! functions/mm/mremap 参数验证单元测试
 
 use edgine_tests::{
     mremap_validate, mremap_validate_flags, Errno, MREMAP_MAYMOVE,

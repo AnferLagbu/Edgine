@@ -4,7 +4,7 @@
 //!   - vendored 副本的版本 = 0.14.x (Cargo.toml) — 当前 0.14.0 (升级于 2026-09-13)
 //!   - edgine 通过 path 依赖消费, 不用 crates.io
 //!   - 上游一致性 — 未做 vendored 之外的本地 patch (git log 验证; 本地化走 scripts/smoltcp-localization/)
-//!   - REVAL-W W3.1: smoltcp 从 framework/ 迁到 services/ (决策 3-B, FK 合规)
+//!   - REVAL-W W3.1: smoltcp 从 privileged/ 迁到 functions/ (决策 3-B, FK 合规)
 //!
 //! 任何变更需要更新 I-08 评估并说明理由.
 
@@ -21,9 +21,9 @@ fn repo_root() -> std::path::PathBuf {
 
 #[test]
 fn test_smoltcp_vendored_version_is_0_14() {
-    // W3.1 (2026-06-24): smoltcp 从 framework/ 迁到 services/ (决策 3-B)
+    // W3.1 (2026-06-24): smoltcp 从 privileged/ 迁到 functions/ (决策 3-B)
     // 2026-09-13: 0.13.1 → 0.14.0 升级
-    let manifest = repo_root().join("src/kernel/services/net/smoltcp/Cargo.toml");
+    let manifest = repo_root().join("src/kernel/functions/net/smoltcp/Cargo.toml");
     let content = fs::read_to_string(&manifest)
         .unwrap_or_else(|e| panic!("无法读取 {}: {}", manifest.display(), e));
 
@@ -97,7 +97,7 @@ fn test_no_uncommitted_local_patch_to_vendored_smoltcp() {
             "status",
             "--porcelain",
             "--",
-            "src/kernel/services/net/smoltcp/",
+            "src/kernel/functions/net/smoltcp/",
         ])
         .current_dir(&root)
         .output()

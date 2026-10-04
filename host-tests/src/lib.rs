@@ -14,12 +14,12 @@
 //! ## B08-12/B08-14 迁移 (2026-09-06)
 //! 原平行实现 unkfs/(19 文件) + unkfs_mock/ 虚拟内核树已删除 — host-tests 经
 //! `edgine = { path = "../src/rust", features = ["host-test"] }` 直接引用内核
-//! 真实源码 (services/framework host-test 暴露面). 详见 docs/plan/
+//! 真实源码 (functions/privileged host-test 暴露面). 详见 docs/plan/
 //! eliminate-parallel-implementations.md.
 //!
 //! ## H-04 迁移 (2026-09-09)
 //! `buddy` 平行实现已删除 — buddy 测试移至集成测试 `tests/pmm_buddy_host_test.rs`,
-//! 经 `MetaStore` 载体注入 `VecMetaStore` 直接驱动内核真实 `framework::mm::pmm`.
+//! 经 `MetaStore` 载体注入 `VecMetaStore` 直接驱动内核真实 `privileged::mm::pmm`.
 //!
 //! ## 集成测试 (Cargo 自动发现)
 //! `tests/` 目录下的每个 `.rs` 文件被 Cargo 视为独立测试二进制, 不在

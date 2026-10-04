@@ -19,7 +19,7 @@ This project relies on the following external project code in its design and imp
 
 **Third-party source vendored into this repository**
 
-- **smoltcp** — the TCP/IP stack, vendored (inlined) into this repository at [`src/kernel/services/net/smoltcp/`](src/kernel/services/net/smoltcp/). Version v0.14.0, licensed under 0BSD (the upstream `LICENSE-0BSD.txt` is retained), with local adaptations on top of upstream (lint suppressions, `SAFETY` comments, `no_std` adaptation). Upstream project: <https://github.com/smoltcp-rs/smoltcp>.
+- **smoltcp** — the TCP/IP stack, vendored (inlined) into this repository at [`src/kernel/functions/net/smoltcp/`](src/kernel/functions/net/smoltcp/). Version v0.14.0, licensed under 0BSD (the upstream `LICENSE-0BSD.txt` is retained), with local adaptations on top of upstream (lint suppressions, `SAFETY` comments, `no_std` adaptation). Upstream project: <https://github.com/smoltcp-rs/smoltcp>.
 
 **Third-party crates pulled in via Cargo** (not distributed with this repository)
 

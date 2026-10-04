@@ -23,12 +23,12 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
-# 扫描范围 (2026-09-13 用户裁决扩展): framework + services 双子树.
-# 扩展背景: 第二十六批 unkfs/dedup.rs ABBA 死锁位于 services 子树, 原单根
-# 扫描对 services 锁使用不可见 (fail-closed 原则: 不可检查 = 漏检).
+# 扫描范围 (2026-09-13 用户裁决扩展): privileged + functions 双子树.
+# 扩展背景: 第二十六批 unkfs/dedup.rs ABBA 死锁位于 functions 子树, 原单根
+# 扫描对 functions 锁使用不可见 (fail-closed 原则: 不可检查 = 漏检).
 BASES = [
-    Path('src/kernel/framework'),
-    Path('src/kernel/services'),
+    Path('src/kernel/privileged'),
+    Path('src/kernel/functions'),
 ]
 
 # 中断上下文的函数白名单 (这些函数中使用的 spin::Mutex 视为高风险)
@@ -126,7 +126,7 @@ def scan_file(filepath):
     # - spin::Mutex<T>
     # - spin::RwLock
     # - spin::Once
-    # - .lock() (不区分, 因为 framework/sync 内部也有 .lock())
+    # - .lock() (不区分, 因为 privileged/sync 内部也有 .lock())
     # - .read() / .write()
 
     # 两阶段扫描:
@@ -155,21 +155,21 @@ def scan_file(filepath):
 
     # 安全锁字段模式: 标记这些字段为 IRQ 安全 (即 .lock() 不会产生 CRITICAL 警告)
     # B01-06 返工: 同样支持带路径的形式
-    # 2026-09-13 扩展: services::sync::irq_lock::IrqSpinLock 为 framework
-    # IrqSpinLock 的类型别名 (services 层 re-export), 全路径声明同样视为安全.
+    # 2026-09-13 扩展: functions::sync::irq_lock::IrqSpinLock 为 privileged
+    # IrqSpinLock 的类型别名 (functions 层 re-export), 全路径声明同样视为安全.
     safe_lock_field_pattern = re.compile(
         r'\b(?:pub(?:\([^)]*\))?\s+)?(\w+)\s*:\s*'
-        r'(?:crate::framework::sync::irq_spinlock::|framework::sync::irq_spinlock::|'
-        r'crate::services::sync::irq_lock::|services::sync::irq_lock::)?'
-        r'IrqSpinLock|FrameworkIrqSpinLock|'
+        r'(?:crate::privileged::sync::irq_spinlock::|privileged::sync::irq_spinlock::|'
+        r'crate::functions::sync::irq_lock::|functions::sync::irq_lock::)?'
+        r'IrqSpinLock|PrivilegedIrqSpinLock|'
         r'(?:crate::)?sync(?:::\s*\w+\s*)*::\s*'
         r'IrqSpinLock\b',
     )
     safe_lock_static_pattern = re.compile(
         r'\bstatic\s+(\w+)\s*:\s*'
-        r'(?:crate::framework::sync::irq_spinlock::|framework::sync::irq_spinlock::|'
-        r'crate::services::sync::irq_lock::|services::sync::irq_lock::)?'
-        r'IrqSpinLock|FrameworkIrqSpinLock|'
+        r'(?:crate::privileged::sync::irq_spinlock::|privileged::sync::irq_spinlock::|'
+        r'crate::functions::sync::irq_lock::|functions::sync::irq_lock::)?'
+        r'IrqSpinLock|PrivilegedIrqSpinLock|'
         r'(?:crate::)?sync(?:::\s*\w+\s*)*::\s*'
         r'IrqSpinLock\b',
     )
@@ -266,19 +266,19 @@ def scan_file(filepath):
                 # 一律视为 unsafe. 详细分类暂不强制.
                 bare_aliases[alias] = 'unsafe'
             continue
-        # 2026-09-13 扩展: services::sync 是 framework::sync 的 re-export 层
+        # 2026-09-13 扩展: functions::sync 是 privileged::sync 的 re-export 层
         # (DECISION-K 边界), 形如
-        # `use crate::services::sync::irq_lock::IrqSpinLock as Mutex;`
+        # `use crate::functions::sync::irq_lock::IrqSpinLock as Mutex;`
         # 的导入按末段类型分类: IrqSpinLock → safe, 其余 → unsafe.
-        m_use_services = re.search(
-            r'use\s+(?:crate::)?services::sync'
+        m_use_functions = re.search(
+            r'use\s+(?:crate::)?functions::sync'
             r'(?:::\s*\w+\s*)*'
             r'::\s*(\w+)\s*(?:\s+as\s+(\w+))?\s*;',
             line,
         )
-        if m_use_services:
-            orig = m_use_services.group(1)
-            alias = m_use_services.group(2) or orig
+        if m_use_functions:
+            orig = m_use_functions.group(1)
+            alias = m_use_functions.group(2) or orig
             bare_aliases[alias] = 'safe' if orig == 'IrqSpinLock' else 'unsafe'
             continue
         # pub type SpinMutex = spin::mutex::SpinMutex<T>;
@@ -355,7 +355,7 @@ def scan_file(filepath):
         r'(?:(?P<field>\w+)\.)?(?P<method>lock|read|write)\s*\('
     )
 
-    framework_lock_methods = {'with', 'with_mut', 'lock_irqsave', 'try_lock'}
+    privileged_lock_methods = {'with', 'with_mut', 'lock_irqsave', 'try_lock'}
 
     for lineno_1, line in enumerate(lines, start=1):
         if not line.strip():
@@ -371,11 +371,11 @@ def scan_file(filepath):
             method = m.group('method')
 
             # 跳过非锁方法
-            if method in framework_lock_methods:
+            if method in privileged_lock_methods:
                 continue
 
-            # 跳过 framework::sync 类型的锁 (它们的 method 不会通过 .lock() 暴露)
-            if 'framework::sync' in line or 'sync::irq_spinlock' in line:
+            # 跳过 privileged::sync 类型的锁 (它们的 method 不会通过 .lock() 暴露)
+            if 'privileged::sync' in line or 'sync::irq_spinlock' in line:
                 continue
 
             # 跳过非字段调用 (例如: spin::Mutex::new, .call_once, 等)
@@ -432,10 +432,10 @@ def scan_file(filepath):
     spin_once_decl = re.compile(r'\bspin::Once\b')
     spin_once_cell_decl = re.compile(r'\bspin::OnceCell\b')
 
-    # framework 的安全锁 (不应被报告)
-    framework_lock_patterns = [
-        re.compile(r'\bframework::sync::(irq_spinlock|spinlock|mutex|rwlock|seqlock|once_lock|once_cell)\b'),
-        re.compile(r'\bcrate::framework::sync::(irq_spinlock|spinlock|mutex|rwlock|seqlock|once_lock|once_cell)\b'),
+    # privileged 的安全锁 (不应被报告)
+    privileged_lock_patterns = [
+        re.compile(r'\bprivileged::sync::(irq_spinlock|spinlock|mutex|rwlock|seqlock|once_lock|once_cell)\b'),
+        re.compile(r'\bcrate::privileged::sync::(irq_spinlock|spinlock|mutex|rwlock|seqlock|once_lock|once_cell)\b'),
         re.compile(r'\bsync::(irq_spinlock|spinlock|mutex|rwlock|seqlock|once_lock|once_cell)\b'),
     ]
 
@@ -468,9 +468,9 @@ def scan_file(filepath):
                 if spin_type not in code_part:
                     continue
 
-            # 简化: 只要不包含 'framework::sync' 就算第三方使用
-            is_framework_use = any(p.search(line) for p in framework_lock_patterns)
-            if is_framework_use:
+            # 简化: 只要不包含 'privileged::sync' 就算第三方使用
+            is_privileged_use = any(p.search(line) for p in privileged_lock_patterns)
+            if is_privileged_use:
                 continue
 
             # 检查是否在中断上下文
@@ -483,7 +483,7 @@ def scan_file(filepath):
                     'type': 'IRQ_CONTEXT_UNSAFE_LOCK_DECL',
                     'lock': spin_type,
                     'function': fn_name,
-                    'message': f'中断上下文相关函数 `{fn_name}` 引用第三方 {spin_type} 声明, 应替换为 framework::sync::irq_spinlock::IrqSpinLock',
+                    'message': f'中断上下文相关函数 `{fn_name}` 引用第三方 {spin_type} 声明, 应替换为 privileged::sync::irq_spinlock::IrqSpinLock',
                     'code': line.strip()[:200],
                 })
             else:
@@ -495,7 +495,7 @@ def scan_file(filepath):
                     'type': 'THIRD_PARTY_LOCK_USE',
                     'lock': spin_type,
                     'function': fn_name,
-                    'message': f'使用第三方 {spin_type} (非中断上下文, 但仍应迁移到 framework::sync)',
+                    'message': f'使用第三方 {spin_type} (非中断上下文, 但仍应迁移到 privileged::sync)',
                     'code': line.strip()[:200],
                 })
 

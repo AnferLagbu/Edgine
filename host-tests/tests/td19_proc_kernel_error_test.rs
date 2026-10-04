@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-// TD-19: services::proc::ElfError / MlockError / ProcError 收敛到 KernelError (TD-08 V5)
+// TD-19: functions::proc::ElfError / MlockError / ProcError 收敛到 KernelError (TD-08 V5)
 //
 // 验收:
 //   - proc/elf.rs: ElfError 12 字段 → 7 ELF 特有 + 1 Kernel 包装
@@ -13,9 +13,9 @@
 use std::fs;
 use std::path::Path;
 
-const ELF_RS: &str = "src/kernel/services/proc/elf.rs";
-const MLOCK_RS: &str = "src/kernel/services/proc/madvise_mlock.rs";
-const PROC_MOD_RS: &str = "src/kernel/services/proc/mod.rs";
+const ELF_RS: &str = "src/kernel/functions/proc/elf.rs";
+const MLOCK_RS: &str = "src/kernel/functions/proc/madvise_mlock.rs";
+const PROC_MOD_RS: &str = "src/kernel/functions/proc/mod.rs";
 
 fn read(path: &str) -> String {
     let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(path);
@@ -30,7 +30,7 @@ fn read(path: &str) -> String {
 fn elf_error_is_thin_wrapper() {
     let src = read(ELF_RS);
     assert!(
-        src.contains("Kernel(crate::services::error::KernelError)"),
+        src.contains("Kernel(crate::functions::error::KernelError)"),
         "ElfError 必须含 `Kernel(KernelError)` 共享包装字段"
     );
 }
@@ -118,7 +118,7 @@ fn elf_error_from_kernel_str_uses_kernel_wrapper() {
     // ELF 溢出错误应改走 Kernel(K::InvalidArgument) 包装
     let kernel_count = block.matches("Self::Kernel(K::").count()
         + block
-            .matches("Self::Kernel(crate::services::error::KernelError::")
+            .matches("Self::Kernel(crate::functions::error::KernelError::")
             .count();
     assert!(
         kernel_count >= 2,
@@ -135,7 +135,7 @@ fn elf_error_from_kernel_str_uses_kernel_wrapper() {
 fn mlock_error_is_thin_wrapper() {
     let src = read(MLOCK_RS);
     assert!(
-        src.contains("Kernel(crate::services::error::KernelError)"),
+        src.contains("Kernel(crate::functions::error::KernelError)"),
         "MlockError 必须含 `Kernel(KernelError)` 共享包装字段"
     );
 }
@@ -177,7 +177,7 @@ fn mlock_error_preserves_not_mapped() {
         "MlockError 应保留 NotMapped 变体 (kernel thread 路径)"
     );
     assert!(
-        enum_block.contains("Kernel(crate::services::error::KernelError)"),
+        enum_block.contains("Kernel(crate::functions::error::KernelError)"),
         "MlockError 应含 Kernel 包装"
     );
 }
@@ -229,7 +229,7 @@ fn mlock_error_mincore_uses_kernel_wrapper() {
     let normalized: String = src.split_whitespace().collect::<Vec<_>>().join("");
     assert!(
         normalized
-            .contains("MlockError::Kernel(crate::services::error::KernelError::InvalidArgument,"),
+            .contains("MlockError::Kernel(crate::functions::error::KernelError::InvalidArgument,"),
         "mincore 函数中的 MlockError 使用点应改走 Kernel(K::InvalidArgument) 包装"
     );
 }
@@ -242,7 +242,7 @@ fn mlock_error_mincore_uses_kernel_wrapper() {
 fn proc_error_is_thin_wrapper() {
     let src = read(PROC_MOD_RS);
     assert!(
-        src.contains("Kernel(crate::services::error::KernelError)"),
+        src.contains("Kernel(crate::functions::error::KernelError)"),
         "ProcError 必须含 `Kernel(KernelError)` 共享包装字段"
     );
 }

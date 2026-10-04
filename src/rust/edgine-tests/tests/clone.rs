@@ -1,6 +1,6 @@
 //! clone 服务层参数验证测试
 //!
-//! 覆盖 services/proc/clone.rs 的纯标量验证逻辑:
+//! 覆盖 functions/proc/clone.rs 的纯标量验证逻辑:
 //! - CLONE_VM/CLONE_THREAD 必须配 CLONE_SIGHAND
 //! - child_stack 16 字节对齐
 

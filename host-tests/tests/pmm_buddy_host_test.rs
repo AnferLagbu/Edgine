@@ -1,7 +1,7 @@
 //! PMM Buddy 分配器 host 集成测试 (H-04)
 //!
 //! H-04 (2026-09-09): 删除 `host-tests/src/buddy.rs` 平行实现 (436 行, 含 F9
-//! `#![allow(dead_code)]`), 改引内核真实 `framework::mm::pmm` 的 buddy 机制 —
+//! `#![allow(dead_code)]`), 改引内核真实 `privileged::mm::pmm` 的 buddy 机制 —
 //! 经 `MetaStore` 载体注入 `VecMetaStore` (Vec<u8> 堆后端), init_bitmap 与
 //! 全部 buddy 算法仅一份代码, 无测试/生产分叉 (B08-12 路线 C 核心).
 //!
@@ -16,8 +16,8 @@
 //! 6. 连续范围查找/预留/回滚 (B03-LEGACY-002): `find_contig_range` 连续扫描、
 //!    `reserve_range` 重叠与契约拒绝、`unreserve_range` 回滚语义 (swap init/deinit 依赖)
 
-use edgine::kernel::framework::mm::pmm::{PhysicalMemoryManager, VecMetaStore};
-use edgine::kernel::framework::mm::{PAGE_SIZE, PhysAddr};
+use edgine::kernel::privileged::mm::pmm::{PhysicalMemoryManager, VecMetaStore};
+use edgine::kernel::privileged::mm::{PAGE_SIZE, PhysAddr};
 
 /// 模拟物理内存 64MB (buddy 完整覆盖 order-0..9)
 const MEM_SIZE: u64 = 64 * 1024 * 1024;

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-M6.1 SAFETY 完备性审计脚本 — framework 全量 SAFETY 覆盖
+M6.1 SAFETY 完备性审计脚本 — privileged 全量 SAFETY 覆盖
 
 修复 B01-13: 原脚本仅扫描硬编码 8 文件, 报告 53/53=100% 覆盖掩盖了剩余 2547 处
-unsafe 块. 现改为动态发现 framework/mod.rs 中所有 pub mod, 全量扫描.
+unsafe 块. 现改为动态发现 privileged/mod.rs 中所有 pub mod, 全量扫描.
 
 检测函数委托给 tools/audit_unsafe.py (B01-15 已修复), 保持一致.
 
@@ -16,7 +16,7 @@ import re
 import sys
 from pathlib import Path
 
-BASE = Path('src/kernel/framework')
+BASE = Path('src/kernel/privileged')
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # 复用 B01-15 修复后的 audit_unsafe.py
 sys.path.insert(0, str(PROJECT_ROOT / 'tools'))
@@ -24,7 +24,7 @@ import audit_unsafe  # noqa: E402
 
 
 def discover_modules(base: Path) -> list[str]:
-    """从 framework/mod.rs 的 pub mod 声明动态发现所有 .rs 模块.
+    """从 privileged/mod.rs 的 pub mod 声明动态发现所有 .rs 模块.
 
     解析 `pub mod <name>;` 和 `pub mod <name> { ... };` 两种形式.
     返回模块相对路径列表 (相对于 base), 例如 ['mm', 'mm/pmm', ...].
@@ -73,7 +73,7 @@ def main():
     modules = discover_modules(BASE)
     files = collect_rs_files(BASE, modules)
     # 过滤掉 arch/ 子目录 (架构特定, 与 SAFETY 主题无关)
-    # SAFETY 主题针对 framework TCB 主线, 不针对每架构 asm
+    # SAFETY 主题针对 privileged TCB 主线, 不针对每架构 asm
     # 但保留 arch/*/mod.rs 以监控
     if not files:
         print('ERROR: 未发现任何 .rs 模块', file=sys.stderr)
@@ -105,9 +105,9 @@ def main():
 
     # 人类可读报告
     print("=" * 78)
-    print("M6.1 SAFETY 完备性审计 — framework 全量 (B01-13 修复)")
+    print("M6.1 SAFETY 完备性审计 — privileged 全量 (B01-13 修复)")
     print("=" * 78)
-    print(f"  扫描模块: {len(modules)} 个 (从 framework/mod.rs 动态发现)")
+    print(f"  扫描模块: {len(modules)} 个 (从 privileged/mod.rs 动态发现)")
     print(f"  扫描文件: {len(files)} 个 .rs")
     print(f"  unsafe 引用: {total_unsafe}")
     print(f"  SAFETY 覆盖: {total_covered} ({total_covered * 100 // max(total_unsafe, 1)}%)")

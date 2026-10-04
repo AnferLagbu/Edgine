@@ -3,7 +3,7 @@
 //   1. vfs_close_cloexec_fds 先收集索引 (owned Vec) 再逐个关闭
 //      (B-9.5: 收集经 with_current_fd_table(|t| t.get_cloexec_fds()), 关闭循环在锁外,
 //       避免 vfs_close_internal 内重入同锁自锁死)
-//   2. services::fs 顶层 re-export vfs_close_cloexec_fds (调用方经顶层 API 访问)
+//   2. functions::fs 顶层 re-export vfs_close_cloexec_fds (调用方经顶层 API 访问)
 //   3. proc_exec_replace 成功路径调用 close_cloexec_fds (经 VfsOps 契约, POSIX close-on-exec)
 //   4. memfd_create 在 MFD_CLOEXEC 置位时以 cloexec=true 分配 fd
 //   5. open 消费 O_CLOEXEC: VfsOpenFlags 定义 CLOEXEC 位, vfs_open_internal 读取
@@ -15,12 +15,12 @@
 use std::fs;
 use std::path::Path;
 
-const VFS_HANDLE: &str = "src/kernel/services/fs/handle.rs";
-const VFS_MOD: &str = "src/kernel/services/fs/mod.rs";
-const VFS_TYPES: &str = "src/kernel/services/fs/vfs_types.rs";
-const SYS_IO: &str = "src/kernel/services/fs/io.rs";
-const PROC_OPS: &str = "src/kernel/framework/proc/proc_ops.rs";
-const MEMFD: &str = "src/kernel/services/proc/memfd.rs";
+const VFS_HANDLE: &str = "src/kernel/functions/fs/handle.rs";
+const VFS_MOD: &str = "src/kernel/functions/fs/mod.rs";
+const VFS_TYPES: &str = "src/kernel/functions/fs/vfs_types.rs";
+const SYS_IO: &str = "src/kernel/functions/fs/io.rs";
+const PROC_OPS: &str = "src/kernel/privileged/proc/proc_ops.rs";
+const MEMFD: &str = "src/kernel/functions/proc/memfd.rs";
 
 fn read(path: &str) -> String {
     let p = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -69,7 +69,7 @@ fn test_vfs_close_cloexec_fds_re_exported_at_top_level() {
     let src = read(VFS_MOD);
     assert!(
         src.contains("vfs_close_cloexec_fds"),
-        "services::fs 顶层必须 re-export vfs_close_cloexec_fds (F2: 走顶层 API)"
+        "functions::fs 顶层必须 re-export vfs_close_cloexec_fds (F2: 走顶层 API)"
     );
 }
 

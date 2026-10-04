@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-M6.5 services 层隐式依赖审计脚本
+M6.5 functions 层隐式依赖审计脚本
 
-检查 services 层模块对 framework 全局状态的引用,
+检查 functions 层模块对 privileged 全局状态的引用,
 检测通过全局静态变量产生的隐式依赖。
 
 退出码: 0 = 通过, 1 = 有严重违规
@@ -13,12 +13,12 @@ import re
 import sys
 from pathlib import Path
 
-SERVICES_BASE = Path('src/kernel/services')
-FRAMEWORK_BASE = Path('src/kernel/framework')
+FUNCTIONS_BASE = Path('src/kernel/functions')
+PRIVILEGED_BASE = Path('src/kernel/privileged')
 
-# framework 全局状态变量 (services 不应直接访问)
-# 仅包含实际定义在 framework 中的变量
-FRAMEWORK_GLOBALS = [
+# privileged 全局状态变量 (functions 不应直接访问)
+# 仅包含实际定义在 privileged 中的变量
+PRIVILEGED_GLOBALS = [
     'SCHEDULER',
     'PROCESS_TABLE',
     'SOCKET_SET',
@@ -34,16 +34,16 @@ FRAMEWORK_GLOBALS = [
     'GLOBAL_KMALLOC',
 ]
 
-# 允许的直接引用 (framework 层安全 API)
+# 允许的直接引用 (privileged 层安全 API)
 ALLOWED_PATTERNS = [
-    r'crate::services::fs::VFS_MANAGER',
-    r'crate::framework::ipc::IPC_NAMESPACE',
+    r'crate::functions::fs::VFS_MANAGER',
+    r'crate::privileged::ipc::IPC_NAMESPACE',
 ]
 
-def find_framework_globals():
-    """查找 framework 中实际定义的全局变量.
+def find_privileged_globals():
+    """查找 privileged 中实际定义的全局变量.
 
-    B01-23 修复: FRAMEWORK_GLOBALS 改为动态发现 (扫描 framework/ 全部
+    B01-23 修复: PRIVILEGED_GLOBALS 改为动态发现 (扫描 privileged/ 全部
     `static [mut] NAME:` 与 `static NAME: TYPE` 声明). 原硬编码 14
     项名字静态列表, 改名/新增后静默不再检测.
     """
@@ -65,7 +65,7 @@ def find_framework_globals():
         r'\bstatic\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*'
         r'(?::\s*[A-Za-z][\w:<> ,]*)?\s*[=;{]'
     )
-    for rust_file in FRAMEWORK_BASE.rglob('*.rs'):
+    for rust_file in PRIVILEGED_BASE.rglob('*.rs'):
         if 'smoltcp' in str(rust_file):
             continue
         try:
@@ -80,13 +80,13 @@ def find_framework_globals():
         except (OSError, UnicodeDecodeError):
             continue
     # 与原静态列表合并 (兜底, 防止动态发现漏检)
-    for name in FRAMEWORK_GLOBALS:
+    for name in PRIVILEGED_GLOBALS:
         globals_found.add(name)
     return globals_found
 
 
-def scan_services(framework_globals):
-    """扫描 services 层对 framework 全局状态的引用.
+def scan_functions(privileged_globals):
+    """扫描 functions 层对 privileged 全局状态的引用.
 
     B01-23 修复: `global_name in line` 子串匹配误判.
     - `SCHEDULER` 误匹配 `SCHEDULER_READY` 等包含子串
@@ -94,7 +94,7 @@ def scan_services(framework_globals):
     """
     violations = []
 
-    for rust_file in SERVICES_BASE.rglob('*.rs'):
+    for rust_file in FUNCTIONS_BASE.rglob('*.rs'):
         if 'smoltcp' in str(rust_file):
             continue
 
@@ -109,7 +109,7 @@ def scan_services(framework_globals):
             if stripped.startswith('//') or stripped.startswith('/*') or stripped.startswith('*'):
                 continue
 
-            for global_name in framework_globals:
+            for global_name in privileged_globals:
                 # B01-23: 词边界匹配, 避免 SCHEDULER 误匹配 SCHEDULER_READY
                 if re.search(r'\b' + re.escape(global_name) + r'\b', line):
                     is_allowed = any(re.search(pattern, line) for pattern in ALLOWED_PATTERNS)
@@ -124,16 +124,16 @@ def scan_services(framework_globals):
     return violations
 
 def main():
-    print("M6.5 services 层隐式依赖审计")
+    print("M6.5 functions 层隐式依赖审计")
     print("=" * 60)
     
-    # 先查找 framework 中实际定义的全局变量
-    framework_globals = find_framework_globals()
-    print(f"\n检测到 framework 全局变量: {len(framework_globals)} 个")
-    for g in sorted(framework_globals):
+    # 先查找 privileged 中实际定义的全局变量
+    privileged_globals = find_privileged_globals()
+    print(f"\n检测到 privileged 全局变量: {len(privileged_globals)} 个")
+    for g in sorted(privileged_globals):
         print(f"  - {g}")
     
-    violations = scan_services(framework_globals)
+    violations = scan_functions(privileged_globals)
     
     if violations:
         print(f"\n发现 {len(violations)} 处隐式依赖:")
@@ -146,10 +146,10 @@ def main():
             print()
         
         print("-" * 60)
-        print(f"FAIL: {len(violations)} 处 services 层直接访问 framework 全局状态")
+        print(f"FAIL: {len(violations)} 处 functions 层直接访问 privileged 全局状态")
         sys.exit(1)
     else:
-        print("\nPASS: services 层无隐式依赖")
+        print("\nPASS: functions 层无隐式依赖")
         sys.exit(0)
 
 if __name__ == '__main__':

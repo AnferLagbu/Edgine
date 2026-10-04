@@ -67,7 +67,7 @@ fn fn_body<'a>(src: &'a str, sig: &str) -> &'a str {
 /// 时间戳字段并经 `save_inode` 落盘 (而非只填内存元数据).
 #[test]
 fn test_ext2_utimensat_wires_to_disk_inode() {
-    let src = fs::read_to_string("../src/kernel/services/fs/ext2/mount.rs").unwrap();
+    let src = fs::read_to_string("../src/kernel/functions/fs/ext2/mount.rs").unwrap();
 
     let utimensat = fn_body(&src, "fn fs_utimensat(");
     assert!(
@@ -100,14 +100,14 @@ fn test_ext2_utimensat_wires_to_disk_inode() {
 /// 丙批审查 B2 门槛: ext2 `i_ctime` 取值须独立于 `i_mtime`.
 ///
 /// 背景: `set_times` 曾直接 `i_ctime = i_mtime`, 丢失"元数据变更时刻"的独立
-/// 语义. 修复后 ctime 取**当前秒值**, 换算与 `services/fs/stat.rs::utimensat_syscall`
+/// 语义. 修复后 ctime 取**当前秒值**, 换算与 `functions/fs/stat.rs::utimensat_syscall`
 /// 同源 (tick / frequency) — 不可用 `crate::arch!(timestamp())` (TSC 周期计数,
 /// 落 32 位磁盘字段会截顶成 `u32::MAX`).
 ///
 /// ext2 需块设备, host 无挂载载体, 故以源码结构门槛收口 (与 B1 同体例).
 #[test]
 fn test_ext2_ctime_source_independent_of_mtime() {
-    let src = fs::read_to_string("../src/kernel/services/fs/ext2/mount.rs").unwrap();
+    let src = fs::read_to_string("../src/kernel/functions/fs/ext2/mount.rs").unwrap();
     let set_times = fn_body(&src, "fn set_times(");
 
     assert!(

@@ -22,8 +22,8 @@
 use std::fs;
 
 const INIT: &str = "../src/user/init/src/main.rs";
-const A64_EXCEPTION: &str = "../src/kernel/framework/arch/aarch64/exception.rs";
-const X64_HANDLERS: &str = "../src/kernel/framework/idt/handlers.rs";
+const A64_EXCEPTION: &str = "../src/kernel/privileged/arch/aarch64/exception.rs";
+const X64_HANDLERS: &str = "../src/kernel/privileged/idt/handlers.rs";
 const QEMU_SCRIPT: &str = "../scripts/qemu_boot_test.sh";
 
 /// 双架构共用的运行期里程碑 (由 init 打印, qemu_boot_test.sh 判定).
@@ -100,11 +100,11 @@ fn test_a64_el0_sync_fault_terminates_process() {
     );
     assert_before(&body, "frame.spsr & 0xF == 0", "process_exit");
     assert!(
-        body.contains("crate::framework::proc::process_exit(pid)"),
+        body.contains("crate::privileged::proc::process_exit(pid)"),
         "EL0 故障分支必须终止当前进程 (与 x86_64 TerminateProcess 口径一致)"
     );
     assert!(
-        body.contains("crate::framework::proc::scheduler_yield()"),
+        body.contains("crate::privileged::proc::scheduler_yield()"),
         "终止后必须调度离去 (不得返回 EL0 重执行故障指令)"
     );
     assert_before(&body, "process_exit", "loop {");

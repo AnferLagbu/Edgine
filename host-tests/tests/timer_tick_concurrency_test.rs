@@ -1,6 +1,6 @@
 //! 定时器 tick 并发健壮性 host 测试 (B03-LEGACY-003)
 //!
-//! 背景: `framework/timer/tick.rs` 的 `TICK_COUNT` 为单一全局原子计数器,
+//! 背景: `privileged/timer/tick.rs` 的 `TICK_COUNT` 为单一全局原子计数器,
 //! `on_timer_interrupt()` 经 `TICK_COUNT.fetch_add(1, Ordering::AcqRel)` 递增
 //! (原为 `Relaxed`, B03-12 修正为 `AcqRel`)。本项目当前无 aarch64 SMP
 //! (PSCI `CPU_ON` 未实装), 且 x86_64 的 AP 不接收 timer tick, 因此无法在
@@ -20,7 +20,7 @@
 //! `lock` 前缀 RMW 本身即全屏障, `Relaxed` 与 `AcqRel` 在运行时不可区分。
 //! 真正对弱序 (Release/Acquire) 语义的判别需待 aarch64 SMP 落地后再补。
 
-use edgine::kernel::framework::timer::{get_ticks, on_timer_interrupt};
+use edgine::kernel::privileged::timer::{get_ticks, on_timer_interrupt};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 

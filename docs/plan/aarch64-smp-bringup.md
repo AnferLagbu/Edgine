@@ -10,12 +10,12 @@
 
 ## 1. 根因与性质
 
-**根因**：aarch64 架构**根本不存在 AP 上线路径**，SMP 抽象层（`framework/smp/mod.rs`，双架构共享）在 aarch64 上从未被激活。具体缺口有四处，层层递进：
+**根因**：aarch64 架构**根本不存在 AP 上线路径**，SMP 抽象层（`privileged/smp/mod.rs`，双架构共享）在 aarch64 上从未被激活。具体缺口有四处，层层递进：
 
-1. **无 PSCI 上电原语**：`framework/arch/aarch64/psci.rs` 仅有 `PSCI_SYSTEM_OFF` / `PSCI_SYSTEM_RESET` / `PSCI_VERSION` 三个函数 ID，**无 `PSCI_CPU_ON`**；且唯一底层封装 [`smc()`](../../src/kernel/framework/arch/aarch64/psci.rs#L22-L33) 只传 1 个寄存器（x0=func），而 `CPU_ON` 需要 x0=func / x1=target_cpu / x2=entry_pa / x3=context_id 四个入参。
+1. **无 PSCI 上电原语**：`privileged/arch/aarch64/psci.rs` 仅有 `PSCI_SYSTEM_OFF` / `PSCI_SYSTEM_RESET` / `PSCI_VERSION` 三个函数 ID，**无 `PSCI_CPU_ON`**；且唯一底层封装 [`smc()`](../../src/kernel/privileged/arch/aarch64/psci.rs#L22-L33) 只传 1 个寄存器（x0=func），而 `CPU_ON` 需要 x0=func / x1=target_cpu / x2=entry_pa / x3=context_id 四个入参。
 2. **无次核汇编入口**：`boot/aarch64/start.S` 是**纯单核引导**——仅 `_start`（BSP 入口）一条从 EL3→EL2→EL1→`entry()` 的路径，无任何次核分派。
 3. **无次核 Rust 入口**：`arch/aarch64/` 下无 `smp_init.rs`（x86_64 的对应物在 `arch/x86_64/smp_init.rs`，含 trampoline 拷贝、`start_ap`、`ap_entry`）。
-4. **连 BSP 都未接 `smp::init()`**：`arch/aarch64/mod.rs` 的 [`interrupt_early_init()`](../../src/kernel/framework/arch/aarch64/mod.rs#L238-L240) 与 [`interrupt_late_init()`](../../src/kernel/framework/arch/aarch64/mod.rs#L242-L244) **均为空函数**（注释称「GICv3 + VBAR_EL1 已由 entry.rs / bootloader 配置」）。对比 x86_64 的 [`interrupt_late_init()`](../../src/kernel/framework/arch/x86_64/mod.rs#L324-L395) 末尾调用 `smp::init()` + `smp_init::init()`，aarch64 侧完全缺失该接线。
+4. **连 BSP 都未接 `smp::init()`**：`arch/aarch64/mod.rs` 的 [`interrupt_early_init()`](../../src/kernel/privileged/arch/aarch64/mod.rs#L238-L240) 与 [`interrupt_late_init()`](../../src/kernel/privileged/arch/aarch64/mod.rs#L242-L244) **均为空函数**（注释称「GICv3 + VBAR_EL1 已由 entry.rs / bootloader 配置」）。对比 x86_64 的 [`interrupt_late_init()`](../../src/kernel/privileged/arch/x86_64/mod.rs#L324-L395) 末尾调用 `smp::init()` + `smp_init::init()`，aarch64 侧完全缺失该接线。
 
 **复合后果**：`smp::init()` 从未被调用 ⇒ `BSP_ID` / `CPU_ONLINE[0]` / `CPU_COUNT` 从未被正确初始化（`CPU_COUNT` 恒为初值 1）；`smp::register_cpu()` 无调用者 ⇒ `SMP_ENABLED` 恒 false。因此 [smp-ipi-protocol.md](./smp-ipi-protocol.md) §2.6 明确登记「**无 AP 上线路径**」，其 §5.3 的 aarch64 SGI 处理分支（`exception.rs` 中 SGI 7/13/14）**仅编译验证、无运行验证载体**。
 
@@ -28,11 +28,11 @@
 | # | 命题 | 复核结论 |
 |---|---|---|
 | E1 | aarch64 无 AP 上线路径 | **成立**。四处缺口见 §1（无 CPU_ON / 无次核汇编入口 / 无 `smp_init.rs` / BSP 未接 `smp::init()`） |
-| E2 | SMP 抽象层可复用（双架构共享） | **成立**。`framework/smp/mod.rs` 的 `init()` / `register_cpu()` / IPI 发送 / 代计数 / 探针全套与架构无关，仅 `arch!(cpu_id())` 经 `CoreArch` 抽象（aarch64 = `MPIDR_EL1` Aff0） |
+| E2 | SMP 抽象层可复用（双架构共享） | **成立**。`privileged/smp/mod.rs` 的 `init()` / `register_cpu()` / IPI 发送 / 代计数 / 探针全套与架构无关，仅 `arch!(cpu_id())` 经 `CoreArch` 抽象（aarch64 = `MPIDR_EL1` Aff0） |
 | E3 | SGI 响应分发已存在 | **成立（但分发不等于可响应，见订正）**。`exception.rs::irq_handler()` 已分发 SGI 7（FREG恢复）/ SGI 13（TLB）/ SGI 14（reschedule）。订正（DECISION-083 施工期实证）：分发分支存在**并不等于** SGI 可达 —— SGI 13/14 从未在 per-CPU `GICR_ISENABLER0` 使能，接收侧 `intid == 13` 分支永不触发；且发送侧目标编码有误。二者由 DECISION-083 ST-09 修复（使能收敛到 `gic::init_per_cpu` + 修正 `ICC_SGI1R_EL1` 目标位） |
 | E4 | GIC 初始化函数可参数化复用 | **成立但需改造**。`gic.rs` 的 `init_distributor()` / `init_redistributor()` / `init_cpu_interface()` / `enable_timer_ppi()` 已拆分良好，但 `init_redistributor()` **仅作用于当前核单一 `GICR_BASE` 静态量**（未按 CPU 号偏移），次核需按 `GICR stride = 128 KiB` 定位自己的 RD/SGI frame |
-| E5 | BSP 运行时页表可供次核复用 | **成立**。`mmu.rs` 的运行时根表 [`L0_TABLE`](../../src/kernel/framework/arch/aarch64/mmu.rs#L49) 链接于高半区，`virt_to_phys(L0_TABLE...)` 可得其**物理基址**（[`alloc_user_page_table()`](../../src/kernel/framework/arch/aarch64/mmu.rs#L211-L217) 即此形态）。`start.S` 的引导页表 `_boot_l0`（`.bootbss`，VMA==LMA==PA）与运行时表映射等价 ⇒ 次核可复用 BSP 已建好的运行时表物理基址，**跳过 `mmu::init()`** |
-| E6 | 次核 MPIDR 目标来源需新增 | **成立**。`framework/dtb.rs` 的 [`DtbInfo`](../../src/kernel/framework/dtb.rs#L62-L74) 仅含 memory / uart / gic_dist / gic_redist，**无 CPU 节点枚举能力**。次核目标 MPIDR 须新增 DTB `/cpus/cpu@N/reg` 解析，或回退 QEMU virt 约定 `mpidr = cpu_index`（Aff0 = 索引） |
+| E5 | BSP 运行时页表可供次核复用 | **成立**。`mmu.rs` 的运行时根表 [`L0_TABLE`](../../src/kernel/privileged/arch/aarch64/mmu.rs#L49) 链接于高半区，`virt_to_phys(L0_TABLE...)` 可得其**物理基址**（[`alloc_user_page_table()`](../../src/kernel/privileged/arch/aarch64/mmu.rs#L211-L217) 即此形态）。`start.S` 的引导页表 `_boot_l0`（`.bootbss`，VMA==LMA==PA）与运行时表映射等价 ⇒ 次核可复用 BSP 已建好的运行时表物理基址，**跳过 `mmu::init()`** |
+| E6 | 次核 MPIDR 目标来源需新增 | **成立**。`privileged/dtb.rs` 的 [`DtbInfo`](../../src/kernel/privileged/dtb.rs#L62-L74) 仅含 memory / uart / gic_dist / gic_redist，**无 CPU 节点枚举能力**。次核目标 MPIDR 须新增 DTB `/cpus/cpu@N/reg` 解析，或回退 QEMU virt 约定 `mpidr = cpu_index`（Aff0 = 索引） |
 | E7 | 次核所在异常级（EL）为假设项 | **已实证（SMP-03）**。`-smp 2` QEMU 实测次核经 `ap_entry_asm`（MMU 关态、直接装 TTBR/开 MMU）成功上线（`online CPUs: 2`，且未触发"responded but did not register"诊断分支）⇒ 次核进入级为 **EL1**（PSCI 已替其完成 EL 降级），**无需** EL2→EL1 降级序列 |
 | E8 | 现有 QEMU 集成未启用多核 | **成立**。`scripts/qemu_boot_test.sh` aarch64 分支（[L228-L229](../../scripts/qemu_boot_test.sh#L228-L229)）的 `qemu-system-aarch64` 命令行**无 `-smp`**，默认单核 ⇒ 本工程需显式加 `-smp 2` 方可验证 |
 | E9 | 编号可用 | **成立**。现存最新裁定为 DECISION-081（[framekernel-bench-measure-fix.md](./framekernel-bench-measure-fix.md)），本工程取 **DECISION-082** |
@@ -107,9 +107,9 @@
 
 - **SMP-06. BSP 接线（`interrupt_late_init`）**
   - 描述：让 aarch64 BSP 真正调用 SMP 抽象层与 AP 启动（E10，§1 缺口 4）。
-  - 方案：在 [`arch/aarch64/mod.rs`](../../src/kernel/framework/arch/aarch64/mod.rs#L242-L244) 的 `interrupt_late_init()` 内追加：`smp::init()` → `smp_init::init()`（对齐 x86_64 [`interrupt_late_init()`](../../src/kernel/framework/arch/x86_64/mod.rs#L324-L395) 末尾）。在 `arch/aarch64/mod.rs` 顶部补 `mod smp_init;`（并按需 `pub(crate) use`）。
+  - 方案：在 [`arch/aarch64/mod.rs`](../../src/kernel/privileged/arch/aarch64/mod.rs#L242-L244) 的 `interrupt_late_init()` 内追加：`smp::init()` → `smp_init::init()`（对齐 x86_64 [`interrupt_late_init()`](../../src/kernel/privileged/arch/x86_64/mod.rs#L324-L395) 末尾）。在 `arch/aarch64/mod.rs` 顶部补 `mod smp_init;`（并按需 `pub(crate) use`）。
   - 状态：[X]
-  - 详情（施工结论）：`arch/aarch64/mod.rs` 已加 `pub mod smp_init;`，`interrupt_late_init()` 内追加 `crate::framework::smp::init();` + `smp_init::init();`（对齐 x86_64）。单核与 `-smp 2` 双路径 QEMU 均实测接线生效。
+  - 详情（施工结论）：`arch/aarch64/mod.rs` 已加 `pub mod smp_init;`，`interrupt_late_init()` 内追加 `crate::privileged::smp::init();` + `smp_init::init();`（对齐 x86_64）。单核与 `-smp 2` 双路径 QEMU 均实测接线生效。
   - 详情（为何在此接线）：`interrupt_late_init()` 在 `scheduler::init()` 之前（`lib.rs` L750 vs L770，E10），与 x86_64 一致；AP 的 `init_per_cpu_sched` 是 per-CPU 独立初始化，不依赖全局 scheduler。接线点天然正确，**无需改 `lib.rs` 顺序**。
   - 详情（early_init 不动）：`interrupt_early_init()` 在 aarch64 保持空（GICv3 + VBAR_EL1 由 `entry.rs` 配置）；SMP 属"late"阶段，只动 `interrupt_late_init()`。
 
@@ -138,7 +138,7 @@
   - 描述：让 aarch64 启动测试真正跑到双核（E8）。
   - 方案：`scripts/qemu_boot_test.sh` aarch64 分支的 `qemu-system-aarch64` 命令行加 `-smp 2`；在既有断言（`GICv3 ready` / `VFS ready` / EL0 / KPTI）之上新增：grep `[SMP] online CPUs: 2`，命中 ⇒ `ok`，未命中 ⇒ `warn`/`err`（与现有 RT-002 断言风格一致）。
   - 状态：[X]
-  - 详情（施工结论）：aarch64 分支 QEMU 参数加 `-smp 2`（置于 `-m 512` 之后），并在 `GICv3 ready` 断言块之后新增 `online CPUs: 2` 里程碑断言（fail-closed，未命中置 `RESULT=1`）。实跑 `./scripts/qemu_boot_test.sh aarch64` = 1/1 通过，逐项命中 `VFS ready` / `GICv3 ready` / **`SMP 双核上线 (online CPUs: 2)`** / virtio-net services bridge / `Entering EL0` / KPTI-09，无回归。
+  - 详情（施工结论）：aarch64 分支 QEMU 参数加 `-smp 2`（置于 `-m 512` 之后），并在 `GICv3 ready` 断言块之后新增 `online CPUs: 2` 里程碑断言（fail-closed，未命中置 `RESULT=1`）。实跑 `./scripts/qemu_boot_test.sh aarch64` = 1/1 通过，逐项命中 `VFS ready` / `GICv3 ready` / **`SMP 双核上线 (online CPUs: 2)`** / virtio-net functions bridge / `Entering EL0` / KPTI-09，无回归。
   - 详情（回归衔接）：本工程落地后，ISSUE-RT-002 的"真多核 GIC 压测"已具备执行载体 —— 压测脚本 `scripts/gic_stress_test.sh` 已完成 `-smp 2` 升级（见 SMP-10 后续项 ②），并以真多核载体完成 50 次启动压测（50/50 通过，详见 ISSUE-RT-002 台账「真多核压测复验」行）。
   - 详情（x86_64 分支不动）：`-smp` 仅加在 aarch64 分支；x86_64 分支的 `-smp` 现状保持（避免无关改动，§12.2）。
 
@@ -147,12 +147,12 @@
   - 方案：按序跑全部门槛并记录实测结果：
     1. `./ci/build.sh all`（双架构 0 error / 0 warning）
     2. `cargo clippy --release -- -D warnings`（0 warning）
-    3. `./ci/audit.sh`（核心审计全过，含 `audit_services_boundary.py` / `audit_safety_coverage.py`）
+    3. `./ci/audit.sh`（核心审计全过，含 `audit_functions_boundary.py` / `audit_safety_coverage.py`）
     4. `make test-host`
     5. `make test-kernel-host`（= `cd src/kernel && cargo test --features host-test --lib`）
     6. `./scripts/qemu_boot_test.sh all`（双架构；aarch64 侧须命中 `online CPUs: 2`）
   - 状态：[X]
-  - 详情（施工结论）：六门槛实测 —— ① `./ci/build.sh all` = Passed 5 / Failed 0；② clippy pedantic 三维（lib / kernel_test / host-test）全过；③ `./ci/build.sh aarch64 && ./ci/audit.sh` = `AUDIT_EXIT=0`（services 0 unsafe、6 不变式 PASS、framework SAFETY 覆盖 1867/1867 缺 0、FP-06 PASS）；④ `make test-host` = 116 个测试二进制全 ok、0 failed（含 SMP-08 契约 7 用例）；⑤ `make test-kernel-host` = 949 passed / 0 failed；⑥ `./scripts/qemu_boot_test.sh all` = 2/2 通过（x86_64：`VFS ready`/e1000/Ring 3/KPTI-09；aarch64：`VFS ready`/`GICv3 ready`/`SMP 双核上线 (online CPUs: 2)`/virtio-net bridge/`Entering EL0`/KPTI-09）。
+  - 详情（施工结论）：六门槛实测 —— ① `./ci/build.sh all` = Passed 5 / Failed 0；② clippy pedantic 三维（lib / kernel_test / host-test）全过；③ `./ci/build.sh aarch64 && ./ci/audit.sh` = `AUDIT_EXIT=0`（functions 0 unsafe、6 不变式 PASS、privileged SAFETY 覆盖 1867/1867 缺 0、FP-06 PASS）；④ `make test-host` = 116 个测试二进制全 ok、0 failed（含 SMP-08 契约 7 用例）；⑤ `make test-kernel-host` = 949 passed / 0 failed；⑥ `./scripts/qemu_boot_test.sh all` = 2/2 通过（x86_64：`VFS ready`/e1000/Ring 3/KPTI-09；aarch64：`VFS ready`/`GICv3 ready`/`SMP 双核上线 (online CPUs: 2)`/virtio-net bridge/`Entering EL0`/KPTI-09）。
   - 详情（专项判据实测）：`[SMP] online CPUs: 2` 由 aarch64 `smp_init::init()` 打印（取权威计数 `smp::get_cpu_count()`）⇒ `CPU_COUNT == 2` 直接可观测；`smp_is_enabled()` 为真由构造蕴含 —— `SMP_ENABLED` 与 `CPU_COUNT` 由 `smp::register_cpu` 同一调用路径唯一置位（`CPU_COUNT.fetch_add` 后 `SMP_ENABLED.store(true)`），且 AP 的上线自检 `is_cpu_online(idx)` 未触发 fail-fast（否则 BSP 超时、`online` 不会为 2）⇒ `CPU_COUNT == 2` 必然蕴含 `SMP_ENABLED == true`。（未新增内核代码使该布尔直接打印：本批为验证收口，遵 §12.2/§12.3 简约路径；如需直接实测该行，可单开一行 BSP 汇总日志。）
   - 详情（F9/F4）：`PsciError` 各变体、`cpu_mpidrs`、`GICR_STRIDE` 均经真实使用路径消费（无 `#[allow(dead_code)]`）；新增 `invoke` / 次核入口 unsafe 块的 `// SAFETY:` 覆盖计入 1867/1867。
   - 详情（后续项，不阻塞收口）：① `kpti_aarch64.rs` 注释失真**已修正** + 全局量内存序**已复核**（结论见「风险与回退」与文末专项登记）；复核发现的结构性缺陷（入口/出口每核活跃值存单实例全局量）已**立项为独立专项（per-CPU 化）待排期**；② `scripts/gic_stress_test.sh` 的 `-smp` 升级**已完成** —— 该脚本默认以真多核（`-smp 2`）启动，里程碑由单一 `GICv3 ready` 升级为 `GICv3 ready` && `[SMP] online CPUs: <N>` 双断言（fail-closed，等同覆盖 BSP 与全部 AP 的 per-CPU GIC），并新增 `GIC_STRESS_SMP`（核数）/ `GIC_STRESS_QEMU_EXTRA`（附加 QEMU 参数）两个旋钮以变换核数与时序；③ ISSUE-RT-002 原始偶发挂起**根因仍未定位**（条目不闭合）—— 已借真多核载体完成**有界时序搜索**（5 场景合计 96 次启动，96/96 通过、0 次触发挂起：`-smp 2/4/8` × {50,15,10} + `tcg,thread=single` × 15 + `-icount` × 6），未复现，结论进一步支持「QEMU TCG 时序偶发、当前环境不可稳定复现」，保留待真机 / 具复现样本的环境。
@@ -182,7 +182,7 @@
 
 ### 3.2 数据契约：`.bootbss` 次核启动槽 `ApBootInfo`
 
-次核以 **MMU 关、物理地址、低半区** 进入，故 BSP 与 AP 之间只能经 **`.bootbss` 物理固定槽** 传递启动参数（该段在 [aarch64.ld](../../src/kernel/framework/link/aarch64.ld) 中 `NOLOAD` 且 `VMA == LMA == PA`）。契约手法对齐 x86_64 [`ApStartupInfo`](../../src/kernel/framework/arch/x86_64/smp_init.rs)（固定布局 + 编译期 `size_of` 断言），但**语义不同，不复制其结构体**。
+次核以 **MMU 关、物理地址、低半区** 进入，故 BSP 与 AP 之间只能经 **`.bootbss` 物理固定槽** 传递启动参数（该段在 [aarch64.ld](../../src/kernel/privileged/link/aarch64.ld) 中 `NOLOAD` 且 `VMA == LMA == PA`）。契约手法对齐 x86_64 [`ApStartupInfo`](../../src/kernel/privileged/arch/x86_64/smp_init.rs)（固定布局 + 编译期 `size_of` 断言），但**语义不同，不复制其结构体**。
 
 **三侧骨架**：
 
@@ -242,7 +242,7 @@ unsafe extern "C" { static ap_boot_info_ptr: u64; }
 
 #### 3.3.1 SMP-04（批次 A）：GIC 参数化
 
-- **文件锚点**：[gic.rs](../../src/kernel/framework/arch/aarch64/gic.rs)
+- **文件锚点**：[gic.rs](../../src/kernel/privileged/arch/aarch64/gic.rs)
 - **改动**：
   1. 新增 `pub const GICR_STRIDE: u64 = 0x2_0000;`（GICv3 规定每 CPU 的 RD+SGI 共 128 KiB）。
   2. 新增薄封装 `fn gicr_read_at(base: u64, off: u64) -> u32` / `gicr_write_at` / `gicr_sgi_read_at` / `gicr_sgi_write_at`（内部仍走既有 `ptr::read_volatile`/`write_volatile` + 既有 `// SAFETY:` 注释），既有 `gicr_read(off)` 等改为 `gicr_read_at(GICR_BASE, off)`（**最小改动面**，不改调用者语义）。
@@ -255,7 +255,7 @@ unsafe extern "C" { static ap_boot_info_ptr: u64; }
 
 #### 3.3.2 SMP-02（批次 B）：PSCI `CPU_ON` + 拓扑
 
-- **文件锚点**：[psci.rs](../../src/kernel/framework/arch/aarch64/psci.rs)、[dtb.rs](../../src/kernel/framework/dtb.rs)
+- **文件锚点**：[psci.rs](../../src/kernel/privileged/arch/aarch64/psci.rs)、[dtb.rs](../../src/kernel/privileged/dtb.rs)
 - **psci.rs 骨架**：
 
 ```rust
@@ -332,7 +332,7 @@ pub struct CpuTopology { pub count: u32, pub mpidrs: [u64; CPU_MPIDR_MAX] }
 
 #### 3.3.3 SMP-03（批次 B）：次核汇编入口
 
-- **文件锚点**：[start.S](../../src/kernel/framework/boot/aarch64/start.S)（追加）、[aarch64.ld](../../src/kernel/framework/link/aarch64.ld)（`ap_boot_info_ptr`）
+- **文件锚点**：[start.S](../../src/kernel/privileged/boot/aarch64/start.S)（追加）、[aarch64.ld](../../src/kernel/privileged/link/aarch64.ld)（`ap_boot_info_ptr`）
 - **关键更正**：**stub 放 `.text.boot` 即可物理可达**（该段 `VMA == LMA == PA`），**无需**新建段、无需改链接脚本段布局；仅需按 §3.2 加 `_ap_boot_info` 槽与 `ap_boot_info_ptr` 别名。
 - **骨架**（`.text.boot` 段内）：
 
@@ -383,7 +383,7 @@ ap_bad_el:
 
 #### 3.3.4 SMP-05（批次 B）：次核 Rust 入口
 
-- **文件锚点**：新建 `arch/aarch64/smp_init.rs`；[mmu.rs](../../src/kernel/framework/arch/aarch64/mmu.rs)（补读 helper）；[exception.rs](../../src/kernel/framework/arch/aarch64/exception.rs)（拆 `init_vectors`）
+- **文件锚点**：新建 `arch/aarch64/smp_init.rs`；[mmu.rs](../../src/kernel/privileged/arch/aarch64/mmu.rs)（补读 helper）；[exception.rs](../../src/kernel/privileged/arch/aarch64/exception.rs)（拆 `init_vectors`）
 - **关键更正 1**：`mmu.rs` 公开读 helper 仅 `read_ttbr0()` / `read_far()`，**无** `read_mair` / `read_tcr` / `read_sctlr` ⇒ 需补三个 `pub fn read_mair() -> u64` / `read_tcr()` / `read_sctlr()`（各 `mrs` 一行，含 `// SAFETY:` 或以内联 asm 直接实现）。
 - **关键更正 2**：`exception.rs` 现 `pub unsafe fn init()` = 设 `VBAR_EL1` + `daifclr #0xF`（**当场开中断**）。`VBAR_EL1` 是 **per-CPU** 寄存器 ⇒ 须拆出 `pub unsafe fn init_vectors()`（只 `msr vbar_el1` + `isb`），`init()` = `init_vectors()` + `daifclr #0xF`。AP 用 `init_vectors()`，**开中断延后**至 per-CPU 状态就绪。
 - **骨架**：
@@ -421,10 +421,10 @@ pub unsafe extern "C" fn ap_main(cpu_index: u64) -> ! {
 
 #### 3.3.5 SMP-06（批次 B）：BSP 接线
 
-- **文件锚点**：[arch/aarch64/mod.rs](../../src/kernel/framework/arch/aarch64/mod.rs)
+- **文件锚点**：[arch/aarch64/mod.rs](../../src/kernel/privileged/arch/aarch64/mod.rs)
 - **改动**：
   1. 模块声明区加 `mod smp_init;`。
-  2. [`interrupt_late_init()`](../../src/kernel/framework/arch/aarch64/mod.rs#L242-L244) 内追加 `smp::init(); smp_init::init();`（对齐 x86_64 [`interrupt_late_init()`](../../src/kernel/framework/arch/x86_64/mod.rs#L324-L395) 末尾）。
+  2. [`interrupt_late_init()`](../../src/kernel/privileged/arch/aarch64/mod.rs#L242-L244) 内追加 `smp::init(); smp_init::init();`（对齐 x86_64 [`interrupt_late_init()`](../../src/kernel/privileged/arch/x86_64/mod.rs#L324-L395) 末尾）。
   3. `interrupt_early_init()` 保持空（GICv3 + VBAR_EL1 由 `entry.rs` 配置）。
 - **更正 4（无需改 `lib.rs`）**：`interrupt_late_init()`（[L750](../../src/kernel/lib.rs#L750)）在 `scheduler::init()`（[L770](../../src/kernel/lib.rs#L770-L771)）**之前**，且 AP 的 `init_per_cpu_sched` 是 per-CPU 独立初始化 ⇒ 接线点天然正确。
 - **验证**：默认单核 QEMU 须打印 `[SMP] Single-core system, skipping AP startup` 且启动至 EL0 无回归。
@@ -446,7 +446,7 @@ pub unsafe extern "C" fn ap_main(cpu_index: u64) -> ! {
 
 §10 源码复核相对上一版计划的三处**关键更正**（直接影响施工形态）：
 
-1. **次核 stub 无需新建段/改段布局**：`.text.boot` 已满足 `VMA == LMA == PA`（[aarch64.ld](../../src/kernel/framework/link/aarch64.ld) fail-closed 布局），stub 追加至该段即物理可达；只需在 `.bootbss` 加 `_ap_boot_info` 槽、在链接脚本加 `ap_boot_info_ptr` 别名。
+1. **次核 stub 无需新建段/改段布局**：`.text.boot` 已满足 `VMA == LMA == PA`（[aarch64.ld](../../src/kernel/privileged/link/aarch64.ld) fail-closed 布局），stub 追加至该段即物理可达；只需在 `.bootbss` 加 `_ap_boot_info` 槽、在链接脚本加 `ap_boot_info_ptr` 别名。
 2. **`exception.rs` 须拆 `init_vectors()`**：`init()` 现为"设 VBAR + 当场开中断"，而 AP 必须**延后**开中断（per-CPU 状态就绪后），故须拆出只设 `VBAR_EL1` 的 `init_vectors()`。
 3. **`mmu.rs` 须补读 helper**：现有公开读 helper 仅 `read_ttbr0()` / `read_far()`，缺 `read_mair` / `read_tcr` / `read_sctlr`，SMP-05 准备槽时无值可读。
 
@@ -461,7 +461,7 @@ pub unsafe extern "C" fn ap_main(cpu_index: u64) -> ! {
 - **专项（本工程成功标准）**：aarch64 QEMU `-smp 2` 启动日志出现 `[SMP] online CPUs: 2`，且 `smp_is_enabled() == true`、`CPU_COUNT == 2`。
 - **回归**：aarch64 单核路径（若 QEMU 不带 `-smp`）仍打印 `[SMP] Single-core system, skipping AP startup` 并正常启动到 EL0（不因新增接线破坏单核）。
 - **静态契约**：SMP-08 的 host-tests 全过（PSCI 编码 / 错误码映射 / GIC 常量）。
-- **架构合规**：新增 unsafe 集中于 `framework/`（`psci.rs` / `start.S` / `smp_init.rs`），`services/` 保持 0 unsafe（F1）；`// SAFETY:` 100% 覆盖（F4）；中文注释（F7）；公共 API 中文文档（F8）。
+- **架构合规**：新增 unsafe 集中于 `privileged/`（`psci.rs` / `start.S` / `smp_init.rs`），`functions/` 保持 0 unsafe（F1）；`// SAFETY:` 100% 覆盖（F4）；中文注释（F7）；公共 API 中文文档（F8）。
 
 ## 风险与回退
 

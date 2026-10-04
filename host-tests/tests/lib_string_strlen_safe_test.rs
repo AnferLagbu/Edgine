@@ -1,6 +1,6 @@
 //! 字符串长度契约测试 (B04-23)
 //!
-//! 镜像内核 `src/kernel/framework/lib/string.rs` 中 `strlen` 与 `strlen_safe` 的
+//! 镜像内核 `src/kernel/privileged/lib/string.rs` 中 `strlen` 与 `strlen_safe` 的
 //! 关键不变量, 在 host 环境验证:
 //! 1. `strlen` C FFI 上界 = `STRLEN_MAX = 1024` (B04-07), 防御恶意指针无上界读取
 //! 2. `strlen(null)` 返回 0
@@ -10,15 +10,15 @@
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `strlen_impl` / `strlen_safe_impl` 平行实现, 改引内核真实源码
-//! `edgine::kernel::framework::lib::string::{strlen, strlen_safe}`.
+//! `edgine::kernel::privileged::lib::string::{strlen, strlen_safe}`.
 //! 内核 `strlen` 为 `pub unsafe extern "C" fn` (带 `#[unsafe(no_mangle)]`),
 //! 测试调用需 unsafe 块; `STRLEN_MAX` 是内核私有常量 (string.rs:41), 测试侧
 //! 保留镜像常量并标注同步, 不改内核为 pub.
 
-use edgine::kernel::framework::lib::string::{strlen, strlen_safe};
+use edgine::kernel::privileged::lib::string::{strlen, strlen_safe};
 
 /// 内核私有常量镜像 (B04-07 决策点 D1, DECISION-060)
-/// 与内核 `src/kernel/framework/lib/string.rs:41 const STRLEN_MAX: usize = 1024` 同步.
+/// 与内核 `src/kernel/privileged/lib/string.rs:41 const STRLEN_MAX: usize = 1024` 同步.
 /// 内核侧为私有常量 (非 pub), 测试侧保留本镜像; 若内核改值需同步.
 const STRLEN_MAX: usize = 1024;
 

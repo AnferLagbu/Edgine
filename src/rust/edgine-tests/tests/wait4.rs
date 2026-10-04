@@ -1,6 +1,6 @@
 //! wait4 服务层参数验证测试
 //!
-//! 覆盖 services/proc/wait4.rs 的纯标量验证逻辑:
+//! 覆盖 functions/proc/wait4.rs 的纯标量验证逻辑:
 //! - pid 范围合法 (-32768..=32767)
 //! - options 标志组合 (WNOHANG | WUNTRACED | WCONTINUED)
 

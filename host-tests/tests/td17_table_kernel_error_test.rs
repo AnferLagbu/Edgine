@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
-// TD-17: services::proc::table::TableError 收敛到 KernelError (TD-08 V3 proc域)
+// TD-17: functions::proc::table::TableError 收敛到 KernelError (TD-08 V3 proc域)
 //
 // 验收:
-//   - services/proc/table.rs 不再独立定义 `pub enum TableError { NotFound, Other(i32) }`
+//   - functions/proc/table.rs 不再独立定义 `pub enum TableError { NotFound, Other(i32) }`
 //   - TableError 3 表特有字段 (TableFull/RefCountUnderflow/InvalidStateTransition)
 //     + 1 `Kernel(KernelError)` 共享包装
 //   - `TableError::NotFound` 全部改走 `KernelError::NoSuchProcess` (经 `From` 自动包装)
@@ -16,7 +16,7 @@
 use std::fs;
 use std::path::Path;
 
-const TABLE_RS: &str = "src/kernel/services/proc/table.rs";
+const TABLE_RS: &str = "src/kernel/functions/proc/table.rs";
 
 fn read(path: &str) -> String {
     let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(path);
@@ -28,7 +28,7 @@ fn table_error_is_thin_wrapper() {
     let src = read(TABLE_RS);
     // 必须有 Kernel(KernelError) 共享包装
     assert!(
-        src.contains("Kernel(crate::services::error::KernelError)"),
+        src.contains("Kernel(crate::functions::error::KernelError)"),
         "TableError 必须含 `Kernel(KernelError)` 共享包装字段"
     );
 }
@@ -72,8 +72,8 @@ fn table_error_preserves_three_table_specific_variants() {
 fn to_errno_method_present() {
     let src = read(TABLE_RS);
     assert!(
-        src.contains("pub fn to_errno(self) -> crate::framework::syscall::types::Errno")
-            || src.contains("pub fn to_errno(self) -> crate::framework::syscall::Errno"),
+        src.contains("pub fn to_errno(self) -> crate::privileged::syscall::types::Errno")
+            || src.contains("pub fn to_errno(self) -> crate::privileged::syscall::Errno"),
         "TableError 必须有 to_errno() 方法 (4 变体全覆盖)"
     );
     // to_errno 必须处理 4 个变体
@@ -97,7 +97,7 @@ fn to_errno_method_present() {
 fn from_kernel_error_impl() {
     let src = read(TABLE_RS);
     assert!(
-        src.contains("impl From<crate::services::error::KernelError> for TableError"),
+        src.contains("impl From<crate::functions::error::KernelError> for TableError"),
         "TableError 必须有 From<KernelError> 包装实现, 让 `?` 操作符自动转换"
     );
 }

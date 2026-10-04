@@ -23,7 +23,7 @@ enum CopyOutcome {
     Efault,
 }
 
-/// 模拟 framework/mm::copy_user::copy_to_user
+/// 模拟 privileged/mm::copy_user::copy_to_user
 /// 失败场景: user_dst 落在 "已 munmap 区间" 集合中.
 fn mock_copy_to_user(
     user_dst: u64,
@@ -40,7 +40,7 @@ fn mock_copy_to_user(
     CopyOutcome::Ok(len.min(src.len()))
 }
 
-/// 模拟 framework/mm::copy_user::copy_from_user
+/// 模拟 privileged/mm::copy_user::copy_from_user
 fn mock_copy_from_user(
     kernel_dst: &mut [u8],
     user_src: u64,

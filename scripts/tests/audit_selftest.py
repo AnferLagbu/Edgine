@@ -4,7 +4,7 @@ B01-24 返工: audit 脚本统一自测.
 
 按 docs/plan/audit-fix-01-audit-scripts.md §B01-24 复核要求:
 - 落地 fixture 文件 + CI 断言
-- 至少覆盖 services_boundary / deadlock_matrix /
+- 至少覆盖 functions_boundary / deadlock_matrix /
   block_registration / audit_unsafe 四脚本
 
 设计:
@@ -14,7 +14,7 @@ B01-24 返工: audit 脚本统一自测.
 - exit code: 0 (全部通过) / 1 (有失败)
 
 使用 fixture 的 4 个 audit 脚本:
-1. audit_services_boundary.py: 检测 pub use 框架内部模块
+1. audit_functions_boundary.py: 检测 pub use 框架内部模块
 2. audit_deadlock_matrix.py: 检测带路径的 spin 别名 + 锁调用
 3. audit_block_registration.py: 检测 egdf_register_block_dev
 4. tools/audit_unsafe.py: 检测缺 SAFETY 注释的 unsafe 块
@@ -50,35 +50,35 @@ def _check(label: str, cond: bool, detail: str = "") -> bool:
     return cond
 
 
-def test_services_boundary() -> bool:
-    """B01-24 fixture 测试 1: audit_services_boundary 识别 pub use 内部模块.
+def test_functions_boundary() -> bool:
+    """B01-24 fixture 测试 1: audit_functions_boundary 识别 pub use 内部模块.
 
-    Fixture 在 src/kernel/services/... 下创建临时 services 文件, 包含
-    `pub use crate::framework::sync::raw` 违规. 验证脚本能检测.
+    Fixture 在 src/kernel/functions/... 下创建临时 functions 文件, 包含
+    `pub use crate::privileged::sync::raw` 违规. 验证脚本能检测.
     """
-    print("\n[Test 1/4] audit_services_boundary.py")
+    print("\n[Test 1/4] audit_functions_boundary.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
-        # 构造 services/ 子树
-        test_svc_dir = tmpdir / "src" / "kernel" / "services" / "audit_test"
+        # 构造 functions/ 子树
+        test_svc_dir = tmpdir / "src" / "kernel" / "functions" / "audit_test"
         test_svc_dir.mkdir(parents=True)
         # 故意使用禁止的内部模块
         (test_svc_dir / "mod.rs").write_text(
             "//! test\n"
-            "pub use crate::framework::sync::raw;\n"
+            "pub use crate::privileged::sync::raw;\n"
             "pub fn foo() {}\n"
         )
 
-        # 调用 audit (需要绕过 'src/kernel/services/' 路径检查)
+        # 调用 audit (需要绕过 'src/kernel/functions/' 路径检查)
         # 我们使用真实路径, 创建一个临时项目根
         # 简单方法: 直接 grep 验证, 模拟脚本逻辑
         import re
-        # 复用 audit_services_boundary.py 的核心检测
+        # 复用 audit_functions_boundary.py 的核心检测
         sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
-        # 由于 audit_services_boundary.py 硬编码 BASE = src/kernel/services,
+        # 由于 audit_functions_boundary.py 硬编码 BASE = src/kernel/functions,
         # 我们手动模拟其检测逻辑 (use_pattern + 黑名单匹配)
         text = (test_svc_dir / "mod.rs").read_text()
-        FORBIDDEN = ["framework::sync::raw"]
+        FORBIDDEN = ["privileged::sync::raw"]
         use_pattern = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?use\s+(.*?);")
         detected = False
         for line in text.splitlines():
@@ -90,7 +90,7 @@ def test_services_boundary() -> bool:
                         detected = True
                         break
         return _check("检测 pub use 禁止模块", detected,
-                       "fixture 含 'pub use crate::framework::sync::raw'")
+                       "fixture 含 'pub use crate::privileged::sync::raw'")
 
 
 def test_deadlock_matrix() -> bool:
@@ -103,8 +103,8 @@ def test_deadlock_matrix() -> bool:
     with tempfile.TemporaryDirectory() as tmpdir:
         from pathlib import Path as _P
         tmpdir = _P(tmpdir)
-        # 构造 framework/ 子树 (audit 扫描 framework 而非 services)
-        test_fw_dir = tmpdir / "src" / "kernel" / "framework" / "audit_test"
+        # 构造 privileged/ 子树 (audit 扫描 privileged 而非 functions)
+        test_fw_dir = tmpdir / "src" / "kernel" / "privileged" / "audit_test"
         test_fw_dir.mkdir(parents=True)
         (test_fw_dir / "mod.rs").write_text(
             "//! test\n"
@@ -185,7 +185,7 @@ def test_block_registration() -> bool:
         from pathlib import Path as _P
         tmpdir = _P(tmpdir)
         # audit_block_registration 扫描 src/kernel/ 全树
-        test_dir = tmpdir / "src" / "kernel" / "framework" / "audit_test"
+        test_dir = tmpdir / "src" / "kernel" / "privileged" / "audit_test"
         test_dir.mkdir(parents=True)
         test_file = test_dir / "sample.rs"
         test_file.write_text(
@@ -217,7 +217,7 @@ def test_audit_unsafe() -> bool:
     with tempfile.TemporaryDirectory() as tmpdir:
         from pathlib import Path as _P
         tmpdir = _P(tmpdir)
-        test_dir = tmpdir / "src" / "kernel" / "framework" / "audit_test"
+        test_dir = tmpdir / "src" / "kernel" / "privileged" / "audit_test"
         test_dir.mkdir(parents=True)
         test_file = test_dir / "sample.rs"
         # 没有 SAFETY 注释的 unsafe 块
@@ -238,7 +238,7 @@ def test_audit_unsafe() -> bool:
             "python3", str(PROJECT_ROOT / "tools" / "audit_unsafe.py"),
             "--missing-only", "--machine",
         ]
-        # 跑会扫整个 framework, 慢. 改为仅扫临时目录:
+        # 跑会扫整个 privileged, 慢. 改为仅扫临时目录:
         # 我们手动模拟 B01-15 后的核心检测
         from pathlib import Path
         text = test_file.read_text()
@@ -272,7 +272,7 @@ def main() -> int:
     print("=" * 60)
 
     results = [
-        test_services_boundary(),
+        test_functions_boundary(),
         test_deadlock_matrix(),
         test_block_registration(),
         test_audit_unsafe(),

@@ -6,14 +6,14 @@
 //   保存侧: FPCR/FPSR 覆盖 V31 的高 16 字节
 //   恢复侧: 把 V31 残值当 FPCR/FPSR 写回 (msr fpcr/fpsr)
 //
-// 权威布局 (`ProcessContext`, 见 src/kernel/framework/proc/types.rs):
+// 权威布局 (`ProcessContext`, 见 src/kernel/privileged/proc/types.rs):
 //   fpu_state[64] @ 144..656 / fpcr @ 656 / fpsr @ 664 / extra_regs @ 672
 //
 // 验收: 保存与恢复两侧必须使用 656/664, 且汇编中不得出现 640/648.
 
 use std::fs;
 
-const CTX: &str = "../src/kernel/framework/arch/aarch64/context.rs";
+const CTX: &str = "../src/kernel/privileged/arch/aarch64/context.rs";
 
 #[test]
 fn test_aarch64_fpcr_fpsr_use_dedicated_fields() {

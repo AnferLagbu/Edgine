@@ -6,21 +6,21 @@
 
 ## 一、做得好的（现代化证据）
 
-**1. 双架构对称、边界清晰** —— `framework/mm/mod.rs` 用 `#[path]` 按 cfg 分发 `vmm_x86_64.rs`（2462 行，4 级页表）与 `vmm_aarch64.rs`（1683 行，L0→L3 + Block 描述符 2MB/1GB 巨页）。高半区内核映射双架构统一（aarch64 TTBR0/TTBR1 拆分，x86 PML4[256..511]），内核经高半区直射区在切 per-process 页表后仍可达——这是现代内核的标准做法。
+**1. 双架构对称、边界清晰** —— `privileged/mm/mod.rs` 用 `#[path]` 按 cfg 分发 `vmm_x86_64.rs`（2462 行，4 级页表）与 `vmm_aarch64.rs`（1683 行，L0→L3 + Block 描述符 2MB/1GB 巨页）。高半区内核映射双架构统一（aarch64 TTBR0/TTBR1 拆分，x86 PML4[256..511]），内核经高半区直射区在切 per-process 页表后仍可达——这是现代内核的标准做法。
 
 **2. KPTI 两架构都是真隔离，不是摆设**
 
 - **x86**：USER_PML4 逐页装配"入口依赖面"（KPTI-08 已移除高半区整段复制，等价 Linux KAISER 的精进形态），`invpcid` / `cr3_with_pcid` 原语齐备并有 CPUID 动态检测（`kpti.rs` L50 `PCID_KERNEL` / L71 `invpcid`）
 - **aarch64**：实现得更彻底——"KPTI 方案 S3" 每进程配套 **EL1 视图**（TTBR0 用户半区 ∪ 内核恒等），入口汇编极薄（`ldr x4,[x2,#8]`），内核高半区经 TTBR1 恒可达
 
-**3. 跨核 TLB 失效是全项目质量最高的路径之一** —— `framework/smp/mod.rs`：epoch/代协议，x86 `0xFD` IPI 与 aarch64 SGI13 **共用唯一接收实现**（消除了平行实现），"读代→flush→声明"三段次序由审计脚本 `audit_tlb_receive_order.py` 静态 fail-closed 强制，并有**运行期判别力探针**（不比对计数，要求远程核在接收路径内实测观测字节）——多数生产内核都没有这种自证机制。
+**3. 跨核 TLB 失效是全项目质量最高的路径之一** —— `privileged/smp/mod.rs`：epoch/代协议，x86 `0xFD` IPI 与 aarch64 SGI13 **共用唯一接收实现**（消除了平行实现），"读代→flush→声明"三段次序由审计脚本 `audit_tlb_receive_order.py` 静态 fail-closed 强制，并有**运行期判别力探针**（不比对计数，要求远程核在接收路径内实测观测字节）——多数生产内核都没有这种自证机制。
 
 **4. 框内核分层贯彻到位**
 
-- 机制/策略 trait 注入：`alloc_trait` / `pmm_trait` / `slab_trait` / `swap_trait` + services 侧 `pmm_policy` / `slab_policy` / `swap_policy` / `memory_pressure`
+- 机制/策略 trait 注入：`alloc_trait` / `pmm_trait` / `slab_trait` / `swap_trait` + functions 侧 `pmm_policy` / `slab_policy` / `swap_policy` / `memory_pressure`
 - PMM buddy 用 `MetaStore` trait 抽象三类元数据载体（生产 `RawMetaStore` 裸指针 / host 测试 `VecMetaStore`），buddy 算法本体 safe Rust 单份代码无测试分叉
 - `page_fault.rs` 路径完整：VMA 权限判定 / 栈扩展 / COW / 文件缺页 / **uffd**（696 行）；`copy_user.rs` 有异常表 fixup（`.exception_table` 段）
-- unsafe 纪律：mm 层 453 处 unsafe / 444 条 SAFETY 注释，覆盖率≈100%；services/mm 0 unsafe
+- unsafe 纪律：mm 层 453 处 unsafe / 444 条 SAFETY 注释，覆盖率≈100%；functions/mm 0 unsafe
 
 **5. 测试矩阵厚** —— kpti_x86_user_table / kpti_el0_fault_isolation / page_fault_vma_flags / mm_iomem_alias / pmm_buddy / demand_paging / copy_user_exception / munmap_pml4 等 host-tests 全覆盖。
 

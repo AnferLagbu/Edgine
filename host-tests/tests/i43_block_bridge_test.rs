@@ -80,11 +80,11 @@ fn test_block_drivers_use_register_block_device() {
     // 而非直接调用 egdf_register_block.
     // 检查各驱动文件是否包含 register_block_device 调用.
     let driver_files = [
-        "framework/driver/virtio/blk.rs",
-        "framework/driver/storage/ahci_block.rs",
-        "framework/driver/storage/nvme_block.rs",
-        // framekernel 阶段 3: ATA PIO 驱动的权威实装已迁 services
-        "services/driver/storage/ata.rs",
+        "privileged/driver/virtio/blk.rs",
+        "privileged/driver/storage/ahci_block.rs",
+        "privileged/driver/storage/nvme_block.rs",
+        // framekernel 阶段 3: ATA PIO 驱动的权威实装已迁 functions
+        "functions/driver/storage/ata.rs",
     ];
 
     for driver in &driver_files {
@@ -115,7 +115,7 @@ fn test_block_ops_thunk_signature_matches_trait() {
     // (blk_read_thunk/write_thunk/is_present_thunk/total_sectors_thunk),
     // 全部迁移到 BlockDevice trait + egdf 桥接。
     // 本测试现在反向验证: proto_block.rs 中**不应**再出现 thunk 函数定义。
-    let path = Path::new(KERNEL_DIR).join("framework/egdf/proto_block.rs");
+    let path = Path::new(KERNEL_DIR).join("privileged/egdf/proto_block.rs");
     let content = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("read {} failed: {}", path.display(), e));
 
@@ -140,7 +140,7 @@ fn test_block_ops_thunk_signature_matches_trait() {
 #[test]
 fn test_register_block_device_is_pub() {
     // register_block_device 必须是 pub fn, 确保驱动可调用
-    let path = Path::new(KERNEL_DIR).join("framework/egdf/proto_block.rs");
+    let path = Path::new(KERNEL_DIR).join("privileged/egdf/proto_block.rs");
     let content = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("read {} failed: {}", path.display(), e));
     assert!(

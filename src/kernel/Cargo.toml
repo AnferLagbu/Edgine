@@ -43,7 +43,7 @@ bitflags = "2.4"
 zerocopy = { version = "0.8", default-features = false, features = ["derive"] }
 # DECISION-078: 真实 Ed25519 签名验证 (RFC 8032). BSD-3-Clause OR Apache-2.0.
 ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
-smoltcp = { path = "services/net/smoltcp", default-features = false, features = [
+smoltcp = { path = "functions/net/smoltcp", default-features = false, features = [
     "medium-ethernet",
     "proto-ipv4",
     "proto-ipv4-fragmentation",
@@ -59,7 +59,7 @@ smoltcp = { path = "services/net/smoltcp", default-features = false, features = 
     "socket-dns",
 ] }
 
-# spin 仅在 x86_64 SMP 启动路径 (framework/arch/x86_64/smp_init.rs) 使用,
+# spin 仅在 x86_64 SMP 启动路径 (privileged/arch/x86_64/smp_init.rs) 使用,
 # 声明为 x86_64 限定依赖, 消除 aarch64 构建的 cargo `unused_dependencies` 警告.
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 spin = "0.9"
@@ -70,7 +70,7 @@ default = []
 e1000-real-hw = []
 e1000-verbose = []
 # host-test: 剥离裸机专属顶层约束 (no_std/no_main/alloc_error_handler/panic_handler),
-# 供 host-tests 经 edgine 壳引用 services 真实源码.
+# 供 host-tests 经 edgine 壳引用 functions 真实源码.
 host-test = []
 kernel_test = []
 fault_injection = []

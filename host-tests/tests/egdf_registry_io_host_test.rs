@@ -2,7 +2,7 @@
 //!
 //! ## 背景
 //!
-//! `services/egdf/mod.rs` 是对 `framework/egdf` 的安全代理 (强类型
+//! `functions/egdf/mod.rs` 是对 `privileged/egdf` 的安全代理 (强类型
 //! `DeviceId`/`Proto`/`DeviceState` + `Result<_, EGDFError>`), 但 host-tests
 //! 侧此前只有静态契约检查 ([i43_block_bridge_test.rs]), 缺少对其注册表语义与
 //! 块设备 IO dispatch 的专项运行验证。本文件补齐该缺口。
@@ -18,16 +18,16 @@
 //!
 //! `EGDF_DEVICES` 是进程内全局单例, 同一测试二进制内的 `#[test]` 默认并行执行,
 //! 若不加约束会互相清表并错位 drive 下标。故本文件所有用例统一持 `REGISTRY_LOCK`
-//! 串行执行, 并以 `clear_registry()` 开场 (口径同 framework 侧 `EGDF_TEST_LOCK`)。
+//! 串行执行, 并以 `clear_registry()` 开场 (口径同 privileged 侧 `EGDF_TEST_LOCK`)。
 
 use std::sync::Mutex;
 
-use edgine::kernel::framework::egdf::{BlockDevice, EGDF_DEVICES, egdf_register_block_dev};
-use edgine::kernel::framework::error::KernelError as FwError;
-use edgine::kernel::services::egdf::{
+use edgine::kernel::functions::egdf::{
     DeviceState, EGDFError, Proto, blk_count, blk_is_present, blk_read, blk_total_sectors,
     blk_write, count, find_by_name, find_by_proto, list, register, set_state, unregister,
 };
+use edgine::kernel::privileged::egdf::{BlockDevice, EGDF_DEVICES, egdf_register_block_dev};
+use edgine::kernel::privileged::error::KernelError as FwError;
 
 /// 注册表类用例的进程内串行锁 (见文件头「隔离说明」)。
 static REGISTRY_LOCK: Mutex<()> = Mutex::new(());
@@ -154,7 +154,7 @@ fn egdf_block_io_dispatch() {
     let _guard = REGISTRY_LOCK.lock().expect("REGISTRY_LOCK 中毒");
     clear_registry();
 
-    // 经 framework 注册带 trait 引用的块设备; 表为空, 故其 drive 下标为 0。
+    // 经 privileged 注册带 trait 引用的块设备; 表为空, 故其 drive 下标为 0。
     // `Box::leak` 与 `egdf_register_block_dev` 的 `&'static mut` 契约一致, 测试进程内一次性泄漏。
     let dev: &'static mut MockBlk = Box::leak(Box::new(MockBlk::new(8)));
     let drive = egdf_register_block_dev("mock_blk_io", None, None, dev) as u8;
@@ -179,7 +179,7 @@ fn egdf_block_io_dispatch() {
     blk_read(drive, 3, &mut readback).expect("读扇区 3 应成功");
     assert_eq!(&readback[..2], &[0xAB, 0xCD], "写入内容应可读回");
 
-    // 错误路径 1: 缓冲区小于 512 字节 → framework 返回 InvalidArgument。
+    // 错误路径 1: 缓冲区小于 512 字节 → privileged 返回 InvalidArgument。
     let mut small = [0u8; 128];
     assert_eq!(
         blk_read(drive, 0, &mut small),
@@ -187,7 +187,7 @@ fn egdf_block_io_dispatch() {
         "缓冲区过小应返回 InvalidArgument"
     );
 
-    // 错误路径 2: drive 下标越界 → framework 返回 Io (-5), services 映射为 Fault。
+    // 错误路径 2: drive 下标越界 → privileged 返回 Io (-5), functions 映射为 Fault。
     assert_eq!(
         blk_read(99, 0, &mut buf),
         Err(EGDFError::Kernel(FwError::Fault)),

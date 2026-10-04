@@ -13,8 +13,8 @@ I-43 块设备抽象统一性 audit
 
 规则:
   - `egdf_register_block(` 出现在以下位置允许:
-      * src/kernel/framework/egdf/mod.rs (定义 + 单元测试)
-      * src/kernel/framework/egdf/proto_block.rs (桥接: register_block_device / register_block_device_with_ops)
+      * src/kernel/privileged/egdf/mod.rs (定义 + 单元测试)
+      * src/kernel/privileged/egdf/proto_block.rs (桥接: register_block_device / register_block_device_with_ops)
   - 其他位置出现 → 违规 (应改用 proto_block::register_block_device)
 
 退出码: 0 = 通过, 1 = 有违规
@@ -29,13 +29,13 @@ BASE = Path('src/kernel')
 
 # 允许直接调用 egdf_register_block 的文件 (桥接 + 定义 + 单元测试)
 ALLOWED_FILES = {
-    Path('src/kernel/framework/egdf/mod.rs'),
-    Path('src/kernel/framework/egdf/proto_block.rs'),
+    Path('src/kernel/privileged/egdf/mod.rs'),
+    Path('src/kernel/privileged/egdf/proto_block.rs'),
 }
 
 # 匹配 `egdf_register_block_dev(` 调用 (排除 egdf_register_with_ops / egdf_register_char 等)
 # 严格匹配完整函数名 + 左括号, 避免误报相似前缀
-# B01-07 修复: 真实函数名是 egdf_register_block_dev (见 framework/egdf/mod.rs:353),
+# B01-07 修复: 真实函数名是 egdf_register_block_dev (见 privileged/egdf/mod.rs:353),
 # 此前正则写的是 egdf_register_block (缺 _dev), 与真实函数名不匹配, 门禁恒 0 空转.
 PATTERN = re.compile(r'\begdf_register_block_dev\s*\(')
 

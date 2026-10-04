@@ -1,6 +1,6 @@
 //! UID/GID 系统调用服务层参数验证测试
 //!
-//! 覆盖 services/sgeg/uid.rs 的标量验证:
+//! 覆盖 functions/sgeg/uid.rs 的标量验证:
 //! - 读类 (get*) 始终成功
 //! - 写类 (set*) 简化: 总是先做规则校验, 框架层做最终决定
 
@@ -12,8 +12,8 @@ use edgine_tests::*;
 
 #[test]
 fn test_setuid_any_u32_valid() {
-    // services 层不做限制, 始终接受 u32 参数
-    // 真实权限校验由 framework 决定 (root / euid 一致才允许)
+    // functions 层不做限制, 始终接受 u32 参数
+    // 真实权限校验由 privileged 决定 (root / euid 一致才允许)
     assert_eq!(setuid_validate(0), Ok(()));
     assert_eq!(setuid_validate(1), Ok(()));
     assert_eq!(setuid_validate(1000), Ok(()));

@@ -1,7 +1,7 @@
 //! NVMe Identify 解析 host 集成测试 (§6.4 storage 专项 0 号子步)
 //!
-//! §6.4 直接方案 B: `nvme_read_identify_*` 解析 helper 从 framework 迁 services
-//! (纯逻辑, 输入为 DMA 缓冲区字节切片). 本测试直接引用内核 services 真实
+//! §6.4 直接方案 B: `nvme_read_identify_*` 解析 helper 从 privileged 迁 functions
+//! (纯逻辑, 输入为 DMA 缓冲区字节切片). 本测试直接引用内核 functions 真实
 //! `parse_identify_controller` / `parse_identify_namespace` 纯函数 (B08-12 路线 C),
 //! 验证 offset 提取与边界语义, 无测试/生产分叉.
 //!
@@ -12,7 +12,7 @@
 //! 3. 短缓冲区: 长度不足返回 None
 //! 4. lbaf_idx >= 16: lbaf_data = 0
 
-use edgine::kernel::services::driver::storage::nvme::{
+use edgine::kernel::functions::driver::storage::nvme::{
     parse_identify_controller, parse_identify_namespace,
 };
 
@@ -23,7 +23,7 @@ use edgine::kernel::services::driver::storage::nvme::{
 
 #[test]
 fn cc_iosqes_iocqes_field_positions_match_nvme_spec() {
-    use edgine::kernel::services::driver::storage::nvme::{
+    use edgine::kernel::functions::driver::storage::nvme::{
         CC_IOCQES_MASK, CC_IOCQES_VAL, CC_IOSQES_MASK, CC_IOSQES_VAL,
     };
 
@@ -49,12 +49,12 @@ fn cc_iosqes_iocqes_field_positions_match_nvme_spec() {
 
 #[test]
 fn cc_composed_value_decodes_to_required_entry_sizes() {
-    use edgine::kernel::services::driver::storage::nvme::{
+    use edgine::kernel::functions::driver::storage::nvme::{
         CC_AMS_RR, CC_CSS_NVM, CC_EN, CC_IOCQES_MASK, CC_IOCQES_VAL, CC_IOSQES_MASK, CC_IOSQES_VAL,
         CC_MPS_SHIFT,
     };
 
-    // 与 services nvme init_controller 的 CC 组成保持同构:
+    // 与 functions nvme init_controller 的 CC 组成保持同构:
     // create_cq/create_sq 依赖 QEMU 侧检查 CC.IOSQES == 6 且 CC.IOCQES == 4
     let cc =
         CC_EN | CC_CSS_NVM | (0u32 << CC_MPS_SHIFT) | CC_AMS_RR | CC_IOCQES_VAL | CC_IOSQES_VAL;

@@ -1,6 +1,6 @@
 # Edgine 全项目代码与功能审计最终报告（综合审计日）
 
-> **报告定位**：本报告为 Edgine 项目全项目代码审计的最终独立交付文档，整合了对 `framework/`（29 个子系统）与 `services/`（17 个子系统）的逐文件深度审计成果。
+> **报告定位**：本报告为 Edgine 项目全项目代码审计的最终独立交付文档，整合了对 `privileged/`（29 个子系统）与 `functions/`（17 个子系统）的逐文件深度审计成果。
 >
 > **审计基线**：全项目非 vendored LoC 191,601 行；已深审 ~185,000 行（覆盖率 96.5%）。
 >
@@ -9,7 +9,7 @@
 > **内容组织说明**：
 > - 第1-14章：综合视角的关键问题、统计、决策点、修复路线图
 > - 附录 A：汇编链接脚本深度审计（独立 16 项）
-> - 附录 B：services 关键大文件深度审计（独立 56 项）
+> - 附录 B：functions 关键大文件深度审计（独立 56 项）
 > - 附录 C：25 份子系统深度审计报告索引（详细 P0/P1/P2/P3 列表请参见各子系统报告）
 > - 附录 D：审计完成声明
 >
@@ -28,20 +28,20 @@
 | 第7章 | 全项目 TOP 20 P0 严重问题（按风险排序）|
 | 第8章 | 跨子系统 TOP 15 共性问题 |
 | 第9章 | 子系统级 P0 分布 |
-| 第10章 | framework ↔ services 关联矩阵 |
+| 第10章 | privileged ↔ functions 关联矩阵 |
 | 第11章 | 决策点（8 项待用户裁决）|
 | 第12章 | 修复路线图（4 阶段）|
 | 第13章 | 审计方法说明 |
 | 第14章 | 后续建议 |
 | 附录 A | 汇编链接脚本深度审计 |
-| 附录 B | services 关键大文件深度审计 |
+| 附录 B | functions 关键大文件深度审计 |
 | 附录 C | 25 份子系统深度审计报告 |
 
 ## 第1章 全项目最终统计
 
 | 维度 | 数值 |
 |---|---:|
-| 审计覆盖范围 | framework/ + services/ 全子系统 |
+| 审计覆盖范围 | privileged/ + functions/ 全子系统 |
 | 全项目非 vendored LoC | 191,601 |
 | 已深审 LoC | ~185,000 |
 | **覆盖率** | **96.5%** |
@@ -50,19 +50,19 @@
 | **累计 P1** | **217** |
 | **累计 P2** | **296** |
 | **累计 P3** | **122** |
-| framework unsafe 块总数 | ~2,600 |
-| framework SAFETY 覆盖率 | 99.6% |
-| services unwrap() 总数 | 109 |
-| framework→services 反向依赖 | 78+ 处 |
+| privileged unsafe 块总数 | ~2,600 |
+| privileged SAFETY 覆盖率 | 99.6% |
+| functions unwrap() 总数 | 109 |
+| privileged→functions 反向依赖 | 78+ 处 |
 | TCB 实际占比 | 58.1% |
 
 ## 第2章 关联硬规则 / 安全不变式验证
 
 | 硬规则 | 触发项 |
 |---|---|
-| **F1** (services 0 unsafe) | 50 文件缺 deny |
-| **F2** (services 禁访问 framework 内部) | framework→services 78+ 处反向 |
-| **F3** (禁循环依赖) | framework→services 反向 |
+| **F1** (functions 0 unsafe) | 50 文件缺 deny |
+| **F2** (functions 禁访问 privileged 内部) | privileged→functions 78+ 处反向 |
+| **F3** (禁循环依赖) | privileged→functions 反向 |
 | **F4** (unsafe 配 SAFETY) | 5 处缺 |
 | **F5** (双架构 0 warning) | 待 CI 验证 |
 | **F6** (核心审计通过) | 14 个脚本待 CI 集成 |
@@ -72,12 +72,12 @@
 
 | 安全不变式 | 触发子系统 |
 |---|---|
-| **I1** (内核态 CPU 状态保护) | framework/arch |
-| **I2** (内核内存保护) | framework/mm + framework/sgeg |
-| **I3** (用户态 CPU 状态经 framework) | framework/usermode |
-| **I4** (用户内存经 framework) | framework/userptr + copy_user |
-| **I5** (MMIO/PIO 经 framework) | framework/iomem + ioport |
-| **I6** (DMA 禁写内核内存) | framework/dma |
+| **I1** (内核态 CPU 状态保护) | privileged/arch |
+| **I2** (内核内存保护) | privileged/mm + privileged/sgeg |
+| **I3** (用户态 CPU 状态经 privileged) | privileged/usermode |
+| **I4** (用户内存经 privileged) | privileged/userptr + copy_user |
+| **I5** (MMIO/PIO 经 privileged) | privileged/iomem + ioport |
+| **I6** (DMA 禁写内核内存) | privileged/dma |
 
 ---
 
@@ -98,7 +98,7 @@ P0 为最高优先级问题，必须立即修复。本章汇总全项目深度�
 
 - **严重度**：🔴 P0（安全审计基础设施失效，直接违反 F4）
 - **位置**：`scripts/audit_safety_coverage.py:18`
-- **问题描述**：脚本 `FILES = ['frame', 'vmspace', 'usermode', 'userctx', 'iomem', 'ioport', 'irqline', 'dma_buf']` 仅硬编码 8 个顶层文件；实测 framework 实际有 2,600 处 unsafe 引用，其中 1,629 个 unsafe 块 + 211 个 unsafe fn + 109 个 unsafe impl + 133 个 unsafe extern + 518 个其他引用；脚本扫描后报告 `总计 53/53 = 100% 覆盖`，掩盖了剩余 2,547 处 unsafe 块。
+- **问题描述**：脚本 `FILES = ['frame', 'vmspace', 'usermode', 'userctx', 'iomem', 'ioport', 'irqline', 'dma_buf']` 仅硬编码 8 个顶层文件；实测 privileged 实际有 2,600 处 unsafe 引用，其中 1,629 个 unsafe 块 + 211 个 unsafe fn + 109 个 unsafe impl + 133 个 unsafe extern + 518 个其他引用；脚本扫描后报告 `总计 53/53 = 100% 覆盖`，掩盖了剩余 2,547 处 unsafe 块。
 - **修复建议**：删除 `audit_safety_coverage.py` 或标记为 legacy，用 `tools/audit_unsafe.py` 取代
 
 ## 3.2 P0 审计工具链自身漏洞（独立审计 2026-08-15 新增 4 项）
@@ -112,12 +112,12 @@ P0 为最高优先级问题，必须立即修复。本章汇总全项目深度�
 - **问题描述**：脚本对 `LOCK_FILE.local_src_hash` 与 `actual_local_hash` 不一致时，调用 `log("ERROR", ...)` 输出错误，但 `L266-272` 检测 `lock_mode == "LOCALIZED_VENDORED"` 时只检查 `SMOLTCP_LOCALIZED_FILES` 字段非空即放行，**hash mismatch 仍返回 0（PASS）**。实测本地 vendored `src/` SHA256 `5675b39...` 与锁文件 `SMOLTCP_LOCAL_SRC_HASH = ff7c2d7...` 不一致时，脚本返 0。
 - **修复建议**：LOCALIZED_VENDORED 模式也应要求 hash 一致，或显式标注 `LOCALIZED_PATCH_HASH` 字段反映"基线 + 补丁增量"。
 
-### P0-04. `ci_check_services_unsafe.py` 缺 vendored 排除，CI 门禁失败
+### P0-04. `ci_check_functions_unsafe.py` 缺 vendored 排除，CI 门禁失败
 
 - **严重度**：�� P0（违反 F1 硬规则）
-- **位置**：`scripts/ci_check_services_unsafe.py:22-48`
-- **问题描述**：脚本扫描 `src/kernel/services` 全部 `.rs` 文件，发现 18 处 unsafe 全部来自 `src/kernel/services/net/smoltcp/src/phy/sys/` (vendored)，但脚本未排除 vendored 目录，**返 1 误报**。`audit_services_boundary.py` L41-43 有 `VENDORED_EXCLUDE` 列表正确排除。
-- **修复建议**：复制 `audit_services_boundary.py` 的 `VENDORED_EXCLUDE` 列表到本脚本。
+- **位置**：`scripts/ci_check_functions_unsafe.py:22-48`
+- **问题描述**：脚本扫描 `src/kernel/functions` 全部 `.rs` 文件，发现 18 处 unsafe 全部来自 `src/kernel/functions/net/smoltcp/src/phy/sys/` (vendored)，但脚本未排除 vendored 目录，**返 1 误报**。`audit_functions_boundary.py` L41-43 有 `VENDORED_EXCLUDE` 列表正确排除。
+- **修复建议**：复制 `audit_functions_boundary.py` 的 `VENDORED_EXCLUDE` 列表到本脚本。
 
 ### P0-05. `ci/audit.sh` 中 `if cmd | tail` 反逻辑（实测 9 处）导致门禁失效
 
@@ -133,19 +133,19 @@ P0 为最高优先级问题，必须立即修复。本章汇总全项目深度�
 - **问题描述**：三处 `PROJECT_ROOT = Path("/home/anfer/Code/Edgine")` 硬编码绝对路径；仓库改名或换用户立即失效。`tools/audit_unsafe.py:28` 用 `Path(__file__).resolve().parent.parent` 正确。
 - **修复建议**：统一用 `Path(__file__).resolve().parent.parent` 替代硬编码。
 
-## 3.3 P0 services 业务层严重漏洞（独立审计 2026-08-15 新增 7 项）
+## 3.3 P0 functions 业务层严重漏洞（独立审计 2026-08-15 新增 7 项）
 
-> **来源**：本次独立审计逐文件阅读 services 层 357 个 .rs，新增 P0 服务层漏洞。既有审计 6 份报告（proc/namespace、syscall/types、syscall/dispatch、fs/inode、proc/sched_policy、proc/signal）未涵盖以下关键 POSIX 路径。
+> **来源**：本次独立审计逐文件阅读 functions 层 357 个 .rs，新增 P0 服务层漏洞。既有审计 6 份报告（proc/namespace、syscall/types、syscall/dispatch、fs/inode、proc/sched_policy、proc/signal）未涵盖以下关键 POSIX 路径。
 
 ### P0-07. `pwm_set_syscall` 任何进程可设自己为 root — 严重提权
 
 - **严重度**：�� P0（安全漏洞 / 完整性破坏）
-- **位置**：`src/kernel/services/sgeg/auth.rs:118-122`
+- **位置**：`src/kernel/functions/sgeg/auth.rs:118-122`
 - **代码**：
   ```rust
   pub fn pwm_set_syscall(pwm: u64) -> i64 {
-      let pid = crate::kernel::framework::proc::process_get_current_pid();
-      i64::from(crate::kernel::framework::proc::proc_set_pwm(pid, pwm))
+      let pid = crate::kernel::privileged::proc::process_get_current_pid();
+      i64::from(crate::kernel::privileged::proc::proc_set_pwm(pid, pwm))
   }
   ```
 - **问题描述**：任何进程可调用 `pwm_set_syscall(0)` 将自身 PWM 设为 root，绕过后续所有 UID/GID 检查。
@@ -154,21 +154,21 @@ P0 为最高优先级问题，必须立即修复。本章汇总全项目深度�
 ### P0-08. `open_by_handle_at` 无 CAP_DAC_READ_SEARCH 校验
 
 - **严重度**：�� P0（权限绕过）
-- **位置**：`src/kernel/services/fs/file_handle.rs:147`
+- **位置**：`src/kernel/functions/fs/file_handle.rs:147`
 - **代码**：`// 权限检查: open_by_handle_at 需要 CAP_DAC_READ_SEARCH` 注释之后**无任何 CAP 检查**，任意进程可打开任意 inode 句柄。
 - **修复建议**：在拿到 handle 之前立即调 `sgeg::api::pwm_has_capability(pwm, CAP_DAC_READ_SEARCH)`，否则 EPERM。
 
 ### P0-09. `access_syscall` 不区分 R_OK/W_OK/X_OK
 
 - **严重度**：�� P0（权限检查失效）
-- **位置**：`src/kernel/services/fs/access.rs:46-61`
+- **位置**：`src/kernel/functions/fs/access.rs:46-61`
 - **问题描述**：`mode`（R_OK=4/W_OK=2/X_OK=1/F_OK=0）被范围校验后**完全忽略**，只要 stat 成功就 Ok(0)。`access(path, W_OK)` 对只读文件返回 0。
 - **修复建议**：接 `vfs_check_access(path, pwm, mode)`，按 rwx 位做权限判断。
 
 ### P0-10. `pidfd_open` 直接返回 PID 作为 fd
 
 - **严重度**：�� P0（句柄冲突 / 注入）
-- **位置**：`src/kernel/services/proc/pidfd.rs:28`
+- **位置**：`src/kernel/functions/proc/pidfd.rs:28`
 - **代码**：`Ok(pid as usize)` 直接用 PID 作为 fd 返回。
 - **问题描述**：pid=1 的进程 pidfd 永远 = 1，与 stdin 冲突；同一进程多次 pidfd_open 返回相同 fd；攻击者可对任意进程获取 fd 并 `send_signal` 注入。
 - **修复建议**：通过 `fd_alloc::alloc_fd` 分配新 fd，并维护 pidfd → pid 映射表。
@@ -176,7 +176,7 @@ P0 为最高优先级问题，必须立即修复。本章汇总全项目深度�
 ### P0-11. `clone_syscall` 运算符优先级 Bug 破坏 CLONE 校验
 
 - **严重度**：�� P0（安全约束失效）
-- **位置**：`src/kernel/services/proc/clone.rs:41`
+- **位置**：`src/kernel/functions/proc/clone.rs:41`
 - **代码**：`if (flags & CLONE_VM != 0 || flags & CLONE_THREAD != 0) && flags & CLONE_SIGHAND == 0`
 - **问题描述**：Rust `!=` 高于 `&`，表达式等价于 `flags & (CLONE_VM != 0)` 即 `flags & 1`——只检查 flags LSB。`CLONE_VM+CLONE_THREAD` 必须配 `CLONE_SIGHAND` 这条安全约束**失效**。
 - **修复建议**：加括号 `if (flags & CLONE_VM != 0 || flags & CLONE_THREAD != 0) && (flags & CLONE_SIGHAND) == 0`。
@@ -184,7 +184,7 @@ P0 为最高优先级问题，必须立即修复。本章汇总全项目深度�
 ### P0-12. dispatch 丢失 `SYS_pipe2`/`SYS_dup3` flags 参数
 
 - **严重度**：�� P0（POSIX 语义违反）
-- **位置**：`src/kernel/services/syscall/dispatch.rs:190, 195`
+- **位置**：`src/kernel/functions/syscall/dispatch.rs:190, 195`
 - **代码**：
   ```rust
   SYS_pipe2 => as_ret(pipe_syscall(a0)),           // flags 丢失
@@ -196,51 +196,51 @@ P0 为最高优先级问题，必须立即修复。本章汇总全项目深度�
 ### P0-13. `chown_syscall` UID/GID 查找失败回退 root
 
 - **严重度**：�� P0（提权路径）
-- **位置**：`src/kernel/services/fs/file_ops.rs:169`
+- **位置**：`src/kernel/functions/fs/file_ops.rs:169`
 - **代码**：`let owner_pwm = tbl.find_by_uid(uid).map_or(0, |e| e.get_pwm().0);`
 - **问题描述**：UID/GID 在身份表中查不到时**回退到 owner_pwm=0（root）**。攻击者传入未注册 UID 即可获得目标文件归属权。
 - **修复建议**：UID/GID 未找到时返回 ENOENT 或 EINVAL，不得默认 root。
 
-## 3.4 P0 framework 稳定性问题（独立审计 2026-08-15 新增 3 项）
+## 3.4 P0 privileged 稳定性问题（独立审计 2026-08-15 新增 3 项）
 
 ### P0-14. `mm/kmalloc.rs` dump_stats 引用未定义变量（编译失败）
 
 - **严重度**：�� P0（编译失败）
-- **位置**：`src/kernel/framework/mm/kmalloc.rs:691-707`
+- **位置**：`src/kernel/privileged/mm/kmalloc.rs:691-707`
 - **代码**：`let _stats = self.get_stats();` 后用 `stats.heap_start.0` 引用未定义变量（绑定到 `_stats`）。
 - **修复建议**：改为 `let stats = self.get_stats();`。
 
 ### P0-15. `mm/swap.rs::init` 分配 4096 页未标记 reserved（16MB 内存泄漏）
 
 - **严重度**：�� P0（内存泄漏）
-- **位置**：`src/kernel/framework/mm/swap.rs:155-194`
+- **位置**：`src/kernel/privileged/mm/swap.rs:155-194`
 - **问题描述**：分配 4096 个 4KB 页后未调 `pmm.reserve_range` 标记为 reserved，PMM 不知道这些页属于 swap 子系统，每次 boot 永久泄漏 16MB。
 - **修复建议**：在 `init` 完成后调用 `pmm.reserve_range(base, size)`。
 
 ### P0-16. isr.asm 诊断代码污染中断入口（栈布局破坏）
 
 - **严重度**：�� P0（中断栈布局破坏）
-- **位置**：`src/kernel/framework/boot/isr.asm:50-198`
+- **位置**：`src/kernel/privileged/boot/isr.asm:50-198`
 - **问题描述**：`irq_stub` macro 每个 IRQ 入口插入 `push rax; mov dx, 0x3F8; mov al, 0x5A; out dx, al; pop rax` 序列，48 个 stub 全部污染；`isr_common` ~130 行诊断 push/pop 序列修改通用寄存器，破坏栈布局。
 - **修复建议**：诊断代码用 `#[cfg(feature = "debug_isr")]` 隔离，生产构建不包含。
 
 ## 3.5 P0 user/build/docs 区域（独立审计 2026-08-15 新增 5 项）
 
-> **来源**：既有审计范围限于 framework + services，本次独立审计覆盖 src/user/ + tests/ + build/ + docs/，发现新增 5 项 P0。
+> **来源**：既有审计范围限于 privileged + functions，本次独立审计覆盖 src/user/ + tests/ + build/ + docs/，发现新增 5 项 P0。
 
 ### P0-17. 用户态链接脚本缺 `_user_start/_user_end` 符号
 
 - **严重度**：�� P0（KPTI 双页表映射失败）
 - **位置**：`src/user/link.x`、`src/user/link_aarch64.x`、`src/user/init/link_aarch64.x`
-- **问题描述**：三个用户态链接脚本均无 `PROVIDE(_user_start = .);` / `PROVIDE(_user_end = .);` 边界符号。framework 的 ELF loader 无法获取用户进程内存边界 → KPTI 双页表映射失败 → EXEC 时产生页表错位。
+- **问题描述**：三个用户态链接脚本均无 `PROVIDE(_user_start = .);` / `PROVIDE(_user_end = .);` 边界符号。privileged 的 ELF loader 无法获取用户进程内存边界 → KPTI 双页表映射失败 → EXEC 时产生页表错位。
 - **修复建议**：在 `.text` 起始加 `_user_start = .;`，在 `.bss` 结束处 `_user_end = .;`。
 
 ### P0-18. `build/stage1.bin` 全 0x00，multiboot2 头缺失
 
 - **严重度**：�� P0（启动失败）
 - **位置**：`build/stage1.bin`（440 字节）
-- **问题描述**：`hexdump` 验证整个 440 字节除最后 8 字节外全 0。`Makefile:218` `$(AS) -f bin $< -o $@` 取决于 `src/kernel/framework/boot/stage1.asm` 内容，应核实。
-- **修复建议**：验证 `src/kernel/framework/boot/stage1.asm` 实际内容；若 unused 则删除。
+- **问题描述**：`hexdump` 验证整个 440 字节除最后 8 字节外全 0。`Makefile:218` `$(AS) -f bin $< -o $@` 取决于 `src/kernel/privileged/boot/stage1.asm` 内容，应核实。
+- **修复建议**：验证 `src/kernel/privileged/boot/stage1.asm` 实际内容；若 unused 则删除。
 
 ### P0-19. `src/rust/lib.rs` 空文件与 src/lib.rs 共存
 
@@ -265,11 +265,11 @@ P0 为最高优先级问题，必须立即修复。本章汇总全项目深度�
 
 ## 3.6 P0 硬规则违反（独立审计 2026-08-15 新增 2 项）
 
-### P0-22. services 层 48 文件缺 `#![deny(unsafe_code)]`（违反 F1）
+### P0-22. functions 层 48 文件缺 `#![deny(unsafe_code)]`（违反 F1）
 
 - **严重度**：�� P0（违反 F1 硬规则）
-- **位置**：services/ 42 个 .rs 文件（实测 2026-08-15：非 smoltcp 共 260 文件，缺 deny 42 个；详见既有审计 §2.1）
-- **问题描述**：services/mod.rs:1 声明 deny，但子模块未独立声明；包含 `wasm/wasi/*` (9)、`fs/unkfs/*` (约 16)、`driver/display/*` (3)、`fs/snapshot.rs`、`fs/xattr.rs`、`proc/canary.rs`、`proc/memfd.rs`、`proc/oomd.rs`、`proc/pidfd.rs`、`sync/lockdep.rs`、`config/*`、`timer/mod.rs`、`sgeg/storage/disk.rs` 等。
+- **位置**：functions/ 42 个 .rs 文件（实测 2026-08-15：非 smoltcp 共 260 文件，缺 deny 42 个；详见既有审计 §2.1）
+- **问题描述**：functions/mod.rs:1 声明 deny，但子模块未独立声明；包含 `wasm/wasi/*` (9)、`fs/unkfs/*` (约 16)、`driver/display/*` (3)、`fs/snapshot.rs`、`fs/xattr.rs`、`proc/canary.rs`、`proc/memfd.rs`、`proc/oomd.rs`、`proc/pidfd.rs`、`sync/lockdep.rs`、`config/*`、`timer/mod.rs`、`sgeg/storage/disk.rs` 等。
 - **修复建议**：一次性在所有缺 deny 文件第 1 行添加 `#![deny(unsafe_code)]`；若文件含 unsafe 需先迁移。
 
 ### P0-23. host-tests 18 处 `#![allow(dead_code)]` 违反 F9
@@ -280,38 +280,38 @@ P0 为最高优先级问题，必须立即修复。本章汇总全项目深度�
 P1 为高优先级问题，本季度修复。详细问题列表请参见附录 C 各子系统报告。
 
 **P1 问题分布**：
-- framework 子系统：约 110 项
-- services 子系统：约 107 项
+- privileged 子系统：约 110 项
+- functions 子系统：约 107 项
 
 **TOP 5 P1 子系统**（按数量）：
-1. services/fs/ — 12 项
-2. services/proc/ — 14 项
-3. framework/mm/ — 9 项
-4. framework/net/ — 9 项
-5. services/syscall/ — 5 项
+1. functions/fs/ — 12 项
+2. functions/proc/ — 14 项
+3. privileged/mm/ — 9 项
+4. privileged/net/ — 9 项
+5. functions/syscall/ — 5 项
 
 # 第5章 全项目 P2 问题（296 项）
 
 P2 为中优先级问题，半年内修复。详细问题列表请参见附录 C 各子系统报告。
 
 **P2 问题分布**：
-- framework 子系统：约 130 项
-- services 子系统：约 166 项
+- privileged 子系统：约 130 项
+- functions 子系统：约 166 项
 
 **TOP 5 P2 子系统**（按数量）：
-1. services/fs/ — 20 项
-2. services/proc/ — 15 项
-3. services/driver/ — 16 项
-4. framework/mm/ — 9 项
-5. framework/net/ — 11 项
+1. functions/fs/ — 20 项
+2. functions/proc/ — 15 项
+3. functions/driver/ — 16 项
+4. privileged/mm/ — 9 项
+5. privileged/net/ — 11 项
 
 # 第6章 全项目 P3 问题（122 项）
 
 P3 为低优先级问题，远期修复。详细问题列表请参见附录 C 各子系统报告。
 
 **P3 问题分布**：
-- framework 子系统：约 60 项
-- services 子系统：约 62 项
+- privileged 子系统：约 60 项
+- functions 子系统：约 62 项
 
 ---
 
@@ -348,11 +348,11 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 | SYS 编号 | 实现位置 | 缺失 dispatch 路径 |
 |---|---|---|
-| `SYS_getsockname` (51) | `services/net/syscall.rs::getsockname_syscall` | `dispatch_net` match arm |
-| `SYS_getpeername` (52) | `services/net/syscall.rs::getpeername_syscall` | `dispatch_net` match arm |
-| `SYS_setregid` (116) | `services/sgeg/uid.rs::setregid_syscall` | `dispatch_sgeg` match arm |
-| `SYS_reboot` (169) | `services/proc/sysinfo.rs::reboot_syscall` | `dispatch_sgeg` match arm（已有 SYS_SGEG_REBOOT 同名函数）|
-| `SYS_sethostname` (170) | `services/proc/sysinfo.rs::sethostname_syscall` | `dispatch_sgeg` match arm（已有 SYS_SGEG_SETHOSNAME）|
+| `SYS_getsockname` (51) | `functions/net/syscall.rs::getsockname_syscall` | `dispatch_net` match arm |
+| `SYS_getpeername` (52) | `functions/net/syscall.rs::getpeername_syscall` | `dispatch_net` match arm |
+| `SYS_setregid` (116) | `functions/sgeg/uid.rs::setregid_syscall` | `dispatch_sgeg` match arm |
+| `SYS_reboot` (169) | `functions/proc/sysinfo.rs::reboot_syscall` | `dispatch_sgeg` match arm（已有 SYS_SGEG_REBOOT 同名函数）|
+| `SYS_sethostname` (170) | `functions/proc/sysinfo.rs::sethostname_syscall` | `dispatch_sgeg` match arm（已有 SYS_SGEG_SETHOSNAME）|
 
 > **注**：SYS_reboot / SYS_sethostname 与 SYS_SGEG_REBOOT / SYS_SGEG_SETHOSTNAME 编号相同（170），参见附录 B §2.1 与 §E 已知问题。
 
@@ -374,12 +374,12 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 | SYS 编号 | 路径 | 备注 |
 |---|---|---|
 | `SYS_rt_sigreturn` (15) | 无 sigreturn 实现 | 走缺页异常路径 |
-| `SYS_execve` (59) | 无 exec 实装 | `services/proc/execve.rs` 仅有 stub |
+| `SYS_execve` (59) | 无 exec 实装 | `functions/proc/execve.rs` 仅有 stub |
 | `SYS_tgkill` (234) | 无 tgkill | 走 generic kill |
 | `SYS_inotify_init` (253) | 无 init1 之外的 init | 与 SYS_inotify_init1 重叠 |
 | `SYS_readv` (19) | 无 readv 实现 | 仅 read_syscall |
 | `SYS_writev` (20) | 无 writev 实现 | 仅 write_syscall |
-| `SYS_sendfile` (40) | 无 sendfile | framework dispatch 也未处理 |
+| `SYS_sendfile` (40) | 无 sendfile | privileged dispatch 也未处理 |
 | `SYS_preadv` (295) | 无 preadv | 同 SYS_readv |
 | `SYS_pwritev` (296) | 无 pwritev | 同 SYS_writev |
 | `SYS_fchownat` (260) | 无 fchownat | 仅 SYS_fchown |
@@ -398,8 +398,8 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 | `SYS_userfaultfd` (323) | 无 userfaultfd | |
 | `SYS_recvmmsg` (299) | 无 mmsg 系列 | |
 | `SYS_sendmmsg` (307) | 同上 | |
-| `SYS_socketpair` (53) | 无 socketpair | framework dispatch 也未处理 |
-| `SYS_seccomp` (317) | 无 seccomp | 与 §F2 services 黑名单冲突 |
+| `SYS_socketpair` (53) | 无 socketpair | privileged dispatch 也未处理 |
+| `SYS_seccomp` (317) | 无 seccomp | 与 §F2 functions 黑名单冲突 |
 | `SYS_prctl` (157) | 无 prctl | |
 | `SYS_arch_prctl` (158) | 无 arch_prctl | |
 | `SYS_capget` (125) | 无 capget | 仅 pwm_has_capability |
@@ -424,7 +424,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 |---|---:|---|
 | `[X:CFG]` `#[cfg(target_arch)]` 跨架构（已确认）| 3 | 保留（双架构预留）|
 | `[T:模板]` trait impl（已豁免）| - | prelude/api.rs/mod.rs 永久保留 |
-| `[R:替代]` services 与 framework 同名 type 冲突（services 副本死亡）| 估计 ~20 | 删除 services 副本，统一 framework |
+| `[R:替代]` functions 与 privileged 同名 type 冲突（functions 副本死亡）| 估计 ~20 | 删除 functions 副本，统一 privileged |
 | `[D:删除]` 真死代码 | 估计 ~340 | 逐项评估后删除 |
 | `[?]` 待人工评审 | 余下 | 需逐项判断 |
 
@@ -432,52 +432,52 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 | 模块 | 死代码数 | 备注 |
 |---|---:|---|
-| `framework/arch/` | 58 | APIC/IOAPIC/GIC 中断控制器 + aarch64 MMU/KPTI |
-| `services/fs/` | 54 | VFS / 4 个文件系统内部函数 |
-| `services/driver/` | 49 | 通用驱动框架 |
-| `framework/driver/` | 33 | PCI/USB/存储/网络驱动 |
-| `services/proc/` | 31 | proc 子系统（user_proc.rs 38 个已误报为 0）|
-| `services/sgeg/` | 22 | secure_boot 整套（0 引用）+ TPM stub |
-| `framework/mm/` | 18 | MM 子系统辅助 |
-| `services/ipc/` | 9 | System V IPC（sem/signal）|
-| `services/mm/` | 9 | MM 业务层 |
-| `framework/proc/` | 8 | proc 框架层 |
+| `privileged/arch/` | 58 | APIC/IOAPIC/GIC 中断控制器 + aarch64 MMU/KPTI |
+| `functions/fs/` | 54 | VFS / 4 个文件系统内部函数 |
+| `functions/driver/` | 49 | 通用驱动框架 |
+| `privileged/driver/` | 33 | PCI/USB/存储/网络驱动 |
+| `functions/proc/` | 31 | proc 子系统（user_proc.rs 38 个已误报为 0）|
+| `functions/sgeg/` | 22 | secure_boot 整套（0 引用）+ TPM stub |
+| `privileged/mm/` | 18 | MM 子系统辅助 |
+| `functions/ipc/` | 9 | System V IPC（sem/signal）|
+| `functions/mm/` | 9 | MM 业务层 |
+| `privileged/proc/` | 8 | proc 框架层 |
 
 ### 高密度死代码文件 Top 5
 
 | 文件 | 死代码数 | 评估 |
 |---|---:|---|
-| `framework/arch/x86_64/apic.rs` | 19 | `[D:删除]` 大部分是预留 API（如 `apic_read_isr/tmr/irr`、`configure_lint0/1`），与 audit §G.4 "APIC 中断控制器辅助函数" 完全对应 |
-| `services/driver/usb/xhci.rs` | 16 | `[D:删除]` 与 `framework/driver/usb/xhci.rs` 同名 `XhciController` type，services 副本完全死亡 |
-| `services/driver/storage/ahci.rs` | 11 | `[?]` 待审 |
-| `services/sgeg/identity.rs` | 10 | `[D:删除]` audit 报告 §G.2 提到 "identity 中转机制过多死代码" |
-| `framework/arch/x86_64/mmu.rs` | 9 | `[D:删除]` aarch64 KPTI 诊断辅助 |
+| `privileged/arch/x86_64/apic.rs` | 19 | `[D:删除]` 大部分是预留 API（如 `apic_read_isr/tmr/irr`、`configure_lint0/1`），与 audit §G.4 "APIC 中断控制器辅助函数" 完全对应 |
+| `functions/driver/usb/xhci.rs` | 16 | `[D:删除]` 与 `privileged/driver/usb/xhci.rs` 同名 `XhciController` type，functions 副本完全死亡 |
+| `functions/driver/storage/ahci.rs` | 11 | `[?]` 待审 |
+| `functions/sgeg/identity.rs` | 10 | `[D:删除]` audit 报告 §G.2 提到 "identity 中转机制过多死代码" |
+| `privileged/arch/x86_64/mmu.rs` | 9 | `[D:删除]` aarch64 KPTI 诊断辅助 |
 
 ### 已确认 `[X:CFG]` 跨架构项（3 项）
 
 | 函数 | 文件:行 | 架构 |
 |---|---|---|
-| `rdtsc_fence` | `framework/idt/safety.rs:152` | x86_64 |
-| `save_frame_pointer` | `framework/idt/safety.rs:234` | x86_64 |
-| `spurious_irq_count` | `framework/idt/idt.rs:64` | x86_64 |
+| `rdtsc_fence` | `privileged/idt/safety.rs:152` | x86_64 |
+| `save_frame_pointer` | `privileged/idt/safety.rs:234` | x86_64 |
+| `spurious_irq_count` | `privileged/idt/idt.rs:64` | x86_64 |
 
 ### 评估建议
 
 按用户原则（功能性激活 / 真死代码删除 / 替代标记）：
 
 1. **本周删除**（5 个高置信 `[D:删除]` 文件）：
-   - `framework/arch/x86_64/apic.rs` 19 项预留 API
-   - `services/driver/usb/xhci.rs` 与 framework 重复的 services 副本 16 项
-   - `services/sgeg/secure_boot.rs` 整套 8-9 个 fn（audit §G 多次提及）
-   - `services/sgeg/identity.rs` 10 项中转函数
-   - `framework/arch/x86_64/mmu.rs` 9 项 aarch64 诊断
+   - `privileged/arch/x86_64/apic.rs` 19 项预留 API
+   - `functions/driver/usb/xhci.rs` 与 privileged 重复的 functions 副本 16 项
+   - `functions/sgeg/secure_boot.rs` 整套 8-9 个 fn（audit §G 多次提及）
+   - `functions/sgeg/identity.rs` 10 项中转函数
+   - `privileged/arch/x86_64/mmu.rs` 9 项 aarch64 诊断
 
 2. **本季度专项清理**：362 - 38（已删除）= 324 项
    - 需 5-7 天专项工作
-   - 重点：`framework/arch/` 58 项中应保留哪些 interrupt controller 辅助？
+   - 重点：`privileged/arch/` 58 项中应保留哪些 interrupt controller 辅助？
 
 3. **决策类**：
-   - services vs framework 同名 type 冲突治理（~20 项已识别）
+   - functions vs privileged 同名 type 冲突治理（~20 项已识别）
    - unkfs trait stub 整套删除决策（附录 B §4.6）
    - inode.rs / sched_policy.rs 等已审计的 `[D:删除]` 候选
 
@@ -487,29 +487,29 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 | 模块 | 父模块 | 类别 |
 |---|---|---|
-| `mod test_mm` | framework/tests/mod.rs | `[?]` 测试模块 |
-| `mod test_new_features` | framework/tests/mod.rs | `[?]` 测试模块 |
-| `mod test_pi_mutex` | framework/tests/mod.rs | `[?]` 测试模块 |
-| `mod test_proc` | framework/tests/mod.rs | `[?]` 测试模块 |
-| `mod test_smp` | framework/tests/mod.rs | `[?]` 测试模块 |
-| `mod test_uds` | framework/tests/mod.rs | `[?]` 测试模块 |
-| `mod test_vfs` | framework/tests/mod.rs | `[?]` 测试模块 |
-| `mod audit_export` | services/freg/mod.rs | `[D:删除]` |
-| `mod health_monitor` | services/freg/mod.rs | `[D:删除]` |
-| `mod dmu_trait` | services/fs/unkfs/mod.rs | `[?]` ZFS 克隆未启用 |
-| `mod raidz_trait` | services/fs/unkfs/mod.rs | `[?]` 同上 |
-| `mod spa_trait` | services/fs/unkfs/mod.rs | `[?]` 同上 |
-| `mod txg_trait` | services/fs/unkfs/mod.rs | `[?]` 同上 |
-| `mod zap_trait` | services/fs/unkfs/mod.rs | `[?]` 同上 |
-| `mod zil_persist_trait` | services/fs/unkfs/mod.rs | `[?]` 同上 |
-| `mod zil_trait` | services/fs/unkfs/mod.rs | `[?]` 同上 |
-| `mod ramfs_data` | services/fs/ramfs_core/mod.rs | `[?]` ramfs 实现 |
-| `mod pmm_policy` | services/mm/mod.rs | `[D:删除]` |
-| `mod slab_policy` | services/mm/mod.rs | `[D:删除]` |
-| `mod swap_policy` | services/mm/mod.rs | `[D:删除]` |
-| `mod wasi` | services/wasm/mod.rs | `[T:模板]` WASM 沙箱 |
-| `mod fd_ops` | services/wasm/wasi/mod.rs | `[T:模板]` 同上 |
-| `mod path_ops` | services/wasm/wasi/mod.rs | `[T:模板]` 同上 |
+| `mod test_mm` | privileged/tests/mod.rs | `[?]` 测试模块 |
+| `mod test_new_features` | privileged/tests/mod.rs | `[?]` 测试模块 |
+| `mod test_pi_mutex` | privileged/tests/mod.rs | `[?]` 测试模块 |
+| `mod test_proc` | privileged/tests/mod.rs | `[?]` 测试模块 |
+| `mod test_smp` | privileged/tests/mod.rs | `[?]` 测试模块 |
+| `mod test_uds` | privileged/tests/mod.rs | `[?]` 测试模块 |
+| `mod test_vfs` | privileged/tests/mod.rs | `[?]` 测试模块 |
+| `mod audit_export` | functions/freg/mod.rs | `[D:删除]` |
+| `mod health_monitor` | functions/freg/mod.rs | `[D:删除]` |
+| `mod dmu_trait` | functions/fs/unkfs/mod.rs | `[?]` ZFS 克隆未启用 |
+| `mod raidz_trait` | functions/fs/unkfs/mod.rs | `[?]` 同上 |
+| `mod spa_trait` | functions/fs/unkfs/mod.rs | `[?]` 同上 |
+| `mod txg_trait` | functions/fs/unkfs/mod.rs | `[?]` 同上 |
+| `mod zap_trait` | functions/fs/unkfs/mod.rs | `[?]` 同上 |
+| `mod zil_persist_trait` | functions/fs/unkfs/mod.rs | `[?]` 同上 |
+| `mod zil_trait` | functions/fs/unkfs/mod.rs | `[?]` 同上 |
+| `mod ramfs_data` | functions/fs/ramfs_core/mod.rs | `[?]` ramfs 实现 |
+| `mod pmm_policy` | functions/mm/mod.rs | `[D:删除]` |
+| `mod slab_policy` | functions/mm/mod.rs | `[D:删除]` |
+| `mod swap_policy` | functions/mm/mod.rs | `[D:删除]` |
+| `mod wasi` | functions/wasm/mod.rs | `[T:模板]` WASM 沙箱 |
+| `mod fd_ops` | functions/wasm/wasi/mod.rs | `[T:模板]` 同上 |
+| `mod path_ops` | functions/wasm/wasi/mod.rs | `[T:模板]` 同上 |
 
 > **建议处置**：
 > - `[D:删除]` 类（audit_export, health_monitor, pmm_policy 等）— 直接删除（5 项）
@@ -521,7 +521,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 | 类型 | 位置 | 类别 |
 |---|---|---|
-| `struct DomainFlags` | `services/sgeg/types.rs:101` | `[D:删除]` 仅 1 个引用（自身声明）|
+| `struct DomainFlags` | `functions/sgeg/types.rs:101` | `[D:删除]` 仅 1 个引用（自身声明）|
 
 > **建议**：删除 `DomainFlags`（若确认无外部依赖）。
 
@@ -534,12 +534,12 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 | `signal::cont/interrupt/stop/kill` (§G.1) | "70+ 行死代码，4 个便利包装" | `[D:删除]`（删除后调底层 send）| 待审 |
 | `pi_mutex_process_exit` (§G.2) | "永久持锁" | `[A:激活]` §F-10 已识别 | 待审 |
 | `Inode::set_times` (§G.1) | "默认 Ok(()) 静默成功" | `[A:激活]`（实现返回值校验）| 待审 |
-| `services/sgeg/secure_boot.rs` 整套 | audit §G 多次提及 | `[D:删除]` 8 个 fn 全套 | ✅ 脚本确认 0 引用 |
+| `functions/sgeg/secure_boot.rs` 整套 | audit §G 多次提及 | `[D:删除]` 8 个 fn 全套 | ✅ 脚本确认 0 引用 |
 | `signal.rs::cont/kill/interrupt/stop` | "70+ 行死代码" | `[D:删除]` | ✅ 脚本确认 0 引用 |
 | `fs/inode.rs::new_legacy_inode/new_ramfs_inode` | "被取代未删除" | `[D:删除]` | 待审 |
 | `sched_policy.rs::boost_priority` | "100% 等价" | `[D:删除]` | ✅ 脚本已报 dead code |
 | `apic.rs` 19 项预留 API | §G.4 "APIC 中断控制器辅助函数" | `[D:删除]` | ✅ 脚本确认 0 引用 |
-| `services/driver/usb/xhci.rs` XhciController | services 与 framework 同名 type | `[D:删除]` services 副本 | ✅ 验证 framework `impl Driver for XhciController` 已占用 |
+| `functions/driver/usb/xhci.rs` XhciController | functions 与 privileged 同名 type | `[D:删除]` functions 副本 | ✅ 验证 privileged `impl Driver for XhciController` 已占用 |
 
 ## 处置工作流建议
 
@@ -548,8 +548,8 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 ### 阶段 1（本周）：高确定项清理
 
 1. **删除** `[D:删除]` 类纯死代码（5-10 个文件、~150 行）
-   - `services/sgeg/secure_boot.rs` 整套删除
-   - `services/proc/signal.rs::cont/interrupt/stop/kill` 4 个便利包装删除
+   - `functions/sgeg/secure_boot.rs` 整套删除
+   - `functions/proc/signal.rs::cont/interrupt/stop/kill` 4 个便利包装删除
    - `sched_policy.rs::boost_priority` 删除
    - `fs/inode.rs::new_legacy_inode/new_ramfs_inode` 删除
 
@@ -575,56 +575,56 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 | 排名 | 问题 | 子系统 | 性质 |
 |---|---|---|---|
-| 1 | strlen 无上界循环 | framework/lib | 恶意指针 → 任意内存读 / #PF |
-| 2 | sendmsg SCM_CREDENTIALS 硬编码 | services/net | 任意进程自称 root |
-| 3 | aarch64 KPTI 不完整 | framework/arch | Meltdown 可攻击 |
-| 4 | klog_ffi! 缺 NUL 终止 | framework/klog | 栈缓冲溢出读取 |
-| 5 | Ed25519 签名验证为占位 | framework/sgeg | 任何非零签名通过 |
-| 6 | pi_mutex_process_exit 死代码 | framework/sync | 永久持锁 |
-| 7 | test_runner_init 永久关闭中断 | framework/tests | 中断全关 |
-| 8 | MSI-X 实装未完成 | framework/pci | NVMe 无法工作 |
-| 9 | ECAM_BASE 硬编码 aarch64 | framework/pci | 不可移植 |
-| 10 | u32::MAX 句柄冲突 | services/net | use-after-close |
-| 11 | audit.rs static mut GLOBAL_AUDIT | framework/sgeg | 多核并发撕裂 |
-| 12 | recovery_domain_register Box::leak | framework/freg | 内存永久泄漏 |
-| 13 | PCI 配置空间 SMP 并发无锁 | framework/pci | 配置访问冲突 |
-| 14 | do_softirq 全局 running | framework/irq | 多核下仅 1 CPU 处理 softirq |
-| 15 | MSI_VECTOR_COUNT=64 | framework/pci | 严重不足 |
-| 16 | gfx_console fb 裸指针 | framework/console | use-after-free |
-| 17 | enter_user_mode 缺 SMEP/SMAP | framework/usermode | 用户态可执行内核代码 |
-| 18 | vfs/api.rs 1700 行单文件 | framework/fs | 拆分违反简单优先 |
-| 19 | vfs/api.rs → services/fs 反向依赖 | framework/fs | F2 单向数据流严重违反 |
-| 20 | timer tick 计数器内存序 | framework/timer | 多核一致性问题 |
+| 1 | strlen 无上界循环 | privileged/lib | 恶意指针 → 任意内存读 / #PF |
+| 2 | sendmsg SCM_CREDENTIALS 硬编码 | functions/net | 任意进程自称 root |
+| 3 | aarch64 KPTI 不完整 | privileged/arch | Meltdown 可攻击 |
+| 4 | klog_ffi! 缺 NUL 终止 | privileged/klog | 栈缓冲溢出读取 |
+| 5 | Ed25519 签名验证为占位 | privileged/sgeg | 任何非零签名通过 |
+| 6 | pi_mutex_process_exit 死代码 | privileged/sync | 永久持锁 |
+| 7 | test_runner_init 永久关闭中断 | privileged/tests | 中断全关 |
+| 8 | MSI-X 实装未完成 | privileged/pci | NVMe 无法工作 |
+| 9 | ECAM_BASE 硬编码 aarch64 | privileged/pci | 不可移植 |
+| 10 | u32::MAX 句柄冲突 | functions/net | use-after-close |
+| 11 | audit.rs static mut GLOBAL_AUDIT | privileged/sgeg | 多核并发撕裂 |
+| 12 | recovery_domain_register Box::leak | privileged/freg | 内存永久泄漏 |
+| 13 | PCI 配置空间 SMP 并发无锁 | privileged/pci | 配置访问冲突 |
+| 14 | do_softirq 全局 running | privileged/irq | 多核下仅 1 CPU 处理 softirq |
+| 15 | MSI_VECTOR_COUNT=64 | privileged/pci | 严重不足 |
+| 16 | gfx_console fb 裸指针 | privileged/console | use-after-free |
+| 17 | enter_user_mode 缺 SMEP/SMAP | privileged/usermode | 用户态可执行内核代码 |
+| 18 | vfs/api.rs 1700 行单文件 | privileged/fs | 拆分违反简单优先 |
+| 19 | vfs/api.rs → functions/fs 反向依赖 | privileged/fs | F2 单向数据流严重违反 |
+| 20 | timer tick 计数器内存序 | privileged/timer | 多核一致性问题 |
 
 > **2026-08-15 独立审计增量**：合并入 TOP 20 表的独立发现（去重后净增 21 项 P0）：
 
 | # | 新增 P0 | 子系统 | 性质 |
 |---|---|---|---|
-| 21 | `pwm_set_syscall` 任何进程可设自己为 root | services/sgeg | 完全提权 |
-| 22 | `open_by_handle_at` 无 CAP_DAC_READ_SEARCH | services/fs | 绕过 DAC 权限 |
-| 23 | `access` 不区分 R_OK/W_OK/X_OK | services/fs | 权限检查失效 |
-| 24 | `pidfd_open` 直接返 PID 作为 fd | services/proc | 与 stdin 冲突 |
-| 25 | `clone_syscall` 运算符优先级 Bug | services/proc | CLONE 校验失效 |
-| 26 | dispatch 丢 SYS_pipe2/SYS_dup3 flags | services/syscall | POSIX 语义违反 |
-| 27 | `chown_syscall` UID 失败回退 root | services/fs | 提权路径 |
+| 21 | `pwm_set_syscall` 任何进程可设自己为 root | functions/sgeg | 完全提权 |
+| 22 | `open_by_handle_at` 无 CAP_DAC_READ_SEARCH | functions/fs | 绕过 DAC 权限 |
+| 23 | `access` 不区分 R_OK/W_OK/X_OK | functions/fs | 权限检查失效 |
+| 24 | `pidfd_open` 直接返 PID 作为 fd | functions/proc | 与 stdin 冲突 |
+| 25 | `clone_syscall` 运算符优先级 Bug | functions/proc | CLONE 校验失效 |
+| 26 | dispatch 丢 SYS_pipe2/SYS_dup3 flags | functions/syscall | POSIX 语义违反 |
+| 27 | `chown_syscall` UID 失败回退 root | functions/fs | 提权路径 |
 | 28 | `audit_smoltcp_purity.py` hash mismatch 返 0 | scripts | CI 门禁失效 |
-| 29 | `ci_check_services_unsafe.py` 缺 vendored 排除 | scripts | CI 门禁失效 |
+| 29 | `ci_check_functions_unsafe.py` 缺 vendored 排除 | scripts | CI 门禁失效 |
 | 30 | `ci/audit.sh` `if cmd \| tail` 反逻辑（实测 9 处） | ci | CI 门禁失效 |
 | 31 | `tools/auto_*.py` 硬编码绝对路径 | tools | 工具失效 |
-| 32 | `kmalloc.rs::dump_stats` 引用未定义变量 | framework/mm | 编译失败 |
-| 33 | `swap.rs::init` 4096 页未标记 reserved | framework/mm | 16MB 内存泄漏 |
-| 34 | isr.asm 诊断代码污染中断入口 | framework/boot | 中断栈布局破坏 |
+| 32 | `kmalloc.rs::dump_stats` 引用未定义变量 | privileged/mm | 编译失败 |
+| 33 | `swap.rs::init` 4096 页未标记 reserved | privileged/mm | 16MB 内存泄漏 |
+| 34 | isr.asm 诊断代码污染中断入口 | privileged/boot | 中断栈布局破坏 |
 | 35 | 用户态链接脚本缺 `_user_start/_user_end` | user/link.x | KPTI 双页表映射失败 |
 | 36 | `build/stage1.bin` 全 0x00 | build | 启动失败 |
 | 37 | `src/rust/lib.rs` 空文件与 src/lib.rs 共存 | src/rust | Cargo 解析疑惑 |
 | 38 | `ref-naming.md` 500+ 立场与代码不符 | docs | 文档漂移 |
 | 39 | `tests/reports/` 164 个陈旧日志散落 | tests | git 跟踪异常 |
-| 40 | services 48 文件缺 `#![deny(unsafe_code)]` | services | F1 违反 |
+| 40 | functions 48 文件缺 `#![deny(unsafe_code)]` | functions | F1 违反 |
 | 41 | host-tests 18 处 `#![allow(dead_code)]` | host-tests | F9 违反 |
 
 **合并 P0 总数**：原有 93 项 + 独立审计新增 21 项（独立审计总 35 项中有 14 项与既有审计重叠）= **114 项合并 P0**。
 
-> **2026-08-15 附录 H 增量后权威口径**：114 项 + 附录 H 新增 10 项（cred 加密原语缺失 P0-24 + audit_comment_language 失效 P0-25 + host-tests 与内核解耦 P0-26 + host-tests 平行实装使 G.4 双倍严重 P0-27 + SYS_SGEG_* 错位 P0-28 + pmm.reserve_range API 缺失 P0-29 + COW 物理页泄漏 P0-30 + framework/fs/vfs/api.rs F2 违反 P0-31 + framework/syscall/dispatch.rs 诊断污染 P0-32 + src/rust/build.rs 全 0 占位符 P0-33） - 附录 H 标记 [DEPRECATED] 的 2 项误判 = **122 项权威 P0**。详见附录 H §五 5.4 DECISION-H01~H15 与 §九.13 DECISION-H13/H14/H15（参见 §3.2 与附录 E 三.1 的 [DEPRECATED] 标记）。
+> **2026-08-15 附录 H 增量后权威口径**：114 项 + 附录 H 新增 10 项（cred 加密原语缺失 P0-24 + audit_comment_language 失效 P0-25 + host-tests 与内核解耦 P0-26 + host-tests 平行实装使 G.4 双倍严重 P0-27 + SYS_SGEG_* 错位 P0-28 + pmm.reserve_range API 缺失 P0-29 + COW 物理页泄漏 P0-30 + privileged/fs/vfs/api.rs F2 违反 P0-31 + privileged/syscall/dispatch.rs 诊断污染 P0-32 + src/rust/build.rs 全 0 占位符 P0-33） - 附录 H 标记 [DEPRECATED] 的 2 项误判 = **122 项权威 P0**。详见附录 H §五 5.4 DECISION-H01~H15 与 §九.13 DECISION-H13/H14/H15（参见 §3.2 与附录 E 三.1 的 [DEPRECATED] 标记）。
 
 ---
 
@@ -654,45 +654,45 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 | 子系统 | P0 数 | 主要类别 |
 |---|---:|---|
-| framework/sgeg | 8 | TCB 死代码 + 占位实现 + 内存泄漏 |
-| framework/dma | 6 | I6 不变式 + MMIO 泄漏 |
-| framework/arch | 6 | KPTI + CET + SMP 可靠性 |
-| framework/proc | 5 | FFI 重声明 + 三重 unsafe + 内存屏障 |
-| framework/net | 6 | 单文件过大 + 句柄重用 |
-| framework/mm | 6 | EXCEPTION_TABLE 哨兵 + KPTI 入口 |
-| framework/ 顶层散文件 | 7 | SMEP/SMAP + IoMem 溢出 + 帧验证 |
-| framework/freg+egdf+debug+klog+smp | 5 | 函数指针 + IDT 持锁 + Box::leak |
-| framework/tests | 3 | 永久关闭中断 + 持锁执行 + 物理地址硬编码 |
-| framework/syscall | 1 | mmap 内核地址泄漏 |
-| framework/cpu | 5 | 单文件 1554 行 + SAFETY + 溢出 |
-| framework/irq | 3 | 全局 running + handlers 并发 + 死锁 |
-| framework/timer | 4 | tick 内存序 + hrtimer 单文件 + tickless |
-| framework/pci | 4 | ECAM_BASE 硬编码 + SMP 无锁 + MSI 不足 |
-| framework/fs (drivers) | 4 | vfs/api.rs 1700 行 + 反向依赖 |
-| framework/remaining | 4 | strlen 无上界 + string.rs 单文件 |
-| services/net | 6 | SCM_CREDENTIALS 硬编码 + 句柄重用 |
-| services/fs | 8 | VFS_MAX_FDS + dcache 全局锁 + inotify 隐私 |
-| services/proc | 7 | 计数漂移 + 嵌套锁 + 状态机绕过 |
-| services/driver | 6 | PIO 无 SAFETY + TX ring UB + NVMe packed |
-| services/wasm+ipc+sgeg | 4 | 无限循环 + shm 无 size + 签名占位 |
-| services/mm+syscall+freg+config+debug+egdf+io+timer | 5 | syscall O(N) + eBPF 验证器 + capability 降级 |
+| privileged/sgeg | 8 | TCB 死代码 + 占位实现 + 内存泄漏 |
+| privileged/dma | 6 | I6 不变式 + MMIO 泄漏 |
+| privileged/arch | 6 | KPTI + CET + SMP 可靠性 |
+| privileged/proc | 5 | FFI 重声明 + 三重 unsafe + 内存屏障 |
+| privileged/net | 6 | 单文件过大 + 句柄重用 |
+| privileged/mm | 6 | EXCEPTION_TABLE 哨兵 + KPTI 入口 |
+| privileged/ 顶层散文件 | 7 | SMEP/SMAP + IoMem 溢出 + 帧验证 |
+| privileged/freg+egdf+debug+klog+smp | 5 | 函数指针 + IDT 持锁 + Box::leak |
+| privileged/tests | 3 | 永久关闭中断 + 持锁执行 + 物理地址硬编码 |
+| privileged/syscall | 1 | mmap 内核地址泄漏 |
+| privileged/cpu | 5 | 单文件 1554 行 + SAFETY + 溢出 |
+| privileged/irq | 3 | 全局 running + handlers 并发 + 死锁 |
+| privileged/timer | 4 | tick 内存序 + hrtimer 单文件 + tickless |
+| privileged/pci | 4 | ECAM_BASE 硬编码 + SMP 无锁 + MSI 不足 |
+| privileged/fs (drivers) | 4 | vfs/api.rs 1700 行 + 反向依赖 |
+| privileged/remaining | 4 | strlen 无上界 + string.rs 单文件 |
+| functions/net | 6 | SCM_CREDENTIALS 硬编码 + 句柄重用 |
+| functions/fs | 8 | VFS_MAX_FDS + dcache 全局锁 + inotify 隐私 |
+| functions/proc | 7 | 计数漂移 + 嵌套锁 + 状态机绕过 |
+| functions/driver | 6 | PIO 无 SAFETY + TX ring UB + NVMe packed |
+| functions/wasm+ipc+sgeg | 4 | 无限循环 + shm 无 size + 签名占位 |
+| functions/mm+syscall+freg+config+debug+egdf+io+timer | 5 | syscall O(N) + eBPF 验证器 + capability 降级 |
 | **合计** | **112**（含重叠去重为 93）| — |
 
-# 第10章 framework ↔ services 关联矩阵
+# 第10章 privileged ↔ functions 关联矩阵
 
-| framework 子系统 | 主要服务的调用方 |
+| privileged 子系统 | 主要服务的调用方 |
 |---|---|
-| framework/mm | services/mm（mmap/mprotect/brk/mremap/numa/pcache/policy）|
-| framework/proc | services/proc（namespace/cgroup/sched_policy/signal/seccomp/session/rlimit）|
-| framework/sync | services/ipc + services/sync |
-| framework/dma | services/driver（NVMe/AHCI/e1000/VirtIO）|
-| framework/net | services/net（smoltcp/socket/syscall）|
-| framework/sgeg | services/sgeg（policy/grants/sessions/audit）|
-| framework/arch | services/syscall + services/proc + 所有硬件相关 |
-| framework/pci | services/driver + framework/idt |
-| framework/cpu | services/proc + scheduler |
-| framework/irq | services/net + framework/timer |
-| framework/timer | services/proc + framework/sched |
+| privileged/mm | functions/mm（mmap/mprotect/brk/mremap/numa/pcache/policy）|
+| privileged/proc | functions/proc（namespace/cgroup/sched_policy/signal/seccomp/session/rlimit）|
+| privileged/sync | functions/ipc + functions/sync |
+| privileged/dma | functions/driver（NVMe/AHCI/e1000/VirtIO）|
+| privileged/net | functions/net（smoltcp/socket/syscall）|
+| privileged/sgeg | functions/sgeg（policy/grants/sessions/audit）|
+| privileged/arch | functions/syscall + functions/proc + 所有硬件相关 |
+| privileged/pci | functions/driver + privileged/idt |
+| privileged/cpu | functions/proc + scheduler |
+| privileged/irq | functions/net + privileged/timer |
+| privileged/timer | functions/proc + privileged/sched |
 
 ---
 
@@ -707,7 +707,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 | D5 | do_softirq per-CPU 改造 | 单开 PR | 多核可靠性 |
 | D6 | 单文件拆分（>1000 行的 12+ 个文件）| 拆分是简单优先要求 | 工作量大 |
 | D7 | P0-08 `pi_mutex_process_exit` 完整实装 | 实装 register/unregister/force_unlock | 5-7 天 |
-| D8 | framework→services 78+ 处反向依赖 | 按子模块分类治理 | 大规模重构 |
+| D8 | privileged→functions 78+ 处反向依赖 | 按子模块分类治理 | 大规模重构 |
 
 ---
 
@@ -802,7 +802,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 1. **建立持续审计流程**：每次 PR 自动跑 14 个审计脚本
 2. **配置 vs 代码同源**：硬编码常量应通过 build.rs 注入
-3. **services 单向数据流审查**：78+ 处反向依赖需 6-8 周专项重构（与 DECISION-H13/H19 合并执行）
+3. **functions 单向数据流审查**：78+ 处反向依赖需 6-8 周专项重构（与 DECISION-H13/H19 合并执行）
 4. **测试基础设施重构（附录 H H.3.6）**：host-tests 应仅保留 (a) host-only micro-benchmarks；(b) cross-architecture integration tests；(c) 不含任何内核代码的 mock 重实装。**禁止** host-tests/src/{unkfs,fs,...} 平行实装
 5. **DECISION-H25 codegen sysno**：把 sysno 单一来源生成纳入 build.rs（与 P0-31 同步执行）
 
@@ -822,8 +822,8 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 ### F-01 [C0] `trampoline.asm` SINFO 字段布局与 Rust 端 `ApStartupInfo` 字节序不一致（trampoline magic 偏移脆弱）
 
-- **文件**: `/home/anfer/Code/Edgine/src/kernel/framework/arch/x86_64/trampoline.asm` 行 41-62
-- **关联代码**: `/home/anfer/Code/Edgine/src/kernel/framework/arch/x86_64/smp_init.rs` 行 23-36
+- **文件**: `/home/anfer/Code/Edgine/src/kernel/privileged/arch/x86_64/trampoline.asm` 行 41-62
+- **关联代码**: `/home/anfer/Code/Edgine/src/kernel/privileged/arch/x86_64/smp_init.rs` 行 23-36
 - **问题描述**:
   - 汇编文件头注释（行 11-23）声明 ApStartupInfo 布局：
     ```
@@ -864,8 +864,8 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 ### F-02 [C0] `isr.asm` 中 `USER_CR3_SAVE` 定义在 `.bss` 但段切换在 `.text` 中段且声明 `extern`，布局假设是 LMA 直接地址
 
-- **文件**: `/home/anfer/Code/Edgine/src/kernel/framework/boot/isr.asm` 行 22-28
-- **关联代码**: `/home/anfer/Code/Edgine/src/kernel/framework/mm/kpti.rs` 行 720 `USER_CR3_SAVE_ASM`
+- **文件**: `/home/anfer/Code/Edgine/src/kernel/privileged/boot/isr.asm` 行 22-28
+- **关联代码**: `/home/anfer/Code/Edgine/src/kernel/privileged/mm/kpti.rs` 行 720 `USER_CR3_SAVE_ASM`
 - **问题描述**:
   - 汇编将 `USER_CR3_SAVE` 放在 `.bss` 段（行 22-25），使用裸符号访问 `[USER_CR3_SAVE]`（如行 141、465、715）。
   - 链接脚本 `x86_64.ld` 行 75-81 `.bss` 段使用 `AT(_kernel_text_lma + (ADDR(.bss) - _kernel_text_lma))` 显式指定 LMA，但 **NOLOAD**，运行时由 boot 阶段清零。
@@ -884,8 +884,8 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 ### F-03 [H] `x86_64.ld` `_kernel_size` 基于 VMA 计算但应基于 LMA（与 aarch64 不一致）
 
-- **文件**: `/home/anfer/Code/Edgine/src/kernel/framework/link/x86_64.ld` 行 117-118
-- **对比**: `/home/anfer/Code/Edgine/src/kernel/framework/link/aarch64.ld` 行 58
+- **文件**: `/home/anfer/Code/Edgine/src/kernel/privileged/link/x86_64.ld` 行 117-118
+- **对比**: `/home/anfer/Code/Edgine/src/kernel/privileged/link/aarch64.ld` 行 58
 - **问题描述**:
   - x86_64: `_kernel_size = _kernel_end - _kernel_text_vma;`  
     `_kernel_text_vma = 0xFFFF800001000000 + .;`（行 44）
@@ -925,8 +925,8 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 ### F-05 [H] `isr.asm` 入口寄存器破坏 + swapgs 时序存在双重诊断痕迹（已经显式标注但未清理）
 
-- **文件**: `/home/anfer/Code/Edgine/src/kernel/framework/boot/isr.asm` 全文
-- **关联代码**: `framework/arch/x86_64/mod.rs` 行 458-823 `enter_user_asm`（同样充斥诊断）
+- **文件**: `/home/anfer/Code/Edgine/src/kernel/privileged/boot/isr.asm` 全文
+- **关联代码**: `privileged/arch/x86_64/mod.rs` 行 458-823 `enter_user_asm`（同样充斥诊断）
 - **问题描述**:
   - 已记录于 F-09/F-22：诊断字符输出（'E'/'P'/'K'/'M'/'V'/'T'/'U'/'L'/'N'/'O'/'W'/'S'/'Y'/'Z'/'Q'/'R'/'H'/'I'/'1'-'7'/'A'/'B'/'C'/'C1'-'C9'/'D'/'F'/'G'）已占据 ~50% 的指令空间。
   - 行 82 `swapgs`（进入用户态后）→ 行 129 `mov rax, cr3` → 行 184 `mov cr3, rax` → 行 197 `swapgs`（第二次，恢复用户 GS）。
@@ -946,7 +946,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 ### F-06 [H] `aarch64/start.S` EL3→EL2→EL1 转换未配置 MAIR_EL1 / TCR_EL1 EL2 阶段，`eret` 后 EL1 处于未知状态
 
-- **文件**: `/home/anfer/Code/Edgine/src/kernel/framework/boot/aarch64/start.S` 行 39-91
+- **文件**: `/home/anfer/Code/Edgine/src/kernel/privileged/boot/aarch64/start.S` 行 39-91
 - **问题描述**:
   - `el3_entry`（行 39-55）：仅设 SCR_EL3（NS=1, HCE=1, RW=1）+ SPSR_EL3 + ELR_EL3。**未配置 MAIR_EL3、TCR_EL3**。
   - `el2_entry`（行 60-91）：设 HCR_EL2、CPTR_EL2、CPACR_EL1、CNTHCTL_EL2、SCTLR_EL1=0、SPSR_EL2、ELR_EL2。**未配置 VTTBR_EL2**（stage-2 translation 当前不启用，但 ARMv8.1 之后 PE 默认可能在 EL2 用 stage-2）。
@@ -966,7 +966,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 ### F-07 [H] `aarch64/context.rs` 上下文切换 `eret` 前未 `isb` 同步 SPSR/ELR 写入
 
-- **文件**: `/home/anfer/Code/Edgine/src/kernel/framework/arch/aarch64/context.rs` 行 116-146
+- **文件**: `/home/anfer/Code/Edgine/src/kernel/privileged/arch/aarch64/context.rs` 行 116-146
 - **问题描述**:
   - 行 116-119: `msr spsr_el1, x2; msr elr_el1, x2;` 后 **没有 `isb`**。
   - ARM ARM 规定：写入 SPSR/ELR 后必须 `isb` 才能 `eret`（否则 CPU 可能用旧值 eret）。
@@ -995,7 +995,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 ### F-08 [H] `arch/aarch64/exception.rs` EL0 IRQ/SVC handler 缺 TTBR0 切换，KPTI 不完整
 
-- **文件**: `/home/anfer/Code/Edgine/src/kernel/framework/arch/aarch64/exception.rs` 行 226-379
+- **文件**: `/home/anfer/Code/Edgine/src/kernel/privileged/arch/aarch64/exception.rs` 行 226-379
 - **关联**: `mm/kpti_aarch64.rs`（KERNEL_TTBR1/TRAMP_TTBR1 切换）
 - **问题描述**:
   - 仅切换 **TTBR1_EL1**（KPTI 双页表），未触及 TTBR0_EL1。
@@ -1020,7 +1020,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 ### F-09 [H] `arch/x86_64/mod.rs` `enter_user_asm` 段寄存器加载与 swapgs 顺序逻辑依赖注释不充分
 
-- **文件**: `/home/anfer/Code/Edgine/src/kernel/framework/arch/x86_64/mod.rs` 行 593-682
+- **文件**: `/home/anfer/Code/Edgine/src/kernel/privileged/arch/x86_64/mod.rs` 行 593-682
 - **问题描述**:
   - 行 593 `mov gs:[0x10], rax` — 直接通过段前缀寻址写 user_pml4。
   - 行 601 `swapgs` → 行 648-676 `mov ds/es/fs/gs, cx`。
@@ -1042,7 +1042,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 ### F-10 [M] `proc/switch.asm` `process_switch_asm` 缺 KPTI 兼容处理（CR3 切换不在 KPTI trampoline 区）
 
-- **文件**: `/home/anfer/Code/Edgine/src/kernel/framework/proc/switch.asm` 行 34-110
+- **文件**: `/home/anfer/Code/Edgine/src/kernel/privileged/proc/switch.asm` 行 34-110
 - **问题描述**:
   - 行 81-82 `mov rax, [rsi + 80]; mov cr3, rax` 切换进程页表——**不在 `.kpti_trampoline` section**。
   - 链接脚本 `x86_64.ld` 行 48-51 `.kpti_trampoline` section 仅包含 `build/isr.o(.text .text.*)`，**switch.asm 在 `.text`**，切换 CR3 后 CPU 在 `switch.asm` 后续指令（行 86-93 加载 ds/es/fs/gs）会使用新 CR3 寻址，若 switch 代码段不在新页表中 → #PF。
@@ -1062,7 +1062,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 ### F-11 [M] `arch/aarch64/mmu.rs` `enable_mmu` 启用 C/I cache，但 `init()` 中 SCTLR_EL1 处理不完整
 
-- **文件**: `/home/anfer/Code/Edgine/src/kernel/framework/arch/aarch64/mmu.rs` 行 263-278
+- **文件**: `/home/anfer/Code/Edgine/src/kernel/privileged/arch/aarch64/mmu.rs` 行 263-278
 - **问题描述**:
   - 行 269-276:
 ```rust
@@ -1087,7 +1087,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 ### F-12 [M] `arch/x86_64/smp_init.rs` `start_ap` 无 `lock` 注解，`cli` 顺序与 `AP_STARTUP_LOCK` 顺序冲突
 
-- **文件**: `/home/anfer/Code/Edgine/src/kernel/framework/arch/x86_64/smp_init.rs` 行 151-218
+- **文件**: `/home/anfer/Code/Edgine/src/kernel/privileged/arch/x86_64/smp_init.rs` 行 151-218
 - **问题描述**:
   - 行 157 `core::arch::asm!("cli", ...)` — 禁用中断。
   - 行 159 `let _lock = AP_STARTUP_LOCK.lock();` — 申请 spinlock。
@@ -1106,8 +1106,8 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 ### F-13 [M] `arch/x86_64/gdt.rs` GDT_SYSRET 选择子布局 `0x18 | 3` 用户数据与 `0x20 | 3` 用户代码，但汇编 `enter_user_asm` push `0x1B/0x23`，未与 GDT 同步
 
-- **文件**: `/home/anfer/Code/Edgine/src/kernel/framework/arch/x86_64/gdt.rs` 行 56-62
-- **关联**: `/home/anfer/Code/Edgine/src/kernel/framework/arch/x86_64/mod.rs` 行 542、569 `push 0x1B; push 0x23`
+- **文件**: `/home/anfer/Code/Edgine/src/kernel/privileged/arch/x86_64/gdt.rs` 行 56-62
+- **关联**: `/home/anfer/Code/Edgine/src/kernel/privileged/arch/x86_64/mod.rs` 行 542、569 `push 0x1B; push 0x23`
 - **问题描述**:
   - `SELECTOR_USER_DATA = 0x18`（DPL=3 → `0x18 | 3 = 0x1B`）
   - `SELECTOR_USER_CODE = 0x20`（DPL=3 → `0x20 | 3 = 0x23`）
@@ -1126,7 +1126,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 ### F-14 [M] `arch/aarch64/mod.rs` `interrupt_restore` 不恢复 D/A/F 位（与 x86_64 对称性问题）
 
-- **文件**: `/home/anfer/Code/Edgine/src/kernel/framework/arch/aarch64/mod.rs` 行 116-133
+- **文件**: `/home/anfer/Code/Edgine/src/kernel/privileged/arch/aarch64/mod.rs` 行 116-133
 - **问题描述**:
   - 仅恢复 IRQ mask (bit 7)，不恢复 D/A/F（debug、SError、FIQ）。
   - 行 119 注释解释 "使用 `msr daifset/daifclr` 而非 `msr daif, Xt` 以避免 QEMU aarch64 上的挂起问题"——这是 QEMU 已知 bug，但其他 hypervisor（KVM on real hw、gem5）无此限制。
@@ -1144,7 +1144,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 ### F-15 [L] `boot/stage1.asm` Multiboot2 信息手工组装无校验和验证
 
-- **文件**: `/home/anfer/Code/Edgine/src/kernel/framework/boot/stage1.asm` 行 67-101
+- **文件**: `/home/anfer/Code/Edgine/src/kernel/privileged/boot/stage1.asm` 行 67-101
 - **问题描述**:
   - 行 103 `mov eax, 0x36D76289; mov ebx, MB2_INFO; cli` ——0x36D76289 是 Multiboot2 魔数。
   - **boot.asm 行 122** `cmp dword [KERNEL_LOAD + 40], MAGIC` 验证魔数在偏移 40——但 stage1 的 MB2 header 总长度计算（行 73 `+32`、`+16`）与 mb2 spec 字段定义未严格对齐。
@@ -1161,7 +1161,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 ### F-16 [H] `arch/x86_64/mod.rs` `enter_user_asm` 缺 `swapgs` 与 `iretq` 之间的 `wbinvd` / 屏障，且 CR3 切换未 flush TLB
 
-- **文件**: `/home/anfer/Code/Edgine/src/kernel/framework/arch/x86_64/mod.rs` 行 740
+- **文件**: `/home/anfer/Code/Edgine/src/kernel/privileged/arch/x86_64/mod.rs` 行 740
 - **问题描述**:
   - 行 740 `mov cr3, rax` 切换到 user_pml4——**没有 INVLPG/TLB flush**。
   - x86 ISA 保证：mov to CR3 隐式刷新所有 non-global TLB 条目，但 global 页（如内核 .text 的 G 位=1）不会被刷新。
@@ -1223,8 +1223,8 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 | 规则 | 关联缺陷 | 备注 |
 |---|---|---|
-| **F1** (services 0 unsafe) | — | 本审计范围无 services |
-| **F2** (services 边界) | — | 同上 |
+| **F1** (functions 0 unsafe) | — | 本审计范围无 functions |
+| **F2** (functions 边界) | — | 同上 |
 | **F3** (无循环依赖) | — | 链接脚本未审计 cross-module |
 | **F4** (SAFETY 注释 100%) | F-09 | `enter_user_asm` 全局_asm 内无 `// SAFETY:` 注释 |
 | **F5** (双架构编译) | — | 需 `./ci/build.sh all` 验证 |
@@ -1282,20 +1282,20 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 ---
 
 **报告结束**
-# 附录 B：services 层关键大文件深度审计
+# 附录 B：functions 层关键大文件深度审计
 
-> **原报告文件**：[`archive/audit-2026-08-14/services-deep-audit-v2.1.md`](./archive/audit-2026-08-14/services-deep-audit-v2.1.md)（1415 行）
-> **审计范围**：services 层 6 个关键大文件深度阅读 ≥80% 文件 / ≥60% 行数
+> **原报告文件**：[`archive/audit-2026-08-14/functions-deep-audit-v2.1.md`](./archive/audit-2026-08-14/functions-deep-audit-v2.1.md)（1415 行）
+> **审计范围**：functions 层 6 个关键大文件深度阅读 ≥80% 文件 / ≥60% 行数
 > **审计项数**：56 项（P0×5 / P1×25 / P2×26）
 
 | 文件 | 字节数 | 已读行数 | 发现数 | P0 | P1 | P2 |
 |------|--------|----------|--------|----|----|----|
-| `services/proc/namespace.rs` | 24,349 | 787/787 (100%) | 9 | 0 | 4 | 5 |
-| `services/syscall/types.rs` | 32,281 | 1020/1020 (100%) | 10 | 1 | 5 | 4 |
-| `services/syscall/dispatch.rs` | 32,422 | 755/755 (100%) | 12 | 2 | 6 | 4 |
-| `services/fs/inode.rs` | 21,689 | 603/603 (100%) | 8 | 1 | 4 | 3 |
-| `services/proc/sched_policy.rs` | 20,278 | 605/605 (100%) | 9 | 1 | 3 | 5 |
-| `services/proc/signal.rs` | 18,485 | 601/601 (100%) | 8 | 0 | 3 | 5 |
+| `functions/proc/namespace.rs` | 24,349 | 787/787 (100%) | 9 | 0 | 4 | 5 |
+| `functions/syscall/types.rs` | 32,281 | 1020/1020 (100%) | 10 | 1 | 5 | 4 |
+| `functions/syscall/dispatch.rs` | 32,422 | 755/755 (100%) | 12 | 2 | 6 | 4 |
+| `functions/fs/inode.rs` | 21,689 | 603/603 (100%) | 8 | 1 | 4 | 3 |
+| `functions/proc/sched_policy.rs` | 20,278 | 605/605 (100%) | 9 | 1 | 3 | 5 |
+| `functions/proc/signal.rs` | 18,485 | 601/601 (100%) | 8 | 0 | 3 | 5 |
 | **总计** | **149,504** | **≥95% 行** | **56** | **5** | **25** | **26** |
 
 | **总计** | **149,504** | **≥95% 行** | **56** | **5** | **25** | **26** |
@@ -1304,12 +1304,12 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 - ✅ 0 unsafe 严格遵守（F1 通过）
 - ✅ 中文注释 100% 覆盖（F7 通过）
 - ⚠️ **存在 5 个 P0 问题**（涉及 POSIX 语义 + 编号空间错位 + 死代码 + 资源配对）
-- ⚠️ syscall 编号空间存在多处**重复定义/与 framework 错位**的严重问题
+- ⚠️ syscall 编号空间存在多处**重复定义/与 privileged 错位**的严重问题
 - ⚠️ namespace.rs 已实现的 POSIX 接口**未被 dispatch 接线**，调度入口断裂
 
 ---
 
-## 1. services/proc/namespace.rs（787 行 / 9 项发现）
+## 1. functions/proc/namespace.rs（787 行 / 9 项发现）
 
 ### 1.1 [P1] `NS_REGISTRY` 使用 `IrqSpinLock` 但内部 `entries` 无并发保护 — 死锁/嵌套锁风险
 
@@ -1318,10 +1318,10 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 **问题描述**:
 - `NsRegistry::register()`/`find()` 持有 `IrqSpinLock` 外层锁后,**直接访问内部 `Vec<NsRegistryEntry>`**(无内部锁)。`IrqSpinLock` 设计用于保护内部数据,这里使用是合规的。
 - 但 `setns_by_type()` 中 `NS_REGISTRY.lock()`(L638)→`find()`(L639) 完成后**整个锁释放前**才通过 `with_process_mut(pid, |p| p.namespaces.lock().setns_by_type(...))` 进入 ProcessTable 锁(L778)。**锁顺序**: `NS_REGISTRY` → `PROCESS_TABLE` (via namespaces.lock())
-- 若任何反向路径存在 `PROCESS_TABLE` → `NS_REGISTRY`,则触发 F8 锁顺序违规。当前 framework 端未确认,需补 audit_deadlock_matrix.py 验证。
+- 若任何反向路径存在 `PROCESS_TABLE` → `NS_REGISTRY`,则触发 F8 锁顺序违规。当前 privileged 端未确认,需补 audit_deadlock_matrix.py 验证。
 
 **修复建议**:
-- 验证 framework 端无 `PROCESS_TABLE` → `NS_REGISTRY` 反向路径
+- 验证 privileged 端无 `PROCESS_TABLE` → `NS_REGISTRY` 反向路径
 - 或考虑改为无锁结构(`AtomicU64` ID + 不可变 `Arc<NsRegistryEntry>` + 全局 DashMap 等)
 
 **验证方法**: `./ci/audit_deadlock_matrix.sh` + 静态追踪所有 `NS_REGISTRY.lock()` 调用点
@@ -1395,7 +1395,7 @@ buf[len] = 0;
   2. 对于 user namespace,还需 uid/gid 映射校验。
   3. 目标 ns 必须与当前 ns 在同一 user namespace 或其后代。
 - 当前实现**零权限校验**,任何进程可 `setns_by_type(Pid, target_id)` 切换到任意 PID namespace。
-- 这破坏了 namespace 隔离的根本目的(I2 不变式 — 内核数据可被 services 非法访问)。
+- 这破坏了 namespace 隔离的根本目的(I2 不变式 — 内核数据可被 functions 非法访问)。
 
 **修复建议**:
 ```rust
@@ -1513,15 +1513,15 @@ loop {
 **位置**: `namespace.rs:747-787` + `dispatch.rs` 全文
 **严重度**: P2（功能完整性）
 **问题描述**:
-- `sys_unshare` 与 `sys_setns` 函数已实现,但 `dispatch.rs` 中**没有引用** `services::proc::namespace::*`。
+- `sys_unshare` 与 `sys_setns` 函数已实现,但 `dispatch.rs` 中**没有引用** `functions::proc::namespace::*`。
 - 调用 `unshare(2)` syscall 会得到 `-ENOSYS`。
 - `EG_UNSHARE = 820` 与 `EG_SETNS = 821` 在 `types.rs` 已定义,等待 dispatch 接线。
 
 **修复建议**:
-在 `services/syscall/dispatch.rs::dispatch_proc` 中追加:
+在 `functions/syscall/dispatch.rs::dispatch_proc` 中追加:
 ```rust
-EG_UNSHARE => crate::kernel::services::proc::namespace::sys_unshare(a0),
-EG_SETNS => crate::kernel::services::proc::namespace::sys_setns(a0, a1),
+EG_UNSHARE => crate::kernel::functions::proc::namespace::sys_unshare(a0),
+EG_SETNS => crate::kernel::functions::proc::namespace::sys_setns(a0, a1),
 ```
 并加入 `use` 列表。
 
@@ -1529,7 +1529,7 @@ EG_SETNS => crate::kernel::services::proc::namespace::sys_setns(a0, a1),
 
 ---
 
-## 2. services/syscall/types.rs（1020 行 / 10 项发现）
+## 2. functions/syscall/types.rs（1020 行 / 10 项发现）
 
 ### 2.1 [P0] 大量 syscall 编号 `pub const X = Y` **与同编号的另一个常量重复** — 二进制硬冲突
 
@@ -1568,8 +1568,8 @@ pub const EG_SOCKETPAIR: u64 = 600; // ← 同一编号!
 **严重度**: P1（功能）
 **问题描述**:
 - `Errno::from_ret()` 转换表(L848-889)只覆盖 1..40 共 ~35 个 errno,跳过了 60-63/64/71/74/75/88-115。
-- framework 返回 `-ENOSTR(-60)` 时,`from_ret(-60)` 返回 `EINVAL`,**误导调用方**。
-- `Dispatch::Errno::from_ret()` 是 services 与 framework 错误转换的唯一桥梁,**必须覆盖所有定义值**。
+- privileged 返回 `-ENOSTR(-60)` 时,`from_ret(-60)` 返回 `EINVAL`,**误导调用方**。
+- `Dispatch::Errno::from_ret()` 是 functions 与 privileged 错误转换的唯一桥梁,**必须覆盖所有定义值**。
 
 **修复建议**: 在 `from_ret()` 添加缺失分支:
 ```rust
@@ -1656,7 +1656,7 @@ pub type SyscallHandler = fn([u64; 6]) -> i64;
 
 **修复建议**:
 - 标记 `SyscallError::E_*` 全部为 `#[deprecated(since = "v2.16", note = "use Errno::* instead")]`,强制外部迁移。
-- `#[allow(non_upper_case_globals)]` 仅对 POSIX errno(`EAGAIN/EACCES/...`)保留,services 内部别名不需要。
+- `#[allow(non_upper_case_globals)]` 仅对 POSIX errno(`EAGAIN/EACCES/...`)保留,functions 内部别名不需要。
 - 在下个 major 版本删 `SyscallError`。
 
 **验证方法**: `cargo clippy -- -D warnings` 应通过。
@@ -1673,7 +1673,7 @@ pub type SyscallHandler = fn([u64; 6]) -> i64;
 
 **修复建议**:
 - 在 `dispatch_proc` 添加 `SYS_clone => clone_syscall(...)`、`SYS_setregid => setregid_syscall(...)`、`SYS_clone3 => clone3_syscall(...)`(后者可 fallthrough 到 clone)。
-- `setregid_syscall` 已存在于 `services/sgeg/uid.rs:156`,只需 import + 分发。
+- `setregid_syscall` 已存在于 `functions/sgeg/uid.rs:156`,只需 import + 分发。
 
 **验证方法**: 集成测试 `syscall(SYS_setregid, rgid, egid)` → 期望返回 0 或 `EPERM`。
 
@@ -1691,7 +1691,7 @@ pub type SyscallHandler = fn([u64; 6]) -> i64;
 - 提升 `MAX_SYSCALLS = 900`,或
 - 在 `types.rs` 头注释同步:`500-899` 而非 `500-899`(已是 800-899,合理)。
 
-**验证方法**: 检查 framework 端 syscall 数组定义大小。
+**验证方法**: 检查 privileged 端 syscall 数组定义大小。
 
 ---
 
@@ -1701,7 +1701,7 @@ pub type SyscallHandler = fn([u64; 6]) -> i64;
 **严重度**: P2（一致性）
 **问题描述**:
 - `from_ret()` L885 实际有 `38 => Self::ENOSYS` 分支,但在 L888 `_ => Self::EINVAL` 兜底。
-- 这意味着如果 framework 返回 `-38` 没问题,但其他未列出 errno 全部被吞为 `EINVAL`。
+- 这意味着如果 privileged 返回 `-38` 没问题,但其他未列出 errno 全部被吞为 `EINVAL`。
 - 建议补全表(L793-827 列出的所有 errno 都应在 `from_ret` 中),或者 `_` 分支应返回 `Errno::ENOSYS`("未知"语义更准确)。
 
 **修复建议**: 见 §2.2 修复建议(同一事项)。
@@ -1730,18 +1730,18 @@ pub type SyscallHandler = fn([u64; 6]) -> i64;
 **严重度**: P2（ABI 错位）
 **问题描述**:
 - `SYS_open = 2`(L33) 与 `EG_OPEN = 504`(L400) — 同功能两套编号。
-- 但 `dispatch.rs::dispatch_fs` **只对 SYS_* 编号分流**,EG_OPEN 永远走 framework 回退。
+- 但 `dispatch.rs::dispatch_fs` **只对 SYS_* 编号分流**,EG_OPEN 永远走 privileged 回退。
 - 这导致 `EG_*` 编号是**实际不可用的死编号**,除非 libc shim 用 `SYS_*` 编号调用。
 
 **修复建议**:
 - 在 `dispatch.rs` 内 `match` 增加 `EG_OPEN => ...`、`EG_WRITE => ...` 等分支,与 `SYS_*` 共用同一 handler。
 - 或在 `types.rs` 头文档明确 `EG_*` 仅作内部命名,真实编号使用 `SYS_*`。
 
-**验证方法**: `grep -rn "EG_OPEN\|EG_WRITE" src/kernel/services/syscall/`。
+**验证方法**: `grep -rn "EG_OPEN\|EG_WRITE" src/kernel/functions/syscall/`。
 
 ---
 
-## 3. services/syscall/dispatch.rs（755 行 / 12 项发现）
+## 3. functions/syscall/dispatch.rs（755 行 / 12 项发现）
 
 ### 3.1 [P0] `name_to_handle_at` / `open_by_handle_at` 使用 `unwrap_or_else(Errno::as_ret)` — 错误吞咽 + 静默 ENOSYS
 
@@ -1750,7 +1750,7 @@ pub type SyscallHandler = fn([u64; 6]) -> i64;
 **问题描述**:
 ```rust
 SYS_name_to_handle_at => {
-    crate::kernel::services::fs::file_handle::name_to_handle_at_syscall(...)
+    crate::kernel::functions::fs::file_handle::name_to_handle_at_syscall(...)
         .unwrap_or_else(super::types::Errno::as_ret)
 }
 ```
@@ -1768,27 +1768,27 @@ SYS_name_to_handle_at => {
 
 ---
 
-### 3.2 [P0] `dispatch_other` 直接调用 `framework::syscall::api::*` — 违反 F2 services 黑名单
+### 3.2 [P0] `dispatch_other` 直接调用 `privileged::syscall::api::*` — 违反 F2 functions 黑名单
 
-> **[DEPRECATED：附录 H 5.2 实测 services 内已无 `framework::syscall::api` 引用，迁移已完成，本项为时序错位。2026-08-15 经 DECISION-H03 标记。下文保留为审计历史快照]**
+> **[DEPRECATED：附录 H 5.2 实测 functions 内已无 `privileged::syscall::api` 引用，迁移已完成，本项为时序错位。2026-08-15 经 DECISION-H03 标记。下文保留为审计历史快照]**
 
 **位置**: `dispatch.rs:716-732`
 **严重度**: P0（架构）
 **问题描述**:
 ```rust
-SYS_timer_create => crate::kernel::framework::syscall::api::sys_timer_create(a0, a1, a2),
+SYS_timer_create => crate::kernel::privileged::syscall::api::sys_timer_create(a0, a1, a2),
 ```
-- `audit_services_boundary.py` 黑名单应包含 `framework::syscall::api::*`。
-- 但 `dispatch.rs` 仍直接调用 framework 私有 API。
-- 注释("从 framework 回退迁移")承认现状,但 audit 脚本应当 reject。
+- `audit_functions_boundary.py` 黑名单应包含 `privileged::syscall::api::*`。
+- 但 `dispatch.rs` 仍直接调用 privileged 私有 API。
+- 注释("从 privileged 回退迁移")承认现状,但 audit 脚本应当 reject。
 
 **修复建议**:
-- 立即迁移 timer/getrandom/canary 的策略到 services 层:
-  - `services/timer/posix.rs` 实现 `timer_create_syscall(...)` 等。
-  - `services/random/getrandom.rs` 实现 `getrandom_syscall(...)`。
-- 或在 `framework::syscall::api` 上层加 `services::syscall::api` re-export 中转层,使其不算"内部访问"。
+- 立即迁移 timer/getrandom/canary 的策略到 functions 层:
+  - `functions/timer/posix.rs` 实现 `timer_create_syscall(...)` 等。
+  - `functions/random/getrandom.rs` 实现 `getrandom_syscall(...)`。
+- 或在 `privileged::syscall::api` 上层加 `functions::syscall::api` re-export 中转层,使其不算"内部访问"。
 
-**验证方法**: `./scripts/audit_services_boundary.py` 是否实际拒绝该调用点。
+**验证方法**: `./scripts/audit_functions_boundary.py` 是否实际拒绝该调用点。
 
 ---
 
@@ -1817,7 +1817,7 @@ SYS_timer_create => crate::kernel::framework::syscall::api::sys_timer_create(a0,
 ```rust
 SYS_SGEG_PROC_SLEEP => {
     let ns = a0 * 1_000_000;
-    as_ret(crate::kernel::services::timer::sleep::nanosleep_syscall(ns, a1))
+    as_ret(crate::kernel::functions::timer::sleep::nanosleep_syscall(ns, a1))
 }
 ```
 - 注释(`a0 * 1_000_000`)表示输入是 `ms`(毫秒),转 ns 需 `×1_000_000`。
@@ -1851,19 +1851,19 @@ let ns = a0.checked_mul(MS_TO_NS).ok_or(Errno::EINVAL)?;
 
 ---
 
-### 3.6 [P1] `dispatch_proc` 中 `SYS_setregid` 未分发,但 `services/sgeg/uid.rs::setregid_syscall` 已实现
+### 3.6 [P1] `dispatch_proc` 中 `SYS_setregid` 未分发,但 `functions/sgeg/uid.rs::setregid_syscall` 已实现
 
-**位置**: `dispatch.rs` 全文 + `services/sgeg/uid.rs:156`
+**位置**: `dispatch.rs` 全文 + `functions/sgeg/uid.rs:156`
 **严重度**: P1（功能缺失）
 **问题描述**:
 - 见 §2.6 — `SYS_setregid = 116` 已定义,`setregid_syscall` 已实现,**但 dispatch 完全不接线**。
-- `grep -rn "setregid_syscall" src/kernel/services/syscall/` 只在 `types.rs` 出现(`SYS_setregid` 常量定义)。
+- `grep -rn "setregid_syscall" src/kernel/functions/syscall/` 只在 `types.rs` 出现(`SYS_setregid` 常量定义)。
 
 **修复建议**: 在 `dispatch_sgeg` 添加:
 ```rust
-SYS_setregid => as_ret(crate::kernel::services::sgeg::uid::setregid_syscall(a0 as u32, a1 as u32)),
+SYS_setregid => as_ret(crate::kernel::functions::sgeg::uid::setregid_syscall(a0 as u32, a1 as u32)),
 ```
-并加入 `use crate::kernel::services::sgeg::uid::setregid_syscall;`。
+并加入 `use crate::kernel::functions::sgeg::uid::setregid_syscall;`。
 
 **验证方法**: 集成测试 `setregid(rgid, egid)` → 期望返回 0 或 EPERM。
 
@@ -1875,10 +1875,10 @@ SYS_setregid => as_ret(crate::kernel::services::sgeg::uid::setregid_syscall(a0 a
 **严重度**: P1（语义错误）
 **问题描述**:
 ```rust
-SYS_fchown => as_ret(crate::kernel::services::fs::misc::fchown_syscall(
+SYS_fchown => as_ret(crate::kernel::functions::fs::misc::fchown_syscall(
     a0 as i32, a1, a2,
 )),
-SYS_chown => crate::kernel::services::fs::file_ops::chown_syscall(a0, a1 as u32, a2 as u32),
+SYS_chown => crate::kernel::functions::fs::file_ops::chown_syscall(a0, a1 as u32, a2 as u32),
 ```
 - `SYS_chown(path, owner, group)`:path 是字符串指针,`a0 = ptr`,`a1 = uid`,`a2 = gid`。
 - `SYS_fchown(fd, owner, group)`:fd 是 int,`a0 = fd`,`a1 = uid`,`a2 = gid`。
@@ -1901,7 +1901,7 @@ SYS_chown => crate::kernel::services::fs::file_ops::chown_syscall(a0, a1 as u32,
 - 时间相关 syscall 被拆分到 `fs::file_ops` 与 `proc::info` 两个模块,违反内聚性。
 - 未来 `clock_gettime` 增加新 clock_id 时,需同时改两处。
 
-**修复建议**: 抽取 `services::time::*` 模块,统一所有时间 syscall handler。
+**修复建议**: 抽取 `functions::time::*` 模块,统一所有时间 syscall handler。
 
 **验证方法**: `grep -rn "clock_gettime_syscall\|gettimeofday_syscall" src/` 列出调用点。
 
@@ -1925,29 +1925,29 @@ Some(r)
 
 ---
 
-### 3.10 [P2] `dispatch::register_services_dispatch` 失败时仅 `log_info` 不 panic,可能掩盖启动错误
+### 3.10 [P2] `dispatch::register_functions_dispatch` 失败时仅 `log_info` 不 panic,可能掩盖启动错误
 
 **位置**: `dispatch.rs:744-755`
 **严重度**: P2（启动可靠性）
 **问题描述**:
 ```rust
-pub fn register_services_dispatch() -> Result<(), ()> {
-    static POLICY: ServicesSyscallDispatch = ServicesSyscallDispatch;
+pub fn register_functions_dispatch() -> Result<(), ()> {
+    static POLICY: FunctionsSyscallDispatch = FunctionsSyscallDispatch;
     let r = register_syscall_dispatch(&POLICY);
-    log_info(... "[SYSCALL] register_services_dispatch result={}", ...);
+    log_info(... "[SYSCALL] register_functions_dispatch result={}", ...);
     r.map_err(|_| ())
 }
 ```
 - 若注册失败,只 `log_info` 写一行,**不 panic**。
-- 启动期 `services::init()` 调用此函数,若失败应 panic 或返回致命错误。
+- 启动期 `functions::init()` 调用此函数,若失败应 panic 或返回致命错误。
 - 当前实现让 `Result<(), ()>` 静默吞掉错误。
 
 **修复建议**:
 ```rust
 let r = register_syscall_dispatch(&POLICY);
 if r.is_err() {
-    log_error(... "[SYSCALL] FATAL: register_services_dispatch failed");
-    panic!("services syscall dispatch register failed");
+    log_error(... "[SYSCALL] FATAL: register_functions_dispatch failed");
+    panic!("functions syscall dispatch register failed");
 }
 r
 ```
@@ -1962,8 +1962,8 @@ r
 **严重度**: P2（语义）
 **问题描述**:
 ```rust
-SYS_pipe => as_ret(crate::kernel::services::fs::io::pipe_syscall(a0)),
-SYS_pipe2 => as_ret(crate::kernel::services::fs::io::pipe_syscall(a0)),
+SYS_pipe => as_ret(crate::kernel::functions::fs::io::pipe_syscall(a0)),
+SYS_pipe2 => as_ret(crate::kernel::functions::fs::io::pipe_syscall(a0)),
 ```
 - `SYS_pipe2(int pipefd[2], int flags)` — `a1` 是 flags(O_CLOEXEC/O_NONBLOCK)。
 - 当前 `SYS_pipe2` **完全忽略 `a1`**,无法设置 close-on-exec 或非阻塞。
@@ -1971,7 +1971,7 @@ SYS_pipe2 => as_ret(crate::kernel::services::fs::io::pipe_syscall(a0)),
 
 **修复建议**:
 ```rust
-SYS_pipe2 => as_ret(crate::kernel::services::fs::io::pipe2_syscall(a0, a1 as i32)),
+SYS_pipe2 => as_ret(crate::kernel::functions::fs::io::pipe2_syscall(a0, a1 as i32)),
 ```
 
 **验证方法**: 集成测试 `pipe2(fd, O_CLOEXEC)` → 子进程中 `fd[0]`/`fd[1]` 应关闭。
@@ -1989,7 +1989,7 @@ SYS_pipe2 => as_ret(crate::kernel::services::fs::io::pipe2_syscall(a0, a1 as i32
 
 **修复建议**:
 ```rust
-SYS_fchmodat => as_ret(crate::kernel::services::fs::mode::fchmodat_syscall(
+SYS_fchmodat => as_ret(crate::kernel::functions::fs::mode::fchmodat_syscall(
     a0 as i32, a1, a2 as u32, a3 as i32,
 )),
 ```
@@ -1999,7 +1999,7 @@ SYS_fchmodat => as_ret(crate::kernel::services::fs::mode::fchmodat_syscall(
 
 ---
 
-## 4. services/fs/inode.rs（603 行 / 8 项发现）
+## 4. functions/fs/inode.rs（603 行 / 8 项发现）
 
 ### 4.1 [P0] `Inode` trait 中 `mount_idx(&self) -> u32` 在 `AnonymousInode` 中硬编码 `u32::MAX`,可能在 mmap 路径触发 panic/越界
 
@@ -2144,7 +2144,7 @@ fn is_dir(&self) -> bool { self.file_type == VfsFileType::Dir.as_u8() }
 **问题描述**:
 ```rust
 fn is_dir(&self) -> bool {
-    use crate::kernel::framework::fs::ramfs::ramfs::RAMFS_DATA;
+    use crate::kernel::privileged::fs::ramfs::ramfs::RAMFS_DATA;
     let ramfs = RAMFS_DATA.lock();
     if (self.inode_id as usize) < 256 {
         ramfs.nodes[self.inode_id as usize].file_type == 1 // DIR
@@ -2185,7 +2185,7 @@ if (self.inode_id as usize) < nodes_len {
 
 ---
 
-## 5. services/proc/sched_policy.rs（605 行 / 9 项发现）
+## 5. functions/proc/sched_policy.rs（605 行 / 9 项发现）
 
 ### 5.1 [P0] `CfsRunQueue::boost_priority` 函数存在但**无人调用** — 死代码 + v2.0 §F7.1/F7.2 修复未触达
 
@@ -2207,8 +2207,8 @@ pub fn boost_priority(&mut self, current_tick: u64) {
 ```
 - v2.0 §F7.1/F7.2 报告"`boost_priority` 抹平 vruntime"被识别为 bug。
 - 但本函数与 `boost_all_vruntime`(L209-225)**逻辑完全相同**(都是把所有进程 vruntime 设为 min_vr)。
-- `grep -rn "boost_priority" src/` 显示**仅本文件 + framework/proc/scheduler.rs:16 注释引用**,**无人调用**。
-- framework 端调度循环(L996-998)只调用 `boost_all_vruntime`,**未调用 `boost_priority`**。
+- `grep -rn "boost_priority" src/` 显示**仅本文件 + privileged/proc/scheduler.rs:16 注释引用**,**无人调用**。
+- privileged 端调度循环(L996-998)只调用 `boost_all_vruntime`,**未调用 `boost_priority`**。
 - 这是**双重 bug**:函数本身实现仍是抹平 vruntime,且无人使用。
 
 **修复建议**:
@@ -2290,13 +2290,13 @@ pub fn dequeue_by_pid(&mut self, pid: Pid) -> bool {
 - `pick_next_priority` 接受 `queue_lengths: [u32; 5]`,`for prio in (0..5).rev()` 扫描 4..0。
 - 但 `time_slice_for` 用 `match priority` 覆盖 5 个 variant + `Idle => u32::MAX`。
 - 索引映射:`Idle=4, Low=3, Normal=2, High=1, Realtime=0`?
-- 注释无说明,且 `register_sched_decision` 实现注册到 framework 后,framework 端如何将 `queue_lengths` 数组按枚举索引填充?**完全未文档化**。
+- 注释无说明,且 `register_sched_decision` 实现注册到 privileged 后,privileged 端如何将 `queue_lengths` 数组按枚举索引填充?**完全未文档化**。
 
 **修复建议**:
 - 显式注释映射:`queue_lengths[0]=Realtime, [1]=High, [2]=Normal, [3]=Low, [4]=Idle`。
 - 或改为 `fn pick_next_priority(&self, queues: &ThreadQueues) -> Option<ThreadPriority>`,用 enum 类型索引。
 
-**验证方法**: `grep "pick_next_priority" framework` 查 framework 调用点 + 数组填充逻辑。
+**验证方法**: `grep "pick_next_priority" privileged` 查 privileged 调用点 + 数组填充逻辑。
 
 ---
 
@@ -2409,7 +2409,7 @@ ThreadPriority::Idle => 0, // 让 Idle 进程立即被抢占
 
 ---
 
-## 6. services/proc/signal.rs（601 行 / 8 项发现）
+## 6. functions/proc/signal.rs（601 行 / 8 项发现）
 
 ### 6.1 [P1] `send` 中 `Signal::NONE`(0) 走 `with(pid, |_p| ())` 仅检查存在,但 `proc::table::signal_set` 之前未检查 PID 0 (idle/init)
 
@@ -2419,11 +2419,11 @@ ThreadPriority::Idle => 0, // 让 Idle 进程立即被抢占
 ```rust
 pub fn send(pid: Pid, sig: Signal) -> SignalResult<()> {
     if sig == Signal::NONE {
-        return crate::kernel::services::proc::table::with(pid, |_p| ())
+        return crate::kernel::functions::proc::table::with(pid, |_p| ())
             .ok_or(SignalError::NoSuchProcess);
     }
     if sig.0 >= 64 { return Err(SignalError::InvalidArgument); }
-    crate::kernel::services::proc::table::signal_set(pid, u32::from(sig.0))
+    crate::kernel::functions::proc::table::signal_set(pid, u32::from(sig.0))
         .map_err(|_| SignalError::NoSuchProcess)
 }
 ```
@@ -2436,7 +2436,7 @@ pub fn send(pid: Pid, sig: Signal) -> SignalResult<()> {
 **修复建议**:
 ```rust
 if sig == Signal::NONE {
-    return crate::kernel::services::proc::table::with(pid, |target| {
+    return crate::kernel::functions::proc::table::with(pid, |target| {
         if cred::same_uid_or_cap_kill(caller_pwm, target.owner_pwm) {
             Ok(())
         } else {
@@ -2460,12 +2460,12 @@ if sig == Signal::NONE {
 pub fn kill_syscall(pid: i32, sig: i32) -> Result<usize, Errno> {
     if !(0..=31).contains(&sig) { return Err(Errno::EINVAL); }
     // 注释: "原约束 pid <= 0 -> ESRCH 已移除 (TRACK-315B7C 解决)"
-    let ret = crate::kernel::framework::syscall::api::sys_kill(pid, sig);
+    let ret = crate::kernel::privileged::syscall::api::sys_kill(pid, sig);
     ...
 }
 ```
 - 注释承认 `pid <= 0` 校验被移除(TRACK-315B7C),但**无任何替代校验**。
-- `pid = i32::MIN = -2147483648` 取反 `|pid| = 2147483648` 超出 i32 范围,**直接传入 framework 会溢出**。
+- `pid = i32::MIN = -2147483648` 取反 `|pid| = 2147483648` 超出 i32 范围,**直接传入 privileged 会溢出**。
 - `pid = -1` 在 POSIX 是"广播给所有进程",但**Edgine 可能不支持广播**,应显式 ENOSYS 或 EINVAL。
 
 **修复建议**:
@@ -2484,24 +2484,24 @@ match pid {
 
 ---
 
-### 6.3 [P1] `rt_sigaction_syscall` 允许 RT 信号(32..=64)被设置 handler,但 framework 内核基础设施是 32-bit `signal_pending_*` 简易实现
+### 6.3 [P1] `rt_sigaction_syscall` 允许 RT 信号(32..=64)被设置 handler,但 privileged 内核基础设施是 32-bit `signal_pending_*` 简易实现
 
 **位置**: `signal.rs:466-487` + `signal.rs:8-12` 文档
 **严重度**: P1（实现差距）
 **问题描述**:
-- services 层允许 `signum in 32..=64` 设置 handler。
-- 但 framework 是 **per-process 32-bit 简易实现**(`signal_pending_*`,只支持 32 bit)。
+- functions 层允许 `signum in 32..=64` 设置 handler。
+- 但 privileged 是 **per-process 32-bit 简易实现**(`signal_pending_*`,只支持 32 bit)。
 - 当用户设置 RT 信号 handler 后,实际信号到达时:
-  - `Signal::to_bit()` 返回 `1 << 32..64`,但 framework `signal_pending` 是 u32 → **高位全部丢失**。
+  - `Signal::to_bit()` 返回 `1 << 32..64`,但 privileged `signal_pending` 是 u32 → **高位全部丢失**。
   - handler 永不触发。
-- 这是 services 与 framework 实现**严重脱节**。
+- 这是 functions 与 privileged 实现**严重脱节**。
 
 **修复建议**:
-- services 限制 `signum ∈ 1..=31`,RT 信号暂时 EINVAL:
+- functions 限制 `signum ∈ 1..=31`,RT 信号暂时 EINVAL:
   ```rust
   if !(1..=31).contains(&signum) { return Err(Errno::EINVAL); }
   ```
-- 或扩展 framework `signal_pending` 到 u64(需 audit framework 端)。
+- 或扩展 privileged `signal_pending` 到 u64(需 audit privileged 端)。
 
 **验证方法**: 集成测试 `rt_sigaction(35, handler)` → 当前返回 0(成功),实际收到 `signal 35` 时框架无法识别 → 期望 EINVAL 或内核扩展。
 
@@ -2550,9 +2550,9 @@ fn pick_next_signal(&self, deliverable: u64) -> Option<u8> {
 }
 ```
 - `sig_bit > 31` 直接 None,但 RT 信号(32..=64)也可能设置 pending。
-- 与 §6.3 同样的"framework 仅 32-bit"问题一致 —— strategy 应明确"不支持 RT 信号"或"framework 已扩展"。
+- 与 §6.3 同样的"privileged 仅 32-bit"问题一致 —— strategy 应明确"不支持 RT 信号"或"privileged 已扩展"。
 
-**修复建议**: 文档化 RT 信号当前不可用,或扩展 framework + strategy 同步。
+**修复建议**: 文档化 RT 信号当前不可用,或扩展 privileged + strategy 同步。
 
 **验证方法**: 单测 `pick_next_signal(1u64 << 35)` → 当前返回 None(应显式 None,无 panic)。
 
@@ -2564,7 +2564,7 @@ fn pick_next_signal(&self, deliverable: u64) -> Option<u8> {
 **严重度**: P2（代码风格）
 **问题描述**:
 ```rust
-return crate::kernel::services::proc::table::with(pid, |_p| ())
+return crate::kernel::functions::proc::table::with(pid, |_p| ())
     .ok_or(SignalError::NoSuchProcess);
 ```
 - `with(pid, fn)` 返回 `Option<R>` (None = pid 不存在),但这里用 `ok_or` 将 None 转 `NoSuchProcess`。
@@ -2573,13 +2573,13 @@ return crate::kernel::services::proc::table::with(pid, |_p| ())
 
 **修复建议**: 显式类型:
 ```rust
-match crate::kernel::services::proc::table::with(pid, |_p| ()) {
+match crate::kernel::functions::proc::table::with(pid, |_p| ()) {
     Some(()) => Ok(()),
     None => Err(SignalError::NoSuchProcess),
 }
 ```
 
-**验证方法**: `grep "pub fn with" src/kernel/services/proc/table.rs` 查签名。
+**验证方法**: `grep "pub fn with" src/kernel/functions/proc/table.rs` 查签名。
 
 ---
 
@@ -2588,11 +2588,11 @@ match crate::kernel::services::proc::table::with(pid, |_p| ()) {
 **位置**: `signal.rs:497-515`
 **严重度**: P2（输入校验）
 **问题描述**:
-- `rt_sigprocmask(how, set, oset)` 中 `set` 是用户 buffer 指针,但 services 层仅校验 `how ∈ 0..=2`,**未校验 `set` 指针合法性**。
-- 注释(L519-522)说"ss 与 old_ss 合法性由 framework 侧 raw::check_user_buf 校验"。
-- 但 `set` 也应类似处理,服务层不校验 → 若 framework 端未校验,**可触发任意内存读**(I4 不变式违反)。
+- `rt_sigprocmask(how, set, oset)` 中 `set` 是用户 buffer 指针,但 functions 层仅校验 `how ∈ 0..=2`,**未校验 `set` 指针合法性**。
+- 注释(L519-522)说"ss 与 old_ss 合法性由 privileged 侧 raw::check_user_buf 校验"。
+- 但 `set` 也应类似处理,服务层不校验 → 若 privileged 端未校验,**可触发任意内存读**(I4 不变式违反)。
 
-**修复建议**: 调用 framework 前**明确要求**已校验 set/oset 指针,或显式调用 `framework::raw::check_user_buf(set, 8)` (若存在公开 API)。
+**修复建议**: 调用 privileged 前**明确要求**已校验 set/oset 指针,或显式调用 `privileged::raw::check_user_buf(set, 8)` (若存在公开 API)。
 
 **验证方法**: 集成测试 `rt_sigprocmask(SIG_BLOCK, 0xDEADBEEF, 0)` → 期望 EFAULT 而非 kernel panic。
 
@@ -2619,7 +2619,7 @@ match crate::kernel::services::proc::table::with(pid, |_p| ()) {
 
 | 严重度 | 数量 | 关键类别 |
 |--------|------|----------|
-| **P0** | 5 | syscall 编号硬冲突 + dispatch name_to_handle_at 错误吞咽 + framework API 直调 + AnonymousInode u32::MAX 哨兵 + boost_priority 死代码 + F2 黑名单违反 |
+| **P0** | 5 | syscall 编号硬冲突 + dispatch name_to_handle_at 错误吞咽 + privileged API 直调 + AnonymousInode u32::MAX 哨兵 + boost_priority 死代码 + F2 黑名单违反 |
 | **P1** | 25 | POSIX 语义错误 + 权限校验缺失 + 输入校验缺失 + 编号未分发 + 重复实现 |
 | **P2** | 26 | 风格/一致性/死代码/启动可靠性 |
 
@@ -2655,10 +2655,10 @@ match crate::kernel::services::proc::table::with(pid, |_p| ()) {
 
 | v2.0 已知问题 | 修复状态 | 本次审计发现 |
 |---------------|----------|--------------|
-| boost_priority 抹平 vruntime | ⚠️ **未根除**:`boost_priority`(L189)仍存在且与 `boost_all_vruntime`(L209)逻辑完全相同;framework 只调用 `boost_all_vruntime`,`boost_priority` 永不被调用 → **死代码** | §5.1 P0 |
+| boost_priority 抹平 vruntime | ⚠️ **未根除**:`boost_priority`(L189)仍存在且与 `boost_all_vruntime`(L209)逻辑完全相同;privileged 只调用 `boost_all_vruntime`,`boost_priority` 永不被调用 → **死代码** | §5.1 P0 |
 | CFS vruntime 钳制未补偿 weight | ⚠️ **未修复**:`enqueue` 仍只 `vruntime.max(min_vr)`,无 `TARGET_LATENCY/weight` 补偿 | §5.2 P1 |
-| syscall 编号与 framework 对齐 | ⚠️ **多个错位**:`SYS_setregid/SYS_clone3/EG_UNSHARE/EG_SETNS` 等已定义但 dispatch 完全未接线 | §2.6 §3.5 §3.6 §1.9 |
-| services 0 unsafe | ✅ 通过 | 无新问题 |
+| syscall 编号与 privileged 对齐 | ⚠️ **多个错位**:`SYS_setregid/SYS_clone3/EG_UNSHARE/EG_SETNS` 等已定义但 dispatch 完全未接线 | §2.6 §3.5 §3.6 §1.9 |
+| functions 0 unsafe | ✅ 通过 | 无新问题 |
 | 中文注释 100% | ✅ 通过 | 无新问题 |
 
 ---
@@ -2668,7 +2668,7 @@ match crate::kernel::services::proc::table::with(pid, |_p| ()) {
 1. **立即处理 P0 (5 项)**:
    - §5.1 删 `boost_priority` 死代码(F9 零容忍)
    - §2.1 修 syscall 编号硬冲突(编译期可能已失败)
-   - §3.2 修 dispatch 直调 framework::syscall::api(F2 违反)
+   - §3.2 修 dispatch 直调 privileged::syscall::api(F2 违反)
    - §3.1 验证 name_to_handle_at_syscall 签名 + 错误吞咽
    - §4.1 修 AnonymousInode::mount_idx() u32::MAX 哨兵
 
@@ -2683,7 +2683,7 @@ match crate::kernel::services::proc::table::with(pid, |_p| ()) {
 任何修复完成后必须重跑:
 1. `./ci/build.sh all`(双架构 0 error / 0 warning)
 2. `cargo clippy --release -- -D warnings`
-3. `./scripts/audit_services_boundary.py`
+3. `./scripts/audit_functions_boundary.py`
 4. `./scripts/audit_safety_coverage.py`
 5. `./scripts/audit_deadlock_matrix.py`
 6. `./scripts/audit_coupling.py`
@@ -2695,7 +2695,7 @@ match crate::kernel::services::proc::table::with(pid, |_p| ()) {
 ---
 
 **报告生成**: 2026-08-13
-**审计执行**: services 深度审计 v2.1
+**审计执行**: functions 深度审计 v2.1
 **关联文档**: docs/explain/spec-engineering.md / docs/plan/ / AGENTS.md
 # 附录 C：25 份子系统深度审计报告
 
@@ -2705,31 +2705,31 @@ match crate::kernel::services::proc::table::with(pid, |_p| ()) {
 
 ## 25 份子系统报告清单
 
-- [subsystem-arch-net.md](./archive/audit-2026-08-14/subsystem-arch-net.md) — framework/arch/ + framework/net/ 子系统深度审计报告
-- [subsystem-driver.md](./archive/audit-2026-08-14/subsystem-driver.md) — framework/driver + services/driver 子系统深度审计报告
-- [subsystem-framework-arch.md](./archive/audit-2026-08-14/subsystem-framework-arch.md) — framework/arch 子系统深度审计报告
-- [subsystem-framework-cpu.md](./archive/audit-2026-08-14/subsystem-framework-cpu.md) — framework/cpu 子系统深度审计报告
-- [subsystem-framework-credo.md](./archive/audit-2026-08-14/subsystem-framework-credo.md) — framework/sgeg 子系统深度审计报告
-- [subsystem-framework-dma.md](./archive/audit-2026-08-14/subsystem-framework-dma.md) — framework/dma + dma_buf 子系统深度审计报告
-- [subsystem-framework-fs-drivers.md](./archive/audit-2026-08-14/subsystem-framework-fs-drivers.md) — framework/fs (drivers 子模块) 深度审计报告
-- [subsystem-framework-irq.md](./archive/audit-2026-08-14/subsystem-framework-irq.md) — framework/irq 子系统深度审计报告
-- [subsystem-framework-misc.md](./archive/audit-2026-08-14/subsystem-framework-misc.md) — framework/freg + egdf + debug + klog + smp 子系统深度审计报告
-- [subsystem-framework-mm-remaining.md](./archive/audit-2026-08-14/subsystem-framework-mm-remaining.md) — framework/mm 剩余文件深度审计报告
-- [subsystem-framework-net.md](./archive/audit-2026-08-14/subsystem-framework-net.md) — framework/net 子系统深度审计报告
-- [subsystem-framework-pci.md](./archive/audit-2026-08-14/subsystem-framework-pci.md) — framework/pci 子系统深度审计报告
-- [subsystem-framework-proc-remaining.md](./archive/audit-2026-08-14/subsystem-framework-proc-remaining.md) — framework/proc 剩余文件深度审计报告
-- [subsystem-framework-remaining-modules.md](./archive/audit-2026-08-14/subsystem-framework-remaining-modules.md) — framework 剩余模块（constants/console/io/alloc/link/lib）深度审计报告
-- [subsystem-framework-tests.md](./archive/audit-2026-08-14/subsystem-framework-tests.md) — framework/tests 子系统深度审计报告
-- [subsystem-framework-timer.md](./archive/audit-2026-08-14/subsystem-framework-timer.md) — framework/timer 子系统深度审计报告
-- [subsystem-framework-toplevel.md](./archive/audit-2026-08-14/subsystem-framework-toplevel.md) — framework 顶层散 .rs 文件深度审计报告
-- [subsystem-mm.md](./archive/audit-2026-08-14/subsystem-mm.md) — framework/mm/ 子系统深度审计报告
-- [subsystem-proc.md](./archive/audit-2026-08-14/subsystem-proc.md) — framework/proc/ 子系统深度审计报告
-- [subsystem-services-fs.md](./archive/audit-2026-08-14/subsystem-services-fs.md) — services/fs 子系统深度审计报告
-- [subsystem-services-misc.md](./archive/audit-2026-08-14/subsystem-services-misc.md) — services 多子目录深度审计报告
-- [subsystem-services-net.md](./archive/audit-2026-08-14/subsystem-services-net.md) — services/net 顶层深度审计报告
-- [subsystem-services-proc.md](./archive/audit-2026-08-14/subsystem-services-proc.md) — services/proc 子系统深度审计报告
-- [subsystem-services-wasm-ipc-credo.md](./archive/audit-2026-08-14/subsystem-services-wasm-ipc-credo.md) — services/wasm + services/ipc + services/sgeg 子系统深度审计报告
-- [subsystem-sync.md](./archive/audit-2026-08-14/subsystem-sync.md) — framework/sync/ 子系统深度审计报告
+- [subsystem-arch-net.md](./archive/audit-2026-08-14/subsystem-arch-net.md) — privileged/arch/ + privileged/net/ 子系统深度审计报告
+- [subsystem-driver.md](./archive/audit-2026-08-14/subsystem-driver.md) — privileged/driver + functions/driver 子系统深度审计报告
+- [subsystem-privileged-arch.md](./archive/audit-2026-08-14/subsystem-privileged-arch.md) — privileged/arch 子系统深度审计报告
+- [subsystem-privileged-cpu.md](./archive/audit-2026-08-14/subsystem-privileged-cpu.md) — privileged/cpu 子系统深度审计报告
+- [subsystem-privileged-credo.md](./archive/audit-2026-08-14/subsystem-privileged-credo.md) — privileged/sgeg 子系统深度审计报告
+- [subsystem-privileged-dma.md](./archive/audit-2026-08-14/subsystem-privileged-dma.md) — privileged/dma + dma_buf 子系统深度审计报告
+- [subsystem-privileged-fs-drivers.md](./archive/audit-2026-08-14/subsystem-privileged-fs-drivers.md) — privileged/fs (drivers 子模块) 深度审计报告
+- [subsystem-privileged-irq.md](./archive/audit-2026-08-14/subsystem-privileged-irq.md) — privileged/irq 子系统深度审计报告
+- [subsystem-privileged-misc.md](./archive/audit-2026-08-14/subsystem-privileged-misc.md) — privileged/freg + egdf + debug + klog + smp 子系统深度审计报告
+- [subsystem-privileged-mm-remaining.md](./archive/audit-2026-08-14/subsystem-privileged-mm-remaining.md) — privileged/mm 剩余文件深度审计报告
+- [subsystem-privileged-net.md](./archive/audit-2026-08-14/subsystem-privileged-net.md) — privileged/net 子系统深度审计报告
+- [subsystem-privileged-pci.md](./archive/audit-2026-08-14/subsystem-privileged-pci.md) — privileged/pci 子系统深度审计报告
+- [subsystem-privileged-proc-remaining.md](./archive/audit-2026-08-14/subsystem-privileged-proc-remaining.md) — privileged/proc 剩余文件深度审计报告
+- [subsystem-privileged-remaining-modules.md](./archive/audit-2026-08-14/subsystem-privileged-remaining-modules.md) — privileged 剩余模块（constants/console/io/alloc/link/lib）深度审计报告
+- [subsystem-privileged-tests.md](./archive/audit-2026-08-14/subsystem-privileged-tests.md) — privileged/tests 子系统深度审计报告
+- [subsystem-privileged-timer.md](./archive/audit-2026-08-14/subsystem-privileged-timer.md) — privileged/timer 子系统深度审计报告
+- [subsystem-privileged-toplevel.md](./archive/audit-2026-08-14/subsystem-privileged-toplevel.md) — privileged 顶层散 .rs 文件深度审计报告
+- [subsystem-mm.md](./archive/audit-2026-08-14/subsystem-mm.md) — privileged/mm/ 子系统深度审计报告
+- [subsystem-proc.md](./archive/audit-2026-08-14/subsystem-proc.md) — privileged/proc/ 子系统深度审计报告
+- [subsystem-functions-fs.md](./archive/audit-2026-08-14/subsystem-functions-fs.md) — functions/fs 子系统深度审计报告
+- [subsystem-functions-misc.md](./archive/audit-2026-08-14/subsystem-functions-misc.md) — functions 多子目录深度审计报告
+- [subsystem-functions-net.md](./archive/audit-2026-08-14/subsystem-functions-net.md) — functions/net 顶层深度审计报告
+- [subsystem-functions-proc.md](./archive/audit-2026-08-14/subsystem-functions-proc.md) — functions/proc 子系统深度审计报告
+- [subsystem-functions-wasm-ipc-credo.md](./archive/audit-2026-08-14/subsystem-functions-wasm-ipc-credo.md) — functions/wasm + functions/ipc + functions/sgeg 子系统深度审计报告
+- [subsystem-sync.md](./archive/audit-2026-08-14/subsystem-sync.md) — privileged/sync/ 子系统深度审计报告
 
 ---
 
@@ -2745,7 +2745,7 @@ match crate::kernel::services::proc::table::with(pid, |_p| ()) {
 
 按 AGENTS.md §9.4 AI 输出审查清单，本最终报告**有限自检**（未跑编译验证，详见 §13 覆盖度限制）：
 - ⚠ 架构合规（不越过 F1-F9 硬规则）— 仅静态分析，未跑 `cargo check`/`clippy` 验证；P0-14 编译错误能进入报告本身就证明此声明的局限
-- ⚠ 安全注释（framework unsafe 块有 SAFETY 注释）— 静态统计 99.6%，未抽样验证所有 unsafe 块
+- ⚠ 安全注释（privileged unsafe 块有 SAFETY 注释）— 静态统计 99.6%，未抽样验证所有 unsafe 块
 - ✅ 决策溯源（关键设计选择有 commit/plan 记录）
 - ⚠ 测试覆盖（新增 P0 有单元测试建议）— 仅为建议，实际测试代码未建立
 - ✅ 文档同步（API 改动已同步 docs/plan）
@@ -2756,7 +2756,7 @@ match crate::kernel::services::proc::table::with(pid, |_p| ()) {
 **已知局限**：
 1. 本次审计未跑 `cargo build`/`cargo check`/`cargo clippy`/QEMU 启动测试（详见 §13），故"P0-14 编译失败"等需编译验证才能发现的问题未被编译验证确认。
 2. P0 总数三套并存（93 / 114 / 79）已于 2026-08-15 第二轮验证后统一为 §7 合并 **114** 为权威口径；附录 G 中的 79 仅为第二轮独立样本视角。
-3. 文档内部数字偏差（services 缺 deny 文件 48→42、host-tests dead_code 13→18、tests/reports/ 182→164、ci/audit.sh 反逻辑 5 处→9 处）已在 2026-08-15 验证后订正。
+3. 文档内部数字偏差（functions 缺 deny 文件 48→42、host-tests dead_code 13→18、tests/reports/ 182→164、ci/audit.sh 反逻辑 5 处→9 处）已在 2026-08-15 验证后订正。
 
 请用户按 AGENTS.md §9.4 对本最终报告做最终审查。
 
@@ -2766,14 +2766,14 @@ match crate::kernel::services::proc::table::with(pid, |_p| ()) {
 
 > **审计员**：Trae IDE Sub-Agent（6 路并行逐文件深度阅读 + grep 跨文件验证 + 实际执行 17 个 audit 脚本）
 > **审计日期**：2026-08-15
-> **审计范围**：全面审计（framekernel + services + src/user + src/rust + tests + build + scripts + host-tests + docs）
+> **审计范围**：全面审计（framekernel + functions + src/user + src/rust + tests + build + scripts + host-tests + docs）
 > **本附录作用**：补充既有审计（2026-08-13）未覆盖的 21 项 P0 / 35 项 P1 / 多个 P2
 
 ## 一、独立审计 vs 既有审计
 
 | 维度 | 既有审计 (2026-08-13) | 本次独立审计 (2026-08-15) |
 |---|---|---|
-| 范围 | framework + services | **全项目**（含 user + tests + docs + build + scripts） |
+| 范围 | privileged + functions | **全项目**（含 user + tests + docs + build + scripts） |
 | 总问题数 | 728 项 | 360 项（核心聚焦，去重后 35 项 P0 + 130 P1 + 195 P2） |
 | 实际执行 | 抽样阅读 | **17 个 audit 脚本实跑 + 验证退出码** |
 | 架构深度 | 96.5% 抽样 | 85% 抽样（核心 100%） |
@@ -2787,29 +2787,29 @@ match crate::kernel::services::proc::table::with(pid, |_p| ()) {
 | # | 文件 | 描述 |
 |---|---|---|
 | P0-03 | `scripts/audit_smoltcp_purity.py:202-215` | hash mismatch 仍返回 0（PASS） |
-| P0-04 | `scripts/ci_check_services_unsafe.py:22-48` | 缺 vendored smoltcp 排除（CI 误报） |
+| P0-04 | `scripts/ci_check_functions_unsafe.py:22-48` | 缺 vendored smoltcp 排除（CI 误报） |
 | P0-05 | `ci/audit.sh:51,75,85,95,122,136,170,197` | `if cmd \| tail` 反逻辑（实测 9 处） |
 | P0-06 | `tools/auto_*.py:23` | 硬编码 `/home/anfer/Code/Edgine` 绝对路径 |
 
-### 二.2 P0 services 业务层严重漏洞（7 项）
+### 二.2 P0 functions 业务层严重漏洞（7 项）
 
 | # | 文件 | 描述 |
 |---|---|---|
-| P0-07 | `src/kernel/services/sgeg/auth.rs:118-122` | `pwm_set_syscall` 任何进程可设自己为 root |
-| P0-08 | `src/kernel/services/fs/file_handle.rs:147` | `open_by_handle_at` 无 CAP_DAC_READ_SEARCH 校验 |
-| P0-09 | `src/kernel/services/fs/access.rs:46-61` | `access` 不区分 R_OK/W_OK/X_OK |
-| P0-10 | `src/kernel/services/proc/pidfd.rs:28` | `pidfd_open` 直接返回 PID 作为 fd |
-| P0-11 | `src/kernel/services/proc/clone.rs:41` | 运算符优先级 Bug 破坏 CLONE 校验 |
-| P0-12 | `src/kernel/services/syscall/dispatch.rs:190, 195` | dispatch 丢 SYS_pipe2/SYS_dup3 flags |
-| P0-13 | `src/kernel/services/fs/file_ops.rs:169` | `chown_syscall` UID 失败回退 root |
+| P0-07 | `src/kernel/functions/sgeg/auth.rs:118-122` | `pwm_set_syscall` 任何进程可设自己为 root |
+| P0-08 | `src/kernel/functions/fs/file_handle.rs:147` | `open_by_handle_at` 无 CAP_DAC_READ_SEARCH 校验 |
+| P0-09 | `src/kernel/functions/fs/access.rs:46-61` | `access` 不区分 R_OK/W_OK/X_OK |
+| P0-10 | `src/kernel/functions/proc/pidfd.rs:28` | `pidfd_open` 直接返回 PID 作为 fd |
+| P0-11 | `src/kernel/functions/proc/clone.rs:41` | 运算符优先级 Bug 破坏 CLONE 校验 |
+| P0-12 | `src/kernel/functions/syscall/dispatch.rs:190, 195` | dispatch 丢 SYS_pipe2/SYS_dup3 flags |
+| P0-13 | `src/kernel/functions/fs/file_ops.rs:169` | `chown_syscall` UID 失败回退 root |
 
-### 二.3 P0 framework 稳定性问题（3 项）
+### 二.3 P0 privileged 稳定性问题（3 项）
 
 | # | 文件 | 描述 |
 |---|---|---|
-| P0-14 | `src/kernel/framework/mm/kmalloc.rs:691-707` | `dump_stats` 引用未定义变量（编译失败） |
-| P0-15 | `src/kernel/framework/mm/swap.rs:155-194` | `init` 分配 4096 页未标记 reserved（16MB 泄漏） |
-| P0-16 | `src/kernel/framework/boot/isr.asm:50-198` | 诊断代码污染中断入口（栈布局破坏） |
+| P0-14 | `src/kernel/privileged/mm/kmalloc.rs:691-707` | `dump_stats` 引用未定义变量（编译失败） |
+| P0-15 | `src/kernel/privileged/mm/swap.rs:155-194` | `init` 分配 4096 页未标记 reserved（16MB 泄漏） |
+| P0-16 | `src/kernel/privileged/boot/isr.asm:50-198` | 诊断代码污染中断入口（栈布局破坏） |
 
 ### 二.4 P0 user/build/docs 区域（5 项）
 
@@ -2825,12 +2825,12 @@ match crate::kernel::services::proc::table::with(pid, |_p| ()) {
 
 | # | 文件 | 描述 |
 |---|---|---|
-| P0-22 | services/ 42 个 .rs | 缺 `#![deny(unsafe_code)]`（违反 F1） |
+| P0-22 | functions/ 42 个 .rs | 缺 `#![deny(unsafe_code)]`（违反 F1） |
 | P0-23 | host-tests/ 18 处 | `#![allow(dead_code)]`（违反 F9） |
 
 ## 三、关键 P1 独立发现（35 项摘要）
 
-### 三.1 services 业务层 P1（15 项）
+### 三.1 functions 业务层 P1（15 项）
 
 - `dispatch.rs` SYS_exit_group 与 SYS_exit 同处理（线程组语义错误）
 - ~~`fs/open.rs:44` O_CLOEXEC 标志位错 4 倍（实际 0x80000 vs Linux 0x200000）~~ **[DEPRECATED：附录 H 5.2 实测为 8 进制误读，0o2_000_000=0x80000 与 Linux 一致，2026-08-15 经 DECISION-H03 标记]**
@@ -2845,10 +2845,10 @@ match crate::kernel::services::proc::table::with(pid, |_p| ()) {
 - `net/syscall.rs:430-433` SCM_RIGHTS 路径占位
 - `sgeg/uid.rs:144` setreuid 不处理 (uid_t)-1 哨兵
 - `sgeg/uid.rs:156-162` setregid_syscall 死代码
-- `services/` 48 文件缺 deny（与 P0-22 重复）
+- `functions/` 48 文件缺 deny（与 P0-22 重复）
 - `driver/display/{hdmi,ddc,dp}.rs` 缺 deny
 
-### 三.2 framework 审计脚本 P1（5 项）
+### 三.2 privileged 审计脚本 P1（5 项）
 
 - `tools/auto_replace_spin.py:70-72` 注释自承认函数有不严谨
 - `host-tests/benches/baseline.json` 11 项 `ns_per_op_frac=0.0` 已无效化
@@ -2867,7 +2867,7 @@ match crate::kernel::services::proc::table::with(pid, |_p| ()) {
 - `src/rust/src/memory_allocator.rs:13-16` KERNEL_BASE 与 link 脚本 VMA 起点不一致
 - `src/rust/edgine-tests/Cargo.toml` test 缺缺失
 - `src/rust/Cargo.lock` bitflags 1.3.2 + 2.11.1 多版本共存
-- `src/kernel/framework/link/x86_64.ld:117-118` `_kernel_size` 公式语义模糊
+- `src/kernel/privileged/link/x86_64.ld:117-118` `_kernel_size` 公式语义模糊
 - `Makefile:106-122` `arch-switch-clean` 首跑时强制 cargo clean
 - `Makefile:115-116` `host-tests/target/` 未在 arch 切换时清理
 - `.gitignore:3` `build/log/.arch` 应被提交但被忽略
@@ -2899,7 +2899,7 @@ match crate::kernel::services::proc::table::with(pid, |_p| ()) {
 | 独立审计独立发现 | 21 项 | 18.4% |
 | **合并 P0** | **114 项** | 100% |
 
-> **2026-08-15 附录 H 增量后**：上述 114 项中已标 [DEPRECATED] 的 2 项误判（§3.2 dispatch F2 + 附录 E 三.1 O_CLOEXEC）不计入有效 P0；附录 H 新增 P0-24（cred 加密原语缺失）+ P0-25（audit_comment_language 失效）+ P0-26（host-tests 与内核解耦）+ P0-27（host-tests 平行实装使 G.4 双倍严重）+ P0-28（SYS_SGEG_* 错位）+ P0-29（pmm.reserve_range API 缺失）+ P0-30（COW 物理页泄漏）+ P0-31（framework/fs/vfs/api.rs F2 违反）+ P0-32（framework/syscall/dispatch.rs 诊断污染）+ P0-33（src/rust/build.rs 全 0 占位符）= **122 项权威 P0**。详见附录 H §五 5.4 DECISION-H01~H15 与 §九.13 DECISION-H13/H14/H15。|
+> **2026-08-15 附录 H 增量后**：上述 114 项中已标 [DEPRECATED] 的 2 项误判（§3.2 dispatch F2 + 附录 E 三.1 O_CLOEXEC）不计入有效 P0；附录 H 新增 P0-24（cred 加密原语缺失）+ P0-25（audit_comment_language 失效）+ P0-26（host-tests 与内核解耦）+ P0-27（host-tests 平行实装使 G.4 双倍严重）+ P0-28（SYS_SGEG_* 错位）+ P0-29（pmm.reserve_range API 缺失）+ P0-30（COW 物理页泄漏）+ P0-31（privileged/fs/vfs/api.rs F2 违反）+ P0-32（privileged/syscall/dispatch.rs 诊断污染）+ P0-33（src/rust/build.rs 全 0 占位符）= **122 项权威 P0**。详见附录 H §五 5.4 DECISION-H01~H15 与 §九.13 DECISION-H13/H14/H15。|
 
 ## 六、关键路径风险图
 
@@ -2909,11 +2909,11 @@ syscall dispatch → fw::syscall::api（框架回退）→ 内核实现
                   P0-04 缺 vendored 排除误报 ─────┘
                   P0-30 `if cmd | tail` 反逻辑
 
-syscall dispatch → services::fs::file_handle::open_by_handle_at
+syscall dispatch → functions::fs::file_handle::open_by_handle_at
                   ↑                                    ↑
                   P0-08 无 CAP_DAC_READ_SEARCH ─────┘
 
-net/sendmsg → services::sgeg（拟人凭据）
+net/sendmsg → functions::sgeg（拟人凭据）
               ↑                    ↑
               P0-07 pwm_set 提权 ─────┘
 
@@ -2941,12 +2941,12 @@ isr.asm 36 次 IRQ 出口 → 0x3F8 UART 写 'Z'
 9. P0-14 kmalloc 编译错误 → 修编译
 10. P0-15 swap 内存泄漏 → reserve_range
 11. P0-03 audit_smoltcp_purity bug → 修 hash 阻断
-12. P0-04 ci_check_services_unsafe 缺 vendored → 复制 VENDORED_EXCLUDE
+12. P0-04 ci_check_functions_unsafe 缺 vendored → 复制 VENDORED_EXCLUDE
 13. P0-30 ci/audit.sh `if cmd|tail` 反逻辑 → 5 处修复
 
 ### 本季度（修复剩余 101 项 P0）
 
-- 78+ 处 framework→services 反向依赖治理
+- 78+ 处 privileged→functions 反向依赖治理
 - 22 组 syscall 编号冲突
 - 48 文件缺 deny
 - 时钟/锁/GIC 同步问题
@@ -2975,7 +2975,7 @@ isr.asm 36 次 IRQ 出口 → 0x3F8 UART 写 'Z'
 
 ### 审计方法
 
-1. **既有审计（2026-08-13）**：25 份子系统报告 + 16 项汇编链接脚本 + 56 项 services 关键大文件 → 728 项问题
+1. **既有审计（2026-08-13）**：25 份子系统报告 + 16 项汇编链接脚本 + 56 项 functions 关键大文件 → 728 项问题
 2. **本次独立审计（2026-08-15）**：6 路并行 sub-agent → 360 项核心问题
 3. **合并**：去重 14 项重叠 P0 + 21 项独立 P0 → 114 项合并 P0
 
@@ -2983,8 +2983,8 @@ isr.asm 36 次 IRQ 出口 → 0x3F8 UART 写 'Z'
 
 | 区域 | 既有审计 | 本次独立审计 |
 |---|---|---|
-| framework 系统 | 96.5% | 100%（核心 85%） |
-| services 系统 | 96.5% | 70%（核心 100%） |
+| privileged 系统 | 96.5% | 100%（核心 85%） |
+| functions 系统 | 96.5% | 70%（核心 100%） |
 | src/user/ | 未覆盖 | 100% |
 | src/rust/ | 未覆盖 | 100% |
 | tests/ | 未覆盖 | 100%（顶层）/ 30%（scripts） |
@@ -3004,8 +3004,8 @@ isr.asm 36 次 IRQ 出口 → 0x3F8 UART 写 'Z'
 ### 互不重叠的盲点
 
 - 既有审计：未覆盖 user + tests + build + scripts + host-tests
-- 本次审计：未深度阅读 30% 的 services 关键文件（services/fs/inode、services/proc/sched_policy 等）
-- 建议下一轮：合并两份审计后补齐剩余 30% services 深度
+- 本次审计：未深度阅读 30% 的 functions 关键文件（functions/fs/inode、functions/proc/sched_policy 等）
+- 建议下一轮：合并两份审计后补齐剩余 30% functions 深度
 
 ---
 
@@ -3013,23 +3013,23 @@ isr.asm 36 次 IRQ 出口 → 0x3F8 UART 写 'Z'
 
 > **审计员**：Trae IDE Sub-Agent（6 路并行）
 > **审计日期**：2026-08-15
-> **作用**：填补既有审计未覆盖的关键领域，包括 4 个 services 关键大文件、6 个 framework 超大文件、28 份 archive 子系统报告交叉验证、6 个文件系统（unkfs/ext2/exfat/overlayfs/tmpfs/procfs/ramfs）、egdf/wasm/wasi 三大子系统、13 个 Python 测试脚本
+> **作用**：填补既有审计未覆盖的关键领域，包括 4 个 functions 关键大文件、6 个 privileged 超大文件、28 份 archive 子系统报告交叉验证、6 个文件系统（unkfs/ext2/exfat/overlayfs/tmpfs/procfs/ramfs）、egdf/wasm/wasi 三大子系统、13 个 Python 测试脚本
 
 ## G.1 服务层关键大文件深度审计 v2.2（sub-agent #1）
 
 **审计范围**：4 个文件 100% 逐行通读
-- `src/kernel/services/fs/inode.rs`（603 行）
-- `src/kernel/services/proc/sched_policy.rs`（605 行）
-- `src/kernel/services/proc/signal.rs`（601 行）
-- `src/kernel/services/fs/file_ops.rs`（238 行）
+- `src/kernel/functions/fs/inode.rs`（603 行）
+- `src/kernel/functions/proc/sched_policy.rs`（605 行）
+- `src/kernel/functions/proc/signal.rs`（601 行）
+- `src/kernel/functions/fs/file_ops.rs`（238 行）
 
 **核心 P0 发现**：
 
 | # | 文件:行 | 问题 |
 |---|---|---|
-| 1 | `signal.rs:563-588` | `services::ipc::signal` 与 `services::proc::signal` 双层实现 SignalDecision + 双路径权限检查（架构重复） |
-| 2 | `signal.rs:286-297` | `services::proc::signal::send` + 4 个便利包装（kill/interrupt/stop/cont）+ pending/clear 共 70+ 行死代码 |
-| 3 | `signal.rs:439-456` | `kill_syscall` 直接调 `framework::syscall::api::sys_kill` 绕过本文件 `send` —— F2 黑名单违反 |
+| 1 | `signal.rs:563-588` | `functions::ipc::signal` 与 `functions::proc::signal` 双层实现 SignalDecision + 双路径权限检查（架构重复） |
+| 2 | `signal.rs:286-297` | `functions::proc::signal::send` + 4 个便利包装（kill/interrupt/stop/cont）+ pending/clear 共 70+ 行死代码 |
+| 3 | `signal.rs:439-456` | `kill_syscall` 直接调 `privileged::syscall::api::sys_kill` 绕过本文件 `send` —— F2 黑名单违反 |
 | 4 | `inode.rs:527-555` | `LegacyInode::chmod/chown` 不 invalidate icache → 缓存陈旧导致 stat 看到旧 perm/owner |
 | 5 | `inode.rs:167-169` | `Inode::set_times` 默认 `Ok(())` 静默成功 |
 | 6 | `sched_policy.rs:189-207` | `boost_priority` 死代码（与 `boost_all_vruntime` 函数体 100% 等价，注释自承"调试读"）|
@@ -3037,15 +3037,15 @@ isr.asm 36 次 IRQ 出口 → 0x3F8 UART 写 'Z'
 
 **净增统计**：P0 +6 / P1 +9 / P2 +8 / P3 +5
 
-## G.2 framework 6 个超大文件深度审计（sub-agent #2）
+## G.2 privileged 6 个超大文件深度审计（sub-agent #2）
 
 **审计范围**：10,803 行（100% 覆盖）
-- `framework/cpu/mod.rs`（1554 行）
-- `framework/mm/vmm_x86_64.rs`（1942 行）
-- `framework/net/init.rs`（2060 行）
-- `framework/proc/user_proc.rs`（2137 行）
-- `framework/proc/scheduler.rs`（1457 行）
-- `services/driver/display/dp.rs`（1653 行）
+- `privileged/cpu/mod.rs`（1554 行）
+- `privileged/mm/vmm_x86_64.rs`（1942 行）
+- `privileged/net/init.rs`（2060 行）
+- `privileged/proc/user_proc.rs`（2137 行）
+- `privileged/proc/scheduler.rs`（1457 行）
+- `functions/driver/display/dp.rs`（1653 行）
 
 **核心 P0 发现**：
 
@@ -3096,21 +3096,21 @@ isr.asm 36 次 IRQ 出口 → 0x3F8 UART 写 'Z'
 | 14 | `subsystem-proc.md` P0-19 | Scheduler::tick 硬编码 1..=255 PID 范围 |
 | 15 | `subsystem-proc.md` P0-20 | `let _ = core_limit;` 静默忽略 RLIMIT_CORE |
 | 16 | `subsystem-proc.md` P0-22 | `exit()` 自递归风险 |
-| 17 | `subsystem-services-net.md` P0-2.3 | `socket.rs:140` IPv6 路径丢失（DECISION-032 违反）|
-| 18 | `subsystem-services-net.md` P0-2.4 | `handle_to_fd` 线性扫描 + 死代码 |
-| 19 | `subsystem-services-net.md` P0-2.5 | UDS FD 起点跨子系统硬编码（违反 F2）|
-| 20 | `subsystem-services-net.md` P0-2.6 | `alloc_user_id` wrapping_add 重用 id=1（use-after-close）|
-| 21 | `subsystem-driver.md` P0-2.4 | e1000 framework ↔ services 双向依赖循环（违反 F3）|
-| 22-24 | `subsystem-framework-cpu.md` 5 项 P0 | 全未进入主报告（cpu/mod.rs 1554 行、cpu/msr.cs 等）|
+| 17 | `subsystem-functions-net.md` P0-2.3 | `socket.rs:140` IPv6 路径丢失（DECISION-032 违反）|
+| 18 | `subsystem-functions-net.md` P0-2.4 | `handle_to_fd` 线性扫描 + 死代码 |
+| 19 | `subsystem-functions-net.md` P0-2.5 | UDS FD 起点跨子系统硬编码（违反 F2）|
+| 20 | `subsystem-functions-net.md` P0-2.6 | `alloc_user_id` wrapping_add 重用 id=1（use-after-close）|
+| 21 | `subsystem-driver.md` P0-2.4 | e1000 privileged ↔ functions 双向依赖循环（违反 F3）|
+| 22-24 | `subsystem-privileged-cpu.md` 5 项 P0 | 全未进入主报告（cpu/mod.rs 1554 行、cpu/msr.cs 等）|
 
 **修复建议 13 条**（约 10 工作日）：
 1. 建立 archive→主报告 P0 编号映射表
 2. 统一 DECISION 编号体系
 3. 统一 P0 编号格式
 4. 建立 asm 严重度→P0/P1 映射
-5. services-deep-audit §3.11 升 P2→P0
-6. `subsystem-services-fs.md` 追加 inode.rs P0
-7. `subsystem-services-net.md` 追加 dispatch.rs 部分
+5. functions-deep-audit §3.11 升 P2→P0
+6. `subsystem-functions-fs.md` 追加 inode.rs P0
+7. `subsystem-functions-net.md` 追加 dispatch.rs 部分
 8. 全部 5 项 cpu P0 纳入主报告
 9. wasm-ipc-sgeg §2.4 密码时间侧信道补行号
 10-13. 其他合并与同步
@@ -3238,7 +3238,7 @@ isr.asm 36 次 IRQ 出口 → 0x3F8 UART 写 'Z'
 9. `chown_syscall` UID 失败回退 root（file_ops.rs 独立）
 10. `dispatch.rs` 丢 SYS_pipe2/SYS_dup3 flags
 
-**framework 稳定性**：
+**privileged 稳定性**：
 11. `isr.asm` 诊断代码污染
 12. `enter_user_asm` 365 行诊断
 13. `vmm_x86_64` clone_user_page_table OOM 死锁
@@ -3274,7 +3274,7 @@ isr.asm 36 次 IRQ 出口 → 0x3F8 UART 写 'Z'
 
 **审计工具链**：
 39. `audit_smoltcp_purity` hash mismatch 返 0
-40. `ci_check_services_unsafe` 缺 vendored
+40. `ci_check_functions_unsafe` 缺 vendored
 41. `ci/audit.sh` if cmd|tail 反逻辑
 42. `tools/auto_*.py` 硬编码路径
 43. `audit_safety_coverage` 仅 8 文件
@@ -3287,7 +3287,7 @@ isr.asm 36 次 IRQ 出口 → 0x3F8 UART 写 'Z'
 48. `tests/reports/` 164 个日志未清理（本地+远程同步）
 49. 用户态链接脚本缺 `_user_start/_user_end`
 50. `host-tests` 18 处 F9 违反
-51. `services` 42 文件缺 F1 deny
+51. `functions` 42 文件缺 F1 deny
 
 剩余 28 项 P0（archive 独有与本轮深度发现）按相同优先级排期。
 
@@ -3301,8 +3301,8 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
 **两轮深度审计完整覆盖**：
 - ✅ 既有审计 28 份 archive 子系统报告已交叉验证
-- ✅ 4 个 services 关键大文件 100% 通读
-- ✅ 6 个 framework 超大文件 100% 通读
+- ✅ 4 个 functions 关键大文件 100% 通读
+- ✅ 6 个 privileged 超大文件 100% 通读
 - ✅ 20 个 Python 测试脚本 100% 通读
 - ✅ 6 个文件系统（unkfs/ext2/exfat/overlayfs/tmpfs/procfs/ramfs）100% 通读
 - ✅ egdf/wasm/wasi 三大子系统 100% 通读
@@ -3326,8 +3326,8 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 ## 一、复核方法
 
 - **静态阅读**：12 个关键源码文件 100% 通读（`auth.rs`、`file_handle.rs`、`access.rs`、`pidfd.rs`、`clone.rs`、`dispatch.rs`、`secure_boot.rs`、`namespace.rs`、`sched_policy.rs`、`signal.rs`、`types.rs`、`file_ops.rs`）
-- **脚本实测**：实际执行 9 个 audit 脚本并验证退出码（`audit_services_boundary` / `ci_check_services_unsafe` / `audit_tcb_ratio` / `audit_safety_coverage` / `audit_smoltcp_purity` / `audit_invariants` / `audit_once_cell` / `audit_block_registration` / `audit_c_naming` / `audit_deadlock_matrix` / `audit_coupling` / `audit_comment_language`）
-- **grep 验证**：80+ 关键模式跨文件验证（`#![deny(unsafe_code)]` / `#![allow(dead_code)]` / `static mut` / `unwrap()` / `unsafe` / `// SAFETY` / `TODO(TRACK-...)` / `use crate::kernel::services::*` 在 framework 中等）
+- **脚本实测**：实际执行 9 个 audit 脚本并验证退出码（`audit_functions_boundary` / `ci_check_functions_unsafe` / `audit_tcb_ratio` / `audit_safety_coverage` / `audit_smoltcp_purity` / `audit_invariants` / `audit_once_cell` / `audit_block_registration` / `audit_c_naming` / `audit_deadlock_matrix` / `audit_coupling` / `audit_comment_language`）
+- **grep 验证**：80+ 关键模式跨文件验证（`#![deny(unsafe_code)]` / `#![allow(dead_code)]` / `static mut` / `unwrap()` / `unsafe` / `// SAFETY` / `TODO(TRACK-...)` / `use crate::kernel::functions::*` 在 privileged 中等）
 - **不跑**：cargo build / clippy / QEMU（与附录 E/G 一致）
 
 ## 二、附录 E/G 25 项 P0 实测复核结果
@@ -3342,28 +3342,28 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 | P0-01 | `audit_tcb_ratio.py:218` | line 215-221 `# sys.exit(1)` 仍注释 | ✅ 仍存在 |
 | P0-02 | `audit_safety_coverage.py:18` | `FILES = ['frame', 'vmspace', 'usermode', 'userctx', 'iomem', 'ioport', 'irqline', 'dma_buf']` | ✅ 仍存在 |
 | P0-03 | `audit_smoltcp_purity.py:202-215` | 实测 hash mismatch 返 0 | ✅ 仍存在 |
-| P0-04 | `ci_check_services_unsafe.py:22-48` | 实测 18 处全 vendored 误报 | ✅ 仍存在 |
+| P0-04 | `ci_check_functions_unsafe.py:22-48` | 实测 18 处全 vendored 误报 | ✅ 仍存在 |
 | P0-05 | `ci/audit.sh:51,75,85,95,122,136,170,197` | 实测 line 51/75/85/95/122/136/170/197 共 8 处 if 反逻辑 + line 45 单 pipe 共 9 处 | ✅ 仍存在 |
 | P0-06 | `tools/auto_*.py:23` | 实测硬编码 `/home/anfer/Code/Edgine` | ✅ 仍存在 |
-| P0-07 | `services/sgeg/auth.rs:118-122` | line 118-122 无 CAP 校验 | ✅ 仍存在 |
-| P0-08 | `services/fs/file_handle.rs:147` | line 147 注释承认"当前允许所有已认证进程" | ✅ 仍存在 |
-| P0-09 | `services/fs/access.rs:46-61` | line 46-61 仅校验存在性 | ✅ 仍存在 |
-| P0-10 | `services/proc/pidfd.rs:28` | line 28 `Ok(pid as usize)` | ✅ 仍存在 |
-| P0-11 | `services/proc/clone.rs:41` | line 41 仍未加括号 | ✅ 仍存在 |
-| P0-12 | `services/syscall/dispatch.rs:190, 195` | line 190/195 flags 仍忽略 | ✅ 仍存在 |
-| P0-13 | `services/fs/file_ops.rs:169` | line 169 `map_or(0, ...)` | ✅ 仍存在 |
-| P0-14 | `framework/mm/kmalloc.rs:691-707` | line 692 `let _stats` 后 line 696 用 `stats.heap_start.0` — **编译必失败** | ✅ 仍存在 |
-| P0-15 | `framework/mm/swap.rs:155-194` | line 165-183 无 `pmm.reserve_range` | ✅ 仍存在 |
-| P0-16 | `framework/boot/isr.asm:50-198` | 未实测（需 NASM 反汇编）| 🔍 未实测 |
+| P0-07 | `functions/sgeg/auth.rs:118-122` | line 118-122 无 CAP 校验 | ✅ 仍存在 |
+| P0-08 | `functions/fs/file_handle.rs:147` | line 147 注释承认"当前允许所有已认证进程" | ✅ 仍存在 |
+| P0-09 | `functions/fs/access.rs:46-61` | line 46-61 仅校验存在性 | ✅ 仍存在 |
+| P0-10 | `functions/proc/pidfd.rs:28` | line 28 `Ok(pid as usize)` | ✅ 仍存在 |
+| P0-11 | `functions/proc/clone.rs:41` | line 41 仍未加括号 | ✅ 仍存在 |
+| P0-12 | `functions/syscall/dispatch.rs:190, 195` | line 190/195 flags 仍忽略 | ✅ 仍存在 |
+| P0-13 | `functions/fs/file_ops.rs:169` | line 169 `map_or(0, ...)` | ✅ 仍存在 |
+| P0-14 | `privileged/mm/kmalloc.rs:691-707` | line 692 `let _stats` 后 line 696 用 `stats.heap_start.0` — **编译必失败** | ✅ 仍存在 |
+| P0-15 | `privileged/mm/swap.rs:155-194` | line 165-183 无 `pmm.reserve_range` | ✅ 仍存在 |
+| P0-16 | `privileged/boot/isr.asm:50-198` | 未实测（需 NASM 反汇编）| 🔍 未实测 |
 | P0-17 | `user/link.x` / `user/link_aarch64.x` | 两个文件均无 `_user_start/_user_end` | ✅ 仍存在 |
 | P0-18 | `build/stage1.bin` | 实测 440 字节，内容全 0x00（除末尾 8 字节） | ⚠️ 部分存在 |
 | P0-19 | `src/rust/lib.rs`（0 字节）| 实测存在，与 `src/lib.rs` 共存 | ✅ 仍存在 |
 | P0-20 | `docs/explain/ref-naming.md:48-50` | line 49 `EG_CAPABILITY = 500` 与实测 `SYS_SGEG_*` 在 400-437/700+ 区间不符 | ✅ 仍存在 |
 | P0-21 | `tests/reports/*.log` | 实测 164 个 `.log` 文件 | ✅ 仍存在 |
-| P0-22 | services 缺 deny | 实测 42 个文件（不含 smoltcp）| ✅ 仍存在（数量从 48 修正为 42）|
+| P0-22 | functions 缺 deny | 实测 42 个文件（不含 smoltcp）| ✅ 仍存在（数量从 48 修正为 42）|
 | P0-23 | host-tests `#[allow(dead_code)]` | 实测 6 处 src + 7 处 tests = 13 处（不含注释/字符串引用）| ✅ 仍存在（数量从 18 修正为 13）|
-| §3.2 P0-05 | `framework/sgeg/secure_boot.rs:197-210` | 实测任何非零 64 字节通过 | ✅ 仍存在 |
-| §3.2 P0-12 | `framework/net/init.rs:115-118` `static mut SOCKET_STORAGE/SOCKET_SET` | 实测 line 115-118 仍 `static mut MaybeUninit<...>` | ✅ 仍存在 |
+| §3.2 P0-05 | `privileged/sgeg/secure_boot.rs:197-210` | 实测任何非零 64 字节通过 | ✅ 仍存在 |
+| §3.2 P0-12 | `privileged/net/init.rs:115-118` `static mut SOCKET_STORAGE/SOCKET_SET` | 实测 line 115-118 仍 `static mut MaybeUninit<...>` | ✅ 仍存在 |
 
 ### 表 H.2：5 项误判自证（详见用户追问专项回复）
 
@@ -3371,16 +3371,16 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 |---|---|---|
 | 附录 E 三.1 "O_CLOEXEC 错 4 倍" | `0o2_000_000₈ = 524288 = 0x80000` 与 Linux 一致；报告把 8 进制误读为十进制 | ❌ **可删**：报告描述与代码不符 |
 | §3.10 "name_to_handle_at 错误吞咽" | `Result::unwrap_or_else(Errno::as_ret)` 类型匹配正确，`Result<i64, Errno>` 与 `FnOnce(E) -> T` 完全契合 | ❌ **可删**：报告误解 Rust `Result::unwrap_or_else` 契约 |
-| §3.3 "clone_syscall 缺 a5" | services wrapper 5 参数 + framework sys_clone 6 参数是**分层设计**，不是 bug | ❌ **可删**：报告混用 POSIX 接口签名与 syscall ABI 签名 |
-| 附录 G G.1 §2 "services dispatch 直调 framework::syscall::api" | 实测 services 内已无此引用，迁移已完成 | ❌ **可删**：时序错位（snapshot vs 报告呈现时差）|
+| §3.3 "clone_syscall 缺 a5" | functions wrapper 5 参数 + privileged sys_clone 6 参数是**分层设计**，不是 bug | ❌ **可删**：报告混用 POSIX 接口签名与 syscall ABI 签名 |
+| 附录 G G.1 §2 "functions dispatch 直调 privileged::syscall::api" | 实测 functions 内已无此引用，迁移已完成 | ❌ **可删**：时序错位（snapshot vs 报告呈现时差）|
 | 附录 G G.3 "fs/file_ops.rs chown 回退 root" | 与主报告 P0-13 完全同源同函数同描述 | ❌ **可删**：重复发现，未跨通道去重 |
 
 ## 三、新发现增量（**未涵盖在原报告**）
 
 ### H.3.1 新发现 P0：cred 子系统完全无加密原语（独立 P0-24）
 
-- **描述**：`framework/sgeg/` 14 个文件（146KB）实测**无任何** AES/CBC/CTR/GCM/ChaCha20/X25519/HMAC/KDF 实现
-  - `sha256.rs` 仅 9 行 re-export（真实实现在 `services/sgeg/sha256.rs`）
+- **描述**：`privileged/sgeg/` 14 个文件（146KB）实测**无任何** AES/CBC/CTR/GCM/ChaCha20/X25519/HMAC/KDF 实现
+  - `sha256.rs` 仅 9 行 re-export（真实实现在 `functions/sgeg/sha256.rs`）
   - `secure_boot.rs::verify()` 是**占位实现**（line 197-209）——任何非零 64 字节都视为有效
   - 无 HMAC、无 KDF、无 TLS 握手机密
 - **方案**：3 步迁移
@@ -3388,13 +3388,13 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   2. 中期：引入 `crypto-traits` crate + `ed25519-dalek` 实现真正 Ed25519
   3. 长期：补 AES-GCM/ChaCha20-Poly1305 用于磁盘加密与 IPC 信道加密
 - **状态**：[]
-- **详情**：身份系统声称有 "secure boot" 但实际无加密支撑 → 整个 sgeg 子系统形同**虚假 TCB**，是 framework 中最严重的安全漏洞
+- **详情**：身份系统声称有 "secure boot" 但实际无加密支撑 → 整个 sgeg 子系统形同**虚假 TCB**，是 privileged 中最严重的安全漏洞
 - **风险**：任何非零 64 字节签名都通过 → 引导链完整性验证形同虚设 → 攻击者可植入任意"已签名"内核镜像
 - **工作日**：3-5 天（短期 fail-closed）+ 5-7 天（中期真 Ed25519）
 
 ### H.3.2 新发现 P0：audit_comment_language.py 失败仍返 EXIT=0（独立 P0-25）
 
-- **描述**：实测 `audit_comment_language.py` 检测出 1 处违规（`services/net/mod.rs:9` 引用英文 `progress-active-tasks.md`），但脚本最终退出码仍为 0
+- **描述**：实测 `audit_comment_language.py` 检测出 1 处违规（`functions/net/mod.rs:9` 引用英文 `progress-active-tasks.md`），但脚本最终退出码仍为 0
 - **方案**：在 `audit_comment_language.py` 末尾添加 `sys.exit(1)` 当违规数 > 0
 - **状态**：[]
 - **详情**：TD-22 硬阈值门禁（违规 > 0 即 CI 失败）**完全失效**——这是继 P0-01/P0-02/P0-03 之后的**第 4 处 CI 门禁失效**，门禁可信度接近 0
@@ -3402,15 +3402,15 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
 ### H.3.3 新发现 P1：Errno::from_ret 缺失 60-115 区间（独立 P1-A）
 
-- **描述**：`Errno::from_ret()` [types.rs:848-890](file:///home/anfer/Code/Edgine/src/kernel/services/syscall/types.rs#L848-L890) 仅覆盖 1..40 共 35 个 errno，未覆盖 43（EIDRM）、60-64（ENOSTR/ENODATA/ETIME/ENOSR/ENONET）、71（EPROTO）、74（EBADMSG）、75（EOVERFLOW）、88-115（ENOTSOCK/EOPNOTSUPP/...）
-- **方案**：在 match 表中补全所有定义值（[types.rs:793-827](file:///home/anfer/Code/Edgine/src/kernel/services/syscall/types.rs#L793-L827) 列出的所有 errno 都应在 `from_ret` 中）
+- **描述**：`Errno::from_ret()` [types.rs:848-890](file:///home/anfer/Code/Edgine/src/kernel/functions/syscall/types.rs#L848-L890) 仅覆盖 1..40 共 35 个 errno，未覆盖 43（EIDRM）、60-64（ENOSTR/ENODATA/ETIME/ENOSR/ENONET）、71（EPROTO）、74（EBADMSG）、75（EOVERFLOW）、88-115（ENOTSOCK/EOPNOTSUPP/...）
+- **方案**：在 match 表中补全所有定义值（[types.rs:793-827](file:///home/anfer/Code/Edgine/src/kernel/functions/syscall/types.rs#L793-L827) 列出的所有 errno 都应在 `from_ret` 中）
 - **状态**：[]
 - **详情**：未覆盖错误码全部被静默转为 `EINVAL` → 错误信息完全丢失；上层调用方无法区分"权限不足"与"无效参数"
 - **工作日**：0.5 天（纯增补）
 
 ### H.3.4 新发现 P1：audit_safety_coverage.py 覆盖率虚标（独立 P1-B）
 
-- **描述**：`audit_safety_coverage.py:18` 硬编码 `FILES = ['frame', 'vmspace', 'usermode', 'userctx', 'iomem', 'ioport', 'irqline', 'dma_buf']` 仅 8 个顶层文件，实测 framework 实际有 **2,227 处 unsafe**，脚本报告"53/53 = 100% 覆盖"，实际覆盖率 **53/2,227 = 2.4%**
+- **描述**：`audit_safety_coverage.py:18` 硬编码 `FILES = ['frame', 'vmspace', 'usermode', 'userctx', 'iomem', 'ioport', 'irqline', 'dma_buf']` 仅 8 个顶层文件，实测 privileged 实际有 **2,227 处 unsafe**，脚本报告"53/53 = 100% 覆盖"，实际覆盖率 **53/2,227 = 2.4%**
 - **方案**：用 `tools/audit_unsafe.py` 全量扫描取代 `audit_safety_coverage.py`，或标记为 legacy
 - **状态**：[]
 - **详情**：报告"P0-02"已识别此问题，但只描述现象未给出修复路径——本项提供完整替代方案
@@ -3420,28 +3420,28 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
 #### P2-A: ref-naming.md 500+ 立场与代码不符（独立 P2-A）
 
-- **描述**：`ref-naming.md:48-50` 示例 `EG_CAPABILITY = 500` 与 `services/syscall/types.rs` 实际 `SYS_SGEG_*` 在 400-437 / 700+ 两段分布不一致
+- **描述**：`ref-naming.md:48-50` 示例 `EG_CAPABILITY = 500` 与 `functions/syscall/types.rs` 实际 `SYS_SGEG_*` 在 400-437 / 700+ 两段分布不一致
 - **方案**：迁移 `SYS_SGEG_*` 全部到 500+ 编号区间，或删除 ref-naming.md "500+" 表述
 - **状态**：[]
 
-#### P2-B: services "策略上移"模式违反 OSTD Minimalism（独立 P2-B）
+#### P2-B: functions "策略上移"模式违反 OSTD Minimalism（独立 P2-B）
 
-- **描述**：实测 framework→services 反向依赖中，**约 78 处 `pub use` re-export** 集中在 `framework/config/`、`framework/sgeg/`、`framework/driver/`、`framework/fs/unkfs/` 等——这是"services 类型定义 → framework re-export → services 实现"的**循环迁移模式**
-- **方案**：撤销 re-export，让 services 类型只通过顶层 API 暴露
+- **描述**：实测 privileged→functions 反向依赖中，**约 78 处 `pub use` re-export** 集中在 `privileged/config/`、`privileged/sgeg/`、`privileged/driver/`、`privileged/fs/unkfs/` 等——这是"functions 类型定义 → privileged re-export → functions 实现"的**循环迁移模式**
+- **方案**：撤销 re-export，让 functions 类型只通过顶层 API 暴露
 - **状态**：[]
-- **详情**：违反 `explain-framekernel.md` §"机制与策略分离"原则，应将 services 类型反向依赖全部迁移到 framework 或通过 trait 注入
+- **详情**：违反 `explain-framekernel.md` §"机制与策略分离"原则，应将 functions 类型反向依赖全部迁移到 privileged 或通过 trait 注入
 - **工作日**：5-7 天（专项重构）
 
 #### P2-C: 28 处 TODO(TRACK-...) 注释违反 AGENTS.md §9.4（独立 P2-C）
 
-- **描述**：实测 `TODO(TRACK-...)` 注释共 **28 处**，主要分布在 `framework/driver/usb/`（11 处）、`framework/sgeg/secure_boot.rs`、`framework/dma/engine.rs`、`framework/arch/shadow_stack.rs`、`framework/driver/power.rs`
+- **描述**：实测 `TODO(TRACK-...)` 注释共 **28 处**，主要分布在 `privileged/driver/usb/`（11 处）、`privileged/sgeg/secure_boot.rs`、`privileged/dma/engine.rs`、`privileged/arch/shadow_stack.rs`、`privileged/driver/power.rs`
 - **方案**：按 AGENTS.md §13 "存量问题处理"4 步策略（触及时修复 / 标记待修 / 禁止忽视 / 新代码零容忍）
 - **状态**：[]
 
 #### P2-D: build/stage1.bin 内容全 0x00（独立 P2-D）
 
 - **描述**：实测 `build/stage1.bin` 440 字节，除末尾 8 字节外全 0x00
-- **方案**：验证 `src/kernel/framework/boot/stage1.asm` 实际产出是否对应 multiboot2 头；若 unused 则删除
+- **方案**：验证 `src/kernel/privileged/boot/stage1.asm` 实际产出是否对应 multiboot2 头；若 unused 则删除
 - **状态**：[]
 - **详情**：报告 P0-18 描述为"全 0x00"是简写，精确为"440 字节除末尾 8 字节外全 0x00"——表 H.1 中已修正
 
@@ -3450,9 +3450,9 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 - **描述**：实测 host-tests 与内核 src 完全不链接，**整个 host-tests 是 mock 平行实装**
   - `src/rust/Cargo.toml` 第 21-23 行 `[lib] crate-type = ["staticlib"] test = false` — 内核 lib 显式 `test = false`，禁止 `cargo test`
   - `host-tests/Cargo.toml` 第 1 行 `name = "edgine-host-tests"` 是独立 package，**未声明** 内核 `edgine` 作为依赖
-  - `host-tests/src/unkfs/` 20 个 .rs 文件 / 5460 LoC，与 `src/kernel/services/fs/unkfs/` 29 个 .rs 文件 / 9481 LoC 是**两套独立实装**
+  - `host-tests/src/unkfs/` 20 个 .rs 文件 / 5460 LoC，与 `src/kernel/functions/fs/unkfs/` 29 个 .rs 文件 / 9481 LoC 是**两套独立实装**
   - 测试代码用 `std::sync::*` + `std::collections::*`，内核用 `alloc::*` + `core::*`，**完全不兼容的 std 运行时**
-  - `host-tests/src/unkfs/arc.rs` 第 1 行 `use crate::kernel::sync::mutex::Mutex` 与 内核 `src/kernel/services/fs/unkfs/arc.rs` 第 1 行 `use crate::kernel::services::sync::irq_lock::IrqSpinLock as Mutex` — **同一类型但不同 crate 路径**
+  - `host-tests/src/unkfs/arc.rs` 第 1 行 `use crate::kernel::sync::mutex::Mutex` 与 内核 `src/kernel/functions/fs/unkfs/arc.rs` 第 1 行 `use crate::kernel::functions::sync::irq_lock::IrqSpinLock as Mutex` — **同一类型但不同 crate 路径**
 - **方案**：3 步迁移
   1. 短期：保留 host-tests/Cargo.toml 独立 package 但显式标注 `[lints] workspace = false` 与"仅 host-side benchmarks"语义；删除 host-tests/src/unkfs/ 整套 mock 平行实装
   2. 中期：启用 `src/rust/Cargo.toml [lib] test = true`，把 unkfs/checksum/arc/bp 等可测单元的测试迁入内核 `#[cfg(test)] mod tests`，与内核代码同 crate 编译
@@ -3465,7 +3465,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 ### H.3.7 新发现 P0：host-tests/src/unkfs/ 平行实装使 G.4 P0-29/30/31 隐性双倍严重（独立 P0-27）
 
 - **描述**：报告 G.4 第 1 项 P0 `unkfs/checksum.rs:42-45 XORP 校验和"静默成功"——Fletcher4 仅检 4 字节，bit rot 100% 漏检` 已知内核 stub 问题。但实测 `host-tests/src/unkfs/checksum.rs` 145 LoC 是**独立实装**的 Fletcher4 stub：
-  - 内核 `src/kernel/services/fs/unkfs/checksum.rs` 是 stub（漏检）
+  - 内核 `src/kernel/functions/fs/unkfs/checksum.rs` 是 stub（漏检）
   - 测试 `host-tests/src/unkfs/checksum.rs` 也是 stub（漏检）
   - 即使 host-tests 跑通所有 unkfs checksum 测试，**也无法捕获内核的真实 bug**——因为两套实现彼此独立
   - 同理影响 G.4 全部 15 项 unkfs P0（XORP/签名/checksum/mount_drive/读路径不校验 等）以及 G.8 优先级 29-30（unkfs checksum 静默成功 + unkfs 无签名）
@@ -3540,7 +3540,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 ### 5.4 决策记录（2026-08-15 用户授权采纳）
 
 - **DECISION-H01（D9 采纳）**：将 H.3.1 cred 子系统完全无加密原语纳入独立 P0-24
-  - 描述：`framework/sgeg/` 实测无 AES/CBC/CTR/GCM/ChaCha20/X25519/HMAC/KDF 任何实现，Ed25519 `verify()` 占位实现
+  - 描述：`privileged/sgeg/` 实测无 AES/CBC/CTR/GCM/ChaCha20/X25519/HMAC/KDF 任何实现，Ed25519 `verify()` 占位实现
   - 方案：附录 H.3.1 短期 fail-closed + 中期引入 ed25519-dalek + 长期补 AES-GCM/ChaCha20-Poly1305
   - 状态：[X]
 
@@ -3550,7 +3550,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   - 状态：[X]
 
 - **DECISION-H03（D11 采纳）**：删除两项误判（事实错误 + 时序错位）
-  - 描述：删除附录 E 三.1 "O_CLOEXEC 错 4 倍"（8 进制误读）+ 删除附录 G G.1 §2 "services dispatch 直调 framework::syscall::api"（已修复状态时序错位），并保留原文加 [DEPRECATED] 标记指向本附录 H.5.2
+  - 描述：删除附录 E 三.1 "O_CLOEXEC 错 4 倍"（8 进制误读）+ 删除附录 G G.1 §2 "functions dispatch 直调 privileged::syscall::api"（已修复状态时序错位），并保留原文加 [DEPRECATED] 标记指向本附录 H.5.2
   - 方案：原章节保留为审计历史快照但加 [DEPRECATED] 标记；不物理删除（按 plan/ 文档规范保留已完成/废弃的计划）
   - 状态：[X]
 
@@ -3605,7 +3605,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 ### 第一周（最高 P0 - 合并后 122 项中的最严重子集）
 
 **阶段1 紧急（0.1 天）**：
-0. **P0-32 framework/syscall/dispatch.rs 入口诊断污染**（DECISION-H14）→ 直接删除整段 asm 块（最高效快速 win）
+0. **P0-32 privileged/syscall/dispatch.rs 入口诊断污染**（DECISION-H14）→ 直接删除整段 asm 块（最高效快速 win）
 
 **启动链断裂**：
 0. **P0-33 src/rust/build.rs 全 0 占位符**（DECISION-H15）→ build.rs 改 panic_missing 强制要求真实产物 + Makefile 加 build-deps
@@ -3626,7 +3626,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 7. **P0-29 pmm.reserve_range API 缺失** → 实现 reserve_range（修原 P0-15 swap 16MB 泄漏）
 
 **阶段2 框架结构（3-5 天）**：
-8. **P0-31 framework/fs/vfs/api.rs F2 违反**（DECISION-H13）+ **P2-D framework/syscall/api.rs F2**（DECISION-H19）→ services 类型迁回 framework，5-7 天
+8. **P0-31 privileged/fs/vfs/api.rs F2 违反**（DECISION-H13）+ **P2-D privileged/syscall/api.rs F2**（DECISION-H19）→ functions 类型迁回 privileged，5-7 天
 
 **服务层安全漏洞**：
 9. P0-07 pwm_set_syscall 提权 → 加 CAP_SYS_ADMIN
@@ -3642,7 +3642,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 17. P0-01 audit_tcb_ratio.py 退出码注释 → 恢复 sys.exit(1)
 18. P0-02 audit_safety_coverage 仅 8 文件 → 用 tools/audit_unsafe.py 取代
 19. P0-03 audit_smoltcp_purity hash mismatch 返 0 → LOCALIZED_VENDORED 也需 hash 一致
-20. P0-04 ci_check_services_unsafe 缺 vendored → 复制 VENDORED_EXCLUDE
+20. P0-04 ci_check_functions_unsafe 缺 vendored → 复制 VENDORED_EXCLUDE
 
 ### 本季度（修复剩余 102 项 P0）
 
@@ -3653,7 +3653,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 - H.3.4 Errno::from_ret 缺失 60-115 区间 → 补全 errno 转换
 - P0-15 swap 内存泄漏（已在 P0-29 中修复，覆盖此条目）
 - P0-17 link.x 缺 _user_start/_user_end → 添加边界符号
-- 78+ 处 framework→services 反向依赖治理
+- 78+ 处 privileged→functions 反向依赖治理
 - 22 组 syscall 编号冲突
 - 42 文件缺 deny
 
@@ -3672,7 +3672,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 - P2-F aarch64/mod.rs cfg 内层加固（0.1 天）
 - P2-G lib.rs 模块注释同步（0.5 天）
 - P2-H USER_ADDR_MAX cfg 守护（0.5 天）
-- P2-I framework/syscall/api.rs 迁 services（与 P0-31 合并 5-7 天）
+- P2-I privileged/syscall/api.rs 迁 functions（与 P0-31 合并 5-7 天）
 - P2-J Multiboot1Info 死代码删除（0.5 天）
 
 ### 半年（修复所有 P0 + 226 项 P1）
@@ -3701,13 +3701,13 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 ## 八、附录 H §四：第四轮深度审计（用户授权持续深审）
 
 > **审计员**：Trae IDE 主对话（用户 2026-08-15 授权"继续尝试深究审查项目源码"）
-> **审计范围**：framework/mm（PMM/COW/Kmalloc/Slab）、framework/arch（双架构一致性）、services/syscall（dispatch/types）、src/rust + src/user 入口与编译配置
+> **审计范围**：privileged/mm（PMM/COW/Kmalloc/Slab）、privileged/arch（双架构一致性）、functions/syscall（dispatch/types）、src/rust + src/user 入口与编译配置
 > **本节作用**：补充附录 H §三 未覆盖的盲点——下沉到具体模块内部的关键 bug
 > **本节结果**：3 项 P0 + 6 项 P1 + 2 项 P2（11 项新增）
 
 ### 八.1 H.4.1 P0-28：用户态/内核态 SYS_SGEG_* 编号错位（任何 SGEG 系统调用不可能工作）
 
-- **位置**：用户态 [src/user/lib/src/sys.rs:46-60](file:///home/anfer/Code/Edgine/src/user/lib/src/sys.rs#L46-L60) vs 内核态 [src/kernel/services/syscall/types.rs:346-374](file:///home/anfer/Code/Edgine/src/kernel/services/syscall/types.rs#L346-L374)
+- **位置**：用户态 [src/user/lib/src/sys.rs:46-60](file:///home/anfer/Code/Edgine/src/user/lib/src/sys.rs#L46-L60) vs 内核态 [src/kernel/functions/syscall/types.rs:346-374](file:///home/anfer/Code/Edgine/src/kernel/functions/syscall/types.rs#L346-L374)
 
 - **实测**：
 
@@ -3722,23 +3722,23 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 - **方案**：3 步
   1. 短期：在 userlib/src/sys.rs 把 SYS_SGEG_* 全部从 400-434 改为 700-734（强行同步）
   2. 中期：把 sysno 编码到 build.rs 或 xtask 工具，单一来源
-  3. 长期：把 services::syscall::types 暴露为 `edgine-sysno` crate，被内核与用户态共同依赖
+  3. 长期：把 functions::syscall::types 暴露为 `edgine-sysno` crate，被内核与用户态共同依赖
 - **状态**：[]
 - **详情**：报告 P0-20 描述 ref-naming.md "立场不符"是表面现象——**真正问题是 ABI 完全断裂**。用户进程调用 `syscall(400, ...)` 期望 SYS_SGEG_LOGIN=400，内核 dispatch 收到 `num=400` **找不到** SYS_SGEG_LOGIN（内核 = 700），走 `_ =>` 默认分支返回 -ENOSYS。**任何 SGEG 系统调用（login/disk/reboot/proc_list 等）从用户态永远不可能成功**。
 - **风险**：P0 — Edgine 用户态所有 SGEG 操作（鉴权、磁盘、关机、进程查询）全部不可用
 - **工作日**：0.5 天
 
-### 八.2 H.4.2 P0-29：framework/mm/pmm 没有 reserve_range API（按用户指示调整为"实现该 API"）
+### 八.2 H.4.2 P0-29：privileged/mm/pmm 没有 reserve_range API（按用户指示调整为"实现该 API"）
 
-- **位置**：[framework/mm/pmm.rs](file:///home/anfer/Code/Edgine/src/kernel/framework/mm/pmm.rs) `PhysicalMemoryManager`
+- **位置**：[privileged/mm/pmm.rs](file:///home/anfer/Code/Edgine/src/kernel/privileged/mm/pmm.rs) `PhysicalMemoryManager`
 - **实测**：`grep -rE "reserve_range|mark_reserved" src/kernel/` → **0 处匹配**
 
-  `framework/mm/swap.rs:166` 在 init 中调 `pmm.alloc_page()` 4096 次，但**未调** `pmm.reserve_range`（因为此 API 不存在）
+  `privileged/mm/swap.rs:166` 在 init 中调 `pmm.alloc_page()` 4096 次，但**未调** `pmm.reserve_range`（因为此 API 不存在）
 
 - **方案**（**用户授权调整为"实现 reserve_range API"**）：
   - 描述：在 `PhysicalMemoryManager` 新增 `pub fn reserve_range(&self, base: PhysAddr, size: u64)`，按 PFN 范围批量调 `self.set_bit(pfn)`，与 `free_page` 互斥
   - 实施步骤：
-    1. 在 `framework/mm/pmm.rs` `impl PhysicalMemoryManager` 内实现：
+    1. 在 `privileged/mm/pmm.rs` `impl PhysicalMemoryManager` 内实现：
        ```rust
        /// 显式保留 [base, base+size) 范围，禁止 PMM 分配
        ///
@@ -3760,7 +3760,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
            self.release_lock(&flags);
        }
        ```
-    2. 在 `framework/mm/swap.rs::init` line 165-194 之后追加：
+    2. 在 `privileged/mm/swap.rs::init` line 165-194 之后追加：
        ```rust
        // 把 4096 个 4KB 页标记为 reserved，禁止 PMM 重复分配
        pmm_inst.reserve_range(
@@ -3768,7 +3768,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
            SWAP_MAX_SLOTS as u64 * PAGE_SIZE,
        );
        ```
-    3. 在 `framework/mm/cow.rs::cow_init` 之前如有动态预留也照此调用
+    3. 在 `privileged/mm/cow.rs::cow_init` 之前如有动态预留也照此调用
   - 验收：`audit_swap_reserve.py`（新增脚本）扫描 `pmm.alloc_page` 调用点，验证 swap 等大块分配后都有对应 `reserve_range`
 - **状态**：[]
 - **详情**：原报告 P0-15 给出"调 pmm.reserve_range"修复建议但 API 不存在——按用户 2026-08-15 指示，改为实现该 API 而非改变调用模式。这是工程实用性优先于"最小 API 表面"原则的取舍（依据 AGENTS.md §12.3 简单优先：reserve_range 是 alloc_page/free_page 的批量形式，复杂度增量极低）
@@ -3776,9 +3776,9 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 - **工作日**：1 天（含新增 audit 脚本 0.5 天）
 - **关联**：本项也覆盖 H.3.6 host-tests 平行实装触发的 G.4 P0-29（unkfs checksum stub）—— 实现 reserve_range API 后，可写 `#[cfg(test)] mod tests` 验证 `pmm.reserve_range + alloc_page` 互斥
 
-### 八.3 H.4.3 P0-30：framework/mm/cow.rs COW 物理页泄漏
+### 八.3 H.4.3 P0-30：privileged/mm/cow.rs COW 物理页泄漏
 
-- **位置**：[framework/mm/cow.rs:280-330](file:///home/anfer/Code/Edgine/src/kernel/framework/mm/cow.rs#L280-L330) `cow_handle_fault`
+- **位置**：[privileged/mm/cow.rs:280-330](file:///home/anfer/Code/Edgine/src/kernel/privileged/mm/cow.rs#L280-L330) `cow_handle_fault`
 - **实测**：
 
   ```rust
@@ -3825,21 +3825,21 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
 ### 八.4 H.4.4 P1-A：SYS_exit_group 与 SYS_exit 共享 handler（线程组语义违反）
 
-- **位置**：[dispatch.rs:365-366](file:///home/anfer/Code/Edgine/src/kernel/services/syscall/dispatch.rs#L365-L366)
+- **位置**：[dispatch.rs:365-366](file:///home/anfer/Code/Edgine/src/kernel/functions/syscall/dispatch.rs#L365-L366)
 
   ```rust
-  SYS_exit => crate::kernel::services::proc::lifecycle::exit_syscall(a0 as i32),
-  SYS_exit_group => crate::kernel::services::proc::lifecycle::exit_syscall(a0 as i32),
+  SYS_exit => crate::kernel::functions::proc::lifecycle::exit_syscall(a0 as i32),
+  SYS_exit_group => crate::kernel::functions::proc::lifecycle::exit_syscall(a0 as i32),
   ```
 
 - **方案**：新增 `exit_group_syscall(a0)` handler 实现线程组级退出，dispatch 分别分发
 
   ```rust
-  // services/proc/lifecycle.rs 新增：
+  // functions/proc/lifecycle.rs 新增：
   pub fn exit_group_syscall(exit_code: i32) -> ! {
       // 遍历所有同 thread group leader 的 LWP, 全部发 SIGKILL
       // 主进程退出后由 do_exit 统一清理
-      crate::kernel::services::proc::thread_group::exit_all(exit_code);
+      crate::kernel::functions::proc::thread_group::exit_all(exit_code);
       exit_syscall(exit_code)  // 主线程同步退出
   }
   ```
@@ -3848,9 +3848,9 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 - **详情**：报告附录 E 三.1 已识别但**未修**。Linux语义：exit 退出当前 LWP，exit_group 退出整个线程组（所有 LWP）
 - **工作日**：1-2 天
 
-### 八.5 H.4.5 P1-B：framework/mm/pmm.rs 自引用读取相邻字段（脆弱 LTO）
+### 八.5 H.4.5 P1-B：privileged/mm/pmm.rs 自引用读取相邻字段（脆弱 LTO）
 
-- **位置**：[pmm.rs:850-858](file:///home/anfer/Code/Edgine/src/kernel/framework/mm/pmm.rs#L850-L858)
+- **位置**：[pmm.rs:850-858](file:///home/anfer/Code/Edgine/src/kernel/privileged/mm/pmm.rs#L850-L858)
 
   ```rust
   fn test_bit(&self, bit: usize) -> bool {
@@ -3903,9 +3903,9 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 - **详情**：aarch64 用户态 init 入口是死代码——只有 build.rs 间接生成才被引用。实测 `src/user/init/Cargo.toml` 也没有 `[build-dependencies]`
 - **工作日**：0.5 天
 
-### 八.7 H.4.7 P1-D：framework/proc/scheduler.rs MAX_QUOTAS=32 / MAX_LIMITS=32 硬编码上限
+### 八.7 H.4.7 P1-D：privileged/proc/scheduler.rs MAX_QUOTAS=32 / MAX_LIMITS=32 硬编码上限
 
-- **位置**：[scheduler.rs:93,102](file:///home/anfer/Code/Edgine/src/kernel/framework/proc/scheduler.rs#L93-L102)
+- **位置**：[scheduler.rs:93,102](file:///home/anfer/Code/Edgine/src/kernel/privileged/proc/scheduler.rs#L93-L102)
 
   ```rust
   const MAX_QUOTAS: usize = 32;
@@ -3928,12 +3928,12 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
 ### 八.8 H.4.8 P1-E：sys.rs（用户态）与 types.rs（内核态）syscall 编号双源未同步
 
-- **位置**：用户态 [sys.rs](file:///home/anfer/Code/Edgine/src/user/lib/src/sys.rs) vs 内核态 [types.rs](file:///home/anfer/Code/Edgine/src/kernel/services/syscall/types.rs)
-- **方案**：单一来源生成（`xtask codegen sysno` → 同时生成 userlib 与 services types）：
+- **位置**：用户态 [sys.rs](file:///home/anfer/Code/Edgine/src/user/lib/src/sys.rs) vs 内核态 [types.rs](file:///home/anfer/Code/Edgine/src/kernel/functions/syscall/types.rs)
+- **方案**：单一来源生成（`xtask codegen sysno` → 同时生成 userlib 与 functions types）：
 
   ```rust
   // xtask/src/codegen/sysno.rs
-  // 读 src/kernel/services/syscall/types.rs 的所有 SYS_ 常量
+  // 读 src/kernel/functions/syscall/types.rs 的所有 SYS_ 常量
   // 生成 src/user/lib/src/sys.rs
   ```
 
@@ -3943,16 +3943,16 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
 ### 八.9 H.4.9 P1-F：dispatch.rs 大量"快捷路径"合并 handler（语义偏差风险）
 
-- **位置**：[dispatch.rs:154-211](file:///home/anfer/Code/Edgine/src/kernel/services/syscall/dispatch.rs#L154-L211)
+- **位置**：[dispatch.rs:154-211](file:///home/anfer/Code/Edgine/src/kernel/functions/syscall/dispatch.rs#L154-L211)
 
 - **实测示例**：
 
   ```rust
-  SYS_newfstatat => as_ret(crate::kernel::services::fs::stat::fstat_syscall(...)),  // 复用 fstat 而非 newfstatat
-  SYS_unlinkat => as_ret(crate::kernel::services::fs::access::unlink_syscall(a1)),  // 简化
-  SYS_renameat => as_ret(crate::kernel::services::fs::misc::rename_syscall(a1, a3)),  // 简化
-  SYS_poll => crate::kernel::services::fs::file_ops::poll_syscall(a0, a1 as u32, a2 as i32),
-  SYS_select => crate::kernel::services::fs::file_ops::poll_syscall(a0, a1 as u32, a2 as i32),  // poll顶替 select
+  SYS_newfstatat => as_ret(crate::kernel::functions::fs::stat::fstat_syscall(...)),  // 复用 fstat 而非 newfstatat
+  SYS_unlinkat => as_ret(crate::kernel::functions::fs::access::unlink_syscall(a1)),  // 简化
+  SYS_renameat => as_ret(crate::kernel::functions::fs::misc::rename_syscall(a1, a3)),  // 简化
+  SYS_poll => crate::kernel::functions::fs::file_ops::poll_syscall(a0, a1 as u32, a2 as i32),
+  SYS_select => crate::kernel::functions::fs::file_ops::poll_syscall(a0, a1 as u32, a2 as i32),  // poll顶替 select
   ```
 
   共 **8 处** "语义偷懒"（用简化版替代语义不同 sysno）
@@ -3963,9 +3963,9 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 - **详情**：报告附录 B §3.7 已识别 SYS_chown 与 SYS_fchown 分支不同，但未识别**完整规模**——dispatch.rs 至少 8 处"语义偷懒"。`SYS_select` 与 `SYS_poll` 走同一 handler → select() 与 poll() 语义不可区分；`SYS_newfstatat` 走 fstat 而非 newfstatat → **忽略 AT_SYMLINK_NOFOLLOW 等 at 标志位**
 - **工作日**：3-5 天
 
-### 八.10 H.4.10 P2-A：framework/arch/aarch64/mod.rs 子模块声明无 cfg 门控
+### 八.10 H.4.10 P2-A：privileged/arch/aarch64/mod.rs 子模块声明无 cfg 门控
 
-- **位置**：[framework/arch/aarch64/mod.rs:22-29](file:///home/anfer/Code/Edgine/src/kernel/framework/arch/aarch64/mod.rs#L22-L29)
+- **位置**：[privileged/arch/aarch64/mod.rs:22-29](file:///home/anfer/Code/Edgine/src/kernel/privileged/arch/aarch64/mod.rs#L22-L29)
 
   ```rust
   pub mod freg;
@@ -3978,10 +3978,10 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   pub mod uart;
   ```
 
-- **实测**：`grep -E "#\[cfg\(target_arch" framework/arch/aarch64/mod.rs` → **0 行匹配**——子模块无 cfg
+- **实测**：`grep -E "#\[cfg\(target_arch" privileged/arch/aarch64/mod.rs` → **0 行匹配**——子模块无 cfg
 - **方案**：在 aarch64/mod.rs 顶部加 `#![cfg(target_arch = "aarch64")]`
 - **状态**：[]
-- **详情**：虽然 `framework/arch/mod.rs:51-52` 已 cfg 整个 `pub mod aarch64;`，但 aarch64/mod.rs 自身没有 cfg 内层加固。如果未来有人在 `framework/arch/aarch64/` 子目录新增非 aarch64 通用文件，会污染 x86_64 构建
+- **详情**：虽然 `privileged/arch/mod.rs:51-52` 已 cfg 整个 `pub mod aarch64;`，但 aarch64/mod.rs 自身没有 cfg 内层加固。如果未来有人在 `privileged/arch/aarch64/` 子目录新增非 aarch64 通用文件，会污染 x86_64 构建
 - **工作日**：0.1 天
 
 ### 八.11 H.4.11 P2-B：src/rust/src/lib.rs 的"模块结构"注释不含 aarch64 + egdf/wasm
@@ -3996,9 +3996,9 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   /// └── driver/     # 设备驱动                    ← 缺 egdf / wasm / config / freg 子系统
   ```
 
-- **方案**：把注释与 `framework/mod.rs` 的子系统清单对齐（参见 AGENTS.md §1）
+- **方案**：把注释与 `privileged/mod.rs` 的子系统清单对齐（参见 AGENTS.md §1）
 - **状态**：[]
-- **详情**：注释与实际目录结构不一致（实测 src/kernel/framework 含 arch/aarch64/ + egdf/ + wasm/ + freg/ + config/ 等多个未列入注释的目录）
+- **详情**：注释与实际目录结构不一致（实测 src/kernel/privileged 含 arch/aarch64/ + egdf/ + wasm/ + freg/ + config/ 等多个未列入注释的目录）
 - **工作日**：0.5 天（纯文档）
 
 ### 八.12 合并统计（H.4 节追加后）
@@ -4015,17 +4015,17 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 ### 八.13 决策记录（2026-08-15 用户授权采纳）
 
 - **DECISION-H09（D14 采纳）**：将 H.4.1 用户态/内核态 SYS_SGEG_* 编号错位纳入独立 P0-28
-  - 描述：用户态 sys.rs SYS_SGEG_* 在 400-434 区间，内核 services::syscall::types 在 700-738 区间，错位 300。任何 SGEG syscall（login/disk/reboot/proc_list）从用户态永远返回 -ENOSYS
+  - 描述：用户态 sys.rs SYS_SGEG_* 在 400-434 区间，内核 functions::syscall::types 在 700-738 区间，错位 300。任何 SGEG syscall（login/disk/reboot/proc_list）从用户态永远返回 -ENOSYS
   - 方案：3 步迁移（短期把 userlib 强制改为 700-734；中期 build.rs 单一来源；长期 edgine-sysno crate 共享）
   - 状态：[X]
 
 - **DECISION-H10（D15 采纳）**：将 H.4.2 pmm.reserve_range API 缺失纳入独立 P0-29，按用户指示实现该 API
-  - 描述：实测 `grep -rE "reserve_range|mark_reserved" src/kernel/` 返回 0 处，原报告 P0-15 修复建议不可执行。按用户 2026-08-15 指示改为实现 reserve_range API（[pmm.rs PhysicalMemoryManager](file:///home/anfer/Code/Edgine/src/kernel/framework/mm/pmm.rs)），用 set_bit 批量保留 + lock 保护
+  - 描述：实测 `grep -rE "reserve_range|mark_reserved" src/kernel/` 返回 0 处，原报告 P0-15 修复建议不可执行。按用户 2026-08-15 指示改为实现 reserve_range API（[pmm.rs PhysicalMemoryManager](file:///home/anfer/Code/Edgine/src/kernel/privileged/mm/pmm.rs)），用 set_bit 批量保留 + lock 保护
   - 方案：八.2 节已附完整实现 + swap.rs::init 末尾追加 reserve_range 调用 + 新增 audit_swap_reserve.py 校验脚本
   - 状态：[X]
 
 - **DECISION-H11（D16 采纳）**：将 H.4.3 COW 物理页泄漏纳入独立 P0-30
-  - 描述：[cow.rs:300-305](file:///home/anfer/Code/Edgine/src/kernel/framework/mm/cow.rs#L300-L305) `should_reuse=true` 分支仅 `refs.remove(&old_frame)` 删除 BTreeMap 引用计数，从未归还物理页给 PMM
+  - 描述：[cow.rs:300-305](file:///home/anfer/Code/Edgine/src/kernel/privileged/mm/cow.rs#L300-L305) `should_reuse=true` 分支仅 `refs.remove(&old_frame)` 删除 BTreeMap 引用计数，从未归还物理页给 PMM
   - 方案：八.3 节给出 2 个修复版本（保守版调 cow_dec_ref 后 free；激进版直接 remove+free，绕过引用计数维护）。推荐激进版（cow_dec_ref 在 refs 已 remove 后会饱和到 u32::MAX）
   - 状态：[X]
 
@@ -4045,32 +4045,32 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 ## 九、附录 H §五：第五轮深度审计（用户授权"继续审计"）
 
 > **审计员**：Trae IDE 主对话（用户 2026-08-15 授权"尝试继续审计"）
-> **审计范围**：framework/fs/vfs（api.rs 反向依赖 + 入口诊断）、framework/syscall（dispatch.rs 入口完整性）、framework/boot（build.rs 占位符）、framework/klog（klog_ffi! 宏）
-> **本节作用**：补充附录 H §四 未覆盖的盲点——下沉到 framework TCB 入口与启动链路
+> **审计范围**：privileged/fs/vfs（api.rs 反向依赖 + 入口诊断）、privileged/syscall（dispatch.rs 入口完整性）、privileged/boot（build.rs 占位符）、privileged/klog（klog_ffi! 宏）
+> **本节作用**：补充附录 H §四 未覆盖的盲点——下沉到 privileged TCB 入口与启动链路
 > **本节结果**：3 项 P0 + 5 项 P1 + 3 项 P2（11 项新增）
 
-### 九.1 H.5.1 P0-31：framework/fs/vfs/api.rs 严重违反 F2（直调 services 层）
+### 九.1 H.5.1 P0-31：privileged/fs/vfs/api.rs 严重违反 F2（直调 functions 层）
 
-- **位置**：[src/kernel/framework/fs/vfs/api.rs:33-35](file:///home/anfer/Code/Edgine/src/kernel/framework/fs/vfs/api.rs#L33-L35)
+- **位置**：[src/kernel/privileged/fs/vfs/api.rs:33-35](file:///home/anfer/Code/Edgine/src/kernel/privileged/fs/vfs/api.rs#L33-L35)
 
   ```rust
-  use crate::kernel::services::fs::devfs::DevfsData;           // ← framework → services
-  use crate::kernel::services::fs::open_file_table::OPEN_FILE_TABLE;  // ← framework → services
-  use crate::kernel::services::fs::vfs_types::OpenFile;       // ← framework → services
+  use crate::kernel::functions::fs::devfs::DevfsData;           // ← privileged → functions
+  use crate::kernel::functions::fs::open_file_table::OPEN_FILE_TABLE;  // ← privileged → functions
+  use crate::kernel::functions::fs::vfs_types::OpenFile;       // ← privileged → functions
   ```
 
-- **实测**：`framework/fs/vfs/api.rs`（1700 行 framework TCB）**直接 use 3 个 services 层符号**，并在10+ 处调用 services 层 `OPEN_FILE_TABLE.alloc/close/with_file` 与 `OpenFile::new`
+- **实测**：`privileged/fs/vfs/api.rs`（1700 行 privileged TCB）**直接 use 3 个 functions 层符号**，并在10+ 处调用 functions 层 `OPEN_FILE_TABLE.alloc/close/with_file` 与 `OpenFile::new`
 
-- **方案**：把 OpenFile/OPEN_FILE_TABLE/DevfsData 迁移到 framework，或把 framework→services 调用封装为 safe trait 边界
+- **方案**：把 OpenFile/OPEN_FILE_TABLE/DevfsData 迁移到 privileged，或把 privileged→functions 调用封装为 safe trait 边界
 
 - **状态**：[]
-- **详情**：报告 G.3 §10 仅识别"VFS 严重违反"，但未量化。framework TCB 调度 services 数据结构违反 OSTD Soundness 准则（任何 safe Rust 调用不可触发 UB）
-- **风险**：P0 — services 数据结构变更时 framework TCB 失控
+- **详情**：报告 G.3 §10 仅识别"VFS 严重违反"，但未量化。privileged TCB 调度 functions 数据结构违反 OSTD Soundness 准则（任何 safe Rust 调用不可触发 UB）
+- **风险**：P0 — functions 数据结构变更时 privileged TCB 失控
 - **工作日**：5-7 天（专项重构）
 
-### 九.2 H.5.2 P0-32：framework/syscall/dispatch.rs 入口诊断代码污染
+### 九.2 H.5.2 P0-32：privileged/syscall/dispatch.rs 入口诊断代码污染
 
-- **位置**：[src/kernel/framework/syscall/dispatch.rs:54-68](file:///home/anfer/Code/Edgine/src/kernel/framework/syscall/dispatch.rs#L54-L68) `syscall_dispatch_from_frame`
+- **位置**：[src/kernel/privileged/syscall/dispatch.rs:54-68](file:///home/anfer/Code/Edgine/src/kernel/privileged/syscall/dispatch.rs#L54-L68) `syscall_dispatch_from_frame`
 
   ```rust
   pub unsafe extern "C" fn syscall_dispatch_from_frame(frame: *mut InterruptFrame) {
@@ -4122,23 +4122,23 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
 ### 九.4 H.5.4 P1-G：5 项 SYS_* 已实装但未 dispatch（报告 R2 表 A 完全成立）
 
-- **位置**：[src/kernel/services/syscall/dispatch.rs](file:///home/anfer/Code/Edgine/src/kernel/services/syscall/dispatch.rs) 全文
+- **位置**：[src/kernel/functions/syscall/dispatch.rs](file:///home/anfer/Code/Edgine/src/kernel/functions/syscall/dispatch.rs) 全文
 
 - **实测**：
 
   ```bash
-  $ grep -E "SYS_setregid|SYS_reboot|SYS_sethostname|SYS_getsockname|SYS_getpeername" src/kernel/services/syscall/dispatch.rs
+  $ grep -E "SYS_setregid|SYS_reboot|SYS_sethostname|SYS_getsockname|SYS_getpeername" src/kernel/functions/syscall/dispatch.rs
   # 0 行匹配
   ```
 
 - **方案**：
 
   ```rust
-  SYS_setregid => as_ret(crate::kernel::services::sgeg::uid::setregid_syscall(a0 as u32, a1 as u32)),
-  SYS_getsockname => as_ret(crate::kernel::services::net::syscall::getsockname_syscall(a0 as i32, a1, a2 as u32)),
-  SYS_getpeername => as_ret(crate::kernel::services::net::syscall::getpeername_syscall(a0 as i32, a1, a2 as u32)),
-  SYS_reboot => as_ret(crate::kernel::services::proc::sysinfo::reboot_syscall(a0 as i32)),
-  SYS_sethostname => as_ret(crate::kernel::services::sgeg::auth::sethostname_syscall(a0, a1)),
+  SYS_setregid => as_ret(crate::kernel::functions::sgeg::uid::setregid_syscall(a0 as u32, a1 as u32)),
+  SYS_getsockname => as_ret(crate::kernel::functions::net::syscall::getsockname_syscall(a0 as i32, a1, a2 as u32)),
+  SYS_getpeername => as_ret(crate::kernel::functions::net::syscall::getpeername_syscall(a0 as i32, a1, a2 as u32)),
+  SYS_reboot => as_ret(crate::kernel::functions::proc::sysinfo::reboot_syscall(a0 as i32)),
+  SYS_sethostname => as_ret(crate::kernel::functions::sgeg::auth::sethostname_syscall(a0, a1)),
   ```
 
 - **状态**：[]
@@ -4146,9 +4146,9 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 - **风险**：P1 — 5 项 sysno 调用得 -ENOSYS
 - **工作日**：0.5 天
 
-### 九.5 H.5.5 P1-H：framework/klog klog_ffi! 宏栈缓冲 256 字节无 NUL 终止保证
+### 九.5 H.5.5 P1-H：privileged/klog klog_ffi! 宏栈缓冲 256 字节无 NUL 终止保证
 
-- **位置**：[src/kernel/framework/klog/mod.rs:78-93](file:///home/anfer/Code/Edgine/src/kernel/framework/klog/mod.rs#L78-L93)
+- **位置**：[src/kernel/privileged/klog/mod.rs:78-93](file:///home/anfer/Code/Edgine/src/kernel/privileged/klog/mod.rs#L78-L93)
 
   ```rust
   macro_rules! klog_ffi {
@@ -4179,9 +4179,9 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 - **风险**：P1 — 栈信息泄漏 + 字符串截断行为不确定
 - **工作日**：0.5 天（含新增测试 `test_klog_ffi_nul_terminate`）
 
-### 九.6 H.5.6 P1-I：framework/syscall/dispatch.rs rt_sigreturn 处理硬编码 sysno
+### 九.6 H.5.6 P1-I：privileged/syscall/dispatch.rs rt_sigreturn 处理硬编码 sysno
 
-- **位置**：[src/kernel/framework/syscall/dispatch.rs:80-83](file:///home/anfer/Code/Edgine/src/kernel/framework/syscall/dispatch.rs#L80-L83)
+- **位置**：[src/kernel/privileged/syscall/dispatch.rs:80-83](file:///home/anfer/Code/Edgine/src/kernel/privileged/syscall/dispatch.rs#L80-L83)
 
   ```rust
   #[cfg(target_arch = "x86_64")]
@@ -4203,9 +4203,9 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 - **详情**：x86_64 sysno=15 与 aarch64 sysno=139 各自硬编码。新增架构需手动再加 cfg——这是正常的（Linux ABI 本来就因架构不同），但**没有任何运行时校验**：如果 num=15 但实际是 aarch64 内核编译，仍按 x86_64 处理，会走错误的 sigframe
 - **工作日**：0.5 天
 
-### 九.7 H.5.7 P1-J：framework/syscall/dispatch.rs syscall 入口参数传递仅支持 x86_64
+### 九.7 H.5.7 P1-J：privileged/syscall/dispatch.rs syscall 入口参数传递仅支持 x86_64
 
-- **位置**：[src/kernel/framework/syscall/dispatch.rs:113-118](file:///home/anfer/Code/Edgine/src/kernel/framework/syscall/dispatch.rs#L113-L118)
+- **位置**：[src/kernel/privileged/syscall/dispatch.rs:113-118](file:///home/anfer/Code/Edgine/src/kernel/privileged/syscall/dispatch.rs#L113-L118)
 
   ```rust
   let a0 = f.rdi;
@@ -4230,9 +4230,9 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 - **风险**：P1 — aarch64 构建时编译失败（这是 c0 阻塞）或 syscall 参数错乱
 - **工作日**：1-2 天（含实际跑 `./ci/build.sh aarch64` 验证）
 
-### 九.8 H.5.8 P1-K：framework/fs/vfs/api.rs VFS_MAX_FDS=32 与 poll fd 数=256 不一致
+### 九.8 H.5.8 P1-K：privileged/fs/vfs/api.rs VFS_MAX_FDS=32 与 poll fd 数=256 不一致
 
-- **位置**：[services/fs/vfs_types.rs:18](file:///home/anfer/Code/Edgine/src/kernel/services/fs/vfs_types.rs#L18) vs [services/fs/file_ops.rs:146](file:///home/anfer/Code/Edgine/src/kernel/services/fs/file_ops.rs#L146)
+- **位置**：[functions/fs/vfs_types.rs:18](file:///home/anfer/Code/Edgine/src/kernel/functions/fs/vfs_types.rs#L18) vs [functions/fs/file_ops.rs:146](file:///home/anfer/Code/Edgine/src/kernel/functions/fs/file_ops.rs#L146)
 
 - **实测**：
 
@@ -4244,15 +4244,15 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   // poll fd ∈ [0, 256)
   ```
 
-- **方案**：统一为 `VFS_MAX_FDS = 256`（或抽取到 `services::config::fd`）
+- **方案**：统一为 `VFS_MAX_FDS = 256`（或抽取到 `functions::config::fd`）
 - **状态**：[]
 - **详情**：报告附录 E 三.1 第 4 项 "VFS_MAX_FDS=32 与 poll 256 不一致"**完全成立**。poll/epoll 系统调用能接受 256 个 fd，但 fd 表只能容纳 32 个——超过 32 个 fd 直接被丢弃
 - **风险**：P1 — fd 表溢出静默丢失
 - **工作日**：1 天
 
-### 九.9 H.5.9 P2-C：framework/syscall/dispatch.rs USER_ADDR_MAX 硬编码
+### 九.9 H.5.9 P2-C：privileged/syscall/dispatch.rs USER_ADDR_MAX 硬编码
 
-- **位置**：[src/kernel/framework/syscall/dispatch.rs:27](file:///home/anfer/Code/Edgine/src/kernel/framework/syscall/dispatch.rs#L27)
+- **位置**：[src/kernel/privileged/syscall/dispatch.rs:27](file:///home/anfer/Code/Edgine/src/kernel/privileged/syscall/dispatch.rs#L27)
 
   ```rust
   const USER_ADDR_MAX: u64 = 0x7FFFFFFFE000;
@@ -4264,26 +4264,26 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 - **风险**：P2 — aarch64 用户态地址上限校验错位
 - **工作日**：0.5 天
 
-### 九.10 H.5.10 P2-D：framework/syscall/api.rs 大量 C-ABI 函数依赖 `Extern "C"` 链接未声明
+### 九.10 H.5.10 P2-D：privileged/syscall/api.rs 大量 C-ABI 函数依赖 `Extern "C"` 链接未声明
 
-- **位置**：[framework/syscall/*.rs](file:///home/anfer/Code/Edgine/src/kernel/framework/syscall/) 全部 ~10 个文件
+- **位置**：[privileged/syscall/*.rs](file:///home/anfer/Code/Edgine/src/kernel/privileged/syscall/) 全部 ~10 个文件
 
 - **实测**：
 
   ```bash
-  $ grep -rE "extern \"C\"|#\[unsafe\(no_mangle\)\]" src/kernel/framework/syscall/*.rs | wc -l
+  $ grep -rE "extern \"C\"|#\[unsafe\(no_mangle\)\]" src/kernel/privileged/syscall/*.rs | wc -l
   # ~80+ 处
   ```
 
-- **方案**：把 syscall api 整体迁入 services 层（services::syscall::api）
+- **方案**：把 syscall api 整体迁入 functions 层（functions::syscall::api）
 - **状态**：[]
-- **详情**：F2 黑名单应禁止 services 直调 `framework::syscall::api::*`，但实际仍有调用（报告 G.4 §3.2 已识别）
-- **风险**：P2 — services→framework 边界违规持续
+- **详情**：F2 黑名单应禁止 functions 直调 `privileged::syscall::api::*`，但实际仍有调用（报告 G.4 §3.2 已识别）
+- **风险**：P2 — functions→privileged 边界违规持续
 - **工作日**：5-7 天（与 H.5.1 合并）
 
-### 九.11 H.5.11 P2-E：framework/boot/mod.rs Multiboot1 与 Multiboot2 都声明但实际只支持 Multiboot2
+### 九.11 H.5.11 P2-E：privileged/boot/mod.rs Multiboot1 与 Multiboot2 都声明但实际只支持 Multiboot2
 
-- **位置**：[src/kernel/framework/boot/mod.rs:18-50](file:///home/anfer/Code/Edgine/src/kernel/framework/boot/mod.rs#L18-L50)
+- **位置**：[src/kernel/privileged/boot/mod.rs:18-50](file:///home/anfer/Code/Edgine/src/kernel/privileged/boot/mod.rs#L18-L50)
 
   ```rust
   pub const MULTIBOOT1_MAGIC: u32 = 0x2BADB002;  // 仅声明
@@ -4319,14 +4319,14 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   - 方案：保留 H.5.4 描述 + 状态 `[]`，**不采纳、不降级、不暂缓**——而是**显式推迟**到 P0 修复完成后的后续 sprint
   - 状态：[推迟]
 
-- **DECISION-H13（D19 采纳）**：将 H.5.1 framework/fs/vfs/api.rs 严重违反 F2 纳入独立 P0-31
-  - 描述：实测 [api.rs:33-35](file:///home/anfer/Code/Edgine/src/kernel/framework/fs/vfs/api.rs#L33-L35) 直接 use services 层 DevfsData/OPEN_FILE_TABLE/OpenFile，并在10+ 处调用
-  - 方案：把 OpenFile/OPEN_FILE_TABLE/DevfsData 迁回 framework/ + services 保留 re-export 路径保持兼容
+- **DECISION-H13（D19 采纳）**：将 H.5.1 privileged/fs/vfs/api.rs 严重违反 F2 纳入独立 P0-31
+  - 描述：实测 [api.rs:33-35](file:///home/anfer/Code/Edgine/src/kernel/privileged/fs/vfs/api.rs#L33-L35) 直接 use functions 层 DevfsData/OPEN_FILE_TABLE/OpenFile，并在10+ 处调用
+  - 方案：把 OpenFile/OPEN_FILE_TABLE/DevfsData 迁回 privileged/ + functions 保留 re-export 路径保持兼容
   - 状态：[X]
 
-- **DECISION-H14（D20 采纳）**：将 H.5.2 framework/syscall/dispatch.rs 入口诊断代码污染纳入独立 P0-32
-  - 描述：[dispatch.rs:54-69](file:///home/anfer/Code/Edgine/src/kernel/framework/syscall/dispatch.rs#L54-L69) `out 0x3F8 'J'` 调试代码未被 cfg 守护，永远编译进生产
-  - 方案：**直接删除**整个 asm 块（不是 cfg 隔离）+ 同步删除 framework/arch/x86_64/mod.rs::enter_user_asm 同类诊断（来自报告 P0-16）
+- **DECISION-H14（D20 采纳）**：将 H.5.2 privileged/syscall/dispatch.rs 入口诊断代码污染纳入独立 P0-32
+  - 描述：[dispatch.rs:54-69](file:///home/anfer/Code/Edgine/src/kernel/privileged/syscall/dispatch.rs#L54-L69) `out 0x3F8 'J'` 调试代码未被 cfg 守护，永远编译进生产
+  - 方案：**直接删除**整个 asm 块（不是 cfg 隔离）+ 同步删除 privileged/arch/x86_64/mod.rs::enter_user_asm 同类诊断（来自报告 P0-16）
   - 状态：[X]
 
 - **DECISION-H15（D21 采纳）**：将 H.5.3 src/rust/build.rs 主动创建全 0x00 占位符纳入独立 P0-33
@@ -4335,7 +4335,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   - 状态：[X]
 
 - **DECISION-H16（D18 采纳）**：将 H.4.10 P2-A（aarch64/mod.rs cfg 缺失）纳入独立 P2-F
-  - 描述：[framework/arch/aarch64/mod.rs:22-29](file:///home/anfer/Code/Edgine/src/kernel/framework/arch/aarch64/mod.rs#L22-L29) 子模块 `pub mod freg;` 等无 `#[cfg(target_arch = "aarch64")]` 内层加固
+  - 描述：[privileged/arch/aarch64/mod.rs:22-29](file:///home/anfer/Code/Edgine/src/kernel/privileged/arch/aarch64/mod.rs#L22-L29) 子模块 `pub mod freg;` 等无 `#[cfg(target_arch = "aarch64")]` 内层加固
   - 方案：在 aarch64/mod.rs 顶部加 `#![cfg(target_arch = "aarch64")]`
   - 状态：[X]
 
@@ -4345,27 +4345,27 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   - 状态：[X]
 
 - **DECISION-H18（D23 采纳）**：将 H.5.9 P2-C（USER_ADDR_MAX 硬编码）纳入独立 P2-H
-  - 描述：[dispatch.rs:27](file:///home/anfer/Code/Edgine/src/kernel/framework/syscall/dispatch.rs#L27) `const USER_ADDR_MAX: u64 = 0x7FFFFFFFE000` 硬编码，aarch64 不应有此常量
+  - 描述：[dispatch.rs:27](file:///home/anfer/Code/Edgine/src/kernel/privileged/syscall/dispatch.rs#L27) `const USER_ADDR_MAX: u64 = 0x7FFFFFFFE000` 硬编码，aarch64 不应有此常量
   - 方案：`#[cfg(target_arch = "x86_64")] const USER_ADDR_MAX: u64 = 0x7FFFFFFFE000;`
   - 状态：[X]
 
-- **DECISION-H19（D23 采纳）**：将 H.5.10 P2-D（framework/syscall/api.rs F2 边界违规）纳入独立 P2-I
-  - 描述：实测 framework/syscall/api.rs 有 ~80+ 处 `extern "C"` / `#[unsafe(no_mangle)]`，F2 黑名单应禁止 services 直调 framework::syscall::api::*
-  - 方案：把 syscall api 整体迁入 services 层（services::syscall::api），与 DECISION-H13 合并执行
+- **DECISION-H19（D23 采纳）**：将 H.5.10 P2-D（privileged/syscall/api.rs F2 边界违规）纳入独立 P2-I
+  - 描述：实测 privileged/syscall/api.rs 有 ~80+ 处 `extern "C"` / `#[unsafe(no_mangle)]`，F2 黑名单应禁止 functions 直调 privileged::syscall::api::*
+  - 方案：把 syscall api 整体迁入 functions 层（functions::syscall::api），与 DECISION-H13 合并执行
   - 状态：[X]
 
 - **DECISION-H20（D23 采纳）**：将 H.5.11 P2-E（Multiboot1Info 死代码）纳入独立 P2-J
-  - 描述：[boot/mod.rs:18-50](file:///home/anfer/Code/Edgine/src/kernel/framework/boot/mod.rs#L18-L50) Multiboot1Info 结构定义完整但实测未使用
+  - 描述：[boot/mod.rs:18-50](file:///home/anfer/Code/Edgine/src/kernel/privileged/boot/mod.rs#L18-L50) Multiboot1Info 结构定义完整但实测未使用
   - 方案：直接删除 Multiboot1 常量与结构体
   - 状态：[X]
 
 - **DECISION-H21（D17 采纳）**：将 H.4.4 P1-A（exit_group 线程组）纳入独立 P1-L
-  - 描述：[dispatch.rs:365-366](file:///home/anfer/Code/Edgine/src/kernel/services/syscall/dispatch.rs#L365-L366) SYS_exit_group 与 SYS_exit 共享 handler 违反线程组语义
-  - 方案：新增 exit_group_syscall 在 services::proc::lifecycle + dispatch.rs 分别分发
+  - 描述：[dispatch.rs:365-366](file:///home/anfer/Code/Edgine/src/kernel/functions/syscall/dispatch.rs#L365-L366) SYS_exit_group 与 SYS_exit 共享 handler 违反线程组语义
+  - 方案：新增 exit_group_syscall 在 functions::proc::lifecycle + dispatch.rs 分别分发
   - 状态：[X]
 
 - **DECISION-H22（D17 采纳）**：将 H.4.5 P1-B（自引用字段读取）纳入独立 P1-M
-  - 描述：[pmm.rs:850-858](file:///home/anfer/Code/Edgine/src/kernel/framework/mm/pmm.rs#L850-L858) `ptr.add(1) as *const usize` 读取自身结构体相邻字段，重构时易错
+  - 描述：[pmm.rs:850-858](file:///home/anfer/Code/Edgine/src/kernel/privileged/mm/pmm.rs#L850-L858) `ptr.add(1) as *const usize` 读取自身结构体相邻字段，重构时易错
   - 方案：直接 `self.bitmap_size` 替换 `ptr.add(1)`
   - 状态：[X]
 
@@ -4375,17 +4375,17 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   - 状态：[X]
 
 - **DECISION-H24（D17 采纳）**：将 H.4.7 P1-D（MAX_QUOTAS 硬编码）纳入独立 P1-O
-  - 描述：[scheduler.rs:93,102](file:///home/anfer/Code/Edgine/src/kernel/framework/proc/scheduler.rs#L93-L102) MAX_QUOTAS / MAX_LIMITS = 32 硬编码
+  - 描述：[scheduler.rs:93,102](file:///home/anfer/Code/Edgine/src/kernel/privileged/proc/scheduler.rs#L93-L102) MAX_QUOTAS / MAX_LIMITS = 32 硬编码
   - 方案：改用 `HashMap<u64, PwidQuota>` 替代定长数组
   - 状态：[X]
 
 - **DECISION-H25（D17 采纳）**：将 H.4.8 P1-E（sysno 双源）纳入独立 P1-P
-  - 描述：实测用户态 sys.rs（[user/lib/src/sys.rs](file:///home/anfer/Code/Edgine/src/user/lib/src/sys.rs)）与内核态 types.rs（[services/syscall/types.rs](file:///home/anfer/Code/Edgine/src/kernel/services/syscall/types.rs)）是双源手写，存在系统性错位风险
-  - 方案：新建 `tools/codegen_sysno.rs`（xtask 子命令）从 services::syscall::types 单向生成 userlib/src/sys.rs
+  - 描述：实测用户态 sys.rs（[user/lib/src/sys.rs](file:///home/anfer/Code/Edgine/src/user/lib/src/sys.rs)）与内核态 types.rs（[functions/syscall/types.rs](file:///home/anfer/Code/Edgine/src/kernel/functions/syscall/types.rs)）是双源手写，存在系统性错位风险
+  - 方案：新建 `tools/codegen_sysno.rs`（xtask 子命令）从 functions::syscall::types 单向生成 userlib/src/sys.rs
   - 状态：[X]
 
 - **DECISION-H26（D17 采纳）**：将 H.4.9 P1-F（dispatch 8 处语义偷懒）纳入独立 P1-Q
-  - 描述：[dispatch.rs:154-211](file:///home/anfer/Code/Edgine/src/kernel/services/syscall/dispatch.rs#L154-L211) at 系列 syscall 用简化版替代，违反 ABI
+  - 描述：[dispatch.rs:154-211](file:///home/anfer/Code/Edgine/src/kernel/functions/syscall/dispatch.rs#L154-L211) at 系列 syscall 用简化版替代，违反 ABI
   - 方案：为每个 `*at` syscall（newfstatat/unlinkat/renameat/linkat/symlinkat/readlinkat/fchmodat/fchownat/faccessat/openat）实现专用 handler
   - 状态：[X]
 
@@ -4408,7 +4408,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 2. H.5.3 P0-33 DECISION-H15：build.rs 改 panic_missing
 
 阶段 2（3-5 天）：
-3. H.5.1 P0-31 DECISION-H13 + H.5.10 P2-D DECISION-H19：services 类型迁回 framework
+3. H.5.1 P0-31 DECISION-H13 + H.5.10 P2-D DECISION-H19：functions 类型迁回 privileged
 
 阶段 3（P0 完成后立即启动）：
 4. H.5.4 P1-G（DECISION-H12 推迟项）：5 项 SYS_* 实装+分发
@@ -4427,7 +4427,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
 > **来源**：用户指出"全项目审查应覆盖审计脚本自身——把关人自身也可能有问题"。本轮独立元审计逐行审查 39 个审计脚本（`scripts/` 26 + `tools/` 11 + `ci/` 2），4 路并行 sub-agent 深审 + 主 agent 交叉复核关键 P0，并对核心脚本实跑验证退出码与检测能力。
 >
-> **核心结论**：多数"门禁"存在可被违规代码确定性绕过的漏洞，且 CI 实际只接线 4 个脚本（`ci-lint.yml` 仅调用 `audit_safety_coverage` / `audit_services_boundary` / `audit_comment_language` / `audit_once_cell`）。**AGENTS.md §5 声称强制执行的 F2/F3/F8/I1-I6/I-43 等硬规则在 CI 上实际处于失效或半失效状态。**
+> **核心结论**：多数"门禁"存在可被违规代码确定性绕过的漏洞，且 CI 实际只接线 4 个脚本（`ci-lint.yml` 仅调用 `audit_safety_coverage` / `audit_functions_boundary` / `audit_comment_language` / `audit_once_cell`）。**AGENTS.md §5 声称强制执行的 F2/F3/F8/I1-I6/I-43 等硬规则在 CI 上实际处于失效或半失效状态。**
 
 ## 一、对既有报告论断的复核修正（3 项）
 
@@ -4435,17 +4435,17 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 |---|---|---|---|
 | P0-03 | `audit_smoltcp_purity.py` hash mismatch 仍返 0 | 实跑：本地 hash `5675b397...` vs 锁文件 `ff7c2d73...` 失配时输出 `✗ 审计未通过` 且 **exit=1**（L204-210 失配入 issues → L277-281 返 1；L266-272 检查 7 为追加检查，不替代检查 4） | **误判，撤销** |
 | P0-05 | `ci/audit.sh` `if cmd \| tail` 反逻辑 9 处导致门禁失效 | L9 有 `set -euo pipefail`，管道退出码取右起首个非零 → 门禁实际生效；实测该类模式仅 **7 处**（L51/75/85/95/122/136/197），L170 为 `\|\| $?` 模式不属此类 | **误判，撤销**（写法脆弱但功能正常） |
-| P0-14 | `kmalloc.rs::dump_stats` 编译失败 | touch 后重跑 `cargo check --target x86_64-unknown-none` **编译通过**；根因 [kmalloc.rs:12-14](file:///home/anfer/Code/Edgine/src/kernel/framework/mm/kmalloc.rs#L12-L14) `serial_println!` 为空宏（`=> {}`），参数不求值，未定义变量 `stats` 永不解析 | **严重度下调至 P1**（dump_stats 为静默 no-op + 潜伏未定义变量，非编译失败） |
+| P0-14 | `kmalloc.rs::dump_stats` 编译失败 | touch 后重跑 `cargo check --target x86_64-unknown-none` **编译通过**；根因 [kmalloc.rs:12-14](file:///home/anfer/Code/Edgine/src/kernel/privileged/mm/kmalloc.rs#L12-L14) `serial_println!` 为空宏（`=> {}`），参数不求值，未定义变量 `stats` 永不解析 | **严重度下调至 P1**（dump_stats 为静默 no-op + 潜伏未定义变量，非编译失败） |
 
 ## 二、新发现 P0 — 审计脚本门禁失效（9 项）
 
 | # | 位置 | 问题 | 实测 |
 |---|---|---|---|
-| META-P0-01 | [audit_services_boundary.py:460-466](file:///home/anfer/Code/Edgine/scripts/audit_services_boundary.py#L460-L466) | 退出码仅对 CRITICAL（unsafe）生效；**F2 违规（`FORBIDDEN_FRAMEWORK_IMPORT`，HIGH）、裸指针（HIGH）、跨模块依赖（MEDIUM）全部不 exit(1)** → F2 门禁在退出码层面失效 | services 真实存在穿透访问（[msgq.rs:7](file:///home/anfer/Code/Edgine/src/kernel/services/ipc/msgq.rs#L7) `framework::ipc::msgq::raw`、[memfd.rs:6](file:///home/anfer/Code/Edgine/src/kernel/services/proc/memfd.rs#L6) `framework::syscall::types`），脚本报 0 违规 |
-| META-P0-02 | [audit_services_boundary.py:41-80](file:///home/anfer/Code/Edgine/scripts/audit_services_boundary.py#L41-L80) | FORBIDDEN_FRAMEWORK_MODULES 黑名单严重不完整（缺 ipc::msgq::raw、syscall::types、proc::coredump 等）；`SAFE_FRAMEWORK_APIS` allow-list 定义后**零引用**（死代码），F2 实为不完整 deny-list | 同上 |
-| META-P0-03 | [audit_services_boundary.py:204](file:///home/anfer/Code/Edgine/scripts/audit_services_boundary.py#L204) | 正则 `^\s*use\s+` 不匹配 `pub use` → **30 处** `pub use framework::...` 穿透全部绕过 | 实测 30 处 |
-| META-P0-04 | [audit_deadlock_matrix.py:128-136](file:///home/anfer/Code/Edgine/scripts/audit_deadlock_matrix.py#L128-L136) | 仅识别 `spin::`/`crate::spin::` 字面量，import 后裸类型名逃逸；唯一真实第三方锁 [smp_init.rs:42](file:///home/anfer/Code/Edgine/src/kernel/framework/arch/x86_64/smp_init.rs#L42) `SpinMutex` 完全漏检（366 文件 0 问题）；docstring 声称的"锁顺序 AB-BA 矩阵/原子上下文 sleep 锁/不可重入"检测**代码中均未实现** | 实测 |
-| META-P0-05 | [audit_block_registration.py:38](file:///home/anfer/Code/Edgine/scripts/audit_block_registration.py#L38) | 检测函数名 `egdf_register_block(` 在代码中不存在（实为 [egdf/mod.rs:353](file:///home/anfer/Code/Edgine/src/kernel/framework/egdf/mod.rs#L353) `egdf_register_block_dev`）→ **门禁恒 0 空转**，驱动绕过桥接不可被发现 | 实测"违规调用: 0 处" |
+| META-P0-01 | [audit_functions_boundary.py:460-466](file:///home/anfer/Code/Edgine/scripts/audit_functions_boundary.py#L460-L466) | 退出码仅对 CRITICAL（unsafe）生效；**F2 违规（`FORBIDDEN_PRIVILEGED_IMPORT`，HIGH）、裸指针（HIGH）、跨模块依赖（MEDIUM）全部不 exit(1)** → F2 门禁在退出码层面失效 | functions 真实存在穿透访问（[msgq.rs:7](file:///home/anfer/Code/Edgine/src/kernel/functions/ipc/msgq.rs#L7) `privileged::ipc::msgq::raw`、[memfd.rs:6](file:///home/anfer/Code/Edgine/src/kernel/functions/proc/memfd.rs#L6) `privileged::syscall::types`），脚本报 0 违规 |
+| META-P0-02 | [audit_functions_boundary.py:41-80](file:///home/anfer/Code/Edgine/scripts/audit_functions_boundary.py#L41-L80) | FORBIDDEN_PRIVILEGED_MODULES 黑名单严重不完整（缺 ipc::msgq::raw、syscall::types、proc::coredump 等）；`SAFE_PRIVILEGED_APIS` allow-list 定义后**零引用**（死代码），F2 实为不完整 deny-list | 同上 |
+| META-P0-03 | [audit_functions_boundary.py:204](file:///home/anfer/Code/Edgine/scripts/audit_functions_boundary.py#L204) | 正则 `^\s*use\s+` 不匹配 `pub use` → **30 处** `pub use privileged::...` 穿透全部绕过 | 实测 30 处 |
+| META-P0-04 | [audit_deadlock_matrix.py:128-136](file:///home/anfer/Code/Edgine/scripts/audit_deadlock_matrix.py#L128-L136) | 仅识别 `spin::`/`crate::spin::` 字面量，import 后裸类型名逃逸；唯一真实第三方锁 [smp_init.rs:42](file:///home/anfer/Code/Edgine/src/kernel/privileged/arch/x86_64/smp_init.rs#L42) `SpinMutex` 完全漏检（366 文件 0 问题）；docstring 声称的"锁顺序 AB-BA 矩阵/原子上下文 sleep 锁/不可重入"检测**代码中均未实现** | 实测 |
+| META-P0-05 | [audit_block_registration.py:38](file:///home/anfer/Code/Edgine/scripts/audit_block_registration.py#L38) | 检测函数名 `egdf_register_block(` 在代码中不存在（实为 [egdf/mod.rs:353](file:///home/anfer/Code/Edgine/src/kernel/privileged/egdf/mod.rs#L353) `egdf_register_block_dev`）→ **门禁恒 0 空转**，驱动绕过桥接不可被发现 | 实测"违规调用: 0 处" |
 | META-P0-06 | [audit_once_cell.py:29,32](file:///home/anfer/Code/Edgine/scripts/audit_once_cell.py#L29-L32) | 双正则均无法命中：`pub use spin::once::Once`（锚定 `^\s*use`）与 `use spin::OnceCell`（`Once\b` 词边界不成立） | 已实证两写法均漏检 |
 | META-P0-07 | [audit_comment_language.py:601](file:///home/anfer/Code/Edgine/scripts/audit_comment_language.py#L601) | **行尾注释完全漏检**：`iter_comments` 仅对行首 `//` 产出行，`let x = f(); // English` 对 F7 透明 | 已实证 |
 | META-P0-08 | [tools/audit_unsafe.sh:102](file:///home/anfer/Code/Edgine/tools/audit_unsafe.sh#L102) | `xargs bash -c 'scan_unsafe ...'` 新进程不继承函数 → `command not found`，**工具完全不可用**（零输出、退出 123），接入 CI 将永远"通过" | 实测 |
@@ -4453,8 +4453,8 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
 ## 三、新发现 P1 — 检测不准（12 项摘要）
 
-1. **audit_coupling.py**：循环依赖 `total > 20` 才阻断（[L416](file:///home/anfer/Code/Edgine/scripts/audit_coupling.py#L416)）；**services 层循环依赖完全不检测**；白名单 `('timer','idt')` 字典序 bug 永不匹配；`use super::super::frame` 跨相对路径漏检；**未接入 CI**。
-2. **audit_invariants.py:56**：I2 正则把 safe 解引用 `(*v).field` 误报为裸指针——已实际发生（[raidz_trait.rs:304](file:///home/anfer/Code/Edgine/src/kernel/services/fs/unkfs/raidz_trait.rs#L304) 注释证实开发者被迫改写代码规避误报）。
+1. **audit_coupling.py**：循环依赖 `total > 20` 才阻断（[L416](file:///home/anfer/Code/Edgine/scripts/audit_coupling.py#L416)）；**functions 层循环依赖完全不检测**；白名单 `('timer','idt')` 字典序 bug 永不匹配；`use super::super::frame` 跨相对路径漏检；**未接入 CI**。
+2. **audit_invariants.py:56**：I2 正则把 safe 解引用 `(*v).field` 误报为裸指针——已实际发生（[raidz_trait.rs:304](file:///home/anfer/Code/Edgine/src/kernel/functions/fs/unkfs/raidz_trait.rs#L304) 注释证实开发者被迫改写代码规避误报）。
 3. **tools/audit_unsafe.py:79,81**：8 行窗口过窄（属性堆叠推出 SAFETY → 误报，52 MISSING 中混入误报）；反之窗口内任意行含 "SAFETY" 子串即判 OK（漏报）。
 4. **ci/audit.sh:62-69**：audit_unsafe 输出为空时 if/elif 均不执行 → 静默通过；**clippy 未加 `-D warnings`** 且 else 仅警告不退出（L135-141）；qemu 联动 `FAIL_OK` 默认 1 → 0/2 也报"通过"。
 5. **audit_static_mut.py:94**：正则要求行首 `static`，`pub static mut`/`pub(crate) static mut` 漏检；SAFE_PATTERNS 子串豁免过宽（`T1`/`T2` 子串匹配）。
@@ -4463,7 +4463,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 8. **audit_unwired_pub_fn.py:139**：`in_trait_impl_depth` 置位后永不重置；`count_refs` 全词匹配把同名局部变量计入 → 高频词 fn 死代码逃检。
 9. **audit_edition2024.py:85-96**：`\*\w+` 匹配 `as *mut ()`（edition 2024 下 safe cast）等 → 82 处"高优先级"含大量 FP。
 10. **audit_implicit_deps.py:73**：无词边界子串匹配，`SCHEDULER` 误匹配 `SCHEDULER_READY`。
-11. **audit_tcb_ratio.py**：确认 P0-01（退出码失效）；另 smoltcp 路径检查错误（`framework/net/smoltcp` 不存在，实际在 `services/net/smoltcp`）。
+11. **audit_tcb_ratio.py**：确认 P0-01（退出码失效）；另 smoltcp 路径检查错误（`privileged/net/smoltcp` 不存在，实际在 `functions/net/smoltcp`）。
 12. **audit_safety_coverage.py:128-129**：文件缺失静默跳过 → 8 文件被删/改名后假 PASS（100%）。
 
 ## 四、CI 接线缺口
@@ -4481,7 +4481,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
 - **本增量新增**：P0 ×9（META-P0-01~09）、P1 ×12、P2 ×15（含各脚本死代码/接口不符）；修正既有 3 项（P0-03、P0-05 撤销，P0-14 降级）。
 - **最高优先级修复**：
-  1. META-P0-01/02/03：audit_services_boundary.py — HIGH/MEDIUM 纳入退出码 + 补全黑名单 + 匹配 `pub use`（F2 门禁，最高优先）。
+  1. META-P0-01/02/03：audit_functions_boundary.py — HIGH/MEDIUM 纳入退出码 + 补全黑名单 + 匹配 `pub use`（F2 门禁，最高优先）。
   2. META-P0-04：audit_deadlock_matrix.py — 裸类型名检测 + 实装锁顺序矩阵（或如实降级声明）。
   3. META-P0-05：audit_block_registration.py — 函数名改 `egdf_register_block_dev`。
   4. 接入 CI：audit_coupling / audit_invariants / audit_public_api_docs / audit_deadlock_matrix。

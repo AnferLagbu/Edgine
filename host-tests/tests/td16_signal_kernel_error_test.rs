@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
-// TD-16: services::proc::signal 错误类型收敛到 KernelError 单一来源
+// TD-16: functions::proc::signal 错误类型收敛到 KernelError 单一来源
 //
 // 验收:
-//   - services/proc/signal.rs 暴露 `pub use KernelError as SignalError;` (type alias)
+//   - functions/proc/signal.rs 暴露 `pub use KernelError as SignalError;` (type alias)
 //   - 不再独立定义 `pub enum SignalError { ... }`
 //   - 4 个 `SignalError::X` 使用点全部用 KernelError 已覆盖变体
 //   - 不再引用旧变体 `ProcessExited` / `InvalidSignal`
@@ -13,10 +13,10 @@
 use std::fs;
 use std::path::Path;
 
-const SIGNAL_RS: &str = "src/kernel/services/proc/signal.rs";
-// B09-12/DECISION-H13 P0-2: KernelError 定义迁回 framework/error.rs, services 侧 re-export.
-// 静态断言指向 framework/error.rs (变体/映射定义所在).
-const FRAMEWORK_ERROR_RS: &str = "src/kernel/framework/error.rs";
+const SIGNAL_RS: &str = "src/kernel/functions/proc/signal.rs";
+// B09-12/DECISION-H13 P0-2: KernelError 定义迁回 privileged/error.rs, functions 侧 re-export.
+// 静态断言指向 privileged/error.rs (变体/映射定义所在).
+const PRIVILEGED_ERROR_RS: &str = "src/kernel/privileged/error.rs";
 
 fn read(path: &str) -> String {
     let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(path);
@@ -27,7 +27,7 @@ fn read(path: &str) -> String {
 fn signal_error_is_kernel_error_alias() {
     let src = read(SIGNAL_RS);
     assert!(
-        src.contains("pub use crate::services::error::KernelError as SignalError;"),
+        src.contains("pub use crate::functions::error::KernelError as SignalError;"),
         "SignalError 必须为 KernelError 的 type alias (TD-16)"
     );
 }
@@ -66,8 +66,8 @@ fn four_signal_error_usages_under_kernel_error() {
 
 #[test]
 fn kernel_error_exposes_no_such_process() {
-    // B09-12 P0-2: KernelError 定义在 framework/error.rs
-    let src = read(FRAMEWORK_ERROR_RS);
+    // B09-12 P0-2: KernelError 定义在 privileged/error.rs
+    let src = read(PRIVILEGED_ERROR_RS);
     assert!(
         src.contains("NoSuchProcess"),
         "KernelError 必须暴露 NoSuchProcess 变体 (ESRCH=3) 供 SignalError::NoSuchProcess 复用"
@@ -98,7 +98,7 @@ fn signal_module_still_safe() {
 
 #[test]
 fn deny_unsafe_code_intact() {
-    // 静态契约: services/proc/signal.rs 第一行必须是 #![deny(unsafe_code)]
+    // 静态契约: functions/proc/signal.rs 第一行必须是 #![deny(unsafe_code)]
     let src = read(SIGNAL_RS);
     let first_line = src.lines().next().expect("non-empty");
     assert_eq!(first_line, "#![deny(unsafe_code)]");

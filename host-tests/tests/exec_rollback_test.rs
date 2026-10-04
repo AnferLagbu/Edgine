@@ -7,7 +7,7 @@
 //! 的 transactional 语义. 经评估, 内核真实实现 **host 不可测**, 本地平行实现
 //! 已全部删除, 不保留镜像:
 //!
-//! - 内核权威实现为 `framework/proc/proc_ops.rs::proc_exec_replace` (FFI, `no_mangle`).
+//! - 内核权威实现为 `privileged/proc/proc_ops.rs::proc_exec_replace` (FFI, `no_mangle`).
 //!   其 transactional 语义依赖全局状态链: `SCHEDULER.current()` (当前进程) →
 //!   `api::user_proc_load_elf` (VFS 文件加载 + `USER_PROC_MANAGER` 新进程构造) →
 //!   `raw::switch_page_table` (CR3 页表切换) → `USER_PROC_MANAGER.replace_user_space`
@@ -16,7 +16,7 @@
 //!   在入口即返回 -1, 无法验证 transactional 语义.
 //!
 //! - 原镜像的 `ProcState` (Active/Loading/Destructed) 是**虚构状态机**, 与内核
-//!   `services::proc::types::ProcessState` (Created/Ready/Running/Blocked/Zombie/
+//!   `functions::proc::types::ProcessState` (Created/Ready/Running/Blocked/Zombie/
 //!   Terminated/Frozen) 不符, 无迁移对象. 内核 `ProcessState` 判别值已在
 //!   `zombie_signal_boundary_test` 中经真实枚举验证.
 //!

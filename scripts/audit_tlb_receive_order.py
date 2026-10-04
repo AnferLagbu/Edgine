@@ -2,7 +2,7 @@
 """
 audit_tlb_receive_order.py — TLB 失效接收侧三段次序防线 (S-14)
 
-检查 `framework::smp::tlb_catch_up_local` 函数体内三条语句的**次序**:
+检查 `privileged::smp::tlb_catch_up_local` 函数体内三条语句的**次序**:
     1. `tlb_gen_now()`      — 先读当代
     2. `tlb_flush_all()`    — 再全量失效本核 TLB
     3. `tlb_gen_set_self()` — 最后声明本核已追平该代
@@ -20,7 +20,7 @@ import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TARGET = os.path.join(ROOT, "src/kernel/framework/smp/mod.rs")
+TARGET = os.path.join(ROOT, "src/kernel/privileged/smp/mod.rs")
 
 FN_SIG = "fn tlb_catch_up_local("
 # 期望次序 (语句指纹 → 人类可读名)

@@ -5,7 +5,7 @@
 //!
 //! ## 验收
 //!
-//! - `framework/net/init.rs` 中 0 处 `unsafe { core::mem::transmute(...) }`
+//! - `privileged/net/init.rs` 中 0 处 `unsafe { core::mem::transmute(...) }`
 //! - 仅允许 `transmute_copy` (W5 安全路径)
 //! - 注释中提到 `transmute` 是允许的 (历史包袱说明)
 //!
@@ -25,19 +25,19 @@ fn init_rs() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("src/kernel/framework/net/init.rs")
+        .join("src/kernel/privileged/net/init.rs")
 }
 
 #[test]
 fn test_no_unsafe_transmute_in_init_rs() {
-    // 验收: W5 transmute 移除完整, framework/net/init.rs 0 处 unsafe transmute
+    // 验收: W5 transmute 移除完整, privileged/net/init.rs 0 处 unsafe transmute
     let content = read(&init_rs());
 
     // 匹配 `unsafe { core::mem::transmute(`
     let unsafe_transmute_count = content.matches("unsafe { core::mem::transmute(").count();
     assert_eq!(
         unsafe_transmute_count, 0,
-        "framework/net/init.rs 仍有 {} 处 unsafe transmute (W5 反模式), 应改用 transmute_copy",
+        "privileged/net/init.rs 仍有 {} 处 unsafe transmute (W5 反模式), 应改用 transmute_copy",
         unsafe_transmute_count
     );
 }

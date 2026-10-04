@@ -1,19 +1,19 @@
 //! Memory Pressure 归属契约测试 (P1-I-01 D9 → DECISION-O ② 反转)
 //!
 //! 契约随 DECISION-O ② (2026-09-13) 反转：MemoryPressure 类型/压力状态/
-//! `update_pressure` 包装归 framework (机制持有, OOMD 是调度器 tick 直接驱动
-//! 的机制组件); 分级阈值/算法留 services (策略), 经注册注入。
+//! `update_pressure` 包装归 privileged (机制持有, OOMD 是调度器 tick 直接驱动
+//! 的机制组件); 分级阈值/算法留 functions (策略), 经注册注入。
 //!
 //! 静态契约:
 //! 1. MemoryPressure 枚举 / update_pressure / current_pressure 必在
-//!    framework/mm/pressure.rs (机制权威)
-//! 2. framework/mm/mod.rs 必声明 `pub mod pressure`
-//! 3. framework/proc/oomd.rs 必引用 framework::mm::pressure, 禁止引用 services
-//! 4. services/mm/memory_pressure.rs 必 deny unsafe_code, 保留阈值/分级算法/
-//!    set_thresholds, 并 re-export framework API (services→framework 合法方向)
-//! 5. services/mm/mod.rs init 必注册分级策略 (register_pressure_classifier)
+//!    privileged/mm/pressure.rs (机制权威)
+//! 2. privileged/mm/mod.rs 必声明 `pub mod pressure`
+//! 3. privileged/proc/oomd.rs 必引用 privileged::mm::pressure, 禁止引用 functions
+//! 4. functions/mm/memory_pressure.rs 必 deny unsafe_code, 保留阈值/分级算法/
+//!    set_thresholds, 并 re-export privileged API (functions→privileged 合法方向)
+//! 5. functions/mm/mod.rs init 必注册分级策略 (register_pressure_classifier)
 //! 6. 4 级状态机变体 + 双重阈值 (绝对值 + 百分比) 契约保持
-//! 7. services 文件不含 klog_ffi (避免 unsafe 边界)
+//! 7. functions 文件不含 klog_ffi (避免 unsafe 边界)
 
 use std::fs;
 use std::path::PathBuf;
@@ -23,38 +23,38 @@ fn repo_root() -> PathBuf {
     manifest.parent().unwrap().to_path_buf()
 }
 
-fn framework_pressure_rs() -> String {
+fn privileged_pressure_rs() -> String {
     let path = format!(
-        "{}/../src/kernel/framework/mm/pressure.rs",
+        "{}/../src/kernel/privileged/mm/pressure.rs",
         env!("CARGO_MANIFEST_DIR")
     );
-    fs::read_to_string(&path).expect("read framework/mm/pressure.rs")
+    fs::read_to_string(&path).expect("read privileged/mm/pressure.rs")
 }
 
-fn services_memory_pressure_rs() -> String {
+fn functions_memory_pressure_rs() -> String {
     let path = format!(
-        "{}/../src/kernel/services/mm/memory_pressure.rs",
+        "{}/../src/kernel/functions/mm/memory_pressure.rs",
         env!("CARGO_MANIFEST_DIR")
     );
-    fs::read_to_string(&path).expect("read services/mm/memory_pressure.rs")
+    fs::read_to_string(&path).expect("read functions/mm/memory_pressure.rs")
 }
 
-fn framework_mm_mod_rs() -> String {
-    let p = repo_root().join("src/kernel/framework/mm/mod.rs");
-    fs::read_to_string(&p).expect("read framework/mm/mod.rs")
+fn privileged_mm_mod_rs() -> String {
+    let p = repo_root().join("src/kernel/privileged/mm/mod.rs");
+    fs::read_to_string(&p).expect("read privileged/mm/mod.rs")
 }
 
-fn framework_oomd_rs() -> String {
-    let p = repo_root().join("src/kernel/framework/proc/oomd.rs");
-    fs::read_to_string(&p).expect("read framework/proc/oomd.rs")
+fn privileged_oomd_rs() -> String {
+    let p = repo_root().join("src/kernel/privileged/proc/oomd.rs");
+    fs::read_to_string(&p).expect("read privileged/proc/oomd.rs")
 }
 
-fn services_mm_mod_rs() -> String {
+fn functions_mm_mod_rs() -> String {
     let path = format!(
-        "{}/../src/kernel/services/mm/mod.rs",
+        "{}/../src/kernel/functions/mm/mod.rs",
         env!("CARGO_MANIFEST_DIR")
     );
-    fs::read_to_string(&path).expect("read services/mm/mod.rs")
+    fs::read_to_string(&path).expect("read functions/mm/mod.rs")
 }
 
 /// 提取 `src` 中 `sig` 起始的顶层函数体 (至首个行首 `}` 结束)
@@ -96,48 +96,48 @@ fn method_body<'a>(src: &'a str, sig: &str) -> &'a str {
 }
 
 #[test]
-fn memory_pressure_mechanism_in_framework() {
-    // DECISION-O ② 验收: 类型/状态/update_pressure 包装必在 framework (机制权威)
-    let src = framework_pressure_rs();
+fn memory_pressure_mechanism_in_privileged() {
+    // DECISION-O ② 验收: 类型/状态/update_pressure 包装必在 privileged (机制权威)
+    let src = privileged_pressure_rs();
     assert!(
         src.contains("pub enum MemoryPressure"),
-        "DECISION-O ②: MemoryPressure 枚举必在 framework/mm/pressure.rs"
+        "DECISION-O ②: MemoryPressure 枚举必在 privileged/mm/pressure.rs"
     );
     assert!(
         src.contains("pub fn update_pressure"),
-        "DECISION-O ②: update_pressure 包装必在 framework"
+        "DECISION-O ②: update_pressure 包装必在 privileged"
     );
     assert!(
         src.contains("pub fn current_pressure") && src.contains("pub fn previous_pressure"),
-        "DECISION-O ②: 压力状态读取原语必在 framework"
+        "DECISION-O ②: 压力状态读取原语必在 privileged"
     );
     assert!(
         src.contains("pub fn register_pressure_classifier"),
-        "DECISION-O ②: 分级策略注册口必在 framework"
+        "DECISION-O ②: 分级策略注册口必在 privileged"
     );
 }
 
 #[test]
-fn framework_mm_mod_declares_pressure() {
-    // DECISION-O ② 验收: framework/mm/mod.rs 必声明 pressure 模块
-    let src = framework_mm_mod_rs();
+fn privileged_mm_mod_declares_pressure() {
+    // DECISION-O ② 验收: privileged/mm/mod.rs 必声明 pressure 模块
+    let src = privileged_mm_mod_rs();
     assert!(
         src.contains("pub mod pressure"),
-        "DECISION-O ②: framework/mm/mod.rs 必声明 pub mod pressure"
+        "DECISION-O ②: privileged/mm/mod.rs 必声明 pub mod pressure"
     );
 }
 
 #[test]
-fn framework_oomd_uses_framework_pressure() {
-    // DECISION-O ② 验收: OOMD 引用 framework::mm::pressure, 禁止 services 引用
-    let src = framework_oomd_rs();
+fn privileged_oomd_uses_privileged_pressure() {
+    // DECISION-O ② 验收: OOMD 引用 privileged::mm::pressure, 禁止 functions 引用
+    let src = privileged_oomd_rs();
     assert!(
-        src.contains("framework::mm::pressure::{MemoryPressure, update_pressure}"),
-        "DECISION-O ②: oomd.rs 必从 framework::mm::pressure 引入"
+        src.contains("privileged::mm::pressure::{MemoryPressure, update_pressure}"),
+        "DECISION-O ②: oomd.rs 必从 privileged::mm::pressure 引入"
     );
     assert!(
-        !src.contains("kernel::services::"),
-        "DECISION-O ②: framework/proc/oomd.rs 禁止引用 services (反向依赖清零)"
+        !src.contains("kernel::functions::"),
+        "DECISION-O ②: privileged/proc/oomd.rs 禁止引用 functions (反向依赖清零)"
     );
 }
 
@@ -147,7 +147,7 @@ fn framework_oomd_uses_framework_pressure() {
 /// 若后续任何改动退回到"仅计数", 本用例失败.
 #[test]
 fn oomd_emergency_actually_sends_sigkill() {
-    let src = framework_oomd_rs();
+    let src = privileged_oomd_rs();
     assert!(
         src.contains("do_signal_send(victim, super::SIGKILL)"),
         "C1: OOMD Emergency 必须真实发送 SIGKILL (不可仅计数)"
@@ -169,7 +169,7 @@ fn oomd_emergency_actually_sends_sigkill() {
 /// (中断上下文, 关中断), 一旦自锁无法恢复, 属系统级死锁.
 #[test]
 fn oomd_sigkill_sent_outside_process_table_iteration() {
-    let src = framework_oomd_rs();
+    let src = privileged_oomd_rs();
     let start = src
         .find("process_for_each(")
         .expect("C1: OOMD 必须遍历进程表选择 victim");
@@ -190,51 +190,51 @@ fn oomd_sigkill_sent_outside_process_table_iteration() {
 }
 
 #[test]
-fn memory_pressure_services_keeps_policy() {
-    // DECISION-O ② 验收: 阈值/分级算法/set_thresholds 必留 services (策略)
-    let src = services_memory_pressure_rs();
+fn memory_pressure_functions_keeps_policy() {
+    // DECISION-O ② 验收: 阈值/分级算法/set_thresholds 必留 functions (策略)
+    let src = functions_memory_pressure_rs();
     assert!(
         src.contains("pub fn set_thresholds"),
-        "DECISION-O ②: set_thresholds 必在 services"
+        "DECISION-O ②: set_thresholds 必在 functions"
     );
     assert!(
         src.contains("fn classify_pressure"),
-        "DECISION-O ②: 分级算法 classify_pressure 必在 services"
+        "DECISION-O ②: 分级算法 classify_pressure 必在 functions"
     );
     assert!(
-        src.contains("pub use crate::framework::mm::pressure::"),
-        "DECISION-O ②: services 必经 re-export 保持 API 兼容 (services→framework 合法方向)"
+        src.contains("pub use crate::privileged::mm::pressure::"),
+        "DECISION-O ②: functions 必经 re-export 保持 API 兼容 (functions→privileged 合法方向)"
     );
 }
 
 #[test]
-fn memory_pressure_services_denies_unsafe() {
-    // P1-I-01 D9 验收 (保持): services 文件必 deny unsafe_code
-    let src = services_memory_pressure_rs();
+fn memory_pressure_functions_denies_unsafe() {
+    // P1-I-01 D9 验收 (保持): functions 文件必 deny unsafe_code
+    let src = functions_memory_pressure_rs();
     assert!(
         src.contains("#![deny(unsafe_code)]"),
-        "DECISION-O ②: services/mm/memory_pressure.rs 必 #![deny(unsafe_code)]"
+        "DECISION-O ②: functions/mm/memory_pressure.rs 必 #![deny(unsafe_code)]"
     );
 }
 
 #[test]
-fn services_mm_init_registers_classifier() {
-    // DECISION-O ② 验收: services::mm::init 必注册分级策略 (机制留注册口)
-    let src = services_mm_mod_rs();
+fn functions_mm_init_registers_classifier() {
+    // DECISION-O ② 验收: functions::mm::init 必注册分级策略 (机制留注册口)
+    let src = functions_mm_mod_rs();
     assert!(
         src.contains("pub mod memory_pressure"),
-        "DECISION-O ②: services/mm/mod.rs 必 pub mod memory_pressure"
+        "DECISION-O ②: functions/mm/mod.rs 必 pub mod memory_pressure"
     );
     assert!(
         src.contains("memory_pressure::register_pressure_classifier()"),
-        "DECISION-O ②: services::mm::init 必注册分级策略"
+        "DECISION-O ②: functions::mm::init 必注册分级策略"
     );
 }
 
 #[test]
 fn memory_pressure_uses_4_level_state_machine() {
     // P1-I-01 D9 验收 (保持): 策略核心是 4 级状态机
-    let src = framework_pressure_rs();
+    let src = privileged_pressure_rs();
     // 必 4 个级别
     for variant in ["Normal", "Warning", "Critical", "Emergency"] {
         assert!(
@@ -246,9 +246,9 @@ fn memory_pressure_uses_4_level_state_machine() {
 }
 
 #[test]
-fn memory_pressure_services_uses_double_threshold() {
+fn memory_pressure_functions_uses_double_threshold() {
     // P1-I-01 D9 验收 (保持): 双重阈值 (绝对值 + 百分比)
-    let src = services_memory_pressure_rs();
+    let src = functions_memory_pressure_rs();
     // 三个阈值常量
     assert!(
         src.contains("FREE_PAGES_THRESHOLD_WARNING"),
@@ -270,16 +270,16 @@ fn memory_pressure_services_uses_double_threshold() {
 }
 
 #[test]
-fn memory_pressure_services_no_klog_ffi() {
-    // P1-I-01 D9 验收 (保持): services 文件不含 klog_ffi (避免 unsafe 边界)
-    let src = services_memory_pressure_rs();
+fn memory_pressure_functions_no_klog_ffi() {
+    // P1-I-01 D9 验收 (保持): functions 文件不含 klog_ffi (避免 unsafe 边界)
+    let src = functions_memory_pressure_rs();
     assert!(
         !src.contains("klog_ffi!"),
-        "DECISION-O ②: services 文件不应含 klog_ffi! (触发 unsafe)"
+        "DECISION-O ②: functions 文件不应含 klog_ffi! (触发 unsafe)"
     );
     assert!(
         !src.contains("crate::klog_ffi"),
-        "DECISION-O ②: services 文件不应含 crate::klog_ffi"
+        "DECISION-O ②: functions 文件不应含 crate::klog_ffi"
     );
 }
 
@@ -305,11 +305,11 @@ fn memory_pressure_services_no_klog_ffi() {
 fn user_page_count_traversal_uses_nonblocking_vmm_lock() {
     for (file, sig) in [
         (
-            "src/kernel/framework/mm/vmm_x86_64.rs",
+            "src/kernel/privileged/mm/vmm_x86_64.rs",
             "pub fn count_present_user_pages(",
         ),
         (
-            "src/kernel/framework/mm/vmm_aarch64.rs",
+            "src/kernel/privileged/mm/vmm_aarch64.rs",
             "pub fn count_present_user_pages(",
         ),
     ] {
@@ -364,7 +364,7 @@ fn user_page_count_traversal_uses_nonblocking_vmm_lock() {
 /// 全局锁状态复原 (不影响同进程其他用例).
 #[test]
 fn count_present_user_pages_returns_none_when_vmm_lock_held() {
-    use edgine::kernel::framework::mm::vmm::{VirtualMemoryManager, count_present_user_pages};
+    use edgine::kernel::privileged::mm::vmm::{VirtualMemoryManager, count_present_user_pages};
 
     let vmm = VirtualMemoryManager::new();
     let flags = vmm.acquire_lock();
@@ -391,8 +391,8 @@ fn count_present_user_pages_returns_none_when_vmm_lock_held() {
 #[test]
 fn vmm_lock_acquire_stays_non_reentrant_spinlock() {
     for file in [
-        "src/kernel/framework/mm/vmm_x86_64.rs",
-        "src/kernel/framework/mm/vmm_aarch64.rs",
+        "src/kernel/privileged/mm/vmm_x86_64.rs",
+        "src/kernel/privileged/mm/vmm_aarch64.rs",
     ] {
         let src = fs::read_to_string(repo_root().join(file))
             .unwrap_or_else(|e| panic!("read {file}: {e}"));

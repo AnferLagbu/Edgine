@@ -43,7 +43,7 @@ default = []
 # e1000 真实硬件 EEPROM 读取路径 (转发至 kernel).
 e1000-real-hw = ["kernel/e1000-real-hw"]
 e1000-verbose = ["kernel/e1000-verbose"]
-# host-test: 剥离裸机专属顶层约束, 供 host-tests 引用内核 services 真实源码 (转发至 kernel).
+# host-test: 剥离裸机专属顶层约束, 供 host-tests 引用内核 functions 真实源码 (转发至 kernel).
 host-test = ["kernel/host-test"]
 kernel_test = ["kernel/kernel_test"]
 fault_injection = ["kernel/fault_injection"]

@@ -13,11 +13,11 @@
 use std::fs;
 use std::path::Path;
 
-const FD_ALLOC: &str = "src/kernel/framework/proc/fd_alloc.rs";
-const EVENTFD: &str = "src/kernel/framework/syscall/eventfd.rs";
-const SIGNALFD: &str = "src/kernel/framework/syscall/signalfd.rs";
-const TIMERFD: &str = "src/kernel/framework/syscall/timerfd.rs";
-const UNIX: &str = "src/kernel/services/net/unix.rs";
+const FD_ALLOC: &str = "src/kernel/privileged/proc/fd_alloc.rs";
+const EVENTFD: &str = "src/kernel/privileged/syscall/eventfd.rs";
+const SIGNALFD: &str = "src/kernel/privileged/syscall/signalfd.rs";
+const TIMERFD: &str = "src/kernel/privileged/syscall/timerfd.rs";
+const UNIX: &str = "src/kernel/functions/net/unix.rs";
 
 fn read(p: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -6,7 +6,7 @@
 //! 3. 双架构在 host 端通过 union 表达, 跨平台编译期验证
 //!
 //! 主机端测试平台: 借用 host CPU 架构的 trampoline 与固定字节序列做 hex 对比.
-//! 内核 `src/kernel/framework/proc/signal.rs::SIGRETURN_TRAMPOLINE` 是该契约权威实现.
+//! 内核 `src/kernel/privileged/proc/signal.rs::SIGRETURN_TRAMPOLINE` 是该契约权威实现.
 
 #[cfg(target_arch = "x86_64")]
 const EXPECTED: &[u8] = &[0xB8, 0x0F, 0x00, 0x00, 0x00, 0x0F, 0x05];

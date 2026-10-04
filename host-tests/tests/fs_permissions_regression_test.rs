@@ -8,8 +8,8 @@
 //! ## B08-20 迁移 (2026-09-06)
 //! 原镜像三个 syscall 的纯判定逻辑已改引内核真实 API:
 //! - chown_syscall 的 UID 判定 → `identity::get_table().find_by_uid` (真实身份表)
-//! - open_by_handle_at_syscall 的 CAP_SYS_ADMIN 判定 → `framework::sgeg::pwm_has_capability`
-//! - poll_syscall 的 fd 有效性判定 → `services::fs::vfs_get_fd_handle` (per-process fd 表)
+//! - open_by_handle_at_syscall 的 CAP_SYS_ADMIN 判定 → `privileged::sgeg::pwm_has_capability`
+//! - poll_syscall 的 fd 有效性判定 → `functions::fs::vfs_get_fd_handle` (per-process fd 表)
 //!
 //! ## 因内核 host 不可测已移除 (syscall 完整路径)
 //! 三个 syscall 完整函数 (chown_syscall / open_by_handle_at_syscall / poll_syscall) 依赖
@@ -25,10 +25,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use edgine::kernel::framework::sgeg::identity;
-use edgine::kernel::framework::sgeg::pwm_has_capability;
-use edgine::kernel::services::sgeg::capability::CAP_DOMAIN_SYSTEM;
-use edgine::kernel::services::sgeg::types::{CapBits, CapDomain};
+use edgine::kernel::functions::sgeg::capability::CAP_DOMAIN_SYSTEM;
+use edgine::kernel::functions::sgeg::types::{CapBits, CapDomain};
+use edgine::kernel::privileged::sgeg::identity;
+use edgine::kernel::privileged::sgeg::pwm_has_capability;
 
 /// 注册并缓存测试身份 (creator=0 → 最高特权级, uid=0).
 fn test_pwm() -> u64 {
@@ -54,7 +54,7 @@ fn admin_pwm() -> u64 {
 // B06-02: chown_syscall UID/GID 判定 (改引内核 identity::find_by_uid)
 // ============================================================================
 
-/// 内核 [services/fs/file_ops.rs::chown_syscall] 的 uid→pwm 判定 (B06-02 修复后):
+/// 内核 [functions/fs/file_ops.rs::chown_syscall] 的 uid→pwm 判定 (B06-02 修复后):
 ///
 /// 原实现 `tbl.find_by_uid(uid).map_or(0, ...)` 在 uid 未注册时回退 owner_pwm=0 (root),
 /// 存在提权漏洞; 修复后未注册 uid/gid 返回 `EINVAL` (errno=22), 不再默认 root.
@@ -103,11 +103,11 @@ fn chown_max_uid_sentinel_rejected() {
 // B06-03: open_by_handle_at_syscall CAP 检查 (改引内核 pwm_has_capability)
 // ============================================================================
 
-/// 内核 [services/fs/file_handle.rs::open_by_handle_at_syscall] 的权限检查 (B06-03):
+/// 内核 [functions/fs/file_handle.rs::open_by_handle_at_syscall] 的权限检查 (B06-03):
 ///
 /// 采用 SYSTEM 域 (domain=0) + CAP_SYS_ADMIN (0x01), 与 mount/umount2 先例一致;
 /// 无能力返回 `EPERM` (errno=1). 本测试直接验证内核
-/// `framework::sgeg::pwm_has_capability(pwm, SYSTEM, 0x01)` 判定.
+/// `privileged::sgeg::pwm_has_capability(pwm, SYSTEM, 0x01)` 判定.
 #[test]
 fn open_by_handle_without_cap_returns_eperm() {
     // 注册身份初始 SYSTEM caps = VIABLE_FLOOR[SYSTEM] = 0 → 无 CAP_SYS_ADMIN → EPERM
@@ -154,7 +154,7 @@ fn pub_fn_body<'a>(src: &'a str, sig: &str) -> &'a str {
     &src[start..start + sig.len() + end]
 }
 
-/// 内核 [services/fs/file_ops.rs::poll_syscall] 的 fd 有效性判定 (B06-07 → B-9.5):
+/// 内核 [functions/fs/file_ops.rs::poll_syscall] 的 fd 有效性判定 (B06-07 → B-9.5):
 ///
 /// 原实现用硬编码 `< 256` 做上限后直接索引 32 长 fd_table, fd∈[32,255] 越界 panic;
 /// B-9.5 per-process fd 表全量下沉后, 全局数值上限 (VFS_MAX_FDS / 256) 随全局 fd 表
@@ -164,8 +164,8 @@ fn pub_fn_body<'a>(src: &'a str, sig: &str) -> &'a str {
 /// stac/clac) 与进程上下文, host 不可直接调用; 此处作静态契约扫描.
 #[test]
 fn poll_syscall_validates_fd_via_per_process_fd_table() {
-    let path = Path::new("../src/kernel/services/fs/file_ops.rs");
-    let src = fs::read_to_string(path).expect("读取 services/fs/file_ops.rs 失败");
+    let path = Path::new("../src/kernel/functions/fs/file_ops.rs");
+    let src = fs::read_to_string(path).expect("读取 functions/fs/file_ops.rs 失败");
     let body = pub_fn_body(&src, "pub fn poll_syscall");
     assert!(
         body.contains("vfs_get_fd_handle(pfd.fd as usize)"),
@@ -227,7 +227,7 @@ fn fn_body<'a>(src: &'a str, sig: &str) -> &'a str {
 /// 背景: ext2 `set_times` 曾只写回不判权限 (任意 pwm 可改他人文件时间戳), 与
 /// unkfs 同层实装分歧. 判据必须与写回同锁域 — 上提到 VFS 层无 owner 模型,
 /// 且会把判据与写回拆成两次路径解析 (TOCTOU) — 故一致性由本测试面收口:
-/// 扫描 framework/services 两侧 fs 源码, 凡 `set_times` 函数体含落盘动作
+/// 扫描 privileged/functions 两侧 fs 源码, 凡 `set_times` 函数体含落盘动作
 /// (`save_inode`/`update_obj`) 者, 必须同体出现 `pwm_get_privilege_level` 与
 /// `PermissionDenied`. 纯内存 FS 的 `Ok(())` 桩与默认 `NotSupported` 不在门槛内.
 ///
@@ -236,8 +236,8 @@ fn fn_body<'a>(src: &'a str, sig: &str) -> &'a str {
 #[test]
 fn set_times_of_persistent_fs_checks_owner_or_privilege() {
     let roots = [
-        Path::new("../src/kernel/services/fs"),
-        Path::new("../src/kernel/framework/fs"),
+        Path::new("../src/kernel/functions/fs"),
+        Path::new("../src/kernel/privileged/fs"),
     ];
     let mut files = Vec::new();
     for root in roots {

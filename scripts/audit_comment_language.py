@@ -13,7 +13,7 @@ Rust 注释中残留的英文段落式注释 (// 或 /// 或 /* */ 或 // SAFETY
     * 算法/协议/机制: RCU, CFS, COW, spin::Mutex
     * 错误码与标准常量: ENOENT, EINVAL, EAGAIN, O_RDONLY
     * 外部 API/标准引用: Linux man page: futex(2), POSIX 1003.1-2017 §2.9
-    * 链接路径与文件名: src/kernel/framework/mm/cow.rs
+    * 链接路径与文件名: src/kernel/privileged/mm/cow.rs
     * 配置项/编译 flag: #[cfg(target_arch = "x86_64")]
     * 第三方 crate 名称: smoltcp, heapless
   - 短英文注释 (≤ 30 字符非空白 + ≤ 2 个英文长词) 视为合理引用, 不算违规
@@ -287,7 +287,7 @@ def is_posix_signature_ref(text: str) -> bool:
     例: `/// POSIX `bind(fd, addr, addrlen)`` (单行, 含 `POSIX` + 反引号函数名)
 
     也接受不带 POSIX 前缀但形式相同的: `/// sendto(fd, buf, len, flags, ...)`
-    (常见于 services/net/syscall.rs 等纯签名引用).
+    (常见于 functions/net/syscall.rs 等纯签名引用).
     """
     body = re.sub(r"^\s*(?:///?|\*|/\*)", "", text).strip()
     # 必须是单行 (不允许折行), 长度 < 120
@@ -453,7 +453,7 @@ def detect_violation(comment_text: str, continuation: bool = False) -> tuple[boo
     if is_formula_or_equation(stripped):
         return False, ""
 
-    # services 迁移记录豁免 (syscall 列表 / 原属 / 迁移到 services 等目录式说明)
+    # functions 迁移记录豁免 (syscall 列表 / 原属 / 迁移到 functions 等目录式说明)
     if is_migration_note(stripped, continuation=continuation):
         return False, ""
 
@@ -556,15 +556,15 @@ def is_safety_or_todo_short_ref(text: str) -> bool:
 
 
 # 迁移记录注释的特征模式 (用于 2026-06-18 回归豁免).
-# 这些注释用于记录 services 迁移历史, 含大量 syscall/函数名列表,
+# 这些注释用于记录 functions 迁移历史, 含大量 syscall/函数名列表,
 # 本质是"目录式索引", 不应被视作英文段落.
 MIGRATION_NOTE_HINTS = (
-    "已迁移到 services",
+    "已迁移到 functions",
     "原属 ",
-    "迁移到 services",
-    "迁至 services",
-    "依赖 framework safe API",
-    "依赖 framework safe api",
+    "迁移到 functions",
+    "迁至 functions",
+    "依赖 privileged safe API",
+    "依赖 privileged safe api",
 )
 # syscall 标识符 (sys_xxx), 单词边界避免误匹配
 MIGRATION_SYS_PATTERN = re.compile(r"\bsys_[a-z][a-z0-9_]*\b")
@@ -573,19 +573,19 @@ MIGRATION_SAFE_PATTERN = re.compile(r"\b[a-z][a-z0-9_]*_safe(?:_[a-z0-9_]+)?\b")
 
 
 def is_migration_note(text: str, continuation: bool = False) -> bool:
-    """检测是否为 services 迁移记录注释.
+    """检测是否为 functions 迁移记录注释.
 
-    模式 (常见于 syscall/fs/ipc 迁移到 services 层后的历史记录):
-      - `// 已迁移到 services: sys_xxx, sys_yyy, ...`
-      - `// 原属 framework/foo.rs, 2026-XX-XX 迁移到 services.`
-      - `//! 依赖 framework safe API (pipe_write_safe / pipe_read_safe / msgq_send_safe).`
+    模式 (常见于 syscall/fs/ipc 迁移到 functions 层后的历史记录):
+      - `// 已迁移到 functions: sys_xxx, sys_yyy, ...`
+      - `// 原属 privileged/foo.rs, 2026-XX-XX 迁移到 functions.`
+      - `//! 依赖 privileged safe API (pipe_write_safe / pipe_read_safe / msgq_send_safe).`
 
     这些是"目录式索引/历史说明", 含 2+ 个 syscall 或 safe-API 标识符列表,
     等价于 POSIX 签名引用豁免.
 
     续行 (continuation=True): 上一行已识别为迁移记录, 当前行作为
     syscall/函数名列表的下一行也应豁免. 例如:
-        // 已迁移到 services: sys_setregid, sys_mmap,
+        // 已迁移到 functions: sys_setregid, sys_mmap,
         // sys_munmap, sys_time, sys_sched_setaffinity
     """
     body = re.sub(r"^\s*(?:///?|\*|/\*)", "", text).strip()
@@ -600,7 +600,7 @@ def is_migration_note(text: str, continuation: bool = False) -> bool:
         return True
     if len(body) >= 200:
         return False
-    # 必须显式包含"已迁移到 services"等迁移关键字, 避免误判普通英文段落
+    # 必须显式包含"已迁移到 functions"等迁移关键字, 避免误判普通英文段落
     if not any(hint in body for hint in MIGRATION_NOTE_HINTS):
         return False
     # 命中 2+ 个 syscall 标识符 (典型: 迁移清单)
@@ -617,7 +617,7 @@ def is_migration_note(text: str, continuation: bool = False) -> bool:
 def iter_comments(rs_file: Path) -> Iterator[tuple[int, str, bool]]:
     """逐行迭代 .rs 文件, 产出 (行号, 注释文本, 是否迁移记录续行).
 
-    续行标记: 上一行被识别为迁移记录 (已迁移到 services/原属 .../迁移到 services
+    续行标记: 上一行被识别为迁移记录 (已迁移到 functions/原属 .../迁移到 functions
     关键字) 时, 当前行作为该迁移记录的列表续行传递, 供 detect_violation 豁免.
     """
     try:

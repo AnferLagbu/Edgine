@@ -4,11 +4,11 @@ E9: 6 安全不变式审计脚本
 
 检查 Edgine/Edgine 是否违反星绽框内核定义的 6 条安全不变式:
 
-  I1: 内核态 CPU 状态不可被 services 篡改
-  I2: 内核内存不可被 services 非法访问
-  I3: 用户态 CPU 状态只能通过 framework 安全入口修改
-  I4: 用户内存只能通过 framework 安全代理访问
-  I5: 外设 MMIO/PIO 只能通过 framework 安全代理访问
+  I1: 内核态 CPU 状态不可被 functions 篡改
+  I2: 内核内存不可被 functions 非法访问
+  I3: 用户态 CPU 状态只能通过 privileged 安全入口修改
+  I4: 用户内存只能通过 privileged 安全代理访问
+  I5: 外设 MMIO/PIO 只能通过 privileged 安全代理访问
   I6: 外设 DMA 不可写入内核内存
 
 退出码: 0 = 通过, 1 = 有违反
@@ -20,15 +20,15 @@ import json
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent.parent
-SERVICES = BASE / 'src' / 'kernel' / 'services'
+FUNCTIONS = BASE / 'src' / 'kernel' / 'functions'
 TARGET_DIR = BASE / 'other' / 'target' / 'audit'
 
 violations = []
 
 
 def check_i1():
-    """I1: services 不可直接操作内核态 CPU 状态寄存器"""
-    # 检查 services 中是否包含 CR0/CR3/CR4/GDT/IDT/LDT/TR/MSR 的汇编操作
+    """I1: functions 不可直接操作内核态 CPU 状态寄存器"""
+    # 检查 functions 中是否包含 CR0/CR3/CR4/GDT/IDT/LDT/TR/MSR 的汇编操作
     # 注意: 仅检查汇编/内联汇编中的寄存器操作, 不检查字符串/注释/类型名引用
     patterns = [
         r'mov\s+cr[0-4]', r'mov\s+.*,\s*cr[0-4]',  # x86 CR 寄存器操作
@@ -38,92 +38,92 @@ def check_i1():
         r'mrs\s+ttbr[01]', r'msr\s+ttbr[01]',         # ARM 页表基址
         r'mrs\s+vbar', r'msr\s+vbar',                  # ARM 异常向量基址
     ]
-    found = _scan_services(patterns, 'I1')
+    found = _scan_functions(patterns, 'I1')
     return found
 
 
 def check_i2():
-    """I2: services 不可直接访问内核内存 (裸指针解引用).
+    """I2: functions 不可直接访问内核内存 (裸指针解引用).
 
-    B01-25 修复: I2 检测范围回归 services 层.
-    设计依据: I2 不变式 (AGENTS.md §4.2) 语义为 "内核内存不可被 services
-    非法访问", 守护对象是 services, 而非 framework. framework 是合法 TCB,
+    B01-25 修复: I2 检测范围回归 functions 层.
+    设计依据: I2 不变式 (AGENTS.md §4.2) 语义为 "内核内存不可被 functions
+    非法访问", 守护对象是 functions, 而非 privileged. privileged 是合法 TCB,
     裸指针解引用是其职责 (127 处全部位于 unsafe 块内), 其安全由 F4
     (audit_safety_coverage.py SAFETY 100% 覆盖) 守护, 不属 I2 范畴.
 
-    历史: B01-21 (commit c00e9e55) 将 I2 范围误改为 framework 层, 产生
-    127 处误报 (framework 合法 unsafe 解引用). B01-25 恢复扫描 services,
-    消除误报. services 层 `#![deny(unsafe_code)]` (B01-09) 编译期保证
+    历史: B01-21 (commit c00e9e55) 将 I2 范围误改为 privileged 层, 产生
+    127 处误报 (privileged 合法 unsafe 解引用). B01-25 恢复扫描 functions,
+    消除误报. functions 层 `#![deny(unsafe_code)]` (B01-09) 编译期保证
     无裸指针, 本检查作为纵深防御 (防未来某天移除 deny).
 
-    注: 原 B01-21 前误报 (services 层对 `&T`/`Box` 的 safe 解引用被误判
+    注: 原 B01-21 前误报 (functions 层对 `&T`/`Box` 的 safe 解引用被误判
     为裸指针解引用) 已由当前 pattern 负向前瞻排除方法实参位置解决,
-    实测 services 0 违规.
+    实测 functions 0 违规.
     """
-    # 真正的违反: services 中对裸指针的解引用 (*ptr).field
+    # 真正的违反: functions 中对裸指针的解引用 (*ptr).field
     patterns = [
         r'(?<![\w.,(])\(\*\w+\)\.',        # (*ptr).field — 表达式起首, 非方法实参
         r'\(\*mut\s+\w+\)\.',              # (*mut T).field
         r'\(\*const\s+\w+\)\.',            # (*const T).field
     ]
-    return _scan_services(patterns, 'I2', exclude_patterns=[r'^\s*use\s+', r'^\s*//', r'^\s*//!'])
+    return _scan_functions(patterns, 'I2', exclude_patterns=[r'^\s*use\s+', r'^\s*//', r'^\s*//!'])
 
 
 def check_i3():
-    """I3: 用户态 CPU 状态只能通过 framework 安全入口修改"""
-    # 检查 services 中是否有直接 iretq/eret/sysret 汇编指令
+    """I3: 用户态 CPU 状态只能通过 privileged 安全入口修改"""
+    # 检查 functions 中是否有直接 iretq/eret/sysret 汇编指令
     # 注意: "syscall" 作为标识符/字符串不应匹配, 仅匹配汇编指令
     patterns = [
         r'\biretq?\b',               # x86 中断返回
         r'\beret\b',                  # ARM 异常返回
         r'\bsysretq?\b',              # x86 系统调用返回
     ]
-    found = _scan_services(patterns, 'I3')
+    found = _scan_functions(patterns, 'I3')
     return found
 
 
 def check_i4():
-    """I4: 用户内存只能通过 framework 安全代理访问"""
-    # 检查 services 中是否有直接的用户内存访问 (非 copy_from/to_user)
+    """I4: 用户内存只能通过 privileged 安全代理访问"""
+    # 检查 functions 中是否有直接的用户内存访问 (非 copy_from/to_user)
     patterns = [
         r'read_volatile\b(?!.*copy_from_user)',
         r'write_volatile\b(?!.*copy_to_user)',
         r'core::ptr::read\b(?!.*copy_from_user)',
         r'core::ptr::write\b(?!.*copy_to_user)',
     ]
-    found = _scan_services(patterns, 'I4', exclude_patterns=[r'copy_from_user', r'copy_to_user', r'userptr'])
+    found = _scan_functions(patterns, 'I4', exclude_patterns=[r'copy_from_user', r'copy_to_user', r'userptr'])
     return found
 
 
 def check_i5():
-    """I5: 外设 MMIO/PIO 只能通过 framework 安全代理访问"""
-    # 检查 services 中是否有直接的 I/O 端口或 MMIO 读写指令
-    # 合法: 通过 framework::iomem / framework::ioport 代理
+    """I5: 外设 MMIO/PIO 只能通过 privileged 安全代理访问"""
+    # 检查 functions 中是否有直接的 I/O 端口或 MMIO 读写指令
+    # 合法: 通过 privileged::iomem / privileged::ioport 代理
     patterns = [
         r'\binb\s*\(', r'\boutb\s*\(',    # x86 I/O 端口
         r'\binl\s*\(', r'\boutl\s*\(',
         r'\binw\s*\(', r'\boutw\s*\(',
     ]
-    found = _scan_services(patterns, 'I5', exclude_patterns=[r'iomem', r'ioport', r'framework'])
+    found = _scan_functions(patterns, 'I5', exclude_patterns=[r'iomem', r'ioport', r'privileged'])
     return found
 
 
 def check_i6():
     """I6: 外设 DMA 不可写入内核内存"""
-    # 检查 services 中是否有直接的 DMA 映射操作 (不通过 dma_buf)
+    # 检查 functions 中是否有直接的 DMA 映射操作 (不通过 dma_buf)
     patterns = [
         r'dma_map\b(?!.*dma_buf)',
         r'dma_unmap\b(?!.*dma_buf)',
         r'dma_sync\b(?!.*dma_buf)',
     ]
-    found = _scan_services(patterns, 'I6', exclude_patterns=[r'dma_buf', r'framework'])
+    found = _scan_functions(patterns, 'I6', exclude_patterns=[r'dma_buf', r'privileged'])
     return found
 
 
-def _scan_services(patterns, invariant_id, exclude_patterns=None):
-    """扫描 services 目录, 返回匹配数"""
+def _scan_functions(patterns, invariant_id, exclude_patterns=None):
+    """扫描 functions 目录, 返回匹配数"""
     found = 0
-    for rs in SERVICES.rglob('*.rs'):
+    for rs in FUNCTIONS.rglob('*.rs'):
         # B01-18/B01-21 修复: 排除 vendored smoltcp (3rd-party,
         # 上游未修改, 无需按 I1-I6 守护)
         if 'smoltcp' in str(rs):
@@ -163,11 +163,11 @@ def main():
     print("=" * 70)
 
     checks = [
-        ('I1', 'CPU state not tampered by services', check_i1),
-        ('I2', 'Kernel memory not accessed by services', check_i2),
-        ('I3', 'User CPU state via framework only', check_i3),
-        ('I4', 'User memory via framework only', check_i4),
-        ('I5', 'MMIO/PIO via framework only', check_i5),
+        ('I1', 'CPU state not tampered by functions', check_i1),
+        ('I2', 'Kernel memory not accessed by functions', check_i2),
+        ('I3', 'User CPU state via privileged only', check_i3),
+        ('I4', 'User memory via privileged only', check_i4),
+        ('I5', 'MMIO/PIO via privileged only', check_i5),
         ('I6', 'DMA cannot write kernel memory', check_i6),
     ]
 

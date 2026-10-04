@@ -119,7 +119,7 @@
 不复制大段代码。用以下形式指向源：
 
 ```
-详见 [src/kernel/framework/proc/user_proc.rs:810-858](src/kernel/framework/proc/user_proc.rs) 的 `create()` 函数.
+详见 [src/kernel/privileged/proc/user_proc.rs:810-858](src/kernel/privileged/proc/user_proc.rs) 的 `create()` 函数.
 ```
 
 或在行内：

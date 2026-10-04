@@ -5,8 +5,8 @@
 //! "devfs::global() called before init_global()" panic, 测试卡死.
 //!
 //! 修复: test_runner_init 在 register_tests 之前调用:
-//! - crate::services::fs::devfs::init_global()
-//! - crate::services::fs::procfs::init_global()
+//! - crate::functions::fs::devfs::init_global()
+//! - crate::functions::fs::procfs::init_global()
 //!
 //! E-04 (2026-09-06): 测试运行器双端适配 — 注册逻辑已从 test_runner_init 抽取至
 //! `register_all_tests()` (kernel_test 的 test_runner_init 与 host 入口
@@ -16,7 +16,7 @@
 
 use std::fs;
 
-const TESTS_MOD_PATH: &str = "../src/kernel/framework/tests/mod.rs";
+const TESTS_MOD_PATH: &str = "../src/kernel/privileged/tests/mod.rs";
 
 fn read_source() -> String {
     fs::read_to_string(TESTS_MOD_PATH)
@@ -69,9 +69,9 @@ fn test_init_global_is_idempotent() {
     // 验收: devfs::init_global() 是幂等的 (OnceCell::get_or_init).
     // 多次调用不会 panic, 不会重置状态.
     // 主机端无 devfs 全局, 这里验证 init_global 签名可见且文档承诺幂等.
-    // 阶段 4b: devfs 实现已下沉 services/fs/devfs.rs
+    // 阶段 4b: devfs 实现已下沉 functions/fs/devfs.rs
     let devfs_rs =
-        fs::read_to_string("../src/kernel/services/fs/devfs.rs").expect("无法读取 devfs.rs");
+        fs::read_to_string("../src/kernel/functions/fs/devfs.rs").expect("无法读取 devfs.rs");
     assert!(
         devfs_rs.contains("OnceCell::get_or_init") || devfs_rs.contains("get_or_init"),
         "devfs::init_global 应使用 OnceCell::get_or_init 保证幂等"
@@ -80,21 +80,21 @@ fn test_init_global_is_idempotent() {
 
 #[test]
 fn test_smoltcp_impl_kernel_test_fw_init_stub() {
-    // 验收: services/net/init (kernel_test 桩) 提供 smoltcp_net_stack_* stub
-    let services_mod = fs::read_to_string("../src/kernel/services/net/mod.rs")
-        .expect("无法读取 services/net/mod.rs");
+    // 验收: functions/net/init (kernel_test 桩) 提供 smoltcp_net_stack_* stub
+    let functions_mod = fs::read_to_string("../src/kernel/functions/net/mod.rs")
+        .expect("无法读取 functions/net/mod.rs");
     assert!(
-        services_mod.contains("smoltcp_net_stack_socket_open")
-            && services_mod.contains("smoltcp_net_stack_slot_base"),
-        "services/net/init kernel_test 桩必须包含 smoltcp_net_stack_* stub"
+        functions_mod.contains("smoltcp_net_stack_socket_open")
+            && functions_mod.contains("smoltcp_net_stack_slot_base"),
+        "functions/net/init kernel_test 桩必须包含 smoltcp_net_stack_* stub"
     );
 
     // smoltcp_impl.rs 必须 cfg-gate fw_init import
-    let smoltcp_impl = fs::read_to_string("../src/kernel/services/net/smoltcp_impl.rs")
+    let smoltcp_impl = fs::read_to_string("../src/kernel/functions/net/smoltcp_impl.rs")
         .expect("无法读取 smoltcp_impl.rs");
     assert!(
         smoltcp_impl.contains("#[cfg(not(feature = \"kernel_test\"))]")
-            && smoltcp_impl.contains("use crate::framework::net::init as fw_init"),
-        "smoltcp_impl.rs 应 cfg-gate framework::net::init import (kernel_test 模式走桩)"
+            && smoltcp_impl.contains("use crate::privileged::net::init as fw_init"),
+        "smoltcp_impl.rs 应 cfg-gate privileged::net::init import (kernel_test 模式走桩)"
     );
 }

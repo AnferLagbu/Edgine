@@ -8,18 +8,18 @@
 //   - socket 句柄 alloc_user_id 无 wrapping 回绕复用 (冲突即报错)
 //   - pwm_set_syscall 须先校验 SYSTEM 域 SET_PWM 能力位 (防任意提权)
 //
-// 来源: docs/plan/audit-fix-07-services-net-ipc-credo.md
+// 来源: docs/plan/audit-fix-07-functions-net-ipc-credo.md
 
 use std::fs;
 use std::path::Path;
 
-const UNIX: &str = "src/kernel/services/net/unix.rs";
-const SYS_NET: &str = "src/kernel/services/net/syscall.rs";
-const SMOLTCP: &str = "src/kernel/services/net/smoltcp_impl.rs";
-const AUTH: &str = "src/kernel/services/sgeg/auth.rs";
-// 第二十五批: capability 权威定义反转归位 framework (DECISION-K 项 5 sgeg
-// 判据), services/sgeg/capability.rs 仅 re-export 壳 — 源码断言改读权威路径
-const CAP: &str = "src/kernel/framework/sgeg/capability.rs";
+const UNIX: &str = "src/kernel/functions/net/unix.rs";
+const SYS_NET: &str = "src/kernel/functions/net/syscall.rs";
+const SMOLTCP: &str = "src/kernel/functions/net/smoltcp_impl.rs";
+const AUTH: &str = "src/kernel/functions/sgeg/auth.rs";
+// 第二十五批: capability 权威定义反转归位 privileged (DECISION-K 项 5 sgeg
+// 判据), functions/sgeg/capability.rs 仅 re-export 壳 — 源码断言改读权威路径
+const CAP: &str = "src/kernel/privileged/sgeg/capability.rs";
 
 fn read(p: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))

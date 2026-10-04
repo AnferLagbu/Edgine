@@ -51,7 +51,7 @@
 
 - **ST-01. 抽取公共层 `mm/deferred_free.rs`**
   - 描述：把 E4 的机制迁入架构无关模块，x86_64 行为**不变**（纯重构）。
-  - 方案：新建 `src/kernel/framework/mm/deferred_free.rs`，迁入静态量、`frame_link_*`、`free_chain`、`settle_batch`、`drain_pending`；对外暴露 `defer_free(frame)` / `mark_remote_shootdown()` / `take_batch()` / `clear_shootdown_flag()` / `release_tail(shootdown_needed, batch)` / `admitted()` / `released()` / `pending_nonempty()`。
+  - 方案：新建 `src/kernel/privileged/mm/deferred_free.rs`，迁入静态量、`frame_link_*`、`free_chain`、`settle_batch`、`drain_pending`；对外暴露 `defer_free(frame)` / `mark_remote_shootdown()` / `take_batch()` / `clear_shootdown_flag()` / `release_tail(shootdown_needed, batch)` / `admitted()` / `released()` / `pending_nonempty()`。
   - 状态：[X]
 - **ST-02. x86_64 接线到公共层**
   - 描述：`vmm_x86_64.rs` 删除本地副本，改调公共 API（行为等价）。
@@ -113,7 +113,7 @@
 
 - AGENTS §2.3 六条门槛全过（双架构 0w0e / clippy 0 warning / 核心审计 / `make test-host` / `make test-kernel-host` / QEMU 双架构）。
 - 专项：aarch64 QEMU `-smp 2` 出现 `[SMP] TLB shootdown #N gen=… targets=…`；x86_64 QEMU 的 `[VMM] deferred-free admitted_total=N released_total=N pending=false` 行为不回归。
-- 架构合规：新增 unsafe 仅限 `framework/`；`// SAFETY:` 100% 覆盖（F4）；中文注释（F7）。
+- 架构合规：新增 unsafe 仅限 `privileged/`；`// SAFETY:` 100% 覆盖（F4）；中文注释（F7）。
 
 ## 风险与回退
 

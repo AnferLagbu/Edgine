@@ -3,10 +3,10 @@
 M6.4 模块耦合度审计脚本 — 循环依赖/依赖深度/公开接口/跨子系统直接访问
 
 检查规则:
-  (1) 检测 framework 子模块间的双向依赖 (循环耦合)
-  (2) 检测 framework 子模块间的跨子系统内部访问 (绕过 api.rs)
+  (1) 检测 privileged 子模块间的双向依赖 (循环耦合)
+  (2) 检测 privileged 子模块间的跨子系统内部访问 (绕过 api.rs)
   (3) 统计各模块的公开接口比例 (pub 项 / 总项)
-  (4) 检测 services 子模块间的隐式依赖传递
+  (4) 检测 functions 子模块间的隐式依赖传递
   (5) 生成模块依赖矩阵 JSON 报告
 
 退出码: 0 = 通过, 1 = 有严重违规
@@ -19,10 +19,10 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
-FRAMEWORK_BASE = Path('src/kernel/framework')
-SERVICES_BASE = Path('src/kernel/services')
+PRIVILEGED_BASE = Path('src/kernel/privileged')
+FUNCTIONS_BASE = Path('src/kernel/functions')
 
-# framework 子系统间允许的内部访问白名单
+# privileged 子系统间允许的内部访问白名单
 # 格式: (源模块, 目标模块内部子模块) → 允许
 # 默认: 只允许通过 api.rs / types.rs / mod.rs 访问
 ALLOWED_INTERNAL_ACCESS = {
@@ -48,57 +48,57 @@ ALLOWED_TIGHT_COUPLING = {
     ('mm', 'tests'),       # 测试框架↔被测模块
 }
 
-# framework 子系统间禁止直接访问的内部子模块模式
+# privileged 子系统间禁止直接访问的内部子模块模式
 # 如果 A 直接 use B::internal_submodule (而非 B::api / B::types / B::mod),
 # 则视为违规
 INTERNAL_PATTERNS = [
     # mm 内部 — api/vma/swap/kpti/page_fault/pressure/copy_user/pmm 已在 mm/mod.rs re-export
-    r'framework::mm::vmm_x86_64',
-    r'framework::mm::vmm_aarch64',
-    r'framework::mm::slab',
-    r'framework::mm::frame',
-    r'framework::mm::cow',
-    r'framework::mm::pcache',
-    r'framework::mm::kpti_aarch64',
-    r'framework::mm::numa',
-    r'framework::mm::arch',
+    r'privileged::mm::vmm_x86_64',
+    r'privileged::mm::vmm_aarch64',
+    r'privileged::mm::slab',
+    r'privileged::mm::frame',
+    r'privileged::mm::cow',
+    r'privileged::mm::pcache',
+    r'privileged::mm::kpti_aarch64',
+    r'privileged::mm::numa',
+    r'privileged::mm::arch',
     # proc 内部 — api/signal/rlimit/fd_alloc/seccomp/namespace/cgroup/elf/madvise_mlock/cpu_queue/session/thread/scheduler/scheduler_ex/process/canary/posix_timer/user_proc 已 re-export
-    r'framework::proc::oomd',
-    r'framework::proc::cfs',
+    r'privileged::proc::oomd',
+    r'privileged::proc::cfs',
     # syscall 内部 — types/epoll/api 已 re-export
-    r'framework::syscall::futex',
-    r'framework::syscall::eventfd',
-    r'framework::syscall::timerfd',
-    r'framework::syscall::signalfd',
-    r'framework::syscall::sendfile',
-    r'framework::syscall::io',
-    r'framework::syscall::mmap',
-    r'framework::syscall::mprotect',
-    r'framework::syscall::madvise_mlock',
-    r'framework::syscall::brk',
-    r'framework::syscall::clone',
-    r'framework::syscall::posix_timer',
-    r'framework::syscall::canary',
-    r'framework::syscall::raw',
+    r'privileged::syscall::futex',
+    r'privileged::syscall::eventfd',
+    r'privileged::syscall::timerfd',
+    r'privileged::syscall::signalfd',
+    r'privileged::syscall::sendfile',
+    r'privileged::syscall::io',
+    r'privileged::syscall::mmap',
+    r'privileged::syscall::mprotect',
+    r'privileged::syscall::madvise_mlock',
+    r'privileged::syscall::brk',
+    r'privileged::syscall::clone',
+    r'privileged::syscall::posix_timer',
+    r'privileged::syscall::canary',
+    r'privileged::syscall::raw',
     # fs 内部 — vfs 是 fs 的公共子模块入口, 不标记为内部
-    r'framework::fs::ramfs',
-    r'framework::fs::devfs',
+    r'privileged::fs::ramfs',
+    r'privileged::fs::devfs',
     # driver 内部 — net/virtio/display/storage/char/input/power/kexec/uefi 已在 driver/mod.rs glob re-export
     # sync 内部 — spinlock/irq_spinlock/lockdep 已 re-export
-    r'framework::sync::raw',
-    r'framework::sync::arch',
-    r'framework::sync::seqlock::raw',
-    r'framework::sync::rcu::raw',
+    r'privileged::sync::raw',
+    r'privileged::sync::arch',
+    r'privileged::sync::seqlock::raw',
+    r'privileged::sync::rcu::raw',
     # net 内部 — init 已 re-export (poll_network)
-    r'framework::net::smoltcp_impl',
-    r'framework::net::smoltcp',
-    r'framework::net::save',
+    r'privileged::net::smoltcp_impl',
+    r'privileged::net::smoltcp',
+    r'privileged::net::save',
     # timer 内部 — tick/calibration/tickless/time_sync/hrtimer/sleep/pit 已 glob re-export
     # idt 内部
-    r'framework::idt::statistics',
-    r'framework::idt::handlers',
-    r'framework::idt::safety',
-    r'framework::idt::types',
+    r'privileged::idt::statistics',
+    r'privileged::idt::handlers',
+    r'privileged::idt::safety',
+    r'privileged::idt::types',
     # arch 内部 — apic/ioapic/gdt/tss/uart/exception/mmu/gic/timer/X8664/Aarch64/shadow_stack 已 re-export
     # sgeg 内部 — api/session/engine/secure_boot 已 glob re-export
     # debug 内部 — api/ebpf/ftrace/kgdb 已 glob re-export
@@ -198,8 +198,8 @@ def check_internal_access(base, layer_name):
                         import_path = m.group(1)
 
                         for pattern in INTERNAL_PATTERNS:
-                            # 精确匹配: pattern 必须是完整路径段, 避免 framework::mm::vma 误匹配
-                            # framework::mm::vma_get_current_mm (vma 是 vma_get 的前缀但不是路径段)
+                            # 精确匹配: pattern 必须是完整路径段, 避免 privileged::mm::vma 误匹配
+                            # privileged::mm::vma_get_current_mm (vma 是 vma_get 的前缀但不是路径段)
                             # 在 pattern 后追加 :: 或匹配到路径末尾
                             if pattern in import_path:
                                 # 验证 pattern 后面要么是 :: 要么是路径结束
@@ -208,8 +208,8 @@ def check_internal_access(base, layer_name):
                                 if end < len(import_path) and import_path[end:end+2] != '::':
                                     continue
                                 # 排除自身模块的内部访问
-                                # e.g. framework::mm::pmm 被 framework/mm/ 内部使用是允许的
-                                # pattern 格式: framework::proc::process → 子系统是 proc (index 1)
+                                # e.g. privileged::mm::pmm 被 privileged/mm/ 内部使用是允许的
+                                # pattern 格式: privileged::proc::process → 子系统是 proc (index 1)
                                 target_mod = pattern.split('::')[1] if '::' in pattern else ''
                                 if target_mod == mod:
                                     continue
@@ -296,18 +296,18 @@ def generate_dependency_matrix_json(fw_matrix, svc_matrix, circular, internal_is
     """生成依赖矩阵 JSON 报告."""
     report = {
         'timestamp': '2026-06-16',
-        'framework_deps': {},
-        'services_deps': {},
+        'privileged_deps': {},
+        'functions_deps': {},
         'circular_deps': circular,
         'internal_access_issues': len(internal_issues),
         'pub_surface': pub_surface,
     }
 
     for mod in sorted(fw_matrix.keys()):
-        report['framework_deps'][mod] = dict(fw_matrix[mod])
+        report['privileged_deps'][mod] = dict(fw_matrix[mod])
 
     for mod in sorted(svc_matrix.keys()):
-        report['services_deps'][mod] = dict(svc_matrix[mod])
+        report['functions_deps'][mod] = dict(svc_matrix[mod])
 
     return report
 
@@ -318,10 +318,10 @@ def main():
     print('=' * 78)
     print()
 
-    # 1. framework 子模块间交叉依赖
-    print('[1] framework 子模块间交叉依赖')
+    # 1. privileged 子模块间交叉依赖
+    print('[1] privileged 子模块间交叉依赖')
     print('-' * 78)
-    fw_matrix, fw_details = scan_cross_module_deps(FRAMEWORK_BASE, 'framework')
+    fw_matrix, fw_details = scan_cross_module_deps(PRIVILEGED_BASE, 'privileged')
     fw_total = sum(sum(targets.values()) for targets in fw_matrix.values())
     print(f'总交叉引用数: {fw_total}')
 
@@ -333,10 +333,10 @@ def main():
             print(f'  {mod} → {dep_str}')
     print()
 
-    # 2. services 子模块间交叉依赖
-    print('[2] services 子模块间交叉依赖')
+    # 2. functions 子模块间交叉依赖
+    print('[2] functions 子模块间交叉依赖')
     print('-' * 78)
-    svc_matrix, svc_details = scan_cross_module_deps(SERVICES_BASE, 'services')
+    svc_matrix, svc_details = scan_cross_module_deps(FUNCTIONS_BASE, 'functions')
     svc_total = sum(sum(targets.values()) for targets in svc_matrix.values())
     print(f'总交叉引用数: {svc_total}')
 
@@ -368,7 +368,7 @@ def main():
     # 4. 跨子系统内部访问检查
     print('[4] 跨子系统内部访问检查')
     print('-' * 78)
-    internal_issues = check_internal_access(FRAMEWORK_BASE, 'framework')
+    internal_issues = check_internal_access(PRIVILEGED_BASE, 'privileged')
     if internal_issues:
         # 按源模块分组
         by_source = defaultdict(list)
@@ -387,9 +387,9 @@ def main():
     print()
 
     # 5. 公开接口比例
-    print('[5] framework 公开接口比例')
+    print('[5] privileged 公开接口比例')
     print('-' * 78)
-    pub_surface = count_pub_surface(FRAMEWORK_BASE)
+    pub_surface = count_pub_surface(PRIVILEGED_BASE)
     for mod in sorted(pub_surface.keys()):
         info = pub_surface[mod]
         print(f'  {mod}: {info["pub"]}/{info["total"]} ({info["ratio"]}%)')

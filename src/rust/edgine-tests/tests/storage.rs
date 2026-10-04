@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! services/storage 参数验证单元测试
+//! functions/storage 参数验证单元测试
 
 use edgine_tests::{
     disk_format_validate, disk_info_validate, disk_list_validate, disk_partition_validate, Errno,

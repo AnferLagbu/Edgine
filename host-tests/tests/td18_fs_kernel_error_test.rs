@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
-// TD-18: services::fs::ramfs::FsError 收敛到 KernelError (TD-08 V4 fs域)
+// TD-18: functions::fs::ramfs::FsError 收敛到 KernelError (TD-08 V4 fs域)
 //
 // 验收:
-//   - services/fs/ramfs.rs 不再独立定义 16 字段 FsError enum
+//   - functions/fs/ramfs.rs 不再独立定义 16 字段 FsError enum
 //   - FsError 3 FS 特有字段 (NotInitialized/IoError/Overflow) + 1 Kernel 包装
 //   - 旧变体 NotFound/AlreadyExists/NoSpace/PermissionDenied/InvalidArgument/
 //     OutOfMemory/Busy/NotSupported/NotADirectory/IsDirectory/ReadOnly/
@@ -19,10 +19,10 @@
 use std::fs;
 use std::path::Path;
 
-const RAMFS_RS: &str = "src/kernel/services/fs/ramfs.rs";
-// B09-12/DECISION-H13 P0-2: KernelError 定义迁回 framework/error.rs, services 侧 re-export.
-// 静态断言指向 framework/error.rs (变体/映射定义所在).
-const ERROR_RS: &str = "src/kernel/framework/error.rs";
+const RAMFS_RS: &str = "src/kernel/functions/fs/ramfs.rs";
+// B09-12/DECISION-H13 P0-2: KernelError 定义迁回 privileged/error.rs, functions 侧 re-export.
+// 静态断言指向 privileged/error.rs (变体/映射定义所在).
+const ERROR_RS: &str = "src/kernel/privileged/error.rs";
 
 fn read(path: &str) -> String {
     let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(path);
@@ -33,7 +33,7 @@ fn read(path: &str) -> String {
 fn fs_error_is_thin_wrapper() {
     let src = read(RAMFS_RS);
     assert!(
-        src.contains("Kernel(crate::services::error::KernelError)"),
+        src.contains("Kernel(crate::functions::error::KernelError)"),
         "FsError 必须含 `Kernel(KernelError)` 共享包装字段"
     );
 }
@@ -77,8 +77,8 @@ fn fs_error_preserves_three_fs_specific_variants() {
 fn to_errno_method_present() {
     let src = read(RAMFS_RS);
     assert!(
-        src.contains("pub fn to_errno(self) -> crate::framework::syscall::types::Errno")
-            || src.contains("pub fn to_errno(self) -> crate::framework::syscall::Errno"),
+        src.contains("pub fn to_errno(self) -> crate::privileged::syscall::types::Errno")
+            || src.contains("pub fn to_errno(self) -> crate::privileged::syscall::Errno"),
         "FsError 必须有 to_errno() 方法 (4 变体全覆盖)"
     );
     let to_errno_block_start = src.find("pub fn to_errno(self)").expect("to_errno 存在");
@@ -101,7 +101,7 @@ fn to_errno_method_present() {
 fn from_kernel_error_impl() {
     let src = read(RAMFS_RS);
     assert!(
-        src.contains("impl From<crate::services::error::KernelError> for FsError"),
+        src.contains("impl From<crate::functions::error::KernelError> for FsError"),
         "FsError 必须有 From<KernelError> 包装实现"
     );
 }

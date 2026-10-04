@@ -2,7 +2,7 @@
 //!
 //! ## 背景
 //!
-//! 本轮接通了运行时热插拔链路: framework 侧 `HotplugManager` 新增公开
+//! 本轮接通了运行时热插拔链路: privileged 侧 `HotplugManager` 新增公开
 //! `dispatch` (供自行探测事件的总线驱动复用统一分发语义), 并新增
 //! "重枚举先行、监听器后处理" 的时序契约; EGDF 侧新增块设备墓碑注销协议
 //! (`egdf_unregister_block`), 保证移除后索引稳定 (从中间物理删除会使后续
@@ -22,16 +22,16 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use edgine::kernel::framework::driver::block_device_state;
-use edgine::kernel::framework::driver::hotplug::{
+use edgine::kernel::functions::egdf::{Proto, register};
+use edgine::kernel::privileged::driver::block_device_state;
+use edgine::kernel::privileged::driver::hotplug::{
     BusType, DeviceLocation, HOTPLUG_MANAGER, HotplugEvent, HotplugListener, register_reenum_hook,
 };
-use edgine::kernel::framework::egdf::{
+use edgine::kernel::privileged::egdf::{
     BlockDevice, EGDF_DEVICES, egdf_blk_drives, egdf_blk_is_present, egdf_blk_is_removed,
     egdf_blk_read, egdf_blk_write, egdf_register_block_dev, egdf_unregister_block,
 };
-use edgine::kernel::framework::error::KernelError as FwError;
-use edgine::kernel::services::egdf::{Proto, register};
+use edgine::kernel::privileged::error::KernelError as FwError;
 
 /// 宿主块设备载体: 实现内核 `BlockDevice` 契约, 供注册表 dispatch。
 struct MockBlk {

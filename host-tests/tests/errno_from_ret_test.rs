@@ -1,18 +1,18 @@
 //! Errno::from_ret 映射完整性契约测试 (B05-04)
 //!
-//! 权威实现: `framework::errno::Errno` 的 `from_ret` (DECISION-J 2026-09-13:
-//! syscall/types 迁回 framework, services 侧 re-export 兼容). 本测试经
-//! services 公共 API 直接验证内核真实实现:
+//! 权威实现: `privileged::errno::Errno` 的 `from_ret` (DECISION-J 2026-09-13:
+//! syscall/types 迁回 privileged, functions 侧 re-export 兼容). 本测试经
+//! functions 公共 API 直接验证内核真实实现:
 //! 1. 所有已定义的 `Errno` 变体编号都能被 `from_ret` 正确往返映射
 //!    (返回的枚举编号与输入负返回码绝对值一致)
 //! 2. 未知错误码回退 `EINVAL` (POSIX 约定)
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `mirror_from_ret` 手工映射表 (78 项平行实现), 改引
-//! `edgine::kernel::services::syscall::types::Errno::from_ret` 真实实现.
-//! 原镜像表与内核 `framework/errno.rs::from_ret` 一一对应, 不再需要双维护.
+//! `edgine::kernel::functions::syscall::types::Errno::from_ret` 真实实现.
+//! 原镜像表与内核 `privileged/errno.rs::from_ret` 一一对应, 不再需要双维护.
 
-use edgine::kernel::services::syscall::types::Errno;
+use edgine::kernel::functions::syscall::types::Errno;
 
 /// 内核 `Errno` 枚举中已定义的全部编号 (B05-04 验收: 这些必须可往返)
 const ALL_DEFINED_ERRNOS: &[i32] = &[

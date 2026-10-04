@@ -7,8 +7,8 @@
 
 use std::fs;
 
-const VMM: &str = "../src/kernel/framework/mm/vmm_aarch64.rs";
-const EXCEPTION: &str = "../src/kernel/framework/arch/aarch64/exception.rs";
+const VMM: &str = "../src/kernel/privileged/mm/vmm_aarch64.rs";
+const EXCEPTION: &str = "../src/kernel/privileged/arch/aarch64/exception.rs";
 
 fn read(path: &str) -> String {
     fs::read_to_string(path).unwrap_or_else(|e| panic!("读取 {path} 失败: {e}"))

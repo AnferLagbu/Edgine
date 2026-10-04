@@ -235,7 +235,7 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
         RESULT=1
     else
         A64_LOG="$LOG_DIR/qemu_boot_aarch64.log"
-        # 批次 Z ④: virt 机型挂 virtio-net 网卡 (services 权威探测链路, 对齐
+        # 批次 Z ④: virt 机型挂 virtio-net 网卡 (functions 权威探测链路, 对齐
         # Y 批次挂盘冒烟配置). -netdev user 无 DHCP 服务, smoltcp 初始化
         # 偶发 "TX 超时" WARN 属预期, 不影响 boot 里程碑.
         # 镜像为 arm64 Image (内嵌 Image 头, 见 Makefile/link/aarch64.ld),
@@ -270,12 +270,12 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 warn "[aarch64] 未观察到 TLB shootdown 里程碑 (发送路径未触发?)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
-            # 批次 Z ④: 验证 services virtio-net 经 NetOps 安全桥注册链路
-            # (framework 侧单向拉取日志, 由 framework/net/init/probe.rs 输出)
-            if grep -q "nic: probed successfully (services bridge)" "$A64_LOG"; then
+            # 批次 Z ④: 验证 functions virtio-net 经 NetOps 安全桥注册链路
+            # (privileged 侧单向拉取日志, 由 privileged/net/init/probe.rs 输出)
+            if grep -q "nic: probed successfully (functions bridge)" "$A64_LOG"; then
                 ok "[aarch64] virtio-net 经 NetOps 安全桥探测成功 (批次 Z ④)"
             else
-                warn "[aarch64] 未发现 virtio-net services bridge 探测日志 (Z ④ 链路未走通)"
+                warn "[aarch64] 未发现 virtio-net functions bridge 探测日志 (Z ④ 链路未走通)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
             # aarch64 完整启动: 应进入用户态 (EL0)

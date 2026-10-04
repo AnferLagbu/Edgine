@@ -1,7 +1,7 @@
-//! Host-side test utilities — re-implements services layer validation
+//! Host-side test utilities — re-implements functions layer validation
 //! logic for pure-scalar (no kernel-state) testing on host std environment.
 //!
-//! The actual services layer uses #[deny(unsafe_code)] and depends on
+//! The actual functions layer uses #[deny(unsafe_code)] and depends on
 //! the no_std kernel crate. For host testing, we extract the parameter
 //! validation rules into equivalent pure functions.
 
@@ -45,7 +45,7 @@ pub const PROT_READ: i32 = 0x1;
 pub const PROT_WRITE: i32 = 0x2;
 pub const PROT_EXEC: i32 = 0x4;
 
-/// 验证 mprotect 参数 (等价于 services::mm::mprotect::mprotect_syscall 的验证部分)
+/// 验证 mprotect 参数 (等价于 functions::mm::mprotect::mprotect_syscall 的验证部分)
 pub fn mprotect_validate(addr: u64, len: u64, prot: i32) -> Result<(), Errno> {
     if addr & 0xFFF != 0 {
         return Err(Errno::EINVAL);
@@ -69,7 +69,7 @@ pub const CLONE_SIGHAND: u64 = 0x00000800;
 pub const CLONE_THREAD: u64 = 0x00010000;
 pub const CLONE_PARENT_SETTID: u64 = 0x00100000;
 
-/// 验证 clone 参数 (等价于 services::proc::clone::clone_syscall 的验证部分)
+/// 验证 clone 参数 (等价于 functions::proc::clone::clone_syscall 的验证部分)
 pub fn clone_validate(
     flags: u64,
     child_stack: u64,
@@ -95,7 +95,7 @@ pub const WNOHANG: i32 = 0x1;
 pub const WUNTRACED: i32 = 0x2;
 pub const WCONTINUED: i32 = 0x8;
 
-/// 验证 wait4 参数 (等价于 services::proc::wait4::wait4_syscall 的验证部分)
+/// 验证 wait4 参数 (等价于 functions::proc::wait4::wait4_syscall 的验证部分)
 pub fn wait4_validate(pid: i32, options: i32) -> Result<(), Errno> {
     // pid 范围: -32768..=32767
     const PID_MAX: i32 = 0x7FFF;
@@ -113,7 +113,7 @@ pub fn wait4_validate(pid: i32, options: i32) -> Result<(), Errno> {
 
 // =============== info validation ===============
 
-/// 验证 getpgid 参数 (等价于 services::proc::info::getpgid_syscall 的验证部分)
+/// 验证 getpgid 参数 (等价于 functions::proc::info::getpgid_syscall 的验证部分)
 pub fn getpgid_validate(pid: i32) -> Result<(), Errno> {
     if pid < 0 {
         return Err(Errno::EINVAL);
@@ -121,7 +121,7 @@ pub fn getpgid_validate(pid: i32) -> Result<(), Errno> {
     Ok(())
 }
 
-/// 验证 uname 参数 (等价于 services::proc::info::uname_syscall 的验证部分)
+/// 验证 uname 参数 (等价于 functions::proc::info::uname_syscall 的验证部分)
 pub fn uname_validate(buf: u64) -> Result<(), Errno> {
     if buf == 0 {
         return Err(Errno::EFAULT);
@@ -129,7 +129,7 @@ pub fn uname_validate(buf: u64) -> Result<(), Errno> {
     Ok(())
 }
 
-/// 验证 gettimeofday 参数 (等价于 services::proc::info::gettimeofday_syscall 的验证部分)
+/// 验证 gettimeofday 参数 (等价于 functions::proc::info::gettimeofday_syscall 的验证部分)
 pub fn gettimeofday_validate(tv: u64) -> Result<(), Errno> {
     if tv == 0 {
         return Err(Errno::EFAULT);
@@ -139,7 +139,7 @@ pub fn gettimeofday_validate(tv: u64) -> Result<(), Errno> {
 
 // =============== io validation ===============
 
-/// 验证 pipe 参数 (等价于 services::fs::io::pipe_syscall 的验证部分)
+/// 验证 pipe 参数 (等价于 functions::fs::io::pipe_syscall 的验证部分)
 pub fn pipe_validate(fds: u64) -> Result<(), Errno> {
     if fds == 0 {
         return Err(Errno::EFAULT);
@@ -147,7 +147,7 @@ pub fn pipe_validate(fds: u64) -> Result<(), Errno> {
     Ok(())
 }
 
-/// 验证 dup 参数 (等价于 services::fs::io::dup_syscall 的验证部分)
+/// 验证 dup 参数 (等价于 functions::fs::io::dup_syscall 的验证部分)
 pub fn dup_validate(oldfd: i32) -> Result<(), Errno> {
     if oldfd < 0 {
         return Err(Errno::EBADF);
@@ -155,7 +155,7 @@ pub fn dup_validate(oldfd: i32) -> Result<(), Errno> {
     Ok(())
 }
 
-/// 验证 dup2 参数 (等价于 services::fs::io::dup2_syscall 的验证部分)
+/// 验证 dup2 参数 (等价于 functions::fs::io::dup2_syscall 的验证部分)
 pub fn dup2_validate(oldfd: i32, newfd: i32) -> Result<(), Errno> {
     if oldfd < 0 || newfd < 0 {
         return Err(Errno::EBADF);
@@ -163,7 +163,7 @@ pub fn dup2_validate(oldfd: i32, newfd: i32) -> Result<(), Errno> {
     Ok(())
 }
 
-/// 验证 fcntl 参数 (等价于 services::fs::io::fcntl_syscall 的验证部分)
+/// 验证 fcntl 参数 (等价于 functions::fs::io::fcntl_syscall 的验证部分)
 pub fn fcntl_validate(fd: i32, _cmd: i32, _arg: u64) -> Result<(), Errno> {
     if fd < 0 {
         return Err(Errno::EBADF);
@@ -183,7 +183,7 @@ pub const SOL_SOCKET: i32 = 1;
 /// SO_REUSEADDR
 pub const SO_REUSEADDR: i32 = 2;
 
-/// 验证 socket 参数 (等价于 services::net::syscall::socket_syscall 的验证部分)
+/// 验证 socket 参数 (等价于 functions::net::syscall::socket_syscall 的验证部分)
 pub fn socket_validate(domain: i32, sock_type: i32, protocol: i32) -> Result<(), Errno> {
     if domain != AF_INET {
         return Err(Errno::EINVAL);
@@ -197,7 +197,7 @@ pub fn socket_validate(domain: i32, sock_type: i32, protocol: i32) -> Result<(),
     Ok(())
 }
 
-/// 验证 bind 参数 (等价于 services::net::syscall::bind_syscall 的验证部分)
+/// 验证 bind 参数 (等价于 functions::net::syscall::bind_syscall 的验证部分)
 pub fn bind_validate(fd: i32, addr_ptr: u64, _addrlen: u32) -> Result<(), Errno> {
     if fd < 0 {
         return Err(Errno::EBADF);
@@ -350,7 +350,7 @@ pub fn recvmsg_validate(fd: i32, msg_ptr: u64, _flags: i32) -> Result<(), Errno>
 
 // =============== init 启动状态 (host 模拟) ===============
 
-/// init 启动状态常量 (与 services::init 保持一致)
+/// init 启动状态常量 (与 functions::init 保持一致)
 pub const INIT_STATUS_NOT_STARTED: u32 = 0;
 pub const INIT_STATUS_UNPACKING: u32 = 1;
 pub const INIT_STATUS_LOADING: u32 = 2;
@@ -485,7 +485,7 @@ pub const MAP_ANONYMOUS: i32 = 0x20;
 pub const MAP_FIXED: i32 = 0x10;
 pub const MAP_FAILED: i64 = -1; // (void*)-1
 
-/// 验证 mmap 参数 (等价于 services::mm::mmap::mmap_syscall 的验证部分)
+/// 验证 mmap 参数 (等价于 functions::mm::mmap::mmap_syscall 的验证部分)
 pub fn mmap_validate(
     _addr: u64,
     size: u64,
@@ -514,7 +514,7 @@ pub fn mmap_validate(
 
 // =============== brk validation ===============
 
-/// 验证 brk 参数 (等价于 services::mm::brk::brk_syscall 的验证部分)
+/// 验证 brk 参数 (等价于 functions::mm::brk::brk_syscall 的验证部分)
 pub fn brk_validate(addr: u64) -> Result<(), Errno> {
     // POSIX 允许 0 (取当前) 或非 0 (请求新 brk)
     if addr == 0 {
@@ -530,7 +530,7 @@ pub fn brk_validate(addr: u64) -> Result<(), Errno> {
 
 // =============== path validation ===============
 
-/// 验证 chdir 参数 (等价于 services::fs::path::chdir_syscall 的验证部分)
+/// 验证 chdir 参数 (等价于 functions::fs::path::chdir_syscall 的验证部分)
 pub fn chdir_validate(path_ptr: u64) -> Result<(), Errno> {
     if path_ptr == 0 {
         return Err(Errno::EFAULT);
@@ -538,7 +538,7 @@ pub fn chdir_validate(path_ptr: u64) -> Result<(), Errno> {
     Ok(())
 }
 
-/// 验证 getcwd 参数 (等价于 services::fs::path::getcwd_syscall 的验证部分)
+/// 验证 getcwd 参数 (等价于 functions::fs::path::getcwd_syscall 的验证部分)
 pub fn getcwd_validate(buf_ptr: u64, size: u64) -> Result<(), Errno> {
     if buf_ptr == 0 || size == 0 {
         return Err(Errno::EINVAL);
@@ -804,7 +804,7 @@ pub fn getrlimit_validate(resource: i32, rlim_ptr: u64) -> Result<(), Errno> {
 
 /// 解析 IPv4 字面量 "a.b.c.d"
 ///
-/// 等价于 `framework::net::init::parse_ipv4_literal` (无错处理; 不合法返 None)。
+/// 等价于 `privileged::net::init::parse_ipv4_literal` (无错处理; 不合法返 None)。
 pub fn parse_ipv4_literal(s: &str) -> Option<[u8; 4]> {
     let mut octets = [0u8; 4];
     let mut idx = 0usize;
@@ -839,7 +839,7 @@ struct HostEntry {
     ip: [u8; 4],
 }
 
-/// 内置静态 hosts (与 framework::net::init::STATIC_HOSTS 保持一致)
+/// 内置静态 hosts (与 privileged::net::init::STATIC_HOSTS 保持一致)
 const STATIC_HOSTS: &[HostEntry] = &[
     HostEntry { name: "localhost",       ip: [127, 0, 0, 1] },
     HostEntry { name: "router",          ip: [10, 0, 2, 2]  },
@@ -848,7 +848,7 @@ const STATIC_HOSTS: &[HostEntry] = &[
     HostEntry { name: "edgine-gateway",    ip: [10, 0, 2, 2]  },
 ];
 
-/// 简单 DNS 解析 (等价于 `framework::net::init::dns_resolve`)
+/// 简单 DNS 解析 (等价于 `privileged::net::init::dns_resolve`)
 pub fn dns_resolve(name: &str) -> Option<[u8; 4]> {
     for entry in STATIC_HOSTS {
         if entry.name.eq_ignore_ascii_case(name) {
@@ -863,7 +863,7 @@ pub fn dns_resolve(name: &str) -> Option<[u8; 4]> {
 
 // =============== Socket 子系统 (D1.3) ===============
 
-/// Socket 错误 (等价于 services::net::socket::SocketError)
+/// Socket 错误 (等价于 functions::net::socket::SocketError)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SocketError {
     PermissionDenied,
@@ -908,7 +908,7 @@ impl SocketError {
     }
 }
 
-/// Socket 协议族 (等价于 services::net::socket::Domain)
+/// Socket 协议族 (等价于 functions::net::socket::Domain)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum Domain {
@@ -924,7 +924,7 @@ impl Domain {
     }
 }
 
-/// Socket 类型 (等价于 services::net::socket::SockType)
+/// Socket 类型 (等价于 functions::net::socket::SockType)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum SockType {
@@ -942,7 +942,7 @@ impl SockType {
     }
 }
 
-/// IPv4 Socket 地址 (等价于 services::net::socket::SockAddrIn)
+/// IPv4 Socket 地址 (等价于 functions::net::socket::SockAddrIn)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SockAddrIn {
     pub port: u16,
@@ -955,7 +955,7 @@ impl SockAddrIn {
     }
 }
 
-/// IPv4 Socket 地址 → 8 字节 C 结构体 (等价于 services::net::socket::sockaddr_in_to_bytes)
+/// IPv4 Socket 地址 → 8 字节 C 结构体 (等价于 functions::net::socket::sockaddr_in_to_bytes)
 pub fn sockaddr_in_to_bytes(addr: &SockAddrIn) -> [u8; 8] {
     let mut buf = [0u8; 8];
     buf[0..2].copy_from_slice(&(2u16).to_be_bytes()); // AF_INET
@@ -964,7 +964,7 @@ pub fn sockaddr_in_to_bytes(addr: &SockAddrIn) -> [u8; 8] {
     buf
 }
 
-/// 8 字节 C 结构体 → IPv4 Socket 地址 (等价于 services::net::socket::bytes_to_sockaddr_in)
+/// 8 字节 C 结构体 → IPv4 Socket 地址 (等价于 functions::net::socket::bytes_to_sockaddr_in)
 pub fn bytes_to_sockaddr_in(buf: &[u8; 8]) -> Option<SockAddrIn> {
     let family = u16::from_be_bytes([buf[0], buf[1]]);
     if family != 2 {
@@ -976,7 +976,7 @@ pub fn bytes_to_sockaddr_in(buf: &[u8; 8]) -> Option<SockAddrIn> {
     Some(SockAddrIn { port, ip })
 }
 
-/// 解析 "a.b.c.d" 格式 IP 字符串 (等价于 services::net::socket::parse_ipv4)
+/// 解析 "a.b.c.d" 格式 IP 字符串 (等价于 functions::net::socket::parse_ipv4)
 pub fn socket_parse_ipv4(s: &str) -> Option<[u8; 4]> {
     let mut parts = s.split('.');
     let mut out = [0u8; 4];
@@ -1002,7 +1002,7 @@ pub fn endpoint_from_str(ip: &str, port: u16) -> Option<SockAddrIn> {
 
 // =============== Socket Syscall 12 dispatch (D1.4) ===============
 //
-// 各 dispatch 的"参数预校验" (前几行 if-check) 在 services/net/syscall.rs 与
+// 各 dispatch 的"参数预校验" (前几行 if-check) 在 functions/net/syscall.rs 与
 // edgine-tests 中等价, 因为它们只是纯标量验证; 真正的 fw:: 委托调用需要
 // QEMU 集成测试覆盖。
 
@@ -1079,7 +1079,7 @@ pub fn shutdown_syscall_validate(fd: i32, _how: i32) -> Result<(), Errno> {
 pub fn sendmsg_syscall_validate(fd: i32, msg_ptr: u64, _flags: i32) -> Result<(), Errno> {
     if fd < 0 { return Err(Errno::EBADF); }
     if msg_ptr == 0 { return Err(Errno::EFAULT); }
-    // 注: iov 校验依赖 raw::check_user_buf + read_u64_from_user, 需 framework
+    // 注: iov 校验依赖 raw::check_user_buf + read_u64_from_user, 需 privileged
     // host 端无法复刻, 委托 fw 调用; 此处只覆盖前两个最常见错误
     Ok(())
 }

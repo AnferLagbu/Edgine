@@ -13,7 +13,7 @@
 //!
 //! ## 为何用静态契约 (而非镜像常量)
 //!
-//! `framework/arch/aarch64/*` 为架构特有源码, host-tests (host 侧编译) 无法
+//! `privileged/arch/aarch64/*` 为架构特有源码, host-tests (host 侧编译) 无法
 //! 引用其符号, 亦无法在 x86_64 上编译 aarch64 内联汇编。故本测试以**源码文本
 //! 分析**固化契约 —— 与同类测试 `aarch64_gic_contract_test.rs` (批次 A) 同手法。
 //!
@@ -55,11 +55,11 @@ fn slice_between<'a>(src: &'a str, begin: &str, end: &str) -> &'a str {
     &rest[..end_off]
 }
 
-const PSCI_RS: &str = "src/kernel/framework/arch/aarch64/psci.rs";
-const SMP_INIT_RS: &str = "src/kernel/framework/arch/aarch64/smp_init.rs";
-const GIC_RS: &str = "src/kernel/framework/arch/aarch64/gic.rs";
-const START_S: &str = "src/kernel/framework/boot/aarch64/start.S";
-const AARCH64_LD: &str = "src/kernel/framework/link/aarch64.ld";
+const PSCI_RS: &str = "src/kernel/privileged/arch/aarch64/psci.rs";
+const SMP_INIT_RS: &str = "src/kernel/privileged/arch/aarch64/smp_init.rs";
+const GIC_RS: &str = "src/kernel/privileged/arch/aarch64/gic.rs";
+const START_S: &str = "src/kernel/privileged/boot/aarch64/start.S";
+const AARCH64_LD: &str = "src/kernel/privileged/link/aarch64.ld";
 
 /// 次核启动槽的 10 个字段 (Rust 声明顺序 = 汇编字节偏移递增顺序).
 const AP_BOOT_FIELDS: [&str; 10] = [
@@ -312,7 +312,7 @@ fn per_cpu_gic_enables_all_kernel_sgis() {
         !src.contains("enable_freg_sgi"),
         "gic.rs 不得残留 enable_freg_sgi (SGI 使能已收敛到 init_per_cpu)"
     );
-    let freg = read("src/kernel/framework/arch/aarch64/freg/mod.rs");
+    let freg = read("src/kernel/privileged/arch/aarch64/freg/mod.rs");
     assert!(
         !freg.contains("enable_freg_sgi"),
         "freg/mod.rs 不得残留 enable_freg_sgi (F9)"

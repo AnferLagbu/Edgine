@@ -5,13 +5,13 @@
 //!
 //! ## B08-21 处置 (2026-09-06): host 不可测, 平行实现已移除
 //!
-//! 原镜像对象为 `framework/driver/net/e1000.rs::eeprom_read` /
+//! 原镜像对象为 `privileged/driver/net/e1000.rs::eeprom_read` /
 //! `read_mac_address` (I-40) 的 EERD 寄存器状态机 + 魔数 + MAC 小端组装.
 //! 评估结论: **内核该部分 host 不可测**, 原因:
 //!
 //! 1. `eeprom_read` / `read_mac_address` 均为**私有** `fn` (非 pub), host-tests
 //!    无法引用;
-//! 2. 两者依赖 `E1000Io` (framework iomem::IoMem 的 MMIO 封装), 寄存器访问
+//! 2. 两者依赖 `E1000Io` (privileged iomem::IoMem 的 MMIO 封装), 寄存器访问
 //!    走真实 MMIO 读写, host 环境无法以 MockIoMem 注入 (MockIoMem 只是 host
 //!    侧自建的寄存器模拟, 无法挂到内核私有 MMIO 路径);
 //! 3. 真实硬件路径 (e1000-real-hw) 下 EERD 轮询含 `spin_loop` 超时 + MMIO 访问.

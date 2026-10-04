@@ -43,10 +43,10 @@ jobs:
           fi
 
   # ========================================================================
-  # Job 2: clippy -D unsafe-code (services 层 fail-fast)
+  # Job 2: clippy -D unsafe-code (functions 层 fail-fast)
   # ========================================================================
-  clippy-no-unsafe-services:
-    name: clippy -D unsafe-code (services)
+  clippy-no-unsafe-functions:
+    name: clippy -D unsafe-code (functions)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,10 +63,10 @@ jobs:
             other/target
           key: ${{ runner.os }}-clippy-x86_64-${{ hashFiles('src/rust/Cargo.toml', 'src/rust/Cargo.lock') }}
 
-      - name: 静态断言 — services/ 所有 .rs 都有 #![deny(unsafe_code)]
+      - name: 静态断言 — functions/ 所有 .rs 都有 #![deny(unsafe_code)]
         run: |
           missing=0
-          for f in $(find src/kernel/services -name '*.rs'); do
+          for f in $(find src/kernel/functions -name '*.rs'); do
             first_line=$(head -1 "$f")
             if ! echo "$first_line" | grep -q 'deny(unsafe_code)'; then
               echo "  ❌ $f 首行缺少 #![deny(unsafe_code)]: $first_line"
@@ -74,30 +74,30 @@ jobs:
             fi
           done
           if [ $missing -gt 0 ]; then
-            echo "::error::共 $missing 个 services 文件未声明 #![deny(unsafe_code)]"
+            echo "::error::共 $missing 个 functions 文件未声明 #![deny(unsafe_code)]"
             exit 1
           fi
-          echo "✅ 全部 services/ .rs 已声明 #![deny(unsafe_code)]"
+          echo "✅ 全部 functions/ .rs 已声明 #![deny(unsafe_code)]"
 
-      - name: cargo build (services 层编译期 unsafe 拦截)
+      - name: cargo build (functions 层编译期 unsafe 拦截)
         working-directory: src/rust
         run: |
           mkdir -p ../../other/build/log
           # 方案 D: 裸机 build 指向 kernel manifest; 方案 B: 注入 build-std
-          cargo build --manifest-path ../kernel/Cargo.toml --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target x86_64-unknown-none --target-dir ../../other/target --lib 2>&1 | tee ../../other/build/log/build_services.txt | tail -5
-          if grep -E "error.*unsafe|services/.*\.rs.*unsafe" ../../other/build/log/build_services.txt >/dev/null; then
-            echo "::error::services 层检测到 unsafe 代码 (编译期 fail-fast 失败)"
-            grep -E "error.*unsafe|services/.*\.rs" ../../other/build/log/build_services.txt | head -20
+          cargo build --manifest-path ../kernel/Cargo.toml --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target x86_64-unknown-none --target-dir ../../other/target --lib 2>&1 | tee ../../other/build/log/build_functions.txt | tail -5
+          if grep -E "error.*unsafe|functions/.*\.rs.*unsafe" ../../other/build/log/build_functions.txt >/dev/null; then
+            echo "::error::functions 层检测到 unsafe 代码 (编译期 fail-fast 失败)"
+            grep -E "error.*unsafe|functions/.*\.rs" ../../other/build/log/build_functions.txt | head -20
             exit 1
           fi
-          echo "✅ services 层编译通过 (编译期 unsafe 拦截 OK)"
+          echo "✅ functions 层编译通过 (编译期 unsafe 拦截 OK)"
 
       - name: 上传编译报告
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-services-unsafe-report
-          path: other/build/log/build_services.txt
+          name: build-functions-unsafe-report
+          path: other/build/log/build_functions.txt
           retention-days: 14
 
   # ========================================================================

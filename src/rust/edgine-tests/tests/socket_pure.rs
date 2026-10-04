@@ -1,6 +1,6 @@
 //! Socket 子系统纯逻辑测试 (D1.3)
 //!
-//! 覆盖 `services::net::socket` 中不依赖 FFI 的 pure-scalar / pure-bytes 逻辑:
+//! 覆盖 `functions::net::socket` 中不依赖 FFI 的 pure-scalar / pure-bytes 逻辑:
 //! - SocketError::from_i32 (POSIX errno → 强类型)
 //! - Domain::from_i32 (AF_INET 2, 其它 None)
 //! - SockType::from_i32 (SOCK_STREAM 1, SOCK_DGRAM 2, 其它 None)
@@ -295,10 +295,10 @@ fn test_sockaddr_in_size() {
     use std::mem::size_of;
     assert_eq!(size_of::<SockAddrIn>(), 6);
     assert_eq!(size_of::<[u8; 8]>(),      8);
-    // Domain / SockType 在 services 层标 #[repr(i32)], 大小为 4
+    // Domain / SockType 在 functions 层标 #[repr(i32)], 大小为 4
     assert_eq!(size_of::<Domain>(),       4);
     assert_eq!(size_of::<SockType>(),     4);
     // SocketError 16 个无 payload 变体 + Other(i32) → 大小 8
-    // (与服务层保持一致 — services 端未显式 #[repr(i32)], 跟随 Rust 默认)
+    // (与服务层保持一致 — functions 端未显式 #[repr(i32)], 跟随 Rust 默认)
     assert_eq!(size_of::<SocketError>(),  8);
 }

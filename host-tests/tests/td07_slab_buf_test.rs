@@ -9,11 +9,11 @@
 use std::fs;
 use std::path::Path;
 
-const NET_INIT: &str = "src/kernel/framework/net/init.rs";
-const NET_SM_FI: &str = "src/kernel/framework/net/init/sm_fi.rs";
+const NET_INIT: &str = "src/kernel/privileged/net/init.rs";
+const NET_SM_FI: &str = "src/kernel/privileged/net/init/sm_fi.rs";
 // B04-09 (2026-08-25): buffer accessor 与 k_malloc/k_free 逻辑随拆分
 // 移至 init/raw.rs, init.rs 经 `pub use raw::*` 引用.
-const NET_RAW: &str = "src/kernel/framework/net/init/raw.rs";
+const NET_RAW: &str = "src/kernel/privileged/net/init/raw.rs";
 
 fn read(path: &str) -> String {
     let p = Path::new(env!("CARGO_MANIFEST_DIR"))

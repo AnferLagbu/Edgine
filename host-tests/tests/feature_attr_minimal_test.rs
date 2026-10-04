@@ -65,17 +65,17 @@ fn test_edgine_lib_rs_feature_count_minimal() {
 
 #[test]
 fn test_kernel_uses_core_arch_asm_not_bare_asm() {
-    // 扫描 framework/, 内联汇编必须走 `core::arch::asm!` 路径.
+    // 扫描 privileged/, 内联汇编必须走 `core::arch::asm!` 路径.
     // 允许两种风格:
     //   1) `core::arch::asm!(...)` 直接限定
     //   2) `use core::arch::asm;` 后裸用 `asm!(...)` (仍来自稳定 core::arch)
     // 不允许: 完全没有 core::arch 来源的 `asm!(...)` 调用
     //         `llvm_asm!` 旧式调用
     // 例外: smoltcp/benches (vendored 第三方, 不在审查范围).
-    let framework = repo_root().join("src/kernel/framework");
+    let privileged = repo_root().join("src/kernel/privileged");
     let mut bad: Vec<String> = Vec::new();
 
-    fn walk(dir: &Path, out: &mut Vec<String>, framework_root: &Path) {
+    fn walk(dir: &Path, out: &mut Vec<String>, privileged_root: &Path) {
         if let Ok(rd) = fs::read_dir(dir) {
             for entry in rd.flatten() {
                 let p = entry.path();
@@ -83,7 +83,7 @@ fn test_kernel_uses_core_arch_asm_not_bare_asm() {
                     if p.ends_with("smoltcp") || p.ends_with("target") {
                         continue;
                     }
-                    walk(&p, out, framework_root);
+                    walk(&p, out, privileged_root);
                 } else if p.extension().and_then(|s| s.to_str()) == Some("rs") {
                     let src = match fs::read_to_string(&p) {
                         Ok(s) => s,
@@ -106,12 +106,12 @@ fn test_kernel_uses_core_arch_asm_not_bare_asm() {
                             && !line.contains("core::arch::")
                             && !has_qualified_use
                         {
-                            let rel = p.strip_prefix(framework_root).unwrap_or(&p);
+                            let rel = p.strip_prefix(privileged_root).unwrap_or(&p);
                             out.push(format!("{}:{}: {}", rel.display(), n + 1, line.trim()));
                         }
                         // 旧式 llvm_asm!
                         if trimmed.contains("llvm_asm!") {
-                            let rel = p.strip_prefix(framework_root).unwrap_or(&p);
+                            let rel = p.strip_prefix(privileged_root).unwrap_or(&p);
                             out.push(format!(
                                 "{}:{}: llvm_asm! (旧式 API, 已废弃): {}",
                                 rel.display(),
@@ -125,7 +125,7 @@ fn test_kernel_uses_core_arch_asm_not_bare_asm() {
         }
     }
 
-    walk(&framework, &mut bad, &framework);
+    walk(&privileged, &mut bad, &privileged);
 
     assert!(
         bad.is_empty(),

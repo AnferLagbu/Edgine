@@ -2,7 +2,7 @@
 //!
 //! ## B08-20 处置 (2026-09-06): host 不可测, 平行实现已移除
 //!
-//! 原镜像对象为 `framework/net/smoltcp_impl.rs::smoltcp_now` (I-50) 的
+//! 原镜像对象为 `privileged/net/smoltcp_impl.rs::smoltcp_now` (I-50) 的
 //! hrtimer/tick 决策 + ns→ms 截断 + 溢出保护. 评估结论: **内核该函数 host 不可测**,
 //! 原因:
 //!

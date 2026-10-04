@@ -2,8 +2,8 @@
 //!
 //! ## 背景
 //!
-//! SATA 端口插拔不产生 PCIe 热插拔事件, 故新增 services 侧 `ahci_port_poll`
-//! 辅助轮询 (读 `PxSSTS` 检测链路变化) 并经 `register_aux_poll` 接入 framework
+//! SATA 端口插拔不产生 PCIe 热插拔事件, 故新增 functions 侧 `ahci_port_poll`
+//! 辅助轮询 (读 `PxSSTS` 检测链路变化) 并经 `register_aux_poll` 接入 privileged
 //! softirq, 复用统一热插拔分发语义 (`BusType::Sata` 事件)。本文件补齐该新链路
 //! 的可在主机端验证的部分。
 //!
@@ -24,10 +24,10 @@
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use edgine::kernel::framework::driver::hotplug::{
+use edgine::kernel::functions::driver::storage::drives_for_location;
+use edgine::kernel::privileged::driver::hotplug::{
     BusType, DeviceLocation, HOTPLUG_MANAGER, HotplugEvent, HotplugListener,
 };
-use edgine::kernel::services::driver::storage::drives_for_location;
 
 /// 分发类用例的进程内串行锁 (全局管理器单例)。
 static MGR_LOCK: Mutex<()> = Mutex::new(());
@@ -132,8 +132,8 @@ fn drives_for_location_empty_without_controller() {
 /// 端口级热插拔接线契约 (静态): 防未来回归。
 #[test]
 fn ahci_port_hotplug_wiring_present() {
-    let storage = std::fs::read_to_string("../src/kernel/services/driver/storage/mod.rs")
-        .expect("读取 services storage mod.rs 失败");
+    let storage = std::fs::read_to_string("../src/kernel/functions/driver/storage/mod.rs")
+        .expect("读取 functions storage mod.rs 失败");
     assert!(
         storage.contains("register_aux_poll(ahci_port_poll)"),
         "storage_init 未注册 AHCI 端口级轮询回调"
@@ -143,8 +143,8 @@ fn ahci_port_hotplug_wiring_present() {
         "缺 ahci_port_poll 端口轮询实现"
     );
 
-    let ahci = std::fs::read_to_string("../src/kernel/services/driver/storage/ahci.rs")
-        .expect("读取 services ahci.rs 失败");
+    let ahci = std::fs::read_to_string("../src/kernel/functions/driver/storage/ahci.rs")
+        .expect("读取 functions ahci.rs 失败");
     assert!(
         ahci.contains("pub fn scan_ports"),
         "缺 scan_ports 端口扫描入口"

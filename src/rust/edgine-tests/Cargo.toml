@@ -2,7 +2,7 @@
 name = "edgine-tests"
 version = "0.1.0"
 edition = "2024"
-description = "Host-side unit tests for Edgine kernel services (parameter validation, pure logic)"
+description = "Host-side unit tests for Edgine kernel functions (parameter validation, pure logic)"
 
 [lib]
 path = "src/lib.rs"

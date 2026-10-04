@@ -15,11 +15,11 @@
 //! - 本文件验证 `assert!(rc >= 1)` 等业务正确性约束
 //!
 //! ## B08-14 迁移 (2026-09-06)
-//! 改引内核 `services::fs::unkfs` 真实实现 (host-test feature 暴露), 消除
+//! 改引内核 `functions::fs::unkfs` 真实实现 (host-test feature 暴露), 消除
 //! 平行实现依赖. API 与测试版同构 (get_cas/sha256/CasIndex/CasHash/
 //! UnkfsBlockPointer/UnkfsZap/UnkfsZil), 仅 import 路径变化.
 
-use edgine::kernel::services::fs::unkfs::{bp, dedup, zap, zil};
+use edgine::kernel::functions::fs::unkfs::{bp, dedup, zap, zil};
 
 #[test]
 fn stress_cas_insert_lookup_100() {

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-批量添加 SAFETY 注释到 framework 层缺失的 unsafe 块
+批量添加 SAFETY 注释到 privileged 层缺失的 unsafe 块
 
 根据 audit_unsafe.py --missing-only --machine 的输出，
 为每个缺失 SAFETY 的 unsafe 块添加合适的注释。

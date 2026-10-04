@@ -11,7 +11,7 @@
 //! ## B08-20 处置 (2026-09-06): 算法镜像移除, 静态契约保留
 //!
 //! 原 `pick_frame_rsp` 镜像 `do_signal_deliver` 的 use_alternate 决策
-//! (framework/proc/signal.rs:552-567). 评估结论: **该决策 host 不可直接测** —
+//! (privileged/proc/signal.rs:552-567). 评估结论: **该决策 host 不可直接测** —
 //! 它内联于 `do_signal_deliver` 函数体, 依赖全局 PROCESS_TABLE (当前进程
 //! `sigaltstack_*` 字段) + `InterruptFrame` 指针 + `do_signal_default_action`
 //! (可能终止进程), 无法在 host 环境以函数形式调用.
@@ -26,7 +26,7 @@
 #[test]
 fn source_signal_uses_sigaltstack() {
     // P1-I-45 源码静态扫描: signal.rs 必须实现替代栈判定
-    let source = include_str!("../../src/kernel/framework/proc/signal.rs");
+    let source = include_str!("../../src/kernel/privileged/proc/signal.rs");
     assert!(
         source.contains("sigaltstack_addr")
             && source.contains("sigaltstack_size")
@@ -50,7 +50,7 @@ fn source_syscall_clears_onstack_on_sigreturn() {
     // P1-I-45 源码静态扫描: dispatch.rs pre-dispatch rt_sigreturn 特殊路径
     // 必须清 SS_ONSTACK (T3 迁移: 原 sys_rt_sigreturn 死分支函数已删除,
     // 清除逻辑随迁移至 syscall_dispatch_from_frame 可达路径)
-    let source = include_str!("../../src/kernel/framework/syscall/dispatch.rs");
+    let source = include_str!("../../src/kernel/privileged/syscall/dispatch.rs");
     let rt_sigreturn_start = source
         .find("if is_rt_sigreturn {")
         .expect("必须存在 rt_sigreturn 特殊处理路径");
@@ -61,7 +61,7 @@ fn source_syscall_clears_onstack_on_sigreturn() {
     // 必须清 SS_ONSTACK
     assert!(
         rt_sigreturn_block.contains("sigaltstack_flags")
-            && rt_sigreturn_block.contains("!crate::framework::proc::SS_ONSTACK"),
+            && rt_sigreturn_block.contains("!crate::privileged::proc::SS_ONSTACK"),
         "P1-I-45: rt_sigreturn 路径必须清除 SS_ONSTACK 标记"
     );
 }

@@ -22,7 +22,7 @@
 
 use std::fs;
 
-const EXC: &str = "../src/kernel/framework/arch/aarch64/exception.rs";
+const EXC: &str = "../src/kernel/privileged/arch/aarch64/exception.rs";
 
 fn read() -> String {
     fs::read_to_string(EXC).unwrap_or_else(|e| panic!("read {EXC}: {e}"))

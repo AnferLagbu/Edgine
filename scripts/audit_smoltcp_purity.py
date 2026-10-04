@@ -27,10 +27,10 @@ from pathlib import Path
 # 常量
 # ============================================================================
 BASE = Path("src/kernel")
-# W3.1 (2026-06-24): smoltcp 从 framework/ 迁到 services/ (决策 3-B)
-# 原因: smoltcp 100% safe Rust, 应在 services 层 (FK 合规)
-VENDORED_SMOLTCP = BASE / "services" / "net" / "smoltcp"
-LOCK_FILE = BASE / "services" / "net" / "smoltcp.versions"
+# W3.1 (2026-06-24): smoltcp 从 privileged/ 迁到 functions/ (决策 3-B)
+# 原因: smoltcp 100% safe Rust, 应在 functions 层 (FK 合规)
+VENDORED_SMOLTCP = BASE / "functions" / "net" / "smoltcp"
+LOCK_FILE = BASE / "functions" / "net" / "smoltcp.versions"
 UPSTREAM_REPO = "https://github.com/smoltcp-rs/smoltcp.git"
 
 

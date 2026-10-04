@@ -10,8 +10,8 @@ use std::fs;
 use std::path::Path;
 
 // vfs_close_internal 已在 B 方案拆分第二步从 api.rs 物理迁至 handle.rs
-const VFS_HANDLE: &str = "src/kernel/services/fs/handle.rs";
-const UNKFS: &str = "src/kernel/services/fs/unkfs/unkfs_data.rs";
+const VFS_HANDLE: &str = "src/kernel/functions/fs/handle.rs";
+const UNKFS: &str = "src/kernel/functions/fs/unkfs/unkfs_data.rs";
 
 fn read(path: &str) -> String {
     let p = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -89,7 +89,7 @@ fn test_vfs_close_second_call_is_noop() {
     let body = &src[body_start..];
     // 必须有 snapshot 模式 + match (B-9.5: 快照取自 per-process FdTable::close_fd)
     assert!(
-        body.contains("let snapshot = crate::framework::proc::with_current_fd_table("),
+        body.contains("let snapshot = crate::privileged::proc::with_current_fd_table("),
         "vfs_close_internal 必须用 snapshot 模式 (TD-03 原子 claim-and-clear)"
     );
     // snapshot 为空时必须 return 0 (跳过副作用)

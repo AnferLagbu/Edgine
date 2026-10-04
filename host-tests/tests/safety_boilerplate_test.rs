@@ -40,7 +40,7 @@ fn check_boilerplate(file: &str, top_dupes: &[(&str, usize)]) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap() // Edgine workspace root (host-tests' parent)
-        .join("src/kernel/framework")
+        .join("src/kernel/privileged")
         .join(file);
     let src =
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
@@ -97,12 +97,12 @@ fn test_kernel_wide_boilerplate_inventory() {
     // I-11 修复只针对 scheduler_ex.rs / pmm.rs. 其他文件暂时记录在案,
     // 后续按 I-11 同方案逐个修复 (审计 5 原文提到仅这两个文件存在"行数过多").
     // 此测试报告但不强制 — 是 inventory 性质, 不 panic.
-    let framework = Path::new(env!("CARGO_MANIFEST_DIR"))
+    let privileged = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("src/kernel/framework");
+        .join("src/kernel/privileged");
     let mut report: Vec<String> = Vec::new();
-    walk(&framework, &mut |path: &Path| {
+    walk(&privileged, &mut |path: &Path| {
         if path.extension().and_then(|s| s.to_str()) != Some("rs") {
             return;
         }
@@ -116,7 +116,7 @@ fn test_kernel_wide_boilerplate_inventory() {
             .filter(|(_, c)| **c > MAX_DUPLICATES)
             .collect();
         if !over.is_empty() {
-            let rel = path.strip_prefix(&framework).unwrap_or(path);
+            let rel = path.strip_prefix(&privileged).unwrap_or(path);
             for (text, count) in over {
                 report.push(format!("{}: {:?} 重复 {} 次", rel.display(), text, count));
             }

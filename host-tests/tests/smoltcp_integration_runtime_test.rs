@@ -21,7 +21,7 @@ fn read_src(rel: &str) -> String {
     fs::read_to_string(&p).unwrap_or_else(|e| panic!("无法读取 {}: {}", p.display(), e))
 }
 
-const SMOLTCP_IMPL_RS: &str = "src/kernel/services/net/smoltcp_impl.rs";
+const SMOLTCP_IMPL_RS: &str = "src/kernel/functions/net/smoltcp_impl.rs";
 
 // ============================================================================
 // 结构体字段验证
@@ -196,7 +196,7 @@ fn test_poll_all_fd_has_no_fd_validation() {
 
 #[test]
 fn test_socket_create_fd_caller_uses_mut() {
-    let socket_rs = read_src("src/kernel/services/net/socket.rs");
+    let socket_rs = read_src("src/kernel/functions/net/socket.rs");
     // socket 函数调用 socket_create_fd, 需要 mut binding
     let idx = socket_rs
         .find("fn socket(domain:")
@@ -210,7 +210,7 @@ fn test_socket_create_fd_caller_uses_mut() {
 
 #[test]
 fn test_close_fd_caller_uses_mut() {
-    let socket_rs = read_src("src/kernel/services/net/socket.rs");
+    let socket_rs = read_src("src/kernel/functions/net/socket.rs");
     let idx = socket_rs
         .find("pub fn close(fd:")
         .expect("应存在 close 函数");
@@ -222,7 +222,7 @@ fn test_close_fd_caller_uses_mut() {
 }
 
 // ============================================================================
-// services 层 0 unsafe 不变式
+// functions 层 0 unsafe 不变式
 // ============================================================================
 
 #[test]

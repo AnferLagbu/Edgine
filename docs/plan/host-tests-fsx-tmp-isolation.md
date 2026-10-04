@@ -19,7 +19,7 @@
   - 详情: 已按方案执行反向验证。并发启动 lib 单测二进制（`test_fsx_stress`）与集成测试二进制（同名 `test_fsx_stress`）—— 这正是改造前自撞的用例组合 —— 两进程均 `rc=0`，运行后 `/tmp/edgine-fsx-*` 无残留。另 `cargo test --release --test fsx_integration_test` 6 passed；`cargo check --all-targets` 0 warning；`cargo clippy --all-targets --release --keep-going -- -D warnings` rc=0。
 
 - **影响面与边界**
-  - 描述: 仅影响 host-tests 自身（`fsx` 是宿主侧 `std::fs` 压力工具，非内核逻辑，不涉 framework/services 正确性）；但会污染 AGENTS §2.3 门槛 1（`./ci/build.sh all` 含 host 测试）与门槛 4（`make test-host`）的判定，使真实失败与假失败无法区分，违背 §12.4「先定义成功标准再验证」的目标驱动前提。
+  - 描述: 仅影响 host-tests 自身（`fsx` 是宿主侧 `std::fs` 压力工具，非内核逻辑，不涉 privileged/functions 正确性）；但会污染 AGENTS §2.3 门槛 1（`./ci/build.sh all` 含 host 测试）与门槛 4（`make test-host`）的判定，使真实失败与假失败无法区分，违背 §12.4「先定义成功标准再验证」的目标驱动前提。
   - 方案: 修复仅需改动测试侧目录构造，不需要 CI 新增步骤，也不改变任何被测量行为。
   - 状态: [X]
   - 详情: 实际改动面与预估一致 —— 仅 `host-tests/src/fsx.rs`（新增 helper、默认配置、`run()` 幂等化）与 `host-tests/tests/fsx_integration_test.rs`（6 处目录构造、导入调整）。未涉内核侧代码、未新增 CI 步骤、未改变任何被测量行为。

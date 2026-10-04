@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-批量把 framework 内所有 `spin::Mutex<T>` / `spin::Mutex::new(...)` 替换为
+批量把 privileged 内所有 `spin::Mutex<T>` / `spin::Mutex::new(...)` 替换为
 `IrqSpinLock<T>` / `IrqSpinLock::new(...)`, 并自动添加 use 语句.
 
 策略:
   1. 扫描 `spin::Mutex` 和 `spin::Mutex::new` 所有出现
   2. 替换文本 (类型/init)
-  3. 若文件没有 `use crate::kernel::framework::sync::irq_spinlock::IrqSpinLock`, 在 use 区添加
+  3. 若文件没有 `use crate::kernel::privileged::sync::irq_spinlock::IrqSpinLock`, 在 use 区添加
   4. 不动 .lock() 调用 (Guard API 兼容)
   5. 跳过 `spin::Once` / `spin::OnceCell` (已识别的 init-once 模式, 单独处理)
   6. 跳过 host-tests / 第三方目录 (miri-tests 已删除 2026-06-26)
@@ -21,9 +21,9 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SCAN_DIR = "src/kernel/framework"
+SCAN_DIR = "src/kernel/privileged"
 
-USE_LINE = "use crate::kernel::framework::sync::irq_spinlock::IrqSpinLock;\n"
+USE_LINE = "use crate::kernel::privileged::sync::irq_spinlock::IrqSpinLock;\n"
 
 
 def list_files_using_spin() -> list[Path]:
@@ -105,11 +105,11 @@ def patch_file(path: Path) -> tuple[int, str]:
     n_replaced += n
     text = new_text
 
-    # 3. use spin::Mutex; → use crate::kernel::framework::sync::irq_spinlock::IrqSpinLock as Mutex;
+    # 3. use spin::Mutex; → use crate::kernel::privileged::sync::irq_spinlock::IrqSpinLock as Mutex;
     #    这样既兼容 `Mutex<T>` 类型使用, 又不引入第三方依赖
     new_text, n = re.subn(
         r"^use\s+spin::Mutex\s*;\s*$",
-        "use crate::kernel::framework::sync::irq_spinlock::IrqSpinLock as Mutex;",
+        "use crate::kernel::privileged::sync::irq_spinlock::IrqSpinLock as Mutex;",
         text,
         flags=re.MULTILINE,
     )
@@ -126,7 +126,7 @@ def patch_file(path: Path) -> tuple[int, str]:
     text = new_text
 
     # 5. 自动添加 use IrqSpinLock 语句 (若无)
-    if "IrqSpinLock" in text and "use crate::kernel::framework::sync::irq_spinlock::IrqSpinLock" not in text:
+    if "IrqSpinLock" in text and "use crate::kernel::privileged::sync::irq_spinlock::IrqSpinLock" not in text:
         m = re.search(r"^(use [^;]+;\s*\n)+", text, re.MULTILINE)
         if m:
             insert_pos = m.end()

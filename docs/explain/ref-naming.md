@@ -8,7 +8,7 @@
 
 edgine 工程哲学的 3 个核心信条：(1) 不盲从任何 OS，包括 Linux，必要才参考业界惯例；(2) 直接实现 Linux ABI 以获得最大兼容性，内核内部实现保持 Rust 纯净；(3) 务实而非教条，工具链用现成（GCC/LLVM），libc 复用 glibc/musl，不重造轮子。
 
-edgine 内核 100% Rust（framework unsafe + services safe），但 ABI 层面直接兼容 Linux。学 Asterinas 路线：内核实现与 ABI 兼容性不冲突，syscall 编号是 ABI 约定而非内核实现细节。
+edgine 内核 100% Rust（privileged unsafe + functions safe），但 ABI 层面直接兼容 Linux。学 Asterinas 路线：内核实现与 ABI 兼容性不冲突，syscall 编号是 ABI 约定而非内核实现细节。
 
 ## 二、命名规则（NetBSD 风格中性）
 
@@ -32,6 +32,8 @@ edgine 内核 100% Rust（framework unsafe + services safe），但 ABI 层面�
 | 容错子系统 | FREG | Fault Recovery Edgine |
 
 重命名映射（旧名 → 新名）：`QueenX → Edgine` / `QX → EG` / `NestFS → UNKFS` / `Chitin → EGDF` / `Credo → SGEG` / `Barrier → FREG`。除子系统外，通用内存屏障（Barrier）原语一并归入 `FREG`。
+
+框内核双层目录命名：`framework → privileged`（TCB 子树）/ `services → functions`（去特权子树）。`framework`/`services` 属框内核架构术语（源自 Asterinas 框架论文），非本项目自有目录名；本项目改用描述性命名区分两个子树，避免与架构概念混同。内部嵌套模块 `driver/framework → driver/infra` 同步改名。架构术语本身（`OS Framework`/`OS Services`）与外部标准术语（UEFI `BootServices`/`RuntimeServices`、smoltcp `Differential Services`）保留不动。
 
 ### 路径层级
 

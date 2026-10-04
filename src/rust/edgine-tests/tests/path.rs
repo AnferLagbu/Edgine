@@ -1,6 +1,6 @@
 //! 路径系统调用服务层参数验证测试
 //!
-//! 覆盖 services/fs/path.rs 的标量验证:
+//! 覆盖 functions/fs/path.rs 的标量验证:
 //! - chdir: path_ptr != 0
 //! - getcwd: buf_ptr != 0 && size > 0
 

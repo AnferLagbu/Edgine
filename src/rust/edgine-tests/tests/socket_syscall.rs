@@ -1,6 +1,6 @@
 //! Socket Syscall 12 dispatch 预校验测试 (D1.4)
 //!
-//! 覆盖 `services::net::syscall.rs` 的 12 个 dispatch 的"参数预校验"逻辑:
+//! 覆盖 `functions::net::syscall.rs` 的 12 个 dispatch 的"参数预校验"逻辑:
 //! - fd 范围 (EBADF)
 //! - 指针非空 (EFAULT/EINVAL)
 //! - 长度非零 (EFAULT)

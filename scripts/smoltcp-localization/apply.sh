@@ -3,12 +3,12 @@
 # 用法: scripts/smoltcp-localization/apply.sh
 #
 # 前提:
-#   - 已在 src/kernel/services/net/smoltcp/ 部署上游源 (无本地化)
+#   - 已在 src/kernel/functions/net/smoltcp/ 部署上游源 (无本地化)
 #   - 13 个 patch 文件已生成 (相对路径, 在同目录)
 # 退出码: 0 = 全部成功, 1 = 有失败
 
 set -uo pipefail
-VENDORED="src/kernel/services/net/smoltcp"
+VENDORED="src/kernel/functions/net/smoltcp"
 PATCH_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # 12 个本地化文件 (路径 → patch)

@@ -1,6 +1,6 @@
 # 跨文档战略矛盾与活跃任务收口
 
-> 0-1 句话说清"为什么有这个计划": 当前 4 份活跃 plan 文档 + 多份 explain 文档 + framework 内部模块注释之间存在 3 处 P1 跨文档战略矛盾与 6 处 P2 漂移, 若不收敛则后续 plan 同步工作反复漂移. 本计划同步建立"活跃任务进度对比基线", 一表覆盖 5 份 plan 文档与实装对齐状态.
+> 0-1 句话说清"为什么有这个计划": 当前 4 份活跃 plan 文档 + 多份 explain 文档 + privileged 内部模块注释之间存在 3 处 P1 跨文档战略矛盾与 6 处 P2 漂移, 若不收敛则后续 plan 同步工作反复漂移. 本计划同步建立"活跃任务进度对比基线", 一表覆盖 5 份 plan 文档与实装对齐状态.
 
 ## 工程计划 A: 跨文档战略矛盾与活跃任务收口
 
@@ -82,21 +82,21 @@
 - **条目**: DECISION-037 草案
 - **现状事实**:
   - [ref-naming.md](../explain/ref-naming.md) §三 (2026-07-05 修订): 0-299 直接使用 Linux 原始编号, 无需翻译层
-  - [framework/syscall/mod.rs:24-35](../../src/kernel/framework/syscall/mod.rs#L24-L35): 0-299 保留给未来 linuxulator (与 Linux 1:1 映射), EG_* (500-899)
-  - [framework/syscall/api.rs:7](../../src/kernel/framework/syscall/api.rs#L7): 0-299 Linux 兼容编号 (SYS_*), 直接使用 Linux 标准编号
+  - [privileged/syscall/mod.rs:24-35](../../src/kernel/privileged/syscall/mod.rs#L24-L35): 0-299 保留给未来 linuxulator (与 Linux 1:1 映射), EG_* (500-899)
+  - [privileged/syscall/api.rs:7](../../src/kernel/privileged/syscall/api.rs#L7): 0-299 Linux 兼容编号 (SYS_*), 直接使用 Linux 标准编号
   - [vision-hope.md](../explain/vision-hope.md) 风险 2: 提供 syscall 翻译层 (类似 linuxulator) 将 OpenHarmony syscall 编号映射到 EG 原生编号
-  - 同一 framework 内部 mod.rs 与 api.rs 自相矛盾
+  - 同一 privileged 内部 mod.rs 与 api.rs 自相矛盾
 - **方案 A (推荐)**: 走"直接 Linux ABI" 路线
   - 描述: 统一为 ref-naming.md 立场 (0-299 直接用 Linux 编号)
   - 优势: 简化 ABI 层; Linux 静态/动态二进制可直接运行; Asterinas 已验证
   - 劣势: OpenHarmony 用户态需 syscall 翻译层 (与 vision-hope.md 风险 2 缓解方案需保留)
-  - 待修: 更新 framework/syscall/mod.rs:24-35 注释; 删除或改写 vision-hope.md 风险 2
+  - 待修: 更新 privileged/syscall/mod.rs:24-35 注释; 删除或改写 vision-hope.md 风险 2
 - **方案 B**: 走"EG_* 原生 + linuxulator 翻译" 路线
   - 描述: 统一为 vision-hope.md 立场 (保留 linuxulator, EG_* 原生编号 500+)
   - 优势: 与 OpenHarmony 战略对齐; 保留 syscall 翻译空间
   - 劣势: 需实现 linuxulator; Linux 二进制需经翻译层; 与 Asterinas 偏离
-  - 待修: 更新 ref-naming.md §三; 保留 framework/syscall/mod.rs 现状
-- **状态**: [X] (2026-08-03 决策落地: A 主线 + B 部分. 0-299 直接 Linux, 500+ EG 错开. 2026-09-26 复验: `framework/syscall/mod.rs:22-30` 注释已统一为 A 立场; `vision-hope.md` 已整篇重写, 原"风险 2"节不复存在)
+  - 待修: 更新 ref-naming.md §三; 保留 privileged/syscall/mod.rs 现状
+- **状态**: [X] (2026-08-03 决策落地: A 主线 + B 部分. 0-299 直接 Linux, 500+ EG 错开. 2026-09-26 复验: `privileged/syscall/mod.rs:22-30` 注释已统一为 A 立场; `vision-hope.md` 已整篇重写, 原"风险 2"节不复存在)
 
 ##### A2. CHANGELOG.md 处置
 
@@ -118,49 +118,49 @@
   - 待修: 删除 README.md 3 处 + AGENTS.md 2 处 + host-tests/README.md 3 处引用
 - **状态**: [X] (2026-08-03 决策落地: B 方案. 删除 10 处引用, git commit 即变更日志. 2026-09-26 复验补清: host-tests/README.md 实际残留 3 处 (原记载"2 处"实为 3 处), 本轮按 DECISION-038 删除/改写; 现全仓除归档文档与 `scan_antx_residue.py` 白名单外 0 引用)
 
-##### A3. userctx 反向依赖 services 的 P1 边界违反
+##### A3. userctx 反向依赖 functions 的 P1 边界违反
 
 - **条目**: DECISION-039 草案
 - **现状事实**:
-  - [framework/userctx.rs:9](../../src/kernel/framework/userctx.rs#L9) `pub use crate::kernel::services::userctx::*;` — TCB 层 re-export 非 TCB 层类型
-  - [framework/usermode.rs:38/58](../../src/kernel/framework/usermode.rs#L38) `unsafe fn enter_user_mode` 直接读取 `ctx.rip`/`ctx.elr_el1` 等字段
-  - 实际类型定义位于 [services/userctx.rs:30/57](../../src/kernel/services/userctx.rs#L30) 两个 `#[repr(C)] UserContext` 结构
-  - 违反 [explain-framekernel.md](../explain/explain-framekernel.md) "services→framework 单向数据流"
-- **方案 A (推荐)**: 将 `UserContext` 迁回 framework 层
-  - 描述: 寄存器快照属于"用户态 CPU 状态", 按 I3 不变式归 framework
+  - [privileged/userctx.rs:9](../../src/kernel/privileged/userctx.rs#L9) `pub use crate::kernel::functions::userctx::*;` — TCB 层 re-export 非 TCB 层类型
+  - [privileged/usermode.rs:38/58](../../src/kernel/privileged/usermode.rs#L38) `unsafe fn enter_user_mode` 直接读取 `ctx.rip`/`ctx.elr_el1` 等字段
+  - 实际类型定义位于 [functions/userctx.rs:30/57](../../src/kernel/functions/userctx.rs#L30) 两个 `#[repr(C)] UserContext` 结构
+  - 违反 [explain-framekernel.md](../explain/explain-framekernel.md) "functions→privileged 单向数据流"
+- **方案 A (推荐)**: 将 `UserContext` 迁回 privileged 层
+  - 描述: 寄存器快照属于"用户态 CPU 状态", 按 I3 不变式归 privileged
   - 优势: 恢复 framekernel 单向数据流; types 与 mechanism 自然分离
-  - 劣势: services/userctx.rs 调用方需更新 import (应只是 `pub use` 调整)
-  - 待修: framework/userctx.rs 重新声明 `UserContext` 完整定义 (x86_64 + aarch64 两个 cfg 分支); services/userctx.rs 改为反向 re-export 兼容
-- **方案 B**: 在 framework 层加编译期布局断言
-  - 描述: 在 framework 层重新声明 `#[repr(C)]` 等价结构 + `static_assertions::assert_eq_size!/assert_eq_offset!`
-  - 优势: 改动最小; 保留 services 层类型归属
+  - 劣势: functions/userctx.rs 调用方需更新 import (应只是 `pub use` 调整)
+  - 待修: privileged/userctx.rs 重新声明 `UserContext` 完整定义 (x86_64 + aarch64 两个 cfg 分支); functions/userctx.rs 改为反向 re-export 兼容
+- **方案 B**: 在 privileged 层加编译期布局断言
+  - 描述: 在 privileged 层重新声明 `#[repr(C)]` 等价结构 + `static_assertions::assert_eq_size!/assert_eq_offset!`
+  - 优势: 改动最小; 保留 functions 层类型归属
   - 劣势: 仍有运行时数据流 (即使编译期验证); 架构责任不清晰
-  - 待修: framework 层加镜像结构 + 编译期断言; services 层 UserContext 加 `#[repr(C)]` 验证
-- **状态**: [X] (2026-08-03 决策落地: A 方案. framework/userctx.rs 重声明 + services/userctx.rs 反向 re-export 兼容. 2026-09-26 复验: `framework/userctx.rs:28/55` 两处 `#[repr(C)] UserContext` 存在, `services/userctx.rs:11` 为 `pub use crate::framework::userctx::*;`)
+  - 待修: privileged 层加镜像结构 + 编译期断言; functions 层 UserContext 加 `#[repr(C)]` 验证
+- **状态**: [X] (2026-08-03 决策落地: A 方案. privileged/userctx.rs 重声明 + functions/userctx.rs 反向 re-export 兼容. 2026-09-26 复验: `privileged/userctx.rs:28/55` 两处 `#[repr(C)] UserContext` 存在, `functions/userctx.rs:11` 为 `pub use crate::privileged::userctx::*;`)
 
 #### B. P2 待办清单 (可执行化)
 
-##### B1. framework/mod.rs:10 注释漂移
+##### B1. privileged/mod.rs:10 注释漂移
 
 - **条目**: code-review-2026-08-01 #027
-- **现状**: `framework/ (TCB, ~3000+ LoC, unsafe 允许)` — 实际约 10 万行
+- **现状**: `privileged/ (TCB, ~3000+ LoC, unsafe 允许)` — 实际约 10 万行
 - **方案**:
-  - 描述: 改为 `framework/ (TCB, unsafe 允许)` 移除具体数字
+  - 描述: 改为 `privileged/ (TCB, unsafe 允许)` 移除具体数字
   - 优势: 避免再次漂移
   - 状态: [X] (2026-08-04 落地, commit 待定)
 
-##### B2. services/net 与 services/fs 头注释过期
+##### B2. functions/net 与 functions/fs 头注释过期
 
 - **条目**: code-review-2026-08-01 #028
 - **现状**:
-  - services/net/mod.rs:4-9 — 头注释 "v2.7, 2026-06-04" 已替换为 "封装 smoltcp 协议栈 safe 入口, IPv4/IPv6 双栈已实装 (DECISION-032), 进度见 progress-active-tasks.md"
-  - services/fs/mod.rs:4-9 — 头注释 "v2.5, 2026-06-04" 已替换为 "VFS + 7 个原生 FS + UNKFS 列表, 0 unsafe"
-  - services/proc/mod.rs:4-9 — 头注释 "v2.11, 2026-06-04" 已替换为 "18+ 子模块列表, 0 unsafe"
+  - functions/net/mod.rs:4-9 — 头注释 "v2.7, 2026-06-04" 已替换为 "封装 smoltcp 协议栈 safe 入口, IPv4/IPv6 双栈已实装 (DECISION-032), 进度见 progress-active-tasks.md"
+  - functions/fs/mod.rs:4-9 — 头注释 "v2.5, 2026-06-04" 已替换为 "VFS + 7 个原生 FS + UNKFS 列表, 0 unsafe"
+  - functions/proc/mod.rs:4-9 — 头注释 "v2.11, 2026-06-04" 已替换为 "18+ 子模块列表, 0 unsafe"
   - 全部三文件头注释均已更新为当前真实状态, 含模块清单 + 引用 progress-active-tasks.md
 - **方案**:
   - 描述: 删除三文件头注释中的迁移状态块, 替换为当前真实状态描述
   - 优势: 与代码现状一致
-  - 状态: [X] (2026-08-04 落地, 见 services/net/mod.rs:7-9 / services/fs/mod.rs:7-9 / services/proc/mod.rs:7-9. 验证: §2.4 #1-#4 全过)
+  - 状态: [X] (2026-08-04 落地, 见 functions/net/mod.rs:7-9 / functions/fs/mod.rs:7-9 / functions/proc/mod.rs:7-9. 验证: §2.4 #1-#4 全过)
 
 ##### B3. README.md remote 命名与 kernel-roadmap 链接过期
 
@@ -187,8 +187,8 @@
 
 - **条目**: clippy-pedantic-cleanup 工程计划 7 步骤 1 + 3
 - **现状**:
-  - [sgeg/storage.rs:45/54/62](../../src/kernel/framework/sgeg/storage.rs#L45) w32/w64/w16 仍带 `#[expect(clippy::cast_possible_truncation)]` 注释为 "显式收窄转换, 调用方/上下文保证值域安全" — 与 DECISION-036 矛盾
-  - [freg/api.rs:303-312](../../src/kernel/framework/freg/api.rs#L303) `recovery_set_fault_rate`/`recovery_get_fault_rate` 在 `#[cfg(feature = "fault_injection")]` 下仍 `#[no_mangle] pub fn` 无 `extern "C"` 标注
+  - [sgeg/storage.rs:45/54/62](../../src/kernel/privileged/sgeg/storage.rs#L45) w32/w64/w16 仍带 `#[expect(clippy::cast_possible_truncation)]` 注释为 "显式收窄转换, 调用方/上下文保证值域安全" — 与 DECISION-036 矛盾
+  - [freg/api.rs:303-312](../../src/kernel/privileged/freg/api.rs#L303) `recovery_set_fault_rate`/`recovery_get_fault_rate` 在 `#[cfg(feature = "fault_injection")]` 下仍 `#[no_mangle] pub fn` 无 `extern "C"` 标注
 - **方案**:
   - B5.1: 移除 sgeg/storage.rs 3 处 expect, 改用 `(v >> (i*8)) as u8` 消除警告 (w64 已用此模式可参考)
   - B5.2: freg/api.rs 2 处补 `extern "C"` + 改为 `#[unsafe(no_mangle)]` (与 file 中其他函数 api.rs:30/43/56/77 一致)
@@ -198,13 +198,13 @@
 
 - **条目**: code-review-2026-08-01 #031
 - **现状**:
-  - [iomem.rs:201/210](../../src/kernel/framework/iomem.rs#L201) `read_u*`/`write_u*` 在 `check_offset` 失败时 `.expect("IoMem: ... 越界 (构造函数保证合法范围)")` panic
+  - [iomem.rs:201/210](../../src/kernel/privileged/iomem.rs#L201) `read_u*`/`write_u*` 在 `check_offset` 失败时 `.expect("IoMem: ... 越界 (构造函数保证合法范围)")` panic
   - `MAX_MMIO_MAPPINGS = 64` (iomem.rs:26) + `MAX_LOCK_CLASSES = 64` / `MAX_HELD_LOCKS = 8` (lockdep.rs:66/69) 均为硬编码
 - **方案**:
   - 描述:
     - B6.1: 评估 `read_u*` 是否改返回 `Result<_, &'static str>`; 或保持 expect 但加 `debug_assert!` 前置
-    - B6.2: 上限常量集中到 `framework/config/` 并注释超限行为 (lockdep 超限策略: 跳过检测 vs panic)
-  - 状态: [X] (2026-08-04 落地. B6.1: 8 个 read_u*/write_u* 函数全部加 `debug_assert!` 前置 + 文档说明生产路径 panic 与调试构建 early detection. B6.2: 新建 `framework/constants/limits.rs` 集中 3 个 TCB 容量常量 (MAX_MMIO_MAPPINGS/MAX_LOCK_CLASSES/MAX_HELD_LOCKS), 配套 doc 说明"超限行为". iomem.rs/lockdep.rs 改 `use` 引用, 本地常量删除. `config/` 职责保持不变 (反向 re-export 白名单), 避免职责混淆.)
+    - B6.2: 上限常量集中到 `privileged/config/` 并注释超限行为 (lockdep 超限策略: 跳过检测 vs panic)
+  - 状态: [X] (2026-08-04 落地. B6.1: 8 个 read_u*/write_u* 函数全部加 `debug_assert!` 前置 + 文档说明生产路径 panic 与调试构建 early detection. B6.2: 新建 `privileged/constants/limits.rs` 集中 3 个 TCB 容量常量 (MAX_MMIO_MAPPINGS/MAX_LOCK_CLASSES/MAX_HELD_LOCKS), 配套 doc 说明"超限行为". iomem.rs/lockdep.rs 改 `use` 引用, 本地常量删除. `config/` 职责保持不变 (反向 re-export 白名单), 避免职责混淆.)
 
 ### 待办
 
@@ -242,7 +242,7 @@
 
 - **DECISION-037** (2026-08-03 落地)
   - 描述: syscall 编号空间立场统一 — **0-299 直接使用 Linux 标准 syscall 编号, 500+ 作为 Edgine 自由扩展 (EG_*) 与 Linux 错开**
-  - 方案: A 主线 (直接 Linux ABI) + B 部分 (EG_* 自由 syscall 500+ 错开, 避免未来 Linux 扩展冲突). framework/syscall/mod.rs 注释 + vision-hope.md 风险 2 同步更新. 不实现 linuxulator 翻译层.
+  - 方案: A 主线 (直接 Linux ABI) + B 部分 (EG_* 自由 syscall 500+ 错开, 避免未来 Linux 扩展冲突). privileged/syscall/mod.rs 注释 + vision-hope.md 风险 2 同步更新. 不实现 linuxulator 翻译层.
   - 状态: [X]
 
 - **DECISION-038** (2026-08-03 落地)
@@ -251,8 +251,8 @@
   - 状态: [X] (2026-09-26 源码复验: AGENTS.md / README.md / scripts / ci 均已无引用; host-tests/README.md 实际残留 3 处 (原记载"2 处"不准), 本轮按本决策归零)
 
 - **DECISION-039** (2026-08-03 落地)
-  - 描述: userctx 反向依赖 services 的 P1 边界违反 — **UserContext 类型迁回 framework, services 改为反向 re-export**
-  - 方案: A 方案. framework/userctx.rs 重声明完整 `#[repr(C)] UserContext` (x86_64 + aarch64 两 cfg 分支) + 全部方法实现. services/userctx.rs 简化为 `pub use crate::kernel::framework::userctx::*;` 兼容旧调用路径. 调用方零修改 (services/syscall/mod.rs:25 已走 framework 路径).
+  - 描述: userctx 反向依赖 functions 的 P1 边界违反 — **UserContext 类型迁回 privileged, functions 改为反向 re-export**
+  - 方案: A 方案. privileged/userctx.rs 重声明完整 `#[repr(C)] UserContext` (x86_64 + aarch64 两 cfg 分支) + 全部方法实现. functions/userctx.rs 简化为 `pub use crate::kernel::privileged::userctx::*;` 兼容旧调用路径. 调用方零修改 (functions/syscall/mod.rs:25 已走 privileged 路径).
   - 状态: [X]
 
 ### 变更历史
@@ -268,16 +268,16 @@
 - **2026-08-03 (3 个 P1 决策落地)**
   - 描述: 用户决策 DECISION-037/038/039, 全部落地为代码 + 文档变更
   - 方案:
-    - **DECISION-037 syscall 编号**: 改 framework/syscall/mod.rs 注释 + vision-hope.md 风险 2. 0-299 直接 Linux, 500+ EG 自由错开, 不实现 linuxulator.
+    - **DECISION-037 syscall 编号**: 改 privileged/syscall/mod.rs 注释 + vision-hope.md 风险 2. 0-299 直接 Linux, 500+ EG 自由错开, 不实现 linuxulator.
     - **DECISION-038 放弃 CHANGELOG.md**: 删除 10 处引用 (README/AGENTS/host-tests/scripts/ci/audit + 1 处历史). git commit 即变更日志.
-    - **DECISION-039 userctx 迁回 framework**: framework/userctx.rs 重声明完整 UserContext + 全部方法; services/userctx.rs 改为反向 re-export 兼容.
+    - **DECISION-039 userctx 迁回 privileged**: privileged/userctx.rs 重声明完整 UserContext + 全部方法; functions/userctx.rs 改为反向 re-export 兼容.
     - 验证: §2.4 5 条门槛全过 (双架构 0w0e + clippy 0 warning + 三审计全过 + host-tests 838 passed/0 failed + QEMU x86_64 1/1 通过 + aarch64 1/1 通过).
   - 状态: [X]
 - **2026-08-04 (阶段 1: 纯文档 P2 修复)**
   - 描述: code-review #027/028/029 三项 P2 纯文档修复全部落地
   - 方案:
-    - **B1 framework/mod.rs:10**: 删 `~3000+ LoC` 数字, 改 `framework/ (TCB, unsafe 允许)`. 实测 src/kernel/mod.rs 无同类数字.
-    - **B2 services/net|fs|proc 头注释**: 删除 2026-06 状态评估块, 替换为简洁模块说明 + 引用 progress-active-tasks.md.
+    - **B1 privileged/mod.rs:10**: 删 `~3000+ LoC` 数字, 改 `privileged/ (TCB, unsafe 允许)`. 实测 src/kernel/mod.rs 无同类数字.
+    - **B2 functions/net|fs|proc 头注释**: 删除 2026-06 状态评估块, 替换为简洁模块说明 + 引用 progress-active-tasks.md.
     - **B3 README remote + 链接**: README.md:21 改用 `git remote add origin` (与 AGENTS.md §8.4 一致); README.md:71 改链接 `docs/plan/future-roadmap.md`.
     - 验证: §2.4 #1-#4 全过 (双架构 0w0e + clippy 0 warning + 三审计全过 + host-tests 838 passed/0 failed). #5 QEMU 不适用 (纯文档).
   - 状态: [X]
@@ -286,14 +286,14 @@
   - 方案:
     - **B5.1 sgeg/storage.rs**: w32/w64/w16 三函数移除 3 处 `#[expect(clippy::cast_possible_truncation)]`, 改 `& 0xFF` 显式收窄 (DECISION-036 落地). 3 个 expect 全部消除.
     - **B5.2 freg/api.rs**: 2 处 `#[no_mangle] pub fn` 改为 `#[unsafe(no_mangle)] pub extern "C" fn` + 加 SAFETY 注释, 与 file 中其他 FFI 函数 (api.rs:30/43/56/77) 一致.
-    - 调研发现: services/sgeg/storage/disk.rs 也有 7 处类似 cast 警告 (按字节序列化场景), 范围超出 B5.1, 按 §15.3 不顺手处理, 登记为下次 plan 待办.
+    - 调研发现: functions/sgeg/storage/disk.rs 也有 7 处类似 cast 警告 (按字节序列化场景), 范围超出 B5.1, 按 §15.3 不顺手处理, 登记为下次 plan 待办.
     - 验证: §2.4 #1-#4 全过 (双架构 0w0e + clippy 0 warning + 三审计全过 + host-tests 838 passed/0 failed). #5 QEMU 不适用 (5 行代码变更).
   - 状态: [X]
 - **2026-08-04 (阶段 3: B6 IoMem 边界 expect + 固定上限集中)**
   - 描述: 推进 progress-active-tasks.md B6.1 + B6.2
   - 方案:
     - **B6.1 IoMem debug_assert!**: 8 个 read_u*/write_u* 函数 (read_u8/16/32/64 + write_u8/16/32/64) 全部加 `debug_assert!` 前置. 生产路径仍 expect panic; 调试构建提前触发便于 early detection. 0 风险 (仅增加 debug-only 检查).
-    - **B6.2 容量常量集中**: 新建 `framework/constants/limits.rs` 集中 3 个 TCB 容量常量 (MAX_MMIO_MAPPINGS/MAX_LOCK_CLASSES/MAX_HELD_LOCKS), 配套 doc 说明"超限行为". iomem.rs/lockdep.rs 改 `use` 引用, 本地常量删除. `framework/config/` 职责保持不变 (反向 re-export 白名单), 避免职责混淆.
+    - **B6.2 容量常量集中**: 新建 `privileged/constants/limits.rs` 集中 3 个 TCB 容量常量 (MAX_MMIO_MAPPINGS/MAX_LOCK_CLASSES/MAX_HELD_LOCKS), 配套 doc 说明"超限行为". iomem.rs/lockdep.rs 改 `use` 引用, 本地常量删除. `privileged/config/` 职责保持不变 (反向 re-export 白名单), 避免职责混淆.
     - 验证: §2.4 5 条门槛全过 (双架构 0w0e + clippy 0 warning + 三审计全过 + host-tests 838 passed/0 failed + QEMU x86_64 1/1 通过 + aarch64 1/1 通过).
   - 状态: [X]
 - **2026-08-04 (阶段 4: B4 clippy DECISION-035 注释统一)**
@@ -307,15 +307,15 @@
     - 0 语义变更, 仅注释规范化. 符合 DECISION-035 模板 `// 有意窄化: <具体原因>`.
     - 验证: §2.4 #1-#4 全过 (双架构 0w0e + clippy 0 warning + 三审计全过 + host-tests 838 passed/0 failed). #5 QEMU 不适用 (纯注释变更).
   - 状态: [X]
-- **2026-08-04 (阶段 5: P3 #030 framework/sched task 抽象调研 + 注释修复)**
+- **2026-08-04 (阶段 5: P3 #030 privileged/sched task 抽象调研 + 注释修复)**
   - 描述: 调研 P3 #030 任务状态 + 修复 mod.rs 注释
   - 方案:
-    - 调研发现: [sched_trait.rs:30-117](file:///home/anfer/Code/Edgine/src/kernel/framework/sched/sched_trait.rs#L30) **Task 抽象已完整实装** (struct Task + 10 个属性方法 + Send/Sync + Scheduler trait + EdgineScheduler 委托). 计划文档 (REVIEW-FINDING-030) "未开工" 描述与源码事实不符, 实装早于计划文档更新.
+    - 调研发现: [sched_trait.rs:30-117](file:///home/anfer/Code/Edgine/src/kernel/privileged/sched/sched_trait.rs#L30) **Task 抽象已完整实装** (struct Task + 10 个属性方法 + Send/Sync + Scheduler trait + EdgineScheduler 委托). 计划文档 (REVIEW-FINDING-030) "未开工" 描述与源码事实不符, 实装早于计划文档更新.
     - 决策: 用户 2026-08-04 选 A 方案 — 仅修复 mod.rs:8 注释与事实不符的问题, 补 plan 记录 task 抽象实装完成. 不重写 plan 文档 (避免 §15.3 顺手优化).
-    - 修复: framework/sched/mod.rs 头注释更新为 "Task 抽象实装状态" 段, 列出 10 个属性方法 + 委托关系 + services/proc 暴露路径. 删除过期 "未实现" 注释.
+    - 修复: privileged/sched/mod.rs 头注释更新为 "Task 抽象实装状态" 段, 列出 10 个属性方法 + 委托关系 + functions/proc 暴露路径. 删除过期 "未实现" 注释.
     - 验证: §2.4 #1-#4 全过 (双架构 0w0e + clippy 0 warning + 三审计全过 + host-tests 838 passed/0 failed). #5 QEMU 不适用 (纯注释变更).
   - 状态: [X]
-- **2026-08-04 (阶段 6: services/sgeg/storage/disk.rs 7 处 cast 修复)**
+- **2026-08-04 (阶段 6: functions/sgeg/storage/disk.rs 7 处 cast 修复)**
   - 描述: 推进 plan 文档登记的 disk.rs 7 处按字节序列化场景 cast 警告
   - 方案:
     - 调研发现: 7 处 cast 中 5 处是 `disk_id as u8` (u32 → u8 截断, 范围 0-255). 2 处 `i as u64` (usize → u64 截断, block_device_count 远小于 usize::MAX 实际安全).
@@ -463,7 +463,7 @@
   - 调研:
     - 实际分布: cast_possible_truncation 939 / cast_sign_loss 643 / cast_possible_wrap 285 / cast_precision_loss 43 (合计 1910)
     - 涉及文件: ~ 200 文件 (155 文件含 cast_possible_truncation)
-    - top 集中: syscall/dispatch.rs 170 处, framework/syscall/dispatch.rs 42 处, services/fs/ramfs_core/ramfs_data.rs 38 处
+    - top 集中: syscall/dispatch.rs 170 处, privileged/syscall/dispatch.rs 42 处, functions/fs/ramfs_core/ramfs_data.rs 38 处
     - 真实风险 cast: 估算 < 200 处 (其余 1700+ 处是已知安全: APIC ID 协议保证 < 256, 循环变量 `i as u8` 且 i < 8, sizeof 已知 < u32, 常量字符串长度 < u32, etc.)
   - 决策路径分析:
     - A. 全局 allow (lib.rs #![allow(clippy::cast_*)]): 5 分钟, 失去未来增量发现能力. **不放纵但失去 lint 价值** (已知安全 cast 不需 clippy 警告).
@@ -477,9 +477,9 @@
 - **2026-09-26 (文档漂移收敛: 逐项源码复验 + 回写)**
   - 描述: 对本工程计划全部 `[X]`/`[]` 项回源码/文档复验实装, 修正文档漂移
   - 方案:
-    - **A1/A3 复验属实**: `framework/syscall/mod.rs:22-30` 注释为 DECISION-037 立场; `framework/userctx.rs:28/55` 两处 `#[repr(C)] UserContext` + `services/userctx.rs:11` 反向 re-export — 与记载一致.
+    - **A1/A3 复验属实**: `privileged/syscall/mod.rs:22-30` 注释为 DECISION-037 立场; `privileged/userctx.rs:28/55` 两处 `#[repr(C)] UserContext` + `functions/userctx.rs:11` 反向 re-export — 与记载一致.
     - **A2 遗留补清**: `host-tests/README.md` 实测残留 3 处 `docs/CHANGELOG.md` 引用 (原 DECISION-038 记载"2 处"), 本轮按 B 方案改写/删除; 现全仓除归档文档与 `scan_antx_residue.py` 白名单外 0 引用.
-    - **B1/B2/B3/B5/B6 复验属实**: `framework/mod.rs:10` 无 LoC 数字; 三 services 头注释已换真实状态; `README.md` 已整篇重写为 18 行 (原 :21/:71 moot; 【订正】实测为 23 行); `freg/api.rs:310/317` 两函数为 `#[unsafe(no_mangle)] pub extern "C" fn`; `iomem.rs` 16 处 `debug_assert!` + `constants/limits.rs` 三常量.
+    - **B1/B2/B3/B5/B6 复验属实**: `privileged/mod.rs:10` 无 LoC 数字; 三 functions 头注释已换真实状态; `README.md` 已整篇重写为 18 行 (原 :21/:71 moot; 【订正】实测为 23 行); `freg/api.rs:310/317` 两函数为 `#[unsafe(no_mangle)] pub extern "C" fn`; `iomem.rs` 16 处 `debug_assert!` + `constants/limits.rs` 三常量.
     - **B4 实况订正**: 当前 expect 注释为双模板并存 (`// 有意窄化` 237 处 + `reason = "<lint名>: ..."` 347 处), 非历史记载的单模板"3 场景 + 1 兜底".
     - **交叉引用修正**: clippy-pedantic-cleanup 链接由失效的 `./clippy-pedantic-cleanup.md` 改为 `./archive/...` 并指 `stage-engineering-master.md`; AGENTS.md 章节号由 §6/§10/§15 更正为 §5/§9/§12.
     - **工程计划 B/C 状态回写**: 原遗留 `[]` 项 (B 的背景/目标/方案/待办, C 的背景/目标/方案/待办) 全部改为 `[X]`.
@@ -528,11 +528,11 @@
 
   | 编号 | 描述 | 计划状态 | 实装验证 |
   |---|---|---|---|
-  | WASM WASI | services/wasm/wasi/ + 解释器增强 | [X] 2026-07-20 | [services/wasm/wasi/](../../src/kernel/services/wasm/wasi/) 8 个文件存在 |
+  | WASM WASI | functions/wasm/wasi/ + 解释器增强 | [X] 2026-07-20 | [functions/wasm/wasi/](../../src/kernel/functions/wasm/wasi/) 8 个文件存在 |
   | F1 mdBook | 5 部分文档 | [] | 无 mdBook 配置; 无 docs/book/ |
   | F2 RISC-V | OpenSBI + Sv39 + PLIC/CLINT | [] | 无 arch/riscv64/ |
   | F3 TDX | CPUID 0x21 + tdcall | [] | 无 tdx 模块 |
-  | F4 NFS | services 层 + FileSystem trait | [] | 无 services/fs/nfs/ |
+  | F4 NFS | functions 层 + FileSystem trait | [] | 无 functions/fs/nfs/ |
   | F5 IPv6 | 930 行 / 9 文件 | [X] 2026-08-02 | 见下方 ipv6-dual-stack 详情表 |
 
 - **ipv6-dual-stack 8 Phase 详情**
@@ -542,10 +542,10 @@
 
   | Phase | 描述 | 计划状态 | 实装验证 |
   |---|---|---|---|
-  | 1 | Ipv6Addr + IpAddr + Ipv6Cidr + From 转换 | [X] | [iface_trait.rs:968/1078/1060](../../src/kernel/framework/net/iface_trait.rs#L968) 全部存在 |
+  | 1 | Ipv6Addr + IpAddr + Ipv6Cidr + From 转换 | [X] | [iface_trait.rs:968/1078/1060](../../src/kernel/privileged/net/iface_trait.rs#L968) 全部存在 |
   | 2 | NetEndpoint.addr: IpAddr 破坏性改造 | [X] | sm_fi.rs 使用 `new_v4`/`new_v6` |
-  | 3 | FFI 翻译层 (endpoint_to_smol/endpoint_from_smol) | [X] | [sm_fi.rs:171-200](../../src/kernel/framework/net/init/sm_fi.rs#L171) `parse_endpoint_trait` 支持 V4/V6 |
-  | 4 | sm_socket 接受 AF_INET6 (domain=10) | [X] | [sm_fi.rs:253](../../src/kernel/framework/net/init/sm_fi.rs#L253) `is_af = domain == 2 \|\| domain == 10` |
+  | 3 | FFI 翻译层 (endpoint_to_smol/endpoint_from_smol) | [X] | [sm_fi.rs:171-200](../../src/kernel/privileged/net/init/sm_fi.rs#L171) `parse_endpoint_trait` 支持 V4/V6 |
+  | 4 | sm_socket 接受 AF_INET6 (domain=10) | [X] | [sm_fi.rs:253](../../src/kernel/privileged/net/init/sm_fi.rs#L253) `is_af = domain == 2 \|\| domain == 10` |
   | 5 | SmoltcpNetStack 适配 IpAddr | [X] | smoltcp_impl.rs 接受 NetEndpoint |
   | 6 | DHCPv6 / SLAAC | [] 远期 | smoltcp vendored 不含 DHCPv6 客户端 |
   | 7 | route.rs 扩展 Ipv6Cidr | [X] | route.rs:285/313/355/390 实际使用 Ipv6Cidr (2026-09-26 grep 复验) |
@@ -575,11 +575,11 @@
   |---|---|---|---|
   | 024 | P1 | CHANGELOG.md 缺失 | [X] — DECISION-038 落地 (B 方案; 2026-09-26 补清 host-tests/README.md 残留 3 处) |
   | 025 | P1 | syscall 编号空间矛盾 | [X] — DECISION-037 落地 (0-299 Linux + 500+ EG) |
-  | 026 | P1 | userctx 反向依赖 services | [X] — DECISION-039 落地 (UserContext 迁回 framework) |
-  | 027 | P2 | framework/mod.rs:10 "3000+ LoC" 漂移 | [X] — B1 落地 (删数字) |
-  | 028 | P2 | services/net\|fs 头注释过期 | [X] — B2 落地 (三文件头注释更新) |
+  | 026 | P1 | userctx 反向依赖 functions | [X] — DECISION-039 落地 (UserContext 迁回 privileged) |
+  | 027 | P2 | privileged/mod.rs:10 "3000+ LoC" 漂移 | [X] — B1 落地 (删数字) |
+  | 028 | P2 | functions/net\|fs 头注释过期 | [X] — B2 落地 (三文件头注释更新) |
   | 029 | P2 | README remote/kernel-roadmap 链接过期 | [X] — B3 落地 (README 整篇重写, 原 :21/:71 不复存在) |
-  | 030 | P3 | framework/sched task 抽象未开工 | [X] (2026-08-04 阶段 5: 实际已实装, 仅 mod.rs 注释过期, 已修复) |
+  | 030 | P3 | privileged/sched task 抽象未开工 | [X] (2026-08-04 阶段 5: 实际已实装, 仅 mod.rs 注释过期, 已修复) |
   | 031 | P3 | IoMem 边界 expect + 固定上限 | [X] — B6 落地 (8 函数 debug_assert + constants/limits.rs) |
 
 - **test-compile-issues-2026-07-31 详情**
@@ -653,7 +653,7 @@
   - 方案:
     1. 双架构 `cargo check --release` 0 error / 0 warning
     2. clippy 0 warning (`cargo clippy --release -- -D warnings`)
-    3. 三审计通过 (services_boundary + safety_coverage + deadlock_matrix)
+    3. 三审计通过 (functions_boundary + safety_coverage + deadlock_matrix)
     4. host-tests 全部通过
     5. QEMU 集成测试通过 (如改动 boot/架构相关)
     6. host 侧内核单元测试 0 failed (`make test-kernel-host`; 2026-09-25 新增, 见 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md))
@@ -696,8 +696,8 @@
   - 方案:
     - [docs/README.md](../README.md) — 文档写作规范 (计划文档格式来源)
     - [AGENTS.md](../../AGENTS.md) — §2.3 验证门槛 6 条 / §5 硬规则 F1-F9 / §9 预存问题处理 / §12 AI 行为准则
-    - [docs/explain/explain-framekernel.md](../explain/explain-framekernel.md) — framekernel 架构 (services→framework 单向数据流)
-    - [docs/explain/ref-naming.md](../explain/ref-naming.md) — syscall 编号空间立场 (已与 framework/syscall/mod.rs 统一, DECISION-037)
+    - [docs/explain/explain-framekernel.md](../explain/explain-framekernel.md) — framekernel 架构 (functions→privileged 单向数据流)
+    - [docs/explain/ref-naming.md](../explain/ref-naming.md) — syscall 编号空间立场 (已与 privileged/syscall/mod.rs 统一, DECISION-037)
     - [docs/explain/vision-hope.md](../explain/vision-hope.md) — 项目愿景 (已整篇重写, 无 linuxulator 翻译层立场)
     - [docs/plan/future-roadmap.md](./future-roadmap.md) — 远期规划 (WASM 已完成)
     - [docs/plan/ipv6-dual-stack.md](./ipv6-dual-stack.md) — DECISION-032 双栈改造

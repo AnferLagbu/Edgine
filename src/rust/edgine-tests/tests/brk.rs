@@ -1,6 +1,6 @@
 //! brk 系统调用服务层参数验证测试
 //!
-//! 覆盖 services/mm/brk.rs 的 brk_syscall 验证:
+//! 覆盖 functions/mm/brk.rs 的 brk_syscall 验证:
 //! - 0 表示查询当前 brk
 //! - 非 0 必须在用户空间地址范围
 

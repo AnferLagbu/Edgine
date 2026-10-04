@@ -10,7 +10,7 @@
 
 use std::fs;
 
-const KLOG: &str = "../src/kernel/framework/klog/mod.rs";
+const KLOG: &str = "../src/kernel/privileged/klog/mod.rs";
 
 fn read(p: &str) -> String {
     fs::read_to_string(p).unwrap_or_else(|e| panic!("read {p}: {e}"))
@@ -77,7 +77,7 @@ fn test_sink_registry_caps_at_4() {
     );
     // 新模式: LOG_SINKS 使用 IrqSpinLock 包装 SinkPtr 数组
     assert!(
-        src.contains("static LOG_SINKS: crate::framework::sync::IrqSpinLock<[SinkPtr"),
+        src.contains("static LOG_SINKS: crate::privileged::sync::IrqSpinLock<[SinkPtr"),
         "必须有 IrqSpinLock 包装的 SinkPtr 注册表"
     );
 }

@@ -8,7 +8,7 @@
 
 ## 1. 根因与性质
 
-**根因**：`boot/aarch64/start.S:74-76` 显式设置 `CPACR_EL1.FPEN = 0b11`（trap none），并在 `el2_entry` 清 `CPTR_EL2.TFP`（bit 10）——内核**主动放开**了 EL1 的 FP/SIMD 访问。使能条件成立后，编译器生成的隐式 NEON（结构体清零/memset 内联）与 `services`/`framework` 侧显式 `f64`/`f32` 都会在 EL1 执行 FP/SIMD。而 EL0 边界（SVC/IRQ）的 `ExceptionFrame`（35×8，仅 x0–x30 + elr/spsr/sp）**不含 V0–V31/FPCR/FPSR** ⇒ 内核一旦执行 FP/SIMD，用户 V0–V31 即被破坏。
+**根因**：`boot/aarch64/start.S:74-76` 显式设置 `CPACR_EL1.FPEN = 0b11`（trap none），并在 `el2_entry` 清 `CPTR_EL2.TFP`（bit 10）——内核**主动放开**了 EL1 的 FP/SIMD 访问。使能条件成立后，编译器生成的隐式 NEON（结构体清零/memset 内联）与 `functions`/`privileged` 侧显式 `f64`/`f32` 都会在 EL1 执行 FP/SIMD。而 EL0 边界（SVC/IRQ）的 `ExceptionFrame`（35×8，仅 x0–x30 + elr/spsr/sp）**不含 V0–V31/FPCR/FPSR** ⇒ 内核一旦执行 FP/SIMD，用户 V0–V31 即被破坏。
 
 **性质判定**：**契约级缺陷，非"潜在风险"**。仅因当前 `src/user/init` 不使用浮点而**暂不可观测**。
 
@@ -109,7 +109,7 @@ core v0.0.0 (.../library/core), sha2 v0.11.0
   3. **整数化范围 = 10 个内核源文件**（比率族 7 + 简单格式化 3）；**Wu 定点重写暂缓**并登记为后继项（见 FP-08）。
   4. **比率类公共 API 统一千分比 `u64`（0..1000）**。
 - **状态**：[X]
-- **详情（裁定 3 的理由）**：`framework/driver/display/framebuffer.rs::draw_line_aa` 是 11 个候选文件中**唯一**的"真实浮点算法"（Wu 抗锯齿，f32），其余均为比率或格式化（整数化后可用 host-test 精确核对）。其整数化（f32→定点）会改变像素输出（±1 alpha 级），而调用方只有 `display/self_test.rs`、**不在 QEMU 启动路径** ⇒ **无任何测试可验证**；同时 flag 已保证其 FP 计数 = 0 ⇒ **收益为零、风险非零**。按 AGENTS §12.3（简约为默认）/ §12.4（成功标准必须可验证），剥离为后继项。
+- **详情（裁定 3 的理由）**：`privileged/driver/display/framebuffer.rs::draw_line_aa` 是 11 个候选文件中**唯一**的"真实浮点算法"（Wu 抗锯齿，f32），其余均为比率或格式化（整数化后可用 host-test 精确核对）。其整数化（f32→定点）会改变像素输出（±1 alpha 级），而调用方只有 `display/self_test.rs`、**不在 QEMU 启动路径** ⇒ **无任何测试可验证**；同时 flag 已保证其 FP 计数 = 0 ⇒ **收益为零、风险非零**。按 AGENTS §12.3（简约为默认）/ §12.4（成功标准必须可验证），剥离为后继项。
 - **详情（裁定 1 的构建面耦合）**：`Makefile:9` 的 `RUST_TARGET` **同时服务内核与用户态构建**（`Makefile:152` 用户态、`Makefile:204` 内核共用）⇒ 直接改它会把 userland 一并锁死在软浮点 ABI。必须**新增内核专用变量**（内核用 softfloat、用户态保持 `aarch64-unknown-none`）。
 
 ## 任务清单
@@ -141,22 +141,22 @@ core v0.0.0 (.../library/core), sha2 v0.11.0
 - **FP-04. 内核自有 `f64` 整数化 —— 比率族（7 文件）**
   - 描述：消除内核公共 API 上的浮点暴露（对齐 Linux arm64 `-mgeneral-regs-only` 的形态约束）。
   - 方案：统一 **千分比 `u64`（0..1000）**。
-    - `framework/mm/pmm_trait.rs`：trait 签名 `fragmentation_score -> f64` → `-> u64`（千分比）+ `FallbackPmmPolicy` 默认实现整数化。
-    - `services/mm/pmm_policy.rs`：impl + 单元测试断言改定点（`0.7→700`、`0.35→350`、`0.79→1000`、`0.15→150`、`0.0→0`）。
-    - `framework/mm/swap_trait.rs` / `services/mm/swap_policy.rs`：`should_wakeup_kswapd` 函数体整数化（**返回类型 `bool` 不变**）。
-    - `services/mm/swap.rs`：`usage_ratio -> f64` → `-> u64`。
-    - `framework/mm/slab.rs`：`hit_rate` / `utilization` → `u64`（原为百分数 `*100.0`，统一到千分比）。
-    - `services/fs/unkfs/arc_trait.rs`：trait + impl `hit_rate -> f64` → `-> u64`，并同步其文件内测试。
+    - `privileged/mm/pmm_trait.rs`：trait 签名 `fragmentation_score -> f64` → `-> u64`（千分比）+ `FallbackPmmPolicy` 默认实现整数化。
+    - `functions/mm/pmm_policy.rs`：impl + 单元测试断言改定点（`0.7→700`、`0.35→350`、`0.79→1000`、`0.15→150`、`0.0→0`）。
+    - `privileged/mm/swap_trait.rs` / `functions/mm/swap_policy.rs`：`should_wakeup_kswapd` 函数体整数化（**返回类型 `bool` 不变**）。
+    - `functions/mm/swap.rs`：`usage_ratio -> f64` → `-> u64`。
+    - `privileged/mm/slab.rs`：`hit_rate` / `utilization` → `u64`（原为百分数 `*100.0`，统一到千分比）。
+    - `functions/fs/unkfs/arc_trait.rs`：trait + impl `hit_rate -> f64` → `-> u64`，并同步其文件内测试。
   - 状态：[X]
-  - 详情（`fragmentation_score` 调用面）：全仓**无生产调用者**（仅 `#[cfg(test)]` 内调用）；`should_wakeup_kswapd` 生产调用者唯一 = `framework/mm/swap.rs:941`；`slab::hit_rate`/`utilization` 与 `swap::usage_ratio` 当前无调用者。参照形态：`framework/fs/vfs/dcache.rs` 的 `dcache_hit_rate -> (u64, u64)`（已是整数）。`host-tests/src/framekernel_bench.rs` 的 `HostArcCache::hit_rate -> f64` 经核实是 **host-only 独立 trait**（非内核 `arc_trait` 的副本引用，无编译耦合）⇒ **不改**，作为预存平行实现另行报告。
-  - 详情（本轮更正的既有断言缺陷）：`services/mm/pmm_policy.rs` 原测试断言 `assert!((… - 0.79).abs() < 1e-9)` 与其推导注释 `0.7*0.7 + 1.0*0.3 = 0.79` **算术错误**（`0.7*0.7 + 1.0*0.3 = 0.79` 实为 `0.49 + 0.3 = 0.79`，但公式为 `(1-free)*7/10 + fail*3/10`，`free = 0.3` 时 `(1-0.3)*0.7 = 0.49`，须配 `fail` 比例；原断言取 `free_ratio = 0`、`fail_ratio = 1.0` 时实算 `1.0`）。原 f64 实现返回 `1.0`，与断言 `0.79` 本就不符 —— 属**预存缺陷**（非本轮引入）。本轮按千分比公式统一修正为 `1000`，并已登记于本详情。**补充（本轮普查）**：该断言之所以长期未暴露，是因为所在 `#[cfg(test)]` 模块**从未被任何门槛编译**（`[lib] test = false` + 依赖不激活 `cfg(test)`）—— 属全仓 104 文件 / 770 例的同类问题，已单独立项，见 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md)。
+  - 详情（`fragmentation_score` 调用面）：全仓**无生产调用者**（仅 `#[cfg(test)]` 内调用）；`should_wakeup_kswapd` 生产调用者唯一 = `privileged/mm/swap.rs:941`；`slab::hit_rate`/`utilization` 与 `swap::usage_ratio` 当前无调用者。参照形态：`privileged/fs/vfs/dcache.rs` 的 `dcache_hit_rate -> (u64, u64)`（已是整数）。`host-tests/src/framekernel_bench.rs` 的 `HostArcCache::hit_rate -> f64` 经核实是 **host-only 独立 trait**（非内核 `arc_trait` 的副本引用，无编译耦合）⇒ **不改**，作为预存平行实现另行报告。
+  - 详情（本轮更正的既有断言缺陷）：`functions/mm/pmm_policy.rs` 原测试断言 `assert!((… - 0.79).abs() < 1e-9)` 与其推导注释 `0.7*0.7 + 1.0*0.3 = 0.79` **算术错误**（`0.7*0.7 + 1.0*0.3 = 0.79` 实为 `0.49 + 0.3 = 0.79`，但公式为 `(1-free)*7/10 + fail*3/10`，`free = 0.3` 时 `(1-0.3)*0.7 = 0.49`，须配 `fail` 比例；原断言取 `free_ratio = 0`、`fail_ratio = 1.0` 时实算 `1.0`）。原 f64 实现返回 `1.0`，与断言 `0.79` 本就不符 —— 属**预存缺陷**（非本轮引入）。本轮按千分比公式统一修正为 `1000`，并已登记于本详情。**补充（本轮普查）**：该断言之所以长期未暴露，是因为所在 `#[cfg(test)]` 模块**从未被任何门槛编译**（`[lib] test = false` + 依赖不激活 `cfg(test)`）—— 属全仓 104 文件 / 770 例的同类问题，已单独立项，见 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md)。
 
 - **FP-05. 内核自有 `f64` 整数化 —— 简单格式化（3 文件）**
   - 描述：清除按需路径上的显式浮点格式化。
   - 方案：改整数除法/取余。
-    - `services/fs/procfs_core.rs:179-207`：cpuinfo MHz / bogomips 的 `as f64 / 1_000_000.0` → 整数商余（`hz / 1_000_000` + `hz % 1_000_000 / 10_000` 两位小数）。
-    - `services/driver/virtio/blk.rs:237`：容量 MB → `(capacity * 512) / (1024 * 1024)`。
-    - `framework/driver/storage/mod.rs:90`：同上。
+    - `functions/fs/procfs_core.rs:179-207`：cpuinfo MHz / bogomips 的 `as f64 / 1_000_000.0` → 整数商余（`hz / 1_000_000` + `hz % 1_000_000 / 10_000` 两位小数）。
+    - `functions/driver/virtio/blk.rs:237`：容量 MB → `(capacity * 512) / (1024 * 1024)`。
+    - `privileged/driver/storage/mod.rs:90`：同上。
   - 状态：[X]
   - 详情：三处均改整数商余（MHz = `hz / 1_000_000` + `(hz % 1_000_000) / 10_000` 两位小数；MB = `sectors * 512 / (1024 * 1024)`）。已 grep 确认**无 host-test 断言**这些格式化字符串 ⇒ 风险低；逐处核对输出与整数化前一致（MHz 显示小数位对齐：整数化前的 f64 打印为 `xxx.xxxxxx` 全精度，现收敛为两位小数，属格式化精度收窄，语义不变）。
 
@@ -179,7 +179,7 @@ core v0.0.0 (.../library/core), sha2 v0.11.0
   - 详情（跑序依赖与途中发现的预存工具问题，均未在本轮改动）：① `make test-unit` 首次失败于 build.rs 的「构建产物缺失 `build/user/init.bin`」—— 原因是 `make ARCH=<另一架构>` 的 arch 戳记（`build/log/.arch`）不匹配时会强制 clean 并删除 `build/kernel.{bin,flat,map}`，而 `.bin` 未被同步重建；按序 `make ARCH=x86_64 user` 后通过。② 同源现象：`kernel.flat` 被该 clean 删除后，`./scripts/qemu_boot_test.sh` 在**戳记已匹配**时不触发重建，直接输出「kernel.flat 缺失, 跳过测试」并计为失败（本次 x86_64 侧 1/2）—— 需先 `./ci/build.sh x86_64` 补产物。二者均属预存工具链行为（arch 戳记 clean × 跳过逻辑），本轮未改，登记备查。
 
 - **FP-08. Wu 抗锯齿定点重写（后继项，登记不实施）**
-  - 描述：`framework/driver/display/framebuffer.rs::draw_line_aa` 的 f32 是内核自有源码中最后的真实浮点算法。
+  - 描述：`privileged/driver/display/framebuffer.rs::draw_line_aa` 的 f32 是内核自有源码中最后的真实浮点算法。
   - 方案：f32 → 定点（Q16）重写，含 `fpart`/`rfpart`/`gradient`/alpha 计算的定点化。
   - 状态：[]（后继项，本轮不实施）
   - 详情：**本轮不实施**，理由见 DECISION-079 裁定 3。登记触发条件：当显示子系统接入 QEMU/真实硬件并具备像素级回归测试手段时再实施（届时可校验 ±1 alpha 差异）。
@@ -188,7 +188,7 @@ core v0.0.0 (.../library/core), sha2 v0.11.0
 
 - AGENTS §2.3 五条门槛全过（双架构 build / clippy 0 warning / 核心审计 / host-tests / QEMU 双架构）—— 实测结果见 FP-07 详情。
 - 专项：aarch64 内核产物反汇编 **白名单外 FP/SIMD = 0**（FP-06 脚本，带预期值：白名单内 `stp/ldp q` 32 条 + `fpcr/fpsr` 4 条）—— 实测 0 / 32 / 4，达成。
-- 回归：FP-04 的 4 个公共 API 签名变更后，`services/*` 与 `framework/*` 内全部调用点与单元测试断言同步通过。
+- 回归：FP-04 的 4 个公共 API 签名变更后，`functions/*` 与 `privileged/*` 内全部调用点与单元测试断言同步通过。
 - 反向验证：x86_64 产物与 host-tests 不受影响（target 未变，`baseline.json` 不红）。
 
 ## 风险与回退

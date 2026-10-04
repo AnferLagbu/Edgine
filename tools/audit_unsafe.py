@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Edgine/Edgine Framework Unsafe 块 SAFETY 注释自动审计
+Edgine/Edgine Privileged Unsafe 块 SAFETY 注释自动审计
 
-扫描 framework/ 下所有 *.rs 文件, 列出每个 unsafe 引用位置 + 上方 5 行内
+扫描 privileged/ 下所有 *.rs 文件, 列出每个 unsafe 引用位置 + 上方 5 行内
 是否含 SAFETY 注释, 输出一份诚实基线报告。
 
 用法:
@@ -26,7 +26,7 @@ from typing import List, NamedTuple
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-FW_DIR = PROJECT_ROOT / "src" / "kernel" / "framework"
+FW_DIR = PROJECT_ROOT / "src" / "kernel" / "privileged"
 
 
 class UnsafeHit(NamedTuple):
@@ -273,7 +273,7 @@ def print_summary(hits: List[UnsafeHit]) -> None:
     for h in hits:
         by_kind[h.kind] = by_kind.get(h.kind, 0) + 1
 
-    print("=== Framework Unsafe 块 SAFETY 注释基线 ===")
+    print("=== Privileged Unsafe 块 SAFETY 注释基线 ===")
     print(f"扫描目录:     {FW_DIR.relative_to(PROJECT_ROOT)}")
     print(f"扫描时间:     {__import__('datetime').datetime.now().isoformat(timespec='seconds')}")
     print()
@@ -322,7 +322,7 @@ def print_summary(hits: List[UnsafeHit]) -> None:
 
 
 def print_human(hits: List[UnsafeHit], missing_only: bool) -> None:
-    print("=== Framework Unsafe 块 SAFETY 注释基线 ===")
+    print("=== Privileged Unsafe 块 SAFETY 注释基线 ===")
     print(f"扫描目录: {FW_DIR.relative_to(PROJECT_ROOT)}")
     print(f"扫描时间: {__import__('datetime').datetime.now().isoformat(timespec='seconds')}")
     print()

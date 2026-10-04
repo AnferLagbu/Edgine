@@ -6,12 +6,12 @@
 //! 3. 中断安全锁配对契约: lock_irqsave 返回 flags, unlock_irqrestore 接 flags
 //!
 //! 分册 9 项 2 (B09-21): 原第 2 条 (kmalloc_slab.rs 源文本静态扫描) 随
-//! `framework/mm/kmalloc_slab.rs` 零引用孤岛整体删除而移除.
+//! `privileged/mm/kmalloc_slab.rs` 零引用孤岛整体删除而移除.
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `IrqSaveFlags` / `IRQ_DISABLED` / `disable_interrupts` /
 //! `restore_interrupts` / `acquire_lock` / `release_lock` / `MockHeap` 平行镜像,
-//! 改引内核真实源码 `edgine::kernel::framework::sync::{SpinLock, IrqSpinLock,
+//! 改引内核真实源码 `edgine::kernel::privileged::sync::{SpinLock, IrqSpinLock,
 //! IrqSaveFlags, disable_interrupts, restore_interrupts}`.
 //! 内核 `disable_interrupts`/`restore_interrupts` 在 host-test 下为桩 (no-op,
 //! B08-14 前置: host 无中断语义, 原子自旋仍正确互斥); `SpinLock`/`IrqSpinLock`
@@ -23,7 +23,7 @@
 //! 故改为验证锁**配对契约** (lock_irqsave 返回 flags / is_locked 翻转 /
 //! IrqSpinLock RAII guard Drop 自动释放), 该契约即 kmalloc 临界区的实际保障.
 
-use edgine::kernel::framework::sync::{
+use edgine::kernel::privileged::sync::{
     IrqSaveFlags, IrqSpinLock, SpinLock, disable_interrupts, restore_interrupts,
 };
 
@@ -77,7 +77,7 @@ fn irq_disable_restore_host_stub_pairing() {
 #[test]
 fn kmalloc_source_uses_irq_save_flags_signature() {
     // P1-I-28 验收: 源码静态扫描 — kmalloc.rs 的 lock 函数签名使用 IrqSaveFlags
-    let source = include_str!("../../src/kernel/framework/mm/kmalloc.rs");
+    let source = include_str!("../../src/kernel/privileged/mm/kmalloc.rs");
     // 修复后必须包含: fn acquire_lock(&self) -> IrqSaveFlags
     assert!(
         source.contains("fn acquire_lock(&self) -> IrqSaveFlags"),
@@ -89,8 +89,8 @@ fn kmalloc_source_uses_irq_save_flags_signature() {
     );
     // 必须导入 disable_interrupts / restore_interrupts
     assert!(
-        (source.contains("use crate::framework::sync::spinlock::")
-            || source.contains("use crate::framework::sync::"))
+        (source.contains("use crate::privileged::sync::spinlock::")
+            || source.contains("use crate::privileged::sync::"))
             && source.contains("disable_interrupts")
             && source.contains("restore_interrupts"),
         "P1-I-28: kmalloc.rs 必须导入 disable/restore 中断原语"
