@@ -6,7 +6,7 @@
 //! ## 调用方契约
 //! - `proc::api` —— 进程创建/销毁时的页表操作 (`vmm_map_page` / `vmm_unmap_page`)
 //! - `crate::framework::proc::elf` —— ELF 加载时的 COW 页表克隆 (`vmm_clone_user_page_table_cow`)
-//! - `fs::ramfs` / `fs::nestfs` —— 文件系统页缓存分配 (`pmm_alloc_page` / `pmm_free_page`)
+//! - `fs::ramfs` / `fs::unkfs` —— 文件系统页缓存分配 (`pmm_alloc_page` / `pmm_free_page`)
 //! - `ipc::shm` —— 共享内存段的物理页映射
 //! - `driver::*` —— 各驱动的 DMA 缓冲区分配
 //!

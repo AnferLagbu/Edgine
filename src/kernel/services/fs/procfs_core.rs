@@ -339,7 +339,7 @@ impl ProcfsData {
 
         // /proc/version
         if name == "version" {
-            let version = "QueenX version 0.1.0 (queenx@build) (rustc 1.78.0) #1 SMP PREEMPT Mon Jul  6 00:00:00 UTC 2026\n";
+            let version = "Edgine version 0.1.0 (edgine@build) (rustc 1.78.0) #1 SMP PREEMPT Mon Jul  6 00:00:00 UTC 2026\n";
             let bytes = version.as_bytes();
             let len = bytes.len().min(buf.len());
             buf[..len].copy_from_slice(&bytes[..len]);
@@ -476,8 +476,8 @@ impl ProcfsData {
             return pos as i32;
         }
 
-        // /proc/fs/nestfs
-        if name == "fs/nestfs" {
+        // /proc/fs/unkfs
+        if name == "fs/unkfs" {
             let mut pos = 0usize;
             let write_str = |buf: &mut [u8], pos: &mut usize, s: &str| {
                 let b = s.as_bytes();
@@ -487,9 +487,9 @@ impl ProcfsData {
                 *pos += len;
             };
 
-            // 获取 NestFS 池统计
-            let nestfs = crate::services::fs::nestfs::nestfs::get_nestfs();
-            let (allocs, frees, reads, writes) = nestfs.get_stats();
+            // 获取 UNKFS 池统计
+            let unkfs = crate::services::fs::unkfs::unkfs::get_unkfs();
+            let (allocs, frees, reads, writes) = unkfs.get_stats();
 
             write_str(buf, &mut pos, "allocs: ");
             write_str(buf, &mut pos, &alloc::format!("{allocs}\n"));

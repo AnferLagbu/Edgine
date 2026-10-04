@@ -5,7 +5,7 @@
 //! 调用方契约: 本模块内所有函数要求调用方持有 `NET_STATE` 锁.
 
 use super::{
-    ChitinNetDevice, MAX_SM_FD, NET_STATE, NetState, NetworkStack, SOCKET_SET, SocketHandle,
+    EGDFNetDevice, MAX_SM_FD, NET_STATE, NetState, NetworkStack, SOCKET_SET, SocketHandle,
     SocketSet, TCP_BUF_SIZE, TOTAL_SLOTS, UDP_BUF_SIZE, UDP_META_COUNT, dhcpv4, klog_init_msg,
     klog_net, klog_net_err, tcp, udp,
 };
@@ -31,13 +31,13 @@ pub fn stack_mut() -> Option<&'static mut NetworkStack> {
 }
 
 /// 安全访问 device
-pub fn device_mut() -> Option<&'static mut ChitinNetDevice> {
+pub fn device_mut() -> Option<&'static mut EGDFNetDevice> {
     // SAFETY: 调用方持有 NET_STATE 锁.
     unsafe { state().device.as_mut() }
 }
 
 /// 安全设置 device
-pub fn set_device(d: Option<ChitinNetDevice>) {
+pub fn set_device(d: Option<EGDFNetDevice>) {
     // SAFETY: 调用方持有 NET_STATE 锁.
     unsafe {
         state().device = d;
@@ -549,7 +549,7 @@ pub fn smoltcp_net_stack_poll() -> crate::framework::net::iface_trait::PollOutco
     // SAFETY: process_dhcp_events 在 NET_LOCK 保护下处理 DHCP 事件.
     unsafe { super::process_dhcp_events(sockets) };
 
-    // 将 smoltcp PollResult 翻译为 QueenX PollOutcome
+    // 将 smoltcp PollResult 翻译为 Edgine PollOutcome
     match poll_result {
         smoltcp::iface::PollResult::SocketStateChanged => PollOutcome {
             packet_received: true,

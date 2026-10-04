@@ -56,8 +56,8 @@ const NODE_UPTIME: SysfsNode = SysfsNode::new("uptime_secs");
 const NODE_VERSION: SysfsNode = SysfsNode::new("version");
 const NODE_BOOT_STATUS: SysfsNode = SysfsNode::new("boot_status");
 
-/// /sys/queenx/ 下节点列表
-pub const QUEENX_NODES: &[SysfsNode] = &[
+/// /sys/edgine/ 下节点列表
+pub const EDGINE_NODES: &[SysfsNode] = &[
     NODE_CPU_COUNT,
     NODE_MEM_TOTAL,
     NODE_MEM_FREE,
@@ -73,13 +73,13 @@ pub const QUEENX_NODES: &[SysfsNode] = &[
 /// 静态节点总数
 #[inline]
 pub fn node_count() -> usize {
-    QUEENX_NODES.len()
+    EDGINE_NODES.len()
 }
 
 /// 节点存在查询
 #[inline]
 pub fn has_node(name: &str) -> bool {
-    QUEENX_NODES.iter().any(|n| n.name == name)
+    EDGINE_NODES.iter().any(|n| n.name == name)
 }
 
 // ============================================================================
@@ -100,7 +100,7 @@ pub fn write_node_value(name: &str, buf: &mut [u8]) -> Result<usize, Errno> {
         "mem_total" => SysfsValue::Integer(0x10000000), // 256 MiB
         "mem_free" => SysfsValue::Integer(0x08000000),  // 128 MiB
         "uptime_secs" => SysfsValue::Integer(0),
-        "version" => SysfsValue::String("queenx-0.1.0"),
+        "version" => SysfsValue::String("edgine-0.1.0"),
         "boot_status" => SysfsValue::Bool(true),
         _ => return Err(Errno::ENOENT),
     };
@@ -172,7 +172,7 @@ fn format_u64(mut n: u64) -> [u8; 20] {
 pub fn mount_sysfs() -> Result<(), Errno> {
     // 真实实现: vfs_mount("/sys", "sysfs")
     // 简化: 计数 + 验证节点表
-    if QUEENX_NODES.is_empty() {
+    if EDGINE_NODES.is_empty() {
         return Err(Errno::EINVAL);
     }
     Ok(())

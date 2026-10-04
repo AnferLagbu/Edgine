@@ -136,7 +136,7 @@ impl Controller for Cubic {
         // RFC 9438 §4.3: use cubic function to get suggested cwnd.
         // W_cubic(t) = C(t - K)^3 + w_max, evaluated at the current time t.
         let c_as_bytes = C * self.mss as f64;
-        // QX-local: no_std 目标无 f64::powi (core_float_math unstable), 立方展开数学等价.
+        // EG-local: no_std 目标无 f64::powi (core_float_math unstable), 立方展开数学等价.
         let t_sec = t as f64 / 1_000_000.0 - self.k;
         let w_cubic = c_as_bytes * t_sec * t_sec * t_sec + self.w_max as f64;
 
@@ -165,7 +165,7 @@ impl Controller for Cubic {
             let srtt = (rtt.smoothed_rtt() as u64 * 1000).max(1000);
 
             let t_ahead = (t as f64 + srtt as f64) / 1_000_000.0;
-            // QX-local: no_std 目标无 f64::powi (core_float_math unstable), 立方展开数学等价.
+            // EG-local: no_std 目标无 f64::powi (core_float_math unstable), 立方展开数学等价.
             let dt = t_ahead - self.k;
             let raw = c_as_bytes * dt * dt * dt + self.w_max as f64;
             raw.min(1.5 * self.cwnd as f64) // clamp to avoid increasing faster than slow-start would
@@ -289,7 +289,7 @@ fn cube_root(a: f64) -> f64 {
 
     // extract mantissa, get rough cbrt using linear interpolation
     let m = f64::from_bits((bits & 0x000F_FFFF_FFFF_FFFF) | 0x3FF0_0000_0000_0000);
-    // QX-local: no_std 目标无 f64::mul_add (core_float_math unstable), 普通乘加 (FMA 精度差异 <1 ULP, 无影响).
+    // EG-local: no_std 目标无 f64::mul_add (core_float_math unstable), 普通乘加 (FMA 精度差异 <1 ULP, 无影响).
     let cbrt_m = m * 0.2599 + 0.7401;
 
     // extract exponent, break into quotient and remainder

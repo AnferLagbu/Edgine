@@ -10,7 +10,7 @@
 //!
 //! ## 依赖声明
 //!
-//! framework 内部依赖: sync, mm, io, chitin, pci, net, timer, tests
+//! framework 内部依赖: sync, mm, io, egdf, pci, net, timer, tests
 //! services 依赖: `services::driver` (安全代理)
 //!
 //! ## 架构设计
@@ -146,7 +146,7 @@ pub use uefi::*;
 
 /// 初始化所有设备驱动
 ///
-/// 按照依赖顺序初始化各个子系统并注册到 Chitin 全局设备表：
+/// 按照依赖顺序初始化各个子系统并注册到 EGDF 全局设备表：
 /// 1. 字符设备 (VGA、串口)
 /// 2. 总线驱动 (PCI)
 /// 3. 输入设备 (键盘)
@@ -173,10 +173,10 @@ pub fn init_all() {
 
     hotplug::hotplug_init();
 
-    // NestFS 热插拔监听器注册已反转至 services::fs::init (DECISION-K 项 6:
-    // 注册点前置, framework driver 不再反向调用 services nestfs)
+    // UNKFS 热插拔监听器注册已反转至 services::fs::init (DECISION-K 项 6:
+    // 注册点前置, framework driver 不再反向调用 services unkfs)
 
-    let _ = crate::framework::chitin::devtree_probe_composites();
+    let _ = crate::framework::egdf::devtree_probe_composites();
 
     // 注册 Block softirq 处理程序
     crate::framework::irq::open_softirq(
@@ -187,27 +187,27 @@ pub fn init_all() {
 
 /// Block softirq 处理程序 — 块设备 IO 完成延迟处理
 fn block_softirq_handler() {
-    // 当前块设备路径走同步 VFS → NestFS → chitin 直接完成.
+    // 当前块设备路径走同步 VFS → UNKFS → egdf 直接完成.
     // 此 handler 为异步 IO (io_uring) + DMA 完成中断模式预留.
 }
 
 /// 关闭所有设备驱动
 ///
-/// 通过 Chitin 框架统一关闭所有注册的设备。
+/// 通过 EGDF 框架统一关闭所有注册的设备。
 pub fn shutdown_all() {
-    crate::framework::chitin::chitin_shutdown_all();
+    crate::framework::egdf::egdf_shutdown_all();
 }
 
-/// 获取系统已检测到的设备列表 (从 Chitin + BlockDevice 读取)
+/// 获取系统已检测到的设备列表 (从 EGDF + BlockDevice 读取)
 ///
 /// 返回格式化的设备信息字符串。
 #[cfg(feature = "alloc")]
 pub fn list_devices() -> alloc::string::String {
     use alloc::format;
-    let mut info = alloc::string::String::from("=== Chitin Device Registry ===\n\n");
+    let mut info = alloc::string::String::from("=== EGDF Device Registry ===\n\n");
 
-    let chitin_devs = crate::framework::chitin::chitin_list();
-    if chitin_devs.is_empty() {
+    let egdf_devs = crate::framework::egdf::egdf_list();
+    if egdf_devs.is_empty() {
         info.push_str("  (no devices)\n");
     } else {
         let mut block = Vec::new();
@@ -216,14 +216,14 @@ pub fn list_devices() -> alloc::string::String {
         let mut char_dev = Vec::new();
         let mut other = Vec::new();
 
-        for (id, name, proto, state) in &chitin_devs {
+        for (id, name, proto, state) in &egdf_devs {
             let st = format!("{:?}", state);
             let line = format!("  [id={}] {} proto={:?} state={}", id, name, proto, st);
             match proto {
-                crate::framework::chitin::ChitinProto::Block => block.push(line),
-                crate::framework::chitin::ChitinProto::Input => input.push(line),
-                crate::framework::chitin::ChitinProto::Net => net.push(line),
-                crate::framework::chitin::ChitinProto::Char => char_dev.push(line),
+                crate::framework::egdf::EGDFProto::Block => block.push(line),
+                crate::framework::egdf::EGDFProto::Input => input.push(line),
+                crate::framework::egdf::EGDFProto::Net => net.push(line),
+                crate::framework::egdf::EGDFProto::Char => char_dev.push(line),
                 _ => other.push(line),
             }
         }

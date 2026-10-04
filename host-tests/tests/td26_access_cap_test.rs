@@ -5,13 +5,13 @@
 //!   1. `F_OK` (mode=0) 不要求任何能力
 //!   2. `R_OK`/`W_OK`/`X_OK` 正确映射到 `FS_CAP_READ/WRITE/EXECUTE`
 //!   3. 组合 mode (位或) 映射为组合能力位
-//!   4. 能力充足 → 放行; 能力不足 → EACCES (走内核 `framework::credo::pwm_has_capability`)
+//!   4. 能力充足 → 放行; 能力不足 → EACCES (走内核 `framework::sgeg::pwm_has_capability`)
 //!   5. mode 越界 → EINVAL (与内核 `0..=0o7` 校验一致)
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `FS_CAP_*` 常量表与 `pwm_has_capability` mock 实现, 改引:
-//! - `framework::credo::pwm_has_capability` — 内核真实能力检查 (engine::check)
-//! - `services::credo::capability::{FS_CAP_*, CAP_DOMAIN_FS}` — 能力位/域常量
+//! - `framework::sgeg::pwm_has_capability` — 内核真实能力检查 (engine::check)
+//! - `services::sgeg::capability::{FS_CAP_*, CAP_DOMAIN_FS}` — 能力位/域常量
 //! - 测试身份经 `identity::get_table().create(..)` 真实注册 (初始 FS 能力 =
 //!   `capability::VIABLE_FLOOR` = READ|EXECUTE), 能力授予以 `PwmEntry::fetch_or_caps` 完成.
 //!
@@ -19,17 +19,17 @@
 //! 原镜像的 `path_exists` 存在性检查 (对应内核 `access_syscall` 内
 //! `vfs_stat_safe`) 已移除: VFS 全局状态 (VFS_MANAGER) 在 host 未初始化, 不可测.
 //! 原镜像 `current_pwm()` 读取进程凭证部分 (内核 `access.rs::current_pwm` 为私有
-//! 函数, 依赖 `credo::api::pwm_get_current()` 进程上下文) 亦不可测, 已移除.
+//! 函数, 依赖 `sgeg::api::pwm_get_current()` 进程上下文) 亦不可测, 已移除.
 //! 以上两部分的回归覆盖保留在 QEMU 集成测试.
 
 use std::sync::OnceLock;
 
-use queenx::kernel::framework::credo::identity;
-use queenx::kernel::framework::credo::pwm_has_capability;
-use queenx::kernel::services::credo::capability::{
+use edgine::kernel::framework::sgeg::identity;
+use edgine::kernel::framework::sgeg::pwm_has_capability;
+use edgine::kernel::services::sgeg::capability::{
     CAP_DOMAIN_FS, FS_CAP_EXECUTE, FS_CAP_READ, FS_CAP_WRITE,
 };
-use queenx::kernel::services::credo::types::{CapBits, CapDomain};
+use edgine::kernel::services::sgeg::types::{CapBits, CapDomain};
 
 const EACCES: i32 = -13; // POSIX EACCES
 const EINVAL: i32 = -22; // POSIX EINVAL
@@ -41,7 +41,7 @@ const W_OK: i32 = 2;
 const X_OK: i32 = 1;
 
 /// 注册并缓存测试身份 (creator=0 → 最高特权级). 新身份的初始 FS 能力 =
-/// `services::credo::capability::VIABLE_FLOOR[FS]` = READ|EXECUTE (无 WRITE),
+/// `services::sgeg::capability::VIABLE_FLOOR[FS]` = READ|EXECUTE (无 WRITE),
 /// 即内核"可行下界"进程的权限形态.
 fn test_pwm() -> u64 {
     static PWM: OnceLock<u64> = OnceLock::new();

@@ -24,10 +24,10 @@
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use queenx::kernel::framework::driver::hotplug::{
+use edgine::kernel::framework::driver::hotplug::{
     BusType, DeviceLocation, HOTPLUG_MANAGER, HotplugEvent, HotplugListener,
 };
-use queenx::kernel::services::driver::storage::drives_for_location;
+use edgine::kernel::services::driver::storage::drives_for_location;
 
 /// 分发类用例的进程内串行锁 (全局管理器单例)。
 static MGR_LOCK: Mutex<()> = Mutex::new(());

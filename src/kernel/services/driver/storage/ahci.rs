@@ -300,7 +300,7 @@ pub struct AhciPort {
     pub signature: u32,
     /// 设备类型
     pub device_kind: AhciDeviceKind,
-    /// 该端口对应的 Chitin 块设备下标 (无盘或未注册时为 `None`)
+    /// 该端口对应的 EGDF 块设备下标 (无盘或未注册时为 `None`)
     drive: Option<u8>,
     /// DMA 资源
     dma: Option<AhciPortDma>,
@@ -323,12 +323,12 @@ impl AhciPort {
         }
     }
 
-    /// 端口对应的 Chitin 块设备下标 (无盘/未注册为 `None`)
+    /// 端口对应的 EGDF 块设备下标 (无盘/未注册为 `None`)
     pub fn drive(&self) -> Option<u8> {
         self.drive
     }
 
-    /// 记录端口对应的 Chitin 块设备下标
+    /// 记录端口对应的 EGDF 块设备下标
     pub fn set_drive(&mut self, drive: Option<u8>) {
         self.drive = drive;
     }
@@ -1056,7 +1056,7 @@ pub struct AhciController {
 pub struct PortChanges {
     /// 新近在位的端口: (`port_index`, 硬件端口号)
     pub added: alloc::vec::Vec<(usize, u8)>,
-    /// 新近离位的端口: (`port_index`, 硬件端口号, 已注册的 Chitin 块设备下标)
+    /// 新近离位的端口: (`port_index`, 硬件端口号, 已注册的 EGDF 块设备下标)
     pub removed: alloc::vec::Vec<(usize, u8, u8)>,
 }
 
@@ -1181,7 +1181,7 @@ impl AhciController {
     /// 扫描全部端口, 返回自上次扫描以来的在位/离位变化
     ///
     /// 用于 SATA 端口级热插拔: 逐端口读 `PxSSTS` 判定链路状态, 对新增在位
-    /// 端口执行上电检测, 对离位端口执行停止并按已注册的 Chitin 块设备下标
+    /// 端口执行上电检测, 对离位端口执行停止并按已注册的 EGDF 块设备下标
     /// 记录移除。移除项的 `drive` 字段**保留不清**, 供后续分发阶段解析。
     pub fn scan_ports(&mut self) -> PortChanges {
         let mut changes = PortChanges::default();
@@ -1436,7 +1436,7 @@ mod tests {
 
     #[test]
     fn test_ahci_port_drive_mapping() {
-        // 端口 → Chitin 块设备下标的回写/读取/清除 (端口级热插拔墓碑化依赖)
+        // 端口 → EGDF 块设备下标的回写/读取/清除 (端口级热插拔墓碑化依赖)
         let mut port = AhciPort::new(3);
         assert_eq!(port.port_num, 3);
         assert_eq!(port.port_offset(), PORT_REG_BASE + 3 * PORT_REG_STRIDE);

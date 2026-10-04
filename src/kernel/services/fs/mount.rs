@@ -13,7 +13,7 @@
 //! - [`mount_syscall`] target 必须非空, fstype 必须在已知列表
 //! - [`umount2_syscall`] target 必须非空, 需 `CAP_SYS_ADMIN`
 
-use crate::framework::credo;
+use crate::framework::sgeg;
 use crate::framework::syscall::Errno;
 use crate::framework::syscall::raw;
 use crate::services::fs::api as fw;
@@ -25,7 +25,7 @@ use crate::services::fs::api as fw;
 /// mount(source, target, fstype) — 挂载文件系统
 ///
 /// 需 `CAP_SYS_ADMIN` (capability 0x01) 才能挂载.
-/// Framekernel 简化: 仅支持 5 种内置 FS (ramfs/nestfs/tmpfs/procfs/devfs),
+/// Framekernel 简化: 仅支持 5 种内置 FS (ramfs/unkfs/tmpfs/procfs/devfs),
 /// 校验先于 framework 调用, 失败一律 ENODEV.
 ///
 /// # Errors
@@ -49,11 +49,11 @@ pub fn mount_syscall(source_ptr: u64, target_ptr: u64, fstype_ptr: u64) -> Resul
     }
 
     let pwm = current_pwm()?;
-    if !credo::api::pwm_has_capability(pwm, 0, 0x01) {
+    if !sgeg::api::pwm_has_capability(pwm, 0, 0x01) {
         return Err(Errno::EACCES);
     }
 
-    // 框架端会解析 fstype; 校验则委托 framework 内置白名单 (ramfs/nestfs/...)
+    // 框架端会解析 fstype; 校验则委托 framework 内置白名单 (ramfs/unkfs/...)
     let r = fw::vfs_mount(target_ptr as *const u8, fstype_ptr as *const u8);
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))
@@ -83,7 +83,7 @@ pub fn umount2_syscall(target_ptr: u64, flags: i32) -> Result<usize, Errno> {
     }
 
     let pwm = current_pwm()?;
-    if !credo::api::pwm_has_capability(pwm, 0, 0x01) {
+    if !sgeg::api::pwm_has_capability(pwm, 0, 0x01) {
         return Err(Errno::EACCES);
     }
 
@@ -108,5 +108,5 @@ pub fn umount2_syscall(target_ptr: u64, flags: i32) -> Result<usize, Errno> {
 /// mount/umount2 在调用前还需 `pwm_has_capability(..., CAP_SYS_ADMIN)` 检查,
 /// 这里仅返回原始凭证,真正权限决策交给 capability 模块。
 fn current_pwm() -> Result<u64, Errno> {
-    Ok(credo::api::pwm_get_current())
+    Ok(sgeg::api::pwm_get_current())
 }

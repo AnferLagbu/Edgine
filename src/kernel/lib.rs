@@ -1,4 +1,4 @@
-//! QueenX 内核 (纯 Rust 实现) — 框内核 (Framekernel)
+//! Edgine 内核 (纯 Rust 实现) — 框内核 (Framekernel)
 //!
 //! ## 架构概览 (Asterinas OSTD 范式)
 //!
@@ -16,9 +16,9 @@
 //! │   ├── net/       网络硬件 + 协议栈
 //! │   ├── fs/        文件系统底层 (VFS 抽象 + 块设备层)
 //! │   ├── ipc/       IPC 底层 (内核态通道)
-//! │   ├── credo/     身份/密码学硬件
-//! │   ├── chitin/    设备框架底层
-//! │   ├── barrier/   弹性恢复底层
+//! │   ├── sgeg/     身份/密码学硬件
+//! │   ├── egdf/    设备框架底层
+//! │   ├── freg/   弹性恢复底层
 //! │   ├── console/   串口/终端硬件
 //! │   ├── klog/      日志硬件输出
 //! │   ├── config/    硬件相关配置
@@ -37,7 +37,7 @@
 //! │   └── frame.rs/vmspace.rs/usermode.rs/userctx.rs/userptr.rs
 //! │     iomem.rs/ioport.rs/irqline.rs/dma_buf.rs/page_table.rs
 //! │     cpu_local.rs/racy_cell.rs
-//! │     net_socket.rs/credo_pwm.rs/proc_elf.rs/syscall_init.rs
+//! │     net_socket.rs/sgeg_pwm.rs/proc_elf.rs/syscall_init.rs
 //! │
 //! └── services/    # 【全 safe / #![deny(unsafe_code)]】业务层
 //!     ├── driver/    设备驱动 safe wrapper
@@ -47,9 +47,9 @@
 //!     ├── proc/      进程子系统
 //!     ├── sync/      同步原语业务封装
 //!     ├── syscall/   系统调用分发
-//!     ├── credo/     身份/密码学业务
-//!     ├── chitin/    用户态驱动框架
-//!     ├── barrier/   弹性归因业务
+//!     ├── sgeg/     身份/密码学业务
+//!     ├── egdf/    用户态驱动框架
+//!     ├── freg/   弹性归因业务
 //!     ├── console/   控制台业务 (services 实际通过 framework::console 复用)
 //!     ├── klog/      日志业务 (services 实际通过 framework::klog 复用)
 //!     └── wasm/      WASM 运行时
@@ -107,7 +107,7 @@
 #![allow(clippy::result_unit_err)]
 // rustfmt 整改后函数体行数普遍增长 10-20%, 原 100 行阈值过紧; 放宽至 200
 #![allow(clippy::too_many_lines)]
-// 11. Clippy: module_inception — 内核模块命名（如 fs/nestfs/nestfs.rs）是架构惯例
+// 11. Clippy: module_inception — 内核模块命名（如 fs/unkfs/unkfs.rs）是架构惯例
 #![allow(clippy::module_inception)]
 // 12. Clippy: new_without_default — 内核对象通常不应有无参默认构造
 #![allow(clippy::new_without_default)]
@@ -225,7 +225,7 @@ use core::sync::atomic::Ordering;
     reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
 )]
 fn panic(info: &PanicInfo) -> ! {
-    crate::framework::barrier::PANIC_FLAG.store(true, Ordering::SeqCst);
+    crate::framework::freg::PANIC_FLAG.store(true, Ordering::SeqCst);
 
     // 诊断 (TRACK-INIT-RING3-PANIC): 先直接输出 panic location (file:line),
     // 绕过 PanicInfo::Display 格式化 (其内部 slice 索引在栈/数据被破坏时
@@ -267,7 +267,7 @@ fn panic(info: &PanicInfo) -> ! {
     let bytes = msg.as_bytes();
     let len = bytes.len().min(127);
     {
-        let mut panic_msg = crate::framework::barrier::PANIC_MSG.lock();
+        let mut panic_msg = crate::framework::freg::PANIC_MSG.lock();
         panic_msg[..len].copy_from_slice(&bytes[..len]);
         panic_msg[len] = 0;
     }
@@ -419,7 +419,7 @@ fn panic(info: &PanicInfo) -> ! {
     }
     #[cfg(target_arch = "aarch64")]
     {
-        // AArch64 栏栈恢复: 直接调用恢复逻辑进行域回滚
+        // AArch64 FREG恢复: 直接调用恢复逻辑进行域回滚
         unsafe extern "C" {
             fn recovery_try_recover_from_idt() -> i32;
         }
@@ -427,13 +427,12 @@ fn panic(info: &PanicInfo) -> ! {
         if result >= 0 {
             // 域状态已回滚到一致快照, 记录恢复事件
             crate::framework::klog::serial_write_bytes(
-                b"\n[RECOVERY] Barrier-stack: domain rolled back\n",
+                b"\n[RECOVERY] FREG-stack: domain rolled back\n",
             );
-            crate::framework::barrier::PANIC_FLAG
-                .store(false, core::sync::atomic::Ordering::SeqCst);
+            crate::framework::freg::PANIC_FLAG.store(false, core::sync::atomic::Ordering::SeqCst);
         } else {
             crate::framework::klog::serial_write_bytes(
-                b"\n[RECOVERY] Barrier-stack: recovery failed, halting\n",
+                b"\n[RECOVERY] FREG-stack: recovery failed, halting\n",
             );
         }
         loop {
@@ -512,7 +511,7 @@ pub extern "C" fn kernel_init() {
     unsafe {
         crate::framework::klog::klog_init();
     }
-    crate::klog_boot_info!("QueenX starting");
+    crate::klog_boot_info!("Edgine starting");
 
     // 0.05. Boot 栈 canary 验证 — 检测 trampoline → kernel_init 路径上的栈溢出.
     // canary 在 boot.asm trampoline64_high (x86_64) 或 entry.rs (aarch64) 写入 stack_bottom,
@@ -626,7 +625,7 @@ pub extern "C" fn kernel_init() {
             let rate = option_env!("FAULT_RATE")
                 .and_then(|s| s.parse::<u32>().ok())
                 .unwrap_or(50);
-            crate::framework::barrier::fault_inject::FAULT_INJECTION_RATE
+            crate::framework::freg::fault_inject::FAULT_INJECTION_RATE
                 .store(rate, core::sync::atomic::Ordering::Relaxed);
             crate::klog_boot_info!("[CHAOS] Fault injection enabled, rate={}/1000", rate);
         }
@@ -716,12 +715,12 @@ pub extern "C" fn kernel_init() {
         crate::framework::mm::pmm::pmm_init_bitmap(reserved_after_kernel);
         crate::klog_boot_info!("PMM bitmap initialized");
 
-        // --- 栏栈恢复域 (前移至中断使能前, 避免竞态) ---
+        // --- FREG恢复域 (前移至中断使能前, 避免竞态) ---
         // 在中断使能前注册 PMM + PROC 域, 使定时器 IRQ
         // 不会与 RECOVERY_MANAGER 自旋锁上的域注册竞态
-        crate::framework::mm::pmm::pmm_register_barrier_domain();
-        crate::framework::proc::process::proc_register_barrier_domain();
-        crate::klog_boot_info!("Barrier-stack recovery domains registered (PMM=3, PROC=4)");
+        crate::framework::mm::pmm::pmm_register_freg_domain();
+        crate::framework::proc::process::proc_register_freg_domain();
+        crate::klog_boot_info!("FREG-stack recovery domains registered (PMM=3, PROC=4)");
 
         // 5.5. Swap — 物理内存回收/换出 (B3 完整实现)
         // 必须在 PMM + VMM + kmalloc 初始化之后 (使用 pmm/vmm 接口)
@@ -774,7 +773,7 @@ pub extern "C" fn kernel_init() {
         crate::services::debug::ebpf::init();
 
         // 9. VFS
-        // services::fs::init() — FsBackend 策略 + VFS poll 策略 + NestFS
+        // services::fs::init() — FsBackend 策略 + VFS poll 策略 + UNKFS
         // FileSystem/热插拔监听器注册 (DECISION-K 项 6 注册点前置)。预存欠账:
         // 此前 services::fs::init() 无调用者, make_ramfs_inode 钩子 (第二十三批)
         // 恒命中 FallbackFsBackend Err(NotInitialized), ramfs open/create 路径
@@ -791,10 +790,10 @@ pub extern "C" fn kernel_init() {
         {
             // 阶段 3 (驱动双份合并): services 网络驱动权威 (e1000 + virtio-net
             // 复合探测) 注册探测回调槽 (services→framework 单向), 实际设备
-            // 探测在 qx_net_init → nic_probe_all 经槽位单向拉取。
+            // 探测在 eg_net_init → nic_probe_all 经槽位单向拉取。
             crate::services::driver::net::net_init();
 
-            crate::framework::net::init::qx_net_init();
+            crate::framework::net::init::eg_net_init();
 
             crate::klog_boot_info!("Network subsystem initialized");
         }
@@ -802,80 +801,80 @@ pub extern "C" fn kernel_init() {
         // 10-10.6. Driver subsystem init
         crate::framework::driver::init_all();
         // §6.4 直接方案 B: 字符设备 (x86_64 vga/serial + aarch64 pl011) 权威迁 services,
-        // 由 crate root (合法双向编排者) 调用 services char_init 注册进 Chitin.
+        // 由 crate root (合法双向编排者) 调用 services char_init 注册进 EGDF.
         crate::services::driver::char::char_init();
         // §6.4 直接方案 B: virtio-blk 权威迁 services (aarch64 QEMU -M virt 主战场;
         // x86_64 走 PCI AHCI/NVMe, 此调用探测 virtio-mmio 无设备即跳过)
         crate::services::driver::virtio::blk_init();
         // DECISION-H storage 专项 3 号子步: PCI AHCI/NVMe 权威迁 services,
         // 由 crate root (合法双向编排者) 调用 services storage_init 接管控制器
-        // 初始化与 Chitin 注册 (framework storage_init 仅余 ATA 回退路径)。
+        // 初始化与 EGDF 注册 (framework storage_init 仅余 ATA 回退路径)。
         #[cfg(target_arch = "x86_64")]
         crate::services::driver::storage::storage_init();
         // 2-D USB 整体下沉: xHCI 探测/注册权威实装于 services::driver::usb,
         // 由 crate root (合法双向编排者) 调用 services usb_init 接管
-        // PCI 发现 + Chitin 注册 (framework 侧 usb 模块已删除)。
+        // PCI 发现 + EGDF 注册 (framework 侧 usb 模块已删除)。
         crate::services::driver::usb::usb_init();
         // MIG-008 接线补齐: 显示控制器 (HDMI/DP/DisplayManager) 权威实装于
         // services::driver::display, 由 crate root (合法双向编排者) 调用
         // services display_init 注册工厂回调, 再经 framework display_probe_controllers
-        // 单向拉取触发 Chitin 注册 (DECISION-K 单向注册契约)。
+        // 单向拉取触发 EGDF 注册 (DECISION-K 单向注册契约)。
         crate::services::driver::display::display_init();
         crate::framework::driver::display_probe_controllers();
         crate::klog_boot_info!("Driver subsystem initialized");
         {
-            let chitin_count = crate::framework::chitin::chitin_count() as u64;
-            let block_count = crate::framework::chitin::chitin_count_by_proto(
-                crate::framework::chitin::ChitinProto::Block,
+            let egdf_count = crate::framework::egdf::egdf_count() as u64;
+            let block_count = crate::framework::egdf::egdf_count_by_proto(
+                crate::framework::egdf::EGDFProto::Block,
             ) as u64;
-            let net_count = crate::framework::chitin::chitin_count_by_proto(
-                crate::framework::chitin::ChitinProto::Net,
-            ) as u64;
-            let input_count = crate::framework::chitin::chitin_count_by_proto(
-                crate::framework::chitin::ChitinProto::Input,
+            let net_count =
+                crate::framework::egdf::egdf_count_by_proto(crate::framework::egdf::EGDFProto::Net)
+                    as u64;
+            let input_count = crate::framework::egdf::egdf_count_by_proto(
+                crate::framework::egdf::EGDFProto::Input,
             ) as u64;
             crate::klog_boot_info!(
-                "Chitin: {} device(s) [blk={} net={} input={}]",
-                chitin_count,
+                "EGDF: {} device(s) [blk={} net={} input={}]",
+                egdf_count,
                 block_count,
                 net_count,
                 input_count
             );
         }
 
-        // NestFS + 磁盘挂载 — BlockDevice 注册表自动发现多块磁盘 (支持 ATA/NVMe/virtio-blk)
+        // UNKFS + 磁盘挂载 — BlockDevice 注册表自动发现多块磁盘 (支持 ATA/NVMe/virtio-blk)
         // 门控语义 (T1 G7): 与上方真机引导块一致, 真机路径 = not(any(kernel_test, host-test)).
         #[cfg(all(
             not(any(feature = "kernel_test", feature = "host-test")),
             target_arch = "x86_64"
         ))]
         {
-            let nestfs = crate::services::fs::nestfs::nestfs::get_nestfs();
-            // init() 会自动扫描所有块设备, 发现 QueenX 签名的磁盘并挂载
-            nestfs.init();
+            let unkfs = crate::services::fs::unkfs::unkfs::get_unkfs();
+            // init() 会自动扫描所有块设备, 发现 Edgine 签名的磁盘并挂载
+            unkfs.init();
 
-            if nestfs.is_disk_mode() {
-                crate::services::fs::nestfs::nestfs::get_nestfs()
+            if unkfs.is_disk_mode() {
+                crate::services::fs::unkfs::unkfs::get_unkfs()
                     .spa
                     .disk_present
                     .store(true, core::sync::atomic::Ordering::Release);
                 let r =
-                    crate::services::fs::api::vfs_mount_internal(b"/".as_ptr(), b"nestfs".as_ptr());
+                    crate::services::fs::api::vfs_mount_internal(b"/".as_ptr(), b"unkfs".as_ptr());
                 if r == 0 {
-                    let n_drives = crate::services::fs::nestfs::nestfs::get_nestfs()
+                    let n_drives = crate::services::fs::unkfs::unkfs::get_unkfs()
                         .drives_discovered
                         .lock()
                         .len() as u64;
                     if n_drives > 1 {
-                        crate::klog_boot_info!("Root filesystem: NestFS ({} drives)", n_drives);
+                        crate::klog_boot_info!("Root filesystem: UNKFS ({} drives)", n_drives);
                     } else {
-                        crate::klog_boot_info!("Root filesystem: NestFS (disk)");
+                        crate::klog_boot_info!("Root filesystem: UNKFS (disk)");
                     }
                 } else {
-                    crate::klog_boot_info!("NestFS mount failed");
+                    crate::klog_boot_info!("UNKFS mount failed");
                 }
             } else {
-                crate::klog_boot_info!("NestFS: running in memory mode (no disk)");
+                crate::klog_boot_info!("UNKFS: running in memory mode (no disk)");
             }
         }
 
@@ -897,7 +896,7 @@ pub extern "C" fn kernel_init() {
             );
         }
 
-        crate::klog_boot_info!("QueenX initialized, entering user mode...");
+        crate::klog_boot_info!("Edgine initialized, entering user mode...");
 
         // 11. Syscall 子系统初始化 (必须在 interrupt_late_init 之后, launch_first_user_process 之前)
         // 11a. framework 层: MSR/STAR/LSTAR 配置 + epoll 回调注册

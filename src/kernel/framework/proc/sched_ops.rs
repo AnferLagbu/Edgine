@@ -110,7 +110,7 @@ pub extern "C" fn scheduler_init() {
     super::scheduler::init();
     SCHEDULER_EX.init();
 
-    // 注册 tick 查询回调, 解耦 barrier→proc::scheduler 依赖
+    // 注册 tick 查询回调, 解耦 freg→proc::scheduler 依赖
     // SAFETY: get_tick 是 'static 函数指针, 在内核运行期间始终有效.
     unsafe {
         crate::framework::tick_query::register_tick_query(crate::framework::proc::get_tick);
@@ -127,8 +127,8 @@ pub extern "C" fn scheduler_init() {
     // 由 lib.rs kernel_init 统一接入.
     // D5: 初始化电源管理子系统
     crate::framework::driver::pm_init(crate::framework::config::MAX_CPUS as u32);
-    // D6: 初始化安全启动 + TPM (移至 credo_init, 消除 proc→credo 依赖)
-    crate::framework::credo::credo_init();
+    // D6: 初始化安全启动 + TPM (移至 sgeg_init, 消除 proc→sgeg 依赖)
+    crate::framework::sgeg::sgeg_init();
     // D7: 初始化 CET (Shadow Stack)
     crate::framework::arch::cet_init();
     // D8: 初始化 Tickless (NO_HZ)

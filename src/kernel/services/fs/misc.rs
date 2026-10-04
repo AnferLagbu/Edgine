@@ -9,9 +9,9 @@
 //! - rename 需校验两个路径指针
 //! - time 需校验 buf 长度 (8 字节)
 
-use crate::framework::credo;
-use crate::framework::credo::capability::FS_CAP_CHOWN;
 use crate::framework::proc::api as proc_fw;
+use crate::framework::sgeg;
+use crate::framework::sgeg::capability::FS_CAP_CHOWN;
 use crate::framework::syscall::Errno;
 use crate::framework::syscall::raw;
 use crate::services::fs::api as fw;
@@ -121,7 +121,7 @@ pub fn fchown_syscall(fd: i32, owner: u64, group: u64) -> Result<usize, Errno> {
     let pwm = current_pwm()?;
     // B06-PRE-002: 前置 FS 域 CHOWN 能力校验 — 属主/属组变更是身份安全关键操作,
     // 由专用能力位门控 (与 access/open 路径的 pwm_has_capability 语义一致).
-    if !credo::api::pwm_has_capability(pwm, credo::CAP_DOMAIN_FS, FS_CAP_CHOWN) {
+    if !sgeg::api::pwm_has_capability(pwm, sgeg::CAP_DOMAIN_FS, FS_CAP_CHOWN) {
         return Err(Errno::EPERM);
     }
     let r = fw::vfs_fchown(fd as u32, owner, group, pwm);
@@ -350,7 +350,7 @@ pub fn alarm_syscall(seconds: u32) -> Result<usize, Errno> {
 )]
 /// 取当前进程凭证,无会话时直接返回 EACCES (历史硬编码 `TEST_PWM` 路径已弃用)。
 fn current_pwm() -> Result<u64, Errno> {
-    Ok(credo::api::pwm_get_current())
+    Ok(sgeg::api::pwm_get_current())
 }
 
 fn current_pid() -> u32 {

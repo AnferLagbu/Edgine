@@ -6,7 +6,7 @@
 //! - socket send/recv 缓冲区失效, 返回 EFAULT
 //! - 信号栈帧写入失败, 信号不投递但进程继续运行
 //!
-//! host-tests 不链接 queenx; 复刻 copy_user 的核心接口契约来
+//! host-tests 不链接 edgine; 复刻 copy_user 的核心接口契约来
 //! 验证调用方语义: 返回 Result<usize, ()>, 失败时调用方必须
 //! 把 EFAULT / SIG_IGN 路径走通.
 

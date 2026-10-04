@@ -1,6 +1,6 @@
-# QueenX Kernel
+# Edgine Kernel
 
-QueenX 是一个从零实现的内核，使用 Rust 编写，基于 Asterinas 框内核（Framekernel）架构与范式进行设计与开发。它目前是实验性的，并在此基础上设计了一些独特的功能与特性。
+Edgine 是一个从零实现的内核，使用 Rust 编写，基于 Asterinas 框内核（Framekernel）架构与范式进行设计与开发。它目前是实验性的，并在此基础上设计了一些独特的功能与特性。
 
 > **English version**: [README.en.md](README.en.md)
 
@@ -31,7 +31,7 @@ QueenX 是一个从零实现的内核，使用 Rust 编写，基于 Asterinas �
 
 欢迎提交问题报告与贡献：
 
-- **主仓库**：[Gitee](https://gitee.com/AnferLagbu/QueenX)
-- **镜像仓库**：[GitHub](https://github.com/AnferLagbu/QueenX)
+- **主仓库**：[Gitee](https://gitee.com/AnferLagbu/Edgine)
+- **镜像仓库**：[GitHub](https://github.com/AnferLagbu/Edgine)
 
 无论是问题报告还是贡献提交，我都会关注，并由衷感谢你对本项目的关注与贡献。

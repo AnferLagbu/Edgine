@@ -1,8 +1,8 @@
-# QueenX USB 主/从侧（Host / Device）实现路线报告
+# Edgine USB 主/从侧（Host / Device）实现路线报告
 
-> 总体判断：QueenX 现有 USB 子系统为**纯 Host 侧**，其**自持实现**是 framekernel 边界下唯一可行的路径，应当延续；**Device（gadget）侧**受"UDC 硬件存在性"与"QEMU 无虚拟 UDC"两项前置条件制约，**暂不自持，条件触发**。host 侧第三方库（`usb-host` 等）不可用，device 侧第三方库（`usb-device`）只覆盖上半层——两者均不建议引入。
+> 总体判断：Edgine 现有 USB 子系统为**纯 Host 侧**，其**自持实现**是 framekernel 边界下唯一可行的路径，应当延续；**Device（gadget）侧**受"UDC 硬件存在性"与"QEMU 无虚拟 UDC"两项前置条件制约，**暂不自持，条件触发**。host 侧第三方库（`usb-host` 等）不可用，device 侧第三方库（`usb-device`）只覆盖上半层——两者均不建议引入。
 
-本报告是 QueenX 对 USB 主/从侧实现路线的一次性技术快照。评估依据为 QueenX 仓库当前事实（`src/kernel/services/driver/usb/`、`src/rust/deny.toml`、`docs/report/third-party-library-selection-assessment.md`）与 crates.io 官方元数据（`usb-device` 0.3.2、`usb-host` 0.1.3）。作为后续制定 plan 与修复工程的输入依据。
+本报告是 Edgine 对 USB 主/从侧实现路线的一次性技术快照。评估依据为 Edgine 仓库当前事实（`src/kernel/services/driver/usb/`、`src/rust/deny.toml`、`docs/report/third-party-library-selection-assessment.md`）与 crates.io 官方元数据（`usb-device` 0.3.2、`usb-host` 0.1.3）。作为后续制定 plan 与修复工程的输入依据。
 
 ## 一、问题背景：USB 的硬性主从不对称
 
@@ -19,7 +19,7 @@ USB 总线在设计上规定了唯一的根主机（Host），其余节点全为
 
 关键点在于**类驱动方向相反**：host 侧是"HID 类驱动去驱动一把外部键盘"，device 侧是"HID 类实现让本机对外表现为一把键盘"。名字相同，语义相反——因此两者不是可替换的候选，而是同一总线上的两条互补腿。
 
-## 二、QueenX 现状：100% Host 侧、且已自持
+## 二、Edgine 现状：100% Host 侧、且已自持
 
 `src/kernel/services/driver/usb/` 全部为 Host 侧实现，落在 services 子树（0 unsafe），模块结构见 `services/driver/usb/mod.rs` L11-19：
 
@@ -34,7 +34,7 @@ USB 总线在设计上规定了唯一的根主机（Host），其余节点全为
 
 其设计原则（`mod.rs` L23-25）已明确"零 unsafe / MMIO 经 `framework::IoMem` 代理 / DMA 经 framework 安全包装"；控制器列表由 services 自持（`mod.rs` L55），PCI 发现常量（`mod.rs` L68-72）与初始化入口 `usb_init()`（`mod.rs` L141）亦均在 services。后续计划文件为 `ehci.rs` / `uhci.rs` / `ohci.rs`（`mod.rs` L29-31），方向仍是 host 侧各代控制器。
 
-结论：QueenX 的 USB 能力当前**只有一个方向**——作为主机去驱动外部设备；device 侧尚无任何代码。
+结论：Edgine 的 USB 能力当前**只有一个方向**——作为主机去驱动外部设备；device 侧尚无任何代码。
 
 ## 三、Host 侧：自持是唯一合架构路径
 
@@ -70,7 +70,7 @@ Host 侧不建议、也无必要改用第三方库，理由有三：
 | 许可证 | MIT |
 | 分层 | `UsbDevice` / `UsbClass` / `UsbBus` 三层 trait，仅覆盖**上半层** |
 
-其方向与 QueenX 现有 host 栈相反（既有结论见 `docs/report/third-party-library-selection-assessment.md` L36）。更关键的是：即便将来做 device 侧，`usb-device` 也只提供 upper-half，底下的 `UsbBus` 控制器驱动**仍须自行编写**；且其 trait 形状为 MCU peripheral 风格（poll 驱动、embedded-hal 取向），与通用内核的上下文 / 中断模型并不契合。引入它省不掉最硬的部分，只增加一层接口耦合。
+其方向与 Edgine 现有 host 栈相反（既有结论见 `docs/report/third-party-library-selection-assessment.md` L36）。更关键的是：即便将来做 device 侧，`usb-device` 也只提供 upper-half，底下的 `UsbBus` 控制器驱动**仍须自行编写**；且其 trait 形状为 MCU peripheral 风格（poll 驱动、embedded-hal 取向），与通用内核的上下文 / 中断模型并不契合。引入它省不掉最硬的部分，只增加一层接口耦合。
 
 ### 5.2 `usb-host`（host 侧，不可用）
 
@@ -87,7 +87,7 @@ Host 侧不建议、也无必要改用第三方库，理由有三：
 
 ### 5.3 其余 host 侧第三方（均不适用）
 
-`cotton-usb-host`、`crab-usb`、`rp-pio-usb-host` 等均为 MCU / Embassy async 向实现，绑定特定微控制器（RP2040 等）或 async 执行器，不面向 QueenX 的 x86_64 / aarch64 通用平台。
+`cotton-usb-host`、`crab-usb`、`rp-pio-usb-host` 等均为 MCU / Embassy async 向实现，绑定特定微控制器（RP2040 等）或 async 执行器，不面向 Edgine 的 x86_64 / aarch64 通用平台。
 
 ## 六、若将来推进 Device 侧
 

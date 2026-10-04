@@ -22,10 +22,10 @@ pub use keyboard::KeyboardDriver;
 
 #[cfg(target_arch = "x86_64")]
 pub fn input_init() {
-    // 键盘注册唯一入口: `keyboard_init()` 内经 `chitin_register_with_ops` 注册
+    // 键盘注册唯一入口: `keyboard_init()` 内经 `egdf_register_with_ops` 注册
     // `ps2_keyboard` (携带 `InputOps` + IRQ1), 并持有驱动实例供 IRQ 处理使用。
-    // 原此处的二次 `chitin_register_driver("ps2_keyboard", ...)` 为历史遗留:
-    // Chitin 注册表不按名去重, 重复注册会产生同名设备节点, 且对新建实例再跑一次
+    // 原此处的二次 `egdf_register_driver("ps2_keyboard", ...)` 为历史遗留:
+    // EGDF 注册表不按名去重, 重复注册会产生同名设备节点, 且对新建实例再跑一次
     // `init()` 会重复触发 PS/2 自检与扫描码协商 (硬件副作用)。
     keyboard::keyboard_init();
 }

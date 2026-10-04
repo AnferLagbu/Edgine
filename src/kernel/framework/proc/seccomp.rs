@@ -37,8 +37,8 @@ use crate::framework::syscall::types::{
 /// 属机制语义 (seccomp_check 与 services 策略共用), 保持 framework 单一权威.
 pub const MAX_FILTERS: usize = 4;
 
-// B09-17 (2026-09-14): 白名单数值从 QX_* 私有区 (501+) 归位 Linux 编号 (SYS_*).
-// 原 QX_* 值 (502/503/...) 与用户态实际 syscall 编号 (SYS_read=0 等) 不一致 → 白名单永不命中 (bug).
+// B09-17 (2026-09-14): 白名单数值从 EG_* 私有区 (501+) 归位 Linux 编号 (SYS_*).
+// 原 EG_* 值 (502/503/...) 与用户态实际 syscall 编号 (SYS_read=0 等) 不一致 → 白名单永不命中 (bug).
 const STRICT_ALLOWED: &[u64] = &[
     SYS_read,         // read
     SYS_write,        // write

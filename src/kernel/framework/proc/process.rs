@@ -233,7 +233,7 @@ pub struct Process {
     /// fork 继承全部过滤器; execve 保留.
     pub seccomp: crate::framework::proc::SeccompState,
 
-    /// Per-process Credo 域级行为门控标志 (分册 9 批次 4)
+    /// Per-process SGEG 域级行为门控标志 (分册 9 批次 4)
     ///
     /// `DomainFlags` 位掩码, 默认 0 (无门控). 在 syscall 咽喉点
     /// (`syscall_dispatch_impl`) 于 seccomp 检查之后裁决; fork 继承全部标志;
@@ -261,18 +261,18 @@ pub struct Process {
 
     /// Per-process 凭证会话上下文 (P2-I-30)
     ///
-    /// 替代 `credo::session` 中 `static GLOBAL_SESSION` 的全局 `UnsafeCell` 单例.
+    /// 替代 `sgeg::session` 中 `static GLOBAL_SESSION` 的全局 `UnsafeCell` 单例.
     /// 每个进程拥有独立的 `PwmContext` (`uid/gid/euid/egid/saved_euid/saved_egid`/
     /// `domain/elevation_granted_pwm`). 在 SMP 下, 不同 CPU 上不同进程的会话
     /// 上下文天然隔离, 杜绝身份/权限串台.
     /// 进程退出时该字段随 Process 一起释放, 自动回收.
-    pub session: Mutex<crate::framework::credo::types::PwmContext>,
+    pub session: Mutex<crate::framework::sgeg::types::PwmContext>,
 
     /// Per-process SUID 提权栈 (P2-I-30)
     ///
     /// `try_setuid` / `elevate_for_suid` 推送 `PwmContext` 快照;
     /// `drop_elevation` 弹出. 栈深上限 8, 与原 `SessionManager` 保持一致.
-    pub session_elev_stack: Mutex<[crate::framework::credo::types::PwmContext; 8]>,
+    pub session_elev_stack: Mutex<[crate::framework::sgeg::types::PwmContext; 8]>,
 
     /// Per-process SUID 提权栈深度 (P2-I-30)
     pub session_elev_depth: AtomicIsize,
@@ -387,10 +387,10 @@ impl Process {
             // D3: NUMA 策略默认 Default
             numa_policy: Mutex::new(crate::framework::mm::numa::NumaMempolicy::new()),
             // P2-I-30: 进程级凭证会话上下文 (uid/gid/euid/egid/saved_*/domain)
-            session: Mutex::new(crate::framework::credo::types::PwmContext::default()),
+            session: Mutex::new(crate::framework::sgeg::types::PwmContext::default()),
             // P2-I-30: SUID 提权栈 (深度 0, 容量 8)
             session_elev_stack: Mutex::new(
-                [crate::framework::credo::types::PwmContext::default(); 8],
+                [crate::framework::sgeg::types::PwmContext::default(); 8],
             ),
             session_elev_depth: AtomicIsize::new(0),
             tls_base: AtomicU64::new(0),
@@ -876,7 +876,7 @@ unsafe impl Sync for ProcSnapshot {}
 
 static PROC_SNAPSHOT: Mutex<Option<ProcSnapshot>> = Mutex::new(None);
 
-pub fn proc_barrier_capture() {
+pub fn proc_freg_capture() {
     let table = &PROCESS_TABLE;
     *PROC_SNAPSHOT.lock() = Some(ProcSnapshot {
         pid_bitmap: *table.pid_bitmap.lock(),
@@ -885,7 +885,7 @@ pub fn proc_barrier_capture() {
     });
 }
 
-pub fn proc_barrier_rollback() -> bool {
+pub fn proc_freg_rollback() -> bool {
     if let Some(ref snap) = *PROC_SNAPSHOT.lock() {
         let table = &PROCESS_TABLE;
         *table.pid_bitmap.lock() = snap.pid_bitmap;
@@ -895,18 +895,18 @@ pub fn proc_barrier_rollback() -> bool {
     true
 }
 
-fn proc_barrier_capture_cb() {
-    proc_barrier_capture();
+fn proc_freg_capture_cb() {
+    proc_freg_capture();
 }
 
-fn proc_barrier_rollback_cb() -> bool {
-    proc_barrier_rollback()
+fn proc_freg_rollback_cb() -> bool {
+    proc_freg_rollback()
 }
 
-pub fn proc_register_barrier_domain() {
-    crate::framework::barrier::recovery_domain_register(4);
-    if let Some(dom) = crate::framework::barrier::RECOVERY_MANAGER.lock().find(4) {
-        *dom.capture_cb.lock() = Some(proc_barrier_capture_cb);
-        *dom.rollback_cb.lock() = Some(proc_barrier_rollback_cb);
+pub fn proc_register_freg_domain() {
+    crate::framework::freg::recovery_domain_register(4);
+    if let Some(dom) = crate::framework::freg::RECOVERY_MANAGER.lock().find(4) {
+        *dom.capture_cb.lock() = Some(proc_freg_capture_cb);
+        *dom.rollback_cb.lock() = Some(proc_freg_rollback_cb);
     }
 }

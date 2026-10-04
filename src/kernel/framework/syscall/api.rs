@@ -1,19 +1,19 @@
 //! 系统调用 API 层
 //!
-//! `QueenX` 原生 syscall (QX_*) + Linux 兼容 (SYS_*) + Credo 私有 syscall 的统一分发入口,
+//! `Edgine` 原生 syscall (EG_*) + Linux 兼容 (SYS_*) + SGEG 私有 syscall 的统一分发入口,
 //! 用户态→内核态的唯一合法路径。
 //!
 //! ## 编号空间
 //! - 0-299   : Linux 兼容编号 (SYS_*), 直接使用 Linux 标准编号
-//! - 400-499 : Credo 私有 syscall
-//! - 500+    : `QueenX` 原生编号 (QX_*)
+//! - 400-499 : SGEG 私有 syscall
+//! - 500+    : `Edgine` 原生编号 (EG_*)
 //!
 //! ## 调用方契约
 //! - `boot::isr.asm` —— 中断/异常入口 (int 0x80 / syscall 指令)
 //! - `idt::handlers` —— ISR 存根调用 `syscall_dispatch_from_frame`
 //! - `proc::exec::load_elf` —— execve 时验证用户指针
-//! - `credo::api` —— 能力检查路径复用 `validate_user_ptr`
-//! - `chitin::user_driver` —— 用户态驱动透传
+//! - `sgeg::api` —— 能力检查路径复用 `validate_user_ptr`
+//! - `egdf::user_driver` —— 用户态驱动透传
 //!
 //! ## 内部接口
 //! - `types.rs` —— Errno, syscall 编号常量
@@ -29,24 +29,24 @@
 //! ## 性能特征
 //! - 分发路径: O(1) match 分支, 编译器优化为跳转表
 //! - 指针验证: 两次比较, ≤ 5ns
-//! - 覆盖 70+ POSIX syscall + 40+ Credo 私有 syscall
+//! - 覆盖 70+ POSIX syscall + 40+ SGEG 私有 syscall
 
 pub use super::types::Errno;
 
 // ============================================================================
-// QueenX 原生 syscall 编号 (QX_*)
+// Edgine 原生 syscall 编号 (EG_*)
 // ============================================================================
 
 pub use super::types::{
-    QX_CET, QX_CGROUP_ATTACH, QX_CGROUP_CREATE, QX_CGROUP_DESTROY, QX_CGROUP_GET_STAT,
-    QX_CGROUP_SET_LIMIT, QX_FTRACE_DISABLE, QX_FTRACE_ENABLE, QX_FTRACE_READ, QX_FTRACE_STAT,
-    QX_FW_DETACH, QX_FW_GET, QX_FW_GET_INFO, QX_FW_LOAD, QX_GET_CANARY, QX_KGDB_ENTER,
-    QX_NF_ADD_RULE, QX_NF_DEL_RULE, QX_PM, QX_ROUTE_ADD, QX_ROUTE_DEL, QX_ROUTE_QUERY,
-    QX_SECURE_BOOT, QX_TICKLESS, QX_TIMESYNC, QX_TPM, QX_UEFI,
+    EG_CET, EG_CGROUP_ATTACH, EG_CGROUP_CREATE, EG_CGROUP_DESTROY, EG_CGROUP_GET_STAT,
+    EG_CGROUP_SET_LIMIT, EG_FTRACE_DISABLE, EG_FTRACE_ENABLE, EG_FTRACE_READ, EG_FTRACE_STAT,
+    EG_FW_DETACH, EG_FW_GET, EG_FW_GET_INFO, EG_FW_LOAD, EG_GET_CANARY, EG_KGDB_ENTER,
+    EG_NF_ADD_RULE, EG_NF_DEL_RULE, EG_PM, EG_ROUTE_ADD, EG_ROUTE_DEL, EG_ROUTE_QUERY,
+    EG_SECURE_BOOT, EG_TICKLESS, EG_TIMESYNC, EG_TPM, EG_UEFI,
 };
 
 // ============================================================================
-// SYS_* 编号常量唯一定义于 `types.rs` (B09-17 归位); Credo 基准 400 见 types.rs.
+// SYS_* 编号常量唯一定义于 `types.rs` (B09-17 归位); SGEG 基准 400 见 types.rs.
 // ============================================================================
 
 /// 验证用户态指针是否在合法范围内

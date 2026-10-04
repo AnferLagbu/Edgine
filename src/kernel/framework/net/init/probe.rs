@@ -12,7 +12,7 @@
 //! virtio-net 的探测统一收敛于 services 复合探测函数 `net_services_probe`
 //! (顺序 e1000 → virtio-net); 本模块仅做槽位单向拉取, 不再自行探测设备。
 
-use crate::framework::net::ChitinNetDevice;
+use crate::framework::net::EGDFNetDevice;
 
 use super::raw;
 
@@ -21,11 +21,11 @@ use super::raw;
 /// # Safety
 ///
 /// - 在网络子系统初始化入口被调用, 期间无其他并发探测
-/// - 依赖的 chitin/driver 框架自身保证设备独占
+/// - 依赖的 egdf/driver 框架自身保证设备独占
 #[cfg(not(feature = "kernel_test"))]
-// SAFETY: 仅由 qx_net_init 在启动临界区调用一次 (单线程), 无并发探测;
-// 返回的 ChitinNetDevice 所有权转移给调用方, 内部裸指针由驱动生命周期保证.
-pub(super) unsafe fn nic_probe_all() -> Option<ChitinNetDevice> {
+// SAFETY: 仅由 eg_net_init 在启动临界区调用一次 (单线程), 无并发探测;
+// 返回的 EGDFNetDevice 所有权转移给调用方, 内部裸指针由驱动生命周期保证.
+pub(super) unsafe fn nic_probe_all() -> Option<EGDFNetDevice> {
     // I-53 修复: 去除编译时架构互斥, 双架构二进制按运行时探测顺序
     // 尝试 e1000 (PCI 设备) 与 virtio-net (MMIO 设备). 两者驱动代码
     // 均架构无关, 仅依赖 IoMem / PCI 抽象. QEMU 配置决定哪一个会成功.
@@ -41,7 +41,7 @@ pub(super) unsafe fn nic_probe_all() -> Option<ChitinNetDevice> {
         // ISSUE-SRC-008: 接线设备中断 — ISR 经 ops.handle_irq 做设备侧 ack,
         // 并置位 NetRx 软中断由 poll_network 完成收包 (启动临界区单次)。
         super::irq::net_irq_install(reg.ops, reg.driver_data);
-        let nic = ChitinNetDevice::new(reg.ops, reg.driver_data, reg.mac);
+        let nic = EGDFNetDevice::new(reg.ops, reg.driver_data, reg.mac);
         raw::klog_msg("nic: probed successfully (services bridge)");
         return Some(nic);
     }

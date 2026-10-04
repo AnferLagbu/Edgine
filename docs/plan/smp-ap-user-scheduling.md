@@ -123,7 +123,7 @@
   - **aarch64**：AP 未使能 `CPACR_EL1.FPEN`（BSP 在 `boot/aarch64/start.S` el2_entry 已设，AP stub `ap_entry_asm` 未复制），`context_switch_asm` 首次保存 V0-V31 即触发 FP/ASIMD trap（`ESR_EL1.EC=0x07`，实测 `SYNC! ESR=0x1FE00000`）；EL1 同步异常处理落入 `loop { wfi }`，核永久离线。
   - **x86_64**：AP 未使能 CR4.OSFXSR/OSXMMEXCPT（`process_switch_asm` 的 `fxsave` 在 CR4.OSFXSR=0 下触发 #UD → #DF，实测 `DoubleFault count=1`），且内核态 `IA32_GS_BASE` 未设（保持 0，`mov rdi,[gs:TRAMPOLINE_TOP_OFF]` 读到线性地址 0x20 垃圾 → 用户态出口栈错乱）。
   - 崩溃均在 AP 首次 `schedule()` → `context_switch` 路径；BSP 存活继续 fork。
-- 详情（修后实测）：双架构 `[SMP] EL0 ... cpu=1` 出现（次核承载 EL0 任务），`find_idle_cpu` 恢复复选次核，日志 `SYNC!`/`DoubleFault`/`BARRIER` 计数为 0。
+- 详情（修后实测）：双架构 `[SMP] EL0 ... cpu=1` 出现（次核承载 EL0 任务），`find_idle_cpu` 恢复复选次核，日志 `SYNC!`/`DoubleFault`/`FREG` 计数为 0。
 - 详情（门槛实测）：`./ci/build.sh all` 5/0；`./ci/build.sh aarch64 && ./ci/audit.sh quick` EXIT=0；`make test-host` 通过；`make test-kernel-host` 949/0；`TIMEOUT_QEMU=30 ./scripts/qemu_boot_test.sh all` 2/2 且双架构命中成对 EL0（`cpu=0` 与 `cpu=1`）。
 - 详情（判据健全性）：`scripts/qemu_boot_test.sh` 的 EL0 判据 grep 加 `-a` —— 日志含 NUL 字节（串口并发写）时 `grep` 默认按二进制处理、只输出 "Binary file ... matches" 而漏输出匹配行；加 `-a` 后判据如实反映内核行为（详见 APS-05 详情）。
 

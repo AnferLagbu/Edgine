@@ -1,10 +1,10 @@
 // UT-07 (2026-09-25): mm::slab 注册副本已删 — 其纯逻辑断言以
 // framework/mm/slab.rs 的 #[cfg(test)] 为唯一归属.
-use crate::framework::credo::constant_time_eq;
-use crate::framework::credo::secure_boot::{sha256_extend, sha256_hash};
-use crate::framework::credo::sha256::sha256;
 use crate::framework::errno::{Errno, errno_from_i64};
 use crate::framework::proc::elf::{Elf64Header, Elf64Phdr};
+use crate::framework::sgeg::constant_time_eq;
+use crate::framework::sgeg::secure_boot::{sha256_extend, sha256_hash};
+use crate::framework::sgeg::sha256::sha256;
 use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 use crate::register_tests_inner;
 // T1 G7: 文件系统组策略 (services 侧)
@@ -41,7 +41,7 @@ fn syscall_error_display() -> TestResult {
 }
 
 // UT-07 (2026-09-26): pwm::sha256 注册组 15 例已收敛 —
-// 纯算法断言以 framework/credo/sha256.rs 的 #[cfg(test)] 为唯一归属;
+// 纯算法断言以 framework/sgeg/sha256.rs 的 #[cfg(test)] 为唯一归属;
 // 本文件保留 pwm::secure_boot_sha256 与 pwm::ct_eq_authority 两组
 // (委托链一致性属 framework 内部协作行为, 非纯算法判据).
 
@@ -178,7 +178,7 @@ fn settimeofday_apply() -> TestResult {
         "usec out of range → EINVAL"
     );
 
-    if crate::framework::credo::get_current_uid() != 0 {
+    if crate::framework::sgeg::get_current_uid() != 0 {
         check!(
             apply_settimeofday(0, 0) == Err(Errno::EPERM),
             "non-root denied"
@@ -265,7 +265,7 @@ fn adjtimex_policy() -> TestResult {
         "ADJ_SETOFFSET usec out of range"
     );
 
-    if crate::framework::credo::get_current_uid() != 0 {
+    if crate::framework::sgeg::get_current_uid() != 0 {
         check!(
             apply_adjtimex(ADJ_FREQUENCY, 0, 0, 0, 0) == Err(Errno::EPERM),
             "non-root denied"

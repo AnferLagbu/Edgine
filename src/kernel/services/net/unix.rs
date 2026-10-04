@@ -999,12 +999,12 @@ pub struct ScmCredentials {
 /// B07-01: 获取当前进程的真实凭据 (消除硬编码伪造的 root 凭据).
 ///
 /// `pid`/`uid`/`gid` 取自 framework 的权威凭据源:
-/// `proc::process_get_current_pid()` + `credo::session::{get_current_uid, get_current_gid}`.
+/// `proc::process_get_current_pid()` + `sgeg::session::{get_current_uid, get_current_gid}`.
 fn current_scm_credentials() -> ScmCredentials {
     ScmCredentials {
         pid: crate::framework::proc::process_get_current_pid(),
-        uid: crate::framework::credo::get_current_uid(),
-        gid: crate::framework::credo::get_current_gid(),
+        uid: crate::framework::sgeg::get_current_uid(),
+        gid: crate::framework::sgeg::get_current_gid(),
     }
 }
 

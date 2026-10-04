@@ -592,7 +592,7 @@ pub fn sys_timer_getoverrun(timer_id: i32) -> i64 {
 
 /// `clock_getres` — 时钟分辨率
 ///
-/// `QueenX` 内置两种时钟: `CLOCK_REALTIME` (TICK 精度) / `CLOCK_MONOTONIC` (TICK 精度)
+/// `Edgine` 内置两种时钟: `CLOCK_REALTIME` (TICK 精度) / `CLOCK_MONOTONIC` (TICK 精度)
 /// 分辨率 = 1 tick = 1ms (hrtimer 配置, 暂以 1ms 作为标称分辨率)。
 pub fn sys_clock_getres(clockid: i32, res_ptr: u64) -> i64 {
     use crate::framework::errno::Errno;

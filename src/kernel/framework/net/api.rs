@@ -5,12 +5,12 @@
 //! ## 调用方契约
 //! - `syscall::mod` —— `sys_socket/sys_connect/sys_accept/sys_sendto/sys_recvfrom` 系统调用
 //! - `proc::api` —— 进程创建/销毁时关联 socket fd
-//! - `chitin::proto_net` —— 网卡设备注册/注销
-//! - `barrier::recovery` —— 网络子系统纳入恢复域
+//! - `egdf::proto_net` —— 网卡设备注册/注销
+//! - `freg::recovery` —— 网络子系统纳入恢复域
 //!
 //! ## 内部接口
 //! - `init.rs` —— 初始化状态机, DHCP, Socket API (`poll_network/tcp`_*/udp_*)
-//! - `smoltcp_impl.rs` —— `ChitinNetDevice` + `NetworkStack` + Device trait 实现
+//! - `smoltcp_impl.rs` —— `EGDFNetDevice` + `NetworkStack` + Device trait 实现
 //! - `types.rs` —— 公共状态 (`NET_READY` / `NET_CONFIGURED`)
 //!
 //! ## 安全约束
@@ -29,7 +29,7 @@
 
 /// 网卡设备抽象。
 ///
-/// chitin 注册网络设备时,驱动必须提供此 trait 的实现。
+/// egdf 注册网络设备时,驱动必须提供此 trait 的实现。
 pub trait NetworkDevice: Send + Sync {
     /// 设备名称 (MAC 地址格式)
     fn name(&self) -> &'static str;

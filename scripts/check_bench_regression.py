@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MPL-2.0
-# Copyright (c) 2026 QueenX Contributors
+# Copyright (c) 2026 Edgine Contributors
 #
 # check_bench_regression.py — 对比当前 framekernel-bench 结果与 baseline.json
 #

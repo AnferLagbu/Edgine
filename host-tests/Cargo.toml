@@ -1,8 +1,8 @@
 [package]
-name = "queenx-host-tests"
+name = "edgine-host-tests"
 version = "0.1.0"
 edition = "2024"
-description = "QueenX host-side tests + microbenchmarks"
+description = "Edgine host-side tests + microbenchmarks"
 authors = ["Anfer"]
 
 # 集成测试 (integration tests) 由 Cargo 自动从 tests/ 目录发现
@@ -28,6 +28,6 @@ path = "src/bin/framekernel_bench.rs"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # B08-12 (DECISION-052 路线 C): 直接引用内核 services 真实源码 (host-test feature),
-# 消除 host-tests/src/ 下 7 处平行实现 (nestfs/dma_stream/buddy/capability/checksum/sha256/framekernel_bench).
-# host-tests 为根 crate, 其 dev profile (panic=unwind) 覆盖 queenx 依赖的 panic 策略.
-queenx = { path = "../src/rust", features = ["host-test"] }
+# 消除 host-tests/src/ 下 7 处平行实现 (unkfs/dma_stream/buddy/capability/checksum/sha256/framekernel_bench).
+# host-tests 为根 crate, 其 dev profile (panic=unwind) 覆盖 edgine 依赖的 panic 策略.
+edgine = { path = "../src/rust", features = ["host-test"] }

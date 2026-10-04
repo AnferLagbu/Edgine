@@ -1,5 +1,5 @@
 /*
- * elfld.so — QueenX 最小 ELF 解释器 (动态链接器)
+ * elfld.so — Edgine 最小 ELF 解释器 (动态链接器)
  *
  * 最小实现: 读取 ELF 头, 加载 PT_LOAD 段, 跳转到入口点.
  * 当前仅支持静态链接的 PIE 可执行文件 (ET_DYN).
@@ -67,7 +67,7 @@ static int prot_from_pflags(Elf64_Word flags) {
 /*
  * 最小 ELF 解释器入口点.
  *
- * 在实际 QueenX 中, 内核将控制权传递给此函数,
+ * 在实际 Edgine 中, 内核将控制权传递给此函数,
  * 参数为被加载二进制的 ELF 头地址.
  *
  * 当前实现: 仅验证 ELF 有效性并跳转到入口点.
@@ -75,7 +75,7 @@ static int prot_from_pflags(Elf64_Word flags) {
  */
 void __attribute__((noreturn)) _start(void *elf_phdr) {
     /* 最小实现: 直接跳转到程序入口.
-     * 在 QueenX 框内核中, 内核已完成 PT_LOAD 加载,
+     * 在 Edgine 框内核中, 内核已完成 PT_LOAD 加载,
      * elfld.so 只需解析 PT_DYNAMIC 并处理重定位.
      * 当前静态链接场景下, 跳过这些步骤直接返回控制权. */
 

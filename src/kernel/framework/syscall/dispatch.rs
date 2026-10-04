@@ -8,14 +8,14 @@ use core::sync::atomic::Ordering;
 
 use super::raw;
 use super::types::{
-    Errno, QX_CET, QX_CGROUP_ATTACH, QX_CGROUP_CREATE, QX_CGROUP_DESTROY, QX_CGROUP_GET_STAT,
-    QX_CGROUP_SET_LIMIT, QX_IO_URING_SUBMIT, QX_NF_ADD_RULE, QX_NF_DEL_RULE, QX_PM, QX_ROUTE_ADD,
-    QX_ROUTE_DEL, QX_ROUTE_QUERY, QX_SECURE_BOOT, QX_TICKLESS, QX_TIMESYNC, QX_TPM, QX_UEFI,
+    EG_CET, EG_CGROUP_ATTACH, EG_CGROUP_CREATE, EG_CGROUP_DESTROY, EG_CGROUP_GET_STAT,
+    EG_CGROUP_SET_LIMIT, EG_IO_URING_SUBMIT, EG_NF_ADD_RULE, EG_NF_DEL_RULE, EG_PM, EG_ROUTE_ADD,
+    EG_ROUTE_DEL, EG_ROUTE_QUERY, EG_SECURE_BOOT, EG_TICKLESS, EG_TIMESYNC, EG_TPM, EG_UEFI, Errno,
     SYS_accept, SYS_bind, SYS_connect, SYS_getpeername, SYS_getsockname, SYS_getsockopt,
     SYS_listen, SYS_recvfrom, SYS_recvmsg, SYS_sendmsg, SYS_sendto, SYS_setsockopt, SYS_shutdown,
     SYS_socket,
 };
-// SYS_CREDO_DISK_INSTALL 分支已迁至 services (T2 批 5), 编号常量仅在 types.rs 保留
+// SYS_SGEG_DISK_INSTALL 分支已迁至 services (T2 批 5), 编号常量仅在 types.rs 保留
 // (aarch64 生产构建不引用, 与迁移前 cfg 门控语义一致)
 
 /// fb_mmap 目标虚拟地址上界 — 集中定义于 `framework::constants::limits`
@@ -231,7 +231,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         return ret;
     }
 
-    // 分册 9 批次 4: Credo 域级行为门控 (在 seccomp 之后, 策略分发之前)
+    // 分册 9 批次 4: SGEG 域级行为门控 (在 seccomp 之后, 策略分发之前)
     if let Some(ret) = crate::framework::proc::domain_gate_check(num, &args) {
         return ret;
     }
@@ -253,25 +253,25 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         // services (services::proc::seccomp::seccomp_syscall / prctl_syscall).
 
         // ==================== C5: 路由表 ====================
-        QX_ROUTE_ADD => dispatch!(
+        EG_ROUTE_ADD => dispatch!(
             crate::framework::net::route::sys_route_add(a0, a1, a2),
             b"route_add\0"
         ),
-        QX_ROUTE_DEL => dispatch!(
+        EG_ROUTE_DEL => dispatch!(
             crate::framework::net::route::sys_route_del(a0, a1, a2),
             b"route_del\0"
         ),
-        QX_ROUTE_QUERY => dispatch!(
+        EG_ROUTE_QUERY => dispatch!(
             crate::framework::net::route::sys_route_query(a0),
             b"route_query\0"
         ),
 
         // ==================== C5: Netfilter ====================
-        QX_NF_ADD_RULE => dispatch!(
+        EG_NF_ADD_RULE => dispatch!(
             crate::framework::net::netfilter::sys_nf_add_rule(a0, a1, a2, a3, a4, a5),
             b"nf_add_rule\0"
         ),
-        QX_NF_DEL_RULE => dispatch!(
+        EG_NF_DEL_RULE => dispatch!(
             crate::framework::net::netfilter::sys_nf_del_rule(a0, a1),
             b"nf_del_rule\0"
         ),
@@ -283,7 +283,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         // T3 (syscall-followup): SYS_io_uring_register 分支已删除——原实现为恒
         // ENOSYS 桩 (iouring.rs), 删除后落 `_ =>` 兜底 ENOSYS, 行为不变.
         // 实装注册缓冲区/文件语义时在 services 层接线 (T2 批 3).
-        QX_IO_URING_SUBMIT => dispatch!(
+        EG_IO_URING_SUBMIT => dispatch!(
             crate::framework::io::iouring::sys_io_uring_submit_sqe(a0, a1, a2, a3, a4, a5),
             b"io_uring_submit\0"
         ),
@@ -293,23 +293,23 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         // services (services::proc::namespace::unshare_syscall / setns_syscall).
 
         // ==================== D2: cgroup ====================
-        QX_CGROUP_CREATE => dispatch!(
+        EG_CGROUP_CREATE => dispatch!(
             crate::framework::proc::sys_cgroup_create(a0, a1, a2),
             b"cgroup_create\0"
         ),
-        QX_CGROUP_DESTROY => dispatch!(
+        EG_CGROUP_DESTROY => dispatch!(
             crate::framework::proc::sys_cgroup_destroy(a0),
             b"cgroup_destroy\0"
         ),
-        QX_CGROUP_ATTACH => dispatch!(
+        EG_CGROUP_ATTACH => dispatch!(
             crate::framework::proc::sys_cgroup_attach(a0, a1),
             b"cgroup_attach\0"
         ),
-        QX_CGROUP_SET_LIMIT => dispatch!(
+        EG_CGROUP_SET_LIMIT => dispatch!(
             crate::framework::proc::sys_cgroup_set_limit(a0, a1, a2),
             b"cgroup_set_limit\0"
         ),
-        QX_CGROUP_GET_STAT => dispatch!(
+        EG_CGROUP_GET_STAT => dispatch!(
             crate::framework::proc::sys_cgroup_get_stat(a0, a1),
             b"cgroup_get_stat\0"
         ),
@@ -319,29 +319,29 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         // (services::debug::ebpf::bpf_syscall, 委托 framework debug::sys_bpf).
 
         // ==================== D5: 电源管理 ====================
-        QX_PM => dispatch!(crate::framework::driver::sys_pm(a0, a1, a2), b"pm\0"),
+        EG_PM => dispatch!(crate::framework::driver::sys_pm(a0, a1, a2), b"pm\0"),
 
         // ==================== D6: 安全启动 + TPM ====================
-        QX_SECURE_BOOT => dispatch!(
-            crate::framework::credo::sys_secure_boot(a0, a1, a2, a3),
+        EG_SECURE_BOOT => dispatch!(
+            crate::framework::sgeg::sys_secure_boot(a0, a1, a2, a3),
             b"secure_boot\0"
         ),
-        QX_TPM => dispatch!(crate::framework::credo::sys_tpm(a0, a1, a2, a3), b"tpm\0"),
+        EG_TPM => dispatch!(crate::framework::sgeg::sys_tpm(a0, a1, a2, a3), b"tpm\0"),
 
         // ==================== D7: Shadow Stack (CET) ====================
-        QX_CET => dispatch!(
+        EG_CET => dispatch!(
             crate::framework::arch::shadow_stack::sys_cet(a0, a1, a2),
             b"cet\0"
         ),
 
         // ==================== D8: 无 tick 模式 (NO_HZ) ====================
-        QX_TICKLESS => dispatch!(
+        EG_TICKLESS => dispatch!(
             crate::framework::timer::sys_tickless(a0, a1, a2),
             b"tickless\0"
         ),
 
         // ==================== D9: NTP/PTP 时钟同步 ====================
-        QX_TIMESYNC => dispatch!(
+        EG_TIMESYNC => dispatch!(
             crate::framework::timer::sys_timesync(a0, a1, a2),
             b"timesync\0"
         ),
@@ -351,7 +351,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         // (services::driver::kexec::kexec_syscall, 委托 framework driver::sys_kexec).
 
         // ==================== D11: UEFI ====================
-        QX_UEFI => dispatch!(crate::framework::driver::sys_uefi(a0, a1, a2), b"uefi\0"),
+        EG_UEFI => dispatch!(crate::framework::driver::sys_uefi(a0, a1, a2), b"uefi\0"),
 
         // ==================== 进程 ====================
         // T2 批 2 (syscall-followup): SYS_tcgetpgrp / SYS_tcsetpgrp 分支已迁至
@@ -382,9 +382,9 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         // 阶段 2-A (framekernel 范式): 该实现已完整下沉 services (0 unsafe),
         // framework 侧 sendfile 机制与其 re-export 已删除.
 
-        // ==================== Credo 私有 syscall ====================
-        // T2 批 5 (syscall-followup): SYS_CREDO_DISK_INSTALL / SYS_CREDO_HOTPLUG_STATUS
-        // 分支已迁至 services (services::credo::storage::disk::boot_install_syscall /
+        // ==================== SGEG 私有 syscall ====================
+        // T2 批 5 (syscall-followup): SYS_SGEG_DISK_INSTALL / SYS_SGEG_HOTPLUG_STATUS
+        // 分支已迁至 services (services::sgeg::storage::disk::boot_install_syscall /
         // hotplug_status_syscall), 委托本层机制 (sys_boot_install / sys_hotplug_status).
 
         // ==================== 帧缓冲设备 ====================
@@ -645,7 +645,7 @@ pub(crate) fn sys_arch_prctl(code: u64, addr: u64) -> i64 {
 /// `sys_hotplug_status` — 读取热插拔状态 (机制: 用户 buffer 写入 + 驱动状态读取)
 ///
 /// T2 批 5 (syscall-followup): syscall 策略入口迁至 services
-/// (services::credo::storage::disk::hotplug_status_syscall), 本函数保留为
+/// (services::sgeg::storage::disk::hotplug_status_syscall), 本函数保留为
 /// 机制库 (unsafe 用户指针写入), 经 framework::syscall 顶层 re-export 消费.
 pub fn sys_hotplug_status(buf: *mut u8, buf_size: u32) -> i64 {
     if buf.is_null() || buf_size == 0 {
@@ -926,10 +926,10 @@ const BOOT_PART_SECTORS: u32 = 16384;
 /// `sys_boot_install` — 引导安装 (机制: 磁盘扇区写 + stage1/内核拷贝, 仅 x86_64)
 ///
 /// T2 批 5 (syscall-followup): syscall 策略入口迁至 services
-/// (services::credo::storage::disk::boot_install_syscall), 本函数保留为机制库.
+/// (services::sgeg::storage::disk::boot_install_syscall), 本函数保留为机制库.
 pub fn sys_boot_install(disk_id: u32) -> i64 {
-    let pwm = crate::framework::credo::pwm_get_current();
-    if !crate::framework::credo::pwm_has_capability(pwm, 4, 0) {
+    let pwm = crate::framework::sgeg::pwm_get_current();
+    if !crate::framework::sgeg::pwm_has_capability(pwm, 4, 0) {
         return Errno::EACCES.as_ret();
     }
     // 产物桩化: stage1.bin 是裸机产物 (other/build/ 被 gitignore, 仅由 make 生成).
@@ -937,7 +937,7 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
     // host target 的 host-test / kernel_test 两个 lint 维度与 host-tests 都会编译它,
     // 若直接 include_bytes 即让 host 侧编译硬依赖裸机产物 (build.rs G-06「消除隐式
     // make 耦合」的漏项). 该函数在 host 不可达 (host-tests 零引用 boot_install /
-    // CREDO_DISK_INSTALL, 见 docs/plan/syscall-followup.md 可达性矩阵簇 4), 取空切片.
+    // SGEG_DISK_INSTALL, 见 docs/plan/syscall-followup.md 可达性矩阵簇 4), 取空切片.
     #[cfg(target_os = "none")]
     let stage1 = include_bytes!("../../../../other/build/stage1.bin");
     #[cfg(not(target_os = "none"))]
@@ -952,9 +952,9 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe { core::ptr::copy_nonoverlapping(stage1.as_ptr(), mbr.as_mut_ptr(), 440) };
     let total_sectors = crate::framework::driver::hdd_total_sectors(disk_id as u8);
-    let nestfs_start = BOOT_PART_SECTORS;
-    let nestfs_sectors = if total_sectors > u64::from(nestfs_start) + 1 {
-        total_sectors - u64::from(nestfs_start)
+    let unkfs_start = BOOT_PART_SECTORS;
+    let unkfs_sectors = if total_sectors > u64::from(unkfs_start) + 1 {
+        total_sectors - u64::from(unkfs_start)
     } else {
         0xFFFFFFFFu64
     };
@@ -962,15 +962,15 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
     write_le32(&mut mbr, 450, 0x06FEFFFF);
     write_le32(&mut mbr, 454, 64u32);
     write_le32(&mut mbr, 458, BOOT_PART_SECTORS - 64);
-    write_le32(&mut mbr, 462, nestfs_start);
+    write_le32(&mut mbr, 462, unkfs_start);
     write_le32(&mut mbr, 466, 0x83FEFFFF);
-    write_le32(&mut mbr, 470, nestfs_start);
-    let nestfs_len = if nestfs_sectors > 0xFFFFFFFF {
+    write_le32(&mut mbr, 470, unkfs_start);
+    let unkfs_len = if unkfs_sectors > 0xFFFFFFFF {
         0xFFFFFFFFu32
     } else {
-        nestfs_sectors as u32
+        unkfs_sectors as u32
     };
-    write_le32(&mut mbr, 474, nestfs_len);
+    write_le32(&mut mbr, 474, unkfs_len);
     mbr[510] = 0x55;
     mbr[511] = 0xAA;
     if crate::framework::driver::hdd_write_sector(disk_id as u8, 0, &mbr) < 0 {

@@ -19,10 +19,10 @@
 //! pwm 统一用 bootstrap 身份 `0` (`engine::check` 直通, ramfs `check_permission`
 //! 走 `caps == ALL` 分支), 无需注册身份或授权.
 
-use queenx::kernel::framework::error::KernelError;
-use queenx::kernel::services::fs::init as fs_init;
-use queenx::kernel::services::fs::overlayfs::overlay_fs;
-use queenx::kernel::services::fs::{FileSystem, VFS_MANAGER, vfs_mount_safe};
+use edgine::kernel::framework::error::KernelError;
+use edgine::kernel::services::fs::init as fs_init;
+use edgine::kernel::services::fs::overlayfs::overlay_fs;
+use edgine::kernel::services::fs::{FileSystem, VFS_MANAGER, vfs_mount_safe};
 use std::sync::{Mutex, Once};
 
 /// bootstrap 身份 — 持全权, 免注册/免授权

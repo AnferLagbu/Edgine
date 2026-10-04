@@ -1,12 +1,12 @@
 //! 网络配置入口 (B04-09 优化拆分 Step G, 2026-08-25)
 //!
-//! 原 init.rs 内联定义: `qx_net_start_dhcp` / `qx_net_static_ip`.
+//! 原 init.rs 内联定义: `eg_net_start_dhcp` / `eg_net_static_ip`.
 //! 抽出为独立子模块后, init.rs 主体与外部调用方 (FFI) 经
-//! `pub use cmd::*` re-export 保持 `init::qx_net_*` 路径不变.
+//! `pub use cmd::*` re-export 保持 `init::eg_net_*` 路径不变.
 //!
 //! ## CIDR 解析复用 (2026-08-25)
 //!
-//! `qx_net_static_ip` 原内联手写 "a.b.c.d/prefix" 与网关解析, 与
+//! `eg_net_static_ip` 原内联手写 "a.b.c.d/prefix" 与网关解析, 与
 //! `dns.rs::parse_ipv4_literal` 逻辑重复. 本次重构复用 `dns::` 解析:
 //! - CIDR 部分: `parse_cidr` (新增, 支持可选 /prefix, 默认 24)
 //! - 网关部分: `parse_ipv4_literal` (dns.rs 既有)
@@ -29,10 +29,10 @@ use super::state::NET_STATE;
 /// 用户态通过 poll/select 或轮询 `NET_CONFIGURED` 等待完成。
 ///
 /// # Safety
-/// 调用方保证 NET 已初始化 (通过 `qx_net_init` 注册)，
+/// 调用方保证 NET 已初始化 (通过 `eg_net_init` 注册)，
 /// `NET_READY` 由网络栈在链路就绪后置位。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn qx_net_start_dhcp() -> i32 {
+pub unsafe extern "C" fn eg_net_start_dhcp() -> i32 {
     unsafe {
         if !NET_READY.load(Ordering::Acquire) {
             return -1;
@@ -53,10 +53,10 @@ pub unsafe extern "C" fn qx_net_start_dhcp() -> i32 {
 /// - 调用方保证 NET 已初始化。
 #[expect(
     clippy::manual_let_else,
-    reason = "manual_let_else: qx_net_static_ip 内 5 处 `match Option { Some(v)=>v, None=>return -1 }` 用于 FFI 参数 (cidr/gw) 解析的提前返回; 保持 match-return 结构以最小化 diff, 当前优先 expect 兑底"
+    reason = "manual_let_else: eg_net_static_ip 内 5 处 `match Option { Some(v)=>v, None=>return -1 }` 用于 FFI 参数 (cidr/gw) 解析的提前返回; 保持 match-return 结构以最小化 diff, 当前优先 expect 兑底"
 )]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn qx_net_static_ip(cidr_str: *const u8, gw_str: *const u8) -> i32 {
+pub unsafe extern "C" fn eg_net_static_ip(cidr_str: *const u8, gw_str: *const u8) -> i32 {
     unsafe {
         if !NET_READY.load(Ordering::Acquire) {
             return -1;

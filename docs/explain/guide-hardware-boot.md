@@ -1,6 +1,6 @@
-# QueenX 真机引导验证指南
+# Edgine 真机引导验证指南
 
-> 本文档给需要把 QueenX 内核放到**真实硬件**上跑起来的维护者：如何制作双架构引导介质、如何接串口、在内核日志中看到哪些里程碑才算启动成功，以及 aarch64 侧对 SoC 的硬性契约与移植边界。配套 [guide-dev.md](./guide-dev.md)（代码归属与变更流程）与 [explain-framekernel.md](./explain-framekernel.md)（架构与安全不变式）阅读。适用读者：在实体 PC / aarch64 开发板上验证内核构建产物的开发者。
+> 本文档给需要把 Edgine 内核放到**真实硬件**上跑起来的维护者：如何制作双架构引导介质、如何接串口、在内核日志中看到哪些里程碑才算启动成功，以及 aarch64 侧对 SoC 的硬性契约与移植边界。配套 [guide-dev.md](./guide-dev.md)（代码归属与变更流程）与 [explain-framekernel.md](./explain-framekernel.md)（架构与安全不变式）阅读。适用读者：在实体 PC / aarch64 开发板上验证内核构建产物的开发者。
 
 ## 适用范围
 
@@ -19,8 +19,8 @@
 两个架构共用同一脚本，产物落在 `other/build/boot/`：
 
 ```bash
-./scripts/make_boot_medium.sh x86_64    # -> other/build/boot/queenx-x86_64.iso
-./scripts/make_boot_medium.sh aarch64   # -> other/build/boot/queenx-aarch64.img
+./scripts/make_boot_medium.sh x86_64    # -> other/build/boot/edgine-x86_64.iso
+./scripts/make_boot_medium.sh aarch64   # -> other/build/boot/edgine-aarch64.img
 ```
 
 脚本对工具缺失**失败即停**（`require_cmd`），并打印对应 apt 包名。依赖工具随架构不同：
@@ -34,7 +34,7 @@
 
 ### x86_64：GRUB2 multiboot2 ISO
 
-脚本执行 `make ARCH=x86_64 iso`，该目标把内核与用户态程序装入 `other/isodir/`，生成 GRUB 配置并以 `grub2-mkrescue` 打包为 `other/build/antx.iso`，脚本再拷贝为 `queenx-x86_64.iso`。GRUB 配置（由 [Makefile](../../Makefile) `iso` 目标生成）以 multiboot2 协议加载内核：
+脚本执行 `make ARCH=x86_64 iso`，该目标把内核与用户态程序装入 `other/isodir/`，生成 GRUB 配置并以 `grub2-mkrescue` 打包为 `other/build/antx.iso`，脚本再拷贝为 `edgine-x86_64.iso`。GRUB 配置（由 [Makefile](../../Makefile) `iso` 目标生成）以 multiboot2 协议加载内核：
 
 ```
 menuentry "AntX" {
@@ -59,7 +59,7 @@ sudo ./scripts/make_boot_medium.sh x86_64 --write /dev/sdX
 | 分区表 | MBR（`label: dos`） |
 | 分区 1 | FAT32，起始扇区 2048（偏移 1 MiB），类型 `0x0c` |
 | 盘大小 | 默认 128 MiB（`--size <N>M` 可调） |
-| 卷标 | `QUEENX` |
+| 卷标 | `EDGINE` |
 
 分区内文件：
 
@@ -72,10 +72,10 @@ sudo ./scripts/make_boot_medium.sh x86_64 --write /dev/sdX
 `extlinux.conf` 内容：
 
 ```
-default queenx
+default edgine
 timeout 30
-label queenx
-    menu label QueenX (aarch64)
+label edgine
+    menu label Edgine (aarch64)
     linux /Image
 ```
 
@@ -107,7 +107,7 @@ aarch64 侧 PL011 波特率除数在 [uart.rs](../../src/kernel/framework/arch/a
 aarch64 启动日志按以下顺序出现（前几行来自 [entry.rs](../../src/kernel/framework/boot/aarch64/entry.rs) 的 `uart::puts`）：
 
 ```
-[BOOT] QueenX starting...
+[BOOT] Edgine starting...
 [BOOT] Setting up exception vectors...
 [BOOT] Initializing GICv3...
 [BOOT] Initializing timer...
@@ -118,7 +118,7 @@ aarch64 启动日志按以下顺序出现（前几行来自 [entry.rs](../../src
 
 x86_64 侧关键里程碑为 `VFS ready` → `e1000: 初始化完成` → `Entering Ring 3`（以及 KPTI 断言）。
 
-**看不到 `[BOOT] QueenX starting...`** = 内核尚未执行到 UART 输出，问题在更早（固件装载 / Image 头 / 异常级 / MMU），不在内核逻辑。
+**看不到 `[BOOT] Edgine starting...`** = 内核尚未执行到 UART 输出，问题在更早（固件装载 / Image 头 / 异常级 / MMU），不在内核逻辑。
 
 ## aarch64 SoC 契约与边界
 
@@ -187,13 +187,13 @@ x86_64 侧无 DTB 契约，由 GRUB2 经 multiboot2 装载，真机仅需目标�
 `extlinux/extlinux.conf` 是无外部工具依赖的主路径。若目标板 U-Boot 的 `bootcmd` 不走 distro boot 而期望 `boot.scr`，可用分区内已附带的 `/boot.cmd` 打包：
 
 ```bash
-mkimage -A arm64 -O linux -T script -C none -n "QueenX" -d boot.cmd boot.scr
+mkimage -A arm64 -O linux -T script -C none -n "Edgine" -d boot.cmd boot.scr
 ```
 
 `boot.cmd` 内容（脚本生成）：
 
 ```
-echo "Booting QueenX (aarch64) ..."
+echo "Booting Edgine (aarch64) ..."
 fatload mmc 0:1 ${AARCH64_LOAD_ADDR} Image
 booti ${AARCH64_LOAD_ADDR} - ${fdtcontroladdr}
 ```

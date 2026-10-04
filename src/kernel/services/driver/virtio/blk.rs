@@ -563,7 +563,7 @@ pub struct BlkGeometry {
 // BlockDevice trait 实现 (§6.4 直接方案 B: services 权威注册)
 // ============================================================================
 
-impl crate::framework::chitin::BlockDevice for VirtioBlkDriver {
+impl crate::framework::egdf::BlockDevice for VirtioBlkDriver {
     fn blk_read(&mut self, sector: u64, buf: &mut [u8]) -> i32 {
         match self.read_sector(sector, buf) {
             Ok(()) => 0,

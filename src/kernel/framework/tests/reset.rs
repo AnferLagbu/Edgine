@@ -1,31 +1,31 @@
 //! # BBR/BSR/BHR 单元测试
 //!
-//! 测试 Barrier Base/Soft/Hard Recovery 功能
+//! 测试 FREG Base/Soft/Hard Recovery 功能
 use crate::register_tests_inner;
 
 use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 
 fn config_recovery_result() -> TestResult {
-    use crate::framework::barrier::reset::config::tests;
+    use crate::framework::freg::reset::config::tests;
     check!(tests::test_recovery_result(), "recovery result");
     check!(tests::test_recovery_layer(), "recovery layer");
     TestResult::Pass
 }
 
 fn config_default() -> TestResult {
-    use crate::framework::barrier::reset::config::tests;
+    use crate::framework::freg::reset::config::tests;
     check!(tests::test_config_default(), "config default");
     TestResult::Pass
 }
 
 fn config_stats() -> TestResult {
-    use crate::framework::barrier::reset::config::tests;
+    use crate::framework::freg::reset::config::tests;
     check!(tests::test_stats(), "recovery stats");
     TestResult::Pass
 }
 
 fn device_type_enum() -> TestResult {
-    use crate::framework::barrier::DeviceType;
+    use crate::framework::freg::DeviceType;
 
     assert_eq_test!(DeviceType::Keyboard as u32, 1, "keyboard type");
     assert_eq_test!(DeviceType::Serial as u32, 2, "serial type");
@@ -48,7 +48,7 @@ fn device_type_enum() -> TestResult {
 }
 
 fn recovery_layer_order() -> TestResult {
-    use crate::framework::barrier::RecoveryLayer;
+    use crate::framework::freg::RecoveryLayer;
 
     assert_eq_test!(RecoveryLayer::Layer1 as u32, 1, "layer1 value");
     assert_eq_test!(RecoveryLayer::Layer2 as u32, 2, "layer2 value");
@@ -58,7 +58,7 @@ fn recovery_layer_order() -> TestResult {
 }
 
 fn recovery_result_checks() -> TestResult {
-    use crate::framework::barrier::RecoveryResult;
+    use crate::framework::freg::RecoveryResult;
 
     let success = RecoveryResult::Success;
     let failed = RecoveryResult::Failed;
@@ -77,7 +77,7 @@ fn recovery_result_checks() -> TestResult {
 }
 
 fn rollback_mode_enum() -> TestResult {
-    use crate::framework::barrier::RollbackMode;
+    use crate::framework::freg::RollbackMode;
 
     assert_eq_test!(RollbackMode::Serial as u32, 0, "serial mode");
     assert_eq_test!(RollbackMode::Parallel as u32, 1, "parallel mode");
@@ -86,7 +86,7 @@ fn rollback_mode_enum() -> TestResult {
 }
 
 fn snapshot_register_api() -> TestResult {
-    use crate::framework::barrier::{
+    use crate::framework::freg::{
         DeviceType, snapshot_register_device, snapshot_unregister_device,
     };
 
@@ -100,7 +100,7 @@ fn snapshot_register_api() -> TestResult {
 }
 
 fn recovery_stats_api() -> TestResult {
-    use crate::framework::barrier::{get_stats, reset_stats};
+    use crate::framework::freg::{get_stats, reset_stats};
 
     reset_stats();
     let (bsr, bhr, tick) = get_stats();
@@ -112,7 +112,7 @@ fn recovery_stats_api() -> TestResult {
 }
 
 fn recovery_status_api() -> TestResult {
-    use crate::framework::barrier::{get_recovery_status, reset_stats};
+    use crate::framework::freg::{get_recovery_status, reset_stats};
 
     reset_stats();
     let status = get_recovery_status();
@@ -123,22 +123,22 @@ fn recovery_status_api() -> TestResult {
     TestResult::Pass
 }
 
-// UT-07 (2026-09-26): barrier::audit / bbr / bsr / parallel 四组注册副本已删 —
+// UT-07 (2026-09-26): freg::audit / bbr / bsr / parallel 四组注册副本已删 —
 // 其源侧断言由 `#[cfg(feature = "kernel_test")] pub mod tests { pub fn .. -> bool }`
 // 改写为 `#[cfg(test)] #[test]` (见对应源文件), 以源侧为唯一归属.
 pub fn register_tests() {
     let r = runner();
     register_tests_inner! { r:
-        "barrier::config": {
+        "freg::config": {
             "recovery_result": config_recovery_result,
             "default": config_default,
             "stats": config_stats,
         },
-        "barrier::snapshot": {
+        "freg::snapshot": {
             "device_type": device_type_enum,
             "register_api": snapshot_register_api,
         },
-        "barrier::reset": {
+        "freg::reset": {
             "layer_order": recovery_layer_order,
             "result_checks": recovery_result_checks,
             "rollback_mode": rollback_mode_enum,

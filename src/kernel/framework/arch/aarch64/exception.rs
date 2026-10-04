@@ -562,7 +562,7 @@ pub fn kpti_enter_user_trampoline_high() -> u64 {
 ///
 /// EL0 SVC 系统调用处理器。
 /// 从 EL0 通过 `svc #0` 进入。
-/// QueenX aarch64 系统调用约定: x0=syscall_num, x1-x4=args, 返回 x0。
+/// Edgine aarch64 系统调用约定: x0=syscall_num, x1-x4=args, 返回 x0。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn svc_handler(frame: &mut ExceptionFrame) -> u64 {
@@ -651,7 +651,7 @@ fn handle_irq(from_el0: bool) {
 
     // 内核 SGI 接收诊断 (有界): 打印接收入口 (EL1h/EL0) 与 intid, 为
     // ISSUE-RT-002 的"EL0 路径与内核态等价路由内核 SGI"提供正向运行期证据。
-    if intid == super::gic::BARRIER_RECOVERY_SGI
+    if intid == super::gic::FREG_RECOVERY_SGI
         || intid == super::gic::TLB_SHOOTDOWN_SGI
         || intid == super::gic::RESCHEDULE_SGI
     {
@@ -667,11 +667,11 @@ fn handle_irq(from_el0: bool) {
         }
     }
 
-    // ── 栏栈恢复 SGI 7 (aarch64 等价于 x86_64 int 0x82) ─────────────────
-    if intid == super::gic::BARRIER_RECOVERY_SGI {
-        let result = super::barrier::barrier_sgi_handler();
+    // ── FREG恢复 SGI 7 (aarch64 等价于 x86_64 int 0x82) ─────────────────
+    if intid == super::gic::FREG_RECOVERY_SGI {
+        let result = super::freg::freg_sgi_handler();
         if result < 0 {
-            crate::klog_info!(Boot, "Barrier recovery SGI failed: {}", result);
+            crate::klog_info!(Boot, "FREG recovery SGI failed: {}", result);
         }
         super::gic::end_of_interrupt(intid);
         return;
@@ -880,7 +880,7 @@ unsafe fn exc_puthex(val: u64) {
 // 跨核 TLB 失效 / 重新调度 SGI 编号集中定义于 `gic` (GIC 资源归属), 见其 `*_SGI` 常量:
 // 发送侧 `send_ipi(target, 0xFD|0xFE)` 把 `vector & 0xF` 编码进 `ICC_SGI1R_EL1[27:24]`
 // (见 arch/aarch64/mod.rs 的 `send_ipi`), GIC 交付的 INTID 即低 4 位
-// (TLB 失效 = 13, 重新调度 = 14), 与栏栈 SGI 7 及 timer PPI 30 均不冲突。
+// (TLB 失效 = 13, 重新调度 = 14), 与FREG SGI 7 及 timer PPI 30 均不冲突。
 // 使能由每核入口 `gic::init_per_cpu` 统一完成, 本模块只负责接收路由。
 
 /// 默认 IRQ 处理 (EL1h, 内核态中断入口)。

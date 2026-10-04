@@ -1,14 +1,14 @@
-# queenx 命名与生态兼容立场书
+# edgine 命名与生态兼容立场书
 
-> 定义 queenx 内核在命名/syscall 编号/工具链/libc/路径等关键设计点上的立场。直接实现 Linux ABI 作为务实路径。
+> 定义 edgine 内核在命名/syscall 编号/工具链/libc/路径等关键设计点上的立场。直接实现 Linux ABI 作为务实路径。
 
-## 一、queenx 哲学
+## 一、edgine 哲学
 
 ### 核心立场（3 句话）
 
-queenx 工程哲学的 3 个核心信条：(1) 不盲从任何 OS，包括 Linux，必要才参考业界惯例；(2) 直接实现 Linux ABI 以获得最大兼容性，内核内部实现保持 Rust 纯净；(3) 务实而非教条，工具链用现成（GCC/LLVM），libc 复用 glibc/musl，不重造轮子。
+edgine 工程哲学的 3 个核心信条：(1) 不盲从任何 OS，包括 Linux，必要才参考业界惯例；(2) 直接实现 Linux ABI 以获得最大兼容性，内核内部实现保持 Rust 纯净；(3) 务实而非教条，工具链用现成（GCC/LLVM），libc 复用 glibc/musl，不重造轮子。
 
-queenx 内核 100% Rust（framework unsafe + services safe），但 ABI 层面直接兼容 Linux。学 Asterinas 路线：内核实现与 ABI 兼容性不冲突，syscall 编号是 ABI 约定而非内核实现细节。
+edgine 内核 100% Rust（framework unsafe + services safe），但 ABI 层面直接兼容 Linux。学 Asterinas 路线：内核实现与 ABI 兼容性不冲突，syscall 编号是 ABI 约定而非内核实现细节。
 
 ## 二、命名规则（NetBSD 风格中性）
 
@@ -17,6 +17,21 @@ queenx 内核 100% Rust（framework unsafe + services safe），但 ABI 层面�
 核心路径命名（NetBSD 风格中性，0 OS 商标）。动态链接器 `/lib64/ld-linux-x86-64.so.2`（Linux 标准）/ libc `glibc` 或 `musl`（直接复用）/ 内核镜像 `/boot/kernel.bin` / 用户目录 `/bin /usr/bin /usr/lib /etc`（Linux 标准）。
 
 采用 Linux 标准路径，不自创路径。与 Asterinas 一致：直接兼容比自建命名更有价值。
+
+### 内核与子系统命名
+
+项目主名为 `Edgine`（Edge + Engine 拼接，意为软硬件边界的引擎，指内核），符号前缀缩写为 `EG`（保留给内核私有扩展符号，如 `EG_*` 常量与私有 syscall）。独有定制子系统采用 `EG` 后缀（标记"并非每个内核都必需"的设计），通用子系统则用中性描述性缩写。各组件命名如下：
+
+| 组件 | 名称 | 含义 |
+|---|---|---|
+| 内核 | Edgine | Edge + Engine，软硬件边界的引擎 |
+| 符号前缀 | EG | 内核私有扩展符号前缀（原 `QX`） |
+| 文件系统 | UNKFS | unknown FS |
+| 驱动框架 | EGDF | Edgine Driver Framework |
+| 安全子系统 | SGEG | Security Guarantee Edgine |
+| 容错子系统 | FREG | Fault Recovery Edgine |
+
+重命名映射（旧名 → 新名）：`QueenX → Edgine` / `QX → EG` / `NestFS → UNKFS` / `Chitin → EGDF` / `Credo → SGEG` / `Barrier → FREG`。除子系统外，通用内存屏障（Barrier）原语一并归入 `FREG`。
 
 ### 路径层级
 
@@ -30,7 +45,7 @@ queenx 内核 100% Rust（framework unsafe + services safe），但 ABI 层面�
 
 ### 编号设计
 
-直接使用 Linux syscall 编号，无需翻译层。(1) 标准 POSIX/Linux syscall 使用 Linux 原始编号（0-299）；(2) QueenX 私有扩展使用 400+（用户态 credo）与 700+（内核态）两段编号；(3) 无需 linuxulator 翻译层。
+直接使用 Linux syscall 编号，无需翻译层。(1) 标准 POSIX/Linux syscall 使用 Linux 原始编号（0-299）；(2) Edgine 私有扩展使用 400+（用户态 sgeg）与 700+（内核态）两段编号；(3) 无需 linuxulator 翻译层。
 
 ```rust
 // Linux 标准编号（直接使用）
@@ -45,15 +60,15 @@ pub const SYS_FORK: u64    = 57;
 pub const SYS_EXECVE: u64  = 59;
 pub const SYS_SOCKET: u64  = 41;
 
-// QueenX 私有扩展（400+/700+）
-pub const SYS_CREDO_LOGIN: u64 = 400;
-pub const QX_UNAME: u64 = 700;
+// Edgine 私有扩展（400+/700+）
+pub const SYS_SGEG_LOGIN: u64 = 400;
+pub const EG_UNAME: u64 = 700;
 // ...
 ```
 
 ### 编号空间分配
 
-2 段编号空间。0-299 Linux 标准（直接兼容）/ 400+ 用户态私有扩展（credo 系统）与 700+ 内核态私有扩展（弹性恢复等）。
+2 段编号空间。0-299 Linux 标准（直接兼容）/ 400+ 用户态私有扩展（sgeg 系统）与 700+ 内核态私有扩展（弹性恢复等）。
 
 ### 关键认知
 
@@ -75,9 +90,9 @@ pub const QX_UNAME: u64 = 700;
 
 ### 选型决策
 
-直接使用 glibc 或 musl，不派生。Linux 二进制自带 glibc 依赖，直接提供 glibc 运行时；QueenX 原生程序可用 musl 静态编译；不需要 queenx_libc 派生。
+直接使用 glibc 或 musl，不派生。Linux 二进制自带 glibc 依赖，直接提供 glibc 运行时；Edgine 原生程序可用 musl 静态编译；不需要 edgine_libc 派生。
 
-直接 ABI 兼容意味着不需要自定义 libc。Linux 的 glibc/musl 在 QueenX 上直接运行，因为 syscall 编号一致。
+直接 ABI 兼容意味着不需要自定义 libc。Linux 的 glibc/musl 在 Edgine 上直接运行，因为 syscall 编号一致。
 
 ## 六、Linux 应用兼容（直接 ABI）
 
@@ -107,9 +122,9 @@ pub const QX_UNAME: u64 = 700;
 
 ### 对标矩阵
 
-queenx 决策对标业界：内核纯 Rust → Asterinas / 直接 Linux ABI → Asterinas / 文件系统 → Linux 标准（ext2/procfs/devfs）/ 命名中性 → 保留（不影响兼容性）/ libc 直接复用 → Asterinas。
+edgine 决策对标业界：内核纯 Rust → Asterinas / 直接 Linux ABI → Asterinas / 文件系统 → Linux 标准（ext2/procfs/devfs）/ 命名中性 → 保留（不影响兼容性）/ libc 直接复用 → Asterinas。
 
-queenx = Asterinas 的 Rust 内核哲学 + 直接 Linux ABI + 中性命名保留。
+edgine = Asterinas 的 Rust 内核哲学 + 直接 Linux ABI + 中性命名保留。
 
 ## 九、明确不做的（红线圈外）
 
@@ -121,7 +136,7 @@ queenx = Asterinas 的 Rust 内核哲学 + 直接 Linux ABI + 中性命名保留
 
 ### D 任务优先序
 
-Phase D 任务优先序（直接 ABI 路径）。D1 网络栈收尾（已完成）/ D2 NestFS e2e 测试（已完成）/ D3.5 eash 增强（已完成）/ D6 eash 测试（已完成）/ 实现 240+ Linux syscall（核心任务）/ 提供 glibc 运行时（关键）。
+Phase D 任务优先序（直接 ABI 路径）。D1 网络栈收尾（已完成）/ D2 UNKFS e2e 测试（已完成）/ D3.5 eash 增强（已完成）/ D6 eash 测试（已完成）/ 实现 240+ Linux syscall（核心任务）/ 提供 glibc 运行时（关键）。
 
 核心路径：实现 Linux syscall → 提供 glibc → Linux 二进制直接运行。
 
@@ -129,13 +144,13 @@ Phase D 任务优先序（直接 ABI 路径）。D1 网络栈收尾（已完成�
 
 ### 一句话定位
 
-queenx 工程定位：queenx = 100% Rust 内核 + 直接 Linux ABI + 中性命名。内核内部实现保持 Rust 纯净，ABI 层面完全兼容 Linux，实现 Asterinas 级别的应用兼容性。
+edgine 工程定位：edgine = 100% Rust 内核 + 直接 Linux ABI + 中性命名。内核内部实现保持 Rust 纯净，ABI 层面完全兼容 Linux，实现 Asterinas 级别的应用兼容性。
 
 ## 附录 A: 业界对照表（修订）
 
 ### 业界 12 个 OS 对照
 
-业界 OS 在 syscall 编号/命名/libc/跑 Linux 二进制 4 维度对照：Linux/自己一套/ld-linux-*.so.2/glibc/99%；Asterinas/直接 Linux ABI/ld-linux-*.so.2/glibc/95%+；macOS/错开/dyld/libSystem/0%；FreeBSD/BSD 标准/ld-elf.so.1/BSD libc/~30%；NetBSD/BSD 标准/ld.elf_so/BSD libc/0%；OpenBSD/BSD 标准/ld.so/BSD libc/0%；Android/自有/linker64/Bionic/0%；Fuchsia/自有/fd.vmo/libmoneta/0%；Redox/自有/relibc/relibc/0%；queenx/直接 Linux ABI/ld-linux-*.so.2/glibc/90%+。
+业界 OS 在 syscall 编号/命名/libc/跑 Linux 二进制 4 维度对照：Linux/自己一套/ld-linux-*.so.2/glibc/99%；Asterinas/直接 Linux ABI/ld-linux-*.so.2/glibc/95%+；macOS/错开/dyld/libSystem/0%；FreeBSD/BSD 标准/ld-elf.so.1/BSD libc/~30%；NetBSD/BSD 标准/ld.elf_so/BSD libc/0%；OpenBSD/BSD 标准/ld.so/BSD libc/0%；Android/自有/linker64/Bionic/0%；Fuchsia/自有/fd.vmo/libmoneta/0%；Redox/自有/relibc/relibc/0%；edgine/直接 Linux ABI/ld-linux-*.so.2/glibc/90%+。
 
 ## 附录 B: 兼容性测试用例（修订）
 
@@ -147,7 +162,7 @@ queenx 工程定位：queenx = 100% Rust 内核 + 直接 Linux ABI + 中性命�
 
 ### 维护者
 
-文档维护组。queenx 架构组。
+文档维护组。edgine 架构组。
 
 ### 变更流程
 

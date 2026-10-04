@@ -4,10 +4,10 @@
 //!
 //! ## 编号 (730-733: 设备固件)
 //!
-//! - `QX_FW_LOAD`     (730): 从用户态路径读取文件并附着到设备树节点
-//! - `QX_FW_GET_INFO` (731): 拷贝 `FirmwareInfo` 到用户态
-//! - `QX_FW_GET`      (732): 按 offset 拷贝固件内容到用户态缓冲
-//! - `QX_FW_DETACH`   (733): 移除节点上的固件
+//! - `EG_FW_LOAD`     (730): 从用户态路径读取文件并附着到设备树节点
+//! - `EG_FW_GET_INFO` (731): 拷贝 `FirmwareInfo` 到用户态
+//! - `EG_FW_GET`      (732): 按 offset 拷贝固件内容到用户态缓冲
+//! - `EG_FW_DETACH`   (733): 移除节点上的固件
 //!
 //! ## 安全
 //!
@@ -16,7 +16,7 @@
 //! - 路径最长 4096 字节, 超过返回 `-EINVAL`
 //! - 读取走 services `fs::api::{vfs_open_safe, vfs_read_safe}`
 
-use crate::framework::chitin::{
+use crate::framework::egdf::{
     FW_ERR_IO, FW_ERR_NOT_FOUND, FW_ERR_TOO_LARGE, FirmwareInfo, MAX_FIRMWARE_SIZE,
     devtree_attach_firmware, devtree_detach_firmware, devtree_get_firmware, fnv1a_32,
 };
@@ -29,7 +29,7 @@ const MAX_FW_GET_SIZE: usize = 8 * 1024 * 1024;
 const FW_BUF_SIZE: usize = 4096;
 const FW_INFO_SIZE: usize = core::mem::size_of::<FirmwareInfo>();
 
-// POSIX errno (与 QX_* 错误语义一致)
+// POSIX errno (与 EG_* 错误语义一致)
 const EFAULT: i64 = -14;
 const EINVAL: i64 = -22;
 const ENOENT: i64 = -2;

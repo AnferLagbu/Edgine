@@ -61,7 +61,7 @@ use crate::services::syscall::posix_timer as syscall_ptimer;
 ///
 /// ```c
 /// struct itimerspec new_val = { .it_interval = {1, 0}, .it_value = {1, 0} };
-/// syscall(QX_TIMER_SETTIME, id, 0, &new_val, NULL);
+/// syscall(EG_TIMER_SETTIME, id, 0, &new_val, NULL);
 /// ```
 pub fn timer_settime(timer_id: i32, flags: i32, new_value_ptr: u64, old_value_ptr: u64) -> i64 {
     syscall_ptimer::sys_timer_settime(timer_id as u64, flags as u64, new_value_ptr, old_value_ptr)

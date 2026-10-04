@@ -1,4 +1,4 @@
-//! QX (`QueenX`) AMD64 CPU 驱动核心 - Rust 完整实现
+//! EG (`Edgine`) AMD64 CPU 驱动核心 - Rust 完整实现
 //!
 //! ## 功能概览
 //!
@@ -397,7 +397,7 @@ pub fn get_cpu_info() -> Option<&'static CpuInfo> {
 pub extern "C" fn cpu_init() -> i32 {
     use crate::framework::klog::{LogCategory, LogLevel, klog_write};
 
-    static INIT_MSG: &[u8] = b"Initializing QX AMD64 CPU driver...\0";
+    static INIT_MSG: &[u8] = b"Initializing EG AMD64 CPU driver...\0";
     // SAFETY: FFI 日志调用; INIT_MSG 是带尾部 NUL 的静态字节切片,
     // C 端 klog_write 按 C 字符串读取.
     unsafe {

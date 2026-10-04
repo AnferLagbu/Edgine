@@ -59,9 +59,9 @@ pub extern "C" fn vfs_unlink_internal(path: *const u8, pwm: u64) -> i32 {
 }
 
 // ============================================================================
-// link / symlink / readlink — 见 services/fs/link.rs, 在 ramfs/nestfs
+// link / symlink / readlink — 见 services/fs/link.rs, 在 ramfs/unkfs
 // 真正实现 link/symlink 前, 暂时由 dispatch 直接返回 ENOSYS.
-// 保留 framework API 的需求: 一旦 ramfs/nestfs 支持, services 不变, 仅
+// 保留 framework API 的需求: 一旦 ramfs/unkfs 支持, services 不变, 仅
 // 调整 framework 实现即可. 当前未保留 stub, 避免假实现.
 // ============================================================================
 
@@ -148,9 +148,9 @@ pub extern "C" fn vfs_stat_internal(path: *const u8, st: *mut VfsStat, pwm: u64)
     // E6-4: trait object 分发
     let result = fs_opt.map_or(-1, |fs| {
         fs.fs_stat(rel_path, pwm).map_or(-1, |stat| {
-            // credo 身份映射: 先算最终 stat 再经 framework 安全代理写入 (I4)
+            // sgeg 身份映射: 先算最终 stat 再经 framework 安全代理写入 (I4)
             let mut stat = stat;
-            let tbl = crate::framework::credo::identity::get_table();
+            let tbl = crate::framework::sgeg::identity::get_table();
             stat.uid = tbl.uid_of(stat.owner_pwm);
             stat.gid = tbl.gid_of(stat.group_pwm);
             if stat.gid == 0xFFFF_FFFF {

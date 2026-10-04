@@ -4,7 +4,7 @@
 //!
 //! ## 调用方契约
 //! - `driver::bus::pci` —— 设备初始化阶段的配置空间读写
-//! - `chitin::devtree` —— 设备树生成时枚举 PCI 设备
+//! - `egdf::devtree` —— 设备树生成时枚举 PCI 设备
 //! - `driver::net::e1000` —— E1000 网卡 probe
 //! - `driver::storage::nvme` —— `NVMe` SSD 初始化
 //! - `driver::storage::ahci` —— AHCI SATA 控制器初始化
@@ -18,7 +18,7 @@
 //! - config 访问包含 unsafe (Port I/O / volatile MMIO)
 //! - `pci_scan_all_buses()` 必须在启动早期单线程调用
 //! - `DEVICE_LIST` 由 `spin::Mutex` 保护, 线程安全
-//! - BAR 地址不可跨设备共享 (由 chitin `IoMem` 别名检测保证)
+//! - BAR 地址不可跨设备共享 (由 egdf `IoMem` 别名检测保证)
 //!
 //! ## 性能特征
 //! - 配置空间访问: `x86_64` Port I/O O(1), aarch64 ECAM MMIO O(1)

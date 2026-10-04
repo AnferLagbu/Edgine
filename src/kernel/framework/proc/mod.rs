@@ -4,7 +4,7 @@
 //!
 //! ## 依赖声明
 //!
-//! framework 内部依赖: mm, sync, syscall, config, idt, sched, barrier, tests
+//! framework 内部依赖: mm, sync, syscall, config, idt, sched, freg, tests
 //! services 依赖: `services::proc` (安全代理)
 //!
 //! ## 架构
@@ -46,7 +46,7 @@ pub mod cfs;
 pub mod cgroup;
 pub mod coredump_trait;
 pub mod cpu_queue;
-/// Credo 域级行为门控 (`DomainFlags`) 机制 + 状态读写
+/// SGEG 域级行为门控 (`DomainFlags`) 机制 + 状态读写
 pub mod domain;
 pub mod elf;
 /// D2: cgroup 资源控制器
@@ -80,7 +80,7 @@ pub mod user_proc;
 // LATER(polish): 用显式导入替代 glob re-export 消除歧义
 // USER_STACK_SIZE: types(usize) 对比 user_proc(u64)
 // init: scheduler vs user_proc
-pub use crate::framework::barrier::*;
+pub use crate::framework::freg::*;
 pub use canary::*;
 pub use coredump_trait::{
     CoredumpSink, RegSnapshot, current_coredump_sink, read_interrupt_regs, register_coredump_sink,

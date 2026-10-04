@@ -4,7 +4,7 @@
 //! 1. 注册点前置: `register_default_ipc_strategy()` 在 lib.rs 中位于
 //!    `interrupt_late_init` **之前** (kernel_init 早期, 删去 VFS 后约束)
 //! 2. 未注册降级契约: `current_ipc_strategy()` 返回 `Option` (不 panic);
-//!    13 处 FFI 调用点含 `Errno::ENOSYS` 降级 (逻辑错误降级原则, 不进 barrier 恢复)
+//!    13 处 FFI 调用点含 `Errno::ENOSYS` 降级 (逻辑错误降级原则, 不进 freg 恢复)
 
 use std::fs;
 use std::path::PathBuf;

@@ -1,4 +1,4 @@
-# QueenX CI Local Targets
+# Edgine CI Local Targets
 #
 # Usage:
 #   make -f Makefile.ci ci              # Full CI flow
@@ -16,7 +16,7 @@ PY := python3
 .PHONY: ci ci-audit ci-cargo ci-unsafe-scan ci-bench ci-bench-record ci-test-host ci-fix ci-clean help
 
 help:
-	@echo "QueenX CI Targets"
+	@echo "Edgine CI Targets"
 	@echo ""
 	@echo "  make -f Makefile.ci ci                - Full CI flow"
 	@echo "  make -f Makefile.ci ci-audit          - SAFETY + boundary + deadlock audit"
@@ -34,7 +34,7 @@ help:
 ci: ci-unsafe-scan ci-audit ci-cargo ci-bench ci-test-aarch64
 	@echo ""
 	@echo "=========================================="
-	@echo "QueenX Framekernel Compliance: PASS"
+	@echo "Edgine Framekernel Compliance: PASS"
 	@echo "=========================================="
 
 # Unsafe scan (uses Python script for accurate comment filtering)
@@ -105,8 +105,8 @@ ci-bench-record:
 # Host-tests: 单元 (内联 #[cfg(test)]) + 集成 (tests/ 自动发现)
 # v2.24 重构后, 不再使用 [[test]] 显式声明, 全部由 Cargo 自动发现, 避免双重编译.
 # 测试分布:
-#   - 单元测试: src/{buddy,capability,checksum,sha256,dma_stream,framekernel_bench,nestfs_mock}.rs
-#   - 集成测试: tests/{display,e1000_eeprom,iomem_alias,nestfs_test,nestfs_persist,stress_test}.rs
+#   - 单元测试: src/{buddy,capability,checksum,sha256,dma_stream,framekernel_bench,unkfs_mock}.rs
+#   - 集成测试: tests/{display,e1000_eeprom,iomem_alias,unkfs_test,unkfs_persist,stress_test}.rs
 #   - 共享helper: tests/common/mod.rs
 ci-test-host:
 	@echo "[host-tests] 单元 + 集成测试 (Cargo 自动发现)..."

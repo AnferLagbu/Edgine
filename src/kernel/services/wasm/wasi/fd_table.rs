@@ -70,7 +70,7 @@ impl WasiRights {
 pub struct WasiFdEntry {
     pub file_type: WasiFileType,
     pub rights: WasiRights,
-    /// 映射到 VFS 的内部 fd (queenx 内部使用)
+    /// 映射到 VFS 的内部 fd (edgine 内部使用)
     pub inner_fd: i32,
     /// preopen 路径 (仅 preopen fd 有值)
     pub path: Option<alloc::string::String>,

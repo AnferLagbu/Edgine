@@ -1,15 +1,15 @@
 #![deny(unsafe_code)]
 //! @SAFE: 本文件不含 unsafe 代码。纯判定逻辑 + 原子状态读写。
-//! Credo 域级行为门控 (`DomainFlags`) — framework 机制实现
+//! SGEG 域级行为门控 (`DomainFlags`) — framework 机制实现
 //!
 //! ## 归属记录
 //!
 //! `DomainFlags` 状态挂在 `Process` 结构体 (`framework` 进程机制状态), 门控
 //! 入口 `domain_gate_check` 被 `framework` syscall 分发路径消费 — 属机制项,
 //! 与 `seccomp_check` 同构 (见 `framework/proc/seccomp.rs` 归属说明).
-//! 依赖闭包仅 framework (`proc` / `credo::types` / `syscall`)。
+//! 依赖闭包仅 framework (`proc` / `sgeg::types` / `syscall`)。
 //!
-//! services 侧策略 (`services::credo::domain`) 消费本文件的机制 API,
+//! services 侧策略 (`services::sgeg::domain`) 消费本文件的机制 API,
 //! 方向合法 (services→framework)。
 //!
 //! ## 门控语义
@@ -20,9 +20,9 @@
 //! - **元数据位** (`TEMP` / `SYSTEM`): 不参与门控, 仅供审计/生命周期标记,
 //!   本文件不产生任何拒绝行为.
 
-use crate::framework::credo::types::DomainFlags;
 use crate::framework::proc::PROCESS_TABLE;
 use crate::framework::proc::process_get_current_pid;
+use crate::framework::sgeg::types::DomainFlags;
 use crate::framework::syscall::Errno;
 use crate::framework::syscall::types::{
     SYS_accept, SYS_accept4, SYS_bind, SYS_chmod, SYS_clone, SYS_clone3, SYS_connect, SYS_execve,

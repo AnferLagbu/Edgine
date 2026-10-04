@@ -20,7 +20,7 @@
 //! `lock` 前缀 RMW 本身即全屏障, `Relaxed` 与 `AcqRel` 在运行时不可区分。
 //! 真正对弱序 (Release/Acquire) 语义的判别需待 aarch64 SMP 落地后再补。
 
-use queenx::kernel::framework::timer::{get_ticks, on_timer_interrupt};
+use edgine::kernel::framework::timer::{get_ticks, on_timer_interrupt};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 

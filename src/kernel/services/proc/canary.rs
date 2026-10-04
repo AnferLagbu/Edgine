@@ -5,7 +5,7 @@
 
 use crate::framework::proc::canary;
 
-/// 触发 `QueenX` 原生 `getrandom` syscall
+/// 触发 `Edgine` 原生 `getrandom` syscall
 ///
 /// ## 入参
 ///

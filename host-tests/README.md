@@ -1,18 +1,18 @@
 # host-tests 测试框架指南
 
-> QueenX host 端测试规范. 所有 `host-tests/tests/*.rs` 集成测试 + `host-tests/src/*.rs` 单元测试 + `host-tests/benches/*.rs` 性能基准均适用.
+> Edgine host 端测试规范. 所有 `host-tests/tests/*.rs` 集成测试 + `host-tests/src/*.rs` 单元测试 + `host-tests/benches/*.rs` 性能基准均适用.
 >
 > **新建测试前必读本文**; **修改测试组织前必读本文**; **评审 PR 测试代码时必读本文**.
 
 ## 仓库定位
 
-`host-tests` 是 QueenX 的 host 端验证 crate, 承担三类内容:
+`host-tests` 是 Edgine 的 host 端验证 crate, 承担三类内容:
 
 | 类型 | 位置 | 入口 |
 |------|------|------|
-| 单元测试 | `host-tests/src/<module>.rs` 内联 `#[cfg(test)] mod tests` | `cargo test -p queenx-host-tests --lib` |
-| 集成测试 | `host-tests/tests/<scope>_<feature>_<kind>_test.rs` (70 个文件) | `cargo test -p queenx-host-tests --test <name>` |
-| 性能基准 | `host-tests/benches/<scope>_bench.rs` (Cargo 官方, 待迁移) | `cargo bench -p queenx-host-tests` |
+| 单元测试 | `host-tests/src/<module>.rs` 内联 `#[cfg(test)] mod tests` | `cargo test -p edgine-host-tests --lib` |
+| 集成测试 | `host-tests/tests/<scope>_<feature>_<kind>_test.rs` (70 个文件) | `cargo test -p edgine-host-tests --test <name>` |
+| 性能基准 | `host-tests/benches/<scope>_bench.rs` (Cargo 官方, 待迁移) | `cargo bench -p edgine-host-tests` |
 
 > **不要**把单元测试 + 集成测试 + 性能基准混放在一个 `tests/*.rs` 文件, Cargo 自动发现会让 `tests/*.rs` 编译为独立 binary, 极慢.
 
@@ -24,7 +24,7 @@
 
 | 段 | 含义 | 示例 |
 |----|------|------|
-| `<scope>` | 子系统或模块缩写 | `vfs` / `net` / `mm` / `driver` / `proc` / `signal` / `audit` / `klog` / `elf` / `nestfs` |
+| `<scope>` | 子系统或模块缩写 | `vfs` / `net` / `mm` / `driver` / `proc` / `signal` / `audit` / `klog` / `elf` / `unkfs` |
 | `<feature>` | 功能点 | `close_atomic` / `socket_wait_queue` / `iomem_alias` / `e1000_eeprom` |
 | `<kind>` | 测试类型 (可选) | `test` (静态契约) / `e2e` (端到端) / `persist` (持久化) / `stress` (压力) |
 
@@ -34,8 +34,8 @@
 - `driver_display_test.rs` — 显示器驱动
 - `driver_e1000_eeprom_test.rs` — e1000 EEPROM 读取
 - `mm_iomem_alias_test.rs` — IoMem 别名检测
-- `nestfs_stress_test.rs` — NestFS 压力
-- `nestfs_persist_test.rs` — NestFS 持久化往返
+- `unkfs_stress_test.rs` — UNKFS 压力
+- `unkfs_persist_test.rs` — UNKFS 持久化往返
 - `audit_comment_language_test.rs` — 注释语言审计契约
 
 **禁用**:
@@ -128,11 +128,11 @@ criterion_main!(benches);
 | `mmap_pwm_test.rs` | Vma.file_pwm 桥接 | B2.1 |
 | `i43_block_bridge_test.rs` | 块设备单一桥接入口 | I-43 |
 | `td21_early_vfs_eacces_test.rs` | early VFS EACCES | TD-21 |
-| `nestfs_test.rs` | NestFS 综合集成 | I-05 |
-| `nestfs_e2e_test.rs` | NestFS 端到端 (host 端) | I-05 |
-| `nestfs_persist_test.rs` | NestFS 持久化往返 | I-05 |
-| `nestfs_stress_test.rs` | NestFS 压力 (CAS/ZAP/ZIL) | I-05 |
-| `nestfs_trait_abstract_test.rs` | NestFS 18 文件强耦合 trait 化 | I-04 |
+| `unkfs_test.rs` | UNKFS 综合集成 | I-05 |
+| `unkfs_e2e_test.rs` | UNKFS 端到端 (host 端) | I-05 |
+| `unkfs_persist_test.rs` | UNKFS 持久化往返 | I-05 |
+| `unkfs_stress_test.rs` | UNKFS 压力 (CAS/ZAP/ZIL) | I-05 |
+| `unkfs_trait_abstract_test.rs` | UNKFS 18 文件强耦合 trait 化 | I-04 |
 | `memory_pressure_extraction_test.rs` | Memory Pressure 策略提取 | P1-I-01 D9 |
 | `fd_table_extraction_test.rs` | FdTable 策略提取 | P1-I-01 |
 | `fd_allocator_unified_test.rs` | 统一 FdAllocator (含 I-51 UDS/smoltcp 不重叠验收, 已合入) | TD-02 |
@@ -255,12 +255,12 @@ criterion_main!(benches);
 |------|------|------|
 | 集成测试 | 70 文件 (从 73 - 3) | ~11,200 |
 | 单元测试模块 | 5 | ~800 |
-| 公共库代码 | nestfs + nestfs_mock + framekernel_bench | ~6,000 |
+| 公共库代码 | unkfs + unkfs_mock + framekernel_bench | ~6,000 |
 | 性能基准 | 1 bin (待迁 benches/) | - |
 
 **对比规范化前**:
 - 73 → 70 文件 (-3 重复/退役)
-- 4 无后缀 → 0 无后缀 (重命名 driver_/mm_/nestfs_ scope)
+- 4 无后缀 → 0 无后缀 (重命名 driver_/mm_/unkfs_ scope)
 - 新增 README.md 索引
 - 5 文件补 SPDX + 追踪号
 
@@ -271,22 +271,22 @@ criterion_main!(benches);
 make test-host
 
 # 跑单个集成测试
-cargo test -p queenx-host-tests --test vfs_close_atomic_test
+cargo test -p edgine-host-tests --test vfs_close_atomic_test
 
 # 跑单个单元测试
-cargo test -p queenx-host-tests --lib dma_stream
+cargo test -p edgine-host-tests --lib dma_stream
 
 # 跑 PMM buddy host 集成测试 (H-04)
-cargo test -p queenx-host-tests --test pmm_buddy_host_test
+cargo test -p edgine-host-tests --test pmm_buddy_host_test
 
 # 跑特定测试函数
-cargo test -p queenx-host-tests --test net_socket_wait_queue_test socket_wait_queue_basic
+cargo test -p edgine-host-tests --test net_socket_wait_queue_test socket_wait_queue_basic
 
 # 性能基准
-cargo bench -p queenx-host-tests
+cargo bench -p edgine-host-tests
 
 # 静态契约测试 (依赖源文件存在)
-cargo test -p queenx-host-tests --test audit_comment_language_test
+cargo test -p edgine-host-tests --test audit_comment_language_test
 ```
 
 ## 添加新测试流程
@@ -306,7 +306,7 @@ cargo test -p queenx-host-tests --test audit_comment_language_test
 1. 把过期测试的 `#[test]` 函数加 `#[ignore]` 并加注释"已退役, 保留以防回滚"——不推荐
 2. **推荐**: 直接删除, 在 commit message 写明废弃原因
 3. 如果有真实回归风险, 把测试函数改名为 `<feature>_regression_<bug_id>`, 持续验证
-4. 退役原因写入 commit message (QueenX 不维护独立 `CHANGELOG.md`, 见 DECISION-038)
+4. 退役原因写入 commit message (Edgine 不维护独立 `CHANGELOG.md`, 见 DECISION-038)
 
 ## 重复测试处理
 
@@ -314,7 +314,7 @@ cargo test -p queenx-host-tests --test audit_comment_language_test
 1. 选最新 (覆盖更全) 的那份保留
 2. 把旧版的独有用例合并到新版 (避免测试缺失)
 3. 删除旧版
-4. 合并原因写入 commit message (QueenX 不维护独立 `CHANGELOG.md`, 见 DECISION-038)
+4. 合并原因写入 commit message (Edgine 不维护独立 `CHANGELOG.md`, 见 DECISION-038)
 
 ## 测试架构原则
 

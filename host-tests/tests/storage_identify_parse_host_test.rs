@@ -12,7 +12,7 @@
 //! 3. 短缓冲区: 长度不足返回 None
 //! 4. lbaf_idx >= 16: lbaf_data = 0
 
-use queenx::kernel::services::driver::storage::nvme::{
+use edgine::kernel::services::driver::storage::nvme::{
     parse_identify_controller, parse_identify_namespace,
 };
 
@@ -23,7 +23,7 @@ use queenx::kernel::services::driver::storage::nvme::{
 
 #[test]
 fn cc_iosqes_iocqes_field_positions_match_nvme_spec() {
-    use queenx::kernel::services::driver::storage::nvme::{
+    use edgine::kernel::services::driver::storage::nvme::{
         CC_IOCQES_MASK, CC_IOCQES_VAL, CC_IOSQES_MASK, CC_IOSQES_VAL,
     };
 
@@ -49,7 +49,7 @@ fn cc_iosqes_iocqes_field_positions_match_nvme_spec() {
 
 #[test]
 fn cc_composed_value_decodes_to_required_entry_sizes() {
-    use queenx::kernel::services::driver::storage::nvme::{
+    use edgine::kernel::services::driver::storage::nvme::{
         CC_AMS_RR, CC_CSS_NVM, CC_EN, CC_IOCQES_MASK, CC_IOCQES_VAL, CC_IOSQES_MASK, CC_IOSQES_VAL,
         CC_MPS_SHIFT,
     };
@@ -74,7 +74,7 @@ fn cc_composed_value_decodes_to_required_entry_sizes() {
 #[test]
 fn identify_controller_parse_full() {
     let mut data = [0u8; 520];
-    let model = b"QueenX NVMe";
+    let model = b"Edgine NVMe";
     data[24..24 + model.len()].copy_from_slice(model);
     data[516..520].copy_from_slice(&3u32.to_le_bytes());
 

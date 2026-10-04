@@ -26,7 +26,7 @@ pub fn help(cmd: &Cmd) {
     }
 
     if filter.is_empty() {
-        println("\nQueenX Shell — deep & lightweight");
+        println("\nEdgine Shell — deep & lightweight");
         println("Use 'help <category>' for details");
     }
 }

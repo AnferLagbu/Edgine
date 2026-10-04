@@ -1,7 +1,7 @@
 //! I-43: 块设备单一桥接入口不变式验证
 //!
 //! 验证修复后的状态契约:
-//! 1. `chitin_register_block` 仅在允许文件中被调用 (chitin/mod.rs + chitin/proto_block.rs)
+//! 1. `egdf_register_block` 仅在允许文件中被调用 (egdf/mod.rs + egdf/proto_block.rs)
 //! 2. 所有块设备驱动通过 `register_block_device` (proto_block) 注册
 //! 3. BlockDevice trait 的 blk_read/blk_write 签名与 BlockOps thunk 一致
 //!
@@ -34,11 +34,11 @@ fn collect_rs_files(dir: &Path) -> Vec<String> {
 }
 
 #[test]
-fn test_chitin_register_block_only_in_allowed_files() {
-    // chitin_register_block 是低层桥接, 仅允许在以下文件中直接调用:
-    // - chitin/mod.rs (定义 + 单元测试)
-    // - chitin/proto_block.rs (桥接函数)
-    let allowed_suffixes = ["/chitin/mod.rs", "/chitin/proto_block.rs"];
+fn test_egdf_register_block_only_in_allowed_files() {
+    // egdf_register_block 是低层桥接, 仅允许在以下文件中直接调用:
+    // - egdf/mod.rs (定义 + 单元测试)
+    // - egdf/proto_block.rs (桥接函数)
+    let allowed_suffixes = ["/egdf/mod.rs", "/egdf/proto_block.rs"];
 
     let kernel_dir = Path::new(KERNEL_DIR);
     let all_rs = collect_rs_files(kernel_dir);
@@ -55,13 +55,13 @@ fn test_chitin_register_block_only_in_allowed_files() {
         }
 
         let content = read_source(file_path);
-        // 检查是否有 `chitin_register_block(` 调用 (排除注释行)
+        // 检查是否有 `egdf_register_block(` 调用 (排除注释行)
         for (i, line) in content.lines().enumerate() {
             let trimmed = line.trim();
             if trimmed.starts_with("//") || trimmed.starts_with("//!") {
                 continue; // 跳过注释
             }
-            if trimmed.contains("chitin_register_block(") {
+            if trimmed.contains("egdf_register_block(") {
                 violations.push(format!("{}:{}: {}", file_path, i + 1, trimmed.trim()));
             }
         }
@@ -69,7 +69,7 @@ fn test_chitin_register_block_only_in_allowed_files() {
 
     assert!(
         violations.is_empty(),
-        "I-43 违规: chitin_register_block 在非允许文件中被调用:\n{}",
+        "I-43 违规: egdf_register_block 在非允许文件中被调用:\n{}",
         violations.join("\n")
     );
 }
@@ -77,7 +77,7 @@ fn test_chitin_register_block_only_in_allowed_files() {
 #[test]
 fn test_block_drivers_use_register_block_device() {
     // 所有块设备驱动应通过 proto_block::register_block_device 注册,
-    // 而非直接调用 chitin_register_block.
+    // 而非直接调用 egdf_register_block.
     // 检查各驱动文件是否包含 register_block_device 调用.
     let driver_files = [
         "framework/driver/virtio/blk.rs",
@@ -113,9 +113,9 @@ fn test_block_ops_thunk_signature_matches_trait() {
     //
     // 历史: LEGACY-4.2 已于 maintenance-2026-06-11 周期删除 4 个 thunk
     // (blk_read_thunk/write_thunk/is_present_thunk/total_sectors_thunk),
-    // 全部迁移到 BlockDevice trait + chitin 桥接。
+    // 全部迁移到 BlockDevice trait + egdf 桥接。
     // 本测试现在反向验证: proto_block.rs 中**不应**再出现 thunk 函数定义。
-    let path = Path::new(KERNEL_DIR).join("framework/chitin/proto_block.rs");
+    let path = Path::new(KERNEL_DIR).join("framework/egdf/proto_block.rs");
     let content = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("read {} failed: {}", path.display(), e));
 
@@ -140,7 +140,7 @@ fn test_block_ops_thunk_signature_matches_trait() {
 #[test]
 fn test_register_block_device_is_pub() {
     // register_block_device 必须是 pub fn, 确保驱动可调用
-    let path = Path::new(KERNEL_DIR).join("framework/chitin/proto_block.rs");
+    let path = Path::new(KERNEL_DIR).join("framework/egdf/proto_block.rs");
     let content = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("read {} failed: {}", path.display(), e));
     assert!(

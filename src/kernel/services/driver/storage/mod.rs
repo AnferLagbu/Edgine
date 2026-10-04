@@ -80,7 +80,7 @@ struct ProbedController {
     ahci: bool,
     /// 控制器在 AHCI/NVMe 注册表中的槽位 (探测失败为 `None`)。
     slot: Option<usize>,
-    /// 该控制器下已注册的 Chitin 块设备下标。
+    /// 该控制器下已注册的 EGDF 块设备下标。
     ///
     /// 控制器移除后**保留**该列表: 移除事件要先经重枚举再交监听器,
     /// 监听器需据此解析出要注销的块设备 (见 `drives_for_location`)。
@@ -132,11 +132,11 @@ impl ProbeResult {
 ///
 /// `slot_hint` 为重插场景下复用的注册表槽位 (`None` 表示首次探测)。
 #[cfg(target_arch = "x86_64")]
-// 有意窄化: Chitin 全局下标当前以 u8 表示块设备编号
+// 有意窄化: EGDF 全局下标当前以 u8 表示块设备编号
 #[expect(clippy::cast_possible_truncation)]
 fn probe_ahci(dev: &crate::framework::pci::PciDevice, slot_hint: Option<usize>) -> ProbeResult {
     use crate::framework::mm::PAGE_SIZE;
-    use crate::services::chitin::register_block_device;
+    use crate::services::egdf::register_block_device;
 
     // AHCI 控制器 - 使用 BAR5 (偏移 0x24)
     let bar = dev.bars[5].base_addr;
@@ -189,7 +189,7 @@ fn probe_ahci(dev: &crate::framework::pci::PciDevice, slot_hint: Option<usize>) 
             let dev_name = alloc::format!("ahci{ci}-p{pi}");
             let idx = register_block_device(dev_name.leak(), dev, None);
             drives.push(idx as u8);
-            // 回写端口 → Chitin 下标映射: 端口级热插拔移除时据此墓碑化块设备
+            // 回写端口 → EGDF 下标映射: 端口级热插拔移除时据此墓碑化块设备
             if let Some(port) = AHCI_CONTROLLERS
                 .lock()
                 .get_mut(ci)
@@ -218,7 +218,7 @@ fn probe_ahci(dev: &crate::framework::pci::PciDevice, slot_hint: Option<usize>) 
 /// `run_selftest` 仅为启动期 (`storage_init`) 置真: MSIX-03 受控自测内部会
 /// 自旋并 `halt()` 等待中断, 不可在软中断 (热插拔重枚举) 上下文执行。
 #[cfg(target_arch = "x86_64")]
-// 有意窄化: Chitin 全局下标当前以 u8 表示块设备编号
+// 有意窄化: EGDF 全局下标当前以 u8 表示块设备编号
 #[expect(clippy::cast_possible_truncation)]
 fn probe_nvme(
     dev: &crate::framework::pci::PciDevice,
@@ -226,7 +226,7 @@ fn probe_nvme(
     run_selftest: bool,
 ) -> ProbeResult {
     use crate::framework::mm::PAGE_SIZE;
-    use crate::services::chitin::register_block_device;
+    use crate::services::egdf::register_block_device;
 
     // NVMe 控制器 - 使用 BAR0
     let bar = dev.bars[0].base_addr;
@@ -421,13 +421,13 @@ fn storage_scan_with(
     (ahci_found, nvme_found)
 }
 
-/// 将已从总线消失的控制器标记为移除, 并注销其块设备 (Chitin 墓碑)。
+/// 将已从总线消失的控制器标记为移除, 并注销其块设备 (EGDF 墓碑)。
 ///
 /// **保留**台账中的 `slot` 与 `drives`: 槽位供重插复用 (见 `install_controller`),
 /// 块设备列表供监听器在随后的事件分发中解析出待注销的驱动编号。
 #[cfg(target_arch = "x86_64")]
 fn remove_stale_controllers(devices: &[crate::framework::pci::PciDevice]) {
-    use crate::services::chitin::unregister_block;
+    use crate::services::egdf::unregister_block;
 
     let mut probed = PROBED.lock();
     for r in probed.iter_mut() {
@@ -461,7 +461,7 @@ fn storage_rescan() {
 
 /// framework 热插拔重枚举回调 (经 `register_reenum_hook` 注册)。
 ///
-/// 在监听器处理事件**之前**被调用, 使 `PROBED` 台账与 Chitin 块设备表
+/// 在监听器处理事件**之前**被调用, 使 `PROBED` 台账与 EGDF 块设备表
 /// 与最新总线状态一致。USB 等其他总线的事件不触发 PCI 重扫。
 #[cfg(target_arch = "x86_64")]
 fn storage_reenum_hook(event: &HotplugEvent) {
@@ -481,7 +481,7 @@ fn event_location(event: &HotplugEvent) -> &DeviceLocation {
     }
 }
 
-/// 解析热插拔事件位置下的存储块设备 (Chitin 下标)。
+/// 解析热插拔事件位置下的存储块设备 (EGDF 下标)。
 ///
 /// - `Pcie`: `PcieHotplugSlot` 只识别 Root Port / Downstream Port, 故热插拔
 ///   事件中的 BDF 是**端口**的 BDF, 而存储控制器挂在该端口二级总线之下。
@@ -556,11 +556,11 @@ pub fn drives_for_location(location: &DeviceLocation) -> Vec<u8> {
 /// (监听器可能反向访问 `AHCI_CONTROLLERS`)。锁序保持 `PROBED →
 /// AHCI_CONTROLLERS`, 与既有热插拔路径一致。
 #[cfg(target_arch = "x86_64")]
-// 有意窄化: Chitin 全局下标当前以 u8 表示块设备编号
+// 有意窄化: EGDF 全局下标当前以 u8 表示块设备编号
 #[expect(clippy::cast_possible_truncation)]
 fn ahci_port_poll() {
     use crate::framework::driver::hotplug::HOTPLUG_MANAGER;
-    use crate::services::chitin::{register_block_device, unregister_block};
+    use crate::services::egdf::{register_block_device, unregister_block};
 
     // Phase 1: 摘取在线 AHCI 控制器 (注册表槽位 + BDF), 释放 PROBED 锁。
     let controllers: Vec<(usize, u8, u8, u8)> = PROBED
@@ -751,10 +751,10 @@ fn nvme_msix03_selftest(ci: usize) {
     );
 }
 
-/// 初始化存储子系统并注册块设备到 Chitin (services 权威)
+/// 初始化存储子系统并注册块设备到 EGDF (services 权威)
 ///
 /// 首次全量扫描 PCI (见 `storage_scan_with`) 发现 AHCI/NVMe 控制器 →
-/// services 控制器初始化 → 全局注册表 → `_block` 适配器注册 Chitin。
+/// services 控制器初始化 → 全局注册表 → `_block` 适配器注册 EGDF。
 /// NVMe 为 MSI-X 中断驱动 (启用/ISR 注册失败回退轮询), 附 MSIX-03 受控自测。
 /// 随后探测传统 ATA PIO 通道 (经由 framework `IoPort` safe 代理) 并注册
 /// `ata0-3`。aarch64 (QEMU virt) 无 PCI AHCI/NVMe/ATA, virtio-blk 已由
@@ -783,7 +783,7 @@ pub fn storage_init() {
 
     // Step 2: 注册热插拔重枚举回调 (DECISION-K 模式)。framework 在分发每个
     // 热插拔事件给监听器之前调用它, 触发 `storage_rescan` 增量重扫总线,
-    // 保证监听器看到的 Chitin 块设备表与最新总线状态一致。
+    // 保证监听器看到的 EGDF 块设备表与最新总线状态一致。
     let _ = register_reenum_hook(storage_reenum_hook);
 
     // Step 2b: 注册 AHCI 端口级热插拔轮询回调 (DECISION-K 模式)。SATA 端口
@@ -817,7 +817,7 @@ pub fn storage_init() {
 // 有意窄化: `detected_device_count` 为 usize, 设备数远小于 u32 上限
 #[expect(clippy::cast_possible_truncation)]
 fn probe_ata() -> u32 {
-    use crate::services::chitin::register_block_device;
+    use crate::services::egdf::register_block_device;
 
     let mut ata_found = 0u32;
     if let Some(mut controller) = ata::AtaController::new() {

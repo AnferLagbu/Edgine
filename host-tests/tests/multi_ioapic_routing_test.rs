@@ -17,7 +17,7 @@
 //! 保留: 内核 `IoApicInfo` 为 `pub struct` (pub 字段 id/base_addr/gsi_base/max_irq),
 //! 纯数据可 host 构造, 其字段语义测试改引内核类型.
 
-use queenx::kernel::framework::arch::x86_64::acpi::IoApicInfo;
+use edgine::kernel::framework::arch::x86_64::acpi::IoApicInfo;
 
 /// 双 IOAPIC 控制器场景 (多路服务器): id/base/gsi_base/max_irq 字段语义
 #[test]

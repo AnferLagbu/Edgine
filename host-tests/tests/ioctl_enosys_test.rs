@@ -8,7 +8,7 @@
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `sys_ioctl_contract` / `Winsize` / 错误码常量平行镜像, 改引内核
-//! 真实源码 `queenx::kernel::services::fs::file_ops::ioctl_syscall` (services 层,
+//! 真实源码 `edgine::kernel::services::fs::file_ops::ioctl_syscall` (services 层,
 //! 100% safe, pub fn, host 可直接调用).
 //! - TIOCGWINSZ 命令常量 (0x5413) / TCGETS (0x5401) 为内核私有常量, 测试侧
 //!   保留镜像并标注同步 (参考 lib_string_strlen_safe 的 STRLEN_MAX 做法).
@@ -16,8 +16,8 @@
 //! - 用户指针校验 (USER_ADDR_MAX) 是内核真实行为: host 用堆 (Box) 分配的
 //!   Winsize 缓冲区地址 < USER_ADDR_MAX 可通过校验; 栈地址会因超界返回 EFAULT.
 
-use queenx::kernel::framework::syscall::Errno;
-use queenx::kernel::services::fs::file_ops::ioctl_syscall;
+use edgine::kernel::framework::syscall::Errno;
+use edgine::kernel::services::fs::file_ops::ioctl_syscall;
 
 /// 内核私有命令常量镜像 (services/fs/file_ops.rs, 非 pub)
 /// 与内核 `const TIOCGWINSZ: u64 = 0x5413` 同步; 若内核改值需同步.

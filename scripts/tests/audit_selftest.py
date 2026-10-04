@@ -16,7 +16,7 @@ B01-24 返工: audit 脚本统一自测.
 使用 fixture 的 4 个 audit 脚本:
 1. audit_services_boundary.py: 检测 pub use 框架内部模块
 2. audit_deadlock_matrix.py: 检测带路径的 spin 别名 + 锁调用
-3. audit_block_registration.py: 检测 chitin_register_block_dev
+3. audit_block_registration.py: 检测 egdf_register_block_dev
 4. tools/audit_unsafe.py: 检测缺 SAFETY 注释的 unsafe 块
 """
 from __future__ import annotations
@@ -176,9 +176,9 @@ def test_deadlock_matrix() -> bool:
 
 
 def test_block_registration() -> bool:
-    """B01-24 fixture 测试 3: audit_block_registration 识别 chitin_register_block_dev.
+    """B01-24 fixture 测试 3: audit_block_registration 识别 egdf_register_block_dev.
 
-    Fixture 含 'unsafe { chitin_register_block_dev(); }' (在非允许文件).
+    Fixture 含 'unsafe { egdf_register_block_dev(); }' (在非允许文件).
     """
     print("\n[Test 3/4] audit_block_registration.py")
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -191,19 +191,19 @@ def test_block_registration() -> bool:
         test_file.write_text(
             "//! test\n"
             "pub fn test() {\n"
-            "    unsafe { chitin_register_block_dev(); }\n"
+            "    unsafe { egdf_register_block_dev(); }\n"
             "}\n"
         )
 
         # 复现 PATTERN 逻辑
         import re
-        PATTERN = re.compile(r'\bchitin_register_block_dev\s*\(')
+        PATTERN = re.compile(r'\begdf_register_block_dev\s*\(')
         text = test_file.read_text()
         detected = bool(PATTERN.search(text))
         return _check(
-            "检测 chitin_register_block_dev 违规调用",
+            "检测 egdf_register_block_dev 违规调用",
             detected,
-            "fixture 含 'unsafe { chitin_register_block_dev(); }'",
+            "fixture 含 'unsafe { egdf_register_block_dev(); }'",
         )
 
 

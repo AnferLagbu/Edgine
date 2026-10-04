@@ -6,7 +6,7 @@
 //! - 0 unsafe,纯类型安全
 //! - 委托 `framework/fs/vfs::api` 完成
 
-use crate::framework::credo;
+use crate::framework::sgeg;
 use crate::framework::syscall::Errno;
 use crate::framework::syscall::raw;
 use crate::services::fs::api as fw;
@@ -26,7 +26,7 @@ pub fn umask_syscall(mask: u32) -> Result<usize, Errno> {
     if mask > 0o777 {
         return Err(Errno::EINVAL);
     }
-    Ok(crate::framework::credo::api::umask_set(mask) as usize)
+    Ok(crate::framework::sgeg::api::umask_set(mask) as usize)
 }
 
 // ============================================================================
@@ -144,5 +144,5 @@ pub fn fchmod_syscall(fd: i32, mode: u32) -> Result<usize, Errno> {
 )]
 /// 取当前进程凭证,无会话时直接返回 EACCES (历史硬编码 `TEST_PWM` 路径已弃用)。
 fn current_pwm() -> Result<u64, Errno> {
-    Ok(credo::api::pwm_get_current())
+    Ok(sgeg::api::pwm_get_current())
 }

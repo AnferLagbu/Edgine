@@ -25,15 +25,15 @@
 //! 内存访问放行范围可能与 Linux 存在差异」; 若后续引入 LSM/能力模型, 应在
 //! [`check_access`] 处接入.
 
-use crate::framework::credo::{
-    pwm_check_privilege, pwm_get_current, pwm_get_current_uid, pwm_get_uid,
-};
 use crate::framework::errno::Errno;
 use crate::framework::mm::{
     copy_from_user, copy_from_user_in_mm, copy_to_user, copy_to_user_in_mm, is_user_buf,
 };
 use crate::framework::proc::{
     process_dec_ref, process_get_cr3, process_get_current_pid, process_get_pwm, process_try_inc_ref,
+};
+use crate::framework::sgeg::{
+    pwm_check_privilege, pwm_get_current, pwm_get_current_uid, pwm_get_uid,
 };
 use crate::services::fs::io::{IOV_MAX, read_iovecs};
 

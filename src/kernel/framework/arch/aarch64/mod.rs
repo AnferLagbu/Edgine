@@ -17,11 +17,11 @@
 //! - [x] `impl MmuArch for Aarch64` — TTBR0/1 + 上下文切换 + eret
 //! - [x] `impl SystemArch for Aarch64` — PSCI + port IO 桩
 //! - [x] `impl Arch for Aarch64` — 超 trait (空)
-//! - [x] `barrier` — 栏栈恢复 (SGI 7 替代 int 0x82)
+//! - [x] `freg` — FREG恢复 (SGI 7 替代 int 0x82)
 
-pub mod barrier;
 pub mod context;
 pub mod exception;
+pub mod freg;
 pub mod gic;
 pub mod mmu;
 pub mod psci;

@@ -1,5 +1,5 @@
 #![deny(unsafe_code)]
-//! QueenX Services 层 — 100% safe Rust (去特权)
+//! Edgine Services 层 — 100% safe Rust (去特权)
 //!
 //! **禁止** 包含任何 `unsafe` 代码。
 //! 所有硬件交互通过 `kernel::framework` 的安全 API 进行。
@@ -34,7 +34,7 @@
 // 子系统声明
 // ============================================================================
 
-/// 系统调用 — POSIX + Credo 分发 (通过 framework::UserContext)
+/// 系统调用 — POSIX + SGEG 分发 (通过 framework::UserContext)
 pub mod syscall;
 
 /// TD-08: services 层统一错误 (单一来源, SocketError/UnixSocketError 共享)
@@ -50,7 +50,7 @@ pub mod klog;
 /// 进程管理 — 调度 / 进程表 / ELF 加载
 pub mod proc;
 
-/// 文件系统 — VFS + ramfs + NestFS + devfs + procfs
+/// 文件系统 — VFS + ramfs + UNKFS + devfs + procfs
 pub mod fs;
 
 /// 网络栈 — smoltcp + 驱动适配
@@ -59,19 +59,19 @@ pub mod net;
 /// 进程间通信 — 管道 / 共享内存 / 消息队列 / 信号
 pub mod ipc;
 
-/// 设备驱动框架 — Chitin 协议族
-pub mod chitin;
+/// 设备驱动框架 — EGDF 协议族
+pub mod egdf;
 
 /// 设备驱动 — 网卡 / 存储 / 显示 / 输入
 pub mod driver;
 
 /// 身份与权限 — PWM / 能力矩阵 / 会话
-pub mod credo;
+pub mod sgeg;
 
-/// 故障恢复 — 栏栈恢复
-pub mod barrier;
+/// 故障恢复 — FREG恢复
+pub mod freg;
 
-/// 同步原语高级封装 — IrqSpinLock / scoped / Barrier / Once
+/// 同步原语高级封装 — IrqSpinLock / scoped / FREG / Once
 ///
 /// 基础同步原语见 `framework::sync` (TCB); 本模块提供
 /// services 层的安全抽象 (闭包 API / 一次性初始化等)。
@@ -123,7 +123,7 @@ pub mod userctx;
 // framework::klog::log_info 等 safe 函数, 不含任何 unsafe 块。
 //
 // 示例:
-//   slog_info!(FS, "NestFS 已初始化: pool={}", name);
+//   slog_info!(FS, "UNKFS 已初始化: pool={}", name);
 //   slog_warn!(Kernel, "内存不足: 剩余 {} 页", free);
 //   slog_err!(Driver, "未找到磁盘 {}", id);
 // ============================================================================

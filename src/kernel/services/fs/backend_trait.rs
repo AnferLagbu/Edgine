@@ -129,30 +129,30 @@ pub fn current_fs_backend() -> &'static dyn FsBackend {
 }
 
 // ============================================================================
-// NestFS FileSystem 注册表 (DECISION-K 项 6: 注入归零)
+// UNKFS FileSystem 注册表 (DECISION-K 项 6: 注入归零)
 // ============================================================================
 
-/// 全局 NestFS FileSystem 注册表 — `services::fs::init` 注册 `NestfsData` 实例
-static NESTFS_FS: crate::framework::sync::OnceLock<&'static dyn FileSystem> =
+/// 全局 UNKFS FileSystem 注册表 — `services::fs::init` 注册 `NestfsData` 实例
+static UNKFS_FS: crate::framework::sync::OnceLock<&'static dyn FileSystem> =
     crate::framework::sync::OnceLock::new();
 
-/// 注册 NestFS FileSystem 实例 (由 `services::fs::init` 调用)
+/// 注册 UNKFS FileSystem 实例 (由 `services::fs::init` 调用)
 ///
-/// framework 挂载/格式化路径经 `nestfs_fs()` 消费 trait object,
+/// framework 挂载/格式化路径经 `unkfs_fs()` 消费 trait object,
 /// 不再反向依赖 services 具象 `NestfsData`.
 /// # Errors
 /// 已被注册过时返回 Err。
-pub fn register_nestfs_fs(fs: &'static dyn FileSystem) -> Result<(), &'static dyn FileSystem> {
-    match NESTFS_FS.set(fs) {
+pub fn register_unkfs_fs(fs: &'static dyn FileSystem) -> Result<(), &'static dyn FileSystem> {
+    match UNKFS_FS.set(fs) {
         Ok(()) => Ok(()),
         Err(existing) => Err(existing),
     }
 }
 
-/// 获取注册的 NestFS FileSystem (未注册时返回 None — fail-closed)
+/// 获取注册的 UNKFS FileSystem (未注册时返回 None — fail-closed)
 #[inline]
-pub fn nestfs_fs() -> Option<&'static dyn FileSystem> {
-    match NESTFS_FS.get() {
+pub fn unkfs_fs() -> Option<&'static dyn FileSystem> {
+    match UNKFS_FS.get() {
         Some(&fs) => Some(fs),
         None => None,
     }
@@ -185,12 +185,12 @@ mod tests {
     }
 
     #[test]
-    fn test_nestfs_fs_registered() {
+    fn test_unkfs_fs_registered() {
         crate::services::fs::init();
-        let Some(fs) = nestfs_fs() else {
-            panic!("nestfs_fs() 未注册 — services::fs::init 未生效");
+        let Some(fs) = unkfs_fs() else {
+            panic!("unkfs_fs() 未注册 — services::fs::init 未生效");
         };
-        assert_eq!(fs.name(), "nestfs", "nestfs name mismatch");
+        assert_eq!(fs.name(), "unkfs", "unkfs name mismatch");
         // 注: fs_format 行为不在单测覆盖 (内存模式调 format_drive 有底层 IO 副作用),
         // 语义等价性由 fsformat 路径代码搬移保证, QEMU boot 覆盖挂载分发链路
     }

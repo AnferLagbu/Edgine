@@ -268,7 +268,7 @@ fn test_cmd_realistic_eash_commands() {
     type CmdCase<'a> = (&'a [u8], usize, &'a [&'a [u8]]);
     let cases: &[CmdCase<'_>] = &[
         (b"help", 1, &[b"help"]),
-        (b"echo QueenX Shell", 3, &[b"echo", b"QueenX", b"Shell"]),
+        (b"echo Edgine Shell", 3, &[b"echo", b"Edgine", b"Shell"]),
         (b"dir /bin", 2, &[b"dir", b"/bin"]),
         (b"cat /etc/hostname", 2, &[b"cat", b"/etc/hostname"]),
         (b"kill 1234", 2, &[b"kill", b"1234"]),

@@ -33,7 +33,7 @@ const STATIC_HOSTS: &[HostEntry] = &[
         ip: FALLBACK_GATEWAY,
     },
     HostEntry {
-        name: "queenx-gateway",
+        name: "edgine-gateway",
         ip: FALLBACK_GATEWAY,
     },
 ];
@@ -94,7 +94,7 @@ pub fn parse_ipv4_literal(s: &str) -> Option<[u8; 4]> {
 
 /// 解析 CIDR 字面量 "a.b.c.d/prefix" (可选 prefix, 默认 24)
 ///
-/// 返回 `(ipv4, prefix_len)`. 用于 `cmd.rs::qx_net_static_ip` 复用,
+/// 返回 `(ipv4, prefix_len)`. 用于 `cmd.rs::eg_net_static_ip` 复用,
 /// 消除 init.rs 中重复的 IPv4 文本解析实现 (B04-09 优化拆分 Step G).
 ///
 /// # 语法

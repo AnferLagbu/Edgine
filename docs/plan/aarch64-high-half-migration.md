@@ -56,8 +56,8 @@ aarch64 侧 `KERNEL_BASE` 取 [mm/mod.rs:184](../../src/kernel/framework/mm/mod.
   - 方案：**决策灰色地带**（§9.1）——须由用户裁定，不在本工程自行选择。列候选 + 各自对 EL1 视图/别名体系的影响后再施工。
   - 状态：[X]
   - 详情：**裁定为「A 数值 + 合一布局」** —— `KERNEL_BASE = 0xFFFF_0000_0000_0000`（= 现有 `HIGH_ALIAS_BASE` = TTBR1 窗口基址），镜像落点 = `KERNEL_BASE + PA 0x4008_0000 = 0xFFFF_0000_4008_0000`，`KERNEL_TEXT_BASE` 同步改为 `0xFFFF_0000_4008_0000`。
-    - **数值血统**：该值同时等于 Linux arm64 `PAGE_OFFSET = -(1<<48)`、FreeBSD arm64 `VM_MIN_KERNEL_ADDRESS`/`KERNBASE`、T1SZ=16 的 TTBR1 窗口基址、QueenX 现有 `HIGH_ALIAS_BASE`（四重血统）。
-    - **角色定位**：FreeBSD 将 `KERNBASE`（镜像落点）与 `DMAP_MIN_ADDRESS`（直射区 `0xFFFF_A000_0000_0000`）分离；Linux arm64 将 `PAGE_OFFSET`（直射起点）与 `KIMAGE_VADDR`（镜像 `0xFFFF_8800_0000_0000`）分离。本方案**合一**——`KERNEL_BASE` 既作直射偏移（`phys_to_virt = phys + KERNEL_BASE`）又作镜像落点基准，省去两家都有的分离区。合一可行前提：QueenX 当前无 KASLR、无模块区、无 vmemmap 需求，无需为镜像预留独立高 VA 区段。
+    - **数值血统**：该值同时等于 Linux arm64 `PAGE_OFFSET = -(1<<48)`、FreeBSD arm64 `VM_MIN_KERNEL_ADDRESS`/`KERNBASE`、T1SZ=16 的 TTBR1 窗口基址、Edgine 现有 `HIGH_ALIAS_BASE`（四重血统）。
+    - **角色定位**：FreeBSD 将 `KERNBASE`（镜像落点）与 `DMAP_MIN_ADDRESS`（直射区 `0xFFFF_A000_0000_0000`）分离；Linux arm64 将 `PAGE_OFFSET`（直射起点）与 `KIMAGE_VADDR`（镜像 `0xFFFF_8800_0000_0000`）分离。本方案**合一**——`KERNEL_BASE` 既作直射偏移（`phys_to_virt = phys + KERNEL_BASE`）又作镜像落点基准，省去两家都有的分离区。合一可行前提：Edgine 当前无 KASLR、无模块区、无 vmemmap 需求，无需为镜像预留独立高 VA 区段。
     - **布局形态裁定**：**一次性迁移**（照搬 FreeBSD `locore.S` / Linux `__primary_switch` 的「高半区链接 + 开机恒等跳板 + MMU 开启后一次性 `br` 切换」行业先例；无内核采用渐进双映射）。
     - **附带收敛**：迁移后 aarch64 的 `KERNEL_BASE == HIGH_ALIAS_BASE`（同值），MMIO 与 DRAM 访问同走高半区别名，与 Linux arm64 语义一致（`ioremap` 与 `PAGE_OFFSET` 同处高半区）。
 

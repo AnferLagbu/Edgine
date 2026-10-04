@@ -11,7 +11,7 @@
 //!     → 扫描所有已知热插拔槽位
 //!     → 生成 HotplugEvent
 //!     → 分发给 HotplugListener 链表
-//!       → NestFS hotplug listener (磁盘插入/移除)
+//!       → UNKFS hotplug listener (磁盘插入/移除)
 //!       → Storage listener (重新注册 BlockDevice)
 //!       → 未来: 用户态通知 (/dev/hotplug)
 //! ```
@@ -62,7 +62,7 @@ pub enum HotplugEvent {
 
 /// 热插拔事件监听器 trait。
 ///
-/// 各子系统（如 NestFS、存储管理器）实现此 trait 并注册到 `HotplugManager`。
+/// 各子系统（如 UNKFS、存储管理器）实现此 trait 并注册到 `HotplugManager`。
 pub trait HotplugListener: Send + Sync {
     /// 设备插入通知。
     /// 在事件分发给所有监听器后, 由第一个返回 true 的监听器"认领"该设备。
@@ -206,9 +206,9 @@ impl HotplugManager {
             .collect();
         drop(slots);
 
-        // 按 Chitin 全局下标枚举块设备 (含已墓碑化设备), 保证上报的 `drive`
-        // 与 `hdd_*` / `chitin_blk_*` 使用的索引一致。
-        let drives = crate::framework::chitin::chitin_blk_drives();
+        // 按 EGDF 全局下标枚举块设备 (含已墓碑化设备), 保证上报的 `drive`
+        // 与 `hdd_*` / `egdf_blk_*` 使用的索引一致。
+        let drives = crate::framework::egdf::egdf_blk_drives();
         let mut blk_states: Vec<BlockDeviceState> = Vec::new();
         for d in drives {
             let (present, removing, io_count) = crate::framework::driver::block_device_state(d);

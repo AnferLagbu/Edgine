@@ -10,7 +10,7 @@
 //!
 //! ## 测试策略
 //!
-//! host-tests 不链接 queenx 静态库, 复刻 CpuFeatures bitflag 抽象层.
+//! host-tests 不链接 edgine 静态库, 复刻 CpuFeatures bitflag 抽象层.
 //! 验证 SMEP/SMAP bit 位置与 CR4 bit 位置映射.
 
 /// CpuFeatures SMEP bit (1 << 30, 见 cpu/mod.rs P4.B.1).

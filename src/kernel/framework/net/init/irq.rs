@@ -22,7 +22,7 @@
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-use crate::framework::chitin::NetOps;
+use crate::framework::egdf::NetOps;
 use crate::framework::irq::{SoftirqVec, raise_softirq};
 use crate::framework::sync::OnceLock;
 

@@ -3,7 +3,7 @@
 //! ## 调用方契约
 //! - `syscall::sys_read/write/open/close` —— 用户态文件操作
 //! - `proc::exec::load_elf` —— 加载 ELF 时通过 VFS 读文件
-//! - `credo::persist` —— 持久化身份数据
+//! - `sgeg::persist` —— 持久化身份数据
 //! - `host-tests` —— host 端单元测试
 //!
 //! ## 内部接口

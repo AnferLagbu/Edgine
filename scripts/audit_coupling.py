@@ -42,7 +42,7 @@ ALLOWED_TIGHT_COUPLING = {
     ('driver', 'io'),      # 硬件驱动需要 I/O
     ('console', 'driver'), # 控制台需要显示驱动
     ('proc', 'sched'),     # 进程管理↔调度核心
-    ('credo', 'proc'),     # 安全凭证↔进程管理 (PwmContext 绑定 Process)
+    ('sgeg', 'proc'),     # 安全凭证↔进程管理 (PwmContext 绑定 Process)
     ('proc', 'tests'),     # 测试框架↔被测模块 (#[cfg(test)] 内嵌测试)
     ('fs', 'tests'),       # 测试框架↔被测模块
     ('mm', 'tests'),       # 测试框架↔被测模块
@@ -100,9 +100,9 @@ INTERNAL_PATTERNS = [
     r'framework::idt::safety',
     r'framework::idt::types',
     # arch 内部 — apic/ioapic/gdt/tss/uart/exception/mmu/gic/timer/X8664/Aarch64/shadow_stack 已 re-export
-    # credo 内部 — api/session/engine/secure_boot 已 glob re-export
+    # sgeg 内部 — api/session/engine/secure_boot 已 glob re-export
     # debug 内部 — api/ebpf/ftrace/kgdb 已 glob re-export
-    # chitin 内部 — composite/firmware/proto_net/devtree 已 glob re-export
+    # egdf 内部 — composite/firmware/proto_net/devtree 已 glob re-export
     # cpu 内部 — tsc 已 re-export (read_tsc/read_tsc_serialized/cycles_to_nanoseconds)
     # io 内部 — iouring 已 glob re-export
 ]

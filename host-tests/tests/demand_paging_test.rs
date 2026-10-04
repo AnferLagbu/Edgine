@@ -3,9 +3,9 @@
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `PfResult` / `PageFaultInfo` / `PageFlags` / `Vma` / `VmaType` /
 //! `decide_fallthrough` 平行实现, 改引内核真实类型:
-//! - `queenx::kernel::framework::mm::page_fault::{PfResult, PageFaultInfo}`
-//! - `queenx::kernel::framework::mm::PageFlags` (bitflags, NX = 1<<63)
-//! - `queenx::kernel::framework::mm::{Vma, VmaType}`
+//! - `edgine::kernel::framework::mm::page_fault::{PfResult, PageFaultInfo}`
+//! - `edgine::kernel::framework::mm::PageFlags` (bitflags, NX = 1<<63)
+//! - `edgine::kernel::framework::mm::{Vma, VmaType}`
 //!
 //! ## 因内核 mm 层 host 不可测已移除 (handle_user_page_fault fallthrough)
 //! 原镜像的 fallthrough 决策测试 (no_vma_returns_sigsegv / guard_vma_returns_sigsegv /
@@ -23,9 +23,9 @@
 //! - 内核 `Vma::is_guard()` = `vma_type == VmaType::Guard`; 原镜像误判为 "无 USER 位".
 //! - 内核 `PageFlags::NX = 1<<63`; 原镜像误作 `NO_EXEC = 0x08`.
 
-use queenx::kernel::framework::constants::limits::USER_ADDR_MAX;
-use queenx::kernel::framework::mm::page_fault::{PageFaultInfo, PfResult};
-use queenx::kernel::framework::mm::{PageFlags, Vma, VmaType};
+use edgine::kernel::framework::constants::limits::USER_ADDR_MAX;
+use edgine::kernel::framework::mm::page_fault::{PageFaultInfo, PfResult};
+use edgine::kernel::framework::mm::{PageFlags, Vma, VmaType};
 
 // =============================================================================
 // 类型级测试

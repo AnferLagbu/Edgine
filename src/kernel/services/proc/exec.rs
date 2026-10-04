@@ -72,11 +72,11 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
 
     // SUID 处理: 可执行文件带 setuid 位且属主非 root 时提权
     let mut st = crate::services::fs::VfsStat::default();
-    let current_pwm = crate::framework::credo::get_current_pwm();
+    let current_pwm = crate::framework::sgeg::get_current_pwm();
     let stat_result =
         crate::services::fs::api::vfs_stat_internal(path as *const u8, &raw mut st, current_pwm);
     if stat_result == 0 && (st.perm & 0o4000) != 0 && st.owner_pwm != 0 {
-        crate::framework::credo::elevate_for_suid(st.owner_pwm);
+        crate::framework::sgeg::elevate_for_suid(st.owner_pwm);
     }
 
     // 阶段 4b: ELF 文件 I/O 下沉 services — 读取字节 + PT_INTERP 改写,

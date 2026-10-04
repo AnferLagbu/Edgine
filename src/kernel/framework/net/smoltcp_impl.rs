@@ -1,15 +1,15 @@
 //! smoltcp 网络协议栈集成模块
 //!
-//! 实现 smoltcp 的 `Device` trait, 通过 Chitin `NetOps` 驱动任意网卡。
+//! 实现 smoltcp 的 `Device` trait, 通过 EGDF `NetOps` 驱动任意网卡。
 //! 不依赖具体驱动类型 (E1000 / Virtio-Net)。
 //!
 //! ## 架构
 //!
 //! ```text
 //! smoltcp Interface
-//! └── phy::Device ── ChitinNetDevice
+//! └── phy::Device ── EGDFNetDevice
 //!     └── NetOps (send / try_receive / get_mac / handle_irq)
-//!         └── Chitin device registry
+//!         └── EGDF device registry
 //!             ├── e1000
 //!             └── virtio-net
 //! ```
@@ -19,7 +19,7 @@ use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
 use smoltcp::time::Instant;
 use smoltcp::wire::{EthernetAddress, HardwareAddress};
 
-use crate::framework::chitin::NetOps;
+use crate::framework::egdf::NetOps;
 use crate::framework::timer::get_uptime_ms;
 use crate::framework::timer::hrtimer_clock_read;
 
@@ -42,10 +42,10 @@ fn smoltcp_now() -> Instant {
 }
 
 // ============================================================================
-// ChitinNetDevice — 通过 Chitin NetOps 驱动任意网卡
+// EGDFNetDevice — 通过 EGDF NetOps 驱动任意网卡
 // ============================================================================
 
-pub struct ChitinNetDevice {
+pub struct EGDFNetDevice {
     ops: &'static NetOps,
     driver_data: *mut core::ffi::c_void,
     pub mac: [u8; 6],
@@ -54,17 +54,17 @@ pub struct ChitinNetDevice {
     tx_buf: [u8; TX_BUF_SIZE],
 }
 
-pub struct ChitinRxToken<'a> {
+pub struct EGDFRxToken<'a> {
     buf: &'a [u8],
 }
 
-pub struct ChitinTxToken<'a> {
+pub struct EGDFTxToken<'a> {
     tx_buf: &'a mut [u8],
     ops: &'static NetOps,
     driver_data: *mut core::ffi::c_void,
 }
 
-impl ChitinNetDevice {
+impl EGDFNetDevice {
     pub fn new(ops: &'static NetOps, driver_data: *mut core::ffi::c_void, mac: [u8; 6]) -> Self {
         Self {
             ops,
@@ -78,17 +78,17 @@ impl ChitinNetDevice {
 }
 
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-unsafe impl Send for ChitinNetDevice {}
+unsafe impl Send for EGDFNetDevice {}
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-unsafe impl Sync for ChitinNetDevice {}
+unsafe impl Sync for EGDFNetDevice {}
 
-impl Device for ChitinNetDevice {
+impl Device for EGDFNetDevice {
     type RxToken<'a>
-        = ChitinRxToken<'a>
+        = EGDFRxToken<'a>
     where
         Self: 'a;
     type TxToken<'a>
-        = ChitinTxToken<'a>
+        = EGDFTxToken<'a>
     where
         Self: 'a;
 
@@ -104,10 +104,10 @@ impl Device for ChitinNetDevice {
             return None;
         }
         self.rx_len = n as usize;
-        let rx = ChitinRxToken {
+        let rx = EGDFRxToken {
             buf: &self.rx_buf[..self.rx_len],
         };
-        let tx = ChitinTxToken {
+        let tx = EGDFTxToken {
             tx_buf: &mut self.tx_buf[..],
             ops: self.ops,
             driver_data: self.driver_data,
@@ -116,7 +116,7 @@ impl Device for ChitinNetDevice {
     }
 
     fn transmit(&mut self, _timestamp: Instant) -> Option<Self::TxToken<'_>> {
-        Some(ChitinTxToken {
+        Some(EGDFTxToken {
             tx_buf: &mut self.tx_buf[..],
             ops: self.ops,
             driver_data: self.driver_data,
@@ -132,7 +132,7 @@ impl Device for ChitinNetDevice {
     }
 }
 
-impl RxToken for ChitinRxToken<'_> {
+impl RxToken for EGDFRxToken<'_> {
     fn consume<R, F>(self, f: F) -> R
     where
         F: FnOnce(&[u8]) -> R,
@@ -141,7 +141,7 @@ impl RxToken for ChitinRxToken<'_> {
     }
 }
 
-impl TxToken for ChitinTxToken<'_> {
+impl TxToken for EGDFTxToken<'_> {
     fn consume<R, F>(self, len: usize, f: F) -> R
     where
         F: FnOnce(&mut [u8]) -> R,
@@ -173,7 +173,7 @@ impl NetworkStack {
 // 公共 API：统一的初始化与轮询
 // ============================================================================
 
-pub fn init_stack(device: &mut ChitinNetDevice, mac: [u8; 6]) -> NetworkStack {
+pub fn init_stack(device: &mut EGDFNetDevice, mac: [u8; 6]) -> NetworkStack {
     let config = Config::new(HardwareAddress::Ethernet(EthernetAddress::from_bytes(&mac)));
     let iface = Interface::new(config, device, smoltcp_now());
     NetworkStack {
@@ -183,10 +183,6 @@ pub fn init_stack(device: &mut ChitinNetDevice, mac: [u8; 6]) -> NetworkStack {
     }
 }
 
-pub fn poll_stack(
-    nic: &mut ChitinNetDevice,
-    stack: &mut NetworkStack,
-    sockets: &mut SocketSet<'_>,
-) {
+pub fn poll_stack(nic: &mut EGDFNetDevice, stack: &mut NetworkStack, sockets: &mut SocketSet<'_>) {
     stack.poll(nic, sockets);
 }

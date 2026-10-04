@@ -4,34 +4,34 @@
 //!
 //! 本轮接通了运行时热插拔链路: framework 侧 `HotplugManager` 新增公开
 //! `dispatch` (供自行探测事件的总线驱动复用统一分发语义), 并新增
-//! "重枚举先行、监听器后处理" 的时序契约; Chitin 侧新增块设备墓碑注销协议
-//! (`chitin_unregister_block`), 保证移除后索引稳定 (从中间物理删除会使后续
+//! "重枚举先行、监听器后处理" 的时序契约; EGDF 侧新增块设备墓碑注销协议
+//! (`egdf_unregister_block`), 保证移除后索引稳定 (从中间物理删除会使后续
 //! `drive` 句柄错位)。
 //!
 //! ## 覆盖范围
 //!
-//! - Chitin 块设备墓碑语义: 索引稳定 / I/O 安全失败 / 幂等与边界
+//! - EGDF 块设备墓碑语义: 索引稳定 / I/O 安全失败 / 幂等与边界
 //! - `HotplugManager::dispatch` 分发契约: 重枚举回调先于监听器, 且
 //!   `DeviceAdded` → `on_device_added`, `DeviceRemoved`/`SurpriseRemoval`
 //!   → `on_device_removed`
 //!
 //! ## 隔离说明
 //!
-//! `CHITIN_DEVICES` 与 `HOTPLUG_MANAGER` 均为进程内全局单例。本文件两个用例
+//! `EGDF_DEVICES` 与 `HOTPLUG_MANAGER` 均为进程内全局单例。本文件两个用例
 //! 分别只触碰其中一个全局 (块设备表 / 热插拔管理器), 互不干扰, 故无需串行锁。
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use queenx::kernel::framework::chitin::{
-    BlockDevice, CHITIN_DEVICES, chitin_blk_drives, chitin_blk_is_present, chitin_blk_is_removed,
-    chitin_blk_read, chitin_blk_write, chitin_register_block_dev, chitin_unregister_block,
-};
-use queenx::kernel::framework::driver::block_device_state;
-use queenx::kernel::framework::driver::hotplug::{
+use edgine::kernel::framework::driver::block_device_state;
+use edgine::kernel::framework::driver::hotplug::{
     BusType, DeviceLocation, HOTPLUG_MANAGER, HotplugEvent, HotplugListener, register_reenum_hook,
 };
-use queenx::kernel::framework::error::KernelError as FwError;
-use queenx::kernel::services::chitin::{Proto, register};
+use edgine::kernel::framework::egdf::{
+    BlockDevice, EGDF_DEVICES, egdf_blk_drives, egdf_blk_is_present, egdf_blk_is_removed,
+    egdf_blk_read, egdf_blk_write, egdf_register_block_dev, egdf_unregister_block,
+};
+use edgine::kernel::framework::error::KernelError as FwError;
+use edgine::kernel::services::egdf::{Proto, register};
 
 /// 宿主块设备载体: 实现内核 `BlockDevice` 契约, 供注册表 dispatch。
 struct MockBlk {
@@ -74,20 +74,20 @@ impl BlockDevice for MockBlk {
     }
 }
 
-/// Chitin 块设备墓碑注销: 索引稳定 + I/O 安全失败 + 边界。
+/// EGDF 块设备墓碑注销: 索引稳定 + I/O 安全失败 + 边界。
 #[test]
-fn chitin_block_tombstone_keeps_index_stable() {
-    CHITIN_DEVICES.lock().clear();
+fn egdf_block_tombstone_keeps_index_stable() {
+    EGDF_DEVICES.lock().clear();
 
     // 交错注册: blk0(0), char(1), blk1(2) — 中间夹一个非块设备
     let dev0: &'static mut MockBlk = Box::leak(Box::new(MockBlk::new(4)));
-    let d0 = chitin_register_block_dev("hp_blk0", None, None, dev0) as u8;
+    let d0 = egdf_register_block_dev("hp_blk0", None, None, dev0) as u8;
     register("hp_char", Proto::Char, core::ptr::null_mut()).expect("注册字符设备失败");
     let dev1: &'static mut MockBlk = Box::leak(Box::new(MockBlk::new(4)));
-    let d1 = chitin_register_block_dev("hp_blk1", None, None, dev1) as u8;
+    let d1 = egdf_register_block_dev("hp_blk1", None, None, dev1) as u8;
     assert_eq!((d0, d1), (0, 2), "块设备索引应与交错注册顺序一致");
     assert_eq!(
-        chitin_blk_drives(),
+        egdf_blk_drives(),
         vec![0, 2],
         "应枚举出含中间字符设备空洞的块设备索引"
     );
@@ -95,12 +95,12 @@ fn chitin_block_tombstone_keeps_index_stable() {
     // 向 blk1 写入特征, 用于墓碑化 blk0 后验证索引未错位
     let mut payload = [0u8; 512];
     payload[0] = 0x5A;
-    assert_eq!(chitin_blk_write(d1, 0, &payload), 0, "写 blk1 应成功");
+    assert_eq!(egdf_blk_write(d1, 0, &payload), 0, "写 blk1 应成功");
 
     // 墓碑化 blk0: 标记移除 + 释放块设备引用 (不物理删除)
-    assert!(chitin_unregister_block(d0), "首次墓碑化应成功");
-    assert!(chitin_blk_is_removed(d0), "墓碑化后应报告 removed");
-    assert!(!chitin_blk_is_present(d0), "墓碑化后应报告不存在");
+    assert!(egdf_unregister_block(d0), "首次墓碑化应成功");
+    assert!(egdf_blk_is_removed(d0), "墓碑化后应报告 removed");
+    assert!(!egdf_blk_is_present(d0), "墓碑化后应报告不存在");
     assert_eq!(
         block_device_state(d0),
         (false, true, 0),
@@ -109,7 +109,7 @@ fn chitin_block_tombstone_keeps_index_stable() {
 
     // 索引稳定性: blk1 仍是原设备, 数据可读回
     let mut rb = [0u8; 512];
-    assert_eq!(chitin_blk_read(d1, 0, &mut rb), 0, "blk1 索引应保持稳定");
+    assert_eq!(egdf_blk_read(d1, 0, &mut rb), 0, "blk1 索引应保持稳定");
     assert_eq!(rb[0], 0x5A, "墓碑化 blk0 不应影响 blk1 的数据");
     assert_eq!(
         block_device_state(d1),
@@ -119,23 +119,23 @@ fn chitin_block_tombstone_keeps_index_stable() {
 
     // 墓碑化后 I/O 安全失败 (状态非 Ready → Busy), 不静默走错设备
     assert_eq!(
-        chitin_blk_read(d0, 0, &mut rb),
+        egdf_blk_read(d0, 0, &mut rb),
         FwError::Busy.as_i32(),
         "墓碑化设备 I/O 应安全失败"
     );
 
     // 幂等与边界: 重复墓碑化 / 非块设备索引 / 越界均返回 false
-    assert!(!chitin_unregister_block(d0), "重复墓碑化应返回 false");
-    assert!(!chitin_unregister_block(1), "对非块设备墓碑化应返回 false");
-    assert!(!chitin_unregister_block(99), "越界索引应返回 false");
-    assert!(!chitin_blk_is_removed(99), "越界索引不应报告 removed");
+    assert!(!egdf_unregister_block(d0), "重复墓碑化应返回 false");
+    assert!(!egdf_unregister_block(1), "对非块设备墓碑化应返回 false");
+    assert!(!egdf_unregister_block(99), "越界索引应返回 false");
+    assert!(!egdf_blk_is_removed(99), "越界索引不应报告 removed");
 
     // 新设备追加到表尾, 不回收墓碑槽位 (索引单调递增, 保证旧句柄不指向新设备)
     let dev2: &'static mut MockBlk = Box::leak(Box::new(MockBlk::new(4)));
-    let d2 = chitin_register_block_dev("hp_blk2", None, None, dev2) as u8;
+    let d2 = egdf_register_block_dev("hp_blk2", None, None, dev2) as u8;
     assert_eq!(d2, 3, "新设备应追加到表尾, 不覆盖墓碑槽位");
 
-    CHITIN_DEVICES.lock().clear();
+    EGDF_DEVICES.lock().clear();
 }
 
 // ── 分发契约: 重枚举先行 + 事件变体路由 ──

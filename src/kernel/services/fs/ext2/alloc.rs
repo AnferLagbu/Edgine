@@ -5,7 +5,7 @@
 use super::block_group::Ext2BlockGroupDescriptor;
 use super::inode::Ext2Inode;
 use super::super_block::Ext2SuperBlock;
-use crate::framework::chitin::{chitin_blk_read_sectors, chitin_blk_write_sectors};
+use crate::framework::egdf::{egdf_blk_read_sectors, egdf_blk_write_sectors};
 use crate::services::fs::KernelError;
 
 /// 在指定块组中分配一个空闲块
@@ -26,7 +26,7 @@ pub fn alloc_block_in_group(
     let bitmap_sector_count = (block_size / 512).max(1) as u32;
     let mut bitmap_data = alloc::vec![0u8; block_size];
 
-    chitin_blk_read_sectors(
+    egdf_blk_read_sectors(
         device_idx,
         bitmap_sector,
         bitmap_sector_count,
@@ -53,7 +53,7 @@ pub fn alloc_block_in_group(
                 bitmap_data[byte_idx] |= 1 << bit_idx;
 
                 // 写回位图
-                chitin_blk_write_sectors(
+                egdf_blk_write_sectors(
                     device_idx,
                     bitmap_sector,
                     bitmap_sector_count,
@@ -86,7 +86,7 @@ pub fn free_block(
     let bitmap_sector_count = (block_size / 512).max(1) as u32;
     let mut bitmap_data = alloc::vec![0u8; block_size];
 
-    chitin_blk_read_sectors(
+    egdf_blk_read_sectors(
         device_idx,
         bitmap_sector,
         bitmap_sector_count,
@@ -99,7 +99,7 @@ pub fn free_block(
     bitmap_data[byte_idx] &= !(1 << bit_idx);
 
     // 写回位图
-    chitin_blk_write_sectors(device_idx, bitmap_sector, bitmap_sector_count, &bitmap_data)?;
+    egdf_blk_write_sectors(device_idx, bitmap_sector, bitmap_sector_count, &bitmap_data)?;
 
     Ok(())
 }
@@ -126,7 +126,7 @@ pub fn write_block(
     let sector = u64::from(block_num) * block_size as u64 / 512;
     let sector_count = (block_size / 512) as u32;
 
-    chitin_blk_write_sectors(device_idx, sector, sector_count, &buf)?;
+    egdf_blk_write_sectors(device_idx, sector, sector_count, &buf)?;
 
     Ok(())
 }
@@ -187,7 +187,7 @@ pub fn write_inode(
     let sector = inode_offset / 512;
     let sector_count = (inode_size / 512).max(1) as u32;
 
-    chitin_blk_write_sectors(device_idx, sector as u64, sector_count, &inode_data)?;
+    egdf_blk_write_sectors(device_idx, sector as u64, sector_count, &inode_data)?;
 
     Ok(())
 }
@@ -210,7 +210,7 @@ pub fn alloc_inode_in_group(
     let bitmap_sector_count = (block_size / 512).max(1) as u32;
     let mut bitmap_data = alloc::vec![0u8; block_size];
 
-    chitin_blk_read_sectors(
+    egdf_blk_read_sectors(
         device_idx,
         bitmap_sector,
         bitmap_sector_count,
@@ -237,7 +237,7 @@ pub fn alloc_inode_in_group(
                 bitmap_data[byte_idx] |= 1 << bit_idx;
 
                 // 写回位图
-                chitin_blk_write_sectors(
+                egdf_blk_write_sectors(
                     device_idx,
                     bitmap_sector,
                     bitmap_sector_count,
@@ -270,7 +270,7 @@ pub fn free_inode(
     let bitmap_sector_count = (block_size / 512).max(1) as u32;
     let mut bitmap_data = alloc::vec![0u8; block_size];
 
-    chitin_blk_read_sectors(
+    egdf_blk_read_sectors(
         device_idx,
         bitmap_sector,
         bitmap_sector_count,
@@ -283,7 +283,7 @@ pub fn free_inode(
     bitmap_data[byte_idx] &= !(1 << bit_idx);
 
     // 写回位图
-    chitin_blk_write_sectors(device_idx, bitmap_sector, bitmap_sector_count, &bitmap_data)?;
+    egdf_blk_write_sectors(device_idx, bitmap_sector, bitmap_sector_count, &bitmap_data)?;
 
     Ok(())
 }

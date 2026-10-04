@@ -4,7 +4,7 @@
 
 use super::fat::FAT_END;
 use super::super_block::ExfatSuperBlock;
-use crate::framework::chitin::{chitin_blk_read_sectors, chitin_blk_write_sectors};
+use crate::framework::egdf::{egdf_blk_read_sectors, egdf_blk_write_sectors};
 use crate::services::fs::KernelError;
 use alloc::vec;
 
@@ -22,8 +22,7 @@ pub fn alloc_cluster(device_idx: u8, super_block: &ExfatSuperBlock) -> Result<u3
         let fat_offset = (cluster * 4) % bytes_per_sector as u32;
 
         let mut sector_data = vec![0u8; bytes_per_sector];
-        if chitin_blk_read_sectors(device_idx, u64::from(fat_sector), 1, &mut sector_data).is_err()
-        {
+        if egdf_blk_read_sectors(device_idx, u64::from(fat_sector), 1, &mut sector_data).is_err() {
             continue;
         }
 
@@ -88,7 +87,7 @@ pub fn write_cluster(
 
     for i in 0..sectors_per_cluster {
         let offset = i * bytes_per_sector;
-        chitin_blk_write_sectors(
+        egdf_blk_write_sectors(
             device_idx,
             u64::from(sector + i as u32),
             1,
@@ -123,7 +122,7 @@ pub fn read_cluster(
 
     for i in 0..sectors_per_cluster {
         let offset = i * bytes_per_sector;
-        chitin_blk_read_sectors(
+        egdf_blk_read_sectors(
             device_idx,
             u64::from(sector + i as u32),
             1,

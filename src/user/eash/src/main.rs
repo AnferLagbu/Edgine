@@ -1,4 +1,4 @@
-//! eash — easy shell (QueenX userland)
+//! eash — easy shell (Edgine userland)
 //!
 //! 模块化 Shell: 主循环 + 提示符在此，命令实现位于 `commands/` 子目录。
 
@@ -29,7 +29,7 @@ fn banner() {
     println(""); println("  ___  _  _ ___");
     println(" / _ \\| || | __|"); println("| (_) | || |__ \\");
     println(" \\___/|_||_|___/"); println("");
-    println("eash - QueenX Shell  (type 'help')"); println("");
+    println("eash - Edgine Shell  (type 'help')"); println("");
 }
 
 fn prompt() {

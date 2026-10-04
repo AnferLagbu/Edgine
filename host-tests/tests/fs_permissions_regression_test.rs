@@ -8,7 +8,7 @@
 //! ## B08-20 迁移 (2026-09-06)
 //! 原镜像三个 syscall 的纯判定逻辑已改引内核真实 API:
 //! - chown_syscall 的 UID 判定 → `identity::get_table().find_by_uid` (真实身份表)
-//! - open_by_handle_at_syscall 的 CAP_SYS_ADMIN 判定 → `framework::credo::pwm_has_capability`
+//! - open_by_handle_at_syscall 的 CAP_SYS_ADMIN 判定 → `framework::sgeg::pwm_has_capability`
 //! - poll_syscall 的 fd 有效性判定 → `services::fs::vfs_get_fd_handle` (per-process fd 表)
 //!
 //! ## 因内核 host 不可测已移除 (syscall 完整路径)
@@ -25,10 +25,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use queenx::kernel::framework::credo::identity;
-use queenx::kernel::framework::credo::pwm_has_capability;
-use queenx::kernel::services::credo::capability::CAP_DOMAIN_SYSTEM;
-use queenx::kernel::services::credo::types::{CapBits, CapDomain};
+use edgine::kernel::framework::sgeg::identity;
+use edgine::kernel::framework::sgeg::pwm_has_capability;
+use edgine::kernel::services::sgeg::capability::CAP_DOMAIN_SYSTEM;
+use edgine::kernel::services::sgeg::types::{CapBits, CapDomain};
 
 /// 注册并缓存测试身份 (creator=0 → 最高特权级, uid=0).
 fn test_pwm() -> u64 {
@@ -107,7 +107,7 @@ fn chown_max_uid_sentinel_rejected() {
 ///
 /// 采用 SYSTEM 域 (domain=0) + CAP_SYS_ADMIN (0x01), 与 mount/umount2 先例一致;
 /// 无能力返回 `EPERM` (errno=1). 本测试直接验证内核
-/// `framework::credo::pwm_has_capability(pwm, SYSTEM, 0x01)` 判定.
+/// `framework::sgeg::pwm_has_capability(pwm, SYSTEM, 0x01)` 判定.
 #[test]
 fn open_by_handle_without_cap_returns_eperm() {
     // 注册身份初始 SYSTEM caps = VIABLE_FLOOR[SYSTEM] = 0 → 无 CAP_SYS_ADMIN → EPERM
@@ -225,7 +225,7 @@ fn fn_body<'a>(src: &'a str, sig: &str) -> &'a str {
 /// 丙批审查 B1 门槛: 凡真实落盘时间戳的 `set_times` 必须含属主/特权判据.
 ///
 /// 背景: ext2 `set_times` 曾只写回不判权限 (任意 pwm 可改他人文件时间戳), 与
-/// nestfs 同层实装分歧. 判据必须与写回同锁域 — 上提到 VFS 层无 owner 模型,
+/// unkfs 同层实装分歧. 判据必须与写回同锁域 — 上提到 VFS 层无 owner 模型,
 /// 且会把判据与写回拆成两次路径解析 (TOCTOU) — 故一致性由本测试面收口:
 /// 扫描 framework/services 两侧 fs 源码, 凡 `set_times` 函数体含落盘动作
 /// (`save_inode`/`update_obj`) 者, 必须同体出现 `pwm_get_privilege_level` 与
@@ -267,6 +267,6 @@ fn set_times_of_persistent_fs_checks_owner_or_privilege() {
     }
     assert!(
         checked.len() >= 2,
-        "B1 门槛应至少覆盖 ext2 与 nestfs 两条落盘路径, 实得 {checked:?}",
+        "B1 门槛应至少覆盖 ext2 与 unkfs 两条落盘路径, 实得 {checked:?}",
     );
 }

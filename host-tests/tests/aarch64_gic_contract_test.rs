@@ -31,7 +31,7 @@ use std::path::Path;
 fn workspace_root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .unwrap() // QueenX workspace root
+        .unwrap() // Edgine workspace root
         .to_path_buf()
 }
 
@@ -191,7 +191,7 @@ fn test_qemu_script_asserts_gic_marker() {
 /// TLB 失效 (SGI 13) 被静默 ACK/EOI, 该核 `CPU_TLB_GEN` 永不推进, 以
 /// `smp::tlb_gen_min_online` 为判据的延迟释放页帧永久滞留。本契约固化:
 /// - 两条 IRQ 入口均委托同一 `handle_irq` (单一实现, 不得再有平行分派);
-/// - 共用分发须覆盖全部内核 SGI (barrier 7 / TLB 13 / resched 14)。
+/// - 共用分发须覆盖全部内核 SGI (freg 7 / TLB 13 / resched 14)。
 #[test]
 fn test_el0_and_el1_irq_paths_share_sgi_dispatch() {
     let src = read(EXCEPTION_RS);
@@ -216,7 +216,7 @@ fn test_el0_and_el1_irq_paths_share_sgi_dispatch() {
     // 共用分发必须覆盖全部内核 SGI 的路由条件与接收处理。
     let shared = slice_between(&src, "fn handle_irq(", "\n}\n");
     for (cond, call) in [
-        ("super::gic::BARRIER_RECOVERY_SGI", "barrier_sgi_handler"),
+        ("super::gic::FREG_RECOVERY_SGI", "freg_sgi_handler"),
         ("super::gic::TLB_SHOOTDOWN_SGI", "tlb_catch_up_local"),
         ("super::gic::RESCHEDULE_SGI", "resched_ipi_handler"),
     ] {

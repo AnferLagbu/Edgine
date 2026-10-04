@@ -10,7 +10,7 @@
 //!
 //! - **Option 可空**: `current_config_validate_hook()` 返回 `Option`, 未注册时
 //!   config::init()/pci/net 自检**跳过校验 + 打日志** (validate 是启动增强, 不 panic,
-//!   不进 barrier 恢复流程)。
+//!   不进 freg 恢复流程)。
 //! - **注册时序**: 注册在 framework `config::init()` 之前 (kernel_init 早期, lib.rs
 //!   编排), services validate 依赖闭包轻可极早注册。
 //!
@@ -67,7 +67,7 @@ pub fn register_config_validate_hook(
 /// 获取当前注册的配置自检策略.
 ///
 /// 未注册时返回 `None` — **DECISION-K**: validate 是启动增强, 未注册跳过校验 + 日志,
-/// 不 panic (逻辑错误降级原则, 不进 barrier 恢复流程).
+/// 不 panic (逻辑错误降级原则, 不进 freg 恢复流程).
 pub fn current_config_validate_hook() -> Option<&'static dyn ConfigValidateHook> {
     CONFIG_VALIDATE_HOOK.get().copied()
 }

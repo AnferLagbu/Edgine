@@ -10,7 +10,7 @@
 //! - [x] rwlock — 读写锁 API (read_lock/write_lock/try + irqsave 版本)
 //! - [x] atomic — 原子操作 re-export
 //! - [x] seqlock / rcu / arch — 顺序锁/RCU/arch 内存屏障 re-export
-//! - [x] smp barriers — `smp_wmb` / `smp_rmb` / `smp_mb` 跨 CPU 内存屏障
+//! - [x] smp fregs — `smp_wmb` / `smp_rmb` / `smp_mb` 跨 CPU 内存屏障
 //! - [x] irq 控制 — `disable_interrupts` / `restore_interrupts` / `scheduler_yield`
 //!
 //! ## 迁移方法

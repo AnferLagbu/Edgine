@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-QueenX/QueenX Framework Unsafe 块 SAFETY 注释自动审计
+Edgine/Edgine Framework Unsafe 块 SAFETY 注释自动审计
 
 扫描 framework/ 下所有 *.rs 文件, 列出每个 unsafe 引用位置 + 上方 5 行内
 是否含 SAFETY 注释, 输出一份诚实基线报告。

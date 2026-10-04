@@ -285,7 +285,7 @@ impl DmaEngine {
 
         // 交给设备前同步
         if matches!(direction, DmaDirection::ToDevice) {
-            Self::barrier_device();
+            Self::freg_device();
         }
 
         mappings.push(mapping);
@@ -339,7 +339,7 @@ impl DmaEngine {
             // offset 后的 size 区间 → 直接刷整 cache line 区间
             self.cache_flush(addr, size);
         }
-        Self::barrier_device();
+        Self::freg_device();
     }
 
     /// 为 CPU 访问同步 (Device → CPU)
@@ -348,7 +348,7 @@ impl DmaEngine {
             let addr = VirtAddr(mapping.cpu_addr.0 + offset as u64);
             self.cache_invalidate(addr, size);
         }
-        Self::barrier_cpu();
+        Self::freg_cpu();
     }
 
     /// 双向同步
@@ -565,14 +565,14 @@ impl DmaEngine {
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
-    fn barrier_device() {
+    fn freg_device() {
         // sfence: 确保所有 store 在 DMA 之前可见
         crate::arch!(fence_w());
         core::sync::atomic::fence(Ordering::SeqCst);
     }
 
     #[inline(always)]
-    fn barrier_cpu() {
+    fn freg_cpu() {
         // lfence: 确保所有 load 反映 DMA 写入
         crate::arch!(fence_r());
         core::sync::atomic::fence(Ordering::SeqCst);
@@ -695,7 +695,7 @@ pub fn submit_transfer(
         //      复制完成即刻释放.
         core::ptr::copy_nonoverlapping(src_virt as *const u8, dst_virt as *mut u8, size);
 
-        DmaEngine::barrier_device();
+        DmaEngine::freg_device();
 
         // B04-12: iounmap 解除映射, 同时回收 MMIO 虚拟地址区间.
         ioremap_unmap_pair(src, dst, size);

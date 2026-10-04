@@ -22,9 +22,9 @@ fn test_procfs_meminfo_format() {
 #[test]
 fn test_procfs_version_format() {
     // 验证 version 输出格式
-    let version = "Linux version 6.1.0-queenx (queenx@build) (gcc (Ubuntu 11.3.0) 11.3.0)\n";
+    let version = "Linux version 6.1.0-edgine (edgine@build) (gcc (Ubuntu 11.3.0) 11.3.0)\n";
     assert!(version.contains("Linux version"));
-    assert!(version.contains("queenx"));
+    assert!(version.contains("edgine"));
 }
 
 #[test]

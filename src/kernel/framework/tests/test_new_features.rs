@@ -1,6 +1,6 @@
 // UT-07 (2026-09-25): rcu / kmalloc_slab / zil_persist 注册副本已删 —
 // 其纯逻辑断言分别以 framework/sync/rcu.rs, framework/mm/kmalloc_slab.rs,
-// services/fs/nestfs/zil_persist.rs 的 #[cfg(test)] 为唯一归属.
+// services/fs/unkfs/zil_persist.rs 的 #[cfg(test)] 为唯一归属.
 // 分册 9 项 2 (B09-21): framework/mm/kmalloc_slab.rs 属全仓零引用孤岛,
 // 已整体删除, 其 1 个源侧用例随之核销 (注册副本已于 UT-07 期间先行删除).
 // UT-07 (2026-09-25): page_fault / mmap 注册副本已删 — 其纯逻辑断言分别以
@@ -121,8 +121,8 @@ fn test_elf_valid_minimal() -> TestResult {
     TestResult::Pass
 }
 
-// UT-07 (2026-09-26): devtree 组注册副本已删 — 其断言以 framework/chitin/devtree.rs
-// 的 #[cfg(test)] 为唯一归属 (Chitin 设备树节横幅随之移除).
+// UT-07 (2026-09-26): devtree 组注册副本已删 — 其断言以 framework/egdf/devtree.rs
+// 的 #[cfg(test)] 为唯一归属 (EGDF 设备树节横幅随之移除).
 
 // ============================================================
 // IPC Dynamic Namespace

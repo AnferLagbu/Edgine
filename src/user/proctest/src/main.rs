@@ -1,4 +1,4 @@
-//! QueenX 进程/线程功能测试程序
+//! Edgine 进程/线程功能测试程序
 //!
 //! 测试覆盖:
 //! 1. 进程创建 (fork)
@@ -386,7 +386,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 pub extern "C" fn _start() -> ! {
     println("");
     println("========================================");
-    println("  QueenX 进程/线程功能测试");
+    println("  Edgine 进程/线程功能测试");
     println("========================================");
     println("");
 

@@ -1,7 +1,7 @@
-# Clippy configuration for QueenX kernel
+# Clippy configuration for Edgine kernel
 # Enforce strict safety and code quality standards
 #
-# 适用: QueenX Framekernel (Rust no_std 内核, 裸机)
+# 适用: Edgine Framekernel (Rust no_std 内核, 裸机)
 # 内核风格: 文档化所有公开 API, 强制 SAFETY 注释紧邻 unsafe 块。
 
 # ── 内核风格阈值 ──────────────────────────────────────────────

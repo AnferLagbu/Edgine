@@ -49,7 +49,7 @@ use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 
 /// services 自持的 xHCI 控制器列表 (供端口变化轮询).
 ///
-/// 控制器同时以裸指针登记进 Chitin 设备表 (proto=Bus) 供统一展示, 但 Chitin
+/// 控制器同时以裸指针登记进 EGDF 设备表 (proto=Bus) 供统一展示, 但 EGDF
 /// 只持有指针不拥有对象; `Box::leak` 得到的 `&'static mut` 由本表持有, 保证
 /// 轮询时可安全访问 PORTSC。
 static USB_CONTROLLERS: Mutex<Vec<&'static mut XhciController>> = Mutex::new(Vec::new());
@@ -135,12 +135,12 @@ fn is_xhci_device(dev: &crate::framework::pci::PciDevice) -> bool {
 
 /// 初始化 USB 子系统.
 ///
-/// 发现系统 xHCI 控制器, 逐个 `init_hardware` (reset + start) 后登记到 Chitin
+/// 发现系统 xHCI 控制器, 逐个 `init_hardware` (reset + start) 后登记到 EGDF
 /// 设备表 (proto=Bus), 并由 services 自持控制器所有权以支持端口变化轮询。
 /// 最后注册 xHCI 端口轮询回调 (framework 无法自行探测 USB 端口变化)。
 pub fn usb_init() {
-    use crate::framework::chitin::{ChitinProto, chitin_register};
     use crate::framework::driver::hotplug::register_aux_poll;
+    use crate::framework::egdf::{EGDFProto, egdf_register};
 
     let controllers = discover_xhci_controllers();
     crate::slog_info!(
@@ -151,11 +151,11 @@ pub fn usb_init() {
 
     for mut ctrl in controllers {
         let _ = ctrl.init_hardware();
-        // 所有权移交 services (Box::leak); Chitin 仅登记裸指针 (非所有权)
+        // 所有权移交 services (Box::leak); EGDF 仅登记裸指针 (非所有权)
         let leaked: &'static mut XhciController = Box::leak(Box::new(ctrl));
-        chitin_register(
+        egdf_register(
             "xhci",
-            ChitinProto::Bus,
+            EGDFProto::Bus,
             None,
             None,
             core::ptr::from_mut(leaked).cast::<u8>(),
@@ -185,7 +185,7 @@ fn usb_port_poll() {
     // 变化位集合 (RW1CS: 写 1 应答)
     const CHANGE_BITS: u32 = PORTSC_CSC | PORTSC_PEC | PORTSC_OCC | PORTSC_RC;
 
-    // 先收集事件并在锁内应答, 释放锁后再分发 (分发会进入 storage/NestFS 等
+    // 先收集事件并在锁内应答, 释放锁后再分发 (分发会进入 storage/UNKFS 等
     // 子系统并获取其锁, 不在持 USB 锁时跨界)。
     let mut events = Vec::new();
     {

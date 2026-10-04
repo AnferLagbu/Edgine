@@ -35,7 +35,7 @@ pub enum RecoveryAction {
     /// 需要终止 user-mode 进程
     TerminateProcess(u32),
 
-    /// 需要域级恢复 (barrier-stack)
+    /// 需要域级恢复 (freg-stack)
     DomainRecovery,
 
     /// 无法恢复，触发 kernel panic

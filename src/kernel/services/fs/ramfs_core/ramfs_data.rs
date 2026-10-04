@@ -8,8 +8,8 @@ use super::{
     DIRECT_BLOCKS, FS_CAP_CREATE, FS_CAP_READ, FS_CAP_WRITE, INDIRECT_BLOCKS_PER_BLOCK,
     RAMFS_BLOCK_SIZE, RAMFS_MAX_ACES, RAMFS_MAX_BLOCKS, RAMFS_MAX_NODES, SENSITIVITY_PUBLIC,
 };
-use crate::framework::credo::api as pwm_api;
 use crate::framework::mm::LazyPageArena;
+use crate::framework::sgeg::api as pwm_api;
 use crate::services::fs::KernelError;
 use crate::services::fs::dcache;
 use crate::services::fs::{VFS_MAX_NAME, VfsFileType, VfsSeekWhence, VfsStat};

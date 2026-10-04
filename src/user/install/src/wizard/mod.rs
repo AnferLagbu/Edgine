@@ -13,7 +13,7 @@ use userlib::sys::{fs_mount, fs_unmount};
 const MOUNT_POINT: &[u8] = b"/mnt\0";
 
 fn mount_target() -> bool {
-    let r = fs_mount(b"none\0", MOUNT_POINT, b"nestfs\0", b"defaults\0");
+    let r = fs_mount(b"none\0", MOUNT_POINT, b"unkfs\0", b"defaults\0");
     r == 0
 }
 
@@ -24,10 +24,10 @@ fn unmount_target() {
 fn welcome_page() {
     println("");
     println("========================================");
-    println("        QueenX Installation Wizard");
+    println("        Edgine Installation Wizard");
     println("========================================");
     println("");
-    println("Welcome to QueenX Operating System!");
+    println("Welcome to Edgine Operating System!");
     println("");
     println("This wizard will guide you through the");
     println("system installation process.");
@@ -64,7 +64,7 @@ pub fn run() {
     // Step 3: 挂载目标文件系统
     println(""); println("Mounting target filesystem...");
     if !mount_target() {
-        println("  [ERROR] Failed to mount NestFS to /mnt");
+        println("  [ERROR] Failed to mount UNKFS to /mnt");
         println("Installation failed: Unable to access target disk.");
         println("Tip: Disk was partitioned but filesystem may be corrupt.");
         println("     Re-run the installer to re-format the disk.");

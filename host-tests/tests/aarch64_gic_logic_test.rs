@@ -18,7 +18,7 @@
 //!
 //! 与之互补的**源码结构**回归防护见 `aarch64_gic_contract_test.rs`。
 
-use queenx::kernel::framework::arch::gic_logic::{
+use edgine::kernel::framework::arch::gic_logic::{
     REDIST_WAKE_SPIN_LIMIT, uses_affinity_routing, verify_post_conditions, wake_timed_out,
 };
 

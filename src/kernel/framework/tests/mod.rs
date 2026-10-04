@@ -19,7 +19,7 @@ pub mod idt;
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod net;
 // UT-07 (2026-09-26): reset 由 kernel_test 专属改归 any(kernel_test, host-test) —
-// barrier::reset::{audit,bbr,bsr,parallel}::tests 已由 cfg(feature = "kernel_test")
+// freg::reset::{audit,bbr,bsr,parallel}::tests 已由 cfg(feature = "kernel_test")
 // 的 `pub mod tests { pub fn .. -> bool }` 改写为源侧 `#[cfg(test)] #[test]`,
 // reset.rs 对 kernel_test 门控的依赖随之解除 (config::tests 本就是 any 双端).
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
@@ -28,10 +28,10 @@ pub mod reset;
 pub mod sched;
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod sys;
-pub mod test_barrier;
-pub mod test_barrier_ext;
 pub mod test_config;
-// UT-07 (2026-09-26): test_credo 注册载体已删 — services::credo::policy
+pub mod test_freg;
+pub mod test_freg_ext;
+// UT-07 (2026-09-26): test_sgeg 注册载体已删 — services::sgeg::policy
 // (CapBits/CapMatrix/InMemoryMatrix) 纯逻辑断言以该文件源侧 #[cfg(test)] 为唯一归属.
 pub mod test_ipc;
 pub mod test_mm;
@@ -130,7 +130,7 @@ impl TestRunner {
         let total = reg.count;
 
         Self::serial_print(b"\n========================================\n");
-        Self::serial_print(b"  QueenX Test Suite\n  ");
+        Self::serial_print(b"  Edgine Test Suite\n  ");
         Self::serial_print_num(total as u64);
         Self::serial_print(b" test cases registered\n");
         Self::serial_print(b"========================================\n\n");
@@ -400,7 +400,7 @@ pub use {assert_eq_test, check, skip_test};
     reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
 )]
 pub fn test_runner_init() {
-    crate::klog_boot_info!("[TEST] === QueenX Test Framework ===");
+    crate::klog_boot_info!("[TEST] === Edgine Test Framework ===");
 
     register_all_tests();
 
@@ -453,8 +453,8 @@ pub fn register_all_tests() {
     crate::services::fs::devfs::init_global();
     crate::services::fs::procfs::init_global();
 
-    test_barrier::register_barrier_tests();
-    test_barrier_ext::register_barrier_ext_tests();
+    test_freg::register_freg_tests();
+    test_freg_ext::register_freg_ext_tests();
     test_config::register_config_tests();
     test_pwm::register_pwm_tests();
     test_mm::register_mm_tests();

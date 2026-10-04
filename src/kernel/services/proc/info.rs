@@ -102,10 +102,10 @@ pub fn uname_syscall(buf: u64) -> Result<usize, Errno> {
         machine: [0; 65],
         domainname: [0; 65],
     };
-    copy_str(&mut uts.sysname, b"QueenX");
+    copy_str(&mut uts.sysname, b"Edgine");
     copy_str(&mut uts.nodename, nodename.as_bytes());
     copy_str(&mut uts.release, b"0.1.0");
-    copy_str(&mut uts.version, b"QueenX 0.1.0 (queenx)");
+    copy_str(&mut uts.version, b"Edgine 0.1.0 (edgine)");
     #[cfg(target_arch = "x86_64")]
     copy_str(&mut uts.machine, b"x86_64");
     #[cfg(target_arch = "aarch64")]
@@ -164,6 +164,6 @@ mod tests {
 
     #[test]
     fn default_nodename_matches_const() {
-        assert_eq!(default_nodename(), "QueenX");
+        assert_eq!(default_nodename(), "Edgine");
     }
 }

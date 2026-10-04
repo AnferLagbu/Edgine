@@ -526,24 +526,24 @@ impl VfsManager {
 
 pub static VFS_MANAGER: VfsManager = VfsManager::new();
 
-/// VFS 子系统初始化 — 注册 barrier 回调 + 初始化 VFS_MANAGER
+/// VFS 子系统初始化 — 注册 freg 回调 + 初始化 VFS_MANAGER
 ///
-/// 阶段 4b 已下沉 services; barrier 回调经 framework 机制 (`RECOVERY_MANAGER`) 注册.
+/// 阶段 4b 已下沉 services; freg 回调经 framework 机制 (`RECOVERY_MANAGER`) 注册.
 pub fn init() {
     VFS_MANAGER.init();
 
-    // barrier 回调注册 (引用 framework::barrier 机制)
-    if let Some(dom) = crate::framework::barrier::RECOVERY_MANAGER.lock().find(2) {
-        *dom.capture_cb.lock() = Some(vfs_barrier_capture_cb);
-        *dom.rollback_cb.lock() = Some(vfs_barrier_rollback_cb);
+    // freg 回调注册 (引用 framework::freg 机制)
+    if let Some(dom) = crate::framework::freg::RECOVERY_MANAGER.lock().find(2) {
+        *dom.capture_cb.lock() = Some(vfs_freg_capture_cb);
+        *dom.rollback_cb.lock() = Some(vfs_freg_rollback_cb);
     }
 }
 
-fn vfs_barrier_capture_cb() {
+fn vfs_freg_capture_cb() {
     VFS_MANAGER.capture_snapshot();
 }
 
-fn vfs_barrier_rollback_cb() -> bool {
+fn vfs_freg_rollback_cb() -> bool {
     VFS_MANAGER.restore_from_snapshot();
     true
 }
@@ -587,7 +587,7 @@ mod tests {
     fn test_vfs_resolve_mount() {
         let mgr = VfsManager::new();
         let _ = mgr.mount("/", "ramfs");
-        let _ = mgr.mount("/home", "nestfs");
+        let _ = mgr.mount("/home", "unkfs");
 
         let root = mgr.resolve_mount("/");
         assert!(root.is_some(), "should resolve /");
@@ -709,7 +709,7 @@ mod tests {
             "切根后相对路径应为 根前缀 + 视图路径"
         );
 
-        // 快照往返携带 root (barrier 回滚语义)
+        // 快照往返携带 root (freg 回滚语义)
         mgr.capture_snapshot();
         mgr.set_root("/other");
         assert_eq!(mgr.get_root(), "/other", "第二次切根应生效");

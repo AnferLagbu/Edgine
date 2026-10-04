@@ -6,12 +6,12 @@
 //!
 //! ## 编号 (740-745: POSIX Timer)
 //!
-//! - `QX_TIMER_CREATE`     (740): 创建 per-process 定时器
-//! - `QX_TIMER_SETTIME`    (741): 启动 / 调整 / 停止定时器
-//! - `QX_TIMER_GETTIME`    (742): 查询剩余时间和间隔
-//! - `QX_TIMER_DELETE`     (743): 释放定时器
-//! - `QX_TIMER_GETOVERRUN` (744): 返回上次 read 之后补打的次数
-//! - `QX_CLOCK_GETRES`     (745): 时钟分辨率
+//! - `EG_TIMER_CREATE`     (740): 创建 per-process 定时器
+//! - `EG_TIMER_SETTIME`    (741): 启动 / 调整 / 停止定时器
+//! - `EG_TIMER_GETTIME`    (742): 查询剩余时间和间隔
+//! - `EG_TIMER_DELETE`     (743): 释放定时器
+//! - `EG_TIMER_GETOVERRUN` (744): 返回上次 read 之后补打的次数
+//! - `EG_CLOCK_GETRES`     (745): 时钟分辨率
 
 use crate::framework::proc as ptimer;
 

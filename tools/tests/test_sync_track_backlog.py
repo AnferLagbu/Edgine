@@ -29,7 +29,7 @@ class TestParseBacklog(unittest.TestCase):
     """测试 parse_backlog 正确解析 Backlog 段."""
 
     SAMPLE = """\
-# QueenX 内核工程规划书
+# Edgine 内核工程规划书
 
 > 主题
 

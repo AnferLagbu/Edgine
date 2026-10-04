@@ -37,7 +37,7 @@ pub mod wait_queue;
 /// src/net/
 /// |-- mod.rs          # 模块导出
 /// |-- types.rs        # 公共状态 (NET_READY / NET_CONFIGURED)
-/// |-- smoltcp_impl.rs # Device trait 实现 + ChitinNetDevice
+/// |-- smoltcp_impl.rs # Device trait 实现 + EGDFNetDevice
 /// |-- init.rs         # 初始化状态机 + DHCP + Socket API
 /// +-- driver/         # 网卡驱动重新导出 → kernel::driver::net
 /// +-- smoltcp/        # smoltcp 协议栈源码
@@ -77,7 +77,7 @@ pub use init::irq::net_register_intx_isr;
 #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
 pub use init::irq::net_register_msix_isr;
 #[cfg(not(feature = "kernel_test"))]
-pub use smoltcp_impl::{ChitinNetDevice, NetworkStack, init_stack, poll_stack};
+pub use smoltcp_impl::{EGDFNetDevice, NetworkStack, init_stack, poll_stack};
 // NetOps 安全桥 (批次 Z ④): trait + 注册入口 + DECISION-K 单向拉取槽。
 pub use net_device_ops::{
     NetDeviceOps, NetDeviceRegistration, net_register_services_driver, register_net_device,

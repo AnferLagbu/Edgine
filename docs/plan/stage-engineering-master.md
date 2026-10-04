@@ -1,6 +1,6 @@
-# QueenX 静态检查工程总览 (clippy / rustfmt / rustdoc / lint 全景)
+# Edgine 静态检查工程总览 (clippy / rustfmt / rustdoc / lint 全景)
 
-> QueenX 自研内核的静态检查工程**唯一权威跟踪文档**. 涵盖 clippy pedantic 全量修复 (10591 → 0) + clippy 加严 + clippy.toml 评估 + rustfmt + rustdoc + nursery use_self + CI 阻断位 + 验证门槛 + 后续开发者交接.
+> Edgine 自研内核的静态检查工程**唯一权威跟踪文档**. 涵盖 clippy pedantic 全量修复 (10591 → 0) + clippy 加严 + clippy.toml 评估 + rustfmt + rustdoc + nursery use_self + CI 阻断位 + 验证门槛 + 后续开发者交接.
 >
 > 已交付状态: 双架构 (x86_64 + aarch64) cargo check 0 warning + clippy `-D pedantic` 0 warning + rustdoc `broken_intra_doc_links` 0 + cargo fmt --check 0 差异 + 三审计全过 + host-tests 838 passed / 0 failed + CI 5 阻断位全部就位 + **`option_if_let_else` 185 → 0** + **10 处永久 expect 兜底全部根治** (a656c91e).
 >
@@ -78,8 +78,8 @@
 
 - **工程计划 7: 已完成批次质量评估与修复**
   - 阶段: 8.13-8.14
-  - 内容: 抽样审查 + 编译期 unfulfilled 检测 + 注释规范检查; 识别 3 类问题 (注释不统一 / credo expect 错误 / no_mangle 漏修复)
-  - 方案: DECISION-035 注释统一 `// 有意窄化: <具体原因>` + DECISION-036 credo/storage.rs 3 处错误 expect 改位移 + barrier/api.rs 2 处 no_mangle extern "C" 补全
+  - 内容: 抽样审查 + 编译期 unfulfilled 检测 + 注释规范检查; 识别 3 类问题 (注释不统一 / sgeg expect 错误 / no_mangle 漏修复)
+  - 方案: DECISION-035 注释统一 `// 有意窄化: <具体原因>` + DECISION-036 sgeg/storage.rs 3 处错误 expect 改位移 + freg/api.rs 2 处 no_mangle extern "C" 补全
   - 状态: [X]
 
 - **工程计划 8: 阶段 8.3-8.8 expect 兜底 + 阶段 8.9 cast 类治根决策**
@@ -93,8 +93,8 @@
 ### 待办 (按时间窗口分组)
 
 - **短期待办 (1-2 周内可完成)**
-  - [x] ~~credo/storage.rs 3 处 expect 修复 (DECISION-036)~~ — **已完成**: 2026-08-04 阶段 7-8 期间 w32/w64/w16 函数已用位移形式 `v & 0xFF` / `(v >> 8) & 0xFF` 避免 cast 警告 (见 src/kernel/framework/credo/storage.rs:43-63). 当前 2 处剩余 expect 是 `save_database` 函数 (`disk_id as u8` 等) 资源类型转换, 不属于按字节序列化场景.
-  - [x] ~~barrier/api.rs 2 处 no_mangle extern "C" 补全~~ — **已完成**: 阶段 7-8 期间已补全 `recovery_set_fault_rate` / `recovery_get_fault_rate` 两个 `#[cfg(feature = "fault_injection")]` 函数 (见 src/kernel/framework/barrier/api.rs:308-310 / 314-317).
+  - [x] ~~sgeg/storage.rs 3 处 expect 修复 (DECISION-036)~~ — **已完成**: 2026-08-04 阶段 7-8 期间 w32/w64/w16 函数已用位移形式 `v & 0xFF` / `(v >> 8) & 0xFF` 避免 cast 警告 (见 src/kernel/framework/sgeg/storage.rs:43-63). 当前 2 处剩余 expect 是 `save_database` 函数 (`disk_id as u8` 等) 资源类型转换, 不属于按字节序列化场景.
+  - [x] ~~freg/api.rs 2 处 no_mangle extern "C" 补全~~ — **已完成**: 阶段 7-8 期间已补全 `recovery_set_fault_rate` / `recovery_get_fault_rate` 两个 `#[cfg(feature = "fault_injection")]` 函数 (见 src/kernel/framework/freg/api.rs:308-310 / 314-317).
   - [x] ~~ab/ac 组 191 处 expect 注释统一 (DECISION-035)~~ — **已完成**: 全仓 257 处 cast expect 注释统一为 `// 有意窄化: <具体原因>` 模板 (见 DECISION-035 治理成果).
   - 状态: [X] (3 项均已在阶段 7-8 期间完成, master 文档未同步)
 
@@ -120,7 +120,7 @@
   - 状态: [X]
 
 - **DECISION-036: 按字节序列化场景禁用 cast expect** (2026-08-02)
-  - 描述: credo/storage.rs w32/w64/w16 函数按字节拆分, `v as u8` 取低 8 位是正确逻辑, expect 掩盖了正确逻辑为"截断".
+  - 描述: sgeg/storage.rs w32/w64/w16 函数按字节拆分, `v as u8` 取低 8 位是正确逻辑, expect 掩盖了正确逻辑为"截断".
   - 方案: 改用 `(v >> (i*8)) as u8` 或 `((v >> (i*8)) & 0xFF) as u8` 消除警告. 移除错误 expect.
   - 状态: [X]
 
@@ -294,7 +294,7 @@
 
 - **中期待办 (4-6 周内可完成)**
   - [x] ~~option_if_let_else 211 处手工重构 (map_or/map_or_else 链式) — DECISION-044 留作中期~~ — **已完成**: 阶段 30 (a656c91e) 推翻评估, 185 → 0 + 10 处永久 expect 兜底全部消除
-  - [ ] kernel `#[test]` → host-tests 迁移 (1354 个 #[test] 跨 166 文件) — **DECISION-046 维持原状**: 范畴属测试架构工程非静态检查工程; ROI 不匹配 (827 个 qx 自己测试中仅 ~70 个纯算法测试值得迁移, 其余 ~700 个需 mock 失真风险高); 现状完美 (双架构 0 warning / cargo clippy --tests 0 warning). 维持 kernel #[test] 原状, 不推进迁移.
+  - [ ] kernel `#[test]` → host-tests 迁移 (1354 个 #[test] 跨 166 文件) — **DECISION-046 维持原状**: 范畴属测试架构工程非静态检查工程; ROI 不匹配 (827 个 eg 自己测试中仅 ~70 个纯算法测试值得迁移, 其余 ~700 个需 mock 失真风险高); 现状完美 (双架构 0 warning / cargo clippy --tests 0 warning). 维持 kernel #[test] 原状, 不推进迁移.
   - 状态: [~] (选项 A 完成, 选项 B 明确维持)
 
 - **长期待办 (永久保留, 不强制修复)**
@@ -315,7 +315,7 @@
   - 状态: [X]
 
 - **DECISION-046: kernel `#[test]` 维持原状, 不迁移 host-tests** (2026-08-09)
-  - 描述: 中期待办"kernel `#[test]` → host-tests 迁移"范畴属测试架构工程非静态检查工程; 1354 个 #[test] 中 527 个 smoltcp vendored 不动, 827 个 qx 自己测试中仅 ~70 个纯算法 (USB HID/MassStorage/XHCI/Enumerate/Ring 5 文件) 值得迁移, 其余 ~700 个需 mock Mutex/SpinLock/IRQ 上下文, mock 失真风险高.
+  - 描述: 中期待办"kernel `#[test]` → host-tests 迁移"范畴属测试架构工程非静态检查工程; 1354 个 #[test] 中 527 个 smoltcp vendored 不动, 827 个 eg 自己测试中仅 ~70 个纯算法 (USB HID/MassStorage/XHCI/Enumerate/Ring 5 文件) 值得迁移, 其余 ~700 个需 mock Mutex/SpinLock/IRQ 上下文, mock 失真风险高.
   - 方案: 维持 kernel #[test] 原状不迁移. 现状完美: 双架构 cargo check 0 warning / clippy 默认 0 warning / clippy -D pedantic 0 warning / clippy::option_if_let_else 0 唯一位置 / cargo fmt --check 0 差异 / 永久 expect 兜底 0 处 / unfulfilled lint 0 处. 静态检查工程目标已 100% 达成, 不必为迁移而迁移. 若未来有 host-side 调试纯算法测试需求, 可单独抽 USB 一类试点 (5-7 天工作量, 不属于本工程).
   - 状态: [X] (用户 2026-08-09 授权"保持不迁移 (推荐)")
 
@@ -393,7 +393,7 @@
 
 ## 后续开发者快速上手
 
-1. **读本文档** (stage-engineering-master.md): 了解 QueenX 静态检查工程完整历史 (阶段 7-18 全景, 5 阻断位, 1230 nursery 治理决策).
+1. **读本文档** (stage-engineering-master.md): 了解 Edgine 静态检查工程完整历史 (阶段 7-18 全景, 5 阻断位, 1230 nursery 治理决策).
 2. **读 AGENTS.md** §2.4: 7 条验证门槛 + 复跑命令.
 3. **若修改 clippy.toml 或 lib.rs `#![allow]`**: 必须先 review DECISION-043 (治根路径), 不能私自迁移 allow 到 workspace.lints (会破坏 aarch64 差异化).
 4. **若修复 nursery lint**: 必须先评估是否破坏 host-tests brittleness (use_self fix 已示范 2 处修复).

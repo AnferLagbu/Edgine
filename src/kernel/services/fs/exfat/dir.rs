@@ -3,7 +3,7 @@
 //! exFAT 目录项数据结构
 
 use super::super_block::ExfatSuperBlock;
-use crate::framework::chitin::chitin_blk_read_sectors;
+use crate::framework::egdf::egdf_blk_read_sectors;
 use crate::services::fs::KernelError;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -130,7 +130,7 @@ impl ExfatDirEntry {
 
             for i in 0..sectors_per_cluster {
                 let offset = i as usize * super_block.bytes_per_sector() as usize;
-                chitin_blk_read_sectors(
+                egdf_blk_read_sectors(
                     device_idx,
                     u64::from(sector + i),
                     1,

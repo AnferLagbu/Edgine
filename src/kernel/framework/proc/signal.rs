@@ -772,7 +772,7 @@ pub fn set_sigaction(pid: Pid, sig: u8, action: u64) -> Option<u64> {
 // 4. sigaction 表本身保留 (handler 函数指针, 但目标地址在旧地址空间,
 //    执行后即失效, 内核再投递时若仍指向旧地址需特殊处理)
 //
-// QueenX 简化语义:
+// Edgine 简化语义:
 // - execve 走 transactional 双进程替换 (proc_exec_replace):
 //   1. 阶段 1: 加载新 ELF → 全新 UserProc (新 PID, 全新 signal_pending=0,
 //      sigaction_table 全 SIG_DFL).

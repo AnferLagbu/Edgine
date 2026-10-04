@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ⚠ DEPRECATED (B01-10, 2026-08-19)
 #
-# QueenX/QueenX Framework Unsafe 块 SAFETY 注释自动审计 (Bash 实现).
+# Edgine/Edgine Framework Unsafe 块 SAFETY 注释自动审计 (Bash 实现).
 #
 # 本脚本已废弃, 统一使用 Python 实现:
 #   python3 tools/audit_unsafe.py                  # 人类可读

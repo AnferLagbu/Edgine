@@ -81,15 +81,15 @@ const SPI_BASE: u32 = 32;
 ///
 /// SGI/PPI 的使能位属**每核 Redistributor** 私有状态 (`GICR_ISENABLER0`), 故全部
 /// 内核 SGI 必须由每核初始化入口 [`init_per_cpu`] 显式使能。编号集中定义于本模块
-/// (GIC 资源归属), 供 `exception` (接收路由) 与 `barrier` (触发) 复用, 避免编号分散
+/// (GIC 资源归属), 供 `exception` (接收路由) 与 `freg` (触发) 复用, 避免编号分散
 /// 在多处导致某路 SGI 漏使能 (历史缺陷: SGI 13/14 从未使能, 接收侧永不响应)。
 pub const TLB_SHOOTDOWN_SGI: u32 = 0xFD & 0xF;
 
 /// 跨核重新调度 SGI 编号 (对应 x86_64 向量 `0xFE`, 低位 4 bit = 14)。
 pub const RESCHEDULE_SGI: u32 = 0xFE & 0xF;
 
-/// 栏栈恢复专用 SGI 编号 (`0x82` 语义的 aarch64 等价, 取 SGI 7)。
-pub const BARRIER_RECOVERY_SGI: u32 = 7;
+/// FREG恢复专用 SGI 编号 (`0x82` 语义的 aarch64 等价, 取 SGI 7)。
+pub const FREG_RECOVERY_SGI: u32 = 7;
 
 // ============================================================================
 // 寄存器读写辅助
@@ -380,7 +380,7 @@ pub fn deactivate(intid: u32) {
 /// 次核上线后由 SMP 启动路径调用本函数, 以 `cpu_index` 定位自身 Redistributor 帧。
 ///
 /// 本函数是**每核中断能力的唯一入口**: 返回 `Ok` 后该核可接收定时器 PPI 与全部
-/// 内核 SGI (`TLB_SHOOTDOWN_SGI` / `RESCHEDULE_SGI` / `BARRIER_RECOVERY_SGI`)。
+/// 内核 SGI (`TLB_SHOOTDOWN_SGI` / `RESCHEDULE_SGI` / `FREG_RECOVERY_SGI`)。
 ///
 /// # Errors
 ///
@@ -402,7 +402,7 @@ pub unsafe fn init_per_cpu(cpu_index: u32) -> Result<(), &'static str> {
         // 不响应, 延迟释放帧永久滞留)。
         enable_sgi(sgi, TLB_SHOOTDOWN_SGI);
         enable_sgi(sgi, RESCHEDULE_SGI);
-        enable_sgi(sgi, BARRIER_RECOVERY_SGI);
+        enable_sgi(sgi, FREG_RECOVERY_SGI);
     }
     Ok(())
 }

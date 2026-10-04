@@ -134,7 +134,7 @@ def main():
     # - --enforce: 严格阈值, TCB >= 30% exit 1
     # 未来 TCB < 30% 后, CI job 切换 --enforce.
     import argparse
-    parser = argparse.ArgumentParser(description='QueenX TCB 度量')
+    parser = argparse.ArgumentParser(description='Edgine TCB 度量')
     parser.add_argument('--soft', action='store_true', default=True,
                         help='仅警告 (默认)')
     parser.add_argument('--enforce', action='store_true',

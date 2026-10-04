@@ -1,8 +1,8 @@
 //! I-09: Rust nightly 不稳定 API 依赖最小化 — 静态契约测试
 //!
 //! 验证 maintenance-2026-06-11.md I-09 验收:
-//!   - queenx 不再依赖 `#![feature(asm)]` (已稳定为 `core::arch::asm!`)
-//!   - queenx 内 `feature(` 总数 ≤ 1 (仅 alloc_error_handler)
+//!   - edgine 不再依赖 `#![feature(asm)]` (已稳定为 `core::arch::asm!`)
+//!   - edgine 内 `feature(` 总数 ≤ 1 (仅 alloc_error_handler)
 //!   - 所有内联汇编均走 `core::arch::asm!` 路径, 不再裸用 `asm!`
 //!
 //! 任何新增 `#![feature(...)]` 顶层声明需要先在 I-09 评估中说明.
@@ -18,7 +18,7 @@ fn repo_root() -> std::path::PathBuf {
 }
 
 #[test]
-fn test_queenx_lib_rs_no_feature_asm() {
+fn test_edgine_lib_rs_no_feature_asm() {
     let lib = repo_root().join("src/kernel/lib.rs");
     let content =
         fs::read_to_string(&lib).unwrap_or_else(|e| panic!("无法读取 {}: {}", lib.display(), e));
@@ -32,17 +32,17 @@ fn test_queenx_lib_rs_no_feature_asm() {
 
     assert!(
         !non_comment.contains("#![feature(asm)]"),
-        "queenx 不应再声明 #![feature(asm)], asm! 已稳定为 core::arch::asm!"
+        "edgine 不应再声明 #![feature(asm)], asm! 已稳定为 core::arch::asm!"
     );
     assert!(
         !non_comment.contains("#![feature(asm "),
-        "queenx 不应再以 feature(asm ...) 形式声明"
+        "edgine 不应再以 feature(asm ...) 形式声明"
     );
 }
 
 #[test]
-fn test_queenx_lib_rs_feature_count_minimal() {
-    // queenx 内的 #![feature(...)] 数量应 ≤ 1 (仅 alloc_error_handler)
+fn test_edgine_lib_rs_feature_count_minimal() {
+    // edgine 内的 #![feature(...)] 数量应 ≤ 1 (仅 alloc_error_handler)
     let lib = repo_root().join("src/kernel/lib.rs");
     let content =
         fs::read_to_string(&lib).unwrap_or_else(|e| panic!("无法读取 {}: {}", lib.display(), e));
@@ -57,7 +57,7 @@ fn test_queenx_lib_rs_feature_count_minimal() {
     let count = head.matches("#![feature(").count();
     assert!(
         count <= 1,
-        "queenx 顶层 #![feature(...)] 数量 = {} (> 1, I-09 要求最小化).\n当前:\n{}",
+        "edgine 顶层 #![feature(...)] 数量 = {} (> 1, I-09 要求最小化).\n当前:\n{}",
         count,
         head
     );

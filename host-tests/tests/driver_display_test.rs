@@ -13,23 +13,23 @@
 //! ## B08-21 迁移 (2026-09-06)
 //! 删除本地 `PixelFormat` / `Color` / `DisplayMode` / `LinkRate` / `LaneCount`
 //! 平行镜像, 改引内核真实源码:
-//! - `queenx::kernel::framework::driver::display::{Color, PixelFormat}`
+//! - `edgine::kernel::framework::driver::display::{Color, PixelFormat}`
 //!   — framework 层纯算法类型 (framebuffer.rs, host 可测)
-//! - `queenx::kernel::services::driver::display::controller::DisplayMode`
+//! - `edgine::kernel::services::driver::display::controller::DisplayMode`
 //!   — services 层显示控制器管理策略 (2-E 批次自 framework 迁出, 100% safe)
-//! - `queenx::kernel::services::driver::display::dp::{LinkRate, LaneCount}`
+//! - `edgine::kernel::services::driver::display::dp::{LinkRate, LaneCount}`
 //!   — services 层 DisplayPort 协商 (100% safe, 纯算法)
-//! - `queenx::kernel::services::driver::display::hdmi::STANDARD_VIDEO_MODES`
+//! - `edgine::kernel::services::driver::display::hdmi::STANDARD_VIDEO_MODES`
 //!   — 标准视频模式表 (pub const, 10 个常见 DMT 模式)
 //!
 //! ## 保留标注 (外部规范, 非内核实现)
 //! - `EDID_HEADER` 8 字节魔数表为 HDMI EDID 外部规范常量 (非内核算法),
 //!   测试侧保留字节表并标注, 内核 hdmi/edid.rs 中为 `pub(super)` 常量不可 host 引用.
 
-use queenx::kernel::framework::driver::display::{Color, PixelFormat};
-use queenx::kernel::services::driver::display::controller::DisplayMode;
-use queenx::kernel::services::driver::display::dp::{LaneCount, LinkRate};
-use queenx::kernel::services::driver::display::hdmi::STANDARD_VIDEO_MODES;
+use edgine::kernel::framework::driver::display::{Color, PixelFormat};
+use edgine::kernel::services::driver::display::controller::DisplayMode;
+use edgine::kernel::services::driver::display::dp::{LaneCount, LinkRate};
+use edgine::kernel::services::driver::display::hdmi::STANDARD_VIDEO_MODES;
 
 #[test]
 fn test_pixel_format_bytes() {

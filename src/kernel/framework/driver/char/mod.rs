@@ -10,7 +10,7 @@
 //! ## 历史
 //!
 //! - x86_64 serial.rs / vga.rs 已删除 (2026-09-12): 业务迁 services,
-//!   framework 保留 IoPort/IoMem 机制; Chitin 注册由 services::driver::char::char_init 完成。
+//!   framework 保留 IoPort/IoMem 机制; EGDF 注册由 services::driver::char::char_init 完成。
 //! - MIG-003: aarch64 PL011 业务迁 services (services/driver/char/pl011.rs),
 //!   framework 删除 driver/char/pl011.rs, 仅暴露 [`pl011_phys_base`] 安全基址面。
 

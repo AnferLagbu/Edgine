@@ -1,5 +1,5 @@
 #!/bin/bash
-# tools/check_tcb.sh — QueenX TCB 统计
+# tools/check_tcb.sh — Edgine TCB 统计
 #
 # Phase 0 产物: 自动化 unsafe 分布检查
 # 用法: ./tools/check_tcb.sh
@@ -12,7 +12,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo "=== QueenX TCB Inventory ==="
+echo "=== Edgine TCB Inventory ==="
 echo ""
 
 # 统计 framework 中 unsafe

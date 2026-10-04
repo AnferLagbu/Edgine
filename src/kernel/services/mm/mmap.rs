@@ -324,8 +324,8 @@ pub fn mmap_syscall_entry(
     if size == 0 {
         return Errno::EINVAL.as_ret();
     }
-    let pwm = crate::framework::credo::pwm_get_current();
-    if !crate::framework::credo::pwm_has_capability(pwm, 7, 0x01) {
+    let pwm = crate::framework::sgeg::pwm_get_current();
+    if !crate::framework::sgeg::pwm_has_capability(pwm, 7, 0x01) {
         return Errno::EACCES.as_ret();
     }
 

@@ -2,7 +2,7 @@
 //!
 //! services_boundary fixture:
 //! - 行 5: 违规 - `use crate::framework::sync::raw` (FORBIDDEN)
-//! - 行 7: 违规 - `pub use framework::chitin::composite` (B01-05 pub use 检测)
+//! - 行 7: 违规 - `pub use framework::egdf::composite` (B01-05 pub use 检测)
 //! - 行 11: 裸指针解引用 (I2 检测)
 
 #![allow(dead_code, unused)]

@@ -17,8 +17,8 @@
 // WasiFdTable 行为测试 (改引内核真实实现)
 // ============================================================================
 
-use queenx::kernel::services::wasm::wasi::fd_table::{WasiFdEntry, WasiFdTable};
-use queenx::kernel::services::wasm::wasi::{WasiContext, WasiErrno, WasiFileType, WasiRights};
+use edgine::kernel::services::wasm::wasi::fd_table::{WasiFdEntry, WasiFdTable};
+use edgine::kernel::services::wasm::wasi::{WasiContext, WasiErrno, WasiFileType, WasiRights};
 
 fn entry(inner_fd: i32) -> WasiFdEntry {
     WasiFdEntry {

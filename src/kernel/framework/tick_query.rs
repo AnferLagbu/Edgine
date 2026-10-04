@@ -1,7 +1,7 @@
-//! 全局 tick 查询接口 — 解耦 barrier 与 proc::scheduler
+//! 全局 tick 查询接口 — 解耦 freg 与 proc::scheduler
 //!
-//! barrier 在故障恢复时需要读取当前 tick, 但不应直接访问 proc::scheduler 内部.
-//! 本模块提供全局函数指针注册机制: scheduler 初始化时注册回调, barrier 通过此模块调用.
+//! freg 在故障恢复时需要读取当前 tick, 但不应直接访问 proc::scheduler 内部.
+//! 本模块提供全局函数指针注册机制: scheduler 初始化时注册回调, freg 通过此模块调用.
 //!
 //! # 安全契约
 //!

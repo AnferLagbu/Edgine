@@ -21,22 +21,22 @@
 #[cfg(not(feature = "kernel_test"))]
 use crate::framework::net::init;
 
-// kernel_test 桩: `unsafe` 性与真实实现对齐 (`qx_net_init` 为 safe `extern "C" fn`,
+// kernel_test 桩: `unsafe` 性与真实实现对齐 (`eg_net_init` 为 safe `extern "C" fn`,
 // 其余真实实现为 `unsafe fn` / `unsafe extern "C" fn`), 函数体 no-op.
 // 提供与 `init::*` 同名的桩, 让 `init::xxx()` 路径在两种 build 下都有效,
 // 且上层包装器中的 `unsafe` 块在两种 build 下都不冗余 (F9 清理 crate 级
 // `allow(unused_unsafe)` 后, 桩若为 safe 会使包装器的 `unsafe` 块被判冗余).
 #[cfg(feature = "kernel_test")]
 mod init {
-    pub fn qx_net_init() {}
+    pub fn eg_net_init() {}
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
     pub unsafe fn poll_network() {}
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
-    pub unsafe fn qx_net_start_dhcp() -> i32 {
+    pub unsafe fn eg_net_start_dhcp() -> i32 {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
-    pub unsafe fn qx_net_static_ip(_cidr: *const u8, _gw: *const u8) -> i32 {
+    pub unsafe fn eg_net_static_ip(_cidr: *const u8, _gw: *const u8) -> i32 {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
@@ -146,8 +146,8 @@ mod init {
 /// # Safety
 ///
 /// 调用方保证单线程上下文 (启动期) 调用一次, 内部全局状态串行化。
-pub fn qx_net_init() {
-    init::qx_net_init();
+pub fn eg_net_init() {
+    init::eg_net_init();
 }
 
 /// 轮询网络栈
@@ -165,9 +165,9 @@ pub fn poll_network() {
 /// # Safety
 ///
 /// 由 services 串行调用, `NET_LOCK` 由内核管理。
-pub fn qx_net_start_dhcp() -> i32 {
+pub fn eg_net_start_dhcp() -> i32 {
     // SAFETY: 串行调用, NET_LOCK 由内核管理
-    unsafe { init::qx_net_start_dhcp() }
+    unsafe { init::eg_net_start_dhcp() }
 }
 
 /// 设置静态 IP
@@ -175,9 +175,9 @@ pub fn qx_net_start_dhcp() -> i32 {
 /// # Safety
 ///
 /// `cidr_ptr` / `gw_ptr` 必须为以 NUL 结尾的有效 C 字符串, 且调用期间不释放。
-pub fn qx_net_static_ip(cidr_ptr: *const u8, gw_ptr: *const u8) -> i32 {
+pub fn eg_net_static_ip(cidr_ptr: *const u8, gw_ptr: *const u8) -> i32 {
     // SAFETY: cidr_ptr/gw_ptr 由调用方保证为有效 NUL 结尾字符串
-    unsafe { init::qx_net_static_ip(cidr_ptr, gw_ptr) }
+    unsafe { init::eg_net_static_ip(cidr_ptr, gw_ptr) }
 }
 
 /// 重置网络状态

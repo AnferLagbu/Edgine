@@ -34,7 +34,7 @@ use std::path::Path;
 fn workspace_root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .unwrap() // QueenX workspace root
+        .unwrap() // Edgine workspace root
         .to_path_buf()
 }
 
@@ -275,16 +275,16 @@ fn gic_redistributor_geometry_frozen() {
 /// 追踪: DECISION-083 (SGI 使能收敛)。SGI/PPI 使能位是 per-CPU Redistributor
 /// 私有状态 (`GICR_ISENABLER0`); 历史缺陷: SGI 13/14 从未使能 ⇒ 跨核 TLB 失效
 /// 接收侧永不响应, 延迟释放帧永久滞留。本契约固化不变式:
-/// - SGI 编号集中在 gic.rs 定义 (编号单一 owner, 供 exception/barrier 复用);
+/// - SGI 编号集中在 gic.rs 定义 (编号单一 owner, 供 exception/freg 复用);
 /// - `init_per_cpu` (BSP/AP 共用入口) 对每核使能 Timer PPI + 全部内核 SGI;
-/// - 不再存在 BSP 专属的分散使能入口 `enable_barrier_sgi`。
+/// - 不再存在 BSP 专属的分散使能入口 `enable_freg_sgi`。
 #[test]
 fn per_cpu_gic_enables_all_kernel_sgis() {
     let src = read(GIC_RS);
     for decl in [
         "pub const TLB_SHOOTDOWN_SGI: u32 = 0xFD & 0xF;",
         "pub const RESCHEDULE_SGI: u32 = 0xFE & 0xF;",
-        "pub const BARRIER_RECOVERY_SGI: u32 = 7;",
+        "pub const FREG_RECOVERY_SGI: u32 = 7;",
     ] {
         assert!(
             src.contains(decl),
@@ -298,7 +298,7 @@ fn per_cpu_gic_enables_all_kernel_sgis() {
         "enable_timer_ppi(sgi)",
         "enable_sgi(sgi, TLB_SHOOTDOWN_SGI)",
         "enable_sgi(sgi, RESCHEDULE_SGI)",
-        "enable_sgi(sgi, BARRIER_RECOVERY_SGI)",
+        "enable_sgi(sgi, FREG_RECOVERY_SGI)",
     ] {
         assert!(
             init.contains(call),
@@ -309,16 +309,16 @@ fn per_cpu_gic_enables_all_kernel_sgis() {
 
     // 分散的 BSP 专属使能入口必须已删除 (F9: 不得残留死代码).
     assert!(
-        !src.contains("enable_barrier_sgi"),
-        "gic.rs 不得残留 enable_barrier_sgi (SGI 使能已收敛到 init_per_cpu)"
+        !src.contains("enable_freg_sgi"),
+        "gic.rs 不得残留 enable_freg_sgi (SGI 使能已收敛到 init_per_cpu)"
     );
-    let barrier = read("src/kernel/framework/arch/aarch64/barrier/mod.rs");
+    let freg = read("src/kernel/framework/arch/aarch64/freg/mod.rs");
     assert!(
-        !barrier.contains("enable_barrier_sgi"),
-        "barrier/mod.rs 不得残留 enable_barrier_sgi (F9)"
+        !freg.contains("enable_freg_sgi"),
+        "freg/mod.rs 不得残留 enable_freg_sgi (F9)"
     );
     assert!(
-        !barrier.contains("pub const BARRIER_RECOVERY_SGI"),
-        "barrier/mod.rs 不得重复定义 BARRIER_RECOVERY_SGI (编号 owner 为 gic.rs)"
+        !freg.contains("pub const FREG_RECOVERY_SGI"),
+        "freg/mod.rs 不得重复定义 FREG_RECOVERY_SGI (编号 owner 为 gic.rs)"
     );
 }

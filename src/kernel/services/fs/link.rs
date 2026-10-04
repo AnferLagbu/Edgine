@@ -7,7 +7,7 @@
 //! - 0 unsafe, 纯类型安全
 //! - 委托 `framework/fs/vfs::api` 完成真实现 (ramfs.link / ramfs.symlink / ramfs.readlink)
 
-use crate::framework::credo;
+use crate::framework::sgeg;
 use crate::framework::syscall::Errno;
 use crate::framework::syscall::raw;
 use crate::services::fs::api as fw;
@@ -109,5 +109,5 @@ pub fn readlink_syscall(path_ptr: u64, buf_ptr: u64, bufsiz: u64) -> Result<usiz
 )]
 /// 取当前进程凭证,无会话时直接返回 EACCES (历史硬编码 `TEST_PWM` 路径已弃用)。
 fn current_pwm() -> Result<u64, Errno> {
-    Ok(credo::api::pwm_get_current())
+    Ok(sgeg::api::pwm_get_current())
 }

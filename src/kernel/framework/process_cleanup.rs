@@ -1,8 +1,8 @@
-//! 进程退出清理回调接口 — 解耦 proc 与 chitin
+//! 进程退出清理回调接口 — 解耦 proc 与 egdf
 //!
-//! proc 在进程退出时需要通知 chitin 清理用户驱动资源,
-//! 但不应直接依赖 chitin::user_driver.
-//! 本模块提供全局函数指针注册机制: chitin 初始化时注册回调, proc 通过此模块调用.
+//! proc 在进程退出时需要通知 egdf 清理用户驱动资源,
+//! 但不应直接依赖 egdf::user_driver.
+//! 本模块提供全局函数指针注册机制: egdf 初始化时注册回调, proc 通过此模块调用.
 //!
 //! # 安全契约
 //!
@@ -14,10 +14,10 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 /// 进程退出清理回调类型: `fn(pid: u32)`
 type ProcessCleanupFn = fn(u32);
 
-/// 全局回调函数指针. 初始为 null, chitin 初始化时注册.
+/// 全局回调函数指针. 初始为 null, egdf 初始化时注册.
 static PROCESS_CLEANUP_FN: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
-/// 注册进程退出清理回调. 由 chitin 子系统在初始化时调用.
+/// 注册进程退出清理回调. 由 egdf 子系统在初始化时调用.
 ///
 /// # Safety
 ///
@@ -28,7 +28,7 @@ pub unsafe fn register_process_cleanup(func: ProcessCleanupFn) {
 
 /// 通知进程退出事件. 由 proc 在进程退出时调用.
 ///
-/// 若 chitin 未注册回调, 则静默跳过.
+/// 若 egdf 未注册回调, 则静默跳过.
 pub fn notify_process_exit(pid: u32) {
     // B03-08 返工: 进程退出时强制释放该进程持有的所有 PI Mutex,
     // 防止"持锁进程退出 → 锁永久不释放 → 后续获取者死锁" (TOP 20 #6).

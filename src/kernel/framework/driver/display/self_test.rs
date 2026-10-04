@@ -16,7 +16,7 @@ use super::framebuffer::{Color, Framebuffer, Rect};
 /// ├──────────────────────────────────────────────┤
 /// │  ≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈              │  反走样直线 (Wu)
 /// ├──────────────────────────────────────────────┤
-/// │  `QueenX` Framebuffer Self-Test v2.0             │  调试文本
+/// │  `Edgine` Framebuffer Self-Test v2.0             │  调试文本
 /// │  Resolution: 1024x768x32                     │
 /// └──────────────────────────────────────────────┘
 ///
@@ -190,7 +190,7 @@ pub fn framebuffer_self_test(fb: &mut Framebuffer, font: &Font) -> usize {
     let text_y: u32 = fh.saturating_sub(40);
     font.render_text(
         fb,
-        "QueenX Framebuffer Self-Test v2.0",
+        "Edgine Framebuffer Self-Test v2.0",
         10,
         text_y,
         colors::WHITE,

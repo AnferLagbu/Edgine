@@ -2,7 +2,7 @@
 //!
 //! 验证 maintenance-2026-06-11.md I-08 评估结论 + 2026-09-13 升级:
 //!   - vendored 副本的版本 = 0.14.x (Cargo.toml) — 当前 0.14.0 (升级于 2026-09-13)
-//!   - queenx 通过 path 依赖消费, 不用 crates.io
+//!   - edgine 通过 path 依赖消费, 不用 crates.io
 //!   - 上游一致性 — 未做 vendored 之外的本地 patch (git log 验证; 本地化走 scripts/smoltcp-localization/)
 //!   - REVAL-W W3.1: smoltcp 从 framework/ 迁到 services/ (决策 3-B, FK 合规)
 //!

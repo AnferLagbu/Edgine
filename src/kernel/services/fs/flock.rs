@@ -43,8 +43,8 @@
 //! - **POSIX lock 关联 (pid, inode)**: 同一 pid 对同一 inode 的新锁替换旧锁
 //! - **`LOCK_NB` 非阻塞**: 立即返回 EAGAIN 而非阻塞等待
 //! - **与 Linux 的差异**:
-//!   - Linux flock 和 POSIX lock 互不影响; `QueenX` 同样保持独立
-//!   - Linux POSIX lock 关联到 (pid, file); `QueenX` 简化为 (pid, inode, range)
+//!   - Linux flock 和 POSIX lock 互不影响; `Edgine` 同样保持独立
+//!   - Linux POSIX lock 关联到 (pid, file); `Edgine` 简化为 (pid, inode, range)
 //!   - 不实现 `F_SETLKW` 阻塞等待 (v1), 返回 EAGAIN
 //!
 //! ## 安全契约

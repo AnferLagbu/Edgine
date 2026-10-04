@@ -3,8 +3,8 @@ name = "kernel"
 version = "0.1.0"
 edition = "2024"
 license = "MPL-2.0"
-description = "QueenX 内核本体 (framekernel 架构, x86_64 + aarch64) — 方案 D 独立 crate"
-repository = "https://gitee.com/AnferLagbu/QueenX"
+description = "Edgine 内核本体 (framekernel 架构, x86_64 + aarch64) — 方案 D 独立 crate"
+repository = "https://gitee.com/AnferLagbu/Edgine"
 readme = "../../README.md"
 keywords = ["kernel", "os", "framekernel", "no_std"]
 categories = ["os", "no-std", "embedded"]
@@ -12,7 +12,7 @@ categories = ["os", "no-std", "embedded"]
 [lib]
 name = "kernel"
 path = "lib.rs"
-# 方案 D: staticlib 供 Makefile 链接内核; rlib 供 queenx 壳依赖 (host-tests).
+# 方案 D: staticlib 供 Makefile 链接内核; rlib 供 edgine 壳依赖 (host-tests).
 crate-type = ["staticlib", "rlib"]
 # 原 `test = false` (DECISION-021 处置 E0152 双 core lang item 冲突) 已移除:
 # 构建模式显式化后该冲突不再复现, 源文件 `#[cfg(test)]` 内联单元测试可直接由
@@ -28,7 +28,7 @@ panic = "abort"
 lto = true
 opt-level = "z"
 
-# 调试专用 profile (与 queenx 原配置一致), 用于排查深水区问题.
+# 调试专用 profile (与 edgine 原配置一致), 用于排查深水区问题.
 [profile.test-debug]
 inherits = "release"
 lto = false
@@ -36,9 +36,9 @@ opt-level = 0
 debug = 2
 
 [dependencies]
-# 方案 D: kernel 直接依赖 (从 queenx Cargo.toml 迁移, 仅 kernel 实际使用).
+# 方案 D: kernel 直接依赖 (从 edgine Cargo.toml 迁移, 仅 kernel 实际使用).
 # zerocopy/ed25519-dalek 由 kernel 代码直接引用; bitflags 经 `bitflags::bitflags!`
-# 宏调用 (mm/credo/cpu 等 7 文件); smoltcp 为 kernel 内部 vendored.
+# 宏调用 (mm/sgeg/cpu 等 7 文件); smoltcp 为 kernel 内部 vendored.
 bitflags = "2.4"
 zerocopy = { version = "0.8", default-features = false, features = ["derive"] }
 # DECISION-078: 真实 Ed25519 签名验证 (RFC 8032). BSD-3-Clause OR Apache-2.0.
@@ -70,7 +70,7 @@ default = []
 e1000-real-hw = []
 e1000-verbose = []
 # host-test: 剥离裸机专属顶层约束 (no_std/no_main/alloc_error_handler/panic_handler),
-# 供 host-tests 经 queenx 壳引用 services 真实源码.
+# 供 host-tests 经 edgine 壳引用 services 真实源码.
 host-test = []
 kernel_test = []
 fault_injection = []
@@ -95,6 +95,6 @@ snmp = []
 netbios = []
 preempt = []
 kaslr = []
-barrier = []
+freg = []
 # syscall 入口诊断串口输出 (仅调试)
 debug_syscall = []

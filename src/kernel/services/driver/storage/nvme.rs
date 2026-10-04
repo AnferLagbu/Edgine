@@ -1277,10 +1277,10 @@ mod tests {
 
     #[test]
     fn test_parse_identify_controller() {
-        // 构造 520 字节 Identify Controller 数据: mn (offset 24) = "QueenX NVMe",
+        // 构造 520 字节 Identify Controller 数据: mn (offset 24) = "Edgine NVMe",
         // nn (offset 516) = 3 (LE u32)
         let mut data = [0u8; 520];
-        let model = b"QueenX NVMe";
+        let model = b"Edgine NVMe";
         data[24..24 + model.len()].copy_from_slice(model);
         data[516] = 3;
         data[517] = 0;

@@ -3,8 +3,8 @@
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `FakeProcess` / `ProcessState` 镜像 / `do_signal_send` /
 //! `do_signal_send_inner` 平行实现, 改引内核真实源码:
-//! - `queenx::kernel::framework::proc::signal::do_signal_send` (全局 PROCESS_TABLE)
-//! - `queenx::kernel::framework::proc::ProcessState` (services::proc::types 权威)
+//! - `edgine::kernel::framework::proc::signal::do_signal_send` (全局 PROCESS_TABLE)
+//! - `edgine::kernel::framework::proc::ProcessState` (services::proc::types 权威)
 //! - 通过真实 `Process::new` + `PROCESS_TABLE.insert` 构造宿主进程, 测试后
 //!   `remove_and_free` 清理 (PID 经 `allocate_pid` 唯一分配, 避免并行互踩).
 //!
@@ -23,9 +23,9 @@
 
 use std::sync::atomic::Ordering;
 
-use queenx::kernel::framework::proc::ProcessState;
-use queenx::kernel::framework::proc::process::{PROCESS_TABLE, Process};
-use queenx::kernel::framework::proc::signal::do_signal_send;
+use edgine::kernel::framework::proc::ProcessState;
+use edgine::kernel::framework::proc::process::{PROCESS_TABLE, Process};
+use edgine::kernel::framework::proc::signal::do_signal_send;
 
 /// 宿主进程句柄: 构造 + 插入全局 PROCESS_TABLE, Drop 时回收
 struct TestProc {

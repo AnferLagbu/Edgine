@@ -29,7 +29,7 @@
 pub trait SyscallDispatch: Send + Sync {
     /// 分发系统调用
     ///
-    /// `num` 为翻译后的 `QueenX` 原生编号 (QX_*).
+    /// `num` 为翻译后的 `Edgine` 原生编号 (EG_*).
     /// `args` 为 6 个系统调用参数.
     /// 返回值: 正数为成功返回值, 负数为 -errno.
     fn dispatch(&self, num: u64, args: [u64; 6]) -> i64;

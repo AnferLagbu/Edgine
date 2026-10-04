@@ -353,7 +353,7 @@ pub fn restore_interrupts(_flags: &IrqSaveFlags) {}
 // 内存屏障辅助函数
 // ============================================================================
 
-/// 写内存屏障 (Store barrier)
+/// 写内存屏障 (Store freg)
 /// 确保所有写操作对其他 CPU 可见
 #[inline(always)]
 #[expect(
@@ -364,7 +364,7 @@ pub fn smp_wmb() {
     fence(Ordering::Release);
 }
 
-/// 读内存屏障 (Load barrier)
+/// 读内存屏障 (Load freg)
 /// 确保读取到最新值
 #[inline(always)]
 #[expect(

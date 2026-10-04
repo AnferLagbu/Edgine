@@ -1,6 +1,6 @@
-# QueenX Kernel
+# Edgine Kernel
 
-QueenX is a from-scratch kernel implemented in Rust, designed and developed based on the Asterinas Framekernel architecture and paradigm. It is currently experimental, and includes some unique features designed specifically for it.
+Edgine is a from-scratch kernel implemented in Rust, designed and developed based on the Asterinas Framekernel architecture and paradigm. It is currently experimental, and includes some unique features designed specifically for it.
 
 > **中文版本**: [README.md](README.md)
 
@@ -31,7 +31,7 @@ This project relies on the following external project code in its design and imp
 
 Bug reports and contributions are welcome:
 
-- **Primary repository**: [Gitee](https://gitee.com/AnferLagbu/QueenX)
-- **Mirror repository**: [GitHub](https://github.com/AnferLagbu/QueenX)
+- **Primary repository**: [Gitee](https://gitee.com/AnferLagbu/Edgine)
+- **Mirror repository**: [GitHub](https://github.com/AnferLagbu/Edgine)
 
 Both bug reports and contributions are appreciated — thank you for your interest and contributions to this project.

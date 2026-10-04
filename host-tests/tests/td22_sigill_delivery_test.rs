@@ -8,7 +8,7 @@
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `decide_ud` / `Severity` 平行镜像, 改引内核真实源码:
-//! - `queenx::kernel::framework::proc::{signal_default_action, SignalDefaultAction}`
+//! - `edgine::kernel::framework::proc::{signal_default_action, SignalDefaultAction}`
 //!   — 信号默认动作 (proc 模块, host 可链接)
 //! - `create_handler` 派发表 → include_str! 静态契约扫描 (见下方不可测说明)
 //!
@@ -22,7 +22,7 @@
 //!    kernel-mode Panic) 依赖 `InterruptFrame` + 全局 PROCESS_TABLE, 属 IDT 中断
 //!    路径上下文, 无法 host 直接调用; 对应用例已移除, 真实投递由 QEMU 集成测试覆盖.
 
-use queenx::kernel::framework::proc::{SignalDefaultAction, signal_default_action};
+use edgine::kernel::framework::proc::{SignalDefaultAction, signal_default_action};
 
 /// POSIX SIGILL = 4
 const SIGILL: u8 = 4;

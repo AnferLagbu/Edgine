@@ -1,6 +1,6 @@
-//! NestFS ZIL 序列化/回放集成测试
+//! UNKFS ZIL 序列化/回放集成测试
 //!
-//! 验证内核 `services::fs/nestfs/zil_persist` 的序列化/反序列化契约:
+//! 验证内核 `services::fs/unkfs/zil_persist` 的序列化/反序列化契约:
 //! 1. 合法 block 完整回放全部 record, 字段保真
 //! 2. 损坏/截断/坏 magic block 被拒绝 (返回空, 不 panic)
 //! 3. 空 ZIL 不产生 block
@@ -8,7 +8,7 @@
 //! ## B08-14 迁移 (2026-09-06)
 //! 原文件为自包含 mini-persist 镜像 (B08-21 登记, 镜像内核 `try_deserialize_record`
 //! / `deserialize_zil_from_block`), 含本地常量/序列化/CRC 复刻. 已删除, 改引内核
-//! `services::fs/nestfs/zil_persist` 真实实现 (host-test feature 暴露).
+//! `services::fs/unkfs/zil_persist` 真实实现 (host-test feature 暴露).
 //!
 //! ## 语义契约 (2026-09-08 J-04 更新, G-09 长期最优)
 //! 原 P0-I-15 契约"单条 record 损坏 → 跳过返回其余"已修正为"损坏块拒绝":
@@ -16,8 +16,8 @@
 //! 收敛为块级单一校验 (block CRC, ZFS 语义) — 任何损坏 → 整个 block 拒绝返回空.
 //! 本文件断言与内核契约一致 (损坏 → 空, 不 panic). G-09 已随 J-04 修复关闭.
 
-use queenx::kernel::services::fs::nestfs::zil::{NestZil, NestZilRecord, NestZilRecordType};
-use queenx::kernel::services::fs::nestfs::zil_persist::{NestZilPersist, crc32_test_wrapper};
+use edgine::kernel::services::fs::unkfs::zil::{NestZil, NestZilRecord, NestZilRecordType};
+use edgine::kernel::services::fs::unkfs::zil_persist::{NestZilPersist, crc32_test_wrapper};
 
 const REC_DISK_SIZE: usize = 256;
 const HEADER_SIZE: usize = 64;

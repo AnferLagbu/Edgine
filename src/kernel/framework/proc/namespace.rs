@@ -137,7 +137,7 @@ pub struct UtsNamespace {
 }
 
 /// 默认主机名 (新建 UTS namespace 初值 / 无进程上下文时的 `uname` 回退值)
-pub const UTS_DEFAULT_NODENAME: &[u8] = b"QueenX";
+pub const UTS_DEFAULT_NODENAME: &[u8] = b"Edgine";
 
 impl UtsNamespace {
     /// 创建新的 UTS namespace (默认继承 init 主机名)
@@ -207,7 +207,7 @@ impl UtsNamespace {
 ///
 /// 单一权威入口: `uname` / `gethostname` / `sethostname` / `setdomainname`
 /// 全部经本函数读写, 避免各自维护主机名副本 (历史: `sys_uname` 硬编码
-/// `"queenx-node"`, `gethostname` 硬编码 `"localhost"`, `sethostname` 不存储).
+/// `"edgine-node"`, `gethostname` 硬编码 `"localhost"`, `sethostname` 不存储).
 ///
 /// 返回 `None` 表示当前无进程上下文 (启动早期 / 无进程的 host 测试).
 pub fn uts_current() -> Option<Arc<UtsNamespace>> {

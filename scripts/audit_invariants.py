@@ -2,7 +2,7 @@
 """
 E9: 6 安全不变式审计脚本
 
-检查 QueenX/QueenX 是否违反星绽框内核定义的 6 条安全不变式:
+检查 Edgine/Edgine 是否违反星绽框内核定义的 6 条安全不变式:
 
   I1: 内核态 CPU 状态不可被 services 篡改
   I2: 内核内存不可被 services 非法访问

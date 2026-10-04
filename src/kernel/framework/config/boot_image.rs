@@ -93,7 +93,7 @@ pub fn encode_boot_image() {
     if caps.kpti {
         flags |= 1 << 3;
     }
-    if caps.barrier {
+    if caps.freg {
         flags |= 1 << 4;
     }
     pack_u8(buf, 44, flags);
@@ -112,7 +112,7 @@ pub fn encode_boot_image() {
     if caps.kpti {
         feature_id |= 1 << 3;
     }
-    if caps.barrier {
+    if caps.freg {
         feature_id |= 1 << 4;
     }
     pack_u16(buf, 46, feature_id);

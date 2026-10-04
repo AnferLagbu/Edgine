@@ -1,6 +1,6 @@
 //! # Interrupt Descriptor Table (IDT) - Rust 安全重写
 //!
-//! `QueenX` 操作系统的中断描述符表管理模块。
+//! `Edgine` 操作系统的中断描述符表管理模块。
 //!
 //! ## 架构概览
 //!

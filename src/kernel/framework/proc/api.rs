@@ -11,8 +11,8 @@
 //! - `syscall::mod` — fork/execve/exit/wait4/kill/getpid 等系统调用
 //! - `syscall::mmap` — mmap 通过 `process_get_current_pid` 获取当前进程
 //! - `ipc::pipe/shm/signal` — IPC 操作需关联当前进程 PID 和 PWM
-//! - `barrier::recovery` — 进程域纳入栏栈恢复
-//! - `credo::session` — 会话管理器注册/注销进程
+//! - `freg::recovery` — 进程域纳入FREG恢复
+//! - `sgeg::session` — 会话管理器注册/注销进程
 //! - `fs::procfs` — `/proc` 文件系统读取进程列表
 //!
 //! ## 安全约束

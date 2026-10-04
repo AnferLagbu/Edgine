@@ -1246,7 +1246,7 @@ impl DpController {
     }
 }
 
-/// MIG-008 接线补齐: `DisplayPort` 控制器接入 `Driver` 抽象, 供 Chitin 注册 (DECISION-K)
+/// MIG-008 接线补齐: `DisplayPort` 控制器接入 `Driver` 抽象, 供 EGDF 注册 (DECISION-K)
 ///
 /// 委托 inherent 方法 (显式 `Type::method(self)` 路径, 规避同名解析歧义);
 /// inherent `init`/`shutdown` 返回 `()`, 此处按 trait 契约包装为 `Ok(())`.

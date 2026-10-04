@@ -364,7 +364,7 @@ fn user_page_count_traversal_uses_nonblocking_vmm_lock() {
 /// 全局锁状态复原 (不影响同进程其他用例).
 #[test]
 fn count_present_user_pages_returns_none_when_vmm_lock_held() {
-    use queenx::kernel::framework::mm::vmm::{VirtualMemoryManager, count_present_user_pages};
+    use edgine::kernel::framework::mm::vmm::{VirtualMemoryManager, count_present_user_pages};
 
     let vmm = VirtualMemoryManager::new();
     let flags = vmm.acquire_lock();

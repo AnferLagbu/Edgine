@@ -24,7 +24,7 @@ fn net_services_probe() -> Option<crate::framework::net::NetDeviceRegistration> 
 ///
 /// DECISION-K 注册契约模式 (同 virtio-blk / NVMe): 仅注册探测回调槽
 /// (services→framework 单向, framework 不引用 services), 实际设备探测由
-/// framework `nic_probe_all` 经槽位拉取。crate root lib.rs 在 `qx_net_init`
+/// framework `nic_probe_all` 经槽位拉取。crate root lib.rs 在 `eg_net_init`
 /// 之前编排调用。
 pub fn net_init() {
     #[cfg(not(feature = "kernel_test"))]

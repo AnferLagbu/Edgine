@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# QueenX 真机引导介质制作脚本 (Boot Medium Builder)
+# Edgine 真机引导介质制作脚本 (Boot Medium Builder)
 #
 # 用途: 将双架构内核制品打包为可写入 USB 的真机引导介质.
 #   - x86_64 : GRUB2 multiboot2 ISO (BIOS/UEFI 兼容, 复用 `make iso` 逻辑)
@@ -29,8 +29,8 @@
 #                docs/explain/guide-hardware-boot.md 的手工 mkimage 说明.
 #
 # 产物:
-#   x86_64 : other/build/boot/queenx-x86_64.iso
-#   aarch64: other/build/boot/queenx-aarch64.img
+#   x86_64 : other/build/boot/edgine-x86_64.iso
+#   aarch64: other/build/boot/edgine-aarch64.img
 #
 # 与 QEMU 的关系:
 #   aarch64 的 Image 制品与 `make ARCH=aarch64 all` / QEMU `-kernel` 共用同一
@@ -50,8 +50,8 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 OUT_DIR="other/build/boot"
-ISO_OUT="${OUT_DIR}/queenx-x86_64.iso"
-IMG_OUT="${OUT_DIR}/queenx-aarch64.img"
+ISO_OUT="${OUT_DIR}/edgine-x86_64.iso"
+IMG_OUT="${OUT_DIR}/edgine-aarch64.img"
 
 # aarch64 默认参数: 装载地址须与 Image 头 text_offset 一致
 # (DRAM 基址 0x40000000 + text_offset 0x80000 = 0x40080000).
@@ -189,17 +189,17 @@ build_aarch64() {
     #    DRAM 基址 + text_offset = 0x40080000, 与内核链接地址一致.
     #    boot.cmd: 等价的手工 `booti` 脚本, 供自定义 bootcmd 的板子使用.
     cat > "$work/extlinux.conf" <<EOF
-# QueenX aarch64 U-Boot extlinux 配置 (由 U-Boot distro boot / sysboot 读取)
-default queenx
+# Edgine aarch64 U-Boot extlinux 配置 (由 U-Boot distro boot / sysboot 读取)
+default edgine
 timeout 30
-label queenx
-    menu label QueenX (aarch64)
+label edgine
+    menu label Edgine (aarch64)
     linux /Image
 EOF
     cat > "$work/boot.cmd" <<EOF
-# QueenX aarch64 U-Boot 手工引导脚本 (等价路径, 供自定义 bootcmd 使用)
-# 打包为 boot.scr: mkimage -A arm64 -O linux -T script -C none -n "QueenX" -d boot.cmd boot.scr
-echo "Booting QueenX (aarch64) ..."
+# Edgine aarch64 U-Boot 手工引导脚本 (等价路径, 供自定义 bootcmd 使用)
+# 打包为 boot.scr: mkimage -A arm64 -O linux -T script -C none -n "Edgine" -d boot.cmd boot.scr
+echo "Booting Edgine (aarch64) ..."
 fatload mmc 0:1 ${AARCH64_LOAD_ADDR} Image
 booti ${AARCH64_LOAD_ADDR} - \${fdtcontroladdr}
 EOF
@@ -216,7 +216,7 @@ unit: sectors
 start=2048, size=${part_sectors}, type=c
 EOF
 
-    mkfs.vfat --offset=2048 -F 32 -n QUEENX "$disk" >/dev/null
+    mkfs.vfat --offset=2048 -F 32 -n EDGINE "$disk" >/dev/null
 
     # mtools `@@<offset>` 语法定位分区内偏移 (1MiB = 1048576 字节)
     mcopy -i "${disk}@@1M" other/build/kernel-aarch64.img ::Image

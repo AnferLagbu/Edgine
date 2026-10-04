@@ -14,7 +14,7 @@
 //!   获取策略
 //! - **无内建回退 + 不 panic (DECISION-K)**: 策略方法依赖 services 实现, framework
 //!   无法安全回退; `current_ipc_strategy()` 返回 `Option`, 未注册时调用点降级返回
-//!   `ENOSYS` + 日志 (逻辑错误降级原则, 不进 barrier 恢复流程), 开发期由时序门禁
+//!   `ENOSYS` + 日志 (逻辑错误降级原则, 不进 freg 恢复流程), 开发期由时序门禁
 //!   host-test 捕获。注册点前置契约: 紧随 framework `ipc_init()` 后立即 (kernel_init
 //!   早期), 与调用点 (用户态 syscall) 分离 — 注册零依赖 (零字段构造 + static 零初始化)
 
@@ -178,7 +178,7 @@ pub fn register_ipc_strategy(
 /// 获取当前注册的 IPC 策略.
 ///
 /// 未注册时返回 `None` — **DECISION-K 修订 (2026-09-12)**: 不 panic。
-/// 依据: QX panic 触发 barrier 系统级恢复 (`panic!()→PANIC_FLAG→int 0x82`),
+/// 依据: EG panic 触发 freg 系统级恢复 (`panic!()→PANIC_FLAG→int 0x82`),
 /// "策略未注册"是确定性逻辑错误 (启动顺序 bug), 非可恢复故障 — 统一原则:
 /// **逻辑错误一律降级 + 日志, 不进恢复流程**。调用点对 `None` 返回 `ENOSYS`
 /// 并打日志; 开发期由时序门禁 host-test 捕获。

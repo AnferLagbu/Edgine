@@ -1,0 +1,30 @@
+[package]
+name = "edgine-tests"
+version = "0.1.0"
+edition = "2024"
+description = "Host-side unit tests for Edgine kernel services (parameter validation, pure logic)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+
+[[test]]
+name = "mprotect"
+path = "tests/mprotect.rs"
+
+[[test]]
+name = "clone"
+path = "tests/clone.rs"
+
+[[test]]
+name = "wait4"
+path = "tests/wait4.rs"
+
+[[test]]
+name = "info"
+path = "tests/info.rs"
+
+[[test]]
+name = "io"
+path = "tests/io.rs"

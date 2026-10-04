@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 // TD-20: services 域 NetError / IpcError / SyncError / PiMutexError /
-//        DevTreeError / ChitinError / StorageError / PwmError /
+//        DevTreeError / EGDFError / StorageError / PwmError /
 //        AuditError / SessionError 收敛到 KernelError (TD-08 V6)
 //
 // 验收:
@@ -20,12 +20,12 @@ const NET_RS: &str = "src/kernel/services/net/mod.rs";
 const IPC_RS: &str = "src/kernel/services/ipc/mod.rs";
 const SYNC_RS: &str = "src/kernel/services/sync/mod.rs";
 const PIMUTEX_RS: &str = "src/kernel/services/sync/pi_mutex.rs";
-const DEVTREE_RS: &str = "src/kernel/services/chitin/devtree.rs";
-const CHITIN_RS: &str = "src/kernel/services/chitin/mod.rs";
-const STORAGE_RS: &str = "src/kernel/services/credo/crypto.rs";
-const PWM_RS: &str = "src/kernel/services/credo/identity.rs";
-const AUDIT_RS: &str = "src/kernel/services/credo/audit.rs";
-const SESSION_RS: &str = "src/kernel/services/credo/sessions.rs";
+const DEVTREE_RS: &str = "src/kernel/services/egdf/devtree.rs";
+const EGDF_RS: &str = "src/kernel/services/egdf/mod.rs";
+const STORAGE_RS: &str = "src/kernel/services/sgeg/crypto.rs";
+const PWM_RS: &str = "src/kernel/services/sgeg/identity.rs";
+const AUDIT_RS: &str = "src/kernel/services/sgeg/audit.rs";
+const SESSION_RS: &str = "src/kernel/services/sgeg/sessions.rs";
 
 fn read(path: &str) -> String {
     let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(path);
@@ -174,31 +174,31 @@ fn no_legacy_devtree_error_variants() {
 }
 
 // ============================================================================
-// ChitinError
+// EGDFError
 // ============================================================================
 
 #[test]
-fn chitin_error_uses_kernel_wrapper() {
-    let src = read(CHITIN_RS);
-    assert_has_kernel_wrapper(&src, "ChitinError");
+fn egdf_error_uses_kernel_wrapper() {
+    let src = read(EGDF_RS);
+    assert_has_kernel_wrapper(&src, "EGDFError");
 }
 
 #[test]
-fn no_legacy_chitin_error_variants() {
-    let src = read(CHITIN_RS);
+fn no_legacy_egdf_error_variants() {
+    let src = read(EGDF_RS);
     for legacy in &[
-        "ChitinError::NotFound",
-        "ChitinError::AlreadyExists",
-        "ChitinError::Io",
-        "ChitinError::InvalidArgument",
-        "ChitinError::NoResources",
-        "ChitinError::NotReady",
-        "ChitinError::PermissionDenied",
-        "ChitinError::Other",
+        "EGDFError::NotFound",
+        "EGDFError::AlreadyExists",
+        "EGDFError::Io",
+        "EGDFError::InvalidArgument",
+        "EGDFError::NoResources",
+        "EGDFError::NotReady",
+        "EGDFError::PermissionDenied",
+        "EGDFError::Other",
     ] {
         assert!(
             !src.contains(legacy),
-            "{} 已废弃, 应改走 ChitinError::Kernel(KernelError::...)",
+            "{} 已废弃, 应改走 EGDFError::Kernel(KernelError::...)",
             legacy
         );
     }
@@ -298,7 +298,7 @@ fn all_to_errno_methods_present() {
         (SYNC_RS, "SyncError"),
         (PIMUTEX_RS, "PiMutexError"),
         (DEVTREE_RS, "DevTreeError"),
-        (CHITIN_RS, "ChitinError"),
+        (EGDF_RS, "EGDFError"),
         (STORAGE_RS, "StorageError"),
         (PWM_RS, "PwmError"),
         (AUDIT_RS, "AuditError"),

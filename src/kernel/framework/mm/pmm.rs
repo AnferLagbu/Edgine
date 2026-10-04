@@ -2099,7 +2099,7 @@ struct PmmSnapshot {
 
 static PMM_SNAPSHOT: IrqSpinLock<Option<PmmSnapshot>> = IrqSpinLock::new(None);
 
-pub fn pmm_barrier_capture() {
+pub fn pmm_freg_capture() {
     let pmm = get_pmm();
     let mut snap = PMM_SNAPSHOT.lock();
     *snap = Some(PmmSnapshot {
@@ -2110,7 +2110,7 @@ pub fn pmm_barrier_capture() {
     });
 }
 
-pub fn pmm_barrier_rollback() -> bool {
+pub fn pmm_freg_rollback() -> bool {
     let pmm = get_pmm();
     let snap = PMM_SNAPSHOT.lock();
     if let Some(ref s) = *snap {
@@ -2122,17 +2122,17 @@ pub fn pmm_barrier_rollback() -> bool {
     true
 }
 
-fn pmm_barrier_capture_cb() {
-    pmm_barrier_capture();
+fn pmm_freg_capture_cb() {
+    pmm_freg_capture();
 }
-fn pmm_barrier_rollback_cb() -> bool {
-    pmm_barrier_rollback()
+fn pmm_freg_rollback_cb() -> bool {
+    pmm_freg_rollback()
 }
 
-pub fn pmm_register_barrier_domain() {
-    crate::framework::barrier::recovery_domain_register(3);
-    if let Some(dom) = crate::framework::barrier::RECOVERY_MANAGER.lock().find(3) {
-        *dom.capture_cb.lock() = Some(pmm_barrier_capture_cb);
-        *dom.rollback_cb.lock() = Some(pmm_barrier_rollback_cb);
+pub fn pmm_register_freg_domain() {
+    crate::framework::freg::recovery_domain_register(3);
+    if let Some(dom) = crate::framework::freg::RECOVERY_MANAGER.lock().find(3) {
+        *dom.capture_cb.lock() = Some(pmm_freg_capture_cb);
+        *dom.rollback_cb.lock() = Some(pmm_freg_rollback_cb);
     }
 }

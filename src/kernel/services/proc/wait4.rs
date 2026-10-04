@@ -272,7 +272,7 @@ struct SiginfoChld {
 /// SIMPLIFIED: 1) `si_code` 恒为 CLD_EXITED — 信号投递路径未记录致死信号
 /// (termsig), 无法区分 CLD_KILLED/CLD_DUMPED; 影响面: 被信号终止的子进程
 /// siginfo 归类为正常退出; 何时需扩展: 信号投递记录 termsig 至 Process 后映射.
-/// 2) `si_uid` 恒 0 — 无 uid 模型 (Credo PWM). 3) 拒绝 WSTOPPED/WCONTINUED
+/// 2) `si_uid` 恒 0 — 无 uid 模型 (SGEG PWM). 3) 拒绝 WSTOPPED/WCONTINUED
 /// (EINVAL) — 无进程 stop/continue 状态跟踪, 作业控制等待不可用.
 ///
 /// # Errors

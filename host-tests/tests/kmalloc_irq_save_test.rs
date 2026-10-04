@@ -11,7 +11,7 @@
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `IrqSaveFlags` / `IRQ_DISABLED` / `disable_interrupts` /
 //! `restore_interrupts` / `acquire_lock` / `release_lock` / `MockHeap` 平行镜像,
-//! 改引内核真实源码 `queenx::kernel::framework::sync::{SpinLock, IrqSpinLock,
+//! 改引内核真实源码 `edgine::kernel::framework::sync::{SpinLock, IrqSpinLock,
 //! IrqSaveFlags, disable_interrupts, restore_interrupts}`.
 //! 内核 `disable_interrupts`/`restore_interrupts` 在 host-test 下为桩 (no-op,
 //! B08-14 前置: host 无中断语义, 原子自旋仍正确互斥); `SpinLock`/`IrqSpinLock`
@@ -23,7 +23,7 @@
 //! 故改为验证锁**配对契约** (lock_irqsave 返回 flags / is_locked 翻转 /
 //! IrqSpinLock RAII guard Drop 自动释放), 该契约即 kmalloc 临界区的实际保障.
 
-use queenx::kernel::framework::sync::{
+use edgine::kernel::framework::sync::{
     IrqSaveFlags, IrqSpinLock, SpinLock, disable_interrupts, restore_interrupts,
 };
 

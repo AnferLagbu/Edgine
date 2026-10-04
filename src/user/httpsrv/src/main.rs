@@ -51,7 +51,7 @@ fn write_header_and_body(resp: &mut [u8], pos: &mut usize,
     };
     for &b in status_line { if *pos < BUF_SIZE { resp[*pos] = b; *pos += 1; } }
 
-    let server = b"Server: QueenX-httpsrv/0.1\r\nContent-Type: ";
+    let server = b"Server: Edgine-httpsrv/0.1\r\nContent-Type: ";
     for &b in server { if *pos < BUF_SIZE { resp[*pos] = b; *pos += 1; } }
     for &b in content_type { if *pos < BUF_SIZE { resp[*pos] = b; *pos += 1; } }
     for &b in b"\r\nConnection: close\r\n" { if *pos < BUF_SIZE { resp[*pos] = b; *pos += 1; } }
@@ -116,10 +116,10 @@ fn handle_client(fd: i32, resp: &mut [u8]) {
         write_header_and_body(resp, &mut pos, 200,
             b"text/html; charset=utf-8",
             b"<!DOCTYPE html>
-<html><head><title>QueenX HTTP Server</title></head>
+<html><head><title>Edgine HTTP Server</title></head>
 <body>
-<h1>QueenX HTTP Server</h1>
-<p>Welcome! This is a minimal HTTP server running on the QueenX kernel.</p>
+<h1>Edgine HTTP Server</h1>
+<p>Welcome! This is a minimal HTTP server running on the Edgine kernel.</p>
 <ul>
 <li><a href=\"/about\">About</a></li>
 </ul>
@@ -128,10 +128,10 @@ fn handle_client(fd: i32, resp: &mut [u8]) {
         write_header_and_body(resp, &mut pos, 200,
             b"text/html; charset=utf-8",
             b"<!DOCTYPE html>
-<html><head><title>About - QueenX</title></head>
+<html><head><title>About - Edgine</title></head>
 <body>
-<h1>About QueenX</h1>
-<p>QueenX is a microkernel operating system written in Rust and C.</p>
+<h1>About Edgine</h1>
+<p>Edgine is a microkernel operating system written in Rust and C.</p>
 <p>This HTTP server is a demonstration of the networking stack built on smoltcp.</p>
 <p><a href=\"/\">Back</a></p>
 </body></html>");
@@ -139,7 +139,7 @@ fn handle_client(fd: i32, resp: &mut [u8]) {
         write_header_and_body(resp, &mut pos, 404,
             b"text/html; charset=utf-8",
             b"<!DOCTYPE html>
-<html><head><title>404 - QueenX</title></head>
+<html><head><title>404 - Edgine</title></head>
 <body><h1>404 Not Found</h1>
 <p>The requested resource was not found.</p>
 <p><a href=\"/\">Back to home</a></p>

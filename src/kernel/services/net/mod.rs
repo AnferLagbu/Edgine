@@ -185,7 +185,7 @@ pub fn init() {
     NET_STACK_INSTANCE.get_or_init(|slot| {
         slot.write(Mutex::new(SmoltcpNetStack::new()));
     });
-    fw_net_socket::qx_net_init();
+    fw_net_socket::eg_net_init();
 }
 
 /// 轮询网络栈 (驱动 TX/RX、定时器、DHCP)
@@ -205,7 +205,7 @@ pub fn poll() {
 ///
 /// 当底层 DHCP 启动失败时返回 `Err(NetError)`, 例如网络栈尚未初始化或网卡不支持 DHCP。
 pub fn start_dhcp() -> NetResult<()> {
-    let rc = fw_net_socket::qx_net_start_dhcp();
+    let rc = fw_net_socket::eg_net_start_dhcp();
     if rc == 0 {
         Ok(())
     } else {
@@ -235,7 +235,7 @@ pub fn static_ip(cidr_str: &str, gw_str: &str) -> NetResult<()> {
     gw_c.extend_from_slice(gw_str.as_bytes());
     gw_c.push(0);
 
-    let rc = fw_net_socket::qx_net_static_ip(cidr_c.as_ptr(), gw_c.as_ptr());
+    let rc = fw_net_socket::eg_net_static_ip(cidr_c.as_ptr(), gw_c.as_ptr());
     if rc == 0 {
         Ok(())
     } else {

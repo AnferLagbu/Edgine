@@ -577,7 +577,7 @@ impl SerialPort {
 }
 
 // ============================================================================
-// Chitin Driver trait 实现 (§6.4 直接方案 B: services 权威注册)
+// EGDF Driver trait 实现 (§6.4 直接方案 B: services 权威注册)
 // ============================================================================
 
 impl crate::framework::driver::Driver for SerialPort {

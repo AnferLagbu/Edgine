@@ -2,7 +2,7 @@
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `FakeProcess` / `reset` 平行实现, 改引内核真实源码
-//! `queenx::kernel::framework::proc::signal::reset_signal_state_on_exec`
+//! `edgine::kernel::framework::proc::signal::reset_signal_state_on_exec`
 //! (全局 PROCESS_TABLE 查找 + 清零 pending/sigaction/blocked, 无效 PID 静默 no-op).
 //! 通过真实 `Process::new` + `PROCESS_TABLE.insert` 构造宿主进程, Drop 时回收.
 //!
@@ -12,8 +12,8 @@
 
 use std::sync::atomic::Ordering;
 
-use queenx::kernel::framework::proc::process::{PROCESS_TABLE, Process};
-use queenx::kernel::framework::proc::signal::reset_signal_state_on_exec;
+use edgine::kernel::framework::proc::process::{PROCESS_TABLE, Process};
+use edgine::kernel::framework::proc::signal::reset_signal_state_on_exec;
 
 /// 宿主进程句柄: 构造 + 插入全局 PROCESS_TABLE, Drop 时回收
 struct TestProc {
@@ -170,10 +170,10 @@ fn test_linux_execve_signal_pendings_documented() {
     // 1. SA_RESETHAND 标志的 handler → SIG_DFL
     // 2. 挂起标准信号保留
     // 3. 挂起实时信号保留
-    // QueenX 简化: 全新进程, 无保留. 此处记录差异, 不在运行时检查.
+    // Edgine 简化: 全新进程, 无保留. 此处记录差异, 不在运行时检查.
     const DOC_LINUX_BEHAVIOR: &str = "Linux: SA_RESETHAND resets; pendings preserved";
-    const DOC_QUEENX_BEHAVIOR: &str =
-        "QueenX: fresh process via transactional replace, no carry-over";
+    const DOC_EDGINE_BEHAVIOR: &str =
+        "Edgine: fresh process via transactional replace, no carry-over";
     assert!(!DOC_LINUX_BEHAVIOR.is_empty());
-    assert!(!DOC_QUEENX_BEHAVIOR.is_empty());
+    assert!(!DOC_EDGINE_BEHAVIOR.is_empty());
 }

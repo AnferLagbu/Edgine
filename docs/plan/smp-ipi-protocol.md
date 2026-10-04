@@ -64,8 +64,8 @@
 ### 2.6 aarch64 现状
 
 - `send_ipi` 用 `ICC_SGI1R_EL1` 单播 SGI（目标核 `& 0xF`）、`broadcast_ipi` 置 IRM：[arch/aarch64/mod.rs:199-220](../../src/kernel/framework/arch/aarch64/mod.rs#L199-L220)。
-- 接收侧无 TLB/reschedule SGI 分支：[arch/aarch64/exception.rs:636-704](../../src/kernel/framework/arch/aarch64/exception.rs#L636-L704) 的 `irq_handler` 仅特判 barrier recovery SGI(7) 与 timer PPI，忽略 `intid >= 1020`。
-- 既有 SGI 先例可参照：[arch/aarch64/barrier/mod.rs:32-64](../../src/kernel/framework/arch/aarch64/barrier/mod.rs#L32-L64)。
+- 接收侧无 TLB/reschedule SGI 分支：[arch/aarch64/exception.rs:636-704](../../src/kernel/framework/arch/aarch64/exception.rs#L636-L704) 的 `irq_handler` 仅特判 freg recovery SGI(7) 与 timer PPI，忽略 `intid >= 1020`。
+- 既有 SGI 先例可参照：[arch/aarch64/freg/mod.rs:32-64](../../src/kernel/framework/arch/aarch64/freg/mod.rs#L32-L64)。
 - **无 AP 上线路径**（本节为当时结论，**已由 DECISION-082 解除**）：`start_ap`/`ap_entry` 仅在 `arch/x86_64/smp_init.rs`，aarch64 无 `register_cpu` 调用点 ⇒ `SMP_ENABLED` 恒 false、`CPU_COUNT` 恒 1。
 - **【订正（DECISION-082 落地后）】**：aarch64 AP 上线路径已实装（[aarch64-smp-bringup.md](./aarch64-smp-bringup.md)：PSCI `CPU_ON` + `ap_entry_asm` + `ap_main` + `register_cpu`），故本节「`SMP_ENABLED` 恒 false / `CPU_COUNT` 恒 1」已不成立；QEMU `-smp 2` 断言 `[SMP] online CPUs: 2` 已进 CI（SMP-09）。
 
@@ -126,7 +126,7 @@
 
 - **S-8. aarch64 SGI 同语义分支（D4）**
   - 描述：aarch64 接收侧无 TLB/reschedule SGI 分支，与 x86_64 语义不对称（§2.6）。
-  - 方案：`arch/aarch64/exception.rs` 的 `irq_handler` 按 SGI intid 增补分支：TLB 失效 SGI → `tlb_flush_all` + ack 递减；reschedule SGI → 复用 `resched_ipi_handler`。向量编号与既有 barrier SGI(7) 不冲突。
+  - 方案：`arch/aarch64/exception.rs` 的 `irq_handler` 按 SGI intid 增补分支：TLB 失效 SGI → `tlb_flush_all` + ack 递减；reschedule SGI → 复用 `resched_ipi_handler`。向量编号与既有 freg SGI(7) 不冲突。
   - 状态：[X]
   - 详情：aarch64 无 AP 上线路径（`SMP_ENABLED` 恒 false），本轮**仅编译验证，无运行验证载体**（见 §5.3）；须避免不可达分支触碰 F9 死代码红线（分支由 SGI intid 判定，属真实可执行路径）。
   - 落地证据：`arch/aarch64/exception.rs:634`（`pub const TLB_SHOOTDOWN_SGI: u32 = 0xFD & 0xF;` = 13）+ `:636-638`（reschedule SGI = `0xFE & 0xF` = 14）；处理分支 `:677-683`（`intid == TLB_SHOOTDOWN_SGI` → `tlb_flush_all()` → `tlb_gen_set_self(g)`，同样按 P1 序）与 `:691`（`resched_ipi_handler()`）。**取代点**：原文 S-8 的「ack 递减」随 ack 路线废止改为代计数（`tlb_gen_set_self`）。双架构构建已覆盖编译面；运行面按 §5.3 标注为不可验证。
@@ -171,10 +171,10 @@
 - `Makefile` `test-host` 的 `; true` fail-open（D-9-4）。
 - `acpi.rs` MADT 日志占位串（D-9-6）。
 - `lib.rs:97` 的 `#![allow(unused_unsafe)]`（已核实）。
-- 启动日志 `Caps: ...` 行的 `smp`/`preempt`/`kaslr`/`barrier` 取值由 `KernelCapabilities::detect()` 的 `cfg!(feature = ...)` 决定（[caps.rs:49-61](../../src/kernel/framework/config/caps.rs#L49-L61)，已核实）；因当前无构建传入 `--features smp`，故日志恒为 `smp=off`。**注**：该行是编译期能力报告，不反映运行期 TLB shootdown 是否生效——D6 后后者由 `smp::is_enabled() && get_cpu_count() > 1` 运行期门控决定。
-- **更正（原句失实）**：原 §5.1 曾记「`smp`/`preempt`/`kaslr`/`barrier` feature 未在 `Cargo.toml` 声明」，实测为**误**——四者均已声明（[Cargo.toml](../../src/kernel/Cargo.toml) 的 `[features]` 段：`smp=[]`、`preempt=[]`、`kaslr=[]`、`barrier=[]`，`host-test=[]` 亦在其中）。故本项不属于「既有面遗留」，而是原文表述错误，现予更正。
+- 启动日志 `Caps: ...` 行的 `smp`/`preempt`/`kaslr`/`freg` 取值由 `KernelCapabilities::detect()` 的 `cfg!(feature = ...)` 决定（[caps.rs:49-61](../../src/kernel/framework/config/caps.rs#L49-L61)，已核实）；因当前无构建传入 `--features smp`，故日志恒为 `smp=off`。**注**：该行是编译期能力报告，不反映运行期 TLB shootdown 是否生效——D6 后后者由 `smp::is_enabled() && get_cpu_count() > 1` 运行期门控决定。
+- **更正（原句失实）**：原 §5.1 曾记「`smp`/`preempt`/`kaslr`/`freg` feature 未在 `Cargo.toml` 声明」，实测为**误**——四者均已声明（[Cargo.toml](../../src/kernel/Cargo.toml) 的 `[features]` 段：`smp=[]`、`preempt=[]`、`kaslr=[]`、`freg=[]`，`host-test=[]` 亦在其中）。故本项不属于「既有面遗留」，而是原文表述错误，现予更正。
 - `page_fault.rs`/`cow.rs`/`swap.rs`/`pcache.rs` 的 `free_page` 与跨核失效关系（不在本工程临界区内）。
-- `0x82`（barrier）与 MSI 段 `0x80-0x9F` 的门重叠。
+- `0x82`（freg）与 MSI 段 `0x80-0x9F` 的门重叠。
 
 ### 5.2 本工程产生的后续项（如出现）
 

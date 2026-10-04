@@ -1,7 +1,7 @@
 #!/bin/bash
-# QueenX 内核构建环境依赖检查与安装工具
+# Edgine 内核构建环境依赖检查与安装工具
 #
-# 适用于 QueenX 框内核项目, 基于 2026-06-05 v3.2 工具链实测:
+# 适用于 Edgine 框内核项目, 基于 2026-06-05 v3.2 工具链实测:
 #
 #   ┌──────────────────────────────────────────────────────────┐
 #   │  工具链组成 (全 Rust 化 + 最小 C 链接层 + Python CI 胶水)│
@@ -45,7 +45,7 @@
 #   ./scripts/requirements.sh -h | --help      # 帮助
 #
 # 关于 C 工具链 (v3.2 决策):
-#   QueenX 源码已 100% Rust 化, C 工具链默认归类为"可选" (--skip-c 即可跳过).
+#   Edgine 源码已 100% Rust 化, C 工具链默认归类为"可选" (--skip-c 即可跳过).
 #   但 Makefile 仍引用 ld/nasm/objcopy 进行裸机链接 (rustc 默认链接器无法生成
 #   裸机 ELF), 因此:
 #     - C 链接层 (ld/nasm/objcopy) — 实际必需, 但本脚本不强制 (--skip-c 时
@@ -112,8 +112,8 @@ PROJECT_TOOLS_TOTAL=0
 print_header() {
     echo ""
     echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║   QueenX 内核构建环境依赖检查工具 v3.2 (2026-06-05)     ║${NC}"
-    echo -e "${CYAN}║   Project: QueenX Framekernel | Toolchain: Rust 2021      ║${NC}"
+    echo -e "${CYAN}║   Edgine 内核构建环境依赖检查工具 v3.2 (2026-06-05)     ║${NC}"
+    echo -e "${CYAN}║   Project: Edgine Framekernel | Toolchain: Rust 2021      ║${NC}"
     echo -e "${CYAN}║   C 工具链已分类: 链接层(5) + 测试桩(6) — 均可跳过       ║${NC}"
     echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
@@ -714,7 +714,7 @@ ${YELLOW}依赖分类 (8 类, v3.2):${NC}
   ${CYAN}项目工具 (8/8)${NC} : tools/check_tcb.sh + tools/audit_unsafe.{sh,py}
 
 ${YELLOW}C 工具链 v3.2 决策:${NC}
-  QueenX 源码已 100% Rust 化, C 工具链默认归类为"可选" (--skip-c 即可跳过).
+  Edgine 源码已 100% Rust 化, C 工具链默认归类为"可选" (--skip-c 即可跳过).
   但 Makefile 仍引用 ld/nasm/objcopy 进行裸机链接, 因此:
     - C 链接层 (ld/nasm/objcopy) — 实际裸机构建必需, 但本脚本不强制
     - C 测试桩 (gcc 编译 tests/*.c) — 真正可选, 已弃用, 仅历史兼容
@@ -1003,7 +1003,7 @@ fi
 # ==================== 第 5 部分: C 链接层 ====================
 if [ "$SKIP_OPTIONAL" = false ] && [ "$SKIP_C" = false ] && [ "$SKIP_C_LINKER" = false ]; then
     print_section "[5/8] C 链接层 (Linker) — 裸机链接 / 启动汇编"
-    echo -e "  ${BLUE}说明: QueenX 源码已 100% Rust 化, C 链接层仅用于${NC}"
+    echo -e "  ${BLUE}说明: Edgine 源码已 100% Rust 化, C 链接层仅用于${NC}"
     echo -e "  ${BLUE}       1. 裸机链接 (ld + 链接脚本 src/kernel/framework/link/*.ld)${NC}"
     echo -e "  ${BLUE}       2. 启动汇编 (nasm x86_64 / aarch64-linux-gnu-as)${NC}"
     echo -e "  ${BLUE}       3. ELF→bin 转换 (objcopy, Makefile other/build/kernel.flat)${NC}"
@@ -1413,7 +1413,7 @@ echo -e "${CYAN}═════════════════════�
 echo ""
 
 if [ $REQUIRED_OK -eq $REQUIRED_TOTAL ] && [ $REQUIRED_TOTAL -gt 0 ]; then
-    echo -e "  ${GREEN}✓ 必需依赖已满足, 可以开始构建 QueenX 内核${NC}"
+    echo -e "  ${GREEN}✓ 必需依赖已满足, 可以开始构建 Edgine 内核${NC}"
 else
     echo -e "  ${RED}✗ 必需依赖缺失, 请先安装后重试${NC}"
 fi

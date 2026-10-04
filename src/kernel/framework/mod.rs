@@ -1,4 +1,4 @@
-//! QueenX Framekernel — 特权 OS Framework (TCB)
+//! Edgine Framekernel — 特权 OS Framework (TCB)
 //!
 //! 这是整个内核中**唯一**允许包含 `unsafe` Rust 代码的模块。
 //! 所有低层硬件交互 (MMU/DMA/中断/上下文切换) 在此封装为
@@ -19,9 +19,9 @@
 //!   ├── net/              网络硬件 + 协议栈
 //!   ├── fs/               文件系统底层 (VFS 抽象)
 //!   ├── ipc/              IPC 底层 (内核态通道)
-//!   ├── credo/            身份/密码学硬件
-//!   ├── chitin/           设备框架底层
-//!   ├── barrier/          弹性恢复底层 (故障注入/snapshot)
+//!   ├── sgeg/            身份/密码学硬件
+//!   ├── egdf/           设备框架底层
+//!   ├── freg/          弹性恢复底层 (故障注入/snapshot)
 //!   ├── console/          串口/终端硬件初始化
 //!   ├── klog/             日志硬件输出
 //!   ├── config/           硬件相关配置
@@ -44,15 +44,15 @@
 //!   ├── cpu_local.rs      CpuLocal Per-CPU 变量
 //!   ├── racy_cell.rs      裸 Cell
 //!   ├── net_socket.rs     网络 FFI 安全代理
-//!   ├── credo_pwm.rs      PWM 身份 FFI 安全代理
+//!   ├── sgeg_pwm.rs      PWM 身份 FFI 安全代理
 //!   ├── proc_elf.rs       ELF 加载器 FFI 安全代理
 //!   ├── syscall_init.rs   syscall 初始化 FFI 安全代理
 //!   └── prelude.rs        公共导入
 //!
 //! services/ (去特权, 100% safe Rust, 禁止 unsafe)
-//!   ├── driver/  fs/  net/  ipc/  chitin/
-//!   ├── proc/  sync/  syscall/  barrier/
-//!   ├── credo/  wasm/  config/  console/  klog/
+//!   ├── driver/  fs/  net/  ipc/  egdf/
+//!   ├── proc/  sync/  syscall/  freg/
+//!   ├── sgeg/  wasm/  config/  console/  klog/
 //!   └── ...
 //! ```
 //!
@@ -65,20 +65,19 @@
 
 pub mod alloc;
 pub mod arch;
-pub mod barrier;
 pub mod boot;
-pub mod chitin;
 pub mod config;
 pub mod console;
 /// TCB 内部容量常量 (与 framework::config 职责正交, 见 constants/mod.rs)
 pub mod constants;
 pub mod cpu;
-pub mod credo;
 pub mod debug;
 pub mod dma;
 pub mod driver;
 /// 扁平设备树 (FDT/DTB) 最小解析器 — aarch64 SoC 移植运行时硬件探测
 pub mod dtb;
+pub mod egdf;
+pub mod freg;
 pub mod fs;
 pub mod idt;
 pub mod iobuf;
@@ -91,6 +90,7 @@ pub mod net;
 pub mod pci;
 pub mod proc;
 pub mod sched;
+pub mod sgeg;
 pub mod smp;
 pub mod sync;
 pub mod syscall;
@@ -119,7 +119,7 @@ pub mod page_table;
 
 pub mod net_socket;
 
-pub mod credo_pwm;
+pub mod sgeg_pwm;
 
 pub mod proc_elf;
 
@@ -141,8 +141,8 @@ pub mod fd_notify;
 /// 资源限制查询接口 (消除 mm 对 proc::rlimit 的直接依赖)
 pub mod rlimit_query;
 
-/// 全局 tick 查询接口 (消除 barrier 对 proc::scheduler 的直接依赖)
+/// 全局 tick 查询接口 (消除 freg 对 proc::scheduler 的直接依赖)
 pub mod tick_query;
 
-/// 进程退出清理回调接口 (消除 proc 对 chitin::user_driver 的直接依赖)
+/// 进程退出清理回调接口 (消除 proc 对 egdf::user_driver 的直接依赖)
 pub mod process_cleanup;

@@ -47,7 +47,7 @@ pub fn directory_tree() {
 pub fn fstab() {
     let fd = fs::file_open(FSTAB_FILE, sys::O_CREAT | sys::O_WRONLY | sys::O_TRUNC);
     if fd < 0 { println("  [WARN] Failed to create fstab"); return; }
-    let content = b"# QueenX Filesystem Configuration\n# Format: source mountpoint type options\n\nnone    /dev    devfs   defaults\nnone    /proc   procfs  defaults\nnone    /temp   ramfs   defaults,size=64M\n";
+    let content = b"# Edgine Filesystem Configuration\n# Format: source mountpoint type options\n\nnone    /dev    devfs   defaults\nnone    /proc   procfs  defaults\nnone    /temp   ramfs   defaults,size=64M\n";
     sys::fs_write(fd, content); sys::fs_close(fd);
     println("  [OK] fstab created");
 }

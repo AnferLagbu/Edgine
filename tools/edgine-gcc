@@ -1,0 +1,56 @@
+#!/bin/bash
+# edgine-gcc — 透明转发 + 注入 PT_INTERP 的 GCC wrapper
+#
+# 用法: 与 gcc 相同, 自动注入 edgine 动态链接器路径
+# 依赖: 系统安装的 gcc/clang
+#
+# 关联: docs/explain/naming-standpoint.md §四 + 附录 B
+
+set -euo pipefail
+
+# 根据架构选择 interp 路径
+detect_interp() {
+    local arch="${EDGINE_ARCH:-$(uname -m)}"
+    case "$arch" in
+        x86_64|x86-64|amd64)
+            echo "/usr/libexec/elfld.so"
+            ;;
+        aarch64|arm64)
+            echo "/usr/libexec/elfld.so"
+            ;;
+        riscv64|riscv64le)
+            echo "/usr/libexec/elfld.so"
+            ;;
+        *)
+            echo "/usr/libexec/elfld.so"
+            ;;
+    esac
+}
+
+INTERP="$(detect_interp)"
+
+# 收集参数: 分离编译标志和链接标志
+COMPILE_ARGS=()
+LINK_ARGS=()
+IS_COMPILE_ONLY=false
+
+for arg in "$@"; do
+    case "$arg" in
+        -c|-S|-E|-M|-MM)
+            IS_COMPILE_ONLY=true
+            ;;
+    esac
+    COMPILE_ARGS+=("$arg")
+done
+
+# 仅在链接阶段注入 PT_INTERP
+if [ "$IS_COMPILE_ONLY" = false ]; then
+    # 注入动态链接器路径
+    LINK_ARGS+=("-Wl,--dynamic-linker,$INTERP")
+    # 注入 rpath 搜索路径
+    LINK_ARGS+=("-Wl,-rpath,/usr/libexec")
+    LINK_ARGS+=("-Wl,-rpath,/usr/lib")
+fi
+
+# 透明转发到系统 gcc
+exec gcc "${COMPILE_ARGS[@]}" "${LINK_ARGS[@]}"

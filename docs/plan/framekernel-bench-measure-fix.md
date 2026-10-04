@@ -1,6 +1,6 @@
 # framekernel-bench 度量口径修复（measure 0ns 折叠）
 
-> 0-1 句话说清"为什么有这个计划": [framekernel_bench.rs](file:///home/anfer/Code/QueenX/host-tests/src/framekernel_bench.rs) 的 `measure()` 与各 bench 函数返回值语义错配（双重归一化 + 自适应放大从未生效），致 [baseline.json](file:///home/anfer/Code/QueenX/host-tests/benches/baseline.json) 23 条中 5 条 `ps_per_op=0`、其余整体低估约 10^4 倍，`check_bench_regression.py` 失去回归检出能力。
+> 0-1 句话说清"为什么有这个计划": [framekernel_bench.rs](file:///home/anfer/Code/Edgine/host-tests/src/framekernel_bench.rs) 的 `measure()` 与各 bench 函数返回值语义错配（双重归一化 + 自适应放大从未生效），致 [baseline.json](file:///home/anfer/Code/Edgine/host-tests/benches/baseline.json) 23 条中 5 条 `ps_per_op=0`、其余整体低估约 10^4 倍，`check_bench_regression.py` 失去回归检出能力。
 > 来源: G-07 平行实现消除收尾轮（[eliminate-parallel-implementations.md](./eliminate-parallel-implementations.md)）验收时发现。用户裁定：baseline 先按现状重录，口径修复登记为本独立任务。
 
 ## DECISION-081（实施裁定：落点选择与对推荐 A 的偏离披露）
@@ -35,7 +35,7 @@
   - 描述: `measure()` 以 `iters = (iters * 10).min(10_000_000)` 放大取样规模，但 `run_all()` 传入的闭包捕获的是**字面量**（如 `|| zap_dispatch_bench(10_000)`），放大值从未传给 `f()`；放大循环只是重复调用同一个固定工作量的 `f()`，并按放大后的 `iters` 归一化。
   - 方案: `measure()` 签名改为 `Fn(u64) -> u128`，循环内把放大后的 `iters` 传入闭包；`run_all()` 各闭包由 `|| xxx_bench(N)` 改为 `|iters| xxx_bench(iters)` —— bench 函数本就以 `iters` 为形参，23 处重复字面量随之消除。
   - 状态: [X]
-  - 详情: 签名与编排器按要求收敛 —— `measure<F: Fn(u64) -> u128>`，`run_all()` 23 条全部改为**直接传 bench 函数**（`measure("zap_dispatch", "nestfs", 10_000, zap_dispatch_bench)`），闭包与 23 处重复字面量一并消除。**但自适应放大被整体移除**（非「把放大值传入闭包」），理由见 DECISION-081 第 2 条（BATCH 倍数无法被 measure 归一化 + O(n)/二次复杂度 bench 放大后运行时爆炸），改为「一次预热 + 一次计时」。
+  - 详情: 签名与编排器按要求收敛 —— `measure<F: Fn(u64) -> u128>`，`run_all()` 23 条全部改为**直接传 bench 函数**（`measure("zap_dispatch", "unkfs", 10_000, zap_dispatch_bench)`），闭包与 23 处重复字面量一并消除。**但自适应放大被整体移除**（非「把放大值传入闭包」），理由见 DECISION-081 第 2 条（BATCH 倍数无法被 measure 归一化 + O(n)/二次复杂度 bench 放大后运行时爆炸），改为「一次预热 + 一次计时」。
 
 - **现状量化（重录后的 baseline 留档）**
   - 描述: 因 `iters` 恒被放大到 10_000_000，记录值 = `floor(实际 ps_per_op / 10_000)`。重录后 baseline 23 条**全部** `iterations=10000000`；`ps_per_op=0` 者 5 条（`page_flags_bits` / `capability_check` / `dma_state_machine` / `vfs_poll_dispatch` / `raidz_dispatch`），其真实单操作耗时均 < 10ns 故被整数截断折叠；`zil_persist_dispatch` 记录 729 ps，对应实际约 7.29 µs/op（与逐位 CRC32 处理 4096B 块的量级吻合）。

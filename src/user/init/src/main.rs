@@ -1,4 +1,4 @@
-//! QueenX Init — fork / KPTI 隔离测试 (print_char)
+//! Edgine Init — fork / KPTI 隔离测试 (print_char)
 
 #![no_std]
 #![no_main]

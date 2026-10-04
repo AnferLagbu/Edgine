@@ -60,7 +60,7 @@ pub unsafe extern "C" fn entry() -> ! {
 
         // 3. 初始化 UART (使用 TTBR1 高半区地址, 依赖 MMU)
         uart::init();
-        uart::puts("[BOOT] QueenX starting...");
+        uart::puts("[BOOT] Edgine starting...");
 
         // 3.0 输出设备树探测结果 (UART 已可用)
         if let Some(info) = fdt_info {

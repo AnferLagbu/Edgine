@@ -44,7 +44,7 @@ pub fn unshare_syscall(flags: u64) -> i64 {
 pub fn setns_syscall(ns_type: u64, target_ns_id: u64) -> i64 {
     // B06-18: 修正原 `1 << (ns_type + 8)` 位运算公式错误 (恒不匹配 CLONE_NEW* 导致
     // from_clone_flag 恒 None)。现直接用 ns_type 匹配: 兼容 CLONE_NEW* 标志位
-    // (0x00020000 等) 与 QueenX 简化枚举值 (0-6) 两种语义。
+    // (0x00020000 等) 与 Edgine 简化枚举值 (0-6) 两种语义。
     let ns_t = match NsType::from_clone_flag(ns_type) {
         Some(t) => t,
         None => match ns_type {
@@ -60,8 +60,8 @@ pub fn setns_syscall(ns_type: u64, target_ns_id: u64) -> i64 {
     };
 
     // B06-20: setns 切换 namespace 需 CAP_SYS_ADMIN (SYSTEM 域 0x01), 与 mount/umount2 先例一致
-    let pwm = crate::framework::credo::pwm_get_current();
-    if !crate::framework::credo::pwm_has_capability(pwm, 0, 0x01) {
+    let pwm = crate::framework::sgeg::pwm_get_current();
+    if !crate::framework::sgeg::pwm_has_capability(pwm, 0, 0x01) {
         return Errno::EPERM.as_ret();
     }
 

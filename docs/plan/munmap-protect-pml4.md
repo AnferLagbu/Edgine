@@ -89,7 +89,7 @@
 
 ⇒ **cr3 不作为** **`MmStruct`** **的字段**，而是在 services 侧取得后**作为参数**传入 framework 的 mm 安全方法。services 可同时使用 `framework::proc` 与 `framework::mm` 的顶层 re-export，不引入环。
 
-（services 侧取 cr3 有先例：[user\_driver.rs:146](../../src/kernel/framework/chitin/user_driver.rs#L146) 等 3 处在 framework 内使用 `process_get_cr3`；services 侧 `process_get_current_pid` 用于 20+ 处。）
+（services 侧取 cr3 有先例：[user\_driver.rs:146](../../src/kernel/framework/egdf/user_driver.rs#L146) 等 3 处在 framework 内使用 `process_get_cr3`；services 侧 `process_get_current_pid` 用于 20+ 处。）
 
 ## 4. 施工条目
 
@@ -121,7 +121,7 @@
 
 * `MmStruct::mprotect(start, len, new_flags, cr3)`（[vma.rs:547](../../src/kernel/framework/mm/vma.rs#L547)）：两处 cfg 分支内的 `vmm.protect_page` → `vmm.protect_page_in_table(cr3, …)`（保留 x86\_64/aarch64 双 cfg 块结构，未合并）。
 
-* 连带调用点（均已传 cr3）：`MmStruct::mremap`（3 处 `remove_range`）、`MmStruct::set_brk`（1 处）、[user\_driver.rs:167](../../src/kernel/framework/chitin/user_driver.rs#L167) 与 [user\_driver.rs:343](../../src/kernel/framework/chitin/user_driver.rs#L343)（cr3 已在作用域）、framework 自测 [test\_new\_features.rs:374](../../src/kernel/framework/tests/test_new_features.rs#L374)（该用例只校验 VMA 描述符增删、不建页表，故传 `0` 表达"不触及任何表"）。
+* 连带调用点（均已传 cr3）：`MmStruct::mremap`（3 处 `remove_range`）、`MmStruct::set_brk`（1 处）、[user\_driver.rs:167](../../src/kernel/framework/egdf/user_driver.rs#L167) 与 [user\_driver.rs:343](../../src/kernel/framework/egdf/user_driver.rs#L343)（cr3 已在作用域）、framework 自测 [test\_new\_features.rs:374](../../src/kernel/framework/tests/test_new_features.rs#L374)（该用例只校验 VMA 描述符增删、不建页表，故传 `0` 表达"不触及任何表"）。
 
 **部分拆除语义核查结论**：`remove_range` 的四种 VMA 拆分分支产生的"待拆除区间"与逐页拆除范围**一致**——每分支都以 `Vma::new(<被删子区间>)` 为参数进入 `unmap_vma_pages`，后者按 `[start, end)` 逐页对齐遍历，与建立侧不对齐语义无冲突；拆除范围不含未覆盖页（不会误拆相邻 VMA 的 PTE）。
 
@@ -270,5 +270,5 @@ services 层 0 unsafe（F1）：取 cr3 与传参均为 safe API（顶层 re-exp
 4. **`VmSpace`** **整体零调用者**：是否接线到生产路径（`allocate_user_space` / `destroy_user_page_table` 同为零调用者，见 `cr3-lifetime-ownership.md` §6）属独立议题。
 5. **aarch64 大页/section 拆除**：`protect_page` 已处理 L1/L2 块映射，但拆除侧的块映射路径与帧计数面的关系未核查（与 x86\_64 的大页 leaf 不计数问题同源）。
 6. **pcache** **`ref_count`** **增减不对称（本工程新增发现，只报不动；原描述已订正；已由** **[`pcache-frame-ownership.md`](pcache-frame-ownership.md)** **承接并修复）**：原描述「`pcache::deref` 绕过帧持有计数」**不成立**——`pmm.free_page` 内部即走 `frame_counts_release`（[pmm.rs:959-970](../../src/kernel/framework/mm/pmm.rs#L959-L970)），不存在绕过；`munmap` 顺序（先 `release_file_pages` 后 `remove_range`）的帧计数亦为 3→2→1 递减，不会把仍被映射的帧归还进 free list。真实缺陷是 **pcache 条目** **`ref_count`** **的增减与「该 VMA 是否真的持有该缓存页」不对齐**：① 登记点不对称——`+1` 只在 `pcache_get`（miss 插入 / 显式 get），而 [page\_fault.rs:315](../../src/kernel/framework/mm/page_fault.rs#L315) 的**命中**路径用 `pcache_lookup`（不 +1）却照样建映射 + `frame_inc`；② 注销点不对称——[mmap.rs:219-239](../../src/kernel/services/mm/mmap.rs#L219-L239) 的 `release_file_pages` 按**地址区间**逐页**无条件** `pcache_put`（−1），不判该页是否曾被该 VMA 取用。后果：条目提前驱逐（缓存数据与 `dirty` 标记丢失、`MAP_SHARED` 一致性破裂）、未持有该页的 VMA 拆除时注销他人条目、`MAP_SHARED` 换叶不注销旧帧 ⇒ 帧泄漏。与 `cr3-lifetime-ownership.md` §8.1 帧持有契约同族，属**文件映射路径**，不属本工程改动范围。
-7. **`user_driver.rs`** **重复拆除（本工程新增发现，只报不动）**：[user\_driver.rs:160-170](../../src/kernel/framework/chitin/user_driver.rs#L160-L170) 与 [user\_driver.rs:335-345](../../src/kernel/framework/chitin/user_driver.rs#L335-L345) 在调用 `remove_range` 之前/之后另有显式 `unmap_page_in_table(cr3, …)` 逐页循环，与 `remove_range` 的逐页拆除**重复**（属 `eliminate-parallel-implementations.md` 范畴）。
+7. **`user_driver.rs`** **重复拆除（本工程新增发现，只报不动）**：[user\_driver.rs:160-170](../../src/kernel/framework/egdf/user_driver.rs#L160-L170) 与 [user\_driver.rs:335-345](../../src/kernel/framework/egdf/user_driver.rs#L335-L345) 在调用 `remove_range` 之前/之后另有显式 `unmap_page_in_table(cr3, …)` 逐页循环，与 `remove_range` 的逐页拆除**重复**（属 `eliminate-parallel-implementations.md` 范畴）。
 

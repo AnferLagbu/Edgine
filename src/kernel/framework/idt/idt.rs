@@ -348,7 +348,7 @@ impl IdtManager {
             IDT_TYPE_TRAP | IDT_DPL_USER,
         );
 
-        // 5. 设置恢复中断 (int 0x82, barrier-stack) → IDT IST=3 → TSS ist[2]
+        // 5. 设置恢复中断 (int 0x82, freg-stack) → IDT IST=3 → TSS ist[2]
         state.entries[0x82] = IdtEntry::new_with_ist(
             isr0x82,
             GDT_KERNEL_CODE,
@@ -703,7 +703,7 @@ impl IdtManager {
                 // 其他向量 (syscall, recovery 等)
                 match vector {
                     0x80 => { /* System call - handled by syscall handler */ }
-                    0x82 => { /* Recovery interrupt - handled by barrier-stack */ }
+                    0x82 => { /* Recovery interrupt - handled by freg-stack */ }
                     _ => {} // 忽略未知向量
                 }
             }
@@ -741,7 +741,7 @@ impl IdtManager {
             }
 
             RecoveryAction::DomainRecovery => {
-                // 尝试域级恢复 (barrier-stack)
+                // 尝试域级恢复 (freg-stack)
                 // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
                 unsafe extern "C" {
                     fn recovery_try_recover_from_idt() -> i32;

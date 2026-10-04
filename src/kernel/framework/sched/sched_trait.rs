@@ -162,12 +162,12 @@ pub trait Scheduler: Send + Sync {
 // 默认实现: 委托给 proc::scheduler::SCHEDULER 全局单例
 // ============================================================================
 
-/// `QueenX` 默认调度器 (MLFQ + RT + CFS)。
+/// `Edgine` 默认调度器 (MLFQ + RT + CFS)。
 ///
 /// 委托给 `proc::scheduler::SCHEDULER`。
-pub struct QueenXScheduler;
+pub struct EdgineScheduler;
 
-impl Scheduler for QueenXScheduler {
+impl Scheduler for EdgineScheduler {
     fn enqueue(&self, pid: Pid) {
         crate::framework::proc::SCHEDULER.add(pid);
     }

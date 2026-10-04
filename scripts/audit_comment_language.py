@@ -99,7 +99,7 @@ ALLOWED_ENGLISH_TERMS = frozenset({
     "prctl", "seccomp", "capability", "Capability", "Capabilities",
     "kthread", "klog", "kexec", "kfence", "kprobe", "kprobes", "ebpf",
     "bpf", "ftrace", "perf", "kdump", "cgroup", "cgroups", "namespace",
-    "namespaces", "pwm", "PWM", "credo", "Credo", "sched", "Scheduler",
+    "namespaces", "pwm", "PWM", "sgeg", "SGEG", "sched", "Scheduler",
     "schedule", "scheduler", "tickless", "shadow", "secure_boot",
     "iopl", "ioperm", "io_uring", "iovec",
     # WASM/WASI 标准术语
@@ -212,11 +212,11 @@ ALLOWED_ENGLISH_TERMS = frozenset({
     "subnet", "Subnet", "prefix", "Prefix", "cidr", "CIDR",
     "smoltcp_impl", "smoltcp_iface",
     "fs", "FS", "filesystem", "Filesystem", "file_system",
-    "ramfs", "RamFs", "devfs", "DevFs", "procfs", "ProcFs", "nestfs", "NestFs",
+    "ramfs", "RamFs", "devfs", "DevFs", "procfs", "ProcFs", "unkfs", "NestFs",
     "spa", "SPA", "dmu", "DMU", "zap", "ZAP", "zil", "ZIL", "arc", "ARC",
     "txg", "TXG", "raid", "RAID", "raidz", "RAIDZ", "dedup", "Dedup",
     "checksum", "Checksum",
-    "credo", "Credo", "session", "Session", "privilege", "Privilege",
+    "sgeg", "SGEG", "session", "Session", "privilege", "Privilege",
     "capability", "Capability", "pwm_id", "pwm", "PWM",
     "vfork", "clone", "fork", "execve", "exec", "exit", "wait", "waitpid",
     "kill", "raise", "signal", "signals", "sigaction", "sigprocmask",
@@ -270,7 +270,7 @@ ALLOWED_ENGLISH_TERMS = frozenset({
     "TFD_CLOEXEC", "TFD_NONBLOCK",
     "SECCOMP_SET_MODE_STRICT", "SECCOMP_SET_MODE_FILTER",
     "operation",
-    # Chitin 错误类型名 (在 /// 文档注释中引用)
+    # EGDF 错误类型名 (在 /// 文档注释中引用)
     "InvalidArgument", "NoResources", "WouldBlock", "NotReady", "PermissionDenied",
     "WrongType", "AlreadyExists", "Other",
     # 恢复层术语

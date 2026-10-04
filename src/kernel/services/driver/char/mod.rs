@@ -18,7 +18,7 @@ pub mod pl011;
 pub mod serial;
 pub mod vga;
 
-/// 初始化字符设备子系统并注册到 Chitin (§6.4 直接方案 B: services 权威)
+/// 初始化字符设备子系统并注册到 EGDF (§6.4 直接方案 B: services 权威)
 ///
 /// services 层权威实现:
 /// - x86_64: VGA 文本控制台 + COM1 串口
@@ -27,24 +27,24 @@ pub mod vga;
 /// framework 侧已退位 (删除 driver/char 业务, 保留 IoPort/IoMem 机制 +
 /// arch::uart 早期控制台 + [`pl011_phys_base`](crate::framework::driver::pl011_phys_base) 安全基址面)。
 ///
-/// SIMPLIFIED: 注册走 `chitin_register_driver` (无 CharOps 读写绑定)——Chitin char
-/// 读写路径 (`chitin_char_write/read`) 当前无生产消费者 (休眠); 待 devfs char 读写
+/// SIMPLIFIED: 注册走 `egdf_register_driver` (无 CharOps 读写绑定)——EGDF char
+/// 读写路径 (`egdf_char_write/read`) 当前无生产消费者 (休眠); 待 devfs char 读写
 /// 接入时按 §6.2 补 framework 提供的 CharOps 安全桥 trait (unsafe 转换留 framework)。
 pub fn char_init() {
     #[cfg(target_arch = "x86_64")]
     {
-        use crate::framework::chitin::{ChitinProto, chitin_register_driver};
+        use crate::framework::egdf::{EGDFProto, egdf_register_driver};
         use alloc::boxed::Box;
         use serial::{ComPort, SerialConfig, SerialPort};
         use vga::VgaConsole;
 
         if let Some(vga) = VgaConsole::new() {
-            chitin_register_driver("vga", ChitinProto::Char, None, None, Box::new(vga));
+            egdf_register_driver("vga", EGDFProto::Char, None, None, Box::new(vga));
         }
         if let Some(com1) = SerialPort::new(ComPort::Com1, SerialConfig::default_115200_8n1()) {
-            chitin_register_driver(
+            egdf_register_driver(
                 "serial0",
-                ChitinProto::Char,
+                EGDFProto::Char,
                 Some(u64::from(serial::COM1_BASE)),
                 Some(4),
                 Box::new(com1),
@@ -54,13 +54,13 @@ pub fn char_init() {
 
     #[cfg(target_arch = "aarch64")]
     {
-        use crate::framework::chitin::{ChitinProto, chitin_register_driver};
+        use crate::framework::egdf::{EGDFProto, egdf_register_driver};
         use alloc::boxed::Box;
 
         if let Some(pl011) = pl011::Pl011Driver::new() {
-            chitin_register_driver(
+            egdf_register_driver(
                 "pl011",
-                ChitinProto::Char,
+                EGDFProto::Char,
                 Some(crate::framework::driver::pl011_phys_base()),
                 None,
                 Box::new(pl011),

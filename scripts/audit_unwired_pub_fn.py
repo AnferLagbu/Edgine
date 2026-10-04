@@ -3,15 +3,15 @@
 audit_unwired_pub_fn.py — 检测「已实现但未接线」的 pub fn / pub const / pub mod
 
 设计原则 (§10 源码调研后):
-  - 仅检测 queenx crate (staticlib) 内部 src/kernel/{framework,services} 子树
+  - 仅检测 edgine crate (staticlib) 内部 src/kernel/{framework,services} 子树
   - 排除 vendored smoltcp (锁定版本, 禁止扫描)
   - 排除 host-tests / tests/ (测试代码)
-  - 排除 src/user/ (独立 ELF, 不调用 queenx 内部 pub fn)
+  - 排除 src/user/ (独立 ELF, 不调用 edgine 内部 pub fn)
 
 检测项:
   R1 (HIGH):  pub fn 全仓库零调用 (除声明文件自身) 且**未被 T5 甄别分类**
   R1 (INFO):  同上但**已在台账「已分类清单」区块中** (降噪, 零引用事实保留)
-  R2 (CRITICAL): pub const SYS_*/QX_* 在 syscall/types.rs 声明但 dispatch.rs 未分发
+  R2 (CRITICAL): pub const SYS_*/EG_* 在 syscall/types.rs 声明但 dispatch.rs 未分发
   R3 (WARN):  pub mod 子模块 0 引用
   R4 (INFO):  pub struct/enum 全仓库零引用 (核心类型)
 
@@ -126,7 +126,7 @@ def is_vendored(path: Path) -> bool:
 
 
 def is_kernel_code(path: Path) -> bool:
-    """是否 queenx crate 内 src/kernel/ 下的非 vendored 代码"""
+    """是否 edgine crate 内 src/kernel/ 下的非 vendored 代码"""
     if not path.suffix == ".rs":
         return False
     try:
@@ -225,7 +225,7 @@ def collect_pub_fns(path: Path) -> list[dict]:
 
 
 def collect_pub_consts_syscall(path: Path) -> list[tuple[str, int]]:
-    """仅在 syscall/types.rs 中收集 pub const SYS_*/QX_* 声明"""
+    """仅在 syscall/types.rs 中收集 pub const SYS_*/EG_* 声明"""
     if path.name != "types.rs" or "syscall" not in path.parts:
         return []
     try:
@@ -234,7 +234,7 @@ def collect_pub_consts_syscall(path: Path) -> list[tuple[str, int]]:
         return []
     results = []
     for i, line in enumerate(content.split("\n")):
-        m = re.match(r"^\s*pub\s+const\s+(SYS_[a-z_]+|QX_[A-Z_]+)\s*:\s*u64\s*=", line)
+        m = re.match(r"^\s*pub\s+const\s+(SYS_[a-z_]+|EG_[A-Z_]+)\s*:\s*u64\s*=", line)
         if m:
             results.append((m.group(1), i + 1))
     return results
@@ -288,7 +288,7 @@ def count_refs(name: str, decl_file: Path, decl_line: int) -> dict:
     if shutil.which("rg"):
         return _count_refs_rg(name, decl_file)
     # 降级: Python 扫描 (较慢但无依赖)
-    # queenx crate ~700+ .rs 文件, ~3000+ pub fn, 每次 count_refs 扫描 ~700 文件
+    # edgine crate ~700+ .rs 文件, ~3000+ pub fn, 每次 count_refs 扫描 ~700 文件
     # 总体时间: 1-2 分钟 (每 fn 2-3 ms on cold cache, 0.5 ms on warm cache)
     # B01-19 性能优化: 一次性缓存所有文件内容, 后续 count_refs 仅内存子串扫描
     return _count_refs_python(name, decl_file)
@@ -343,7 +343,7 @@ _PYTHON_FILE_CACHE: dict[str, str] = {}
 def _build_python_cache() -> None:
     """构建一次所有 .rs 文件内容缓存, 避免反复 read_text.
 
-    B01-19 性能优化: queenx crate ~700+ .rs 文件, 每次 count_refs 调用
+    B01-19 性能优化: edgine crate ~700+ .rs 文件, 每次 count_refs 调用
     重复 read_text 是主要性能瓶颈. 一次性缓存后, 仅做内存子串扫描.
     该缓存按 tgt 调用一次 (lazy init), 一次性扫描 ~700 文件约 1-3 秒.
     """
@@ -401,7 +401,7 @@ def _count_refs_python(name: str, decl_file: Path) -> dict:
 
 
 def is_in_dispatch(name: str, syscall_types_path: Path) -> bool:
-    """检查 SYS_*/QX_* 名称是否被 dispatch 处理
+    """检查 SYS_*/EG_* 名称是否被 dispatch 处理
 
     检查两个 dispatch:
       - services/syscall/dispatch.rs (T5-1 迁移后)
@@ -450,7 +450,7 @@ def is_exempt_function(name: str, path: Path, in_trait_impl: bool,
 # ────────────────────────────────────────────────────────────────────────
 
 def scan_tree() -> dict:
-    """扫描整个 queenx crate"""
+    """扫描整个 edgine crate"""
     issues = {
         "R1_unwired_pub_fn": [],
         "R2_unwired_syscall": [],
@@ -521,7 +521,7 @@ def scan_tree() -> dict:
                         "refs_callers": refs["actual_callers"],
                     })
 
-            # R2: SYS_*/QX_* 未接线检测
+            # R2: SYS_*/EG_* 未接线检测
             for name, line_no in collect_pub_consts_syscall(path):
                 stats["syscall_consts_scanned"] += 1
                 if not is_in_dispatch(name, path):
@@ -581,7 +581,7 @@ def format_report(result: dict) -> str:
     """生成可读报告"""
     lines = []
     lines.append("=" * 78)
-    lines.append("QueenX 死代码 / 未接线审计报告 (audit_unwired_pub_fn.py)")
+    lines.append("Edgine 死代码 / 未接线审计报告 (audit_unwired_pub_fn.py)")
     lines.append("=" * 78)
     lines.append("")
     stats = result.get("stats", {})
@@ -589,7 +589,7 @@ def format_report(result: dict) -> str:
     lines.append(f"扫描 pub fn:   {stats.get('pub_fns_scanned', 0)}")
     lines.append(f"  └─ 豁免:     {stats.get('fns_exempted', 0)} "
                  "(#[no_mangle] / 顶层 re-export / trait impl)")
-    lines.append(f"扫描 SYS_/QX_ 编号: {stats.get('syscall_consts_scanned', 0)}")
+    lines.append(f"扫描 SYS_/EG_ 编号: {stats.get('syscall_consts_scanned', 0)}")
     lines.append(f"  └─ 已 dispatch: {stats.get('syscall_consts_dispatched', 0)}")
     lines.append(f"扫描 pub mod:  {stats.get('pub_mods_scanned', 0)}")
     lines.append(f"扫描 pub type: {stats.get('pub_types_scanned', 0)}")
@@ -662,7 +662,7 @@ def format_report(result: dict) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="QueenX 死代码 / 未接线审计")
+    parser = argparse.ArgumentParser(description="Edgine 死代码 / 未接线审计")
     parser.add_argument("--strict", action="store_true",
                         help="HIGH/WARN 也退出 1 (默认仅 CRITICAL 退出 1)")
     parser.add_argument("--json", action="store_true", help="输出 JSON 报告")

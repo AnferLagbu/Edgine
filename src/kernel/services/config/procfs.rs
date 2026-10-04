@@ -90,7 +90,7 @@ fn write_text(buf: &mut [u8]) -> usize {
         push_str(dst, p, if val { "yes" } else { "no" });
     };
 
-    push_str(buf, &mut pos, "QueenX Configuration\n");
+    push_str(buf, &mut pos, "Edgine Configuration\n");
     push_str(buf, &mut pos, "==========================\n");
     push_str(buf, &mut pos, "max_cpus:        ");
     push_usize(buf, &mut pos, s.max_cpus);
@@ -119,8 +119,8 @@ fn write_text(buf: &mut [u8]) -> usize {
     push_bool(buf, &mut pos, caps.kaslr);
     push_str(buf, &mut pos, "\nkpti:            ");
     push_bool(buf, &mut pos, caps.kpti);
-    push_str(buf, &mut pos, "\nbarrier:         ");
-    push_bool(buf, &mut pos, caps.barrier);
+    push_str(buf, &mut pos, "\nfreg:         ");
+    push_bool(buf, &mut pos, caps.freg);
     push_str(buf, &mut pos, "\n");
 
     pos
@@ -186,7 +186,7 @@ fn write_json(buf: &mut [u8]) -> usize {
     push_str(buf, &mut pos, "{");
     push_field_str(buf, &mut pos, "format_version", "1");
     push_str(buf, &mut pos, ",");
-    push_field_str(buf, &mut pos, "kernel", "QueenX");
+    push_field_str(buf, &mut pos, "kernel", "Edgine");
     push_str(buf, &mut pos, ",");
     push_field_num(buf, &mut pos, "max_cpus", s.max_cpus as u64);
     push_str(buf, &mut pos, ",");
@@ -215,7 +215,7 @@ fn write_json(buf: &mut [u8]) -> usize {
     push_str(buf, &mut pos, ",");
     push_field_bool(buf, &mut pos, "kpti", caps.kpti);
     push_str(buf, &mut pos, ",");
-    push_field_bool(buf, &mut pos, "barrier", caps.barrier);
+    push_field_bool(buf, &mut pos, "freg", caps.freg);
     push_str(buf, &mut pos, "}");
     push_str(buf, &mut pos, "}");
 

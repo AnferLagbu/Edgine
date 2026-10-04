@@ -8,7 +8,7 @@
 //! ## 与 Asterinas OSTD 的关系
 //!
 //! 等价于 OSTD 的 soundness 验证机制 (Miri + Verus)。
-//! `QueenX` 用 Rust 类型系统 + 运行时断言实现等价安全。
+//! `Edgine` 用 Rust 类型系统 + 运行时断言实现等价安全。
 //!
 //! ## SAFETY 不变量
 //!

@@ -4,11 +4,11 @@
 //!
 //! ## 编号 (800-809: 内核调试 / 跟踪)
 //!
-//! - `QX_FTRACE_ENABLE`  (800): 启用 ftrace 全局开关
-//! - `QX_FTRACE_DISABLE` (801): 禁用 ftrace 全局开关
-//! - `QX_FTRACE_READ`    (802): 弹出一条事件, 按紧凑布局写入用户态缓冲
-//! - `QX_FTRACE_STAT`    (803): 查询 (`event_count`, `overflow_count`) 到用户态
-//! - `QX_KGDB_ENTER`     (804): 主动进入 KGDB 主循环 (等待外部 gdb)
+//! - `EG_FTRACE_ENABLE`  (800): 启用 ftrace 全局开关
+//! - `EG_FTRACE_DISABLE` (801): 禁用 ftrace 全局开关
+//! - `EG_FTRACE_READ`    (802): 弹出一条事件, 按紧凑布局写入用户态缓冲
+//! - `EG_FTRACE_STAT`    (803): 查询 (`event_count`, `overflow_count`) 到用户态
+//! - `EG_KGDB_ENTER`     (804): 主动进入 KGDB 主循环 (等待外部 gdb)
 //!
 //! ## 用户态布局
 //!

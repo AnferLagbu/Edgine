@@ -2,7 +2,7 @@
 //! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 framework API。
 //! Stack Canary / 熵源 系统调用 — services 层实现 (从 framework/syscall/canary.rs 下沉, §6.1)
 //!
-//! 提供两个 `QueenX` 原生 syscall:
+//! 提供两个 `Edgine` 原生 syscall:
 //! - [`sys_getrandom`]: 从内核熵源填充用户 buffer (Linux getrandom 语义)
 //! - [`sys_get_canary`]: 返回当前进程 8 字节 stack canary
 //!

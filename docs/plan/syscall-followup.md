@@ -6,7 +6,7 @@
 
 ## 描述
 
-syscall 编号空间治理已闭环（QX_* 归位 SYS_*、双 dispatch 重叠归零）。剩余为三类：
+syscall 编号空间治理已闭环（EG_* 归位 SYS_*、双 dispatch 重叠归零）。剩余为三类：
 1. **功能实装**：Linux 有标准编号但未实装的 syscall（T1）。
 2. **分层收尾**：framework 回退层 24 个"未迁移" syscall 转 services（T2），其中半成品先清除（T3）。
 3. **审计核实**：R3/R1/TODO 遗留（T4/T5/T6）+ aarch64 编号预存（T7）。
@@ -36,7 +36,7 @@ syscall 编号空间治理已闭环（QX_* 归位 SYS_*、双 dispatch 重叠归
 ### T2：回退层 24 未迁移 syscall → services 迁移（P1，F/S 分层）
 
 **范围**：syscall-cleanup B2 登记的 24 项（services 无对应、framework 回退真实执行）：
-read/write/rt_sigreturn/seccomp/prctl/io_uring_setup/enter/register/unshare/setns/bpf/kexec_load/tcgetpgrp/tcsetpgrp/execve/setrlimit/tgkill/sendfile/splice/CREDO_DISK_INSTALL/CREDO_HOTPLUG_STATUS/FB_OPEN/MMAP/RELEASE。
+read/write/rt_sigreturn/seccomp/prctl/io_uring_setup/enter/register/unshare/setns/bpf/kexec_load/tcgetpgrp/tcsetpgrp/execve/setrlimit/tgkill/sendfile/splice/SGEG_DISK_INSTALL/SGEG_HOTPLUG_STATUS/FB_OPEN/MMAP/RELEASE。
 
 **方案**：逐批迁移——每项：services 实现（或确认 services 已实现如 sendfile）→ services dispatch 接线 → 回退层删分支 + 契约注释更新 → 测试。
 **分批**：
@@ -44,7 +44,7 @@ read/write/rt_sigreturn/seccomp/prctl/io_uring_setup/enter/register/unshare/setn
 - 批 2 安全/机制：seccomp/prctl/tcgetpgrp/tcsetpgrp
 - 批 3 网络/异步：sendfile/splice/io_uring×3
 - 批 4 namespace/调试：unshare/setns/bpf/kexec_load
-- 批 5 平台扩展：CREDO×2/FB×3
+- 批 5 平台扩展：SGEG×2/FB×3
 
 **验证**：每批双架构 0w0e + host-tests + QEMU（syscall 路径必跑）。
 **注意**：迁移后 framework 回退层仅剩"机制独有 27 + 哨兵 14"（B2 契约允许面），F/S 分层收尾。
@@ -62,8 +62,8 @@ read/write/rt_sigreturn/seccomp/prctl/io_uring_setup/enter/register/unshare/setn
 
 ### T4：R3 零引用 pub mod 7 项核实（P2）
 
-**范围**：dmu_trait/raidz_trait/spa_trait/txg_trait/zap_trait/zil_persist_trait/zil_trait（nestfs 的 trait 抽象层）。
-**方案**：逐个核实（接线使用 → 保留；纯预留 → 删除或合并）。并入 NestFS 收尾工程。
+**范围**：dmu_trait/raidz_trait/spa_trait/txg_trait/zap_trait/zil_persist_trait/zil_trait（unkfs 的 trait 抽象层）。
+**方案**：逐个核实（接线使用 → 保留；纯预留 → 删除或合并）。并入 UNKFS 收尾工程。
 
 ### T5：R1 pub fn 445 项甄别（P2，大）
 
@@ -119,9 +119,9 @@ T7 (预存登记)
 | 分类 | 项 | 依据 |
 |---|---|---|
 | 保留（有用户，T2 迁移） | read、write、execve | io.rs/eash/install/fbterm 全量使用 |
-| 保留（有用户，T2 批 5） | CREDO_DISK_INSTALL | install/wizard/prepare.rs `boot_install` |
+| 保留（有用户，T2 批 5） | SGEG_DISK_INSTALL | install/wizard/prepare.rs `boot_install` |
 | 保留（有用户，T2 批 5） | FB_OPEN/MMAP/RELEASE | fbterm main.rs:179/184/271 直用 |
-| 保留（无用户但真实实现，T2 迁移） | seccomp、prctl、tcgetpgrp、tcsetpgrp、setrlimit、unshare、setns、bpf、kexec_load、sendfile、splice、io_uring_setup、io_uring_enter、CREDO_HOTPLUG_STATUS | 实现均非 stub；用户态无常量/wrapper/调用 |
+| 保留（无用户但真实实现，T2 迁移） | seccomp、prctl、tcgetpgrp、tcsetpgrp、setrlimit、unshare、setns、bpf、kexec_load、sendfile、splice、io_uring_setup、io_uring_enter、SGEG_HOTPLUG_STATUS | 实现均非 stub；用户态无常量/wrapper/调用 |
 | **清除（无用户半成品/死分支）** | **tgkill、rt_sigreturn（回退分支）、io_uring_register** | 见下 |
 
 **清除明细**（恢复 ENOSYS 安全态，types.rs 权威编号常量保留）：
@@ -130,7 +130,7 @@ T7 (预存登记)
 2. **SYS_rt_sigreturn 回退分支**：死分支——pre-dispatch 特殊路径（dispatch.rs `is_rt_sigreturn`）无条件 `return` 拦截，回退层永不可达；`sys_rt_sigreturn` 残缺（仅清标志不恢复上下文）。删分支 + 函数；**SS_ONSTACK 清除逻辑（P1-I-45）迁移至可达的 pre-dispatch 路径**（顺带修复潜在缺口：原可达 sigreturn 路径从未清标志）；host-tests sigaltstack_test 源码断言同步指向新位置。
 3. **SYS_io_uring_register**：恒 ENOSYS 桩，删除后落 `_ =>` 兜底 ENOSYS 行为不变。删分支 + iouring.rs 函数。
 
-**半成品补充发现（不清除，登记 T2 处置）**：`sys_fb_release` 空 stub（恒 0 无释放动作，有用户 → T2 批 5 实装）；`sys_tcgetpgrp/sys_tcsetpgrp` `_fd` 参数忽略（POSIX 简化语义，T2 批 2 迁移时确认）；用户态 sys.rs `SYS_CREDO_HOTPLUG_STATUS` 常量无 wrapper 无调用（T2 批 5 补 wrapper）。
+**半成品补充发现（不清除，登记 T2 处置）**：`sys_fb_release` 空 stub（恒 0 无释放动作，有用户 → T2 批 5 实装）；`sys_tcgetpgrp/sys_tcsetpgrp` `_fd` 参数忽略（POSIX 简化语义，T2 批 2 迁移时确认）；用户态 sys.rs `SYS_SGEG_HOTPLUG_STATUS` 常量无 wrapper 无调用（T2 批 5 补 wrapper）。
 
 **验证**：build.sh all 5/5（双架构 0w0e + host-tests 全量 + asm 门控 + link）、clippy 双架构 0 warning、核心审计 8 项通过、QEMU boot（Ring 3/init）通过。
 
@@ -178,7 +178,7 @@ T7 (预存登记)
 | io_uring_setup | `services/io/iouring.rs`（`io_uring_setup_syscall`） | 委托 framework 机制 `io_uring_setup`（全局实例表 + ID 分配），services 仅参数转换 + errno 映射 |
 | io_uring_enter | `services/io/iouring.rs`（`io_uring_enter_syscall`） | 委托 framework 机制 `io_uring_enter`（SQE→CQE 处理） |
 
-**机制保留（framework）**：`framework/syscall/sendfile.rs`（sys_sendfile/sys_splice 完整实现 + SPLICE_F_* 常量，services 经 `framework::syscall` 顶层 re-export 消费）；`framework/io/iouring.rs`（IoUring/RingBuffer/Sqe/Cqe + io_uring_setup/enter/destroy/submit/reap 机制函数 + `sys_io_uring_submit_sqe`——QX_IO_URING_SUBMIT 机制独有，留在回退层）。
+**机制保留（framework）**：`framework/syscall/sendfile.rs`（sys_sendfile/sys_splice 完整实现 + SPLICE_F_* 常量，services 经 `framework::syscall` 顶层 re-export 消费）；`framework/io/iouring.rs`（IoUring/RingBuffer/Sqe/Cqe + io_uring_setup/enter/destroy/submit/reap 机制函数 + `sys_io_uring_submit_sqe`——EG_IO_URING_SUBMIT 机制独有，留在回退层）。
 
 **framework 回退层清理**：删 SYS_sendfile/SYS_splice/SYS_io_uring_setup/SYS_io_uring_enter 4 分支 + `sys_io_uring_setup`/`sys_io_uring_enter` 薄策略入口（参数转换类，迁 services 后无调用方）；sendfile/splice 实现在 framework 保留为机制库（services 委托调用）。
 
@@ -191,7 +191,7 @@ T7 (预存登记)
 | 项 | services 落点 | 要点 |
 |---|---|---|
 | unshare | `services/proc/namespace.rs`（`unshare_syscall`） | 委托 `NamespaceSet::unshare`（机制：按 flags 创建新 ns 实例）；services 仅 errno 映射 |
-| setns | `services/proc/namespace.rs`（`setns_syscall`） | 参数解析（CLONE_NEW_* 标志位与简化枚举双语义，B06-18 语义保留）+ CAP_SYS_ADMIN 特权判定（`credo::pwm_has_capability`，经顶层 re-export）+ 委托 `setns_by_type` |
+| setns | `services/proc/namespace.rs`（`setns_syscall`） | 参数解析（CLONE_NEW_* 标志位与简化枚举双语义，B06-18 语义保留）+ CAP_SYS_ADMIN 特权判定（`sgeg::pwm_has_capability`，经顶层 re-export）+ 委托 `setns_by_type` |
 | bpf | `services/debug/ebpf.rs`（`bpf_syscall`，既有安全代理接线） | 委托 framework `debug::sys_bpf`（机制） |
 | kexec_load | `services/driver/kexec.rs`（`kexec_syscall`，既有安全代理接线） | 委托 framework `driver::sys_kexec`（extern "C" 机制函数） |
 
@@ -207,13 +207,13 @@ T7 (预存登记)
 
 | 项 | services 落点 | 要点 |
 |---|---|---|
-| CREDO_DISK_INSTALL | `services/credo/storage/disk.rs`（`boot_install_syscall`） | cfg 门控镜像原回退层（x86_64 生产委托 `sys_boot_install`；kernel_test ENOSYS；aarch64 生产分支不编译走 `_ =>` 兜底）；机制含磁盘扇区写 + credo 权限检查留 framework |
-| CREDO_HOTPLUG_STATUS | 同上（`hotplug_status_syscall`） | 委托 `sys_hotplug_status`（unsafe 用户 buffer 写入 + 驱动状态读取）；用户态补 `hotplug_status` wrapper（T3 登记项） |
+| SGEG_DISK_INSTALL | `services/sgeg/storage/disk.rs`（`boot_install_syscall`） | cfg 门控镜像原回退层（x86_64 生产委托 `sys_boot_install`；kernel_test ENOSYS；aarch64 生产分支不编译走 `_ =>` 兜底）；机制含磁盘扇区写 + sgeg 权限检查留 framework |
+| SGEG_HOTPLUG_STATUS | 同上（`hotplug_status_syscall`） | 委托 `sys_hotplug_status`（unsafe 用户 buffer 写入 + 驱动状态读取）；用户态补 `hotplug_status` wrapper（T3 登记项） |
 | FB_OPEN | `services/driver/fb.rs`（`fb_open_syscall`，新建模块） | 委托 `sys_fb_open`（FB 驱动读取 + 用户 FbInfo 写入） |
 | FB_MMAP | 同上（`fb_mmap_syscall`） | 委托 `sys_fb_mmap`（页表映射）；机制层新增 `FB_MAP_RECORD` 单槽记录映射区间供 release 解除 |
 | FB_RELEASE | 同上（`fb_release_syscall`） | **自空 stub 实装**：依 `FB_MAP_RECORD` unmap 页表并清记录（SIMPLIFIED：单槽，多映射需扩展 per-process 表） |
 
-**framework 回退层清理**：删 SYS_CREDO_DISK_INSTALL/SYS_CREDO_HOTPLUG_STATUS/SYS_FB_OPEN/SYS_FB_MMAP/SYS_FB_RELEASE 5 分支；5 个机制函数 pub 化（经 `framework::syscall` 顶层 `pub use dispatch::*` re-export 供 services 委托）；`sys_fb_release` 空 stub 实装（FB_MAP_RECORD 记录 + unmap）。
+**framework 回退层清理**：删 SYS_SGEG_DISK_INSTALL/SYS_SGEG_HOTPLUG_STATUS/SYS_FB_OPEN/SYS_FB_MMAP/SYS_FB_RELEASE 5 分支；5 个机制函数 pub 化（经 `framework::syscall` 顶层 `pub use dispatch::*` re-export 供 services 委托）；`sys_fb_release` 空 stub 实装（FB_MAP_RECORD 记录 + unmap）。
 
 **验证**：build.sh all 5/5、clippy 3 维 0 warning、核心审计通过、host-tests 全量、QEMU boot（Ring 3/init）通过。
 
@@ -417,9 +417,9 @@ T7 (预存登记)
 - **`framework/fs/vfs/handle.rs`**：`vfs_open_internal` 入口归一化。
 - **`services/fs/file_handle.rs`**：`name_to_handle_at` 先 `resolve_user_path` 归一化再 `resolve_mount_fs`（host 源检查回归 `name_to_handle_at_uses_path_resolution` 同步断言两步入径）。
 - **`framework/proc/namespace.rs`**：`UtsNamespace.set_domainname`/`get_domainname`（65B 缓冲，未设置为空串）+ `UTS_DEFAULT_NODENAME` 常量（与 `UtsNamespace::new` 初值同源）+ `uts_current()`（**单一权威读取入口**：进程表 → `NamespaceSet` → uts；仅暂持 namespaces 锁取 Arc，UTS 字段锁在调用方按需获取以避免锁嵌套）。
-- **`framework/syscall/info.rs`**：`sys_uname` 的 nodename/domainname 改取 `uts_current()`（无进程上下文回退 `default_nodename()`），删除原硬编码 `"queenx-node"` / `"(none)"`。
+- **`framework/syscall/info.rs`**：`sys_uname` 的 nodename/domainname 改取 `uts_current()`（无进程上下文回退 `default_nodename()`），删除原硬编码 `"edgine-node"` / `"(none)"`。
 - **`services/proc/sysinfo.rs`**：`gethostname_syscall` 由恒返回字面量 `"localhost"` 改为读 UTS nodename（≤64B + NUL，按 `size` 截断）；`sethostname_syscall` 由"仅校验不存储"改为写入 UTS nodename。
-- **`framework/credo/capability.rs`**：新增命名常量 `SYSTEM_CAP_UTS_SETNAME = 1 << 9`（提取自原 sethostname 字面量 `9`）+ `credo::mod` 顶层 re-export；`sysinfo.rs` 特权判定由 `(pwm, 0, 9)` 改为 `(pwm, CAP_DOMAIN_SYSTEM, SYSTEM_CAP_UTS_SETNAME)`。
+- **`framework/sgeg/capability.rs`**：新增命名常量 `SYSTEM_CAP_UTS_SETNAME = 1 << 9`（提取自原 sethostname 字面量 `9`）+ `sgeg::mod` 顶层 re-export；`sysinfo.rs` 特权判定由 `(pwm, 0, 9)` 改为 `(pwm, CAP_DOMAIN_SYSTEM, SYSTEM_CAP_UTS_SETNAME)`。
 - **`services/syscall/dispatch.rs`**：`SYS_chroot` / `SYS_pivot_root`（dispatch_fs）、`SYS_setdomainname` / `SYS_execveat`（dispatch_proc）接线。
 
 **SIMPLIFIED 清单**：
@@ -461,7 +461,7 @@ T7 (预存登记)
 7 项**全部为纯预留抽象**（零生产引用）。判据：
 
 1. trait 自述目的「便于单元测试注入 mock」未落地——全仓无任何生产/测试调用方依赖该抽象。
-2. 具体实现的测试由 `framework/tests/test_nestfs.rs` 直接针对 `NestZap` / `NestZil` / `NestSpa` / `NestObjSet` / `NestTxgGroup` 等**具体类型**完成，未走 trait。
+2. 具体实现的测试由 `framework/tests/test_unkfs.rs` 直接针对 `NestZap` / `NestZil` / `NestSpa` / `NestObjSet` / `NestTxgGroup` 等**具体类型**完成，未走 trait。
 3. 7 文件内的 `#[cfg(test)] mod tests` 在 `make test-unit`（构造为 `--features kernel_test`，非 `cargo test`）与 `make test-host`（依赖编译不含 `cfg(test)`）下**均不编译**——从不执行。本仓 `cargo test` 入口仅为 host-tests（Makefile L419 / ci/build.sh L58）。
 4. host-tests 已走「直接引用内核真实源码」的源共享路线（DECISION-052 路线 C），取代 trait 注入式 mock。
 5. 项目既有教训明载：「Trait injection for empty forwarding logic creates unnecessary abstraction overhead」。
@@ -474,8 +474,8 @@ T7 (预存登记)
 
 | 文件 | 改动 |
 |---|---|
-| `services/fs/nestfs/{dmu,raidz,spa,txg,zap,zil,zil_persist}_trait.rs` | 删除 7 文件（含从不运行的内联测试） |
-| `services/fs/nestfs/mod.rs` | 删除 7 行 `pub mod` 声明 |
+| `services/fs/unkfs/{dmu,raidz,spa,txg,zap,zil,zil_persist}_trait.rs` | 删除 7 文件（含从不运行的内联测试） |
+| `services/fs/unkfs/mod.rs` | 删除 7 行 `pub mod` 声明 |
 | `scripts/audit_invariants.py` | I2 检测 docstring 中指向已删文件 `raidz_trait.rs:304` 的历史注释改写为通用表述（本批改动直接导致的 stale 引用，§9.3 本轮修复） |
 
 **验证**：
@@ -496,7 +496,7 @@ T7 (预存登记)
 
 | 类别 | 实例 | 为何零调用但保留 |
 |---|---|---|
-| services 的 framework 安全代理壳 | `driver/acpi.rs`（`get_lapic_base`/`get_ioapic_*`/`hpet_info`）、`credo/secure_boot.rs`（8 项）、`credo/crypto.rs`、`driver/char/serial.rs`、`driver/storage/ahci.rs`、`fs/nestfs/dedup.rs` | services 经顶层 re-export 暴露 safe API（F2 边界要求）；「零调用」≠「无用」 |
+| services 的 framework 安全代理壳 | `driver/acpi.rs`（`get_lapic_base`/`get_ioapic_*`/`hpet_info`）、`sgeg/secure_boot.rs`（8 项）、`sgeg/crypto.rs`、`driver/char/serial.rs`、`driver/storage/ahci.rs`、`fs/unkfs/dedup.rs` | services 经顶层 re-export 暴露 safe API（F2 边界要求）；「零调用」≠「无用」 |
 | 文件系统 mount/umount API 面 | `fs/{sysfs,cgroupfs,configfs,virtiofs,systree,devpts}.rs` 的 `mount_*`/`umount_*` | 完整实现，待 VFS mount 集成接线 |
 | 调试/统计查询面 | `idt/statistics.rs`、`idt/handlers.rs`、`mm/slab.rs`、`mm/page_fault.rs`、`sync/atomic.rs` 计数、`net/route.rs`、`net/netfilter.rs` | 诊断/可观测能力预留 |
 | 同步/跨架构原语预留 | `sync/{rwlock,seqlock,pi_mutex,atomic}`、`arch/aarch64/{mmu,gic,psci,vmm_aarch64}`、`arch/x86_64/{apic,ioapic}` | D-4 已登记「能力预留」 |
@@ -529,18 +529,18 @@ T7 (预存登记)
 
 | 项数 | 子系统 | 类别 |
 |---|---|---|
-| 60 | `framework/` 其他（idt/timer/net/cpu/dma/pci/io/debug/console/chitin/config/ipc/credo/error/vmspace/page_table/irqline） | 预留（查询/诊断/原语） |
+| 60 | `framework/` 其他（idt/timer/net/cpu/dma/pci/io/debug/console/egdf/config/ipc/sgeg/error/vmspace/page_table/irqline） | 预留（查询/诊断/原语） |
 | 58 | `framework/arch/*`（apic/ioapic/gic/mmu/psci/gdt/uart/acpi/timer/shadow_stack） | 预留（跨架构原语，D-4） |
 | 43 | `framework/proc/*`（进程/调度/命名空间/信号/fd_table/rlimit/cgroup/session/cfs） | 预留（策略查询面） |
 | 43 | `services/driver/*`（usb/acpi/char/storage/display/virtio/firmware/uefi） | 预留（safe 代理壳 + 硬件面） |
 | 42 | `framework/driver/*`（display/usb/net/power/uefi/hotplug/pci/input） | 预留（D-4） |
 | 41 | `services/fs/*`（systree/devpts/exfat/ext2/tmpfs/virtiofs/sysfs/cgroupfs/configfs/ramfs/inode） | 预留（mount API 面）+ 少量待裁 |
-| 34 | `services/fs/nestfs/*`（dedup/bp/arc/raidz/txg/spa/zil/dmu…） | 预留（NestFS 子系统） |
-| 30 | `services/` 其他（ipc/proc/mm/net/wasm/barrier/timer/config） | 预留 + 少量待裁 |
+| 34 | `services/fs/unkfs/*`（dedup/bp/arc/raidz/txg/spa/zil/dmu…） | 预留（UNKFS 子系统） |
+| 30 | `services/` 其他（ipc/proc/mm/net/wasm/freg/timer/config） | 预留 + 少量待裁 |
 | 22 | `framework/mm/*`（vmm_aarch64/kpti/numa/swap/slab/vma/page_fault/frame） | 预留（D-4） |
-| 21 | `services/credo/*`（identity/secure_boot/crypto） | 预留（D-4） |
+| 21 | `services/sgeg/*`（identity/secure_boot/crypto） | 预留（D-4） |
 | 17 | `framework/sync/*`（rwlock/seqlock/pi_mutex/atomic/mutex/rcu/spinlock） | 预留（D-4） |
-| 14 | `framework/barrier/*`（domain/recovery/reset/recoverable/snapshot） | 预留（BCB 策略面） |
+| 14 | `framework/freg/*`（domain/recovery/reset/recoverable/snapshot） | 预留（BCB 策略面） |
 | 13 | `framework/fs/vfs/*`（flock/handle/inotify/dcache/vfs） | 预留（VFS 内部） |
 
 **验证**：`audit_unwired_pub_fn.py` R1 **447 → 438**（−9，与删除项精确对应；R3 仍 0）；`./ci/build.sh all` 5/5（双架构 0w0e + host-tests + link）；`./ci/audit.sh quick` rc=0；`make test-host` 全量 0 failed；未跑 QEMU（未触及 boot/架构路径）。
@@ -555,13 +555,13 @@ T7 (预存登记)
 
 | 区间 | 覆盖 | 项数 |
 |---|---|---|
-| g1 | `framework/{arch,mm,sync,barrier}` | 111 |
-| g2 | `framework/` 其余（driver/fs/proc/idt/timer/net/cpu/dma/pci/io/debug/console/chitin/credo/ipc/…） | 158 |
+| g1 | `framework/{arch,mm,sync,freg}` | 111 |
+| g2 | `framework/` 其余（driver/fs/proc/idt/timer/net/cpu/dma/pci/io/debug/console/egdf/sgeg/ipc/…） | 158 |
 | g3 | `services/` 全量 | 169 |
 
 **方法与限制（复核前置，reviewer 反馈后补）**：
 
-**① 判定工具**：`scripts/audit_unwired_pub_fn.py` 的 **R1 规则**（`pub fn` 跨文件零引用 WARN）。引用计数实现为 `rg -c -w <name> src/ host-tests/`（[脚本 L247-255](file:///home/anfer/Code/QueenX/scripts/audit_unwired_pub_fn.py#L247-L255)），**纯文本词边界计数**；脚本自述「基于 .rs 文件源码 AST 分析, **不依赖 cargo build**」（[L69](file:///home/anfer/Code/QueenX/scripts/audit_unwired_pub_fn.py#L69)）。**声明侧无 cfg 感知**——`EXEMPT_CFG_ATTR` 只豁免「引用侧被 cfg 门控的引用」，不识别「声明本身被 cfg 门控」。
+**① 判定工具**：`scripts/audit_unwired_pub_fn.py` 的 **R1 规则**（`pub fn` 跨文件零引用 WARN）。引用计数实现为 `rg -c -w <name> src/ host-tests/`（[脚本 L247-255](file:///home/anfer/Code/Edgine/scripts/audit_unwired_pub_fn.py#L247-L255)），**纯文本词边界计数**；脚本自述「基于 .rs 文件源码 AST 分析, **不依赖 cargo build**」（[L69](file:///home/anfer/Code/Edgine/scripts/audit_unwired_pub_fn.py#L69)）。**声明侧无 cfg 感知**——`EXEMPT_CFG_ATTR` 只豁免「引用侧被 cfg 门控的引用」，不识别「声明本身被 cfg 门控」。
 
 **② 判定构建维**：**不存在单一构建维**。名义上是「`src/` + `host-tests/` 文本并集」，既非某一构建维，也未做「逐维取交集」。⇒ 台账中的「零引用」**不等于**「任何构建维下都无调用者」。
 
@@ -569,9 +569,9 @@ T7 (预存登记)
 
 | 误判源 | 实例 | 后果 |
 |---|---|---|
-| 声明侧 `#[cfg(target_arch = "…")]` | [mm/mod.rs:51-53](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/mod.rs#L51-L53) 以 `#[path = "vmm_aarch64.rs"]` 门控 `pub mod vmm`；`arch/aarch64/**` 同理 | 非本维编译的模块被判「无调用者」= **构造性结果**，非死代码证据 |
+| 声明侧 `#[cfg(target_arch = "…")]` | [mm/mod.rs:51-53](file:///home/anfer/Code/Edgine/src/kernel/framework/mm/mod.rs#L51-L53) 以 `#[path = "vmm_aarch64.rs"]` 门控 `pub mod vmm`；`arch/aarch64/**` 同理 | 非本维编译的模块被判「无调用者」= **构造性结果**，非死代码证据 |
 | 声明侧 `#[cfg(feature = "…")]` | 原实例 `sync/atomic.rs` `#[cfg(feature = "atomic_stats")] mod stats`（原链接已随本批 feature 删除失效） | feature 门控代码被判「死」，实为「默认维未启用」；**该实例本批已消解**（feature 删除，见 B-5.2 / B-5.3 G2）。**类别本身仍适用**（现存同类如 `#[cfg(feature = "kernel_test")]` / `#[cfg(feature = "alloc")]`） |
-| `#[cfg(feature = "kernel_test")]` 测试模块 | `barrier/snapshot.rs` / `barrier/reset/layered.rs` 的 `pub mod tests` | 测试用例被判「未接线」 |
+| `#[cfg(feature = "kernel_test")]` 测试模块 | `freg/snapshot.rs` / `freg/reset/layered.rs` 的 `pub mod tests` | 测试用例被判「未接线」 |
 
 ③ 表补充：**单维甄别的结果仅在该维有效**，跨维完备性需逐维复核（遗留 1 裁定：属**漏项风险**，非误删风险——甄别所在维中 x86_64 专属项*有*引用，不会被误列删候选；误删方向已由「aarch64 门控」属性隔离）。
 
@@ -622,7 +622,7 @@ T7 (预存登记)
 
 | 区间 | 项数 | 删 | 接线 | 预留 | 待裁 |
 |---|---|---|---|---|---|
-| g1 `framework/{arch,mm,sync,barrier}` | 111 | 59 | 34 | 8 | 10 |
+| g1 `framework/{arch,mm,sync,freg}` | 111 | 59 | 34 | 8 | 10 |
 | g2 `framework/` 其余 | 158 | 7 | 102 | 47 | 2 |
 | g3 `services/` | 169 | 4 | 6 | 150 | 9 |
 | **合计** | **438** | **70** | **142** | **205** | **21** |
@@ -652,7 +652,7 @@ T7 (预存登记)
 
 > **裁定五（审计噪音治理——单开任务，最小形态）**：`scripts/audit_unwired_pub_fn.py`（R1）在 CI 反复报零引用 pub fn，T5 关闭后若不治理则**成果无法固化、清单必漂移**。裁定：给 R1 增加「已分类清单」数据源，**不新建独立文件**，清单以**台账内机器可读区块**承载——以 `audit-classified-begin` / `audit-classified-end` 两个 HTML 注释标记圈定（**实际区块见 B-6**）；审计脚本读该区块作为「已知分类」集合，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败视同未分类（仍报）；**只降噪不豁免**＝不改变「零引用」事实判定，只改变报告分级。定位＝**单开任务**，**不作为 T5 前置**（T5 可先完成甄别），但**是 T5 关闭条件之一**。
 
-> **裁定六（授权边界）**：委托人**可自主处置**＝判据复核 / 三档分档 / 试删 / 退桶 / 桶数修订 / 台账事实订正 / 已确认删候选的试删全流程（含提交、回退）。**必须上报（不自主决定）**＝① **新增删候选**（本轮 23 → 2 的教训：**宁保守**）；② 删除涉及**安全面**（credo / 权限 / 路径 / 内存保护）；③ 删除涉及 **TCB 核心**（GDT / IDT / MMU / 中断 / 调度）；④ 删除涉及**已登记路线图的地基**（如 `pcid_is_enabled`）。
+> **裁定六（授权边界）**：委托人**可自主处置**＝判据复核 / 三档分档 / 试删 / 退桶 / 桶数修订 / 台账事实订正 / 已确认删候选的试删全流程（含提交、回退）。**必须上报（不自主决定）**＝① **新增删候选**（本轮 23 → 2 的教训：**宁保守**）；② 删除涉及**安全面**（sgeg / 权限 / 路径 / 内存保护）；③ 删除涉及 **TCB 核心**（GDT / IDT / MMU / 中断 / 调度）；④ 删除涉及**已登记路线图的地基**（如 `pcid_is_enabled`）。
 
 > **裁定七（待裁 47 的优先次序）**：**安全面待 T3（2 项，ramfs `split_path` / `validate_path`）先解**——它**阻塞一个可能的安全缺陷判定**；其余两态按文档工作量平行推进。
 
@@ -674,7 +674,7 @@ T7 (预存登记)
 | `framework/arch/aarch64/mmu.rs` | 1：`allows_el0_access` | 页表描述符权限谓词（硬件内省） |
 | `framework/arch/aarch64/timer.rs` | 1：`read_control` | 定时器控制寄存器读取（硬件内省） |
 | `framework/mm/vmm_aarch64.rs` | 5：`is_desc_table` `is_desc_block` `is_desc_page` `is_desc_device_memory` `is_desc_non_cacheable` | 页表描述符类型谓词（硬件内省） |
-| `services/credo/crypto.rs` | 2：`ct_eq_salt`(210) `ct_eq_password`(216) | **族残缺档（reviewer 第三轮裁定一）**：与 `ct_eq_hash`(204) 形状完全相同，同为 `Salt` / `PasswordHash` / `Sha256Hash` 的**类型化比较同族**；`ct_eq_hash` 有调用者、未入删候选 ⇒ 删另两者则**族残缺且不对称**。真正作用不是「提供能力」（`ct_eq` 已提供），而是**阻止调用方拆字段**（写 `ct_eq(&a.0, &b.0)`）——删掉等于**诱导密码学代码绕过类型包装**、降低抽象层级。与 A-1 保留 `sync/*` 原语族入口**判据完全同构** |
+| `services/sgeg/crypto.rs` | 2：`ct_eq_salt`(210) `ct_eq_password`(216) | **族残缺档（reviewer 第三轮裁定一）**：与 `ct_eq_hash`(204) 形状完全相同，同为 `Salt` / `PasswordHash` / `Sha256Hash` 的**类型化比较同族**；`ct_eq_hash` 有调用者、未入删候选 ⇒ 删另两者则**族残缺且不对称**。真正作用不是「提供能力」（`ct_eq` 已提供），而是**阻止调用方拆字段**（写 `ct_eq(&a.0, &b.0)`）——删掉等于**诱导密码学代码绕过类型包装**、降低抽象层级。与 A-1 保留 `sync/*` 原语族入口**判据完全同构** |
 
 > **安全面「族残缺」档并入（reviewer 第三轮裁定一：41 → 43）**：`ct_eq_salt` / `ct_eq_password` 由「安全面待确认」定型为**族残缺** ⇒ 按裁定只保留、不删、不停留于待裁。**附核实（裁定一要求）**：`grep -rn` 全仓 `src/` + `host-tests/` 实测两者**零引用**（仅自身定义行，无任何调用）；二者为 services 侧普通 `pub fn`，**无 `#[no_mangle]` / 无 `extern "C"` / 无 FFI 导出**，且零引用即排除跨 crate / 用户态 API 面按名调用 ⇒ **保留不引入新暴露面**。
 
@@ -701,10 +701,10 @@ T7 (预存登记)
 
 | 文件 | 项（行号） | 定型档 | 去向 |
 |---|---|---|---|
-| `services/credo/crypto.rs` | `ct_eq_salt`(210) `ct_eq_password`(216) | **族残缺** | ⇒ **A-1 硬件原语完整性保留（43）**。与 `ct_eq_hash`(204) 同族，删则族残缺且不对称，且诱导调用方绕过类型包装（裁定一） |
+| `services/sgeg/crypto.rs` | `ct_eq_salt`(210) `ct_eq_password`(216) | **族残缺** | ⇒ **A-1 硬件原语完整性保留（43）**。与 `ct_eq_hash`(204) 同族，删则族残缺且不对称，且诱导调用方绕过类型包装（裁定一） |
 | `services/fs/ramfs.rs` | `split_path`(524) `validate_path`(544) | **待定型（冗余 / 缺陷 二选一）** | ⇒ **B-4 待裁**。**不得进试删队列**，须先由 T3 安全面给出「VFS 是否已提供等价校验」的结论（裁定二） |
 
-> **事实更正（裁定二，威胁模型修正）**：上轮 A-3 记述的「路径穿越防护」**不成立**——实读 [ramfs.rs:544-562](file:///home/anfer/Code/QueenX/src/kernel/services/fs/ramfs.rs#L544-L562) `validate_path` 只做**空 / 长度(`VFS_MAX_PATH`) / NUL** 三项检查，**不含 `..` 穿越检查**；穿越防护由 VFS 侧 `resolve_path`（[ramfs.rs:515](file:///home/anfer/Code/QueenX/src/kernel/services/fs/ramfs.rs#L515) `global().resolve_path(path)`）负责。故「删掉即移除穿越防护」的担心不成立。
+> **事实更正（裁定二，威胁模型修正）**：上轮 A-3 记述的「路径穿越防护」**不成立**——实读 [ramfs.rs:544-562](file:///home/anfer/Code/Edgine/src/kernel/services/fs/ramfs.rs#L544-L562) `validate_path` 只做**空 / 长度(`VFS_MAX_PATH`) / NUL** 三项检查，**不含 `..` 穿越检查**；穿越防护由 VFS 侧 `resolve_path`（[ramfs.rs:515](file:///home/anfer/Code/Edgine/src/kernel/services/fs/ramfs.rs#L515) `global().resolve_path(path)`）负责。故「删掉即移除穿越防护」的担心不成立。
 >
 > **零调用的两种含义（裁定二给出，必须二选一）**：① **VFS 层已做等价（空/长度/NUL）校验** ⇒ 这两项**冗余**，可删，但须**登记契约**「ramfs 依赖 VFS 前置校验」（否则将来 VFS 改动会无声破坏 ramfs 的假设）；② **VFS 未做等价校验** ⇒ 零调用说明 ramfs 路径入口**缺基础校验**，是**安全缺陷**而非死代码 ⇒ **不得删**，登记缺陷移 T3 并按 C-1 接线（ramfs 路径入口补调用）。此项待 T3 结论后定型。
 
@@ -715,7 +715,7 @@ T7 (预存登记)
 | `framework/arch/shadow_stack.rs` | `is_ssp_valid`(129) | **同文件整组统一**（`set_ssp` 等 4 项在待裁，取决于 CET 路线图）；且属安全敏感面（CET/SSP）。② 未取得等价入口证据 |
 | `framework/mm/numa.rs` | `contains_cpu`(195) `all_nodes`(334) | **同文件整组统一**（`set_distance` 等 3 项在待裁，取决于 NUMA 路线图）。② 未取得等价入口证据 |
 | `framework/mm/kpti.rs` | `pcid_is_enabled`(149) | **已登记的未完成路线图项**：文件头 doc（`kpti.rs:23-31`）明载「未完成 … **PCID/INVPCID 优化**：当前每次切换 CR3 都 TLB 全清，高频 syscall 性能损失 5-15%」⇒ 该函数是这条已登记项的地基，删它＝删掉登记过的路线图基础设施 |
-| `framework/barrier/reset/audit.rs` | `count_by_result`(101) | ② 未取得等价入口（同文件 `count_by_layer` 是另一维度，非等价）；③ 属诊断查询 API 面 |
+| `framework/freg/reset/audit.rs` | `count_by_result`(101) | ② 未取得等价入口（同文件 `count_by_layer` 是另一维度，非等价）；③ 属诊断查询 API 面 |
 | `framework/mm/page_fault.rs` | `page_fault_count`(497) | ② 未取得等价**封装**入口（`PAGE_FAULT_COUNT` 为 `pub static`，是并行读法而非等价替代）；③ 属统计 API 面 |
 | `framework/mm/slab.rs` | `utilization`(921) | ② 仅部分等价（`get_stats() -> CacheStats{total_objects, active_objects}` 可推导，但为使能等价能力需调用方自行除法）；③ 属统计 API 面 ⇒ 证据不足以支撑删除 |
 | `framework/arch/x86_64/gdt.rs` | `get_gdt_table`(701) | **注释原文核对**：`/// 获取 GDT 表的引用 (调试用途)` ⇒ 自述调试用途，**非死代码**，退桶 |
@@ -735,7 +735,7 @@ T7 (预存登记)
 | `framework/arch/x86_64/acpi.rs` | `get_ap`(457) | `get_ap_list` **1** / `get_ap_count` **3** / `has_madt` **6** / `parse_madt` **5** | AP 信息访问器族在用 |
 | `framework/fs/vfs/vfs.rs` | `get_fs_name`(75) | `get_fs_type` **2** / `get_fs` **13** / `set_fs` **1** | VFS 挂载点元信息访问器族在用 |
 
-> **`vfs_*_safe` 三项的档位争议（如实登记）**：实测 [services/fs/dir_ops.rs:14-28](file:///home/anfer/Code/QueenX/src/kernel/services/fs/dir_ops.rs#L14-L28) 已**直接调用裸 `extern "C"`** `vfs_seek` / `vfs_readdir`（不经 `_safe` 壳）⇒ 该族**本就不是封装边界**，删 3 员**不改变抽象层级**（弱于 `tss_64bit` 的族残缺强度）。仍按「同族部分在用 ⇒ 保对称」退回待裁，档位由 reviewer 复核确定。
+> **`vfs_*_safe` 三项的档位争议（如实登记）**：实测 [services/fs/dir_ops.rs:14-28](file:///home/anfer/Code/Edgine/src/kernel/services/fs/dir_ops.rs#L14-L28) 已**直接调用裸 `extern "C"`** `vfs_seek` / `vfs_readdir`（不经 `_safe` 壳）⇒ 该族**本就不是封装边界**，删 3 员**不改变抽象层级**（弱于 `tss_64bit` 的族残缺强度）。仍按「同族部分在用 ⇒ 保对称」退回待裁，档位由 reviewer 复核确定。
 
 > **`get_ap` 的试删门槛已实测通过（如实登记）**：该项试删后 `./ci/build.sh all` / `./ci/audit.sh quick` / `make test-host` / `make test-unit` / `./scripts/qemu_boot_test.sh x86_64` **5/5 全过**（QEMU boot 硬闸门通过）⇒ **门槛在原理上无法识别族残缺**（与 ⑦ 试删盲区同源），故按裁定退回待裁，代码已 `git checkout` 回退。
 
@@ -743,7 +743,7 @@ T7 (预存登记)
 
 | 文件 | 项（行号） | 原台账记述 | 实测更正 |
 |---|---|---|---|
-| `framework/barrier/domain.rs` | `consume_quota_tick`(213) `is_quota_exceeded`(307) | 「② 与**在用** `check_quota` 语义重复」 | **`check_quota` 自身零引用**（仅 [domain.rs:278](file:///home/anfer/Code/QueenX/src/kernel/framework/barrier/domain.rs#L278) 定义行；全仓其余命中仅在 `docs/` 与 `build/*.map`）⇒「在用」**不成立**；且 `check_quota` 本身已列在同台账待裁表（B-2）。② 判据落空 ⇒ 退桶 |
+| `framework/freg/domain.rs` | `consume_quota_tick`(213) `is_quota_exceeded`(307) | 「② 与**在用** `check_quota` 语义重复」 | **`check_quota` 自身零引用**（仅 [domain.rs:278](file:///home/anfer/Code/Edgine/src/kernel/framework/freg/domain.rs#L278) 定义行；全仓其余命中仅在 `docs/` 与 `build/*.map`）⇒「在用」**不成立**；且 `check_quota` 本身已列在同台账待裁表（B-2）。② 判据落空 ⇒ 退桶 |
 | `framework/ipc/dynamic.rs` | `pipe_exists`(118) | 「② 可由**在用** `get_pipe` / `pipe_count` 等价判定」 | 全仓**无 `get_pipe` 符号**；`pipe_count()` 只返回数量、**不判定指定 `IpcId` 是否存在** ⇒ **无能力等价的公共入口**，② 判据落空 ⇒ 按三合一判据它本不该入删候选，退桶 |
 
 > **负债如实登记**：上表 2 处错误系「二次修订」时未经全仓实测即写入 ② 判据所致——已于本轮就地订正，并据此退桶。
@@ -766,7 +766,7 @@ T7 (预存登记)
 
 | 文件 | 项 | 待裁点 |
 |---|---|---|
-| `framework/arch/aarch64/mmu.rs` + `framework/mm/vmm_aarch64.rs` | 2：`diagnose_permission` / `diagnose_descriptor` | **aarch64 专属 + 诊断类**（[mm/mod.rs:51-53](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/mod.rs#L51-L53) 门控）⇒ x86_64 维下整模块不编译，「零引用」为**构造性结果**；另 10 项 aarch64 项因「硬件原语」优先级已归 A-1（见该桶优先级裁定） |
+| `framework/arch/aarch64/mmu.rs` + `framework/mm/vmm_aarch64.rs` | 2：`diagnose_permission` / `diagnose_descriptor` | **aarch64 专属 + 诊断类**（[mm/mod.rs:51-53](file:///home/anfer/Code/Edgine/src/kernel/framework/mm/mod.rs#L51-L53) 门控）⇒ x86_64 维下整模块不编译，「零引用」为**构造性结果**；另 10 项 aarch64 项因「硬件原语」优先级已归 A-1（见该桶优先级裁定） |
 | `framework/sync/atomic.rs` | 4：`record_inc` `record_dec` `record_cmpxchg_success` `record_cmpxchg_fail` | ~~原位于 `#[cfg(feature = "atomic_stats")]`~~，**feature 门控代码非死代码**；既有登记 [subsystem-sync.md §9.3 [P2]](archive/audit-2026-08-14/subsystem-sync.md#L1075-L1092)「`atomic_stats` 引用 `println!` — no_std 不支持」⇒ **本批处置＝删除 feature**（按职责判定：非内核所需 + 零履行 + 已有 `*_dump_stats` 等价诊断 idiom，见 B-5.2 / B-5.3 G2），4 项随 feature 消失 |
 
 **B-2 原有（21 项）**
@@ -775,7 +775,7 @@ T7 (预存登记)
 |---|---|---|
 | `framework/arch/shadow_stack.rs` | `set_ssp`(124) `alloc_kernel_shadow_stack`(302) `configure_user_cet_msr`(394) `configure_interrupt_ssp_table`(445) | 去留取决于 CET 子系统路线图 |
 | `framework/arch/x86_64/acpi.rs` | `get_dmar_drhd_list`(878) `get_dmar_host_addr_width`(883) | 取决于 IOMMU/DMAR 路线图 |
-| `framework/barrier/recoverable.rs` | `lock_fast`(75) | 免 checkpoint 快速路径，属设计决策 |
+| `framework/freg/recoverable.rs` | `lock_fast`(75) | 免 checkpoint 快速路径，属设计决策 |
 | `framework/mm/numa.rs` | `set_distance`(291) `best_alloc_node`(339) `nearest_free_node`(346) | 取决于 NUMA 子系统路线图 |
 | `framework/cpu/cpuid.rs` | `cpuid_checked`(60) | 叶范围校验变体，保留安全变体 vs 删 |
 | `framework/driver/bus/pci.rs` | `pci_scan`(75) | 与在用 `scan_all_buses` 能力重叠且带日志（批 1 已登记） |
@@ -790,7 +790,7 @@ T7 (预存登记)
 | `framework/arch/shadow_stack.rs` | `is_ssp_valid`(129) | 与同文件 4 项（`set_ssp` 等）**整组统一**，取决于 CET 路线图；安全敏感（CET/SSP） |
 | `framework/mm/numa.rs` | `contains_cpu`(195) `all_nodes`(334) | 与同文件 3 项（`set_distance` 等）**整组统一**，取决于 NUMA 路线图 |
 | `framework/mm/kpti.rs` | `pcid_is_enabled`(149) | 已登记路线图项（`kpti.rs:23-31` PCID/INVPCID 优化）的地基 |
-| `framework/barrier/reset/audit.rs` | `count_by_result`(101) | 诊断查询 API 面；② 未取得等价入口 |
+| `framework/freg/reset/audit.rs` | `count_by_result`(101) | 诊断查询 API 面；② 未取得等价入口 |
 | `framework/mm/page_fault.rs` | `page_fault_count`(497) | 统计 API 面；② 未取得等价封装入口 |
 | `framework/mm/slab.rs` | `utilization`(921) | 统计 API 面；② 仅部分等价（`CacheStats` 可推导） |
 | `framework/arch/x86_64/gdt.rs` | `get_gdt_table`(701) | 注释自述调试用途 ⇒ 非死代码 |
@@ -809,11 +809,11 @@ T7 (预存登记)
 >
 > | `validate_path` 检查项 | 下层实测 | 是否等价 |
 > |---|---|---|
-> | **空** | framework [`RamFsData::open`](file:///home/anfer/Code/QueenX/src/kernel/framework/fs/ramfs/ramfs_data.rs#L481-L484)（L482 `if path.is_empty() { return None }`）＋ [`resolve_path`](file:///home/anfer/Code/QueenX/src/kernel/framework/fs/ramfs/ramfs_data.rs#L354-L365)（去前导 `/`、跳过空段） | ✅ **等价** |
-> | **长度**（`VFS_MAX_PATH`） | 路径以 `[u8; VFS_MAX_PATH]`（[vfs/types.rs:16](file:///home/anfer/Code/QueenX/src/kernel/framework/fs/vfs/types.rs#L16) ＝ 128）承载，转换处 `bytes.len().min(VFS_MAX_PATH - 1)`（[vfs.rs:53](file:///home/anfer/Code/QueenX/src/kernel/framework/fs/vfs/vfs.rs#L53)/137/546/574）**按构造截断** | ⚠️ **不等价**（截断 vs `NameTooLong` 报错；语义差异） |
-> | **NUL** | 路径以 **NUL 结尾语义**承载（`position(\|&b\| b == 0)`，[vfs.rs:553](file:///home/anfer/Code/QueenX/src/kernel/framework/fs/vfs/vfs.rs#L553)）⇒ 嵌入式 NUL 在边界被截断 | ✅ 等效处理（非显式报错） |
+> | **空** | framework [`RamFsData::open`](file:///home/anfer/Code/Edgine/src/kernel/framework/fs/ramfs/ramfs_data.rs#L481-L484)（L482 `if path.is_empty() { return None }`）＋ [`resolve_path`](file:///home/anfer/Code/Edgine/src/kernel/framework/fs/ramfs/ramfs_data.rs#L354-L365)（去前导 `/`、跳过空段） | ✅ **等价** |
+> | **长度**（`VFS_MAX_PATH`） | 路径以 `[u8; VFS_MAX_PATH]`（[vfs/types.rs:16](file:///home/anfer/Code/Edgine/src/kernel/framework/fs/vfs/types.rs#L16) ＝ 128）承载，转换处 `bytes.len().min(VFS_MAX_PATH - 1)`（[vfs.rs:53](file:///home/anfer/Code/Edgine/src/kernel/framework/fs/vfs/vfs.rs#L53)/137/546/574）**按构造截断** | ⚠️ **不等价**（截断 vs `NameTooLong` 报错；语义差异） |
+> | **NUL** | 路径以 **NUL 结尾语义**承载（`position(\|&b\| b == 0)`，[vfs.rs:553](file:///home/anfer/Code/Edgine/src/kernel/framework/fs/vfs/vfs.rs#L553)）⇒ 嵌入式 NUL 在边界被截断 | ✅ 等效处理（非显式报错） |
 >
-> **调用面实测**：services `SafeRamFs`（`GLOBAL_RAMFS` / `global()`）**在 `src/` 下无生产调用者**（全仓仅 host-tests [td18_fs_kernel_error_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/td18_fs_kernel_error_test.rs) 对该文件做**源文本断言**，非调用）；`split_path` / `validate_path` 自身更是全仓零引用 ⇒ 其形态是「**未被调用的辅助**」，**不是**「被调用却缺失校验」。
+> **调用面实测**：services `SafeRamFs`（`GLOBAL_RAMFS` / `global()`）**在 `src/` 下无生产调用者**（全仓仅 host-tests [td18_fs_kernel_error_test.rs](file:///home/anfer/Code/Edgine/host-tests/tests/td18_fs_kernel_error_test.rs) 对该文件做**源文本断言**，非调用）；`split_path` / `validate_path` 自身更是全仓零引用 ⇒ 其形态是「**未被调用的辅助**」，**不是**「被调用却缺失校验」。
 >
 > **结论**：**非安全缺陷**（活路径的空校验由 framework 提供；长度由 VFS 缓冲区按构造约束；NUL 由缓冲区语义处理）⇒ 上轮「阻塞一个可能的安全缺陷判定」**已解除**。定型**倾向「冗余」**（附两条保留：① 长度校验**语义不等价**（截断 vs 报错）⇒ 将来若接线 services 代理入口须补长度校验并登记契约；② 删除属**安全面**，按**裁定六**「必须上报」⇒ **不自主删**，**待 reviewer 授权**）。本项保留在待裁（三态＝安全面待 T3），**三字段见 B-5**。
 
@@ -840,11 +840,11 @@ T7 (预存登记)
 |---|---|---|---|
 | **G1 aarch64 门控诊断**（2） | `arch/aarch64/mmu.rs::diagnose_permission`、`mm/vmm_aarch64.rs::diagnose_descriptor` | ② **不成立**——aarch64 专属诊断输出（非原语），x86_64 维下 `mm/mod.rs:51-53` 整模块门控，**「零引用」为构造性结果**；③ aarch64 架构门控诊断面；族（aarch64 诊断/内省族）完整 | 完整性保留（aarch64 门控诊断面） |
 | **G2 feature 门控**（4 ⇒ **0**） | `sync/atomic.rs::record_inc` / `record_dec` / `record_cmpxchg_success` / `record_cmpxchg_fail` | ② **不适用**（feature 门控代码非死代码）；③ feature 面。**本批已按职责判定删除 feature**（非内核所需 + 零履行 + 已有 `*_dump_stats` 等价诊断 idiom）⇒ 4 项随 feature 消失 | **已删（feature 去留裁定：删），4 项归零** |
-| **G3 机制原语 / 安全加固 / TCB**（3） | `barrier/recoverable.rs::lock_fast`、`cpu/cpuid.rs::cpuid_checked`、`arch/x86_64/gdt.rs::get_gdt_table` | ② **不成立**——`lock_fast` 为免 checkpoint 快速路径（与常规 `lock` 路径能力不同）；`cpuid_checked` 为**叶范围校验安全变体**（裸 `cpuid` 无校验，非等价）；`get_gdt_table` 注释自述 `/// 获取 GDT 表的引用 (调试用途)`（退桶时已引原文核对）；③ 机制原语 / 安全加固 / **TCB 核心**（GDT，裁定六）面 | 完整性保留 |
-| **G4 驱动 / 统计 / 诊断 API 面**（4） | `driver/bus/pci.rs::pci_scan`、`barrier/reset/audit.rs::count_by_result`、`mm/page_fault.rs::page_fault_count`、`mm/slab.rs::utilization` | ② **不成立（能力重叠但非等价）**——`pci_scan`（`driver/bus/pci.rs:75-90`）唯一实现体调用在用 `pci::scan_all_buses`（`pci/mod.rs:518`，3 处在用），**差异能力＝逐设备 `klog_info!` 输出**（与 A-6 `format_duration` 的「`core::fmt` 非等价」同款判据）；`count_by_result` 与同文件 `count_by_layer` 为**不同维度**；`page_fault_count` 的 `PAGE_FAULT_COUNT` 为 `pub static`（并行读法非等价封装）；`utilization` 需调用方自行除法（部分等价）；③ 驱动 / 统计 / 诊断 API 面 | 完整性保留 |
+| **G3 机制原语 / 安全加固 / TCB**（3） | `freg/recoverable.rs::lock_fast`、`cpu/cpuid.rs::cpuid_checked`、`arch/x86_64/gdt.rs::get_gdt_table` | ② **不成立**——`lock_fast` 为免 checkpoint 快速路径（与常规 `lock` 路径能力不同）；`cpuid_checked` 为**叶范围校验安全变体**（裸 `cpuid` 无校验，非等价）；`get_gdt_table` 注释自述 `/// 获取 GDT 表的引用 (调试用途)`（退桶时已引原文核对）；③ 机制原语 / 安全加固 / **TCB 核心**（GDT，裁定六）面 | 完整性保留 |
+| **G4 驱动 / 统计 / 诊断 API 面**（4） | `driver/bus/pci.rs::pci_scan`、`freg/reset/audit.rs::count_by_result`、`mm/page_fault.rs::page_fault_count`、`mm/slab.rs::utilization` | ② **不成立（能力重叠但非等价）**——`pci_scan`（`driver/bus/pci.rs:75-90`）唯一实现体调用在用 `pci::scan_all_buses`（`pci/mod.rs:518`，3 处在用），**差异能力＝逐设备 `klog_info!` 输出**（与 A-6 `format_duration` 的「`core::fmt` 非等价」同款判据）；`count_by_result` 与同文件 `count_by_layer` 为**不同维度**；`page_fault_count` 的 `PAGE_FAULT_COUNT` 为 `pub static`（并行读法非等价封装）；`utilization` 需调用方自行除法（部分等价）；③ 驱动 / 统计 / 诊断 API 面 | 完整性保留 |
 | **G5 FS mount-unmount 面 + Plan B FD 表**（9） | `services/fs/{sysfs,cgroupfs,configfs,virtiofs,systree}.rs::umount_*`（5）、`services/fs/devpts.rs::umount_devpts`、`services/fs/process_fd_table.rs::get_fd` / `close_cloexec_fds` / `clear_non_cloexec`（3） | ② **不成立**——各 FS 的 unmount 面唯一（无等价入口），与 C-2 `mount_*` 5 项为同批「待 VFS mount 集成」；`umount_devpts`（`devpts.rs:237-243`）实现体**误调 `mount_devpts`**、注释自述「当前实现恒返回 `Ok(())`」⇒ **已知缺陷形态（缺陷档）**，但**无调用链且非安全面** ⇒ 不删；`process_fd_table.rs` 3 项属**未采用的 Plan B 并行 FD 表**（`services/fs/mod.rs:43` 模块已注册）；③ FS / 进程 API 面 | 完整性保留 |
 | **G6 族残缺**（6） | `arch/x86_64/gdt.rs::tss_64bit`、`fs/vfs/handle.rs::vfs_close_safe` / `vfs_seek_safe` / `vfs_readdir_safe`、`arch/x86_64/acpi.rs::get_ap`、`fs/vfs/vfs.rs::get_fs_name` | ② **不成立**；**族残缺**（实测引用计数：`Granularity` 构造器族 `code_64bit` 4 / `data_32bit` 4 / `tss_64bit` 0；`vfs_*_safe` 全族 17 员 / 14 员在用；AP 访问器族 `get_ap_list` 1 / `get_ap_count` 3 / `has_madt` 6 / `parse_madt` 5 在用；VFS 元信息访问器族 `get_fs_type` 2 / `get_fs` 13 / `set_fs` 1 在用）⇒ 删则**族残缺且不对称**、诱导调用方绕过类型包装 | 完整性保留（**B-0 三档规定：族残缺 ⇒ 并入 A-1 完整性保留**） |
-| **G7 无等价入口（计数 / IPC 查询）**（3） | `barrier/domain.rs::consume_quota_tick` / `is_quota_exceeded`、`ipc/dynamic.rs::pipe_exists` | ② **不成立**（实测订正：`check_quota` 自身零引用且已列 B-2 ⇒ 原「与在用 `check_quota` 重复」不成立；全仓**无 `get_pipe` 符号**、`pipe_count()` 不判定指定 `IpcId` 是否存在）；③ 计数 / IPC 查询 API 面 | 完整性保留 |
+| **G7 无等价入口（计数 / IPC 查询）**（3） | `freg/domain.rs::consume_quota_tick` / `is_quota_exceeded`、`ipc/dynamic.rs::pipe_exists` | ② **不成立**（实测订正：`check_quota` 自身零引用且已列 B-2 ⇒ 原「与在用 `check_quota` 重复」不成立；全仓**无 `get_pipe` 符号**、`pipe_count()` 不判定指定 `IpcId` 是否存在）；③ 计数 / IPC 查询 API 面 | 完整性保留 |
 | **G8 无等价格式化入口**（1） | `timer/tick.rs::format_duration` | ② **不成立**（全仓无等价时长格式化公共入口；`core::fmt` 为通用设施，**不能产出 `1h23m45s678ms`** ⇒ 非能力等价）；族（`tick.rs` 的 tick↔单位换算族）**外**成员；③ `#[cfg(feature = "alloc")]` feature 面 | 完整性保留 |
 
 **B-5.2 三字段（组内同因同责，逐组登记）**
@@ -886,7 +886,7 @@ T7 (预存登记)
 
 > 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**440 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
 >
-> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝MIG-004 安全代理批次**（本轮 R1 复核检出 **6 项既有条目失效**并逐项移除：4 项因本工程而失效 —— 3 项 `framework/chitin/user_driver.rs::{chitin_forward_irq, devtree_map_user_device, devtree_unmap_user_device}` 因 services `chitin::user_driver` 强类型封装接线后不再零引用、1 项 `services/chitin/mod.rs::find_net_device` 因函数下沉至 `services/chitin/proto.rs` 并被 host-tests 调用；另 2 项**预存失效** `framework/arch/aarch64/gic.rs::{configure_spi_level, enable_spi}`（实为同文件私有 `configure_and_enable_device_spi` 内部调用 ⇒ refs=2）经用户裁决本轮一并清理 ⇒ **446 → 440**；同步改写 `services/chitin/proto.rs` 头注释、去除与 `char_read`/`char_write` 同名的字面量，使该两项恢复「真零引用」并被本区块正确命中；修复后实测区块 440 ＝ matched 440、stale 0、HIGH 18 不变）。**上一轮同步＝B-6 区块路径漂移清理（**B-13.7**）**（R1 实测检出 43 项**失效条目**并逐项处置：31 项路径更新 `framework/...`→`services/...`（文件随框内核迁移下沉、函数仍零引用 ⇒ 原 framework 路径失效、现报 HIGH），12 项移除（已接线 / 已删 / 已豁免：`framework/driver/net/e1000_io.rs::install_rings`（已删）、`::set_ctrl` / `::set_ipg` / `::set_rx_ctl` / `::set_tx_ctl`（已被 `services/driver/net/e1000.rs` 调用）、`framework/driver/usb/xhci.rs::init_command_ring` / `::recover_endpoint`（已删）、`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`（内联测试引用）、`services/chitin/mod.rs::find_by_proto`（host 测试引用）、`services/driver/usb/xhci.rs::port_connected` / `::port_status`（内部调用））⇒ **458 → 446**；修复后实测区块 446 ＝ matched 446、stale 0、HIGH 18）。**上一轮同步＝B-12.8 遗留清理批次（**B-13**）**（本批改动**未改变** R1 零引用集合，以 HEAD 独立 worktree 对跑逐项一致 ⇒ 本区块计数**不变（458）**，见 **B-13.6**）。**上一轮同步＝热插拔运行时接线批次（**B-12**）**（4 项因本工程「接线 / 删除」而不再零引用 ⇒ 本区块移除：`framework/driver/hotplug.rs::hotplug_poll`（函数已不存在，由 `hotplug_wakeup` + softirq 轮询替代）、`services/driver/usb/xhci.rs::ack_port_change` / `::has_port_change`（已被 `usb_port_poll` 调用）、`framework/driver/block.rs::mark_removed`（函数已不存在，由 Chitin 墓碑协议 `chitin_blk_is_removed` 替代）⇒ **462 → 458**）。**上一轮同步＝`atomic_stats` feature 删除**（`framework/sync/atomic.rs` 4 项 `record_*` 随 feature 删除而消失 ⇒ 本区块移除 4 条目，**466 → 462**；处置依据＝按职责判定「非内核所需 + 零履行 + 已有 `*_dump_stats` 等价诊断 idiom」，见 **B-5.2 / B-5.3 G2**）。**更早同步＝per-process fd 表全量下沉（**B-11**）**（10 项因本工程接线 / 删除而不再零引用 ⇒ 本区块移除：`framework/fs/vfs/handle.rs::vfs_get_fd_handle`（poll 改源）、`framework/proc/fd_table.rs` 4 项（`get_handle_id` / `is_cloexec` / `set_cloexec` / `get_cloexec_fds` 接线）、`framework/proc/scheduler.rs::get_current_process`（`with_current_fd_table` 取当前进程）、`services/fs/process_fd_table.rs` 4 项（Plan B 表文件删除）⇒ **476 → 466**；编辑前实测区块为 **476** 行，区块说明原记 475（差 1，前批计数笔误，本次以实测为准）。另有 2 条**既有偏差**（`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`：脚本按名计数，其内联测试即计入引用 ⇒ 恒不在 INFO 集，见上述口径说明②）经本批复核确认，**非本工程引入，不属本批处置面**）。**更早同步＝项 5 批 C「67 项逐项分流」**（21 项判定为可删并已删除 ⇒ 本区块移除对应 21 条目，496 → 475；其余 46 项保留 `pub` 并留块登记，见 **B-10.11**；上一轮为项 2「`kmalloc_slab.rs` 孤岛删除」，被删 2 项原为 HIGH / **未入块** ⇒ 计数不变，见 **B-10.10**；更早为项 5 批 B「豁免面收窄」新增 67 项，429 → 496，见 **B-10.9**）。
+> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝MIG-004 安全代理批次**（本轮 R1 复核检出 **6 项既有条目失效**并逐项移除：4 项因本工程而失效 —— 3 项 `framework/egdf/user_driver.rs::{egdf_forward_irq, devtree_map_user_device, devtree_unmap_user_device}` 因 services `egdf::user_driver` 强类型封装接线后不再零引用、1 项 `services/egdf/mod.rs::find_net_device` 因函数下沉至 `services/egdf/proto.rs` 并被 host-tests 调用；另 2 项**预存失效** `framework/arch/aarch64/gic.rs::{configure_spi_level, enable_spi}`（实为同文件私有 `configure_and_enable_device_spi` 内部调用 ⇒ refs=2）经用户裁决本轮一并清理 ⇒ **446 → 440**；同步改写 `services/egdf/proto.rs` 头注释、去除与 `char_read`/`char_write` 同名的字面量，使该两项恢复「真零引用」并被本区块正确命中；修复后实测区块 440 ＝ matched 440、stale 0、HIGH 18 不变）。**上一轮同步＝B-6 区块路径漂移清理（**B-13.7**）**（R1 实测检出 43 项**失效条目**并逐项处置：31 项路径更新 `framework/...`→`services/...`（文件随框内核迁移下沉、函数仍零引用 ⇒ 原 framework 路径失效、现报 HIGH），12 项移除（已接线 / 已删 / 已豁免：`framework/driver/net/e1000_io.rs::install_rings`（已删）、`::set_ctrl` / `::set_ipg` / `::set_rx_ctl` / `::set_tx_ctl`（已被 `services/driver/net/e1000.rs` 调用）、`framework/driver/usb/xhci.rs::init_command_ring` / `::recover_endpoint`（已删）、`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`（内联测试引用）、`services/egdf/mod.rs::find_by_proto`（host 测试引用）、`services/driver/usb/xhci.rs::port_connected` / `::port_status`（内部调用））⇒ **458 → 446**；修复后实测区块 446 ＝ matched 446、stale 0、HIGH 18）。**上一轮同步＝B-12.8 遗留清理批次（**B-13**）**（本批改动**未改变** R1 零引用集合，以 HEAD 独立 worktree 对跑逐项一致 ⇒ 本区块计数**不变（458）**，见 **B-13.6**）。**上一轮同步＝热插拔运行时接线批次（**B-12**）**（4 项因本工程「接线 / 删除」而不再零引用 ⇒ 本区块移除：`framework/driver/hotplug.rs::hotplug_poll`（函数已不存在，由 `hotplug_wakeup` + softirq 轮询替代）、`services/driver/usb/xhci.rs::ack_port_change` / `::has_port_change`（已被 `usb_port_poll` 调用）、`framework/driver/block.rs::mark_removed`（函数已不存在，由 EGDF 墓碑协议 `egdf_blk_is_removed` 替代）⇒ **462 → 458**）。**上一轮同步＝`atomic_stats` feature 删除**（`framework/sync/atomic.rs` 4 项 `record_*` 随 feature 删除而消失 ⇒ 本区块移除 4 条目，**466 → 462**；处置依据＝按职责判定「非内核所需 + 零履行 + 已有 `*_dump_stats` 等价诊断 idiom」，见 **B-5.2 / B-5.3 G2**）。**更早同步＝per-process fd 表全量下沉（**B-11**）**（10 项因本工程接线 / 删除而不再零引用 ⇒ 本区块移除：`framework/fs/vfs/handle.rs::vfs_get_fd_handle`（poll 改源）、`framework/proc/fd_table.rs` 4 项（`get_handle_id` / `is_cloexec` / `set_cloexec` / `get_cloexec_fds` 接线）、`framework/proc/scheduler.rs::get_current_process`（`with_current_fd_table` 取当前进程）、`services/fs/process_fd_table.rs` 4 项（Plan B 表文件删除）⇒ **476 → 466**；编辑前实测区块为 **476** 行，区块说明原记 475（差 1，前批计数笔误，本次以实测为准）。另有 2 条**既有偏差**（`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`：脚本按名计数，其内联测试即计入引用 ⇒ 恒不在 INFO 集，见上述口径说明②）经本批复核确认，**非本工程引入，不属本批处置面**）。**更早同步＝项 5 批 C「67 项逐项分流」**（21 项判定为可删并已删除 ⇒ 本区块移除对应 21 条目，496 → 475；其余 46 项保留 `pub` 并留块登记，见 **B-10.11**；上一轮为项 2「`kmalloc_slab.rs` 孤岛删除」，被删 2 项原为 HIGH / **未入块** ⇒ 计数不变，见 **B-10.10**；更早为项 5 批 B「豁免面收窄」新增 67 项，429 → 496，见 **B-10.9**）。
 >
 > **口径说明（2026-09-26 订正）**：本区块与 `audit_unwired_pub_fn.py` 的「零引用」判定均为**按名计数**（`rg -c -w`），因而存在两类已知偏差，本区块**不承诺**与脚本输出逐项等同：① **同名遮蔽**（文档注释 / 局部变量出现同名字符串即计入引用 ⇒ 真零引用项可能**漏报**，实例见 **B-10.3** 的 `slab_init` / `services/driver/acpi.rs::lapic_base`）；② **已失效条目**（被接线或删除后不再零引用，需人工同步移除，本期移除 6 项见 B-10.4）。
 
@@ -946,23 +946,23 @@ src/kernel/framework/arch/x86_64/ioapic.rs::get_arbitration_id
 src/kernel/framework/arch/x86_64/ioapic.rs::get_max_irq
 src/kernel/framework/arch/x86_64/ioapic.rs::set_id
 src/kernel/framework/arch/x86_64/ioapic.rs::set_irq_level
-src/kernel/framework/barrier/domain.rs::check_proc_limit
-src/kernel/framework/barrier/domain.rs::check_quota
-src/kernel/framework/barrier/domain.rs::consume_quota_tick
-src/kernel/framework/barrier/domain.rs::is_quota_exceeded
-src/kernel/framework/barrier/recoverable.rs::lock_fast
-src/kernel/framework/barrier/recovery.rs::cascade_recover
-src/kernel/framework/barrier/recovery.rs::hard_reset_domain
-src/kernel/framework/barrier/recovery.rs::recovery_registry_init
-src/kernel/framework/barrier/recovery.rs::recovery_subdomain_save_checkpoint
-src/kernel/framework/barrier/reset/audit.rs::count_by_result
-src/kernel/framework/barrier/snapshot.rs::test_registry_priority_order
-src/kernel/framework/barrier/snapshot.rs::test_registry_register
-src/kernel/framework/barrier/snapshot.rs::test_snapshot_basic
-src/kernel/framework/chitin/composite.rs::compatible_str
-src/kernel/framework/chitin/devtree.rs::as_bool
-src/kernel/framework/chitin/mod.rs::chitin_with_device_map
-src/kernel/framework/chitin/mod.rs::driver_as_mut
+src/kernel/framework/freg/domain.rs::check_proc_limit
+src/kernel/framework/freg/domain.rs::check_quota
+src/kernel/framework/freg/domain.rs::consume_quota_tick
+src/kernel/framework/freg/domain.rs::is_quota_exceeded
+src/kernel/framework/freg/recoverable.rs::lock_fast
+src/kernel/framework/freg/recovery.rs::cascade_recover
+src/kernel/framework/freg/recovery.rs::hard_reset_domain
+src/kernel/framework/freg/recovery.rs::recovery_registry_init
+src/kernel/framework/freg/recovery.rs::recovery_subdomain_save_checkpoint
+src/kernel/framework/freg/reset/audit.rs::count_by_result
+src/kernel/framework/freg/snapshot.rs::test_registry_priority_order
+src/kernel/framework/freg/snapshot.rs::test_registry_register
+src/kernel/framework/freg/snapshot.rs::test_snapshot_basic
+src/kernel/framework/egdf/composite.rs::compatible_str
+src/kernel/framework/egdf/devtree.rs::as_bool
+src/kernel/framework/egdf/mod.rs::egdf_with_device_map
+src/kernel/framework/egdf/mod.rs::driver_as_mut
 src/kernel/framework/console/gfx_console.rs::set_colors
 src/kernel/framework/console/gfx_console.rs::set_margin
 src/kernel/framework/cpu/cpuid.rs::cpuid_checked
@@ -973,12 +973,12 @@ src/kernel/framework/cpu/feature.rs::supports_avx
 src/kernel/framework/cpu/feature.rs::supports_simd
 src/kernel/framework/cpu/feature.rs::supports_virtualization
 src/kernel/framework/cpu/tsc.rs::nanoseconds_to_cycles
-src/kernel/framework/credo/api.rs::umask_get
-src/kernel/framework/credo/audit.rs::get_entries
-src/kernel/framework/credo/identity.rs::find_mut
-src/kernel/framework/credo/secure_boot.rs::add_trust_entry
-src/kernel/framework/credo/types.rs::get_creator_pwm
-src/kernel/framework/credo/types.rs::to_uid
+src/kernel/framework/sgeg/api.rs::umask_get
+src/kernel/framework/sgeg/audit.rs::get_entries
+src/kernel/framework/sgeg/identity.rs::find_mut
+src/kernel/framework/sgeg/secure_boot.rs::add_trust_entry
+src/kernel/framework/sgeg/types.rs::get_creator_pwm
+src/kernel/framework/sgeg/types.rs::to_uid
 src/kernel/framework/debug/api.rs::kgdb_break_now
 src/kernel/framework/debug/ebpf.rs::get_map
 src/kernel/framework/debug/ebpf.rs::get_prog
@@ -1129,32 +1129,32 @@ src/kernel/framework/timer/tick.rs::get_uptime_tsc
 src/kernel/framework/timer/tick.rs::reset_ticks
 src/kernel/framework/timer/time_sync.rs::client_request
 src/kernel/framework/vmspace.rs::map_huge
-src/kernel/services/barrier/audit_export.rs::count_failure
-src/kernel/services/barrier/audit_export.rs::count_success
-src/kernel/services/chitin/mod.rs::char_read
-src/kernel/services/chitin/mod.rs::char_write
+src/kernel/services/freg/audit_export.rs::count_failure
+src/kernel/services/freg/audit_export.rs::count_success
+src/kernel/services/egdf/mod.rs::char_read
+src/kernel/services/egdf/mod.rs::char_write
 src/kernel/services/config/sysctl.rs::write_to
-src/kernel/services/credo/crypto.rs::as_bytes_mut
-src/kernel/services/credo/crypto.rs::ct_eq_password
-src/kernel/services/credo/crypto.rs::ct_eq_salt
-src/kernel/services/credo/crypto.rs::generate
-src/kernel/services/credo/identity.rs::create_first_identity
-src/kernel/services/credo/identity.rs::current_gid
-src/kernel/services/credo/identity.rs::current_uid
-src/kernel/services/credo/identity.rs::get_capability_raw
-src/kernel/services/credo/identity.rs::get_fs_capability
-src/kernel/services/credo/identity.rs::load_from_disk
-src/kernel/services/credo/identity.rs::save_to_disk
-src/kernel/services/credo/identity.rs::try_genesis
-src/kernel/services/credo/identity.rs::try_load
-src/kernel/services/credo/secure_boot.rs::hash_sha256
-src/kernel/services/credo/secure_boot.rs::hash_sha256_extend
-src/kernel/services/credo/secure_boot.rs::init_secure_boot
-src/kernel/services/credo/secure_boot.rs::init_tpm
-src/kernel/services/credo/secure_boot.rs::is_secure_boot_initialized
-src/kernel/services/credo/secure_boot.rs::is_tpm_initialized
-src/kernel/services/credo/secure_boot.rs::secure_boot_syscall
-src/kernel/services/credo/secure_boot.rs::tpm_syscall
+src/kernel/services/sgeg/crypto.rs::as_bytes_mut
+src/kernel/services/sgeg/crypto.rs::ct_eq_password
+src/kernel/services/sgeg/crypto.rs::ct_eq_salt
+src/kernel/services/sgeg/crypto.rs::generate
+src/kernel/services/sgeg/identity.rs::create_first_identity
+src/kernel/services/sgeg/identity.rs::current_gid
+src/kernel/services/sgeg/identity.rs::current_uid
+src/kernel/services/sgeg/identity.rs::get_capability_raw
+src/kernel/services/sgeg/identity.rs::get_fs_capability
+src/kernel/services/sgeg/identity.rs::load_from_disk
+src/kernel/services/sgeg/identity.rs::save_to_disk
+src/kernel/services/sgeg/identity.rs::try_genesis
+src/kernel/services/sgeg/identity.rs::try_load
+src/kernel/services/sgeg/secure_boot.rs::hash_sha256
+src/kernel/services/sgeg/secure_boot.rs::hash_sha256_extend
+src/kernel/services/sgeg/secure_boot.rs::init_secure_boot
+src/kernel/services/sgeg/secure_boot.rs::init_tpm
+src/kernel/services/sgeg/secure_boot.rs::is_secure_boot_initialized
+src/kernel/services/sgeg/secure_boot.rs::is_tpm_initialized
+src/kernel/services/sgeg/secure_boot.rs::secure_boot_syscall
+src/kernel/services/sgeg/secure_boot.rs::tpm_syscall
 src/kernel/services/debug/mod.rs::kgdb_is_active
 src/kernel/services/driver/acpi.rs::hpet_info
 src/kernel/services/driver/acpi.rs::ioapic_addr
@@ -1245,41 +1245,41 @@ src/kernel/services/fs/handle.rs::vfs_readdir_safe
 src/kernel/services/fs/handle.rs::vfs_seek_safe
 src/kernel/services/fs/inotify.rs::inotify_fd_readable
 src/kernel/services/fs/inotify.rs::inotify_stats
-src/kernel/services/fs/nestfs/arc.rs::is_referenced
-src/kernel/services/fs/nestfs/bp.rs::is_data
-src/kernel/services/fs/nestfs/bp.rs::is_encrypted
-src/kernel/services/fs/nestfs/bp.rs::is_gang
-src/kernel/services/fs/nestfs/bp.rs::is_metadata
-src/kernel/services/fs/nestfs/bp.rs::set_encrypted
-src/kernel/services/fs/nestfs/bp.rs::with_gang
-src/kernel/services/fs/nestfs/dataset.rs::list_entries
-src/kernel/services/fs/nestfs/dedup.rs::cas_aware_free
-src/kernel/services/fs/nestfs/dedup.rs::cas_aware_write
-src/kernel/services/fs/nestfs/dedup.rs::cas_init
-src/kernel/services/fs/nestfs/dedup.rs::cas_insert
-src/kernel/services/fs/nestfs/dedup.rs::cas_is_known
-src/kernel/services/fs/nestfs/dedup.rs::cas_lookup
-src/kernel/services/fs/nestfs/dedup.rs::cas_ref_count
-src/kernel/services/fs/nestfs/dedup.rs::cas_ref_inc
-src/kernel/services/fs/nestfs/dedup.rs::cas_stats
-src/kernel/services/fs/nestfs/dedup.rs::sha256_matches
-src/kernel/services/fs/nestfs/dmu.rs::is_zap
-src/kernel/services/fs/nestfs/metaslab.rs::fragmentation
-src/kernel/services/fs/nestfs/raidz.rs::create_stripe
-src/kernel/services/fs/nestfs/raidz.rs::generate_parity
-src/kernel/services/fs/nestfs/raidz.rs::reconstruct_data
-src/kernel/services/fs/nestfs/raidz.rs::scrub_block
-src/kernel/services/fs/nestfs/spa.rs::is_disk_present
-src/kernel/services/fs/nestfs/spa.rs::is_formatted
-src/kernel/services/fs/nestfs/spa.rs::sync_uberblock
-src/kernel/services/fs/nestfs/txg.rs::add_free_to_open
-src/kernel/services/fs/nestfs/txg.rs::add_io_to_open
-src/kernel/services/fs/nestfs/txg.rs::drain_free
-src/kernel/services/fs/nestfs/txg.rs::drain_io
-src/kernel/services/fs/nestfs/txg.rs::get_open_txg_mut
-src/kernel/services/fs/nestfs/zil.rs::new_dedup_unref
-src/kernel/services/fs/nestfs/zil.rs::new_setattr
-src/kernel/services/fs/nestfs/zil_persist.rs::as_static_str
+src/kernel/services/fs/unkfs/arc.rs::is_referenced
+src/kernel/services/fs/unkfs/bp.rs::is_data
+src/kernel/services/fs/unkfs/bp.rs::is_encrypted
+src/kernel/services/fs/unkfs/bp.rs::is_gang
+src/kernel/services/fs/unkfs/bp.rs::is_metadata
+src/kernel/services/fs/unkfs/bp.rs::set_encrypted
+src/kernel/services/fs/unkfs/bp.rs::with_gang
+src/kernel/services/fs/unkfs/dataset.rs::list_entries
+src/kernel/services/fs/unkfs/dedup.rs::cas_aware_free
+src/kernel/services/fs/unkfs/dedup.rs::cas_aware_write
+src/kernel/services/fs/unkfs/dedup.rs::cas_init
+src/kernel/services/fs/unkfs/dedup.rs::cas_insert
+src/kernel/services/fs/unkfs/dedup.rs::cas_is_known
+src/kernel/services/fs/unkfs/dedup.rs::cas_lookup
+src/kernel/services/fs/unkfs/dedup.rs::cas_ref_count
+src/kernel/services/fs/unkfs/dedup.rs::cas_ref_inc
+src/kernel/services/fs/unkfs/dedup.rs::cas_stats
+src/kernel/services/fs/unkfs/dedup.rs::sha256_matches
+src/kernel/services/fs/unkfs/dmu.rs::is_zap
+src/kernel/services/fs/unkfs/metaslab.rs::fragmentation
+src/kernel/services/fs/unkfs/raidz.rs::create_stripe
+src/kernel/services/fs/unkfs/raidz.rs::generate_parity
+src/kernel/services/fs/unkfs/raidz.rs::reconstruct_data
+src/kernel/services/fs/unkfs/raidz.rs::scrub_block
+src/kernel/services/fs/unkfs/spa.rs::is_disk_present
+src/kernel/services/fs/unkfs/spa.rs::is_formatted
+src/kernel/services/fs/unkfs/spa.rs::sync_uberblock
+src/kernel/services/fs/unkfs/txg.rs::add_free_to_open
+src/kernel/services/fs/unkfs/txg.rs::add_io_to_open
+src/kernel/services/fs/unkfs/txg.rs::drain_free
+src/kernel/services/fs/unkfs/txg.rs::drain_io
+src/kernel/services/fs/unkfs/txg.rs::get_open_txg_mut
+src/kernel/services/fs/unkfs/zil.rs::new_dedup_unref
+src/kernel/services/fs/unkfs/zil.rs::new_setattr
+src/kernel/services/fs/unkfs/zil_persist.rs::as_static_str
 src/kernel/services/fs/ramfs.rs::is_read_only
 src/kernel/services/fs/sysfs.rs::has_node
 src/kernel/services/fs/sysfs.rs::mount_sysfs
@@ -1358,22 +1358,22 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 | 项 | 调用点（函数 / 路径） | 改动 | 生效证据（测试） |
 |---|---|---|---|
-| `framework/fs/vfs/vfs.rs::set_fd` | `vfs_open_internal` **两分支**（`fs_open` 命中 / `CREAT` 命中）；live 路径 `open_syscall` / `openat_syscall` → `vfs_open_safe` → `vfs_open_internal` | [handle.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/fs/vfs/handle.rs#L70-L76)：`set_fd_handle` 之后补 `VFS_MANAGER.set_fd(fd_idx, node_id, 0, flags, pwm, file_type, path)`；CREAT 分支同款（[L101-L103](file:///home/anfer/Code/QueenX/src/kernel/framework/fs/vfs/handle.rs#L101-L103)） | kernel_test `vfs::backend::open_populates_fd_metadata`（[test_vfs.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/tests/test_vfs.rs#L227-L266)） |
+| `framework/fs/vfs/vfs.rs::set_fd` | `vfs_open_internal` **两分支**（`fs_open` 命中 / `CREAT` 命中）；live 路径 `open_syscall` / `openat_syscall` → `vfs_open_safe` → `vfs_open_internal` | [handle.rs](file:///home/anfer/Code/Edgine/src/kernel/framework/fs/vfs/handle.rs#L70-L76)：`set_fd_handle` 之后补 `VFS_MANAGER.set_fd(fd_idx, node_id, 0, flags, pwm, file_type, path)`；CREAT 分支同款（[L101-L103](file:///home/anfer/Code/Edgine/src/kernel/framework/fs/vfs/handle.rs#L101-L103)） | kernel_test `vfs::backend::open_populates_fd_metadata`（[test_vfs.rs](file:///home/anfer/Code/Edgine/src/kernel/framework/tests/test_vfs.rs#L227-L266)） |
 
 **「缺此半」的具体后果（逐条可在源码定位，故调用点成立）**：
 
 | 受害调用点 | 未接线时的行为 |
 |---|---|
-| [file_ops.rs:298-305](file:///home/anfer/Code/QueenX/src/kernel/services/fs/file_ops.rs#L298-L305) `flock_syscall`（以 `fd_table[fd].node_id` 作 ino） | 所有 fd 的 ino 恒 **0** ⇒ flock 全部落到同一 ino |
-| [mmap.rs:44-51](file:///home/anfer/Code/QueenX/src/kernel/services/mm/mmap.rs#L44-L51) `fd_to_inode_id` | 恒得 **0** ⇒ 文件映射分支恒 `EBADF` |
-| [mmap.rs:54-59](file:///home/anfer/Code/QueenX/src/kernel/services/mm/mmap.rs#L54-L59) `fd_to_mount_idx` | `path` 为空 ⇒ `find_mount` 反查失败 ⇒ VMA 无 `mount_idx` |
-| [handle.rs:143-180](file:///home/anfer/Code/QueenX/src/kernel/framework/fs/vfs/handle.rs#L143-L180) `vfs_close_internal` | pcache 失效按 `node_id = 0` 执行 ⇒ 关联 inode 缓存页不释放 |
+| [file_ops.rs:298-305](file:///home/anfer/Code/Edgine/src/kernel/services/fs/file_ops.rs#L298-L305) `flock_syscall`（以 `fd_table[fd].node_id` 作 ino） | 所有 fd 的 ino 恒 **0** ⇒ flock 全部落到同一 ino |
+| [mmap.rs:44-51](file:///home/anfer/Code/Edgine/src/kernel/services/mm/mmap.rs#L44-L51) `fd_to_inode_id` | 恒得 **0** ⇒ 文件映射分支恒 `EBADF` |
+| [mmap.rs:54-59](file:///home/anfer/Code/Edgine/src/kernel/services/mm/mmap.rs#L54-L59) `fd_to_mount_idx` | `path` 为空 ⇒ `find_mount` 反查失败 ⇒ VMA 无 `mount_idx` |
+| [handle.rs:143-180](file:///home/anfer/Code/Edgine/src/kernel/framework/fs/vfs/handle.rs#L143-L180) `vfs_close_internal` | pcache 失效按 `node_id = 0` 执行 ⇒ 关联 inode 缓存页不释放 |
 
 **B-8.2 判据不成立 ⇒ 转「未来功能」（7 项；三字段）——其中 5 项已于 2026-09-27 兑现（见 **B-11**），余 2 项仍为未来功能**
 
 | 文件 / 项 | 等待原因（判据不成立的事实） | 解锁条件 | 责任方 |
 |---|---|---|---|
-| `framework/fs/vfs/handle.rs::vfs_get_fd_handle` | ~~同能力 `VFS_MANAGER.get_fd_handle` 的调用点全在同模块内直呼 manager，无独立调用点~~ ⇒ **2026-09-27 已接线**：services [file_ops.rs `poll_syscall`](file:///home/anfer/Code/QueenX/src/kernel/services/fs/file_ops.rs) 改源为 `vfs_get_fd_handle`（原直查已退役的 `VFS_MANAGER.fd_table` / `VFS_MAX_FDS` 全局表）⇒ 出现**跨模块** FD→句柄访问需求（如 services 侧 fd 查询代理）**已成立** | **已兑现**（见 **B-11**） | — |
+| `framework/fs/vfs/handle.rs::vfs_get_fd_handle` | ~~同能力 `VFS_MANAGER.get_fd_handle` 的调用点全在同模块内直呼 manager，无独立调用点~~ ⇒ **2026-09-27 已接线**：services [file_ops.rs `poll_syscall`](file:///home/anfer/Code/Edgine/src/kernel/services/fs/file_ops.rs) 改源为 `vfs_get_fd_handle`（原直查已退役的 `VFS_MANAGER.fd_table` / `VFS_MAX_FDS` 全局表）⇒ 出现**跨模块** FD→句柄访问需求（如 services 侧 fd 查询代理）**已成立** | **已兑现**（见 **B-11**） | — |
 | `framework/irqline.rs::is_registered` | `IrqLine` 类型全库 **0 构造点**（在用者仅 `idt.rs::dispatch_irq`）⇒ 无对象可查 | 中断处理切到 `IrqLine` 抽象（`services/driver/mod.rs:21` 已登记的路线图项） | 路线图（driver 中断抽象） |
 | `framework/frame.rs::set_meta` | 读侧 `Frame::meta()` 同样**零引用**，无消费方；文档自述「预留元数据槽位」 | services 侧需给页帧挂自定义状态（回写 / 迁移标记） | reviewer 排期 |
 | `framework/proc/fd_table.rs::get_handle_id` | ~~`Process::fd_table` 从未被填充（`alloc_fd` 全库零引用）⇒ 恒 `None`~~ ⇒ **2026-09-27 全量兑现**：`Process.fd_table(FdTable)` 权威化，`alloc_fd` 经 `vfs_open_internal` 两分支接线，本函数成为 `vfs_get_fd_handle` / `vfs_dup` / `vfs_dup2` / `fcntl(F_GETFD)` 的统一取句柄入口 | **已兑现**（见 **B-11**） | — |
@@ -1389,7 +1389,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 | 链路环节 | 实测（源码定位） | 缺口后果 |
 |---|---|---|
-| 标记来源 `fcntl(F_SETFD, FD_CLOEXEC)` | [framework/syscall/io.rs:108-124](file:///home/anfer/Code/QueenX/src/kernel/framework/syscall/io.rs#L108-L124)：`F_GETFD => 0`、`F_SETFD => 0` **静默返回成功** | 用户设 CLOEXEC **无任何存储**，且**不报错**（虚假成功） ⇒ **2026-09-27 全量兑现**：`F_GETFD`/`F_SETFD` 接 `FdTable::is_cloexec`/`set_cloexec` |
+| 标记来源 `fcntl(F_SETFD, FD_CLOEXEC)` | [framework/syscall/io.rs:108-124](file:///home/anfer/Code/Edgine/src/kernel/framework/syscall/io.rs#L108-L124)：`F_GETFD => 0`、`F_SETFD => 0` **静默返回成功** | 用户设 CLOEXEC **无任何存储**，且**不报错**（虚假成功） ⇒ **2026-09-27 全量兑现**：`F_GETFD`/`F_SETFD` 接 `FdTable::is_cloexec`/`set_cloexec` |
 | 打开时携带 `O_CLOEXEC` | `services/fs/open.rs:44 pub const O_CLOEXEC` 全库**零引用** | open 无法携带 cloexec ⇒ **2026-09-27 全量兑现**：`vfs_open_internal` 消费 `O_CLOEXEC`（剥离后经 `alloc_fd(handle_id, cloexec)` 入表） |
 | 存储位 | live fd 表 `VFS_MANAGER.fd_table: [VfsFile; VFS_MAX_FDS]` 的 `VfsFile` **无 cloexec 字段** | 无处存放标记 ⇒ **2026-09-27 全量兑现**：标记位改存 per-process `FdTable.cloexec`（原 `VfsManager` 全局表版 `VfsFile.cloexec` 最小件随之退役） |
 | exec 时关闭 | `services/proc/exec.rs` `execve_syscall` / `execveat_syscall` → `proc_ops.rs::proc_exec_replace`（transactional：加载 ELF → `replace_user_space` → argv → 信号复位）**全程不触碰 fd 表** | exec 后**所有 fd 原样保留** ⇒ **2026-09-27 全量兑现**：exec 经 `vfs_close_cloexec_fds`→`FdTable::get_cloexec_fds` 关闭已标记本地 fd |
@@ -1519,7 +1519,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 | `::kpti_user_ttbr0`(130) | 同上 | total=1 | 同上：写侧 `kpti_set_user_ttbr0` 有 1 处调用点（`arch/aarch64/mod.rs:326` `enter_user`），**读侧 getter 零调用者** ⇒ 与 ttbr1 族同构 | **上报待裁** |
 | `framework/mm/kmalloc_slab.rs::slab_kmalloc`(76) | TCB（内存分配器） | total=1 | **未接线（整模块孤岛）**：本模块 3 个 `pub fn`（`slab_init` / `slab_kmalloc` / `slab_kfree`）**全部零调用者** ⇒ `SLAB_READY` 永为 `false`，Slab 路径永不生效（`slab_kmalloc` 恒走 `kmalloc` 回退）。**与既有登记同源**：[archive/audit-2026-08-14/subsystem-mm.md](archive/audit-2026-08-14/subsystem-mm.md) 记「内部用 SLAB 但未注册到 kmalloc → 死代码」（P2） | **上报待裁**（接线 / 删除二选一） |
 | `::slab_kfree`(90) | 同上 | total=1 | 同上 | **上报待裁** |
-| `services/fs/nestfs/txg.rs::add_free_to_open`(243) | services | total=1（底层 `add_free` 2 ＝ 声明 + 本项调用） | **族残缺**：同族 `add_dirty_to_open` **7 引用在用**（且额外递增 group 级 `total_dirty`）；free / io 两条并行路径（`add_free` / `add_io` / `drain_free` / `drain_io`）**只有本项与 `add_io_to_open` 作为唯一送入口** ⇒ 删则族残缺、且 `add_free` / `add_io` 一并沦为孤儿 | **完整性保留**（登记） |
+| `services/fs/unkfs/txg.rs::add_free_to_open`(243) | services | total=1（底层 `add_free` 2 ＝ 声明 + 本项调用） | **族残缺**：同族 `add_dirty_to_open` **7 引用在用**（且额外递增 group 级 `total_dirty`）；free / io 两条并行路径（`add_free` / `add_io` / `drain_free` / `drain_io`）**只有本项与 `add_io_to_open` 作为唯一送入口** ⇒ 删则族残缺、且 `add_free` / `add_io` 一并沦为孤儿 | **完整性保留**（登记） |
 | `::add_io_to_open`(249) | services | total=1（底层 `add_io` 2） | 同上 | **完整性保留**（登记） |
 | `services/driver/char/serial.rs::send_str`(468) | services | total=1（同族 `send_all` 2 在用） | **能力等价复本**（实现体 ＝ `self.send_all(s.as_bytes())`）；但**三合一判据第三项不成立**——属 **driver 公共 API 面**（同文件已有 5 项同类 API 在 B-6 区块）⇒ 不构成删候选 | **完整性保留**（登记） |
 | `services/driver/char/vga.rs::write_string_at`(370) | services | total=1（同族 `write_char` 3 在用） | 同上（实现体 ＝ 逐格 `write_char` 的定位写串封装；同文件已有 3 项同类 API 在区块） | **完整性保留**（登记） |
@@ -1528,7 +1528,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 | 项 | 等待原因（零引用的事实成因） | 解锁条件 | 责任方 |
 |---|---|---|---|
-| `txg.rs::add_free_to_open` / `add_io_to_open` | NestFS 写路径当前**只走 dirty 累积**（`add_dirty_to_open` 已在用）；free / io 累积器**无送入口**——本两项即其唯一入口，故 `free_bps` / `io_list` 在 live 路径**结构性为空**，`drain_free` / `drain_io` 恒得空集 | NestFS 写路径接入 free / io 累积（届时本两项即为自然接线点；一并核对 `total_dirty` 同类 group 计数是否需补 `total_free`） | 路线图（NestFS 写路径 / TXG 完整语义） |
+| `txg.rs::add_free_to_open` / `add_io_to_open` | UNKFS 写路径当前**只走 dirty 累积**（`add_dirty_to_open` 已在用）；free / io 累积器**无送入口**——本两项即其唯一入口，故 `free_bps` / `io_list` 在 live 路径**结构性为空**，`drain_free` / `drain_io` 恒得空集 | UNKFS 写路径接入 free / io 累积（届时本两项即为自然接线点；一并核对 `total_dirty` 同类 group 计数是否需补 `total_free`） | 路线图（UNKFS 写路径 / TXG 完整语义） |
 | `char/serial.rs::send_str` | driver 公共 API 面：同能力 `send_all` 已在用，字符串便捷入口无调用者 | 出现「按 `&str` 写串口」的上层需求（用户态串口服务 / 内核日志旁路） | 路线图（driver API 收敛） |
 | `char/vga.rs::write_string_at` | driver 公共 API 面：同能力 `write_char` 已在用，定位写串入口无调用者 | 出现屏幕**绝对定位**写串需求（状态栏 / 日志定区刷新） | 路线图（driver API 收敛） |
 
@@ -1542,13 +1542,13 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 | 动作 | 项 | 依据 |
 |---|---|---|
-| 新增 | `char/serial.rs::send_str`、`char/vga.rs::write_string_at`、`fs/nestfs/txg.rs::add_free_to_open`、`::add_io_to_open` | B-10.1 / B-10.2（非 TCB，完整性保留） |
+| 新增 | `char/serial.rs::send_str`、`char/vga.rs::write_string_at`、`fs/unkfs/txg.rs::add_free_to_open`、`::add_io_to_open` | B-10.1 / B-10.2（非 TCB，完整性保留） |
 | 移除 | `arch/aarch64/uart.rs::switch_to_high_half` | **已接线**：`arch/aarch64/mod.rs:323` 调用 |
-| 移除 | `barrier/reset/layered.rs::test_recovery_status` | **已删除**（UT-07 孤儿清理，`layered.rs:121` 注释残迹） |
+| 移除 | `freg/reset/layered.rs::test_recovery_status` | **已删除**（UT-07 孤儿清理，`layered.rs:121` 注释残迹） |
 | 移除 | `fs/vfs/handle.rs::vfs_close_safe` | **已接线**：`framework/tests/test_vfs.rs:191` / `:239` 调用（UT-07 收敛后生效） |
 | 移除 | `proc/thread.rs::create_thread` | **被同名串遮蔽**：`proc/scheduler.rs:725` 注释出现 `ThreadManager::create_thread` ⇒ 不再计数为零引用（真零引用仍成立，另见 B-10.3 附带发现） |
 | 移除 | `services/driver/acpi.rs::lapic_base` | 同名局部变量遮蔽（见 B-10.3 附带发现） |
-| 移除 | `fs/nestfs/txg.rs::get_syncing_txg` | **已被引用**：`host-tests/src/framekernel_bench.rs:1759` 调用 |
+| 移除 | `fs/unkfs/txg.rs::get_syncing_txg` | **已被引用**：`host-tests/src/framekernel_bench.rs:1759` 调用 |
 
 **B-10.5 实测计数（脚本正向复跑）**
 
@@ -1563,12 +1563,12 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 | `SYS_sigaltstack` | 半实装未接线 | **接线** | `framework/syscall/dispatch.rs::sys_sigaltstack` 早已存在（含 `SS_DISABLE`/`SS_ONSTACK` 状态机），仅缺 services 分发臂 ⇒ `dispatch_proc` 加 `SYS_sigaltstack => signal::sigaltstack_syscall` |
 | `SYS_fdatasync` | 未实装（同族近似） | **接线（复用）** | 与 `fsync` 同语义复用 `fs::misc::fsync_syscall`（VFS 整体同步，无数据/元数据区分，与 `fsync` 的 SIMPLIFIED 口径一致） |
 | `SYS_arch_prctl` | **原裁定 ENOSYS 保留，本轮改判实装** | **最小实装** | framework 新增 `sys_arch_prctl`（`ARCH_SET_FS` 归档 `Process.tls_base` + 当前进程立即写 `MSR_FS_BASE`；`ARCH_GET_FS` 经 `raw::write_u64_to_user` 回读）；services `proc::clone::arch_prctl_syscall` 代理 |
-| `SYS_capget` / `SYS_capset` | **原裁定 ENOSYS 保留，本轮改判实装** | **ABI 映射层实装** | services `credo::auth::{capget,capset}_syscall` 建 credo↔Linux cap ABI 映射（`_LINUX_CAPABILITY_VERSION_3`，SYSTEM 域 64 位 ↔ 2×`cap_data`）；capset 经 framework 新增受约束 setter `credo::api::pwm_set_current_capability_raw`（**子集 + 不破 `VIABLE_FLOOR`**，不接受 pwm 参数 ⇒ 无法跨进程篡改） |
+| `SYS_capget` / `SYS_capset` | **原裁定 ENOSYS 保留，本轮改判实装** | **ABI 映射层实装** | services `sgeg::auth::{capget,capset}_syscall` 建 sgeg↔Linux cap ABI 映射（`_LINUX_CAPABILITY_VERSION_3`，SYSTEM 域 64 位 ↔ 2×`cap_data`）；capset 经 framework 新增受约束 setter `sgeg::api::pwm_set_current_capability_raw`（**子集 + 不破 `VIABLE_FLOOR`**，不接受 pwm 参数 ⇒ 无法跨进程篡改） |
 | `SYS_process_vm_readv` / `SYS_process_vm_writev` | **原裁定「不实装 · 上报」，本轮改判实装** | **相对完整实装** | framework 新增跨进程用户内存 safe 代理（`mm::cross_process`：`copy_{from,to}_user_in_mm` 逐页翻译目标 CR3 + 写权限校验 + SAFETY）；services 新建 `proc::process_vm`（iovec 解析 + 权限判定 + 分块拷贝 + 全错误分支，0 unsafe）；dispatch 接线；详见 **B-10.12** |
 
 - **实测（脚本正向复跑）**：`python3 scripts/audit_unwired_pub_fn.py` ⇒ 汇总 **`CRITICAL=2 / HIGH=4 / WARN=0 / INFO=434`**（`rc=1`，仅 CRITICAL 非零）。R2 **7 → 2**（余 `process_vm_readv` / `process_vm_writev`；**余 2 项已于 B-10.12 实装核销**）。
 - **B-6 区块同步**：`services/proc/signal.rs::sigaltstack_syscall` 接线后不再零引用 ⇒ 移除该行 ⇒ 清单 **434 → 433**（脚本 INFO 同期 435 → 433，差额 1 项为已接线移出 + 1 项为 HIGH/INFO 分级口径差）。
-- **新增 pub fn 未进 R1**：本轮新增 `proc::clone::arch_prctl_syscall` / `credo::auth::{capget,capset}_syscall` 均**已被 dispatch 引用**，非零引用，无需登记 B-6。
+- **新增 pub fn 未进 R1**：本轮新增 `proc::clone::arch_prctl_syscall` / `sgeg::auth::{capget,capset}_syscall` 均**已被 dispatch 引用**，非零引用，无需登记 B-6。
 - **原裁定溯源**：`capget`/`capset`/`arch_prctl` 此前按「无凭证能力模型 / 无 arch 相关用户态需求」判 **ENOSYS 保留**（见本台账「实现路径裁定」段）；批次 3 经用户裁定改为实装，**原判定作废**，相关 ENOSYS 回退说明同步失效。
 
 **B-10.7 R4 实装（分册 9 批次 4；R4 1 → 0 / B-6 区块不变 ⇒ `433`）**
@@ -1577,11 +1577,11 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 | 项 | 类别 | 处置 | 落点 |
 |---|---|---|---|
-| `DomainFlags`（`framework/credo/types.rs`） | R4 零引用核心类型 | **实装为域级行为门控** | framework 新建 `proc/domain.rs`（6 门控位判定表 + `domain_gate_check` 咽喉点 + `domain_flags_get`/`set` 状态读写）；`Process` 新增 `domain_flags: AtomicU32`（fork 全量继承）；`syscall_dispatch_impl` 在 seccomp 之后调用门控；services 新建 `credo/domain.rs` 策略（set 需新增 `SYSTEM_CAP_SET_DOMAIN_FLAGS` 鉴权）；新增 syscall `SYS_CREDO_GET_DOMAIN_FLAGS(414)` / `SYS_CREDO_SET_DOMAIN_FLAGS(415)` 并接线 |
+| `DomainFlags`（`framework/sgeg/types.rs`） | R4 零引用核心类型 | **实装为域级行为门控** | framework 新建 `proc/domain.rs`（6 门控位判定表 + `domain_gate_check` 咽喉点 + `domain_flags_get`/`set` 状态读写）；`Process` 新增 `domain_flags: AtomicU32`（fork 全量继承）；`syscall_dispatch_impl` 在 seccomp 之后调用门控；services 新建 `sgeg/domain.rs` 策略（set 需新增 `SYSTEM_CAP_SET_DOMAIN_FLAGS` 鉴权）；新增 syscall `SYS_SGEG_GET_DOMAIN_FLAGS(414)` / `SYS_SGEG_SET_DOMAIN_FLAGS(415)` 并接线 |
 
-- **新增 syscall 编号记录**：`SYS_CREDO_GET_DOMAIN_FLAGS = 414` / `SYS_CREDO_SET_DOMAIN_FLAGS = 415`（**QX 独有功能** —— Linux 无对应 syscall，沿用 `SYS_CREDO_*` 族既有编号段；`416-419` 仍为保留号）。二者**均已 dispatch**，非 R2 范畴；编译期 `PRIVATE_NUMS` 断言同步追加。
-- **实测（脚本正向复跑）**：`python3 scripts/audit_unwired_pub_fn.py` ⇒ 汇总 **`CRITICAL=2 / HIGH=4 / WARN=0 / INFO=433`**。R4 **1 → 0**；`扫描 SYS_/QX_ 编号 231`（批次 3 为 229，+2 ＝ 本轮新增）且 `已 dispatch 229 → 231` 全部命中。
-- **B-6 区块同步**：**无需同步**（清单仍 `433` 项）——本轮新增的 `proc/domain.rs::{domain_gate_check,domain_flags_get,domain_flags_set}` 与 `services/credo/domain.rs::{domain_flags_get_syscall,domain_flags_set_syscall}` **均已被引用**（前者被 framework dispatch / services 策略消费），非零引用，不入 B-6。
+- **新增 syscall 编号记录**：`SYS_SGEG_GET_DOMAIN_FLAGS = 414` / `SYS_SGEG_SET_DOMAIN_FLAGS = 415`（**EG 独有功能** —— Linux 无对应 syscall，沿用 `SYS_SGEG_*` 族既有编号段；`416-419` 仍为保留号）。二者**均已 dispatch**，非 R2 范畴；编译期 `PRIVATE_NUMS` 断言同步追加。
+- **实测（脚本正向复跑）**：`python3 scripts/audit_unwired_pub_fn.py` ⇒ 汇总 **`CRITICAL=2 / HIGH=4 / WARN=0 / INFO=433`**。R4 **1 → 0**；`扫描 SYS_/EG_ 编号 231`（批次 3 为 229，+2 ＝ 本轮新增）且 `已 dispatch 229 → 231` 全部命中。
+- **B-6 区块同步**：**无需同步**（清单仍 `433` 项）——本轮新增的 `proc/domain.rs::{domain_gate_check,domain_flags_get,domain_flags_set}` 与 `services/sgeg/domain.rs::{domain_flags_get_syscall,domain_flags_set_syscall}` **均已被引用**（前者被 framework dispatch / services 策略消费），非零引用，不入 B-6。
 
 **B-10.8 裁定落地（七次修订：TCB 4 项 + 安全面 2 项）**
 
@@ -1608,7 +1608,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 - **67 项分布**：`mod.rs` 53 / `types.rs` 9 / `api.rs` 5（`prelude.rs` 与 `dispatch.rs` 无命中；smoltcp 子树已排除）。
 - **口径更正（本次实测）**：首次度量误用 `cross_file == 0` 得 115 项 —— R1 真实口径为 `actual_callers == 0`（即 `total == 1`，仅声明自身）⇒ 正确值为 **67 项**。差值 48 项为「同文件内有多处引用但跨文件为 0」者（如 `framework/sync/mod.rs` 内 `pub(crate) mod raw` 的 helper，由同文件调用，非零引用）。
-- **代表性条目**：`framework/klog/mod.rs::{log_warn,log_debug,log_crit,klog_set_level,klog_get_level}`、`framework/mm/mod.rs::{is_dirty,set_dirty,is_accessed,set_accessed,is_nx,set_nx}`、`framework/pci/mod.rs::{set_ecam_base,get_ecam_base,get_device_list,find_by_vendor,find_device}`、`services/proc/mod.rs::{pid_new,pid_raw,tid_new,tid_raw,...}`、`services/chitin/mod.rs` 10 项、`framework/driver/virtio/mod.rs` 4 项、`framework/idt/types.rs::{error_code_flags,dump_registers,set_handler}`。
+- **代表性条目**：`framework/klog/mod.rs::{log_warn,log_debug,log_crit,klog_set_level,klog_get_level}`、`framework/mm/mod.rs::{is_dirty,set_dirty,is_accessed,set_accessed,is_nx,set_nx}`、`framework/pci/mod.rs::{set_ecam_base,get_ecam_base,get_device_list,find_by_vendor,find_device}`、`services/proc/mod.rs::{pid_new,pid_raw,tid_new,tid_raw,...}`、`services/egdf/mod.rs` 10 项、`framework/driver/virtio/mod.rs` 4 项、`framework/idt/types.rs::{error_code_flags,dump_registers,set_handler}`。
 - **失败关闭不变**：`load_classified_set()` 的 fail-closed 六条路径未改动；区块行格式校验（`^src/[^\s:]+\.rs::\w+$`）与唯一性校验保持。
 - **待办（批 C）**：67 项逐项收敛 —— 原估三条路径（内部实现改 `pub(crate)` / 无价值者删除 / API 面保留登记）中的**「改 `pub(crate)`」经批 C 实测判定为不可行**（触发 `dead_code` ⇒ 违 F5；补 allow 又违 F9），仅余**删除**与**保留 `pub` 并登记**两类；**已于批 C 执行完毕**（21 删 / 46 留），见 **B-10.11**。
 
@@ -1649,8 +1649,8 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 | 桶 | 项数 | 处置 | 构成 |
 |---|---|---|---|
 | A 可删 | **21** | 删除 | 见 B-10.11.3 |
-| B1 保留（删之生孤儿） | 10 | 保留 `pub` + 留块登记 | `services/chitin::{find_by_proto, find_net_device, char_write, char_read}`；`services/proc::priority_from_u32`；`services/syscall::dispatch_from_ctx_typed`；`services/debug::kgdb_is_active`；`services/net::{start_dhcp, static_ip, reset_state}` —— 均为其 framework 对应项的**唯一调用方**，删除将使 framework 侧入口失去全部调用链（新 R1 孤儿） |
-| B2 保留（无等价活入口 / API·机制面） | 27 | 保留 `pub` + 留块登记 | `klog::{log_warn, log_debug, log_crit, klog_set_level, klog_get_level}`（`MIN_LEVEL` 私有，无等价入口）；`chitin::{driver_as_mut, chitin_with_device_map}`；`credo::{umask_get, to_uid, get_creator_pwm}`；`debug::kgdb_break_now`；`driver::list_devices`；`irq::{register_tasklet, schedule_tasklet}`（`TASKLETS` 私有）；`proc/types::{thaw_target_state, set_user_mode}`；`smp::broadcast_reschedule`；`pci::{register_scanner, set_ecam_base, get_ecam_base, get_device_list, find_by_vendor, find_device}`；`net/api::{init_network_now, status_snapshot}`；`wasm::{as_i64, wasi_function_table}` |
+| B1 保留（删之生孤儿） | 10 | 保留 `pub` + 留块登记 | `services/egdf::{find_by_proto, find_net_device, char_write, char_read}`；`services/proc::priority_from_u32`；`services/syscall::dispatch_from_ctx_typed`；`services/debug::kgdb_is_active`；`services/net::{start_dhcp, static_ip, reset_state}` —— 均为其 framework 对应项的**唯一调用方**，删除将使 framework 侧入口失去全部调用链（新 R1 孤儿） |
+| B2 保留（无等价活入口 / API·机制面） | 27 | 保留 `pub` + 留块登记 | `klog::{log_warn, log_debug, log_crit, klog_set_level, klog_get_level}`（`MIN_LEVEL` 私有，无等价入口）；`egdf::{driver_as_mut, egdf_with_device_map}`；`sgeg::{umask_get, to_uid, get_creator_pwm}`；`debug::kgdb_break_now`；`driver::list_devices`；`irq::{register_tasklet, schedule_tasklet}`（`TASKLETS` 私有）；`proc/types::{thaw_target_state, set_user_mode}`；`smp::broadcast_reschedule`；`pci::{register_scanner, set_ecam_base, get_ecam_base, get_device_list, find_by_vendor, find_device}`；`net/api::{init_network_now, status_snapshot}`；`wasm::{as_i64, wasi_function_table}` |
 | B3 保留（硬件原语面，判据③不满足） | 9 | 保留 `pub` + 留块登记 | `virtio::{set_status, read_config64}`；`idt/types::{error_code_flags, dump_registers, set_handler}`；`fs/vfs/types::inode_arc`；`driver/storage::xhci_read_trb`；`fs/devfs::{is_virtual, is_physical}` |
 
 **B-10.11.3 桶 A 已删除 21 项（含必删连带）**
@@ -1659,13 +1659,13 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 |---|---|---|
 | A1（6） | `framework/mm/mod.rs`：`is_dirty` / `set_dirty` / `is_accessed` / `set_accessed` / `is_nx` / `set_nx` | 同文件 `flags()`（L701）+ `set_flags()` + `PageFlags::{ACCESSED, DIRTY, NX}` —— 能力完全重叠；活调用点 20 处（`vmm_x86_64.rs`） |
 | A2（2） | `framework/driver/virtio/mod.rs`：`setup_vq` / `setup_vq_legacy` | 细粒度组合 `select_queue` + `setup_queue_addrs` / `setup_queue_legacy` + `set_queue_ready`（`services/driver/virtio/{net,blk}.rs` 生产路径已用后者） |
-| A3（1） | `framework/chitin/mod.rs::chitin_device_list` | 纯别名转调 `chitin_list`（`framework/driver/mod.rs` 活） |
-| A4（6） | `services/chitin/mod.rs`：`find_by_id` / `count_by_proto` / `blk_name` / `blk_info` / `input_read` / `input_has_data` | 其 framework 对应项**另有独立活调用点**（`composite.rs` / `lib.rs` / `block.rs` / `keyboard.rs`）⇒ 删 wrapper 不产孤儿 |
+| A3（1） | `framework/egdf/mod.rs::egdf_device_list` | 纯别名转调 `egdf_list`（`framework/driver/mod.rs` 活） |
+| A4（6） | `services/egdf/mod.rs`：`find_by_id` / `count_by_proto` / `blk_name` / `blk_info` / `input_read` / `input_has_data` | 其 framework 对应项**另有独立活调用点**（`composite.rs` / `lib.rs` / `block.rs` / `keyboard.rs`）⇒ 删 wrapper 不产孤儿 |
 | A5（6） | `services/proc/mod.rs`：`init_per_cpu` / `scheduler_ready` / `pid_new` / `pid_raw` / `tid_new` / `tid_raw` | framework 侧另有活入口（`init_per_cpu_sched` / `SCHEDULER_READY` 为 pub static）；`ProcessId(pub Pid)` / `ThreadId(pub Tid)` 字段公开 ⇒ `ProcessId(x)` / `x.0` 直接可用 |
 
 - **必删连带（本次删除直接导致的死代码，非工程外）**：`framework/driver/virtio/mod.rs` 的 `const QUEUE_NUM: usize = 0x038` —— 唯一使用点为 `setup_vq` / `setup_vq_legacy` 两函数体，删函数后成死常量（`dead_code` ⇒ F5），按 §9.3「硬件规范常量须通过实现使用路径消除」随之删除；同时移除两函数各自的 `#[expect(clippy::unnecessary_wraps)]`（避免 `unfulfilled_lint_expectations`）。
 - **未涉及**：`QUEUE_PFN`（`setup_queue_legacy` 仍用）、`QUEUE_READY`（`set_queue_ready` 仍用）、`pub mod queue`（host-tests `framekernel_bench.rs` 消费 `VirtQueue` 等，仍被引用 ⇒ 无 R3 WARN）。
-- **后续修订（MIG-004 边界治理批次）**：A4 中删除的 `services/chitin::{input_read, input_has_data}`「能力等价公共入口」结论**不变**（framework `chitin_input_read` / `chitin_input_has_data` 仍由 `framework/driver/input/keyboard.rs` 独立调用）。MIG-004 在 `services/chitin/proto.rs` **新建同名强类型安全代理**（与 `char`/`net`/`block` 协议族统一 `services::chitin` 出口、去裸指针、含 host-tests 覆盖），属**新增 API 面**而非恢复旧 wrapper；本区块删除结论不受影响，详见 `docs/plan/unresolved-issues-2026-08-09.md` 的 MIG-004 结案条目。
+- **后续修订（MIG-004 边界治理批次）**：A4 中删除的 `services/egdf::{input_read, input_has_data}`「能力等价公共入口」结论**不变**（framework `egdf_input_read` / `egdf_input_has_data` 仍由 `framework/driver/input/keyboard.rs` 独立调用）。MIG-004 在 `services/egdf/proto.rs` **新建同名强类型安全代理**（与 `char`/`net`/`block` 协议族统一 `services::egdf` 出口、去裸指针、含 host-tests 覆盖），属**新增 API 面**而非恢复旧 wrapper；本区块删除结论不受影响，详见 `docs/plan/unresolved-issues-2026-08-09.md` 的 MIG-004 结案条目。
 
 **B-10.11.4 B-6 区块同步**
 
@@ -1746,32 +1746,32 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 #### B-12. 热插拔运行时接线批次（方案 B：相对完整实现）
 
-> 来源：遗留调研结论「热插拔**基础设施已就位但运行时链路未接通**」（8 处断点）。用户裁定：**方案 B（相对完整实现）**；结构决策 **D1＝块设备移除协议迁移到 Chitin**、**D2＝检测 + 分发 + 日志**。本条为兑现记录。
+> 来源：遗留调研结论「热插拔**基础设施已就位但运行时链路未接通**」（8 处断点）。用户裁定：**方案 B（相对完整实现）**；结构决策 **D1＝块设备移除协议迁移到 EGDF**、**D2＝检测 + 分发 + 日志**。本条为兑现记录。
 
 **B-12.1 背景（8 处断点）**
 
-`HotplugManager`（`slots`/`listeners`/`initialized` 三锁 + `HotplugEvent`/`HotplugListener`）与 PCIe Slot Capability/`PcieHotplugSlot::probe` 早已存在，但无运行时链路：① 无 softirq 唤醒；② 无调度 tick 触发；③ 无 services 侧总线重枚举回调契约；④ 无 Chitin 块设备移除协议；⑤ NestFS 监听器以端口 `location.slot` 误当 drive 号（语义错位）；⑥ storage 侧无重扫描；⑦ USB 端口变化无检测；⑧ USB 控制器无自持注册。本批接线使之端到端可用。
+`HotplugManager`（`slots`/`listeners`/`initialized` 三锁 + `HotplugEvent`/`HotplugListener`）与 PCIe Slot Capability/`PcieHotplugSlot::probe` 早已存在，但无运行时链路：① 无 softirq 唤醒；② 无调度 tick 触发；③ 无 services 侧总线重枚举回调契约；④ 无 EGDF 块设备移除协议；⑤ UNKFS 监听器以端口 `location.slot` 误当 drive 号（语义错位）；⑥ storage 侧无重扫描；⑦ USB 端口变化无检测；⑧ USB 控制器无自持注册。本批接线使之端到端可用。
 
 **B-12.2 架构关键决策（用户裁定）**
 
-- **D1：块设备移除协议迁移到 Chitin**（[framework/chitin/mod.rs](../../src/kernel/framework/chitin/mod.rs)）。新增 `BlockDevice` trait（**定义在 chitin 而非 driver 模块，避免循环依赖 F3**）+ `chitin_register_block_dev` / `chitin_unregister_block` / `chitin_blk_read` / `chitin_blk_write` / `chitin_blk_is_present` / `chitin_blk_drives` / `chitin_blk_is_removed`。**墓碑（tombstone）语义**：移除**不物理删除** `CHITIN_DEVICES` 槽位，改置 `state = Removed` + `block_dev = None`，保证已下发 `drive` 句柄索引稳定（`AHCI_CONTROLLERS`/`NVME_CONTROLLERS` 为 `Vec` 且 `AhciBlockDevice`/`NvmeBlockDevice` 缓存 `controller_index: usize`，**不得从中间删除**）。`block_device_state` 迁移至 [framework/driver/block.rs](../../src/kernel/framework/driver/block.rs)（`(hdd_is_present, chitin_blk_is_removed, 0)`）。
-- **D2：检测 + 分发 + 日志**。USB 端口变化扫描 → 构造 `DeviceLocation` → `HOTPLUG_MANAGER.dispatch()`；storage 侧重扫描 + 分发（`drives_for_location`）；NestFS 监听器逐 drive 认领/移除 + `slog_info!` 记录。
+- **D1：块设备移除协议迁移到 EGDF**（[framework/egdf/mod.rs](../../src/kernel/framework/egdf/mod.rs)）。新增 `BlockDevice` trait（**定义在 egdf 而非 driver 模块，避免循环依赖 F3**）+ `egdf_register_block_dev` / `egdf_unregister_block` / `egdf_blk_read` / `egdf_blk_write` / `egdf_blk_is_present` / `egdf_blk_drives` / `egdf_blk_is_removed`。**墓碑（tombstone）语义**：移除**不物理删除** `EGDF_DEVICES` 槽位，改置 `state = Removed` + `block_dev = None`，保证已下发 `drive` 句柄索引稳定（`AHCI_CONTROLLERS`/`NVME_CONTROLLERS` 为 `Vec` 且 `AhciBlockDevice`/`NvmeBlockDevice` 缓存 `controller_index: usize`，**不得从中间删除**）。`block_device_state` 迁移至 [framework/driver/block.rs](../../src/kernel/framework/driver/block.rs)（`(hdd_is_present, egdf_blk_is_removed, 0)`）。
+- **D2：检测 + 分发 + 日志**。USB 端口变化扫描 → 构造 `DeviceLocation` → `HOTPLUG_MANAGER.dispatch()`；storage 侧重扫描 + 分发（`drives_for_location`）；UNKFS 监听器逐 drive 认领/移除 + `slog_info!` 记录。
 
 **B-12.3 framework 侧接线**
 
-- **softirq（kswapd 先例模式，QueenX 无 kthread 抽象）**：`SoftirqVec::Hotplug = 8`（[irq/mod.rs](../../src/kernel/framework/irq/mod.rs)；`MAX_SOFTIRQS = 10`）。`hotplug_wakeup()`（pending 标志去重 + `raise_softirq`）**替代原 `hotplug_poll`**（原函数已不存在）；`hotplug_softirq_handler` = 清 pending → `HOTPLUG_MANAGER.poll()` → `dispatch_aux_poll()`；调度 tick 周期 `HOTPLUG_TICK_INTERVAL = 100` 调 `hotplug_wakeup()`（[proc/scheduler.rs](../../src/kernel/framework/proc/scheduler.rs#L1176-L1177)）。
+- **softirq（kswapd 先例模式，Edgine 无 kthread 抽象）**：`SoftirqVec::Hotplug = 8`（[irq/mod.rs](../../src/kernel/framework/irq/mod.rs)；`MAX_SOFTIRQS = 10`）。`hotplug_wakeup()`（pending 标志去重 + `raise_softirq`）**替代原 `hotplug_poll`**（原函数已不存在）；`hotplug_softirq_handler` = 清 pending → `HOTPLUG_MANAGER.poll()` → `dispatch_aux_poll()`；调度 tick 周期 `HOTPLUG_TICK_INTERVAL = 100` 调 `hotplug_wakeup()`（[proc/scheduler.rs](../../src/kernel/framework/proc/scheduler.rs#L1176-L1177)）。
 - **DECISION-K 回调契约**（services → framework 单向注册无捕获函数指针，未注册 fail-quiet）：`register_reenum_hook`（总线重枚举，**先于**监听器分发）+ `register_aux_poll`（辅助轮询）。
 - **`HotplugManager::dispatch`**（[driver/hotplug.rs](../../src/kernel/framework/driver/hotplug.rs#L166)）：先 `dispatch_reenum(event)`，再 `listeners` 锁内按变体调 `on_device_added`（认领返回 `bool`）/ `on_device_removed`。
 
 **B-12.4 services 侧接线**
 
-- **storage**（[services/driver/storage/mod.rs](../../src/kernel/services/driver/storage/mod.rs)）：注册 `storage_reenum_hook`（L631）重扫描控制器，重插经 `install_controller(..., slot_hint, ...)` **复用槽位**；新增 `drives_for_location(location) -> Vec<u8>`（位置 → 已注册块设备，x86_64 实装 + aarch64 恒空 stub）；移除路径 `remove_stale_controllers`（L409）经 `chitin_unregister_block` 墓碑化。
-- **NestFS**（[services/fs/nestfs/nestfs.rs](../../src/kernel/services/fs/nestfs/nestfs.rs)）：`on_device_added` 仅认领 `DeviceAdded`，逐 `drives_for_location(location)` 调 `hotplug_add_disk`；`on_device_removed` 处理 `DeviceRemoved | SurpriseRemoval` 调 `hotplug_remove_disk`（**原 `location.slot` 直用为语义错位，本批修正**）。
-- **USB**（[services/driver/usb/mod.rs](../../src/kernel/services/driver/usb/mod.rs)）：`static USB_CONTROLLERS: Mutex<Vec<&'static mut XhciController>>`；`usb_init` 改为 `Box::leak` 自持控制器 + `chitin_register("xhci", ChitinProto::Bus, ...)` + `register_aux_poll(usb_port_poll)`；`usb_port_poll` 扫描 PORTSC 变化位（`CSC|PEC|OCC|RC`）→ `ack_port_change`（读-改-写屏蔽 RW1CS 位，`PORTSC_RWS`，参照 Linux `xhci_port_state_to_neutral`，[usb/xhci.rs](../../src/kernel/services/driver/usb/xhci.rs#L625)）→ **先释放 USB 锁再 `dispatch`**（避免持锁跨界）。
+- **storage**（[services/driver/storage/mod.rs](../../src/kernel/services/driver/storage/mod.rs)）：注册 `storage_reenum_hook`（L631）重扫描控制器，重插经 `install_controller(..., slot_hint, ...)` **复用槽位**；新增 `drives_for_location(location) -> Vec<u8>`（位置 → 已注册块设备，x86_64 实装 + aarch64 恒空 stub）；移除路径 `remove_stale_controllers`（L409）经 `egdf_unregister_block` 墓碑化。
+- **UNKFS**（[services/fs/unkfs/unkfs.rs](../../src/kernel/services/fs/unkfs/unkfs.rs)）：`on_device_added` 仅认领 `DeviceAdded`，逐 `drives_for_location(location)` 调 `hotplug_add_disk`；`on_device_removed` 处理 `DeviceRemoved | SurpriseRemoval` 调 `hotplug_remove_disk`（**原 `location.slot` 直用为语义错位，本批修正**）。
+- **USB**（[services/driver/usb/mod.rs](../../src/kernel/services/driver/usb/mod.rs)）：`static USB_CONTROLLERS: Mutex<Vec<&'static mut XhciController>>`；`usb_init` 改为 `Box::leak` 自持控制器 + `egdf_register("xhci", EGDFProto::Bus, ...)` + `register_aux_poll(usb_port_poll)`；`usb_port_poll` 扫描 PORTSC 变化位（`CSC|PEC|OCC|RC`）→ `ack_port_change`（读-改-写屏蔽 RW1CS 位，`PORTSC_RWS`，参照 Linux `xhci_port_state_to_neutral`，[usb/xhci.rs](../../src/kernel/services/driver/usb/xhci.rs#L625)）→ **先释放 USB 锁再 `dispatch`**（避免持锁跨界）。
 
 **B-12.5 测试**
 
-- host 契约测试 [hotplug_reenum_contract_test.rs](../../host-tests/tests/hotplug_reenum_contract_test.rs)（2 passed / 0 failed）：① **Chitin 墓碑索引稳定**——交错注册（块/非块）→ 墓碑化块设备 → 读回存活设备数据 → 越界/非块/已移除边界；新注册**不回收墓碑槽位**；② **分发契约**——reenum hook 先于 listener；`DeviceAdded`/`DeviceRemoved`/`SurpriseRemoval` 分发计数正确。
+- host 契约测试 [hotplug_reenum_contract_test.rs](../../host-tests/tests/hotplug_reenum_contract_test.rs)（2 passed / 0 failed）：① **EGDF 墓碑索引稳定**——交错注册（块/非块）→ 墓碑化块设备 → 读回存活设备数据 → 越界/非块/已移除边界；新注册**不回收墓碑槽位**；② **分发契约**——reenum hook 先于 listener；`DeviceAdded`/`DeviceRemoved`/`SurpriseRemoval` 分发计数正确。
 
 **B-12.6 门槛（§2.3 六条，全绿）**
 
@@ -1786,7 +1786,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 **B-12.7 R1 台账同步**
 
-- 移除 **4 条**因本工程「接线 / 删除」而不再零引用的条目：`framework/driver/hotplug.rs::hotplug_poll`（**函数已不存在**，由 `hotplug_wakeup` + softirq 轮询替代）、`services/driver/usb/xhci.rs::ack_port_change`、`::has_port_change`（**已被 `usb_port_poll` 调用**）、`framework/driver/block.rs::mark_removed`（**函数已不存在**，由 Chitin 墓碑协议 `chitin_blk_is_removed` 替代）⇒ **B-6 区块 462 → 458 项**（脚本正向复跑：`已分类清单: 458 项` / `HIGH 未分类: 49 项`，HIGH 均为**预存项**，本批新增/改动函数（`dispatch`/`register_reenum_hook`/`register_aux_poll`/`chitin_unregister_block`/`chitin_blk_drives`/`chitin_blk_is_removed`/`drives_for_location`/`ack_port_change`/`has_port_change`）**均已接线，未落 HIGH**）。
+- 移除 **4 条**因本工程「接线 / 删除」而不再零引用的条目：`framework/driver/hotplug.rs::hotplug_poll`（**函数已不存在**，由 `hotplug_wakeup` + softirq 轮询替代）、`services/driver/usb/xhci.rs::ack_port_change`、`::has_port_change`（**已被 `usb_port_poll` 调用**）、`framework/driver/block.rs::mark_removed`（**函数已不存在**，由 EGDF 墓碑协议 `egdf_blk_is_removed` 替代）⇒ **B-6 区块 462 → 458 项**（脚本正向复跑：`已分类清单: 458 项` / `HIGH 未分类: 49 项`，HIGH 均为**预存项**，本批新增/改动函数（`dispatch`/`register_reenum_hook`/`register_aux_poll`/`egdf_unregister_block`/`egdf_blk_drives`/`egdf_blk_is_removed`/`drives_for_location`/`ack_port_change`/`has_port_change`）**均已接线，未落 HIGH**）。
 
 **B-12.8 SIMPLIFIED 登记（§12.3）**
 
@@ -1799,22 +1799,22 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 **B-13.1 ① legacy `REGISTRY` 死路径清理**
 
-- **新增 Chitin 多扇区 API**（[framework/chitin/mod.rs](../../src/kernel/framework/chitin/mod.rs)）：`chitin_blk_read_sectors(drive, start, count, buf)` / `chitin_blk_write_sectors(drive, start, count, buf)`——单次持 `CHITIN_DEVICES` 锁完成整段读写；`buf` 不足 ⇒ `InvalidArgument`；越界 / 非块 / 缺实现 ⇒ `Io`；非 `Ready`（已墓碑化）⇒ `Busy`。补齐 NestFS 之外 ext2/exFAT 的**多扇区**读写面。
-- **迁移 ext2 / exFAT 全部块读写调用点**：ext2（[read.rs](../../src/kernel/services/fs/ext2/read.rs) 4 处、[alloc.rs](../../src/kernel/services/fs/ext2/alloc.rs) 10 处）与 exFAT（[read.rs](../../src/kernel/services/fs/exfat/read.rs) 1、[dir.rs](../../src/kernel/services/fs/exfat/dir.rs) 1、[fat.rs](../../src/kernel/services/fs/exfat/fat.rs) 3、[alloc.rs](../../src/kernel/services/fs/exfat/alloc.rs) 3）由 legacy `block::with_device` + `read_sectors`/`write_sectors` 改走 `chitin_blk_read_sectors`/`chitin_blk_write_sectors`。
-- **删除 [block.rs](../../src/kernel/framework/driver/block.rs) legacy 死路径**：`REGISTRY` / `DEVICE_NAMES` 两个 static + 7 个 pub fn（`register_named` / `register` / `with_device` / `registry` / `count` / `read_sectors` / `write_sectors`）及随之无用的 import（`KernelError` / `KernelResult` / `IrqSpinLock` / `Box`）。文件仅保留 Chitin 代理面（`hdd_*` / `block_device_*`）。
+- **新增 EGDF 多扇区 API**（[framework/egdf/mod.rs](../../src/kernel/framework/egdf/mod.rs)）：`egdf_blk_read_sectors(drive, start, count, buf)` / `egdf_blk_write_sectors(drive, start, count, buf)`——单次持 `EGDF_DEVICES` 锁完成整段读写；`buf` 不足 ⇒ `InvalidArgument`；越界 / 非块 / 缺实现 ⇒ `Io`；非 `Ready`（已墓碑化）⇒ `Busy`。补齐 UNKFS 之外 ext2/exFAT 的**多扇区**读写面。
+- **迁移 ext2 / exFAT 全部块读写调用点**：ext2（[read.rs](../../src/kernel/services/fs/ext2/read.rs) 4 处、[alloc.rs](../../src/kernel/services/fs/ext2/alloc.rs) 10 处）与 exFAT（[read.rs](../../src/kernel/services/fs/exfat/read.rs) 1、[dir.rs](../../src/kernel/services/fs/exfat/dir.rs) 1、[fat.rs](../../src/kernel/services/fs/exfat/fat.rs) 3、[alloc.rs](../../src/kernel/services/fs/exfat/alloc.rs) 3）由 legacy `block::with_device` + `read_sectors`/`write_sectors` 改走 `egdf_blk_read_sectors`/`egdf_blk_write_sectors`。
+- **删除 [block.rs](../../src/kernel/framework/driver/block.rs) legacy 死路径**：`REGISTRY` / `DEVICE_NAMES` 两个 static + 7 个 pub fn（`register_named` / `register` / `with_device` / `registry` / `count` / `read_sectors` / `write_sectors`）及随之无用的 import（`KernelError` / `KernelResult` / `IrqSpinLock` / `Box`）。文件仅保留 EGDF 代理面（`hdd_*` / `block_device_*`）。
 
 **B-13.2 ② `block_device_list()` 索引 bug 修复**
 
-- [block.rs:52](../../src/kernel/framework/driver/block.rs#L52) 由 `.filter(...).enumerate()` 改为 `.enumerate().filter(...)`，`map` 取**全局下标 `i`**（= Chitin 槽位 = `drive` 号）。原实现返回的是**过滤后序列的位置**，与 Chitin 下标错位 ⇒ 多块设备 / 存在非块设备时列表 drive 号错误。调用点：[framework/driver/mod.rs:270](../../src/kernel/framework/driver/mod.rs#L270)。
+- [block.rs:52](../../src/kernel/framework/driver/block.rs#L52) 由 `.filter(...).enumerate()` 改为 `.enumerate().filter(...)`，`map` 取**全局下标 `i`**（= EGDF 槽位 = `drive` 号）。原实现返回的是**过滤后序列的位置**，与 EGDF 下标错位 ⇒ 多块设备 / 存在非块设备时列表 drive 号错误。调用点：[framework/driver/mod.rs:270](../../src/kernel/framework/driver/mod.rs#L270)。
 
 **B-13.3 ③ SATA 端口级热插拔（新功能）**
 
 - **总线变体**：`BusType::Sata`（[hotplug.rs:37](../../src/kernel/framework/driver/hotplug.rs#L37)）。
 - **辅助轮询多槽化**：`HOTPLUG_AUX_POLL: Mutex<Vec<fn()>>`（[hotplug.rs:303](../../src/kernel/framework/driver/hotplug.rs#L303)）+ `register_aux_poll(hook: fn())` 去掉返回值（原单槽 `OnceLock` 只能注册一条总线，与 USB 冲突）；去重 push；`dispatch_aux_poll()` 持锁只读遍历（[hotplug.rs:320](../../src/kernel/framework/driver/hotplug.rs#L320)）。
-- **AHCI 端口固定槽位**（[services/driver/storage/ahci.rs](../../src/kernel/services/driver/storage/ahci.rs)）：`init_controller` 无条件 push 全部已实现端口 ⇒ `ports` 下标恒等于 SATA 硬件端口号（不因在位状态改变槽位）；`AhciPort::drive()` / `set_drive(Option<u8>)` 维护端口 → Chitin `drive` 映射；`port_index_of(port_num)` / `bring_up_port` / `scan_ports() -> PortChanges { added, removed }`。
-- **三相位轮询** `ahci_port_poll()`（[storage/mod.rs:552](../../src/kernel/services/driver/storage/mod.rs#L552)，`#[cfg(target_arch = "x86_64")]`）：Phase 1 摘取 `PROBED` 在线 AHCI 控制器 `(slot, bus, device, function)`；Phase 2 持 `AHCI_CONTROLLERS` 逐控制器 `scan_ports()` 收集变化并 `set_drive` 回写；Phase 3 **锁外**分发——新增走 `register_block_device`（`dispatch(DeviceAdded)`），移除走 `chitin_unregister_block`（`dispatch(SurpriseRemoval)`）。`storage_init` 注册 `register_aux_poll(ahci_port_poll)`（[storage/mod.rs:779](../../src/kernel/services/driver/storage/mod.rs#L779)）。
+- **AHCI 端口固定槽位**（[services/driver/storage/ahci.rs](../../src/kernel/services/driver/storage/ahci.rs)）：`init_controller` 无条件 push 全部已实现端口 ⇒ `ports` 下标恒等于 SATA 硬件端口号（不因在位状态改变槽位）；`AhciPort::drive()` / `set_drive(Option<u8>)` 维护端口 → EGDF `drive` 映射；`port_index_of(port_num)` / `bring_up_port` / `scan_ports() -> PortChanges { added, removed }`。
+- **三相位轮询** `ahci_port_poll()`（[storage/mod.rs:552](../../src/kernel/services/driver/storage/mod.rs#L552)，`#[cfg(target_arch = "x86_64")]`）：Phase 1 摘取 `PROBED` 在线 AHCI 控制器 `(slot, bus, device, function)`；Phase 2 持 `AHCI_CONTROLLERS` 逐控制器 `scan_ports()` 收集变化并 `set_drive` 回写；Phase 3 **锁外**分发——新增走 `register_block_device`（`dispatch(DeviceAdded)`），移除走 `egdf_unregister_block`（`dispatch(SurpriseRemoval)`）。`storage_init` 注册 `register_aux_poll(ahci_port_poll)`（[storage/mod.rs:779](../../src/kernel/services/driver/storage/mod.rs#L779)）。
 - **位置解析**：`drives_for_location` 新增 `BusType::Sata` 分支（[storage/mod.rs:511](../../src/kernel/services/driver/storage/mod.rs#L511)）——经 `PROBED` 定位控制器槽位 → `AHCI_CONTROLLERS` → `port_index_of(location.slot)` → 端口 `drive`；`Usb | Virtio` 恒空；aarch64 恒空 stub（[storage/mod.rs:648](../../src/kernel/services/driver/storage/mod.rs#L648)）。
-- **锁顺序**（F8 合规）：合法链 `PROBED → CHITIN_DEVICES → AHCI_CONTROLLERS`；禁止持 `AHCI_CONTROLLERS` 时锁 Chitin / PROBED（Phase 3 严格锁外分发）。
+- **锁顺序**（F8 合规）：合法链 `PROBED → EGDF_DEVICES → AHCI_CONTROLLERS`；禁止持 `AHCI_CONTROLLERS` 时锁 EGDF / PROBED（Phase 3 严格锁外分发）。
 
 **B-13.4 测试**
 
@@ -1841,7 +1841,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 - 依用户裁定「规划方案并修复」，对 B-13.6 登记的 **43 项预存漂移**逐项定位处置，根因＝**文件随框内核迁移从 `framework/...` 下沉至 `services/...`，区块仍记旧 framework 路径 ⇒ R1 按路径比对失配**（函数仍零引用，故报 HIGH）：
   - **31 项路径更新**（`framework/...`→`services/...`）：`driver/display/controller.rs`(11)、`driver/usb/mass_storage.rs`(2) / `ring.rs`(2) / `usb_core.rs`(3)、`fs/devfs/mod.rs`(2)→`fs/devfs.rs`、`fs/vfs/flock.rs`(4)→`fs/flock.rs`、`fs/vfs/dcache.rs`(1)→`fs/dcache.rs`、`fs/vfs/handle.rs`(2)→`fs/handle.rs`、`fs/vfs/inotify.rs`(2)→`fs/inotify.rs`、`fs/vfs/types.rs`(1)→`fs/vfs_types.rs`、`fs/vfs/vfs.rs`(1)→`fs/vfs_manager.rs`。
-  - **12 项移除**（已接线 / 已删 / 已豁免）：`framework/driver/net/e1000_io.rs::install_rings`（已删）、`::set_ctrl` / `::set_ipg` / `::set_rx_ctl` / `::set_tx_ctl`（已被 `services/driver/net/e1000.rs` 调用）、`framework/driver/usb/xhci.rs::init_command_ring` / `::recover_endpoint`（已删）、`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`（内联测试引用）、`services/chitin/mod.rs::find_by_proto`（host 测试引用）、`services/driver/usb/xhci.rs::port_connected` / `::port_status`（内部调用）。
+  - **12 项移除**（已接线 / 已删 / 已豁免）：`framework/driver/net/e1000_io.rs::install_rings`（已删）、`::set_ctrl` / `::set_ipg` / `::set_rx_ctl` / `::set_tx_ctl`（已被 `services/driver/net/e1000.rs` 调用）、`framework/driver/usb/xhci.rs::init_command_ring` / `::recover_endpoint`（已删）、`framework/timer/tickless.rs::enter_tickless` / `::exit_tickless`（内联测试引用）、`services/egdf/mod.rs::find_by_proto`（host 测试引用）、`services/driver/usb/xhci.rs::port_connected` / `::port_status`（内部调用）。
 - 复核：修复后 R1 实测 `已分类清单: 446 项` ＝ `[INFO] R1 已分类 446 项`（matched）、**stale 0**、`[HIGH] 未分类 18 项`（18 项均为**预存、不在 B-6 区块、与本批无关**：`framework/driver/net/e1000_io.rs` 5 项、`services/driver/usb/xhci.rs` 6 项、`services/fs/vfs_mount.rs` 5 项、`services/proc/coredump.rs` 2 项），脚本 EXIT=0。
 
 #### C. 原「接线」142 项（重划：仅 8 项留「接线」，其余 134 项入「未来功能」）
@@ -1871,20 +1871,20 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 | `framework/arch/aarch64/timer.rs` | 1 | `set_timeout_ms` |
 | `framework/arch/aarch64/uart.rs` | 1 | `switch_to_high_half` |
 | `framework/arch/x86_64/apic.rs` | 4 | `mask_lint0` `mask_lint1` `unmask_lint0` `unmask_lint1` |
-| `framework/barrier/domain.rs` | 2 | `check_quota` `check_proc_limit` |
-| `framework/barrier/recovery.rs` | 4 | `recovery_registry_init` `recovery_subdomain_save_checkpoint` `cascade_recover` `hard_reset_domain` |
-| `framework/barrier/{reset/layered,snapshot}.rs` | 4 | `test_recovery_status` `test_snapshot_basic` `test_registry_register` `test_registry_priority_order`（kernel_test 用例未挂测试运行器） |
+| `framework/freg/domain.rs` | 2 | `check_quota` `check_proc_limit` |
+| `framework/freg/recovery.rs` | 4 | `recovery_registry_init` `recovery_subdomain_save_checkpoint` `cascade_recover` `hard_reset_domain` |
+| `framework/freg/{reset/layered,snapshot}.rs` | 4 | `test_recovery_status` `test_snapshot_basic` `test_registry_register` `test_registry_priority_order`（kernel_test 用例未挂测试运行器） |
 | `framework/mm/kpti.rs` | 3 | `invpcid_flush_single` `kpti_kernel_pml4` `kpti_user_pml4_or_kernel` |
 | `framework/mm/kpti_aarch64.rs` | 2 | `kpti_trampoline_ttbr1` `kpti_kernel_ttbr1` |
 | `framework/mm/swap.rs` | 1 | `swap_free` |
 | `framework/mm/vma.rs` | 1 | `with_offset` |
 | `framework/sync/mutex.rs` / `pi_mutex.rs` / `rcu.rs` | 3 | `wait_timeout` / `set_ceiling` / `rcu_process_all_callbacks` |
-| `framework/chitin/user_driver.rs` | 3 | `devtree_map_user_device` `devtree_unmap_user_device` `chitin_forward_irq` |
+| `framework/egdf/user_driver.rs` | 3 | `devtree_map_user_device` `devtree_unmap_user_device` `egdf_forward_irq` |
 | `framework/cpu/tsc.rs` | 1 | `nanoseconds_to_cycles` |
-| `framework/credo/{audit,identity,secure_boot}.rs` | 3 | `get_entries` `find_mut` `add_trust_entry` |
+| `framework/sgeg/{audit,identity,secure_boot}.rs` | 3 | `get_entries` `find_mut` `add_trust_entry` |
 | `framework/debug/ebpf.rs` | 3 | `prog_run` `get_map` `get_prog` |
 | `framework/dma/engine.rs` | 5 | `unmap_single` `sync_both` `sg_init` `sg_add_entry` `sg_total_length` |
-| `framework/driver/block.rs` | 1 | `mark_removed`（已由 Chitin 墓碑协议 `chitin_blk_is_removed` 替代，原函数不存在；见 B-12） |
+| `framework/driver/block.rs` | 1 | `mark_removed`（已由 EGDF 墓碑协议 `egdf_blk_is_removed` 替代，原函数不存在；见 B-12） |
 | `framework/driver/hotplug.rs` | 1 | `hotplug_poll`（已由 `hotplug_wakeup` + softirq 轮询替代，原函数不存在；见 B-12） |
 | `framework/driver/input/keyboard.rs` | 1 | `get_modifiers` |
 | `framework/driver/net/e1000_io.rs` | 5 | `set_ctrl` `set_rx_ctl` `set_tx_ctl` `set_ipg` `install_rings` |
@@ -1936,7 +1936,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 | `framework/arch/aarch64/mmu.rs` | 1 | `alloc_user_page_table`（Phase 6 每进程独立页表） |
 | `framework/arch/aarch64/timer.rs` | 1 | `set_compare`（oneshot 高精度定时） |
 | `framework/mm/swap.rs` | 1 | `swap_deinit`（host-tests 配对 + 将来热卸载） |
-| `framework/chitin/{composite,devtree}.rs` | 2 | 设备树匹配/属性解析 API 面 |
+| `framework/egdf/{composite,devtree}.rs` | 2 | 设备树匹配/属性解析 API 面 |
 | `framework/console/gfx_console.rs` | 2 | `set_margin` `set_colors`（控制台配置面） |
 | `framework/cpu/feature.rs` | 6 | CPU 能力/厂商查询面（D-4） |
 | `framework/dma/engine.rs` | 1 | `submit_transfer_async`（异步 DMA 面） |
@@ -1949,13 +1949,13 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 | `framework/fs/vfs/dcache.rs` / `flock.rs` / `inotify.rs` | 6 | VFS 内部诊断面 + flock 子系统查询面 + inotify 统计 |
 | `framework/idt/{handlers,idt,safety,statistics}.rs` | 7 | 诊断计数/历史查询面 + 屏障原语（D-4） |
 | `framework/proc/scheduler_ex.rs` | 1 | `thread_dump_info`（线程信息转储） |
-| `services/credo/{identity,secure_boot,crypto}.rs` | 19 | 身份/凭据/安全启动能力预留（D-4）+ safe 代理壳 |
+| `services/sgeg/{identity,secure_boot,crypto}.rs` | 19 | 身份/凭据/安全启动能力预留（D-4）+ safe 代理壳 |
 | `services/driver/{acpi,char,display,firmware,storage,uefi,usb,virtio}` | 41 | safe 代理壳 + 硬件操作面（D-4） |
-| `services/fs/nestfs/*` | 34 | NestFS 子系统预留（D-4） |
+| `services/fs/unkfs/*` | 34 | UNKFS 子系统预留（D-4） |
 | `services/fs/{exfat,ext2,tmpfs,devpts,sysfs,systree,ramfs,cgroupfs,configfs}` | 21 | FS 内部访问器 / mount-配套面 / 空间统计面 |
 | `services/ipc/{async_ipc,sem,signal}.rs` | 12 | IPC API/FFI 导出面（待用户态接线） |
 | `services/mm/{memory_pressure,swap}.rs` | 3 | 内存压力策略 + SwapInfo 查询面 |
-| `services/barrier/audit_export.rs` / `config/sysctl.rs` | 3 | 审计导出统计 + sysctl 序列化面 |
+| `services/freg/audit_export.rs` / `config/sysctl.rs` | 3 | 审计导出统计 + sysctl 序列化面 |
 | `services/proc/{canary,elf,shadow_stack,signal}.rs` / `timer/*` / `net/unix.rs` / `wasm/*` | 12 | 查询面 + safe 代理壳 + wasm 运行时 API 面 |
 
 #### 登记结论（修订版：E.1-E.4 + 第二 / 三 / 四轮裁定 + 甲批 + 本批 feature 去留；**第 15 条为最新口径**）
@@ -1968,14 +1968,14 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 6. **第二轮复核：A-2 已退回重做（reviewer，12/23 项判据站不住）**——原 23 项按四档处置，逐档有据：① **判据仅「零消费」7 项** → 补齐证据或退桶，结果 **7 项全退**（3 项同文件整组统一、1 项已登记路线图项、3 项属统计/诊断 API 面且未取得等价入口证据）；② **安全敏感 4 项** → 转 A-3 安全面二次分桶，**不走试删**；③ **注释待核 1 项**（`get_gdt_table`）→ 引注释原文核对＝`/// 获取 GDT 表的引用 (调试用途)`，**非死代码**，退桶；④ **判据较强 11 项** → 保留为 A-2。算术：23 − 4 − 8 = **11**。
 7. **判据升格为三合一（reviewer 第二轮，根本性修正）**：「存在等价公共入口」**单独不成立**——有等价入口 ≠ 该函数无人用（可能正属 API 面 / FFI 面 / feature 面）。删候选判据＝**该构建维零引用 ＋ 存在能力等价的公共入口 ＋ 非 API/FFI/feature/硬件原语面**，三者须同时成立。
 8. **试删的原理性盲区 + 顺序约束（reviewer 第二轮）**：`试删 + 五条门槛`**在原理上发现不了「安全校验被移除」**（删零调用校验后编译链接全过、无覆盖即全绿）⇒ 安全敏感项必须先经安全面确认；**不得并行 T1 收尾与 T5 施工**（同动 `framework`，且 `pcid_is_enabled` 与 T1 P2′ 所改 `kpti.rs` **文件级冲突**），T5 文档修订可并行。A-2 开工解锁条件五条见 ⑧。
-9. **第三轮裁定一：`ct_eq_salt` / `ct_eq_password` → 不删，移入完整性保留（族残缺档）**——实读 [crypto.rs:198-217](file:///home/anfer/Code/QueenX/src/kernel/services/credo/crypto.rs#L198-L217)，四者（`ct_eq` / `ct_eq_hash` / `ct_eq_salt` / `ct_eq_password`）**形状完全相同**，是 `Salt` / `PasswordHash` / `Sha256Hash` 的**类型化比较同族**；`ct_eq_hash` 有调用者、未入删候选 ⇒ 删另两者则**族残缺且不对称**。真正作用不是「提供能力」（`ct_eq` 已提供），而是**阻止调用方拆字段**（写 `ct_eq(&a.0, &b.0)`）——删掉等于**诱导密码学代码绕过类型包装**、降低抽象层级，与 A-1 保留 `sync/*` 原语族入口**判据同构**。**附核实已完成**：全仓 `src/` + `host-tests/` 零引用、无 `#[no_mangle]` / 无 `extern "C"` / 无 FFI、超出零引用即无跨 crate 与用户态 API 面按名调用 ⇒ 保留不引入新暴露面。桶效应：A-1 41 → **43**。
+9. **第三轮裁定一：`ct_eq_salt` / `ct_eq_password` → 不删，移入完整性保留（族残缺档）**——实读 [crypto.rs:198-217](file:///home/anfer/Code/Edgine/src/kernel/services/sgeg/crypto.rs#L198-L217)，四者（`ct_eq` / `ct_eq_hash` / `ct_eq_salt` / `ct_eq_password`）**形状完全相同**，是 `Salt` / `PasswordHash` / `Sha256Hash` 的**类型化比较同族**；`ct_eq_hash` 有调用者、未入删候选 ⇒ 删另两者则**族残缺且不对称**。真正作用不是「提供能力」（`ct_eq` 已提供），而是**阻止调用方拆字段**（写 `ct_eq(&a.0, &b.0)`）——删掉等于**诱导密码学代码绕过类型包装**、降低抽象层级，与 A-1 保留 `sync/*` 原语族入口**判据同构**。**附核实已完成**：全仓 `src/` + `host-tests/` 零引用、无 `#[no_mangle]` / 无 `extern "C"` / 无 FFI、超出零引用即无跨 crate 与用户态 API 面按名调用 ⇒ 保留不引入新暴露面。桶效应：A-1 41 → **43**。
 10. **第三轮裁定二 + 裁定三：ramfs 2 项挂起待 T3；二次分桶产出规格固定为三档**——（二）`split_path` / `validate_path` **不得按「零调用」删**，须先由 T3 给出「VFS 是否已提供等价（空/长度/NUL）校验」结论再二选一（冗余 ⇒ 可删 + 登记契约；缺陷 ⇒ 不删 + 登记缺陷 + 按 C-1 接线）；**威胁模型已更正**：`validate_path` **不含 `..` 穿越检查**，穿越由 VFS `resolve_path` 负责，上轮「删即移除穿越防护」不成立（实况见 A-3）。桶效应：并入 B-4，待裁 35 → **37**。（三）**「二次分桶」产物固定为三档＝冗余 / 缺陷 / 族残缺**，写入 **B-0** 作为本桶定型口径——**三合一判据不足以区分三档**（它只判「是否依赖等价入口」，不判「零调用是冗余还是缺陷」）。
 11. **第三轮开工裁定：A-2 11 项试删已授予开工**——解锁五条逐条核销（①②③④⑤ 全 ✅，见 ⑧）；执行约束：**逐项试删 / 每项独立提交可单独回退 / 每项跑五条门槛全量 / QEMU boot 为硬闸门 / ramfs 2 项不入本批 / `pcid_is_enabled` 已确认不在 11 项内**。**QEMU 日志已留存归档**：boot 日志 `build/log/qemu_boot_x86_64_t1wrap_20260918.log`（md5 `ad749d876db2808d053e219b5f91523a`，240 行）、kernel_test 日志 `tests/reports/unit_test_20260918_165355.log`（md5 `b1cf091bf44d3e6419fcd8f6c75f4d17`）。注：二者所在目录（`build/` / `tests/reports/`）**按 B08-10 既有裁定为 gitignore**（禁止日志入仓），故**可追溯性＝时间戳/固定名归档文件 + 关键行逐字入档**，非 git 跟踪。
 12. **第四轮（试删开工后逐项复核）：A-2 退桶 9 项入待裁 ⇒ 删候选 11 → 2**——试删启动后按 **B-0 三档规格**逐项复核「零调用 ＝ 冗余 / 缺陷 / 族残缺」，以**全仓 `grep -rn` 实测引用计数**为判据，发现 9 项判据不成立（明细见 **A-5**）：
     - **族残缺 6 项**（同族兄弟在用 ⇒ 不删，保对称）：`tss_64bit`（`Granularity` 构造器族 `code_64bit` **4** / `data_32bit` **4** / `tss_64bit` **0** ⇒ 2/3 在用；字段 `Granularity(pub(crate) u8)` ⇒ 删后调用方须写 `Granularity(Granularity::LONG_MODE)` **绕过构造器族**，**与裁定一 `ct_eq(&a.0, &b.0)` 判据同构**）、`vfs_close_safe` / `vfs_seek_safe` / `vfs_readdir_safe`（`vfs_*_safe` 全族 **17 员 / 14 员在用**）、`get_ap`（`get_ap_list`/`get_ap_count`/`has_madt`/`parse_madt` 在用）、`get_fs_name`（`get_fs_type`/`get_fs`/`set_fs` 在用）。
     - **台账 ② 判据事实错误 / 无等价入口 3 项**：`consume_quota_tick` / `is_quota_exceeded`（原记「与**在用** `check_quota` 语义重复」——实测 `check_quota` **自身零引用**且已列 B-2 待裁 ⇒「在用」不成立）、`pipe_exists`（原记「可由**在用** `get_pipe` / `pipe_count` 等价判定」——全仓**无 `get_pipe` 符号**，`pipe_count()` 不判定指定 `IpcId` 是否存在 ⇒ **无等价公共入口**）。两处错误已就地订正。
     - **新增原理性证据（重要）**：`get_ap` 试删后五门槛 **5/5 全过**（含 QEMU boot 硬闸门）却仍被判族残缺退回 ⇒ **试删 + 五条门槛在原理上无法识别族残缺**，与 ⑧「发现不了安全校验被移除」**同源**——**门槛通过 ≠ 判据成立**，试删只证「无构建/链接/回归破坏」，不证「零调用属冗余」。
-    - **档位争议如实登记**：`vfs_*_safe` 三项**弱于** `tss_64bit`——实测 [dir_ops.rs:14-28](file:///home/anfer/Code/QueenX/src/kernel/services/fs/dir_ops.rs#L14-L28) 已直接调用裸 `extern "C"` `vfs_seek` / `vfs_readdir`（不经 `_safe` 壳）⇒ 该族**本就不是封装边界**，删 3 员不改变抽象层级。仍按「同族部分在用 ⇒ 保对称」退桶，最终档位由 reviewer 复核确定。
+    - **档位争议如实登记**：`vfs_*_safe` 三项**弱于** `tss_64bit`——实测 [dir_ops.rs:14-28](file:///home/anfer/Code/Edgine/src/kernel/services/fs/dir_ops.rs#L14-L28) 已直接调用裸 `extern "C"` `vfs_seek` / `vfs_readdir`（不经 `_safe` 壳）⇒ 该族**本就不是封装边界**，删 3 员不改变抽象层级。仍按「同族部分在用 ⇒ 保对称」退桶，最终档位由 reviewer 复核确定。
     - **桶效应**：删候选 11 → **2**（仅 `write_log_line` / `format_duration`，为**唯一进入试删者**）；待裁 37 → **46**。合计 438（算术已核对闭合：2+43+8+339+46）。
 
 13. **六次修订（B-5 待裁 47 归零；裁定二 / 裁定四.2）**：每项均按**裁定二**落**三态**并补**三字段**（等待原因 + 解锁条件 + 责任方），**47 项逐项可追**：
@@ -2020,7 +2020,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 | 项 | 裁决 | 说明 |
 |---|---|---|
-| `uname` 默认 nodename `"queenx-node"` → `"QueenX"`，domainname `"(none)"` → 空串 | 已随本批变更（行为变化登记） | UTS 收敛的直接后果：`uname`（硬编码 `"queenx-node"`）/ `gethostname`（硬编码 `"localhost"`）/ `sethostname`（仅校验不存储）三处各说各话，统一后以 `UtsNamespace` 初值 `UTS_DEFAULT_NODENAME = b"QueenX"` 为准。原 `"(none)"` 为 Linux 未设域名的显示占位，本批按"未设置即空串"处理。回退路径：需对齐 Linux `(none)` 字面量时在 `sys_uname` 回填占位串 |
+| `uname` 默认 nodename `"edgine-node"` → `"Edgine"`，domainname `"(none)"` → 空串 | 已随本批变更（行为变化登记） | UTS 收敛的直接后果：`uname`（硬编码 `"edgine-node"`）/ `gethostname`（硬编码 `"localhost"`）/ `sethostname`（仅校验不存储）三处各说各话，统一后以 `UtsNamespace` 初值 `UTS_DEFAULT_NODENAME = b"Edgine"` 为准。原 `"(none)"` 为 Linux 未设域名的显示占位，本批按"未设置即空串"处理。回退路径：需对齐 Linux `(none)` 字面量时在 `sys_uname` 回填占位串 |
 | `VfsManager.root` 全局单例根 + `pivot_root` 不摘除旧根 + `vfs_set_cwd_internal` 静默失败 | 登记（本批 SIMPLIFIED，见实施记录 SIMPLIFIED 清单） | 三项均为随 chroot/pivot_root 完整路径解析引入的显式简化，已在代码内以 `// SIMPLIFIED:` 标注具体简化点/影响面/扩展时机；待 per-process root 或 mount namespace 机制出现时统一升级 |
 | `audit_implicit_deps` 151 → 159（+8） | 登记（本批引入，扩展审计维度） | 增量全部来自用户路径归一化的必要调用点：`services/fs/path.rs` +5（chroot/pivot_root 的 `VFS_MANAGER.set_root`/`get_root`/`resolve_user_path`）、`services/fs/file_handle.rs` +2（`name_to_handle_at` 归一化）、`services/fs/file_ops.rs` +1（`resolve_user_path`）。该维度为**扩展审计**（非 CI 硬门槛），HEAD 基线已有 151 处预存 backlog，本批未做清减（§12.2 不顺手扩大） |
 | `audit_unwired_pub_fn` / `public_api_docs` / `implicit_deps` 大额预存 backlog | 登记（预存，非本批引入） | 经 HEAD worktree 对比确认与 T1 G4-G7 批次无关；待专项工程处置 |
@@ -2035,7 +2035,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 
 **可达性矩阵（2026-09-17 调研）**
 
-调研口径：逐个符号访问点向上追溯调用链至入口，判定 host 测试能否到达；旁证为 `host-tests/` 全线零**代码**引用（`boot_install` / `CREDO_DISK_INSTALL` / `create_user_page_table` / `kpti_init` / `boot::init` 无任何命中；`handle_user_page_fault` / `read_user_cr3_asm` 仅命中文档注释，无调用）。
+调研口径：逐个符号访问点向上追溯调用链至入口，判定 host 测试能否到达；旁证为 `host-tests/` 全线零**代码**引用（`boot_install` / `SGEG_DISK_INSTALL` / `create_user_page_table` / `kpti_init` / `boot::init` 无任何命中；`handle_user_page_fault` / `read_user_cr3_asm` 仅命中文档注释，无调用）。
 
 | 簇 | 符号 | 访问点 | 调用链顶端 | host 可达性 |
 |---|---|---|---|---|
@@ -2043,7 +2043,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 | 2 | `_kernel_text_start` / `_kernel_text_end` | ① `kpti::kpti_init`（`framework/mm/kpti.rs:366-380` step 4.5）② `vmm::create_user_page_table`（`framework/mm/vmm_x86_64.rs:630-635`） | `vmm_init` / 进程地址空间创建 | **不可达**（host 无 MMU，不可构造页表上下文） |
 | 2b | `_kpti_trampoline_end` | **零引用**（仅 `kpti.rs:161` extern 声明 + `x86_64.ld:51` 定义） | — | 无引用即无 undefined symbol；G7 实际报错清单亦不含它 → **连声明一并删除** |
 | 3 | `_kernel_end` | `boot::init`（`framework/boot/mod.rs:285`） | `kernel_init`（`src/kernel/lib.rs:562` / `:654`） | **不可达**（裸机引导入口） |
-| 4 | `_kernel_start` / `_kernel_end` | `raw::kernel_start_ptr`（`framework/syscall/mod.rs:318`）/ `raw::kernel_end_phys`（`:331`） | `sys_boot_install`（`framework/syscall/dispatch.rs:876`，gate 为 `all(not(kernel_test), x86_64)`） | **不可达**（host-tests 零引用 boot_install / CREDO_DISK_INSTALL） |
+| 4 | `_kernel_start` / `_kernel_end` | `raw::kernel_start_ptr`（`framework/syscall/mod.rs:318`）/ `raw::kernel_end_phys`（`:331`） | `sys_boot_install`（`framework/syscall/dispatch.rs:876`，gate 为 `all(not(kernel_test), x86_64)`） | **不可达**（host-tests 零引用 boot_install / SGEG_DISK_INSTALL） |
 | 5 | `stack_bottom` | ① `proc::check_boot_stack_canary`（`framework/proc/process.rs:50`）② `proc::write_boot_stack_canary`（`framework/proc/process.rs:69`） | `kernel_init`（`src/kernel/lib.rs:528` / `:904`）+ aarch64 引导入口（`boot/aarch64/entry.rs:40` / `:52`） | **不可达**（裸机引导入口） |
 
 **aarch64 侧顺带项**：`_kernel_end` 另有 `framework/boot/aarch64/entry.rs:101` 访问点（该模块受 `target_arch = "aarch64"` 门控，host 构建不编译，不构成 host 链接风险）；列此仅为"符号语义桩化原则在双架构一致"的完整性记录。
@@ -2111,7 +2111,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
    - 实测：`cargo test --manifest-path host-tests/Cargo.toml --test e04_shared_runner_test --no-run` → **exit=101**，报错逐字：
      ```
      error[E0425]: cannot find value `_kernel_start` in this scope
-        --> /home/anfer/Code/QueenX/src/kernel/framework/syscall/mod.rs:338:19
+        --> /home/anfer/Code/Edgine/src/kernel/framework/syscall/mod.rs:338:19
          |
      338 |         unsafe { &_kernel_start as *const u8 }
          |                   ^^^^^^^^^^^^^ not found in this scope
@@ -2119,11 +2119,11 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
    - **第二处（针对本批新收拢声明的定向验证，证明跨模块引用同样 fail-closed）**：临时移除 [vmm_x86_64.rs](src/kernel/framework/mm/vmm_x86_64.rs) `create_user_page_table` KPTI 同步段的**块级 cfg**，使跨模块引用（`crate::framework::mm::kpti::_kernel_text_*`）在 host 下转 live → **exit=101**，报错逐字（共 3 项，前两项即新收拢符号；rustc 并指认门控位置）：
      ```
      error[E0425]: cannot find value `_kernel_text_start` in module `crate::framework::mm::kpti`
-        --> /home/anfer/Code/QueenX/src/kernel/framework/mm/vmm_x86_64.rs:633:69
+        --> /home/anfer/Code/Edgine/src/kernel/framework/mm/vmm_x86_64.rs:633:69
      error[E0425]: cannot find value `_kernel_text_end` in module `crate::framework::mm::kpti`
-        --> /home/anfer/Code/QueenX/src/kernel/framework/mm/vmm_x86_64.rs:636:69
+        --> /home/anfer/Code/Edgine/src/kernel/framework/mm/vmm_x86_64.rs:636:69
      note: found an item that was configured out
-        --> /home/anfer/Code/QueenX/src/kernel/framework/mm/kpti.rs:516:22
+        --> /home/anfer/Code/Edgine/src/kernel/framework/mm/kpti.rs:516:22
          |
      493 | #[cfg(not(feature = "host-test"))]
          |          ----------------------- the item is gated here
@@ -2137,10 +2137,10 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
    - 裁定依据：一致性（与 `mm/mod.rs` / `process.rs` 对齐）+ 语义自洽（声明保留意味着 host 构建仍"宣称"依赖链接脚本符号，与「符号契约 7 → 0」相斥）+ 守卫前移（编译期早于链接期，且条件写错只会是编译期报错，无实质风险）。
    - 原「残余一致性观察（未改）」一项随之**关闭**：三处声明已全部收拢，本方案符号集合内**不再存在保留声明的链接期守卫样本**（此即 P1 验收标准改写的原因）。
    - 复跑结果（P2′ 落地 + 判据修正为"存在性"后）：E-04 `--no-run` **exit=0**；`./ci/audit.sh quick` **exit=0**（双架构 check + clippy lib / kernel_test / host-test 三维全 passed，F4 SAFETY 覆盖缺漏 0；**aarch64 / kernel_test 两维的"未引用声明"零告警已实测**）；`./ci/build.sh all` **Passed 5 / Failed 0**（含 aarch64 release 构建）；`make test-unit` **498/498**（kernel_test 维链接正常，未引用声明不引入符号引用）；`qemu_boot_test.sh x86_64` **1/1**。注：x86_64 真机维在两种判据下声明均存在，真机产物等价，故 boot 语义无差异。
-3. **门控语义推广落地**：[lib.rs](src/kernel/lib.rs) **3 处**（`:505` `kernel_init` 的 `used_underscore_binding` cfg_attr 条件、`:661` Boot Info 真机块、`:861` NestFS 挂载块）由 `not(kernel_test)` 推广为 `not(any(kernel_test, host-test))`；[audit_feature_semantics.py](scripts/audit_feature_semantics.py) 仅注释同步，**判定规则未动**（实测 HIGH 清单与基线一致，见第 6 条）。
+3. **门控语义推广落地**：[lib.rs](src/kernel/lib.rs) **3 处**（`:505` `kernel_init` 的 `used_underscore_binding` cfg_attr 条件、`:661` Boot Info 真机块、`:861` UNKFS 挂载块）由 `not(kernel_test)` 推广为 `not(any(kernel_test, host-test))`；[audit_feature_semantics.py](scripts/audit_feature_semantics.py) 仅注释同步，**判定规则未动**（实测 HIGH 清单与基线一致，见第 6 条）。
 4. `./ci/build.sh all` → **Passed 5 / Failed 0**（双架构 0w0e + host-tests + forbidden-patterns + x86_64 link）；`./ci/audit.sh quick` → **exit 0**，含 `framework SAFETY 覆盖 (缺漏 0 ≤ 0 基线)`（F4 100%）、`audit_safety_coverage` 之外全部子审计绿。（**P2′ 收拢后复跑，结果一致**——声明收拢动了 TCB，故全门槛重跑。）
 5. **覆盖无损失断言** → `make test-host` **99 个 test bin 全 ok、755 tests passed / 0 FAILED**（与门控前基线一致，无下降；**P2′ 后复跑同值**）。
-6. **HIGH 清单与 HEAD 基线逐项一致（不得新增/推翻）**：当前基线 **7 项 HIGH**（`services/credo/storage/disk.rs` ×2、`services/fs/io.rs` ×1、`services/net/unix.rs` ×1、`services/syscall/dispatch.rs` ×3）+ 20 项 INFO（`framework/tests/net.rs`、`framework/tests/test_config.rs`、`services/net/mod.rs`）——**与本批桩化文件集（`framework/mm/*`、`framework/boot/mod.rs`、`framework/proc/process.rs`、`framework/syscall/mod.rs`、`src/kernel/lib.rs`）零交集**；实测与 HEAD 影子树基线逐项一致，差异仅 `services/syscall/dispatch.rs` 3 处行号平移（785/898/902 → 826/939/943）。原文「rc=0」系裁定方笔误（未核 HEAD 基线），已按实测修正。
+6. **HIGH 清单与 HEAD 基线逐项一致（不得新增/推翻）**：当前基线 **7 项 HIGH**（`services/sgeg/storage/disk.rs` ×2、`services/fs/io.rs` ×1、`services/net/unix.rs` ×1、`services/syscall/dispatch.rs` ×3）+ 20 项 INFO（`framework/tests/net.rs`、`framework/tests/test_config.rs`、`services/net/mod.rs`）——**与本批桩化文件集（`framework/mm/*`、`framework/boot/mod.rs`、`framework/proc/process.rs`、`framework/syscall/mod.rs`、`src/kernel/lib.rs`）零交集**；实测与 HEAD 影子树基线逐项一致，差异仅 `services/syscall/dispatch.rs` 3 处行号平移（785/898/902 → 826/939/943）。原文「rc=0」系裁定方笔误（未核 HEAD 基线），已按实测修正。
 7. **QEMU 三门槛**：`make test-unit` → **ALL 498 TESTS PASSED (0 skipped)**；`./scripts/qemu_boot_test.sh x86_64` → **1/1 通过**（进入 Ring 3 启动 init）；**真机路径证据（非仅编译通过）**——引导日志实测 `Boot stack canary verified`、`Boot info: mem=128 MB, kernel_end=0x3E60000`（非零 → 簇 3 真机分支生效）、`[KPTI] text region: start=0x12B000 end=0x2801B9 (342 pages)`、`[KPTI] map_text_region: …`、`[KPTI] data pages mapped: USER_CR3_SAVE=0x23FD000, …`、`[KPTI] kpti_init: kernel_pml4=0x102000, user_pml4_phys=0x3e60000, …` —— 簇 1/2/3/5 的真机分支均**实际执行**，桩化未侵蚀裸机语义。（**P2′ 后复跑同绿**：498/498 + boot 1/1，日志中 `_kernel_text_*` / `_kernel_end` 取值点均正常输出 → 声明收拢未影响真机构建。）
    - **日志留存归档（reviewer 第三轮要求：可追溯）**：boot 日志已从会被下次运行覆盖的 `build/log/qemu_boot_x86_64.log` 归档为固定名 **`build/log/qemu_boot_x86_64_t1wrap_20260918.log`**（240 行，md5 `ad749d876db2808d053e219b5f91523a`，与归档前逐字节一致）；kernel_test 日志 **`tests/reports/unit_test_20260918_165355.log`**（带时间戳，md5 `b1cf091bf44d3e6419fcd8f6c75f4d17`）。上列逐字证据行**均取自该归档文件**（原引用 `end=0x2805E9` 与本轮归档实况 `end=0x2801B9` 不符，已按归档更正）。注：两目录按 B08-10 既有裁定为 gitignore，日志不入仓 ⇒ 可追溯性＝归档文件 + 逐字行入档。
 8. **本轮复核复跑（T1 收尾复核：纯复核，未改任何代码）**：
@@ -2148,7 +2148,7 @@ src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
    - **P1 负向验证复跑**：临时将 `syscall/mod.rs` 的 `kernel_start_ptr` 真机分支转为无条件（去掉 host 桩分支）→ `cargo test --manifest-path host-tests/Cargo.toml --test e04_shared_runner_test --no-run` **exit=101**，逐字报错：
      ```
      error[E0425]: cannot find value `_kernel_start` in this scope
-        --> /home/anfer/Code/QueenX/src/kernel/framework/syscall/mod.rs:336:23
+        --> /home/anfer/Code/Edgine/src/kernel/framework/syscall/mod.rs:336:23
      ```
      ⇒ **编译期**失败（非链接期 `undefined symbol`），与改写后的验收标准一致；改动已回退（`git diff --stat` 仅两份文档、临时标记全仓零残留）。
    - **P4 全门槛回归（本轮实测）**：`./ci/build.sh all` → **Passed 5 / Failed 0**（RC=0）；`./ci/audit.sh quick` → **RC=0**（**F4 SAFETY 覆盖 1924 / 1924 = 100%，缺 SAFETY 0**；clippy lib / `kernel_test` / `host-test` **三维全 passed**）；`make test-host` → **RC=0**（101 个测试二进制全 `ok`、合计 **766 passed / 0 FAILED**，对基线 755 **无下降**）；`make test-unit` → **RC=0**（QEMU `kernel_test` **ALL 498 TESTS PASSED**）；`./scripts/qemu_boot_test.sh x86_64` → **RC=0，1/1 通过**（串口 240 行，命中里程碑 `VFS ready`，进入 Ring 3 启动 init）。

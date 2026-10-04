@@ -154,8 +154,8 @@ pub fn open_by_handle_at_syscall(
 
     // 权限检查: open_by_handle_at 按句柄绕过路径权限打开任意 inode, 属特权操作
     // B06-03: 采用 SYSTEM 域 CAP_SYS_ADMIN (0x01), 与 mount/umount2 先例一致 (services/fs/mount.rs:52)
-    let pwm = crate::framework::credo::session::get_current_pwm();
-    if !crate::framework::credo::api::pwm_has_capability(pwm, 0, 0x01) {
+    let pwm = crate::framework::sgeg::session::get_current_pwm();
+    if !crate::framework::sgeg::api::pwm_has_capability(pwm, 0, 0x01) {
         return Err(Errno::EPERM);
     }
 
@@ -193,7 +193,7 @@ pub fn open_by_handle_at_syscall(
     // 通过 FileSystem trait 构造原生 Inode
     // fs_resolve_inode 返回原生 Arc<dyn Inode>; 句柄无法解析 (inode_id/mount_idx 失效)
     // 时返回 EINVAL, 与相邻 mount_idx 校验一致。
-    let pwm = crate::framework::credo::session::get_current_pwm();
+    let pwm = crate::framework::sgeg::session::get_current_pwm();
     let inode: Arc<dyn Inode> = fs
         .fs_resolve_inode(inode_id, mount_idx)
         .ok_or(Errno::EINVAL)?;

@@ -179,7 +179,7 @@ pub fn chown_syscall(path_ptr: u64, uid: u32, gid: u32) -> i64 {
         return Errno::EFAULT.as_ret();
     }
     let path = path_ptr as *const u8;
-    let tbl = crate::framework::credo::identity::get_table();
+    let tbl = crate::framework::sgeg::identity::get_table();
     // B06-02: UID/GID 未注册时返回 EINVAL, 不得默认 root (原 map_or(0, ...) 存在提权漏洞)
     let owner_pwm = match tbl.find_by_uid(uid) {
         Some(e) => e.get_pwm().0,
@@ -189,7 +189,7 @@ pub fn chown_syscall(path_ptr: u64, uid: u32, gid: u32) -> i64 {
         Some(e) => e.get_pwm().0,
         None => return Errno::EINVAL.as_ret(),
     };
-    let pwm = crate::framework::credo::pwm_get_current();
+    let pwm = crate::framework::sgeg::pwm_get_current();
     i64::from(crate::services::fs::vfs_chown_ext(
         path, owner_pwm, group_pwm, pwm,
     ))
@@ -201,7 +201,7 @@ pub fn truncate_syscall(path_ptr: u64, length: i64) -> i64 {
         return Errno::EINVAL.as_ret();
     }
     let path = path_ptr as *const u8;
-    let fd = crate::services::fs::vfs_open(path, 0o2, crate::framework::credo::pwm_get_current());
+    let fd = crate::services::fs::vfs_open(path, 0o2, crate::framework::sgeg::pwm_get_current());
     if fd < 0 {
         return Errno::ENOENT.as_ret();
     }
@@ -253,7 +253,7 @@ pub fn fallocate_syscall(fd: i32, mode: i32, offset: u64, len: u64) -> i64 {
     // 仅扩展不缩小: 目标大小超过当前 size 时才截断扩展
     let cur_size = crate::services::fs::api::vfs_fstat_safe(
         fd as u32,
-        crate::framework::credo::pwm_get_current(),
+        crate::framework::sgeg::pwm_get_current(),
     )
     .map_or(0, |st| u64::from(st.size));
     if end > cur_size {

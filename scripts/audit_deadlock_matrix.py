@@ -24,7 +24,7 @@ from collections import defaultdict
 from pathlib import Path
 
 # 扫描范围 (2026-09-13 用户裁决扩展): framework + services 双子树.
-# 扩展背景: 第二十六批 nestfs/dedup.rs ABBA 死锁位于 services 子树, 原单根
+# 扩展背景: 第二十六批 unkfs/dedup.rs ABBA 死锁位于 services 子树, 原单根
 # 扫描对 services 锁使用不可见 (fail-closed 原则: 不可检查 = 漏检).
 BASES = [
     Path('src/kernel/framework'),

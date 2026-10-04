@@ -8,7 +8,7 @@
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 
-use crate::framework::net::{ChitinNetDevice, NetworkStack};
+use crate::framework::net::{EGDFNetDevice, NetworkStack};
 use crate::framework::sync::IrqSpinLock as Mutex;
 use smoltcp::iface::SocketHandle;
 use smoltcp::socket::udp;
@@ -53,7 +53,7 @@ pub static G_DNS: [AtomicU32; 3] = [AtomicU32::new(0), AtomicU32::new(0), Atomic
 ///
 /// 由 `NET_STATE` (`IrqSpinLock`) 保护, 所有字段访问通过 `raw` 模块 accessor.
 pub struct NetState {
-    pub(crate) device: Option<ChitinNetDevice>,
+    pub(crate) device: Option<EGDFNetDevice>,
     pub(crate) stack: Option<NetworkStack>,
     pub(crate) dhcp_handle: Option<SocketHandle>,
     pub(crate) socket_table: Vec<Option<SocketHandle>>,

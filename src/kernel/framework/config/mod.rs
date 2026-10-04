@@ -1,6 +1,6 @@
 //! 系统配置中心
 //!
-//! `QueenX` 内核的 **统一配置中心 + 启动自检中心**.
+//! `Edgine` 内核的 **统一配置中心 + 启动自检中心**.
 //!
 //! ## 职责
 //!
@@ -130,7 +130,7 @@ pub fn print_config_table() {
     );
     klog_info!(
         Boot,
-        "|          QueenX Configuration                      |"
+        "|          Edgine Configuration                      |"
     );
     klog_info!(
         Boot,
@@ -181,12 +181,12 @@ pub fn print_config_table() {
     klog_info!(Boot, "| capabilities                                     |");
     klog_info!(
         Boot,
-        "|   smp={} preempt={} kaslr={} kpti={} barrier={}      |",
+        "|   smp={} preempt={} kaslr={} kpti={} freg={}      |",
         on_off(caps.smp),
         on_off(caps.preempt),
         on_off(caps.kaslr),
         on_off(caps.kpti),
-        on_off(caps.barrier)
+        on_off(caps.freg)
     );
     klog_info!(
         Boot,
@@ -213,7 +213,7 @@ pub fn init() {
     let summary = get_config_summary();
     let caps = summary.capabilities;
 
-    klog_info!(Boot, "==== QueenX Configuration ====");
+    klog_info!(Boot, "==== Edgine Configuration ====");
     klog_info!(
         Boot,
         "  CPUs:    {} / {}",
@@ -237,12 +237,12 @@ pub fn init() {
     );
     klog_info!(
         Boot,
-        "  Caps:    smp={} preempt={} kaslr={} kpti={} barrier={}",
+        "  Caps:    smp={} preempt={} kaslr={} kpti={} freg={}",
         on_off(caps.smp),
         on_off(caps.preempt),
         on_off(caps.kaslr),
         on_off(caps.kpti),
-        on_off(caps.barrier)
+        on_off(caps.freg)
     );
 
     // DECISION-K: 启动自检经 ConfigValidateHook trait 注入 (Option 可空,

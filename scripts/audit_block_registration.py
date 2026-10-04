@@ -3,18 +3,18 @@
 I-43 块设备抽象统一性 audit
 
 目标: 防止新驱动绕过 `proto_block::register_block_device` (BlockDevice trait 桥接),
-     直接调用低层 `chitin_register_block` 导致 NestFS 看不到该驱动.
+     直接调用低层 `egdf_register_block` 导致 UNKFS 看不到该驱动.
 
 设计契约:
   - 驱动实现 `BlockDevice` trait (driver interface, Rust OO)
   - 驱动通过 `proto_block::register_block_device` 注册 (单一桥接入口)
-  - NestFS 通过 `chitin_blk_read/write` I/O (统一 Chitin 路径)
-  - 低层 `chitin_register_block` 仅由 `proto_block` 桥接函数调用
+  - UNKFS 通过 `egdf_blk_read/write` I/O (统一 EGDF 路径)
+  - 低层 `egdf_register_block` 仅由 `proto_block` 桥接函数调用
 
 规则:
-  - `chitin_register_block(` 出现在以下位置允许:
-      * src/kernel/framework/chitin/mod.rs (定义 + 单元测试)
-      * src/kernel/framework/chitin/proto_block.rs (桥接: register_block_device / register_block_device_with_ops)
+  - `egdf_register_block(` 出现在以下位置允许:
+      * src/kernel/framework/egdf/mod.rs (定义 + 单元测试)
+      * src/kernel/framework/egdf/proto_block.rs (桥接: register_block_device / register_block_device_with_ops)
   - 其他位置出现 → 违规 (应改用 proto_block::register_block_device)
 
 退出码: 0 = 通过, 1 = 有违规
@@ -27,17 +27,17 @@ from pathlib import Path
 
 BASE = Path('src/kernel')
 
-# 允许直接调用 chitin_register_block 的文件 (桥接 + 定义 + 单元测试)
+# 允许直接调用 egdf_register_block 的文件 (桥接 + 定义 + 单元测试)
 ALLOWED_FILES = {
-    Path('src/kernel/framework/chitin/mod.rs'),
-    Path('src/kernel/framework/chitin/proto_block.rs'),
+    Path('src/kernel/framework/egdf/mod.rs'),
+    Path('src/kernel/framework/egdf/proto_block.rs'),
 }
 
-# 匹配 `chitin_register_block_dev(` 调用 (排除 chitin_register_with_ops / chitin_register_char 等)
+# 匹配 `egdf_register_block_dev(` 调用 (排除 egdf_register_with_ops / egdf_register_char 等)
 # 严格匹配完整函数名 + 左括号, 避免误报相似前缀
-# B01-07 修复: 真实函数名是 chitin_register_block_dev (见 framework/chitin/mod.rs:353),
-# 此前正则写的是 chitin_register_block (缺 _dev), 与真实函数名不匹配, 门禁恒 0 空转.
-PATTERN = re.compile(r'\bchitin_register_block_dev\s*\(')
+# B01-07 修复: 真实函数名是 egdf_register_block_dev (见 framework/egdf/mod.rs:353),
+# 此前正则写的是 egdf_register_block (缺 _dev), 与真实函数名不匹配, 门禁恒 0 空转.
+PATTERN = re.compile(r'\begdf_register_block_dev\s*\(')
 
 
 def main() -> int:
@@ -68,7 +68,7 @@ def main() -> int:
     print('I-43 audit: 块设备抽象统一性 — 单一桥接入口')
     print('=' * 78)
     print(f'  扫描文件: {scanned} 个 .rs')
-    print(f'  允许文件: {len(ALLOWED_FILES)} 个 (chitin/mod.rs, chitin/proto_block.rs)')
+    print(f'  允许文件: {len(ALLOWED_FILES)} 个 (egdf/mod.rs, egdf/proto_block.rs)')
     print(f'  违规调用: {len(violations)} 处')
     print('-' * 78)
 
@@ -80,7 +80,7 @@ def main() -> int:
         print('-' * 78)
         print('  说明: 块设备驱动应实现 `BlockDevice` trait 并调用')
         print("        `proto_block::register_block_device(dev)` 注册.")
-        print("        禁止直接调用低层 `chitin_register_block`.")
+        print("        禁止直接调用低层 `egdf_register_block`.")
         print('=' * 78)
         return 1
 

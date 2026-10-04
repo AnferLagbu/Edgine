@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-为 queenx 自己的代码中所有 TODO/FIXME/XXX 加上唯一跟踪 ID (TRACK-XXX),
+为 edgine 自己的代码中所有 TODO/FIXME/XXX 加上唯一跟踪 ID (TRACK-XXX),
 并在 docs/plan/kernel-roadmap.md 末尾追加 "Backlog" 一节集中登记.
 
-排除: smoltcp vendor 目录 (上游代码, queenx 不负责维护).
+排除: smoltcp vendor 目录 (上游代码, edgine 不负责维护).
 执行: 干跑只打印改动; 加 --apply 才落盘; --add-backlog 追加 Backlog 节.
 """
 import argparse

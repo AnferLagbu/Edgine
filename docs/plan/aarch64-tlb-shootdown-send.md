@@ -84,10 +84,10 @@
 - **ST-09. 每核 SGI 使能收敛 + `ICC_SGI1R_EL1` 目标编码修复（施工期新增，用户裁定「取长期最优」）**
   - 描述：ST-05/ST-06 的发送路径在接收侧静默失效，根因二：① SGI 13/14/7 未在 per-CPU `GICR_ISENABLER0` 使能；② `send_ipi` 目标编码把 Aff0 误置入 Aff1。
   - 方案：
-    1. SGI 编号集中定义于 `gic.rs`（`TLB_SHOOTDOWN_SGI`/`RESCHEDULE_SGI`/`BARRIER_RECOVERY_SGI`），供 `exception`（接收路由）与 `barrier`（触发）复用，消除编号分散；
+    1. SGI 编号集中定义于 `gic.rs`（`TLB_SHOOTDOWN_SGI`/`RESCHEDULE_SGI`/`FREG_RECOVERY_SGI`），供 `exception`（接收路由）与 `freg`（触发）复用，消除编号分散；
     2. 新增通用原语 `gic::enable_sgi`，在**每核唯一中断入口** `gic::init_per_cpu` 内使能全部内核 SGI（BSP 经 `gic::init`、AP 经 `ap_main` 共用）——确保每核 Redistributor 私有使能位均置位；
     3. 修复 `arch/aarch64/mod.rs::send_ipi`：目标 Aff0 编码为 `TargetList` 的对应位（`1 << aff0`），修正初稿误置 `1 << (16+aff0)`（Aff1）；
-    4. 删除因收敛而成为死代码的 `gic::gicr_sgi_write` 与 `barrier::enable_barrier_sgi`（F9）。
+    4. 删除因收敛而成为死代码的 `gic::gicr_sgi_write` 与 `freg::enable_freg_sgi`（F9）。
   - 状态：[X]（实测：QEMU `-smp 2` 出现 `IRQ: intid=13 count=2..5` 与 `[SMP] TLB shootdown #1/#2/#3 gen=1/2/3`；host 契约测试 `per_cpu_gic_enables_all_kernel_sgis()` 8/8）
 
 ## 施工规划
@@ -121,5 +121,5 @@
 - **aarch64 `free_table` 调用点上下文不一**（已按 ST-04 精准分派化解）：16 处调用点中 7 处不持 `VMM_LOCK`，保持立即释放（不改道，避免违反锁内单写者前提）；持锁调用点走 `deferred_free::defer_free`。
 - **延迟释放引入滞留**：若某核无法追平代，帧滞留 pending 链（`DEFERRED_FREE_RELEASED` 不增长）——按 x86_64 既有诊断文案观测，不引入新机制。**滞留的结构性预期**：排空点唯一（各架构 `release_lock` 出口的 `release_tail`），若某轮 shootdown 后不再有新的页表拆除触发 `release_tail`，末批 admitted 帧会保留在 pending 链至下一次排空——与 x86_64 canonical 行为一致，非缺陷。
 - **无地址载荷**：本工程沿用"远程失效 = 全量 `tlb_flush_all`"简化（对齐 x86_64 SIMPLIFIED 项），不含页级载荷。
-- **同族编码缺陷（§12.5 报告后已处置）**：`arch/aarch64/barrier/mod.rs::barrier_trigger_recovery` 原以 `1u64 << 16` 编码目标（注释误称 "TargetList: Aff0=0"），与已确认的 `ICC_SGI1R_EL1` 布局（TargetList=[15:0]，Aff1=[23:16]）不符 —— 属与 ST-09 同类的编码缺陷（因 `barrier=off` 未触发）。经用户裁定「本轮一并修复」：改为按**当前核 Aff0** 编码 TargetList（`1u64 << (cpu_id() & 0xF)`），保 `isb` 不变。
+- **同族编码缺陷（§12.5 报告后已处置）**：`arch/aarch64/freg/mod.rs::freg_trigger_recovery` 原以 `1u64 << 16` 编码目标（注释误称 "TargetList: Aff0=0"），与已确认的 `ICC_SGI1R_EL1` 布局（TargetList=[15:0]，Aff1=[23:16]）不符 —— 属与 ST-09 同类的编码缺陷（因 `freg=off` 未触发）。经用户裁定「本轮一并修复」：改为按**当前核 Aff0** 编码 TargetList（`1u64 << (cpu_id() & 0xF)`），保 `isb` 不变。
 - **过期 lint expectation（§12.5 报告后已处置）**：`arch/aarch64/exception.rs` 第二处 `#[expect(clippy::borrow_as_ptr)]` 在 aarch64 clippy `-D warnings` 下报 unfulfilled（`cargo check`/CI 不查 aarch64 clippy，故长期潜伏，HEAD 即存在）。经用户裁定「本轮一并清理」：删除该过期 `#[expect]`（保留已 fulfilled 的另一处）。

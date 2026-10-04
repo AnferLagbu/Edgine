@@ -20,7 +20,7 @@ fn main() {
 
     // G-06 (2026-09-06): 产物存在性检查仅对裸机 target 生效.
     // other/build/user/init.bin + other/build/stage1.bin 由 Makefile 生成, other/build/ 目录被
-    // .gitignore 忽略. host 构建 (host-tests 经 queenx path 依赖触发) 的
+    // .gitignore 忽略. host 构建 (host-tests 经 edgine path 依赖触发) 的
     // CARGO_CFG_TARGET_OS 为 linux, 不应检查裸机产物 — 否则干净 checkout 直接
     // cargo test 会因产物缺失 panic, 形成未记录的隐式 make 依赖.
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();

@@ -46,7 +46,7 @@
 >
 > **2026-09-25 更新**: 新增活跃工程 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md)（内核单元测试 harness 统一，承接 audit-fix-09 的 B09-19）。其 UT-01..UT-06 / UT-08 / UT-10 已完成并过 §2.3 六门槛，仅余 UT-07 双轨收敛未开工。本文件工程计划 C 的门槛引用同步为现行 §2.3 六条（历史验证记录行不改）。【订正】UT-07 双轨收敛已于后续批次收口并置 `[X]`，本工程 UT-01..UT-10 全部完成 ⇒ 上句「仅余 UT-07 未开工」失效。
 >
-> **2026-09-26 文档漂移收敛 (逐项源码复验)**: 对本工程计划全部自称 `[X]`/`[]` 项回源码复验, 修正 3 类偏差 — (a) A2 遗留未清: `host-tests/README.md` 残留 3 处 `docs/CHANGELOG.md` 引用, 本轮按 DECISION-038 删除/改写 (已清零); (b) B4 表述过时: 当前 expect 注释为**双模板并存** (`// 有意窄化: <原因>` 237 处 + `reason = "<lint名>: ..."` 347 处), 非历史记载的"3 场景 + 1 兜底"单模板, 实况见 §方案 B4; (c) A1/B3/B5.2 待修对象 moot: `vision-hope.md` 已整篇重写 (无"风险 2"节)、`README.md` 已整篇重写为 18 行 (原 :21/:71 不复存在; 【订正】实测为 23 行, "18 行"为漂移)、`barrier/api.rs` B5.2 目标函数形态已正确。另修正 §交叉引用 clippy-pedantic-cleanup.md 失效链接 (已归档 → archive/)。
+> **2026-09-26 文档漂移收敛 (逐项源码复验)**: 对本工程计划全部自称 `[X]`/`[]` 项回源码复验, 修正 3 类偏差 — (a) A2 遗留未清: `host-tests/README.md` 残留 3 处 `docs/CHANGELOG.md` 引用, 本轮按 DECISION-038 删除/改写 (已清零); (b) B4 表述过时: 当前 expect 注释为**双模板并存** (`// 有意窄化: <原因>` 237 处 + `reason = "<lint名>: ..."` 347 处), 非历史记载的"3 场景 + 1 兜底"单模板, 实况见 §方案 B4; (c) A1/B3/B5.2 待修对象 moot: `vision-hope.md` 已整篇重写 (无"风险 2"节)、`README.md` 已整篇重写为 18 行 (原 :21/:71 不复存在; 【订正】实测为 23 行, "18 行"为漂移)、`freg/api.rs` B5.2 目标函数形态已正确。另修正 §交叉引用 clippy-pedantic-cleanup.md 失效链接 (已归档 → archive/)。
 >
 > **本轮更新**: 新增活跃工程 [smp-ap-user-scheduling.md](./smp-ap-user-scheduling.md)（AP 参与用户态调度 + aarch64 KPTI per-CPU 化，**DECISION-084**，方案 C 相对完整）—— 使 ≥2 个用户任务可在多核并发处于 EL0（APS-01..APS-06 全部 `[X]`，批次 P1→{P2,P3}→P4 收口，并含收口期修复的批次 P5「次核 CPU 状态初始化」）。同族前置工程 [aarch64-smp-bringup.md](./aarch64-smp-bringup.md)（DECISION-082）的后续专项 **KPTI-PCPU-01** 已由本工程落地结案。本文件据此更新活跃工程全景（既有一表沿用，本轮不新增表行，仅登记关联）。
 
@@ -82,21 +82,21 @@
 - **条目**: DECISION-037 草案
 - **现状事实**:
   - [ref-naming.md](../explain/ref-naming.md) §三 (2026-07-05 修订): 0-299 直接使用 Linux 原始编号, 无需翻译层
-  - [framework/syscall/mod.rs:24-35](../../src/kernel/framework/syscall/mod.rs#L24-L35): 0-299 保留给未来 linuxulator (与 Linux 1:1 映射), QX_* (500-899)
+  - [framework/syscall/mod.rs:24-35](../../src/kernel/framework/syscall/mod.rs#L24-L35): 0-299 保留给未来 linuxulator (与 Linux 1:1 映射), EG_* (500-899)
   - [framework/syscall/api.rs:7](../../src/kernel/framework/syscall/api.rs#L7): 0-299 Linux 兼容编号 (SYS_*), 直接使用 Linux 标准编号
-  - [vision-hope.md](../explain/vision-hope.md) 风险 2: 提供 syscall 翻译层 (类似 linuxulator) 将 OpenHarmony syscall 编号映射到 QX 原生编号
+  - [vision-hope.md](../explain/vision-hope.md) 风险 2: 提供 syscall 翻译层 (类似 linuxulator) 将 OpenHarmony syscall 编号映射到 EG 原生编号
   - 同一 framework 内部 mod.rs 与 api.rs 自相矛盾
 - **方案 A (推荐)**: 走"直接 Linux ABI" 路线
   - 描述: 统一为 ref-naming.md 立场 (0-299 直接用 Linux 编号)
   - 优势: 简化 ABI 层; Linux 静态/动态二进制可直接运行; Asterinas 已验证
   - 劣势: OpenHarmony 用户态需 syscall 翻译层 (与 vision-hope.md 风险 2 缓解方案需保留)
   - 待修: 更新 framework/syscall/mod.rs:24-35 注释; 删除或改写 vision-hope.md 风险 2
-- **方案 B**: 走"QX_* 原生 + linuxulator 翻译" 路线
-  - 描述: 统一为 vision-hope.md 立场 (保留 linuxulator, QX_* 原生编号 500+)
+- **方案 B**: 走"EG_* 原生 + linuxulator 翻译" 路线
+  - 描述: 统一为 vision-hope.md 立场 (保留 linuxulator, EG_* 原生编号 500+)
   - 优势: 与 OpenHarmony 战略对齐; 保留 syscall 翻译空间
   - 劣势: 需实现 linuxulator; Linux 二进制需经翻译层; 与 Asterinas 偏离
   - 待修: 更新 ref-naming.md §三; 保留 framework/syscall/mod.rs 现状
-- **状态**: [X] (2026-08-03 决策落地: A 主线 + B 部分. 0-299 直接 Linux, 500+ QX 错开. 2026-09-26 复验: `framework/syscall/mod.rs:22-30` 注释已统一为 A 立场; `vision-hope.md` 已整篇重写, 原"风险 2"节不复存在)
+- **状态**: [X] (2026-08-03 决策落地: A 主线 + B 部分. 0-299 直接 Linux, 500+ EG 错开. 2026-09-26 复验: `framework/syscall/mod.rs:22-30` 注释已统一为 A 立场; `vision-hope.md` 已整篇重写, 原"风险 2"节不复存在)
 
 ##### A2. CHANGELOG.md 处置
 
@@ -154,7 +154,7 @@
 - **条目**: code-review-2026-08-01 #028
 - **现状**:
   - services/net/mod.rs:4-9 — 头注释 "v2.7, 2026-06-04" 已替换为 "封装 smoltcp 协议栈 safe 入口, IPv4/IPv6 双栈已实装 (DECISION-032), 进度见 progress-active-tasks.md"
-  - services/fs/mod.rs:4-9 — 头注释 "v2.5, 2026-06-04" 已替换为 "VFS + 7 个原生 FS + NestFS 列表, 0 unsafe"
+  - services/fs/mod.rs:4-9 — 头注释 "v2.5, 2026-06-04" 已替换为 "VFS + 7 个原生 FS + UNKFS 列表, 0 unsafe"
   - services/proc/mod.rs:4-9 — 头注释 "v2.11, 2026-06-04" 已替换为 "18+ 子模块列表, 0 unsafe"
   - 全部三文件头注释均已更新为当前真实状态, 含模块清单 + 引用 progress-active-tasks.md
 - **方案**:
@@ -183,16 +183,16 @@
   - 工作量: 中等 (需审查每处 expect 的语义)
   - 状态: [X] (2026-08-04 落地. 124 处 expect 注释从 7 种变体合并为 3 种主要场景 + 1 种兜底: 硬件字段宽度 (31) / 资源类型转换 POSIX 约定 (27) / 用户内存代理 (15) / 显式收窄兜底 (51). 脚本两轮替换 (src/kernel 全树 78 文件). 第 1 轮: 7→4 变体; 第 2 轮: 4→3 主要场景 + 兜底. 0 语义变更, 纯注释规范化. **2026-09-26 实况订正**: 上述"统一单模板"表述已随 DECISION-040/043 批次演化为**双模板并存** — 实测 `// 有意窄化: <原因>` 237 处 (83 文件) + `#[expect(..., reason = "<lint名>: ...")]` 347 处 (100 文件). B4 的"注释统一 3 场景"结论仅适用于 `// 有意窄化` 模板; `reason = "..."` 模板由 DECISION-043 引入并成为新的主流形态.)
 
-##### B5. clippy DECISION-036 落地 + barrier/api.rs extern "C" 补齐
+##### B5. clippy DECISION-036 落地 + freg/api.rs extern "C" 补齐
 
 - **条目**: clippy-pedantic-cleanup 工程计划 7 步骤 1 + 3
 - **现状**:
-  - [credo/storage.rs:45/54/62](../../src/kernel/framework/credo/storage.rs#L45) w32/w64/w16 仍带 `#[expect(clippy::cast_possible_truncation)]` 注释为 "显式收窄转换, 调用方/上下文保证值域安全" — 与 DECISION-036 矛盾
-  - [barrier/api.rs:303-312](../../src/kernel/framework/barrier/api.rs#L303) `recovery_set_fault_rate`/`recovery_get_fault_rate` 在 `#[cfg(feature = "fault_injection")]` 下仍 `#[no_mangle] pub fn` 无 `extern "C"` 标注
+  - [sgeg/storage.rs:45/54/62](../../src/kernel/framework/sgeg/storage.rs#L45) w32/w64/w16 仍带 `#[expect(clippy::cast_possible_truncation)]` 注释为 "显式收窄转换, 调用方/上下文保证值域安全" — 与 DECISION-036 矛盾
+  - [freg/api.rs:303-312](../../src/kernel/framework/freg/api.rs#L303) `recovery_set_fault_rate`/`recovery_get_fault_rate` 在 `#[cfg(feature = "fault_injection")]` 下仍 `#[no_mangle] pub fn` 无 `extern "C"` 标注
 - **方案**:
-  - B5.1: 移除 credo/storage.rs 3 处 expect, 改用 `(v >> (i*8)) as u8` 消除警告 (w64 已用此模式可参考)
-  - B5.2: barrier/api.rs 2 处补 `extern "C"` + 改为 `#[unsafe(no_mangle)]` (与 file 中其他函数 api.rs:30/43/56/77 一致)
-  - 状态: [X] (2026-08-04 落地. B5.1: w32/w64/w16 三函数 `& 0xFF` 模式消除 cast expect, 移除 3 处 expect + 替换为函数 doc. B5.2: barrier/api.rs 2 处补 `extern "C"` + `#[unsafe(no_mangle)]` + SAFETY 注释)
+  - B5.1: 移除 sgeg/storage.rs 3 处 expect, 改用 `(v >> (i*8)) as u8` 消除警告 (w64 已用此模式可参考)
+  - B5.2: freg/api.rs 2 处补 `extern "C"` + 改为 `#[unsafe(no_mangle)]` (与 file 中其他函数 api.rs:30/43/56/77 一致)
+  - 状态: [X] (2026-08-04 落地. B5.1: w32/w64/w16 三函数 `& 0xFF` 模式消除 cast expect, 移除 3 处 expect + 替换为函数 doc. B5.2: freg/api.rs 2 处补 `extern "C"` + `#[unsafe(no_mangle)]` + SAFETY 注释)
 
 ##### B6. IoMem 边界 expect + 固定上限硬编码
 
@@ -241,8 +241,8 @@
 ### 决策记录
 
 - **DECISION-037** (2026-08-03 落地)
-  - 描述: syscall 编号空间立场统一 — **0-299 直接使用 Linux 标准 syscall 编号, 500+ 作为 QueenX 自由扩展 (QX_*) 与 Linux 错开**
-  - 方案: A 主线 (直接 Linux ABI) + B 部分 (QX_* 自由 syscall 500+ 错开, 避免未来 Linux 扩展冲突). framework/syscall/mod.rs 注释 + vision-hope.md 风险 2 同步更新. 不实现 linuxulator 翻译层.
+  - 描述: syscall 编号空间立场统一 — **0-299 直接使用 Linux 标准 syscall 编号, 500+ 作为 Edgine 自由扩展 (EG_*) 与 Linux 错开**
+  - 方案: A 主线 (直接 Linux ABI) + B 部分 (EG_* 自由 syscall 500+ 错开, 避免未来 Linux 扩展冲突). framework/syscall/mod.rs 注释 + vision-hope.md 风险 2 同步更新. 不实现 linuxulator 翻译层.
   - 状态: [X]
 
 - **DECISION-038** (2026-08-03 落地)
@@ -268,7 +268,7 @@
 - **2026-08-03 (3 个 P1 决策落地)**
   - 描述: 用户决策 DECISION-037/038/039, 全部落地为代码 + 文档变更
   - 方案:
-    - **DECISION-037 syscall 编号**: 改 framework/syscall/mod.rs 注释 + vision-hope.md 风险 2. 0-299 直接 Linux, 500+ QX 自由错开, 不实现 linuxulator.
+    - **DECISION-037 syscall 编号**: 改 framework/syscall/mod.rs 注释 + vision-hope.md 风险 2. 0-299 直接 Linux, 500+ EG 自由错开, 不实现 linuxulator.
     - **DECISION-038 放弃 CHANGELOG.md**: 删除 10 处引用 (README/AGENTS/host-tests/scripts/ci/audit + 1 处历史). git commit 即变更日志.
     - **DECISION-039 userctx 迁回 framework**: framework/userctx.rs 重声明完整 UserContext + 全部方法; services/userctx.rs 改为反向 re-export 兼容.
     - 验证: §2.4 5 条门槛全过 (双架构 0w0e + clippy 0 warning + 三审计全过 + host-tests 838 passed/0 failed + QEMU x86_64 1/1 通过 + aarch64 1/1 通过).
@@ -281,12 +281,12 @@
     - **B3 README remote + 链接**: README.md:21 改用 `git remote add origin` (与 AGENTS.md §8.4 一致); README.md:71 改链接 `docs/plan/future-roadmap.md`.
     - 验证: §2.4 #1-#4 全过 (双架构 0w0e + clippy 0 warning + 三审计全过 + host-tests 838 passed/0 failed). #5 QEMU 不适用 (纯文档).
   - 状态: [X]
-- **2026-08-04 (阶段 2: clippy DECISION-036 + barrier extern "C")**
+- **2026-08-04 (阶段 2: clippy DECISION-036 + freg extern "C")**
   - 描述: 推进 progress-active-tasks.md B5 拆分后两子项 (B5.1 + B5.2)
   - 方案:
-    - **B5.1 credo/storage.rs**: w32/w64/w16 三函数移除 3 处 `#[expect(clippy::cast_possible_truncation)]`, 改 `& 0xFF` 显式收窄 (DECISION-036 落地). 3 个 expect 全部消除.
-    - **B5.2 barrier/api.rs**: 2 处 `#[no_mangle] pub fn` 改为 `#[unsafe(no_mangle)] pub extern "C" fn` + 加 SAFETY 注释, 与 file 中其他 FFI 函数 (api.rs:30/43/56/77) 一致.
-    - 调研发现: services/credo/storage/disk.rs 也有 7 处类似 cast 警告 (按字节序列化场景), 范围超出 B5.1, 按 §15.3 不顺手处理, 登记为下次 plan 待办.
+    - **B5.1 sgeg/storage.rs**: w32/w64/w16 三函数移除 3 处 `#[expect(clippy::cast_possible_truncation)]`, 改 `& 0xFF` 显式收窄 (DECISION-036 落地). 3 个 expect 全部消除.
+    - **B5.2 freg/api.rs**: 2 处 `#[no_mangle] pub fn` 改为 `#[unsafe(no_mangle)] pub extern "C" fn` + 加 SAFETY 注释, 与 file 中其他 FFI 函数 (api.rs:30/43/56/77) 一致.
+    - 调研发现: services/sgeg/storage/disk.rs 也有 7 处类似 cast 警告 (按字节序列化场景), 范围超出 B5.1, 按 §15.3 不顺手处理, 登记为下次 plan 待办.
     - 验证: §2.4 #1-#4 全过 (双架构 0w0e + clippy 0 warning + 三审计全过 + host-tests 838 passed/0 failed). #5 QEMU 不适用 (5 行代码变更).
   - 状态: [X]
 - **2026-08-04 (阶段 3: B6 IoMem 边界 expect + 固定上限集中)**
@@ -310,12 +310,12 @@
 - **2026-08-04 (阶段 5: P3 #030 framework/sched task 抽象调研 + 注释修复)**
   - 描述: 调研 P3 #030 任务状态 + 修复 mod.rs 注释
   - 方案:
-    - 调研发现: [sched_trait.rs:30-117](file:///home/anfer/Code/QueenX/src/kernel/framework/sched/sched_trait.rs#L30) **Task 抽象已完整实装** (struct Task + 10 个属性方法 + Send/Sync + Scheduler trait + QueenXScheduler 委托). 计划文档 (REVIEW-FINDING-030) "未开工" 描述与源码事实不符, 实装早于计划文档更新.
+    - 调研发现: [sched_trait.rs:30-117](file:///home/anfer/Code/Edgine/src/kernel/framework/sched/sched_trait.rs#L30) **Task 抽象已完整实装** (struct Task + 10 个属性方法 + Send/Sync + Scheduler trait + EdgineScheduler 委托). 计划文档 (REVIEW-FINDING-030) "未开工" 描述与源码事实不符, 实装早于计划文档更新.
     - 决策: 用户 2026-08-04 选 A 方案 — 仅修复 mod.rs:8 注释与事实不符的问题, 补 plan 记录 task 抽象实装完成. 不重写 plan 文档 (避免 §15.3 顺手优化).
     - 修复: framework/sched/mod.rs 头注释更新为 "Task 抽象实装状态" 段, 列出 10 个属性方法 + 委托关系 + services/proc 暴露路径. 删除过期 "未实现" 注释.
     - 验证: §2.4 #1-#4 全过 (双架构 0w0e + clippy 0 warning + 三审计全过 + host-tests 838 passed/0 failed). #5 QEMU 不适用 (纯注释变更).
   - 状态: [X]
-- **2026-08-04 (阶段 6: services/credo/storage/disk.rs 7 处 cast 修复)**
+- **2026-08-04 (阶段 6: services/sgeg/storage/disk.rs 7 处 cast 修复)**
   - 描述: 推进 plan 文档登记的 disk.rs 7 处按字节序列化场景 cast 警告
   - 方案:
     - 调研发现: 7 处 cast 中 5 处是 `disk_id as u8` (u32 → u8 截断, 范围 0-255). 2 处 `i as u64` (usize → u64 截断, block_device_count 远小于 usize::MAX 实际安全).
@@ -479,7 +479,7 @@
   - 方案:
     - **A1/A3 复验属实**: `framework/syscall/mod.rs:22-30` 注释为 DECISION-037 立场; `framework/userctx.rs:28/55` 两处 `#[repr(C)] UserContext` + `services/userctx.rs:11` 反向 re-export — 与记载一致.
     - **A2 遗留补清**: `host-tests/README.md` 实测残留 3 处 `docs/CHANGELOG.md` 引用 (原 DECISION-038 记载"2 处"), 本轮按 B 方案改写/删除; 现全仓除归档文档与 `scan_antx_residue.py` 白名单外 0 引用.
-    - **B1/B2/B3/B5/B6 复验属实**: `framework/mod.rs:10` 无 LoC 数字; 三 services 头注释已换真实状态; `README.md` 已整篇重写为 18 行 (原 :21/:71 moot; 【订正】实测为 23 行); `barrier/api.rs:310/317` 两函数为 `#[unsafe(no_mangle)] pub extern "C" fn`; `iomem.rs` 16 处 `debug_assert!` + `constants/limits.rs` 三常量.
+    - **B1/B2/B3/B5/B6 复验属实**: `framework/mod.rs:10` 无 LoC 数字; 三 services 头注释已换真实状态; `README.md` 已整篇重写为 18 行 (原 :21/:71 moot; 【订正】实测为 23 行); `freg/api.rs:310/317` 两函数为 `#[unsafe(no_mangle)] pub extern "C" fn`; `iomem.rs` 16 处 `debug_assert!` + `constants/limits.rs` 三常量.
     - **B4 实况订正**: 当前 expect 注释为双模板并存 (`// 有意窄化` 237 处 + `reason = "<lint名>: ..."` 347 处), 非历史记载的单模板"3 场景 + 1 兜底".
     - **交叉引用修正**: clippy-pedantic-cleanup 链接由失效的 `./clippy-pedantic-cleanup.md` 改为 `./archive/...` 并指 `stage-engineering-master.md`; AGENTS.md 章节号由 §6/§10/§15 更正为 §5/§9/§12.
     - **工程计划 B/C 状态回写**: 原遗留 `[]` 项 (B 的背景/目标/方案/待办, C 的背景/目标/方案/待办) 全部改为 `[X]`.
@@ -574,7 +574,7 @@
   | 编号 | 严重度 | 描述 | 状态 |
   |---|---|---|---|
   | 024 | P1 | CHANGELOG.md 缺失 | [X] — DECISION-038 落地 (B 方案; 2026-09-26 补清 host-tests/README.md 残留 3 处) |
-  | 025 | P1 | syscall 编号空间矛盾 | [X] — DECISION-037 落地 (0-299 Linux + 500+ QX) |
+  | 025 | P1 | syscall 编号空间矛盾 | [X] — DECISION-037 落地 (0-299 Linux + 500+ EG) |
   | 026 | P1 | userctx 反向依赖 services | [X] — DECISION-039 落地 (UserContext 迁回 framework) |
   | 027 | P2 | framework/mod.rs:10 "3000+ LoC" 漂移 | [X] — B1 落地 (删数字) |
   | 028 | P2 | services/net\|fs 头注释过期 | [X] — B2 落地 (三文件头注释更新) |

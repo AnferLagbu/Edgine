@@ -923,7 +923,7 @@ mod tests {
 // W4.4: 线协议类型 newtype 包装 (替代 smoltcp::wire::Ipv4Address / IpCidr / IpEndpoint)
 //
 // 全部使用 `[u8; 4]` / `(addr, port)` 元组, 不引入 IPv6 路径.
-// 仅 IPv4 域足够覆盖 QEMU/QueenX 目标环境的现有需求.
+// 仅 IPv4 域足够覆盖 QEMU/Edgine 目标环境的现有需求.
 //
 // ## 设计动机
 //

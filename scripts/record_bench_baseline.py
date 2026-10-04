@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MPL-2.0
-# Copyright (c) 2026 QueenX Contributors
+# Copyright (c) 2026 Edgine Contributors
 #
 # record_bench_baseline.py — 记录 framekernel-bench 当前的性能基线
 #

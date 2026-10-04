@@ -1,10 +1,10 @@
 #![deny(unsafe_code)]
-//! 进程管理策略 — proc_list / proc_setpri / credo_proc_cputime
+//! 进程管理策略 — proc_list / proc_setpri / sgeg_proc_cputime
 //!
 //! 从 framework/syscall/mod.rs 迁移的策略代码:
 //! - proc_list_syscall: 进程列表查询
 //! - proc_setpri_syscall: 设置进程优先级
-//! - credo_proc_cputime_syscall: 查询进程 CPU 时间
+//! - sgeg_proc_cputime_syscall: 查询进程 CPU 时间
 //!
 //! ## 框内核边界
 //! - 100% safe Rust
@@ -72,8 +72,8 @@ pub fn proc_setpri_syscall(pid: u32, priority: u32) -> i64 {
     i64::from(crate::framework::proc::proc_set_priority(pid, priority))
 }
 
-/// `credo_proc_cputime(pid)` 策略
-pub fn credo_proc_cputime_syscall(pid: u32) -> i64 {
+/// `sgeg_proc_cputime(pid)` 策略
+pub fn sgeg_proc_cputime_syscall(pid: u32) -> i64 {
     let target_pid = if pid == 0 {
         crate::framework::proc::process_get_current_pid()
     } else {

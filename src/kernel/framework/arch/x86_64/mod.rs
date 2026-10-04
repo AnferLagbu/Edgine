@@ -162,7 +162,7 @@ impl CoreArch for X8664 {
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
     fn fence_r() {
-        // SAFETY: lfence orders loads; correct memory model barrier.
+        // SAFETY: lfence orders loads; correct memory model freg.
         unsafe {
             core::arch::asm!("lfence", options(nostack, preserves_flags));
         }

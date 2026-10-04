@@ -11,11 +11,11 @@
 | page_flags_bits      | mm     | framework/mm PageFlags 位运算      |
 | pte_set_flags        | mm     | framework/mm PTE 标志位操作          |
 | iomem_alias_check    | iomem  | framework/iomem AliasRegistry 冲突检查 |
-| capability_check     | credo  | framework/credo 能力位检查           |
+| capability_check     | sgeg  | framework/sgeg 能力位检查           |
 | dma_state_machine    | dma    | framework/dma_buf SyncState 转换    |
-| sha256_block         | credo  | framework/credo/sha256 块压缩        |
-| attribution_classify | barrier| services/barrier/attribution 分类   |
-| recovery_decide      | barrier| services/barrier/recovery_policy 决策|
+| sha256_block         | sgeg  | framework/sgeg/sha256 块压缩        |
+| attribution_classify | freg| services/freg/attribution 分类   |
+| recovery_decide      | freg| services/freg/recovery_policy 决策|
 | bitmap_scan          | pmm    | 物理页分配 (Bitmap)                 |
 | btree_id_lookup      | proc   | 进程表 PID 查找                     |
 

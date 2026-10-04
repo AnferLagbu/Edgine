@@ -1,4 +1,4 @@
-name: QueenX CI
+name: Edgine CI
 
 on:
   workflow_run:
@@ -38,7 +38,7 @@ jobs:
         if: success()
         run: |
           cat <<'EOF' > $GITHUB_STEP_SUMMARY
-          # QueenX 框内核合规性报告
+          # Edgine 框内核合规性报告
 
           | 工作流 | 状态 | 内容 |
           |--------|------|------|

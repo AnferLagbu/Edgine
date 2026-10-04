@@ -450,7 +450,7 @@ pub fn io_uring_reap(id: u32) -> Option<Cqe> {
 // T2 批 3 (syscall-followup): sys_io_uring_setup / sys_io_uring_enter 策略
 // 入口已迁至 services (services::io::iouring::io_uring_setup_syscall /
 // io_uring_enter_syscall), 委托本文件机制函数 (io_uring_setup / io_uring_enter).
-// 以下仅保留 QX_IO_URING_SUBMIT 机制独有入口 (QX_* 归 framework 回退层).
+// 以下仅保留 EG_IO_URING_SUBMIT 机制独有入口 (EG_* 归 framework 回退层).
 
 /// `sys_io_uring_submit_sqe` — 提交单个 SQE
 pub fn sys_io_uring_submit_sqe(

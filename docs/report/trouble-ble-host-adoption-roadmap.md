@@ -2,7 +2,7 @@
 
 > 总体判断：TrouBLE 是一个 **BLE Host 上半层**（HCI 之上的 GAP/L2CAP/SMP/ATT/GATT），它**本身不等于"有蓝牙"**——没有外部 Controller（链路层 + 无线电固件）经 HCI 传输接入，它一条包也发不出去。因此引入 TrouBLE 的真实成本不在"这个 crate 好不好用"（它质量不错，Apache-2.0 OR MIT、`no_std`、async-first、22766 行 Rust / 43 文件），而在于它牵出的三件内核侧前置件：**HCI 传输的 safe 代理、内核 async 运行时、以及可执行的虚拟 Controller 验证路径**。据此，本报告的结论与第三方库选型评估一致：**暂缓、条件触发（触发条件：蓝牙需求）**；一旦蓝牙从"想做"变成"要做"，建议按本报告分阶段推进，且第一阶段先补验证基座、再谈协议栈落地。
 
-本报告是 QueenX 对 TrouBLE 引入路线与未来规划的一次性可行性快照。评估依据为 TrouBLE crates.io 官方元数据（`trouble-host` 0.8.0，2026-08-25 发布）与 QueenX 仓库当前事实（`src/kernel/Cargo.toml`、`scripts/audit_services_boundary.py`、`src/kernel/framework/` 与 `src/kernel/services/` 目录树）。作为后续制定 plan 与修复工程的输入依据。
+本报告是 Edgine 对 TrouBLE 引入路线与未来规划的一次性可行性快照。评估依据为 TrouBLE crates.io 官方元数据（`trouble-host` 0.8.0，2026-08-25 发布）与 Edgine 仓库当前事实（`src/kernel/Cargo.toml`、`scripts/audit_services_boundary.py`、`src/kernel/framework/` 与 `src/kernel/services/` 目录树）。作为后续制定 plan 与修复工程的输入依据。
 
 ## 一、TrouBLE 本体事实
 
@@ -21,7 +21,7 @@
 
 默认 feature 集为 `peripheral`、`central`、`gatt`、`derive`、`default-packet-pool`、`extended-advertising`。需要关注的是其可选 feature 的**依赖传染性**：`security` 拉入 `p256`/`aes`/`cmac`/`rand_core`/`rand_chacha`/`rand` 六项加密依赖，`legacy-pairing` 又依赖 `security`，`derive` 依赖同仓库的 `trouble-host-macros` 过程宏 crate。这意味着"只要 central+peripheral 的最小可用形态"与"完整含配对加密的形态"，依赖面差异很大——引入时必须以 `default-features = false` + 显式列表的方式收敛，与项目对 smoltcp 的既有做法一致（`src/kernel/Cargo.toml` L47-61）。
 
-**关键事实：TrouBLE 强绑 Embassy async 生态。** 它的 API 形态是 `async fn`，运行时语义依赖 `embassy-futures`/`embassy-sync`/`embassy-time`。QueenX 内核当前**没有任何 async 运行时**（见第五节），这是引入的第一道真实门槛，而非 F1/F2 边界规则。
+**关键事实：TrouBLE 强绑 Embassy async 生态。** 它的 API 形态是 `async fn`，运行时语义依赖 `embassy-futures`/`embassy-sync`/`embassy-time`。Edgine 内核当前**没有任何 async 运行时**（见第五节），这是引入的第一道真实门槛，而非 F1/F2 边界规则。
 
 ## 二、定位与边界：Host 上半层 ≠ 有蓝牙
 
@@ -31,9 +31,9 @@ BLE 协议栈纵向分为三层实体：
 - **HCI（Host Controller Interface）**：Host 与 Controller 之间的传输协议，物理载体是 UART / USB / IPC。
 - **Host**：GAP（发现与连接管理）、L2CAP（逻辑链路复用）、SMP（配对与密钥分发）、ATT/GATT（属性协议与数据库）。**TrouBLE 覆盖的是这一层。**
 
-因此 TrouBLE 的完整运行链路是：`TrouBLE（Host）` → `HCI 传输` → `Controller 固件` → `无线电`。QueenX 现无蓝牙子系统（`src/kernel` 全树检索 `trouble`/`embassy`/`Executor`/`block_on` 零命中；`bluetooth` 亦零真实命中，`hci` 的命中均来自存储驱动 `ahci` 的误匹配）。这意味着引入 TrouBLE 是**从零起一条新子系统**，且只能覆盖其中一段——Controller 与 HCI 传输两端都要自己补。
+因此 TrouBLE 的完整运行链路是：`TrouBLE（Host）` → `HCI 传输` → `Controller 固件` → `无线电`。Edgine 现无蓝牙子系统（`src/kernel` 全树检索 `trouble`/`embassy`/`Executor`/`block_on` 零命中；`bluetooth` 亦零真实命中，`hci` 的命中均来自存储驱动 `ahci` 的误匹配）。这意味着引入 TrouBLE 是**从零起一条新子系统**，且只能覆盖其中一段——Controller 与 HCI 传输两端都要自己补。
 
-**这个边界决定了成本判断**：TrouBLE 的质量与 QueenX 引入它的工程量之间几乎没有关系。工程量集中在 Controller 接入与 HCI 传输这一侧，而非 Host 协议逻辑。
+**这个边界决定了成本判断**：TrouBLE 的质量与 Edgine 引入它的工程量之间几乎没有关系。工程量集中在 Controller 接入与 HCI 传输这一侧，而非 Host 协议逻辑。
 
 ## 三、与 Linux 蓝牙切分的对照
 
@@ -42,14 +42,14 @@ Linux 的蓝牙实现**横跨内核态与用户态**，且分界线与 TrouBLE �
 - **内核态**：`net/bluetooth/`（L2CAP、RFCOMM、BNEP、HIDP、SCO、SSP/SMP）+ `drivers/bluetooth/`（`btusb`、`hci_uart` 及 `btintel`/`btrtl`/`btmtk` 等厂家固件加载）。
 - **用户态**：BlueZ（`bluetoothd`/`obexd`）负责 GAP 策略与适配器管理、**ATT/GATT 数据库**、A2DP/HFP/HID 等 profile，以及 D-Bus 接口。
 
-对照可见：TrouBLE 的覆盖范围（GAP/L2CAP/SMP/ATT/GATT）**横跨了 Linux 的内核/用户态分界线**——L2CAP/SMP 在 Linux 内核侧，GAP/GATT 在用户态侧。这直接对应 QueenX 的两条候选路线：
+对照可见：TrouBLE 的覆盖范围（GAP/L2CAP/SMP/ATT/GATT）**横跨了 Linux 的内核/用户态分界线**——L2CAP/SMP 在 Linux 内核侧，GAP/GATT 在用户态侧。这直接对应 Edgine 的两条候选路线：
 
 | 路线 | 落点 | 参照系 | 对 TCB 的影响 |
 |---|---|---|---|
 | A．整体落 `services/` | vendored `services/ble/trouble/`，0 unsafe | 接近 Linux（协议栈在核内），但整体更靠上 | TCB 不增（vendored 编译单元不算自有 TCB 代码），但需 `#![deny(unsafe_code)]` 边界确认 |
 | B．整体落用户态 | 用户态进程内跑 TrouBLE，内核仅提供 HCI 传输通道 | 更接近 microkernel 式切分，TCB 更小 | 内核侧仅增 HCI 传输 safe 代理，TCB 增量最小 |
 
-两条路线在本项目均无既有否决项；选择取决于"QueenX 是否要走核内蓝牙"这一方向决策（属用户决策范畴，见 AGENTS.md §9.1），本报告不代替此决策。
+两条路线在本项目均无既有否决项；选择取决于"Edgine 是否要走核内蓝牙"这一方向决策（属用户决策范畴，见 AGENTS.md §9.1），本报告不代替此决策。
 
 ## 四、framekernel 合规性
 
@@ -72,7 +72,7 @@ Linux 的蓝牙实现**横跨内核态与用户态**，且分界线与 TrouBLE �
 | 3 | HCI 传输 safe 代理 | `framework::iomem`/`ioport`/`irqline` 已在 `SAFE_FRAMEWORK_APIS` 白名单；字符设备侧 `framework/driver/char/mod.rs` 已有物理基址查询面。基本就绪，缺的是把它组织成 HCI 传输抽象的薄层 | 非阻塞 |
 | 4 | HCI 所需时钟源 | `framework/timer` 已有 safe 时钟面：`get_time_ms()`/`get_uptime_ms()`（`calibration.rs` L311、`tick.rs` L316）、`get_adjusted_time_ns()`（`time_sync.rs` L364）。**缺口小于早前判断** | 非阻塞 |
 
-一句话：**缺的不是协议栈，是跑得动协议栈的运行时与中断唤醒通路。** 缺口 1、2 是 QueenX 目前完全不具备的能力，且与蓝牙本身无关——它们对任何 async 驱动（USB gadget、异步块设备）都是共用的。这提示一个正确的推进顺序：**若要为 TrouBLE 建 async 运行时，应作为一个独立的通用内核能力立项，而非夹带在蓝牙工程里。**
+一句话：**缺的不是协议栈，是跑得动协议栈的运行时与中断唤醒通路。** 缺口 1、2 是 Edgine 目前完全不具备的能力，且与蓝牙本身无关——它们对任何 async 驱动（USB gadget、异步块设备）都是共用的。这提示一个正确的推进顺序：**若要为 TrouBLE 建 async 运行时，应作为一个独立的通用内核能力立项，而非夹带在蓝牙工程里。**
 
 ## 六、验证路径
 
@@ -82,7 +82,7 @@ Linux 蓝牙测试体系给出的最有价值的一条经验是：**协议栈内
 2. **tester 套件**：`mgmt-tester`/`l2cap-tester`/`smp-tester` 等，配 `tools/test-runner`，在 QEMU 内运行。
 3. **抓包与模糊测试**：`btmon`（btsnoop）、syzkaller/syzbot、VirtFuzz、FuzzBT。
 
-映射到 QueenX 的门槛体系（AGENTS.md §2.3），可落地为：
+映射到 Edgine 的门槛体系（AGENTS.md §2.3），可落地为：
 
 - `framework/` 侧做**虚拟 HCI 传输**（对应 `hci_vhci`），让 HCI 传输这层可在无真实无线电时被驱动。
 - `host-tests/` 侧做**模拟 Controller**（对应 `btdev`/`bthost`），在标准测试进程内喂 HCI 事件与 ACL 数据，从而对 TrouBLE 的 GAP/L2CAP/ATT/GATT 逻辑做端到端测试。

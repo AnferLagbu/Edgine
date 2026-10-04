@@ -42,8 +42,8 @@ pub struct KernelCapabilities {
     pub kaslr: bool,
     /// `x86_64` KPTI 缓解措施.
     pub kpti: bool,
-    /// `QueenX` Barrier 子系统已编译入.
-    pub barrier: bool,
+    /// `Edgine` FREG 子系统已编译入.
+    pub freg: bool,
 }
 
 impl KernelCapabilities {
@@ -55,7 +55,7 @@ impl KernelCapabilities {
             kaslr: cfg!(feature = "kaslr"),
             // 测试模式下禁用 KPTI: 避免 KPTI 初始化修改共享页表导致 bitmap 映射被破坏
             kpti: cfg!(all(target_arch = "x86_64", not(feature = "kernel_test"))),
-            barrier: cfg!(feature = "barrier"),
+            freg: cfg!(feature = "freg"),
         }
     }
 }

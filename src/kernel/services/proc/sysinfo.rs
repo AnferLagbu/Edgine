@@ -152,7 +152,7 @@ pub fn getrlimit_syscall(_resource: i32, rlim_ptr: u64) -> i64 {
 /// gethostname(buf, size) 策略 — 读取当前进程 UTS namespace 主机名
 ///
 /// T1 G7: 原实现恒返回字面量 `"localhost"`, 与 `uname` (硬编码
-/// `"queenx-node"`) / `sethostname` (不存储) 三处各说各话; 现全部收敛到
+/// `"edgine-node"`) / `sethostname` (不存储) 三处各说各话; 现全部收敛到
 /// framework `UtsNamespace` (单一权威).
 pub fn gethostname_syscall(buf_ptr: u64, size: u64) -> i64 {
     if buf_ptr == 0 || size == 0 {
@@ -194,11 +194,11 @@ fn set_uts_name_syscall(name_ptr: u64, len: u64, domain: bool) -> i64 {
         return Errno::EINVAL.as_ret();
     }
     // 能力位沿用既有的 SYSTEM 域 UTS 名称设置位 (原 sethostname 字面量 9)
-    let pwm = crate::framework::credo::pwm_get_current();
-    if !crate::framework::credo::pwm_has_capability(
+    let pwm = crate::framework::sgeg::pwm_get_current();
+    if !crate::framework::sgeg::pwm_has_capability(
         pwm,
-        crate::framework::credo::CAP_DOMAIN_SYSTEM,
-        crate::framework::credo::SYSTEM_CAP_UTS_SETNAME,
+        crate::framework::sgeg::CAP_DOMAIN_SYSTEM,
+        crate::framework::sgeg::SYSTEM_CAP_UTS_SETNAME,
     ) {
         return Errno::EACCES.as_ret();
     }
@@ -224,7 +224,7 @@ fn set_uts_name_syscall(name_ptr: u64, len: u64, domain: bool) -> i64 {
 /// `boot_check(check_type)` 策略
 pub fn boot_check_syscall(check_type: i32) -> i64 {
     match check_type {
-        0 => i64::from(crate::framework::credo::pwm_any_identity_exists()),
+        0 => i64::from(crate::framework::sgeg::pwm_any_identity_exists()),
         _ => -1,
     }
 }
@@ -233,8 +233,8 @@ pub fn boot_check_syscall(check_type: i32) -> i64 {
 ///
 /// PWM 权限检查 + 委托 framework 执行重启机制
 pub fn reboot_syscall(cmd: i32) -> i64 {
-    let pwm = crate::framework::credo::pwm_get_current();
-    if !crate::framework::credo::pwm_has_capability(pwm, 0, 0x01) {
+    let pwm = crate::framework::sgeg::pwm_get_current();
+    if !crate::framework::sgeg::pwm_has_capability(pwm, 0, 0x01) {
         return Errno::EACCES.as_ret();
     }
     crate::framework::syscall::api::reboot_mechanism(cmd)

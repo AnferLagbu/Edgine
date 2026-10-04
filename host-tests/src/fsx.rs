@@ -43,7 +43,7 @@ struct FileData {
 /// 运行的"空目录"初始假设即与实际内容冲突, 触发数据完整性假失败 (实测见
 /// `docs/plan/host-tests-fsx-tmp-isolation.md`)。进程 ID 后缀保证每个进程独占目录。
 pub fn isolated_test_dir(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("queenx-fsx-{}-{}", name, std::process::id()))
+    std::env::temp_dir().join(format!("edgine-fsx-{}-{}", name, std::process::id()))
 }
 
 /// fsx 配置

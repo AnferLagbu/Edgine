@@ -1,6 +1,6 @@
 # 全局锁顺序
 
-> QueenX 内核锁获取的全局顺序约定。违反此顺序将导致 AB-BA 死锁。
+> Edgine 内核锁获取的全局顺序约定。违反此顺序将导致 AB-BA 死锁。
 > 运行时检测由 `framework/sync/lockdep.rs`（Lockdep）提供。
 
 ## 锁层级（从高到低）
@@ -8,7 +8,7 @@
 获取锁时必须按层级编号从小到大获取。同一层级内的锁可以任意顺序获取。
 
 ```
-层级 0: Barrier / Recovery（中断安全）
+层级 0: FREG / Recovery（中断安全）
   RECOVERY_MANAGER, ROLLBACK_LOG, RESET_AUDIT_LOG, DEVICE_SNAPSHOTS
 
 层级 1: PMM（物理内存）
@@ -42,7 +42,7 @@
   TIMER_MANAGER 锁
 
 层级 11: VFS / FS（文件系统）
-  VFS 全局锁, 文件系统特定锁（NestFS, ramfs, devfs）
+  VFS 全局锁, 文件系统特定锁（UNKFS, ramfs, devfs）
 
 层级 12: Network（网络）
   NET_LOCK, socket 锁, NET_SNAPSHOT_LOCK

@@ -2,9 +2,9 @@
 //!
 //! 验证:
 //! 1. FileSystem trait 增加 fs_sync 默认方法 (返回 Ok(()))
-//! 2. NestFS override fs_sync (i32 sync() 包装)
+//! 2. UNKFS override fs_sync (i32 sync() 包装)
 //! 3. RamFS/DevFS 不必 override (继承默认实现)
-//! 4. vfs_sync 不再是 nestfs_sync_internal 直调
+//! 4. vfs_sync 不再是 unkfs_sync_internal 直调
 //! 5. vfs_sync 遍历 VFS_MAX_MOUNTS 挂载点
 //! 6. 单元测试覆盖 fs_sync 默认实现语义
 
@@ -45,20 +45,20 @@ fn trait_has_fs_sync_default() {
 }
 
 #[test]
-fn nestfs_overrides_fs_sync() {
-    // 拆分后 FileSystem impl 在 nestfs_inode.rs (原在 nestfs.rs)
-    let src = read_src("src/kernel/services/fs/nestfs/nestfs_inode.rs");
+fn unkfs_overrides_fs_sync() {
+    // 拆分后 FileSystem impl 在 unkfs_inode.rs (原在 unkfs.rs)
+    let src = read_src("src/kernel/services/fs/unkfs/unkfs_inode.rs");
     let impl_block = src
         .rsplit_once("impl crate::services::fs::FileSystem for NestfsData")
         .map(|(_, b)| b)
         .unwrap_or("");
     assert!(
         impl_block.contains("fn fs_sync("),
-        "P3-I-18: NestFS impl 必须 override fs_sync"
+        "P3-I-18: UNKFS impl 必须 override fs_sync"
     );
     assert!(
         impl_block.contains("self.sync()") || impl_block.contains(".sync()"),
-        "P3-I-18: NestFS.fs_sync 必须调用底层 self.sync()"
+        "P3-I-18: UNKFS.fs_sync 必须调用底层 self.sync()"
     );
 }
 
@@ -103,15 +103,15 @@ fn vfs_sync_uses_trait_dispatch() {
         .map(|o| start + o)
         .unwrap_or(src.len());
     let body = &src[start..next_fn];
-    // 必须 NOT 调 nestfs_sync_internal(). 排除注释行
+    // 必须 NOT 调 unkfs_sync_internal(). 排除注释行
     let code_lines: Vec<&str> = body
         .lines()
         .filter(|l| !l.trim_start().starts_with("//"))
         .collect();
     let code_body = code_lines.join("\n");
     assert!(
-        !code_body.contains("nestfs_sync_internal()"),
-        "P3-I-18: vfs_sync 不应再直调 nestfs_sync_internal (允许注释提及历史)"
+        !code_body.contains("unkfs_sync_internal()"),
+        "P3-I-18: vfs_sync 不应再直调 unkfs_sync_internal (允许注释提及历史)"
     );
     assert!(
         body.contains("VFS_MANAGER.mounts.lock()"),
@@ -186,9 +186,9 @@ fn trait_object_method_signature() {
 }
 
 #[test]
-fn nestfs_sync_returns_ioerror_on_nonzero() {
-    // 拆分后 FileSystem impl 在 nestfs_inode.rs
-    let src = read_src("src/kernel/services/fs/nestfs/nestfs_inode.rs");
+fn unkfs_sync_returns_ioerror_on_nonzero() {
+    // 拆分后 FileSystem impl 在 unkfs_inode.rs
+    let src = read_src("src/kernel/services/fs/unkfs/unkfs_inode.rs");
     let impl_block = src
         .rsplit_once("impl crate::services::fs::FileSystem for NestfsData")
         .map(|(_, b)| b)
@@ -200,6 +200,6 @@ fn nestfs_sync_returns_ioerror_on_nonzero() {
         .unwrap_or("");
     assert!(
         sync_block.contains("KernelError::Io") || sync_block.contains("IoError"),
-        "P3-I-18: NestFS.fs_sync 非零返回必须映射为 KernelError::Io"
+        "P3-I-18: UNKFS.fs_sync 非零返回必须映射为 KernelError::Io"
     );
 }

@@ -6,7 +6,7 @@
 //
 // `recovery_domain_register("net", 5, ...)` 在 init 末尾注册网络恢复域,
 // 但原 `net_save` 函数体为空. 恢复后所有配置 (IP, gateway) 与 FD 表
-// (用户 socket 句柄) 都丢失, 即便 `net_restore` 调用 `qx_net_init` 重新
+// (用户 socket 句柄) 都丢失, 即便 `net_restore` 调用 `eg_net_init` 重新
 // 初始化, 也只是把 NIC 重启, 不会保留任何业务状态.
 //
 // ## 修复方案

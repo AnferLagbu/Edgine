@@ -43,6 +43,10 @@ pub const DEVFS_MAX_NAME: usize = 32;
 /// 设备类型 (强类型枚举, 替代裸 `u8`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+#[expect(
+    clippy::upper_case_acronyms,
+    reason = "设备种类枚举按子系统缩写命名 (SGEG), 与 /dev/sgeg 路径对应"
+)]
 pub enum DevKind {
     /// 空设备 /dev/null
     Null = 0,
@@ -52,8 +56,8 @@ pub enum DevKind {
     Console = 2,
     /// TTY /dev/tty
     Tty = 3,
-    /// Credo 能力 (PWM) 接口 /dev/credo
-    Credo = 4,
+    /// SGEG 能力 (PWM) 接口 /dev/sgeg
+    SGEG = 4,
     /// 块设备 (如 /dev/sda)
     Block = 5,
     /// 字符设备 (如 /dev/serial0)
@@ -72,7 +76,7 @@ impl DevKind {
             1 => Some(Self::Zero),
             2 => Some(Self::Console),
             3 => Some(Self::Tty),
-            4 => Some(Self::Credo),
+            4 => Some(Self::SGEG),
             5 => Some(Self::Block),
             6 => Some(Self::Char),
             7 => Some(Self::Net),
@@ -89,7 +93,7 @@ impl DevKind {
     pub fn is_virtual(&self) -> bool {
         matches!(
             self,
-            Self::Null | Self::Zero | Self::Console | Self::Tty | Self::Credo
+            Self::Null | Self::Zero | Self::Console | Self::Tty | Self::SGEG
         )
     }
 
@@ -97,7 +101,7 @@ impl DevKind {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
-    /// 是否为物理设备 (由 Chitin 驱动提供)
+    /// 是否为物理设备 (由 EGDF 驱动提供)
     pub fn is_physical(&self) -> bool {
         matches!(self, Self::Block | Self::Char | Self::Net | Self::Input)
     }
@@ -280,10 +284,10 @@ impl DevfsData {
                 buf.len() as i32
             }
             Some(DevKind::Console | DevKind::Tty) => 0,
-            Some(DevKind::Credo) => {
-                let pwm = crate::framework::credo::session::get_current_pwm();
-                let euid = crate::framework::credo::session::get_euid();
-                let uid = crate::framework::credo::session::get_current_uid();
+            Some(DevKind::SGEG) => {
+                let pwm = crate::framework::sgeg::session::get_current_pwm();
+                let euid = crate::framework::sgeg::session::get_euid();
+                let uid = crate::framework::sgeg::session::get_current_uid();
                 if pwm != 0 {
                     let mut off = 0;
                     let blen = buf.len();
@@ -340,7 +344,7 @@ impl DevfsData {
                 }
             }
             Some(DevKind::Block | DevKind::Char | DevKind::Net | DevKind::Input) => {
-                // E6-9a: 物理设备 I/O 路由待 E6-9b (Chitin 桥接) 实现
+                // E6-9a: 物理设备 I/O 路由待 E6-9b (EGDF 桥接) 实现
                 -1
             }
             None => -1,
@@ -363,7 +367,7 @@ impl DevfsData {
                 crate::framework::klog::serial_write_bytes(buf);
                 buf.len() as i32
             }
-            Some(DevKind::Credo) => {
+            Some(DevKind::SGEG) => {
                 let input = core::str::from_utf8(buf).unwrap_or("");
                 let input = input.trim_end_matches(['\n', '\r', '\0']);
                 let mut parts = input.splitn(2, '\n');
@@ -372,13 +376,13 @@ impl DevfsData {
                 if note.is_empty() || password.is_empty() {
                     return KernelError::InvalidArgument.as_i32();
                 }
-                crate::framework::credo::session::login(note, password)
+                crate::framework::sgeg::session::login(note, password)
                     .map_or(KernelError::PermissionDenied.as_i32(), |_pwm| {
                         buf.len() as i32
                     })
             }
             Some(DevKind::Block | DevKind::Char | DevKind::Net | DevKind::Input) => {
-                // E6-9a: 物理设备 I/O 路由待 E6-9b (Chitin 桥接) 实现
+                // E6-9a: 物理设备 I/O 路由待 E6-9b (EGDF 桥接) 实现
                 -1
             }
             None => -1,
@@ -420,26 +424,26 @@ pub fn init() {
     register_standard();
 }
 
-/// 初始化 `DevFS` 并订阅 Chitin 设备注册回调 (E6-9b)
+/// 初始化 `DevFS` 并订阅 EGDF 设备注册回调 (E6-9b)
 ///
-/// Chitin 驱动注册新设备时, `DevFS` 自动创建对应设备节点。
-pub fn init_with_chitin_bridge() {
+/// EGDF 驱动注册新设备时, `DevFS` 自动创建对应设备节点。
+pub fn init_with_egdf_bridge() {
     register_standard();
-    crate::framework::chitin::chitin_set_register_callback(on_chitin_device_registered);
+    crate::framework::egdf::egdf_set_register_callback(on_egdf_device_registered);
 }
 
-/// Chitin 设备注册回调 — 自动创建 `DevFS` 设备节点 (E6-9b)
-fn on_chitin_device_registered(dev: &crate::framework::chitin::ChitinDevice) {
+/// EGDF 设备注册回调 — 自动创建 `DevFS` 设备节点 (E6-9b)
+fn on_egdf_device_registered(dev: &crate::framework::egdf::EGDFDevice) {
     let kind = match dev.proto {
-        crate::framework::chitin::ChitinProto::Block => DevKind::Block,
-        crate::framework::chitin::ChitinProto::Char => DevKind::Char,
-        crate::framework::chitin::ChitinProto::Net => DevKind::Net,
-        crate::framework::chitin::ChitinProto::Input => DevKind::Input,
+        crate::framework::egdf::EGDFProto::Block => DevKind::Block,
+        crate::framework::egdf::EGDFProto::Char => DevKind::Char,
+        crate::framework::egdf::EGDFProto::Net => DevKind::Net,
+        crate::framework::egdf::EGDFProto::Input => DevKind::Input,
         // Bus/Other 不创建 DevFS 节点
         _ => return,
     };
     // I-20: register_device 现在返回 KernelResult<()>, 失败仅记录
-    // (设备可能已存在, Chitin 重启场景), 不阻断 chitin 回调链.
+    // (设备可能已存在, EGDF 重启场景), 不阻断 egdf 回调链.
     let _ = DEVFS_DATA.register_device(dev.name, kind as u8);
 }
 
@@ -469,7 +473,7 @@ impl DevFile {
             DevKind::Zero => "zero",
             DevKind::Console => "console",
             DevKind::Tty => "tty",
-            DevKind::Credo => "credo",
+            DevKind::SGEG => "sgeg",
             DevKind::Block | DevKind::Char | DevKind::Net | DevKind::Input => "device",
         }
     }
@@ -632,13 +636,13 @@ pub const fn max_name_len() -> usize {
 // 标准设备预注册
 // ============================================================================
 
-/// 注册所有标准设备 (null/zero/console/tty/credo)
+/// 注册所有标准设备 (null/zero/console/tty/sgeg)
 pub fn register_standard() {
     let _ = register("null", DevKind::Null);
     let _ = register("zero", DevKind::Zero);
     let _ = register("console", DevKind::Console);
     let _ = register("tty", DevKind::Tty);
-    let _ = register("credo", DevKind::Credo);
+    let _ = register("sgeg", DevKind::SGEG);
 }
 
 // ============================================================================
@@ -742,7 +746,7 @@ impl FileSystem for DevfsData {
         if self.mount(path) != 0 {
             return Err(KernelError::Io);
         }
-        // E6-9a: mount 不再硬编码设备, 由 init() 或 init_with_chitin_bridge() 注册
+        // E6-9a: mount 不再硬编码设备, 由 init() 或 init_with_egdf_bridge() 注册
         Ok(())
     }
 
@@ -908,8 +912,8 @@ mod tests {
             "register tty"
         );
         assert!(
-            devfs.register_device("credo", DevKind::Credo as u8).is_ok(),
-            "register credo"
+            devfs.register_device("sgeg", DevKind::SGEG as u8).is_ok(),
+            "register sgeg"
         );
         assert_eq!(devfs.device_count(), 5, "expected 5 standard devices");
     }
@@ -1029,7 +1033,7 @@ mod tests {
         // 幂等: 重复注册返回 AlreadyExists, 由 register_standard 内部忽略
         register_standard();
         let g = global();
-        for name in ["null", "zero", "console", "tty", "credo"] {
+        for name in ["null", "zero", "console", "tty", "sgeg"] {
             assert!(g.open(name).is_ok(), "global devfs should open {name}");
         }
     }

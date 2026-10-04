@@ -1,16 +1,16 @@
 [package]
-name = "queenx"
+name = "edgine"
 version = "0.1.0"
 edition = "2024"
 license = "MPL-2.0"
-description = "QueenX 自研操作系统内核壳 crate (方案 D: 内核本体独立为 kernel crate)"
-repository = "https://gitee.com/AnferLagbu/QueenX"
+description = "Edgine 自研操作系统内核壳 crate (方案 D: 内核本体独立为 kernel crate)"
+repository = "https://gitee.com/AnferLagbu/Edgine"
 readme = "../../README.md"
 keywords = ["kernel", "os", "framekernel", "no_std"]
 categories = ["os", "no-std", "embedded"]
 
 [lib]
-name = "queenx"
+name = "edgine"
 # B08-04: 显式声明 lib 路径, 消除 src/rust/lib.rs 空文件歧义
 path = "src/lib.rs"
 # 方案 D: 壳仅以 rlib 供 host-tests 引用 (re-export kernel); 裸机 staticlib 由 kernel crate 产出.
@@ -26,7 +26,7 @@ panic = "abort"
 lto = true
 opt-level = "z"
 
-# 调试专用 profile (与 kernel/queenx 原配置一致), 用于排查深水区问题.
+# 调试专用 profile (与 kernel/edgine 原配置一致), 用于排查深水区问题.
 [profile.test-debug]
 inherits = "release"
 lto = false
@@ -67,5 +67,5 @@ snmp = ["kernel/snmp"]
 netbios = ["kernel/netbios"]
 preempt = ["kernel/preempt"]
 kaslr = ["kernel/kaslr"]
-barrier = ["kernel/barrier"]
+freg = ["kernel/freg"]
 debug_syscall = ["kernel/debug_syscall"]

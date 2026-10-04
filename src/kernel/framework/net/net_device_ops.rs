@@ -4,7 +4,7 @@
 //! 指针表 (需裸指针转换与指针契约)。本模块提供 **安全桥 trait**
 //! [`NetDeviceOps`]: 设备驱动 impl trait 后, 经 [`register_net_device`]
 //! 由 framework 泛型桥 (monomorphization) 生成 extern "C" 回调并封装全部
-//! unsafe 转换, 产出 [`NetDeviceRegistration`] 供 `ChitinNetDevice`
+//! unsafe 转换, 产出 [`NetDeviceRegistration`] 供 `EGDFNetDevice`
 //! 接入 smoltcp。
 //!
 //! ## 架构
@@ -16,7 +16,7 @@
 //!         ├── net_ops_for::<T> → Box::leak(NetOps { extern "C" 回调 })
 //!         │   └── unsafe 转换边界 (driver_data 裸指针 → &mut T)
 //!         └── NetDeviceRegistration { ops, driver_data, mac }
-//!             └── nic_probe_all → ChitinNetDevice → smoltcp
+//!             └── nic_probe_all → EGDFNetDevice → smoltcp
 //! ```
 //!
 //! ## 初始化接线 (DECISION-K 单向注册契约)
@@ -28,7 +28,7 @@
 
 use alloc::boxed::Box;
 
-use crate::framework::chitin::NetOps;
+use crate::framework::egdf::NetOps;
 use crate::framework::sync::OnceLock;
 
 // ============================================================================
@@ -92,7 +92,7 @@ extern "C" fn net_send_impl<T: NetDeviceOps>(
     // 设备生命周期 (内核不回收); 类型由泛型桥的单调化保证 (每类型一张表)。
     let dev = unsafe { &mut *(driver_data.cast::<T>()) };
     // SAFETY: data 非空且 len 字节在调用期有效 (NetOps 契约: smoltcp 内核
-    // 缓冲区 tx_buf, 由 ChitinNetDevice 持有)。
+    // 缓冲区 tx_buf, 由 EGDFNetDevice 持有)。
     let frame = unsafe { core::slice::from_raw_parts(data, len as usize) };
     dev.send(frame)
 }
@@ -111,7 +111,7 @@ extern "C" fn net_recv_impl<T: NetDeviceOps>(
     // SAFETY: driver_data 契约同 net_send_impl。
     let dev = unsafe { &mut *(driver_data.cast::<T>()) };
     // SAFETY: buf 非空且 buf_len 字节在调用期有效 (NetOps 契约: smoltcp
-    // 内核缓冲区 rx_buf, 调用方 ChitinNetDevice 持有完整空间)。
+    // 内核缓冲区 rx_buf, 调用方 EGDFNetDevice 持有完整空间)。
     let rx = unsafe { core::slice::from_raw_parts_mut(buf, buf_len as usize) };
     dev.try_receive(rx)
 }
@@ -151,7 +151,7 @@ pub struct NetDeviceRegistration {
     pub ops: &'static NetOps,
     /// 设备裸指针 (Box::into_raw 转移所有权, 内核生命周期存续)。
     pub driver_data: *mut core::ffi::c_void,
-    /// MAC 地址 (注册时读取, 供 ChitinNetDevice 构造, 免二次回调)。
+    /// MAC 地址 (注册时读取, 供 EGDFNetDevice 构造, 免二次回调)。
     pub mac: [u8; 6],
 }
 
@@ -159,7 +159,7 @@ pub struct NetDeviceRegistration {
 ///
 /// 所有权转移: `Box::into_raw` 泄漏设备存续内核生命周期 (与既有设备全局
 /// 实例语义等价); MAC 在转移前经 `Box<T>` 安全读取; 返回的注册数据由
-/// `nic_probe_all` 交 `ChitinNetDevice` 接入 smoltcp。
+/// `nic_probe_all` 交 `EGDFNetDevice` 接入 smoltcp。
 pub fn register_net_device<T: NetDeviceOps + 'static>(dev: Box<T>) -> NetDeviceRegistration {
     let mac = dev.get_mac();
     let raw = Box::into_raw(dev).cast::<core::ffi::c_void>();

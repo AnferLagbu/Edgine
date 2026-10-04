@@ -6,15 +6,15 @@
 
 ## 背景
 
-当前 QueenX 网络栈为 IPv4-only 设计:
+当前 Edgine 网络栈为 IPv4-only 设计:
 
 - `Ipv4Addr(pub [u8; 4])` — 无 `Ipv6Addr` / `IpAddr` 枚举
 - `NetEndpoint { addr: Ipv4Addr, port: u16 }` — 硬编码 IPv4
 - `NetListenEndpoint { addr: Option<Ipv4Addr>, port: u16 }` — 硬编码 IPv4
 - FFI 层 (`sm_fi.rs`) 仅处理 AF_INET (family=2) + sockaddr_in (16 字节)
-- smoltcp vendored 已完整支持 IPv6 (wire/ipv6.rs, wire/ip.rs, parsers.rs), 但 QueenX 抽象层未暴露
+- smoltcp vendored 已完整支持 IPv6 (wire/ipv6.rs, wire/ip.rs, parsers.rs), 但 Edgine 抽象层未暴露
 
-**目标**: 让 QueenX 同时支持 IPv4 与 IPv6 协议栈, 可绑定/连接/收发 IPv6 套接字.
+**目标**: 让 Edgine 同时支持 IPv4 与 IPv6 协议栈, 可绑定/连接/收发 IPv6 套接字.
 
 ---
 
@@ -47,7 +47,7 @@
   - 所有调用方一次性迁移 (match V4/V6 分支)
   - 提供迁移辅助: `Ipv4Addr::into_ip_addr()` / `NetEndpoint::new_v4()` / `NetEndpoint::new_v6()`
 - **状态**: [X]
-- **详情**: 破坏性改造符合 QueenX "简单优先" (§15.2), 避免三类型并存导致的复杂度. 所有调用点在编译期暴露, 无运行时风险.
+- **详情**: 破坏性改造符合 Edgine "简单优先" (§15.2), 避免三类型并存导致的复杂度. 所有调用点在编译期暴露, 无运行时风险.
 
 ### D3: C ABI 兼容 — sockaddr_in6 结构体
 
@@ -76,7 +76,7 @@
   - 在 `sm_socket` 中新增 `domain == 10` 分支
   - 句柄表中区分 V4/V6 socket (或使用统一句柄 + 运行时 family 字段)
 - **状态**: [X]
-- **详情**: smoltcp 的 `tcp::Socket` / `udp::Socket` 本身支持 IPv6, 无需在 smoltcp 层区分. QueenX 仅需在 FFI 层正确解析 sockaddr_in6 并转换为 `IpEndpoint` (smoltcp wire 类型).
+- **详情**: smoltcp 的 `tcp::Socket` / `udp::Socket` 本身支持 IPv6, 无需在 smoltcp 层区分. Edgine 仅需在 FFI 层正确解析 sockaddr_in6 并转换为 `IpEndpoint` (smoltcp wire 类型).
 
 ---
 

@@ -320,7 +320,7 @@ pub fn vfs_pread_inode(
     pwm: u64,
 ) -> i32 {
     // P3-I-19: 走 FileSystem trait 分发. 旧实现直接访问 RAMFS_DATA,
-    // 非 RamFS (NestFS/DevFS 等) 挂载 mmap 时无法工作. 现按 mount_idx
+    // 非 RamFS (UNKFS/DevFS 等) 挂载 mmap 时无法工作. 现按 mount_idx
     // 派发, 无挂载则返回 -1 (EIO). mmap prewarm 由 page_fault 传入
     // vma.mount_idx (mmap 时已解析).
     let mount_idx = match mount_idx {
@@ -713,9 +713,9 @@ pub extern "C" fn vfs_fstat(fd: u32, st: *mut VfsStat, _pwm: u64) -> i32 {
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
         let pwm = open_file.pwm;
         open_file.inode().stat(pwm).map_or(-1, |stat| {
-            // credo 身份映射: 把 pwm 归属的 uid/gid 写入最终 stat (先算后写, 免二次回读)
+            // sgeg 身份映射: 把 pwm 归属的 uid/gid 写入最终 stat (先算后写, 免二次回读)
             let mut stat = stat;
-            let tbl = crate::framework::credo::identity::get_table();
+            let tbl = crate::framework::sgeg::identity::get_table();
             stat.uid = tbl.uid_of(stat.owner_pwm);
             stat.gid = tbl.gid_of(stat.group_pwm);
             if stat.gid == 0xFFFF_FFFF {

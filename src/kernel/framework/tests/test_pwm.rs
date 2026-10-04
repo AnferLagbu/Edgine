@@ -1,13 +1,13 @@
 use super::check;
-use crate::framework::credo::capability;
-use crate::framework::credo::engine;
-use crate::framework::credo::types::{CapBits, CapDomain, GrantRecord, PwmEntry, PwmFlags, PwmId};
+use crate::framework::sgeg::capability;
+use crate::framework::sgeg::engine;
+use crate::framework::sgeg::types::{CapBits, CapDomain, GrantRecord, PwmEntry, PwmFlags, PwmId};
 use crate::framework::tests::{TestResult, runner};
 use crate::register_tests_inner;
 
 // UT-07 (2026-09-26): pwm::sha256 / pwm::types / pwm::audit 三组注册副本已删 —
-// 纯算法与纯类型断言分别以 framework/credo/sha256.rs 与
-// framework/credo/types.rs 的 #[cfg(test)] 为唯一归属.
+// 纯算法与纯类型断言分别以 framework/sgeg/sha256.rs 与
+// framework/sgeg/types.rs 的 #[cfg(test)] 为唯一归属.
 
 fn test_pwmentry_caps() -> TestResult {
     let entry = PwmEntry::new();
@@ -130,8 +130,8 @@ fn test_viable_floor() -> TestResult {
 
 #[cfg(target_arch = "x86_64")]
 fn test_pwmentry_cow_bp() -> TestResult {
-    use crate::services::fs::nestfs::bp::NestBlockPointer;
-    use crate::services::fs::nestfs::dmu::NestDmuObject;
+    use crate::services::fs::unkfs::bp::NestBlockPointer;
+    use crate::services::fs::unkfs::dmu::NestDmuObject;
 
     let mut obj = NestDmuObject::new_file(1, 0);
     let bp = NestBlockPointer::null();

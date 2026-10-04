@@ -384,9 +384,9 @@ pub fn display_init() -> framework::Result<()> {
         }
     });
 
-    crate::framework::chitin::chitin_register_driver(
+    crate::framework::egdf::egdf_register_driver(
         "vga-display",
-        crate::framework::chitin::ChitinProto::Other,
+        crate::framework::egdf::EGDFProto::Other,
         Some(fb_addr),
         None,
         alloc::boxed::Box::new(DisplayDriver),
@@ -403,7 +403,7 @@ pub fn display_init() -> framework::Result<()> {
 ///
 /// MIG-008 接线补齐: framework 持有本槽 + [`display_probe_controllers`] 机制,
 /// services 注册无捕获工厂函数指针 (在 services 侧构造 HDMI/DP/DisplayManager
-/// 并经 Chitin 注册)。未注册时 [`display_probe_controllers`] fail-quiet 跳过。
+/// 并经 EGDF 注册)。未注册时 [`display_probe_controllers`] fail-quiet 跳过。
 static DISPLAY_CONTROLLER_FACTORY: crate::framework::sync::OnceLock<fn()> =
     crate::framework::sync::OnceLock::new();
 

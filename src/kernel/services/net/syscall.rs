@@ -405,8 +405,8 @@ pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
             // [24-27] gid
             // B07-02: 使用当前进程真实凭据, 消除硬编码伪造的 root 凭据.
             let pid: u64 = u64::from(crate::framework::proc::process_get_current_pid());
-            let uid: u64 = u64::from(crate::framework::credo::get_current_uid());
-            let gid: u64 = u64::from(crate::framework::credo::get_current_gid());
+            let uid: u64 = u64::from(crate::framework::sgeg::get_current_uid());
+            let gid: u64 = u64::from(crate::framework::sgeg::get_current_gid());
             raw::write_u64_to_user(msg_control_ptr, 28u64);
             raw::write_u64_to_user(msg_control_ptr + 8, (2u64 << 32) | 1u64);
             raw::write_u64_to_user(msg_control_ptr + 16, (pid << 32) | uid);

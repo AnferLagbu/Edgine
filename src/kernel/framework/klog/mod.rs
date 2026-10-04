@@ -1,4 +1,4 @@
-//! `QueenX` 内核日志系统 (`KLog`)
+//! `Edgine` 内核日志系统 (`KLog`)
 //!
 //! 自举设计 — 零外部依赖:
 //!   1. 内建 COM1 串口驱动 (直接 port I/O, 无需 driver 子系统)
@@ -16,7 +16,7 @@ use core::sync::atomic::{AtomicU8, Ordering};
 // 输出格式: <ts_s>.<ts_us> [LEVEL] [CATEGORY] message\n
 //
 // 使用方式:
-//   klog!(Info, Boot, "QueenX 启动中...");
+//   klog!(Info, Boot, "Edgine 启动中...");
 //   klog_warn!(Kernel, "告警信息");
 //   klog_err!(Driver, "驱动错误: {}", code);
 // ============================================================================

@@ -26,7 +26,7 @@ use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 /// ## 设计
 ///
 /// - 32 位位掩码, atomic 友好
-/// - 与 Linux `vm_flags` 同源, 但仅实现 `QueenX` 用到的子集
+/// - 与 Linux `vm_flags` 同源, 但仅实现 `Edgine` 用到的子集
 /// - mlock 路径 (MADV_*) 与 fork 行为 (`MADV_DONTFORK`) 由 `VmFlags` 驱动
 /// - 与 `PageFlags` 解耦: mlock 不修改页表权限, 仅在内核策略路径被检查
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

@@ -30,7 +30,7 @@ use std::path::Path;
 fn workspace_root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .unwrap() // QueenX workspace root
+        .unwrap() // Edgine workspace root
         .to_path_buf()
 }
 

@@ -300,8 +300,8 @@ pub fn elf_load_with_bias(
     Ok(result)
 }
 
-/// queenx 动态链接器路径 (替代 Linux ld-linux-*.so.2)
-const QUEENX_INTERP: &[u8] = b"/usr/libexec/elfld.so\0";
+/// edgine 动态链接器路径 (替代 Linux ld-linux-*.so.2)
+const EDGINE_INTERP: &[u8] = b"/usr/libexec/elfld.so\0";
 
 /// Linux 动态链接器路径前缀 (用于检测)
 const LINUX_INTERP_PREFIXES: &[&[u8]] = &[
@@ -385,7 +385,7 @@ pub fn needs_interp_rewrite(elf_data: *const u8, elf_size: u64) -> bool {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
-/// 改写 ELF 数据中的 `PT_INTERP` 路径为 queenx 动态链接器.
+/// 改写 ELF 数据中的 `PT_INTERP` 路径为 edgine 动态链接器.
 ///
 /// # Safety
 /// `elf_data` 必须指向可写的有效 ELF 数据 (内核拷贝缓冲区).
@@ -419,12 +419,12 @@ pub unsafe fn rewrite_interp_path(elf_data: *mut u8, elf_size: u64) {
             let interp_dst = elf_data.add(interp_offset);
 
             // 计算可写入长度 (不超过原 interp 段大小)
-            let write_len = QUEENX_INTERP.len().min(interp_len);
+            let write_len = EDGINE_INTERP.len().min(interp_len);
 
             // SAFETY: elf_data 是内核拷贝缓冲区, interp_offset+interp_len 在 ELF 范围内
-            core::ptr::copy_nonoverlapping(QUEENX_INTERP.as_ptr(), interp_dst, write_len);
+            core::ptr::copy_nonoverlapping(EDGINE_INTERP.as_ptr(), interp_dst, write_len);
 
-            // 如果 queenx interp 比原 interp 短, 用 null 填充剩余空间
+            // 如果 edgine interp 比原 interp 短, 用 null 填充剩余空间
             if write_len < interp_len {
                 core::ptr::write_bytes(interp_dst.add(write_len), 0, interp_len - write_len);
             }
@@ -432,7 +432,7 @@ pub unsafe fn rewrite_interp_path(elf_data: *mut u8, elf_size: u64) {
     }
 }
 
-/// 准备 ELF 映像: 检测并在必要时把 `PT_INTERP` 改写为 queenx 动态链接器路径.
+/// 准备 ELF 映像: 检测并在必要时把 `PT_INTERP` 改写为 edgine 动态链接器路径.
 ///
 /// 返回 `true` 表示发生了改写 (Linux 二进制), `false` 表示无需改写.
 ///

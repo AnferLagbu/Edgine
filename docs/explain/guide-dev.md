@@ -1,6 +1,6 @@
 # 框内核开发与维护指导
 
-> 本文档给本项目（QueenX）维护者与贡献者：在框内核（framework/ + services/）双子树架构下，新代码放哪里，改代码先改哪里，何时两边都改。配套 [explain-framekernel.md](./explain-framekernel.md) 阅读。适用读者：维护 framework/ 与 services/ 的内核开发者，以及首次提 PR 的新贡献者。
+> 本文档给本项目（Edgine）维护者与贡献者：在框内核（framework/ + services/）双子树架构下，新代码放哪里，改代码先改哪里，何时两边都改。配套 [explain-framekernel.md](./explain-framekernel.md) 阅读。适用读者：维护 framework/ 与 services/ 的内核开发者，以及首次提 PR 的新贡献者。
 
 ## 这是什么
 
@@ -38,7 +38,7 @@ TCB 维护 5 条原则：(1) 暴露最强类型，避免裸指针 framework pub 
 
 ### 常见子系统归属示例
 
-8 个常见子系统。进程管理（机制：上下文切换/页表切换 framework；策略：CFS/MLFQ 调度 services）/ 内存管理（机制：物理页分配/页表映射 framework；策略：VMA 合并/页面回收 services）/ 中断处理（机制：IDT/中断控制器 framework；策略：路由/分发 services）/ 文件系统（机制：inode 操作表 framework；策略：VFS 后端/RamFS/NestFS services）/ 设备驱动（机制：iomem/ioport 代理 framework；策略：设备行为 services）/ 网络协议栈（机制：smoltcp 接口 framework；策略：TCP 状态机/DHCP services）/ 同步原语（机制：SpinLock/Mutex framework；策略：锁顺序/Lockdep services）/ 凭据安全（机制：creds/pwm 校验 framework；策略：会话/授权 services）。
+8 个常见子系统。进程管理（机制：上下文切换/页表切换 framework；策略：CFS/MLFQ 调度 services）/ 内存管理（机制：物理页分配/页表映射 framework；策略：VMA 合并/页面回收 services）/ 中断处理（机制：IDT/中断控制器 framework；策略：路由/分发 services）/ 文件系统（机制：inode 操作表 framework；策略：VFS 后端/RamFS/UNKFS services）/ 设备驱动（机制：iomem/ioport 代理 framework；策略：设备行为 services）/ 网络协议栈（机制：smoltcp 接口 framework；策略：TCP 状态机/DHCP services）/ 同步原语（机制：SpinLock/Mutex framework；策略：锁顺序/Lockdep services）/ 凭据安全（机制：creds/pwm 校验 framework；策略：会话/授权 services）。
 
 ## 工作原理
 

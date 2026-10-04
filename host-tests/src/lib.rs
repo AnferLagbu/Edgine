@@ -1,4 +1,4 @@
-//! QueenX host-tests 库
+//! Edgine host-tests 库
 //!
 //! ## 职责划分 (按 Rust 官方测试组织标准)
 //!
@@ -12,8 +12,8 @@
 //! - `dma_stream`  — DMA 状态机 (改引内核 dma_buf)
 //!
 //! ## B08-12/B08-14 迁移 (2026-09-06)
-//! 原平行实现 nestfs/(19 文件) + nestfs_mock/ 虚拟内核树已删除 — host-tests 经
-//! `queenx = { path = "../src/rust", features = ["host-test"] }` 直接引用内核
+//! 原平行实现 unkfs/(19 文件) + unkfs_mock/ 虚拟内核树已删除 — host-tests 经
+//! `edgine = { path = "../src/rust", features = ["host-test"] }` 直接引用内核
 //! 真实源码 (services/framework host-test 暴露面). 详见 docs/plan/
 //! eliminate-parallel-implementations.md.
 //!

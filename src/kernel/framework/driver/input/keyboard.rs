@@ -783,13 +783,13 @@ pub extern "C" fn keyboard_init() {
     let _ = driver.init();
 
     let raw_ptr: *mut KeyboardDriver = &mut *driver;
-    let _id = crate::framework::chitin::chitin_register_with_ops(
+    let _id = crate::framework::egdf::egdf_register_with_ops(
         "ps2_keyboard",
-        crate::framework::chitin::ChitinProto::Input,
+        crate::framework::egdf::EGDFProto::Input,
         None,
         Some(1),
         raw_ptr as *mut u8,
-        crate::framework::chitin::ChitinOps::Input(&PS2_KEYBOARD_INPUT_OPS),
+        crate::framework::egdf::EGDFOps::Input(&PS2_KEYBOARD_INPUT_OPS),
     );
 
     *KEYBOARD_DEVICE.lock() = Some(driver);
@@ -807,18 +807,18 @@ pub extern "C" fn keyboard_irq_handler() {
     }
 }
 
-/// 读取字符 (C 兼容接口) — 委托到 Chitin 统一输入路径
+/// 读取字符 (C 兼容接口) — 委托到 EGDF 统一输入路径
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn keyboard_read_char() -> i32 {
-    crate::framework::chitin::chitin_input_read().map_or(-1, i32::from)
+    crate::framework::egdf::egdf_input_read().map_or(-1, i32::from)
 }
 
-/// 检查是否有可读字符 (C 兼容接口) — 委托到 Chitin 统一输入路径
+/// 检查是否有可读字符 (C 兼容接口) — 委托到 EGDF 统一输入路径
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn keyboard_has_char() -> i32 {
-    i32::from(crate::framework::chitin::chitin_input_has_data())
+    i32::from(crate::framework::egdf::egdf_input_has_data())
 }
 
 /// C 兼容别名: `keyboard_has_data` (旧C代码/FFI调用的名称)
@@ -944,10 +944,10 @@ mod tests {
 }
 
 // ============================================================================
-// InputOps 桥接 — 供 Chitin 统一输入设备 I/O
+// InputOps 桥接 — 供 EGDF 统一输入设备 I/O
 // ============================================================================
 
-use crate::framework::chitin::InputOps;
+use crate::framework::egdf::InputOps;
 
 #[expect(
     clippy::ptr_as_ptr,
@@ -965,7 +965,7 @@ extern "C" fn kb_input_read(driver_data: *mut u8) -> *const u8 {
     if driver_data.is_null() {
         return core::ptr::null();
     }
-    // SAFETY: driver_data 由 Chitin InputOps 契约保证有效。
+    // SAFETY: driver_data 由 EGDF InputOps 契约保证有效。
     let kb = unsafe { &mut *(driver_data as *mut KeyboardDriver) };
     kb.read_char().map_or(core::ptr::null(), |b| {
         // 使用原子槽位存放返回值, 调用方在返回后立即拷贝
@@ -1003,7 +1003,7 @@ extern "C" fn kb_input_irq(driver_data: *mut u8) {
     if driver_data.is_null() {
         return;
     }
-    // SAFETY: driver_data 由 Chitin InputOps 契约保证有效。
+    // SAFETY: driver_data 由 EGDF InputOps 契约保证有效。
     let kb = unsafe { &mut *(driver_data as *mut KeyboardDriver) };
     kb.handle_interrupt();
 }

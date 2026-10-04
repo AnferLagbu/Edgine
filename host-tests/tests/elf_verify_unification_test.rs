@@ -13,7 +13,7 @@
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `verify_elf` 算法复刻 + `VerifyError` / `VerifyResult` / `Elf64Header`
-//! 平行镜像, 改引内核真实源码 `queenx::kernel::framework::proc::elf::verify::verify_elf`
+//! 平行镜像, 改引内核真实源码 `edgine::kernel::framework::proc::elf::verify::verify_elf`
 //! (pub unsafe fn, host 可测, 传 host 缓冲区指针 + 长度). 内核 `verify_elf` 为
 //! **unsafe** 函数, 测试调用需 unsafe 块.
 //! - `EM_X86_64` / `EM_AARCH64` / `ET_DYN` 为内核 pub const, 直接引用.
@@ -24,10 +24,10 @@
 //! 静态契约用例 (源码文本扫描 user_proc.rs / elf/mod.rs 无重复 magic 字面量,
 //! verify 子模块声明与委托) 为 B08-20 混合型文件的 include_str 部分, 原样保留.
 
-use queenx::kernel::framework::proc::elf::verify::{
+use edgine::kernel::framework::proc::elf::verify::{
     EM_AARCH64, EM_X86_64, ET_DYN, VerifyError, VerifyResult, verify_elf,
 };
-use queenx::kernel::framework::proc::elf::{Elf64Header, Elf64Phdr};
+use edgine::kernel::framework::proc::elf::{Elf64Header, Elf64Phdr};
 
 // =============================================================================
 // 镜像内核私有常量 (verify.rs, 非 pub)

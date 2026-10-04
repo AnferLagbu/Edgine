@@ -20,7 +20,7 @@
 //!
 //! ## 测试策略
 //!
-//! host-tests 不链接 queenx 静态库 (裸二进制), 也无法直接读取 trampoline.asm.
+//! host-tests 不链接 edgine 静态库 (裸二进制), 也无法直接读取 trampoline.asm.
 //! 本测试复刻 ApStartupInfo 的字段顺序与类型, 在 std 环境下**重放**编译期布局断言:
 //!
 //! - `ApStartupInfo` 总大小 = 54 字节

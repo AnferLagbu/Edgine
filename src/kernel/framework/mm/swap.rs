@@ -846,7 +846,7 @@ pub fn handle_swap_fault(pml4: u64, fault_addr: u64) -> PfResult {
 //
 // ## 设计
 //
-// QueenX 当前没有 kthread 抽象, 因此 kswapd 走 softirq 路径:
+// Edgine 当前没有 kthread 抽象, 因此 kswapd 走 softirq 路径:
 //   1. `kswapd_init()`: 注册 Kswapd softirq handler, 调度器 tick 周期触发
 //   2. `kswapd_wakeup()`: 立即 raise_softirq, 异步执行 reclaim_pages
 //   3. `kswapd_softirq_handler()`: softirq 上下文执行 reclaim_pages

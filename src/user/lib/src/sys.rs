@@ -1,5 +1,5 @@
 #![allow(non_upper_case_globals)]
-//! QueenX 用户态运行时 — POSIX 原生系统调用层
+//! Edgine 用户态运行时 — POSIX 原生系统调用层
 //! x86_64: syscall, rax=num, rdi=a1, rsi=a2, rdx=a3, r10=a4, r8=a5, rax=ret
 //! aarch64: svc #0, x0=num, x1-x4=args, x0=返回
 use core::arch::asm;
@@ -42,24 +42,24 @@ pub const SYS_getppid: u64 = 110;
 pub const SYS_sync: u64 = 162;
 pub const SYS_mount: u64 = 165;
 
-// QueenX 私有 syscall (Credo 400-499, 与内核 syscall/types.rs 权威源对齐)
-pub const SYS_CREDO_LOGIN: u64 = 400;
-pub const SYS_CREDO_LOGOUT: u64 = 401;
-pub const SYS_CREDO_CREATE_IDENTITY: u64 = 402;
-pub const SYS_CREDO_CHANGE_PASSWORD: u64 = 405;
-pub const SYS_CREDO_CREATE_FIRST: u64 = 407;
-pub const SYS_CREDO_GET_PWM: u64 = 412;
-pub const SYS_CREDO_DISK_LIST: u64 = 420;
-pub const SYS_CREDO_DISK_INFO: u64 = 421;
-pub const SYS_CREDO_DISK_FORMAT: u64 = 422;
-pub const SYS_CREDO_DISK_PARTITION: u64 = 423;
-pub const SYS_CREDO_DISK_INSTALL: u64 = 453;
-pub const SYS_CREDO_FAT_FORMAT: u64 = 454;
-pub const SYS_CREDO_PROC_LIST: u64 = 455;
-pub const SYS_CREDO_GETHOSTNAME: u64 = 459;
-pub const SYS_CREDO_SETHOSTNAME: u64 = 460;
-pub const SYS_CREDO_REBOOT: u64 = 462;
-pub const SYS_CREDO_HOTPLUG_STATUS: u64 = 463;
+// Edgine 私有 syscall (SGEG 400-499, 与内核 syscall/types.rs 权威源对齐)
+pub const SYS_SGEG_LOGIN: u64 = 400;
+pub const SYS_SGEG_LOGOUT: u64 = 401;
+pub const SYS_SGEG_CREATE_IDENTITY: u64 = 402;
+pub const SYS_SGEG_CHANGE_PASSWORD: u64 = 405;
+pub const SYS_SGEG_CREATE_FIRST: u64 = 407;
+pub const SYS_SGEG_GET_PWM: u64 = 412;
+pub const SYS_SGEG_DISK_LIST: u64 = 420;
+pub const SYS_SGEG_DISK_INFO: u64 = 421;
+pub const SYS_SGEG_DISK_FORMAT: u64 = 422;
+pub const SYS_SGEG_DISK_PARTITION: u64 = 423;
+pub const SYS_SGEG_DISK_INSTALL: u64 = 453;
+pub const SYS_SGEG_FAT_FORMAT: u64 = 454;
+pub const SYS_SGEG_PROC_LIST: u64 = 455;
+pub const SYS_SGEG_GETHOSTNAME: u64 = 459;
+pub const SYS_SGEG_SETHOSTNAME: u64 = 460;
+pub const SYS_SGEG_REBOOT: u64 = 462;
+pub const SYS_SGEG_HOTPLUG_STATUS: u64 = 463;
 
 // POSIX open flags
 pub const O_RDONLY: i32 = 0;
@@ -151,7 +151,7 @@ pub fn sched_yield()                                      { unsafe { sys0(24); }
 pub fn sync()                                             { unsafe { sys0(SYS_sync); } }
 
 // ============================================================
-// QueenX 兼容 wrapper — 保留原有语义，内部映射到 POSIX/PWM 编号
+// Edgine 兼容 wrapper — 保留原有语义，内部映射到 POSIX/PWM 编号
 // ============================================================
 
 pub fn proc_exec(path: &[u8], argv: &[*const u8]) -> i64   { unsafe { sys3(SYS_execve, path.as_ptr() as u64, argv.as_ptr() as u64, 0) } }
@@ -162,7 +162,7 @@ pub fn proc_exit(code: i32) -> ! {
         else { unsafe { asm!("wfi", options(nomem, nostack)); } }
     }
 }
-pub fn proc_get_pwm() -> u64                               { unsafe { sys0(SYS_CREDO_GET_PWM) as u64 } }
+pub fn proc_get_pwm() -> u64                               { unsafe { sys0(SYS_SGEG_GET_PWM) as u64 } }
 pub fn proc_yield()                                        { unsafe { sys0(24); } }
 
 pub fn pipe_create(fds: &mut [i32; 2]) -> i32              { unsafe { sys1(SYS_pipe, fds.as_mut_ptr() as u64) as i32 } }
@@ -187,27 +187,27 @@ pub fn fs_mount(src: &[u8], tgt: &[u8], typ: &[u8], opt: &[u8]) -> i32 {
 }
 pub fn fs_unmount(t: &[u8]) -> i32 { unsafe { sys1(166, t.as_ptr() as u64) as i32 } }
 
-pub fn auth_login(n: &[u8], p: &[u8]) -> i64               { unsafe { sys2(SYS_CREDO_LOGIN, n.as_ptr() as u64, p.as_ptr() as u64) } }
-pub fn auth_logout()                                       { unsafe { sys0(SYS_CREDO_LOGOUT); } }
-pub fn auth_create_first(pw: &[u8]) -> i32                 { unsafe { sys1(SYS_CREDO_CREATE_FIRST, pw.as_ptr() as u64) as i32 } }
-pub fn auth_change_password(o: &[u8], n: &[u8]) -> i32     { unsafe { sys2(SYS_CREDO_CHANGE_PASSWORD, o.as_ptr() as u64, n.as_ptr() as u64) as i32 } }
+pub fn auth_login(n: &[u8], p: &[u8]) -> i64               { unsafe { sys2(SYS_SGEG_LOGIN, n.as_ptr() as u64, p.as_ptr() as u64) } }
+pub fn auth_logout()                                       { unsafe { sys0(SYS_SGEG_LOGOUT); } }
+pub fn auth_create_first(pw: &[u8]) -> i32                 { unsafe { sys1(SYS_SGEG_CREATE_FIRST, pw.as_ptr() as u64) as i32 } }
+pub fn auth_change_password(o: &[u8], n: &[u8]) -> i32     { unsafe { sys2(SYS_SGEG_CHANGE_PASSWORD, o.as_ptr() as u64, n.as_ptr() as u64) as i32 } }
 
 pub fn env_getcwd(buf: &mut [u8]) -> i32                   { unsafe { sys2(SYS_getcwd, buf.as_mut_ptr() as u64, buf.len() as u64) as i32 } }
 pub fn env_chdir(path: &[u8]) -> i32                       { unsafe { sys1(SYS_chdir, path.as_ptr() as u64) as i32 } }
 
-pub fn gethostname(buf: &mut [u8]) -> i32                  { unsafe { sys2(SYS_CREDO_GETHOSTNAME, buf.as_mut_ptr() as u64, buf.len() as u64) as i32 } }
-pub fn sethostname(name: &[u8]) -> i32                     { unsafe { sys2(SYS_CREDO_SETHOSTNAME, name.as_ptr() as u64, name.len() as u64) as i32 } }
-pub fn reboot(cmd: i32) -> i64                             { unsafe { sys1(SYS_CREDO_REBOOT, cmd as u64) } }
-pub fn proc_list(buf: &mut [u8], max_entries: u32) -> i32  { unsafe { sys2(SYS_CREDO_PROC_LIST, buf.as_mut_ptr() as u64, max_entries as u64) as i32 } }
+pub fn gethostname(buf: &mut [u8]) -> i32                  { unsafe { sys2(SYS_SGEG_GETHOSTNAME, buf.as_mut_ptr() as u64, buf.len() as u64) as i32 } }
+pub fn sethostname(name: &[u8]) -> i32                     { unsafe { sys2(SYS_SGEG_SETHOSTNAME, name.as_ptr() as u64, name.len() as u64) as i32 } }
+pub fn reboot(cmd: i32) -> i64                             { unsafe { sys1(SYS_SGEG_REBOOT, cmd as u64) } }
+pub fn proc_list(buf: &mut [u8], max_entries: u32) -> i32  { unsafe { sys2(SYS_SGEG_PROC_LIST, buf.as_mut_ptr() as u64, max_entries as u64) as i32 } }
 
-pub fn disk_list(disks: &mut [u64]) -> i32                 { unsafe { sys2(SYS_CREDO_DISK_LIST, disks.as_mut_ptr() as u64, disks.len() as u64) as i32 } }
-pub fn disk_info(id: u32, info: &mut UserDiskInfo) -> i32  { unsafe { sys2(SYS_CREDO_DISK_INFO, id as u64, info as *mut UserDiskInfo as u64) as i32 } }
-pub fn disk_format(id: u32) -> i32                         { unsafe { sys2(SYS_CREDO_DISK_FORMAT, id as u64, c"nestfs".as_ptr() as u64) as i32 } }
-pub fn disk_partition(id: u32, sectors: u64) -> i64        { unsafe { sys2(SYS_CREDO_DISK_PARTITION, id as u64, sectors) } }
-pub fn boot_install(id: u32) -> i64                        { unsafe { sys1(SYS_CREDO_DISK_INSTALL, id as u64) } }
-pub fn fat_format(id: u32) -> i64                          { unsafe { sys1(SYS_CREDO_FAT_FORMAT, id as u64) } }
+pub fn disk_list(disks: &mut [u64]) -> i32                 { unsafe { sys2(SYS_SGEG_DISK_LIST, disks.as_mut_ptr() as u64, disks.len() as u64) as i32 } }
+pub fn disk_info(id: u32, info: &mut UserDiskInfo) -> i32  { unsafe { sys2(SYS_SGEG_DISK_INFO, id as u64, info as *mut UserDiskInfo as u64) as i32 } }
+pub fn disk_format(id: u32) -> i32                         { unsafe { sys2(SYS_SGEG_DISK_FORMAT, id as u64, c"unkfs".as_ptr() as u64) as i32 } }
+pub fn disk_partition(id: u32, sectors: u64) -> i64        { unsafe { sys2(SYS_SGEG_DISK_PARTITION, id as u64, sectors) } }
+pub fn boot_install(id: u32) -> i64                        { unsafe { sys1(SYS_SGEG_DISK_INSTALL, id as u64) } }
+pub fn fat_format(id: u32) -> i64                          { unsafe { sys1(SYS_SGEG_FAT_FORMAT, id as u64) } }
 // T2 批 5 (syscall-followup): 补 wrapper — 原仅常量无 wrapper 无调用 (T3 登记)
-pub fn hotplug_status(buf: &mut [u8]) -> i64               { unsafe { sys2(SYS_CREDO_HOTPLUG_STATUS, buf.as_mut_ptr() as u64, buf.len() as u64) } }
+pub fn hotplug_status(buf: &mut [u8]) -> i64               { unsafe { sys2(SYS_SGEG_HOTPLUG_STATUS, buf.as_mut_ptr() as u64, buf.len() as u64) } }
 
 // ============================================================
 // 新增 POSIX syscall wrapper
@@ -241,7 +241,7 @@ pub fn kill(pid: i32, sig: i32) -> i32                     { unsafe { sys2(62, p
 // ============================================================
 
 // ============================================================
-// 帧缓冲设备 (FB syscalls — QueenX 私有, 与内核 720-722 对齐)
+// 帧缓冲设备 (FB syscalls — Edgine 私有, 与内核 720-722 对齐)
 // ============================================================
 
 pub const SYS_FB_OPEN: u64 = 720;

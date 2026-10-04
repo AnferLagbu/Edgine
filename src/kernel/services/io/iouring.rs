@@ -7,7 +7,7 @@
 //! 机制留在 framework (`framework/io/iouring.rs`):
 //!   - `IoUring` 实例 + `RingBuffer` + `Sqe/Cqe` 数据结构
 //!   - 全局实例管理 (`io_uring_setup/enter/destroy/submit/reap`)
-//!   - `sys_io_uring_submit_sqe` (QX_IO_URING_SUBMIT 机制独有, 留在回退层)
+//!   - `sys_io_uring_submit_sqe` (EG_IO_URING_SUBMIT 机制独有, 留在回退层)
 //!
 //! 本文件实现 syscall 策略入口: 参数转换 + errno 转换 + 委托机制函数.
 //!

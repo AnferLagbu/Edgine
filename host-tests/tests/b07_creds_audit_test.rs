@@ -16,10 +16,10 @@ use std::path::Path;
 const UNIX: &str = "src/kernel/services/net/unix.rs";
 const SYS_NET: &str = "src/kernel/services/net/syscall.rs";
 const SMOLTCP: &str = "src/kernel/services/net/smoltcp_impl.rs";
-const AUTH: &str = "src/kernel/services/credo/auth.rs";
-// 第二十五批: capability 权威定义反转归位 framework (DECISION-K 项 5 credo
-// 判据), services/credo/capability.rs 仅 re-export 壳 — 源码断言改读权威路径
-const CAP: &str = "src/kernel/framework/credo/capability.rs";
+const AUTH: &str = "src/kernel/services/sgeg/auth.rs";
+// 第二十五批: capability 权威定义反转归位 framework (DECISION-K 项 5 sgeg
+// 判据), services/sgeg/capability.rs 仅 re-export 壳 — 源码断言改读权威路径
+const CAP: &str = "src/kernel/framework/sgeg/capability.rs";
 
 fn read(p: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))

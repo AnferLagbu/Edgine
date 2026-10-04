@@ -1,19 +1,19 @@
 //! B2.1: Vma.file_pwm 桥接模型测试
 //!
 //! 验证 file_pwm 从 mmap_syscall 入口到 Vma 存储的语义正确性.
-//! 不链接 queenx (host-tests 是 mock 层), 通过复刻 Vma 数据结构
-//! 验证模型语义与 queenx Vma 一致.
+//! 不链接 edgine (host-tests 是 mock 层), 通过复刻 Vma 数据结构
+//! 验证模型语义与 edgine Vma 一致.
 //!
-//! ## 与 queenx Vma 的一致性
+//! ## 与 edgine Vma 的一致性
 //! - 字段: start/end/flags/offset/inode_id/shared/file_pwm
 //! - file_backed: file_pwm 参数, 匿名: file_pwm = 0
 //! - insert_vma: 合并判断含 file_pwm (不同 pwm 不合并)
 //!
 //! ## 与单元测试的分工
-//! - host-tests/src/nestfs/* 验证 nestfs 数据结构
+//! - host-tests/src/unkfs/* 验证 unkfs 数据结构
 //! - 本文件验证 mmap/pwm 桥接的模型语义
 
-/// 简化的 VmaType (对应 queenx VmaType::FileBacked/Anonymous)
+/// 简化的 VmaType (对应 edgine VmaType::FileBacked/Anonymous)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 enum VmaType {
@@ -21,7 +21,7 @@ enum VmaType {
     FileBacked = 1,
 }
 
-/// 模型 Vma (镜像 queenx Vma 字段集, 用于语义测试)
+/// 模型 Vma (镜像 edgine Vma 字段集, 用于语义测试)
 #[derive(Debug, Clone)]
 struct Vma {
     start: usize,
@@ -31,7 +31,7 @@ struct Vma {
     shared: bool,
     file_pwm: u64,
     /// P3-I-19: 挂载点索引, 决定 #PF miss 时调哪个 FileSystem trait.
-    /// mock 中用 Option<usize> (与 queenx 一致), 匿名为 None.
+    /// mock 中用 Option<usize> (与 edgine 一致), 匿名为 None.
     mount_idx: Option<usize>,
     vma_type: VmaType,
 }
@@ -45,7 +45,7 @@ impl Vma {
         pwm: u64,
         shared: bool,
     ) -> Self {
-        // 默认挂载根 (RamFS, mount_idx = 0), 与 queenx mmap 退到根一致.
+        // 默认挂载根 (RamFS, mount_idx = 0), 与 edgine mmap 退到根一致.
         Self::file_backed_with_mount(start, end, offset, inode_id, pwm, shared, Some(0))
     }
 
@@ -126,7 +126,7 @@ fn mmap_syscall_passes_pwm_to_vma() {
 /// #PF 同步填 pcache 时, 读 vma.file_pwm 调用 vfs_pread_inode
 /// 此处模拟该路径: 验证 vma.file_pwm 是被读取的, 不是其它字段
 fn mock_handle_pf(vma: &Vma) -> u64 {
-    // queenx page_fault::handle_file_fault miss 路径:
+    // edgine page_fault::handle_file_fault miss 路径:
     // vfs_pread_inode(vma.inode_id, file_off, dst, vma.file_pwm)
     vma.file_pwm
 }
@@ -173,7 +173,7 @@ fn vma_clone_preserves_file_pwm() {
 fn mremap_preserves_file_pwm() {
     let pwm: u64 = 0xFEDC_BA09_8765_4321;
     let v_old = Vma::file_backed(0x20000, 0x24000, 0, 9, pwm, true);
-    // mremap 模拟: 复制 old_vma → new_vma (在 queenx mremap 实现)
+    // mremap 模拟: 复制 old_vma → new_vma (在 edgine mremap 实现)
     let v_new = v_old.clone();
     assert_eq!(v_new.file_pwm, pwm, "mremap 必须继承 file_pwm");
     assert_eq!(v_new.inode_id, 9);
@@ -181,7 +181,7 @@ fn mremap_preserves_file_pwm() {
 }
 
 /// P3-I-19: file_backed 默认挂载到根 (RamFS, mount_idx = 0),
-/// 与 queenx mmap 退到根一致.
+/// 与 edgine mmap 退到根一致.
 #[test]
 fn file_backed_defaults_to_root_mount() {
     let v = Vma::file_backed(0x30000, 0x34000, 0, 11, 0xAA, true);

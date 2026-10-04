@@ -41,7 +41,7 @@
 //! ## 与 Linux 的差异
 //!
 //! Linux dcache 是复杂的 LRU + RCU + dentry 父子指针树.
-//! `QueenX` 当前是单核 + `RamFs`, 采用扁平哈希表 + 简单失效,
+//! `Edgine` 当前是单核 + `RamFs`, 采用扁平哈希表 + 简单失效,
 //! 功能等价但复杂度低两个数量级. 后续多核时再引入 per-CPU dcache.
 //!
 //! ## 安全契约

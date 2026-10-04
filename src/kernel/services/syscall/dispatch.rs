@@ -20,7 +20,7 @@
 //!   unshare, setns, tgkill, waitid, robust_list), 信号, 网络, 凭证, 同步,
 //!   定时器, 事件轮询,
 //!   eventfd/signalfd/timerfd, io_uring (setup/enter) 与 eBPF (bpf),
-//!   kexec (kexec_load) 等, Credo 私有 syscall (含 disk_install/hotplug),
+//!   kexec (kexec_load) 等, SGEG 私有 syscall (含 disk_install/hotplug),
 //!   帧缓冲 (fb_open/fb_mmap/fb_release), 存储设备, inotify,
 //!   内存建议与锁定, 进程创建/等待, 系统信息, CPU 亲和性, 进程优先级,
 //!   设备固件 (fw_load/fw_get/fw_get_info/fw_detach),
@@ -75,7 +75,7 @@ impl SyscallDispatch for ServicesSyscallDispatch {
         if let Some(ret) = dispatch_sync(num, args) {
             return ret;
         }
-        if let Some(ret) = dispatch_credo(num, args) {
+        if let Some(ret) = dispatch_sgeg(num, args) {
             return ret;
         }
         if let Some(ret) = dispatch_other(num, args) {
@@ -98,7 +98,7 @@ impl SyscallDispatch for ServicesSyscallDispatch {
 /// 文件系统相关系统调用
 fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
-        QX_SNAPSHOT_CLONE, QX_SNAPSHOT_CREATE, QX_SNAPSHOT_DESTROY, QX_SNAPSHOT_ROLLBACK,
+        EG_SNAPSHOT_CLONE, EG_SNAPSHOT_CREATE, EG_SNAPSHOT_DESTROY, EG_SNAPSHOT_ROLLBACK,
         SYS_access, SYS_alarm, SYS_chdir, SYS_chmod, SYS_chown, SYS_chroot, SYS_clock_gettime,
         SYS_close, SYS_close_range, SYS_copy_file_range, SYS_creat, SYS_dup, SYS_dup2, SYS_dup3,
         SYS_faccessat, SYS_fallocate, SYS_fchmod, SYS_fchmodat, SYS_fchown, SYS_fchownat,
@@ -308,7 +308,7 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
             }
         }
 
-        // 扩展属性 (B09-17: QX_SETXATTR 890 → SYS_setxattr 188, Linux 编号空间归位)
+        // 扩展属性 (B09-17: EG_SETXATTR 890 → SYS_setxattr 188, Linux 编号空间归位)
         SYS_setxattr => as_ret(crate::services::fs::xattr::setxattr_syscall(
             a0,
             a1,
@@ -332,12 +332,12 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_removexattr => as_ret(crate::services::fs::xattr::removexattr_syscall(a0, a1, a4)),
 
         // 快照
-        QX_SNAPSHOT_CREATE => as_ret(crate::services::fs::snapshot::snapshot_create_syscall(a0)),
-        QX_SNAPSHOT_DESTROY => as_ret(crate::services::fs::snapshot::snapshot_destroy_syscall(a0)),
-        QX_SNAPSHOT_ROLLBACK => {
+        EG_SNAPSHOT_CREATE => as_ret(crate::services::fs::snapshot::snapshot_create_syscall(a0)),
+        EG_SNAPSHOT_DESTROY => as_ret(crate::services::fs::snapshot::snapshot_destroy_syscall(a0)),
+        EG_SNAPSHOT_ROLLBACK => {
             as_ret(crate::services::fs::snapshot::snapshot_rollback_syscall(a0))
         }
-        QX_SNAPSHOT_CLONE => as_ret(crate::services::fs::snapshot::snapshot_clone_syscall(
+        EG_SNAPSHOT_CLONE => as_ret(crate::services::fs::snapshot::snapshot_clone_syscall(
             a0, a1,
         )),
 
@@ -753,110 +753,108 @@ fn dispatch_sync(num: u64, args: [u64; 6]) -> Option<i64> {
     })
 }
 
-/// Credo 私有系统调用
-fn dispatch_credo(num: u64, args: [u64; 6]) -> Option<i64> {
+/// SGEG 私有系统调用
+fn dispatch_sgeg(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
-        SYS_CREDO_BOOT_CHECK, SYS_CREDO_CHANGE_PASSWORD, SYS_CREDO_CHECK_CAP,
-        SYS_CREDO_CREATE_FIRST, SYS_CREDO_CREATE_IDENTITY, SYS_CREDO_DELETE_IDENTITY,
-        SYS_CREDO_DISK_FORMAT, SYS_CREDO_DISK_INFO, SYS_CREDO_DISK_LIST, SYS_CREDO_DISK_PARTITION,
-        SYS_CREDO_FAT_FORMAT, SYS_CREDO_GET_CAPS, SYS_CREDO_GET_DOMAIN_FLAGS, SYS_CREDO_GET_PWM,
-        SYS_CREDO_GETHOSTNAME, SYS_CREDO_GRANT, SYS_CREDO_HOTPLUG_STATUS, SYS_CREDO_IDENTITY_INFO,
-        SYS_CREDO_LOGIN, SYS_CREDO_LOGOUT, SYS_CREDO_PROC_CPUTIME, SYS_CREDO_PROC_LIST,
-        SYS_CREDO_PROC_SETPRI, SYS_CREDO_PROC_SLEEP, SYS_CREDO_REBOOT, SYS_CREDO_REVOKE,
-        SYS_CREDO_SET_DOMAIN_FLAGS, SYS_CREDO_SET_PWM, SYS_CREDO_SETHOSTNAME,
-        SYS_CREDO_VERIFY_PASSWORD, SYS_capget, SYS_capset, SYS_getegid, SYS_geteuid, SYS_getgid,
-        SYS_getuid, SYS_setegid, SYS_seteuid, SYS_setgid, SYS_setregid, SYS_setreuid, SYS_setuid,
+        SYS_SGEG_BOOT_CHECK, SYS_SGEG_CHANGE_PASSWORD, SYS_SGEG_CHECK_CAP, SYS_SGEG_CREATE_FIRST,
+        SYS_SGEG_CREATE_IDENTITY, SYS_SGEG_DELETE_IDENTITY, SYS_SGEG_DISK_FORMAT,
+        SYS_SGEG_DISK_INFO, SYS_SGEG_DISK_LIST, SYS_SGEG_DISK_PARTITION, SYS_SGEG_FAT_FORMAT,
+        SYS_SGEG_GET_CAPS, SYS_SGEG_GET_DOMAIN_FLAGS, SYS_SGEG_GET_PWM, SYS_SGEG_GETHOSTNAME,
+        SYS_SGEG_GRANT, SYS_SGEG_HOTPLUG_STATUS, SYS_SGEG_IDENTITY_INFO, SYS_SGEG_LOGIN,
+        SYS_SGEG_LOGOUT, SYS_SGEG_PROC_CPUTIME, SYS_SGEG_PROC_LIST, SYS_SGEG_PROC_SETPRI,
+        SYS_SGEG_PROC_SLEEP, SYS_SGEG_REBOOT, SYS_SGEG_REVOKE, SYS_SGEG_SET_DOMAIN_FLAGS,
+        SYS_SGEG_SET_PWM, SYS_SGEG_SETHOSTNAME, SYS_SGEG_VERIFY_PASSWORD, SYS_capget, SYS_capset,
+        SYS_getegid, SYS_geteuid, SYS_getgid, SYS_getuid, SYS_setegid, SYS_seteuid, SYS_setgid,
+        SYS_setregid, SYS_setreuid, SYS_setuid,
     };
-    // SYS_CREDO_DISK_INSTALL 仅 x86_64 (非 kernel_test) 或 kernel_test 模式使用
+    // SYS_SGEG_DISK_INSTALL 仅 x86_64 (非 kernel_test) 或 kernel_test 模式使用
     // (aarch64 生产构建走 `_ =>` 兜底 ENOSYS, 与迁移前 framework cfg 语义一致)
     #[cfg(any(feature = "kernel_test", target_arch = "x86_64"))]
-    use crate::services::syscall::types::SYS_CREDO_DISK_INSTALL;
+    use crate::services::syscall::types::SYS_SGEG_DISK_INSTALL;
     let [a0, a1, a2, a3, _a4, _a5] = args;
 
     Some(match num {
         // 凭证 - UID/GID
-        SYS_getuid => as_ret(crate::services::credo::uid::getuid_syscall()),
-        SYS_getgid => as_ret(crate::services::credo::uid::getgid_syscall()),
-        SYS_setuid => as_ret(crate::services::credo::uid::setuid_syscall(a0 as u32)),
-        SYS_setgid => as_ret(crate::services::credo::uid::setgid_syscall(a0 as u32)),
-        SYS_geteuid => as_ret(crate::services::credo::uid::geteuid_syscall()),
-        SYS_getegid => as_ret(crate::services::credo::uid::getegid_syscall()),
-        SYS_seteuid => as_ret(crate::services::credo::uid::seteuid_syscall(a0 as u32)),
-        SYS_setegid => as_ret(crate::services::credo::uid::setegid_syscall(a0 as u32)),
-        SYS_setreuid => as_ret(crate::services::credo::uid::setreuid_syscall(
+        SYS_getuid => as_ret(crate::services::sgeg::uid::getuid_syscall()),
+        SYS_getgid => as_ret(crate::services::sgeg::uid::getgid_syscall()),
+        SYS_setuid => as_ret(crate::services::sgeg::uid::setuid_syscall(a0 as u32)),
+        SYS_setgid => as_ret(crate::services::sgeg::uid::setgid_syscall(a0 as u32)),
+        SYS_geteuid => as_ret(crate::services::sgeg::uid::geteuid_syscall()),
+        SYS_getegid => as_ret(crate::services::sgeg::uid::getegid_syscall()),
+        SYS_seteuid => as_ret(crate::services::sgeg::uid::seteuid_syscall(a0 as u32)),
+        SYS_setegid => as_ret(crate::services::sgeg::uid::setegid_syscall(a0 as u32)),
+        SYS_setreuid => as_ret(crate::services::sgeg::uid::setreuid_syscall(
             a0 as u32, a1 as u32,
         )),
-        SYS_setregid => as_ret(crate::services::credo::uid::setregid_syscall(
+        SYS_setregid => as_ret(crate::services::sgeg::uid::setregid_syscall(
             a0 as u32, a1 as u32,
         )),
 
-        // Credo 认证
-        SYS_CREDO_LOGIN => crate::services::credo::auth::auth_login_syscall(a0, a1),
-        SYS_CREDO_LOGOUT => crate::services::credo::auth::auth_logout_syscall(),
-        SYS_CREDO_CREATE_IDENTITY => {
-            crate::services::credo::auth::auth_create_syscall(a0, a1, a2 as u8)
+        // SGEG 认证
+        SYS_SGEG_LOGIN => crate::services::sgeg::auth::auth_login_syscall(a0, a1),
+        SYS_SGEG_LOGOUT => crate::services::sgeg::auth::auth_logout_syscall(),
+        SYS_SGEG_CREATE_IDENTITY => {
+            crate::services::sgeg::auth::auth_create_syscall(a0, a1, a2 as u8)
         }
-        SYS_CREDO_DELETE_IDENTITY => crate::services::credo::auth::auth_delete_syscall(a0),
-        SYS_CREDO_IDENTITY_INFO => crate::services::credo::auth::auth_info_syscall(a0),
-        SYS_CREDO_CHANGE_PASSWORD => crate::services::credo::auth::auth_changepw_syscall(a0, a1),
-        SYS_CREDO_VERIFY_PASSWORD => crate::services::credo::auth::auth_verify_syscall(a0),
-        SYS_CREDO_CREATE_FIRST => crate::services::credo::auth::auth_create_first_syscall(a0),
-        SYS_CREDO_GRANT => crate::services::credo::auth::auth_grant_syscall(a0, a1, a2 as u16, a3),
-        SYS_CREDO_REVOKE => {
-            crate::services::credo::auth::auth_revoke_syscall(a0, a1, a2 as u16, a3)
+        SYS_SGEG_DELETE_IDENTITY => crate::services::sgeg::auth::auth_delete_syscall(a0),
+        SYS_SGEG_IDENTITY_INFO => crate::services::sgeg::auth::auth_info_syscall(a0),
+        SYS_SGEG_CHANGE_PASSWORD => crate::services::sgeg::auth::auth_changepw_syscall(a0, a1),
+        SYS_SGEG_VERIFY_PASSWORD => crate::services::sgeg::auth::auth_verify_syscall(a0),
+        SYS_SGEG_CREATE_FIRST => crate::services::sgeg::auth::auth_create_first_syscall(a0),
+        SYS_SGEG_GRANT => crate::services::sgeg::auth::auth_grant_syscall(a0, a1, a2 as u16, a3),
+        SYS_SGEG_REVOKE => crate::services::sgeg::auth::auth_revoke_syscall(a0, a1, a2 as u16, a3),
+        SYS_SGEG_CHECK_CAP => {
+            crate::services::sgeg::auth::auth_check_cap_syscall(a0, a1 as u16, a2)
         }
-        SYS_CREDO_CHECK_CAP => {
-            crate::services::credo::auth::auth_check_cap_syscall(a0, a1 as u16, a2)
-        }
-        SYS_CREDO_GET_CAPS => crate::services::credo::auth::auth_get_caps_syscall(a0, a1 as u16),
-        SYS_CREDO_GET_PWM => crate::services::credo::auth::pwm_get_syscall(),
-        SYS_CREDO_SET_PWM => crate::services::credo::auth::pwm_set_syscall(a0),
+        SYS_SGEG_GET_CAPS => crate::services::sgeg::auth::auth_get_caps_syscall(a0, a1 as u16),
+        SYS_SGEG_GET_PWM => crate::services::sgeg::auth::pwm_get_syscall(),
+        SYS_SGEG_SET_PWM => crate::services::sgeg::auth::pwm_set_syscall(a0),
 
         // 分册 9 批次 4: 域级行为门控 (DomainFlags) — 查询/设置当前进程
-        SYS_CREDO_GET_DOMAIN_FLAGS => crate::services::credo::domain::domain_flags_get_syscall(),
-        SYS_CREDO_SET_DOMAIN_FLAGS => crate::services::credo::domain::domain_flags_set_syscall(a0),
+        SYS_SGEG_GET_DOMAIN_FLAGS => crate::services::sgeg::domain::domain_flags_get_syscall(),
+        SYS_SGEG_SET_DOMAIN_FLAGS => crate::services::sgeg::domain::domain_flags_set_syscall(a0),
 
         // Linux capability ABI 映射 (分册 9 批次 3): 导出/写回 SYSTEM 域能力
-        SYS_capget => crate::services::credo::auth::capget_syscall(a0, a1),
-        SYS_capset => crate::services::credo::auth::capset_syscall(a0, a1),
+        SYS_capget => crate::services::sgeg::auth::capget_syscall(a0, a1),
+        SYS_capset => crate::services::sgeg::auth::capset_syscall(a0, a1),
 
-        // Credo 系统信息
-        SYS_CREDO_GETHOSTNAME => crate::services::proc::sysinfo::gethostname_syscall(a0, a1),
-        SYS_CREDO_SETHOSTNAME => crate::services::proc::sysinfo::sethostname_syscall(a0, a1),
-        SYS_CREDO_BOOT_CHECK => crate::services::proc::sysinfo::boot_check_syscall(a0 as i32),
-        SYS_CREDO_PROC_LIST => crate::services::proc::proc_mgmt::proc_list_syscall(a0, a1 as u32),
-        SYS_CREDO_PROC_SETPRI => {
+        // SGEG 系统信息
+        SYS_SGEG_GETHOSTNAME => crate::services::proc::sysinfo::gethostname_syscall(a0, a1),
+        SYS_SGEG_SETHOSTNAME => crate::services::proc::sysinfo::sethostname_syscall(a0, a1),
+        SYS_SGEG_BOOT_CHECK => crate::services::proc::sysinfo::boot_check_syscall(a0 as i32),
+        SYS_SGEG_PROC_LIST => crate::services::proc::proc_mgmt::proc_list_syscall(a0, a1 as u32),
+        SYS_SGEG_PROC_SETPRI => {
             crate::services::proc::proc_mgmt::proc_setpri_syscall(a0 as u32, a1 as u32)
         }
-        SYS_CREDO_PROC_CPUTIME => {
-            crate::services::proc::proc_mgmt::credo_proc_cputime_syscall(a0 as u32)
+        SYS_SGEG_PROC_CPUTIME => {
+            crate::services::proc::proc_mgmt::sgeg_proc_cputime_syscall(a0 as u32)
         }
-        SYS_CREDO_PROC_SLEEP => {
-            // 单位约定: 输入为毫秒 (Credo 策略), 底层 nanosleep 为纳秒.
+        SYS_SGEG_PROC_SLEEP => {
+            // 单位约定: 输入为毫秒 (SGEG 策略), 底层 nanosleep 为纳秒.
             const MS_TO_NS: u64 = 1_000_000;
             let ns = a0 * MS_TO_NS;
             as_ret(crate::services::timer::sleep::nanosleep_syscall(ns, a1))
         }
-        SYS_CREDO_REBOOT => crate::services::proc::sysinfo::reboot_syscall(a0 as i32),
+        SYS_SGEG_REBOOT => crate::services::proc::sysinfo::reboot_syscall(a0 as i32),
 
         // 存储设备
-        SYS_CREDO_DISK_LIST => as_ret(
-            crate::services::credo::storage::disk::disk_list(a0, a1 as u32).map(|n| n as usize),
+        SYS_SGEG_DISK_LIST => as_ret(
+            crate::services::sgeg::storage::disk::disk_list(a0, a1 as u32).map(|n| n as usize),
         ),
-        SYS_CREDO_DISK_INFO => {
-            match crate::services::credo::storage::disk::disk_info(a0 as u32, a1) {
+        SYS_SGEG_DISK_INFO => {
+            match crate::services::sgeg::storage::disk::disk_info(a0 as u32, a1) {
                 Ok(()) => 0,
                 Err(e) => e.as_ret(),
             }
         }
-        SYS_CREDO_DISK_FORMAT => {
-            match crate::services::credo::storage::disk::disk_format(a0 as u32, a1) {
+        SYS_SGEG_DISK_FORMAT => {
+            match crate::services::sgeg::storage::disk::disk_format(a0 as u32, a1) {
                 Ok(()) => 0,
                 Err(e) => e.as_ret(),
             }
         }
-        SYS_CREDO_DISK_PARTITION => {
-            match crate::services::credo::storage::disk::disk_partition(a0 as u32, a1) {
+        SYS_SGEG_DISK_PARTITION => {
+            match crate::services::sgeg::storage::disk::disk_partition(a0 as u32, a1) {
                 Ok(()) => 0,
                 Err(e) => e.as_ret(),
             }
@@ -864,20 +862,18 @@ fn dispatch_credo(num: u64, args: [u64; 6]) -> Option<i64> {
         // T2 批 5: 引导安装 / 热插拔状态 自 framework 回退层迁移
         // (委托 framework 机制 sys_boot_install / sys_hotplug_status)
         #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
-        SYS_CREDO_DISK_INSTALL => {
-            crate::services::credo::storage::disk::boot_install_syscall(a0 as u32)
+        SYS_SGEG_DISK_INSTALL => {
+            crate::services::sgeg::storage::disk::boot_install_syscall(a0 as u32)
         }
         #[cfg(feature = "kernel_test")]
-        SYS_CREDO_DISK_INSTALL => Errno::ENOSYS.as_ret(),
-        SYS_CREDO_HOTPLUG_STATUS => {
-            crate::services::credo::storage::disk::hotplug_status_syscall(a0, a1 as u32)
+        SYS_SGEG_DISK_INSTALL => Errno::ENOSYS.as_ret(),
+        SYS_SGEG_HOTPLUG_STATUS => {
+            crate::services::sgeg::storage::disk::hotplug_status_syscall(a0, a1 as u32)
         }
-        SYS_CREDO_FAT_FORMAT => {
-            match crate::services::credo::storage::disk::fat_format(a0 as u32) {
-                Ok(()) => 0,
-                Err(e) => e.as_ret(),
-            }
-        }
+        SYS_SGEG_FAT_FORMAT => match crate::services::sgeg::storage::disk::fat_format(a0 as u32) {
+            Ok(()) => 0,
+            Err(e) => e.as_ret(),
+        },
 
         _ => return None,
     })
@@ -886,8 +882,8 @@ fn dispatch_credo(num: u64, args: [u64; 6]) -> Option<i64> {
 /// 其他系统调用 (POSIX Timer, 熵源等)
 fn dispatch_other(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
-        QX_FTRACE_DISABLE, QX_FTRACE_ENABLE, QX_FTRACE_READ, QX_FTRACE_STAT, QX_FW_DETACH,
-        QX_FW_GET, QX_FW_GET_INFO, QX_FW_LOAD, QX_GET_CANARY, QX_KGDB_ENTER, SYS_FB_MMAP,
+        EG_FTRACE_DISABLE, EG_FTRACE_ENABLE, EG_FTRACE_READ, EG_FTRACE_STAT, EG_FW_DETACH,
+        EG_FW_GET, EG_FW_GET_INFO, EG_FW_LOAD, EG_GET_CANARY, EG_KGDB_ENTER, SYS_FB_MMAP,
         SYS_FB_OPEN, SYS_FB_RELEASE, SYS_bpf, SYS_clock_getres, SYS_getrandom, SYS_io_uring_enter,
         SYS_io_uring_setup, SYS_kexec_load, SYS_timer_create, SYS_timer_delete,
         SYS_timer_getoverrun, SYS_timer_gettime, SYS_timer_settime,
@@ -923,20 +919,20 @@ fn dispatch_other(num: u64, args: [u64; 6]) -> Option<i64> {
 
         // 熵源 / Stack Canary (§6.1 下沉 services/syscall/canary)
         SYS_getrandom => crate::services::syscall::canary::sys_getrandom(a0, a1, a2),
-        QX_GET_CANARY => crate::services::syscall::canary::sys_get_canary(a0, a1),
+        EG_GET_CANARY => crate::services::syscall::canary::sys_get_canary(a0, a1),
 
         // 设备固件加载 (§6.2 下沉 services/syscall/firmware)
-        QX_FW_LOAD => crate::services::syscall::firmware::sys_fw_load(a0, a1, a2, a3),
-        QX_FW_GET => crate::services::syscall::firmware::sys_fw_get(a0, a1, a2, a3),
-        QX_FW_GET_INFO => crate::services::syscall::firmware::sys_fw_get_info(a0, a1),
-        QX_FW_DETACH => crate::services::syscall::firmware::sys_fw_detach(a0),
+        EG_FW_LOAD => crate::services::syscall::firmware::sys_fw_load(a0, a1, a2, a3),
+        EG_FW_GET => crate::services::syscall::firmware::sys_fw_get(a0, a1, a2, a3),
+        EG_FW_GET_INFO => crate::services::syscall::firmware::sys_fw_get_info(a0, a1),
+        EG_FW_DETACH => crate::services::syscall::firmware::sys_fw_detach(a0),
 
         // 内核调试 / 跟踪 (§6.2 下沉 services/syscall/ftrace)
-        QX_FTRACE_ENABLE => crate::services::syscall::ftrace::sys_ftrace_enable(),
-        QX_FTRACE_DISABLE => crate::services::syscall::ftrace::sys_ftrace_disable(),
-        QX_FTRACE_READ => crate::services::syscall::ftrace::sys_ftrace_read(a0),
-        QX_FTRACE_STAT => crate::services::syscall::ftrace::sys_ftrace_stat(a0),
-        QX_KGDB_ENTER => crate::services::syscall::ftrace::sys_kgdb_enter(),
+        EG_FTRACE_ENABLE => crate::services::syscall::ftrace::sys_ftrace_enable(),
+        EG_FTRACE_DISABLE => crate::services::syscall::ftrace::sys_ftrace_disable(),
+        EG_FTRACE_READ => crate::services::syscall::ftrace::sys_ftrace_read(a0),
+        EG_FTRACE_STAT => crate::services::syscall::ftrace::sys_ftrace_stat(a0),
+        EG_KGDB_ENTER => crate::services::syscall::ftrace::sys_kgdb_enter(),
 
         _ => return None,
     })

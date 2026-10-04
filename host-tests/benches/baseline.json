@@ -27,7 +27,7 @@
     },
     {
       "name": "capability_check",
-      "category": "credo",
+      "category": "sgeg",
       "iterations": 100000,
       "ns_per_op_frac": 2.231,
       "ps_per_op": 2231
@@ -41,21 +41,21 @@
     },
     {
       "name": "sha256_block",
-      "category": "credo",
+      "category": "sgeg",
       "iterations": 1000,
       "ns_per_op_frac": 454.409,
       "ps_per_op": 454409
     },
     {
       "name": "attribution_classify",
-      "category": "barrier",
+      "category": "freg",
       "iterations": 100000,
       "ns_per_op_frac": 4.859,
       "ps_per_op": 4859
     },
     {
       "name": "recovery_decide",
-      "category": "barrier",
+      "category": "freg",
       "iterations": 100000,
       "ns_per_op_frac": 72.963,
       "ps_per_op": 72963
@@ -111,56 +111,56 @@
     },
     {
       "name": "zap_dispatch",
-      "category": "nestfs",
+      "category": "unkfs",
       "iterations": 10000,
       "ns_per_op_frac": 163.399,
       "ps_per_op": 163399
     },
     {
       "name": "txg_dispatch",
-      "category": "nestfs",
+      "category": "unkfs",
       "iterations": 10000,
       "ns_per_op_frac": 27.44,
       "ps_per_op": 27440
     },
     {
       "name": "dmu_dispatch",
-      "category": "nestfs",
+      "category": "unkfs",
       "iterations": 1000,
       "ns_per_op_frac": 189.741,
       "ps_per_op": 189741
     },
     {
       "name": "spa_dispatch",
-      "category": "nestfs",
+      "category": "unkfs",
       "iterations": 100000,
       "ns_per_op_frac": 11.886,
       "ps_per_op": 11886
     },
     {
       "name": "raidz_dispatch",
-      "category": "nestfs",
+      "category": "unkfs",
       "iterations": 100000,
       "ns_per_op_frac": 1.423,
       "ps_per_op": 1423
     },
     {
       "name": "arc_dispatch",
-      "category": "nestfs",
+      "category": "unkfs",
       "iterations": 100000,
       "ns_per_op_frac": 66.048,
       "ps_per_op": 66048
     },
     {
       "name": "zil_log_dispatch",
-      "category": "nestfs",
+      "category": "unkfs",
       "iterations": 100000,
       "ns_per_op_frac": 18.59,
       "ps_per_op": 18590
     },
     {
       "name": "zil_persist_dispatch",
-      "category": "nestfs",
+      "category": "unkfs",
       "iterations": 1000,
       "ns_per_op_frac": 7331.145,
       "ps_per_op": 7331145

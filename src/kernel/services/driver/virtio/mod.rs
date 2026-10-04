@@ -87,11 +87,11 @@ pub(crate) fn virtio_net_registration() -> Option<crate::framework::net::NetDevi
     None
 }
 
-/// 初始化 VirtIO 块设备并注册到 Chitin (§6.4 直接方案 B: services 权威)
+/// 初始化 VirtIO 块设备并注册到 EGDF (§6.4 直接方案 B: services 权威)
 ///
 /// 探测 virtio-mmio 区域, 为块设备创建 services `VirtioBlkDriver`,
 /// 完成初始化 (`finalize`: vq0 MMIO 配置 + DRIVER_OK) 后经
-/// `services::chitin::register_block_device` 注册为块设备。
+/// `services::egdf::register_block_device` 注册为块设备。
 ///
 /// framework 保留: `VirtioMmioDevice` (MMIO 传输机制) + `queue` (DMA 环机制)。
 /// aarch64 (QEMU -M virt) 是 virtio-blk 的主战场; x86_64 走 PCI AHCI/NVMe。
@@ -100,7 +100,7 @@ pub fn blk_init() {
         VIRTIO_ID_BLOCK, VIRTIO_MMIO_BASE, VIRTIO_MMIO_MAX_DEVICES, VIRTIO_MMIO_STRIDE,
         VirtioMmioDevice,
     };
-    use crate::services::chitin::register_block_device;
+    use crate::services::egdf::register_block_device;
     use blk::VirtioBlkDriver;
 
     let mut blk_count = 0u32;

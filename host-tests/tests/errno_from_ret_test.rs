@@ -9,10 +9,10 @@
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `mirror_from_ret` 手工映射表 (78 项平行实现), 改引
-//! `queenx::kernel::services::syscall::types::Errno::from_ret` 真实实现.
+//! `edgine::kernel::services::syscall::types::Errno::from_ret` 真实实现.
 //! 原镜像表与内核 `framework/errno.rs::from_ret` 一一对应, 不再需要双维护.
 
-use queenx::kernel::services::syscall::types::Errno;
+use edgine::kernel::services::syscall::types::Errno;
 
 /// 内核 `Errno` 枚举中已定义的全部编号 (B05-04 验收: 这些必须可往返)
 const ALL_DEFINED_ERRNOS: &[i32] = &[

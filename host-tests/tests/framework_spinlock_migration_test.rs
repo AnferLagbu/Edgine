@@ -105,7 +105,7 @@ fn irq_spinlock_adopted_in_migrated_files() {
         "timer/time_sync.rs",
         "timer/tickless.rs",
         "arch/shadow_stack.rs",
-        "credo/secure_boot.rs",
+        "sgeg/secure_boot.rs",
         "debug/ebpf.rs",
         "proc/process.rs",
         // cgroup/namespace/seccomp/io_uring 已迁移到 services 层, framework 仅 re-export

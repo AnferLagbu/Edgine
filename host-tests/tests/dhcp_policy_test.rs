@@ -7,7 +7,7 @@
 //! 4. 边界: 0 lease、u64::MAX elapsed、自定义策略注入
 //! 5. `SmoltcpNetStack::dhcp_decide_default` 接入路径正确
 //!
-//! 注意: 本测试不依赖 `kernel_test` feature, 通过 `path` 引用 queenx
+//! 注意: 本测试不依赖 `kernel_test` feature, 通过 `path` 引用 edgine
 //! 的 services/net 公共 API, 验证 trait 设计契约.
 
 use std::fs;

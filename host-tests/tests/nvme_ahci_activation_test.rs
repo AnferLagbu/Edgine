@@ -5,7 +5,7 @@
 //! 2. framework `ahci.rs` 仅剩 wire 命令结构 (H2dFis/命令头/命令表), HBA 寄存器布局已删
 //! 3. framework `storage_init` 已整体退位 (无 ATA 回退路径); PCI AHCI/NVMe + ATA
 //!    探测/注册全部由 services 接管
-//! 4. services `storage_init` 调用 `_block` 适配器注册 Chitin + MSI-X 接线
+//! 4. services `storage_init` 调用 `_block` 适配器注册 EGDF + MSI-X 接线
 //! 5. crate root lib.rs 编排 services storage_init (合法双向编排者)
 //! 6. 双侧均无文件级 dead_code 豁免 (I-49 契约延续)
 //!
@@ -168,7 +168,7 @@ fn test_services_storage_init_uses_block_devices() {
     );
     assert!(
         src.contains("register_block_device"),
-        "services storage_init 未注册 block 设备到 Chitin"
+        "services storage_init 未注册 block 设备到 EGDF"
     );
     // MSI-X 接线 (DECISION-H 2 号子步): 启用 + ISR 注册 + services 分发契约注册
     assert!(

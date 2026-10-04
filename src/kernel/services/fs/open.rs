@@ -13,7 +13,7 @@
 //! - [`close_syscall`] 关闭一个 fd
 //! - [`creat_syscall`] 等价于 open(path, `O_WRONLY|O_CREAT|O_TRUNC`, mode)
 
-use crate::framework::credo;
+use crate::framework::sgeg;
 use crate::framework::syscall::Errno;
 use crate::framework::syscall::raw;
 use crate::services::fs::api as fw;
@@ -57,7 +57,7 @@ pub const O_CLOEXEC: i32 = 0o2_000_000;
 /// 实际会让所有未登录态调用落入 "匿名管理员" 路径,绕过访问控制。
 /// 现在严格走 session 模块,无会话即拒绝。
 fn current_pwm() -> Result<u64, Errno> {
-    Ok(credo::api::pwm_get_current())
+    Ok(sgeg::api::pwm_get_current())
 }
 
 /// 验证 open flags 合法: 只接受低 3 位访问模式, 其他位 POSIX 定义.

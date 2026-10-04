@@ -3,7 +3,7 @@
 //!
 //! VFS Manager + Inode trait 抽象, services 侧原生 FS 模块: ramfs/tmpfs/overlayfs
 //! /procfs/devfs/sysfs/systree/cgroupfs/configfs/devpts/anonymous 等, 以及
-//! virtiofs/ext2/exfat/nestfs 共 15 个. Plan B 契约实现在 services::fs::inode.
+//! virtiofs/ext2/exfat/unkfs 共 15 个. Plan B 契约实现在 services::fs::inode.
 //! 0 unsafe, 全部块设备/页缓存底层走 framework.
 //!
 //! 历史: 2026-06 之前 v2.5 状态评估已过时, 当前已远超当时范围. 详细
@@ -43,7 +43,6 @@ pub mod link;
 pub mod misc;
 pub mod mode;
 pub mod mount;
-pub mod nestfs;
 pub mod open;
 /// 全局 OpenFile 表 (POSIX 打开文件描述)
 pub mod open_file_table;
@@ -64,6 +63,7 @@ pub mod sysfs;
 pub mod systree;
 /// tmpfs 临时文件系统 (基于 ramfs 的内存文件系统)
 pub mod tmpfs;
+pub mod unkfs;
 /// VFS 管理器 (挂载表 + FD 表 + 路径解析)
 pub mod vfs_manager;
 /// VFS 挂载/生命周期/同步/格式化 (原 framework/fs/vfs/mount.rs 下沉)
@@ -81,7 +81,7 @@ pub mod xattr;
 // T-05: VFS 后端决策策略
 // ============================================================================
 
-// 注: `FsBackend` / `register_fs_backend` / `register_nestfs_fs` / `Inode` /
+// 注: `FsBackend` / `register_fs_backend` / `register_unkfs_fs` / `Inode` /
 // `FileSystem` / `KernelError` 由文件尾部顶层扁平 re-export 引入作用域, 此处
 // 不再重复 `use`, 避免重名冲突 (E0252).
 use crate::services::fs::api as vfs_api;
@@ -183,16 +183,16 @@ static VFS_OPS_IMPL: ServicesVfsOps = ServicesVfsOps;
 /// 注册内容 (DECISION-K 项 6 注册点前置):
 /// - FsBackend 挂载决策策略 (`register_fs_backend`)
 /// - VFS poll 策略 (`register_default_vfs_poll_policy`)
-/// - NestFS FileSystem 实例 (`register_nestfs_fs`) + 热插拔监听器
-///   (`nestfs_hotplug_register`, HOTPLUG_MANAGER 为自足 static, 时序仅要求
+/// - UNKFS FileSystem 实例 (`register_unkfs_fs`) + 热插拔监听器
+///   (`unkfs_hotplug_register`, HOTPLUG_MANAGER 为自足 static, 时序仅要求
 ///   早于首个热插拔中断事件 — kernel_init 早期注册满足)
 /// - VfsOps 契约实现 (`register_vfs_ops`, 阶段 4b: framework 消费点回呼入口)
 pub fn init() {
     static POLICY: ServicesFsBackend = ServicesFsBackend;
     let _ = register_fs_backend(&POLICY);
     let _ = crate::services::fs::vfs_poll_policy::register_default_vfs_poll_policy();
-    let _ = register_nestfs_fs(crate::services::fs::nestfs::nestfs::get_nestfs());
-    crate::services::fs::nestfs::nestfs::nestfs_hotplug_register();
+    let _ = register_unkfs_fs(crate::services::fs::unkfs::unkfs::get_unkfs());
+    crate::services::fs::unkfs::unkfs::unkfs_hotplug_register();
     let _ = crate::framework::fs::register_vfs_ops(&VFS_OPS_IMPL);
 }
 
@@ -230,8 +230,8 @@ pub use inotify::{
 };
 // T-05: 后端决策策略 re-export
 pub use backend_trait::{
-    FallbackFsBackend, FsBackend, current_fs_backend, nestfs_fs, register_fs_backend,
-    register_nestfs_fs,
+    FallbackFsBackend, FsBackend, current_fs_backend, register_fs_backend, register_unkfs_fs,
+    unkfs_fs,
 };
 
 /// 全局 FS 单例 / 进程-调度器态测试互斥锁

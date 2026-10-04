@@ -739,7 +739,7 @@ use raw::UserProcRef;
 ///
 /// # 设计: 单源真相 + FFI 镜像
 ///
-/// `QueenX` 进程子系统维护**两个并行结构**:
+/// `Edgine` 进程子系统维护**两个并行结构**:
 /// - `Process` (在 `process.rs` 中, 权威单一源) — 全量进程描述符, 包含调度/
 ///   信号/文件系统/会话等所有元数据, 由 `PROCESS_TABLE` 管理.
 /// - `UserProcess` (本结构, FFI 镜像) — 仅缓存进入 Ring 3 路径上**热访问**的

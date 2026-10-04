@@ -1,4 +1,4 @@
-# 方案 D: kernel 独立 crate 统一 target-dir 到仓库级 other/target (与 queenx/CI/
+# 方案 D: kernel 独立 crate 统一 target-dir 到仓库级 other/target (与 edgine/CI/
 # 审计共用同一 target 缓存). 避免 src/kernel/target 独立产物被 forbidden-patterns
 # 等审计脚本误扫描 (target/ 下的依赖 probe.rs 含裸 asm). 构建时仍可用 --target-dir 覆盖.
 # 与仓库根 .cargo/config.toml 的 target-dir 一致 (本文件更近, 优先级更高).

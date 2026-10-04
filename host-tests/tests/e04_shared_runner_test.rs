@@ -9,7 +9,7 @@
 //!
 //! 本文件保留为 E-05 共享测试集的 host 端执行载体.
 
-use queenx::kernel::framework::tests::host_test_runner_main;
+use edgine::kernel::framework::tests::host_test_runner_main;
 
 #[test]
 fn e04_shared_runner_zero_failed() {

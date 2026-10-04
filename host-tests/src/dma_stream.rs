@@ -13,9 +13,9 @@
 
 #[cfg(test)]
 mod tests {
-    use queenx::kernel::framework::dma_buf::{DmaDirection, DmaError, DmaStream, SyncState};
-    use queenx::kernel::framework::frame::Frame;
-    use queenx::kernel::framework::mm::PhysAddr;
+    use edgine::kernel::framework::dma_buf::{DmaDirection, DmaError, DmaStream, SyncState};
+    use edgine::kernel::framework::frame::Frame;
+    use edgine::kernel::framework::mm::PhysAddr;
 
     /// 构造测试用 Frame (host 无真实物理页).
     ///

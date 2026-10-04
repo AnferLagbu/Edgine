@@ -88,8 +88,8 @@ pub fn getcwd_syscall(buf_ptr: u64, size: u64) -> Result<usize, Errno> {
 ///
 /// 与 `mount`/`umount2`/`open_by_handle_at` 先例一致 (services/fs/mount.rs:52).
 fn require_sys_admin() -> Result<u64, Errno> {
-    let pwm = crate::framework::credo::session::get_current_pwm();
-    if !crate::framework::credo::api::pwm_has_capability(pwm, 0, 0x01) {
+    let pwm = crate::framework::sgeg::session::get_current_pwm();
+    if !crate::framework::sgeg::api::pwm_has_capability(pwm, 0, 0x01) {
         return Err(Errno::EACCES);
     }
     Ok(pwm)

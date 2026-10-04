@@ -61,7 +61,7 @@ def collect_rs_files(base: Path, modules: list[str]) -> list[Path]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='QueenX SAFETY 注释覆盖审计')
+    parser = argparse.ArgumentParser(description='Edgine SAFETY 注释覆盖审计')
     parser.add_argument('--missing-only', action='store_true',
                         help='只输出缺 SAFETY 的位置 (每行: file:line:kind:code)')
     args = parser.parse_args()

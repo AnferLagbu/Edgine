@@ -19,10 +19,10 @@
 
 /// Syscall 类型定义和常量
 ///
-/// 编号空间分配 (DECISION-037 + queenx-naming-standpoint.md):
+/// 编号空间分配 (DECISION-037 + edgine-naming-standpoint.md):
 ///   0-299   : Linux 兼容编号 (SYS_*), 直接使用 Linux 标准编号
 ///   300-399 : 保留
-///   400-499 : Credo 私有 syscall (避开 424-452 的 Linux 现代扩展区)
+///   400-499 : SGEG 私有 syscall (避开 424-452 的 Linux 现代扩展区)
 ///   500-599 : 进程 / 内存 / 文件基础
 ///   600-699 : 网络 / IPC
 ///   700-799 : 设备 / 系统
@@ -32,7 +32,7 @@ pub const SYSCALL_INT: u8 = 0x80;
 
 /// syscall 编号空间上界 (非 dispatch 数组边界 — dispatch 全为 match, 无 SYSCALL_TABLE).
 ///
-/// 覆盖全部 QX_* 扩展区 (0-899), 与 `QX_FTRACE_ENABLE = 800` 等 800 段常量错开,
+/// 覆盖全部 EG_* 扩展区 (0-899), 与 `EG_FTRACE_ENABLE = 800` 等 800 段常量错开,
 /// 避免编号常量语义误导.
 pub const MAX_SYSCALLS: u64 = 900;
 
@@ -178,8 +178,8 @@ pub const SYS_setgid: u64 = 106;
 pub const SYS_geteuid: u64 = 107;
 pub const SYS_getegid: u64 = 108;
 
-pub const SYS_seteuid: u64 = 597; // QX 私有 (x86_64 无独立 seteuid syscall, 与 QX_SETEUID 同值)
-pub const SYS_setegid: u64 = 598; // QX 私有 (x86_64 无独立 setegid syscall, 与 QX_SETEGID 同值)
+pub const SYS_seteuid: u64 = 597; // EG 私有 (x86_64 无独立 seteuid syscall, 与 EG_SETEUID 同值)
+pub const SYS_setegid: u64 = 598; // EG 私有 (x86_64 无独立 setegid syscall, 与 EG_SETEGID 同值)
 pub const SYS_setreuid: u64 = 113;
 pub const SYS_setregid: u64 = 114;
 
@@ -351,60 +351,60 @@ pub const SYS_reboot: u64 = 169;
 pub const SYS_sethostname: u64 = 170;
 pub const SYS_setdomainname: u64 = 171;
 
-// ==================== Credo 私有 syscall (400-499, 避开 Linux 424-452) ====================
+// ==================== SGEG 私有 syscall (400-499, 避开 Linux 424-452) ====================
 //
 // 编号空间: 400-423 + 453-499. 424-452 保留给 Linux 现代扩展 syscall
 // (pidfd_send_signal/io_uring/clone3/close_range/openat2/faccessat2/fchmodat2 等),
-// 避免 QueenX 私有编号与未来 Linux ABI 冲突 (DECISION-037: 500+ 与 Linux 错开).
+// 避免 Edgine 私有编号与未来 Linux ABI 冲突 (DECISION-037: 500+ 与 Linux 错开).
 
 // ---------- 400-413: 认证 / 身份 ----------
-pub const SYS_CREDO_LOGIN: u64 = 400;
-pub const SYS_CREDO_LOGOUT: u64 = 401;
-pub const SYS_CREDO_CREATE_IDENTITY: u64 = 402;
-pub const SYS_CREDO_DELETE_IDENTITY: u64 = 403;
-pub const SYS_CREDO_IDENTITY_INFO: u64 = 404;
-pub const SYS_CREDO_CHANGE_PASSWORD: u64 = 405;
-pub const SYS_CREDO_VERIFY_PASSWORD: u64 = 406;
-pub const SYS_CREDO_CREATE_FIRST: u64 = 407;
-pub const SYS_CREDO_GRANT: u64 = 408;
-pub const SYS_CREDO_REVOKE: u64 = 409;
-pub const SYS_CREDO_CHECK_CAP: u64 = 410;
-pub const SYS_CREDO_GET_CAPS: u64 = 411;
-pub const SYS_CREDO_GET_PWM: u64 = 412;
-pub const SYS_CREDO_SET_PWM: u64 = 413;
+pub const SYS_SGEG_LOGIN: u64 = 400;
+pub const SYS_SGEG_LOGOUT: u64 = 401;
+pub const SYS_SGEG_CREATE_IDENTITY: u64 = 402;
+pub const SYS_SGEG_DELETE_IDENTITY: u64 = 403;
+pub const SYS_SGEG_IDENTITY_INFO: u64 = 404;
+pub const SYS_SGEG_CHANGE_PASSWORD: u64 = 405;
+pub const SYS_SGEG_VERIFY_PASSWORD: u64 = 406;
+pub const SYS_SGEG_CREATE_FIRST: u64 = 407;
+pub const SYS_SGEG_GRANT: u64 = 408;
+pub const SYS_SGEG_REVOKE: u64 = 409;
+pub const SYS_SGEG_CHECK_CAP: u64 = 410;
+pub const SYS_SGEG_GET_CAPS: u64 = 411;
+pub const SYS_SGEG_GET_PWM: u64 = 412;
+pub const SYS_SGEG_SET_PWM: u64 = 413;
 // 分册 9 批次 4: 域级行为门控 (DomainFlags) 查询 / 设置
-pub const SYS_CREDO_GET_DOMAIN_FLAGS: u64 = 414;
-pub const SYS_CREDO_SET_DOMAIN_FLAGS: u64 = 415;
+pub const SYS_SGEG_GET_DOMAIN_FLAGS: u64 = 414;
+pub const SYS_SGEG_SET_DOMAIN_FLAGS: u64 = 415;
 // 416-419: 保留
 
 // ---------- 420-423: 存储设备 ----------
-pub const SYS_CREDO_DISK_LIST: u64 = 420;
-pub const SYS_CREDO_DISK_INFO: u64 = 421;
-pub const SYS_CREDO_DISK_FORMAT: u64 = 422;
-pub const SYS_CREDO_DISK_PARTITION: u64 = 423;
+pub const SYS_SGEG_DISK_LIST: u64 = 420;
+pub const SYS_SGEG_DISK_INFO: u64 = 421;
+pub const SYS_SGEG_DISK_FORMAT: u64 = 422;
+pub const SYS_SGEG_DISK_PARTITION: u64 = 423;
 
 // ---------- 453-463: 存储扩展 + 进程管理 + 系统信息 (避开 424-452) ----------
-pub const SYS_CREDO_DISK_INSTALL: u64 = 453;
-pub const SYS_CREDO_FAT_FORMAT: u64 = 454;
-pub const SYS_CREDO_PROC_LIST: u64 = 455;
-pub const SYS_CREDO_PROC_SETPRI: u64 = 456;
-pub const SYS_CREDO_PROC_SLEEP: u64 = 457;
-pub const SYS_CREDO_PROC_CPUTIME: u64 = 458;
-pub const SYS_CREDO_GETHOSTNAME: u64 = 459;
-pub const SYS_CREDO_SETHOSTNAME: u64 = 460;
-pub const SYS_CREDO_BOOT_CHECK: u64 = 461;
-pub const SYS_CREDO_REBOOT: u64 = 462;
-pub const SYS_CREDO_HOTPLUG_STATUS: u64 = 463;
+pub const SYS_SGEG_DISK_INSTALL: u64 = 453;
+pub const SYS_SGEG_FAT_FORMAT: u64 = 454;
+pub const SYS_SGEG_PROC_LIST: u64 = 455;
+pub const SYS_SGEG_PROC_SETPRI: u64 = 456;
+pub const SYS_SGEG_PROC_SLEEP: u64 = 457;
+pub const SYS_SGEG_PROC_CPUTIME: u64 = 458;
+pub const SYS_SGEG_GETHOSTNAME: u64 = 459;
+pub const SYS_SGEG_SETHOSTNAME: u64 = 460;
+pub const SYS_SGEG_BOOT_CHECK: u64 = 461;
+pub const SYS_SGEG_REBOOT: u64 = 462;
+pub const SYS_SGEG_HOTPLUG_STATUS: u64 = 463;
 
-// ==================== 帧缓冲设备 (QueenX 私有, 与 QX_FB_* 同值) ====================
+// ==================== 帧缓冲设备 (Edgine 私有, 与 EG_FB_* 同值) ====================
 pub const SYS_FB_OPEN: u64 = 720;
 pub const SYS_FB_MMAP: u64 = 721;
 pub const SYS_FB_RELEASE: u64 = 722;
 
 // ============================================================================
-// QueenX 原生 syscall 编号 (500+)
+// Edgine 原生 syscall 编号 (500+)
 //
-// 遵循 queenx-naming-standpoint.md:
+// 遵循 edgine-naming-standpoint.md:
 //   500-599 : 进程 / 内存 / 文件基础
 //   600-699 : 网络 / IPC
 //   700-799 : 设备 / 系统
@@ -432,7 +432,7 @@ pub const SYS_FB_RELEASE: u64 = 722;
 // ---------- 580-589: FD / 同步 / 挂载 ----------
 
 // ---------- 590-599: 身份 + 文件锁 ----------
-// QX_SETREGID 映射到 QX_SETREUID, 由 dispatch 区分
+// EG_SETREGID 映射到 EG_SETREUID, 由 dispatch 区分
 
 // ---------- 600-619: 网络 ----------
 // 614-619: 保留 (socketpair, ...)  // syscall 编号预留
@@ -458,10 +458,10 @@ pub const SYS_listxattr: u64 = 194;
 pub const SYS_removexattr: u64 = 197;
 
 // ---------- 730-739: 设备固件加载 ----------
-pub const QX_FW_LOAD: u64 = 730;
-pub const QX_FW_GET: u64 = 731;
-pub const QX_FW_GET_INFO: u64 = 732;
-pub const QX_FW_DETACH: u64 = 733;
+pub const EG_FW_LOAD: u64 = 730;
+pub const EG_FW_GET: u64 = 731;
+pub const EG_FW_GET_INFO: u64 = 732;
+pub const EG_FW_DETACH: u64 = 733;
 
 // ---------- 740-745: POSIX Timer ----------
 /// 创建 per-process 定时器 (`timer_create`)
@@ -474,7 +474,7 @@ pub const QX_FW_DETACH: u64 = 733;
 // ---------- 746-747: 熵源 / Stack Canary (P1 #14) ----------
 /// 从内核熵源填充用户 buffer (Linux getrandom 兼容)
 /// 读取当前进程 8 字节 stack canary (低字节恒为 0)
-pub const QX_GET_CANARY: u64 = 747;
+pub const EG_GET_CANARY: u64 = 747;
 
 // ---------- 760-765: 内存建议与锁定 (madvise / mlock, P1 #15) ----------
 /// 设置内存区域访问模式建议 (madvise)
@@ -486,15 +486,15 @@ pub const QX_GET_CANARY: u64 = 747;
 
 // ---------- 800-809: 内核调试 / 跟踪 (ftrace / KGDB) ----------
 /// 启用 ftrace 全局开关
-pub const QX_FTRACE_ENABLE: u64 = 800;
+pub const EG_FTRACE_ENABLE: u64 = 800;
 /// 禁用 ftrace 全局开关
-pub const QX_FTRACE_DISABLE: u64 = 801;
+pub const EG_FTRACE_DISABLE: u64 = 801;
 /// 从 ftrace ring buffer 读取一条事件到用户缓冲
-pub const QX_FTRACE_READ: u64 = 802;
+pub const EG_FTRACE_READ: u64 = 802;
 /// 查询 ftrace 状态 (`event_count` / `overflow_count`)
-pub const QX_FTRACE_STAT: u64 = 803;
+pub const EG_FTRACE_STAT: u64 = 803;
 /// KGDB 主动断点 (用户态调试器触发)
-pub const QX_KGDB_ENTER: u64 = 804;
+pub const EG_KGDB_ENTER: u64 = 804;
 
 // ==================== C7: Seccomp / prctl ====================
 
@@ -504,18 +504,18 @@ pub const QX_KGDB_ENTER: u64 = 804;
 // ==================== C5: 路由表 ====================
 
 /// `route_add` — 添加路由条目
-pub const QX_ROUTE_ADD: u64 = 807;
+pub const EG_ROUTE_ADD: u64 = 807;
 /// `route_del` — 删除路由条目
-pub const QX_ROUTE_DEL: u64 = 808;
+pub const EG_ROUTE_DEL: u64 = 808;
 /// `route_query` — 查询路由 (最长前缀匹配)
-pub const QX_ROUTE_QUERY: u64 = 809;
+pub const EG_ROUTE_QUERY: u64 = 809;
 
 // ==================== C5: Netfilter ====================
 
 /// `nf_add_rule` — 添加 Netfilter 规则
-pub const QX_NF_ADD_RULE: u64 = 810;
+pub const EG_NF_ADD_RULE: u64 = 810;
 /// `nf_del_rule` — 删除 Netfilter 规则
-pub const QX_NF_DEL_RULE: u64 = 811;
+pub const EG_NF_DEL_RULE: u64 = 811;
 
 // ==================== C4: io_uring ====================
 
@@ -532,15 +532,15 @@ pub const QX_NF_DEL_RULE: u64 = 811;
 // ==================== D2: cgroup ====================
 
 /// `cgroup_create` — 创建子 cgroup
-pub const QX_CGROUP_CREATE: u64 = 830;
+pub const EG_CGROUP_CREATE: u64 = 830;
 /// `cgroup_destroy` — 删除 cgroup
-pub const QX_CGROUP_DESTROY: u64 = 831;
+pub const EG_CGROUP_DESTROY: u64 = 831;
 /// `cgroup_attach` — 将进程迁移到 cgroup
-pub const QX_CGROUP_ATTACH: u64 = 832;
+pub const EG_CGROUP_ATTACH: u64 = 832;
 /// `cgroup_set_limit` — 设置 cgroup 资源限制
-pub const QX_CGROUP_SET_LIMIT: u64 = 833;
+pub const EG_CGROUP_SET_LIMIT: u64 = 833;
 /// `cgroup_get_stat` — 获取 cgroup 统计信息
-pub const QX_CGROUP_GET_STAT: u64 = 834;
+pub const EG_CGROUP_GET_STAT: u64 = 834;
 
 // ==================== D3: NUMA ====================
 
@@ -556,30 +556,30 @@ pub const QX_CGROUP_GET_STAT: u64 = 834;
 // ==================== D5: 电源管理 ====================
 
 /// pm — 电源管理系统调用
-pub const QX_PM: u64 = 860;
+pub const EG_PM: u64 = 860;
 
 // ==================== D6: 安全启动 + TPM ====================
 
 /// `secure_boot` — 安全启动系统调用
-pub const QX_SECURE_BOOT: u64 = 870;
+pub const EG_SECURE_BOOT: u64 = 870;
 
 /// tpm — TPM 系统调用
-pub const QX_TPM: u64 = 871;
+pub const EG_TPM: u64 = 871;
 
 // ==================== D7: Shadow Stack (CET) ====================
 
 /// cet — CET/Shadow Stack 系统调用
-pub const QX_CET: u64 = 880;
+pub const EG_CET: u64 = 880;
 
 // ==================== D8: Tickless (NO_HZ) ====================  // 动态时钟节拍模式
 
 /// tickless — Tickless 系统调用
-pub const QX_TICKLESS: u64 = 881;
+pub const EG_TICKLESS: u64 = 881;
 
 // ==================== D9: NTP/PTP 时钟同步 ====================
 
 /// timesync — 时间同步系统调用
-pub const QX_TIMESYNC: u64 = 882;
+pub const EG_TIMESYNC: u64 = 882;
 
 // ==================== D10: kexec ====================
 
@@ -588,7 +588,7 @@ pub const QX_TIMESYNC: u64 = 882;
 // ==================== D11: UEFI ====================
 
 /// uefi — UEFI 运行时服务系统调用
-pub const QX_UEFI: u64 = 884;
+pub const EG_UEFI: u64 = 884;
 
 // ==================== D12: 扩展属性 (xattr) ====================
 
@@ -600,15 +600,15 @@ pub const QX_UEFI: u64 = 884;
 // ==================== D13: 快照 (snapshot) ====================
 
 /// `snapshot_create` — 创建快照
-pub const QX_IO_URING_SUBMIT: u64 = 815;
+pub const EG_IO_URING_SUBMIT: u64 = 815;
 
-pub const QX_SNAPSHOT_CREATE: u64 = 895;
+pub const EG_SNAPSHOT_CREATE: u64 = 895;
 /// `snapshot_destroy` — 销毁快照
-pub const QX_SNAPSHOT_DESTROY: u64 = 896;
+pub const EG_SNAPSHOT_DESTROY: u64 = 896;
 /// `snapshot_rollback` — 回滚快照
-pub const QX_SNAPSHOT_ROLLBACK: u64 = 897;
+pub const EG_SNAPSHOT_ROLLBACK: u64 = 897;
 /// `snapshot_clone` — 从快照创建克隆
-pub const QX_SNAPSHOT_CLONE: u64 = 898;
+pub const EG_SNAPSHOT_CLONE: u64 = 898;
 
 // ==================== POSIX errno (使用 Linux 风格: 返回值 = -errno) ====================
 //
@@ -848,74 +848,74 @@ const _: () = {
 ///
 /// 每个逻辑 syscall 只列一个代表值; 下列设计别名 (同编号, 由 dispatch 区分语义)
 /// 已从断言中剔除, 避免误判:
-///   - `SYS_FB_*` (720-722, 帧缓冲, QX_FB_* 别名已删 B09-17)
-///   - `QX_FCHMODAT` == `QX_FCHOWN` (570) / `QX_PIPE2` == `QX_PIPE` (579)
-///   - `QX_DUP3` == `QX_DUP2` (581) / `QX_SOCKETPAIR` == `QX_SOCKET` (600)
+///   - `SYS_FB_*` (720-722, 帧缓冲, EG_FB_* 别名已删 B09-17)
+///   - `EG_FCHMODAT` == `EG_FCHOWN` (570) / `EG_PIPE2` == `EG_PIPE` (579)
+///   - `EG_DUP3` == `EG_DUP2` (581) / `EG_SOCKETPAIR` == `EG_SOCKET` (600)
 const _: () = {
     const PRIVATE_NUMS: &[u64] = &[
-        SYS_CREDO_LOGIN,
-        SYS_CREDO_LOGOUT,
-        SYS_CREDO_CREATE_IDENTITY,
-        SYS_CREDO_DELETE_IDENTITY,
-        SYS_CREDO_IDENTITY_INFO,
-        SYS_CREDO_CHANGE_PASSWORD,
-        SYS_CREDO_VERIFY_PASSWORD,
-        SYS_CREDO_CREATE_FIRST,
-        SYS_CREDO_GRANT,
-        SYS_CREDO_REVOKE,
-        SYS_CREDO_CHECK_CAP,
-        SYS_CREDO_GET_CAPS,
-        SYS_CREDO_GET_PWM,
-        SYS_CREDO_SET_PWM,
-        SYS_CREDO_GET_DOMAIN_FLAGS,
-        SYS_CREDO_SET_DOMAIN_FLAGS,
-        SYS_CREDO_DISK_LIST,
-        SYS_CREDO_DISK_INFO,
-        SYS_CREDO_DISK_FORMAT,
-        SYS_CREDO_DISK_PARTITION,
-        SYS_CREDO_DISK_INSTALL,
-        SYS_CREDO_FAT_FORMAT,
-        SYS_CREDO_PROC_LIST,
-        SYS_CREDO_PROC_SETPRI,
-        SYS_CREDO_PROC_SLEEP,
-        SYS_CREDO_PROC_CPUTIME,
-        SYS_CREDO_GETHOSTNAME,
-        SYS_CREDO_SETHOSTNAME,
-        SYS_CREDO_BOOT_CHECK,
-        SYS_CREDO_REBOOT,
-        SYS_CREDO_HOTPLUG_STATUS,
-        QX_FW_LOAD,
-        QX_FW_GET,
-        QX_FW_GET_INFO,
-        QX_FW_DETACH,
-        QX_GET_CANARY,
-        QX_FTRACE_ENABLE,
-        QX_FTRACE_DISABLE,
-        QX_FTRACE_READ,
-        QX_FTRACE_STAT,
-        QX_KGDB_ENTER,
-        QX_ROUTE_ADD,
-        QX_ROUTE_DEL,
-        QX_ROUTE_QUERY,
-        QX_NF_ADD_RULE,
-        QX_NF_DEL_RULE,
-        QX_IO_URING_SUBMIT,
-        QX_CGROUP_CREATE,
-        QX_CGROUP_DESTROY,
-        QX_CGROUP_ATTACH,
-        QX_CGROUP_SET_LIMIT,
-        QX_CGROUP_GET_STAT,
-        QX_PM,
-        QX_SECURE_BOOT,
-        QX_TPM,
-        QX_CET,
-        QX_TICKLESS,
-        QX_TIMESYNC,
-        QX_UEFI,
-        QX_SNAPSHOT_CREATE,
-        QX_SNAPSHOT_DESTROY,
-        QX_SNAPSHOT_ROLLBACK,
-        QX_SNAPSHOT_CLONE,
+        SYS_SGEG_LOGIN,
+        SYS_SGEG_LOGOUT,
+        SYS_SGEG_CREATE_IDENTITY,
+        SYS_SGEG_DELETE_IDENTITY,
+        SYS_SGEG_IDENTITY_INFO,
+        SYS_SGEG_CHANGE_PASSWORD,
+        SYS_SGEG_VERIFY_PASSWORD,
+        SYS_SGEG_CREATE_FIRST,
+        SYS_SGEG_GRANT,
+        SYS_SGEG_REVOKE,
+        SYS_SGEG_CHECK_CAP,
+        SYS_SGEG_GET_CAPS,
+        SYS_SGEG_GET_PWM,
+        SYS_SGEG_SET_PWM,
+        SYS_SGEG_GET_DOMAIN_FLAGS,
+        SYS_SGEG_SET_DOMAIN_FLAGS,
+        SYS_SGEG_DISK_LIST,
+        SYS_SGEG_DISK_INFO,
+        SYS_SGEG_DISK_FORMAT,
+        SYS_SGEG_DISK_PARTITION,
+        SYS_SGEG_DISK_INSTALL,
+        SYS_SGEG_FAT_FORMAT,
+        SYS_SGEG_PROC_LIST,
+        SYS_SGEG_PROC_SETPRI,
+        SYS_SGEG_PROC_SLEEP,
+        SYS_SGEG_PROC_CPUTIME,
+        SYS_SGEG_GETHOSTNAME,
+        SYS_SGEG_SETHOSTNAME,
+        SYS_SGEG_BOOT_CHECK,
+        SYS_SGEG_REBOOT,
+        SYS_SGEG_HOTPLUG_STATUS,
+        EG_FW_LOAD,
+        EG_FW_GET,
+        EG_FW_GET_INFO,
+        EG_FW_DETACH,
+        EG_GET_CANARY,
+        EG_FTRACE_ENABLE,
+        EG_FTRACE_DISABLE,
+        EG_FTRACE_READ,
+        EG_FTRACE_STAT,
+        EG_KGDB_ENTER,
+        EG_ROUTE_ADD,
+        EG_ROUTE_DEL,
+        EG_ROUTE_QUERY,
+        EG_NF_ADD_RULE,
+        EG_NF_DEL_RULE,
+        EG_IO_URING_SUBMIT,
+        EG_CGROUP_CREATE,
+        EG_CGROUP_DESTROY,
+        EG_CGROUP_ATTACH,
+        EG_CGROUP_SET_LIMIT,
+        EG_CGROUP_GET_STAT,
+        EG_PM,
+        EG_SECURE_BOOT,
+        EG_TPM,
+        EG_CET,
+        EG_TICKLESS,
+        EG_TIMESYNC,
+        EG_UEFI,
+        EG_SNAPSHOT_CREATE,
+        EG_SNAPSHOT_DESTROY,
+        EG_SNAPSHOT_ROLLBACK,
+        EG_SNAPSHOT_CLONE,
     ];
     let mut i = 0;
     while i < PRIVATE_NUMS.len() {

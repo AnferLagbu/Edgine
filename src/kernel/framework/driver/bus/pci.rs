@@ -3,7 +3,7 @@
 //! 对接真实的 PCI 子系统 (`crate::framework::pci`)，
 //! 提供设备枚举、配置空间访问和 C FFI 导出。
 //!
-//! 通过 Chitin 框架注册为 Bus 类型设备。
+//! 通过 EGDF 框架注册为 Bus 类型设备。
 
 #![cfg(target_arch = "x86_64")]
 
@@ -30,10 +30,10 @@ impl Driver for PciBusDriver {
     }
 }
 
-/// 初始化 PCI 子系统并注册到 Chitin
+/// 初始化 PCI 子系统并注册到 EGDF
 ///
 /// 调用内核 PCI 模块执行总线扫描和设备枚举,
-/// 然后将 PCI 总线注册到 Chitin 框架。
+/// 然后将 PCI 总线注册到 EGDF 框架。
 /// 返回发现的设备数量。
 ///
 /// # 并发约束 (B04-AUDIT-005 #3)
@@ -52,9 +52,9 @@ impl Driver for PciBusDriver {
 pub extern "C" fn pci_init() -> i32 {
     let count = crate::framework::pci::init() as i32;
 
-    crate::framework::chitin::chitin_register_driver(
+    crate::framework::egdf::egdf_register_driver(
         "pci-bus",
-        crate::framework::chitin::ChitinProto::Bus,
+        crate::framework::egdf::EGDFProto::Bus,
         Some(0xCF8),
         None,
         alloc::boxed::Box::new(PciBusDriver),

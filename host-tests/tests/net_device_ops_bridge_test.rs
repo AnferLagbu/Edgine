@@ -8,7 +8,7 @@
 //!
 //! 直接引用内核真实源码 (host-test feature), mock 设备仅为本测试构造。
 
-use queenx::kernel::framework::net::{
+use edgine::kernel::framework::net::{
     NetDeviceOps, NetDeviceRegistration, net_register_services_driver, register_net_device,
 };
 

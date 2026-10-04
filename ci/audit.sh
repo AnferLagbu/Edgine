@@ -1,5 +1,5 @@
 #!/bin/bash
-# QueenX 内核代码审计脚本
+# Edgine 内核代码审计脚本
 # 工具栈: cargo check + clippy (pedantic) + Lockbud + Miri 配置验证
 # 用法: ./ci/audit.sh [quick|full]
 #
@@ -191,7 +191,7 @@ pushd src/rust > /dev/null
 unset RUSTC_WRAPPER
 for target in x86_64-unknown-none aarch64-unknown-none-softfloat; do
     echo -e "${BLUE}[audit] target=${target}${NC}"
-    # 方案 D: kernel 独立 crate, 裸机 check 指向 kernel manifest (queenx 壳仅 host).
+    # 方案 D: kernel 独立 crate, 裸机 check 指向 kernel manifest (edgine 壳仅 host).
     if cargo check --manifest-path ../kernel/Cargo.toml --target "${target}" --target-dir ../../other/target "${BUILD_STD_CFG[@]}" 2>&1 | tail -3; then
         ok "${target}: check passed"
     else
@@ -258,8 +258,8 @@ done
 # ── 2c. rustfmt 风格门禁 (全仓三 crate) ────────────────────────
 # 长期修复 (2026-10-03): 此前本地 audit 不跑 fmt, 导致 kernel 39 hunks 漂移长期
 # 不可见 (仅 CI 暴露且已被忽略). 现与 ci-x86.yml clippy-pedantic job 对齐, 覆盖
-# kernel / host-tests / queenx 壳; rustfmt.toml 与 rust-toolchain.toml 均在仓库根.
-step "2c/6 rustfmt 风格门禁 (kernel + host-tests + queenx 壳)"
+# kernel / host-tests / edgine 壳; rustfmt.toml 与 rust-toolchain.toml 均在仓库根.
+step "2c/6 rustfmt 风格门禁 (kernel + host-tests + edgine 壳)"
 for FMT_MANIFEST in src/kernel/Cargo.toml host-tests/Cargo.toml src/rust/Cargo.toml; do
     if cargo fmt --manifest-path "$FMT_MANIFEST" -- --check; then
         ok "fmt: ${FMT_MANIFEST} 通过"

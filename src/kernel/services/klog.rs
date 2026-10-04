@@ -105,7 +105,7 @@ pub fn list_names(buf: &mut [&'static str; framework_klog::MAX_LOG_SINKS]) -> us
 /// 文本格式: 一行一 sink, 形如:
 ///
 /// ```text
-/// QueenX klog sinks
+/// Edgine klog sinks
 /// ===============
 /// count: 2
 /// 0: serial
@@ -151,7 +151,7 @@ pub fn render_text(buf: &mut [u8]) -> usize {
         *p += len;
     };
 
-    push_str(buf, &mut pos, "QueenX klog sinks\n");
+    push_str(buf, &mut pos, "Edgine klog sinks\n");
     push_str(buf, &mut pos, "===============\n");
     push_str(buf, &mut pos, "count: ");
     push_usize(buf, &mut pos, n);

@@ -11,7 +11,7 @@
 //! ## 说明
 //!
 //! - Inode trait 定义于 `super::inode`, 本文件引用之.
-//! - 各文件系统 (ramfs/nestfs/ext2/exfat/...) 在本模块树内实现本 trait.
+//! - 各文件系统 (ramfs/unkfs/ext2/exfat/...) 在本模块树内实现本 trait.
 
 pub const VFS_MAX_PATH: usize = 128;
 pub const VFS_MAX_NAME: usize = 64;
@@ -108,7 +108,7 @@ impl FsType {
     pub fn from_name(name: &str) -> Self {
         match name {
             "ramfs" => Self::RamFs,
-            "nestfs" => Self::NestFs,
+            "unkfs" => Self::NestFs,
             "devfs" => Self::DevFs,
             "ext2" => Self::Ext2,
             "exfat" => Self::ExFat,
@@ -121,7 +121,7 @@ impl FsType {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::RamFs => "ramfs",
-            Self::NestFs => "nestfs",
+            Self::NestFs => "unkfs",
             Self::DevFs => "devfs",
             Self::Ext2 => "ext2",
             Self::ExFat => "exfat",
@@ -222,10 +222,10 @@ impl VfsDirEntry {
 // 新增文件系统只需实现本 trait, 无需修改 framework.
 //
 // 设计原则:
-// - 统一 RamFS (node_id) / NestFS (fd) 的差异: open 返回 FsOpenResult,
+// - 统一 RamFS (node_id) / UNKFS (fd) 的差异: open 返回 FsOpenResult,
 //   内部不透明 handle 由各 FS 自行解释
 // - 所有方法接收 `&self` (非 `&mut self`), 内部可变性由各 FS 自行管理
-//   (RamFS 用内部 Mutex, NestFS 用内部原子操作)
+//   (RamFS 用内部 Mutex, UNKFS 用内部原子操作)
 // - pwm 参数由 VFS 层传入, FS 实现负责权限检查
 //
 // L4 重构: 核心方法必须实现, 扩展方法提供默认实现 (返回 NotSupported)
@@ -235,7 +235,7 @@ impl VfsDirEntry {
 /// `fs_open` 返回结果
 #[derive(Debug, Clone, Copy)]
 pub struct FsOpenResult {
-    /// FS 内部不透明 handle (`RamFS` 填 `node_id`, `NestFS` 填 fd)
+    /// FS 内部不透明 handle (`RamFS` 填 `node_id`, `UNKFS` 填 fd)
     pub handle: u32,
     /// 文件初始偏移
     pub offset: u64,
@@ -251,7 +251,7 @@ pub struct FsOpenResult {
 /// L4 重构: 核心方法必须实现, 扩展方法提供默认实现 (返回 `NotSupported`).
 /// 实现者可以选择性地 override 扩展方法, 减少实现负担.
 pub trait FileSystem: Send + Sync {
-    /// 文件系统名称 (如 "ramfs", "nestfs")
+    /// 文件系统名称 (如 "ramfs", "unkfs")
     fn name(&self) -> &'static str;
 
     // ---- 生命周期 ----
@@ -480,9 +480,9 @@ pub trait FileSystem: Send + Sync {
     fn fs_removexattr(&self, _rel_path: &str, _name: &str, _pwm: u64) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
-    /// 格式化底层介质 (NestFS 磁盘模式使用).
+    /// 格式化底层介质 (UNKFS 磁盘模式使用).
     ///
-    /// 封装原 framework fsformat 路径对 NestFS 内部字段 (drives_discovered/
+    /// 封装原 framework fsformat 路径对 UNKFS 内部字段 (drives_discovered/
     /// disk_drive/partition_start) 的直接访问, 归位 services 策略
     /// (DECISION-K 项 6: 注入归零).
     ///
@@ -504,7 +504,7 @@ use super::inode::Inode;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-/// 打开文件描述 — POSIX open file description 的 `QueenX` 实现
+/// 打开文件描述 — POSIX open file description 的 `Edgine` 实现
 ///
 /// 多个 fd 可以指向同一个 `OpenFile` (通过 dup).
 /// offset 和 flags 在所有共享者之间共享.
@@ -635,14 +635,14 @@ mod tests {
     #[test]
     fn fstype_from_name() {
         assert_eq!(FsType::from_name("ramfs"), FsType::RamFs, "ramfs");
-        assert_eq!(FsType::from_name("nestfs"), FsType::NestFs, "nestfs");
+        assert_eq!(FsType::from_name("unkfs"), FsType::NestFs, "unkfs");
         assert_eq!(FsType::from_name("ext4"), FsType::Unknown, "未知名称");
     }
 
     #[test]
     fn fstype_as_str() {
         assert_eq!(FsType::RamFs.as_str(), "ramfs", "RamFs 回写");
-        assert_eq!(FsType::NestFs.as_str(), "nestfs", "NestFs 回写");
+        assert_eq!(FsType::NestFs.as_str(), "unkfs", "NestFs 回写");
         assert_eq!(FsType::Unknown.as_str(), "unknown", "Unknown 回写");
     }
 

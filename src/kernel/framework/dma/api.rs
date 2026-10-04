@@ -9,7 +9,7 @@
 //! - `driver::virtio::blk` —— `VirtIO` 队列的 DMA 映射
 //!   (批次 Z ④: virtio-net 权威已迁 services, 其 DMA 路径经 framework
 //!   `DmaBuffer` 机制, 见 services/driver/virtio/net.rs)
-//! - `fs::nestfs` —— `NestFS` 页缓存直接 I/O (通过 DMA 绕过 CPU)
+//! - `fs::unkfs` —— `UNKFS` 页缓存直接 I/O (通过 DMA 绕过 CPU)
 //!
 //! ## 内部接口
 //! - `mod.rs` —— 公开类型: `DmaMapping`, `DmaTransfer`, `DmaScatterList`
@@ -73,7 +73,7 @@ pub struct DmaScatterEntry {
 
 /// DMA 引擎抽象。
 ///
-/// `QueenX` 当前只有一个 `DmaEngine` 实例, trait 化是为了
+/// `Edgine` 当前只有一个 `DmaEngine` 实例, trait 化是为了
 /// 未来架构差异 (x86 自动一致 vs aarch64 需显式 flush) 的策略注入。
 pub trait DmaEngine: Send + Sync {
     /// 分配一致性 DMA 缓冲区, 返回 (`cpu_vaddr`, `dma_phys`)

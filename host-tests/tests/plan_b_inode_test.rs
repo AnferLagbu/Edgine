@@ -231,11 +231,11 @@ fn tmpfs_has_native_inode() {
 }
 
 #[test]
-fn nestfs_has_native_inode() {
-    let src = read_file("services/fs/nestfs/nestfs_inode.rs");
+fn unkfs_has_native_inode() {
+    let src = read_file("services/fs/unkfs/unkfs_inode.rs");
     assert!(
         src.contains("pub struct NestfsInode"),
-        "NestFS 必须有原生 NestfsInode"
+        "UNKFS 必须有原生 NestfsInode"
     );
     assert!(
         src.contains("impl Inode for NestfsInode"),

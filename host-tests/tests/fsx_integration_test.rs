@@ -1,6 +1,6 @@
 //! fsx 集成测试 — 文件系统 exerciser
 //!
-//! 验证 QueenX 文件系统实现的正确性:
+//! 验证 Edgine 文件系统实现的正确性:
 //! - ext2: 磁盘文件系统
 //! - exfat: FAT 文件系统
 //! - overlayfs: 联合文件系统
@@ -8,7 +8,7 @@
 //!
 //! 测试目标: 100 万次操作无崩溃, 数据完整性 100% 通过
 
-use queenx_host_tests::fsx::{FsxConfig, FsxFs, isolated_test_dir};
+use edgine_host_tests::fsx::{FsxConfig, FsxFs, isolated_test_dir};
 
 /// 快速测试 (1000 次操作, 用于 CI)
 #[test]

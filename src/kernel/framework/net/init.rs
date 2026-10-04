@@ -1,7 +1,7 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::framework::klog::{klog_init_msg, klog_net, klog_net_err};
-use crate::framework::net::{ChitinNetDevice, NetworkStack};
+use crate::framework::net::{EGDFNetDevice, NetworkStack};
 use smoltcp::iface::{SocketHandle, SocketSet};
 use smoltcp::socket::dhcpv4;
 use smoltcp::socket::{tcp, udp};
@@ -124,11 +124,11 @@ unsafe fn process_dhcp_events(_sockets: &mut SocketSet<'_>) {
 
     // dhcp_state_stub 需要 &mut SocketSet + Option<SocketHandle> 才能
     // 读取 smoltcp 内部状态. 调用方契约要求 NET_LOCK 持有, socket_set()
-    // 返回的指针由 init_sockets 单次初始化, dhcp_handle 在 qx_net_init
+    // 返回的指针由 init_sockets 单次初始化, dhcp_handle 在 eg_net_init
     // 阶段由 raw::set_dhcp_handle 写入, 此处只读.
     //
     // SAFETY: 由 NET_LOCK 保护下, socket_set() 返回的指针由 init_sockets
-    // 单次初始化, dhcp_handle 在 qx_net_init 阶段由 raw::set_dhcp_handle
+    // 单次初始化, dhcp_handle 在 eg_net_init 阶段由 raw::set_dhcp_handle
     // 写入, 此处只读.
     let sockets_ptr = unsafe { &mut *raw::socket_set() };
     let state = raw::dhcp_state_stub(sockets_ptr, raw::dhcp_handle());
@@ -348,7 +348,7 @@ unsafe fn net_restore() {
     }
 
     // 2. 重新初始化 NIC + stack
-    qx_net_init();
+    eg_net_init();
 
     // 3. 读取快照, 跳过 DHCP 重配, 直接把 IP/GW 重新绑回
     let saved = snap::load();
@@ -441,7 +441,7 @@ unsafe fn net_reset() {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
-pub extern "C" fn qx_net_init() {
+pub extern "C" fn eg_net_init() {
     // SAFETY: 网络初始化由启动流程串行调用, 无并发访问全局状态。
     unsafe {
         raw::klog_init("--- Network Subsystem Init ---");
@@ -571,7 +571,7 @@ pub extern "C" fn qx_net_init() {
             }
         }
 
-        crate::framework::barrier::recovery::recovery_domain_register(
+        crate::framework::freg::recovery::recovery_domain_register(
             "net",
             5,
             &[],
@@ -610,7 +610,7 @@ fn net_tx_softirq_handler() {
     // 此 handler 为多核 + DMA 完成中断模式预留.
 }
 
-// B04-09 优化 Step G: qx_net_start_dhcp / qx_net_static_ip 已移至 cmd.rs.
+// B04-09 优化 Step G: eg_net_start_dhcp / eg_net_static_ip 已移至 cmd.rs.
 
 // ============================================================================
 // 公共 API
@@ -803,7 +803,7 @@ mod tests {
         assert_eq!(dns_resolve("LOCALHOST"), Some([127, 0, 0, 1])); // 大小写不敏感
         assert_eq!(dns_resolve("Router"), Some([10, 0, 2, 2]));
         assert_eq!(dns_resolve("qemu-gateway"), Some([10, 0, 2, 2]));
-        assert_eq!(dns_resolve("queenx-gateway"), Some([10, 0, 2, 2]));
+        assert_eq!(dns_resolve("edgine-gateway"), Some([10, 0, 2, 2]));
     }
 
     #[test]

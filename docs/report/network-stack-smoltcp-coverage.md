@@ -1,6 +1,6 @@
 # 网络栈 smoltcp 功能覆盖度评估报告
 
-> 总体判断：QueenX 把 smoltcp 当作核心互联网传输栈在用——以太网 + IPv4 + IPv6(静态) + TCP + UDP + DHCPv4 这条主干是真实接线、真跑包的，形态上足以支撑一个能收发数据的内核网络面。但存在两处结构性缝隙：一是"启用 feature ≠ 接线使用"（ICMP / DNS / raw 三个开关开了没消费者）；二是"有 v6 协议栈却拿不到 v6 地址"（启用 proto-ipv6 却未启 SLAAC）。且决定"真实用户态软件能否跑起来"的关键瓶颈其实在 smoltcp 之外——面向用户态的 Linux socket ABI 兼容层。
+> 总体判断：Edgine 把 smoltcp 当作核心互联网传输栈在用——以太网 + IPv4 + IPv6(静态) + TCP + UDP + DHCPv4 这条主干是真实接线、真跑包的，形态上足以支撑一个能收发数据的内核网络面。但存在两处结构性缝隙：一是"启用 feature ≠ 接线使用"（ICMP / DNS / raw 三个开关开了没消费者）；二是"有 v6 协议栈却拿不到 v6 地址"（启用 proto-ipv6 却未启 SLAAC）。且决定"真实用户态软件能否跑起来"的关键瓶颈其实在 smoltcp 之外——面向用户态的 Linux socket ABI 兼容层。
 
 本报告是网络栈对 vendored smoltcp 功能覆盖度的一次性快照，评估范围 smoltcp 0.14.0（锁定于 `src/kernel/services/net/smoltcp/`）+ framework/net 约 7.6K 行真实协议栈驱动 + services/net 约 5.0K 行策略/句柄层。按"feature 空间 → 启用集 → 实际接线"三层对照，并给出目标档位的收敛建议。作为后续制定 plan 与修复工程的输入依据。
 
@@ -8,7 +8,7 @@
 
 **1. 接入纪律正：`default-features = false` + 显式列表** —— `src/kernel/Cargo.toml` L47-61 不盲从 smoltcp 默认全开（默认集含 6LoWPAN/RPL/tuntap 等），而是按需勾选 13 个功能 feature。这符合框架最小化立场。
 
-**2. smoltcp 真被 framework 层驱动跑包，不是 W3.2 骨架** —— W4 已落地：`framework/net/smoltcp_impl.rs` 的 `ChitinNetDevice` 实现 smoltcp `phy::Device` trait（L85），经 Chitin `NetOps` 桥接真实网卡；`init_stack()` L177 `Config::new(HardwareAddress::Ethernet(...))` + `Interface::new(...)` 真构造接口；L167-168 `iface.poll(now, device, sockets)` 真轮询收发。
+**2. smoltcp 真被 framework 层驱动跑包，不是 W3.2 骨架** —— W4 已落地：`framework/net/smoltcp_impl.rs` 的 `EGDFNetDevice` 实现 smoltcp `phy::Device` trait（L85），经 EGDF `NetOps` 桥接真实网卡；`init_stack()` L177 `Config::new(HardwareAddress::Ethernet(...))` + `Interface::new(...)` 真构造接口；L167-168 `iface.poll(now, device, sockets)` 真轮询收发。
 
 **3. SocketSet 真实装配、TCP/UDP 真建真用** —— `init.rs` L93 `SocketSet::new(&mut storage[..])`；`raw.rs` L322 `tcp::Socket::new()` + L326 `sockets.add()`、L349/L376 `udp::Socket::new()` + add；`sm_fi.rs` 17 处 `get_mut::<tcp::Socket>` / 11 处 `get_mut::<udp::Socket>` 覆盖 accept/connect/listen/send/recv。services 层 `SmoltcpNetStack`（`smoltcp_impl.rs`）另做类型擦除句柄表 + 幂等/回滚不变式（DECISION-025/027）。
 
@@ -16,7 +16,7 @@
 
 ## 二、功能覆盖度矩阵与"启用未用"缝隙
 
-以"协议/介质/socket 类功能 feature"（排除 `iface-*` 容量型与 std/alloc/log/defmt 构建型，共 33 个）为分母：QueenX 启用 13 个（≈40%），真正在数据路径上被消费的约 10 个。
+以"协议/介质/socket 类功能 feature"（排除 `iface-*` 容量型与 std/alloc/log/defmt 构建型，共 33 个）为分母：Edgine 启用 13 个（≈40%），真正在数据路径上被消费的约 10 个。
 
 | feature | 启用 | 实际接线 | 证据 |
 |---|---|---|---|

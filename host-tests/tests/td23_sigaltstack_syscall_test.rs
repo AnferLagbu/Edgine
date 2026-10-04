@@ -8,9 +8,9 @@
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `sigaltstack_op` / `StackT` / `AltStackState` 状态机平行镜像, 改引
 //! 内核真实常量:
-//! - `queenx::kernel::services::syscall::types::SYS_sigaltstack` (pub const = 131)
-//! - `queenx::kernel::framework::proc::{SS_ONSTACK, SS_DISABLE}` (pub const)
-//! - `queenx::kernel::framework::syscall::api::sys_sigaltstack` (pub fn)
+//! - `edgine::kernel::services::syscall::types::SYS_sigaltstack` (pub const = 131)
+//! - `edgine::kernel::framework::proc::{SS_ONSTACK, SS_DISABLE}` (pub const)
+//! - `edgine::kernel::framework::syscall::api::sys_sigaltstack` (pub fn)
 //!
 //! ## 因内核 host 不可测已移除
 //! `sys_sigaltstack` 的完整状态机 (SS_DISABLE 清 addr/size / 启用清 flags /
@@ -20,9 +20,9 @@
 //! (query_only_no_change / set_then_query_returns_value / disable_clears_addr_size
 //! 等) 已移除. 状态机真实覆盖由 QEMU 集成测试 (syscall 路径) 承担.
 
-use queenx::kernel::framework::proc::{SS_DISABLE, SS_ONSTACK};
-use queenx::kernel::framework::syscall::api::sys_sigaltstack;
-use queenx::kernel::services::syscall::types::SYS_sigaltstack;
+use edgine::kernel::framework::proc::{SS_DISABLE, SS_ONSTACK};
+use edgine::kernel::framework::syscall::api::sys_sigaltstack;
+use edgine::kernel::services::syscall::types::SYS_sigaltstack;
 
 #[test]
 fn syscall_number_is_546() {

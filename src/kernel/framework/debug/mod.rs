@@ -12,10 +12,10 @@
 //!
 //! ## 子模块
 //!
-//! - [ringbuf](file:///home/anfer/Code/QueenX/src/kernel/framework/debug/ringbuf.rs) — 单生产者单消费者环形缓冲区
-//! - [ftrace](file:///home/anfer/Code/QueenX/src/kernel/framework/debug/ftrace.rs) — 跟踪点/事件记录
-//! - [kgdb](file:///home/anfer/Code/QueenX/src/kernel/framework/debug/kgdb.rs) — KGDB 桩
-//! - [api](file:///home/anfer/Code/QueenX/src/kernel/framework/debug/api.rs) — 公共 re-export
+//! - [ringbuf](file:///home/anfer/Code/Edgine/src/kernel/framework/debug/ringbuf.rs) — 单生产者单消费者环形缓冲区
+//! - [ftrace](file:///home/anfer/Code/Edgine/src/kernel/framework/debug/ftrace.rs) — 跟踪点/事件记录
+//! - [kgdb](file:///home/anfer/Code/Edgine/src/kernel/framework/debug/kgdb.rs) — KGDB 桩
+//! - [api](file:///home/anfer/Code/Edgine/src/kernel/framework/debug/api.rs) — 公共 re-export
 // ebpf 公共接口 re-export — 避免跨子系统直接访问 debug::ebpf 内部
 pub use ebpf::bpf_init;
 pub use ebpf::sys_bpf;

@@ -940,7 +940,7 @@ impl HdmiController {
     }
 }
 
-/// MIG-008 接线补齐: HDMI 控制器接入 `Driver` 抽象, 供 Chitin 注册 (DECISION-K)
+/// MIG-008 接线补齐: HDMI 控制器接入 `Driver` 抽象, 供 EGDF 注册 (DECISION-K)
 ///
 /// 委托 inherent 方法 (显式 `Type::method(self)` 路径, 规避同名解析歧义);
 /// 错误统一映射为 [`DriverError::HardwareError`].

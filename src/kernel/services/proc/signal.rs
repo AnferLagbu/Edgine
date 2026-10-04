@@ -14,7 +14,7 @@
 //!
 //! ## 迁移方法
 //!
-//! `QueenX` 当前内核信号子系统是 per-process 32 bit 简易实现 (`signal_pending_*`),
+//! `Edgine` 当前内核信号子系统是 per-process 32 bit 简易实现 (`signal_pending_*`),
 //! 不完整的 POSIX 信号语义由 services 层提供类型安全封装 + 标准常量。
 //! 未来完整化信号子系统 (sigaction 表, 共享处理, sigaltstack) 时, 替换 `do_signal`
 //! 内部实现, services 层 API 保持稳定。

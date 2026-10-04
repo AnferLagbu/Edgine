@@ -146,7 +146,7 @@ core v0.0.0 (.../library/core), sha2 v0.11.0
     - `framework/mm/swap_trait.rs` / `services/mm/swap_policy.rs`：`should_wakeup_kswapd` 函数体整数化（**返回类型 `bool` 不变**）。
     - `services/mm/swap.rs`：`usage_ratio -> f64` → `-> u64`。
     - `framework/mm/slab.rs`：`hit_rate` / `utilization` → `u64`（原为百分数 `*100.0`，统一到千分比）。
-    - `services/fs/nestfs/arc_trait.rs`：trait + impl `hit_rate -> f64` → `-> u64`，并同步其文件内测试。
+    - `services/fs/unkfs/arc_trait.rs`：trait + impl `hit_rate -> f64` → `-> u64`，并同步其文件内测试。
   - 状态：[X]
   - 详情（`fragmentation_score` 调用面）：全仓**无生产调用者**（仅 `#[cfg(test)]` 内调用）；`should_wakeup_kswapd` 生产调用者唯一 = `framework/mm/swap.rs:941`；`slab::hit_rate`/`utilization` 与 `swap::usage_ratio` 当前无调用者。参照形态：`framework/fs/vfs/dcache.rs` 的 `dcache_hit_rate -> (u64, u64)`（已是整数）。`host-tests/src/framekernel_bench.rs` 的 `HostArcCache::hit_rate -> f64` 经核实是 **host-only 独立 trait**（非内核 `arc_trait` 的副本引用，无编译耦合）⇒ **不改**，作为预存平行实现另行报告。
   - 详情（本轮更正的既有断言缺陷）：`services/mm/pmm_policy.rs` 原测试断言 `assert!((… - 0.79).abs() < 1e-9)` 与其推导注释 `0.7*0.7 + 1.0*0.3 = 0.79` **算术错误**（`0.7*0.7 + 1.0*0.3 = 0.79` 实为 `0.49 + 0.3 = 0.79`，但公式为 `(1-free)*7/10 + fail*3/10`，`free = 0.3` 时 `(1-0.3)*0.7 = 0.49`，须配 `fail` 比例；原断言取 `free_ratio = 0`、`fail_ratio = 1.0` 时实算 `1.0`）。原 f64 实现返回 `1.0`，与断言 `0.79` 本就不符 —— 属**预存缺陷**（非本轮引入）。本轮按千分比公式统一修正为 `1000`，并已登记于本详情。**补充（本轮普查）**：该断言之所以长期未暴露，是因为所在 `#[cfg(test)]` 模块**从未被任何门槛编译**（`[lib] test = false` + 依赖不激活 `cfg(test)`）—— 属全仓 104 文件 / 770 例的同类问题，已单独立项，见 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md)。

@@ -6,7 +6,7 @@ use super::block_group::Ext2BlockGroupDescriptor;
 use super::dir::Ext2DirEntry;
 use super::inode::Ext2Inode;
 use super::super_block::Ext2SuperBlock;
-use crate::framework::chitin::chitin_blk_read_sectors;
+use crate::framework::egdf::egdf_blk_read_sectors;
 use crate::services::fs::KernelError;
 use alloc::format;
 use alloc::vec::Vec;
@@ -35,7 +35,7 @@ impl Ext2Fs {
         let sb_sector = 1024 / 512; // 扇区 2
         let sb_sector_count = 1024 / 512; // 2 扇区
 
-        chitin_blk_read_sectors(device_idx, sb_sector as u64, sb_sector_count, &mut sb_data)?;
+        egdf_blk_read_sectors(device_idx, sb_sector as u64, sb_sector_count, &mut sb_data)?;
 
         // 解析超级块
         let super_block =
@@ -48,7 +48,7 @@ impl Ext2Fs {
         let bgd_sector_count = (block_size / 512).max(1) as u32;
 
         let mut bgd_data = alloc::vec![0u8; block_size];
-        chitin_blk_read_sectors(device_idx, bgd_sector, bgd_sector_count, &mut bgd_data)?;
+        egdf_blk_read_sectors(device_idx, bgd_sector, bgd_sector_count, &mut bgd_data)?;
 
         let bg_count = super_block.block_group_count() as usize;
         let block_groups = Ext2BlockGroupDescriptor::from_table(&bgd_data, bg_count);
@@ -93,7 +93,7 @@ impl Ext2Fs {
         let sector_count = (inode_size / 512).max(1) as u32;
 
         let mut inode_data = alloc::vec![0u8; inode_size];
-        chitin_blk_read_sectors(
+        egdf_blk_read_sectors(
             self.device_idx,
             sector as u64,
             sector_count,
@@ -119,7 +119,7 @@ impl Ext2Fs {
         let sector = u64::from(block_num) * block_size as u64 / 512;
         let sector_count = (block_size / 512) as u32;
 
-        chitin_blk_read_sectors(self.device_idx, sector, sector_count, &mut data)?;
+        egdf_blk_read_sectors(self.device_idx, sector, sector_count, &mut data)?;
         Ok(data)
     }
 

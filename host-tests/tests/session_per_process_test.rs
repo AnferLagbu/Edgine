@@ -3,7 +3,7 @@
 // ============================================================================
 //
 // 验收契约:
-// 1. 源码层 `static GLOBAL_SESSION` 全局单例必须被删除 (框架 credo/session.rs
+// 1. 源码层 `static GLOBAL_SESSION` 全局单例必须被删除 (框架 sgeg/session.rs
 //    不再持有 process 间共享的可变状态).
 // 2. 源码层 SessionManager 结构体 (含 UnsafeCell 字段) 必须被删除.
 // 3. PwmContext 凭证会话上下文必须绑定到 Process 结构体, 字段命名稳定:
@@ -32,7 +32,7 @@ fn read_src(rel: &str) -> String {
 
 #[test]
 fn session_rs_no_global_session_static() {
-    let src = read_src("src/kernel/framework/credo/session.rs");
+    let src = read_src("src/kernel/framework/sgeg/session.rs");
     // 仅检查代码行, 排除注释 (注释中允许出现历史名字以解释设计变更)
     for line in src.lines() {
         let trimmed = line.trim();
@@ -41,7 +41,7 @@ fn session_rs_no_global_session_static() {
         }
         assert!(
             !line.contains("static GLOBAL_SESSION"),
-            "P2-I-30: credo/session.rs 仍包含 `static GLOBAL_SESSION` 全局单例 (行: {})",
+            "P2-I-30: sgeg/session.rs 仍包含 `static GLOBAL_SESSION` 全局单例 (行: {})",
             line
         );
     }
@@ -49,21 +49,21 @@ fn session_rs_no_global_session_static() {
 
 #[test]
 fn session_rs_no_session_manager_struct() {
-    let src = read_src("src/kernel/framework/credo/session.rs");
+    let src = read_src("src/kernel/framework/sgeg/session.rs");
     assert!(
         !src.contains("struct SessionManager"),
-        "P2-I-30: credo/session.rs 仍定义 SessionManager 结构体"
+        "P2-I-30: sgeg/session.rs 仍定义 SessionManager 结构体"
     );
     assert!(
         !src.contains("impl SessionManager"),
-        "P2-I-30: credo/session.rs 仍实现 SessionManager impl 块"
+        "P2-I-30: sgeg/session.rs 仍实现 SessionManager impl 块"
     );
 }
 
 #[test]
 fn session_rs_no_unsafe_cell() {
     // 检查代码行 (排除注释), per-process 化必须彻底清除 UnsafeCell 使用
-    let src = read_src("src/kernel/framework/credo/session.rs");
+    let src = read_src("src/kernel/framework/sgeg/session.rs");
     for line in src.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("//") {
@@ -71,7 +71,7 @@ fn session_rs_no_unsafe_cell() {
         }
         assert!(
             !line.contains("UnsafeCell"),
-            "P2-I-30: credo/session.rs 代码行仍引用 UnsafeCell (行: {})",
+            "P2-I-30: sgeg/session.rs 代码行仍引用 UnsafeCell (行: {})",
             line
         );
     }
@@ -135,18 +135,18 @@ fn process_new_initializes_session_fields() {
 }
 
 #[test]
-fn credo_mod_does_not_reexport_session_manager() {
-    let src = read_src("src/kernel/framework/credo/mod.rs");
+fn sgeg_mod_does_not_reexport_session_manager() {
+    let src = read_src("src/kernel/framework/sgeg/mod.rs");
     assert!(
         !src.contains("pub use session::SessionManager"),
-        "P2-I-30: credo/mod.rs 仍在 re-export SessionManager, 应删除"
+        "P2-I-30: sgeg/mod.rs 仍在 re-export SessionManager, 应删除"
     );
 }
 
 #[test]
 fn public_api_signatures_preserved() {
     // 公开 API 函数名/签名必须与 I-30 改造前一致, 所有调用方不需要改
-    let src = read_src("src/kernel/framework/credo/session.rs");
+    let src = read_src("src/kernel/framework/sgeg/session.rs");
     for sig in &[
         "pub fn login(",
         "pub fn logout(",
@@ -172,7 +172,7 @@ fn public_api_signatures_preserved() {
     ] {
         assert!(
             src.contains(sig),
-            "P2-I-30: 公开 API `{}` 在 credo/session.rs 中缺失",
+            "P2-I-30: 公开 API `{}` 在 sgeg/session.rs 中缺失",
             sig
         );
     }
@@ -181,24 +181,24 @@ fn public_api_signatures_preserved() {
 #[test]
 fn session_rs_routes_through_process_table() {
     // 内部实现必须走 process_get_current_pid + PROCESS_TABLE 路径
-    let src = read_src("src/kernel/framework/credo/session.rs");
+    let src = read_src("src/kernel/framework/sgeg/session.rs");
     assert!(
         src.contains("process_get_current_pid"),
-        "P2-I-30: credo/session.rs 内部未调用 process_get_current_pid"
+        "P2-I-30: sgeg/session.rs 内部未调用 process_get_current_pid"
     );
     assert!(
         src.contains("PROCESS_TABLE.with_process"),
-        "P2-I-30: credo/session.rs 内部未走 PROCESS_TABLE.with_process 查表"
+        "P2-I-30: sgeg/session.rs 内部未走 PROCESS_TABLE.with_process 查表"
     );
 }
 
 #[test]
-fn no_legacy_g_session_singleton_in_other_credo_modules() {
-    // 复查: 其它 credo 子模块没有偷偷回退到全局状态
+fn no_legacy_g_session_singleton_in_other_sgeg_modules() {
+    // 复查: 其它 sgeg 子模块没有偷偷回退到全局状态
     for rel in &[
-        "src/kernel/framework/credo/api.rs",
-        "src/kernel/framework/credo/identity.rs",
-        "src/kernel/framework/credo/audit.rs",
+        "src/kernel/framework/sgeg/api.rs",
+        "src/kernel/framework/sgeg/identity.rs",
+        "src/kernel/framework/sgeg/audit.rs",
     ] {
         let src = read_src(rel);
         assert!(

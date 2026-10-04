@@ -16,8 +16,8 @@
 //! 6. 连续范围查找/预留/回滚 (B03-LEGACY-002): `find_contig_range` 连续扫描、
 //!    `reserve_range` 重叠与契约拒绝、`unreserve_range` 回滚语义 (swap init/deinit 依赖)
 
-use queenx::kernel::framework::mm::pmm::{PhysicalMemoryManager, VecMetaStore};
-use queenx::kernel::framework::mm::{PAGE_SIZE, PhysAddr};
+use edgine::kernel::framework::mm::pmm::{PhysicalMemoryManager, VecMetaStore};
+use edgine::kernel::framework::mm::{PAGE_SIZE, PhysAddr};
 
 /// 模拟物理内存 64MB (buddy 完整覆盖 order-0..9)
 const MEM_SIZE: u64 = 64 * 1024 * 1024;

@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# QueenX QEMU 真实启动测试脚本 (QEMU Real Boot Validation)
+# Edgine QEMU 真实启动测试脚本 (QEMU Real Boot Validation)
 #
 # 用途: 验证双架构内核镜像在 QEMU 中真实启动, 记录关键子系统状态
 # 输出: other/build/log/qemu_boot_*.log

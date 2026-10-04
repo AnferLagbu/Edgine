@@ -33,7 +33,7 @@ FRAMEWORK_BASE = Path('src/kernel/framework')
 #   framework::ioport (IoPort)
 #   framework::irqline (IrqLine)
 #   framework::dma_buf (DmaStream)
-#   framework::credo_pwm (PWM)
+#   framework::sgeg_pwm (PWM)
 #   framework::net_socket (NetSocket)
 #   framework::proc_elf (Elf)
 #
@@ -74,10 +74,10 @@ FORBIDDEN_FRAMEWORK_MODULES = [
     # 分配器/引导底层
     'framework::alloc::raw',
     'framework::boot::raw',
-    # barrier 实现细节
-    'framework::barrier::undo_log',
-    'framework::barrier::fault_inject',
-    'framework::barrier::reset',
+    # freg 实现细节
+    'framework::freg::undo_log',
+    'framework::freg::fault_inject',
+    'framework::freg::reset',
     # 日志/控制台底层
     'framework::klog::raw',
     'framework::console::raw',
@@ -124,9 +124,9 @@ SAFE_FRAMEWORK_APIS = [
     'framework::fs',
     'framework::net',
     'framework::ipc',
-    'framework::credo',
-    'framework::chitin',
-    'framework::barrier',
+    'framework::sgeg',
+    'framework::egdf',
+    'framework::freg',
     'framework::driver',
     'framework::pci',
     'framework::dma',
@@ -338,8 +338,8 @@ PROXY_ALLOWANCE = [
     # (纯 `pub use framework::...::*`, 无业务逻辑, 属机制安全导出面的合法转发).
     # sync 子系统: types.rs 代理 framework::sync::types (锁状态/守卫/统计)
     ('src/kernel/services/sync/types.rs', 'framework::sync::types'),
-    # barrier 子系统: reset_config.rs 代理 framework::barrier::reset::config
-    ('src/kernel/services/barrier/reset_config.rs', 'framework::barrier::reset'),
+    # freg 子系统: reset_config.rs 代理 framework::freg::reset::config
+    ('src/kernel/services/freg/reset_config.rs', 'framework::freg::reset'),
     # DECISION-J 第十七批: syscall/types.rs 代理 framework::syscall::types
     # (syscall 编号表迁回 framework, services re-export 兼容层)
     ('src/kernel/services/syscall/types.rs', 'framework::syscall::types'),
@@ -431,14 +431,14 @@ def check_services_inter_module_deps():
         ('driver', 'sync'),
         # ipc 依赖 sync 是合理的
         ('ipc', 'sync'),
-        # credo 依赖 sync 是合理的
-        ('credo', 'sync'),
+        # sgeg 依赖 sync 是合理的
+        ('sgeg', 'sync'),
         # mm 依赖 sync 是合理的
         ('mm', 'sync'),
-        # chitin 依赖 sync 是合理的
-        ('chitin', 'sync'),
-        # barrier 依赖 sync 是合理的
-        ('barrier', 'sync'),
+        # egdf 依赖 sync 是合理的
+        ('egdf', 'sync'),
+        # freg 依赖 sync 是合理的
+        ('freg', 'sync'),
         # storage 依赖 sync 是合理的
         ('storage', 'sync'),
         # io 依赖 sync 是合理的
@@ -455,22 +455,22 @@ def check_services_inter_module_deps():
         ('fs', 'config'),
         # ipc 依赖 proc 是合理的 (进程间通信)
         ('ipc', 'proc'),
-        # fs 依赖 credo 是合理的 (权限检查)
-        ('fs', 'credo'),
+        # fs 依赖 sgeg 是合理的 (权限检查)
+        ('fs', 'sgeg'),
         # driver 依赖 mm 是合理的 (DMA 映射)
         ('driver', 'mm'),
         # driver 依赖 config 是合理的
         ('driver', 'config'),
-        # driver 依赖 chitin 是合理的 (块设备经 services::chitin 安全代理注册/注销)
-        ('driver', 'chitin'),
-        # barrier 依赖 credo 是合理的 (故障恢复权限检查)
-        ('barrier', 'credo'),
+        # driver 依赖 egdf 是合理的 (块设备经 services::egdf 安全代理注册/注销)
+        ('driver', 'egdf'),
+        # freg 依赖 sgeg 是合理的 (故障恢复权限检查)
+        ('freg', 'sgeg'),
         # fs 依赖 syscall 是合理的 (fs 系统调用实现使用 syscall 的 Errno 类型)
         ('fs', 'syscall'),
         # proc 依赖 fs 是合理的 (memfd_create 等需要 OpenFile/AnonymousFs)
         ('proc', 'fs'),
-        # credo 依赖 fs 是合理的 (持久化编排经 services::fs 的 VFS safe 包装读写 /pwm.db)
-        ('credo', 'fs'),
+        # sgeg 依赖 fs 是合理的 (持久化编排经 services::fs 的 VFS safe 包装读写 /pwm.db)
+        ('sgeg', 'fs'),
     }
 
     for mod in modules:
@@ -514,7 +514,7 @@ def main():
     # 但允许 CI 严格模式开启. 这样新代码不会因历史遗留触发 CI 失败,
     # 但 CI 可选择性开启.
     import argparse
-    parser = argparse.ArgumentParser(description='QueenX services→framework 边界审计')
+    parser = argparse.ArgumentParser(description='Edgine services→framework 边界审计')
     parser.add_argument('--strict-medium', action='store_true',
                         help='MEDIUM 级别违规也触发 exit 1')
     args = parser.parse_args()

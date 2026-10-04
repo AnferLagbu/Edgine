@@ -1,7 +1,7 @@
 //! Framekernel 微基准测试 (性能回归基线)
 //!
 //! ## 目标
-//! 测量 QueenX 框内核关键路径的纯算法性能, 建立可重复的回归基线.
+//! 测量 Edgine 框内核关键路径的纯算法性能, 建立可重复的回归基线.
 //! 所有实现都 host-runnable (std 可用), 与内核版本位一致, 便于:
 //! - CI 跑回归检查 (vs. baseline.json)
 //! - 优化前后对比
@@ -13,9 +13,9 @@
 //! 3. `iomem_alias_bench`: IoMem 别名区间注册 (重叠检测, 内核 `IoMem::new`)
 //! 4. `capability_check_bench`: 能力矩阵域位检查 (内核 `PolicyEngine::check`)
 //! 5. `dma_state_machine_bench`: DmaStream 状态机迁移
-//! 6. `sha256_block_bench`: SHA-256 哈希 (credo 身份, 内核 `sha256`)
-//! 7. `attribution_classify_bench`: 故障归属分类 (barrier)
-//! 8. `recovery_decide_bench`: 恢复策略决策 (barrier)
+//! 6. `sha256_block_bench`: SHA-256 哈希 (sgeg 身份, 内核 `sha256`)
+//! 7. `attribution_classify_bench`: 故障归属分类 (freg)
+//! 8. `recovery_decide_bench`: 恢复策略决策 (freg)
 //! 9. `bitmap_scan_bench`: PMM 物理页分配 (内核 buddy alloc/free)
 //!
 //! ## 输出
@@ -34,32 +34,30 @@ use std::time::Instant;
 
 // ====== A 类: 内核真实实现直引 (G-07 消除 host 侧平行实现) ======
 //
-// 以下 bench 组不再本地复刻算法, 改为直接引用内核真实源码 (经 queenx 壳 crate 的
+// 以下 bench 组不再本地复刻算法, 改为直接引用内核真实源码 (经 edgine 壳 crate 的
 // host-test feature 暴露面), 与 `src/kernel/**` 位一致. 各 bench 仅保留计时骨架,
 // 计算本身完全由内核实现承担 — 平行复刻体已删除.
-use queenx::kernel::framework::debug::{
+use edgine::kernel::framework::debug::{
     BpfInsn, BpfProg, BpfProgType, BpfVerifier, VerifyResult, opcode,
 };
 // `BpfSubsystem` 仅单测使用 (bench 体走 `&dyn BpfVerifier`), 故 cfg(test) 门控.
 #[cfg(test)]
-use queenx::kernel::framework::debug::BpfSubsystem;
-use queenx::kernel::framework::dma_buf::{DmaDirection, DmaStream, SyncState};
-use queenx::kernel::framework::frame::Frame;
-use queenx::kernel::framework::mm::{PageFlags, PageTableEntry, PhysAddr};
-use queenx::kernel::framework::net::wait_queue::{SocketWaitQueue, WakeReason};
-use queenx::kernel::services::barrier::attribution::{
-    FaultAttribution, FaultAttributor, TcbModule,
-};
-use queenx::kernel::services::barrier::recovery_policy::{
-    FaultSignal, RecoveryAction, RecoveryPolicy,
-};
-use queenx::kernel::services::config::sysctl::{
+use edgine::kernel::framework::debug::BpfSubsystem;
+use edgine::kernel::framework::dma_buf::{DmaDirection, DmaStream, SyncState};
+use edgine::kernel::framework::frame::Frame;
+use edgine::kernel::framework::mm::{PageFlags, PageTableEntry, PhysAddr};
+use edgine::kernel::framework::net::wait_queue::{SocketWaitQueue, WakeReason};
+use edgine::kernel::services::config::sysctl::{
     SysctlKind, SysctlValue, sysctl_register, sysctl_write,
+};
+use edgine::kernel::services::freg::attribution::{FaultAttribution, FaultAttributor, TcbModule};
+use edgine::kernel::services::freg::recovery_policy::{
+    FaultSignal, RecoveryAction, RecoveryPolicy,
 };
 // `sysctl_read`/`SysctlError` 仅单测使用 (bench 体只写), 故 cfg(test) 门控.
 #[cfg(test)]
-use queenx::kernel::services::config::sysctl::{SysctlError, sysctl_read};
-use queenx::kernel::services::debug::ebpf_verifier::STANDARD_VERIFIER;
+use edgine::kernel::services::config::sysctl::{SysctlError, sysctl_read};
+use edgine::kernel::services::debug::ebpf_verifier::STANDARD_VERIFIER;
 
 // ====== B 类: 内核真实实现直引 + 机制层载体注入 (G-07 消除 host 侧平行实现) ======
 //
@@ -68,57 +66,57 @@ use queenx::kernel::services::debug::ebpf_verifier::STANDARD_VERIFIER;
 //   与 `tests/pmm_buddy_host_test.rs` 一致)
 // - `IoMem`: 别名注册表唯一公共入口 (与 `tests/mm_iomem_alias_test.rs` 一致)
 // - `VirtQueue`: 描述符/环区操作用宿主堆块作 DMA 后备 (host 无 PMM, 见 §12 段注释)
-use queenx::kernel::framework::credo::sha256::sha256;
-use queenx::kernel::framework::driver::virtio::queue::{
+use edgine::kernel::framework::driver::virtio::queue::{
     VQ_SIZE, VirtQueue, VqAvail, VqDesc, VqUsed, VqUsedElem,
 };
+use edgine::kernel::framework::sgeg::sha256::sha256;
 // 描述符标志位仅单测断言使用 (bench 体经 `prepare_desc` 的 write 参数间接设置)
 #[cfg(test)]
-use queenx::kernel::framework::driver::virtio::queue::{VQ_DESC_F_NEXT, VQ_DESC_F_WRITE};
-use queenx::kernel::framework::iomem::IoMem;
-use queenx::kernel::framework::mm::pmm::{PhysicalMemoryManager, VecMetaStore};
-use queenx::kernel::services::credo::policy::{
+use edgine::kernel::framework::driver::virtio::queue::{VQ_DESC_F_NEXT, VQ_DESC_F_WRITE};
+use edgine::kernel::framework::iomem::IoMem;
+use edgine::kernel::framework::mm::pmm::{PhysicalMemoryManager, VecMetaStore};
+use edgine::kernel::services::sgeg::policy::{
     CapBits, CapDomain, CapabilityMatrix, InMemoryMatrix, PolicyEngine, PolicyResult,
 };
 
-// ====== C 类: 内核真实实现直引 (G-07 遗留项: nestfs / chitin / epoll 策略面) ======
+// ====== C 类: 内核真实实现直引 (G-07 遗留项: unkfs / egdf / epoll 策略面) ======
 //
 // 与 A/B 类同口径, 覆盖 G-07 遗留的三处平行实现:
-// - `chitin::BlockDevice` + `CHITIN_DEVICES` 注册表: 块设备边界检查与 dispatch
+// - `egdf::BlockDevice` + `EGDF_DEVICES` 注册表: 块设备边界检查与 dispatch
 //   的唯一实现 (host 侧仅提供扇区存储载体 `BenchBlockDevice`)
 // - `framework::fs::vfs_poll_trait` (机制) + services `StandardVfsPollPolicy` (策略):
 //   epoll `check_fd_ready` 事件位决策的唯一实现
-// - `nestfs::*`: Zap / TXG / DMU / SPA / RAID-Z / ARC / ZIL / ZIL-persist 八大子模块
+// - `unkfs::*`: Zap / TXG / DMU / SPA / RAID-Z / ARC / ZIL / ZIL-persist 八大子模块
 //   的唯一实现, 本地 `HostXxx` trait + `StandardHostXxx` 复刻体已全部删除
-use queenx::kernel::framework::chitin::{
-    BlockDevice, chitin_blk_read, chitin_blk_write, chitin_register_block_dev,
+use edgine::kernel::framework::egdf::{
+    BlockDevice, egdf_blk_read, egdf_blk_write, egdf_register_block_dev,
 };
-// `chitin_blk_is_present` 仅单测断言使用 (bench 体只做读写)
+// `egdf_blk_is_present` 仅单测断言使用 (bench 体只做读写)
 #[cfg(test)]
-use queenx::kernel::framework::chitin::chitin_blk_is_present;
-use queenx::kernel::framework::fs::vfs_poll_trait::{
+use edgine::kernel::framework::egdf::egdf_blk_is_present;
+use edgine::kernel::framework::fs::vfs_poll_trait::{
     EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, VfsPollContext, VfsPollPolicyRef,
 };
 // `VfsPollPolicy` trait 仅单测直接调用策略方法时需在作用域
-use queenx::kernel::framework::error::KernelError;
-use queenx::kernel::framework::fs::VfsFileType;
+use edgine::kernel::framework::error::KernelError;
+use edgine::kernel::framework::fs::VfsFileType;
 #[cfg(test)]
-use queenx::kernel::framework::fs::vfs_poll_trait::VfsPollPolicy;
-use queenx::kernel::services::fs::nestfs::arc::{NestArcBufType, NestArcKey};
-use queenx::kernel::services::fs::nestfs::arc_trait::{ArcCache, StandardArc};
-use queenx::kernel::services::fs::nestfs::bp::NestBlockPointer;
-use queenx::kernel::services::fs::nestfs::dmu::{NestObjSet, NestObjType};
-use queenx::kernel::services::fs::nestfs::raidz::{NestRaidzLevel, NestRaidzMap};
+use edgine::kernel::framework::fs::vfs_poll_trait::VfsPollPolicy;
+use edgine::kernel::services::fs::unkfs::arc::{NestArcBufType, NestArcKey};
+use edgine::kernel::services::fs::unkfs::arc_trait::{ArcCache, StandardArc};
+use edgine::kernel::services::fs::unkfs::bp::NestBlockPointer;
+use edgine::kernel::services::fs::unkfs::dmu::{NestObjSet, NestObjType};
+use edgine::kernel::services::fs::unkfs::raidz::{NestRaidzLevel, NestRaidzMap};
 // RAID-Z 列数上下限仅单测断言 clamp 行为时使用
 #[cfg(test)]
-use queenx::kernel::services::fs::nestfs::raidz::{HV_RAIDZ_MAX_COLS, HV_RAIDZ_MIN_COLS};
-use queenx::kernel::services::fs::nestfs::spa::NestSpa;
-use queenx::kernel::services::fs::nestfs::txg::NestTxgGroup;
-use queenx::kernel::services::fs::nestfs::vdev::NestVdevConfig;
-use queenx::kernel::services::fs::nestfs::zap::NestZap;
-use queenx::kernel::services::fs::nestfs::zil::{NestZil, NestZilRecord};
-use queenx::kernel::services::fs::nestfs::zil_persist::NestZilPersist;
-use queenx::kernel::services::fs::vfs_poll_policy::StandardVfsPollPolicy;
+use edgine::kernel::services::fs::unkfs::raidz::{HV_RAIDZ_MAX_COLS, HV_RAIDZ_MIN_COLS};
+use edgine::kernel::services::fs::unkfs::spa::NestSpa;
+use edgine::kernel::services::fs::unkfs::txg::NestTxgGroup;
+use edgine::kernel::services::fs::unkfs::vdev::NestVdevConfig;
+use edgine::kernel::services::fs::unkfs::zap::NestZap;
+use edgine::kernel::services::fs::unkfs::zil::{NestZil, NestZilRecord};
+use edgine::kernel::services::fs::unkfs::zil_persist::NestZilPersist;
+use edgine::kernel::services::fs::vfs_poll_policy::StandardVfsPollPolicy;
 use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
 
@@ -225,10 +223,10 @@ pub fn iomem_alias_bench(iters: u64) -> u128 {
     elapsed.saturating_mul(1_000) / total_ops
 }
 
-// ====== 4. 能力矩阵域位检查 (来自 services/credo/policy.rs) ======
+// ====== 4. 能力矩阵域位检查 (来自 services/sgeg/policy.rs) ======
 
 // G-07: 本地 `CapabilityMatrix`/`CAP_DOMAINS` 复刻已删除, 直引内核
-// `services::credo::policy` 的 `InMemoryMatrix` (16×AtomicU64) + `PolicyEngine::check`
+// `services::sgeg::policy` 的 `InMemoryMatrix` (16×AtomicU64) + `PolicyEngine::check`
 // (域合法性 → 原子读 → 包含判定 → 可行下界保护).
 //
 // bench 域表按内核 16 域常量构造 (避免字面量映射).
@@ -242,7 +240,7 @@ const BENCH_CAP_DOMAINS: [CapDomain; 16] = [
     CapDomain::IPC,
     CapDomain::MEM,
     CapDomain::TIME,
-    CapDomain::BARRIER,
+    CapDomain::FREG,
     CapDomain::SIGNAL,
     CapDomain::SHM,
     CapDomain::SEM,
@@ -323,10 +321,10 @@ pub fn dma_state_machine_bench(iters: u64) -> u128 {
     elapsed.saturating_mul(1_000) / total_ops
 }
 
-// ====== 6. SHA-256 哈希 (来自 framework/credo/sha256.rs) ======
+// ====== 6. SHA-256 哈希 (来自 framework/sgeg/sha256.rs) ======
 
 // G-07: 本地 `K`/`rotr`/`sha256_transform` 复刻已删除, 直引内核
-// `framework::credo::sha256::sha256` — 消息填充 + 压缩函数 + 输出编码的唯一公共入口.
+// `framework::sgeg::sha256::sha256` — 消息填充 + 压缩函数 + 输出编码的唯一公共入口.
 //
 // 语义与基线变更: 旧 mock 只做单 block 压缩 (无填充); 内核公共入口对 64B 输入做
 // 2 次压缩 (数据块 + 填充块) 并编码输出, 故 1 op 口径改为 1 次完整 `sha256` 调用.
@@ -345,10 +343,10 @@ pub fn sha256_block_bench(iters: u64) -> u128 {
     elapsed.saturating_mul(1_000) / iters as u128
 }
 
-// ====== 7. Attribution classify (来自 services/barrier/attribution.rs) ======
+// ====== 7. Attribution classify (来自 services/freg/attribution.rs) ======
 
 // G-07: 本地 `FaultAttribution`/`FaultRecord`/`classify` 复刻已删除, 直引内核
-// `services::barrier::attribution::FaultAttributor::attribute(panic_rip)`.
+// `services::freg::attribution::FaultAttributor::attribute(panic_rip)`.
 //
 // 语义对齐说明 (基线变更来源): 旧 mock 按 `FaultRecord` 的 in_interrupt /
 // holding_lock / in_services 标志位做规则判定; 内核真实入口的唯一入参是
@@ -380,17 +378,17 @@ pub fn attribution_classify_bench(iters: u64) -> u128 {
     elapsed.saturating_mul(1_000) / iters as u128
 }
 
-// ====== 8. Recovery decide (来自 services/barrier/recovery_policy.rs) ======
+// ====== 8. Recovery decide (来自 services/freg/recovery_policy.rs) ======
 
 // G-07: 本地 `FaultSignal`/`decide` 复刻已删除, 直引内核
-// `services::barrier::recovery_policy::{FaultSignal, RecoveryAction, RecoveryPolicy}`.
+// `services::freg::recovery_policy::{FaultSignal, RecoveryAction, RecoveryPolicy}`.
 // 入参构造改用内核 `FaultSignal::tcb` 与 `FaultAttribution::Service` 结构体字面量
 // (旧 mock 的 `is_tcb`/`retry` 字段名映射为 `attribution`/`retry_count`).
 
 /// 构造第 i 个 bench 用故障信号 (奇偶交替 TCB / Service 两类归属).
 fn bench_signal(i: u64) -> FaultSignal {
     if i & 1 == 0 {
-        FaultSignal::tcb(TcbModule::Barrier, i)
+        FaultSignal::tcb(TcbModule::FREG, i)
     } else {
         FaultSignal {
             attribution: FaultAttribution::Service {
@@ -415,9 +413,9 @@ pub fn recovery_decide_bench(iters: u64) -> u128 {
             let a = RecoveryPolicy::decide(&signals[((i * BATCH + j) as usize) & 0x3F]);
             sink ^= match a {
                 RecoveryAction::Noop => 0,
-                RecoveryAction::BarrierBaseRecovery => 1,
-                RecoveryAction::BarrierSoftReset => 2,
-                RecoveryAction::BarrierHardReset => 3,
+                RecoveryAction::FREGBaseRecovery => 1,
+                RecoveryAction::FREGSoftReset => 2,
+                RecoveryAction::FREGHardReset => 3,
                 RecoveryAction::Quarantine => 4,
             };
         }
@@ -756,12 +754,12 @@ pub fn sysctl_bench(iters: u64) -> u128 {
 // T-4.1 (LEGACY-4): BlockDevice trait dispatch bench
 // ============================================================================
 //
-// G-07: 本地 `HostBlockDevice` / `MockChitinDevice` 复刻已删除, 直引内核
-// `framework::chitin` — 设备注册 (`chitin_register_block_dev`)、协议/状态/长度
-// 边界检查与 trait dispatch (`chitin_blk_read`/`chitin_blk_write`) 全为内核唯一实现.
+// G-07: 本地 `HostBlockDevice` / `MockEGDFDevice` 复刻已删除, 直引内核
+// `framework::egdf` — 设备注册 (`egdf_register_block_dev`)、协议/状态/长度
+// 边界检查与 trait dispatch (`egdf_blk_read`/`egdf_blk_write`) 全为内核唯一实现.
 // host 侧仅保留「设备载体」`BenchBlockDevice`: 提供扇区存储, 实现内核 `BlockDevice` 契约.
 
-/// 宿主块设备载体 (实现内核 `BlockDevice`, 供 `CHITIN_DEVICES` 注册表 dispatch)
+/// 宿主块设备载体 (实现内核 `BlockDevice`, 供 `EGDF_DEVICES` 注册表 dispatch)
 pub struct BenchBlockDevice {
     /// 内部存储 (按 sector 索引)
     storage: Vec<[u8; 512]>,
@@ -815,18 +813,18 @@ fn bench_blk_drive() -> u8 {
     static SLOT: OnceLock<u8> = OnceLock::new();
     *SLOT.get_or_init(|| {
         let dev: &'static mut BenchBlockDevice = Box::leak(Box::new(BenchBlockDevice::new(1024)));
-        chitin_register_block_dev("bench_blk", None, None, dev) as u8
+        egdf_register_block_dev("bench_blk", None, None, dev) as u8
     })
 }
 
-/// bench: T-4.1 块设备 I/O 路径 throughput (经内核 chitin dispatch)
+/// bench: T-4.1 块设备 I/O 路径 throughput (经内核 egdf dispatch)
 pub fn blk_dev_dispatch_bench(iters: u64) -> u128 {
     let drive = bench_blk_drive();
 
     // 预热 (避免首次调用路径开销污染)
     let mut buf = [0u8; 512];
     for _ in 0..100 {
-        let _ = chitin_blk_read(drive, 0, &mut buf);
+        let _ = egdf_blk_read(drive, 0, &mut buf);
     }
 
     let start = Instant::now();
@@ -834,9 +832,9 @@ pub fn blk_dev_dispatch_bench(iters: u64) -> u128 {
     for r in 0..iters {
         // 1 轮: 1 读 + 1 写 (16 扇区 旋转)
         let sector = r & 0xF;
-        let _ = chitin_blk_read(drive, sector, &mut buf);
+        let _ = egdf_blk_read(drive, sector, &mut buf);
         sink ^= u64::from(buf[0]) | (u64::from(buf[1]) << 8);
-        let _ = chitin_blk_write(drive, sector, &buf);
+        let _ = egdf_blk_write(drive, sector, &buf);
     }
     let elapsed = start.elapsed().as_nanos();
     std::hint::black_box(sink);
@@ -906,7 +904,7 @@ pub fn vfs_poll_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `HostZapStore` / `StandardHostZap` (Mutex<HashMap>) 复刻已删除, 直引内核
-// `services::fs::nestfs::zap::NestZap`. 注: 内核 ZAP 为线性扫描 (先比 hash 再比名字),
+// `services::fs::unkfs::zap::NestZap`. 注: 内核 ZAP 为线性扫描 (先比 hash 再比名字),
 // 与内核真实行为位一致.
 
 /// bench: ZAP insert / lookup / contains 路径 throughput
@@ -950,7 +948,7 @@ pub fn zap_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `MockTxgState` / `HostTxgManager` / `StandardHostTxg` 复刻已删除, 直引内核
-// `services::fs::nestfs::txg::NestTxgGroup` — `init`/`transition`/`add_dirty_to_open`/
+// `services::fs::unkfs::txg::NestTxgGroup` — `init`/`transition`/`add_dirty_to_open`/
 // `current_txg` 的唯一实现. 事务组三态 (open/quiescing/syncing) 迁移与脏块登记
 // 均由内核承担.
 
@@ -988,7 +986,7 @@ pub fn txg_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `MockDmuObject` / `HostDmuManager` / `StandardHostDmu` (Mutex<HashMap>)
-// 复刻已删除, 直引内核 `services::fs::nestfs::dmu::NestObjSet` — 对象分配/释放/查询/
+// 复刻已删除, 直引内核 `services::fs::unkfs::dmu::NestObjSet` — 对象分配/释放/查询/
 // 计数唯一实现 (内核为 `Mutex<Vec<NestDmuObject>>`, 查询与计数为线性扫描).
 
 /// bench: DMU 对象分配 / 查询 路径 throughput
@@ -1032,7 +1030,7 @@ pub fn dmu_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `SpaState` / `HostSpaManager` / `StandardHostSpa` 复刻已删除, 直引内核
-// `services::fs::nestfs::spa::NestSpa` — 池初始化 / vdev 装配 / 事务组推进 / 统计读取
+// `services::fs::unkfs::spa::NestSpa` — 池初始化 / vdev 装配 / 事务组推进 / 统计读取
 // 唯一实现. 注: 内核 vdev 上限为 `NestSpaConfig::max_vdevs` (默认 8).
 
 /// bench: SPA 池状态读 + 事务组推进 路径 throughput
@@ -1070,7 +1068,7 @@ pub fn spa_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `MockRaidzLevel` / `HostRaidzEngine` / `StandardHostRaidz` 复刻已删除,
-// 直引内核 `services::fs::nestfs::raidz::NestRaidzMap`. 注: 内核以 struct 字段
+// 直引内核 `services::fs::unkfs::raidz::NestRaidzMap`. 注: 内核以 struct 字段
 // (`ncols` / `nparity` / `ashift`) + `level` 枚举方法表达几何, 无 `is_single` /
 // `is_mirror` 谓词, 故此处按内核真实访问面测量.
 
@@ -1101,7 +1099,7 @@ pub fn raidz_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `MockArcKey` / `HostArcCache` / `StandardHostArc` / `ArcState`
-// (Mutex<HashMap>) 复刻已删除, 直引内核 `services::fs::nestfs::arc_trait::StandardArc`.
+// (Mutex<HashMap>) 复刻已删除, 直引内核 `services::fs::unkfs::arc_trait::StandardArc`.
 // 注: 内核 `ArcCache::hit_rate()` 返回千分比 (u64), 且 `insert` 额外带
 // `NestArcBufType` 参数.
 
@@ -1147,7 +1145,7 @@ pub fn arc_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `MockZilRecord` / `HostZilLog` / `StandardHostZil` / `ZilLogState`
-// 复刻已删除, 直引内核 `services::fs::nestfs::zil::NestZil`. 注: 内核无
+// 复刻已删除, 直引内核 `services::fs::unkfs::zil::NestZil`. 注: 内核无
 // `is_enabled` / `set_enabled` / `current_seq()` / `committed_seq()` 访问器,
 // 序列号域为 `AtomicU64` 直读.
 
@@ -1186,7 +1184,7 @@ pub fn zil_log_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `HostZilPersist` / `StandardHostZilPersist` / `MockZilPersistState`
-// 复刻已删除, 直引内核 `services::fs::nestfs::zil_persist::NestZilPersist`.
+// 复刻已删除, 直引内核 `services::fs::unkfs::zil_persist::NestZilPersist`.
 // 注: 内核 serialize/deserialize 为关联函数, 输入为真实 `NestZil` 记录集
 // (每块上限 `ZIL_MAX_RECORDS_PER_BLOCK` = 15 条), 含 CRC32 逐位计算.
 
@@ -1301,7 +1299,7 @@ pub fn run_all() -> BenchReport {
     ));
     results.push(measure(
         "capability_check",
-        "credo",
+        "sgeg",
         100_000,
         capability_check_bench,
     ));
@@ -1311,16 +1309,16 @@ pub fn run_all() -> BenchReport {
         100_000,
         dma_state_machine_bench,
     ));
-    results.push(measure("sha256_block", "credo", 1_000, sha256_block_bench));
+    results.push(measure("sha256_block", "sgeg", 1_000, sha256_block_bench));
     results.push(measure(
         "attribution_classify",
-        "barrier",
+        "freg",
         100_000,
         attribution_classify_bench,
     ));
     results.push(measure(
         "recovery_decide",
-        "barrier",
+        "freg",
         100_000,
         recovery_decide_bench,
     ));
@@ -1361,53 +1359,43 @@ pub fn run_all() -> BenchReport {
         vfs_poll_dispatch_bench,
     ));
     // LEGACY-5.1: ZAP dispatch bench (线性扫描 + 键名 format, 故缩小 iters)
-    results.push(measure(
-        "zap_dispatch",
-        "nestfs",
-        10_000,
-        zap_dispatch_bench,
-    ));
+    results.push(measure("zap_dispatch", "unkfs", 10_000, zap_dispatch_bench));
     // LEGACY-5.2: TXG dispatch bench (脏块 Vec 累积, 故缩小 iters)
-    results.push(measure(
-        "txg_dispatch",
-        "nestfs",
-        10_000,
-        txg_dispatch_bench,
-    ));
+    results.push(measure("txg_dispatch", "unkfs", 10_000, txg_dispatch_bench));
     // LEGACY-5.4: DMU dispatch bench (get_obj/obj_count 为 O(n) 线性扫描, 故缩小 iters)
-    results.push(measure("dmu_dispatch", "nestfs", 1_000, dmu_dispatch_bench));
+    results.push(measure("dmu_dispatch", "unkfs", 1_000, dmu_dispatch_bench));
     // LEGACY-5.5: SPA dispatch bench
     results.push(measure(
         "spa_dispatch",
-        "nestfs",
+        "unkfs",
         100_000,
         spa_dispatch_bench,
     ));
     // LEGACY-5.7: RAID-Z 几何查询 dispatch bench
     results.push(measure(
         "raidz_dispatch",
-        "nestfs",
+        "unkfs",
         100_000,
         raidz_dispatch_bench,
     ));
     // LEGACY-5.8: ARC 缓存 dispatch bench
     results.push(measure(
         "arc_dispatch",
-        "nestfs",
+        "unkfs",
         100_000,
         arc_dispatch_bench,
     ));
     // LEGACY-5.10: ZIL 日志 dispatch bench
     results.push(measure(
         "zil_log_dispatch",
-        "nestfs",
+        "unkfs",
         100_000,
         zil_log_dispatch_bench,
     ));
     // LEGACY-5.11: ZIL 持久化 dispatch bench (含 CRC32 逐位计算, 故缩小 iters)
     results.push(measure(
         "zil_persist_dispatch",
-        "nestfs",
+        "unkfs",
         1_000,
         zil_persist_dispatch_bench,
     ));
@@ -1504,7 +1492,7 @@ mod tests {
 
     #[test]
     fn test_sha256_known_digest() {
-        // G-07: 直引内核 credo `sha256` — 已知向量 "abc" (与 framework 侧单测同源)
+        // G-07: 直引内核 sgeg `sha256` — 已知向量 "abc" (与 framework 侧单测同源)
         let expected: [u8; 32] = [
             0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae,
             0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61,
@@ -1535,8 +1523,8 @@ mod tests {
     #[test]
     fn test_recovery_tcb_is_bhr() {
         // G-07: 直引内核 RecoveryPolicy — TCB 故障不可恢复 → 硬重置
-        let s = FaultSignal::tcb(TcbModule::Barrier, 0);
-        assert_eq!(RecoveryPolicy::decide(&s), RecoveryAction::BarrierHardReset);
+        let s = FaultSignal::tcb(TcbModule::FREG, 0);
+        assert_eq!(RecoveryPolicy::decide(&s), RecoveryAction::FREGHardReset);
     }
 
     #[test]
@@ -1712,14 +1700,14 @@ mod tests {
         let _ = sysctl_bench(10);
     }
 
-    // ====== T-4.1 (LEGACY-4): 块设备 I/O 路径单元测试 (经内核 chitin 注册表) ======
+    // ====== T-4.1 (LEGACY-4): 块设备 I/O 路径单元测试 (经内核 egdf 注册表) ======
 
     /// 注册 4 扇区的独立块设备载具 (边界用例专用), 返回 drive 索引
     fn bench_blk_small_drive() -> u8 {
         static SLOT: OnceLock<u8> = OnceLock::new();
         *SLOT.get_or_init(|| {
             let dev: &'static mut BenchBlockDevice = Box::leak(Box::new(BenchBlockDevice::new(4)));
-            chitin_register_block_dev("bench_blk_small", None, None, dev) as u8
+            egdf_register_block_dev("bench_blk_small", None, None, dev) as u8
         })
     }
 
@@ -1727,9 +1715,9 @@ mod tests {
     fn test_blk_dev_read_write_roundtrip() {
         let drive = bench_blk_drive();
         let wbuf = [0xAB; 512];
-        assert_eq!(chitin_blk_write(drive, 1, &wbuf), 0);
+        assert_eq!(egdf_blk_write(drive, 1, &wbuf), 0);
         let mut rbuf = [0u8; 512];
-        assert_eq!(chitin_blk_read(drive, 1, &mut rbuf), 0);
+        assert_eq!(egdf_blk_read(drive, 1, &mut rbuf), 0);
         assert_eq!(rbuf[0], 0xAB);
     }
 
@@ -1739,8 +1727,8 @@ mod tests {
         let buf = [0u8; 512];
         let mut rbuf = [0u8; 512];
         // 越界 sector (容量 4) 应由载体返回 -EIO
-        assert_eq!(chitin_blk_read(drive, 100, &mut rbuf), -5);
-        assert_eq!(chitin_blk_write(drive, 100, &buf), -5);
+        assert_eq!(egdf_blk_read(drive, 100, &mut rbuf), -5);
+        assert_eq!(egdf_blk_write(drive, 100, &buf), -5);
     }
 
     #[test]
@@ -1748,25 +1736,25 @@ mod tests {
         let drive = bench_blk_small_drive();
         let mut small = [0u8; 256];
         // 内核 dispatch 层 buf.len() < 512 → -EINVAL
-        assert_eq!(chitin_blk_read(drive, 0, &mut small), -22);
+        assert_eq!(egdf_blk_read(drive, 0, &mut small), -22);
     }
 
     #[test]
     fn test_blk_dev_metadata() {
         let drive = bench_blk_small_drive();
-        assert!(chitin_blk_is_present(drive));
+        assert!(egdf_blk_is_present(drive));
         // 容量 4: 末扇区可读, 越界不可读
         let mut buf = [0u8; 512];
-        assert_eq!(chitin_blk_read(drive, 3, &mut buf), 0);
-        assert_eq!(chitin_blk_read(drive, 4, &mut buf), -5);
+        assert_eq!(egdf_blk_read(drive, 3, &mut buf), 0);
+        assert_eq!(egdf_blk_read(drive, 4, &mut buf), -5);
         // 未注册的 drive 索引 → 不存在
-        assert!(!chitin_blk_is_present(200));
+        assert!(!egdf_blk_is_present(200));
     }
 
     #[test]
     fn test_blk_dev_unregistered_drive() {
         let mut buf = [0u8; 512];
-        assert_eq!(chitin_blk_read(200, 0, &mut buf), -5);
+        assert_eq!(egdf_blk_read(200, 0, &mut buf), -5);
     }
 
     #[test]

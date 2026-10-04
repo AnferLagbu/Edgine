@@ -123,7 +123,7 @@ fn clock_now_ns(clk_id: i32) -> Option<u64> {
 
 /// 时间设置类 syscall 的特权判定 (等价 Linux `CAP_SYS_TIME`)
 fn has_time_privilege() -> bool {
-    crate::framework::credo::get_current_uid() == 0
+    crate::framework::sgeg::get_current_uid() == 0
 }
 
 /// `clock_gettime(clk_id, tp)` 策略

@@ -27,4 +27,4 @@ pub use super::irqline::{InterruptHandler, IrqLine};
 pub use super::page_table::{check_user_boundary, check_wxorx, verify_mapping};
 
 // Phase 1.4 — 调度器
-pub use super::sched::sched_trait::{QueenXScheduler, Scheduler, Task};
+pub use super::sched::sched_trait::{EdgineScheduler, Scheduler, Task};

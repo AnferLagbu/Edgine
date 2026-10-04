@@ -27,7 +27,7 @@ pub use dp::{
     REQUIRED_IOMEM_SIZE, TrainingState, assert_iomem_size_at_least,
 };
 
-/// 初始化显示控制器子系统并注册到 Chitin (MIG-008 接线补齐, DECISION-K 契约)
+/// 初始化显示控制器子系统并注册到 EGDF (MIG-008 接线补齐, DECISION-K 契约)
 ///
 /// services 层权威实现: 本函数仅向 framework 注册"工厂回调" (经
 /// [`crate::framework::driver::register_display_controller_factory`]),
@@ -49,29 +49,29 @@ pub fn display_init() {
 /// 由 framework [`crate::framework::driver::display_probe_controllers`]
 /// 单向拉取时执行, 在 services 侧构造并注册显示设备 (0 unsafe)。
 fn enroll_controllers() {
-    use crate::framework::chitin::{ChitinProto, chitin_register_driver};
+    use crate::framework::egdf::{EGDFProto, egdf_register_driver};
     use alloc::boxed::Box;
     use controller::DisplayManager;
     use dp::DpController;
     use hdmi::HdmiController;
 
-    chitin_register_driver(
+    egdf_register_driver(
         "hdmi0",
-        ChitinProto::Other,
+        EGDFProto::Other,
         None,
         None,
         Box::new(HdmiController::new()),
     );
-    chitin_register_driver(
+    egdf_register_driver(
         "dp0",
-        ChitinProto::Other,
+        EGDFProto::Other,
         None,
         None,
         Box::new(DpController::new(0)),
     );
-    chitin_register_driver(
+    egdf_register_driver(
         "display-manager",
-        ChitinProto::Other,
+        EGDFProto::Other,
         None,
         None,
         Box::new(DisplayManager::new()),

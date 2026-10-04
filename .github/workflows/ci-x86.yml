@@ -35,7 +35,7 @@ jobs:
       - name: cargo check
         working-directory: src/rust
         run: |
-          # 方案 D: 裸机 check 指向 kernel manifest (queenx 壳仅 host); 方案 B: 注入 build-std
+          # 方案 D: 裸机 check 指向 kernel manifest (edgine 壳仅 host); 方案 B: 注入 build-std
           cargo check --manifest-path ../kernel/Cargo.toml --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target x86_64-unknown-none --target-dir ../../other/target 2>&1 | tee ../../other/build/log/cargo_check.txt
           if grep -q "error\[" ../../other/build/log/cargo_check.txt; then
             echo "::error::cargo check 失败"
@@ -286,12 +286,12 @@ jobs:
         working-directory: .
         run: |
           # 仓库根 rustfmt.toml / rust-toolchain.toml 为唯一来源; 三 crate 均纳入门禁,
-          # 防止 kernel 之外 (host-tests / queenx 壳) 的格式漂移重新积累.
+          # 防止 kernel 之外 (host-tests / edgine 壳) 的格式漂移重新积累.
           for manifest in src/kernel/Cargo.toml host-tests/Cargo.toml src/rust/Cargo.toml; do
             echo "=== cargo fmt --check: ${manifest} ==="
             cargo fmt --manifest-path "${manifest}" -- --check
           done
-          echo "✅ cargo fmt --check 通过 (kernel + host-tests + queenx 壳, rustfmt 风格统一)"
+          echo "✅ cargo fmt --check 通过 (kernel + host-tests + edgine 壳, rustfmt 风格统一)"
 
       - name: 上传 clippy 报告
         if: always()

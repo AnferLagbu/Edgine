@@ -78,7 +78,7 @@ B 档 S-6 要回答的是"`destroy_page_table` 的帧该不该走 deferred-free"
 
 ### 2.6 Asterinas 0.18.1 的 fork/COW 共享机制（已逐行核实）
 
-> 本节核实结论**推翻**了此前"帧是唯一所有权、无共享计数"的论断——那是 QueenX `frame.rs` 的形态，不是 Asterinas 的。
+> 本节核实结论**推翻**了此前"帧是唯一所有权、无共享计数"的论断——那是 Edgine `frame.rs` 的形态，不是 Asterinas 的。
 
 **Asterinas 的帧本身就是"pfn 索引槽 + 引用计数"的多所有者共享句柄**：
 
@@ -116,12 +116,12 @@ B 档 S-6 要回答的是"`destroy_page_table` 的帧该不该走 deferred-free"
 
 ### 2.7 `sys_fork` 对 `MmStruct` 的实际处置（已逐行核实）——地址空间对象缺失
 
-**结论：QueenX 不存在"属于某个进程的地址空间对象"。**
+**结论：Edgine 不存在"属于某个进程的地址空间对象"。**
 
 - **`sys_fork` 完全不处置 `MmStruct`**（[proc_ops.rs:786-880](../../src/kernel/framework/proc/proc_ops.rs#L786-L880)）：全函数无 `MmStruct`/`vmas`/`set_current_mm` 的任何操作；处理项只有 cr3（COW 克隆，[:806-808](../../src/kernel/framework/proc/proc_ops.rs#L806-L808)）、rlimit、session/pgid/canary、seccomp、namespace、cgroup、kstack、context ⇒ **子进程继承父的 mm**。
 - **载体是全局单例指针**：`static CURRENT_MM: AtomicPtr<MmStruct>`（[vma.rs:1271-1272](../../src/kernel/framework/mm/vma.rs#L1271-L1272)），非 per-CPU、非进程字段。唯一写入点是 ELF 装载末尾 `vma_set_current_mm(mm)`（[elf/mod.rs:297](../../src/kernel/framework/proc/elf/mod.rs#L297)）。
 - **注释失实**：[vma.rs:1279](../../src/kernel/framework/mm/vma.rs#L1279) 称"CURRENT_MM 是当前 CPU 的 per-CPU 状态指针"，实为**单个** `AtomicPtr`，非按 CPU 索引的数组。
-- **生产路径无创建点**：全仓 `MmStruct::new()` 仅命中 [tests/test_mm.rs:145/364](../../src/kernel/framework/tests/test_mm.rs#L145)、[tests/test_new_features.rs:361](../../src/kernel/framework/tests/test_new_features.rs#L361)；所有生产 `&MmStruct` 均为参数（[elf/mod.rs:116/150](../../src/kernel/framework/proc/elf/mod.rs#L116)、[mmap.rs:77/171](../../src/kernel/services/mm/mmap.rs#L77)、[remap.rs:30](../../src/kernel/services/mm/mremap.rs#L30)、[user_driver.rs:115](../../src/kernel/framework/chitin/user_driver.rs#L115)）或经 `vma_get_current_mm()` 取得。
+- **生产路径无创建点**：全仓 `MmStruct::new()` 仅命中 [tests/test_mm.rs:145/364](../../src/kernel/framework/tests/test_mm.rs#L145)、[tests/test_new_features.rs:361](../../src/kernel/framework/tests/test_new_features.rs#L361)；所有生产 `&MmStruct` 均为参数（[elf/mod.rs:116/150](../../src/kernel/framework/proc/elf/mod.rs#L116)、[mmap.rs:77/171](../../src/kernel/services/mm/mmap.rs#L77)、[remap.rs:30](../../src/kernel/services/mm/mremap.rs#L30)、[user_driver.rs:115](../../src/kernel/framework/egdf/user_driver.rs#L115)）或经 `vma_get_current_mm()` 取得。
 - **所有消费者都经全局入口取 mm**：`mmap`（[mmap.rs:314/341](../../src/kernel/services/mm/mmap.rs#L314)）、`mprotect`（[mprotect.rs:76](../../src/kernel/services/mm/mprotect.rs#L76)）、`brk`（[brk.rs:27/38](../../src/kernel/services/syscall/brk.rs#L27)）、`numa`（[numa.rs:461](../../src/kernel/framework/mm/numa.rs#L461)）、`uffd`（[uffd.rs:376](../../src/kernel/framework/mm/uffd.rs#L376)）、`madvise_mlock`（[madvise_mlock.rs:72-216](../../src/kernel/framework/proc/madvise_mlock.rs#L72)）、`coredump`（[coredump.rs:346](../../src/kernel/framework/proc/coredump.rs#L346)）⇒ **不存在"进程 → mm"的归属边**。
 - **`Process` 结构体无 mm 字段（已逐字段核实）**：`Process` 字段全集为 [process.rs:139-296](../../src/kernel/framework/proc/process.rs#L139-L296)，无 `MmStruct`/`mm`/`mm_ptr` 任何形态的字段；`framework/proc/` 全目录对 `MmStruct|mm_ptr|current_mm` 的 grep 仅命中原子的 `mm::` **模块路径**，无字段级命中。⇒ §2.7 结论（"不存在进程 → mm 归属边"）**反面验证通过**，D-γ 成立。
 
@@ -154,7 +154,7 @@ B 档 S-6 要回答的是"`destroy_page_table` 的帧该不该走 deferred-free"
 
 - `COW_REFS` 的"没坏"是**局部**的：它只覆盖用户数据页，其覆盖边界（不计页表结构帧与 PML4，[vmm_x86_64.rs:1236-1248](../../src/kernel/framework/mm/vmm_x86_64.rs#L1236-L1248)）**正是 G1–G3 无保护的直接原因**。
 - `Process.ref_count` 本应承担"何时销毁页表"，但对 `alloc_kernel_process` 路径恒为 0（§2.5 P1）⇒ 该职责**从未生效**。
-- `Frame`/`FrameAlloc` 并非空脚手架——`BuddyFrameAlloc` **已接线真 PMM**（[frame_alloc.rs:52-99](../../src/kernel/framework/alloc/frame_alloc.rs#L52-L99)），但**QueenX 的** `Frame` 不变式写死为"**同一 phys 至多一个实例**"（[frame.rs:26-27](../../src/kernel/framework/frame.rs#L26-L27)），**无 `Clone`**，其 `ref_count` 语义是"**被映射次数**"（[:88](../../src/kernel/framework/frame.rs#L88)）而非"**持有者数**" ⇒ 结构上**无法表达**"两个进程共享同一 PML4"。（对照：Asterinas 的 `Frame` 恰好相反——`Clone` 即持有计数 +1，见 §2.6。）
+- `Frame`/`FrameAlloc` 并非空脚手架——`BuddyFrameAlloc` **已接线真 PMM**（[frame_alloc.rs:52-99](../../src/kernel/framework/alloc/frame_alloc.rs#L52-L99)），但**Edgine 的** `Frame` 不变式写死为"**同一 phys 至多一个实例**"（[frame.rs:26-27](../../src/kernel/framework/frame.rs#L26-L27)），**无 `Clone`**，其 `ref_count` 语义是"**被映射次数**"（[:88](../../src/kernel/framework/frame.rs#L88)）而非"**持有者数**" ⇒ 结构上**无法表达**"两个进程共享同一 PML4"。（对照：Asterinas 的 `Frame` 恰好相反——`Clone` 即持有计数 +1，见 §2.6。）
 - 生产页表路径（`cr3` 裸 u64、`vmm_create_user_page_table`、`destroy_page_table`）**完全绕过以上三者**，直接走裸 phys + PMM（PMM 无 per-frame 计数）。
 
 ⇒ 现状是**三条各自不完整的所有权机制并存，且生产路径一条都不用**。D1 会造出**第四条**并行机制，加重病态，故撤回。
@@ -181,7 +181,7 @@ B 档 S-6 要回答的是"`destroy_page_table` 的帧该不该走 deferred-free"
 
 **裁定依据（三项均已核实）**：
 
-1. **实际调用面**：QueenX 的连续多帧入口是 `pmm_alloc_pages(count)` / `pmm_free_pages(addr, count)`（[api.rs:113-150](../../src/kernel/framework/mm/api.rs#L113-L150)）。生产调用者全集为：
+1. **实际调用面**：Edgine 的连续多帧入口是 `pmm_alloc_pages(count)` / `pmm_free_pages(addr, count)`（[api.rs:113-150](../../src/kernel/framework/mm/api.rs#L113-L150)）。生产调用者全集为：
    - [memory_allocator.rs:61/99/111](../../src/kernel/memory_allocator.rs#L61)（Rust 全局分配器后端）
    - [slab.rs:632/661](../../src/kernel/framework/mm/slab.rs#L632)（slab 页）
    - [iobuf.rs:65/117](../../src/kernel/framework/iobuf.rs#L65)（IO 缓冲）
@@ -192,7 +192,7 @@ B 档 S-6 要回答的是"`destroy_page_table` 的帧该不该走 deferred-free"
 3. **其他内核的处理**：
    - **Asterinas**：逐页计数。`Segment`（连续帧句柄）在 `Drop`/`Clone`/`slice` 中一律 `step_by(PAGE_SIZE)` 逐页 inc/dec（[segment.rs:48-63](../../other/asterinas-0.18.1/ostd/src/mm/frame/segment.rs#L48-L63)/[:177-182](../../other/asterinas-0.18.1/ostd/src/mm/frame/segment.rs#L177-L182)），不做 head 归一。其可行前提是元数据本就是**每页一槽**的 `MetaSlot` 数组（[meta.rs:107](../../other/asterinas-0.18.1/ostd/src/mm/frame/meta.rs#L107)）。
    - **Linux**：compound page —— `order > 0` 分配只维护 **head page** 的 `_refcount`，tail page 以 `PageTail` 归一到 head，`get_page`/`put_page` 一律作用于 head。这是为"整块不可分割"语义（hugetlb 等）服务的，代价是 tail 页无独立计数。
-4. **QueenX 的元数据现实**：`buddy_meta` 已存在且是**按页 1 字节**，但该字节已被 buddy 阶数语义占用（`0xFF` = 已分配，`0..=MAX_BUDDY_ORDER` = 空闲块头阶数，[pmm.rs:177-180](../../src/kernel/framework/mm/pmm.rs#L177-L180)），**无法复用为计数槽** ⇒ 计数面须独立按 pfn 索引的数组。
+4. **Edgine 的元数据现实**：`buddy_meta` 已存在且是**按页 1 字节**，但该字节已被 buddy 阶数语义占用（`0xFF` = 已分配，`0..=MAX_BUDDY_ORDER` = 空闲块头阶数，[pmm.rs:177-180](../../src/kernel/framework/mm/pmm.rs#L177-L180)），**无法复用为计数槽** ⇒ 计数面须独立按 pfn 索引的数组。
 
 **裁定语义（本轮采用）**：
 
@@ -201,9 +201,9 @@ B 档 S-6 要回答的是"`destroy_page_table` 的帧该不该走 deferred-free"
 - `frame_inc` / `frame_dec` **只接受单页帧**：传入连续块的非首帧按契约违反处理（文档契约 + `debug_assert`）。
 - 共享方（COW 用户页、`CLONE_VM` 的页表帧）经 `frame_inc` 表达持有；**不存在"共享连续块"的调用点**（依据第 1 项核实结论）。
 
-**与 Asterinas 的收敛路径**：差异仅在"连续块是否逐页计数"，而 QueenX 当前无该需求。若未来出现大页共享（如透明大页拆分共享），把语义扩展为逐页即可，**契约层（`frame_inc`/`frame_dec` 入口）不变**，属局部扩展。
+**与 Asterinas 的收敛路径**：差异仅在"连续块是否逐页计数"，而 Edgine 当前无该需求。若未来出现大页共享（如透明大页拆分共享），把语义扩展为逐页即可，**契约层（`frame_inc`/`frame_dec` 入口）不变**，属局部扩展。
 
-**与 buddy 合并/分裂的交互**：因连续块不逐页计数，buddy 在块内合并/分裂时**不触碰计数**（块首计数的存在即保证该块在 `free_pages` 前不会被 buddy 视为完全空闲并合并走）——这与 Linux 的 head 计数在语义上一致，差别只是 QueenX 不做 tail 归一。
+**与 buddy 合并/分裂的交互**：因连续块不逐页计数，buddy 在块内合并/分裂时**不触碰计数**（块首计数的存在即保证该块在 `free_pages` 前不会被 buddy 视为完全空闲并合并走）——这与 Linux 的 head 计数在语义上一致，差别只是 Edgine 不做 tail 归一。
 
 ## 4. 施工条目（已裁定，按序开工）
 
@@ -286,7 +286,7 @@ B 档 S-6 要回答的是"`destroy_page_table` 的帧该不该走 deferred-free"
 - **注入 1**：使 `frame_inc` 空转（不计数，即让 CLONE_VM 共享登记失效），确认门槛 7 中"共享者仍运行"用例**必须 FAIL**；验后完全还原。
   - **实测（有判别力）**：注入后 `make test-unit` 报 `❌ TESTS FAILED (QEMU exit: 35)`，`505 passed / 1 FAILED`，失败行为 `FAIL: two holders expected after CLONE_VM-style registration`（即 225 号用例 `Proc::cr3_shared_owner_exit_keeps_table`）⇒ 判别力成立。还原后复跑全绿。该轮总用例数为 505（加入本轮注入 2 载体后为 509）；本项未随本轮复跑，判别力结论不变。
 - **注入 2**：恢复 `unwrap_or(parent_cr3)` 回退，确认门槛 7 的 COW 失败用例**必须 FAIL**；验后完全还原。
-  - **载体**：注入面 = PMM 内 `#[cfg(any(test, feature = "kernel_test"))]` 门控的**确定性失败开关**（[pmm.rs:906-932](../../src/kernel/framework/mm/pmm.rs#L906-L932) `arm_alloc_failure(skip)` / `disarm_alloc_failure`，生产二进制不含该路径；**未接 `barrier/fault_inject`**，简化依据见 §6.1）。该开关只拦 `alloc_page`，故 `sys_fork` 内子进程描述符分配（走 `alloc_pages`/slab）不消耗注入计数，4 轮 `skip=0..3` 精确命中克隆的四个页表帧分配点。回归用例 = [test_proc.rs:392-486](../../src/kernel/framework/tests/test_proc.rs#L392-L486) `Proc::fork_cow_failure_rolls_back`。
+  - **载体**：注入面 = PMM 内 `#[cfg(any(test, feature = "kernel_test"))]` 门控的**确定性失败开关**（[pmm.rs:906-932](../../src/kernel/framework/mm/pmm.rs#L906-L932) `arm_alloc_failure(skip)` / `disarm_alloc_failure`，生产二进制不含该路径；**未接 `freg/fault_inject`**，简化依据见 §6.1）。该开关只拦 `alloc_page`，故 `sys_fork` 内子进程描述符分配（走 `alloc_pages`/slab）不消耗注入计数，4 轮 `skip=0..3` 精确命中克隆的四个页表帧分配点。回归用例 = [test_proc.rs:392-486](../../src/kernel/framework/tests/test_proc.rs#L392-L486) `Proc::fork_cow_failure_rolls_back`。
   - **实测（有判别力且已复验）**：注入态（临时恢复 `unwrap_or(parent_cr3)`）→ `make test-unit` 报 `508 passed, 1 FAILED`，**唯一失败即本用例**，失败行 `FAIL: 克隆失败时 sys_fork 必须返回 0 (不得静默共享父 cr3)`；还原态 → `Registered 509 test cases` / `ALL 509 TESTS PASSED (0 skipped)`；`grep -rn "TEMP-INJECT"` 于 `src/` 返回空（其余命中仅为说明注入语义的注释文本）。依据：**载体未建立前不得标注为通过**；本轮载体建立并复验后登记为通过（§6 对应登记项已闭合）。
 - 两项注入的还原状态须以 `git diff` 复核，禁止残留。
 
@@ -301,7 +301,7 @@ B 档 S-6 要回答的是"`destroy_page_table` 的帧该不该走 deferred-free"
 - **~~`munmap` 不拆除 PTE、不归还数据帧~~（已由 `munmap-protect-pml4.md` 承接，描述已订正）**：[mmap.rs](../../src/kernel/services/mm/mmap.rs) 的 `munmap_syscall` 仅 `remove_range` + `release_file_pages`（`pcache_put`），**不调用 `unmap_page_in_table`** ⇒ 数据帧的"拆除侧 dec"在 `munmap` 路径上不发生；当前仅 `destroy_page_table`（进程销毁）承担该侧注销。属既有缺口，与 D-9 的规则 3 无关（未拆除即无 dec，不产生双重注销）。**承接结果**：调研订正——拆除调用链**已存在**（`remove_range` → `unmap_vma_pages` → `vmm.unmap_page`），真实缺陷是**目标表错位**（落到 `KERNEL_PML4`，用户 PTE 悬留且帧不归还）；该工程已改为 cr3 显式变体（D-2/D-3），判别力由 `mm::vma_teardown::remove_range_targets_user_table` 承担。
 - **`user_proc_load_elf` 失败回滚路径的调用顺序（本轮核实，只报不动）**：[proc_ops.rs:546](../../src/kernel/framework/proc/proc_ops.rs#L546) 先 `remove_and_free`（触发 `Process::drop` ⇒ 销毁页表），再于 [proc_ops.rs:550](../../src/kernel/framework/proc/proc_ops.rs#L550) 调 `destroy_by_pid`（其内 `virt_to_phys` 作用于**已销毁**的页表）。D-5 生效后该路径顺序的行为面首次真正被执行；因 `destroy_page_table` **不清空 PTE 条目**（仅遍历 defer 释放帧），行为与 D-5 之前等价 ⇒ **非本轮引入的缺陷**，属既有脆弱点（依赖"销毁后 PTE 未被覆写"这一未成文假设）。
 - P1/P2 的完整影响面（其他 `alloc_zeroed` 路径是否同样漏初始化 Atomic 字段）——**未核实**。
-- ~~**注入 2 的载体缺口**~~：**本轮闭合**——注入面取"PMM 内 `#[cfg(any(test, feature = "kernel_test"))]` 门控的确定性失败开关"（`arm_alloc_failure` / `disarm_alloc_failure`），**未接 `barrier/fault_inject`**；回归载体 [test_proc.rs](../../src/kernel/framework/tests/test_proc.rs) `Proc::fork_cow_failure_rolls_back` 已建立，并完成注入态 FAIL / 还原态全绿的双向复验（实测见 §5.2）。
+- ~~**注入 2 的载体缺口**~~：**本轮闭合**——注入面取"PMM 内 `#[cfg(any(test, feature = "kernel_test"))]` 门控的确定性失败开关"（`arm_alloc_failure` / `disarm_alloc_failure`），**未接 `freg/fault_inject`**；回归载体 [test_proc.rs](../../src/kernel/framework/tests/test_proc.rs) `Proc::fork_cow_failure_rolls_back` 已建立，并完成注入态 FAIL / 还原态全绿的双向复验（实测见 §5.2）。
 - ~~`Makefile` `test-host` 末尾 `; true`（fail-open，D-9-4）~~：**本轮闭合**，含同源项 [Makefile.ci](../../Makefile.ci) 的 `ci-test-host`（原 `| tee` 无 pipefail）。两处配方均改为"日志落盘 → 取 `cargo test` 自身 `status` → `cat` 日志 → `exit $status`"；负向验证（故意使 `cargo` 失败：坏 `CARGO_TARGET_DIR`）均得 `EXIT=2`，修复前形态恒为 0。**未采用 `set -o pipefail`**：`SHELL` 未设置 ⇒ make 默认 `/bin/sh`（dash）不支持该选项。
 - **`make test-unit` 自身不传播 QEMU 退出码（本轮新发现，只报不动）**：[Makefile:449-483](../../Makefile#L449-L483) 的 `test-unit` recipe 以 `if/elif … echo` 仅打印 `✅/❌`，**末尾命令是 `tail`/`if`** ⇒ 测试失败（`exit_code=35`）时 make 仍返回 0。与上一条同源但**独立**，且与 cr3 工程无关，故本轮仅登记不修；判读须结合串口日志的 `RESULT: ALL N TESTS PASSED` 行。
 - **`make test-unit` 打印空时间戳路径（本轮新发现，只报不动）**：[Makefile:479](../../Makefile#L479) 的 `@echo "  Report: tests/reports/unit_test_$${timestamp}.log"` 为独立 recipe 行（每行独立 shell），`timestamp` 在该行未定义 ⇒ 输出 `unit_test_.log`。
@@ -312,7 +312,7 @@ B 档 S-6 要回答的是"`destroy_page_table` 的帧该不该走 deferred-free"
 - [pmm.rs:1053-1055](../../src/kernel/framework/mm/pmm.rs#L1053-L1055)（`alloc_pages`）：**连续多帧块的块首计数未实装**——影响面为 `order > 0` 的块内页计数恒 0、其归还/共享不经计数面（与既有语义一致）；需扩展时机为出现大页共享时按逐页计数展开，契约入口 `frame_inc`/`frame_dec` 不变。依据 §3.2 裁定 2。
 - [vmm_x86_64.rs:2180-2182](../../src/kernel/framework/mm/vmm_x86_64.rs#L2180-L2182)（`release_lock` 埋点）：只统计"释放帧总数"聚合量，不区分批次/来源；需扩展时机为排查需定位滞留来源时改分路径计数。
 - **拆除侧的大页 leaf 不参与帧计数（D-9 段，契约推论非实现简化）**：`unmap_page_in_table`（[vmm_x86_64.rs:1253-1270](../../src/kernel/framework/mm/vmm_x86_64.rs#L1253-L1270) 的 1GB/2MB 分支）与 `destroy_page_table`（仅遍历 4KB USER leaf）对 huge leaf **不 `frame_dec`**。影响面：大页映射的拆除不递减计数（与"大页未计数"对称，不产生"帧永不归零"的泄漏）；需扩展时机为大页共享场景落地时按 §3.2 裁定 2 逐页展开——依据同上条 `alloc_pages` 简化点，仅计数侧对称，本处以契约推论记录、不再重复置代码标记。
-- **分配失败注入实现为 PMM 内的确定性进程内开关（登记项 1 载体段）**：[pmm.rs:901-932](../../src/kernel/framework/mm/pmm.rs#L901-L932) 的 `arm_alloc_failure(skip)` / `disarm_alloc_failure` / `alloc_fail_should_fail`，以 `#[cfg(any(test, feature = "kernel_test"))]` 门控使生产二进制不含该路径；**未接入 `barrier/fault_inject`**（其 `maybe_inject_fault` 仅被 `barrier/recoverable.rs` 消费，且 `fault_injection` feature 仅在 [Makefile:222](../../Makefile#L222) 的 chaos 构建面启用）。影响面：只能构造 `alloc_page` 侧失败，`alloc_pages`/slab 侧失败不可注入——对本判别目标充分（克隆中途四个失败点全部走 `alloc_page`）；需扩展时机为需要在 chaos/生产构建下做可配置故障注入时，改走 `barrier` 域并与 chaos 构建面合并。
+- **分配失败注入实现为 PMM 内的确定性进程内开关（登记项 1 载体段）**：[pmm.rs:901-932](../../src/kernel/framework/mm/pmm.rs#L901-L932) 的 `arm_alloc_failure(skip)` / `disarm_alloc_failure` / `alloc_fail_should_fail`，以 `#[cfg(any(test, feature = "kernel_test"))]` 门控使生产二进制不含该路径；**未接入 `freg/fault_inject`**（其 `maybe_inject_fault` 仅被 `freg/recoverable.rs` 消费，且 `fault_injection` feature 仅在 [Makefile:222](../../Makefile#L222) 的 chaos 构建面启用）。影响面：只能构造 `alloc_page` 侧失败，`alloc_pages`/slab 侧失败不可注入——对本判别目标充分（克隆中途四个失败点全部走 `alloc_page`）；需扩展时机为需要在 chaos/生产构建下做可配置故障注入时，改走 `freg` 域并与 chaos 构建面合并。
 - **`cow.rs` 克隆两阶段化（登记项 1 载体段，契约推论非实现简化）**：[cow.rs:60-232](../../src/kernel/framework/mm/cow.rs#L60-L232) 把"分配 + 改父页表 + 登记持有者"重排为"**阶段 1 只建结构**（页表帧分配 + leaf PTE 原值复制，不改父页表、不 `frame_inc`）/ **阶段 2 只改 PTE 与计数**（清 WRITABLE + `frame_inc`，无分配）"，使阶段 2 不可能失败 ⇒ 失败回滚只需 [free_child_page_table_tree](../../src/kernel/framework/mm/cow.rs#L348) 释放已建**页表结构帧**。影响面：回滚面**不含 leaf 数据帧**（阶段 1 既未改父页表也未 `frame_inc`，无数据帧需回滚）；需扩展时机为阶段 2 若引入可失败操作（如惰性叶子复制）时，须补"已 `frame_inc` 的计数回退 + PTE 内容回退"。
 
 ## 7. 裁定结果（用户已裁定）
@@ -398,7 +398,7 @@ B 档 S-6 要回答的是"`destroy_page_table` 的帧该不该走 deferred-free"
 - **`Frame` 现语义**（[frame.rs:25-109](../../src/kernel/framework/frame.rs#L25-L109)）：持 `phys` / `ref_count: AtomicU32` / `order` / `meta`；`order` 决定 `size() = PAGE_SIZE << order`；`as_virt_ptr()` = `phys_to_virt`；**零生产调用者**，唯一使用者为 host 维 [dma_stream.rs](../../host-tests/src/dma_stream.rs)（以 `from_raw` 构造"纯算术载体"帧，含 order 17 / MMIO 地址 / 1000 次循环，依赖"drop 不触碰 PMM"）。
 - **`BuddyFrameAlloc` 阶数缺陷（D3a 必须一并修正）**：[frame_alloc.rs:64-76](../../src/kernel/framework/alloc/frame_alloc.rs#L64-L76) 的 `alloc_pages(count)` 把 `order` 硬编码为 `9`（`count <= 512`），而 `pmm::free_pages(addr, count)` 用 `count_to_order(count)`（[pmm.rs:1143-1150](../../src/kernel/framework/mm/pmm.rs#L1143-L1150)）⇒ 非 512 页的块将按错误阶释放（Frame 成为真实属主后即"释放面阶数不一致"）。修法：以 `count.next_power_of_two()` 作为请求页数传给 `pmm_alloc_pages_phys`（使 pmm 内部 `count_to_order` 与 `Frame.order` 严格同值），`DMA_MAX` 面维持既有上限判据。
 - **host 维门控先例**：`sync/spinlock.rs:317-325` 已用 `#[cfg(feature = "host-test")]` 把"host 无中断语义"的中断禁用降为 no-op。D3a 的 `Drop` 归还路径按同型处理（host 构建不承担物理归还，测试帧为算术载体）——**不是平行实现**，与既有先例同构。
-- **旁路影响（登记，不改）**：新路径不再经 `alloc_coherent` ⇒ 这些缓冲不再计入 `DmaEngine.stats`，也不再由 `DmaEngine::shutdown()` 释放（改由句柄 RAII 接管）；`nvme_alloc_io_queues`（[mod.rs:264](../../src/kernel/framework/driver/storage/mod.rs#L264)）、`ahci_alloc_cmd_lists`（[mod.rs:585-606](../../src/kernel/framework/driver/storage/mod.rs#L585-L606)）与 e1000 / virtio / NestFS 仍走 `alloc_coherent`，本轮不动。
+- **旁路影响（登记，不改）**：新路径不再经 `alloc_coherent` ⇒ 这些缓冲不再计入 `DmaEngine.stats`，也不再由 `DmaEngine::shutdown()` 释放（改由句柄 RAII 接管）；`nvme_alloc_io_queues`（[mod.rs:264](../../src/kernel/framework/driver/storage/mod.rs#L264)）、`ahci_alloc_cmd_lists`（[mod.rs:585-606](../../src/kernel/framework/driver/storage/mod.rs#L585-L606)）与 e1000 / virtio / UNKFS 仍走 `alloc_coherent`，本轮不动。
 - **同语义面的第三份实现（登记，不合并）**：[virtio/queue.rs:283](../../src/kernel/framework/driver/virtio/queue.rs#L283) 的 `DmaBuffer`（自有 `Drop`，virtio blk/net 生产在用）与 `DmaStream` 属同一语义面；本轮按 §12.2 不做合并，登记为预存问题。
 - **aarch64 现状**（D3b 依据）：[vmm_aarch64.rs:677-721](../../src/kernel/framework/mm/vmm_aarch64.rs#L677-L721) 的 `unmap_page_in_table` 已执行 `dsb ishst` + `tlbi vaae1is` + `dsb ish` + `isb`（且注释明确"必须在释放页表页前执行"），但 leaf 不 `frame_dec`；[:1075-1124](../../src/kernel/framework/mm/vmm_aarch64.rs#L1075-L1124) 的 `destroy_page_table` 只走 L0→L1→L2、在 L2 处把 `0b11` 当表指针交给 `free_table`（[:345-349](../../src/kernel/framework/mm/vmm_aarch64.rs#L345-L349) 直调 `get_pmm().free_page`），**完全不遍历 L3 leaf ⇒ 用户数据帧在销毁路径上零释放**（既有缺口，非本轮引入）。
 - **aarch64 +1 侧失效（D3b 补调研，裁定 6 的实测依据）**：[cow.rs](../../src/kernel/framework/mm/cow.rs) 的 `clone_user_page_table_cow_inner` 阶段 2 原用 `let flags = parent_pte & 0xFFF; if (flags & 2) == 0 || (flags & 4) == 0 { return; }` 过滤 leaf —— 该判据是 `x86_64` PTE 语义（bit1 = WRITABLE、bit2 = USER）。aarch64 描述符 bits[1:0] = `0b11`（页描述符）且 bit2 为 MAIR 属性索引位（用户页用索引 4 ⇒ bit2 = 0），故 `flags & 4` **恒为 0** ⇒ aarch64 从不 `frame_inc`、也不清写位（fork 实为"无 COW 的共享写"）。两面同集前若直接补 dec，必然 UAF。

@@ -13,7 +13,7 @@
 //! - [`lstat_syscall`] 不跟随符号链接
 //! - [`fstat_syscall`] 按 FD 查询
 
-use crate::framework::credo;
+use crate::framework::sgeg;
 use crate::framework::syscall::Errno;
 use crate::framework::syscall::raw;
 use crate::services::fs::VfsStat;
@@ -247,7 +247,7 @@ pub fn utimensat_syscall(dirfd: i32, path_ptr: u64, times_ptr: u64, _flags: i32)
     let Ok(path) = crate::framework::mm::copy_user::copy_string_from_user(path_ptr, 4096) else {
         return Errno::EFAULT.as_ret();
     };
-    let pwm = crate::framework::credo::pwm_get_current();
+    let pwm = crate::framework::sgeg::pwm_get_current();
     let r = crate::services::fs::vfs_utimensat_safe(&path, atime, mtime, pwm);
     if r < 0 { Errno::EIO.as_ret() } else { 0 }
 }
@@ -262,5 +262,5 @@ pub fn utimensat_syscall(dirfd: i32, path_ptr: u64, times_ptr: u64, _flags: i32)
 )]
 /// 取当前进程凭证,无会话时直接返回 EACCES (历史硬编码 `TEST_PWM` 路径已弃用)。
 fn current_pwm() -> Result<u64, Errno> {
-    Ok(credo::api::pwm_get_current())
+    Ok(sgeg::api::pwm_get_current())
 }

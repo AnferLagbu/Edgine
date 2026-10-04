@@ -1,4 +1,4 @@
-//! 磁盘准备: 分区表创建、FAT16/NestFS 格式化、引导器安装
+//! 磁盘准备: 分区表创建、FAT16/UNKFS 格式化、引导器安装
 //!
 //! 任意步骤失败即中止，避免在半初始化的磁盘上继续操作。
 
@@ -9,7 +9,7 @@ pub fn execute(disk_id: u32, sectors: u64) -> i32 {
     println(""); println("--- Step 2: Disk Partitioning & Formatting ---"); println("");
 
     // 2a. 分区表
-    print("  Creating partition table (FAT16 boot + NestFS)...");
+    print("  Creating partition table (FAT16 boot + UNKFS)...");
     let r = sys::disk_partition(disk_id, sectors);
     if r != 0 {
         print(" FAILED (error "); print_dec(r as i64); println(")");
@@ -28,8 +28,8 @@ pub fn execute(disk_id: u32, sectors: u64) -> i32 {
     }
     println(" [OK]");
 
-    // 2c. NestFS 系统分区
-    print("  Formatting system partition (NestFS)...");
+    // 2c. UNKFS 系统分区
+    print("  Formatting system partition (UNKFS)...");
     let r = sys::disk_format(disk_id);
     if r != 0 {
         print(" FAILED (error "); print_dec(r as i64); println(")");

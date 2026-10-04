@@ -9,7 +9,7 @@
 //! ## 架构 (§6.4 直接方案 B: services 权威)
 //!
 //! ```text
-//! Chitin 设备表 (chitin_register_driver)
+//! EGDF 设备表 (egdf_register_driver)
 //!   └── services::driver::char::pl011::Pl011Driver
 //!         └── framework::iomem::IoMem (MMIO 安全代理)
 //!               └── 高半区别名 (phys_to_virt)
@@ -18,7 +18,7 @@
 //! ## 与早期控制台的关系
 //!
 //! framework `arch::uart` 在 boot 阶段已初始化 PL011 供早期输出 (直接 MMIO, 属机制)。
-//! 本驱动负责 Chitin 枚举注册, 基址经
+//! 本驱动负责 EGDF 枚举注册, 基址经
 //! [`pl011_phys_base`](crate::framework::driver::pl011_phys_base) 安全面获取
 //! (启动期可被设备树覆盖); `init()` 幂等检测 UARTCR.UARTEN, 已启用则跳过重复初始化。
 
@@ -82,7 +82,7 @@ impl Pl011Driver {
 
     /// 读取单个字节 (阻塞, 等待 RX FIFO 非空)。
     ///
-    /// SIMPLIFIED: Chitin char 读写路径当前无生产消费者 (休眠), 本方法暂作为
+    /// SIMPLIFIED: EGDF char 读写路径当前无生产消费者 (休眠), 本方法暂作为
     /// 公共 API 供后续 CharOps 安全桥接入, 未被内部调用。
     pub fn read_byte(&self) -> u8 {
         while self.regs.read_u32(UARTFR) & UARTFR_RXFE != 0 {

@@ -65,7 +65,7 @@ NC='\033[0m' # No Color
 print_banner() {
     echo -e "${BLUE}"
     echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║           QueenX - QEMU Debug Environment           ║"
+    echo "║           Edgine - QEMU Debug Environment           ║"
     echo "╠══════════════════════════════════════════════════════════╣"
     echo "║  Kernel: ${KERNEL_IMG:0:20}...                          ║"
     echo "║  Memory: ${MEMORY_SIZE}MB                                        ║"
@@ -156,7 +156,7 @@ generate_gdb_init() {
     local GDB_INIT=".gdbinit.antx"
     
     cat > "$GDB_INIT" << EOF
-# QueenX GDB Configuration
+# Edgine GDB Configuration
 set architecture i386:x86-64
 target remote localhost:$GDB_PORT
 
@@ -174,7 +174,7 @@ set print array-indexes on
 
 echo \\n
 echo ╔════════════════════════════════════════╗\\n
-echo ║   QueenX - GDB Debug Session      ║\\n
+echo ║   Edgine - GDB Debug Session      ║\\n
 echo ╚════════════════════════════════════════╝\\n
 echo \\n
 echo Ready to debug. Use 'c' to continue.\\n
@@ -224,7 +224,7 @@ main() {
 # ============================================================================
 
 show_help() {
-    echo "QueenX QEMU Debug Script"
+    echo "Edgine QEMU Debug Script"
     echo ""
     echo "Usage: $0 [OPTIONS]"
     echo ""

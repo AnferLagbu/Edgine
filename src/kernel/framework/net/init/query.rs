@@ -89,7 +89,7 @@ pub(crate) fn ipv4_from_atomic(v: u32) -> Option<[u8; 4]> {
 /// 主动触发网络初始化 (非阻塞; 失败返回 false)
 ///
 /// # 行为
-/// - 状态机 = Uninitialized 时, 直接返回 false (需要先有 chitin 设备注册)
+/// - 状态机 = Uninitialized 时, 直接返回 false (需要先有 egdf 设备注册)
 /// - 状态机 = HardwareProbed/InterfaceReady 时, 启动 DHCP 握手
 /// - 状态机 = `FullyInitialized` 时, 直接返回 true
 /// - 状态机 = Failed 时, 不重试, 返回 false
@@ -147,7 +147,7 @@ pub fn shutdown_network() {
     raw::klog_msg("Network shutdown");
 }
 
-/// 重置网络栈状态 (供栏栈 BHR / 异常恢复使用)。
+/// 重置网络栈状态 (供FREG BHR / 异常恢复使用)。
 ///
 /// # Safety
 /// - 必须持有 `NET_LOCK` (内部获取)。

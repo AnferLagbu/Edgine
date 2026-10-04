@@ -46,7 +46,7 @@ pub fn memfd_create_syscall(_name_ptr: u64, flags: u32) -> Result<usize, Errno> 
     let open_file = OpenFile::new_anonymous(
         inode,
         0x0003, // O_RDWR
-        crate::framework::credo::session::get_current_pwm(),
+        crate::framework::sgeg::session::get_current_pwm(),
         0, // File
     );
 

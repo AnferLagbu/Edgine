@@ -1259,20 +1259,20 @@ impl Scheduler {
         let new_tick = TICK_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
         let per_cpu = per_cpu_for(cpu_id as u32);
 
-        crate::framework::barrier::RECOVERY_MANAGER
+        crate::framework::freg::RECOVERY_MANAGER
             .lock()
             .tick(new_tick);
 
-        if crate::framework::barrier::check_and_clear_bsr_escalation() {
-            crate::framework::barrier::reset::config::set_reset_in_progress(true);
-            crate::framework::barrier::reset::config::set_current_layer(
-                crate::framework::barrier::reset::config::RecoveryLayer::Layer2,
+        if crate::framework::freg::check_and_clear_bsr_escalation() {
+            crate::framework::freg::reset::config::set_reset_in_progress(true);
+            crate::framework::freg::reset::config::set_current_layer(
+                crate::framework::freg::reset::config::RecoveryLayer::Layer2,
             );
-            crate::framework::barrier::reset::bsr::freeze_all_domains();
-            crate::framework::barrier::reset::bsr::rollback_to_init();
-            crate::framework::barrier::reset::bsr::reset_devices();
-            crate::framework::barrier::reset::bsr::unfreeze_all_domains();
-            crate::framework::barrier::reset::bsr::clear_panic_state();
+            crate::framework::freg::reset::bsr::freeze_all_domains();
+            crate::framework::freg::reset::bsr::rollback_to_init();
+            crate::framework::freg::reset::bsr::reset_devices();
+            crate::framework::freg::reset::bsr::unfreeze_all_domains();
+            crate::framework::freg::reset::bsr::clear_panic_state();
         }
 
         crate::framework::proc::oomd::OOMD.tick();
@@ -1543,7 +1543,7 @@ impl Scheduler {
             return true;
         }
         if (cpu_id as usize) >= 64 {
-            return true; // QueenX 当前 cpuset 是 64-bit
+            return true; // Edgine 当前 cpuset 是 64-bit
         }
         let allowed = PROCESS_TABLE
             .with_process(pid, |p| p.cpuset_allowed.load(Ordering::Acquire))

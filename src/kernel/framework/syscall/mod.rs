@@ -9,16 +9,16 @@ pub mod madvise_mlock;
 pub mod signalfd;
 pub mod timerfd;
 
-/// Syscall 模块 — `QueenX` 原生系统调用分发
+/// Syscall 模块 — `Edgine` 原生系统调用分发
 ///
 /// 编号空间 (DECISION-037, 2026-08-03):
 ///   0-299   : 直接使用 Linux 标准 syscall 编号 (POSIX/syscall 透明兼容)
 ///   300-399 : 保留
-///   400-499 : Credo 私有 syscall
-///   500-599 : QueenX 自由 syscall (QX_*) — 进程 / 内存 / 文件基础
-///   600-699 : QueenX 自由 syscall (QX_*) — 网络 / IPC
-///   700-799 : QueenX 自由 syscall (QX_*) — 设备 / 系统
-///   800-899 : QueenX 自由 syscall (QX_*) — 扩展
+///   400-499 : SGEG 私有 syscall
+///   500-599 : Edgine 自由 syscall (EG_*) — 进程 / 内存 / 文件基础
+///   600-699 : Edgine 自由 syscall (EG_*) — 网络 / IPC
+///   700-799 : Edgine 自由 syscall (EG_*) — 设备 / 系统
+///   800-899 : Edgine 自由 syscall (EG_*) — 扩展
 ///
 /// 0-299 直接走 Linux ABI, 无翻译层. 500+ 与 Linux 错开, 避免与未来 Linux 新增 syscall 冲突.
 ///
@@ -26,10 +26,10 @@ pub mod timerfd;
 ///
 /// 调用链: 中断入口 → services 策略分发 (优先) → 返回 ENOSYS 时 framework 回退层兜底.
 ///
-/// - **回退层内容限定**: 仅允许 "框架机制资源 (QX_*) + 未迁移项 (SYS_*/CREDO/FB) + ENOSYS 哨兵",
+/// - **回退层内容限定**: 仅允许 "框架机制资源 (EG_*) + 未迁移项 (SYS_*/SGEG/FB) + ENOSYS 哨兵",
 ///   **禁止新增与 services 重叠的真实实现分支** (重叠分支 = services 优先命中下的死代码).
 /// - **新 syscall 归属规范**: Linux 标准编号 (`SYS_*`) → 实现在 services;
-///   QX 独有编号 (`QX_*`) 按"机制资源 / 处理策略"二分归属:
+///   EG 独有编号 (`EG_*`) 按"机制资源 / 处理策略"二分归属:
 ///   框架持有的机制资源 (页表 / 中断 / 上下文 / 硬件原语) 留 framework 回退层;
 ///   仅做参数校验 + 编排的处理策略 (可 0-unsafe 且不直接调用 framework 内部机制) 迁 services.
 /// - 编号常量唯一定义于 `types.rs` (B09-17 归位), 禁止在其他文件重复定义.
@@ -87,7 +87,7 @@ pub unsafe extern "C" fn syscall_init() {
 //
 // 设计目的：
 // 1. 隔离 unsafe 到单一文件作用域，降低 sys_* 业务函数的认知负载
-// 2. 复用 services/credo、services/barrier 的"raw 子模块"模式
+// 2. 复用 services/sgeg、services/freg 的"raw 子模块"模式
 // 3. 为 Phase 2.5.1 的 60+ unsafe 函数提供统一的 SAFETY 注释入口
 //
 // 调用契约：

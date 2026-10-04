@@ -5,11 +5,11 @@
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `Entry` / `AliasRegistry` (Vec 版) / `MAX_MMIO_MAPPINGS` 平行实现,
 //! 以及 `#![allow(dead_code)]` (F9 违规), 改引内核真实源码:
-//! - `queenx::kernel::framework::iomem::IoMem` (pub 安全代理, 内部驱动全局
+//! - `edgine::kernel::framework::iomem::IoMem` (pub 安全代理, 内部驱动全局
 //!   `ALIAS_REGISTRY` — 内核 `AliasRegistry` 为私有结构, host 经 `IoMem` 公共
 //!   API 间接验证其固定数组 `[(u64,usize,&'static str); MAX_MMIO_MAPPINGS]` 语义)
-//! - `queenx::kernel::framework::constants::limits::MAX_MMIO_MAPPINGS` (64)
-//! - `queenx::kernel::framework::mm::PhysAddr`
+//! - `edgine::kernel::framework::constants::limits::MAX_MMIO_MAPPINGS` (64)
+//! - `edgine::kernel::framework::mm::PhysAddr`
 //!
 //! 内核 `IoMem::new` 为 `unsafe fn`, SAFETY 契约要求 phys 指向有效 MMIO 区域;
 //! 本测试仅验证别名注册表算法, **从不**对返回句柄做读/写, 因此伪造 phys 地址
@@ -28,9 +28,9 @@
 //!
 //! 注: 完整验证还需 QEMU 端运行, 见 `scripts/qemu_boot_test.sh`.
 
-use queenx::kernel::framework::constants::limits::MAX_MMIO_MAPPINGS;
-use queenx::kernel::framework::iomem::IoMem;
-use queenx::kernel::framework::mm::PhysAddr;
+use edgine::kernel::framework::constants::limits::MAX_MMIO_MAPPINGS;
+use edgine::kernel::framework::iomem::IoMem;
+use edgine::kernel::framework::mm::PhysAddr;
 
 /// 内核注册表为全局 `ALIAS_REGISTRY` (各测试并行共享), 本文件全部注册表用例
 /// 合并为单个顺序测试函数, 且每个小节用独立作用域让 `IoMem` Drop 及时释放,

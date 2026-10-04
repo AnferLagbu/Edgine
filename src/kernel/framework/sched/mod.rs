@@ -10,7 +10,7 @@
 //! - 10 个属性方法 (pid/name/state/priority/is_kernel/pwm/exit_code/
 //!   cpu_time_ticks/cr3/pending_signals) 通过 `Process` Atomic 字段
 //! - `unsafe fn from_raw` + `Send`/`Sync` 显式 unsafe impl
-//! - `Scheduler` trait + `QueenXScheduler` 委托给 `proc::SCHEDULER`
+//! - `Scheduler` trait + `EdgineScheduler` 委托给 `proc::SCHEDULER`
 //!
 //! 历史: 2026-08-04 复核, 计划文档 (REVIEW-FINDING-030) 注释
 //! "task 抽象在 Phase 1.4.2 计划中但尚未实现" 已过期, 实装早于
