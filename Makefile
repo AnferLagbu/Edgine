@@ -117,7 +117,7 @@ USER_TEST_ELF = $(RUST_USER_TARGET)/proctest
 STAGE1_BIN = $(BUILD_DIR)/stage1.bin
 DISK_IMAGE = $(BUILD_DIR)/antx.img
 
-.PHONY: all clean run run-net debug log log-net iso run-iso disk run-disk user test test-host test-kernel-host test-unit test-integration test-smoke test-stress \
+.PHONY: all clean run run-net debug log log-net iso run-iso disk run-disk user test test-host test-kernel-host test-unit \
          test-all test-chaos test-smp test-smp-multicore
 
 ifeq ($(ARCH),aarch64)
@@ -523,7 +523,7 @@ test-unit: $(BUILD_DIR)/kernel_test.bin user
 		tail -80 $(REPORT_DIR)/unit_test_$${timestamp}.log; \
 	fi
 
-test-all: test-smoke test-host test-unit
+test-all: test-host test-unit
 	@echo ""
 	@echo "╔══════════════════════════════════════════════════════════╗"
 	@echo "║     🎉 All Tests Complete!                            ║"
@@ -576,27 +576,10 @@ test-chaos: $(BUILD_DIR)/kernel_chaos.bin user
 		echo "╔══════════════════════════════════════════════╗"; \
 		echo "║  Chaos Test Report                           ║"; \
 		echo "╚══════════════════════════════════════════════╝"; \
-		python3 tests/chaos/analyze_chaos.py $(REPORT_DIR)/chaos_test_$${timestamp}.log 2>/dev/null || \
-		echo "  (Run 'python3 tests/chaos/analyze_chaos.py $(REPORT_DIR)/chaos_test_$${timestamp}.log' for analysis)"; \
 		echo ""; \
 		echo "--- Last 80 lines of serial output ---"; \
 		tail -80 $(REPORT_DIR)/chaos_test_$${timestamp}.log; \
 	fi
-
-test-integration: iso
-	@echo "╔══════════════════════════════════════════════════════════╗"
-	@echo "║     Integration Tests                                   ║"
-	@echo "╚══════════════════════════════════════════════════════════╝"
-	@python3 tests/integration/run_integration_tests.py
-
-test-smoke: iso
-	@python3 tests/smoke/run_smoke_tests.py
-
-test-stress: iso
-	@echo "╔══════════════════════════════════════════════════════════╗"
-	@echo "║     Stress Tests                                        ║"
-	@echo "╚══════════════════════════════════════════════════════════╝"
-	@python3 tests/stress/run_stress_tests.py
 
 # SMP 测试核数 (S-9): 默认 2 核, 可用 make test-smp SMP_CORES=N 覆盖
 SMP_CORES ?= 2

@@ -12,7 +12,7 @@ backup/
 *.tmp
 *.temp
 
-# 日志文件 (除 tests/reports/ 已单独覆盖外, 其他路径下的 .log)
+# 日志文件 (构建/运行日志; other/ 下产物由 other/ 全局忽略覆盖)
 *.log
 
 # Linux coredump 防御 (内核崩溃可能产生)
@@ -77,10 +77,6 @@ venv/
 .coverage
 .coverage.*
 htmlcov/
-
-# ===== 测试报告 =====
-# tests/reports/ 是运行时测试输出目录, 不应入仓 (含 .json/.md/.log/.txt 等)
-tests/reports/
 
 # ===== 操作系统垃圾 =====
 .DS_Store
