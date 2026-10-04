@@ -33,7 +33,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            host-tests/target
+            other/target
           key: ${{ runner.os }}-bench-${{ hashFiles('host-tests/Cargo.toml', 'host-tests/Cargo.lock') }}
 
       - name: 检查 baseline.json 是否存在
@@ -49,16 +49,16 @@ jobs:
         if: steps.check-baseline.outputs.has_baseline == 'false'
         run: |
           echo "baseline.json 不存在, 自动记录初始基线..."
-          python3 scripts/record_bench_baseline.py 2>&1 | tee build/log/bench_baseline_init.txt
+          python3 scripts/record_bench_baseline.py 2>&1 | tee other/build/log/bench_baseline_init.txt
           echo "已生成 baseline.json, 后续将进入回归检查模式"
 
       - name: 运行回归检查
         if: steps.check-baseline.outputs.has_baseline == 'true'
         run: |
-          python3 scripts/check_bench_regression.py 2>&1 | tee build/log/bench_regression.txt
+          python3 scripts/check_bench_regression.py 2>&1 | tee other/build/log/bench_regression.txt
           if [ ${PIPESTATUS[0]} -ne 0 ]; then
             echo "::error::bench 回归检查失败"
-            cat build/log/bench_regression.txt
+            cat other/build/log/bench_regression.txt
             exit 1
           fi
           echo "✅ bench 回归检查通过"
@@ -69,8 +69,8 @@ jobs:
         with:
           name: bench-report
           path: |
-            build/log/bench_regression.txt
-            build/log/bench_baseline_init.txt
+            other/build/log/bench_regression.txt
+            other/build/log/bench_baseline_init.txt
             host-tests/benches/baseline.json
           retention-days: 30
 
@@ -92,7 +92,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src/rust/target
+            other/target
           key: ${{ runner.os }}-compile-time-${{ hashFiles('src/rust/Cargo.toml', 'src/rust/Cargo.lock') }}
 
       - name: 测量编译时间
@@ -101,7 +101,7 @@ jobs:
           echo "=== 编译时间测量 (x86_64) ==="
           START=$(date +%s%N)
           # 方案 D: 裸机 build 指向 kernel manifest; 方案 B: 注入 build-std
-          cargo build --manifest-path ../kernel/Cargo.toml --release --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target x86_64-unknown-none --target-dir target 2>&1 | tail -3
+          cargo build --manifest-path ../kernel/Cargo.toml --release --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target x86_64-unknown-none --target-dir ../../other/target 2>&1 | tail -3
           END=$(date +%s%N)
           DURATION=$(( (END - START) / 1000000 ))
           echo "编译时间: ${DURATION}ms"

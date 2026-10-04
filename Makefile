@@ -1,5 +1,16 @@
 ARCH ?= x86_64
-LOG_DIR := build/log
+
+# 临时/构建产物统一收敛到 other/ 下 (.gitignore 的 other/ 规则覆盖全部).
+# 单一变量源: 迁移产物根目录只需改下面三处 (LOG_DIR 由 BUILD_DIR 派生).
+# 注: 变量赋值行不可写行内注释 — GNU make 会把 `#` 前的空格并入变量值,
+#     使路径中出现多余空格 (曾引发 "mixed implicit and normal rules" 致命错误).
+#   BUILD_DIR  - Makefile 中间/最终产物 (含 log/ 与 .arch 戳记)
+#   ISODIR     - GRUB ISO 暂存目录
+#   REPORT_DIR - 运行期测试日志
+BUILD_DIR := other/build
+ISODIR := other/isodir
+REPORT_DIR := other/tests-reports
+LOG_DIR := $(BUILD_DIR)/log
 
 ifeq ($(ARCH),aarch64)
     CC = aarch64-linux-gnu-gcc
@@ -49,7 +60,7 @@ BUILD_STD_CFG := --config 'unstable.build-std=["core","compiler_builtins","alloc
 # Network stack: smoltcp (Rust)
 # ============================================================================
 
-LDFLAGS = -T $(LDSCRIPT) -nostdlib -Map=build/kernel.map -z noexecstack --no-warn-rwx-segments
+LDFLAGS = -T $(LDSCRIPT) -nostdlib -Map=$(BUILD_DIR)/kernel.map -z noexecstack --no-warn-rwx-segments
 
 # ── 架构条件 QEMU 标志 ────────────────────────────────────────────────
 ifeq ($(ARCH),aarch64)
@@ -58,38 +69,38 @@ ifeq ($(ARCH),aarch64)
     QEMU_NET :=
     # 内核产出统一为 arm64 Image (内嵌 Image 头, 见 link/aarch64.ld):
     # QEMU -kernel 与 U-Boot booti / 真机引导共用同一制品.
-    KERNEL_IMAGE := build/kernel-aarch64.img
+    KERNEL_IMAGE := $(BUILD_DIR)/kernel-aarch64.img
     QEMU_KERNEL_FLAG := -kernel
 else
     QEMU_FLAGS := -m 512 -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04
     QEMU_NET := -device e1000,netdev=n0 \
                 -netdev user,id=n0,hostfwd=tcp::8080-:80,hostname=antx
-    KERNEL_IMAGE := build/kernel.flat
+    KERNEL_IMAGE := $(BUILD_DIR)/kernel.flat
     QEMU_KERNEL_FLAG := -kernel
 endif
 
 # ── 架构条件构建对象 ─────────────────────────────────────────────────
-# 注: build/lib/string.o 已废弃 — string.c 已被 string.rs (Rust) 取代,
+# 注: $(BUILD_DIR)/lib/string.o 已废弃 — string.c 已被 string.rs (Rust) 取代,
 #     string 符号由 $(RUST_LIB) 通过 --whole-archive 包含。
 ifeq ($(ARCH),aarch64)
-    KERNEL_OBJS = build/boot.o
-    KERNEL_TEST_OBJS = build/boot.o
+    KERNEL_OBJS = $(BUILD_DIR)/boot.o
+    KERNEL_TEST_OBJS = $(BUILD_DIR)/boot.o
 else
-    KERNEL_OBJS = build/boot.o build/entry.o build/isr.o build/switch.o \
-                  build/arch/x86_64/trampoline.o
+    KERNEL_OBJS = $(BUILD_DIR)/boot.o $(BUILD_DIR)/entry.o $(BUILD_DIR)/isr.o $(BUILD_DIR)/switch.o \
+                  $(BUILD_DIR)/arch/x86_64/trampoline.o
     # 测试入口由 Rust 端 kernel_test feature (lib.rs:343 kernel_test_main) 提供,
     # 不再依赖 C 桩文件. 2026-06-24 移除 kernel_test.o / test_main.o / test_hw_stubs.o.
-    KERNEL_TEST_OBJS = build/boot.o build/entry.o build/isr.o build/switch.o \
-                  build/arch/x86_64/trampoline.o
+    KERNEL_TEST_OBJS = $(BUILD_DIR)/boot.o $(BUILD_DIR)/entry.o $(BUILD_DIR)/isr.o $(BUILD_DIR)/switch.o \
+                  $(BUILD_DIR)/arch/x86_64/trampoline.o
 endif
 
-RUST_LIB = src/rust/target/$(RUST_TARGET_KERNEL)/release/libkernel.a
-RUST_LIB_TEST = src/rust/target/test-release/$(RUST_TARGET_KERNEL)/release/libkernel.a
-RUST_LIB_CHAOS = src/rust/target/chaos-release/$(RUST_TARGET_KERNEL)/release/libkernel.a
-RUST_LIB_TEST_DEBUG = src/rust/target/test-debug/$(RUST_TARGET_KERNEL)/test-debug/libkernel.a
+RUST_LIB = other/target/$(RUST_TARGET_KERNEL)/release/libkernel.a
+RUST_LIB_TEST = other/target/test-release/$(RUST_TARGET_KERNEL)/release/libkernel.a
+RUST_LIB_CHAOS = other/target/chaos-release/$(RUST_TARGET_KERNEL)/release/libkernel.a
+RUST_LIB_TEST_DEBUG = other/target/test-debug/$(RUST_TARGET_KERNEL)/test-debug/libkernel.a
 
 RUST_USER_DIR = src/user
-RUST_USER_TARGET = $(RUST_USER_DIR)/target/$(RUST_TARGET)/release
+RUST_USER_TARGET = other/target/$(RUST_TARGET)/release
 
 # 用户程序前置依赖: 无前置依赖时目标文件一旦存在, make 便认为已最新 → recipe 永不执行,
 # 用户态源码改动长期不生效 (与 $(RUST_LIB) 同族踩坑, 见 §L204 注释).
@@ -103,28 +114,28 @@ USER_FBTERM_ELF = $(RUST_USER_TARGET)/fbterm
 USER_HTTPSRV_ELF = $(RUST_USER_TARGET)/httpsrv
 USER_TEST_ELF = $(RUST_USER_TARGET)/proctest
 
-STAGE1_BIN = build/stage1.bin
-DISK_IMAGE = build/antx.img
+STAGE1_BIN = $(BUILD_DIR)/stage1.bin
+DISK_IMAGE = $(BUILD_DIR)/antx.img
 
 .PHONY: all clean run run-net debug log log-net iso run-iso disk run-disk user test test-host test-kernel-host test-unit test-integration test-smoke test-stress \
          test-all test-chaos test-smp test-smp-multicore
 
 ifeq ($(ARCH),aarch64)
-# aarch64: 内核产出统一为 arm64 Image (build/kernel-aarch64.img), 供 QEMU -kernel
+# aarch64: 内核产出统一为 arm64 Image ($(BUILD_DIR)/kernel-aarch64.img), 供 QEMU -kernel
 # 与 U-Boot booti / 真机引导共用; 不再产出无 Image 头语义的 kernel.flat.
-all: build/kernel.bin build/kernel-aarch64.img
+all: $(BUILD_DIR)/kernel.bin $(BUILD_DIR)/kernel-aarch64.img
 else
 # x86_64: 同时构建 kernel.flat (qemu 直接使用的 raw 镜像),
 # 避免外部脚本在 make 完成后还需要二次 objcopy.
-all: build/kernel.bin build/kernel.flat
+all: $(BUILD_DIR)/kernel.bin $(BUILD_DIR)/kernel.flat
 endif
 
 # 跨架构构建时自动清理上架构产物, 避免 boot.o 等被新架构误用。
-# 通过 build/log/.arch 记录上次构建架构 (build/log/ 不被 clean 删除), 不匹配时强制 clean.
+# 通过 $(BUILD_DIR)/log/.arch 记录上次构建架构 ($(BUILD_DIR)/log/ 不被 clean 删除), 不匹配时强制 clean.
 # 修复: 戳记写入必须在 arch-switch-clean 配方内 (仅真实跨架构切换时更新).
 # 原实现在解析期无条件覆写戳记, `make test-host` 等不产生架构产物的目标也会
 # 把戳记改成默认 ARCH, 导致下次同 ARCH 链接误用残留的异架构 boot.o (EM 不符).
-ARCH_STAMP := build/log/.arch
+ARCH_STAMP := $(BUILD_DIR)/log/.arch
 PREVIOUS_ARCH := $(shell cat $(ARCH_STAMP) 2>/dev/null || echo none)
 ifneq ($(PREVIOUS_ARCH), $(ARCH))
 ARCH_CHANGED := 1
@@ -132,17 +143,17 @@ endif
 ifeq ($(ARCH_CHANGED),1)
 .PHONY: arch-switch-clean
 arch-switch-clean:
-	@echo "[make] cross-arch switch: $(PREVIOUS_ARCH) → $(ARCH), removing arch-specific build/ artifacts (preserving build/log/)"
-	@rm -f build/boot.o build/entry.o build/isr.o build/switch.o \
-	       build/arch/x86_64/trampoline.o build/gdt_asm.o \
-	       build/kernel.bin build/kernel.flat build/kernel-aarch64.img build/kernel.map
+	@echo "[make] cross-arch switch: $(PREVIOUS_ARCH) → $(ARCH), removing arch-specific $(BUILD_DIR)/ artifacts (preserving $(BUILD_DIR)/log/)"
+	@rm -f $(BUILD_DIR)/boot.o $(BUILD_DIR)/entry.o $(BUILD_DIR)/isr.o $(BUILD_DIR)/switch.o \
+	       $(BUILD_DIR)/arch/x86_64/trampoline.o $(BUILD_DIR)/gdt_asm.o \
+	       $(BUILD_DIR)/kernel.bin $(BUILD_DIR)/kernel.flat $(BUILD_DIR)/kernel-aarch64.img $(BUILD_DIR)/kernel.map
 	@cd src/kernel && cargo clean >/dev/null 2>&1 || true
 	@cd src/user && cargo clean >/dev/null 2>&1 || true
-	@rm -f build/user/*.bin
+	@rm -f $(BUILD_DIR)/user/*.bin
 	@echo $(ARCH) > $(ARCH_STAMP)
 # 挂到所有 asm .o 目标, 强制 clean 后重新评估 .o 的依赖图
 # (clean 在 make 评估图后执行, .o 文件存在与否需要重新触发)
-ASM_OBJS := build/boot.o build/entry.o build/isr.o build/switch.o build/arch/x86_64/trampoline.o
+ASM_OBJS := $(BUILD_DIR)/boot.o $(BUILD_DIR)/entry.o $(BUILD_DIR)/isr.o $(BUILD_DIR)/switch.o $(BUILD_DIR)/arch/x86_64/trampoline.o
 $(ASM_OBJS): arch-switch-clean
 endif
 $(shell mkdir -p $(LOG_DIR))
@@ -150,134 +161,134 @@ $(shell mkdir -p $(LOG_DIR))
 # ====== x86_64 Rust user programs ======
 ifeq ($(ARCH),x86_64)
 user: $(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF)
-	@mkdir -p build/user
-	@cp $(USER_INIT_ELF) build/user/init.bin
-	@cp $(USER_SHELL_ELF) build/user/eash.bin
-	@cp $(USER_INSTALL_ELF) build/user/install.bin
-	@cp $(USER_FBTERM_ELF) build/user/fbterm.bin
-	@cp $(USER_HTTPSRV_ELF) build/user/httpsrv.bin
-	@cp $(USER_TEST_ELF) build/user/proctest.bin
+	@mkdir -p $(BUILD_DIR)/user
+	@cp $(USER_INIT_ELF) $(BUILD_DIR)/user/init.bin
+	@cp $(USER_SHELL_ELF) $(BUILD_DIR)/user/eash.bin
+	@cp $(USER_INSTALL_ELF) $(BUILD_DIR)/user/install.bin
+	@cp $(USER_FBTERM_ELF) $(BUILD_DIR)/user/fbterm.bin
+	@cp $(USER_HTTPSRV_ELF) $(BUILD_DIR)/user/httpsrv.bin
+	@cp $(USER_TEST_ELF) $(BUILD_DIR)/user/proctest.bin
 	@echo "User programs built successfully (Rust)"
 
 $(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF): $(USER_SRCS)
 	@echo "Building Rust user programs..."
 	cd $(RUST_USER_DIR) && RUSTFLAGS="-C link-arg=-T$$(pwd)/link.x -C link-arg=-nostdlib -C link-arg=-no-pie" cargo build --release --target $(RUST_TARGET)
 
-build/user/init.bin: $(USER_INIT_ELF)
-	@mkdir -p build/user
+$(BUILD_DIR)/user/init.bin: $(USER_INIT_ELF)
+	@mkdir -p $(BUILD_DIR)/user
 	@cp $< $@
 
-build/user/eash.bin: $(USER_SHELL_ELF)
-	@mkdir -p build/user
+$(BUILD_DIR)/user/eash.bin: $(USER_SHELL_ELF)
+	@mkdir -p $(BUILD_DIR)/user
 	@cp $< $@
 
-build/user/install.bin: $(USER_INSTALL_ELF)
-	@mkdir -p build/user
+$(BUILD_DIR)/user/install.bin: $(USER_INSTALL_ELF)
+	@mkdir -p $(BUILD_DIR)/user
 	@cp $< $@
 
-build/user/fbterm.bin: $(USER_FBTERM_ELF)
-	@mkdir -p build/user
+$(BUILD_DIR)/user/fbterm.bin: $(USER_FBTERM_ELF)
+	@mkdir -p $(BUILD_DIR)/user
 	@cp $< $@
 
-build/user/httpsrv.bin: $(USER_HTTPSRV_ELF)
-	@mkdir -p build/user
+$(BUILD_DIR)/user/httpsrv.bin: $(USER_HTTPSRV_ELF)
+	@mkdir -p $(BUILD_DIR)/user
 	@cp $< $@
 endif
 
-build/kernel.bin: $(KERNEL_OBJS) $(RUST_LIB)
-	@mkdir -p build
+$(BUILD_DIR)/kernel.bin: $(KERNEL_OBJS) $(RUST_LIB)
+	@mkdir -p $(BUILD_DIR)
 	@echo "[LINK] Linking kernel..."
 	$(LD) $(LDFLAGS) --allow-multiple-definition -o $@ --whole-archive $(RUST_LIB) --no-whole-archive $(KERNEL_OBJS)
 
-build/kernel.flat: build/kernel.bin
+$(BUILD_DIR)/kernel.flat: $(BUILD_DIR)/kernel.bin
 	$(OBJCOPY) -O binary $< $@
 
 # aarch64: objcopy 出 arm64 Image (内含 .image_header, 见 link/aarch64.ld).
 ifeq ($(ARCH),aarch64)
-build/kernel-aarch64.img: build/kernel.bin
+$(BUILD_DIR)/kernel-aarch64.img: $(BUILD_DIR)/kernel.bin
 	$(OBJCOPY) -O binary $< $@
 endif
 
 # AArch64 用户程序: 使用 Cargo 编译 Rust 用户程序
 ifeq ($(ARCH),aarch64)
 user: $(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF)
-	@mkdir -p build/user
-	@cp $(USER_INIT_ELF) build/user/init.bin
-	@cp $(USER_SHELL_ELF) build/user/eash.bin
-	@cp $(USER_INSTALL_ELF) build/user/install.bin
-	@cp $(USER_FBTERM_ELF) build/user/fbterm.bin
-	@cp $(USER_HTTPSRV_ELF) build/user/httpsrv.bin
+	@mkdir -p $(BUILD_DIR)/user
+	@cp $(USER_INIT_ELF) $(BUILD_DIR)/user/init.bin
+	@cp $(USER_SHELL_ELF) $(BUILD_DIR)/user/eash.bin
+	@cp $(USER_INSTALL_ELF) $(BUILD_DIR)/user/install.bin
+	@cp $(USER_FBTERM_ELF) $(BUILD_DIR)/user/fbterm.bin
+	@cp $(USER_HTTPSRV_ELF) $(BUILD_DIR)/user/httpsrv.bin
 	@echo "User programs built (Rust aarch64)"
 
 $(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF): $(USER_SRCS)
 	@echo "Building Rust user programs (aarch64)..."
 	cd $(RUST_USER_DIR) && RUSTFLAGS="-C link-arg=-T$$(pwd)/link_aarch64.x -C link-arg=-nostdlib" cargo build --release --target $(RUST_TARGET)
 
-build/user/init.bin: $(USER_INIT_ELF)
-	@mkdir -p build/user
+$(BUILD_DIR)/user/init.bin: $(USER_INIT_ELF)
+	@mkdir -p $(BUILD_DIR)/user
 	@cp $< $@
 
-$(RUST_LIB): build/user/init.bin
+$(RUST_LIB): $(BUILD_DIR)/user/init.bin
 	@echo "Building Rust kernel module..."
-	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --target-dir ../rust/target
+	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --target-dir ../../other/target
 else
 # x86_64: 用 Cargo 构建 Rust 用户程序 + 内核
 # include_bytes! 编译时需要 init.bin 存在，确保用户程序先构建
 
-$(RUST_LIB): $(STAGE1_BIN) build/user/init.bin $(shell find src/kernel -name '*.rs' 2>/dev/null)
+$(RUST_LIB): $(STAGE1_BIN) $(BUILD_DIR)/user/init.bin $(shell find src/kernel -name '*.rs' 2>/dev/null)
 	@echo "Building Rust kernel module..."
-	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --target-dir ../rust/target
+	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --target-dir ../../other/target
 endif
 
 # RUST_LIB_TEST 需源文件前置依赖 (kernel 源码经 #[path="../../kernel"] 引入, 须一并搜索):
 # 否则 .a 已存在时 make 跳过 cargo 重建, kernel_test.bin 长期使用陈旧二进制 (E-06 验证踩坑, 2026-09-07)
 $(RUST_LIB_TEST): $(shell find src/kernel -name '*.rs' 2>/dev/null)
 	@echo "Building Rust test kernel..."
-	cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --features kernel_test --target-dir ../rust/target/test-release
+	cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --features kernel_test --target-dir ../../other/target/test-release
 
 $(RUST_LIB_CHAOS):
 	@echo "Building Rust chaos kernel (fault_injection enabled)..."
-	cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --features "kernel_test fault_injection" --target-dir ../rust/target/chaos-release
+	cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --features "kernel_test fault_injection" --target-dir ../../other/target/chaos-release
 
 # 2026-06-29 新增: 调试构建 (LTO=false + debug info + opt-level=0), 用于排查 OnceLock 静态初始化 hang
 $(RUST_LIB_TEST_DEBUG):
 	@echo "Building Rust test kernel (debug profile)..."
-	cd src/kernel && cargo build --profile test-debug --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --features kernel_test --target-dir ../rust/target/test-debug
+	cd src/kernel && cargo build --profile test-debug --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --features kernel_test --target-dir ../../other/target/test-debug
 
-build/%.o: src/kernel/framework/%.asm
+$(BUILD_DIR)/%.o: src/kernel/framework/%.asm
 	@mkdir -p $(dir $@)
 	$(AS) $(ASFLAGS) $< -o $@
 
 $(STAGE1_BIN): src/kernel/framework/boot/stage1.asm
-	@mkdir -p build
+	@mkdir -p $(BUILD_DIR)
 	$(AS) -f bin $< -o $@
 
-build/%.o: src/kernel/framework/boot/%.asm
-	@mkdir -p build
+$(BUILD_DIR)/%.o: src/kernel/framework/boot/%.asm
+	@mkdir -p $(BUILD_DIR)
 	$(AS) $(ASFLAGS) $< -o $@
 
 # AArch64 启动汇编 (GNU as)
 ifeq ($(ARCH),aarch64)
-build/boot.o: src/kernel/framework/boot/aarch64/start.S
-	@mkdir -p build
+$(BUILD_DIR)/boot.o: src/kernel/framework/boot/aarch64/start.S
+	@mkdir -p $(BUILD_DIR)
 	$(AS) $(ASFLAGS) $< -o $@
 endif
 
-build/gdt_asm.o: src/kernel/framework/gdt.asm
-	@mkdir -p build
+$(BUILD_DIR)/gdt_asm.o: src/kernel/framework/gdt.asm
+	@mkdir -p $(BUILD_DIR)
 	$(AS) $(ASFLAGS) $< -o $@
 
-build/switch.o: src/kernel/framework/proc/switch.asm
-	@mkdir -p build
+$(BUILD_DIR)/switch.o: src/kernel/framework/proc/switch.asm
+	@mkdir -p $(BUILD_DIR)
 	$(AS) $(ASFLAGS) $< -o $@
 
 # 磁盘镜像 — 仅 x86_64
 ifeq ($(ARCH),x86_64)
-$(DISK_IMAGE): build/kernel.flat user
+$(DISK_IMAGE): $(BUILD_DIR)/kernel.flat user
 	@echo "Creating disk image..."
 	@dd if=/dev/zero of=$@ bs=1M count=4 2>/dev/null
-	@dd if=build/stage1.bin of=$@ bs=512 seek=0 conv=notrunc 2>/dev/null
-	@dd if=build/kernel.flat of=$@ bs=512 seek=1 conv=notrunc 2>/dev/null
+	@dd if=$(BUILD_DIR)/stage1.bin of=$@ bs=512 seek=0 conv=notrunc 2>/dev/null
+	@dd if=$(BUILD_DIR)/kernel.flat of=$@ bs=512 seek=1 conv=notrunc 2>/dev/null
 	@echo "Disk image created: $@ (4MB)"
 
 disk: $(DISK_IMAGE)
@@ -287,24 +298,24 @@ run-disk: $(DISK_IMAGE)
 endif
 
 iso: all user
-	@mkdir -p isodir/boot/grub
-	cp build/kernel.bin isodir/boot/kernel.bin
-	mkdir -p isodir/bin
-	cp build/user/init.bin isodir/bin/init
-	cp build/user/eash.bin isodir/bin/eash
-	cp build/user/install.bin isodir/bin/install
-	cp build/user/fbterm.bin isodir/bin/fbterm
-	cp build/user/httpsrv.bin isodir/bin/httpsrv
-	echo 'set timeout=0' > isodir/boot/grub/grub.cfg
-	echo 'set default=0' >> isodir/boot/grub/grub.cfg
-	echo '' >> isodir/boot/grub/grub.cfg
-	echo 'menuentry "AntX" {' >> isodir/boot/grub/grub.cfg
-	echo '    multiboot2 /boot/kernel.bin' >> isodir/boot/grub/grub.cfg
-	echo '}' >> isodir/boot/grub/grub.cfg
-	grub2-mkrescue -o build/antx.iso isodir
+	@mkdir -p $(ISODIR)/boot/grub
+	cp $(BUILD_DIR)/kernel.bin $(ISODIR)/boot/kernel.bin
+	mkdir -p $(ISODIR)/bin
+	cp $(BUILD_DIR)/user/init.bin $(ISODIR)/bin/init
+	cp $(BUILD_DIR)/user/eash.bin $(ISODIR)/bin/eash
+	cp $(BUILD_DIR)/user/install.bin $(ISODIR)/bin/install
+	cp $(BUILD_DIR)/user/fbterm.bin $(ISODIR)/bin/fbterm
+	cp $(BUILD_DIR)/user/httpsrv.bin $(ISODIR)/bin/httpsrv
+	echo 'set timeout=0' > $(ISODIR)/boot/grub/grub.cfg
+	echo 'set default=0' >> $(ISODIR)/boot/grub/grub.cfg
+	echo '' >> $(ISODIR)/boot/grub/grub.cfg
+	echo 'menuentry "AntX" {' >> $(ISODIR)/boot/grub/grub.cfg
+	echo '    multiboot2 /boot/kernel.bin' >> $(ISODIR)/boot/grub/grub.cfg
+	echo '}' >> $(ISODIR)/boot/grub/grub.cfg
+	grub2-mkrescue -o $(BUILD_DIR)/antx.iso $(ISODIR)
 
 clean:
-	rm -rf build/ isodir/
+	rm -rf $(BUILD_DIR)/ $(ISODIR)/
 	cd src/kernel && cargo clean
 	cd $(RUST_USER_DIR) && cargo clean
 
@@ -327,9 +338,9 @@ run: all $(KERNEL_IMAGE)
 
 # 网络 QEMU — 仅 x86_64 (依赖 e1000 PCI 设备)
 ifeq ($(ARCH),x86_64)
-run-net: all user build/kernel.flat
+run-net: all user $(BUILD_DIR)/kernel.flat
 	@mkdir -p $(LOG_DIR)
-	$(QEMU) $(QEMU_FLAGS) -kernel build/kernel.flat $(QEMU_NET) $(QEMU_DISPLAY)
+	$(QEMU) $(QEMU_FLAGS) -kernel $(BUILD_DIR)/kernel.flat $(QEMU_NET) $(QEMU_DISPLAY)
 else
 run-net:
 	@echo "run-net is not supported on aarch64 (no PCI/e1000)"
@@ -344,7 +355,7 @@ run-headless: all $(KERNEL_IMAGE)
 ifeq ($(ARCH),x86_64)
 run-iso: iso
 	@mkdir -p $(LOG_DIR)
-	$(QEMU) $(QEMU_FLAGS) -cdrom build/antx.iso $(QEMU_DISPLAY)
+	$(QEMU) $(QEMU_FLAGS) -cdrom $(BUILD_DIR)/antx.iso $(QEMU_DISPLAY)
 else
 run-iso:
 	@echo "run-iso is not supported on aarch64 (BIOS/GRUB only)"
@@ -362,9 +373,9 @@ log: all $(KERNEL_IMAGE)
 
 # 网络日志 — 仅 x86_64
 ifeq ($(ARCH),x86_64)
-log-net: all user build/kernel.flat
+log-net: all user $(BUILD_DIR)/kernel.flat
 	@mkdir -p $(LOG_DIR)
-	timeout 60 $(QEMU) $(QEMU_FLAGS) -kernel build/kernel.flat \
+	timeout 60 $(QEMU) $(QEMU_FLAGS) -kernel $(BUILD_DIR)/kernel.flat \
 		$(QEMU_NET) \
 		-serial file:$(LOG_DIR)/serial.log \
 		-display none \
@@ -393,7 +404,7 @@ run-iso-debug: iso
 	@mkdir -p $(LOG_DIR)
 	@timestamp=$$(date +%Y%m%d_%H%M%S); \
 	timeout 30 $(QEMU) $(QEMU_FLAGS) \
-		-cdrom build/antx.iso \
+		-cdrom $(BUILD_DIR)/antx.iso \
 		-serial file:$(LOG_DIR)/serial_$${timestamp}.log \
 		-display none \
 		-no-reboot \
@@ -413,7 +424,7 @@ run-iso-debug: iso
 debug-iso: iso
 	@mkdir -p $(LOG_DIR)
 	$(QEMU) $(QEMU_FLAGS) \
-		-cdrom build/antx.iso \
+		-cdrom $(BUILD_DIR)/antx.iso \
 		-serial stdio \
 		-no-reboot \
 		-s -S &
@@ -422,24 +433,24 @@ debug-iso: iso
 	@echo "╚══════════════════════════════════════════════╝"
 	@echo "Connect with:"
 	@echo "  gdb -ex 'target remote localhost:1234' \\"
-	@echo "      -ex 'symbol-file build/kernel.bin'"
+	@echo "      -ex 'symbol-file $(BUILD_DIR)/kernel.bin'"
 
-build/main.o: src/kernel/main.c
-	@mkdir -p build
+$(BUILD_DIR)/main.o: src/kernel/main.c
+	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 test: test-host test-unit
 
-build/kernel_test.bin: $(KERNEL_TEST_OBJS) $(RUST_LIB_TEST)
-	$(LD) -T $(LDSCRIPT) -nostdlib -Map=build/kernel_test.map --allow-multiple-definition -o build/kernel_test.bin $(KERNEL_TEST_OBJS) $(RUST_LIB_TEST)
+$(BUILD_DIR)/kernel_test.bin: $(KERNEL_TEST_OBJS) $(RUST_LIB_TEST)
+	$(LD) -T $(LDSCRIPT) -nostdlib -Map=$(BUILD_DIR)/kernel_test.map --allow-multiple-definition -o $(BUILD_DIR)/kernel_test.bin $(KERNEL_TEST_OBJS) $(RUST_LIB_TEST)
 
 # 单元测试（优化版）
 test-host:
 	@echo "╔══════════════════════════════════════════════╗"
 	@echo "║     Running Host-Side Unit Tests             ║"
 	@echo "╚══════════════════════════════════════════════╝"
-	@mkdir -p $(CURDIR)/tests/reports
-	@cd host-tests && { log=$(CURDIR)/tests/reports/host_test_$$(date +%Y%m%d_%H%M%S).log; cargo test --quiet > "$$log" 2>&1; status=$$?; cat "$$log"; exit $$status; }
+	@mkdir -p $(CURDIR)/$(REPORT_DIR)
+	@cd host-tests && { log=$(CURDIR)/$(REPORT_DIR)/host_test_$$(date +%Y%m%d_%H%M%S).log; cargo test --quiet > "$$log" 2>&1; status=$$?; cat "$$log"; exit $$status; }
 	@echo ""
 
 # 内核单元测试（host 侧）: 执行 src/kernel 源文件内 `#[cfg(test)]` 内联用例.
@@ -450,40 +461,40 @@ test-kernel-host:
 	@echo "╔══════════════════════════════════════════════╗"
 	@echo "║   Running Kernel Host-Side Unit Tests        ║"
 	@echo "╚══════════════════════════════════════════════╝"
-	@mkdir -p $(CURDIR)/tests/reports
-	@cd src/kernel && { log=$(CURDIR)/tests/reports/kernel_host_test_$$(date +%Y%m%d_%H%M%S).log; cargo test --features host-test --lib > "$$log" 2>&1; status=$$?; cat "$$log"; exit $$status; }
+	@mkdir -p $(CURDIR)/$(REPORT_DIR)
+	@cd src/kernel && { log=$(CURDIR)/$(REPORT_DIR)/kernel_host_test_$$(date +%Y%m%d_%H%M%S).log; cargo test --features host-test --lib > "$$log" 2>&1; status=$$?; cat "$$log"; exit $$status; }
 	@echo ""
 
-test-unit: build/kernel_test.bin user
+test-unit: $(BUILD_DIR)/kernel_test.bin user
 	@echo "╔══════════════════════════════════════════════╗"
 	@echo "║     Building & Running Unit Tests             ║"
 	@echo "╚══════════════════════════════════════════════╝"
-	@mkdir -p isodir/boot/grub
-	@cp build/kernel_test.bin isodir/boot/kernel.bin
-	@mkdir -p isodir/bin
-	@cp build/user/init.bin isodir/bin/init
-	@cp build/user/eash.bin isodir/bin/eash
-	@cp build/user/install.bin isodir/bin/install
-	@cp build/user/fbterm.bin isodir/bin/fbterm
-	@cp build/user/httpsrv.bin isodir/bin/httpsrv
-	@echo 'set timeout=0' > isodir/boot/grub/grub.cfg
-	@echo 'set default=0' >> isodir/boot/grub/grub.cfg
-	@echo '' >> isodir/boot/grub/grub.cfg
-	@echo 'menuentry "AntX Test" {' >> isodir/boot/grub/grub.cfg
-	@echo '    multiboot2 /boot/kernel.bin' >> isodir/boot/grub/grub.cfg
-	@echo '}' >> isodir/boot/grub/grub.cfg
-	@grub2-mkrescue -o build/antx_test.iso isodir 2>/dev/null
+	@mkdir -p $(ISODIR)/boot/grub
+	@cp $(BUILD_DIR)/kernel_test.bin $(ISODIR)/boot/kernel.bin
+	@mkdir -p $(ISODIR)/bin
+	@cp $(BUILD_DIR)/user/init.bin $(ISODIR)/bin/init
+	@cp $(BUILD_DIR)/user/eash.bin $(ISODIR)/bin/eash
+	@cp $(BUILD_DIR)/user/install.bin $(ISODIR)/bin/install
+	@cp $(BUILD_DIR)/user/fbterm.bin $(ISODIR)/bin/fbterm
+	@cp $(BUILD_DIR)/user/httpsrv.bin $(ISODIR)/bin/httpsrv
+	@echo 'set timeout=0' > $(ISODIR)/boot/grub/grub.cfg
+	@echo 'set default=0' >> $(ISODIR)/boot/grub/grub.cfg
+	@echo '' >> $(ISODIR)/boot/grub/grub.cfg
+	@echo 'menuentry "AntX Test" {' >> $(ISODIR)/boot/grub/grub.cfg
+	@echo '    multiboot2 /boot/kernel.bin' >> $(ISODIR)/boot/grub/grub.cfg
+	@echo '}' >> $(ISODIR)/boot/grub/grub.cfg
+	@grub2-mkrescue -o $(BUILD_DIR)/antx_test.iso $(ISODIR) 2>/dev/null
 	@echo ""
 	@echo "▶ Starting QEMU (timeout: 300s, memory: 512MB)..."
-	@mkdir -p tests/reports
+	@mkdir -p $(REPORT_DIR)
 	@timestamp=$$(date +%Y%m%d_%H%M%S); \
 	timeout 300 $(QEMU) $(QEMU_FLAGS) \
 		-m 512 \
-		-cdrom build/antx_test.iso \
+		-cdrom $(BUILD_DIR)/antx_test.iso \
 		$(QEMU_NET) \
-		-serial file:tests/reports/unit_test_$${timestamp}.log \
+		-serial file:$(REPORT_DIR)/unit_test_$${timestamp}.log \
 		-display none \
-		-d cpu_reset 2>tests/reports/qemu_stderr_$${timestamp}.log; \
+		-d cpu_reset 2>$(REPORT_DIR)/qemu_stderr_$${timestamp}.log; \
 	exit_code=$$?; \
 	if [ $$exit_code -eq 33 ]; then \
 		echo ""; \
@@ -506,10 +517,10 @@ test-unit: build/kernel_test.bin user
 		echo "║  ⚠️  QEMU exited with code $$exit_code (timeout/crash) ║"; \
 		echo "╚══════════════════════════════════════════════╝"; \
 	fi
-	@echo "  Report: tests/reports/unit_test_$${timestamp}.log"
-	@if [ -f tests/reports/unit_test_$${timestamp}.log ]; then \
+	@echo "  Report: $(REPORT_DIR)/unit_test_$${timestamp}.log"
+	@if [ -f $(REPORT_DIR)/unit_test_$${timestamp}.log ]; then \
 		echo "--- Serial Output (last 80 lines) ---"; \
-		tail -80 tests/reports/unit_test_$${timestamp}.log; \
+		tail -80 $(REPORT_DIR)/unit_test_$${timestamp}.log; \
 	fi
 
 test-all: test-smoke test-host test-unit
@@ -527,49 +538,49 @@ test-all: test-smoke test-host test-unit
 
 FAULT_RATE ?= 50
 
-build/kernel_chaos.bin: $(KERNEL_TEST_OBJS) $(RUST_LIB_CHAOS)
-	$(LD) -T $(LDSCRIPT) -nostdlib -Map=build/kernel_chaos.map --allow-multiple-definition -o build/kernel_chaos.bin $(KERNEL_TEST_OBJS) $(RUST_LIB_CHAOS)
+$(BUILD_DIR)/kernel_chaos.bin: $(KERNEL_TEST_OBJS) $(RUST_LIB_CHAOS)
+	$(LD) -T $(LDSCRIPT) -nostdlib -Map=$(BUILD_DIR)/kernel_chaos.map --allow-multiple-definition -o $(BUILD_DIR)/kernel_chaos.bin $(KERNEL_TEST_OBJS) $(RUST_LIB_CHAOS)
 
-test-chaos: build/kernel_chaos.bin user
+test-chaos: $(BUILD_DIR)/kernel_chaos.bin user
 	@echo "╔══════════════════════════════════════════════════════════╗"
 	@echo "║     Chaos/Fault Injection Tests (fault_injection=on)   ║"
 	@echo "║     FAULT_RATE=$(FAULT_RATE)/1000                        ║"
 	@echo "╚══════════════════════════════════════════════════════════╝"
-	@mkdir -p isodir/boot/grub
-	@cp build/kernel_chaos.bin isodir/boot/kernel.bin
-	@mkdir -p isodir/bin
-	@cp build/user/init.bin isodir/bin/init
-	@cp build/user/eash.bin isodir/bin/eash
-	@cp build/user/install.bin isodir/bin/install
-	@cp build/user/fbterm.bin isodir/bin/fbterm
-	@cp build/user/httpsrv.bin isodir/bin/httpsrv
-	@echo 'set timeout=0' > isodir/boot/grub/grub.cfg
-	@echo 'set default=0' >> isodir/boot/grub/grub.cfg
-	@echo '' >> isodir/boot/grub/grub.cfg
-	@echo 'menuentry "AntX Chaos Test" {' >> isodir/boot/grub/grub.cfg
-	@echo '    multiboot2 /boot/kernel.bin' >> isodir/boot/grub/grub.cfg
-	@echo '}' >> isodir/boot/grub/grub.cfg
-	@grub2-mkrescue -o build/antx_chaos.iso isodir 2>/dev/null
-	@mkdir -p tests/reports
+	@mkdir -p $(ISODIR)/boot/grub
+	@cp $(BUILD_DIR)/kernel_chaos.bin $(ISODIR)/boot/kernel.bin
+	@mkdir -p $(ISODIR)/bin
+	@cp $(BUILD_DIR)/user/init.bin $(ISODIR)/bin/init
+	@cp $(BUILD_DIR)/user/eash.bin $(ISODIR)/bin/eash
+	@cp $(BUILD_DIR)/user/install.bin $(ISODIR)/bin/install
+	@cp $(BUILD_DIR)/user/fbterm.bin $(ISODIR)/bin/fbterm
+	@cp $(BUILD_DIR)/user/httpsrv.bin $(ISODIR)/bin/httpsrv
+	@echo 'set timeout=0' > $(ISODIR)/boot/grub/grub.cfg
+	@echo 'set default=0' >> $(ISODIR)/boot/grub/grub.cfg
+	@echo '' >> $(ISODIR)/boot/grub/grub.cfg
+	@echo 'menuentry "AntX Chaos Test" {' >> $(ISODIR)/boot/grub/grub.cfg
+	@echo '    multiboot2 /boot/kernel.bin' >> $(ISODIR)/boot/grub/grub.cfg
+	@echo '}' >> $(ISODIR)/boot/grub/grub.cfg
+	@grub2-mkrescue -o $(BUILD_DIR)/antx_chaos.iso $(ISODIR) 2>/dev/null
+	@mkdir -p $(REPORT_DIR)
 	@timestamp=$$(date +%Y%m%d_%H%M%S); \
 	echo "▶ Starting QEMU with fault injection (rate=$(FAULT_RATE)/1000, timeout: 120s)..."; \
 	timeout 120 $(QEMU) $(QEMU_FLAGS) \
 		-m 512 \
-		-cdrom build/antx_chaos.iso \
-		-serial file:tests/reports/chaos_test_$${timestamp}.log \
+		-cdrom $(BUILD_DIR)/antx_chaos.iso \
+		-serial file:$(REPORT_DIR)/chaos_test_$${timestamp}.log \
 		-display none \
-		-d cpu_reset 2>tests/reports/qemu_chaos_stderr_$${timestamp}.log || true
+		-d cpu_reset 2>$(REPORT_DIR)/qemu_chaos_stderr_$${timestamp}.log || true
 	@echo ""
-	@timestamp=$$(ls -t tests/reports/chaos_test_*.log 2>/dev/null | head -1 | sed 's/.*chaos_test_//;s/\.log//'); \
+	@timestamp=$$(ls -t $(REPORT_DIR)/chaos_test_*.log 2>/dev/null | head -1 | sed 's/.*chaos_test_//;s/\.log//'); \
 	if [ -n "$$timestamp" ]; then \
 		echo "╔══════════════════════════════════════════════╗"; \
 		echo "║  Chaos Test Report                           ║"; \
 		echo "╚══════════════════════════════════════════════╝"; \
-		python3 tests/chaos/analyze_chaos.py tests/reports/chaos_test_$${timestamp}.log 2>/dev/null || \
-		echo "  (Run 'python3 tests/chaos/analyze_chaos.py tests/reports/chaos_test_$${timestamp}.log' for analysis)"; \
+		python3 tests/chaos/analyze_chaos.py $(REPORT_DIR)/chaos_test_$${timestamp}.log 2>/dev/null || \
+		echo "  (Run 'python3 tests/chaos/analyze_chaos.py $(REPORT_DIR)/chaos_test_$${timestamp}.log' for analysis)"; \
 		echo ""; \
 		echo "--- Last 80 lines of serial output ---"; \
-		tail -80 tests/reports/chaos_test_$${timestamp}.log; \
+		tail -80 $(REPORT_DIR)/chaos_test_$${timestamp}.log; \
 	fi
 
 test-integration: iso
@@ -594,15 +605,15 @@ test-smp: all user $(KERNEL_IMAGE)
 	@echo "╔══════════════════════════════════════════════════════════╗"
 	@echo "║     SMP Tests ($(SMP_CORES) cores)                                 ║"
 	@echo "╚══════════════════════════════════════════════════════════╝"
-	@mkdir -p tests/reports
+	@mkdir -p $(REPORT_DIR)
 	@timestamp=$$(date +%Y%m%d_%H%M%S); \
-	smp_log=tests/reports/smp_test_$${timestamp}.log; \
+	smp_log=$(REPORT_DIR)/smp_test_$${timestamp}.log; \
 	timeout 60 $(QEMU) $(QEMU_FLAGS) \
 		-m 512 -smp $(SMP_CORES) \
 		$(QEMU_KERNEL_FLAG) $(KERNEL_IMAGE) \
 		-serial file:$${smp_log} \
 		-display none \
-		-d cpu_reset 2>tests/reports/qemu_smp_stderr_$${timestamp}.log || true; \
+		-d cpu_reset 2>$(REPORT_DIR)/qemu_smp_stderr_$${timestamp}.log || true; \
 	echo ""; \
 	echo "--- SMP Test Output (last 60 lines) ---"; \
 	tail -60 "$${smp_log}"; \
@@ -668,12 +679,12 @@ test-smp-multicore: all user $(KERNEL_IMAGE)
 # 使用 QEMU 调试脚本启动 (正常模式)
 qemu-debug:
 	@chmod +x scripts/qemu_debug.sh
-	@./scripts/qemu_debug.sh -k build/kernel.flat
+	@./scripts/qemu_debug.sh -k $(BUILD_DIR)/kernel.flat
 
 # 使用 QEMU 调试脚本启动 (GDB 调试模式)
 qemu-debug-gdb:
 	@chmod +x scripts/qemu_debug.sh
-	@./scripts/qemu_debug.sh -k build/kernel.flat -d
+	@./scripts/qemu_debug.sh -k $(BUILD_DIR)/kernel.flat -d
 	@echo ""
 	@echo "╔══════════════════════════════════════════════╗"
 	@echo "║  GDB Debug Session                           ║"
@@ -685,12 +696,12 @@ qemu-debug-gdb:
 # 无头模式 (Headless mode)
 qemu-headless:
 	@chmod +x scripts/qemu_debug.sh
-	@./scripts/qemu_debug.sh -k build/kernel.flat -D none
+	@./scripts/qemu_debug.sh -k $(BUILD_DIR)/kernel.flat -D none
 
 # 网络模式 (Network mode)
 qemu-network:
 	@chmod +x scripts/qemu_debug.sh
-	@./scripts/qemu_debug.sh -k build/kernel.flat -n
+	@./scripts/qemu_debug.sh -k $(BUILD_DIR)/kernel.flat -n
 
 # QEMU 真实启动测试 (双架构门禁)
 # 用法: make qemu-boot-test [ARCH=x86_64|aarch64|all]
@@ -702,26 +713,26 @@ qemu-boot-test:
 # 驱动测试 (Driver Tests)
 # ============================================================================
 
-driver-test: all build/kernel.flat
+driver-test: all $(BUILD_DIR)/kernel.flat
 	@echo "╔══════════════════════════════════════════════════════════╗"
 	@echo "║     Hardware Driver Tests                                ║"
 	@echo "╚══════════════════════════════════════════════════════════╝"
-	@mkdir -p tests/reports
+	@mkdir -p $(REPORT_DIR)
 	@timestamp=$$(date +%Y%m%d_%H%M%S); \
 	echo "[TEST] Starting driver tests in QEMU..."; \
 	timeout 30 $(QEMU) $(QEMU_FLAGS) \
-		-kernel build/kernel.flat \
-		-serial file:tests/reports/driver_test_$${timestamp}.log \
+		-kernel $(BUILD_DIR)/kernel.flat \
+		-serial file:$(REPORT_DIR)/driver_test_$${timestamp}.log \
 		-display none \
-		-d cpu_reset,guest_errors,unimp 2>tests/reports/qemu_driver_stderr_$${timestamp}.log || true
+		-d cpu_reset,guest_errors,unimp 2>$(REPORT_DIR)/qemu_driver_stderr_$${timestamp}.log || true
 	@echo ""
-	@driver_log=$$(ls -t tests/reports/driver_test_*.log 2>/dev/null | head -1); \
+	@driver_log=$$(ls -t $(REPORT_DIR)/driver_test_*.log 2>/dev/null | head -1); \
 	if [ -n "$$driver_log" ]; then \
 		echo "--- Driver Test Output ---"; \
 		cat "$$driver_log"; \
 		echo ""; \
 		echo "--- QEMU Warnings (if any) ---"; \
-		qemu_err=$$(ls -t tests/reports/qemu_driver_stderr_*.log 2>/dev/null | head -1); \
+		qemu_err=$$(ls -t $(REPORT_DIR)/qemu_driver_stderr_*.log 2>/dev/null | head -1); \
 		if [ -f "$$qemu_err" ] && [ -s "$$qemu_err" ]; then \
 			cat "$$qemu_err"; \
 		else \

@@ -533,8 +533,8 @@ def main():
     report = generate_report(issues, file_count)
     print(report)
 
-    # 保存 JSON 报告 (gitignored target/audit/)
-    json_path = Path('target/audit/services-boundary.json')
+    # 保存 JSON 报告 (gitignored other/target/audit/)
+    json_path = Path('other/target/audit/services-boundary.json')
     json_path.parent.mkdir(parents=True, exist_ok=True)
     with open(json_path, 'w', encoding='utf-8') as f:
         json.dump({

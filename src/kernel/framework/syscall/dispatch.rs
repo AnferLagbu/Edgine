@@ -932,14 +932,14 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
     if !crate::framework::credo::pwm_has_capability(pwm, 4, 0) {
         return Errno::EACCES.as_ret();
     }
-    // 产物桩化: stage1.bin 是裸机产物 (build/ 被 gitignore, 仅由 make 生成).
+    // 产物桩化: stage1.bin 是裸机产物 (other/build/ 被 gitignore, 仅由 make 生成).
     // 判据用 target_os 而非 feature —— 本函数 gate 为 all(not(kernel_test), x86_64),
     // host target 的 host-test / kernel_test 两个 lint 维度与 host-tests 都会编译它,
     // 若直接 include_bytes 即让 host 侧编译硬依赖裸机产物 (build.rs G-06「消除隐式
     // make 耦合」的漏项). 该函数在 host 不可达 (host-tests 零引用 boot_install /
     // CREDO_DISK_INSTALL, 见 docs/plan/syscall-followup.md 可达性矩阵簇 4), 取空切片.
     #[cfg(target_os = "none")]
-    let stage1 = include_bytes!("../../../../build/stage1.bin");
+    let stage1 = include_bytes!("../../../../other/build/stage1.bin");
     #[cfg(not(target_os = "none"))]
     let stage1: &[u8] = &[];
     if !crate::framework::driver::hdd_is_present(disk_id as u8) {

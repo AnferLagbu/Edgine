@@ -15,8 +15,8 @@ from dataclasses import dataclass, field
 from typing import List, Dict
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-BUILD_DIR = PROJECT_ROOT / "build"
-REPORTS_DIR = PROJECT_ROOT / "tests" / "reports"
+BUILD_DIR = PROJECT_ROOT / "other" / "build"
+REPORTS_DIR = PROJECT_ROOT / "other" / "tests-reports"
 
 @dataclass
 class BenchmarkResult:

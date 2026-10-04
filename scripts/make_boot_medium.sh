@@ -29,8 +29,8 @@
 #                docs/explain/guide-hardware-boot.md 的手工 mkimage 说明.
 #
 # 产物:
-#   x86_64 : build/boot/queenx-x86_64.iso
-#   aarch64: build/boot/queenx-aarch64.img
+#   x86_64 : other/build/boot/queenx-x86_64.iso
+#   aarch64: other/build/boot/queenx-aarch64.img
 #
 # 与 QEMU 的关系:
 #   aarch64 的 Image 制品与 `make ARCH=aarch64 all` / QEMU `-kernel` 共用同一
@@ -49,7 +49,7 @@ NC='\033[0m'
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-OUT_DIR="build/boot"
+OUT_DIR="other/build/boot"
 ISO_OUT="${OUT_DIR}/queenx-x86_64.iso"
 IMG_OUT="${OUT_DIR}/queenx-aarch64.img"
 
@@ -150,13 +150,13 @@ build_x86_64() {
     info "构建 x86_64 内核与用户态并打包 ISO (make ARCH=x86_64 iso)..."
     make ARCH=x86_64 iso
 
-    if [ ! -f build/antx.iso ]; then
-        err "未生成 build/antx.iso, 请检查 make iso 输出"
+    if [ ! -f other/build/antx.iso ]; then
+        err "未生成 other/build/antx.iso, 请检查 make iso 输出"
         exit 1
     fi
 
     mkdir -p "$OUT_DIR"
-    cp build/antx.iso "$ISO_OUT"
+    cp other/build/antx.iso "$ISO_OUT"
     ok "ISO 产物: $ISO_OUT"
     file "$ISO_OUT" || true
 }
@@ -173,8 +173,8 @@ build_aarch64() {
     info "构建 aarch64 内核 Image (make ARCH=aarch64 all)..."
     make ARCH=aarch64 all
 
-    if [ ! -f build/kernel-aarch64.img ]; then
-        err "未生成 build/kernel-aarch64.img, 请检查 make all 输出"
+    if [ ! -f other/build/kernel-aarch64.img ]; then
+        err "未生成 other/build/kernel-aarch64.img, 请检查 make all 输出"
         exit 1
     fi
 
@@ -219,7 +219,7 @@ EOF
     mkfs.vfat --offset=2048 -F 32 -n QUEENX "$disk" >/dev/null
 
     # mtools `@@<offset>` 语法定位分区内偏移 (1MiB = 1048576 字节)
-    mcopy -i "${disk}@@1M" build/kernel-aarch64.img ::Image
+    mcopy -i "${disk}@@1M" other/build/kernel-aarch64.img ::Image
     mmd   -i "${disk}@@1M" ::extlinux
     mcopy -i "${disk}@@1M" "$work/extlinux.conf" ::extlinux/extlinux.conf
     mcopy -i "${disk}@@1M" "$work/boot.cmd" ::boot.cmd

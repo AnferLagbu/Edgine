@@ -29,15 +29,15 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src/rust/target
+            other/target
           key: ${{ runner.os }}-cargo-aarch64-${{ hashFiles('src/rust/Cargo.toml', 'src/rust/Cargo.lock') }}
 
       - name: cargo check
         working-directory: src/rust
         run: |
           # 方案 D: 裸机 check 指向 kernel manifest; 方案 B: 注入 build-std
-          cargo check --manifest-path ../kernel/Cargo.toml --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target aarch64-unknown-none-softfloat --target-dir target 2>&1 | tee build/log/cargo_check_aarch64.txt
-          if grep -q "error\[" build/log/cargo_check_aarch64.txt; then
+          cargo check --manifest-path ../kernel/Cargo.toml --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target aarch64-unknown-none-softfloat --target-dir ../../other/target 2>&1 | tee ../../other/build/log/cargo_check_aarch64.txt
+          if grep -q "error\[" ../../other/build/log/cargo_check_aarch64.txt; then
             echo "::error::cargo check 失败"
             exit 1
           fi

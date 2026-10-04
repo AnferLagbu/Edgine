@@ -101,6 +101,7 @@ EXCLUDE_DIRS = {
     "target",
     "isodir",
     "build",
+    "other",
     "node_modules",
     "__pycache__",
     ".mypy_cache",

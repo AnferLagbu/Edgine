@@ -396,7 +396,7 @@ def main():
     print()
 
     # 6. 生成 JSON 报告
-    json_path = Path('target/audit/dependency-matrix.json')
+    json_path = Path('other/target/audit/dependency-matrix.json')
     json_path.parent.mkdir(parents=True, exist_ok=True)
     report = generate_dependency_matrix_json(fw_matrix, svc_matrix, circular, internal_issues, pub_surface)
     with open(json_path, 'w', encoding='utf-8') as f:

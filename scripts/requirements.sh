@@ -1006,7 +1006,7 @@ if [ "$SKIP_OPTIONAL" = false ] && [ "$SKIP_C" = false ] && [ "$SKIP_C_LINKER" =
     echo -e "  ${BLUE}说明: QueenX 源码已 100% Rust 化, C 链接层仅用于${NC}"
     echo -e "  ${BLUE}       1. 裸机链接 (ld + 链接脚本 src/kernel/framework/link/*.ld)${NC}"
     echo -e "  ${BLUE}       2. 启动汇编 (nasm x86_64 / aarch64-linux-gnu-as)${NC}"
-    echo -e "  ${BLUE}       3. ELF→bin 转换 (objcopy, Makefile build/kernel.flat)${NC}"
+    echo -e "  ${BLUE}       3. ELF→bin 转换 (objcopy, Makefile other/build/kernel.flat)${NC}"
     echo -e "  ${BLUE}  v3.2 决策: 全 Rust 化后已归类为可选, --skip-c-linker 可单独跳过${NC}"
 
     print_subsection "x86_64 工具链 (Makefile x86_64 条件分支)"

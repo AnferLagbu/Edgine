@@ -22,7 +22,7 @@ from datetime import datetime
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TESTS_ROOT = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(TESTS_ROOT, "logs")
-BUILD_DIR = os.path.join(PROJECT_ROOT, "build")
+BUILD_DIR = os.path.join(PROJECT_ROOT, "other", "build")
 ISO_PATH = os.path.join(BUILD_DIR, "antx.iso")
 
 def ensure_log_dir():

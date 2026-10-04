@@ -33,7 +33,7 @@ DRIVER-2 QEMU virtio-vga 生产 kernel 集成测试 (Display 真机增强验证)
 
 ## 前置条件
 
-- antx.iso (生产 ISO, 非 test ISO) 在 build/ 目录
+- antx.iso (生产 ISO, 非 test ISO) 在 other/build/ 目录
   → `make iso` (含完整 boot → driver::init_all)
 - qemu-system-x86_64 ≥ 9.0
 - virtio-vga 是 QEMU 内置设备, 不需要物理显卡
@@ -52,8 +52,8 @@ import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-BUILD_DIR = PROJECT_ROOT / "build"
-LOG_DIR = PROJECT_ROOT / "tests" / "reports" / "driver2_display_production"
+BUILD_DIR = PROJECT_ROOT / "other" / "build"
+LOG_DIR = PROJECT_ROOT / "other" / "tests-reports" / "driver2_display_production"
 ANTX_ISO = BUILD_DIR / "antx.iso"
 
 QEMU_TIMEOUT_SEC = 15

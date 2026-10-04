@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-BUILD_DIR = PROJECT_ROOT / "build"
+BUILD_DIR = PROJECT_ROOT / "other" / "build"
 
 
 def run_qemu_test(timeout: int = 25) -> str:

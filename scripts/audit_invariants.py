@@ -21,7 +21,7 @@ from pathlib import Path
 
 BASE = Path(__file__).resolve().parent.parent
 SERVICES = BASE / 'src' / 'kernel' / 'services'
-TARGET_DIR = BASE / 'target' / 'audit'
+TARGET_DIR = BASE / 'other' / 'target' / 'audit'
 
 violations = []
 

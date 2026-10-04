@@ -20,9 +20,9 @@ BUILD_STD_CFG=(--config 'unstable.build-std=["core","compiler_builtins","alloc"]
 # 生成内核 build.rs 在编译期校验的 Makefile 产物 (src/kernel/build.rs:9-36).
 #
 # 为何必须前置: build.rs 只校验 launcher 产物**存在**, 而这些产物由 Makefile 生成;
-# 且两架构的 build/user/*.bin 是不同 ELF, 不能混用 (build.rs 无法辨别架构, 跨架构
+# 且两架构的 other/build/user/*.bin 是不同 ELF, 不能混用 (build.rs 无法辨别架构, 跨架构
 # 产物会被静默嵌入). 之前 make 仅出现在 link_kernel 中, 排在 build_arch 之后 ——
-# 于是当 build/ 处于另一架构状态 (arch-switch-clean 已删除这些产物) 时,
+# 于是当 other/build/ 处于另一架构状态 (arch-switch-clean 已删除这些产物) 时,
 # 首个 build_arch 必然失败 (曾表现为 `./ci/build.sh all` → `Passed: 4 Failed: 1`).
 #
 # 本函数只做播种, 不占用 PASSED/FAILED 计数: 若播种失败, 紧随其后的 build_arch
@@ -30,10 +30,10 @@ BUILD_STD_CFG=(--config 'unstable.build-std=["core","compiler_builtins","alloc"]
 seed_artifacts() {
     local arch=$1
     echo -e "${YELLOW}[CI] Seeding Makefile artifacts (ARCH=${arch})...${NC}"
-    # x86_64 需 build/stage1.bin (专属引导码 boot/stage1.asm); 两架构均需
-    # build/user/*.bin (user 目标一次生成全部用户态产物)
+    # x86_64 需 other/build/stage1.bin (专属引导码 boot/stage1.asm); 两架构均需
+    # other/build/user/*.bin (user 目标一次生成全部用户态产物)
     if [ "$arch" = "x86_64" ]; then
-        make ARCH="${arch}" build/stage1.bin user 2>&1 | tail -3 || true
+        make ARCH="${arch}" other/build/stage1.bin user 2>&1 | tail -3 || true
     else
         make ARCH="${arch}" user 2>&1 | tail -3 || true
     fi
@@ -46,7 +46,7 @@ build_arch() {
 
     pushd src/rust > /dev/null
     # 方案 D: 内核独立 crate, 裸机 build 指向 kernel manifest (queenx 壳仅 host).
-    if cargo build --manifest-path ../kernel/Cargo.toml --release --target "${target}" --target-dir target "${BUILD_STD_CFG[@]}" 2>&1 | tail -5; then
+    if cargo build --manifest-path ../kernel/Cargo.toml --release --target "${target}" --target-dir ../../other/target "${BUILD_STD_CFG[@]}" 2>&1 | tail -5; then
         echo -e "${GREEN}[CI] ARCH=${arch}: build passed${NC}"
         popd > /dev/null
         return 0
@@ -60,7 +60,7 @@ build_arch() {
 # 链接最终内核镜像 (kernel.flat / kernel.bin).
 # cargo build 仅生成 Rust 静态库 (.a), 必须通过 make 链接汇编对象
 # 才能生成可启动的内核二进制. 跳过此步骤会导致 QEMU 使用过期镜像.
-# 注意: 双架构不能同时链接 (共用 build/kernel.bin 输出路径),
+# 注意: 双架构不能同时链接 (共用 other/build/kernel.bin 输出路径),
 #       因此 all 模式下仅链接主架构 (x86_64).
 link_kernel() {
     local arch=$1
@@ -187,7 +187,7 @@ case "$ARCH" in
         build_arch "aarch64" "aarch64-unknown-none-softfloat" && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
         run_host_tests && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
         check_forbidden_patterns && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
-        # 双架构共享 build/kernel.bin 输出路径, 仅链接主架构.
+        # 双架构共享 other/build/kernel.bin 输出路径, 仅链接主架构.
         # aarch64 链接验证在单独 `./ci/build.sh aarch64` 时完成.
         link_kernel "x86_64" && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
         ;;

@@ -37,8 +37,8 @@ MARKER="GICv3 ready"
 # 方括号按字面量匹配需转义 (grep BRE), 与 qemu_boot_test.sh 断言写法一致.
 SMP_MARKER="\[SMP\] online CPUs: ${SMP}"
 
-IMAGE="build/kernel-aarch64.img"
-LOG_DIR="build/log"
+IMAGE="other/build/kernel-aarch64.img"
+LOG_DIR="other/build/log"
 mkdir -p "$LOG_DIR"
 
 if [ ! -f "$IMAGE" ]; then

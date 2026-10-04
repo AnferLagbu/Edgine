@@ -32,7 +32,7 @@ DRIVER-1 QEMU xHCI 集成测试 (USB xHCI 真机集成验证)
 
 ## 前置条件
 
-- antx.iso (生产镜像, 非 antx_test.iso) 在 build/ 目录
+- antx.iso (生产镜像, 非 antx_test.iso) 在 other/build/ 目录
   → 需要 `make iso` 构建 (含 driver::init_all 完整启动流)
 - qemu-system-x86_64 ≥ 9.0 (含 qemu-xhci 设备)
 - 不需要物理 USB 设备 (QEMU 内置控制器即可)
@@ -61,8 +61,8 @@ import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-BUILD_DIR = PROJECT_ROOT / "build"
-LOG_DIR = PROJECT_ROOT / "tests" / "reports" / "driver1_usb_xhci"
+BUILD_DIR = PROJECT_ROOT / "other" / "build"
+LOG_DIR = PROJECT_ROOT / "other" / "tests-reports" / "driver1_usb_xhci"
 ANTX_ISO = BUILD_DIR / "antx.iso"
 
 QEMU_TIMEOUT_SEC = 15

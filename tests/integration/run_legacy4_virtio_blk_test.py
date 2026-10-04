@@ -28,7 +28,7 @@ LEGACY-4.4 QEMU virtio-blk 集成测试 (BlockOps thunk 移除验证)
 
 ## 前置条件
 
-- antx_test.iso 在 build/ 目录 (make iso)
+- antx_test.iso 在 other/build/ 目录 (make iso)
 - qemu-system-x86_64 ≥ 9.0
 - 不依赖任何 PCIe 透传
 
@@ -57,8 +57,8 @@ import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-BUILD_DIR = PROJECT_ROOT / "build"
-LOG_DIR = PROJECT_ROOT / "tests" / "reports" / "legacy4_virtio_blk"
+BUILD_DIR = PROJECT_ROOT / "other" / "build"
+LOG_DIR = PROJECT_ROOT / "other" / "tests-reports" / "legacy4_virtio_blk"
 HOST_TESTS_DIR = PROJECT_ROOT / "host-tests"
 
 QEMU_TIMEOUT_SEC = 12

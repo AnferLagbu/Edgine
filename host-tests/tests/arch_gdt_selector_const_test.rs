@@ -29,7 +29,7 @@
 //! ## 限制
 //!
 //! 本测试在 host std 环境运行, 仅验证数值常量一致性, 不验证汇编端实际
-//! 字节编码. 验证手段: `make ARCH=x86_64` 后 `objdump -d build/kernel.bin | grep 0x1B`.
+//! 字节编码. 验证手段: `make ARCH=x86_64` 后 `objdump -d other/build/kernel.bin | grep 0x1B`.
 
 /// 期望值: 与 gdt.rs `pub const SELECTOR_*` 同步.
 /// 若 GDT 重排, 修改此测试必须同步修改 gdt.rs / x86_64.ld / isr.asm 等.

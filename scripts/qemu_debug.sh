@@ -22,7 +22,7 @@ set -e
 QEMU_BIN="${QEMU_BIN:-qemu-system-x86_64}"
 
 # 内核镜像路径
-KERNEL_IMG="${KERNEL_IMG:-build/kernel.flat}"
+KERNEL_IMG="${KERNEL_IMG:-other/build/kernel.flat}"
 
 # 内存大小 (MB)
 MEMORY_SIZE="${MEMORY_SIZE:-512}"
@@ -229,7 +229,7 @@ show_help() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  -k, --kernel PATH    Kernel image path (default: build/kernel.flat)"
+    echo "  -k, --kernel PATH    Kernel image path (default: other/build/kernel.flat)"
     echo "  -m, --memory SIZE    Memory size in MB (default: 512)"
     echo "  -c, --cpu TYPE       CPU type (default: qemu64)"
     echo "  -d, --debug          Enable GDB debug mode"

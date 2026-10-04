@@ -18,7 +18,7 @@
 //   3. `map_text_region_in_user_pml4` 含收窄不变式断言 (fail-closed)
 //   4. 装配入口统一: `kpti_init` / `create_user_page_table` / COW fork 三条路径
 //      均经统一入口, 且**不再**出现高半区整段复制 (fail-closed)
-//   5. 链接脚本把 `*(.kpti_trampoline)` 与 `build/isr.o(.text)` 排在
+//   5. 链接脚本把 `*(.kpti_trampoline)` 与 `other/build/isr.o(.text)` 排在
 //      `_kpti_trampoline_end` 之前 (入口代码可取指)
 //   6. 入口依赖面必需页 (USER_CR3_SAVE / IDT / per-CPU GDT 头区 / IST+栈顶页)
 //      仍由 `map_kpti_data_pages` 逐页映射
@@ -349,7 +349,11 @@ fn test_linker_places_entry_code_before_trampoline_end() {
     let ld = read(LINKER_LD);
     assert_before(&ld, "_kernel_text_start", "*(.kpti_trampoline)");
     assert_before(&ld, "*(.kpti_trampoline)", "_kpti_trampoline_end");
-    assert_before(&ld, "build/isr.o(.text .text.*)", "_kpti_trampoline_end");
+    assert_before(
+        &ld,
+        "other/build/isr.o(.text .text.*)",
+        "_kpti_trampoline_end",
+    );
     assert_before(&ld, "_kpti_trampoline_end", "_kernel_text_end");
     // `.trampoline` (AP 启动) 不映射进用户页表, 必须排在收窄上界之后.
     assert_before(&ld, "_kpti_trampoline_end", "*(.trampoline)");

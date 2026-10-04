@@ -10,7 +10,7 @@
 #   make -f Makefile.ci ci-test-host    # host-tests (单元 + 集成) 全量测试
 #   make -f Makefile.ci ci-fix          # auto-fix where possible
 
-LOG_DIR := build/log
+LOG_DIR := other/build/log
 PY := python3
 
 .PHONY: ci ci-audit ci-cargo ci-unsafe-scan ci-bench ci-bench-record ci-test-host ci-fix ci-clean help

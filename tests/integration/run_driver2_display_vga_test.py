@@ -30,7 +30,7 @@ DRIVER-2 QEMU virtio-vga 集成测试 (Display HDMI/DP 真机集成验证)
 
 ## 前置条件
 
-- antx_test.iso 在 build/ 目录
+- antx_test.iso 在 other/build/ 目录
 - qemu-system-x86_64 ≥ 9.0 (含 virtio-vga 设备)
 - 不依赖 USB/PCI 透传
 
@@ -59,8 +59,8 @@ import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-BUILD_DIR = PROJECT_ROOT / "build"
-LOG_DIR = PROJECT_ROOT / "tests" / "reports" / "driver2_display_vga"
+BUILD_DIR = PROJECT_ROOT / "other" / "build"
+LOG_DIR = PROJECT_ROOT / "other" / "tests-reports" / "driver2_display_vga"
 
 QEMU_TIMEOUT_SEC = 12
 MIN_TEST_COUNT = 100  # boot 阶段至少跑这么多测试

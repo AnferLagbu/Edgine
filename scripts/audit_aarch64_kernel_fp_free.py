@@ -8,7 +8,7 @@ EL1 不应再执行任何浮点/NEON 指令. 但「零 FP/SIMD」若只依赖编
 拦截点. 本脚本把该判据变为可 CI 强制的确定性检查
 (见 docs/plan/aarch64-kernel-fp-free.md 的 FP-06).
 
-检查对象: `build/kernel.bin` (aarch64 内核 ELF, 由 `make ARCH=aarch64` 链接产出).
+检查对象: `other/build/kernel.bin` (aarch64 内核 ELF, 由 `make ARCH=aarch64` 链接产出).
 
 判据: 白名单**外** FP/SIMD 指令计数 == 0.
 
@@ -25,7 +25,7 @@ fail-closed (不可检查 = 违规):
   产物缺失 / 非 AArch64 ELF / objdump 不可用或执行失败或输出为空 /
   `context_switch_asm` 符号缺失或不唯一 ⇒ 一律判违规 (exit 1).
 
-前置条件: 本脚本读取当前 `build/kernel.bin`, 因此要求该产物是**最近一次 aarch64
+前置条件: 本脚本读取当前 `other/build/kernel.bin`, 因此要求该产物是**最近一次 aarch64
   链接**的结果. 注意 `./ci/build.sh all` 最后链接的是 x86_64 (双架构共用该输出
   路径), 需先单独运行 `./ci/build.sh aarch64`.
 
@@ -40,7 +40,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ARTIFACT = os.path.join(ROOT, "build", "kernel.bin")
+ARTIFACT = os.path.join(ROOT, "other", "build", "kernel.bin")
 
 # 白名单符号 (context.rs 的 global_asm! 块内唯一手写 FP 序列)
 WHITELIST_SYMBOL = "context_switch_asm"

@@ -158,7 +158,7 @@ pub fn pcid_is_enabled() -> bool {
 
 // ── 链接脚本符号 (x86_64.ld) ──────────────────────────────────────
 // KPTI 用户页表只需 `.text` 的**入口区段**: `_kernel_text_start ~ _kpti_trampoline_end`.
-// 链接脚本把 `*(.kpti_trampoline)` 与 `build/isr.o(.text)` 排在 `_kpti_trampoline_end`
+// 链接脚本把 `*(.kpti_trampoline)` 与 `other/build/isr.o(.text)` 排在 `_kpti_trampoline_end`
 // 之前 ⇒ 全部入口 stub (isr0-31/irq0-15/isr_common/irq_common/syscall_entry)、
 // `enter_user_asm` 与 `.kpti_trampoline` 内的 Rust 处理函数都在该区段内可取指.
 // `_kernel_text_end` 仅用于诊断统计与"收窄不变式"断言 (不得作为用户页表映射上界).
@@ -466,7 +466,7 @@ pub unsafe fn kpti_init(kernel_pml4: u64) {
 /// 1. `.text` 的**入口区段** `_kernel_text_start ~ _kpti_trampoline_end`
 ///    (低半区恒等 + `KERNEL_BASE` 直映别名 + 链接脚本镜像别名,
 ///    见 `map_text_region_in_user_pml4`). 链接脚本把 `*(.kpti_trampoline)` 与
-///    `build/isr.o(.text)` 排在该区段内 ⇒ 入口 stub / `syscall_entry` /
+///    `other/build/isr.o(.text)` 排在该区段内 ⇒ 入口 stub / `syscall_entry` /
 ///    `enter_user_asm` / KPTI 出口 stub 均可取指; 其余内核代码页不进用户页表.
 /// 2. 入口路径必需数据页 `map_kpti_data_pages`:
 ///    `USER_CR3_SAVE` + IDT 条目表 + 每 CPU 的 GDT 头区 / IST0..3 栈顶页 /

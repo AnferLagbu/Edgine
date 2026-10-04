@@ -18,7 +18,7 @@ def run_qemu_with_debug():
     cmd = [
         "timeout", "5",
         "qemu-system-x86_64",
-        "-cdrom", "build/antx.iso",
+        "-cdrom", "other/build/antx.iso",
         "-serial", "stdio",
         "-no-reboot",
         "-d", "int",

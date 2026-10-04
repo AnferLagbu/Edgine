@@ -26,14 +26,14 @@ jobs:
 
       - name: 运行 SAFETY 注释审计
         run: |
-          mkdir -p build/log
+          mkdir -p other/build/log
           echo "=== Step 1: SAFETY 注释审计 (M6.1) ==="
           # B01-25 模式: 捕获脚本真实退出码, 修复 `| tee` fail-open (管道退出码 = tee 的 0).
           set +e
           SAFETY_OUT=$(python3 scripts/audit_safety_coverage.py --missing-only 2>&1)
           SAFETY_RC=$?
           set -e
-          echo "$SAFETY_OUT" | tee build/log/safety_audit.txt
+          echo "$SAFETY_OUT" | tee other/build/log/safety_audit.txt
           if [ "$SAFETY_RC" -ne 0 ]; then
             echo "::error::SAFETY 注释审计失败 (存在未覆盖的 unsafe 块), 请为每个 unsafe 块补充 // SAFETY: 注释"
             echo "--- 缺失 SAFETY 的 unsafe 位置 (前 20) ---"
@@ -48,11 +48,11 @@ jobs:
           BOUNDARY_OUT=$(python3 scripts/audit_services_boundary.py 2>&1)
           BOUNDARY_RC=$?
           set -e
-          echo "$BOUNDARY_OUT" | tee build/log/services_boundary.txt | tail -20
+          echo "$BOUNDARY_OUT" | tee other/build/log/services_boundary.txt | tail -20
           if [ "$BOUNDARY_RC" -ne 0 ]; then
             echo "::error::services→framework 边界渗透检查失败 (CRITICAL/HIGH 违规)"
             echo "--- 违规详情 ---"
-            grep -A 4 'FORBIDDEN\|RAW_POINTER\|CRITICAL\|HIGH' build/log/services_boundary.txt | head -40
+            grep -A 4 'FORBIDDEN\|RAW_POINTER\|CRITICAL\|HIGH' other/build/log/services_boundary.txt | head -40
             exit 1
           fi
           echo "✅ 边界渗透检查通过 (services 无 framework 内部模块穿透)"
@@ -63,7 +63,7 @@ jobs:
           DEADLOCK_OUT=$(python3 scripts/audit_deadlock_matrix.py 2>&1)
           DEADLOCK_RC=$?
           set -e
-          echo "$DEADLOCK_OUT" | tee build/log/deadlock_matrix.txt | tail -20
+          echo "$DEADLOCK_OUT" | tee other/build/log/deadlock_matrix.txt | tail -20
           if [ "$DEADLOCK_RC" -ne 0 ]; then
             echo "::error::检测到 CRITICAL 级别死锁风险, 请修复"
             exit 1
@@ -75,10 +75,10 @@ jobs:
         with:
           name: audit-reports
           path: |
-            build/log/safety_audit.txt
-            build/log/services_boundary.txt
-            build/log/deadlock_matrix.txt
-            target/audit/services-boundary.json
+            other/build/log/safety_audit.txt
+            other/build/log/services_boundary.txt
+            other/build/log/deadlock_matrix.txt
+            other/target/audit/services-boundary.json
           retention-days: 30
 
   # ========================================================================
@@ -240,7 +240,7 @@ jobs:
           RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links" cargo doc --release \
             --manifest-path ../kernel/Cargo.toml \
             --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' \
-            --target x86_64-unknown-none --target-dir target \
+            --target x86_64-unknown-none --target-dir ../../other/target \
             --lib --bins --examples --no-deps 2>&1 | tee /tmp/rustdoc-x86.log | tail -5
           DOC_EXIT_X86=${PIPESTATUS[0]}
           # aarch64
@@ -248,7 +248,7 @@ jobs:
           RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links" cargo doc --release \
             --manifest-path ../kernel/Cargo.toml \
             --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' \
-            --target aarch64-unknown-none-softfloat --target-dir target \
+            --target aarch64-unknown-none-softfloat --target-dir ../../other/target \
             --lib --bins --examples --no-deps 2>&1 | tee /tmp/rustdoc-aarch64.log | tail -5
           DOC_EXIT_ARM=${PIPESTATUS[0]}
           echo ""
@@ -280,18 +280,18 @@ jobs:
 
       - name: 运行耦合度审计
         run: |
-          mkdir -p build/log
+          mkdir -p other/build/log
           # B01-25: 移除 `|| true` 掩盖退出码的 fail-open bug (与 audit-invariants job 同模式).
           set +e
           COUPLING_OUT=$(python3 scripts/audit_coupling.py 2>&1)
           COUPLING_RC=$?
           set -e
-          echo "$COUPLING_OUT" | tee build/log/audit_coupling.txt | tail -20
+          echo "$COUPLING_OUT" | tee other/build/log/audit_coupling.txt | tail -20
           # B01-18: 退出码语义 (HIGH/severe_circular > 0 时 fail)
           if [ "$COUPLING_RC" -ne 0 ]; then
             echo "::error::模块耦合度审计失败 (HIGH 跨子系统访问 / 严重循环依赖)"
             echo "--- Top 跨子系统访问 ---"
-            grep -A 3 'HIGH' build/log/audit_coupling.txt | head -20
+            grep -A 3 'HIGH' other/build/log/audit_coupling.txt | head -20
             exit 1
           fi
           echo "✅ 模块耦合度审计通过 (无严重循环 / 无跨子系统访问)"
@@ -301,7 +301,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coupling-audit-report
-          path: build/log/audit_coupling.txt
+          path: other/build/log/audit_coupling.txt
           retention-days: 14
 
   # ========================================================================
@@ -320,7 +320,7 @@ jobs:
 
       - name: 运行 6 条安全不变式审计
         run: |
-          mkdir -p build/log
+          mkdir -p other/build/log
           # B01-25: 移除 `|| true` 掩盖退出码的 fail-open bug.
           # 原写法 `$(python3 ... || true)` 使命令替换的退出码恒为 0,
           # 后续 ${PIPESTATUS[0]} 恒为 0, CI 永不因违规失败.
@@ -328,12 +328,12 @@ jobs:
           INVARIANTS_OUT=$(python3 scripts/audit_invariants.py 2>&1)
           INVARIANTS_RC=$?
           set -e
-          echo "$INVARIANTS_OUT" | tee build/log/audit_invariants.txt | tail -12
+          echo "$INVARIANTS_OUT" | tee other/build/log/audit_invariants.txt | tail -12
           # B01-18: 退出码语义 (total_violations > 0 时 fail)
           if [ "$INVARIANTS_RC" -ne 0 ]; then
             echo "::error::6 条安全不变式存在违反"
             echo "--- 违规详情 ---"
-            grep -A 1 '^  ✗' build/log/audit_invariants.txt | head -20
+            grep -A 1 '^  ✗' other/build/log/audit_invariants.txt | head -20
             exit 1
           fi
           echo "✅ 6 条安全不变式全部满足"
@@ -343,7 +343,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: invariants-audit-report
-          path: build/log/audit_invariants.txt
+          path: other/build/log/audit_invariants.txt
           retention-days: 14
 
   # ========================================================================
@@ -362,9 +362,9 @@ jobs:
 
       - name: 运行审计脚本自测
         run: |
-          mkdir -p build/log
+          mkdir -p other/build/log
           SELFTEST_OUT=$(python3 scripts/tests/audit_selftest.py 2>&1 || true)
-          echo "$SELFTEST_OUT" | tee build/log/audit_selftest.txt | tail -30
+          echo "$SELFTEST_OUT" | tee other/build/log/audit_selftest.txt | tail -30
           # B01-24: 自测退出码 (4/4 全部通过才成功)
           SELFTEST_RC=${PIPESTATUS[0]}
           if [ "$SELFTEST_RC" -ne 0 ]; then
@@ -378,5 +378,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: audit-selftest-report
-          path: build/log/audit_selftest.txt
+          path: other/build/log/audit_selftest.txt
           retention-days: 14

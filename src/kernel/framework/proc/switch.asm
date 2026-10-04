@@ -207,7 +207,7 @@ process_switch_asm:
 
 ; ── KPTI-08 用户态出口 stub ────────────────────────────────────────────
 ; 位于 `.kpti_trampoline` 段: 链接脚本 (link/x86_64.ld) 把 `*(.kpti_trampoline)`
-; 与 `build/isr.o(.text)` 排在 `_kernel_text_start ~ _kpti_trampoline_end`,
+; 与 `other/build/isr.o(.text)` 排在 `_kernel_text_start ~ _kpti_trampoline_end`,
 ; 该区段被 kpti::map_kernel_pages_in_user_pml4 映射进**每份**用户页表, 故切
 ; CR3 之后本段仍可取指.
 ;

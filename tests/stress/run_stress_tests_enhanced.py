@@ -17,7 +17,7 @@ from typing import List, Callable
 import random
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-REPORTS_DIR = PROJECT_ROOT / "tests" / "reports"
+REPORTS_DIR = PROJECT_ROOT / "other" / "tests-reports"
 
 @dataclass
 class StressTestResult:

@@ -18,7 +18,7 @@ from datetime import datetime
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
-ISO_PATH = os.path.join(PROJECT_ROOT, "..", "build", "antx.iso")
+ISO_PATH = os.path.join(PROJECT_ROOT, "..", "other", "build", "antx.iso")
 
 INSTALL_INPUTS = [
     b"\n",           # Press ENTER to continue welcome screen
@@ -277,7 +277,7 @@ def run_gdb_test():
     
     print(f"[GDB] Starting GDB debug server...")
     print(f"[GDB] Log file: {log_file}")
-    print(f"[GDB] Connect with: gdb -ex 'target remote :1234' build/kernel.bin")
+    print(f"[GDB] Connect with: gdb -ex 'target remote :1234' other/build/kernel.bin")
     print(f"[GDB] Set breakpoint at: process_start_user_asm")
     print(f"[GDB] Or at: scheduler_schedule (when prev==NULL)")
     

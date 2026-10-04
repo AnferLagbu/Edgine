@@ -17,7 +17,7 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent.parent
 FRAMEWORK = BASE / 'src' / 'kernel' / 'framework'
 SERVICES = BASE / 'src' / 'kernel' / 'services'
-TARGET_DIR = BASE / 'target' / 'audit'
+TARGET_DIR = BASE / 'other' / 'target' / 'audit'
 
 TCB_TARGET_RATIO = 30.0  # 目标: TCB 占比 < 30%
 

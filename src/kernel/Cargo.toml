@@ -79,7 +79,7 @@ net = []
 alloc = []
 async = []
 debug_mutex = []
-# initramfs: 从 build/user/initramfs.cpio 加载根文件系统
+# initramfs: 从 other/build/user/initramfs.cpio 加载根文件系统
 initramfs = []
 log = []
 json_export = []

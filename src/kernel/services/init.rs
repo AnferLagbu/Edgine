@@ -75,7 +75,7 @@ pub fn launch_first_user_process() -> ! {
     {
         #[cfg(feature = "initramfs")]
         {
-            let initramfs = include_bytes!("../../../build/user/initramfs.cpio");
+            let initramfs = include_bytes!("../../../other/build/user/initramfs.cpio");
             if !initramfs.is_empty() {
                 match crate::services::fs::initramfs::unpack(initramfs) {
                     Ok(count) => {
@@ -117,10 +117,10 @@ pub fn launch_first_user_process() -> ! {
         // 回退: 直接加载内嵌的 init.bin.
         // 判据用 target_os 而非 feature: host target 的 host-test / kernel_test
         // 两个 lint 维度与 host-tests 都会编译本块, 不桩化即让 host 侧编译硬依赖
-        // 裸机产物 (build/ 仅由 make 生成). 本函数为裸机 init 入口, host 不可达,
+        // 裸机产物 (other/build/ 仅由 make 生成). 本函数为裸机 init 入口, host 不可达,
         // 取空切片 ⇒ 走下方 bin.is_empty() 报错退出分支.
         #[cfg(target_os = "none")]
-        let bin = include_bytes!("../../../build/user/init.bin");
+        let bin = include_bytes!("../../../other/build/user/init.bin");
         #[cfg(not(target_os = "none"))]
         let bin: &[u8] = &[];
 
@@ -152,7 +152,7 @@ pub fn launch_first_user_process() -> ! {
         // 进程自行启用中断, 此处无需恢复.
         let _saved = crate::arch!(interrupt_disable());
 
-        let bin = include_bytes!("../../../build/user/init.bin");
+        let bin = include_bytes!("../../../other/build/user/init.bin");
         let bin_size = bin.len() as u64;
         if bin_size == 0 {
             crate::klog_boot_info!("[USER] init ELF is empty");

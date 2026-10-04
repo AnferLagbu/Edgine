@@ -13,7 +13,7 @@ import random
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-BUILD_DIR = PROJECT_ROOT / "build"
+BUILD_DIR = PROJECT_ROOT / "other" / "build"
 
 def run_qemu_stress(memory_mb: int = 512, timeout: int = 30, extra_args: list = None) -> tuple:
     iso_path = BUILD_DIR / "antx.iso"

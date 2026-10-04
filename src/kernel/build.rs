@@ -19,7 +19,7 @@ fn main() {
     let base = Path::new(&manifest_dir).parent().unwrap().parent().unwrap();
 
     // G-06 (2026-09-06): 产物存在性检查仅对裸机 target 生效.
-    // build/user/init.bin + build/stage1.bin 由 Makefile 生成, build/ 目录被
+    // other/build/user/init.bin + other/build/stage1.bin 由 Makefile 生成, other/build/ 目录被
     // .gitignore 忽略. host 构建 (host-tests 经 queenx path 依赖触发) 的
     // CARGO_CFG_TARGET_OS 为 linux, 不应检查裸机产物 — 否则干净 checkout 直接
     // cargo test 会因产物缺失 panic, 形成未记录的隐式 make 依赖.
@@ -31,11 +31,11 @@ fn main() {
         // aarch64 构建时缺失属正常, 不能 panic.
         let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
         if target_arch == "x86_64" {
-            require_exists(&base.join("build/stage1.bin"));
+            require_exists(&base.join("other/build/stage1.bin"));
         }
-        require_exists(&base.join("build/user/init.bin"));
+        require_exists(&base.join("other/build/user/init.bin"));
 
-        println!("cargo:rerun-if-changed=build/stage1.bin");
-        println!("cargo:rerun-if-changed=build/user/init.bin");
+        println!("cargo:rerun-if-changed=other/build/stage1.bin");
+        println!("cargo:rerun-if-changed=other/build/user/init.bin");
     }
 }

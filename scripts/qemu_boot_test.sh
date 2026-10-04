@@ -3,7 +3,7 @@
 # QueenX QEMU 真实启动测试脚本 (QEMU Real Boot Validation)
 #
 # 用途: 验证双架构内核镜像在 QEMU 中真实启动, 记录关键子系统状态
-# 输出: build/log/qemu_boot_*.log
+# 输出: other/build/log/qemu_boot_*.log
 # 退出码: 0 = 启动通过 (到达指定里程碑), 1 = 启动失败
 #
 # 历史: 2026-06-04 v2.0 首次实现 — 修复了 Makefile 中 string.c 过期引用,
@@ -21,7 +21,7 @@ NC='\033[0m'
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
-LOG_DIR="build/log"
+LOG_DIR="other/build/log"
 mkdir -p "$LOG_DIR"
 
 ARCH="${1:-all}"
@@ -72,7 +72,7 @@ boot_and_check() {
 }
 
 # ---------------------------------------------------------------------------
-# 架构同步: 确保 build/ 中间产物架构 + .arch 戳记与目标一致
+# 架构同步: 确保 other/build/ 中间产物架构 + .arch 戳记与目标一致
 # 防止 qemu_boot_test.sh 跑 aarch64 后, .arch 残留 aarch64 但开发者
 # 下次手敲 make ARCH=x86_64 增量构建报 EM 183 错误 (AArch64 产物误用).
 # 解决: 脚本每次跑测试前主动检测 + 同步 .arch 戳记.
@@ -86,7 +86,7 @@ sync_make_state() {
     [ -f "$arch_stamp" ] && prev_arch="$(cat "$arch_stamp" 2>/dev/null || echo none)"
 
     # 检查中间 .o 产物是否与目标架构一致 (使用 file 命令)
-    local asm_objs="build/boot.o build/entry.o build/isr.o build/switch.o build/arch/x86_64/trampoline.o"
+    local asm_objs="other/build/boot.o other/build/entry.o other/build/isr.o other/build/switch.o other/build/arch/x86_64/trampoline.o"
     local need_rebuild=0
 
     if [ "$prev_arch" != "$target_arch" ]; then
@@ -112,8 +112,8 @@ sync_make_state() {
     fi
 
     if [ "$need_rebuild" = "1" ]; then
-        rm -f $asm_objs build/kernel.bin build/kernel.flat build/kernel-aarch64.img build/kernel.map build/stage1.bin
-        rm -f build/user/*.bin 2>/dev/null || true
+        rm -f $asm_objs other/build/kernel.bin other/build/kernel.flat other/build/kernel-aarch64.img other/build/kernel.map other/build/stage1.bin
+        rm -f other/build/user/*.bin 2>/dev/null || true
         if ! make ARCH="$target_arch" all 2>&1 | tail -3; then
             err "[$target_arch] make ARCH=$target_arch 失败"
             return 1
@@ -128,11 +128,11 @@ sync_make_state() {
 # 内核镜像陈旧检测 (B08-16 / ISSUE-TOOL-002)
 # Makefile 依赖已保证 make 层面自动重建, 此处为 QEMU 脚本独立防线:
 # 源码 (内核 + 用户态) 比镜像新时提示先 make, 避免跑陈旧镜像误判.
-# 参数: $1=镜像路径 (默认 build/kernel.flat, aarch64 传 build/kernel-aarch64.img)
+# 参数: $1=镜像路径 (默认 other/build/kernel.flat, aarch64 传 other/build/kernel-aarch64.img)
 # 返回: 0 = 镜像新鲜或缺失, 1 = 镜像可能过期
 # ---------------------------------------------------------------------------
 check_kernel_fresh() {
-    local image="${1:-build/kernel.flat}"
+    local image="${1:-other/build/kernel.flat}"
     [ -f "$image" ] || return 0
     local newest
     newest=$(find src/rust/src src/kernel src/user -name '*.rs' -newer "$image" 2>/dev/null | head -1)
@@ -154,14 +154,14 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
     TESTED=$((TESTED+1))
     info "=== x86_64 QEMU 真实启动 ==="
 
-    # 架构同步: 确保 build/ 中间产物 + .arch 戳记与 x86_64 一致
+    # 架构同步: 确保 other/build/ 中间产物 + .arch 戳记与 x86_64 一致
     # (防止 aarch64 测试残留导致 EM 183 报错)
     sync_make_state "x86_64" || RESULT=1
 
     # ISSUE-TOOL-002: x86_64 侧同样接入陈旧镜像检测 (与 aarch64 分支一致)
     check_kernel_fresh || true
 
-    if [ ! -f build/kernel.flat ]; then
+    if [ ! -f other/build/kernel.flat ]; then
         err "x86_64 kernel.flat 缺失, 跳过测试"
         RESULT=1
     else
@@ -171,7 +171,7 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
         # PHY_RST) 修复后, 恢复默认 e1000 并断言驱动初始化里程碑 + 完整进 Ring 3.
         # APS-05 (DECISION-084): -smp 2 使次核上线路径与双核并发 EL0 进入门禁.
         if boot_and_check "x86_64" "$X64_LOG" "$TIMEOUT_QEMU" "VFS ready" \
-            -m 512 -smp 2 -kernel build/kernel.flat; then
+            -m 512 -smp 2 -kernel other/build/kernel.flat; then
             # e1000 驱动初始化里程碑 (ISSUE-RT-001 回归断言)
             if grep -q "e1000: 初始化完成" "$X64_LOG"; then
                 ok "[x86_64] e1000 驱动初始化完成 (ISSUE-RT-001 回归通过)"
@@ -224,13 +224,13 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
     TESTED=$((TESTED+1))
     info "=== aarch64 QEMU 真实启动 ==="
 
-    # 架构同步: 确保 build/ 中间产物 + .arch 戳记与 aarch64 一致
+    # 架构同步: 确保 other/build/ 中间产物 + .arch 戳记与 aarch64 一致
     # (防止 x86_64 测试残留导致 EM 183 反向误用)
     sync_make_state "aarch64" || RESULT=1
 
-    check_kernel_fresh build/kernel-aarch64.img || true
+    check_kernel_fresh other/build/kernel-aarch64.img || true
 
-    if [ ! -f build/kernel-aarch64.img ]; then
+    if [ ! -f other/build/kernel-aarch64.img ]; then
         err "aarch64 kernel-aarch64.img 缺失, 跳过测试"
         RESULT=1
     else
@@ -242,7 +242,7 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
         # QEMU 经 Image 头 text_offset 定位入口, 与 U-Boot booti / 真机一致.
         # SMP-09 (DECISION-082): 以 -smp 2 启动双核, 使 AP 上线路径进入 CI 门禁.
         if boot_and_check "aarch64" "$A64_LOG" "$TIMEOUT_QEMU" "VFS ready" \
-            -M virt,gic-version=3 -cpu max -m 512 -smp 2 -kernel build/kernel-aarch64.img \
+            -M virt,gic-version=3 -cpu max -m 512 -smp 2 -kernel other/build/kernel-aarch64.img \
             -device virtio-net-device,netdev=n0 \
             -netdev user,id=n0; then
             # ISSUE-RT-002: GICv3 初始化成功里程碑 (初始化后置条件自检通过).
@@ -320,6 +320,6 @@ fi
 echo ""
 echo "============================================"
 echo "QEMU 真实启动测试: ${PASSED}/${TESTED} 通过"
-echo "  日志: build/log/qemu_boot_*.log"
+echo "  日志: other/build/log/qemu_boot_*.log"
 echo "============================================"
 exit $RESULT

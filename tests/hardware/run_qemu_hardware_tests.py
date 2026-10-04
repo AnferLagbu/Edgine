@@ -13,8 +13,8 @@ from pathlib import Path
 from datetime import datetime
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-BUILD_DIR = PROJECT_ROOT / "build"
-REPORTS_DIR = PROJECT_ROOT / "tests" / "reports"
+BUILD_DIR = PROJECT_ROOT / "other" / "build"
+REPORTS_DIR = PROJECT_ROOT / "other" / "tests-reports"
 
 class QemuHardwareTest:
     def __init__(self, name: str, description: str):

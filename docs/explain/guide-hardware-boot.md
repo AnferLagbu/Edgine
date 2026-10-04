@@ -16,11 +16,11 @@
 
 ### 统一入口
 
-两个架构共用同一脚本，产物落在 `build/boot/`：
+两个架构共用同一脚本，产物落在 `other/build/boot/`：
 
 ```bash
-./scripts/make_boot_medium.sh x86_64    # -> build/boot/queenx-x86_64.iso
-./scripts/make_boot_medium.sh aarch64   # -> build/boot/queenx-aarch64.img
+./scripts/make_boot_medium.sh x86_64    # -> other/build/boot/queenx-x86_64.iso
+./scripts/make_boot_medium.sh aarch64   # -> other/build/boot/queenx-aarch64.img
 ```
 
 脚本对工具缺失**失败即停**（`require_cmd`），并打印对应 apt 包名。依赖工具随架构不同：
@@ -34,7 +34,7 @@
 
 ### x86_64：GRUB2 multiboot2 ISO
 
-脚本执行 `make ARCH=x86_64 iso`，该目标把内核与用户态程序装入 `isodir/`，生成 GRUB 配置并以 `grub2-mkrescue` 打包为 `build/antx.iso`，脚本再拷贝为 `queenx-x86_64.iso`。GRUB 配置（由 [Makefile](../../Makefile) `iso` 目标生成）以 multiboot2 协议加载内核：
+脚本执行 `make ARCH=x86_64 iso`，该目标把内核与用户态程序装入 `other/isodir/`，生成 GRUB 配置并以 `grub2-mkrescue` 打包为 `other/build/antx.iso`，脚本再拷贝为 `queenx-x86_64.iso`。GRUB 配置（由 [Makefile](../../Makefile) `iso` 目标生成）以 multiboot2 协议加载内核：
 
 ```
 menuentry "AntX" {
@@ -52,7 +52,7 @@ sudo ./scripts/make_boot_medium.sh x86_64 --write /dev/sdX
 
 ### aarch64：整盘 FAT32 + U-Boot
 
-脚本执行 `make ARCH=aarch64 all`，产出 `build/kernel-aarch64.img`，再把它打成一整块磁盘镜像。分区布局：
+脚本执行 `make ARCH=aarch64 all`，产出 `other/build/kernel-aarch64.img`，再把它打成一整块磁盘镜像。分区布局：
 
 | 项 | 值 |
 |---|---|

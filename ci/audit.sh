@@ -44,6 +44,19 @@ else
     err "tools/check_tcb.sh 不存在或不可执行"
 fi
 
+# ── 0.5a 产物目录卫生门禁 ────────────────────────────────────────
+# 临时/构建产物统一收敛到 other/ 下 (整个 other/ 被 .gitignore 覆盖).
+# fail-closed: 若已跟踪文件中混入被忽略产物 (git ls-files -i -c --exclude-standard
+# 非空), 说明产物被误提交 (历史上 .arch/target 等曾漏出), 阻断 CI 并提示移除.
+step "0.5a/6 产物目录卫生 (tracked ∩ ignored = ∅)"
+STALE_TRACKED=$(git ls-files -i -c --exclude-standard)
+if [ -z "$STALE_TRACKED" ]; then
+    ok "产物目录卫生: 无被跟踪的忽略产物 (全部收敛到 other/)"
+else
+    echo "$STALE_TRACKED" | head -20
+    err "有被跟踪的忽略产物混入仓库 (见上), 需从 git 移除 (git rm --cached <path>)"
+fi
+
 # ── 0.5b TCB 度量报告 (E10) ──────────────────────────────────────
 if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_tcb_ratio.py" ]; then
     step "0.5b/6 TCB 度量报告 (E10)"
@@ -144,7 +157,7 @@ fi
 # FP-06: aarch64 内核「零 FP/SIMD」反汇编白名单审计 — 防 EL1 出现浮点/NEON
 # (软浮点 target 只保证编译期不生成 FP 指令, 无法拦截源码/汇编层的回退;
 #  以反汇编白名单确定性覆盖, 见 docs/plan/aarch64-kernel-fp-free.md FP-06)
-# 注意: 本步骤读取 build/kernel.bin, 要求其为最近一次 aarch64 链接的产物
+# 注意: 本步骤读取 other/build/kernel.bin, 要求其为最近一次 aarch64 链接的产物
 # (双架构共用该输出路径, ./ci/build.sh all 最后链接 x86_64 ⇒ 需先跑 build.sh aarch64).
 if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_aarch64_kernel_fp_free.py" ]; then
     step "0.5i/6 aarch64 内核零 FP/SIMD (FP-06)"
@@ -179,7 +192,7 @@ unset RUSTC_WRAPPER
 for target in x86_64-unknown-none aarch64-unknown-none-softfloat; do
     echo -e "${BLUE}[audit] target=${target}${NC}"
     # 方案 D: kernel 独立 crate, 裸机 check 指向 kernel manifest (queenx 壳仅 host).
-    if cargo check --manifest-path ../kernel/Cargo.toml --target "${target}" --target-dir target "${BUILD_STD_CFG[@]}" 2>&1 | tail -3; then
+    if cargo check --manifest-path ../kernel/Cargo.toml --target "${target}" --target-dir ../../other/target "${BUILD_STD_CFG[@]}" 2>&1 | tail -3; then
         ok "${target}: check passed"
     else
         err "${target}: check FAILED"
@@ -199,7 +212,7 @@ unset RUSTC_WRAPPER
 # B01-16 修复: 加 -D warnings 让任何 warning 阻断 CI, 失败走 err 而非仅警告.
 # 原代码 `if cmd | tail; then ok; else warn; fi` 中 `tail` 退出 0 总是成功,
 # 即使 cargo clippy 失败也被掩盖 (P0-05 类问题).
-if cargo clippy --manifest-path ../kernel/Cargo.toml --release --lib --bins --examples --target x86_64-unknown-none --target-dir target \
+if cargo clippy --manifest-path ../kernel/Cargo.toml --release --lib --bins --examples --target x86_64-unknown-none --target-dir ../../other/target \
     "${BUILD_STD_CFG[@]}" \
     -- -D warnings -D clippy::pedantic \
     -A clippy::cast_possible_truncation \
@@ -225,7 +238,7 @@ step "2b/6 Clippy feature 维 (kernel_test + host-test, host target)"
 for FEATURE in kernel_test host-test; do
     # 方案 D: feature 维 clippy 指向 kernel manifest (host target, 门控代码 lint)
     if cargo clippy --manifest-path "$PROJECT_ROOT/src/kernel/Cargo.toml" --features "$FEATURE" --lib \
-        --target-dir "$PROJECT_ROOT/src/rust/target" \
+        --target-dir "$PROJECT_ROOT/other/target" \
         -- -D warnings -D clippy::pedantic \
         -A clippy::cast_possible_truncation \
         -A clippy::cast_sign_loss \
@@ -282,7 +295,7 @@ step "4/6 Lockbud 死锁/数据竞争扫描"
 pushd src/rust > /dev/null
 unset RUSTC_WRAPPER
 LOCKBUD_RESULT=0
-cargo lockbud --manifest-path ../kernel/Cargo.toml --target x86_64-unknown-none --target-dir target "${BUILD_STD_CFG[@]}" 2>&1 | tail -25 || LOCKBUD_RESULT=$?
+cargo lockbud --manifest-path ../kernel/Cargo.toml --target x86_64-unknown-none --target-dir ../../other/target "${BUILD_STD_CFG[@]}" 2>&1 | tail -25 || LOCKBUD_RESULT=$?
 if [ $LOCKBUD_RESULT -eq 0 ]; then
     ok "lockbud: passed"
 else

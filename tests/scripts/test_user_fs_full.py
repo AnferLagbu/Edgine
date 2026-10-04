@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-ISO_PATH = PROJECT_ROOT / "build" / "antx.iso"
+ISO_PATH = PROJECT_ROOT / "other" / "build" / "antx.iso"
 
 # Install wizard auto-responses
 INSTALL_INPUT = (

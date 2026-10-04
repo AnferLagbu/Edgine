@@ -441,7 +441,7 @@ def main():
     report = generate_report(issues)
     print(report)
 
-    json_path = Path('target/audit/feature-semantics.json')
+    json_path = Path('other/target/audit/feature-semantics.json')
     json_path.parent.mkdir(parents=True, exist_ok=True)
     with open(json_path, 'w', encoding='utf-8') as fh:
         json.dump({'issue_count': len(issues), 'issues': issues}, fh,

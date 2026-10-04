@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import Dict, Tuple
 
 PROJECT_ROOT = Path(__file__).parent.parent
-KERNEL_BIN = PROJECT_ROOT / "build" / "kernel.bin"
-KERNEL_TEST_BIN = PROJECT_ROOT / "build" / "kernel_test.bin"
+KERNEL_BIN = PROJECT_ROOT / "other" / "build" / "kernel.bin"
+KERNEL_TEST_BIN = PROJECT_ROOT / "other" / "build" / "kernel_test.bin"
 
 
 def print_header(title: str):

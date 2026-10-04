@@ -8,7 +8,7 @@
 #   3. NVMe MSI-X 中断路径 (MSI-X IRQ fired)
 #   4. e1000 probe 不破坏 boot 流程 (network subsystem ready)
 #
-# 输出: build/log/pci_boot_*.log
+# 输出: other/build/log/pci_boot_*.log
 # 退出码: 0 = 全部通过, 1 = 部分失败
 #
 # 历史: 2026-08-25 初次实现 (B04-22 收尾补丁, 由 AGENTS.md 决策授权)
@@ -24,7 +24,7 @@ NC='\033[0m'
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
-LOG_DIR="build/log"
+LOG_DIR="other/build/log"
 mkdir -p "$LOG_DIR"
 
 ARCH="${1:-x86_64}"
@@ -53,8 +53,8 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
     TESTED=$((TESTED+1))
     info "=== x86_64 PCI 集成测试 (NVMe + e1000 + -nic none) ==="
 
-    if [ ! -f build/kernel.flat ]; then
-        err "build/kernel.flat 缺失, 跳过"
+    if [ ! -f other/build/kernel.flat ]; then
+        err "other/build/kernel.flat 缺失, 跳过"
         RESULT=1
     else
         LOG="$LOG_DIR/pci_boot_x86_64.log"
@@ -66,7 +66,7 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
             -no-reboot \
             -m 512 \
             -nic none \
-            -kernel build/kernel.flat \
+            -kernel other/build/kernel.flat \
             -device nvme,serial=QM0001,id=nvme0 \
             -drive "file=${NVME_DISK},if=none,id=nd0" \
             -device nvme-ns,drive=nd0,bus=nvme0 \

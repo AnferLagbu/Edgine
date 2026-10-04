@@ -28,7 +28,7 @@ SECTIONS
     
     . = ALIGN(4096);
     .boot.text : {
-        build/boot.o(.text)
+        other/build/boot.o(.text)
         __boot_text_end = .;
     } :boot
     
@@ -46,7 +46,7 @@ SECTIONS
     .text : AT(_kernel_text_lma) {
         _kernel_text_start = .;
         *(.kpti_trampoline)
-        build/isr.o(.text .text.*)
+        other/build/isr.o(.text .text.*)
         . = ALIGN(16);
         _kpti_trampoline_end = .;
         *(.text)

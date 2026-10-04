@@ -29,15 +29,15 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src/rust/target
+            other/target
           key: ${{ runner.os }}-cargo-x86_64-${{ hashFiles('src/rust/Cargo.toml', 'src/rust/Cargo.lock') }}
 
       - name: cargo check
         working-directory: src/rust
         run: |
           # 方案 D: 裸机 check 指向 kernel manifest (queenx 壳仅 host); 方案 B: 注入 build-std
-          cargo check --manifest-path ../kernel/Cargo.toml --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target x86_64-unknown-none --target-dir target 2>&1 | tee build/log/cargo_check.txt
-          if grep -q "error\[" build/log/cargo_check.txt; then
+          cargo check --manifest-path ../kernel/Cargo.toml --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target x86_64-unknown-none --target-dir ../../other/target 2>&1 | tee ../../other/build/log/cargo_check.txt
+          if grep -q "error\[" ../../other/build/log/cargo_check.txt; then
             echo "::error::cargo check 失败"
             exit 1
           fi
@@ -60,7 +60,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src/rust/target
+            other/target
           key: ${{ runner.os }}-clippy-x86_64-${{ hashFiles('src/rust/Cargo.toml', 'src/rust/Cargo.lock') }}
 
       - name: 静态断言 — services/ 所有 .rs 都有 #![deny(unsafe_code)]
@@ -82,12 +82,12 @@ jobs:
       - name: cargo build (services 层编译期 unsafe 拦截)
         working-directory: src/rust
         run: |
-          mkdir -p build/log
+          mkdir -p ../../other/build/log
           # 方案 D: 裸机 build 指向 kernel manifest; 方案 B: 注入 build-std
-          cargo build --manifest-path ../kernel/Cargo.toml --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target x86_64-unknown-none --target-dir target --lib 2>&1 | tee build/log/build_services.txt | tail -5
-          if grep -E "error.*unsafe|services/.*\.rs.*unsafe" build/log/build_services.txt >/dev/null; then
+          cargo build --manifest-path ../kernel/Cargo.toml --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target x86_64-unknown-none --target-dir ../../other/target --lib 2>&1 | tee ../../other/build/log/build_services.txt | tail -5
+          if grep -E "error.*unsafe|services/.*\.rs.*unsafe" ../../other/build/log/build_services.txt >/dev/null; then
             echo "::error::services 层检测到 unsafe 代码 (编译期 fail-fast 失败)"
-            grep -E "error.*unsafe|services/.*\.rs" build/log/build_services.txt | head -20
+            grep -E "error.*unsafe|services/.*\.rs" ../../other/build/log/build_services.txt | head -20
             exit 1
           fi
           echo "✅ services 层编译通过 (编译期 unsafe 拦截 OK)"
@@ -97,7 +97,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-services-unsafe-report
-          path: build/log/build_services.txt
+          path: other/build/log/build_services.txt
           retention-days: 14
 
   # ========================================================================
@@ -118,13 +118,13 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            host-tests/target
+            other/target
           key: ${{ runner.os }}-host-tests-${{ hashFiles('host-tests/Cargo.toml', 'host-tests/Cargo.lock') }}
 
       - name: 运行 host-tests
         working-directory: host-tests
         run: |
-          cargo test 2>&1 | tee ../build/log/host_tests.txt
+          cargo test 2>&1 | tee ../other/build/log/host_tests.txt
           if [ ${PIPESTATUS[0]} -ne 0 ]; then
             echo "::error::host-tests 失败"
             exit 1
@@ -136,14 +136,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: host-tests-report
-          path: build/log/host_tests.txt
+          path: other/build/log/host_tests.txt
           retention-days: 14
 
   # ========================================================================
   # Job 4: 内核 host 侧单元测试 (AGENTS.md §2.3 第 6 条门槛)
   # 源文件 `#[cfg(test)]` 内联用例: 由 cargo 自动发现, 无手工注册负担
   # (与 kernel_test 注册表轨并存, 见 docs/plan/kernel-unit-test-harness-unification.md).
-  # target-dir 由 src/kernel/.cargo/config.toml 指向 src/rust/target, 故缓存该目录.
+  # target-dir 由 src/kernel/.cargo/config.toml 指向 other/target, 故缓存该目录.
   # 实测耗时: 冷编译约 20s + 运行约 20s.
   # ========================================================================
   kernel-host-tests:
@@ -161,15 +161,15 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src/rust/target
+            other/target
           key: ${{ runner.os }}-kernel-host-tests-${{ hashFiles('src/rust/Cargo.toml', 'src/rust/Cargo.lock') }}
 
       - name: 运行内核 host 单元测试
         working-directory: src/kernel
         run: |
-          mkdir -p ../../build/log
+          mkdir -p ../../other/build/log
           # B01-25 模式: 捕获 cargo 真实退出码, 避免 `| tee` 管道退出码 fail-open.
-          cargo test --features host-test --lib 2>&1 | tee ../../build/log/kernel_host_tests.txt
+          cargo test --features host-test --lib 2>&1 | tee ../../other/build/log/kernel_host_tests.txt
           if [ ${PIPESTATUS[0]} -ne 0 ]; then
             echo "::error::内核 host 侧单元测试失败 (§2.3 第 6 条门槛)"
             exit 1
@@ -181,7 +181,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kernel-host-tests-report
-          path: build/log/kernel_host_tests.txt
+          path: other/build/log/kernel_host_tests.txt
           retention-days: 14
 
   # ========================================================================
@@ -203,22 +203,22 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src/rust/target
+            other/target
           key: ${{ runner.os }}-clippy-${{ hashFiles('src/rust/Cargo.toml', 'src/rust/Cargo.lock') }}
 
       - name: clippy -D pedantic (排除 cast_*)
         working-directory: src/rust
         run: |
-          mkdir -p build/log
+          mkdir -p ../../other/build/log
           # 方案 D: clippy 指向 kernel manifest; 方案 B: 注入 build-std
-          cargo clippy --manifest-path ../kernel/Cargo.toml --release --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target x86_64-unknown-none --target-dir target --lib --bins --examples -- \
+          cargo clippy --manifest-path ../kernel/Cargo.toml --release --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target x86_64-unknown-none --target-dir ../../other/target --lib --bins --examples -- \
             -D clippy::pedantic \
             -A clippy::cast_possible_truncation \
             -A clippy::cast_sign_loss \
             -A clippy::cast_possible_wrap \
             -A clippy::cast_precision_loss \
-            2>&1 | tee build/log/clippy_pedantic.txt | tail -20
-          if grep -qE "^error\[|^error:" build/log/clippy_pedantic.txt; then
+            2>&1 | tee ../../other/build/log/clippy_pedantic.txt | tail -20
+          if grep -qE "^error\[|^error:" ../../other/build/log/clippy_pedantic.txt; then
             echo "::error::clippy -D pedantic 失败"
             exit 1
           fi
@@ -227,16 +227,16 @@ jobs:
       - name: clippy aarch64 -D pedantic (排除 cast_*)
         working-directory: src/rust
         run: |
-          mkdir -p build/log
+          mkdir -p ../../other/build/log
           # 方案 D: clippy 指向 kernel manifest; 方案 B: 注入 build-std
-          cargo clippy --manifest-path ../kernel/Cargo.toml --release --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target aarch64-unknown-none-softfloat --target-dir target --lib --bins --examples -- \
+          cargo clippy --manifest-path ../kernel/Cargo.toml --release --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target aarch64-unknown-none-softfloat --target-dir ../../other/target --lib --bins --examples -- \
             -D clippy::pedantic \
             -A clippy::cast_possible_truncation \
             -A clippy::cast_sign_loss \
             -A clippy::cast_possible_wrap \
             -A clippy::cast_precision_loss \
-            2>&1 | tee build/log/clippy_pedantic_aarch64.txt | tail -20
-          if grep -qE "^error\[|^error:" build/log/clippy_pedantic_aarch64.txt; then
+            2>&1 | tee ../../other/build/log/clippy_pedantic_aarch64.txt | tail -20
+          if grep -qE "^error\[|^error:" ../../other/build/log/clippy_pedantic_aarch64.txt; then
             echo "::error::clippy aarch64 -D pedantic 失败"
             exit 1
           fi
@@ -245,7 +245,7 @@ jobs:
       - name: clippy kernel_test 维 -D pedantic (排除 cast_*, J-01/G-02)
         working-directory: .
         run: |
-          mkdir -p build/log
+          mkdir -p other/build/log
           # J-01 (2026-09-08): kernel_test feature 门控代码 lint 纳入 CI —
           # host target 运行 (避开裸机 build.rs 产物检查), 覆盖 feature 维 lint 回归
           # 方案 D: 指向 kernel manifest
@@ -255,8 +255,8 @@ jobs:
             -A clippy::cast_sign_loss \
             -A clippy::cast_possible_wrap \
             -A clippy::cast_precision_loss \
-            2>&1 | tee build/log/clippy_pedantic_kernel_test.txt | tail -20
-          if grep -qE "^error\[|^error:" build/log/clippy_pedantic_kernel_test.txt; then
+            2>&1 | tee other/build/log/clippy_pedantic_kernel_test.txt | tail -20
+          if grep -qE "^error\[|^error:" other/build/log/clippy_pedantic_kernel_test.txt; then
             echo "::error::clippy kernel_test 维失败"
             exit 1
           fi
@@ -265,7 +265,7 @@ jobs:
       - name: clippy host-test 维 -D pedantic (排除 cast_*, J-01/G-18)
         working-directory: .
         run: |
-          mkdir -p build/log
+          mkdir -p other/build/log
           # J-01 (2026-09-08): host-test feature 门控代码 lint 纳入 CI —
           # host target 运行, 覆盖 E-03 同源双编译维度的 lint 回归
           # 方案 D: 指向 kernel manifest
@@ -275,8 +275,8 @@ jobs:
             -A clippy::cast_sign_loss \
             -A clippy::cast_possible_wrap \
             -A clippy::cast_precision_loss \
-            2>&1 | tee build/log/clippy_pedantic_host_test.txt | tail -20
-          if grep -qE "^error\[|^error:" build/log/clippy_pedantic_host_test.txt; then
+            2>&1 | tee other/build/log/clippy_pedantic_host_test.txt | tail -20
+          if grep -qE "^error\[|^error:" other/build/log/clippy_pedantic_host_test.txt; then
             echo "::error::clippy host-test 维失败"
             exit 1
           fi
@@ -298,5 +298,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: clippy-pedantic-report
-          path: build/log/clippy_pedantic.txt
+          path: other/build/log/clippy_pedantic.txt
           retention-days: 14

@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-BUILD_DIR = PROJECT_ROOT / "build"
+BUILD_DIR = PROJECT_ROOT / "other" / "build"
 
 def run_qemu_test(timeout: int = 60) -> str:
     # ARCH 环境变量支持 x86_64 (默认) / aarch64

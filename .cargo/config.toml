@@ -1,0 +1,9 @@
+# 仓库级 Cargo 配置: 统一 target-dir 到 other/ 下 (临时/构建产物统一收敛, 见 .gitignore
+# 的 other/ 规则). cargo 从 cwd 向上合并 .cargo/config.toml, 更近的 crate 配置
+# (如 src/kernel/.cargo/config.toml) 优先覆盖本文件.
+#
+# 作用: host-tests / src/user / src/rust 以及仓库根目录的 ad-hoc cargo 调用均落到
+# other/target, 收敛此前散落的 7 处 target/ 目录 (./target, src/{rust,kernel,user}/target,
+# host-tests/target, ...). 显式 --target-dir / CARGO_TARGET_DIR 仍可覆盖本设置.
+[build]
+target-dir = "other/target"

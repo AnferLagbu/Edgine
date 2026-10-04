@@ -12,7 +12,7 @@ echo "║  $(date) ║"
 echo "╚══════════════════════════════════════════════════════════╝"
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-REPORT_DIR="tests/reports"
+REPORT_DIR="other/tests-reports"
 REPORT_FILE="${REPORT_DIR}/rust_acceptance_${TIMESTAMP}.json"
 MARKDOWN_FILE="${REPORT_DIR}/rust_acceptance_${TIMESTAMP}.md"
 
