@@ -132,14 +132,14 @@ pub fn current_fs_backend() -> &'static dyn FsBackend {
 // UNKFS FileSystem 注册表 (DECISION-K 项 6: 注入归零)
 // ============================================================================
 
-/// 全局 UNKFS FileSystem 注册表 — `services::fs::init` 注册 `NestfsData` 实例
+/// 全局 UNKFS FileSystem 注册表 — `services::fs::init` 注册 `UnkfsData` 实例
 static UNKFS_FS: crate::framework::sync::OnceLock<&'static dyn FileSystem> =
     crate::framework::sync::OnceLock::new();
 
 /// 注册 UNKFS FileSystem 实例 (由 `services::fs::init` 调用)
 ///
 /// framework 挂载/格式化路径经 `unkfs_fs()` 消费 trait object,
-/// 不再反向依赖 services 具象 `NestfsData`.
+/// 不再反向依赖 services 具象 `UnkfsData`.
 /// # Errors
 /// 已被注册过时返回 Err。
 pub fn register_unkfs_fs(fs: &'static dyn FileSystem) -> Result<(), &'static dyn FileSystem> {

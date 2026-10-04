@@ -39,10 +39,10 @@ fn test_unkfs_checksum_trait_impl_for_hvchecksum() {
     let src =
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
-    // 必须为现有 NestChecksum 提供 trait 实现
+    // 必须为现有 UnkfsChecksum 提供 trait 实现
     assert!(
-        src.contains("impl Checksum for NestChecksum"),
-        "必须 `impl Checksum for NestChecksum` (I-04)."
+        src.contains("impl Checksum for UnkfsChecksum"),
+        "必须 `impl Checksum for UnkfsChecksum` (I-04)."
     );
 }
 

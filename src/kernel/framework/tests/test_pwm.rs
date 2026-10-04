@@ -130,11 +130,11 @@ fn test_viable_floor() -> TestResult {
 
 #[cfg(target_arch = "x86_64")]
 fn test_pwmentry_cow_bp() -> TestResult {
-    use crate::services::fs::unkfs::bp::NestBlockPointer;
-    use crate::services::fs::unkfs::dmu::NestDmuObject;
+    use crate::services::fs::unkfs::bp::UnkfsBlockPointer;
+    use crate::services::fs::unkfs::dmu::UnkfsDmuObject;
 
-    let mut obj = NestDmuObject::new_file(1, 0);
-    let bp = NestBlockPointer::null();
+    let mut obj = UnkfsDmuObject::new_file(1, 0);
+    let bp = UnkfsBlockPointer::null();
     obj.cow_bp(bp, 5);
     check!(obj.birth_txg == 5, "birth txg should be 5 after cow_bp");
     TestResult::Pass

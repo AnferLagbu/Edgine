@@ -33,7 +33,7 @@
 //!
 //! **不包含** (这些是内部抽象, 不暴露给用户态, 不存在重叠问题):
 //! - `VfsManager::alloc_fd()` — VFS 内部 slot 索引
-//! - `NestFs::alloc_fd()` — UNKFS 内部 slot 索引
+//! - `Unkfs::alloc_fd()` — UNKFS 内部 slot 索引
 //! - `FdTable::alloc_fd()` — per-process 视图映射
 //!
 //! ## 架构

@@ -8,7 +8,7 @@ pub const HV_ZAP_MAX_VALUE: usize = 128;
 pub const HV_ZAP_MAX_ENTRIES: usize = 256;
 
 #[derive(Debug, Clone)]
-pub struct NestZapEntry {
+pub struct UnkfsZapEntry {
     pub name: [u8; HV_ZAP_MAX_NAME],
     pub value: [u8; HV_ZAP_MAX_VALUE],
     pub value_len: u16,
@@ -16,7 +16,7 @@ pub struct NestZapEntry {
     pub used: bool,
 }
 
-impl NestZapEntry {
+impl UnkfsZapEntry {
     pub fn new(name: &str, value: &[u8]) -> Self {
         let mut n = [0u8; HV_ZAP_MAX_NAME];
         let mut v = [0u8; HV_ZAP_MAX_VALUE];
@@ -71,28 +71,28 @@ impl NestZapEntry {
     }
 }
 
-pub struct NestZap {
-    pub entries: Mutex<Vec<NestZapEntry>>,
+pub struct UnkfsZap {
+    pub entries: Mutex<Vec<UnkfsZapEntry>>,
     pub capacity: usize,
-    pub zap_type: NestZapType,
+    pub zap_type: UnkfsZapType,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum NestZapType {
+pub enum UnkfsZapType {
     Micro = 0,
     Normal = 1,
     Leaf = 2,
 }
 
-// SAFETY (Framekernel P2.2.2): NestZap 全部字段 (Mutex<T>, AtomicU64) 自动 Send + Sync。
+// SAFETY (Framekernel P2.2.2): UnkfsZap 全部字段 (Mutex<T>, AtomicU64) 自动 Send + Sync。
 
-impl NestZap {
+impl UnkfsZap {
     pub fn new() -> Self {
         Self {
             entries: Mutex::new(Vec::new()),
             capacity: HV_ZAP_MAX_ENTRIES,
-            zap_type: NestZapType::Micro,
+            zap_type: UnkfsZapType::Micro,
         }
     }
 
@@ -101,9 +101,9 @@ impl NestZap {
             entries: Mutex::new(Vec::new()),
             capacity,
             zap_type: if capacity <= 64 {
-                NestZapType::Micro
+                UnkfsZapType::Micro
             } else {
-                NestZapType::Normal
+                UnkfsZapType::Normal
             },
         }
     }
@@ -113,7 +113,7 @@ impl NestZap {
         if entries.len() >= self.capacity {
             return false;
         }
-        let hash = NestZapEntry::hash_name(name);
+        let hash = UnkfsZapEntry::hash_name(name);
         if let Some(existing) = entries
             .iter_mut()
             .find(|e| e.used && e.hash == hash && e.get_name() == name)
@@ -123,7 +123,7 @@ impl NestZap {
             existing.value_len = vlen as u16;
             return true;
         }
-        entries.push(NestZapEntry::new(name, value));
+        entries.push(UnkfsZapEntry::new(name, value));
         true
     }
 
@@ -133,7 +133,7 @@ impl NestZap {
 
     pub fn lookup(&self, name: &str) -> Option<Vec<u8>> {
         let entries = self.entries.lock();
-        let hash = NestZapEntry::hash_name(name);
+        let hash = UnkfsZapEntry::hash_name(name);
         for entry in entries.iter() {
             if entry.used && entry.hash == hash && entry.get_name() == name {
                 return Some(entry.get_value().to_vec());
@@ -144,7 +144,7 @@ impl NestZap {
 
     pub fn lookup_u64(&self, name: &str) -> Option<u64> {
         let entries = self.entries.lock();
-        let hash = NestZapEntry::hash_name(name);
+        let hash = UnkfsZapEntry::hash_name(name);
         for entry in entries.iter() {
             if entry.used && entry.hash == hash && entry.get_name() == name {
                 return Some(entry.get_value_u64());
@@ -155,7 +155,7 @@ impl NestZap {
 
     pub fn remove(&self, name: &str) -> bool {
         let mut entries = self.entries.lock();
-        let hash = NestZapEntry::hash_name(name);
+        let hash = UnkfsZapEntry::hash_name(name);
         let idx = entries
             .iter()
             .position(|e| e.used && e.hash == hash && e.get_name() == name);
@@ -167,7 +167,7 @@ impl NestZap {
 
     pub fn contains(&self, name: &str) -> bool {
         let entries = self.entries.lock();
-        let hash = NestZapEntry::hash_name(name);
+        let hash = UnkfsZapEntry::hash_name(name);
         entries
             .iter()
             .any(|e| e.used && e.hash == hash && e.get_name() == name)
@@ -214,7 +214,7 @@ mod tests {
     /// 插入后应能按名查回同一值.
     #[test]
     fn test_zap_insert_lookup() {
-        let zap = NestZap::new();
+        let zap = UnkfsZap::new();
         zap.insert_u64("key1", 42);
         let Some(val) = zap.lookup_u64("key1") else {
             panic!("key1 not found");
@@ -225,7 +225,7 @@ mod tests {
     /// 重复插入同名键应覆盖旧值.
     #[test]
     fn test_zap_overwrite() {
-        let zap = NestZap::new();
+        let zap = UnkfsZap::new();
         zap.insert_u64("key1", 10);
         zap.insert_u64("key1", 99);
         let Some(val) = zap.lookup_u64("key1") else {
@@ -237,7 +237,7 @@ mod tests {
     /// 查询不存在的键应返回 None.
     #[test]
     fn test_zap_nonexistent() {
-        let zap = NestZap::new();
+        let zap = UnkfsZap::new();
         assert!(
             zap.lookup_u64("no_such_key").is_none(),
             "nonexistent should be None"
@@ -249,7 +249,7 @@ mod tests {
     /// remove 后键应不可查, 删除前应可查.
     #[test]
     fn test_zap_remove() {
-        let zap = NestZap::new();
+        let zap = UnkfsZap::new();
         zap.insert_u64("rm_me", 7);
         assert!(
             zap.lookup_u64("rm_me").is_some(),
@@ -265,7 +265,7 @@ mod tests {
     /// 大批量键插入后应全部可查回.
     #[test]
     fn test_zap_large_namespace() {
-        let zap = NestZap::with_capacity(64);
+        let zap = UnkfsZap::with_capacity(64);
         for i in 0..30u64 {
             let key = alloc::format!("key_{i}");
             zap.insert_u64(&key, i * 100);
@@ -284,7 +284,7 @@ mod tests {
     /// contains 与 clear 语义应一致.
     #[test]
     fn test_zap_contains_clear() {
-        let zap = NestZap::new();
+        let zap = UnkfsZap::new();
         zap.insert_u64("test", 42);
         assert!(zap.contains("test"), "should contain test");
         assert!(!zap.contains("other"), "should not contain other");

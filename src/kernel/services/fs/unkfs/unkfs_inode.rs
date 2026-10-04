@@ -1,17 +1,17 @@
 #![deny(unsafe_code)]
 
-use super::unkfs_data::{NestfsData, get_unkfs};
+use super::unkfs_data::{UnkfsData, get_unkfs};
 use crate::services::fs::inode::Inode;
 use crate::services::fs::{KernelError, KernelResult, VfsFileType, VfsSeekWhence, VfsStat};
 
 /// `UNKFS` 文件 Inode — 直接持有 fd 编号
-pub struct NestfsInode {
+pub struct UnkfsInode {
     fd: u32,
     mount_idx: u32,
     rel_path: alloc::string::String,
 }
 
-impl NestfsInode {
+impl UnkfsInode {
     pub fn new(fd: u32, mount_idx: u32, rel_path: &str) -> Self {
         Self {
             fd,
@@ -21,7 +21,7 @@ impl NestfsInode {
     }
 }
 
-impl Inode for NestfsInode {
+impl Inode for UnkfsInode {
     fn read(&self, _offset: u64, buf: &mut [u8], _pwm: u64) -> KernelResult<usize> {
         let unkfs = get_unkfs();
         let result = unkfs.read(self.fd, buf, buf.len() as u32);
@@ -89,7 +89,7 @@ impl Inode for NestfsInode {
         false
     }
 
-    // B06-08: 显式覆盖 chmod/chown (委托给底层 NestfsData, 底层支持路径级权限修改)
+    // B06-08: 显式覆盖 chmod/chown (委托给底层 UnkfsData, 底层支持路径级权限修改)
     fn chmod(&self, mode: u16, pwm: u64) -> KernelResult<()> {
         let unkfs = get_unkfs();
         if unkfs.chmod(&self.rel_path, mode, pwm) == 0 {
@@ -108,7 +108,7 @@ impl Inode for NestfsInode {
         }
     }
 
-    // B06-08 同源: 委托底层 NestfsData (按路径定位 DMU 对象并落盘)
+    // B06-08 同源: 委托底层 UnkfsData (按路径定位 DMU 对象并落盘)
     fn set_times(&self, atime: u64, mtime: u64, pwm: u64) -> KernelResult<()> {
         let unkfs = get_unkfs();
         unkfs.set_times(&self.rel_path, atime, mtime, pwm)
@@ -127,7 +127,7 @@ impl Inode for NestfsInode {
 // E6-4: FileSystem trait 实现
 // ============================================================================
 
-impl crate::services::fs::FileSystem for NestfsData {
+impl crate::services::fs::FileSystem for UnkfsData {
     fn name(&self) -> &'static str {
         "unkfs"
     }
@@ -170,7 +170,7 @@ impl crate::services::fs::FileSystem for NestfsData {
     ) -> crate::services::fs::KernelResult<alloc::sync::Arc<dyn crate::services::fs::inode::Inode>>
     {
         match self.open(rel_path, flags, pwm) {
-            Ok(fd) => Ok(alloc::sync::Arc::new(NestfsInode::new(
+            Ok(fd) => Ok(alloc::sync::Arc::new(UnkfsInode::new(
                 fd as u32, 0, rel_path,
             ))),
             Err(e) => Err(e),
@@ -246,7 +246,7 @@ impl crate::services::fs::FileSystem for NestfsData {
             })
     }
 
-    // POSIX utimensat 通路: 委托 NestfsData::set_times (按路径定位 DMU 对象)
+    // POSIX utimensat 通路: 委托 UnkfsData::set_times (按路径定位 DMU 对象)
     fn fs_utimensat(
         &self,
         rel_path: &str,
@@ -403,7 +403,7 @@ impl crate::services::fs::FileSystem for NestfsData {
         inode_id: u32,
         mount_idx: u32,
     ) -> Option<alloc::sync::Arc<dyn crate::services::fs::inode::Inode>> {
-        Some(alloc::sync::Arc::new(NestfsInode::new(
+        Some(alloc::sync::Arc::new(UnkfsInode::new(
             inode_id, mount_idx, "",
         )))
     }

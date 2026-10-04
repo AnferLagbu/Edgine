@@ -105,7 +105,7 @@ impl Inode for Ext2Inode {
     ///
     /// ## 属主判据 (丙批审查 B1 整改)
     ///
-    /// 与 `NestfsData::set_times` 同判据 (属主或特权级 0). ext2 磁盘 inode 无
+    /// 与 `UnkfsData::set_times` 同判据 (属主或特权级 0). ext2 磁盘 inode 无
     /// `owner_pwm` 字段, 属主身份改由 `i_uid` 与该 pwm 映射的 uid 比对; 判据与
     /// `save_inode` 同处 `EXT2_FS` 锁域, 不引入二次路径解析 (无 TOCTOU 窗口).
     /// `pwm` 未注册时 `pwm_get_uid` 返回 `u32::MAX` 且特权级为 `0xFF`, 判为拒绝.

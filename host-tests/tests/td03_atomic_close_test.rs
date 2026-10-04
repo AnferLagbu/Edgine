@@ -58,11 +58,11 @@ fn test_vfs_close_uses_atomic_claim_and_clear() {
 
 #[test]
 fn test_unkfs_close_uses_atomic_claim_and_clear() {
-    // TD-03: unkfs NestDmu::close 必须在单一锁内同时检查 used 并清零
+    // TD-03: unkfs UnkfsDmu::close 必须在单一锁内同时检查 used 并清零
     let src = read(UNKFS);
     let body_start = src
         .find("pub fn close(&self, fd: u32) -> i32")
-        .expect("NestDmu::close 必须存在");
+        .expect("UnkfsDmu::close 必须存在");
     let body = &src[body_start..body_start + 600];
     // 锁内同时含 used 检查与清零
     assert!(

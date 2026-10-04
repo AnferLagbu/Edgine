@@ -25,7 +25,7 @@
 
 use edgine::kernel::framework::error::KernelError;
 use edgine::kernel::framework::sgeg::identity;
-use edgine::kernel::services::fs::unkfs::dataset::NestDataset;
+use edgine::kernel::services::fs::unkfs::dataset::UnkfsDataset;
 use edgine::kernel::services::fs::unkfs::unkfs_data::get_unkfs;
 use std::sync::{Mutex, Once, OnceLock};
 
@@ -609,7 +609,7 @@ fn unkfs_snapshot_clone() {
         let snaps = snap_mgr.list_snapshots(0);
         if !snaps.is_empty() {
             let snap_id = snaps[0].snap_id;
-            let fake_ds = NestDataset::new(999, "fake", 0);
+            let fake_ds = UnkfsDataset::new(999, "fake", 0);
             let r = snap_mgr.rollback(snap_id, &fake_ds);
             assert_eq_unkfs!(r, false, "rollback with wrong ds_id should fail");
         }

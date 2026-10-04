@@ -29,7 +29,7 @@
 //! ```
 
 use super::spa::HV_POOL_BLOCK_SIZE;
-use super::zil::{NestZil, NestZilRecord};
+use super::zil::{UnkfsZil, UnkfsZilRecord};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -43,7 +43,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 /// - `try_deserialize_record` 的 Err (CRC/UnknownRecordType/BufferTooShort) 在
 ///   block CRC 通过后不可达, 保留为防御性解析校验 + 单元测试直接验证对象.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NestZilPersistError {
+pub enum UnkfsZilPersistError {
     /// 缓冲区长度不足, 不可能通过外部 `assert!(buf.len() >= 256)` 触发
     BufferTooShort { need: usize, got: usize },
     /// CRC32 校验失败 — 物理 bit rot 或上层写入错误
@@ -54,7 +54,7 @@ pub enum NestZilPersistError {
     InvalidBlock,
 }
 
-impl NestZilPersistError {
+impl UnkfsZilPersistError {
     pub fn as_static_str(&self) -> &'static str {
         match self {
             Self::BufferTooShort { .. } => "buffer_too_short",
@@ -227,7 +227,7 @@ fn crc32_checksum(data: &[u8]) -> u32 {
     !crc
 }
 
-fn serialize_record(record: &NestZilRecord, buf: &mut [u8]) {
+fn serialize_record(record: &UnkfsZilRecord, buf: &mut [u8]) {
     debug_assert!(
         buf.len() >= ZIL_RECORD_PAYLOAD,
         "serialize_record buffer too small: {} < {}",
@@ -252,24 +252,24 @@ fn serialize_record(record: &NestZilRecord, buf: &mut [u8]) {
     buf[payload_end..payload_end + 4].copy_from_slice(&rec_crc.to_le_bytes());
 }
 
-fn try_deserialize_record(buf: &[u8]) -> Result<NestZilRecord, NestZilPersistError> {
+fn try_deserialize_record(buf: &[u8]) -> Result<UnkfsZilRecord, UnkfsZilPersistError> {
     let actual_size = 173 + 32 + 4;
     if buf.len() < actual_size {
-        return Err(NestZilPersistError::BufferTooShort {
+        return Err(UnkfsZilPersistError::BufferTooShort {
             need: actual_size,
             got: buf.len(),
         });
     }
     let rec_crc =
         u32::from_le_bytes(buf[actual_size - 4..actual_size].try_into().map_err(|_| {
-            NestZilPersistError::BufferTooShort {
+            UnkfsZilPersistError::BufferTooShort {
                 need: 4,
                 got: actual_size - 4,
             }
         })?);
     let computed = crc32_checksum(&buf[..actual_size - 4]);
     if rec_crc != computed {
-        return Err(NestZilPersistError::CrcMismatch {
+        return Err(UnkfsZilPersistError::CrcMismatch {
             expected: rec_crc,
             computed,
         });
@@ -279,32 +279,32 @@ fn try_deserialize_record(buf: &[u8]) -> Result<NestZilRecord, NestZilPersistErr
     let txg = u64::from_le_bytes(
         buf[1..9]
             .try_into()
-            .map_err(|_| NestZilPersistError::BufferTooShort { need: 8, got: 8 })?,
+            .map_err(|_| UnkfsZilPersistError::BufferTooShort { need: 8, got: 8 })?,
     );
     let obj_id = u64::from_le_bytes(
         buf[9..17]
             .try_into()
-            .map_err(|_| NestZilPersistError::BufferTooShort { need: 8, got: 8 })?,
+            .map_err(|_| UnkfsZilPersistError::BufferTooShort { need: 8, got: 8 })?,
     );
     let parent_obj = u64::from_le_bytes(
         buf[17..25]
             .try_into()
-            .map_err(|_| NestZilPersistError::BufferTooShort { need: 8, got: 8 })?,
+            .map_err(|_| UnkfsZilPersistError::BufferTooShort { need: 8, got: 8 })?,
     );
     let offset = u64::from_le_bytes(
         buf[25..33]
             .try_into()
-            .map_err(|_| NestZilPersistError::BufferTooShort { need: 8, got: 8 })?,
+            .map_err(|_| UnkfsZilPersistError::BufferTooShort { need: 8, got: 8 })?,
     );
     let size = u32::from_le_bytes(
         buf[33..37]
             .try_into()
-            .map_err(|_| NestZilPersistError::BufferTooShort { need: 4, got: 4 })?,
+            .map_err(|_| UnkfsZilPersistError::BufferTooShort { need: 4, got: 4 })?,
     );
     let seq = u64::from_le_bytes(
         buf[37..45]
             .try_into()
-            .map_err(|_| NestZilPersistError::BufferTooShort { need: 8, got: 8 })?,
+            .map_err(|_| UnkfsZilPersistError::BufferTooShort { need: 8, got: 8 })?,
     );
 
     let mut name = [0u8; 128];
@@ -316,28 +316,28 @@ fn try_deserialize_record(buf: &[u8]) -> Result<NestZilRecord, NestZilPersistErr
         *val = u64::from_le_bytes(
             buf[off..off + 8]
                 .try_into()
-                .map_err(|_| NestZilPersistError::BufferTooShort { need: 8, got: 8 })?,
+                .map_err(|_| UnkfsZilPersistError::BufferTooShort { need: 8, got: 8 })?,
         );
     }
 
     let rec_type_enum = match rec_type {
-        1 => super::zil::NestZilRecordType::Create,
-        2 => super::zil::NestZilRecordType::Remove,
-        3 => super::zil::NestZilRecordType::Link,
-        4 => super::zil::NestZilRecordType::Rename,
-        5 => super::zil::NestZilRecordType::Write,
-        6 => super::zil::NestZilRecordType::Truncate,
-        7 => super::zil::NestZilRecordType::SetAttr,
-        8 => super::zil::NestZilRecordType::Acl,
-        9 => super::zil::NestZilRecordType::CreateAcl,
-        10 => super::zil::NestZilRecordType::Mkdir,
-        11 => super::zil::NestZilRecordType::Symlink,
-        12 => super::zil::NestZilRecordType::DedupRef,
-        13 => super::zil::NestZilRecordType::DedupUnref,
-        other => return Err(NestZilPersistError::UnknownRecordType(other)),
+        1 => super::zil::UnkfsZilRecordType::Create,
+        2 => super::zil::UnkfsZilRecordType::Remove,
+        3 => super::zil::UnkfsZilRecordType::Link,
+        4 => super::zil::UnkfsZilRecordType::Rename,
+        5 => super::zil::UnkfsZilRecordType::Write,
+        6 => super::zil::UnkfsZilRecordType::Truncate,
+        7 => super::zil::UnkfsZilRecordType::SetAttr,
+        8 => super::zil::UnkfsZilRecordType::Acl,
+        9 => super::zil::UnkfsZilRecordType::CreateAcl,
+        10 => super::zil::UnkfsZilRecordType::Mkdir,
+        11 => super::zil::UnkfsZilRecordType::Symlink,
+        12 => super::zil::UnkfsZilRecordType::DedupRef,
+        13 => super::zil::UnkfsZilRecordType::DedupUnref,
+        other => return Err(UnkfsZilPersistError::UnknownRecordType(other)),
     };
 
-    Ok(NestZilRecord {
+    Ok(UnkfsZilRecord {
         rec_type: rec_type_enum,
         txg,
         obj_id,
@@ -350,20 +350,20 @@ fn try_deserialize_record(buf: &[u8]) -> Result<NestZilRecord, NestZilPersistErr
     })
 }
 
-pub struct NestZilPersist {
+pub struct UnkfsZilPersist {
     pub zil_blocks_written: AtomicBool,
 }
 
-// SAFETY (Framekernel P2.2.2): NestZilPersist 全部字段 (AtomicBool) 自动 Send + Sync。
+// SAFETY (Framekernel P2.2.2): UnkfsZilPersist 全部字段 (AtomicBool) 自动 Send + Sync。
 
-impl NestZilPersist {
+impl UnkfsZilPersist {
     pub const fn new() -> Self {
         Self {
             zil_blocks_written: AtomicBool::new(false),
         }
     }
 
-    pub fn serialize_zil_to_block(zil: &NestZil, txg: u64) -> Option<Vec<u8>> {
+    pub fn serialize_zil_to_block(zil: &UnkfsZil, txg: u64) -> Option<Vec<u8>> {
         let records = zil.records.lock();
         if records.is_empty() {
             return None;
@@ -410,7 +410,7 @@ impl NestZilPersist {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
-    pub fn deserialize_zil_from_block(block: &[u8]) -> Vec<NestZilRecord> {
+    pub fn deserialize_zil_from_block(block: &[u8]) -> Vec<UnkfsZilRecord> {
         let mut records = Vec::new();
 
         if block.len() < ZIL_BLOCK_SIZE {
@@ -509,8 +509,8 @@ mod tests {
 
     #[test]
     fn test_serialize_roundtrip() {
-        let rec = NestZilRecord {
-            rec_type: super::super::zil::NestZilRecordType::Write,
+        let rec = UnkfsZilRecord {
+            rec_type: super::super::zil::UnkfsZilRecordType::Write,
             txg: 42,
             obj_id: 100,
             parent_obj: 0,
@@ -536,8 +536,8 @@ mod tests {
 
     #[test]
     fn test_deserialize_corrupted_data() {
-        let rec = NestZilRecord {
-            rec_type: super::super::zil::NestZilRecordType::Create,
+        let rec = UnkfsZilRecord {
+            rec_type: super::super::zil::UnkfsZilRecordType::Create,
             txg: 1,
             obj_id: 0,
             parent_obj: 0,
@@ -554,6 +554,6 @@ mod tests {
         buf[10] ^= 0xFF; // corrupt
         // P0-I-15 修复: 损坏 record 必须返回 CrcMismatch 而非 None
         let err = try_deserialize_record(&buf).expect_err("P0-I-15: corrupt must fail");
-        assert!(matches!(err, NestZilPersistError::CrcMismatch { .. }));
+        assert!(matches!(err, UnkfsZilPersistError::CrcMismatch { .. }));
     }
 }

@@ -102,20 +102,20 @@ use edgine::kernel::framework::error::KernelError;
 use edgine::kernel::framework::fs::VfsFileType;
 #[cfg(test)]
 use edgine::kernel::framework::fs::vfs_poll_trait::VfsPollPolicy;
-use edgine::kernel::services::fs::unkfs::arc::{NestArcBufType, NestArcKey};
+use edgine::kernel::services::fs::unkfs::arc::{UnkfsArcBufType, UnkfsArcKey};
 use edgine::kernel::services::fs::unkfs::arc_trait::{ArcCache, StandardArc};
-use edgine::kernel::services::fs::unkfs::bp::NestBlockPointer;
-use edgine::kernel::services::fs::unkfs::dmu::{NestObjSet, NestObjType};
-use edgine::kernel::services::fs::unkfs::raidz::{NestRaidzLevel, NestRaidzMap};
+use edgine::kernel::services::fs::unkfs::bp::UnkfsBlockPointer;
+use edgine::kernel::services::fs::unkfs::dmu::{UnkfsObjSet, UnkfsObjType};
+use edgine::kernel::services::fs::unkfs::raidz::{UnkfsRaidzLevel, UnkfsRaidzMap};
 // RAID-Z 列数上下限仅单测断言 clamp 行为时使用
 #[cfg(test)]
 use edgine::kernel::services::fs::unkfs::raidz::{HV_RAIDZ_MAX_COLS, HV_RAIDZ_MIN_COLS};
-use edgine::kernel::services::fs::unkfs::spa::NestSpa;
-use edgine::kernel::services::fs::unkfs::txg::NestTxgGroup;
-use edgine::kernel::services::fs::unkfs::vdev::NestVdevConfig;
-use edgine::kernel::services::fs::unkfs::zap::NestZap;
-use edgine::kernel::services::fs::unkfs::zil::{NestZil, NestZilRecord};
-use edgine::kernel::services::fs::unkfs::zil_persist::NestZilPersist;
+use edgine::kernel::services::fs::unkfs::spa::UnkfsSpa;
+use edgine::kernel::services::fs::unkfs::txg::UnkfsTxgGroup;
+use edgine::kernel::services::fs::unkfs::vdev::UnkfsVdevConfig;
+use edgine::kernel::services::fs::unkfs::zap::UnkfsZap;
+use edgine::kernel::services::fs::unkfs::zil::{UnkfsZil, UnkfsZilRecord};
+use edgine::kernel::services::fs::unkfs::zil_persist::UnkfsZilPersist;
 use edgine::kernel::services::fs::vfs_poll_policy::StandardVfsPollPolicy;
 use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
@@ -900,17 +900,17 @@ pub fn vfs_poll_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// LEGACY-5.1: ZAP (NestZap) dispatch bench
+// LEGACY-5.1: ZAP (UnkfsZap) dispatch bench
 // ============================================================================
 //
 // G-07: 本地 `HostZapStore` / `StandardHostZap` (Mutex<HashMap>) 复刻已删除, 直引内核
-// `services::fs::unkfs::zap::NestZap`. 注: 内核 ZAP 为线性扫描 (先比 hash 再比名字),
+// `services::fs::unkfs::zap::UnkfsZap`. 注: 内核 ZAP 为线性扫描 (先比 hash 再比名字),
 // 与内核真实行为位一致.
 
 /// bench: ZAP insert / lookup / contains 路径 throughput
 pub fn zap_dispatch_bench(iters: u64) -> u128 {
     // 容量 > 键空间, 保证 insert 分支始终走「查找已有键」真实路径
-    let zap = NestZap::with_capacity(512);
+    let zap = UnkfsZap::with_capacity(512);
     // 预热: 填满键空间
     for i in 0..256u64 {
         zap.insert_u64(&format!("k_{}", i), i);
@@ -944,21 +944,21 @@ pub fn zap_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// LEGACY-5.2: TXG (NestTxgGroup) dispatch bench
+// LEGACY-5.2: TXG (UnkfsTxgGroup) dispatch bench
 // ============================================================================
 //
 // G-07: 本地 `MockTxgState` / `HostTxgManager` / `StandardHostTxg` 复刻已删除, 直引内核
-// `services::fs::unkfs::txg::NestTxgGroup` — `init`/`transition`/`add_dirty_to_open`/
+// `services::fs::unkfs::txg::UnkfsTxgGroup` — `init`/`transition`/`add_dirty_to_open`/
 // `current_txg` 的唯一实现. 事务组三态 (open/quiescing/syncing) 迁移与脏块登记
 // 均由内核承担.
 
 /// bench: TXG 事务组迁移 + 脏块登记 路径 throughput
 pub fn txg_dispatch_bench(iters: u64) -> u128 {
-    let mut txg = NestTxgGroup::new();
+    let mut txg = UnkfsTxgGroup::new();
     txg.init(1);
     // 预热
     for _ in 0..1000 {
-        txg.add_dirty_to_open(NestBlockPointer::null());
+        txg.add_dirty_to_open(UnkfsBlockPointer::null());
     }
     // bench: add_dirty + current_txg + transition 旋转
     let start = Instant::now();
@@ -973,7 +973,7 @@ pub fn txg_dispatch_bench(iters: u64) -> u128 {
             sink = sink.wrapping_add(txg.current_txg());
         } else {
             // add_dirty_to_open
-            txg.add_dirty_to_open(NestBlockPointer::null());
+            txg.add_dirty_to_open(UnkfsBlockPointer::null());
         }
     }
     let elapsed = start.elapsed().as_nanos();
@@ -982,27 +982,27 @@ pub fn txg_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// LEGACY-5.4: DMU (NestObjSet) dispatch bench
+// LEGACY-5.4: DMU (UnkfsObjSet) dispatch bench
 // ============================================================================
 //
 // G-07: 本地 `MockDmuObject` / `HostDmuManager` / `StandardHostDmu` (Mutex<HashMap>)
-// 复刻已删除, 直引内核 `services::fs::unkfs::dmu::NestObjSet` — 对象分配/释放/查询/
-// 计数唯一实现 (内核为 `Mutex<Vec<NestDmuObject>>`, 查询与计数为线性扫描).
+// 复刻已删除, 直引内核 `services::fs::unkfs::dmu::UnkfsObjSet` — 对象分配/释放/查询/
+// 计数唯一实现 (内核为 `Mutex<Vec<UnkfsDmuObject>>`, 查询与计数为线性扫描).
 
 /// bench: DMU 对象分配 / 查询 路径 throughput
 pub fn dmu_dispatch_bench(iters: u64) -> u128 {
-    let dmu = NestObjSet::new();
+    let dmu = UnkfsObjSet::new();
     dmu.init(0x100);
     // 预热: alloc 1000 个 File 对象
     for _ in 0..1000 {
-        dmu.alloc_obj(NestObjType::File, 0x100);
+        dmu.alloc_obj(UnkfsObjType::File, 0x100);
     }
     let start = Instant::now();
     let mut sink: u64 = 0;
     for r in 0..iters {
         if r & 0x3 == 0 {
             // alloc File
-            if let Some(id) = dmu.alloc_obj(NestObjType::File, 0x100) {
+            if let Some(id) = dmu.alloc_obj(UnkfsObjType::File, 0x100) {
                 sink = sink.wrapping_add(id);
             }
         } else if r & 0x3 == 1 {
@@ -1026,20 +1026,20 @@ pub fn dmu_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// LEGACY-5.5: SPA (NestSpa) dispatch bench
+// LEGACY-5.5: SPA (UnkfsSpa) dispatch bench
 // ============================================================================
 //
 // G-07: 本地 `SpaState` / `HostSpaManager` / `StandardHostSpa` 复刻已删除, 直引内核
-// `services::fs::unkfs::spa::NestSpa` — 池初始化 / vdev 装配 / 事务组推进 / 统计读取
-// 唯一实现. 注: 内核 vdev 上限为 `NestSpaConfig::max_vdevs` (默认 8).
+// `services::fs::unkfs::spa::UnkfsSpa` — 池初始化 / vdev 装配 / 事务组推进 / 统计读取
+// 唯一实现. 注: 内核 vdev 上限为 `UnkfsSpaConfig::max_vdevs` (默认 8).
 
 /// bench: SPA 池状态读 + 事务组推进 路径 throughput
 pub fn spa_dispatch_bench(iters: u64) -> u128 {
-    let spa = NestSpa::new();
+    let spa = UnkfsSpa::new();
     spa.init("bench");
     // 预热: 装配 vdev 至内核上限 (max_vdevs = 8)
     for i in 0..8u16 {
-        spa.add_vdev(NestVdevConfig::new_disk(i, "bench_disk", 9));
+        spa.add_vdev(UnkfsVdevConfig::new_disk(i, "bench_disk", 9));
     }
     let start = Instant::now();
     let mut sink: u64 = 0;
@@ -1068,13 +1068,13 @@ pub fn spa_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `MockRaidzLevel` / `HostRaidzEngine` / `StandardHostRaidz` 复刻已删除,
-// 直引内核 `services::fs::unkfs::raidz::NestRaidzMap`. 注: 内核以 struct 字段
+// 直引内核 `services::fs::unkfs::raidz::UnkfsRaidzMap`. 注: 内核以 struct 字段
 // (`ncols` / `nparity` / `ashift`) + `level` 枚举方法表达几何, 无 `is_single` /
 // `is_mirror` 谓词, 故此处按内核真实访问面测量.
 
 /// bench: RAID-Z 几何查询 (ncols / nparity / max_failures / ashift) throughput
 pub fn raidz_dispatch_bench(iters: u64) -> u128 {
-    let map = NestRaidzMap::new(NestRaidzLevel::RaidZ1, 3, 9);
+    let map = UnkfsRaidzMap::new(UnkfsRaidzLevel::RaidZ1, 3, 9);
     // 预热
     for _ in 0..1000 {
         let _ = map.ncols;
@@ -1101,7 +1101,7 @@ pub fn raidz_dispatch_bench(iters: u64) -> u128 {
 // G-07: 本地 `MockArcKey` / `HostArcCache` / `StandardHostArc` / `ArcState`
 // (Mutex<HashMap>) 复刻已删除, 直引内核 `services::fs::unkfs::arc_trait::StandardArc`.
 // 注: 内核 `ArcCache::hit_rate()` 返回千分比 (u64), 且 `insert` 额外带
-// `NestArcBufType` 参数.
+// `UnkfsArcBufType` 参数.
 
 /// ARC 初始容量 (内核 `HV_ARC_DEFAULT_SIZE` 量级, 保证预热后仍有淘汰余量)
 const BENCH_ARC_MAX_SIZE: usize = 100;
@@ -1112,13 +1112,13 @@ pub fn arc_dispatch_bench(iters: u64) -> u128 {
     arc.init(BENCH_ARC_MAX_SIZE);
     // 预热: 填满容量上限, 使 lookup 分支可命中
     for i in 0..BENCH_ARC_MAX_SIZE as u64 {
-        let k = NestArcKey::new(0, i, 0);
-        arc.insert(k, &[0u8; 16], NestArcBufType::Data);
+        let k = UnkfsArcKey::new(0, i, 0);
+        arc.insert(k, &[0u8; 16], UnkfsArcBufType::Data);
     }
     let start = Instant::now();
     let mut sink: u64 = 0;
     for r in 0..iters {
-        let k = NestArcKey::new(0, r & 0xFF, 0);
+        let k = UnkfsArcKey::new(0, r & 0xFF, 0);
         if r & 0x3 == 0 {
             // lookup
             if arc.lookup(&k) {
@@ -1126,7 +1126,7 @@ pub fn arc_dispatch_bench(iters: u64) -> u128 {
             }
         } else if r & 0x3 == 1 {
             // insert
-            arc.insert(k, &[0u8; 16], NestArcBufType::Data);
+            arc.insert(k, &[0u8; 16], UnkfsArcBufType::Data);
         } else if r & 0x3 == 2 {
             // hit_count
             sink = sink.wrapping_add(arc.hit_count());
@@ -1145,17 +1145,17 @@ pub fn arc_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `MockZilRecord` / `HostZilLog` / `StandardHostZil` / `ZilLogState`
-// 复刻已删除, 直引内核 `services::fs::unkfs::zil::NestZil`. 注: 内核无
+// 复刻已删除, 直引内核 `services::fs::unkfs::zil::UnkfsZil`. 注: 内核无
 // `is_enabled` / `set_enabled` / `current_seq()` / `committed_seq()` 访问器,
 // 序列号域为 `AtomicU64` 直读.
 
 /// bench: ZIL 日志 (add_record / current_seq / pending_count / commit) throughput
 pub fn zil_log_dispatch_bench(iters: u64) -> u128 {
-    let zil = NestZil::new();
+    let zil = UnkfsZil::new();
     zil.init();
     // 预热
     for i in 0..1000 {
-        zil.add_record(NestZilRecord::new_write(1, 100, i, 4096));
+        zil.add_record(UnkfsZilRecord::new_write(1, 100, i, 4096));
     }
     let start = Instant::now();
     let mut sink: u64 = 0;
@@ -1171,7 +1171,7 @@ pub fn zil_log_dispatch_bench(iters: u64) -> u128 {
             sink = sink.wrapping_add(zil.pending_count() as u64);
         } else {
             // add_record
-            zil.add_record(NestZilRecord::new_write(1, 100, r, 4096));
+            zil.add_record(UnkfsZilRecord::new_write(1, 100, r, 4096));
         }
     }
     let elapsed = start.elapsed().as_nanos();
@@ -1184,8 +1184,8 @@ pub fn zil_log_dispatch_bench(iters: u64) -> u128 {
 // ============================================================================
 //
 // G-07: 本地 `HostZilPersist` / `StandardHostZilPersist` / `MockZilPersistState`
-// 复刻已删除, 直引内核 `services::fs::unkfs::zil_persist::NestZilPersist`.
-// 注: 内核 serialize/deserialize 为关联函数, 输入为真实 `NestZil` 记录集
+// 复刻已删除, 直引内核 `services::fs::unkfs::zil_persist::UnkfsZilPersist`.
+// 注: 内核 serialize/deserialize 为关联函数, 输入为真实 `UnkfsZil` 记录集
 // (每块上限 `ZIL_MAX_RECORDS_PER_BLOCK` = 15 条), 含 CRC32 逐位计算.
 
 /// 预热用 ZIL 记录数 (等于内核单块记录上限 15, 使 serialize 走满块路径)
@@ -1193,30 +1193,30 @@ const BENCH_ZIL_PERSIST_RECORDS: u64 = 15;
 
 /// bench: ZIL 持久化 (serialize / deserialize / mark_written) throughput
 pub fn zil_persist_dispatch_bench(iters: u64) -> u128 {
-    let persist = NestZilPersist::new();
-    let zil = NestZil::new();
+    let persist = UnkfsZilPersist::new();
+    let zil = UnkfsZil::new();
     zil.init();
     for i in 0..BENCH_ZIL_PERSIST_RECORDS {
-        zil.add_record(NestZilRecord::new_write(1, 100, i, 4096));
+        zil.add_record(UnkfsZilRecord::new_write(1, 100, i, 4096));
     }
     // 预热: serialize + deserialize
-    let warm_block = NestZilPersist::serialize_zil_to_block(&zil, 1);
+    let warm_block = UnkfsZilPersist::serialize_zil_to_block(&zil, 1);
     if let Some(b) = &warm_block {
-        let _ = NestZilPersist::deserialize_zil_from_block(b);
+        let _ = UnkfsZilPersist::deserialize_zil_from_block(b);
     }
     let start = Instant::now();
     let mut sink: u64 = 0;
     for r in 0..iters {
         if r & 0x3 == 0 {
             // serialize
-            if let Some(b) = NestZilPersist::serialize_zil_to_block(&zil, 1) {
+            if let Some(b) = UnkfsZilPersist::serialize_zil_to_block(&zil, 1) {
                 sink = sink.wrapping_add(b.len() as u64);
             }
         } else if r & 0x3 == 1 {
             // deserialize
             if let Some(b) = &warm_block {
                 sink =
-                    sink.wrapping_add(NestZilPersist::deserialize_zil_from_block(b).len() as u64);
+                    sink.wrapping_add(UnkfsZilPersist::deserialize_zil_from_block(b).len() as u64);
             }
         } else {
             // mark_written
@@ -1839,7 +1839,7 @@ mod tests {
 
     #[test]
     fn test_zap_insert_lookup() {
-        let zap = NestZap::new();
+        let zap = UnkfsZap::new();
         assert!(zap.insert("a", b"1"));
         assert_eq!(zap.lookup("a"), Some(b"1".to_vec()));
         assert_eq!(zap.lookup("nokey"), None);
@@ -1847,7 +1847,7 @@ mod tests {
 
     #[test]
     fn test_zap_update() {
-        let zap = NestZap::new();
+        let zap = UnkfsZap::new();
         assert!(zap.insert("k", b"v1"));
         assert!(zap.insert("k", b"v2"));
         assert_eq!(zap.lookup("k"), Some(b"v2".to_vec()));
@@ -1857,7 +1857,7 @@ mod tests {
 
     #[test]
     fn test_zap_capacity_limit() {
-        let zap = NestZap::with_capacity(2);
+        let zap = UnkfsZap::with_capacity(2);
         assert!(zap.insert("a", b"1"));
         assert!(zap.insert("b", b"2"));
         // 内核实现: 容量满后一切 insert 均拒 (含已存在键的更新)
@@ -1868,14 +1868,14 @@ mod tests {
 
     #[test]
     fn test_zap_u64() {
-        let zap = NestZap::new();
+        let zap = UnkfsZap::new();
         assert!(zap.insert_u64("count", 42));
         assert_eq!(zap.lookup_u64("count"), Some(42));
     }
 
     #[test]
     fn test_zap_remove() {
-        let zap = NestZap::new();
+        let zap = UnkfsZap::new();
         zap.insert("a", b"1");
         assert!(zap.contains("a"));
         assert!(zap.remove("a"));
@@ -1892,7 +1892,7 @@ mod tests {
 
     #[test]
     fn test_txg_init() {
-        let mut txg = NestTxgGroup::new();
+        let mut txg = UnkfsTxgGroup::new();
         txg.init(1);
         assert_eq!(txg.current_txg(), 1);
         // init 后 open/quiescing/syncing 槽位分别指向 txgs[0..3]
@@ -1903,7 +1903,7 @@ mod tests {
 
     #[test]
     fn test_txg_transition() {
-        let mut txg = NestTxgGroup::new();
+        let mut txg = UnkfsTxgGroup::new();
         txg.init(1);
         let old = txg.current_txg();
         let new = txg.transition();
@@ -1913,10 +1913,10 @@ mod tests {
 
     #[test]
     fn test_txg_dirty_accumulate() {
-        let mut txg = NestTxgGroup::new();
+        let mut txg = UnkfsTxgGroup::new();
         txg.init(1);
         for _ in 0..5 {
-            txg.add_dirty_to_open(NestBlockPointer::null());
+            txg.add_dirty_to_open(UnkfsBlockPointer::null());
         }
         assert_eq!(txg.total_dirty.load(Ordering::Acquire), 5);
     }
@@ -1930,7 +1930,7 @@ mod tests {
 
     #[test]
     fn test_dmu_uninitialized() {
-        let dmu = NestObjSet::new();
+        let dmu = UnkfsObjSet::new();
         assert!(!dmu.initialized.load(Ordering::Acquire));
         assert_eq!(dmu.obj_count(), 0);
         // 未 init 时对象表为空 → root 不可得
@@ -1939,38 +1939,38 @@ mod tests {
 
     #[test]
     fn test_dmu_init_creates_root() {
-        let dmu = NestObjSet::new();
+        let dmu = UnkfsObjSet::new();
         dmu.init(0x100);
         assert!(dmu.initialized.load(Ordering::Acquire));
         // init 后有 root + meta 两个对象
         assert_eq!(dmu.obj_count(), 2);
         assert_eq!(
             dmu.get_root().expect("root 对象存在").obj_type,
-            NestObjType::Dir
+            UnkfsObjType::Dir
         );
     }
 
     #[test]
     fn test_dmu_alloc_obj() {
-        let dmu = NestObjSet::new();
+        let dmu = UnkfsObjSet::new();
         dmu.init(0x100);
         let f = dmu
-            .alloc_obj(NestObjType::File, 0x100)
+            .alloc_obj(UnkfsObjType::File, 0x100)
             .expect("File 分配成功");
         // init 后 next_obj_id = root+2 = 4
         assert!(f >= 4);
         assert_eq!(
             dmu.get_obj(f).expect("已分配对象可查").obj_type,
-            NestObjType::File
+            UnkfsObjType::File
         );
     }
 
     #[test]
     fn test_dmu_free_link_count() {
-        let dmu = NestObjSet::new();
+        let dmu = UnkfsObjSet::new();
         dmu.init(0x100);
         let f = dmu
-            .alloc_obj(NestObjType::File, 0x100)
+            .alloc_obj(UnkfsObjType::File, 0x100)
             .expect("File 分配成功");
         assert_eq!(dmu.get_obj(f).expect("对象可查").link_count, 1);
         assert!(dmu.free_obj(f));
@@ -1981,11 +1981,11 @@ mod tests {
 
     #[test]
     fn test_dmu_unsupported_obj_type() {
-        let dmu = NestObjSet::new();
+        let dmu = UnkfsObjSet::new();
         dmu.init(0x100);
         // 内核仅支持 File/Dir/Zap/ZapMicro/Symlink
-        assert!(dmu.alloc_obj(NestObjType::None, 0x100).is_none());
-        assert!(dmu.alloc_obj(NestObjType::Snapshot, 0x100).is_none());
+        assert!(dmu.alloc_obj(UnkfsObjType::None, 0x100).is_none());
+        assert!(dmu.alloc_obj(UnkfsObjType::Snapshot, 0x100).is_none());
     }
 
     #[test]
@@ -1997,14 +1997,14 @@ mod tests {
 
     #[test]
     fn test_spa_uninitialized() {
-        let spa = NestSpa::new();
+        let spa = UnkfsSpa::new();
         assert!(!spa.is_initialized());
         assert_eq!(spa.vdevs.lock().len(), 0);
     }
 
     #[test]
     fn test_spa_init() {
-        let spa = NestSpa::new();
+        let spa = UnkfsSpa::new();
         spa.init("tank");
         assert!(spa.is_initialized());
         assert_eq!(spa.current_txg(), 1);
@@ -2013,27 +2013,27 @@ mod tests {
 
     #[test]
     fn test_spa_add_vdev() {
-        let spa = NestSpa::new();
+        let spa = UnkfsSpa::new();
         spa.init("tank");
-        assert!(spa.add_vdev(NestVdevConfig::new_disk(0, "d0", 9)));
-        assert!(spa.add_vdev(NestVdevConfig::new_disk(1, "d1", 9)));
+        assert!(spa.add_vdev(UnkfsVdevConfig::new_disk(0, "d0", 9)));
+        assert!(spa.add_vdev(UnkfsVdevConfig::new_disk(1, "d1", 9)));
         assert_eq!(spa.vdevs.lock().len(), 2);
     }
 
     #[test]
     fn test_spa_vdev_limit() {
-        let spa = NestSpa::new();
+        let spa = UnkfsSpa::new();
         spa.init("tank");
         // 内核上限 = config.max_vdevs (默认 8)
         for i in 0..8u16 {
-            assert!(spa.add_vdev(NestVdevConfig::new_disk(i, "d", 9)));
+            assert!(spa.add_vdev(UnkfsVdevConfig::new_disk(i, "d", 9)));
         }
-        assert!(!spa.add_vdev(NestVdevConfig::new_disk(8, "d", 9)));
+        assert!(!spa.add_vdev(UnkfsVdevConfig::new_disk(8, "d", 9)));
     }
 
     #[test]
     fn test_spa_advance_txg() {
-        let spa = NestSpa::new();
+        let spa = UnkfsSpa::new();
         spa.init("tank");
         let t1 = spa.advance_txg();
         let t2 = spa.advance_txg();
@@ -2050,7 +2050,7 @@ mod tests {
 
     #[test]
     fn test_raidz_z1_geometry() {
-        let map = NestRaidzMap::new(NestRaidzLevel::RaidZ1, 3, 9);
+        let map = UnkfsRaidzMap::new(UnkfsRaidzLevel::RaidZ1, 3, 9);
         assert_eq!(map.ncols, 3);
         assert_eq!(map.nparity, 1);
         assert_eq!(map.data_cols(), 2);
@@ -2059,7 +2059,7 @@ mod tests {
 
     #[test]
     fn test_raidz_z2_geometry() {
-        let map = NestRaidzMap::new(NestRaidzLevel::RaidZ2, 5, 12);
+        let map = UnkfsRaidzMap::new(UnkfsRaidzLevel::RaidZ2, 5, 12);
         assert_eq!(map.nparity, 2);
         assert_eq!(map.data_cols(), 3);
         assert_eq!(map.level.max_failures(), 2);
@@ -2069,10 +2069,10 @@ mod tests {
     #[test]
     fn test_raidz_mirror_and_single_parity() {
         // Mirror 与 Single 均无校验列, 但 Mirror 容许 1 块盘故障
-        let mirror = NestRaidzMap::new(NestRaidzLevel::Mirror, 2, 9);
+        let mirror = UnkfsRaidzMap::new(UnkfsRaidzLevel::Mirror, 2, 9);
         assert_eq!(mirror.nparity, 0);
         assert_eq!(mirror.level.max_failures(), 1);
-        let single = NestRaidzMap::new(NestRaidzLevel::Single, 2, 9);
+        let single = UnkfsRaidzMap::new(UnkfsRaidzLevel::Single, 2, 9);
         assert_eq!(single.nparity, 0);
         assert_eq!(single.level.max_failures(), 0);
     }
@@ -2080,9 +2080,9 @@ mod tests {
     #[test]
     fn test_raidz_cols_clamped() {
         // 构造时 ncols 被 clamp 到 [HV_RAIDZ_MIN_COLS, HV_RAIDZ_MAX_COLS]
-        let low = NestRaidzMap::new(NestRaidzLevel::Single, 1, 9);
+        let low = UnkfsRaidzMap::new(UnkfsRaidzLevel::Single, 1, 9);
         assert_eq!(low.ncols, HV_RAIDZ_MIN_COLS);
-        let high = NestRaidzMap::new(NestRaidzLevel::Single, 64, 9);
+        let high = UnkfsRaidzMap::new(UnkfsRaidzLevel::Single, 64, 9);
         assert_eq!(high.ncols, HV_RAIDZ_MAX_COLS);
     }
 
@@ -2103,11 +2103,11 @@ mod tests {
     fn test_arc_lookup_miss_hit() {
         let arc = StandardArc::new();
         arc.init(10);
-        let k = NestArcKey::new(0, 0, 0);
+        let k = UnkfsArcKey::new(0, 0, 0);
         // 首次 lookup → miss
         assert!(!arc.lookup(&k));
         assert_eq!(arc.miss_count(), 1);
-        arc.insert(k, &[1u8; 16], NestArcBufType::Data);
+        arc.insert(k, &[1u8; 16], UnkfsArcBufType::Data);
         // 二次 lookup → hit
         assert!(arc.lookup(&k));
         assert_eq!(arc.hit_count(), 1);
@@ -2119,7 +2119,7 @@ mod tests {
         // 内核淘汰以「条目数」为口径 (max_size 为条目上限)
         arc.init(3);
         for i in 0..5u64 {
-            arc.insert(NestArcKey::new(0, i, 0), &[0u8; 16], NestArcBufType::Data);
+            arc.insert(UnkfsArcKey::new(0, i, 0), &[0u8; 16], UnkfsArcBufType::Data);
         }
         assert!(arc.evict_count() > 0);
         // 存活条目数不超过 max_size
@@ -2130,12 +2130,12 @@ mod tests {
     fn test_arc_hit_rate() {
         let arc = StandardArc::new();
         arc.init(10);
-        let k = NestArcKey::new(0, 0, 0);
-        arc.insert(k, &[0u8; 16], NestArcBufType::Data);
+        let k = UnkfsArcKey::new(0, 0, 0);
+        arc.insert(k, &[0u8; 16], UnkfsArcBufType::Data);
         arc.lookup(&k);
         arc.lookup(&k);
-        arc.lookup(&NestArcKey::new(0, 99, 0));
-        arc.lookup(&NestArcKey::new(0, 100, 0));
+        arc.lookup(&UnkfsArcKey::new(0, 99, 0));
+        arc.lookup(&UnkfsArcKey::new(0, 100, 0));
         // 内核 `hit_rate()` 为千分比: 2 hit / 4 total → 500
         assert_eq!(arc.hit_rate(), 500);
     }
@@ -2149,7 +2149,7 @@ mod tests {
 
     #[test]
     fn test_zil_log_init() {
-        let zil = NestZil::new();
+        let zil = UnkfsZil::new();
         zil.init();
         assert!(zil.enabled.load(Ordering::Acquire));
         assert_eq!(zil.current_seq.load(Ordering::Acquire), 0);
@@ -2158,9 +2158,9 @@ mod tests {
 
     #[test]
     fn test_zil_log_add_record() {
-        let zil = NestZil::new();
+        let zil = UnkfsZil::new();
         zil.init();
-        zil.add_record(NestZilRecord::new_write(1, 100, 0, 4096));
+        zil.add_record(UnkfsZilRecord::new_write(1, 100, 0, 4096));
         assert_eq!(zil.current_seq.load(Ordering::Acquire), 1);
         assert_eq!(zil.pending_count(), 1);
         assert!(zil.has_uncommitted());
@@ -2168,11 +2168,11 @@ mod tests {
 
     #[test]
     fn test_zil_log_commit() {
-        let zil = NestZil::new();
+        let zil = UnkfsZil::new();
         zil.init();
-        zil.add_record(NestZilRecord::new_write(1, 100, 0, 4096));
-        zil.add_record(NestZilRecord::new_write(2, 100, 0, 4096));
-        zil.add_record(NestZilRecord::new_write(3, 100, 0, 4096));
+        zil.add_record(UnkfsZilRecord::new_write(1, 100, 0, 4096));
+        zil.add_record(UnkfsZilRecord::new_write(2, 100, 0, 4096));
+        zil.add_record(UnkfsZilRecord::new_write(3, 100, 0, 4096));
         // commit txg=2 → 保留 txg=3
         zil.commit(2);
         assert_eq!(zil.pending_count(), 1);
@@ -2182,10 +2182,10 @@ mod tests {
 
     #[test]
     fn test_zil_log_disabled() {
-        let zil = NestZil::new();
+        let zil = UnkfsZil::new();
         zil.init();
         zil.enabled.store(false, Ordering::Release);
-        zil.add_record(NestZilRecord::new_write(1, 100, 0, 4096));
+        zil.add_record(UnkfsZilRecord::new_write(1, 100, 0, 4096));
         // disable 后 add_record 不分配 seq
         assert_eq!(zil.current_seq.load(Ordering::Acquire), 0);
         assert_eq!(zil.pending_count(), 0);
@@ -2199,29 +2199,29 @@ mod tests {
     // ====== LEGACY-5.11: ZIL 持久化单元测试 ======
 
     /// 构造含 `count` 条 write 记录的 ZIL
-    fn zil_with_records(count: u64) -> NestZil {
-        let zil = NestZil::new();
+    fn zil_with_records(count: u64) -> UnkfsZil {
+        let zil = UnkfsZil::new();
         zil.init();
         for i in 0..count {
-            zil.add_record(NestZilRecord::new_write(1, 100, i, 4096));
+            zil.add_record(UnkfsZilRecord::new_write(1, 100, i, 4096));
         }
         zil
     }
 
     #[test]
     fn test_zil_persist_serialize_empty() {
-        let zil = NestZil::new();
+        let zil = UnkfsZil::new();
         zil.init();
         // 无记录 → 无块可写
-        assert!(NestZilPersist::serialize_zil_to_block(&zil, 1).is_none());
+        assert!(UnkfsZilPersist::serialize_zil_to_block(&zil, 1).is_none());
     }
 
     #[test]
     fn test_zil_persist_roundtrip() {
         let zil = zil_with_records(10);
-        let block = NestZilPersist::serialize_zil_to_block(&zil, 1).expect("有记录时块生成成功");
+        let block = UnkfsZilPersist::serialize_zil_to_block(&zil, 1).expect("有记录时块生成成功");
         assert_eq!(block.len(), 4096);
-        let records = NestZilPersist::deserialize_zil_from_block(&block);
+        let records = UnkfsZilPersist::deserialize_zil_from_block(&block);
         assert_eq!(records.len(), 10);
         // 反序列化按 seq 升序还原
         assert_eq!(records[0].seq, 1);
@@ -2231,21 +2231,21 @@ mod tests {
     #[test]
     fn test_zil_persist_short_block() {
         // 长度不足 4096 → 空记录 (整块拒绝)
-        assert!(NestZilPersist::deserialize_zil_from_block(&[]).is_empty());
+        assert!(UnkfsZilPersist::deserialize_zil_from_block(&[]).is_empty());
     }
 
     #[test]
     fn test_zil_persist_corrupt_block_rejected() {
         let zil = zil_with_records(10);
-        let mut block = NestZilPersist::serialize_zil_to_block(&zil, 1).expect("块生成成功");
+        let mut block = UnkfsZilPersist::serialize_zil_to_block(&zil, 1).expect("块生成成功");
         // 翻转 record 区一个字节 → 块 CRC 失配 → 整块拒绝 (ZFS 块级校验语义)
         block[128] ^= 0xFF;
-        assert!(NestZilPersist::deserialize_zil_from_block(&block).is_empty());
+        assert!(UnkfsZilPersist::deserialize_zil_from_block(&block).is_empty());
     }
 
     #[test]
     fn test_zil_persist_mark_written() {
-        let persist = NestZilPersist::new();
+        let persist = UnkfsZilPersist::new();
         assert!(!persist.zil_blocks_written.load(Ordering::Acquire));
         persist.mark_written();
         assert!(persist.zil_blocks_written.load(Ordering::Acquire));

@@ -3131,7 +3131,7 @@ isr.asm 36 次 IRQ 出口 → 0x3F8 UART 写 'Z'
 | # | 文件 | 问题 |
 |---|---|---|
 | 1 | `unkfs/checksum.rs:42-45` | XORP 校验和"静默成功"——Fletcher4 仅检 4 字节，bit rot 100% 漏检 |
-| 2 | `unkfs/spa.rs:34-47` | NestUberblock 无签名 → 篡改 root_bp 可挂载伪造池并执行任意块写入 |
+| 2 | `unkfs/spa.rs:34-47` | UnkfsUberblock 无签名 → 篡改 root_bp 可挂载伪造池并执行任意块写入 |
 | 3 | `unkfs_data.rs:414-487` | `mount_drive` 失败时仍标记 mounted/initialized=true |
 | 4 | `unkfs_data.rs:649-657` | 读路径完全不校验 checksum 字段 |
 | 5 | `ext2/read.rs:571-578` | `i_size = new_size as u32` —— 4GB 边界截断 + i_blocks 公式除零 panic |

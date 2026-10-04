@@ -182,7 +182,7 @@
     - `timer/mod.rs`(1，E0599)：`is_ok` 施于 `()` —— 模块自身 `pub extern "C" fn timer_sleep` 返回 `()`，带 `Result` 的是 re-export 别名 `timer_sleep_safe` ⇒ 改调别名。
     - `cpu/mod.rs`(2，E0308)：`CpuVendor::from_vendor_string` 取**定长 12 字节**数组，原字面量为 13 字节；QEMU 分支判据是 `&vendor_str[..9] == b"TCGTCGTCG"` ⇒ 字面量截为 12 字节且保留前 9 字节前缀（`"TCGTCGTCGXYZ"`）。
     - `error.rs`(2，E0277)：无 `From<KernelError> for i32` 实现 ⇒ 反向映射改经 `as_errno().as_i32()`。
-    - `services/fs/unkfs/arc_trait.rs`(2)：枚举变体真名为 `NestArcBufType::Metadata`（`Data = 0, Metadata = 1`）⇒ 测试的 `Meta` 改名。
+    - `services/fs/unkfs/arc_trait.rs`(2)：枚举变体真名为 `UnkfsArcBufType::Metadata`（`Data = 0, Metadata = 1`）⇒ 测试的 `Meta` 改名。
     - `proc/cfs.rs`（**合规修正，非编译修复**）：测试模块原 `use crate::services::config::{SCHED_LEVEL_*}`。该引用**不产生 error**（`services::config` 尚存 re-export 兼容层），但违反「framework 不得反向依赖 services」⇒ 改引 `framework::config`（DECISION-J 归属反转后的权威定义处）。登记为随批合规修正，取证为基线该文件 5 处 error 全为 `time_slice`。
   - 详情（断言删除登记 —— `dcache::test_dcache_invalidate_entry`）
     - 依据：`DCache::invalidate_entry` 已于 `dd5fa9c6`（refactor: eliminate dead code and implement pending features）**有意删除**，经 `git log -S 'invalidate_entry'` 溯源确认，当前**零调用方**。

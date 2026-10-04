@@ -49,7 +49,7 @@ fn unkfs_overrides_fs_sync() {
     // 拆分后 FileSystem impl 在 unkfs_inode.rs (原在 unkfs.rs)
     let src = read_src("src/kernel/services/fs/unkfs/unkfs_inode.rs");
     let impl_block = src
-        .rsplit_once("impl crate::services::fs::FileSystem for NestfsData")
+        .rsplit_once("impl crate::services::fs::FileSystem for UnkfsData")
         .map(|(_, b)| b)
         .unwrap_or("");
     assert!(
@@ -190,7 +190,7 @@ fn unkfs_sync_returns_ioerror_on_nonzero() {
     // 拆分后 FileSystem impl 在 unkfs_inode.rs
     let src = read_src("src/kernel/services/fs/unkfs/unkfs_inode.rs");
     let impl_block = src
-        .rsplit_once("impl crate::services::fs::FileSystem for NestfsData")
+        .rsplit_once("impl crate::services::fs::FileSystem for UnkfsData")
         .map(|(_, b)| b)
         .unwrap_or("");
     // r == 0 → Ok(()); != 0 → Err(Io)

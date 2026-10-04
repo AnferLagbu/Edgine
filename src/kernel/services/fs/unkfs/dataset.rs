@@ -1,7 +1,7 @@
 #![deny(unsafe_code)]
-use crate::services::fs::unkfs::bp::NestBlockPointer;
-use crate::services::fs::unkfs::dmu::{NestObjSet, NestObjType};
-use crate::services::fs::unkfs::zap::NestZap;
+use crate::services::fs::unkfs::bp::UnkfsBlockPointer;
+use crate::services::fs::unkfs::dmu::{UnkfsObjSet, UnkfsObjType};
+use crate::services::fs::unkfs::zap::UnkfsZap;
 use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -12,7 +12,7 @@ pub const HV_DS_MAX_DATASETS: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum NestDsState {
+pub enum UnkfsDsState {
     Uninit = 0,
     Creating = 1,
     Active = 2,
@@ -22,7 +22,7 @@ pub enum NestDsState {
 }
 
 #[derive(Debug, Clone)]
-pub struct NestDsProps {
+pub struct UnkfsDsProps {
     pub record_size: u32,
     pub compression: u8,
     pub checksum: u8,
@@ -36,7 +36,7 @@ pub struct NestDsProps {
     pub ref_reservation: u64,
 }
 
-impl NestDsProps {
+impl UnkfsDsProps {
     // 2026-09-11 实测: default 触发 should_implement_trait, 需豁免
     #[allow(clippy::should_implement_trait)]
     #[expect(
@@ -60,20 +60,20 @@ impl NestDsProps {
     }
 }
 
-pub struct NestDataset {
+pub struct UnkfsDataset {
     pub ds_id: u64,
     pub name: [u8; HV_DS_MAX_NAME],
     pub state: AtomicU8,
-    pub props: NestDsProps,
-    pub objset: NestObjSet,
-    pub dir_zap: NestZap,
-    pub xattr_zap: NestZap,
+    pub props: UnkfsDsProps,
+    pub objset: UnkfsObjSet,
+    pub dir_zap: UnkfsZap,
+    pub xattr_zap: UnkfsZap,
     pub parent_id: Option<u64>,
     pub child_ids: Vec<u64>,
     pub used_space: AtomicU64,
     pub ref_count: AtomicU64,
     pub birth_txg: AtomicU64,
-    pub root_bp: Mutex<NestBlockPointer>,
+    pub root_bp: Mutex<UnkfsBlockPointer>,
     pub is_snapshot: bool,
     pub snapshot_origin: Option<u64>,
     pub prev_snap: Option<u64>,
@@ -83,31 +83,31 @@ pub struct NestDataset {
     pub mounted: AtomicBool,
 }
 
-// SAFETY: NestDataset uses AtomicBool for mounted; other fields are plain
-// SAFETY (Framekernel P2.2.2): NestDataset 全部字段自动 Send + Sync。
+// SAFETY: UnkfsDataset uses AtomicBool for mounted; other fields are plain
+// SAFETY (Framekernel P2.2.2): UnkfsDataset 全部字段自动 Send + Sync。
 
-impl NestDataset {
+impl UnkfsDataset {
     pub fn new(ds_id: u64, name: &str, owner_pwm: u64) -> Self {
         let mut n = [0u8; HV_DS_MAX_NAME];
         let b = name.as_bytes();
         let len = b.len().min(HV_DS_MAX_NAME - 1);
         n[..len].copy_from_slice(&b[..len]);
-        let mut props = NestDsProps::default();
+        let mut props = UnkfsDsProps::default();
         props.owner_pwm = owner_pwm;
         Self {
             ds_id,
             name: n,
-            state: AtomicU8::new(NestDsState::Creating as u8),
+            state: AtomicU8::new(UnkfsDsState::Creating as u8),
             props,
-            objset: NestObjSet::new(),
-            dir_zap: NestZap::new(),
-            xattr_zap: NestZap::new(),
+            objset: UnkfsObjSet::new(),
+            dir_zap: UnkfsZap::new(),
+            xattr_zap: UnkfsZap::new(),
             parent_id: None,
             child_ids: Vec::new(),
             used_space: AtomicU64::new(0),
             ref_count: AtomicU64::new(1),
             birth_txg: AtomicU64::new(0),
-            root_bp: Mutex::new(NestBlockPointer::null()),
+            root_bp: Mutex::new(UnkfsBlockPointer::null()),
             is_snapshot: false,
             snapshot_origin: None,
             prev_snap: None,
@@ -130,23 +130,23 @@ impl NestDataset {
     pub fn init(&self, owner_pwm: u64) {
         self.objset.init(owner_pwm);
         self.state
-            .store(NestDsState::Active as u8, Ordering::Release);
+            .store(UnkfsDsState::Active as u8, Ordering::Release);
         self.mounted.store(true, Ordering::Release);
     }
 
     pub fn is_active(&self) -> bool {
-        self.state.load(Ordering::Acquire) == NestDsState::Active as u8
+        self.state.load(Ordering::Acquire) == UnkfsDsState::Active as u8
     }
 
     pub fn is_writeable(&self) -> bool {
-        self.writeable && self.state.load(Ordering::Acquire) == NestDsState::Active as u8
+        self.writeable && self.state.load(Ordering::Acquire) == UnkfsDsState::Active as u8
     }
 
     pub fn create_file(&self, name: &str, owner_pwm: u64) -> Option<u64> {
         if !self.is_writeable() {
             return None;
         }
-        let obj_id = self.objset.alloc_obj(NestObjType::File, owner_pwm)?;
+        let obj_id = self.objset.alloc_obj(UnkfsObjType::File, owner_pwm)?;
         self.dir_zap.insert_u64(name, obj_id);
         Some(obj_id)
     }
@@ -155,7 +155,7 @@ impl NestDataset {
         if !self.is_writeable() {
             return None;
         }
-        let obj_id = self.objset.alloc_obj(NestObjType::Dir, owner_pwm)?;
+        let obj_id = self.objset.alloc_obj(UnkfsObjType::Dir, owner_pwm)?;
         self.dir_zap.insert_u64(name, obj_id);
         Some(obj_id)
     }
@@ -214,7 +214,7 @@ mod tests {
     /// 新建数据集应为 Creating 状态, init 后转为 Active 且可写.
     #[test]
     fn test_dataset_create() {
-        let ds = NestDataset::new(1, "test-ds", 0);
+        let ds = UnkfsDataset::new(1, "test-ds", 0);
         assert_eq!(ds.get_name(), "test-ds", "dataset name mismatch");
         assert!(
             !ds.is_active(),
@@ -228,7 +228,7 @@ mod tests {
     /// init 后应能读取已用空间.
     #[test]
     fn test_dataset_init() {
-        let ds = NestDataset::new(2, "init-ds", 0);
+        let ds = UnkfsDataset::new(2, "init-ds", 0);
         ds.init(0);
         let _used = ds.get_used();
     }

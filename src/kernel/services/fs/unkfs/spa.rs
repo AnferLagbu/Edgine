@@ -1,12 +1,14 @@
 #![deny(unsafe_code)]
 use crate::framework::driver::block;
 use crate::services::fs::KernelError;
-use crate::services::fs::unkfs::arc::NestArc;
-use crate::services::fs::unkfs::bp::{HV_DVA_MAX, NestBlockPointer, NestCksumType, NestCompType};
-use crate::services::fs::unkfs::checksum::NestChecksum;
-use crate::services::fs::unkfs::dva::NestDva;
-use crate::services::fs::unkfs::metaslab::NestMetaslab;
-use crate::services::fs::unkfs::vdev::{NestVdev, NestVdevConfig, NestVdevState};
+use crate::services::fs::unkfs::arc::UnkfsArc;
+use crate::services::fs::unkfs::bp::{
+    HV_DVA_MAX, UnkfsBlockPointer, UnkfsCksumType, UnkfsCompType,
+};
+use crate::services::fs::unkfs::checksum::UnkfsChecksum;
+use crate::services::fs::unkfs::dva::UnkfsDva;
+use crate::services::fs::unkfs::metaslab::UnkfsMetaslab;
+use crate::services::fs::unkfs::vdev::{UnkfsVdev, UnkfsVdevConfig, UnkfsVdevState};
 use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
@@ -23,7 +25,7 @@ pub const HV_POOL_METASLAB_SIZE: u64 = 1 << HV_POOL_METASLAB_SHIFT;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum NestPoolState {
+pub enum UnkfsPoolState {
     Uninit = 0,
     Active = 1,
     Exported = 2,
@@ -34,9 +36,9 @@ pub enum NestPoolState {
 
 #[derive(Debug, Clone, Copy, zerocopy::IntoBytes, zerocopy::Immutable)]
 #[repr(C)]
-pub struct NestUberblock {
+pub struct UnkfsUberblock {
     pub txg: u64,
-    pub root_bp: NestBlockPointer,
+    pub root_bp: UnkfsBlockPointer,
     pub timestamp: u64,
     pub root_dataset_obj: u64,
     pub pool_guid: u64,
@@ -47,11 +49,11 @@ pub struct NestUberblock {
     pub _pad: [u8; 2],
 }
 
-impl NestUberblock {
+impl UnkfsUberblock {
     pub const fn null() -> Self {
         Self {
             txg: 0,
-            root_bp: NestBlockPointer::null(),
+            root_bp: UnkfsBlockPointer::null(),
             timestamp: 0,
             root_dataset_obj: 0,
             pool_guid: 0,
@@ -69,7 +71,7 @@ impl NestUberblock {
 
     pub fn compute_checksum(&mut self) {
         self.checksum = [0; 4];
-        let ck = NestChecksum::compute(NestCksumType::Fletcher4, self.as_bytes());
+        let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, self.as_bytes());
         self.checksum = ck.value;
     }
 
@@ -77,7 +79,7 @@ impl NestUberblock {
         let mut copy = *self;
         let saved = copy.checksum;
         copy.checksum = [0; 4];
-        let ck = NestChecksum::compute(NestCksumType::Fletcher4, copy.as_bytes());
+        let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, copy.as_bytes());
         ck.value == saved
     }
 
@@ -95,8 +97,8 @@ impl NestUberblock {
         let mut off = 0usize;
         let txg = u64::from_le_bytes(bytes[off..off + 8].try_into().ok()?);
         off += 8;
-        let root_bp = NestBlockPointer::from_bytes(&bytes[off..off + NestBlockPointer::BYTES])?;
-        off += NestBlockPointer::BYTES;
+        let root_bp = UnkfsBlockPointer::from_bytes(&bytes[off..off + UnkfsBlockPointer::BYTES])?;
+        off += UnkfsBlockPointer::BYTES;
         let timestamp = u64::from_le_bytes(bytes[off..off + 8].try_into().ok()?);
         off += 8;
         let root_dataset_obj = u64::from_le_bytes(bytes[off..off + 8].try_into().ok()?);
@@ -128,10 +130,10 @@ impl NestUberblock {
     }
 }
 
-// 编译期断言: NestUberblock 必须装入 512 字节的 uberblock 区 (UBERBLOCK_MAX_SIZE).
-const _: () = assert!(core::mem::size_of::<NestUberblock>() <= 512);
+// 编译期断言: UnkfsUberblock 必须装入 512 字节的 uberblock 区 (UBERBLOCK_MAX_SIZE).
+const _: () = assert!(core::mem::size_of::<UnkfsUberblock>() <= 512);
 
-pub struct NestSpaConfig {
+pub struct UnkfsSpaConfig {
     pub name: [u8; HV_POOL_MAX_NAME],
     pub guid: u64,
     pub ashift: u8,
@@ -140,7 +142,7 @@ pub struct NestSpaConfig {
     pub readonly: bool,
 }
 
-impl NestSpaConfig {
+impl UnkfsSpaConfig {
     pub fn new(name: &str) -> Self {
         let mut n = [0u8; HV_POOL_MAX_NAME];
         let b = name.as_bytes();
@@ -157,13 +159,13 @@ impl NestSpaConfig {
     }
 }
 
-pub struct NestSpa {
-    pub config: Mutex<NestSpaConfig>,
+pub struct UnkfsSpa {
+    pub config: Mutex<UnkfsSpaConfig>,
     pub state: AtomicU8,
-    pub uberblock: Mutex<NestUberblock>,
-    pub vdevs: Mutex<Vec<NestVdev>>,
-    pub metaslabs: Mutex<Vec<NestMetaslab>>,
-    pub arc: NestArc,
+    pub uberblock: Mutex<UnkfsUberblock>,
+    pub vdevs: Mutex<Vec<UnkfsVdev>>,
+    pub metaslabs: Mutex<Vec<UnkfsMetaslab>>,
+    pub arc: UnkfsArc,
     pub txg_current: AtomicU64,
     pub txg_syncing: AtomicBool,
     pub alloc_count: AtomicU64,
@@ -179,17 +181,17 @@ pub struct NestSpa {
     pub partition_start: AtomicU32,
 }
 
-// SAFETY (Framekernel P2.2.2): NestSpa 全部字段 (Mutex<T>, Atomic*, Vec) 自动 Send + Sync。
+// SAFETY (Framekernel P2.2.2): UnkfsSpa 全部字段 (Mutex<T>, Atomic*, Vec) 自动 Send + Sync。
 
-impl NestSpa {
+impl UnkfsSpa {
     pub fn new() -> Self {
         Self {
-            config: Mutex::new(NestSpaConfig::new("")),
-            state: AtomicU8::new(NestPoolState::Uninit as u8),
-            uberblock: Mutex::new(NestUberblock::null()),
+            config: Mutex::new(UnkfsSpaConfig::new("")),
+            state: AtomicU8::new(UnkfsPoolState::Uninit as u8),
+            uberblock: Mutex::new(UnkfsUberblock::null()),
             vdevs: Mutex::new(Vec::new()),
             metaslabs: Mutex::new(Vec::new()),
-            arc: NestArc::new(),
+            arc: UnkfsArc::new(),
             txg_current: AtomicU64::new(0),
             txg_syncing: AtomicBool::new(false),
             alloc_count: AtomicU64::new(0),
@@ -249,14 +251,14 @@ impl NestSpa {
     pub fn init(&self, name: &str) {
         {
             let mut cfg = self.config.lock();
-            let mut new_cfg = NestSpaConfig::new(name);
+            let mut new_cfg = UnkfsSpaConfig::new(name);
             new_cfg.guid = Self::generate_guid();
             *cfg = new_cfg;
         }
         self.arc.init(256);
         self.txg_current.store(1, Ordering::Release);
         self.state
-            .store(NestPoolState::Active as u8, Ordering::Release);
+            .store(UnkfsPoolState::Active as u8, Ordering::Release);
         self.initialized.store(true, Ordering::Release);
         {
             let mut ub = self.uberblock.lock();
@@ -267,14 +269,14 @@ impl NestSpa {
         }
     }
 
-    pub fn add_vdev(&self, config: NestVdevConfig) -> bool {
+    pub fn add_vdev(&self, config: UnkfsVdevConfig) -> bool {
         let mut vdevs = self.vdevs.lock();
         let max_vdevs = self.config.lock().max_vdevs;
         if vdevs.len() >= max_vdevs as usize {
             return false;
         }
-        let mut vdev = NestVdev::new(config);
-        vdev.state = NestVdevState::Healthy;
+        let mut vdev = UnkfsVdev::new(config);
+        vdev.state = UnkfsVdevState::Healthy;
         let vdev_id = vdev.config.vdev_id;
         let asize = vdev.config.asize;
         vdevs.push(vdev);
@@ -289,7 +291,7 @@ impl NestSpa {
                 } else {
                     asize - ms_start + HV_VDEV_LABEL_SIZE
                 };
-                let ms = NestMetaslab::new(ms_list.len() as u32, vdev_id, ms_start, ms_size);
+                let ms = UnkfsMetaslab::new(ms_list.len() as u32, vdev_id, ms_start, ms_size);
                 ms_list.push(ms);
             }
         }
@@ -299,10 +301,10 @@ impl NestSpa {
     pub fn allocate(
         &self,
         size: u64,
-        kind: NestCksumType,
-        comp: NestCompType,
+        kind: UnkfsCksumType,
+        comp: UnkfsCompType,
         txg: u64,
-    ) -> Option<NestBlockPointer> {
+    ) -> Option<UnkfsBlockPointer> {
         let rounded = size.div_ceil(HV_POOL_BLOCK_SIZE) * HV_POOL_BLOCK_SIZE;
         let mut ms_list = self.metaslabs.lock();
         let mut best_vdev_id: u16 = 0;
@@ -324,8 +326,8 @@ impl NestSpa {
         let ms_idx = best_ms_idx?;
         let offset = ms_list[ms_idx].alloc(rounded)?;
         drop(ms_list);
-        let dva = NestDva::new(best_vdev_id, offset, rounded as u32);
-        let mut bp = NestBlockPointer::null();
+        let dva = UnkfsDva::new(best_vdev_id, offset, rounded as u32);
+        let mut bp = UnkfsBlockPointer::null();
         bp.set_dva(0, dva);
         bp.prop.set_cksum_type(kind);
         bp.prop.set_comp_type(comp);
@@ -336,7 +338,7 @@ impl NestSpa {
         Some(bp)
     }
 
-    pub fn free(&self, bp: &NestBlockPointer, _txg: u64) {
+    pub fn free(&self, bp: &UnkfsBlockPointer, _txg: u64) {
         for i in 0..HV_DVA_MAX {
             if let Some(dva) = bp.get_dva(i) {
                 let mut ms_list = self.metaslabs.lock();
@@ -354,7 +356,7 @@ impl NestSpa {
         self.free_count.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub fn read_bp(&self, bp: &NestBlockPointer, buf: &mut [u8]) -> i32 {
+    pub fn read_bp(&self, bp: &UnkfsBlockPointer, buf: &mut [u8]) -> i32 {
         for i in 0..HV_DVA_MAX {
             if let Some(dva) = bp.get_dva(i) {
                 let mut vdevs = self.vdevs.lock();
@@ -372,7 +374,7 @@ impl NestSpa {
         -1
     }
 
-    pub fn write_bp(&self, bp: &NestBlockPointer, buf: &[u8]) -> i32 {
+    pub fn write_bp(&self, bp: &UnkfsBlockPointer, buf: &[u8]) -> i32 {
         for i in 0..HV_DVA_MAX {
             if let Some(dva) = bp.get_dva(i) {
                 let mut vdevs = self.vdevs.lock();
@@ -413,14 +415,14 @@ impl NestSpa {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
-    pub fn read_uberblock_from_disk(&self) -> Option<NestUberblock> {
+    pub fn read_uberblock_from_disk(&self) -> Option<UnkfsUberblock> {
         for i in (0..HV_UBERBLOCK_COUNT as u32).rev() {
             let sector = HV_UBERBLOCK_SECTOR + i;
             let mut sector_buf = [0u8; 512];
             if self.read_sector(sector, &mut sector_buf) != 0 {
                 continue;
             }
-            let ub = match NestUberblock::from_bytes_unaligned(&sector_buf) {
+            let ub = match UnkfsUberblock::from_bytes_unaligned(&sector_buf) {
                 Some(u) => u,
                 None => continue,
             };
@@ -476,7 +478,7 @@ mod tests {
     /// 池名写入应以 NUL 截断并保留前缀.
     #[test]
     fn test_spa_config_name() {
-        let cfg = NestSpaConfig::new("test-pool");
+        let cfg = UnkfsSpaConfig::new("test-pool");
         let name = core::str::from_utf8(&cfg.name)
             .unwrap_or("")
             .trim_end_matches('\0');
@@ -486,16 +488,16 @@ mod tests {
     /// 空 uberblock magic 为 0, 应判定无效.
     #[test]
     fn test_spa_uberblock_null() {
-        let ub = NestUberblock::null();
+        let ub = UnkfsUberblock::null();
         assert!(!ub.is_valid(), "null uberblock should be invalid");
     }
 
     /// 计算校验和后应立即通过自校验.
     #[test]
     fn test_spa_uberblock_checksum() {
-        let mut ub = NestUberblock {
+        let mut ub = UnkfsUberblock {
             txg: 1,
-            root_bp: NestBlockPointer::null(),
+            root_bp: UnkfsBlockPointer::null(),
             timestamp: 100,
             root_dataset_obj: 0,
             pool_guid: 0xABCD,
@@ -516,7 +518,7 @@ mod tests {
     )]
     #[test]
     fn test_spa_uberblock_invalid_magic() {
-        let mut ub = NestUberblock::null();
+        let mut ub = UnkfsUberblock::null();
         ub.magic = 0xDEADBEEF;
         assert!(!ub.is_valid(), "wrong magic should be invalid");
     }

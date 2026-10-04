@@ -17,7 +17,7 @@
 //! ## B08-14 迁移 (2026-09-06)
 //! 改引内核 `services::fs::unkfs` 真实实现 (host-test feature 暴露), 消除
 //! 平行实现依赖. API 与测试版同构 (get_cas/sha256/CasIndex/CasHash/
-//! NestBlockPointer/NestZap/NestZil), 仅 import 路径变化.
+//! UnkfsBlockPointer/UnkfsZap/UnkfsZil), 仅 import 路径变化.
 
 use edgine::kernel::services::fs::unkfs::{bp, dedup, zap, zil};
 
@@ -27,7 +27,7 @@ fn stress_cas_insert_lookup_100() {
     for i in 0..100u64 {
         let data = i.to_le_bytes();
         let hash = dedup::sha256(&data);
-        let mut bp = bp::NestBlockPointer::null();
+        let mut bp = bp::UnkfsBlockPointer::null();
         bp.set_birth(i);
         cas.insert(hash, bp);
         let found = cas.lookup(&hash);
@@ -44,7 +44,7 @@ fn stress_cas_dedup_50_ref_inc_dec() {
     let cas = dedup::get_cas();
     let data = b"hello-world-identical-block";
     let hash = dedup::sha256(data);
-    let bp = bp::NestBlockPointer::null();
+    let bp = bp::UnkfsBlockPointer::null();
     cas.insert(hash, bp);
     for _ in 0..50 {
         cas.ref_inc(&hash);
@@ -72,7 +72,7 @@ fn stress_cas_concurrent_insert_refdec_no_abba() {
         let cas = dedup::get_cas();
         for i in 0..200u64 {
             let hash = dedup::sha256(format!("abba-dec-{}", i).as_bytes());
-            let mut bp = bp::NestBlockPointer::null();
+            let mut bp = bp::UnkfsBlockPointer::null();
             bp.set_birth(i);
             cas.insert(hash, bp);
             assert_eq!(cas.ref_count(&hash), 1, "abba-dec-{} count", i);
@@ -84,7 +84,7 @@ fn stress_cas_concurrent_insert_refdec_no_abba() {
         let cas = dedup::get_cas();
         for i in 0..200u64 {
             let hash = dedup::sha256(format!("abba-ins-{}", i).as_bytes());
-            let mut bp = bp::NestBlockPointer::null();
+            let mut bp = bp::UnkfsBlockPointer::null();
             bp.set_birth(i);
             cas.insert(hash, bp);
             assert!(cas.lookup(&hash).is_some(), "abba-ins-{} lookup", i);
@@ -96,7 +96,7 @@ fn stress_cas_concurrent_insert_refdec_no_abba() {
 
 #[test]
 fn stress_zap_hash_collision_256() {
-    let z = zap::NestZap::with_capacity(256);
+    let z = zap::UnkfsZap::with_capacity(256);
     for i in 0..256 {
         let name = format!("entry_{:04}", i);
         let value = (i * 9973) ^ 0xDEADBEEF;
@@ -119,7 +119,7 @@ fn stress_zap_hash_collision_256() {
 
 #[test]
 fn stress_zap_clear_reuse_10_rounds() {
-    let z = zap::NestZap::new();
+    let z = zap::UnkfsZap::new();
     for round in 0..10 {
         for i in 0..50 {
             z.insert_u64(&format!("k{}", i), i as u64);
@@ -147,10 +147,10 @@ fn stress_sha256_deterministic_100() {
 
 #[test]
 fn stress_zil_roundtrip_100_records() {
-    let zil = zil::NestZil::new();
+    let zil = zil::UnkfsZil::new();
     let names: [&str; 5] = ["alpha", "beta", "gamma", "delta", "epsilon"];
     for i in 0..100u64 {
-        let mut rec = zil::NestZilRecord::new_create(i, 0, names[(i % 5) as usize]);
+        let mut rec = zil::UnkfsZilRecord::new_create(i, 0, names[(i % 5) as usize]);
         rec.seq = i + 1;
         zil.records.lock().push(rec);
     }

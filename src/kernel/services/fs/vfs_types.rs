@@ -95,7 +95,7 @@ impl VfsSeekWhence {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FsType {
     RamFs,
-    NestFs,
+    Unkfs,
     DevFs,
     Ext2,
     ExFat,
@@ -108,7 +108,7 @@ impl FsType {
     pub fn from_name(name: &str) -> Self {
         match name {
             "ramfs" => Self::RamFs,
-            "unkfs" => Self::NestFs,
+            "unkfs" => Self::Unkfs,
             "devfs" => Self::DevFs,
             "ext2" => Self::Ext2,
             "exfat" => Self::ExFat,
@@ -121,7 +121,7 @@ impl FsType {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::RamFs => "ramfs",
-            Self::NestFs => "unkfs",
+            Self::Unkfs => "unkfs",
             Self::DevFs => "devfs",
             Self::Ext2 => "ext2",
             Self::ExFat => "exfat",
@@ -635,14 +635,14 @@ mod tests {
     #[test]
     fn fstype_from_name() {
         assert_eq!(FsType::from_name("ramfs"), FsType::RamFs, "ramfs");
-        assert_eq!(FsType::from_name("unkfs"), FsType::NestFs, "unkfs");
+        assert_eq!(FsType::from_name("unkfs"), FsType::Unkfs, "unkfs");
         assert_eq!(FsType::from_name("ext4"), FsType::Unknown, "未知名称");
     }
 
     #[test]
     fn fstype_as_str() {
         assert_eq!(FsType::RamFs.as_str(), "ramfs", "RamFs 回写");
-        assert_eq!(FsType::NestFs.as_str(), "unkfs", "NestFs 回写");
+        assert_eq!(FsType::Unkfs.as_str(), "unkfs", "Unkfs 回写");
         assert_eq!(FsType::Unknown.as_str(), "unknown", "Unknown 回写");
     }
 

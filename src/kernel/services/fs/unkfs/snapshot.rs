@@ -1,25 +1,25 @@
 #![deny(unsafe_code)]
-use crate::services::fs::unkfs::bp::NestBlockPointer;
-use crate::services::fs::unkfs::dataset::NestDataset;
+use crate::services::fs::unkfs::bp::UnkfsBlockPointer;
+use crate::services::fs::unkfs::dataset::UnkfsDataset;
 use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 pub const HV_SNAP_MAX: usize = 64;
 
-pub struct NestSnapshotManager {
-    pub snapshots: Mutex<Vec<NestSnapshot>>,
+pub struct UnkfsSnapshotManager {
+    pub snapshots: Mutex<Vec<UnkfsSnapshot>>,
     pub next_snap_id: AtomicU64,
 }
 
-// SAFETY (Framekernel P2.2.2): NestSnapshotManager 全部字段 (Mutex<T>, AtomicU64) 自动 Send + Sync。
+// SAFETY (Framekernel P2.2.2): UnkfsSnapshotManager 全部字段 (Mutex<T>, AtomicU64) 自动 Send + Sync。
 
 #[derive(Debug, Clone)]
-pub struct NestSnapshot {
+pub struct UnkfsSnapshot {
     pub snap_id: u64,
     pub ds_id: u64,
     pub name: [u8; 128],
-    pub root_bp: NestBlockPointer,
+    pub root_bp: UnkfsBlockPointer,
     pub birth_txg: u64,
     pub used_space: u64,
     pub ref_count: u64,
@@ -27,8 +27,8 @@ pub struct NestSnapshot {
     pub origin_snap: Option<u64>,
 }
 
-impl NestSnapshot {
-    pub fn new(snap_id: u64, ds_id: u64, name: &str, root_bp: NestBlockPointer, txg: u64) -> Self {
+impl UnkfsSnapshot {
+    pub fn new(snap_id: u64, ds_id: u64, name: &str, root_bp: UnkfsBlockPointer, txg: u64) -> Self {
         let mut n = [0u8; 128];
         let b = name.as_bytes();
         let len = b.len().min(127);
@@ -52,7 +52,7 @@ impl NestSnapshot {
     }
 }
 
-impl NestSnapshotManager {
+impl UnkfsSnapshotManager {
     pub fn new() -> Self {
         Self {
             snapshots: Mutex::new(Vec::new()),
@@ -64,10 +64,10 @@ impl NestSnapshotManager {
         clippy::unnecessary_wraps,
         reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
     )]
-    pub fn create_snapshot(&self, ds: &NestDataset, name: &str, txg: u64) -> Option<u64> {
+    pub fn create_snapshot(&self, ds: &UnkfsDataset, name: &str, txg: u64) -> Option<u64> {
         let snap_id = self.next_snap_id.fetch_add(1, Ordering::AcqRel);
         let root_bp = *ds.root_bp.lock();
-        let mut snap = NestSnapshot::new(snap_id, ds.ds_id, name, root_bp, txg);
+        let mut snap = UnkfsSnapshot::new(snap_id, ds.ds_id, name, root_bp, txg);
         snap.used_space = ds.get_used();
         self.snapshots.lock().push(snap);
         Some(snap_id)
@@ -95,11 +95,11 @@ impl NestSnapshotManager {
         ds_id: u64,
         name: &str,
         txg: u64,
-    ) -> Option<NestDataset> {
+    ) -> Option<UnkfsDataset> {
         let mut snaps = self.snapshots.lock();
         let snap = snaps.iter_mut().find(|s| s.snap_id == snap_id)?;
         let root_bp = snap.root_bp;
-        let mut ds = NestDataset::new(ds_id, name, 0);
+        let mut ds = UnkfsDataset::new(ds_id, name, 0);
         *ds.root_bp.lock() = root_bp;
         ds.birth_txg.store(txg, Ordering::Release);
         ds.is_snapshot = false;
@@ -109,7 +109,7 @@ impl NestSnapshotManager {
         Some(ds)
     }
 
-    pub fn get_snapshot(&self, snap_id: u64) -> Option<NestSnapshot> {
+    pub fn get_snapshot(&self, snap_id: u64) -> Option<UnkfsSnapshot> {
         self.snapshots
             .lock()
             .iter()
@@ -117,7 +117,7 @@ impl NestSnapshotManager {
             .cloned()
     }
 
-    pub fn list_snapshots(&self, ds_id: u64) -> Vec<NestSnapshot> {
+    pub fn list_snapshots(&self, ds_id: u64) -> Vec<UnkfsSnapshot> {
         self.snapshots
             .lock()
             .iter()
@@ -130,7 +130,7 @@ impl NestSnapshotManager {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
-    pub fn rollback(&self, snap_id: u64, ds: &NestDataset) -> bool {
+    pub fn rollback(&self, snap_id: u64, ds: &UnkfsDataset) -> bool {
         let snaps = self.snapshots.lock();
         let snap = match snaps.iter().find(|s| s.snap_id == snap_id) {
             Some(s) => s,
@@ -160,14 +160,14 @@ mod tests {
     /// 构造快照后应能读回名称.
     #[test]
     fn test_snapshot_create() {
-        let snap = NestSnapshot::new(1, 10, "test-snap", NestBlockPointer::null(), 5);
+        let snap = UnkfsSnapshot::new(1, 10, "test-snap", UnkfsBlockPointer::null(), 5);
         assert_eq!(snap.get_name(), "test-snap", "snapshot name mismatch");
     }
 
     /// 新建快照管理器应无任何快照.
     #[test]
     fn test_snapshot_manager() {
-        let mgr = NestSnapshotManager::new();
+        let mgr = UnkfsSnapshotManager::new();
         assert_eq!(
             mgr.snapshot_count(),
             0,

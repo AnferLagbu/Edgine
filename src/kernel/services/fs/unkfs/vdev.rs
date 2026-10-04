@@ -17,7 +17,7 @@ pub const HV_VDEV_ASIZE_DEFAULT: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum NestVdevState {
+pub enum UnkfsVdevState {
     Unknown = 0,
     Closed = 1,
     Offline = 2,
@@ -28,7 +28,7 @@ pub enum NestVdevState {
     Healthy = 7,
 }
 
-impl NestVdevState {
+impl UnkfsVdevState {
     pub fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::Closed,
@@ -44,7 +44,7 @@ impl NestVdevState {
 }
 
 #[derive(Debug, Clone)]
-pub struct NestVdevConfig {
+pub struct UnkfsVdevConfig {
     pub vdev_id: u16,
     pub vdev_type: u8,
     pub guid: u64,
@@ -58,7 +58,7 @@ pub struct NestVdevConfig {
     pub partition_start: u32,
 }
 
-impl NestVdevConfig {
+impl UnkfsVdevConfig {
     pub fn new_disk(vdev_id: u16, path: &str, ashift: u8) -> Self {
         let mut p = [0u8; 64];
         let b = path.as_bytes();
@@ -80,9 +80,9 @@ impl NestVdevConfig {
     }
 }
 
-pub struct NestVdev {
-    pub config: NestVdevConfig,
-    pub state: NestVdevState,
+pub struct UnkfsVdev {
+    pub config: UnkfsVdevConfig,
+    pub state: UnkfsVdevState,
     pub parent_id: Option<u16>,
     pub child_ids: Vec<u16>,
     pub ms_count: u32,
@@ -93,14 +93,14 @@ pub struct NestVdev {
     pub total_writes: u64,
 }
 
-// SAFETY: NestVdev contains only Copy/primitive types and Mutex-protected fields.
-// SAFETY (Framekernel P2.2.2): NestVdev 全部字段 (Mutex<T>, Atomic*, [T; N]) 自动 Send + Sync。
+// SAFETY: UnkfsVdev contains only Copy/primitive types and Mutex-protected fields.
+// SAFETY (Framekernel P2.2.2): UnkfsVdev 全部字段 (Mutex<T>, Atomic*, [T; N]) 自动 Send + Sync。
 
-impl NestVdev {
-    pub fn new(config: NestVdevConfig) -> Self {
+impl UnkfsVdev {
+    pub fn new(config: UnkfsVdevConfig) -> Self {
         Self {
             config,
-            state: NestVdevState::Closed,
+            state: UnkfsVdevState::Closed,
             parent_id: None,
             child_ids: Vec::new(),
             ms_count: 0,
@@ -147,18 +147,21 @@ impl NestVdev {
     }
 
     pub fn is_healthy(&self) -> bool {
-        self.state == NestVdevState::Healthy
+        self.state == UnkfsVdevState::Healthy
     }
 
     pub fn is_available(&self) -> bool {
-        matches!(self.state, NestVdevState::Healthy | NestVdevState::Degraded)
+        matches!(
+            self.state,
+            UnkfsVdevState::Healthy | UnkfsVdevState::Degraded
+        )
     }
 
     pub fn open(&mut self) {
         if self.config.vdev_type == HV_VDEV_TYPE_DISK {
             let present = block::hdd_is_present(self.config.vdev_id as u8);
             if present {
-                self.state = NestVdevState::Healthy;
+                self.state = UnkfsVdevState::Healthy;
                 if self.config.asize == 0 {
                     self.config.asize = Self::probe_disk_size(self.config.vdev_id as u8);
                 }
@@ -166,7 +169,7 @@ impl NestVdev {
                     self.config.sector_count = self.config.asize / 512;
                 }
             } else {
-                self.state = NestVdevState::CantOpen;
+                self.state = UnkfsVdevState::CantOpen;
             }
         }
     }

@@ -41,7 +41,7 @@ pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32
                 } // 显式 drop ramfs 释放锁
             }
         }
-        FsType::NestFs => {
+        FsType::Unkfs => {
             // UNKFS 初始化经注册的 FileSystem trait (fs_init 内含 is_initialized 检查);
             // 未注册 (services::fs::init 之前) 时静默跳过, 挂载在下方 unkfs_fs() 处 fail-closed
             if let Some(fs) = unkfs_fs() {
@@ -76,7 +76,7 @@ pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32
     // 带 trait object 挂载: 各类型经注册表/全局实例解析 FileSystem trait object
     let fs: &'static dyn FileSystem = match fs_type {
         FsType::RamFs => ramfs_fs(),
-        FsType::NestFs => match unkfs_fs() {
+        FsType::Unkfs => match unkfs_fs() {
             Some(fs) => fs,
             // fail-closed: services::fs::init 注册前 UNKFS 不可挂载
             None => return KernelError::NotInitialized.as_i32(),

@@ -1,5 +1,5 @@
 #![deny(unsafe_code)]
-use crate::services::fs::unkfs::bp::NestBlockPointer;
+use crate::services::fs::unkfs::bp::UnkfsBlockPointer;
 use crate::services::fs::unkfs::spa::HV_POOL_BLOCK_SIZE;
 use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::vec::Vec;
@@ -13,7 +13,7 @@ pub const HV_DMU_MAX_NAME: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum NestObjType {
+pub enum UnkfsObjType {
     None = 0,
     File = 1,
     Dir = 2,
@@ -26,7 +26,7 @@ pub enum NestObjType {
     Symlink = 9,
 }
 
-impl NestObjType {
+impl UnkfsObjType {
     pub fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::File,
@@ -45,13 +45,13 @@ impl NestObjType {
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
-pub struct NestDmuObject {
+pub struct UnkfsDmuObject {
     pub obj_id: u64,
-    pub obj_type: NestObjType,
+    pub obj_type: UnkfsObjType,
     pub block_size: u32,
     pub nblocks: u64,
     pub size: u64,
-    pub bp: NestBlockPointer,
+    pub bp: UnkfsBlockPointer,
     pub atime: u64,
     pub mtime: u64,
     pub ctime: u64,
@@ -68,15 +68,15 @@ pub struct NestDmuObject {
     pub used: bool,
 }
 
-impl NestDmuObject {
+impl UnkfsDmuObject {
     pub fn new_file(obj_id: u64, owner_pwm: u64) -> Self {
         Self {
             obj_id,
-            obj_type: NestObjType::File,
+            obj_type: UnkfsObjType::File,
             block_size: HV_POOL_BLOCK_SIZE as u32,
             nblocks: 0,
             size: 0,
-            bp: NestBlockPointer::null(),
+            bp: UnkfsBlockPointer::null(),
             atime: 0,
             mtime: 0,
             ctime: 0,
@@ -97,11 +97,11 @@ impl NestDmuObject {
     pub fn new_dir(obj_id: u64, owner_pwm: u64) -> Self {
         Self {
             obj_id,
-            obj_type: NestObjType::Dir,
+            obj_type: UnkfsObjType::Dir,
             block_size: HV_POOL_BLOCK_SIZE as u32,
             nblocks: 0,
             size: 0,
-            bp: NestBlockPointer::null(),
+            bp: UnkfsBlockPointer::null(),
             atime: 0,
             mtime: 0,
             ctime: 0,
@@ -122,11 +122,11 @@ impl NestDmuObject {
     pub fn new_zap(obj_id: u64) -> Self {
         Self {
             obj_id,
-            obj_type: NestObjType::Zap,
+            obj_type: UnkfsObjType::Zap,
             block_size: HV_POOL_BLOCK_SIZE as u32,
             nblocks: 0,
             size: 0,
-            bp: NestBlockPointer::null(),
+            bp: UnkfsBlockPointer::null(),
             atime: 0,
             mtime: 0,
             ctime: 0,
@@ -147,11 +147,11 @@ impl NestDmuObject {
     pub fn new_symlink(obj_id: u64, owner_pwm: u64) -> Self {
         Self {
             obj_id,
-            obj_type: NestObjType::Symlink,
+            obj_type: UnkfsObjType::Symlink,
             block_size: HV_POOL_BLOCK_SIZE as u32,
             nblocks: 0,
             size: 0,
-            bp: NestBlockPointer::null(),
+            bp: UnkfsBlockPointer::null(),
             atime: 0,
             mtime: 0,
             ctime: 0,
@@ -170,16 +170,16 @@ impl NestDmuObject {
     }
 
     pub fn is_file(&self) -> bool {
-        self.obj_type == NestObjType::File
+        self.obj_type == UnkfsObjType::File
     }
     pub fn is_dir(&self) -> bool {
-        self.obj_type == NestObjType::Dir
+        self.obj_type == UnkfsObjType::Dir
     }
     pub fn is_zap(&self) -> bool {
-        self.obj_type == NestObjType::Zap || self.obj_type == NestObjType::ZapMicro
+        self.obj_type == UnkfsObjType::Zap || self.obj_type == UnkfsObjType::ZapMicro
     }
     pub fn is_snapshot(&self) -> bool {
-        self.obj_type == NestObjType::Snapshot
+        self.obj_type == UnkfsObjType::Snapshot
     }
 
     pub fn mark_dirty(&mut self, txg: u64) {
@@ -187,23 +187,23 @@ impl NestDmuObject {
         self.birth_txg = txg;
     }
 
-    pub fn cow_bp(&mut self, new_bp: NestBlockPointer, txg: u64) {
+    pub fn cow_bp(&mut self, new_bp: UnkfsBlockPointer, txg: u64) {
         self.bp = new_bp;
         self.birth_txg = txg;
         self.dirty = true;
     }
 }
 
-pub struct NestObjSet {
-    pub objects: Mutex<Vec<NestDmuObject>>,
+pub struct UnkfsObjSet {
+    pub objects: Mutex<Vec<UnkfsDmuObject>>,
     pub next_obj_id: AtomicU64,
     pub root_obj: u64,
     pub initialized: AtomicBool,
 }
 
-// SAFETY (Framekernel P2.2.2): NestObjSet 全部字段 (Mutex<T>, Atomic*, Vec) 自动 Send + Sync。
+// SAFETY (Framekernel P2.2.2): UnkfsObjSet 全部字段 (Mutex<T>, Atomic*, Vec) 自动 Send + Sync。
 
-impl NestObjSet {
+impl UnkfsObjSet {
     pub fn new() -> Self {
         Self {
             objects: Mutex::new(Vec::new()),
@@ -216,23 +216,23 @@ impl NestObjSet {
     pub fn init(&self, owner_pwm: u64) {
         let mut objs = self.objects.lock();
         objs.clear();
-        let mut root = NestDmuObject::new_dir(HV_DMU_OBJ_ROOT, owner_pwm);
+        let mut root = UnkfsDmuObject::new_dir(HV_DMU_OBJ_ROOT, owner_pwm);
         root.birth_txg = 1;
         objs.push(root);
-        let zap = NestDmuObject::new_zap(HV_DMU_OBJ_META);
+        let zap = UnkfsDmuObject::new_zap(HV_DMU_OBJ_META);
         objs.push(zap);
         self.next_obj_id
             .store(HV_DMU_OBJ_ROOT + 2, Ordering::Release);
         self.initialized.store(true, Ordering::Release);
     }
 
-    pub fn alloc_obj(&self, obj_type: NestObjType, owner_pwm: u64) -> Option<u64> {
+    pub fn alloc_obj(&self, obj_type: UnkfsObjType, owner_pwm: u64) -> Option<u64> {
         let obj_id = self.next_obj_id.fetch_add(1, Ordering::AcqRel);
         let obj = match obj_type {
-            NestObjType::File => NestDmuObject::new_file(obj_id, owner_pwm),
-            NestObjType::Dir => NestDmuObject::new_dir(obj_id, owner_pwm),
-            NestObjType::Zap | NestObjType::ZapMicro => NestDmuObject::new_zap(obj_id),
-            NestObjType::Symlink => NestDmuObject::new_symlink(obj_id, owner_pwm),
+            UnkfsObjType::File => UnkfsDmuObject::new_file(obj_id, owner_pwm),
+            UnkfsObjType::Dir => UnkfsDmuObject::new_dir(obj_id, owner_pwm),
+            UnkfsObjType::Zap | UnkfsObjType::ZapMicro => UnkfsDmuObject::new_zap(obj_id),
+            UnkfsObjType::Symlink => UnkfsDmuObject::new_symlink(obj_id, owner_pwm),
             _ => return None,
         };
         self.objects.lock().push(obj);
@@ -253,16 +253,16 @@ impl NestObjSet {
         }
     }
 
-    pub fn get_obj(&self, obj_id: u64) -> Option<NestDmuObject> {
+    pub fn get_obj(&self, obj_id: u64) -> Option<UnkfsDmuObject> {
         let objs = self.objects.lock();
         objs.iter().find(|o| o.obj_id == obj_id && o.used).copied()
     }
 
-    pub fn get_obj_mut(&self, obj_id: u64) -> Option<NestDmuObject> {
+    pub fn get_obj_mut(&self, obj_id: u64) -> Option<UnkfsDmuObject> {
         self.get_obj(obj_id)
     }
 
-    pub fn update_obj(&self, obj: &NestDmuObject) -> bool {
+    pub fn update_obj(&self, obj: &UnkfsDmuObject) -> bool {
         let mut objs = self.objects.lock();
         objs.iter_mut()
             .find(|o| o.obj_id == obj.obj_id)
@@ -272,7 +272,7 @@ impl NestObjSet {
             })
     }
 
-    pub fn get_root(&self) -> Option<NestDmuObject> {
+    pub fn get_root(&self) -> Option<UnkfsDmuObject> {
         self.get_obj(self.root_obj)
     }
 
@@ -291,17 +291,17 @@ mod tests {
     /// 新建 File 对象应带上默认类型与零大小.
     #[test]
     fn test_dmu_object_default() {
-        let obj = NestDmuObject::new_file(1, 0);
+        let obj = UnkfsDmuObject::new_file(1, 0);
         assert_eq!(obj.obj_id, 1, "obj_id mismatch");
-        assert_eq!(obj.obj_type, NestObjType::File, "obj_type should be File");
+        assert_eq!(obj.obj_type, UnkfsObjType::File, "obj_type should be File");
         assert_eq!(obj.size, 0, "new object size should be 0");
     }
 
     /// cow_bp 应更新 birth_txg.
     #[test]
     fn test_dmu_object_cow() {
-        let mut obj = NestDmuObject::new_file(2, 0);
-        let new_bp = NestBlockPointer::null();
+        let mut obj = UnkfsDmuObject::new_file(2, 0);
+        let new_bp = UnkfsBlockPointer::null();
         obj.cow_bp(new_bp, 5);
         assert_eq!(obj.birth_txg, 5, "birth txg should be 5");
     }
@@ -309,7 +309,7 @@ mod tests {
     /// 新建 Dir 对象应报告为目录类型.
     #[test]
     fn test_dmu_object_dir_type() {
-        let obj = NestDmuObject::new_dir(3, 0);
+        let obj = UnkfsDmuObject::new_dir(3, 0);
         assert!(obj.is_dir(), "Dir should report as dir");
     }
 
@@ -318,9 +318,9 @@ mod tests {
     /// alloc_obj 应返回有效 id 且可被 get_obj 取回.
     #[test]
     fn test_dmu_objset_alloc() {
-        let os = NestObjSet::new();
+        let os = UnkfsObjSet::new();
         os.init(0);
-        let Some(id) = os.alloc_obj(NestObjType::File, 0) else {
+        let Some(id) = os.alloc_obj(UnkfsObjType::File, 0) else {
             panic!("alloc_obj should succeed");
         };
         assert!(id > 0, "allocated obj_id should be > 0");
@@ -333,9 +333,9 @@ mod tests {
     /// alloc_obj 的 Dir 类型应被正确记录.
     #[test]
     fn test_dmu_objset_dir() {
-        let os = NestObjSet::new();
+        let os = UnkfsObjSet::new();
         os.init(0);
-        let Some(obj_id) = os.alloc_obj(NestObjType::Dir, 0) else {
+        let Some(obj_id) = os.alloc_obj(UnkfsObjType::Dir, 0) else {
             panic!("alloc_obj Dir should succeed");
         };
         let Some(o) = os.get_obj(obj_id) else {
@@ -348,9 +348,9 @@ mod tests {
     /// free_obj 后对象不应再被 get_obj 取回.
     #[test]
     fn test_dmu_objset_free() {
-        let os = NestObjSet::new();
+        let os = UnkfsObjSet::new();
         os.init(0);
-        let Some(obj_id) = os.alloc_obj(NestObjType::File, 0) else {
+        let Some(obj_id) = os.alloc_obj(UnkfsObjType::File, 0) else {
             panic!("alloc_obj should succeed");
         };
         let _count_before = os.obj_count();
@@ -364,9 +364,9 @@ mod tests {
     /// cow_bp 后旧 birth_txg 应被新值覆盖.
     #[test]
     fn test_dmu_cow_preserves_old() {
-        let mut obj = NestDmuObject::new_file(1, 0);
+        let mut obj = UnkfsDmuObject::new_file(1, 0);
         let old_bp = {
-            let mut bp = NestBlockPointer::null();
+            let mut bp = UnkfsBlockPointer::null();
             bp.set_birth(10);
             bp
         };

@@ -1,5 +1,5 @@
 #![deny(unsafe_code)]
-use crate::services::fs::unkfs::bp::NestCompType;
+use crate::services::fs::unkfs::bp::UnkfsCompType;
 use alloc::vec::Vec;
 
 pub const HV_COMP_MIN_SIZE: usize = 64;
@@ -8,31 +8,31 @@ pub const HV_COMP_MIN_SIZE: usize = 64;
     clippy::match_same_arms,
     reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
 )]
-pub fn compress(data: &[u8], comp_type: NestCompType) -> Option<Vec<u8>> {
+pub fn compress(data: &[u8], comp_type: UnkfsCompType) -> Option<Vec<u8>> {
     if data.len() < HV_COMP_MIN_SIZE {
         return None;
     }
     match comp_type {
-        NestCompType::Off => None,
-        NestCompType::LZ4 => compress_lz4(data),
-        NestCompType::ZSTD => compress_zstd_fallback(data),
-        NestCompType::Gzip1 => compress_rle(data),
-        NestCompType::Gzip9 => compress_rle(data),
-        NestCompType::ZLE => compress_zle(data),
+        UnkfsCompType::Off => None,
+        UnkfsCompType::LZ4 => compress_lz4(data),
+        UnkfsCompType::ZSTD => compress_zstd_fallback(data),
+        UnkfsCompType::Gzip1 => compress_rle(data),
+        UnkfsCompType::Gzip9 => compress_rle(data),
+        UnkfsCompType::ZLE => compress_zle(data),
     }
 }
 
 pub fn decompress(
     compressed: &[u8],
     expected_size: usize,
-    comp_type: NestCompType,
+    comp_type: UnkfsCompType,
 ) -> Option<Vec<u8>> {
     match comp_type {
-        NestCompType::Off => None,
-        NestCompType::LZ4 => decompress_lz4(compressed, expected_size),
-        NestCompType::ZSTD => decompress_zstd_fallback(compressed, expected_size),
-        NestCompType::Gzip1 | NestCompType::Gzip9 => decompress_rle(compressed, expected_size),
-        NestCompType::ZLE => decompress_zle(compressed, expected_size),
+        UnkfsCompType::Off => None,
+        UnkfsCompType::LZ4 => decompress_lz4(compressed, expected_size),
+        UnkfsCompType::ZSTD => decompress_zstd_fallback(compressed, expected_size),
+        UnkfsCompType::Gzip1 | UnkfsCompType::Gzip9 => decompress_rle(compressed, expected_size),
+        UnkfsCompType::ZLE => decompress_zle(compressed, expected_size),
     }
 }
 
@@ -318,8 +318,8 @@ mod tests {
         for (i, b) in data.iter_mut().enumerate() {
             *b = (i % 4) as u8;
         }
-        if let Some(c) = compress(&data, NestCompType::LZ4) {
-            let Some(d) = decompress(&c, data.len(), NestCompType::LZ4) else {
+        if let Some(c) = compress(&data, UnkfsCompType::LZ4) {
+            let Some(d) = decompress(&c, data.len(), UnkfsCompType::LZ4) else {
                 panic!("decompress returned None");
             };
             assert_eq!(d.len(), data.len(), "decompressed length mismatch");
@@ -327,15 +327,15 @@ mod tests {
         }
     }
 
-    /// NestCompType::Off 表示不压缩, compress() 按设计返回 None; 这里验证 Gzip1(RLE) 往返.
+    /// UnkfsCompType::Off 表示不压缩, compress() 按设计返回 None; 这里验证 Gzip1(RLE) 往返.
     #[test]
     fn test_compress_off() {
         let mut data = [0u8; 256];
         for (i, b) in data.iter_mut().enumerate() {
             *b = (i % 4) as u8;
         }
-        if let Some(c) = compress(&data, NestCompType::Gzip1) {
-            if let Some(d) = decompress(&c, data.len(), NestCompType::Gzip1) {
+        if let Some(c) = compress(&data, UnkfsCompType::Gzip1) {
+            if let Some(d) = decompress(&c, data.len(), UnkfsCompType::Gzip1) {
                 assert_eq!(d.len(), data.len(), "RLE decompressed length mismatch");
                 assert_eq!(d.as_slice(), data, "RLE roundtrip data mismatch");
             }

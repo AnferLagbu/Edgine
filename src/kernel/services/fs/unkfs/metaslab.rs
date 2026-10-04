@@ -9,18 +9,18 @@ pub const HV_MS_SHIFT: u8 = 14;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum NestMsState {
+pub enum UnkfsMsState {
     Uninit = 0,
     Active = 1,
     Full = 2,
 }
 
-pub struct NestMetaslab {
+pub struct UnkfsMetaslab {
     pub id: u32,
     pub vdev_id: u16,
     pub start: u64,
     pub size: u64,
-    pub state: NestMsState,
+    pub state: UnkfsMsState,
     pub allocated: AtomicU64,
     pub freed: AtomicU64,
     pub space: AtomicU64,
@@ -32,10 +32,10 @@ pub struct NestMetaslab {
     pub condensing: bool,
 }
 
-// SAFETY: NestMetaslab uses Mutex for bitmap and plain Copy types for other fields.
-// SAFETY (Framekernel P2.2.2): NestMetaslab 全部字段 (Mutex<T>, [T; N]) 自动 Send + Sync。
+// SAFETY: UnkfsMetaslab uses Mutex for bitmap and plain Copy types for other fields.
+// SAFETY (Framekernel P2.2.2): UnkfsMetaslab 全部字段 (Mutex<T>, [T; N]) 自动 Send + Sync。
 
-impl NestMetaslab {
+impl UnkfsMetaslab {
     pub fn new(id: u32, vdev_id: u16, start: u64, size: u64) -> Self {
         let nblocks = (size / HV_MS_BLOCK_SIZE) as u32;
         let bitmap_len = (nblocks as usize).div_ceil(64);
@@ -47,7 +47,7 @@ impl NestMetaslab {
             vdev_id,
             start,
             size,
-            state: NestMsState::Active,
+            state: UnkfsMsState::Active,
             allocated: AtomicU64::new(0),
             freed: AtomicU64::new(0),
             space: AtomicU64::new(size),
@@ -147,7 +147,7 @@ impl NestMetaslab {
     }
 
     pub fn is_available(&self) -> bool {
-        self.state == NestMsState::Active && self.free_space.load(Ordering::Relaxed) > 0
+        self.state == UnkfsMsState::Active && self.free_space.load(Ordering::Relaxed) > 0
     }
 
     pub fn fragmentation(&self) -> u8 {
@@ -161,9 +161,9 @@ impl NestMetaslab {
     pub fn sync(&mut self) {
         let free = self.free_space.load(Ordering::Relaxed);
         if free == 0 {
-            self.state = NestMsState::Full;
+            self.state = UnkfsMsState::Full;
         } else {
-            self.state = NestMsState::Active;
+            self.state = UnkfsMsState::Active;
         }
     }
 }

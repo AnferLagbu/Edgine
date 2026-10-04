@@ -3,15 +3,15 @@
 use crate::framework::driver::block;
 use crate::framework::sgeg::api as pwm_api;
 use crate::services::fs::KernelError;
-use crate::services::fs::unkfs::arc::{NestArcBufType, NestArcKey};
-use crate::services::fs::unkfs::bp::{NestBlockPointer, NestCksumType, NestCompType};
+use crate::services::fs::unkfs::arc::{UnkfsArcBufType, UnkfsArcKey};
+use crate::services::fs::unkfs::bp::{UnkfsBlockPointer, UnkfsCksumType, UnkfsCompType};
 use crate::services::fs::unkfs::compress;
-use crate::services::fs::unkfs::dataset::NestDataset;
-use crate::services::fs::unkfs::dmu::{HV_DMU_OBJ_ROOT, NestDmuObject, NestObjType};
-use crate::services::fs::unkfs::snapshot::NestSnapshotManager;
-use crate::services::fs::unkfs::spa::{HV_POOL_BLOCK_SIZE, NestPoolState, NestSpa};
-use crate::services::fs::unkfs::txg::NestTxgGroup;
-use crate::services::fs::unkfs::zil::{NestZil, NestZilRecord};
+use crate::services::fs::unkfs::dataset::UnkfsDataset;
+use crate::services::fs::unkfs::dmu::{HV_DMU_OBJ_ROOT, UnkfsDmuObject, UnkfsObjType};
+use crate::services::fs::unkfs::snapshot::UnkfsSnapshotManager;
+use crate::services::fs::unkfs::spa::{HV_POOL_BLOCK_SIZE, UnkfsPoolState, UnkfsSpa};
+use crate::services::fs::unkfs::txg::UnkfsTxgGroup;
+use crate::services::fs::unkfs::zil::{UnkfsZil, UnkfsZilRecord};
 use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -41,7 +41,7 @@ fn unkfs_reset() {
 pub const UNKFS_MAX_FDS: usize = 256;
 
 #[derive(Debug, Clone, Copy)]
-pub struct NestfsFd {
+pub struct UnkfsFd {
     pub fd: u32,
     pub obj_id: u64,
     pub ds_id: u64,
@@ -53,18 +53,18 @@ pub struct NestfsFd {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum NestfsMode {
+pub enum UnkfsMode {
     Memory = 0,
     Disk = 1,
 }
 
-pub struct NestfsData {
-    pub spa: NestSpa,
-    pub txg_group: Mutex<Option<NestTxgGroup>>,
-    pub datasets: Mutex<Vec<NestDataset>>,
-    pub snap_mgr: NestSnapshotManager,
-    pub zil: NestZil,
-    pub fds: Mutex<[NestfsFd; UNKFS_MAX_FDS]>,
+pub struct UnkfsData {
+    pub spa: UnkfsSpa,
+    pub txg_group: Mutex<Option<UnkfsTxgGroup>>,
+    pub datasets: Mutex<Vec<UnkfsDataset>>,
+    pub snap_mgr: UnkfsSnapshotManager,
+    pub zil: UnkfsZil,
+    pub fds: Mutex<[UnkfsFd; UNKFS_MAX_FDS]>,
     pub next_fd: AtomicU32,
     pub current_pwm: AtomicU64,
     pub current_dir: AtomicU64,
@@ -78,21 +78,21 @@ pub struct NestfsData {
     pub partition_start: AtomicU32,
 }
 
-// SAFETY (Framekernel P2.2.2): NestfsData 全部字段 (Mutex<T>, Atomic*, NestSpa/NestZil/NestSnapshotManager)
+// SAFETY (Framekernel P2.2.2): UnkfsData 全部字段 (Mutex<T>, Atomic*, UnkfsSpa/UnkfsZil/UnkfsSnapshotManager)
 // 都自动实现 Send + Sync, 无需 unsafe impl。
 
-static UNKFS_DATA: OnceCell<NestfsData> = OnceCell::new();
+static UNKFS_DATA: OnceCell<UnkfsData> = OnceCell::new();
 
-pub fn get_unkfs() -> &'static NestfsData {
+pub fn get_unkfs() -> &'static UnkfsData {
     UNKFS_DATA.get_or_init(|slot| {
-        slot.write(NestfsData {
-            spa: NestSpa::new(),
+        slot.write(UnkfsData {
+            spa: UnkfsSpa::new(),
             txg_group: Mutex::new(None),
             datasets: Mutex::new(Vec::new()),
-            snap_mgr: NestSnapshotManager::new(),
-            zil: NestZil::new(),
+            snap_mgr: UnkfsSnapshotManager::new(),
+            zil: UnkfsZil::new(),
             fds: Mutex::new(
-                [NestfsFd {
+                [UnkfsFd {
                     fd: 0,
                     obj_id: 0,
                     ds_id: 0,
@@ -108,7 +108,7 @@ pub fn get_unkfs() -> &'static NestfsData {
             mounted: AtomicBool::new(false),
             initialized: AtomicBool::new(false),
             root_ds_id: AtomicU64::new(0),
-            mode: AtomicU8::new(NestfsMode::Memory as u8),
+            mode: AtomicU8::new(UnkfsMode::Memory as u8),
             drives_discovered: Mutex::new(Vec::new()),
             disk_drive: AtomicU8::new(0),
             partition_start: AtomicU32::new(0),
@@ -116,7 +116,7 @@ pub fn get_unkfs() -> &'static NestfsData {
     })
 }
 
-impl NestfsData {
+impl UnkfsData {
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
@@ -156,7 +156,7 @@ impl NestfsData {
     )]
     pub fn init(&self) {
         // J-03 (2026-09-08, G-10 方案 C): init 幂等化 — 重复 init 不再重建 objset.
-        // 原行为: 重复 init 经 setup_zil_datasets → NestObjSet::init 清空 objects,
+        // 原行为: 重复 init 经 setup_zil_datasets → UnkfsObjSet::init 清空 objects,
         // 静默清空磁盘数据 (挂载重试/热插拔重建/FREG故障恢复场景灾难性).
         // 显式重建改经 reset() (FREG恢复钩子 unkfs_reset/unkfs_restore 调用).
         if self.is_initialized() {
@@ -212,7 +212,7 @@ impl NestfsData {
                 // 其余磁盘也添加为 vdev
                 for (drive_id, part_start) in &discovered[1..] {
                     self.disk_drive.store(*drive_id, Ordering::Release);
-                    let mut vdev_cfg = crate::services::fs::unkfs::vdev::NestVdevConfig::new_disk(
+                    let mut vdev_cfg = crate::services::fs::unkfs::vdev::UnkfsVdevConfig::new_disk(
                         u16::from(*drive_id),
                         "disk",
                         12,
@@ -235,7 +235,7 @@ impl NestfsData {
         } else {
             crate::slog_info!(FS, "[UNKFS] No disk, running in memory mode");
             self.spa
-                .add_vdev(crate::services::fs::unkfs::vdev::NestVdevConfig::new_disk(
+                .add_vdev(crate::services::fs::unkfs::vdev::UnkfsVdevConfig::new_disk(
                     0, "ata0", 12,
                 ));
         }
@@ -246,7 +246,7 @@ impl NestfsData {
         self.mounted.store(true, Ordering::Release);
         self.initialized.store(true, Ordering::Release);
         if !self.is_disk_mode() {
-            self.mode.store(NestfsMode::Memory as u8, Ordering::Release);
+            self.mode.store(UnkfsMode::Memory as u8, Ordering::Release);
         }
         if !has_any_disk {
             crate::slog_info!(FS, "[UNKFS] Initialized: pool=edgine-pool (memory)");
@@ -288,7 +288,7 @@ impl NestfsData {
     fn setup_zil_datasets(&self) {
         {
             let mut txg_guard = self.txg_group.lock();
-            let mut txg_group = NestTxgGroup::new();
+            let mut txg_group = UnkfsTxgGroup::new();
             txg_group.init(1);
             *txg_guard = Some(txg_group);
         }
@@ -296,7 +296,7 @@ impl NestfsData {
         let mut has_persisted = false;
         {
             let mut datasets = self.datasets.lock();
-            let root_ds = NestDataset::new(0, "root", 0);
+            let root_ds = UnkfsDataset::new(0, "root", 0);
             datasets.push(root_ds);
         }
         {
@@ -331,7 +331,7 @@ impl NestfsData {
             part_start
         );
         self.spa.disk_present.store(true, Ordering::Release);
-        let mut vdev_cfg = crate::services::fs::unkfs::vdev::NestVdevConfig::new_disk(
+        let mut vdev_cfg = crate::services::fs::unkfs::vdev::UnkfsVdevConfig::new_disk(
             u16::from(drive_id),
             "disk",
             12,
@@ -340,7 +340,7 @@ impl NestfsData {
         vdev_cfg.partition_start = part_start;
         self.spa.add_vdev(vdev_cfg);
         self.spa.formatted.store(true, Ordering::Release);
-        self.mode.store(NestfsMode::Disk as u8, Ordering::Release);
+        self.mode.store(UnkfsMode::Disk as u8, Ordering::Release);
         self.spa.write_uberblock_to_disk();
         crate::slog_info!(FS, "[UNKFS] FORMAT: Complete");
     }
@@ -374,7 +374,7 @@ impl NestfsData {
             }
         };
 
-        let mut vdev_cfg = crate::services::fs::unkfs::vdev::NestVdevConfig::new_disk(
+        let mut vdev_cfg = crate::services::fs::unkfs::vdev::UnkfsVdevConfig::new_disk(
             u16::from(drive),
             "disk",
             12,
@@ -403,7 +403,7 @@ impl NestfsData {
             .iter_mut()
             .find(|v| v.config.vdev_id == u16::from(drive))
         {
-            vdev.state = crate::services::fs::unkfs::vdev::NestVdevState::Removed;
+            vdev.state = crate::services::fs::unkfs::vdev::UnkfsVdevState::Removed;
             crate::slog_info!(FS, "[UNKFS] HOTPLUG: disk removed (drive={})", drive);
             return true;
         }
@@ -439,7 +439,7 @@ impl NestfsData {
         if last_ok > part_start {
             (u64::from(last_ok) - u64::from(part_start)) * 512
         } else {
-            crate::services::fs::unkfs::vdev::NestVdev::probe_disk_size(drive_id)
+            crate::services::fs::unkfs::vdev::UnkfsVdev::probe_disk_size(drive_id)
         }
     }
 
@@ -474,8 +474,8 @@ impl NestfsData {
         self.spa.txg_current.store(ub.txg, Ordering::Release);
         self.spa.formatted.store(true, Ordering::Release);
         self.spa.disk_present.store(true, Ordering::Release);
-        self.mode.store(NestfsMode::Disk as u8, Ordering::Release);
-        let mut vdev_cfg = crate::services::fs::unkfs::vdev::NestVdevConfig::new_disk(
+        self.mode.store(UnkfsMode::Disk as u8, Ordering::Release);
+        let mut vdev_cfg = crate::services::fs::unkfs::vdev::UnkfsVdevConfig::new_disk(
             u16::from(drive_id),
             "disk",
             12,
@@ -485,14 +485,14 @@ impl NestfsData {
         self.spa.add_vdev(vdev_cfg);
         {
             let mut txg_guard = self.txg_group.lock();
-            let mut txg_group = NestTxgGroup::new();
+            let mut txg_group = UnkfsTxgGroup::new();
             txg_group.init(ub.txg);
             *txg_guard = Some(txg_group);
         }
         self.zil.init();
         {
             let mut datasets = self.datasets.lock();
-            let root_ds = NestDataset::new(0, "root", 0);
+            let root_ds = UnkfsDataset::new(0, "root", 0);
             datasets.push(root_ds);
         }
         {
@@ -513,7 +513,7 @@ impl NestfsData {
         self.initialized.store(true, Ordering::Release);
         self.spa
             .state
-            .store(NestPoolState::Active as u8, Ordering::Release);
+            .store(UnkfsPoolState::Active as u8, Ordering::Release);
         crate::slog_info!(
             FS,
             "[UNKFS] MOUNT: Ready (pool_guid={})",
@@ -527,7 +527,7 @@ impl NestfsData {
     }
 
     pub fn is_disk_mode(&self) -> bool {
-        self.mode.load(Ordering::Acquire) == NestfsMode::Disk as u8
+        self.mode.load(Ordering::Acquire) == UnkfsMode::Disk as u8
     }
 
     fn alloc_fd(&self) -> Option<usize> {
@@ -547,7 +547,7 @@ impl NestfsData {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
-    fn check_permission(&self, obj: &NestDmuObject, pwm: u64, cap: u64) -> bool {
+    fn check_permission(&self, obj: &UnkfsDmuObject, pwm: u64, cap: u64) -> bool {
         if pwm == 0 {
             return false;
         }
@@ -621,7 +621,7 @@ impl NestfsData {
             fds[fd_idx].flags = flags;
             fds[fd_idx].pwm = pwm;
         }
-        self.zil.add_record(NestZilRecord::new_create(0, 0, name));
+        self.zil.add_record(UnkfsZilRecord::new_create(0, 0, name));
         Ok(fd_idx as i32)
     }
 
@@ -672,7 +672,7 @@ impl NestfsData {
             return 0;
         }
         let block_offset = (offset / HV_POOL_BLOCK_SIZE) * HV_POOL_BLOCK_SIZE;
-        let block_key = NestArcKey::new(0, (obj_id << 40) | block_offset, obj.birth_txg);
+        let block_key = UnkfsArcKey::new(0, (obj_id << 40) | block_offset, obj.birth_txg);
         if let Some(data) = self
             .spa
             .arc
@@ -688,10 +688,10 @@ impl NestfsData {
                 let start = offset as usize;
                 let end = (start + to_read).min(disk_buf.len());
                 buf[..end - start].copy_from_slice(&disk_buf[start..end]);
-                let arc_key = NestArcKey::new(0, (obj_id << 40) | block_offset, obj.birth_txg);
+                let arc_key = UnkfsArcKey::new(0, (obj_id << 40) | block_offset, obj.birth_txg);
                 self.spa
                     .arc
-                    .insert(arc_key, &disk_buf, NestArcBufType::Data);
+                    .insert(arc_key, &disk_buf, UnkfsArcBufType::Data);
             }
         }
         {
@@ -737,8 +737,8 @@ impl NestfsData {
             return 0;
         }
         let txg = self.spa.current_txg();
-        let cksum_type = NestCksumType::Fletcher4;
-        let comp_type = NestCompType::Off;
+        let cksum_type = UnkfsCksumType::Fletcher4;
+        let comp_type = UnkfsCompType::Off;
         let compressed = compress::compress(&buf[..to_write], comp_type);
         let write_data = compressed.as_deref().unwrap_or(&buf[..to_write]);
         let new_bp = match self
@@ -760,10 +760,10 @@ impl NestfsData {
         obj.mtime = crate::arch!(timestamp());
         if !self.is_disk_mode() {
             let block_offset = (offset / HV_POOL_BLOCK_SIZE) * HV_POOL_BLOCK_SIZE;
-            let arc_key = NestArcKey::new(0, (obj_id << 40) | block_offset, txg);
+            let arc_key = UnkfsArcKey::new(0, (obj_id << 40) | block_offset, txg);
             self.spa
                 .arc
-                .insert(arc_key, &buf[..to_write], NestArcBufType::Data);
+                .insert(arc_key, &buf[..to_write], UnkfsArcBufType::Data);
         }
         {
             let datasets = self.datasets.lock();
@@ -775,7 +775,7 @@ impl NestfsData {
                 txg_group.add_dirty_to_open(obj.bp);
             }
         }
-        self.zil.add_record(NestZilRecord::new_write(
+        self.zil.add_record(UnkfsZilRecord::new_write(
             txg,
             obj_id,
             offset,
@@ -799,7 +799,7 @@ impl NestfsData {
             || KernelError::Io.as_i32(),
             |obj_id| {
                 let txg = self.spa.current_txg();
-                self.zil.add_record(NestZilRecord::new_mkdir(txg, 0, name));
+                self.zil.add_record(UnkfsZilRecord::new_mkdir(txg, 0, name));
                 obj_id as i32
             },
         )
@@ -842,11 +842,12 @@ impl NestfsData {
         if !obj.bp.is_null() {
             self.spa.free(&obj.bp, txg);
         }
-        self.zil.add_record(NestZilRecord::new_remove(txg, 0, name));
+        self.zil
+            .add_record(UnkfsZilRecord::new_remove(txg, 0, name));
         0
     }
 
-    pub fn stat(&self, path: &str, pwm: u64) -> Option<NestDmuObject> {
+    pub fn stat(&self, path: &str, pwm: u64) -> Option<UnkfsDmuObject> {
         if !self.is_initialized() {
             return None;
         }
@@ -1045,7 +1046,7 @@ impl NestfsData {
 
         let txg = self.spa.current_txg();
         self.zil
-            .add_record(NestZilRecord::new_rename(txg, 0, old_name, new_name));
+            .add_record(UnkfsZilRecord::new_rename(txg, 0, old_name, new_name));
 
         0
     }
@@ -1067,7 +1068,7 @@ impl NestfsData {
             let mut datasets = self.datasets.lock();
             let ds = &mut datasets[0];
 
-            match ds.objset.alloc_obj(NestObjType::Symlink, pwm) {
+            match ds.objset.alloc_obj(UnkfsObjType::Symlink, pwm) {
                 Some(id) => id,
                 None => return KernelError::NoSpace.as_i32(),
             }
@@ -1078,7 +1079,7 @@ impl NestfsData {
             let ds = &mut datasets[0];
 
             if let Some(mut obj) = ds.objset.get_obj_mut(obj_id) {
-                obj.obj_type = NestObjType::Symlink;
+                obj.obj_type = UnkfsObjType::Symlink;
                 obj.size = target.len() as u64;
                 obj.dirty = true;
                 ds.objset.update_obj(&obj);
@@ -1086,8 +1087,8 @@ impl NestfsData {
 
             let target_bytes = target.as_bytes();
             let txg = self.spa.current_txg();
-            let cksum_type = NestCksumType::Fletcher4;
-            let comp_type = NestCompType::Off;
+            let cksum_type = UnkfsCksumType::Fletcher4;
+            let comp_type = UnkfsCompType::Off;
 
             if let Some(new_bp) =
                 self.spa
@@ -1106,7 +1107,7 @@ impl NestfsData {
 
         let txg = self.spa.current_txg();
         self.zil
-            .add_record(NestZilRecord::new_symlink(txg, 0, link_name, target));
+            .add_record(UnkfsZilRecord::new_symlink(txg, 0, link_name, target));
 
         0
     }
@@ -1133,7 +1134,7 @@ impl NestfsData {
                 None => return KernelError::FileNotFound.as_i32(),
             }
         };
-        if obj.obj_type == NestObjType::Dir {
+        if obj.obj_type == UnkfsObjType::Dir {
             return KernelError::IsDirectory.as_i32();
         }
 
@@ -1165,7 +1166,7 @@ impl NestfsData {
 
         let txg = self.spa.current_txg();
         self.zil
-            .add_record(NestZilRecord::new_link(txg, 0, new_name, obj_id));
+            .add_record(UnkfsZilRecord::new_link(txg, 0, new_name, obj_id));
 
         0
     }
@@ -1192,7 +1193,7 @@ impl NestfsData {
             }
         };
 
-        if obj.obj_type != NestObjType::Symlink {
+        if obj.obj_type != UnkfsObjType::Symlink {
             return KernelError::InvalidArgument.as_i32();
         }
 
@@ -1207,7 +1208,7 @@ impl NestfsData {
         let target_len = obj.size as usize;
         let to_read = target_len.min(buf.len());
 
-        let block_key = NestArcKey::new(0, 0, obj.birth_txg);
+        let block_key = UnkfsArcKey::new(0, 0, obj.birth_txg);
         if let Some(data) = self.spa.arc.lookup_slice(&block_key, target_len) {
             buf[..to_read].copy_from_slice(&data[..to_read]);
             return to_read as i32;
@@ -1441,7 +1442,7 @@ impl NestfsData {
         clippy::too_many_lines,
         reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
     )]
-    fn serialize_dataset_metadata(&self, txg: u64) -> Option<NestBlockPointer> {
+    fn serialize_dataset_metadata(&self, txg: u64) -> Option<UnkfsBlockPointer> {
         const OBJ_RECORD_SIZE: usize = 222;
         const MAX_SERIALIZE_OBJECTS: usize = 65536;
         const MAX_SERIALIZE_ENTRIES: usize = 65536;
@@ -1450,7 +1451,7 @@ impl NestfsData {
             let datasets = self.datasets.lock();
             let ds = &datasets[0];
             let objs = ds.objset.objects.lock();
-            let obj_clones: Vec<NestDmuObject> = objs.iter().filter(|o| o.used).copied().collect();
+            let obj_clones: Vec<UnkfsDmuObject> = objs.iter().filter(|o| o.used).copied().collect();
             let dir_list = ds.dir_zap.entries();
             let next = ds.objset.next_obj_id.load(Ordering::Acquire);
             (obj_clones, dir_list, next)
@@ -1516,12 +1517,12 @@ impl NestfsData {
                 return None;
             }
             off += 8;
-            if off + NestBlockPointer::BYTES > buf.len() {
+            if off + UnkfsBlockPointer::BYTES > buf.len() {
                 return None;
             }
             let bp_bytes = obj.bp.as_bytes();
-            buf[off..off + NestBlockPointer::BYTES].copy_from_slice(bp_bytes);
-            off += NestBlockPointer::BYTES;
+            buf[off..off + UnkfsBlockPointer::BYTES].copy_from_slice(bp_bytes);
+            off += UnkfsBlockPointer::BYTES;
             if !Self::write_le64(&mut buf, off, obj.atime) {
                 return None;
             }
@@ -1586,8 +1587,8 @@ impl NestfsData {
         }
         let bp = self.spa.allocate(
             buf.len() as u64,
-            NestCksumType::Fletcher4,
-            NestCompType::Off,
+            UnkfsCksumType::Fletcher4,
+            UnkfsCompType::Off,
             txg,
         )?;
         if self.spa.write_bp(&bp, &buf) != 0 {
@@ -1605,7 +1606,7 @@ impl NestfsData {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
-    fn deserialize_dataset_metadata(&self, bp: &NestBlockPointer) -> bool {
+    fn deserialize_dataset_metadata(&self, bp: &UnkfsBlockPointer) -> bool {
         const OBJ_RECORD_SIZE: usize = 222;
         const MAX_DESERIALIZE_OBJECTS: usize = 65536;
         const MAX_DESERIALIZE_ENTRIES: usize = 65536;
@@ -1671,7 +1672,7 @@ impl NestfsData {
                     None => return false,
                 };
                 off += 8;
-                let obj_type = NestObjType::from_u8(buf[off]);
+                let obj_type = UnkfsObjType::from_u8(buf[off]);
                 off += 1;
                 let _block_size = match Self::read_le32(&buf, off) {
                     Some(v) => v,
@@ -1689,15 +1690,16 @@ impl NestfsData {
                 };
                 off += 8;
 
-                if off + NestBlockPointer::BYTES > buf.len() {
+                if off + UnkfsBlockPointer::BYTES > buf.len() {
                     return false;
                 }
-                let bp_val =
-                    match NestBlockPointer::from_bytes(&buf[off..off + NestBlockPointer::BYTES]) {
-                        Some(v) => v,
-                        None => return false,
-                    };
-                off += NestBlockPointer::BYTES;
+                let bp_val = match UnkfsBlockPointer::from_bytes(
+                    &buf[off..off + UnkfsBlockPointer::BYTES],
+                ) {
+                    Some(v) => v,
+                    None => return false,
+                };
+                off += UnkfsBlockPointer::BYTES;
 
                 let atime = match Self::read_le64(&buf, off) {
                     Some(v) => v,
@@ -1749,7 +1751,7 @@ impl NestfsData {
                 let used = buf[off] != 0;
                 off += 1;
                 off += 1;
-                let obj = NestDmuObject {
+                let obj = UnkfsDmuObject {
                     obj_id,
                     obj_type,
                     block_size: HV_POOL_BLOCK_SIZE as u32,

@@ -12,7 +12,7 @@ pub const HV_ARC_META_SIZE: usize = 16384;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum NestArcState {
+pub enum UnkfsArcState {
     Anon = 0,
     Mru = 1,
     Mfu = 2,
@@ -23,19 +23,19 @@ pub enum NestArcState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum NestArcBufType {
+pub enum UnkfsArcBufType {
     Data = 0,
     Metadata = 1,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct NestArcKey {
+pub struct UnkfsArcKey {
     pub vdev_id: u16,
     pub offset: u64,
     pub birth_txg: u64,
 }
 
-impl NestArcKey {
+impl UnkfsArcKey {
     pub fn new(vdev_id: u16, offset: u64, birth_txg: u64) -> Self {
         Self {
             vdev_id,
@@ -60,12 +60,12 @@ impl NestArcKey {
     }
 }
 
-pub struct NestArcBuf {
-    pub key: NestArcKey,
+pub struct UnkfsArcBuf {
+    pub key: UnkfsArcKey,
     pub data: Box<[u8]>,
     pub size: usize,
-    pub buf_type: NestArcBufType,
-    pub state: NestArcState,
+    pub buf_type: UnkfsArcBufType,
+    pub state: UnkfsArcState,
     pub ref_count: AtomicU32,
     pub access_count: u32,
     pub dirty: bool,
@@ -73,10 +73,10 @@ pub struct NestArcBuf {
     pub compressed: bool,
 }
 
-// SAFETY (Framekernel P2.2.2): NestArcBuf 全部字段自动 Send + Sync。
+// SAFETY (Framekernel P2.2.2): UnkfsArcBuf 全部字段自动 Send + Sync。
 
-impl NestArcBuf {
-    pub fn new(key: NestArcKey, size: usize, buf_type: NestArcBufType) -> Self {
+impl UnkfsArcBuf {
+    pub fn new(key: UnkfsArcKey, size: usize, buf_type: UnkfsArcBufType) -> Self {
         // 2026-09-11 实测: with_capacity+resize 触发 slow_vector_initialization, 需豁免
         #[allow(clippy::slow_vector_initialization)]
         let mut data = Vec::with_capacity(size);
@@ -86,7 +86,7 @@ impl NestArcBuf {
             data: data.into_boxed_slice(),
             size,
             buf_type,
-            state: NestArcState::Anon,
+            state: UnkfsArcState::Anon,
             ref_count: AtomicU32::new(1),
             access_count: 1,
             dirty: false,
@@ -122,7 +122,7 @@ impl NestArcBuf {
     }
 }
 
-pub struct NestArcStats {
+pub struct UnkfsArcStats {
     pub hits: AtomicU64,
     pub misses: AtomicU64,
     pub mru_hits: AtomicU64,
@@ -138,7 +138,7 @@ pub struct NestArcStats {
     pub meta_size: AtomicU64,
 }
 
-impl NestArcStats {
+impl UnkfsArcStats {
     pub fn new() -> Self {
         Self {
             hits: AtomicU64::new(0),
@@ -160,30 +160,30 @@ impl NestArcStats {
 
 const HV_ARC_HASH_BUCKETS: usize = 256;
 
-struct NestArcInner {
+struct UnkfsArcInner {
     mru: VecDeque<usize>,
     mfu: VecDeque<usize>,
-    ghost_mru: VecDeque<NestArcKey>,
-    ghost_mfu: VecDeque<NestArcKey>,
-    buffers: Vec<Option<NestArcBuf>>,
+    ghost_mru: VecDeque<UnkfsArcKey>,
+    ghost_mfu: VecDeque<UnkfsArcKey>,
+    buffers: Vec<Option<UnkfsArcBuf>>,
     hash_table: Vec<Vec<usize>>,
     max_size: usize,
     p: usize,
 }
 
-pub struct NestArc {
-    inner: Mutex<NestArcInner>,
-    stats: NestArcStats,
+pub struct UnkfsArc {
+    inner: Mutex<UnkfsArcInner>,
+    stats: UnkfsArcStats,
     initialized: AtomicBool,
 }
 
-// SAFETY (Framekernel P2.2.2): NestArc 全部字段 (Mutex<T>, AtomicBool, NestArcStats)
+// SAFETY (Framekernel P2.2.2): UnkfsArc 全部字段 (Mutex<T>, AtomicBool, UnkfsArcStats)
 // 都自动实现 Send + Sync。
 
-impl NestArc {
+impl UnkfsArc {
     pub fn new() -> Self {
         Self {
-            inner: Mutex::new(NestArcInner {
+            inner: Mutex::new(UnkfsArcInner {
                 mru: VecDeque::new(),
                 mfu: VecDeque::new(),
                 ghost_mru: VecDeque::new(),
@@ -193,7 +193,7 @@ impl NestArc {
                 max_size: HV_ARC_DEFAULT_SIZE,
                 p: 0,
             }),
-            stats: NestArcStats::new(),
+            stats: UnkfsArcStats::new(),
             initialized: AtomicBool::new(false),
         }
     }
@@ -218,7 +218,7 @@ impl NestArc {
         self.initialized.store(true, Ordering::Release);
     }
 
-    pub fn lookup(&self, key: &NestArcKey) -> Option<*const u8> {
+    pub fn lookup(&self, key: &UnkfsArcKey) -> Option<*const u8> {
         let mut inner = self.inner.lock();
         let bucket_idx = (key.hash() as usize) % HV_ARC_HASH_BUCKETS;
         let mut found_idx: Option<usize> = None;
@@ -232,14 +232,14 @@ impl NestArc {
                     && buf.key.birth_txg == key.birth_txg
                 {
                     self.stats.hits.fetch_add(1, Ordering::Relaxed);
-                    if buf.state == NestArcState::Mru {
+                    if buf.state == UnkfsArcState::Mru {
                         self.stats.mru_hits.fetch_add(1, Ordering::Relaxed);
-                    } else if buf.state == NestArcState::Mfu {
+                    } else if buf.state == UnkfsArcState::Mfu {
                         self.stats.mfu_hits.fetch_add(1, Ordering::Relaxed);
                     }
                     if let Some(ref mut buf) = inner.buffers[idx] {
                         buf.access_count += 1;
-                        if buf.state == NestArcState::Mru {
+                        if buf.state == UnkfsArcState::Mru {
                             promote_to_mfu = true;
                         }
                         buf.add_ref();
@@ -254,7 +254,7 @@ impl NestArc {
             if promote_to_mfu {
                 inner.mru.retain(|&i| i != idx);
                 if let Some(ref mut buf) = inner.buffers[idx] {
-                    buf.state = NestArcState::Mfu;
+                    buf.state = UnkfsArcState::Mfu;
                 }
                 inner.mfu.push_back(idx);
             }
@@ -289,23 +289,23 @@ impl NestArc {
 
     /// Framekernel P2.2.2: 安全地获取缓存切片，通过 framework `arc_safe::ptr_to_slice` 封装 unsafe
     /// 调用者仍需在访问后调用 release(key) 释放引用计数
-    pub fn lookup_slice(&self, key: &NestArcKey, len: usize) -> Option<&[u8]> {
+    pub fn lookup_slice(&self, key: &UnkfsArcKey, len: usize) -> Option<&[u8]> {
         let ptr = self.lookup(key)?;
         crate::framework::fs::unkfs::arc_safe::ptr_to_slice(ptr, len)
     }
 
     pub fn insert(
         &self,
-        key: NestArcKey,
+        key: UnkfsArcKey,
         data: &[u8],
-        buf_type: NestArcBufType,
+        buf_type: UnkfsArcBufType,
     ) -> Option<*const u8> {
         let mut inner = self.inner.lock();
         self.remove_key(&mut inner, &key);
         self.evict_if_needed(&mut inner, data.len());
-        let mut buf = NestArcBuf::new(key, data.len(), buf_type);
+        let mut buf = UnkfsArcBuf::new(key, data.len(), buf_type);
         buf.data[..data.len()].copy_from_slice(data);
-        buf.state = NestArcState::Mru;
+        buf.state = UnkfsArcState::Mru;
         let slot_idx = inner.buffers.iter().position(core::option::Option::is_none);
         let idx = if let Some(i) = slot_idx {
             inner.buffers[i] = Some(buf);
@@ -320,7 +320,7 @@ impl NestArc {
         self.stats
             .size
             .fetch_add(data.len() as u64, Ordering::Relaxed);
-        if buf_type == NestArcBufType::Data {
+        if buf_type == UnkfsArcBufType::Data {
             self.stats
                 .data_size
                 .fetch_add(data.len() as u64, Ordering::Relaxed);
@@ -338,7 +338,7 @@ impl NestArc {
         })
     }
 
-    fn remove_key(&self, inner: &mut NestArcInner, key: &NestArcKey) {
+    fn remove_key(&self, inner: &mut UnkfsArcInner, key: &UnkfsArcKey) {
         let bucket_idx = (key.hash() as usize) % HV_ARC_HASH_BUCKETS;
         let mut found: Option<usize> = None;
         for (pos, &idx) in inner.hash_table[bucket_idx].iter().enumerate() {
@@ -362,7 +362,7 @@ impl NestArc {
         }
     }
 
-    fn evict_if_needed(&self, inner: &mut NestArcInner, _incoming_size: usize) {
+    fn evict_if_needed(&self, inner: &mut UnkfsArcInner, _incoming_size: usize) {
         while inner.mru.len() + inner.mfu.len() + 1 > inner.max_size {
             if inner.mru.len() > inner.p {
                 if let Some(idx) = inner.mru.pop_front() {
@@ -402,7 +402,7 @@ impl NestArc {
         }
     }
 
-    pub fn release(&self, key: &NestArcKey) {
+    pub fn release(&self, key: &UnkfsArcKey) {
         let mut inner = self.inner.lock();
         if let Some(buf) = inner.buffers.iter_mut().find_map(|slot| {
             slot.as_mut().filter(|buf| {
@@ -415,7 +415,7 @@ impl NestArc {
         }
     }
 
-    pub fn mark_dirty(&self, key: &NestArcKey) {
+    pub fn mark_dirty(&self, key: &UnkfsArcKey) {
         let mut inner = self.inner.lock();
         if let Some(buf) = inner.buffers.iter_mut().find_map(|slot| {
             slot.as_mut().filter(|buf| {
@@ -508,7 +508,7 @@ mod tests {
     /// init 后应报告已初始化.
     #[test]
     fn test_arc_init() {
-        let arc = NestArc::new();
+        let arc = UnkfsArc::new();
         arc.init(128);
         assert!(arc.is_initialized(), "arc should be initialized");
     }
@@ -516,20 +516,20 @@ mod tests {
     /// 空缓存查找应返回 None.
     #[test]
     fn test_arc_lookup_miss() {
-        let arc = NestArc::new();
+        let arc = UnkfsArc::new();
         arc.init(128);
-        let key = NestArcKey::new(0, 0, 0);
+        let key = UnkfsArcKey::new(0, 0, 0);
         assert!(arc.lookup(&key).is_none(), "empty arc should return None");
     }
 
     /// 插入后应能经 safe 切片接口查回同一数据.
     #[test]
     fn test_arc_insert_lookup() {
-        let arc = NestArc::new();
+        let arc = UnkfsArc::new();
         arc.init(128);
-        let key = NestArcKey::new(0, 4096, 1);
+        let key = UnkfsArcKey::new(0, 4096, 1);
         let data: [u8; 16] = [0xAA; 16];
-        let _ = arc.insert(key, &data, NestArcBufType::Data);
+        let _ = arc.insert(key, &data, UnkfsArcBufType::Data);
         let Some(found) = arc.lookup_slice(&key, 16) else {
             panic!("should find inserted entry");
         };
@@ -539,12 +539,12 @@ mod tests {
     /// 多次插入后缓存应产生统计活动.
     #[test]
     fn test_arc_eviction() {
-        let arc = NestArc::new();
+        let arc = UnkfsArc::new();
         arc.init(8192);
         for i in 0..5u64 {
-            let key = NestArcKey::new(0, i * 4096, 1);
+            let key = UnkfsArcKey::new(0, i * 4096, 1);
             let data: [u8; 64] = [i as u8; 64];
-            let _ = arc.insert(key, &data, NestArcBufType::Data);
+            let _ = arc.insert(key, &data, UnkfsArcBufType::Data);
         }
         let (hits, misses, size, _evicts) = arc.get_stats();
         assert!(
@@ -556,11 +556,11 @@ mod tests {
     /// mark_dirty 后 flush_dirty 应统计到脏条目.
     #[test]
     fn test_arc_dirty_tracking() {
-        let arc = NestArc::new();
+        let arc = UnkfsArc::new();
         arc.init(256);
-        let key = NestArcKey::new(0, 0, 1);
+        let key = UnkfsArcKey::new(0, 0, 1);
         let data: [u8; 32] = [0xBB; 32];
-        let _ = arc.insert(key, &data, NestArcBufType::Data);
+        let _ = arc.insert(key, &data, UnkfsArcBufType::Data);
 
         arc.mark_dirty(&key);
         let dirty_count = arc.flush_dirty();

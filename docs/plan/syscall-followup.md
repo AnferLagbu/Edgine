@@ -461,7 +461,7 @@ T7 (预存登记)
 7 项**全部为纯预留抽象**（零生产引用）。判据：
 
 1. trait 自述目的「便于单元测试注入 mock」未落地——全仓无任何生产/测试调用方依赖该抽象。
-2. 具体实现的测试由 `framework/tests/test_unkfs.rs` 直接针对 `NestZap` / `NestZil` / `NestSpa` / `NestObjSet` / `NestTxgGroup` 等**具体类型**完成，未走 trait。
+2. 具体实现的测试由 `framework/tests/test_unkfs.rs` 直接针对 `UnkfsZap` / `UnkfsZil` / `UnkfsSpa` / `UnkfsObjSet` / `UnkfsTxgGroup` 等**具体类型**完成，未走 trait。
 3. 7 文件内的 `#[cfg(test)] mod tests` 在 `make test-unit`（构造为 `--features kernel_test`，非 `cargo test`）与 `make test-host`（依赖编译不含 `cfg(test)`）下**均不编译**——从不执行。本仓 `cargo test` 入口仅为 host-tests（Makefile L419 / ci/build.sh L58）。
 4. host-tests 已走「直接引用内核真实源码」的源共享路线（DECISION-052 路线 C），取代 trait 注入式 mock。
 5. 项目既有教训明载：「Trait injection for empty forwarding logic creates unnecessary abstraction overhead」。

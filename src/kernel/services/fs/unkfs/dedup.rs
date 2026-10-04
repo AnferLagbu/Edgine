@@ -15,7 +15,7 @@
 //! 删除 → refcount-- → refcount=0 时真正释放
 //! ```
 
-use super::bp::NestBlockPointer;
+use super::bp::UnkfsBlockPointer;
 use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -35,7 +35,7 @@ pub enum CasOp {
 }
 
 pub struct CasIndex {
-    hash_to_dva: Mutex<BTreeMap<[u8; 32], Vec<NestBlockPointer>>>,
+    hash_to_dva: Mutex<BTreeMap<[u8; 32], Vec<UnkfsBlockPointer>>>,
     ref_counts: Mutex<BTreeMap<[u8; 32], u64>>,
     hits: AtomicU64,
     misses: AtomicU64,
@@ -53,7 +53,7 @@ impl CasIndex {
         }
     }
 
-    pub fn lookup(&self, hash: &CasHash) -> Option<NestBlockPointer> {
+    pub fn lookup(&self, hash: &CasHash) -> Option<UnkfsBlockPointer> {
         let index = self.hash_to_dva.lock();
         if let Some(dvas) = index.get(hash) {
             if let Some(bp) = dvas.first() {
@@ -65,7 +65,7 @@ impl CasIndex {
         None
     }
 
-    pub fn insert(&self, hash: CasHash, bp: NestBlockPointer) {
+    pub fn insert(&self, hash: CasHash, bp: UnkfsBlockPointer) {
         let mut index = self.hash_to_dva.lock();
         index.entry(hash).or_default().push(bp);
         let mut refs = self.ref_counts.lock();
@@ -137,11 +137,11 @@ pub fn cas_init() {
     get_cas();
 }
 
-pub fn cas_lookup(hash: &CasHash) -> Option<NestBlockPointer> {
+pub fn cas_lookup(hash: &CasHash) -> Option<UnkfsBlockPointer> {
     get_cas().lookup(hash)
 }
 
-pub fn cas_insert(hash: CasHash, bp: NestBlockPointer) {
+pub fn cas_insert(hash: CasHash, bp: UnkfsBlockPointer) {
     get_cas().insert(hash, bp);
 }
 
@@ -166,7 +166,7 @@ pub fn cas_stats() -> (u64, u64, u64) {
 }
 
 pub fn sha256(data: &[u8]) -> CasHash {
-    let ck = super::checksum::NestChecksum::compute(super::bp::NestCksumType::SHA256, data);
+    let ck = super::checksum::UnkfsChecksum::compute(super::bp::UnkfsCksumType::SHA256, data);
     let mut hash = [0u8; 32];
     hash[0..8].copy_from_slice(&ck.value[0].to_be_bytes());
     hash[8..16].copy_from_slice(&ck.value[1].to_be_bytes());
@@ -180,13 +180,13 @@ pub fn sha256_matches(data: &[u8], expected: &CasHash) -> bool {
 }
 
 /// CAS 感知写入: 计算 SHA256, 检查去重索引, 引用已有块或分配新块
-pub fn cas_aware_write(data: &[u8], txg: u64, obj_id: u64) -> Option<super::bp::NestBlockPointer> {
+pub fn cas_aware_write(data: &[u8], txg: u64, obj_id: u64) -> Option<super::bp::UnkfsBlockPointer> {
     let hash = sha256(data);
     let cas = get_cas();
 
     if let Some(existing) = cas.lookup(&hash) {
         cas.ref_inc(&hash);
-        crate::services::fs::unkfs::zil::NestZilRecord::new_dedup_ref(
+        crate::services::fs::unkfs::zil::UnkfsZilRecord::new_dedup_ref(
             txg,
             [
                 u64::from_be_bytes(hash[0..8].try_into().unwrap_or_else(|_| [0u8; 8])),

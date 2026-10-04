@@ -11,9 +11,9 @@ pub use super::unkfs_data::*;
 pub use super::unkfs_inode::*;
 
 /// `UNKFS` 热插拔监听器 — 将块设备热插拔事件转发到 `UNKFS`
-struct NestfsHotplugListener;
+struct UnkfsHotplugListener;
 
-impl HotplugListener for NestfsHotplugListener {
+impl HotplugListener for UnkfsHotplugListener {
     fn on_device_added(&self, event: &HotplugEvent) -> bool {
         let HotplugEvent::DeviceAdded { location } = event else {
             return false;
@@ -52,5 +52,5 @@ impl HotplugListener for NestfsHotplugListener {
 /// 注册 `UNKFS` 热插拔监听器到全局热插拔管理器
 pub fn unkfs_hotplug_register() {
     use crate::framework::driver::hotplug::HOTPLUG_MANAGER;
-    HOTPLUG_MANAGER.register_listener(Box::new(NestfsHotplugListener));
+    HOTPLUG_MANAGER.register_listener(Box::new(UnkfsHotplugListener));
 }

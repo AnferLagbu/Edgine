@@ -4,7 +4,7 @@ pub const HV_BP_CHECKSUM_SIZE: usize = 32;
 
 #[derive(Debug, Clone, Copy, zerocopy::IntoBytes, zerocopy::Immutable)]
 #[repr(C)]
-pub struct NestDva {
+pub struct UnkfsDva {
     pub offset: u64,
     pub asize: u32,
     pub vdev_id: u16,
@@ -12,7 +12,7 @@ pub struct NestDva {
     pub _pad: [u8; 1],
 }
 
-impl NestDva {
+impl UnkfsDva {
     pub const BYTES: usize = core::mem::size_of::<Self>();
 
     pub const fn null() -> Self {
@@ -78,7 +78,7 @@ impl NestDva {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 #[allow(clippy::upper_case_acronyms)] // ZSTD/ZLE/LZ4 压缩算法名
-pub enum NestCompType {
+pub enum UnkfsCompType {
     Off = 0,
     LZ4 = 1,
     ZSTD = 2,
@@ -87,7 +87,7 @@ pub enum NestCompType {
     ZLE = 5,
 }
 
-impl NestCompType {
+impl UnkfsCompType {
     pub fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::LZ4,
@@ -102,7 +102,7 @@ impl NestCompType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum NestCksumType {
+pub enum UnkfsCksumType {
     Off = 0,
     Fletcher2 = 1,
     Fletcher4 = 2,
@@ -110,7 +110,7 @@ pub enum NestCksumType {
     EdonR = 4,
 }
 
-impl NestCksumType {
+impl UnkfsCksumType {
     pub fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::Fletcher2,
@@ -124,7 +124,7 @@ impl NestCksumType {
 
 #[derive(Debug, Clone, Copy, zerocopy::IntoBytes, zerocopy::Immutable)]
 #[repr(C)]
-pub struct NestBpProp {
+pub struct UnkfsBpProp {
     pub logical_size: u32,
     pub physical_size: u32,
     pub level: u8,
@@ -135,7 +135,7 @@ pub struct NestBpProp {
     pub _pad: [u8; 3],
 }
 
-impl NestBpProp {
+impl UnkfsBpProp {
     pub const BYTES: usize = core::mem::size_of::<Self>();
 
     pub const fn default() -> Self {
@@ -143,8 +143,8 @@ impl NestBpProp {
             logical_size: 0,
             physical_size: 0,
             level: 0,
-            comp_type: NestCompType::Off as u8,
-            cksum_type: NestCksumType::Fletcher4 as u8,
+            comp_type: UnkfsCompType::Off as u8,
+            cksum_type: UnkfsCksumType::Fletcher4 as u8,
             encrypted: 0,
             byteorder: 0,
             _pad: [0; 3],
@@ -155,23 +155,23 @@ impl NestBpProp {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
-    pub fn comp_type(&self) -> NestCompType {
-        NestCompType::from_u8(self.comp_type)
+    pub fn comp_type(&self) -> UnkfsCompType {
+        UnkfsCompType::from_u8(self.comp_type)
     }
 
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
-    pub fn cksum_type(&self) -> NestCksumType {
-        NestCksumType::from_u8(self.cksum_type)
+    pub fn cksum_type(&self) -> UnkfsCksumType {
+        UnkfsCksumType::from_u8(self.cksum_type)
     }
 
-    pub fn set_comp_type(&mut self, v: NestCompType) {
+    pub fn set_comp_type(&mut self, v: UnkfsCompType) {
         self.comp_type = v as u8;
     }
 
-    pub fn set_cksum_type(&mut self, v: NestCksumType) {
+    pub fn set_cksum_type(&mut self, v: UnkfsCksumType) {
         self.cksum_type = v as u8;
     }
 
@@ -207,20 +207,20 @@ impl NestBpProp {
 
 #[derive(Debug, Clone, Copy, zerocopy::IntoBytes, zerocopy::Immutable)]
 #[repr(C)]
-pub struct NestBlockPointer {
-    pub dva: [NestDva; HV_DVA_MAX],
-    pub prop: NestBpProp,
+pub struct UnkfsBlockPointer {
+    pub dva: [UnkfsDva; HV_DVA_MAX],
+    pub prop: UnkfsBpProp,
     pub checksum: [u64; 4],
     pub birth_txg: u64,
     pub fill: u64,
     pub _pad: [u64; 2],
 }
 
-impl NestBlockPointer {
+impl UnkfsBlockPointer {
     pub const fn null() -> Self {
         Self {
-            dva: [NestDva::null(); HV_DVA_MAX],
-            prop: NestBpProp::default(),
+            dva: [UnkfsDva::null(); HV_DVA_MAX],
+            prop: UnkfsBpProp::default(),
             checksum: [0; 4],
             birth_txg: 0,
             fill: 0,
@@ -244,7 +244,7 @@ impl NestBlockPointer {
         self.prop.physical_size
     }
 
-    pub fn get_dva(&self, idx: usize) -> Option<&NestDva> {
+    pub fn get_dva(&self, idx: usize) -> Option<&UnkfsDva> {
         if idx < HV_DVA_MAX && !self.dva[idx].is_null() {
             Some(&self.dva[idx])
         } else {
@@ -252,7 +252,7 @@ impl NestBlockPointer {
         }
     }
 
-    pub fn set_dva(&mut self, idx: usize, dva: NestDva) {
+    pub fn set_dva(&mut self, idx: usize, dva: UnkfsDva) {
         if idx < HV_DVA_MAX {
             self.dva[idx] = dva;
         }
@@ -286,11 +286,11 @@ impl NestBlockPointer {
         let mut bp = Self::null();
         let mut off = 0usize;
         for i in 0..HV_DVA_MAX {
-            bp.dva[i] = NestDva::from_bytes(&bytes[off..off + NestDva::BYTES])?;
-            off += NestDva::BYTES;
+            bp.dva[i] = UnkfsDva::from_bytes(&bytes[off..off + UnkfsDva::BYTES])?;
+            off += UnkfsDva::BYTES;
         }
-        bp.prop = NestBpProp::from_bytes(&bytes[off..off + NestBpProp::BYTES])?;
-        off += NestBpProp::BYTES;
+        bp.prop = UnkfsBpProp::from_bytes(&bytes[off..off + UnkfsBpProp::BYTES])?;
+        off += UnkfsBpProp::BYTES;
         // checksum, birth_txg, fill, _pad 直接从字节切片读取
         for i in 0..4 {
             bp.checksum[i] =
@@ -315,7 +315,7 @@ mod tests {
     /// 空块指针应为 null, 且无有效 DVA.
     #[test]
     fn test_bp_null() {
-        let bp = NestBlockPointer::null();
+        let bp = UnkfsBlockPointer::null();
         assert!(bp.is_null(), "null bp should be null");
         assert!(bp.get_dva(0).is_none(), "null bp dva should be None");
     }
@@ -323,8 +323,8 @@ mod tests {
     /// set_dva / get_dva 往返应保持一致.
     #[test]
     fn test_bp_dva_set_get() {
-        let mut bp = NestBlockPointer::null();
-        let dva = NestDva::new(0, 4096, 8192);
+        let mut bp = UnkfsBlockPointer::null();
+        let dva = UnkfsDva::new(0, 4096, 8192);
         bp.set_dva(0, dva);
         let Some(got) = bp.get_dva(0) else {
             panic!("dva not set");
@@ -337,7 +337,7 @@ mod tests {
     /// set_birth 应写入 birth_txg.
     #[test]
     fn test_bp_birth_txg() {
-        let mut bp = NestBlockPointer::null();
+        let mut bp = UnkfsBlockPointer::null();
         bp.set_birth(42);
         assert_eq!(bp.birth_txg, 42, "birth txg mismatch");
     }

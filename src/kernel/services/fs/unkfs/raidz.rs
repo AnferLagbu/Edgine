@@ -8,7 +8,7 @@ pub const HV_RAIDZ_MAX_COLS: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum NestRaidzLevel {
+pub enum UnkfsRaidzLevel {
     Single = 0,
     RaidZ1 = 1,
     RaidZ2 = 2,
@@ -16,7 +16,7 @@ pub enum NestRaidzLevel {
     Mirror = 4,
 }
 
-impl NestRaidzLevel {
+impl UnkfsRaidzLevel {
     #[expect(
         clippy::match_same_arms,
         reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
@@ -54,15 +54,15 @@ impl NestRaidzLevel {
     }
 }
 
-pub struct NestRaidzMap {
-    pub level: NestRaidzLevel,
+pub struct UnkfsRaidzMap {
+    pub level: UnkfsRaidzLevel,
     pub ncols: usize,
     pub nparity: usize,
     pub ashift: u8,
-    pub cols: Vec<NestRaidzCol>,
+    pub cols: Vec<UnkfsRaidzCol>,
 }
 
-pub struct NestRaidzCol {
+pub struct UnkfsRaidzCol {
     pub col_id: usize,
     pub devidx: usize,
     pub offset: u64,
@@ -180,8 +180,8 @@ fn gf_invert_matrix(mat: &mut [Vec<u8>], n: usize) -> bool {
     true
 }
 
-impl NestRaidzMap {
-    pub fn new(level: NestRaidzLevel, ncols: usize, ashift: u8) -> Self {
+impl UnkfsRaidzMap {
+    pub fn new(level: UnkfsRaidzLevel, ncols: usize, ashift: u8) -> Self {
         let nparity = level.parity_cols();
         Self {
             level,
@@ -376,18 +376,18 @@ impl NestRaidzMap {
     }
 }
 
-pub struct NestRaidzEngine;
+pub struct UnkfsRaidzEngine;
 
-impl NestRaidzEngine {
-    pub fn create_stripe(level: NestRaidzLevel, ncols: usize, ashift: u8) -> NestRaidzMap {
-        NestRaidzMap::new(level, ncols, ashift)
+impl UnkfsRaidzEngine {
+    pub fn create_stripe(level: UnkfsRaidzLevel, ncols: usize, ashift: u8) -> UnkfsRaidzMap {
+        UnkfsRaidzMap::new(level, ncols, ashift)
     }
 
-    pub fn scrub_block(map: &NestRaidzMap, parity_data: &[Vec<u8>]) -> NestScrubResult {
+    pub fn scrub_block(map: &UnkfsRaidzMap, parity_data: &[Vec<u8>]) -> UnkfsScrubResult {
         if map.verify_parity(parity_data) {
-            NestScrubResult::Clean
+            UnkfsScrubResult::Clean
         } else {
-            NestScrubResult::Corrupted {
+            UnkfsScrubResult::Corrupted {
                 failed_cols: vec![0],
             }
         }
@@ -395,7 +395,7 @@ impl NestRaidzEngine {
 }
 
 #[derive(Debug, Clone)]
-pub enum NestScrubResult {
+pub enum UnkfsScrubResult {
     Clean,
     Corrupted { failed_cols: Vec<usize> },
     Repaired { repaired_cols: Vec<usize> },

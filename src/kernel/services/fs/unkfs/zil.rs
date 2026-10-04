@@ -1,5 +1,5 @@
 #![deny(unsafe_code)]
-use crate::services::fs::unkfs::bp::NestBlockPointer;
+use crate::services::fs::unkfs::bp::UnkfsBlockPointer;
 use crate::services::fs::unkfs::spa::HV_POOL_BLOCK_SIZE;
 use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::vec::Vec;
@@ -10,7 +10,7 @@ pub const HV_ZIL_BLOCK_SIZE: usize = HV_POOL_BLOCK_SIZE as usize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum NestZilRecordType {
+pub enum UnkfsZilRecordType {
     Create = 1,
     Remove = 2,
     Link = 3,
@@ -27,8 +27,8 @@ pub enum NestZilRecordType {
 }
 
 #[derive(Debug, Clone)]
-pub struct NestZilRecord {
-    pub rec_type: NestZilRecordType,
+pub struct UnkfsZilRecord {
+    pub rec_type: UnkfsZilRecordType,
     pub txg: u64,
     pub obj_id: u64,
     pub parent_obj: u64,
@@ -39,10 +39,10 @@ pub struct NestZilRecord {
     pub seq: u64,
 }
 
-impl NestZilRecord {
+impl UnkfsZilRecord {
     pub fn new_write(txg: u64, obj_id: u64, offset: u64, size: u32) -> Self {
         Self {
-            rec_type: NestZilRecordType::Write,
+            rec_type: UnkfsZilRecordType::Write,
             txg,
             obj_id,
             parent_obj: 0,
@@ -60,7 +60,7 @@ impl NestZilRecord {
         let len = b.len().min(127);
         n[..len].copy_from_slice(&b[..len]);
         Self {
-            rec_type: NestZilRecordType::Create,
+            rec_type: UnkfsZilRecordType::Create,
             txg,
             obj_id: 0,
             parent_obj,
@@ -78,7 +78,7 @@ impl NestZilRecord {
         let len = b.len().min(127);
         n[..len].copy_from_slice(&b[..len]);
         Self {
-            rec_type: NestZilRecordType::Remove,
+            rec_type: UnkfsZilRecordType::Remove,
             txg,
             obj_id: 0,
             parent_obj,
@@ -96,7 +96,7 @@ impl NestZilRecord {
         let len = b.len().min(127);
         n[..len].copy_from_slice(&b[..len]);
         Self {
-            rec_type: NestZilRecordType::Mkdir,
+            rec_type: UnkfsZilRecordType::Mkdir,
             txg,
             obj_id: 0,
             parent_obj,
@@ -110,7 +110,7 @@ impl NestZilRecord {
 
     pub fn new_setattr(txg: u64, obj_id: u64) -> Self {
         Self {
-            rec_type: NestZilRecordType::SetAttr,
+            rec_type: UnkfsZilRecordType::SetAttr,
             txg,
             obj_id,
             parent_obj: 0,
@@ -128,7 +128,7 @@ impl NestZilRecord {
         let len = b.len().min(127);
         n[..len].copy_from_slice(&b[..len]);
         Self {
-            rec_type: NestZilRecordType::Link,
+            rec_type: UnkfsZilRecordType::Link,
             txg,
             obj_id,
             parent_obj,
@@ -149,7 +149,7 @@ impl NestZilRecord {
         let len2 = b2.len().min(63);
         n[64..64 + len2].copy_from_slice(&b2[..len2]);
         Self {
-            rec_type: NestZilRecordType::Rename,
+            rec_type: UnkfsZilRecordType::Rename,
             txg,
             obj_id: 0,
             parent_obj,
@@ -170,7 +170,7 @@ impl NestZilRecord {
         let len2 = b2.len().min(63);
         n[64..64 + len2].copy_from_slice(&b2[..len2]);
         Self {
-            rec_type: NestZilRecordType::Symlink,
+            rec_type: UnkfsZilRecordType::Symlink,
             txg,
             obj_id: 0,
             parent_obj,
@@ -184,7 +184,7 @@ impl NestZilRecord {
 
     pub fn new_dedup_ref(txg: u64, hash: [u64; 4], obj_id: u64) -> Self {
         Self {
-            rec_type: NestZilRecordType::DedupRef,
+            rec_type: UnkfsZilRecordType::DedupRef,
             txg,
             obj_id,
             parent_obj: 0,
@@ -198,7 +198,7 @@ impl NestZilRecord {
 
     pub fn new_dedup_unref(txg: u64, hash: [u64; 4]) -> Self {
         Self {
-            rec_type: NestZilRecordType::DedupUnref,
+            rec_type: UnkfsZilRecordType::DedupUnref,
             txg,
             obj_id: 0,
             parent_obj: 0,
@@ -211,26 +211,26 @@ impl NestZilRecord {
     }
 }
 
-pub struct NestZil {
-    pub records: Mutex<Vec<NestZilRecord>>,
+pub struct UnkfsZil {
+    pub records: Mutex<Vec<UnkfsZilRecord>>,
     pub committed_seq: AtomicU64,
     pub current_seq: AtomicU64,
-    pub log_bp: Mutex<NestBlockPointer>,
+    pub log_bp: Mutex<UnkfsBlockPointer>,
     pub itxg: AtomicU64,
     pub syncing: AtomicBool,
     pub replaying: AtomicBool,
     pub enabled: AtomicBool,
 }
 
-// SAFETY (Framekernel P2.2.2): NestZil 全部字段 (Mutex<T>, Atomic*) 自动 Send + Sync。
+// SAFETY (Framekernel P2.2.2): UnkfsZil 全部字段 (Mutex<T>, Atomic*) 自动 Send + Sync。
 
-impl NestZil {
+impl UnkfsZil {
     pub fn new() -> Self {
         Self {
             records: Mutex::new(Vec::new()),
             committed_seq: AtomicU64::new(0),
             current_seq: AtomicU64::new(0),
-            log_bp: Mutex::new(NestBlockPointer::null()),
+            log_bp: Mutex::new(UnkfsBlockPointer::null()),
             itxg: AtomicU64::new(0),
             syncing: AtomicBool::new(false),
             replaying: AtomicBool::new(false),
@@ -245,7 +245,7 @@ impl NestZil {
         self.enabled.store(true, Ordering::Release);
     }
 
-    pub fn add_record(&self, record: NestZilRecord) {
+    pub fn add_record(&self, record: UnkfsZilRecord) {
         if !self.enabled.load(Ordering::Acquire) {
             return;
         }
@@ -281,7 +281,7 @@ impl NestZil {
         self.syncing.store(false, Ordering::Release);
     }
 
-    pub fn replay(&self) -> Vec<NestZilRecord> {
+    pub fn replay(&self) -> Vec<UnkfsZilRecord> {
         if self
             .replaying
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
@@ -315,7 +315,7 @@ mod tests {
     /// 创建记录应带上正确的事务号与父对象.
     #[test]
     fn test_zil_record_create() {
-        let rec = NestZilRecord::new_create(1, 0, "test_file");
+        let rec = UnkfsZilRecord::new_create(1, 0, "test_file");
         assert_eq!(rec.txg, 1, "txg mismatch");
         assert_eq!(rec.obj_id, 0, "obj_id should be 0");
     }
@@ -323,7 +323,7 @@ mod tests {
     /// 写记录应带上正确的事务号与对象号.
     #[test]
     fn test_zil_record_write() {
-        let rec = NestZilRecord::new_write(2, 10, 0, 1024);
+        let rec = UnkfsZilRecord::new_write(2, 10, 0, 1024);
         assert_eq!(rec.txg, 2, "txg mismatch");
         assert_eq!(rec.obj_id, 10, "obj_id mismatch");
     }
@@ -331,9 +331,9 @@ mod tests {
     /// add_record + sync 后提交序号应推进.
     #[test]
     fn test_zil_add_and_sync() {
-        let zil = NestZil::new();
+        let zil = UnkfsZil::new();
         zil.init();
-        zil.add_record(NestZilRecord::new_write(1, 5, 0, 512));
+        zil.add_record(UnkfsZilRecord::new_write(1, 5, 0, 512));
         zil.sync(1);
         assert!(
             zil.committed_seq.load(Ordering::SeqCst) >= 1,

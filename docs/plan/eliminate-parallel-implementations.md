@@ -56,7 +56,7 @@
 - **sync 桩先行**
   - 描述：services 41 处依赖 framework::sync（IrqSpinLock/Mutex/OnceCell/原子），host 下需 std 替代。
   - 方案：host-test cfg 下 `framework/sync` 提供 std 实现（Mutex→std::sync::Mutex，OnceCell→std::sync::OnceLock），仿 unkfs_mock 模式；保留中断禁用语义为 no-op（host 无中断）。
-  - 状态：[X] (2026-09-06 实施：`framework/sync/spinlock.rs` 的 `disable_interrupts`/`restore_interrupts` 加 `#[cfg(feature = "host-test")]` no-op 变体——host 无中断语义且 cli 特权指令在用户态 SIGSEGV；IrqSpinLock/SpinLock 的原子自旋在 host 多线程下仍正确互斥。`OnceCell`（framework::sync::OnceLock）为原子 Once 实现，host 原生兼容无需桩。**可行性验证**：临时探针测试调用内核 `services::fs::unkfs::zap::NestZap`（含 IrqSpinLock Mutex）在 host 运行通过，证明内核 unkfs 纯逻辑模块可 host 运行)
+  - 状态：[X] (2026-09-06 实施：`framework/sync/spinlock.rs` 的 `disable_interrupts`/`restore_interrupts` 加 `#[cfg(feature = "host-test")]` no-op 变体——host 无中断语义且 cli 特权指令在用户态 SIGSEGV；IrqSpinLock/SpinLock 的原子自旋在 host 多线程下仍正确互斥。`OnceCell`（framework::sync::OnceLock）为原子 Once 实现，host 原生兼容无需桩。**可行性验证**：临时探针测试调用内核 `services::fs::unkfs::zap::UnkfsZap`（含 IrqSpinLock Mutex）在 host 运行通过，证明内核 unkfs 纯逻辑模块可 host 运行)
 - **fs/syscall/proc/mm 桩分批**
   - 描述：services 依赖的 fs(43)/syscall(84)/proc(37)/mm(31) 公共 API 需 host 桩（多数为"表结构 + 查询"类，可 mock）。
   - 方案：按 `cargo check --features host-test` 暴露的缺失清单分批实现桩；纯算法类 API（checksum/sha256/位图）直接用内核真实实现，不桩化。
@@ -96,8 +96,8 @@
 
 - **迁移 unkfs（被测对象）**
   - 描述：unkfs 平行实现（19 文件）删除，tests/ 226 处引用改指内核 `edgine::kernel::services::fs::unkfs`。
-  - 方案：依赖工程计划 B 的 services host 编译；删除前先统一 NestDva 布局（内核版为准）；`ffi.rs` 垫片删除；`unkfs_mock.rs` 的 kernel 树按需收敛。
-  - 状态：[X] (2026-09-06 完成：6 个 unkfs 测试文件全部改引内核真实实现（unkfs_test/persist/stress/e2e/zil_replay + trait_abstract 静态契约）；**host-tests/src/unkfs/ 19 文件 + unkfs_mock.rs（虚拟内核树 + 桥接桩）全部删除**；lib.rs 收敛。B08-14 步骤 4 完成（详见 audit-fix-08 B08-14 状态）。注：文档原步骤 1"统一 NestDva 布局"经调研价值存疑（tests/ 无布局断言），迁移时直接以内核 16B 布局为准，见 audit-fix-08 B08-14 详情)
+  - 方案：依赖工程计划 B 的 services host 编译；删除前先统一 UnkfsDva 布局（内核版为准）；`ffi.rs` 垫片删除；`unkfs_mock.rs` 的 kernel 树按需收敛。
+  - 状态：[X] (2026-09-06 完成：6 个 unkfs 测试文件全部改引内核真实实现（unkfs_test/persist/stress/e2e/zil_replay + trait_abstract 静态契约）；**host-tests/src/unkfs/ 19 文件 + unkfs_mock.rs（虚拟内核树 + 桥接桩）全部删除**；lib.rs 收敛。B08-14 步骤 4 完成（详见 audit-fix-08 B08-14 状态）。注：文档原步骤 1"统一 UnkfsDva 布局"经调研价值存疑（tests/ 无布局断言），迁移时直接以内核 16B 布局为准，见 audit-fix-08 B08-14 详情)
 
 - **迁移 framekernel_bench**
   - 描述：bench 复刻 10 个内核算法热点，目标"与内核版本位一致"。
@@ -106,7 +106,7 @@
 
 - **G-07 收尾：剩余 host-only mock 清零**
   - 描述：G-07 登记的 host-only mock 残留（archive 记为 29 个 bench，实测 HEAD 编排器注册 28 项）中，除已迁移的热点外仍存三类内核逻辑复刻：8 组 unkfs dispatch mock（`HostZapStore`/`HostTxgManager`/`HostDmuManager`/`HostSpaManager`/`HostRaidzEngine`/`HostArcCache`/`HostZilLog`/`HostZilPersist` 及其 `StandardHostXxx` 复刻）、`MockEGDFDevice`/`HostBlockDevice` 块设备复刻、`MockVfsPollPolicy`/`MockEpollInstance`/`MockEpollPwake` 等 poll/epoll 复刻。三者均属"内核逻辑在 host 侧的平行实现"。
-  - 方案：8 组 unkfs dispatch 与块设备/poll 复刻改为直引内核真实实现（`NestZap`/`NestTxgGroup`/`NestObjSet`/`NestSpa`/`NestRaidzMap`/`StandardArc`/`NestZil`/`NestZilPersist`；`egdf_blk_read`/`egdf_blk_write` 注册表；`StandardVfsPollPolicy` + `VfsPollPolicyRef`）；无内核对应物的纯合成 bench 直接删除，不留复刻。
+  - 方案：8 组 unkfs dispatch 与块设备/poll 复刻改为直引内核真实实现（`UnkfsZap`/`UnkfsTxgGroup`/`UnkfsObjSet`/`UnkfsSpa`/`UnkfsRaidzMap`/`StandardArc`/`UnkfsZil`/`UnkfsZilPersist`；`egdf_blk_read`/`egdf_blk_write` 注册表；`StandardVfsPollPolicy` + `VfsPollPolicyRef`）；无内核对应物的纯合成 bench 直接删除，不留复刻。
   - 状态：[X] (收尾完成：**10 组改引内核真实实现**（`blk_dev_dispatch` 经 `egdf` 块设备注册表；`vfs_poll_dispatch` 经内核 `StandardVfsPollPolicy` + `VfsPollPolicyRef`；8 组 unkfs dispatch 直引内核类型）；**5 组纯合成 bench 删除**（`btree_id_lookup`/`context_switch_latency`/`pipe_throughput`/`vfs_open_close`/`loopback_rtt`）；**epoll mock 块删除**（`MockEpollInstance`/`instance_watches_fd`/`enqueue_ready_for_fd`/`MockEpollPwake` + 8 个单测）；本地复刻体删除后 `bitflags` 直接依赖随之移除；bench 项 28 → 23。迁移中发现并修复 1 处本轮自造问题（`framework/debug/ebpf.rs` `register_verifier` 持 `IrqSpinLockGuard` 重入 `verifier()` 自死锁）。验证：`cargo check --all-targets` 0 warning、`cargo test --lib` 95 passed / 0 failed、bench 运行输出 23 条、baseline.json 重录 23 条且 `check_bench_regression.py` PASS。剩余唯一测试替身为 `BenchBlockDevice`（实现内核 `BlockDevice` trait 的 bench 载具，非内核逻辑复刻）。**遗留**：`measure()` 度量口径缺陷（0ns 折叠）经用户裁定另立独立任务，见 [framekernel-bench-measure-fix.md](./framekernel-bench-measure-fix.md))
 
 - **删除完成标准**
