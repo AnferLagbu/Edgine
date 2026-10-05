@@ -1,6 +1,6 @@
 # AP 参与用户态调度工程（次核调度闭环 + KPTI per-CPU 化）
 
-> 本文件是 [aarch64-smp-bringup.md](./aarch64-smp-bringup.md)（DECISION-082）与 [aarch64-tlb-shootdown-send.md](./aarch64-tlb-shootdown-send.md)（DECISION-083）之后的后续独立工程。
+> 本文件是 [aarch64-smp-bringup.md](./archive/aarch64-smp-bringup.md)（DECISION-082）与 [aarch64-tlb-shootdown-send.md](./archive/aarch64-tlb-shootdown-send.md)（DECISION-083）之后的后续独立工程。
 >
 > 目标：让**次核（AP）参与用户态调度** —— 使 ≥2 个可运行用户任务能在多核上并发处于 EL0；并把 aarch64 KPTI 入口/出口的每核活跃状态 per-CPU 化（KPTI-PCPU-01），使双核并发 EL0 不产生跨核污染。以 QEMU `-smp 2` 运行验证。
 >
@@ -97,9 +97,9 @@
     - **`-a` 必要性（本轮修）**：日志含 NUL 字节（串口并发写）时 `grep` 默认将文件视为二进制、只输出 "Binary file ... matches" 而不输出匹配行，会使 `EL0_CPUS` 为空而误报；两分支 `grep` 均加 `-a` 强制按文本处理，不改变判据语义。
 - **APS-06. 文档同步 + 验证收口**
   - 描述：更新登记项与前提。
-  - 方案：订正 [aarch64-smp-bringup.md](./aarch64-smp-bringup.md) §「后续专项登记」KPTI-PCPU-01（状态置结案并指向本工程）；在 [unresolved-issues-2026-08-09.md](./unresolved-issues-2026-08-09.md) 登记本工程；在 [progress-active-tasks.md](./progress-active-tasks.md) 关联。
+  - 方案：订正 [aarch64-smp-bringup.md](./archive/aarch64-smp-bringup.md) §「后续专项登记」KPTI-PCPU-01（状态置结案并指向本工程）；在 [unresolved-issues-2026-08-09.md](./unresolved-issues-2026-08-09.md) 登记本工程；在 [progress-active-tasks.md](./progress-active-tasks.md) 关联。
   - 状态：[X]
-  - 详情（施工结论）：① [aarch64-smp-bringup.md](./aarch64-smp-bringup.md) §「后续专项登记」的 KPTI-PCPU-01 已置结案，并注明由本工程（DECISION-084）落地；② [unresolved-issues-2026-08-09.md](./unresolved-issues-2026-08-09.md) 已追加本工程登记（DECISION-084）；③ 关联的进行中任务清单文件实际路径为 [docs/plan/progress-active-tasks.md](./progress-active-tasks.md)（与预期一致，非漂移），已在该文件 §现状的「本轮更新」中登记本工程。
+  - 详情（施工结论）：① [aarch64-smp-bringup.md](./archive/aarch64-smp-bringup.md) §「后续专项登记」的 KPTI-PCPU-01 已置结案，并注明由本工程（DECISION-084）落地；② [unresolved-issues-2026-08-09.md](./unresolved-issues-2026-08-09.md) 已追加本工程登记（DECISION-084）；③ 关联的进行中任务清单文件实际路径为 [docs/plan/progress-active-tasks.md](./progress-active-tasks.md)（与预期一致，非漂移），已在该文件 §现状的「本轮更新」中登记本工程。
 
 ## 施工规划
 

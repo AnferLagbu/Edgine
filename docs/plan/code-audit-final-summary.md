@@ -3387,7 +3387,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   1. 短期：把 `verify()` 改为 `false`（fail-closed），secure boot 完全失效而非虚假通过
   2. 中期：引入 `crypto-traits` crate + `ed25519-dalek` 实现真正 Ed25519
   3. 长期：补 AES-GCM/ChaCha20-Poly1305 用于磁盘加密与 IPC 信道加密
-- **状态**：[]
+- **状态**：[X]（DECISION-H01）
 - **详情**：身份系统声称有 "secure boot" 但实际无加密支撑 → 整个 sgeg 子系统形同**虚假 TCB**，是 privileged 中最严重的安全漏洞
 - **风险**：任何非零 64 字节签名都通过 → 引导链完整性验证形同虚设 → 攻击者可植入任意"已签名"内核镜像
 - **工作日**：3-5 天（短期 fail-closed）+ 5-7 天（中期真 Ed25519）
@@ -3396,7 +3396,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
 - **描述**：实测 `audit_comment_language.py` 检测出 1 处违规（`functions/net/mod.rs:9` 引用英文 `progress-active-tasks.md`），但脚本最终退出码仍为 0
 - **方案**：在 `audit_comment_language.py` 末尾添加 `sys.exit(1)` 当违规数 > 0
-- **状态**：[]
+- **状态**：[X]（DECISION-H02）
 - **详情**：TD-22 硬阈值门禁（违规 > 0 即 CI 失败）**完全失效**——这是继 P0-01/P0-02/P0-03 之后的**第 4 处 CI 门禁失效**，门禁可信度接近 0
 - **工作日**：0.5 天
 
@@ -3404,7 +3404,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
 - **描述**：`Errno::from_ret()` [types.rs:848-890](file:///home/anfer/Code/Edgine/src/kernel/functions/syscall/types.rs#L848-L890) 仅覆盖 1..40 共 35 个 errno，未覆盖 43（EIDRM）、60-64（ENOSTR/ENODATA/ETIME/ENOSR/ENONET）、71（EPROTO）、74（EBADMSG）、75（EOVERFLOW）、88-115（ENOTSOCK/EOPNOTSUPP/...）
 - **方案**：在 match 表中补全所有定义值（[types.rs:793-827](file:///home/anfer/Code/Edgine/src/kernel/functions/syscall/types.rs#L793-L827) 列出的所有 errno 都应在 `from_ret` 中）
-- **状态**：[]
+- **状态**：[X]（并入 226 项权威 P1 口径）
 - **详情**：未覆盖错误码全部被静默转为 `EINVAL` → 错误信息完全丢失；上层调用方无法区分"权限不足"与"无效参数"
 - **工作日**：0.5 天（纯增补）
 
@@ -3412,7 +3412,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
 - **描述**：`audit_safety_coverage.py:18` 硬编码 `FILES = ['frame', 'vmspace', 'usermode', 'userctx', 'iomem', 'ioport', 'irqline', 'dma_buf']` 仅 8 个顶层文件，实测 privileged 实际有 **2,227 处 unsafe**，脚本报告"53/53 = 100% 覆盖"，实际覆盖率 **53/2,227 = 2.4%**
 - **方案**：用 `tools/audit_unsafe.py` 全量扫描取代 `audit_safety_coverage.py`，或标记为 legacy
-- **状态**：[]
+- **状态**：[X]（并入 226 项权威 P1 口径）
 - **详情**：报告"P0-02"已识别此问题，但只描述现象未给出修复路径——本项提供完整替代方案
 - **工作日**：0.5 天（用 `tools/audit_unsafe.py` 替换）
 
@@ -3422,13 +3422,13 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
 - **描述**：`ref-naming.md:48-50` 示例 `EG_CAPABILITY = 500` 与 `functions/syscall/types.rs` 实际 `SYS_SGEG_*` 在 400-437 / 700+ 两段分布不一致
 - **方案**：迁移 `SYS_SGEG_*` 全部到 500+ 编号区间，或删除 ref-naming.md "500+" 表述
-- **状态**：[]
+- **状态**：[X]（并入 301 项权威 P2 口径）
 
 #### P2-B: functions "策略上移"模式违反 OSTD Minimalism（独立 P2-B）
 
 - **描述**：实测 privileged→functions 反向依赖中，**约 78 处 `pub use` re-export** 集中在 `privileged/config/`、`privileged/sgeg/`、`privileged/driver/`、`privileged/fs/unkfs/` 等——这是"functions 类型定义 → privileged re-export → functions 实现"的**循环迁移模式**
 - **方案**：撤销 re-export，让 functions 类型只通过顶层 API 暴露
-- **状态**：[]
+- **状态**：[X]（并入 301 项权威 P2 口径）
 - **详情**：违反 `explain-framekernel.md` §"机制与策略分离"原则，应将 functions 类型反向依赖全部迁移到 privileged 或通过 trait 注入
 - **工作日**：5-7 天（专项重构）
 
@@ -3436,13 +3436,13 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
 - **描述**：实测 `TODO(TRACK-...)` 注释共 **28 处**，主要分布在 `privileged/driver/usb/`（11 处）、`privileged/sgeg/secure_boot.rs`、`privileged/dma/engine.rs`、`privileged/arch/shadow_stack.rs`、`privileged/driver/power.rs`
 - **方案**：按 AGENTS.md §13 "存量问题处理"4 步策略（触及时修复 / 标记待修 / 禁止忽视 / 新代码零容忍）
-- **状态**：[]
+- **状态**：[X]（并入 301 项权威 P2 口径）
 
 #### P2-D: build/stage1.bin 内容全 0x00（独立 P2-D）
 
 - **描述**：实测 `build/stage1.bin` 440 字节，除末尾 8 字节外全 0x00
 - **方案**：验证 `src/kernel/privileged/boot/stage1.asm` 实际产出是否对应 multiboot2 头；若 unused 则删除
-- **状态**：[]
+- **状态**：[X]（并入 301 项权威 P2 口径）
 - **详情**：报告 P0-18 描述为"全 0x00"是简写，精确为"440 字节除末尾 8 字节外全 0x00"——表 H.1 中已修正
 
 ### H.3.6 新发现 P0：host-tests 与内核完全解耦 — 测试覆盖率虚标（独立 P0-26）
@@ -3457,7 +3457,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   1. 短期：保留 host-tests/Cargo.toml 独立 package 但显式标注 `[lints] workspace = false` 与"仅 host-side benchmarks"语义；删除 host-tests/src/unkfs/ 整套 mock 平行实装
   2. 中期：启用 `src/rust/Cargo.toml [lib] test = true`，把 unkfs/checksum/arc/bp 等可测单元的测试迁入内核 `#[cfg(test)] mod tests`，与内核代码同 crate 编译
   3. 长期：host-tests 仅保留 (a) host-only micro-benchmarks（[host-tests/Cargo.toml L19-20](file:///home/anfer/Code/Edgine/host-tests/Cargo.toml#L19-L20) 的 `framekernel_bench`）；(b) cross-architecture integration tests（验证内核 ELF 装载、syscall ABI 兼容性）；(c) 不含任何内核代码的 mock 重实装
-- **状态**：[]
+- **状态**：[X]（DECISION-H05）
 - **详情**：报告多处"修复后 host-tests 加 XX 测试"建议（如附录 A F-01/F-03/F-09/F-10/F-13 等 6 处提及 host-tests 添加测试）**不可执行**——因为 host-tests 不链接内核。即使测试代码逻辑正确，编译时也只能测 mock 实装而非真实内核代码。**整个报告的"测试覆盖建议"可信度归零**。
 - **风险**：P0 级 — 测试基础设施与内核完全解耦 → 测试通过无法证明内核正确 → TCB 验证可信度虚高
 - **工作日**：3-5 天（短期删除 mock）+ 5-7 天（中期迁入 `#[cfg(test)]`）
@@ -3470,7 +3470,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   - 即使 host-tests 跑通所有 unkfs checksum 测试，**也无法捕获内核的真实 bug**——因为两套实现彼此独立
   - 同理影响 G.4 全部 15 项 unkfs P0（XORP/签名/checksum/mount_drive/读路径不校验 等）以及 G.8 优先级 29-30（unkfs checksum 静默成功 + unkfs 无签名）
 - **方案**：先执行 H.3.6 删除 host-tests/src/unkfs/ mock；再迁入内核 `#[cfg(test)] mod tests`，确保测试代码编译时就是内核代码本身
-- **状态**：[]
+- **状态**：[X]（DECISION-H06）
 - **详情**：这是 H.3.6 的衍生 P0——单一 root cause（host-tests 不链接内核）产生多个表面症状（unkfs/exfat/overlayfs/tmpfs/procfs/ramfs 6 个 FS的 mock 平行实装各自漏检）
 - **风险**：P0 级 — 即使 G.4 全部修复，host-tests 仍无法验证修复效果
 - **工作日**：与 H.3.6 共用工作量（不重复计算）
@@ -3482,7 +3482,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   - host-tests/src/buddy.rs 含 `mock_memory: Vec<u8>` 等显式 mock 字段
   - 报告 G.4 的"修复建议"未提及 host-tests 平行实装的存在
 - **方案**：单独 PR 重新审计 host-tests/src/ 与 src/kernel/ 的等价性，按模块逐一列出平行实装清单
-- **状态**：[]
+- **状态**：[X]（DECISION-H07）
 - **详情**：报告 G.4 声称"6 个文件系统 100% 通读"实际仅覆盖 50%（只读内核源码，未读测试源码）
 - **工作日**：1-2 天
 
@@ -3496,7 +3496,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   - [附录 A F-10](file:///home/anfer/Code/Edgine/docs/plan/code-audit-final-summary.md#L1051) ：`process_switch_layout_test`
   - [附录 A F-13](file:///home/anfer/Code/Edgine/docs/plan/code-audit-final-summary.md#L1112) ：`gdt_selector_consistency_test`
 - **方案**：逐项标注 `[UNVERIFIABLE]`，并提供替代方案（迁入内核 `#[cfg(test)] mod tests` 或 QEMU 集成测试）
-- **状态**：[]
+- **状态**：[X]（DECISION-H08）
 - **详情**：报告对测试基础设施理解有误——把 host-tests 当作 `cargo test -p edgine` 的子集
 - **工作日**：0.5 天（纯文档标注）
 
@@ -3723,7 +3723,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   1. 短期：在 userlib/src/sys.rs 把 SYS_SGEG_* 全部从 400-434 改为 700-734（强行同步）
   2. 中期：把 sysno 编码到 build.rs 或 xtask 工具，单一来源
   3. 长期：把 functions::syscall::types 暴露为 `edgine-sysno` crate，被内核与用户态共同依赖
-- **状态**：[]
+- **状态**：[X]（DECISION-H09）
 - **详情**：报告 P0-20 描述 ref-naming.md "立场不符"是表面现象——**真正问题是 ABI 完全断裂**。用户进程调用 `syscall(400, ...)` 期望 SYS_SGEG_LOGIN=400，内核 dispatch 收到 `num=400` **找不到** SYS_SGEG_LOGIN（内核 = 700），走 `_ =>` 默认分支返回 -ENOSYS。**任何 SGEG 系统调用（login/disk/reboot/proc_list 等）从用户态永远不可能成功**。
 - **风险**：P0 — Edgine 用户态所有 SGEG 操作（鉴权、磁盘、关机、进程查询）全部不可用
 - **工作日**：0.5 天
@@ -3770,7 +3770,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
        ```
     3. 在 `privileged/mm/cow.rs::cow_init` 之前如有动态预留也照此调用
   - 验收：`audit_swap_reserve.py`（新增脚本）扫描 `pmm.alloc_page` 调用点，验证 swap 等大块分配后都有对应 `reserve_range`
-- **状态**：[]
+- **状态**：[X]（DECISION-H10）
 - **详情**：原报告 P0-15 给出"调 pmm.reserve_range"修复建议但 API 不存在——按用户 2026-08-15 指示，改为实现该 API 而非改变调用模式。这是工程实用性优先于"最小 API 表面"原则的取舍（依据 AGENTS.md §12.3 简单优先：reserve_range 是 alloc_page/free_page 的批量形式，复杂度增量极低）
 - **风险**：P0 — 16MB 内存泄漏修复方案不可行的问题获得解决路径
 - **工作日**：1 天（含新增 audit 脚本 0.5 天）
@@ -3818,7 +3818,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   }
   ```
 
-- **状态**：[]
+- **状态**：[X]（DECISION-H11）
 - **详情**：每次 COW 触发，物理页至少泄漏 1 页。多次 fork + COW 后系统内存耗尽
 - **风险**：P0 — fork() 后内存持续泄漏，长跑系统必 OOM
 - **工作日**：1 天（含单元测试 `test_cow_handle_fault_no_leak`）
@@ -3844,7 +3844,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   }
   ```
 
-- **状态**：[]
+- **状态**：[X]（DECISION-H21）
 - **详情**：报告附录 E 三.1 已识别但**未修**。Linux语义：exit 退出当前 LWP，exit_group 退出整个线程组（所有 LWP）
 - **工作日**：1-2 天
 
@@ -3874,7 +3874,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   }
   ```
 
-- **状态**：[]
+- **状态**：[X]（DECISION-H22）
 - **详情**：`p.add(1)` 读取**自身结构体的下一个 u64 字段**——如果重构时插入新字段就会读到错误数据。同时 `read_volatile` 不提供原子性保证
 - **工作日**：0.5 天
 
@@ -3899,7 +3899,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
   或直接删除该文件
 
-- **状态**：[]
+- **状态**：[X]（DECISION-H23）
 - **详情**：aarch64 用户态 init 入口是死代码——只有 build.rs 间接生成才被引用。实测 `src/user/init/Cargo.toml` 也没有 `[build-dependencies]`
 - **工作日**：0.5 天
 
@@ -3922,7 +3922,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   }
   ```
 
-- **状态**：[]
+- **状态**：[X]（DECISION-H24）
 - **详情**：PWM-based quota 与 limit 数组硬编码 32 项。多用户/多 namespace 系统超过 32 个独立用户身份时会**全部覆盖为旧**（lastline = 0），等价于全部退化为未限制
 - **工作日**：2-3 天（含迁移）
 
@@ -3937,7 +3937,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   // 生成 src/user/lib/src/sys.rs
   ```
 
-- **状态**：[]
+- **状态**：[X]（DECISION-H25）
 - **详情**：与 H.4.1 P0-28 同源——所有 syscall 编号（不仅是 SGEG）都是双源手写维护，存在系统性错位风险
 - **工作日**：2-3 天
 
@@ -3959,7 +3959,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
 - **方案**：为每个 at 系列 syscall（newfstatat/unlinkat/renameat/linkat/symlinkat/readlinkat/fchmodat/fchownat/faccessat/openat）实现专用 handler，**禁止**用非 at 系列 syscall handler 顶替 at 系列
 
-- **状态**：[]
+- **状态**：[X]（DECISION-H26）
 - **详情**：报告附录 B §3.7 已识别 SYS_chown 与 SYS_fchown 分支不同，但未识别**完整规模**——dispatch.rs 至少 8 处"语义偷懒"。`SYS_select` 与 `SYS_poll` 走同一 handler → select() 与 poll() 语义不可区分；`SYS_newfstatat` 走 fstat 而非 newfstatat → **忽略 AT_SYMLINK_NOFOLLOW 等 at 标志位**
 - **工作日**：3-5 天
 
@@ -3980,7 +3980,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
 - **实测**：`grep -E "#\[cfg\(target_arch" privileged/arch/aarch64/mod.rs` → **0 行匹配**——子模块无 cfg
 - **方案**：在 aarch64/mod.rs 顶部加 `#![cfg(target_arch = "aarch64")]`
-- **状态**：[]
+- **状态**：[X]（DECISION-H16）
 - **详情**：虽然 `privileged/arch/mod.rs:51-52` 已 cfg 整个 `pub mod aarch64;`，但 aarch64/mod.rs 自身没有 cfg 内层加固。如果未来有人在 `privileged/arch/aarch64/` 子目录新增非 aarch64 通用文件，会污染 x86_64 构建
 - **工作日**：0.1 天
 
@@ -3997,7 +3997,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   ```
 
 - **方案**：把注释与 `privileged/mod.rs` 的子系统清单对齐（参见 AGENTS.md §1）
-- **状态**：[]
+- **状态**：[X]（DECISION-H17）
 - **详情**：注释与实际目录结构不一致（实测 src/kernel/privileged 含 arch/aarch64/ + egdf/ + wasm/ + freg/ + config/ 等多个未列入注释的目录）
 - **工作日**：0.5 天（纯文档）
 
@@ -4063,7 +4063,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 
 - **方案**：把 OpenFile/OPEN_FILE_TABLE/DevfsData 迁移到 privileged，或把 privileged→functions 调用封装为 safe trait 边界
 
-- **状态**：[]
+- **状态**：[X]（DECISION-H13）
 - **详情**：报告 G.3 §10 仅识别"VFS 严重违反"，但未量化。privileged TCB 调度 functions 数据结构违反 OSTD Soundness 准则（任何 safe Rust 调用不可触发 UB）
 - **风险**：P0 — functions 数据结构变更时 privileged TCB 失控
 - **工作日**：5-7 天（专项重构）
@@ -4092,7 +4092,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   ```
 
 - **方案**：把诊断代码 `#[cfg(feature = "debug_syscall")]` 隔离，或完全移除（生产构建）
-- **状态**：[]
+- **状态**：[X]（DECISION-H14）
 - **详情**：报告 P0-16 "isr.asm 诊断代码污染中断入口"已识别 IRQ 入口，但**实测 syscall 路径同样有诊断代码**——每次 syscall 都 push/pop rax+rdx，写 COM1 'J' 字符。**所有 syscall 都有7 行诊断 ASM 开销**
 - **风险**：P0 — 性能+栈布局干扰：每次 syscall 损耗 rax/rdx 的 push/pop 周期
 - **工作日**：0.1 天
@@ -4115,7 +4115,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   2. 改用 `assert!(p.exists(), "stage1.bin missing — 请先 make build")` 强制要求真实编译产物
   3. 或在 build.rs 显式调 `make -C build/stage1.bin` 自动构建
 
-- **状态**：[]
+- **状态**：[X]（DECISION-H15）
 - **详情**：报告 P0-18 描述的"stage1.bin 全 0x00"现象根因是 `build.rs::ensure_placeholder` 主动写 440 字节全 0——不是 stage1.asm 编译产物错误。**影响链**：GRUB 调用 stage1.bin 期望 multiboot2 头（魔数 `0x36D76289`），全 0 占位符无任何魔数 → GRUB 拒绝加载 → 内核启动失败。此外 `build/user/init.bin` 512 字节全 0 占位符同步污染——所有用户态 init 镜像**没有实际编译产物**
 - **风险**：P0 — 启动链断裂
 - **工作日**：0.5 天
@@ -4141,7 +4141,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   SYS_sethostname => as_ret(crate::kernel::functions::sgeg::auth::sethostname_syscall(a0, a1)),
   ```
 
-- **状态**：[]
+- **状态**：[X]（代码已实装，DECISION-H12 推迟项已达成）
 - **详情**：报告 R2 表 A 声称 5 项 `[A:激活]` SYS_* 已实装但未 dispatch——**完全成立**
 - **风险**：P1 — 5 项 sysno 调用得 -ENOSYS
 - **工作日**：0.5 天
@@ -4174,7 +4174,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   unsafe { $ffi_fn(buf.as_ptr()); }
   ```
 
-- **状态**：[]
+- **状态**：[X]（DECISION-H27）
 - **详情**：报告 P0-04 "klog_ffi! NUL 终止"已识别——`buf` 是 256 字节全 0 初始化，但 `cursor` 写入区段是无格式化数据的"原始字节"，**不是 NUL 终止字符串**。如果 ffi 函数（如 `klog_ffi_info`）实现是 `while *p != 0 { print }`，且 cursor 写入少于 256 字节，ffi 会继续读剩余的全 0 直到 NUL——这恰好"碰巧"显示正确文本，**但栈帧后续数据全部泄漏**
 - **风险**：P1 — 栈信息泄漏 + 字符串截断行为不确定
 - **工作日**：0.5 天（含新增测试 `test_klog_ffi_nul_terminate`）
@@ -4199,7 +4199,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   pub const SYS_RT_SIGRETURN: u64 = 139;
   ```
 
-- **状态**：[]
+- **状态**：[X]（DECISION-H27）
 - **详情**：x86_64 sysno=15 与 aarch64 sysno=139 各自硬编码。新增架构需手动再加 cfg——这是正常的（Linux ABI 本来就因架构不同），但**没有任何运行时校验**：如果 num=15 但实际是 aarch64 内核编译，仍按 x86_64 处理，会走错误的 sigframe
 - **工作日**：0.5 天
 
@@ -4225,7 +4225,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   let (a3, a4, a5) = (f.x3, f.x4, f.x5);
   ```
 
-- **状态**：[]
+- **状态**：[误判, 不采纳（DECISION-H27）]
 - **详情**：`r10/r8/r9` 是 x86_64 syscall ABI 的特定传递约定（破坏 rcx/r11 因 syscall 指令覆写它们）。aarch64 用 `x0..x5` 传参，无此约定——但代码用 `f.r10/f.r8/f.r9` 这些**x86_64 专属寄存器名**，在 aarch64 构建时**根本不存在**
 - **风险**：P1 — aarch64 构建时编译失败（这是 c0 阻塞）或 syscall 参数错乱
 - **工作日**：1-2 天（含实际跑 `./ci/build.sh aarch64` 验证）
@@ -4245,7 +4245,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   ```
 
 - **方案**：统一为 `VFS_MAX_FDS = 256`（或抽取到 `functions::config::fd`）
-- **状态**：[]
+- **状态**：[X]（DECISION-H27）
 - **详情**：报告附录 E 三.1 第 4 项 "VFS_MAX_FDS=32 与 poll 256 不一致"**完全成立**。poll/epoll 系统调用能接受 256 个 fd，但 fd 表只能容纳 32 个——超过 32 个 fd 直接被丢弃
 - **风险**：P1 — fd 表溢出静默丢失
 - **工作日**：1 天
@@ -4259,7 +4259,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   ```
 
 - **方案**：`#[cfg(target_arch = "x86_64")] const USER_ADDR_MAX: u64 = 0x7FFFFFFFE000;`
-- **状态**：[]
+- **状态**：[X]（DECISION-H18）
 - **详情**：x86_64 用户态地址上限 0x7FFFFFFFE000（这是经典的 canonical 上界），但 aarch64 不存在此常量。aarch64 用户态最高位 [48:47] 区分 user/kernel——`USER_ADDR_MAX` 不应硬编码
 - **风险**：P2 — aarch64 用户态地址上限校验错位
 - **工作日**：0.5 天
@@ -4276,7 +4276,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
   ```
 
 - **方案**：把 syscall api 整体迁入 functions 层（functions::syscall::api）
-- **状态**：[]
+- **状态**：[X]（DECISION-H19）
 - **详情**：F2 黑名单应禁止 functions 直调 `privileged::syscall::api::*`，但实际仍有调用（报告 G.4 §3.2 已识别）
 - **风险**：P2 — functions→privileged 边界违规持续
 - **工作日**：5-7 天（与 H.5.1 合并）
@@ -4295,7 +4295,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 - **实测**：`grep "Multiboot1Info" src/` 仅在定义处出现——**死代码**
 
 - **方案**：删除 Multiboot1 常量与结构体（或标 `#[allow(dead_code)]` 标记为后续扩展）
-- **状态**：[]
+- **状态**：[X]（DECISION-H20）
 - **详情**：Multiboot1Info 结构定义完整但实测未使用
 - **风险**：P2 — 违反 AGENTS.md §9.3 "禁止死代码"
 - **工作日**：0.5 天
@@ -4317,7 +4317,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / egdf/user_d
 - **DECISION-H12（D22 推迟）**：H.5.4 P1-G（5 项 SYS_* 未 dispatch）推迟到 P0 修复完成后才处理
   - 描述：用户 2026-08-15 授权"D22 至少推迟到 P0 修复完成后"——P1-G（setregid/reboot/sethostname/getsockname/getpeername 5 项 SYS_* 未分发）虽是 ABI 完整性问题，但因调用方依赖服务（auth、sysinfo、net）已存在实现，**比 P0-31/P0-32/P0-33 优先级低**
   - 方案：保留 H.5.4 描述 + 状态 `[]`，**不采纳、不降级、不暂缓**——而是**显式推迟**到 P0 修复完成后的后续 sprint
-  - 状态：[推迟]
+  - 状态：[X]（5 项 SYS_* 已实装 dispatch）
 
 - **DECISION-H13（D19 采纳）**：将 H.5.1 privileged/fs/vfs/api.rs 严重违反 F2 纳入独立 P0-31
   - 描述：实测 [api.rs:33-35](file:///home/anfer/Code/Edgine/src/kernel/privileged/fs/vfs/api.rs#L33-L35) 直接 use functions 层 DevfsData/OPEN_FILE_TABLE/OpenFile，并在10+ 处调用

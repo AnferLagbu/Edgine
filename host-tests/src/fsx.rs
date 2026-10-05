@@ -41,7 +41,7 @@ struct FileData {
 /// 固定目录名会让并发运行共用同一目录并互相追加内容: `cargo test` 下 lib 单测与
 /// 集成测试是两个进程, 且同一仓库可能被多个会话并行运行 —— 一旦共用目录, 后续
 /// 运行的"空目录"初始假设即与实际内容冲突, 触发数据完整性假失败 (实测见
-/// `docs/plan/host-tests-fsx-tmp-isolation.md`)。进程 ID 后缀保证每个进程独占目录。
+/// `docs/plan/archive/host-tests-fsx-tmp-isolation.md`)。进程 ID 后缀保证每个进程独占目录。
 pub fn isolated_test_dir(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("edgine-fsx-{}-{}", name, std::process::id()))
 }

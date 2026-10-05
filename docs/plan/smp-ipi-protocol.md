@@ -67,7 +67,7 @@
 - 接收侧无 TLB/reschedule SGI 分支：[arch/aarch64/exception.rs:636-704](../../src/kernel/privileged/arch/aarch64/exception.rs#L636-L704) 的 `irq_handler` 仅特判 freg recovery SGI(7) 与 timer PPI，忽略 `intid >= 1020`。
 - 既有 SGI 先例可参照：[arch/aarch64/freg/mod.rs:32-64](../../src/kernel/privileged/arch/aarch64/freg/mod.rs#L32-L64)。
 - **无 AP 上线路径**（本节为当时结论，**已由 DECISION-082 解除**）：`start_ap`/`ap_entry` 仅在 `arch/x86_64/smp_init.rs`，aarch64 无 `register_cpu` 调用点 ⇒ `SMP_ENABLED` 恒 false、`CPU_COUNT` 恒 1。
-- **【订正（DECISION-082 落地后）】**：aarch64 AP 上线路径已实装（[aarch64-smp-bringup.md](./aarch64-smp-bringup.md)：PSCI `CPU_ON` + `ap_entry_asm` + `ap_main` + `register_cpu`），故本节「`SMP_ENABLED` 恒 false / `CPU_COUNT` 恒 1」已不成立；QEMU `-smp 2` 断言 `[SMP] online CPUs: 2` 已进 CI（SMP-09）。
+- **【订正（DECISION-082 落地后）】**：aarch64 AP 上线路径已实装（[aarch64-smp-bringup.md](./archive/aarch64-smp-bringup.md)：PSCI `CPU_ON` + `ap_entry_asm` + `ap_main` + `register_cpu`），故本节「`SMP_ENABLED` 恒 false / `CPU_COUNT` 恒 1」已不成立；QEMU `-smp 2` 断言 `[SMP] online CPUs: 2` 已进 CI（SMP-09）。
 
 ## 3. 施工条目
 
@@ -185,4 +185,4 @@
 
 aarch64 侧本轮实现 SGI 处理分支，但**无 AP 上线路径**（`arch/x86_64/smp_init.rs` 之外的平台无 `register_cpu` 调用点），故 `SMP_ENABLED` 恒 false、`CPU_COUNT` 恒 1，IPI 路径在 aarch64 上**不可运行验证**。该平台差异须在台账 D-9-7 与本文件同时标注，避免后续误判「已验证」。
 
-**【订正（DECISION-082 落地后）】**：上段「无 AP 上线路径」的前提已解除 —— aarch64 次核经 PSCI `CPU_ON` 上线并调用 `register_cpu`（见 [aarch64-smp-bringup.md](./aarch64-smp-bringup.md)）。IPI 路径在 aarch64 上自此**具备运行验证载体**（QEMU `-smp 2`）；本文件所涉 IPI/TLB shootdown 的 aarch64 运行期验证仍待专项推进（不属 DECISION-082 范围）。
+**【订正（DECISION-082 落地后）】**：上段「无 AP 上线路径」的前提已解除 —— aarch64 次核经 PSCI `CPU_ON` 上线并调用 `register_cpu`（见 [aarch64-smp-bringup.md](./archive/aarch64-smp-bringup.md)）。IPI 路径在 aarch64 上自此**具备运行验证载体**（QEMU `-smp 2`）；本文件所涉 IPI/TLB shootdown 的 aarch64 运行期验证仍待专项推进（不属 DECISION-082 范围）。

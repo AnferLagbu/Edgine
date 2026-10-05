@@ -48,7 +48,7 @@
 >
 > **2026-09-26 文档漂移收敛 (逐项源码复验)**: 对本工程计划全部自称 `[X]`/`[]` 项回源码复验, 修正 3 类偏差 — (a) A2 遗留未清: `host-tests/README.md` 残留 3 处 `docs/CHANGELOG.md` 引用, 本轮按 DECISION-038 删除/改写 (已清零); (b) B4 表述过时: 当前 expect 注释为**双模板并存** (`// 有意窄化: <原因>` 237 处 + `reason = "<lint名>: ..."` 347 处), 非历史记载的"3 场景 + 1 兜底"单模板, 实况见 §方案 B4; (c) A1/B3/B5.2 待修对象 moot: `vision-hope.md` 已整篇重写 (无"风险 2"节)、`README.md` 已整篇重写为 18 行 (原 :21/:71 不复存在; 【订正】实测为 23 行, "18 行"为漂移)、`freg/api.rs` B5.2 目标函数形态已正确。另修正 §交叉引用 clippy-pedantic-cleanup.md 失效链接 (已归档 → archive/)。
 >
-> **本轮更新**: 新增活跃工程 [smp-ap-user-scheduling.md](./smp-ap-user-scheduling.md)（AP 参与用户态调度 + aarch64 KPTI per-CPU 化，**DECISION-084**，方案 C 相对完整）—— 使 ≥2 个用户任务可在多核并发处于 EL0（APS-01..APS-06 全部 `[X]`，批次 P1→{P2,P3}→P4 收口，并含收口期修复的批次 P5「次核 CPU 状态初始化」）。同族前置工程 [aarch64-smp-bringup.md](./aarch64-smp-bringup.md)（DECISION-082）的后续专项 **KPTI-PCPU-01** 已由本工程落地结案。本文件据此更新活跃工程全景（既有一表沿用，本轮不新增表行，仅登记关联）。
+> **本轮更新**: 新增活跃工程 [smp-ap-user-scheduling.md](./smp-ap-user-scheduling.md)（AP 参与用户态调度 + aarch64 KPTI per-CPU 化，**DECISION-084**，方案 C 相对完整）—— 使 ≥2 个用户任务可在多核并发处于 EL0（APS-01..APS-06 全部 `[X]`，批次 P1→{P2,P3}→P4 收口，并含收口期修复的批次 P5「次核 CPU 状态初始化」）。同族前置工程 [aarch64-smp-bringup.md](./archive/aarch64-smp-bringup.md)（DECISION-082）的后续专项 **KPTI-PCPU-01** 已由本工程落地结案。本文件据此更新活跃工程全景（既有一表沿用，本轮不新增表行，仅登记关联）。
 
 - **活跃 plan 文档与实装对齐总览**
   - 描述: 5 份文档 — ipv6-dual-stack 与源码完全对齐; test-compile-issues 已归档; clippy-pedantic-cleanup 已 DEPRECATED (被 stage-engineering-master.md 取代, 收敛至 0 警告); code-review-2026-08-01 8 项已落地; future-roadmap 远期未启动 (与实装吻合)

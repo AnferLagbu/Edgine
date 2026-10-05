@@ -1255,7 +1255,7 @@ pub struct BenchReport {
 /// (bench 内已按自身总操作数归一化 —— 含 BATCH 倍数, 故归一化只能留在 bench 内,
 /// measure 不再二次归一化). 闭包/函数接收 `iters`, 与本函数记账的 `iterations` 同源.
 ///
-/// 修复 (G-07 收尾轮, 详见 docs/plan/framekernel-bench-measure-fix.md): 历史上闭包
+/// 修复 (G-07 收尾轮, 详见 docs/plan/archive/framekernel-bench-measure-fix.md): 历史上闭包
 /// 捕获字面量 iters, 自适应放大值从未传入 bench; 且 measure 把 bench 返回的
 /// ps_per_op 当作"总耗时"再除以放大后的 iters, 二次归一化使记录值 = 实际/10⁴
 /// (单操作 < 10ns 者直接折叠为 0). 现为「一次预热 + 一次计时」, 三项字段自洽:
