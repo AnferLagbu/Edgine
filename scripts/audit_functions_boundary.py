@@ -471,6 +471,12 @@ def check_functions_inter_module_deps():
         ('proc', 'fs'),
         # sgeg 依赖 fs 是合理的 (持久化编排经 functions::fs 的 VFS safe 包装读写 /pwm.db)
         ('sgeg', 'fs'),
+        # net 依赖 proc 是合理的 (socket fd 经 functions::proc::fd_alloc 分配/释放)
+        ('net', 'proc'),
+        # syscall 依赖 fs 是合理的 (固件加载经 functions::fs 的 vfs_open_safe/vfs_read_safe)
+        ('syscall', 'fs'),
+        # timer 依赖 syscall 是合理的 (POSIX timer 复用 syscall 层 posix_timer 实现)
+        ('timer', 'syscall'),
     }
 
     for mod in modules:
