@@ -18,7 +18,7 @@ SMOLTCP_UPSTREAM_SRC_HASH=f87551603f12bfc1a564ef1253d1f26af7f1befa99669d7bb0c77d
 
 # 本地 vendored 实际 src/ 合并 SHA256 (含 13 个本地化)
 # 计算方法: LC_ALL=C find src/kernel/functions/net/smoltcp/src -name '*.rs' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum
-SMOLTCP_LOCAL_SRC_HASH=57a4d89d100b50c001535bb8d8406f627fb87f04e44789bfd1d2fd57d6c72d4b
+SMOLTCP_LOCAL_SRC_HASH=9f63730b064582c3e8fc838d791fec93d44969ce6b9d085ab091de14735a9c31
 
 # 锁定时间 (ISO 8601, 仅供人类阅读, CI 不读取)
 SMOLTCP_LOCKED_AT=2026-09-13T23:30:00Z

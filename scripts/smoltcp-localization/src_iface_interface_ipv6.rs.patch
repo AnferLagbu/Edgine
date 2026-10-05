@@ -1,14 +1,6 @@
 --- a/src/iface/interface/ipv6.rs	2026-06-24 23:16:09.010170369 +0800
 +++ b/src/iface/interface/ipv6.rs	2026-06-17 10:32:35.684840656 +0800
-@@ -1,7 +1,5 @@
- use super::*;
- 
--use crate::iface::Route;
--
- /// Enum used for the process_hopbyhop function. In some cases, when discarding a packet, an ICMP
- /// parameter problem message needs to be transmitted to the source of the address. In other cases,
- /// the processing of the IP packet can continue.
-@@ -170,6 +168,7 @@
+@@ -170,6 +170,7 @@
      }
  
      /// Get the first link-local IPv6 address of the interface, if present.
@@ -16,7 +8,7 @@
      fn link_local_ipv6_address(&self) -> Option<Ipv6Address> {
          self.ip_addrs.iter().find_map(|addr| match *addr {
              #[cfg(feature = "proto-ipv4")]
-@@ -562,6 +561,7 @@
+@@ -562,6 +563,7 @@
          ))
      }
  

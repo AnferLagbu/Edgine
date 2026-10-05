@@ -17,7 +17,7 @@
 use smoltcp::iface::{Config, Interface, PollResult, SocketSet};
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
 use smoltcp::time::Instant;
-use smoltcp::wire::{EthernetAddress, HardwareAddress};
+use smoltcp::wire::{EthernetAddress, HardwareAddress, IpCidr, Ipv6Cidr};
 
 use crate::privileged::egdf::NetOps;
 use crate::privileged::timer::get_uptime_ms;
@@ -179,8 +179,29 @@ impl NetworkStack {
 
 /// 初始化 smoltcp 网络栈 — 以给定 MAC 构造 Interface 并返回 [`NetworkStack`]
 pub fn init_stack(device: &mut EGDFNetDevice, mac: [u8; 6]) -> NetworkStack {
-    let config = Config::new(HardwareAddress::Ethernet(EthernetAddress::from_bytes(&mac)));
-    let iface = Interface::new(config, device, smoltcp_now());
+    let hw = HardwareAddress::Ethernet(EthernetAddress::from_bytes(&mac));
+    let mut config = Config::new(hw);
+    // P6a: 启用 SLAAC (无状态地址自动配置), 由 smoltcp 内置实现驱动
+    // (feature `proto-ipv6-slaac` 已在 Cargo.toml 启用). 开启后 `Interface::poll`
+    // 会自动发 Router Solicitation / 处理 Router Advertisement, 从 RA 的前缀
+    // 派生全局 IPv6 地址与默认路由, 无需 Edgine 侧额外代码.
+    config.slaac = true;
+    let mut iface = Interface::new(config, device, smoltcp_now());
+    // P6a: 注入 IPv6 link-local 地址 (fe80::/64, 接口标识由 MAC 经 EUI-64 派生).
+    // SLAAC 发 RS 时以 link-local 作源地址 (smoltcp `ndisc_rs_egress` 内
+    // `link_local_ipv6_address().unwrap()` 依赖其存在), 同时 link-local 是 IPv6 邻居发现 (NDP) 的前提.
+    //
+    // SIMPLIFIED: link-local 仅在 init_stack 注入一次, 未在 update_ip_addrs(clear())
+    //   路径 (init/cmd.rs 静态 IP 配置 / init.rs DHCP deconfigured) 之后重建;
+    //   影响面: 经这些路径会移除 link-local, 致 SLAAC 停摆, 若此时仍处 RS 发现期
+    //   还可能触发 smoltcp ndisc_rs_egress 的 unwrap panic; 何时需扩展: P6a 硬化
+    //   时将上述 clear 路径改为保留 IPv6 地址, 或统一经 ensure 助手重建.
+    let ll_prefix = Ipv6Cidr::new(Ipv6Cidr::LINK_LOCAL_PREFIX.address(), 64);
+    if let Some(ll) = Ipv6Cidr::from_link_prefix(&ll_prefix, hw) {
+        iface.update_ip_addrs(|addrs| {
+            let _ = addrs.push(IpCidr::Ipv6(ll));
+        });
+    }
     NetworkStack {
         iface,
         mac,

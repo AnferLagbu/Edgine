@@ -48,6 +48,7 @@ smoltcp = { path = "functions/net/smoltcp", default-features = false, features =
     "proto-ipv4",
     "proto-ipv4-fragmentation",
     "proto-ipv6",
+    "proto-ipv6-slaac",
     "proto-dhcpv4",
     "proto-dns",
     "socket-raw",
