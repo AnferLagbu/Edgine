@@ -90,6 +90,7 @@ fn ap_list() -> &'static IrqSpinLock<Box<[Option<ApInfo>]>> {
 // RSDP 搜索
 // ============================================================================
 
+/// 搜索 ACPI RSDP 表: 依次尝试 Multiboot2 信息、EBDA 与 BIOS ROM。
 pub fn find_rsdp(multiboot2_info_ptr: u64) -> Option<u64> {
     // 1. 尝试从 Multiboot2 info 中获取 RSDP
     if multiboot2_info_ptr != 0 {
@@ -316,6 +317,7 @@ struct MadtIoApic {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 解析 ACPI MADT 表, 填充 AP 与 IOAPIC 信息; 成功返回 true。
 pub fn parse_madt(multiboot2_info_ptr: u64) -> bool {
     let rsdp = if let Some(addr) = find_rsdp(multiboot2_info_ptr) {
         addr
@@ -454,27 +456,33 @@ fn parse_madt_entries(madt_ptr: u64) {
 // 公共查询 API
 // ============================================================================
 
+/// 获取已解析的 AP (应用处理器) 数量。
 pub fn get_ap_count() -> u32 {
     AP_COUNT.load(Ordering::Acquire)
 }
 
+/// 获取全部 AP 信息列表的克隆快照。
 pub fn get_ap_list() -> Box<[Option<ApInfo>]> {
     ap_list().lock().clone()
 }
 
+/// 按下标获取单个 AP 信息。
 pub fn get_ap(index: usize) -> Option<ApInfo> {
     ap_list().lock()[index]
 }
 
+/// 查询是否已成功解析到 MADT 表。
 pub fn has_madt() -> bool {
     MADT_FOUND.load(Ordering::Acquire)
 }
 
+/// 获取首个 IOAPIC 的 MMIO 基址 (无则返回 0)。
 pub fn get_ioapic_addr() -> u64 {
     let ioapics = IOAPICS.lock();
     ioapics.iter().flatten().next().map_or(0, |i| i.base_addr)
 }
 
+/// 获取首个 IOAPIC 的全局系统中断基址 (GSI base, 无则返回 0)。
 pub fn get_ioapic_gsib() -> u32 {
     let ioapics = IOAPICS.lock();
     ioapics.iter().flatten().next().map_or(0, |i| i.gsi_base)
@@ -505,6 +513,7 @@ pub fn gsi_to_ioapic(gsi: u32) -> Option<(usize, u8)> {
     None
 }
 
+/// 获取 MADT 记录的本地 APIC MMIO 基址 (无 MADT 则返回 0)。
 pub fn get_lapic_base() -> u64 {
     if !MADT_FOUND.load(Ordering::Acquire) {
         return 0;

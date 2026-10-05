@@ -31,6 +31,7 @@ use crate::privileged::racy_cell::RacyCell;
 
 const MAX_SOFTIRQS: usize = 10;
 
+/// 软中断向量枚举: 各类可延迟执行工作的编号.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SoftirqVec {
@@ -71,6 +72,7 @@ impl SoftirqVec {
     }
 }
 
+/// softirq 处理函数类型 (无参数、无返回值).
 pub type SoftirqHandler = fn();
 
 /// 全局 softirq 处理程序表.
@@ -165,11 +167,13 @@ pub fn softirq_alloc_cpu(cpu_index: u32) -> bool {
     true
 }
 
+/// 注册指定 softirq 向量的处理函数 (启动期单线程调用一次).
 pub fn open_softirq(nr: SoftirqVec, handler: SoftirqHandler) {
     // handlers 全局唯一, 启动期单线程注册; get_mut 独占访问 (无并发写者).
     SOFTIRQ_HANDLERS.get_mut()[nr.to_idx()] = Some(handler);
 }
 
+/// 在当前 CPU 上把指定 softirq 标记为 pending.
 #[inline]
 pub fn raise_softirq(nr: SoftirqVec) {
     let cpu = current_cpu_id();
@@ -181,6 +185,7 @@ pub fn raise_softirq(nr: SoftirqVec) {
     // CPU id 越界: 静默丢弃 (启动期 cpu_local 尚未初始化)
 }
 
+/// 在当前 CPU 上按位掩码批量标记 softirq 为 pending.
 #[inline]
 pub fn raise_softirq_mask(mask: u64) {
     let cpu = current_cpu_id();
@@ -191,6 +196,7 @@ pub fn raise_softirq_mask(mask: u64) {
     }
 }
 
+/// 执行当前 CPU 上所有 pending 的 softirq (开中断运行, 带重入保护).
 pub fn do_softirq() {
     let cpu = current_cpu_id();
     if cpu >= MAX_CPUS {
@@ -232,6 +238,7 @@ pub fn do_softirq() {
     state.running.store(false, Ordering::Release);
 }
 
+/// 返回当前 CPU 是否正在执行 softirq.
 #[inline]
 pub fn in_softirq() -> bool {
     let cpu = current_cpu_id();
@@ -242,6 +249,7 @@ pub fn in_softirq() -> bool {
     }
 }
 
+/// 返回当前 CPU 是否存在待处理的 softirq.
 #[inline]
 pub fn pending_softirq() -> bool {
     let cpu = current_cpu_id();

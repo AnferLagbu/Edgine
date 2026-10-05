@@ -280,6 +280,7 @@ mod tests {
     }
 }
 
+/// 注册 IPC 子系统的内核测试用例.
 #[cfg(feature = "kernel_test")]
 pub fn register_ipc_tests() {
     crate::privileged::tests::test_ipc::register_ipc_tests();

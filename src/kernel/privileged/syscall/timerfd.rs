@@ -607,6 +607,7 @@ fn test_timerfd_read_empty() -> crate::privileged::tests::TestResult {
     TestResult::Pass
 }
 
+/// 注册 timerfd 子系统的内核测试用例.
 #[cfg(feature = "kernel_test")]
 pub fn register_timerfd_tests() {
     use crate::privileged::tests::runner;

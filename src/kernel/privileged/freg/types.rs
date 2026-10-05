@@ -13,6 +13,7 @@ pub const CAP_FS_WRITE: u64 = 1 << 0;
 pub const CAP_NET_SEND: u64 = 1 << 1;
 pub const CAP_PROC_CREATE: u64 = 1 << 2;
 
+/// 恢复域生命周期状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum DomainState {
@@ -42,6 +43,7 @@ impl DomainState {
     }
 }
 
+/// 单条撤销记录: 记录字段原值及其地址, 用于回滚时还原。
 #[derive(Clone, Copy)]
 pub struct UndoEntry {
     pub generation: u64,
@@ -57,6 +59,7 @@ pub struct UndoEntry {
 unsafe impl Send for UndoEntry {}
 unsafe impl Sync for UndoEntry {}
 
+/// FREG 快照: 记录捕获时的代数、时间刻度与撤销日志偏移。
 #[derive(Clone, Copy)]
 pub struct FREGSnapshot {
     pub generation: u64,
@@ -64,6 +67,7 @@ pub struct FREGSnapshot {
     pub undo_offset: usize,
 }
 
+/// 一次回滚事件记录: 时间刻度/域标识/代数变化/回滚条目数/指纹与结果。
 #[derive(Clone, Copy)]
 pub struct RollbackEvent {
     pub tick: u64,

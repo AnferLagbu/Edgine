@@ -81,12 +81,14 @@ fn wrmsr(msr: u32, value: u64) {
     }
 }
 
+/// 读取 APIC 寄存器 (`reg` 为相对 MMIO 基址的偏移)。
 pub fn apic_read(reg: u32) -> u32 {
     let base = APIC_BASE.load(Ordering::Acquire);
     // SAFETY: `const` 由调用方保证为有效指针; 只读访问
     unsafe { core::ptr::read_volatile((base + u64::from(reg)) as *const u32) }
 }
 
+/// 写入 APIC 寄存器 (`reg` 为相对 MMIO 基址的偏移)。
 pub fn apic_write(reg: u32, value: u32) {
     let base = APIC_BASE.load(Ordering::Acquire);
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -95,6 +97,7 @@ pub fn apic_write(reg: u32, value: u32) {
     }
 }
 
+/// 初始化本地 APIC: 使能 SVR, 屏蔽未用 LVT 项并清零 TPR/ESR。
 pub fn init() {
     let msr = rdmsr(APIC_BASE_MSR);
     let base = msr & APIC_BASE_ADDR_MASK;
@@ -124,10 +127,12 @@ pub fn init() {
     APIC_INITIALIZED.store(true, Ordering::Release);
 }
 
+/// 查询本地 APIC 是否已完成初始化。
 pub fn is_initialized() -> bool {
     APIC_INITIALIZED.load(Ordering::Acquire)
 }
 
+/// 获取本地 APIC ID (未初始化时返回 0)。
 pub fn get_id() -> u32 {
     if !is_initialized() {
         return 0;
@@ -135,6 +140,7 @@ pub fn get_id() -> u32 {
     apic_read(APIC_ID) >> 24
 }
 
+/// 获取本地 APIC 版本号低字节 (未初始化时返回 0)。
 pub fn get_version() -> u32 {
     if !is_initialized() {
         return 0;
@@ -142,12 +148,14 @@ pub fn get_version() -> u32 {
     apic_read(APIC_VERSION) & 0xFF
 }
 
+/// 向本地 APIC 发送 EOI, 结束当前中断处理。
 pub fn eoi() {
     if is_initialized() {
         apic_write(APIC_EOI, 0);
     }
 }
 
+/// 向目标 APIC 发送 IPI, 等待 ICR 投递完成后返回。
 // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
 #[expect(clippy::cast_possible_truncation)]
 pub fn send_ipi(apic_id: u8, vector: u8) {
@@ -159,6 +167,7 @@ pub fn send_ipi(apic_id: u8, vector: u8) {
     while apic_read(APIC_ICR_LOW) & (1 << 12) != 0 {}
 }
 
+/// 向所有其他 CPU 广播 IPI, 等待 ICR 投递完成后返回。
 // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
 #[expect(clippy::cast_possible_truncation)]
 pub fn broadcast_ipi(vector: u8) {
@@ -177,6 +186,7 @@ pub fn broadcast_ipi(vector: u8) {
     clippy::match_same_arms,
     reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
 )]
+/// 初始化 APIC 定时器: 设置分频值、单次/周期模式与中断向量。
 pub fn init_timer(vector: u8, periodic: bool, divisor: u32) {
     if !is_initialized() {
         return;
@@ -200,12 +210,14 @@ pub fn init_timer(vector: u8, periodic: bool, divisor: u32) {
     apic_write(APIC_LVT_TIMER, mode | u32::from(vector));
 }
 
+/// 设置 APIC 定时器初始计数值 (单次模式)。
 pub fn set_timer_count(count: u32) {
     if is_initialized() {
         apic_write(APIC_TIMER_ICR, count);
     }
 }
 
+/// 读取 APIC 定时器当前计数值 (未初始化时返回 0)。
 pub fn get_timer_count() -> u32 {
     if !is_initialized() {
         return 0;
@@ -217,6 +229,7 @@ pub fn get_timer_count() -> u32 {
     clippy::unreadable_literal,
     reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
 )]
+/// 校准 APIC 定时器频率: 以固定忙等窗口测得的计数反推 Hz, 并记录结果。
 pub fn calibrate_timer(_pit_hz: u64, target_ms: u64) -> u64 {
     if !is_initialized() {
         return 0;
@@ -251,32 +264,38 @@ pub fn calibrate_timer(_pit_hz: u64, target_ms: u64) -> u64 {
     apic_hz
 }
 
+/// 获取已校准的 APIC 定时器频率 (Hz), 未校准时为 0。
 pub fn get_timer_hz() -> u64 {
     APIC_TIMER_HZ.load(Ordering::Acquire)
 }
 
+/// 查询 APIC 定时器是否已完成频率校准。
 pub fn is_timer_calibrated() -> bool {
     APIC_TIMER_CALIBRATED.load(Ordering::Acquire)
 }
 
+/// 屏蔽 LINT0 本地中断 (置 LVT 掩码位)。
 pub fn mask_lint0() {
     if is_initialized() {
         apic_write(APIC_LVT_LINT0, apic_read(APIC_LVT_LINT0) | LVT_MASK);
     }
 }
 
+/// 屏蔽 LINT1 本地中断 (置 LVT 掩码位)。
 pub fn mask_lint1() {
     if is_initialized() {
         apic_write(APIC_LVT_LINT1, apic_read(APIC_LVT_LINT1) | LVT_MASK);
     }
 }
 
+/// 解除 LINT0 屏蔽并按 `mode` 设置投递模式。
 pub fn unmask_lint0(mode: u32) {
     if is_initialized() {
         apic_write(APIC_LVT_LINT0, mode);
     }
 }
 
+/// 解除 LINT1 屏蔽并按 `mode` 设置投递模式。
 pub fn unmask_lint1(mode: u32) {
     if is_initialized() {
         apic_write(APIC_LVT_LINT1, mode);

@@ -10,6 +10,7 @@
 use crate::privileged::sync::OnceLock;
 pub const MULTIBOOT2_TAG_FRAMEBUFFER: u32 = 8;
 
+/// Multiboot2 帧缓冲信息 (物理地址 / 行距 / 分辨率 / 位深 / 通道掩码)
 #[derive(Debug, Clone, Copy)]
 pub struct FramebufferInfo {
     pub addr: u64,
@@ -51,6 +52,7 @@ impl FramebufferInfo {
 
 static FB_INFO: OnceLock<FramebufferInfo> = OnceLock::new();
 
+/// 获取已解析的帧缓冲信息; 若 Multiboot2 tag 尚未解析则返回 `None`
 pub fn get_framebuffer_info() -> Option<&'static FramebufferInfo> {
     FB_INFO.get()
 }

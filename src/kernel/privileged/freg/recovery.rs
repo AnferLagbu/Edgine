@@ -23,17 +23,24 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::privileged::sync::IrqSpinLock;
+/// 恢复域标识符 (u64 别名)。
 pub type DomainId = u64;
 
 pub const DOMAIN_ID_UNKFS: DomainId = 2;
 pub const DOMAIN_ID_NET: DomainId = 5;
 
 pub trait RecoverableDomain: Send + Sync {
+    /// 返回该域名称 (用于日志与拓扑展示)。
     fn name(&self) -> &'static str;
+    /// 保存该域检查点 (中断上下文执行, 须无阻塞、无锁竞争)。
     fn save_checkpoint(&self);
+    /// 从最近检查点恢复该域状态。
     fn restore_checkpoint(&self);
+    /// 将该域重置到初始状态。
     fn reset(&self);
+    /// 返回该域依赖的域 ID 列表 (恢复拓扑排序用)。
     fn dependencies(&self) -> &'static [DomainId];
+    /// 返回该域当前是否健康 (默认视为健康)。
     fn is_healthy(&self) -> bool {
         true
     }
@@ -53,6 +60,7 @@ pub(crate) struct RegisteredDomain {
 
 impl RegisteredDomain {}
 
+/// 恢复域注册表: 维护已注册域及其 save/restore/reset 回调。
 pub struct RecoveryRegistry {
     pub(crate) registered: Vec<RegisteredDomain>,
     pub next_id: AtomicU64,
@@ -71,6 +79,7 @@ impl RecoveryRegistry {
 
 static RECOVERY_REGISTRY: IrqSpinLock<RecoveryRegistry> = IrqSpinLock::new(RecoveryRegistry::new());
 
+/// 初始化恢复域注册表 (幂等; 清空注册项并置初始化标志)。
 pub fn recovery_registry_init() {
     let mut reg = RECOVERY_REGISTRY.lock();
     if reg.initialized {
@@ -80,6 +89,7 @@ pub fn recovery_registry_init() {
     reg.initialized = true;
 }
 
+/// 注册一个恢复域并返回其域 ID; `prefer_id` 非 0 时优先复用该 ID。
 pub fn recovery_domain_register(
     name: &'static str,
     prefer_id: DomainId,
@@ -114,6 +124,7 @@ pub fn recovery_domain_register(
     id
 }
 
+/// 对指定域调用其保存检查点回调 (未注册则忽略)。
 pub fn recovery_subdomain_save_checkpoint(domain_id: DomainId) {
     let reg = RECOVERY_REGISTRY.lock();
     for r in &reg.registered {
@@ -134,6 +145,7 @@ fn has_dependency(sub_id: DomainId, on_id: DomainId) -> bool {
     false
 }
 
+/// 计算以 `root_id` 为根的恢复拓扑序 (子域先于父域)。
 pub fn compute_recovery_order(root_id: DomainId) -> Vec<DomainId> {
     let reg = RECOVERY_REGISTRY.lock();
     let all_ids: Vec<DomainId> = reg.registered.iter().map(|r| r.id).collect();
@@ -185,6 +197,7 @@ pub fn compute_recovery_order(root_id: DomainId) -> Vec<DomainId> {
     order
 }
 
+/// 按拓扑序级联恢复以 `domain_id` 为根的域, 返回成功恢复的域数量。
 pub fn cascade_recover(domain_id: DomainId) -> usize {
     let order = compute_recovery_order(domain_id);
     let reg = RECOVERY_REGISTRY.lock();
@@ -203,6 +216,7 @@ pub fn cascade_recover(domain_id: DomainId) -> usize {
     recovered
 }
 
+/// 对指定域调用其硬重置回调 (未注册则忽略)。
 pub fn hard_reset_domain(domain_id: DomainId) {
     let reg = RECOVERY_REGISTRY.lock();
     for r in &reg.registered {

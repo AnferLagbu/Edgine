@@ -53,6 +53,7 @@ fn log_num(n: u64) {
 // Session 数据结构
 // ============================================================================
 
+/// 会话状态 — `Active` 表示会话有效, `Zombie` 表示会话待回收或槽位空闲。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SessionState {
@@ -98,6 +99,7 @@ impl Session {
 // SessionManager
 // ============================================================================
 
+/// 会话管理器 — 以固定容量数组维护会话表, 并自增分配会话 ID。
 pub struct SessionManager {
     session_table: Mutex<[Session; MAX_SESSIONS]>,
     next_session_id: core::sync::atomic::AtomicU64,
@@ -266,6 +268,7 @@ impl SessionManager {
 
 pub static SESSION_MANAGER: SessionManager = SessionManager::new();
 
+/// 会话子系统初始化入口 — 初始化全局 [`SESSION_MANAGER`]。
 pub fn init() {
     SESSION_MANAGER.init();
 }

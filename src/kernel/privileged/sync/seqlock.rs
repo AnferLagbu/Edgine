@@ -27,6 +27,7 @@
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicUsize, Ordering, compiler_fence};
 
+/// 顺序锁 (seqlock): 读多写少场景的无锁读者同步原语.
 pub struct SeqLock<T> {
     pub(crate) sequence: AtomicUsize,
     data: UnsafeCell<T>,
@@ -99,6 +100,7 @@ impl<T> SeqLock<T> {
     }
 }
 
+/// 顺序锁读守卫: 持有时可读取数据, 并用 `is_valid` 校验期间无写入.
 pub struct SeqLockReadGuard<'a, T> {
     lock: &'a SeqLock<T>,
     seq1: usize,
@@ -132,6 +134,7 @@ impl<T> core::ops::Deref for SeqLockReadGuard<'_, T> {
     }
 }
 
+/// 顺序锁写守卫: `Drop` 时结束写临界区并递增序号.
 pub struct SeqLockWriteGuard<'a, T> {
     lock: &'a SeqLock<T>,
 }

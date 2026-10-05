@@ -55,6 +55,7 @@ pub(crate) fn hash_with_salt(password: &str, salt: &[u8; PWM_SALT_LEN]) -> [u8; 
     hash
 }
 
+/// 全局身份表: 固定容量的 `PwmEntry` 集合, 含并发自旋锁与变更标记字段。
 pub struct IdentityTable {
     pub entries: alloc::vec::Vec<PwmEntry>,
     pub count: AtomicUsize,

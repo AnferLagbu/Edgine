@@ -23,6 +23,7 @@ use core::sync::atomic::{AtomicU8, Ordering};
 
 pub const KLOG_BUF: usize = 256;
 
+/// 固定容量 (256 字节) 的栈上缓冲区写入器, 收集格式化后的日志字节.
 pub struct KlogWriter {
     buf: [u8; KLOG_BUF],
     pos: usize,
@@ -52,6 +53,7 @@ impl KlogWriter {
     }
 }
 
+/// 借用外部缓冲与游标的写入器, 将格式化结果原地写入并推进游标.
 pub struct CursorWriter<'a> {
     buf: &'a mut [u8],
     cursor: &'a mut usize,
@@ -221,6 +223,7 @@ fn serial_newline() {
     serial_impl::serial_putc(b'\n');
 }
 
+/// 向串口逐字节写出数据, 将换行符转换为 `\r\n`.
 pub fn serial_write_bytes(data: &[u8]) {
     for &byte in data {
         if byte == b'\n' {
@@ -473,6 +476,7 @@ pub static KLOG_INIT: core::sync::atomic::AtomicBool = core::sync::atomic::Atomi
 // 日志级别 / 分类
 // ============================================================================
 
+/// 日志级别 (Debug < Info < Note < Warn < Error < Crit).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum LogLevel {
@@ -484,6 +488,7 @@ pub enum LogLevel {
     Crit = 5,
 }
 
+/// 日志分类 (Boot/Kernel/Memory/... 用于输出前缀与过滤).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 #[allow(clippy::upper_case_acronyms)] // IPC 子系统名
@@ -714,10 +719,12 @@ pub fn log_crit(cat: LogCategory, args: core::fmt::Arguments<'_>) {
     log(LogLevel::Crit, cat, args);
 }
 
+/// 设置日志最低输出级别 (低于该级别的日志被丢弃).
 pub fn klog_set_level(level: LogLevel) {
     MIN_LEVEL.store(level as u8, Ordering::Relaxed);
 }
 
+/// 获取当前日志最低输出级别.
 pub fn klog_get_level() -> LogLevel {
     match MIN_LEVEL.load(Ordering::Relaxed) {
         0 => LogLevel::Debug,

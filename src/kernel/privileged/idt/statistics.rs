@@ -354,6 +354,7 @@ impl DetailedStatistics {
 }
 
 // 简单的 Vec 实现 (用于 no_std 环境)
+/// 固定容量 (64) 的栈内简易 Vec, 供 no_std 环境存放中断历史事件.
 pub struct Vec<T> {
     data: [Option<T>; 64],
     len: usize,
@@ -388,6 +389,7 @@ impl<T: Copy> IntoIterator for Vec<T> {
     }
 }
 
+/// `Vec` 的按值迭代器
 pub struct VecIntoIter<T> {
     vec: Vec<T>,
     index: usize,

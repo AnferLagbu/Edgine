@@ -31,6 +31,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+/// 设备树节点的属性值 (支持 u32/u64/字符串/布尔及定长数组).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PropertyValue {
     U32(u32),
@@ -71,14 +72,17 @@ impl PropertyValue {
     }
 }
 
+/// 设备树节点的单个属性 (名称 + 值).
 #[derive(Debug, Clone)]
 pub struct Property {
     pub name: &'static str,
     pub value: PropertyValue,
 }
 
+/// 设备树节点标识符.
 pub type NodeId = u32;
 
+/// 设备树中的一个设备节点 (含层级、compatible、属性与状态).
 #[derive(Debug, Clone)]
 pub struct EGDFNode {
     pub id: NodeId,
@@ -152,6 +156,7 @@ fn devtree_init_impl() {
     ROOT_NODE_ID.store(root_id, Ordering::Release);
 }
 
+/// 返回设备树根节点的 id (未初始化时为 0).
 pub fn devtree_root_id() -> NodeId {
     ROOT_NODE_ID.load(Ordering::Acquire)
 }
@@ -188,6 +193,7 @@ pub(crate) fn devtree_create_node_impl(
     Some(id)
 }
 
+/// 向指定节点添加或覆盖一个属性.
 pub fn devtree_add_prop(node_id: NodeId, name: &'static str, value: PropertyValue) {
     let mut tree = DEV_TREE.lock();
     if let Some(node) = tree.nodes.iter_mut().find(|n| n.id == node_id) {
@@ -195,6 +201,7 @@ pub fn devtree_add_prop(node_id: NodeId, name: &'static str, value: PropertyValu
     }
 }
 
+/// 设置指定节点的 compatible 字符串列表.
 pub fn devtree_set_compatible(node_id: NodeId, compat: Vec<&'static str>) {
     let mut tree = DEV_TREE.lock();
     if let Some(node) = tree.nodes.iter_mut().find(|n| n.id == node_id) {
@@ -202,6 +209,7 @@ pub fn devtree_set_compatible(node_id: NodeId, compat: Vec<&'static str>) {
     }
 }
 
+/// 设置指定节点的生命周期状态.
 pub fn devtree_set_state(node_id: NodeId, state: DeviceState) {
     let mut tree = DEV_TREE.lock();
     if let Some(node) = tree.nodes.iter_mut().find(|n| n.id == node_id) {
@@ -209,6 +217,7 @@ pub fn devtree_set_state(node_id: NodeId, state: DeviceState) {
     }
 }
 
+/// 将指定节点标记为已绑定到用户进程 `pid`.
 pub fn devtree_set_user_mapped(node_id: NodeId, pid: u32) {
     let mut tree = DEV_TREE.lock();
     if let Some(node) = tree.nodes.iter_mut().find(|n| n.id == node_id) {
@@ -216,6 +225,7 @@ pub fn devtree_set_user_mapped(node_id: NodeId, pid: u32) {
     }
 }
 
+/// 清除指定节点的用户进程绑定标记.
 pub fn devtree_clear_user_mapped(node_id: NodeId) {
     let mut tree = DEV_TREE.lock();
     if let Some(node) = tree.nodes.iter_mut().find(|n| n.id == node_id) {
@@ -234,6 +244,7 @@ pub fn devtree_clear_user_mapped_by_pid(pid: u32) {
     }
 }
 
+/// 返回指定节点当前绑定的用户进程 pid (未绑定时为 `None`).
 pub fn devtree_get_user_mapped(node_id: NodeId) -> Option<u32> {
     let tree = DEV_TREE.lock();
     tree.nodes
@@ -331,6 +342,7 @@ pub fn devtree_read_irq(node_id: NodeId) -> Option<u32> {
     node.get_prop("interrupts").and_then(PropertyValue::as_u32)
 }
 
+/// 返回设备树中的节点总数.
 pub fn devtree_count() -> usize {
     DEV_TREE.lock().nodes.len()
 }

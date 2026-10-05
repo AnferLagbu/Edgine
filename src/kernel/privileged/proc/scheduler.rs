@@ -74,6 +74,10 @@ const KSWAPD_TICK_INTERVAL: u64 = 100;
 /// 非热插拔场景下 poll 无任何 PCI 配置空间访问, 开销可忽略.
 const HOTPLUG_TICK_INTERVAL: u64 = 100;
 
+/// PWM 资源的 CFS 带宽配额槽位 — 限制指定 PWM 的 CPU 带宽, 并记录本周期已消耗的运行时间。
+///
+/// `max_runtime` 与 `period` 构成带宽约束: 每 `period` 内任务最多运行
+/// `max_runtime`; `consumed`/`next_reset` 用于跨 tick 累计与周期重置。
 pub struct PwidQuota {
     pub pwm: u64,
     pub used: bool,
@@ -98,6 +102,9 @@ impl PwidQuota {
 
 use crate::privileged::constants::limits::{MAX_LIMITS, MAX_QUOTAS};
 
+/// PWM 资源的进程数上限槽位 — 限制指定 PWM 可同时存在的进程数。
+///
+/// `max_procs` 为上限, `current` 为当前已归属该 PWM 的进程数。
 pub struct PwidLimit {
     pub pwm: u64,
     pub used: bool,
@@ -113,6 +120,10 @@ pub fn get_tick() -> u64 {
     TICK_COUNT.load(Ordering::SeqCst)
 }
 
+/// 调度策略 — 决定任务进入哪条运行队列及其抢占语义。
+///
+/// `Normal` 为 CFS 公平调度; `Fifo`/`Rr` 为实时策略 (先进先出 / 时间片轮转);
+/// `Idle` 仅在本核无其它可运行任务时执行; `Deadline` 为截止时间调度。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchedPolicy {
     Normal = 0,
@@ -139,6 +150,7 @@ impl SchedPolicy {
     }
 }
 
+/// 实时任务信息 — 记录实时运行队列中任务的 pid、静态实时优先级、调度策略与剩余时间片。
 pub struct RtTaskInfo {
     pub pid: Pid,
     pub rt_priority: u8,
@@ -310,6 +322,7 @@ pub extern "C" fn idle_entry() -> ! {
     }
 }
 
+/// 全局调度器 — 持有 PWM 级 CPU 带宽配额表与进程数上限表, 并跟踪初始化状态。
 pub struct Scheduler {
     quotas: Mutex<[PwidQuota; MAX_QUOTAS]>,
     limits: Mutex<[PwidLimit; MAX_LIMITS]>,
@@ -1790,6 +1803,10 @@ pub static SCHEDULER: Scheduler = Scheduler::new();
 
 pub static SCHEDULER_READY: AtomicBool = AtomicBool::new(false);
 
+/// 调度器子系统初始化入口 — 初始化全局调度器并置位 [`SCHEDULER_READY`]。
+///
+/// 具体工作 (建立 BSP per-CPU 状态、idle 任务与 init 进程) 由
+/// [`Scheduler::init`] 完成; 本函数仅负责对外暴露入口并发布就绪标志。
 pub fn init() {
     SCHEDULER.init();
     // D6: 进程级 tick 与跨核 resched IPI 只登记重调度请求 (见

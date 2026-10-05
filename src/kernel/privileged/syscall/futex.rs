@@ -426,6 +426,7 @@ fn test_futex_bucket_push_remove() -> crate::privileged::tests::TestResult {
     TestResult::Pass
 }
 
+/// 注册 futex 子系统的内核测试用例.
 #[cfg(feature = "kernel_test")]
 pub fn register_futex_tests() {
     use crate::privileged::tests::runner;

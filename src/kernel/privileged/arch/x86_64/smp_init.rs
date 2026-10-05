@@ -107,6 +107,7 @@ pub extern "C" fn smp_get_ap_count() -> u32 {
     AP_STARTED_COUNT.load(Ordering::Acquire)
 }
 
+/// 初始化 SMP: 解析 MADT 并启动所有 AP; 单核时直接标记完成。
 #[inline(never)]
 pub fn init() {
     super::acpi::parse_madt(0);

@@ -24,6 +24,7 @@ unsafe extern "C" {
 // 读取汇编层保存的用户 CR3 (page fault handler 使用)
 // x86_64: 从 isr.asm .bss 中的 USER_CR3_SAVE 读取, 汇编在 KPTI 切换前写入.
 // aarch64: 回退到硬件 CR3 (aarch64 KPTI 实现不同).
+/// 读取中断入口保存的用户态 CR3 (x86_64); aarch64 回退到当前页表.
 pub fn read_user_cr3_asm() -> u64 {
     // 符号桩化 (host-test): host 无 isr.asm 的 USER_CR3_SAVE 符号且不执行中断
     // 上下文读取, 常量中性返回 0 (与 E-04 cpu_id 桩同模式).
@@ -338,6 +339,7 @@ pub const fn pml4_index(addr: u64) -> usize {
     clippy::inline_always,
     reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
 )]
+/// 提取地址的 PDPT (页目录指针表) 索引 (bits[38:30]).
 pub const fn pdpt_index(addr: u64) -> usize {
     ((addr >> 30) & 0x1FF) as usize
 }
@@ -347,6 +349,7 @@ pub const fn pdpt_index(addr: u64) -> usize {
     clippy::inline_always,
     reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
 )]
+/// 提取地址的 PD (页目录) 索引 (bits[29:21]).
 pub const fn pd_index(addr: u64) -> usize {
     ((addr >> 21) & 0x1FF) as usize
 }
@@ -356,6 +359,7 @@ pub const fn pd_index(addr: u64) -> usize {
     clippy::inline_always,
     reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
 )]
+/// 提取地址的 PT (页表) 索引 (bits[20:12]).
 pub const fn pt_index(addr: u64) -> usize {
     ((addr >> 12) & 0x1FF) as usize
 }
@@ -376,7 +380,7 @@ pub const fn virt_to_phys(virt: u64) -> u64 {
     virt - KERNEL_BASE
 }
 
-/// Page size type enum
+/// 页大小类型枚举 (4KB / 2MB / 1GB).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PageSize {
@@ -453,7 +457,7 @@ impl MemoryInfo {
     }
 }
 
-/// Physical address wrapper for type safety
+/// 物理地址的类型安全包装.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PhysAddr(pub u64);
 

@@ -26,6 +26,7 @@ pub mod verify;
 use crate::privileged::mm::{MmStruct, Vma, VmaType};
 use crate::privileged::mm::{PAGE_SIZE, PageFlags, VirtAddr};
 
+/// ELF64 文件头 (Elf64_Ehdr) — 描述文件类型、目标机器、入口地址与各表偏移。
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Elf64Header {
@@ -45,6 +46,7 @@ pub struct Elf64Header {
     pub e_shstrndx: u16,
 }
 
+/// ELF64 程序头 (Elf64_Phdr) — 描述一个程序段 (PT_LOAD 等) 的偏移、地址、大小与权限。
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Elf64Phdr {
@@ -70,6 +72,7 @@ const MAX_PHDR_COUNT: usize = 128;
 /// `ET_DYN`: 共享对象 / PIE 可执行文件
 const ET_DYN: u16 = 3;
 
+/// ELF 加载结果 — 返回入口地址、程序头表位置、brk 基址与用户栈顶。
 pub struct ElfLoadResult {
     pub entry: u64,
     pub phdr_addr: u64,
@@ -99,6 +102,7 @@ impl ElfLoadResult {
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
+/// 校验 ELF 数据有效性并返回指向其文件头的引用; 校验失败返回 `None`。
 pub fn elf_validate(elf_data: *const u8, elf_size: u64) -> Option<&'static Elf64Header> {
     // SAFETY: 调用方保证 elf_data 有效, verify_elf 内部仅读借用
     let _ = unsafe { verify::verify_elf(elf_data, elf_size) }.ok()?;

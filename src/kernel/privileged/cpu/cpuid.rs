@@ -94,6 +94,7 @@ mod tests {
         assert!(!is_leaf_supported(0xFFFF_FFFF));
     }
 }
+/// 注册 CPUID 相关内核测试用例 (kernel_test)
 #[cfg(feature = "kernel_test")]
 pub fn register_cpuid_tests() {
     crate::privileged::tests::arch::register_cpuid_tests();

@@ -283,6 +283,7 @@ pub struct Aarch64Context {
 
 // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
 unsafe extern "C" {
+    /// 上下文切换汇编实现: 保存 `prev` 指向的上下文, 恢复 `next` 指向的上下文。
     pub fn context_switch_asm(prev: *const u64, next: *const u64);
 }
 

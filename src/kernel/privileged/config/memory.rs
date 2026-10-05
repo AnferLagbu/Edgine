@@ -197,6 +197,7 @@ fn test_aslr_pie_base_range() -> crate::privileged::tests::TestResult {
     TestResult::Pass
 }
 
+/// 注册 ASLR 相关内核测试用例 (kernel_test)
 #[cfg(feature = "kernel_test")]
 pub fn register_aslr_tests() {
     use crate::privileged::tests::runner;

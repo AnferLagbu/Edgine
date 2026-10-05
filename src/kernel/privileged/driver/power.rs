@@ -502,6 +502,7 @@ impl SystemPowerState {
 
 /// 挂起/恢复回调
 pub type SuspendCallback = fn() -> i32;
+/// 恢复回调: 系统从挂起状态恢复时调用, 返回 0 表示成功
 pub type ResumeCallback = fn() -> i32;
 
 /// 挂起/恢复通知器

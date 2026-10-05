@@ -6,6 +6,7 @@ const FONT8X16_DATA: &[u8] = include_bytes!("assets/font8x16.raw");
 const GLYPH_WIDTH: u32 = 8;
 const GLYPH_HEIGHT: u32 = 16;
 
+/// 位图字体 (字形数据 + 字形宽高与字形数元数据)
 pub struct Font {
     data: &'static [u8],
     pub glyph_height: u32,
@@ -126,6 +127,7 @@ impl Font {
 use crate::privileged::sync::OnceLock;
 static DEFAULT_FONT: OnceLock<Font> = OnceLock::new();
 
+/// 返回全局默认字体 (惰性初始化内嵌 8x16 位图字体)
 pub fn default_font() -> &'static Font {
     DEFAULT_FONT.get_or_init(|slot| {
         slot.write(Font::builtin_8x16());

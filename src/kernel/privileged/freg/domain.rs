@@ -7,6 +7,7 @@ use super::types::{
 use super::undo_log::UndoLog;
 
 use crate::privileged::sync::IrqSpinLock;
+/// 恢复域: 承载 FREG 运行时状态、撤销日志与依赖拓扑。
 pub struct RecoveryDomain {
     pub id: u64,
     state: AtomicU32,

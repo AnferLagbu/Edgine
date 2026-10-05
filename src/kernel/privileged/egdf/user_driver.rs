@@ -19,6 +19,7 @@ use crate::privileged::sgeg::{CapBits, CapDomain};
 
 const MAX_MMIO_SIZE: usize = 256 * 1024 * 1024;
 
+/// 用户态设备驱动操作返回的错误码封装 (负 errno 语义).
 pub struct UserDriverError {
     code: i32,
 }
@@ -353,6 +354,7 @@ pub fn devtree_unmap_user_device(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 向绑定的用户进程投递 IRQ 信号 (SIGUSR1); 未绑定或缺少 IRQ 能力时返回 `false`.
 pub fn egdf_forward_irq(node_id: NodeId) -> bool {
     let pid = match devtree_get_user_mapped(node_id) {
         Some(p) => p,

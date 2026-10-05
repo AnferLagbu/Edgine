@@ -829,6 +829,7 @@ fn periodic_test_callback(_timer: &HrTimer) -> HrTimerRestart {
     HrTimerRestart::Periodic
 }
 
+/// 注册高精度定时器 (hrtimer) 测试用例 (kernel_test)
 #[cfg(feature = "kernel_test")]
 pub fn register_hrtimer_tests() {
     use crate::privileged::tests::runner;

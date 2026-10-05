@@ -27,6 +27,7 @@ pub const MULTIBOOT2_MAGIC: u32 = 0x36D76289;
 pub const MBOOT1_FLAG_MEM: u32 = 1 << 0;
 pub const MBOOT1_FLAG_MMAP: u32 = 1 << 6;
 
+/// Multiboot1 引导信息结构 (Multiboot1 spec 定义的机器状态块)
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct Multiboot1Info {
@@ -55,6 +56,7 @@ pub struct Multiboot1Info {
     pub vbe_mode_info_high: u64,
 }
 
+/// Multiboot1 内存映射条目 (描述一段物理内存的基址 / 长度 / 类型)
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct MemoryMapEntry {
@@ -80,6 +82,7 @@ impl MemoryMapEntry {
     }
 }
 
+/// 引导阶段汇总的启动信息 (可用内存大小 / 内核结束地址 / 内存映射条目数)
 #[derive(Debug, Clone, Copy)]
 pub struct BootInfo {
     pub mem_size: u64,
@@ -286,6 +289,7 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize) {
         reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
     )
 )]
+/// 初始化启动信息子系统, 解析引导器传入的启动参数并返回汇总的 [`BootInfo`]
 pub fn init() -> BootInfo {
     // 符号桩化 (host-test): host 无 _kernel_end 链接脚本符号且不执行裸机引导,
     // 常量中性取值 0. 真机分支取链接脚本符号地址.

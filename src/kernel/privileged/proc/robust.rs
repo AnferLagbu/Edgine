@@ -151,6 +151,7 @@ fn test_robust_head_layout() -> crate::privileged::tests::TestResult {
     TestResult::Pass
 }
 
+/// 注册 robust futex 相关的内核测试用例。
 #[cfg(feature = "kernel_test")]
 pub fn register_robust_tests() {
     use crate::privileged::tests::runner;

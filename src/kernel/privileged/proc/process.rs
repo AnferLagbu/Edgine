@@ -98,6 +98,7 @@ pub fn write_boot_stack_canary() {
     }
 }
 
+/// 检查内核栈顶 8 字节处的 canary 是否符合预期; 栈顶非法或地址越界时视为通过。
 pub fn kernel_stack_check_canary(stack_top: u64) -> bool {
     if stack_top < 8 {
         return true;
@@ -113,6 +114,7 @@ pub fn kernel_stack_check_canary(stack_top: u64) -> bool {
     }
 }
 
+/// 在内核栈顶 8 字节处写入 canary 哨兵值; 栈顶非法或地址越界时跳过。
 pub fn kernel_stack_write_canary(stack_top: u64) {
     if stack_top <= 8 {
         return;
@@ -127,6 +129,7 @@ pub fn kernel_stack_write_canary(stack_top: u64) {
     }
 }
 
+/// 进程控制块 (PCB) — 保存标识、状态、调度信息、地址空间与资源统计等运行时状态。
 pub struct Process {
     pub pid: ProcessId,
     pub pwm: AtomicU64,
@@ -640,6 +643,7 @@ impl Drop for Process {
     }
 }
 
+/// 全局进程表 — 以定长数组保存进程槽位, 并用 PID 位图管理编号分配与回收。
 pub struct ProcessTable {
     processes: Mutex<[Option<NonNull<Process>>; MAX_PROCESSES]>,
     /// PID 位图: true = 已分配, false = 空闲
@@ -877,6 +881,7 @@ unsafe impl Sync for ProcSnapshot {}
 
 static PROC_SNAPSHOT: Mutex<Option<ProcSnapshot>> = Mutex::new(None);
 
+/// 将进程表的 PID 位图、搜索起点与槽位快照保存到 `PROC_SNAPSHOT`。
 pub fn proc_freg_capture() {
     let table = &PROCESS_TABLE;
     *PROC_SNAPSHOT.lock() = Some(ProcSnapshot {
@@ -886,6 +891,7 @@ pub fn proc_freg_capture() {
     });
 }
 
+/// 从 `PROC_SNAPSHOT` 快照回滚进程表状态 (位图/搜索起点/槽位)。
 pub fn proc_freg_rollback() -> bool {
     if let Some(ref snap) = *PROC_SNAPSHOT.lock() {
         let table = &PROCESS_TABLE;
@@ -904,6 +910,7 @@ fn proc_freg_rollback_cb() -> bool {
     proc_freg_rollback()
 }
 
+/// 注册进程表的故障恢复域 (域 id 4), 并绑定捕获与回滚回调。
 pub fn proc_register_freg_domain() {
     crate::privileged::freg::recovery_domain_register(4);
     if let Some(dom) = crate::privileged::freg::RECOVERY_MANAGER.lock().find(4) {

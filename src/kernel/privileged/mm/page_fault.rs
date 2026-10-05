@@ -30,6 +30,7 @@ use super::vmm;
 use super::{PAGE_SIZE, PageFlags, PhysAddr, VirtAddr};
 use core::sync::atomic::{AtomicU64, Ordering};
 
+/// 缺页处理结果: 指示 #PF 处理器应采取的处置动作.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PfResult {
     Fixed = 0,
@@ -44,6 +45,7 @@ pub enum PfResult {
     UffdWait = 5,
 }
 
+/// 缺页错误信息: 故障地址与错误码解码后的标志位.
 #[derive(Debug, Clone, Copy)]
 pub struct PageFaultInfo {
     pub fault_addr: u64,
@@ -80,6 +82,7 @@ fn stack_guard_end() -> u64 {
 
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
+/// 基于给定地址空间 (`MmStruct`) 处理一次缺页, 返回处置结果.
 pub fn handle_page_fault(mm: &MmStruct, info: PageFaultInfo) -> PfResult {
     let addr = info.fault_addr as usize;
 
@@ -502,6 +505,7 @@ fn do_cow_copy_with_mm(_mm: &MmStruct, _vma: &Vma, addr: usize, user_cr3: u64) -
 
 pub static PAGE_FAULT_COUNT: AtomicU64 = AtomicU64::new(0);
 
+/// 返回累计缺页处理次数.
 pub fn page_fault_count() -> u64 {
     PAGE_FAULT_COUNT.load(Ordering::Relaxed)
 }

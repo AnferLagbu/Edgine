@@ -21,7 +21,7 @@ pub const DMA_MAX_MAPPINGS: usize = 256;
 pub const DMA_MAX_SCATTER_ENTRIES: usize = 64;
 pub const MMIO_VIRT_BASE: u64 = 0xFFFF900000000000;
 
-/// DMA transfer direction
+/// DMA 传输方向 (到设备/自设备/双向)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum DmaDirection {
@@ -30,7 +30,7 @@ pub enum DmaDirection {
     Bidirectional = 2,
 }
 
-/// DMA cache policy
+/// DMA 缓存策略 (无缓存/写回/写穿)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum DmaCachePolicy {
@@ -39,7 +39,7 @@ pub enum DmaCachePolicy {
     Writethrough = 2,
 }
 
-/// DMA mapping entry
+/// DMA 映射条目, 记录 CPU/设备地址、大小、方向与缓存/一致性标志
 #[derive(Debug)]
 pub struct DmaMapping {
     pub cpu_addr: VirtAddr,
@@ -102,7 +102,7 @@ pub struct DmaTransfer {
     pub private_data: *mut u8,
 }
 
-/// DMA pool statistics
+/// DMA 池运行统计快照
 #[derive(Debug, Clone, Default)]
 #[repr(C)]
 pub struct DmaPoolStats {

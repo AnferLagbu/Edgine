@@ -279,6 +279,7 @@ pub(crate) mod raw {
 use raw::ThreadRef;
 
 // === 环形双向就绪队列 ===
+/// 环形双向就绪队列 — 以 `head` 指向的环形双向链表组织同优先级就绪线程, `count` 记录元素数。
 pub struct RunQueue {
     head: AtomicU64,
     count: AtomicU32,
@@ -440,6 +441,7 @@ impl RunQueue {
     }
 }
 
+/// [`RunQueue`] 的迭代器 — 沿环形链表遍历就绪线程, 至多产出入队时快照的 `count` 个元素。
 pub struct RunQueueIter {
     head: *mut Thread,
     current: u64,
@@ -476,6 +478,7 @@ impl Iterator for RunQueueIter {
 }
 
 // === 调度器统计 ===
+/// 调度器统计计数器 — 累计上下文切换/时钟 tick/冻结线程/僵尸回收/优先级提升次数。
 pub struct SchedulerStats {
     pub total_switches: AtomicU64,
     pub total_ticks: AtomicU64,
@@ -497,6 +500,7 @@ impl SchedulerStats {
 }
 
 // === 线程级调度器 (SchedulerEx) ===
+/// 线程级调度器 — 按优先级维护 5 条就绪队列加一条冻结队列, 并跟踪当前/空闲线程与运行统计。
 pub struct SchedulerEx {
     pub run_queues: [RunQueue; 5],
     pub frozen_queue: RunQueue,
@@ -905,6 +909,7 @@ impl SchedulerEx {
 
 pub static SCHEDULER_EX: SchedulerEx = SchedulerEx::new();
 
+/// 线程级调度器初始化入口 — 初始化全局 [`SCHEDULER_EX`] 实例。
 pub fn init() {
     SCHEDULER_EX.init();
 }

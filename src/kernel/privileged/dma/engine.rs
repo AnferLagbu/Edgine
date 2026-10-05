@@ -15,6 +15,7 @@ use crate::privileged::sync::IrqSpinLock as Mutex;
 use crate::privileged::sync::OnceLock;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
+/// 全局 DMA 引擎, 管理一致性内存/流式映射/MMIO 映射与运行统计.
 pub struct DmaEngine {
     initialized: AtomicBool,
     mappings: Mutex<Vec<DmaMapping>>,
@@ -633,6 +634,7 @@ pub(crate) fn dma() -> &'static DmaEngine {
 
 // =============== DMA 传输引擎 ===============
 
+/// DMA 传输请求描述符 (源/目的物理地址、大小、方向与完成回调).
 #[repr(C)]
 pub struct DmaTransfer {
     pub src_addr: PhysAddr,
@@ -643,6 +645,7 @@ pub struct DmaTransfer {
     pub callback: Option<DmaCallback>,
 }
 
+/// DMA 传输完成回调函数类型.
 pub type DmaCallback = fn(*const DmaTransfer);
 
 impl DmaTransfer {
@@ -673,6 +676,7 @@ const MAX_DMA_TRANSFERS: usize = 32;
 static DMA_TRANSFERS: [core::sync::atomic::AtomicU8; MAX_DMA_TRANSFERS] =
     [const { core::sync::atomic::AtomicU8::new(0) }; MAX_DMA_TRANSFERS];
 
+/// 提交一次同步 DMA 传输请求, 成功返回传输槽位编号.
 pub fn submit_transfer(
     src: PhysAddr,
     dst: PhysAddr,
@@ -708,6 +712,7 @@ pub fn submit_transfer(
     clippy::borrow_as_ptr,
     reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
 )]
+/// 异步提交 DMA 传输请求, 提交完成后立即调用回调.
 pub fn submit_transfer_async(
     src: PhysAddr,
     dst: PhysAddr,

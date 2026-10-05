@@ -50,6 +50,7 @@ fn alloc_cgroup_id() -> u64 {
 // CPU 控制器
 // ============================================================================
 
+/// CPU 控制器 — 按 CFS 配额与周期限制 CPU 带宽, 并统计运行时长与节流次数。
 #[derive(Debug)]
 pub struct CpuController {
     pub cfs_quota_us: AtomicU64,
@@ -106,6 +107,7 @@ impl CpuController {
 // 内存控制器
 // ============================================================================
 
+/// 内存控制器 — 限制 cgroup 内存用量, 并统计峰值用量与 OOM 击杀次数。
 #[derive(Debug)]
 pub struct MemoryController {
     pub limit_in_bytes: AtomicU64,
@@ -203,6 +205,7 @@ impl MemoryController {
 // PID 控制器
 // ============================================================================
 
+/// PID 控制器 — 限制 cgroup 内进程/线程总数, 并统计 fork 失败次数。
 #[derive(Debug)]
 pub struct PidsController {
     pub pids_max: AtomicU64,
@@ -263,6 +266,7 @@ impl PidsController {
 // IO 控制器
 // ============================================================================
 
+/// IO 控制器 — 统计 cgroup 的读写字节数与 IO 次数, 并提供带宽/IOPS 上限字段。
 #[derive(Debug)]
 pub struct IoController {
     pub read_bps_max: AtomicU64,
@@ -304,6 +308,7 @@ impl IoController {
 // CgroupRq — cgroup 实例
 // ============================================================================
 
+/// cgroup 运行时实例 — 保存层级关系、成员进程及各资源控制器。
 #[derive(Debug)]
 pub struct CgroupRq {
     pub id: u64,
@@ -371,6 +376,7 @@ impl CgroupRq {
 // CgroupSubsystem — 全局管理器
 // ============================================================================
 
+/// cgroup 子系统全局管理器 — 维护 id 到 cgroup 的映射, 负责创建/删除/迁移。
 pub struct CgroupSubsystem {
     groups: IrqSpinLock<BTreeMap<u64, Arc<CgroupRq>>>,
     root: Arc<CgroupRq>,
@@ -505,6 +511,7 @@ impl CgroupSubsystem {
 // Errno
 // ============================================================================
 
+/// cgroup 子系统错误码 (与 POSIX errno 数值对齐)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u64)]
 #[allow(clippy::upper_case_acronyms)]
@@ -524,6 +531,7 @@ pub enum Errno {
 static CGROUP_SUBSYSTEM: OnceLock<CgroupSubsystem> = OnceLock::new();
 static CGROUP_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
+/// 初始化全局 cgroup 子系统, 并创建根 cgroup (id=0)。
 pub fn cgroup_init() {
     CGROUP_SUBSYSTEM.get_or_init(|slot| {
         slot.write(CgroupSubsystem::new());
@@ -543,6 +551,7 @@ pub fn cgroup_subsystem() -> &'static CgroupSubsystem {
         .expect("cgroup subsystem not initialized")
 }
 
+/// 返回 cgroup 子系统是否已完成初始化。
 pub fn cgroup_is_initialized() -> bool {
     CGROUP_INITIALIZED.load(Ordering::Acquire)
 }
@@ -551,6 +560,9 @@ pub fn cgroup_is_initialized() -> bool {
 // 系统调用
 // ============================================================================
 
+/// 在指定父 cgroup 下创建子 cgroup。
+///
+/// 成功返回新 cgroup id, 初始化未完成或父组非法时返回负错误码。
 pub fn sys_cgroup_create(parent_id: u64, _name_ptr: u64, _name_len: u64) -> i64 {
     if !cgroup_is_initialized() {
         return -(Errno::EINVAL as i64);
@@ -564,6 +576,9 @@ pub fn sys_cgroup_create(parent_id: u64, _name_ptr: u64, _name_len: u64) -> i64 
     id as i64
 }
 
+/// 销毁指定 cgroup。
+///
+/// 成功返回 0, 初始化未完成或销毁失败时返回负错误码。
 pub fn sys_cgroup_destroy(cg_id: u64) -> i64 {
     if !cgroup_is_initialized() {
         return -(Errno::EINVAL as i64);
@@ -574,6 +589,9 @@ pub fn sys_cgroup_destroy(cg_id: u64) -> i64 {
     }
 }
 
+/// 将进程 `pid` 迁移到指定 cgroup。
+///
+/// 成功返回 0, 初始化未完成或迁移失败时返回负错误码。
 pub fn sys_cgroup_attach(cg_id: u64, pid: u64) -> i64 {
     if !cgroup_is_initialized() {
         return -(Errno::EINVAL as i64);
@@ -588,6 +606,10 @@ pub fn sys_cgroup_attach(cg_id: u64, pid: u64) -> i64 {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 设置指定 cgroup 的资源上限。
+///
+/// `controller`: 0=CFS 配额, 1=CFS 周期, 2=内存, 3=PID 上限。
+/// 成功返回 0, 初始化未完成或控制器非法时返回负错误码。
 pub fn sys_cgroup_set_limit(cg_id: u64, controller: u64, value: u64) -> i64 {
     if !cgroup_is_initialized() {
         return -(Errno::EINVAL as i64);
@@ -613,6 +635,9 @@ pub fn sys_cgroup_set_limit(cg_id: u64, controller: u64, value: u64) -> i64 {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 读取指定 cgroup 的统计值。
+///
+/// `stat_type` 选择统计项, 成功返回非负值, 初始化未完成或项非法时返回负错误码。
 pub fn sys_cgroup_get_stat(cg_id: u64, stat_type: u64) -> i64 {
     if !cgroup_is_initialized() {
         return -(Errno::EINVAL as i64);

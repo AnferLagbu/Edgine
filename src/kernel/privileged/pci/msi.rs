@@ -538,6 +538,7 @@ fn test_msi_ctrl_bits() -> crate::privileged::tests::TestResult {
     TestResult::Pass
 }
 
+/// 注册 MSI 子系统的内核测试用例 (仅 `kernel_test` 模式).
 #[cfg(feature = "kernel_test")]
 pub fn register_msi_tests() {
     use crate::privileged::tests::runner;

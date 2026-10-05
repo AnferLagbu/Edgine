@@ -929,6 +929,7 @@ mod tests {
         assert!(mono.is_single_core());
     }
 }
+/// 注册 CPU 拓扑相关内核测试用例 (kernel_test)
 #[cfg(feature = "kernel_test")]
 pub fn register_cpu_tests() {
     crate::privileged::tests::arch::register_cpu_tests();

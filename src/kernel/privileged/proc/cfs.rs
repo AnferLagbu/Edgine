@@ -44,6 +44,7 @@ pub const NICE_TO_WEIGHT: [u64; 40] = [
     70, 56, 45, 36, 29, 23, 18, 15,
 ];
 
+/// 将 nice 值 (-20..=19) 映射为其 CFS 调度权重; 越界值收敛到端点。
 #[inline]
 pub fn nice_to_weight(nice: i8) -> u64 {
     let clamped = nice.clamp(-20, 19);
@@ -51,6 +52,7 @@ pub fn nice_to_weight(nice: i8) -> u64 {
     NICE_TO_WEIGHT[idx]
 }
 
+/// 将 CFS 权重反查为最接近的 nice 值 (-20..=19)。
 #[inline]
 pub fn weight_to_nice(weight: u64) -> i8 {
     if weight >= NICE_TO_WEIGHT[0] {
@@ -75,6 +77,7 @@ pub fn weight_to_nice(weight: u64) -> i8 {
 // Deadline 调度 (EDF + CBS)
 // ============================================================================
 
+/// Deadline (EDF + CBS) 调度参数 — 运行时、相对截止期与周期。
 #[derive(Debug, Clone, Copy)]
 pub struct DeadlineParams {
     pub runtime: u64,
@@ -110,6 +113,7 @@ impl DeadlineParams {
 // CFS Run Queue
 // ============================================================================
 
+/// CFS 运行队列 — 以 (vruntime, pid) 为键的有序树, 并跟踪最小 vruntime 与总权重。
 pub struct CfsRunQueue {
     pub tree: BTreeMap<(u64, Pid), ()>,
     pub min_vruntime: AtomicU64,
@@ -234,6 +238,7 @@ impl CfsRunQueue {
 // Deadline 运行队列 (EDF)
 // ============================================================================
 
+/// Deadline 运行队列 — 以 (绝对截止期, pid) 为键, 并跟踪总利用率。
 pub struct DlRunQueue {
     pub tree: BTreeMap<(u64, Pid), ()>,
     pub nr_running: u32,
@@ -293,6 +298,7 @@ impl DlRunQueue {
 // Tick 计数辅助
 // ============================================================================
 
+/// 计算单 tick 的 vruntime 增量 (权重越大增量越小; 权重为 0 时退化为 nice0 权重)。
 #[inline]
 pub fn calc_vruntime_delta(weight: u64) -> u64 {
     if weight == 0 {
@@ -301,6 +307,7 @@ pub fn calc_vruntime_delta(weight: u64) -> u64 {
     (NICE0_WEIGHT / weight).max(1)
 }
 
+/// 判定当前线程是否应被抢占 — 其 vruntime 超出最小 vruntime 的差值超过按权重缩放的时间片阈值。
 #[inline]
 pub fn cfs_should_preempt(curr_vruntime: u64, min_vruntime: u64, weight: u64) -> bool {
     let threshold = if weight == 0 {

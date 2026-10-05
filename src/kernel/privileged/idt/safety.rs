@@ -359,6 +359,7 @@ mod tests {
     }
 }
 
+/// 注册 IDT 安全相关的内核测试用例.
 #[cfg(feature = "kernel_test")]
 pub fn register_idt_safety_tests() {
     crate::privileged::tests::idt::register_idt_safety_tests();

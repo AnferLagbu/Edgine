@@ -15,6 +15,7 @@ use super::bhr;
 use super::bsr;
 use super::config::{self, RecoveryLayer, RecoveryResult};
 
+/// 按配置依次执行 BSR (Layer2) 与 BHR (Layer3) 恢复, 不返回。
 pub fn execute_layered() -> ! {
     if !config::is_reset_in_progress() {
         config::set_reset_in_progress(true);
@@ -56,6 +57,7 @@ pub fn execute_layered() -> ! {
     bhr::execute_fallback()
 }
 
+/// panic 入口: 先尝试 BBR (Layer1), 失败则升级到分层恢复, 不返回。
 pub fn execute_from_panic(panic_info: &core::panic::PanicInfo<'_>) -> ! {
     crate::klog_crit!(
         Kernel,
@@ -94,10 +96,12 @@ pub fn execute_from_panic(panic_info: &core::panic::PanicInfo<'_>) -> ! {
     execute_layered()
 }
 
+/// 仅执行 Layer1 栏基恢复, 返回其结果供调用方决定后续升级。
 pub fn try_bbr_first(panic_info: &core::panic::PanicInfo<'_>) -> RecoveryResult {
     bbr::execute(panic_info)
 }
 
+/// 汇总当前恢复状态快照 (当前层级/是否重置中/各级尝试计数)。
 pub fn get_recovery_status() -> RecoveryStatus {
     RecoveryStatus {
         current_layer: config::get_current_layer(),
@@ -108,6 +112,7 @@ pub fn get_recovery_status() -> RecoveryStatus {
     }
 }
 
+/// 恢复状态快照: 当前恢复层级、是否正在重置及 BBR/BSR/BHR 尝试计数。
 #[derive(Debug, Clone, Copy)]
 pub struct RecoveryStatus {
     pub current_layer: RecoveryLayer,

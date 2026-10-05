@@ -286,6 +286,7 @@ unsafe fn enable_mmu() {
 // Arch trait 辅助函数 (供 Arch impl 调用)
 // ============================================================================
 
+/// 读取 TTBR0_EL1 (低半区页表基址寄存器)。
 #[inline(always)]
 pub fn read_ttbr0() -> u64 {
     let val: u64;
@@ -307,6 +308,7 @@ pub fn read_ttbr1() -> u64 {
     val
 }
 
+/// 写入 TTBR0_EL1 并执行 ISB 使改动生效。
 #[inline(always)]
 pub fn write_ttbr0(val: u64) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -319,6 +321,7 @@ pub fn write_ttbr0(val: u64) {
     }
 }
 
+/// 按虚拟地址刷新 EL1 的 TLB 条目 (tlbi vaae1)。
 #[inline(always)]
 pub fn tlbi_vaae1(vaddr: u64) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -330,6 +333,7 @@ pub fn tlbi_vaae1(vaddr: u64) {
     }
 }
 
+/// 刷新 EL1 的整个 TLB (tlbi vmalle1)。
 #[inline(always)]
 pub fn tlbi_vmalle1() {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -341,6 +345,7 @@ pub fn tlbi_vmalle1() {
     }
 }
 
+/// 读取 FAR_EL1 (触发页错误的故障地址寄存器)。
 #[inline(always)]
 pub fn read_far() -> u64 {
     let val: u64;

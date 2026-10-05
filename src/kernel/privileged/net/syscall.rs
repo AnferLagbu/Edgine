@@ -258,7 +258,7 @@ pub fn socket_syscall(domain: i32, sock_type: i32, _protocol: i32) -> i64 {
     }
 }
 
-/// bind
+/// bind — 绑定本地地址到 socket (按 sockaddr 族分流 IPv4/IPv6)
 pub fn bind_syscall(fd: i32, addr_ptr: u64, _addrlen: u32) -> i64 {
     if fd < 0 {
         return Errno::EBADF.as_ret();
@@ -295,7 +295,7 @@ pub fn bind_syscall(fd: i32, addr_ptr: u64, _addrlen: u32) -> i64 {
     if rc == 0 { 0 } else { Errno::EINVAL.as_ret() }
 }
 
-/// listen
+/// listen — 将 socket 置为监听状态并设置连接队列长度
 pub fn listen_syscall(fd: i32, backlog: i32) -> i64 {
     if fd < 0 {
         return Errno::EBADF.as_ret();
@@ -320,7 +320,7 @@ pub fn accept_syscall(fd: i32, _addr_ptr: u64, _addrlen_ptr: u64) -> i64 {
     }
 }
 
-/// connect
+/// connect — 连接远端地址 (按 sockaddr 族分流 IPv4/IPv6)
 pub fn connect_syscall(fd: i32, addr_ptr: u64, _addrlen: u32) -> i64 {
     if fd < 0 {
         return Errno::EBADF.as_ret();
@@ -359,7 +359,7 @@ pub fn connect_syscall(fd: i32, addr_ptr: u64, _addrlen: u32) -> i64 {
     }
 }
 
-/// sendto / send
+/// sendto / send — 发送数据, 指定目标地址时按族分流, 否则走已连接路径
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
 pub fn sendto_syscall(
@@ -415,7 +415,7 @@ pub fn sendto_syscall(
     }
 }
 
-/// recvfrom / recv
+/// recvfrom / recv — 接收数据到用户缓冲区 (简化: 不写对端地址)
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
 pub fn recvfrom_syscall(
@@ -454,7 +454,7 @@ pub fn recvfrom_syscall(
     i64::from(n)
 }
 
-/// setsockopt
+/// setsockopt — 设置 socket 选项 (从用户空间读入 u32 选项值)
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
 pub fn setsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, _valen: u32) -> i64 {
@@ -476,7 +476,7 @@ pub fn setsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, _vale
     if rc == 0 { 0 } else { Errno::ENOSYS.as_ret() }
 }
 
-/// getsockopt
+/// getsockopt — 获取 socket 选项 (写回 u32 选项值到用户空间)
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
 #[expect(

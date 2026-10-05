@@ -143,6 +143,7 @@ impl Thread {
     }
 }
 
+/// 线程表 — 以固定容量数组按 tid 索引存放线程句柄, 并自增分配 tid。
 pub struct ThreadTable {
     threads: Mutex<[Option<NonNull<Thread>>; MAX_THREADS]>,
     next_tid: AtomicU32,
@@ -206,6 +207,7 @@ impl ThreadTable {
 
 static THREAD_TABLE: ThreadTable = ThreadTable::new();
 
+/// 线程管理器 — 跟踪当前运行线程的句柄与线程总数。
 pub struct ThreadManager {
     current_thread: AtomicU64,
     thread_count: AtomicU32,
@@ -319,6 +321,7 @@ impl ThreadManager {
 
 pub static THREAD_MANAGER: ThreadManager = ThreadManager::new();
 
+/// 线程子系统初始化入口 — 初始化全局 [`THREAD_MANAGER`]。
 pub fn init() {
     THREAD_MANAGER.init();
 }

@@ -100,6 +100,7 @@ fn fill_random_bytes(buf: &mut [u8]) {
     }
 }
 
+/// 生成 `PWM_SALT_LEN` 字节的随机盐; 优先硬件 RNG, 不可用时回退到 TSC/计数器派生的熵源。
 pub fn generate_salt() -> [u8; PWM_SALT_LEN] {
     let mut salt = [0u8; PWM_SALT_LEN];
     fill_random_bytes(&mut salt);

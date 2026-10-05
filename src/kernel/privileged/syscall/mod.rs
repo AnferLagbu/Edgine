@@ -50,6 +50,7 @@ pub fn validate_user_ptr(ptr: u64) -> bool {
     crate::privileged::userptr::validate_user_ptr(ptr)
 }
 
+/// 校验用户态缓冲区 (基址 + 长度) 是否完整落在用户可访问地址范围内.
 pub fn validate_user_buf(ptr: u64, len: u64) -> bool {
     crate::privileged::userptr::validate_user_buf(ptr, len)
 }

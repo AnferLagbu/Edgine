@@ -4,6 +4,7 @@ use super::types::{MAX_UNDO_ENTRIES, UndoEntry};
     clippy::unreadable_literal,
     reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
 )]
+/// 计算 FNV-1a 32 位哈希, 用于撤销记录校验和。
 pub fn fnv1a_32(data: &[u8]) -> u32 {
     let mut h: u32 = 2166136261;
     for &b in data {
@@ -13,6 +14,7 @@ pub fn fnv1a_32(data: &[u8]) -> u32 {
     h
 }
 
+/// 恢复域的撤销日志: 定长条目数组 + 有效计数 + 当前代数。
 pub struct UndoLog {
     pub entries: [UndoEntry; MAX_UNDO_ENTRIES],
     pub count: usize,

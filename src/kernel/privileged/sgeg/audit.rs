@@ -3,6 +3,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 const AUDIT_CAPACITY: usize = 256;
 
+/// 环形审计日志: 固定容量条目数组与写入计数。
 pub struct AuditLog {
     entries: [AuditEntry; AUDIT_CAPACITY],
     count: AtomicUsize,
@@ -91,10 +92,12 @@ impl AuditLog {
 pub(crate) static GLOBAL_AUDIT: crate::privileged::sync::IrqSpinLock<AuditLog> =
     crate::privileged::sync::IrqSpinLock::new(AuditLog::new());
 
+/// 向全局审计日志追加一条审计项 (IrqSpinLock 保护)。
 pub fn log(pwm: u64, action: AuditAction, target_pwm: u64, domain: u64, caps: u64) {
     raw::log(pwm, action, target_pwm, domain, caps);
 }
 
+/// 将全局审计日志中的全部有效条目打印到串口。
 pub fn dump() {
     raw::dump();
 }

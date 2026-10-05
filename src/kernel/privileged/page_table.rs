@@ -36,6 +36,7 @@ pub fn check_user_boundary(vaddr: VirtAddr, flags: PageFlags) {
     }
 }
 
+/// 检查虚拟地址是否在用户地址空间内 (aarch64 变体, 内核高半区地址不得设 `PAGE_USER`)
 #[cfg(target_arch = "aarch64")]
 #[expect(
     clippy::uninlined_format_args,
@@ -111,6 +112,7 @@ pub fn dump_page_table_stats(pml4: u64) {
     let _ = (pml4, mapped);
 }
 
+/// 页表统计摘要转储 (aarch64 变体, 当前为空实现)
 #[cfg(target_arch = "aarch64")]
 pub fn dump_page_table_stats(pml4: u64) {
     let _ = pml4;

@@ -107,6 +107,7 @@ mod tests {
     // register_timer_irq_tests 的 "register_interface" 用例 (QEMU 裸机).
 }
 
+/// 注册定时器 IRQ 测试用例 (kernel_test, 仅 x86_64)
 #[cfg(all(feature = "kernel_test", target_arch = "x86_64"))]
 pub fn register_timer_irq_tests() {
     use crate::privileged::tests::{TestFn, TestResult, runner};

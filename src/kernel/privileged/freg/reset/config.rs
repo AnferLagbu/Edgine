@@ -18,6 +18,7 @@ pub const RESET_ESCALATE: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
+/// FREG 恢复层级 (Layer1=BBR, Layer2=BSR, Layer3=BHR)。
 pub enum RecoveryLayer {
     Layer1 = 1,
     Layer2 = 2,
@@ -41,6 +42,7 @@ impl RecoveryLayer {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
+/// 单层恢复的执行结果 (成功/失败/需升级到下一层)。
 pub enum RecoveryResult {
     Success = RESET_SUCCESS,
     Failed = RESET_FAILED,
@@ -67,12 +69,14 @@ impl RecoveryResult {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
+/// 回滚模式: 串行或并行执行多域回滚。
 pub enum RollbackMode {
     Serial = 0,
     Parallel = 1,
 }
 
 #[derive(Debug)]
+/// 恢复配置: 各层开关、失败阈值、设备超时与并行回滚参数。
 pub struct RecoveryConfig {
     pub enable_layer1: bool,
     pub enable_layer2: bool,
@@ -115,30 +119,37 @@ pub static BHR_ATTEMPT_COUNT: AtomicU32 = AtomicU32::new(0);
 pub static LAST_RESET_TICK: AtomicU64 = AtomicU64::new(0);
 pub static PARALLEL_ROLLBACK_ACTIVE: AtomicBool = AtomicBool::new(false);
 
+/// 返回当前是否已有恢复流程正在进行。
 pub fn is_reset_in_progress() -> bool {
     RESET_IN_PROGRESS.load(Ordering::SeqCst)
 }
 
+/// 设置恢复进行中标志。
 pub fn set_reset_in_progress(v: bool) {
     RESET_IN_PROGRESS.store(v, Ordering::SeqCst);
 }
 
+/// 返回当前正在执行的恢复层级 (未进行时为 Layer1)。
 pub fn get_current_layer() -> RecoveryLayer {
     RecoveryLayer::from_u32(CURRENT_LAYER.load(Ordering::SeqCst))
 }
 
+/// 设置当前正在执行的恢复层级。
 pub fn set_current_layer(layer: RecoveryLayer) {
     CURRENT_LAYER.store(layer as u32, Ordering::SeqCst);
 }
 
+/// 递增 BBR (Layer1) 尝试计数, 返回递增前的旧值。
 pub fn increment_bbr_count() -> u32 {
     BBR_ATTEMPT_COUNT.fetch_add(1, Ordering::SeqCst)
 }
 
+/// 递增 BSR (Layer2) 尝试计数, 返回递增前的旧值。
 pub fn increment_bsr_count() -> u32 {
     BSR_ATTEMPT_COUNT.fetch_add(1, Ordering::SeqCst)
 }
 
+/// 递增 BHR (Layer3) 尝试计数, 返回递增前的旧值。
 pub fn increment_bhr_count() -> u32 {
     BHR_ATTEMPT_COUNT.fetch_add(1, Ordering::SeqCst)
 }
@@ -147,6 +158,7 @@ pub fn increment_bhr_count() -> u32 {
     clippy::similar_names,
     reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
 )]
+/// 返回 (BSR 尝试次数, BHR 尝试次数, 上次重置 tick 低 32 位) 统计元组。
 pub fn get_stats() -> (u32, u32, u32) {
     let bsr_count = BSR_ATTEMPT_COUNT.load(Ordering::SeqCst);
     let bhr_count = BHR_ATTEMPT_COUNT.load(Ordering::SeqCst);
@@ -154,6 +166,7 @@ pub fn get_stats() -> (u32, u32, u32) {
     (bsr_count, bhr_count, last_tick)
 }
 
+/// 清空全部恢复统计与状态标志。
 pub fn reset_stats() {
     BSR_ATTEMPT_COUNT.store(0, Ordering::SeqCst);
     BHR_ATTEMPT_COUNT.store(0, Ordering::SeqCst);

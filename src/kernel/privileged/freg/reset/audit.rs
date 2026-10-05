@@ -6,12 +6,14 @@ use super::config::RecoveryResult;
 use crate::privileged::sync::IrqSpinLock;
 pub const MAX_AUDIT_ENTRIES: usize = 16;
 
+/// 循环复用的恢复审计日志 (定长环形条目数组 + 有效计数)。
 #[derive(Debug)]
 pub struct ResetAuditLog {
     pub entries: [ResetAuditEntry; MAX_AUDIT_ENTRIES],
     pub count: usize,
 }
 
+/// 单条恢复审计记录: 时间刻度/层级/结果/原因码/域标识/回滚条目数。
 #[derive(Debug, Clone, Copy)]
 pub struct ResetAuditEntry {
     pub tick: u64,
@@ -108,6 +110,7 @@ impl ResetAuditLog {
 
 pub static RESET_AUDIT_LOG: IrqSpinLock<ResetAuditLog> = IrqSpinLock::new(ResetAuditLog::new());
 
+/// 记录一条不含域信息的恢复审计 (审计关闭时直接返回)。
 pub fn audit_record(layer: RecoveryLayer, result: RecoveryResult, reason: u32) {
     use super::config::RECOVERY_CONFIG;
 
@@ -119,6 +122,7 @@ pub fn audit_record(layer: RecoveryLayer, result: RecoveryResult, reason: u32) {
     log.record_simple(tick, layer, result, reason);
 }
 
+/// 记录一条含域标识与回滚条目数的恢复审计 (审计关闭时直接返回)。
 pub fn audit_record_domain(
     layer: RecoveryLayer,
     result: RecoveryResult,
@@ -136,11 +140,13 @@ pub fn audit_record_domain(
     log.record(tick, layer, result, reason, domain_id, entries_rolled);
 }
 
+/// 读取最近一条恢复审计记录的副本, 无记录时返回 None。
 pub fn audit_get_last() -> Option<ResetAuditEntry> {
     let log = RESET_AUDIT_LOG.lock();
     log.last().copied()
 }
 
+/// 清空恢复审计日志 (重置有效计数)。
 pub fn audit_clear() {
     let mut log = RESET_AUDIT_LOG.lock();
     log.clear();

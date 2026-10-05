@@ -19,6 +19,7 @@ use super::{TOTAL_SLOTS, UDP_META_COUNT};
 // 初始化状态管理
 // ============================================================================
 
+/// 网络初始化状态机 — 记录从硬件探测到就绪或失败的推进阶段
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InitState {
@@ -121,6 +122,9 @@ pub static NET_STATE: Mutex<NetState> = Mutex::new(NetState::empty());
 // 辅助函数
 // ============================================================================
 
+/// 状态机推进 — 以 CAS 将当前状态从 `from` 迁移到 `to`
+///
+/// 返回 `Err(())` 表示迁移被拒绝 (CAS 竞争失败、非法回退或已处于 `Failed` 终态)。
 #[expect(
     clippy::missing_errors_doc,
     reason = "missing_errors_doc: transition_state 返回 Result<(), ()>; Err 仅表示状态转换被拒绝 (compare_exchange 竞争或非法迁移), 非结构化错误, 语义由调用方按 InitState 自行判定, 当前优先 expect 兑底"
@@ -140,6 +144,7 @@ pub fn transition_state(from: InitState, to: InitState) -> Result<(), ()> {
     }
 }
 
+/// 将状态机置为 `Failed` 终态 (后续不再重试)
 pub fn set_failed() {
     G_INIT_STATE.store(InitState::Failed as u8, Ordering::Release);
 }

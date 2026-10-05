@@ -414,6 +414,7 @@ impl MetaStore for RawMetaStore {
 use core::cell::RefCell;
 
 #[cfg(any(test, feature = "host-test"))]
+/// host 测试用 MetaStore: 以堆 `Vec<u8>` 模拟 bitmap / buddy 元数据 / 空闲链等载体.
 pub struct VecMetaStore {
     /// bitmap 载体 (字节数组模拟 u32 word, 小端)
     bitmap: RefCell<Option<Vec<u8>>>,
@@ -2065,6 +2066,7 @@ impl PhysicalMemoryManager {
 
 static GLOBAL_PMM: OnceLock<PhysicalMemoryManager> = OnceLock::new();
 
+/// 初始化全局 PMM 单例 (幂等: 已初始化则复用既有实例).
 pub fn pmm_init(mem_size: u64, kernel_end: u64) -> &'static PhysicalMemoryManager {
     GLOBAL_PMM.get_or_init(|slot| {
         let pmm = PhysicalMemoryManager::new();
@@ -2083,6 +2085,7 @@ pub fn pmm_init_bitmap(reserved_after_kernel: u64) {
     pmm.init_bitmap(reserved_after_kernel);
 }
 
+/// 获取全局 PMM 单例 (未初始化则 panic).
 pub fn get_pmm() -> &'static PhysicalMemoryManager {
     GLOBAL_PMM.get_or_panic("PMM")
 }
@@ -2099,6 +2102,7 @@ struct PmmSnapshot {
 
 static PMM_SNAPSHOT: IrqSpinLock<Option<PmmSnapshot>> = IrqSpinLock::new(None);
 
+/// 捕获 PMM 统计快照 (供 FREG 故障恢复回滚).
 pub fn pmm_freg_capture() {
     let pmm = get_pmm();
     let mut snap = PMM_SNAPSHOT.lock();
@@ -2110,6 +2114,7 @@ pub fn pmm_freg_capture() {
     });
 }
 
+/// 将 PMM 统计回滚到最近一次 `pmm_freg_capture` 捕获的快照.
 pub fn pmm_freg_rollback() -> bool {
     let pmm = get_pmm();
     let snap = PMM_SNAPSHOT.lock();
@@ -2129,6 +2134,7 @@ fn pmm_freg_rollback_cb() -> bool {
     pmm_freg_rollback()
 }
 
+/// 将 PMM 注册为 FREG 恢复域 (域号 3), 并绑定捕获 / 回滚回调.
 pub fn pmm_register_freg_domain() {
     crate::privileged::freg::recovery_domain_register(3);
     if let Some(dom) = crate::privileged::freg::RECOVERY_MANAGER.lock().find(3) {

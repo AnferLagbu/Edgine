@@ -31,6 +31,7 @@ pub const MAX_HOOKS_PER_POINT: usize = 8;
 // 钩子点
 // ============================================================================
 
+/// netfilter 钩子点 — 报文流经协议栈时触发回调的五个位置
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum NfHook {
@@ -60,6 +61,7 @@ impl NfHook {
 // 判定结果
 // ============================================================================
 
+/// netfilter 判定结果 — 钩子回调/规则对报文的处置动作
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum NfVerdict {
@@ -85,6 +87,7 @@ impl NfVerdict {
 // 包信息
 // ============================================================================
 
+/// 报文元信息 — 供 netfilter 规则匹配使用的五元组与接口索引
 #[derive(Debug, Clone)]
 pub struct NfPacketInfo {
     pub src_ip: [u8; 4],
@@ -100,6 +103,7 @@ pub struct NfPacketInfo {
 // 过滤规则
 // ============================================================================
 
+/// netfilter 过滤规则 — 按 CIDR/端口/协议匹配报文, 并给出判定与优先级
 #[derive(Debug, Clone)]
 pub struct NfRule {
     pub name: String,
@@ -161,6 +165,7 @@ fn cidr_match(net: [u8; 4], prefix_len: u8, addr: [u8; 4]) -> bool {
 // 钩子回调
 // ============================================================================
 
+/// netfilter 钩子回调函数指针 — 接收钩子点与报文信息, 返回判定结果
 pub type NfHookFn = fn(NfHook, &NfPacketInfo) -> NfVerdict;
 
 struct NfHookEntry {
@@ -301,6 +306,10 @@ pub fn nf_unregister_hook(hook: NfHook, callback: NfHookFn) -> Result<(), i32> {
     }
 }
 
+/// 在指定 hook 点判定报文 — 依次执行钩子回调与规则匹配
+///
+/// 钩子按 priority 升序执行, 任一回调返回非 `Accept` 即短路返回该判定;
+/// 全部回调通过后再按 priority 升序匹配规则, 命中即返回其判定; 无命中返回 `Accept`。
 pub fn nf_hook(hook: NfHook, pkt: &NfPacketInfo) -> NfVerdict {
     let idx = hook as usize;
 
@@ -325,11 +334,13 @@ pub fn nf_hook(hook: NfHook, pkt: &NfPacketInfo) -> NfVerdict {
     NfVerdict::Accept
 }
 
+/// 查询指定 hook 点累计的报文判定调用次数
 pub fn nf_hook_count(hook: NfHook) -> usize {
     let state = NF_STATE.lock();
     state.hook_counts[hook as usize].load(Ordering::Relaxed)
 }
 
+/// 返回指定 hook 点当前的规则列表 (副本)
 pub fn nf_list_rules(hook: NfHook) -> Vec<NfRule> {
     let state = NF_STATE.lock();
     state.chains[hook as usize].rules.clone()
@@ -375,14 +386,17 @@ pub fn unregister_hook(hook: NfHook, callback: NfHookFn) -> Result<(), i32> {
     nf_unregister_hook(hook, callback)
 }
 
+/// 兼容旧调用方的 `hook` 封装, 委托给 [`nf_hook`]
 pub fn hook(hook: NfHook, pkt: &NfPacketInfo) -> NfVerdict {
     nf_hook(hook, pkt)
 }
 
+/// 兼容旧调用方的 `hook_count` 封装, 委托给 [`nf_hook_count`]
 pub fn hook_count(hook: NfHook) -> usize {
     nf_hook_count(hook)
 }
 
+/// 兼容旧调用方的 `list_rules` 封装, 委托给 [`nf_list_rules`]
 pub fn list_rules(hook: NfHook) -> Vec<NfRule> {
     nf_list_rules(hook)
 }
@@ -395,6 +409,9 @@ pub fn list_rules(hook: NfHook) -> Vec<NfRule> {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// `sys_nf_add_rule` — 从 u64 syscall 参数构造并添加一条 IPv4 netfilter 规则
+///
+/// 当 hook 或 verdict 非法时返回 `-EINVAL`; 成功返回 0, 规则数量达上限时返回对应内核错误码。
 pub fn sys_nf_add_rule(
     hook: u64,
     src_ip: u64,
@@ -442,6 +459,9 @@ pub fn sys_nf_add_rule(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// `sys_nf_del_rule` — 按 hook 与规则序号删除 IPv4 netfilter 规则
+///
+/// 当 hook 非法时返回 `-EINVAL`; 成功返回 0, 规则不存在时返回 `-ENOENT`。
 pub fn sys_nf_del_rule(hook: u64, rule_index: u64) -> i64 {
     let hook = match NfHook::from_u8(hook as u8) {
         Some(h) => h,

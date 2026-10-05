@@ -93,14 +93,19 @@ pub mod firmware;
 /// - driver 是具体驱动实现, 实现 egdf 定义的 trait
 /// - 消除 egdf→driver 循环依赖
 pub trait BlockDevice: Send + Sync {
+    /// 从指定扇区读取数据到缓冲区; 返回 0 成功, 负 errno 失败.
     fn blk_read(&mut self, sector: u64, buf: &mut [u8]) -> i32;
+    /// 将缓冲区数据写入指定扇区; 返回 0 成功, 负 errno 失败.
     fn blk_write(&mut self, sector: u64, buf: &[u8]) -> i32;
+    /// 返回块设备当前是否存在 (就绪可访问).
     fn blk_is_present(&self) -> bool;
+    /// 返回块设备的总扇区数.
     fn blk_total_sectors(&self) -> u64;
 }
 
 // ── 协议类型 ──
 
+/// 设备协议分类 (块/字符/网络/输入/总线/其他).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EGDFProto {
     Block,
@@ -143,6 +148,7 @@ impl From<super::driver::DeviceType> for EGDFProto {
 
 // ── 设备状态 ──
 
+/// 设备生命周期状态.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceState {
     Uninit,
@@ -280,6 +286,7 @@ pub static EGDF_DEVICES: Mutex<Vec<EGDFDevice>> = Mutex::new(Vec::new());
 
 // ── 注册函数 ──
 
+/// 注册一个由调用方自持裸驱动指针的设备 (不含 I/O 操作表), 返回新设备 id.
 pub fn egdf_register(
     name: &'static str,
     proto: EGDFProto,
@@ -387,18 +394,22 @@ pub fn egdf_register_block_dev(
 
 // ── 查找函数 ──
 
+/// 按设备 id 查找其在 `EGDF_DEVICES` 中的下标.
 pub fn egdf_find_by_id(id: u32) -> Option<usize> {
     EGDF_DEVICES.lock().iter().position(|d| d.id == id)
 }
 
+/// 按设备名查找其在 `EGDF_DEVICES` 中的下标.
 pub fn egdf_find_by_name(name: &str) -> Option<usize> {
     EGDF_DEVICES.lock().iter().position(|d| d.name == name)
 }
 
+/// 按协议类型查找首个匹配设备在 `EGDF_DEVICES` 中的下标.
 pub fn egdf_find_by_proto(proto: EGDFProto) -> Option<usize> {
     EGDF_DEVICES.lock().iter().position(|d| d.proto == proto)
 }
 
+/// 列出所有设备的 (id, 名称, 协议, 状态) 摘要.
 pub fn egdf_list() -> Vec<(u32, &'static str, EGDFProto, DeviceState)> {
     EGDF_DEVICES
         .lock()
@@ -407,10 +418,12 @@ pub fn egdf_list() -> Vec<(u32, &'static str, EGDFProto, DeviceState)> {
         .collect()
 }
 
+/// 返回已注册设备总数.
 pub fn egdf_count() -> usize {
     EGDF_DEVICES.lock().len()
 }
 
+/// 返回指定协议类型的设备数量.
 pub fn egdf_count_by_proto(proto: EGDFProto) -> usize {
     EGDF_DEVICES
         .lock()
@@ -452,6 +465,7 @@ pub fn egdf_find_net_device() -> Option<(
     None
 }
 
+/// 以可变引用访问指定 id 的设备并对其执行闭包 (设备不存在时不执行).
 pub fn egdf_with_device<F>(id: u32, f: F)
 where
     F: FnOnce(&mut EGDFDevice),
@@ -462,6 +476,7 @@ where
     }
 }
 
+/// 以可变引用访问指定 id 的设备并返回闭包结果 (设备不存在时返回 `None`).
 pub fn egdf_with_device_map<T, F>(id: u32, f: F) -> Option<T>
 where
     F: FnOnce(&mut EGDFDevice) -> T,
@@ -470,6 +485,7 @@ where
     devices.iter_mut().find(|d| d.id == id).map(f)
 }
 
+/// 从注册表移除指定 id 的设备, 返回其 `driver_data` 裸指针 (不存在时返回 `None`).
 pub fn egdf_unregister(id: u32) -> Option<*mut u8> {
     let mut devices = EGDF_DEVICES.lock();
     let pos = devices.iter().position(|d| d.id == id)?;
@@ -502,6 +518,7 @@ pub fn egdf_unregister_block(drive: u8) -> bool {
     true
 }
 
+/// 设置指定 id 设备的生命周期状态.
 pub fn egdf_set_state(id: u32, state: DeviceState) {
     let mut devices = EGDF_DEVICES.lock();
     if let Some(dev) = devices.iter_mut().find(|d| d.id == id) {
@@ -834,6 +851,7 @@ pub fn egdf_input_has_data() -> bool {
     clippy::ptr_as_ptr,
     reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
 )]
+/// 将 `Box` 转换为裸指针 (`Box::into_raw`) 并擦除类型, 所有权移交调用方.
 pub fn box_to_raw<T: ?Sized>(b: Box<T>) -> *mut u8 {
     Box::into_raw(b) as *mut u8
 }
@@ -857,6 +875,7 @@ impl Drop for DriverObject {
     clippy::ptr_as_ptr,
     reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
 )]
+/// 注册由 EGDF 持有所有权的 `Driver` 设备 (自动调用其 `init`), 返回设备 id.
 pub fn egdf_register_driver(
     name: &'static str,
     proto: EGDFProto,
@@ -942,6 +961,7 @@ fn driver_from_obj<'a>(ptr: *mut u8) -> &'a mut dyn Driver {
     unsafe { &mut *obj.ptr }
 }
 
+/// 初始化所有未初始化且由 EGDF 自持的驱动设备, 并注册进程退出清理回调.
 pub fn egdf_init_all() {
     // 注册进程退出清理回调, 解耦 proc→egdf 依赖
     // SAFETY: egdf_process_cleanup 是 'static 函数指针, 在内核运行期间始终有效.
@@ -969,6 +989,7 @@ pub fn egdf_init_all() {
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
+/// 关闭所有就绪且由 EGDF 自持的驱动设备 (调用 `shutdown` 并释放驱动对象).
 pub fn egdf_shutdown_all() {
     let mut devices = EGDF_DEVICES.lock();
     for dev in devices.iter_mut() {

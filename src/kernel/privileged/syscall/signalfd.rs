@@ -468,6 +468,7 @@ fn test_signalfd_sigkill_filtered() -> crate::privileged::tests::TestResult {
     TestResult::Pass
 }
 
+/// 注册 signalfd 子系统的内核测试用例.
 #[cfg(feature = "kernel_test")]
 pub fn register_signalfd_tests() {
     use crate::privileged::tests::runner;

@@ -19,14 +19,17 @@ use super::state::{G_DNS, G_GATEWAY, G_INIT_STATE, G_IPV4, G_MAC, InitState, NET
 // 网络状态查询
 // ============================================================================
 
+/// 查询网络是否已完成硬件探测与接口初始化 (`NET_READY`)
 pub fn is_network_initialized() -> bool {
     NET_READY.load(Ordering::Acquire)
 }
 
+/// 查询网络是否已获得配置 (IP/网关等已就绪, `NET_CONFIGURED`)
 pub fn is_network_configured() -> bool {
     NET_CONFIGURED.load(Ordering::Acquire)
 }
 
+/// 读取当前网络初始化状态机的枚举值
 pub fn get_init_state() -> InitState {
     match G_INIT_STATE.load(Ordering::Acquire) {
         0 => InitState::Uninitialized,

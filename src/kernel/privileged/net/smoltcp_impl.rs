@@ -45,6 +45,7 @@ fn smoltcp_now() -> Instant {
 // EGDFNetDevice — 通过 EGDF NetOps 驱动任意网卡
 // ============================================================================
 
+/// smoltcp `Device` 实现 — 通过 EGDF `NetOps` 驱动任意网卡 (E1000/Virtio-Net)
 pub struct EGDFNetDevice {
     ops: &'static NetOps,
     driver_data: *mut core::ffi::c_void,
@@ -54,10 +55,12 @@ pub struct EGDFNetDevice {
     tx_buf: [u8; TX_BUF_SIZE],
 }
 
+/// smoltcp 接收令牌 — 持有从网卡收到的报文字节切片
 pub struct EGDFRxToken<'a> {
     buf: &'a [u8],
 }
 
+/// smoltcp 发送令牌 — 持有发送缓冲区并回写至网卡
 pub struct EGDFTxToken<'a> {
     tx_buf: &'a mut [u8],
     ops: &'static NetOps,
@@ -157,6 +160,7 @@ impl TxToken for EGDFTxToken<'_> {
 // smoltcp 网络栈管理
 // ============================================================================
 
+/// smoltcp 网络栈句柄 — 封装 Interface 与 MAC/初始化标志
 pub struct NetworkStack {
     pub iface: Interface,
     pub mac: [u8; 6],
@@ -173,6 +177,7 @@ impl NetworkStack {
 // 公共 API：统一的初始化与轮询
 // ============================================================================
 
+/// 初始化 smoltcp 网络栈 — 以给定 MAC 构造 Interface 并返回 [`NetworkStack`]
 pub fn init_stack(device: &mut EGDFNetDevice, mac: [u8; 6]) -> NetworkStack {
     let config = Config::new(HardwareAddress::Ethernet(EthernetAddress::from_bytes(&mac)));
     let iface = Interface::new(config, device, smoltcp_now());
@@ -183,6 +188,7 @@ pub fn init_stack(device: &mut EGDFNetDevice, mac: [u8; 6]) -> NetworkStack {
     }
 }
 
+/// 轮询 smoltcp 网络栈 — 推进协议状态机并处理收发
 pub fn poll_stack(nic: &mut EGDFNetDevice, stack: &mut NetworkStack, sockets: &mut SocketSet<'_>) {
     stack.poll(nic, sockets);
 }

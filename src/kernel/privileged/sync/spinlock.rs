@@ -323,6 +323,7 @@ pub fn disable_interrupts() -> IrqSaveFlags {
 // 且执行 cli 特权指令在用户态会 SIGSEGV. IrqSpinLock/SpinLock 的原子自旋
 // 在 host 多线程下仍正确互斥. 裸机 (非 host-test) 行为不变.
 #[cfg(feature = "host-test")]
+/// 禁用中断并返回原中断状态 (host-test 下为 no-op).
 pub fn disable_interrupts() -> IrqSaveFlags {
     IrqSaveFlags(0)
 }
@@ -347,6 +348,7 @@ pub fn restore_interrupts(flags: &IrqSaveFlags) {
     clippy::trivially_copy_pass_by_ref,
     reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (与裸机变体签名一致); 当前优先 expect"
 )]
+/// 恢复先前保存的中断状态 (host-test 下为 no-op).
 pub fn restore_interrupts(_flags: &IrqSaveFlags) {}
 
 // ============================================================================

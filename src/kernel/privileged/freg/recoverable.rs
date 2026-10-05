@@ -9,27 +9,35 @@ pub trait Snapshot: Copy + Sized {
         clippy::return_self_not_must_use,
         reason = "return_self_not_must_use: 返回 Self 是 builder/fluent API; 当前优先 expect"
     )]
+    /// 返回该值的快照副本 (默认返回自身拷贝)。
     fn snapshot(&self) -> Self {
         *self
     }
+    /// 用给定快照覆盖当前值。
     fn restore(&mut self, snapshot: &Self) {
         *self = *snapshot;
     }
 }
 
+/// 可恢复对象接口: 提供域标识、快照捕获与回滚/重置。
 pub trait Recoverable {
+    /// 返回所属恢复域 ID (默认 0 表示不属于任何域)。
     fn domain_id(&self) -> u64 {
         0
     }
+    /// 将当前状态记入撤销日志 (默认空实现)。
     fn capture_freg(&self, _undo: &mut UndoLog) {}
+    /// 回滚到快照状态, 成功返回 true (默认成功)。
     fn rollback(&self) -> bool {
         true
     }
+    /// 重置对象状态, 成功返回 true (默认成功)。
     fn reset(&self) -> bool {
         true
     }
 }
 
+/// 带 FREG 撤销日志的互斥锁: 加锁时自动记录字段快照。
 pub struct RecoverableMutex<T: Snapshot + 'static> {
     inner: IrqSpinLock<T>,
     domain_id: u64,

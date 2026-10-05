@@ -81,7 +81,7 @@ pub const UFFDIO_RANGE_SIZE: usize = 16;
 // ABI 结构体
 // ============================================================================
 
-/// `struct uffdio_api`
+/// `UFFDIO_API` 命令参数: 协商 API 版本与可用特性.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UffdIoApi {
@@ -90,7 +90,7 @@ pub struct UffdIoApi {
     pub ioctls: u64,
 }
 
-/// `struct uffdio_range`
+/// userfaultfd 地址区间 (起始地址 + 长度).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UffdIoRange {
@@ -98,7 +98,7 @@ pub struct UffdIoRange {
     pub len: u64,
 }
 
-/// `struct uffdio_register`
+/// `UFFDIO_REGISTER` 命令参数: 注册区间及缺页模式.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UffdIoRegister {
@@ -107,7 +107,7 @@ pub struct UffdIoRegister {
     pub ioctls: u64,
 }
 
-/// `struct uffdio_copy`
+/// `UFFDIO_COPY` 命令参数: 把用户数据拷贝进缺页区间.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UffdIoCopy {
@@ -119,7 +119,7 @@ pub struct UffdIoCopy {
     pub copy: i64,
 }
 
-/// `struct uffdio_zeropage`
+/// `UFFDIO_ZEROPAGE` 命令参数: 把缺页区间填零.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UffdIoZeropage {

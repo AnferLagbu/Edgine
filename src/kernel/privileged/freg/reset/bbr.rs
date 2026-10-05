@@ -17,6 +17,7 @@ use crate::privileged::freg::RECOVERY_MANAGER;
     clippy::ref_as_ptr,
     reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
 )]
+/// 依据 panic 位置在恢复域的地址区间中反查所属域, 未命中返回 None。
 pub fn locate_domain_from_panic(panic_location: &core::panic::PanicInfo<'_>) -> Option<u64> {
     let manager = RECOVERY_MANAGER.lock();
 
@@ -46,6 +47,7 @@ pub fn locate_domain_from_panic(panic_location: &core::panic::PanicInfo<'_>) -> 
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 尝试回滚单个恢复域; 域不存在或回滚失败时返回 Escalate 触发升级。
 pub fn try_rollback_single(domain_id: u64, tick: u64, fingerprint: u64) -> RecoveryResult {
     let manager = RECOVERY_MANAGER.lock();
 
@@ -67,11 +69,13 @@ pub fn try_rollback_single(domain_id: u64, tick: u64, fingerprint: u64) -> Recov
     }
 }
 
+/// 级联回滚指定域及其依赖域, 返回实际回滚的域数量。
 pub fn cascade_rollback(domain_id: u64, tick: u64, fingerprint: u64) -> usize {
     let manager = RECOVERY_MANAGER.lock();
     manager.cascade_rollback(domain_id, tick, fingerprint)
 }
 
+/// 执行 Layer1 栏基恢复: 定位 panic 域并级联回滚, 失败则升级。
 pub fn execute(panic_info: &core::panic::PanicInfo<'_>) -> RecoveryResult {
     config::set_current_layer(RecoveryLayer::Layer1);
     config::increment_bbr_count();
@@ -108,6 +112,7 @@ pub fn execute(panic_info: &core::panic::PanicInfo<'_>) -> RecoveryResult {
     clippy::unreadable_literal,
     reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
 )]
+/// 由 panic 位置与消息计算 u64 指纹, 供回滚一致性校验使用。
 pub fn compute_fingerprint(panic_info: &core::panic::PanicInfo<'_>) -> u64 {
     let mut hash = 0u64;
 
@@ -127,6 +132,7 @@ pub fn compute_fingerprint(panic_info: &core::panic::PanicInfo<'_>) -> u64 {
     hash
 }
 
+/// 将恢复域标记为已恢复: 置为 Active 并清零连续失败计数。
 pub fn mark_recovered(domain_id: u64) {
     let manager = RECOVERY_MANAGER.lock();
     if let Some(domain) = manager.find(domain_id) {
@@ -135,6 +141,7 @@ pub fn mark_recovered(domain_id: u64) {
     }
 }
 
+/// 判断指定域是否仍可尝试恢复 (连续失败次数未达 Layer1 阈值)。
 pub fn should_attempt_recovery(domain_id: u64) -> bool {
     let manager = RECOVERY_MANAGER.lock();
     manager.find(domain_id).map_or(false, |domain| {

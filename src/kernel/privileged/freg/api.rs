@@ -199,6 +199,7 @@ pub extern "C" fn recovery_was_attempted() -> i32 {
     i32::from(RECOVERY_ATTEMPTED.load(Ordering::SeqCst))
 }
 
+/// 设置指定恢复域的捕获/回滚回调; 成功返回 0, 域不存在返回 -1。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 // 注意: 保持 Rust ABI — 参数含 `Option<unsafe fn()>` 等非 FFI-safe 类型
 #[unsafe(no_mangle)]

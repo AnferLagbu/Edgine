@@ -34,6 +34,7 @@ pub fn add_record(record: GrantRecord) -> Result<(), PwmError> {
         })
 }
 
+/// 判断授权记录表中是否存在一条覆盖所需能力的「授权方→被授权方」记录。
 pub fn is_grantor(grantor_pwm: u64, grantee_pwm: u64, domain: CapDomain, caps: CapBits) -> bool {
     let guard = grant_records().lock();
     guard.iter().any(|r| {
@@ -44,6 +45,7 @@ pub fn is_grantor(grantor_pwm: u64, grantee_pwm: u64, domain: CapDomain, caps: C
     })
 }
 
+/// 从授权记录表中移除撤销方对被撤销方在指定域上指定的能力, 能力清零后回收记录槽位。
 pub fn clear_records(revoker_pwm: u64, target_pwm: u64, domain: CapDomain, caps: CapBits) {
     let mut guard = grant_records().lock();
     for record in guard.iter_mut() {

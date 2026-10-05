@@ -437,12 +437,18 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - 来源：委托人报告（§12.5 报告），按"登记待处置"处理，与方案 D 同类，**不阻塞批次 Z 开工**。
   - 项目与处置：
     1. **audit_unwired_pub_fn（CRITICAL=157）**：非违规，属治理进度跟踪（公共 API 未被接线引用）。已有分册 9 B09-05/B09-17 计划覆盖，作为进度工具不豁免、不本工程处理。
-    2. **audit_public_api_docs（缺中文文档 2204 处）**：量大 + 低风险（F8 文档性软规范）。**待用户裁决**：A 豁免软规范（推荐）/ B 单独立项补全 / C 保持硬门槛。
+    2. **audit_public_api_docs（缺中文文档 2204 处 → 修正口径后 568 处）**：量大 + 低风险（F8 文档性软规范）。**用户裁决（方案 B）**：单独立项补全。
+       - **脚本先修（用户追加裁决「先修脚本再补全」）**：原 2204 计数含大量误报，`scripts/audit_public_api_docs.py` 已修正六类误报 —— ① 正则未限定 `pub` → 误纳私有/测试 `fn`；② 遇 `// SAFETY:` 等普通注释即断开 doc 扫描 → doc 被隔断误报；③ 未豁免 `#[cfg(test)]` / `#[cfg(feature = "kernel_test")]` 门控测试模块与 `privileged/tests/` 整目录；④ `#[cfg(...)] pub mod tests`（`mod` 前带 `pub`）漏豁免；⑤ 未对齐 clippy 语义 → 补豁免非对外可见项（`pub(crate)`/`pub(super)`/`pub(in ...)` 声明，及位于非 pub 嵌套模块内的项）；⑥ 多行属性块（`#[expect(\n ... \n)]`）的续行（如 `)]`）不以 `#[` 开头 → 遇之即断 doc 扫描，使 doc 被多行属性块隔断的项误报；修复后计数由 568 降至 **268 处 / 68 文件**。
+       - **修正后待补全实测**：初始 **568 处 / 126 文件**（按 kind：fn 413 / struct 108 / enum 38 / type 8 / trait 1）；重灾文件 `arch/mod.rs` 29、`egdf/mod.rs` 21、`sgeg/session.rs` 20、`arch/x86_64/apic.rs` 19、`pci/mod.rs` 16、`proc/cgroup.rs` 14、`freg/recovery.rs` 14 等。第 ⑥ 类修复后为 **268 处 / 68 文件**（fn 184 / struct 53 / enum 25 / type 6）。
+       - **语义口径**：保留 trait 方法（随 `pub trait` 对外暴露）与 impl 豁免（沿用 B01-11 既有约定）；口径与真实 F8 门禁（clippy `missing_docs_in_crate_items`）对齐，只补真正对外公共 API。
+       - **补全施工**：按模块分 9 批（A-I）并行补中文文档，仅新增 `///` 行（已有英文 doc 就地翻译保留 `# Safety` 等结构），不动逻辑/签名/属性。第 ④ 类修复前的 Wave1（A/B/C）因脚本多行属性块误报曾误插 4 处冗余 doc，已在修复后 revert。
+       - **D1 host 测试同步（用户裁决「同步测试到 4096」）**：D1 将 `strlen` 扫描上限由私有 `STRLEN_MAX=1024` 改为复用 `cstr::MAX_CSTR_LEN=4096`，`host-tests/tests/lib_string_strlen_safe_test.rs` 原镜像常量 1024 及边界用例失配（`test_strlen_over_max_truncated_to_max` 失败）。已改为直接导入 `cstr::MAX_CSTR_LEN`（消除镜像漂移），同步文档/边界用例/常量不变量测试（1024 → 4096，`test_strlen_max_is_4096`），`over_max` 用例 buffer 改 `MAX_CSTR_LEN + 100` 避免越界读。
+       - **状态**：**实施完成**。`python3 scripts/audit_public_api_docs.py` 0 违规（退出码 0）；改动仅 `///` doc 行（privileged 树非 doc 变更仅 D1 `string.rs` 既有常量统一，非本项）。§2.3 门槛复跑：双架构 `build all` 5/5 passed、clippy + rustfmt（kernel + host-tests + edgine 壳）全绿、`ci/audit.sh` 全绿（含 FP-06）、host-tests 全 passed、`make test-kernel-host` 949/0。本轮未改 boot，QEMU 不适用。
     3. **audit_implicit_deps（functions 直访 privileged 全局 122 处）**：与反向依赖同源（privileged 全局被 functions 直接引用），并入本工程 §7 trait 化改造覆盖，作为 §7 基线指标（批次 Z 开工前置 3 分钟对齐基线）。
     4. **audit_smoltcp_purity**：随 smoltcp 0.14 升级刚验证通过，无需处理。
     5. **audit_edition2024 / audit_feature_semantics**：数据待确认，归零或单列待定。
   - 状态：登记待处置；仅 implicit_deps 需批次 Z 开工前基线对齐（3 分钟），其余不阻塞。
-  - 关联：157 → 分册 9 B09-05/B09-17；122 → 本工程 §7；2204 → 待用户裁决（A/B/C）。
+  - 关联：157 → 分册 9 B09-05/B09-17；122 → 本工程 §7；2204→568→268 → 已裁决补全（**实施完成**）。
 - **构建模式显式化工程（登记，2026-09-13）：E0152 整族根治（对齐 Asterinas osdk 命令层注入）**
   - 背景：`src/rust/.cargo/config.toml [unstable] build-std` 全局生效，src/rust 目录内 host-target 构建触发 E0152（build-std 与 host std 双 alloc）；项目以"cwd 隐式约定"规避（裸机在 src/rust 内、host 从根），4+ 处登记（DECISION-021 同族）。
   - 参照：Asterinas osdk 命令层注入（`-Zbuild-std=core,alloc,compiler_builtins` + 显式裸机 target，无全局 config）——成熟实践。per-target build-std 实测语法不存在（cargo 拒绝：`expected a table`）。

@@ -51,6 +51,7 @@ const STRICT_ALLOWED: &[u64] = &[
 // Seccomp 模式
 // ============================================================================
 
+/// seccomp 运行模式 — 禁用 / 严格白名单 / BPF 过滤。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SeccompMode {
@@ -63,6 +64,7 @@ pub enum SeccompMode {
 // Seccomp 动作
 // ============================================================================
 
+/// seccomp 命中规则时的动作 (与 Linux SECCOMP_RET_* 语义对应)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SeccompAction {
     Allow,
@@ -112,6 +114,7 @@ pub const DEFAULT_ACTION: SeccompAction = SeccompAction::Allow;
 // 参数比较器
 // ============================================================================
 
+/// 规则中参数比较操作符 (与 Linux seccomp 比较类型对应)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CmpOp {
@@ -124,6 +127,7 @@ pub enum CmpOp {
     MaskedEqual = 6,
 }
 
+/// 单条 syscall 参数比较器 — 指定参数下标、比较操作符、比较值与掩码。
 #[derive(Debug, Clone, Copy)]
 pub struct ArgComparator {
     pub index: u8,
@@ -150,6 +154,7 @@ impl ArgComparator {
 // Seccomp 规则
 // ============================================================================
 
+/// 一条 seccomp 规则 — 匹配某个 syscall 及其参数条件, 命中后执行指定动作。
 #[derive(Debug, Clone)]
 pub struct SeccompRule {
     pub syscall_nr: u64,
@@ -176,6 +181,7 @@ impl SeccompRule {
 // Seccomp 过滤器
 // ============================================================================
 
+/// seccomp 过滤器 — 一组规则加默认动作, 按序匹配首个命中的规则。
 #[derive(Debug, Clone)]
 pub struct SeccompFilter {
     pub rules: Vec<SeccompRule>,
@@ -204,6 +210,7 @@ impl SeccompFilter {
 // Per-process Seccomp 状态
 // ============================================================================
 
+/// 每个进程的 seccomp 状态 — 当前模式、过滤器列表与 no_new_privs 标志。
 pub struct SeccompState {
     pub mode: AtomicU8,
     pub filters: IrqSpinLock<Vec<SeccompFilter>>,
@@ -245,6 +252,7 @@ impl SeccompState {
     clippy::match_same_arms,
     reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
 )]
+/// seccomp 检查入口 — 按当前进程模式判定 `syscall_nr`, 返回拦截时的负错误码, 放行返回 `None`。
 pub fn seccomp_check(syscall_nr: u64, args: &[u64; 6]) -> Option<i64> {
     let pid = process_get_current_pid();
     let mode = PROCESS_TABLE

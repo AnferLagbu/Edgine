@@ -210,7 +210,7 @@ pub fn sm_bind(fd: i32, addr: *const u8, addrlen: u32) -> i32 {
     unsafe { init::sm_bind(fd, addr, addrlen) }
 }
 
-/// POSIX `listen(fd, backlog)`
+/// POSIX `listen(fd, backlog)` — 将 socket 置为监听状态
 pub fn sm_listen(fd: i32, backlog: i32) -> i32 {
     // SAFETY: NET_LOCK 内部获取
     unsafe { init::sm_listen(fd, backlog) }
@@ -290,7 +290,7 @@ pub fn sm_recvfrom(
     unsafe { init::sm_recvfrom(fd, buf, len, flags, src_addr, addrlen) }
 }
 
-/// POSIX `close(fd)`
+/// POSIX `close(fd)` — 关闭 socket 并释放其资源
 pub fn sm_close(fd: i32) -> i32 {
     // SAFETY: sm_close 内部 NET_LOCK 串行化
     unsafe { init::sm_close(fd) }

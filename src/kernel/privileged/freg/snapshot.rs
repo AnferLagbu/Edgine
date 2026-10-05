@@ -10,6 +10,7 @@ pub const MAX_REGISTERS_PER_DEVICE: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
+/// 设备类型分类, 用于快照分组与恢复。
 pub enum DeviceType {
     Unknown = 0,
     Keyboard = 1,
@@ -35,6 +36,7 @@ impl DeviceType {
 }
 
 #[derive(Debug, Clone, Copy)]
+/// 单个设备寄存器的快照 (寄存器偏移 + 值)。
 pub struct RegisterState {
     pub offset: u32,
     pub value: u32,
@@ -50,6 +52,7 @@ impl Default for RegisterState {
 }
 
 #[derive(Debug)]
+/// 单个设备的 MMIO 寄存器快照集合。
 pub struct DeviceSnapshot {
     pub device_id: u64,
     pub device_type: DeviceType,
@@ -126,6 +129,7 @@ pub const SNAPSHOT_FLAG_VALID: u32 = 0x02;
 pub const SNAPSHOT_FLAG_RESTORED: u32 = 0x04;
 
 #[derive(Debug)]
+/// 设备快照注册表: 管理所有已注册设备的快照。
 pub struct DeviceSnapshotRegistry {
     snapshots: [Option<DeviceSnapshot>; MAX_DEVICE_SNAPSHOTS],
     count: usize,
@@ -257,6 +261,7 @@ impl DeviceSnapshotRegistry {
     }
 }
 
+/// 设备快照注册表的只读迭代器。
 pub struct DeviceSnapshotIter<'a> {
     registry: &'a DeviceSnapshotRegistry,
     index: usize,
@@ -280,6 +285,7 @@ impl<'a> Iterator for DeviceSnapshotIter<'a> {
 pub static DEVICE_SNAPSHOTS: IrqSpinLock<DeviceSnapshotRegistry> =
     IrqSpinLock::new(DeviceSnapshotRegistry::new());
 
+/// 注册一个设备并创建其快照槽位, 成功返回 true。
 pub fn snapshot_register_device(
     device_id: u64,
     device_type: DeviceType,
@@ -297,21 +303,25 @@ pub fn snapshot_register_device(
     ))
 }
 
+/// 注销指定设备并移除其快照, 成功返回 true。
 pub fn snapshot_unregister_device(device_id: u64) -> bool {
     let mut registry = DEVICE_SNAPSHOTS.lock();
     registry.unregister(device_id)
 }
 
+/// 捕获所有已注册设备的初始寄存器状态。
 pub fn snapshot_capture_init(read_fn: fn(u64, u32) -> u32) {
     let mut registry = DEVICE_SNAPSHOTS.lock();
     registry.capture_all_init(read_fn);
 }
 
+/// 按优先级顺序恢复所有设备寄存器, 返回 (成功数, 失败数)。
 pub fn snapshot_restore_all(write_fn: fn(u64, u32, u32)) -> (usize, usize) {
     let registry = DEVICE_SNAPSHOTS.lock();
     registry.restore_all(write_fn)
 }
 
+/// 返回初始设备快照是否已捕获。
 pub fn snapshot_is_init_captured() -> bool {
     DEVICE_SNAPSHOTS.lock().is_init_captured()
 }

@@ -231,6 +231,7 @@ impl Default for TaskStateSegment {
     }
 }
 
+/// 设置当前 CPU TSS 的 RSP0 (内核栈顶), 供中断/特权切换使用。
 pub fn tss_set_kernel_stack(rsp0: u64) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {

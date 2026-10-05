@@ -13,6 +13,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 const MAX_COMPOSITE_CHILDREN: usize = 8;
 const MIN_STRIPE_SIZE: u64 = 512;
 
+/// 复合块设备类型 (RAID0 条带 / RAID1 镜像).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompositeType {
     Raid0,
@@ -51,6 +52,7 @@ impl CompositeType {
     }
 }
 
+/// 由多个子块设备组成的复合块设备 (RAID0 条带 / RAID1 镜像).
 pub struct CompositeBlockDevice {
     device_type: CompositeType,
     child_drives: [u8; MAX_COMPOSITE_CHILDREN],
@@ -283,6 +285,7 @@ impl BlockDevice for CompositeBlockDevice {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 遍历设备树, 为匹配 `eg,raid0`/`eg,raid1` 的节点创建并注册复合块设备, 返回创建数量.
 pub fn devtree_probe_composites() -> usize {
     let composite_compatibles: &[&str] = &["eg,raid0", "eg,raid1"];
 

@@ -147,6 +147,7 @@ pub fn login(note: &str, password: &str) -> Result<u64, PwmError> {
     Ok(pwm)
 }
 
+/// 注销当前进程会话: 清空其 `PwmContext` 状态与 SUID 提权栈, 并记录登出审计。
 pub fn logout() {
     let pid = process_get_current_pid();
     if pid == 0 {
@@ -177,42 +178,52 @@ pub fn logout() {
 // 只读访问器
 // ============================================================================
 
+/// 返回当前进程会话绑定的 PWM (未登录或进程不存在时为 0)。
 pub fn get_current_pwm() -> u64 {
     with_current_ctx(|ctx| ctx.session_pwm.as_u64()).unwrap_or(0)
 }
 
+/// 返回当前进程会话对应 `PwmEntry` 的只读指针 (未登录时为空指针)。
 pub fn get_current_entry() -> *const PwmEntry {
     with_current_ctx(|ctx| ctx.current_entry).unwrap_or(core::ptr::null())
 }
 
+/// 返回当前进程会话缓存的 POSIX uid (未登录时为 0)。
 pub fn get_current_uid() -> u32 {
     with_current_ctx(|ctx| ctx.cached_uid).unwrap_or(0)
 }
 
+/// 返回当前进程会话缓存的 POSIX gid (未登录时为 0)。
 pub fn get_current_gid() -> u32 {
     with_current_ctx(|ctx| ctx.cached_gid).unwrap_or(0)
 }
 
+/// 返回当前进程的有效 uid (euid, 未登录时为 0)。
 pub fn get_euid() -> u32 {
     with_current_ctx(|ctx| ctx.euid).unwrap_or(0)
 }
 
+/// 返回当前进程的有效 gid (egid, 未登录时为 0)。
 pub fn get_egid() -> u32 {
     with_current_ctx(|ctx| ctx.egid).unwrap_or(0)
 }
 
+/// 返回当前进程保存的 uid (saved euid, 未登录时为 0)。
 pub fn get_saved_euid() -> u32 {
     with_current_ctx(|ctx| ctx.saved_euid).unwrap_or(0)
 }
 
+/// 返回当前进程保存的 gid (saved egid, 未登录时为 0)。
 pub fn get_saved_egid() -> u32 {
     with_current_ctx(|ctx| ctx.saved_egid).unwrap_or(0)
 }
 
+/// 返回当前进程的活动域身份 ID (未登录或进程不存在时为 0)。
 pub fn get_current_domain_id() -> u64 {
     with_current_ctx(|ctx| ctx.active_domain_id.as_u64()).unwrap_or(0)
 }
 
+/// 判断当前进程是否已登录 (会话 PWM 非零)。
 pub fn is_logged_in() -> bool {
     get_current_pwm() != 0
 }
@@ -240,6 +251,7 @@ pub fn clear_lockout(pwm: u64) -> Result<(), PwmError> {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 以目标 PWM 的 uid/gid 提升当前进程权限, 并将当前上下文快照压入 SUID 提权栈; 栈满返回 false。
 pub fn elevate_for_suid(target_pwm: u64) -> bool {
     let pid = process_get_current_pid();
     if pid == 0 {
@@ -288,6 +300,7 @@ pub fn elevate_for_suid(target_pwm: u64) -> bool {
     }
 }
 
+/// 弹出并恢复 SUID 提权栈顶的上下文, 撤销一次提权; 栈空返回 false。
 pub fn drop_elevation() -> bool {
     let pid = process_get_current_pid();
     if pid == 0 {
@@ -313,6 +326,7 @@ pub fn drop_elevation() -> bool {
         .unwrap_or(false)
 }
 
+/// 判断当前进程是否持有针对目标 PWM 的提权授权。
 pub fn has_elevation_authority(target_pwm: u64) -> bool {
     with_current_ctx(|ctx| ctx.elevation_granted_pwm == PwmId(target_pwm)).unwrap_or(false)
 }
@@ -325,6 +339,7 @@ pub fn has_elevation_authority(target_pwm: u64) -> bool {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 尝试将当前进程 uid 切换到目标 uid 对应身份 (需特权或已有提权授权); 成功返回 true。
 pub fn try_setuid(target_uid: u32) -> bool {
     let table = identity::get_table();
     let target_entry = match table.find_by_uid(target_uid) {
@@ -348,6 +363,8 @@ pub fn try_setuid(target_uid: u32) -> bool {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 尝试将当前进程 gid 切换到目标 gid; 特权时同时设置 egid/saved_egid,
+/// 否则仅当目标等于缓存或保存 gid 时设置 egid。
 pub fn try_setgid(target_gid: u32) -> bool {
     let egid = get_egid();
     if target_gid == egid {
@@ -386,6 +403,8 @@ pub fn try_setgid(target_gid: u32) -> bool {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 尝试设置当前进程有效 uid (euid); 特权时同时更新 saved_euid,
+/// 否则仅当目标等于缓存或保存 euid 时更新 euid。
 pub fn try_seteuid(target_euid: u32) -> bool {
     let euid = get_euid();
     if target_euid == euid {
@@ -424,6 +443,8 @@ pub fn try_seteuid(target_euid: u32) -> bool {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 尝试设置当前进程有效 gid (egid); 特权时同时更新 saved_egid,
+/// 否则仅当目标等于缓存或保存 egid 时更新 egid。
 pub fn try_setegid(target_egid: u32) -> bool {
     let egid = get_egid();
     if target_egid == egid {
@@ -462,6 +483,7 @@ pub fn try_setegid(target_egid: u32) -> bool {
     clippy::similar_names,
     reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
 )]
+/// POSIX setreuid 语义: 按需同时设置缓存 uid 与有效 uid, 参数为 `u32::MAX` 表示保持原值。
 pub fn try_setreuid(target_ruid: u32, target_euid: u32) -> bool {
     #[inline]
     fn has_uid_privilege(table: &identity::IdentityTable, uid: u32, current_pwm: u64) -> bool {
@@ -522,6 +544,7 @@ pub fn try_setreuid(target_ruid: u32, target_euid: u32) -> bool {
     clippy::similar_names,
     reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
 )]
+/// POSIX setregid 语义: 按需同时设置缓存 gid 与有效 gid, 参数为 `u32::MAX` 表示保持原值。
 pub fn try_setregid(target_rgid: u32, target_egid: u32) -> bool {
     #[inline]
     fn has_gid_privilege(table: &identity::IdentityTable, gid: u32, current_pwm: u64) -> bool {

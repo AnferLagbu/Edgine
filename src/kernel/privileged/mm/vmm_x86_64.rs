@@ -98,6 +98,7 @@ struct UserPageTable {
     in_use: bool,
 }
 
+/// x86_64 虚拟内存管理器 (管理用户页表槽位与映射 / 缺页统计).
 pub struct VirtualMemoryManager {
     user_tables: UnsafeCell<[UserPageTable; MAX_USER_PAGE_TABLES]>,
     user_table_count: AtomicUsize,
@@ -1987,6 +1988,7 @@ impl VirtualMemoryManager {
 
 static GLOBAL_VMM: OnceLock<VirtualMemoryManager> = OnceLock::new();
 
+/// 初始化全局 VMM 单例 (幂等).
 pub fn vmm_init() {
     GLOBAL_VMM.get_or_init(|slot| {
         let vmm = VirtualMemoryManager::new();
@@ -1995,6 +1997,7 @@ pub fn vmm_init() {
     });
 }
 
+/// 获取全局 VMM 单例 (未初始化则 panic).
 pub fn get_vmm() -> &'static VirtualMemoryManager {
     GLOBAL_VMM.get_or_panic("VMM")
 }
@@ -2007,10 +2010,12 @@ pub fn vmm_debug_state() -> u8 {
     GLOBAL_VMM.debug_state()
 }
 
+/// 返回内核 PML4 物理地址.
 pub fn get_kernel_pml4() -> u64 {
     KERNEL_PML4.load(Ordering::Acquire)
 }
 
+/// 返回当前 CR3 指向的 PML4 物理地址 (为 0 时回退内核表).
 pub fn get_current_pml4() -> u64 {
     let cr3 = crate::arch!(read_page_table_base());
     if cr3 != 0 {

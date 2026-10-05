@@ -37,6 +37,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 const OOMD_CHECK_INTERVAL: u64 = 100;
 const OOMD_KILL_GRACE_TICKS: u64 = 500;
 
+/// OOM 守护器 — 周期性检查内存压力, 在压力进入紧急态时终止进程, 并统计告警/终止次数。
 pub struct OomDaemon {
     last_check: AtomicU64,
     emergency_since: AtomicU64,

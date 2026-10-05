@@ -348,6 +348,7 @@ pub enum NetError {
     Other,
 }
 
+/// 网络协议栈操作结果别名 — 以 [`NetError`] 为错误类型的 `Result`
 pub type Result<T> = core::result::Result<T, NetError>;
 
 // ============================================================================

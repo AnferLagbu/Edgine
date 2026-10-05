@@ -783,6 +783,7 @@ use raw::UserProcRef;
 unsafe impl Send for UserProcess {}
 // SAFETY: 同上, Sync 安全性由外部锁保证.
 unsafe impl Sync for UserProcess {}
+/// 用户态进程句柄 — 封装用户态进程特有的 FFI 独占状态, 并持有指向权威 [`Process`] 的引用。
 #[repr(C)]
 pub struct UserProcess {
     /// ✅ 权威引用: 指向 `PROCESS_TABLE` 中对应的 `Process`.
@@ -813,6 +814,7 @@ impl UserProcess {
     }
 }
 
+/// 用户进程管理器 — 维护 pid 到 [`UserProcess`] 的映射, 并跟踪当前进程。
 pub struct UserProcManager {
     current: AtomicU64,
     // 使用 NonNull<UserProcess> 替代 *mut UserProcess,
@@ -1976,6 +1978,7 @@ impl UserProcManager {
 
 pub static USER_PROC_MANAGER: UserProcManager = UserProcManager::new();
 
+/// 用户进程子系统初始化入口 — 初始化全局 [`USER_PROC_MANAGER`] 并注册 memlock 限制查询回调。
 pub fn init() {
     USER_PROC_MANAGER.init();
 
@@ -2060,6 +2063,9 @@ pub extern "C" fn user_proc_clone(parent_pid: u32, child_pid: u32) -> i32 {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 按缺页地址尝试向下扩展用户栈 — 若 `fault_addr` 落在可扩展区间内, 则映射其所在页。
+///
+/// 返回是否成功扩展; 地址已越过栈顶、低于扩展下限或当前无进程时返回 `false`。
 pub fn try_expand_user_stack(fault_addr: u64) -> bool {
     if fault_addr >= USER_STACK_TOP {
         return false;

@@ -14,11 +14,14 @@
 //! 保持 API 兼容 (functions→privileged 合法方向)。
 
 pub type Pid = u32;
+/// 线程标识符 (TID) 的底层整数类型。
 pub type Tid = u32;
 
+/// 进程标识符包装类型 — 对裸 `Pid` 做类型区分, 避免与 TID 混用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ProcessId(pub Pid);
 
+/// 线程标识符包装类型 — 对裸 `Tid` 做类型区分, 避免与 PID 混用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ThreadId(pub Tid);
 
@@ -129,6 +132,7 @@ impl ProcessState {
     }
 }
 
+/// 进程阻塞原因 — 记录线程因何事件进入阻塞态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockReason {
     WaitingForIo = 0,
@@ -152,6 +156,7 @@ impl BlockReason {
     }
 }
 
+/// 进程优先级等级 — 从 Idle 到 RealTime 共五档, 供调度器使用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessPriority {
     Idle = 0,
@@ -187,6 +192,7 @@ bitflags::bitflags! {
     }
 }
 
+/// 进程/线程的 CPU 上下文 — 保存切换时需恢复的通用寄存器、RIP/RSP、CR3 与段寄存器。
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct ProcessContext {

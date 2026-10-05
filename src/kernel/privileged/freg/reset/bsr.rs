@@ -10,6 +10,7 @@ use crate::privileged::freg::DomainState;
 use crate::privileged::freg::PANIC_FLAG;
 use crate::privileged::freg::RECOVERY_MANAGER;
 
+/// 冻结所有恢复域, 使其在软重置期间不接受新操作。
 pub fn freeze_all_domains() {
     let manager = RECOVERY_MANAGER.lock();
     let count = manager.count.load(Ordering::SeqCst) as usize;
@@ -20,6 +21,7 @@ pub fn freeze_all_domains() {
     }
 }
 
+/// 解冻所有恢复域: 恢复为 Active 并清零连续失败计数。
 pub fn unfreeze_all_domains() {
     let manager = RECOVERY_MANAGER.lock();
     let count = manager.count.load(Ordering::SeqCst) as usize;
@@ -31,6 +33,7 @@ pub fn unfreeze_all_domains() {
     }
 }
 
+/// 回滚所有恢复域到初始状态, 返回累计回滚的撤销条目数。
 pub fn rollback_to_init() -> usize {
     let mut total_rolled = 0usize;
     let manager = RECOVERY_MANAGER.lock();
@@ -47,6 +50,7 @@ pub fn rollback_to_init() -> usize {
     total_rolled
 }
 
+/// 从快照恢复全部设备寄存器, 失败时返回 Escalate。
 pub fn reset_devices() -> RecoveryResult {
     use crate::privileged::freg::snapshot;
 
@@ -63,6 +67,7 @@ pub fn reset_devices() -> RecoveryResult {
     }
 }
 
+/// 关闭 CPU 中断 (软重置期间隔离外部事件)。
 pub fn reset_interrupts() {
     #[cfg(not(feature = "kernel_test"))]
     {
@@ -70,11 +75,13 @@ pub fn reset_interrupts() {
     }
 }
 
+/// 清除 panic 标志与重置进行中状态, 结束软重置流程。
 pub fn clear_panic_state() {
     PANIC_FLAG.store(false, Ordering::SeqCst);
     config::set_reset_in_progress(false);
 }
 
+/// 执行 Layer2 软重置: 冻结域/回滚到初始态/恢复设备, 失败则升级。
 pub fn execute() -> RecoveryResult {
     if config::is_reset_in_progress() {
         return RecoveryResult::Escalate;

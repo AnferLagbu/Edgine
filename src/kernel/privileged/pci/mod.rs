@@ -125,6 +125,7 @@ pub const CLASS_BRIDGE: u8 = 0x06;
 
 // ── Data types ──
 
+/// PCI BAR 类型: 未使用 / 端口 I/O / 32 位内存 / 64 位内存.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BarType {
     None = 0,
@@ -133,6 +134,7 @@ pub enum BarType {
     Memory64 = 3,
 }
 
+/// 单个 PCI BAR: 基址 / 尺寸 / 类型 / 是否可预取 / 是否 64 位.
 #[derive(Debug, Clone, Copy)]
 pub struct PciBar {
     pub base_addr: u64,
@@ -154,6 +156,7 @@ impl PciBar {
     }
 }
 
+/// 一个 PCI 设备: 拓扑位置 / 厂商与设备 ID / 类别码 / 中断线 / BAR 列表等.
 #[derive(Debug, Clone)]
 pub struct PciDevice {
     pub bus: u8,
@@ -219,6 +222,7 @@ fn make_config_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
         | u32::from(offset & 0xFC)
 }
 
+/// 读取 PCI 配置空间 1 字节 (入口持全局锁, 线程安全).
 pub fn read_config_byte(bus: u8, dev: u8, func: u8, offset: u8) -> u8 {
     // B04-05: 全局持锁防止多 CPU 并发访问 PIO/ECAM 端口。
     let _guard = PCI_CONFIG_LOCK.lock();
@@ -245,6 +249,7 @@ fn read_config_byte_locked(bus: u8, dev: u8, func: u8, offset: u8) -> u8 {
     }
 }
 
+/// 读取 PCI 配置空间 2 字节 (入口持全局锁, 线程安全).
 pub fn read_config_word(bus: u8, dev: u8, func: u8, offset: u8) -> u16 {
     let _guard = PCI_CONFIG_LOCK.lock();
     read_config_word_locked(bus, dev, func, offset)
@@ -269,6 +274,7 @@ fn read_config_word_locked(bus: u8, dev: u8, func: u8, offset: u8) -> u16 {
     }
 }
 
+/// 读取 PCI 配置空间 4 字节 (入口持全局锁, 线程安全).
 pub fn read_config_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
     let _guard = PCI_CONFIG_LOCK.lock();
     read_config_dword_locked(bus, dev, func, offset)
@@ -292,6 +298,7 @@ fn read_config_dword_locked(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
     }
 }
 
+/// 写入 PCI 配置空间 1 字节 (入口持全局锁, 线程安全).
 pub fn write_config_byte(bus: u8, dev: u8, func: u8, offset: u8, val: u8) {
     let _guard = PCI_CONFIG_LOCK.lock();
     write_config_byte_locked(bus, dev, func, offset, val);
@@ -322,6 +329,7 @@ fn write_config_byte_locked(bus: u8, dev: u8, func: u8, offset: u8, val: u8) {
     }
 }
 
+/// 写入 PCI 配置空间 2 字节 (入口持全局锁, 线程安全).
 pub fn write_config_word(bus: u8, dev: u8, func: u8, offset: u8, val: u16) {
     let _guard = PCI_CONFIG_LOCK.lock();
     write_config_word_locked(bus, dev, func, offset, val);
@@ -352,6 +360,7 @@ fn write_config_word_locked(bus: u8, dev: u8, func: u8, offset: u8, val: u16) {
     }
 }
 
+/// 写入 PCI 配置空间 4 字节 (入口持全局锁, 线程安全).
 pub fn write_config_dword(bus: u8, dev: u8, func: u8, offset: u8, val: u32) {
     let _guard = PCI_CONFIG_LOCK.lock();
     write_config_dword_locked(bus, dev, func, offset, val);
@@ -515,6 +524,7 @@ fn scan_bus(bus: u8) -> Vec<PciDevice> {
     devices
 }
 
+/// 扫描全部 PCI 总线 (0-255), 返回发现的设备列表.
 pub fn scan_all_buses() -> Vec<PciDevice> {
     let mut all = Vec::new();
     for bus in 0..=PCI_MAX_BUS {
@@ -529,6 +539,7 @@ pub fn scan_all_buses() -> Vec<PciDevice> {
 
 // ── Public API ──
 
+/// 初始化 PCI 子系统: 扫描总线并缓存设备列表, 返回设备数量 (幂等).
 pub fn init() -> usize {
     if PCI_INITIALIZED.load(core::sync::atomic::Ordering::SeqCst) {
         return DEVICE_LIST.lock().len();
@@ -546,10 +557,12 @@ pub fn is_initialized() -> bool {
     PCI_INITIALIZED.load(core::sync::atomic::Ordering::SeqCst)
 }
 
+/// 返回已缓存 PCI 设备列表的副本.
 pub fn get_device_list() -> Vec<PciDevice> {
     DEVICE_LIST.lock().clone()
 }
 
+/// 按厂商 ID 查找设备, 返回匹配列表.
 pub fn find_by_vendor(vendor_id: u16) -> Vec<PciDevice> {
     DEVICE_LIST
         .lock()
@@ -559,6 +572,7 @@ pub fn find_by_vendor(vendor_id: u16) -> Vec<PciDevice> {
         .collect()
 }
 
+/// 按类别码 (class code) 查找设备, 返回匹配列表.
 pub fn find_by_class(class_code: u8) -> Vec<PciDevice> {
     DEVICE_LIST
         .lock()
@@ -568,6 +582,7 @@ pub fn find_by_class(class_code: u8) -> Vec<PciDevice> {
         .collect()
 }
 
+/// 按厂商/设备 ID 查找首个匹配设备; 字段为 0xFFFF 时表示通配.
 pub fn find_device(vendor_id: u16, device_id: u16) -> Option<PciDevice> {
     let list = DEVICE_LIST.lock();
     if vendor_id == 0xFFFF && device_id == 0xFFFF {
@@ -582,6 +597,7 @@ pub fn find_device(vendor_id: u16, device_id: u16) -> Option<PciDevice> {
     }
 }
 
+/// 返回已缓存 PCI 设备数量.
 pub fn device_count() -> usize {
     DEVICE_LIST.lock().len()
 }

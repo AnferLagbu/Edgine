@@ -1,44 +1,41 @@
-/// 基础字符串/内存操作库 (String & Memory Utilities)
-///
-/// 提供标准 C 库风格的字符串和内存操作函数的 Rust 实现。
-/// 替代原来的 lib/string.c，提供更安全的接口。
-///
-/// ## 功能清单
-///
-/// ### 字符串操作 (String Operations)
-/// - `strlen` / `strlen_safe` - 字符串长度
-/// - `strcmp` / `strncmp` - 字符串比较
-/// - `strcpy` / `strncpy` - 字符串拷贝
-/// - `strcat` - 字符串连接
-/// - `strchr` / `strrchr` - 字符查找
-/// - `strstr` - 子串查找
-///
-/// ### 内存操作 (Memory Operations)
-/// - `memcpy` - 内存拷贝
-/// - `memmove` - 内存移动（处理重叠区域）
-/// - `memset` / `memset_optimized` - 内存设置
-/// - `memcmp` - 内存比较
-/// - `memchr` - 内存字符查找
-///
-/// ### 安全函数 (Secure Functions)
-/// - `secure_zero` - 安全清零（防止编译器优化）
-///
-/// ## 设计原则
-///
-/// 1. **FFI 兼容** - 所有 C 函数都有对应的 Rust FFI 实现
-/// 2. **类型安全** - 提供 Rust 原生的安全包装版本
-/// 3. **性能优化** - 关键路径使用内联和优化算法
-/// 4. **边界检查** - 所有数组操作都有安全保证
+//! 基础字符串/内存操作库 (String & Memory Utilities)
+//!
+//! 提供标准 C 库风格的字符串和内存操作函数的 Rust 实现。
+//! 替代原来的 lib/string.c，提供更安全的接口。
+//!
+//! ## 功能清单
+//!
+//! ### 字符串操作 (String Operations)
+//! - `strlen` / `strlen_safe` - 字符串长度
+//! - `strcmp` / `strncmp` - 字符串比较
+//! - `strcpy` / `strncpy` - 字符串拷贝
+//! - `strcat` - 字符串连接
+//! - `strchr` / `strrchr` - 字符查找
+//! - `strstr` - 子串查找
+//!
+//! ### 内存操作 (Memory Operations)
+//! - `memcpy` - 内存拷贝
+//! - `memmove` - 内存移动（处理重叠区域）
+//! - `memset` / `memset_optimized` - 内存设置
+//! - `memcmp` - 内存比较
+//! - `memchr` - 内存字符查找
+//!
+//! ### 安全函数 (Secure Functions)
+//! - `secure_zero` - 安全清零（防止编译器优化）
+//!
+//! ## 设计原则
+//!
+//! 1. **FFI 兼容** - 所有 C 函数都有对应的 Rust FFI 实现
+//! 2. **类型安全** - 提供 Rust 原生的安全包装版本
+//! 3. **性能优化** - 关键路径使用内联和优化算法
+//! 4. **边界检查** - 所有数组操作都有安全保证
+
+// D1: strlen 扫描上限统一复用 cstr::MAX_CSTR_LEN, 消除双常量漂移。
+use super::cstr::MAX_CSTR_LEN;
 
 // ============================================================================
 // 字符串操作函数 (String Operations)
 // ============================================================================
-
-/// `strlen` 上限常量 (防御深度)
-///
-/// 实际有效路径仅 FFI 测试调用; 上限避免恶意指针读到 #PF。
-/// B04-07: 1024 足以覆盖内核内部任何合法字符串 (路径名 ≤ 256, 命令行 ≤ 256)。
-const STRLEN_MAX: usize = 1024;
 
 /// 计算字符串长度 (C 风格 FFI 接口)
 ///
@@ -61,7 +58,7 @@ pub unsafe extern "C" fn strlen(s: *const core::ffi::c_char) -> usize {
         let mut ptr = s;
 
         // B04-07: 加 MAX_CSTR_LEN 上限 (DECISION-060), 防御恶意指针无上界读取。
-        while *ptr != 0 && len < STRLEN_MAX {
+        while *ptr != 0 && len < MAX_CSTR_LEN {
             len += 1;
             ptr = ptr.add(1);
         }

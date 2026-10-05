@@ -69,6 +69,7 @@ pub(crate) mod raw {
 use crate::privileged::racy_cell::RacyCell;
 use raw::MessageRef;
 
+/// 动态 IPC 命名空间, 持有管道/共享内存/消息队列/信号量集合与 ID 分配器.
 pub struct DynIpcNamespace {
     pub pipes: Mutex<Vec<Pipe>>,
     pub shm_segs: Mutex<Vec<ShmSegment>>,
@@ -295,6 +296,7 @@ fn dyn_ipc_init_impl() {
     *DYN_IPC.get_mut() = Some(DynIpcNamespace::new());
 }
 
+/// 获取全局动态 IPC 命名空间的只读引用 (要求已由 `dyn_ipc_init` 初始化).
 pub fn get_dyn_ipc() -> &'static DynIpcNamespace {
     // SAFETY 集中在 privileged::RacyCell::get_ref 内部;
     // 调用方保证 DYN_IPC 在 dyn_ipc_init() 中初始化, 此后只读。

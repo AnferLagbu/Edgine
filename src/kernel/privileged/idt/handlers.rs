@@ -357,18 +357,21 @@ pub struct PageFaultAnalysis {
     pub instruction_fetch: bool,
 }
 
+/// 缺页访问类型 (读/写)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessType {
     Read,
     Write,
 }
 
+/// 缺页发生时 CPU 所处特权级 (内核/用户)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Kernel,
     User,
 }
 
+/// 缺页原因分类
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FaultCause {
     PageNotPresent,

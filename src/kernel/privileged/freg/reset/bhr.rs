@@ -5,6 +5,7 @@
 use super::audit;
 use super::config::{self, RecoveryLayer};
 
+/// 关闭 CPU 中断 (BHR 硬重置前置步骤)。
 pub fn disable_interrupts() {
     #[cfg(not(feature = "kernel_test"))]
     {
@@ -12,6 +13,7 @@ pub fn disable_interrupts() {
     }
 }
 
+/// 屏蔽 8259 主/从片全部 PIC 中断。
 pub fn mask_all_irqs() {
     #[cfg(not(feature = "kernel_test"))]
     {
@@ -21,6 +23,7 @@ pub fn mask_all_irqs() {
     }
 }
 
+/// 关闭所有外设 (BHR 硬重置前置步骤)。
 pub fn shutdown_devices() {
     #[cfg(not(feature = "kernel_test"))]
     {
@@ -28,6 +31,7 @@ pub fn shutdown_devices() {
     }
 }
 
+/// 保存崩溃现场信息用于事后诊断。
 pub fn save_crash_info() {
     #[cfg(not(feature = "kernel_test"))]
     {
@@ -35,6 +39,7 @@ pub fn save_crash_info() {
     }
 }
 
+/// 通过 8042 键盘控制器触发系统复位, 不返回。
 pub fn keyboard_reset() -> ! {
     #[cfg(not(feature = "kernel_test"))]
     {
@@ -52,6 +57,7 @@ pub fn keyboard_reset() -> ! {
     }
 }
 
+/// 触发 x86 三重故障以强制硬复位, 不返回。
 pub fn triple_fault() -> ! {
     #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
     raw::triple_fault_asm();
@@ -61,6 +67,7 @@ pub fn triple_fault() -> ! {
     }
 }
 
+/// 执行 Layer3 硬重置流程 (关中断/屏蔽 IRQ/关设备后键盘复位), 不返回。
 pub fn execute() -> ! {
     config::set_current_layer(RecoveryLayer::Layer3);
     config::increment_bhr_count();
@@ -79,6 +86,7 @@ pub fn execute() -> ! {
     keyboard_reset()
 }
 
+/// 键盘复位失败时的兜底路径: 触发三重故障, 不返回。
 pub fn execute_fallback() -> ! {
     crate::klog_crit!(
         Kernel,

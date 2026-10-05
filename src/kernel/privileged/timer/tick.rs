@@ -297,6 +297,7 @@ pub fn ticks_to_ms_fast(ticks: u64) -> u64 {
     ticks * MS_PER_TICK.load(Ordering::Relaxed)
 }
 
+/// 使用预计算常量进行快速微秒转换 (性能关键路径)
 #[inline]
 pub fn ticks_to_us_fast(ticks: u64) -> u64 {
     ticks * US_PER_TICK.load(Ordering::Relaxed)
@@ -516,6 +517,7 @@ mod tests {
     }
 }
 
+/// 注册定时器 tick 子系统测试用例 (kernel_test)
 #[cfg(feature = "kernel_test")]
 // J-01 (2026-09-08): items_after_statements — 测试注册函数内嵌套测试 fn 为内核测试惯用模式
 #[expect(

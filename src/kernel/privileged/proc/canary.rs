@@ -43,6 +43,7 @@ pub fn generate_canary() -> u64 {
     next_random_u64() & 0xFFFF_FFFF_FFFF_FF00
 }
 
+/// 设置每进程 canary 种子 — 供进程创建时注入熵源, 使各进程的栈保护值互异。
 pub fn set_per_proc_seed(seed: u64) {
     PER_PROC_SEED.store(seed, Ordering::Release);
 }

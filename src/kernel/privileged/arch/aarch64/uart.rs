@@ -32,6 +32,7 @@ pub fn switch_to_high_half() {
     );
 }
 
+/// 获取 PL011 UART 的当前 MMIO 基址。
 #[inline(always)]
 pub fn base() -> u64 {
     PL011_BASE.load(core::sync::atomic::Ordering::Acquire)

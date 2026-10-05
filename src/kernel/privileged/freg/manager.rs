@@ -28,6 +28,7 @@ fn log_rollback_event(event: RollbackEvent) {
     );
 }
 
+/// panic 前缀到恢复域标识的静态映射 (如 "PMM" → 3)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PanicDomainMapping {
     pub prefix: &'static [u8],
@@ -61,6 +62,7 @@ const PANIC_DOMAIN_MAP: [PanicDomainMapping; 6] = [
     },
 ];
 
+/// FREG 恢复管理器: 登记所有恢复域并提供查找与回滚能力。
 pub struct RecoveryManager {
     pub domains: [Option<&'static RecoveryDomain>; MAX_RECOVERY_DOMAINS],
     pub direct_map: [Option<&'static RecoveryDomain>; DIRECT_MAP_SIZE],

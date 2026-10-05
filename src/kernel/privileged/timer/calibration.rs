@@ -378,6 +378,7 @@ mod tests {
     }
 }
 
+/// 注册 TSC 频率校准相关测试用例 (kernel_test)
 #[cfg(feature = "kernel_test")]
 // J-01 (2026-09-08): items_after_statements — 测试注册函数内嵌套测试 fn 为内核测试惯用模式
 #[expect(

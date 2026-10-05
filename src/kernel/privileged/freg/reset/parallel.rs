@@ -11,6 +11,7 @@ use crate::privileged::freg::RECOVERY_MANAGER;
 pub const MAX_DEPENDENCY_LAYERS: usize = 8;
 pub const MAX_DOMAINS_PER_LAYER: usize = 16;
 
+/// 单个依赖层级: 同一层内的恢复域互相无依赖, 可并行回滚。
 #[derive(Debug, Clone, Copy)]
 pub struct DependencyLayer {
     pub domains: [u64; MAX_DOMAINS_PER_LAYER],
@@ -37,6 +38,7 @@ impl DependencyLayer {
     }
 }
 
+/// 按依赖拓扑分层后的恢复域集合, 层级由低到高排列。
 #[derive(Debug)]
 pub struct DependencyLayers {
     pub layers: [DependencyLayer; MAX_DEPENDENCY_LAYERS],
@@ -65,6 +67,7 @@ impl DependencyLayers {
     }
 }
 
+/// 根据各恢复域的 depends_on 关系计算依赖分层 (拓扑排序)。
 pub fn compute_dependency_layers() -> DependencyLayers {
     let manager = RECOVERY_MANAGER.lock();
     let domain_count = manager.count.load(Ordering::SeqCst) as usize;
@@ -114,6 +117,7 @@ pub fn compute_dependency_layers() -> DependencyLayers {
     layers
 }
 
+/// 串行回滚单层内全部恢复域, 返回累计回滚的撤销条目数。
 pub fn rollback_layer_serial(layer: &DependencyLayer) -> usize {
     let mut total_rolled = 0usize;
     let manager = RECOVERY_MANAGER.lock();
@@ -133,6 +137,7 @@ pub fn rollback_layer_serial(layer: &DependencyLayer) -> usize {
     total_rolled
 }
 
+/// 按 worker 分片并行回滚单层的一个分片, 返回该分片回滚的撤销条目数。
 pub fn rollback_layer_parallel(layer: &DependencyLayer, worker_id: usize) -> usize {
     let manager = RECOVERY_MANAGER.lock();
     let count = layer.count;
@@ -167,6 +172,7 @@ pub fn rollback_layer_parallel(layer: &DependencyLayer, worker_id: usize) -> usi
     total_rolled
 }
 
+/// 按依赖分层并行回滚全部恢复域, 返回累计回滚的撤销条目数。
 pub fn rollback_all_parallel() -> usize {
     config::PARALLEL_ROLLBACK_ACTIVE.store(true, Ordering::SeqCst);
 
@@ -194,6 +200,7 @@ pub fn rollback_all_parallel() -> usize {
     total_rolled
 }
 
+/// 回滚全部恢复域: 依据配置选择并行分层回滚或串行回滚到初始态。
 pub fn rollback_all() -> usize {
     if config::RECOVERY_CONFIG.is_parallel() {
         rollback_all_parallel()
@@ -205,6 +212,7 @@ pub fn rollback_all() -> usize {
 pub static PARALLEL_ROLLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub static PARALLEL_ROLLBACK_TIME: AtomicU32 = AtomicU32::new(0);
 
+/// 读取并行回滚统计 (累计回滚次数, 耗时)。
 pub fn get_parallel_stats() -> (usize, u32) {
     (
         PARALLEL_ROLLBACK_COUNT.load(Ordering::SeqCst),

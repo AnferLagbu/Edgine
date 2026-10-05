@@ -205,6 +205,7 @@ fn ipv6_cidr_contains(net: &Ipv6Addr, dest: &Ipv6Addr, prefix_len: u8) -> bool {
 // Syscall 接口 (保持 u32 ABI 兼容, 仅 IPv4; V6 路由走 route_add/route_query)
 // ============================================================================
 
+/// `sys_route_add` — 从 u32 ABI 参数添加 IPv4 路由 (前缀长度 > 32 返回 `-EINVAL`)
 pub fn sys_route_add(dest_u32: u64, prefix_len: u64, gateway_u32: u64) -> i64 {
     let entry = RouteEntry {
         dest: IpAddr::V4(Ipv4Addr::from_octets((dest_u32 as u32).to_be_bytes())),
@@ -223,6 +224,7 @@ pub fn sys_route_add(dest_u32: u64, prefix_len: u64, gateway_u32: u64) -> i64 {
     }
 }
 
+/// `sys_route_del` — 从 u32 ABI 参数删除 IPv4 路由 (前缀长度 > 32 返回 `-EINVAL`)
 pub fn sys_route_del(dest_u32: u64, prefix_len: u64, gateway_u32: u64) -> i64 {
     match route_del(
         IpAddr::V4(Ipv4Addr::from_octets((dest_u32 as u32).to_be_bytes())),
@@ -238,6 +240,7 @@ pub fn sys_route_del(dest_u32: u64, prefix_len: u64, gateway_u32: u64) -> i64 {
     }
 }
 
+/// `sys_route_query` — 查询 IPv4 目标的最长前缀匹配网关 (不可达返回 `-ENETUNREACH`)
 pub fn sys_route_query(dest_u32: u64) -> i64 {
     route_query(IpAddr::V4(Ipv4Addr::from_octets(
         (dest_u32 as u32).to_be_bytes(),

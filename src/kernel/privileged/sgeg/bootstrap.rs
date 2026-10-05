@@ -1,6 +1,7 @@
 use super::types::{AuditAction, CapBits, CapDomain, PwmError};
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+/// 首次令牌 (First Token): 初始化阶段向首个身份授予全部权限的一次性凭证。
 pub struct FirstToken {
     pub token_id: u64,
     pub granted: AtomicBool,
@@ -25,6 +26,7 @@ static FIRST_TOKEN_CREATED: AtomicU64 = AtomicU64::new(0);
     clippy::unreadable_literal,
     reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
 )]
+/// 生成新的首次令牌: 由 TSC 派生 token_id, 标记为未使用并记录创建时间。
 pub fn generate_first_token() {
     let token_id = {
         let tsc = crate::arch!(timestamp());
@@ -63,6 +65,7 @@ pub fn grant_from_first_token(
     Ok(())
 }
 
+/// 返回当前 PWM 时间戳 (微秒); TSC 频率未知时直接返回 TSC 原值。
 pub fn pwm_now() -> u64 {
     let tsc = crate::arch!(timestamp());
     let freq = raw::tsc_frequency();

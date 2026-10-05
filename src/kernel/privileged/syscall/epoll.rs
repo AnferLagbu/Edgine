@@ -573,6 +573,7 @@ fn test_epoll_ctl_add_del() -> crate::privileged::tests::TestResult {
     TestResult::Pass
 }
 
+/// 注册 epoll 子系统的内核测试用例.
 #[cfg(feature = "kernel_test")]
 pub fn register_epoll_tests() {
     use crate::privileged::tests::runner;

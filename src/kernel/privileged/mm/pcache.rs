@@ -564,6 +564,7 @@ fn test_pcache_fill_len_clamped() -> crate::privileged::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
+/// 注册页缓存 (pcache) 单元测试用例到内核测试运行器.
 pub fn register_pcache_tests() {
     use crate::privileged::tests::runner;
     let r = runner();

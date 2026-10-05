@@ -916,6 +916,7 @@ fn test_default_action_coverage() -> crate::privileged::tests::TestResult {
     TestResult::Pass
 }
 
+/// 注册 signal 相关的内核测试用例。
 #[cfg(feature = "kernel_test")]
 pub fn register_signal_tests() {
     use crate::privileged::tests::runner;

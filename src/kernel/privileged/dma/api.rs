@@ -38,6 +38,7 @@ pub const DMA_MAX_SCATTER_ENTRIES: usize = 64;
 // 契约类型
 // ============================================================================
 
+/// DMA 传输方向
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DmaDirection {
     ToDevice,
@@ -45,6 +46,7 @@ pub enum DmaDirection {
     Bidirectional,
 }
 
+/// DMA 缓存策略
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DmaCachePolicy {
     None,

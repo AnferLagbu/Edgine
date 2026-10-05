@@ -23,6 +23,7 @@ pub const PWM_DIGEST_LEN: usize = 32;
 pub const MAX_GRANT_RECORDS: usize = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// PWM 唯一标识; 0 表示无效/未分配。
 #[repr(transparent)]
 pub struct PwmId(pub u64);
 
@@ -53,6 +54,7 @@ impl Default for PwmId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// 域身份 ID (DID); 由 uid 派生, 0 表示无活动域。
 #[repr(transparent)]
 pub struct DomainId(pub u64);
 
@@ -136,6 +138,7 @@ bitflags::bitflags! {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// 能力域编号 (0-15), 标识一类受控资源。
 #[repr(transparent)]
 pub struct CapDomain(pub u16);
 
@@ -181,6 +184,7 @@ impl From<u16> for CapDomain {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// 单个能力域内的能力位图 (u64)。
 #[repr(transparent)]
 pub struct CapBits(pub u64);
 
@@ -255,6 +259,7 @@ impl Default for PwmFlags {
     }
 }
 
+/// PWM 表条目: 身份的标识、凭证、标志、能力与登录状态的原子化字段集合。
 #[repr(C)]
 pub struct PwmEntry {
     pub pwm: AtomicU64,
@@ -521,6 +526,7 @@ impl PwmEntry {
     }
 }
 
+/// 进程级会话上下文: 登录身份、缓存的 uid/gid、有效与保存的 uid/gid、活动域与提权授权。
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
 pub struct PwmContext {
@@ -536,6 +542,7 @@ pub struct PwmContext {
     pub elevation_granted_pwm: PwmId,
 }
 
+/// 授权记录: 记录授权方对被授权方在指定能力域上授予的能力。
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct GrantRecord {
@@ -560,6 +567,7 @@ impl GrantRecord {
     }
 }
 
+/// SGEG 操作错误码; 0 为成功, 负值编码对应各类失败原因。
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PwmError {
@@ -586,6 +594,7 @@ impl PwmError {
     }
 }
 
+/// 审计动作类型 (登录/登出/创建/删除/授权等)。
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Default)]
 pub enum AuditAction {
@@ -608,6 +617,7 @@ impl AuditAction {
     }
 }
 
+/// 审计结果 (成功/失败/拒绝)。
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Default)]
 pub enum AuditResult {
@@ -623,6 +633,7 @@ impl AuditResult {
     }
 }
 
+/// 单条审计记录 (时间戳、主体 PWM、动作、结果、目标 PWM 与细节)。
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
 pub struct AuditEntry {

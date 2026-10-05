@@ -22,6 +22,7 @@ use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use super::types::Pid;
 use crate::privileged::racy_cell::RacyCell;
 
+/// 单 CPU 运行队列状态 — 记录当前运行 pid、重调度请求、idle 任务 pid 与上线状态。
 pub struct CpuQueue {
     pub current: AtomicU32,
     pub need_reschedule: AtomicBool,
@@ -124,6 +125,7 @@ pub fn cpu_queue(cpu_id: u32) -> &'static CpuQueue {
     unsafe { &*ptr }
 }
 
+/// 获取当前 CPU 的 [`CpuQueue`] — 按本核 cpu id 索引, 槽位未分配时回退 BSP 队列。
 pub fn current_cpu_queue() -> &'static CpuQueue {
     let cpu_id = crate::privileged::smp::get_current_cpu();
     cpu_queue(cpu_id)

@@ -26,6 +26,7 @@ use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering, fence};
 
 use crate::privileged::racy_cell::RacyCell;
 
+/// RCU 回调链表节点: 记录下一个节点与宽限期结束后执行的回调.
 pub struct RcuHead {
     pub next: *mut Self,
     // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
@@ -434,10 +435,12 @@ pub fn rcu_process_all_callbacks() {
     }
 }
 
+/// 返回已完成的 RCU 宽限期 (grace period) 计数.
 pub fn rcu_gp_count() -> u32 {
     RCU_GP_COUNTER.load(Ordering::Relaxed)
 }
 
+/// 返回当前 CPU 待处理的 RCU 回调数.
 pub fn rcu_callback_count() -> u32 {
     let cpu = crate::privileged::smp::get_current_cpu();
     rcu_data(cpu).callback_count.load(Ordering::Relaxed)

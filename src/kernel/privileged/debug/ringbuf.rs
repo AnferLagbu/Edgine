@@ -48,6 +48,7 @@ impl<const CAP: usize> RingBuffer<{ CAP }> {
         assert!(CAP > 0 && CAP.is_power_of_two(), "CAP must be power of 2");
     }
 
+    /// 创建空环形缓冲区, 构造期断言容量为 2 的幂
     pub const fn new() -> Self {
         Self::assert_power_of_two();
         Self {

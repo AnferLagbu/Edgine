@@ -119,6 +119,7 @@ impl core::ops::BitAndAssign for VmFlags {
     }
 }
 
+/// 虚拟内存区域 (VMA) 类型.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum VmaType {
@@ -152,6 +153,7 @@ impl VmaType {
     }
 }
 
+/// 虚拟内存区域 (VMA): 描述一段地址区间的映射属性与后端信息.
 #[derive(Debug, Clone)]
 pub struct Vma {
     pub start: usize,
@@ -270,6 +272,7 @@ impl Vma {
     }
 }
 
+/// 进程地址空间描述符 (mm): 持有 VMA 列表、brk 边界与 mlock 状态.
 pub struct MmStruct {
     pub vmas: Mutex<Vec<Vma>>,
     pub start_brk: AtomicUsize,
@@ -1298,12 +1301,14 @@ static CURRENT_MM: core::sync::atomic::AtomicPtr<MmStruct> =
     clippy::ptr_cast_constness,
     reason = "ptr_cast_constness: *mut T as *const T 是已知安全 (Rust 2024 可用 ptr.cast_const 或 &raw const; 当前优先 expect"
 )]
+/// 设置当前进程的地址空间指针 (进程切换时由调度器调用).
 pub fn set_current_mm(mm: *const MmStruct) {
     // SAFETY: CURRENT_MM 是当前 CPU 的 per-CPU 状态指针，
     // 仅在进程切换时由调度器写入，调用者保证无并发写入。
     CURRENT_MM.store(mm as *mut MmStruct, core::sync::atomic::Ordering::Release);
 }
 
+/// 获取当前进程的地址空间引用 (未设置时为 `None`).
 pub fn get_current_mm() -> Option<&'static MmStruct> {
     // SAFETY: CURRENT_MM 在 set_current_mm 中设置，
     // 要么为 null，要么指向有效的 MmStruct。

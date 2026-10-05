@@ -984,6 +984,7 @@ fn test_swap_entry_large_slot() -> crate::privileged::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
+/// 注册交换 (swap) 单元测试用例到内核测试运行器.
 pub fn register_swap_tests() {
     use crate::privileged::tests::runner;
     let r = runner();

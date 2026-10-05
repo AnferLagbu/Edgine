@@ -46,6 +46,7 @@ pub trait IpcResource {
     fn release(&mut self);
 }
 
+/// IPC 资源类型 (管道/共享内存/消息队列/信号量)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IpcResourceType {
     Pipe,

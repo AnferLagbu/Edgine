@@ -233,96 +233,125 @@ pub trait SystemArch {
 /// 新架构移植时，实现子 trait 后加 `impl Arch for MyArch {}` 即可获得完整接口。
 pub trait Arch: CoreArch + InterruptArch + MmuArch + SystemArch {
     // ── 委托到 CoreArch ─────────────────────────────────
+    /// 获取当前 CPU ID (委托 `CoreArch::cpu_id`)。
     fn cpu_id() -> u32 {
         <Self as CoreArch>::cpu_id()
     }
+    /// 获取高精度时间戳 (委托 `CoreArch::timestamp`)。
     fn timestamp() -> u64 {
         <Self as CoreArch>::timestamp()
     }
+    /// 序列化时间戳读取, 确保先前指令全部完成 (委托 `CoreArch::timestamp_serialized`)。
     fn timestamp_serialized() -> u64 {
         <Self as CoreArch>::timestamp_serialized()
     }
+    /// 暂停 CPU 直到下一次中断 (委托 `CoreArch::halt`)。
     fn halt() {
         <Self as CoreArch>::halt();
     }
+    /// 全内存屏障 (委托 `CoreArch::fence`)。
     fn fence() {
         <Self as CoreArch>::fence();
     }
+    /// 写内存屏障 (委托 `CoreArch::fence_w`)。
     fn fence_w() {
         <Self as CoreArch>::fence_w();
     }
+    /// 读内存屏障 (委托 `CoreArch::fence_r`)。
     fn fence_r() {
         <Self as CoreArch>::fence_r();
     }
 
     // ── 委托到 InterruptArch ────────────────────────────
+    /// 禁用中断并返回先前状态标志 (委托 `InterruptArch::interrupt_disable`)。
     fn interrupt_disable() -> usize {
         <Self as InterruptArch>::interrupt_disable()
     }
+    /// 恢复先前保存的中断状态 (委托 `InterruptArch::interrupt_restore`)。
     fn interrupt_restore(flags: usize) {
         <Self as InterruptArch>::interrupt_restore(flags);
     }
+    /// 启用中断 (委托 `InterruptArch::interrupt_enable`)。
     fn interrupt_enable() {
         <Self as InterruptArch>::interrupt_enable();
     }
+    /// 检查中断是否已启用 (委托 `InterruptArch::is_interrupt_enabled`)。
     fn is_interrupt_enabled() -> bool {
         <Self as InterruptArch>::is_interrupt_enabled()
     }
+    /// 最小中断初始化, 仅设置中断向量表 (委托 `InterruptArch::interrupt_early_init`)。
     fn interrupt_early_init() {
         <Self as InterruptArch>::interrupt_early_init();
     }
+    /// 完整中断初始化, 含中断控制器/IPI/定时器 (委托 `InterruptArch::interrupt_late_init`)。
     fn interrupt_late_init() {
         <Self as InterruptArch>::interrupt_late_init();
     }
+    /// 向目标 CPU 发送核间中断 (委托 `InterruptArch::send_ipi`)。
     fn send_ipi(target_cpu: u32, vector: u8) {
         <Self as InterruptArch>::send_ipi(target_cpu, vector);
     }
+    /// 向所有其他 CPU 广播 IPI (委托 `InterruptArch::broadcast_ipi`)。
     fn broadcast_ipi(vector: u8) {
         <Self as InterruptArch>::broadcast_ipi(vector);
     }
 
     // ── 委托到 MmuArch ─────────────────────────────────
+    /// 刷新单个虚拟地址的 TLB 条目 (委托 `MmuArch::tlb_flush_page`)。
     fn tlb_flush_page(vaddr: usize) {
         <Self as MmuArch>::tlb_flush_page(vaddr);
     }
+    /// 刷新整个 TLB (委托 `MmuArch::tlb_flush_all`)。
     fn tlb_flush_all() {
         <Self as MmuArch>::tlb_flush_all();
     }
+    /// 读取当前页表基地址 (委托 `MmuArch::read_page_table_base`)。
     fn read_page_table_base() -> u64 {
         <Self as MmuArch>::read_page_table_base()
     }
+    /// 写入页表基地址 (委托 `MmuArch::write_page_table_base`)。
     fn write_page_table_base(paddr: u64) {
         <Self as MmuArch>::write_page_table_base(paddr);
     }
+    /// 读取触发页错误的地址 (委托 `MmuArch::read_fault_address`)。
     fn read_fault_address() -> usize {
         <Self as MmuArch>::read_fault_address()
     }
+    /// 保存当前上下文到 `from`, 从 `to` 恢复 (委托 `MmuArch::context_switch`)。
     fn context_switch(from: *mut u8, to: *const u8) {
         <Self as MmuArch>::context_switch(from, to);
     }
+    /// 进入用户态执行, 不返回 (委托 `MmuArch::enter_user`)。
     fn enter_user(entry: usize, stack: usize, arg: usize, user_cr3: u64, kstack: u64) -> ! {
         <Self as MmuArch>::enter_user(entry, stack, arg, user_cr3, kstack)
     }
+    /// 从内核态返回用户态 (委托 `MmuArch::return_to_user`)。
     fn return_to_user() {
         <Self as MmuArch>::return_to_user();
     }
 
     // ── 委托到 SystemArch ──────────────────────────────
+    /// 向 I/O 端口写入字节 (委托 `SystemArch::outb`)。
     fn outb(port: u16, value: u8) {
         <Self as SystemArch>::outb(port, value);
     }
+    /// 从 I/O 端口读取字节 (委托 `SystemArch::inb`)。
     fn inb(port: u16) -> u8 {
         <Self as SystemArch>::inb(port)
     }
+    /// 向 I/O 端口写入双字 (委托 `SystemArch::outl`)。
     fn outl(port: u16, value: u32) {
         <Self as SystemArch>::outl(port, value);
     }
+    /// 从 I/O 端口读取双字 (委托 `SystemArch::inl`)。
     fn inl(port: u16) -> u32 {
         <Self as SystemArch>::inl(port)
     }
+    /// 关机, 永不返回 (委托 `SystemArch::shutdown`)。
     fn shutdown() -> ! {
         <Self as SystemArch>::shutdown()
     }
+    /// 重启, 永不返回 (委托 `SystemArch::reboot`)。
     fn reboot() -> ! {
         <Self as SystemArch>::reboot()
     }

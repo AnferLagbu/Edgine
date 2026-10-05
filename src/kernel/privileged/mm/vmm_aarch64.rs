@@ -224,6 +224,7 @@ fn try_acquire_lock() -> Option<IrqSaveFlags> {
 
 // ─── AArch64 Virtual Memory Manager ──────────────────────────────────
 
+/// aarch64 虚拟内存管理器 (持有内核 L0 页表与用户页表追踪计数器).
 pub struct Aarch64Vmm {
     /// Physical address of kernel L0 table (for TTBR1_EL1)
     kernel_l0: u64,
@@ -1583,6 +1584,7 @@ impl Aarch64Vmm {
 
 static GLOBAL_VMM: OnceLock<Aarch64Vmm> = OnceLock::new();
 
+/// 初始化全局 VMM 单例 (幂等).
 pub fn vmm_init() {
     GLOBAL_VMM.get_or_init(|slot| {
         let vmm = Aarch64Vmm::new();
@@ -1591,6 +1593,7 @@ pub fn vmm_init() {
     });
 }
 
+/// 获取全局 VMM 单例 (未初始化则 panic).
 pub fn get_vmm() -> &'static Aarch64Vmm {
     GLOBAL_VMM.get_or_panic("VMM")
 }
@@ -1603,10 +1606,12 @@ pub fn vmm_debug_state() -> u8 {
     GLOBAL_VMM.debug_state()
 }
 
+/// 返回内核 L0 页表物理地址 (供 TTBR1_EL1 使用).
 pub fn get_kernel_pml4() -> u64 {
     get_vmm().kernel_l0
 }
 
+/// 返回当前生效的 L0 页表物理地址 (读 TTBR0_EL1; 为 0 时回退内核表).
 pub fn get_current_pml4() -> u64 {
     let ttbr0: u64;
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)

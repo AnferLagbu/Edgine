@@ -33,6 +33,7 @@ static CPU_TLB_GEN: [AtomicU64; crate::privileged::config::MAX_CPUS] =
 /// 仅用于可观测性/测试断言 (Makefile 依据打印行统计), 不参与任何控制逻辑.
 static TLB_SHOOTDOWN_COUNT: AtomicU64 = AtomicU64::new(0);
 
+/// 初始化 SMP 子系统: 登记 BSP 为逻辑索引 0 并置为在线
 #[expect(
     clippy::ptr_as_ptr,
     reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
@@ -49,10 +50,12 @@ pub fn init() {
     }
 }
 
+/// 查询 SMP 是否已启用 (至少有一个 AP 已上线)
 pub fn is_enabled() -> bool {
     SMP_ENABLED.load(Ordering::Acquire)
 }
 
+/// 返回当前已登记的 CPU 数量 (逻辑索引上界)
 pub fn get_cpu_count() -> u32 {
     CPU_COUNT.load(Ordering::Acquire)
 }
@@ -103,6 +106,7 @@ pub fn register_cpu(hw_id: u32) -> bool {
     true
 }
 
+/// 查询逻辑索引 `cpu_index` 的核是否在线; 越界返回 `false`
 pub fn is_cpu_online(cpu_index: u32) -> bool {
     if cpu_index as usize >= crate::privileged::config::MAX_CPUS {
         return false;
@@ -130,10 +134,12 @@ pub fn send_tlb_invalidate_ipi(cpu_index: u32) {
     crate::arch!(send_ipi(hw_id, 0xFD));
 }
 
+/// 向除本核外的所有核广播指定中断向量的 IPI
 pub fn send_broadcast_ipi(vector: u8) {
     crate::arch!(broadcast_ipi(vector));
 }
 
+/// 向所有在线核广播 TLB 失效 IPI (vector 0xFD)
 pub fn broadcast_tlb_invalidate() {
     if is_enabled() {
         send_broadcast_ipi(0xFD);
@@ -152,6 +158,7 @@ pub fn send_reschedule_ipi(cpu_index: u32) {
     crate::arch!(send_ipi(hw_id, 0xFE));
 }
 
+/// 向所有在线核广播重新调度 IPI (vector 0xFE)
 pub fn broadcast_reschedule() {
     if is_enabled() {
         send_broadcast_ipi(0xFE);

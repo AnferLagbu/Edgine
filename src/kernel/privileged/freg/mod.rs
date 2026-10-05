@@ -107,6 +107,7 @@ pub static RECOVERY_MANAGER: IrqSpinLock<RecoveryManager> =
     IrqSpinLock::new(RecoveryManager::new());
 pub static NEED_BSR_ESCALATION: AtomicBool = AtomicBool::new(false);
 
+/// 读取并清除 BSR 升级标志, 返回其先前值。
 pub fn check_and_clear_bsr_escalation() -> bool {
     NEED_BSR_ESCALATION.swap(false, Ordering::SeqCst)
 }
