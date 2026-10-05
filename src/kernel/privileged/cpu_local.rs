@@ -1,7 +1,7 @@
 //! `CpuLocal` — Per-CPU 变量安全抽象 (TCB)
 //!
 //! 提供类型安全的 per-CPU 数据访问，内部通过
-//! `arch!(cpu_id())` 索引静态槽位数组。
+//! `smp::current_cpu_index()` 索引静态槽位数组。
 //!
 //! ## 与 Asterinas OSTD `CpuLocal` 的关系
 //!
@@ -10,7 +10,7 @@
 //! ## SAFETY 不变量
 //!
 //! - 运行时 CPU 数 ≤ `MAX_CPUS`。
-//! - `cpu_id()` 返回值为 [0, `MAX_CPUS`) 范围内的有效索引。
+//! - `smp::current_cpu_index()` 返回值为 [0, `MAX_CPUS`) 范围内的有效索引。
 //! - per-CPU 数据仅在所属 CPU 上访问。
 
 use core::cell::UnsafeCell;
@@ -41,7 +41,7 @@ impl<T> CpuLocal<T> {
     /// # Panics
     /// 如果当前 CPU 的槽位已被初始化。
     pub fn init_this_cpu(&self, val: T) {
-        let cpu = crate::arch!(cpu_id()) as usize;
+        let cpu = crate::privileged::smp::current_cpu_index() as usize;
         assert!(cpu < MAX_CPUS, "CPU id {cpu} exceeds MAX_CPUS");
         // SAFETY:
         //   1. `cpu < MAX_CPUS` 已由上一行 assert 保证, 索引安全
@@ -61,7 +61,7 @@ impl<T> CpuLocal<T> {
     /// # Panics
     /// 如果当前 CPU 的槽位未初始化。
     pub fn get(&self) -> &T {
-        let cpu = crate::arch!(cpu_id()) as usize;
+        let cpu = crate::privileged::smp::current_cpu_index() as usize;
         assert!(cpu < MAX_CPUS);
         // SAFETY: 同 `init_this_cpu` 的 1-3 条款; 此外 `init_this_cpu` 已把 Some 写入,
         // 此处的 `expect("slot not initialized")` 是在违反调用契约时 panic (而非 UB)。
@@ -76,7 +76,7 @@ impl<T> CpuLocal<T> {
     /// # Panics
     /// 如果当前 CPU 的槽位未初始化。
     pub fn get_mut(&self) -> &mut T {
-        let cpu = crate::arch!(cpu_id()) as usize;
+        let cpu = crate::privileged::smp::current_cpu_index() as usize;
         assert!(cpu < MAX_CPUS);
         // SAFETY: 同 `init_this_cpu` 的 1-3 条款 + `get` 的初始化保证。
         // `&mut *UnsafeCell::get()` 产生独占 `&mut Option<T>`, Rust 借用检查器
@@ -91,7 +91,7 @@ impl<T> CpuLocal<T> {
     /// # Panics
     /// CPU 编号超出最大 CPU 数时 panic。
     pub fn take(&self) -> Option<T> {
-        let cpu = crate::arch!(cpu_id()) as usize;
+        let cpu = crate::privileged::smp::current_cpu_index() as usize;
         assert!(cpu < MAX_CPUS);
         // SAFETY: 同 `init_this_cpu` 的 1-3 条款。`Option::take` 自身是 safe 操作,
         // 这里需要 unsafe 仅是为了访问 UnsafeCell 的内部值; `&mut` 借用与

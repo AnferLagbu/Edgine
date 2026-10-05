@@ -634,6 +634,8 @@ fn handle_irq(from_el0: bool) {
     static IRQ_COUNT: AtomicU64 = AtomicU64::new(0);
     static TIMER_COUNT: AtomicU64 = AtomicU64::new(0);
     static SGI_COUNT: AtomicU64 = AtomicU64::new(0);
+    // ISSUE-RT-005: EL0 来源 IRQ 计数 (有界打印, 见下).
+    static EL0_IRQ_COUNT: AtomicU64 = AtomicU64::new(0);
 
     // GIC ACK
     let intid = super::gic::acknowledge();
@@ -647,6 +649,16 @@ fn handle_irq(from_el0: bool) {
     if intid >= 1020 {
         // 伪中断, 无需 EOI
         return;
+    }
+
+    // ISSUE-RT-005 正向证据: `enter_user` / 调度恢复路径清 SPSR.I 后, EL0 期可
+    // 接收 IRQ ⇒ 本 EL0 入口不再运行期不可达. 首次由 EL0 投递即打印里程碑 (有界),
+    // 供 QEMU fail-closed 断言 (缺失即 EL0 中断再次不可达/回归).
+    if from_el0 {
+        let c = EL0_IRQ_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        if c <= 5 {
+            crate::klog_info!(Boot, "IRQ: delivered from EL0 count={}", c);
+        }
     }
 
     // 内核 SGI 接收诊断 (有界): 打印接收入口 (EL1h/EL0) 与 intid, 为

@@ -107,9 +107,7 @@ fn cpu_queue_alloc(cpu_id: u32) -> bool {
 /// # 不变量
 ///
 /// 调用方保证目标槽位已分配 (启动时序: `init_cpu_queue` 早于该 CPU 使用队列).
-/// 若槽位为 `null` (例如真机 LAPIC ID 与顺序 `cpu_index` 不一致导致查错槽位),
-/// 回退 BSP 以保证内存安全 —— 这是已知的预存问题 (见 `smp::get_current_cpu`
-/// 返回 LAPIC ID 的语义).
+/// 若槽位为 `null` (目标 `cpu_index` 尚未分配队列), 回退 BSP 以保证内存安全.
 pub fn cpu_queue(cpu_id: u32) -> &'static CpuQueue {
     let idx = cpu_queue_slot(cpu_id);
     if idx == 0 {
@@ -118,7 +116,7 @@ pub fn cpu_queue(cpu_id: u32) -> &'static CpuQueue {
     }
     let ptr = CPU_QUEUES[idx].load(Ordering::Acquire);
     if ptr.is_null() {
-        // SAFETY: 回退 BSP 仅用于避免 null 解引用 (见 doc 的预存问题).
+        // SAFETY: 回退 BSP 仅用于避免 null 解引用 (见 doc 的槽位未分配情形).
         return unsafe { CPU_QUEUE_BSP.get() };
     }
     // SAFETY: 指针由 cpu_queue_alloc 以 Release 发布, 指向页池分配且已清零的
@@ -156,10 +154,8 @@ pub fn resched_cpu(target_cpu: u32) {
 
     cpu_queue(target_cpu).set_need_reschedule();
 
-    let target_apic_id = crate::privileged::smp::get_apic_id(target_cpu);
-    if target_apic_id != 0xFFFF {
-        crate::arch!(send_ipi(target_apic_id, 0xFE));
-    }
+    // 以逻辑索引为键发送重调度 IPI; 目标未登记时内部静默返回。
+    crate::privileged::smp::send_reschedule_ipi(target_cpu);
 }
 
 /// 在本核登记一次延迟重调度: 只置本核 `CpuQueue.need_reschedule`, 实际

@@ -157,14 +157,14 @@ pub fn kpti_set_user_ttbr0(ttbr0: u64) {
     kpti_cpu_state().user_ttbr0.store(ttbr0, Ordering::Release);
 }
 
-/// 返回**本核** KPTI 活跃状态槽 (索引 = `MPIDR_EL1 & 0xFF`, 即 `arch::cpu_id`)。
+/// 返回**本核** KPTI 活跃状态槽 (索引 = `smp::current_cpu_index()` 对 `MAX_CPUS` 取模)。
 ///
 /// 汇编侧改用 [`kpti_bind_cpu`] 写入 `TPIDR_EL1` 的**同一槽地址**寻址, 故 Rust 写
 /// 与汇编读必然落在同一槽 (入口切表前无空闲 GPR 现算 `MPIDR` 索引, 这是把索引
 /// 提前到上电路径的原因)。
 #[inline(always)]
 fn kpti_cpu_state() -> &'static KptiCpuState {
-    let cpu = (crate::privileged::cpu::arch::cpu_id() as usize) % MAX_CPUS;
+    let cpu = (crate::privileged::smp::current_cpu_index() as usize) % MAX_CPUS;
     // SAFETY: 索引经 MAX_CPUS 取模, 恒在数组范围内; 静态量生命周期为 'static。
     unsafe { KPTI_CPU_GLOBALS.0.get_unchecked(cpu) }
 }
@@ -303,7 +303,7 @@ pub unsafe fn kpti_init(vmm: &super::vmm::Aarch64Vmm, kernel_ttbr1: u64) {
     KPTI_GLOBALS.ready.store(1, Ordering::Release);
 
     // 5. 绑定**本核** (BSP) 的状态槽地址到 TPIDR_EL1 (AP 由 `ap_main` 各自绑定).
-    kpti_bind_cpu(crate::privileged::cpu::arch::cpu_id());
+    kpti_bind_cpu(crate::privileged::smp::current_cpu_index());
 }
 
 /// KPTI 关闭时的占位: 返回 trampoline TTBR1, 未就绪时退回完整内核 TTBR1.

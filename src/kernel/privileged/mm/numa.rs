@@ -442,7 +442,7 @@ pub fn sys_migrate_pages(_target_nodemask: u64) -> i64 {
 
 /// `sys_getcpu` — 获取当前 CPU 和 NUMA 节点
 pub fn sys_getcpu() -> i64 {
-    let cpu = crate::privileged::cpu::arch::cpu_id();
+    let cpu = crate::privileged::smp::current_cpu_index();
     let node = if numa_is_initialized() {
         numa_topology().cpu_to_node(cpu)
     } else {

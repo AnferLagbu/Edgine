@@ -17,7 +17,7 @@
 3. **无次核 Rust 入口**：`arch/aarch64/` 下无 `smp_init.rs`（x86_64 的对应物在 `arch/x86_64/smp_init.rs`，含 trampoline 拷贝、`start_ap`、`ap_entry`）。
 4. **连 BSP 都未接 `smp::init()`**：`arch/aarch64/mod.rs` 的 [`interrupt_early_init()`](../../src/kernel/privileged/arch/aarch64/mod.rs#L238-L240) 与 [`interrupt_late_init()`](../../src/kernel/privileged/arch/aarch64/mod.rs#L242-L244) **均为空函数**（注释称「GICv3 + VBAR_EL1 已由 entry.rs / bootloader 配置」）。对比 x86_64 的 [`interrupt_late_init()`](../../src/kernel/privileged/arch/x86_64/mod.rs#L324-L395) 末尾调用 `smp::init()` + `smp_init::init()`，aarch64 侧完全缺失该接线。
 
-**复合后果**：`smp::init()` 从未被调用 ⇒ `BSP_ID` / `CPU_ONLINE[0]` / `CPU_COUNT` 从未被正确初始化（`CPU_COUNT` 恒为初值 1）；`smp::register_cpu()` 无调用者 ⇒ `SMP_ENABLED` 恒 false。因此 [smp-ipi-protocol.md](./smp-ipi-protocol.md) §2.6 明确登记「**无 AP 上线路径**」，其 §5.3 的 aarch64 SGI 处理分支（`exception.rs` 中 SGI 7/13/14）**仅编译验证、无运行验证载体**。
+**复合后果**：`smp::init()` 从未被调用 ⇒ `CPU_HW_IDS[0]` / `CPU_ONLINE[0]` / `CPU_COUNT` 从未被正确初始化（`CPU_COUNT` 恒为初值 1）；`smp::register_cpu()` 无调用者 ⇒ `SMP_ENABLED` 恒 false。因此 [smp-ipi-protocol.md](./smp-ipi-protocol.md) §2.6 明确登记「**无 AP 上线路径**」，其 §5.3 的 aarch64 SGI 处理分支（`exception.rs` 中 SGI 7/13/14）**仅编译验证、无运行验证载体**。
 
 **性质判定**：**能力级缺口，非缺陷修复**。aarch64 当前单核语义"自洽"（所有依赖 `CPU_COUNT` 的路径在单核下退化为恒等操作），故本工程是**新增能力**而非修 bug；但其缺失使 aarch64 与 x86_64 的 SMP 抽象层长期处于"一半活、一半死"的分叉状态，且 ISSUE-RT-002（GIC 多核压测）等条目被该缺口阻塞。
 
@@ -87,17 +87,17 @@
 
 - **SMP-04. GIC 次核初始化参数化**
   - 描述：次核需唤醒并配置**自己的** Redistributor（E4）。
-  - 方案：把 `gic.rs` 的 `init_redistributor()` / `init_cpu_interface()` / `enable_timer_ppi()` 改为接受 **CPU 索引**（或 `GICR` frame 物理基址），内部按 `GICR stride = 128 KiB` 计算 `RD` frame 与 `SGI` frame 基址（`GICR_SGI = GICR_RD + GICR_SGI_OFFSET(0x1_0000)`）。BSP 调用点传 0，AP 传自身 CPU 索引。
+  - 方案：把 `gic.rs` 的 `init_redistributor()` / `init_cpu_interface()` / `enable_timer_ppi()` 改为按 **`(rd, sgi)` frame 基址** 操作；帧定位由 `redist_frames()` **以当前核硬件 id（紧凑亲和值）扫描 `GICR_TYPER[63:32].Affinity_Value`** 得出（以 `GICR_TYPER.Last` / `REDIST_SCAN_MAX_FRAMES` 界定，未命中 fail-closed），**不使用** `GICR stride × cpu_index` 线性推算。BSP 与 AP 共用 `init_per_cpu()`，各自以本核硬件 id 定位帧。
   - 状态：[X]
   - 详情（现有常量）：`GICR_SGI_OFFSET = 0x1_0000`（RD→SGI 相邻 64 KiB）；CPU 间 `GICR` stride = **128 KiB**（2 × 64 KiB，ARM GICv3 规定）。新增常量 `GICR_STRIDE: u64 = 0x2_0000` 并附中文说明。
-  - 详情（Distributor 共享）：`GICD` 为全局共享，**仅 BSP 初始化一次**；AP **不得**重复初始化 `GICD`。`GICD_ITARGETSR = 0x0101_0101`（PPIs to CPU0）现为硬编码单一目标 —— SPI 亲和路由暂不随 CPU 数调整，登记为简化项（`// SIMPLIFIED:`）。
+  - 详情（Distributor 共享）：`GICD` 为全局共享，**仅 BSP 初始化一次**；AP **不得**重复初始化 `GICD`。`init_distributor()` **显式置 ARE** 并等待 `GICD_CTLR.RWP`（RT-002 根因修复）；原 `GICD_ITARGETSR = 0x0101_0101` 硬编码与 `// SIMPLIFIED` 注释**已删除**（ARE 置位后该寄存器不再定义），SPI 定向改由 64 位 `GICD_IROUTER` 承担。
   - 详情（唤醒超时复用）：沿用既有 `REDIST_WAKE_SPIN_LIMIT`；超限返回 `Err("GICR_WAKER.ChildrenAsleep 未在限定自旋内清零")`，AP 侧据此 fail-fast（不登记该 CPU）。
 
 - **SMP-05. 次核 Rust 入口（`smp_init.rs`）**
   - 描述：次核切高半区后进入 Rust，完成 per-CPU 初始化并登记上线（E2、E10）。
   - 方案：新建 `arch/aarch64/smp_init.rs`，镜像 x86_64 同名模块结构但按 aarch64 语义重写：
     - `pub fn init()`（BSP 侧）：`smp::init()` 之后调用；探测 CPU 数（`<=1` 则打印 `[SMP] Single-core system, skipping AP startup` 并置 `SMP_FULLY_INITIALIZED` 返回）→ 准备 `.bootbss` 槽（SMP-03 详情）→ 遍历次核 `psci::cpu_on(mpidr, ap_entry_pa, cpu_index)` → 等待上线（有超时）→ 打印 `[SMP] online CPUs: {}`。
-    - `pub unsafe extern "C" fn ap_main(cpu_index: u64) -> !`（AP 侧）：`gic::init_per_cpu(cpu_index)`（SMP-04）→ **per-CPU 四连**（对齐 x86_64 `ap_entry`）：`proc::init_cpu_queue(cpu_index, 0)` / `proc::init_per_cpu_sched(cpu_index)` / `sync::rcu_alloc_cpu(cpu_index)` / `irq::softirq_alloc_cpu(cpu_index)`（任一失败 ⇒ **不登记**，打印后 `loop { arch!(halt()) }`）→ `smp::register_cpu(cpu_index)`（登记 `CPU_ONLINE` / `SMP_ENABLED`）→ `SCHEDULER.init_per_cpu_idle(cpu_index)` → 写 done 标志 → **开中断**（`msr daifclr, #2` 或等价）→ `loop { arch!(halt()) }`。
+    - `pub unsafe extern "C" fn ap_main(cpu_index: u64) -> !`（AP 侧）：`gic::init_per_cpu()`（SMP-04）→ **per-CPU 四连**（对齐 x86_64 `ap_entry`）：`proc::init_cpu_queue(cpu_index, 0)` / `proc::init_per_cpu_sched(cpu_index)` / `sync::rcu_alloc_cpu(cpu_index)` / `irq::softirq_alloc_cpu(cpu_index)`（任一失败 ⇒ **不登记**，打印后 `loop { arch!(halt()) }`）→ `smp::register_cpu(cpu_index)`（登记 `CPU_ONLINE` / `SMP_ENABLED`）→ `SCHEDULER.init_per_cpu_idle(cpu_index)` → 写 done 标志 → **开中断**（`msr daifclr, #2` 或等价）→ `loop { arch!(halt()) }`。
     - 次核入口后置自检（fail-fast，方案 B）：开中断前后各做一次可观测自检（如 `gic` 回读 `ICC_IGRPEN1_EL1`、`smp::is_enabled()`），任一不满足即 FATAL loop 并打印原因（对齐 `entry.rs` 的 GIC fail-fast 风格）。
     - 导出：`smp_init_bsp()` / `smp_ready()` / `smp_get_ap_count()`（与 x86_64 命名对齐，供 BSP 接线与自检）。
   - 状态：[X]
@@ -246,11 +246,11 @@ unsafe extern "C" { static ap_boot_info_ptr: u64; }
 - **改动**：
   1. 新增 `pub const GICR_STRIDE: u64 = 0x2_0000;`（GICv3 规定每 CPU 的 RD+SGI 共 128 KiB）。
   2. 新增薄封装 `fn gicr_read_at(base: u64, off: u64) -> u32` / `gicr_write_at` / `gicr_sgi_read_at` / `gicr_sgi_write_at`（内部仍走既有 `ptr::read_volatile`/`write_volatile` + 既有 `// SAFETY:` 注释），既有 `gicr_read(off)` 等改为 `gicr_read_at(GICR_BASE, off)`（**最小改动面**，不改调用者语义）。
-  3. 新增 `fn redist_frames(cpu_index: u32) -> (u64, u64)`：`rd = GICR_BASE + GICR_STRIDE * cpu_index`、`sgi = rd + GICR_SGI_OFFSET`。
+  3. 新增 `unsafe fn redist_frames() -> Result<(u64, u64), &'static str>`：**以当前核硬件 id（紧凑亲和值）为键扫描 GICR 帧** — 逐帧回读 `GICR_TYPER[63:32].Affinity_Value`（与 packed 亲和无歧义）匹配，以 `GICR_TYPER.Last`（bit4）/ `REDIST_SCAN_MAX_FRAMES=1024` 界定扫描终点；命中即 `rd = GICR_BASE + GICR_STRIDE * frame`、`sgi = rd + GICR_SGI_OFFSET`。未命中返回 `Err`（fail-closed），**不再使用线性推算**（`GICR_BASE + GICR_STRIDE * cpu_index`，该假设仅在 GICR 紧凑且帧序与逻辑索引一致时成立，稀疏拓扑下会定位错误帧）。判定复用架构中立纯逻辑 `gic_logic::find_redist_frame`，host 侧与生产路径同源。
   4. `init_redistributor()` / `enable_timer_ppi()` 改为按 `(rd, sgi)` 基址操作；`init_cpu_interface()` 不动（纯 ICC_* 系统寄存器，天然 per-CPU）。
-  5. 新增 `pub fn init_per_cpu(cpu_index: u32) -> Result<(), &'static str>`：`init_redistributor(rd, sgi)?; init_cpu_interface(); enable_timer_ppi(sgi);`。
-  6. `pub fn init()` 内 `init_redistributor()` 调用点改为 `init_per_cpu(0)?`；**`init_distributor()` 仍仅在 BSP 调用一次**（AP 不得重复初始化 `GICD`）。
-  7. `GICD_ITARGETSR = 0x0101_0101` 保持硬编码 + 附 `// SIMPLIFIED: PPIs 固定亲和 CPU0；SPI 亲和路由未随 CPU 数调整；多核 SPI 负载均衡时需扩展`。
+  5. 新增 `pub fn init_per_cpu() -> Result<(), &'static str>`（**去参**）：`redist_frames()?; init_redistributor(rd, sgi)?; init_cpu_interface(); enable_timer_ppi(sgi); enable_sgi(...)`。BSP 与 AP 共用同一实现，均以当前核硬件 id 定位帧。
+  6. `pub fn init()` 内调用点改为 `init_per_cpu()?`；**`init_distributor()` 仍仅在 BSP 调用一次**（AP 不得重复初始化 `GICD`）；`init_distributor()` 内**显式置 ARE** 并等待 `GICD_CTLR.RWP`（见 [../report/gicv3-rt002-rootcause-and-index-model.md](../report/gicv3-rt002-rootcause-and-index-model.md)）。
+  7. `GICD_ITARGETSR = 0x0101_0101` 硬编码与 `// SIMPLIFIED` 注释**已删除** — ARE 置位后该寄存器不再定义；SPI 定向改由 64 位 `GICD_IROUTER` 承担（`route_spi_to_cpu0`）。
 - **验证**：`./ci/build.sh all` → `./scripts/qemu_boot_test.sh aarch64`（须仍命中 `GICv3 ready`，无回归）。
 
 #### 3.3.2 SMP-02（批次 B）：PSCI `CPU_ON` + 拓扑

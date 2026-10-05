@@ -311,6 +311,17 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 warn "[aarch64] 未成对观察到 EL0 cpu=0/cpu=1 (实测: ${EL0_CPUS:-无})"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+            # ISSUE-RT-005: EL0 中断可达里程碑. `enter_user` / 调度恢复路径清
+            # SPSR.I 后 EL0 期可接收 IRQ, `handle_irq` 首次由 EL0 投递即打印
+            # `IRQ: delivered from EL0`. 缺失即 EL0 全程屏蔽 IRQ 回归
+            # (用户态不可被抢占, 与 x86_64 RFLAGS.IF=1 语义不一致, fail-closed).
+            # 注: -a 避免日志含 NUL 字节时 grep 误判二进制.
+            if grep -aq "IRQ: delivered from EL0" "$A64_LOG"; then
+                ok "[aarch64] EL0 中断可达 (用户态可被抢占, ISSUE-RT-005)"
+            else
+                warn "[aarch64] 未观察到 EL0 来源 IRQ (ISSUE-RT-005 回归?)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
         else
             [ "$FAIL_OK" = "0" ] && RESULT=1
         fi

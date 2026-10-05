@@ -446,9 +446,8 @@ fn gdt_slot(cpu: u32) -> usize {
 /// # 不变量
 ///
 /// 调用方保证目标槽位已分配 (启动时序: `alloc_ap_gdt` 早于 SIPI, `register_cpu`
-/// 晚于 `gdt_init_ap`). 若 AP 槽位为 `null` (例如真机 LAPIC ID 与顺序 `cpu_index`
-/// 不一致导致查错槽位), 回退 BSP GDT 以保证内存安全 —— 这是已知的预存问题
-/// (见 `smp::get_current_cpu` 返回 LAPIC ID 的语义).
+/// 晚于 `gdt_init_ap`). 若 AP 槽位为 `null` (目标 `cpu_index` 尚未分配 GDT),
+/// 回退 BSP GDT 以保证内存安全.
 #[inline]
 fn per_cpu_gdt(cpu: u32) -> &'static PerCpuGdt {
     let idx = gdt_slot(cpu);
@@ -458,7 +457,7 @@ fn per_cpu_gdt(cpu: u32) -> &'static PerCpuGdt {
     }
     let ptr = AP_GDT[idx].load(Ordering::Acquire);
     if ptr.is_null() {
-        // SAFETY: 回退 BSP GDT 仅用于避免 null 解引用 (见 doc 的预存问题).
+        // SAFETY: 回退 BSP GDT 仅用于避免 null 解引用 (见 doc 的槽位未分配情形).
         return unsafe { BSP_GDT.get() };
     }
     // SAFETY: 指针由 alloc_ap_gdt 以 Release 发布, 指向 PMM 分配且已清零的
@@ -480,7 +479,7 @@ fn per_cpu_gdt_mut(cpu: u32) -> &'static mut PerCpuGdt {
     }
     let ptr = AP_GDT[idx].load(Ordering::Acquire);
     if ptr.is_null() {
-        // SAFETY: 回退 BSP GDT 仅用于避免 null 解引用 (见 per_cpu_gdt 的预存问题).
+        // SAFETY: 回退 BSP GDT 仅用于避免 null 解引用 (见 per_cpu_gdt 的槽位未分配情形).
         return BSP_GDT.get_mut();
     }
     // SAFETY: 指针由 alloc_ap_gdt 以 Release 发布; 调用方保证该槽位独占访问.

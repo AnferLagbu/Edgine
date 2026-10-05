@@ -148,8 +148,9 @@ pub fn launch_first_user_process() -> ! {
     {
         // 禁用 IRQ 以防止 timer 中断在 ELF 加载/进程创建期间干扰,
         // 导致非确定性挂起 (PMM 分配/页表操作/调度器状态不一致).
-        // SAFETY: 后续 enter_user 设置 SPSR_EL1 时 DAIF 全屏蔽, EL0 init
-        // 进程自行启用中断, 此处无需恢复.
+        // SAFETY: 其后 enter_user_process 以 `-> !` 进入 EL0 不再返回本 EL1 上下文;
+        // 进入 EL0 的 PSTATE 由 enter_user 写入 SPSR_EL1 (I 位清零 ⇒ EL0 可被抢占),
+        // 与本处 EL1 侧的中断屏蔽状态无关, 故无需恢复.
         let _saved = crate::arch!(interrupt_disable());
 
         let bin = include_bytes!("../../../other/build/user/init.bin");

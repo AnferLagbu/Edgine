@@ -6,9 +6,16 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 static SMP_ENABLED: AtomicBool = AtomicBool::new(false);
 static CPU_COUNT: AtomicU32 = AtomicU32::new(1);
-static BSP_ID: AtomicU32 = AtomicU32::new(0);
 
-static CPU_APIC_IDS: [AtomicU32; crate::privileged::config::MAX_CPUS] =
+/// 各逻辑 CPU 槽位登记的**硬件 id** (`MAX_CPUS` 槽; 未占用为哨兵 `0xFFFF`)。
+///
+/// - x86_64: Local APIC id;
+/// - aarch64: 紧凑亲和 id `(Aff3<<24)|(Aff2<<16)|(Aff1<<8)|Aff0`。
+///
+/// 这是逻辑索引 ↔ 硬件 id 的**唯一**映射源: `CPU_HW_IDS[逻辑索引] == 硬件 id`。
+/// 逻辑索引由 [`register_cpu`] 按上线次序稠密分配, 与 [`CPU_ONLINE`]/[`CPU_TLB_GEN`]
+/// 等 per-CPU 数组下标一致; 由 [`current_cpu_index`] 线性扫描本表反查本核索引。
+static CPU_HW_IDS: [AtomicU32; crate::privileged::config::MAX_CPUS] =
     [const { AtomicU32::new(0xFFFF) }; crate::privileged::config::MAX_CPUS];
 
 static CPU_ONLINE: [AtomicBool; crate::privileged::config::MAX_CPUS] =
@@ -31,10 +38,8 @@ static TLB_SHOOTDOWN_COUNT: AtomicU64 = AtomicU64::new(0);
     reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
 )]
 pub fn init() {
-    let bsp_apic_id = crate::arch!(cpu_id());
-    BSP_ID.store(bsp_apic_id, Ordering::Release);
-
-    CPU_APIC_IDS[0].store(bsp_apic_id, Ordering::Release);
+    let bsp_hw_id = crate::arch!(cpu_id());
+    CPU_HW_IDS[0].store(bsp_hw_id, Ordering::Release);
     CPU_ONLINE[0].store(true, Ordering::Release);
     CPU_COUNT.store(1, Ordering::Release);
 
@@ -52,18 +57,46 @@ pub fn get_cpu_count() -> u32 {
     CPU_COUNT.load(Ordering::Acquire)
 }
 
-pub fn get_current_cpu() -> u32 {
-    crate::arch!(cpu_id())
+/// 返回当前 CPU 的**逻辑索引** (`[0, get_cpu_count())`)。
+///
+/// 读取本核硬件 id (`arch::cpu_id()`) 后在 [`CPU_HW_IDS`] 的已登记前缀内线性
+/// 扫描反查; 未命中 (例如极早期调用, 槽位尚未登记) 回退 BSP (0), 保证返回值
+/// 恒为有效索引。核数上限 [`crate::privileged::config::MAX_CPUS`] 有界, 扫描
+/// 成本可接受且为纯读, 可在中断上下文调用。
+pub fn current_cpu_index() -> u32 {
+    let hw_id = crate::arch!(cpu_id());
+    let count = get_cpu_count();
+    let mut i = 0u32;
+    while i < count {
+        if CPU_HW_IDS[i as usize].load(Ordering::Acquire) == hw_id {
+            return i;
+        }
+        i += 1;
+    }
+    0
 }
 
-pub fn register_cpu(apic_id: u32) -> bool {
+/// 返回当前 CPU 的逻辑索引 (等价于 [`current_cpu_index`])。
+///
+/// 语义修正 (RT-002): 本函数历史上直接返回硬件 id (x86: LAPIC id / aarch64:
+/// MPIDR Aff0), 但全部内核调用点都把它当**稠密逻辑索引**用于 per-CPU 数组寻址
+/// (调度器 / softirq / RCU / CpuQueue / TLB 代), 稀疏拓扑下二者不一致会导致
+/// 索引错位。现统一返回逻辑索引。
+pub fn get_current_cpu() -> u32 {
+    current_cpu_index()
+}
+
+/// 登记一个上线 CPU: 按当前计数器稠密分配逻辑索引, 并把其硬件 id 存入该槽。
+///
+/// 返回 `false` 表示槽位耗尽 (超过 `MAX_CPUS`), 计数器已回滚。
+pub fn register_cpu(hw_id: u32) -> bool {
     let count = CPU_COUNT.fetch_add(1, Ordering::AcqRel);
     if count as usize >= crate::privileged::config::MAX_CPUS {
         CPU_COUNT.fetch_sub(1, Ordering::AcqRel);
         return false;
     }
 
-    CPU_APIC_IDS[count as usize].store(apic_id, Ordering::Release);
+    CPU_HW_IDS[count as usize].store(hw_id, Ordering::Release);
     CPU_TLB_GEN[count as usize].store(TLB_GEN.load(Ordering::Acquire), Ordering::Release);
     CPU_ONLINE[count as usize].store(true, Ordering::Release);
     SMP_ENABLED.store(true, Ordering::Release);
@@ -77,15 +110,24 @@ pub fn is_cpu_online(cpu_index: u32) -> bool {
     CPU_ONLINE[cpu_index as usize].load(Ordering::Acquire)
 }
 
-pub fn get_apic_id(cpu_index: u32) -> u32 {
+/// 返回逻辑索引 `cpu_index` 对应槽位登记的硬件 id; 越界返哨兵 `0xFFFF`。
+pub fn get_hw_id(cpu_index: u32) -> u32 {
     if cpu_index as usize >= crate::privileged::config::MAX_CPUS {
         return 0xFFFF;
     }
-    CPU_APIC_IDS[cpu_index as usize].load(Ordering::Acquire)
+    CPU_HW_IDS[cpu_index as usize].load(Ordering::Acquire)
 }
 
-pub fn send_tlb_invalidate_ipi(target_apic_id: u8) {
-    crate::arch!(send_ipi(u32::from(target_apic_id), 0xFD));
+/// 向逻辑索引 `cpu_index` 的核发送 TLB 失效 IPI (vector `0xFD` / SGI 13)。
+///
+/// 以**逻辑索引**为键: 内部经 [`get_hw_id`] 解析目标硬件 id 后交由架构层寻址。
+/// 目标未登记 (哨兵 `0xFFFF`) 时静默返回。
+pub fn send_tlb_invalidate_ipi(cpu_index: u32) {
+    let hw_id = get_hw_id(cpu_index);
+    if hw_id == 0xFFFF {
+        return;
+    }
+    crate::arch!(send_ipi(hw_id, 0xFD));
 }
 
 pub fn send_broadcast_ipi(vector: u8) {
@@ -98,8 +140,16 @@ pub fn broadcast_tlb_invalidate() {
     }
 }
 
-pub fn send_reschedule_ipi(target_apic_id: u8) {
-    crate::arch!(send_ipi(u32::from(target_apic_id), 0xFE));
+/// 向逻辑索引 `cpu_index` 的核发送重新调度 IPI (vector `0xFE` / SGI 14)。
+///
+/// 以**逻辑索引**为键: 内部经 [`get_hw_id`] 解析目标硬件 id 后交由架构层寻址。
+/// 目标未登记 (哨兵 `0xFFFF`) 时静默返回。
+pub fn send_reschedule_ipi(cpu_index: u32) {
+    let hw_id = get_hw_id(cpu_index);
+    if hw_id == 0xFFFF {
+        return;
+    }
+    crate::arch!(send_ipi(hw_id, 0xFE));
 }
 
 pub fn broadcast_reschedule() {
@@ -177,7 +227,7 @@ pub fn tlb_gen_publish_and_shoot() -> u64 {
     let mut targets = 0u64;
     for i in 0..cpu_count {
         if CPU_ONLINE[i as usize].load(Ordering::Acquire) {
-            send_tlb_invalidate_ipi(get_apic_id(i) as u8);
+            send_tlb_invalidate_ipi(i);
             targets += 1;
         }
     }
@@ -315,13 +365,13 @@ pub extern "C" fn smp_get_current_cpu() -> u32 {
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-pub extern "C" fn smp_register_cpu(apic_id: u32) -> bool {
-    register_cpu(apic_id)
+pub extern "C" fn smp_register_cpu(hw_id: u32) -> bool {
+    register_cpu(hw_id)
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-pub extern "C" fn smp_send_tlb_invalidate_ipi(target_apic_id: u8) {
-    send_tlb_invalidate_ipi(target_apic_id);
+pub extern "C" fn smp_send_tlb_invalidate_ipi(cpu_index: u32) {
+    send_tlb_invalidate_ipi(cpu_index);
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
@@ -330,6 +380,6 @@ pub extern "C" fn smp_broadcast_tlb_invalidate() {
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-pub extern "C" fn smp_send_reschedule_ipi(target_apic_id: u8) {
-    send_reschedule_ipi(target_apic_id);
+pub extern "C" fn smp_send_reschedule_ipi(cpu_index: u32) {
+    send_reschedule_ipi(cpu_index);
 }

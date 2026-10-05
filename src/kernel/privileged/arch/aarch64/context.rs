@@ -78,7 +78,8 @@ context_switch_asm:
     mrs  x2, ttbr0_el1
     str  x2, [x0, #104]
     // @112: SPSR_EL1. **不存 live SPSR**: syscall/异常中途取出的是"被打断的
-    // EL0 状态" (0x3C0 + 用户 PC), 不是 EL1 续跑点. 本函数入口已 daifset #0xF
+    // EL0 状态" (0x340 + 用户 PC, I 位清零 ⇒ EL0 可被抢占, 见 ISSUE-RT-005),
+    // 不是 EL1 续跑点. 本函数入口已 daifset #0xF
     // ⇒ 续跑点必为 EL1h (M=0b0101) + DAIF 屏蔽, 故写常量 0x3C5; 恢复侧据
     // SPSR.M[3:0] != 0 走"内核续跑"路径.
     movz x2, #0x3C5
@@ -172,7 +173,7 @@ context_switch_asm:
     // === 恢复路径分派 (按目标 SPSR_EL1.M[3:0]) ===
     //
     // 保存侧把"内核续跑点"写成常量 0x3C5 (EL1h), 把"首次进入 EL0"的时间点
-    // 由 `proc_save_user_regs_aarch64` 写成用户的 0x3C0 (EL0t). 故此处以
+    // 由 `proc_save_user_regs_aarch64` 写成用户的 0x340 (EL0t, I 清零). 故此处以
     // SPSR.M 是否为 0 区分两条语义完全不同的恢复路径:
     //
     // - M != 0 (EL1): **内核续跑**. 本任务是"在内核里被换出"的 (schedule 调用点),

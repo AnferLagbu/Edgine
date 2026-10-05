@@ -43,7 +43,10 @@ struct ApBootInfo {
     stack_top: u64,
     /// `[0x30]` AP Rust 入口 (`ap_main`) 的高半区 VA。
     entry_va: u64,
-    /// `[0x38]` 透传给 `ap_main` 第 1 参的 `cpu_index` (= MPIDR)。
+    /// `[0x38]` 透传给 `ap_main` 第 1 参的**逻辑 CPU 索引** (`[0, MAX_CPUS)`)。
+    ///
+    /// 由 BSP 按上线次序稠密分配, 与 `smp::register_cpu` 内部计数器取值一致;
+    /// 原始 MPIDR 仅作 PSCI `CPU_ON` 的寻址参数, 不经本槽传递。
     cpu_index: u64,
     /// `[0x40]` 握手完成标志: AP 登记上线后置 1。
     done: u64,
@@ -131,17 +134,18 @@ pub fn init() {
         return;
     }
 
-    let bsp_mpidr = u64::from(crate::arch!(cpu_id()));
+    let bsp_hw = crate::arch!(cpu_id());
     let expected = topology.count;
 
     for &mpidr in topology.mpidrs.iter().take(topology.count as usize) {
-        if mpidr == bsp_mpidr {
+        // BSP 自身跳过: 以其硬件 id (紧凑亲和) 判定, 而非原始 MPIDR 全字段比较。
+        if super::affinity_pack(mpidr) == bsp_hw {
             continue;
         }
-        // SIMPLIFIED: 稀疏 Aff0 下 `smp::register_cpu` 内部计数器与槽索引可能不一致;
-        //   影响面: 仅在 MPIDR Aff0 非连续 (超 8 核且带亲和性) 时索引错位;
-        //   何时需扩展: 引入 cpu_index ↔ MPIDR 独立映射表时按映射修正.
-        let _ = start_ap(mpidr);
+        // 为每个 AP 按上线次序分配稠密逻辑索引: 与 `smp::register_cpu` 内部计数器
+        // 取值一致 (BSP 逐个等待 AP 登记完成后再启动下一个, 故无并发分配竞争)。
+        let logical = crate::privileged::smp::get_cpu_count();
+        let _ = start_ap(mpidr, logical);
     }
 
     // 在线核数以权威计数器为准 (仅 `smp::register_cpu` 会增加它), 据此判定全体上线。
@@ -154,7 +158,10 @@ pub fn init() {
 }
 
 /// 上电单个 AP 并等待其上线登记; 成功返回 `Ok(())`, 失败返回 `Err(())`。
-fn start_ap(mpidr: u64) -> Result<(), ()> {
+///
+/// `mpidr` 为 AP 的**原始** `MPIDR_EL1` (供 PSCI 寻址); `cpu_index` 为 BSP 为其
+/// 分配的**逻辑索引**, 经启动槽透传给 `ap_main` 作为 per-CPU 数组下标。
+fn start_ap(mpidr: u64, cpu_index: u32) -> Result<(), ()> {
     // 本核私有栈: 零初始化后常驻 (不释放), 供 AP 生命周期内使用。
     // SAFETY: Layout::new::<ApStack>() 的 size/align 均由类型保证非零且合法;
     //   alloc_zeroed 返回的指针须显式转回 ApStack.
@@ -176,7 +183,7 @@ fn start_ap(mpidr: u64) -> Result<(), ()> {
         sctlr: super::mmu::read_sctlr(),
         stack_top,
         entry_va: ap_main as *const () as u64,
-        cpu_index: mpidr,
+        cpu_index: u64::from(cpu_index),
         done: 0,
         el: 0,
     };
@@ -230,7 +237,7 @@ fn start_ap(mpidr: u64) -> Result<(), ()> {
     Ok(())
 }
 
-/// AP Rust 入口 (`ap_entry_asm` 经 TTBR1 跳入, `cpu_index` = MPIDR)。
+/// AP Rust 入口 (`ap_entry_asm` 经 TTBR1 跳入; `cpu_index` = BSP 分配的逻辑索引)。
 ///
 /// 依次完成本核 GIC/per-CPU 状态初始化、登记上线、接管本核 idle, 最后置 `done`
 /// 并进入本核 idle 调度循环 (装载本核定时器 + `schedule()` 循环)。任一前置步骤
@@ -258,8 +265,9 @@ extern "C" fn ap_main(cpu_index: u64) -> ! {
     }
 
     // 1. 本核 GICv3 重分发器/CPU 接口初始化 + 定时器 PPI 使能。
+    //    以本核硬件 id 自动定位自身 Redistributor 帧, 无需传入逻辑索引。
     // SAFETY: 仅在 AP 本核调用; 本核 MMU 已在 stub 中启用, GIC MMIO 已由 BSP 建立映射.
-    if let Err(e) = unsafe { super::gic::init_per_cpu(idx) } {
+    if let Err(e) = unsafe { super::gic::init_per_cpu() } {
         crate::klog_err!(
             Boot,
             "[SMP] AP cpu_index={} gic init_per_cpu failed: {}",
@@ -293,8 +301,9 @@ extern "C" fn ap_main(cpu_index: u64) -> ! {
         }
     }
 
-    // 4. 登记本核上线。
-    crate::privileged::smp::register_cpu(idx);
+    // 4. 登记本核上线: 以本核硬件 id (紧凑亲和, 见 `affinity_pack`) 入表; 登记的
+    //    槽位由内部计数器决定, 应等于 BSP 经启动槽透传的 `idx`。
+    crate::privileged::smp::register_cpu(crate::arch!(cpu_id()));
 
     // 4.1 绑定本核 KPTI 状态槽地址到 TPIDR_EL1: EL0 入口/出口汇编据此按核寻址
     //     (切表前无空闲 GPR 现算 MPIDR 索引, 故索引在上电路径一次算好)。

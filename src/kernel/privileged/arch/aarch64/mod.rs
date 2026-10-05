@@ -36,10 +36,27 @@ pub struct Aarch64;
 
 use crate::privileged::arch::{Arch, CoreArch, InterruptArch, MmuArch, SystemArch};
 
+/// 将 `MPIDR_EL1` 原始值打包为紧凑亲和 id (每级 8 bit, 合计 32 bit)。
+///
+/// 布局 `(Aff3<<24)|(Aff2<<16)|(Aff1<<8)|Aff0`, 忽略 `MT`(bit31) 与保留位。
+/// 作为本核硬件 id 参与逻辑索引反查 (见 `smp::CPU_HW_IDS`), 并由 [`Aarch64`] 的
+/// `InterruptArch::send_ipi` 还原为 `ICC_SGI1R_EL1` 的 Aff1/Aff2/Aff3 字段。
+///
+/// 取完整 4 级亲和 (而非仅 Aff0) 的原因: 稀疏/多簇拓扑下仅 Aff0 无法唯一标识
+/// 一个核, 会与其它簇同 Aff0 的核碰撞。
+#[inline]
+pub(crate) fn affinity_pack(mpidr: u64) -> u32 {
+    let aff0 = (mpidr & 0xFF) as u32;
+    let aff1 = ((mpidr >> 8) & 0xFF) as u32;
+    let aff2 = ((mpidr >> 16) & 0xFF) as u32;
+    let aff3 = ((mpidr >> 32) & 0xFF) as u32;
+    (aff3 << 24) | (aff2 << 16) | (aff1 << 8) | aff0
+}
+
 // ── CoreArch: 基础核心 ──────────────────────────────────────────────────
 
 impl CoreArch for Aarch64 {
-    /// 获取当前 CPU ID (MPIDR_EL1 Aff0)。
+    /// 获取当前核硬件 id: `MPIDR_EL1` 的紧凑亲和编码 (见 [`affinity_pack`])。
     #[inline(always)]
     fn cpu_id() -> u32 {
         let mpidr: u64;
@@ -47,7 +64,7 @@ impl CoreArch for Aarch64 {
         unsafe {
             asm!("mrs {}, mpidr_el1", out(reg) mpidr);
         }
-        (mpidr & 0xFF) as u32
+        affinity_pack(mpidr)
     }
 
     /// 获取高精度时间戳 (CNTPCT_EL0)。
@@ -210,22 +227,26 @@ impl InterruptArch for Aarch64 {
         (daif & (1 << 7)) == 0
     }
 
-    #[expect(
-        clippy::cast_lossless,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
     /// GICv3 SGI 单播 (ICC_SGI1R_EL1)。
+    ///
+    /// `target_cpu` 是目标的紧凑亲和 id (见 [`affinity_pack`]); 本函数把 Aff1/2/3
+    /// 填回 `ICC_SGI1R_EL1` 的 [23:16]/[39:32]/[55:48], 并把 Aff0 编码为
+    /// TargetList 的对应位 (`1 << Aff0`) —— 误置于 [23:16] (Aff1) 会寻址到不存在
+    /// 的簇, SGI 永不投递。TargetList 仅覆盖簇内 Aff0 ∈ [0,15], 故 Aff0 取低 4 位。
     fn send_ipi(target_cpu: u32, vector: u8) {
-        // ICC_SGI1R_EL1 字段: INTID[27:24], Aff1[23:16], TargetList[15:0]。
-        // 同簇内按 Aff0 单播: 目标的 Aff0 编码为 **TargetList 的对应位**
-        // (Aff1/Aff2/Aff3 均为 0), 即 `1 << aff0`; 误置于 [23:16] (Aff1) 会
-        // 寻址到不存在的簇, SGI 永不投递。
-        // SIMPLIFIED: 仅按 Aff0 同簇寻址 (接口 `send_ipi` 目标参数窄化为低位);
-        //   影响面: 多簇 (>16 核带亲和性) 拓扑下无法寻址跨簇核; 何时需扩展:
-        //   引入 cpu_index↔(Aff0,Aff1,Aff2,Aff3) 映射, 按目标 MPIDR 填 Aff1/2/3。
-        let sgi: u64 = ((vector & 0xF) as u64) << 24 | (1u64 << (target_cpu & 0xF));
+        // ICC_SGI1R_EL1 字段: Aff3[55:48], Aff2[39:32], INTID[27:24], Aff1[23:16],
+        // TargetList[15:0]。
+        let aff0 = target_cpu & 0xFF;
+        let aff1 = (target_cpu >> 8) & 0xFF;
+        let aff2 = (target_cpu >> 16) & 0xFF;
+        let aff3 = (target_cpu >> 24) & 0xFF;
+        let sgi: u64 = (u64::from(aff3) << 48)
+            | (u64::from(aff2) << 32)
+            | (u64::from(vector & 0xF) << 24)
+            | (u64::from(aff1) << 16)
+            | (1u64 << (aff0 & 0xF));
         // SAFETY: msr icc_sgi1r_el1 触发 GICv3 SGI；
-        // 目标 CPU 与 vector 已 mask 至合法范围。
+        // 各字段已 mask 至 ICC_SGI1R_EL1 的合法位宽。
         unsafe {
             asm!("msr icc_sgi1r_el1, {}", in(reg) sgi);
         }
@@ -323,9 +344,12 @@ impl MmuArch for Aarch64 {
     /// 3. 跳转到 `.vectors` 内的高半区 trampoline 完成 `TTBR0/TTBR1` 切换后 eret
     ///    (切换必须在高半区执行, 否则切 `TTBR0` 后低半区代码立即 Prefetch Abort).
     fn enter_user(entry: usize, stack: usize, arg: usize, user_cr3: u64, kstack: u64) -> ! {
-        // SPSR_EL1: EL0t (M[3:0]=0000), DAIF 全屏蔽 (F=1,I=1,A=1,D=1).
-        // 0x3C0 = (0b1111 << 6) | 0b0000.
-        let spsr: u64 = 0x3C0;
+        // SPSR_EL1: EL0t (M[3:0]=0000), D/A/F 屏蔽但 **I 位清零**.
+        // 清 I ⇒ EL0 可接收 IRQ (定时器 PPI / 跨核 SGI), 使 aarch64 用户态
+        // 可被抢占, 与 x86_64 用户态 `RFLAGS.IF=1` 对齐 (见 arch/x86_64/mod.rs
+        // iretq 帧 `push 0x202`); 对照 ISSUE-RT-005 (EL0 中断此前运行期不可达).
+        // 0x340 = (0b1101 << 6) | 0b0000 (D=1,A=1,I=0,F=1).
+        let spsr: u64 = 0x340;
 
         // 内核 MMIO 统一走 TTBR1 高别名 (KPTI 方案 S3: EL1 视图刻意不含 Device 段).
         // 进入 EL0 后 TTBR0 即为用户视图, 内核态 (EL1) 若仍按低半区地址 0x0900_0000

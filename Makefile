@@ -117,7 +117,7 @@ USER_TEST_ELF = $(RUST_USER_TARGET)/proctest
 STAGE1_BIN = $(BUILD_DIR)/stage1.bin
 DISK_IMAGE = $(BUILD_DIR)/antx.img
 
-.PHONY: all clean run run-net debug log log-net iso run-iso disk run-disk user test test-host test-kernel-host test-unit \
+.PHONY: all clean run run-net debug log log-net iso run-iso disk run-disk user test test-host test-kernel-host test-kani test-unit \
          test-all test-chaos test-smp test-smp-multicore
 
 ifeq ($(ARCH),aarch64)
@@ -463,6 +463,16 @@ test-kernel-host:
 	@echo "╚══════════════════════════════════════════════╝"
 	@mkdir -p $(CURDIR)/$(REPORT_DIR)
 	@cd src/kernel && { log=$(CURDIR)/$(REPORT_DIR)/kernel_host_test_$$(date +%Y%m%d_%H%M%S).log; cargo test --features host-test --lib > "$$log" 2>&1; status=$$?; cat "$$log"; exit $$status; }
+	@echo ""
+
+# Kani 形式化验证: 独立 crate kani-harness/ 通过 #[path] 引真实 functions 源码,
+# 证明其核心安全不变式 (不 panic / pos 单调不减 / 不越界). 需本机已 `cargo kani setup`.
+test-kani:
+	@echo "╔══════════════════════════════════════════════╗"
+	@echo "║   Running Kani Formal Verification           ║"
+	@echo "╚══════════════════════════════════════════════╝"
+	@mkdir -p $(CURDIR)/$(REPORT_DIR)
+	@cd kani-harness && { log=$(CURDIR)/$(REPORT_DIR)/kani_$$(date +%Y%m%d_%H%M%S).log; cargo kani > "$$log" 2>&1; status=$$?; cat "$$log"; exit $$status; }
 	@echo ""
 
 test-unit: $(BUILD_DIR)/kernel_test.bin user

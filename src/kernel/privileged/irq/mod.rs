@@ -112,7 +112,7 @@ static SOFTIRQ_PER_CPU: [AtomicPtr<SoftirqState>; MAX_CPUS] =
 
 #[inline]
 fn current_cpu_id() -> usize {
-    crate::arch!(cpu_id()) as usize
+    crate::privileged::smp::current_cpu_index() as usize
 }
 
 /// 将 CPU 编号映射到 softirq 状态槽位下标.
@@ -126,9 +126,8 @@ fn softirq_slot(cpu: u32) -> usize {
 /// # 不变量
 ///
 /// 调用方保证目标槽位已分配 (启动时序: `softirq_alloc_cpu` 早于 AP 使用 softirq).
-/// 若槽位为 `null` (例如真机 LAPIC ID 与顺序 `cpu_index` 不一致导致查错槽位),
-/// 回退 BSP 状态以保证内存安全 —— 这是已知的预存问题 (见 `smp::get_current_cpu`
-/// 返回 LAPIC ID 的语义).
+/// 若槽位为 `null` (目标 `cpu_index` 尚未分配 softirq 状态), 回退 BSP 状态以保证
+/// 内存安全.
 #[inline]
 fn softirq_state(cpu: u32) -> &'static SoftirqState {
     let idx = softirq_slot(cpu);
@@ -138,7 +137,7 @@ fn softirq_state(cpu: u32) -> &'static SoftirqState {
     }
     let ptr = SOFTIRQ_PER_CPU[idx].load(Ordering::Acquire);
     if ptr.is_null() {
-        // SAFETY: 回退 BSP 仅用于避免 null 解引用 (见 doc 的预存问题).
+        // SAFETY: 回退 BSP 仅用于避免 null 解引用 (见 doc 的槽位未分配情形).
         return unsafe { SOFTIRQ_BSP.get() };
     }
     // SAFETY: 指针由 softirq_alloc_cpu 以 Release 发布, 指向页池分配且已清零的

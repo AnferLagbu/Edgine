@@ -49,7 +49,8 @@ const EL0_OBSERVE_LIMIT: u32 = 4;
 /// aarch64 `arch/aarch64/exception.rs::svc_handler` (刻意不置于架构中立的
 /// `syscall_dispatch`, 以免内核侧 `usermode::dispatch_syscall` 调用混入观测).
 pub fn observe_el0_syscall() {
-    let cpu = crate::privileged::cpu::arch::cpu_id() as usize % crate::privileged::config::MAX_CPUS;
+    let cpu =
+        crate::privileged::smp::current_cpu_index() as usize % crate::privileged::config::MAX_CPUS;
     let counter = &EL0_OBSERVED_PER_CPU[cpu];
     // 同核 syscall 路径不在中断中重入 ⇒ 计数无并发写者, load/store 足够.
     let seen = counter.load(Ordering::Relaxed);

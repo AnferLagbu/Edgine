@@ -16,10 +16,13 @@
 //! 无法引用其符号; 故采用**源码文本分析**方式固化关键契约, 防止回归:
 //!
 //! - redistributor 唤醒超时必须**显式失败** (不得静默 `break` 继续);
+//! - `init_distributor` 必须**显式置 ARE** (不得依赖平台默认值) 并在每次写
+//!   `GICD_CTLR` 后等待 `RWP` 清零;
 //! - `init()` 必须返回 `Result` 并在末尾执行后置条件自检;
 //! - 自检须回读 GICD_CTLR / GICR_WAKER / GICR_ISENABLER0 / ICC_IGRPEN1_EL1,
 //!   并委托架构中立纯逻辑 `gic_logic` 判定 (判据单源, host 侧可逐支路实证,
-//!   见 `aarch64_gic_logic_test.rs`); 唤醒超限判据同源;
+//!   见 `aarch64_gic_logic_test.rs`); 唤醒超限与 ARE 判据同源;
+//! - 不得再使用 GICv2 兼容的 `GICD_ITARGETSR` (ARE=1 下为死写, 且自校正掩盖模型错误);
 //! - 不得再写 `GICR_CTLR` (其 bit0 实为 EnableLPIs, 非 redistributor 使能位);
 //! - boot 入口须 fail-fast 并打印 `GICv3 ready` 里程碑;
 //! - QEMU 启动脚本须断言该里程碑;
@@ -98,7 +101,7 @@ fn test_init_returns_result_and_verifies_post_conditions() {
         "init() 必须返回 Result 以支持 boot 入口 fail-fast"
     );
     assert!(
-        body.contains("init_per_cpu(0)?"),
+        body.contains("init_per_cpu()?"),
         "init() 须用 ? 向上传递 per-CPU (redistributor) 初始化失败"
     );
     assert!(
@@ -133,12 +136,44 @@ fn test_post_conditions_cover_key_registers() {
     let logic = read(GIC_LOGIC_RS);
     for msg in [
         "GICD_CTLR.EnableGrp1 未置位",
+        "GICD_CTLR.ARE 未置位 (SGI/SPI 依赖亲和路由)",
         "GICR_WAKER.ChildrenAsleep 未清零",
         "GICR_ISENABLER0 未使能 Timer PPI",
         "ICC_IGRPEN1_EL1 未使能",
     ] {
         assert!(logic.contains(msg), "纯逻辑须覆盖后置条件: {}", msg);
     }
+}
+
+/// `init_distributor` 必须显式置 ARE (不得依赖平台默认值) 并等待 RWP 清零。
+///
+/// 追踪: ISSUE-RT-002。根因: 旧实现仅写 `GICD_CTLR=0x3` (未置 ARE), 依赖 QEMU 把
+/// ARE 置为 RAO/WI 掩盖缺陷; 不强制 ARE 的真机上内核 SGI (`ICC_SGI1R_EL1`) 与 SPI
+/// (`GICD_IROUTER`) 均失效 ⇒ 偶发挂起。
+#[test]
+fn test_init_distributor_sets_are_and_awaits_rwp() {
+    let src = read(GIC_RS);
+    let body = slice_between(
+        &src,
+        "pub unsafe fn init_distributor(",
+        "unsafe fn wait_ctlr_rwp(",
+    );
+    assert!(
+        body.contains("GICD_CTLR_ARE_MASK"),
+        "init_distributor 必须显式置 ARE (不得依赖平台默认值)"
+    );
+    assert!(
+        body.contains("wait_ctlr_rwp()?"),
+        "init_distributor 每次写 GICD_CTLR 后须等待 RWP 清零"
+    );
+    assert!(
+        body.contains("GICD_CTLR_ENABLE_GRP0_MASK") && body.contains("GICD_CTLR_ENABLE_GRP1_MASK"),
+        "使能 Distributor 须同时置 Group0 + Group1NS"
+    );
+    assert!(
+        !src.contains("GICD_ITARGETSR"),
+        "不得再使用 legacy GICD_ITARGETSR (ARE=1 下为死写, 且掩盖模型错误)"
+    );
 }
 
 #[test]

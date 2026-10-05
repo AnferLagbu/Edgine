@@ -56,7 +56,6 @@ const GICD_IGROUPR: u64 = 0x0080; // Interrupt Group (0-31)
 const GICD_ISENABLER: u64 = 0x0100; // Interrupt Set-Enable (0-31)
 const GICD_ISPENDR: u64 = 0x0200; // Interrupt Set-Pending
 const GICD_IPRIORITYR: u64 = 0x0400; // 中断优先级 (每路 8 bit)
-const GICD_ITARGETSR: u64 = 0x0800; // Interrupt Target
 const GICD_ICFGR: u64 = 0x0C00; // 中断配置 (电平/边沿触发)
 const GICD_IROUTER: u64 = 0x6000; // 亲和路由 (GICv3, 每中断 64 bit)
 
@@ -64,6 +63,7 @@ const GICD_IROUTER: u64 = 0x6000; // 亲和路由 (GICv3, 每中断 64 bit)
 ///
 /// 注: 不定义 GICR_CTLR (0x0000) — 其 bit0 为 EnableLPIs (LPI 使能), 并非
 /// "Redistributor 使能"位; 本项目未使用 LPI, 故不访问该寄存器.
+const GICR_TYPER: u64 = 0x0008; // Type (只读: 亲和值 bits[63:32] + Last bit4)
 const GICR_WAKER: u64 = 0x0014; // Wake
 const GICR_IGROUPR0: u64 = 0x0080; // SGI/PPI 中断分组
 pub const GICR_ISENABLER0: u64 = 0x0100; // SGI/PPI 中断使能
@@ -140,13 +140,48 @@ unsafe fn gicr_write_at(base: u64, offset: u64, val: u32) {
     }
 }
 
-/// 计算指定 CPU 的 Redistributor RD / SGI 帧基地址。
+#[inline(always)]
+// SAFETY: 调用方保证 base 指向已映射的 GICR 帧, 且 base+offset 处为 64 位 (8 字节对齐) 寄存器。
+unsafe fn gicr_read64_at(base: u64, offset: u64) -> u64 {
+    unsafe {
+        core::arch::asm!("dsb sy");
+        let val = read_volatile((base + offset) as *const u64);
+        core::arch::asm!("dsb sy");
+        val
+    }
+}
+
+/// 定位当前核的 Redistributor RD / SGI 帧基地址。
 ///
-/// GICv3 各 CPU 的 Redistributor 在 GICR 区域按 CPU 序号连续排布, 步长
-/// [`GICR_STRIDE`]; SGI 帧相对 RD 帧偏移 [`GICR_SGI_OFFSET`]。
-fn redist_frames(cpu_index: u32) -> (u64, u64) {
-    let rd = GICR_BASE.load(Ordering::Acquire) + GICR_STRIDE * u64::from(cpu_index);
-    (rd, rd + GICR_SGI_OFFSET)
+/// GICv3 各核的 Redistributor 帧在 GICR 区域内按**亲和值** (而非物理/逻辑 CPU
+/// 序号) 排列; 故不能按逻辑索引线性推算 (`GICR_BASE + stride * cpu_index`),
+/// 稀疏或多簇拓扑下会命中他人帧甚至越界, 使本核 SGI/PPI 使能落到错误核上
+/// (ISSUE-RT-002 关联缺陷)。
+///
+/// 本函数以当前核硬件 id (即 [`affinity_pack`](super::affinity_pack) 得到的紧凑
+/// 亲和值) 为键, 逐帧回读 `GICR_TYPER[63:32]` 的亲和值匹配; 扫描判定复用架构
+/// 中立纯逻辑 [`gic_logic::find_redist_frame`] (host 侧与生产路径同源实证)。
+///
+/// # Errors
+///
+/// 扫描至 `GICR_TYPER.Last` 或 [`gic_logic::REDIST_SCAN_MAX_FRAMES`] 上限仍未命中
+/// 当前核亲和 ⇒ 返回 `Err` (fail-closed), 而非回退到线性推算。
+///
+/// # Safety
+///
+/// 需确保 GICR 区域 (含扫描范围内全部帧) 已映射到内核地址空间。
+unsafe fn redist_frames() -> Result<(u64, u64), &'static str> {
+    unsafe {
+        let base = GICR_BASE.load(Ordering::Acquire);
+        let target = crate::arch!(cpu_id());
+        let frame =
+            gic_logic::find_redist_frame(target, gic_logic::REDIST_SCAN_MAX_FRAMES, |idx| {
+                gicr_read64_at(base + GICR_STRIDE * u64::from(idx), GICR_TYPER)
+            })
+            .ok_or("GICR 区域无匹配当前核亲和的 redistributor 帧")?;
+        let rd = base + GICR_STRIDE * u64::from(frame);
+        Ok((rd, rd + GICR_SGI_OFFSET))
+    }
 }
 
 #[inline(always)]
@@ -166,15 +201,20 @@ pub unsafe fn gicr_sgi_read(offset: u64) -> u32 {
 
 /// 初始化 GICv3 Distributor:
 /// 1. 读取 GIC 类型和实现者信息
-/// 2. 禁用所有中断
-/// 3. 配置中断优先级 (全默认 0xA0)
-/// 4. 使能 Distributor
-/// 5. 使能 CPU Interface
+/// 2. 禁用 Distributor 并等待 RWP 清零
+/// 3. 显式置亲和路由 (ARE) 并等待 RWP 清零
+/// 4. 配置中断分组与优先级
+/// 5. 使能 Distributor (Group0 + Group1NS) 并等待 RWP 清零
+///
+/// # Errors
+///
+/// `GICD_CTLR.RWP` 未在限定自旋内清零 ⇒ 返回 Err (硬件写入未生效), 由 [`init`]
+/// 向上传递 fail-fast。
 ///
 /// # Safety
 ///
 /// 调用前需确保 GICD_BASE (0x08000000) 已正确映射，MMU 已启用。
-pub unsafe fn init_distributor() {
+pub unsafe fn init_distributor() -> Result<(), &'static str> {
     unsafe {
         // 0. 读取 GIC 诊断信息
         let typer = gicd_read(GICD_TYPER);
@@ -190,30 +230,65 @@ pub unsafe fn init_distributor() {
             num_cpus
         );
 
-        // 1. 禁用 Distributor
+        // 1. 禁用 Distributor; ARE 仅在所有 Group 使能位为 0 时可写, 故须先禁用。
         gicd_write(GICD_CTLR, 0);
+        wait_ctlr_rwp()?;
 
-        // 2. 设置所有 SPIs 为 Group 1 (Non-secure, IRQ 信号).
+        // 2. 显式置亲和路由 (ARE_S|ARE_NS)。内核跨核 IPI 经 ICC_SGI1R_EL1 投递、
+        //    SPI 经 GICD_IROUTER 分发, 二者均以 ARE=1 为前提。历史上此处仅写 0x3
+        //    (未置 ARE), 依赖平台默认值 —— QEMU 强制 ARE=1 掩盖了该缺陷, 而在不
+        //    强制 ARE 的真机上 SGI/SPI 失效, 表现为偶发挂起 (ISSUE-RT-002)。
+        gicd_write(GICD_CTLR, gic_logic::GICD_CTLR_ARE_MASK);
+        wait_ctlr_rwp()?;
+
+        // 3. 设置所有 SPIs 为 Group 1 (Non-secure, IRQ 信号).
         //    Group 0 会触发 FIQ, 但 FIQ handler 仅为 unexpected_exception 桩.
         //    使用 Group 1 使中断走 handle_el1h_irq 正常处理路径.
         for i in 0..2 {
             gicd_write(GICD_IGROUPR + (i as u64 * 4), 0xFFFF_FFFF);
         }
 
-        // 3. 设置中断优先级
+        // 4. 设置中断优先级
         for i in 0..32 {
             gicd_write(GICD_IPRIORITYR + (i as u64 * 4), 0xA0A0_A0A0);
         }
 
-        // 4. 使能 Distributor (Group0 + Group1)
-        gicd_write(GICD_CTLR, 0x3);
-
-        // 5. 设置 CPU interface target: PPIs to CPU0
-        // SIMPLIFIED: SPI/PPI 亲和路由固定为 CPU0 (硬编码); 影响: 次核上线后 SPI 仍只
-        //   投递至 CPU0; 需扩展: 引入多核 SPI 亲和路由时改经 GICD_IROUTER 按目标 CPU 分发。
-        gicd_write(GICD_ITARGETSR, 0x0101_0101);
-        gicd_write(GICD_ITARGETSR + 4, 0x0101_0101);
+        // 5. 使能 Distributor (Group0 + Group1NS); ARE 已在步骤 2 置位。
+        gicd_write(
+            GICD_CTLR,
+            gic_logic::GICD_CTLR_ARE_MASK
+                | gic_logic::GICD_CTLR_ENABLE_GRP0_MASK
+                | gic_logic::GICD_CTLR_ENABLE_GRP1_MASK,
+        );
+        wait_ctlr_rwp()?;
     }
+    Ok(())
+}
+
+/// 等待 `GICD_CTLR.RWP` (bit31) 清零。
+///
+/// `GICD_CTLR` 写后须等 RWP 归零方可进行下一次修改 —— 尤其 ARE 位仅在所有 Group
+/// 使能位为 0 时可写 (ARM IHI 0069), 故"置 ARE"与"置 Group 使能"两步之间必须等待。
+///
+/// # Errors
+///
+/// RWP 未在限定自旋内清零 ⇒ 返回 Err (硬件异常), 由调用方 fail-fast。
+///
+/// # Safety
+///
+/// 需确保 GICD MMIO 已映射。
+unsafe fn wait_ctlr_rwp() -> Result<(), &'static str> {
+    unsafe {
+        let mut wait_count: u32 = 0;
+        while gicd_read(GICD_CTLR) & gic_logic::GICD_CTLR_RWP_MASK != 0 {
+            wait_count += 1;
+            if gic_logic::ctlr_rwp_timed_out(wait_count) {
+                return Err("GICD_CTLR.RWP 未在限定自旋内清零");
+            }
+            core::hint::spin_loop();
+        }
+    }
+    Ok(())
 }
 
 #[expect(
@@ -226,7 +301,7 @@ pub unsafe fn init_distributor() {
 /// 3. 配置 PPI 触发模式
 /// 4. 为当前核启用 SGIs/PPIs
 ///
-/// `rd` / `sgi` 分别指向目标 CPU 的 RD 帧与 SGI 帧基地址 (由 `redist_frames` 推算)。
+/// `rd` / `sgi` 分别指向目标 CPU 的 RD 帧与 SGI 帧基地址 (由 [`redist_frames`] 定位)。
 ///
 /// # Errors
 ///
@@ -313,7 +388,7 @@ pub unsafe fn init_cpu_interface() {
 
 /// 使能指定 CPU 的 Timer PPI 中断
 ///
-/// `sgi` 为目标 CPU 的 SGI 帧基地址 (由 `redist_frames` 推算)。
+/// `sgi` 为目标 CPU 的 SGI 帧基地址 (由 [`redist_frames`] 定位)。
 ///
 /// # Safety
 ///
@@ -327,7 +402,7 @@ pub unsafe fn enable_timer_ppi(sgi: u64) {
 
 /// 使能指定 CPU SGI 帧中的一路 SGI。
 ///
-/// `sgi` 为目标 CPU 的 SGI 帧基地址 (由 [`redist_frames`] 推算); `intid` 为 SGI
+/// `sgi` 为目标 CPU 的 SGI 帧基地址 (由 [`redist_frames`] 定位); `intid` 为 SGI
 /// 编号 (0-15), 取自本模块的 `*_SGI` 常量。
 ///
 /// # Safety
@@ -373,26 +448,28 @@ pub fn deactivate(intid: u32) {
     }
 }
 
-/// 初始化指定 CPU 的 GICv3 per-CPU 部分:
+/// 初始化当前核的 GICv3 per-CPU 部分:
 /// Redistributor + CPU Interface + Timer PPI + 全部内核 SGI。
 ///
-/// BSP 经 [`init`] 完成启动核初始化 (内含 `init_per_cpu(0)`);
-/// 次核上线后由 SMP 启动路径调用本函数, 以 `cpu_index` 定位自身 Redistributor 帧。
+/// BSP 经 [`init`] 完成启动核初始化 (内含 `init_per_cpu()`);
+/// 次核上线后由 SMP 启动路径调用本函数。本函数以**当前核硬件 id**定位自身
+/// Redistributor 帧 (见 [`redist_frames`]), 故 BSP 与 AP 共用同一入口, 无需传入
+/// 逻辑索引, 也不受稀疏/多簇拓扑下核序号错位的影响。
 ///
 /// 本函数是**每核中断能力的唯一入口**: 返回 `Ok` 后该核可接收定时器 PPI 与全部
 /// 内核 SGI (`TLB_SHOOTDOWN_SGI` / `RESCHEDULE_SGI` / `FREG_RECOVERY_SGI`)。
 ///
 /// # Errors
 ///
-/// 返回 `Err(原因)` 表示本核 redistributor 唤醒失败 (见 [`init_redistributor`]),
-/// 由调用方决定 fail-fast 或报错下线该核。
+/// 返回 `Err(原因)` 表示本核 redistributor 帧未定位到 (见 [`redist_frames`]) 或
+/// 唤醒失败 (见 [`init_redistributor`]), 由调用方决定 fail-fast 或报错下线该核。
 ///
 /// # Safety
 ///
 /// 仅在目标 CPU 上调用，需确保 MMU 已启用且 GIC MMIO 区域已映射。
-pub unsafe fn init_per_cpu(cpu_index: u32) -> Result<(), &'static str> {
+pub unsafe fn init_per_cpu() -> Result<(), &'static str> {
     unsafe {
-        let (rd, sgi) = redist_frames(cpu_index);
+        let (rd, sgi) = redist_frames()?;
         init_redistributor(rd, sgi)?;
         init_cpu_interface();
         enable_timer_ppi(sgi);
@@ -423,8 +500,8 @@ pub unsafe fn init_per_cpu(cpu_index: u32) -> Result<(), &'static str> {
 /// 仅在启动阶段调用，需确保 MMU 已启用且 GIC MMIO 区域已映射。
 pub unsafe fn init() -> Result<(), &'static str> {
     unsafe {
-        init_distributor();
-        init_per_cpu(0)?;
+        init_distributor()?;
+        init_per_cpu()?;
         verify_post_conditions()
     }
 }
@@ -627,27 +704,17 @@ unsafe fn gicd_write64(offset: u64, val: u64) {
 
 /// 将 SPI 路由到 CPU0
 ///
-/// GICv3 的 SPI 路由寄存器取决于亲和路由是否使能:
-///   - ARE=1 (GICv3 原生): 64 位 `GICD_IROUTER`, 写 Affinity=0 → CPU0;
-///   - ARE=0 (GICv2 兼容): 8 位 `GICD_ITARGETSR`, bit0 → CPU0。
-///
-/// 读 `GICD_CTLR` 自校正选择, 兼容 QEMU 不同 gic-version 配置。
+/// ARE 由 [`init_distributor`] 显式置位、并经 [`verify_post_conditions`] fail-fast
+/// 校验, 故 SPI 一律走 64 位 `GICD_IROUTER` (Affinity 全 0 → CPU0)。
 ///
 /// # Safety
 ///
 /// 调用前需确保 Distributor 已初始化且 GICD MMIO 已映射。
 unsafe fn route_spi_to_cpu0(irq: u32) {
     unsafe {
-        if gic_logic::uses_affinity_routing(gicd_read(GICD_CTLR)) {
-            // 亲和路由模式: IROUTER[irq] 为 64 位, Affinity 全 0 → CPU0
-            gicd_write64(GICD_IROUTER + u64::from(irq) * 8, 0);
-        } else {
-            // GICv2 兼容模式: ITARGETSR 每 SPI 8 bit, bit0 → CPU0
-            let reg = GICD_ITARGETSR + u64::from(irq / 4) * 4;
-            let shift = (irq % 4) * 8;
-            let val = gicd_read(reg);
-            gicd_write(reg, (val & !(0xFFu32 << shift)) | (0x01u32 << shift));
-        }
+        // SIMPLIFIED: SPI 亲和路由固定为 CPU0 (硬编码); 影响: 次核上线后 SPI 仍只
+        //   投递至 CPU0; 需扩展: 引入多核 SPI 亲和路由时按目标 CPU 计算 Affinity。
+        gicd_write64(GICD_IROUTER + u64::from(irq) * 8, 0);
     }
 }
 

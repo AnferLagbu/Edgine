@@ -949,7 +949,7 @@ pub extern "C" fn sys_fork() -> Pid {
             child_ctx.es = child_el1_view;
             child_ctx.ds = child.kernel_stack.load(Ordering::SeqCst) & !0xF;
             child_ctx.extra_regs[0] = 0;
-            // `fs`(@112) = 父进程 SVC 入口快照的 EL0 状态 (0x3C0, 由
+            // `fs`(@112) = 父进程 SVC 入口快照的 EL0 状态 (0x340, 由
             // `proc_save_user_regs_aarch64` 写入) ⇒ 子进程走 EL0 恢复路径;
             // `gs`(@120) / `ss`(@128) = 用户返回 PC / 用户栈指针, 随 ctx 复制而来.
         }

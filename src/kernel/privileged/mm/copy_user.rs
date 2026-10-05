@@ -139,7 +139,7 @@ static PER_CPU_EXCEPTION_OCCURRED: [AtomicBool; crate::privileged::config::MAX_C
 /// 但这表明存在配置问题 (CPU 数量过多)
 #[inline]
 fn current_cpu_id() -> usize {
-    let cpu = crate::privileged::cpu::arch::cpu_id() as usize;
+    let cpu = crate::privileged::smp::current_cpu_index() as usize;
     let max_cpus = crate::privileged::config::MAX_CPUS;
 
     #[cfg(debug_assertions)]
