@@ -434,9 +434,13 @@ fn free_child_page_table_tree(root: u64) {
     release_child_table_frame(root);
 }
 
-/// 归还单个子页表帧. 调用方须持 `VMM_LOCK` (归还时机与锁序见 `mm::release_frame_locked`).
+/// 归还单个子页表帧.
+///
+/// 调用方须持 `VMM_LOCK`. 表帧与数据帧同属需计数帧 (经 `alloc_page` 计数 1), 故走
+/// `mm::release_table_frame_locked` 的 `frame_dec` 单一归零门, 保证「同一表帧只入链
+/// 一次」(归还时机与锁序见 `mm::release_table_frame_locked`).
 fn release_child_table_frame(frame: u64) {
-    super::release_frame_locked(PhysAddr(frame));
+    super::release_table_frame_locked(PhysAddr(frame));
 }
 
 /// COW fault 处理: 为写入分配新页

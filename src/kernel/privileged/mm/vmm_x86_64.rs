@@ -992,21 +992,23 @@ impl VirtualMemoryManager {
                         }
                     }
 
-                    // 递归释放空的中间页表 (延迟到全部在线核 TLB 代追平后再真正释放)
+                    // 递归释放空的中间页表 (延迟到全部在线核 TLB 代追平后再真正释放).
+                    // 表帧与数据帧同属需计数帧, 走 release_table_frame_locked 的
+                    // frame_dec 单一归零门, 保证「同一表帧只入链一次」.
                     if self.is_table_empty(pt) {
                         let pt_phys = pde.frame().as_u64();
                         (*pd.add(virt.pd_idx())).set_value(0);
-                        super::release_frame_locked(PhysAddr(pt_phys));
+                        super::release_table_frame_locked(PhysAddr(pt_phys));
 
                         if self.is_table_empty(pd) {
                             let pd_phys = pdpte.frame().as_u64();
                             (*pdpt.add(virt.pdpt_idx())).set_value(0);
-                            super::release_frame_locked(PhysAddr(pd_phys));
+                            super::release_table_frame_locked(PhysAddr(pd_phys));
 
                             if self.is_table_empty(pdpt) {
                                 let pdpt_phys = pml4e.frame().as_u64();
                                 (*pml4_tbl.add(virt.pml4_idx())).set_value(0);
-                                super::release_frame_locked(PhysAddr(pdpt_phys));
+                                super::release_table_frame_locked(PhysAddr(pdpt_phys));
                             }
                         }
                     }
@@ -1101,19 +1103,19 @@ impl VirtualMemoryManager {
                                         }
                                     }
 
-                                    super::release_frame_locked(PhysAddr(pt_phys));
+                                    super::release_table_frame_locked(PhysAddr(pt_phys));
                                 }
                             }
 
-                            super::release_frame_locked(PhysAddr(pd_phys));
+                            super::release_table_frame_locked(PhysAddr(pd_phys));
                         }
                     }
 
-                    super::release_frame_locked(PhysAddr(pdpt_phys));
+                    super::release_table_frame_locked(PhysAddr(pdpt_phys));
                 }
             }
 
-            super::release_frame_locked(PhysAddr(pml4));
+            super::release_table_frame_locked(PhysAddr(pml4));
         }
 
         // SAFETY: VMM_LOCK held; only mutation is clearing user_tables slot

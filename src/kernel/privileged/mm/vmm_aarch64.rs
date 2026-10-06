@@ -390,8 +390,12 @@ impl Aarch64Vmm {
     ///
     /// 用于"页表页曾被其他核的页表遍历可达"的路径 (unmap 递归回收 / destroy 整表):
     /// 与数据帧同理, 立即归还的页被重分配后, 仍持有陈旧 TLB 的远程核可能经旧翻译
-    /// 访问他人物理页 (UAF). 故与帧归还统一走 [`super::deferred_free::defer_free`],
-    /// 等全部在线核 TLB 代追平后才真正归还 PMM.
+    /// 访问他人物理页 (UAF). 故与帧归还统一走延迟释放, 等全部在线核 TLB 代追平后
+    /// 才真正归还 PMM.
+    ///
+    /// 表帧与数据帧同属需计数帧 (经 [`Self::alloc_table`] → `alloc_page` 计数 1),
+    /// 故走 [`super::release_table_frame_locked`] 的 `frame_dec` 单一归零门: 只有恰好
+    /// 把计数减到 0 的那一次才入链, fail-closed 地保证「同一表帧只入链一次」.
     ///
     /// 锁序: 与数据帧归还一致, 须在持 `VMM_LOCK` 期间调用 (批次链单写者前提).
     #[expect(
@@ -400,7 +404,7 @@ impl Aarch64Vmm {
     )]
     fn free_table_locked(&self, paddr: u64) {
         if paddr != 0 {
-            super::deferred_free::defer_free(paddr);
+            super::release_table_frame_locked(PhysAddr(paddr));
         }
     }
 

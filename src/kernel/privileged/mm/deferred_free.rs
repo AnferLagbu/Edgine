@@ -129,7 +129,20 @@ fn free_chain(chain: u64) {
     }
     let pmm = get_pmm();
     let mut node = chain;
+    // fail-closed 遍历上界 —— 链损坏成环时避免整核挂死于此 (正常链长远小于上界).
+    // 触顶即判定链损坏, 告警后停止遍历; 未遍历的节点留在链上不归还 (泄漏优于挂死 /
+    // 持续 free_page 破坏 PMM).
+    let mut walked: u64 = 0;
     while node != 0 {
+        walked = walked.saturating_add(1);
+        if walked > CHAIN_WALK_LIMIT {
+            crate::klog_warn!(
+                Memory,
+                "[VMM] free_chain walk limit hit at frame={:#X} (链成环?)",
+                node
+            );
+            break;
+        }
         // SAFETY: 链上节点均为已逻辑死亡的帧 (见 frame_link_next 契约).
         let next = unsafe { frame_link_next(node) };
         pmm.free_page(PhysAddr(node));
@@ -199,7 +212,19 @@ fn drain_pending(min: u64) {
     let mut hold_head = 0u64;
     let mut hold_tail = 0u64;
     let mut node = chain;
+    // fail-closed 遍历上界 —— 同 free_chain; 链损坏成环时停止遍历, 未处理的节点
+    // (含本节点及其后继) 不再回挂 pending, 选择泄漏而非挂死.
+    let mut walked: u64 = 0;
     while node != 0 {
+        walked = walked.saturating_add(1);
+        if walked > CHAIN_WALK_LIMIT {
+            crate::klog_warn!(
+                Memory,
+                "[VMM] drain_pending walk limit hit at frame={:#X} (链成环?)",
+                node
+            );
+            break;
+        }
         // SAFETY: 链上节点均为已逻辑死亡的帧 (见 frame_link_next 契约).
         let next = unsafe { frame_link_next(node) };
         // SAFETY: 同 free_chain; 帧未归还 PMM, 内容仍可读.

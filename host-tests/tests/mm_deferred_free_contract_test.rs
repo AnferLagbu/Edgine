@@ -22,6 +22,12 @@
 //! - x86_64 后端不再保留机制的本地副本 (静态量 / 链操作 / 结算函数);
 //! - 两架构 `release_lock` 出口都接线到公共层收尾;
 //! - `mm::release_frame_locked` 已去除架构分叉, 统一走 `defer_free`;
+//! - `mm::release_table_frame_locked` 作为**页表帧释放的单一归零门**: 先过
+//!   `frame_dec`, 仅归零那一次入链 (保证「同一表帧只入链一次」);
+//! - 两架构全部表帧释放站点 (x86_64 unmap 递归 3 + destroy 4 / aarch64 漏斗 1 /
+//!   cow 克隆回滚 1) 均走该门, 不得绕过直连 `defer_free`;
+//! - 三个链遍历者 (`free_chain` / `settle_batch` / `drain_pending`) 均带
+//!   `CHAIN_WALK_LIMIT` fail-closed 上界;
 //! - aarch64 页表页/帧归还与映射变更点已接入公共层.
 
 use std::fs;
@@ -55,6 +61,7 @@ const DEFERRED_FREE_RS: &str = "src/kernel/privileged/mm/deferred_free.rs";
 const VMM_X86_64_RS: &str = "src/kernel/privileged/mm/vmm_x86_64.rs";
 const VMM_AARCH64_RS: &str = "src/kernel/privileged/mm/vmm_aarch64.rs";
 const MM_MOD_RS: &str = "src/kernel/privileged/mm/mod.rs";
+const COW_RS: &str = "src/kernel/privileged/mm/cow.rs";
 
 /// 公共层对外暴露的 6 个接口 (签名逐字固化).
 const PUBLIC_API: [&str; 6] = [
@@ -146,11 +153,11 @@ fn release_frame_locked_has_no_arch_fork() {
 #[test]
 fn aarch64_wires_deferred_free_and_shootdown() {
     let src = read(VMM_AARCH64_RS);
-    // 页表页延迟归还变体必须接入公共层.
+    // 页表页延迟归还变体必须接入公共层门控 (frame_dec 归零后才入链).
     let free_locked = slice_between(&src, "fn free_table_locked", "\n    }");
     assert!(
-        free_locked.contains("super::deferred_free::defer_free(paddr)"),
-        "aarch64 free_table_locked 必须走公共层 defer_free"
+        free_locked.contains("super::release_table_frame_locked(PhysAddr(paddr))"),
+        "aarch64 free_table_locked 必须走 release_table_frame_locked 门控"
     );
     // 页表修改点必须登记远程失效 (映射变更 / 拆除).
     assert!(
@@ -159,6 +166,62 @@ fn aarch64_wires_deferred_free_and_shootdown() {
             >= 3,
         "aarch64 至少 unmap / destroy / map-替换 三处须登记远程失效"
     );
+}
+
+#[test]
+fn table_frame_release_is_gated_by_frame_dec() {
+    // 页表帧释放必须经单一归零门: 先 frame_dec, 仅归零那一次 defer_free.
+    let src = read(MM_MOD_RS);
+    let body = slice_between(&src, "pub(crate) fn release_table_frame_locked", "\n}");
+    assert!(
+        body.contains("get_pmm().frame_dec(phys)"),
+        "release_table_frame_locked 必须先过 frame_dec 单一归零门"
+    );
+    assert!(
+        body.contains("deferred_free::defer_free(phys.0)"),
+        "release_table_frame_locked 归零后才送入延迟释放链"
+    );
+}
+
+#[test]
+fn x86_64_table_frames_release_through_gate() {
+    // 表帧释放站点: unmap 递归 (pt/pd/pdpt) 3 处 + destroy (pt/pd/pdpt/pml4) 4 处.
+    let src = read(VMM_X86_64_RS);
+    assert_eq!(
+        src.matches("super::release_table_frame_locked(PhysAddr(")
+            .count(),
+        7,
+        "x86_64 应有 7 处表帧释放走 release_table_frame_locked 门控 (unmap 3 + destroy 4)"
+    );
+}
+
+#[test]
+fn cow_child_table_frame_release_goes_through_gate() {
+    let src = read(COW_RS);
+    let body = slice_between(&src, "fn release_child_table_frame", "\n}");
+    assert!(
+        body.contains("super::release_table_frame_locked(PhysAddr(frame))"),
+        "cow 子表帧归还必须走 release_table_frame_locked 门控"
+    );
+}
+
+#[test]
+fn all_chain_traversers_have_failclosed_walk_limit() {
+    // 三个链遍历者都必须带 CHAIN_WALK_LIMIT 上界 —— 链损坏成环时告警停止而非挂死.
+    let src = read(DEFERRED_FREE_RS);
+    for fname in ["fn free_chain", "fn settle_batch", "fn drain_pending"] {
+        let body = slice_between(&src, fname, "\n}\n");
+        assert!(
+            body.contains("CHAIN_WALK_LIMIT"),
+            "{} 必须有 fail-closed 遍历上界 CHAIN_WALK_LIMIT",
+            fname
+        );
+        assert!(
+            body.contains("crate::klog_warn!"),
+            "{} 触顶必须告警 (便于诊断链损坏)",
+            fname
+        );
+    }
 }
 
 #[test]

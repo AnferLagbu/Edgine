@@ -313,6 +313,27 @@ pub(crate) fn release_frame_locked(phys: PhysAddr) {
     deferred_free::defer_free(phys.0);
 }
 
+/// 归还一个**页表结构帧** —— **要求调用方已持 `VMM_LOCK`**
+///
+/// 页表结构帧 (PML4/PDPT/PD/PT, aarch64 L0-L3) 与用户数据帧同属「需计数的帧」:
+/// 帧经 `alloc_page` 分配即被 `alloc_page` 置计数 1 (§3.2 计数契约), 故**必须**先经
+/// [`frame_dec`] 的单一归零门 —— 只有恰好把计数减到 0 的那一次才允许送入延迟释放链.
+///
+/// 与 [`release_frame_locked`] 的区别: 后者把帧**无条件**挂入批次链, 适用于数据页
+/// (unmap 路径已先经 `frame_dec` 门控). 页表帧若绕过 `frame_dec` 直接入链, 一旦同一
+/// 表帧被两处释放 (如双路径/重入), 就会二次入链 —— 帧内链节点 (前 16 字节, 见
+/// [`deferred_free`] 模块契约) 被覆盖后形成自环/交叉环, 令链遍历永不终止. 本入口以
+/// `frame_dec` 归零判据作为「同一表帧只入链一次」的**单一门**, fail-closed 地拒绝
+/// 未计数帧 (计数 0) 与仍有持有者的帧.
+///
+/// 锁序约束同 [`release_frame_locked`].
+#[track_caller]
+pub(crate) fn release_table_frame_locked(phys: PhysAddr) {
+    if get_pmm().frame_dec(phys) {
+        deferred_free::defer_free(phys.0);
+    }
+}
+
 /// 归还一个物理帧 —— **自持 `VMM_LOCK` 变体**
 ///
 /// 语义与锁序约束见 [`release_frame_locked`]; 本入口只负责加/解锁, 供不持

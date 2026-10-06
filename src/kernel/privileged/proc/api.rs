@@ -197,10 +197,10 @@ pub extern "C" fn user_proc_enter_by_pid(pid: u32) -> i32 {
     })
 }
 
-/// 进入指定用户进程 (Ring 3 / EL0): 设置当前进程槽位 → 加入调度器 → 切换用户态.
+/// 进入指定用户进程 (Ring 3 / EL0): 设置当前进程槽位 → 切换用户态.
 ///
 /// L-02 机制入口: functions 层启动编排 (functions::init::launch_first_user_process)
-/// 经此完成进入用户态的最后三步, 无需访问 privileged 内部 `C_CURRENT_PROCESS`.
+/// 经此完成进入用户态的最后两步, 无需访问 privileged 内部 `C_CURRENT_PROCESS`.
 ///
 /// 正常路径下 `USER_PROC_MANAGER.enter` 切走不返回; 若返回, 由调用方决定后续.
 pub fn enter_user_process(pid: u32) {
@@ -211,16 +211,18 @@ pub fn enter_user_process(pid: u32) {
         p.parent_pid = 1;
     });
 
-    // 必须在 `SCHEDULER.add` **之前**把该进程的 ProcessContext 填成有效值:
-    // 用户进程创建时 context 被清零 (设计上只经 enter_user_asm 直入用户态), 若
-    // 先入队, 则入队到 enter_user_asm 之间被 tick 抢占时, process_switch_asm 会
-    // 读到全 0 上下文 (cr3=0) → #PF → triple fault. 先填充即恢复
-    // "可运行 ⇒ 上下文有效" 不变式, 抢占无论落在何处都能正确进入用户态.
+    // 关键: **不得**在此将首进程 `SCHEDULER.add` 入队. 该进程随即经
+    // `user_proc_enter_by_pid` 的 iretq 直入用户态并物理运行; 若同时留在 CFS 树中,
+    // 即成为"已运行 + 仍在 rq"的幽灵条目 —— 其它核的 `load_balance` 会偷走该条目
+    // 并二次派发, 导致同一进程的唯一内核栈被两核并发使用 (栈互踩 ⇒ 野跳崩溃).
+    // 首进程的运行由 `schedule()` 的 `keep_current` 兜底保住, 待其首次被抢占时再经
+    // `prev_requeue` 正常入树, 语义闭合.
+    //
+    // 仍需先把 ProcessContext 填成有效用户态上下文 (cr3/rip/rsp), 维持
+    // "可运行 ⇒ 上下文有效" 不变式, 使此后任意抢占路径均能正确进入用户态.
     if let Some(proc) = USER_PROC_MANAGER.get(pid) {
         USER_PROC_MANAGER.init_first_entry_context(proc);
     }
-
-    SCHEDULER.add(pid);
 
     user_proc_enter_by_pid(pid);
 }
