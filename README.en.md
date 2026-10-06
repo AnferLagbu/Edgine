@@ -11,7 +11,7 @@ Edgine is a from-scratch kernel implemented in Rust, designed and developed base
 
 ## A Note on Development Mode
 
-This project is built in a **human-in-the-loop, human-AI collaborative model**: the human owns direction, architecture decisions, and final review, while AI / agents carry out the implementation. The model yields high development throughput, and the code may therefore carry the traces and flaws common to machine-generated sources. If you find any questionable or erroneous code, your reports and contributions are welcome.
+This project is built in a **human-in-the-loop, human-AI collaborative model**: the human owns direction, architecture decisions, and final review, while AI / agents carry out the implementation. The model yields high development throughput, and the code may therefore carry the traces and flaws common to AI-generated code. If you find any questionable or erroneous code, your reports and contributions are welcome. To keep AI implementation in check, this project enforces an executable engineering gate: the core static audits run in CI as fail-closed checks (full list in [`AGENTS.md`](AGENTS.md) §2.2).
 
 ## External Dependency Notice
 
@@ -23,7 +23,7 @@ This project relies on the following external project code in its design and imp
 
 **Third-party crates pulled in via Cargo** (not distributed with this repository)
 
-- **Common ecosystem dependencies**: `spin`, `bitflags`, `zerocopy`, etc. — standard building blocks of the Rust `no_std` ecosystem, consistent with those used by the Asterinas framekernel.
+- **Common ecosystem dependencies**: `spin`, `bitflags`, `zerocopy`, etc. — standard building blocks of the Rust `no_std` ecosystem.
 - **ed25519-dalek** (BSD-3-Clause OR Apache-2.0): used for Ed25519 signature verification of secure-boot images.
 - **serde**, `serde_json`: used only for host-side tests and excluded from the kernel build.
 
