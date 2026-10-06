@@ -58,6 +58,9 @@ smoltcp = { path = "functions/net/smoltcp", default-features = false, features =
     "socket-tcp-cubic",
     "socket-dhcpv4",
     "socket-dns",
+    # P6a 联调: 由 smoltcp Interface 直接回显 ICMP/ICMPv6 EchoRequest, 无需上层 socket
+    # (宿主机 ping/ping6 内核地址可被自动应答, 用于证明链路双向连通).
+    "auto-icmp-echo-reply",
 ] }
 
 # spin 仅在 x86_64 SMP 启动路径 (privileged/arch/x86_64/smp_init.rs) 使用,

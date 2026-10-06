@@ -1,10 +1,8 @@
-use super::process::{FdTable, PROCESS_TABLE, Process};
-use super::types::{ProcessContext, ProcessId, ProcessPriority, ProcessState};
+use super::process::{PROCESS_TABLE, Process};
+use super::types::{ProcessId, ProcessState};
 use crate::klog_error;
 use crate::privileged::mm::KERNEL_BASE;
 use crate::privileged::sync::IrqSpinLock as Mutex;
-use alloc::string::String;
-use alloc::vec::Vec;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
@@ -93,11 +91,10 @@ pub struct UserProcInfo {
 // 才能被 `static USER_PROC_MANAGER` 使用。
 pub(crate) mod raw {
     use super::{
-        AtomicU32, AtomicU64, FdTable, KERNEL_BASE, Mutex, NonNull, Ordering, PAGE_SIZE, PageFlags,
-        Process, ProcessContext, ProcessId, ProcessPriority, ProcessState, String, UserProcess,
-        Vec, kmalloc, memcpy, memset, pmm_alloc_page, pmm_alloc_pages, pmm_free_page, raw,
-        vmm_create_user_page_table, vmm_destroy_page_table, vmm_ensure_path_user,
-        vmm_get_physical_in_table, vmm_map_page, vmm_map_page_in_table,
+        AtomicU32, AtomicU64, KERNEL_BASE, NonNull, Ordering, PAGE_SIZE, PageFlags, Process,
+        ProcessId, ProcessState, UserProcess, kmalloc, memcpy, memset, pmm_alloc_page,
+        pmm_alloc_pages, pmm_free_page, raw, vmm_create_user_page_table, vmm_destroy_page_table,
+        vmm_ensure_path_user, vmm_get_physical_in_table, vmm_map_page, vmm_map_page_in_table,
     };
 
     // === UserProcess 安全访问封装 (Framekernel privilege wrapper) ===
@@ -648,18 +645,21 @@ pub(crate) mod raw {
         unsafe { UserProcRef::new_unchecked(proc) }
     }
 
-    /// 在已清零的 `Process` 内存上写入基本字段 (避免业务逻辑中的 `unsafe`)。
+    /// 初始化一个新分配的 `Process` (用户进程创建路径)。
+    ///
+    /// 以 [`Process::new`] 建立**完整默认值** (单一默认来源), 再仅覆盖与本次
+    /// 分配相关的字段 (`pwm/cr3/kernel_stack/user_stack/state`)。
+    ///
+    /// 历史实现直接在 `alloc_zeroed` 内存上逐字段手工初始化, 与 `Process::new`
+    /// 构成**平行默认集**: 每当 `Process` 新增字段, 此处必然漏写。已实证的后果是
+    /// 漏写 `cfs_weight` (权重保持 0) ⇒ `calc_vruntime_delta(0)` 异常 ⇒ 该进程
+    /// vruntime 暴涨并经 `start_vr = max(vr, min_vr)` 钉死所在核的
+    /// `min_vruntime` ⇒ 同核任务永不满足抢占条件 ⇒ 该进程永久饥饿。委托
+    /// `Process::new` 后, 此类漂移从根上消除。
     ///
     /// # Safety (内部)
-    /// - `kproc_ptr` 必须为 `alloc_kernel_process` 返回的合法指针, 已被清零。
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
-    #[expect(
-        clippy::borrow_as_ptr,
-        reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-    )]
+    /// - `kproc_ptr` 必须为 `alloc_kernel_process` 返回的合法指针。`ptr::write`
+    ///   覆盖整块 `size_of::<Process>()` 内存且不读取旧值, 故旧内容无需有效。
     pub fn init_kernel_process_fields(
         kproc_ptr: *mut Process,
         pid: u32,
@@ -668,67 +668,19 @@ pub(crate) mod raw {
         kstack: u64,
         ustack: u64,
     ) {
-        use crate::privileged::proc::SchedPolicy;
-        // SAFETY: kproc_ptr 来自 alloc_kernel_process, 已清零, 字段可被 ptr::write 覆盖。
+        // SAFETY: kproc_ptr 来自 alloc_kernel_process, 指向 size_of::<Process>()
+        // 的可写内存; ptr::write 整块覆盖, 不触发旧值 drop/读取。
         unsafe {
-            core::ptr::write(&mut (*kproc_ptr).pid, ProcessId(pid));
-            core::ptr::write(&mut (*kproc_ptr).pwm, AtomicU64::new(pwm));
+            core::ptr::write(kproc_ptr, Process::new(pid, "", None));
+            // 覆盖与本次进程分配相关的字段 (其余默认值来自 Process::new)。
+            core::ptr::write(&raw mut (*kproc_ptr).pwm, AtomicU64::new(pwm));
             core::ptr::write(
-                &mut (*kproc_ptr).state,
+                &raw mut (*kproc_ptr).state,
                 AtomicU32::new(ProcessState::Ready as u32),
             );
-            core::ptr::write(
-                &mut (*kproc_ptr).priority,
-                AtomicU32::new(ProcessPriority::Normal as u32),
-            );
-            core::ptr::write(&mut (*kproc_ptr).flags, AtomicU32::new(0));
-            core::ptr::write(&mut (*kproc_ptr).parent, None);
-            core::ptr::write(&mut (*kproc_ptr).cr3, AtomicU64::new(cr3));
-            core::ptr::write(&mut (*kproc_ptr).kernel_stack, AtomicU64::new(kstack));
-            core::ptr::write(&mut (*kproc_ptr).user_stack, AtomicU64::new(ustack));
-            core::ptr::write(&mut (*kproc_ptr).exit_code, AtomicU32::new(0));
-            // P1 修复: 本路径经 alloc_zeroed 分配 (不走 Process::new), 不写此字段则
-            // ref_count 保持 0; 而 `remove_and_free`/`dec_ref_and_maybe_free` 以
-            // "减后归零" 为释放判据 ⇒ 0 上做减法回绕到 u32::MAX, Box::from_raw
-            // 永不执行, Process::drop 不运行, PID 不回收. 显式置 1 使首个 dec 归零.
-            core::ptr::write(&mut (*kproc_ptr).ref_count, AtomicU32::new(1));
-            core::ptr::write(&mut (*kproc_ptr).cpu_time, AtomicU64::new(0));
-            core::ptr::write(&mut (*kproc_ptr).block_reason, AtomicU32::new(0));
-            core::ptr::write(
-                &mut (*kproc_ptr).sched_policy,
-                AtomicU32::new(SchedPolicy::Normal as u32),
-            );
-            (*kproc_ptr).rt_priority.store(0, Ordering::SeqCst);
-            (*kproc_ptr).session_id.store(0, Ordering::SeqCst);
-            (*kproc_ptr).sleep_until.store(0, Ordering::SeqCst);
-            // 零初始化包含 alloc 的字段 (Mutex/Vec/String), 保持有效空状态
-            core::ptr::write_bytes(
-                &mut (*kproc_ptr).name as *mut _ as *mut u8,
-                0,
-                core::mem::size_of::<Mutex<String>>(),
-            );
-            core::ptr::write_bytes(
-                &mut (*kproc_ptr).children as *mut _ as *mut u8,
-                0,
-                core::mem::size_of::<Mutex<Vec<ProcessId>>>(),
-            );
-            core::ptr::write_bytes(
-                &mut (*kproc_ptr).context as *mut _ as *mut u8,
-                0,
-                core::mem::size_of::<Mutex<ProcessContext>>(),
-            );
-            // fd_table 不能零初始化: entries 全 0 会被 FdTable 误判为
-            // "全 64 个 slot 已占用 handle_id=0". 必须显式初始化为空闲态 (u32::MAX).
-            // 先例同下方 `namespaces` (同样用 ptr::write 覆盖零初始值).
-            core::ptr::write(&mut (*kproc_ptr).fd_table, FdTable::new());
-            // TRACK-INIT-RING3-FORK: alloc_kernel_process 清零分配 (不走 Process::new),
-            // 因此 `namespaces` (Mutex<NamespaceSet>) 保持全零 (7 个 NULL Arc).
-            // fork 时 NamespaceSet::fork_from 对 NULL Arc 执行 Arc::clone → 地址 0 递增
-            // 计数 → 溢出 abort (ud2). 必须显式初始化为 init namespace 集合.
-            core::ptr::write(
-                &mut (*kproc_ptr).namespaces,
-                Mutex::new(crate::privileged::proc::NamespaceSet::new_init()),
-            );
+            core::ptr::write(&raw mut (*kproc_ptr).cr3, AtomicU64::new(cr3));
+            core::ptr::write(&raw mut (*kproc_ptr).kernel_stack, AtomicU64::new(kstack));
+            core::ptr::write(&raw mut (*kproc_ptr).user_stack, AtomicU64::new(ustack));
         }
     }
 }
@@ -1130,6 +1082,51 @@ impl UserProcManager {
         PROCESS_TABLE.insert(kproc_ptr);
 
         Some(proc_ptr)
+    }
+
+    /// 为用户进程填充"首次被调度即进入用户态"所需的 `ProcessContext`.
+    ///
+    /// 用户进程创建时 `context` 由 `init_kernel_process_fields` 显式清零, 设计上
+    /// 只经 `enter_user_asm` 直接 iretq 进用户态, 不经 `process_switch_asm`. 但
+    /// `enter_user_process` 会先把 pid 入 CFS 运行队列, 从入队到 `enter_user_asm`
+    /// 之间若被定时器 tick 抢占, `schedule()` 会选中本进程并以 `process_switch_asm`
+    /// 内核分支执行 `mov cr3,0` → #PF → double fault → triple fault.
+    ///
+    /// 本方法在入队**之前**把上下文填为有效值 (entry/user_stack/cr3 取自权威
+    /// `Process`, 段选择子与 rflags 复用 [`ProcessContext::set_user_mode`], 与
+    /// `enter_user_asm` 载入的 0x1B/0x23/0x202 逐一对应), 恢复
+    /// "可运行 ⇒ 上下文有效" 不变式, 使此后任意抢占 (含跨核 load_balance / IPI)
+    /// 均能经调度器用户态出口正确进入用户态.
+    ///
+    /// `enter_user_asm` 快路径保持不变: 二者是同一状态的两个入口, 择一胜出结果
+    /// 一致 (调度器侧亦执行 `set_kernel_stack` / `gdt_set_user_cr3` /
+    /// `map_rsp0_page`, 见 `Scheduler::schedule`).
+    #[expect(
+        clippy::unused_self,
+        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
+    )]
+    pub fn init_first_entry_context(&self, proc: *mut UserProcess) {
+        if proc.is_null() {
+            return;
+        }
+        // SAFETY: proc 由调用方保证为非空、生命周期有效 (USER_PROC_MANAGER 中已存在).
+        let proc_ref = unsafe { UserProcRef::new_unchecked(proc) };
+        let cr3 = proc_ref.load_cr3();
+        let rip = proc_ref.entry();
+        let rsp = proc_ref.load_user_stack();
+        // 三者任一为 0 说明进程尚未装配完成, 保持原状由 `enter_user_asm` 路径报错.
+        if cr3 == 0 || rip == 0 || rsp == 0 {
+            return;
+        }
+        // SAFETY: proc 有效; context 为 Process 内的 Mutex<ProcessContext>.
+        let mut ctx = unsafe { (*proc).process().context.lock() };
+        ctx.set_user_mode();
+        ctx.cr3 = cr3;
+        ctx.rip = rip;
+        ctx.rsp = rsp;
+        // 首次进入不继承任何寄存器值 (与 enter_user_asm 清零 rax 后 iretq 对齐).
+        ctx.rax = 0;
+        ctx.extra_regs = [0; 8];
     }
 
     #[expect(

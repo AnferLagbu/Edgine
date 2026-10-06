@@ -204,6 +204,15 @@ pub struct Process {
 
     pub ref_count: AtomicU32,
     pub pending_free: AtomicBool,
+    /// 退出中标志 + 自引用锚点 (方案 B: exit/回收竞态根治).
+    ///
+    /// `exit()` 在把自身置为 `Zombie` **之前** 置位本标志, 并对本 PCB
+    /// `try_inc_ref` 持有一次性自引用. 该自引用使父进程 `wait4` 的
+    /// `remove_and_free` 只能置 `pending_free` 而不能真正释放 PCB, 从而保证
+    /// 本进程在完成最后一次 `schedule()` 上下文切换前 PCB / 内核栈始终有效.
+    /// 自引用由 `Scheduler::schedule()` 入口的 `reap_off_cpu` 钩子在确认本
+    /// 进程已离开 CPU 后释放并完成实际回收 (否则退出进程返回用户态 = UAF).
+    pub exiting: AtomicBool,
     pub pending_signals: AtomicU64,
 
     // --- POSIX 信号处理字段 ---
@@ -370,6 +379,7 @@ impl Process {
             sleep_until: AtomicU64::new(0),
             ref_count: AtomicU32::new(1),
             pending_free: AtomicBool::new(false),
+            exiting: AtomicBool::new(false),
             pending_signals: AtomicU64::new(0),
             blocked_mask: AtomicU64::new(0),
             sigaction_table: Mutex::new([0u64; 64]),

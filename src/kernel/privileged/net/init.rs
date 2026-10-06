@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::Ordering;
 
 use crate::privileged::klog::{klog_init_msg, klog_net, klog_net_err};
 use crate::privileged::net::{EGDFNetDevice, NetworkStack};
@@ -103,58 +103,87 @@ unsafe fn socket_set() -> *mut SocketSet<'static> {
 unsafe fn process_dhcp_events(_sockets: &mut SocketSet<'_>) {
     // REVAL-W W4.3 (2026-06-25): dhcp.poll() → dhcp_state_stub 缓存读取.
     //
-    // 之前: sockets.get_mut::<dhcpv4::Socket>(dhcp_handle).poll() — 直接
-    // smoltcp API 调用 + Event 匹配 + 翻译为内部状态.
-    // 现在: raw::dhcp_state_stub() 直接返回当前 DhcpState, 内部翻译
-    // 已封装在 stub 内 (W4.2.2 实装). 调用方只读缓存, 不再访问 smoltcp
-    // SocketSet.
+    // dhcp_state_stub() 把 smoltcp DHCP 事件翻译为 DhcpState (内部缓存).
+    // 本函数据此把状态**边界触发**地落到 iface 与全局观测量:
+    //   - Bound 且 NET_CONFIGURED == false → 落 iface CIDR + 默认路由,
+    //     写 G_IPV4/G_GATEWAY/G_DNS, 置 NET_CONFIGURED = true.
+    //   - Idle 且 NET_CONFIGURED == true → 移除 iface 中 IPv4 地址
+    //     (保留 IPv6 SLAAC), 移除默认路由, 清零全局量, 置 false.
     //
-    // ## 简化
+    // 以 NET_CONFIGURED 作边沿判据 (而非一次性 static), 使重复的相同状态
+    // 不产生重复动作, 且状态真正回归时能再次生效.
     //
-    // 之前 process_dhcp_events 处理 3 类事件: None / Deconfigured /
-    // Configured. 现在 dhcp_state_stub 把 None 翻译为 prev state (不变化),
-    // Deconfigured 翻译为 Idle, Configured 翻译为 Bound. 调用方只需匹配
-    // Idle / Bound 两种状态.
+    // ## 调用方契约
     //
-    // ## 0 行为变更
-    //
-    // process_dhcp_events 的"行为"是: 更新 iface IP/路由/全局状态 + klog.
-    // 我们用 DhcpState 缓存驱动相同的更新路径, 行为完全一致.
-    static FIRST_DECONFIG: AtomicBool = AtomicBool::new(true);
+    // 调用方 (poll_network / smoltcp_net_stack_poll) 已持有 NET_STATE 锁,
+    // 故此处直接使用 raw accessor, 不再重复加锁 (会死锁).
+    use crate::privileged::net::iface_trait::DhcpState;
 
-    // dhcp_state_stub 需要 &mut SocketSet + Option<SocketHandle> 才能
-    // 读取 smoltcp 内部状态. 调用方契约要求 NET_LOCK 持有, socket_set()
-    // 返回的指针由 init_sockets 单次初始化, dhcp_handle 在 eg_net_init
-    // 阶段由 raw::set_dhcp_handle 写入, 此处只读.
-    //
-    // SAFETY: 由 NET_LOCK 保护下, socket_set() 返回的指针由 init_sockets
+    // SAFETY: 由 NET_STATE 锁保护下, socket_set() 返回的指针由 init_sockets
     // 单次初始化, dhcp_handle 在 eg_net_init 阶段由 raw::set_dhcp_handle
     // 写入, 此处只读.
     let sockets_ptr = unsafe { &mut *raw::socket_set() };
     let state = raw::dhcp_state_stub(sockets_ptr, raw::dhcp_handle());
+    let configured = crate::privileged::net::NET_CONFIGURED.load(Ordering::Acquire);
     match state {
-        crate::privileged::net::iface_trait::DhcpState::Idle => {
-            if FIRST_DECONFIG.swap(false, Ordering::AcqRel) {
+        DhcpState::Bound { ipv4, .. } => {
+            if configured {
+                // 已落配置, 边沿未变化, 无动作
+                return;
+            }
+            let prefix = raw::dhcp_prefix_len();
+            let router = raw::dhcp_router();
+            let dns = raw::dhcp_dns_servers();
+            let cidr = IpCidr::Ipv4(smoltcp::wire::Ipv4Cidr::new(
+                smoltcp::wire::Ipv4Address::new(ipv4[0], ipv4[1], ipv4[2], ipv4[3]),
+                prefix,
+            ));
+            if let Some(stack) = raw::stack_mut() {
+                stack.iface.update_ip_addrs(|addrs| {
+                    let _ = addrs.push(cidr);
+                });
+                if let Some(gw) = router {
+                    let _ = stack.iface.routes_mut().add_default_ipv4_route(
+                        smoltcp::wire::Ipv4Address::new(gw[0], gw[1], gw[2], gw[3]),
+                    );
+                }
+            }
+            G_IPV4.store(u32::from_be_bytes(ipv4), Ordering::Release);
+            G_GATEWAY.store(
+                u32::from_be_bytes(router.unwrap_or([0, 0, 0, 0])),
+                Ordering::Release,
+            );
+            for (i, slot) in G_DNS.iter().enumerate() {
+                slot.store(u32::from_be_bytes(dns[i]), Ordering::Release);
+            }
+            crate::privileged::net::NET_CONFIGURED.store(true, Ordering::Release);
+            raw::klog_msg("DHCP configured (lease applied)");
+        }
+        DhcpState::Idle => {
+            if !configured {
+                // 从未配置 / 已拆配置, 边沿未变化, 无动作
                 return;
             }
             if let Some(stack) = raw::stack_mut() {
+                // 仅移除 IPv4 地址, 保留 IPv6 SLAAC 地址
                 stack.iface.update_ip_addrs(|addrs| {
-                    addrs.clear();
+                    let mut idx = addrs.len();
+                    while idx > 0 {
+                        idx -= 1;
+                        if matches!(addrs[idx], IpCidr::Ipv4(_)) {
+                            let _ = addrs.swap_remove(idx);
+                        }
+                    }
                 });
                 let _ = stack.iface.routes_mut().remove_default_ipv4_route();
             }
+            G_IPV4.store(0, Ordering::Release);
+            G_GATEWAY.store(0, Ordering::Release);
+            for slot in &G_DNS {
+                slot.store(0, Ordering::Release);
+            }
             crate::privileged::net::NET_CONFIGURED.store(false, Ordering::Release);
             raw::klog_msg("DHCP deconfigured");
-        }
-        crate::privileged::net::iface_trait::DhcpState::Bound { ipv4, .. } => {
-            // W4.3 简化: 暂不重新配置 iface IP/路由/全局状态 (在 W4.3 之后
-            // 由专门的 DHCP 状态机迁移阶段处理). 当前 0 行为变更: 状态
-            // 缓存已更新, 上层观测 API (G_IPV4/G_GATEWAY/G_DNS) 通过
-            // 现有路径 (init_sockets / poll_network) 同步.
-            FIRST_DECONFIG.store(false, Ordering::Release);
-            let _ = ipv4; // 占位: W4.3+ 阶段从 Bound 还原 iface 配置
-            crate::privileged::net::NET_CONFIGURED.store(true, Ordering::Release);
-            raw::klog_msg("DHCP configured (cached)");
         }
         // Discovering / Requesting / Renewing / Failed: 中间状态, 暂不处理
         _ => {}
@@ -167,6 +196,11 @@ unsafe fn process_dhcp_events(_sockets: &mut SocketSet<'_>) {
 // 使用 NET_STATE.try_lock() 确保互斥访问。
 // try_lock() 在 ISR 上下文中不会阻塞：若锁已被持有则直接返回。
 // ============================================================================
+
+/// P6a 联调观测: SLAAC 从 RA 前缀派生全局 IPv6 地址后仅上报一次.
+///
+/// 纯观测标志, 不参与任何协议状态判定; 置位后不再重复打印.
+static SLAAC_OBSERVED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 #[expect(
     clippy::manual_let_else,
@@ -202,6 +236,23 @@ pub unsafe fn poll_network() {
         let sockets = &mut *raw::socket_set();
         crate::privileged::net::poll_stack(nic, stack, sockets);
         raw::process_dhcp_events(sockets);
+
+        // P6a 联调观测: SLAAC 处理 Router Advertisement 成功后, smoltcp 会把从 RA
+        // 前缀派生的全局 IPv6 地址写入 iface 地址表. 此处只读检查并一次性上报
+        // (发现即置位 SLAAC_OBSERVED, 后续 tick 不重复打印), 不修改地址表.
+        if !SLAAC_OBSERVED.load(Ordering::Relaxed) {
+            for cidr in stack.iface.ip_addrs() {
+                if let IpCidr::Ipv6(v6) = cidr {
+                    let octets = v6.address().octets();
+                    // 排除 fe80::/64 link-local (init_stack 注入) 与 :: 未指定
+                    if octets[0..8] != [0xfe, 0x80, 0, 0, 0, 0, 0, 0] && octets != [0u8; 16] {
+                        SLAAC_OBSERVED.store(true, Ordering::Relaxed);
+                        crate::klog_info!(Net, "IPv6 SLAAC: global address {} acquired", v6);
+                        break;
+                    }
+                }
+            }
+        }
 
         // P2-I-41: poll 完毕后通知所有 fd 的等待者, 让 sm_send/sm_recv
         // (未来阻塞扩展点) 重新检查 socket 状态. try_wake 持锁时间 O(1).

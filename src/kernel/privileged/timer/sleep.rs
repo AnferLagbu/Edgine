@@ -169,8 +169,9 @@ pub fn pit_busy_wait_us(us: u64) -> Result<(), &'static str> {
 
 /// 阻塞当前线程指定毫秒数
 ///
-/// 将当前线程加入定时器等待队列并让出 CPU，
-/// 直到超时后被唤醒。这是**最高效**的长延时方式。
+/// 将当前线程置为 `Sleeping` 阻塞态并让出 CPU，
+/// 由调度器 tick 的睡眠唤醒扫描在其 `sleep_until` 到期后唤醒。
+/// 这是**最高效**的长延时方式 (睡眠期间不占 CPU)。
 ///
 /// # Arguments
 /// * `ms` - 睡眠时间 (毫秒), 0 表示立即返回
@@ -199,37 +200,29 @@ pub fn timer_sleep(ms: u64) -> Result<(), i32> {
         return Ok(());
     }
 
-    // 使用 hrtimer + scheduler block/unblock 替代忙等 yield:
-    // 1. 设置 hrtimer 到期回调唤醒当前进程
-    // 2. 阻塞当前进程并让出 CPU
-    // 3. hrtimer 到期时回调 unblock 唤醒进程
     let pid = crate::privileged::proc::process_get_current_pid();
     if pid == 0 {
         // idle/内核线程回退到 yield 循环
         return timer_sleep_yield(ms);
     }
 
-    // 记录待唤醒 pid 供回调使用
-    SLEEP_WAKE_PID.store(pid, core::sync::atomic::Ordering::Relaxed);
+    // 单一唤醒机制: 写入 `sleep_until` (tick 时基), 由调度器 tick 的睡眠唤醒
+    // 扫描 (见 `Scheduler::tick`) 在到期后 `unblock` —— 与 `proc_sleep_ms` 同源,
+    // 不再并行维护 hrtimer 回调唤醒路径 (该路径回调从未触发, 且栈上 HrTimer 在
+    // 进程退出后会留下悬垂队列项 = UAF 隐患).
+    let wake_at = get_ticks() + ms_to_ticks(ms);
+    crate::privileged::proc::PROCESS_TABLE.with_process(pid, |proc| {
+        proc.sleep_until
+            .store(wake_at, core::sync::atomic::Ordering::SeqCst);
+    });
 
-    // 在栈上创建 HrTimer, 回调唤醒当前进程
-    let mut timer = crate::privileged::timer::HrTimer::uninit();
-    timer.init(sleep_timer_callback);
-
-    let delay_ns = ms * 1_000_000;
-    crate::privileged::timer::hrtimer_start_rel(&timer, delay_ns);
-
-    // 阻塞当前进程
+    // `block()` 只登记挂起状态与 need_reschedule, 不切换上下文; 必须同步
+    // `schedule()` 才能真正挂起调用者 —— 否则调用者会带着 Blocked 状态继续执行.
     crate::privileged::proc::scheduler_block(crate::privileged::proc::BlockReason::Sleeping);
-
-    // 被唤醒后取消可能残留的 timer
-    crate::privileged::timer::hrtimer_cancel(&timer);
+    crate::privileged::proc::scheduler_schedule();
 
     Ok(())
 }
-
-/// 待唤醒的进程 PID (供 hrtimer 回调使用)
-static SLEEP_WAKE_PID: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// 纳秒级睡眠机制 (tsleep 类 syscall 的共享权威实现)
 ///
@@ -261,18 +254,7 @@ pub fn sleep_ns(total_ns: u64) {
     }
 }
 
-/// hrtimer 回调: 唤醒被 `timer_sleep` 阻塞的进程
-fn sleep_timer_callback(
-    _timer: &crate::privileged::timer::HrTimer,
-) -> crate::privileged::timer::HrTimerRestart {
-    let pid = SLEEP_WAKE_PID.load(core::sync::atomic::Ordering::Relaxed);
-    if pid != 0 {
-        crate::privileged::proc::scheduler_unblock(pid);
-    }
-    crate::privileged::timer::HrTimerRestart::OneShot
-}
-
-/// yield 循环回退实现 (idle/内核线程或 hrtimer 不可用时)
+/// yield 循环回退实现 (idle/内核线程或定时器不可用时)
 fn timer_sleep_yield(ms: u64) -> Result<(), i32> {
     // SAFETY: get_ticks() 读取全局原子计数器, scheduler_yield_ex() 是
     // 正常的调度器让出函数; 均可在进程上下文安全调用.

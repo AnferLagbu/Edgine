@@ -155,6 +155,25 @@ pub fn eoi() {
     }
 }
 
+/// ICR 投递完成等待的自旋上界。
+///
+/// 硬件正常情形下投递在数个周期内完成 (bit 12 清零); 本上界仅为防止在 IF=0 下
+/// 因目标 APIC 异常而无限自旋 —— 那会挂死整核 (APS 早期挂死曾观测到该点自旋).
+const ICR_DELIVERY_SPIN_LIMIT: u32 = 1_000_000;
+
+/// 等待 ICR 投递完成 (bit 12 = Delivery Status 清零), 带上界自旋。
+#[inline]
+fn wait_icr_delivery() {
+    let mut spins: u32 = 0;
+    while apic_read(APIC_ICR_LOW) & (1 << 12) != 0 {
+        spins = spins.saturating_add(1);
+        if spins >= ICR_DELIVERY_SPIN_LIMIT {
+            break;
+        }
+        core::hint::spin_loop();
+    }
+}
+
 /// 向目标 APIC 发送 IPI, 等待 ICR 投递完成后返回。
 // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
 #[expect(clippy::cast_possible_truncation)]
@@ -164,7 +183,7 @@ pub fn send_ipi(apic_id: u8, vector: u8) {
     }
     apic_write(APIC_ICR_HIGH, u32::from(apic_id) << 24);
     apic_write(APIC_ICR_LOW, u32::from(vector) | ICR_ASSERT as u32);
-    while apic_read(APIC_ICR_LOW) & (1 << 12) != 0 {}
+    wait_icr_delivery();
 }
 
 /// 向所有其他 CPU 广播 IPI, 等待 ICR 投递完成后返回。
@@ -179,7 +198,7 @@ pub fn broadcast_ipi(vector: u8) {
         APIC_ICR_LOW,
         u32::from(vector) | ICR_ALL_EXCLUDE_SELF as u32 | ICR_ASSERT as u32,
     );
-    while apic_read(APIC_ICR_LOW) & (1 << 12) != 0 {}
+    wait_icr_delivery();
 }
 
 #[expect(

@@ -121,6 +121,13 @@ unsafe fn sys5(num: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> i64 {
     unsafe { asm!("syscall", in("rax") num, in("rdi") a1, in("rsi") a2, in("rdx") a3, in("r10") a4, in("r8") a5, lateout("rax") ret, out("rcx") _, out("r11") _) };
     ret
 }
+#[cfg(target_arch = "x86_64")]
+unsafe fn sys6(num: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64, a6: u64) -> i64 {
+    let ret: i64;
+    // SAFETY: syscall 指令通过 C ABI 与内核互操作，调用方保证参数有效性
+    unsafe { asm!("syscall", in("rax") num, in("rdi") a1, in("rsi") a2, in("rdx") a3, in("r10") a4, in("r8") a5, in("r9") a6, lateout("rax") ret, out("rcx") _, out("r11") _) };
+    ret
+}
 
 #[cfg(target_arch = "aarch64")]
 unsafe fn sys0(num: u64) -> i64 { let ret: i64; unsafe { asm!("svc #0", in("x0") num, lateout("x0") ret) }; ret }
@@ -134,6 +141,8 @@ unsafe fn sys3(num: u64, a1: u64, a2: u64, a3: u64) -> i64 { let ret: i64; unsaf
 unsafe fn sys4(num: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> i64 { let ret: i64; unsafe { asm!("svc #0", in("x0") num, in("x1") a1, in("x2") a2, in("x3") a3, in("x4") a4, lateout("x0") ret) }; ret }
 #[cfg(target_arch = "aarch64")]
 unsafe fn sys5(num: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> i64 { let ret: i64; unsafe { asm!("svc #0", in("x0") num, in("x1") a1, in("x2") a2, in("x3") a3, in("x4") a4, in("x5") a5, lateout("x0") ret) }; ret }
+#[cfg(target_arch = "aarch64")]
+unsafe fn sys6(num: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64, a6: u64) -> i64 { let ret: i64; unsafe { asm!("svc #0", in("x0") num, in("x1") a1, in("x2") a2, in("x3") a3, in("x4") a4, in("x5") a5, in("x6") a6, lateout("x0") ret) }; ret }
 
 // ============================================================
 // POSIX 标准 syscall wrapper
@@ -285,6 +294,7 @@ pub const SYS_getrusage: u64 = 98;
 
 // 地址族
 pub const AF_INET: i32 = 2;
+pub const AF_INET6: i32 = 10;
 
 // socket 类型
 pub const SOCK_STREAM: i32 = 1;
@@ -318,18 +328,34 @@ pub const SHUT_RDWR: i32 = 2;
 // 网络结构体 (POSIX socket ABI)
 // ============================================================
 
+// 双栈 (DECISION-032): 用户态 sockaddr 采用 Linux 布局 —— `sa_family_t` 为
+// 主机序 (NE) u16, 与内核 `parse_endpoint_trait` 的 `read_unaligned::<u16>`
+// 读取契约及 `raw_read_sockaddr_in` 的 `from_ne_bytes` 一致; 端口保持网络序 (BE).
 #[repr(C)]
 pub struct InAddr {
-    pub s_addr: u32,
+    pub s_addr: [u8; 4],
 }
 
 #[repr(C)]
 pub struct SockaddrIn {
-    pub sin_len: u8,
-    pub sin_family: u8,
+    pub sin_family: u16,
     pub sin_port: u16,
     pub sin_addr: InAddr,
     pub sin_zero: [u8; 8],
+}
+
+#[repr(C)]
+pub struct In6Addr {
+    pub s6_addr: [u8; 16],
+}
+
+#[repr(C)]
+pub struct SockaddrIn6 {
+    pub sin6_family: u16,
+    pub sin6_port: u16,
+    pub sin6_flowinfo: u32,
+    pub sin6_addr: In6Addr,
+    pub sin6_scope_id: u32,
 }
 
 #[repr(C)]
@@ -365,7 +391,7 @@ pub fn socket(domain: i32, sock_type: i32, protocol: i32) -> i32 {
     unsafe { sys3(SYS_socket, domain as u64, sock_type as u64, protocol as u64) as i32 }
 }
 
-pub fn bind(sockfd: i32, addr: *const SockaddrIn, addrlen: u32) -> i32 {
+pub fn bind(sockfd: i32, addr: *const u8, addrlen: u32) -> i32 {
     unsafe { sys3(SYS_bind, sockfd as u64, addr as u64, addrlen as u64) as i32 }
 }
 
@@ -373,20 +399,30 @@ pub fn listen(sockfd: i32, backlog: i32) -> i32 {
     unsafe { sys2(SYS_listen, sockfd as u64, backlog as u64) as i32 }
 }
 
-pub fn accept(sockfd: i32, addr: *mut SockaddrIn, addrlen: *mut u32) -> i32 {
+pub fn accept(sockfd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
     unsafe { sys3(SYS_accept, sockfd as u64, addr as u64, addrlen as u64) as i32 }
 }
 
-pub fn connect(sockfd: i32, addr: *const SockaddrIn, addrlen: u32) -> i32 {
+pub fn connect(sockfd: i32, addr: *const u8, addrlen: u32) -> i32 {
     unsafe { sys3(SYS_connect, sockfd as u64, addr as u64, addrlen as u64) as i32 }
 }
 
+// sendto/recvfrom 为 6 参数 syscall; 显式传入 a5/a6 (含 null) 以规避内核从
+// r8/r9 采集残留寄存器值被误当作地址指针的隐患 (见 DECISION-032).
+pub fn sendto(sockfd: i32, buf: *const u8, len: usize, flags: i32, dest: *const u8, destlen: u32) -> isize {
+    unsafe { sys6(SYS_sendto, sockfd as u64, buf as u64, len as u64, flags as u64, dest as u64, destlen as u64) as isize }
+}
+
+pub fn recvfrom(sockfd: i32, buf: *mut u8, len: usize, flags: i32, src: *mut u8, srclen: *mut u32) -> isize {
+    unsafe { sys6(SYS_recvfrom, sockfd as u64, buf as u64, len as u64, flags as u64, src as u64, srclen as u64) as isize }
+}
+
 pub fn send(sockfd: i32, buf: *const u8, len: usize, flags: i32) -> isize {
-    unsafe { sys4(SYS_sendto, sockfd as u64, buf as u64, len as u64, flags as u64) as isize }
+    unsafe { sys6(SYS_sendto, sockfd as u64, buf as u64, len as u64, flags as u64, 0, 0) as isize }
 }
 
 pub fn recv(sockfd: i32, buf: *mut u8, len: usize, flags: i32) -> isize {
-    unsafe { sys4(SYS_recvfrom, sockfd as u64, buf as u64, len as u64, flags as u64) as isize }
+    unsafe { sys6(SYS_recvfrom, sockfd as u64, buf as u64, len as u64, flags as u64, 0, 0) as isize }
 }
 
 pub fn sendmsg(sockfd: i32, msg: *const Msghdr, flags: i32) -> isize {
@@ -405,7 +441,7 @@ pub fn getsockopt(sockfd: i32, level: i32, optname: i32, optval: *mut u8, optlen
     unsafe { sys5(SYS_getsockopt, sockfd as u64, level as u64, optname as u64, optval as u64, optlen as u64) as i32 }
 }
 
-pub fn getsockname(sockfd: i32, addr: *mut SockaddrIn, addrlen: *mut u32) -> i32 {
+pub fn getsockname(sockfd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
     unsafe { sys3(SYS_getsockname, sockfd as u64, addr as u64, addrlen as u64) as i32 }
 }
 

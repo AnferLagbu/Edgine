@@ -22,10 +22,9 @@ fn u16_to_be(val: u16) -> u16 {
 
 fn make_addr(port: u16) -> SockaddrIn {
     SockaddrIn {
-        sin_len: core::mem::size_of::<SockaddrIn>() as u8,
-        sin_family: AF_INET as u8,
+        sin_family: AF_INET as u16,
         sin_port: u16_to_be(port),
-        sin_addr: InAddr { s_addr: 0 },
+        sin_addr: InAddr { s_addr: [0u8; 4] },
         sin_zero: [0u8; 8],
     }
 }
@@ -167,7 +166,7 @@ pub fn _start() -> ! {
     }
 
     let addr = make_addr(80);
-    let bind_ret = bind(sockfd, &addr as *const SockaddrIn,
+    let bind_ret = bind(sockfd, &addr as *const SockaddrIn as *const u8,
         core::mem::size_of::<SockaddrIn>() as u32);
     if bind_ret < 0 {
         print("[httpsrv] bind() failed: "); print_dec(bind_ret as i64); print("\n");

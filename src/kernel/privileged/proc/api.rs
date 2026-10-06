@@ -211,6 +211,15 @@ pub fn enter_user_process(pid: u32) {
         p.parent_pid = 1;
     });
 
+    // 必须在 `SCHEDULER.add` **之前**把该进程的 ProcessContext 填成有效值:
+    // 用户进程创建时 context 被清零 (设计上只经 enter_user_asm 直入用户态), 若
+    // 先入队, 则入队到 enter_user_asm 之间被 tick 抢占时, process_switch_asm 会
+    // 读到全 0 上下文 (cr3=0) → #PF → triple fault. 先填充即恢复
+    // "可运行 ⇒ 上下文有效" 不变式, 抢占无论落在何处都能正确进入用户态.
+    if let Some(proc) = USER_PROC_MANAGER.get(pid) {
+        USER_PROC_MANAGER.init_first_entry_context(proc);
+    }
+
     SCHEDULER.add(pid);
 
     user_proc_enter_by_pid(pid);

@@ -301,10 +301,13 @@ impl DlRunQueue {
 /// 计算单 tick 的 vruntime 增量 (权重越大增量越小; 权重为 0 时退化为 nice0 权重)。
 #[inline]
 pub fn calc_vruntime_delta(weight: u64) -> u64 {
-    if weight == 0 {
-        return NICE0_WEIGHT;
-    }
-    (NICE0_WEIGHT / weight).max(1)
+    // 权重 0 是非法态 (合法权重恒 ≥ `nice_to_weight(19)`=15). 此处按 `NICE0_WEIGHT`
+    // "退化权重" 处理, 故增量取 1。**不可**直接返回 `NICE0_WEIGHT` 作为增量: 那会
+    // 让该进程 vruntime 以 1024 倍速度暴涨, 经入队/更新的 `start_vr = max(vr, min_vr)`
+    // 把所在核 `min_vruntime` 钉在高位, 使同核其他任务永不满足抢占/让出条件而集体
+    // 饥饿 (历史缺陷根因之一, 与 `init_kernel_process_fields` 漏写 `cfs_weight` 叠加)。
+    let w = if weight == 0 { NICE0_WEIGHT } else { weight };
+    (NICE0_WEIGHT / w).max(1)
 }
 
 /// 判定当前线程是否应被抢占 — 其 vruntime 超出最小 vruntime 的差值超过按权重缩放的时间片阈值。
@@ -540,6 +543,23 @@ mod tests {
         let q = CfsRunQueue::new();
         q.total_weight.store(2048, Ordering::Release);
         assert_eq!(q.calc_time_slice(1024), TARGET_LATENCY_TICKS / 2);
+    }
+
+    /// 7b. calc_vruntime_delta: 权重 0 (非法态) 必须退化为增量 1, 而非 NICE0_WEIGHT.
+    ///
+    /// 回归: 历史实现 `if weight == 0 { return NICE0_WEIGHT; }` 让权重 0 的进程
+    /// vruntime 以 1024 倍速度增长, 经 `start_vr = max(vr, min_vr)` 把所在核的
+    /// `min_vruntime` 钉在高位, 使同核任务永不满足抢占条件而集体饥饿.
+    #[test]
+    fn test_sched_calc_vruntime_delta_zero_weight() {
+        // 权重 0 → 退化权重 NICE0_WEIGHT → 增量 1 (绝不可为 1024)
+        assert_eq!(calc_vruntime_delta(0), 1);
+        // nice=0 权重 (1024) → 增量 1
+        assert_eq!(calc_vruntime_delta(NICE0_WEIGHT), 1);
+        // nice=19 最低合法权重 (15) → 增量 1024/15 = 68
+        assert_eq!(calc_vruntime_delta(nice_to_weight(19)), NICE0_WEIGHT / 15);
+        // nice=-20 最高权重 (88761) → 整除为 0, 钳到下限 1
+        assert_eq!(calc_vruntime_delta(nice_to_weight(-20)), 1);
     }
 
     /// 8. CfsRunQueue: enqueue 时 vruntime 自动对齐到 min_vruntime

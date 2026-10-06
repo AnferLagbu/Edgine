@@ -328,6 +328,9 @@ pub struct GdtPtr {
 /// | 16   | user_pml4   | USER_PML4_OFF     |
 /// | 24   | user_rsp    | USER_RSP_OFF      |
 /// | 32   | trampoline_top | TRAMPOLINE_TOP_OFF |
+/// | 40   | scratch_r12 | SCRATCH_R12_OFF   |
+/// | 48   | scratch_r14 | SCRATCH_R14_OFF   |
+/// | 56   | scratch_r15 | SCRATCH_R15_OFF   |
 ///
 /// `user_rsp` (TRACK-INIT-RING3-SYSCALL-RET): syscall 入口保存当前用户 RSP,
 /// 供 iretq 帧的 RSP 槽位使用. 与 `kernel_rsp` 分离, 避免覆盖 (原实现复用
@@ -336,6 +339,13 @@ pub struct GdtPtr {
 /// `trampoline_top` (KPTI-08): 本 CPU KPTI trampoline 栈顶 VA (高半区).
 /// `process_switch_asm` 的用户态出口在 `swapgs` 前读入该值, 切换到 trampoline
 /// 栈后再构建 iretq 帧 (该栈页已映射进 next 的用户页表).
+///
+/// `scratch_r12/r14/r15` (SYSCALL-CLOBBER-R12R14R15): syscall 入口的 KPTI 切
+/// CR3 窗口无可用栈, 需借通用寄存器作临时量; 而 r12/r14/r15 属用户态
+/// callee-saved 寄存器, 直接复用会污染 InterruptFrame, 使 syscall 返回后用户
+/// r12/r14/r15 变成内核值. 故入口先把三者存入本暂存区 (该页在用户页表中已
+/// 映射, 未切 CR3 也可写), 压帧时再从暂存区取回, 保证用户寄存器跨 syscall
+/// 完整. 仅 syscall_entry 使用, 每次入口写后读, 无跨 CPU 复用.
 #[repr(C)]
 pub struct SyscallPerCpu {
     pub kernel_rsp: u64,
@@ -343,6 +353,9 @@ pub struct SyscallPerCpu {
     pub user_pml4: u64,
     pub user_rsp: u64,
     pub trampoline_top: u64,
+    pub scratch_r12: u64,
+    pub scratch_r14: u64,
+    pub scratch_r15: u64,
 }
 
 /// 每个 CPU 独立的 syscall 内核栈大小 (64KB, syscall 入口与调度切换共用).
@@ -392,6 +405,9 @@ impl PerCpuGdt {
                 user_pml4: 0,
                 user_rsp: 0,
                 trampoline_top: 0,
+                scratch_r12: 0,
+                scratch_r14: 0,
+                scratch_r15: 0,
             },
             syscall_stack: [0u8; PER_CPU_SYSCALL_STACK_SIZE],
             ist0: AlignedStack([0u8; PER_CPU_IST_SIZE]),

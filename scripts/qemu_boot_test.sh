@@ -179,6 +179,16 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] 未观察到 e1000 初始化完成 (默认 NIC 未挂载或驱动回归)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+            # DHCP 租约里程碑 (默认 e1000 + user netdev 自带 slirp DHCP 服务).
+            # 修复 RX 描述符回收 off-by-one (RDT 误设为 tail+1 致 RDT==RDH,
+            # 硬件可用描述符归零, 后续帧被静默丢弃) 后应拿到租约; 回落
+            # Static IP (fallback) 即为该回归 (fail-closed, -a 避免 NUL 误判).
+            if grep -aq "DHCP configured (lease applied)" "$X64_LOG"; then
+                ok "[x86_64] DHCP 租约获取成功 (RX 描述符回收回归通过)"
+            else
+                warn "[x86_64] 未获取 DHCP 租约 (回落静态地址 fallback?)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
             # v2.2: x86_64 无网络启动已修复 VGA 越界 bug, 完整进入 Ring 3
             if grep -q "Entering Ring 3" "$X64_LOG"; then
                 ok "[x86_64] 完整启动成功! 进入 Ring 3 启动 init 进程 (v2.2 修复 VGA 越界)"

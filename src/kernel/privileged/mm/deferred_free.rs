@@ -59,6 +59,10 @@ static DEFERRED_FREE_RELEASED: AtomicU64 = AtomicU64::new(0);
 /// - `admitted > 0 && released == 0 && pending` ⇒ 帧已入链但代未追平, 滞留 pending.
 static DEFERRED_FREE_ADMITTED: AtomicU64 = AtomicU64::new(0);
 
+/// 链遍历迭代上界 (fail-closed): 正常批次/pending 链长远小于此值;
+/// 触顶即判定链损坏成环, 告警后停止遍历, 避免整核挂死 (防御性上界, 非正常路径)。
+const CHAIN_WALK_LIMIT: u64 = 1 << 20;
+
 // 帧内链节点布局: `[0, 8)` = next (u64 物理地址, 0 表尾); `[8, 16)` = gen.
 //
 // 取帧前 16 字节当节点: 进入延迟释放的帧已不再服务于任何用途 —— unmap 路径在
@@ -144,8 +148,21 @@ fn settle_batch(batch: u64, g: u64, min: u64) {
         return;
     }
     // 锁外先写 gen 并记录链尾: 取 PENDING_HEAD 锁期间只做 O(1) 指针搬运.
+    //
+    // fail-closed 遍历上界 —— 链损坏成环时避免整核挂死于此;
+    // 正常链长远小于上界, 触顶即视为异常并告警停止。
     let mut tail = batch;
+    let mut walked: u64 = 0;
     loop {
+        walked = walked.saturating_add(1);
+        if walked > CHAIN_WALK_LIMIT {
+            crate::klog_warn!(
+                Memory,
+                "[VMM] settle_batch walk limit hit at frame={:#X} (链成环?)",
+                tail
+            );
+            break;
+        }
         // SAFETY: 同 free_chain; 帧未归还 PMM, 内容仍可写.
         let next = unsafe { frame_link_next(tail) };
         // SAFETY: 同 free_chain.
@@ -221,12 +238,28 @@ fn drain_pending(min: u64) {
 /// tick / 返回用户态前的额外排空点; 影响面为未追平帧可能滞留到下一次任一核的
 /// `release_lock` (不丢帧, 只推迟归还, 单核下代恒 0 立即释放); 何时需扩展: 出现
 /// 长时间无 VMM 操作却需及时回收的负载时, 再补排空点.
+#[track_caller]
 pub(crate) fn defer_free(frame: u64) {
     // 头插: 新帧的 next 指向当前批次链头, 再更新链头.
     // SAFETY: 持 VMM_LOCK (本核是批次链唯一写者); frame 刚被解除映射/已从页表
     // 拆链, 前 16 字节不再被任何映射引用, 可复用为链节点.
+    //
+    // 不变式自检 (fail-closed): 模块契约要求「同一帧只能入链一次」(见文件头)。若本帧
+    // 已是批次链头, 再次入链会令 frame->next 指向自身形成自环, 使 release_tail 的链
+    // 遍历永不终止。检测到即拒绝入链并告警, 避免挂死。
     unsafe {
         let head = BATCH_HEAD.load(Ordering::Acquire);
+        if head == frame {
+            let loc = core::panic::Location::caller();
+            crate::klog_warn!(
+                Memory,
+                "[VMM] defer_free self-enqueue frame={:#X} from {}:{} (同帧二次入链, 已拒绝)",
+                frame,
+                loc.file(),
+                loc.line()
+            );
+            return;
+        }
         frame_link_set_next(frame, head);
         frame_link_set_gen(frame, 0); // 出锁前不会被读, 0 为占位
     }

@@ -168,6 +168,18 @@ struct PerCpuSched {
     /// idle 任务不进入任何运行队列 (CFS/RT/DL), 仅作为 `schedule()` 在
     /// 本地无候选任务时的最后兜底, 使调度器在运行期永不为 `None`.
     idle: AtomicU32,
+    /// 本 CPU 最近一次被切走的任务 pid (0 = 无).
+    ///
+    /// 由 `schedule()` 在上下文切换**前**写入; 由下一次 `schedule()` 入口的
+    /// `reap_off_cpu` 消费 —— 彼时本 CPU 已在新任务上下文运行, 被切走者确已
+    /// 离开 CPU, 可安全完成其退出回收 (方案 B: exit/回收竞态根治).
+    prev: AtomicU32,
+    /// 单向切换用的临时上下文落点 (方案 B 兜底).
+    ///
+    /// 若 `current` 在进程表中不可解析 (不变式违反), 该上下文永不可能再被恢复,
+    /// 其内核栈亦可能已释放 —— 绝不能写回其 PCB 的 `context`, 故改用本 scratch
+    /// 承接被丢弃的 prev 寄存器, 单向切到 next (见 `schedule()` 末段).
+    scratch_ctx: crate::privileged::racy_cell::RacyCell<ProcessContext>,
     need_reschedule: AtomicBool,
     rt_running: AtomicBool,
     dl_running: AtomicBool,
@@ -199,6 +211,8 @@ fn new_per_cpu_sched() -> PerCpuSched {
         dl_rq: Mutex::new(DlRunQueue::new()),
         current: AtomicU32::new(0),
         idle: AtomicU32::new(0),
+        prev: AtomicU32::new(0),
+        scratch_ctx: crate::privileged::racy_cell::RacyCell::new(ProcessContext::new()),
         need_reschedule: AtomicBool::new(false),
         rt_running: AtomicBool::new(false),
         dl_running: AtomicBool::new(false),
@@ -360,6 +374,13 @@ impl Scheduler {
         let init_pid = self.create_process("init", None, 0);
         if let Some(pid) = init_pid {
             PROCESS_TABLE.with_process(pid, |proc| {
+                // 必须经 `Created → Ready → Running` 两步: 状态机不允许
+                // `Created → Running` 直跳 (见 `Process::set_state_safe`), 直跳返回
+                // Err 被忽略后 init 会停在 `Created` —— 此后任一 tick 触发
+                // `should_yield` 时, `schedule()` 因本地无候选切到本核 idle, 而
+                // `prev_requeue` 判据要求 `Running || Ready` 对 `Created` 判假, init
+                // 不再入队 ⇒ boot 流程被永久丢弃 (双核同闲挂死).
+                let _ = proc.set_state_safe(ProcessState::Ready);
                 let _ = proc.set_state_safe(ProcessState::Running);
                 proc.set_priority(ProcessPriority::Normal);
             });
@@ -704,6 +725,13 @@ impl Scheduler {
         let per_cpu = per_cpu();
         let current_pid = per_cpu.current.load(Ordering::SeqCst);
 
+        // 方案 B: 消费上一轮被切走的任务. 本函数此刻正运行在**新任务**上下文中,
+        // 被切走者 (prev) 的上下文切换已完成, 确已离开 CPU 且不会再被调度
+        // (退出的进程为 Zombie, 不入任何运行队列), 故可安全完成其退出回收.
+        // 事件顺序保证: 每次切换前写入 `prev`, 而本 CPU 不可能在未再次进入本函数
+        // 的情况下发生第二次切换 ⇒ 无遗漏.
+        self.reap_off_cpu(per_cpu);
+
         let mut next_pid = self.pick_deadline_task();
 
         // 2. RT (FIFO/RR) —— 从 MLFQ 保留
@@ -777,7 +805,25 @@ impl Scheduler {
         // 框架 (privileged::debug 的 qemu_exit) 承担, 不属调度器职责.
         if next_pid.is_none() {
             let idle_pid = per_cpu.idle.load(Ordering::SeqCst);
-            if idle_pid != 0 {
+            // 优先保持 current: 运行队列中无其它候选, 但本核 current 仍是可运行的
+            // 非 idle 任务 (Running/Ready) 时, 切到 idle 会白白让出 CPU 并令 current
+            // 经 `prev_requeue` 重新入队 —— 对"从未入过 CFS 队列"的任务 (如 boot 的
+            // init) 而言不入树/不计 `nr_running`, 之后 `pick_cfs_task`/`has_runnable`
+            // 均判空, 该任务永久饥饿 (boot 流程被丢弃, 双核同闲挂死).
+            // 仅当 current 已不可运行 (Created/Blocked/Zombie) 或本核就是 idle 时,
+            // 才回退到 idle 等待中断.
+            let keep_current = current_pid != 0
+                && idle_pid != 0
+                && current_pid != idle_pid
+                && PROCESS_TABLE
+                    .with_process(current_pid, |p| {
+                        let s = p.get_state();
+                        s == ProcessState::Running || s == ProcessState::Ready
+                    })
+                    .unwrap_or(false);
+            if keep_current {
+                next_pid = Some(current_pid);
+            } else if idle_pid != 0 {
                 next_pid = Some(idle_pid);
             }
         }
@@ -825,6 +871,9 @@ impl Scheduler {
             crate::privileged::cpu::arch::set_kernel_stack(next_kernel_stack);
         }
 
+        // 方案 B: 记录本次被切走者, 供下一次 `schedule()` 入口的 `reap_off_cpu`
+        // 在确认其已离开 CPU 后完成退出回收. 必须在切换前写入.
+        per_cpu.prev.store(current_pid, Ordering::SeqCst);
         per_cpu.current.store(next, Ordering::SeqCst);
 
         // 注意: 此处**不得**同步写 `SCHEDULER_EX.current`.
@@ -880,14 +929,25 @@ impl Scheduler {
         // - prev 已不在 Running/Ready (如 `exit()` 之后的 Zombie, 或阻塞中的
         //   Blocked): 同样会被 `pick_cfs_task` 判为不可调度而返回 None; 且把
         //   Blocked/Zombie 任务塞回 CFS 树/置回 Ready 与阻塞、退出语义冲突.
+        let prev_state_code = PROCESS_TABLE
+            .with_process(current_pid, |p| {
+                let s = p.get_state();
+                if s == ProcessState::Running {
+                    1u32
+                } else if s == ProcessState::Ready {
+                    2u32
+                } else if s == ProcessState::Blocked {
+                    3u32
+                } else if s == ProcessState::Zombie {
+                    4u32
+                } else {
+                    5u32
+                }
+            })
+            .unwrap_or(9);
         let prev_requeue = if prev_ptr.is_some() {
             per_cpu.idle.load(Ordering::SeqCst) != current_pid
-                && PROCESS_TABLE
-                    .with_process(current_pid, |p| {
-                        let state = p.get_state();
-                        state == ProcessState::Running || state == ProcessState::Ready
-                    })
-                    .unwrap_or(false)
+                && (prev_state_code == 1 || prev_state_code == 2)
         } else {
             false
         };
@@ -968,11 +1028,17 @@ impl Scheduler {
             unsafe { &raw const (*p).context as *const Mutex<ProcessContext> }
         });
 
-        if !prev_ctx_ptr.is_null() {
+        // `context_switch` 会在**本任务稍后被重新调度上核时返回** —— 恢复点即
+        // 其后代码, 且执行时用的是本任务自身的栈上局部变量 (`next`/`current_pid`
+        // 均为本次切换的陈旧值). 故**不能**以"执行到切换段之后"推断未发生切换;
+        // 必须用 `switched` 标志区分"恢复路径"与"真·未切换".
+        let switched = !prev_ctx_ptr.is_null();
+        if switched {
             // 关键修复 (B05-55): 不能持 MutexGuard 调 context_switch.
-            // process_switch_asm 切换后永不返回 (iretq 到 next 用户态), Guard 的
-            // Drop 不执行 → prev/next 的 context 锁永久泄漏 → next 进程运行后
-            // p.context.lock() (如 proc_save_user_regs) 自旋死锁.
+            // process_switch_asm 切到 next 后本处暂不执行 (待本任务被重新调度上核
+            // 才从其后继续), 若持 Guard 则其 Drop 要等到恢复之后才可能执行, 期间
+            // prev 的 context 锁泄漏 → 本任务被重新调度上核后 p.context.lock()
+            // (如 proc_save_user_regs) 自旋死锁.
             // 改用 get_mut_unchecked 裸访问: 单核 + process_switch_asm 开头 cli
             // 保证切换期间无并发访问.
             // SAFETY: prev/next_ptr 均派生自 PROCESS_TABLE 中活动的 Process 条目;
@@ -982,11 +1048,71 @@ impl Scheduler {
                 let next_ctx = core::ptr::addr_of!(*((*next_ctx_ptr).get_mut_unchecked()));
                 crate::arch!(context_switch(prev_ctx as *mut u8, next_ctx as *const u8));
             }
+            // 恢复路径: 本任务已被重新调度上核, 本次切换早已由"切走本任务的那次
+            // schedule()"完成. 仅做 RCU 收尾并按原语义返回 (返回值调用方不依赖).
+            crate::privileged::sync::rcu::rcu_note_quiescent_state();
+            return Some(next);
         }
 
+        // 能执行到此处 ⇔ `prev_ctx_ptr` 为 null —— 本次**未发生**上下文切换.
+        // - `current_pid == 0`: 引导路径 (本 CPU 尚无 current), 无 prev 可保存,
+        //   把 next 返回给调用方即可.
+        // - `current_pid != 0`: 不变式违反 —— 当前进程的 PCB 在表中不可解析, 其
+        //   内核栈可能已释放, **绝不能返回** (返回即回到已失效上下文 = UAF, 正是
+        //   "exit 后返回用户态" 的直接机理). 此处丢弃该上下文 (寄存器写入本 CPU
+        //   scratch), 单向切到 next 保活; 绝不静默改写 current 后返回.
+        // 方案 B 的 `exiting` 自引用已使本分支在 `current_pid != 0` 时不可达,
+        // 保留兜底仅为"故障不静默".
         crate::privileged::sync::rcu::rcu_note_quiescent_state();
-
+        if current_pid == 0 {
+            return Some(next);
+        }
+        crate::klog_error!(
+            "[SCHED] invariant violated: current pid={} not in table; one-way switch to {}",
+            current_pid,
+            next
+        );
+        // SAFETY: next_ptr 来自 PROCESS_TABLE.get(next) 且上面已判非 None; 单核 +
+        // 本函数开头 cli 排他, 切换期间无并发访问. scratch 为本 CPU 私有槽, 仅
+        // 承接被丢弃的 prev 寄存器 (其内容不会被读回).
+        unsafe {
+            let next_ctx = core::ptr::addr_of!(*((*next_ctx_ptr).get_mut_unchecked()));
+            let scratch_ctx = per_cpu.scratch_ctx.map_mut(|c| core::ptr::addr_of_mut!(*c));
+            crate::arch!(context_switch(
+                scratch_ctx as *mut u8,
+                next_ctx as *const u8
+            ));
+        }
+        // context_switch 永不返回; 以下仅为类型收尾.
         Some(next)
+    }
+
+    /// 方案 B: 在 `schedule()` 入口完成上一轮被切走任务的退出回收.
+    ///
+    /// 调用时机保证: 本函数运行在**新任务**上下文中, 即被切走者 (prev) 的上下文
+    /// 切换已经完成 —— 它确已离开 CPU, 且退出进程为 Zombie (不入任何运行队列)
+    /// 不会再次上核. 此时释放 `exit()` 持有的自引用: 若父进程已 `wait4` 收割
+    /// (置位 `pending_free`), 引用归零即完成 PCB / 内核栈 / 用户页表的最终释放;
+    /// 若尚未收割, 仅自引用归零, PCB 保留至父进程收割 (由 `remove_and_free`
+    /// 看到引用归零而释放).
+    ///
+    /// 仅对"退出中"(`exiting`) 的 prev 释放自引用; 普通被抢占任务仍可运行 (可能
+    /// 迁移到其它核), 绝不能在此误减其引用计数.
+    #[expect(
+        clippy::unused_self,
+        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
+    )]
+    fn reap_off_cpu(&self, per_cpu: &PerCpuSched) {
+        let prev = per_cpu.prev.swap(0, Ordering::SeqCst);
+        if prev == 0 {
+            return;
+        }
+        let was_exiting = PROCESS_TABLE
+            .with_process(prev, |proc| proc.exiting.swap(false, Ordering::AcqRel))
+            .unwrap_or(false);
+        if was_exiting {
+            PROCESS_TABLE.dec_ref_and_maybe_free(prev);
+        }
     }
 
     #[expect(
@@ -1099,11 +1225,30 @@ impl Scheduler {
             }
             _ => {}
         }
+
+        // 唤醒不变式: 置任务可运行后, 必须叫醒持有其运行队列的 CPU — 本函数把任务
+        // 入到**本核** cfs/rq, 故置本核 pending-resched 与 `block` 对称. 否则若本核
+        // 正处于 idle (BSP `idle_entry` 为 `sti; hlt`, 不像 AP idle 每轮调
+        // `schedule()`), 新入队任务将永不被拾取 → 丢失唤醒 (P6a 实测: hrtimer 唤醒
+        // 被投到 idle 核后, 睡眠进程永不恢复). 中断上下文下只置标志, 由 IRQ 退出
+        // 路径 `run_pending_resched` 完成切换 (见 `cpu_queue::mark_resched_pending_local`).
+        crate::privileged::proc::cpu_queue::mark_resched_pending_local();
     }
 
     pub fn exit(&self, exit_code: u32) {
         let per_cpu = per_cpu();
         if let Some(pid) = self.current() {
+            // 方案 B (exit/回收竞态根治): 在置为 Zombie **之前**, 于同一锁域内
+            // 持有一次性自引用并置 `exiting`. 该自引用使父进程 `wait4` 的
+            // `remove_and_free` 只能置 `pending_free` 而不能真正释放本 PCB ——
+            // 否则退出进程会在已被释放的内核栈上完成最后一次 `schedule()`, 因
+            // 拿不到 prev 上下文而不切换、直接返回用户态 (UAF). 自引用由本 CPU
+            // 下一次 `schedule()` 入口的 `reap_off_cpu` 释放.
+            PROCESS_TABLE.with_process(pid, |proc| {
+                if proc.try_inc_ref() {
+                    proc.exiting.store(true, Ordering::Release);
+                }
+            });
             // 埋点 (见 docs/plan/tlb-shootdown-epoch.md S-10): 退出事件是延迟释放覆盖的
             // 上游分位 —— 与 `vmm_x86_64.rs` 的 `destroy_page_table` 埋点配对, 可区分
             // "子进程根本没跑到 exit" 与 "已退出成 zombie 但无人回收 (无 wait4 ⇒ 无人调
@@ -1134,27 +1279,31 @@ impl Scheduler {
                 self.unblock(parent_pid);
             }
 
-            PROCESS_TABLE.with_process(pid, |proc| {
-                let children: alloc::vec::Vec<Pid> =
-                    proc.children.lock().iter().map(|c| c.0).collect();
-                for child_pid in children {
-                    PROCESS_TABLE.with_process_mut(child_pid, |child| {
-                        let state = child.get_state();
-                        if state == ProcessState::Zombie {
-                            let _ = child.set_state_safe(ProcessState::Terminated);
-                        } else {
-                            child.parent = Some(ProcessId(1));
-                        }
-                    });
-                    if PROCESS_TABLE
-                        .with_process(child_pid, |c| c.get_state() == ProcessState::Terminated)
-                        .unwrap_or(false)
-                    {
-                        PROCESS_TABLE.remove_and_free(child_pid);
+            // 单次加锁取出子进程列表, 随后逐个独立加锁处理.
+            // `processes` 为不可重入锁, 在持锁闭包内再次 `with_process*` /
+            // `remove_and_free` 会同核自死锁.
+            let children: alloc::vec::Vec<Pid> = PROCESS_TABLE
+                .with_process(pid, |proc| {
+                    proc.children.lock().iter().map(|c| c.0).collect()
+                })
+                .unwrap_or_default();
+            for child_pid in children {
+                PROCESS_TABLE.with_process_mut(child_pid, |child| {
+                    let state = child.get_state();
+                    if state == ProcessState::Zombie {
+                        let _ = child.set_state_safe(ProcessState::Terminated);
+                    } else {
+                        child.parent = Some(ProcessId(1));
                     }
+                });
+                let child_terminated = PROCESS_TABLE
+                    .with_process(child_pid, |c| c.get_state() == ProcessState::Terminated)
+                    .unwrap_or(false);
+                if child_terminated {
+                    PROCESS_TABLE.remove_and_free(child_pid);
                 }
-                proc.children.lock().clear();
-            });
+            }
+            let _ = PROCESS_TABLE.with_process(pid, |proc| proc.children.lock().clear());
 
             // 本函数**不**释放本进程的用户地址空间: 唯一的销毁点是
             // `Process::drop` -> `vmm_destroy_page_table`, 而 `Process` 只在
@@ -1170,7 +1319,7 @@ impl Scheduler {
         // 调度下一个任务. 生产路径不因"无任务可运行"而结束运行: 本 CPU 的
         // idle 任务保证 `schedule()` 在运行期永不为 None. 整机退出 (QEMU exit)
         // 由测试框架承担 (`privileged::debug` 的 `qemu_exit`), 不属调度器职责.
-        let _ = self.schedule();
+        self.schedule();
     }
 
     pub fn yield_current(&self) {
@@ -1454,24 +1603,29 @@ impl Scheduler {
                     break;
                 }
                 if let Some(_proc) = PROCESS_TABLE.get(pid) {
-                    let is_zombie = PROCESS_TABLE
+                    // 单次加锁取本进程状态与父 pid, 父存活另起一次加锁查询.
+                    // `processes` 为不可重入锁, 在持锁闭包内再次 `with_process`
+                    // 会同核自死锁 (本轮 hang 根因).
+                    let zombie_parent = PROCESS_TABLE
                         .with_process(pid, |p| {
                             if p.get_state() == ProcessState::Zombie {
-                                let parent_alive = p.parent.map_or(true, |ppid| {
-                                    PROCESS_TABLE
-                                        .with_process(ppid.0, |pp| {
-                                            let s = pp.get_state();
-                                            s != ProcessState::Zombie
-                                                && s != ProcessState::Terminated
-                                        })
-                                        .unwrap_or(false)
-                                });
-                                !parent_alive || p.parent == Some(ProcessId(1))
+                                Some(p.parent)
                             } else {
-                                false
+                                None
                             }
                         })
-                        .unwrap_or(false);
+                        .flatten();
+                    let is_zombie = zombie_parent.is_some_and(|parent| {
+                        let parent_alive = parent.map_or(true, |ppid| {
+                            PROCESS_TABLE
+                                .with_process(ppid.0, |pp| {
+                                    let s = pp.get_state();
+                                    s != ProcessState::Zombie && s != ProcessState::Terminated
+                                })
+                                .unwrap_or(false)
+                        });
+                        !parent_alive || parent == Some(ProcessId(1))
+                    });
                     if is_zombie {
                         to_reap[reap_count] = pid;
                         reap_count += 1;

@@ -1,6 +1,3 @@
-#[cfg(test)]
-use crate::privileged::mm::KERNEL_BASE;
-use crate::privileged::mm::virt_to_phys;
 use alloc::vec::Vec;
 
 // ============================================================================
@@ -15,39 +12,38 @@ pub use crate::privileged::driver::net::dma_ring::{
 };
 
 // ============================================================================
-// 虚拟地址 → 物理地址转换
-// ============================================================================
-//
-// 复用 mm::virt_to_phys (基于 KERNEL_BASE 常量, 自动适配架构:
-// - x86_64: KERNEL_BASE=0xFFFF800000000000, 减去得物理地址
-// - aarch64: KERNEL_BASE=0 (恒等映射), VA==PA, 减 0 无变化)
-//
-// 本文件不重复定义 virt_to_phys, 避免 I-53 架构互斥 cfg 检查失败.
-
-// ============================================================================
 // DMA 描述符环安全包装 (privileged 层, 封装 unsafe 指针操作)
 // ============================================================================
 
 /// TX 描述符环安全包装
 ///
 /// 封装 E1000 TX DMA 描述符环的 unsafe 指针操作, 提供安全公共 API。
-/// 内部管理描述符内存分配、物理地址转换、DD 状态检查。
+/// 内部管理描述符内存分配、发送缓冲区分配 (DMA 一致内存)、DD 状态检查。
+///
+/// 与 RX 环对称: 每个描述符预分配独立的 `alloc_coherent` 发送缓冲区,
+/// 由 `prepare_from_slice` 拷入数据。发送源恒为 DMA 分配器给出的物理地址,
+/// 不再依赖对内核静态地址做虚拟→物理反推。
 pub struct TxRing {
     ptr: *mut E1000TxDesc,
     phys: u64,
     count: usize,
+    bufs: Vec<*mut u8>,
+    buf_phys: Vec<u64>,
     tail: usize,
+    buf_size: usize,
 }
 
 impl TxRing {
-    /// 分配并初始化 TX 描述符环
+    /// 分配并初始化 TX 描述符环及发送缓冲区
     ///
-    /// 通过 `DmaEngine::alloc_coherent` 分配物理连续、4KiB 对齐的 DMA 一致内存,
-    /// 该内存已自动清零, 且 cache 已 flush, 满足 E1000 硬件 DMA 访问要求。
+    /// 描述符环与每个发送缓冲区均通过 `DmaEngine::alloc_coherent` 分配物理连续、
+    /// 4KiB 对齐的 DMA 一致内存 (自动清零 + cache flush), 满足 E1000 硬件 DMA
+    /// 读取要求 (与 `RxRing::alloc` 对称)。
     #[cfg(not(feature = "kernel_test"))]
-    pub fn alloc(count: usize) -> Option<Self> {
-        // B04-17: count == 0 时分配大小为 0, 后续解引用越过分配边界 → 任意内存读/写。
-        if count == 0 {
+    pub fn alloc(count: usize, buf_size: usize) -> Option<Self> {
+        // B04-17: count == 0 或 buf_size == 0 时分配大小为 0, 后续解引用越过
+        // 分配边界 → 任意内存读/写。
+        if count == 0 || buf_size == 0 {
             return None;
         }
         let size = core::mem::size_of::<E1000TxDesc>() * count;
@@ -55,7 +51,13 @@ impl TxRing {
         // 表示描述符初始可用 (硬件发送完成后同样置 DD)。
         let (virt, phys) = crate::privileged::dma::get_dma().alloc_coherent(size)?;
         let desc_ptr = virt.0 as *mut E1000TxDesc;
+        let mut bufs = Vec::new();
+        let mut buf_phys = Vec::new();
         for i in 0..count {
+            // alloc_coherent 分配物理连续的发送缓冲区 (已清零)。
+            let (buf_virt, buf_pa) = crate::privileged::dma::get_dma().alloc_coherent(buf_size)?;
+            bufs.push(buf_virt.0 as *mut u8);
+            buf_phys.push(buf_pa.0);
             // SAFETY: desc_ptr 由 alloc_coherent 分配, 大小为 size;
             // i < count 保证索引在分配范围内。
             unsafe {
@@ -66,7 +68,10 @@ impl TxRing {
             ptr: desc_ptr,
             phys: phys.0,
             count,
+            bufs,
+            buf_phys,
             tail: 0,
+            buf_size,
         })
     }
 
@@ -85,23 +90,25 @@ impl TxRing {
         self.tail
     }
 
-    /// 准备一个描述符用于发送 (物理地址版本)
+    /// 准备一个描述符用于发送 (从调用方切片拷入本环独占的 DMA 缓冲)
     ///
-    /// 设置 buffer 物理地址、长度、命令字, 清除 DD 状态。
+    /// 将 `data` 拷入 `tail` 描述符对应的发送缓冲区 (由 `alloc_coherent` 分配,
+    /// 硬件可安全 DMA 读取), 并设置缓冲区物理地址、长度、命令字, 清除 DD 状态。
     /// 调用方需先确认当前 tail 位置的描述符已完成 (DD=1)。
-    pub fn prepare(&mut self, buf_phys: u64, buf_len: u16) {
+    pub fn prepare_from_slice(&mut self, data: &[u8]) {
+        let len = data.len().min(self.buf_size);
+        // SAFETY: tail 在 0..count 范围内; bufs[tail] 由 alloc_coherent 分配,
+        // 大小 >= buf_size >= len; data.as_ptr() 对其 len 字节有效, 且源 (调用方
+        // 缓冲) 与目标 (DMA 缓冲) 不重叠, 满足 copy_nonoverlapping 前提。
+        unsafe {
+            core::ptr::copy_nonoverlapping(data.as_ptr(), self.bufs[self.tail], len);
+        }
         // SAFETY: tail 在 0..count 范围内; ptr 由 alloc_coherent 分配且大小足够。
         let desc = unsafe { &mut *self.ptr.add(self.tail) };
-        desc.addr = buf_phys;
-        desc.length = buf_len;
+        desc.addr = self.buf_phys[self.tail];
+        desc.length = len as u16;
         desc.cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_IFCS | E1000_TXD_CMD_RS;
         desc.status = 0;
-    }
-
-    /// 准备一个描述符用于发送 (虚拟地址版本, 内部转换物理地址)
-    pub fn prepare_from_virt(&mut self, buf_virt: u64, buf_len: u16) {
-        let buf_phys = virt_to_phys(buf_virt);
-        self.prepare(buf_phys, buf_len);
     }
 
     /// 检查指定索引的描述符是否完成 (DD bit)
@@ -269,14 +276,5 @@ mod tests {
     fn test_descriptor_sizes() {
         assert_eq!(core::mem::size_of::<E1000TxDesc>(), 16);
         assert_eq!(core::mem::size_of::<E1000RxDesc>(), 16);
-    }
-
-    #[test]
-    fn test_virt_to_phys_conversion() {
-        let high_addr: u64 = KERNEL_BASE;
-        assert_eq!(virt_to_phys(high_addr), 0);
-        // virt_to_phys 仅对内核空间地址 (>= KERNEL_BASE) 成立;
-        // 原用例传低地址 0x12345678 导致下溢 panic (2026-09-24 UT-06 实测修正).
-        assert_eq!(virt_to_phys(KERNEL_BASE + 0x12345678), 0x12345678);
     }
 }

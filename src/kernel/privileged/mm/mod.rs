@@ -308,6 +308,7 @@ pub struct PageTranslation {
 /// 锁序约束: 调用方另持的锁必须在 `VMM_LOCK` **之前**取得 (如 `VMA_LOCK`);
 /// **不得在持有 pcache 桶锁时调用** —— 既定锁序为 `VMA_LOCK → VMM_LOCK → 桶锁`,
 /// 桶锁内调用构成反向嵌套.
+#[track_caller]
 pub(crate) fn release_frame_locked(phys: PhysAddr) {
     deferred_free::defer_free(phys.0);
 }
@@ -317,6 +318,7 @@ pub(crate) fn release_frame_locked(phys: PhysAddr) {
 /// 语义与锁序约束见 [`release_frame_locked`]; 本入口只负责加/解锁, 供不持
 /// `VMM_LOCK` 的路径 (缺页换叶 / COW / 页缓存条目释放) 使用. 已持锁的路径必须
 /// 直接用 `release_frame_locked`, 否则构成递归加锁.
+#[track_caller]
 pub(crate) fn release_frame(phys: PhysAddr) {
     let vmm_inst = vmm::get_vmm();
     let lock_flags = vmm_inst.acquire_lock();

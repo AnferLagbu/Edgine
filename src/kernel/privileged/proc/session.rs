@@ -359,48 +359,56 @@ pub fn proc_setpgid(pid: i32, pgid: i32) -> i64 {
         .with_process(current_pid, |p| p.session_id.load(Ordering::SeqCst))
         .unwrap_or(0);
 
-    let result = PROCESS_TABLE.with_process(target_pid, |p| {
-        let target_sid = p.session_id.load(Ordering::SeqCst);
+    // 阶段 1: 单次加锁校验 target 的会话与关系.
+    let Some((target_sid, is_self, is_child)) = PROCESS_TABLE.with_process(target_pid, |p| {
+        (
+            p.session_id.load(Ordering::SeqCst),
+            p.pid.0 == current_pid,
+            p.parent.is_some_and(|ppid| ppid.0 == current_pid),
+        )
+    }) else {
+        return -3;
+    };
 
-        if current_sid != target_sid {
-            return -1;
-        }
+    if current_sid != target_sid {
+        return -1;
+    }
+    if !is_self && !is_child {
+        return -1;
+    }
 
-        let is_self = p.pid.0 == current_pid;
-        let is_child = p.parent.is_some_and(|ppid| ppid.0 == current_pid);
-        if !is_self && !is_child {
-            return -1;
-        }
+    // 阶段 2: 校验目标进程组归属 (独立加锁; 不得在 `processes` 锁内嵌套
+    // `with_process` / `for_each`, 否则不可重入锁同核自死锁).
+    if new_pgid != target_pid && new_pgid != 0 {
+        let group_in_session = PROCESS_TABLE
+            .with_process(new_pgid, |leader| {
+                leader.session_id.load(Ordering::SeqCst) == current_sid
+            })
+            .unwrap_or(false);
 
-        if new_pgid != target_pid && new_pgid != 0 {
-            let group_in_session = PROCESS_TABLE
-                .with_process(new_pgid, |leader| {
-                    let leader_sid = leader.session_id.load(Ordering::SeqCst);
-                    leader_sid == current_sid
-                })
-                .unwrap_or(false);
-
-            if !group_in_session {
-                let mut found = false;
-                PROCESS_TABLE.for_each(|proc| {
-                    let pg = proc.pgid.load(Ordering::SeqCst);
-                    let sid = proc.session_id.load(Ordering::SeqCst);
-                    if pg == new_pgid && sid == current_sid {
-                        found = true;
-                    }
-                    true
-                });
-                if !found {
-                    return -22;
+        if !group_in_session {
+            let mut found = false;
+            PROCESS_TABLE.for_each(|proc| {
+                let pg = proc.pgid.load(Ordering::SeqCst);
+                let sid = proc.session_id.load(Ordering::SeqCst);
+                if pg == new_pgid && sid == current_sid {
+                    found = true;
                 }
+                true
+            });
+            if !found {
+                return -22;
             }
         }
+    }
 
+    // 阶段 3: 写入新 pgid.
+    match PROCESS_TABLE.with_process(target_pid, |p| {
         p.pgid.store(new_pgid, Ordering::SeqCst);
-        0
-    });
-
-    result.unwrap_or(-3)
+    }) {
+        Some(()) => 0,
+        None => -3,
+    }
 }
 
 #[expect(

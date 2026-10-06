@@ -251,6 +251,24 @@ static PREV_DHCP_IPV4: [core::sync::atomic::AtomicU8; 4] = [
     core::sync::atomic::AtomicU8::new(0),
 ];
 
+/// DHCP 租约的地址前缀长度 (Bound 时有效, 供 init flow 重建 iface CIDR).
+static PREV_DHCP_PREFIX: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+/// DHCP 租约的默认网关 (全 0 = 无网关, 作 None 哨兵).
+static PREV_DHCP_ROUTER: [core::sync::atomic::AtomicU8; 4] = [
+    core::sync::atomic::AtomicU8::new(0),
+    core::sync::atomic::AtomicU8::new(0),
+    core::sync::atomic::AtomicU8::new(0),
+    core::sync::atomic::AtomicU8::new(0),
+];
+
+/// DHCP 租约的 DNS 服务器 (最多 3 个, 0 = 无, 存网络字节序).
+static PREV_DHCP_DNS: [core::sync::atomic::AtomicU32; 3] = [
+    core::sync::atomic::AtomicU32::new(0),
+    core::sync::atomic::AtomicU32::new(0),
+    core::sync::atomic::AtomicU32::new(0),
+];
+
 /// 实际打开一个 socket (W4.2.3.2 实装).
 ///
 /// 根据 `kind` 构造 smoltcp socket (Tcp/Udp), 加入 `sockets`, 记录 buffer
@@ -395,21 +413,29 @@ pub fn socket_open_stub(
 /// 实际获取 DHCP 状态 (W4.2.2 实装).
 ///
 /// 翻译 `dhcpv4::Socket::poll()` → `DhcpState`:
-/// - `None` → 保持 prev state (内部 static, 0 初始化 = Idle)
-/// - `Some(Event::Deconfigured)` → Idle
+/// - `None` → 保持 prev tag 翻译结果 (内部 static, 0 初始化 = Idle)
+/// - `Some(Event::Deconfigured)` → 区分初始启动与租约丢失 (见下)
 /// - `Some(Event::Configured(config))` → Bound { ipv4, `lease_expires_at`: `u64::MAX` }
 ///
 /// ## 内部状态
 ///
-/// 使用 `static mut PREV_DHCP_STATE` 维护翻译结果. 0 初始化 = Idle.
-/// 调用方需在 `NET_LOCK` 保护下调用 (确保互斥访问).
+/// 使用 `PREV_DHCP_TAG` (tag) + `PREV_DHCP_IPV4` / `PREV_DHCP_PREFIX` /
+/// `PREV_DHCP_ROUTER` / `PREV_DHCP_DNS` 维护翻译结果.
+/// 调用方需在 `NET_STATE` 锁保护下调用 (确保互斥访问).
 ///
 /// ## dhcpv4 poll 语义
 ///
 /// smoltcp `dhcpv4::Socket::poll()` 返回 Option<Event>:
 /// - None: 无新事件, DHCP 状态机内部推进中
 /// - `Some(Event::Configured)`: 收到 DHCP ACK, 已配置
-/// - `Some(Event::Deconfigured)`: 收到 DHCP NAK 或租约过期, 已取消配置
+/// - `Some(Event::Deconfigured)`: 内部 `config_changed` 置位且 state 非 Renewing
+///
+/// 注意: `dhcpv4::Socket::new()` 初始 `config_changed = true`, 故**首次**
+/// `poll()` 必返回 `Some(Deconfigured)` (初始态), 而非租约丢失. 因此
+/// Deconfigured 需按 prev tag 区分:
+/// - prev tag 为 3/4 (曾 Bound/Renewing): 租约丢失/NAK → 回 Idle (tag 0)
+/// - 其他 (初始 Discovering 启动): 记为 Discovering (tag 1), 否则会把
+///   prev tag 覆盖为 0, 导致后续每轮 `None` 都退化为 Idle 并重复拆配置.
 ///
 /// 我们翻译为 trait `DhcpState`, 简化 `lease_expires_at` = `u64::MAX`
 /// (实际租约管理在 init flow 中通过 `G_IPV4` / `G_GATEWAY` 跟踪).
@@ -435,15 +461,36 @@ pub fn dhcp_state_stub(
             tag_to_dhcp_state(prev_tag)
         }
         Some(dhcpv4::Event::Deconfigured) => {
-            // DHCP 取消配置, 回到 Idle (tag = 0)
-            PREV_DHCP_TAG.store(0, Ordering::Release);
-            DhcpState::Idle
+            if prev_tag == 3 || prev_tag == 4 {
+                // 曾 Bound/Renewing: 租约丢失或 NAK, 回到 Idle (tag = 0)
+                PREV_DHCP_TAG.store(0, Ordering::Release);
+                DhcpState::Idle
+            } else {
+                // 初始启动: 首次 poll 必返回 Deconfigured, 记为 Discovering
+                // (tag = 1), 避免退化为 Idle 并重复拆配置.
+                PREV_DHCP_TAG.store(1, Ordering::Release);
+                DhcpState::Discovering
+            }
         }
         Some(dhcpv4::Event::Configured(config)) => {
-            // DHCP 配置完成, 提取 IP + 写 tag
+            // DHCP 配置完成, 提取 IP/前缀/网关/DNS + 写 tag
             let ipv4 = config.address.address().octets();
             for (i, &byte) in ipv4.iter().enumerate() {
                 PREV_DHCP_IPV4[i].store(byte, Ordering::Release);
+            }
+            PREV_DHCP_PREFIX.store(config.address.prefix_len(), Ordering::Release);
+            // 无网关时写全 0 (None 哨兵)
+            let router = config.router.map_or([0u8; 4], |r| r.octets());
+            for (i, &byte) in router.iter().enumerate() {
+                PREV_DHCP_ROUTER[i].store(byte, Ordering::Release);
+            }
+            // DNS 服务器最多取前 3 个, 缺省写 0
+            for (i, slot) in PREV_DHCP_DNS.iter().enumerate() {
+                let v = config
+                    .dns_servers
+                    .get(i)
+                    .map_or(0u32, |d| u32::from_be_bytes(d.octets()));
+                slot.store(v, Ordering::Release);
             }
             PREV_DHCP_TAG.store(3, Ordering::Release); // tag 3 = Bound
             DhcpState::Bound {
@@ -452,6 +499,43 @@ pub fn dhcp_state_stub(
             }
         }
     }
+}
+
+/// 读取最近一次 DHCP 租约的地址前缀长度.
+///
+/// 调用方需持有 `NET_STATE` 锁. 仅在 `dhcp_state_stub` 返回 `Bound` 后有义.
+pub fn dhcp_prefix_len() -> u8 {
+    PREV_DHCP_PREFIX.load(core::sync::atomic::Ordering::Acquire)
+}
+
+/// 读取最近一次 DHCP 租约的默认网关; 无网关时返回 `None`.
+///
+/// 调用方需持有 `NET_STATE` 锁.
+pub fn dhcp_router() -> Option<[u8; 4]> {
+    use core::sync::atomic::Ordering;
+    let octets = [
+        PREV_DHCP_ROUTER[0].load(Ordering::Acquire),
+        PREV_DHCP_ROUTER[1].load(Ordering::Acquire),
+        PREV_DHCP_ROUTER[2].load(Ordering::Acquire),
+        PREV_DHCP_ROUTER[3].load(Ordering::Acquire),
+    ];
+    if octets == [0, 0, 0, 0] {
+        None
+    } else {
+        Some(octets)
+    }
+}
+
+/// 读取最近一次 DHCP 租约的 DNS 服务器 (最多 3 个, 每项网络字节序, 0 = 无).
+///
+/// 调用方需持有 `NET_STATE` 锁.
+pub fn dhcp_dns_servers() -> [[u8; 4]; 3] {
+    use core::sync::atomic::Ordering;
+    let mut out = [[0u8; 4]; 3];
+    for (i, slot) in PREV_DHCP_DNS.iter().enumerate() {
+        out[i] = slot.load(Ordering::Acquire).to_be_bytes();
+    }
+    out
 }
 
 /// `SmoltcpNetStack::close` 的 safe wrapper (W4.2.3.4).

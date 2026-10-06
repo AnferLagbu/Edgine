@@ -176,19 +176,33 @@ def main() -> int:
     log("INFO", "")
 
     # ---- 检查 3: SHA 字段不能是 PENDING 占位 ----
+    # 联网探测只做一次, 供检查 3/5/6 复用 (离线下每次调用都要等超时, 避免重复).
+    online = check_upstream_reachable()
+
+    # 语义 (与 docstring 检查 3 的 "offline 模式除外" 一致):
+    #   - 网络相关字段 (SMOLTCP_SHA / SMOLTCP_UPSTREAM_SRC_HASH): 离线无法获取/复核上游值,
+    #     占位降级为 WARN (与检查 5/6 上游不可达时的降级行为保持一致); 联网时仍是硬违规.
+    #   - 本地可验证字段 (SMOLTCP_LOCAL_SRC_HASH): 始终硬违规 — 其占位会使检查 4 的
+    #     本地纯度比对静默跳过, 门禁失效.
     sha = config.get("SMOLTCP_SHA", "")
     if "PENDING" in sha:
-        log("WARN", f"SMOLTCP_SHA 是占位值: {sha}")
-        log("WARN", "在联网环境运行 scripts/vendor_smoltcp.sh lock 重写")
-        issues.append("SMOLTCP_SHA 占位")
+        if online:
+            log("WARN", f"SMOLTCP_SHA 是占位值: {sha}")
+            log("WARN", "在联网环境运行 scripts/vendor_smoltcp.sh lock 重写")
+            issues.append("SMOLTCP_SHA 占位")
+        else:
+            log("INFO", f"SMOLTCP_SHA 是占位值 (离线无法获取上游 SHA, 跳过): {sha}")
 
     lock_mode = config.get("SMOLTCP_LOCK_MODE", "")
     upstream_src_hash = config.get("SMOLTCP_UPSTREAM_SRC_HASH", "")
     local_src_hash = config.get("SMOLTCP_LOCAL_SRC_HASH", "")
 
     if "PENDING" in upstream_src_hash:
-        log("WARN", f"SMOLTCP_UPSTREAM_SRC_HASH 是占位值: {upstream_src_hash}")
-        issues.append("SMOLTCP_UPSTREAM_SRC_HASH 占位")
+        if online:
+            log("WARN", f"SMOLTCP_UPSTREAM_SRC_HASH 是占位值: {upstream_src_hash}")
+            issues.append("SMOLTCP_UPSTREAM_SRC_HASH 占位")
+        else:
+            log("INFO", f"SMOLTCP_UPSTREAM_SRC_HASH 是占位值 (离线, 跳过): {upstream_src_hash}")
     if "PENDING" in local_src_hash:
         log("WARN", f"SMOLTCP_LOCAL_SRC_HASH 是占位值: {local_src_hash}")
         issues.append("SMOLTCP_LOCAL_SRC_HASH 占位")
@@ -215,7 +229,7 @@ def main() -> int:
 
     # ---- 检查 5: 上游 src/ hash 一致性 (可选, 需联网) ----
     tag = config.get("SMOLTCP_TAG", "")
-    if check_upstream_reachable() and upstream_src_hash and "PENDING" not in upstream_src_hash:
+    if online and upstream_src_hash and "PENDING" not in upstream_src_hash:
         log("INFO", "")
         log("INFO", f"上游可达, 正在验证 tag {tag} 的 src/ hash...")
         # 浅克隆上游, 计算 hash
@@ -244,7 +258,7 @@ def main() -> int:
 
     # ---- 检查 6: (可选) 与上游 SHA 比对 ----
     if tag and "PENDING" not in sha:
-        if check_upstream_reachable():
+        if online:
             log("INFO", f"上游可达, 正在验证 tag {tag} 的 commit SHA...")
             upstream_sha = fetch_upstream_sha(tag)
             if upstream_sha:

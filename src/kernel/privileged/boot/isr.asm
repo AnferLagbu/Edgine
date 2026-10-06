@@ -76,6 +76,11 @@ isr_common:
     jne .isr_no_kpti_enter
     swapgs
 
+    ; 保护用户 RAX: 下方读 CR3 需借 RAX 作暂存, 若不先压栈则 push rax
+    ; 保存的是被覆盖后的 PML4 值, 异常返回后用户 RAX 被污染成 CR3.
+    ; (与 syscall_entry 出口的 push rax/pop rax 保护同源思路)
+    push rax
+
     ; 保存用户 CR3: 硬件 CR3 此时仍是用户页表
     mov rax, cr3
 
@@ -86,6 +91,8 @@ isr_common:
     ; CR3, 导致异常处理器在用户页表下访问内核静态数据 → #PF → Triple Fault.
     mov rax, [gs:KERNEL_PML4_OFF]
     mov cr3, rax
+    ; 恢复用户 RAX (此时已在直接被映射的内核栈上, 内核页表下可读写)
+    pop rax
     ; 不 swapgs 回来: exception_handler 在内核 GS 下运行 (syscall_entry 模式)
 .isr_no_kpti_enter:
 
@@ -132,8 +139,11 @@ isr_common:
     cmp word [rsp+8], 0x23
     jne .isr_no_kpti_exit
     ; 此时 GS = 内核 GS (入口已 swapgs 一次), 直接读 per-CPU 用户 PML4
+    ; 保护 RAX: mov cr3 需借 RAX 暂存, 否则用户返回值被用户 PML4 物理地址覆盖.
+    push rax
     mov rax, [gs:USER_PML4_OFF]
     mov cr3, rax
+    pop rax
     swapgs
 .isr_no_kpti_exit:
 
@@ -144,8 +154,8 @@ isr_common:
 ;   1. 用户态执行 syscall 指令
 ;   2. CPU 保存 RIP→RCX, RFLAGS→R11, 加载 CS=STAR[47:32], SS=STAR[47:32]+8
 ;   3. swapgs → GS 指向 per-CPU SyscallPerCpu 数据
-;   4. mov r14, [gs:0] → 加载内核栈顶 (kernel_rsp); 用户 RSP 存入 [gs:USER_RSP_OFF]
-;   5. 切 CR3 到内核页表 → 切 RSP 到内核栈
+;   4. 用户 R12/R14/R15 存入 per-CPU 暂存槽; 用户 RSP 存入 [gs:USER_RSP_OFF]
+;   5. 切 CR3 到内核页表 → 从 [gs:KERNEL_RSP_OFF] 切 RSP 到内核栈
 ;   6. 构建 InterruptFrame, 调用 syscall_dispatch_from_frame
 ;   7. 返回: 切用户页表 → iretq 返回用户态 (内核栈为高半区 VA, 无需别名)
 ;
@@ -164,6 +174,11 @@ USER_RSP_OFF    equ 24
 ; proc/switch.asm 的用户态出口 (KPTI-08 方案 B), 二者偏移必须与 gdt.rs 字段
 ; 顺序严格一致; 在此列出以免新增字段时遗漏同步.
 TRAMPOLINE_TOP_OFF equ 32
+; SCRATCH_R12/R14/R15_OFF (SYSCALL-CLOBBER-R12R14R15): syscall 入口在切到内核栈
+; 之前暂存用户 r12/r14/r15 的 per-CPU 槽位 (见 syscall_entry 入口注释).
+SCRATCH_R12_OFF equ 40
+SCRATCH_R14_OFF equ 48
+SCRATCH_R15_OFF equ 56
 
 global syscall_entry
 syscall_entry:
@@ -187,25 +202,29 @@ syscall_entry:
     ; → 再切 RSP (mov rsp, r14), 确保 push 在内核页表保护下执行.
     ; ═══════════════════════════════════════════════════════════════════
 
-    xor r15d, r15d                  ; R15 = 0 = KERNEL_RSP_OFF
-    mov r14, [gs:r15]               ; R14 = kernel_rsp (暂存, CR3 切换后使用)
+    ; ── 保存用户 R12/R14/R15 ────────────────────────────────────────────
+    ; 教训 (SYSCALL-CLOBBER-R12R14R15): 下方 KPTI 切 CR3 窗口无可用栈
+    ; (内核栈此时尚未映射可用), 需借通用寄存器作临时量. 但 r12/r14/r15 是
+    ; 用户态 callee-saved 寄存器: 若先用它们暂存再压入 InterruptFrame, 用户值
+    ; 已被内核值覆盖 —— syscall 返回后用户 r12=内核 PML4 物理地址, r14=内核栈顶,
+    ; r15=0. 曾导致用户把 &ts 存于 r12 的 nanosleep 收到 0x102000 指针, 睡眠
+    ; 立即返回, 进而网络 recv 重试窗口塌缩. 入口在切到内核栈前无栈可用, 故
+    ; 先存 per-CPU 暂存槽 ([gs:...] 所指页在用户页表中已映射, 未切 CR3 也可写).
+    mov [gs:SCRATCH_R12_OFF], r12
+    mov [gs:SCRATCH_R14_OFF], r14
+    mov [gs:SCRATCH_R15_OFF], r15
 
-    ; 使用用户栈暂存 R12 作为 CR3 操作临时寄存器.
-    ; push/pop 配对, 用户栈净效果为零, 中断已由 SFMASK 禁用.
-    push r12                        ; (a) 保存用户 R12 到用户栈
-    mov r12, cr3                    ; R12 = 用户 CR3
-    mov [USER_CR3_SAVE], r12        ; 保存用户 CR3 (USER_CR3_SAVE 在用户页表中已映射)
-    pop r12                         ; (b) 恢复用户 R12, 用户栈恢复原状
-
-    mov [gs:USER_RSP_OFF], rsp       ; 保存用户 RSP (pop r12 后, 即原始值)
+    mov [gs:USER_RSP_OFF], rsp       ; 保存用户 RSP (切栈前, 即原始值)
     ; 注: 保存到独立字段 USER_RSP_OFF, 不覆盖 [gs:KERNEL_RSP_OFF] (kernel_rsp),
     ; 否则首次 syscall 后 kernel_rsp 丢失, 后续 syscall 用错内核栈
     ; (TRACK-INIT-RING3-SYSCALL-RET).
 
+    mov r12, cr3                    ; R12 = 用户 CR3 (暂存, 用户值已存 per-CPU)
+    mov [USER_CR3_SAVE], r12        ; 保存用户 CR3 (USER_CR3_SAVE 在用户页表中已映射)
     mov r12, [gs:KERNEL_PML4_OFF]   ; R12 = 内核 PML4 物理地址
     mov cr3, r12                    ; ← 切换到内核页表 (此后所有访存走内核页表)
 
-    mov rsp, r14                    ; 切换到内核 RSP (安全: 内核页表已加载)
+    mov rsp, [gs:KERNEL_RSP_OFF]    ; 切到内核 RSP (切 CR3 后 [gs:] 仍可达)
 
     ; 构建 InterruptFrame (与 int 0x80 中断帧布局一致)
     push 0x1B                         ; SS = 用户数据段 (0x18|3)
@@ -233,10 +252,10 @@ syscall_entry:
     push r9
     push r10
     push r11
-    push r12
+    push qword [gs:SCRATCH_R12_OFF]   ; 用户 R12 (入口暂存, 见上)
     push r13
-    push r14
-    push r15
+    push qword [gs:SCRATCH_R14_OFF]   ; 用户 R14
+    push qword [gs:SCRATCH_R15_OFF]   ; 用户 R15
 
     mov rdi, rsp
     cld
@@ -305,6 +324,10 @@ irq_common:
     jne .irq_no_kpti_enter
     swapgs
 
+    ; 保护用户 RAX: 下方读 CR3 借 RAX 作暂存, 否则中断返回后用户 RAX 被
+    ; 覆盖成 PML4 值 —— 这是 fork 子进程误判返回值/用户态寄存器错乱的根因.
+    push rax
+
     ; 保存用户 CR3
     mov rax, cr3
 
@@ -318,6 +341,8 @@ irq_common:
     ; 与 syscall_entry 的 KPTI 切换模式保持一致.
     mov rax, [gs:KERNEL_PML4_OFF]
     mov cr3, rax
+    ; 恢复用户 RAX (内核页表下, 内核栈直接映射可读写)
+    pop rax
     ; 不 swapgs 回来: irq_handler 在内核 GS 下运行 (syscall_entry 模式).
     ; 原实现在此再次 swapgs, 导致 handler 在用户 GS 下访问 per-CPU 错乱
     ; (tick 等写入低物理地址, 可能破坏用户页表 → 用户态取指 #PF).
@@ -366,8 +391,11 @@ irq_common:
     cmp word [rsp+8], 0x23
     jne .irq_no_kpti_exit
     ; 此时 GS = 内核 GS (入口已 swapgs 一次), 直接读 per-CPU 用户 PML4
+    ; 保护 RAX: 否则中断返回后用户 RAX 被覆盖成用户 PML4 物理地址.
+    push rax
     mov rax, [gs:USER_PML4_OFF]
     mov cr3, rax
+    pop rax
     swapgs
 .irq_no_kpti_exit:
     iretq
@@ -557,11 +585,14 @@ syscall_handler:
     cmp word [rsp+24], 0x23
     jne .syscall_handler_no_kpti_enter
     swapgs
+    ; 保护用户 RAX (读 CR3 借 RAX 暂存, 否则保存的帧 RAX 被污染)
+    push rax
     ; 保存用户 CR3
     mov rax, cr3
     mov [USER_CR3_SAVE], rax
     mov rax, [gs:KERNEL_PML4_OFF]
     mov cr3, rax
+    pop rax
     swapgs
 .syscall_handler_no_kpti_enter:
 
@@ -608,8 +639,11 @@ syscall_handler:
     cmp word [rsp+8], 0x23
     jne .syscall_handler_no_kpti_exit
     swapgs
+    ; 保护 RAX (否则返回值被用户 PML4 物理地址覆盖)
+    push rax
     mov rax, [gs:USER_PML4_OFF]
     mov cr3, rax
+    pop rax
     swapgs
 .syscall_handler_no_kpti_exit:
 
@@ -625,11 +659,14 @@ isr0x82:
     cmp word [rsp+24], 0x23
     jne .isr0x82_no_kpti_enter
     swapgs
+    ; 保护用户 RAX (读 CR3 借 RAX 暂存, 否则保存的帧 RAX 被污染)
+    push rax
     ; 保存用户 CR3
     mov rax, cr3
     mov [USER_CR3_SAVE], rax
     mov rax, [gs:KERNEL_PML4_OFF]
     mov cr3, rax
+    pop rax
     swapgs
 .isr0x82_no_kpti_enter:
 
@@ -676,8 +713,11 @@ isr0x82:
     cmp word [rsp+8], 0x23
     jne .isr0x82_no_kpti_exit
     swapgs
+    ; 保护 RAX (否则返回值被用户 PML4 物理地址覆盖)
+    push rax
     mov rax, [gs:USER_PML4_OFF]
     mov cr3, rax
+    pop rax
     swapgs
 .isr0x82_no_kpti_exit:
 

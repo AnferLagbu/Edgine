@@ -79,7 +79,133 @@ pub extern "C" fn _start() -> ! {
     if busy == 0 {
         busy_wait(b'.');
     }
+    // P6a SLAAC 联调: 用户态 IPv6 UDP 收发探针 (仅 x86_64 — 联调在 x86_64
+    // tap + 宿主 dnsmasq RA 下进行; aarch64 无对应 NIC/RA 环境, 不探).
+    #[cfg(target_arch = "x86_64")]
+    ipv6_udp_probe();
     busy_wait(b'+');
+}
+
+/// 用户态 IPv6 UDP 收发探针 (P6a SLAAC 联调).
+///
+/// 端到端验证用户态 IPv6 socket 路径:
+/// 1. `socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)` 创建双栈 UDP socket;
+/// 2. `bind` 到 `[::]:7777` (Linux 布局 `SockaddrIn6`, family 主机序 / 端口网络序);
+/// 3. 向宿主回显服务 `fd00::1:9999` `sendto` 载荷, 有界重试至 SLAAC 全局地址就绪;
+/// 4. `recv` 回显并校验内容一致.
+///
+/// 宿主侧回显服务由 `scripts/qemu_slaac_test.sh` 启动; 未就绪时 (如默认
+/// slirp 无 RA) 有界重试后打印 FAIL 并继续, 不阻塞启动.
+#[cfg(target_arch = "x86_64")]
+fn ipv6_udp_probe() {
+    // 本地绑定端口 / 宿主回显端口, 与 qemu_slaac_test.sh 约定一致.
+    const LOCAL_PORT: u16 = 7777;
+    const ECHO_PORT: u16 = 9999;
+    // sockaddr_in6 定长布局: 2+2+4+16+4 = 28 字节.
+    const SOCKADDR_IN6_LEN: u32 = 28;
+    // 最大重试轮数 (每轮 50ms); SLAAC 地址由 RA 异步派生, 需留出等待窗口.
+    const MAX_TRIES: u32 = 60;
+
+    let fd = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+    if fd < 0 {
+        print("[net6] FAIL: socket()=");
+        print_dec(fd as i64);
+        print_char(b'\n');
+        return;
+    }
+
+    // 本地 [::]:7777 — sin6_family 主机序 (NE), sin6_port 网络序 (BE).
+    let local = SockaddrIn6 {
+        sin6_family: AF_INET6 as u16,
+        sin6_port: LOCAL_PORT.to_be(),
+        sin6_flowinfo: 0,
+        sin6_addr: In6Addr { s6_addr: [0u8; 16] },
+        sin6_scope_id: 0,
+    };
+    let rc = bind(
+        fd,
+        &local as *const SockaddrIn6 as *const u8,
+        SOCKADDR_IN6_LEN,
+    );
+    if rc < 0 {
+        print("[net6] FAIL: bind()=");
+        print_dec(rc as i64);
+        print_char(b'\n');
+        close_socket(fd);
+        return;
+    }
+
+    // 宿主回显端点 fd00::1:9999 (链路前缀由 RA 下发 fd00::/64).
+    let mut remote = SockaddrIn6 {
+        sin6_family: AF_INET6 as u16,
+        sin6_port: ECHO_PORT.to_be(),
+        sin6_flowinfo: 0,
+        sin6_addr: In6Addr { s6_addr: [0u8; 16] },
+        sin6_scope_id: 0,
+    };
+    remote.sin6_addr.s6_addr[0] = 0xfd;
+    remote.sin6_addr.s6_addr[15] = 0x01;
+
+    let payload = b"EDGINE6";
+    let mut tries: u32 = 0;
+    loop {
+        let n = sendto(
+            fd,
+            payload.as_ptr(),
+            payload.len(),
+            0,
+            &remote as *const SockaddrIn6 as *const u8,
+            SOCKADDR_IN6_LEN,
+        );
+        if n == payload.len() as isize {
+            break;
+        }
+        tries += 1;
+        if tries >= MAX_TRIES {
+            println("[net6] FAIL: sendto() timeout (SLAAC 地址未就绪?)");
+            close_socket(fd);
+            return;
+        }
+        delay_ms(50);
+    }
+    println("[net6] TX ok: EDGINE6 sent to [fd00::1]:9999");
+
+    // 等待宿主回显 (recvfrom 内核实现不回写对端地址, 故仅校验载荷).
+    let mut buf = [0u8; 64];
+    let mut recvs: u32 = 0;
+    loop {
+        let n = recv(fd, buf.as_mut_ptr(), buf.len(), 0);
+        if n > 0 {
+            let got = n as usize;
+            if got == payload.len() && &buf[..got] == &payload[..] {
+                println("[net6] RX ok: circulated EDGINE6 echo verified");
+            } else {
+                print("[net6] FAIL: echo mismatch len=");
+                print_dec(n as i64);
+                print_char(b'\n');
+            }
+            close_socket(fd);
+            return;
+        }
+        recvs += 1;
+        if recvs >= MAX_TRIES {
+            print("[net6] FAIL: recv() timeout (无回显)");
+            close_socket(fd);
+            return;
+        }
+        delay_ms(50);
+    }
+}
+
+/// 毫秒级休眠 (IPv6 探针重试节流): 以 `nanosleep` 让出 CPU, 使周期网络
+/// poll (timer IRQ) 得以推进 RA 处理与收发.
+#[cfg(target_arch = "x86_64")]
+fn delay_ms(ms: i64) {
+    let ts = Timespec {
+        tv_sec: 0,
+        tv_nsec: ms * 1_000_000,
+    };
+    let _ = nanosleep(&ts);
 }
 
 /// 不 yield 的忙等 (APS-05): 仅低频发 syscall (打印 `mark`, 上限 8 次), 之后

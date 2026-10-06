@@ -85,6 +85,21 @@ fn detect_spurious_8259_irq(irq: u8) -> Option<bool> {
     Some(isr & bit == 0)
 }
 
+/// legacy IRQ 线 (<16) 当前是否由 IOAPIC 投递 (单一真源).
+///
+/// 投递侧 (`enable_irq`/`disable_irq` 选 IOAPIC vs 8259A) 与
+/// EOI 侧 (`send_eoi_legacy` 选 LAPIC EOI vs 8259A EOI) **必须** 采用
+/// 同一判据. 否则会出现"8259A 投递却只发 LAPIC EOI", 导致 PIC ISR 位
+/// 永不清除, 该类 IRQ 在首次投递后永久停投.
+///
+/// 仅 x86_64 存在 IOAPIC; 调用点全部位于 `#[cfg(target_arch = "x86_64")]`
+/// 分支, 故本函数同样仅在该架构编译 (其他架构既无 IOAPIC 也无调用者).
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn legacy_irq_via_ioapic() -> bool {
+    crate::privileged::arch::ioapic::is_initialized()
+}
+
 /// 读取 8259A 主/从 ISR (In-Service Register).
 /// 通过 OCW3 = 0x0B 触发读 ISR (vs IRR); 返回 8-bit 当前在服务中断位图.
 // SAFETY: 调用方保证指针/类型有效 (详见上下文) — 仅 I/O 端口读写, 不涉及指针解引用
@@ -573,7 +588,7 @@ impl IdtManager {
         // 使用 GSI 路由, 不再限制 irq < 16
         #[cfg(target_arch = "x86_64")]
         {
-            if crate::privileged::arch::ioapic::is_initialized() {
+            if legacy_irq_via_ioapic() {
                 crate::privileged::arch::ioapic::unmask_irq(irq);
                 return;
             }
@@ -606,7 +621,7 @@ impl IdtManager {
         // 使用 GSI 路由, 不再限制 irq < 16
         #[cfg(target_arch = "x86_64")]
         {
-            if crate::privileged::arch::ioapic::is_initialized() {
+            if legacy_irq_via_ioapic() {
                 crate::privileged::arch::ioapic::mask_irq(irq);
                 return;
             }
@@ -798,7 +813,7 @@ impl IdtManager {
         if vector == 0xFD {
             crate::privileged::smp::tlb_catch_up_local();
             crate::privileged::smp::tlb_probe_report();
-            self.send_eoi(0);
+            self.send_eoi_local();
             return;
         }
         // 0xFE (reschedule): 接线既有 resched_ipi_handler 登记本核挂起重调度;
@@ -806,7 +821,7 @@ impl IdtManager {
         // 执行切换 (本路径不进 do_softirq/信号投递).
         if vector == 0xFE {
             crate::privileged::proc::cpu_queue::resched_ipi_handler();
-            self.send_eoi(0);
+            self.send_eoi_local();
             crate::privileged::proc::cpu_queue::run_pending_resched();
             return;
         }
@@ -833,8 +848,8 @@ impl IdtManager {
                 handler(frame);
             }
 
-            // MSI EOI: LAPIC 路径 (send_eoi 内已检查 APIC init)
-            self.send_eoi(irq);
+            // MSI EOI: LAPIC 路径
+            self.send_eoi_local();
 
             crate::privileged::irq::do_softirq();
 
@@ -893,7 +908,7 @@ impl IdtManager {
                 handler(frame);
             }
 
-            self.send_eoi(irq);
+            self.send_eoi_legacy(irq);
 
             crate::privileged::irq::do_softirq();
 
@@ -912,7 +927,7 @@ impl IdtManager {
         } else {
             // MSI 向量 (0x40-0x7F → irq 0x10-0x3F): 通过 ISR_TABLE 分发
             crate::privileged::irqline::dispatch_irq(vector);
-            self.send_eoi(irq);
+            self.send_eoi_local();
         }
     }
 
@@ -920,33 +935,40 @@ impl IdtManager {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
-    /// 发送 EOI (End of Interrupt)
-    fn send_eoi(&self, irq: u8) {
-        // Use Local APIC EOI if available (modern systems); 仅 x86_64 支持 APIC.
-        let apic_handled = {
-            #[cfg(target_arch = "x86_64")]
-            {
-                if crate::privileged::arch::apic::is_initialized() {
-                    crate::privileged::arch::apic::eoi();
-                    true
-                } else {
-                    false
-                }
+    /// 发送本地 APIC EOI (IPI / MSI 恒由 LAPIC 投递).
+    ///
+    /// `apic::eoi` 内部自带 `is_initialized` 检查, 未初始化时为 no-op.
+    fn send_eoi_local(&self) {
+        #[cfg(target_arch = "x86_64")]
+        {
+            crate::privileged::arch::apic::eoi();
+        }
+    }
+
+    #[expect(
+        clippy::unused_self,
+        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
+    )]
+    /// 发送 legacy IRQ (<16) 的 EOI.
+    ///
+    /// 判据与投递侧一致 (单一真源 `legacy_irq_via_ioapic`):
+    /// - IOAPIC 投递 ⇒ LAPIC EOI;
+    /// - 8259A PIC 投递 ⇒ 传统 PIC EOI (从片先于主片).
+    fn send_eoi_legacy(&self, irq: u8) {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if legacy_irq_via_ioapic() {
+                crate::privileged::arch::apic::eoi();
+                return;
             }
-            #[cfg(not(target_arch = "x86_64"))]
-            {
-                false
+        }
+        // 兜底: 对老式系统回退到传统 PIC EOI
+        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        unsafe {
+            if irq >= 8 {
+                port_outb(0xA0, 0x20);
             }
-        };
-        if !apic_handled {
-            // 兜底: 对老式系统回退到传统 PIC EOI
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-            unsafe {
-                if irq >= 8 {
-                    port_outb(0xA0, 0x20);
-                }
-                port_outb(0x20, 0x20);
-            }
+            port_outb(0x20, 0x20);
         }
     }
 

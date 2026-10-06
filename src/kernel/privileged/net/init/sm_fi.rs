@@ -353,9 +353,17 @@ pub unsafe extern "C" fn sm_bind(fd: i32, addr: *const u8, _addrlen: u32) -> i32
         match raw::fd_type(fd as usize) {
             2 => {
                 let sock = sockets.get_mut::<udp::Socket>(handle);
+                // 通配绑定 (`[::]` / `0.0.0.0`) 必须映射为 `addr: None`:
+                // 若置 `Some(::)`, smoltcp 会以 unspecified 作为发送源地址,
+                // 且 `UdpSocket::accepts` 会因 `addr != dst` 拒绝所有入向报文
+                // (通配语义丢失). 故仅在指定地址时置 `Some`.
                 let endpoint = match parse_endpoint(addr) {
                     Some(ep) => IpListenEndpoint {
-                        addr: Some(ep.addr),
+                        addr: if ep.addr.is_unspecified() {
+                            None
+                        } else {
+                            Some(ep.addr)
+                        },
                         port: ep.port,
                     },
                     None => return -E_INVAL,

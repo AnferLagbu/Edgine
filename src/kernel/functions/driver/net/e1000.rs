@@ -145,7 +145,7 @@ mod e1000_impl {
 
         /// 分配并配置收发描述符环 (写入环基址 / 长度 / 指针寄存器).
         fn setup_descriptor_rings(&mut self) -> Result<(), DriverError> {
-            let Some(tx_ring) = TxRing::alloc(E1000_TX_RING_SIZE) else {
+            let Some(tx_ring) = TxRing::alloc(E1000_TX_RING_SIZE, E1000_MAX_FRAME) else {
                 return Err(DriverError::HardwareError);
             };
             self.io.set_tx_base(tx_ring.phys_addr());
@@ -216,7 +216,7 @@ mod e1000_impl {
                 core::hint::spin_loop();
             }
 
-            tx_ring.prepare_from_virt(data.as_ptr() as u64, total_len as u16);
+            tx_ring.prepare_from_slice(&data[..total_len]);
             // 保证描述符写入先于 tail 更新对设备可见 (设备随后 DMA 读取).
             core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
             tx_ring.advance_tail();
@@ -243,14 +243,16 @@ mod e1000_impl {
                     crate::slog_warn!(Driver, "e1000: RX 描述符错误 err=0x{:02X}", err);
                     rx_ring.clear_status(tail);
                     rx_ring.advance_tail();
-                    self.io.set_rx_tail(rx_ring.tail() as u32);
+                    self.io.set_rx_tail(tail as u32);
                     continue;
                 }
 
                 let len = rx_ring.copy_packet(tail, buf);
                 rx_ring.clear_status(tail);
                 rx_ring.advance_tail();
-                self.io.set_rx_tail(rx_ring.tail() as u32);
+                // RDT 指向刚回收的索引 (= RDH-1), 与 init (RDT=count-1, RDH=0) 同约定;
+                // 若设为 tail+1 会使 RDT==RDH, 硬件可用描述符归零, 后续帧被静默丢弃.
+                self.io.set_rx_tail(tail as u32);
                 return Some(len);
             }
         }
