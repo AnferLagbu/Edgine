@@ -34,6 +34,8 @@ E2E_GUEST_PORT="${E2E_GUEST_PORT:-80}"        # guest 内 echo 服务端口
 E2E_READY_TIMEOUT="${E2E_READY_TIMEOUT:-40}"  # 就绪轮询上限 (s)
 E2E_ROUNDS="${E2E_ROUNDS:-3}"                 # 客户端连接轮数
 E2E_QEMU_PID=""                               # 后台 QEMU pid (cleanup_e2e 消费)
+E2E_UDP_PID=""                                 # 后台宿主 UDP 回显服务 pid (cleanup_e2e 消费)
+E2E_UDP_PORT="${E2E_UDP_PORT:-9090}"           # 宿主 UDP 回显端口 (guest 经 10.0.2.2 访问)
 
 ok()   { echo -e "${GREEN}\u2713 $1${NC}"; }
 err()  { echo -e "${RED}\u2717 $1${NC}"; }
@@ -50,6 +52,11 @@ cleanup_e2e() {
         wait "$E2E_QEMU_PID" 2>/dev/null || true
     fi
     E2E_QEMU_PID=""
+    if [ -n "$E2E_UDP_PID" ] && kill -0 "$E2E_UDP_PID" 2>/dev/null; then
+        kill "$E2E_UDP_PID" 2>/dev/null || true
+        wait "$E2E_UDP_PID" 2>/dev/null || true
+    fi
+    E2E_UDP_PID=""
     return 0
 }
 trap cleanup_e2e EXIT INT TERM
@@ -179,6 +186,20 @@ e2e_tcp_echo() {
 
     command -v python3 >/dev/null 2>&1 || { err "[x86_64] 缺少依赖: python3 (端到端客户端)"; return 1; }
 
+    # P4 D9 recvfrom 活体腿: 宿主 UDP 回显服务 (绑 127.0.0.1:${E2E_UDP_PORT}).
+    # guest udp_echo_probe 经 slirp 网关 10.0.2.2:${E2E_UDP_PORT} 发起, slirp 投递
+    # 到本服务并原样回包, 验证内核 recvfrom 回填真实对端. 与 e2e QEMU 同生命周期
+    # (cleanup_e2e 回收), 先于 QEMU 启动确保 guest 探针发出时服务已就绪.
+    E2E_UDP_PORT="$E2E_UDP_PORT" python3 -c '
+import os, socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.bind(("127.0.0.1", int(os.environ["E2E_UDP_PORT"])))
+while True:
+    data, addr = s.recvfrom(4096)
+    s.sendto(data, addr)
+' >/dev/null 2>&1 &
+    E2E_UDP_PID=$!
+
     rm -f "$log"
     info "[x86_64] 启动后台 QEMU (hostfwd tcp::${E2E_HOST_PORT}->:${E2E_GUEST_PORT})..."
     qemu-system-x86_64 \
@@ -292,7 +313,29 @@ PY
         err "[x86_64] FD 回收断言失败: accept fd 去重为 ${uniq_count} (实测: ${uniq_fds:-无})"
         rc=1
     fi
-    # 4. 失败标记兜底: 出现 [tcp] FAIL 时打印首条便于诊断.
+    # 4. P4 语义里程碑 (D7/D8/D8b 每连接 TCP 侧 + D9 启动期 UDP 侧). TCP 项随
+    #    hostfwd 入站逐轮出现 (>=1 即可), UDP 连接态探针在启动期同步跑一次.
+    local nodelay_cnt pollin_cnt shutwr_cnt udpconn_cnt udppeer_cnt udpsock_cnt udprecv_cnt
+    nodelay_cnt=$(grep -acF "[tcp] NODELAY roundtrip ok" "$log" || true)
+    pollin_cnt=$(grep -acF "[tcp] POLLIN revents=1" "$log" || true)
+    shutwr_cnt=$(grep -acF "[tcp] SHUTDOWN_WR ok" "$log" || true)
+    udpconn_cnt=$(grep -acF "[udp] CONNECT ok" "$log" || true)
+    udppeer_cnt=$(grep -acF "[udp] PEERNAME ok" "$log" || true)
+    udpsock_cnt=$(grep -acF "[udp] SOCKNAME ok" "$log" || true)
+    udprecv_cnt=$(grep -acF "[udp] RECVFROM src ok" "$log" || true)
+    if [ "$nodelay_cnt" -ge 1 ] && [ "$pollin_cnt" -ge 1 ] && [ "$shutwr_cnt" -ge 1 ]; then
+        ok "[x86_64] P4 TCP 里程碑通过: NODELAY=${nodelay_cnt} POLLIN=${pollin_cnt} SHUTDOWN_WR=${shutwr_cnt}"
+    else
+        err "[x86_64] P4 TCP 里程碑不足: NODELAY=${nodelay_cnt} POLLIN=${pollin_cnt} SHUTDOWN_WR=${shutwr_cnt}"
+        rc=1
+    fi
+    if [ "$udpconn_cnt" -ge 1 ] && [ "$udppeer_cnt" -ge 1 ] && [ "$udpsock_cnt" -ge 1 ] && [ "$udprecv_cnt" -ge 1 ]; then
+        ok "[x86_64] P4 UDP 里程碑通过: CONNECT=${udpconn_cnt} PEERNAME=${udppeer_cnt} SOCKNAME=${udpsock_cnt} RECVFROM=${udprecv_cnt}"
+    else
+        err "[x86_64] P4 UDP 里程碑不足: CONNECT=${udpconn_cnt} PEERNAME=${udppeer_cnt} SOCKNAME=${udpsock_cnt} RECVFROM=${udprecv_cnt}"
+        rc=1
+    fi
+    # 5. 失败标记兜底: 出现 [tcp] FAIL 时打印首条便于诊断.
     if grep -aqF "[tcp] FAIL:" "$log"; then
         warn "[x86_64] 日志出现 [tcp] FAIL 标记: $(grep -aF "[tcp] FAIL:" "$log" | head -1)"
     fi

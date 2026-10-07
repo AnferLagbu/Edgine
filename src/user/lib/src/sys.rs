@@ -315,6 +315,14 @@ pub const SO_REUSEADDR: i32 = 2;
 pub const SO_KEEPALIVE: i32 = 8;
 pub const SO_BROADCAST: i32 = 32;
 
+// D8/D8b: TCP 选项与 poll 事件位 (与内核 sm_fi.rs D8/D8b 常量值域对齐).
+// SIMPLIFIED: 仅补齐 P4 e2e 所需项; SO_KEEPALIVE/SO_BROADCAST 沿用既有 (与
+// 内核 asm-generic 值域存在历史偏差), 未在本探针使用, 已独立立项统一
+// (见 docs/plan/socket-option-constants-unification.md).
+pub const TCP_NODELAY: i32 = 1;
+pub const POLLIN: i16 = 1;
+pub const POLLOUT: i16 = 4;
+
 // 标志
 pub const MSG_DONTWAIT: i32 = 0x80;
 pub const MSG_PEEK: i32 = 0x02;
@@ -445,10 +453,46 @@ pub fn getsockname(sockfd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
     unsafe { sys3(SYS_getsockname, sockfd as u64, addr as u64, addrlen as u64) as i32 }
 }
 
+pub fn getpeername(sockfd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
+    unsafe { sys3(SYS_getpeername, sockfd as u64, addr as u64, addrlen as u64) as i32 }
+}
+
+/// `shutdown(sockfd, how)` — D7 半关语义透传 (SHUT_RD/SHUT_WR/SHUT_RDWR).
+pub fn shutdown(sockfd: i32, how: i32) -> i32 {
+    unsafe { sys2(SYS_shutdown, sockfd as u64, how as u64) as i32 }
+}
+
 pub fn close_socket(sockfd: i32) -> i32 {
     unsafe { sys1(SYS_close, sockfd as u64) as i32 }
 }
 
 pub fn ioctl(fd: i32, request: u64, arg: u64) -> i32 {
     unsafe { sys3(SYS_ioctl, fd as u64, request, arg) as i32 }
+}
+
+// ============================================================
+// poll 多路复用 (D8b 接线: 用户态 poll 经内核 Smoltcp 路由取真实 socket revents)
+// ============================================================
+
+pub const SYS_poll: u64 = 7;
+
+/// `struct pollfd` (Linux ABI): fd + 请求事件 + 返回事件, 定长 8 字节.
+#[repr(C)]
+pub struct PollFd {
+    pub fd: i32,
+    pub events: i16,
+    pub revents: i16,
+}
+
+/// `poll(fds, nfds, timeout)` — 内核当前为单次扫描非阻塞语义 (timeout 不生效,
+/// 归 P5 阻塞睡眠), 就绪计数即时返回.
+pub fn poll(fds: &mut [PollFd], timeout: i32) -> i32 {
+    unsafe {
+        sys3(
+            SYS_poll,
+            fds.as_mut_ptr() as u64,
+            fds.len() as u64,
+            timeout as u64,
+        ) as i32
+    }
 }

@@ -86,6 +86,15 @@ pub extern "C" fn _start() -> ! {
     // echo fork **之前**同步完成.
     #[cfg(target_arch = "x86_64")]
     ipv6_udp_probe();
+    // P4 D9 端到端验证: UDP 连接态探针 (connect/getpeername/getsockname, 纯本地
+    // 状态确定性强). 同 ipv6 探针约束 —— 须在 echo fork 前同步完成并释放 fd.
+    #[cfg(target_arch = "x86_64")]
+    udp_connect_probe();
+    // P4 D9 recvfrom 活体对端回填腿: 经已连接 UDP 实际收发 + 校验 src 回填.
+    // 依赖宿主回显服务 (qemu_boot_test.sh e2e 阶段起), 无应答者时有界重试后 FAIL
+    // 并继续 (与 ipv6_udp_probe 同款容错). 须在 echo fork 前同步完成并释放 fd.
+    #[cfg(target_arch = "x86_64")]
+    udp_echo_probe();
     // P3 D6 端到端验证: 常驻 TCP echo 服务端 (仅 x86_64). 由
     // scripts/qemu_boot_test.sh 的端到端阶段经 hostfwd 入站连接驱动
     // (accept -> recv -> send 回显), 验证 D6 "先建后换" 交接语义.
@@ -183,7 +192,8 @@ fn ipv6_udp_probe() {
     }
     println("[net6] TX ok: EDGINE6 sent to [fd00::1]:9999");
 
-    // 等待宿主回显 (recvfrom 内核实现不回写对端地址, 故仅校验载荷).
+    // 等待宿主回显 (本探针以 recv() 收取, 不经 recvfrom 回写对端地址; D9 后
+    // recvfrom 已回填 src, 其确定性由 udp_connect_probe 与内核契约测试覆盖).
     let mut buf = [0u8; 64];
     let mut recvs: u32 = 0;
     loop {
@@ -203,6 +213,187 @@ fn ipv6_udp_probe() {
         recvs += 1;
         if recvs >= MAX_TRIES {
             print("[net6] FAIL: recv() timeout (无回显)");
+            close_socket(fd);
+            return;
+        }
+        delay_ms(50);
+    }
+}
+
+/// 用户态 UDP 连接态探针 (P4 D9 端到端验证, 仅 x86_64).
+///
+/// 验证 D9 UDP 连接态语义 (纯本地状态, 无需对端应答, 故确定性强):
+/// 1. `socket(AF_INET, SOCK_DGRAM)` 建 IPv4 UDP socket;
+/// 2. `connect` 到 slirp 网关 `10.0.2.2:53` — 登记 remote 端点 + 自动 bind 临时端口;
+/// 3. `getpeername` 回读对端 == 登记的 `10.0.2.2:53` (纯本地 remote 表);
+/// 4. `getsockname` 回读本地端口非 0 (connect 触发临时端口分配).
+///
+/// 须在 echo 子进程 fork **之前**同步完成并释放 fd (smoltcp FD 位图全局共享).
+#[cfg(target_arch = "x86_64")]
+fn udp_connect_probe() {
+    // sockaddr_in 定长布局: 2+2+4+8 = 16 字节.
+    const SOCKADDR_IN_LEN: u32 = 16;
+
+    let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if fd < 0 {
+        print("[udp] FAIL: socket()=");
+        print_dec(fd as i64);
+        print_char(b'\n');
+        return;
+    }
+
+    // slirp 网关 10.0.2.2:53 — sin_family 主机序 (NE), sin_port 网络序 (BE).
+    let peer = SockaddrIn {
+        sin_family: AF_INET as u16,
+        sin_port: 53u16.to_be(),
+        sin_addr: InAddr { s_addr: [10, 0, 2, 2] },
+        sin_zero: [0u8; 8],
+    };
+    let rc = connect(fd, &peer as *const SockaddrIn as *const u8, SOCKADDR_IN_LEN);
+    if rc != 0 {
+        print("[udp] FAIL: connect()=");
+        print_dec(rc as i64);
+        print_char(b'\n');
+        close_socket(fd);
+        return;
+    }
+    println("[udp] CONNECT ok (remote registered)");
+
+    // getpeername 回读对端, 校验与登记一致 (读 remote 端点表, 无网络依赖).
+    let mut gp = SockaddrIn {
+        sin_family: 0,
+        sin_port: 0,
+        sin_addr: InAddr { s_addr: [0u8; 4] },
+        sin_zero: [0u8; 8],
+    };
+    let mut glen = SOCKADDR_IN_LEN;
+    let rc = getpeername(fd, &mut gp as *mut SockaddrIn as *mut u8, &mut glen);
+    if rc == 0 && gp.sin_addr.s_addr == [10, 0, 2, 2] && gp.sin_port == 53u16.to_be() {
+        println("[udp] PEERNAME ok (matches connect peer)");
+    } else {
+        print("[udp] FAIL: getpeername rc=");
+        print_dec(rc as i64);
+        print_char(b'\n');
+    }
+
+    // getsockname 回读本地临时端口 (connect 自动 bind).
+    let mut gs = SockaddrIn {
+        sin_family: 0,
+        sin_port: 0,
+        sin_addr: InAddr { s_addr: [0u8; 4] },
+        sin_zero: [0u8; 8],
+    };
+    let mut slen = SOCKADDR_IN_LEN;
+    let rc = getsockname(fd, &mut gs as *mut SockaddrIn as *mut u8, &mut slen);
+    if rc == 0 && gs.sin_port != 0 {
+        print("[udp] SOCKNAME ok (ephemeral port=");
+        print_dec(i64::from(u16::from_be(gs.sin_port)));
+        println(")");
+    } else {
+        print("[udp] FAIL: getsockname rc=");
+        print_dec(rc as i64);
+        print_char(b'\n');
+    }
+    close_socket(fd);
+}
+
+/// 用户态 UDP 活体对端回填探针 (P4 D9 recvfrom 端到端验证, 仅 x86_64).
+///
+/// 补 `udp_connect_probe` 未覆盖的"活体收发腿": 经已连接 UDP socket 实际发出
+/// 数据报并由宿主回显服务应答, 验证 `recvfrom` 回填真实对端地址 (syscall 层 U3
+/// 透传 src_ptr/src_len_ptr + `sm_recvfrom` UDP 分支 write_sockaddr). 拓扑:
+/// 1. `socket(AF_INET, SOCK_DGRAM)` → `connect` 到 slirp 网关 `10.0.2.2:9090`;
+/// 2. `send` 载荷 (走 D9 登记的 remote 端点, 非 sendto);
+/// 3. `recvfrom` 有界重试收取回显, 校验内容一致 + src 回填 == `10.0.2.2:9090`;
+/// 4. 里程碑 `[udp] RECVFROM src ok` 仅在宿主回显服务应答时出现; 普通启动无
+///    应答者, 有界重试后打印 FAIL 并继续 (与 ipv6_udp_probe 同款容错, 不断言 FAIL).
+///
+/// 须在 echo 子进程 fork **之前**同步完成并释放 fd (smoltcp FD 位图全局共享).
+#[cfg(target_arch = "x86_64")]
+fn udp_echo_probe() {
+    // 宿主回显端口 (slirp 网关侧), 与 scripts/qemu_boot_test.sh e2e UDP 服务约定一致.
+    const ECHO_PORT: u16 = 9090;
+    // sockaddr_in 定长布局: 2+2+4+8 = 16 字节.
+    const SOCKADDR_IN_LEN: u32 = 16;
+    // 有界重试轮数 (每轮 50ms, 共 2s 窗口). 宿主服务先于 QEMU 起, 首轮即命中;
+    // 无应答者 (普通启动) 时以最小代价收敛到 FAIL.
+    const MAX_TRIES: u32 = 40;
+
+    let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if fd < 0 {
+        print("[udp] FAIL: echo socket()=");
+        print_dec(fd as i64);
+        print_char(b'\n');
+        return;
+    }
+
+    let peer = SockaddrIn {
+        sin_family: AF_INET as u16,
+        sin_port: ECHO_PORT.to_be(),
+        sin_addr: InAddr { s_addr: [10, 0, 2, 2] },
+        sin_zero: [0u8; 8],
+    };
+    if connect(fd, &peer as *const SockaddrIn as *const u8, SOCKADDR_IN_LEN) != 0 {
+        println("[udp] FAIL: echo connect()");
+        close_socket(fd);
+        return;
+    }
+
+    // send 走 D9 登记的 remote 端点 (无显式 dest); UDP 非阻塞投递, 有界重试至链路就绪.
+    let payload = b"EDGINE-UDP";
+    let mut tries = 0u32;
+    loop {
+        let n = send(fd, payload.as_ptr(), payload.len(), 0);
+        if n == payload.len() as isize {
+            break;
+        }
+        tries += 1;
+        if tries >= MAX_TRIES {
+            println("[udp] FAIL: echo send() timeout");
+            close_socket(fd);
+            return;
+        }
+        delay_ms(50);
+    }
+
+    // recvfrom 收取回显 + 回填对端地址 (非阻塞语义, 有界重试让出 CPU 供周期 poll).
+    let mut buf = [0u8; 64];
+    let mut src = SockaddrIn {
+        sin_family: 0,
+        sin_port: 0,
+        sin_addr: InAddr { s_addr: [0u8; 4] },
+        sin_zero: [0u8; 8],
+    };
+    let mut srclen = SOCKADDR_IN_LEN;
+    let mut recvs = 0u32;
+    loop {
+        let n = recvfrom(
+            fd,
+            buf.as_mut_ptr(),
+            buf.len(),
+            0,
+            &mut src as *mut SockaddrIn as *mut u8,
+            &mut srclen as *mut u32,
+        );
+        if n > 0 {
+            let got = n as usize;
+            if got == payload.len()
+                && &buf[..got] == &payload[..]
+                && src.sin_addr.s_addr == [10, 0, 2, 2]
+                && src.sin_port == ECHO_PORT.to_be()
+            {
+                println("[udp] RECVFROM src ok (peer backfilled = 10.0.2.2:9090)");
+            } else {
+                print("[udp] FAIL: echo mismatch len=");
+                print_dec(n as i64);
+                print_char(b'\n');
+            }
+            close_socket(fd);
+            return;
+        }
+        recvs += 1;
+        if recvs >= MAX_TRIES {
+            println("[udp] FAIL: echo recvfrom() timeout (no responder)");
             close_socket(fd);
             return;
         }
@@ -305,6 +496,59 @@ fn tcp_echo_server() -> ! {
         print_dec(conn as i64);
         print_char(b'\n');
 
+        // D8: TCP_NODELAY setsockopt → getsockopt round-trip (关 Nagle → 读回 1).
+        let nodelay: i32 = 1;
+        let sret = setsockopt(
+            conn,
+            IPPROTO_TCP,
+            TCP_NODELAY,
+            &nodelay as *const i32 as *const u8,
+            core::mem::size_of::<i32>() as u32,
+        );
+        let mut got: i32 = 0;
+        let mut got_len: u32 = core::mem::size_of::<i32>() as u32;
+        let gret = getsockopt(
+            conn,
+            IPPROTO_TCP,
+            TCP_NODELAY,
+            &mut got as *mut i32 as *mut u8,
+            &mut got_len,
+        );
+        if sret == 0 && gret == 0 && got == 1 {
+            println("[tcp] NODELAY roundtrip ok");
+        } else {
+            print("[tcp] FAIL: NODELAY set=");
+            print_dec(sret as i64);
+            print(" get=");
+            print_dec(gret as i64);
+            print(" val=");
+            print_dec(got as i64);
+            print_char(b'\n');
+        }
+
+        // D8b: 用户态 poll 取真实 socket 就绪位 (Smoltcp 路由 → sm_socket_poll).
+        // 内核 poll 为单次扫描非阻塞, 故有界轮询直到 POLLIN 置位 (数据到达).
+        let mut pfd = [PollFd {
+            fd: conn,
+            events: POLLIN,
+            revents: 0,
+        }];
+        let mut poll_hits: u32 = 0;
+        loop {
+            let pr = poll(&mut pfd, 0);
+            if pr > 0 && (pfd[0].revents & POLLIN) != 0 {
+                break;
+            }
+            poll_hits += 1;
+            if poll_hits >= MAX_RECV_TRIES {
+                break;
+            }
+            delay_ms(POLL_MS);
+        }
+        print("[tcp] POLLIN revents=");
+        print_dec(i64::from(pfd[0].revents));
+        print_char(b'\n');
+
         // 一次性回显: recv 有界重试直至取到数据. `0` 表示"暂无数据"
         // (非对端关闭 —— TCP recv 无数据与 EOF 均返回 0), 让出 CPU 后重试.
         let mut buf = [0u8; 256];
@@ -341,6 +585,16 @@ fn tcp_echo_server() -> ! {
             print_dec(n as i64);
             print_char(b'\n');
             break;
+        }
+        // D7: shutdown(SHUT_WR) 半关 — 触发主动关闭 (发 FIN) 但保留 socket/FD,
+        // 区别 close 的完全回收; 验证 shutdown ≠ close 语义 (syscall 返 0).
+        let shut = shutdown(conn, SHUT_WR);
+        if shut == 0 {
+            println("[tcp] SHUTDOWN_WR ok");
+        } else {
+            print("[tcp] FAIL: shutdown()=");
+            print_dec(shut as i64);
+            print_char(b'\n');
         }
         close_socket(conn);
         println("[tcp] Connection closed");
