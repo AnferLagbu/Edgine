@@ -70,13 +70,13 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - **G6: `shutdown` 等同 `close`**
   - 描述：无半关闭语义，`SHUT_WR` 无法只关发送侧。
   - 方案：新增 `sm_shutdown(fd, how)` 并透传 `how`（D7）。
-  - 状态：[]
+  - 状态：[X]
   - 详情：见 [syscall.rs:513-519](../../src/kernel/privileged/net/syscall.rs) —— `shutdown_syscall(fd, _how)` 忽略 `_how`，直接调 `sm_close`。
 
 - **G7: poll 就绪链路整条无消费者**
   - 描述：`sm_poll_sockets` 恒返回 `0`，且 `poll_syscall` 对 socket fd 恒报可读/可写，用户态 `poll` 拿不到真实就绪位。
   - 方案：新增 `sm_socket_poll(fd, events)` 按 `can_recv`/`can_send` 派生 revents，并在 `fs` 层 `poll_syscall` 经 FD 命名空间判定接线（D8b）。
-  - 状态：[]
+  - 状态：[X]
   - 详情：`sm_poll_sockets` 循环内仅 `let _sock = sockets.get_mut::<tcp::Socket>(handle);` 未查询状态（[sm_fi.rs:1145-1152](../../src/kernel/privileged/net/init/sm_fi.rs)）后恒 `0`（[sm_fi.rs:1153](../../src/kernel/privileged/net/init/sm_fi.rs)）；[file_ops.rs:107-115](../../src/kernel/functions/fs/file_ops.rs) 的 `poll_syscall` 对 `POLLIN` 仅查 VFS handle、对 `POLLOUT` 恒置位，**不触达任何 socket 逻辑**。
 
 - **G8: 错误映射粗化**
@@ -88,7 +88,7 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - **G9: sockopt 近空实现**
   - 描述：`TCP_NODELAY` / `SO_ERROR` / `SO_TYPE` 等常用选项不可用。
   - 方案：精简集实装（D8）。
-  - 状态：[]
+  - 状态：[X]
   - 详情：`sm_setsockopt` 仅 `level == 1 && optname == 16`（`SO_PASSCRED`）路由 UDS，其余返回 `0`（no-op，[sm_fi.rs:964-1004](../../src/kernel/privileged/net/init/sm_fi.rs)）；`sm_getsockopt` 恒 `0`（[sm_fi.rs:996-1003](../../src/kernel/privileged/net/init/sm_fi.rs)）。
 
 - **G10: FD 位图泄漏（accept 的实现前置）**
@@ -108,19 +108,19 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - **U1: 无"已连接 UDP"语义**
   - 描述：UDP `send` 恒返回 `-E_NOTCONN`，无目的地址可复用。
   - 方案：`sm_connect` 增 UDP 分支登记对端，`sm_send` 走登记的 remote（D9）。
-  - 状态：[]
+  - 状态：[X]
   - 详情：见 [sm_fi.rs:542-546](../../src/kernel/privileged/net/init/sm_fi.rs) —— UDP 分支直接 `-E_NOTCONN`，注释"UDP 无目的地址: 依赖 socket 已连接…简化处理"；而 `sm_connect` 仅接受 `fd_type == 1`（[sm_fi.rs:484-486](../../src/kernel/privileged/net/init/sm_fi.rs)）。
 
 - **U2: `sm_getpeername` UDP 恒失败**
   - 描述：已连接的 UDP socket 也无法查询对端。
   - 方案：读端点表的 remote（D1/D9）。
-  - 状态：[]
+  - 状态：[X]
   - 详情：见 [sm_fi.rs:1111-1114](../../src/kernel/privileged/net/init/sm_fi.rs) —— UDP 分支直接 `return -E_NOTCONN`，注释"remote 由 last_recv_meta 取, 但 Socket 没暴露"。
 
 - **U3: `recvfrom` 系统调用丢弃对端出参**
   - 描述：UDP 用户态 `recvfrom` 拿不到发送方地址。
   - 方案：`recvfrom_syscall` 改调 `sm_recvfrom` 并透传 `src_ptr`/`src_len_ptr`（D9）。
-  - 状态：[]
+  - 状态：[X]
   - 详情：见 [syscall.rs:421-455](../../src/kernel/privileged/net/syscall.rs) —— 忽略 `_src_ptr`/`_src_len_ptr`，且实际调用 `sm_recv`（[syscall.rs:446](../../src/kernel/privileged/net/syscall.rs)）而非 `sm_recvfrom`。底层 `sm_recvfrom` 的 UDP 分支**已能**回写对端（[sm_fi.rs:699-709](../../src/kernel/privileged/net/init/sm_fi.rs)），故此为纯系统调用层缺口。
 
 - **U4: 无临时端口分配**
@@ -138,19 +138,19 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - **U6: 无 per-slot 端点表**
   - 描述：无 local/remote 端点记录，导致 U1/U2/G3/G5 缺公共地基。
   - 方案：`NetState` 增端点表 + `raw` accessor（D1）。
-  - 状态：[]
+  - 状态：[X]
   - 详情：端点信息目前只能从 smoltcp socket 反查（`local_endpoint`/`endpoint`），而 TCP bind 端口、UDP 已连接对端、accept 交接所需的监听端点均**无法**从 socket 反查。
 
 - **U7: `sm_getsockname` 通配强制 V4**
   - 描述：IPv6 通配绑定会误报为 `0.0.0.0`。
   - 方案：按 socket 的族或端点表如实回填（D9）。
-  - 状态：[]
+  - 状态：[X]
   - 详情：见 [sm_fi.rs:1042-1057](../../src/kernel/privileged/net/init/sm_fi.rs) —— UDP 通配（`ep.addr == None`）时强制构造 `IpAddress::Ipv4(Ipv4Address::UNSPECIFIED)`。
 
 - **U8: sockopt no-op / `getsockopt` 恒 0**
   - 描述：与 TCP G9 同一实现路径，UDP 同样不可用。
   - 方案：见 D8。
-  - 状态：[]
+  - 状态：[X]
 
 - **U9: 错误映射粗化**
   - 描述：与 TCP G8 同一实现路径。
@@ -238,7 +238,7 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
   - `SHUT_WR(1)` / `SHUT_RDWR(2)` → `sock.close()`（[tcp.rs:1084](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)；smoltcp `close()` 关闭发送侧，接收侧仍可读，符合 `SHUT_WR` 语义）。
   - `SHUT_RD(0)` → no-op 返 `0`（SIMPLIFIED，无 smoltcp 直接对应物）。
   - 同步 `shutdown_syscall`（[syscall.rs:513-519](../../src/kernel/privileged/net/syscall.rs)）透传 `how`。
-- **状态**：[]
+- **状态**：[X]
 - **详情**：需同步在 [net_socket.rs](../../src/kernel/privileged/net_socket.rs) 增 safe 包装 + kernel_test 桩模块镜像同名桩（签名对齐）。
 
 ### D8: sockopt 精简集
@@ -253,7 +253,7 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
     - `SO_TYPE`（`level = 1`, `optname = 3`）→ `SOCK_STREAM(1)` / `SOCK_DGRAM(2)`。
     - `TCP_NODELAY`（`level = 6`, `optname = 1`）→ 当前 Nagle 使能状态（smoltcp 默认启用 → `0`）。
     - `SO_ERROR`（`level = 1`, `optname = 4`）→ 由 `state()` 近似派生。
-- **状态**：[]
+- **状态**：[X]
 - **详情**：`set_keep_alive` 签名取 `Option<Duration>`，`Duration` 当前未在 [sm_fi.rs:13-18](../../src/kernel/privileged/net/init/sm_fi.rs) 导入，须补 `use smoltcp::time::Duration;`。`SO_ERROR` 精确值需 smoltcp 内部错误状态，属排除项（仅近似）。
 
 ### D8b: poll 就绪接线至 `fs` 层（DECISION-089）
@@ -268,7 +268,7 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
   3. [functions/net/socket.rs](../../src/kernel/functions/net/socket.rs)（路径乙）增 `poll_fd(fd, events) -> i16`。
   4. [file_ops.rs](../../src/kernel/functions/fs/file_ops.rs) 的 `poll_syscall`（[file_ops.rs:69](../../src/kernel/functions/fs/file_ops.rs)）与 `ppoll_syscall`（[file_ops.rs:136](../../src/kernel/functions/fs/file_ops.rs)）：对每个 `pfd` 先判 `subsystem_of(fd) == Some(FdSubsystem::Smoltcp)`（[fd_alloc.rs:282](../../src/kernel/privileged/proc/fd_alloc.rs)）→ 走 `net::socket::poll_fd` 取 revents；否则维持现 VFS 路径。
   - 常量：`POLLIN = 1`（[file_ops.rs:20](../../src/kernel/functions/fs/file_ops.rs)）/ `POLLOUT = 4`（[file_ops.rs:21](../../src/kernel/functions/fs/file_ops.rs)）/ `POLLERR = 8` / `POLLHUP = 16` / `POLLNVAL = 32`（后三者需新增）。
-- **状态**：[]
+- **状态**：[X]
 - **详情**：`sm_poll_sockets`（返回 `i32`，[sm_fi.rs:1138](../../src/kernel/privileged/net/init/sm_fi.rs)）**保留**恒返回 `0` 的契约，仅用于 `poll_network` 的唤醒路径（[init.rs:288](../../src/kernel/privileged/net/init.rs)）；不改其语义，避免影响自我唤醒链路。
 
 ### D9: UDP 连接态 + 对端语义
@@ -281,7 +281,7 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
   - `sm_getpeername` UDP 分支（[sm_fi.rs:1111-1114](../../src/kernel/privileged/net/init/sm_fi.rs)）：读 D1 remote，无则 `-E_NOTCONN`。
   - `recvfrom_syscall`（[syscall.rs:421](../../src/kernel/privileged/net/syscall.rs)）改调 `sm_recvfrom`（[sm_fi.rs:672](../../src/kernel/privileged/net/init/sm_fi.rs)）并透传 `_src_ptr` / `_src_len_ptr`。
   - `sm_getsockname`（[sm_fi.rs:1020](../../src/kernel/privileged/net/init/sm_fi.rs)）：TCP 在 `local_endpoint()` 为 `None` 时回退 D1；UDP 通配按 D1 族如实回填（修正 U7）。
-- **状态**：[]
+- **状态**：[X]
 - **详情**：`sm_recvfrom` 已能回写对端（[sm_fi.rs:699-709](../../src/kernel/privileged/net/init/sm_fi.rs)），故 U3 仅需改系统调用层调用点。functions 侧 `recvfrom_syscall` 已透传出参（[functions/net/syscall.rs:252](../../src/kernel/functions/net/syscall.rs)）。
 
 ### D10: 阻塞睡眠（DECISION-090）
@@ -344,8 +344,9 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - **条目**：D7 shutdown + D8 sockopt + D8b poll 接线 + D9 UDP 连接态/对端
 - **描述**：半关闭、常用选项、poll 就绪、已连接 UDP 与对端语义补齐。
 - **方案**：见 D7/D8/D8b/D9。
-- **状态**：[]
+- **状态**：[X]
 - **验证**：`TCP_NODELAY` round-trip、`shutdown(SHUT_WR)` 半关验证、用户态 `poll` 得到真实 revents、UDP `connect`+`send`+`getpeername`+`recvfrom` 对端回填。
+- **详情**：已达成（含 recvfrom 活体回填腿）。§2.3 六门槛全绿：`build.sh all`（双架构 0w0e）/ `audit.sh`（clippy pedantic lib + kernel_test + host-test 三维 0 warning + fmt 三 crate + 全审计含 FP-06）/ `make test-host` / `make test-kernel-host` 960 passed（+3 契约单测：`test_remote_endpoint_table_roundtrip` / `test_shutdown_contract` / `test_socket_poll_contract`）/ `scripts/qemu_boot_test.sh x86_64` e2e 里程碑 —— TCP 侧 `NODELAY roundtrip`/`POLLIN revents=1`/`SHUTDOWN_WR` 各 3 轮、UDP 侧 `CONNECT`/`PEERNAME`/`SOCKNAME`/`RECVFROM src ok` 各 1 次。e2e 落地：`userlib` 补 `poll`/`shutdown`/`getpeername` wrapper 与 `TCP_NODELAY`/`POLLIN`/`POLLOUT` 常量；`tcp_echo_server` 在真实已建连接上跑 setsockopt→getsockopt round-trip + `poll` 就绪 + `shutdown(SHUT_WR)` 半关；`udp_connect_probe`（启动期同步、echo fork 前释放 fd）跑 connect→getpeername→getsockname 纯本地端点态；`udp_echo_probe` 跑 connect→send→recvfrom 活体回填——脚本 e2e 阶段起宿主 UDP 回显服务（绑 127.0.0.1:9090），guest 经 slirp 网关 `10.0.2.2:9090` 发出 `EDGINE-UDP` 并校验回显一致 + `recvfrom` 回填 src == `10.0.2.2:9090`（实活验证 syscall 层 U3 透传 + `sm_recvfrom` UDP 分支 `write_sockaddr`）。普通启动无应答者时探针有界重试后打印 FAIL 并继续（与 `ipv6_udp_probe` 同款容错，不断言）。
 
 ### P5: 阻塞睡眠
 
