@@ -246,6 +246,15 @@ pub fn poll_all() -> SocketResult<i32> {
     Ok(0)
 }
 
+/// POSIX `poll` 单 fd 就绪快照 (D8b): 委托 privileged `net_socket::sm_socket_poll`.
+///
+/// 返回 revents 位掩码 (POLLIN/POLLOUT/POLLHUP/POLLERR/POLLNVAL); 非阻塞、无副作用.
+/// 这是终态 `File::poll` 的数值 fd 前影 (见 `docs/design/fd-object-model-design.md` 第四节);
+/// `net_socket` 为 privileged 顶层安全代理, 与 `open.rs` 直调 `sm_close` 同路径.
+pub fn poll_fd(fd: i32, events: i16) -> i16 {
+    crate::privileged::net_socket::sm_socket_poll(fd, events)
+}
+
 // ============================================================================
 // 便利: 字符串 IP 解析
 // ============================================================================

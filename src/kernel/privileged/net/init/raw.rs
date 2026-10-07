@@ -125,6 +125,20 @@ pub fn set_socket_local_endpoint(fd: usize, val: Option<NetEndpoint>) {
     }
 }
 
+/// 读取 socket 对端端点 (D1, UDP 专属)
+pub fn socket_remote_endpoint(fd: usize) -> Option<NetEndpoint> {
+    // SAFETY: 调用方持有 NET_STATE 锁.
+    unsafe { state().remote_endpoints[fd] }
+}
+
+/// 写入 socket 对端端点 (D1, UDP 专属)
+pub fn set_socket_remote_endpoint(fd: usize, val: Option<NetEndpoint>) {
+    // SAFETY: 调用方持有 NET_STATE 锁.
+    unsafe {
+        state().remote_endpoints[fd] = val;
+    }
+}
+
 /// 读取 TCP RX buffer 指针
 pub fn tcp_rx_buf(fd: usize) -> *mut u8 {
     // SAFETY: 调用方持有 NET_STATE 锁.

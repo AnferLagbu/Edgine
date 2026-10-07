@@ -96,6 +96,14 @@ mod init {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_shutdown(_fd: i32, _how: i32) -> i32 {
+        0
+    }
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_socket_poll(_fd: i32, _events: i16) -> i16 {
+        0
+    }
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
     pub unsafe fn sm_sendmsg(_fd: i32, _m: *const u8, _f: i32) -> i32 {
         0
     }
@@ -294,6 +302,18 @@ pub fn sm_recvfrom(
 pub fn sm_close(fd: i32) -> i32 {
     // SAFETY: sm_close 内部 NET_LOCK 串行化
     unsafe { init::sm_close(fd) }
+}
+
+/// POSIX `shutdown(fd, how)` — 半关闭 socket (不回收 FD/缓冲)
+pub fn sm_shutdown(fd: i32, how: i32) -> i32 {
+    // SAFETY: sm_shutdown 内部 NET_LOCK 串行化
+    unsafe { init::sm_shutdown(fd, how) }
+}
+
+/// POSIX `poll` 单 socket 就绪快照 — 返回 revents 位掩码 (D8b)
+pub fn sm_socket_poll(fd: i32, events: i16) -> i16 {
+    // SAFETY: sm_socket_poll 内部 NET_LOCK 串行化
+    unsafe { init::sm_socket_poll(fd, events) }
 }
 
 /// POSIX `sendmsg(fd, msg, flags)` — 散聚 I/O

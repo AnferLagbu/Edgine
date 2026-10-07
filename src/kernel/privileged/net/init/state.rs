@@ -62,6 +62,9 @@ pub struct NetState {
     pub(crate) fd_types: Vec<u8>,
     /// 各 FD 的本地端点 (D1): bind 成功时写入, 供端口冲突检测与 getsockname.
     pub(crate) local_endpoints: Vec<Option<NetEndpoint>>,
+    /// 各 FD 的对端端点 (D1, UDP 专属): `connect` 时登记, 供 send/getpeername.
+    /// TCP 的 remote 由 smoltcp socket 自身持有, 不使用此表.
+    pub(crate) remote_endpoints: Vec<Option<NetEndpoint>>,
     pub(crate) tcp_rx_bufs: Vec<*mut u8>,
     pub(crate) tcp_tx_bufs: Vec<*mut u8>,
     pub(crate) udp_rx_bufs: Vec<*mut u8>,
@@ -89,6 +92,7 @@ impl NetState {
             socket_table: Vec::new(),
             fd_types: Vec::new(),
             local_endpoints: Vec::new(),
+            remote_endpoints: Vec::new(),
             tcp_rx_bufs: Vec::new(),
             tcp_tx_bufs: Vec::new(),
             udp_rx_bufs: Vec::new(),
@@ -106,6 +110,7 @@ impl NetState {
         self.socket_table = (0..TOTAL_SLOTS).map(|_| None).collect();
         self.fd_types = (0..TOTAL_SLOTS).map(|_| 0u8).collect();
         self.local_endpoints = (0..TOTAL_SLOTS).map(|_| None).collect();
+        self.remote_endpoints = (0..TOTAL_SLOTS).map(|_| None).collect();
         self.tcp_rx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();
         self.tcp_tx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();
         self.udp_rx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();

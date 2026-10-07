@@ -17,6 +17,7 @@ use super::{
 };
 use core::sync::atomic::AtomicU16;
 use smoltcp::socket::{tcp, udp};
+use smoltcp::time::Duration;
 use smoltcp::wire::{IpAddress, IpEndpoint, IpListenEndpoint, Ipv4Address, Ipv6Address};
 
 // ============================================================================
@@ -36,6 +37,30 @@ const E_NOTCONN: i32 = 107;
 const E_CONNREFUSED: i32 = 111;
 const E_NODEV: i32 = 19;
 const E_NOPROTOOPT: i32 = 92;
+
+// ============================================================================
+// D8: socket 选项常量 (Linux asm-generic 值域)
+// ============================================================================
+const SOL_SOCKET: i32 = 1;
+const IPPROTO_TCP: i32 = 6;
+const SO_REUSEADDR: i32 = 2;
+const SO_TYPE: i32 = 3;
+const SO_ERROR: i32 = 4;
+const SO_KEEPALIVE: i32 = 9;
+const SO_REUSEPORT: i32 = 15;
+const SO_PASSCRED: i32 = 16;
+const TCP_NODELAY: i32 = 1;
+const SOCK_STREAM: i32 = 1;
+const SOCK_DGRAM: i32 = 2;
+
+// ============================================================================
+// D8b: poll 事件位 (Linux <poll.h> 值域; 与 functions/fs/file_ops.rs 一致)
+// ============================================================================
+const POLLIN: i16 = 1;
+const POLLOUT: i16 = 4;
+const POLLERR: i16 = 8;
+const POLLHUP: i16 = 16;
+const POLLNVAL: i16 = 32;
 
 // ============================================================================
 // 方案 C: fd → 槽位索引单点换算 (Smoltcp 段, base = FdPlan::SMOLTCP.base)
@@ -789,6 +814,45 @@ unsafe fn sm_connect_locked(fd: i32, addr: *const u8, _addrlen: u32) -> i32 {
             None => return -E_INVAL,
         };
 
+        // D9: UDP connect — 登记对端到 D1 remote 表; 未 bind 时按 D2 分配临时端口并 bind.
+        if raw::fd_type(slot) == 2 {
+            let net_remote = match endpoint_from_smol(endpoint) {
+                Some(ep) => ep,
+                None => return -E_INVAL,
+            };
+            raw::set_socket_remote_endpoint(slot, Some(net_remote));
+
+            // 已显式 bind (port != 0) 则无需再分配临时端口.
+            let need_bind = match raw::socket_local_endpoint(slot) {
+                Some(ep) => ep.port == 0,
+                None => true,
+            };
+            if !need_bind {
+                return 0;
+            }
+            let Some(port) = next_ephemeral() else {
+                raw::set_socket_remote_endpoint(slot, None);
+                return -E_ADDRINUSE;
+            };
+            let sockets = &mut *socket_set();
+            let sock = sockets.get_mut::<udp::Socket>(handle);
+            return if let Ok(()) = sock.bind(IpListenEndpoint { addr: None, port }) {
+                raw::set_socket_local_endpoint(
+                    slot,
+                    Some(crate::privileged::net::iface_trait::NetEndpoint::new(
+                        crate::privileged::net::iface_trait::IpAddr::V4(
+                            crate::privileged::net::iface_trait::Ipv4Addr::UNSPECIFIED,
+                        ),
+                        port,
+                    )),
+                );
+                0
+            } else {
+                raw::set_socket_remote_endpoint(slot, None);
+                -E_ADDRINUSE
+            };
+        }
+
         if raw::fd_type(slot) != 1 {
             return -E_NOTSUPP;
         }
@@ -871,9 +935,20 @@ pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, _flags: i32)
                 sock.send_slice(data).map_or(-E_CONNRESET, |n| n as i32)
             }
             2 => {
-                // UDP 无目的地址: 依赖 socket 已 "连接" (经 endpoint 绑定)
-                // 简化处理, 返回 ENOTCONN; 请改用 sendto
-                -E_NOTCONN
+                // D9: UDP send 依赖 connect 登记的对端 (D1 remote 表); 未 connect → ENOTCONN.
+                let remote = match raw::socket_remote_endpoint(slot) {
+                    Some(ep) => ep,
+                    None => return -E_NOTCONN,
+                };
+                let smol = IpEndpoint {
+                    addr: wire_to_smol(remote.addr),
+                    port: remote.port,
+                };
+                let sock = sockets.get_mut::<udp::Socket>(handle);
+                match sock.send_slice(data, smol) {
+                    Ok(()) => len as i32,
+                    Err(_) => -E_CONNRESET,
+                }
             }
             _ => -E_NOTSUPP,
         }
@@ -1288,6 +1363,8 @@ pub unsafe extern "C" fn sm_close(fd: i32) -> i32 {
         raw::set_fd_type(slot, 0);
         // D1: 清空 local 端点表槽位.
         raw::set_socket_local_endpoint(slot, None);
+        // D9: 清空 remote 端点表槽位 (UDP connect 登记的对端).
+        raw::set_socket_remote_endpoint(slot, None);
         // G10: 归还 FD 编号, 否则 socket/accept 循环会耗尽 MAX_SM_FD 个 FD 位.
         crate::privileged::proc::fd_alloc::free_fd(
             crate::privileged::proc::fd_alloc::FdSubsystem::Smoltcp,
@@ -1297,63 +1374,290 @@ pub unsafe extern "C" fn sm_close(fd: i32) -> i32 {
     }
 }
 
-/// POSIX `setsockopt` 内核实现 (当前空操作占位)。
+/// POSIX `shutdown(fd, how)` 内核实现 — 半关闭, 区别于 `sm_close` 的整体回收.
 ///
-/// v2: 识别 `SO_PASSCRED` (`level=SOL_SOCKET=1`, `optname=SO_PASSCRED=16`).
-/// 路由到 UDS 服务层 (`uds_setsockopt`).
-/// 其他 (level, optname): 0 (no-op).
+/// - `SHUT_WR(1)` / `SHUT_RDWR(2)`: 对 TCP/UDP socket 调 `sock.close()`, 触发
+///   smoltcp 主动关闭 (发送 FIN, 停止接收新数据), 近似 POSIX 发送侧半关语义;
+///   socket 句柄与 FD 编号**保留**, 不回收缓冲/端点表 (与 `sm_close` 的关键差异).
+/// - `SHUT_RD(0)`: no-op 返 `0` (见下方 SIMPLIFIED).
+/// - 其他 `how`: `-EINVAL`.
 ///
 /// # Safety
-/// `_optval` 必须是有效指针, 含 `_optlen` 字节 (此处忽略)。
+/// `fd` 须为合法 socket FD; 内部持 `NET_STATE` 锁串行化.
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::used_underscore_binding,
-    reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-pub unsafe extern "C" fn sm_setsockopt(
-    _fd: i32,
-    _level: i32,
-    _optname: i32,
-    _optval: *const u8,
-    _optlen: u32,
-    // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
-) -> i32 {
+pub unsafe extern "C" fn sm_shutdown(fd: i32, how: i32) -> i32 {
     unsafe {
-        // v2 SO_PASSCRED 路由: level==1 (SOL_SOCKET), optname==16 (SO_PASSCRED)
-        if _level == 1 && _optname == 16 {
-            if _optlen < 4 {
-                return -22; // EINVAL
-            }
-            let val = core::ptr::read_unaligned(_optval as *const i32);
-            // 第二十六批: UDS 策略经注册钩子委托 (未注册 fail-closed, 早期
-            // 启动无用户态进程, -ENOPROTOOPT 窗口安全; 符号与全文件
-            // 负 errno 返回惯例一致)
-            return match UDS_SETOPT_HOOK.get() {
-                Some(&hook) => hook(_fd, val != 0),
-                None => -E_NOPROTOOPT,
-            };
+        let _guard = NET_STATE.lock();
+        sm_shutdown_locked(fd, how)
+    }
+}
+
+/// `sm_shutdown` 的锁自由内核实现, 要求调用方已持有 `NET_STATE` 锁。
+///
+/// # Safety
+/// 调用方必须持有 `NET_STATE` 锁 (非可重入自旋锁, 重复加锁会死锁)。
+unsafe fn sm_shutdown_locked(fd: i32, how: i32) -> i32 {
+    unsafe {
+        let Some(slot) = sm_slot(fd) else {
+            return -E_BADF;
+        };
+        if raw::fd_type(slot) == 0 {
+            return -E_BADF;
+        }
+
+        // 非法 how: POSIX 约定返回 EINVAL.
+        if how != 0 && how != 1 && how != 2 {
+            return -E_INVAL;
+        }
+
+        // SHUT_RD(0): smoltcp 无"仅停接收、保持发送"的直接对应物, no-op 返 0.
+        // SIMPLIFIED: 未真正切断接收路径; 影响面为 recv 仍可读到对端残余数据;
+        // 何时需扩展: P5 阻塞/唤醒链路接入后在 rx 侧补屏蔽.
+        if how == 0 {
+            return 0;
+        }
+
+        // SHUT_WR(1) / SHUT_RDWR(2): 取句柄触发主动关闭, socket/FD 保留.
+        let Some(handle) = raw::socket_handle(slot) else {
+            return -E_BADF;
+        };
+        let stype = raw::fd_type(slot);
+        let sockets = &mut *socket_set();
+        match stype {
+            1 => sockets.get_mut::<tcp::Socket>(handle).close(),
+            2 => sockets.get_mut::<udp::Socket>(handle).close(),
+            _ => {}
         }
         0
     }
 }
 
-/// POSIX `getsockopt` 内核实现 (当前空操作占位)。
+/// POSIX `poll` 的单 socket 就绪快照 (D8b: `File::poll` 的数值 fd 前影).
+///
+/// 非阻塞、无副作用: 只查询收发就绪与关闭态, 返回 `events` 请求位的就绪子集
+/// (POLLHUP/POLLERR 可无条件附加). 不睡眠 (阻塞等待归 P5 等待队列).
+///
+/// - TCP (`fd_type`=1): `can_recv()` → POLLIN; `can_send()` → POLLOUT;
+///   `state()==Closed` → POLLHUP|POLLERR.
+/// - UDP (`fd_type`=2): `can_recv()`/`can_send()` 同理.
+/// - fd 非法 / 非 socket (`fd_type`=0) → POLLNVAL.
 ///
 /// # Safety
-/// `_optval` 必须是有效可写指针, `_optlen` 必须是有效可写 u32 指针 (此处忽略)。
+/// `fd` 须为合法 FD; 内部持 `NET_STATE` 锁串行化.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sm_getsockopt(
-    _fd: i32,
-    _level: i32,
-    _optname: i32,
-    _optval: *mut u8,
-    _optlen: *mut u32,
+pub unsafe extern "C" fn sm_socket_poll(fd: i32, events: i16) -> i16 {
+    unsafe {
+        let _guard = NET_STATE.lock();
+        sm_socket_poll_locked(fd, events)
+    }
+}
+
+/// `sm_socket_poll` 的锁自由内核实现, 要求调用方已持有 `NET_STATE` 锁。
+///
+/// # Safety
+/// 调用方必须持有 `NET_STATE` 锁 (非可重入自旋锁, 重复加锁会死锁)。
+unsafe fn sm_socket_poll_locked(fd: i32, events: i16) -> i16 {
+    unsafe {
+        let Some(slot) = sm_slot(fd) else {
+            return POLLNVAL;
+        };
+        let stype = raw::fd_type(slot);
+        if stype == 0 {
+            return POLLNVAL;
+        }
+        let Some(handle) = raw::socket_handle(slot) else {
+            return POLLNVAL;
+        };
+
+        let mut revents: i16 = 0;
+        let sockets = &mut *socket_set();
+        match stype {
+            1 => {
+                let sock = sockets.get::<tcp::Socket>(handle);
+                // SIMPLIFIED: 监听 socket 的"待 accept 连接"就绪 (POLLIN) 未单独
+                // 识别 (smoltcp listen socket `can_recv()` 恒 false); 影响面: poll
+                // 一个监听 fd 不会因有新连接而报 POLLIN; 何时需扩展: 待 P5 接入
+                // accept 就绪路径后补 (需判 `state()==Listen` + 完成队列非空).
+                if events & POLLIN != 0 && sock.can_recv() {
+                    revents |= POLLIN;
+                }
+                if events & POLLOUT != 0 && sock.can_send() {
+                    revents |= POLLOUT;
+                }
+                if sock.state() == tcp::State::Closed {
+                    revents |= POLLHUP | POLLERR;
+                }
+            }
+            2 => {
+                let sock = sockets.get::<udp::Socket>(handle);
+                if events & POLLIN != 0 && sock.can_recv() {
+                    revents |= POLLIN;
+                }
+                if events & POLLOUT != 0 && sock.can_send() {
+                    revents |= POLLOUT;
+                }
+            }
+            _ => return POLLNVAL,
+        }
+        revents
+    }
+}
+
+/// POSIX `setsockopt` 内核实现 (D8: 精简集).
+///
+/// 已支持选项:
+/// - `SO_PASSCRED` (`SOL_SOCKET`/16): 路由到 UDS 服务层 (`uds_setsockopt`).
+/// - `SO_REUSEADDR`(2)/`SO_REUSEPORT`(15): 接受但忽略 (本内核无端口复用调度需求).
+/// - `SO_KEEPALIVE` (`SOL_SOCKET`/9, 仅 TCP): 置/清 keep-alive (7200s 缺省间隔).
+/// - `TCP_NODELAY` (`IPPROTO_TCP`/6, 仅 TCP): `val != 0` 关闭 Nagle.
+/// 其余 (`level`, `optname`): `-ENOPROTOOPT`.
+///
+/// # Safety
+/// `optval` 必须是 syscall 层提供的有效内核指针 (4 字节 i32), `optlen` 为其长度。
+#[unsafe(no_mangle)]
+#[expect(
+    clippy::ptr_as_ptr,
+    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
+)]
+pub unsafe extern "C" fn sm_setsockopt(
+    fd: i32,
+    level: i32,
+    optname: i32,
+    optval: *const u8,
+    optlen: u32,
 ) -> i32 {
-    0
+    // SAFETY: optval 为 syscall 层传入的内核栈指针 (含 4 字节); NET_STATE 锁保护 socket 集合.
+    unsafe {
+        // v2 SO_PASSCRED 路由: level==1 (SOL_SOCKET), optname==16 (SO_PASSCRED)
+        if level == SOL_SOCKET && optname == SO_PASSCRED {
+            if optlen < 4 {
+                return -E_INVAL;
+            }
+            let val = core::ptr::read_unaligned(optval as *const i32);
+            // 第二十六批: UDS 策略经注册钩子委托 (未注册 fail-closed, 早期
+            // 启动无用户态进程, -ENOPROTOOPT 窗口安全; 符号与全文件
+            // 负 errno 返回惯例一致)
+            return match UDS_SETOPT_HOOK.get() {
+                Some(&hook) => hook(fd, val != 0),
+                None => -E_NOPROTOOPT,
+            };
+        }
+
+        // D8: SOL_SOCKET 层的 REUSEADDR/REUSEPORT 接受但忽略.
+        if level == SOL_SOCKET && (optname == SO_REUSEADDR || optname == SO_REUSEPORT) {
+            return 0;
+        }
+
+        // D8: TCP_NODELAY (IPPROTO_TCP) 与 SO_KEEPALIVE (SOL_SOCKET) 需 TCP socket.
+        let need_tcp = (level == IPPROTO_TCP && optname == TCP_NODELAY)
+            || (level == SOL_SOCKET && optname == SO_KEEPALIVE);
+        if !need_tcp {
+            return -E_NOPROTOOPT;
+        }
+        if optlen < 4 {
+            return -E_INVAL;
+        }
+        let val = core::ptr::read_unaligned(optval as *const i32);
+
+        let _guard = NET_STATE.lock();
+        let Some(slot) = sm_slot(fd) else {
+            return -E_BADF;
+        };
+        if raw::fd_type(slot) != 1 {
+            // 仅 TCP socket 支持 Nagle / keep-alive.
+            return -E_NOPROTOOPT;
+        }
+        let Some(handle) = raw::socket_handle(slot) else {
+            return -E_BADF;
+        };
+        let sockets = &mut *socket_set();
+        let sock = sockets.get_mut::<tcp::Socket>(handle);
+        if level == IPPROTO_TCP {
+            // TCP_NODELAY: val != 0 关闭 Nagle.
+            sock.set_nagle_enabled(val == 0);
+        } else {
+            // SO_KEEPALIVE: 开启用 7200s 缺省间隔 (对齐 Linux tcp_keepalive_time).
+            sock.set_keep_alive(if val != 0 {
+                Some(Duration::from_secs(7200))
+            } else {
+                None
+            });
+        }
+        0
+    }
+}
+
+/// POSIX `getsockopt` 内核实现 (D8: 精简集).
+///
+/// 已支持选项 (均写回 i32 到 `optval`, `*optlen` 置 4):
+/// - `SO_TYPE` (`SOL_SOCKET`/3): `SOCK_STREAM(1)` / `SOCK_DGRAM(2)`.
+/// - `SO_ERROR` (`SOL_SOCKET`/4): 近似恒 0 (见下方 SIMPLIFIED).
+/// - `TCP_NODELAY` (`IPPROTO_TCP`/1, 仅 TCP): Nagle 禁用时 1, 启用时 0.
+/// 其余 (`level`, `optname`): `-ENOPROTOOPT`.
+///
+/// # Safety
+/// `optval` 必须是 syscall 层提供的可写内核指针 (≥ 4 字节), `optlen` 为可写内核 u32 指针。
+#[unsafe(no_mangle)]
+#[expect(
+    clippy::ptr_as_ptr,
+    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
+)]
+pub unsafe extern "C" fn sm_getsockopt(
+    fd: i32,
+    level: i32,
+    optname: i32,
+    optval: *mut u8,
+    optlen: *mut u32,
+) -> i32 {
+    // SAFETY: optval/optlen 为 syscall 层传入的内核栈指针 (NET_STATE 锁保护 socket 集合).
+    unsafe {
+        if optval.is_null() || optlen.is_null() {
+            return -E_INVAL;
+        }
+        // 出参缓冲由 syscall 层预置 (内核栈, 固定 4 字节); 不足视为 EINVAL.
+        if core::ptr::read_unaligned(optlen) < 4 {
+            return -E_INVAL;
+        }
+
+        let out: i32 = {
+            let _guard = NET_STATE.lock();
+            let Some(slot) = sm_slot(fd) else {
+                return -E_BADF;
+            };
+            let stype = raw::fd_type(slot);
+            if stype == 0 {
+                return -E_BADF;
+            }
+            match (level, optname) {
+                (SOL_SOCKET, SO_TYPE) => {
+                    if stype == 1 {
+                        SOCK_STREAM
+                    } else {
+                        SOCK_DGRAM
+                    }
+                }
+                // SIMPLIFIED: smoltcp 无 sticky so_error 字段; 本内核 connect 同步完成,
+                // 异步错误经 recv/send 返回值体现, 故 so_error 恒 0.
+                // 何时需扩展: 引入非阻塞 connect (P5) 后由连接状态派生真实 errno.
+                (SOL_SOCKET, SO_ERROR) => 0,
+                (IPPROTO_TCP, TCP_NODELAY) => {
+                    if stype != 1 {
+                        return -E_NOPROTOOPT;
+                    }
+                    let Some(handle) = raw::socket_handle(slot) else {
+                        return -E_BADF;
+                    };
+                    let sockets = &mut *socket_set();
+                    let sock = sockets.get::<tcp::Socket>(handle);
+                    i32::from(!sock.nagle_enabled())
+                }
+                _ => return -E_NOPROTOOPT,
+            }
+        };
+        core::ptr::write_unaligned(optval as *mut i32, out);
+        core::ptr::write_unaligned(optlen, 4);
+        0
+    }
 }
 
 /// POSIX `getsockname(fd, addr, addrlen)` 内核实现。
@@ -1393,23 +1697,37 @@ pub unsafe extern "C" fn sm_getsockname(fd: i32, addr: *mut u8, addrlen: *mut u3
         let endpoint_opt: Option<IpEndpoint> = match stype {
             1 => {
                 let sock = sockets.get::<tcp::Socket>(handle);
-                sock.local_endpoint()
+                // D9: TCP 未 connect 时 smoltcp local_endpoint() 为 None,
+                // 回退 D1 本地端点表 (bind 时登记, 使 getsockname 可用).
+                match sock.local_endpoint() {
+                    Some(ep) => Some(ep),
+                    None => raw::socket_local_endpoint(slot).map(|nep| IpEndpoint {
+                        addr: wire_to_smol(nep.addr),
+                        port: nep.port,
+                    }),
+                }
             }
             2 => {
                 let sock = sockets.get::<udp::Socket>(handle);
                 let ep = sock.endpoint();
-                ep.addr.map_or(
-                    Some(IpEndpoint {
-                        addr: IpAddress::Ipv4(Ipv4Address::UNSPECIFIED),
+                match ep.addr {
+                    Some(addr) => Some(IpEndpoint {
+                        addr,
                         port: ep.port,
                     }),
-                    |addr| {
-                        Some(IpEndpoint {
-                            addr,
+                    // D9/U7: 通配绑定时 smoltcp 存 None, 按 D1 登记的族如实回填
+                    // (避免将 IPv6 通配误回为 IPv4 unspecified); D1 也缺省时退 V4.
+                    None => Some(match raw::socket_local_endpoint(slot) {
+                        Some(nep) => IpEndpoint {
+                            addr: wire_to_smol(nep.addr),
                             port: ep.port,
-                        })
-                    },
-                )
+                        },
+                        None => IpEndpoint {
+                            addr: IpAddress::Ipv4(Ipv4Address::UNSPECIFIED),
+                            port: ep.port,
+                        },
+                    }),
+                }
             }
             _ => return -E_NOTSUPP,
         };
@@ -1468,8 +1786,15 @@ pub unsafe extern "C" fn sm_getpeername(fd: i32, addr: *mut u8, addrlen: *mut u3
                 sock.remote_endpoint()
             }
             2 => {
-                // UDP: remote 由 last_recv_meta 取, 但 Socket 没暴露, 暂返 ENOTCONN.
-                return -E_NOTCONN;
+                // D9: UDP 对端取 D1 remote 表 (connect 时登记); 未 connect → ENOTCONN.
+                return match raw::socket_remote_endpoint(slot) {
+                    Some(ep) => {
+                        // SAFETY: write_sockaddr 按 ep.addr 分支写 sockaddr, addr 已校验非空.
+                        write_sockaddr(addr, addrlen, &ep);
+                        0
+                    }
+                    None => -E_NOTCONN,
+                };
             }
             _ => return -E_NOTSUPP,
         };
@@ -1792,5 +2117,102 @@ mod tests {
             unsafe { sm_accept_locked(tcp_fd, core::ptr::null_mut(), core::ptr::null_mut()) },
             -E_AGAIN
         );
+    }
+
+    /// D9: remote 端点表写入/读取/清空 往返一致 (UDP connect 登记对端的基础).
+    #[test]
+    fn test_remote_endpoint_table_roundtrip() {
+        let mut guard = NET_STATE.lock();
+        guard.allocate();
+
+        let ep = TraitEndpoint::new_v4(TraitIpv4Addr::new(10, 0, 0, 1), 53);
+        raw::set_socket_remote_endpoint(0, Some(ep));
+        assert_eq!(raw::socket_remote_endpoint(0), Some(ep));
+
+        raw::set_socket_remote_endpoint(0, None);
+        assert_eq!(raw::socket_remote_endpoint(0), None);
+    }
+
+    /// D7: `shutdown` 半关闭契约 — 非法 fd / 非法 how 错误分支, SHUT_RD no-op 返 0,
+    /// SHUT_WR 保留 socket (与 close 的关键差异: 不回收 handle/fd_type/FD 编号).
+    #[test]
+    fn test_shutdown_contract() {
+        let mut guard = NET_STATE.lock();
+        guard.allocate();
+        raw::init_sockets();
+
+        // 建一个 TCP socket (host-test 下 Box::leak 自建 'static 缓冲, 绕开 k_malloc).
+        // SAFETY: 持 NET_STATE 锁, SocketSet 已初始化.
+        let sockets = unsafe { &mut *raw::socket_set() };
+        let rx: &'static mut [u8] = alloc::boxed::Box::leak(
+            alloc::vec![0u8; super::super::TCP_BUF_SIZE].into_boxed_slice(),
+        );
+        let tx: &'static mut [u8] = alloc::boxed::Box::leak(
+            alloc::vec![0u8; super::super::TCP_BUF_SIZE].into_boxed_slice(),
+        );
+        let handle = sockets.add(tcp::Socket::new(
+            tcp::SocketBuffer::new(rx),
+            tcp::SocketBuffer::new(tx),
+        ));
+        let fd = alloc_fd(FdSubsystem::Smoltcp).expect("分配 TCP FD");
+        let slot = sm_slot(fd).expect("FD 应可换算槽位");
+        raw::set_socket_handle(slot, Some(handle));
+        raw::set_fd_type(slot, 1);
+
+        // 非法 fd → -E_BADF.
+        assert_eq!(unsafe { sm_shutdown_locked(-1, 1) }, -E_BADF);
+        // 合法 socket 但非法 how (非 0/1/2) → -E_INVAL.
+        assert_eq!(unsafe { sm_shutdown_locked(fd, 5) }, -E_INVAL);
+        // SHUT_RD(0) → no-op 返 0, socket 保留.
+        assert_eq!(unsafe { sm_shutdown_locked(fd, 0) }, 0);
+        assert!(raw::fd_type(slot) == 1 && raw::socket_handle(slot).is_some());
+        // SHUT_WR(1) → 返 0, 且 socket/FD **未被回收** (区别于 close).
+        assert_eq!(unsafe { sm_shutdown_locked(fd, 1) }, 0);
+        assert_eq!(raw::fd_type(slot), 1, "SHUT_WR 不应改 fd_type");
+        assert!(
+            raw::socket_handle(slot).is_some(),
+            "SHUT_WR 不应 remove socket"
+        );
+    }
+
+    /// D8b: `sm_socket_poll` 错误/状态分支 — 非法 fd 与空槽 → POLLNVAL;
+    /// TCP 新建 socket (state Closed) → POLLHUP|POLLERR. 真实收发就绪由 QEMU e2e 覆盖.
+    #[test]
+    fn test_socket_poll_contract() {
+        let mut guard = NET_STATE.lock();
+        guard.allocate();
+        raw::init_sockets();
+
+        // 非法 fd (负数) → POLLNVAL.
+        // SAFETY: 调用 *_locked 变体要求持 NET_STATE 锁 (本测试已持 guard); 负 fd 经 sm_slot 返 None, 不解引用 socket_set.
+        assert_eq!(unsafe { sm_socket_poll_locked(-1, POLLIN) }, POLLNVAL);
+        // 段内未使用空槽 (fd_type == 0) → POLLNVAL.
+        // SAFETY: 持 NET_STATE 锁 (guard); 空槽 fd_type==0 于取 handle 前早返回 POLLNVAL, 不触碰 socket_set.
+        assert_eq!(
+            unsafe { sm_socket_poll_locked(fd_at(FdSubsystem::Smoltcp, MAX_SM_FD - 1), POLLIN) },
+            POLLNVAL
+        );
+
+        // 建 TCP socket (新建态 Closed), poll 应报 POLLHUP|POLLERR.
+        // SAFETY: 持 NET_STATE 锁, SocketSet 已初始化.
+        let sockets = unsafe { &mut *raw::socket_set() };
+        let rx: &'static mut [u8] = alloc::boxed::Box::leak(
+            alloc::vec![0u8; super::super::TCP_BUF_SIZE].into_boxed_slice(),
+        );
+        let tx: &'static mut [u8] = alloc::boxed::Box::leak(
+            alloc::vec![0u8; super::super::TCP_BUF_SIZE].into_boxed_slice(),
+        );
+        let handle = sockets.add(tcp::Socket::new(
+            tcp::SocketBuffer::new(rx),
+            tcp::SocketBuffer::new(tx),
+        ));
+        let fd = alloc_fd(FdSubsystem::Smoltcp).expect("分配 TCP FD");
+        let slot = sm_slot(fd).expect("FD 应可换算槽位");
+        raw::set_socket_handle(slot, Some(handle));
+        raw::set_fd_type(slot, 1);
+
+        let rev = unsafe { sm_socket_poll_locked(fd, POLLIN | POLLOUT) };
+        assert_ne!(rev & POLLHUP, 0, "Closed TCP 应报 POLLHUP");
+        assert_ne!(rev & POLLERR, 0, "Closed TCP 应报 POLLERR");
     }
 }

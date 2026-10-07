@@ -404,7 +404,7 @@ pub fn sendto_syscall(
     i64::from(rc)
 }
 
-/// recvfrom / recv — 接收数据到用户缓冲区 (简化: 不写对端地址)
+/// recvfrom / recv — 接收数据到用户缓冲区, 并回写对端地址 (D9).
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
 pub fn recvfrom_syscall(
@@ -412,8 +412,8 @@ pub fn recvfrom_syscall(
     buf_ptr: u64,
     len: u32,
     _flags: i32,
-    _src_ptr: u64,
-    _src_len_ptr: u64,
+    src_ptr: u64,
+    src_len_ptr: u64,
 ) -> i64 {
     if fd < 0 {
         return Errno::EBADF.as_ret();
@@ -432,7 +432,16 @@ pub fn recvfrom_syscall(
     const MAX: usize = 4096;
     let want = (len as usize).min(MAX);
     let mut stack_buf = [0u8; MAX];
-    let n = net_socket::sm_recv(fd, stack_buf.as_mut_ptr(), want as u32, 0);
+    // D9: 改调 sm_recvfrom 取回对端地址; data 仍走内核栈 bounce (保 P0-I-37 异常表保护),
+    // 对端 sockaddr 按 accept/getsockname 约定由 sm 层直写用户 src_ptr (可为 0, null-guard 已备).
+    let n = net_socket::sm_recvfrom(
+        fd,
+        stack_buf.as_mut_ptr(),
+        want as u32,
+        0,
+        src_ptr as *mut u8,
+        src_len_ptr as *mut u32,
+    );
     if n < 0 {
         return i64::from(n);
     }
@@ -498,12 +507,12 @@ pub fn getsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, _vale
     0
 }
 
-/// shutdown — 简化等同 close
-pub fn shutdown_syscall(fd: i32, _how: i32) -> i64 {
+/// shutdown(fd, how) — 半关闭 socket (D7: 透传 how 到 sm_shutdown)
+pub fn shutdown_syscall(fd: i32, how: i32) -> i64 {
     if fd < 0 {
         return Errno::EBADF.as_ret();
     }
-    let rc = net_socket::sm_close(fd);
+    let rc = net_socket::sm_shutdown(fd, how);
     i64::from(rc)
 }
 
