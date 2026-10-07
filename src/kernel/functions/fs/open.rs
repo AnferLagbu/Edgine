@@ -160,6 +160,20 @@ pub fn close_syscall(fd: i32) -> Result<usize, Errno> {
         }
         return Err(Errno::EBADF);
     }
+    // 方案 C (socket P3): sm socket fd 不在 VFS FdTable 内, vfs_close 对其是
+    // no-op (accept 循环 FD 无法回收). FdPlan 命名空间去重叠后 subsystem_of
+    // 判定成立, 分流至 net 机制 sm_close (含 G10 free_fd, 与 shutdown_syscall
+    // 同路径; F2 走顶层 re-export net_socket).
+    if crate::privileged::proc::fd_alloc::subsystem_of(fd)
+        == Some(crate::privileged::proc::fd_alloc::FdSubsystem::Smoltcp)
+    {
+        let rc = crate::privileged::net_socket::sm_close(fd);
+        return if rc < 0 {
+            Err(Errno::from_ret(i64::from(rc)))
+        } else {
+            Ok(0)
+        };
+    }
     let r = fw::vfs_close(fd as u32);
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))
