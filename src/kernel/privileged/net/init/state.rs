@@ -8,6 +8,7 @@
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 
+use crate::privileged::net::iface_trait::NetEndpoint;
 use crate::privileged::net::{EGDFNetDevice, NetworkStack};
 use crate::privileged::sync::IrqSpinLock as Mutex;
 use smoltcp::iface::SocketHandle;
@@ -59,6 +60,8 @@ pub struct NetState {
     pub(crate) dhcp_handle: Option<SocketHandle>,
     pub(crate) socket_table: Vec<Option<SocketHandle>>,
     pub(crate) fd_types: Vec<u8>,
+    /// 各 FD 的本地端点 (D1): bind 成功时写入, 供端口冲突检测与 getsockname.
+    pub(crate) local_endpoints: Vec<Option<NetEndpoint>>,
     pub(crate) tcp_rx_bufs: Vec<*mut u8>,
     pub(crate) tcp_tx_bufs: Vec<*mut u8>,
     pub(crate) udp_rx_bufs: Vec<*mut u8>,
@@ -85,6 +88,7 @@ impl NetState {
             dhcp_handle: None,
             socket_table: Vec::new(),
             fd_types: Vec::new(),
+            local_endpoints: Vec::new(),
             tcp_rx_bufs: Vec::new(),
             tcp_tx_bufs: Vec::new(),
             udp_rx_bufs: Vec::new(),
@@ -101,6 +105,7 @@ impl NetState {
     pub fn allocate(&mut self) {
         self.socket_table = (0..TOTAL_SLOTS).map(|_| None).collect();
         self.fd_types = (0..TOTAL_SLOTS).map(|_| 0u8).collect();
+        self.local_endpoints = (0..TOTAL_SLOTS).map(|_| None).collect();
         self.tcp_rx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();
         self.tcp_tx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();
         self.udp_rx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();

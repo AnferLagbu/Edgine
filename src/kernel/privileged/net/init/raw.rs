@@ -9,6 +9,7 @@ use super::{
     SocketSet, TCP_BUF_SIZE, TOTAL_SLOTS, UDP_BUF_SIZE, UDP_META_COUNT, dhcpv4, klog_init_msg,
     klog_net, klog_net_err, tcp, udp,
 };
+use crate::privileged::net::iface_trait::NetEndpoint;
 
 /// 获取 `NetState` 可变引用 (调用方必须持有 `NET_STATE` 锁).
 ///
@@ -107,6 +108,20 @@ pub fn set_socket_handle(fd: usize, val: Option<SocketHandle>) {
     // SAFETY: 调用方持有 NET_STATE 锁.
     unsafe {
         state().socket_table[fd] = val;
+    }
+}
+
+/// 读取 socket 本地端点 (D1)
+pub fn socket_local_endpoint(fd: usize) -> Option<NetEndpoint> {
+    // SAFETY: 调用方持有 NET_STATE 锁.
+    unsafe { state().local_endpoints[fd] }
+}
+
+/// 写入 socket 本地端点 (D1)
+pub fn set_socket_local_endpoint(fd: usize, val: Option<NetEndpoint>) {
+    // SAFETY: 调用方持有 NET_STATE 锁.
+    unsafe {
+        state().local_endpoints[fd] = val;
     }
 }
 

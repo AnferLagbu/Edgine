@@ -292,7 +292,7 @@ pub fn bind_syscall(fd: i32, addr_ptr: u64, _addrlen: u32) -> i64 {
         }
         _ => return Errno::EAFNOSUPPORT.as_ret(),
     };
-    if rc == 0 { 0 } else { Errno::EINVAL.as_ret() }
+    i64::from(rc)
 }
 
 /// listen — 将 socket 置为监听状态并设置连接队列长度
@@ -304,20 +304,17 @@ pub fn listen_syscall(fd: i32, backlog: i32) -> i64 {
         return Errno::EINVAL.as_ret();
     }
     let rc = net_socket::sm_listen(fd, backlog);
-    if rc == 0 { 0 } else { Errno::EINVAL.as_ret() }
+    i64::from(rc)
 }
 
-/// accept — 当前简化:不写对端地址
-pub fn accept_syscall(fd: i32, _addr_ptr: u64, _addrlen_ptr: u64) -> i64 {
+/// accept — 接受连接, 并把对端地址回写到 `addr`/`addrlen` (二者可为 0)。
+pub fn accept_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> i64 {
     if fd < 0 {
         return Errno::EBADF.as_ret();
     }
-    let new_fd = net_socket::sm_accept(fd, core::ptr::null_mut(), core::ptr::null_mut());
-    if new_fd < 0 {
-        Errno::EBADF.as_ret()
-    } else {
-        i64::from(new_fd)
-    }
+    // addr/addrlen 非 0 时须为有效可写用户指针; sm_accept 校验并直写 (同 getsockname 约定).
+    let rc = net_socket::sm_accept(fd, addr_ptr as *mut u8, addrlen_ptr as *mut u32);
+    i64::from(rc)
 }
 
 /// connect — 连接远端地址 (按 sockaddr 族分流 IPv4/IPv6)
@@ -352,11 +349,7 @@ pub fn connect_syscall(fd: i32, addr_ptr: u64, _addrlen: u32) -> i64 {
         }
         _ => return Errno::EAFNOSUPPORT.as_ret(),
     };
-    if rc == 0 {
-        0
-    } else {
-        Errno::ECONNREFUSED.as_ret()
-    }
+    i64::from(rc)
 }
 
 /// sendto / send — 发送数据, 指定目标地址时按族分流, 否则走已连接路径
@@ -408,11 +401,7 @@ pub fn sendto_syscall(
             _ => return Errno::EAFNOSUPPORT.as_ret(),
         }
     };
-    if rc < 0 {
-        Errno::EINVAL.as_ret()
-    } else {
-        i64::from(rc)
-    }
+    i64::from(rc)
 }
 
 /// recvfrom / recv — 接收数据到用户缓冲区 (简化: 不写对端地址)
@@ -445,7 +434,7 @@ pub fn recvfrom_syscall(
     let mut stack_buf = [0u8; MAX];
     let n = net_socket::sm_recv(fd, stack_buf.as_mut_ptr(), want as u32, 0);
     if n < 0 {
-        return Errno::EAGAIN.as_ret();
+        return i64::from(n);
     }
     // P0-I-37 修复: 走异常表保护版
     if safe_copy_to_user(buf_ptr, &stack_buf[..n as usize], n as usize).is_err() {
@@ -473,7 +462,7 @@ pub fn setsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, _vale
         val_bytes.as_ptr(),
         val_bytes.len() as u32,
     );
-    if rc == 0 { 0 } else { Errno::ENOSYS.as_ret() }
+    i64::from(rc)
 }
 
 /// getsockopt — 获取 socket 选项 (写回 u32 选项值到用户空间)
@@ -501,7 +490,7 @@ pub fn getsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, _vale
         &mut out_len,
     );
     if rc != 0 {
-        return Errno::ENOSYS.as_ret();
+        return i64::from(rc);
     }
     if let Err(e) = raw_write_u32(val_ptr, out) {
         return e.as_ret();
@@ -515,7 +504,7 @@ pub fn shutdown_syscall(fd: i32, _how: i32) -> i64 {
         return Errno::EBADF.as_ret();
     }
     let rc = net_socket::sm_close(fd);
-    if rc == 0 { 0 } else { Errno::EBADF.as_ret() }
+    i64::from(rc)
 }
 
 /// sendmsg(fd, msg, flags) — functions 层入口

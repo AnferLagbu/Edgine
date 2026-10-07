@@ -6,7 +6,8 @@
 //! 按"机制持有的数据结构/常量归 privileged"统一判据反转：全局 FD 编号是**用户态
 //! 可见的内核机制** (集中基址规划 + 位图分配/释放/反查), 被 privileged 4 处
 //! (sm_fi/eventfd/signalfd/timerfd) + functions (inotify/pidfd) 消费 — 属机制项,
-//! 迁回。依赖闭包为空 (纯 core 原子 + 编译期 const 规划)。
+//! 迁回。依赖仅 `fd_table::MAX_FDS_PER_PROCESS` (编译期 const, VFS 段宽度单一来源);
+//! 其余为纯 core 原子 + 编译期 const 规划。
 //!
 //! functions 侧改 `pub use crate::privileged::proc::fd_alloc::*` 保持 API 兼容。
 //! 本文件 0 unsafe.
@@ -22,7 +23,8 @@
 //!
 //! | 子系统 | 起点 | 上限 | 容量 | 来源 |
 //! |--------|------|------|------|------|
-//! | Smoltcp | 0 | MAX_SM_FD | 256 | `privileged/net/init.rs` |
+//! | Vfs     | 0 | MAX_FDS_PER_PROCESS | 64 | `privileged/proc/fd_table.rs` (仅入重叠校验, 不走本分配器) |
+//! | Smoltcp | 64 | MAX_SM_FD | 256 | `privileged/net/init.rs` |
 //! | Uds     | 1000 | UDS 范围 | 16 | `privileged/net/unix.rs` |
 //! | EventFd | 1100 | EFD 范围 | 16 | `privileged/syscall/eventfd.rs` |
 //! | SignalFd| 1120 | SFD 范围 | 16 | `privileged/syscall/signalfd.rs` |
@@ -34,7 +36,11 @@
 //! **不包含** (这些是内部抽象, 不暴露给用户态, 不存在重叠问题):
 //! - `VfsManager::alloc_fd()` — VFS 内部 slot 索引
 //! - `Unkfs::alloc_fd()` — UNKFS 内部 slot 索引
-//! - `FdTable::alloc_fd()` — per-process 视图映射
+//!
+//! **方案 C (2026-10 socket P3)**: per-process `FdTable` 的 [0, 64) 段已纳入本规划
+//! (`FdPlan::VFS`, 仅作重叠不变量校验对象, 分配仍由 FdTable 自管), Smoltcp 段基址
+//! 随之移出至 64, 彻底消除与 VFS fd 的命名空间重叠 — `subsystem_of`/`idx_of`
+//! 对任意 fd 的判定自此对所有段成立 (close/poll 分发前提)。
 //!
 //! ## 架构
 //!
@@ -143,14 +149,23 @@ impl FdRange {
 /// 集中 FD 基址规划 — 单一来源 (Single Source of Truth)
 ///
 /// 各子系统的 `*_FD_BASE` 常量在编译期引用本规划, 禁止分散定义.
-/// 验收: 任意两个 `FdRange` 不重叠; 全部不与 smoltcp [0, 256) 重叠 (除 Smoltcp 自身).
+/// 验收: `ALL` 内任意两个 `FdRange` 不重叠 (含 VFS 段).
 pub struct FdPlan;
 
+/// VFS per-process fd 表宽度 (与 `fd_table::MAX_FDS_PER_PROCESS` 单一来源)
+const VFS_FD_WIDTH: usize = super::fd_table::MAX_FDS_PER_PROCESS;
+
 impl FdPlan {
+    /// VFS per-process fd 段 [0, 64) — **仅作重叠校验**, 分配/释放由 `FdTable` 自管,
+    /// 不进 `FdSubsystem` 枚举与位图 (方案 C).
+    pub const VFS: FdRange = FdRange::new(0, VFS_FD_WIDTH as u16);
+
     /// Smoltcp FD 空间 (TD-06: 容量从 `cfg_smoltcp_cap()` 派生, 当前默认 256.
     /// 用户可手动修改 `cfg_smoltcp_cap` 至 1024 / 4096, 同步 `privileged/net/init.rs` 的
     /// `MAX_SOCKETS` 与 buf 静态表尺寸 (`TCP_RX_BUFS` / `TCP_TX_BUFS` / UDP_*_BUFS)).
-    pub const SMOLTCP: FdRange = FdRange::new(0, 256);
+    /// 方案 C: 基址紧贴 VFS 段上界, 与 [0, 64) 不重叠; fd → 槽位索引一律经
+    /// `idx_of` 换算 (消费方唯一切换面, fd 对象模型终态工程整体退役该层).
+    pub const SMOLTCP: FdRange = FdRange::new(VFS_FD_WIDTH as i32, 256);
 
     /// UDS FD 空间 (TD-01: 历史 100 → 1000, 跳出 smoltcp)
     pub const UDS: FdRange = FdRange::new(1000, 16);
@@ -187,8 +202,9 @@ impl FdPlan {
         }
     }
 
-    /// 全部 FD 范围 (用于启动期不变量校验)
+    /// 全部 FD 范围 (用于启动期不变量校验; VFS 段仅参与校验, 无 `FdSubsystem` 变体)
     pub const ALL: &'static [FdRange] = &[
+        Self::VFS,
         Self::SMOLTCP,
         Self::UDS,
         Self::EVENT_FD,
@@ -209,8 +225,8 @@ impl FdPlan {
             let mut j = i + 1;
             while j < all.len() {
                 if all[i].overlaps(all[j]) {
-                    // Smoltcp 与自身比较时 base == end_exclusive, 不会重叠
-                    // 但 Smoltcp 与其他 4 个范围不重叠 (其他 4 个 base ≥ 1000 ≥ 256)
+                    // 方案 C 后全部 9 段 (含 VFS) 两两不重叠:
+                    // VFS [0,64) < Smoltcp [64,320) < UDS 起始 1000, 其余 base ≥ 1000
                     return false;
                 }
                 j += 1;

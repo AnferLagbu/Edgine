@@ -140,7 +140,15 @@ unsafe fn process_dhcp_events(_sockets: &mut SocketSet<'_>) {
             ));
             if let Some(stack) = raw::stack_mut() {
                 stack.iface.update_ip_addrs(|addrs| {
-                    let _ = addrs.push(cidr);
+                    // A+: 地址池触顶时不得静默丢弃, 显式告警以便定位
+                    // (容量由 IFACE_MAX_ADDR_COUNT 决定, 见 src/kernel/Cargo.toml feature).
+                    if addrs.push(cidr).is_err() {
+                        crate::klog_warn!(
+                            Net,
+                            "DHCP: iface 地址池已满, IPv4 {} 未落 iface (IFACE_MAX_ADDR_COUNT 不足)",
+                            cidr
+                        );
+                    }
                 });
                 if let Some(gw) = router {
                     let _ = stack.iface.routes_mut().add_default_ipv4_route(
@@ -678,11 +686,12 @@ const UDP_META_COUNT: usize = 4;
 // SmoltcpNetStack 范围 (MAX_SM_FD..TOTAL_SLOTS). 范围严格隔离, 不冲突.
 //
 // 索引空间分配:
-//   - 0..MAX_SM_FD:           sm_socket fd (不变)
+//   - 0..MAX_SM_FD:           sm_socket 槽位 (方案 C: fd = FdPlan::SMOLTCP.base + 槽位,
+//                             经 sm_fi::sm_slot 换算, 表下标仍为紧凑槽位)
 //   - MAX_SM_FD..TOTAL_SLOTS: SmoltcpNetStack (新增, 留给 W4.2.3.2+ 整合)
 //
-// BSS 增长: 8 张数组 × (TOTAL_SLOTS - MAX_SM_FD) 槽位. MAX_SOCKETS=1024
-// 时增长约 169 KB (主要是 UDP_RX_METAS / UDP_TX_METAS).
+// BSS 增长: 9 张数组 × (TOTAL_SLOTS - MAX_SM_FD) = 9 × MAX_SOCKETS 槽位
+// (主要是 UDP_RX_METAS / UDP_TX_METAS).
 const TOTAL_SLOTS: usize = MAX_SM_FD + MAX_SOCKETS;
 
 // TD-05: 8 张 smoltcp 大表, 现已合并到 NetState 结构中 (由 NET_STATE IrqSpinLock 保护).

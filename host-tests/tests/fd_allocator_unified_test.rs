@@ -1,8 +1,8 @@
 //! TD-02: 统一 FdAllocator — 静态契约测试
 //!
 //! 验证 `privileged/proc/fd_alloc.rs`:
-//!   - FdPlan 5 个范围互不重叠
-//!   - 全部 ≥ MAX_SM_FD=256 (除 Smoltcp 自身)
+//!   - FdPlan 各范围互不重叠 (含方案 C 的 VFS 段)
+//!   - Smoltcp 段基址紧贴 VFS 上界, 与 [0, 64) 命名空间不重叠 (方案 C)
 //!   - alloc_fd / free_fd / subsystem_of 行为正确
 //!   - 启动期不变量 (verify_plan) 满足
 
@@ -39,12 +39,20 @@ fn test_fd_plan_ranges_non_overlapping_const() {
 
 #[test]
 fn test_fd_plan_constants_match_td01() {
-    // FdPlan 的 5 个范围必须与 TD-01 修复后的各子系统 FD_BASE 对齐
+    // FdPlan 各范围必须与子系统 FD_BASE 对齐; 方案 C 后 Smoltcp 基址不再为 0
     let src = read_fd_alloc();
-    // 关键值常量: Smoltcp=0, UDS=1000, EventFd=1100, SignalFd=1120, Inotify=1140
+    // 方案 C: VFS [0,64) 入重叠校验, Smoltcp 基址紧贴 VFS 上界
     assert!(
-        src.contains("SMOLTCP: FdRange = FdRange::new(0,"),
-        "Smoltcp 范围起点应为 0"
+        src.contains("VFS: FdRange = FdRange::new(0, VFS_FD_WIDTH as u16)"),
+        "VFS 段应以基址 0 纳入 FdPlan (方案 C 重叠校验)"
+    );
+    assert!(
+        src.contains("SMOLTCP: FdRange = FdRange::new(VFS_FD_WIDTH as i32,"),
+        "Smoltcp 范围基址应从 VFS_FD_WIDTH 派生, 与 VFS [0,64) 不重叠 (方案 C)"
+    );
+    assert!(
+        src.contains("Self::VFS,\n        Self::SMOLTCP,"),
+        "ALL 必须同时纳入 VFS 与 SMOLTCP 段 (方案 C 重叠不变量覆盖)"
     );
     assert!(
         src.contains("UDS: FdRange = FdRange::new(1000,"),
