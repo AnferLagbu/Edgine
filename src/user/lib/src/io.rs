@@ -17,7 +17,8 @@ pub fn print_dec(mut val: i64) {
     if val == 0 { i-=1; buf[i]=b'0'; }
     else { while val > 0 { i-=1; buf[i]=b'0'+(val%10) as u8; val/=10; } }
     if neg { i-=1; buf[i]=b'-'; }
-    sys::fs_write(1, &buf[i..]);
+    // 有效数字区为 buf[i..20] (索引 20 为填充位); 切片上界若取 21 会多输出 1 个 NUL
+    sys::fs_write(1, &buf[i..20]);
 }
 
 pub fn read_line(buf: &mut [u8]) -> usize {
