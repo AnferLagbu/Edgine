@@ -28,10 +28,31 @@ ARCH="${1:-all}"
 TIMEOUT_QEMU="${TIMEOUT_QEMU:-25}"
 FAIL_OK="${FAIL_OK:-1}"  # 1 = 允许部分里程碑不通过 (e1000 已知挂起)
 
+# --- P3 D6 端到端验证参数 (仅 x86_64, 可用环境变量覆盖) ---
+E2E_HOST_PORT="${E2E_HOST_PORT:-8080}"        # 宿主侧 hostfwd 监听端口
+E2E_GUEST_PORT="${E2E_GUEST_PORT:-80}"        # guest 内 echo 服务端口
+E2E_READY_TIMEOUT="${E2E_READY_TIMEOUT:-40}"  # 就绪轮询上限 (s)
+E2E_ROUNDS="${E2E_ROUNDS:-3}"                 # 客户端连接轮数
+E2E_QEMU_PID=""                               # 后台 QEMU pid (cleanup_e2e 消费)
+
 ok()   { echo -e "${GREEN}\u2713 $1${NC}"; }
 err()  { echo -e "${RED}\u2717 $1${NC}"; }
 warn() { echo -e "${YELLOW}! $1${NC}"; }
 info() { echo -e "${BLUE}-> $1${NC}"; }
+
+# ---------------------------------------------------------------------------
+# 端到端阶段清理: 退出/中断/超时时回收后台 QEMU (幂等).
+# 未进入端到端阶段时 E2E_QEMU_PID 为空, 本函数为空操作.
+# ---------------------------------------------------------------------------
+cleanup_e2e() {
+    if [ -n "$E2E_QEMU_PID" ] && kill -0 "$E2E_QEMU_PID" 2>/dev/null; then
+        kill "$E2E_QEMU_PID" 2>/dev/null || true
+        wait "$E2E_QEMU_PID" 2>/dev/null || true
+    fi
+    E2E_QEMU_PID=""
+    return 0
+}
+trap cleanup_e2e EXIT INT TERM
 
 # ---------------------------------------------------------------------------
 # 通用 QEMU 启动 + 日志分析
@@ -144,6 +165,145 @@ check_kernel_fresh() {
 }
 
 # ---------------------------------------------------------------------------
+# 端到端 TCP echo 验证 (P3 D6 "先建后换" 交接, 仅 x86_64)
+#
+# 以 QEMU slirp hostfwd 把宿主端口映射到 guest 内用户态 echo 服务:
+#   -netdev user,id=n0,hostfwd=tcp::<host>-:<guest>
+# 宿主 python3 客户端连续发起 <E2E_ROUNDS> 轮 TCP 连接, 每轮发送固定载荷并
+# 校验回显; guest 侧断言 accept/echo/close 里程碑与 accept fd 去重 (FD 回收).
+# 返回: 0 = 全部断言通过, 1 = 任一失败.
+# ---------------------------------------------------------------------------
+e2e_tcp_echo() {
+    local log="$LOG_DIR/qemu_e2e_tcp_x86_64.log"
+    local payload="EDGINE-TCP-ECHO"
+
+    command -v python3 >/dev/null 2>&1 || { err "[x86_64] 缺少依赖: python3 (端到端客户端)"; return 1; }
+
+    rm -f "$log"
+    info "[x86_64] 启动后台 QEMU (hostfwd tcp::${E2E_HOST_PORT}->:${E2E_GUEST_PORT})..."
+    qemu-system-x86_64 \
+        -serial "file:${log}" \
+        -display none \
+        -no-reboot \
+        -m 512 -smp 2 \
+        -kernel other/build/kernel.flat \
+        -device e1000,netdev=n0 \
+        -netdev "user,id=n0,hostfwd=tcp::${E2E_HOST_PORT}-:${E2E_GUEST_PORT}" \
+        >/dev/null 2>&1 &
+    E2E_QEMU_PID=$!
+
+    # 就绪等待: DHCP 租约 + TCP 监听标记均出现; 期间检测 QEMU 早退.
+    local waited=0
+    while [ "$waited" -lt "$E2E_READY_TIMEOUT" ]; do
+        if grep -aqF "[tcp] Listening on 0.0.0.0:80" "$log" 2>/dev/null \
+            && grep -aqF "DHCP configured (lease applied)" "$log" 2>/dev/null; then
+            break
+        fi
+        if ! kill -0 "$E2E_QEMU_PID" 2>/dev/null; then
+            err "[x86_64] QEMU 在端到端就绪前退出 (见 $log)"
+            cleanup_e2e
+            return 1
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    if [ "$waited" -ge "$E2E_READY_TIMEOUT" ]; then
+        err "[x86_64] 端到端就绪超时 (${E2E_READY_TIMEOUT}s): 未见 TCP 监听 / DHCP 租约"
+        cleanup_e2e
+        return 1
+    fi
+    ok "[x86_64] echo 服务端就绪 (guest :${E2E_GUEST_PORT})"
+
+    # 宿主客户端: 逐轮连接 + 回显校验 (set -e 下以 || 捕获退出码).
+    local py_rc=0
+    E2E_HOST_PORT="$E2E_HOST_PORT" E2E_ROUNDS="$E2E_ROUNDS" E2E_PAYLOAD="$payload" \
+        python3 - <<'PY' || py_rc=$?
+import os
+import socket
+import sys
+import time
+
+port = int(os.environ["E2E_HOST_PORT"])
+rounds = int(os.environ["E2E_ROUNDS"])
+payload = os.environ["E2E_PAYLOAD"].encode()
+
+for i in range(rounds):
+    try:
+        sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+    except OSError as exc:
+        print(f"round {i}: connect to 127.0.0.1:{port} failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+    got = b""
+    try:
+        sock.sendall(payload)
+        sock.shutdown(socket.SHUT_WR)
+        while len(got) < len(payload):
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            got += chunk
+    finally:
+        sock.close()
+    if got != payload:
+        print(f"round {i}: echo mismatch: sent={payload!r} got={got!r}", file=sys.stderr)
+        sys.exit(1)
+    time.sleep(0.2)
+
+print(f"OK: {rounds}/{rounds} rounds echoed")
+PY
+    if [ "$py_rc" -ne 0 ]; then
+        warn "[x86_64] 宿主客户端回显校验失败 (exit=$py_rc)"
+        cleanup_e2e
+        return 1
+    fi
+    ok "[x86_64] 宿主客户端 ${E2E_ROUNDS} 轮回显全部校验通过"
+
+    # 释放后台 QEMU (SIGTERM + wait), 日志完整落盘后再断言 guest 侧里程碑.
+    cleanup_e2e
+
+    local rc=0
+    # 1. 监听槽持续可用: 监听标记存在.
+    if grep -aqF "[tcp] Listening on 0.0.0.0:80" "$log"; then
+        ok "[x86_64] guest 监听 0.0.0.0:80 就绪"
+    else
+        err "[x86_64] guest 未打印监听标记"
+        rc=1
+    fi
+    # 2. accept / echo / close 计数均不低于连接轮数 (D6 交接逐轮生效).
+    local accepted echoed closed
+    accepted=$(grep -acF "[tcp] Connection accepted" "$log" || true)
+    echoed=$(grep -acF "[tcp] Echo ok len=" "$log" || true)
+    closed=$(grep -acF "[tcp] Connection closed" "$log" || true)
+    if [ "$accepted" -ge "$E2E_ROUNDS" ] && [ "$echoed" -ge "$E2E_ROUNDS" ] && [ "$closed" -ge "$E2E_ROUNDS" ]; then
+        ok "[x86_64] 交接计数通过: accept=${accepted} echo=${echoed} close=${closed} (>=${E2E_ROUNDS})"
+    else
+        err "[x86_64] 交接计数不足: accept=${accepted} echo=${echoed} close=${closed} (<${E2E_ROUNDS})"
+        rc=1
+    fi
+    # 3. FD 回收: 每次 accept 分配最小空闲 fd, close 归还后下次 accept 复用同一
+    #    fd, 故 accepted fd 去重应恰为 1. 日志可能含 NUL 字节, 故 grep -a.
+    local uniq_fds uniq_count
+    uniq_fds=$(grep -aoE "\[tcp\] Connection accepted fd=[0-9]+" "$log" \
+        | grep -aoE "[0-9]+$" | sort -u | tr '\n' ' ' || true)
+    uniq_count=$(echo "$uniq_fds" | wc -w)
+    if [ "$uniq_count" -eq 1 ]; then
+        ok "[x86_64] FD 回收断言通过: accept fd 去重为 1 (fd=${uniq_fds% })"
+    else
+        err "[x86_64] FD 回收断言失败: accept fd 去重为 ${uniq_count} (实测: ${uniq_fds:-无})"
+        rc=1
+    fi
+    # 4. 失败标记兜底: 出现 [tcp] FAIL 时打印首条便于诊断.
+    if grep -aqF "[tcp] FAIL:" "$log"; then
+        warn "[x86_64] 日志出现 [tcp] FAIL 标记: $(grep -aF "[tcp] FAIL:" "$log" | head -1)"
+    fi
+
+    if [ "$rc" -eq 0 ]; then
+        ok "[x86_64] 端到端 TCP echo 验证通过 (P3 D6 先建后换 + FD 回收)"
+    fi
+    return $rc
+}
+
+# ---------------------------------------------------------------------------
 # 测试: 全部架构
 # ---------------------------------------------------------------------------
 RESULT=0
@@ -224,6 +384,11 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] 未成对观察到 EL0 cpu=0/cpu=1 (实测: ${EL0_CPUS:-无})"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+
+            # P3 D6 端到端验证: hostfwd 入站连接驱动 guest 用户态 TCP echo
+            # 服务端, 断言 accept/recv/send 里程碑 + FD 回收 + 监听槽持续可用.
+            # 为硬门禁 (不受 FAIL_OK 放宽): 端到端连通性是 D6 交接语义的直接判据.
+            e2e_tcp_echo || RESULT=1
         else
             [ "$FAIL_OK" = "0" ] && RESULT=1
         fi

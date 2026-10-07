@@ -81,8 +81,21 @@ pub extern "C" fn _start() -> ! {
     }
     // P6a SLAAC 联调: 用户态 IPv6 UDP 收发探针 (仅 x86_64 — 联调在 x86_64
     // tap + 宿主 dnsmasq RA 下进行; aarch64 无对应 NIC/RA 环境, 不探).
+    // 探针占用并释放一个 smoltcp fd; smoltcp FD 位图全局共享, 若与 echo
+    // 子进程 accept 并发会扰动其 fd 取值 (FD 回收断言失去确定性), 故须在
+    // echo fork **之前**同步完成.
     #[cfg(target_arch = "x86_64")]
     ipv6_udp_probe();
+    // P3 D6 端到端验证: 常驻 TCP echo 服务端 (仅 x86_64). 由
+    // scripts/qemu_boot_test.sh 的端到端阶段经 hostfwd 入站连接驱动
+    // (accept -> recv -> send 回显), 验证 D6 "先建后换" 交接语义.
+    #[cfg(target_arch = "x86_64")]
+    {
+        let echo = fork();
+        if echo == 0 {
+            tcp_echo_server();
+        }
+    }
     busy_wait(b'+');
 }
 
@@ -194,6 +207,143 @@ fn ipv6_udp_probe() {
             return;
         }
         delay_ms(50);
+    }
+}
+
+/// 用户态 TCP echo 服务端 (P3 D6 端到端验证, 仅 x86_64).
+///
+/// 常驻子进程: 监听 `0.0.0.0:80`, 循环 `accept` 已建立连接并原样回显.
+/// 用途是端到端验证 D6 "先建后换" 交接语义 ——
+/// 1. 连续多次入站连接下**监听槽持续可用** (每次 accept 后监听 fd 仍可再 accept);
+/// 2. 连接处理完 `close_socket` 后 FD 归还, 可被下一次 `accept` 复用 (FD 回收).
+///
+/// 驱动方为 `scripts/qemu_boot_test.sh` 的端到端阶段: 该阶段以
+/// `-netdev user,...,hostfwd=tcp::8080-:80` 启动 QEMU, 宿主客户端连
+/// `localhost:8080`, 由 slirp 转发到 guest `:80` 触发本服务.
+///
+/// 语义要点: 内核 TCP `recv` 在**无数据**与**对端关闭(EOF)**两种情况都返回
+/// `0` (smoltcp `recv_slice` 对已建立但 rx 缓冲为空的连接返回 `Ok(0)`),
+/// 二者无法区分; 仅在连接已关闭时返回 `-E_CONNRESET`. 故每连接采取
+/// **一次性回显**: `recv` 有界重试 (`0` 视为"暂无数据", 让出 CPU 供定时器
+/// IRQ 推进 smoltcp 周期 poll) 直到取到数据 → `send` 原样回显 → 留出发送
+/// 窗口后 `close`. 本函数永不返回 (常驻), 失败路径以忙等驻留 (不改变既有
+/// APS-05/KPTI-09 断言).
+#[cfg(target_arch = "x86_64")]
+fn tcp_echo_server() -> ! {
+    // 监听端口与脚本 hostfwd (`tcp::8080-:80`) 及 Makefile `QEMU_NET` 约定一致.
+    const PORT: u16 = 80;
+    // sockaddr_in 定长布局: 2+2+4+8 = 16 字节.
+    const SOCKADDR_IN_LEN: u32 = 16;
+    // accept 无就绪连接时的返回值 (EAGAIN, 非阻塞语义).
+    const E_AGAIN: i32 = -11;
+    // 重试节流间隔 (ms): 让出 CPU 供定时器 IRQ 推进网络 poll.
+    const POLL_MS: i64 = 5;
+    // 单连接等待数据的最大重试轮数 (每轮 POLL_MS); 超时则放弃该连接.
+    const MAX_RECV_TRIES: u32 = 200;
+    // 回显 `send` 后留出的窗口 (ms): 待定时器 IRQ poll 把 tx 缓冲排空,
+    // 再 close —— sm_close 中 `sockets.remove` 会丢弃未发出的数据.
+    const FLUSH_MS: i64 = 50;
+
+    let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if fd < 0 {
+        print("[tcp] FAIL: socket()=");
+        print_dec(fd as i64);
+        print_char(b'\n');
+        busy_wait(b'!');
+    }
+
+    // 允许快速重绑 (TIME_WAIT 残留), 与 httpsrv 一致.
+    let opt: i32 = 1;
+    let _ = setsockopt(
+        fd,
+        SOL_SOCKET,
+        SO_REUSEADDR,
+        &opt as *const i32 as *const u8,
+        core::mem::size_of::<i32>() as u32,
+    );
+
+    // 通配绑定 0.0.0.0:80 — sin_family 主机序 (NE), sin_port 网络序 (BE).
+    let local = SockaddrIn {
+        sin_family: AF_INET as u16,
+        sin_port: PORT.to_be(),
+        sin_addr: InAddr { s_addr: [0u8; 4] },
+        sin_zero: [0u8; 8],
+    };
+    let rc = bind(fd, &local as *const SockaddrIn as *const u8, SOCKADDR_IN_LEN);
+    if rc < 0 {
+        print("[tcp] FAIL: bind()=");
+        print_dec(rc as i64);
+        print_char(b'\n');
+        busy_wait(b'!');
+    }
+
+    let rc = listen(fd, 5);
+    if rc < 0 {
+        print("[tcp] FAIL: listen()=");
+        print_dec(rc as i64);
+        print_char(b'\n');
+        busy_wait(b'!');
+    }
+    println("[tcp] Listening on 0.0.0.0:80");
+
+    // 常驻 accept 循环: D6 先建后换保证监听 fd 在每次交接后仍可继续 accept.
+    loop {
+        let conn = accept(fd, core::ptr::null_mut(), core::ptr::null_mut());
+        if conn < 0 {
+            if conn == E_AGAIN {
+                // 尚无连接完成三次握手: 让出 CPU 后重试 (非阻塞语义).
+                delay_ms(POLL_MS);
+                continue;
+            }
+            print("[tcp] FAIL: accept()=");
+            print_dec(conn as i64);
+            print_char(b'\n');
+            delay_ms(POLL_MS);
+            continue;
+        }
+        print("[tcp] Connection accepted fd=");
+        print_dec(conn as i64);
+        print_char(b'\n');
+
+        // 一次性回显: recv 有界重试直至取到数据. `0` 表示"暂无数据"
+        // (非对端关闭 —— TCP recv 无数据与 EOF 均返回 0), 让出 CPU 后重试.
+        let mut buf = [0u8; 256];
+        let mut tries: u32 = 0;
+        loop {
+            let n = recv(conn, buf.as_mut_ptr(), buf.len(), 0);
+            if n > 0 {
+                let len = n as usize;
+                let sent = send(conn, buf.as_ptr(), len, 0);
+                if sent == n {
+                    print("[tcp] Echo ok len=");
+                    print_dec(n as i64);
+                    print_char(b'\n');
+                } else {
+                    print("[tcp] FAIL: send()=");
+                    print_dec(sent as i64);
+                    print_char(b'\n');
+                }
+                // 留出窗口让定时器 IRQ poll 把回显排空 (close 会丢弃未发数据).
+                delay_ms(FLUSH_MS);
+                break;
+            }
+            if n == 0 {
+                tries += 1;
+                if tries >= MAX_RECV_TRIES {
+                    println("[tcp] recv timeout (no data)");
+                    break;
+                }
+                delay_ms(POLL_MS);
+                continue;
+            }
+            // 其它负值 (如 -E_CONNRESET): 连接已关闭, 结束本连接.
+            print("[tcp] FAIL: recv()=");
+            print_dec(n as i64);
+            print_char(b'\n');
+            break;
+        }
+        close_socket(conn);
+        println("[tcp] Connection closed");
     }
 }
 
