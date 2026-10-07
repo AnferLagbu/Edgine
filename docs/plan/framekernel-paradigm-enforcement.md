@@ -874,7 +874,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **验证**：audit_reverse_deps **0 文件/0 行**（测试上下文 15 文件/52 行按 §7.3 豁免不计数）✅ / 双架构 build.sh all ✅ / quick 审计链 ✅ / host-tests 98 套件 ✅ / QEMU x86_64 完整启动至 Ring 3 ✅（孤儿不参与编译，编译产物零变化，全链为门槛形式性复核）。
 - **审计盲区扩展（用户裁决通过）**：`audit_deadlock_matrix.py` 扫描范围由仅 privileged 扩展为 **privileged + functions 双子树**（368→718 文件）——扩展背景：第二十六批 unkfs ABBA 死锁位于 functions 子树，原单根扫描不可见（fail-closed：不可检查 = 漏检）。同步增强：`functions::sync::irq_lock::IrqSpinLock`（privileged IrqSpinLock 的 functions 层类型别名）纳入安全锁识别，覆盖全路径字段声明与 `as Mutex` 别名导入两种形态。扩展后**零新增发现**（唯一 HIGH 为 privileged smp_init.rs `AP_STARTUP_LOCK` 预存人工审查项，扩展前已存在）。注：脚本 AB-BA 环检测仍为其文档声明的未实现项（需 lockdep-style 锁序声明机制），本次扩展不改变该边界。
 
-### DECISION-L 终局验证：FREG不下沉（2026-09-12 审核员，基于 freg-stack-design.md）
+### DECISION-L 终局验证：FREG不下沉（2026-09-12 审核员，基于 docs/design/freg-design.md）
 
 > 审核员最终解释：**FREG不整体下沉**——它已是"privileged 机制 + functions 策略"的正确分层样板，重构后依然如此。DECISION-L（阻塞 freg 开发）得到设计文档三重证据验证，继续执行。
 

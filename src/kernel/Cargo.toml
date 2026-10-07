@@ -45,6 +45,10 @@ zerocopy = { version = "0.8", default-features = false, features = ["derive"] }
 ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
 smoltcp = { path = "functions/net/smoltcp", default-features = false, features = [
     "medium-ethernet",
+    # 双栈地址池容量: link-local IPv6 + SLAAC 全局 IPv6 + DHCP IPv4 需 3 槽,
+    # 默认容量 2 会致 DHCP IPv4 入池失败 → iface 无 IPv4 → 单播 SYN 被丢.
+    # 取 4 留一档余量 (smoltcp 仅提供 2 的幂 feature, 故不能取 3).
+    "iface-max-addr-count-4",
     "proto-ipv4",
     "proto-ipv4-fragmentation",
     "proto-ipv6",
