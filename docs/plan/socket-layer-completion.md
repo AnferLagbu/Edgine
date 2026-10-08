@@ -499,6 +499,12 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - **裁定**：取路径 B「相对完整」。改用 `scheduler_block(BlockReason::WaitingForIo)` + `scheduler_schedule()` + `scheduler_unblock(pid)`（仿 futex/epoll/uffd 既有范式）；`SocketWaitQueue` 增 `waiter_pid`；唤醒侧持 `NET_STATE` 收集 pid、**释放锁后** unblock（F8：禁 `NET_STATE → SCHEDULER` 嵌套锁）；等待表扩至 `MAX_SM_FD`。accept/connect 完成语义取 A2（对齐 POSIX，非阻塞 `-EINPROGRESS`）。EINTR 与 per-op 超时（`SO_RCVTIMEO`/`SO_SNDTIMEO`）移出首轮，独立轮（P5d）推进。
 - **状态**：[X]
 
+### DECISION-093: 网络快照 FD 表越界崩溃根治（P5a 与 P5b 之间插轮）
+
+- **描述**：P5a 前置调研发现 `save.rs` 的 `SNAPSHOT_FD_COUNT` 硬编码 16，而 `net_save`/`net_restore`（init.rs）按 `for i in 0..MAX_SM_FD` 读写 `fd_types`/`fd_handles` 数组。TD-02 已将 `MAX_SM_FD` 重基为 `FdPlan::SMOLTCP.capacity` = 256，二者自此不一致 → 每次 freg 网络恢复在 i=16 处 **index out-of-bounds panic**（潜伏崩溃，早于 P5a）。同源病灶还有 host-test `fd_count_matches_max_sm_fd` 断言 `= 16 "与 MAX_SM_FD 对齐"`（把错误值锁死）与 bench 侧局部 `MAX_SM_FD=16` 陈旧常量/失效注释。
+- **裁定**：消除魔法数、回归单一来源。`SNAPSHOT_FD_COUNT` 改为 `= crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize`，与 `net::init::MAX_SM_FD` **共用同一 `FdRange::capacity` 源**（不引用 init 别名，避免 `init ↔ save` 循环依赖，与 P5a wait_queue 同法），数组长度与循环上界由构造恒等，崩溃类永久消除；配套修正 save.rs 两单测（16 元字面量 → `array::from_fn` 长度无关）与契约测试（`fd_count_matches_max_sm_fd` → `snapshot_fd_count_sized_by_fdplan_capacity`，锁单源契约 + `!contains("= 16")` 防回退 + 交叉校验 `MAX_SM_FD` 同源）。bench 侧 `MAX_SM_FD` 重命名为 `BENCH_FD_WORKING_SET`（工作集仍 16，为延迟测量的 cache 友好选择，语义与基线不变）并更正注释。save/restore 序列化仅驻内存 static、无跨版本介质约束（`NET_SNAPSHOT_VERSION` 不动）。
+- **状态**：[X]
+
 ---
 
 ## 关联文档
@@ -519,6 +525,7 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 
 - 创建文档，完成现状与缺口梳理（TCP G1-G10 / UDP U1-U9）与方案设计（D1-D9），登记 DECISION-085（A 路径 + 合并补全 + smoltcp 零修改口径）与 DECISION-086（accept 交接与重臂算法及 FD 回收前置）。
 - 口径由 A 路径升级为「相对完整」：补齐 D1-D9 到实现级，accept 改为「先建后换」（DECISION-088），新增 D8b（poll 接线）、D10（阻塞睡眠）、D11（组播）与 G11（无阻塞语义）缺口，实施分期重构，新增决策记录章节并登记 DECISION-087 至 DECISION-091。全部分期与条目状态为 `[]`（未实施）。
+- P5a（地基）完成并入库；P5a 与 P5b 之间插轮根治网络快照 FD 表越界崩溃（DECISION-093），登记单源化处置。
 
 ---
 

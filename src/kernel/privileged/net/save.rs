@@ -38,8 +38,13 @@ use crate::privileged::sync::IrqSpinLock as Mutex;
 pub const NET_SNAPSHOT_MAGIC: u32 = 0x584E_4153;
 /// 快照版本
 pub const NET_SNAPSHOT_VERSION: u32 = 1;
-/// 快照 FD 表长度 (序列化侧自有固定上限, 独立于 Smoltcp 段 `MAX_SM_FD`).
-pub const SNAPSHOT_FD_COUNT: usize = 16;
+/// 快照 FD 表长度: 与 Smoltcp 段 FD 上限 (`FdPlan::SMOLTCP.capacity`) **单一来源**
+/// 同源, 与 `net/init.rs` 的 `MAX_SM_FD` 恒等 (二者皆从 `FdRange::capacity` 派生).
+/// `net_save` / `net_restore` 按 `0..MAX_SM_FD` 读写本数组, 若本长度短于
+/// `MAX_SM_FD` 会越界 panic (TD-02 曾将 `MAX_SM_FD` 重基为 256 而此处滞留 16 即
+/// 为潜伏崩溃); 故此处不得硬编码, 必须复用 `FdPlan` 单一来源.
+/// 不引用 `net::init::MAX_SM_FD` 别名, 避免 `init ↔ save` 循环依赖 (与 wait_queue 同法).
+pub const SNAPSHOT_FD_COUNT: usize = crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize;
 /// DNS 槽数
 pub const SNAPSHOT_DNS_COUNT: usize = 4;
 
@@ -221,7 +226,11 @@ mod tests {
         s.prefix_len = 24;
         s.gateway = [10, 0, 2, 2];
         s.dns = [[8, 8, 8, 8], [1, 1, 1, 1], [0; 4], [0; 4]];
-        s.fd_types = [0, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        s.fd_types = core::array::from_fn(|i| match i {
+            1 => 1,
+            2 => 2,
+            _ => 0,
+        });
         s.fd_handles = core::array::from_fn(|i| if i == 1 || i == 2 { i as u32 } else { 0 });
         s.net_ready = true;
         s.net_configured = true;
@@ -279,7 +288,11 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         clear();
         save(|s| {
-            s.fd_types = [0, 1, 1, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            s.fd_types = core::array::from_fn(|i| match i {
+                1 | 2 => 1,
+                3 | 4 => 2,
+                _ => 0,
+            });
             s.fd_handles = core::array::from_fn(|i| i as u32);
         });
         let got = load();

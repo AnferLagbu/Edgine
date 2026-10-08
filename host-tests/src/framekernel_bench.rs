@@ -472,7 +472,7 @@ pub fn bitmap_scan_bench(iters: u64) -> u128 {
 
 // ====== 11. Socket WaitQueue (来自 privileged/net/wait_queue.rs) ======
 //
-// 16 个 fd (MAX_SM_FD) 上的 mark_waiting → try_wake 循环.
+// 16 个 fd 工作集上的 mark_waiting → try_wake 循环.
 // 单次循环 = 1 个 fd 上的 1 次 send/wake 对应操作.
 // 验收: 1000 个并发 send 路径平均延迟 < 1μs (QEMU 环境 1000 < 1ms 目标换算).
 //
@@ -486,11 +486,15 @@ pub fn bitmap_scan_bench(iters: u64) -> u128 {
 // G-07 收口: 本地 mock 的 `StdMutex` 依赖已随 `MockBlockDevice` 等复刻体删除而移除,
 // 全部同步原语由内核实现承担 (host-test 下 `IrqSpinLock` 的禁中断为 no-op).
 
-/// MAX_SM_FD: 16 (与 functions/net/socket.rs 的 fd 空间 [0, 16) 对齐)
-const MAX_SM_FD: usize = 16;
+/// bench 工作集 fd 数: 16 — 仅为延迟测量选定的小工作集 (cache 友好, 轮询
+/// mark_waiting→try_wake), **不等于** 内核 Smoltcp 段 FD 容量 (生产宽度为
+/// `FdPlan::SMOLTCP.capacity` = 256). 本 bench 不依赖内核 fd 空间, 自持固定队列数.
+const BENCH_FD_WORKING_SET: usize = 16;
 
 pub fn socket_wait_queue_bench(iters: u64) -> u128 {
-    let queues: Vec<SocketWaitQueue> = (0..MAX_SM_FD).map(|_| SocketWaitQueue::new()).collect();
+    let queues: Vec<SocketWaitQueue> = (0..BENCH_FD_WORKING_SET)
+        .map(|_| SocketWaitQueue::new())
+        .collect();
     // 1 轮 (BATCH) = 1000 次并发 send/wake 路径 = 验收目标
     const BATCH: u64 = 1000;
     let start = Instant::now();
@@ -498,7 +502,7 @@ pub fn socket_wait_queue_bench(iters: u64) -> u128 {
     for i in 0..iters {
         for j in 0..BATCH {
             // 轮询 16 个 fd, 每个 fd 上做 mark_waiting + try_wake
-            let fd = ((i * BATCH + j) as usize) % MAX_SM_FD;
+            let fd = ((i * BATCH + j) as usize) % BENCH_FD_WORKING_SET;
             queues[fd].mark_waiting();
             if queues[fd].try_wake(WakeReason::Readable) {
                 sink ^= 1;

@@ -221,11 +221,20 @@ fn unit_tests_count() {
 }
 
 #[test]
-fn fd_count_matches_max_sm_fd() {
+fn snapshot_fd_count_sized_by_fdplan_capacity() {
     let src = read_src("src/kernel/privileged/net/save.rs");
+    // 根治: SNAPSHOT_FD_COUNT 不得硬编码, 必须与 net/init.rs 的 MAX_SM_FD 复用
+    // 同一单一来源 (FdPlan::SMOLTCP.capacity). net_save / net_restore 按
+    // 0..MAX_SM_FD 读写本数组, 若滞留旧值 16 (< 现容量 256) 会越界 panic.
     assert!(
-        src.contains("SNAPSHOT_FD_COUNT: usize = 16"),
-        "P2-I-44: SNAPSHOT_FD_COUNT 必须 = 16 (与 MAX_SM_FD 对齐)"
+        src.contains(
+            "SNAPSHOT_FD_COUNT: usize = crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize"
+        ),
+        "P2-I-44/根治: SNAPSHOT_FD_COUNT 必须从 FdPlan::SMOLTCP.capacity 单一来源派生 (与 MAX_SM_FD 恒等)"
+    );
+    assert!(
+        !src.contains("SNAPSHOT_FD_COUNT: usize = 16"),
+        "P2-I-44/根治: 禁止回退到硬编码 16 (曾与 MAX_SM_FD=256 不一致致 net_save 越界崩溃)"
     );
     assert!(
         src.contains("fd_types: [u8; SNAPSHOT_FD_COUNT]"),
@@ -234,5 +243,14 @@ fn fd_count_matches_max_sm_fd() {
     assert!(
         src.contains("fd_handles: [u32; SNAPSHOT_FD_COUNT]"),
         "P2-I-44: fd_handles 数组必须按 SNAPSHOT_FD_COUNT 分配"
+    );
+    // 消费侧: net_save / net_restore 的循环上界必须与数组同源 (均为 MAX_SM_FD),
+    // 长度恒等由单一来源保证 — 回归防线.
+    let init_src = read_src("src/kernel/privileged/net/init.rs");
+    assert!(
+        init_src.contains(
+            "const MAX_SM_FD: usize = crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize"
+        ),
+        "根治: MAX_SM_FD 与 SNAPSHOT_FD_COUNT 必须共用 FdPlan::SMOLTCP.capacity 单一来源"
     );
 }
