@@ -314,8 +314,8 @@ fn recv_send_block_loop_wired() {
         "fn net_add_waiter",
         "fn net_clear_waiter",
         "can_block",
-        "net_add_waiter(slot, pid, WAITER_READ)",
-        "net_add_waiter(slot, pid, WAITER_WRITE)",
+        "net_add_waiter(slot, pid, WAITER_READ, dl)",
+        "net_add_waiter(slot, pid, WAITER_WRITE, dl)",
         "drop(guard)",
         "scheduler_block(BlockReason::WaitingForIo)",
         "scheduler_schedule()",
@@ -338,5 +338,145 @@ fn recv_send_block_loop_wired() {
     assert!(
         recv_body.contains("net_clear_waiter(slot, pid)"),
         "P5b: sm_recv 返回前必须 net_clear_waiter 自摘等待者"
+    );
+}
+
+// ============================================================================
+// P5d / DECISION-096: EINTR + SO_RCVTIMEO/SNDTIMEO 超时 + MSG_DONTWAIT 接线契约
+// ============================================================================
+
+#[test]
+fn p5d_wait_queue_has_deadline_and_collect_expired() {
+    // 等待者槽新增绝对超时死线维度 (与方向正交), collect_expired 非破坏采集到点 pid.
+    let wq = read_src("src/kernel/privileged/net/wait_queue.rs");
+    assert!(
+        wq.contains("waiter_deadline: [AtomicU64; WAITER_SLOTS]"),
+        "P5d: wait_queue 缺 waiter_deadline 定长死线数组"
+    );
+    assert!(
+        wq.contains("pub fn add_waiter(&self, pid: u32, want: u8, deadline_ns: u64)"),
+        "P5d: add_waiter 未扩 deadline_ns 参数"
+    );
+    assert!(
+        wq.contains("pub fn collect_expired"),
+        "P5d: wait_queue 缺 collect_expired API"
+    );
+    // collect_expired 必须非破坏 (只 load, 不 swap), 与 collect_waiters 同一自愈根基.
+    let start = wq
+        .find("pub fn collect_expired")
+        .expect("P5d: 缺 collect_expired");
+    let end = start
+        + wq[start..]
+            .find("}\n    \n")
+            .or_else(|| wq[start..].find("#[expect"))
+            .unwrap_or(wq.len() - start);
+    let body = &wq[start..end];
+    assert!(
+        body.contains(".load("),
+        "P5d: collect_expired 应基于只读 load 采集"
+    );
+    assert!(
+        !body.contains(".swap("),
+        "P5d: collect_expired 必须非破坏 (不得 swap 清槽)"
+    );
+}
+
+#[test]
+fn p5d_poll_network_wires_deadline_sweep() {
+    // 机制 B: poll_network 每 tick 用单调时钟扫到点死线, 与就绪唤醒共用同一
+    // 出临界区 scheduler_unblock 路 (不新增第三条唤醒源).
+    let poll = read_src("src/kernel/privileged/net/init.rs");
+    assert!(
+        poll.contains("use crate::privileged::timer::hrtimer_clock_read;"),
+        "P5d: poll_network 需引入 hrtimer_clock_read 单调时钟"
+    );
+    assert!(
+        poll.contains("let now_ns = hrtimer_clock_read();"),
+        "P5d: poll_network 每 tick 采一次死线基准 now_ns"
+    );
+    assert!(
+        poll.contains("q.collect_expired(now_ns"),
+        "P5d: poll_network 未接线 collect_expired 死线扫描"
+    );
+}
+
+#[test]
+fn p5d_sock_timeout_per_slot_storage() {
+    // per-slot 超时刻度 (ns) 存于 NetState, 经 raw accessor 读写 (调用方持 NET_STATE).
+    let st = read_src("src/kernel/privileged/net/init/state.rs");
+    assert!(
+        st.contains("recv_timeout_ns: Vec<u64>") && st.contains("send_timeout_ns: Vec<u64>"),
+        "P5d: NetState 缺 recv/send_timeout_ns per-slot 存储"
+    );
+    let raw = read_src("src/kernel/privileged/net/init/raw.rs");
+    assert!(
+        raw.contains("pub fn sock_timeout_ns(fd: usize, recv: bool) -> u64"),
+        "P5d: raw 缺 sock_timeout_ns 读 accessor"
+    );
+    assert!(
+        raw.contains("pub fn set_sock_timeout_ns(fd: usize, recv: bool, ns: u64)"),
+        "P5d: raw 缺 set_sock_timeout_ns 写 accessor"
+    );
+}
+
+#[test]
+fn p5d_blocking_loops_eintr_timeout_wired() {
+    // 统一阻塞循环三退出: ready / signal (-EINTR) / 超时 (-E_AGAIN, connect -E_INPROGRESS);
+    // MSG_DONTWAIT 折叠为本次非阻塞.
+    let sm = read_src("src/kernel/privileged/net/init/sm_fi.rs");
+    assert!(
+        sm.contains("has_deliverable_signal"),
+        "P5d: 阻塞循环未检测可投递信号 (EINTR)"
+    );
+    assert!(
+        sm.contains("return -E_INTR;"),
+        "P5d: 阻塞循环缺 -EINTR 返回路径"
+    );
+    assert!(
+        sm.contains("(flags & MSG_DONTWAIT) != 0"),
+        "P5d: 缺 MSG_DONTWAIT 本次非阻塞折叠"
+    );
+    assert!(
+        sm.contains("unsafe fn sock_block_deadline") && sm.contains("get_or_insert_with"),
+        "P5d: 缺进阻塞前算绝对死线 (get_or_insert_with 复用不延长)"
+    );
+    // connect 超时保守异步语义: 返 -E_INPROGRESS (非 -E_AGAIN).
+    let conn_start = sm.find("fn sm_connect(").expect("P5d: 缺 sm_connect");
+    let conn_body = &sm[conn_start..conn_start + 4000];
+    assert!(
+        conn_body.contains("return -E_INPROGRESS;"),
+        "P5d: sm_connect 超时未返 -E_INPROGRESS"
+    );
+}
+
+#[test]
+fn p5d_sockopt_timeval_abi_wired() {
+    // SO_RCVTIMEO/SO_SNDTIMEO: sm 层读写 16 字节 struct timeval; syscall 层长度感知 marshalling.
+    let sm = read_src("src/kernel/privileged/net/init/sm_fi.rs");
+    assert!(
+        sm.contains("optname == SO_RCVTIMEO || optname == SO_SNDTIMEO"),
+        "P5d: sm_setsockopt/sm_getsockopt 缺 SO_RCVTIMEO/SO_SNDTIMEO 分支"
+    );
+    assert!(
+        sm.contains("raw::set_sock_timeout_ns(slot, optname == SO_RCVTIMEO, ns)"),
+        "P5d: sm_setsockopt 未将 timeval 存为 per-slot ns"
+    );
+    assert!(
+        sm.contains("core::ptr::write_unaligned(optlen, 16);"),
+        "P5d: sm_getsockopt 未回填 16 字节 timeval"
+    );
+    // syscall 层不再硬读/写 4 字节 u32, 改为按 valen / *optlen 全长 marshalling.
+    let sc = read_src("src/kernel/privileged/net/syscall.rs");
+    assert!(
+        sc.contains("let len = (valen as usize).min(16);"),
+        "P5d: setsockopt_syscall 未按 valen 全长 copy-in (上限 16)"
+    );
+    assert!(
+        sc.contains("let in_len = cap.min(16);"),
+        "P5d: getsockopt_syscall 未按用户 *optlen 容量回填 (上限 16)"
+    );
+    assert!(
+        sc.contains("raw_copy_out(val_ptr, out_len, &buf)"),
+        "P5d: getsockopt_syscall 未用长度感知 copy-out"
     );
 }

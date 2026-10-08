@@ -41,7 +41,7 @@
 //
 // 不破坏任何既有边界; 只在 privileged/net/ 内部新增, 不跨层.
 use crate::privileged::sync::IrqSpinLock as Mutex;
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 /// Smoltcp 段 FD 上限 (与 `FdPlan::SMOLTCP.capacity` 同源; 不引用 `net::init` 的
 /// `MAX_SM_FD` 别名, 避免 `init ↔ wait_queue` 循环依赖). 权威定义见 `net/init.rs`.
@@ -86,10 +86,16 @@ pub enum WakeReason {
 /// `collect_waiters` 均在 `NET_STATE` 临界区内调用 (消费者与 `poll_network` 互斥),
 /// 数组内原子操作仅为防御.
 ///
-/// syscall 端阻塞 (D10): 持 `NET_STATE` 内 `add_waiter(pid,want)` → **释放锁**
-/// → `scheduler_block` + `scheduler_schedule`; 唤醒侧 `collect_waiters` 收集
-/// 方向匹配 pid → **释放 `NET_STATE`** → 逐个 `scheduler_unblock` (F8: 禁
+/// syscall 端阻塞 (D10): 持 `NET_STATE` 内 `add_waiter(pid,want,deadline)` →
+/// **释放锁** → `scheduler_block` + `scheduler_schedule`; 唤醒侧 `collect_waiters`
+/// 收集方向匹配 pid → **释放 `NET_STATE`** → 逐个 `scheduler_unblock` (F8: 禁
 /// `NET_STATE → SCHEDULER` 嵌套锁).
+///
+/// 超时 (P5d / DECISION-096): 每个等待者槽附带一个绝对死线 `deadline_ns`
+/// (0 = 无超时). 消费者进入阻塞前按 `SO_RCVTIMEO`/`SO_SNDTIMEO` 算出死线并随
+/// `add_waiter` 登记; `poll_network` 每 tick 经 `collect_expired(now)` 采集到点者,
+/// 与就绪唤醒共用同一条出临界区 `scheduler_unblock` 路, 唤醒后消费者重判返
+/// `-EAGAIN`. 超时粒度 = poll tick 周期.
 ///
 /// 丢失唤醒自愈 (DECISION-094 事实②): `collect_waiters` **非破坏** (不移除
 /// 等待者); 消费者操作成功后自行 `remove_waiter` 自摘. 若某次 unblock 落在
@@ -107,6 +113,10 @@ pub struct SocketWaitQueue {
     /// 与 `waiter_pid` 同索引的兴趣方向 (`WAITER_READ` / `WAITER_WRITE` /
     /// `WAITER_ACCEPT` / `WAITER_CONNECT`).
     waiter_want: [AtomicU8; WAITER_SLOTS],
+    /// 与 `waiter_pid` 同索引的绝对超时死线 (纳秒, 取自 `hrtimer_clock_read`
+    /// 单调时钟; 0 = 无超时). 消费者进入阻塞时按 `SO_RCVTIMEO`/`SO_SNDTIMEO`
+    /// 算出并登记, `poll_network` 每 tick 经 `collect_expired` 采集到点者唤醒 (P5d).
+    waiter_deadline: [AtomicU64; WAITER_SLOTS],
     /// ISR 端抢锁 (`try_lock`) 用的 mutex
     lock: Mutex<()>,
 }
@@ -119,6 +129,7 @@ impl SocketWaitQueue {
             last_reason: AtomicU32::new(u32::MAX),
             waiter_pid: [const { AtomicU32::new(0) }; WAITER_SLOTS],
             waiter_want: [const { AtomicU8::new(WAITER_NONE) }; WAITER_SLOTS],
+            waiter_deadline: [const { AtomicU64::new(0) }; WAITER_SLOTS],
             lock: Mutex::new(()),
         }
     }
@@ -128,17 +139,19 @@ impl SocketWaitQueue {
         !self.pending.swap(true, Ordering::AcqRel)
     }
 
-    /// 将 `pid` 登记为方向 `want` 的等待者. 由调用方在持 `NET_STATE` 临界区内
-    /// 与 `mark_waiting` 一同调用. 同一 pid 已登记则更新方向 (幂等).
-    /// 返 false 表示槽满 (消费者应回退非阻塞, 见 `WAITER_SLOTS` SIMPLIFIED).
-    pub fn add_waiter(&self, pid: u32, want: u8) -> bool {
-        // 已存在同 pid → 更新方向 (幂等, 避免重复占槽).
+    /// 将 `pid` 登记为方向 `want`、绝对死线 `deadline_ns` (0 = 无超时) 的等待者.
+    /// 由调用方在持 `NET_STATE` 临界区内与 `mark_waiting` 一同调用. 同一 pid 已
+    /// 登记则更新方向与死线 (幂等). 返 false 表示槽满 (消费者应回退非阻塞,
+    /// 见 `WAITER_SLOTS` SIMPLIFIED).
+    pub fn add_waiter(&self, pid: u32, want: u8, deadline_ns: u64) -> bool {
+        // 已存在同 pid → 更新方向与死线 (幂等, 避免重复占槽).
         if let Some(idx) = self
             .waiter_pid
             .iter()
             .position(|s| s.load(Ordering::Acquire) == pid)
         {
             self.waiter_want[idx].store(want, Ordering::Release);
+            self.waiter_deadline[idx].store(deadline_ns, Ordering::Release);
             return true;
         }
         // 找空槽 CAS 入队.
@@ -148,6 +161,7 @@ impl SocketWaitQueue {
                 .is_ok()
             {
                 self.waiter_want[i].store(want, Ordering::Release);
+                self.waiter_deadline[i].store(deadline_ns, Ordering::Release);
                 self.pending.store(true, Ordering::Release);
                 return true;
             }
@@ -160,6 +174,7 @@ impl SocketWaitQueue {
         for i in 0..WAITER_SLOTS {
             if self.waiter_pid[i].swap(0, Ordering::AcqRel) == pid {
                 self.waiter_want[i].store(WAITER_NONE, Ordering::Release);
+                self.waiter_deadline[i].store(0, Ordering::Release);
                 return;
             }
         }
@@ -173,6 +188,28 @@ impl SocketWaitQueue {
         for i in 0..WAITER_SLOTS {
             let pid = self.waiter_pid[i].load(Ordering::Acquire);
             if pid != 0 && self.waiter_want[i].load(Ordering::Acquire) == want {
+                if n < out.len() {
+                    out[n] = pid;
+                    n += 1;
+                } else {
+                    break; // out 满, 余下待下一 tick 电平重扫自愈 (SIMPLIFIED)
+                }
+            }
+        }
+        n
+    }
+
+    /// 将 `deadline_ns != 0 && deadline_ns <= now_ns` 的等待者 pid 采集到 `out`,
+    /// 返回写入个数. **非破坏** (不移除等待者), 与方向 `want` 无关 (超时到点无论
+    /// 阻塞在哪个方向都须唤醒消费者重判, 由其返回 `-EAGAIN`). 供 `poll_network`
+    /// 每 tick 在持 `NET_STATE` 时采集超时到点 pid, 出临界区后逐个
+    /// `scheduler_unblock`. `out` 满则截断, 余下待下一 tick 电平重扫自愈.
+    pub fn collect_expired(&self, now_ns: u64, out: &mut [u32]) -> usize {
+        let mut n = 0usize;
+        for i in 0..WAITER_SLOTS {
+            let pid = self.waiter_pid[i].load(Ordering::Acquire);
+            let dl = self.waiter_deadline[i].load(Ordering::Acquire);
+            if pid != 0 && dl != 0 && dl <= now_ns {
                 if n < out.len() {
                     out[n] = pid;
                     n += 1;
@@ -297,7 +334,7 @@ mod tests {
         let q = SocketWaitQueue::new();
         let mut out = [0u32; WAITER_SLOTS];
         assert_eq!(q.collect_waiters(WAITER_READ, &mut out), 0); // 初始无等待者
-        assert!(q.add_waiter(42, WAITER_READ));
+        assert!(q.add_waiter(42, WAITER_READ, 0));
         // 非破坏 collect: 采集到但不移除
         assert_eq!(q.collect_waiters(WAITER_READ, &mut out), 1);
         assert_eq!(out[0], 42);
@@ -310,8 +347,8 @@ mod tests {
     fn waiter_direction_filter() {
         let q = SocketWaitQueue::new();
         let mut out = [0u32; WAITER_SLOTS];
-        assert!(q.add_waiter(7, WAITER_READ));
-        assert!(q.add_waiter(8, WAITER_WRITE));
+        assert!(q.add_waiter(7, WAITER_READ, 0));
+        assert!(q.add_waiter(8, WAITER_WRITE, 0));
         // 只采集 read 方向
         assert_eq!(q.collect_waiters(WAITER_READ, &mut out), 1);
         assert_eq!(out[0], 7);
@@ -325,8 +362,8 @@ mod tests {
         // (机制与 READ/WRITE 同构, 无需改队列结构).
         let q = SocketWaitQueue::new();
         let mut out = [0u32; WAITER_SLOTS];
-        assert!(q.add_waiter(11, WAITER_ACCEPT));
-        assert!(q.add_waiter(12, WAITER_CONNECT));
+        assert!(q.add_waiter(11, WAITER_ACCEPT, 0));
+        assert!(q.add_waiter(12, WAITER_CONNECT, 0));
         assert_eq!(q.collect_waiters(WAITER_ACCEPT, &mut out), 1);
         assert_eq!(out[0], 11);
         assert_eq!(q.collect_waiters(WAITER_CONNECT, &mut out), 1);
@@ -353,12 +390,15 @@ mod tests {
         let q = SocketWaitQueue::new();
         // 填满 WAITER_SLOTS 个不同 pid (均 read)
         for i in 0..WAITER_SLOTS as u32 {
-            assert!(q.add_waiter(i + 1, WAITER_READ), "第 {i} 个等待者应入槽");
+            assert!(q.add_waiter(i + 1, WAITER_READ, 0), "第 {i} 个等待者应入槽");
         }
         // 槽满: 新 pid 拒绝 (消费者回退非阻塞, 见 WAITER_SLOTS SIMPLIFIED)
-        assert!(!q.add_waiter(1_000, WAITER_READ), "超 WAITER_SLOTS 应拒绝");
+        assert!(
+            !q.add_waiter(1_000, WAITER_READ, 0),
+            "超 WAITER_SLOTS 应拒绝"
+        );
         // 同 pid 幂等更新方向 (不重复占槽): pid 1 → write
-        assert!(q.add_waiter(1, WAITER_WRITE), "同 pid 应幂等更新方向");
+        assert!(q.add_waiter(1, WAITER_WRITE, 0), "同 pid 应幂等更新方向");
         let mut out = [0u32; WAITER_SLOTS];
         assert_eq!(q.collect_waiters(WAITER_WRITE, &mut out), 1); // 仅 pid 1 转 write
         assert_eq!(out[0], 1);
@@ -374,5 +414,41 @@ mod tests {
         }
         assert_eq!(q.wake_count(), 3);
         assert_eq!(q.last_reason(), Some(WakeReason::Closed));
+    }
+
+    #[test]
+    fn waiter_deadline_collect_expired() {
+        // P5d: 带死线的等待者经 collect_expired 按 now 采集, 与方向无关.
+        let q = SocketWaitQueue::new();
+        let mut out = [0u32; WAITER_SLOTS];
+        // pid 20 死线 1000, pid 21 死线 2000, pid 22 无死线 (0)
+        assert!(q.add_waiter(20, WAITER_READ, 1_000));
+        assert!(q.add_waiter(21, WAITER_WRITE, 2_000));
+        assert!(q.add_waiter(22, WAITER_ACCEPT, 0));
+        // now=500: 均未到点
+        assert_eq!(q.collect_expired(500, &mut out), 0);
+        // now=1000: 仅 pid 20 到点 (dl<=now, 含等号)
+        assert_eq!(q.collect_expired(1_000, &mut out), 1);
+        assert_eq!(out[0], 20);
+        // now=2500: pid 20/21 到点, pid 22 无死线不采
+        assert_eq!(q.collect_expired(2_500, &mut out), 2);
+        // 非破坏: 采集后仍可再采
+        assert_eq!(q.collect_expired(2_500, &mut out), 2);
+        // remove_waiter 清死线: 摘 pid 20 后到点集合只剩 pid 21
+        q.remove_waiter(20);
+        assert_eq!(q.collect_expired(2_500, &mut out), 1);
+        assert_eq!(out[0], 21);
+    }
+
+    #[test]
+    fn deadline_does_not_affect_direction_collect() {
+        // P5d: 死线维度不影响既有 collect_waiters 的方向过滤 (两维正交).
+        let q = SocketWaitQueue::new();
+        let mut out = [0u32; WAITER_SLOTS];
+        assert!(q.add_waiter(30, WAITER_READ, 5_000));
+        assert_eq!(q.collect_waiters(WAITER_READ, &mut out), 1);
+        assert_eq!(out[0], 30);
+        // 未到点不触发超时采集
+        assert_eq!(q.collect_expired(1, &mut out), 0);
     }
 }

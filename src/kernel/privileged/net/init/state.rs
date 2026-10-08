@@ -69,6 +69,12 @@ pub struct NetState {
     /// `false` = 非阻塞 (`SOCK_NONBLOCK` 或 `fcntl(F_SETFL, O_NONBLOCK)` 置位).
     /// `allocate()` 默认填 `true`; 由 `socket_syscall` / `fcntl` 经 `raw` accessor 改写.
     pub(crate) blocking: Vec<bool>,
+    /// 各 FD 的接收超时 (SO_RCVTIMEO, P5d / DECISION-096): 单位纳秒, `0` = 无超时
+    /// (阻塞至就绪或被信号打断). `recv`/`recvfrom`/`accept` 进入阻塞前据此算绝对死线.
+    pub(crate) recv_timeout_ns: Vec<u64>,
+    /// 各 FD 的发送超时 (SO_SNDTIMEO, P5d / DECISION-096): 单位纳秒, `0` = 无超时.
+    /// `send`/`sendto`/`connect` 进入阻塞前据此算绝对死线.
+    pub(crate) send_timeout_ns: Vec<u64>,
     pub(crate) tcp_rx_bufs: Vec<*mut u8>,
     pub(crate) tcp_tx_bufs: Vec<*mut u8>,
     pub(crate) udp_rx_bufs: Vec<*mut u8>,
@@ -98,6 +104,8 @@ impl NetState {
             local_endpoints: Vec::new(),
             remote_endpoints: Vec::new(),
             blocking: Vec::new(),
+            recv_timeout_ns: Vec::new(),
+            send_timeout_ns: Vec::new(),
             tcp_rx_bufs: Vec::new(),
             tcp_tx_bufs: Vec::new(),
             udp_rx_bufs: Vec::new(),
@@ -117,6 +125,8 @@ impl NetState {
         self.local_endpoints = (0..TOTAL_SLOTS).map(|_| None).collect();
         self.remote_endpoints = (0..TOTAL_SLOTS).map(|_| None).collect();
         self.blocking = (0..TOTAL_SLOTS).map(|_| true).collect();
+        self.recv_timeout_ns = (0..TOTAL_SLOTS).map(|_| 0u64).collect();
+        self.send_timeout_ns = (0..TOTAL_SLOTS).map(|_| 0u64).collect();
         self.tcp_rx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();
         self.tcp_tx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();
         self.udp_rx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();

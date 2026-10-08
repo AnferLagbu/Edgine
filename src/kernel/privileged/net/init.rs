@@ -277,9 +277,21 @@ pub unsafe fn poll_network() {
             SOCKET_WAIT_QUEUES, WAITER_ACCEPT, WAITER_CONNECT, WAITER_READ, WAITER_WRITE,
             WakeReason,
         };
+        use crate::privileged::timer::hrtimer_clock_read;
+        // P5d: 死线到点判定用单调时钟 (纳秒). 每 tick 采一次, 全 fd 循环复用.
+        let now_ns = hrtimer_clock_read();
         for fd in 0..MAX_SM_FD {
             if raw::fd_type(fd) == 0 {
                 continue;
+            }
+            // P5d: 超时唤醒与 socket 就绪无关 —— 无论 handle 是否存在、是否 ready,
+            // 只要该 fd 等待队列有到点死线即采集唤醒 (消费者醒来重判返 -EAGAIN).
+            // 取 q 上移至此; 就绪方向采集仍延后到 handle 判定之后.
+            let Some(q) = SOCKET_WAIT_QUEUES.get(fd) else {
+                continue;
+            };
+            if wake_n < WAKE_BATCH {
+                wake_n += q.collect_expired(now_ns, &mut to_wake[wake_n..]);
             }
             // 用 smoltcp can_send / can_recv + is_open 判定就绪方向与连接关闭.
             // socket_set 访问仍在 NET_STATE 锁保护下 (try_wake 内部 lock 仅保护
@@ -323,9 +335,6 @@ pub unsafe fn poll_network() {
                 WakeReason::AcceptReady
             } else {
                 WakeReason::ConnectDone
-            };
-            let Some(q) = SOCKET_WAIT_QUEUES.get(fd) else {
-                continue;
             };
             q.try_wake(reason);
             // 锁内采集方向匹配等待者 pid (非破坏, 不移除); unblock 延后到释放

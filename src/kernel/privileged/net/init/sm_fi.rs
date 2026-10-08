@@ -19,9 +19,11 @@ use crate::privileged::net::{
     SOCKET_WAIT_QUEUES, WAITER_ACCEPT, WAITER_CONNECT, WAITER_READ, WAITER_WRITE,
 };
 use crate::privileged::proc::{
-    BlockReason, process_get_current_pid, scheduler_block, scheduler_schedule,
+    BlockReason, has_deliverable_signal, process_get_current_pid, scheduler_block,
+    scheduler_schedule,
 };
 use crate::privileged::sync::in_irq_context;
+use crate::privileged::timer::hrtimer_clock_read;
 use core::sync::atomic::AtomicU16;
 use smoltcp::socket::{tcp, udp};
 use smoltcp::time::Duration;
@@ -30,6 +32,7 @@ use smoltcp::wire::{IpAddress, IpEndpoint, IpListenEndpoint, Ipv4Address, Ipv6Ad
 // ============================================================================
 // POSIX errno 常量 (i32)
 // ============================================================================
+const E_INTR: i32 = 4;
 const E_BADF: i32 = 9;
 const E_AGAIN: i32 = 11;
 const E_NOMEM: i32 = 12;
@@ -62,6 +65,16 @@ const SOCK_STREAM: i32 = 1;
 const SOCK_DGRAM: i32 = 2;
 
 // ============================================================================
+// D8c: recv/send flags + socket 超时选项 (P5d / DECISION-096, Linux 值域)
+// ============================================================================
+/// `recv`/`send` 族 flags: 本次调用非阻塞 (不挂起, 立即返 -E_AGAIN).
+const MSG_DONTWAIT: i32 = 0x40;
+/// `SOL_SOCKET` 接收超时选项 (存 ns 于 per-slot, 治理 recv/recvfrom/accept).
+const SO_RCVTIMEO: i32 = 20;
+/// `SOL_SOCKET` 发送超时选项 (存 ns 于 per-slot, 治理 send/sendto/connect).
+const SO_SNDTIMEO: i32 = 21;
+
+// ============================================================================
 // D8b: poll 事件位 (Linux <poll.h> 值域; 与 functions/fs/file_ops.rs 一致)
 // ============================================================================
 const POLLIN: i16 = 1;
@@ -88,13 +101,14 @@ fn sm_slot(fd: i32) -> Option<usize> {
     }
 }
 
-/// 登记当前进程为 `slot` 上方向 `want` 的等待者 (须在持 `NET_STATE` 时调用).
-/// 返 false 表示等待者槽满 → 调用方应回退非阻塞语义 (见 `WAITER_SLOTS` SIMPLIFIED).
+/// 登记当前进程为 `slot` 上方向 `want`、绝对死线 `deadline_ns` (0=无超时) 的
+/// 等待者 (须在持 `NET_STATE` 时调用). 返 false 表示等待者槽满 → 调用方应回退
+/// 非阻塞语义 (见 `WAITER_SLOTS` SIMPLIFIED).
 #[inline]
-fn net_add_waiter(slot: usize, pid: u32, want: u8) -> bool {
+fn net_add_waiter(slot: usize, pid: u32, want: u8, deadline_ns: u64) -> bool {
     SOCKET_WAIT_QUEUES
         .get(slot)
-        .is_some_and(|q| q.add_waiter(pid, want))
+        .is_some_and(|q| q.add_waiter(pid, want, deadline_ns))
 }
 
 /// 清除当前进程在 `slot` 上的等待登记 (IO 返回前自摘; 无登记则 no-op).
@@ -106,6 +120,25 @@ fn net_clear_waiter(slot: usize, pid: u32) {
         if let Some(q) = SOCKET_WAIT_QUEUES.get(slot) {
             q.remove_waiter(pid);
         }
+    }
+}
+
+/// P5d: 进入阻塞前算绝对超时死线 (纳秒, `hrtimer_clock_read` 单调时钟). `recv=true`
+/// 取 SO_RCVTIMEO, `false` 取 SO_SNDTIMEO. 刻度 0 = 无超时 (返 0, 阻塞至就绪/信号).
+/// 消费者在首次真正挂起时用 `Option::get_or_insert_with` 计算一次, 后续重挂复用
+/// 同一绝对死线 (不因重挂而延长超时).
+///
+/// # Safety
+/// 调用方须持有 `NET_STATE` 锁 (读 per-slot 超时刻度).
+#[inline]
+unsafe fn sock_block_deadline(slot: usize, recv: bool) -> u64 {
+    // raw::sock_timeout_ns 为 safe 签名访问器 (内部 unsafe 块要求调用方持 NET_STATE
+    // 锁, 由本 unsafe fn 契约保证); 本处无 unsafe 操作, 无需再裹 unsafe 块.
+    let to = raw::sock_timeout_ns(slot, recv);
+    if to == 0 {
+        0
+    } else {
+        hrtimer_clock_read().saturating_add(to)
     }
 }
 
@@ -711,6 +744,9 @@ pub unsafe extern "C" fn sm_accept(fd: i32, addr: *mut u8, addrlen: *mut u32) ->
     // 中断路径保留旧 eager -E_AGAIN 语义 (显式 O_NONBLOCK 或不可挂起场景).
     let pid = process_get_current_pid();
     let can_block = pid != 0 && !in_irq_context();
+    // P5d (DECISION-096): 阻塞 accept 至就绪 / 信号 (-EINTR) / SO_RCVTIMEO 到点 (-E_AGAIN).
+    // 绝对死线首次挂起时算一次, 重挂复用同一绝对值 (不因重挂而延长超时).
+    let mut deadline: Option<u64> = None;
     unsafe {
         loop {
             let guard = NET_STATE.lock();
@@ -728,13 +764,26 @@ pub unsafe extern "C" fn sm_accept(fd: i32, addr: *mut u8, addrlen: *mut u32) ->
             if !raw::is_blocking(slot) || !can_block {
                 return r;
             }
-            if !net_add_waiter(slot, pid, WAITER_ACCEPT) {
+            // 醒来重查仍无连接: 先判信号 (-EINTR), 再判超时 (-E_AGAIN), 均自摘等待者.
+            if has_deliverable_signal(pid) {
+                net_clear_waiter(slot, pid);
+                return -E_INTR;
+            }
+            let dl = *deadline.get_or_insert_with(|| {
+                // SAFETY: 持 NET_STATE 锁 (guard 存活); sock_block_deadline 读 per-slot 刻度.
+                sock_block_deadline(slot, true)
+            });
+            if dl != 0 && hrtimer_clock_read() >= dl {
+                net_clear_waiter(slot, pid);
+                return -E_AGAIN;
+            }
+            if !net_add_waiter(slot, pid, WAITER_ACCEPT, dl) {
                 return -E_AGAIN; // 等待者槽满, 保守回退 (见 WAITER_SLOTS SIMPLIFIED)
             }
             drop(guard);
             scheduler_block(BlockReason::WaitingForIo);
             scheduler_schedule();
-            // poll_network 唤醒 → 回循环顶重锁重查监听槽状态.
+            // poll_network 唤醒 (就绪/超时) 或信号置 Ready → 回循环顶重锁重查监听槽状态.
         }
     }
 }
@@ -882,6 +931,9 @@ pub unsafe extern "C" fn sm_connect(fd: i32, addr: *const u8, addrlen: u32) -> i
     // Phase B: 仅 TCP 可能处于握手进行中; UDP (fd_type!=1) 同步完成直接返 0.
     let pid = process_get_current_pid();
     let can_block = pid != 0 && !in_irq_context();
+    // P5d (DECISION-096): 阻塞 connect 叠加信号 (-EINTR) 与 SO_SNDTIMEO (-E_INPROGRESS)
+    // 两条退出 (绝对死线首次挂起算一次、重挂复用).
+    let mut deadline: Option<u64> = None;
     unsafe {
         loop {
             let guard = NET_STATE.lock();
@@ -903,8 +955,10 @@ pub unsafe extern "C" fn sm_connect(fd: i32, addr: *const u8, addrlen: u32) -> i
                     return 0;
                 }
                 tcp::State::Closed => {
-                    // SIMPLIFIED: smoltcp 不提供 connect 失败精确原因 (RST vs 超时),
-                    // 统一近似 ECONNREFUSED; 精确 refused/timeout 区分归 P5d.
+                    // SIMPLIFIED: smoltcp Closed 不区分失败原因 (RST vs 其内部超时),
+                    // 统一近似 ECONNREFUSED. P5d (DECISION-096) 已落 SO_SNDTIMEO: 用户态
+                    // 连接超时经下行 SynSent 死线分支返 -E_INPROGRESS (有别于 refused);
+                    // 唯 Closed 自身成因仍不可细分.
                     net_clear_waiter(slot, pid);
                     return -E_CONNREFUSED;
                 }
@@ -912,13 +966,28 @@ pub unsafe extern "C" fn sm_connect(fd: i32, addr: *const u8, addrlen: u32) -> i
                     if !raw::is_blocking(slot) || !can_block {
                         return -E_INPROGRESS; // 非阻塞 / 不可挂起: 异步进行中
                     }
-                    if !net_add_waiter(slot, pid, WAITER_CONNECT) {
+                    // P5d: 醒来仍 SynSent/SynReceived → 先判信号, 再判超时.
+                    // SIMPLIFIED: 返 -EINTR/-E_INPROGRESS 后 smoltcp 仍处 SynSent (后台续接握手),
+                    // 不同于 Linux “connect 被打断后 socket 状态未定义”; 用户可后续 getsockopt SO_ERROR 查询.
+                    if has_deliverable_signal(pid) {
+                        net_clear_waiter(slot, pid);
+                        return -E_INTR;
+                    }
+                    let dl = *deadline.get_or_insert_with(|| {
+                        // SAFETY: 持 NET_STATE 锁 (guard 存活); sock_block_deadline 读 per-slot 刻度.
+                        sock_block_deadline(slot, false)
+                    });
+                    if dl != 0 && hrtimer_clock_read() >= dl {
+                        net_clear_waiter(slot, pid);
+                        return -E_INPROGRESS; // SO_SNDTIMEO 到点: 握手未完成, 保守异步语义
+                    }
+                    if !net_add_waiter(slot, pid, WAITER_CONNECT, dl) {
                         return -E_INPROGRESS; // 等待者槽满: 保守回退非阻塞语义
                     }
                     drop(guard);
                     scheduler_block(BlockReason::WaitingForIo);
                     scheduler_schedule();
-                    // poll_network 唤醒 → 回顶重查握手结果.
+                    // poll_network 唤醒 (Established/Closed/超时) 或信号 → 回顶重查握手结果.
                 }
                 _ => {
                     // 其他态 (罕见) 视为完成.
@@ -1055,13 +1124,15 @@ unsafe fn sm_connect_locked(fd: i32, addr: *const u8, _addrlen: u32) -> i32 {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
-pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, _flags: i32) -> i32 {
-    // SIMPLIFIED: 未处理 MSG_DONTWAIT / MSG_NOSIGNAL (归 P5d); 仅据 fd 阻塞位
-    // 决定是否挂起; 影响面=单次 send 的 flag 级非阻塞; 何时扩展=flags 语义完善轮.
+pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, flags: i32) -> i32 {
     // P5b (DECISION-094): TCP 发送缓冲满 (can_send=false) 且连接存活时, 阻塞 fd
     // 登记 WAITER_WRITE 等待者 → 释放 NET_STATE → block+schedule → 回顶重查.
+    // P5d (DECISION-096): MSG_DONTWAIT 本次非阻塞 (立即 -E_AGAIN); 阻塞时叠加信号
+    // (-EINTR) 与 SO_SNDTIMEO (-E_AGAIN) 两条退出. MSG_NOSIGNAL 无效果 (本核无 SIGPIPE).
+    let dontwait = (flags & MSG_DONTWAIT) != 0;
     let pid = process_get_current_pid();
     let can_block = pid != 0 && !in_irq_context();
+    let mut deadline: Option<u64> = None;
     unsafe {
         loop {
             let guard = NET_STATE.lock();
@@ -1079,7 +1150,7 @@ pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, _flags: i32)
             if buf.is_null() || len == 0 {
                 return -E_INVAL;
             }
-            let blocking = raw::is_blocking(slot);
+            let blocking = raw::is_blocking(slot) && !dontwait;
 
             let sockets = &mut *socket_set();
             let data = core::slice::from_raw_parts(buf, len as usize);
@@ -1121,8 +1192,20 @@ pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, _flags: i32)
                 net_clear_waiter(slot, pid);
                 return r;
             }
-            // None 仅在 (blocking && can_block && TCP 缓冲满) 产生 → 登记等待者并挂起.
-            if !net_add_waiter(slot, pid, WAITER_WRITE) {
+            // None 仅在 (blocking && can_block && TCP 缓冲满) 产生 → P5d: 判信号/超时后挂起.
+            if has_deliverable_signal(pid) {
+                net_clear_waiter(slot, pid);
+                return -E_INTR;
+            }
+            let dl = *deadline.get_or_insert_with(|| {
+                // SAFETY: 持 NET_STATE 锁 (guard 存活); sock_block_deadline 读 per-slot 刻度.
+                sock_block_deadline(slot, false)
+            });
+            if dl != 0 && hrtimer_clock_read() >= dl {
+                net_clear_waiter(slot, pid);
+                return -E_AGAIN;
+            }
+            if !net_add_waiter(slot, pid, WAITER_WRITE, dl) {
                 return -E_AGAIN; // 等待者槽满, 保守回退 (见 WAITER_SLOTS SIMPLIFIED)
             }
             drop(guard);
@@ -1145,13 +1228,16 @@ pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, _flags: i32)
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
-pub unsafe extern "C" fn sm_recv(fd: i32, buf: *mut u8, len: u32, _flags: i32) -> i32 {
-    // SIMPLIFIED: 未处理 MSG_DONTWAIT / MSG_PEEK (归 P5d); 仅据 fd 阻塞位决定挂起.
+pub unsafe extern "C" fn sm_recv(fd: i32, buf: *mut u8, len: u32, flags: i32) -> i32 {
     // P5b (DECISION-094): TCP 空缓冲且连接存活 / UDP 无数据报时, 阻塞 fd 登记
     // WAITER_READ → 释放 NET_STATE → block+schedule → 回顶重查. 连接关闭 (EOF) 由
     // poll_network 的 dead 分支唤醒, 避免阻塞挂死.
+    // P5d (DECISION-096): MSG_DONTWAIT 本次非阻塞 (立即); 阻塞时叠加信号 (-EINTR) 与
+    // SO_RCVTIMEO (-E_AGAIN). SIMPLIFIED: MSG_PEEK 仍未实现 (捐视语义, 归后续轮).
+    let dontwait = (flags & MSG_DONTWAIT) != 0;
     let pid = process_get_current_pid();
     let can_block = pid != 0 && !in_irq_context();
+    let mut deadline: Option<u64> = None;
     unsafe {
         loop {
             let guard = NET_STATE.lock();
@@ -1169,7 +1255,7 @@ pub unsafe extern "C" fn sm_recv(fd: i32, buf: *mut u8, len: u32, _flags: i32) -
             if buf.is_null() || len == 0 {
                 return -E_INVAL;
             }
-            let blocking = raw::is_blocking(slot);
+            let blocking = raw::is_blocking(slot) && !dontwait;
 
             let sockets = &mut *socket_set();
             let data = core::slice::from_raw_parts_mut(buf, len as usize);
@@ -1208,7 +1294,19 @@ pub unsafe extern "C" fn sm_recv(fd: i32, buf: *mut u8, len: u32, _flags: i32) -
                 net_clear_waiter(slot, pid);
                 return r;
             }
-            if !net_add_waiter(slot, pid, WAITER_READ) {
+            if has_deliverable_signal(pid) {
+                net_clear_waiter(slot, pid);
+                return -E_INTR;
+            }
+            let dl = *deadline.get_or_insert_with(|| {
+                // SAFETY: 持 NET_STATE 锁 (guard 存活); sock_block_deadline 读 per-slot 刻度.
+                sock_block_deadline(slot, true)
+            });
+            if dl != 0 && hrtimer_clock_read() >= dl {
+                net_clear_waiter(slot, pid);
+                return -E_AGAIN;
+            }
+            if !net_add_waiter(slot, pid, WAITER_READ, dl) {
                 return -E_AGAIN; // 等待者槽满, 保守回退 (见 WAITER_SLOTS SIMPLIFIED)
             }
             drop(guard);
@@ -1234,15 +1332,17 @@ pub unsafe extern "C" fn sm_sendto(
     fd: i32,
     buf: *const u8,
     len: u32,
-    _flags: i32,
+    flags: i32,
     addr: *const u8,
     _addrlen: u32,
     // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
 ) -> i32 {
-    // SIMPLIFIED: 未处理 MSG_DONTWAIT (归 P5d). P5b: TCP sendto 与 sm_send 同阻塞语义;
-    // UDP sendto 为数据报不阻塞 (维持旧 eager). 方向 WAITER_WRITE.
+    // P5b: TCP sendto 与 sm_send 同阻塞语义 (方向 WAITER_WRITE); UDP sendto 为数据报不阻塞.
+    // P5d (DECISION-096): MSG_DONTWAIT 本次非阻塞; 阻塞时叠加信号 (-EINTR) 与 SO_SNDTIMEO (-E_AGAIN).
+    let dontwait = (flags & MSG_DONTWAIT) != 0;
     let pid = process_get_current_pid();
     let can_block = pid != 0 && !in_irq_context();
+    let mut deadline: Option<u64> = None;
     unsafe {
         loop {
             let guard = NET_STATE.lock();
@@ -1265,7 +1365,7 @@ pub unsafe extern "C" fn sm_sendto(
                 Some(ep) => ep,
                 None => return -E_INVAL,
             };
-            let blocking = raw::is_blocking(slot);
+            let blocking = raw::is_blocking(slot) && !dontwait;
 
             let sockets = &mut *socket_set();
             let data = core::slice::from_raw_parts(buf, len as usize);
@@ -1296,7 +1396,19 @@ pub unsafe extern "C" fn sm_sendto(
                 net_clear_waiter(slot, pid);
                 return r;
             }
-            if !net_add_waiter(slot, pid, WAITER_WRITE) {
+            if has_deliverable_signal(pid) {
+                net_clear_waiter(slot, pid);
+                return -E_INTR;
+            }
+            let dl = *deadline.get_or_insert_with(|| {
+                // SAFETY: 持 NET_STATE 锁 (guard 存活); sock_block_deadline 读 per-slot 刻度.
+                sock_block_deadline(slot, false)
+            });
+            if dl != 0 && hrtimer_clock_read() >= dl {
+                net_clear_waiter(slot, pid);
+                return -E_AGAIN;
+            }
+            if !net_add_waiter(slot, pid, WAITER_WRITE, dl) {
                 return -E_AGAIN;
             }
             drop(guard);
@@ -1322,15 +1434,18 @@ pub unsafe extern "C" fn sm_recvfrom(
     fd: i32,
     buf: *mut u8,
     len: u32,
-    _flags: i32,
+    flags: i32,
     addr: *mut u8,
     addrlen: *mut u32,
     // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
 ) -> i32 {
-    // SIMPLIFIED: 未处理 MSG_DONTWAIT / MSG_PEEK (归 P5d). P5b: 与 sm_recv 同阻塞
-    // 语义 (方向 WAITER_READ), UDP 额外写回对端 sockaddr.
+    // P5b: 与 sm_recv 同阻塞语义 (方向 WAITER_READ), UDP 额外写回对端 sockaddr.
+    // P5d (DECISION-096): MSG_DONTWAIT 本次非阻塞; 阻塞时叠加信号 (-EINTR) 与 SO_RCVTIMEO (-E_AGAIN).
+    // SIMPLIFIED: MSG_PEEK 仍未实现 (捐视语义, 归后续轮).
+    let dontwait = (flags & MSG_DONTWAIT) != 0;
     let pid = process_get_current_pid();
     let can_block = pid != 0 && !in_irq_context();
+    let mut deadline: Option<u64> = None;
     unsafe {
         loop {
             let guard = NET_STATE.lock();
@@ -1348,7 +1463,7 @@ pub unsafe extern "C" fn sm_recvfrom(
             if buf.is_null() || len == 0 {
                 return -E_INVAL;
             }
-            let blocking = raw::is_blocking(slot);
+            let blocking = raw::is_blocking(slot) && !dontwait;
 
             let sockets = &mut *socket_set();
             let data = core::slice::from_raw_parts_mut(buf, len as usize);
@@ -1390,7 +1505,19 @@ pub unsafe extern "C" fn sm_recvfrom(
                 net_clear_waiter(slot, pid);
                 return r;
             }
-            if !net_add_waiter(slot, pid, WAITER_READ) {
+            if has_deliverable_signal(pid) {
+                net_clear_waiter(slot, pid);
+                return -E_INTR;
+            }
+            let dl = *deadline.get_or_insert_with(|| {
+                // SAFETY: 持 NET_STATE 锁 (guard 存活); sock_block_deadline 读 per-slot 刻度.
+                sock_block_deadline(slot, true)
+            });
+            if dl != 0 && hrtimer_clock_read() >= dl {
+                net_clear_waiter(slot, pid);
+                return -E_AGAIN;
+            }
+            if !net_add_waiter(slot, pid, WAITER_READ, dl) {
                 return -E_AGAIN;
             }
             drop(guard);
@@ -1773,13 +1900,14 @@ unsafe fn sm_socket_poll_locked(fd: i32, events: i16) -> i16 {
 ///
 /// 已支持选项:
 /// - `SO_PASSCRED` (`SOL_SOCKET`/16): 路由到 UDS 服务层 (`uds_setsockopt`).
+/// - `SO_RCVTIMEO`(20)/`SO_SNDTIMEO`(21): 收发超时, 参数 `struct timeval` (16 字节: tv_sec i64 + tv_usec i64); 存 ns 于 per-slot (P5d).
 /// - `SO_REUSEADDR`(2)/`SO_REUSEPORT`(15): 接受但忽略 (本内核无端口复用调度需求).
 /// - `SO_KEEPALIVE` (`SOL_SOCKET`/9, 仅 TCP): 置/清 keep-alive (7200s 缺省间隔).
 /// - `TCP_NODELAY` (`IPPROTO_TCP`/6, 仅 TCP): `val != 0` 关闭 Nagle.
 /// 其余 (`level`, `optname`): `-ENOPROTOOPT`.
 ///
 /// # Safety
-/// `optval` 必须是 syscall 层提供的有效内核指针 (4 字节 i32), `optlen` 为其长度。
+/// `optval` 必须是 syscall 层提供的有效内核指针 (i32 选项 4 字节 / `SO_RCVTIMEO`、`SO_SNDTIMEO` 的 `struct timeval` 16 字节), `optlen` 为其长度。
 #[unsafe(no_mangle)]
 #[expect(
     clippy::ptr_as_ptr,
@@ -1807,6 +1935,40 @@ pub unsafe extern "C" fn sm_setsockopt(
                 Some(&hook) => hook(fd, val != 0),
                 None => -E_NOPROTOOPT,
             };
+        }
+
+        // P5d (DECISION-096): SO_RCVTIMEO / SO_SNDTIMEO — 收发超时. 参数为
+        // struct timeval (tv_sec: i64 @0 + tv_usec: i64 @8, 共 16 字节). 存 ns 于
+        // per-slot, 供阻塞循环 (accept/connect/send/recv/sendto/recvfrom) 进入挂起
+        // 前经 sock_block_deadline 计算绝对死线. ns=0 语义为"无超时".
+        if level == SOL_SOCKET && (optname == SO_RCVTIMEO || optname == SO_SNDTIMEO) {
+            if optlen < 16 {
+                return -E_INVAL;
+            }
+            // 负值非法 (POSIX EINVAL); try_from 兼拦负值与类型边界, 免 cast lint.
+            // 直读 struct timeval 两字段 (i64 @0 = 秒, i64 @8 = 微秒), 不引入中间
+            // 同名绑定 (免 clippy similar_names 对 tv_sec/tv_usec 相似命名的误报).
+            let Ok(sec) = u64::try_from(core::ptr::read_unaligned(optval as *const i64)) else {
+                return -E_INVAL;
+            };
+            let Ok(usec) = u64::try_from(core::ptr::read_unaligned(optval.add(8) as *const i64))
+            else {
+                return -E_INVAL;
+            };
+            // sec→ns (1e9) + usec→ns (1e3); saturating 防溢出 (超大 timeval 钳制为
+            // "近乎无限", 与 0=无超时 同向, 不会提前误触超时).
+            let ns = sec
+                .saturating_mul(1_000_000_000)
+                .saturating_add(usec.saturating_mul(1_000));
+            let _guard = NET_STATE.lock();
+            let Some(slot) = sm_slot(fd) else {
+                return -E_BADF;
+            };
+            if raw::fd_type(slot) == 0 {
+                return -E_BADF;
+            }
+            raw::set_sock_timeout_ns(slot, optname == SO_RCVTIMEO, ns);
+            return 0;
         }
 
         // D8: SOL_SOCKET 层的 REUSEADDR/REUSEPORT 接受但忽略.
@@ -1855,14 +2017,15 @@ pub unsafe extern "C" fn sm_setsockopt(
 
 /// POSIX `getsockopt` 内核实现 (D8: 精简集).
 ///
-/// 已支持选项 (均写回 i32 到 `optval`, `*optlen` 置 4):
+/// 已支持选项 (i32 类写回 4 字节, `*optlen` 置 4; 超时类写回 `struct timeval` 16 字节):
 /// - `SO_TYPE` (`SOL_SOCKET`/3): `SOCK_STREAM(1)` / `SOCK_DGRAM(2)`.
+/// - `SO_RCVTIMEO`(20)/`SO_SNDTIMEO`(21): 回填 `struct timeval` (16 字节, 读自 per-slot ns; P5d).
 /// - `SO_ERROR` (`SOL_SOCKET`/4): 近似恒 0 (见下方 SIMPLIFIED).
 /// - `TCP_NODELAY` (`IPPROTO_TCP`/1, 仅 TCP): Nagle 禁用时 1, 启用时 0.
 /// 其余 (`level`, `optname`): `-ENOPROTOOPT`.
 ///
 /// # Safety
-/// `optval` 必须是 syscall 层提供的可写内核指针 (≥ 4 字节), `optlen` 为可写内核 u32 指针。
+/// `optval` 必须是 syscall 层提供的可写内核指针 (i32 选项 ≥ 4 字节 / 超时选项 ≥ 16 字节), `optlen` 为可写内核 u32 指针。
 #[unsafe(no_mangle)]
 #[expect(
     clippy::ptr_as_ptr,
@@ -1880,7 +2043,31 @@ pub unsafe extern "C" fn sm_getsockopt(
         if optval.is_null() || optlen.is_null() {
             return -E_INVAL;
         }
-        // 出参缓冲由 syscall 层预置 (内核栈, 固定 4 字节); 不足视为 EINVAL.
+        // P5d (DECISION-096): SO_RCVTIMEO / SO_SNDTIMEO 回填 struct timeval
+        // (16 字节: tv_sec i64 @0 + tv_usec i64 @8), 读 per-slot ns 刻度拆回.
+        if level == SOL_SOCKET && (optname == SO_RCVTIMEO || optname == SO_SNDTIMEO) {
+            if core::ptr::read_unaligned(optlen) < 16 {
+                return -E_INVAL;
+            }
+            let ns = {
+                let _guard = NET_STATE.lock();
+                let Some(slot) = sm_slot(fd) else {
+                    return -E_BADF;
+                };
+                if raw::fd_type(slot) == 0 {
+                    return -E_BADF;
+                }
+                raw::sock_timeout_ns(slot, optname == SO_RCVTIMEO)
+            };
+            // ns 拆回秒 + 微秒; try_from 兜底钳制 (免 cast lint), 实际值域远小于 i64::MAX.
+            let sec = i64::try_from(ns / 1_000_000_000).unwrap_or(i64::MAX);
+            let usec = i64::try_from((ns % 1_000_000_000) / 1_000).unwrap_or(i64::MAX);
+            core::ptr::write_unaligned(optval as *mut i64, sec);
+            core::ptr::write_unaligned(optval.add(8) as *mut i64, usec);
+            core::ptr::write_unaligned(optlen, 16);
+            return 0;
+        }
+        // 出参缓冲容量由 syscall 层按用户 *optlen 传入 (≤ 16 字节); i32 选项需 ≥ 4.
         if core::ptr::read_unaligned(optlen) < 4 {
             return -E_INVAL;
         }
@@ -1909,7 +2096,8 @@ pub unsafe extern "C" fn sm_getsockopt(
                 // SIMPLIFIED: smoltcp 无 sticky so_error 字段, 且 Closed 不区分
                 // "connect 失败" vs "从未连接"; Edgine 中 socket 关闭即从集合移除,
                 // state==Closed 窗口实际仅对应 connect 失败, 故近似 ECONNREFUSED.
-                // 精确 refused/timeout 区分归 P5d.
+                // P5d 已落 SO_SNDTIMEO (阻塞 connect 超时→connect 返 -E_INPROGRESS); SO_ERROR
+                // 仍纯态派生, Closed 的 refused-vs-timeout 成因不可细分 (smoltcp 无此信息).
                 (SOL_SOCKET, SO_ERROR) => {
                     if stype == 1 {
                         raw::socket_handle(slot).map_or(0, |h| {

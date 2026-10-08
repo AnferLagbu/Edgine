@@ -114,6 +114,32 @@ pub fn set_blocking(fd: usize, val: bool) {
     }
 }
 
+/// 读取 socket 超时刻度 (P5d / DECISION-096): `recv=true` 取 SO_RCVTIMEO,
+/// `false` 取 SO_SNDTIMEO. 返回单位纳秒, `0` = 无超时. `fd` 为 Smoltcp 段槽位
+/// 索引 (与 `blocking` 同空间). 调用方须持有 `NET_STATE` 锁.
+pub fn sock_timeout_ns(fd: usize, recv: bool) -> u64 {
+    // SAFETY: 调用方持有 NET_STATE 锁.
+    unsafe {
+        if recv {
+            state().recv_timeout_ns[fd]
+        } else {
+            state().send_timeout_ns[fd]
+        }
+    }
+}
+
+/// 写入 socket 超时刻度 (P5d). 调用方须持有 `NET_STATE` 锁.
+pub fn set_sock_timeout_ns(fd: usize, recv: bool, ns: u64) {
+    // SAFETY: 调用方持有 NET_STATE 锁.
+    unsafe {
+        if recv {
+            state().recv_timeout_ns[fd] = ns;
+        } else {
+            state().send_timeout_ns[fd] = ns;
+        }
+    }
+}
+
 /// 读取 socket handle
 pub fn socket_handle(fd: usize) -> Option<SocketHandle> {
     // SAFETY: 调用方持有 NET_STATE 锁.

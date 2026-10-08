@@ -461,56 +461,65 @@ pub fn recvfrom_syscall(
     i64::from(n)
 }
 
-/// setsockopt — 设置 socket 选项 (从用户空间读入 u32 选项值)
+/// setsockopt — 设置 socket 选项 (按 valen 全长 copy-in, 覆盖 i32 与 timeval 选项)
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
-pub fn setsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, _valen: u32) -> i64 {
+pub fn setsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, valen: u32) -> i64 {
     if fd < 0 {
         return Errno::EBADF.as_ret();
     }
-    let v = match raw_read_u32(val_ptr) {
-        Ok(x) => x,
-        Err(e) => return e.as_ret(),
-    };
-    let val_bytes = v.to_ne_bytes();
-    let rc = net_socket::sm_setsockopt(
-        fd,
-        level,
-        optname,
-        val_bytes.as_ptr(),
-        val_bytes.len() as u32,
-    );
+    // P5d (DECISION-096): 按 valen 全长 copy-in (上限 16 字节 — 覆盖 i32 选项 (4B)
+    // 与 SO_RCVTIMEO/SO_SNDTIMEO 的 struct timeval (16B)); 旧实现硬读 4 字节, 无法
+    // 承载 timeval. 定长内核栈缓冲, 免堆分配.
+    let len = (valen as usize).min(16);
+    let mut buf = [0u8; 16];
+    if len > 0 {
+        if val_ptr == 0 || !userptr::validate_user_buf(val_ptr, len as u64) {
+            return Errno::EFAULT.as_ret();
+        }
+        // copy_from_user 内部走异常表保护 (P0-I-37), 用户 munmap 时返 EFAULT 而非 panic.
+        if safe_copy_from_user(&mut buf[..len], val_ptr, len).is_err() {
+            return Errno::EFAULT.as_ret();
+        }
+    }
+    let rc = net_socket::sm_setsockopt(fd, level, optname, buf.as_ptr(), len as u32);
     i64::from(rc)
 }
 
-/// getsockopt — 获取 socket 选项 (写回 u32 选项值到用户空间)
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
-pub fn getsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, _valen_ptr: u64) -> i64 {
+/// getsockopt — 获取 socket 选项 (按用户 *optlen 容量回填, 覆盖 i32 与 timeval 选项)
+pub fn getsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, optlen_ptr: u64) -> i64 {
     if fd < 0 {
         return Errno::EBADF.as_ret();
     }
-    let mut out = 0u32;
-    let mut out_len = core::mem::size_of::<u32>() as u32;
+    // P5d (DECISION-096): 长度感知 — 读用户 *optlen (socklen_t) 作缓冲容量, 上限
+    // 16 字节 (i32 选项 4B / SO_RCVTIMEO/SNDTIMEO timeval 16B). 旧实现硬写 4 字节,
+    // 无法回填 timeval.
+    let cap = match raw_read_u32(optlen_ptr) {
+        Ok(x) => x,
+        Err(e) => return e.as_ret(),
+    };
+    let in_len = cap.min(16);
+    if in_len == 0 {
+        return Errno::EINVAL.as_ret();
+    }
+    let mut buf = [0u8; 16];
+    let mut out_len = in_len;
     let rc = net_socket::sm_getsockopt(
         fd,
         level,
         optname,
-        &mut out as *mut u32 as *mut u8,
-        &mut out_len,
+        buf.as_mut_ptr(),
+        core::ptr::from_mut(&mut out_len),
     );
     if rc != 0 {
         return i64::from(rc);
     }
-    if let Err(e) = raw_write_u32(val_ptr, out) {
+    // copy-out 实际长度 (out_len ≤ 16) 到用户缓冲区; raw_copy_out 内 validate + 异常表保护.
+    if let Err(e) = raw_copy_out(val_ptr, out_len, &buf) {
+        return e.as_ret();
+    }
+    // 回写 *optlen = 实际选项长度 (POSIX 语义).
+    if let Err(e) = raw_write_u32(optlen_ptr, out_len) {
         return e.as_ret();
     }
     0

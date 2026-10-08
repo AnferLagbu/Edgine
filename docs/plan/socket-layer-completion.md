@@ -361,8 +361,8 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
   - **P5a（地基，不改行为）**：等待表 16→`MAX_SM_FD` + `waiter_pid` 化 + `get`/注释/单测修订；`NetState.blocking` 标志 + `raw` accessor；`socket_syscall` 剥离 `SOCK_NONBLOCK` 透传 `sm_socket`；`fcntl` `F_GETFL`/`F_SETFL` 的 `O_NONBLOCK` 桥。
   - **P5b（阻塞核心，F8 高危轮）**：`recv`/`send`/`recvfrom`/`sendto` 接入真 block（置 pid under `NET_STATE`→释放→`scheduler_block`+`schedule`→重抢→重试）+ `poll_network` 锁序重构（锁内收集 pid、锁外 `scheduler_unblock`）+ 锁序/丢失唤醒回归测试。
   - **P5c（accept/connect A2）**：`poll_network` 增状态迁移唤醒；阻塞 connect 等 Established/失败 errno 映射、非阻塞 `-EINPROGRESS`；阻塞 accept 等连接到达。
-  - **P5d（EINTR + 超时，独立轮）**：唤醒后查 `signal_pending`→`-EINTR`；`SO_RCVTIMEO`/`SO_SNDTIMEO` + 到期 `-EAGAIN`。
-- **状态**：[]（子轮进度：P5a [X]、P5b [X]（DECISION-094）、P5c [X]（DECISION-095，accept/connect 真阻塞 + 异步 connect 语义闭环）、P5d []）
+  - **P5d（EINTR + 超时，独立轮）**：统一阻塞循环三退出——唤醒后查 `has_deliverable_signal`→`-EINTR`；`SO_RCVTIMEO`/`SO_SNDTIMEO` 超时经 poll_network 死线扫描（机制 B）到期→`-EAGAIN`（connect→`-EINPROGRESS`）；`MSG_DONTWAIT` 折叠为本次非阻塞。
+- **状态**：[X]（子轮进度：P5a [X]、P5b [X]（DECISION-094）、P5c [X]（DECISION-095，accept/connect 真阻塞 + 异步 connect 语义闭环）、P5d [X]（DECISION-096，EINTR + SO_RCVTIMEO/SNDTIMEO 超时 + MSG_DONTWAIT，机制 B））
 - **验证**：P5a 契约测试（表边界 `get(255)` 可唤醒 / `get(256)`→`None`、`blocking` 默认 true、`SOCK_NONBLOCK` 剥离、`fcntl` `O_NONBLOCK` 往返）；P5b 丢失唤醒 + 锁序（`audit_deadlock_matrix`）回归；P5c connect/accept 完成语义 e2e（QEMU 阻塞 recv 唤醒、非阻塞 connect `-EINPROGRESS`）；每子轮独立过 §2.3 六门槛。
 
 ### P6: 组播
@@ -523,6 +523,18 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - **SIMPLIFIED**：`SO_ERROR` 的 `Closed` 不区分「connect 失败」与「从未连接」（Edgine 中 socket 关闭即从集合移除，`state==Closed` 窗口实际仅对应 connect 失败，故近似 `ECONNREFUSED`）；connect 失败精确 refused/timeout 区分、超时上限（`SO_SNDTIMEO`）归 P5d。
 - **状态**：[X]（P5c 完成，§2.3 六门槛含 QEMU e2e 全绿：`[tcp] Listening` 就绪 + 3 轮回显 + 交接计数 accept=3/echo=3/close=3 + FD 回收去重=1(fd=65) + UDP 四项=1；新方向/接线契约测试 + wait_queue 内联 2 用例全过）
 
+### DECISION-096: P5d EINTR + SO_RCVTIMEO/SNDTIMEO 超时 + MSG_DONTWAIT（poll 死线扫描·机制 B）
+
+- **描述**：P5b/P5c 落地真阻塞与 accept/connect 完成语义后，缺三条 POSIX 退出路径：① 信号打断阻塞返 `-EINTR`；② `SO_RCVTIMEO`/`SO_SNDTIMEO` 收发超时（到期返 `-EAGAIN`）；③ `MSG_DONTWAIT` per-call 非阻塞。DECISION-092 已将 EINTR 与超时移出首轮独立推进。前置调研定死三约束：① 信号投递侧 `do_signal_send_process` 已对被阻塞任务置 Ready 唤醒（signal.rs），`has_deliverable_signal(pid)`（=`pending & !blocked`）可直接判可否投递，无需新增唤醒源；② 定时器侧 `wait_with_timeout` 是忙等 yield 原语（与 `scheduler_block` 真阻塞范式不兼容），`HrTimer` 无 owner 字段、`hrtimer_sleep` 单实例自旋——Linux/Asterinas 的 per-wait timer（`schedule_timeout`+到期 `wake_up_process`）在 Edgine 需改通用 timer 核心或 unsafe `container_of`，且新增第三条唤醒源（timer-ISR-Ready）并绑一类栈生命周期×异步取消 UAF；③ `poll_network` 已由定时器 ISR 每 tick 无条件调用（timer/irq.rs:42），天然是电平自愈扫描点。
+- **裁定**：取**机制 B（poll_network 死线扫描）** 而非 per-wait timer（机制 A）。核心论据：B 不增唤醒源（poll-Ready + signal-Ready 两条不变）、零通用抽象污染、无 UAF 类新 bug；超时粒度=poll tick（~ms，对 SO_RCVTIMEO 足够），契合本仓已选「poll 驱动·电平·自愈」模型。五点落地：
+  1. **waiter 死线维度**：`SocketWaitQueue` 增 `waiter_deadline: [AtomicU64; WAITER_SLOTS]`（绝对 ns，`hrtimer_clock_read` 单调时钟；0=无超时，与方向 `want` 正交）；`add_waiter(pid,want,deadline_ns)` 扩签名、`remove_waiter` 清死线；新增 `collect_expired(now_ns,out)->usize`（**非破坏**，`dl!=0 && dl<=now` 采集，与方向无关）。
+  2. **poll_network 死线扫描**：每 tick 先 `hrtimer_clock_read()` 采 `now_ns`，就绪判定前取 `q`（上移），无条件 `collect_expired(now_ns)` 采集到点 pid 进 `to_wake`，与就绪唤醒**共用同一出临界区 `scheduler_unblock` 路**（F8 合规，锁序不变）。
+  3. **per-slot 超时刻度**：`NetState` 增 `recv_timeout_ns`/`send_timeout_ns: Vec<u64>`（ns，0=无超时），`raw::sock_timeout_ns`/`set_sock_timeout_ns` accessor（持 `NET_STATE`）。
+  4. **统一阻塞循环三退出**（6 处 accept/connect/send/recv/sendto/recvfrom）：循环「唤醒」来源无关，醒来统一分类 `ready? 干活 : signal? -EINTR : 超时? -EAGAIN : 重睡`。绝对死线首次真正挂起时经 `Option::get_or_insert_with` 算一次（重挂复用不延长）；EINTR 用 `has_deliverable_signal(pid)`（不清 pending，交 syscall 退出 `do_signal_deliver` 拥有）；`MSG_DONTWAIT` 折叠为 `blocking = is_blocking(slot) && !dontwait`。connect 超时保守返 `-E_INPROGRESS`（异于其余 `-EAGAIN`）。
+  5. **sockopt timeval ABI**：`sm_setsockopt`/`sm_getsockopt` 增 `SO_RCVTIMEO`/`SO_SNDTIMEO` 早分支——读写 16 字节 `struct timeval`（`tv_sec` i64 @0 + `tv_usec` i64 @8）拆合 ns；`setsockopt_syscall`/`getsockopt_syscall` 由硬编码 4 字节 u32 改为按 `valen`/`*optlen` 全长 marshalling（上限 16 字节，定长内核栈缓冲，兼容既有 i32 选项）。
+- **SIMPLIFIED**：① `MSG_PEEK` 未实现（smoltcp recv 无 peek，破零修改门禁，DECISION-087 排除项，非 P5d 范围）；② 超时粒度为 poll tick（机制 B 固有，非 per-wait 精确定时器）；③ connect 被打断/超时后 smoltcp 仍处 `SynSent`（后台续接握手），异于 Linux「打断后状态未定义」，用户可后续 `getsockopt(SO_ERROR)` 查询；④ `SO_ERROR` 的 `Closed` 仍不细分 refused-vs-timeout（smoltcp 无成因信息）。
+- **状态**：[X]（P5d 完成：wait_queue 死线维度 + poll_network 死线扫描 + per-slot 超时刻度 + 6 阻塞循环三退出（`-EINTR`/`-EAGAIN`/connect `-EINPROGRESS`）+ MSG_DONTWAIT + sockopt timeval ABI；接线契约测试 + wait_queue 内联 2 死线用例；§2.3 六门槛含 QEMU e2e 见本轮验证）
+
 ---
 
 ## 关联文档
@@ -546,6 +558,7 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - P5a（地基）完成并入库；P5a 与 P5b 之间插轮根治网络快照 FD 表越界崩溃（DECISION-093），登记单源化处置。
 - P5b（阻塞核心）完成：wait_queue 多等待者泛化 + `poll_network` 锁序重构（锁内 collect/锁外 unblock + 连接关闭唤读写双向）+ recv/send/recvfrom/sendto 阻塞循环 + 契约测试（DECISION-094）。同轮修复 P5b 默认阻塞暴露的 e2e 回归（init UDP 探针改非阻塞，用户态侧）。
 - P5c（accept/connect A2）完成：wait_queue 新增 `WAITER_ACCEPT`/`WAITER_CONNECT` 方向 + `WakeReason::AcceptReady`/`ConnectDone` + `poll_network` 状态迁移电平唤醒（accept-ready / connect-done）+ `sm_accept`/`sm_connect` 阻塞循环（非阻塞 connect → `-EINPROGRESS`）+ `sm_getsockopt` `SO_ERROR` 由连接态派生（异步 connect 闭环）（DECISION-095）。同步 §9.2 文档-代码不同步：G11（默认阻塞语义）与 D1（端点表 remote 半）状态改 `[X]`。
+- P5d（EINTR + 超时）完成：wait_queue 增 `waiter_deadline` 死线维度 + `collect_expired`（非破坏）+ `poll_network` 每-tick 死线扫描（机制 B，共用出临界区 unblock 路，不增唤醒源）+ per-slot `recv/send_timeout_ns` + 6 阻塞循环三退出（`-EINTR`/`-EAGAIN`/connect `-EINPROGRESS`）+ `MSG_DONTWAIT` + `SO_RCVTIMEO`/`SO_SNDTIMEO` sockopt（16 字节 `struct timeval`，syscall 层改长度感知 marshalling）（DECISION-096）。P5 全四子轮完成，分期状态改 `[X]`。
 
 ---
 
