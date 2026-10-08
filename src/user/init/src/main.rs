@@ -135,6 +135,9 @@ fn ipv6_udp_probe() {
         print_char(b'\n');
         return;
     }
+    // 有界重试轮询依赖 recv 立即返回 -EAGAIN: 显式置非阻塞. P5b 起 socket 默认
+    // 阻塞, 无应答者时 recv 会永久挂起, 探针必须 O_NONBLOCK 才能收敛到 FAIL 后继续.
+    let _ = fcntl(fd, F_SETFL, O_NONBLOCK as u64);
 
     // 本地 [::]:7777 — sin6_family 主机序 (NE), sin6_port 网络序 (BE).
     let local = SockaddrIn6 {
@@ -326,6 +329,8 @@ fn udp_echo_probe() {
         print_char(b'\n');
         return;
     }
+    // 同 ipv6_udp_probe: recvfrom 有界重试需非阻塞 (P5b 默认阻塞会使无应答时挂死).
+    let _ = fcntl(fd, F_SETFL, O_NONBLOCK as u64);
 
     let peer = SockaddrIn {
         sin_family: AF_INET as u16,

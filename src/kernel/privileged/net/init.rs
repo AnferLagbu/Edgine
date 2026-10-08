@@ -210,6 +210,11 @@ unsafe fn process_dhcp_events(_sockets: &mut SocketSet<'_>) {
 /// 纯观测标志, 不参与任何协议状态判定; 置位后不再重复打印.
 static SLAAC_OBSERVED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// `poll_network` 每 tick 待唤醒 pid 的定长栈缓冲上限.
+/// SIMPLIFIED: 单 tick 就绪且方向匹配的等待者超过 `WAKE_BATCH` 时, 余下待
+/// 下一 tick 电平重扫唤醒 (自愈); 影响面为极端批量就绪 (正常负载远不到此量级).
+const WAKE_BATCH: usize = 128;
+
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -227,6 +232,10 @@ static SLAAC_OBSERVED: core::sync::atomic::AtomicBool = core::sync::atomic::Atom
 /// - `try_lock` 保证 ISR 安全 (不阻塞)。
 /// - 内部 `raw::device_mut` / `raw::stack_mut` 通过 `NET_LOCK` 互斥保护。
 pub unsafe fn poll_network() {
+    use crate::privileged::proc::scheduler_unblock;
+    // 锁内采集 / 锁外唤醒 (F8: 禁 `NET_STATE → SCHEDULER` 嵌套锁).
+    let mut to_wake = [0u32; WAKE_BATCH];
+    let mut wake_n: usize = 0;
     unsafe {
         let _guard = match NET_STATE.try_lock() {
             Some(g) => g,
@@ -264,38 +273,59 @@ pub unsafe fn poll_network() {
 
         // P2-I-41: poll 完毕后通知所有 fd 的等待者, 让 sm_send/sm_recv
         // (未来阻塞扩展点) 重新检查 socket 状态. try_wake 持锁时间 O(1).
-        use crate::privileged::net::{SOCKET_WAIT_QUEUES, WakeReason};
+        use crate::privileged::net::{SOCKET_WAIT_QUEUES, WAITER_READ, WAITER_WRITE, WakeReason};
         for fd in 0..MAX_SM_FD {
             if raw::fd_type(fd) == 0 {
                 continue;
             }
-            // 用 smoltcp can_send / can_recv 推断 wake 原因. socket_set 访问
-            // 仍在 NET_STATE 锁保护下 (try_wake 内部 lock 仅保护自身 pending 标记,
-            // 与 smoltcp 状态机无关).
-            let reason = if let Some(handle) = raw::socket_handle(fd) {
-                let can_read = match raw::fd_type(fd) {
-                    1 => sockets.get::<tcp::Socket>(handle).can_recv(),
-                    2 => sockets.get::<udp::Socket>(handle).can_recv(),
-                    _ => false,
-                };
-                let can_write = match raw::fd_type(fd) {
-                    1 => sockets.get::<tcp::Socket>(handle).can_send(),
-                    2 => sockets.get::<udp::Socket>(handle).can_send(),
-                    _ => false,
-                };
-                if can_read {
-                    WakeReason::Readable
-                } else if can_write {
-                    WakeReason::Writable
-                } else {
-                    continue;
-                }
+            // 用 smoltcp can_send / can_recv + is_open 判定就绪方向与连接关闭.
+            // socket_set 访问仍在 NET_STATE 锁保护下 (try_wake 内部 lock 仅保护
+            // 自身 pending 标记, 与 smoltcp 状态机无关).
+            let (can_read, can_write, dead) = match raw::socket_handle(fd) {
+                Some(handle) => match raw::fd_type(fd) {
+                    1 => {
+                        let s = sockets.get::<tcp::Socket>(handle);
+                        (s.can_recv(), s.can_send(), !s.is_open())
+                    }
+                    2 => {
+                        let s = sockets.get::<udp::Socket>(handle);
+                        (s.can_recv(), s.can_send(), false)
+                    }
+                    _ => continue,
+                },
+                None => continue,
+            };
+            if !can_read && !can_write && !dead {
+                continue;
+            }
+            let reason = if can_read {
+                WakeReason::Readable
+            } else if can_write {
+                WakeReason::Writable
             } else {
+                WakeReason::Closed
+            };
+            let Some(q) = SOCKET_WAIT_QUEUES.get(fd) else {
                 continue;
             };
-            if let Some(q) = SOCKET_WAIT_QUEUES.get(fd) {
-                q.try_wake(reason);
+            q.try_wake(reason);
+            // 锁内采集方向匹配等待者 pid (非破坏, 不移除); unblock 延后到释放
+            // `NET_STATE` 之后逐个执行 (F8). 连接关闭 (dead) 唤醒读写双向, 避免
+            // 阻塞 recv/send 因 EOF/RST 无人唤醒而挂死. 丢失唤醒由下一 tick 自愈.
+            if wake_n < WAKE_BATCH && (can_read || dead) {
+                wake_n += q.collect_waiters(WAITER_READ, &mut to_wake[wake_n..]);
             }
+            if wake_n < WAKE_BATCH && (can_write || dead) {
+                wake_n += q.collect_waiters(WAITER_WRITE, &mut to_wake[wake_n..]);
+            }
+        }
+    }
+    // 出 `NET_STATE` 临界区 (`_guard` 已随上一作域块释放) 后逐个唤醒.
+    // 若某 pid 因落在“释放锁→尚未 block()”窗口被 `unblock` no-op 吞掉唤醒,
+    // 下一 tick `poll_network` 电平重扫会重新采集并唤醒 (自愈).
+    for &pid in &to_wake[..wake_n] {
+        if pid != 0 {
+            scheduler_unblock(pid);
         }
     }
 }

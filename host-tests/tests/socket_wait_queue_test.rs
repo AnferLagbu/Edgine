@@ -184,3 +184,118 @@ fn wake_without_pending_does_not_count() {
         "P2-I-41: 必须存在 'multiple_wake_increments_count' 单元测试"
     );
 }
+
+// ============================================================================
+// P5b / DECISION-094: 多等待者模型 + 锁序 F8 + 丢失唤醒自愈 静态契约
+// ============================================================================
+
+#[test]
+fn wait_queue_exposes_multi_waiter_api() {
+    let src = read_src("src/kernel/privileged/net/wait_queue.rs");
+    for sig in [
+        "pub fn add_waiter",
+        "pub fn remove_waiter",
+        "pub fn collect_waiters",
+    ] {
+        assert!(
+            src.contains(sig),
+            "P5b: SocketWaitQueue 缺少多等待者 API `{sig}`"
+        );
+    }
+    // 定长多槽 + 方向位 (取代 P5a 的单 waiter_pid).
+    for marker in [
+        "pub const WAITER_SLOTS",
+        "pub const WAITER_READ",
+        "pub const WAITER_WRITE",
+        "waiter_pid: [AtomicU32; WAITER_SLOTS]",
+        "waiter_want: [AtomicU8; WAITER_SLOTS]",
+    ] {
+        assert!(
+            src.contains(marker),
+            "P5b: wait_queue 缺少多等待者建模 `{marker}`"
+        );
+    }
+}
+
+#[test]
+fn collect_waiters_is_non_destructive() {
+    // 丢失唤醒自愈的根基: collect_waiters 只读 (load), 不清槽; 等待者由消费者
+    // 成功返回时自行 remove_waiter 自摘. 若 collect 误用 swap 清槽会被电平重扫漏唤醒.
+    let src = read_src("src/kernel/privileged/net/wait_queue.rs");
+    let start = src
+        .find("pub fn collect_waiters")
+        .expect("P5b: 缺 collect_waiters");
+    let end = src[start..]
+        .find("#[expect")
+        .map(|i| start + i)
+        .unwrap_or(src.len());
+    let body = &src[start..end];
+    assert!(
+        body.contains(".load("),
+        "P5b: collect_waiters 应基于只读 load 采集"
+    );
+    assert!(
+        !body.contains(".swap("),
+        "P5b: collect_waiters 必须非破坏 (不得 swap 清槽), 否则丢唤醒无法自愈"
+    );
+}
+
+#[test]
+fn poll_network_collects_inside_lock_unblocks_outside() {
+    // F8: 禁 NET_STATE → SCHEDULER 嵌套锁. poll_network 必须锁内 collect_waiters,
+    // 出临界区后才 scheduler_unblock (用文本出现顺序作结构代理).
+    let src = read_src("src/kernel/privileged/net/init.rs");
+    let start = src
+        .find("pub unsafe fn poll_network()")
+        .expect("P5b: 缺 poll_network");
+    let body = &src[start..];
+    let collect = body
+        .find("collect_waiters(")
+        .expect("P5b: poll_network 必须在锁内 collect_waiters 采集待唤醒 pid");
+    let unblock = body
+        .find("scheduler_unblock(pid)")
+        .expect("P5b: poll_network 必须调用 scheduler_unblock 唤醒等待者");
+    assert!(
+        collect < unblock,
+        "P5b/F8: poll_network 应先锁内 collect_waiters, 出临界区后才 scheduler_unblock"
+    );
+    assert!(
+        body.contains("use crate::privileged::proc::scheduler_unblock;"),
+        "P5b: poll_network 需引入 scheduler_unblock"
+    );
+}
+
+#[test]
+fn recv_send_block_loop_wired() {
+    // sm_recv/sm_send/sm_recvfrom/sm_sendto 均接入阻塞重试循环.
+    let src = read_src("src/kernel/privileged/net/init/sm_fi.rs");
+    for marker in [
+        "fn net_add_waiter",
+        "fn net_clear_waiter",
+        "can_block",
+        "net_add_waiter(slot, pid, WAITER_READ)",
+        "net_add_waiter(slot, pid, WAITER_WRITE)",
+        "drop(guard)",
+        "scheduler_block(BlockReason::WaitingForIo)",
+        "scheduler_schedule()",
+    ] {
+        assert!(
+            src.contains(marker),
+            "P5b: sm_fi 阻塞循环缺少接线 `{marker}`"
+        );
+    }
+    // 中断/idle 路径守卫: 不可阻塞时直接返 eager, 不得登记等待者.
+    assert!(
+        src.contains("pid != 0 && !in_irq_context()"),
+        "P5b: 阻塞前必须守卫 in_irq_context/pid!=0 (中断路径禁阻塞)"
+    );
+    // 消费者返回前自摘 (非破坏 collect 的配套).
+    let recv_start = src
+        .find("pub unsafe extern \"C\" fn sm_recv(")
+        .expect("P5b: 缺 sm_recv");
+    let recv_body = &src[recv_start..];
+    assert!(
+        recv_body.contains("net_clear_waiter(slot, pid)"),
+        "P5b: sm_recv 返回前必须 net_clear_waiter 自摘等待者"
+    );
+}

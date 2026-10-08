@@ -13,6 +13,7 @@ pub const SYS_read: u64 = 0;
 pub const SYS_write: u64 = 1;
 pub const SYS_open: u64 = 2;
 pub const SYS_close: u64 = 3;
+pub const SYS_fcntl: u64 = 72;
 pub const SYS_ioctl: u64 = 16;
 pub const SYS_stat: u64 = 4;
 pub const SYS_fstat: u64 = 5;
@@ -468,6 +469,21 @@ pub fn close_socket(sockfd: i32) -> i32 {
 
 pub fn ioctl(fd: i32, request: u64, arg: u64) -> i32 {
     unsafe { sys3(SYS_ioctl, fd as u64, request, arg) as i32 }
+}
+
+// ============================================================
+// fcntl — 文件描述符状态标志 (D10: socket fd 的 O_NONBLOCK 经内核落到 per-slot 阻塞标志)
+// ============================================================
+
+/// `fcntl` 命令: `F_SETFL` (设置 status flag, Linux/x86 值 4).
+pub const F_SETFL: i32 = 4;
+/// `O_NONBLOCK` (Linux/x86 `0o4000`): socket fd 经此位请求非阻塞.
+pub const O_NONBLOCK: i32 = 0o4000;
+
+/// `fcntl(fd, cmd, arg)` — 对 socket fd `F_SETFL | O_NONBLOCK` 使其 recv/recvfrom
+/// 立即返回 `-EAGAIN` (非阻塞轮询语义), 供有界重试探针使用.
+pub fn fcntl(fd: i32, cmd: i32, arg: u64) -> i32 {
+    unsafe { sys3(SYS_fcntl, fd as u64, cmd as u64, arg) as i32 }
 }
 
 // ============================================================

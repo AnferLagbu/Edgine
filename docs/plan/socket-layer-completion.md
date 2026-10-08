@@ -505,6 +505,13 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - **裁定**：消除魔法数、回归单一来源。`SNAPSHOT_FD_COUNT` 改为 `= crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize`，与 `net::init::MAX_SM_FD` **共用同一 `FdRange::capacity` 源**（不引用 init 别名，避免 `init ↔ save` 循环依赖，与 P5a wait_queue 同法），数组长度与循环上界由构造恒等，崩溃类永久消除；配套修正 save.rs 两单测（16 元字面量 → `array::from_fn` 长度无关）与契约测试（`fd_count_matches_max_sm_fd` → `snapshot_fd_count_sized_by_fdplan_capacity`，锁单源契约 + `!contains("= 16")` 防回退 + 交叉校验 `MAX_SM_FD` 同源）。bench 侧 `MAX_SM_FD` 重命名为 `BENCH_FD_WORKING_SET`（工作集仍 16，为延迟测量的 cache 友好选择，语义与基线不变）并更正注释。save/restore 序列化仅驻内存 static、无跨版本介质约束（`NET_SNAPSHOT_VERSION` 不动）。
 - **状态**：[X]
 
+### DECISION-094: P5b 采用多等待者模型 + 电平自愈阻塞（路径 B 落地机制）
+
+- **描述**：P5b（recv/send/recvfrom/sendto 真 block）需为 per-fd 等待者建模。调研定死三事实：① `scheduler_unblock()` 在目标非 `Blocked/Frozen` 时 no-op（scheduler.rs:1159）→ “释放 NET_STATE → 尚未 block()”窗口的唤醒会被吞；② `poll_network()` 每 tick 无条件调用（timer/irq.rs:42「始终轮询」）且按 `can_recv()/can_send()` 电平重扫→被吞唤醒下一 tick 自愈；③ `unblock`/`block` 均触 `PROCESS_TABLE`，须严格置于 `NET_STATE` 之外（F8）。单 waiter 与 P5c accept（线程池共堵一监听 socket）不相容，业界（Linux `socket->wq`、Asterinas `poll_wait` 队列）均为多 waiter；且“相对完整”下先建单 waiter 再改多 waiter 返工成本 > 一次建对。
+- **裁定**：取 **B（多等待者）**。`SocketWaitQueue` 的单 `waiter_pid` 改为定长 `waiter_pid: [AtomicU32; WAITER_SLOTS]` + `waiter_want: [AtomicU8; WAITER_SLOTS]`（方向 1=read/2=write；no_std 无堆、可进自旋锁），API = `add_waiter(pid,want)`/`remove_waiter(pid)`/`collect_waiters(want,out)->usize`（非破坏，等待者成功后自摘），均在 `NET_STATE` 临界区内调用。阻塞方循环：锁内校验 →就绪则操作并 `remove_waiter` 自返 → 非阻塞返 `-E_AGAIN` → `add_waiter` → **释放锁** → `scheduler_block(WaitingForIo)` + `scheduler_schedule()` → 回顶重查；`poll_network` 锁内 `collect_waiters` 到定长 `to_wake` 栈缓冲、**出临界区后**逐个 `scheduler_unblock`（F8 合规）。溢出（同 fd > `WAITER_SLOTS`，或 `to_wake` 满）保守回退 `-E_AGAIN` / 待下一 tick 电平自愈，标 SIMPLIFIED。中断上下文（`in_irq_context`）禁阻塞，直接返 `-E_AGAIN`。`MSG_DONTWAIT` 本轮不处理（标 SIMPLIFIED）。TCP 空缓冲且 `is_open()` → 阻塞（非 EOF）；仅 `!is_open()` 无数据才返 EOF(0)。
+- **状态**：[X]（P5b 完成，§2.3 六门槛含 QEMU e2e 全绿）
+- **e2e 回归与修复**：P5b 打开 socket 默认阻塞（POSIX 正确）后，`src/user/init` 的 `ipv6_udp_probe`（recv）与 `udp_echo_probe`（recvfrom）这两个「fork 前同步跑的有界重试轮询」探针在无应答者时永久挂起（旧代码依赖 P5a 期 recv 从不阻塞的非-POSIX 特性）→ 永不 fork `tcp_echo_server` → `[tcp] Listening` marker 不打印 → readiness 超时。定性为**用户态侧缺陷**（内核阻塞默认不动）：给 userlib 补 `fcntl`（SYS_fcntl=72）包装 + `F_SETFL`/`O_NONBLOCK` 常量（内核 `fcntl(F_SETFL,O_NONBLOCK)`→`sm_set_nonblocking` 路径早已接通，零内核改动），探针建 socket 后即置非阻塞，恢复 recv/recvfrom 的 eager `-E_AGAIN` 有界重试语义。
+
 ---
 
 ## 关联文档
@@ -526,6 +533,7 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - 创建文档，完成现状与缺口梳理（TCP G1-G10 / UDP U1-U9）与方案设计（D1-D9），登记 DECISION-085（A 路径 + 合并补全 + smoltcp 零修改口径）与 DECISION-086（accept 交接与重臂算法及 FD 回收前置）。
 - 口径由 A 路径升级为「相对完整」：补齐 D1-D9 到实现级，accept 改为「先建后换」（DECISION-088），新增 D8b（poll 接线）、D10（阻塞睡眠）、D11（组播）与 G11（无阻塞语义）缺口，实施分期重构，新增决策记录章节并登记 DECISION-087 至 DECISION-091。全部分期与条目状态为 `[]`（未实施）。
 - P5a（地基）完成并入库；P5a 与 P5b 之间插轮根治网络快照 FD 表越界崩溃（DECISION-093），登记单源化处置。
+- P5b（阻塞核心）完成：wait_queue 多等待者泛化 + `poll_network` 锁序重构（锁内 collect/锁外 unblock + 连接关闭唤读写双向）+ recv/send/recvfrom/sendto 阻塞循环 + 契约测试（DECISION-094）。同轮修复 P5b 默认阻塞暴露的 e2e 回归（init UDP 探针改非阻塞，用户态侧）。
 
 ---
 

@@ -15,6 +15,11 @@ use super::{
     MAX_SM_FD, NET_STATE, Ordering, get_max_sockets, is_network_initialized, process_dhcp_events,
     raw, socket_set,
 };
+use crate::privileged::net::{SOCKET_WAIT_QUEUES, WAITER_READ, WAITER_WRITE};
+use crate::privileged::proc::{
+    BlockReason, process_get_current_pid, scheduler_block, scheduler_schedule,
+};
+use crate::privileged::sync::in_irq_context;
 use core::sync::atomic::AtomicU16;
 use smoltcp::socket::{tcp, udp};
 use smoltcp::time::Duration;
@@ -77,6 +82,27 @@ fn sm_slot(fd: i32) -> Option<usize> {
     match crate::privileged::proc::fd_alloc::idx_of(fd) {
         Some((crate::privileged::proc::fd_alloc::FdSubsystem::Smoltcp, slot)) => Some(slot),
         _ => None,
+    }
+}
+
+/// 登记当前进程为 `slot` 上方向 `want` 的等待者 (须在持 `NET_STATE` 时调用).
+/// 返 false 表示等待者槽满 → 调用方应回退非阻塞语义 (见 `WAITER_SLOTS` SIMPLIFIED).
+#[inline]
+fn net_add_waiter(slot: usize, pid: u32, want: u8) -> bool {
+    SOCKET_WAIT_QUEUES
+        .get(slot)
+        .is_some_and(|q| q.add_waiter(pid, want))
+}
+
+/// 清除当前进程在 `slot` 上的等待登记 (IO 返回前自摘; 无登记则 no-op).
+/// 因 `poll_network` 采用非破坏 `collect_waiters` + 电平重扫, 等待者必须由
+/// 消费者在成功返回/放弃阻塞时自行摘除, 否则槽位永久泄漏.
+#[inline]
+fn net_clear_waiter(slot: usize, pid: u32) {
+    if pid != 0 {
+        if let Some(q) = SOCKET_WAIT_QUEUES.get(slot) {
+            q.remove_waiter(pid);
+        }
     }
 }
 
@@ -942,48 +968,79 @@ unsafe fn sm_connect_locked(fd: i32, addr: *const u8, _addrlen: u32) -> i32 {
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
 pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, _flags: i32) -> i32 {
+    // SIMPLIFIED: 未处理 MSG_DONTWAIT / MSG_NOSIGNAL (归 P5d); 仅据 fd 阻塞位
+    // 决定是否挂起; 影响面=单次 send 的 flag 级非阻塞; 何时扩展=flags 语义完善轮.
+    // P5b (DECISION-094): TCP 发送缓冲满 (can_send=false) 且连接存活时, 阻塞 fd
+    // 登记 WAITER_WRITE 等待者 → 释放 NET_STATE → block+schedule → 回顶重查.
+    let pid = process_get_current_pid();
+    let can_block = pid != 0 && !in_irq_context();
     unsafe {
-        let _guard = NET_STATE.lock();
+        loop {
+            let guard = NET_STATE.lock();
 
-        let Some(slot) = sm_slot(fd) else {
-            return -E_BADF;
-        };
-        if raw::fd_type(slot) == 0 {
-            return -E_BADF;
-        }
-        let handle = match raw::socket_handle(slot) {
-            Some(h) => h,
-            None => return -E_BADF,
-        };
-        if buf.is_null() || len == 0 {
-            return -E_INVAL;
-        }
-
-        let sockets = &mut *socket_set();
-        let data = core::slice::from_raw_parts(buf, len as usize);
-
-        match raw::fd_type(slot) {
-            1 => {
-                let sock = sockets.get_mut::<tcp::Socket>(handle);
-                sock.send_slice(data).map_or(-E_CONNRESET, |n| n as i32)
+            let Some(slot) = sm_slot(fd) else {
+                return -E_BADF;
+            };
+            if raw::fd_type(slot) == 0 {
+                return -E_BADF;
             }
-            2 => {
-                // D9: UDP send 依赖 connect 登记的对端 (D1 remote 表); 未 connect → ENOTCONN.
-                let remote = match raw::socket_remote_endpoint(slot) {
-                    Some(ep) => ep,
-                    None => return -E_NOTCONN,
-                };
-                let smol = IpEndpoint {
-                    addr: wire_to_smol(remote.addr),
-                    port: remote.port,
-                };
-                let sock = sockets.get_mut::<udp::Socket>(handle);
-                match sock.send_slice(data, smol) {
-                    Ok(()) => len as i32,
-                    Err(_) => -E_CONNRESET,
+            let handle = match raw::socket_handle(slot) {
+                Some(h) => h,
+                None => return -E_BADF,
+            };
+            if buf.is_null() || len == 0 {
+                return -E_INVAL;
+            }
+            let blocking = raw::is_blocking(slot);
+
+            let sockets = &mut *socket_set();
+            let data = core::slice::from_raw_parts(buf, len as usize);
+
+            // Some(r) = 本次可完成 (返 r); None = TCP 可发送性未就绪且需阻塞.
+            // 非阻塞 / 中断路径 / idle 保持旧 eager 语义 (不改变既有返回值).
+            let done: Option<i32> = match raw::fd_type(slot) {
+                1 => {
+                    let sock = sockets.get_mut::<tcp::Socket>(handle);
+                    if !sock.is_open() {
+                        Some(-E_CONNRESET)
+                    } else if sock.can_send() || !(blocking && can_block) {
+                        Some(sock.send_slice(data).map_or(-E_CONNRESET, |n| n as i32))
+                    } else {
+                        None // 阻塞 fd + 连接存活 + 缓冲满 → 挂起等可写
+                    }
                 }
+                2 => {
+                    // D9: UDP send 依赖 connect 登记的对端 (D1 remote 表); 未 connect → ENOTCONN.
+                    let remote = match raw::socket_remote_endpoint(slot) {
+                        Some(ep) => ep,
+                        None => return -E_NOTCONN,
+                    };
+                    let smol = IpEndpoint {
+                        addr: wire_to_smol(remote.addr),
+                        port: remote.port,
+                    };
+                    let sock = sockets.get_mut::<udp::Socket>(handle);
+                    // UDP 数据报: 维持原语义, 不阻塞 (send 侧无"半包等待"概念).
+                    Some(match sock.send_slice(data, smol) {
+                        Ok(()) => len as i32,
+                        Err(_) => -E_CONNRESET,
+                    })
+                }
+                _ => Some(-E_NOTSUPP),
+            };
+
+            if let Some(r) = done {
+                net_clear_waiter(slot, pid);
+                return r;
             }
-            _ => -E_NOTSUPP,
+            // None 仅在 (blocking && can_block && TCP 缓冲满) 产生 → 登记等待者并挂起.
+            if !net_add_waiter(slot, pid, WAITER_WRITE) {
+                return -E_AGAIN; // 等待者槽满, 保守回退 (见 WAITER_SLOTS SIMPLIFIED)
+            }
+            drop(guard);
+            scheduler_block(BlockReason::WaitingForIo);
+            scheduler_schedule();
+            // 被 poll_network 唤醒 → 回循环顶重锁重查 can_send.
         }
     }
 }
@@ -1001,40 +1058,74 @@ pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, _flags: i32)
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
 pub unsafe extern "C" fn sm_recv(fd: i32, buf: *mut u8, len: u32, _flags: i32) -> i32 {
+    // SIMPLIFIED: 未处理 MSG_DONTWAIT / MSG_PEEK (归 P5d); 仅据 fd 阻塞位决定挂起.
+    // P5b (DECISION-094): TCP 空缓冲且连接存活 / UDP 无数据报时, 阻塞 fd 登记
+    // WAITER_READ → 释放 NET_STATE → block+schedule → 回顶重查. 连接关闭 (EOF) 由
+    // poll_network 的 dead 分支唤醒, 避免阻塞挂死.
+    let pid = process_get_current_pid();
+    let can_block = pid != 0 && !in_irq_context();
     unsafe {
-        let _guard = NET_STATE.lock();
+        loop {
+            let guard = NET_STATE.lock();
 
-        let Some(slot) = sm_slot(fd) else {
-            return -E_BADF;
-        };
-        if raw::fd_type(slot) == 0 {
-            return -E_BADF;
-        }
-        let handle = match raw::socket_handle(slot) {
-            Some(h) => h,
-            None => return -E_BADF,
-        };
-        if buf.is_null() || len == 0 {
-            return -E_INVAL;
-        }
-
-        let sockets = &mut *socket_set();
-        let data = core::slice::from_raw_parts_mut(buf, len as usize);
-
-        match raw::fd_type(slot) {
-            1 => {
-                let sock = sockets.get_mut::<tcp::Socket>(handle);
-                sock.recv_slice(data).map_or_else(
-                    |_| if sock.is_open() { 0 } else { -E_CONNRESET },
-                    |n| n as i32,
-                )
+            let Some(slot) = sm_slot(fd) else {
+                return -E_BADF;
+            };
+            if raw::fd_type(slot) == 0 {
+                return -E_BADF;
             }
-            2 => {
-                let sock = sockets.get_mut::<udp::Socket>(handle);
-                sock.recv_slice(data)
-                    .map_or(-E_AGAIN, |(n, _meta)| n as i32)
+            let handle = match raw::socket_handle(slot) {
+                Some(h) => h,
+                None => return -E_BADF,
+            };
+            if buf.is_null() || len == 0 {
+                return -E_INVAL;
             }
-            _ => -E_NOTSUPP,
+            let blocking = raw::is_blocking(slot);
+
+            let sockets = &mut *socket_set();
+            let data = core::slice::from_raw_parts_mut(buf, len as usize);
+
+            // Some(r) = 本次可完成; None = 未就绪且需阻塞. 非阻塞/中断路径保持旧 eager 语义.
+            let done: Option<i32> = match raw::fd_type(slot) {
+                1 => {
+                    let sock = sockets.get_mut::<tcp::Socket>(handle);
+                    if sock.can_recv() {
+                        Some(sock.recv_slice(data).map_or(0, |n| n as i32))
+                    } else if !sock.is_open() {
+                        Some(-E_CONNRESET) // 无数据且连接关闭 (沿用旧 eager 语义: 未细分 EOF/RST)
+                    } else if blocking && can_block {
+                        None // 连接存活且空 → 阻塞等可读
+                    } else {
+                        Some(0) // 非阻塞 empty+open: 旧行为返 0
+                    }
+                }
+                2 => {
+                    let sock = sockets.get_mut::<udp::Socket>(handle);
+                    if sock.can_recv() {
+                        Some(
+                            sock.recv_slice(data)
+                                .map_or(-E_AGAIN, |(n, _meta)| n as i32),
+                        )
+                    } else if blocking && can_block {
+                        None
+                    } else {
+                        Some(-E_AGAIN) // 非阻塞空: 旧行为返 -E_AGAIN
+                    }
+                }
+                _ => Some(-E_NOTSUPP),
+            };
+
+            if let Some(r) = done {
+                net_clear_waiter(slot, pid);
+                return r;
+            }
+            if !net_add_waiter(slot, pid, WAITER_READ) {
+                return -E_AGAIN; // 等待者槽满, 保守回退 (见 WAITER_SLOTS SIMPLIFIED)
+            }
+            drop(guard);
+            scheduler_block(BlockReason::WaitingForIo);
+            scheduler_schedule();
         }
     }
 }
@@ -1060,44 +1151,69 @@ pub unsafe extern "C" fn sm_sendto(
     _addrlen: u32,
     // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
 ) -> i32 {
+    // SIMPLIFIED: 未处理 MSG_DONTWAIT (归 P5d). P5b: TCP sendto 与 sm_send 同阻塞语义;
+    // UDP sendto 为数据报不阻塞 (维持旧 eager). 方向 WAITER_WRITE.
+    let pid = process_get_current_pid();
+    let can_block = pid != 0 && !in_irq_context();
     unsafe {
-        let _guard = NET_STATE.lock();
+        loop {
+            let guard = NET_STATE.lock();
 
-        let Some(slot) = sm_slot(fd) else {
-            return -E_BADF;
-        };
-        if raw::fd_type(slot) == 0 {
-            return -E_BADF;
-        }
-        let handle = match raw::socket_handle(slot) {
-            Some(h) => h,
-            None => return -E_BADF,
-        };
-        if buf.is_null() || len == 0 {
-            return -E_INVAL;
-        }
+            let Some(slot) = sm_slot(fd) else {
+                return -E_BADF;
+            };
+            if raw::fd_type(slot) == 0 {
+                return -E_BADF;
+            }
+            let handle = match raw::socket_handle(slot) {
+                Some(h) => h,
+                None => return -E_BADF,
+            };
+            if buf.is_null() || len == 0 {
+                return -E_INVAL;
+            }
 
-        let endpoint = match parse_endpoint(addr) {
-            Some(ep) => ep,
-            None => return -E_INVAL,
-        };
+            let endpoint = match parse_endpoint(addr) {
+                Some(ep) => ep,
+                None => return -E_INVAL,
+            };
+            let blocking = raw::is_blocking(slot);
 
-        let sockets = &mut *socket_set();
-        let data = core::slice::from_raw_parts(buf, len as usize);
+            let sockets = &mut *socket_set();
+            let data = core::slice::from_raw_parts(buf, len as usize);
 
-        match raw::fd_type(slot) {
-            2 => {
-                let sock = sockets.get_mut::<udp::Socket>(handle);
-                match sock.send_slice(data, endpoint) {
-                    Ok(()) => len as i32,
-                    Err(_) => -E_CONNRESET,
+            let done: Option<i32> = match raw::fd_type(slot) {
+                2 => {
+                    let sock = sockets.get_mut::<udp::Socket>(handle);
+                    // UDP sendto: 数据报 eager, 不阻塞.
+                    Some(match sock.send_slice(data, endpoint) {
+                        Ok(()) => len as i32,
+                        Err(_) => -E_CONNRESET,
+                    })
                 }
+                1 => {
+                    let sock = sockets.get_mut::<tcp::Socket>(handle);
+                    if !sock.is_open() {
+                        Some(-E_CONNRESET)
+                    } else if sock.can_send() || !(blocking && can_block) {
+                        Some(sock.send_slice(data).map_or(-E_CONNRESET, |n| n as i32))
+                    } else {
+                        None
+                    }
+                }
+                _ => Some(-E_NOTSUPP),
+            };
+
+            if let Some(r) = done {
+                net_clear_waiter(slot, pid);
+                return r;
             }
-            1 => {
-                let sock = sockets.get_mut::<tcp::Socket>(handle);
-                sock.send_slice(data).map_or(-E_CONNRESET, |n| n as i32)
+            if !net_add_waiter(slot, pid, WAITER_WRITE) {
+                return -E_AGAIN;
             }
-            _ => -E_NOTSUPP,
+            drop(guard);
+            scheduler_block(BlockReason::WaitingForIo);
+            scheduler_schedule();
         }
     }
 }
@@ -1123,46 +1239,75 @@ pub unsafe extern "C" fn sm_recvfrom(
     addrlen: *mut u32,
     // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
 ) -> i32 {
+    // SIMPLIFIED: 未处理 MSG_DONTWAIT / MSG_PEEK (归 P5d). P5b: 与 sm_recv 同阻塞
+    // 语义 (方向 WAITER_READ), UDP 额外写回对端 sockaddr.
+    let pid = process_get_current_pid();
+    let can_block = pid != 0 && !in_irq_context();
     unsafe {
-        let _guard = NET_STATE.lock();
+        loop {
+            let guard = NET_STATE.lock();
 
-        let Some(slot) = sm_slot(fd) else {
-            return -E_BADF;
-        };
-        if raw::fd_type(slot) == 0 {
-            return -E_BADF;
-        }
-        let handle = match raw::socket_handle(slot) {
-            Some(h) => h,
-            None => return -E_BADF,
-        };
-        if buf.is_null() || len == 0 {
-            return -E_INVAL;
-        }
+            let Some(slot) = sm_slot(fd) else {
+                return -E_BADF;
+            };
+            if raw::fd_type(slot) == 0 {
+                return -E_BADF;
+            }
+            let handle = match raw::socket_handle(slot) {
+                Some(h) => h,
+                None => return -E_BADF,
+            };
+            if buf.is_null() || len == 0 {
+                return -E_INVAL;
+            }
+            let blocking = raw::is_blocking(slot);
 
-        let sockets = &mut *socket_set();
-        let data = core::slice::from_raw_parts_mut(buf, len as usize);
+            let sockets = &mut *socket_set();
+            let data = core::slice::from_raw_parts_mut(buf, len as usize);
 
-        match raw::fd_type(slot) {
-            2 => {
-                let sock = sockets.get_mut::<udp::Socket>(handle);
-                sock.recv_slice(data).map_or(-E_AGAIN, |(n, meta)| {
-                    // 通过 endpoint_from_smol 将 smoltcp IpEndpoint 翻译为 NetEndpoint,
-                    // 再写入 sockaddr_in 供用户态读取对端地址.
-                    if let Some(ep) = endpoint_from_smol(meta.endpoint) {
-                        write_sockaddr(addr, addrlen, &ep);
+            let done: Option<i32> = match raw::fd_type(slot) {
+                2 => {
+                    let sock = sockets.get_mut::<udp::Socket>(handle);
+                    if sock.can_recv() {
+                        Some(sock.recv_slice(data).map_or(-E_AGAIN, |(n, meta)| {
+                            // 通过 endpoint_from_smol 将 smoltcp IpEndpoint 翻译为 NetEndpoint,
+                            // 再写入 sockaddr_in 供用户态读取对端地址.
+                            if let Some(ep) = endpoint_from_smol(meta.endpoint) {
+                                write_sockaddr(addr, addrlen, &ep);
+                            }
+                            n as i32
+                        }))
+                    } else if blocking && can_block {
+                        None
+                    } else {
+                        Some(-E_AGAIN)
                     }
-                    n as i32
-                })
+                }
+                1 => {
+                    let sock = sockets.get_mut::<tcp::Socket>(handle);
+                    if sock.can_recv() {
+                        Some(sock.recv_slice(data).map_or(0, |n| n as i32))
+                    } else if !sock.is_open() {
+                        Some(-E_CONNRESET)
+                    } else if blocking && can_block {
+                        None
+                    } else {
+                        Some(0)
+                    }
+                }
+                _ => Some(-E_NOTSUPP),
+            };
+
+            if let Some(r) = done {
+                net_clear_waiter(slot, pid);
+                return r;
             }
-            1 => {
-                let sock = sockets.get_mut::<tcp::Socket>(handle);
-                sock.recv_slice(data).map_or_else(
-                    |_| if sock.is_open() { 0 } else { -E_CONNRESET },
-                    |n| n as i32,
-                )
+            if !net_add_waiter(slot, pid, WAITER_READ) {
+                return -E_AGAIN;
             }
-            _ => -E_NOTSUPP,
+            drop(guard);
+            scheduler_block(BlockReason::WaitingForIo);
+            scheduler_schedule();
         }
     }
 }

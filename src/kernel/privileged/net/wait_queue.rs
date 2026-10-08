@@ -26,11 +26,11 @@
 // 本文件提供 **SocketWaitQueue**: 给每个 fd 关联一个轻量级等待队列, 记录在该
 // fd 上阻塞的等待者 pid.
 // - `sm_recv` / `sm_send` 等在 socket 未就绪且 fd 阻塞时, 于持 `NET_STATE` 的
-//   临界区内 `set_waiter(current_pid)`, 释放 `NET_STATE` 后 `scheduler_block`
-//   (与 `timer_sleep` / uffd / futex / epoll 既有范式同源).
-// - smoltcp 状态机在 `poll_network` 末尾遍历所有 fd, 对刚就绪的 fd 经 `take_waiter`
-//   收集待唤醒 pid; **释放 `NET_STATE` 后**逐个 `scheduler_unblock` (F8: 禁
-//   `NET_STATE → SCHEDULER` 嵌套锁).
+//   临界区内 `add_waiter(pid, want)`, 释放 `NET_STATE` 后 `scheduler_block`
+//   + `scheduler_schedule` (与 `timer_sleep` / uffd / futex / epoll 既有范式同源).
+// - smoltcp 状态机在 `poll_network` 末尾遍历所有 fd, 对就绪的 fd 经 `collect_waiters`
+//   (非破坏) 采集方向匹配的待唤醒 pid; **释放 `NET_STATE` 后**逐个
+//   `scheduler_unblock` (F8: 禁 `NET_STATE → SCHEDULER` 嵌套锁).
 //
 // ## 线程安全
 //
@@ -41,11 +41,24 @@
 //
 // 不破坏任何既有边界; 只在 privileged/net/ 内部新增, 不跨层.
 use crate::privileged::sync::IrqSpinLock as Mutex;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 /// Smoltcp 段 FD 上限 (与 `FdPlan::SMOLTCP.capacity` 同源; 不引用 `net::init` 的
 /// `MAX_SM_FD` 别名, 避免 `init ↔ wait_queue` 循环依赖). 权威定义见 `net/init.rs`.
 const MAX_SM_FD: usize = crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize;
+
+/// per-fd 等待者槽上限 (定长, no_std 无堆分配, 可进自旋锁临界区).
+///
+/// SIMPLIFIED: 同一 fd 并发阻塞的等待者超过 `WAITER_SLOTS` 时, `add_waiter`
+/// 返回 false → 消费者回退非阻塞 `-E_AGAIN`; 影响面为病态高并发同 fd 阻塞;
+/// 若需无上限等待者, 待改为 per-fd 动态等待队列 (受 NET_STATE 保护的定长链).
+pub const WAITER_SLOTS: usize = 16;
+/// 等待者兴趣方向: 空槽.
+pub const WAITER_NONE: u8 = 0;
+/// 等待者兴趣方向: 等待可读 (recv).
+pub const WAITER_READ: u8 = 1;
+/// 等待者兴趣方向: 等待可写 (send).
+pub const WAITER_WRITE: u8 = 2;
 
 /// Socket 状态变化原因 (用于 wake 路径)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,21 +71,33 @@ pub enum WakeReason {
     Closed,
 }
 
-/// 单 fd 的等待队列.
+/// 单 fd 的等待队列 (多等待者, DECISION-094).
 ///
-/// 持锁时间: `try_lock` 命中 → O(1) 修改 `pending` / `waiter_pid` → 释放.
-/// syscall 端阻塞 (D10): 持 `NET_STATE` 内 `set_waiter` → 释放锁 → `scheduler_block`;
-/// 唤醒侧 `take_waiter` → 释放 `NET_STATE` → `scheduler_unblock`.
+/// 等待者建模为定长 `waiter_pid`/`waiter_want` 槽数组, 每槽记一个在该 fd
+/// 上阻塞的 pid 与其兴趣方向 (read/write). 所有 `add_waiter`/`remove_waiter`/
+/// `collect_waiters` 均在 `NET_STATE` 临界区内调用 (消费者与 `poll_network` 互斥),
+/// 数组内原子操作仅为防御.
+///
+/// syscall 端阻塞 (D10): 持 `NET_STATE` 内 `add_waiter(pid,want)` → **释放锁**
+/// → `scheduler_block` + `scheduler_schedule`; 唤醒侧 `collect_waiters` 收集
+/// 方向匹配 pid → **释放 `NET_STATE`** → 逐个 `scheduler_unblock` (F8: 禁
+/// `NET_STATE → SCHEDULER` 嵌套锁).
+///
+/// 丢失唤醒自愈 (DECISION-094 事实②): `collect_waiters` **非破坏** (不移除
+/// 等待者); 消费者操作成功后自行 `remove_waiter` 自摘. 若某次 unblock 落在
+/// “释放锁→尚未 block()”窗口被吞 (unblock 对非 Blocked 目标 no-op), 则
+/// `poll_network` 下一 tick 电平重扫会再次采集并唤醒, 自愈.
 pub struct SocketWaitQueue {
-    /// 当前 fd 上是否有等待者 (简化: 1 个, 多于 1 个也只标记一次)
+    /// 当前 fd 上是否有等待者 (observability; 驱动不再依赖此位, 靠 waiter 槽 + 电平重扫)
     pending: AtomicBool,
     /// 累计 wake 次数 (供测试 / 调试使用)
     wake_count: AtomicU32,
     /// 最近一次 wake 原因 (u8 repr of `WakeReason`)
     last_reason: AtomicU32,
-    /// 在该 fd 上阻塞等待的 pid (0 = 无等待者, pid 0 为 idle/内核线程从不阻塞于 socket).
-    /// 供唤醒侧定位待 `scheduler_unblock` 的目标 (D10 / DECISION-092, 仿 uffd `fault_pid`).
-    waiter_pid: AtomicU32,
+    /// 定长等待者 pid 数组 (0 = 空槽; pid 0 为 idle/内核线程, 从不阻塞于 socket).
+    waiter_pid: [AtomicU32; WAITER_SLOTS],
+    /// 与 `waiter_pid` 同索引的兴趣方向 (`WAITER_READ` / `WAITER_WRITE`).
+    waiter_want: [AtomicU8; WAITER_SLOTS],
     /// ISR 端抢锁 (`try_lock`) 用的 mutex
     lock: Mutex<()>,
 }
@@ -83,27 +108,71 @@ impl SocketWaitQueue {
             pending: AtomicBool::new(false),
             wake_count: AtomicU32::new(0),
             last_reason: AtomicU32::new(u32::MAX),
-            waiter_pid: AtomicU32::new(0),
+            waiter_pid: [const { AtomicU32::new(0) }; WAITER_SLOTS],
+            waiter_want: [const { AtomicU8::new(WAITER_NONE) }; WAITER_SLOTS],
             lock: Mutex::new(()),
         }
     }
 
-    /// 标记当前 fd 已被 wait. 由 `sm_send/sm_recv` 在 Err 分支调用 (未来).
-    /// 返回 true 表示之前未标记 (首次 wait).
+    /// 标记当前 fd 已被 wait (observability). 返回 true 表示之前未标记.
     pub fn mark_waiting(&self) -> bool {
         !self.pending.swap(true, Ordering::AcqRel)
     }
 
-    /// 记录当前在该 fd 上阻塞的 pid (仿 uffd `fault_pid`). 由调用方在持 `NET_STATE`
-    /// 临界区内与 `mark_waiting` 一同设置, 供唤醒侧定位待 unblock 的任务 (D10).
-    pub fn set_waiter(&self, pid: u32) {
-        self.waiter_pid.store(pid, Ordering::Release);
+    /// 将 `pid` 登记为方向 `want` 的等待者. 由调用方在持 `NET_STATE` 临界区内
+    /// 与 `mark_waiting` 一同调用. 同一 pid 已登记则更新方向 (幂等).
+    /// 返 false 表示槽满 (消费者应回退非阻塞, 见 `WAITER_SLOTS` SIMPLIFIED).
+    pub fn add_waiter(&self, pid: u32, want: u8) -> bool {
+        // 已存在同 pid → 更新方向 (幂等, 避免重复占槽).
+        if let Some(idx) = self
+            .waiter_pid
+            .iter()
+            .position(|s| s.load(Ordering::Acquire) == pid)
+        {
+            self.waiter_want[idx].store(want, Ordering::Release);
+            return true;
+        }
+        // 找空槽 CAS 入队.
+        for i in 0..WAITER_SLOTS {
+            if self.waiter_pid[i]
+                .compare_exchange(0, pid, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                self.waiter_want[i].store(want, Ordering::Release);
+                self.pending.store(true, Ordering::Release);
+                return true;
+            }
+        }
+        false // 满
     }
 
-    /// 取出并清空等待者 pid (返 0 表示无等待者). 供唤醒侧在释放 `NET_STATE` 后调
-    /// `scheduler_unblock` 使用 (D10).
-    pub fn take_waiter(&self) -> u32 {
-        self.waiter_pid.swap(0, Ordering::AcqRel)
+    /// 移除 `pid` 的等待登记 (清槽). 消费者操作成功返返前自摘, 或放弃阻塞时调用.
+    pub fn remove_waiter(&self, pid: u32) {
+        for i in 0..WAITER_SLOTS {
+            if self.waiter_pid[i].swap(0, Ordering::AcqRel) == pid {
+                self.waiter_want[i].store(WAITER_NONE, Ordering::Release);
+                return;
+            }
+        }
+    }
+
+    /// 将方向匹配 `want` 的等待者 pid 采集到 `out`, 返回写入个数. **非破坏**
+    /// (不移除等待者), 供 `poll_network` 在持 `NET_STATE` 时收集待唤醒 pid,
+    /// 出临界区后逐个 `scheduler_unblock`. `out` 满则截断, 余下待下一 tick 自愈.
+    pub fn collect_waiters(&self, want: u8, out: &mut [u32]) -> usize {
+        let mut n = 0usize;
+        for i in 0..WAITER_SLOTS {
+            let pid = self.waiter_pid[i].load(Ordering::Acquire);
+            if pid != 0 && self.waiter_want[i].load(Ordering::Acquire) == want {
+                if n < out.len() {
+                    out[n] = pid;
+                    n += 1;
+                } else {
+                    break; // out 满, 余下待下一 tick 电平重扫自愈 (SIMPLIFIED)
+                }
+            }
+        }
+        n
     }
 
     #[expect(
@@ -213,12 +282,47 @@ mod tests {
     }
 
     #[test]
-    fn waiter_pid_roundtrip() {
+    fn waiter_add_remove_roundtrip() {
         let q = SocketWaitQueue::new();
-        assert_eq!(q.take_waiter(), 0); // 初始无等待者
-        q.set_waiter(42);
-        assert_eq!(q.take_waiter(), 42); // 取出即清空
-        assert_eq!(q.take_waiter(), 0);
+        let mut out = [0u32; WAITER_SLOTS];
+        assert_eq!(q.collect_waiters(WAITER_READ, &mut out), 0); // 初始无等待者
+        assert!(q.add_waiter(42, WAITER_READ));
+        // 非破坏 collect: 采集到但不移除
+        assert_eq!(q.collect_waiters(WAITER_READ, &mut out), 1);
+        assert_eq!(out[0], 42);
+        assert_eq!(q.collect_waiters(WAITER_READ, &mut out), 1); // 仍在 (非破坏)
+        q.remove_waiter(42);
+        assert_eq!(q.collect_waiters(WAITER_READ, &mut out), 0); // 自摘后清空
+    }
+
+    #[test]
+    fn waiter_direction_filter() {
+        let q = SocketWaitQueue::new();
+        let mut out = [0u32; WAITER_SLOTS];
+        assert!(q.add_waiter(7, WAITER_READ));
+        assert!(q.add_waiter(8, WAITER_WRITE));
+        // 只采集 read 方向
+        assert_eq!(q.collect_waiters(WAITER_READ, &mut out), 1);
+        assert_eq!(out[0], 7);
+        assert_eq!(q.collect_waiters(WAITER_WRITE, &mut out), 1);
+        assert_eq!(out[0], 8);
+    }
+
+    #[test]
+    fn waiter_multi_idempotent_and_capacity() {
+        let q = SocketWaitQueue::new();
+        // 填满 WAITER_SLOTS 个不同 pid (均 read)
+        for i in 0..WAITER_SLOTS as u32 {
+            assert!(q.add_waiter(i + 1, WAITER_READ), "第 {i} 个等待者应入槽");
+        }
+        // 槽满: 新 pid 拒绝 (消费者回退非阻塞, 见 WAITER_SLOTS SIMPLIFIED)
+        assert!(!q.add_waiter(1_000, WAITER_READ), "超 WAITER_SLOTS 应拒绝");
+        // 同 pid 幂等更新方向 (不重复占槽): pid 1 → write
+        assert!(q.add_waiter(1, WAITER_WRITE), "同 pid 应幂等更新方向");
+        let mut out = [0u32; WAITER_SLOTS];
+        assert_eq!(q.collect_waiters(WAITER_WRITE, &mut out), 1); // 仅 pid 1 转 write
+        assert_eq!(out[0], 1);
+        assert_eq!(q.collect_waiters(WAITER_READ, &mut out), WAITER_SLOTS - 1);
     }
 
     #[test]
