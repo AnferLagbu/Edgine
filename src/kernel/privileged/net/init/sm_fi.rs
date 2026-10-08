@@ -404,6 +404,39 @@ pub unsafe extern "C" fn sm_socket(domain: i32, sock_type: i32, _protocol: i32) 
     }
 }
 
+/// 设置 socket 非阻塞标志 (D10 / DECISION-092).
+///
+/// `nonblock` = true 置非阻塞, false 恢复阻塞 (写 per-slot `blocking` 标志).
+/// fd 非法 / 非 socket (`fd_type`=0) 返回 `-E_BADF`, 否则 `0`. 内部持 `NET_STATE`
+/// 锁串行化; 供 `socket_syscall` (剥离 `SOCK_NONBLOCK`) 与 `functions` 侧
+/// `fcntl(F_SETFL, O_NONBLOCK)` 经 `net_socket` 安全代理调用. 阻塞睡眠本身归 P5b.
+pub fn sm_set_nonblocking(fd: i32, nonblock: bool) -> i32 {
+    let _guard = NET_STATE.lock();
+    let Some(slot) = sm_slot(fd) else {
+        return -E_BADF;
+    };
+    if raw::fd_type(slot) == 0 {
+        return -E_BADF;
+    }
+    raw::set_blocking(slot, !nonblock);
+    0
+}
+
+/// 读取 socket 非阻塞标志 (D10). 供 `fcntl(F_GETFL)` 回填 `O_NONBLOCK`.
+///
+/// 返回 `1` (非阻塞) / `0` (阻塞); fd 非法 / 非 socket 返回 `-E_BADF`.
+pub fn sm_get_nonblocking(fd: i32) -> i32 {
+    let _guard = NET_STATE.lock();
+    let Some(slot) = sm_slot(fd) else {
+        return -E_BADF;
+    };
+    if raw::fd_type(slot) == 0 {
+        return -E_BADF;
+    }
+    // 非阻塞 = !blocking; 返回 1 (非阻塞) / 0 (阻塞).
+    i32::from(!raw::is_blocking(slot))
+}
+
 // ============================================================================
 // D2: 临时端口 (ephemeral port) 分配器
 //
@@ -1862,6 +1895,26 @@ mod tests {
 
         raw::set_socket_local_endpoint(0, None);
         assert_eq!(raw::socket_local_endpoint(0), None);
+    }
+
+    /// D10 (P5a): blocking 标志 `allocate()` 默认阻塞, raw accessor 跨槽位往返一致.
+    ///
+    /// 全程持单次 `NET_STATE` 锁 (非可重入), 只验证 per-slot 阻塞表存储 (P5a 数据
+    /// 结构本体); `sm_set_nonblocking`/`fcntl`/`socket_syscall` 为自锁 glue, 其
+    /// 行为待 P5b 阻塞睡眠接入后经 e2e 验证.
+    #[test]
+    fn test_blocking_flag_default_and_roundtrip() {
+        let mut guard = NET_STATE.lock();
+        guard.allocate();
+        // allocate() 默认阻塞 (POSIX); 抽查首/尾槽位.
+        assert!(raw::is_blocking(0), "allocate 后应默认阻塞");
+        assert!(raw::is_blocking(MAX_SM_FD - 1), "末槽位应默认阻塞");
+        // 跨槽位 set/get 往返 (非阻塞仅翻 per-slot 标志, 不触 smoltcp).
+        raw::set_blocking(0, false);
+        assert!(!raw::is_blocking(0), "置非阻塞后应读到 false");
+        assert!(raw::is_blocking(1), "相邻槽位不受影响");
+        raw::set_blocking(0, true);
+        assert!(raw::is_blocking(0));
     }
 
     /// D2: 连续分配返回互不相同的端口, 且均落在动态端口区间内.

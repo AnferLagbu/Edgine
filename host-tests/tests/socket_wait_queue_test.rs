@@ -3,7 +3,7 @@
 //! 验证:
 //! 1. wait_queue.rs 模块存在并导出关键类型
 //! 2. SocketWaitQueue 行为契约 (mark_waiting / try_wake / is_pending)
-//! 3. SocketWaitQueueTable 边界 (16 项 + 越界返回 None)
+//! 3. SocketWaitQueueTable 边界 (按 `MAX_SM_FD` 定长 + 越界返回 None)
 //! 4. poll_network 末尾调用 try_wake (静态契约)
 //! 5. 单元测试 (wait_queue.rs 内 #[cfg(test)]) 数量
 //! 6. 与框架/服务边界: SOCKET_WAIT_QUEUES 是 privileged 内 static (不在 functions 暴露)
@@ -60,22 +60,28 @@ fn wake_reason_distinguishes_three_states() {
 }
 
 #[test]
-fn socket_wait_queue_table_bounded_at_16() {
+fn socket_wait_queue_table_sized_by_max_sm_fd() {
     let src = read_src("src/kernel/privileged/net/wait_queue.rs");
-    // 表格内 16 个 SocketWaitQueue
+    // D10 / DECISION-092: 等待表按 `MAX_SM_FD` 定长 (修复原固定 16 导致
+    // slots 16..255 唤醒静默失效的潜伏 bug); 不得回退为硬编码小常量.
     assert!(
-        src.contains("queues: [SocketWaitQueue; 16]"),
-        "P2-I-41: SocketWaitQueueTable 必须定长 16 项, 与 MAX_SM_FD 对齐"
+        src.contains("queues: [SocketWaitQueue; MAX_SM_FD]"),
+        "P5a/D10: SocketWaitQueueTable 必须按 MAX_SM_FD 定长, 与 FdPlan::SMOLTCP 对齐"
     );
-    let body: String = src
-        .lines()
-        .filter(|l| l.trim().starts_with("SocketWaitQueue::new()"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let count = body.matches("SocketWaitQueue::new()").count();
     assert!(
-        count >= 16,
-        "P2-I-41: SocketWaitQueueTable 应至少含 16 个 new() 调用, 实测 {count}"
+        src.contains(
+            "const MAX_SM_FD: usize = crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize"
+        ),
+        "P5a/D10: MAX_SM_FD 须与 FdPlan::SMOLTCP.capacity 同源 (免 init↔wait_queue 循环依赖)"
+    );
+    assert!(
+        !src.contains("[SocketWaitQueue; 16]"),
+        "P5a/D10: 等待表不得回退为固定 16 项"
+    );
+    // get() 改为切片自动判界 (越界 → None), 不再硬编 `if fd < 16`.
+    assert!(
+        src.contains("self.queues.get(fd)"),
+        "P5a/D10: get() 应基于切片自动判界"
     );
 }
 

@@ -57,6 +57,11 @@ pub enum SockType {
     Dgram = 2,
 }
 
+/// `SOCK_NONBLOCK` (Linux/x86 asm-generic `0o4000`): `socket()` 的 type 参数可按位
+/// 或入此标志, 表示创建即置非阻塞 (D10 / DECISION-092). `socket_syscall` 在校验
+/// [`SockType`] 前剥离本位, 并据此设置 per-slot 阻塞标志.
+pub const SOCK_NONBLOCK: i32 = 0o4000;
+
 impl SockType {
     pub fn from_i32(t: i32) -> Option<Self> {
         match t {

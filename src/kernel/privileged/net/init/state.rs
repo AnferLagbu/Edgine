@@ -65,6 +65,10 @@ pub struct NetState {
     /// 各 FD 的对端端点 (D1, UDP 专属): `connect` 时登记, 供 send/getpeername.
     /// TCP 的 remote 由 smoltcp socket 自身持有, 不使用此表.
     pub(crate) remote_endpoints: Vec<Option<NetEndpoint>>,
+    /// 各 FD 的阻塞标志 (D10 / DECISION-092): `true` = 阻塞 (POSIX 默认),
+    /// `false` = 非阻塞 (`SOCK_NONBLOCK` 或 `fcntl(F_SETFL, O_NONBLOCK)` 置位).
+    /// `allocate()` 默认填 `true`; 由 `socket_syscall` / `fcntl` 经 `raw` accessor 改写.
+    pub(crate) blocking: Vec<bool>,
     pub(crate) tcp_rx_bufs: Vec<*mut u8>,
     pub(crate) tcp_tx_bufs: Vec<*mut u8>,
     pub(crate) udp_rx_bufs: Vec<*mut u8>,
@@ -93,6 +97,7 @@ impl NetState {
             fd_types: Vec::new(),
             local_endpoints: Vec::new(),
             remote_endpoints: Vec::new(),
+            blocking: Vec::new(),
             tcp_rx_bufs: Vec::new(),
             tcp_tx_bufs: Vec::new(),
             udp_rx_bufs: Vec::new(),
@@ -111,6 +116,7 @@ impl NetState {
         self.fd_types = (0..TOTAL_SLOTS).map(|_| 0u8).collect();
         self.local_endpoints = (0..TOTAL_SLOTS).map(|_| None).collect();
         self.remote_endpoints = (0..TOTAL_SLOTS).map(|_| None).collect();
+        self.blocking = (0..TOTAL_SLOTS).map(|_| true).collect();
         self.tcp_rx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();
         self.tcp_tx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();
         self.udp_rx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();

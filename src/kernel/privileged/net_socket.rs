@@ -143,6 +143,13 @@ mod init {
     pub unsafe fn sm_poll_sockets() -> i32 {
         0
     }
+    // D10 非阻塞标志桩: 真实实现为 safe `pub fn`, 桩保持同签名 (no-op).
+    pub fn sm_set_nonblocking(_fd: i32, _nonblock: bool) -> i32 {
+        0
+    }
+    pub fn sm_get_nonblocking(_fd: i32) -> i32 {
+        0
+    }
 }
 
 // ============================================================================
@@ -372,6 +379,18 @@ pub fn sm_getpeername(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
 pub fn sm_poll_sockets() -> i32 {
     // SAFETY: try_lock 内部使用, ISR 安全
     unsafe { init::sm_poll_sockets() }
+}
+
+/// POSIX `fcntl(F_SETFL, O_NONBLOCK)` 的 socket 侧落点 (D10): 设置非阻塞标志.
+///
+/// 真实实现为 safe `pub fn` (内部自持 `NET_STATE` 锁), 本层无 unsafe.
+pub fn sm_set_nonblocking(fd: i32, nonblock: bool) -> i32 {
+    init::sm_set_nonblocking(fd, nonblock)
+}
+
+/// POSIX `fcntl(F_GETFL)` 读取 socket 非阻塞标志 (D10).
+pub fn sm_get_nonblocking(fd: i32) -> i32 {
+    init::sm_get_nonblocking(fd)
 }
 
 // ============================================================================

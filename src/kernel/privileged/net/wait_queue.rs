@@ -21,16 +21,16 @@
 // 当前实现是非阻塞 (Err 即返回 -E_AGAIN/-E_CONNRESET), 暂无"自旋等待"症状.
 // 但结构上存在风险: 任何未来在 smoltcp 调用之间加 retry 的修改都会复发.
 //
-// ## 修复方案 (Phase 1)
+// ## 机制 (D10 / DECISION-092: 真调度阻塞)
 //
-// 本文件提供 **SocketWaitQueue**: 给每个 fd 关联一个轻量级等待队列.
-// - smoltcp 状态机在 `poll_network` 末尾遍历所有 fd, 对刚刚可读/可写的 fd
-//   调用 `SocketWaitQueue::wake`, 唤醒等待者.
-// - `sm_send` / `sm_recv` 在 socket 未就绪时, **不**调用 wait (保持非阻塞
-//   语义), 但基础设施已就位. 未来要切换为阻塞式, 只需在 Err 分支中调
-//   `wait_queue.wait_with_timeout(NET_LOCK_*)`.
-// - `wait_with_timeout` 释放 NET_LOCK → proc_sleep_ms(N) → 重抢 NET_LOCK,
-//   持锁时间从"任意长"收敛为"无状态变化时 0 ms".
+// 本文件提供 **SocketWaitQueue**: 给每个 fd 关联一个轻量级等待队列, 记录在该
+// fd 上阻塞的等待者 pid.
+// - `sm_recv` / `sm_send` 等在 socket 未就绪且 fd 阻塞时, 于持 `NET_STATE` 的
+//   临界区内 `set_waiter(current_pid)`, 释放 `NET_STATE` 后 `scheduler_block`
+//   (与 `timer_sleep` / uffd / futex / epoll 既有范式同源).
+// - smoltcp 状态机在 `poll_network` 末尾遍历所有 fd, 对刚就绪的 fd 经 `take_waiter`
+//   收集待唤醒 pid; **释放 `NET_STATE` 后**逐个 `scheduler_unblock` (F8: 禁
+//   `NET_STATE → SCHEDULER` 嵌套锁).
 //
 // ## 线程安全
 //
@@ -42,6 +42,10 @@
 // 不破坏任何既有边界; 只在 privileged/net/ 内部新增, 不跨层.
 use crate::privileged::sync::IrqSpinLock as Mutex;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+/// Smoltcp 段 FD 上限 (与 `FdPlan::SMOLTCP.capacity` 同源; 不引用 `net::init` 的
+/// `MAX_SM_FD` 别名, 避免 `init ↔ wait_queue` 循环依赖). 权威定义见 `net/init.rs`.
+const MAX_SM_FD: usize = crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize;
 
 /// Socket 状态变化原因 (用于 wake 路径)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,8 +60,9 @@ pub enum WakeReason {
 
 /// 单 fd 的等待队列.
 ///
-/// 持锁时间: `try_lock` 命中 → O(1) 修改 `pending` 标记 → 释放.
-/// syscall 端 `wait_with_timeout`: 释放 `NET_LOCK` 后睡眠 10ms, 重抢 `NET_LOCK`.
+/// 持锁时间: `try_lock` 命中 → O(1) 修改 `pending` / `waiter_pid` → 释放.
+/// syscall 端阻塞 (D10): 持 `NET_STATE` 内 `set_waiter` → 释放锁 → `scheduler_block`;
+/// 唤醒侧 `take_waiter` → 释放 `NET_STATE` → `scheduler_unblock`.
 pub struct SocketWaitQueue {
     /// 当前 fd 上是否有等待者 (简化: 1 个, 多于 1 个也只标记一次)
     pending: AtomicBool,
@@ -65,6 +70,9 @@ pub struct SocketWaitQueue {
     wake_count: AtomicU32,
     /// 最近一次 wake 原因 (u8 repr of `WakeReason`)
     last_reason: AtomicU32,
+    /// 在该 fd 上阻塞等待的 pid (0 = 无等待者, pid 0 为 idle/内核线程从不阻塞于 socket).
+    /// 供唤醒侧定位待 `scheduler_unblock` 的目标 (D10 / DECISION-092, 仿 uffd `fault_pid`).
+    waiter_pid: AtomicU32,
     /// ISR 端抢锁 (`try_lock`) 用的 mutex
     lock: Mutex<()>,
 }
@@ -75,6 +83,7 @@ impl SocketWaitQueue {
             pending: AtomicBool::new(false),
             wake_count: AtomicU32::new(0),
             last_reason: AtomicU32::new(u32::MAX),
+            waiter_pid: AtomicU32::new(0),
             lock: Mutex::new(()),
         }
     }
@@ -83,6 +92,18 @@ impl SocketWaitQueue {
     /// 返回 true 表示之前未标记 (首次 wait).
     pub fn mark_waiting(&self) -> bool {
         !self.pending.swap(true, Ordering::AcqRel)
+    }
+
+    /// 记录当前在该 fd 上阻塞的 pid (仿 uffd `fault_pid`). 由调用方在持 `NET_STATE`
+    /// 临界区内与 `mark_waiting` 一同设置, 供唤醒侧定位待 unblock 的任务 (D10).
+    pub fn set_waiter(&self, pid: u32) {
+        self.waiter_pid.store(pid, Ordering::Release);
+    }
+
+    /// 取出并清空等待者 pid (返 0 表示无等待者). 供唤醒侧在释放 `NET_STATE` 后调
+    /// `scheduler_unblock` 使用 (D10).
+    pub fn take_waiter(&self) -> u32 {
+        self.waiter_pid.swap(0, Ordering::AcqRel)
     }
 
     #[expect(
@@ -125,47 +146,33 @@ impl SocketWaitQueue {
     }
 }
 
-/// Per-fd 等待队列表 (固定 16 项, 与 `MAX_SM_FD` 对齐).
+/// Per-fd 等待队列表 (与 `MAX_SM_FD` 对齐, 当前 256).
 pub struct SocketWaitQueueTable {
-    queues: [SocketWaitQueue; 16],
+    queues: [SocketWaitQueue; MAX_SM_FD],
 }
 
 impl SocketWaitQueueTable {
+    // 固定容量表 (MAX_SM_FD) 仅在全局 static `SOCKET_WAIT_QUEUES` 中物化, 常驻
+    // .bss 而非栈; const 构造要求数组字面量在此函数体内展开, clippy 的
+    // large_stack_arrays 仅在 host target (kernel_test/host-test 维) 按放大后的
+    // 元素尺寸报出, x86_64-unknown-none 维不触发 — 故用 allow 而非 expect
+    // (expect 会在 none target 产生 unfulfilled 警告, 破坏 lib 维 0 warning).
+    // 非死代码抑制 (F9 不受影响), 是对静态表设计意图的正当豁免.
+    #[allow(clippy::large_stack_arrays)]
     pub const fn new() -> Self {
         Self {
-            queues: [
-                SocketWaitQueue::new(),
-                SocketWaitQueue::new(),
-                SocketWaitQueue::new(),
-                SocketWaitQueue::new(),
-                SocketWaitQueue::new(),
-                SocketWaitQueue::new(),
-                SocketWaitQueue::new(),
-                SocketWaitQueue::new(),
-                SocketWaitQueue::new(),
-                SocketWaitQueue::new(),
-                SocketWaitQueue::new(),
-                SocketWaitQueue::new(),
-                SocketWaitQueue::new(),
-                SocketWaitQueue::new(),
-                SocketWaitQueue::new(),
-                SocketWaitQueue::new(),
-            ],
+            queues: [const { SocketWaitQueue::new() }; MAX_SM_FD],
         }
     }
 
     /// 取 fd 对应队列 (fd 越界时返回 None)
     pub fn get(&self, fd: usize) -> Option<&SocketWaitQueue> {
-        if fd < 16 {
-            Some(&self.queues[fd])
-        } else {
-            None
-        }
+        self.queues.get(fd)
     }
 }
 
 // ============================================================================
-// 全局表 (单例). 与 MAX_SM_FD = 16 对齐.
+// 全局表 (单例). 与 MAX_SM_FD 对齐.
 // ============================================================================
 
 pub static SOCKET_WAIT_QUEUES: SocketWaitQueueTable = SocketWaitQueueTable::new();
@@ -200,9 +207,18 @@ mod tests {
     fn table_lookup_bounded() {
         let t = SocketWaitQueueTable::new();
         assert!(t.get(0).is_some());
-        assert!(t.get(15).is_some());
-        assert!(t.get(16).is_none());
+        assert!(t.get(MAX_SM_FD - 1).is_some());
+        assert!(t.get(MAX_SM_FD).is_none());
         assert!(t.get(usize::MAX).is_none());
+    }
+
+    #[test]
+    fn waiter_pid_roundtrip() {
+        let q = SocketWaitQueue::new();
+        assert_eq!(q.take_waiter(), 0); // 初始无等待者
+        q.set_waiter(42);
+        assert_eq!(q.take_waiter(), 42); // 取出即清空
+        assert_eq!(q.take_waiter(), 0);
     }
 
     #[test]

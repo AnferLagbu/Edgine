@@ -284,19 +284,24 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - **状态**：[X]
 - **详情**：`sm_recvfrom` 已能回写对端（[sm_fi.rs:699-709](../../src/kernel/privileged/net/init/sm_fi.rs)），故 U3 仅需改系统调用层调用点。functions 侧 `recvfrom_syscall` 已透传出参（[functions/net/syscall.rs:252](../../src/kernel/functions/net/syscall.rs)）。
 
-### D10: 阻塞睡眠（DECISION-090）
+### D10: 阻塞睡眠（DECISION-090，实施取路径 B「相对完整」，机制细化见 DECISION-092）
 
-- **描述**：实现 POSIX 默认阻塞语义：I/O 未就绪时睡眠等待，由网络 poll 唤醒；并由 `SOCK_NONBLOCK` / `fcntl(F_SETFL)` 切换非阻塞。
-- **方案**：
-  1. `socket_syscall`（[syscall.rs:244](../../src/kernel/privileged/net/syscall.rs)）：在 `SockType::from_i32` 前剥离 `SOCK_NONBLOCK`（`0x800`）位，并据其置 per-slot 阻塞标志为 `false`。
-  2. per-slot 阻塞标志入 `NetState`（`blocking: Vec<bool>`，`allocate()` 默认 `true` = 阻塞），经 `raw.rs` accessor 访问；`fcntl` `F_SETFL`（[io.rs:331](../../src/kernel/functions/fs/io.rs)）支持 `O_NONBLOCK`，经新增 safe API 落到该标志。
-  3. `sm_recv`（[sm_fi.rs:564](../../src/kernel/privileged/net/init/sm_fi.rs)）/ `sm_send`（[sm_fi.rs:519](../../src/kernel/privileged/net/init/sm_fi.rs)）/ `sm_connect`（[sm_fi.rs:463](../../src/kernel/privileged/net/init/sm_fi.rs)）/ `sm_accept`（[sm_fi.rs:430](../../src/kernel/privileged/net/init/sm_fi.rs)）在未就绪时：
-     - 非阻塞 → `-E_AGAIN`（现行为）。
-     - 阻塞 → 锁内 `SOCKET_WAIT_QUEUES.get(fd)?.mark_waiting()`（[wait_queue.rs:84](../../src/kernel/privileged/net/wait_queue.rs)）→ 释放 `NET_STATE` guard → `wait_with_timeout(|| !q.is_pending(), timeout_ms)`（[sleep.rs:302](../../src/kernel/privileged/timer/sleep.rs)）→ 重抢锁 → 重试。
-  4. `SocketWaitQueueTable` 由固定 16 项扩至 `MAX_SM_FD`（256）项（[wait_queue.rs:129-131](../../src/kernel/privileged/net/wait_queue.rs)）；同步 4 个单测（[wait_queue.rs:178-217](../../src/kernel/privileged/net/wait_queue.rs)），尤其 `table_lookup_bounded`（[wait_queue.rs:200](../../src/kernel/privileged/net/wait_queue.rs)）的 `get(16)` / `get(usize::MAX)` 边界。
-  5. 修正陈旧注释：`wait_queue.rs:128` / `wait_queue.rs:168` 的"与 `MAX_SM_FD = 16` 对齐"（实际 `MAX_SM_FD = 256`）。
-- **状态**：[]
-- **详情**：**顺序约束**——必须先锁内 `mark_waiting()` 再释放锁，否则 ISR 唤醒会丢失。`wait_with_timeout` 只 `yield`（[sleep.rs:302](../../src/kernel/privileged/timer/sleep.rs)），**不释放调用方锁**；故阻塞等待期间必须**主动释放** `NET_STATE`，否则 `poll_network`（ISR 侧）无法取锁而饿死。`timeout_ms == 0` 表示无限等待。`get()` 越界返 `None` 的既有契约须在扩容后保持一致（fd ≥ `MAX_SM_FD` → `None`）。
+- **描述**：实现 POSIX 默认阻塞语义：I/O 未就绪时**真阻塞睡眠**（非忙轮询），由 poll 事件 / 信号（EINTR，P5d）唤醒；`SOCK_NONBLOCK` / `fcntl(F_SETFL)` 切换非阻塞；accept/connect 完成语义对齐 POSIX（A2）。
+- **调研结论（P5 前置调研坐实，修正原 D10 假设）**：
+  1. **真阻塞原语已存在**：`scheduler_block(BlockReason::WaitingForIo)` + `scheduler_schedule()`（`timer_sleep` 同款，[sleep.rs:221](../../src/kernel/privileged/timer/sleep.rs)）；事件唤醒 `scheduler_unblock(pid)`（[sched_ops.rs:40](../../src/kernel/privileged/proc/sched_ops.rs)）。futex（`ipc/types.rs`）、`epoll.rs:405`、`uffd.rs` 三处均为「**锁内收集 pid → 释放锁后逐个 unblock**」范式。
+  2. `wait_with_timeout`（[sleep.rs:302](../../src/kernel/privileged/timer/sleep.rs)）只 `scheduler_yield_ex` 让出自旋、任务保持 runnable，**非真阻塞**——原 D10 以其为睡眠原语与目标「睡眠而非忙轮询」矛盾，本路径**弃用**。
+  3. **表容量是潜伏 bug**：`SocketWaitQueueTable` 固定 16（[wait_queue.rs:130](../../src/kernel/privileged/net/wait_queue.rs)），`MAX_SM_FD=256`（`FdPlan::SMOLTCP.capacity`）；`poll_network` 已按 `0..MAX_SM_FD` 扫（[init.rs:268](../../src/kernel/privileged/net/init.rs)），故 slots 16..255 的 `try_wake` 恒 None，唤醒静默失效（非「将来才需要」）。
+  4. **唤醒模型缺 accept/connect 条件**：现仅 `can_recv`/`can_send`（[init.rs:276](../../src/kernel/privileged/net/init.rs)）；阻塞 accept 就绪=监听槽→`Established`、阻塞 connect 就绪=connector→`Established/Closed`，需给 `poll_network` 新增**状态迁移唤醒**。
+  5. **connect 现状「发起即返 0」**（`sock.connect()` Ok 即返，[sm_fi.rs:891](../../src/kernel/privileged/net/init/sm_fi.rs)），无 `EINPROGRESS`、不等握手——A2 须改造。
+  6. 信号可打断 Blocked 任务（`do_signal_send` 置 `Ready`，[signal.rs:231](../../src/kernel/privileged/proc/signal.rs)），但全仓无阻塞 syscall 返 `EINTR`——EINTR 为新开垦（P5d）。
+- **方案（分 P5a-P5d 子轮，见分期）**：
+  1. **阻塞范式**（取代原「`mark_waiting`+`wait_with_timeout`」）：未就绪且阻塞 → 持 `NET_STATE` 下 `q.set_waiter(current_pid)`（仿 uffd `fault_pid`）→ 释放 `NET_STATE` → `scheduler_block(WaitingForIo)` + `scheduler_schedule()` →（被 poll/信号唤醒）→ 重抢 `NET_STATE` → 重查就绪，未就绪则循环。`recv`/`send`/`recvfrom`/`sendto`（[sm_fi.rs](../../src/kernel/privileged/net/init/sm_fi.rs)，现单函数内联持 `NET_STATE`）拆出 `_locked` 临界区以支持「释放锁→等→重抢→重试」。
+  2. **F8 锁序铁律**：唤醒侧（`poll_network` 等）持 `NET_STATE` 只**收集待唤醒 pid 列表**，**释放 `NET_STATE` 后**再 `scheduler_unblock(pid)`——杜绝 `NET_STATE → SCHEDULER` 嵌套锁。丢失唤醒约束：置 waiter pid 必须在持 `NET_STATE`（与 socket 状态读取同一临界区）内完成后才释放。
+  3. **表扩容**：`SocketWaitQueueTable` 16→`MAX_SM_FD`（`[const { SocketWaitQueue::new() }; MAX_SM_FD]`），`get()` 边界随之（slot ≥ `MAX_SM_FD`→`None`）；`SocketWaitQueue` 增 `waiter_pid`；同步 `table_lookup_bounded` 单测（[wait_queue.rs:200](../../src/kernel/privileged/net/wait_queue.rs)）与陈旧「=16」注释（`wait_queue.rs:128`/`168` + `save.rs:41`）。
+  4. **非阻塞开关**：`socket_syscall`（[syscall.rs:244](../../src/kernel/privileged/net/syscall.rs)）在 `SockType::from_i32` 前剥离 `SOCK_NONBLOCK`（`0x800`）并透传给 `sm_socket` 置 slot 阻塞标志；`fcntl` `F_GETFL`/`F_SETFL`（[io.rs:331](../../src/kernel/functions/fs/io.rs)，现 `F_SETFL => Ok(0)` 空实现）经新增 functions→privileged safe API 落 `O_NONBLOCK`。
+  5. **per-slot 阻塞标志**：`NetState.blocking: Vec<bool>`（`allocate()` 默认 `true`=阻塞）+ `raw.rs` accessor。
+- **状态**：[]（分 P5a-P5d 子轮推进）
+- **详情**：EINTR 与 `SO_RCVTIMEO`/`SO_SNDTIMEO` per-op 超时**移出 P5 首轮**，独立轮（P5d）推进——超时须给 D8 sockopt 再增两选项 + per-slot timeval 存储 + 「事件/超时/信号」三路竞态。connect 完成语义取 A2（对齐 POSIX：阻塞等 Established、非阻塞 `-EINPROGRESS`、状态→errno 映射），归 P5c。
 
 ### D11: 组播（DECISION-091）
 
@@ -348,13 +353,17 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - **验证**：`TCP_NODELAY` round-trip、`shutdown(SHUT_WR)` 半关验证、用户态 `poll` 得到真实 revents、UDP `connect`+`send`+`getpeername`+`recvfrom` 对端回填。
 - **详情**：已达成（含 recvfrom 活体回填腿）。§2.3 六门槛全绿：`build.sh all`（双架构 0w0e）/ `audit.sh`（clippy pedantic lib + kernel_test + host-test 三维 0 warning + fmt 三 crate + 全审计含 FP-06）/ `make test-host` / `make test-kernel-host` 960 passed（+3 契约单测：`test_remote_endpoint_table_roundtrip` / `test_shutdown_contract` / `test_socket_poll_contract`）/ `scripts/qemu_boot_test.sh x86_64` e2e 里程碑 —— TCP 侧 `NODELAY roundtrip`/`POLLIN revents=1`/`SHUTDOWN_WR` 各 3 轮、UDP 侧 `CONNECT`/`PEERNAME`/`SOCKNAME`/`RECVFROM src ok` 各 1 次。e2e 落地：`userlib` 补 `poll`/`shutdown`/`getpeername` wrapper 与 `TCP_NODELAY`/`POLLIN`/`POLLOUT` 常量；`tcp_echo_server` 在真实已建连接上跑 setsockopt→getsockopt round-trip + `poll` 就绪 + `shutdown(SHUT_WR)` 半关；`udp_connect_probe`（启动期同步、echo fork 前释放 fd）跑 connect→getpeername→getsockname 纯本地端点态；`udp_echo_probe` 跑 connect→send→recvfrom 活体回填——脚本 e2e 阶段起宿主 UDP 回显服务（绑 127.0.0.1:9090），guest 经 slirp 网关 `10.0.2.2:9090` 发出 `EDGINE-UDP` 并校验回显一致 + `recvfrom` 回填 src == `10.0.2.2:9090`（实活验证 syscall 层 U3 透传 + `sm_recvfrom` UDP 分支 `write_sockaddr`）。普通启动无应答者时探针有界重试后打印 FAIL 并继续（与 `ipv6_udp_probe` 同款容错，不断言）。
 
-### P5: 阻塞睡眠
+### P5: 阻塞睡眠（路径 B，分 P5a-P5d 四子轮）
 
-- **条目**：D10 阻塞语义
-- **描述**：默认阻塞 I/O 可睡眠等待，`SOCK_NONBLOCK` / `fcntl(F_SETFL)` 可控。
-- **方案**：见 D10。
+- **条目**：D10 阻塞语义（真调度阻塞 + accept/connect A2）
+- **描述**：默认阻塞 I/O 真睡眠等待，`SOCK_NONBLOCK` / `fcntl(F_SETFL)` 可控；accept/connect 完成语义对齐 POSIX（A2）。
+- **方案**：见 D10（B 路径，DECISION-092 细化）。子轮分解：
+  - **P5a（地基，不改行为）**：等待表 16→`MAX_SM_FD` + `waiter_pid` 化 + `get`/注释/单测修订；`NetState.blocking` 标志 + `raw` accessor；`socket_syscall` 剥离 `SOCK_NONBLOCK` 透传 `sm_socket`；`fcntl` `F_GETFL`/`F_SETFL` 的 `O_NONBLOCK` 桥。
+  - **P5b（阻塞核心，F8 高危轮）**：`recv`/`send`/`recvfrom`/`sendto` 接入真 block（置 pid under `NET_STATE`→释放→`scheduler_block`+`schedule`→重抢→重试）+ `poll_network` 锁序重构（锁内收集 pid、锁外 `scheduler_unblock`）+ 锁序/丢失唤醒回归测试。
+  - **P5c（accept/connect A2）**：`poll_network` 增状态迁移唤醒；阻塞 connect 等 Established/失败 errno 映射、非阻塞 `-EINPROGRESS`；阻塞 accept 等连接到达。
+  - **P5d（EINTR + 超时，独立轮）**：唤醒后查 `signal_pending`→`-EINTR`；`SO_RCVTIMEO`/`SO_SNDTIMEO` + 到期 `-EAGAIN`。
 - **状态**：[]
-- **验证**：阻塞 `recv` 在数据到达时被唤醒并返回；`SOCK_NONBLOCK` 下立即 `-EAGAIN`；`fcntl(F_SETFL, O_NONBLOCK)` 切换生效；等待队列扩容后 fd ≥ 16 可唤醒；4 个 wait_queue 单测更新后通过。
+- **验证**：P5a 契约测试（表边界 `get(255)` 可唤醒 / `get(256)`→`None`、`blocking` 默认 true、`SOCK_NONBLOCK` 剥离、`fcntl` `O_NONBLOCK` 往返）；P5b 丢失唤醒 + 锁序（`audit_deadlock_matrix`）回归；P5c connect/accept 完成语义 e2e（QEMU 阻塞 recv 唤醒、非阻塞 connect `-EINPROGRESS`）；每子轮独立过 §2.3 六门槛。
 
 ### P6: 组播
 
@@ -482,6 +491,12 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 
 - **描述**：原将组播留 B 阶段。
 - **裁定**：纳入主路径（D11）；`sm_setsockopt` 增 `IP_ADD/DROP_MEMBERSHIP` 与 `IPV6_ADD/DROP_MEMBERSHIP`，经 `Interface::join_multicast_group` / `leave_multicast_group` 实装。
+- **状态**：[X]
+
+### DECISION-092: D10 采用真调度 block/unblock（取代 wait_with_timeout）
+
+- **描述**：原 DECISION-090 以 `wait_with_timeout`（`scheduler_yield` 自旋、任务保持 runnable）为睡眠原语，与目标「睡眠而非忙轮询」矛盾；P5 前置调研另发现等待表仅 16（slots 16..255 唤醒静默失效，潜伏 bug）、唤醒模型缺 accept/connect 状态迁移。
+- **裁定**：取路径 B「相对完整」。改用 `scheduler_block(BlockReason::WaitingForIo)` + `scheduler_schedule()` + `scheduler_unblock(pid)`（仿 futex/epoll/uffd 既有范式）；`SocketWaitQueue` 增 `waiter_pid`；唤醒侧持 `NET_STATE` 收集 pid、**释放锁后** unblock（F8：禁 `NET_STATE → SCHEDULER` 嵌套锁）；等待表扩至 `MAX_SM_FD`。accept/connect 完成语义取 A2（对齐 POSIX，非阻塞 `-EINPROGRESS`）。EINTR 与 per-op 超时（`SO_RCVTIMEO`/`SO_SNDTIMEO`）移出首轮，独立轮（P5d）推进。
 - **状态**：[X]
 
 ---

@@ -14,7 +14,9 @@ use crate::privileged::mm::{
 use crate::privileged::net_socket;
 use crate::privileged::userptr;
 
-use crate::privileged::net::socket_types::{Domain, SockAddrIn, SockAddrUn, SockType};
+use crate::privileged::net::socket_types::{
+    Domain, SOCK_NONBLOCK, SockAddrIn, SockAddrUn, SockType,
+};
 
 // ============================================================================
 // 用户空间数据搬运 (TCB)
@@ -246,7 +248,11 @@ pub fn socket_syscall(domain: i32, sock_type: i32, _protocol: i32) -> i64 {
         Some(x) => x,
         None => return Errno::EAFNOSUPPORT.as_ret(),
     };
-    let t = match SockType::from_i32(sock_type) {
+    // D10 (DECISION-092): SOCK_NONBLOCK 是 type 参数的标志位, 非 socket 类型本身.
+    // 校验前剥离本位, 只对基础类型过 SockType; 创建成功后据此置 per-slot 非阻塞标志.
+    let nonblock = sock_type & SOCK_NONBLOCK != 0;
+    let base_type = sock_type & !SOCK_NONBLOCK;
+    let t = match SockType::from_i32(base_type) {
         Some(x) => x,
         None => return Errno::EINVAL.as_ret(),
     };
@@ -254,6 +260,9 @@ pub fn socket_syscall(domain: i32, sock_type: i32, _protocol: i32) -> i64 {
     if fd < 0 {
         Errno::EINVAL.as_ret()
     } else {
+        if nonblock {
+            net_socket::sm_set_nonblocking(fd, true);
+        }
         i64::from(fd)
     }
 }

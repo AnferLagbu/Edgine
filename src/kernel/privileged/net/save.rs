@@ -38,7 +38,7 @@ use crate::privileged::sync::IrqSpinLock as Mutex;
 pub const NET_SNAPSHOT_MAGIC: u32 = 0x584E_4153;
 /// 快照版本
 pub const NET_SNAPSHOT_VERSION: u32 = 1;
-/// 单槽最大 FD 数, 与 `MAX_SM_FD = 16` 对齐
+/// 快照 FD 表长度 (序列化侧自有固定上限, 独立于 Smoltcp 段 `MAX_SM_FD`).
 pub const SNAPSHOT_FD_COUNT: usize = 16;
 /// DNS 槽数
 pub const SNAPSHOT_DNS_COUNT: usize = 4;

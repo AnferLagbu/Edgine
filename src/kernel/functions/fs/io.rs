@@ -273,6 +273,9 @@ const F_SETFD: i32 = 2;
 const F_GETFL: i32 = 3;
 /// `fcntl` 命令: `F_SETFL`
 const F_SETFL: i32 = 4;
+/// `O_NONBLOCK` (Linux/x86 `0o4000`): `fcntl(F_GETFL/F_SETFL)` 的 status flag (D10).
+/// socket fd 的该位经 `net_socket::sm_{set,get}_nonblocking` 落到 privileged per-slot 阻塞标志.
+const O_NONBLOCK: i32 = 0o4000;
 
 /// fd 级 close-on-exec 标志位 (F_GETFD/F_SETFD 的掩码, 与 POSIX `FD_CLOEXEC` 一致)
 const FD_CLOEXEC: u64 = 1;
@@ -317,6 +320,19 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
             }
         }
         F_GETFL => {
+            // D10 (DECISION-092): socket fd 的 O_NONBLOCK 反映 privileged 阻塞标志
+            // (FdPlan SMOLTCP 段 fd 不在 VFS OpenFile 表内).
+            // SIMPLIFIED: 仅回填 O_NONBLOCK, 不含其它 status flag; 影响面: 对 socket
+            // F_GETFL 拿不到其余 flag; 何时需扩展: status flag 全面接入时.
+            if crate::functions::proc::fd_alloc::subsystem_of(fd)
+                == Some(crate::functions::proc::fd_alloc::FdSubsystem::Smoltcp)
+            {
+                return match crate::privileged::net_socket::sm_get_nonblocking(fd) {
+                    r if r < 0 => Err(Errno::EBADF),
+                    1 => Ok(O_NONBLOCK as usize),
+                    _ => Ok(0),
+                };
+            }
             // B-9.5: fd 元数据改源 OpenFile (per-process fd 表取 handle_id)
             let Some(handle_id) = crate::functions::fs::vfs_get_fd_handle(fd as usize) else {
                 return Err(Errno::EBADF);
@@ -328,7 +344,20 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
                 None => Err(Errno::EBADF),
             }
         }
-        F_SETFL => Ok(0),
+        F_SETFL => {
+            // D10 (DECISION-092): socket fd 的 O_NONBLOCK 落到 privileged per-slot
+            // 阻塞标志; 非 socket fd 沿用既有 no-op (OpenFile status flags 未实现).
+            if crate::functions::proc::fd_alloc::subsystem_of(fd)
+                == Some(crate::functions::proc::fd_alloc::FdSubsystem::Smoltcp)
+            {
+                let nonblock = (arg as i32) & O_NONBLOCK != 0;
+                ret_to_result(i64::from(
+                    crate::privileged::net_socket::sm_set_nonblocking(fd, nonblock),
+                ))
+            } else {
+                Ok(0)
+            }
+        }
         F_DUPFD => dup2_syscall(fd, arg as i32),
         // POSIX record locks (F_SETLK / F_GETLK / F_SETLKW)  // fcntl 文件锁命令
         5 | 6 | 7 => sys_fcntl_posix_lock(fd, cmd, arg),
