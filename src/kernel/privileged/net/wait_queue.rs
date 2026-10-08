@@ -59,6 +59,10 @@ pub const WAITER_NONE: u8 = 0;
 pub const WAITER_READ: u8 = 1;
 /// 等待者兴趣方向: 等待可写 (send).
 pub const WAITER_WRITE: u8 = 2;
+/// 等待者兴趣方向: 等待监听槽上有已完成握手的连接可 accept (P5c).
+pub const WAITER_ACCEPT: u8 = 3;
+/// 等待者兴趣方向: 等待非同步 connect 完成 (Established) 或失败 (Closed) (P5c).
+pub const WAITER_CONNECT: u8 = 4;
 
 /// Socket 状态变化原因 (用于 wake 路径)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +73,10 @@ pub enum WakeReason {
     Writable,
     /// Socket 关闭 / 错误
     Closed,
+    /// 监听槽状态迁移: 出现可 accept 的已完成连接 (P5c)
+    AcceptReady,
+    /// 连接槽状态迁移: 异步 connect 完成或失败 (P5c)
+    ConnectDone,
 }
 
 /// 单 fd 的等待队列 (多等待者, DECISION-094).
@@ -96,7 +104,8 @@ pub struct SocketWaitQueue {
     last_reason: AtomicU32,
     /// 定长等待者 pid 数组 (0 = 空槽; pid 0 为 idle/内核线程, 从不阻塞于 socket).
     waiter_pid: [AtomicU32; WAITER_SLOTS],
-    /// 与 `waiter_pid` 同索引的兴趣方向 (`WAITER_READ` / `WAITER_WRITE`).
+    /// 与 `waiter_pid` 同索引的兴趣方向 (`WAITER_READ` / `WAITER_WRITE` /
+    /// `WAITER_ACCEPT` / `WAITER_CONNECT`).
     waiter_want: [AtomicU8; WAITER_SLOTS],
     /// ISR 端抢锁 (`try_lock`) 用的 mutex
     lock: Mutex<()>,
@@ -210,6 +219,8 @@ impl SocketWaitQueue {
             0 => Some(WakeReason::Readable),
             1 => Some(WakeReason::Writable),
             2 => Some(WakeReason::Closed),
+            3 => Some(WakeReason::AcceptReady),
+            4 => Some(WakeReason::ConnectDone),
             _ => None,
         }
     }
@@ -306,6 +317,35 @@ mod tests {
         assert_eq!(out[0], 7);
         assert_eq!(q.collect_waiters(WAITER_WRITE, &mut out), 1);
         assert_eq!(out[0], 8);
+    }
+
+    #[test]
+    fn waiter_accept_connect_directions() {
+        // P5c: ACCEPT / CONNECT 新方向经同一 `collect_waiters` 按方向过滤
+        // (机制与 READ/WRITE 同构, 无需改队列结构).
+        let q = SocketWaitQueue::new();
+        let mut out = [0u32; WAITER_SLOTS];
+        assert!(q.add_waiter(11, WAITER_ACCEPT));
+        assert!(q.add_waiter(12, WAITER_CONNECT));
+        assert_eq!(q.collect_waiters(WAITER_ACCEPT, &mut out), 1);
+        assert_eq!(out[0], 11);
+        assert_eq!(q.collect_waiters(WAITER_CONNECT, &mut out), 1);
+        assert_eq!(out[0], 12);
+        // 旧 read/write 方向不误采新方向等待者
+        assert_eq!(q.collect_waiters(WAITER_READ, &mut out), 0);
+        assert_eq!(q.collect_waiters(WAITER_WRITE, &mut out), 0);
+    }
+
+    #[test]
+    fn wake_reason_accept_connect_roundtrip() {
+        // P5c: AcceptReady / ConnectDone 经 `last_reason` 数字映射 (3/4) 还原.
+        let q = SocketWaitQueue::new();
+        assert!(q.mark_waiting());
+        assert!(q.try_wake(WakeReason::AcceptReady));
+        assert_eq!(q.last_reason(), Some(WakeReason::AcceptReady));
+        assert!(q.mark_waiting());
+        assert!(q.try_wake(WakeReason::ConnectDone));
+        assert_eq!(q.last_reason(), Some(WakeReason::ConnectDone));
     }
 
     #[test]

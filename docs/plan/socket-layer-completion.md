@@ -100,7 +100,7 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - **G11: 无阻塞语义（默认非阻塞 + `SOCK_NONBLOCK` 被拒）**
   - 描述：socket I/O 未就绪时一律返回 `-E_AGAIN`，无阻塞等待；且 `SOCK_NONBLOCK` 标志位被 `SockType::from_i32` 拒绝，`fcntl(F_SETFL)` 为空实现，用户态无法表达"阻塞 / 非阻塞"意图。
   - 方案：`socket_syscall` 剥离 `SOCK_NONBLOCK` 位 + per-slot 阻塞标志 + 等待队列睡眠（D10）。
-  - 状态：[]
+  - 状态：[X]（P5a 剥 `SOCK_NONBLOCK`/`fcntl O_NONBLOCK` 桥 + per-slot 阻塞标志; P5b recv/send 家族真阻塞; P5c accept/connect 真阻塞——socket 默认阻塞语义已全链路闭合）
   - 详情：`SockType::from_i32` 仅接受 `1`/`2`（[socket_types.rs:61-65](../../src/kernel/privileged/net/socket_types.rs)），`SOCK_NONBLOCK`（`0x800`）落 `None` → `EINVAL`（[syscall.rs:249](../../src/kernel/privileged/net/syscall.rs)）；`F_SETFL => Ok(0)` 空实现（[io.rs:331](../../src/kernel/functions/fs/io.rs)）。
 
 ### UDP 缺口
@@ -168,7 +168,7 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
   - `NetState` 增 `local_endpoints: Vec<Option<NetEndpoint>>` 与 `remote_endpoints: Vec<Option<NetEndpoint>>`（各 `TOTAL_SLOTS` 项），`empty()` 置 `Vec::new()`、`allocate()` 填 `None`（对齐既有 8 张数组的模式，见 [state.rs:81-114](../../src/kernel/privileged/net/init/state.rs)）。
   - `raw.rs` 增 4 个 accessor：`socket_local_endpoint(fd) -> Option<NetEndpoint>` / `set_socket_local_endpoint(fd, ep)` / `socket_remote_endpoint(fd)` / `set_socket_remote_endpoint(fd, ep)`（对齐 [raw.rs:100-111](../../src/kernel/privileged/net/init/raw.rs) 的 handle accessor 形态：普通 `pub fn` + 内部 `unsafe` 块 + "调用方持 `NET_STATE` 锁"注释）。
   - `sm_close` 清空两表对应槽位。
-- **状态**：[]
+- **状态**：[X]（P1 落地 `local_endpoints` + 2 local accessor; P4/D9 落地 `remote_endpoints` + 2 remote accessor（UDP 专属），两端点半均已实现并有消费者）
 - **详情**：`NetEndpoint` 定义于 [iface_trait.rs:1327](../../src/kernel/privileged/net/iface_trait.rs)，已属 privileged 类型（`Copy`），可直接入表，无跨界问题。P1 仅落地 `local_endpoints` 表 + 2 个 local accessor + `sm_bind` UDP 分支写入 + `sm_close` 清理 + 契约测试；`remote_endpoints` 与 2 个 remote accessor 在本期无 release 消费者（F9 死代码零容忍），推迟至 P4 随 D9（UDP 连接态/对端语义）一并落地 —— TCP 的 remote 端点由 smoltcp socket 自身持有（`tcp::Socket::remote_endpoint()`），**不**入 D1 remote 表，故该表定位为 **UDP 专属**。
 
 ### D2: 临时端口分配器（Edgine 侧，DECISION-085）
@@ -362,7 +362,7 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
   - **P5b（阻塞核心，F8 高危轮）**：`recv`/`send`/`recvfrom`/`sendto` 接入真 block（置 pid under `NET_STATE`→释放→`scheduler_block`+`schedule`→重抢→重试）+ `poll_network` 锁序重构（锁内收集 pid、锁外 `scheduler_unblock`）+ 锁序/丢失唤醒回归测试。
   - **P5c（accept/connect A2）**：`poll_network` 增状态迁移唤醒；阻塞 connect 等 Established/失败 errno 映射、非阻塞 `-EINPROGRESS`；阻塞 accept 等连接到达。
   - **P5d（EINTR + 超时，独立轮）**：唤醒后查 `signal_pending`→`-EINTR`；`SO_RCVTIMEO`/`SO_SNDTIMEO` + 到期 `-EAGAIN`。
-- **状态**：[]
+- **状态**：[]（子轮进度：P5a [X]、P5b [X]（DECISION-094）、P5c [X]（DECISION-095，accept/connect 真阻塞 + 异步 connect 语义闭环）、P5d []）
 - **验证**：P5a 契约测试（表边界 `get(255)` 可唤醒 / `get(256)`→`None`、`blocking` 默认 true、`SOCK_NONBLOCK` 剥离、`fcntl` `O_NONBLOCK` 往返）；P5b 丢失唤醒 + 锁序（`audit_deadlock_matrix`）回归；P5c connect/accept 完成语义 e2e（QEMU 阻塞 recv 唤醒、非阻塞 connect `-EINPROGRESS`）；每子轮独立过 §2.3 六门槛。
 
 ### P6: 组播
@@ -512,6 +512,17 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - **状态**：[X]（P5b 完成，§2.3 六门槛含 QEMU e2e 全绿）
 - **e2e 回归与修复**：P5b 打开 socket 默认阻塞（POSIX 正确）后，`src/user/init` 的 `ipv6_udp_probe`（recv）与 `udp_echo_probe`（recvfrom）这两个「fork 前同步跑的有界重试轮询」探针在无应答者时永久挂起（旧代码依赖 P5a 期 recv 从不阻塞的非-POSIX 特性）→ 永不 fork `tcp_echo_server` → `[tcp] Listening` marker 不打印 → readiness 超时。定性为**用户态侧缺陷**（内核阻塞默认不动）：给 userlib 补 `fcntl`（SYS_fcntl=72）包装 + `F_SETFL`/`O_NONBLOCK` 常量（内核 `fcntl(F_SETFL,O_NONBLOCK)`→`sm_set_nonblocking` 路径早已接通，零内核改动），探针建 socket 后即置非阻塞，恢复 recv/recvfrom 的 eager `-E_AGAIN` 有界重试语义。
 
+### DECISION-095: P5c accept/connect 真阻塞 + 异步 connect 语义闭环（waiter 方向扩展 + 状态迁移电平唤醒）
+
+- **描述**：P5b 落地 recv/send 家族真阻塞后，accept/connect 仍为 eager 语义缺口：`sm_accept_locked` 监听槽无已完成握手连接即返 `-E_AGAIN`（无等待）；`sm_connect` TCP 分支 `sock.connect()` Ok 即返 `0`（声称已连实为 `SynSent`，非 POSIX）。需按 DECISION-090 A2 补 accept/connect 的阻塞完成语义。调研三要点：① smoltcp 监听槽握手完成后 socket 迁移到 `Established`/`CloseWait`（与 D6 门控 1 同条件），connect 失败/超时迁移到 `Closed`；② 用户态回归面极小——boot/e2e 无 guest TCP connect 客户端（TCP 客户端为宿主经 hostfwd），accept 的两处调用方（`tcp_echo_server`/`httpsrv`）均为「阻塞直到有连接」的正解服务端，`[tcp] Listening` marker 在 accept 循环之前打印不受影响；③ P5b 多等待者基座的 `waiter_want` 方向字节对方向值无关，`collect_waiters(want)` 天然支持新方向。
+- **裁定**：取**简约路径**（EINTR/超时/`MSG_DONTWAIT`/精确 refused-vs-timeout 归 P5d）。四点落地：
+  1. **waiter 方向扩展**：`wait_queue.rs` 增 `WAITER_ACCEPT=3` / `WAITER_CONNECT=4`（不改队列结构，复用定长 `[pid;want]` 槽 + `add/remove/collect`）；`WakeReason` 增 `AcceptReady`/`ConnectDone`（`last_reason` 数字映射同步扩至 3/4）。
+  2. **`poll_network` 状态迁移电平唤醒**：TCP 分支加读 `socket.state()`，派生两条电平就绪——accept-ready（`Established`/`CloseWait`）→ `collect_waiters(WAITER_ACCEPT)`；connect-done（`Established` 成功 或 `Closed` 失败，后者经既有 `dead` 分支覆盖）→ `collect_waiters(WAITER_CONNECT)`。沿用锁内 collect / 锁外 unblock（F8）+ 非破坏电平自愈，与 P5b recv/send 完全同构。
+  3. **阻塞 accept**：包 public `sm_accept` 为循环——锁内调 `sm_accept_locked`（保留其单发 eager 语义，供 host-test 直调），返 `-E_AGAIN`（唯一「无待连连接」信号，其余错误直返）且 fd 阻塞且可挂起 → `add_waiter(ACCEPT)` → 释锁 → `scheduler_block`+`schedule` → 回顶重查；非阻塞/中断路径保留 eager `-E_AGAIN`。成功交接返 conn_fd 时 `remove_waiter` 自摘。
+  4. **阻塞 connect（A2）+ 语义闭环**：public `sm_connect` 两段——Phase A 复用 `sm_connect_locked` 单发发起（含 `-E_NODEV`/UDP 同步/`connect()` Err 映射），返非 0 直接透传；Phase B 仅 TCP：阻塞 fd 循环等 `Established`→返 `0` / `Closed`→近似 `-E_CONNREFUSED`，`SynSent`/`SynReceived` 且非阻塞/中断 → 返 `-E_INPROGRESS`（修正原 eager 返 0 的错误语义）。配套 `sm_getsockopt` 的 `SO_ERROR` 由 smoltcp 状态派生 sticky 值（`Established`/优雅关闭→0、`SynSent`/`SynReceived`→`EINPROGRESS`、`Closed`→`ECONNREFUSED`、UDP→0），令「非阻塞 connect `-EINPROGRESS` → poll 可写 → `getsockopt(SO_ERROR)`」构成完整异步 connect 闭环。
+- **SIMPLIFIED**：`SO_ERROR` 的 `Closed` 不区分「connect 失败」与「从未连接」（Edgine 中 socket 关闭即从集合移除，`state==Closed` 窗口实际仅对应 connect 失败，故近似 `ECONNREFUSED`）；connect 失败精确 refused/timeout 区分、超时上限（`SO_SNDTIMEO`）归 P5d。
+- **状态**：[X]（P5c 完成，§2.3 六门槛含 QEMU e2e 全绿：`[tcp] Listening` 就绪 + 3 轮回显 + 交接计数 accept=3/echo=3/close=3 + FD 回收去重=1(fd=65) + UDP 四项=1；新方向/接线契约测试 + wait_queue 内联 2 用例全过）
+
 ---
 
 ## 关联文档
@@ -534,6 +545,7 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - 口径由 A 路径升级为「相对完整」：补齐 D1-D9 到实现级，accept 改为「先建后换」（DECISION-088），新增 D8b（poll 接线）、D10（阻塞睡眠）、D11（组播）与 G11（无阻塞语义）缺口，实施分期重构，新增决策记录章节并登记 DECISION-087 至 DECISION-091。全部分期与条目状态为 `[]`（未实施）。
 - P5a（地基）完成并入库；P5a 与 P5b 之间插轮根治网络快照 FD 表越界崩溃（DECISION-093），登记单源化处置。
 - P5b（阻塞核心）完成：wait_queue 多等待者泛化 + `poll_network` 锁序重构（锁内 collect/锁外 unblock + 连接关闭唤读写双向）+ recv/send/recvfrom/sendto 阻塞循环 + 契约测试（DECISION-094）。同轮修复 P5b 默认阻塞暴露的 e2e 回归（init UDP 探针改非阻塞，用户态侧）。
+- P5c（accept/connect A2）完成：wait_queue 新增 `WAITER_ACCEPT`/`WAITER_CONNECT` 方向 + `WakeReason::AcceptReady`/`ConnectDone` + `poll_network` 状态迁移电平唤醒（accept-ready / connect-done）+ `sm_accept`/`sm_connect` 阻塞循环（非阻塞 connect → `-EINPROGRESS`）+ `sm_getsockopt` `SO_ERROR` 由连接态派生（异步 connect 闭环）（DECISION-095）。同步 §9.2 文档-代码不同步：G11（默认阻塞语义）与 D1（端点表 remote 半）状态改 `[X]`。
 
 ---
 

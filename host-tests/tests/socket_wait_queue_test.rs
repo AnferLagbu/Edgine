@@ -60,6 +60,47 @@ fn wake_reason_distinguishes_three_states() {
 }
 
 #[test]
+fn p5c_accept_connect_blocking_wiring() {
+    // P5c (DECISION-095): accept/connect 真阻塞接线 — wait_queue 新方向 +
+    // poll_network 状态迁移唤醒 + sm_accept/sm_connect 阻塞登记 + 非阻塞 -EINPROGRESS.
+    let wq = read_src("src/kernel/privileged/net/wait_queue.rs");
+    assert!(
+        wq.contains("WAITER_ACCEPT"),
+        "P5c: wait_queue 缺 WAITER_ACCEPT 方向"
+    );
+    assert!(
+        wq.contains("WAITER_CONNECT"),
+        "P5c: wait_queue 缺 WAITER_CONNECT 方向"
+    );
+    assert!(wq.contains("AcceptReady"), "P5c: WakeReason 缺 AcceptReady");
+    assert!(wq.contains("ConnectDone"), "P5c: WakeReason 缺 ConnectDone");
+
+    let poll = read_src("src/kernel/privileged/net/init.rs");
+    assert!(
+        poll.contains("collect_waiters(WAITER_ACCEPT"),
+        "P5c: poll_network 未唤醒 ACCEPT 等待者"
+    );
+    assert!(
+        poll.contains("collect_waiters(WAITER_CONNECT"),
+        "P5c: poll_network 未唤醒 CONNECT 等待者"
+    );
+
+    let sm = read_src("src/kernel/privileged/net/init/sm_fi.rs");
+    assert!(
+        sm.contains("WAITER_ACCEPT"),
+        "P5c: sm_accept 未登记 ACCEPT 等待者"
+    );
+    assert!(
+        sm.contains("WAITER_CONNECT"),
+        "P5c: sm_connect 未登记 CONNECT 等待者"
+    );
+    assert!(
+        sm.contains("E_INPROGRESS"),
+        "P5c: sm_connect 缺非阻塞 -EINPROGRESS 语义"
+    );
+}
+
+#[test]
 fn socket_wait_queue_table_sized_by_max_sm_fd() {
     let src = read_src("src/kernel/privileged/net/wait_queue.rs");
     // D10 / DECISION-092: 等待表按 `MAX_SM_FD` 定长 (修复原固定 16 导致

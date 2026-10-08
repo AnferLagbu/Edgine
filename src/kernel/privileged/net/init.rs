@@ -273,7 +273,10 @@ pub unsafe fn poll_network() {
 
         // P2-I-41: poll 完毕后通知所有 fd 的等待者, 让 sm_send/sm_recv
         // (未来阻塞扩展点) 重新检查 socket 状态. try_wake 持锁时间 O(1).
-        use crate::privileged::net::{SOCKET_WAIT_QUEUES, WAITER_READ, WAITER_WRITE, WakeReason};
+        use crate::privileged::net::{
+            SOCKET_WAIT_QUEUES, WAITER_ACCEPT, WAITER_CONNECT, WAITER_READ, WAITER_WRITE,
+            WakeReason,
+        };
         for fd in 0..MAX_SM_FD {
             if raw::fd_type(fd) == 0 {
                 continue;
@@ -281,42 +284,65 @@ pub unsafe fn poll_network() {
             // 用 smoltcp can_send / can_recv + is_open 判定就绪方向与连接关闭.
             // socket_set 访问仍在 NET_STATE 锁保护下 (try_wake 内部 lock 仅保护
             // 自身 pending 标记, 与 smoltcp 状态机无关).
-            let (can_read, can_write, dead) = match raw::socket_handle(fd) {
-                Some(handle) => match raw::fd_type(fd) {
-                    1 => {
-                        let s = sockets.get::<tcp::Socket>(handle);
-                        (s.can_recv(), s.can_send(), !s.is_open())
-                    }
-                    2 => {
-                        let s = sockets.get::<udp::Socket>(handle);
-                        (s.can_recv(), s.can_send(), false)
-                    }
-                    _ => continue,
-                },
-                None => continue,
-            };
-            if !can_read && !can_write && !dead {
+            // P5c: TCP 额外派生 accept-ready / connect-done 两条状态迁移电平,
+            // 唤醒 WAITER_ACCEPT / WAITER_CONNECT (与 recv/send 同款非破坏采集 + 自愈).
+            let (can_read, can_write, dead, accept_ready, connect_done) =
+                match raw::socket_handle(fd) {
+                    Some(handle) => match raw::fd_type(fd) {
+                        1 => {
+                            let s = sockets.get::<tcp::Socket>(handle);
+                            let st = s.state();
+                            (
+                                s.can_recv(),
+                                s.can_send(),
+                                !s.is_open(),
+                                // 监听槽 D6 门控 1 同源: 出现 Established/CloseWait 连接
+                                matches!(st, tcp::State::Established | tcp::State::CloseWait),
+                                // 异步 connect 握手完成 (失败经 dead=Closed 覆盖)
+                                st == tcp::State::Established,
+                            )
+                        }
+                        2 => {
+                            let s = sockets.get::<udp::Socket>(handle);
+                            (s.can_recv(), s.can_send(), false, false, false)
+                        }
+                        _ => continue,
+                    },
+                    None => continue,
+                };
+            if !can_read && !can_write && !dead && !accept_ready && !connect_done {
                 continue;
             }
-            let reason = if can_read {
+            let reason = if dead {
+                WakeReason::Closed
+            } else if can_read {
                 WakeReason::Readable
             } else if can_write {
                 WakeReason::Writable
+            } else if accept_ready {
+                WakeReason::AcceptReady
             } else {
-                WakeReason::Closed
+                WakeReason::ConnectDone
             };
             let Some(q) = SOCKET_WAIT_QUEUES.get(fd) else {
                 continue;
             };
             q.try_wake(reason);
             // 锁内采集方向匹配等待者 pid (非破坏, 不移除); unblock 延后到释放
-            // `NET_STATE` 之后逐个执行 (F8). 连接关闭 (dead) 唤醒读写双向, 避免
-            // 阻塞 recv/send 因 EOF/RST 无人唤醒而挂死. 丢失唤醒由下一 tick 自愈.
+            // `NET_STATE` 之后逐个执行 (F8). 连接关闭 (dead) 唤醒读写双向 + CONNECT
+            // (connect 失败), 监听就绪 (accept_ready) 唤醒 ACCEPT, 握手完成
+            // (connect_done) 唤醒 CONNECT. 丢失唤醒由下一 tick 自愈.
             if wake_n < WAKE_BATCH && (can_read || dead) {
                 wake_n += q.collect_waiters(WAITER_READ, &mut to_wake[wake_n..]);
             }
             if wake_n < WAKE_BATCH && (can_write || dead) {
                 wake_n += q.collect_waiters(WAITER_WRITE, &mut to_wake[wake_n..]);
+            }
+            if wake_n < WAKE_BATCH && accept_ready {
+                wake_n += q.collect_waiters(WAITER_ACCEPT, &mut to_wake[wake_n..]);
+            }
+            if wake_n < WAKE_BATCH && (connect_done || dead) {
+                wake_n += q.collect_waiters(WAITER_CONNECT, &mut to_wake[wake_n..]);
             }
         }
     }

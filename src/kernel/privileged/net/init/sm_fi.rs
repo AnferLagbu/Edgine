@@ -15,7 +15,9 @@ use super::{
     MAX_SM_FD, NET_STATE, Ordering, get_max_sockets, is_network_initialized, process_dhcp_events,
     raw, socket_set,
 };
-use crate::privileged::net::{SOCKET_WAIT_QUEUES, WAITER_READ, WAITER_WRITE};
+use crate::privileged::net::{
+    SOCKET_WAIT_QUEUES, WAITER_ACCEPT, WAITER_CONNECT, WAITER_READ, WAITER_WRITE,
+};
 use crate::privileged::proc::{
     BlockReason, process_get_current_pid, scheduler_block, scheduler_schedule,
 };
@@ -40,6 +42,7 @@ const E_ADDRINUSE: i32 = 98;
 const E_CONNRESET: i32 = 104;
 const E_NOTCONN: i32 = 107;
 const E_CONNREFUSED: i32 = 111;
+const E_INPROGRESS: i32 = 115;
 const E_NODEV: i32 = 19;
 const E_NOPROTOOPT: i32 = 92;
 
@@ -702,9 +705,37 @@ unsafe fn sm_listen_locked(fd: i32, _backlog: i32) -> i32 {
 /// - `NET_LOCK` 持有; 由 `sys_accept` 分发, 调用方验证权限。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_accept(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
+    // P5c (DECISION-095): 监听槽暂无已完成握手的连接 (sm_accept_locked 返 -E_AGAIN)
+    // 且 fd 阻塞时, 登记 WAITER_ACCEPT 等待者 → 释放 NET_STATE → block+schedule →
+    // 回顶重查; poll_network 检测监听槽迁移到 Established/CloseWait 时唤醒. 非阻塞 /
+    // 中断路径保留旧 eager -E_AGAIN 语义 (显式 O_NONBLOCK 或不可挂起场景).
+    let pid = process_get_current_pid();
+    let can_block = pid != 0 && !in_irq_context();
     unsafe {
-        let _guard = NET_STATE.lock();
-        sm_accept_locked(fd, addr, addrlen)
+        loop {
+            let guard = NET_STATE.lock();
+            let r = sm_accept_locked(fd, addr, addrlen);
+            if r != -E_AGAIN {
+                if let Some(slot) = sm_slot(fd) {
+                    net_clear_waiter(slot, pid);
+                }
+                return r;
+            }
+            // -E_AGAIN 唯一来源: 监听槽无可交付连接 (其余错误直接返回, 不挂起).
+            let Some(slot) = sm_slot(fd) else {
+                return r;
+            };
+            if !raw::is_blocking(slot) || !can_block {
+                return r;
+            }
+            if !net_add_waiter(slot, pid, WAITER_ACCEPT) {
+                return -E_AGAIN; // 等待者槽满, 保守回退 (见 WAITER_SLOTS SIMPLIFIED)
+            }
+            drop(guard);
+            scheduler_block(BlockReason::WaitingForIo);
+            scheduler_schedule();
+            // poll_network 唤醒 → 回循环顶重锁重查监听槽状态.
+        }
     }
 }
 
@@ -836,9 +867,66 @@ unsafe fn sm_accept_locked(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
 /// `NET_LOCK` 持有。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_connect(fd: i32, addr: *const u8, addrlen: u32) -> i32 {
-    unsafe {
+    // P5c (DECISION-095, A2): TCP connect 发起 SYN 后进入 SynSent, 需等握手完成.
+    // 阻塞 fd → 登记 WAITER_CONNECT 挂起, poll_network 检测 Established(成功)/Closed
+    // (失败) 唤醒; 非阻塞 / 中断路径 → 发起后返 -E_INPROGRESS (POSIX 异步 connect).
+    // UDP connect 为同步登记 (sm_connect_locked 内即时完成), 不涉及等待.
+    // Phase A: 单发发起 (含参数/NET_CONFIGURED/UDP 同步/连接错误映射), 复用 locked.
+    let rc = unsafe {
         let _guard = NET_STATE.lock();
         sm_connect_locked(fd, addr, addrlen)
+    };
+    if rc != 0 {
+        return rc; // 发起即失败 (E_BADF/E_NODEV/E_INVAL/E_CONNREFUSED)
+    }
+    // Phase B: 仅 TCP 可能处于握手进行中; UDP (fd_type!=1) 同步完成直接返 0.
+    let pid = process_get_current_pid();
+    let can_block = pid != 0 && !in_irq_context();
+    unsafe {
+        loop {
+            let guard = NET_STATE.lock();
+            let Some(slot) = sm_slot(fd) else {
+                return 0;
+            };
+            if raw::fd_type(slot) != 1 {
+                net_clear_waiter(slot, pid);
+                return 0; // UDP: connect 同步登记完成
+            }
+            let Some(handle) = raw::socket_handle(slot) else {
+                net_clear_waiter(slot, pid);
+                return 0;
+            };
+            let st = (&*socket_set()).get::<tcp::Socket>(handle).state();
+            match st {
+                tcp::State::Established => {
+                    net_clear_waiter(slot, pid);
+                    return 0;
+                }
+                tcp::State::Closed => {
+                    // SIMPLIFIED: smoltcp 不提供 connect 失败精确原因 (RST vs 超时),
+                    // 统一近似 ECONNREFUSED; 精确 refused/timeout 区分归 P5d.
+                    net_clear_waiter(slot, pid);
+                    return -E_CONNREFUSED;
+                }
+                tcp::State::SynSent | tcp::State::SynReceived => {
+                    if !raw::is_blocking(slot) || !can_block {
+                        return -E_INPROGRESS; // 非阻塞 / 不可挂起: 异步进行中
+                    }
+                    if !net_add_waiter(slot, pid, WAITER_CONNECT) {
+                        return -E_INPROGRESS; // 等待者槽满: 保守回退非阻塞语义
+                    }
+                    drop(guard);
+                    scheduler_block(BlockReason::WaitingForIo);
+                    scheduler_schedule();
+                    // poll_network 唤醒 → 回顶重查握手结果.
+                }
+                _ => {
+                    // 其他态 (罕见) 视为完成.
+                    net_clear_waiter(slot, pid);
+                    return 0;
+                }
+            }
+        }
     }
 }
 
@@ -1814,10 +1902,28 @@ pub unsafe extern "C" fn sm_getsockopt(
                         SOCK_DGRAM
                     }
                 }
-                // SIMPLIFIED: smoltcp 无 sticky so_error 字段; 本内核 connect 同步完成,
-                // 异步错误经 recv/send 返回值体现, 故 so_error 恒 0.
-                // 何时需扩展: 引入非阻塞 connect (P5) 后由连接状态派生真实 errno.
-                (SOL_SOCKET, SO_ERROR) => 0,
+                // P5c (DECISION-095): 非阻塞 connect 语义闭环 — sticky so_error
+                // 从 smoltcp TCP 连接状态派生 (Established/优雅关闭态→0; SynSent/
+                // SynReceived→EINPROGRESS; Closed→ECONNREFUSED; 监听→0). UDP 无异步
+                // connect, 恒 0.
+                // SIMPLIFIED: smoltcp 无 sticky so_error 字段, 且 Closed 不区分
+                // "connect 失败" vs "从未连接"; Edgine 中 socket 关闭即从集合移除,
+                // state==Closed 窗口实际仅对应 connect 失败, 故近似 ECONNREFUSED.
+                // 精确 refused/timeout 区分归 P5d.
+                (SOL_SOCKET, SO_ERROR) => {
+                    if stype == 1 {
+                        raw::socket_handle(slot).map_or(0, |h| {
+                            let s = (&*socket_set()).get::<tcp::Socket>(h);
+                            match s.state() {
+                                tcp::State::SynSent | tcp::State::SynReceived => E_INPROGRESS,
+                                tcp::State::Closed => E_CONNREFUSED,
+                                _ => 0,
+                            }
+                        })
+                    } else {
+                        0
+                    }
+                }
                 (IPPROTO_TCP, TCP_NODELAY) => {
                     if stype != 1 {
                         return -E_NOPROTOOPT;
