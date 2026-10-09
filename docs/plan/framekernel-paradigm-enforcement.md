@@ -872,7 +872,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 **本批施工**：删除 `privileged/driver/display/hdmi/` 整目录（8 文件：1 re-export 壳 + 7 未挂载孤儿，-1537 行）。
 
 - **验证**：audit_reverse_deps **0 文件/0 行**（测试上下文 15 文件/52 行按 §7.3 豁免不计数）✅ / 双架构 build.sh all ✅ / quick 审计链 ✅ / host-tests 98 套件 ✅ / QEMU x86_64 完整启动至 Ring 3 ✅（孤儿不参与编译，编译产物零变化，全链为门槛形式性复核）。
-- **审计盲区扩展（用户裁决通过）**：`audit_deadlock_matrix.py` 扫描范围由仅 privileged 扩展为 **privileged + functions 双子树**（368→718 文件）——扩展背景：第二十六批 unkfs ABBA 死锁位于 functions 子树，原单根扫描不可见（fail-closed：不可检查 = 漏检）。同步增强：`functions::sync::irq_lock::IrqSpinLock`（privileged IrqSpinLock 的 functions 层类型别名）纳入安全锁识别，覆盖全路径字段声明与 `as Mutex` 别名导入两种形态。扩展后**零新增发现**（唯一 HIGH 为 privileged smp_init.rs `AP_STARTUP_LOCK` 预存人工审查项，扩展前已存在）。注：脚本 AB-BA 环检测仍为其文档声明的未实现项（需 lockdep-style 锁序声明机制），本次扩展不改变该边界。
+- **审计盲区扩展（用户裁决通过）**：`audit_deadlock_matrix.py` 扫描范围由仅 privileged 扩展为 **privileged + functions 双子树**（368→718 文件）——扩展背景：第二十六批 unkfs ABBA 死锁位于 functions 子树，原单根扫描不可见（fail-closed：不可检查 = 漏检）。同步增强：`functions::sync::irq_lock::IrqSpinLock`（privileged IrqSpinLock 的 functions 层类型别名）纳入安全锁识别，覆盖全路径字段声明与 `as Mutex` 别名导入两种形态。扩展后**零新增发现**（唯一 HIGH 为 privileged smp_init.rs `AP_STARTUP_LOCK` 预存人工审查项，扩展前已存在）。注：脚本 AB-BA 环检测仍为其文档声明的未实现项（需 lockdep-style 锁序声明机制），本次扩展不改变该边界。**后续更新**：作为扩展后唯一发现的 `AP_STARTUP_LOCK` HIGH 已消解——源码调研证明 `start_ap` 无第二个获取者（BSP 串行 `init()` 是唯一入口，AP 走 `ap_entry`），无竞争者的锁不保护任何东西且把 ≈150ms/AP 忙等轮询圈进临界区，故删除（裁定与事实链见 [unresolved-issues-2026-08-09.md](unresolved-issues-2026-08-09.md) ISSUE-TOOL-004）；`audit_deadlock_matrix.py` 现报 `问题总数: 0`，回归守卫 [arch_ap_startup_lock_removed_test.rs](../../host-tests/tests/arch_ap_startup_lock_removed_test.rs)。
 
 ### DECISION-L 终局验证：FREG不下沉（2026-09-12 审核员，基于 docs/design/freg-design.md）
 
@@ -1465,7 +1465,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **§9 七门槛**：达标 6 项——双架构 0w0e（`./ci/build.sh all` Passed 5 / Failed 0）；clippy pedantic 三维（`-D warnings`）0；核心审计全过；host-tests 全过 + `make test-kernel-host` **941 passed / 0 failed**；QEMU（`./scripts/qemu_boot_test.sh x86_64` 1/1 + `ci/audit.sh full` 7/7 双架构 2/2）；生产反向依赖 0 文件/0 行。未达标 1 项：TCB 占比 56.7% > 30%（`audit_tcb_ratio.py` Status EXCEEDED）。
 - **§3 验收六项**：达标 4 项（项 2 反向依赖 = 0 / 项 3 functions 权威 / 项 5 functions 0 unsafe / 项 6 §2.3 门槛）；未达标 2 项（项 1 TCB < 30%、项 4 privileged `.rs` 300 个 vs §6.6 规划 200）。
 - **本轮修复（阶段 3 直接引入，§12.5 必修）**：`scripts/qemu_boot_test.sh` aarch64 分支批次 Z ④ 校验 grep 串 `"virtio-net: probed successfully (functions bridge)"` 陈旧——阶段 3 收尾提交 `36b5de5d` 已将 privileged 侧探测日志串改名为 `"nic: probed successfully (functions bridge)"`（`privileged/net/init/probe.rs:42`），致 `FAIL_OK=0` 下 `RESULT=1`、`ci/audit.sh full` `7/7` 误报"执行异常"。修复：脚本 grep 串对齐实际日志并补中文注释。复验 `ci/audit.sh full` `7/7` 恢复输出 "QEMU 双架构启动测试: 2/2 通过"。
-- **环境性非阻断项**：`4/6` Lockbud 未安装（warn）；`6/6` 模块级 SAFETY 不变式文件数 2 < 5（warn）；`audit_deadlock_matrix.py` 1 项 HIGH `privileged/arch/x86_64/smp_init.rs:196 AP_STARTUP_LOCK`（既有项，阶段 0 记录已列）。
+- **环境性非阻断项**：`4/6` Lockbud 未安装（warn）；`6/6` 模块级 SAFETY 不变式文件数 2 < 5（warn）；`audit_deadlock_matrix.py` 1 项 HIGH `privileged/arch/x86_64/smp_init.rs:196 AP_STARTUP_LOCK`（既有项，阶段 0 记录已列）。**后续更新**：该 HIGH 已消解（启动锁删除，见 [unresolved-issues-2026-08-09.md](unresolved-issues-2026-08-09.md) ISSUE-TOOL-004），`audit_deadlock_matrix.py` 现报 `问题总数: 0`，不保留为待办。
 - **门槛顺序敏感性登记**：`ci/audit.sh` 的 FP-06 读 `build/kernel.bin` 需 aarch64 链接产物，`1/6` 的 x86_64 维需 `build/stage1.bin` 存在；二者并存需 `./ci/build.sh aarch64` 后补 `make ARCH=x86_64 build/stage1.bin`（仅汇编引导码，不触碰 `kernel.bin`）。
 
 状态：[X]（验证执行完成；§3 项 1 / 项 4 未达标，后续收敛待裁决）

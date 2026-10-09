@@ -1101,6 +1101,10 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 - **验证方法**:
   - `audit_deadlock_matrix.py` 跑一遍（应报警）。
   - QEMU 4 核启动，30 秒内所有 AP 进入 idle。
+- **后续更新（事实订正 + 终局处置）**:
+  - **本条事实陈述不可靠**：“`AP_STARTUP_LOCK` 是 `SpinMutex<()>`，实现是 irq_spinlock，**lock() 时 save/restore IRQ**”不成立——`spin::mutex::SpinMutex` 沿用 `spin::Mutex`，只有 `lock_irqsave()` 才保存/恢复 RFLAGS，`lock()` 不碰 IF。本条对“双重 cli 后 `_lock` drop 会恢复sti”的推演因此前提有误；当时实际保护启动串行化的是外层显式 `cli`。保留本段原文不涂改（历史快照），错判以本条订正。
+  - **建议 1 已实施**：显式 `cli`/`sti` 已删除（F-12 收口），IF 保持函数入口状态。
+  - **建议 2 以外的终局形态（用户裁定）**：两个候选（换 `parking_lot::Mutex` / 换无 IRQ 保存的 spinlock）均未采用——源码调研证明 `start_ap` **无任何第二个获取者**（唯一调用点 = 同文件 `init()` 内对 MADT AP 列表的串行循环；`init()` 唯一外部入口 = BSP 在 `kernel_main` 经 `Arch::interrupt_late_init()` 调用一次；AP 走 `ap_entry` 不进入启动路径），锁本身必须删除而非换型（保留它只会使 `audit_deadlock_matrix.py` 永久保守报 HIGH，且将 ≈150ms/AP 忙等轮询圈进临界区）。现 `audit_deadlock_matrix.py` 报 `问题总数: 0`；回归守卫 [arch_ap_startup_lock_removed_test.rs](../../host-tests/tests/arch_ap_startup_lock_removed_test.rs)（含前瞻守卫：若因 CPU hotplug 重引启动锁，必须是 `IrqSpinLock` 且忙等移出临界区）。台账见 [unresolved-issues-2026-08-09.md](unresolved-issues-2026-08-09.md) ISSUE-TOOL-004。
 
 ---
 

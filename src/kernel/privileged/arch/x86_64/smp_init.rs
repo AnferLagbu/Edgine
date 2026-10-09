@@ -65,9 +65,6 @@ const DONE_OFFSET: usize = core::mem::offset_of!(ApStartupInfo, done);
 static SMP_FULLY_INITIALIZED: AtomicBool = AtomicBool::new(false);
 static AP_STARTED_COUNT: AtomicU32 = AtomicU32::new(0);
 
-use spin::mutex::SpinMutex;
-static AP_STARTUP_LOCK: SpinMutex<()> = SpinMutex::new(());
-
 struct ApPerCpu {
     stack: [u8; AP_STACK_SIZE],
 }
@@ -189,12 +186,16 @@ unsafe fn start_ap(lapic_id: u32, cpu_index: u32) {
             return;
         }
 
-        // P2.C + F-12: 删除显式 cli / sti, 改用 AP_STARTUP_LOCK 内部 IRQ 保存.
-        // 此前外层 cli 与 AP_STARTUP_LOCK (spin::Mutex, 不做 IRQ save) 嵌套导致
-        // spinlock drop 时不会恢复 IF → 若路径 panic 则系统 hang. 当前依赖
-        // spin::Mutex 在 IRQ 安全路径下不调用 (boot 单线程, MP 启动期), 安全.
-        // AP_STARTUP_LOCK 仅保护 BSP 串行启动 AP 的临界区, IRQ 安全不强制要求.
-        let _lock = AP_STARTUP_LOCK.lock();
+        // AP 启动串行化的前置事实 (deadlock 审计 HIGH 的根治依据):
+        // `start_ap` 全仓唯一调用点是本文件 `init()` 内对 MADT AP 列表的串行循环,
+        // 而 `init()` 仅由 BSP 经 `Arch::interrupt_late_init()` 在 `kernel_main`
+        // 中调用一次; AP 走 `ap_entry`, 不进入本函数. 因此不存在第二个获取者 ——
+        // 旧写法的 `AP_STARTUP_LOCK` (`spin::mutex::SpinMutex`, 不做 IRQ save)
+        // 既不保护任何并发路径, 又把最长约 150ms/AP 的忙等轮询圈进持锁区间,
+        // 还使 `audit_deadlock_matrix.py` 只能保守报 HIGH (无竞争者无法静态证明).
+        // 回归守卫: host-tests/tests/arch_ap_startup_lock_removed_test.rs.
+        // 若将来引入 CPU hotplug (多上下文并发启动 CPU), 重引的锁必须是 IRQ 安全
+        // 锁 (IrqSpinLock), 且忙等轮询须移出临界区.
 
         // AP 的 GDT 必须在该 CPU 进入长模式 (gdt_init_ap) 之前就绪, 故在 SIPI
         // 之前按需分配; 分配失败 (PMM 无可用页) 则放弃启动本 AP.
@@ -267,9 +268,8 @@ unsafe fn start_ap(lapic_id: u32, cpu_index: u32) {
             }
         }
 
-        // P2.C + F-12: 删除显式 sti. 当前 _lock drop 后 IRQ 状态保持 cli 嵌套前.
-        // 由于本函数 cli 已被删除, _lock drop 后 IF 位仍为 boot 启动时的状态.
-        // AP_STARTUP_LOCK 仅在 boot 早期使用 (此函数唯一调用方), IRQ 默认开启.
+        // P2.C + F-12: 显式 cli / sti 已删除 — IF 位保持本函数入口时的状态 (boot
+        // 路径由 BSP 单一上下文串行执行, 无与中断处理器的共享锁需要靠 cli 保护).
     }
 }
 
