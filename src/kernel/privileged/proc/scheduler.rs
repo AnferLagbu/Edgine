@@ -12,8 +12,10 @@
 //!
 //! **MLFQ 已退役**: 历史上 MLFQ 的多级反馈队列 (level 0..3 + 时间片 `[10,20,40,80]` ms)
 //! 已完全被 CFS 取代 (注释中保留 "preserved from MLFQ" 仅为历史可追溯性).
-//! `add_to_run_queue` 路径已重定向到 `cfs_enqueue`; `boost_priority` 死代码已删除
-//! (与 `boost_all_vruntime` 逻辑 100% 等价), 周期性 boost 统一走 `boost_all_vruntime`.
+//! `add_to_run_queue` 路径已重定向到 `cfs_enqueue`; `boost_priority` 死代码已删除.
+//! CFS 的反饥饿不靠周期性 boost, 而靠 `CfsRunQueue` 的**单调 vruntime 下界**
+//! 随时基运行任务推进 (DECISION-099; 旧 `boost_all_vruntime` 因折叠相对次序
+//! 且与任务自身 vruntime 分域, 已删除).
 //!
 //! ## 调度决策链
 //!
@@ -25,9 +27,8 @@ use alloc::collections::VecDeque;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
 use super::cfs::{
-    CFS_BOOST_INTERVAL_TICKS, CfsRunQueue, DL_MAX_UTILIZATION_PCT, DeadlineParams, DlRunQueue,
-    LOAD_BALANCE_THRESHOLD, NICE0_WEIGHT, TARGET_LATENCY_TICKS, calc_vruntime_delta,
-    cfs_should_preempt, nice_to_weight,
+    CfsRunQueue, DL_MAX_UTILIZATION_PCT, DeadlineParams, DlRunQueue, LOAD_BALANCE_THRESHOLD,
+    NICE0_WEIGHT, TARGET_LATENCY_TICKS, calc_vruntime_delta, cfs_should_preempt, nice_to_weight,
 };
 use super::process::{PROCESS_TABLE, Process};
 use super::types::{BlockReason, Pid, ProcessContext, ProcessId, ProcessPriority, ProcessState};
@@ -521,6 +522,10 @@ impl Scheduler {
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
     /// 设置 nice 值并更新进程的 CFS 权重.
+    // SIMPLIFIED: 已入队任务改权重时, 其所在核 `total_weight` 里仍是旧权重,
+    // 后续撤账按新权重扣减 ⇒ 权重和出现 (新-旧) 偏差; 影响面 = 仅负载均衡判定精度
+    // (可运行性判据取自树, IC2 不受影响); 何时需扩展 = `set_nice` 接入 syscall 且
+    // 允许在队改 nice 时, 按 Linux 语义改为 dequeue + enqueue 重投.
     pub fn set_nice(&self, pid: Pid, nice: i8) {
         PROCESS_TABLE.with_process(pid, |proc| {
             let clamped = nice.clamp(-20, 19);
@@ -544,20 +549,59 @@ impl Scheduler {
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
     fn cfs_enqueue_to(&self, pid: Pid, cpu_id: u32) {
-        let vr = PROCESS_TABLE.with_process(pid, |p| {
+        // 锁序 `cfs_rq -> PROCESS_TABLE` (与本文件其余调度路径一致):
+        // PCB 读写各自独立成段, 均不与 rq 锁嵌套.
+        let Some((vr, weight, accounted)) = PROCESS_TABLE.with_process(pid, |p| {
             let _ = p.set_state_safe(ProcessState::Ready);
-            let v = p.cfs_vruntime.load(Ordering::Acquire);
-            let w = p.cfs_weight.load(Ordering::Acquire);
-            p.cfs_on_rq.store(true, Ordering::Release);
-            (v, w)
-        });
+            (
+                p.cfs_vruntime.load(Ordering::Acquire),
+                p.cfs_weight.load(Ordering::Acquire),
+                p.cfs_on_rq.load(Ordering::Acquire),
+            )
+        }) else {
+            return;
+        };
 
-        if let Some((vruntime, weight)) = vr {
-            per_cpu_for(cpu_id)
-                .cfs_rq
-                .lock()
-                .enqueue(pid, vruntime, weight);
+        let placed = per_cpu_for(cpu_id)
+            .cfs_rq
+            .lock()
+            .enqueue(pid, vr, weight, accounted);
+
+        // IC1: 落点必须回写任务自身 vruntime —— 只钳树键而不回写正是旧模型
+        // "运行任务 vr 与队列 floor 分属两域" 的起点 (S-1 饥饿根).
+        PROCESS_TABLE.with_process(pid, |p| {
+            p.cfs_vruntime.store(placed, Ordering::Release);
+            p.cfs_on_rq.store(true, Ordering::Release);
+        });
+    }
+
+    /// 让 `pid` 离开**本核** CFS 可运行记账 (阻塞 / 被切走且不可重排 / 被拣出
+    /// 但不可调度).
+    ///
+    /// 幂等: 以 `Process::cfs_on_rq` 为记账凭证, 重复调用不二次扣减权重 ——
+    /// [`Self::block`] 与 `schedule()` 的 "prev 不可重排" 分支覆盖同一任务时
+    /// 正是这种重复调用. 旧模型缺这一步, 使 `total_weight` 随阻塞/退出单调
+    /// 虚增, 连均衡判定也随之失真.
+    #[expect(
+        clippy::unused_self,
+        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
+    )]
+    fn cfs_deactivate(&self, pid: Pid) {
+        let (weight, accounted) = PROCESS_TABLE
+            .with_process(pid, |p| {
+                (
+                    p.cfs_weight.load(Ordering::Acquire),
+                    p.cfs_on_rq.load(Ordering::Acquire),
+                )
+            })
+            .unwrap_or((0, false));
+        if !accounted {
+            return;
         }
+        per_cpu().cfs_rq.lock().dequeue(pid, weight, true);
+        PROCESS_TABLE.with_process(pid, |p| {
+            p.cfs_on_rq.store(false, Ordering::Release);
+        });
     }
 
     #[expect(
@@ -644,9 +688,8 @@ impl Scheduler {
                 per_cpu.dl_running.store(true, Ordering::SeqCst);
                 Some(pid)
             } else {
-                // pick_next() 已从树中移除任务, 但
-                // 保留 nr_running (与 CfsRunQueue 相同).
-                // reinsert() 把它放回去, 不修改计数器.
+                // 不可调度 (僵尸 / 策略已改): 拣出时已离树, 放回仅供调度其它
+                // 候选; DlRunQueue 无可运行性判据依赖计数器 (IC2: 树即真相).
                 dl_rq.reinsert(pid, dl_abs);
                 per_cpu.dl_running.store(false, Ordering::SeqCst);
                 None
@@ -665,44 +708,45 @@ impl Scheduler {
     fn pick_cfs_task(&self) -> Option<Pid> {
         let per_cpu = per_cpu();
         let mut cfs_rq = per_cpu.cfs_rq.lock();
-        if cfs_rq.is_empty() {
-            return None;
-        }
-        // 不可调度节点的暂存区: 全部取回后统一放回 (见下).
-        let mut skipped: alloc::vec::Vec<(Pid, u64)> = alloc::vec::Vec::new();
         // 循环取下一个节点, 直到取到可调度者 (或树空).
         //
         // 不能"取一个不可调度节点就 return None" —— 若最小 vruntime 位置恰好
         // 是不可调度节点, 每次调度都会在此早返回, 树上其余可调度任务永远选不
-        // 出来 (本核 CFS 永久饥饿). 这里保持"不静默丢失"语义: 不可调度节点
-        // 暂存, 循环继续; 结束后统一放回.
+        // 出来 (本核 CFS 永久饥饿).
+        //
+        // 不可调度节点一律**撤账摘除** (旧实现是暂存后原样放回): 树是 IC2 的
+        // 唯一真相, 留在树上的不可调度节点会长期占据最小键位, 既挡住其余任务,
+        // 又让 `is_empty()` / 抢占判据与真实可运行集背离. 被摘除者后续由
+        // `unblock` 重新投送 (唤醒语义), 故不丢任务.
         let mut picked: Option<Pid> = None;
-        while let Some((pid, vr)) = cfs_rq.pick_next() {
-            let schedulable = PROCESS_TABLE
+        while let Some((pid, _vr)) = cfs_rq.pick_next() {
+            // 锁序 cfs_rq -> PROCESS_TABLE (本函数既有语义): 一次加锁取回
+            // 可调度性与撤账所需的权重/记账凭证.
+            let (schedulable, weight, on_rq) = PROCESS_TABLE
                 .with_process(pid, |p| {
                     let state = p.get_state();
-                    let policy = p.get_sched_policy();
-                    state != ProcessState::Blocked
-                        && state != ProcessState::Zombie
-                        && policy == SchedPolicy::Normal
+                    (
+                        state != ProcessState::Blocked
+                            && state != ProcessState::Zombie
+                            && p.get_sched_policy() == SchedPolicy::Normal,
+                        p.cfs_weight.load(Ordering::Acquire),
+                        p.cfs_on_rq.load(Ordering::Acquire),
+                    )
                 })
-                .unwrap_or(false);
+                .unwrap_or((false, 0, false));
             if schedulable {
-                PROCESS_TABLE.with_process(pid, |p| {
-                    p.cfs_on_rq.store(false, Ordering::Release);
-                });
+                // IC1: 被拣者随即上核运行, 仍在可运行记账中 (`cfs_on_rq` 保持
+                // true, 语义同 Linux on_rq) —— 其 vruntime 由 tick 推进并同步
+                // 队列 floor, 切走时经 `requeue` 原位放回.
                 picked = Some(pid);
                 break;
             }
-            // 该节点已被 pick_next() 从树中移除, 但不可调度 (阻塞/僵尸/策略错):
-            // 暂存, 继续取下一个节点.
-            skipped.push((pid, vr));
-        }
-        // 放回暂存的不可调度节点: update_curr 只插树, 不动 nr_running
-        // (与 pick_next 只移除、不改计数器对称), 保证它们不被丢弃.
-        // 全程持有同一把 cfs_rq 锁, 中途未解锁.
-        for (pid, vr) in skipped {
-            cfs_rq.update_curr(pid, vr);
+            cfs_rq.dequeue(pid, weight, on_rq);
+            if on_rq {
+                PROCESS_TABLE.with_process(pid, |p| {
+                    p.cfs_on_rq.store(false, Ordering::Release);
+                });
+            }
         }
         picked
     }
@@ -808,7 +852,7 @@ impl Scheduler {
             // 优先保持 current: 运行队列中无其它候选, 但本核 current 仍是可运行的
             // 非 idle 任务 (Running/Ready) 时, 切到 idle 会白白让出 CPU 并令 current
             // 经 `prev_requeue` 重新入队 —— 对"从未入过 CFS 队列"的任务 (如 boot 的
-            // init) 而言不入树/不计 `nr_running`, 之后 `pick_cfs_task`/`has_runnable`
+            // init) 而言不入树 / 不计 `total_weight`, 之后 `pick_cfs_task` / `has_runnable`
             // 均判空, 该任务永久饥饿 (boot 流程被丢弃, 双核同闲挂死).
             // 仅当 current 已不可运行 (Created/Blocked/Zombie) 或本核就是 idle 时,
             // 才回退到 idle 等待中断.
@@ -960,9 +1004,8 @@ impl Scheduler {
                 let dl_info =
                     PROCESS_TABLE.with_process(current_pid, |p| p.dl_abs.load(Ordering::Acquire));
                 if let Some(dl_abs) = dl_info {
-                    // pick_next() 保留了 nr_running (与 CFS 相同).
-                    // reinsert() 把任务放回树, 不修改计数器
-                    // —— 任务在最初入队时已计入.
+                    // 拣出仅为选候选, 任务仍属可运行集: reinsert 只放回树上,
+                    // DlRunQueue 无平行计数器 (IC2: 树即真相).
                     per_cpu.dl_rq.lock().reinsert(current_pid, dl_abs);
                 }
             } else if was_rt {
@@ -998,16 +1041,12 @@ impl Scheduler {
                     }
                 }
             } else {
-                let (vr, _wt, _nice) = PROCESS_TABLE
-                    .with_process(current_pid, |p| {
-                        (
-                            p.cfs_vruntime.load(Ordering::Acquire),
-                            p.cfs_weight.load(Ordering::Acquire),
-                            p.nice.load(Ordering::Acquire) as i8,
-                        )
-                    })
-                    .unwrap_or((0, NICE0_WEIGHT, 0i8));
-                per_cpu.cfs_rq.lock().update_curr(current_pid, vr);
+                let vr = PROCESS_TABLE
+                    .with_process(current_pid, |p| p.cfs_vruntime.load(Ordering::Acquire))
+                    .unwrap_or(0);
+                // 被切走者原位放回: 不动记账 (它始终在可运行集中), 也不动 floor
+                // (IC3: floor 只由 tick 推进).
+                per_cpu.cfs_rq.lock().requeue(current_pid, vr);
                 PROCESS_TABLE.with_process(current_pid, |p| {
                     p.cfs_on_rq.store(true, Ordering::Release);
                 });
@@ -1015,6 +1054,11 @@ impl Scheduler {
             PROCESS_TABLE.with_process(current_pid, |p| {
                 let _ = p.set_state_safe(ProcessState::Ready);
             });
+        } else if prev_ptr.is_some() && (prev_state_code == 3 || prev_state_code == 4) {
+            // prev 切走且不可重排 (Blocked / Zombie): 离开 CFS 可运行集 —— 撤账.
+            // 幂等: `block()` 已撤账者其 on_rq 凭证已为 false, 此处不二次扣减;
+            // 旧模型缺这一步, 使 total_weight 随退出单调虚增, 均衡判定随之失真.
+            self.cfs_deactivate(current_pid);
         }
 
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -1144,29 +1188,33 @@ impl Scheduler {
                 let _ = proc.set_state_safe(ProcessState::Blocked);
                 proc.block_reason.store(reason as u32, Ordering::SeqCst);
             });
+            // IC2/IC4: 阻塞即离开可运行集 —— 摘节点 + 撤账. 树上只留可运行
+            // 任务, `is_empty()` / `leftmost_vruntime()` 才与真实可运行集一致.
+            self.cfs_deactivate(pid);
             per_cpu.need_reschedule.store(true, Ordering::SeqCst);
         }
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     pub fn unblock(&self, pid: Pid) {
         let sched_policy = PROCESS_TABLE
             .with_process(pid, |proc| {
                 let state = proc.get_state();
-                if state != ProcessState::Blocked && state != ProcessState::Frozen {
+                // 唤醒判据取"是否已在可运行记账中", 而非只看状态: 旧实现
+                // "状态非 Blocked/Frozen 即返回 None" 会吞掉"Ready 但未入队"的
+                // 唤醒, 使该任务在队列外永久隐形 (实测 boot 期 unb-skip).
+                // Running (已在核上) / Created (尚未启动) / Zombie / Terminated
+                // 一律不投送.
+                let need_enqueue = match state {
+                    ProcessState::Blocked | ProcessState::Frozen => true,
+                    ProcessState::Ready => !proc.cfs_on_rq.load(Ordering::Acquire),
+                    _ => false,
+                };
+                if !need_enqueue {
                     return None;
                 }
                 let _ = proc.set_state_safe(ProcessState::Ready);
                 let policy = proc.get_sched_policy();
-                if policy == SchedPolicy::Normal {
-                    proc.cfs_on_rq.store(true, Ordering::Release);
-                    let vr = proc.cfs_vruntime.load(Ordering::Acquire);
-                    let w = proc.cfs_weight.load(Ordering::Acquire);
-                    Some((policy, vr, w))
-                } else if policy == SchedPolicy::Deadline {
+                if policy == SchedPolicy::Deadline {
                     let dl_abs = proc.dl_abs.load(Ordering::Acquire);
                     let runtime = proc.dl_runtime.load(Ordering::Acquire);
                     let period = proc.dl_period.load(Ordering::Acquire);
@@ -1186,8 +1234,9 @@ impl Scheduler {
             .flatten();
 
         match sched_policy {
-            Some((SchedPolicy::Normal, vr, weight)) => {
-                per_cpu().cfs_rq.lock().enqueue(pid, vr, weight);
+            Some((SchedPolicy::Normal, _, _)) => {
+                // 统一走入队路径: 落点钳制 (IC1) + 回写 vruntime + 记账凭证.
+                self.cfs_enqueue_to(pid, crate::privileged::smp::get_current_cpu());
             }
             Some((SchedPolicy::Fifo | SchedPolicy::Rr, _, _)) => {
                 let (prio, pol) = PROCESS_TABLE
@@ -1451,12 +1500,6 @@ impl Scheduler {
             crate::privileged::driver::hotplug::hotplug_wakeup();
         }
 
-        // 周期性 CFS 提升 —— 防止 vruntime 饥饿
-        if new_tick.is_multiple_of(CFS_BOOST_INTERVAL_TICKS) {
-            let mut cfs_rq = per_cpu.cfs_rq.lock();
-            cfs_rq.boost_all_vruntime();
-        }
-
         let current_pid = per_cpu.current.load(Ordering::SeqCst);
         if current_pid != 0 {
             // RT FIFO watchdog
@@ -1525,33 +1568,38 @@ impl Scheduler {
                 // (schedule 的重新入队路径) 才会被重新入队.
                 let (should_preempt, should_yield) = {
                     let cfs_rq = per_cpu.cfs_rq.lock();
-                    let vr = PROCESS_TABLE
+                    let (vr, weight) = PROCESS_TABLE
                         .with_process(current_pid, |p| {
-                            let old_vr = p.cfs_vruntime.load(Ordering::Acquire);
                             let weight = p.cfs_weight.load(Ordering::Acquire);
+                            // IC1 兜底: 经 `keep_current` 回退上核的任务 (如 boot
+                            // 期 init) 可能从未在队列落过点, 其 vr 与 floor 不同域
+                            // —— 先对齐再累加, 使两者恒在同一时基上比较.
+                            let base = cfs_rq.placement(p.cfs_vruntime.load(Ordering::Acquire));
                             let delta = calc_vruntime_delta(weight);
                             // L2 修复: 使用 saturating_add 防止 vruntime 溢出
-                            let new_vr = old_vr.saturating_add(delta);
+                            let new_vr = base.saturating_add(delta);
                             p.cfs_vruntime.store(new_vr, Ordering::Release);
                             let sum = p.cfs_sum_exec_runtime.load(Ordering::Acquire);
                             // L2 修复: 使用 saturating_add 防止 sum_exec_runtime 溢出
                             p.cfs_sum_exec_runtime
                                 .store(sum.saturating_add(1), Ordering::Release);
-                            new_vr
+                            (new_vr, weight)
                         })
-                        .unwrap_or(0);
+                        .unwrap_or((0, NICE0_WEIGHT));
 
-                    let should_preempt = cfs_rq.nr_running > 0
-                        && cfs_should_preempt(
-                            vr,
-                            cfs_rq.min_vruntime.load(Ordering::Acquire),
-                            PROCESS_TABLE
-                                .with_process(current_pid, |p| p.cfs_weight.load(Ordering::Acquire))
-                                .unwrap_or(NICE0_WEIGHT),
-                        );
+                    // IC3: 运行任务的时基推进队列下界 —— 这是本调度器唯一的
+                    // 反饥饿机制 (旧的周期性整树折叠 boost 会抹掉相对次序, 且与
+                    // 任务自身 vruntime 分域, 已删除).
+                    cfs_rq.advance_floor(vr);
 
-                    let should_yield =
-                        vr > cfs_rq.min_vruntime.load(Ordering::Acquire) + TARGET_LATENCY_TICKS;
+                    // IC1: `vr` 与树左端同域, 差值才真正表示"领先了多少 tick".
+                    // IC2: 候选数判据取自树 (旧 `nr_running` 与树背离时, 抢占
+                    // 判据会在 `nr>0 / tree=0` 的假象下永久失效).
+                    let should_preempt = cfs_rq
+                        .leftmost_vruntime()
+                        .is_some_and(|next_vr| cfs_should_preempt(vr, next_vr, weight));
+
+                    let should_yield = vr > cfs_rq.floor() + TARGET_LATENCY_TICKS;
 
                     (should_preempt, should_yield)
                 };
@@ -1783,8 +1831,9 @@ impl Scheduler {
     )]
     fn total_runnable_for(&self, cpu_id: u32) -> usize {
         let sched = per_cpu_for(cpu_id);
-        let mut count = sched.cfs_rq.lock().nr_running as usize;
-        count += sched.dl_rq.lock().nr_running as usize;
+        // IC2: 可运行数一律取自结构 (树长度), 不读并行计数器.
+        let mut count = sched.cfs_rq.lock().len();
+        count += sched.dl_rq.lock().len();
         count += sched.rt_queue.lock().len();
         // 统计运行中的任务
         if sched.current.load(Ordering::SeqCst) != 0 {
@@ -1834,11 +1883,21 @@ impl Scheduler {
             let mut src_rq = per_cpu_for(busiest_cpu).cfs_rq.lock();
             for _ in 0..4 {
                 match src_rq.pick_next() {
-                    Some((pid, vr)) => {
+                    Some((pid, _vr)) => {
+                        // 锁序 cfs_rq -> PROCESS_TABLE (与本文件其余调度路径一致):
+                        // 一次加锁取回权重, 另一次写记账凭证.
                         let weight = PROCESS_TABLE
                             .with_process(pid, |p| p.cfs_weight.load(Ordering::Acquire))
                             .unwrap_or(NICE0_WEIGHT);
-                        src_rq.dequeue(pid, vr, weight);
+                        // 跨核迁移 = 记账随任务一起搬走: 节点已由 `pick_next` 摘除
+                        // (它不动账), `dequeue` 在此只承担把权重从**源核**
+                        // `total_weight` 中撤出; 凭证清零后由目标核 `enqueue` 重新
+                        // 计入 —— 两核的权重和因此守恒 (旧实现两边都不动账, 使
+                        // `total_weight` 与真实可运行集发散, 均衡判定越跑越偏).
+                        src_rq.dequeue(pid, weight, true);
+                        PROCESS_TABLE.with_process(pid, |p| {
+                            p.cfs_on_rq.store(false, Ordering::Release);
+                        });
                         tasks_to_migrate[count] = pid;
                         count += 1;
                     }
@@ -1847,36 +1906,18 @@ impl Scheduler {
             }
         }
 
-        let mut dst_rq = per_cpu_for(this_cpu).cfs_rq.lock();
+        // 投递统一走 `cfs_enqueue_to`: 它自带 IC1 落点钳制 + vruntime 回写 +
+        // 记账, 且不长期持有目标核 rq 锁 (旧写法在持 `dst_rq` 锁期间再去取
+        // 同一把锁的入队路径会自死锁).
         for i in 0..count {
             let pid = tasks_to_migrate[i];
             // C2: 亲和性检查 — 目标 CPU (this_cpu) 必须在进程 allowed 集合中,
-            // 否则跳过该进程, 留给后续在 allowed CPU 上调度
-            if !self.is_cpu_allowed(pid, this_cpu) {
-                // 放回源队列 (避免丢失)
-                let vr = PROCESS_TABLE
-                    .with_process(pid, |p| p.cfs_vruntime.load(Ordering::Acquire))
-                    .unwrap_or(0);
-                let weight = PROCESS_TABLE
-                    .with_process(pid, |p| p.cfs_weight.load(Ordering::Acquire))
-                    .unwrap_or(NICE0_WEIGHT);
-                drop(dst_rq);
-                per_cpu_for(busiest_cpu)
-                    .cfs_rq
-                    .lock()
-                    .enqueue(pid, vr, weight);
-                dst_rq = per_cpu_for(this_cpu).cfs_rq.lock();
-                continue;
+            // 否则退回源核 (避免丢失)
+            if self.is_cpu_allowed(pid, this_cpu) {
+                self.cfs_enqueue_to(pid, this_cpu);
+            } else {
+                self.cfs_enqueue_to(pid, busiest_cpu);
             }
-            let (vr, weight) = PROCESS_TABLE
-                .with_process(pid, |p| {
-                    (
-                        p.cfs_vruntime.load(Ordering::Acquire),
-                        p.cfs_weight.load(Ordering::Acquire),
-                    )
-                })
-                .unwrap_or((0, NICE0_WEIGHT));
-            dst_rq.enqueue(pid, vr, weight);
         }
     }
 
