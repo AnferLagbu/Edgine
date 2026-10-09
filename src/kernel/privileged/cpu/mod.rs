@@ -794,6 +794,25 @@ pub(crate) fn init_msr(features: &CpuFeatures) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// 由 CPUID Leaf 0x15 推算 TSC 频率 (Hz)
+///
+/// Intel SDM Leaf 15H: `EAX` = TSC 分频系数 N, `EBX` = 核心晶振倍频 M,
+/// `ECX` = 标称晶振频率 (**单位已是 Hz**). 故
+/// `TSC_Hz = ECX × M / N` —— 结果直接为 Hz, **不需**再乘 1e6
+/// (旧实现把 `ECX` 当 MHz 处理, 使返回值放大 10⁶ 倍).
+///
+/// 任一字段为 0 (CPU / 虚拟化层未提供该 leaf 数据) 或乘除溢出 → `None`,
+/// 由调用方回落到估计值.
+#[cfg(target_arch = "x86_64")]
+fn tsc_hz_from_cpuid_leaf15(eax: u32, ebx: u32, ecx: u32) -> Option<u64> {
+    if eax == 0 || ebx == 0 || ecx == 0 {
+        return None;
+    }
+    let cycles = u64::from(ecx).checked_mul(u64::from(ebx))?;
+    let hz = cycles / u64::from(eax);
+    if hz == 0 { None } else { Some(hz) }
+}
+
 /// 校准 TSC 频率 (Hz)
 #[cfg(target_arch = "x86_64")]
 fn calibrate_tsc(max_std: u32, vendor: CpuVendor) -> u64 {
@@ -801,17 +820,18 @@ fn calibrate_tsc(max_std: u32, vendor: CpuVendor) -> u64 {
     if vendor == CpuVendor::Intel && max_std >= 0x15 {
         let (eax, ebx, ecx, _) = cpuid::cpuid(0x15, 0);
 
-        if eax != 0 && ebx != 0 && ecx != 0 {
-            // TSC 频率 = (crystal_freq * ebx) / eax
-            // crystal_freq 通常需要额外查询, 这里简化处理
-            let estimated = (u64::from(ecx) * u64::from(ebx)) / u64::from(eax);
-            if estimated > 0 {
-                return estimated * 1_000_000; // MHz → Hz
-            }
+        if let Some(hz) = tsc_hz_from_cpuid_leaf15(eax, ebx, ecx) {
+            return hz;
         }
     }
 
     // 方法 2: 经验估计 (不精确但可用)
+    // SIMPLIFIED: 厂商典型值硬编码 (Intel 2.5GHz / AMD 3.0GHz / 其他 1.0GHz);
+    //   影响面: `info.tsc_frequency_hz` 与实际频率可差 1.4× 以上, 任何用它折算
+    //   TSC → 时间 的调用方都会拿到系统性偏差 (历史上的 klog 日志前缀即因此被误读为
+    //   “tick 频率 1400/s”, 见 docs/plan/net-e2e-tcp-echo-flakiness.md §6 P-3);
+    //   何时需扩展: 接上 `timer::calibration::calibrate_tsc` (PIT 实测校准) 到生产启动
+    //   路径时, 删除本估计分支.
     match vendor {
         CpuVendor::Intel => 2_500_000_000, // 2.5 GHz 典型值
         CpuVendor::Amd => 3_000_000_000,   // 3.0 GHz 典型值
@@ -826,6 +846,28 @@ fn calibrate_tsc(max_std: u32, vendor: CpuVendor) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_tsc_hz_from_cpuid_leaf15() {
+        // Intel SDM Leaf 15H 例: 25 MHz 晶振, M=166, N=2 → 2.075 GHz.
+        // ECX 单位已是 Hz, 故结果不得再乘 1e6 (旧实现的 10⁶ 倍回归防线).
+        assert_eq!(
+            tsc_hz_from_cpuid_leaf15(2, 166, 25_000_000),
+            Some(2_075_000_000)
+        );
+        // 100 MHz 晶振 × 24 / 1 = 2.4 GHz
+        assert_eq!(
+            tsc_hz_from_cpuid_leaf15(1, 24, 100_000_000),
+            Some(2_400_000_000)
+        );
+        // 任一字段为 0 = 数据不可用 → None (由调用方回落估计值)
+        assert_eq!(tsc_hz_from_cpuid_leaf15(0, 166, 25_000_000), None);
+        assert_eq!(tsc_hz_from_cpuid_leaf15(2, 0, 25_000_000), None);
+        assert_eq!(tsc_hz_from_cpuid_leaf15(2, 166, 0), None);
+        // 整除结果为 0 (倍频小于分频) 同样视为不可用, 不得上报假频率
+        assert_eq!(tsc_hz_from_cpuid_leaf15(u32::MAX, 1, 1), None);
+    }
 
     #[test]
     fn test_cpu_vendor_recognition() {

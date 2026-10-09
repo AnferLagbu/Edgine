@@ -4,11 +4,18 @@
 //!   1. 内建 COM1 串口驱动 (直接 port I/O, 无需 driver 子系统)
 //!   2. 128KB 环形缓冲区 (Atomic + Mutex 保护)
 //!   3. 级别/分类双重过滤
-//!   4. RDTSC 时间戳
+//!   4. tick 派生 uptime 时间戳 (读 `privileged::timer` 顶层公共 API; 定时器
+//!      尚未初始化的早期启动阶段为 `0.000000`)
 //!
 //! 所有内核模块通过 klog_* FFI 统一输出。
 
 use core::sync::atomic::{AtomicU8, Ordering};
+
+// 时间戳时基: 只取 timer 顶层 re-export 的公共 API (`get_ticks` / `ticks_to_us`),
+// 不进入 `timer::tick` 内部. 方向单向 (klog → timer); timer 侧仅通过 `klog_*!`
+// 宏输出日志, 宏不在 `audit_coupling.py` 的 `use` 依赖图上成边.
+#[cfg(not(feature = "host-test"))]
+use crate::privileged::timer::{get_ticks, ticks_to_us};
 
 // ============================================================================
 // 格式化宏 — 统一输出格式: [时间戳][级别][分类] 消息
@@ -569,17 +576,18 @@ unsafe fn cstr_slice(ptr: *const u8) -> &'static [u8] {
     }
 }
 
-// B08-14: 仅裸机路径使用 (klog_output_baremetal), host-test 下 cfg 掉消除 dead_code 警告.
+/// 格式化 uptime 微秒数 → 栈上 buffer (最小化依赖)
+///
+/// 显示 `秒.微秒`。时基取 **tick 派生 uptime** (`ticks_to_us(get_ticks())`)，与
+/// `hrtimer_clock_read()` / `sleep` / `proc` 记账同一源，粒度 = 1 tick (1000Hz 下
+/// 1ms，故后三位恒为 `000`).
+///
+/// 历史实现直接取裸 TSC 并按「假设 ~3GHz」折算 (`tsc / 3000`)，与内核 tick 时基
+/// 背离 1.43× (QEMU 实测 TSC 2.096 GHz)：日志前缀的「秒」比真实时间慢 43%，曾直接
+/// 导致「有效 tick 频率约 1400/s」的误判 —— 见
+/// `docs/plan/net-e2e-tcp-echo-flakiness.md` §6 P-3。
 #[cfg(not(feature = "host-test"))]
-fn rdtsc() -> u64 {
-    crate::arch!(timestamp())
-}
-
-/// 格式化 u64 → 栈上 buffer (最小化依赖)
-#[cfg(not(feature = "host-test"))]
-fn format_ts(buf: &mut [u8; 32], tsc: u64) -> &[u8] {
-    // 假设 ~3GHz TSC, 显示秒.微秒
-    let total_us = tsc / 3000;
+fn format_ts(buf: &mut [u8; 32], total_us: u64) -> &[u8] {
     let sec = total_us / 1_000_000;
     let us = total_us % 1_000_000;
     let mut pos = 0usize;
@@ -621,7 +629,7 @@ fn format_ts(buf: &mut [u8; 32], tsc: u64) -> &[u8] {
 // ============================================================================
 
 fn klog_output(level: LogLevel, cat: LogCategory, msg: &[u8]) {
-    // B08-14 前置: host-test (std) 下 klog no-op — rdtsc/cli/MMIO sink 为裸机专属
+    // B08-14 前置: host-test (std) 下 klog no-op — cli/MMIO sink 为裸机专属
     // (host 用户态执行特权指令 SIGSEGV). 日志功能在 host 测试非被测对象, 丢弃即可.
     #[cfg(feature = "host-test")]
     {
@@ -635,9 +643,9 @@ fn klog_output(level: LogLevel, cat: LogCategory, msg: &[u8]) {
 
 #[cfg(not(feature = "host-test"))]
 fn klog_output_baremetal(level: LogLevel, cat: LogCategory, msg: &[u8]) {
-    let tsc = rdtsc();
+    let total_us = ticks_to_us(get_ticks());
     let mut ts_buf = [0u8; 32];
-    let ts = format_ts(&mut ts_buf, tsc);
+    let ts = format_ts(&mut ts_buf, total_us);
 
     let saved_if = crate::arch!(interrupt_disable());
 
