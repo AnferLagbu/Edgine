@@ -50,9 +50,11 @@
 >
 > **本轮更新**: 新增活跃工程 [smp-ap-user-scheduling.md](./smp-ap-user-scheduling.md)（AP 参与用户态调度 + aarch64 KPTI per-CPU 化，**DECISION-084**，方案 C 相对完整）—— 使 ≥2 个用户任务可在多核并发处于 EL0（APS-01..APS-06 全部 `[X]`，批次 P1→{P2,P3}→P4 收口，并含收口期修复的批次 P5「次核 CPU 状态初始化」）。同族前置工程 [aarch64-smp-bringup.md](./archive/aarch64-smp-bringup.md)（DECISION-082）的后续专项 **KPTI-PCPU-01** 已由本工程落地结案。本文件据此更新活跃工程全景（既有一表沿用，本轮不新增表行，仅登记关联）。
 
+> **整表重新对账**: 工程计划 B 的 §现状总览表已由「5 份」扩为 `docs/plan/` 非归档 28 份（甲・仍开放项 17 份 / 乙・已闭环 11 份），并登记对账方法、判定口径与 4 类文档漂移。下表为工程计划 A 视角的初始基线五份，作为本计划自身结论保留不动；全量活跃任务视图以 B 表为准。
+
 - **活跃 plan 文档与实装对齐总览**
   - 描述: 5 份文档 — ipv6-dual-stack 与源码完全对齐; test-compile-issues 已归档; clippy-pedantic-cleanup 已 DEPRECATED (被 stage-engineering-master.md 取代, 收敛至 0 警告); code-review-2026-08-01 8 项已落地; future-roadmap 远期未启动 (与实装吻合)
-  - 方案: 详见下表
+  - 方案: 详见下表（A 视角初始基线；全量 28 份见工程计划 B §现状总览表）
   - 状态: [X]
 
   | 文档 | 整体进度 | 一致性 | 关键差距 |
@@ -501,25 +503,71 @@
 
 ### 目标
 
-- **5 份 plan 文档与实装对齐表**
-  - 描述: 一表覆盖所有活跃任务, 含计划文档引用 + 源码实装状态 + 一致性评估
-  - 方案: 见 §现状 详细表
-  - 状态: [X] (见 §现状总览表 + 5 张详情表)
+- **docs/plan 全量 plan 文档与实装对齐表**
+  - 描述: 一表覆盖 `docs/plan/` 全部非归档 plan（28 份），含主题 + 状态字段实测计数 + 仍开放条目 + 一致性评估
+  - 方案: 见 §现状 总览表（甲：仍开放项；乙：已闭环）+ 5 张早期基线详情表
+  - 状态: [X] (见 §现状总览表 + 5 张详情表；总览表已按轮次整表重新对账)
 
 ### 现状 (2026-08-03)
 
-- **总览表**
-  - 描述: 5 份 plan 文档对齐情况
+- **总览表（整表重新对账）**
+  - 描述: `docs/plan/` 非归档 28 份 plan 与实装的对齐情况，按「仍开放项 / 已闭环」分两张表（17 / 11）
   - 方案:
   - 状态: [X]
 
-  | 文档 | 任务数 | 已完成 | 待办 | 一致性 | 关键差距 |
+  **甲・仍有开放项（17 份）**
+
+  | 文档 | 主题 | 完成/开放 | 仍开放条目 | 一致性判定 | 关键差距 |
   |---|---|---|---|---|---|
-  | future-roadmap.md | 6 | 1 (WASM WASI) | 5 (F1/F2/F3/F4 + F5) | 完全一致 | 远期未启动, 与实装吻合 |
-  | ipv6-dual-stack.md | 9 (D1-D4 + Phase 1-8) | 8 (D1-D4 + Phase 1-5+7-8) | 1 (Phase 6 DHCPv6) | 高度一致 | 与实装完全对齐 |
-  | archive/clippy-pedantic-cleanup.md (DEPRECATED → stage-engineering-master.md) | 7 批 | 7 批 | 0 | 已收敛 | 10591 → 0, DECISION-034/035/036/040/043 全部落地 |
-  | archive/code-review-findings-2026-08-01.md (历史快照, 不再更新) | 8 项 | 8 | 0 | 已落地 | 实现由 DECISION-037/038/039 + B1-B6 落地; 快照文本保持 `[]` 原样 |
-  | test-compile-issues-2026-07-31.md (已归档) | 9 错误 + 8 pre-existing | 17 | 0 | 已归档 | 无待办 |
+  | net-e2e-tcp-echo-flakiness.md | TCP 回显 e2e 抖动根因工程 | 7（S-1..S-7）/ 4 | §6 登记项（无状态字段）中仍未收口四件：P-1 双份 tick 计数（解耦桥 `current_tick()` 恒返 0）、P-6 每连接 2 次 SYN-ACK 重传待评估、P-7 `calibrate_tsc` 未接生产（`hrtimer_clock_read()` 回退 tick 时基）、P-8 孤儿 init / 接线断点收口工程 | 一致：S-1..S-7 全部 `[X]`（P-2/P-4 由 S-7 闭环、P-3 假时基已修、P-5 重测收敛 8.0s 窄带、P-9 本轮闭环）；`E2E_REPEATS=20` 连续 20 轮 0 失败 | P-8 属阶段工程（多子系统 init 编排 + 防回归门禁），开工前需用户划定边界与验收口径 |
+  | multithreading-project.md | 多线程模型（线程组 + 并发检测） | 0 / 11 | K-01..K-07（tgid/ThreadGroup、CLONE_THREAD 接线、CLONE_FILES/SIGHAND/FS 共享、调度统一、Mutex owner 迁线程指针、线程组 syscall、测试收口）+ A-1..A-4（lockdep 生产编译、feature 接线、AB-BA 静态检测、数据竞争检测） | 一致：全仓无 `ThreadGroup`；`functions/proc/clone.rs` 只校验 CLONE_THREAD 标志；`tgkill` 以 `tgid == tid` 等价替代并带 SIMPLIFIED 标注 | 未开工，台账中最大空白 |
+  | fd-object-model-unification.md | fd 对象模型统一（终态退役 FdPlan） | 1 / 3 | 阶段 2 抽象落地、阶段 3 八个非 VFS 子系统迁移、阶段 4 `FdPlan`/`subsystem_of`/`idx_of` 退役 | 一致：`docs/design/fd-object-model-design.md` 已定稿；数值区间分发仍在生产路径 | 跨子系统长工程，未开工 |
+  | socket-layer-completion.md | Socket 层深度补全（TCP/UDP） | 52 / 1 | U5 组播（`IP_ADD_MEMBERSHIP` → `Interface::join_multicast_group`） | 一致：`sm_setsockopt` 无组播分支 | 仅余一项 |
+  | socket-option-constants-unification.md | sockopt 常量值域治理 | 0 / 2 | S1 值域对齐、S2 防漂移契约测试 | 一致，且**漂移仍在原地**：`src/user/lib/src/sys.rs` `SO_KEEPALIVE=8`/`SO_BROADCAST=32` vs `privileged/net/init/sm_fi.rs` `SO_KEEPALIVE=9` | 阻塞在「统一机制 A（共享常量源）vs B（对齐 + 契约测试）」的用户裁定 |
+  | msi-x-complete-project.md | MSI-X 完整接入 | 5 / 3 | MSIX-02 未验证路径汇总、MSIX-04 virtio-pci 接入评估、MSIX-05 多队列 vector 池评估 | 一致：NVMe MSI-X 已 QEMU 实测（MSIX-03/06 `[X]`），virtio 仍走 mmio INTx | 两项为纯评估项，可出结论即关闭 |
+  | ipv6-dual-stack.md | IPv4/IPv6 双栈 | 14 / 1 | Phase 6 DHCPv6 / SLAAC（远期） | 一致：vendored smoltcp 无 DHCPv6 客户端 | 远期；`scripts/qemu_slaac_test.sh` 探针先于实现存在 |
+  | aarch64-kernel-fp-free.md | aarch64 内核零浮点（KPTI-18b） | 8 / 1 | FP-08 Wu 抗锯齿 f32 → Q16 定点（DECISION-079 裁定登记不实施） | 一致：FP-01..FP-07 落地，FP-06 反汇编门禁已入 `ci/audit.sh` | 触发条件＝显示子系统接入 QEMU/真机并具备像素级回归 |
+  | kpti-complete-project.md | KPTI 完整化 | 32 / 1 | KPTI-18：aarch64 `ExceptionFrame` 不含 V0–V31，用户态 FPU 上下文跨 syscall 不保留 | 部分订正：18a 已并入本轮批次、18b 已由零浮点工程结案；条目本体（异常帧存 V0–V31 或 lazy FPU）仍未做 | 见「对账中发现的文档漂移」第 3 条 |
+  | framekernel-paradigm-enforcement.md | F/S 分层范式落实 | 27（+4 勾选）/ 2 | 阶段目标：TCB 占比 < 30%、privileged `.rs` 收敛至 200 | 一致：本轮实测 effective TCB 占比 **57.78%**（HEAD 57.80%，S-7 净减 55 行） | 长期演化目标，无固定工期 |
+  | stage-engineering-master.md | 静态检查工程总览 | 37（+5 勾选）/ 3（+4 勾选，1 `[~]`） | 长期：cast 1700+ 保留（DECISION-041）/ QEMU 运行时验证 / 真实硬件启动；流程项：每轮门槛复跑；中期：kernel `#[test]` 迁移（DECISION-046 维持原状） | 两处口径过期，见漂移清单第 2 条 | 属「永久保留」清单，改写需用户裁定 |
+  | syscall-followup.md | syscall 编号治理后的剩余任务 | 5 勾选 / 1 | T6-T7（TODO 33 项 / aarch64 编号）登记排后 | 一致：T1-T5 全部 `[X]`，eg 自有代码活跃 TODO 已清零 | 纯排后登记，无在途施工 |
+  | kernel-unit-test-harness-unification.md | 内核单测 harness 统一 | 10 / 1 | DECISION-080 自身状态字段仍 `[ ]` | **漂移，本轮已订正**：`src/kernel/Cargo.toml` 已无 `test = false`，`make test-kernel-host` 全绿 | 无（UT-01..UT-10 全 `[X]`） |
+  | sgeg-capability-constants-plan.md | SGEG 能力位常量治理 | 表内形态：A 类 3 已治理 / B 类 5 + C 类 2 待实施 | B1-B5（reboot / open_by_handle_at / sethostname 魔法数 / mmap 无命名位 / `required=0` 可疑）、C1-C2（storage 域号冲突 / 裸数字域号） | 本轮未逐项复验源码（仅归集文档口径） | 文档自述「本计划不落地代码」，待委托 |
+  | future-roadmap.md | 远期工程规划 | 1（F5 IPv6）/ F1-F4 无状态字段 | F1 mdBook、F2 RISC-V、F3 TDX、F4 NFS | 一致：无 mdBook 配置、无 `arch/riscv64/`、无 tdx 模块、无 `functions/fs/nfs/` | 远期未启动 |
+  | unresolved-issues-2026-08-09.md | 未修复问题追踪清单 | 表内形态（复验订正：真正开放 ≈25 + 3 刻意维持） | RT-002 压测不可复现（保留）、RT-003 待真机、MIG×8 迁移中间态、B06-PRE×3、分册 3 遗留 ×3 | 一致（清单类文档，非执行 plan） | 作为后续 plan 制定的输入 |
+  | progress-active-tasks.md | 本文件：活跃任务进度对比基线 | 72 / 0（+1 `[~]`） | `[~]`：cast 1910 处 `try_from` 改造推未来阶段（DECISION-041 保留原状） | 一致 | 机制项，随轮更新 |
+
+  **乙・状态字段已全量闭环（11 份）**
+
+  | 文档 | 主题 | 完成 | 本轮判定 |
+  |---|---|---|---|
+  | tlb-shootdown-epoch.md | TLB shootdown 代计数与机会式排空 | 16 | 开放 0；`tlb_catch_up_local` 生产路径在用（S-14 门禁在 `ci/audit.sh`） |
+  | code-audit-final-summary.md | 全项目代码与功能审计 | 59 | 开放 0（审计条目逐项收口） |
+  | cr3-lifetime-ownership.md | cr3 所有权计数与生命周期修复 | 13 | 开放 0 |
+  | eliminate-parallel-implementations.md | host-tests 平行实现消除 | 22 | 开放 0（内核源码 host 可编译） |
+  | smp-ipi-protocol.md | SMP IPI 协议（shootdown / reschedule） | 10 | 开放 0 |
+  | smp-ap-user-scheduling.md | AP 参与用户态调度 + aarch64 KPTI per-CPU 化 | 9 | 开放 0（APS-01..06 + 批次 P5，DECISION-084） |
+  | aarch64-high-half-migration.md | aarch64 高半区内核迁移 | 7 | 开放 0（EL1 视图构建在生产路径） |
+  | duplicate-impl-convergence.md | 重复实现收敛（帧归还语义单点化） | 7 | 开放 0；统计命中的 1 处 `状态：[]` 是正文引用他文档文本，非待办 |
+  | munmap-protect-pml4.md | munmap 拆除与 protect 目标页表修复 | 7 | 开放 0 |
+  | pcache-frame-ownership.md | pcache 帧持有计数与映射生命周期对齐 | 7 | 开放 0 |
+  | x86-init-probe-project.md | x86_64 `init_all` 探测阻塞根治 | 4 | 开放 0 |
+
+- **对账方法与判定口径**
+  - 描述: 本轮对账的判据来源与强度，供下一轮复现，避免「看着像对过」的假闭环
+  - 方案: 状态标记按四种形态归一化统计——`状态：[X]` / `状态: [X]` / `**状态**: [X]` / 转义 `状态：\\[X]`，再叠加 markdown 勾选（`- [x]` 与 `1. [ ]` 有序列表形态）；开放项逐条定位到条目名并回源码复验漂移候选
+  - 状态: [X]
+  - 详情: 已闭环文档本轮只核对「状态字段自洽 + 签字符号仍在生产路径」，未做逐项源码复验；早期五份 plan 的逐项复验见下方详情表。
+
+- **对账中发现的文档漂移**
+  - 描述: 4 类，1 项本轮已修，3 项属他人工程的叙述性记录，登记待裁定
+  - 方案:
+  - 状态: [X]
+  - 详情:
+    1. **已修**：`kernel-unit-test-harness-unification.md` DECISION-080 的状态字段仍 `[ ]`，而其实装（删 `[lib] test = false` + 新增 §2.3 第 6 条门槛 + 双轨收敛）全部到位 → 按 §9.2 本轮订正为 `[X]`。
+    2. **待裁定**：`stage-engineering-master.md` 长期待办「QEMU 实际验证（阶段 7-18 改动均未做运行时验证，仅静态）」口径已过期——AGENTS §2.3 第 5 条 QEMU e2e 现为每轮门槛；同文档 §待办「每轮开发完成重跑 5 条验证门槛」的数字也落后于现行 6 条。未改，因该条位于「永久保留」清单并带历史批次归因语义。
+    3. **待裁定**：`kpti-complete-project.md` KPTI-17 实施记录称在 `syscall/clone.rs` aarch64 分支「新增 `map_kernel_stack_top_page`」，全仓（含 `.asm` / `.S`）0 命中；当前 `functions/proc/clone.rs` aarch64 分支注释明确写「本路径恒共享父线程页表……无需改写」，即该次新增已在后续批次回退。属实施记录与源码不符，未改。
+    4. **统计口径教训**：旧总览表按单一形态统计，导致 6 份 plan（fd-object-model-unification / framekernel-paradigm-enforcement / stage-engineering-master / syscall-followup / ipv6-dual-stack / munmap-protect-pml4）的状态标记被漏计，进而被误判为「无进度信息」。
 
 - **future-roadmap 6 项详情**
   - 描述: WASM WASI 已完成; F1-F5 (F5 见 ipv6-dual-stack) 远期/未启动
@@ -622,6 +670,11 @@
 - (本工程计划 B 为基线建立任务, 无独立决策)
 
 ### 变更历史
+
+- **整表重新对账（`docs/plan` 非归档 28 份）**
+  - 描述: §现状总览表由 5 份扩为 28 份（甲·仍开放项 16 / 乙·已闭环 12），新增「对账方法与判定口径」与「对账中发现的文档漂移」两条；工程计划 A §现状加注「全量视图以 B 表为准」
+  - 方案: -
+  - 状态: [X]
 
 - **2026-08-03**
   - 描述: 创建工程计划 B, 建立 5 份 plan 文档进度对比基线
