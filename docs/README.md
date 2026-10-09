@@ -133,6 +133,8 @@ let cr3_val = setup_pagetable(kproc);
 
 引用代码**必须真实存在**，引用前请先 `grep` 确认行号。
 
+**适用边界（路径新鲜度只约束“必须与代码同步”的文档）**：上述强制适用于 `docs/explain/`、`docs/design/` 与根文档（`AGENTS.md` / `README.md` / `docs/README.md`）——它们描述当前形态，路径失效即文档失真。`docs/plan/`（含 `archive/`）条目记录的是**执行当时**的代码形态（批次目标文件 / 实测行数 / 已下沉或已删除的模块），`docs/report/` 发布即冻结；这些历史路径会随后续工程失效，属正常现象，**不得为了“路径存在”而改写历史记录**（§9.2 要求 plan 同步的是状态标记 `[]/[X]`）。`tools/check_doc_paths.py` 按此边界取校验集合（按需运行，未接入 CI）。
+
 ***
 
 ## 5. plan/ 文档格式

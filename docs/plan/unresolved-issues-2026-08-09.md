@@ -30,7 +30,7 @@
 | 跨文档矛盾 (code-review) | 8 | P1×3 + P2×3 + P3×2 | 🔄 已修复 (2026-09-26 复验; 归档快照冻结) |
 | 远期工程 | 6 | 远期 | ❌ 未启动 |
 | 本会话刻意维持 | 3 | 决策登记 | ⏸️ DECISION |
-| 构建/工具问题 | 3 | 工具 | ❌ 未提交 |
+| 构建/工具问题 | 3 (+2 本轮登记) | 工具 | 🔄 TOOL-001/002 已修复；TOOL-003 重评结案不施工；**TOOL-004/005 本轮登记即修复 (`[X]`)** |
 | 审计基线待清零 (2026-08-23) | 2 | F2×12 + F7×67 | 🔄 已处理 (2026-08-30) |
 | 分册 3 归档遗留 (2026-08-23) | 3 | 遗留×3 | ❌ 待下轮 |
 | lint 副作用 (已修复) | 2 | — | 🔄 已修复 |
@@ -45,7 +45,7 @@
 > - **跨文档矛盾**: 8 项实现侧均已落地 (见 §3), 归档快照按 §6 冻结 → 仍开放 **0**.
 > - **审计基线**: 实测 [audit_functions_boundary.py](file:///home/anfer/Code/Edgine/scripts/audit_functions_boundary.py) **EXIT=0 / 0 违规**、`audit_comment_language.py` **724 文件 0 违规** → 仍开放 **0**.
 > - **运行时已知问题**: 3 项仍成立 (RT-001 见 [qemu_boot_test.sh:168](file:///home/anfer/Code/Edgine/scripts/qemu_boot_test.sh#L168) 注释; RT-002 未修复但 `.gdb_debug_gic` 证据失效; RT-003 未运行).
-> - **构建/工具**: TOOL-001 已修复; TOOL-002 QEMU 侧陈旧检测已实装 ([check_kernel_fresh](file:///home/anfer/Code/Edgine/scripts/qemu_boot_test.sh#L133)); TOOL-003 的 E0152 前提已根治 (2026-09-14 build-std 显式化) → 待按新状态重评.
+> - **构建/工具**: TOOL-001 已修复; TOOL-002 QEMU 侧陈旧检测已实装 ([check_kernel_fresh](file:///home/anfer/Code/Edgine/scripts/qemu_boot_test.sh#L133)); TOOL-003 的 E0152 前提已根治 (2026-09-14 build-std 显式化) → 待按新状态重评。**【本轮】TOOL-003 重评结案不施工；新增 TOOL-004（x86_64 AP 启动锁无竞争者 → deadlock 审计唯一 HIGH）与 TOOL-005（check_doc_paths 校验范围语义）登记即修复 → 第 6 类仍开放 0。**
 > - **分册 3 归档遗留**: 3 项均仍成立 (COW TOCTOU 见 [cow.rs:464](file:///home/anfer/Code/Edgine/src/kernel/privileged/mm/cow.rs#L464); pmm/swap 与多核 tick 的 host-tests 缺口均无对应用例).
 > - **迁移中子系统**: MIG-001/002/003/004/006/007/008 仍成立; MIG-005 文件名漂移 (privileged 侧实为 `ata.rs`/`nvme.rs`/`ahci.rs`/`ata_block.rs`, **无** `nvme_block.rs`/`ahci_block.rs`).
 > - **分册 6 预存问题**: B06-PRE-001 已失效 (tmpfs 改用 `nodes.len()` + `VfsFileType::Dir.as_u8()`); B06-PRE-002 仍成立 (安全缺陷); B06-PRE-003 行号漂移.
@@ -514,7 +514,7 @@
 
 ---
 
-## ⚫ 第 6 类：构建/工具问题 (3 项)
+## ⚫ 第 6 类：构建/工具问题 (5 项)
 
 ### ISSUE-TOOL-001: Makefile 缺乏跨架构清理
 
@@ -549,6 +549,30 @@
 | **【本轮复验订正】** | E0152 整族已根治（2026-09-14 build-std 显式化，见 [src/kernel/Cargo.toml:17](file:///home/anfer/Code/Edgine/src/kernel/Cargo.toml#L17) 与 [framekernel-paradigm-enforcement.md:431](file:///home/anfer/Code/Edgine/docs/plan/framekernel-paradigm-enforcement.md#L431)）；`test = false` 相关前提亦已移除。原"裸机 target 失败"现象不再必然复现 → 本条前提已变，待按新状态重评是否需要 |
 | **【本轮修复（修遗留工程）】** | 重评结案: E0152 整族根治后, 内核测试实际一直在 host 侧（`--features host-test`）运行并全绿（`make test-kernel-host` 941 passed），《`test = false` 隔离 host target》的原建议已无必要 — 无需再引入 `#[cfg(target_os = "none")]` 隔离或独立 host 测试目标。本条**结案, 不施工**。 |
 | **工作量** | 估计 1 天 |
+
+### ISSUE-TOOL-004: x86_64 AP 启动锁无竞争者 → deadlock 审计基线唯一 HIGH
+
+| 字段 | 数据 |
+|---|---|
+| **状态** | 🔄 已修复（本轮登记即修复；`audit_deadlock_matrix.py` 基线首次清零） |
+| **现象** | `audit_deadlock_matrix.py` 全仓唯一 HIGH `NON_IRQ_SAFE_LOCK_USE`：`privileged/arch/x86_64/smp_init.rs` 的 `AP_STARTUP_LOCK`。该项自审计基线建立起长期以“预存人工审查项”挂在各轮验证记录里（见 [framekernel-paradigm-enforcement.md](./framekernel-paradigm-enforcement.md) 审计盲区扩展记录与阶段 6 验证记录、[syscall-followup.md](./syscall-followup.md) 验证行），无法闭合 |
+| **根因** | **锁无任何竞争者**。源码调研事实链：`start_ap` 全仓唯一调用点是同文件 `init()` 内对 MADT AP 列表的**串行循环**；`init()` 的唯一外部入口是 `Arch::interrupt_late_init()`（x86_64 `mod.rs`），仅由 BSP 在 `kernel_main` 调用一次；AP 侧走 `ap_entry`，不进入启动路径。脚本无抑制/白名单机制（fail-closed），面对“无竞争者但持非 IRQ 安全锁”只能保守报 HIGH。附带缺陷：`spin::mutex::SpinMutex::lock()` **不做** IRQ save，而临界区包含 INIT 10ms + 就绪 100ms + 完成 50ms 的忙等轮询（≈ 150ms/AP） |
+| **审计表述订正** | 原 F-12 审计条目（[code-audit-final-summary.md](./code-audit-final-summary.md)）称“`AP_STARTUP_LOCK` 是 `SpinMutex<()>`，实现是 irq_spinlock，**lock() 时 save/restore IRQ**” — **不成立**；`spin` crate 只有 `lock_irqsave()` 才保存/恢复标志位，`lock()` 不碰 IF。该错判已原地订正 |
+| **修复** | 用户裁定“删除 `AP_STARTUP_LOCK`”：删除锁声明与 `use spin::mutex::SpinMutex`，原地写调用图事实注释与重引条件（若引入 CPU hotplug，重引的锁必须是 `IrqSpinLock` 且忙等轮询须移出临界区）。复跑 `audit_deadlock_matrix.py`：`扫描文件数: 693 / 问题总数: 0` |
+| **回归守卫** | 新增静态契约用例 [arch_ap_startup_lock_removed_test.rs](../../host-tests/tests/arch_ap_startup_lock_removed_test.rs)（6 例：锁彻底移除 / `start_ap` 体内无锁且无显式 `cli`/`sti` / 调用点唯一 / `ap_entry` 不启动 AP / 启动入口仅 BSP `interrupt_late_init` / 前瞻守卫“重引启动锁必须 IRQ 安全”）；已做负控制（临时加回锁 → 2 例 FAILED），非自证式断言 |
+| **工作量** | 已闭合 |
+
+### ISSUE-TOOL-005: check_doc_paths 将历史快照文档误入“路径必须存在”校验
+
+| 字段 | 数据 |
+|---|---|
+| **状态** | 🔄 已修复（本轮登记即修复；订正对象是**校验工具的范围语义**，未改动任何文档散文） |
+| **现象** | `tools/check_doc_paths.py` 报 368 条“文档路径漂移”（反引号源码路径磁盘上不存在），作为无法闭合的噪声长期存在 |
+| **根因** | 校验范围把 `docs/plan/`（archive 272 + 活文档 96，集中在 9 份 plan）与 `docs/report/` 当作“路径必须与代码同步”的文档集合。plan 条目记录的是**执行当时**的代码形态（批次目标文件 / 实测行数 / 已下沉或已删除模块），其路径按定义会随后续批次失效。对 96 处逐条核后可确认**全部为历史记录**（无一条错指现存文件），关键词判据只能覆盖 51/95，机械替换会篡改历史（违 AGENTS.md §6）；§9.2 要求 plan 同步的是状态标记 `[]/[X]`，不是历史路径文本 |
+| **修复** | 脚本收窄为校验“必须与代码同步”的文档集合：`docs/explain/` + `docs/design/` + 根文档（`AGENTS.md` / `README.md` / `README.en.md` / `docs/README.md`）；`docs/plan/`（含 archive）与 `docs/report/` 排除，排除理由写入脚本 docstring |
+| **实测** | 收窄前全仓报 368 条 → 收窄后 `OK: 无文档路径漂移 (校验 14 份必须与代码同步的文档)` EXIT=0。反向验证：被纳入范围的 14 份活文档本身漂移 **0** → 收窄不是掩真实问题，而是删除范畴错误 |
+| **建议方案** | （已实施）AGENTS.md §6 补写“代码同步范围（源码路径新鲜度）”条款，把该语义固化为文档规则。工具依用户裁定**保持按需运行，不接入 CI 门禁**（不新增 §2.2 核心审计表行） |
+| **工作量** | 已闭合 |
 
 ---
 
@@ -777,6 +801,11 @@
 ---
 
 ## 变更历史
+
+- **本轮（第 6 类两项预存问题收敛 — TOOL-004/005 登记即修复）**: 用户裁定“这两个本轮修复”，同时登记并闭合两项工具/审计预存问题。
+  - **ISSUE-TOOL-004**（deadlock 审计基线唯一 HIGH）：依用户裁定**删除** `privileged/arch/x86_64/smp_init.rs` 的 `AP_STARTUP_LOCK`（源码调研证明 `start_ap` 无第二个获取者：BSP 串行 `init()` 是唯一入口，AP 走 `ap_entry`；`spin::mutex::SpinMutex` 又**不做** IRQ save，因此脚本只能保守报 HIGH）。复跑 `audit_deadlock_matrix.py` → `扫描文件数: 693 / 问题总数: 0`（**审计基线建立以来首次全清**）；新增静态契约回归守卫 [arch_ap_startup_lock_removed_test.rs](../../host-tests/tests/arch_ap_startup_lock_removed_test.rs)（6 passed，含负控制）。同时订正 [code-audit-final-summary.md](./code-audit-final-summary.md) F-12 的“irq_spinlock 会 save/restore IRQ”错判。
+  - **ISSUE-TOOL-005**（文档路径漂移 368 条）：逐条核证 96 处活 plan 漂移**全部为历史记录**（批次目标文件 / 实测行数 / 已删模块），按用户改授“**收窄校验范围，不改文档**”收敛：`tools/check_doc_paths.py` 校验集合收窄为 explain / design / 根文档（共 14 份，实测漂移 **0**），`docs/plan/`（含 archive）与 `docs/report/` 依 AGENTS.md §6 历史快照定位排除；§6 补写“代码同步范围（源码路径新鲜度）”条款。工具依用户裁定不接入 CI。未改动任何文档散文。
+  - 第 6 类计数 3 → 5（总览行改 `3 (+2 本轮登记)`）；本轮无待留开放项。
 
 - **本轮（修复 ISSUE-RT-004 — 调度链路断裂）**: 第 1 类 **ISSUE-RT-004 结案**（`[X]`）。根因**非** KPTI 探针本身，而是调度链路断裂使父进程饥饿、探针 `fork`/`wait` 路径未推进到打印点；断链自洽为双重缺陷——① **D6 tick 未接线**（`scheduler_tick()` 只驱空转的线程级 `SCHEDULER_EX.tick()`，进程级 CFS 记账/抢占/睡眠唤醒/zombie 回收/均衡全不推进）；② **softirq 内调度泄漏**（`do_softirq()` 的 per-CPU `running` 标志在主循环结束后才复位，若 `Sched` handler 内 `schedule()` 切走则本核永久泄漏，此后所有 `do_softirq()` 直接返回）。修法 = **调度点后移到 `do_softirq()` 返回之后（EOI 已发）**：[sched_ops.rs](file:///home/anfer/Code/Edgine/src/kernel/privileged/proc/sched_ops.rs) `scheduler_tick()` 改驱进程级 `SCHEDULER.tick(get_current_cpu())`（内部仍调 `SCHEDULER_EX.tick_accounting()`）；[cpu_queue.rs](file:///home/anfer/Code/Edgine/src/kernel/privileged/proc/cpu_queue.rs) 删 `Sched` softirq 注册/handler、新增 `run_pending_resched()`；aarch64 [exception.rs](file:///home/anfer/Code/Edgine/src/kernel/privileged/arch/aarch64/exception.rs) ×3 与 x86_64 [idt.rs](file:///home/anfer/Code/Edgine/src/kernel/privileged/idt/idt.rs) ×3 在 EOI/`do_softirq()` 之后统一调用。§2.3 六门槛全过（双架构 build 0w0e、`audit.sh quick` 全绿、`make test-host`、`make test-kernel-host` 949/0、QEMU 2/2）—— **aarch64 QEMU 双核已触发 `[KPTI] EL0 kernel high-half access denied`**，x86_64 无回归。同步 [multithreading-project.md](./multithreading-project.md) D6（已提前理顺，D1 线程维度待办不变）与 [smp-ap-user-scheduling.md](./smp-ap-user-scheduling.md) 裁定 2（tick 部分由本工程接管）。仍未闭合收敛为: ISSUE-RT-002、第 4 类远期工程 F1-F5、刻意维持项.
 
