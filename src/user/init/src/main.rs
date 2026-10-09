@@ -3,8 +3,8 @@
 #![no_std]
 #![no_main]
 
-use userlib::*;
 use userlib::sys::*;
+use userlib::*;
 
 /// KPTI-09 探针目标: 内核镜像基址的**高半区(高别名)映射**。
 ///
@@ -22,7 +22,9 @@ const KERNEL_IMAGE_ALIAS: u64 = 0xFFFF_8000_0000_0000 + 0x10_0000;
 const KERNEL_IMAGE_ALIAS: u64 = 0xFFFF_0000_0000_0000 + 0x4008_0000;
 
 #[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! { proc_exit(1); }
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    proc_exit(1);
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
@@ -90,6 +92,11 @@ pub extern "C" fn _start() -> ! {
     // 状态确定性强). 同 ipv6 探针约束 —— 须在 echo fork 前同步完成并释放 fd.
     #[cfg(target_arch = "x86_64")]
     udp_connect_probe();
+    // D11 端到端验证: IPv4 组播成员管理 + 组播报文接收 (仅 x86_64). 依赖宿主
+    // 注入器 (scripts/qemu_mcast_test.sh) 持续送帧; 无注入时有界重试后 FAIL 并继续.
+    // 同 ipv6 探针约束 —— 须在 echo fork 前同步完成并释放 fd.
+    #[cfg(target_arch = "x86_64")]
+    mcast_probe();
     // P4 D9 recvfrom 活体对端回填腿: 经已连接 UDP 实际收发 + 校验 src 回填.
     // 依赖宿主回显服务 (qemu_boot_test.sh e2e 阶段起), 无应答者时有界重试后 FAIL
     // 并继续 (与 ipv6_udp_probe 同款容错). 须在 echo fork 前同步完成并释放 fd.
@@ -249,7 +256,9 @@ fn udp_connect_probe() {
     let peer = SockaddrIn {
         sin_family: AF_INET as u16,
         sin_port: 53u16.to_be(),
-        sin_addr: InAddr { s_addr: [10, 0, 2, 2] },
+        sin_addr: InAddr {
+            s_addr: [10, 0, 2, 2],
+        },
         sin_zero: [0u8; 8],
     };
     let rc = connect(fd, &peer as *const SockaddrIn as *const u8, SOCKADDR_IN_LEN);
@@ -300,6 +309,208 @@ fn udp_connect_probe() {
     close_socket(fd);
 }
 
+/// 用户态组播成员管理探针 (P6 / D11 端到端验证, 仅 x86_64).
+///
+/// IPv4 腿一次跑通组播全链路 (per-socket 引用计数 → iface 组表 → IGMP 报告 →
+/// L3 RX 过滤 → UDP 端口匹配投递 → 退组):
+/// 1. `socket(AF_INET, SOCK_DGRAM)` → `bind` `0.0.0.0:7890` (组播 dst 免地址匹配,
+///    只看端口);
+/// 2. `setsockopt(IPPROTO_IP, IP_ADD_MEMBERSHIP, ip_mreq{239.255.42.42, ANY})` → 0,
+///    内核据此请求 iface 入组并开始发 IGMP 报告;
+/// 3. 重复加入同一 slot 同一组 → `-EADDRINUSE(98)` (per-socket 成员位图的 ABI 边界);
+/// 4. 有界重试 `recv` 收取宿主注入的组播报文并校验载荷;
+/// 5. `IP_DROP_MEMBERSHIP` → 0, 再退一次 → `-EADDRNOTAVAIL(99)` (非成员退组).
+///
+/// IPv6 腿 (`ff3e::…:42`) 只验 ABI: `IPPROTO_IPV6` level 命中 + level/optname
+/// 不成对时返 `-ENOPROTOOPT(92)`; MLD 无宿主注帧路径, 故不收数据.
+///
+/// 拓扑前提: QEMU 走 `-netdev socket,udp=…` 非 slirp (无 DHCP/RA) → 内核落回
+/// `FALLBACK_IPV4` 静态地址; 该路径不参与常规启动的里程碑断言.
+///
+/// 须在 echo 子进程 fork **之前** 同步完成并释放 fd (smoltcp FD 位图全局共享).
+#[cfg(target_arch = "x86_64")]
+fn mcast_probe() {
+    // 组播接收端口与组地址, 与 scripts/qemu_mcast_test.sh 注入帧逐字一致.
+    const MCAST_PORT: u16 = 7890;
+    const MCAST_GROUP: [u8; 4] = [239, 255, 42, 42];
+    const PAYLOAD: &[u8] = b"EDGEMCAST";
+    // sockaddr_in 定长布局: 2+2+4+8 = 16 字节.
+    const SOCKADDR_IN_LEN: u32 = 16;
+    // Linux errno: 重复加入 EADDRINUSE(98) / 非成员退组 EADDRNOTAVAIL(99).
+    const EADDRINUSE: i32 = 98;
+    const EADDRNOTAVAIL: i32 = 99;
+    // 有界重试轮数 (每轮 50ms, 共 1s 窗口): 注入端 (`scripts/qemu_mcast_test.sh`)
+    // 每 250ms 送一帧, 1s 内已有 4 次命中机会, 足够验证入向组播投递.
+    //
+    // 不可随意放大 (实测 6s 窗口会让 `scripts/qemu_boot_test.sh` 的 TCP 回显 e2e
+    // 从 12/12 通过退化为 8/13 失败): 本探针跑在 `tcp_echo_server` fork 之前, 窗口
+    // 直接决定监听 socket 就绪时刻与后续入向连接能否被 `accept`. 根因未定, 详见
+    // docs/plan/net-e2e-tcp-inbound-flakiness.md.
+    const MAX_TRIES: u32 = 20;
+
+    let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if fd < 0 {
+        print("[mcast] FAIL: socket()=");
+        print_dec(fd as i64);
+        print_char(b'\n');
+        return;
+    }
+    // 阻塞 recv 会挂死有界重试轮询 (P5b 起 socket 默认阻塞), 必须置非阻塞.
+    let _ = fcntl(fd, F_SETFL, O_NONBLOCK as u64);
+
+    // bind ANY:7890 — 不绑组地址 (POSIX 允许 ANY 收组播, smoltcp 对组播 dst 豁免地址匹配).
+    let local = SockaddrIn {
+        sin_family: AF_INET as u16,
+        sin_port: MCAST_PORT.to_be(),
+        sin_addr: InAddr { s_addr: [0u8; 4] },
+        sin_zero: [0u8; 8],
+    };
+    if bind(
+        fd,
+        &local as *const SockaddrIn as *const u8,
+        SOCKADDR_IN_LEN,
+    ) < 0
+    {
+        println("[mcast] FAIL: bind()");
+        close_socket(fd);
+        return;
+    }
+
+    // ip_mreq: 组地址网络序 (裸 octets 本就是网络序), 接口 0.0.0.0 = 由内核选.
+    let mreq = IpMreq {
+        imr_multiaddr: InAddr {
+            s_addr: MCAST_GROUP,
+        },
+        imr_interface: InAddr { s_addr: [0u8; 4] },
+    };
+    let mreq_ptr = &mreq as *const IpMreq as *const u8;
+    let mreq_len = core::mem::size_of::<IpMreq>() as u32;
+    let rc = setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, mreq_ptr, mreq_len);
+    if rc != 0 {
+        print("[mcast] FAIL: ADD_MEMBERSHIP rc=");
+        print_dec(rc as i64);
+        print_char(b'\n');
+        close_socket(fd);
+        return;
+    }
+    println("[mcast] JOIN ok (iface group table entry armed)");
+
+    // 引用计数 ABI 边界: 同一 socket 重复加同一组 → EADDRINUSE, 不二次动 iface.
+    let rc = setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, mreq_ptr, mreq_len);
+    if rc == -EADDRINUSE {
+        println("[mcast] DUP ok (EADDRINUSE)");
+    } else {
+        print("[mcast] FAIL: duplicate join rc=");
+        print_dec(rc as i64);
+        print_char(b'\n');
+    }
+
+    // 收取宿主注入的组播报文 (载荷逐字比对).
+    let mut buf = [0u8; 64];
+    let mut tries: u32 = 0;
+    loop {
+        let n = recv(fd, buf.as_mut_ptr(), buf.len(), 0);
+        if n > 0 {
+            let got = n as usize;
+            if got == PAYLOAD.len() && buf[..got] == *PAYLOAD {
+                println("[mcast] RX ok (multicast datagram delivered)");
+            } else {
+                print("[mcast] FAIL: payload mismatch len=");
+                print_dec(n as i64);
+                print_char(b'\n');
+            }
+            break;
+        }
+        tries += 1;
+        if tries >= MAX_TRIES {
+            println("[mcast] FAIL: recv() timeout (无注入帧?)");
+            break;
+        }
+        delay_ms(50);
+    }
+
+    // 退组: 引用归零 → iface 拆组 + IGMP leave 报告.
+    let rc = setsockopt(fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, mreq_ptr, mreq_len);
+    if rc == 0 {
+        println("[mcast] DROP ok");
+    } else {
+        print("[mcast] FAIL: DROP_MEMBERSHIP rc=");
+        print_dec(rc as i64);
+        print_char(b'\n');
+    }
+    // 非成员再退 → EADDRNOTAVAIL (本 socket 位图已无该组, 不得误伤 iface 表).
+    let rc = setsockopt(fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, mreq_ptr, mreq_len);
+    if rc == -EADDRNOTAVAIL {
+        println("[mcast] NOENT ok (EADDRNOTAVAIL)");
+    } else {
+        print("[mcast] FAIL: second drop rc=");
+        print_dec(rc as i64);
+        print_char(b'\n');
+    }
+    close_socket(fd);
+
+    // ── IPv6 成员管理 ABI 腿 ───────────────────────────────────────────
+    // IPv6 组播走 MLD 而非 IGMP, 宿主侧无对应注帧路径, 故本腿**不**验收发,
+    // 只验 `IPPROTO_IPV6`(=41, IANA 永久分配) 这一 level 能否真实命中内核
+    // 分支 —— 该值是纯 ABI, 取错 (曾误取 10) 会静默落 -ENOPROTOOPT(92),
+    // 而 IPv4 腿完全不受影响, 无本腿则漂移无人发现.
+    const MCAST6_GROUP: [u8; 16] = [0xff, 0x3e, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x42];
+    // Linux errno: 未知选项 ENOPROTOOPT(92).
+    const ENOPROTOOPT: i32 = 92;
+
+    let fd6 = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+    if fd6 < 0 {
+        print("[mcast] FAIL: socket(AF_INET6)=");
+        print_dec(fd6 as i64);
+        print_char(b'\n');
+        return;
+    }
+    let mreq6 = Ipv6Mreq {
+        ipv6mr_multiaddr: In6Addr {
+            s6_addr: MCAST6_GROUP,
+        },
+        ipv6mr_interface: 0,
+    };
+    let mreq6_ptr = &mreq6 as *const Ipv6Mreq as *const u8;
+    let mreq6_len = core::mem::size_of::<Ipv6Mreq>() as u32;
+    let rc = setsockopt(fd6, IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP, mreq6_ptr, mreq6_len);
+    if rc != 0 {
+        print("[mcast] FAIL: IPV6_ADD_MEMBERSHIP rc=");
+        print_dec(rc as i64);
+        print_char(b'\n');
+        close_socket(fd6);
+        return;
+    }
+    println("[mcast] JOIN6 ok (level IPPROTO_IPV6=41 routed)");
+
+    // level 与 optname 必须成对: IPv4 level + IPv6 optname → ENOPROTOOPT,
+    // 不得误入 IPv6 分支 (误入会错读 20 字节 mreq 的前 4 字节当 IPv4 地址).
+    let rc = setsockopt(fd6, IPPROTO_IP, IPV6_ADD_MEMBERSHIP, mreq6_ptr, mreq6_len);
+    if rc == -ENOPROTOOPT {
+        println("[mcast] LEVEL ok (ENOPROTOOPT)");
+    } else {
+        print("[mcast] FAIL: mismatched level rc=");
+        print_dec(rc as i64);
+        print_char(b'\n');
+    }
+
+    let rc = setsockopt(
+        fd6,
+        IPPROTO_IPV6,
+        IPV6_DROP_MEMBERSHIP,
+        mreq6_ptr,
+        mreq6_len,
+    );
+    if rc == 0 {
+        println("[mcast] DROP6 ok");
+    } else {
+        print("[mcast] FAIL: IPV6_DROP_MEMBERSHIP rc=");
+        print_dec(rc as i64);
+        print_char(b'\n');
+    }
+    close_socket(fd6);
+}
+
 /// 用户态 UDP 活体对端回填探针 (P4 D9 recvfrom 端到端验证, 仅 x86_64).
 ///
 /// 补 `udp_connect_probe` 未覆盖的"活体收发腿": 经已连接 UDP socket 实际发出
@@ -335,7 +546,9 @@ fn udp_echo_probe() {
     let peer = SockaddrIn {
         sin_family: AF_INET as u16,
         sin_port: ECHO_PORT.to_be(),
-        sin_addr: InAddr { s_addr: [10, 0, 2, 2] },
+        sin_addr: InAddr {
+            s_addr: [10, 0, 2, 2],
+        },
         sin_zero: [0u8; 8],
     };
     if connect(fd, &peer as *const SockaddrIn as *const u8, SOCKADDR_IN_LEN) != 0 {
@@ -465,7 +678,11 @@ fn tcp_echo_server() -> ! {
         sin_addr: InAddr { s_addr: [0u8; 4] },
         sin_zero: [0u8; 8],
     };
-    let rc = bind(fd, &local as *const SockaddrIn as *const u8, SOCKADDR_IN_LEN);
+    let rc = bind(
+        fd,
+        &local as *const SockaddrIn as *const u8,
+        SOCKADDR_IN_LEN,
+    );
     if rc < 0 {
         print("[tcp] FAIL: bind()=");
         print_dec(rc as i64);

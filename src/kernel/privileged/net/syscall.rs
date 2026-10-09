@@ -461,18 +461,19 @@ pub fn recvfrom_syscall(
     i64::from(n)
 }
 
-/// setsockopt — 设置 socket 选项 (按 valen 全长 copy-in, 覆盖 i32 与 timeval 选项)
+/// setsockopt — 设置 socket 选项 (按 valen 全长 copy-in, 覆盖 i32 / timeval / mreq 选项)
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
 pub fn setsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, valen: u32) -> i64 {
     if fd < 0 {
         return Errno::EBADF.as_ret();
     }
-    // P5d (DECISION-096): 按 valen 全长 copy-in (上限 16 字节 — 覆盖 i32 选项 (4B)
-    // 与 SO_RCVTIMEO/SO_SNDTIMEO 的 struct timeval (16B)); 旧实现硬读 4 字节, 无法
-    // 承载 timeval. 定长内核栈缓冲, 免堆分配.
-    let len = (valen as usize).min(16);
-    let mut buf = [0u8; 16];
+    // P5d (DECISION-096) + P6 (D11): 按 valen 全长 copy-in, 上限 20 字节 —— 覆盖
+    // i32 选项 (4B)、SO_RCVTIMEO/SO_SNDTIMEO 的 struct timeval (16B), 以及组播
+    // 成员选项的 struct ipv6_mreq (20B); 旧实现硬读 4 字节, 无法承载后两者.
+    // 定长内核栈缓冲, 免堆分配.
+    let len = (valen as usize).min(20);
+    let mut buf = [0u8; 20];
     if len > 0 {
         if val_ptr == 0 || !userptr::validate_user_buf(val_ptr, len as u64) {
             return Errno::EFAULT.as_ret();

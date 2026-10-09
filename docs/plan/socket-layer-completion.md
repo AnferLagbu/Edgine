@@ -155,7 +155,8 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - **U9: 错误映射粗化**
   - 描述：与 TCP G8 同一实现路径。
   - 方案：见 G8。
-  - 状态：[]
+  - 状态：[X]
+  - 详情：G8 的端到端 `i64::from(rc)` 透传在 `syscall.rs` 全量落地（14 处返回点），UDP 与 TCP 共用同一 marshal 路径，无独立缺口。
 
 ---
 
@@ -226,7 +227,7 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
   5. **索引交换**（O(1) 指针/值交换，无内存拷贝）：槽 `n` ← 已连接会话（handle / tcp_rx_buf / tcp_tx_buf / local，`fd_type = 1`）；槽 `L` ← 新监听（handle / 缓冲 + `local = local_l`，`fd_type = 1`）。TCP remote 端点由 smoltcp socket 自身持有并随会话迁移，**不**经 D1 remote 表（见 D1 详情）。
   6. 从已连接会话读 `remote_endpoint()`（[tcp.rs:894](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)）→ `write_sockaddr`（[sm_fi.rs:140](../../src/kernel/privileged/net/init/sm_fi.rs)）回写到 `*addr` / `*addrlen`。
   7. 返回 `n`。
-- **状态**：[]
+- **状态**：[X]（P3 落地：`sm_accept_locked` 实现步骤 1–7 全流程，`accept_syscall` 透传 `addr_ptr`/`addrlen_ptr`；回归见 QEMU e2e `accept=3 echo=3 close=3` + accepted fd 去重为 1）
 - **前置**：G10（`sm_close` 补 `free_fd`），否则 accept 循环会在 256 次后耗尽 FD 位图。
 - **详情**：**唯一回滚点**为步骤 3–4 失败（释放新 fd + 新缓冲）；步骤 5 交换后无失败路径，故无回滚。原 DECISION-086「迁移 + 重臂」在步骤 3→4 间存在"监听槽短暂空闲"窗口，本算法以"先建后换"消除该窗口。全程持 `NET_STATE` 锁，无并发窗口。`accept_syscall`（[syscall.rs:311](../../src/kernel/privileged/net/syscall.rs)）须透传 `_addr_ptr` / `_addrlen_ptr`（当前忽略）。
 - **SIMPLIFIED**：无 backlog 队列长度限制（`_backlog` 忽略），并发溢出由 `get_max_sockets()` 与 `-E_NFILE` 兜底；需扩展时引入 per-listener 待接受队列。
@@ -300,18 +301,28 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
   3. **表扩容**：`SocketWaitQueueTable` 16→`MAX_SM_FD`（`[const { SocketWaitQueue::new() }; MAX_SM_FD]`），`get()` 边界随之（slot ≥ `MAX_SM_FD`→`None`）；`SocketWaitQueue` 增 `waiter_pid`；同步 `table_lookup_bounded` 单测（[wait_queue.rs:200](../../src/kernel/privileged/net/wait_queue.rs)）与陈旧「=16」注释（`wait_queue.rs:128`/`168` + `save.rs:41`）。
   4. **非阻塞开关**：`socket_syscall`（[syscall.rs:244](../../src/kernel/privileged/net/syscall.rs)）在 `SockType::from_i32` 前剥离 `SOCK_NONBLOCK`（`0x800`）并透传给 `sm_socket` 置 slot 阻塞标志；`fcntl` `F_GETFL`/`F_SETFL`（[io.rs:331](../../src/kernel/functions/fs/io.rs)，现 `F_SETFL => Ok(0)` 空实现）经新增 functions→privileged safe API 落 `O_NONBLOCK`。
   5. **per-slot 阻塞标志**：`NetState.blocking: Vec<bool>`（`allocate()` 默认 `true`=阻塞）+ `raw.rs` accessor。
-- **状态**：[]（分 P5a-P5d 子轮推进）
+- **状态**：[X]（P5a–P5d 四子轮全部完成：P5a 表扩容 + 非阻塞桥、P5b recv/send 家族真阻塞、P5c accept/connect A2、P5d EINTR + 超时 + `MSG_DONTWAIT`）
 - **详情**：EINTR 与 `SO_RCVTIMEO`/`SO_SNDTIMEO` per-op 超时**移出 P5 首轮**，独立轮（P5d）推进——超时须给 D8 sockopt 再增两选项 + per-slot timeval 存储 + 「事件/超时/信号」三路竞态。connect 完成语义取 A2（对齐 POSIX：阻塞等 Established、非阻塞 `-EINPROGRESS`、状态→errno 映射），归 P5c。
 
-### D11: 组播（DECISION-091）
+### D11: 组播（DECISION-091 → DECISION-097）
 
-- **描述**：支持加入/离开 IPv4 与 IPv6 组播组。
-- **方案**：`sm_setsockopt`（[sm_fi.rs:964](../../src/kernel/privileged/net/init/sm_fi.rs)）增：
-  - `IP_ADD_MEMBERSHIP`（`level = 0`, `optname = 35`）/ `IP_DROP_MEMBERSHIP`（`optname = 36`）：解析 `struct ip_mreq`（`imr_multiaddr` + `imr_interface`）→ `stack.iface.join_multicast_group(addr)`（[multicast.rs:104](../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs)）/ `leave_multicast_group(addr)`（[multicast.rs:130](../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs)）。
-  - `IPV6_ADD_MEMBERSHIP`（`level = 41`, `optname = 20`）/ `IPV6_DROP_MEMBERSHIP`（`optname = 21`）：解析 `struct ipv6_mreq`，同上。
-  - 错误映射：`MulticastError::Unaddressable → -E_INVAL`；`MulticastError::GroupTableFull → -E_NOMEM`。
-- **状态**：[]
-- **详情**：`stack.iface` 属 privileged `NetworkStack`（[smoltcp_impl.rs:164-167](../../src/kernel/privileged/net/smoltcp_impl.rs)），与 `socket_set()` 为两个独立 static，可同时可变借用，无借用冲突；全程持 `NET_STATE` 锁。多播收发复用既有 UDP 收发路径，本项仅补组管理入口。
+- **描述**：加入/离开 IPv4 与 IPv6 组播组，成员资格按 **socket 引用计数**（POSIX/Linux 语义）而非接口级开关。
+- **方案**：新增 `privileged/net/mcast.rs`（纯 safe 簿记：接口级组表快照 + 引用计数 + per-slot 成员位图），由 `NetState.mcast: McastRegistry` 承载（[state.rs:81](../../src/kernel/privileged/net/init/state.rs)），`raw.rs` 暴露 6 个持锁 accessor（[raw.rs:157-190](../../src/kernel/privileged/net/init/raw.rs)）；`sm_setsockopt`（[sm_fi.rs:2029](../../src/kernel/privileged/net/init/sm_fi.rs)）组播分支汇入编排入口 `mc_membership`（[sm_fi.rs:1960](../../src/kernel/privileged/net/init/sm_fi.rs)）：
+  - `IP_ADD_MEMBERSHIP`（`level = IPPROTO_IP = 0`, `optname = 35`）/ `IP_DROP_MEMBERSHIP`（`optname = 36`）：解析 `struct ip_mreq`（8 字节：`imr_multiaddr` 网络序 + `imr_interface`）→ 仅当引用计数 0→1 才请求 `Interface::join_multicast_group`。
+  - `IPV6_ADD_MEMBERSHIP`（`level = IPPROTO_IPV6 = 41`, `optname = 20`）/ `IPV6_DROP_MEMBERSHIP`（`optname = 21`）：解析 `struct ipv6_mreq`（20 字节），同上。
+  - errno 映射（Linux 值域）：同 slot 重复加入 `-EADDRINUSE(98)`；非成员退组 `-EADDRNOTAVAIL(99)`；组表满 `-E_NOMEM(12)`；非组播地址 / `Unaddressable` `-E_INVAL(22)`；iface 缺席 `-E_NODEV(19)`；越界 slot `-E_BADF(9)`；`level` 与 `optname` 不成对 `-ENOPROTOOPT(92)`。
+  - `sm_close`（[sm_fi.rs:1735](../../src/kernel/privileged/net/init/sm_fi.rs)）逐位拆离该 slot 的全部成员资格，引用归零才请求 iface 拆组。
+  - `setsockopt_syscall`（[syscall.rs:467](../../src/kernel/privileged/net/syscall.rs)）copy-in 缓冲 16→20 字节以容纳 `struct ipv6_mreq`。
+- **状态**：[X]
+- **详情**：**订正 DECISION-091 的三处事实误判**（本轮源码调研逐条坐实）：
+  1. smoltcp 组播整模块（`iface/interface/multicast.rs`，含 `MulticastError` re-export 与 `join/leave_multicast_group`）**整体受 `multicast` feature 门控**。本仓原 feature 集未启用 → 该 API 在启用前根本不参与编译，DECISION-091 「经 `join_multicast_group` 实装」与 D11 「仅补组管理入口」的表述在彼时不成立。已启用 `multicast`（[Cargo.toml:67](../../src/kernel/Cargo.toml)）。
+  2. 启用后 smoltcp 会在 `update_ip_addrs` 路径为 IPv6 **自动 join solicited-node 组**（[multicast.rs:176](../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs)），与用户组播共用同一张 `LinearMap`；默认容量 4 会被 NDP 挤占 → 增配 `iface-max-multicast-group-count-8`，并令 `MC_MAX_GROUPS = 8` 与 `IFACE_MAX_MULTICAST_GROUP_COUNT` 单点对齐（编译期 `const assert` + host-test 双向断言锁定）。
+  3. `Interface` 组表**不记录成员归属**：直接透传 setsockopt 会使任一 socket 退组即对整个接口拆组。补 per-socket 引用计数是本项主体，原方案未识别该缺口。
+  - 接收侧零改动：e1000 已置 `RCTL_MPE|BAM|UPE`（NIC 不过滤组播）；smoltcp IPv4 RX 放行条件含 `has_multicast_group`（[ipv4.rs:191](../../src/kernel/functions/net/smoltcp/src/iface/interface/ipv4.rs)）；`udp::Socket::accepts` 对组播 dst 豁免地址匹配（只看端口）→ `bind 0.0.0.0:port` 即可收；`has_multicast_group` 对 `Joining` 即返回 true，join 后无需等 IGMP 状态机收敛。
+  - 出向侧：`multicast_egress`（[multicast.rs:186](../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs)）在下一次 `iface.poll` 对每个 `Joining` 组发 IGMPv2 Report（dst = 该组）、对 `Leaving` 发 Leave（dst = 224.0.0.2）。
+  - 次序铁律（join 先簿记后 iface、iface 失败必 `mc_unjoin` 回滚；leave 先簿记、仅归零才 iface leave 且**不回滚**；close 先 `mc_addr_at` 后 `mc_force_leave`）由 host-tests 位置断言锁定。
+- **SIMPLIFIED**：`ip_mreq.imr_interface` / `ipv6mr_interface` 被忽略; 本内核单网络接口, 无法按网卡指定成员; 接入第二个网络接口时需按接口维度扩展组表。
+- **验证**：`mcast.rs` 内联单测 10 例（引用计数全分支）+ host-tests 接线契约 11 例（feature 前提 / 容量对齐 / ABI 常量内核-userlib 一致 / setsockopt 路由 / 次序铁律 / close 取址顺序 / copy-in 容量）+ QEMU 十条里程碑（`scripts/qemu_mcast_test.sh`：IPv4 JOIN/DUP/RX/DROP/NOENT + IPv6 JOIN6/LEVEL/DROP6 + 宿主观测 IGMP Report/Leave）。
 
 ---
 
@@ -368,10 +379,10 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 ### P6: 组播
 
 - **条目**：D11 组播
-- **描述**：IPv4/IPv6 加入/离开组播组。
-- **方案**：见 D11。
-- **状态**：[]
-- **验证**：`setsockopt(IP_ADD_MEMBERSHIP)` 后 `Interface` 组表包含目标组；`IP_DROP_MEMBERSHIP` 后可离开；错误分支返回对应 errno。
+- **描述**：IPv4/IPv6 加入/离开组播组（per-socket 引用计数）。
+- **方案**：见 D11（实施期订正 DECISION-091 事实误判，新增 DECISION-097）。
+- **状态**：[X]
+- **验证**：`setsockopt(IP_ADD_MEMBERSHIP)` 后 `Interface` 组表包含目标组；`IP_DROP_MEMBERSHIP` 后可离开；错误分支返回对应 errno。已达成：QEMU e2e 十条里程碑全绿 —— 引用计数 ABI 边界（`EADDRINUSE`/`EADDRNOTAVAIL`）、组播数据报真实投递到 `0.0.0.0:7890`、宿主侧观测到 guest 的 IGMPv2 Report（dst=239.255.42.42）与 Leave（dst=224.0.0.2）、IPv6 `IPPROTO_IPV6=41` level 真实命中且 `level`/`optname` 不成对时返 `ENOPROTOOPT`。
 
 ---
 
@@ -535,6 +546,30 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - **SIMPLIFIED**：① `MSG_PEEK` 未实现（smoltcp recv 无 peek，破零修改门禁，DECISION-087 排除项，非 P5d 范围）；② 超时粒度为 poll tick（机制 B 固有，非 per-wait 精确定时器）；③ connect 被打断/超时后 smoltcp 仍处 `SynSent`（后台续接握手），异于 Linux「打断后状态未定义」，用户可后续 `getsockopt(SO_ERROR)` 查询；④ `SO_ERROR` 的 `Closed` 仍不细分 refused-vs-timeout（smoltcp 无成因信息）。
 - **状态**：[X]（P5d 完成：wait_queue 死线维度 + poll_network 死线扫描 + per-slot 超时刻度 + 6 阻塞循环三退出（`-EINTR`/`-EAGAIN`/connect `-EINPROGRESS`）+ MSG_DONTWAIT + sockopt timeval ABI；接线契约测试 + wait_queue 内联 2 死线用例；§2.3 六门槛含 QEMU e2e 见本轮验证）
 
+### DECISION-097: D11/P6 采用 per-socket 引用计数簿记层（而非透传 smoltcp 接口级组表）
+
+- **描述**：D11 初稿（DECISION-091）将组播简化为“`sm_setsockopt` 透传 `Interface::join/leave_multicast_group`，多播收发复用既有 UDP 路径”。实施前调研推翻三个隐含假设：① smoltcp 组播整模块受 `multicast` feature 门控，本仓未启用则该 API **根本不存在**（所谓“已有接口”仅对开了 feature 的构型成立）；② `Interface` 组表是**接口级** `LinearMap<IpAddress, GroupState, N>`，不记录“哪个 socket 加入”，透传后任一 socket 退组即拆掉整个接口的组 —— 与 POSIX/Linux 的 per-socket 语义相左（Linux `ip_mreq` 可被同组多 fd 各自加入/退出，最后一个退出才真拆）；③ 启用 feature 后 smoltcp 会为 IPv6 solicited-node **自动 join**，与用户组播共占同一张表（默认容量 4）。三者均需在本轮逐条坐实。
+- **裁定**：新增 `privileged/net/mcast.rs` 作为**组播成员簿记层**，将引用计数与 iface 动作解耦：
+  1. **数据结构**：`McastRegistry { groups: [Option<IpAddress>; 8], refcount: [u8; 8], slot_mask: Vec<u8> }`。`slot_mask[slot]` 的 bit *i* 表示该 slot 持有 `groups[i]` 成员资格；编译期 `const _: () = assert!(MC_MAX_GROUPS <= u8::BITS as usize)` 锁死位图前提。`join` 返回 `Ok(true)` 专属“引用 0→1”（须动 iface），`leave` 返回 `Ok(true)` 专属“归零”（须拆 iface）—— 调用方只在边界值上动 smoltcp。
+  2. **归属 privileged 而非 functions**：该状态是 `NetState`（fd/slot 表）的延伸，必须与 slot 生命周期严格同步（`allocate` 复位、`sm_close` 拆离）；放 functions 将要求它直接读写 privileged 内部状态，越 F2 边界。本体 0 unsafe（纯 `Vec`/数组簿记），可 host 侧单测，符合 §4.1 “机制原语在 privileged、策略在 functions”不矛盾——它既非硬件机制也非业务策略，而是 privileged 自持状态的不变式维护。
+  3. **iface/簿记次序铁律**：join 先登记后动 iface，iface 失败必 `mc_unjoin` 回滚（谎报已入组会使后续 join 永久跳过真实 iface 调用）；leave 先簿记、仅归零才拆 iface，且 iface 失败**不回滚**（簿记已收紧，回滚反而造成引用泄漏）；close 逐位拆离必先 `mc_addr_at` 再 `mc_force_leave`（后者归零会清空表项）。三条铁律均有测试锁位。
+  4. **smoltcp 零修改**：仅动 `Cargo.toml` feature（`multicast` + `iface-max-multicast-group-count-8`），vendored 源码字节不变 → `audit_smoltcp_purity.py` 与 `SMOLTCP_LOCAL_SRC_HASH` 门禁不动。
+  5. **ABI 取 Linux 值域**：`IPPROTO_IP=0` / `IPPROTO_IPV6=41` / `IP_ADD_MEMBERSHIP=35` / `IP_DROP_MEMBERSHIP=36` / `IPV6_ADD_MEMBERSHIP=20` / `IPV6_DROP_MEMBERSHIP=21`；`IPPROTO_IPV6=41` 是 IANA 给 IPv6 协议号的永久分配（Linux 与 BSD 一致），**本项实施中曾误取 10**（误认为“Linux 10 / BSD 41”），已按 `<linux/in.h>` + glibc `<netinet/in.h>` 实测订正，并补两道防线：host-test 双向断言（锁 41 + 拒自造值）与 e2e IPv6 腿（真实 `setsockopt(IPPROTO_IPV6, …)` 命中内核分支，错值会落 `-ENOPROTOOPT(92)` 立刻现形）。
+  6. **syscall 层容量**：`setsockopt` copy-in 缓冲 16→20 字节（`struct ipv6_mreq` = 16B 地址 + 4B 接口索引）；`ip_mreq`/`ipv6mr_interface` 字段按单接口现状忽略。
+  7. **e2e 传输段**：走 `-netdev socket,udp=127.0.0.1:12345,localaddr=127.0.0.1:12346` 隧道而非 `socket,mcast=`。实测同机两进程各自 bind 同一多播 group:port 互不可达（静默不通，QEMU 侧无错）；组播语义完全由**内层帧**（dst MAC `01:00:5e` + 低 23 位 / dst IP 组地址 / iface 组表放行）承载，与传输段无关。注入器自算 IP/UDP 校验和（本仓 `capabilities()` 用 `DeviceCapabilities::default()`，未声明 checksum offload）并补齐至 60 字节。
+- **SIMPLIFIED**：① `imr_interface`/`ipv6mr_interface` 忽略（单网络接口）；② 不支持 IGMPv3/MLDv2 源过滤（`INCLUDE` 模式，smoltcp 发 IGMPv2 Report，`JOIN`/`LEAVE` 语义等价于 v3 的 `CHANGE_TO_INCLUDE`）；③ 无 per-source 组计数与 `MCAST_JOIN_SOURCE_GROUP` 系列选项。
+- **状态**：[X]（P6 完成：mcast.rs 簿记层 + 6 个 raw accessor + `mc_membership` 编排入口 + 四个 sockopt 分支 + `sm_close` 拆离 + syscall copy-in 20B；内联单测 10 例 + host-tests 契约 11 例 + QEMU `scripts/qemu_mcast_test.sh` 十条里程碑全绿；本 DECISION 同时订正 DECISION-091/D11 的三处事实误判与 `IPPROTO_IPV6` ABI 错值）
+
+### DECISION-098: `sm_close` 改「close → 排空 → remove」三步序 + e2e 抖动归因订正
+
+- **描述**：P6 收尾复跑门槛#6（`scripts/qemu_boot_test.sh x86_64`）时出现非确定性失败：宿主 `recv` 5s 超时、guest `accept` 计数缺失。排查过程中先后提出三个假设（“x86_64 egress 无独立驱动源”“NIC 静默掉帧”“close 丢弃未发出数据”），前两个经对照实验证伪；同时 `sm_close` 存在一个与该抖动**正交**的真实 POSIX 语义缺口：`sock.close()` 与 `sockets.remove(handle)` 之间没有任何 egress 推进点，smoltcp 缓冲区里的尾包与 FIN 随 socket 销毁一并作废，对端只能等自己的超时才察觉连接消失。
+- **裁定**：
+  1. **close 三步序**：`sm_close` 改为 `close()` 发起 → `raw::smoltcp_net_stack_poll()` 排空 → `sockets.remove(handle)`（[sm_fi.rs:1768-1790](../../src/kernel/privileged/net/init/sm_fi.rs)）。排空点必须落在 `close()` **之后**而非之前——唯一能把 FIN 送上线的位置就是“socket 仍在集内且已置关闭态”的那一次 poll；置于 remove 之后则 socket 已销毁、无包可发。该调用在 `NET_STATE` 临界区内，与 tick 的 `poll_network` 同口径且不重入锁。
+  2. **不充当抖动解药**：单变量 A/B（1s 探针窗口下，有排空 4/4 通过 vs 无排空 8/8 通过）表明排空对抖动无贡献；抖动的触发变量是 `src/user/init` 组播探针的有界重试窗口（6s：2/13 通过；1s：12/12 通过），根因未定，已单独立项 [net-e2e-tcp-inbound-flakiness.md](./net-e2e-tcp-inbound-flakiness.md)。
+  3. **订正两条失实论断**（详见该 plan §1 D3/D4）：① “egress 无独立驱动源”——x86_64 每个 PIT tick（1000Hz，[timer/irq.rs:30-45](../../src/kernel/privileged/timer/irq.rs)）都调 `poll_network`，aarch64 同构；该误判源于一次被 `head -20` 截断的 grep，归因类搜索不得截断输出。② “NIC 静默掉帧”——在驱动发送口加计数后 25 轮（含全部失败轮）TX 失败恒为 0；`TxToken::consume` 丢弃返回值属实，但属可观测性缺口而非本次故障因。
+- **SIMPLIFIED**：① 排空只覆盖 close 路径，`send`/`sendto` 后不关闭的 egress 推进仍完全依赖 1ms tick 空转（`SmoltcpNetStack::poll_at()` 恒 `None`，未接 hrtimer，见新 plan §3 S-3）；② 一次 poll 未必能送完全部尾包（受 `max_burst_size` 与拥塞窗口限制），未做“排空至 socket 无待发数据”的循环——当前 e2e 载荷 15 字节，单轮足够。
+- **状态**：[X]（三步序落地 + 探针窗口 20 轮(1s) + 最终态 6/6 通过；抖动根因与新 plan 的 S-1–S-5 条目仍为 `[]`）
+
 ---
 
 ## 关联文档
@@ -546,6 +581,9 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - [src/kernel/privileged/net/init/state.rs](../../src/kernel/privileged/net/init/state.rs) — `NetState` 统一状态结构
 - [src/kernel/privileged/net/init/raw.rs](../../src/kernel/privileged/net/init/raw.rs) — 集中 static mut 访问与槽位 accessor
 - [src/kernel/privileged/net/wait_queue.rs](../../src/kernel/privileged/net/wait_queue.rs) — per-fd 等待队列
+- [src/kernel/privileged/net/mcast.rs](../../src/kernel/privileged/net/mcast.rs) — 组播成员引用计数簿记层（DECISION-097）
+- [docs/plan/net-e2e-tcp-inbound-flakiness.md](./net-e2e-tcp-inbound-flakiness.md) — TCP 回显 e2e 入向连接抖动（根因未定，DECISION-098 派生）
+- [scripts/qemu_mcast_test.sh](../../scripts/qemu_mcast_test.sh) — 组播端到端联调（注入器 + 十条里程碑断言）
 - [src/kernel/functions/net/smoltcp_impl.rs](../../src/kernel/functions/net/smoltcp_impl.rs) — functions 侧并行 socket 实现
 - [src/kernel/functions/fs/file_ops.rs](../../src/kernel/functions/fs/file_ops.rs) — `poll` / `ppoll` 系统调用路径
 
@@ -559,6 +597,10 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - P5b（阻塞核心）完成：wait_queue 多等待者泛化 + `poll_network` 锁序重构（锁内 collect/锁外 unblock + 连接关闭唤读写双向）+ recv/send/recvfrom/sendto 阻塞循环 + 契约测试（DECISION-094）。同轮修复 P5b 默认阻塞暴露的 e2e 回归（init UDP 探针改非阻塞，用户态侧）。
 - P5c（accept/connect A2）完成：wait_queue 新增 `WAITER_ACCEPT`/`WAITER_CONNECT` 方向 + `WakeReason::AcceptReady`/`ConnectDone` + `poll_network` 状态迁移电平唤醒（accept-ready / connect-done）+ `sm_accept`/`sm_connect` 阻塞循环（非阻塞 connect → `-EINPROGRESS`）+ `sm_getsockopt` `SO_ERROR` 由连接态派生（异步 connect 闭环）（DECISION-095）。同步 §9.2 文档-代码不同步：G11（默认阻塞语义）与 D1（端点表 remote 半）状态改 `[X]`。
 - P5d（EINTR + 超时）完成：wait_queue 增 `waiter_deadline` 死线维度 + `collect_expired`（非破坏）+ `poll_network` 每-tick 死线扫描（机制 B，共用出临界区 unblock 路，不增唤醒源）+ per-slot `recv/send_timeout_ns` + 6 阻塞循环三退出（`-EINTR`/`-EAGAIN`/connect `-EINPROGRESS`）+ `MSG_DONTWAIT` + `SO_RCVTIMEO`/`SO_SNDTIMEO` sockopt（16 字节 `struct timeval`，syscall 层改长度感知 marshalling）（DECISION-096）。P5 全四子轮完成，分期状态改 `[X]`。
+- P5 收口后 §9.2 文档-代码同步：D6（accept 先建后换，P3 已落地）、D10（阻塞睡眠，P5a–P5d 已落地）本体状态由 `[]` 改 `[X]`；U9（UDP 错误映射，与 G8 同实现路径）改 `[X]`。本 plan 剩余未实施项仅 D11 / P6（组播）。
+- P6（组播）完成：新增 `mcast.rs` per-socket 引用计数簿记层 + `mc_membership` 编排入口（四个组播 sockopt 选项，Linux ABI）+ `sm_close` 逐位拆离 + syscall copy-in 16→20 字节 + 启用 smoltcp `multicast` feature 与 `iface-max-multicast-group-count-8`（DECISION-097，含对 DECISION-091 三处事实误判的订正与 `IPPROTO_IPV6` ABI 错值订正）。D11 与 P6 状态改 `[X]`，本 plan 全部条目收敛。新增 `scripts/qemu_mcast_test.sh` 组播端到端脚本（十条里程碑）。
+- P6 门槛复跑期间派生 DECISION-098：`sm_close` 改「close → 排空 → remove」三步序（补 FIN 与尾包上线的 POSIX 语义缺口）；同时以单变量 A/B 订正先前的两项错误归因（egress 无驱动源 / NIC 静默掉帧）并把未定根因的 e2e 入向抖动移交 [net-e2e-tcp-inbound-flakiness.md](./net-e2e-tcp-inbound-flakiness.md)。
+- P6 收尾轮消解四项预存问题（§9.2）：① 用户态 `MSG_DONTWAIT` ABI 错值 `0x80` 订正为 `0x40`（与 `sm_fi.rs` / `functions/net/syscall.rs` 内核侧一致），并在 `host-tests/tests/socket_wait_queue_test.rs` 加 `msg_dontwait_abi_single_value` 文本锁三侧单值防再漂移；② `smoltcp.versions` 的 `SMOLTCP_SHA` 由 `PENDING_NETWORK` 占位回填为上游 `v0.14.0` tag 的 commit SHA，`audit_smoltcp_purity.py` 由 fail 转 pass 且自验证锁值与上游一致；③ `src/user/{lib,init}` 两个 crate 的 rustfmt 漂移收口（其余 7 个 user crate 仍漂移，未在本轮范围）；④ `scripts/qemu_mcast_test.sh` 构建步由裸 `make` 改走 `./ci/build.sh x86_64`（跨架构中间产物戳串行修复），并避免无 `pipefail` 下的管道吞码。另登记一项**判定为非缺陷**：acpi/sync 处 `clippy::used_underscore_binding` 的 `#[expect]` 在 CI 规范命令（带 `-D clippy::pedantic`）下已 fulfilled，仅 ad-hoc `-D warnings`（不开 pedantic）会报 unfulfilled，删除反而破坏 CI。
 
 ---
 

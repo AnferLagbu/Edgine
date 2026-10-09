@@ -15,6 +15,7 @@ use super::{
     MAX_SM_FD, NET_STATE, Ordering, get_max_sockets, is_network_initialized, process_dhcp_events,
     raw, socket_set,
 };
+use crate::privileged::net::mcast::{MC_MAX_GROUPS, McError};
 use crate::privileged::net::{
     SOCKET_WAIT_QUEUES, WAITER_ACCEPT, WAITER_CONNECT, WAITER_READ, WAITER_WRITE,
 };
@@ -25,6 +26,7 @@ use crate::privileged::proc::{
 use crate::privileged::sync::in_irq_context;
 use crate::privileged::timer::hrtimer_clock_read;
 use core::sync::atomic::AtomicU16;
+use smoltcp::iface::MulticastError;
 use smoltcp::socket::{tcp, udp};
 use smoltcp::time::Duration;
 use smoltcp::wire::{IpAddress, IpEndpoint, IpListenEndpoint, Ipv4Address, Ipv6Address};
@@ -48,6 +50,8 @@ const E_CONNREFUSED: i32 = 111;
 const E_INPROGRESS: i32 = 115;
 const E_NODEV: i32 = 19;
 const E_NOPROTOOPT: i32 = 92;
+/// `EADDRNOTAVAIL` (Linux x86 = 99): `IP_DROP_MEMBERSHIP` 拆一个本 slot 未持有的组.
+const E_ADDRNOTAVAIL: i32 = 99;
 
 // ============================================================================
 // D8: socket 选项常量 (Linux asm-generic 值域)
@@ -73,6 +77,30 @@ const MSG_DONTWAIT: i32 = 0x40;
 const SO_RCVTIMEO: i32 = 20;
 /// `SOL_SOCKET` 发送超时选项 (存 ns 于 per-slot, 治理 send/sendto/connect).
 const SO_SNDTIMEO: i32 = 21;
+
+// ============================================================================
+// D11: 组播成员管理选项 (P6 / DECISION-097, Linux 值域)
+// ============================================================================
+/// `IPPROTO_IP`: IPv4 层 sockopt 的 level (Linux = 0).
+const IPPROTO_IP: i32 = 0;
+/// `IPPROTO_IPV6`: IPv6 层 sockopt 的 level.
+///
+/// 取 **41** —— IANA 给 IPv6 协议号的永久分配, Linux (`<linux/in.h>` /
+/// glibc `<netinet/in.h>`) 与 BSD 系一致, 非本内核自造值. 用户态按 glibc
+/// 编译的程序传 `IPPROTO_IPV6` 可直接命中本常量块.
+const IPPROTO_IPV6: i32 = 41;
+/// 加入 IPv4 组播组 (参数 `struct ip_mreq`).
+const IP_ADD_MEMBERSHIP: i32 = 35;
+/// 离开 IPv4 组播组 (参数 `struct ip_mreq`).
+const IP_DROP_MEMBERSHIP: i32 = 36;
+/// 加入 IPv6 组播组 (参数 `struct ipv6_mreq`).
+const IPV6_ADD_MEMBERSHIP: i32 = 20;
+/// 离开 IPv6 组播组 (参数 `struct ipv6_mreq`).
+const IPV6_DROP_MEMBERSHIP: i32 = 21;
+/// `struct ip_mreq` 长度: `imr_multiaddr` (4B, 网络序) + `imr_interface` (4B).
+const IP_MREQ_LEN: u32 = 8;
+/// `struct ipv6_mreq` 长度: `ipv6mr_multiaddr` (16B) + `ipv6mr_interface` (4B).
+const IPV6_MREQ_LEN: u32 = 20;
 
 // ============================================================================
 // D8b: poll 事件位 (Linux <poll.h> 值域; 与 functions/fs/file_ops.rs 一致)
@@ -1720,6 +1748,28 @@ pub unsafe extern "C" fn sm_close(fd: i32) -> i32 {
         };
 
         let stype = raw::fd_type(slot);
+        // P6 (D11 / DECISION-097): socket 销毁 = 撤销其全部组成员资格. 逐位拆离,
+        // 仅当本 socket 是该组最后一个成员才请求 iface 拆组 —— 其他 socket 的
+        // 订阅必须原样保留.
+        let mc_bits = raw::mc_slot_bits(slot);
+        for idx in 0..MC_MAX_GROUPS {
+            if mc_bits & (1u8 << idx) == 0 {
+                continue;
+            }
+            // 先取址: `mc_force_leave` 令引用归零时会清空登记表表项, 事后再读就没了.
+            let addr = raw::mc_addr_at(idx);
+            // 簿记无条件推进 (socket 销毁是既定事实); iface 缺席只影响能否真拆掉订阅.
+            if raw::mc_force_leave(slot, idx)
+                && let (Some(addr), Some(stack)) = (addr, raw::stack_mut())
+            {
+                let _ = stack.iface.leave_multicast_group(addr);
+            }
+        }
+        // 正常断开 (graceful close) 三步序: `close()` 发起 -> 排空 egress -> `remove()`.
+        // 顺序不可颠倒: `sockets.remove(handle)` 会当场销毁 smoltcp socket, 缓冲区里
+        // 尚未发出的 payload 与 FIN 直接作废 —— 对端只能等自己的超时才察觉连接消失.
+        // 中间的 `smoltcp_net_stack_poll()` 让本 socket 的尾包与 FIN 在销毁前确实上线.
+        // 调用前提: 本函数已持 `NET_STATE`, 与 tick 的 `poll_network` 同口径且不重入锁.
         let sockets = &mut *socket_set();
 
         match stype {
@@ -1734,6 +1784,9 @@ pub unsafe extern "C" fn sm_close(fd: i32) -> i32 {
             _ => {}
         }
 
+        raw::smoltcp_net_stack_poll();
+        // `smoltcp_net_stack_poll` 内部重新借用了 socket 集, 此处按新临界区重新取.
+        let sockets = &mut *socket_set();
         sockets.remove(handle);
         // TD-07: smoltcp socket 已 drop, buf 借用结束, 此时 k_free 安全.
         if !raw::tcp_rx_buf(slot).is_null() {
@@ -1896,18 +1949,86 @@ unsafe fn sm_socket_poll_locked(fd: i32, events: i16) -> i16 {
     }
 }
 
+/// P6 (D11 / DECISION-097): 组播成员资格变更的统一编排入口.
+///
+/// `mcast` 登记表按 **socket** 计数, smoltcp `Interface` 组表按 **接口** 计数,
+/// 二者之间的桥必须遵守固定次序, 否则语义会静默破坏:
+///
+/// - join: 先簿记登记, **仅“该组首次登记”才** 请求 `iface.join_multicast_group`;
+///   iface 失败必须 `mc_unjoin` 回滚 —— 留着谎报“已入组”的条目, 后续任何 socket
+///   再 join 同组都会走“表已有”分支而永久跳过真实的 iface 调用 (彻底收不到流).
+/// - leave: 先簿记递减, **仅引用归零才** 请求 `iface.leave_multicast_group`; 仍有
+///   其他 socket 持有该组时 iface 保持不动 (POSIX 引用计数语义的核心).
+///
+/// leave 方向上 iface 失败**不回滚**簿记: 本 socket 已销毁/已退出是既定事实,
+/// 回滚会凭空造成“仍有成员”的假象而永久保留组订阅 (泄漏比短暂错报更糟).
+///
+/// # Safety
+/// 调用方须持有 `NET_STATE` 锁, 且 `slot` 已通过 `fd_type != 0` 校验.
+fn mc_membership(slot: usize, addr: IpAddress, join: bool) -> i32 {
+    // 非组播地址: Linux 侧 `ip_mc_join_group` / `ipv6_sock_mc_join` 同样先判
+    // `is_multicast` 并返 EINVAL; 在此拦下, 不让 iface 的 Unaddressable 参与回滚.
+    if !addr.is_multicast() {
+        return -E_INVAL;
+    }
+
+    if join {
+        let first = match raw::mc_join(slot, addr) {
+            // 该 slot 已是成员: Linux 重复 `IP_ADD_MEMBERSHIP` → EADDRINUSE.
+            Err(McError::AlreadyMember) => return -E_ADDRINUSE,
+            // 接口组表满 (含 smoltcp 为 IPv6 solicited-node 自动占的位).
+            Err(McError::TableFull) => return -E_NOMEM,
+            // 槽位越界: 调用方已由 `sm_slot` 校验, 此处 fail-closed.
+            Err(McError::InvalidSlot) => return -E_BADF,
+            // join 路径不会报“非成员”; 保留分支使穷尽且映射显式.
+            Err(McError::NotMember) => return -E_INVAL,
+            Ok(first) => first,
+        };
+        // 组已在表中 (其他 socket 已入组): 只多一个引用, 无需动 iface.
+        if !first {
+            return 0;
+        }
+        let rc = match raw::stack_mut() {
+            Some(stack) => match stack.iface.join_multicast_group(addr) {
+                Ok(()) => 0,
+                Err(MulticastError::GroupTableFull) => -E_NOMEM,
+                // iface 认为地址不可组播: 上面的 is_multicast 已拦, 此处兑底.
+                Err(MulticastError::Unaddressable) => -E_INVAL,
+            },
+            // 网络栈尚未初始化 (boot 竞态窗口): 与 `sm_socket` 同口径.
+            None => -E_NODEV,
+        };
+        if rc != 0 {
+            raw::mc_unjoin(slot, addr);
+        }
+        rc
+    } else {
+        // 非成员退组: Linux `IP_DROP_MEMBERSHIP` → EADDRNOTAVAIL.
+        let Ok(dropped) = raw::mc_leave(slot, addr) else {
+            return -E_ADDRNOTAVAIL;
+        };
+        if dropped && let Some(stack) = raw::stack_mut() {
+            let _ = stack.iface.leave_multicast_group(addr);
+        }
+        0
+    }
+}
+
 /// POSIX `setsockopt` 内核实现 (D8: 精简集).
 ///
 /// 已支持选项:
 /// - `SO_PASSCRED` (`SOL_SOCKET`/16): 路由到 UDS 服务层 (`uds_setsockopt`).
 /// - `SO_RCVTIMEO`(20)/`SO_SNDTIMEO`(21): 收发超时, 参数 `struct timeval` (16 字节: tv_sec i64 + tv_usec i64); 存 ns 于 per-slot (P5d).
+/// - `IP_ADD_MEMBERSHIP`/`IP_DROP_MEMBERSHIP` (`IPPROTO_IP`/35、36) 与
+///   `IPV6_ADD_MEMBERSHIP`/`IPV6_DROP_MEMBERSHIP` (`IPPROTO_IPV6`/20、21): 组播
+///   成员管理, 参数 `struct ip_mreq` (8B) / `struct ipv6_mreq` (20B) (P6 / D11).
 /// - `SO_REUSEADDR`(2)/`SO_REUSEPORT`(15): 接受但忽略 (本内核无端口复用调度需求).
 /// - `SO_KEEPALIVE` (`SOL_SOCKET`/9, 仅 TCP): 置/清 keep-alive (7200s 缺省间隔).
 /// - `TCP_NODELAY` (`IPPROTO_TCP`/6, 仅 TCP): `val != 0` 关闭 Nagle.
 /// 其余 (`level`, `optname`): `-ENOPROTOOPT`.
 ///
 /// # Safety
-/// `optval` 必须是 syscall 层提供的有效内核指针 (i32 选项 4 字节 / `SO_RCVTIMEO`、`SO_SNDTIMEO` 的 `struct timeval` 16 字节), `optlen` 为其长度。
+/// `optval` 必须是 syscall 层提供的有效内核指针 (i32 选项 4 字节 / `SO_RCVTIMEO`、`SO_SNDTIMEO` 的 `struct timeval` 16 字节 / 组播选项的 `ip_mreq` 8 字节、`ipv6_mreq` 20 字节), `optlen` 为其长度。
 #[unsafe(no_mangle)]
 #[expect(
     clippy::ptr_as_ptr,
@@ -1969,6 +2090,43 @@ pub unsafe extern "C" fn sm_setsockopt(
             }
             raw::set_sock_timeout_ns(slot, optname == SO_RCVTIMEO, ns);
             return 0;
+        }
+
+        // P6 (D11 / DECISION-097): 组播成员管理. `level` 定地址族与 mreq 布局,
+        // `optname` 定 join/leave 方向.
+        let direction = match (level, optname) {
+            (IPPROTO_IP, IP_ADD_MEMBERSHIP) => Some((false, true)),
+            (IPPROTO_IP, IP_DROP_MEMBERSHIP) => Some((false, false)),
+            (IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP) => Some((true, true)),
+            (IPPROTO_IPV6, IPV6_DROP_MEMBERSHIP) => Some((true, false)),
+            _ => None,
+        };
+        if let Some((is_v6, join)) = direction {
+            // mreq 长度按族区分; 取“至少容纳地址字段”的宽松校验 (与 P5d 超时选项口径一致).
+            if optlen < if is_v6 { IPV6_MREQ_LEN } else { IP_MREQ_LEN } {
+                return -E_INVAL;
+            }
+            // 组地址取 mreq 首字段 (网络序): `ipv6mr_multiaddr` 16B / `imr_multiaddr` 4B.
+            // `optval` 由 syscall 层拷入内核栈缓冲, 长度已按上面的 `optlen` 校验,
+            // `read_unaligned` 避免对齐假设 (用户态 mreq 可能奇数地址).
+            let addr = if is_v6 {
+                let octets = core::ptr::read_unaligned(optval as *const [u8; 16]);
+                IpAddress::from(Ipv6Address::from_octets(octets))
+            } else {
+                let octets = core::ptr::read_unaligned(optval as *const [u8; 4]);
+                IpAddress::from(Ipv4Address::from_octets(octets))
+            };
+            // SIMPLIFIED: mreq 的接口字段 (`imr_interface` / `ipv6mr_interface`) 被
+            // 忽略; 影响面: 多接口机器上无法按网卡指定加入组; 何时需扩展: 本内核
+            // 接入第二个网络接口时 (需先给 iface 建接口索引模型).
+            let _guard = NET_STATE.lock();
+            let Some(slot) = sm_slot(fd) else {
+                return -E_BADF;
+            };
+            if raw::fd_type(slot) == 0 {
+                return -E_BADF;
+            }
+            return mc_membership(slot, addr, join);
         }
 
         // D8: SOL_SOCKET 层的 REUSEADDR/REUSEPORT 接受但忽略.

@@ -55,6 +55,17 @@ smoltcp = { path = "functions/net/smoltcp", default-features = false, features =
     "proto-ipv6-slaac",
     "proto-dhcpv4",
     "proto-dns",
+    # P6 / D11 (DECISION-097): 组播成员管理. smoltcp 的 `iface/interface/multicast.rs`
+    # 整体被 `#[cfg(feature = "multicast")]` 门控 —— 不开启则
+    # `Interface::join_multicast_group` / `MulticastError` 不参与编译, `setsockopt`
+    # 的 `IP_ADD/DROP_MEMBERSHIP` 无法实装. IGMP/MLD 报告由 `Interface::poll` 内部
+    # 状态机自动产生, Edgine 侧无需额外 socket.
+    # 容量取 8 而非默认 4: 开启 multicast 后 smoltcp 会在 `update_ip_addrs` 路径
+    # 为 IPv6 **自动 join** solicited-node 组 (multicast.rs:176), 与用户组播共用
+    # 同一张表; 留 4 槽余量避免 NDP 挤压用户组容量致偶发 -E_NOMEM.
+    # 仅启用 feature 与容量选项, 不改 smoltcp 源码 (见 scripts/vendor_smoltcp.sh 口径).
+    "multicast",
+    "iface-max-multicast-group-count-8",
     "socket-raw",
     "socket-icmp",
     "socket-udp",

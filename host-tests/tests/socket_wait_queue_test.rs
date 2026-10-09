@@ -467,9 +467,12 @@ fn p5d_sockopt_timeval_abi_wired() {
     );
     // syscall 层不再硬读/写 4 字节 u32, 改为按 valen / *optlen 全长 marshalling.
     let sc = read_src("src/kernel/privileged/net/syscall.rs");
+    // 只锁「按 valen 全长 + 定长栈缓冲」这一机制; 上限的具体数值由选项尺寸决定
+    // (P5d timeval=16, P6 ipv6_mreq=20), 归 socket_multicast_membership_test 单源持有,
+    // 本测试不重复钉数值 (否则任一次选项尺寸扩展都会误报为 P5d 回归).
     assert!(
-        sc.contains("let len = (valen as usize).min(16);"),
-        "P5d: setsockopt_syscall 未按 valen 全长 copy-in (上限 16)"
+        sc.contains("let len = (valen as usize).min(") && sc.contains("let mut buf = [0u8; "),
+        "P5d: setsockopt_syscall 未按 valen 全长 copy-in (缺 min 位限幅 + 定长栈缓冲)"
     );
     assert!(
         sc.contains("let in_len = cap.min(16);"),
@@ -479,4 +482,54 @@ fn p5d_sockopt_timeval_abi_wired() {
         sc.contains("raw_copy_out(val_ptr, out_len, &buf)"),
         "P5d: getsockopt_syscall 未用长度感知 copy-out"
     );
+}
+
+/// 从源码文本里抓 `NAME: <int type> = 0xNN;` 的常量值 (三侧定义无共享头文件, 只能按文本锁).
+fn hex_const(src: &str, name: &str) -> u32 {
+    let at = src
+        .find(name)
+        .unwrap_or_else(|| panic!("缺常量定义: {name}"));
+    let tail = &src[at..];
+    let eq = tail
+        .find('=')
+        .unwrap_or_else(|| panic!("{name} 未赋字面值"));
+    let after = tail[eq + 1..].trim_start();
+    let hex = after
+        .strip_prefix("0x")
+        .unwrap_or_else(|| panic!("{name} 非 0x 字面值: {after}"));
+    let digits: String = hex.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+    u32::from_str_radix(&digits, 16).unwrap_or_else(|e| panic!("{name} 解析失败: {e}"))
+}
+
+#[test]
+fn msg_dontwait_abi_single_value() {
+    // MSG_DONTWAIT 在用户态库 / privileged sm 层 / functions syscall 层各定一份 (无共享
+    // ABI 头), 必须逐字相等且等于 Linux x86_64 值 0x40. 曾出现 userlib 取 0x80 的漂移
+    // (用户态传该标志会落在内核未识别的位上, 退化成默认阻塞), 本测试为该漂移的回归锁.
+    const LINUX_MSG_DONTWAIT: u32 = 0x40;
+    let user = read_src("src/user/lib/src/sys.rs");
+    let sm = read_src("src/kernel/privileged/net/init/sm_fi.rs");
+    let sc = read_src("src/kernel/functions/net/syscall.rs");
+
+    let user_v = hex_const(&user, "MSG_DONTWAIT: i32");
+    let sm_v = hex_const(&sm, "MSG_DONTWAIT: i32");
+    let sc_v = hex_const(&sc, "MSG_DONTWAIT_FLAG: u32");
+
+    assert_eq!(
+        user_v, LINUX_MSG_DONTWAIT,
+        "userlib MSG_DONTWAIT 偏离 Linux ABI"
+    );
+    assert_eq!(
+        sm_v, LINUX_MSG_DONTWAIT,
+        "sm_fi MSG_DONTWAIT 偏离 Linux ABI"
+    );
+    assert_eq!(
+        sc_v, LINUX_MSG_DONTWAIT,
+        "functions syscall MSG_DONTWAIT_FLAG 偏离 Linux ABI"
+    );
+    assert_eq!(
+        user_v, sm_v,
+        "用户态与内核侧 MSG_DONTWAIT 不一致 (位漂移会静默失效)"
+    );
+    assert_eq!(sc_v, sm_v, "kernel 内部两处 MSG_DONTWAIT 不一致");
 }

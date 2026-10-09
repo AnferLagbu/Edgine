@@ -9,6 +9,7 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 use crate::privileged::net::iface_trait::NetEndpoint;
+use crate::privileged::net::mcast::McastRegistry;
 use crate::privileged::net::{EGDFNetDevice, NetworkStack};
 use crate::privileged::sync::IrqSpinLock as Mutex;
 use smoltcp::iface::SocketHandle;
@@ -75,6 +76,9 @@ pub struct NetState {
     /// 各 FD 的发送超时 (SO_SNDTIMEO, P5d / DECISION-096): 单位纳秒, `0` = 无超时.
     /// `send`/`sendto`/`connect` 进入阻塞前据此算绝对死线.
     pub(crate) send_timeout_ns: Vec<u64>,
+    /// 组播成员登记表 (P6 / D11 / DECISION-097): per-slot 成员位图 + 每组引用计数.
+    /// smoltcp 的 iface 组表不按 socket 记账, 本表补齐 POSIX 的按 socket 引用计数语义.
+    pub(crate) mcast: McastRegistry,
     pub(crate) tcp_rx_bufs: Vec<*mut u8>,
     pub(crate) tcp_tx_bufs: Vec<*mut u8>,
     pub(crate) udp_rx_bufs: Vec<*mut u8>,
@@ -106,6 +110,7 @@ impl NetState {
             blocking: Vec::new(),
             recv_timeout_ns: Vec::new(),
             send_timeout_ns: Vec::new(),
+            mcast: McastRegistry::new(),
             tcp_rx_bufs: Vec::new(),
             tcp_tx_bufs: Vec::new(),
             udp_rx_bufs: Vec::new(),
@@ -127,6 +132,8 @@ impl NetState {
         self.blocking = (0..TOTAL_SLOTS).map(|_| true).collect();
         self.recv_timeout_ns = (0..TOTAL_SLOTS).map(|_| 0u64).collect();
         self.send_timeout_ns = (0..TOTAL_SLOTS).map(|_| 0u64).collect();
+        // 组播登记表连带复位 (与上表同一槽位数, 网络重初始化时不残留旧组成员).
+        self.mcast.allocate(TOTAL_SLOTS);
         self.tcp_rx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();
         self.tcp_tx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();
         self.udp_rx_bufs = (0..TOTAL_SLOTS).map(|_| core::ptr::null_mut()).collect();

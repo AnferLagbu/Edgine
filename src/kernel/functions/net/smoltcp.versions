@@ -8,8 +8,9 @@
 # 上游 tag (semver, 形如 v0.14.0)
 SMOLTCP_TAG=v0.14.0
 
-# 上游 tag 对应 commit SHA (待联网更新 — 本机离线重生成, 字段保留占位)
-SMOLTCP_SHA=PENDING_NETWORK
+# 上游 tag 对应 commit SHA
+# (2026-10-08: 联网经 `git ls-remote --tags` 取 refs/tags/v0.14.0 回填; 该 tag 为轻量标签, 值即 commit SHA)
+SMOLTCP_SHA=cbfe05f835cfc75bf781addc1c0eb2e1a0df1ea3
 
 # 上游 src/ 目录下所有 .rs 文件的合并 SHA256
 # 计算方法: LC_ALL=C find src -name '*.rs' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum

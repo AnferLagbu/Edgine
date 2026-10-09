@@ -11,6 +11,8 @@ pub mod driver;
 pub mod iface_trait;
 #[cfg(not(feature = "kernel_test"))]
 pub mod init;
+/// P6 (D11 / DECISION-097): 组播成员引用计数登记表 (纯 bookkeeping, 0 unsafe).
+pub mod mcast;
 /// NetOps 安全桥 (批次 Z ④): functions 网络设备经 trait 接入 smoltcp。
 pub mod net_device_ops;
 /// C5: Netfilter 包过滤框架

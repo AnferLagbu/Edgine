@@ -10,6 +10,8 @@ use super::{
     klog_net, klog_net_err, tcp, udp,
 };
 use crate::privileged::net::iface_trait::NetEndpoint;
+use crate::privileged::net::mcast::McError;
+use smoltcp::wire::IpAddress;
 
 /// 获取 `NetState` 可变引用 (调用方必须持有 `NET_STATE` 锁).
 ///
@@ -138,6 +140,56 @@ pub fn set_sock_timeout_ns(fd: usize, recv: bool, ns: u64) {
             state().send_timeout_ns[fd] = ns;
         }
     }
+}
+
+// ============================================================================
+// 组播成员登记表 accessor (P6 / D11 / DECISION-097)
+//
+// 本组函数只做**簿记**, 不碰 `iface` —— POSIX 的按 socket 引用计数与 smoltcp 的
+// 接口级组表之间的编排 (何时真调 `join/leave_multicast_group`) 由 `sm_fi` 承担,
+// 因为 errno 映射与 iface 可变借用都在那一层.
+// ============================================================================
+
+/// 登记 `slot` 对 `addr` 组的成员资格.
+///
+/// `Ok(true)` = 该组首次登记, 调用方须接着请求 `iface.join_multicast_group(addr)`
+/// (失败时须调 [`mc_unjoin`] 回滚); `Ok(false)` = 组已在表中, 无需 iface 动作.
+pub fn mc_join(slot: usize, addr: IpAddress) -> Result<bool, McError> {
+    // SAFETY: 调用方持有 NET_STATE 锁.
+    unsafe { state().mcast.join(slot, addr) }
+}
+
+/// 回滚一次 [`mc_join`] (仅供 iface join 失败路径使用).
+pub fn mc_unjoin(slot: usize, addr: IpAddress) {
+    // SAFETY: 调用方持有 NET_STATE 锁.
+    unsafe {
+        state().mcast.unjoin(slot, addr);
+    }
+}
+
+/// 撤销 `slot` 对 `addr` 组的成员资格. `Ok(true)` = 引用归零, 调用方须请求
+/// `iface.leave_multicast_group(addr)`.
+pub fn mc_leave(slot: usize, addr: IpAddress) -> Result<bool, McError> {
+    // SAFETY: 调用方持有 NET_STATE 锁.
+    unsafe { state().mcast.leave(slot, addr) }
+}
+
+/// 取 `slot` 的组成员位图 (供 `close` 逐位拆离).
+pub fn mc_slot_bits(slot: usize) -> u8 {
+    // SAFETY: 调用方持有 NET_STATE 锁.
+    unsafe { state().mcast.slot_bits(slot) }
+}
+
+/// 取位图第 `idx` 位对应的组地址 (与 [`mc_slot_bits`] 配套遍历).
+pub fn mc_addr_at(idx: usize) -> Option<IpAddress> {
+    // SAFETY: 调用方持有 NET_STATE 锁.
+    unsafe { state().mcast.addr_at(idx) }
+}
+
+/// `close` 专用拆离: 不报 `NotMember`, 返回 `true` 表示引用归零须 iface leave.
+pub fn mc_force_leave(slot: usize, idx: usize) -> bool {
+    // SAFETY: 调用方持有 NET_STATE 锁.
+    unsafe { state().mcast.force_leave(slot, idx) }
 }
 
 /// 读取 socket handle
