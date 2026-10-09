@@ -33,9 +33,18 @@ E2E_HOST_PORT="${E2E_HOST_PORT:-8080}"        # 宿主侧 hostfwd 监听端口
 E2E_GUEST_PORT="${E2E_GUEST_PORT:-80}"        # guest 内 echo 服务端口
 E2E_READY_TIMEOUT="${E2E_READY_TIMEOUT:-40}"  # 就绪轮询上限 (s)
 E2E_ROUNDS="${E2E_ROUNDS:-3}"                 # 客户端连接轮数
+# 抖动门禁 (S-5): 端到端阶段重复轮数, 默认 1 = 行为与既往一致. 单次通过不足以
+# 证明抖动消除 (docs/plan/net-e2e-tcp-echo-flakiness.md), CI 夜间作业设 >1
+# 把"连续多轮 0 失败"变成可门禁指标. 失败轮串口日志另存为 *.failN.log 以便事后归因.
+E2E_REPEATS="${E2E_REPEATS:-1}"              # 端到端阶段重复轮数
 E2E_QEMU_PID=""                               # 后台 QEMU pid (cleanup_e2e 消费)
 E2E_UDP_PID=""                                 # 后台宿主 UDP 回显服务 pid (cleanup_e2e 消费)
 E2E_UDP_PORT="${E2E_UDP_PORT:-9090}"           # 宿主 UDP 回显端口 (guest 经 10.0.2.2 访问)
+# 包级观测口: 非空时启用 QEMU `filter-dump` 把 n0 双向帧写入该 pcap 路径.
+# 供抖动定位用 (docs/plan/net-e2e-tcp-echo-flakiness.md S-1; 该口一度用于验证
+# "入向丢帧"假设, 结论是证伪 —— 失败轮的 SYN 已到 guest, 缺的是 guest 侧消费).
+# 默认空 = 不抓包.
+E2E_PCAP="${E2E_PCAP:-}"
 
 ok()   { echo -e "${GREEN}\u2713 $1${NC}"; }
 err()  { echo -e "${RED}\u2717 $1${NC}"; }
@@ -141,7 +150,9 @@ sync_make_state() {
 
     if [ "$need_rebuild" = "1" ]; then
         rm -f $asm_objs other/build/kernel.bin other/build/kernel.flat other/build/kernel-aarch64.img other/build/kernel.map other/build/stage1.bin
-        rm -f other/build/user/*.bin 2>/dev/null || true
+        # 用户态产物已按架构分目录 (S-6 防线①: other/build/<arch>/user/),
+        # 异架构产物不在本架构读取路径上, 无需清除 (旧写法删共享的 other/build/user/*.bin
+        # 正是当时唯一能拦住污染的机制, 现已由目录隔离 + 启动前自检接手).
         if ! make ARCH="$target_arch" all 2>&1 | tail -3; then
             err "[$target_arch] make ARCH=$target_arch 失败"
             return 1
@@ -166,6 +177,27 @@ check_kernel_fresh() {
     newest=$(find src/rust/src src/kernel src/user -name '*.rs' -newer "$image" 2>/dev/null | head -1)
     if [ -n "$newest" ]; then
         warn "$image 可能过期 (源码 $newest 比镜像新), 建议先运行 make"
+        return 1
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# 镜像内嵌用户态架构自检 (S-6 防线③, fail-fast)
+# 内核经 include_bytes! 在编译期嵌入 other/build/<arch>/user/init.bin. 若嵌入的
+# 用户态 ELF 架构与目标不符, 直到进入 Ring 3 执行非法指令才 #PF — 报错点距根因极远.
+# 本函数在启动前以两项可靠判据拦截: 产物 e_machine + 镜像逐字节包含.
+# (尺寸不参与判定: 同一合法构型在全量/增量构建下尺寸可差数十 KB.)
+# 参数: $1=架构 (x86_64|aarch64)  $2=镜像路径
+# 返回: 0 = 通过, 1 = 不符 / 产物或镜像缺失 / 依赖缺失
+# ---------------------------------------------------------------------------
+verify_image_arch() {
+    local arch="$1"
+    local image="$2"
+    local init_bin="other/build/${arch}/user/init.bin"
+    command -v python3 >/dev/null 2>&1 || { err "[$arch] 缺少依赖: python3 (镜像架构自检)"; return 1; }
+    if ! python3 scripts/verify_image_arch.py --arch "$arch" --image "$image" --init "$init_bin"; then
+        err "[$arch] 镜像内嵌用户态自检未通过 — 拒绝在不可信镜像上跑门禁 (先 ./ci/build.sh $arch 重建)"
         return 1
     fi
     return 0
@@ -202,15 +234,21 @@ while True:
 
     rm -f "$log"
     info "[x86_64] 启动后台 QEMU (hostfwd tcp::${E2E_HOST_PORT}->:${E2E_GUEST_PORT})..."
-    qemu-system-x86_64 \
-        -serial "file:${log}" \
-        -display none \
-        -no-reboot \
-        -m 512 -smp 2 \
-        -kernel other/build/kernel.flat \
-        -device e1000,netdev=n0 \
-        -netdev "user,id=n0,hostfwd=tcp::${E2E_HOST_PORT}-:${E2E_GUEST_PORT}" \
-        >/dev/null 2>&1 &
+    local -a qemu_args=(
+        -serial "file:${log}"
+        -display none
+        -no-reboot
+        -m 512 -smp 2
+        -kernel other/build/kernel.flat
+        -device e1000,netdev=n0
+        -netdev "user,id=n0,hostfwd=tcp::${E2E_HOST_PORT}-:${E2E_GUEST_PORT}"
+    )
+    if [ -n "$E2E_PCAP" ]; then
+        rm -f "$E2E_PCAP"
+        info "[x86_64] 抓包: n0 双向帧 → ${E2E_PCAP} (filter-dump)"
+        qemu_args+=(-object "filter-dump,id=e2edump,netdev=n0,file=${E2E_PCAP}")
+    fi
+    qemu-system-x86_64 "${qemu_args[@]}" >/dev/null 2>&1 &
     E2E_QEMU_PID=$!
 
     # 就绪等待: DHCP 租约 + TCP 监听标记均出现; 期间检测 QEMU 早退.
@@ -367,6 +405,9 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
     if [ ! -f other/build/kernel.flat ]; then
         err "x86_64 kernel.flat 缺失, 跳过测试"
         RESULT=1
+    elif ! verify_image_arch "x86_64" other/build/kernel.flat; then
+        # S-6 防线③: 不通过即不启动 (与旧世界"静默跑在污染镜像上"相反)
+        RESULT=1
     else
         X64_LOG="$LOG_DIR/qemu_boot_x86_64.log"
         # ISSUE-RT-001: 此前用 -nic none 隔离测试, 因 QEMU 默认 e1000 NIC 触发
@@ -431,7 +472,26 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
             # P3 D6 端到端验证: hostfwd 入站连接驱动 guest 用户态 TCP echo
             # 服务端, 断言 accept/recv/send 里程碑 + FD 回收 + 监听槽持续可用.
             # 为硬门禁 (不受 FAIL_OK 放宽): 端到端连通性是 D6 交接语义的直接判据.
-            e2e_tcp_echo || RESULT=1
+            # E2E_REPEATS > 1 时逐轮重复并聚合失败数 (S-5 抖动门禁).
+            e2e_round=1
+            e2e_failed=0
+            while [ "$e2e_round" -le "$E2E_REPEATS" ]; do
+                if [ "$E2E_REPEATS" -gt 1 ]; then
+                    info "[x86_64] 端到端重复轮 ${e2e_round}/${E2E_REPEATS}"
+                fi
+                if ! e2e_tcp_echo; then
+                    e2e_failed=$((e2e_failed + 1))
+                    cp -f "${LOG_DIR}/qemu_e2e_tcp_x86_64.log" \
+                        "${LOG_DIR}/qemu_e2e_tcp_x86_64.fail${e2e_round}.log" 2>/dev/null || true
+                fi
+                e2e_round=$((e2e_round + 1))
+            done
+            if [ "$e2e_failed" -ne 0 ]; then
+                err "[x86_64] 端到端抖动门禁未过: ${E2E_REPEATS} 轮中 ${e2e_failed} 轮失败 (失败日志 *.failN.log)"
+                RESULT=1
+            elif [ "$E2E_REPEATS" -gt 1 ]; then
+                ok "[x86_64] 端到端抖动门禁通过: 连续 ${E2E_REPEATS} 轮 0 失败"
+            fi
         else
             [ "$FAIL_OK" = "0" ] && RESULT=1
         fi
@@ -450,6 +510,9 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
 
     if [ ! -f other/build/kernel-aarch64.img ]; then
         err "aarch64 kernel-aarch64.img 缺失, 跳过测试"
+        RESULT=1
+    elif ! verify_image_arch "aarch64" other/build/kernel-aarch64.img; then
+        # S-6 防线③: 同上, 启 QEMU 前先证明镜像嵌的是 aarch64 用户态
         RESULT=1
     else
         A64_LOG="$LOG_DIR/qemu_boot_aarch64.log"

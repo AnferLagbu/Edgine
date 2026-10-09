@@ -17,13 +17,13 @@ cd "$PROJECT_ROOT"
 # 构建会触发 E0152 双 alloc 冲突 (DECISION-021 同族). 详见主计划文档 §10.
 BUILD_STD_CFG=(--config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]')
 
-# 生成内核 build.rs 在编译期校验的 Makefile 产物 (src/kernel/build.rs:9-36).
+# 生成内核 build.rs 在编译期校验的 Makefile 产物 (src/kernel/build.rs:9-45).
 #
-# 为何必须前置: build.rs 只校验 launcher 产物**存在**, 而这些产物由 Makefile 生成;
-# 且两架构的 other/build/user/*.bin 是不同 ELF, 不能混用 (build.rs 无法辨别架构, 跨架构
-# 产物会被静默嵌入). 之前 make 仅出现在 link_kernel 中, 排在 build_arch 之后 ——
-# 于是当 other/build/ 处于另一架构状态 (arch-switch-clean 已删除这些产物) 时,
-# 首个 build_arch 必然失败 (曾表现为 `./ci/build.sh all` → `Passed: 4 Failed: 1`).
+# 为何必须前置: build.rs 只校验 launcher 产物**存在**, 而这些产物由 Makefile 生成.
+# S-6 防线① 后用户态产物按架构分目录 (other/build/<arch>/user/), 两架构不再原地覆盖
+# 同一 init.bin — “aarch64 播种后被 x86_64 链接误嵌”的通道已从根上消失 (旧世界: 共用
+# 路径 + cargo 仍判 Fresh ⇒ `build.sh all` 产出嵌 aarch64 用户态的 x86_64 镜像且 rc=0).
+# 本函数仍作为“产物缺失则立即暴露”的前置播种保留 (曾表现为 build_arch 必然失败).
 #
 # 本函数只做播种, 不占用 PASSED/FAILED 计数: 若播种失败, 紧随其后的 build_arch
 # 会以 build.rs 的「构建产物缺失」报错暴露问题, 保持步骤计数与既有口径一致.
@@ -31,7 +31,7 @@ seed_artifacts() {
     local arch=$1
     echo -e "${YELLOW}[CI] Seeding Makefile artifacts (ARCH=${arch})...${NC}"
     # x86_64 需 other/build/stage1.bin (专属引导码 boot/stage1.asm); 两架构均需
-    # other/build/user/*.bin (user 目标一次生成全部用户态产物)
+    # other/build/<arch>/user/*.bin (user 目标一次生成全部用户态产物)
     if [ "$arch" = "x86_64" ]; then
         make ARCH="${arch}" other/build/stage1.bin user 2>&1 | tail -3 || true
     else

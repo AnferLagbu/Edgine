@@ -14,6 +14,9 @@
 //!             └── virtio-net
 //! ```
 
+use core::sync::atomic::{AtomicU64, Ordering};
+
+use crate::slog_warn;
 use smoltcp::iface::{Config, Interface, PollResult, SocketSet};
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
 use smoltcp::time::Instant;
@@ -25,6 +28,16 @@ use crate::privileged::timer::hrtimer_clock_read;
 
 const RX_BUF_SIZE: usize = 2048;
 const TX_BUF_SIZE: usize = 2048;
+
+/// S-2 (docs/plan/net-e2e-tcp-echo-flakiness.md §3): 驱动发送失败的累计掉帧数。
+///
+/// `TxToken::consume` 原先直接丢弃 `NetOps::send` 的返回值 —— 驱动返 -1 时帧
+/// 静默消失, 事后无从判断是否发生过 (smoltcp 侧永远认为已发出). 现在失败即计数
+/// 并限频上报到 Net 日志, 使"是否掉过帧"成为 e2e 排查可直接判读的事实。
+static TX_DROPPED: AtomicU64 = AtomicU64::new(0);
+
+/// 掉帧日志的限频步长: 首次必报, 其后每 N 次一条, 避免故障态下的日志风暴。
+const TX_DROP_LOG_STRIDE: u64 = 32;
 
 // P1-I-50: 网络时钟优先用 hrtimer (纳秒), 未校准时回退到 ms 上报给 smoltcp.
 // 这样 TCP RTT/retransmit/dhcp 计时精度从 ms 级提升到 μs 级, 真实网络超时
@@ -150,8 +163,23 @@ impl TxToken for EGDFTxToken<'_> {
         F: FnOnce(&mut [u8]) -> R,
     {
         let result = f(&mut self.tx_buf[..len]);
-        self.ops
-            .send(self.driver_data as *mut u8, &self.tx_buf[..len]);
+        // 驱动侧失败不改变对 smoltcp 的"已消费"语义 (Device trait 无失败回报通道),
+        // 但必须留下可观测痕迹: 计数 + 限频告警, 见 `TX_DROPPED` 文档。
+        if self
+            .ops
+            .send(self.driver_data as *mut u8, &self.tx_buf[..len])
+            < 0
+        {
+            let total = TX_DROPPED.fetch_add(1, Ordering::Relaxed) + 1;
+            if total == 1 || total.is_multiple_of(TX_DROP_LOG_STRIDE) {
+                slog_warn!(
+                    Net,
+                    "[net] TX 掉帧: 驱动发送失败, 累计 {} 帧 (本帧 {} 字节)",
+                    total,
+                    len
+                );
+            }
+        }
         result
     }
 }

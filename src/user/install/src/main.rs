@@ -4,15 +4,17 @@
 #![no_std]
 #![no_main]
 
-use userlib::*;
 use userlib::sys::*;
+use userlib::*;
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     userlib::print("[install] PANIC: ");
     if let Some(loc) = info.location() {
-        userlib::print("at "); userlib::print(loc.file());
-        userlib::print(":"); print_dec(loc.line() as i64);
+        userlib::print("at ");
+        userlib::print(loc.file());
+        userlib::print(":");
+        print_dec(loc.line() as i64);
     }
     userlib::print("\n");
     proc_exit(1);

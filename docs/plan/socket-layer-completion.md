@@ -565,10 +565,24 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - **描述**：P6 收尾复跑门槛#6（`scripts/qemu_boot_test.sh x86_64`）时出现非确定性失败：宿主 `recv` 5s 超时、guest `accept` 计数缺失。排查过程中先后提出三个假设（“x86_64 egress 无独立驱动源”“NIC 静默掉帧”“close 丢弃未发出数据”），前两个经对照实验证伪；同时 `sm_close` 存在一个与该抖动**正交**的真实 POSIX 语义缺口：`sock.close()` 与 `sockets.remove(handle)` 之间没有任何 egress 推进点，smoltcp 缓冲区里的尾包与 FIN 随 socket 销毁一并作废，对端只能等自己的超时才察觉连接消失。
 - **裁定**：
   1. **close 三步序**：`sm_close` 改为 `close()` 发起 → `raw::smoltcp_net_stack_poll()` 排空 → `sockets.remove(handle)`（[sm_fi.rs:1768-1790](../../src/kernel/privileged/net/init/sm_fi.rs)）。排空点必须落在 `close()` **之后**而非之前——唯一能把 FIN 送上线的位置就是“socket 仍在集内且已置关闭态”的那一次 poll；置于 remove 之后则 socket 已销毁、无包可发。该调用在 `NET_STATE` 临界区内，与 tick 的 `poll_network` 同口径且不重入锁。
-  2. **不充当抖动解药**：单变量 A/B（1s 探针窗口下，有排空 4/4 通过 vs 无排空 8/8 通过）表明排空对抖动无贡献；抖动的触发变量是 `src/user/init` 组播探针的有界重试窗口（6s：2/13 通过；1s：12/12 通过），根因未定，已单独立项 [net-e2e-tcp-inbound-flakiness.md](./net-e2e-tcp-inbound-flakiness.md)。
+  2. **不充当抖动解药**：单变量 A/B（1s 探针窗口下，有排空 4/4 通过 vs 无排空 8/8 通过）表明排空对抖动无贡献；抖动的触发变量是 `src/user/init` 组播探针的有界重试窗口（6s：2/13 通过；1s：12/12 通过），当时根因未定，已单独立项 [net-e2e-tcp-echo-flakiness.md](./net-e2e-tcp-echo-flakiness.md)。**后续订正**：该根因已定论为 CFS 时基背离 + 运行队列记账泄漏（见 DECISION-099），探针窗口只是放大器。
   3. **订正两条失实论断**（详见该 plan §1 D3/D4）：① “egress 无独立驱动源”——x86_64 每个 PIT tick（1000Hz，[timer/irq.rs:30-45](../../src/kernel/privileged/timer/irq.rs)）都调 `poll_network`，aarch64 同构；该误判源于一次被 `head -20` 截断的 grep，归因类搜索不得截断输出。② “NIC 静默掉帧”——在驱动发送口加计数后 25 轮（含全部失败轮）TX 失败恒为 0；`TxToken::consume` 丢弃返回值属实，但属可观测性缺口而非本次故障因。
 - **SIMPLIFIED**：① 排空只覆盖 close 路径，`send`/`sendto` 后不关闭的 egress 推进仍完全依赖 1ms tick 空转（`SmoltcpNetStack::poll_at()` 恒 `None`，未接 hrtimer，见新 plan §3 S-3）；② 一次 poll 未必能送完全部尾包（受 `max_burst_size` 与拥塞窗口限制），未做“排空至 socket 无待发数据”的循环——当前 e2e 载荷 15 字节，单轮足够。
-- **状态**：[X]（三步序落地 + 探针窗口 20 轮(1s) + 最终态 6/6 通过；抖动根因与新 plan 的 S-1–S-5 条目仍为 `[]`）
+- **状态**：[X]（三步序落地 + 探针窗口 20 轮(1s) + 最终态 6/6 通过；抖动的 S-1–S-5 已由 DECISION-099 与 [net-e2e-tcp-echo-flakiness.md](./net-e2e-tcp-echo-flakiness.md) 收敛，仅 S-3（`poll_at`→hrtimer，用户裁定本轮不做）与新立的 S-6（构建产物架构污染）为 `[]`）
+
+### DECISION-099: e2e TCP 回显抖动根治 —— CFS 单时基模型（IC1-IC5）
+
+- **描述**：[net-e2e-tcp-echo-flakiness.md](./net-e2e-tcp-echo-flakiness.md) 登记的抖动（宿主 `recv` 5s 超时 / guest `accept` 计数缺失；修复前 `E2E_REPEATS=20` 基线 1/20 失败）经 `-object filter-dump` 抓包**证伪“slirp 入向丢帧”**后，插桩定位到 **CFS 调度器**而非网络栈：① 旧 `CfsRunQueue::enqueue` 只把树键钳到 `min_vruntime` 附近而**不回写** `Process::cfs_vruntime`，使“运行中的任务”与“树上的任务”分属两个时间域并可无界发散（实测 `curr vr=45 / floor=5152`），`cfs_should_preempt` 的 `saturating_sub` 把负差压成 0 ⇒ 恒不置 `need_reschedule` ⇒ 该核上的 Ready 任务饿死 4~10 s；② 并行计数器 `nr_running` 与红黑树背离（实测 `nr=108 / tree=0`），使 `is_empty()` 与抢占判据同时失真，树上的任务变成“隐形饥饿”。二者叠加即抖动 —— 属**时基与记账的模型缺陷**，调参（放宽超时 / 加大粒度 / 加特判唤醒）均无效。
+- **裁定**：重构为单时基模型，五条不变式从构造上封死历史上造成秒级饿死的背离路径：
+  1. **IC1 单一时基**：`enqueue` 返回钳制后的落点（`placement()` = `vr.max(floor - CFS_MIN_GRANULARITY)`），调用方**必须**回写 `Process::cfs_vruntime`；scheduler 侧收敛为唯一投递入口 `cfs_enqueue_to`（新建 / 唤醒 / 迁入 / 抢占回落四条路全部经它），tick 对运行中的任务同样走 `placement` 兜底。
+  2. **IC2 结构即真相**：删除 `nr_running`，`is_empty()`/`len()` 一律取自 `tree`；`total_weight` 依记账凭证精确加减，树内移动（`pick_next`/`requeue`）不动账。
+  3. **IC3 下界单调**：floor 字段刻意私有，仅 `advance_floor`（`fetch_max`）一条写路径，只由 tick 随运行任务 vruntime 推进、**只增不减**；删除 `sync_min_vruntime`（被钳到 floor 的唤醒者会反过来推高 floor，形成棘轮）。
+  4. **IC4 可运行集 = 树**：阻塞 / 不可重排即 `cfs_deactivate` 出队并撤账；`pick_next` 摘除的节点记账随迁到“上核运行”态；`load_balance` 迁移时记账随任务同步搬移，投递仍走 `cfs_enqueue_to`。
+  5. **IC5 相对次序不被抹掉**：删除周期性整树折叠 `boost_all_vruntime`。
+  6. **记账凭证**：`Process::cfs_on_rq`（语义同 Linux `on_rq`：处于可运行记账中，上核运行期间仍为 `true`），使 `enqueue`/`deactivate` 天然**幂等**，重复调用不二次加减权重；`unblock` 的 `need_enqueue` 判据取自状态 + 凭证，避免“已在树里再入一次”。
+  7. **锁序与抢占口径不变**：仍只允许 `cfs_rq → PROCESS_TABLE`；抢占判定改为**同域比较**（当前任务 vruntime vs 树最左键，见 [ref-lock-order.md](../explain/ref-lock-order.md)）。
+- **SIMPLIFIED**：① floor 只由**本核 tick** 推进，空闲核的 floor 可落后于全局——迁入任务由 `placement` 钳制吸收，容差上界即 `CFS_MIN_GRANULARITY`（8 tick，用户裁定），未做跨核时基同步；② `total_weight` 依赖调用方传入的 weight 与凭证，将来若引入运行时 nice 调整需同步加减路径（当前 nice 仅创建时设定）；③ 抢占切片用固定 `CFS_MIN_GRANULARITY`/`CFS_TARGET_LATENCY` 常量，未按负载自适应缩放。
+- **状态**：[X]（`cfs.rs` 单时基 API + `scheduler.rs` 七处调用点收敛 + `cfs.rs` 内联单测重写 + `host-tests/tests/cfs_single_time_base_test.rs` 五条不变式接线契约；抖动门禁 `E2E_REPEATS=20` 由 1/20 失败转 **20/20 通过**；验收期间另发现构建产物跨架构污染缺陷（曾伪装成本轮改动引入的确定性回归），登记为该 plan 的 S-6）
 
 ---
 
@@ -582,7 +596,7 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - [src/kernel/privileged/net/init/raw.rs](../../src/kernel/privileged/net/init/raw.rs) — 集中 static mut 访问与槽位 accessor
 - [src/kernel/privileged/net/wait_queue.rs](../../src/kernel/privileged/net/wait_queue.rs) — per-fd 等待队列
 - [src/kernel/privileged/net/mcast.rs](../../src/kernel/privileged/net/mcast.rs) — 组播成员引用计数簿记层（DECISION-097）
-- [docs/plan/net-e2e-tcp-inbound-flakiness.md](./net-e2e-tcp-inbound-flakiness.md) — TCP 回显 e2e 入向连接抖动（根因未定，DECISION-098 派生）
+- [docs/plan/net-e2e-tcp-echo-flakiness.md](./net-e2e-tcp-echo-flakiness.md) — TCP 回显 e2e 抖动（根因：CFS 时基背离 + 运行队列记账泄漏，DECISION-098 派生、DECISION-099 根治）
 - [scripts/qemu_mcast_test.sh](../../scripts/qemu_mcast_test.sh) — 组播端到端联调（注入器 + 十条里程碑断言）
 - [src/kernel/functions/net/smoltcp_impl.rs](../../src/kernel/functions/net/smoltcp_impl.rs) — functions 侧并行 socket 实现
 - [src/kernel/functions/fs/file_ops.rs](../../src/kernel/functions/fs/file_ops.rs) — `poll` / `ppoll` 系统调用路径
@@ -599,7 +613,8 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - P5d（EINTR + 超时）完成：wait_queue 增 `waiter_deadline` 死线维度 + `collect_expired`（非破坏）+ `poll_network` 每-tick 死线扫描（机制 B，共用出临界区 unblock 路，不增唤醒源）+ per-slot `recv/send_timeout_ns` + 6 阻塞循环三退出（`-EINTR`/`-EAGAIN`/connect `-EINPROGRESS`）+ `MSG_DONTWAIT` + `SO_RCVTIMEO`/`SO_SNDTIMEO` sockopt（16 字节 `struct timeval`，syscall 层改长度感知 marshalling）（DECISION-096）。P5 全四子轮完成，分期状态改 `[X]`。
 - P5 收口后 §9.2 文档-代码同步：D6（accept 先建后换，P3 已落地）、D10（阻塞睡眠，P5a–P5d 已落地）本体状态由 `[]` 改 `[X]`；U9（UDP 错误映射，与 G8 同实现路径）改 `[X]`。本 plan 剩余未实施项仅 D11 / P6（组播）。
 - P6（组播）完成：新增 `mcast.rs` per-socket 引用计数簿记层 + `mc_membership` 编排入口（四个组播 sockopt 选项，Linux ABI）+ `sm_close` 逐位拆离 + syscall copy-in 16→20 字节 + 启用 smoltcp `multicast` feature 与 `iface-max-multicast-group-count-8`（DECISION-097，含对 DECISION-091 三处事实误判的订正与 `IPPROTO_IPV6` ABI 错值订正）。D11 与 P6 状态改 `[X]`，本 plan 全部条目收敛。新增 `scripts/qemu_mcast_test.sh` 组播端到端脚本（十条里程碑）。
-- P6 门槛复跑期间派生 DECISION-098：`sm_close` 改「close → 排空 → remove」三步序（补 FIN 与尾包上线的 POSIX 语义缺口）；同时以单变量 A/B 订正先前的两项错误归因（egress 无驱动源 / NIC 静默掉帧）并把未定根因的 e2e 入向抖动移交 [net-e2e-tcp-inbound-flakiness.md](./net-e2e-tcp-inbound-flakiness.md)。
+- P6 门槛复跑期间派生 DECISION-098：`sm_close` 改「close → 排空 → remove」三步序（补 FIN 与尾包上线的 POSIX 语义缺口）；同时以单变量 A/B 订正先前的两项错误归因（egress 无驱动源 / NIC 静默掉帧）并把未定根因的 e2e 入向抖动移交 [net-e2e-tcp-echo-flakiness.md](./net-e2e-tcp-echo-flakiness.md)。
+- 抖动工程收敛（DECISION-099）：`filter-dump` 抓包再证伪一条假设（“slirp 入向丢帧”），插桩把根因定在 **CFS 时基背离 + `nr_running` 记账泄漏**；据此按 IC1-IC5 单时基模型根治调度器，抖动门禁 `E2E_REPEATS=20` 由 1/20 失败转 20/20 通过。该 plan 改名 `net-e2e-tcp-inbound-flakiness.md` → `net-e2e-tcp-echo-flakiness.md` 并按核实事实重写；附带 S-2（TX 掉帧计数）/ S-4（去 `FLUSH_MS` 用户态兜底）/ S-5（`E2E_REPEATS` 门禁口）落地，S-3（`poll_at`→hrtimer）按用户裁定本轮不做，新立 S-6（`other/build/user/*.bin` 跨架构原地覆盖致 `ci/build.sh all` 产出嵌 aarch64 用户态的 x86_64 镜像且 rc=0）；S-6 已按用户裁定以三条防线收敛（产物按架构分目录 `other/build/<arch>/user/` + 内核 `EXPECTED_E_MACHINE` 严格校验 + QEMU 前 `scripts/verify_image_arch.py` fail-fast），取证见该 plan §5 实施记录。
 - P6 收尾轮消解四项预存问题（§9.2）：① 用户态 `MSG_DONTWAIT` ABI 错值 `0x80` 订正为 `0x40`（与 `sm_fi.rs` / `functions/net/syscall.rs` 内核侧一致），并在 `host-tests/tests/socket_wait_queue_test.rs` 加 `msg_dontwait_abi_single_value` 文本锁三侧单值防再漂移；② `smoltcp.versions` 的 `SMOLTCP_SHA` 由 `PENDING_NETWORK` 占位回填为上游 `v0.14.0` tag 的 commit SHA，`audit_smoltcp_purity.py` 由 fail 转 pass 且自验证锁值与上游一致；③ `src/user/{lib,init}` 两个 crate 的 rustfmt 漂移收口（其余 7 个 user crate 仍漂移，未在本轮范围）；④ `scripts/qemu_mcast_test.sh` 构建步由裸 `make` 改走 `./ci/build.sh x86_64`（跨架构中间产物戳串行修复），并避免无 `pipefail` 下的管道吞码。另登记一项**判定为非缺陷**：acpi/sync 处 `clippy::used_underscore_binding` 的 `#[expect]` 在 CI 规范命令（带 `-D clippy::pedantic`）下已 fulfilled，仅 ad-hoc `-D warnings`（不开 pedantic）会报 unfulfilled，删除反而破坏 CI。
 
 ---

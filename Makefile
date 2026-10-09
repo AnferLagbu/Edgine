@@ -11,6 +11,12 @@ BUILD_DIR := other/build
 ISODIR := other/isodir
 REPORT_DIR := other/tests-reports
 LOG_DIR := $(BUILD_DIR)/log
+# 用户态产物按架构分目录 (S-6 防线①): 内核经 include_bytes! 在编译期嵌入
+# other/build/$(ARCH)/user/init.bin, 旧写法两架构共用 other/build/user/ 同一路径
+# 原地覆盖, `build.sh all` 特别是以 link_kernel x86_64 结尾时, 会将 aarch64 用户态
+# ELF 嵌进 x86_64 镜像且全程 0 error / 0 warning / rc=0 (无任何防线可拦).
+# 分目录后跨架构构建不再相互覆盖; 内核侧校验见 elf::verify::EXPECTED_E_MACHINE.
+USER_BUILD_DIR := $(BUILD_DIR)/$(ARCH)/user
 
 ifeq ($(ARCH),aarch64)
     CC = aarch64-linux-gnu-gcc
@@ -149,7 +155,8 @@ arch-switch-clean:
 	       $(BUILD_DIR)/kernel.bin $(BUILD_DIR)/kernel.flat $(BUILD_DIR)/kernel-aarch64.img $(BUILD_DIR)/kernel.map
 	@cd src/kernel && cargo clean >/dev/null 2>&1 || true
 	@cd src/user && cargo clean >/dev/null 2>&1 || true
-	@rm -f $(BUILD_DIR)/user/*.bin
+	# 不删 $(USER_BUILD_DIR)/: 用户态产物已按架构分目录 (S-6 防线①), 异架构产物
+	# 不在本架构读取路径上, 无需清除; 强行删除反而使每次切架构重建全量用户态.
 	@echo $(ARCH) > $(ARCH_STAMP)
 # 挂到所有 asm .o 目标, 强制 clean 后重新评估 .o 的依赖图
 # (clean 在 make 评估图后执行, .o 文件存在与否需要重新触发)
@@ -161,37 +168,37 @@ $(shell mkdir -p $(LOG_DIR))
 # ====== x86_64 Rust user programs ======
 ifeq ($(ARCH),x86_64)
 user: $(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF)
-	@mkdir -p $(BUILD_DIR)/user
-	@cp $(USER_INIT_ELF) $(BUILD_DIR)/user/init.bin
-	@cp $(USER_SHELL_ELF) $(BUILD_DIR)/user/eash.bin
-	@cp $(USER_INSTALL_ELF) $(BUILD_DIR)/user/install.bin
-	@cp $(USER_FBTERM_ELF) $(BUILD_DIR)/user/fbterm.bin
-	@cp $(USER_HTTPSRV_ELF) $(BUILD_DIR)/user/httpsrv.bin
-	@cp $(USER_TEST_ELF) $(BUILD_DIR)/user/proctest.bin
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $(USER_INIT_ELF) $(USER_BUILD_DIR)/init.bin
+	@cp $(USER_SHELL_ELF) $(USER_BUILD_DIR)/eash.bin
+	@cp $(USER_INSTALL_ELF) $(USER_BUILD_DIR)/install.bin
+	@cp $(USER_FBTERM_ELF) $(USER_BUILD_DIR)/fbterm.bin
+	@cp $(USER_HTTPSRV_ELF) $(USER_BUILD_DIR)/httpsrv.bin
+	@cp $(USER_TEST_ELF) $(USER_BUILD_DIR)/proctest.bin
 	@echo "User programs built successfully (Rust)"
 
 $(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF): $(USER_SRCS)
 	@echo "Building Rust user programs..."
 	cd $(RUST_USER_DIR) && RUSTFLAGS="-C link-arg=-T$$(pwd)/link.x -C link-arg=-nostdlib -C link-arg=-no-pie" cargo build --release --target $(RUST_TARGET)
 
-$(BUILD_DIR)/user/init.bin: $(USER_INIT_ELF)
-	@mkdir -p $(BUILD_DIR)/user
+$(USER_BUILD_DIR)/init.bin: $(USER_INIT_ELF)
+	@mkdir -p $(USER_BUILD_DIR)
 	@cp $< $@
 
-$(BUILD_DIR)/user/eash.bin: $(USER_SHELL_ELF)
-	@mkdir -p $(BUILD_DIR)/user
+$(USER_BUILD_DIR)/eash.bin: $(USER_SHELL_ELF)
+	@mkdir -p $(USER_BUILD_DIR)
 	@cp $< $@
 
-$(BUILD_DIR)/user/install.bin: $(USER_INSTALL_ELF)
-	@mkdir -p $(BUILD_DIR)/user
+$(USER_BUILD_DIR)/install.bin: $(USER_INSTALL_ELF)
+	@mkdir -p $(USER_BUILD_DIR)
 	@cp $< $@
 
-$(BUILD_DIR)/user/fbterm.bin: $(USER_FBTERM_ELF)
-	@mkdir -p $(BUILD_DIR)/user
+$(USER_BUILD_DIR)/fbterm.bin: $(USER_FBTERM_ELF)
+	@mkdir -p $(USER_BUILD_DIR)
 	@cp $< $@
 
-$(BUILD_DIR)/user/httpsrv.bin: $(USER_HTTPSRV_ELF)
-	@mkdir -p $(BUILD_DIR)/user
+$(USER_BUILD_DIR)/httpsrv.bin: $(USER_HTTPSRV_ELF)
+	@mkdir -p $(USER_BUILD_DIR)
 	@cp $< $@
 endif
 
@@ -212,30 +219,30 @@ endif
 # AArch64 用户程序: 使用 Cargo 编译 Rust 用户程序
 ifeq ($(ARCH),aarch64)
 user: $(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF)
-	@mkdir -p $(BUILD_DIR)/user
-	@cp $(USER_INIT_ELF) $(BUILD_DIR)/user/init.bin
-	@cp $(USER_SHELL_ELF) $(BUILD_DIR)/user/eash.bin
-	@cp $(USER_INSTALL_ELF) $(BUILD_DIR)/user/install.bin
-	@cp $(USER_FBTERM_ELF) $(BUILD_DIR)/user/fbterm.bin
-	@cp $(USER_HTTPSRV_ELF) $(BUILD_DIR)/user/httpsrv.bin
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $(USER_INIT_ELF) $(USER_BUILD_DIR)/init.bin
+	@cp $(USER_SHELL_ELF) $(USER_BUILD_DIR)/eash.bin
+	@cp $(USER_INSTALL_ELF) $(USER_BUILD_DIR)/install.bin
+	@cp $(USER_FBTERM_ELF) $(USER_BUILD_DIR)/fbterm.bin
+	@cp $(USER_HTTPSRV_ELF) $(USER_BUILD_DIR)/httpsrv.bin
 	@echo "User programs built (Rust aarch64)"
 
 $(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF): $(USER_SRCS)
 	@echo "Building Rust user programs (aarch64)..."
 	cd $(RUST_USER_DIR) && RUSTFLAGS="-C link-arg=-T$$(pwd)/link_aarch64.x -C link-arg=-nostdlib" cargo build --release --target $(RUST_TARGET)
 
-$(BUILD_DIR)/user/init.bin: $(USER_INIT_ELF)
-	@mkdir -p $(BUILD_DIR)/user
+$(USER_BUILD_DIR)/init.bin: $(USER_INIT_ELF)
+	@mkdir -p $(USER_BUILD_DIR)
 	@cp $< $@
 
-$(RUST_LIB): $(BUILD_DIR)/user/init.bin
+$(RUST_LIB): $(USER_BUILD_DIR)/init.bin
 	@echo "Building Rust kernel module..."
 	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --target-dir ../../other/target
 else
 # x86_64: 用 Cargo 构建 Rust 用户程序 + 内核
 # include_bytes! 编译时需要 init.bin 存在，确保用户程序先构建
 
-$(RUST_LIB): $(STAGE1_BIN) $(BUILD_DIR)/user/init.bin $(shell find src/kernel -name '*.rs' 2>/dev/null)
+$(RUST_LIB): $(STAGE1_BIN) $(USER_BUILD_DIR)/init.bin $(shell find src/kernel -name '*.rs' 2>/dev/null)
 	@echo "Building Rust kernel module..."
 	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --target-dir ../../other/target
 endif
@@ -301,11 +308,11 @@ iso: all user
 	@mkdir -p $(ISODIR)/boot/grub
 	cp $(BUILD_DIR)/kernel.bin $(ISODIR)/boot/kernel.bin
 	mkdir -p $(ISODIR)/bin
-	cp $(BUILD_DIR)/user/init.bin $(ISODIR)/bin/init
-	cp $(BUILD_DIR)/user/eash.bin $(ISODIR)/bin/eash
-	cp $(BUILD_DIR)/user/install.bin $(ISODIR)/bin/install
-	cp $(BUILD_DIR)/user/fbterm.bin $(ISODIR)/bin/fbterm
-	cp $(BUILD_DIR)/user/httpsrv.bin $(ISODIR)/bin/httpsrv
+	cp $(USER_BUILD_DIR)/init.bin $(ISODIR)/bin/init
+	cp $(USER_BUILD_DIR)/eash.bin $(ISODIR)/bin/eash
+	cp $(USER_BUILD_DIR)/install.bin $(ISODIR)/bin/install
+	cp $(USER_BUILD_DIR)/fbterm.bin $(ISODIR)/bin/fbterm
+	cp $(USER_BUILD_DIR)/httpsrv.bin $(ISODIR)/bin/httpsrv
 	echo 'set timeout=0' > $(ISODIR)/boot/grub/grub.cfg
 	echo 'set default=0' >> $(ISODIR)/boot/grub/grub.cfg
 	echo '' >> $(ISODIR)/boot/grub/grub.cfg
@@ -482,11 +489,11 @@ test-unit: $(BUILD_DIR)/kernel_test.bin user
 	@mkdir -p $(ISODIR)/boot/grub
 	@cp $(BUILD_DIR)/kernel_test.bin $(ISODIR)/boot/kernel.bin
 	@mkdir -p $(ISODIR)/bin
-	@cp $(BUILD_DIR)/user/init.bin $(ISODIR)/bin/init
-	@cp $(BUILD_DIR)/user/eash.bin $(ISODIR)/bin/eash
-	@cp $(BUILD_DIR)/user/install.bin $(ISODIR)/bin/install
-	@cp $(BUILD_DIR)/user/fbterm.bin $(ISODIR)/bin/fbterm
-	@cp $(BUILD_DIR)/user/httpsrv.bin $(ISODIR)/bin/httpsrv
+	@cp $(USER_BUILD_DIR)/init.bin $(ISODIR)/bin/init
+	@cp $(USER_BUILD_DIR)/eash.bin $(ISODIR)/bin/eash
+	@cp $(USER_BUILD_DIR)/install.bin $(ISODIR)/bin/install
+	@cp $(USER_BUILD_DIR)/fbterm.bin $(ISODIR)/bin/fbterm
+	@cp $(USER_BUILD_DIR)/httpsrv.bin $(ISODIR)/bin/httpsrv
 	@echo 'set timeout=0' > $(ISODIR)/boot/grub/grub.cfg
 	@echo 'set default=0' >> $(ISODIR)/boot/grub/grub.cfg
 	@echo '' >> $(ISODIR)/boot/grub/grub.cfg
@@ -559,11 +566,11 @@ test-chaos: $(BUILD_DIR)/kernel_chaos.bin user
 	@mkdir -p $(ISODIR)/boot/grub
 	@cp $(BUILD_DIR)/kernel_chaos.bin $(ISODIR)/boot/kernel.bin
 	@mkdir -p $(ISODIR)/bin
-	@cp $(BUILD_DIR)/user/init.bin $(ISODIR)/bin/init
-	@cp $(BUILD_DIR)/user/eash.bin $(ISODIR)/bin/eash
-	@cp $(BUILD_DIR)/user/install.bin $(ISODIR)/bin/install
-	@cp $(BUILD_DIR)/user/fbterm.bin $(ISODIR)/bin/fbterm
-	@cp $(BUILD_DIR)/user/httpsrv.bin $(ISODIR)/bin/httpsrv
+	@cp $(USER_BUILD_DIR)/init.bin $(ISODIR)/bin/init
+	@cp $(USER_BUILD_DIR)/eash.bin $(ISODIR)/bin/eash
+	@cp $(USER_BUILD_DIR)/install.bin $(ISODIR)/bin/install
+	@cp $(USER_BUILD_DIR)/fbterm.bin $(ISODIR)/bin/fbterm
+	@cp $(USER_BUILD_DIR)/httpsrv.bin $(ISODIR)/bin/httpsrv
 	@echo 'set timeout=0' > $(ISODIR)/boot/grub/grub.cfg
 	@echo 'set default=0' >> $(ISODIR)/boot/grub/grub.cfg
 	@echo '' >> $(ISODIR)/boot/grub/grub.cfg

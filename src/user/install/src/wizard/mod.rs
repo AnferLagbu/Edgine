@@ -1,14 +1,14 @@
 //! 安装向导 — 6 步交互式系统安装 → 持久化到磁盘
 
-mod probe;
-mod prepare;
-mod deploy;
 mod auth;
 mod config;
+mod deploy;
 mod finish;
+mod prepare;
+mod probe;
 
-use userlib::{println, read_line};
 use userlib::sys::{fs_mount, fs_unmount};
+use userlib::{println, read_line};
 
 const MOUNT_POINT: &[u8] = b"/mnt\0";
 
@@ -62,7 +62,8 @@ pub fn run() {
     }
 
     // Step 3: 挂载目标文件系统
-    println(""); println("Mounting target filesystem...");
+    println("");
+    println("Mounting target filesystem...");
     if !mount_target() {
         println("  [ERROR] Failed to mount UNKFS to /mnt");
         println("Installation failed: Unable to access target disk.");

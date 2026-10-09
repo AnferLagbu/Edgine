@@ -1,7 +1,7 @@
+use core::fmt::Write;
+use userlib::sys::{gethostname, reboot as sys_reboot, sethostname};
 /// 系统命令: osinfo, host, ps, reboot, halt
 use userlib::{print, println};
-use userlib::sys::{gethostname, sethostname, reboot as sys_reboot};
-use core::fmt::Write;
 
 use super::{Cmd, as_str};
 
@@ -27,12 +27,22 @@ pub fn host(cmd: &Cmd) {
     if cmd.n == 1 {
         let mut buf = [0u8; 64];
         if gethostname(&mut buf) == 0 {
-            println(core::str::from_utf8(&buf).unwrap_or("?").trim_end_matches('\0'));
-        } else { println("Error"); }
+            println(
+                core::str::from_utf8(&buf)
+                    .unwrap_or("?")
+                    .trim_end_matches('\0'),
+            );
+        } else {
+            println("Error");
+        }
     } else {
         let name = as_str(cmd.get(1));
-        if sethostname(name.as_bytes()) == 0 { print("Host: "); println(name); }
-        else { println("Error"); }
+        if sethostname(name.as_bytes()) == 0 {
+            print("Host: ");
+            println(name);
+        } else {
+            println("Error");
+        }
     }
 }
 
@@ -51,21 +61,36 @@ pub fn ps(_: &Cmd) {
         let entry = &buf[i * 64..(i + 1) * 64];
         let pid = u32::from_le_bytes([entry[0], entry[1], entry[2], entry[3]]);
         let state = entry[4];
-        let pwm = u64::from_le_bytes([entry[8], entry[9], entry[10], entry[11],
-            entry[12], entry[13], entry[14], entry[15]]);
+        let pwm = u64::from_le_bytes([
+            entry[8], entry[9], entry[10], entry[11], entry[12], entry[13], entry[14], entry[15],
+        ]);
         let pri = u32::from_le_bytes([entry[16], entry[17], entry[18], entry[19]]);
 
         let state_str = match state {
-            0 => "RUN  ", 1 => "READY", 2 => "WAIT ", 3 => "SLEEP",
+            0 => "RUN  ",
+            1 => "READY",
+            2 => "WAIT ",
+            3 => "SLEEP",
             _ => "?    ",
         };
 
         let mut name = [0u8; 48];
         let name_start = 24;
-        for j in 0..48 { name[j] = entry[name_start + j]; if entry[name_start + j] == 0 { break; } }
-        let name_str = core::str::from_utf8(&name).unwrap_or("?").trim_end_matches('\0');
+        for j in 0..48 {
+            name[j] = entry[name_start + j];
+            if entry[name_start + j] == 0 {
+                break;
+            }
+        }
+        let name_str = core::str::from_utf8(&name)
+            .unwrap_or("?")
+            .trim_end_matches('\0');
 
-        let _ = write!(FmtWriter, "{:<5} {:<6} {:08X}  {:>4}  ", pid, state_str, pwm, pri);
+        let _ = write!(
+            FmtWriter,
+            "{:<5} {:<6} {:08X}  {:>4}  ",
+            pid, state_str, pwm, pri
+        );
         println(name_str);
     }
 }

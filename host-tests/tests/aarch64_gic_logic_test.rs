@@ -150,7 +150,7 @@ fn post_condition_reports_first_failure_in_check_order() {
 
 /// 构造 `GICR_TYPER`: 紧凑亲和值放 bits[63:32], 可选置 `Last`(bit4)。
 fn typer_of(affinity: u32, last: bool) -> u64 {
-    (u64::from(affinity) << GICR_TYPER_AFFINITY_SHIFT) | u64::from(last) * GICR_TYPER_LAST_MASK
+    (u64::from(affinity) << GICR_TYPER_AFFINITY_SHIFT) | (u64::from(last) * GICR_TYPER_LAST_MASK)
 }
 
 #[test]

@@ -38,7 +38,9 @@ pub fn clear(_: &Cmd) {
 
 pub fn echo(cmd: &Cmd) {
     for i in 1..cmd.n {
-        if i > 1 { print(" "); }
+        if i > 1 {
+            print(" ");
+        }
         print(as_str(cmd.get(i)));
     }
     println("");

@@ -37,6 +37,8 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 ./scripts/qemu_boot_test.sh x86_64 # QEMU 集成 (改动 boot 时必跑)
 ```
 
+> **用户态产物按架构分目录**（S-6 三条防线）：产物落 `other/build/<arch>/user/`，内核编译期 `include_bytes!` 嵌入**本架构** `init.bin`，两架构互不覆盖。三层防线缺一不可：`scripts/qemu_boot_test.sh` 启 QEMU 前跑 `scripts/verify_image_arch.py`（判据 = 产物 `e_machine` + 镜像**逐字节包含**产物，`kernel.flat` 尺寸**不是**架构判据），不符即 fail；内核侧 `privileged::proc::elf::verify::EXPECTED_E_MACHINE` 只接受本编译期目标架构的 ELF；`src/kernel/build.rs` 的 `cargo:rerun-if-changed` 必须给**绝对路径**（相对路径以包根 `src/kernel` 为基准，与 `include_bytes!` 不同源，会静默失效）。工具自测：`python3 scripts/tests/verify_image_arch_selftest.py`。
+
 ### 2.2 核心审计脚本（硬规则门槛）
 
 | 脚本 | 作用 | 对应 §5 硬规则 | CI 门禁 |
@@ -60,7 +62,7 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 每轮开发完成，**必须** 全部满足：
 
 1. 双架构 `cargo check --release` 0 error / 0 warning
-2. clippy 0 warning (`cargo clippy --release -- -D warnings`) + `cargo fmt --check` 0 漂移（kernel / host-tests / src/rust 三 crate，见 §3）
+2. clippy 0 warning (`cargo clippy --release -- -D warnings`) + `cargo fmt --check` 0 漂移（kernel / host-tests / src/rust / src/user 四 crate，见 §3）
 3. 核心审计全部通过（见 §2.2）+ GitHub Actions
 4. host-tests 全部通过
 5. QEMU 集成测试通过（如改动 boot/架构相关）
@@ -71,7 +73,7 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 - **Rust 工具链** 锁定在仓库根 `rust-toolchain.toml`（`nightly-2026-10-02`，含 rust-src / llvm-tools-preview / rustfmt / clippy 与三交叉目标；CI 与本地均以该文件为唯一来源）
 - **Edition：** 2024
 - **目标架构：** x86\_64（主）+ aarch64（次）
-- **`rustfmt.toml`：** 仓库根 `rustfmt.toml`（4 空格缩进 + 垂直尾逗号；kernel / host-tests / src/rust 统一受检）
+- **`rustfmt.toml`：** 仓库根 `rustfmt.toml`（4 空格缩进 + 垂直尾逗号；kernel / host-tests / src/rust / src/user 统一受检）
 - **Clippy 配置：** `src/rust/clippy.toml`（cognitive-complexity-threshold = 25）
 - **`cargo-deny` 配置：** `src/rust/deny.toml`（许可证/漏洞/版本治理）
 

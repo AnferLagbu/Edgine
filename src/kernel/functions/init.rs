@@ -75,7 +75,7 @@ pub fn launch_first_user_process() -> ! {
     {
         #[cfg(feature = "initramfs")]
         {
-            let initramfs = include_bytes!("../../../other/build/user/initramfs.cpio");
+            let initramfs = include_bytes!("../../../other/build/x86_64/user/initramfs.cpio");
             if !initramfs.is_empty() {
                 match crate::functions::fs::initramfs::unpack(initramfs) {
                     Ok(count) => {
@@ -120,7 +120,7 @@ pub fn launch_first_user_process() -> ! {
         // 裸机产物 (other/build/ 仅由 make 生成). 本函数为裸机 init 入口, host 不可达,
         // 取空切片 ⇒ 走下方 bin.is_empty() 报错退出分支.
         #[cfg(target_os = "none")]
-        let bin = include_bytes!("../../../other/build/user/init.bin");
+        let bin = include_bytes!("../../../other/build/x86_64/user/init.bin");
         #[cfg(not(target_os = "none"))]
         let bin: &[u8] = &[];
 
@@ -153,7 +153,7 @@ pub fn launch_first_user_process() -> ! {
         // 与本处 EL1 侧的中断屏蔽状态无关, 故无需恢复.
         let _saved = crate::arch!(interrupt_disable());
 
-        let bin = include_bytes!("../../../other/build/user/init.bin");
+        let bin = include_bytes!("../../../other/build/aarch64/user/init.bin");
         let bin_size = bin.len() as u64;
         if bin_size == 0 {
             crate::klog_boot_info!("[USER] init ELF is empty");

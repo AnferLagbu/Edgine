@@ -13,8 +13,8 @@
 #![no_std]
 #![no_main]
 
-use userlib::*;
 use userlib::sys::*;
+use userlib::*;
 
 // ============================================================================
 // 测试基础设施
@@ -30,13 +30,19 @@ fn test_begin(name: &str) {
 }
 
 fn test_pass(name: &str) {
-    unsafe { PASS_COUNT += 1; TEST_COUNT += 1; }
+    unsafe {
+        PASS_COUNT += 1;
+        TEST_COUNT += 1;
+    }
     print("  [PASS] ");
     println(name);
 }
 
 fn test_fail(name: &str, reason: &str) {
-    unsafe { FAIL_COUNT += 1; TEST_COUNT += 1; }
+    unsafe {
+        FAIL_COUNT += 1;
+        TEST_COUNT += 1;
+    }
     print("  [FAIL] ");
     print(name);
     print(": ");
@@ -46,9 +52,15 @@ fn test_fail(name: &str, reason: &str) {
 fn test_summary() {
     println("");
     println("=== 测试结果汇总 ===");
-    print("总测试: "); print_dec(unsafe { TEST_COUNT } as i64); println("");
-    print("通过:   "); print_dec(unsafe { PASS_COUNT } as i64); println("");
-    print("失败:   "); print_dec(unsafe { FAIL_COUNT } as i64); println("");
+    print("总测试: ");
+    print_dec(unsafe { TEST_COUNT } as i64);
+    println("");
+    print("通过:   ");
+    print_dec(unsafe { PASS_COUNT } as i64);
+    println("");
+    print("失败:   ");
+    print_dec(unsafe { FAIL_COUNT } as i64);
+    println("");
     if unsafe { FAIL_COUNT } == 0 {
         println("[OK] 所有测试通过!");
     } else {
@@ -151,7 +163,9 @@ fn test_pipe_ipc() {
         proc_exit(0);
     } else if child_pid > 0 {
         // 父进程: 等待子进程写入
-        for _ in 0..100000 { core::hint::spin_loop(); }
+        for _ in 0..100000 {
+            core::hint::spin_loop();
+        }
 
         let mut buf = [0u8; 64];
         let n = fs_read(fds[0], &mut buf);
@@ -184,7 +198,9 @@ fn test_signal() {
     let child_pid = fork();
     if child_pid == 0 {
         // 子进程: 等待被信号杀死
-        for _ in 0..500000 { core::hint::spin_loop(); }
+        for _ in 0..500000 {
+            core::hint::spin_loop();
+        }
         proc_exit(0);
     } else if child_pid > 0 {
         let sig = 9; // SIGKILL
@@ -238,7 +254,10 @@ fn test_schedule_and_time() {
     sched_yield();
     test_pass("sched_yield 执行成功");
 
-    let ts = Timespec { tv_sec: 0, tv_nsec: 1_000_000 }; // 1ms
+    let ts = Timespec {
+        tv_sec: 0,
+        tv_nsec: 1_000_000,
+    }; // 1ms
     let rc = nanosleep(&ts);
     if rc == 0 {
         test_pass("nanosleep 1ms 执行成功");
@@ -246,7 +265,10 @@ fn test_schedule_and_time() {
         test_fail("nanosleep", "返回错误");
     }
 
-    let ts2 = Timespec { tv_sec: 0, tv_nsec: 10_000_000 }; // 10ms
+    let ts2 = Timespec {
+        tv_sec: 0,
+        tv_nsec: 10_000_000,
+    }; // 10ms
     let rc2 = nanosleep(&ts2);
     if rc2 == 0 {
         test_pass("nanosleep 10ms 执行成功");
@@ -267,7 +289,9 @@ fn test_multiple_children() {
     for i in 0..5u32 {
         let child_pid = fork();
         if child_pid == 0 {
-            for _ in 0..50000 { core::hint::spin_loop(); }
+            for _ in 0..50000 {
+                core::hint::spin_loop();
+            }
             proc_exit((i + 10) as i32);
         } else if child_pid > 0 {
             child_pids[i as usize] = child_pid;
@@ -319,7 +343,9 @@ fn test_multi_process_pipe() {
         // 父进程继续
     }
 
-    for _ in 0..500000 { core::hint::spin_loop(); }
+    for _ in 0..500000 {
+        core::hint::spin_loop();
+    }
 
     let mut received = 0u32;
     for _ in 0..3 {
@@ -338,7 +364,9 @@ fn test_multi_process_pipe() {
 
     fs_close(fds[0]);
     fs_close(fds[1]);
-    for _ in 0..3 { wait_pid(-1); }
+    for _ in 0..3 {
+        wait_pid(-1);
+    }
 }
 
 // ============================================================================

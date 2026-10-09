@@ -8,6 +8,8 @@
 //! 2. **解析一致**: 两处实现不再独立 (host-test 通过源码静态文本扫描确认两份独立
 //!    `e_ident[0..4] != 0x7F/0x45/0x4c/0x46` 字符串字面量已消除).
 //! 3. **跨架构**: x86_64 (0x3E) 与 aarch64 (0xB7) 均接受, 其它机器码拒绝.
+//!    host 构建不绑定单一架构 ⇒ `EXPECTED_E_MACHINE = None`; 裸机构建只接受本目标
+//!    架构 (S-6 防线②), 该分支由 `machine_acceptable` 纯函数在本文件中全量覆盖.
 //! 4. **错误细分**: 7 类错误 (TooSmall / BadMagic / BadClass / BadMachine /
 //!    BadPhentsize / TooManyPhdr / PhdrOutOfBounds) 行为可观测.
 //!
@@ -25,7 +27,8 @@
 //! verify 子模块声明与委托) 为 B08-20 混合型文件的 include_str 部分, 原样保留.
 
 use edgine::kernel::privileged::proc::elf::verify::{
-    EM_AARCH64, EM_X86_64, ET_DYN, VerifyError, VerifyResult, verify_elf,
+    EM_AARCH64, EM_X86_64, ET_DYN, EXPECTED_E_MACHINE, VerifyError, VerifyResult,
+    machine_acceptable, verify_elf,
 };
 use edgine::kernel::privileged::proc::elf::{Elf64Header, Elf64Phdr};
 
@@ -265,4 +268,44 @@ fn verify_null_ptr_is_too_small() {
         unsafe { verify_elf(core::ptr::null(), 0) }.unwrap_err(),
         VerifyError::TooSmall
     );
+}
+
+// =============================================================================
+// S-6 防线②: e_machine 必须等于本内核编译期目标架构
+// =============================================================================
+
+/// 裸机期望 (Some) 下只接受本架构机器码 — 这是旧写法 (`∈ {0x3E, 0xB7}`)
+/// 拦不住“嵌 aarch64 用户态的 x86_64 镜像”的直接补位.
+#[test]
+fn some_expected_accepts_only_own_arch() {
+    assert!(machine_acceptable(Some(EM_X86_64), EM_X86_64));
+    assert!(!machine_acceptable(Some(EM_X86_64), EM_AARCH64));
+    assert!(machine_acceptable(Some(EM_AARCH64), EM_AARCH64));
+    assert!(!machine_acceptable(Some(EM_AARCH64), EM_X86_64));
+    assert!(!machine_acceptable(Some(EM_X86_64), 0x28)); // ARM (32 位)
+}
+
+/// host 期望 (None) 下两架构均为格式校验接受 (使同一套用例覆盖两机器码).
+#[test]
+fn none_expected_accepts_both_supported_arches() {
+    assert!(machine_acceptable(None, EM_X86_64));
+    assert!(machine_acceptable(None, EM_AARCH64));
+    assert!(!machine_acceptable(None, 0x03)); // EM_386
+}
+
+/// 本文件跑在 host target ⇒ 不绑定单一架构; 若某天该前提变化 (host 侧开始
+/// 强制单架构), 此断言会立即提醒修正上述两用例的语义假设.
+#[test]
+fn host_build_has_no_single_arch_expectation() {
+    assert_eq!(EXPECTED_E_MACHINE, None);
+    // host 上跨架构 ELF 仍可通过格式校验 (同本文件开头 `verify_aarch64_elf64_succeeds`)
+    let elf = make_elf(
+        EM_AARCH64,
+        ET_DYN,
+        0,
+        64,
+        core::mem::size_of::<Elf64Phdr>() as u16,
+    );
+    // SAFETY: elf 是完整 host Vec
+    assert!(unsafe { call_verify_elf(&elf) }.is_ok());
 }

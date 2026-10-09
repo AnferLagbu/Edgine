@@ -344,8 +344,9 @@ fn mcast_probe() {
     //
     // 不可随意放大 (实测 6s 窗口会让 `scripts/qemu_boot_test.sh` 的 TCP 回显 e2e
     // 从 12/12 通过退化为 8/13 失败): 本探针跑在 `tcp_echo_server` fork 之前, 窗口
-    // 直接决定监听 socket 就绪时刻与后续入向连接能否被 `accept`. 根因未定, 详见
-    // docs/plan/net-e2e-tcp-inbound-flakiness.md.
+    // 直接决定监听 socket 就绪时刻与后续入向连接能否被 `accept`. 抖动根因已定论:
+    // CFS 时基背离 + 运行队列记账泄漏导致的秒级饥饿 (本窗口只是放大器), 详见
+    // docs/plan/net-e2e-tcp-echo-flakiness.md.
     const MAX_TRIES: u32 = 20;
 
     let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -634,9 +635,10 @@ fn udp_echo_probe() {
 /// `0` (smoltcp `recv_slice` 对已建立但 rx 缓冲为空的连接返回 `Ok(0)`),
 /// 二者无法区分; 仅在连接已关闭时返回 `-E_CONNRESET`. 故每连接采取
 /// **一次性回显**: `recv` 有界重试 (`0` 视为"暂无数据", 让出 CPU 供定时器
-/// IRQ 推进 smoltcp 周期 poll) 直到取到数据 → `send` 原样回显 → 留出发送
-/// 窗口后 `close`. 本函数永不返回 (常驻), 失败路径以忙等驻留 (不改变既有
-/// APS-05/KPTI-09 断言).
+/// IRQ 推进 smoltcp 周期 poll) 直到取到数据 → `send` 原样回显 → `shutdown` +
+/// `close` (尾包排空由内核 `sm_close` 的"close → 排空 egress → remove"三步序
+/// 负责, 用户态不再预留发送窗口 —— S-4). 本函数永不返回 (常驻), 失败路径以
+/// 忙等驻留 (不改变既有 APS-05/KPTI-09 断言).
 #[cfg(target_arch = "x86_64")]
 fn tcp_echo_server() -> ! {
     // 监听端口与脚本 hostfwd (`tcp::8080-:80`) 及 Makefile `QEMU_NET` 约定一致.
@@ -649,9 +651,6 @@ fn tcp_echo_server() -> ! {
     const POLL_MS: i64 = 5;
     // 单连接等待数据的最大重试轮数 (每轮 POLL_MS); 超时则放弃该连接.
     const MAX_RECV_TRIES: u32 = 200;
-    // 回显 `send` 后留出的窗口 (ms): 待定时器 IRQ poll 把 tx 缓冲排空,
-    // 再 close —— sm_close 中 `sockets.remove` 会丢弃未发出的数据.
-    const FLUSH_MS: i64 = 50;
 
     let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if fd < 0 {
@@ -789,8 +788,6 @@ fn tcp_echo_server() -> ! {
                     print_dec(sent as i64);
                     print_char(b'\n');
                 }
-                // 留出窗口让定时器 IRQ poll 把回显排空 (close 会丢弃未发数据).
-                delay_ms(FLUSH_MS);
                 break;
             }
             if n == 0 {

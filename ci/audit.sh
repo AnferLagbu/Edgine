@@ -255,12 +255,13 @@ for FEATURE in kernel_test host-test; do
     fi
 done
 
-# ── 2c. rustfmt 风格门禁 (全仓三 crate) ────────────────────────
+# ── 2c. rustfmt 风格门禁 (全仓四 crate) ────────────────────────
 # 长期修复 (2026-10-03): 此前本地 audit 不跑 fmt, 导致 kernel 39 hunks 漂移长期
 # 不可见 (仅 CI 暴露且已被忽略). 现与 ci-x86.yml clippy-pedantic job 对齐, 覆盖
 # kernel / host-tests / edgine 壳; rustfmt.toml 与 rust-toolchain.toml 均在仓库根.
-step "2c/6 rustfmt 风格门禁 (kernel + host-tests + edgine 壳)"
-for FMT_MANIFEST in src/kernel/Cargo.toml host-tests/Cargo.toml src/rust/Cargo.toml; do
+# 补入 src/user (2026-10-09): 用户态七 crate 此前不受任何 fmt 门禁, 漂移静默积累.
+step "2c/6 rustfmt 风格门禁 (kernel + host-tests + edgine 壳 + user 态)"
+for FMT_MANIFEST in src/kernel/Cargo.toml host-tests/Cargo.toml src/rust/Cargo.toml src/user/Cargo.toml; do
     if cargo fmt --manifest-path "$FMT_MANIFEST" -- --check; then
         ok "fmt: ${FMT_MANIFEST} 通过"
     else

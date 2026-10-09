@@ -43,6 +43,31 @@ pub const EM_AARCH64: u16 = 0xB7;
 /// `ET_DYN`: 共享对象 / PIE
 pub const ET_DYN: u16 = 3;
 
+/// 本内核编译期目标架构的 `e_machine` (S-6 防线②).
+///
+/// 裸机 target 下由 `target_arch` 唯一确定; host 构建 (host-tests 与 kernel 的
+/// host-test / kernel_test 维度) 不绑定单一架构 ⇒ `None`, 使同一套用例能覆盖两
+/// 种机器码的格式校验语义.
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+pub const EXPECTED_E_MACHINE: Option<u16> = Some(EM_X86_64);
+/// 见 [`EXPECTED_E_MACHINE`].
+#[cfg(all(target_os = "none", target_arch = "aarch64"))]
+pub const EXPECTED_E_MACHINE: Option<u16> = Some(EM_AARCH64);
+/// 见 [`EXPECTED_E_MACHINE`].
+#[cfg(not(target_os = "none"))]
+pub const EXPECTED_E_MACHINE: Option<u16> = None;
+
+/// `e_machine` 是否可被本内核加载 — 抽为纯函数供 host 侧直接覆盖两架构分支.
+///
+/// - `expected = Some(em)`: 裸机构建, 只接受本目标架构的机器码.
+/// - `expected = None`: host 构建 (不绑定架构), 接受两架构作为格式校验.
+pub const fn machine_acceptable(expected: Option<u16>, actual: u16) -> bool {
+    match expected {
+        Some(em) => em == actual,
+        None => actual == EM_X86_64 || actual == EM_AARCH64,
+    }
+}
+
 #[expect(
     clippy::ptr_as_ptr,
     reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
@@ -58,14 +83,15 @@ pub const ET_DYN: u16 = 3;
 /// 1. `elf_data != null && elf_size >= sizeof(Elf64Header)`  // 缓冲长度检查
 /// 2. `e_ident[0..4] == b"\x7FELF"`  // ELF 文件魔数
 /// 3. `e_ident` `[4]` == 2 (ELFCLASS64)  // 64 位 ELF
-/// 4. `e_machine ∈ {0x3E, 0xB7}` (`x86_64` / aarch64)  // 目标架构
+/// 4. `machine_acceptable(EXPECTED_E_MACHINE, e_machine)` — 裸机只接受**本目标架构**
+///    的机器码 (S-6 防线②), host 构建接受 `x86_64` / aarch64
 /// 5. `e_phentsize == sizeof(Elf64Phdr)` (56)  // PHDR 项大小
 /// 6. `e_phnum <= MAX_PHDR_COUNT` (128)  // PHDR 数量上限
 /// 7. `e_phoff + e_phnum * e_phentsize <= elf_size` (PHDR 表不越界)  // 边界
 ///
 /// # Errors
 /// 校验失败时返回对应的 `VerifyError`: `TooSmall` (指针为空或尺寸不足),
-/// `BadMagic` (魔数不匹配), `BadClass` (非 64 位 ELF), `BadMachine` (非 `x86_64/aarch64`),
+/// `BadMagic` (魔数不匹配), `BadClass` (非 64 位 ELF), `BadMachine` (与本内核目标架构不符),
 /// `BadPhentsize` (PHDR 项大小不符), `TooManyPhdr` (PHDR 数量超限),
 /// `PhdrOutOfBounds` (PHDR 表越出文件边界), `Overflow` (PHDR 表尺寸算术溢出).
 ///
@@ -89,8 +115,10 @@ pub unsafe fn verify_elf(elf_data: *const u8, elf_size: u64) -> Result<VerifyRes
     if header.e_ident[4] != ELF_CLASS_64 {
         return Err(VerifyError::BadClass);
     }
-    // machine
-    if header.e_machine != EM_X86_64 && header.e_machine != EM_AARCH64 {
+    // machine: 必须与本内核编译期目标架构一致 (S-6 防线②). 旧写法只校
+    // `∈ {0x3E, 0xB7}`, 使得“嵌 aarch64 用户态的 x86_64 镜像”照样 verify_elf OK,
+    // 直到入口 0x400000 执行非法指令才 #PF — 报错点距根因极远.
+    if !machine_acceptable(EXPECTED_E_MACHINE, header.e_machine) {
         return Err(VerifyError::BadMachine);
     }
     // phentsize
@@ -132,7 +160,7 @@ pub enum VerifyError {
     BadMagic,
     /// 非 ELFCLASS64
     BadClass,
-    /// 非 `x86_64` / aarch64
+    /// `e_machine` 与本内核目标架构不符 (裸机), 或非 `x86_64`/aarch64 (host)
     BadMachine,
     /// phentsize 与 sizeof(Elf64Phdr) 不符
     BadPhentsize,
