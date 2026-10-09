@@ -78,10 +78,10 @@ smoltcp = { path = "functions/net/smoltcp", default-features = false, features =
     "auto-icmp-echo-reply",
 ] }
 
-# spin 仅在 x86_64 SMP 启动路径 (privileged/arch/x86_64/smp_init.rs) 使用,
-# 声明为 x86_64 限定依赖, 消除 aarch64 构建的 cargo `unused_dependencies` 警告.
-[target.'cfg(target_arch = "x86_64")'.dependencies]
-spin = "0.9"
+# x86_64 SMP 启动路径的 `AP_STARTUP_LOCK` (`spin::mutex::SpinMutex`) 已依调用图调研
+# 删除 (见 docs/plan/unresolved-issues-2026-08-09.md ISSUE-TOOL-004); 全仓已无任何
+# `spin::` 代码引用, 故原 `[target.'cfg(target_arch = "x86_64")'.dependencies] spin`
+# 声明一并移除 —— 内核同步原语统一由 privileged::sync (自研 IrqSpinLock/SpinLock) 提供.
 
 [features]
 default = []
