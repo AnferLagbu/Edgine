@@ -5,6 +5,10 @@
 //! - per-CPU `need_reschedule` 标志
 //! - 跨 CPU 重新调度 IPI (通过 `SOftirq::Sched`)
 //!
+//! 对外入口一律是 safe Rust 函数 (`init_cpu_queue` / `resched_cpu` /
+//! `mark_resched_pending_local` / `run_pending_resched`); 早期的 `cpq_init` /
+//! `cpq_resched_cpu` 两个 `extern "C"` 薄包裹属死 FFI, 已按 §5 F9 删除.
+//!
 //! ## 架构
 //!
 //! ```text
@@ -191,16 +195,4 @@ pub fn run_pending_resched() {
 #[unsafe(no_mangle)]
 pub extern "C" fn resched_ipi_handler() {
     mark_resched_pending_local();
-}
-
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn cpq_init(cpu_id: u32, idle_pid: Pid) {
-    init_cpu_queue(cpu_id, idle_pid);
-}
-
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn cpq_resched_cpu(target_cpu: u32) {
-    resched_cpu(target_cpu);
 }

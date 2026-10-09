@@ -207,7 +207,8 @@ pub fn timer_sleep(ms: u64) -> Result<(), i32> {
     }
 
     // 单一唤醒机制: 写入 `sleep_until` (tick 时基), 由调度器 tick 的睡眠唤醒
-    // 扫描 (见 `Scheduler::tick`) 在到期后 `unblock` —— 与 `proc_sleep_ms` 同源,
+    // 扫描 (见 `Scheduler::tick`) 在到期后 `unblock` —— 本路径是全内核唯一的
+    // 毫秒级可阻塞睡眠入口 (原 `extern "C"` 包装层已随死 FFI 一并删除),
     // 不再并行维护 hrtimer 回调唤醒路径 (该路径回调从未触发, 且栈上 HrTimer 在
     // 进程退出后会留下悬垂队列项 = UAF 隐患).
     let wake_at = get_ticks() + ms_to_ticks(ms);

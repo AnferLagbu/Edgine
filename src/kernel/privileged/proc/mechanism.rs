@@ -52,7 +52,6 @@ pub use super::proc_ops::process_with_mut;
 
 // ==================== 调度器操作 ====================
 
-pub use super::sched_ops::scheduler_add;
 pub use super::sched_ops::scheduler_add_to_run_queue;
 pub use super::sched_ops::scheduler_current_cputime;
 pub use super::sched_ops::scheduler_schedule;
@@ -70,9 +69,7 @@ pub use super::proc_ops::proc_alloc_pid;
 
 // ==================== 进程信息查询 ====================
 
-pub use super::proc_ops::process_find_by_pid;
 pub use super::proc_ops::process_get_by_pid;
-pub use super::proc_ops::process_get_current;
 pub use super::proc_ops::process_get_current_pid;
 pub use super::proc_ops::process_get_current_pwm;
 pub use super::proc_ops::process_get_pwm_by_pid;
@@ -86,16 +83,11 @@ pub use super::proc_ops::process_signal_pending_set;
 
 pub use super::proc_ops::proc_get_in_kern;
 pub use super::proc_ops::proc_set_in_kern;
-pub use super::sched_ops::proc_get_exit_code;
-pub use super::sched_ops::proc_get_state;
-pub use super::sched_ops::proc_is_initialized;
 pub use super::sched_ops::proc_set_priority;
 
 // ==================== 初始化 ====================
 
 pub use super::api::session_init;
 pub use super::api::user_proc_init;
-pub use super::sched_ops::process_init;
 pub use super::sched_ops::scheduler_init;
 pub use super::sched_ops::scheduler_tick;
-pub use super::sched_ops::thread_init;

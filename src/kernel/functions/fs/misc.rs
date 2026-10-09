@@ -156,12 +156,23 @@ struct Timeval {
     tv_usec: u64,
 }
 
+/// `Timeval` ↔ 纳秒 换算因子 (`tv_usec` 为微秒)
+const NS_PER_SEC: u64 = 1_000_000_000;
+const NS_PER_USEC: u64 = 1_000;
+
 impl Timeval {
-    const fn from_secs(sec: u64) -> Self {
+    /// 纳秒 → `timeval` (微秒位向下取整, 与 POSIX `timeval` 精度一致)
+    const fn from_ns(ns: u64) -> Self {
         Self {
-            tv_sec: sec,
-            tv_usec: 0,
+            tv_sec: ns / NS_PER_SEC,
+            tv_usec: (ns % NS_PER_SEC) / NS_PER_USEC,
         }
+    }
+    /// `timeval` → 纳秒 (`Timeval` 是 `Copy` 的 16 字节标量对, 按值传)
+    fn to_ns(self) -> u64 {
+        self.tv_sec
+            .saturating_mul(NS_PER_SEC)
+            .saturating_add(self.tv_usec.saturating_mul(NS_PER_USEC))
     }
     const fn zero() -> Self {
         Self {
@@ -225,13 +236,12 @@ pub fn times_syscall(buf_ptr: u64) -> Result<usize, Errno> {
     Ok(raw::get_ticks() as usize)
 }
 
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
 /// getitimer(which, value) — 读取间隔定时器.
 /// Framekernel 实现 `ITIMER_REAL` (which==0); VIRTUAL/PROF (which==1/2) 返 ENOSYS;
-/// 其他 (which==3 保留) 返 EINVAL.
+/// 其他 (which>3) 返 EINVAL.
+///
+/// 到期时刻由 `privileged::proc::itimer` 的 hrtimer 槽表持有, 本函数只做
+/// 纳秒 ↔ `timeval` 的 ABI 换算.
 ///
 /// # Errors
 /// 当 `which` 超出 0..=3 范围时返回 `EINVAL`; 当 `value_ptr` 为空或越界时返回 `EFAULT`;
@@ -243,20 +253,17 @@ pub fn getitimer_syscall(which: i32, value_ptr: u64) -> Result<usize, Errno> {
     if value_ptr == 0 {
         return Err(Errno::EFAULT);
     }
-    if !raw::check_user_buf(value_ptr, 16) {
+    if !raw::check_user_buf(value_ptr, core::mem::size_of::<Itimerval>() as u64) {
         return Err(Errno::EFAULT);
     }
     if which == 0 {
         // ITIMER_REAL
         let pid = current_pid();
-        let mut remaining: u64 = 0;
-        let r = proc_fw::proc_getitimer_real(pid, &mut remaining as *mut u64);
-        if r < 0 {
-            return Err(Errno::EFAULT);
-        }
+        let (remaining_ns, interval_ns) =
+            crate::privileged::proc::itimer_real_get(pid).unwrap_or((0, 0));
         let iv = Itimerval {
-            it_interval: Timeval::zero(),
-            it_value: Timeval::from_secs(remaining),
+            it_interval: Timeval::from_ns(interval_ns),
+            it_value: Timeval::from_ns(remaining_ns),
         };
         if !raw::write_struct_to_user(value_ptr, &iv) {
             return Err(Errno::EFAULT);
@@ -268,16 +275,15 @@ pub fn getitimer_syscall(which: i32, value_ptr: u64) -> Result<usize, Errno> {
     }
 }
 
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
 /// setitimer(which, new, old) — 设置间隔定时器.
 /// Framekernel 实现 `ITIMER_REAL` (which==0); 其他返 EINVAL/ENOSYS.
 ///
+/// `it_value == 0` = 撤防 (POSIX 语义); `it_interval > 0` = 周期触发.
+/// 与 `alarm(2)` 共享同一 per-pid 槽位 (Linux 语义: 二者互相覆盖).
+///
 /// # Errors
 /// 当 `which` 超出 0..=3 范围时返回 `EINVAL`; 当 `which` 非 0 时返回 `ENOSYS`;
-/// 当 `new_ptr` 为空/越界、`old_ptr` 越界、读取/写入用户空间失败或底层设置失败时返回 `EFAULT`.
+/// 当 `new_ptr` 为空/越界、`old_ptr` 越界、读取/写入用户空间失败时返回 `EFAULT`.
 pub fn setitimer_syscall(which: i32, new_ptr: u64, old_ptr: u64) -> Result<usize, Errno> {
     if !(0..=3).contains(&which) {
         return Err(Errno::EINVAL);
@@ -288,10 +294,11 @@ pub fn setitimer_syscall(which: i32, new_ptr: u64, old_ptr: u64) -> Result<usize
     if new_ptr == 0 {
         return Err(Errno::EFAULT);
     }
-    if !raw::check_user_buf(new_ptr, 16) {
+    let itimerval_len = core::mem::size_of::<Itimerval>() as u64;
+    if !raw::check_user_buf(new_ptr, itimerval_len) {
         return Err(Errno::EFAULT);
     }
-    if old_ptr != 0 && !raw::check_user_buf(old_ptr, 16) {
+    if old_ptr != 0 && !raw::check_user_buf(old_ptr, itimerval_len) {
         return Err(Errno::EFAULT);
     }
     let mut new: Itimerval = Itimerval::zero();
@@ -299,21 +306,15 @@ pub fn setitimer_syscall(which: i32, new_ptr: u64, old_ptr: u64) -> Result<usize
         return Err(Errno::EFAULT);
     }
     let pid = current_pid();
-    let mut old_remaining: u64 = 0;
-    let r = proc_fw::proc_setitimer_real(
+    let (prev_remaining_ns, prev_interval_ns) = crate::privileged::proc::itimer_real_set(
         pid,
-        new.it_value.tv_sec,
-        new.it_interval.tv_sec,
-        core::ptr::null_mut::<u64>(),
-        &mut old_remaining as *mut u64,
+        new.it_value.to_ns(),
+        new.it_interval.to_ns(),
     );
-    if r < 0 {
-        return Err(Errno::EFAULT);
-    }
     if old_ptr != 0 {
         let old_iv = Itimerval {
-            it_interval: Timeval::zero(),
-            it_value: Timeval::from_secs(old_remaining),
+            it_interval: Timeval::from_ns(prev_interval_ns),
+            it_value: Timeval::from_ns(prev_remaining_ns),
         };
         if !raw::write_struct_to_user(old_ptr, &old_iv) {
             return Err(Errno::EFAULT);
@@ -328,15 +329,16 @@ pub fn setitimer_syscall(which: i32, new_ptr: u64, old_ptr: u64) -> Result<usize
 )]
 /// alarm(seconds) — 设置 SIGALRM 触发间隔 (秒), 返回旧剩余时间 (秒).
 ///
-/// 真实实现: 通过 `privileged/proc/api::proc_alarm` 在 Process 维护的
-/// `alarm_deadline` (jiffies) 上做加/减. 调度器 tick 时由 `proc_check_alarm`
-/// 检查并通过 `do_signal_send(SIGALRM)` 投递信号.
+/// 真实实现: 等价于 `setitimer(ITIMER_REAL, {value=seconds, interval=0})`,
+/// 经 `privileged::proc::itimer` 向 hrtimer 登记纳秒级截止期; 到期时由
+/// `itimer_real_callback` (hardirq 上下文) 经 `do_signal_send(SIGALRM)` 投递信号.
 ///
 /// # Errors
-/// 当前实现恒返回 `Ok(())`; 底层 `proc_alarm` 的错误被忽略.
+/// 当前实现无失败路径 (`seconds` 参不产生错误), 统一包为 `Ok` 以对齐其他
+/// syscall 代理的返回型状.
 pub fn alarm_syscall(seconds: u32) -> Result<usize, Errno> {
     let pid = current_pid();
-    let prev = proc_fw::proc_alarm(pid, seconds);
+    let prev = crate::privileged::proc::itimer_alarm(pid, seconds);
     Ok(prev as usize)
 }
 

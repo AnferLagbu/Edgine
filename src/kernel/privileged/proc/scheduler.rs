@@ -1305,6 +1305,12 @@ impl Scheduler {
             crate::klog_info!(Process, "exit: pid={} code={}", pid, exit_code);
             // 会话 leader 退出时释放控制终端
             crate::privileged::proc::session_leader_exit(pid);
+            // P-7 根治: 终止即撤防 per-pid 截止期类资源 — `ITIMER_REAL`/`alarm` 与
+            // POSIX timer. 两者的到期登记在 hrtimer 框架里, 不会随 `Process` 销毁
+            // 而消失; 不撤防则 pid 复用后新进程会收到前一进程遗留的 SIGALRM/信号.
+            // (槽位表是静态数组, 不存在 UAF, 但归属信息已失效)
+            crate::privileged::proc::itimer_real_release_pid(pid);
+            crate::privileged::proc::posix_timer_release_pid(pid);
 
             let parent_pid_opt = PROCESS_TABLE.with_process(pid, |proc| {
                 let pwm = proc.get_pwm();

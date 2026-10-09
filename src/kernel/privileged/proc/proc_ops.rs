@@ -4,7 +4,7 @@
 //!
 //! ## 依赖
 //! - `api::raw` — 裸指针/FFI 桥接
-//! - `api::{C_CURRENT_PROCESS, CURRENT_PROCESS_PTR, INIT_PROCESS_CREATED}` — 当前进程状态
+//! - `api::{C_CURRENT_PROCESS, CURRENT_PROCESS_PTR}` — 当前进程状态
 //! - `process::PROCESS_TABLE` — 进程表
 //! - `scheduler::SCHEDULER` — 调度器
 //! - `user_proc::USER_PROC_MANAGER` — 用户进程管理
@@ -13,15 +13,13 @@ use core::sync::atomic::Ordering;
 
 use super::process::{PROCESS_TABLE, Process};
 use super::scheduler::SCHEDULER;
-use super::types::{BlockReason, Pid, ProcessId, ProcessState};
+use super::types::{Pid, ProcessId, ProcessState};
 pub use super::user_proc::proc_alloc_pid;
 use super::user_proc::{USER_PROC_MANAGER, user_proc_clone};
-use crate::privileged::lib::CStrExt;
 use crate::privileged::mm::{
     get_kernel_pml4, vmm_clone_user_page_table_cow, vmm_destroy_page_table, vmm_switch_page_table,
 };
 use crate::privileged::racy_cell::RacyCell;
-use crate::privileged::timer::timer_get_ticks;
 
 // === 特权层: 进程子系统裸指针/FFI 桥接集中地 ===
 //
@@ -135,7 +133,6 @@ pub mod raw {
 // === 当前进程状态 (供 api.rs 与本模块共享) ===
 
 static CURRENT_PROCESS_PTR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-static INIT_PROCESS_CREATED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// TD-10: 当前 CPU 是否处于内核态 (syscall / 中断 / 异常).
 ///
@@ -197,33 +194,6 @@ pub(crate) static C_CURRENT_PROCESS: RacyCell<CProcess> = RacyCell::new(CProcess
 // ============================================================================
 // 进程查询与操作
 // ============================================================================
-
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn process_get_current() -> u64 {
-    let ptr = CURRENT_PROCESS_PTR.load(Ordering::SeqCst);
-    if ptr == 0 {
-        if INIT_PROCESS_CREATED.load(Ordering::SeqCst) == 0 {
-            create_init_process();
-        }
-        CURRENT_PROCESS_PTR.load(Ordering::SeqCst)
-    } else {
-        ptr
-    }
-}
-
-fn create_init_process() {
-    INIT_PROCESS_CREATED.store(1, Ordering::SeqCst);
-    C_CURRENT_PROCESS.map_mut(|p| {
-        p.pid = 1;
-        p.state = 2;
-        p.priority = 2;
-        p.time_slice = 10;
-    });
-    // SAFETY: klog_ffi_info is unsafe extern "C". msg is a valid static byte slice.
-    raw::klog_info(b"[PROC] Init process created (pid=1)");
-    CURRENT_PROCESS_PTR.store(C_CURRENT_PROCESS.as_ptr() as u64, Ordering::SeqCst);
-}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn update_current_process_ptr(ptr: u64) {
@@ -393,12 +363,6 @@ pub extern "C" fn process_get_pwm_by_pid(pid: u32) -> u64 {
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-pub extern "C" fn process_create(name: *const u8, parent_pid: Pid, pwm: u64) -> Pid {
-    proc_create_internal(name, parent_pid, pwm)
-}
-
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 pub extern "C" fn process_exit(exit_code: u32) {
     let current_pid = SCHEDULER.current().unwrap_or(0);
     if current_pid != 0 {
@@ -452,62 +416,9 @@ pub extern "C" fn process_unblock(pid: u32) {
     SCHEDULER.unblock(pid);
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn process_kill(pid: u32, exit_code: u32) {
-    if pid == 0 {
-        return;
-    }
-
-    let should_kill = PROCESS_TABLE
-        .with_process(pid, |proc| {
-            let state = proc.get_state();
-            if state == ProcessState::Zombie || state == ProcessState::Terminated {
-                false
-            } else {
-                proc.exit_code.store(exit_code, Ordering::SeqCst);
-                let _ = proc.set_state_safe(ProcessState::Zombie);
-                true
-            }
-        })
-        .unwrap_or(false);
-
-    if should_kill {
-        SCHEDULER.unblock(pid);
-        SCHEDULER.set_need_reschedule();
-    }
-}
-
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn process_find_by_pid(pid: Pid) -> u64 {
-    PROCESS_TABLE.get(pid).map_or(0, |p| p as u64)
-}
-
 // ============================================================================
 // 进程创建内部实现
 // ============================================================================
-
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn proc_create_internal(name: *const u8, parent_pid: Pid, pwm: u64) -> Pid {
-    if name.is_null() {
-        return 0;
-    }
-
-    let name_str = match name.as_kstr_opt() {
-        Some(s) if !s.is_empty() => s,
-        _ => return 0,
-    };
-
-    let parent = if parent_pid == 0 {
-        None
-    } else {
-        Some(parent_pid)
-    };
-
-    SCHEDULER.create_process(name_str, parent, pwm).unwrap_or(0)
-}
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
@@ -617,67 +528,6 @@ pub extern "C" fn proc_exec_replace(
     // 7. 进入当前 PID (使用新地址空间)
     super::api::user_proc_enter_by_pid(current_pid);
     0
-}
-
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn proc_wait_child(pid: Pid) -> i32 {
-    if pid == 0 {
-        return -1;
-    }
-
-    let proc = PROCESS_TABLE.get(pid);
-    if proc.is_none() {
-        return -1;
-    }
-
-    let (state, code) = PROCESS_TABLE
-        .with_process(pid, |process| {
-            let state = process.get_state();
-            if state == ProcessState::Zombie {
-                let code = process.exit_code.load(Ordering::SeqCst) as i32;
-                (state, Some(code))
-            } else {
-                (state, None)
-            }
-        })
-        .unwrap_or((ProcessState::Terminated, None));
-
-    if state == ProcessState::Zombie {
-        PROCESS_TABLE.remove_and_free(pid);
-        return code.unwrap_or(-1);
-    }
-
-    SCHEDULER.block(BlockReason::WaitingForChild);
-    -2
-}
-
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn proc_sleep_ms(ms: u64) {
-    if ms == 0 {
-        return;
-    }
-
-    let pid = SCHEDULER.current().unwrap_or(0);
-    if pid == 0 {
-        return;
-    }
-
-    let current_ticks = timer_get_ticks();
-    let ticks_to_sleep = ms.div_ceil(10);
-    if ticks_to_sleep == 0 {
-        return;
-    }
-
-    let wakeup_at = current_ticks + ticks_to_sleep;
-
-    PROCESS_TABLE.with_process(pid, |proc| {
-        proc.sleep_until.store(wakeup_at, Ordering::SeqCst);
-    });
-
-    SCHEDULER.block(BlockReason::Sleeping);
-    SCHEDULER.schedule();
 }
 
 /// 保存当前 syscall 的用户寄存器到进程 `p.context` (B05-55 根治).
@@ -1066,24 +916,6 @@ pub fn proc_get_times(pid: u32, out_user: *mut u64, out_sys: *mut u64) -> i32 {
     }
 }
 
-/// 取得当前进程启动时刻 jiffies.
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn proc_get_start_jiffies(pid: u32) -> u64 {
-    PROCESS_TABLE
-        .with_process(pid as Pid, |p| p.start_jiffies.load(Ordering::SeqCst))
-        .unwrap_or(0)
-}
-
-/// 标记进程启动时刻 (`process_create` 后调用).
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn proc_set_start_jiffies(pid: u32, j: u64) {
-    PROCESS_TABLE.with_process(pid as Pid, |p| {
-        p.start_jiffies.store(j, Ordering::SeqCst);
-    });
-}
-
 /// 获取用户进程创建时间戳 (ticks).
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
@@ -1091,163 +923,6 @@ pub extern "C" fn proc_get_create_time(pid: u32) -> u64 {
     USER_PROC_MANAGER
         .with_process(pid, |p| p.create_time)
         .unwrap_or(0)
-}
-
-/// alarm(seconds) — 设置 alarm 剩余秒数对应的 jiffies 到期时刻.
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn proc_alarm(pid: u32, seconds: u32) -> u32 {
-    let hz = u64::from(crate::privileged::timer::get_frequency());
-    if hz == 0 {
-        return 0;
-    }
-    let now = crate::privileged::timer::get_ticks();
-    let prev_remaining = PROCESS_TABLE
-        .with_process(pid as Pid, |p| {
-            let deadline = p.alarm_deadline.load(Ordering::SeqCst);
-            let prev = if deadline == 0 || now >= deadline {
-                0u32
-            } else {
-                ((deadline - now) / hz) as u32
-            };
-            if seconds == 0 {
-                p.alarm_deadline.store(0, Ordering::SeqCst);
-            } else {
-                p.alarm_deadline
-                    .store(now + u64::from(seconds) * hz, Ordering::SeqCst);
-            }
-            p.alarm_prev_remaining
-                .store(u64::from(prev), Ordering::SeqCst);
-            prev
-        })
-        .unwrap_or(0);
-    prev_remaining
-}
-
-/// 调度器 tick 时检查 alarm 是否到期.
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn proc_check_alarm(pid: u32) -> i32 {
-    let now = crate::privileged::timer::get_ticks();
-    let triggered = PROCESS_TABLE
-        .with_process(pid as Pid, |p| {
-            let d = p.alarm_deadline.load(Ordering::SeqCst);
-            if d != 0 && now >= d {
-                p.alarm_deadline.store(0, Ordering::SeqCst);
-                true
-            } else {
-                false
-            }
-        })
-        .unwrap_or(false);
-    if triggered {
-        // 14 = SIGALRM
-        let _ = crate::privileged::proc::do_signal_send(pid as Pid, 14);
-        1
-    } else {
-        0
-    }
-}
-
-/// `setitimer(ITIMER_REAL`, new, old) — Framekernel 只实现 `ITIMER_REAL`.
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn proc_setitimer_real(
-    pid: u32,
-    new_seconds: u64,
-    new_interval: u64,
-    out_old_seconds: *mut u64,
-    out_old_remaining: *mut u64,
-) -> i32 {
-    let hz = u64::from(crate::privileged::timer::get_frequency());
-    if hz == 0 {
-        return -1;
-    }
-    let now = crate::privileged::timer::get_ticks();
-    let result: i32 = 0;
-    PROCESS_TABLE.with_process(pid as Pid, |p| {
-        if !out_old_seconds.is_null() {
-            let d = p.itimer_real_deadline.load(Ordering::SeqCst);
-            let rem = if d == 0 || now >= d {
-                0u64
-            } else {
-                (d - now) / hz
-            };
-            // SAFETY: 调用方保证指针有效.
-            unsafe {
-                core::ptr::write_unaligned(
-                    out_old_seconds,
-                    p.itimer_real_interval.load(Ordering::SeqCst) / hz,
-                );
-                core::ptr::write_unaligned(out_old_remaining, rem);
-            }
-        }
-        if new_seconds == 0 {
-            p.itimer_real_deadline.store(0, Ordering::SeqCst);
-        } else {
-            p.itimer_real_deadline
-                .store(now + new_seconds * hz, Ordering::SeqCst);
-        }
-        p.itimer_real_interval
-            .store(new_interval * hz, Ordering::SeqCst);
-        p.itimer_real_remaining
-            .store(new_seconds * hz, Ordering::SeqCst);
-    });
-    result
-}
-
-/// `getitimer(ITIMER_REAL`, value) — 读取当前 `ITIMER_REAL` 剩余.
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn proc_getitimer_real(pid: u32, out_remaining_seconds: *mut u64) -> i32 {
-    if out_remaining_seconds.is_null() {
-        return -1;
-    }
-    let hz = u64::from(crate::privileged::timer::get_frequency());
-    let now = crate::privileged::timer::get_ticks();
-    let res = PROCESS_TABLE.with_process(pid as Pid, |p| {
-        let d = p.itimer_real_deadline.load(Ordering::SeqCst);
-        if d == 0 || hz == 0 || now >= d {
-            0u64
-        } else {
-            (d - now) / hz
-        }
-    });
-    let rem = res.unwrap_or(0);
-    // SAFETY: 调用方保证指针有效.
-    unsafe {
-        core::ptr::write_unaligned(out_remaining_seconds, rem);
-    }
-    0
-}
-
-/// 调度器 tick 时检查 `itimer_real` 是否到期.
-#[unsafe(no_mangle)]
-pub extern "C" fn proc_check_itimer_real(pid: u32) -> i32 {
-    let now = crate::privileged::timer::get_ticks();
-    let mut triggered = false;
-    PROCESS_TABLE.with_process(pid as Pid, |p| {
-        let d = p.itimer_real_deadline.load(Ordering::SeqCst);
-        if d != 0 && now >= d {
-            let interval_ticks = p.itimer_real_interval.load(Ordering::SeqCst);
-            if interval_ticks > 0 {
-                p.itimer_real_deadline
-                    .store(now + interval_ticks, Ordering::SeqCst);
-                p.itimer_real_remaining
-                    .store(interval_ticks, Ordering::SeqCst);
-            } else {
-                p.itimer_real_deadline.store(0, Ordering::SeqCst);
-                p.itimer_real_remaining.store(0, Ordering::SeqCst);
-            }
-            triggered = true;
-        }
-    });
-    if triggered {
-        let _ = crate::privileged::proc::do_signal_send(pid as Pid, 14);
-        1
-    } else {
-        0
-    }
 }
 
 /// POSIX getrusage(who, rusage) — 写回进程/子进程 user/sys 时间.

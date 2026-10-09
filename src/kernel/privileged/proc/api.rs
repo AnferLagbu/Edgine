@@ -7,6 +7,10 @@
 //! - `sched_ops` — 调度器操作 (scheduler_* 函数)
 //! - `raw` — 裸指针/FFI 桥接
 //!
+//! 等待队列不在本层: 队列本体在 `privileged::ipc::types::WaitQueue`, 入队/唤醒
+//! 的调度侧衔接在 `functions::ipc` (曾经存在的 `wait_queue_*` 空桩 FFI 门面
+//! 已按 §5 F9 删除).
+//!
 //! ## 调用方契约
 //! - `syscall::mod` — fork/execve/exit/wait4/kill/getpid 等系统调用
 //! - `syscall::mmap` — mmap 通过 `process_get_current_pid` 获取当前进程
@@ -17,7 +21,9 @@
 //!
 //! ## 安全约束
 //! - `CURRENT_PROCESS_PTR` 用 `AtomicU64` 无锁读写,但 `C_CURRENT_PROCESS` 是 unsafe static mut
-//! - `process_get_current()` 懒初始化 init 进程 (pid=1)
+//! - 不存在进程懒初始化：上述两个当前进程状态只由上下文切换路径经
+//!   `update_current_process_ptr()` 写入，init 进程 (pid=1) 由启动编排
+//!   `functions::init::launch_first_user_process` 显式创建
 //! - `process_exit()` 必须在内核态调用,退出前切换到内核 CR3
 //! - `PROCESS_TABLE` / `SCHEDULER` 均为全局单例,内部有锁保护
 //!
@@ -37,26 +43,6 @@ use super::user_proc::USER_PROC_MANAGER;
 // 使外部代码仍可通过 `proc::api::*` 路径访问
 pub use proc_ops::*;
 pub use sched_ops::*;
-
-// ============================================================================
-// wait_queue 桩函数
-// ============================================================================
-
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn wait_queue_init(_wq: *mut u8) {}
-
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn wait_queue_add(_wq: *mut u8, _thread: u64) {}
-
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn wait_queue_wake_one(_wq: *mut u8) {}
-
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn wait_queue_wake_all(_wq: *mut u8) {}
 
 // ============================================================================
 // 会话/用户进程初始化

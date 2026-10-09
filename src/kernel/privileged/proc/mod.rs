@@ -53,6 +53,8 @@ pub mod elf;
 /// TD-02: 全局统一 FD 分配器与基址规划
 pub mod fd_alloc;
 pub mod fd_table;
+/// `ITIMER_REAL` / `alarm(2)` — hrtimer 驱动的每进程实时间隔定时器
+pub mod itimer;
 pub mod madvise_mlock;
 /// L-02: 机制 API 集中导出 — 供 functions 层策略实现调用
 pub mod mechanism;
@@ -85,6 +87,7 @@ pub use canary::*;
 pub use coredump_trait::{
     CoredumpSink, RegSnapshot, current_coredump_sink, read_interrupt_regs, register_coredump_sink,
 };
+pub use itimer::*;
 pub use posix_timer::*;
 pub use process::*;
 pub use scheduler::*;

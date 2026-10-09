@@ -689,6 +689,8 @@ pub fn has_deliverable_signal(pid: Pid) -> bool {
 pub const SIGKILL: u8 = 9;
 /// `SIGSTOP` 信号编号 (不可捕获/不可屏蔽)
 pub const SIGSTOP: u8 = 19;
+/// `SIGALRM` 信号编号 (`alarm(2)` / `setitimer(ITIMER_REAL)` 到期投递)
+pub const SIGALRM: u8 = 14;
 
 /// 不可屏蔽信号位图 (屏蔽字 bit N = 信号 N)
 const UNCATCHABLE_SIGNAL_BITS: u64 = (1u64 << SIGKILL) | (1u64 << SIGSTOP);
