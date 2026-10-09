@@ -73,6 +73,10 @@ mod init {
     pub fn smoltcp_net_stack_poll() -> crate::privileged::net::iface_trait::PollOutcome {
         crate::privileged::net::iface_trait::PollOutcome::idle()
     }
+    // S-3: 测试模式下无真实协议栈, 无定时需求 (与 smoltcp 空闲时的 `None` 同义).
+    pub fn smoltcp_net_stack_poll_at_ms() -> Option<u64> {
+        None
+    }
     pub fn smoltcp_net_stack_close(_slot_idx: usize) {}
 }
 

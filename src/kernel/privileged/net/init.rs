@@ -41,6 +41,9 @@ pub(crate) mod probe;
 // ISSUE-SRC-008: 网卡中断接线 (ISR 注册 + 设备侧 ack 分发 + NetRx 置位).
 pub(crate) mod irq;
 
+// S-3: 网络轮询截止期驱动 (smoltcp `poll_at` → hrtimer → NetRx 底半部).
+pub(crate) mod poll_timer;
+
 // B04-09 优化 Step G: 配置入口 (FFI) 拆至 cmd.rs.
 pub(crate) mod cmd;
 pub use cmd::*;
@@ -236,6 +239,10 @@ pub unsafe fn poll_network() {
     // 锁内采集 / 锁外唤醒 (F8: 禁 `NET_STATE → SCHEDULER` 嵌套锁).
     let mut to_wake = [0u32; WAKE_BATCH];
     let mut wake_n: usize = 0;
+    // S-3: 本次 poll 得出的下次轮询截止期. 在 `NET_STATE` 临界区内取值,
+    // 出临界区后才登记 hrtimer (锁序约束见 `init/poll_timer.rs`).
+    // 不预先赋 `None`: 临界区内的早退路径直接 `return`, 能走到下面即已赋值.
+    let next_poll_ns: Option<u64>;
     unsafe {
         let _guard = match NET_STATE.try_lock() {
             Some(g) => g,
@@ -251,7 +258,7 @@ pub unsafe fn poll_network() {
             None => return,
         };
         let sockets = &mut *raw::socket_set();
-        crate::privileged::net::poll_stack(nic, stack, sockets);
+        next_poll_ns = crate::privileged::net::poll_stack(nic, stack, sockets);
         raw::process_dhcp_events(sockets);
 
         // P6a 联调观测: SLAAC 处理 Router Advertisement 成功后, smoltcp 会把从 RA
@@ -358,6 +365,10 @@ pub unsafe fn poll_network() {
     // 出 `NET_STATE` 临界区 (`_guard` 已随上一作域块释放) 后逐个唤醒.
     // 若某 pid 因落在“释放锁→尚未 block()”窗口被 `unblock` no-op 吞掉唤醒,
     // 下一 tick `poll_network` 电平重扫会重新采集并唤醒 (自愈).
+    //
+    // S-3: 同样在临界区外登记下次轮询截止期 (未采到截止期的早退路径不更新,
+    // 旧登记保持有效 ⇒ 到点仍会再 poll 一次, 不会让协议栈时限永久停摆).
+    poll_timer::net_poll_deadline_update(next_poll_ns);
     for &pid in &to_wake[..wake_n] {
         if pid != 0 {
             scheduler_unblock(pid);
@@ -815,6 +826,15 @@ pub fn smoltcp_net_stack_slot_base() -> usize {
 /// smoltcp `Interface::poll` + `process_dhcp_events`.
 pub fn smoltcp_net_stack_poll() -> crate::privileged::net::iface_trait::PollOutcome {
     raw::smoltcp_net_stack_poll()
+}
+
+/// `SmoltcpNetStack::poll_at` 的 safe wrapper (S-3).
+///
+/// 读出 `poll_network` 本次登记的下次轮询截止期 (绝对单调毫秒, 由 smoltcp
+/// `Interface::poll_at` 汇总). `None` = 协议栈无内部定时需求 (只由入向包与
+/// tick 侧 poll 驱动), 与 smoltcp 的 `None` 语义一致.
+pub fn smoltcp_net_stack_poll_at_ms() -> Option<u64> {
+    poll_timer::net_poll_deadline_ns().map(|ns| ns / 1_000_000)
 }
 
 /// `SmoltcpNetStack::close` 的 safe wrapper (W4.2.3.4).

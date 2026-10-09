@@ -399,9 +399,14 @@ pub trait NetStack {
         PollOutcome::idle()
     }
 
-    /// 查询协议栈下次轮询时间 (`None` = 立即需要轮询).
+    /// 查询协议栈下次轮询的截止期 (绝对单调毫秒).
     ///
-    /// 用于调度器决定何时插入 hrtimer 唤醒, 避免空轮询.
+    /// `None` = 协议栈无内部定时需求 (只等入向包), 无需定时唤醒 —— 与 smoltcp
+    /// `Interface::poll_at` 的 `None` 语义一致 (旧文档写“立即需要轮询”为误,
+    /// 按 S-3 接线实现订正).
+    ///
+    /// S-3 (`docs/plan/net-e2e-tcp-echo-flakiness.md` §5): `poll_network` 把该截止期
+    /// 登记到 hrtimer, 到点经 `NetRx` 底半部再入 `poll_network`.
     #[inline]
     fn poll_at(&self) -> Option<u64> {
         None

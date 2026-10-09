@@ -647,12 +647,15 @@ impl NetStack for SmoltcpNetStack {
         fw_init::smoltcp_net_stack_poll()
     }
 
-    /// 查询下次轮询时间.
+    /// 查询下次轮询截止期 (绝对单调毫秒).
+    ///
+    /// S-3: 读出 privileged 侧 `poll_network` 本次由 smoltcp `Interface::poll_at`
+    /// 汇总并登记到 hrtimer 的截止期. `None` = 协议栈无内部定时需求.
     fn poll_at(&self) -> Option<u64> {
         if !self.initialized {
             return None;
         }
-        None
+        fw_init::smoltcp_net_stack_poll_at_ms()
     }
 
     /// 打开一个 Socket.

@@ -199,6 +199,23 @@ impl NetworkStack {
     pub fn poll<D: Device>(&mut self, device: &mut D, sockets: &mut SocketSet<'_>) -> PollResult {
         self.iface.poll(smoltcp_now(), device, sockets)
     }
+
+    /// 本次 poll 之后 smoltcp 建议的下次轮询截止期 (绝对纳秒, hrtimer 时基).
+    ///
+    /// S-3 (`docs/plan/net-e2e-tcp-echo-flakiness.md` §5): TCP 重传/keepalive、
+    /// 邻居 (ARP/NDP) 老化、DHCP 续约、SLAAC 路由发现的定时需求都由 smoltcp
+    /// `Interface::poll_at` 汇总成一个截止期; 返回 `None` 表示协议栈没有内部
+    /// 定时需求 (socket 全部只等入向包), 无需定时唤醒。
+    ///
+    /// 时基换算: `smoltcp_now()` 以 `hrtimer_clock_read() / 1_000_000` 构造
+    /// `Instant`, 故 `Instant` 的原点与 hrtimer 同为"自启动起"; `Instant::micros`
+    /// 为 i64 微秒, 非负时直接 ×1000 回纳秒。精度受 `Instant` 的 ms 粒度限制
+    /// (亚毫秒部分在 `smoltcp_now()` 里已被截断), 与 tick 侧 1ms poll 同量级。
+    pub fn next_poll_deadline_ns(&mut self, sockets: &SocketSet<'_>) -> Option<u64> {
+        self.iface
+            .poll_at(smoltcp_now(), sockets)
+            .map(|deadline| deadline.micros().max(0) as u64 * 1_000)
+    }
 }
 
 // ============================================================================
@@ -238,6 +255,15 @@ pub fn init_stack(device: &mut EGDFNetDevice, mac: [u8; 6]) -> NetworkStack {
 }
 
 /// 轮询 smoltcp 网络栈 — 推进协议状态机并处理收发
-pub fn poll_stack(nic: &mut EGDFNetDevice, stack: &mut NetworkStack, sockets: &mut SocketSet<'_>) {
+///
+/// 返回本次 poll 后的下次轮询截止期 (绝对纳秒, 见
+/// [`NetworkStack::next_poll_deadline_ns`]); 调用方须在释放 `NET_STATE`
+/// 之后据此登记 hrtimer (S-3, 见 `init::poll_timer`)。
+pub fn poll_stack(
+    nic: &mut EGDFNetDevice,
+    stack: &mut NetworkStack,
+    sockets: &mut SocketSet<'_>,
+) -> Option<u64> {
     stack.poll(nic, sockets);
+    stack.next_poll_deadline_ns(sockets)
 }
