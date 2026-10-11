@@ -48,7 +48,7 @@ import os
 import re
 import subprocess
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 # ────────────────────────────────────────────────────────────────────────
@@ -123,6 +123,25 @@ def is_vendored(path: Path) -> bool:
     """检测 vendored 子目录（递归检查祖先）"""
     parts = path.relative_to(KERNEL_DIR).parts
     return any(p in VENDORED_DIRS for p in parts)
+
+
+def rel_is_vendored(rel: str) -> bool:
+    """按**仓内相对路径**判定 vendored (引用计数的唯一事实源)
+
+    存在意义 (P-13 名单污染定因): 引用计数有 rg / Python 两条实现, 原先各写各的
+    过滤 —— Python 降级路径写成 `"smoltcp" in str(rs)` 的**子串**匹配, 连带把
+    `privileged/net/smoltcp_impl.rs` 与 `functions/net/smoltcp_impl.rs` 这两个
+    **非 vendored** 文件整份排除在索引外. 后果是双向假阳性:
+
+    1. 声明在 `net_socket.rs` 的 `sm_net_*`: 其唯一跨文件调用方恰在被误排的
+       文件里 ⇒ `cross_file=0` 被判零引用; (实测 13 项全中)
+    2. 声明在被误排文件里的 `*_fd`: `in_decl_file=0` 而 `total` 只余外部计数
+       ⇒ 读数自相矛盾 (实测出现 `total=1 decl=0`).
+
+    判定必须与声明收集侧的 `is_vendored` 同语义 (**按路径分量**, 非子串), 故两条
+    计数路径都收敛到本函数, 不再各自表达.
+    """
+    return any(part in VENDORED_DIRS for part in Path(rel).parts)
 
 
 def is_kernel_code(path: Path) -> bool:
@@ -295,14 +314,22 @@ def count_refs(name: str, decl_file: Path, decl_line: int) -> dict:
 
 
 def _count_refs_rg(name: str, decl_file: Path) -> dict:
-    """ripgrep 实现 (高性能路径)."""
+    """ripgrep 实现 (高性能路径).
+
+    计数语义必须与 Python 降级路径**逐字一致** (每文件词元**出现次数**, 非匹配行数):
+    分级判据是 `total == 1`, 若本路径用 `rg -c` (数行), 则同名多次出现在同一行
+    (典型: 声明行同时出现在 doc 摘要与宏展开) 会使两路得到不同 total, 导致
+    CI (有 rg) 与本地 (无 rg) 报不同名单 —— 台账 B-6 条目因此不可复现.
+    改用 `rg -o` 让每次匹配单独成行后按文件计数.
+    """
     cmd = [
-        "rg", "-c", "-w", "--no-heading",
+        "rg", "-o", "-w", "--no-heading", "--with-filename", "--no-line-number",
+        "--type", "rust",
         name,
         "src/", "host-tests/",
-        "--type", "rust",
     ]
-    cmd.extend(["-g", "!src/kernel/functions/net/smoltcp/**"])
+    # vendored 排除统一由 rel_is_vendored 在结果侧过滤 (与 Python 路径共用事实源),
+    # 不再在这里重复写 -g glob —— 两处表达式会漂移.
 
     try:
         result = subprocess.run(
@@ -311,23 +338,22 @@ def _count_refs_rg(name: str, decl_file: Path) -> dict:
     except subprocess.TimeoutExpired:
         return {"total": 0, "in_decl_file": 0, "cross_file": 0, "error": "timeout"}
 
-    total_refs = 0
-    in_decl_file_refs = 0
-    for line in result.stdout.strip().split("\n"):
-        if ":" not in line:
+    try:
+        decl_rel = str(decl_file.relative_to(ROOT))
+    except ValueError:
+        decl_rel = str(decl_file)
+
+    per_file: dict[str, int] = {}
+    for line in result.stdout.splitlines():
+        path_str, sep, match = line.partition(":")
+        if not sep or not match.strip():
             continue
-        try:
-            path_str, count = line.rsplit(":", 1)
-            count = int(count)
-        except ValueError:
+        if rel_is_vendored(path_str):
             continue
-        total_refs += count
-        try:
-            decl_rel = decl_file.relative_to(ROOT)
-            if path_str == str(decl_rel):
-                in_decl_file_refs = count
-        except ValueError:
-            pass
+        per_file[path_str] = per_file.get(path_str, 0) + 1
+
+    total_refs = sum(per_file.values())
+    in_decl_file_refs = per_file.get(decl_rel, 0)
 
     return {
         "total": total_refs,
@@ -339,16 +365,24 @@ def _count_refs_rg(name: str, decl_file: Path) -> dict:
 
 _PYTHON_FILE_CACHE: dict[str, str] = {}
 
+# 词元索引: 标识符 → { 仓内相对路径: 出现次数 } (一次性建索引后按名直查).
+_TOKEN_INDEX: dict[str, dict[str, int]] = {}
+
 
 def _build_python_cache() -> None:
-    """构建一次所有 .rs 文件内容缓存, 避免反复 read_text.
+    """一次性构建词元索引, 避免每个待查名重复扫全仓.
 
-    B01-19 性能优化: edgine crate ~700+ .rs 文件, 每次 count_refs 调用
-    重复 read_text 是主要性能瓶颈. 一次性缓存后, 仅做内存子串扫描.
+    B01-19 性能优化: 一次性缓存文件内容, 后续 count_refs 仅内存子串扫描.
     该缓存按 tgt 调用一次 (lazy init), 一次性扫描 ~700 文件约 1-3 秒.
+
+    索引化补强 (P-d 接入 CI 前置): 上述形态仍是 O(待查名 × 全仓字节) —— 本机无
+    ripgrep 时实测 13 分钟不收敛, 门禁无法在本地跑完. 改为单遍切词建索引,
+    复杂度降到 O(全仓字节 + 待查名), 计数语义不变: 对标识符 `name`,
+    `re.findall(r"\\b" + name + r"\\b")` 的匹配数等于按 `\\w+` 切出的词元中
+    等于 `name` 的个数 (两者都以非 `\\w` 字符为界).
     """
-    global _PYTHON_FILE_CACHE
-    if _PYTHON_FILE_CACHE:
+    global _TOKEN_INDEX
+    if _TOKEN_INDEX:
         return
     targets = ["src/", "host-tests/"]
     for target in targets:
@@ -356,41 +390,37 @@ def _build_python_cache() -> None:
         if not target_path.exists():
             continue
         for rs in target_path.rglob("*.rs"):
-            if "smoltcp" in str(rs):
+            try:
+                rel = str(rs.relative_to(ROOT))
+            except ValueError:
+                rel = str(rs)
+            if rel_is_vendored(rel):
                 continue
             try:
                 content = rs.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            try:
-                rel = str(rs.relative_to(ROOT))
-            except ValueError:
-                rel = str(rs)
             _PYTHON_FILE_CACHE[rel] = content
+            for token, n in Counter(re.findall(r"\w+", content)).items():
+                _TOKEN_INDEX.setdefault(token, {})[rel] = n
 
 
 def _count_refs_python(name: str, decl_file: Path) -> dict:
-    """Python 子串扫描实现 (降级路径, 无 ripgrep 依赖).
+    """无 ripgrep 依赖的降级实现: 查预建词元索引 (语义等同逐名正则).
 
     B01-19: 性能优化 - 一次性缓存文件内容, 多次 count_refs 共享.
+    P-d: 缓存升级为词元索引, 单次查询从 O(全仓字节) 降为 O(1).
     """
     _build_python_cache()
 
-    word_re = re.compile(r"\b" + re.escape(name) + r"\b")
-
-    total_refs = 0
-    in_decl_file_refs = 0
     try:
         decl_rel = str(decl_file.relative_to(ROOT))
     except ValueError:
         decl_rel = str(decl_file)
 
-    for path_str, content in _PYTHON_FILE_CACHE.items():
-        count = len(word_re.findall(content))
-        if count > 0:
-            total_refs += count
-            if path_str == decl_rel:
-                in_decl_file_refs = count
+    per_file = _TOKEN_INDEX.get(name, {})
+    total_refs = sum(per_file.values())
+    in_decl_file_refs = per_file.get(decl_rel, 0)
 
     return {
         "total": total_refs,
