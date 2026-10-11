@@ -167,7 +167,7 @@ mod e1000_impl {
             Ok(())
         }
 
-        /// 使能收发引擎并写入 MAC / IPG / 中断掩码.
+        /// 使能收发引擎并写入 MAC / IPG (中断掩码待 ISR 注册成功后另启).
         fn complete_init(&self) {
             self.io
                 .set_tx_ctl(E1000_TCTL_EN | E1000_TCTL_PSP | E1000_TCTL_COLD_FD | E1000_TCTL_CT_FD);
@@ -183,8 +183,10 @@ mod e1000_impl {
             self.io.set_mac(self.mac);
             self.io.set_rx_tail((E1000_RX_RING_SIZE - 1) as u32);
             self.io.set_ipg(E1000_IPG_DEFAULT);
-            self.io
-                .irq_enable(E1000_ICR_RXT0 | E1000_ICR_RXDMT0 | E1000_ICR_LSC);
+            // IMS 不在此处使能: 写掩码即令设备经 INTx/MSI 发中断, 而此时 ISR
+            // 尚未注册 (注册在 e1000_net_registration 内), 会形成"已配掩码却
+            // 无人接收"的死接线. 收包此刻由 poll_network 的 try_receive 兜底,
+            // 不依赖 IMS/ICR; 真正的中断使能推迟到 ISR 就位之后按成功与否决定.
             crate::slog_info!(Driver, "e1000: 初始化完成");
         }
 
@@ -376,17 +378,29 @@ mod e1000_impl {
             mac[5]
         );
 
-        // ISSUE-SRC-008: 接线中断 — 使能 MSI-X 并注册网卡 ISR。中断到达时
-        // privileged 统一分发做设备侧 ack (handle_irq) 并置位 NetRx 底半部,
-        // 由 poll_network 完成收包。启动临界区 IF=0, 不存在"中断先于 ISR
-        // 注册"的竞态窗口。MSI-X 不可用 (如 QEMU 82540EM) 时 fail-quiet
-        // 回落轮询模式, 不影响收包正确性。
+        // ISSUE-SRC-008: 接线中断 — 先注册 ISR, 仅在确有接收者时才使能 IMS.
+        // 死接线防线: IMS 收/发/链路掩码只在 MSI-X 使能且 ISR 注册成功后才写.
+        // MSI-X 不可用 (如 QEMU 82540EM) 或 ISR 注册失败时 IMS 保持掩蔽 ⇒ 设备
+        // 不经 INTx 管脚发中断, 内核不会出现"已配掩码却无人接收"的死接线 (x86_64
+        // INTx 路由发现尚未接线, net_register_intx_isr 仅 aarch64 使用); 收包改由
+        // poll_network 的 try_receive 兜底. 启动临界区 IF=0, ISR 注册与 IMS 使能
+        // 之间无"中断先于接收者就位"的竞态窗口.
         if let Some(msix) = pci::msi::msix_enable(dev, 1) {
-            if let Err(e) = crate::privileged::net::net_register_msix_isr(msix.base_vector) {
-                crate::slog_warn!(Driver, "e1000: MSI-X ISR 注册失败 {:?}, 回落轮询", e);
+            match crate::privileged::net::net_register_msix_isr(msix.base_vector) {
+                Ok(()) => {
+                    // ISR 已就位 ⇒ 打开接收/链路中断掩码, 切换为中断驱动收包.
+                    driver
+                        .io
+                        .irq_enable(E1000_ICR_RXT0 | E1000_ICR_RXDMT0 | E1000_ICR_LSC);
+                }
+                Err(e) => crate::slog_warn!(
+                    Driver,
+                    "e1000: MSI-X ISR 注册失败 {:?}, IMS 保持掩蔽走轮询",
+                    e
+                ),
             }
         } else {
-            crate::slog_warn!(Driver, "e1000: MSI-X 不可用, 回落轮询模式");
+            crate::slog_warn!(Driver, "e1000: MSI-X 不可用, 回落轮询模式 (IMS 保持掩蔽)");
         }
 
         Some(register_net_device(Box::new(driver)))
