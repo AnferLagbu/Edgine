@@ -19,7 +19,7 @@ fn main() {
     let base = Path::new(&manifest_dir).parent().unwrap().parent().unwrap();
 
     // G-06 (2026-09-06): 产物存在性检查仅对裸机 target 生效.
-    // other/build/<arch>/user/init.bin + other/build/stage1.bin 由 Makefile 生成,
+    // other/build/<arch>/user/init.bin + other/build/x86_64/stage1.bin 由 Makefile 生成,
     // other/build/ 目录被 .gitignore 忽略. host 构建 (host-tests 经 edgine path 依赖
     // 触发) 的 CARGO_CFG_TARGET_OS 为 linux, 不应检查裸机产物 — 否则干净 checkout
     // 直接 cargo test 会因产物缺失 panic, 形成未记录的隐式 make 依赖.
@@ -29,8 +29,13 @@ fn main() {
         // S-6 防线①: 用户态产物按架构分目录 (Makefile: USER_BUILD_DIR), 与
         // `include_bytes!` 读取路径同源; stage1.bin 是 x86_64 专属引导码
         // (boot/stage1.asm → nasm -f bin). aarch64 引导走 boot/aarch64/start.S,
-        // 不生成也不依赖 stage1.bin, 且 Makefile arch-switch-clean 跨架构切换时
-        // 删除 stage1.bin, aarch64 构建时缺失属正常, 不能 panic.
+        // 不生成也不依赖 stage1.bin.
+        //
+        // stage1.bin 已随内核产物一同迁入 other/build/<arch>/ (P-10): 旧写法放在
+        // 两架构共用的 other/build/ 根下, 靠 Makefile 的 arch-switch-clean 在切架构
+        // 时删掉它来防异架构残留 —— 该补丁机制已随目录隔离退役, 此处不再需要它:
+        // 路径自带 x86_64 段, aarch64 构建既不会读到异架构产物, 也不存在“被删以
+        // 后缺失”的正常情形 (本函数仅在 target_arch == "x86_64" 分支检查).
         let init_bin = base
             .join("other/build")
             .join(&target_arch)
@@ -42,7 +47,7 @@ fn main() {
         // `src/kernel/other/build/...`, 该指令从未生效: 嵌入产物被换后 cargo 仍判
         // Fresh, 不把新字节重新写进镜像, 构成跨架构污染静默通过的通道之一.
         if target_arch == "x86_64" {
-            let stage1 = base.join("other/build/stage1.bin");
+            let stage1 = base.join("other/build/x86_64/stage1.bin");
             require_exists(&stage1);
             println!("cargo:rerun-if-changed={}", stage1.display());
         }

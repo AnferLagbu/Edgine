@@ -26,9 +26,14 @@ SECTIONS
         *(.multiboot2)
     } :boot
     
+    /* 按文件名的输入段选取必须与 Makefile 的 ARCH_BUILD_DIR 逐字一致 (P-10 产物
+       按架构分目录): 模式不命中时 ld 不报错也不警告, 对应 .text 会静默落进下方
+       `*(.text)` 通配区 —— boot.o 的 `_start` 因此离开 `.boot.text`, isr.o 因此
+       离开 `_kpti_trampoline_end` 之前的 KPTI 映射区段. 回归锁:
+       host-tests/tests/kpti_x86_user_table_test.rs (文本契约) + QEMU 启动门禁. */
     . = ALIGN(4096);
     .boot.text : {
-        other/build/boot.o(.text)
+        other/build/x86_64/boot.o(.text)
         __boot_text_end = .;
     } :boot
     
@@ -46,7 +51,7 @@ SECTIONS
     .text : AT(_kernel_text_lma) {
         _kernel_text_start = .;
         *(.kpti_trampoline)
-        other/build/isr.o(.text .text.*)
+        other/build/x86_64/isr.o(.text .text.*)
         . = ALIGN(16);
         _kpti_trampoline_end = .;
         *(.text)

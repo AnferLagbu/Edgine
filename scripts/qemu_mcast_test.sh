@@ -203,7 +203,7 @@ run_qemu() {
         -display none \
         -no-reboot \
         -m 512 -smp 2 \
-        -kernel other/build/kernel.flat \
+        -kernel other/build/x86_64/kernel.flat \
         -netdev socket,id=n0,udp="$HOST_ADDR:$HOST_PORT",localaddr="$HOST_ADDR:$PEER_PORT" \
         -device e1000,netdev=n0,mac="$KERNEL_MAC" \
         >/dev/null 2>&1 || true
@@ -250,8 +250,8 @@ if [ "$SKIP_BUILD" != "1" ]; then
     rm -f "$build_log"
 fi
 
-if [ ! -f other/build/kernel.flat ]; then
-    err "other/build/kernel.flat 缺失, 请先执行 make ARCH=x86_64 all"
+if [ ! -f other/build/x86_64/kernel.flat ]; then
+    err "other/build/x86_64/kernel.flat 缺失, 请先执行 make ARCH=x86_64 all"
     exit 1
 fi
 

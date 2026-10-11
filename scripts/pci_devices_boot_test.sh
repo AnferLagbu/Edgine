@@ -53,8 +53,8 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
     TESTED=$((TESTED+1))
     info "=== x86_64 PCI 集成测试 (NVMe + e1000 + -nic none) ==="
 
-    if [ ! -f other/build/kernel.flat ]; then
-        err "other/build/kernel.flat 缺失, 跳过"
+    if [ ! -f other/build/x86_64/kernel.flat ]; then
+        err "other/build/x86_64/kernel.flat 缺失, 跳过"
         RESULT=1
     else
         LOG="$LOG_DIR/pci_boot_x86_64.log"
@@ -66,7 +66,7 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
             -no-reboot \
             -m 512 \
             -nic none \
-            -kernel other/build/kernel.flat \
+            -kernel other/build/x86_64/kernel.flat \
             -device nvme,serial=QM0001,id=nvme0 \
             -drive "file=${NVME_DISK},if=none,id=nd0" \
             -device nvme-ns,drive=nd0,bus=nvme0 \

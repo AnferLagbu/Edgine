@@ -8,7 +8,8 @@ EL1 不应再执行任何浮点/NEON 指令. 但「零 FP/SIMD」若只依赖编
 拦截点. 本脚本把该判据变为可 CI 强制的确定性检查
 (见 docs/plan/aarch64-kernel-fp-free.md 的 FP-06).
 
-检查对象: `other/build/kernel.bin` (aarch64 内核 ELF, 由 `make ARCH=aarch64` 链接产出).
+检查对象: `other/build/aarch64/kernel.bin` (aarch64 内核 ELF, 由 `make ARCH=aarch64`
+链接产出; P-10 后内核产物按架构分目录, 与 x86_64 镜像不共用路径).
 
 判据: 白名单**外** FP/SIMD 指令计数 == 0.
 
@@ -25,9 +26,12 @@ fail-closed (不可检查 = 违规):
   产物缺失 / 非 AArch64 ELF / objdump 不可用或执行失败或输出为空 /
   `context_switch_asm` 符号缺失或不唯一 ⇒ 一律判违规 (exit 1).
 
-前置条件: 本脚本读取当前 `other/build/kernel.bin`, 因此要求该产物是**最近一次 aarch64
-  链接**的结果. 注意 `./ci/build.sh all` 最后链接的是 x86_64 (双架构共用该输出
-  路径), 需先单独运行 `./ci/build.sh aarch64`.
+产物归属: 路径 `other/build/aarch64/kernel.bin` 自带架构段, 与 x86_64 产物物理隔离
+  (P-10 前与 x86_64 共用一条输出路径, 导致 `./ci/build.sh all` 后本脚本必读到
+  x86_64 镜像而 fail-closed, 需先单独跑 `./ci/build.sh aarch64` —— 该顺序约束已随
+  目录隔离消失, `build.sh all` 现在两架构都链接).
+  下方的 `check_elf_aarch64` 仍保留作为**内容自检**: 若该路径上出现非 AArch64 ELF,
+  说明链接目标与输出目录失配, 同样 fail-closed.
 
 用法: python3 scripts/audit_aarch64_kernel_fp_free.py
 退出码: 0 = 通过, 1 = 违规 / 不可检查
@@ -40,7 +44,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ARTIFACT = os.path.join(ROOT, "other", "build", "kernel.bin")
+ARTIFACT = os.path.join(ROOT, "other", "build", "aarch64", "kernel.bin")
 
 # 白名单符号 (context.rs 的 global_asm! 块内唯一手写 FP 序列)
 WHITELIST_SYMBOL = "context_switch_asm"
@@ -83,8 +87,8 @@ def check_elf_aarch64(path):
     if e_machine != EM_AARCH64:
         return (
             False,
-            f"e_machine=0x{e_machine:x} 非 AArch64 — 当前产物可能是 x86_64 镜像, "
-            f"请先运行 ./ci/build.sh aarch64",
+            f"e_machine=0x{e_machine:x} 非 AArch64 — 路径与内容失配 "
+            f"(other/build/aarch64/ 下出现异架构 ELF), 检查链接目标与 ARCH 变量",
         )
     return True, ""
 

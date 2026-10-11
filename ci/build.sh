@@ -30,10 +30,11 @@ BUILD_STD_CFG=(--config 'unstable.build-std=["core","compiler_builtins","alloc"]
 seed_artifacts() {
     local arch=$1
     echo -e "${YELLOW}[CI] Seeding Makefile artifacts (ARCH=${arch})...${NC}"
-    # x86_64 需 other/build/stage1.bin (专属引导码 boot/stage1.asm); 两架构均需
-    # other/build/<arch>/user/*.bin (user 目标一次生成全部用户态产物)
+    # x86_64 需 other/build/x86_64/stage1.bin (专属引导码 boot/stage1.asm, P-10 后
+    # 内核产物也按架构分目录); 两架构均需 other/build/<arch>/user/*.bin
+    # (user 目标一次生成全部用户态产物)
     if [ "$arch" = "x86_64" ]; then
-        make ARCH="${arch}" other/build/stage1.bin user 2>&1 | tail -3 || true
+        make ARCH="${arch}" other/build/x86_64/stage1.bin user 2>&1 | tail -3 || true
     else
         make ARCH="${arch}" user 2>&1 | tail -3 || true
     fi
@@ -57,11 +58,15 @@ build_arch() {
     fi
 }
 
-# 链接最终内核镜像 (kernel.flat / kernel.bin).
+# 链接最终内核镜像 (kernel.flat / kernel.bin / kernel-aarch64.img).
 # cargo build 仅生成 Rust 静态库 (.a), 必须通过 make 链接汇编对象
 # 才能生成可启动的内核二进制. 跳过此步骤会导致 QEMU 使用过期镜像.
-# 注意: 双架构不能同时链接 (共用 other/build/kernel.bin 输出路径),
-#       因此 all 模式下仅链接主架构 (x86_64).
+#
+# P-10 (产物按架构分目录) 后双架构镜像落 other/build/<arch>/, 不再共用输出
+# 路径 —— 旧写法「all 模式仅链接主架构 (x86_64)」因此从来不会链接 aarch64,
+# aarch64 的链接期错误 (缺 .o / ld script 失配 / Image 头异常) 在全量口径下
+# 完全不可见, 也使 FP-06 审计 (反汇编 aarch64 kernel.bin) 在 `build.sh all`
+# 之后必然读到 x86_64 产物而 fail-closed. 现两架构各自链接, 该耦合消失.
 link_kernel() {
     local arch=$1
     echo -e "${YELLOW}[CI] Linking ARCH=${arch} kernel image...${NC}"
@@ -187,9 +192,10 @@ case "$ARCH" in
         build_arch "aarch64" "aarch64-unknown-none-softfloat" && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
         run_host_tests && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
         check_forbidden_patterns && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
-        # 双架构共享 other/build/kernel.bin 输出路径, 仅链接主架构.
-        # aarch64 链接验证在单独 `./ci/build.sh aarch64` 时完成.
+        # P-10: 产物已按架构分目录, 两架构链接互不覆盖, 因此都链接 —
+        # aarch64 的链接期错误不再依赖单独跑 `./ci/build.sh aarch64` 才能发现.
         link_kernel "x86_64" && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
+        link_kernel "aarch64" && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
         ;;
     *)
         echo "Usage: $0 [x86_64|aarch64|all]"

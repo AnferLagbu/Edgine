@@ -109,56 +109,25 @@ boot_and_check() {
 }
 
 # ---------------------------------------------------------------------------
-# 架构同步: 确保 other/build/ 中间产物架构 + .arch 戳记与目标一致
-# 防止 qemu_boot_test.sh 跑 aarch64 后, .arch 残留 aarch64 但开发者
-# 下次手敲 make ARCH=x86_64 增量构建报 EM 183 错误 (AArch64 产物误用).
-# 解决: 脚本每次跑测试前主动检测 + 同步 .arch 戳记.
+# 跑测试前确保目标架构产物为最新构建 (P-10 后的简化形态)
+#
+# 旧形态 sync_make_state 做三件事: 读 other/build/log/.arch 戳记判跨架构、用
+# file(1) 反查中间 .o 的实际架构、不符则删除共用路径产物后重建. 三者都是
+# 「两架构共用一条产物路径」的补丁 (跨架构误用 boot.o 会报 EM 183, 或静默嵌入
+# 异架构 ELF). P-10 后 Makefile 把 .o 与镜像一并落到 other/build/<arch>/,
+# 该误用通道物理上不存在, 补丁机制随之退役.
+#
+# 保留下来的只剩一件事: 幂等地把本架构产物做到最新 (make 增量, 已新鲜时秒级),
+# 使本脚本对「未 make 就跑」同样成立. 启动前的产物内容自检仍由 verify_image_arch
+# (S-6 防线③) 承担.
 # 参数: $1=目标架构 (x86_64 / aarch64)
-# 返回: 0 = 已同步 (无操作或重建成功), 1 = 重建失败
+# 返回: 0 = 产物已最新, 1 = 构建失败
 # ---------------------------------------------------------------------------
-sync_make_state() {
+ensure_arch_artifacts() {
     local target_arch="$1"
-    local arch_stamp="$LOG_DIR/.arch"
-    local prev_arch=""
-    [ -f "$arch_stamp" ] && prev_arch="$(cat "$arch_stamp" 2>/dev/null || echo none)"
-
-    # 检查中间 .o 产物是否与目标架构一致 (使用 file 命令)
-    local asm_objs="other/build/boot.o other/build/entry.o other/build/isr.o other/build/switch.o other/build/arch/x86_64/trampoline.o"
-    local need_rebuild=0
-
-    if [ "$prev_arch" != "$target_arch" ]; then
-        info "[$target_arch] .arch 戳记不匹配 ($prev_arch → $target_arch), 强制重建"
-        need_rebuild=1
-    else
-        # .arch 一致但仍要校验 .o 产物 (防止外部 rm 与 .arch 失同步)
-        for obj in $asm_objs; do
-            if [ -f "$obj" ]; then
-                local obj_arch=""
-                if file "$obj" | grep -q "x86-64"; then
-                    obj_arch="x86_64"
-                elif file "$obj" | grep -q "ARM aarch64\|aarch64"; then
-                    obj_arch="aarch64"
-                fi
-                if [ "$obj_arch" != "" ] && [ "$obj_arch" != "$target_arch" ]; then
-                    warn "[$target_arch] 中间产物 $obj 架构 ($obj_arch) 与目标不符, 强制重建"
-                    need_rebuild=1
-                    break
-                fi
-            fi
-        done
-    fi
-
-    if [ "$need_rebuild" = "1" ]; then
-        rm -f $asm_objs other/build/kernel.bin other/build/kernel.flat other/build/kernel-aarch64.img other/build/kernel.map other/build/stage1.bin
-        # 用户态产物已按架构分目录 (S-6 防线①: other/build/<arch>/user/),
-        # 异架构产物不在本架构读取路径上, 无需清除 (旧写法删共享的 other/build/user/*.bin
-        # 正是当时唯一能拦住污染的机制, 现已由目录隔离 + 启动前自检接手).
-        if ! make ARCH="$target_arch" all 2>&1 | tail -3; then
-            err "[$target_arch] make ARCH=$target_arch 失败"
-            return 1
-        fi
-        # Makefile 会在解析时写 .arch, 此处再次校验
-        [ -f "$arch_stamp" ] || echo "$target_arch" > "$arch_stamp"
+    if ! make ARCH="$target_arch" all 2>&1 | tail -3; then
+        err "[$target_arch] make ARCH=$target_arch all 失败"
+        return 1
     fi
     return 0
 }
@@ -167,11 +136,11 @@ sync_make_state() {
 # 内核镜像陈旧检测 (B08-16 / ISSUE-TOOL-002)
 # Makefile 依赖已保证 make 层面自动重建, 此处为 QEMU 脚本独立防线:
 # 源码 (内核 + 用户态) 比镜像新时提示先 make, 避免跑陈旧镜像误判.
-# 参数: $1=镜像路径 (默认 other/build/kernel.flat, aarch64 传 other/build/kernel-aarch64.img)
+# 参数: $1=镜像路径 (默认 other/build/x86_64/kernel.flat, aarch64 传 other/build/aarch64/kernel-aarch64.img)
 # 返回: 0 = 镜像新鲜或缺失, 1 = 镜像可能过期
 # ---------------------------------------------------------------------------
 check_kernel_fresh() {
-    local image="${1:-other/build/kernel.flat}"
+    local image="${1:-other/build/x86_64/kernel.flat}"
     [ -f "$image" ] || return 0
     local newest
     newest=$(find src/rust/src src/kernel src/user -name '*.rs' -newer "$image" 2>/dev/null | head -1)
@@ -239,7 +208,7 @@ while True:
         -display none
         -no-reboot
         -m 512 -smp 2
-        -kernel other/build/kernel.flat
+        -kernel other/build/x86_64/kernel.flat
         -device e1000,netdev=n0
         -netdev "user,id=n0,hostfwd=tcp::${E2E_HOST_PORT}-:${E2E_GUEST_PORT}"
     )
@@ -395,17 +364,17 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
     TESTED=$((TESTED+1))
     info "=== x86_64 QEMU 真实启动 ==="
 
-    # 架构同步: 确保 other/build/ 中间产物 + .arch 戳记与 x86_64 一致
-    # (防止 aarch64 测试残留导致 EM 183 报错)
-    sync_make_state "x86_64" || RESULT=1
+    # 产物新鲜度: 确保 other/build/x86_64/ 下为本架构最新构建
+    # (P-10 后产物按架构分目录, 不再需 .arch 戳记与 .o 架构反查)
+    ensure_arch_artifacts "x86_64" || RESULT=1
 
     # ISSUE-TOOL-002: x86_64 侧同样接入陈旧镜像检测 (与 aarch64 分支一致)
     check_kernel_fresh || true
 
-    if [ ! -f other/build/kernel.flat ]; then
+    if [ ! -f other/build/x86_64/kernel.flat ]; then
         err "x86_64 kernel.flat 缺失, 跳过测试"
         RESULT=1
-    elif ! verify_image_arch "x86_64" other/build/kernel.flat; then
+    elif ! verify_image_arch "x86_64" other/build/x86_64/kernel.flat; then
         # S-6 防线③: 不通过即不启动 (与旧世界"静默跑在污染镜像上"相反)
         RESULT=1
     else
@@ -415,7 +384,7 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
         # PHY_RST) 修复后, 恢复默认 e1000 并断言驱动初始化里程碑 + 完整进 Ring 3.
         # APS-05 (DECISION-084): -smp 2 使次核上线路径与双核并发 EL0 进入门禁.
         if boot_and_check "x86_64" "$X64_LOG" "$TIMEOUT_QEMU" "VFS ready" \
-            -m 512 -smp 2 -kernel other/build/kernel.flat; then
+            -m 512 -smp 2 -kernel other/build/x86_64/kernel.flat; then
             # e1000 驱动初始化里程碑 (ISSUE-RT-001 回归断言)
             if grep -q "e1000: 初始化完成" "$X64_LOG"; then
                 ok "[x86_64] e1000 驱动初始化完成 (ISSUE-RT-001 回归通过)"
@@ -502,16 +471,16 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
     TESTED=$((TESTED+1))
     info "=== aarch64 QEMU 真实启动 ==="
 
-    # 架构同步: 确保 other/build/ 中间产物 + .arch 戳记与 aarch64 一致
-    # (防止 x86_64 测试残留导致 EM 183 反向误用)
-    sync_make_state "aarch64" || RESULT=1
+    # 产物新鲜度: 确保 other/build/aarch64/ 下为本架构最新构建
+    # (P-10 后两架构产物分目录, x86_64 侧残留不可能被 aarch64 链路误用)
+    ensure_arch_artifacts "aarch64" || RESULT=1
 
-    check_kernel_fresh other/build/kernel-aarch64.img || true
+    check_kernel_fresh other/build/aarch64/kernel-aarch64.img || true
 
-    if [ ! -f other/build/kernel-aarch64.img ]; then
+    if [ ! -f other/build/aarch64/kernel-aarch64.img ]; then
         err "aarch64 kernel-aarch64.img 缺失, 跳过测试"
         RESULT=1
-    elif ! verify_image_arch "aarch64" other/build/kernel-aarch64.img; then
+    elif ! verify_image_arch "aarch64" other/build/aarch64/kernel-aarch64.img; then
         # S-6 防线③: 同上, 启 QEMU 前先证明镜像嵌的是 aarch64 用户态
         RESULT=1
     else
@@ -523,7 +492,7 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
         # QEMU 经 Image 头 text_offset 定位入口, 与 U-Boot booti / 真机一致.
         # SMP-09 (DECISION-082): 以 -smp 2 启动双核, 使 AP 上线路径进入 CI 门禁.
         if boot_and_check "aarch64" "$A64_LOG" "$TIMEOUT_QEMU" "VFS ready" \
-            -M virt,gic-version=3 -cpu max -m 512 -smp 2 -kernel other/build/kernel-aarch64.img \
+            -M virt,gic-version=3 -cpu max -m 512 -smp 2 -kernel other/build/aarch64/kernel-aarch64.img \
             -device virtio-net-device,netdev=n0 \
             -netdev user,id=n0; then
             # ISSUE-RT-002: GICv3 初始化成功里程碑 (初始化后置条件自检通过).

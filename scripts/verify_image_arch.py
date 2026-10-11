@@ -14,7 +14,7 @@ x86_64 镜像" — 全程 0 error / 0 warning / rc=0, 直到进入 Ring 3 执行
 
 用法:
     python3 scripts/verify_image_arch.py --arch x86_64 \\
-        --image other/build/kernel.flat \\
+        --image other/build/x86_64/kernel.flat \\
         --init  other/build/x86_64/user/init.bin
 
     # 只校验单个 ELF 的架构身份 (Makefile/CI 可用)
