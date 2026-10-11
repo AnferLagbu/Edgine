@@ -1,87 +1,137 @@
-# Edgine CI Local Targets
+# Edgine CI Local Targets —— 薄封装 (只委派, 不实现)
 #
 # Usage:
-#   make -f Makefile.ci ci              # Full CI flow
-#   make -f Makefile.ci ci-audit        # SAFETY + boundary + deadlock audit
-#   make -f Makefile.ci ci-cargo        # cargo check (x86_64 + aarch64)
-#   make -f Makefile.ci ci-unsafe-scan  # functions 0-unsafe scan
+#   make -f Makefile.ci ci              # §2.3 六条验证门槛一键全跑
+#   make -f Makefile.ci ci-audit        # 权威审计栈 (clippy + fmt + 全部 audit_*.py)
+#   make -f Makefile.ci ci-build        # 双架构 cargo check + 双架构链接 (0 error / 0 warning)
+#   make -f Makefile.ci ci-test-host    # host-tests (单元 + 集成, Cargo 自动发现)
+#   make -f Makefile.ci ci-test-kernel-host  # 内核 host 侧 #[cfg(test)] 内联用例
+#   make -f Makefile.ci ci-boot         # QEMU 集成 (x86_64 + aarch64)
+#   make -f Makefile.ci ci-rustdoc      # 双架构 rustdoc 0 warning (对齐 ci-lint.yml)
 #   make -f Makefile.ci ci-bench        # framekernel-bench + 回归检查
 #   make -f Makefile.ci ci-bench-record # 重新记录性能基线
-#   make -f Makefile.ci ci-test-host    # host-tests (单元 + 集成) 全量测试
 #   make -f Makefile.ci ci-fix          # auto-fix where possible
+#   make -f Makefile.ci ci-clean        # clean log dir
+#
+# 本文件不写任何检查逻辑. 旧形态在此平行实现了一套弱化判据, 与权威入口脚本
+# (ci/build.sh / ci/audit.sh) 分叉:
+#   - ci-audit 只跑 3 个审计脚本, 漏掉 §2.2 表格中 functions_boundary 之外的
+#     invariants / once_cell / c_naming / repr(C) / volatile / static_mut /
+#     FP-06 / S-14 / comment_language 等 10+ 项强制门禁;
+#   - ci-cargo 判据是 `grep "^error["`, 漏 warning、漏 link 阶段, 且用 dev
+#     profile 而非 §2.3 要求的 --release, 检查对象还是 src/rust 壳 crate;
+#   - `ci` 聚合不含 clippy / fmt / host-tests / 内核单测 / x86_64 QEMU ——
+#     即「本地一键绿」并不等于 §2.3 六门槛绿.
+# 现在一律委派: 判据由被委派脚本自己决定, 本文件只负责映射目标名.
+
+# 管道里的退出码不被 tee/tail 掩盖: 旧 ci-cargo / ci-test-aarch64 写作
+# `cmd 2>&1 | tee log`, make 看到的是 tee 的退出码 —— 检查失败也报 PASS.
+# 副作用提醒: 把本文件输出再接到会提前退出的下游 (如 `| head -5`) 时, 上游会收到
+# SIGPIPE 并以非 0 中断 make —— 那是截断动作本身造成, 不是门禁失败; 完整日志
+# 已在 $(LOG_DIR) 下, 查看请用 tail/less 或直接读日志文件.
+SHELL := /bin/bash -o pipefail
 
 LOG_DIR := other/build/log
 PY := python3
 
-.PHONY: ci ci-audit ci-cargo ci-unsafe-scan ci-bench ci-bench-record ci-test-host ci-fix ci-clean help
+.PHONY: ci ci-build ci-cargo ci-audit ci-unsafe-scan \
+        ci-test-host ci-test-kernel-host ci-boot ci-test-x86 ci-test-aarch64 \
+        ci-rustdoc ci-bench ci-bench-record ci-fix ci-clean help
 
-help:
-	@echo "Edgine CI Targets"
-	@echo ""
-	@echo "  make -f Makefile.ci ci                - Full CI flow"
-	@echo "  make -f Makefile.ci ci-audit          - SAFETY + boundary + deadlock audit"
-	@echo "  make -f Makefile.ci ci-cargo          - cargo check (x86_64 + aarch64)"
-	@echo "  make -f Makefile.ci ci-unsafe-scan    - functions 0-unsafe scan"
-	@echo "  make -f Makefile.ci ci-bench          - framekernel-bench + 回归检查"
-	@echo "  make -f Makefile.ci ci-bench-record   - 重新记录性能基线"
-	@echo "  make -f Makefile.ci ci-test-host      - host-tests 单元+集成全量 (Cargo 自动发现)"
-	@echo "  make -f Makefile.ci ci-test-aarch64   - aarch64 QEMU boot test"
-	@echo "  make -f Makefile.ci ci-fix            - auto-fix where possible"
-	@echo "  make -f Makefile.ci ci-clean          - clean log dir"
-	@echo ""
-
-# Full CI
-ci: ci-unsafe-scan ci-audit ci-cargo ci-bench ci-test-aarch64
+# ── §2.3 六条验证门槛的一键聚合 ─────────────────────────────────
+# 前置条件按依赖序排列: 先产出双架构产物 (build), 审计与 QEMU 才有可信输入.
+ci: ci-build ci-audit ci-test-host ci-test-kernel-host ci-boot ci-bench ci-rustdoc
 	@echo ""
 	@echo "=========================================="
-	@echo "Edgine Framekernel Compliance: PASS"
+	@echo "Edgine §2.3 六条验证门槛: PASS"
+	@echo "  1 双架构 cargo check + link  → ci-build"
+	@echo "  2 clippy 0 warning + fmt     → ci-audit"
+	@echo "  3 核心审计全通过             → ci-audit"
+	@echo "  4 host-tests 全通过          → ci-test-host"
+	@echo "  5 QEMU 集成通过              → ci-boot"
+	@echo "  6 内核 host 单元测试 0 failed → ci-test-kernel-host"
+	@echo "  (+ bench 回归 / rustdoc, 见 §8 性能基线)"
 	@echo "=========================================="
 
-# Unsafe scan (uses Python script for accurate comment filtering)
+# ── 门槛 1: 双架构 0 error / 0 warning + 链接 ───────────────────
+# 委派 ci/build.sh: 内部按架构做 cargo check (--release) + seed 产物 + 链接
+# 内核镜像, 两架构产物已分目录 (P-10), all 模式两架构都链接.
+ci-build:
+	@echo "[1/6] 双架构 cargo check + link (ci/build.sh all)..."
+	@mkdir -p $(LOG_DIR)
+	@./ci/build.sh all 2>&1 | tee $(LOG_DIR)/ci_build.txt
+
+# ci-cargo 是 ci-build 的历史别名 (旧目标名保留以免打断肌肉记忆), 判据同 ci-build.
+ci-cargo: ci-build
+
+# ── 门槛 2 + 3: 权威审计栈 (clippy / fmt / 全部 audit_*.py) ─────
+# 委派 ci/audit.sh —— 它是 §2.2 表格的落地入口, 含 20+ 审计脚本与 clippy/fmt
+# 分支; quick 模式不依赖 Lockbud/Miri 等重工具, 与 CI 判据一致.
+ci-audit:
+	@echo "[2/6] 权威审计栈 (ci/audit.sh quick)..."
+	@mkdir -p $(LOG_DIR)
+	@bash ci/audit.sh quick 2>&1 | tee $(LOG_DIR)/ci_audit.txt
+
+# 单项快查入口: 只想复跑 functions 层 unsafe 扫描时用 (完整口径仍走 ci-audit).
+# clippy / fmt 不单独设目标 —— 它们已在 ci/audit.sh 内部, 再开入口就又是平行实现.
 ci-unsafe-scan:
-	@echo "[1/3] functions 0-unsafe scan..."
+	@echo "[quick] functions 0-unsafe 单点扫描..."
 	@mkdir -p $(LOG_DIR)
 	@$(PY) scripts/ci_check_functions_unsafe.py
 
-# Audit
-ci-audit:
-	@echo "[2/4] SAFETY + boundary + deadlock audit..."
+# ── 门槛 4: host-tests (单元 + 集成, Cargo 自动发现) ─────────────
+# v2.24 重构后不再用 [[test]] 显式声明, 全部由 Cargo 自动发现, 避免双重编译.
+ci-test-host:
+	@echo "[3/6] host-tests 单元 + 集成 (Cargo 自动发现)..."
 	@mkdir -p $(LOG_DIR)
-	@echo "  - SAFETY comment audit (M6.1)..."
-	@$(PY) scripts/audit_safety_coverage.py > $(LOG_DIR)/safety_audit.txt 2>&1
-	@echo "  - functions->privileged boundary (M6.3)..."
-	@$(PY) scripts/audit_functions_boundary.py > $(LOG_DIR)/functions_boundary.txt 2>&1
-	@echo "  - deadlock matrix (M6.2)..."
-	@$(PY) scripts/audit_deadlock_matrix.py > $(LOG_DIR)/deadlock_matrix.txt 2>&1
-	@if grep -q "CRITICAL" $(LOG_DIR)/deadlock_matrix.txt; then \
-		echo "FAIL: deadlock matrix CRITICAL" ; \
-		head -50 $(LOG_DIR)/deadlock_matrix.txt ; \
-		exit 1 ; \
-	fi
-	@echo "PASS: all audits pass"
+	@cd host-tests && { cargo test --quiet > ../$(LOG_DIR)/host_tests.txt 2>&1; status=$$?; cat ../$(LOG_DIR)/host_tests.txt; exit $$status; }
+	@echo "PASS: host-tests 全量通过"
 
-# Cargo check
-ci-cargo:
-	@echo "[3/3] cargo check (x86_64 + aarch64)..."
+# ── 门槛 6: 内核 host 侧内联单元测试 ────────────────────────────
+ci-test-kernel-host:
+	@echo "[4/6] 内核单元测试 (host, #[cfg(test)] 内联)..."
 	@mkdir -p $(LOG_DIR)
-	@cd src/rust && cargo check --target x86_64-unknown-none 2>&1 | tee ../../$(LOG_DIR)/cargo_check_x86_64.txt
-	@cd src/rust && cargo check --target aarch64-unknown-none-softfloat 2>&1 | tee ../../$(LOG_DIR)/cargo_check_aarch64.txt
-	@if grep -q "^error\[" $(LOG_DIR)/cargo_check_x86_64.txt $(LOG_DIR)/cargo_check_aarch64.txt 2>/dev/null; then \
-		echo "FAIL: cargo check failed" ; \
-		exit 1 ; \
-	fi
-	@echo "PASS: cargo check"
+	@cd src/kernel && { cargo test --features host-test --lib > ../../$(LOG_DIR)/kernel_host_tests.txt 2>&1; status=$$?; cat ../../$(LOG_DIR)/kernel_host_tests.txt; exit $$status; }
+	@echo "PASS: 内核 host 单元测试 0 failed"
 
-# Auto-fix
-ci-fix:
-	@echo "Running auto-fix..."
-	@echo "  - cargo fix --allow-dirty"
-	@cd src/rust && cargo fix --target x86_64-unknown-none --allow-dirty --allow-staged 2>&1 | tail -10 || true
-	@echo "PASS: auto-fix complete (please re-run make ci)"
+# ── 门槛 5: QEMU 集成 (双架构真实启动) ──────────────────────────
+ci-boot: ci-test-x86 ci-test-aarch64
 
-# Bench: 运行 framekernel-bench 并做 15% 回归检查
+ci-test-x86:
+	@echo "[5/6] x86_64 QEMU boot test..."
+	@mkdir -p $(LOG_DIR)
+	@bash scripts/qemu_boot_test.sh x86_64 2>&1 | tee $(LOG_DIR)/qemu_boot_x86_64.txt
+
+ci-test-aarch64:
+	@echo "[5/6] aarch64 QEMU boot test..."
+	@mkdir -p $(LOG_DIR)
+	@bash scripts/qemu_boot_test.sh aarch64 2>&1 | tee $(LOG_DIR)/qemu_boot_aarch64.txt
+
+# ── rustdoc 0 warning (对齐 ci-lint.yml 的 rustdoc-check job) ────
+# 此前该门禁只存在于 workflow, 本地没有入口 —— 提交前无法自查, 只能在 CI 上看
+# 到红. 命令与 workflow 保持逐字一致 (裸机 doc 需 build-std 注入).
+ci-rustdoc:
+	@echo "[+] rustdoc --no-deps 双架构阻断..."
+	@mkdir -p $(LOG_DIR)
+	@cd src/rust && RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links" \
+		cargo doc --release \
+		--manifest-path ../kernel/Cargo.toml \
+		--config 'unstable.build-std=["core","compiler_builtins","alloc"]' \
+		--config 'unstable.build-std-features=["compiler-builtins-mem"]' \
+		--target x86_64-unknown-none --target-dir ../../other/target \
+		--lib --bins --examples --no-deps 2>&1 | tee ../../$(LOG_DIR)/rustdoc_x86_64.log | tail -5
+	@cd src/rust && RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links" \
+		cargo doc --release \
+		--manifest-path ../kernel/Cargo.toml \
+		--config 'unstable.build-std=["core","compiler_builtins","alloc"]' \
+		--config 'unstable.build-std-features=["compiler-builtins-mem"]' \
+		--target aarch64-unknown-none-softfloat --target-dir ../../other/target \
+		--lib --bins --examples --no-deps 2>&1 | tee ../../$(LOG_DIR)/rustdoc_aarch64.log | tail -5
+	@echo "PASS: rustdoc 0 源码级 link 错误 (x86_64 + aarch64)"
+
+# ── Bench: framekernel-bench + 15% 回归检查 (M6.9) ───────────────
 ci-bench:
-	@echo "[4/4] framekernel-bench + 回归检查 (M6.9)..."
+	@echo "[+] framekernel-bench + 回归检查 (M6.9)..."
 	@mkdir -p $(LOG_DIR)
 	@if [ ! -f host-tests/benches/baseline.json ]; then \
 		echo "  - baseline.json 不存在, 自动记录初始基线..." ; \
@@ -89,39 +139,42 @@ ci-bench:
 		echo "  - 已生成 baseline.json, 后续将进入回归检查模式" ; \
 	fi
 	@echo "  - 运行回归检查..."
-	@$(PY) scripts/check_bench_regression.py > $(LOG_DIR)/bench_regression.txt 2>&1 || \
+	@$(PY) scripts/check_bench_regression.py > $(LOG_DIR)/bench_regression.txt || \
 		( echo "FAIL: bench 回归检查失败, 见 $(LOG_DIR)/bench_regression.txt" ; \
 		  cat $(LOG_DIR)/bench_regression.txt ; \
 		  exit 1 )
 	@echo "PASS: bench 回归检查通过"
 
-# Bench record: 主动重新记录基线
 ci-bench-record:
 	@echo "[bench] 重新记录性能基线..."
 	@mkdir -p $(LOG_DIR)
 	@$(PY) scripts/record_bench_baseline.py | tee $(LOG_DIR)/bench_baseline.txt
 	@echo "PASS: baseline.json 已更新"
 
-# Host-tests: 单元 (内联 #[cfg(test)]) + 集成 (tests/ 自动发现)
-# v2.24 重构后, 不再使用 [[test]] 显式声明, 全部由 Cargo 自动发现, 避免双重编译.
-# 测试分布:
-#   - 单元测试: src/{buddy,capability,checksum,sha256,dma_stream,framekernel_bench,unkfs_mock}.rs
-#   - 集成测试: tests/{display,e1000_eeprom,iomem_alias,unkfs_test,unkfs_persist,stress_test}.rs
-#   - 共享helper: tests/common/mod.rs
-ci-test-host:
-	@echo "[host-tests] 单元 + 集成测试 (Cargo 自动发现)..."
-	@mkdir -p $(LOG_DIR)
-	@cd host-tests && { cargo test --quiet > ../$(LOG_DIR)/host_tests.txt 2>&1; status=$$?; cat ../$(LOG_DIR)/host_tests.txt; exit $$status; }
-	@echo "PASS: host-tests 全量通过"
+# ── 辅助目标 ────────────────────────────────────────────────────
+ci-fix:
+	@echo "Running auto-fix..."
+	@echo "  - cargo fix --allow-dirty"
+	@cd src/rust && cargo fix --target x86_64-unknown-none --allow-dirty --allow-staged 2>&1 | tail -10
+	@echo "PASS: auto-fix complete (please re-run make ci)"
 
-# Clean
 ci-clean:
 	@rm -rf $(LOG_DIR)
 	@echo "PASS: clean"
 
-# aarch64 QEMU boot test
-ci-test-aarch64:
-	@echo "[aarch64] QEMU boot test..."
-	@mkdir -p $(LOG_DIR)
-	@bash scripts/qemu_boot_test.sh aarch64 2>&1 | tee $(LOG_DIR)/qemu_boot_aarch64.txt
-	@echo "PASS: aarch64 QEMU boot test"
+help:
+	@echo "Edgine CI Targets (薄封装: 全部委派 ci/build.sh, ci/audit.sh, scripts/*)"
+	@echo ""
+	@echo "  make -f Makefile.ci ci                   - §2.3 六门槛一键全跑"
+	@echo "  make -f Makefile.ci ci-build             - 双架构 cargo check --release + link"
+	@echo "  make -f Makefile.ci ci-audit             - 权威审计栈 (clippy + fmt + audit_*.py)"
+	@echo "  make -f Makefile.ci ci-test-host         - host-tests 单元 + 集成"
+	@echo "  make -f Makefile.ci ci-test-kernel-host  - 内核 host 侧 #[cfg(test)] 用例"
+	@echo "  make -f Makefile.ci ci-boot              - QEMU 集成 (x86_64 + aarch64)"
+	@echo "  make -f Makefile.ci ci-rustdoc           - 双架构 rustdoc 0 warning"
+	@echo "  make -f Makefile.ci ci-bench             - bench + 回归检查"
+	@echo "  make -f Makefile.ci ci-bench-record      - 重新记录基线"
+	@echo "  make -f Makefile.ci ci-unsafe-scan       - functions unsafe 单点快查"
+	@echo "  make -f Makefile.ci ci-fix               - auto-fix"
+	@echo "  make -f Makefile.ci ci-clean             - clean log dir"
+	@echo ""
