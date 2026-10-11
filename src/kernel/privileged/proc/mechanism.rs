@@ -89,5 +89,4 @@ pub use super::sched_ops::proc_set_priority;
 
 pub use super::api::session_init;
 pub use super::api::user_proc_init;
-pub use super::sched_ops::scheduler_init;
 pub use super::sched_ops::scheduler_tick;

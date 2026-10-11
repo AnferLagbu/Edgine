@@ -157,8 +157,10 @@ fi
 # FP-06: aarch64 内核「零 FP/SIMD」反汇编白名单审计 — 防 EL1 出现浮点/NEON
 # (软浮点 target 只保证编译期不生成 FP 指令, 无法拦截源码/汇编层的回退;
 #  以反汇编白名单确定性覆盖, 见 docs/plan/aarch64-kernel-fp-free.md FP-06)
-# 注意: 本步骤读取 other/build/kernel.bin, 要求其为最近一次 aarch64 链接的产物
-# (双架构共用该输出路径, ./ci/build.sh all 最后链接 x86_64 ⇒ 需先跑 build.sh aarch64).
+# 产物: other/build/aarch64/kernel.bin —— 内核产物已按架构分目录 (P-10), 与 x86_64
+# 不共用输出路径, 因此本步骤不再要求"先跑 build.sh aarch64": ./ci/build.sh all 现
+# 已两架构各自链接, 两种产物同时存在. 旧共用路径曾使本审计在 build all 之后必读到
+# x86_64 镜像而 fail-closed (假阳性, 非真实 FP 回退).
 if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_aarch64_kernel_fp_free.py" ]; then
     step "0.5i/6 aarch64 内核零 FP/SIMD (FP-06)"
     FP_AUDIT_OUT=$("$PROJECT_ROOT/scripts/audit_aarch64_kernel_fp_free.py" 2>&1) && FP_AUDIT_RC=0 || FP_AUDIT_RC=$?
@@ -184,6 +186,68 @@ for MEMSAFETY_AUDIT in repr_c volatile_access static_mut; do
         fi
     fi
 done
+
+# ── 0.5k 硬规则 F1+F2 / F4 / F8 核心审计 ────────────────────────
+# 这三项在 AGENTS.md §2.2 里被列为「强制」门禁, 但此前只接入了 GitHub
+# workflow (ci-lint.yml), 本地权威入口本脚本反而没跑 —— 本地绿而 CI 红 (或反之)
+# 的根源. 现在归位: 本地一键门禁 = CI 同一判据, 且都是 fail-closed
+# (三脚本均在违规时 exit 1 / exit 2).
+# 调起方式 = `python3 脚本`: 三脚本在仓库里是 mode 644 (不可执行), 而 workflow
+# 也正是 `python3 scripts/...` 调起 —— 直接执行会因权限不够而假失败,
+# 依赖可执行位也不能保证跨 checkout 稳定 (与 workflow 保持同一调起形式).
+for HARD_RULE_AUDIT in functions_boundary safety_coverage deadlock_matrix; do
+    if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_${HARD_RULE_AUDIT}.py" ]; then
+        step "0.5k/6 硬规则核心 audit (${HARD_RULE_AUDIT})"
+        if python3 "$PROJECT_ROOT/scripts/audit_${HARD_RULE_AUDIT}.py" 2>&1 | tail -10; then
+            ok "${HARD_RULE_AUDIT}: 硬规则门禁通过"
+        else
+            err "${HARD_RULE_AUDIT}: 硬规则被破坏 (F1/F2/F4/F8)! 见上方输出"
+        fi
+    fi
+done
+
+# ── 0.5l P-8 初始化编排孤儿入口审计 ────────────────────────
+# O1 门禁: `#[unsafe(no_mangle)]` + 初始化语义 + 全仓 0 调用者 + 体内嵌套 ≥2 项 init
+# ⇒「孤儿编排入口」. scheduler_init 曾以该形态挂住 10 项子系统 init, 生产环境从未
+# 执行; `audit_unwired_pub_fn.py` 显式豁免 no_mangle (FFI 边界), 本项是那个盲区.
+# 先跑 --self-test: 检测逻辑退化会让门禁静默全绿, 脚本自身必须先自证.
+# O2 (退化 FFI 包裹, 存量 11 项) 仅报告不阻塞 —— 登记见
+# docs/plan/net-e2e-tcp-echo-flakiness.md §6 P-12.
+if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_orphaned_init.py" ]; then
+    step "0.5l/6 孤儿初始化编排入口 audit (P-8) — 自检"
+    if python3 "$PROJECT_ROOT/scripts/audit_orphaned_init.py" --self-test 2>&1 | tail -6; then
+        ok "orphaned_init: 检测器自检通过"
+    else
+        err "orphaned_init: 检测器退化, 门禁不可信 (见上方夹具用例)"
+    fi
+    step "0.5l/6 孤儿初始化编排入口 audit (P-8) — 全仓扫描"
+    if python3 "$PROJECT_ROOT/scripts/audit_orphaned_init.py" 2>&1 | tail -20; then
+        ok "orphaned_init: 无孤儿编排入口 (P-8 不变式成立)"
+    else
+        err "orphaned_init: 发现孤儿编排入口! 子系统初始化从未执行"
+    fi
+fi
+
+# ── 0.5m P-13 零引用 pub fn / 未接线 syscall 编号审计 ──────────
+# R2 (CRITICAL): `syscall/types.rs` 声明的 SYS_*/EG_* 编号未被 dispatch 分发 ⇒
+# 用户态拿到编号却得 ENOSYS, 属接口欺骗, 无条件阻断. R1 零引用 pub fn 由用户裁定
+# **常开 `--strict` 阻断**: 脚本把「未分类 R1」并入 warn 聚合 (`warn =
+# r1_unclassified + R3_unused_module`), 故 `--strict` 对 HIGH>0 确实退 1. 门禁
+# 强度与 §5 F9「零死代码无豁免」同构 —— 本轮 `apic::get_deadline` (本轮自身新增的
+# 零消费者 API) 是靠下一轮审计才发现的, 常开后这类自伤在提交前即被拦.
+# 前置事实: 存量 R1 已逐项甄别完毕 (未分类 HIGH 45 → 0, 其中 25 项经独立 oracle
+# 对跑证实为工具假阳性, 19 项预存已分组登记) ⇒ 开启零摩擦. 台账见
+# docs/plan/syscall-followup.md B-6, 过程记录见 net-e2e-tcp-echo-flakiness.md §6 P-13.
+# 性能前置: 本机无 ripgrep 时走脚本内降级路径; 该路径原为 O(待查名 × 全仓字节)
+# (实测 13 分钟不收敛), 现已改为单遍切词建索引 → O(全仓字节 + 待查名).
+if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_unwired_pub_fn.py" ]; then
+    step "0.5m/6 未接线公共 API audit (P-13, --strict)"
+    if python3 "$PROJECT_ROOT/scripts/audit_unwired_pub_fn.py" --strict 2>&1 | tail -24; then
+        ok "audit_unwired: 无未接线 syscall 编号, 且无未分类零引用 pub fn"
+    else
+        err "audit_unwired: R2 未分发 syscall 编号 (CRITICAL), 或未分类零引用 pub fn / 零引用 pub mod (--strict 阻断)"
+    fi
+fi
 
 # ── 1. 双架构 check ─────────────────────────────────────────────
 step "1/6 双架构 cargo check (x86_64 + aarch64)"

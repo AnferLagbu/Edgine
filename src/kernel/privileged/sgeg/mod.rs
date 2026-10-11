@@ -51,11 +51,11 @@ pub use secure_boot::*;
 
 /// SGEG 子系统初始化 — 安全启动 + TPM.
 ///
-/// 从 `scheduler_init` 中分离, 消除 proc→sgeg 的初始化依赖.
-/// 应在 `scheduler_init` 之后调用.
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn sgeg_init() {
+/// 机制层普通 Rust 函数: 唯一调用者是 crate root 编排入口
+/// (`lib.rs::kernel_init` 的「延迟子系统编排」块, P-8 init 编排收口).
+/// 原 `#[unsafe(no_mangle)] pub extern "C"` 形态是为已删除的 FFI 孤儿入口
+/// `sched_ops::scheduler_init` 服务的, 保留 C ABI 只会让它看起来还有外部调用者.
+pub fn sgeg_init() {
     use secure_boot::{Ed25519PubKey, secure_boot_init, tpm_init};
     // 默认平台密钥 (全零, 开发阶段)
     let default_pk = Ed25519PubKey::new([0u8; 32]);

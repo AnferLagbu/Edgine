@@ -91,42 +91,11 @@ pub extern "C" fn scheduler_tick() {
     SCHEDULER.tick(crate::privileged::smp::get_current_cpu() as usize);
 }
 
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn scheduler_init() {
-    super::scheduler::init();
-    SCHEDULER_EX.init();
-
-    // 注册 tick 查询回调, 解耦 freg→proc::scheduler 依赖
-    // SAFETY: get_tick 是 'static 函数指针, 在内核运行期间始终有效.
-    unsafe {
-        crate::privileged::tick_query::register_tick_query(crate::privileged::proc::get_tick);
-    }
-    // D2: 初始化 cgroup 子系统
-    super::cgroup::cgroup_init();
-    // D3: 初始化 NUMA 拓扑 (UMA 回退, 后续接入 ACPI SRAT)
-    crate::privileged::mm::numa_init(
-        crate::privileged::mm::pmm_get_total_pages() * crate::privileged::mm::PAGE_SIZE,
-        crate::privileged::config::MAX_CPUS as u32,
-    );
-    // D4/T4-3 (eBPF init + 标准验证器注册) 已反转至 functions::debug::ebpf::init
-    // 注册契约 (第二十五批): privileged proc 不再反向调用 functions verifier,
-    // 由 lib.rs kernel_init 统一接入.
-    // D5: 初始化电源管理子系统
-    crate::privileged::driver::pm_init(crate::privileged::config::MAX_CPUS as u32);
-    // D6: 初始化安全启动 + TPM (移至 sgeg_init, 消除 proc→sgeg 依赖)
-    crate::privileged::sgeg::sgeg_init();
-    // D7: 初始化 CET (Shadow Stack)
-    crate::privileged::arch::cet_init();
-    // D8: 初始化 Tickless (NO_HZ)
-    crate::privileged::timer::tickless_init(crate::privileged::config::MAX_CPUS as u32);
-    // D9: 初始化 NTP/PTP 时钟同步
-    crate::privileged::timer::timesync_init();
-    // D10: 初始化 kexec
-    crate::privileged::driver::kexec_init();
-    // D11: 初始化 UEFI (0 = 无 UEFI 固件, 实际由 bootloader 传入)
-    crate::privileged::driver::uefi_init(0);
-}
+// 初始化职责已移出本文件 (P-8 init 编排收口): 原 `#[unsafe(no_mangle)]
+// pub extern "C" fn scheduler_init()` 是一个无生产调用者的 FFI 孤儿入口, 内部挂着
+// 10 项子系统 init (cgroup / numa / pm / sgeg / CET / tickless / timesync / kexec /
+// uefi / tick_query 注册) —— 生产环境**从未执行**. 现由 crate root
+// `lib.rs::kernel_init` 的「延迟子系统编排」块单点接线 (调度器本体 init 见其步骤 8).
 
 // ============================================================================
 // 调度器配置

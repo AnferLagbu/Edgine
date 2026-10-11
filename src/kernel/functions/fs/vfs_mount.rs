@@ -17,10 +17,6 @@ static RAMFS_MOUNTED: core::sync::atomic::AtomicBool = core::sync::atomic::Atomi
 // VFS 核心接口 (内部)
 // ============================================================================
 
-pub extern "C" fn vfs_init_internal() {
-    super::vfs_manager::init();
-}
-
 #[expect(
     clippy::match_same_arms,
     reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
@@ -92,35 +88,22 @@ pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32
     VFS_MANAGER.mount_with_fs(path, fs_name, fs).as_i32()
 }
 
-pub extern "C" fn vfs_unmount_internal(path: *const u8) -> i32 {
-    let path = ptr_to_str(path);
-    VFS_MANAGER.unmount(path).as_i32()
-}
-
 // I-22: 15 个 `unkfs_*_internal` 函数无调用方, 已随 P3-I-18 迁移至 `vfs_sync` (FileSystem
 // trait fs_sync 分发) 后彻底废弃. 旧路径仅 C-FFI 兼容, 无 FFI 调用方, 移除以减小 TCB
 // 面积 (约 150 行, 含 unsafe).
-
-// ============================================================================
-// FREG 接口
-// ============================================================================
-
-pub extern "C" fn vfs_freg_capture() {
-    VFS_MANAGER.capture_snapshot();
-}
-
-pub extern "C" fn vfs_freg_restore() -> i32 {
-    VFS_MANAGER.restore_from_snapshot();
-    1
-}
+//
+// 同族收尾 (本轮经用户裁定): 本模块曾另挂 6 个同形态 `pub extern "C"` 包裹
+// (`vfs_init` / `vfs_init_internal` / `vfs_unmount_internal` / `vfs_freg_capture` /
+// `vfs_freg_restore` / `vfs_format_internal`) —— 均无 `#[no_mangle]` ⇒ 结构上不可能
+// 被 C 侧调用, 且全仓零引用 (分组登记见
+// `docs/plan/net-e2e-tcp-echo-flakiness.md` §6 P-13 预存组 (二)). 真实入口各自另存:
+// VFS 初始化由 `src/kernel/lib.rs` 编排直连 `vfs_manager::init()`, FREG 快照/恢复
+// 经 `vfs_manager.rs` 自持的 `vfs_freg_capture_cb` / `vfs_freg_restore_cb` 注册,
+// 卸载走 `VFS_MANAGER.unmount`, 格式化经 `FileSystem::fs_format` trait 分发.
 
 // ============================================================================
 // 公共 VFS API
 // ============================================================================
-
-pub extern "C" fn vfs_init() {
-    vfs_init_internal();
-}
 
 pub extern "C" fn vfs_mount(path: *const u8, fs_name: *const u8) -> i32 {
     vfs_mount_internal(path, fs_name)
@@ -189,31 +172,6 @@ pub fn vfs_sync() -> i32 {
     last_err
 }
 
-pub extern "C" fn vfs_format_internal(path: *const u8, fs_type: *const u8) -> i32 {
-    let fs_type_str = ptr_to_str(fs_type);
-    let _path = ptr_to_str(path);
-
-    if fs_type_str.is_empty() {
-        return -1;
-    }
-
-    // Parse filesystem type
-    if fs_type_str == "unkfs" || fs_type_str == "UNKFS" {
-        // DECISION-K 项 6: 格式化策略经 FileSystem::fs_format 分发 (functions 实装),
-        // privileged 不再直接访问 UNKFS 内部字段
-        match unkfs_fs() {
-            Some(fs) => {
-                if fs.fs_format().is_ok() {
-                    return 0;
-                }
-                return -1;
-            }
-            None => return -1,
-        }
-    } else if fs_type_str == "ramfs" || fs_type_str == "RamFS" {
-        // RamFS 无需格式化, 始终为内存文件系统
-        return 0;
-    }
-
-    -1
-}
+// `vfs_format_internal` 已删除 (同族 C-FFI 残壳, 见上方注释块): 格式化能力
+// 的唯一入口是 `FileSystem::fs_format` trait 分发 (DECISION-K 项 6), 本函数的
+// unkfs / ramfs 分支在 trait 侧已有等价实装.

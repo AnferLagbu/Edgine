@@ -888,11 +888,11 @@ fn dispatch_sgeg(num: u64, args: [u64; 6]) -> Option<i64> {
 /// 其他系统调用 (POSIX Timer, 熵源等)
 fn dispatch_other(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::functions::syscall::types::{
-        EG_FTRACE_DISABLE, EG_FTRACE_ENABLE, EG_FTRACE_READ, EG_FTRACE_STAT, EG_FW_DETACH,
-        EG_FW_GET, EG_FW_GET_INFO, EG_FW_LOAD, EG_GET_CANARY, EG_KGDB_ENTER, SYS_FB_MMAP,
-        SYS_FB_OPEN, SYS_FB_RELEASE, SYS_bpf, SYS_clock_getres, SYS_getrandom, SYS_io_uring_enter,
-        SYS_io_uring_setup, SYS_kexec_load, SYS_timer_create, SYS_timer_delete,
-        SYS_timer_getoverrun, SYS_timer_gettime, SYS_timer_settime,
+        EG_CET, EG_FTRACE_DISABLE, EG_FTRACE_ENABLE, EG_FTRACE_READ, EG_FTRACE_STAT, EG_FW_DETACH,
+        EG_FW_GET, EG_FW_GET_INFO, EG_FW_LOAD, EG_GET_CANARY, EG_KGDB_ENTER, EG_TICKLESS,
+        EG_TIMESYNC, EG_UEFI, SYS_FB_MMAP, SYS_FB_OPEN, SYS_FB_RELEASE, SYS_bpf, SYS_clock_getres,
+        SYS_getrandom, SYS_io_uring_enter, SYS_io_uring_setup, SYS_kexec_load, SYS_timer_create,
+        SYS_timer_delete, SYS_timer_getoverrun, SYS_timer_gettime, SYS_timer_settime,
     };
     let [a0, a1, a2, a3, _a4, _a5] = args;
 
@@ -916,6 +916,18 @@ fn dispatch_other(num: u64, args: [u64; 6]) -> Option<i64> {
         // 委托 privileged 机制 (debug::sys_bpf / driver::sys_kexec)
         SYS_bpf => crate::functions::debug::ebpf::bpf_syscall(a0, a1, a2),
         SYS_kexec_load => crate::functions::driver::kexec::kexec_syscall(a0, a1, a2, a3),
+
+        // P-8 门面收口: D7 CET / D8 Tickless / D9 TimeSync / D11 UEFI 四臂自 privileged
+        // 回退层迁至此处, 改经各自 functions 安全门面 (shadow_stack / tickless /
+        // time_sync / uefi 的 `*_syscall`). 迁前这 4 个门面的 `init()` 由 kernel_init
+        // 编排调用而 `*_syscall()` 无任何调用者, 形成「门面 + privileged 直调」双路径;
+        // 收口后门面成为访问该机制的唯一入口 (AGENTS.md §4.1).
+        // 行为差异: 原 privileged `dispatch!` 宏会额外输出一行 klog 调试轨迹, 与
+        // 已迁移的 EG_SNAPSHOT_* / SYS_kexec_load 一致不再保留.
+        EG_CET => crate::functions::proc::shadow_stack::cet_syscall(a0, a1, a2),
+        EG_TICKLESS => crate::functions::timer::tickless::tickless_syscall(a0, a1, a2),
+        EG_TIMESYNC => crate::functions::timer::time_sync::timesync_syscall(a0, a1, a2),
+        EG_UEFI => crate::functions::driver::uefi::uefi_syscall(a0, a1, a2),
 
         // 帧缓冲 (T2 批 5, syscall-followup): 委托 privileged 机制
         // (机制函数: sys_fb_open / sys_fb_mmap / sys_fb_release)

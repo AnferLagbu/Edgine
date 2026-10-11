@@ -482,17 +482,6 @@ fn alloc_error(layout: alloc::alloc::Layout) -> ! {
 /// # Panics
 /// Boot 栈 canary 校验失败 (栈溢出至栈底) 时立即 panic, 断言内核状态不可信.
 #[unsafe(no_mangle)]
-// J-01 (2026-09-08): used_underscore_binding expect 仅裸机分支 (not kernel_test) 生效 —
-// kernel_test 分支无 `_xxx` 绑定使用, expect 在 feature 下 unfulfilled.
-// T1 G7 host 符号桩化: 真机门控推广为 not(any(kernel_test, host-test)),
-// 该 expect 的触发代码同属真机分支, 条件同步推广.
-#[cfg_attr(
-    not(any(feature = "kernel_test", feature = "host-test")),
-    expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )
-)]
 #[expect(
     clippy::too_many_lines,
     reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
@@ -750,16 +739,54 @@ pub extern "C" fn kernel_init() {
         crate::functions::mm::swap::kswapd_init();
 
         // 7. Timer 初始化 (中断延后到网络就绪后启用)
-        match crate::privileged::timer::timer_init(1000) {
+        // tick 频率取 `timer::DEFAULT_INTERRUPT_FREQ_HZ` 单源: aarch64 的硬件周期
+        // 由同一常量算出 (`arch::aarch64::timer::init_deferred`), 两处不得各写一份.
+        match crate::privileged::timer::timer_init(
+            crate::privileged::timer::DEFAULT_INTERRUPT_FREQ_HZ,
+        ) {
             Ok(_freq) => {
                 crate::klog_boot_info!("Timer configured");
                 #[cfg(target_arch = "x86_64")]
                 let _ = crate::privileged::timer::irq::register_timer_irq();
             }
-            Err(_msg) => {
-                let _ = _msg;
+            Err(msg) => {
+                // TD-13: 定时器初始化失败必须记录, 不允许静默丢弃. 原载体
+                // `timer::timer_init_ffi` 是 0 调用者的 FFI 孤儿入口, 已随 P-8
+                // init 编排收口删除 —— 记录责任由真机路径 (本分支) 承接.
+                crate::klog_err!(Timer, "timer_init failed: {}", msg);
             }
         }
+
+        // 7.5. 单一时基建立 (P-7 接线): 取硬件自由计数器频率 → 登记 → 向 tick 建锚
+        // 位置约束: 必须在 `timer_init` 之后 (建锚需 tick 频率已配置), 在 scheduler
+        // 之前 (调度器的周期判断以单一时基为准). 测定不依赖中断使能: x86_64 走
+        // CPUID Leaf 0x15 标称值 → PIT 通道 0 实测两级回退, aarch64 读 CNTFRQ_EL0
+        // (启动阶段 IF 尚未打开, 旧实现按 tick 中断计数作时间窗口会永久自旋).
+        // 失败不致命: tick 保持中断计数视图, tickless 由 `timebase_is_hardware()` 拦住.
+        match crate::privileged::timer::calibration::establish_boot_timebase() {
+            Ok((hz, source)) => {
+                crate::klog_boot_info!("Timebase: {} Hz ({})", hz, source.label());
+            }
+            Err(msg) => {
+                crate::klog_warn!(Timer, "boot timebase not established: {}", msg);
+            }
+        }
+
+        // 7.6. 本核 tick 设备装配 (E-II-b, 仅 x86_64): 一次性发布全局 tick 源参
+        // 数 (模式 + 每 tick 计数增量) 并装填 BSP 本核. 位置约束: 必须在 7.5 时基登记
+        // 之后 (clockevent 以时基为换算窗口与截止期域), 在 scheduler (步骤 8) 与次级核
+        // 上线 (7.7) 之前. aarch64 无每核 tick 参数标定需求 (Generic Timer 由
+        // `start_interval` 在网络就绪后开跑), 故不占本步.
+        #[cfg(target_arch = "x86_64")]
+        crate::privileged::timer::clockevent::setup();
+
+        // 7.7. 次级核上线 (自步骤 6 的中断子系统初始化拆出). 次序判据: 全局 tick 源参
+        // 数先于 CPU 上线发布 (对齐 Linux clocksource_init → cpu_up) —— LAPIC 是每核
+        // 私有寄存器, 只能由本核装配; AP 在 `ap_entry` 内按已发布参数自装填. 拆开后
+        // 启动序列不存在"AP 先上线、参数未定"的窗口, 无需超时等待与降级分支.
+        <crate::privileged::arch::CurrentArch as crate::privileged::arch::Arch>::secondary_cpu_bringup(
+        );
+        crate::klog_boot_info!("SMP: secondary CPUs online");
 
         // 8. Scheduler
         crate::privileged::proc::scheduler::init();
@@ -841,6 +868,41 @@ pub extern "C" fn kernel_init() {
                 input_count
             );
         }
+
+        // 10.7. 延迟子系统编排 (P-8 init 编排收口) ──────────────────────────
+        // 单一编排点按依赖序接线 10 项子系统 init. 此前这 10 项挂在一个
+        // `extern "C"` 孤儿入口 `sched_ops::scheduler_init` 内 (无生产调用者),
+        // 后果是它们在生产环境**从未执行**: NUMA 拓扑 (SYS_getcpu / SYS_mbind 等
+        // 已在 functions dispatch 接线却无拓扑可查), cgroup, PM, SGEG/TPM, CET,
+        // Tickless, TimeSync, kexec, UEFI, 以及 tick_query 解耦桥 (P-1 恒返 0 的
+        // 成因). 各项 init 均自带幂等守卫 (OnceCell / AtomicBool / is_initialized).
+        //
+        // 路径选择: 有 functions 安全门面的项一律走门面 (crate root 是唯一合法
+        // 双向编排者), 使门面成为单一路径, 不再与 privileged 直调并存; cgroup /
+        // numa / pm / sgeg 的 functions 侧只是 glob re-export 兼容层 (非门面),
+        // 故直调 privileged 机制.
+        //
+        // 依赖序: PMM (步骤 2/5) → numa; Timer (7) / Scheduler (8) → tick_query /
+        // cgroup / tickless / timesync; 驱动 (10-10.6) → pm / sgeg / kexec /
+        // uefi; **必须早于下方 aarch64 `start_interval`** —— Generic Timer 一旦开跑,
+        // tick 路径就会查 tickless 状态, 未初始化则退化分支不可逆.
+        crate::privileged::tick_query::install_builtin_tick_query();
+        crate::privileged::proc::cgroup::cgroup_init();
+        crate::privileged::mm::numa_init(
+            crate::privileged::mm::pmm_get_total_pages() * crate::privileged::mm::PAGE_SIZE,
+            crate::privileged::config::MAX_CPUS as u32,
+        );
+        crate::privileged::driver::pm_init(crate::privileged::config::MAX_CPUS as u32);
+        crate::privileged::sgeg::sgeg_init();
+        crate::functions::proc::shadow_stack::init();
+        crate::functions::timer::tickless::init(crate::privileged::config::MAX_CPUS as u32);
+        crate::functions::timer::time_sync::init();
+        crate::functions::driver::kexec::init();
+        // SIMPLIFIED: UEFI 系统表地址固定传 0 (= 无 UEFI 固件, runtime services 不启用);
+        // multiboot2/U-Boot 引导链当前不传递 EFI system table, 影响面 = EG_UEFI 全部
+        // 命令返回未初始化错误; 待 bootloader 接入 EFI 指针后从 boot_info 取真值.
+        crate::functions::driver::uefi::init(0);
+        crate::klog_boot_info!("Deferred subsystems initialized");
 
         // UNKFS + 磁盘挂载 — BlockDevice 注册表自动发现多块磁盘 (支持 ATA/NVMe/virtio-blk)
         // 门控语义 (T1 G7): 与上方真机引导块一致, 真机路径 = not(any(kernel_test, host-test)).

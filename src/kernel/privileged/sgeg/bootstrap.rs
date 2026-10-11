@@ -65,29 +65,11 @@ pub fn grant_from_first_token(
     Ok(())
 }
 
-/// 返回当前 PWM 时间戳 (微秒); TSC 频率未知时直接返回 TSC 原值。
+/// 返回当前 PWM 时间戳 (微秒); 计数器频率未登记时直接返回计数器原值。
 pub fn pwm_now() -> u64 {
     let tsc = crate::arch!(timestamp());
-    let freq = raw::tsc_frequency();
-    if freq > 0 {
-        (tsc / freq) * 1_000_000
-    } else {
-        tsc
-    }
-}
-
-// ============================================================================
-// 特权子模块 (Framekernel raw): 集中 TSC 频率 FFI
-// ============================================================================
-
-pub(crate) mod raw {
-    /// 安全获取 CPU TSC 频率 (C ABI 包装, 无内存不安全)
-    pub fn tsc_frequency() -> u64 {
-        // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
-        unsafe extern "C" {
-            fn cpu_get_tsc_frequency() -> u64;
-        }
-        // SAFETY: cpu_get_tsc_frequency 为纯函数 FFI, 无内存访问, 安全。
-        unsafe { cpu_get_tsc_frequency() }
-    }
+    // 单一时基: 频率取 `timer::calibration` 登记值, 周期→微秒 走与 tick/hrtimer
+    // 同一换算入口 (旧形态经 `cpu_get_tsc_frequency` FFI 取 `CpuInfo` 里的厂商
+    // 估计值, 且 `tsc / freq * 1_000_000` 的先除后乘在不足 1 秒时恒为 0).
+    crate::privileged::timer::calibration::tsc_to_microseconds(tsc).unwrap_or(tsc)
 }

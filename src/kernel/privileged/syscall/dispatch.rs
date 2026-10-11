@@ -8,12 +8,11 @@ use core::sync::atomic::Ordering;
 
 use super::raw;
 use super::types::{
-    EG_CET, EG_CGROUP_ATTACH, EG_CGROUP_CREATE, EG_CGROUP_DESTROY, EG_CGROUP_GET_STAT,
-    EG_CGROUP_SET_LIMIT, EG_IO_URING_SUBMIT, EG_NF_ADD_RULE, EG_NF_DEL_RULE, EG_PM, EG_ROUTE_ADD,
-    EG_ROUTE_DEL, EG_ROUTE_QUERY, EG_SECURE_BOOT, EG_TICKLESS, EG_TIMESYNC, EG_TPM, EG_UEFI, Errno,
-    SYS_accept, SYS_bind, SYS_connect, SYS_getpeername, SYS_getsockname, SYS_getsockopt,
-    SYS_listen, SYS_recvfrom, SYS_recvmsg, SYS_sendmsg, SYS_sendto, SYS_setsockopt, SYS_shutdown,
-    SYS_socket,
+    EG_CGROUP_ATTACH, EG_CGROUP_CREATE, EG_CGROUP_DESTROY, EG_CGROUP_GET_STAT, EG_CGROUP_SET_LIMIT,
+    EG_IO_URING_SUBMIT, EG_NF_ADD_RULE, EG_NF_DEL_RULE, EG_PM, EG_ROUTE_ADD, EG_ROUTE_DEL,
+    EG_ROUTE_QUERY, EG_SECURE_BOOT, EG_TPM, Errno, SYS_accept, SYS_bind, SYS_connect,
+    SYS_getpeername, SYS_getsockname, SYS_getsockopt, SYS_listen, SYS_recvfrom, SYS_recvmsg,
+    SYS_sendmsg, SYS_sendto, SYS_setsockopt, SYS_shutdown, SYS_socket,
 };
 // SYS_SGEG_DISK_INSTALL 分支已迁至 functions (T2 批 5), 编号常量仅在 types.rs 保留
 // (aarch64 生产构建不引用, 与迁移前 cfg 门控语义一致)
@@ -330,29 +329,24 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         EG_TPM => dispatch!(crate::privileged::sgeg::sys_tpm(a0, a1, a2, a3), b"tpm\0"),
 
         // ==================== D7: Shadow Stack (CET) ====================
-        EG_CET => dispatch!(
-            crate::privileged::arch::shadow_stack::sys_cet(a0, a1, a2),
-            b"cet\0"
-        ),
+        // P-8 门面收口: EG_CET 分支已迁至 functions
+        // (functions::proc::shadow_stack::cet_syscall, 委托 privileged sys_cet).
 
         // ==================== D8: 无 tick 模式 (NO_HZ) ====================
-        EG_TICKLESS => dispatch!(
-            crate::privileged::timer::sys_tickless(a0, a1, a2),
-            b"tickless\0"
-        ),
+        // P-8 门面收口: EG_TICKLESS 分支已迁至 functions
+        // (functions::timer::tickless::tickless_syscall, 委托 privileged sys_tickless).
 
         // ==================== D9: NTP/PTP 时钟同步 ====================
-        EG_TIMESYNC => dispatch!(
-            crate::privileged::timer::sys_timesync(a0, a1, a2),
-            b"timesync\0"
-        ),
+        // P-8 门面收口: EG_TIMESYNC 分支已迁至 functions
+        // (functions::timer::time_sync::timesync_syscall, 委托 privileged sys_timesync).
 
         // ==================== D10: kexec ====================
         // T2 批 4 (syscall-followup): SYS_kexec_load 分支已迁至 functions
         // (functions::driver::kexec::kexec_syscall, 委托 privileged driver::sys_kexec).
 
         // ==================== D11: UEFI ====================
-        EG_UEFI => dispatch!(crate::privileged::driver::sys_uefi(a0, a1, a2), b"uefi\0"),
+        // P-8 门面收口: EG_UEFI 分支已迁至 functions
+        // (functions::driver::uefi::uefi_syscall, 委托 privileged driver::sys_uefi).
 
         // ==================== 进程 ====================
         // T2 批 2 (syscall-followup): SYS_tcgetpgrp / SYS_tcsetpgrp 分支已迁至
@@ -936,13 +930,15 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
         return Errno::EACCES.as_ret();
     }
     // 产物桩化: stage1.bin 是裸机产物 (other/build/ 被 gitignore, 仅由 make 生成).
+    // 路径自带 x86_64 段 (P-10: 内核产物按架构分目录) —— 本函数仅 x86_64 可达,
+    // 读共享路径时旧世界靠 arch-switch-clean 清除异架构残留, 现由目录隔离保证.
     // 判据用 target_os 而非 feature —— 本函数 gate 为 all(not(kernel_test), x86_64),
     // host target 的 host-test / kernel_test 两个 lint 维度与 host-tests 都会编译它,
     // 若直接 include_bytes 即让 host 侧编译硬依赖裸机产物 (build.rs G-06「消除隐式
     // make 耦合」的漏项). 该函数在 host 不可达 (host-tests 零引用 boot_install /
     // SGEG_DISK_INSTALL, 见 docs/plan/syscall-followup.md 可达性矩阵簇 4), 取空切片.
     #[cfg(target_os = "none")]
-    let stage1 = include_bytes!("../../../../other/build/stage1.bin");
+    let stage1 = include_bytes!("../../../../other/build/x86_64/stage1.bin");
     #[cfg(not(target_os = "none"))]
     let stage1: &[u8] = &[];
     if !crate::privileged::driver::hdd_is_present(disk_id as u8) {
