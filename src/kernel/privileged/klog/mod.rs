@@ -249,6 +249,9 @@ pub fn serial_write_bytes(data: &[u8]) {
 ///
 /// 所有 sink 必须实现: 名称 (调试用) + 字节写入 + 字符串写入.
 /// 字符串写入的默认实现是循环调用 `putc`, 多数后端可以重写以提高效率.
+///
+/// **实现约束**: sink 在 `LOG_EMIT_LOCK` 临界区内被调用 (见该锁文档), 因此其实现
+/// 不得再进入 klog 日志路径 — 自旋锁不可重入, 回环即本核死锁.
 pub trait LogSink: Sync {
     /// 后端名, 用于 `/proc/sys/klog/sinks` 等接口.
     fn name(&self) -> &'static str;
@@ -288,7 +291,8 @@ impl LogSink for SerialSink {
 
 /// TD-09: 全局 sink 注册表 (静态数组, 不依赖分配器).
 ///
-/// 容量固定为 4, 超出时返回 None. 单核模型下无锁 (klog 路径在串口自旋保护).
+/// 容量固定为 4, 超出时返回 None. 本表自身的读改写由 `LOG_SINKS` 自旋锁保护;
+/// 而**一条日志的跨核独占**由 `LOG_EMIT_LOCK` 负责 (见其文档).
 /// 增删接口在 functions 层通过 `/proc/sys/klog/sinks` 暴露.
 pub const MAX_LOG_SINKS: usize = 4;
 
@@ -318,6 +322,26 @@ unsafe impl Sync for SinkPtr {}
 static LOG_SINKS: crate::privileged::sync::IrqSpinLock<[SinkPtr; MAX_LOG_SINKS]> =
     crate::privileged::sync::IrqSpinLock::new(make_null_sinks());
 static LOG_SINK_COUNT: AtomicU8 = AtomicU8::new(0);
+
+/// 整行日志发射的跨核互斥锁 (保护串口写出 + 环形缓冲区).
+///
+/// 为什么 `interrupt_disable()` 不足以承担这个职责: 它只屏蔽**本核**中断, 而串口
+/// 与日志环形缓冲区是**全局**资源; SMP 上线后另一核同样在写, 两条消息的字节流会
+/// 互相插入, 整行被拆散 (历史表现: `VFS ready` 被写成两行, 使 QEMU 启动门槛的
+/// 里程碑匹配以约 1/4 概率假阴性). 因此整条消息必须在跨核锁内一次写完.
+///
+/// 持锁期间的约束 (自旋锁不可重入, 违反即本核自旋死锁):
+/// - 只允许 sink 写出与 `RING` 推进, 不得回调任何会再进 klog 的代码;
+/// - `LogSink` 实现不得调用 klog 宏 (注册时已含 serial, 其写出路径不回环);
+/// - 图形控制台 (`gfx_console_write`) 有意留在临界区外, 避免与 console 锁形成嵌套.
+// B08-14 同口径: 仅裸机日志路径使用; host-test 下 klog no-op, 不设锁避免死静态.
+#[cfg(not(feature = "host-test"))]
+static LOG_EMIT_LOCK: crate::privileged::sync::IrqSpinLock<()> =
+    crate::privileged::sync::IrqSpinLock::new(());
+
+/// 整行缓冲区容量: 正文上限 `KLOG_BUF` + 时间戳 (≤ 20) + 级别 (6) + ` [CAT] ` (≤ 10).
+#[cfg(not(feature = "host-test"))]
+const KLOG_LINE_MAX: usize = KLOG_BUF + 48;
 
 /// 注册 sink, 失败返回 `None` (已满).
 ///
@@ -643,37 +667,43 @@ fn klog_output(level: LogLevel, cat: LogCategory, msg: &[u8]) {
 
 #[cfg(not(feature = "host-test"))]
 fn klog_output_baremetal(level: LogLevel, cat: LogCategory, msg: &[u8]) {
+    // 1. 锁外组装整行: 时间戳 + 级别 + 分类 + 正文 + 换行.
+    //    格式计算 (含 ticks→us 换算) 全部放在临界区之外, 使持锁时间只与串口字节数
+    //    成正比; 组装成**单个**缓冲区也让 sink 只看到一次完整写入, 不给交错留缝.
     let total_us = ticks_to_us(get_ticks());
     let mut ts_buf = [0u8; 32];
     let ts = format_ts(&mut ts_buf, total_us);
 
-    let saved_if = crate::arch!(interrupt_disable());
+    let mut line = [0u8; KLOG_LINE_MAX];
+    let mut pos = 0usize;
+    // 截断式追加: 超出 `KLOG_LINE_MAX` 的部分丢弃 (正文本身已有 `KLOG_BUF` 上限,
+    // 正常路径不触发; 触发时宁可短一行, 也不能越界写栈缓冲区).
+    let mut append = |src: &[u8]| {
+        let n = src.len().min(line.len() - pos);
+        line[pos..pos + n].copy_from_slice(&src[..n]);
+        pos += n;
+    };
+    append(ts);
+    append(level.prefix());
+    append(b" [");
+    append(cat.name());
+    append(b"] ");
+    append(msg);
+    append(b"\n");
+    let line = &line[..pos];
 
-    // TD-09: 走 sink 抽象 (注册时已默认含 serial).
-    klog_broadcast_bytes(ts);
-    klog_broadcast_bytes(level.prefix());
-    klog_broadcast_bytes(b" ");
-    klog_broadcast_bytes(b"[");
-    klog_broadcast_bytes(cat.name());
-    klog_broadcast_bytes(b"] ");
-    klog_broadcast_bytes(msg);
-    // 换行: serial sink 已实现 \n → \r\n; 其他 sink 若需特殊处理, 可重写 write_bytes.
-    klog_broadcast_bytes(b"\n");
+    // 2. 临界区: 跨核独占串口 + 环形缓冲区, 整行一次写完.
+    //    TD-09: 走 sink 抽象 (注册时已默认含 serial); 换行已在整行内 (serial sink
+    //    负责 \n → \r\n, 其他 sink 可重写 write_bytes 特殊处理).
+    let emit = LOG_EMIT_LOCK.lock();
+    klog_broadcast_bytes(line);
 
-    crate::arch!(interrupt_restore(saved_if));
-
-    // SAFETY: `RING` 由调用方保证为有效指针; 只读访问
+    // SAFETY: `RING` 的全部写入点都在本临界区内, `emit` 保证跨核与中断独占
     let ring = unsafe { &mut *RING.inner.get() };
-    ring.push_str(ts);
-    ring.push_str(level.prefix());
-    ring.push(b' ');
-    ring.push(b'[');
-    ring.push_str(cat.name());
-    ring.push(b']');
-    ring.push(b' ');
-    ring.push_str(msg);
-    ring.push(b'\n');
+    ring.push_str(line);
+    drop(emit);
 
+    // 3. 图形控制台在锁外 (console 有自己的互斥, 不与日志锁嵌套)
     crate::privileged::console::gfx_console_write(msg);
 }
 
