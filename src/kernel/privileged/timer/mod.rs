@@ -79,8 +79,15 @@ pub mod tick;
 /// Sleep 和延时功能
 pub mod sleep;
 
-/// Timer IRQ0 中断处理程序 (IDT 集成)
+/// Tick 中断处理程序 (IDT 集成; x86_64 = LAPIC 定时器的本地向量槽)
 pub mod irq;
+
+/// 每核周期 tick 设备 (clockevent): `x86_64` LAPIC 定时器装配与续期
+///
+/// 仅 `x86_64`: aarch64 的对应路径已由 `arch::aarch64::timer` 每核自装配 (Generic
+/// Timer 为 per-CPU 寄存器, 在 `ap_main` / BSP 各自装填), 无需再引入一层抽象。
+#[cfg(target_arch = "x86_64")]
+pub mod clockevent;
 
 /// TSC 频率校准 (PIT-based 高精度测量)
 pub mod calibration;
@@ -97,7 +104,6 @@ pub mod time_sync;
 // ============================================================================
 // 公共 API 导出 (便捷访问)
 // ============================================================================
-use crate::klog_err;
 
 // --- 初始化和状态 ---
 
@@ -107,7 +113,14 @@ pub use tick::{is_initialized, on_timer_interrupt, timer_init};
 // --- 时间查询 ---
 
 /// 使用 `tick` 模块的时间函数
-pub use tick::{get_frequency, get_ticks, get_time_info, get_uptime_ms, get_uptime_s};
+pub use tick::{
+    get_frequency, get_ticks, get_time_info, get_uptime_ms, get_uptime_ns, get_uptime_s,
+};
+
+// --- 单一时基 (硬件计数器派生) ---
+
+/// 时基建立与状态查询 (建锚路径由 `calibration::establish_boot_timebase` 驱动)
+pub use tick::{establish_timebase, timebase_is_hardware};
 
 // --- 时间转换 ---
 
@@ -122,7 +135,7 @@ pub use tick::{
 /// 使用 `sleep` 模块的所有睡眠函数
 pub use sleep::{
     adaptive_sleep, busy_wait_ms, busy_wait_ns, busy_wait_us, measure_time, measure_time_ticks,
-    pit_busy_wait_us, sleep_ns, timer_sleep as timer_sleep_safe, wait_with_timeout,
+    sleep_ns, timer_sleep as timer_sleep_safe, wait_with_timeout,
 };
 
 // --- PIT 底层控制 ---
@@ -133,13 +146,14 @@ pub use pit::{
     pit_init as raw_pit_init, pit_is_initialized, pit_read_count, pit_shutdown,
 };
 
-// --- TSC 校准 ---
+// --- 计数器频率测定 (全内核唯一频率写入点) ---
 
-/// 使用 `calibration` 模块的校准功能
+/// 使用 `calibration` 模块的频率测定与查询功能
 pub use calibration::{
-    calibrate_tsc, get_time_ms, get_time_ns, get_time_us, get_tsc_frequency_hz,
-    get_tsc_frequency_mhz, is_calibrated, nanoseconds_to_tsc, quick_calibrate, tsc_to_microseconds,
-    tsc_to_milliseconds, tsc_to_nanoseconds,
+    TimebaseSource, calibrate_counter_hz, counter_hz_for_wait, establish_boot_timebase,
+    get_time_ms, get_time_ns, get_time_us, hw_counter_frequency_hz, hw_counter_frequency_mhz,
+    is_calibrated, nanoseconds_to_tsc, tsc_to_microseconds, tsc_to_milliseconds,
+    tsc_to_nanoseconds,
 };
 
 // --- HrTimer 高精度定时器 ---
@@ -158,28 +172,6 @@ pub use time_sync::*;
 // ============================================================================
 // FFI 兼容层 (C 接口)
 // ============================================================================
-
-/// C 兼容的初始化函数
-///
-/// 与原始 C 函数签名完全一致：
-/// ```c
-/// void timer_init(void);
-/// ```
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-///
-/// # Safety
-///
-/// 仅从定时器中断处理程序调用。中断已禁用。
-pub unsafe extern "C" fn timer_init_ffi() {
-    match timer_init(DEFAULT_INTERRUPT_FREQ_HZ) {
-        Ok(_) => {}
-        Err(msg) => {
-            // TD-13: klog 替代原 let _ = msg
-            klog_err!(Timer, "timer_init failed: {}", msg);
-        }
-    }
-}
 
 /// C 兼容的获取 ticks 函数
 ///

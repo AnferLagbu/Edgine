@@ -11,7 +11,7 @@
 //! 本测试锁三件事：
 //! 1. klog 前缀改读 tick 派生 uptime，`tsc / 3000` 形态不再复现；
 //! 2. klog 不再保留只服务于假时基的 `rdtsc()` 私有包装（硬规则 F9 死代码零容忍）；
-//! 3. `cpu::calibrate_tsc` 的 CPUID Leaf 0x15 分支按"ECX 单位已是 Hz"换算
+//! 3. `cpu::tsc_nominal_hz` 的 CPUID Leaf 0x15 分支按"ECX 单位已是 Hz"换算
 //!    （旧实现再乘 1e6，把结果放大 10⁶ 倍），且该换算有可测的自由函数与单测。
 //!
 //! 断言在"去空白"后的文本上进行，只锁语义形状，不受 rustfmt 换行影响。
@@ -85,7 +85,7 @@ fn p3_cpuid_leaf15_result_is_hertz() {
     );
     assert!(
         flat.contains("ifletSome(hz)=tsc_hz_from_cpuid_leaf15(eax,ebx,ecx)"),
-        "P-3: calibrate_tsc 不再走 Leaf 0x15 换算出口"
+        "P-3: 标称频率出口不再走 Leaf 0x15 换算"
     );
     // Intel SDM: ECX 已是 Hz, 再乘 1e6 会把频率放大 10⁶ 倍.
     assert!(

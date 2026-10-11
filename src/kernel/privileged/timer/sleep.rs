@@ -21,7 +21,7 @@
 //! 关键路径函数已标记 `#[inline(always)]` 以优化性能。
 
 use super::tick::{get_ticks, is_initialized, ms_to_ticks};
-use crate::privileged::cpu::{cycles_to_nanoseconds, read_tsc};
+use crate::privileged::cpu::read_tsc;
 
 /// 每毫秒的纳秒数 (睡眠机制内 ns↔ms 换算系数)
 const NS_PER_MS: u64 = 1_000_000;
@@ -30,10 +30,13 @@ const NS_PER_MS: u64 = 1_000_000;
 // 忙等待实现 (Busy-wait)
 // ============================================================================
 
-/// 使用 TSC 进行纳秒级忙等待
+/// 使用硬件计数器进行纳秒级忙等待
 ///
 /// 最精确的延时方式，但不释放 CPU。
 /// 适用于中断上下文或需要微秒级精度的场景。
+///
+/// 周期↔时长 的折算一律取单一时基登记的频率 (`calibration::counter_hz_for_wait`),
+/// 本模块不另存频率副本.
 ///
 /// # Arguments
 /// * `ns` - 等待时间 (纳秒)
@@ -51,22 +54,14 @@ pub fn busy_wait_ns(ns: u64) {
 
     let start = read_tsc();
 
-    // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
-    #[expect(
-        clippy::items_after_statements,
-        reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-    )]
-    unsafe extern "C" {
-        fn cpu_get_tsc_frequency() -> u64;
-    }
-    // SAFETY: `cpu_get_tsc_frequency` 是有效的 C ABI 函数指针; 参数列表与声明一致
-    let freq_hz = unsafe { cpu_get_tsc_frequency() };
-
-    let target_cycles = if freq_hz > 0 {
-        (ns * freq_hz) / 1_000_000_000
-    } else {
-        ns * 2
-    };
+    // 单一时基: 频率取 `timer::calibration` 的登记值 (旧形态经 FFI 绕道
+    // `cpu_get_tsc_frequency` 取的是 `CpuInfo` 里的厂商硬编码估计值, 与真值可差
+    // 1.4×); 未登记时按合理性上限折算 ⇒ 只会多等不会少等 (旧 `ns * 2` 假设 2 GHz,
+    // 真频更高时等待不足, 驱动依赖的硬件时序下限失效).
+    let freq_hz = super::calibration::counter_hz_for_wait();
+    // mul_div_saturating: 128 位中间值, 长延时 (如 busy_wait_ms(u64::MAX/1000))
+    // 不再因 `ns * freq_hz` 溢出而 panic.
+    let target_cycles = super::tick::mul_div_saturating(ns, freq_hz, 1_000_000_000);
 
     loop {
         let elapsed = read_tsc().saturating_sub(start);
@@ -109,58 +104,6 @@ pub fn busy_wait_ms(ms: u64) {
 
     // 转换为微秒后调用
     busy_wait_us(ms * 1000);
-}
-
-/// 使用 PIT 计数器进行精确微秒级忙等待
-///
-/// 比 TSC 方式更可靠（不依赖 CPU 频率），
-/// 但需要 PIT 已初始化。
-///
-/// # Arguments
-/// * `us` - 等待时间 (微秒)
-///
-/// # Returns
-/// * `Ok(())` - 成功完成
-/// * `Err(&str)` - PIT 未初始化或其他错误
-///
-/// # Errors
-/// 当 PIT 未初始化时返回 `Err("PIT not initialized")`; 当读取 PIT 计数值失败时返回
-/// `Err("Failed to read PIT count")`.
-pub fn pit_busy_wait_us(us: u64) -> Result<(), &'static str> {
-    if us == 0 {
-        return Ok(());
-    }
-
-    if !super::pit::pit_is_initialized() {
-        return Err("PIT not initialized");
-    }
-
-    // 读取当前 PIT 计数值作为起始点
-    let start_count = super::pit::pit_read_count().ok_or("Failed to read PIT count")?;
-
-    // 计算目标计数值变化量
-    // PIT 频率 = 1.193182 MHz → 每微秒 ≈ 1.193 个周期
-    let cycles_needed = (us * super::pit::PIT_BASE_FREQUENCY) / 1_000_000;
-
-    loop {
-        let current_count = super::pit::pit_read_count().ok_or("Failed to read PIT count")?;
-
-        // 计算已过去的周期数 (考虑倒计数特性)
-        let elapsed = if current_count <= start_count {
-            start_count - current_count
-        } else {
-            // 回绕处理
-            start_count + (0xFFFFu16 - current_count) + 1
-        };
-
-        if u64::from(elapsed) >= cycles_needed {
-            break;
-        }
-
-        core::hint::spin_loop();
-    }
-
-    Ok(())
 }
 
 // ============================================================================
@@ -410,7 +353,10 @@ pub extern "C" fn timer_sleep_busy_compat(ms: u64) {
 // 辅助工具
 // ============================================================================
 
-/// 测量代码块执行时间 (基于 TSC)
+/// 测量代码块执行时间 (基于单一时基的纳秒视图)
+///
+/// 读数与日志前缀 / hrtimer / 网络时钟共用同一时基锚点: 硬件时基建立后具备计数器粒度,
+/// 未建立时退化为 tick 粒度 (不拿假频率反推).
 ///
 /// # Type Parameters
 /// * `F` - 要测量的代码块
@@ -432,14 +378,11 @@ pub fn measure_time<T, F>(func: F) -> (T, u64)
 where
     F: FnOnce() -> T,
 {
-    let start = read_tsc();
+    let start = super::tick::get_uptime_ns();
     let result = func();
-    let end = read_tsc();
+    let end = super::tick::get_uptime_ns();
 
-    let cycles = end.saturating_sub(start);
-    let ns = cycles_to_nanoseconds(cycles, 2000); // 假设 2GHz
-
-    (result, ns)
+    (result, end.saturating_sub(start))
 }
 
 /// 测量代码块执行时间 (基于 ticks)
@@ -485,16 +428,24 @@ mod tests {
 
     #[test]
     fn test_busy_wait_positive_duration() {
-        // 正延时应该消耗合理的时间
+        // 正延时应该消耗合理的时间.
+        // 时基互斥: 折算频率是全局登记值, 与 calibration 用例并行会互相污染.
+        let _lock = crate::privileged::timer::tick::FREQ_TEST_LOCK.lock();
+
         let start = read_tsc();
         busy_wait_us(100); // 100 微秒
         let end = read_tsc();
 
+        // 期望周期数由同一个登记频率反算 (host 下未登记 ⇒ 取合理性上限),
+        // 断言只锁"确实走到周期下界"与"没有数量级失控" — 不再假设主机 CPU 频率.
+        let freq = crate::privileged::timer::calibration::counter_hz_for_wait();
+        let expected = (100_000u64 * freq) / 1_000_000_000;
         let elapsed_cycles = end.saturating_sub(start);
-        // 在 2GHz CPU 上, 100μs ≈ 200,000 cycles
-        // 给予 50% 的误差范围
-        assert!(elapsed_cycles > 100_000); // 至少 50μs
-        assert!(elapsed_cycles < 500_000); // 不超过 250μs
+        assert!(
+            elapsed_cycles >= expected - expected / 10,
+            "忙等待未走到目标周期数"
+        );
+        assert!(elapsed_cycles < expected * 2, "忙等待时长数量级失控");
     }
 
     #[test]
@@ -538,13 +489,6 @@ mod tests {
         // 条件立即满足
         let result = wait_with_timeout(|| true, 1000);
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_pit_busy_wait_uninitialized() {
-        // PIT 未初始化时应该返回错误
-        let result = pit_busy_wait_us(100);
-        assert!(result.is_err());
     }
 }
 
@@ -594,12 +538,6 @@ pub fn register_timer_sleep_tests() {
         TestResult::Pass
     }
 
-    fn pit_busy_wait_uninitialized() -> TestResult {
-        let result = pit_busy_wait_us(100);
-        crate::check!(result.is_err(), "pit not initialized");
-        TestResult::Pass
-    }
-
     r.register(
         "timer::sleep",
         "busy_wait_zero",
@@ -620,10 +558,5 @@ pub fn register_timer_sleep_tests() {
         "timer::sleep",
         "wait_with_timeout_immediate",
         wait_with_timeout_immediate as TestFn,
-    );
-    r.register(
-        "timer::sleep",
-        "pit_uninitialized",
-        pit_busy_wait_uninitialized as TestFn,
     );
 }

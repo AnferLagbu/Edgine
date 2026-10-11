@@ -15,6 +15,22 @@ pub const IDT_ENTRIES: usize = 256;
 /// IRQ 基础向量号
 pub const IRQ_BASE: u8 = 32;
 
+/// 内核 tick 占用的 irq 槽.
+///
+/// `x86_64`: LAPIC 本地定时器. 取 16 (本地向量段首) 而非沿用 legacy 的 0-15:
+/// legacy 段在 IOAPIC 未启用时属 8259 + LINT0 ExtINT 投递域, 其 EOI 由
+/// `send_eoi_legacy()` 发 8259 EOI 而非 LAPIC EOI —— 两者混在同一向量会让
+/// LAPIC ISR 位永不清除, 首个 tick 后本核不再响应任何本地中断.
+/// `handle_irq` 的 `irq >= 16` 分支对该段恒发 LAPIC EOI, 故**一个向量只有
+/// 一个源、EOI 归属由向量号唯一决定**. MSI 基址为 0x40 (irq 32), 与本槽不交.
+///
+/// 定义在 idt 侧 (向量空间的拥有者) 而非 arch / timer 侧, 避免 `timer → arch → idt`
+/// 的反向常量引用; 两侧 (LVT 编程与 `register_irq`) 均引用本常量.
+pub const TICK_IRQ: u8 = 16;
+
+/// 内核 tick 的 IDT 向量号 (`IRQ_BASE + TICK_IRQ` = 0x30).
+pub const TICK_VECTOR: u8 = IRQ_BASE + TICK_IRQ;
+
 /// IDT 门描述符类型标志
 pub const IDT_TYPE_INTERRUPT: u8 = 0x8E; // 中断门 (DPL=0)
 pub const IDT_TYPE_TRAP: u8 = 0x8F; // 陷阱门 (DPL=0)

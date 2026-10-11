@@ -50,26 +50,6 @@ fn mul_div_saturating(value: u64, mul: u64, div: u64) -> u64 {
     (product / u128::from(div)).min(u128::from(u64::MAX)) as u64
 }
 
-/// 将 TSC 周期转换为纳秒 (近似值)
-///
-/// # Arguments
-/// * `tsc_cycles` - TSC 周期数
-/// * `tsc_freq_mhz` - TSC 频率 (MHz)
-///
-/// # Returns
-/// 近似纳秒数
-///
-/// # B03-19 修复
-/// u128 中间值乘法, 中间溢出不再饱和; 仅在最终结果超 u64::MAX 时截断
-/// (理论上 4GHz 运行 ~146 年才可达, 纯防御)。
-#[inline]
-pub fn cycles_to_nanoseconds(tsc_cycles: u64, tsc_freq_mhz: u64) -> u64 {
-    if tsc_freq_mhz == 0 {
-        return tsc_cycles; // 无法转换, 返回原值
-    }
-    mul_div_saturating(tsc_cycles, 1000, tsc_freq_mhz)
-}
-
 /// 将纳秒转换为 TSC 周期 (近似值)
 #[inline]
 pub fn nanoseconds_to_cycles(ns: u64, tsc_freq_mhz: u64) -> u64 {

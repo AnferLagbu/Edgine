@@ -47,7 +47,7 @@ pub mod tsc;
 // ============================================================================
 // 公共 API 导出 (便捷访问) — 避免跨子系统直接访问 cpu 内部子模块
 // ============================================================================
-pub use tsc::{cycles_to_nanoseconds, read_tsc, read_tsc_serialized};
+pub use tsc::{read_tsc, read_tsc_serialized};
 // B03-16 拆分: 类型定义迁入子模块, 顶层 re-export 保持公共 API 不变.
 pub use cache::CacheInfo;
 pub use feature::CpuFeatures;
@@ -91,8 +91,9 @@ pub enum CpuVendor {
     ///
     /// B03-16 语义明确化: 未识别厂商时, 所有厂商特定 CPUID 分支均跳过,
     /// 检测走保守默认值路径 (缓存: L1 32KB/L2 256KB 默认, 见 `cache::detect_cache`;
-    /// 拓扑: 按逻辑线程数回退, 见 `topology::detect_topology`;
-    /// TSC: 1GHz 经验值, 见 `calibrate_tsc`).
+    /// 拓扑: 按逻辑线程数回退, 见 `topology::detect_topology`).
+    /// 时基不在此列: 计数器频率由 `timer::calibration` 测定后单点登记,
+    /// 本模块不再按厂商经验值估计 (旧实现的 2.5/3.0/1.0 GHz 硬编码已删).
     /// `is_virtualized()` 对 Unknown 返回 true 是保守假设 (VMware 等未收录厂商),
     /// 初始化后调用方应以 `features` 位 (VMX/SVM) 为准.
     Unknown = 255,
@@ -282,8 +283,6 @@ pub struct CpuInfo {
     pub max_standard_leaf: u32,
     /// 最大扩展 CPUID leaf 号
     pub max_ext_leaf: u32,
-    /// TSC 频率估算值 (Hz, 0表示未知)
-    pub tsc_frequency_hz: u64,
 }
 
 impl Default for CpuInfo {
@@ -299,7 +298,6 @@ impl Default for CpuInfo {
             topology: TopologyInfo::default(),
             max_standard_leaf: 0,
             max_ext_leaf: 0,
-            tsc_frequency_hz: 0,
         }
     }
 }
@@ -471,8 +469,8 @@ pub extern "C" fn cpu_init() -> i32 {
         }
     }
 
-    // Step 7: 校准 TSC
-    info.tsc_frequency_hz = calibrate_tsc(info.max_standard_leaf, info.vendor);
+    // 时基不在此处估计: 计数器频率 (Hz) 由 `timer::calibration` 在启动编排
+    // (src/kernel/lib.rs 步骤 7.5) 测定后单点登记, 此处只收集 CPUID 静态信息.
 
     // 标记初始化完成
     info.initialized = true;
@@ -659,16 +657,6 @@ pub extern "C" fn cpu_get_cache_info() -> *const CacheInfo {
     get_cpu_info().map_or(core::ptr::null(), |info| &info.cache as *const CacheInfo)
 }
 
-/// 获取 TSC 频率 (Hz) (FFI兼容)
-/// FFI 导出函数 (C 可调用)
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-/// FFI 导出函数 (C 可调用)
-pub extern "C" fn cpu_get_tsc_frequency() -> u64 {
-    // SAFETY: `as_ref` 是有效的 C ABI 函数指针; 参数列表与声明一致
-    get_cpu_info().map_or(0, |info| info.tsc_frequency_hz)
-}
-
 // ============================================================================
 // 内部实现函数 (private, 不暴露给外部)
 // ============================================================================
@@ -802,7 +790,7 @@ pub(crate) fn init_msr(features: &CpuFeatures) -> Result<(), &'static str> {
 /// (旧实现把 `ECX` 当 MHz 处理, 使返回值放大 10⁶ 倍).
 ///
 /// 任一字段为 0 (CPU / 虚拟化层未提供该 leaf 数据) 或乘除溢出 → `None`,
-/// 由调用方回落到估计值.
+/// 由调用方转 PIT 实测路径 (不猜频率).
 #[cfg(target_arch = "x86_64")]
 fn tsc_hz_from_cpuid_leaf15(eax: u32, ebx: u32, ecx: u32) -> Option<u64> {
     if eax == 0 || ebx == 0 || ecx == 0 {
@@ -813,30 +801,31 @@ fn tsc_hz_from_cpuid_leaf15(eax: u32, ebx: u32, ecx: u32) -> Option<u64> {
     if hz == 0 { None } else { Some(hz) }
 }
 
-/// 校准 TSC 频率 (Hz)
+/// 读取 CPUID Leaf 0x15 报告的 TSC 标称频率 (Hz)
+///
+/// 本模块只回答"CPU 自己能不能报出频率"; 是否采信由 `timer::calibration` 的
+/// 合理性范围把关 (全内核频率的单点登记口), 故此处不再保留厂商经验估计值
+/// (旧 `calibrate_tsc` 的 2.5/3.0/1.0 GHz 分支与真值可差 1.4×, 见
+/// `docs/plan/net-e2e-tcp-echo-flakiness.md` §6 P-3), 也不在 `CpuInfo` 内存频率副本.
+///
+/// # Returns
+/// * `Some(hz)` - Leaf 0x15 字段有效且换算非零
+/// * `None` - 非 Intel 厂商 / leaf 不存在 / 字段非法 (调用方转 PIT 实测路径)
 #[cfg(target_arch = "x86_64")]
-fn calibrate_tsc(max_std: u32, vendor: CpuVendor) -> u64 {
-    // 方法 1: Intel CPUID Leaf 0x15 (精确频率)
-    if vendor == CpuVendor::Intel && max_std >= 0x15 {
-        let (eax, ebx, ecx, _) = cpuid::cpuid(0x15, 0);
-
-        if let Some(hz) = tsc_hz_from_cpuid_leaf15(eax, ebx, ecx) {
-            return hz;
-        }
+pub fn tsc_nominal_hz() -> Option<u64> {
+    let info = get_cpu_info()?;
+    // 只采信 Intel Leaf 0x15 的语义: 其他厂商该 leaf 内容不保证是 TSC 频率,
+    // 猜值会把时基带偏, 因此返回 None 让调用方走实测.
+    if info.vendor != CpuVendor::Intel || info.max_standard_leaf < 0x15 {
+        return None;
     }
 
-    // 方法 2: 经验估计 (不精确但可用)
-    // SIMPLIFIED: 厂商典型值硬编码 (Intel 2.5GHz / AMD 3.0GHz / 其他 1.0GHz);
-    //   影响面: `info.tsc_frequency_hz` 与实际频率可差 1.4× 以上, 任何用它折算
-    //   TSC → 时间 的调用方都会拿到系统性偏差 (历史上的 klog 日志前缀即因此被误读为
-    //   “tick 频率 1400/s”, 见 docs/plan/net-e2e-tcp-echo-flakiness.md §6 P-3);
-    //   何时需扩展: 接上 `timer::calibration::calibrate_tsc` (PIT 实测校准) 到生产启动
-    //   路径时, 删除本估计分支.
-    match vendor {
-        CpuVendor::Intel => 2_500_000_000, // 2.5 GHz 典型值
-        CpuVendor::Amd => 3_000_000_000,   // 3.0 GHz 典型值
-        _ => 1_000_000_000,                // 1.0 GHz (QEMU/其他)
+    let (eax, ebx, ecx, _) = cpuid::cpuid(0x15, 0);
+    if let Some(hz) = tsc_hz_from_cpuid_leaf15(eax, ebx, ecx) {
+        return Some(hz);
     }
+    // leaf 存在但字段被虚拟化层清零 ⇒ 不采信
+    None
 }
 
 // ============================================================================
@@ -861,7 +850,7 @@ mod tests {
             tsc_hz_from_cpuid_leaf15(1, 24, 100_000_000),
             Some(2_400_000_000)
         );
-        // 任一字段为 0 = 数据不可用 → None (由调用方回落估计值)
+        // 任一字段为 0 = 数据不可用 → None (由调用方转 PIT 实测路径)
         assert_eq!(tsc_hz_from_cpuid_leaf15(0, 166, 25_000_000), None);
         assert_eq!(tsc_hz_from_cpuid_leaf15(2, 0, 25_000_000), None);
         assert_eq!(tsc_hz_from_cpuid_leaf15(2, 166, 0), None);

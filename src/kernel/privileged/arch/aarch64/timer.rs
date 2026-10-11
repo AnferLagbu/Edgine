@@ -84,8 +84,15 @@ pub fn read_control() -> u64 {
 
 /// 初始化定时器子系统 (延迟启动)
 ///
-/// 读取 CNTFRQ_EL0, 计算 10ms 间隔, 但不启动定时器。
-/// 返回 (频率, 间隔ticks)。稍后调用 start_interval() 开始计时。
+/// 读取 CNTFRQ_EL0, 计算 1ms (1000 Hz) 间隔, 但不启动定时器.
+/// 返回 (频率, 间隔ticks)。稍后调用 start_interval() 开始计时.
+///
+/// # 与 tick 簿记的配对契约
+///
+/// 本函数给出的周期必须与 `timer::timer_init()` 请求的 tick 频率一致 (当前两处
+/// 都是 1000 Hz): `TIMER_FREQ_HZ` 是纳秒/tick 换算的唯一依据, 而本周期决定中断
+/// 实际到达率. 旧实现用 10ms 周期却簿记 1000Hz, 于是每个 IRQ 减 1 的 Deadline
+/// 记账与时间片粒度比名义慢 10 倍 (见 docs/plan S-3 E-II-a).
 pub fn init_deferred() -> (u64, u64) {
     let freq = read_frequency();
     let freq = if freq == 0 {
@@ -99,9 +106,10 @@ pub fn init_deferred() -> (u64, u64) {
         freq
     };
 
-    // 10ms 间隔
-    let ticks_ms = freq / 1000;
-    let interval = ticks_ms * 10;
+    // 1ms 间隔 = 一个 tick; 与 timer_init 请求的默认 tick 频率同源 (见上方配对契约).
+    // `.max(1)`: CNTFRQ 低于 1 kHz 时整除会得 0, 而 TVAL=0 会让定时器持续立刻
+    // 重发 (中断风暴); 至少留 1 个计数周期.
+    let interval = (freq / u64::from(crate::privileged::timer::DEFAULT_INTERRUPT_FREQ_HZ)).max(1);
     (freq, interval)
 }
 

@@ -122,13 +122,18 @@ fn floor_has_only_monotonic_writer() {
 }
 
 /// IC1: 入队落点必须回写任务自身 vruntime (只钳树键不回写正是 S-1 根因).
+///
+/// SMP 迁移协议重写后, `cfs_enqueue_to` 只做委托, 真正操作队列的持锁区搬到
+/// `place_locked` —— 契约跟着搬到唯一写树的那一段, 不变式本身不变.
 #[test]
 fn enqueue_placement_is_written_back_to_task() {
     let sched = read_src(SCHED);
-    let body = code_only(&fn_body(&sched, "fn cfs_enqueue_to"));
+    let body = code_only(&fn_body(&sched, "fn place_locked"));
+    // 同核/首次投送透传记账凭证; 跨核投送必然已在源核撤账, 目的核恒为新记账.
     assert!(
-        has(&body, ".enqueue(pid, vr, weight, accounted)"),
-        "IC1: 入队必须把记账凭证 accounted 透传到队列"
+        has(&body, "dst.enqueue(pid, vr, weight, on_rq)")
+            && has(&body, "dst.enqueue(pid, vr, weight, false)"),
+        "IC1/IC4: 入队必须把记账凭证透传到队列 (同核带凭证 / 跨核恒新记账)"
     );
     assert!(
         has(&body, "p.cfs_vruntime.store(placed"),
@@ -137,6 +142,12 @@ fn enqueue_placement_is_written_back_to_task() {
     assert!(
         has(&body, "p.cfs_on_rq.store(true"),
         "IC4: 入队必须置记账凭证"
+    );
+    // 入口只能有一条: 委托给搬定主体, 不得自带第二套投送逻辑.
+    let to = code_only(&fn_body(&sched, "fn cfs_enqueue_to"));
+    assert!(
+        has(&to, "self.cfs_place_on(pid, cpu_id)"),
+        "IC1/IC4: 入队出现第二条搬定路径 (绕过归属认领)"
     );
 }
 
@@ -156,8 +167,14 @@ fn blocking_and_dead_prev_deactivate_accounting() {
     );
     let deactivate = code_only(&fn_body(&sched, "fn cfs_deactivate"));
     assert!(
-        has(&deactivate, "if !accounted"),
-        "撤账必须以 cfs_on_rq 为凭证做到幂等 (block() 与 schedule() 覆盖同一任务)"
+        has(&deactivate, "rq.dequeue(pid, weight, on_rq)"),
+        "撤账必须以 cfs_on_rq 为凭证交给队列 (block() 与 schedule() 覆盖同一任务)"
+    );
+    // 幂等的落实处在队列 API 内: 未记账者不得再扣权重.
+    let cfs = code_only(&read_src(CFS));
+    assert!(
+        has(&cfs, "if accounted"),
+        "IC4: CfsRunQueue::dequeue 必须按凭证决定是否扣账, 否则重复撤账即扣穿 total_weight"
     );
     // 被切走且仍可重排者: 原位放回, 不动账 (始终在可运行集中)
     assert!(
@@ -203,26 +220,30 @@ fn tick_advances_floor_and_compares_in_one_domain() {
     );
 }
 
-/// IC4: 跨核迁移必须把记账随任务一起搬走, 投递统一走 cfs_enqueue_to.
+/// IC4: 跨核迁移必须把记账随任务一起搬走.
+///
+/// 旧契约直接锁住 `load_balance` 体内的 dequeue/enqueue; 迁移协议重写后
+/// `load_balance` 只负责建立"cpu index 升序双持"的临界区, 账目动作在
+/// `steal_locked` 里 —— 归属不搬则下一次撤账扣错核, 故一并锁住 `commit`.
+/// ("不得长期持目的核锁再走会取同一把锁的入队路径" 已由
+/// `smp_rq_migration_test.rs` 的锁序契约接管)
 #[test]
 fn load_balance_transfers_accounting() {
-    let sched = read_src(SCHED);
-    let body = code_only(&fn_body(&sched, "pub fn load_balance"));
+    let sched = code_only(&read_src(SCHED));
+    let steal = fn_body(&sched, "fn steal_locked");
     assert!(
-        has(&body, "src_rq.dequeue(pid, weight, true)"),
-        "IC4: 偷取必须从源核 total_weight 撤账 (否则两核权重和发散, 均衡判定失真)"
+        has(&steal, "src.dequeue(pid, weight, on_rq)")
+            && has(&steal, "dst.enqueue(pid, vr, weight, false)"),
+        "IC4: 偷取必须从源核 total_weight 撤账并给目的核记账 (否则两核权重和发散, 均衡判定失真)"
     );
     assert!(
-        has(&body, "self.cfs_enqueue_to(pid, this_cpu)"),
-        "IC1/IC4: 投递必须经统一入队入口 (落点钳制 + 回写 + 记账)"
+        has(&steal, "claim.commit(dst_cpu)"),
+        "IC4: 偷取后归属必须随账一起搬到目的核 (归属不搬 = 下一次撤账扣错核)"
     );
+    // 投送只有一条入口: 不得重新出现"只持目的锁就上树"的形态.
     assert!(
-        has(&body, "self.cfs_enqueue_to(pid, busiest_cpu)"),
-        "亲和性不符时退回源核同样要走统一入口"
-    );
-    assert!(
-        !body.contains("dst_rq"),
-        "不得长期持有目标核 rq 锁后再走会取同一把锁的入队路径"
+        !has(&sched, "per_cpu_for(cpu_id).cfs_rq.lock().enqueue("),
+        "IC1/IC4: 出现绕过归属认领的直接入队"
     );
 }
 

@@ -72,6 +72,8 @@ pub use types::{
     IrqDescriptor,
     MODULE_INIT_FAILURE,
     MODULE_INIT_SUCCESS,
+    TICK_IRQ,
+    TICK_VECTOR,
     // 辅助函数
     get_exception_name,
     get_irq_name,
@@ -212,6 +214,8 @@ pub extern "C" fn idt_init() -> i32 {
         fn irq13();
         fn irq14();
         fn irq15();
+        // 本地向量 stub (0x30 = IRQ_BASE + TICK_IRQ, LAPIC 定时器 tick)
+        fn irq128();
         // MSI 向量 stub (0x40-0x9F → irq16-irq127)
         fn irq16();
         fn irq17();
@@ -535,6 +539,11 @@ pub extern "C" fn idt_init() -> i32 {
 
     // 编程 MSI 向量 IDT 条目 (0x40-0x7F)
     manager.init_msi_idt(&msi_table);
+
+    // 编程 tick 本地向量门 (TICK_VECTOR = 0x30): LAPIC 定时器由本核 LVT 直接
+    // 投递, 不经 8259/IOAPIC; 与 `register_irq(TICK_IRQ, ..)` 的槽位同一真源.
+    // 必须早于任何 `program_timer` 装配 (否则首个 tick 无门 → #GP → #DF).
+    manager.init_local_vector(TICK_VECTOR, addr!(irq128));
 
     // 编程 IPI 向量 IDT 门 (0xFD TLB 失效 / 0xFE reschedule)
     let ipi_table: [u64; 2] = [addr!(irq253), addr!(irq254)];

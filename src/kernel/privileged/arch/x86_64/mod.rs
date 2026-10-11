@@ -391,6 +391,13 @@ impl InterruptArch for X8664 {
         crate::privileged::idt::idt_init();
         crate::privileged::arch::x86_64::apic::apic_init();
         crate::privileged::smp::init();
+        // 次级核上线不在此处: 见 `secondary_cpu_bringup` —— LAPIC 是每核私有寄存器,
+        // AP 上线后第一件事是自装配本核 tick, 而全局 tick 源参数必须先于该时刻发布.
+    }
+
+    /// 上线次级核 (MADT 解析 + INIT-SIPI-SIPI); 由启动编排排在全局 tick 源参数
+    /// 发布 (`clockevent::setup`) 之后、调度器之前调用.
+    fn secondary_cpu_bringup() {
         crate::privileged::arch::x86_64::smp_init::init();
     }
 }

@@ -90,6 +90,8 @@ bitflags::bitflags! {
         const X2APIC      = 1 << 53;
         const MOVBE       = 1 << 54;
         const POPCNT      = 1 << 55;
+        /// TSC-Deadline 模式 (LAPIC 定时器可用 MSR 0x6E0 绝对截止期) — CPUID Leaf1 ECX bit 24
+        const TSCDEADLINE = 1 << 56;
         const AES         = 1 << 57;
         const XSAVE       = 1 << 58;
         const OSXSAVE     = 1 << 59;
@@ -305,6 +307,9 @@ pub(super) fn collect_features(
         }
         if ecx & (1 << 23) != 0 {
             feat.insert(CpuFeatures::POPCNT);
+        }
+        if ecx & (1 << 24) != 0 {
+            feat.insert(CpuFeatures::TSCDEADLINE);
         }
         if ecx & (1 << 25) != 0 {
             feat.insert(CpuFeatures::AES);

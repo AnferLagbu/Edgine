@@ -188,7 +188,7 @@ unsafe fn start_ap(lapic_id: u32, cpu_index: u32) {
 
         // AP 启动串行化的前置事实 (deadlock 审计 HIGH 的根治依据):
         // `start_ap` 全仓唯一调用点是本文件 `init()` 内对 MADT AP 列表的串行循环,
-        // 而 `init()` 仅由 BSP 经 `Arch::interrupt_late_init()` 在 `kernel_main`
+        // 而 `init()` 仅由 BSP 经 `Arch::secondary_cpu_bringup()` 在 `kernel_main`
         // 中调用一次; AP 走 `ap_entry`, 不进入本函数. 因此不存在第二个获取者 ——
         // 旧写法的 `AP_STARTUP_LOCK` (`spin::mutex::SpinMutex`, 不做 IRQ save)
         // 既不保护任何并发路径, 又把最长约 150ms/AP 的忙等轮询圈进持锁区间,
@@ -335,7 +335,7 @@ extern "C" fn ap_entry(lapic_id: u32) -> ! {
 
     // AP 必须在本核加载 IDT 之后才能开中断: gdt_init_ap 只装 GDT+TSS,
     // 而 BSP 的 idt_init() 里的 lidt 只对 BSP 本核生效. 若 AP 在 IDTR.BASE=0
-    // 状态下开中断, 首个定时器中断 (向量 0x20) 即触发 #GP → #DF → triple fault.
+    // 状态下开中断, 首个本核 tick (向量 TICK_VECTOR) 即触发 #GP → #DF → triple fault.
     // SAFETY: `IdtManager::init()` 已在 BSP 上完成, IDT 表全局共享; 本核在
     // ap_entry 入口已 cli, 且 sti 在其后, 故加载期间中断处于屏蔽状态.
     unsafe {
@@ -380,6 +380,15 @@ extern "C" fn ap_entry(lapic_id: u32) -> ! {
         }
     }
 
+    // 本核 tick 设备自装配 (E-II-b): LAPIC 是每核私有寄存器, BSP 无法代写.
+    // 次序硬约束: ① 必在 `register_cpu` 之后 —— `clockevent` 的每核装填状态按
+    // `smp::current_cpu_index()` 寻址, 而该函数靠 `register_cpu` 填入的硬件 id 表
+    // 反查索引, 未登记时恒返 0 (会误写 BSP 槽位); ② 必在 `load_idt_on_current_cpu`
+    // 之后 (首个 tick 需有门); ③ 必在 done 握手之前, 使 "BSP 见 done" 蕴含
+    // "本核 tick 已装填" (全局 tick 源参数由启动编排 7.6 先于本函数发布, 故
+    // `arm_local` 不会因未就绪而空转).
+    crate::privileged::timer::clockevent::arm_local();
+
     // SAFETY: TRAMPOLINE_BASE + AP_INFO_OFFSET + DONE_OFFSET 是 AP 握手内存布局中
     // 预留的 done 标志位, BSP 已映射该物理页, 写入对齐 u32 安全.
     // DONE_OFFSET 由 Rust 端 offset_of! 计算, 与 BSP 等待逻辑共享同一来源 (DECISION-050).
@@ -393,10 +402,10 @@ extern "C" fn ap_entry(lapic_id: u32) -> ! {
     // 进入本核 idle 调度循环。
     //
     // 每轮: 关中断 → `schedule()` (本地选任务 / 负载均衡, 必要时上下文切换到任务)
-    // → `sti; hlt` 融合体原子地开中断并停机。融合是必需的: ①AP 本核无周期定时器
-    // (PIT 仅 BSP 可用, LAPIC 周期定时器未标定), 唤醒靠 resched IPI 与其它核的负载
-    // 均衡, 开中断与 `hlt` 分离会丢掉窗口内到达的 IPI; ②`sti; hlt` 是 x86 的经典
-    // 原子等待序列 (STI 影子指令), 对齐 `idle_entry` 手法。
+    // → `sti; hlt` 融合体原子地开中断并停机。融合是必需的: 本核 tick 虽已由
+    // `arm_local` 装填, 但唤醒还依赖 resched IPI 与其它核的负载均衡, 开中断与
+    // `hlt` 分离会丢掉窗口内到达的 IPI; `sti; hlt` 是 x86 的经典原子等待序列
+    // (STI 影子指令), 对齐 `idle_entry` 手法。
     loop {
         crate::arch!(interrupt_disable());
         let _ = crate::privileged::proc::SCHEDULER.schedule();

@@ -451,6 +451,13 @@ irq_stub 13, 45
 irq_stub 14, 46
 irq_stub 15, 47
 
+; ── 本地向量 (0x30-0x3F) ──────────────────────────────────────────────
+; 每核本地中断源 (当前仅 LAPIC 定时器 tick), 不经 8259/IOAPIC: 投递由本核 LVT
+; 编程决定, EOI 由 handle_irq 的 irq>=16 分支走 LAPIC. stub 序号 128 与 MSI 段
+; (16-127) 不重叠; 向量号 48 = IRQ_BASE(32) + TICK_IRQ(16), 单源定义在
+; privileged/idt/types.rs.
+irq_stub 128, 48
+
 ; ── MSI 向量 (0x40-0x7F) ─────────────────────────────────────────────
 ; 64 个 MSI 向量 stub, 使用 irq_common 入口 → irq_handler FFI
 irq_stub 16, 64

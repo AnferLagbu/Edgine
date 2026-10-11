@@ -433,6 +433,24 @@ impl IdtManager {
         crate::klog_info!(Kernel, "IDT: IPI vectors 0xFD/0xFE programmed (2 stubs)");
     }
 
+    /// 编程单个本地向量 IDT 门 (向量段 0x30-0x3F)
+    ///
+    /// 本地向量 = 由本核 LAPIC LVT 直接投递、不经 8259/IOAPIC 的中断源。当前
+    /// 仅一个: tick (`TICK_VECTOR`, LAPIC 定时器)。与 MSI 段的区分不在门类型
+    /// (同用 `irq_common` 入口、中断门 DPL0), 而在分发路径: 本地向量的
+    /// irq 槽落在 16-31, `handle_irq` 走 descriptor + LAPIC EOI 分支。
+    pub fn init_local_vector(&self, vector: u8, handler_addr: u64) {
+        let mut state = self.state.lock();
+        self.set_gate_internal(
+            &mut state,
+            vector,
+            handler_addr,
+            GDT_KERNEL_CODE,
+            IDT_TYPE_INTERRUPT,
+        );
+        crate::klog_info!(Kernel, "IDT: local vector {:#04x} programmed", vector);
+    }
+
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
@@ -828,11 +846,12 @@ impl IdtManager {
 
         let irq = vector - IRQ_BASE;
 
-        // B07 MSI-X: irq >= 16 走 MSI 路径 (irq 16-31 为预留, 32-63 为 MSI vector).
-        // MSI 不走 8259 PIC, 不需 spurious 检测, EOI 走 LAPIC.
+        // B07 MSI-X: irq >= 16 走本地/MSI 投递域 (不经 8259, 无需 spurious 检测,
+        // EOI 走 LAPIC). irq 16 已由 tick (`TICK_IRQ`) 占用, irq 17-31 仍预留,
+        // irq 32+ 为 MSI 向量.
         if irq >= 16 {
-            // MSI 分支: vector 0x40-0x7F (irq 32-63) 由 LAPIC 直接投递,
-            // 不经过 8259A. 跳过 spurious 检测, 直接查 handler 表.
+            // 本地/MSI 分支: vector 由 LAPIC 直接投递 (tick 走 LVT Timer,
+            // MSI 走 0x40+), 不经过 8259A. 跳过 spurious 检测, 直接查 handler 表.
             self.stats.record_irq(irq);
 
             let handler_opt = {

@@ -103,7 +103,7 @@ INTERNAL_PATTERNS = [
     # sgeg 内部 — api/session/engine/secure_boot 已 glob re-export
     # debug 内部 — api/ebpf/ftrace/kgdb 已 glob re-export
     # egdf 内部 — composite/firmware/proto_net/devtree 已 glob re-export
-    # cpu 内部 — tsc 已 re-export (read_tsc/read_tsc_serialized/cycles_to_nanoseconds)
+    # cpu 内部 — tsc 已 re-export (read_tsc/read_tsc_serialized)
     # io 内部 — iouring 已 glob re-export
 ]
 

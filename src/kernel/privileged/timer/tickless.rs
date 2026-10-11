@@ -281,6 +281,12 @@ impl TicklessSubsystem {
         if !(MIN_HZ..=MAX_HZ).contains(&hz) {
             return false;
         }
+        // tick 到达率必须等于时基簿记频率: 二者脱钩会使 Deadline 记账与时间片
+        // 粒度按名义值错位 (硬件装填值由 `tick::counters_per_tick()` 单一来源算出,
+        // clockevent 对此强约束). 先校验再落库, 不留下"名义 hz 与实际不一致"的状态.
+        if hz != super::get_frequency() {
+            return false;
+        }
         let per_cpu = self.per_cpu.lock();
         if (cpu_id as usize) >= per_cpu.len() {
             return false;
@@ -314,52 +320,44 @@ impl TicklessSubsystem {
         super::hrtimer::hrtimer_clock_read()
     }
 
-    /// 编程 one-shot 定时器
+    /// 编程 one-shot 定时器: 把本核下一个到期改到 `now + delta_ns`
+    ///
+    /// 装填后本核不再自动续周期 tick (由 clockevent 的单次装填状态承担),
+    /// 直到退出 tickless 时 [`Self::program_periodic`] 重新起算。
     fn program_oneshot(delta_ns: u64) {
         #[cfg(target_arch = "x86_64")]
-        {
-            // 使用 LAPIC Timer one-shot 模式
-            // SAFETY: LAPIC timer 编程是标准操作
-            let timer_hz = crate::privileged::arch::apic::get_timer_hz();
-            if timer_hz == 0 {
-                return;
-            }
-            let count = ((delta_ns * timer_hz) / 1_000_000_000) as u32;
-            if count > 0 {
-                crate::privileged::arch::apic::init_timer(
-                    0x20,  // IRQ0 vector
-                    false, // one-shot
-                    16,    // divisor
-                );
-                crate::privileged::arch::apic::set_timer_count(count);
-            }
-        }
+        crate::privileged::timer::clockevent::program_oneshot_ns(delta_ns);
         #[cfg(target_arch = "aarch64")]
         {
-            // 使用 ARM Generic Timer one-shot
+            // SIMPLIFIED: aarch64 未向本核 Generic Timer 装填单次到期, 停 tick 在本架构
+            // 上是纯记账 (软件标记), 硬件仍按周期发中断; 影响面 = NO_HZ_IDLE 在 aarch64
+            // 无省电收益且 tick 仍会到达; 待 arch::aarch64::timer 提供每核 one-shot 装填
+            // 入口 (CNTV_TVAL + CTL.ENABLE=0/1 语义) 后接回同一抽象。
             let _ = delta_ns;
         }
     }
 
-    /// 恢复周期定时器
-    fn program_periodic(hz: u32) {
+    /// 恢复本核周期 tick
+    ///
+    /// 返回装填是否受理: `hz` 与时基簿记频率不一致 (或硬件尚未装配) 时返回
+    /// `false` 并记录, 不静默假装成功。
+    fn program_periodic(hz: u32) -> bool {
         #[cfg(target_arch = "x86_64")]
         {
-            // SAFETY: LAPIC timer 周期模式编程
-            let timer_hz = crate::privileged::arch::apic::get_timer_hz();
-            if timer_hz == 0 {
-                return;
+            match crate::privileged::timer::clockevent::arm_periodic(hz) {
+                Ok(()) => true,
+                Err(reason) => {
+                    crate::klog_warn!(Timer, "tickless: resume periodic tick rejected: {}", reason);
+                    false
+                }
             }
-            let count = (timer_hz / u64::from(hz)) as u32;
-            crate::privileged::arch::apic::init_timer(
-                0x20, true, // periodic
-                16,
-            );
-            crate::privileged::arch::apic::set_timer_count(count);
         }
         #[cfg(target_arch = "aarch64")]
         {
+            // SIMPLIFIED: 同 `program_oneshot` — aarch64 的周期装填由 arch 侧
+            // `timer::reload` 在 ISR 内完成, tickless 退出路径不重算周期.
             let _ = hz;
+            true
         }
     }
 }

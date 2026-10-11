@@ -138,6 +138,7 @@ pub trait CoreArch {
 /// 方法:
 /// - `interrupt_disable/enable/restore/is_enabled` — 中断屏蔽
 /// - `interrupt_early_init` / `interrupt_late_init` — 中断子系统初始化
+/// - `secondary_cpu_bringup` — 次级核上线 (在全局 tick 源参数发布后)
 /// - `send_ipi` / `broadcast_ipi` — 核间中断
 pub trait InterruptArch {
     /// 禁用中断并返回之前的中断状态标志 (cli / msr daifset)。
@@ -155,9 +156,19 @@ pub trait InterruptArch {
     fn interrupt_early_init();
     /// 完整中断初始化 — 包括中断控制器、IPI、定时器等。
     ///
-    /// `x86_64`: GDT + IDT + APIC + SMP AP boot
+    /// `x86_64`: GDT + IDT + APIC (次核上线见 `secondary_cpu_bringup`)
     /// aarch64: `GICv3` + Exception vectors + timer (已由 entry.rs 完成, 此处为空操作)
     fn interrupt_late_init();
+    /// 上线次级核 (CPU bringup)。
+    ///
+    /// 与 [`interrupt_late_init`](InterruptArch::interrupt_late_init) 拆开的原因:
+    /// 本核 tick 设备只能由本核装配, 而全局 tick 源参数 (模式 + 每 tick 计数
+    /// 增量) 必须在那之前发布; 两者分开后启动序列不存在"AP 先上线、参数未定"
+    /// 的窗口, 无需超时等待与降级分支 (对齐 Linux clocksource 就绪先于 cpu_up)。
+    ///
+    /// `x86_64`: MADT 解析 + INIT-SIPI 拉起 AP (AP 在 `ap_entry` 内自装配 LAPIC tick)
+    /// aarch64: PSCI CPU_ON 拉起 AP (AP 在 `ap_main` 内自装配 Generic Timer)
+    fn secondary_cpu_bringup();
     /// 向目标 CPU 发送核间中断。
     fn send_ipi(target_cpu: u32, vector: u8);
     /// 向所有 CPU (不含自身) 广播 IPI。
@@ -286,6 +297,10 @@ pub trait Arch: CoreArch + InterruptArch + MmuArch + SystemArch {
     /// 完整中断初始化, 含中断控制器/IPI/定时器 (委托 `InterruptArch::interrupt_late_init`)。
     fn interrupt_late_init() {
         <Self as InterruptArch>::interrupt_late_init();
+    }
+    /// 上线次级核 (委托 `InterruptArch::secondary_cpu_bringup`)。
+    fn secondary_cpu_bringup() {
+        <Self as InterruptArch>::secondary_cpu_bringup();
     }
     /// 向目标 CPU 发送核间中断 (委托 `InterruptArch::send_ipi`)。
     fn send_ipi(target_cpu: u32, vector: u8) {

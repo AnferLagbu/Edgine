@@ -270,8 +270,13 @@ impl InterruptArch for Aarch64 {
     }
 
     fn interrupt_late_init() {
-        // GICv3 + 异常向量 + 定时器已由 entry.rs 配置; 此处仅完成 SMP 次核启动。
+        // GICv3 + 异常向量 + 定时器已由 entry.rs 配置; 次核上线见
+        // `secondary_cpu_bringup` (与 x86_64 同一次序约束).
         crate::privileged::smp::init();
+    }
+
+    /// PSCI CPU_ON 拉起次级核; AP 在 `ap_main` 内自装配本核 Generic Timer.
+    fn secondary_cpu_bringup() {
         smp_init::init();
     }
 }

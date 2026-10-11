@@ -23,7 +23,6 @@
 //! | Emergency | SIGTERM → 最大 RSS 进程, 5s 后 SIGKILL |
 
 use crate::privileged::mm::{self as mm_api};
-use crate::privileged::proc::scheduler::TICK_COUNT;
 use crate::privileged::proc::types::ProcessState;
 // DECISION-O ②: 压力类型/状态/update_pressure 包装归 privileged::mm::pressure
 // (机制持有, OOMD 是调度器 tick 直接驱动的机制组件); 分级算法经
@@ -62,7 +61,9 @@ impl OomDaemon {
             return;
         }
 
-        let tick = TICK_COUNT.load(Ordering::Relaxed);
+        // 单一时基: tick 读数取 `timer::get_ticks()` (P-1 双份计数已收敛,
+        // 调度器不再自存一份计数副本).
+        let tick = crate::privileged::timer::get_ticks();
         let last = self.last_check.load(Ordering::Relaxed);
 
         if tick.saturating_sub(last) < OOMD_CHECK_INTERVAL {

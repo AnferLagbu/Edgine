@@ -469,53 +469,16 @@ pub fn hrtimer_pending_count() -> usize {
 
 /// 读取当前时间 (纳秒, 单调递增)
 ///
-/// 基于 `arch!(timestamp())` 和校准频率转换。
-/// 如果未校准, 回退到 tick 计数。
+/// 直接取 `tick` 的纳秒视图 —— 全内核只有一个时基 (同一个锚点 + 同一个自由
+/// 计数器), hrtimer 不另开一条换算路径 (旧形态: 已校准走 `cycles × 1e9 / freq`,
+/// 未校准走 `ticks_to_ns(get_ticks())`, 两条路径的历元与粒度并不一致).
 ///
 /// # 精度
 ///
-/// - `x86_64`: TSC 频率校准后, 纳秒级精度
-/// - aarch64: `CNTPCT_EL0` + `CNTFRQ_EL0`, 纳秒级精度
-/// - 未校准: 毫秒级 (tick 精度)
+/// - 硬件时基已建立 (`x86_64`: TSC, aarch64: `CNTPCT_EL0`): 计数器粒度 (亚 tick)
+/// - 未建立: tick 粒度 (毫秒级)
 pub fn hrtimer_clock_read() -> u64 {
-    // 优先使用校准后的高精度时间
-    if let Some(freq_hz) = crate::privileged::timer::calibration::get_tsc_frequency_hz() {
-        if freq_hz > 0 {
-            let ts = crate::arch!(timestamp());
-            // ns = cycles * 1_000_000_000 / freq_hz
-            // 使用 128 位乘法避免溢出: 先除后乘会损失精度
-            return mul_u64_div(ts, 1_000_000_000, freq_hz);
-        }
-    }
-
-    // 回退: tick 计数 → 纳秒
-    crate::privileged::timer::tick::ticks_to_ns(crate::privileged::timer::tick::get_ticks())
-}
-
-/// 将纳秒转换为时钟周期数
-///
-/// 用于编程硬件定时器。
-pub fn hrtimer_ns_to_cycles(ns: u64) -> u64 {
-    if let Some(freq_hz) = crate::privileged::timer::calibration::get_tsc_frequency_hz() {
-        if freq_hz > 0 {
-            return mul_u64_div(ns, freq_hz, 1_000_000_000);
-        }
-    }
-
-    // 回退: 纳秒 → tick
-    crate::privileged::timer::tick::us_to_ticks(ns / 1000)
-}
-
-/// 安全的 64 位乘除法: (a * b) / c, 无溢出
-///
-/// 使用 128 位中间结果。
-#[inline]
-fn mul_u64_div(a: u64, b: u64, c: u64) -> u64 {
-    if c == 0 {
-        return 0;
-    }
-    // 在 64 位平台上, u128 可用且通常有硬件支持
-    (u128::from(a) * u128::from(b) / u128::from(c)) as u64
+    crate::privileged::timer::tick::get_uptime_ns()
 }
 
 // ============================================================================
@@ -654,15 +617,11 @@ mod tests {
     }
 
     #[test]
-    fn test_mul_u64_div() {
-        assert_eq!(mul_u64_div(1_000_000_000, 3, 1_000_000_000), 3);
-        assert_eq!(mul_u64_div(0, 100, 50), 0);
-        assert_eq!(mul_u64_div(100, 0, 50), 0);
-        assert_eq!(mul_u64_div(100, 50, 0), 0);
-        // 大数测试 (避免溢出)
-        let freq = 2_500_000_000u64; // 2.5 GHz
-        let ns = mul_u64_div(1_000_000_000, 1_000_000_000, freq);
-        assert!(ns > 0);
+    fn test_hrtimer_clock_read_monotonic() {
+        // 单一时基: 时钟读数取自 `tick` 纳秒视图, 两次读取不得回退.
+        let t1 = hrtimer_clock_read();
+        let t2 = hrtimer_clock_read();
+        assert!(t2 >= t1, "clock must not rewind");
     }
 
     #[test]
@@ -759,16 +718,6 @@ fn test_forward_periodic() -> crate::privileged::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_mul_u64_div_basic() -> crate::privileged::tests::TestResult {
-    use crate::privileged::tests::{TestResult, assert_eq_test};
-    assert_eq_test!(mul_u64_div(100, 3, 100), 3, "100*3/100=3");
-    assert_eq_test!(mul_u64_div(0, 100, 50), 0, "zero a");
-    assert_eq_test!(mul_u64_div(100, 0, 50), 0, "zero b");
-    assert_eq_test!(mul_u64_div(100, 50, 0), 0, "zero c");
-    TestResult::Pass
-}
-
-#[cfg(feature = "kernel_test")]
 fn test_clock_read() -> crate::privileged::tests::TestResult {
     use crate::privileged::tests::{TestResult, check};
     // u64 类型即非负契约; 此测试只验证调用不 panic + 返回合理量级.
@@ -838,7 +787,6 @@ pub fn register_hrtimer_tests() {
     r.register("hrtimer", "uninit_state", test_uninit_state);
     r.register("hrtimer", "init_and_cancel", test_init_and_cancel);
     r.register("hrtimer", "forward_periodic", test_forward_periodic);
-    r.register("hrtimer", "mul_u64_div", test_mul_u64_div_basic);
     r.register("hrtimer", "clock_read", test_clock_read);
     r.register("hrtimer", "queue_ops", test_queue_operations);
     r.register("hrtimer", "periodic_restart", test_periodic_restart);

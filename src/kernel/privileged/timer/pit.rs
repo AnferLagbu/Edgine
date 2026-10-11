@@ -35,6 +35,10 @@ const PIT_COMMAND_PORT: u16 = 0x43; // 命令/控制寄存器
 pub const PIT_BASE_FREQUENCY: u64 = 1_193_182;
 
 /// 默认中断频率 (1000 Hz = 1ms 间隔)
+///
+/// 项目级 tick 频率单源: 不仅定 PIT 通道 0 的重装值, 也是 aarch64 Generic Timer
+/// 算周期的依据 (`arch::aarch64::timer::init_deferred`) 与启动编排 `timer_init`
+/// 的入参 (`src/kernel/lib.rs` 步骤 7) —— 命名沿用历史, 含义是"内核 tick 频率".
 pub const DEFAULT_INTERRUPT_FREQ_HZ: u32 = 1000;
 
 /// 最大分频值 (16位计数器)
@@ -261,6 +265,17 @@ pub fn pit_get_frequency() -> Option<u32> {
 /// 检查 PIT 是否已初始化
 pub fn pit_is_initialized() -> bool {
     PIT_INITIALIZED.load(Ordering::Acquire)
+}
+
+/// 获取当前配置的分频计数值 (通道 0 倒计数器的重装值)
+///
+/// 供频率测定模块计算倒计数器的回绕周期 (`divisor` 个 PIT 时钟 = 一次回绕),
+/// 不暴露 `CURRENT_DIVISOR` 本身。
+///
+/// # Returns
+/// * `u16` - 重装值; PIT 尚未初始化时为 `0` (调用方需自行拒绝)
+pub fn pit_current_divisor() -> u16 {
+    CURRENT_DIVISOR.load(Ordering::Acquire)
 }
 
 /// 重置 PIT 到安全状态

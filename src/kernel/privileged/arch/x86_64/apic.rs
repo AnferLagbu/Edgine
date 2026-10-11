@@ -37,6 +37,11 @@ const APIC_IRR_BASE: u32 = 0x200;
 const SVR_ENABLE: u32 = 1 << 8;
 const LVT_MASK: u32 = 1 << 16;
 const LVT_TIMER_PERIODIC: u32 = 1 << 17;
+/// LAPIC 定时器 TSC-Deadline 模式位 (Intel SDM 3-1079): 置 1 后计数器由
+/// `IA32_TSC_DEADLINE` 驱动, LVT Timer_Count 写入被忽略.
+const LVT_TIMER_TSC_DEADLINE: u32 = 1 << 18;
+/// `IA32_TSC_DEADLINE` MSR —— deadline 模式下的绝对 TSC 截止期.
+const MSR_TSC_DEADLINE: u32 = 0x6E0;
 // LVT 投递模式
 const LVT_DELIVERY_FIXED: u32 = 0x000;
 const LVT_DELIVERY_SMI: u32 = 0x200;
@@ -60,8 +65,6 @@ const TIMER_DIV_128: u32 = 0x06;
 
 static APIC_BASE: AtomicU64 = AtomicU64::new(0);
 static APIC_INITIALIZED: AtomicBool = AtomicBool::new(false);
-static APIC_TIMER_CALIBRATED: AtomicBool = AtomicBool::new(false);
-static APIC_TIMER_HZ: AtomicU64 = AtomicU64::new(0);
 
 fn rdmsr(msr: u32) -> u64 {
     let (high, low): (u32, u32);
@@ -201,17 +204,24 @@ pub fn broadcast_ipi(vector: u8) {
     wait_icr_delivery();
 }
 
+/// LAPIC 定时器工作模式 (机制层枚举, 不含频率换算与策略).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimerMode {
+    /// 递减计数, 到 0 产生一次中断后停止 (one-shot), 需上层重新装填。
+    OneShot,
+    /// 递减计数, 到 0 自动重装初值 (周期)。
+    Periodic,
+    /// 由 `IA32_TSC_DEADLINE` 指定的绝对 TSC 值到期 (one-shot 语义)。
+    TscDeadline,
+}
+
 #[expect(
     clippy::match_same_arms,
     reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
 )]
-/// 初始化 APIC 定时器: 设置分频值、单次/周期模式与中断向量。
-pub fn init_timer(vector: u8, periodic: bool, divisor: u32) {
-    if !is_initialized() {
-        return;
-    }
-
-    let div_val = match divisor {
+/// 分频值 → DCR 编码 (硬件编码不连续, 保留完整分支以对照硬件手册阅读).
+const fn timer_div_bits(divisor: u32) -> u32 {
+    match divisor {
         1 => TIMER_DIV_1,
         2 => TIMER_DIV_2,
         4 => TIMER_DIV_4,
@@ -221,22 +231,58 @@ pub fn init_timer(vector: u8, periodic: bool, divisor: u32) {
         64 => TIMER_DIV_64,
         128 => TIMER_DIV_128,
         _ => TIMER_DIV_16,
-    };
-
-    apic_write(APIC_TIMER_DCR, div_val);
-
-    let mode = if periodic { LVT_TIMER_PERIODIC } else { 0 };
-    apic_write(APIC_LVT_TIMER, mode | u32::from(vector));
+    }
 }
 
-/// 设置 APIC 定时器初始计数值 (单次模式)。
+/// 设置本核定时器分频器 (仅 count 模式参与计数; deadline 模式硬件不使用该值)。
+pub fn set_timer_divisor(divisor: u32) {
+    if is_initialized() {
+        apic_write(APIC_TIMER_DCR, timer_div_bits(divisor));
+    }
+}
+
+/// 编程本核定时器: 模式 + 投递向量。
+///
+/// 写 LVT 即解除屏蔽 (mask 位为 0), 屏蔽由 [`mask_timer`] 负责 —— 使"模式
+/// 与向量装配"和"启停"成为两个正交原语, 装配次序由上层 (timer::clockevent) 决定。
+pub fn program_timer(mode: TimerMode, vector: u8) {
+    if !is_initialized() {
+        return;
+    }
+    let mode_bits = match mode {
+        TimerMode::TscDeadline => LVT_TIMER_TSC_DEADLINE,
+        TimerMode::OneShot => 0,
+        TimerMode::Periodic => LVT_TIMER_PERIODIC,
+    };
+    apic_write(APIC_LVT_TIMER, mode_bits | u32::from(vector));
+}
+
+/// 屏蔽本核定时器 (置 LVT mask 位), 不改变已装配的模式与向量。
+pub fn mask_timer() {
+    if is_initialized() {
+        apic_write(APIC_LVT_TIMER, apic_read(APIC_LVT_TIMER) | LVT_MASK);
+    }
+}
+
+/// 回读本核定时器 LVT (mask 位 + 模式位 + 向量; 未初始化时返回 0)。
+///
+/// 唯一消费者是 tick 源装配失败的诊断路径: 到 `program_timer` 之后 LVT 的实际
+/// 内容决定了"模式没被接受 / 仍被屏蔽 / 向量写错"三种静默失效中到底是哪一种。
+pub fn read_timer_lvt() -> u32 {
+    if !is_initialized() {
+        return 0;
+    }
+    apic_read(APIC_LVT_TIMER)
+}
+
+/// 装载定时器计数初值 (count 模式): 从该值递减到 0 触发。
 pub fn set_timer_count(count: u32) {
     if is_initialized() {
         apic_write(APIC_TIMER_ICR, count);
     }
 }
 
-/// 读取 APIC 定时器当前计数值 (未初始化时返回 0)。
+/// 读取定时器当前剩余计数 (未初始化时返回 0)。
 pub fn get_timer_count() -> u32 {
     if !is_initialized() {
         return 0;
@@ -244,53 +290,33 @@ pub fn get_timer_count() -> u32 {
     apic_read(APIC_TIMER_CCR)
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
-/// 校准 APIC 定时器频率: 以固定忙等窗口测得的计数反推 Hz, 并记录结果。
-pub fn calibrate_timer(_pit_hz: u64, target_ms: u64) -> u64 {
+/// 写 `IA32_TSC_DEADLINE`: 本核下一个定时器到期的绝对 TSC 值。
+///
+/// 仅在 [`timer_deadline_supported`] 为真时调用; 在不支持该 MSR 的 CPU 上写
+/// 会触发 #GP。
+pub fn set_deadline(deadline: u64) {
+    if is_initialized() {
+        wrmsr(MSR_TSC_DEADLINE, deadline);
+    }
+}
+
+/// 探测本核 LAPIC 是否真正接受 TSC-Deadline 模式 (写 bit18 后回读)。
+///
+/// CPUID.01H:ECX[24] 是 CPU 侧的架构性声明, 但 LAPIC 集成可能未实现该位而
+/// CPUID 仍报支持; 若仅据 CPUID 选定 deadline 而硬件忽略 bit18, 定时器永不
+/// 到期 —— 表现为启动后该核再无 tick (挂死类故障, 事后极难归因). 回读探测
+/// 把该风险收敛成一个可判定的分支。
+///
+/// 探测全程保持定时器屏蔽且不带向量号, 不影响已装配的 tick。
+pub fn timer_deadline_supported() -> bool {
     if !is_initialized() {
-        return 0;
+        return false;
     }
-
-    apic_write(APIC_TIMER_DCR, TIMER_DIV_16);
     apic_write(APIC_LVT_TIMER, LVT_MASK);
-    apic_write(APIC_TIMER_ICR, 0xFFFFFFFF);
-
-    // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
-    #[expect(
-        clippy::items_after_statements,
-        reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-    )]
-    unsafe extern "C" {
-        fn timer_sleep_busy(ms: u64);
-    }
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    unsafe {
-        timer_sleep_busy(target_ms);
-    }
-
-    let remaining = apic_read(APIC_TIMER_CCR);
-    let elapsed = 0xFFFFFFFFu32 - remaining;
-
-    let ticks_per_ms = u64::from(elapsed) / target_ms;
-    let apic_hz = ticks_per_ms * 16 * 1000;
-
-    APIC_TIMER_HZ.store(apic_hz, Ordering::Release);
-    APIC_TIMER_CALIBRATED.store(true, Ordering::Release);
-
-    apic_hz
-}
-
-/// 获取已校准的 APIC 定时器频率 (Hz), 未校准时为 0。
-pub fn get_timer_hz() -> u64 {
-    APIC_TIMER_HZ.load(Ordering::Acquire)
-}
-
-/// 查询 APIC 定时器是否已完成频率校准。
-pub fn is_timer_calibrated() -> bool {
-    APIC_TIMER_CALIBRATED.load(Ordering::Acquire)
+    apic_write(APIC_LVT_TIMER, LVT_MASK | LVT_TIMER_TSC_DEADLINE);
+    let accepted = apic_read(APIC_LVT_TIMER) & LVT_TIMER_TSC_DEADLINE != 0;
+    apic_write(APIC_LVT_TIMER, LVT_MASK);
+    accepted
 }
 
 /// 屏蔽 LINT0 本地中断 (置 LVT 掩码位)。
@@ -350,21 +376,6 @@ pub extern "C" fn apic_send_ipi(apic_id: u8, vector: u8) {
 #[unsafe(no_mangle)]
 pub extern "C" fn apic_broadcast_ipi(vector: u8) {
     broadcast_ipi(vector);
-}
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn apic_init_timer(vector: u8, periodic: bool, divisor: u32) {
-    init_timer(vector, periodic, divisor);
-}
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn apic_set_timer_count(count: u32) {
-    set_timer_count(count);
-}
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn apic_calibrate_timer(pit_hz: u64, target_ms: u64) -> u64 {
-    calibrate_timer(pit_hz, target_ms)
 }
 
 // ============================================================================
