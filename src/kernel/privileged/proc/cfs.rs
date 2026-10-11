@@ -271,6 +271,23 @@ impl CfsRunQueue {
         self.tree.insert((vruntime, pid), ());
     }
 
+    /// 按 vruntime 升序把至多 `out.len()` 个**在树上的** pid 写入 `out`, 返回个数。
+    ///
+    /// 不改动树也不动记账 —— 跨核偷取需要"先定候选、逐个认领归属、再在**同一段
+    /// 持锁期**里搬移", 而 [`Self::pick_next`] 一拣就离树, 无法表达"认领失败就放过
+    /// 它"。调用方必须已持有本队列的锁 (候选在锁内才保持有效)。
+    pub fn leftmost_pids(&self, out: &mut [Pid]) -> usize {
+        let mut n = 0usize;
+        for key in self.tree.keys() {
+            if n >= out.len() {
+                break;
+            }
+            out[n] = key.1;
+            n += 1;
+        }
+        n
+    }
+
     pub fn calc_time_slice(&self, weight: u64) -> u64 {
         let total_w = self.total_weight.load(Ordering::Acquire);
         if total_w == 0 || weight == 0 {

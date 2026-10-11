@@ -30,6 +30,23 @@ unsafe extern "C" {
 
 pub const KERNEL_STACK_CANARY: u64 = 0xDEADBEEF_CAFEBABE;
 
+/// [`Process::cfs_rq_cpu`] 的"不在任何核的运行队列上"哨兵值.
+///
+/// 队列归属与 [`Process::cfs_on_rq`] 是一对**必须同步更新**的记账凭证: 二者只在
+/// 持有对应核 `cfs_rq` 锁的临界区内改写 (见 `proc::scheduler::cfs_place_on`).
+/// 缺了本字段, 跨核搬运只能"先摘后投"分两段做, 中间窗口里任务既不在源树也不在
+/// 目的树, 任何并发唤醒都会把它重复投进第三个队列 —— 同一任务同时挂在两棵树上
+/// 即两核同时上核运行它, 进程上下文与 socket 状态随即被踩坏.
+pub const NO_RQ_CPU: u32 = u32::MAX;
+
+/// [`Process::cfs_rq_cpu`] 的"归属已被某个搬动者认领"中间态.
+///
+/// 存本值期间, 该任务的队列归属由认领者独占 (它正持相应 rq 锁搬移树节点与记账),
+/// 其他意图搬动同一任务的人**不得阻塞等待** —— 认领者正在等的 rq 锁可能就在等待者
+/// 手里, 一等待即 AB-BA。因此认领一律非阻塞 (一次 CAS, 失败即走人), 且认领者保证
+/// 在释放 rq 锁前把归属写回具体值 (成功 → 目的核, 放弃 → 原值), 不会把本态留住.
+pub const MIGRATE_PENDING: u32 = u32::MAX - 1;
+
 // boot 栈底部符号, 栈从 `stack_top` 向 `stack_bottom` 方向增长.
 // canary 在 boot trampoline / aarch64 入口阶段写入 `stack_bottom` 处.
 // 符号语义按架构而异:
@@ -166,6 +183,12 @@ pub struct Process {
     pub cfs_weight: AtomicU64,
     pub cfs_sum_exec_runtime: AtomicU64,
     pub cfs_on_rq: AtomicBool,
+    /// 本任务可运行记账所在的核 `cfs_rq` 索引; 不在任何队列上时为 [`NO_RQ_CPU`].
+    ///
+    /// 与 `cfs_on_rq` 同生命周期: `cfs_on_rq == true` 时本字段必为合法 CPU 索引,
+    /// 且任务属于 `per_cpu_for(该索引).cfs_rq` 的可运行集 (树上, 或正被该核拣出在
+    /// 跑 —— 语义同 Linux 的 `task_cpu(p)` 配合 `on_rq`).
+    pub cfs_rq_cpu: AtomicU32,
 
     pub dl_runtime: AtomicU64,
     pub dl_deadline: AtomicU64,
@@ -347,6 +370,7 @@ impl Process {
             cfs_weight: AtomicU64::new(super::cfs::NICE0_WEIGHT),
             cfs_sum_exec_runtime: AtomicU64::new(0),
             cfs_on_rq: AtomicBool::new(false),
+            cfs_rq_cpu: AtomicU32::new(super::process::NO_RQ_CPU),
             dl_runtime: AtomicU64::new(0),
             dl_deadline: AtomicU64::new(0),
             dl_period: AtomicU64::new(0),

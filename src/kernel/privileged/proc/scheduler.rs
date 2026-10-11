@@ -30,7 +30,7 @@ use super::cfs::{
     CfsRunQueue, DL_MAX_UTILIZATION_PCT, DeadlineParams, DlRunQueue, LOAD_BALANCE_THRESHOLD,
     NICE0_WEIGHT, TARGET_LATENCY_TICKS, calc_vruntime_delta, cfs_should_preempt, nice_to_weight,
 };
-use super::process::{PROCESS_TABLE, Process};
+use super::process::{MIGRATE_PENDING, NO_RQ_CPU, PROCESS_TABLE, Process};
 use super::types::{BlockReason, Pid, ProcessContext, ProcessId, ProcessPriority, ProcessState};
 
 // === E2: unsafe 集中化 — 裸子模块 ===
@@ -75,6 +75,27 @@ const KSWAPD_TICK_INTERVAL: u64 = 100;
 /// 非热插拔场景下 poll 无任何 PCI 配置空间访问, 开销可忽略.
 const HOTPLUG_TICK_INTERVAL: u64 = 100;
 
+/// 周期负载均衡触发窗口 (ticks). 64 ticks @ 1kHz timer = 64ms.
+///
+/// 每窗口只允许一个核发起一轮 —— `load_balance` 是 pull 型 (从最忙核偷到自己核),
+/// 各核同窗各自发起即双向互偷 (见 [`LAST_BALANCE_TICK`]).
+const BALANCE_TICK_INTERVAL: u64 = 64;
+
+/// 僵尸回收周期 (ticks). 1000 ticks @ 1kHz timer = 1s.
+///
+/// 同样每窗口只允许一个核执行: 回收路径末端是 `remove_and_free`, 两核同窗对同一
+/// pid 走该路径即 double-free (见 [`LAST_REAP_TICK`]).
+const REAP_TICK_INTERVAL: u64 = 1_000;
+
+/// 单次偷取的上限 (任务数). 与旧字面量 `4` 同值, 提为常量供候选缓冲定长.
+const LOAD_BALANCE_MAX_MOVE: usize = 4;
+
+/// 队列归属认领的有限重试次数.
+///
+/// 认领窗口只在"持 rq 锁搬树节点"的微临界区内 (全程关中断), 正常不会重试;
+/// 重试耗尽即放弃本轮搬动 (任务仍留在原队列, 不丢可运行性).
+const RQ_CLAIM_RETRY: usize = 32;
+
 /// PWM 资源的 CFS 带宽配额槽位 — 限制指定 PWM 的 CPU 带宽, 并记录本周期已消耗的运行时间。
 ///
 /// `max_runtime` 与 `period` 构成带宽约束: 每 `period` 内任务最多运行
@@ -113,13 +134,19 @@ pub struct PwidLimit {
     pub current: u32,
 }
 
-pub static TICK_COUNT: AtomicU64 = AtomicU64::new(0);
-
-/// 获取当前全局 tick 计数 (供 `tick_query` 注册回调使用).
-#[inline]
-pub fn get_tick() -> u64 {
-    TICK_COUNT.load(Ordering::SeqCst)
-}
+/// 周期任务的上次触发时刻 (tick 单位).
+///
+/// 与 `timer::get_ticks()` 比较而非 `is_multiple_of` 取模: 时基改由硬件计数器
+/// 派生后, 读数可能在一次 tick 之间跳过整点 (重新建锚 / E-III 停 tick 后的
+/// 追赶补偿), 取模判断会永久漏触发 (P-1 收敛时一并修).
+///
+/// **每窗口单名额** (CAS 赢家才执行) 是 E-II-b 后的新要求: 每个核都收 tick, 而
+/// `get_ticks()` 是全局派生读数, 若只比时间窗不夺名额, 各核会在同一个 tick 上
+/// 各自发起同一轮全局副作用 (互相偷取运行队列 / 重复回收同一 pid).
+static LAST_KSWAPD_TICK: AtomicU64 = AtomicU64::new(0);
+static LAST_HOTPLUG_TICK: AtomicU64 = AtomicU64::new(0);
+static LAST_BALANCE_TICK: AtomicU64 = AtomicU64::new(0);
+static LAST_REAP_TICK: AtomicU64 = AtomicU64::new(0);
 
 /// 调度策略 — 决定任务进入哪条运行队列及其抢占语义。
 ///
@@ -337,6 +364,43 @@ pub extern "C" fn idle_entry() -> ! {
     }
 }
 
+/// 队列归属认领凭证 (RAII) —— 跨核迁移协议的**唯一**认领形态.
+///
+/// 它存在不是为优雅, 而是为必需: 手工配对 `claim` / `release` 时, 任何一条早退
+/// 分支忘记回滚都会把 `Process::cfs_rq_cpu` 永久留在 `MIGRATE_PENDING` —— 该 pid
+/// 之后所有认领必然失败, 既入不了队也撤不了账, 变成"永远唤不醒"的隐形态.
+/// E-II-b 回归实测: `cfs_deactivate` 的 `NO_RQ_CPU` 早退分支漏一次回滚, 就把全内核
+/// 搬定成功率打到 4/144373. 未 `commit` 即在 Drop 时把归属写回认领前的值,
+/// 使这类泄漏在结构上不可表达.
+struct RqClaim<'a> {
+    /// 归属写回的执行者 (进程表访问).
+    sched: &'a Scheduler,
+    /// 被认领的任务.
+    pid: Pid,
+    /// 认领前的归属核 (`NO_RQ_CPU` = 原本不在任何队列); 未提交即 Drop 时原样回滚.
+    prev_cpu: u32,
+    /// 是否已把归属提交为新值; `false` 时 Drop 回滚.
+    committed: bool,
+}
+
+impl RqClaim<'_> {
+    /// 提交归属: 任务的队列归属改为 `cpu_id`, Drop 不再回滚.
+    ///
+    /// 归属字段的**唯一**写入路径 (除认领本身的 CAS), 保证"谁持有凭证谁能改归属".
+    fn commit(&mut self, cpu_id: u32) {
+        self.sched.set_rq_cpu(self.pid, cpu_id);
+        self.committed = true;
+    }
+}
+
+impl Drop for RqClaim<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.sched.set_rq_cpu(self.pid, self.prev_cpu);
+        }
+    }
+}
+
 /// 全局调度器 — 持有 PWM 级 CPU 带宽配额表与进程数上限表, 并跟踪初始化状态。
 pub struct Scheduler {
     quotas: Mutex<[PwidQuota; MAX_QUOTAS]>,
@@ -536,58 +600,199 @@ impl Scheduler {
     }
 
     /// 将进程入队**当前核**的 CFS 运行队列.
-    fn cfs_enqueue(&self, pid: Pid) {
-        self.cfs_enqueue_to(pid, crate::privileged::smp::get_current_cpu());
+    ///
+    /// 返回 `false` = 本次搬定未发生 (任务不存在 / 正在核上跑 / 已终 / 认领耗尽).
+    /// 调用方**必须**据此决定后续动作 —— 尤其不得先把任务置 `Ready` 再入队,
+    /// 否则失败即造成"Ready 但不在任何树上"的永久隐形 (见 [`Self::cfs_place_on`]).
+    fn cfs_enqueue(&self, pid: Pid) -> bool {
+        self.cfs_enqueue_to(pid, crate::privileged::smp::get_current_cpu())
     }
 
     /// 将进程入队**指定核**的 CFS 运行队列.
     ///
     /// 与 [`Self::cfs_enqueue`] 的区别: 本函数可投送到目标核, 供跨核投送
-    /// (fork / 唤醒) 使用; 只持目标核的 `cfs_rq`, 不与其它核的队列锁嵌套.
+    /// (fork / 唤醒) 使用。归属搬定一律经 [`Self::cfs_place_on`] —— 它保证任务
+    /// **只在一棵树上** (旧写法只持目的锁, 遇到任务仍挂在别的核时既不去重也不搬账).
+    fn cfs_enqueue_to(&self, pid: Pid, cpu_id: u32) -> bool {
+        self.cfs_place_on(pid, cpu_id)
+    }
+
+    // ========================================================================
+    // 队列归属认领 —— 跨核迁移协议的地基
+    // ========================================================================
+
+    /// 写回 `pid` 的队列归属.
+    ///
+    /// 只由 [`RqClaim`] 调用 (认领的 CAS 除外), 调度路径不得直接写该字段 ——
+    /// 否则又制造一处会泄漏的 `MIGRATE_PENDING`.
     #[expect(
         clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
+        reason = "保留 &self 签名: 归属写回是凭证的方法, 凭证持 &Scheduler"
     )]
-    fn cfs_enqueue_to(&self, pid: Pid, cpu_id: u32) {
-        // 锁序 `cfs_rq -> PROCESS_TABLE` (与本文件其余调度路径一致):
-        // PCB 读写各自独立成段, 均不与 rq 锁嵌套.
-        let Some((vr, weight, accounted)) = PROCESS_TABLE.with_process(pid, |p| {
-            let _ = p.set_state_safe(ProcessState::Ready);
+    fn set_rq_cpu(&self, pid: Pid, cpu_id: u32) {
+        let _ = PROCESS_TABLE.with_process(pid, |p| {
+            p.cfs_rq_cpu.store(cpu_id, Ordering::Release);
+        });
+    }
+
+    /// 非阻塞认领 `pid` 的队列归属.
+    ///
+    /// 返回 `None` 表示任务不存在或归属正被他人认领 —— 两者都只能走人, **不得等待**:
+    /// 等待者手里可能正攥着对方需要的 rq 锁 (见 `process::MIGRATE_PENDING`).
+    /// 成功返回认领凭证, 未提交即 Drop 自动回滚.
+    fn try_claim_rq(&self, pid: Pid) -> Option<RqClaim<'_>> {
+        PROCESS_TABLE
+            .with_process(pid, |p| {
+                let cur = p.cfs_rq_cpu.load(Ordering::Acquire);
+                if cur == MIGRATE_PENDING {
+                    return None;
+                }
+                p.cfs_rq_cpu
+                    .compare_exchange(cur, MIGRATE_PENDING, Ordering::AcqRel, Ordering::Acquire)
+                    .ok()
+                    .map(|_| cur)
+            })
+            .flatten()
+            .map(|prev_cpu| RqClaim {
+                sched: self,
+                pid,
+                prev_cpu,
+                committed: false,
+            })
+    }
+
+    /// 认领 + 有限重试 ([`Self::try_claim_rq`] 的等待者语义在锁外完成, 不持 PCB 锁自旋).
+    fn claim_rq(&self, pid: Pid) -> Option<RqClaim<'_>> {
+        for _ in 0..RQ_CLAIM_RETRY {
+            if let Some(claim) = self.try_claim_rq(pid) {
+                return Some(claim);
+            }
+            if PROCESS_TABLE.get(pid).is_none() {
+                return None;
+            }
+            core::hint::spin_loop();
+        }
+        None
+    }
+
+    /// 队列归属搬定的**唯一入口**: 把 `pid` 放进 `dst_cpu` 的可运行记账.
+    ///
+    /// 旧形态是"摘源 → **放锁** → 投目的"两段式: 中间窗口里任务既不在源树也不在
+    /// 目的树, 而 `cfs_on_rq` 已被清掉, 于是任何并发唤醒都看得到"Ready 且不在队"
+    /// 并把它投进第三个队列 —— 同一任务同时挂在两棵树上, 两核同时上核运行它,
+    /// 进程上下文与 socket 状态随即被踩坏 (E-II-b 后每核收 tick, 该窗口第一次被
+    /// 实测打中: x86_64 e2e 由 6/6 退化为 1/6, 特征为纯 RX 侧全灭).
+    fn cfs_place_on(&self, pid: Pid, dst_cpu: u32) -> bool {
+        let Some(mut claim) = self.claim_rq(pid) else {
+            return false;
+        };
+        let src_cpu = claim.prev_cpu;
+        // 源与目的同一把锁 (或本就无归属) 时只锁目的 —— 嵌套同一把 IrqSpinLock 即自死锁.
+        if src_cpu == NO_RQ_CPU || src_cpu == dst_cpu {
+            let mut dst_rq = per_cpu_for(dst_cpu).cfs_rq.lock();
+            self.place_locked(&mut claim, dst_cpu, &mut dst_rq, None)
+        } else if src_cpu < dst_cpu {
+            // 双持锁序: cpu index **升序** (同层级内定序, 见 docs/explain/ref-lock-order.md);
+            // 反向取锁的两个搬动者会 AB-BA.
+            let mut src_rq = per_cpu_for(src_cpu).cfs_rq.lock();
+            let mut dst_rq = per_cpu_for(dst_cpu).cfs_rq.lock();
+            self.place_locked(&mut claim, dst_cpu, &mut dst_rq, Some(&mut src_rq))
+        } else {
+            let mut dst_rq = per_cpu_for(dst_cpu).cfs_rq.lock();
+            let mut src_rq = per_cpu_for(src_cpu).cfs_rq.lock();
+            self.place_locked(&mut claim, dst_cpu, &mut dst_rq, Some(&mut src_rq))
+        }
+    }
+
+    /// [`Self::cfs_place_on`] 的持锁主体.
+    ///
+    /// 前提: `claim` 已握在 caller 手上 (归属已认领), 且 `src`/`dst` 两把 rq 锁在手
+    /// (同核时 `src` 为 `None`). 成功路径 `commit` 新归属; 任何失败路径直接 return —
+    /// 凭证 Drop 把归属回滚成认领前的值, 不会留下 `MIGRATE_PENDING`.
+    #[expect(
+        clippy::unused_self,
+        reason = "保留 &self 签名以便与其余调度路径统一用法 (归属写入已集中到认领凭证, 本函数不再直击 self)"
+    )]
+    fn place_locked(
+        &self,
+        claim: &mut RqClaim<'_>,
+        dst_cpu: u32,
+        dst: &mut CfsRunQueue,
+        src: Option<&mut CfsRunQueue>,
+    ) -> bool {
+        let pid = claim.pid;
+        let src_cpu = claim.prev_cpu;
+        // 锁序 `cfs_rq -> PROCESS_TABLE` (与本文件其余调度路径一致).
+        //
+        // 快照里没有 `policy`: 可调度性 (policy == Normal) 的准入判据属于
+        // `pick_cfs_task` / `steal_locked`, 搬定层只管"任务在一棵树上 + 账随任务走".
+        // 在两层各卡一次 policy 会令 RT 降级入队 (见 `schedule()` 的 `_ =>` 分支)
+        // 与唤醒投送静默失效.
+        let snap = PROCESS_TABLE.with_process(pid, |p| {
             (
+                p.get_state(),
                 p.cfs_vruntime.load(Ordering::Acquire),
                 p.cfs_weight.load(Ordering::Acquire),
                 p.cfs_on_rq.load(Ordering::Acquire),
             )
-        }) else {
-            return;
+        });
+        let Some((state, vr, weight, on_rq)) = snap else {
+            return false;
         };
-
-        let placed = per_cpu_for(cpu_id)
-            .cfs_rq
-            .lock()
-            .enqueue(pid, vr, weight, accounted);
-
-        // IC1: 落点必须回写任务自身 vruntime —— 只钳树键而不回写正是旧模型
-        // "运行任务 vr 与队列 floor 分属两域" 的起点 (S-1 饥饿根).
+        // 正在任一核上跑的任务不得进树: 它是"离树但记账"态, 进树就等于同一任务在
+        // 树上与核上各一份, 切走时 `schedule()` 的 `requeue` 会再插一次 ⇒ 同一棵树上
+        // 两个节点 (语义同 Linux 不迁移 `->on_cpu` 任务).
+        let on_cpu = per_cpu_for(dst_cpu).current.load(Ordering::SeqCst) == pid
+            || (src_cpu != NO_RQ_CPU && per_cpu_for(src_cpu).current.load(Ordering::SeqCst) == pid);
+        let gone = state == ProcessState::Zombie || state == ProcessState::Terminated;
+        if gone || on_cpu {
+            return false;
+        }
+        let placed = match src {
+            // 跨核: 源撤账摘节点, 目的重新记账投节点 —— 两核权重和守恒.
+            Some(src_rq) => {
+                src_rq.dequeue(pid, weight, on_rq);
+                dst.enqueue(pid, vr, weight, false)
+            }
+            // 同核 (或原本不在队): 幂等移动, 记账凭证原样带走.
+            None => dst.enqueue(pid, vr, weight, on_rq),
+        };
         PROCESS_TABLE.with_process(pid, |p| {
+            let _ = p.set_state_safe(ProcessState::Ready);
+            // IC1: 落点必须回写任务自身 vruntime —— 只钳树键而不回写正是旧模型
+            // "运行任务 vr 与队列 floor 分属两域" 的起点 (S-1 饥饿根).
             p.cfs_vruntime.store(placed, Ordering::Release);
             p.cfs_on_rq.store(true, Ordering::Release);
         });
+        claim.commit(dst_cpu);
+        true
     }
 
-    /// 让 `pid` 离开**本核** CFS 可运行记账 (阻塞 / 被切走且不可重排 / 被拣出
-    /// 但不可调度).
+    /// 让 `pid` 离开 CFS 可运行记账 (阻塞 / 被切走且不可重排 / 被拣出但不可调度).
     ///
     /// 幂等: 以 `Process::cfs_on_rq` 为记账凭证, 重复调用不二次扣减权重 ——
     /// [`Self::block`] 与 `schedule()` 的 "prev 不可重排" 分支覆盖同一任务时
     /// 正是这种重复调用. 旧模型缺这一步, 使 `total_weight` 随阻塞/退出单调
     /// 虚增, 连均衡判定也随之失真.
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
+    ///
+    /// 归属核取自 `cfs_rq_cpu` 而非"当前核": 任务被跨核投送后, 它的账在目的核队列上,
+    /// 而 `block()` 运行在它正在跑的核上 —— 两者今天恒等 (不搬在跑的任务), 但只有
+    /// 按归属核撤账才能把"账随任务走"钉成不变式.
     fn cfs_deactivate(&self, pid: Pid) {
-        let (weight, accounted) = PROCESS_TABLE
+        let Some(mut claim) = self.claim_rq(pid) else {
+            return;
+        };
+        if claim.prev_cpu == NO_RQ_CPU {
+            // 本就不在任何队列: 只清记账凭证, 不取锁;
+            // 归属由凭证 Drop 原样回滚成 `NO_RQ_CPU` —— 这里正是旧写法漏回滚的位置.
+            let _ = PROCESS_TABLE.with_process(pid, |p| {
+                p.cfs_on_rq.store(false, Ordering::Release);
+            });
+            return;
+        }
+        let src_cpu = claim.prev_cpu;
+        let mut rq = per_cpu_for(src_cpu).cfs_rq.lock();
+        let (weight, on_rq) = PROCESS_TABLE
             .with_process(pid, |p| {
                 (
                     p.cfs_weight.load(Ordering::Acquire),
@@ -595,13 +800,11 @@ impl Scheduler {
                 )
             })
             .unwrap_or((0, false));
-        if !accounted {
-            return;
-        }
-        per_cpu().cfs_rq.lock().dequeue(pid, weight, true);
+        rq.dequeue(pid, weight, on_rq);
         PROCESS_TABLE.with_process(pid, |p| {
             p.cfs_on_rq.store(false, Ordering::Release);
         });
+        claim.commit(NO_RQ_CPU);
     }
 
     #[expect(
@@ -622,7 +825,7 @@ impl Scheduler {
             proc.dl_runtime.store(params.runtime, Ordering::Release);
             proc.dl_deadline.store(params.deadline, Ordering::Release);
             proc.dl_period.store(params.period, Ordering::Release);
-            let now = TICK_COUNT.load(Ordering::Acquire);
+            let now = crate::privileged::timer::get_ticks();
             proc.dl_abs.store(now + params.deadline, Ordering::Release);
             proc.dl_remaining.store(params.runtime, Ordering::Release);
         });
@@ -700,10 +903,6 @@ impl Scheduler {
         }
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 选取一个 CFS 任务 (vruntime 最小者).
     fn pick_cfs_task(&self) -> Option<Pid> {
         let per_cpu = per_cpu();
@@ -743,9 +942,17 @@ impl Scheduler {
             }
             cfs_rq.dequeue(pid, weight, on_rq);
             if on_rq {
-                PROCESS_TABLE.with_process(pid, |p| {
-                    p.cfs_on_rq.store(false, Ordering::Release);
-                });
+                // 不可调度节点: 已离树 (`pick_next` 摘除), 此处只需撤账 + 归属归零.
+                // 归属必须经认领凭证写: 直接写会与并发搬动者抢同一字段 (它可能正持
+                // `MIGRATE_PENDING`), 且让"归属只有一个写入者"重新退化成约定.
+                if let Some(mut claim) = self.try_claim_rq(pid) {
+                    let _ = PROCESS_TABLE.with_process(pid, |p| {
+                        p.cfs_on_rq.store(false, Ordering::Release);
+                    });
+                    claim.commit(NO_RQ_CPU);
+                }
+                // 认领失败 = 有人正搬它: 账目与归属都归那个搬动者收尾, 本轮直接跳过
+                // (不等待不持锁重试 —— 它可能正需要本函数手里的 rq 锁).
             }
         }
         picked
@@ -1204,6 +1411,12 @@ impl Scheduler {
                 // 唤醒, 使该任务在队列外永久隐形 (实测 boot 期 unb-skip).
                 // Running (已在核上) / Created (尚未启动) / Zombie / Terminated
                 // 一律不投送.
+                //
+                // 本闭包**不改状态** —— 置 Ready 是搬定成功后的结果 (CFS 路由由
+                // `place_locked` 写, RT/DL 路由在各自分支里写). 提前置 Ready 会直接
+                // 打断唤醒面的电平重扫自愈: `poll_network` / 睡眠扫描以
+                // `state == Blocked` 为选集条件, 一旦搬定失败, 该任务既不在树上
+                // 也不再会被重扫拾起 —— 一次可恢复的丢唤醒就变成永久隐形.
                 let need_enqueue = match state {
                     ProcessState::Blocked | ProcessState::Frozen => true,
                     ProcessState::Ready => !proc.cfs_on_rq.load(Ordering::Acquire),
@@ -1212,7 +1425,6 @@ impl Scheduler {
                 if !need_enqueue {
                     return None;
                 }
-                let _ = proc.set_state_safe(ProcessState::Ready);
                 let policy = proc.get_sched_policy();
                 if policy == SchedPolicy::Deadline {
                     let dl_abs = proc.dl_abs.load(Ordering::Acquire);
@@ -1235,10 +1447,18 @@ impl Scheduler {
 
         match sched_policy {
             Some((SchedPolicy::Normal, _, _)) => {
-                // 统一走入队路径: 落点钳制 (IC1) + 回写 vruntime + 记账凭证.
-                self.cfs_enqueue_to(pid, crate::privileged::smp::get_current_cpu());
+                // 统一走搬定入口: 落点钳制 (IC1) + 回写 vruntime + 记账凭证 + 置 Ready.
+                //
+                // 失败 ⇒ 保持原状态直接返回: 不动唤醒不变式 (本核无新可运行任务,
+                // 不需要重调度), 且下一轮电平重扫/超时重投会再次尝试.
+                if !self.cfs_enqueue_to(pid, crate::privileged::smp::get_current_cpu()) {
+                    return;
+                }
             }
             Some((SchedPolicy::Fifo | SchedPolicy::Rr, _, _)) => {
+                PROCESS_TABLE.with_process(pid, |proc| {
+                    let _ = proc.set_state_safe(ProcessState::Ready);
+                });
                 let (prio, pol) = PROCESS_TABLE
                     .with_process(pid, |p| (p.get_rt_priority(), p.get_sched_policy()))
                     .unwrap_or((0, SchedPolicy::Normal));
@@ -1270,6 +1490,9 @@ impl Scheduler {
                 }
             }
             Some((SchedPolicy::Deadline, dl_abs, util)) => {
+                PROCESS_TABLE.with_process(pid, |proc| {
+                    let _ = proc.set_state_safe(ProcessState::Ready);
+                });
                 per_cpu().dl_rq.lock().enqueue(pid, dl_abs, util);
             }
             _ => {}
@@ -1409,6 +1632,9 @@ impl Scheduler {
         // AP 被唤醒 四者齐备, 任务才会真正落到 AP 上).
         let this_cpu = crate::privileged::smp::get_current_cpu();
         let target = self.find_idle_cpu(pid, this_cpu);
+        // 搬定结果不在这里分支: 新子进程尚未入过队, 失败只可能是"它已被别的路径
+        // 放上了某个队列" (幂等) 或任务已终 —— 两种情形下目标核仍需一次重调度提名,
+        // 多发一个 IPI 无代价, 少了 IPI 则会拖到下一轮 tick.
         self.cfs_enqueue_to(pid, target);
         if target != this_cpu {
             // 有界诊断 (仅前若干次): 供 `-smp 2` 验证观测跨核投送.
@@ -1472,7 +1698,10 @@ impl Scheduler {
         // 防止非中断上下文的 schedule() 调用与 timer ISR 的 tick() 并发修改 per-CPU 状态
         let flags = crate::privileged::sync::disable_interrupts();
 
-        let new_tick = TICK_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
+        // 单一时基: tick 读数取 `timer::get_ticks()` (本调度器不再自存一份计数,
+        // P-1 双份计数收敛: 旧形态由本行 `fetch_add` 维护全局计数, 与
+        // `timer::tick` 的中断计数并行演化, 两个读数会背离).
+        let new_tick = crate::privileged::timer::get_ticks();
         let per_cpu = per_cpu_for(cpu_id as u32);
 
         crate::privileged::freg::RECOVERY_MANAGER
@@ -1494,15 +1723,26 @@ impl Scheduler {
         crate::privileged::proc::oomd::OOMD.tick();
         crate::privileged::proc::SCHEDULER_EX.tick_accounting();
 
-        // Periodic kswapd wakeup — 每 100 ticks 唤醒一次内存回收
-        // (B3 完整实现: kswapd 走 softirq 路径, 由 scheduler tick 周期驱动)
-        if new_tick.is_multiple_of(KSWAPD_TICK_INTERVAL) {
+        // Periodic kswapd wakeup — 每 KSWAPD_TICK_INTERVAL tick 唤醒一次内存回收
+        // (B3 完整实现: kswapd 走 softirq 路径, 由 scheduler tick 周期驱动).
+        // carry + CAS: 多核看到同一个硬件派生 tick ⇒ 只允许一个核触发本轮.
+        let last_kswapd = LAST_KSWAPD_TICK.load(Ordering::Acquire);
+        if new_tick.saturating_sub(last_kswapd) >= KSWAPD_TICK_INTERVAL
+            && LAST_KSWAPD_TICK
+                .compare_exchange(last_kswapd, new_tick, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
             crate::privileged::mm::kswapd_wakeup();
         }
 
-        // Periodic hotplug poll — 每 100 ticks 唤醒一次 PCIe/USB 热插拔槽位检查
-        // (softirq 路径, 由 scheduler tick 周期驱动)
-        if new_tick.is_multiple_of(HOTPLUG_TICK_INTERVAL) {
+        // Periodic hotplug poll — 每 HOTPLUG_TICK_INTERVAL tick 唤醒一次 PCIe/USB
+        // 热插拔槽位检查 (softirq 路径, 由 scheduler tick 周期驱动).
+        let last_hotplug = LAST_HOTPLUG_TICK.load(Ordering::Acquire);
+        if new_tick.saturating_sub(last_hotplug) >= HOTPLUG_TICK_INTERVAL
+            && LAST_HOTPLUG_TICK
+                .compare_exchange(last_hotplug, new_tick, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
             crate::privileged::driver::hotplug::hotplug_wakeup();
         }
 
@@ -1529,7 +1769,7 @@ impl Scheduler {
                         let expired = rem == 0;
                         let deadline = p.dl_deadline.load(Ordering::Acquire);
                         let dl_abs = p.dl_abs.load(Ordering::Acquire);
-                        let now = TICK_COUNT.load(Ordering::Acquire);
+                        let now = crate::privileged::timer::get_ticks();
                         let should_replenish =
                             now >= dl_abs || (expired && now + deadline > dl_abs);
                         (expired, should_replenish)
@@ -1540,7 +1780,7 @@ impl Scheduler {
                     PROCESS_TABLE.with_process(current_pid, |p| {
                         let runtime = p.dl_runtime.load(Ordering::Acquire);
                         let deadline = p.dl_deadline.load(Ordering::Acquire);
-                        let now = TICK_COUNT.load(Ordering::Acquire);
+                        let now = crate::privileged::timer::get_ticks();
                         p.dl_remaining.store(runtime, Ordering::Release);
                         p.dl_abs.store(now + deadline, Ordering::Release);
                     });
@@ -1647,9 +1887,14 @@ impl Scheduler {
             }
         }
 
-        // Zombie cleanup
-        let socks_clean_interval: u64 = 1000;
-        if new_tick.is_multiple_of(socks_clean_interval) {
+        // Zombie cleanup — 每 REAP_TICK_INTERVAL tick 一轮, 多核下只 CAS 赢家执行
+        // (回收路径末端是 `remove_and_free`, 两核同窗对同一 pid 重复执行即 double-free).
+        let last_reap = LAST_REAP_TICK.load(Ordering::Acquire);
+        if new_tick.saturating_sub(last_reap) >= REAP_TICK_INTERVAL
+            && LAST_REAP_TICK
+                .compare_exchange(last_reap, new_tick, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
             let mut to_reap: [Pid; 16] = [0; 16];
             let mut reap_count = 0;
             for pid in 1..=255 {
@@ -1694,8 +1939,18 @@ impl Scheduler {
             }
         }
 
-        // 周期性负载均衡
-        if new_tick.is_multiple_of(64) {
+        // 周期性负载均衡 — 每 BALANCE_TICK_INTERVAL tick 一轮, 且每轮只有一个核.
+        //
+        // `load_balance` 是 pull 型 (从最忙核偷到**本核**): E-II-b 后每个核都收 tick,
+        // 若各核在同一全局 tick 上各自发起, 就会出现 CPU0 偷 CPU1 同时 CPU1 偷 CPU0
+        // 的双向互偷 (ping-pong), 每次迁移再叠一发 TLB shootdown IPI. 实测后果是网络
+        // poll 窗口被打穿 (x86_64 e2e 由 6/6 退化为 0/6), 并在迁移密集处偶发挂死.
+        let last_balance = LAST_BALANCE_TICK.load(Ordering::Acquire);
+        if new_tick.saturating_sub(last_balance) >= BALANCE_TICK_INTERVAL
+            && LAST_BALANCE_TICK
+                .compare_exchange(last_balance, new_tick, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
             let local_load = self.total_runnable_for(crate::privileged::smp::get_current_cpu());
             if local_load < 2 {
                 self.load_balance();
@@ -1882,55 +2137,104 @@ impl Scheduler {
             return;
         }
 
-        // 从最忙 CPU 偷取任务
-        let mut tasks_to_migrate: [Pid; 4] = [0; 4];
-        let mut count = 0;
-        {
+        // 偷取全程**同时持有源/目的两把 rq 锁** —— 分两段 (摘源后放锁再投目的) 会留下
+        // "既不在源树也不在目的树" 的归属真空窗口, 并发唤醒正是在那里把同一任务投进
+        // 第三棵树 (见 [`Self::cfs_place_on`] 的同源说明).
+        // 双持锁序: cpu index **升序** (同层级内定序, 见 docs/explain/ref-lock-order.md);
+        // 两个方向相反的搬动者各持一把再抢对方那把, 即 AB-BA 死锁.
+        let moved = if busiest_cpu < this_cpu {
             let mut src_rq = per_cpu_for(busiest_cpu).cfs_rq.lock();
-            for _ in 0..4 {
-                match src_rq.pick_next() {
-                    Some((pid, _vr)) => {
-                        // 锁序 cfs_rq -> PROCESS_TABLE (与本文件其余调度路径一致):
-                        // 一次加锁取回权重, 另一次写记账凭证.
-                        let weight = PROCESS_TABLE
-                            .with_process(pid, |p| p.cfs_weight.load(Ordering::Acquire))
-                            .unwrap_or(NICE0_WEIGHT);
-                        // 跨核迁移 = 记账随任务一起搬走: 节点已由 `pick_next` 摘除
-                        // (它不动账), `dequeue` 在此只承担把权重从**源核**
-                        // `total_weight` 中撤出; 凭证清零后由目标核 `enqueue` 重新
-                        // 计入 —— 两核的权重和因此守恒 (旧实现两边都不动账, 使
-                        // `total_weight` 与真实可运行集发散, 均衡判定越跑越偏).
-                        src_rq.dequeue(pid, weight, true);
-                        PROCESS_TABLE.with_process(pid, |p| {
-                            p.cfs_on_rq.store(false, Ordering::Release);
-                        });
-                        tasks_to_migrate[count] = pid;
-                        count += 1;
-                    }
-                    None => break,
-                }
-            }
-        }
+            let mut dst_rq = per_cpu_for(this_cpu).cfs_rq.lock();
+            self.steal_locked(busiest_cpu, this_cpu, &mut src_rq, &mut dst_rq)
+        } else {
+            let mut dst_rq = per_cpu_for(this_cpu).cfs_rq.lock();
+            let mut src_rq = per_cpu_for(busiest_cpu).cfs_rq.lock();
+            self.steal_locked(busiest_cpu, this_cpu, &mut src_rq, &mut dst_rq)
+        };
 
-        // 投递统一走 `cfs_enqueue_to`: 它自带 IC1 落点钳制 + vruntime 回写 +
-        // 记账, 且不长期持有目标核 rq 锁 (旧写法在持 `dst_rq` 锁期间再去取
-        // 同一把锁的入队路径会自死锁).
-        for i in 0..count {
-            let pid = tasks_to_migrate[i];
-            // C2: 亲和性检查 — 目标 CPU (this_cpu) 必须在进程 allowed 集合中,
-            // 否则退回源核 (避免丢失)
-            if self.is_cpu_allowed(pid, this_cpu) {
-                self.cfs_enqueue_to(pid, this_cpu);
-            } else {
-                self.cfs_enqueue_to(pid, busiest_cpu);
-            }
+        // 偷到的任务进了本核可运行集: 置重调度标记, 出 ISR 后由既有 `should_reschedule`
+        // 路径决定是否立即上核 (本核此刻可能正跑 idle 任务).
+        if moved > 0 {
+            per_cpu_for(this_cpu)
+                .need_reschedule
+                .store(true, Ordering::SeqCst);
         }
+    }
+
+    /// 在同时持有 `src_cpu`/`dst_cpu` 两把 rq 锁的临界区内, 从源队列偷至多
+    /// [`LOAD_BALANCE_MAX_MOVE`] 个任务到目的队列; 返回实际搬动数.
+    ///
+    /// 只由 [`Self::load_balance`] 按升序双持锁后调用 (锁序前提不在此处重建).
+    /// 锁序 `cfs_rq -> PROCESS_TABLE` 与本文件其余调度路径一致.
+    fn steal_locked(
+        &self,
+        src_cpu: u32,
+        dst_cpu: u32,
+        src: &mut CfsRunQueue,
+        dst: &mut CfsRunQueue,
+    ) -> usize {
+        let mut cands: [Pid; LOAD_BALANCE_MAX_MOVE] = [0; LOAD_BALANCE_MAX_MOVE];
+        let n = src.leftmost_pids(&mut cands);
+        let mut moved = 0usize;
+        for i in 0..n {
+            let pid = cands[i];
+            // 非阻塞认领: 已被他人认领者直接放过. 等待即死锁 —— 那个认领者正在等的
+            // rq 锁就在我们手里.
+            let Some(mut claim) = self.try_claim_rq(pid) else {
+                continue;
+            };
+            // 归属已不在源核 (候选取回后被别的路径搬走) 或任务正在源核上跑
+            // (离树但记账): 两种都不能搬, 直接 continue —— 凭证 Drop 原样交回认领.
+            if claim.prev_cpu != src_cpu
+                || per_cpu_for(src_cpu).current.load(Ordering::SeqCst) == pid
+                || !self.is_cpu_allowed(pid, dst_cpu)
+            {
+                continue;
+            }
+            let (state, policy, vr, weight, on_rq) = PROCESS_TABLE
+                .with_process(pid, |p| {
+                    (
+                        p.get_state(),
+                        p.get_sched_policy(),
+                        p.cfs_vruntime.load(Ordering::Acquire),
+                        p.cfs_weight.load(Ordering::Acquire),
+                        p.cfs_on_rq.load(Ordering::Acquire),
+                    )
+                })
+                .unwrap_or((ProcessState::Zombie, SchedPolicy::Normal, 0, 0, false));
+            let schedulable = state != ProcessState::Blocked
+                && state != ProcessState::Zombie
+                && state != ProcessState::Terminated
+                && policy == SchedPolicy::Normal;
+            if !schedulable {
+                // 与 `pick_cfs_task` 同口径: 不可调度者撤账摘除, 不留树上占位 (IC2).
+                src.dequeue(pid, weight, on_rq);
+                let _ = PROCESS_TABLE.with_process(pid, |p| {
+                    p.cfs_on_rq.store(false, Ordering::Release);
+                });
+                claim.commit(NO_RQ_CPU);
+                continue;
+            }
+            // 跨核迁移 = 记账随任务一起搬走: 源核撤账摘节点, 目的核重新记账投节点,
+            // 两核权重和守恒 (旧实现两边都不动账, 使 `total_weight` 与真实可运行集
+            // 发散, 均衡判定越跑越偏).
+            src.dequeue(pid, weight, on_rq);
+            let placed = dst.enqueue(pid, vr, weight, false);
+            PROCESS_TABLE.with_process(pid, |p| {
+                // IC1: 落点回写任务自身 vruntime.
+                p.cfs_vruntime.store(placed, Ordering::Release);
+                p.cfs_on_rq.store(true, Ordering::Release);
+            });
+            claim.commit(dst_cpu);
+            moved += 1;
+        }
+        moved
     }
 
     /// 为 PWM 设置 CPU 配额. 调用方必须持有 `SYSTEM_CAP_QUOTA_ADMIN`.
     pub fn set_quota(&self, pwm: u64, max_runtime: u64, period: u64) {
         let mut quotas = self.quotas.lock();
-        let now = TICK_COUNT.load(Ordering::SeqCst);
+        let now = crate::privileged::timer::get_ticks();
         for q in quotas.iter_mut() {
             if q.used && q.pwm == pwm {
                 q.max_runtime = max_runtime;
