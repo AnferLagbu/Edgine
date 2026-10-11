@@ -129,23 +129,32 @@ pub extern "C" fn pmm_free_pages(addr: *mut u8, count: usize) {
 /// 分配单个 4KB 页, 返回物理地址.
 ///
 /// 供需要 `PhysAddr` 类型安全的调用方使用.
+///
+/// 标 `track_caller`: 帧所有权归因穿透本包装直达调用方 (见
+/// `PhysicalMemoryManager::note_frame_alloc`); 同质的 `extern "C"` 包装因 ABI
+/// 限制不能标该属性, 其归因落到本文件可接受.
+#[track_caller]
 pub fn pmm_alloc_page_phys() -> Option<super::PhysAddr> {
     get_pmm().alloc_page()
 }
 
-/// 释放单个页 (物理地址).
+/// 释放单个页 (物理地址). 归因穿透说明同 [`pmm_alloc_page_phys`].
+#[track_caller]
 pub fn pmm_free_page_phys(addr: super::PhysAddr) {
     get_pmm().free_page(addr);
 }
 
 /// 分配多个连续页, 返回物理地址.
 ///
-/// 供需要 `PhysAddr` 类型安全的调用方使用.
+/// 供需要 `PhysAddr` 类型安全的调用方使用. 归因穿透说明同
+/// [`pmm_alloc_page_phys`].
+#[track_caller]
 pub fn pmm_alloc_pages_phys(count: usize) -> Option<super::PhysAddr> {
     get_pmm().alloc_pages(count)
 }
 
-/// 释放多个连续页 (物理地址).
+/// 释放多个连续页 (物理地址). 归因穿透说明同 [`pmm_alloc_page_phys`].
+#[track_caller]
 pub fn pmm_free_pages_phys(addr: super::PhysAddr, count: usize) {
     get_pmm().free_pages(addr, count);
 }
@@ -170,7 +179,9 @@ pub fn frame_ref_count(addr: super::PhysAddr) -> u32 {
     u32::from(get_pmm().frame_ref_count(addr))
 }
 
-/// 分配一个大页 (2MB 或 1GB), 返回物理地址.
+/// 分配一个大页 (2MB 或 1GB), 返回物理地址. 归因穿透说明同
+/// [`pmm_alloc_page_phys`].
+#[track_caller]
 pub fn pmm_alloc_huge_page_phys(size_type: super::PageSize) -> Option<super::PhysAddr> {
     get_pmm().alloc_huge_page(size_type)
 }

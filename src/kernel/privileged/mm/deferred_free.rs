@@ -289,6 +289,12 @@ pub(crate) fn defer_free(frame: u64) {
         frame_link_set_gen(frame, 0); // 出锁前不会被读, 0 为占位
     }
     BATCH_HEAD.store(frame, Ordering::Release);
+    // 退役点归因 (纯观测): 本帧从此不再属于任何映射, 唯一能记下“是谁让它退役”的
+    // 时刻就是入链这一行. `Location::caller()` 经 `#[track_caller]` 一路上溯到
+    // `release_frame_locked` / `release_table_frame_locked` 的调用者 (真 VMM 站点).
+    // 入口本身不 panic (PMM 单例未建立时静默跳过), 不影响本函数控制流.
+    let site = core::ptr::from_ref(core::panic::Location::caller()).cast::<u8>() as u64;
+    super::pmm::note_frame_retired(frame, site);
     DEFERRED_FREE_ADMITTED.fetch_add(1, Ordering::Relaxed);
 }
 

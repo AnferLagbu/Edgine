@@ -1,10 +1,14 @@
+use crate::privileged::mm::{
+    PhysAddr, pmm_alloc_page_phys, pmm_alloc_pages_phys, pmm_free_page_phys, pmm_free_pages_phys,
+};
 use core::alloc::{GlobalAlloc, Layout};
 
+// 注: 物理帧的分配 / 归还不走 `extern "C"` 声明 (改走 `mm::pmm_*_phys` 的 Rust
+// 入口). `extern "C"` fn 因 ABI 限制不能标 `track_caller`, 经它调用 PMM 会把帧
+// 所有权归因吞到 `mm/api.rs` 包装层的固定行号, 双归还告警就无法点名争抢双方
+// (本堆归还 vs 地址空间销毁). 本文件的 `GlobalAlloc` trait 实现方法同样不能标
+// `track_caller` (trait 定义无该属性), 但归因至少精确落到下面每个调用点的行号.
 unsafe extern "C" {
-    fn pmm_alloc_page() -> *mut u8;
-    fn pmm_free_page(addr: *mut u8);
-    fn pmm_alloc_pages(count: u64) -> *mut u8;
-    fn pmm_free_pages(addr: *mut u8, count: u64);
     fn kmalloc(size: u64) -> *mut u8;
     fn kfree(ptr: *mut u8);
 }
@@ -47,9 +51,13 @@ unsafe impl GlobalAlloc for KernelAllocator {
                 TAG_PMM_PAGES
             };
 
+            // OOM 按 `GlobalAlloc` 契约返回 null (旧实现把 0 物理地址加上
+            // KERNEL_BASE 当有效指针返回, 等于把一个非法地址交给调用方).
             if pages_needed == 1 {
-                let phys = pmm_alloc_page() as u64;
-                let virt = (phys + KERNEL_BASE) as *mut u8;
+                let Some(phys) = pmm_alloc_page_phys() else {
+                    return core::ptr::null_mut();
+                };
+                let virt = (phys.as_u64() + KERNEL_BASE) as *mut u8;
                 if tag_offset > 0 {
                     let tag_ptr = virt as *mut u64;
                     *tag_ptr = tag;
@@ -58,8 +66,10 @@ unsafe impl GlobalAlloc for KernelAllocator {
                     virt
                 }
             } else {
-                let phys = pmm_alloc_pages(pages_needed as u64) as u64;
-                let virt = (phys + KERNEL_BASE) as *mut u8;
+                let Some(phys) = pmm_alloc_pages_phys(pages_needed) else {
+                    return core::ptr::null_mut();
+                };
+                let virt = (phys.as_u64() + KERNEL_BASE) as *mut u8;
                 if tag_offset > 0 {
                     let tag_ptr = virt as *mut u64;
                     *tag_ptr = tag;
@@ -91,24 +101,24 @@ unsafe impl GlobalAlloc for KernelAllocator {
                     }
                     TAG_PMM_PAGE => {
                         let phys_addr = (raw as u64) - KERNEL_BASE;
-                        pmm_free_page(phys_addr as *mut u8);
+                        pmm_free_page_phys(PhysAddr(phys_addr));
                     }
                     TAG_PMM_PAGES => {
                         let phys_addr = (raw as u64) - KERNEL_BASE;
-                        let pages_needed = (size + TAG_SIZE).div_ceil(4096) as u64;
-                        pmm_free_pages(phys_addr as *mut u8, pages_needed);
+                        let pages_needed = (size + TAG_SIZE).div_ceil(4096);
+                        pmm_free_pages_phys(PhysAddr(phys_addr), pages_needed);
                     }
                     _ => {
                         kfree(raw as *mut u8);
                     }
                 }
             } else {
-                let pages = size.div_ceil(4096) as u64;
+                let pages = size.div_ceil(4096);
                 let phys_addr = (ptr as u64) - KERNEL_BASE;
                 if pages <= 1 {
-                    pmm_free_page(phys_addr as *mut u8);
+                    pmm_free_page_phys(PhysAddr(phys_addr));
                 } else {
-                    pmm_free_pages(phys_addr as *mut u8, pages);
+                    pmm_free_pages_phys(PhysAddr(phys_addr), pages);
                 }
             }
         }

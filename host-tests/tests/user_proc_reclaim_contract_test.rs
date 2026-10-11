@@ -17,8 +17,12 @@
 // 验收 (fail-closed, 文本指纹):
 //   1. `remove_and_free` 在 `Box::from_raw` 前调用 `USER_PROC_MANAGER.destroy_by_pid`
 //   2. `dec_ref_and_maybe_free` (延迟释放分支) 同样回收
-//   3. `UserProcManager::destroy` 释放用户栈**先于**销毁页表
-//      (否则页表销毁后 cr3 无法翻译用户虚拟地址 ⇒ 静默漏释放)
+//   3. `UserProcManager::destroy` **不再**自己逐页归还用户栈物理页: 该职责由
+//      拆除地址空间时的 `destroy_user_page_table` 单源承担 (见
+//      `user_proc_frame_release_test.rs`). 本用例改锁这一契约 —— 旧形态"先还栈
+//      页再拆页表"看似解决了 cr3 翻译依赖, 实为同一释放的第二份平行实现, 绕过
+//      持有计数门与 TLB 追平延迟释放, 实测表现为 `[PMM] Warn: double free` 与
+//      启动挂死 / 内核态 #GP (登记见 docs/plan/net-e2e-tcp-echo-flakiness.md §6 P-15)
 //   4. `destroy_by_pid` / `destroy_by_pid_no_kstack` 取句柄与 `destroy` 的锁分离
 //      (避免 `if let` scrutinee 的 guard 存活到 then 块造成同锁自锁死)
 
@@ -94,23 +98,32 @@ fn test_dec_ref_and_maybe_free_reclaims_user_proc_mirror() {
 }
 
 #[test]
-fn test_destroy_frees_user_stack_before_page_table() {
-    // 用户栈释放依赖 cr3 翻译; 页表一旦销毁即无法翻译 ⇒ 顺序不可颠倒.
+fn test_destroy_defers_user_stack_release_to_page_table_teardown() {
+    // 用户帧归还单源 = 拆页表时逐 USER leaf 走归零门; destroy 内不得再有平行实现.
+    // 内核栈不在该单源上 (它不是 USER leaf, 且地址空间拆除不覆盖它), 必须照旧显式归还.
     let src = code_only(&read(USER_PROC));
     let body = body_of(
         &src,
         "fn destroy(&self, proc: NonNull<UserProcess>, keep_kstack: bool) {",
         1800,
     );
-    let free_stack = body
-        .find("raw::free_phys_page(")
-        .unwrap_or_else(|| panic!("destroy 必须释放用户栈物理页"));
+    assert!(
+        !body.contains("raw::free_phys_page("),
+        "destroy 不得再按固定栈区间逐页归还用户栈: 那是与 destroy_user_page_table \
+         争同一帧的平行实现 (绕过 frame_dec 门 + TLB 追平). 单页归还入口 \
+         `raw::free_phys_page` 与多页入口 `raw::free_phys_pages` 是不同符号, \
+         本断言只锁前者"
+    );
     let destroy_table = body
         .find("raw::destroy_user_page_table(")
-        .unwrap_or_else(|| panic!("destroy 必须在计数归零时销毁用户页表"));
+        .unwrap_or_else(|| panic!("destroy 必须在计数归零时销毁用户页表 (用户帧单源出口)"));
+    let free_kstack = body
+        .find("raw::free_phys_pages(")
+        .unwrap_or_else(|| panic!("destroy 必须归还内核栈物理页"));
     assert!(
-        free_stack < destroy_table,
-        "destroy 必须先释放用户栈 (经 cr3 翻译) 再销毁页表, 否则静默漏释放用户栈"
+        destroy_table < free_kstack,
+        "内核栈归还保持在页表拆除之后: 拆表按 USER leaf 遍历, 与内核栈无交集, \
+         顺序前置换不进任何回收语义, 但反向依赖 (先还表再翻译) 一旦重新引入即静默漏释放"
     );
 }
 

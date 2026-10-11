@@ -9,6 +9,9 @@
 //! - 保留位图用于 reserved 页跟踪和统计.
 //! - 双向链表的索引式空闲链表 (prev/next 存独立 FREE_LINKS 数组,
 //!   16 字节/页, 哨兵 = u64::MAX; 链表关系与物理页内容解耦, host 可测).
+//! - 帧所有权槽存独立 FRAME_OWNER 数组 (16 字节/页: 分配点 + 最近归还点),
+//!   使“二次释放 / 释放未分配帧”从静默腐败变为可点名归因的告警
+//!   (语义与契约见 [`PhysicalMemoryManager::note_frame_retired_site`]).
 //! - Buddy 合并使用按页的阶数元数据, 实现 O(1) 伙伴检查.
 //!
 //! # 安全
@@ -23,6 +26,7 @@ macro_rules! klog_pmm {
 use super::{MemoryInfo, NonNull, PAGE_SIZE, PageSize, PhysAddr, phys_to_virt};
 use crate::privileged::sync::{IrqSaveFlags, disable_interrupts, restore_interrupts};
 use core::cell::{Cell, UnsafeCell};
+use core::panic::Location;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use crate::privileged::sync::IrqSpinLock;
@@ -101,6 +105,27 @@ pub(crate) struct FreeIndex {
     next: u64,
 }
 
+/// 帧所有权槽 (与 [`FreeIndex`] 同法: 独立数组按 pfn 索引, 16 字节/帧).
+///
+/// 两槽都是 `Location::caller()` 返回的 `&'static Location` 指针 (指向 .rodata
+/// 静态对象), `0` = 无记录. 写入点唯一 ([`PhysicalMemoryManager::note_frame_alloc`]
+/// / [`PhysicalMemoryManager::note_frame_retired_site`]), 读取点唯一
+/// ([`PhysicalMemoryManager::do_free`] 的异常归还告警).
+///
+/// `#[repr(C)]`: 本结构经 `*mut u8` 区段指针转接, 字段顺序必须与内存布局一致
+/// (两槽在告警中各自对应“分配点 / 归还点”, 颠转会直接送错归因).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct OwnerIndex {
+    /// 分配点 (帧当前归属的建立者).
+    alloc_site: u64,
+    /// 最近一次归还 / 退役点.
+    release_site: u64,
+}
+
+/// 无记录站点在告警中的占位文本.
+const OWNER_SITE_NONE: &str = "<无记录>";
+
 // === E3: unsafe 集中化 — 裸指针子模块 ===
 //
 // buddy 分配器内部涉及的所有裸指针解引用都
@@ -173,6 +198,8 @@ pub trait MetaStore {
     fn setup_links(&mut self, phys: u64, bytes: usize);
     /// 预置帧持有计数载体: 清零 `bytes` 字节并记录区段 (init_bitmap 调用)
     fn setup_counts(&mut self, phys: u64, bytes: usize);
+    /// 预置帧所有权载体: 清零 `bytes` 字节并记录区段 (init_bitmap 调用)
+    fn setup_owner(&mut self, phys: u64, bytes: usize);
 
     /// 置位 bitmap 第 `bit` 位 (载体未就绪/越界时静默跳过)
     fn bitmap_set(&self, bit: usize);
@@ -192,6 +219,13 @@ pub trait MetaStore {
     fn counts_read(&self, idx: usize) -> u8;
     /// 写帧持有计数 (载体未就绪/越界时静默跳过)
     fn counts_write(&self, idx: usize, val: u8);
+
+    /// 读帧所有权槽 (返回 (分配点, 最近归还点) 两个 Location 指针; 0 = 无记录)
+    fn owner_read(&self, idx: usize) -> (u64, u64);
+    /// 写帧分配点 (同时清归还点 —— 新所有者开始持有)
+    fn owner_mark_alloc(&self, idx: usize, site: u64);
+    /// 写帧归还点 (保留分配点归因)
+    fn owner_mark_release(&self, idx: usize, site: u64);
 
     /// 读 FREE_LINKS[idx].prev (存前驱块头 pfn, SENTINEL=无前驱)
     fn links_read_prev(&self, idx: usize) -> u64;
@@ -222,6 +256,8 @@ pub struct RawMetaStore {
     meta: Option<NonNull<u8>>,
     /// 帧持有计数段虚拟地址 (按 pfn 1 字节)
     counts: Option<NonNull<u8>>,
+    /// 帧所有权槽段虚拟地址 (按 pfn 1 个 [`OwnerIndex`])
+    owner: Option<NonNull<OwnerIndex>>,
     /// FREE_LINKS 段虚拟地址 (FreeIndex = prev/next 各 u64)
     links: Option<NonNull<FreeIndex>>,
     /// 宿主 `PhysicalMemoryManager.buddy_heads` 字段地址
@@ -236,6 +272,7 @@ impl RawMetaStore {
             bitmap_words: 0,
             meta: None,
             counts: None,
+            owner: None,
             links: None,
             heads,
         }
@@ -272,6 +309,13 @@ impl MetaStore for RawMetaStore {
         // bytes 为该区段长度, 区段已按页对齐且未他用; 清零 = 全部帧"未计数"
         unsafe { raw::zero_memory(virt, bytes) };
         self.counts = NonNull::new(virt);
+    }
+
+    fn setup_owner(&mut self, phys: u64, bytes: usize) {
+        let virt = phys_to_virt(phys) as *mut u8;
+        // SAFETY: 同上; 清零 = 两槽均为"无记录"(0), 与帧尚未被 PMM 分配一致
+        unsafe { raw::zero_memory(virt, bytes) };
+        self.owner = NonNull::new(virt.cast::<OwnerIndex>());
     }
 
     fn bitmap_set(&self, bit: usize) {
@@ -359,6 +403,37 @@ impl MetaStore for RawMetaStore {
         }
     }
 
+    fn owner_read(&self, idx: usize) -> (u64, u64) {
+        let Some(owner) = self.owner else {
+            // 载体未就绪 (bitmap 就绪前): 两槽均为无记录
+            return (0, 0);
+        };
+        // SAFETY: 调用方保证 idx < total_pages; owner 在 setup_owner 中建立
+        // (`#[repr(C)]` 保证转接后字段顺序与区段布局一致).
+        unsafe {
+            let slot = &*owner.as_ptr().add(idx);
+            (slot.alloc_site, slot.release_site)
+        }
+    }
+
+    fn owner_mark_alloc(&self, idx: usize, site: u64) {
+        let Some(owner) = self.owner else { return };
+        // SAFETY: 同上; 新所有者开始持有 —— 同时抹去上一手的归还点
+        unsafe {
+            let slot = &mut *owner.as_ptr().add(idx);
+            slot.alloc_site = site;
+            slot.release_site = 0;
+        }
+    }
+
+    fn owner_mark_release(&self, idx: usize, site: u64) {
+        let Some(owner) = self.owner else { return };
+        // SAFETY: 同上; 仅改写归还点, 保留分配点供二次释放告警归因
+        unsafe {
+            (*owner.as_ptr().add(idx)).release_site = site;
+        }
+    }
+
     fn links_read_prev(&self, idx: usize) -> u64 {
         let Some(links) = self.links else {
             return SENTINEL;
@@ -424,6 +499,8 @@ pub struct VecMetaStore {
     meta: RefCell<Option<Vec<u8>>>,
     /// 帧持有计数载体 (按 pfn 1 字节)
     counts: RefCell<Option<Vec<u8>>>,
+    /// 帧所有权槽载体 (每项 16 字节 = 分配点/归还点 各 u64)
+    owner: RefCell<Option<Vec<u8>>>,
     /// FREE_LINKS 载体 (每项 16 字节 = prev/next 各 u64)
     links: RefCell<Option<Vec<u8>>>,
     /// buddy_heads 载体 (每阶一个 u64 pfn; 惰性扩容, 未写阶 = SENTINEL)
@@ -438,6 +515,7 @@ impl VecMetaStore {
             bitmap_words: 0,
             meta: RefCell::new(None),
             counts: RefCell::new(None),
+            owner: RefCell::new(None),
             links: RefCell::new(None),
             heads: RefCell::new(Vec::new()),
         }
@@ -519,6 +597,11 @@ impl MetaStore for VecMetaStore {
         *self.counts.borrow_mut() = Some(vec![0u8; bytes]);
     }
 
+    fn setup_owner(&mut self, _phys: u64, bytes: usize) {
+        // 清零 = 两槽均为无记录 (与生产载体一致)
+        *self.owner.borrow_mut() = Some(vec![0u8; bytes]);
+    }
+
     fn counts_read(&self, idx: usize) -> u8 {
         let counts = self.counts.borrow();
         counts
@@ -535,6 +618,43 @@ impl MetaStore for VecMetaStore {
                 *slot = val;
             }
         }
+    }
+
+    fn owner_read(&self, idx: usize) -> (u64, u64) {
+        let owner = self.owner.borrow();
+        let Some(o) = owner.as_ref() else {
+            return (0, 0);
+        };
+        let off = idx * 16;
+        if off + 16 > o.len() {
+            return (0, 0);
+        }
+        (
+            u64::from_le_bytes(o[off..off + 8].try_into().expect("owner alloc site")),
+            u64::from_le_bytes(o[off + 8..off + 16].try_into().expect("owner release site")),
+        )
+    }
+
+    fn owner_mark_alloc(&self, idx: usize, site: u64) {
+        let mut owner = self.owner.borrow_mut();
+        let Some(o) = owner.as_mut() else { return };
+        let off = idx * 16;
+        if off + 16 > o.len() {
+            return;
+        }
+        o[off..off + 8].copy_from_slice(&site.to_le_bytes());
+        // 新所有者开始持有 —— 抹去上一手的归还点
+        o[off + 8..off + 16].copy_from_slice(&0u64.to_le_bytes());
+    }
+
+    fn owner_mark_release(&self, idx: usize, site: u64) {
+        let mut owner = self.owner.borrow_mut();
+        let Some(o) = owner.as_mut() else { return };
+        let off = idx * 16 + 8;
+        if off + 8 > o.len() {
+            return;
+        }
+        o[off..off + 8].copy_from_slice(&site.to_le_bytes());
     }
 
     fn links_read_prev(&self, idx: usize) -> u64 {
@@ -810,6 +930,22 @@ impl PhysicalMemoryManager {
             Ordering::Relaxed,
         );
 
+        // ---- 帧所有权槽布局 (位于计数区之后, 页对齐) ----
+        // 按 pfn 索引, 每帧 16 字节: `[0,8)` 分配点 Location 指针,
+        // `[8,16)` 最近归还 / 退役点 Location 指针 (0 = 无记录).
+        // 与计数区同理不复用 buddy_meta / FREE_LINKS (那两块语义已被 buddy
+        // 阶数与空闲链关系占用), 归还后所有权槽仍保留至下次分配.
+        let owner_bytes = total_pages * core::mem::size_of::<OwnerIndex>();
+        let owner_phys =
+            (counts_phys + counts_pages * PAGE_SIZE + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+        let owner_pages = owner_bytes.div_ceil(PAGE_SIZE as usize) as u64;
+
+        // 将 early_current 推过所有权槽区
+        self.early_current.store(
+            owner_phys + owner_pages * PAGE_SIZE + PAGE_SIZE,
+            Ordering::Relaxed,
+        );
+
         // H-04 (2026-09-09): 三区内存预置统一经 MetaStore 载体 —
         // 生产自动创建 RawMetaStore (基于 phys + KERNEL_BASE 裸指针, 行为不变),
         // host 测试已在 init_bitmap 前经 inject_meta_store 注入 VecMetaStore.
@@ -836,6 +972,7 @@ impl PhysicalMemoryManager {
         store.setup_meta(buddy_meta_phys, buddy_meta_bytes);
         store.setup_links(free_links_phys, free_links_bytes);
         store.setup_counts(counts_phys, counts_bytes);
+        store.setup_owner(owner_phys, owner_bytes);
         self.bitmap_size.set(bitmap_words);
         klog_pmm!(
             "[PMM] Buddy meta: {} B at 0x{:X}",
@@ -853,6 +990,12 @@ impl PhysicalMemoryManager {
             counts_bytes,
             phys_to_virt(counts_phys),
             counts_pages
+        );
+        klog_pmm!(
+            "[PMM] FRAME_OWNER: {} B at 0x{:X} ({} pages)",
+            owner_bytes,
+            phys_to_virt(owner_phys),
+            owner_pages
         );
 
         // ---- 在 bitmap 中标记 reserved 区 ----
@@ -889,6 +1032,12 @@ impl PhysicalMemoryManager {
         // 标记帧持有计数页已用
         let fc_start_page = phys_to_page(counts_phys) as usize;
         for i in fc_start_page..(fc_start_page + counts_pages as usize).min(total_pages) {
+            self.set_bit(i);
+        }
+
+        // 标记帧所有权槽页已用
+        let fo_start_page = phys_to_page(owner_phys) as usize;
+        for i in fo_start_page..(fo_start_page + owner_pages as usize).min(total_pages) {
             self.set_bit(i);
         }
 
@@ -945,6 +1094,11 @@ impl PhysicalMemoryManager {
         false
     }
 
+    /// 分配单页.
+    ///
+    /// 标 [`track_caller`] 以使帧所有权元数据记到真正的分配者 (见
+    /// [`Self::note_frame_alloc`]).
+    #[track_caller]
     pub fn alloc_page(&self) -> Option<PhysAddr> {
         #[cfg(any(test, feature = "kernel_test"))]
         if self.alloc_fail_should_fail() {
@@ -957,6 +1111,7 @@ impl PhysicalMemoryManager {
             Some(addr) => {
                 // 单页帧: 分配者即初始持有者, 持有计数置 1 (见 frame_inc/frame_dec)
                 self.frame_counts_write(phys_to_page(addr.0) as usize, 1);
+                self.note_frame_alloc(addr);
                 self.total_allocs.fetch_add(1, Ordering::Relaxed);
             }
             None => {
@@ -967,6 +1122,7 @@ impl PhysicalMemoryManager {
         result
     }
 
+    #[track_caller]
     pub fn free_page(&self, addr: PhysAddr) {
         if addr.0 == 0 {
             return;
@@ -978,6 +1134,84 @@ impl PhysicalMemoryManager {
             self.total_frees.fetch_add(1, Ordering::Relaxed);
         }
         self.release_lock(&flags);
+    }
+
+    // ====================================================================
+    // 帧所有权元数据 —— 异常归还的可点名归因
+    // ====================================================================
+
+    /// 记录帧的**分配点** (由 `alloc_page` / `alloc_pages` 在持 PMM 锁下调用).
+    ///
+    /// 写入的是本函数的调用点 —— 入口标了 `#[track_caller]`,
+    /// 故 `Location::caller()` 就是真正拿到这帧的那个分配者, 无需任何子系统传参
+    /// 即可给全内核 70+ 个分配点自动归因.
+    #[track_caller]
+    fn note_frame_alloc(&self, addr: PhysAddr) {
+        let pfn = phys_to_page(addr.0) as usize;
+        if let Some(store) = self.meta_store() {
+            store.owner_mark_alloc(
+                pfn,
+                core::ptr::from_ref(Location::caller()).cast::<u8>() as u64,
+            );
+        }
+    }
+
+    /// 记录帧的**退役点** —— 帧被逻辑丢弃 (进入延迟释放链 / 直接归还) 时调用.
+    ///
+    /// 为何不能只在 `free_page` 记: 经延迟释放链归还的帧, 其 `free_page` 调用点恒为
+    /// `deferred_free::free_chain`, 归因价值为零; "谁让这帧退役" 只有入链时刻知道.
+    ///
+    /// `site` 由调用方在自己的 `#[track_caller]` 上下文里取 `Location::caller()`
+    /// 后传入 —— 归因链跨越模块边界 (VMM 退役点 → `defer_free` → 本函数), 在此再取
+    /// 一次 `caller()` 只会落到 deferred_free.rs 自身, 失去归因价值.
+    ///
+    /// 本入口是**纯观测元数据**, 不参与任何控制逻辑: PMM 锁是本函数内部自持的
+    /// (与 `frame_dec` 同法), 载体未就绪 / pfn 越界 / 单例未建立时一律静默跳过.
+    ///
+    /// 锁序: 调用方 (`defer_free`) 持 `VMM_LOCK`, 本函数取 PMM 锁 —— 与同临界区内
+    /// 已有的 `frame_dec` 同向 (VMM → PMM), 未引入新反向边.
+    pub(crate) fn note_frame_retired_site(&self, addr: PhysAddr, site: u64) {
+        let Some(pfn) = self.frame_counts_pfn(addr) else {
+            return;
+        };
+        let flags = self.acquire_lock();
+        self.owner_mark_first_release_locked(pfn, site);
+        self.release_lock(&flags);
+    }
+
+    /// 记**首次**退役点 (调用方已持有 PMM 锁).
+    ///
+    /// 为何不能后写者覆盖前写者: 同一帧可见多次归还 (正常一次 + 异常重复),
+    /// 而带外重复归还的站点 (如链排空的 `deferred_free.rs`) 比首次退役的真实退役点
+    /// (VMM 拆表站点) 归因价值低得多 —— 覆盖恰好擦掉本机制要保护的信息.
+    /// 新所有者拿到帧时 `owner_mark_alloc` 已清空归还槽, 故不会跨主人漏用旧值.
+    fn owner_mark_first_release_locked(&self, pfn: usize, site: u64) {
+        let Some(store) = self.meta_store() else {
+            return;
+        };
+        if store.owner_read(pfn).1 == 0 {
+            store.owner_mark_release(pfn, site);
+        }
+    }
+
+    /// 读帧所有权槽 (分配点, 最近归还点) —— 仅 [`Self::do_free`] 的异常告警使用.
+    fn frame_owner(&self, pfn: usize) -> (u64, u64) {
+        self.meta_store()
+            .map_or((0, 0), |store| store.owner_read(pfn))
+    }
+
+    /// 把所有权槽里的 `Location` 指针还原为 `(file, line)` 供告警打印.
+    ///
+    /// `0` → `(<无记录>, 0)`: 帧未经 PMM 分配 API 得到 (启动预留区 / 内核镜像).
+    fn owner_site_loc(site: u64) -> (&'static str, u32) {
+        if site == 0 {
+            return (OWNER_SITE_NONE, 0);
+        }
+        // SAFETY: 该字段只由 `note_frame_alloc` / `note_frame_retired_site` 写入, 值取自
+        // `Location::caller()` 的 `&'static Location` 指针 —— 指向 .rodata 里的静态
+        // Location 对象, 随内核镜像常驻映射, 故解引用有效且生命周期为 'static.
+        let loc = unsafe { &*(site as *const Location<'static>) };
+        (loc.file(), loc.line())
     }
 
     /// 登记一个帧持有者 (共享方使用).
@@ -1093,6 +1327,8 @@ impl PhysicalMemoryManager {
         }
     }
 
+    /// 分配连续 `count` 页 (整块视为单一持有者, 见 [`Self::alloc_pages`] 内 SIMPLIFIED 注).
+    #[track_caller]
     pub fn alloc_pages(&self, count: usize) -> Option<PhysAddr> {
         if count == 0 {
             return None;
@@ -1143,6 +1379,8 @@ impl PhysicalMemoryManager {
                 if order == 0 {
                     self.frame_counts_write(phys_to_page(addr.0) as usize, 1);
                 }
+                // 块头页记归属 (与计数面同粒度: 块内页不逐页追踪)
+                self.note_frame_alloc(addr);
                 self.total_allocs
                     .fetch_add(npages as u64, Ordering::Relaxed);
             }
@@ -1154,6 +1392,7 @@ impl PhysicalMemoryManager {
         result
     }
 
+    #[track_caller]
     pub fn free_pages(&self, addr: PhysAddr, count: usize) {
         if addr.0 == 0 || count == 0 {
             return;
@@ -1345,6 +1584,12 @@ impl PhysicalMemoryManager {
         result
     }
 
+    /// 分配大页 (按 `size_type` 分派到 `alloc_page` / `alloc_pages`).
+    ///
+    /// 标 `track_caller` 使 Size4K / Size2M 分支的所有权归因落到真正的分配者;
+    /// Size1G 走 `buddy_direct_alloc_aligned` 直分, 不逐页计数亦不记归属 (同
+    /// `alloc_pages` 的大块语义).
+    #[track_caller]
     pub fn alloc_huge_page(&self, size_type: PageSize) -> Option<PhysAddr> {
         match size_type {
             PageSize::Size4K => self.alloc_page(),
@@ -1366,6 +1611,7 @@ impl PhysicalMemoryManager {
 
     // 有意窄化: 显式收窄, 调用方保证值域
     #[expect(clippy::cast_possible_truncation)]
+    #[track_caller]
     pub fn free_huge_page(&self, addr: PhysAddr, size_type: PageSize) {
         match size_type {
             PageSize::Size4K => self.free_page(addr),
@@ -1848,8 +2094,12 @@ impl PhysicalMemoryManager {
     }
 
     /// 主 `do_free`: 处理 buddy 或 bitmap 释放.
+    ///
+    /// 异常归还在此处点名归因: 二次释放 / 释放未经分配帧均打印“分配点 + 首次归还点
+    /// + 本次归还点”三元组 (见 [`Self::frame_owner`]).
     // 有意窄化: 显式收窄, 调用方保证值域
     #[expect(clippy::cast_possible_truncation)]
+    #[track_caller]
     fn do_free(&self, addr: PhysAddr, order: u8) {
         if !self.initialized.load(Ordering::Acquire) {
             klog_pmm!("[PMM] Warn: free before bitmap init at 0x{:X}", addr.0);
@@ -1866,13 +2116,33 @@ impl PhysicalMemoryManager {
         // M1 修复: 在 buddy_ready 前后都检测 double-free
         // 位图约定: 1 = 已分配, 0 = 空闲
         if !self.test_bit(pfn as usize) {
+            // 所有权归因: 帧位已为 0 而再次被归还 —— 两条路径在争同一帧.
+            // 不点名则仅表现为“某页提前进了空闲链”的静默腐败 (他方仍在用该帧,
+            // 下次分配即可能拿到同一帧 → 映射被当数据页覆写).
+            let (alloc_site, release_site) = self.frame_owner(pfn as usize);
+            let alloc = Self::owner_site_loc(alloc_site);
+            let retired = Self::owner_site_loc(release_site);
+            let here = Location::caller();
             klog_pmm!(
-                "[PMM] Warn: double free at pfn {} (addr=0x{:X})",
+                "[PMM] Warn: double free at pfn {} (addr=0x{:X}) alloc={}:{} first_retire={}:{} this_free={}:{}",
                 pfn,
-                addr.0
+                addr.0,
+                alloc.0,
+                alloc.1,
+                retired.0,
+                retired.1,
+                here.file(),
+                here.line()
             );
             return;
         }
+
+        // 首次归还点入元数据 (保留分配点): 若后续又出现二次归还, 本行就是
+        // 告警里的 “first_retire” 字段.
+        self.owner_mark_first_release_locked(
+            pfn as usize,
+            core::ptr::from_ref(Location::caller()).cast::<u8>() as u64,
+        );
 
         if !self.buddy_ready.load(Ordering::Acquire) {
             let npages = 1u64 << u64::from(order);
@@ -2088,6 +2358,17 @@ pub fn pmm_init_bitmap(reserved_after_kernel: u64) {
 /// 获取全局 PMM 单例 (未初始化则 panic).
 pub fn get_pmm() -> &'static PhysicalMemoryManager {
     GLOBAL_PMM.get_or_panic("PMM")
+}
+
+/// 帧退役归因的模块级入口 (供 `deferred_free::defer_free` 调用).
+///
+/// 与 [`get_pmm`] 的关键区别: 本入口**绝不 panic**. 所有权元数据是纯观测面,
+/// PMM 单例尚未建立 (启动早期 / host 测试仅测链逻辑) 时静默跳过 —— 观测面不得
+/// 把控制流打挂 (`free_chain` 的"空链不取 PMM"同一条约束).
+pub(crate) fn note_frame_retired(frame: u64, site: u64) {
+    if let Some(pmm) = GLOBAL_PMM.get() {
+        pmm.note_frame_retired_site(PhysAddr(frame), site);
+    }
 }
 
 // ==================== 屏障与回滚 ====================

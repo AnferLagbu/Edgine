@@ -2,6 +2,7 @@ use super::process::{PROCESS_TABLE, Process};
 use super::types::{ProcessId, ProcessState};
 use crate::klog_error;
 use crate::privileged::mm::KERNEL_BASE;
+use crate::privileged::mm::{pmm_alloc_page_phys, pmm_alloc_pages_phys};
 use crate::privileged::sync::IrqSpinLock as Mutex;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -15,10 +16,11 @@ pub static user_entry_cr3: AtomicU64 = AtomicU64::new(0);
 pub static user_entry_target: AtomicU64 = AtomicU64::new(0);
 
 // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
+//
+// 注: 物理帧的分配 / 归还不走本块 (改走 `mm::pmm_*_phys` 的 Rust 入口), 否则
+// `extern "C"` 无 `track_caller` 会把帧所有权归因吞到 `mm/api.rs` 包装层行,
+// 三元组就失去了点名争抢双方的能力 (见 `pmm_frame_ownership_test.rs`).
 unsafe extern "C" {
-    fn pmm_alloc_page() -> *mut u8;
-    fn pmm_alloc_pages(count: u64) -> *mut u8;
-    fn pmm_free_page(page: *mut u8);
     fn vmm_create_user_page_table() -> u64;
     fn vmm_map_page_in_table(table: u64, vaddr: u64, paddr: u64, flags: u64);
     fn vmm_map_page(vaddr: u64, paddr: u64, flags: u64) -> i32;
@@ -92,8 +94,8 @@ pub struct UserProcInfo {
 pub(crate) mod raw {
     use super::{
         AtomicU32, AtomicU64, KERNEL_BASE, NonNull, Ordering, PAGE_SIZE, PageFlags, Process,
-        ProcessId, ProcessState, UserProcess, kmalloc, memcpy, memset, pmm_alloc_page,
-        pmm_alloc_pages, pmm_free_page, raw, vmm_create_user_page_table, vmm_destroy_page_table,
+        ProcessId, ProcessState, UserProcess, kmalloc, memcpy, memset, pmm_alloc_page_phys,
+        pmm_alloc_pages_phys, raw, vmm_create_user_page_table, vmm_destroy_page_table,
         vmm_ensure_path_user, vmm_get_physical_in_table, vmm_map_page, vmm_map_page_in_table,
     };
 
@@ -357,10 +359,14 @@ pub(crate) mod raw {
     /// 释放一个物理页 (来自内核栈)。
     ///
     /// # Safety (内部)
-    /// - `phys` 必须为 `pmm_alloc_page` 返回的合法物理页基址。
+    /// - `phys` 必须为 `alloc_phys_page` 返回的合法物理页基址。
+    /// - 仅适用于**单一持有者且未经地址空间映射**的帧 (如内核栈); 已入用户页表
+    ///   的帧一律由 `destroy_page_table` 的 leaf 归还路径处理 (带计数门与延迟释放)。
+    #[track_caller]
     pub fn free_phys_page(phys: *mut u8) {
-        // SAFETY: 物理页所有权从分配者转移给本 free。
-        unsafe { pmm_free_page(phys) }
+        if !phys.is_null() {
+            crate::privileged::mm::pmm_free_page_phys(crate::privileged::mm::PhysAddr(phys as u64));
+        }
     }
 
     /// 销毁用户页表 (cr3)。
@@ -391,12 +397,14 @@ pub(crate) mod raw {
     ///
     /// # Safety (内部)
     /// - 调用方负责通过 `free_phys_pages` 释放。
+    #[track_caller]
     pub fn alloc_phys_pages(count: u64) -> *mut u8 {
-        // SAFETY: 物理页分配, 调用方负责所有权。
-        unsafe { pmm_alloc_pages(count) }
+        pmm_alloc_pages_phys(usize::try_from(count).unwrap_or(usize::MAX))
+            .map_or(core::ptr::null_mut(), |addr| addr.0 as *mut u8)
     }
 
     /// 释放多页连续物理页。
+    #[track_caller]
     pub fn free_phys_pages(pages: *mut u8, count: u64) {
         for i in 0..count {
             raw::free_phys_page((pages as u64 + i * PAGE_SIZE) as *mut u8);
@@ -404,9 +412,9 @@ pub(crate) mod raw {
     }
 
     /// 分配一页物理页。
+    #[track_caller]
     pub fn alloc_phys_page() -> *mut u8 {
-        // SAFETY: 物理页分配, 调用方负责所有权。
-        unsafe { pmm_alloc_page() }
+        pmm_alloc_page_phys().map_or(core::ptr::null_mut(), |addr| addr.0 as *mut u8)
     }
 
     /// 在用户页表中建立映射。
@@ -468,12 +476,6 @@ pub(crate) mod raw {
         }
         raw::vmm_map_user_page(cr3, vaddr, page as u64, flags);
         page
-    }
-
-    /// 释放物理页 (用于 ELF 加载失败回滚)。
-    pub fn free_phys_page_for_rollback(phys: u64) {
-        // SAFETY: 物理页所有权从分配者转移给本 free。
-        unsafe { pmm_free_page(phys as *mut u8) }
     }
 
     /// 从 ELF 文件复制 chunk 到用户物理页 (通过内核映射)。
@@ -808,19 +810,17 @@ impl UserProcManager {
 
         let cr3 = proc_ref.load_cr3();
 
-        // 释放用户栈物理页 — 必须在销毁页表**之前**完成: 页表销毁后 `cr3` 不再
-        // 可翻译用户虚拟地址, 再释放会静默漏释放用户栈 (与 replace_user_space 同序).
-        let ustack = proc_ref.load_user_stack();
-        if ustack != 0 {
-            let stack_virt = USER_STACK_TOP - USER_STACK_SIZE - USER_STACK_GUARD;
-            for i in 0..(USER_STACK_SIZE / PAGE_SIZE) {
-                let svirt = stack_virt + USER_STACK_GUARD + i * PAGE_SIZE;
-                let phys = raw::virt_to_phys(cr3, svirt);
-                if phys != 0 {
-                    raw::free_phys_page(phys as *mut u8);
-                }
-            }
-        }
+        // 用户栈物理页**不在此处释放**: 拆除地址空间时 `destroy_page_table` 已逐
+        // leaf 走 `frame_dec` 归零门 + 延迟释放 (见 vmm_x86_64.rs 的 USER leaf 处理).
+        // 此处再按固定栈区间逐个 `pmm_free_page` 是同一释放的第二份平行实现, 且
+        // 绕过了两道防线:
+        //   1) 持有计数 —— fork/COW 共享页被提前还回 PMM, 兄弟进程仍在用;
+        //   2) TLB 追平 —— 他核陈旧映射即刻可命中被重分配的帧.
+        // 二者叠加即表现为 `[PMM] Warn: double free` 与页表帧被当数据页覆写后
+        // 的启动挂死 / 内核态 #GP (取证三元组: first_retire = this_free =
+        // `mm/api.rs` 的 `pmm_free_page`, 即本循环与销毁路径争同一帧).
+        // 旧注释担心的"页表销毁后无法翻译虚拟地址"不成立: 归还物理帧不需要翻译,
+        // 而需要翻译的逐 leaf 遍历已由 destroy_page_table 在拆表时一并完成.
 
         // 计数归零才销毁: cr3 可能被 CLONE_VM 兄弟进程共享, 或已被 execve
         // 转移给其他进程 (转移时源已清空, 见 proc_ops::proc_exec_replace).
@@ -841,11 +841,26 @@ impl UserProcManager {
         self.processes.lock().remove(&pid);
     }
 
-    /// 销毁进程 (接受裸指针的兼容接口)
-    fn destroy_raw(&self, proc: *mut UserProcess, keep_kstack: bool) {
-        if let Some(nn) = NonNull::new(proc) {
-            self.destroy(nn, keep_kstack);
-        }
+    /// 装配失败的回滚: 先如实标记终止状态, 再交给权威销毁单源.
+    ///
+    /// `create()` 完成两张表注册时把状态置 `Ready`, 而 [`Self::destroy`] 的门是
+    /// `is_exited()` (仅 `Zombie` / `Terminated` 放行)。未曾运行即失败的进程直接
+    /// 走销毁入口会得到一次**静默空返回** —— 页表与已映射用户页、内核栈、两张表
+    /// 条目、PID 全部泄漏 (登记见
+    /// `docs/plan/net-e2e-tcp-echo-flakiness.md` §6 P-16)。本函数不放宽那道门
+    /// (它同时服务 `wait4` 与周期僵尸回收), 而是把状态写成它的真实语义:
+    /// 该进程已终止且从未运行。
+    ///
+    /// 随后的 `PROCESS_TABLE::remove_and_free` 是生产退出的唯一销毁入口 (清理
+    /// 通知 + 引用递减 + 镜像 destroy + `Box::from_raw` + PID 回收)。在这里
+    /// 重抄一遍归还顺序等于再造一份平行实现 —— 正是本轮 `destroy` 旧用户栈
+    /// pre-free 循环造成 double free 的形状。
+    fn rollback_unrun_process(proc_ref: UserProcRef) {
+        let pid = proc_ref.pid();
+        // 状态写入经 `store_state` 委托到权威 `Process::state` (见上方访问器),
+        // 不存在镜像与权威两份状态分裂。
+        proc_ref.store_state(crate::privileged::proc::types::ProcessState::Zombie as u32);
+        PROCESS_TABLE.remove_and_free(pid);
     }
 
     /// 获取进程裸指针 (向后兼容接口)。
@@ -902,9 +917,9 @@ impl UserProcManager {
     )]
     /// 替换进程的用户地址空间 (execve 路径).
     ///
-    /// 销毁旧页表和用户栈物理页, 然后将 `CR3/entry/user_stack/stack_bottom`
-    /// 更新为新值. 不移除 `BTreeMap` 条目, 不释放内核栈, 不改变 PID —
-    /// 保持 POSIX execve 语义 (PID 不变).
+    /// 销毁旧页表 (旧用户栈页作为 USER leaf 由其单源归还), 然后将
+    /// `CR3/entry/user_stack/stack_bottom` 更新为新值. 不移除 `BTreeMap` 条目,
+    /// 不释放内核栈, 不改变 PID — 保持 POSIX execve 语义 (PID 不变).
     pub fn replace_user_space(
         &self,
         pid: u32,
@@ -923,17 +938,8 @@ impl UserProcManager {
         // 1. 销毁旧用户页表 (计数归零才销毁: 旧表可能被 CLONE_VM 兄弟进程共享)
         let old_cr3 = proc_ref.load_cr3();
         if old_cr3 != 0 {
-            // 释放旧用户栈物理页 (必须在销毁页表前完成, 否则无法翻译虚拟地址)
-            let old_stack_bottom = proc_ref.load_stack_bottom();
-            if old_stack_bottom != 0 {
-                for i in 0..(USER_STACK_SIZE / PAGE_SIZE) {
-                    let svirt = old_stack_bottom + i * PAGE_SIZE;
-                    let phys = raw::virt_to_phys(old_cr3, svirt);
-                    if phys != 0 {
-                        raw::free_phys_page(phys as *mut u8);
-                    }
-                }
-            }
+            // 旧用户栈物理页同样由 `destroy_page_table` 按 leaf 归还 (单一实现 +
+            // 计数门 + 延迟释放), 理由见 `destroy()` 内同处注释.
             if crate::privileged::mm::pmm::get_pmm()
                 .frame_dec(crate::privileged::mm::PhysAddr(old_cr3))
             {
@@ -1037,7 +1043,13 @@ impl UserProcManager {
         if kstack.is_null() {
             // 失败回滚: 内核栈物理页分配失败, 释放栈页+页表+结构内存.
             // 顺序仍为 LIFO 反序: 物理资源 → 镜像 → 权威结构.
-            raw::free_phys_page(stack_pages);
+            //
+            // 只归还**未映射**的 guard 尾页: 前 USER_STACK_SIZE/PAGE_SIZE 页已
+            // `vmm_map_user_page` 进 cr3, 所有权属地址空间, 由下一步的
+            // `destroy_user_page_table` 逐 USER leaf 走 `frame_dec` 门 + 延迟释放.
+            // 在此再还一次即与销毁路径争同一帧 (与 `destroy` 旧的用户栈 pre-free
+            // 循环同形, 见 `user_proc_frame_release_test.rs`).
+            raw::free_phys_page((stack_pages as u64 + USER_STACK_SIZE) as *mut u8);
             if crate::privileged::mm::pmm::get_pmm()
                 .frame_dec(crate::privileged::mm::PhysAddr(cr3_val))
             {
@@ -1802,7 +1814,7 @@ impl UserProcManager {
 
             let phnum = header.e_phnum as usize;
             if phnum > 256 {
-                self.destroy_raw(proc, false);
+                Self::rollback_unrun_process(proc_ref);
                 return -1;
             }
 
@@ -1810,7 +1822,7 @@ impl UserProcManager {
                 let phdr_size = core::mem::size_of::<ElfPhdr>() as u64;
                 let phdr_offset = header.e_phoff + (i as u64) * u64::from(header.e_phentsize);
                 if phdr_offset + phdr_size > elf_size {
-                    self.destroy_raw(proc, false);
+                    Self::rollback_unrun_process(proc_ref);
                     return -1;
                 }
                 let phdr = (elf_data.add(phdr_offset as usize)) as *const ElfPhdr;
@@ -1844,10 +1856,13 @@ impl UserProcManager {
                     if existing_phys == 0 {
                         let page = raw::alloc_zeroed_user_page(cr3, vaddr, flags);
                         if page.is_null() {
-                            for pi in 0..page_count {
-                                raw::free_phys_page_for_rollback(allocated_pages[pi]);
-                            }
-                            self.destroy_raw(proc, false);
+                            // 失败回滚: 已分配的页**不在此逐个归还**. 它们已由
+                            // `alloc_zeroed_user_page` 映射进 cr3, 所有权属地址空间;
+                            // `allocated_pages` 里还混有复用的既有页 (`existing_phys`),
+                            // 逐个 free 会把别人在用的帧抽走. 真正的释放路径是下面的
+                            // 回滚 —— 它把状态标为 `Zombie` 后经权威销毁单源走到
+                            // `destroy_user_page_table` 的 USER leaf 处理.
+                            Self::rollback_unrun_process(proc_ref);
                             return -1;
                         }
                         if page_count < 1024 {
