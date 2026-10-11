@@ -229,3 +229,8 @@ C 组另一线索：同一构建下 `[tcp] Listening` 的内核时间戳在 7.68
   - **连带工具盲区（属事实陈述，非修复授权）**：R1 的 `EXEMPT_TRAIT_IMPL` 豁免使 trait impl 中的方法**永不进入 R1 名单**（无论是否有调用方）⇒ 本项这类“trait 方法冗余”靠 R1 结不出来；审计能看零引用 `pub fn`，看不见零引用 trait 能力面。是否给 R1 加“trait 方法无生产调用方”的 INFO 级观测，待 `--strict` 与 P-17 收口后单独评估。
   - 状态：[]（**方向已经用户裁定 = A**：syscall 层整体改走 `SocketHandle` 域并退掉 inherent `*_fd`，抽象层作为唯一能力入口。因需连带改造 `functions/net/socket.rs` 全域与 fd↔handle 映射，定性为**单开工程**（不挤进本轮窗口）；本轮仅完成事实测量与登记，未动代码）。
 
+- **P-19 e1000 中断投递面：Q3 框架订正 + IMS 死接线最小收口 (b) + x86_64 INTx 路由发现 (c) 待立项**：P-17 取证曾把“中断未发或丢失”列为 RX 五候选之一，复核后订正其定性——x86_64 默认 QEMU 机型挂 82540EM，无 MSI-X capability，`e1000_net_registration` 的 `pci::msi::msix_enable` 返 `None` ⇒ 走 `e1000.rs` 已文档化的“回落轮询模式”。故**“零中断”是既定回退而非缺陷**；RX 消费在轮询腿下由 `poll_network` 的 `try_receive` 兜底，取证读数 `[fx-n] … irq=0` 与该回退一致。P-17 因此排除“中断丢失”候选，剩余嫌疑收拢到 softirq 唤醒 / `NET_STATE.try_lock()` 拖 poll / 协议栈上送三段（仍属 P-17 取证面）。
+  - **本轮已做（用户裁定 = Q3 选项 b，最小动作）**：原 `complete_init` 在设备 init 阶段无条件 `irq_enable(RXT0|RXDMT0|LSC)` 写 IMS，而 ISR 注册在其后的 `e1000_net_registration` —— MSI-X 不可用时设备已配掩码却无任何接收者（真缺的 INTx 投递链未接线，`net_register_intx_isr` 仅 aarch64 用），构成“配掩码无人接收”的死接线。改为先 `net_register_msix_isr` 成功才 `driver.io.irq_enable(...)`，失败/不可用时 IMS 保持掩蔽。收包路径不变（纯轮询），双架构 build 0w0e / clippy / fmt / audit / host-tests / 内核单测全绿（commit `Fix(net): e1000 IMS 仅在 ISR 就位后使能`）。
+  - **待立项（用户裁定 = 下轮，本轮不挤窗口）**：x86_64 INTx 路由发现 —— 现 `interrupt_line` 全内核 0 消费者、`acpi.rs` 无 `_PRT` 解析、无 IOAPIC PIN 路由 ⇒ MSI-X 缺失机型（含本默认基线）拿不到中断驱动收包，只有轮询。开工需 ACPI `_PRT` 解析 + IOAPIC RTE 配 pin + `net_register_intx_isr` 的 x86_64 分支 + 共享引脚 EOI，体量独立，建议单开工程（对应早前 Q3 选项 c）。验证 MSI-X 接线正确性可临时 `-device e1000-82544EM`（有 MSI-X cap）跑一轮对照（选项 a），不改默认基线。
+  - 状态：[]（(b) 已施工并全门槛绿，作为死接线卫生项关闭；(c) INTx 路由发现登记待下轮，未开工）
+
