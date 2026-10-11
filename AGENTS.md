@@ -39,6 +39,8 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 
 > **用户态产物按架构分目录**（S-6 三条防线）：产物落 `other/build/<arch>/user/`，内核编译期 `include_bytes!` 嵌入**本架构** `init.bin`，两架构互不覆盖。三层防线缺一不可：`scripts/qemu_boot_test.sh` 启 QEMU 前跑 `scripts/verify_image_arch.py`（判据 = 产物 `e_machine` + 镜像**逐字节包含**产物，`kernel.flat` 尺寸**不是**架构判据），不符即 fail；内核侧 `privileged::proc::elf::verify::EXPECTED_E_MACHINE` 只接受本编译期目标架构的 ELF；`src/kernel/build.rs` 的 `cargo:rerun-if-changed` 必须给**绝对路径**（相对路径以包根 `src/kernel` 为基准，与 `include_bytes!` 不同源，会静默失效）。工具自测：`python3 scripts/tests/verify_image_arch_selftest.py`。
 
+> **内核产物按架构分目录**（P-10，与 S-6 同构）：`kernel.bin` / `kernel.flat` / `kernel-aarch64.img` / `kernel.map` / 中间 `.o` / `stage1.bin` / ISO 一律落 `other/build/<arch>/`，两架构互不覆盖。由此 `./ci/build.sh all` **两个架构都链接**（aarch64 的链接期错误不再被「只链主架构」掩盖），FP-06 审计（`scripts/audit_aarch64_kernel_fp_free.py`）直读 `other/build/aarch64/kernel.bin`，不再有「先跑 `./ci/build.sh aarch64`」的顺序耦合；为共用路径设计的 `arch-switch-clean` / `log/.arch` 戳记 / `sync_make_state` 三重补丁随之退役。产物**内容**自检仍由 `verify_image_arch.py` 承担。
+
 ### 2.2 核心审计脚本（硬规则门槛）
 
 | 脚本 | 作用 | 对应 §5 硬规则 | CI 门禁 |
@@ -52,10 +54,12 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 | `audit_once_cell.py` | OnceCell 模式统一 | 附加门禁 | 强制 |
 | `audit_c_naming.py` | C 命名规范 | 附加门禁 | 强制 |
 | `audit_repr_c.py` / `audit_volatile_access.py` / `audit_static_mut.py` | repr(C) 字段错位 / volatile 访问 / static mut 防线 | 附加门禁 | 强制 |
+| `audit_orphaned_init.py` | 孤儿 init 编排入口（`no_mangle` + 零调用 + 体内聚合 ≥2 项 init） | 附加门禁（F9 配套，P-8） | 强制 |
+| `audit_unwired_pub_fn.py` | 未接线 syscall 编号（R2 CRITICAL）；零引用 pub fn（R1）仅报告 | 附加门禁（F9 配套，P-13） | 强制（R2） |
 | `audit_tcb_ratio.py` | TCB 占比统计（软 < 30%）| 软约束 | 报告 |
 
-> **附加门禁**：OnceCell / C 命名 / repr(C) / volatile / static_mut 已接入 CI 强制，但不占 §5 的 F1-F9 零容忍编号（属内存/风格专项防线，映射 I2/I5/I6 不变式）.
-> **完整清单**：仓库共 22 个 `audit_*.py`（本表为常用核心门禁项，非穷举）. `block_registration`(I-43) / `tlb_receive_order`(S-14) / `aarch64_kernel_fp_free`(FP-06) 等专项亦在 `ci/audit.sh` 强制但未列入本表; 其余为按需扩展审计（未接入 CI）.
+> **附加门禁**：OnceCell / C 命名 / repr(C) / volatile / static_mut / orphaned_init / unwired_pub_fn 已接入 CI 强制，但不占 §5 的 F1-F9 零容忍编号（属内存/风格专项防线，映射 I2/I5/I6 不变式；orphaned_init 与 unwired_pub_fn 属 F9 死代码与接线断点的专项，后者仅 R2 未分发 syscall 编号阻断，R1 存量零引用名单待逐项甄别后开 `--strict`）。
+> **完整清单**：仓库共 23 个 `audit_*.py`（本表为常用核心门禁项，非穷举）. `block_registration`(I-43) / `tlb_receive_order`(S-14) / `aarch64_kernel_fp_free`(FP-06) 等专项亦在 `ci/audit.sh` 强制但未列入本表; 其余为按需扩展审计（未接入 CI）.
 
 ### 2.3 验证门槛
 
