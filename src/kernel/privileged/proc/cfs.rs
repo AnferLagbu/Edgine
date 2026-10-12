@@ -135,7 +135,7 @@ impl DeadlineParams {
 ///
 /// `total_weight` 是"可运行集 (树上的 + 正在本核运行的) 权重和", 由
 /// [`Self::enqueue`]/[`Self::dequeue`] 依调用方传入的记账凭证精确加减一次;
-/// 树内移动 (`pick_next`/`requeue`) 不动账。记账凭证由 `Process::cfs_on_rq`
+/// 树内移动 (`pick_next` 拣出 / `enqueue` 去重重投) 不动账。记账凭证由 `Process::cfs_on_rq`
 /// 承载 (语义同 Linux 的 `on_rq`: 处于可运行记账中, 上核运行期间仍为 true)。
 pub struct CfsRunQueue {
     pub tree: BTreeMap<(u64, Pid), ()>,
@@ -263,12 +263,6 @@ impl CfsRunQueue {
         let (&(vruntime, pid), ()) = self.tree.first_key_value()?;
         self.tree.remove(&(vruntime, pid));
         Some((pid, vruntime))
-    }
-
-    /// 放回被切走的运行任务: 位置即其自身 vruntime (IC1 已保证它不低于
-    /// `floor - MIN_GRANULARITY`), 不动记账。
-    pub fn requeue(&mut self, pid: Pid, vruntime: u64) {
-        self.tree.insert((vruntime, pid), ());
     }
 
     /// 按 vruntime 升序把至多 `out.len()` 个**在树上的** pid 写入 `out`, 返回个数。
@@ -597,8 +591,8 @@ mod tests {
         // 仍在可运行集中 (IC1: 与队列同域).
         assert_eq!(q.len(), 2);
         assert_eq!(q.total_weight.load(Ordering::Acquire), 3 * 1024);
-        // 被切走者经 requeue 原位放回, 同样不动账.
-        q.requeue(1, 100);
+        // 被切走者经幂等 `enqueue` 原位放回 (凭证 true ⇒ 不二次记账).
+        assert_eq!(q.enqueue(1, 100, 1024, true), 100);
         assert_eq!(q.len(), 3);
         assert_eq!(q.total_weight.load(Ordering::Acquire), 3 * 1024);
         // dequeue 撤账: 离开可运行集 (阻塞/退出), 且幂等.
@@ -735,8 +729,8 @@ mod tests {
     /// floor 已推进很远之后才唤醒) 下, 唤醒者必须在**有界 tick** 内被拣出.
     ///
     /// 与 `scheduler.rs` 的实际路径同构: tick 内 `placement` 对齐 → 累加 delta →
-    /// `advance_floor` → 与 `leftmost_vruntime()` 同域比较 → 抢占时 `requeue` 原位
-    /// 放回 + `pick_next` 拣新者. 旧模型在此场景下差值被 `saturating_sub` 压成 0
+    /// `advance_floor` → 与 `leftmost_vruntime()` 同域比较 → 抢占时幂等 `enqueue`
+    /// 原位放回 + `pick_next` 拣新者. 旧模型在此场景下差值被 `saturating_sub` 压成 0
     /// ⇒ 该核永不请求重调度 ⇒ 唤醒者永久饿死 (实测 4~10 s, 跨过宿主 5 s 超时).
     #[test]
     fn test_sched_cfs_wakeup_bounded_latency_under_tick_loop() {
@@ -772,8 +766,8 @@ mod tests {
             if cfs_should_preempt(curr_vr, next_vr, NICE0_WEIGHT) {
                 wake_tick = tick;
                 let bg_vr = curr_vr;
-                // 切走者原位放回, 唤醒者上核
-                q.requeue(1, bg_vr);
+                // 切走者原位放回 (凭证 true ⇒ 不动账), 唤醒者上核
+                q.enqueue(1, bg_vr, NICE0_WEIGHT, true);
                 let (picked, _) = q.pick_next().unwrap();
                 assert_eq!(picked, 2, "唤醒者必须被拣出 (反饥饿)");
                 picked_wakee = true;

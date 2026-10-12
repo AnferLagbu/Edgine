@@ -601,7 +601,9 @@ impl Scheduler {
 
     /// 将进程入队**当前核**的 CFS 运行队列.
     ///
-    /// 返回 `false` = 本次搬定未发生 (任务不存在 / 正在核上跑 / 已终 / 认领耗尽).
+    /// 返回 `false` = 本次搬定未发生 (任务不存在 / 已终 / 认领耗尽).
+    /// 返回 `true` 有两种含义: 已投进本核树, 或该任务正被投送屏障 (P-21) 挡住 —— 后者
+    /// 只做了延迟投送 (搬状态不入树), 落地由占用者核接手.
     /// 调用方**必须**据此决定后续动作 —— 尤其不得先把任务置 `Ready` 再入队,
     /// 否则失败即造成"Ready 但不在任何树上"的永久隐形 (见 [`Self::cfs_place_on`]).
     fn cfs_enqueue(&self, pid: Pid) -> bool {
@@ -682,7 +684,24 @@ impl Scheduler {
     /// 并把它投进第三个队列 —— 同一任务同时挂在两棵树上, 两核同时上核运行它,
     /// 进程上下文与 socket 状态随即被踩坏 (E-II-b 后每核收 tick, 该窗口第一次被
     /// 实测打中: x86_64 e2e 由 6/6 退化为 1/6, 特征为纯 RX 侧全灭).
+    ///
+    /// P-21 投送屏障使本入口对"正占用某个核"的任务只做**延迟投送** (搬状态不入树,
+    /// 仍返回 `true`), 落地由占用者核的 prev 收尾 / `reap_off_cpu` 补投两条腿接手
+    /// —— 故 `true` 不等于"已在树上", 调用方不得据此再动该任务的记账.
     fn cfs_place_on(&self, pid: Pid, dst_cpu: u32) -> bool {
+        self.cfs_place_on_inner(pid, dst_cpu, false)
+    }
+
+    /// [`Self::cfs_place_on`] 的内部形态, 多一个**调用者身份**参数.
+    ///
+    /// `owner_landing`: 调用者是否就是投送屏障的**占用者本核** —— 只有
+    /// `schedule()` 的 prev 收尾传 `true` (语义同 Linux `put_prev_task`: 被切走者
+    /// 必须当场回到本核可运行集). 它不是逃生口: 凭证、锁序、去重、记账与落点
+    /// 回写全部走同一条路, 唯一差别是屏障不再拦它 —— 而屏障本来就是为拦**别人**
+    /// 而设的 (本核把 prev 投回**自己**的树, 不构成两核交叠).
+    /// 若这里也拒收, prev 的可运行性会被藏到下一次切换 (`reap_off_cpu`) 为止,
+    /// 本核的抢占判据在这段区间里看不见它.
+    fn cfs_place_on_inner(&self, pid: Pid, dst_cpu: u32, owner_landing: bool) -> bool {
         let Some(mut claim) = self.claim_rq(pid) else {
             return false;
         };
@@ -690,21 +709,33 @@ impl Scheduler {
         // 源与目的同一把锁 (或本就无归属) 时只锁目的 —— 嵌套同一把 IrqSpinLock 即自死锁.
         if src_cpu == NO_RQ_CPU || src_cpu == dst_cpu {
             let mut dst_rq = per_cpu_for(dst_cpu).cfs_rq.lock();
-            self.place_locked(&mut claim, dst_cpu, &mut dst_rq, None)
+            self.place_locked(&mut claim, dst_cpu, &mut dst_rq, None, owner_landing)
         } else if src_cpu < dst_cpu {
             // 双持锁序: cpu index **升序** (同层级内定序, 见 docs/explain/ref-lock-order.md);
             // 反向取锁的两个搬动者会 AB-BA.
             let mut src_rq = per_cpu_for(src_cpu).cfs_rq.lock();
             let mut dst_rq = per_cpu_for(dst_cpu).cfs_rq.lock();
-            self.place_locked(&mut claim, dst_cpu, &mut dst_rq, Some(&mut src_rq))
+            self.place_locked(
+                &mut claim,
+                dst_cpu,
+                &mut dst_rq,
+                Some(&mut src_rq),
+                owner_landing,
+            )
         } else {
             let mut dst_rq = per_cpu_for(dst_cpu).cfs_rq.lock();
             let mut src_rq = per_cpu_for(src_cpu).cfs_rq.lock();
-            self.place_locked(&mut claim, dst_cpu, &mut dst_rq, Some(&mut src_rq))
+            self.place_locked(
+                &mut claim,
+                dst_cpu,
+                &mut dst_rq,
+                Some(&mut src_rq),
+                owner_landing,
+            )
         }
     }
 
-    /// [`Self::cfs_place_on`] 的持锁主体.
+    /// [`Self::cfs_place_on_inner`] 的持锁主体.
     ///
     /// 前提: `claim` 已握在 caller 手上 (归属已认领), 且 `src`/`dst` 两把 rq 锁在手
     /// (同核时 `src` 为 `None`). 成功路径 `commit` 新归属; 任何失败路径直接 return —
@@ -719,6 +750,7 @@ impl Scheduler {
         dst_cpu: u32,
         dst: &mut CfsRunQueue,
         src: Option<&mut CfsRunQueue>,
+        owner_landing: bool,
     ) -> bool {
         let pid = claim.pid;
         let src_cpu = claim.prev_cpu;
@@ -734,18 +766,40 @@ impl Scheduler {
                 p.cfs_vruntime.load(Ordering::Acquire),
                 p.cfs_weight.load(Ordering::Acquire),
                 p.cfs_on_rq.load(Ordering::Acquire),
+                p.cfs_on_cpu.load(Ordering::Acquire),
             )
         });
-        let Some((state, vr, weight, on_rq)) = snap else {
+        let Some((state, vr, weight, on_rq, on_cpu)) = snap else {
             return false;
         };
-        // 正在任一核上跑的任务不得进树: 它是"离树但记账"态, 进树就等于同一任务在
-        // 树上与核上各一份, 切走时 `schedule()` 的 `requeue` 会再插一次 ⇒ 同一棵树上
-        // 两个节点 (语义同 Linux 不迁移 `->on_cpu` 任务).
-        let on_cpu = per_cpu_for(dst_cpu).current.load(Ordering::SeqCst) == pid
-            || (src_cpu != NO_RQ_CPU && per_cpu_for(src_cpu).current.load(Ordering::SeqCst) == pid);
         let gone = state == ProcessState::Zombie || state == ProcessState::Terminated;
-        if gone || on_cpu {
+        if gone {
+            return false;
+        }
+        // 投送屏障 (P-21): `Process::cfs_on_cpu` 在位 ⇒ 该任务正占用某个核 (其上下文
+        // 可能尚未保存完), 不得进树 —— 进树即"树上与核上各一份", 被别核拣走就是两个
+        // 核交叠使用同一块进程内核栈.
+        //
+        // 屏障期到达的唤醒**不丢**: 本支只搬状态 Blocked/Frozen → Ready, 不动任何一棵树,
+        // 落地由占用者核接手 —— `schedule()` 的 prev 收尾会重读到 Ready 就地入树; 若占用者
+        // 核已先行读成 Blocked 并撤了账, 则由该核清屏障时 (`reap_off_cpu`) 补投. 两条腿覆盖
+        // 全部到达次序, 故返回 `true` (唤醒已被承接), 调用方不得当作失败去重投.
+        // 例外: `owner_landing` —— 占用者本核的 prev 收尾正是屏障的解除者, 它入自己
+        // 的树不构成两核交叠 (见 [`Self::cfs_place_on_inner`]).
+        if on_cpu && !owner_landing {
+            if state == ProcessState::Blocked || state == ProcessState::Frozen {
+                PROCESS_TABLE.with_process(pid, |p| {
+                    let _ = p.set_state_safe(ProcessState::Ready);
+                });
+            }
+            return true;
+        }
+        // 兜底: 非 `schedule()` 路径写入的 `per_cpu.current` (boot / AP 首发经
+        // `set_current`) 不带屏障, 故仍按归属核查在核判据 (语义同 Linux 不迁移
+        // `->on_cpu` 任务); 屏障在位时上面的分支已拦住, 这里只补那个缺口.
+        let on_current = per_cpu_for(dst_cpu).current.load(Ordering::SeqCst) == pid
+            || (src_cpu != NO_RQ_CPU && per_cpu_for(src_cpu).current.load(Ordering::SeqCst) == pid);
+        if on_current {
             return false;
         }
         let placed = match src {
@@ -936,7 +990,7 @@ impl Scheduler {
             if schedulable {
                 // IC1: 被拣者随即上核运行, 仍在可运行记账中 (`cfs_on_rq` 保持
                 // true, 语义同 Linux on_rq) —— 其 vruntime 由 tick 推进并同步
-                // 队列 floor, 切走时经 `requeue` 原位放回.
+                // 队列 floor, 切走时经幂等 `enqueue` 原位放回.
                 picked = Some(pid);
                 break;
             }
@@ -1112,9 +1166,15 @@ impl Scheduler {
 
         // 内核栈顶同步必须 hoist 到闭包外: 该值随后要交给
         // `kpti::map_rsp0_page` 映射进切换目标的用户页表 (KPTI-08).
+        //
+        // P-21 投送屏障**唯一置位点**: 必须早于下面 `per_cpu.current.store(next)` ——
+        // 屏障的语义是"该任务正在占用本核", 而从写入 `current` 到真正切走 prev 之间
+        // 已可被别核观察到 (它还是本核 `current`), 故在拣中的同一刻落下. 清位只在
+        // `reap_off_cpu` (见其文档).
         let next_kernel_stack = PROCESS_TABLE
             .with_process(next, |proc| {
                 let _ = proc.set_state_safe(ProcessState::Running);
+                proc.cfs_on_cpu.store(true, Ordering::Release);
                 proc.kernel_stack.load(Ordering::SeqCst)
             })
             .unwrap_or(0);
@@ -1248,15 +1308,18 @@ impl Scheduler {
                     }
                 }
             } else {
-                let vr = PROCESS_TABLE
-                    .with_process(current_pid, |p| p.cfs_vruntime.load(Ordering::Acquire))
-                    .unwrap_or(0);
-                // 被切走者原位放回: 不动记账 (它始终在可运行集中), 也不动 floor
-                // (IC3: floor 只由 tick 推进).
-                per_cpu.cfs_rq.lock().requeue(current_pid, vr);
-                PROCESS_TABLE.with_process(current_pid, |p| {
-                    p.cfs_on_rq.store(true, Ordering::Release);
-                });
+                // prev 落地 (P-21): 走搬定唯一入口的 `owner_landing` 形态 —— 认领凭证 +
+                // 去重 + 记账 + 落点回写 (IC1) 在同一段持锁期内一次闭合. 旧的裸
+                // `requeue` 两头都缺: 不动账 (屏障窗口内被 `block()` 撤过账者会把权重
+                // 漏在 `total_weight` 外), 也不去重 (并发插入即同一棵树两个节点).
+                //
+                // 返回 false = 归属没抢到 (有人正搬它): 不重试也不强行落账 —— 保持
+                // `Ready 且不在队`, 由本核下一次切换入口清屏障时 (`reap_off_cpu`) 补投.
+                let _ = self.cfs_place_on_inner(
+                    current_pid,
+                    crate::privileged::smp::get_current_cpu(),
+                    true,
+                );
             }
             PROCESS_TABLE.with_process(current_pid, |p| {
                 let _ = p.set_state_safe(ProcessState::Ready);
@@ -1349,20 +1412,45 @@ impl Scheduler {
     ///
     /// 仅对"退出中"(`exiting`) 的 prev 释放自引用; 普通被抢占任务仍可运行 (可能
     /// 迁移到其它核), 绝不能在此误减其引用计数.
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
+    ///
+    /// 同时这里是 [`Process::cfs_on_cpu`] 投送屏障的**唯一清位点** (语义同 Linux
+    /// `finish_task_switch` 的 `prev->on_cpu = 0`): 只有在本函数被执行时, "prev 已
+    /// 离开 CPU" 才是**被确证**的事实 —— 提前清位等于允许别核在上下文未保存完时
+    /// 把它投进树, 两个核即交叠使用同一块进程内核栈.
+    ///
+    /// 清位后紧接一次补投: 屏障期只搬了状态而未入树的 `Ready` 任务 (投送屏障的
+    /// 延迟投送支, 或 prev 收尾认领失败) 在此落地; 若 prev 收尾已就地入树, 其
+    /// `cfs_on_rq` 为 true, 本支自然跳过.
     fn reap_off_cpu(&self, per_cpu: &PerCpuSched) {
         let prev = per_cpu.prev.swap(0, Ordering::SeqCst);
         if prev == 0 {
             return;
         }
-        let was_exiting = PROCESS_TABLE
-            .with_process(prev, |proc| proc.exiting.swap(false, Ordering::AcqRel))
-            .unwrap_or(false);
+        // 锁序 PROCESS_TABLE 单独加锁 (不持 rq 锁): 补投走 `cfs_place_on`, 它自己取
+        // `cfs_rq` 锁, 在本闭包里取会构成 `with_process` 重入 (同核自死锁).
+        let snap = PROCESS_TABLE.with_process(prev, |p| {
+            p.cfs_on_cpu.store(false, Ordering::Release);
+            (
+                p.get_state(),
+                p.cfs_on_rq.load(Ordering::Acquire),
+                p.get_sched_policy(),
+                p.exiting.swap(false, Ordering::AcqRel),
+            )
+        });
+        let Some((state, on_rq, policy, was_exiting)) = snap else {
+            return;
+        };
         if was_exiting {
             PROCESS_TABLE.dec_ref_and_maybe_free(prev);
+        }
+        // 补投: 只针对 CFS 可运行集 (RT/DL 的 `cfs_on_rq` 恒为 false, 不据此判据);
+        // idle 任务不属任何运行队列 (见 `schedule()` 的 prev 排除条件), 同样跳过.
+        if state == ProcessState::Ready
+            && !on_rq
+            && policy == SchedPolicy::Normal
+            && per_cpu.idle.load(Ordering::SeqCst) != prev
+        {
+            self.cfs_place_on(prev, crate::privileged::smp::get_current_cpu());
         }
     }
 
@@ -2191,7 +2279,7 @@ impl Scheduler {
             {
                 continue;
             }
-            let (state, policy, vr, weight, on_rq) = PROCESS_TABLE
+            let (state, policy, vr, weight, on_rq, on_cpu) = PROCESS_TABLE
                 .with_process(pid, |p| {
                     (
                         p.get_state(),
@@ -2199,9 +2287,23 @@ impl Scheduler {
                         p.cfs_vruntime.load(Ordering::Acquire),
                         p.cfs_weight.load(Ordering::Acquire),
                         p.cfs_on_rq.load(Ordering::Acquire),
+                        p.cfs_on_cpu.load(Ordering::Acquire),
                     )
                 })
-                .unwrap_or((ProcessState::Zombie, SchedPolicy::Normal, 0, 0, false));
+                .unwrap_or((
+                    ProcessState::Zombie,
+                    SchedPolicy::Normal,
+                    0,
+                    0,
+                    false,
+                    false,
+                ));
+            // 投送屏障 (P-21): 被偷者若仍占用某个核 (上下文未保存完), 搬进本核队列
+            // 就等于两核交叠同一块进程内核栈. 与 `place_locked` 同一判据, 不走
+            // 下面的"不可调度即撤账摘除"分支 —— 它只是**暂时**不可搬, 账目属于源核.
+            if on_cpu {
+                continue;
+            }
             let schedulable = state != ProcessState::Blocked
                 && state != ProcessState::Zombie
                 && state != ProcessState::Terminated

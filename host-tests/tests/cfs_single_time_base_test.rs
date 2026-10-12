@@ -176,10 +176,11 @@ fn blocking_and_dead_prev_deactivate_accounting() {
         has(&cfs, "if accounted"),
         "IC4: CfsRunQueue::dequeue 必须按凭证决定是否扣账, 否则重复撤账即扣穿 total_weight"
     );
-    // 被切走且仍可重排者: 原位放回, 不动账 (始终在可运行集中)
+    // 被切走且仍可重排者: 经搬定入口原位放回, 不动账 (始终在可运行集中)
     assert!(
-        has(&schedule_body, ".requeue(current_pid, vr)"),
-        "IC1: 可重排的 prev 必须原位 requeue (旧 update_curr 语义已删)"
+        has(&schedule_body, "cfs_place_on_inner(current_pid,"),
+        "IC1: 可重排的 prev 必须凭证化重投本核队列 (旧裸 requeue insert 不去重、\
+         不动账, 与屏障窗口内的撤账碰面即漏记账)"
     );
 }
 

@@ -292,10 +292,10 @@ fn test_membership_change_requires_claim_and_claim_never_blocks() {
         "重试等待必须在 PCB 锁外 (持锁自旋会与认领者互锁)"
     );
 
-    // 一切归属变更都经认领.
+    // 一切归属变更都经认领 (搬定主体 = cfs_place_on_inner, 公有入口只做委托).
     for (sig, needle) in [
         (
-            "fncfs_place_on(&self,pid:Pid,dst_cpu:u32)",
+            "fncfs_place_on_inner(&self,pid:Pid,dst_cpu:u32,owner_landing:bool)",
             "self.claim_rq(pid)",
         ),
         ("fncfs_deactivate(&self,pid:Pid)", "self.claim_rq(pid)"),
@@ -336,8 +336,19 @@ fn test_enqueue_is_single_entry_under_ascending_double_lock() {
     );
 
     // 跨核搬动双持锁, 且锁序按 cpu index 升序.
-    let place =
+    // 搬定主体在 `cfs_place_on_inner` (多一个 `owner_landing` 参数, 见 P-21),
+    // 公有入口 `cfs_place_on` 只做一层委托 —— 委托不丢, 否则等于开出第二条入口.
+    let entry =
         fn_body(&sched, "fncfs_place_on(&self,pid:Pid,dst_cpu:u32)").expect("cfs_place_on 不存在");
+    assert!(
+        entry.contains("self.cfs_place_on_inner(pid,dst_cpu,false)"),
+        "cfs_place_on 未把 owner_landing 固定为 false 再委托 (屏障可被任意入口绕过)"
+    );
+    let place = fn_body(
+        &sched,
+        "fncfs_place_on_inner(&self,pid:Pid,dst_cpu:u32,owner_landing:bool)",
+    )
+    .expect("cfs_place_on_inner 不存在");
     assert!(
         place.contains("ifsrc_cpu==NO_RQ_CPU||src_cpu==dst_cpu{")
             && place.contains("}elseifsrc_cpu<dst_cpu{"),

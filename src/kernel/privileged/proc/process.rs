@@ -189,6 +189,22 @@ pub struct Process {
     /// 且任务属于 `per_cpu_for(该索引).cfs_rq` 的可运行集 (树上, 或正被该核拣出在
     /// 跑 —— 语义同 Linux 的 `task_cpu(p)` 配合 `on_rq`).
     pub cfs_rq_cpu: AtomicU32,
+    /// 投送屏障: 本任务正**占用某个核** (已上核运行, 或其上下文尚未保存完成),
+    /// 不得被任何搬动者投进运行队列.
+    ///
+    /// 与 [`Process::cfs_on_rq`] 正交, 各自回答一个问题: `cfs_on_rq` = "在不在可运行
+    /// 记账里", 本字段 = "占不占着某个核". 两者缺一不可 —— 旧实现只能按归属核索引
+    /// ([`Process::cfs_rq_cpu`]) 查"在核上", 而 `Scheduler::block` 在任务**仍是本核
+    /// `current`** 时就把归属清成 [`NO_RQ_CPU`], 于是 `Scheduler::place_locked` 的在核
+    /// 判据看不见它, 远核唤醒得以把一个仍在跑的任务投进树, 随后又被同一核的 prev 收尾
+    /// 摘走 (P-17 取证的单一成因窗口, 现场与读数见
+    /// `docs/report/net-e2e-offcore-dequeue-window.md`).
+    ///
+    /// 生命周期: `schedule()` 拣中 `next` 并改写 `per_cpu.current` **之前**置位; 清位
+    /// 只在 `Scheduler::reap_off_cpu` —— 那里运行在**新任务**上下文, 确证上一次切换已
+    /// 完成 (语义同 Linux `finish_task_switch` 的 `prev->on_cpu = 0`). 不得提前清:
+    /// 上下文未保存完就允许别核投送 = 两个核交叠使用同一块进程内核栈.
+    pub cfs_on_cpu: AtomicBool,
 
     pub dl_runtime: AtomicU64,
     pub dl_deadline: AtomicU64,
@@ -371,6 +387,7 @@ impl Process {
             cfs_sum_exec_runtime: AtomicU64::new(0),
             cfs_on_rq: AtomicBool::new(false),
             cfs_rq_cpu: AtomicU32::new(super::process::NO_RQ_CPU),
+            cfs_on_cpu: AtomicBool::new(false),
             dl_runtime: AtomicU64::new(0),
             dl_deadline: AtomicU64::new(0),
             dl_period: AtomicU64::new(0),
