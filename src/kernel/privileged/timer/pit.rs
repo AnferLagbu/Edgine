@@ -222,17 +222,21 @@ pub fn pit_elapsed_since_tick_us() -> Option<u64> {
         return None;
     }
 
-    // 计算已过去的时钟周期数
+    // 计算已过去的时钟周期数.
+    // Mode 2 速率发生器在 `divisor` 处重装 (倒计数周期 = divisor), 不是 16 位满量程
+    // 0xFFFF 回绕. 旧式用 PIT_MAX_COUNT 估回绕量与重装值脱钩: divisor≠65535 时高估
+    // 跨周期耗时, 且 `last_count + (PIT_MAX_COUNT - current) + 1` 在 u16 里会溢出.
+    // 回绕量 = 一次完整周期 = divisor; 全程按 u64 计算消除溢出. (注: 常态下
+    // last_count 恒 = divisor ≥ 任何读数, 此 else 分支仅在读数与重装竞态时触发.)
     let elapsed_cycles = if current_count <= last_count {
-        last_count - current_count
+        u64::from(last_count - current_count)
     } else {
-        // 发生了回绕
-        last_count + (PIT_MAX_COUNT - current_count) + 1
+        u64::from(last_count) + u64::from(divisor) - u64::from(current_count)
     };
 
     // 转换为微秒
     // us = cycles * 1_000_000 / PIT_BASE_FREQUENCY
-    let us = (u64::from(elapsed_cycles) * 1_000_000) / PIT_BASE_FREQUENCY;
+    let us = (elapsed_cycles * 1_000_000) / PIT_BASE_FREQUENCY;
 
     Some(us)
 }

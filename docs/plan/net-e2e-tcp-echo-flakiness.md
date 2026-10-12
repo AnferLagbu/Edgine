@@ -257,8 +257,13 @@ C 组另一线索：同一构建下 `[tcp] Listening` 的内核时间戳在 7.68
   - **待立项（用户裁定 = 下轮，本轮不挤窗口）**：x86_64 INTx 路由发现 —— 现 `interrupt_line` 全内核 0 消费者、`acpi.rs` 无 `_PRT` 解析、无 IOAPIC PIN 路由 ⇒ MSI-X 缺失机型（含本默认基线）拿不到中断驱动收包，只有轮询。开工需 ACPI `_PRT` 解析 + IOAPIC RTE 配 pin + `net_register_intx_isr` 的 x86_64 分支 + 共享引脚 EOI，体量独立，建议单开工程（对应早前 Q3 选项 c）。验证 MSI-X 接线正确性可临时 `-device e1000-82544EM`（有 MSI-X cap）跑一轮对照（选项 a），不改默认基线。
   - 状态：[]（(b) 已施工并全门槛绿，作为死接线卫生项关闭；(c) INTx 路由发现登记待下轮，未开工）
 
-- **P-20 `cpu::tsc::nanoseconds_to_cycles` 零消费者（P-14 同族发现，未开工）**：P-14 删除三个零消费者 API 时同族扫出本项 —— `privileged/cpu/tsc.rs` 的 `pub fn nanoseconds_to_cycles` 实测全仓引用数 1（仅定义行），不在用户当时授权的“删 3 个”清单内，故留在 P-13 的 R1 名单里。属 §5 F9 零容忍面，删除时连带核查其单测与 `cpu/mod.rs` 再导出。
-  - 状态：[]（未开工，待单开卫生 PR）
+- **P-20 `cpu::tsc::nanoseconds_to_cycles` 零消费者（P-14 同族发现）**：P-14 删除三个零消费者 API 时同族扫出本项 —— `privileged/cpu/tsc.rs` 的 `pub fn nanoseconds_to_cycles` 实测全仓引用数 1（仅定义行），不在用户当时授权的“删 3 个”清单内，故留在 P-13 的 R1 名单里。属 §5 F9 零容忍面。
+  - 状态：[X]（本轮删除，连带处置其唯一依赖）
+  - 实施：删 `nanoseconds_to_cycles` 同时，其唯一调用的私有 `mul_div_saturating`（tsc.rs 本地，无其他消费者）随之成孤儿，一并删除（否则新违 F9）。核查确认无 `cpu/mod.rs` 再导出、无单测、无跨 crate 消费者（全仓 grep 仅命中定义行）；双架构 build 0w0e 佐证无悬空引用。`docs/plan/syscall-followup.md` R1 名单中两处 `nanoseconds_to_cycles` 条目同步标失效。回归承载：同 P-14 手法，该名字从 P-13 审计零引用名单消失（门禁本身即锁），未另写契约用例。
+
+- **P-25 `pit_elapsed_since_tick_us` 回绕量与重装值脱钩（HANDOFF “P-a”卫生项）**：原 HANDOFF 以旧名 `pit_busy_wait_us` 登记本项（“待复核”），但该函数早在 P-14 轮已删除；经 §10 源码调研定位，真实的回绕量/divisor 问题在 `privileged/timer/pit.rs` 的 `pit_elapsed_since_tick_us`。
+  - 状态：[X]（本轮修正回绕算术，潜伏型正确性卫生）
+  - 实施：旧式回绕分支用 `PIT_MAX_COUNT`（65535）估回绕量，与 Mode 2 速率发生器的实际重装值 `divisor` 脱钩（divisor≠65535 时高估跨周期耗时），且 `last_count + (PIT_MAX_COUNT - current) + 1` 在 u16 里会溢出。改为回绕量 = 一次完整周期 = `divisor`，全程按 u64 计算消除溢出。常态下 `last_count` 恒 = `divisor` ≥ 任何读数，else 分支不可达（仅读数与重装竞态时触发），可达路径（normal 分支）取值不变 ⇒ 零行为改变；不可达故不另写难以触发的用例。
 
 - **P-21 `schedule()` prev 处理窗口的账目原子性（由 P-17 定因新立，修复工程）**：一个任务从“决定离核”到“prev 账目处理完毕”的整个区间，当前对并发搬动者**完全可见**，远核唤醒可以穿过它（取证定因见 `docs/report/net-e2e-offcore-dequeue-window.md` 第四节）。承担该职责的三个机制各自都有缺口：`cfs_on_rq` 同时兼任“在树上”与“受搬动保护”两个语义，`block()` 一清就把保护也清掉；`place_locked` 的 `on_cpu` 闸门以 `rq_cpu` 为索引，恰好漏掉 `NO_RQ_CPU` 这个必然经停的中间态；`RqClaim` 认领凭证只覆盖 `cfs_place_on`/`cfs_deactivate` 的局部，`schedule()` 的 prev 采样与两个落地分支全程在凭证之外。
   - 目标不变式（拟）：任意 pid 在“仍是某核 `current`”期间，不得被任何路径置成“可运行状态 + 不在任何树 + 不属任何核”的三元组；prev 账目落地前必须在凭证内**重读权威状态**，不允许按窗口起点的快照二选一。

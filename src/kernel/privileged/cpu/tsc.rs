@@ -35,27 +35,3 @@ pub fn read_tsc() -> u64 {
 pub fn read_tsc_serialized() -> u64 {
     crate::arch!(timestamp_serialized())
 }
-
-/// 乘除辅助 (128 位中间值): 先乘后除, 避免 u64 中间乘法溢出。
-///
-/// 相比 `checked_mul` 饱和方案, 仅在**最终结果**超 u64::MAX 时才饱和截断
-/// (物理上不可达的防御), 中间乘法溢出不再误返回 u64::MAX。
-#[inline]
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "cast_possible_truncation: 已先 min(u64::MAX) 饱和, 截断不可能发生; 当前优先 expect"
-)]
-fn mul_div_saturating(value: u64, mul: u64, div: u64) -> u64 {
-    let product = u128::from(value) * u128::from(mul);
-    (product / u128::from(div)).min(u128::from(u64::MAX)) as u64
-}
-
-/// 将纳秒转换为 TSC 周期 (近似值)
-#[inline]
-pub fn nanoseconds_to_cycles(ns: u64, tsc_freq_mhz: u64) -> u64 {
-    if tsc_freq_mhz == 0 {
-        return ns;
-    }
-    // B03-19: u128 中间值防 u64 乘法溢出。
-    mul_div_saturating(ns, tsc_freq_mhz, 1000)
-}

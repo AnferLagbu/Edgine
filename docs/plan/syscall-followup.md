@@ -971,7 +971,7 @@ src/kernel/privileged/cpu/feature.rs::supports_64bit
 src/kernel/privileged/cpu/feature.rs::supports_avx
 src/kernel/privileged/cpu/feature.rs::supports_simd
 src/kernel/privileged/cpu/feature.rs::supports_virtualization
-src/kernel/privileged/cpu/tsc.rs::nanoseconds_to_cycles
+src/kernel/privileged/cpu/tsc.rs::nanoseconds_to_cycles  <!-- P-25 已删/失效 (P-20 卫生 PR) -->
 src/kernel/privileged/sgeg/api.rs::umask_get
 src/kernel/privileged/sgeg/audit.rs::get_entries
 src/kernel/privileged/sgeg/identity.rs::find_mut
@@ -1893,7 +1893,7 @@ src/kernel/privileged/proc/scheduler.rs::add_rt_task
 | `privileged/mm/vma.rs` | 1 | `with_offset` |
 | `privileged/sync/mutex.rs` / `pi_mutex.rs` / `rcu.rs` | 3 | `wait_timeout` / `set_ceiling` / `rcu_process_all_callbacks` |
 | `privileged/egdf/user_driver.rs` | 3 | `devtree_map_user_device` `devtree_unmap_user_device` `egdf_forward_irq` |
-| `privileged/cpu/tsc.rs` | 1 | `nanoseconds_to_cycles` |
+| `privileged/cpu/tsc.rs` | 1 | ~~`nanoseconds_to_cycles`~~（P-20 已删/失效） |
 | `privileged/sgeg/{audit,identity,secure_boot}.rs` | 3 | `get_entries` `find_mut` `add_trust_entry` |
 | `privileged/debug/ebpf.rs` | 3 | `prog_run` `get_map` `get_prog` |
 | `privileged/dma/engine.rs` | 5 | `unmap_single` `sync_both` `sg_init` `sg_add_entry` `sg_total_length` |
