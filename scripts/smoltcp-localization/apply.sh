@@ -4,18 +4,19 @@
 #
 # 前提:
 #   - 已在 src/kernel/functions/net/smoltcp/ 部署上游源 (无本地化)
-#   - 13 个 patch 文件已生成 (相对路径, 在同目录)
+#   - 14 个 patch 文件已生成 (相对路径, 在同目录)
 # 退出码: 0 = 全部成功, 1 = 有失败
 
 set -uo pipefail
 VENDORED="src/kernel/functions/net/smoltcp"
 PATCH_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# 12 个本地化文件 (路径 → patch)
+# 14 个本地化文件 (路径 → patch)
 declare -A PATCHES=(
     ["src/iface/interface/ipv4.rs"]="src_iface_interface_ipv4.rs.patch"
     ["src/iface/interface/ipv6.rs"]="src_iface_interface_ipv6.rs.patch"
     ["src/iface/interface/mod.rs"]="src_iface_interface_mod.rs.patch"
+    ["src/iface/neighbor.rs"]="src_iface_neighbor.rs.patch"
     ["src/iface/packet.rs"]="src_iface_packet.rs.patch"
     ["src/phy/sys/bpf.rs"]="src_phy_sys_bpf.rs.patch"
     ["src/phy/sys/mod.rs"]="src_phy_sys_mod.rs.patch"

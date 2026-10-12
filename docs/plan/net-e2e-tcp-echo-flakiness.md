@@ -287,5 +287,8 @@ C 组另一线索：同一构建下 `[tcp] Listening` 的内核时间戳在 7.68
 
 - **P-24 guest UDP 出站首包从未离 NIC（由 P-21 验收批残项新立，用户裁定单开）**：P-21 验收批 `E2E_REPEATS=10` 两批中 `[udp] RECVFROM` 里程碑残 3 轮为 0（TCP echo 里程碑 20/20 全绿）。pcap 取证（`filter-dump` 逐帧对照，FAIL 轮 vs OK 轮）：失败轮 guest **从未发出** UDP 数据报——连通往 `10.0.2.2:9090` 的 ARP who-has 都没有；OK 轮 ARP request/reply 与数据报同刻发出。guest 侧 `sendto` 返回成功（smoltcp 入队即成功），断点在出站投递（邻居解析触发 / TX 提交 / poll 节拍的哪一环未定）。与 P-21 无关：HEAD 基线同样存在且形态一致，属 smoltcp 出站面的独立问题，非调度孤儿。
   - 候选面（不预设选择）：arp 表项缺失时 `send` 入队后未触发邻接解析或未唤醒 tx 腿 / tx 单槽竞争丢首包 / 首包依赖下一次 poll 而节拍未到。开工需定点探针（iface 层 `neighbor` 状态 + `can_send`/`transmit` 计数），体量属 net 面单开工程。
-  - 状态：[]（未开工；P-21 收尾时用户裁定登记本轮不挤窗口）
+  - 根因（TX 帧转储探针坐实）：vendored smoltcp 0.14 `iface::neighbor::Cache` 用**单一全缓存** `silent_until: Instant` 做邻居发现限速——任一目的地发出 ARP/NS 后 `limit_rate` 把**整张缓存**静音 `SILENT_TIME`(1s)，此后他址 `lookup` 返 `RateLimited`（`interface/mod.rs` → `Err(NeighborPending)`，**不再发请求**）。IPv4 ARP（网关 `10.0.2.2`）与 IPv6 ND（SLAAC/组播）**共用同一张 Cache**，并发发现下网关 ARP 被 IPv6 流量饿死 → 主动 UDP 首包永不触发 ARP → 首包从未离 NIC。TCP echo 免疫（被动监听端，从入向 SYN 学 MAC，从不主动 ARP）。
+  - 修复（per-destination 有界限速，正规本地化入库）：`neighbor.rs` `silent_until` 由全局 `Instant` 改为 `LinearMap<IpAddress, Instant, IFACE_NEIGHBOR_CACHE_COUNT>`，`limit_rate`/`lookup` 按目的地址独立限速与查询，环满驱逐最先到期项（限速记录为 advisory，近似驱逐安全），`flush` 一并清空；`interface/mod.rs` 调用点 `limit_rate(dst_addr, self.now)`。patch 入库 `scripts/smoltcp-localization/src_iface_neighbor.rs.patch`，`smoltcp.versions` 清单纳入 neighbor.rs（14 个本地化，含理由）并刷新 LOCAL_SRC_HASH。
+  - 验证：`E2E_REPEATS=30` 全部 fresh fail log 均 `[udp] RECVFROM src ok` + proto=17 dst=10.0.2.2，零 UDP 超时（残余失败属另立的 FD 回收去重问题）；host-tests 结构守卫 `p24_neighbor_rate_limit_test.rs` 5/5 锁死本地化不回退。
+  - 状态：[X]（根因坐实 + per-destination 限速修复经 E2E 与结构守卫双重验证）
 

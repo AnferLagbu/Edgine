@@ -3,7 +3,7 @@
 # 用于 CI 验证 vendored 源与上游 byte-level 一致 (排除本地化部分)
 #
 # 关联: docs/plan/smoltcp-framekernel-wrapper.md §同步机制
-# 模式: LOCALIZED_VENDORED (上游版本 + 13 个本地化 lint/SAFETY 注释 + no_std 适配)
+# 模式: LOCALIZED_VENDORED (上游版本 + 14 个本地化 lint/SAFETY 注释 + no_std 适配 + 邻居限速修正)
 
 # 上游 tag (semver, 形如 v0.14.0)
 SMOLTCP_TAG=v0.14.0
@@ -17,9 +17,9 @@ SMOLTCP_SHA=cbfe05f835cfc75bf781addc1c0eb2e1a0df1ea3
 # (2026-09-13: 由 other/smoltcp-0.14.0 解压目录相对路径 src 实测)
 SMOLTCP_UPSTREAM_SRC_HASH=f87551603f12bfc1a564ef1253d1f26af7f1befa99669d7bb0c77d9cc3f6973c
 
-# 本地 vendored 实际 src/ 合并 SHA256 (含 13 个本地化)
+# 本地 vendored 实际 src/ 合并 SHA256 (含 14 个本地化)
 # 计算方法: LC_ALL=C find src/kernel/functions/net/smoltcp/src -name '*.rs' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum
-SMOLTCP_LOCAL_SRC_HASH=9f63730b064582c3e8fc838d791fec93d44969ce6b9d085ab091de14735a9c31
+SMOLTCP_LOCAL_SRC_HASH=9df466f881d470caad7862ef5d1d9d0c0a86019aef630e1b32187dc86098513e
 
 # 锁定时间 (ISO 8601, 仅供人类阅读, CI 不读取)
 SMOLTCP_LOCKED_AT=2026-09-13T23:30:00Z
@@ -29,11 +29,13 @@ SMOLTCP_LOCKED_AT=2026-09-13T23:30:00Z
 # CI 校验: 验证 LOCAL_SRC_HASH 与本地计算一致, UPSTREAM_SRC_HASH 验证上游 tag 字节级一致
 SMOLTCP_LOCK_MODE=LOCALIZED_VENDORED
 
-# 本地化文件清单 (13 个)
+# 本地化文件清单 (14 个)
 # 12 个为 lint/SAFETY 注释层 (0 功能性修改);
 # cubic.rs 为 no_std 适配 (f64::powi/mul_add → 数学等价展开, core_float_math unstable 不可用)
+# neighbor.rs 为功能性修正 (P-24: 邻居发现限速由全缓存 single silent_until 改为
+#   per-destination 有界 silent 环, 修正 IPv4 ARP 与 IPv6 ND 共缓存时跨目的地互相饿死)
 # 维护方式: scripts/smoltcp-localization/ 目录提供 patch 文件
-SMOLTCP_LOCALIZED_FILES="src/iface/interface/ipv4.rs src/iface/interface/ipv6.rs src/iface/interface/mod.rs src/iface/packet.rs src/phy/sys/bpf.rs src/phy/sys/mod.rs src/phy/sys/raw_socket.rs src/phy/sys/tuntap_interface.rs src/socket/dhcpv4.rs src/socket/dns.rs src/socket/tcp/congestion/cubic.rs src/wire/ipv6.rs src/wire/udp.rs"
+SMOLTCP_LOCALIZED_FILES="src/iface/interface/ipv4.rs src/iface/interface/ipv6.rs src/iface/interface/mod.rs src/iface/neighbor.rs src/iface/packet.rs src/phy/sys/bpf.rs src/phy/sys/mod.rs src/phy/sys/raw_socket.rs src/phy/sys/tuntap_interface.rs src/socket/dhcpv4.rs src/socket/dns.rs src/socket/tcp/congestion/cubic.rs src/wire/ipv6.rs src/wire/udp.rs"
 
 # 升级历史 (倒序)
 # 2026-09-13: v0.13.1 → v0.14.0 (0.14 重写: congestion API redesign RFC 9438 + defmt v1 + checksum 公开)

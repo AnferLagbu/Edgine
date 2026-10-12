@@ -45,7 +45,19 @@ impl Answer {
 #[derive(Debug)]
 pub struct Cache {
     storage: LinearMap<IpAddress, Neighbor, IFACE_NEIGHBOR_CACHE_COUNT>,
-    silent_until: Instant,
+    /// Per-destination rate limit: the earliest timestamp at which a new discovery
+    /// request may be issued again, tracked independently for each protocol address.
+    ///
+    /// Upstream used a single cache-wide `silent_until`, so issuing a request for any
+    /// destination silenced *every* other destination for [`Cache::SILENT_TIME`]. On
+    /// this host IPv4 ARP (gateway) and IPv6 ND (SLAAC peers) discover concurrently
+    /// over one shared cache, which starved the gateway ARP behind ongoing IPv6 traffic
+    /// and blocked the first outbound UDP packet from ever leaving the NIC
+    /// (see `docs/plan/net-e2e-tcp-echo-flakiness.md` P-24).
+    ///
+    /// Bounded by `IFACE_NEIGHBOR_CACHE_COUNT` entries, evicting the soonest-expiring
+    /// record when full; rate-limit records are advisory, so approximate eviction is safe.
+    silent_until: LinearMap<IpAddress, Instant, IFACE_NEIGHBOR_CACHE_COUNT>,
 }
 
 impl Cache {
@@ -59,7 +71,7 @@ impl Cache {
     pub fn new() -> Self {
         Self {
             storage: LinearMap::new(),
-            silent_until: Instant::from_millis(0),
+            silent_until: LinearMap::new(),
         }
     }
 
@@ -158,19 +170,41 @@ impl Cache {
             return Answer::Found(hardware_addr);
         }
 
-        if timestamp < self.silent_until {
+        // Rate limit is per destination: a pending request for another address must
+        // not silence this one (P-24).
+        if self
+            .silent_until
+            .get(protocol_addr)
+            .is_some_and(|until| timestamp < *until)
+        {
             Answer::RateLimited
         } else {
             Answer::NotFound
         }
     }
 
-    pub(crate) fn limit_rate(&mut self, timestamp: Instant) {
-        self.silent_until = timestamp + Self::SILENT_TIME;
+    /// Silence further discovery requests for `protocol_addr` until
+    /// `timestamp + SILENT_TIME`. Only the addressed destination is silenced, so
+    /// concurrent discovery for other destinations is not starved (P-24).
+    pub(crate) fn limit_rate(&mut self, protocol_addr: IpAddress, timestamp: Instant) {
+        let until = timestamp + Self::SILENT_TIME;
+        if self.silent_until.insert(protocol_addr, until).is_err() {
+            // Ring full: evict the soonest-expiring record to admit this one.
+            let oldest = self
+                .silent_until
+                .iter()
+                .min_by_key(|&(_, &v)| v)
+                .map(|(&k, _)| k);
+            if let Some(old_addr) = oldest {
+                self.silent_until.remove(&old_addr);
+                let _ = self.silent_until.insert(protocol_addr, until);
+            }
+        }
     }
 
     pub(crate) fn flush(&mut self) {
-        self.storage.clear()
+        self.storage.clear();
+        self.silent_until.clear();
     }
 }
 
@@ -305,7 +339,7 @@ mod test {
             Answer::NotFound
         );
 
-        cache.limit_rate(Instant::from_millis(0));
+        cache.limit_rate(MOCK_IP_ADDR_1.into(), Instant::from_millis(0));
         assert_eq!(
             cache.lookup(&MOCK_IP_ADDR_1.into(), Instant::from_millis(100)),
             Answer::RateLimited
@@ -341,6 +375,44 @@ mod test {
             !cache
                 .lookup(&MOCK_IP_ADDR_1.into(), Instant::from_millis(0))
                 .found()
+        );
+    }
+
+    // P-24 regression: the rate limit is tracked per destination, so silencing one
+    // address after issuing its discovery request must not starve another address
+    // (a single cache-wide silent would wrongly return RateLimited for MOCK_IP_ADDR_2).
+    #[test]
+    fn test_per_destination_rate_limit_no_starvation() {
+        let mut cache = Cache::new();
+
+        // Both unresolved addresses are discoverable at first.
+        assert_eq!(
+            cache.lookup(&MOCK_IP_ADDR_1.into(), Instant::from_millis(0)),
+            Answer::NotFound
+        );
+        assert_eq!(
+            cache.lookup(&MOCK_IP_ADDR_2.into(), Instant::from_millis(0)),
+            Answer::NotFound
+        );
+
+        // A discovery request is issued for ADDR_1 -> silences ADDR_1 for SILENT_TIME.
+        cache.limit_rate(MOCK_IP_ADDR_1.into(), Instant::from_millis(0));
+
+        // Same address inside the silent window: still rate limited (no ARP storm).
+        assert_eq!(
+            cache.lookup(&MOCK_IP_ADDR_1.into(), Instant::from_millis(100)),
+            Answer::RateLimited
+        );
+        // Other address is NOT starved: it may discover immediately.
+        assert_eq!(
+            cache.lookup(&MOCK_IP_ADDR_2.into(), Instant::from_millis(100)),
+            Answer::NotFound
+        );
+
+        // ADDR_1 becomes discoverable again once its own window expires.
+        assert_eq!(
+            cache.lookup(&MOCK_IP_ADDR_1.into(), Instant::from_millis(2_000)),
+            Answer::NotFound
         );
     }
 }
