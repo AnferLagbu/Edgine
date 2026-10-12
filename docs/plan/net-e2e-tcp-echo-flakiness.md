@@ -215,6 +215,7 @@ C 组另一线索：同一构建下 `[tcp] Listening` 的内核时间戳在 7.68
   - **帧所有权元数据为永久防线**（用户裁定，没有则三元组无从取）：owner tag + 异常归还三元组告警；异常处置口径 = **告警 + 不归还**（而非 panic，也不静默）。
   - 回归锁：`host-tests/tests/pmm_frame_ownership_test.rs`（13 例，元数据与告警形状）+ `host-tests/tests/user_proc_frame_release_test.rs`（四处实例 + 归因穿透 + 负控制）；并改写一把锁错契约的旧锁：`host-tests/tests/user_proc_reclaim_contract_test.rs`（ISSUE-RT-006 第 3 项原断言“先还用户栈再拆页表”⇒ 改断言“用户帧归还单源在页表拆除路径，内核栈照旧显式归还”；已做变异负控制：注回旧形态确实 FAILED，还原后 `cmp` 逐字节一致）。
   - 取证结论见 §4.6（double free / `#GP` / 启动挂死三项均 6/6 归零）。
+  - 复跑收档（HANDOFF 类一残项闭合）：当前 HEAD 再跑 6 轮，三条防线签名（`double free at pfn` / `Error: invalid page` / `free before bitmap init`）0/6；叠上 §4.6 首批 6 轮与 P-21 验收批 20 轮，修复后累计 **32 轮恒零**。结果报告快照见 `docs/report/mm-frame-ownership-verification.md`（发布即冻结，串口原始件存 `other/mm-verify-evidence/`）。
   - 状态：[X]（本项技术验收达成；e2e 总门槛未达成，当时记述的“成因已转移至 §4.6 的 RX 面”后经 P-17 取证否证，真因见 §6 P-17 结论与本文件头部订正）
 
 - **P-16 装配失败回滚的静默空操作（由 P-15 施工直接暴露，本轮已修）**：`load_elf_from_memory` 的三个失败点（phnum>256 / phdr 越界 / 装配页 OOM）均调 `destroy_raw` → `destroy`，而 `destroy` 的门是 `if !proc_ref.is_exited() { return }`（仅 `Zombie(4)`/`Terminated(5)` 放行），`create()` 完成注册时置的是 `Ready(1)` ⇒ **回滚整条路径一直是一次静默空返回**：页表与已映射用户页、内核栈、两张表条目、PID 全部泄漏。旧 ELF 逐页归还循环是该错误路径上唯一做过归还动作的代码（虽同时争抢别人的帧），P-15 删它之后该路径从“错误地部分归还”变成“完全不归还”，属本轮改动直接导致的回归，必须同轮修。
