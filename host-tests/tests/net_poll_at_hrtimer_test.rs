@@ -152,3 +152,65 @@ fn s3_no_dead_code_escape_hatch() {
         );
     }
 }
+
+// ============================================================================
+// E-IV: 截止期 min 融合（入向 floor ⊕ smoltcp 定时截止期）
+//
+// 背景 (`docs/plan/net-e2e-tcp-echo-flakiness.md` §5 S-3 / E-IV):
+// S-3 只把 smoltcp 定时截止期接进 hrtimer，tick 侧仍每 tick 无条件 `poll_network`。
+// E-IV 本轮只交付「融合框架」：把入向 floor 与定时截止期取更早者登记到 hrtimer，
+// tick 腿保留完整速率不变（RX 零回归）；待 P-19(c) 网卡中断腿落地后，撤除 tick
+// 侧无条件 poll、拉低 floor 才真正降频。本测试锁融合的语义形状，不锁具体数值。
+// ============================================================================
+
+#[test]
+fn eiv_deadline_fuses_ingress_floor() {
+    let src = read_src(POLL_TIMER);
+    let flat = squash(&src);
+
+    // 1. 入向 floor 常量存在。
+    assert!(
+        flat.contains("constNET_POLL_RX_FLOOR_NS:u64="),
+        "E-IV: 缺入向 floor 常量"
+    );
+
+    // 2. min 融合是独立纯函数, 取「定时截止期」与「floor 上界」中更早者。
+    assert!(
+        flat.contains(
+            "fneffective_poll_deadline(timer_ns:Option<u64>,now_ns:u64,floor_ns:u64)->u64{"
+        ),
+        "E-IV: 缺 effective_poll_deadline 纯函数"
+    );
+    assert!(
+        flat.contains("Some(timer)iftimer>now_ns=>timer.min(floor_deadline)"),
+        "E-IV: 融合未取更早者 (缺 timer.min(floor) 且缺 timer > now 过滤)"
+    );
+    // 无定时需求 (None / 已到期) → 落到 floor 上界 (入向心跳腿).
+    assert!(
+        flat.contains("_=>floor_deadline,"),
+        "E-IV: 无定时需求时未回落到 floor 上界"
+    );
+
+    // 3. update 登记的是融合后的截止期, 而非裸用 next_ns.
+    assert!(
+        flat.contains("letdeadline=effective_poll_deadline(next_ns,now_ns,NET_POLL_RX_FLOOR_NS);"),
+        "E-IV: net_poll_deadline_update 未登记融合后的截止期"
+    );
+}
+
+#[test]
+fn eiv_tick_leg_untouched() {
+    // 方案 A: 本轮不动 tick 速率 —— 两条 tick 腿仍每 tick 无条件 poll_network.
+    // tick 腿降频属 P-19(c) 中断落地后的后续工程, 本轮锁住「未提前降频」以免 RX 回归.
+    for rel in [
+        "src/kernel/privileged/timer/irq.rs",
+        "src/kernel/privileged/arch/aarch64/exception.rs",
+    ] {
+        let src = read_src(rel);
+        let flat = squash(&src);
+        assert!(
+            flat.contains("unsafe{crate::privileged::net::poll_network();}"),
+            "E-IV: {rel} 的 tick 腿 poll_network 不再无条件执行 (本轮应保留完整 tick 速率)"
+        );
+    }
+}

@@ -151,6 +151,18 @@ C 组另一线索：同一构建下 `[tcp] Listening` 的内核时间戳在 7.68
     - 测试承载：`host-tests/tests/net_poll_at_hrtimer_test.rs`（5 例）—— 锁“截止期换算并回报”、“登记在 `NET_STATE` 临界区**外**”（按字节位置判据，防止未来有人把 `hrtimer_start` 搬进持锁段而引入 `NET_STATE → HRTIMER_QUEUE` 嵌套，违反 F8）、“回调只置 `NetRx` 底半部且不自我重登记”、“functions 层 `poll_at()` 委托真值而非恒 `None`”与 F9 扫描。已做负控制：临界区边界（guard / block 结尾 / 登记点）与 HEAD 旧形态均已核对。
     - **价值口径（如实表述）**：x86_64 tick 仍每 tick 无条件 `poll_network`，且 `hrtimer_run_queues()` 本身也只由 tick 驱动（LAPIC/Generic Timer one-shot 属 Phase 2），故截止期最细只能落在下一个 tick。本轮兑现的是：机制缺口闭合、`poll_at` 不再是假桩、`NET_STATE.try_lock()` 失败被跳过的窗口有了到点补投、以及 tick 降频/tickless 的前置条件。**低功耗/tickless 收益尚未兑现**（代码内以 `SIMPLIFIED` 标记）；本项仍不充当 e2e 抖动的解药。
 
+- **E-IV. `poll_at` → hrtimer：截止期 min 融合（入向 floor）**
+  - 描述：S-3 只把 smoltcp 定时截止期接进 hrtimer，空闲即撤销登记，入向包完全由 tick 侧无条件 `poll_network` 驱动；「下次该 poll 的时刻」与「入向最坏等待」两条腿各走各的，未收敛成单一权威截止期，tick 降频/tickless 缺一元。
+  - 方案（用户裁定：先只做 E-IV poll 降频，相对完整实现，且采**方案 A**——只做截止期 min 融合、**不动 tick 速率**）：把入向 floor 与 smoltcp 定时截止期取**更早者**融合成一个绝对截止期登记 hrtimer；tick 腿保留完整速率不变（RX 零回归），本轮只交付「融合框架 + 契约测试」，待 P-19(c) 网卡中断腿落地后再撤除 tick 侧无条件 poll、拉低 floor 真正降频。
+  - 状态：[X]
+  - 实施记录：
+    - 机制链（`poll_timer.rs`）：新增纯函数 `effective_poll_deadline(timer_ns, now_ns, floor_ns) -> u64`（恒 > now）：`Some(timer) if timer > now` 取 `timer.min(now+floor)`，`None`/已到期回落到 `now+floor`；`now+floor` 饱和于 `u64::MAX` 防回绕。`net_poll_deadline_update` 改为登记融合后的截止期，**退役「空闲即撤销 + hrtimer_cancel」分支**——入向 floor 腿成为 tick poll 退役后的接棒心跳。`hrtimer_cancel` 随之从 import 退役（§5 F9）。
+    - 入向 floor 取值：`NET_POLL_RX_FLOOR_NS = 10ms`——**粗于当前 1ms tick 周期**，故 tick 无条件 poll 在位时实际 poll 节奏仍由 tick 主导（floor 只提供一条更粗的冗余心跳），RX 零回归；P-19(c) 后本 floor 成为入向节奏，届时上调该值即为「拉低入向 poll 频率」以兑现低功耗。代码内以 `SIMPLIFIED` 标记「融合框架已建、tick 腿未动、floor 未真正拉低」。
+    - 锁序/硬规则不变：登记仍发生在 `NET_STATE` 临界区**外**（无 `NET_STATE → HRTIMER_QUEUE` 嵌套，F8）；到期回调仍只 `raise_softirq(NetRx)` + `OneShot`（不自登记）；新增 0 unsafe、0 死代码豁免（F1/F4/F9）。
+    - 改动面：仅 `privileged/net/init/poll_timer.rs`（模块头图 + SIMPLIFIED 注释 + `effective_poll_deadline` 纯函数 + `net_poll_deadline_update` 融合 + 内联单测重写为 8 例：4 纯函数边界 + 4 行为接线）；`init.rs` / `smoltcp_impl.rs` / functions 层 / 两条 tick 腿均**未动**。
+    - 测试承载：`host-tests/tests/net_poll_at_hrtimer_test.rs` 新增 2 例（共 7 例）——`eiv_deadline_fuses_ingress_floor`（锁 floor 常量 + `effective_poll_deadline` min 融合形状 + `update` 登记融合值而非裸 `next_ns`）、`eiv_tick_leg_untouched`（锁两条 tick 腿仍每 tick 无条件 `poll_network`，防本轮提前降频致 RX 回归）；原 4 例 S-3 断言（含字节位置临界区判据 + F9 扫描）全部保留且通过。
+    - **验收（RX 零回归）**：`./ci/build.sh all` Passed；§2.3 六门槛全绿（双架构 0w0e / clippy 两维 / fmt / 全仓 audit + QEMU 双架构启动 2/2 / host-tests 全绿 / kernel-host 1003 passed）；e2e `E2E_REPEATS=10`：**TCP echo 里程碑（RX 入向腿）10/10 全绿**，零回退；唯一残项 = repeat 8 的 `[udp] RECVFROM=0`，属 §6 P-24 已登记的 **UDP 出站（egress）面**（首包从未离 NIC），与 E-IV 入向融合无关（P-21 验收批同为该残项、HEAD 基线同样存在）。
+
 - **S-4. 用户态回显服务去掉 `FLUSH_MS` hack**
   - 描述：`FLUSH_MS = 50` 是对"close 丢弃尾包"的用户态兜底；内核侧三步序已闭合该缺口。
   - 方案：删除该延时后连跑 boot test 验证不回退，确认语义归属内核；同步检查 `MAX_RECV_TRIES`/`POLL_MS` 是否仍有等价必要。
