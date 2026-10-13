@@ -277,7 +277,7 @@ C 组另一线索：同一构建下 `[tcp] Listening` 的内核时间戳在 7.68
     - **连带退役**：`CfsRunQueue::requeue` 零引用删除（§5 F9），既有单测改用幂等 `enqueue`。
     - **回归锁**：`host-tests/tests/sched_offcore_placement_barrier_test.rs`（源文本契约：屏障置位/清位唯一站点、闸门延迟支、prev 落地走入口、tick 负向契约，含变异负控制）；`cfs_single_time_base_test.rs` / `smp_rq_migration_test.rs` 同步适配。
   - 验证数据：`./ci/build.sh all` Passed 6 / Failed 0；§2.3 六门槛全绿；e2e `E2E_REPEATS=10` 两批 —— **TCP echo 里程碑 20/20 全绿**（同参数 HEAD 基线仅 4/10 通过，Mode B 孤儿失败面根除）；残项 = `[udp] RECVFROM` 轮间非确定性 3 次，pcap 证实失败轮 guest 从未发出 UDP 数据报（连 ARP 都没有），属 smoltcp 出站面而非调度孤儿，HEAD 上同样存在 → 新立 P-24。
-  - 状态：[X]（屏障 + 延迟投送 + 两条腿落地，TCP 失败面 20/20 闭合；Mode A 双派按 P-17 口径仍属未定论项，本项不以其为验收依据）
+  - 状态：[X]（屏障 + 延迟投送 + 两条腿落地，TCP 失败面 20/20 闭合；Mode A 双派按 P-17 口径仍属未定论项，本项不以其为验收依据。遗留的 e2e 就绪超时 Mode A（约 6%）另由 P-26 插桩根治 —— 坐实为本屏障延迟支的 `on_cpu` 判定 TOCTOU，非双派/同栈）
 
 - **P-22 进程时间记账实际上从不执行（由 P-17 取证附带发现）**：六轮实测所有任务态读数 `tk=0`（直读 `Process::tick_count`），用户态 `times()` 恒 0。链条存在：`Scheduler::tick` → `SCHEDULER_EX.tick_accounting()` → `proc_account_tick()`，但记账分支被 `current != 0` 门控，而该字段语义是 `*mut Thread` —— `ThreadManager::create_thread` 零生产调用者（仓内只剩注释引用），进程无对应 `Thread` 可解析 ⇒ 记账腿断线。调度器自己的 vruntime 推进走另一条路（`tick` 里钳 `min_vruntime`），故“时基单源已完成”与“进程时间记账从未接上”同时成立。
   - 状态：[]（未开工；属 POSIX 语义缺口，与 P-21 正交，需先定“记账经 Thread 还是经 Process”的归属决策）
@@ -291,4 +291,11 @@ C 组另一线索：同一构建下 `[tcp] Listening` 的内核时间戳在 7.68
   - 修复（per-destination 有界限速，正规本地化入库）：`neighbor.rs` `silent_until` 由全局 `Instant` 改为 `LinearMap<IpAddress, Instant, IFACE_NEIGHBOR_CACHE_COUNT>`，`limit_rate`/`lookup` 按目的地址独立限速与查询，环满驱逐最先到期项（限速记录为 advisory，近似驱逐安全），`flush` 一并清空；`interface/mod.rs` 调用点 `limit_rate(dst_addr, self.now)`。patch 入库 `scripts/smoltcp-localization/src_iface_neighbor.rs.patch`，`smoltcp.versions` 清单纳入 neighbor.rs（14 个本地化，含理由）并刷新 LOCAL_SRC_HASH。
   - 验证：`E2E_REPEATS=30` 全部 fresh fail log 均 `[udp] RECVFROM src ok` + proto=17 dst=10.0.2.2，零 UDP 超时（残余失败属另立的 FD 回收去重问题）；host-tests 结构守卫 `p24_neighbor_rate_limit_test.rs` 5/5 锁死本地化不回退。
   - 状态：[X]（根因坐实 + per-destination 限速修复经 E2E 与结构守卫双重验证）
+
+- **P-26 投送屏障延迟支的 `on_cpu` 判定 TOCTOU（P-21 遗留 Mode A 就绪超时的真正根因，插桩根治）**：P-21 关闭后 x86_64 双核 e2e 仍有约 6% 轮卡在就绪超时 —— `[tcp] Listening` 永不打印。以 `[E2E-PROBE]` 只读插桩（每核 tick 活性计数 + 跨核状态转储 + pid 落点核查，取证后已全部撤除、不入库）复现 30 轮、捕获 5 次，坐实**转储里被饿死的是 init 本体（pid=5）**，不是 echo 子进程，也不是某核 tick 停摆（两核 tick 均正常爬升到 ~30k）：init 在网络探针的 `recv` 阻塞→唤醒后，永久停在 `Ready && !on_rq && !on_cpu && rq_cpu=NO_RQ_CPU` 三元组（正是 P-21 目标不变式禁止的形态）。
+  - 描述：P-21 的 `place_locked` 延迟投送支「两条腿覆盖全部到达次序」并不成立 —— 快照读 `cfs_on_cpu`（一次 `PROCESS_TABLE` 加锁）与延迟支内的 `set_state_safe(Ready)`（**另一次**加锁）之间存在窗口：占用者核的 `reap_off_cpu` 可夹在两次加锁之间清掉 `on_cpu` 并读到仍是 `Blocked` 的状态而**放弃补投腿**；延迟支随后才把状态翻成 `Ready` 并回报「已承接」，于是 prev 收尾腿与 reap 补投腿**同时落空**，任务永久隐形。跨核到达（唤醒在本核、prev 收尾在别核）才会暴露，故呈概率性。
+  - 方案（用户裁定 = 调度器插桩根治）：把屏障判定与延迟投送的状态翻转收进**同一次 `with_process` 临界区** —— 在持锁期内**重新读取** `cfs_on_cpu` 再据此决策：仍占用 ⇒ 就地翻 `Ready`，落地交占用者核 `reap`（它必然在本临界区之后取锁、重读到 `Ready` 即补投）；屏障已在快照后被清除 ⇒ 本调用点 **fall-through 到完整搬定路径亲自入树**，不再依赖任何补投腿。二者由同一把 `PROCESS_TABLE` 锁串行化，窗口闭合。
+  - 实施：仅改 `privileged/proc/scheduler.rs::place_locked` 的 `if on_cpu && !owner_landing { … }` 分支（延迟支内加 `still_on_cpu` 复查 + `if let` 分流；屏障已解除则落到既有 `cfs_place_on_inner` 入树腿），不改任何其他站点。诊断探针两处（static + `tick()` 调用）已全部 revert，工作树仅含本修复。
+  - 验证：`./ci/build.sh all` Passed 6 / Failed 0（双架构 0w0e）；`./scripts/qemu_boot_test.sh x86_64` `E2E_REPEATS=40` —— **就绪超时（Mode A）0/40**（原 ~6% 根除；残留 1/40 为宿主 python 客户端 `sock.recv` 5s 超时、guest 侧 `Echo ok`/`Connection closed` 已完成的 net TX/RX flake，与调度无关且 HEAD 上同形，属 P-17 取证面）；`qemu_boot_test.sh aarch64` 完整启动通过（SMP/KPTI/EL0 抢占）。回归锁：`host-tests/tests/sched_offcore_placement_barrier_test.rs` 新增 `barrier_defer_rechecks_on_cpu_atomically`（源文本契约：延迟支必须在临界区内复查 `cfs_on_cpu`、复查先于置 `Ready`、复查后仍不入树），与既有 8 例共 9/9 绿；`make test-host` / `make test-kernel-host` 全绿；核心审计（functions_boundary/safety_coverage/deadlock_matrix/invariants/comment/c_naming/repr_c/volatile/static_mut/once_cell/orphaned_init）全过。预存在的 `audit_unwired --strict`（零引用 pub fn 存量 HIGH=437）与 `clippy`（`acpi.rs`/`sync/types.rs` 陈旧 `#[expect]` unfulfilled、`lapic_tick_source_test` complex-type）在**干净 HEAD 上同样触发**，非本改动引入，属另行处置项。
+  - 状态：[X]（TOCTOU 原子性修复经 40 轮 e2e（Mode A 0 复发）+ 结构守卫双重验证）
 

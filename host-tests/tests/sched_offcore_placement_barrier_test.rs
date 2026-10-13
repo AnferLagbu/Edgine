@@ -222,6 +222,52 @@ fn placement_delivers_state_but_not_tree_under_barrier() {
     );
 }
 
+/// P-26 回归: 屏障延迟投送必须原子 —— 复查 `on_cpu` 与置 `Ready` 在同一临界区.
+///
+/// 缺陷 (取证见 `docs/report/net-e2e-tcp-echo-flakiness.md` P-26): `place_locked` 上方
+/// 快照读 `cfs_on_cpu` 与延迟支的 `set_state(Ready)` 分属两次 `PROCESS_TABLE` 加锁,
+/// 占用者核的 `reap_off_cpu` 可夹在两者之间清屏障 + 读到仍是 `Blocked` 而放弃补投腿,
+/// 本支随后才翻 `Ready` ⇒ prev 收尾腿与 reap 补投腿同时落空, init 永久停在
+/// "Ready 且不在任何树上" (`rq_cpu=NO_RQ_CPU`; x86_64 双核 e2e ~6% 就绪超时挂死).
+///
+/// 契约: 延迟支必须在持锁期内**重新读取** `cfs_on_cpu` 再据此翻 `Ready` —— 承接决策
+/// 不能只依赖快照的陈旧屏障值; 屏障若已在快照后被清除, 延迟支必须 fall-through 到
+/// 完整搬定路径亲自入树, 而不是回报"已承接"后无人接手.
+#[test]
+fn barrier_defer_rechecks_on_cpu_atomically() {
+    let sched = code_only(&read_src(SCHED));
+    let place = code_only(&fn_body(&sched, "fn place_locked"));
+    let gate = place
+        .find("if on_cpu && !owner_landing {")
+        .expect("place_locked 缺屏障拒投分支");
+    // 延迟支体 = gate 到其内第一处 `return true;` (屏障在位时的承接返回).
+    let defer_end = place[gate..]
+        .find("return true;")
+        .map(|i| gate + i)
+        .expect("屏障延迟支缺 return true;");
+    let barrier_seg = &place[gate..defer_end];
+    // 延迟支必须重新读取屏障 (不能只用上方快照的 on_cpu) —— 复查即 TOCTOU 的闭合点.
+    assert!(
+        has(barrier_seg, "cfs_on_cpu.load(Ordering::Acquire)"),
+        "P-26: 屏障延迟支必须在临界区内复查 cfs_on_cpu —— 靠快照的陈旧 on_cpu 判延迟, \
+         会让 reap_off_cpu 夹在快照与置 Ready 之间清屏障, 两条腿同时落空"
+    );
+    // 复查必须先于置 Ready (同一 with_process 闭包: 先 load 屏障再条件翻 Ready).
+    assert!(
+        before(
+            barrier_seg,
+            "cfs_on_cpu.load",
+            "set_state_safe(ProcessState::Ready",
+        ),
+        "P-26: 延迟投送必须在复查到屏障在位后才翻 Ready —— 顺序倒置即回到 TOCTOU"
+    );
+    // 延迟支仍不得动任何一棵树 (落地交占用者核 reap, 或 fall-through 完整搬定路径).
+    assert!(
+        !has(barrier_seg, "enqueue") && !has(barrier_seg, "dequeue"),
+        "P-26: 屏障延迟支复查后仍不得入树 —— 进树即'树上与核上各一份', 被别核拣走即双派"
+    );
+}
+
 /// 搬动闸门二: 跨核偷取拒搬占用中的任务, 且不撤它的账 (账属源核).
 #[test]
 fn steal_refuses_barred_candidate_without_unaccounting() {

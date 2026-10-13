@@ -781,18 +781,44 @@ impl Scheduler {
         // 核交叠使用同一块进程内核栈.
         //
         // 屏障期到达的唤醒**不丢**: 本支只搬状态 Blocked/Frozen → Ready, 不动任何一棵树,
-        // 落地由占用者核接手 —— `schedule()` 的 prev 收尾会重读到 Ready 就地入树; 若占用者
-        // 核已先行读成 Blocked 并撤了账, 则由该核清屏障时 (`reap_off_cpu`) 补投. 两条腿覆盖
-        // 全部到达次序, 故返回 `true` (唤醒已被承接), 调用方不得当作失败去重投.
+        // 落地由占用者核接手。但「两条腿覆盖全部到达次序」的成立依赖屏障判定与状态翻转
+        // 的原子性 —— 见下.
         // 例外: `owner_landing` —— 占用者本核的 prev 收尾正是屏障的解除者, 它入自己
         // 的树不构成两核交叠 (见 [`Self::cfs_place_on_inner`]).
         if on_cpu && !owner_landing {
-            if state == ProcessState::Blocked || state == ProcessState::Frozen {
-                PROCESS_TABLE.with_process(pid, |p| {
-                    let _ = p.set_state_safe(ProcessState::Ready);
-                });
+            // 屏障 TOCTOU 修复 (P-26): 上方快照的 `on_cpu` 读取与本支的状态翻转分属两次
+            // `PROCESS_TABLE` 加锁, 占用者核的 `reap_off_cpu` 可夹在两者之间 —— 它清掉
+            // `on_cpu`、读到仍是 `Blocked` 的状态而放弃补投腿; 本支随后才把状态翻成
+            // `Ready`, 于是 prev 收尾腿与 reap 补投腿同时落空, 任务永久停在
+            // 「Ready 且不在任何树上」(`rq_cpu=NO_RQ_CPU`). 实测: x86_64 双核 e2e 中 init
+            // 网络探针 recv 唤醒约 6% 轮命中该窗口, 就绪超时挂死 (init 即 pid=5).
+            //
+            // 修法是在同一临界区内复查屏障再决定投送路径:
+            // - 屏障仍在位 => 就地翻 `Ready` (Blocked/Frozen→Ready), 落地交占用者核 `reap`
+            //   接手 —— 它此刻尚未取锁清屏障, 必然在本临界区之后重读到 `Ready` 即补投;
+            // - 屏障已在本快照之后被清除 => 补投腿已放弃, 本调用点必须亲自入树, 落到
+            //   下方完整搬定路径, 不再依赖任何补投腿.
+            let still_on_cpu = PROCESS_TABLE.with_process(pid, |p| {
+                if p.cfs_on_cpu.load(Ordering::Acquire) {
+                    let s = p.get_state();
+                    if s == ProcessState::Blocked || s == ProcessState::Frozen {
+                        let _ = p.set_state_safe(ProcessState::Ready);
+                    }
+                    true
+                } else {
+                    false
+                }
+            });
+            if let Some(still_barred) = still_on_cpu {
+                // 屏障仍在位: 已在本临界区把状态翻成 Ready, 落地交占用者核 reap 补投.
+                if still_barred {
+                    return true;
+                }
+                // 屏障已在本快照之后被清除: 往下走完整搬定路径, 由本入口把任务投进目的核的树.
+            } else {
+                // pid 已从进程表消失: 无权投送, 认领凭证 Drop 自动回滚归属.
+                return false;
             }
-            return true;
         }
         // 兜底: 非 `schedule()` 路径写入的 `per_cpu.current` (boot / AP 首发经
         // `set_current`) 不带屏障, 故仍按归属核查在核判据 (语义同 Linux 不迁移
