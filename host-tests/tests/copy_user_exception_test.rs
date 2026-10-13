@@ -176,13 +176,9 @@ fn try_deliver_signal(
         trampoline.len(),
         unmapped,
     );
-    if matches!(ok_ret, CopyOutcome::Efault)
+    !(matches!(ok_ret, CopyOutcome::Efault)
         || matches!(ok_frame, CopyOutcome::Efault)
-        || matches!(ok_tramp, CopyOutcome::Efault)
-    {
-        return false;
-    }
-    true
+        || matches!(ok_tramp, CopyOutcome::Efault))
 }
 
 #[test]

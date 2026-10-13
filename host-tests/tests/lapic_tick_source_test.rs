@@ -520,7 +520,9 @@ fn test_tick_isr_path_stays_silent() {
 
 #[test]
 fn test_negative_control_predicates_reject_regressions() {
-    let fixtures: &[(&str, &str, fn(&str) -> bool)] = &[
+    // 抽 `Fixture` 别名避免 `&str` + `fn(&str) -> bool` 内嵌元组达 clippy `type_complexity` 阈值.
+    type Fixture<'a> = (&'a str, &'a str, for<'b> fn(&'b str) -> bool);
+    let fixtures: &[Fixture<'_>] = &[
         (
             "legacy_irq0",
             "manager.register_irq(0, timer_tick_handler, \"PIT\", 0)?;",

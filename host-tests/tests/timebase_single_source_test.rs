@@ -394,7 +394,9 @@ fn test_boot_orchestration_establishes_timebase_in_order() {
 #[test]
 fn test_negative_control_predicates_reject_regressions() {
     // 每个谓词配一段"回退形态"合成样本; 若某次改动让谓词失去判别力, 本用例先红.
-    let fixtures: &[(&str, &str, fn(&str) -> bool)] = &[
+    // 抽 `Fixture` 别名避免 `&str` + `fn(&str) -> bool` 内嵌元组达 clippy `type_complexity` 阈值.
+    type Fixture<'a> = (&'a str, &'a str, for<'b> fn(&'b str) -> bool);
+    let fixtures: &[Fixture<'_>] = &[
         (
             "dual_tick",
             "static TICK_COUNT: AtomicU64 = AtomicU64::new(0);",

@@ -70,7 +70,7 @@ fn strip_comments(src: &str) -> String {
                         quotes += 1;
                         i += 1;
                     }
-                    '/' if chars[i + 1] == '/' && quotes % 2 == 0 => {
+                    '/' if chars[i + 1] == '/' && quotes.is_multiple_of(2) => {
                         return chars[..i].iter().collect();
                     }
                     _ => i += 1,

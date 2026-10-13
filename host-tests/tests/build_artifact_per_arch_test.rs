@@ -11,6 +11,7 @@
 //!      在全量口径下完全不可见;
 //!   3. 防跨架构误用 `boot.o` 需要三重补丁 (Makefile `arch-switch-clean` +
 //!      `log/.arch` 戳记 + `qemu_boot_test.sh` 的 `sync_make_state`).
+//!
 //! 最隐蔽的一条: `x86_64.ld` 按**文件名**点名 `boot.o` / `isr.o`, 路径失配时
 //! ld 既不报错也不警告, 对应 `.text` 静默落进 `*(.text)` 通配区 —— `_start`
 //! 离开 `.boot.text`, isr 入口代码离开 KPTI 映射区段 (`_kpti_trampoline_end`

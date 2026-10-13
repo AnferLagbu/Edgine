@@ -233,13 +233,12 @@ fn test_wake_path_never_flips_state_before_placement() {
     let at_place = unblock
         .find("self.cfs_enqueue_to(")
         .expect("unblock 的 CFS 路由未经搬定入口");
-    match unblock.find("set_state_safe(ProcessState::Ready)") {
-        Some(at_ready) => assert!(
+    // 全由搬定写 Ready 也合法: find 发 None 时无需断言.
+    if let Some(at_ready) = unblock.find("set_state_safe(ProcessState::Ready)") {
+        assert!(
             at_ready > at_place,
             "unblock 在搬定前就置 Ready: 搬定失败即永久隐形 (电平重扫选集条件丢开它)"
-        ),
-        // 全由搬定写 Ready 也合法.
-        None => {}
+        );
     }
     // 搬定失败必须早退 (不能当作已成功继续跑唤醒不变式).
     assert!(
@@ -423,7 +422,9 @@ fn test_tick_body_uses_carry_cas_for_every_periodic_side_effect() {
 #[test]
 fn test_negative_control_predicates() {
     // 形状谓词逐个用合成回退样本验证: 把"被禁形态"喂回去, 断言仍能识别.
-    let fixtures: &[(&str, &str, fn(&str) -> bool)] = &[
+    // 抽 `Fixture` 别名避免 `&str` + `fn(&str) -> bool` 内嵌元组达 clippy `type_complexity` 阈值.
+    type Fixture<'a> = (&'a str, &'a str, for<'b> fn(&'b str) -> bool);
+    let fixtures: &[Fixture<'_>] = &[
         (
             "旧形态: 只持目的锁入队",
             "per_cpu_for(cpu_id).cfs_rq.lock().enqueue(pid,vr,weight,accounted);",

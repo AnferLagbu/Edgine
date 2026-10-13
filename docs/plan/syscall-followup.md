@@ -971,7 +971,6 @@ src/kernel/privileged/cpu/feature.rs::supports_64bit
 src/kernel/privileged/cpu/feature.rs::supports_avx
 src/kernel/privileged/cpu/feature.rs::supports_simd
 src/kernel/privileged/cpu/feature.rs::supports_virtualization
-src/kernel/privileged/cpu/tsc.rs::nanoseconds_to_cycles  <!-- P-25 已删/失效 (P-20 卫生 PR) -->
 src/kernel/privileged/sgeg/api.rs::umask_get
 src/kernel/privileged/sgeg/audit.rs::get_entries
 src/kernel/privileged/sgeg/identity.rs::find_mut

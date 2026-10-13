@@ -210,7 +210,7 @@ fn ipv6_udp_probe() {
         let n = recv(fd, buf.as_mut_ptr(), buf.len(), 0);
         if n > 0 {
             let got = n as usize;
-            if got == payload.len() && &buf[..got] == &payload[..] {
+            if got == payload.len() && buf[..got] == payload[..] {
                 println("[net6] RX ok: circulated EDGINE6 echo verified");
             } else {
                 print("[net6] FAIL: echo mismatch len=");
@@ -597,7 +597,7 @@ fn udp_echo_probe() {
         if n > 0 {
             let got = n as usize;
             if got == payload.len()
-                && &buf[..got] == &payload[..]
+                && buf[..got] == payload[..]
                 && src.sin_addr.s_addr == [10, 0, 2, 2]
                 && src.sin_port == ECHO_PORT.to_be()
             {
