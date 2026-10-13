@@ -45,6 +45,16 @@ E2E_UDP_PORT="${E2E_UDP_PORT:-9090}"           # 宿主 UDP 回显端口 (guest 
 # "入向丢帧"假设, 结论是证伪 —— 失败轮的 SYN 已到 guest, 缺的是 guest 侧消费).
 # 默认空 = 不抓包.
 E2E_PCAP="${E2E_PCAP:-}"
+# 每 boot 独立 pcap 目录 (P-27 Mode Y 取证): 非空时 `e2e_tcp_echo` 每次调用
+# 生成 `${E2E_PCAP_DIR}/boot<N>.pcap` (N = 外层 boot 序号, 由 E2E_CURRENT_ROUND
+# 传入). 与 E2E_PCAP 单文件互斥 —— 两者同时非空时 E2E_PCAP_DIR 优先, E2E_PCAP
+# 忽略. 空 = 关闭 per-boot 采集, 保持既往行为 (仅 E2E_PCAP 单文件路径生效).
+# Mode Y 命中率 ≈ 1.5% (P-27), 单文件路径会被最后一 boot 覆盖 → 采不到 FAIL
+# 样本; per-boot 目录保留全部 OK/FAIL 对照 (docs/plan/net-e2e-tcp-echo-flakiness.md).
+E2E_PCAP_DIR="${E2E_PCAP_DIR:-}"
+# 外层 while 循环写入, `e2e_tcp_echo` 读取以决定 pcap 落点文件名; 默认 1 兼容
+# E2E_REPEATS=1 单次跑.
+E2E_CURRENT_ROUND="${E2E_CURRENT_ROUND:-1}"
 
 ok()   { echo -e "${GREEN}\u2713 $1${NC}"; }
 err()  { echo -e "${RED}\u2717 $1${NC}"; }
@@ -212,10 +222,20 @@ while True:
         -device e1000,netdev=n0
         -netdev "user,id=n0,hostfwd=tcp::${E2E_HOST_PORT}-:${E2E_GUEST_PORT}"
     )
-    if [ -n "$E2E_PCAP" ]; then
-        rm -f "$E2E_PCAP"
-        info "[x86_64] 抓包: n0 双向帧 → ${E2E_PCAP} (filter-dump)"
-        qemu_args+=(-object "filter-dump,id=e2edump,netdev=n0,file=${E2E_PCAP}")
+    # P-27 Mode Y 取证: E2E_PCAP_DIR 优先, 每 boot 独立 pcap; 回退 E2E_PCAP 单文件.
+    local pcap_path=""
+    if [ -n "$E2E_PCAP_DIR" ]; then
+        mkdir -p "$E2E_PCAP_DIR"
+        pcap_path="${E2E_PCAP_DIR}/boot${E2E_CURRENT_ROUND}.pcap"
+        rm -f "$pcap_path"
+        info "[x86_64] 抓包: n0 双向帧 → ${pcap_path} (per-boot filter-dump)"
+    elif [ -n "$E2E_PCAP" ]; then
+        pcap_path="$E2E_PCAP"
+        rm -f "$pcap_path"
+        info "[x86_64] 抓包: n0 双向帧 → ${pcap_path} (filter-dump)"
+    fi
+    if [ -n "$pcap_path" ]; then
+        qemu_args+=(-object "filter-dump,id=e2edump,netdev=n0,file=${pcap_path}")
     fi
     qemu-system-x86_64 "${qemu_args[@]}" >/dev/null 2>&1 &
     E2E_QEMU_PID=$!
@@ -448,10 +468,17 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 if [ "$E2E_REPEATS" -gt 1 ]; then
                     info "[x86_64] 端到端重复轮 ${e2e_round}/${E2E_REPEATS}"
                 fi
+                # P-27 Mode Y 取证: 将当前 boot 序号传给 e2e_tcp_echo 决定 pcap 落点.
+                E2E_CURRENT_ROUND="$e2e_round"
                 if ! e2e_tcp_echo; then
                     e2e_failed=$((e2e_failed + 1))
                     cp -f "${LOG_DIR}/qemu_e2e_tcp_x86_64.log" \
                         "${LOG_DIR}/qemu_e2e_tcp_x86_64.fail${e2e_round}.log" 2>/dev/null || true
+                    # FAIL 轮 pcap 加 .fail 后缀便于事后对照 (Mode Y 三步对拍).
+                    if [ -n "$E2E_PCAP_DIR" ] && [ -f "${E2E_PCAP_DIR}/boot${e2e_round}.pcap" ]; then
+                        mv -f "${E2E_PCAP_DIR}/boot${e2e_round}.pcap" \
+                            "${E2E_PCAP_DIR}/boot${e2e_round}.fail.pcap" 2>/dev/null || true
+                    fi
                 fi
                 e2e_round=$((e2e_round + 1))
             done
