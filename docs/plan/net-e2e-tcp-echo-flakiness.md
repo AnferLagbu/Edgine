@@ -302,5 +302,10 @@ C 组另一线索：同一构建下 `[tcp] Listening` 的内核时间戳在 7.68
 - **P-27 e2e 残存概率性 flake 二模式取证（P-26 后量化的未定论项）**：P-26 提交后以 `E2E_REPEATS=40 qemu_boot_test.sh x86_64` 重复 5 次 = **200 boot·1·采样单元 / 600 connect·3·采样单元**，命中 3 boot 失败，集中于最后两 boot（boot4 2/40 + boot5 1/40）；Wilson 95% CI 命中率 [0.5%, 4.2%]，与 P-26 前 1/40≈2.5% 估值同区间。需区分与 P-26 无关的两失败形态：**Mode X**（就绪超时，fail5/fail14）——init 打印 `[net6] TX ok` 后卡在**某个探针 recv**，始终未到 `[tcp] Listening` 里程碑；fail16 log 对比显示探针链中后段 `mcast FAIL`/`udp RECVFROM ok` 在 OK 轮会依次打印，失败轮全缺。与 P-21/P-26 时代 Mode A 形态同构（guest 到达 listening 前卡死），但 P-26 已将 `place_locked` 屏障延迟支 TOCTOU 闭合 —— 真因未定：或 `raw::is_blocking(slot)` 在 UDP 探针中因 `fcntl(F_SETFL, O_NONBLOCK)` 失败默认仍为 `true`，`sm_recv` 进入 `block+schedule`，与调度子路新窗口交互；或 `poll_network` 的 WAITER_READ 唤醒到达后，入队侧另有未盖到的 TOCTOU 同族。**Mode Y**（TX/RX 三段丢帧，fail16）—— guest 侧完整跑完 `[tcp] Connection accepted` → `NODELAY roundtrip ok` → `POLLIN revents=1` → `Echo ok len=15` → `SHUTDOWN_WR ok` → `Connection closed` 六里程碑，但 host python `sock.recv` 5s TimeoutError：帧在 smoltcp TX→e1000 DMA→QEMU slirp→host recv 三段中某段丢失，与 P-24 邻居限速（入向解析）属同面不同腿。与调度无关，归 P-17 取证域。
   - 描述：两类失败模式独立、跨子系统；本轮仅量化，未插桩。
   - 方案：二选一或并行——（甲）Mode X 定点插桩（init 侧 5 探针每步前后各打一个里程碑 + 内核 UDP RX softirq 唤醒路径的 waiter 采集），复现 ≥ 5 例坐实是「O_NONBLOCK 传播断层」还是「入队侧新 TOCTOU 同族」；（乙）Mode Y 走 `filter-dump` pcap 对拍（OK 轮 vs FAIL 轮），锁定 TX 帧在哪一段消失（guest 侧 DMA 完成 / QEMU slirp 收到 / host 用户态读走）。两者均需 ≥ 30 boot 采样本体量，可分分合合，不预设选择。
-  - 状态：[]（未开工；P-26 闭合不代表本工程闭合，本项为遗留量化的残存 flake，需单开取证工程）
+  - 状态：[X]（四轮插桩取证闭合，1600 boot 样本；结论见 `docs/report/p27-e2e-flake-forensic-report.md`：Mode Y 零复现不立项；Mode X 坐实为**全局冻结**形态（内核 log 与 per-boot pcap 同一时刻定格），与 P-26 无关、fcntl 传播断层假设否证、recv/poll_network 两腿均 0 命中排除；形态 Z 仅 1/1200 维持观察）
+
+- **P-28 Mode X 全局冻结三假说判型取证（P-27 取证工程的残留分岔点）**：P-27 四轮取证坐实 Mode X（~1.5%）为整系统同一瞬间静默（串口 + 网络两独立观测面同时定格），但纯 log+pcap 无法区分三假说：① 全员空转（冻结是假象，tick 睡眠扫描丢唤醒）；② tick 时基停摆（`get_ticks()` 冻结，到期判据永不成立）；③ 关中断自旋死锁（`LOG_EMIT_LOCK` + `serial_putc` 无超时自旋 wedge，或 rq/PROCESS_TABLE 锁序倒置）。三轮教训已排除插桩自引入（四轮 tick-IRQ 零 printk 仍复现），③ 若坐实属真实锁序缺陷。
+  - 描述：判型工程 = 在**确定的任务上下文**（非 tick/IRQ 路径、零锁域）加低频心跳打印 `[E2P] HB tick=<n>`（如每 5 s 一条），单次 FAIL boot 即可区分三假说：心跳持续且 tick 推进 ⇒ ①；心跳持续 tick 冻结 ⇒ ②；心跳停止 ⇒ ③（与已有两观测面交叉）。
+  - 方案：复用 P-27 采集基础设施（`other/modeY_forensic.sh` + per-boot pcap），插桩点候选 = 某常驻内核任务的安全打印位（须先调研哪个任务在冻结窗口仍应被调度）；样本量需 ~400 boot 复现 ≥3 例。
+  - 状态：[]（未开工；是否立项由 1.5% 残存率对 CI 门禁的实际痛感由用户裁定）
 
