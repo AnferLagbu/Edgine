@@ -306,6 +306,11 @@ C 组另一线索：同一构建下 `[tcp] Listening` 的内核时间戳在 7.68
 
 - **P-28 Mode X 全局冻结三假说判型取证（P-27 取证工程的残留分岔点）**：P-27 四轮取证坐实 Mode X（~1.5%）为整系统同一瞬间静默（串口 + 网络两独立观测面同时定格），但纯 log+pcap 无法区分三假说：① 全员空转（冻结是假象，tick 睡眠扫描丢唤醒）；② tick 时基停摆（`get_ticks()` 冻结，到期判据永不成立）；③ 关中断自旋死锁（`LOG_EMIT_LOCK` + `serial_putc` 无超时自旋 wedge，或 rq/PROCESS_TABLE 锁序倒置）。三轮教训已排除插桩自引入（四轮 tick-IRQ 零 printk 仍复现），③ 若坐实属真实锁序缺陷。
   - 描述：判型工程 = 在**确定的任务上下文**（非 tick/IRQ 路径、零锁域）加低频心跳打印 `[E2P] HB tick=<n>`（如每 5 s 一条），单次 FAIL boot 即可区分三假说：心跳持续且 tick 推进 ⇒ ①；心跳持续 tick 冻结 ⇒ ②；心跳停止 ⇒ ③（与已有两观测面交叉）。
-  - 方案：复用 P-27 采集基础设施（`other/modeY_forensic.sh` + per-boot pcap），插桩点候选 = 某常驻内核任务的安全打印位（须先调研哪个任务在冻结窗口仍应被调度）；样本量需 ~400 boot 复现 ≥3 例。
-  - 状态：[]（未开工；是否立项由 1.5% 残存率对 CI 门禁的实际痛感由用户裁定）
+  - 判型手段变更：实际未走内核心跳插桩，改用 **QEMU HMP monitor 现场快照**（`E2E_MON=1` 挂 server-mode unix monitor，就绪超时隔真实墙钟二次读 `TICK_IRQ_COUNT` + `info registers -a` 抓两核 RIP/HLT + 锁区/栈窗口符号化），零内核插桩避免锁序扰动。
+  - 状态：[X]（判型闭合，见 `docs/report/p28-mode-x-freeze-verdict.md`：主形态坐实为 **假说③ 关中断自旋死锁**（4×③ 现场逐字同形，跨 forensic6/7/8 ~1200 boot，复现率 ~1.5%–2%），自旋点经 DWARF addr2line 收敛到 `schedule()`（入口 `interrupt_disable`）→ `reap_off_cpu` → `ProcessTable::with_process` 取 **PROCESS_TABLE 锁** 死自旋；次要形态 ②（1 例，两核全 halt + tick 冻结）n=1 维持观察不独立立项。更正两处前序误判：`info registers` 缺 `-a` 只见 CPU#0 曾致「排除③」假象；map 符号化把锁猜成 `HrTimer` 系泛型单体 ICF 同址假象。锁序根因与修复另立 P-29）
+
+- **P-29 Mode X 自旋死锁锁序根因坐实与修复（P-28 判型的下游工程）**：P-28 已把 Mode X 判为 ③ 关中断自旋死锁，自旋点 = `schedule()`（`scheduler.rs:1054` 入口即 `interrupt_disable()`）→ `reap_off_cpu`（`scheduler.rs:1450`）→ `ProcessTable::with_process`（`scheduler.rs:1457`）取 PROCESS_TABLE 锁取不到、关中断态死自旋。但「谁持 PROCESS_TABLE 不放」未直接坐实（快照时刻持锁者不在两核 RIP 上，CPU#0 已 idle halt）。
+  - 描述：坐实并修复上述死锁。两候选根因待分辨——（甲）AB-BA 锁序倒置：`ref-lock-order.md` 登记正序 cfs_rq(层级8)→PROCESS_TABLE(层级7)，且禁持进程表锁临界区内取 rq 锁；P-28 栈帧同现 `cfs_deactivate`，需查是否存在反向路径；（乙）同线程重入自死锁：archived G-11/G-12 记 `Mutex::raw_lock` 无 owner/重入检测，重入即无限自旋。先精确 unwind（帧指针链或运行时锁 owner 记录）定住持锁者与取锁序，再据根因选修复形状。
+  - 方案：§10 深查 `reap_off_cpu`/`cfs_deactivate`/`with_process` 与 rq 锁的取锁嵌套 + tick/IRQ 侧对 PROCESS_TABLE 的取锁路径，坐实持锁者；修复方案（缩窗 / 拆锁 / 加 owner 重入检测 / 校正锁序）与实现深度由用户裁定后开工。修复后回归 forensic 复采验效（含 P-28 §五 的 ② 次要形态是否随之消失）。
+  - 状态：[]（待用户裁定实现深度后开工）
 
