@@ -93,7 +93,11 @@ impl SpinLock {
             #[cfg(debug_assertions)]
             self.debug_acquire();
             #[cfg(any(debug_assertions, feature = "lockdep"))]
-            lockdep::acquire(self.lockdep_class, lockdep::in_irq_context());
+            lockdep::acquire(
+                self.lockdep_class,
+                self as *const Self as usize,
+                lockdep::in_irq_context(),
+            );
             return; // 成功获取
         }
 
@@ -111,7 +115,11 @@ impl SpinLock {
         #[cfg(debug_assertions)]
         self.debug_acquire();
         #[cfg(any(debug_assertions, feature = "lockdep"))]
-        lockdep::acquire(self.lockdep_class, lockdep::in_irq_context());
+        lockdep::acquire(
+            self.lockdep_class,
+            self as *const Self as usize,
+            lockdep::in_irq_context(),
+        );
     }
 
     /// ✅ P1-8 修复: 带超时的锁获取 (防止死锁)
@@ -173,7 +181,7 @@ impl SpinLock {
     /// 调用者必须持有该锁
     pub fn raw_unlock(&self) {
         #[cfg(any(debug_assertions, feature = "lockdep"))]
-        lockdep::release(self.lockdep_class);
+        lockdep::release(self.lockdep_class, self as *const Self as usize);
 
         // 内存屏障: 确保所有写操作对其他 CPU 可见
         fence(Ordering::SeqCst);
@@ -197,7 +205,11 @@ impl SpinLock {
                 #[cfg(debug_assertions)]
                 self.debug_acquire();
                 #[cfg(any(debug_assertions, feature = "lockdep"))]
-                lockdep::acquire(self.lockdep_class, lockdep::in_irq_context());
+                lockdep::acquire(
+                    self.lockdep_class,
+                    self as *const Self as usize,
+                    lockdep::in_irq_context(),
+                );
                 TryLockResult::Acquired
             }
             Err(_) => TryLockResult::WouldBlock,

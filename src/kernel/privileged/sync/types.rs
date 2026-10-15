@@ -299,6 +299,9 @@ pub struct MutexGuard<'a, T> {
     /// Lockdep 锁类 ID (debug 或 feature="lockdep" 下使用); `drop` 完全解锁时通知释放.
     #[cfg(any(debug_assertions, feature = "lockdep"))]
     pub lockdep_class: LockClassId,
+    /// Lockdep 锁实例地址 (`MutexInner` 地址, 与 acquire 一致; drop 按实例 pop).
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
+    pub lockdep_instance: usize,
 }
 
 impl<T> core::ops::Deref for MutexGuard<'_, T> {
@@ -328,7 +331,7 @@ impl<T> Drop for MutexGuard<'_, T> {
             // Lockdep: 与 `acquire_lock_internal` 单次 acquire 对齐 — 仅真正解锁
             // (深度归零) 时通知释放, 避免递归锁的多层 guard 过度 release.
             #[cfg(any(debug_assertions, feature = "lockdep"))]
-            crate::privileged::sync::lockdep::release(self.lockdep_class);
+            crate::privileged::sync::lockdep::release(self.lockdep_class, self.lockdep_instance);
             self._mutex.locked.store(0, Ordering::Release);
             self._mutex.owner.store(-1, Ordering::Release);
             self._mutex.acquire_time.store(0, Ordering::Release);

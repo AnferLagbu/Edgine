@@ -109,7 +109,9 @@ impl<T> IrqSpinLock<T> {
             kind: LockKind::IrqSpinLock,
         });
         Self {
-            lock: UnsafeCell::new(SpinLock::named(name)),
+            // 内层 SpinLock 故意不命名 (INVALID 类): 仅由 IrqSpinLock 层统一跟踪 lockdep,
+            // 避免 `raw_lock` 与显式 `acquire` 对同一逻辑锁双重压栈.
+            lock: UnsafeCell::new(SpinLock::new()),
             data: UnsafeCell::new(data),
             depth: UnsafeCell::new(AtomicU32::new(0)),
             lockdep_class: AtomicU16::new(class_id.0),
@@ -179,7 +181,9 @@ impl<T> IrqSpinLock<T> {
         #[cfg(any(debug_assertions, feature = "lockdep"))]
         let class = self.resolve_lockdep_class();
         #[cfg(any(debug_assertions, feature = "lockdep"))]
-        crate::privileged::sync::acquire(class, true);
+        let instance = self as *const Self as usize;
+        #[cfg(any(debug_assertions, feature = "lockdep"))]
+        crate::privileged::sync::acquire(class, instance, true);
 
         IrqSpinLockGuard {
             data: data_ref,
@@ -188,6 +192,8 @@ impl<T> IrqSpinLock<T> {
             prev_if: Some(prev),
             #[cfg(any(debug_assertions, feature = "lockdep"))]
             lockdep_class: class,
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
+            lockdep_instance: instance,
         }
     }
 
@@ -240,7 +246,9 @@ impl<T> IrqSpinLock<T> {
         #[cfg(any(debug_assertions, feature = "lockdep"))]
         let class = self.resolve_lockdep_class();
         #[cfg(any(debug_assertions, feature = "lockdep"))]
-        crate::privileged::sync::acquire(class, true);
+        let instance = self as *const Self as usize;
+        #[cfg(any(debug_assertions, feature = "lockdep"))]
+        crate::privileged::sync::acquire(class, instance, true);
         Some(IrqSpinLockGuard {
             data: data_ref,
             lock_ptr: inner_ptr,
@@ -248,6 +256,8 @@ impl<T> IrqSpinLock<T> {
             prev_if: Some(prev),
             #[cfg(any(debug_assertions, feature = "lockdep"))]
             lockdep_class: class,
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
+            lockdep_instance: instance,
         })
     }
 
@@ -286,6 +296,9 @@ pub struct IrqSpinLockGuard<'a, T> {
     /// Lockdep 锁类 ID (debug 或 feature="lockdep" 模式下使用)
     #[cfg(any(debug_assertions, feature = "lockdep"))]
     lockdep_class: LockClassId,
+    /// Lockdep 锁实例地址 (与 acquire 一致; drop 时按实例精确 pop)
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
+    lockdep_instance: usize,
 }
 
 impl<T> Deref for IrqSpinLockGuard<'_, T> {
@@ -305,7 +318,7 @@ impl<T> Drop for IrqSpinLockGuard<'_, T> {
     fn drop(&mut self) {
         // Lockdep: 通知锁释放
         #[cfg(any(debug_assertions, feature = "lockdep"))]
-        crate::privileged::sync::release(self.lockdep_class);
+        crate::privileged::sync::release(self.lockdep_class, self.lockdep_instance);
 
         // SAFETY: 持有 lock_ptr 上的锁, 任何其他访问者都被锁在外; cli 屏蔽中断。
         unsafe { &*self.lock_ptr }.raw_unlock();

@@ -80,6 +80,11 @@ CFLAGS = $(CFLAGS_BASE) \
 # 构建会触发 E0152 双 alloc 冲突 (DECISION-021 同族). 详见主计划文档 §10.
 BUILD_STD_CFG := --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]'
 
+# 内核 cargo 构建的附加 feature 注入钩子 (默认空 → 常规构建零改变).
+# 用途: 诊断专用 boot (如 P-29 `KERNEL_FEATURES=lockdep` 点亮 lockdep),
+# 避免为一次性取证改动构建主链路. 空值时 `--features` 不出现 (make if 展开).
+KERNEL_FEATURES ?=
+
 # ============================================================================
 # 网络子系统已迁移至 smoltcp (纯 Rust)
 # Network stack: smoltcp (Rust)
@@ -240,14 +245,14 @@ $(USER_BUILD_DIR)/init.bin: $(USER_INIT_ELF)
 
 $(RUST_LIB): $(USER_BUILD_DIR)/init.bin
 	@echo "Building Rust kernel module..."
-	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --target-dir ../../other/target
+	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) $(if $(KERNEL_FEATURES),--features "$(KERNEL_FEATURES)") --target-dir ../../other/target
 else
 # x86_64: 用 Cargo 构建 Rust 用户程序 + 内核
 # include_bytes! 编译时需要 init.bin 存在，确保用户程序先构建
 
 $(RUST_LIB): $(STAGE1_BIN) $(USER_BUILD_DIR)/init.bin $(shell find src/kernel -name '*.rs' 2>/dev/null)
 	@echo "Building Rust kernel module..."
-	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --target-dir ../../other/target
+	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) $(if $(KERNEL_FEATURES),--features "$(KERNEL_FEATURES)") --target-dir ../../other/target
 endif
 
 # RUST_LIB_TEST 需源文件前置依赖 (kernel 源码经 #[path="../../kernel"] 引入, 须一并搜索):

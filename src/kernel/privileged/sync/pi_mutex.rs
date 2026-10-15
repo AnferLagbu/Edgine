@@ -346,6 +346,20 @@ impl<T: Default> Default for PiMutex<T> {
 // ============================================================================
 
 impl<T: ?Sized> PiMutex<T> {
+    /// lockdep 实例键: 本锁基址.
+    ///
+    /// `PiMutex<T: ?Sized>` 是宽指针, 须先转瘦指针 (`*const u8`) 取数据地址再转
+    /// `usize`, 与 [`track_hold`] 的登记键同源.
+    #[cfg(debug_assertions)]
+    fn lockdep_instance(&self) -> usize {
+        #[expect(
+            clippy::ref_as_ptr,
+            reason = "ref_as_ptr: ?Sized 宽指针需先转瘦指针取数据地址再转 usize 作 lockdep 实例键, 语义已知安全"
+        )]
+        let ptr = self as *const Self as *const u8 as usize;
+        ptr
+    }
+
     /// 获取锁 (阻塞 + 优先级继承)
     ///
     /// # 参数
@@ -395,6 +409,7 @@ impl<T: ?Sized> PiMutex<T> {
             #[cfg(debug_assertions)]
             crate::privileged::sync::acquire(
                 self.lockdep_class,
+                self.lockdep_instance(),
                 crate::privileged::sync::in_irq_context(),
             );
 
@@ -530,7 +545,7 @@ impl<T: ?Sized> PiMutex<T> {
     pub(crate) fn unlock_internal(&self) {
         // Lockdep: 通知锁释放
         #[cfg(debug_assertions)]
-        crate::privileged::sync::release(self.lockdep_class);
+        crate::privileged::sync::release(self.lockdep_class, self.lockdep_instance());
 
         let my_pid = current_pid();
         if self.inner.holder.load(Ordering::Acquire) != my_pid {
@@ -555,7 +570,7 @@ impl<T: ?Sized> PiMutex<T> {
     pub(crate) fn force_unlock(&self) {
         // Lockdep: 通知锁释放
         #[cfg(debug_assertions)]
-        crate::privileged::sync::release(self.lockdep_class);
+        crate::privileged::sync::release(self.lockdep_class, self.lockdep_instance());
 
         // 跳过 holder 检查: 静默忽略未持锁情况 (无操作)
         if !self.inner.locked.load(Ordering::Acquire) {

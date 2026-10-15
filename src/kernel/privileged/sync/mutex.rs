@@ -106,6 +106,8 @@ impl<T> Mutex<T> {
             _mutex: &self.inner,
             #[cfg(any(debug_assertions, feature = "lockdep"))]
             lockdep_class: self.lockdep_class,
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
+            lockdep_instance: &self.inner as *const MutexInner as usize,
         }
     }
 
@@ -118,6 +120,8 @@ impl<T> Mutex<T> {
                 _mutex: &self.inner,
                 #[cfg(any(debug_assertions, feature = "lockdep"))]
                 lockdep_class: self.lockdep_class,
+                #[cfg(any(debug_assertions, feature = "lockdep"))]
+                lockdep_instance: &self.inner as *const MutexInner as usize,
             })
         } else {
             None
@@ -198,7 +202,10 @@ impl<T> Mutex<T> {
     fn raw_unlock(&self) {
         // Lockdep: 通知锁释放
         #[cfg(any(debug_assertions, feature = "lockdep"))]
-        lockdep::release(self.lockdep_class);
+        lockdep::release(
+            self.lockdep_class,
+            &self.inner as *const MutexInner as usize,
+        );
 
         self.inner.inner_spinlock.raw_lock();
 
@@ -238,7 +245,11 @@ impl<T> Mutex<T> {
 
         // Lockdep: 通知锁获取
         #[cfg(any(debug_assertions, feature = "lockdep"))]
-        lockdep::acquire(self.lockdep_class, lockdep::in_irq_context());
+        lockdep::acquire(
+            self.lockdep_class,
+            &self.inner as *const MutexInner as usize,
+            lockdep::in_irq_context(),
+        );
     }
 
     /// 检查锁是否被持有

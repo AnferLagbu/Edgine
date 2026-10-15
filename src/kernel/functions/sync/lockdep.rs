@@ -14,11 +14,11 @@
 //!     unsafe { MY_LOCK_CLASS = lockdep::register_class("my_lock", LockKind::Mutex); }
 //! }
 //!
-//! // 在锁获取后通知 lockdep
-//! lockdep::acquire(MY_LOCK_CLASS, false);
+//! // 在锁获取后通知 lockdep (instance = 锁实例地址, 作持有栈/递归键)
+//! lockdep::acquire(MY_LOCK_CLASS, &lock as *const _ as usize, false);
 //!
 //! // 在锁释放前通知 lockdep
-//! lockdep::release(MY_LOCK_CLASS);
+//! lockdep::release(MY_LOCK_CLASS, &lock as *const _ as usize);
 //! ```
 //!
 //! ## 安全契约
@@ -47,21 +47,22 @@ pub fn register_class(name: &'static str, kind: LockKind) -> LockClassId {
 /// 3. 递归获取非递归锁
 ///
 /// # 参数
-/// - `class_id`: 锁类 ID
+/// - `class_id`: 锁类 ID (依赖图 ABBA 键)
+/// - `instance`: 锁实例地址 (持有栈/递归判定键, 同类多实例区分用)
 /// - `irq_context`: 是否在中断上下文中获取
 ///
 /// # 返回
 /// - `true`: 正常
 /// - `false`: 检测到违规 (已打印警告)
-pub fn acquire(class_id: LockClassId, irq_context: bool) -> bool {
-    crate::privileged::sync::acquire(class_id, irq_context)
+pub fn acquire(class_id: LockClassId, instance: usize, irq_context: bool) -> bool {
+    crate::privileged::sync::acquire(class_id, instance, irq_context)
 }
 
 /// 锁释放通知
 ///
-/// 在锁释放前调用。从持有栈中移除。
-pub fn release(class_id: LockClassId) {
-    crate::privileged::sync::release(class_id);
+/// 在锁释放前调用。按实例地址从持有栈中移除。
+pub fn release(class_id: LockClassId, instance: usize) {
+    crate::privileged::sync::release(class_id, instance);
 }
 
 /// 标记进入中断上下文

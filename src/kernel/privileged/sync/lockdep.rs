@@ -336,8 +336,10 @@ static LOCK_DEP_MAP: IrqSpinLock<LockDepMap> = IrqSpinLock::new(LockDepMap::new(
 #[cfg(any(debug_assertions, feature = "lockdep"))]
 #[derive(Debug, Clone, Copy)]
 struct HeldLockEntry {
-    /// 锁类 ID
+    /// 锁类 ID (名字, 用于依赖图 ABBA)
     class_id: LockClassId,
+    /// 锁实例地址 (物理锁指针, 用于持有栈/递归判定/release pop)
+    instance: usize,
     /// 获取时是否在中断上下文
     in_irq: bool,
 }
@@ -347,6 +349,7 @@ impl Default for HeldLockEntry {
     fn default() -> Self {
         Self {
             class_id: LockClassId::INVALID,
+            instance: 0,
             in_irq: false,
         }
     }
@@ -365,28 +368,32 @@ impl HeldLockStack {
         Self {
             entries: [HeldLockEntry {
                 class_id: LockClassId::INVALID,
+                instance: 0,
                 in_irq: false,
             }; MAX_HELD_LOCKS],
             depth: 0,
         }
     }
 
-    /// 压入一个锁
-    fn push(&mut self, class_id: LockClassId, in_irq: bool) -> bool {
+    /// 压入一个锁 (记录类 + 实例)
+    fn push(&mut self, class_id: LockClassId, instance: usize, in_irq: bool) -> bool {
         if self.depth >= MAX_HELD_LOCKS {
             lockdep_log!("lockdep: held lock stack overflow (depth={})", self.depth);
             return false;
         }
-        self.entries[self.depth] = HeldLockEntry { class_id, in_irq };
+        self.entries[self.depth] = HeldLockEntry {
+            class_id,
+            instance,
+            in_irq,
+        };
         self.depth += 1;
         true
     }
 
-    /// 弹出指定锁类
-    fn pop(&mut self, class_id: LockClassId) -> bool {
-        // 从栈顶向下查找 (LIFO 语义: 最近获取的先释放)
+    /// 弹出指定实例 (按实例地址精确匹配; LIFO 从栈顶向下)
+    fn pop(&mut self, class_id: LockClassId, instance: usize) -> bool {
         for i in (0..self.depth).rev() {
-            if self.entries[i].class_id == class_id {
+            if self.entries[i].instance == instance && self.entries[i].class_id == class_id {
                 // 移除并压缩
                 for j in i..self.depth.saturating_sub(1) {
                     self.entries[j] = self.entries[j + 1];
@@ -399,11 +406,11 @@ impl HeldLockStack {
         false
     }
 
-    /// 查找栈中是否已持有指定锁类
-    fn contains(&self, class_id: LockClassId) -> bool {
+    /// 查找栈中是否已持有指定实例 (递归获取判定: 同一物理锁重入)
+    fn contains_instance(&self, instance: usize) -> bool {
         self.entries[..self.depth]
             .iter()
-            .any(|e| e.class_id == class_id)
+            .any(|e| e.instance == instance)
     }
 
     /// 获取当前持有锁的深度
@@ -506,13 +513,18 @@ pub fn register_class(desc: LockClassDesc) -> LockClassId {
 /// 3. 递归获取非递归锁
 ///
 /// # 参数
-/// - `class_id`: 锁类 ID
+/// - `class_id`: 锁类 ID (名字, 依赖图用)
+/// - `instance`: 锁实例地址 (物理锁指针, 持有栈/递归/pop 用)
 /// - `irq_context`: 是否在中断上下文中获取 (由调用方判断)
 ///
 /// # 返回
 /// - `true`: 正常
 /// - `false`: 检测到违规 (已打印警告)
-pub fn acquire(class_id: LockClassId, irq_context: bool) -> bool {
+pub fn acquire(class_id: LockClassId, instance: usize, irq_context: bool) -> bool {
+    // 门控关闭 (release, 无 lockdep feature) 时下方 per-CPU 持有栈段被 cfg 掉,
+    // instance 仅在该段使用 → 显式消费避免 unused 警告.
+    #[cfg(not(any(debug_assertions, feature = "lockdep")))]
+    let _ = instance;
     if class_id == LockClassId::INVALID {
         return true;
     }
@@ -541,8 +553,9 @@ pub fn acquire(class_id: LockClassId, irq_context: bool) -> bool {
     #[cfg(any(debug_assertions, feature = "lockdep"))]
     {
         let outcome = with_current_stack(|stack| {
-            // 检查 2: 递归获取非递归锁
-            if stack.contains(class_id) {
+            // 检查 2: 递归获取非递归锁 — 同一物理实例重入才算递归
+            // (不同实例同类 — 如 per-CPU cfs_rq 成对持有 — 是合法的, 不算递归).
+            if stack.contains_instance(instance) {
                 return false;
             }
             // 检查 2.5: 持有 IRQ 上下文锁时获取 sleep lock → 潜在死锁
@@ -558,9 +571,14 @@ pub fn acquire(class_id: LockClassId, irq_context: bool) -> bool {
                     }
                 }
             }
-            // 检查 3: AB-BA 依赖检测 — 对持有栈中每个锁添加 "held → new" 依赖边
+            // 检查 3: AB-BA 依赖检测 — 对持有栈中每个锁添加 "held → new" 依赖边.
+            // 跳过同类边 (同一 class, 不同 instance: per-CPU 数组锁成对持有, 此类边
+            // 无跨类顺序信息, 且会构成 has_path 自环假阳性).
             let held = stack.held_classes().to_vec();
             for entry in &held {
+                if entry.class_id == class_id {
+                    continue;
+                }
                 let mut map = LOCK_DEP_MAP.lock();
                 if !map.add_dependency(entry.class_id, class_id) {
                     let from_name = map.class_name(entry.class_id);
@@ -574,7 +592,7 @@ pub fn acquire(class_id: LockClassId, irq_context: bool) -> bool {
                 }
             }
             // 压入持有栈
-            stack.push(class_id, irq_context);
+            stack.push(class_id, instance, irq_context);
             true
         });
         // Some(false): 检测到递归获取非递归锁 → 违规; None (CPU 越界): 保守放行
@@ -596,17 +614,17 @@ pub fn acquire(class_id: LockClassId, irq_context: bool) -> bool {
 /// 锁释放通知
 ///
 /// 在锁释放前调用。从持有栈中移除。
-pub fn release(class_id: LockClassId) {
+pub fn release(class_id: LockClassId, instance: usize) {
     // 默认 boot (两门皆关): 不持有锁栈, 仅消费参数避免 unused.
     #[cfg(not(any(debug_assertions, feature = "lockdep")))]
-    let _ = class_id;
+    let _ = (class_id, instance);
 
     #[cfg(any(debug_assertions, feature = "lockdep"))]
     {
         if class_id == LockClassId::INVALID {
             return;
         }
-        let popped = with_current_stack(|stack| stack.pop(class_id));
+        let popped = with_current_stack(|stack| stack.pop(class_id, instance));
         // Some(false): 释放了当前上下文未持有的锁 → 违规
         if popped == Some(false) {
             let map = LOCK_DEP_MAP.lock();
@@ -722,21 +740,23 @@ mod tests {
 
         let id_a = LockClassId(0);
         let id_b = LockClassId(1);
+        let inst_a = 0x1000usize;
+        let inst_b = 0x2000usize;
 
-        assert!(stack.push(id_a, false));
+        assert!(stack.push(id_a, inst_a, false));
         assert_eq!(stack.len(), 1);
-        assert!(stack.contains(id_a));
-        assert!(!stack.contains(id_b));
+        assert!(stack.contains_instance(inst_a));
+        assert!(!stack.contains_instance(inst_b));
 
-        assert!(stack.push(id_b, true));
+        assert!(stack.push(id_b, inst_b, true));
         assert_eq!(stack.len(), 2);
-        assert!(stack.contains(id_b));
+        assert!(stack.contains_instance(inst_b));
 
-        assert!(stack.pop(id_b));
+        assert!(stack.pop(id_b, inst_b));
         assert_eq!(stack.len(), 1);
-        assert!(!stack.contains(id_b));
+        assert!(!stack.contains_instance(inst_b));
 
-        assert!(stack.pop(id_a));
+        assert!(stack.pop(id_a, inst_a));
         assert_eq!(stack.len(), 0);
     }
 
@@ -744,17 +764,17 @@ mod tests {
     fn test_held_stack_overflow() {
         let mut stack = HeldLockStack::new();
         for i in 0..MAX_HELD_LOCKS {
-            assert!(stack.push(LockClassId(i as u16), false));
+            assert!(stack.push(LockClassId(i as u16), i, false));
         }
         // 第 MAX_HELD_LOCKS + 1 次应失败
-        assert!(!stack.push(LockClassId(MAX_HELD_LOCKS as u16), false));
+        assert!(!stack.push(LockClassId(MAX_HELD_LOCKS as u16), MAX_HELD_LOCKS, false));
     }
 
     #[test]
     fn test_held_stack_pop_not_present() {
         let mut stack = HeldLockStack::new();
-        stack.push(LockClassId(0), false);
-        assert!(!stack.pop(LockClassId(1))); // 不存在
+        stack.push(LockClassId(0), 0x10, false);
+        assert!(!stack.pop(LockClassId(1), 0x20)); // 实例不存在
         assert_eq!(stack.len(), 1);
     }
 

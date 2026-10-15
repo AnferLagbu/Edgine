@@ -114,7 +114,7 @@ impl<T> RwLock<T> {
     pub fn raw_read_unlock(&self) {
         // Lockdep: 通知读锁释放
         #[cfg(debug_assertions)]
-        lockdep::release(self.lockdep_class);
+        lockdep::release(self.lockdep_class, self as *const Self as usize);
 
         self.inner.lock.raw_lock();
 
@@ -160,7 +160,7 @@ impl<T> RwLock<T> {
     pub fn raw_write_unlock(&self) {
         // Lockdep: 通知写锁释放
         #[cfg(debug_assertions)]
-        lockdep::release(self.lockdep_class);
+        lockdep::release(self.lockdep_class, self as *const Self as usize);
 
         self.inner.lock.raw_lock();
 
@@ -238,7 +238,11 @@ impl<T> RwLock<T> {
 
                 // Lockdep: 通知读锁获取
                 #[cfg(debug_assertions)]
-                lockdep::acquire(self.lockdep_class, lockdep::in_irq_context());
+                lockdep::acquire(
+                    self.lockdep_class,
+                    self as *const Self as usize,
+                    lockdep::in_irq_context(),
+                );
 
                 return;
             }
@@ -261,7 +265,11 @@ impl<T> RwLock<T> {
 
             // Lockdep: 通知读锁获取
             #[cfg(debug_assertions)]
-            lockdep::acquire(self.lockdep_class, lockdep::in_irq_context());
+            lockdep::acquire(
+                self.lockdep_class,
+                self as *const Self as usize,
+                lockdep::in_irq_context(),
+            );
 
             true
         } else {
@@ -290,7 +298,11 @@ impl<T> RwLock<T> {
 
                 // Lockdep: 通知写锁获取
                 #[cfg(debug_assertions)]
-                lockdep::acquire(self.lockdep_class, lockdep::in_irq_context());
+                lockdep::acquire(
+                    self.lockdep_class,
+                    self as *const Self as usize,
+                    lockdep::in_irq_context(),
+                );
 
                 return;
             }
@@ -313,7 +325,11 @@ impl<T> RwLock<T> {
 
             // Lockdep: 通知写锁获取
             #[cfg(debug_assertions)]
-            lockdep::acquire(self.lockdep_class, lockdep::in_irq_context());
+            lockdep::acquire(
+                self.lockdep_class,
+                self as *const Self as usize,
+                lockdep::in_irq_context(),
+            );
 
             true
         } else {
