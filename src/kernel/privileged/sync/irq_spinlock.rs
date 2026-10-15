@@ -32,7 +32,7 @@ use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::privileged::sync::{IrqSaveFlags, SpinLock, disable_interrupts, restore_interrupts};
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, feature = "lockdep"))]
 use crate::privileged::sync::{LockClassDesc, LockClassId, LockKind};
 
 /// 中断安全自旋锁 (TCB)。
@@ -52,8 +52,8 @@ pub struct IrqSpinLock<T> {
     data: UnsafeCell<T>,
     /// 嵌套深度 (防止 lock 期间再 lock 时错误恢复 IF)
     depth: UnsafeCell<AtomicU32>,
-    /// Lockdep 锁类 ID (debug 模式下使用)
-    #[cfg(debug_assertions)]
+    /// Lockdep 锁类 ID (debug 或 feature="lockdep" 下使用)
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
     lockdep_class: LockClassId,
 }
 
@@ -82,13 +82,13 @@ impl<T> IrqSpinLock<T> {
             lock: UnsafeCell::new(SpinLock::new()),
             data: UnsafeCell::new(data),
             depth: UnsafeCell::new(AtomicU32::new(0)),
-            #[cfg(debug_assertions)]
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
             lockdep_class: LockClassId::INVALID,
         }
     }
 
     /// 创建命名 `IrqSpinLock` (用于调试 + lockdep)
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
     // J-01 (2026-09-08): 删除 unfulfilled doc_markdown expect — 文档已用反引号包裹
     // 标识符, doc_markdown 从不触发, expect 为多余防御 (host-test debug 编译暴露)
     pub fn named(name: &'static str, data: T) -> Self {
@@ -104,8 +104,8 @@ impl<T> IrqSpinLock<T> {
         }
     }
 
-    /// 创建命名 IrqSpinLock (release 模式: 忽略名称)
-    #[cfg(not(debug_assertions))]
+    /// 创建命名 IrqSpinLock (其余构建: 忽略名称)
+    #[cfg(not(any(debug_assertions, feature = "lockdep")))]
     pub fn named(_name: &'static str, data: T) -> Self {
         Self::new(data)
     }
@@ -122,7 +122,7 @@ impl<T> IrqSpinLock<T> {
         unsafe { &*self.depth.get() }.fetch_add(1, Ordering::Relaxed);
 
         // Lockdep: 通知锁获取 (IrqSpinLock 始终在中断上下文安全)
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "lockdep"))]
         crate::privileged::sync::acquire(self.lockdep_class, true);
 
         IrqSpinLockGuard {
@@ -130,7 +130,7 @@ impl<T> IrqSpinLock<T> {
             lock_ptr: self.lock.get(),
             depth_ptr: self.depth.get(),
             prev_if: Some(prev),
-            #[cfg(debug_assertions)]
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
             lockdep_class: self.lockdep_class,
         }
     }
@@ -185,7 +185,7 @@ impl<T> IrqSpinLock<T> {
             lock_ptr: inner_ptr,
             depth_ptr: self.depth.get(),
             prev_if: Some(prev),
-            #[cfg(debug_assertions)]
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
             lockdep_class: self.lockdep_class,
         })
     }
@@ -222,8 +222,8 @@ pub struct IrqSpinLockGuard<'a, T> {
     depth_ptr: *mut AtomicU32,
     /// `lock()` 时保存的 IF 标志
     prev_if: Option<IrqSaveFlags>,
-    /// Lockdep 锁类 ID (debug 模式下使用)
-    #[cfg(debug_assertions)]
+    /// Lockdep 锁类 ID (debug 或 feature="lockdep" 模式下使用)
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
     lockdep_class: LockClassId,
 }
 
@@ -243,7 +243,7 @@ impl<T> DerefMut for IrqSpinLockGuard<'_, T> {
 impl<T> Drop for IrqSpinLockGuard<'_, T> {
     fn drop(&mut self) {
         // Lockdep: 通知锁释放
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "lockdep"))]
         crate::privileged::sync::release(self.lockdep_class);
 
         // SAFETY: 持有 lock_ptr 上的锁, 任何其他访问者都被锁在外; cli 屏蔽中断。

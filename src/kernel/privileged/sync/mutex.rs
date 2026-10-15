@@ -28,7 +28,7 @@
 
 use core::sync::atomic::Ordering;
 
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, feature = "lockdep"))]
 use super::lockdep::{self, LockClassDesc, LockClassId, LockKind};
 use super::types::{MutexGuard, MutexInner};
 
@@ -39,8 +39,8 @@ use super::types::{MutexGuard, MutexInner};
 pub struct Mutex<T: ?Sized> {
     /// 内部状态
     inner: MutexInner,
-    /// Lockdep 锁类 ID (debug 模式下使用)
-    #[cfg(debug_assertions)]
+    /// Lockdep 锁类 ID (debug 或 feature="lockdep" 下使用)
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
     lockdep_class: LockClassId,
     /// 被保护的数据 (必须为最后一项, 以支持 ?Sized)
     data: core::cell::UnsafeCell<T>,
@@ -67,13 +67,13 @@ impl<T> Mutex<T> {
         Self {
             inner: MutexInner::default(),
             data: core::cell::UnsafeCell::new(data),
-            #[cfg(debug_assertions)]
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
             lockdep_class: LockClassId::INVALID,
         }
     }
 
     /// 创建命名 Mutex (用于调试 + lockdep)
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
     pub fn named(name: &'static str, data: T) -> Self {
         let class_id = lockdep::register_class(LockClassDesc {
             name,
@@ -86,8 +86,8 @@ impl<T> Mutex<T> {
         }
     }
 
-    /// 创建命名 Mutex (release 模式: 忽略名称)
-    #[cfg(not(debug_assertions))]
+    /// 创建命名 Mutex (其余构建: 忽略名称)
+    #[cfg(not(any(debug_assertions, feature = "lockdep")))]
     pub fn named(_name: &'static str, data: T) -> Self {
         Self::new(data)
     }
@@ -193,7 +193,7 @@ impl<T> Mutex<T> {
     /// 原始释放锁
     fn raw_unlock(&self) {
         // Lockdep: 通知锁释放
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "lockdep"))]
         lockdep::release(self.lockdep_class);
 
         self.inner.inner_spinlock.raw_lock();
@@ -233,7 +233,7 @@ impl<T> Mutex<T> {
         self.inner.acquire_time.store(rdtsc(), Ordering::Release);
 
         // Lockdep: 通知锁获取
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "lockdep"))]
         lockdep::acquire(self.lockdep_class, lockdep::in_irq_context());
     }
 

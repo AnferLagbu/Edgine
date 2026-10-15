@@ -56,13 +56,17 @@ macro_rules! lockdep_log {
 
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
-use crate::privileged::constants::limits::{MAX_HELD_LOCKS, MAX_LOCK_CLASSES};
+#[cfg(any(debug_assertions, feature = "lockdep"))]
+use crate::privileged::constants::limits::MAX_HELD_LOCKS;
+use crate::privileged::constants::limits::MAX_LOCK_CLASSES;
 use crate::privileged::sync::IrqSpinLock;
 
 /// 邻接矩阵中 "已验证无环" 的标记位 (避免重复 BFS)
+#[cfg(any(debug_assertions, feature = "lockdep"))]
 const DEPENDENCY_VERIFIED: u8 = 1;
 
 /// 邻接矩阵中 "新边, 需要检测" 的标记位
+#[cfg(any(debug_assertions, feature = "lockdep"))]
 const DEPENDENCY_NEW: u8 = 2;
 
 // ============================================================================
@@ -218,6 +222,7 @@ impl LockDepMap {
     /// 检查并添加依赖边 (from → to)
     ///
     /// 返回 true = 添加成功 (无环), false = 检测到环 (死锁风险)
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
     fn add_dependency(&mut self, from: LockClassId, to: LockClassId) -> bool {
         let fi = from.0 as usize;
         let ti = to.0 as usize;
@@ -249,6 +254,7 @@ impl LockDepMap {
     }
 
     /// BFS 检测从 `start` 到 `target` 是否有路径
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
     fn has_path(&self, start: usize, target: usize) -> bool {
         // 简单 BFS, 使用栈上位数组作为 visited
         let mut visited = [false; MAX_LOCK_CLASSES];
@@ -326,7 +332,8 @@ static LOCK_DEP_MAP: IrqSpinLock<LockDepMap> = IrqSpinLock::new(LockDepMap::new(
 // Per-CPU / Per-Thread 持有锁栈
 // ============================================================================
 
-/// 持有锁栈条目
+/// 持有锁栈条目 (仅 lockdep 激活时参与编译)
+#[cfg(any(debug_assertions, feature = "lockdep"))]
 #[derive(Debug, Clone, Copy)]
 struct HeldLockEntry {
     /// 锁类 ID
@@ -335,6 +342,7 @@ struct HeldLockEntry {
     in_irq: bool,
 }
 
+#[cfg(any(debug_assertions, feature = "lockdep"))]
 impl Default for HeldLockEntry {
     fn default() -> Self {
         Self {
@@ -344,14 +352,14 @@ impl Default for HeldLockEntry {
     }
 }
 
-/// Per-CPU 持有锁栈
-///
-/// 当前实现使用全局单栈 (单核/引导阶段), 后续可改为 per-CPU。
+/// Per-CPU 持有锁栈 (每 CPU 一格; 仅 lockdep 激活时参与编译)
+#[cfg(any(debug_assertions, feature = "lockdep"))]
 struct HeldLockStack {
     entries: [HeldLockEntry; MAX_HELD_LOCKS],
     depth: usize,
 }
 
+#[cfg(any(debug_assertions, feature = "lockdep"))]
 impl HeldLockStack {
     const fn new() -> Self {
         Self {
@@ -414,8 +422,45 @@ impl HeldLockStack {
     }
 }
 
-/// 全局持有锁栈 (单核阶段; 后续改为 per-CPU)
-static HELD_LOCK_STACK: IrqSpinLock<HeldLockStack> = IrqSpinLock::new(HeldLockStack::new());
+/// Per-CPU 持有锁栈数组 (每 CPU 一格; 仅 lockdep 激活时占用, 避免 `MAX_CPUS` 格常驻 boot BSS).
+///
+/// 访问纪律: 每次 [`with_current_stack`] 先 `disable_interrupts` 再操作本 CPU 格,
+/// 与 `IrqSpinLock` 同一语义 —— 普通 `SpinLock` 的 lockdep acquire 可能在中断开启时
+/// 发生, 若不关中断, 同核 ISR 可重入同一格造成 `&mut` 别名 UB; 关中断后本核无并发,
+/// 跨核访问的是互不重叠的格.
+#[cfg(any(debug_assertions, feature = "lockdep"))]
+struct PerCpuHeldStacks {
+    slots: [core::cell::UnsafeCell<HeldLockStack>; crate::privileged::config::MAX_CPUS],
+}
+
+// SAFETY: 每个 `slots[cpu]` 仅由其所属 CPU 在关中断临界区内独占访问 (见
+// `PerCpuHeldStacks` 文档), 跨 CPU 访问不重叠的格, 不存在数据竞争与 `&mut` 别名;
+// 由此整体可安全 `Sync` (I2: 每格仅属主 CPU 可见其持有状态).
+#[cfg(any(debug_assertions, feature = "lockdep"))]
+unsafe impl Sync for PerCpuHeldStacks {}
+
+/// Per-CPU 持有锁栈全局数组 (const 初始化, 仅 lockdep 激活时占用).
+#[cfg(any(debug_assertions, feature = "lockdep"))]
+static HELD_LOCK_STACKS: PerCpuHeldStacks = PerCpuHeldStacks {
+    slots: [const { core::cell::UnsafeCell::new(HeldLockStack::new()) };
+        crate::privileged::config::MAX_CPUS],
+};
+
+/// 在当前 CPU 的持有锁栈上执行闭包, 关中断保证本核独占 (返回 `None` 表示 CPU id 越界,
+/// 调用方保守跳过检测).
+#[cfg(any(debug_assertions, feature = "lockdep"))]
+fn with_current_stack<R>(f: impl FnOnce(&mut HeldLockStack) -> R) -> Option<R> {
+    let cpu = crate::privileged::smp::get_current_cpu() as usize;
+    if cpu >= crate::privileged::config::MAX_CPUS {
+        return None;
+    }
+    let prev = crate::privileged::sync::disable_interrupts();
+    // SAFETY: 已屏蔽本 CPU 中断 → 本核无并发访问 `slots[cpu]`; 其他 CPU 访问不同格,
+    // 无 `&mut` 别名 (见 `PerCpuHeldStacks` Sync 契约).
+    let r = f(unsafe { &mut *HELD_LOCK_STACKS.slots[cpu].get() });
+    crate::privileged::sync::restore_interrupts(&prev);
+    Some(r)
+}
 
 // ============================================================================
 // 中断上下文跟踪
@@ -492,10 +537,48 @@ pub fn acquire(class_id: LockClassId, irq_context: bool) -> bool {
         }
     }
 
-    // 检查 2: 递归获取非递归锁
+    // 检查 2/2.5/3 + 压栈: 操作当前 CPU 的 per-CPU 持有锁栈 (仅 lockdep 激活时).
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
     {
-        let mut stack = HELD_LOCK_STACK.lock();
-        if stack.contains(class_id) {
+        let outcome = with_current_stack(|stack| {
+            // 检查 2: 递归获取非递归锁
+            if stack.contains(class_id) {
+                return false;
+            }
+            // 检查 2.5: 持有 IRQ 上下文锁时获取 sleep lock → 潜在死锁
+            if !irq_context && stack.any_in_irq() {
+                if let Some(k) = kind {
+                    if k.may_sleep() {
+                        let map = LOCK_DEP_MAP.lock();
+                        let name = map.class_name(class_id);
+                        lockdep_log!(
+                            "lockdep WARNING: acquiring sleep lock '{}' while holding IRQ-context lock",
+                            name
+                        );
+                    }
+                }
+            }
+            // 检查 3: AB-BA 依赖检测 — 对持有栈中每个锁添加 "held → new" 依赖边
+            let held = stack.held_classes().to_vec();
+            for entry in &held {
+                let mut map = LOCK_DEP_MAP.lock();
+                if !map.add_dependency(entry.class_id, class_id) {
+                    let from_name = map.class_name(entry.class_id);
+                    let to_name = map.class_name(class_id);
+                    lockdep_log!(
+                        "lockdep DEADLOCK: circular dependency detected: {} → {} (AB-BA)",
+                        from_name,
+                        to_name
+                    );
+                    // 不 return, 继续记录但标记违规
+                }
+            }
+            // 压入持有栈
+            stack.push(class_id, irq_context);
+            true
+        });
+        // Some(false): 检测到递归获取非递归锁 → 违规; None (CPU 越界): 保守放行
+        if outcome == Some(false) {
             let map = LOCK_DEP_MAP.lock();
             let name = map.class_name(class_id);
             lockdep_log!(
@@ -505,40 +588,6 @@ pub fn acquire(class_id: LockClassId, irq_context: bool) -> bool {
             map.violation_count.fetch_add(1, Ordering::Relaxed);
             return false;
         }
-
-        // 检查 2.5: 持有 IRQ 上下文锁时获取 sleep lock → 潜在死锁
-        if !irq_context && stack.any_in_irq() {
-            if let Some(k) = kind {
-                if k.may_sleep() {
-                    let map = LOCK_DEP_MAP.lock();
-                    let name = map.class_name(class_id);
-                    lockdep_log!(
-                        "lockdep WARNING: acquiring sleep lock '{}' while holding IRQ-context lock",
-                        name
-                    );
-                }
-            }
-        }
-
-        // 检查 3: AB-BA 依赖检测
-        // 对当前持有栈中的每个锁, 添加 "held → new" 依赖边
-        let held = stack.held_classes().to_vec();
-        for entry in &held {
-            let mut map = LOCK_DEP_MAP.lock();
-            if !map.add_dependency(entry.class_id, class_id) {
-                let from_name = map.class_name(entry.class_id);
-                let to_name = map.class_name(class_id);
-                lockdep_log!(
-                    "lockdep DEADLOCK: circular dependency detected: {} → {} (AB-BA)",
-                    from_name,
-                    to_name
-                );
-                // 不 return, 继续记录但标记违规
-            }
-        }
-
-        // 压入持有栈
-        stack.push(class_id, irq_context);
     }
 
     true
@@ -548,26 +597,39 @@ pub fn acquire(class_id: LockClassId, irq_context: bool) -> bool {
 ///
 /// 在锁释放前调用。从持有栈中移除。
 pub fn release(class_id: LockClassId) {
-    if class_id == LockClassId::INVALID {
-        return;
-    }
+    // 默认 boot (两门皆关): 不持有锁栈, 仅消费参数避免 unused.
+    #[cfg(not(any(debug_assertions, feature = "lockdep")))]
+    let _ = class_id;
 
-    let mut stack = HELD_LOCK_STACK.lock();
-    if !stack.pop(class_id) {
-        let map = LOCK_DEP_MAP.lock();
-        let name = map.class_name(class_id);
-        lockdep_log!(
-            "lockdep VIOLATION: releasing lock '{}' not held by current context!",
-            name
-        );
-        map.violation_count.fetch_add(1, Ordering::Relaxed);
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
+    {
+        if class_id == LockClassId::INVALID {
+            return;
+        }
+        let popped = with_current_stack(|stack| stack.pop(class_id));
+        // Some(false): 释放了当前上下文未持有的锁 → 违规
+        if popped == Some(false) {
+            let map = LOCK_DEP_MAP.lock();
+            let name = map.class_name(class_id);
+            lockdep_log!(
+                "lockdep VIOLATION: releasing lock '{}' not held by current context!",
+                name
+            );
+            map.violation_count.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 
 /// 查询当前持有锁深度
 pub fn held_depth() -> usize {
-    let stack = HELD_LOCK_STACK.lock();
-    stack.len()
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
+    {
+        with_current_stack(|stack| stack.len()).unwrap_or(0)
+    }
+    #[cfg(not(any(debug_assertions, feature = "lockdep")))]
+    {
+        0
+    }
 }
 
 /// 查询已注册锁类数
@@ -590,29 +652,39 @@ pub fn deadlock_detected() -> bool {
 
 /// 打印当前锁依赖状态 (调试用)
 pub fn dump_state() {
-    let map = LOCK_DEP_MAP.lock();
-    let stack = HELD_LOCK_STACK.lock();
-
     lockdep_log!("=== Lockdep State Dump ===");
-    lockdep_log!("Registered classes: {}", map.num_classes());
-    lockdep_log!("Violations: {}", map.num_violations());
-    lockdep_log!(
-        "Deadlock detected: {}",
-        map.deadlock_detected.load(Ordering::Relaxed)
-    );
-    lockdep_log!("Held locks (depth={}):", stack.len());
-
-    for entry in stack.held_classes() {
-        let name = map.class_name(entry.class_id);
-        lockdep_log!("  {} (irq={})", name, entry.in_irq);
+    {
+        let map = LOCK_DEP_MAP.lock();
+        lockdep_log!("Registered classes: {}", map.num_classes());
+        lockdep_log!("Violations: {}", map.num_violations());
+        lockdep_log!(
+            "Deadlock detected: {}",
+            map.deadlock_detected.load(Ordering::Relaxed)
+        );
     }
 
-    // 打印邻接矩阵中的边
-    lockdep_log!("Dependency edges:");
-    for i in 0..map.class_count {
-        for j in 0..map.class_count {
-            if map.adjacency[i][j] != 0 {
-                lockdep_log!("  {} → {}", map.classes[i].name, map.classes[j].name,);
+    // 当前 CPU 持有锁栈 (仅 lockdep 激活时).
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
+    {
+        let held = with_current_stack(|stack| (stack.len(), stack.held_classes().to_vec()));
+        if let Some((depth, held)) = held {
+            lockdep_log!("Held locks (depth={}):", depth);
+            for entry in &held {
+                let map = LOCK_DEP_MAP.lock();
+                let name = map.class_name(entry.class_id);
+                lockdep_log!("  {} (irq={})", name, entry.in_irq);
+            }
+        }
+    }
+
+    {
+        let map = LOCK_DEP_MAP.lock();
+        lockdep_log!("Dependency edges:");
+        for i in 0..map.class_count {
+            for j in 0..map.class_count {
+                if map.adjacency[i][j] != 0 {
+                    lockdep_log!("  {} → {}", map.classes[i].name, map.classes[j].name,);
+                }
             }
         }
     }

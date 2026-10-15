@@ -98,6 +98,10 @@ net = []
 alloc = []
 async = []
 debug_mutex = []
+# lockdep: 独立点亮锁依赖检测体系 (AB-BA / IRQ 取睡眠锁 / 递归 / 释放未持有),
+# 使 release boot 镜像也能在其余仍为 release 的前提下单独启用锁序取证.
+# 详见 docs/plan/multithreading-project.md A-1..A-4 与 P-29 根因诊断.
+lockdep = []
 # initramfs: 从 other/build/x86_64/user/initramfs.cpio 加载根文件系统 (产物按架构分目录)
 initramfs = []
 log = []

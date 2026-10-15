@@ -19,7 +19,7 @@
 
 use core::sync::atomic::{Ordering, fence};
 
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, feature = "lockdep"))]
 use super::lockdep::{self, LockClassDesc, LockClassId, LockKind};
 pub use super::types::IrqSaveFlags;
 use super::types::{SpinLockGuard, SpinLockInner, TryLockResult};
@@ -31,8 +31,8 @@ use super::types::{SpinLockGuard, SpinLockInner, TryLockResult};
 pub struct SpinLock {
     /// 内部状态
     inner: SpinLockInner,
-    /// Lockdep 锁类 ID (debug 模式下使用)
-    #[cfg(debug_assertions)]
+    /// Lockdep 锁类 ID (debug 或 feature="lockdep" 下使用)
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
     lockdep_class: LockClassId,
 }
 
@@ -41,28 +41,38 @@ impl SpinLock {
     pub const fn new() -> Self {
         Self {
             inner: SpinLockInner::new(),
-            #[cfg(debug_assertions)]
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
             lockdep_class: LockClassId::INVALID,
         }
     }
 
     /// 创建命名自旋锁 (用于调试 + lockdep)
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
     pub fn named(name: &'static str) -> Self {
         let class_id = lockdep::register_class(LockClassDesc {
             name,
             kind: LockKind::SpinLock,
         });
-        let mut lock = Self {
+        // debug 构建额外记录 inner.name (types.rs 的 debug-only 字段); feature="lockdep"
+        // 但非 debug 时该字段不参与编译, 直接构造 (避免多余 mut).
+        #[cfg(debug_assertions)]
+        {
+            let mut lock = Self {
+                inner: SpinLockInner::new(),
+                lockdep_class: class_id,
+            };
+            lock.inner.name = name;
+            lock
+        }
+        #[cfg(not(debug_assertions))]
+        Self {
             inner: SpinLockInner::new(),
             lockdep_class: class_id,
-        };
-        lock.inner.name = name;
-        lock
+        }
     }
 
-    /// 创建命名自旋锁 (release 模式: 忽略名称)
-    #[cfg(not(debug_assertions))]
+    /// 创建命名自旋锁 (其余构建: 忽略名称)
+    #[cfg(not(any(debug_assertions, feature = "lockdep")))]
     pub fn named(_name: &'static str) -> Self {
         Self::new()
     }
@@ -82,7 +92,7 @@ impl SpinLock {
         {
             #[cfg(debug_assertions)]
             self.debug_acquire();
-            #[cfg(debug_assertions)]
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
             lockdep::acquire(self.lockdep_class, lockdep::in_irq_context());
             return; // 成功获取
         }
@@ -100,7 +110,7 @@ impl SpinLock {
 
         #[cfg(debug_assertions)]
         self.debug_acquire();
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "lockdep"))]
         lockdep::acquire(self.lockdep_class, lockdep::in_irq_context());
     }
 
@@ -162,7 +172,7 @@ impl SpinLock {
     /// # Safety
     /// 调用者必须持有该锁
     pub fn raw_unlock(&self) {
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "lockdep"))]
         lockdep::release(self.lockdep_class);
 
         // 内存屏障: 确保所有写操作对其他 CPU 可见
@@ -186,7 +196,7 @@ impl SpinLock {
             Ok(_) => {
                 #[cfg(debug_assertions)]
                 self.debug_acquire();
-                #[cfg(debug_assertions)]
+                #[cfg(any(debug_assertions, feature = "lockdep"))]
                 lockdep::acquire(self.lockdep_class, lockdep::in_irq_context());
                 TryLockResult::Acquired
             }
