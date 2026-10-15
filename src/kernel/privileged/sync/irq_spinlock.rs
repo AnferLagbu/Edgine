@@ -29,11 +29,17 @@
 use core::cell::UnsafeCell;
 use core::fmt;
 use core::ops::{Deref, DerefMut};
+#[cfg(any(debug_assertions, feature = "lockdep"))]
+use core::sync::atomic::AtomicU16;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::privileged::sync::{IrqSaveFlags, SpinLock, disable_interrupts, restore_interrupts};
 #[cfg(any(debug_assertions, feature = "lockdep"))]
 use crate::privileged::sync::{LockClassDesc, LockClassId, LockKind};
+
+/// 惰性 lockdep 类槽哨兵: 尚未注册 (机制 A). 与 `LockClassId::INVALID` 编码一致.
+#[cfg(any(debug_assertions, feature = "lockdep"))]
+const LOCKDEP_CLASS_UNSET: u16 = u16::MAX;
 
 /// 中断安全自旋锁 (TCB)。
 ///
@@ -52,9 +58,13 @@ pub struct IrqSpinLock<T> {
     data: UnsafeCell<T>,
     /// 嵌套深度 (防止 lock 期间再 lock 时错误恢复 IF)
     depth: UnsafeCell<AtomicU32>,
-    /// Lockdep 锁类 ID (debug 或 feature="lockdep" 下使用)
+    /// Lockdep 类槽: 惰性注册 (机制 A); `LOCKDEP_CLASS_UNSET`=未注册, 首次 `lock()`
+    /// 按名注册后写回. debug 或 feature="lockdep" 下使用.
     #[cfg(any(debug_assertions, feature = "lockdep"))]
-    lockdep_class: LockClassId,
+    lockdep_class: AtomicU16,
+    /// Lockdep 锁名 (const; "" = 匿名, 不参与检测).
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
+    lockdep_name: &'static str,
 }
 
 // SAFETY: 中断屏蔽保证临界区原子性, T: Send 即可。
@@ -83,7 +93,9 @@ impl<T> IrqSpinLock<T> {
             data: UnsafeCell::new(data),
             depth: UnsafeCell::new(AtomicU32::new(0)),
             #[cfg(any(debug_assertions, feature = "lockdep"))]
-            lockdep_class: LockClassId::INVALID,
+            lockdep_class: AtomicU16::new(LOCKDEP_CLASS_UNSET),
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
+            lockdep_name: "",
         }
     }
 
@@ -100,7 +112,23 @@ impl<T> IrqSpinLock<T> {
             lock: UnsafeCell::new(SpinLock::named(name)),
             data: UnsafeCell::new(data),
             depth: UnsafeCell::new(AtomicU32::new(0)),
-            lockdep_class: class_id,
+            lockdep_class: AtomicU16::new(class_id.0),
+            lockdep_name: name,
+        }
+    }
+
+    /// 创建携带 lockdep 名的 `IrqSpinLock` (const; 类 ID 于首次 `lock()` 惰性注册 — 机制 A).
+    ///
+    /// 供 const 静态锁 (如 `PROCESS_TABLE.processes`) 在不破坏 const-init 的前提下携带
+    /// lockdep 名; 运行期首次 `lock()` 触发 `register_class` (按名幂等).
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
+    pub const fn named_lazy(name: &'static str, data: T) -> Self {
+        Self {
+            lock: UnsafeCell::new(SpinLock::new()),
+            data: UnsafeCell::new(data),
+            depth: UnsafeCell::new(AtomicU32::new(0)),
+            lockdep_class: AtomicU16::new(LOCKDEP_CLASS_UNSET),
+            lockdep_name: name,
         }
     }
 
@@ -108,6 +136,32 @@ impl<T> IrqSpinLock<T> {
     #[cfg(not(any(debug_assertions, feature = "lockdep")))]
     pub fn named(_name: &'static str, data: T) -> Self {
         Self::new(data)
+    }
+
+    /// 创建携带 lockdep 名的 const `IrqSpinLock` (门控关闭: 忽略名称, 等价 `new`).
+    #[cfg(not(any(debug_assertions, feature = "lockdep")))]
+    pub const fn named_lazy(_name: &'static str, data: T) -> Self {
+        Self::new(data)
+    }
+
+    /// 解析本锁 lockdep 类 ID: 惰性槽已注册则直接返回; 有名且未注册则首次注册 (机制 A);
+    /// 匿名 (name 为空) 返回 `INVALID` (不参与检测).
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
+    fn resolve_lockdep_class(&self) -> LockClassId {
+        let cur = self.lockdep_class.load(Ordering::Relaxed);
+        if cur != LOCKDEP_CLASS_UNSET {
+            return LockClassId(cur);
+        }
+        if self.lockdep_name.is_empty() {
+            return LockClassId::INVALID;
+        }
+        let id = crate::privileged::sync::register_class(LockClassDesc {
+            name: self.lockdep_name,
+            kind: LockKind::IrqSpinLock,
+        });
+        // 竞态 benign: 多核各自注册同名 → register_class 按名幂等返回同一 id, store 覆盖同值.
+        self.lockdep_class.store(id.0, Ordering::Relaxed);
+        id
     }
 
     /// 获取锁并返回 RAII Guard, 持锁期间屏蔽中断。
@@ -121,9 +175,11 @@ impl<T> IrqSpinLock<T> {
         // SAFETY: 仅本线程访问 depth (cli 保证 ISR 不并发)。
         unsafe { &*self.depth.get() }.fetch_add(1, Ordering::Relaxed);
 
-        // Lockdep: 通知锁获取 (IrqSpinLock 始终在中断上下文安全)
+        // Lockdep: 解析类 ID (机制 A 惰性注册) + 通知锁获取 (IrqSpinLock 始终中断安全)
         #[cfg(any(debug_assertions, feature = "lockdep"))]
-        crate::privileged::sync::acquire(self.lockdep_class, true);
+        let class = self.resolve_lockdep_class();
+        #[cfg(any(debug_assertions, feature = "lockdep"))]
+        crate::privileged::sync::acquire(class, true);
 
         IrqSpinLockGuard {
             data: data_ref,
@@ -131,7 +187,7 @@ impl<T> IrqSpinLock<T> {
             depth_ptr: self.depth.get(),
             prev_if: Some(prev),
             #[cfg(any(debug_assertions, feature = "lockdep"))]
-            lockdep_class: self.lockdep_class,
+            lockdep_class: class,
         }
     }
 
@@ -180,13 +236,18 @@ impl<T> IrqSpinLock<T> {
         let data_ref = unsafe { &mut *self.data.get() };
         // SAFETY: 仅本线程访问 depth (cli 保证 ISR 不并发)。
         unsafe { &*self.depth.get() }.fetch_add(1, Ordering::Relaxed);
+        // Lockdep: 与 lock() 一致 — 解析类 ID + 通知获取 (try_lock 成功即持锁)
+        #[cfg(any(debug_assertions, feature = "lockdep"))]
+        let class = self.resolve_lockdep_class();
+        #[cfg(any(debug_assertions, feature = "lockdep"))]
+        crate::privileged::sync::acquire(class, true);
         Some(IrqSpinLockGuard {
             data: data_ref,
             lock_ptr: inner_ptr,
             depth_ptr: self.depth.get(),
             prev_if: Some(prev),
             #[cfg(any(debug_assertions, feature = "lockdep"))]
-            lockdep_class: self.lockdep_class,
+            lockdep_class: class,
         })
     }
 

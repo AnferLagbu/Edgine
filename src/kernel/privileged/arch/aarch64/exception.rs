@@ -769,7 +769,13 @@ fn handle_irq(from_el0: bool) {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn irq_handler_el0(_frame: &ExceptionFrame) {
+    // Lockdep: 标记中断上下文 (仅诊断构建; 默认 boot 零开销). 与 x86_64
+    // `idt::irq_handler` 同构, 包裹共用的 `handle_irq`.
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
+    crate::privileged::sync::lockdep::irq_enter();
     handle_irq(true);
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
+    crate::privileged::sync::lockdep::irq_exit();
 }
 
 /// 默认同步异常处理 (EL1h / EL0)
@@ -901,7 +907,12 @@ unsafe fn exc_puthex(val: u64) {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn irq_handler(_frame: &ExceptionFrame) {
+    // Lockdep: 标记中断上下文 (仅诊断构建; 默认 boot 零开销). 与 EL0 入口同构.
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
+    crate::privileged::sync::lockdep::irq_enter();
     handle_irq(false);
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
+    crate::privileged::sync::lockdep::irq_exit();
 }
 
 /// 默认 FIQ 处理 (EL1h)

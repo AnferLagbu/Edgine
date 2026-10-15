@@ -104,6 +104,8 @@ impl<T> Mutex<T> {
             // SAFETY: `self` 由调用方保证为有效指针; 只读访问
             data: unsafe { &mut *self.data.get() },
             _mutex: &self.inner,
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
+            lockdep_class: self.lockdep_class,
         }
     }
 
@@ -114,6 +116,8 @@ impl<T> Mutex<T> {
                 // SAFETY: `self` 由调用方保证为有效指针; 只读访问
                 data: unsafe { &mut *self.data.get() },
                 _mutex: &self.inner,
+                #[cfg(any(debug_assertions, feature = "lockdep"))]
+                lockdep_class: self.lockdep_class,
             })
         } else {
             None

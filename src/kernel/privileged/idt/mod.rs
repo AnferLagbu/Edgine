@@ -588,7 +588,12 @@ pub unsafe extern "C" fn irq_handler(frame: *mut InterruptFrame) {
         let frame_ref = &*frame;
         let vector = frame_ref.int_no as u8;
 
+        // Lockdep: 标记进入中断上下文 (仅诊断构建; 默认 boot 零开销).
+        #[cfg(any(debug_assertions, feature = "lockdep"))]
+        crate::privileged::sync::lockdep::irq_enter();
         manager.handle_irq(frame, vector);
+        #[cfg(any(debug_assertions, feature = "lockdep"))]
+        crate::privileged::sync::lockdep::irq_exit();
     }
 }
 

@@ -20,6 +20,9 @@ use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 // 简单的 AtomicI32 (如果标准库没有)
 use core::sync::atomic::AtomicI32;
 
+#[cfg(any(debug_assertions, feature = "lockdep"))]
+use crate::privileged::sync::LockClassId;
+
 /// 锁状态枚举
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LockState {
@@ -293,6 +296,9 @@ impl<T> Drop for SpinLockGuard<'_, T> {
 pub struct MutexGuard<'a, T> {
     pub data: &'a mut T,
     pub _mutex: &'a MutexInner,
+    /// Lockdep 锁类 ID (debug 或 feature="lockdep" 下使用); `drop` 完全解锁时通知释放.
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
+    pub lockdep_class: LockClassId,
 }
 
 impl<T> core::ops::Deref for MutexGuard<'_, T> {
@@ -319,6 +325,10 @@ impl<T> Drop for MutexGuard<'_, T> {
 
         let depth = self._mutex.depth.fetch_sub(1, Ordering::AcqRel);
         if depth <= 1 {
+            // Lockdep: 与 `acquire_lock_internal` 单次 acquire 对齐 — 仅真正解锁
+            // (深度归零) 时通知释放, 避免递归锁的多层 guard 过度 release.
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
+            crate::privileged::sync::lockdep::release(self.lockdep_class);
             self._mutex.locked.store(0, Ordering::Release);
             self._mutex.owner.store(-1, Ordering::Release);
             self._mutex.acquire_time.store(0, Ordering::Release);

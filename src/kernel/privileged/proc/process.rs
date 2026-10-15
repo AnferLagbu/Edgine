@@ -696,7 +696,7 @@ unsafe impl Sync for ProcessTable {}
 impl ProcessTable {
     pub const fn new() -> Self {
         Self {
-            processes: Mutex::new([None; MAX_PROCESSES]),
+            processes: Mutex::named_lazy("PROCESS_TABLE.processes", [None; MAX_PROCESSES]),
             pid_bitmap: Mutex::new([false; MAX_PROCESSES]),
             next_search: Mutex::new(2), // 从 PID 2 开始搜索 (0=idle, 1=init 保留)
         }

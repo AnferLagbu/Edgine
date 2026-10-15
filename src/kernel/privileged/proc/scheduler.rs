@@ -235,7 +235,7 @@ static PER_CPU_SCHED: [AtomicPtr<PerCpuSched>; crate::privileged::config::MAX_CP
 fn new_per_cpu_sched() -> PerCpuSched {
     PerCpuSched {
         rt_queue: Mutex::new(VecDeque::new()),
-        cfs_rq: Mutex::new(CfsRunQueue::new()),
+        cfs_rq: Mutex::named("cfs_rq", CfsRunQueue::new()),
         dl_rq: Mutex::new(DlRunQueue::new()),
         current: AtomicU32::new(0),
         idle: AtomicU32::new(0),
