@@ -68,9 +68,6 @@ pub use types::ProcessState;
 /// 进程优先级
 pub use types::ProcessPriority;
 
-// sched_policy 公共接口 re-export — 策略-机制分离
-pub use sched_policy::{DefaultPolicy, register_default_policy};
-
 // namespace 公共接口 re-export — 避免跨层直接访问 functions::proc::namespace 内部
 pub use namespace::NamespaceSet;
 
@@ -127,20 +124,15 @@ pub type ProcResult<T> = Result<T, ProcError>;
 ///
 /// **调用顺序** (依赖链):
 /// 1. 进程表 (`PROCESS_TABLE` 常量初始化自动完成, 无需显式 init)
-/// 2. 线程表 (`THREAD_MANAGER.init` → `THREAD_MANAGER` 通过 `pub fn init()`)
-/// 3. 主调度器 (`SCHEDULER.init` + `SCHEDULER_EX.init`)
-/// 4. Session 管理器 (`SESSION_MANAGER.init` → `pub fn init()`)
+/// 2. 主调度器 (`SCHEDULER.init`, per-CPU 进程级; 线程级 SchedulerEx 并行实现已移除, P-29 route C)
+/// 3. Session 管理器 (`SESSION_MANAGER.init` → `pub fn init()`)
 ///
 /// 由启动期 `kernel::init` 调用一次。
 #[expect(
     clippy::missing_panics_doc,
-    reason = "missing_panics_doc: init 在调度/信号策略重复注册时 panic 以暴露启动期配置错误 (privileged 契约: 仅注册一次, 见 B05-36/B05-44)"
+    reason = "missing_panics_doc: init 在信号/coredump 策略重复注册时 panic 以暴露启动期配置错误 (privileged 契约: 仅注册一次, 见 B05-36/B05-44)"
 )]
 pub fn init() {
-    // 注册 functions 层调度策略 (在 privileged 调度器初始化之前)
-    // 启动期重复注册是配置错误, panic 暴露 (B05-36 5.9 + B05-44 返工).
-    sched_policy::register_default_policy()
-        .expect("proc::init: 调度策略重复注册 (privileged 契约: 仅注册一次)");
     // REVAL-1: 注册 functions 层信号策略
     // 启动期重复注册是配置错误, panic 暴露 (B05-44 返工).
     signal::register_standard_signal_policy()
@@ -150,9 +142,7 @@ pub fn init() {
     coredump::register_standard_coredump_sink()
         .expect("proc::init: coredump sink 重复注册 (privileged 契约: 仅注册一次)");
 
-    crate::privileged::proc::thread::init();
     crate::privileged::proc::scheduler::init();
-    crate::privileged::proc::scheduler_ex::init();
     crate::privileged::proc::session::init();
 }
 

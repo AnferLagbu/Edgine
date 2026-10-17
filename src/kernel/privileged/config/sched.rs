@@ -4,7 +4,7 @@
 //!
 //! 原 SCHED_\* 常量于 T6-9 (2026-06-16) 迁至 `functions::config::sched`, 本文件仅
 //! re-export。按"机制持有的数据结构/常量归 privileged"统一判据反转：`SCHED_*`
-//! 被 privileged proc 调度机制 (user_proc/scheduler_ex) 直接消费 — 属机制常量,
+//! 被 privileged proc 调度机制 (user_proc/cfs/scheduler) 直接消费 — 属机制常量,
 //! 迁回。
 //!
 //! ## DECISION-O ② 收敛单向记录 (2026-09-13)

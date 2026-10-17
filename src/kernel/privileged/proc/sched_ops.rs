@@ -6,41 +6,35 @@
 //! ## 依赖
 //! - `process::PROCESS_TABLE` — 进程表
 //! - `scheduler::SCHEDULER` — 主调度器
-//! - `scheduler_ex::SCHEDULER_EX` — 扩展调度器
 //!
 //! ## FFI 面收敛（死 C-ABI 层专项）
 //!
 //! 本文件原有 25 个 `#[unsafe(no_mangle)] extern "C"` 导出，经全仓引用普查
 //! （`.rs` + `.c/.h/.S/.asm/.ld` + `scripts/` `tools/`，剔除注释与 `pub use`）
 //! 确认 24 个零调用者，已按「三合一 + 三档」判据删除：活路径的等价入口分别由
-//! `sched_trait` 策略接口、`scheduler_*` 安全 Rust API 与 `proc_ops::*` 承担。
+//! `scheduler_*` 安全 Rust API（per-CPU 进程级）与 `proc_ops::*` 承担。
 //! 保留的 `SCHEDULER` 侧方法本体（RT / quota / limit / should_reschedule 面）
 //! 登记为「机制已实现、入口待 syscall 接线」，见 `docs/plan/net-e2e-tcp-echo-flakiness.md` §6。
 
 use super::process::PROCESS_TABLE;
 use super::scheduler::SCHEDULER;
-use super::scheduler_ex::SCHEDULER_EX;
 use super::types::{BlockReason, Pid, ProcessPriority};
 
 // ============================================================================
 // 调度器查询与控制
 // ============================================================================
 
-/// 获取当前调度线程的 CPU 时间 (纳秒).
+/// 获取当前调度进程的 CPU 时间 (tick 计数).
 pub fn scheduler_current_cputime() -> u64 {
-    let current = SCHEDULER_EX
-        .current
-        .load(core::sync::atomic::Ordering::Acquire)
-        as *mut super::thread::Thread;
-    if current.is_null() {
-        return 0;
-    }
-    // SAFETY: current 是调度器维护的有效线程指针
-    unsafe {
-        (*current)
-            .cpu_time
-            .load(core::sync::atomic::Ordering::Acquire)
-    }
+    SCHEDULER
+        .current()
+        .and_then(|pid| {
+            PROCESS_TABLE.with_process(pid, |p| {
+                p.user_time.load(core::sync::atomic::Ordering::Acquire)
+                    + p.sys_time.load(core::sync::atomic::Ordering::Acquire)
+            })
+        })
+        .unwrap_or(0)
 }
 
 /// 解除进程阻塞 (加入就绪队列).
@@ -61,7 +55,7 @@ pub fn scheduler_add_to_run_queue(pid: u32) {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn scheduler_yield_ex() {
-    SCHEDULER_EX.yield_current();
+    SCHEDULER.yield_current();
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
@@ -81,13 +75,9 @@ pub extern "C" fn scheduler_schedule() -> Pid {
 pub extern "C" fn scheduler_tick() {
     // D6: 定时器中断统一驱动**进程级**调度器 tick.
     //
-    // 原实现只驱动线程级 `SCHEDULER_EX.tick()`; 而本项目 `ThreadManager::create_thread`
-    // 无调用者 (进程无对应 `Thread`), 线程级调度实际空转, 导致进程级 CFS 记账/
-    // 抢占判定/睡眠唤醒/zombie 回收/周期负载均衡全部不推进 —— aarch64 双核下表现为
-    // 任务被重新入队后本核永久停在 idle (ISSUE-RT-004).
-    //
-    // 线程级记账不丢失: `Scheduler::tick` 内部会调用 `SCHEDULER_EX.tick_accounting()`,
-    // 故此处只保留单一 tick 入口, 不重复记账.
+    // 线程级 `SCHEDULER_EX` 并行实现已移除 (P-29 route C): 进程级 CFS 记账/抢占判定/
+    // 睡眠唤醒/僵尸回收/周期负载均衡均由本 `Scheduler::tick` per-CPU 路径单点承担,
+    // 其中 user/sys 时间记账直接调 `proc_account_tick`.
     SCHEDULER.tick(crate::privileged::smp::get_current_cpu() as usize);
 }
 

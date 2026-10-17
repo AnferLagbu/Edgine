@@ -5,13 +5,14 @@
 //   - user_time / sys_time 字段存在并独立
 //   - proc_set_in_kern(0) → tick 累加 user_time
 //   - proc_set_in_kern(1) → tick 累加 sys_time
-//   - proc_account_tick(in_kern) 真实作用到 PROCESS_TABLE
+//   - Scheduler::tick 真实调用 proc_account_tick (P-29 route C: 记账由已删的
+//     SchedulerEx.tick_accounting 收敛到 per-CPU 进程级 tick)
 //   - syscall_dispatch 入口 set 1, 出口 set 0
 
 use std::fs;
 
 const PROC_API: &str = "../src/kernel/privileged/proc/proc_ops.rs";
-const SCHED: &str = "../src/kernel/privileged/proc/scheduler_ex.rs";
+const SCHEDULER: &str = "../src/kernel/privileged/proc/scheduler.rs";
 const SYSCALL_MOD: &str = "../src/kernel/privileged/syscall/dispatch.rs";
 const PROC_STRUCT: &str = "../src/kernel/privileged/proc/process.rs";
 
@@ -65,18 +66,17 @@ fn test_proc_account_tick_uses_in_kern() {
 }
 
 #[test]
-fn test_tick_accounting_calls_proc_account_tick() {
-    let src = read(SCHED);
-    let body_start = src.find("pub fn tick_accounting").expect("必须存在");
-    let body_end_rel = src[body_start..].find("\n    }\n").unwrap_or(usize::MAX);
-    let body = &src[body_start..body_start + body_end_rel];
+fn test_scheduler_tick_calls_proc_account_tick() {
+    // P-29 route C: 进程级 user/sys 记账由 per-CPU `Scheduler::tick` 直接驱动
+    // (原经已删除的全局 SchedulerEx.tick_accounting).
+    let src = read(SCHEDULER);
     assert!(
-        body.contains("proc_account_tick"),
-        "tick_accounting 必须调用 proc_account_tick"
+        src.contains("proc_account_tick("),
+        "Scheduler::tick 必须调用 proc_account_tick"
     );
     assert!(
-        body.contains("proc_get_in_kern"),
-        "tick_accounting 必须读取 in_kern 状态"
+        src.contains("proc_get_in_kern"),
+        "Scheduler::tick 必须读取 in_kern 状态"
     );
 }
 

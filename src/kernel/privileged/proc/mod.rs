@@ -13,12 +13,10 @@
 //! privileged/proc/  (TCB 进程管理)
 //! ├── types.rs          核心数据结构 (Process/Thread/Task/Pid/Tid 等)
 //! ├── process.rs        进程表 (PCB/进程 CRUD/状态机)
-//! ├── thread.rs         线程 (内核线程/用户线程/上下文)
 //! ├── session.rs        会话/进程组/凭证
 //! ├── elf.rs            ELF 二进制解析 (TCB 原始)
 //! ├── api.rs            C ↔ Rust 桥接 (兼容层)
-//! ├── scheduler.rs      主调度器 (CFS + 实时 + 批处理)
-//! ├── scheduler_ex.rs   调度器扩展 (SMP 负载均衡/亲和性)
+//! ├── scheduler.rs      主调度器 (CFS + 实时 + 批处理, per-CPU)
 //! ├── cfs.rs            CFS 公平调度算法
 //! ├── cpu_queue.rs      每 CPU 运行队列
 //! ├── oomd.rs           OOM killer
@@ -68,14 +66,11 @@ pub mod rlimit;
 /// 进程退出清理 (robust futex / CLEARTID) — 机制层
 pub mod robust;
 pub mod sched_ops;
-pub mod sched_trait;
 pub mod scheduler;
-pub mod scheduler_ex;
 pub mod seccomp;
 pub mod session;
 pub mod signal;
 pub mod signal_trait;
-pub mod thread;
 pub mod types;
 pub mod user_proc;
 
@@ -91,11 +86,9 @@ pub use itimer::*;
 pub use posix_timer::*;
 pub use process::*;
 pub use scheduler::*;
-pub use scheduler_ex::*;
 pub use session::*;
 pub use signal::*;
 pub use signal_trait::*;
-pub use thread::*;
 pub use types::*;
 pub use user_proc::*;
 
@@ -147,11 +140,6 @@ pub use namespace::NamespaceSet;
 pub use cgroup::{
     cgroup_is_initialized, cgroup_subsystem, sys_cgroup_attach, sys_cgroup_create,
     sys_cgroup_destroy, sys_cgroup_get_stat, sys_cgroup_set_limit,
-};
-
-// sched_trait 公共接口 re-export — 策略-机制分离
-pub use sched_trait::{
-    FallbackPolicy, SchedDecision, current_sched_decision, register_sched_decision,
 };
 
 // mechanism 模块供 functions 层通过 privileged::proc::mechanism::* 访问机制 API

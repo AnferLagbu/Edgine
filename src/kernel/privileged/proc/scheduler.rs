@@ -1213,17 +1213,10 @@ impl Scheduler {
         per_cpu.prev.store(current_pid, Ordering::SeqCst);
         per_cpu.current.store(next, Ordering::SeqCst);
 
-        // 注意: 此处**不得**同步写 `SCHEDULER_EX.current`.
-        //
-        // 该字段语义为 `*mut Thread` (由 `SchedulerEx` 独占写: `init`/`schedule`),
-        // 而本函数持有的是进程号 `Pid` ⇒ 写入即造成类型混用: 下一 tick 的
-        // `SCHEDULER_EX.tick_accounting` (aarch64 定时器 IRQ 路径) 会把 pid 当
-        // 指针解引用, 触发非法访问 (aarch64 对齐异常 / x86 低地址静默写坏).
-        // 另: `ThreadManager::create_thread` 当前无调用者, 进程无对应 `Thread`
-        // 可供解析, 故不存在"查询后同步"的合法实现.
-        // SIMPLIFIED: 直接省略跨层同步; 影响面 = `SCHEDULER_EX` 的线程级记账只
-        // 作用于其自身 idle 线程 (进程级记账由 `proc_account_tick` 独立承担, 不受
-        // 影响); 何时需扩展 = 线程层接线后由"双调度器合并"工程统一承载.
+        // 线程级 SchedulerEx 并行实现已移除 (P-29 route C): 本 per-CPU 进程级
+        // 调度器是唯一调度主体, `per_cpu.current` 持有进程号 `Pid`, 不再存在与
+        // 全局 `SCHEDULER_EX.current` (*mut Thread) 的类型混用与跨层同步问题.
+        // 进程级 user/sys 时间记账由下方 `Scheduler::tick` 内的 `proc_account_tick` 承担.
 
         if let Some(next_ptr_raw) = next_ptr {
             // SAFETY: next_ptr_raw is valid from PROCESS_TABLE.get()
@@ -1835,7 +1828,10 @@ impl Scheduler {
         }
 
         crate::privileged::proc::oomd::OOMD.tick();
-        crate::privileged::proc::SCHEDULER_EX.tick_accounting();
+        // 进程级 user/sys 时间记账: 原经全局线程级 SchedulerEx.tick_accounting 驱动,
+        // 现收敛到本 per-CPU tick 直接承担 (P-29 route C, 消除每核并发驱动全局无锁结构的 livelock).
+        let in_kern = crate::privileged::proc::proc_get_in_kern();
+        crate::privileged::proc::proc_account_tick(in_kern);
 
         // Periodic kswapd wakeup — 每 KSWAPD_TICK_INTERVAL tick 唤醒一次内存回收
         // (B3 完整实现: kswapd 走 softirq 路径, 由 scheduler tick 周期驱动).

@@ -27,7 +27,7 @@
 //! │   ├── link/      链接脚本
 //! │   ├── alloc/     全局分配器
 //! │   ├── sync/      同步原语 TCB (11 子模块: spinlock/mutex/rwlock/rcu/atomic/seqlock/types/arch/once_lock/once_cell/irq_spinlock)
-//! │   ├── proc/      进程管理 TCB (12 子模块: types/process/thread/session/elf/api/scheduler/scheduler_ex/cfs/cpu_queue/oomd/user_proc)
+//! │   ├── proc/      进程管理 TCB (types/process/session/elf/api/scheduler/cfs/cpu_queue/oomd/user_proc)
 //! │   ├── sched/     调度器特质
 //! │   ├── syscall/   系统调用底层
 //! │   ├── timer/     时钟底层
@@ -790,7 +790,6 @@ pub extern "C" fn kernel_init() {
 
         // 8. Scheduler
         crate::privileged::proc::scheduler::init();
-        crate::privileged::proc::scheduler_ex::init();
         crate::klog_boot_info!("Scheduler ready");
 
         // 8-1. eBPF — functions::debug::ebpf::init() 注册契约 (DECISION-K 统一

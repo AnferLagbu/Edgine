@@ -26,7 +26,6 @@ use crate::privileged::proc::Pid;
 // DECISION-O ②: CFS_* 权威归 privileged/config/sched (机制常量), functions 侧
 // 纯 re-export — cfs 依赖收敛单向 (本文件零 functions 引用)
 pub use crate::privileged::config::{
-    CFS_BOOST_INTERVAL as CFS_BOOST_INTERVAL_TICKS,
     CFS_DL_MAX_UTILIZATION_PCT as DL_MAX_UTILIZATION_PCT, CFS_DL_MIN_PERIOD as DL_MIN_PERIOD_TICKS,
     CFS_DL_MIN_RUNTIME as DL_MIN_RUNTIME_TICKS, CFS_MIN_GRANULARITY as MIN_GRANULARITY_TICKS,
     CFS_NICE0_WEIGHT as NICE0_WEIGHT, CFS_TARGET_LATENCY as TARGET_LATENCY_TICKS,
@@ -400,77 +399,6 @@ pub fn cfs_should_preempt(curr_vruntime: u64, next_vruntime: u64, weight: u64) -
 }
 
 // ============================================================================
-// 调度策略实现 — functions 层策略主体
-// ============================================================================
-
-use crate::privileged::proc::sched_trait::SchedDecision;
-use crate::privileged::proc::types::ThreadPriority;
-
-/// 默认调度策略 — functions 层安全实现
-///
-/// 策略决策 (优先级选择、boost 触发、时间片计算) 全部在此.
-/// privileged 层的 `SchedulerEx` 仅保留 `RunQueue` 操作和上下文切换机制.
-///
-/// ## 设计
-///
-/// - 从高到低优先级扫描
-/// - 可通过替换此 struct 自定义调度行为
-/// - 在 `functions::proc::init()` 中通过 `register_sched_policy()` 注册
-pub struct DefaultPolicy;
-
-impl SchedDecision for DefaultPolicy {
-    fn pick_next_priority(&self, queue_lengths: [u32; 5]) -> Option<usize> {
-        // 从高到低优先级扫描
-        for prio in (0..5).rev() {
-            if queue_lengths[prio] > 0 {
-                return Some(prio);
-            }
-        }
-        None
-    }
-
-    fn should_boost(&self, tick_count: u64, last_boost: u64) -> bool {
-        tick_count.saturating_sub(last_boost) >= CFS_BOOST_INTERVAL_TICKS
-    }
-
-    fn boost_target(&self) -> ThreadPriority {
-        ThreadPriority::High
-    }
-
-    fn time_slice_for(&self, priority: ThreadPriority) -> u32 {
-        use crate::privileged::config::{
-            SCHED_LEVEL_0_QUANTUM, SCHED_LEVEL_1_QUANTUM, SCHED_LEVEL_2_QUANTUM,
-            SCHED_LEVEL_3_QUANTUM,
-        };
-        match priority {
-            ThreadPriority::Realtime => SCHED_LEVEL_0_QUANTUM,
-            ThreadPriority::High => SCHED_LEVEL_1_QUANTUM,
-            ThreadPriority::Normal => SCHED_LEVEL_2_QUANTUM,
-            ThreadPriority::Low => SCHED_LEVEL_3_QUANTUM,
-            // DECISION-072: u32::MAX = "永不过期"语义; 仅当无其他优先级任务时被调度
-            // (调度器 FIFO 行为); 其他任务唤醒后会抢占, 无死循环风险.
-            ThreadPriority::Idle => u32::MAX,
-        }
-    }
-
-    fn should_reschedule(&self, time_slice_remaining: u32) -> bool {
-        time_slice_remaining <= 1
-    }
-}
-
-/// 注册调度策略到 privileged
-///
-/// 由 `functions::proc::init()` 调用. 只能注册一次.
-///
-/// # Errors
-///
-/// 当调度策略已被注册时返回 `Err(())`.
-pub fn register_default_policy() -> Result<(), ()> {
-    static POLICY: DefaultPolicy = DefaultPolicy;
-    crate::privileged::proc::register_sched_decision(&POLICY).map_err(|_| ())
-}
-
-// ============================================================================
 // 单元测试 — 调度策略契约
 // ============================================================================
 //
@@ -479,16 +407,10 @@ pub fn register_default_policy() -> Result<(), ()> {
 // - mlfq_level_to_nice: 层级 → nice
 // - DeadlineParams 校验: is_valid + utilization_pct
 // - CfsRunQueue: enqueue/dequeue/pick_next + 时间片计算
-// - DefaultPolicy 调度: time_slice_for + should_reschedule
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    // DECISION-J 归属反转: SCHED_LEVEL_* 权威定义已迁回 privileged::config,
-    // functions::config 仅 re-export 兼容层; privileged 侧测试不得反向引用 functions.
-    use crate::privileged::config::{
-        SCHED_LEVEL_0_QUANTUM, SCHED_LEVEL_1_QUANTUM, SCHED_LEVEL_2_QUANTUM, SCHED_LEVEL_3_QUANTUM,
-    };
 
     /// 1. nice_to_weight: -20..19 全范围
     #[test]
@@ -796,38 +718,6 @@ mod tests {
         // IC3: floor 只增不减, 且不小于运行任务的时基
         assert!(q.floor() >= 1000);
         assert_eq!(q.len(), 0, "树上只剩正在运行的任务 (已拣出) 则为空");
-    }
-
-    /// 9. DefaultPolicy: `time_slice_for` (4 级优先级)
-    #[test]
-    fn test_sched_default_time_slice() {
-        let p = DefaultPolicy;
-        assert_eq!(
-            p.time_slice_for(ThreadPriority::Realtime),
-            SCHED_LEVEL_0_QUANTUM
-        );
-        assert_eq!(
-            p.time_slice_for(ThreadPriority::High),
-            SCHED_LEVEL_1_QUANTUM
-        );
-        assert_eq!(
-            p.time_slice_for(ThreadPriority::Normal),
-            SCHED_LEVEL_2_QUANTUM
-        );
-        assert_eq!(p.time_slice_for(ThreadPriority::Low), SCHED_LEVEL_3_QUANTUM);
-        assert_eq!(p.time_slice_for(ThreadPriority::Idle), u32::MAX);
-    }
-
-    /// 10. DefaultPolicy: 是否需要重新调度
-    #[test]
-    fn test_sched_default_should_reschedule() {
-        let p = DefaultPolicy;
-        // 剩余时间片 > 1 → 不重调度
-        assert!(!p.should_reschedule(10));
-        assert!(!p.should_reschedule(2));
-        // 剩余时间片 <= 1 → 应重调度
-        assert!(p.should_reschedule(1));
-        assert!(p.should_reschedule(0));
     }
 
     /// 11. integration: 完整调度循环

@@ -96,27 +96,9 @@ impl ProcessState {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
-    /// ✅ 检查进程是否可调度 (在就绪队列或运行中)
-    pub fn is_runnable(&self) -> bool {
-        matches!(self, Self::Ready | Self::Running)
-    }
-
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// ✅ 检查进程是否存活 (未终止或僵尸)
     pub fn is_alive(&self) -> bool {
         !matches!(self, Self::Zombie | Self::Terminated)
-    }
-
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    /// ✅ 检查进程是否可以被冻结
-    pub fn can_freeze(&self) -> bool {
-        matches!(self, Self::Running | Self::Ready | Self::Blocked)
     }
 
     #[expect(
@@ -316,84 +298,5 @@ pub use crate::privileged::config::{
     USER_STACK_TOP,
 };
 
-/// 线程调度优先级
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ThreadPriority {
-    Idle = 0,
-    Low = 1,
-    Normal = 2,
-    High = 3,
-    Realtime = 4,
-}
-
-impl ThreadPriority {
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
-    pub fn from_u32(value: u32) -> Self {
-        match value {
-            0 => Self::Idle,
-            1 => Self::Low,
-            2 => Self::Normal,
-            3 => Self::High,
-            4 => Self::Realtime,
-            _ => Self::Normal,
-        }
-    }
-}
-
-/// 线程状态 (七状态模型)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ThreadState {
-    Created = 0,
-    Ready = 1,
-    Running = 2,
-    Blocked = 3,
-    Zombie = 4,
-    Terminated = 5,
-    Frozen = 6,
-}
-
-impl ThreadState {
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
-    pub fn from_u32(value: u32) -> Self {
-        match value {
-            0 => Self::Created,
-            1 => Self::Ready,
-            2 => Self::Running,
-            3 => Self::Blocked,
-            4 => Self::Zombie,
-            5 => Self::Terminated,
-            6 => Self::Frozen,
-            _ => Self::Created,
-        }
-    }
-
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn is_runnable(&self) -> bool {
-        matches!(self, Self::Ready | Self::Running)
-    }
-
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn is_alive(&self) -> bool {
-        !matches!(self, Self::Zombie | Self::Terminated)
-    }
-
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn can_freeze(&self) -> bool {
-        matches!(self, Self::Running | Self::Ready | Self::Blocked)
-    }
-}
+// 线程级调度词汇 (ThreadPriority / ThreadState) 随 SchedulerEx 并行实现
+// 一并在 P-29 route C 切除: 进程级模型使用 ProcessPriority / ProcessState.

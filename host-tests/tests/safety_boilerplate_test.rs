@@ -1,4 +1,6 @@
-//! I-11: scheduler_ex.rs / pmm.rs SAFETY 注释差异化静态契约测试
+//! I-11: pmm.rs SAFETY 注释差异化静态契约测试
+//!
+//! (原并测的 `scheduler_ex.rs` 并行调度器已于 P-29 route C 整体删除.)
 //!
 //! 验证 maintenance-2026-06-11.md 中 I-11 验收标准:
 //!   "所有 unsafe 块的 SAFETY 注释差异化 (grep 重复数 ≤ 5)"
@@ -74,27 +76,13 @@ fn check_boilerplate(file: &str, top_dupes: &[(&str, usize)]) {
 }
 
 #[test]
-fn test_scheduler_ex_safety_diversity() {
-    // 期望: 修后 boilerplate ≤ 5. 这里给具体断言:
-    // - "t 由 make_test_thread 分配" 出现 4 次 (旧值, 可能微调)
-    // - "调用方保证 thread 有效, push_back 串行" 出现 4 次
-    // 其他应 ≤ 5
-    check_boilerplate(
-        "proc/scheduler_ex.rs",
-        &[
-            // 数量动态 — 验证不超过阈值即可
-        ],
-    );
-}
-
-#[test]
 fn test_pmm_safety_diversity() {
     check_boilerplate("mm/pmm.rs", &[]);
 }
 
 #[test]
 fn test_kernel_wide_boilerplate_inventory() {
-    // I-11 修复只针对 scheduler_ex.rs / pmm.rs. 其他文件暂时记录在案,
+    // I-11 修复只针对 pmm.rs. 其他文件暂时记录在案,
     // 后续按 I-11 同方案逐个修复 (审计 5 原文提到仅这两个文件存在"行数过多").
     // 此测试报告但不强制 — 是 inventory 性质, 不 panic.
     let privileged = Path::new(env!("CARGO_MANIFEST_DIR"))
