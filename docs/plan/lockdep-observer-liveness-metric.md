@@ -54,6 +54,15 @@
 描述：缩小 `LOCK_DEP_MAP` 临界区、把违规日志移出持 `LOCK_DEP_MAP` 的窗口，使 lockdep build 上的锁并发行为更贴近生产（降低 convoy 假象），且**保持 violation 判据语义等价**。
 方案：① `acquire`/`release` 内多次 `LOCK_DEP_MAP.lock()` 合并为单次临界区（缓存 kind/name 后再判）；② `lockdep_log!` 改为"锁内取快照数据、锁外发射"，杜绝持元锁串口自旋；③ 评估 per-CPU 持有栈改无锁读；④ 以 D-1 指标与既有 lockdep 单测（`host-tests` 相关用例）验证检测力不降。**属调试基础设施核心改造，工程量中高，须先有 D-1 作度量托底。**
 状态：[]
+详情（§10 调研 + 推进决策）：
+
+* 主放大器已定位：`acquire` 里 `lockdep_log!`（→ `klog_warn` → `LOG_EMIT_LOCK` + 无超时串口 `serial_putc`）在**持有 `LOCK_DEP_MAP` 时**发射（`lockdep.rs:540-547/565-570/584-590/600-606`），且 `LOCK_DEP_MAP.lock()` **嵌套在关中断的 `with_current_stack` 窗口内**（`565/582`）——即"持元锁做慢串口"，是 convoy 假象的主要来源。
+
+* violation 纯逻辑层已有回归护栏：`LockDepMap::add_dependency`/环检测/`violation_count` 由 `lockdep.rs:716-886` 的 `#[cfg(test)]`（`make test-kernel-host`）锁死；只要不改 `add_dependency` 本体，这些不受影响。**但 `acquire`/`release` 编排层不可 host 单测**（`with_current_stack` 依赖 `get_current_cpu`/`disable_interrupts`），只能靠编译 + debug/lockdep build + QEMU 启动期兜底。
+
+* 两档深度已评估：**A（仅日志出锁域）** = 只把 `lockdep_log!` 移出 `LOCK_DEP_MAP` 持锁窗（锁内取 `&'static` 名/数据快照、锁外发射），直击主放大器、不改锁序结构、violation 判据逐字不变，风险最低；**B（再合并临界区 + 去 with_current_stack 内 map 嵌套）** = 扰动下降更大但触及 acquire 锁序/栈 push 时序，须逐路径论证等价且无 host 单测托底。
+
+* **本轮用户裁定：暂缓 D-2**（§12.3 同步原语/TCB 谨慎原则）。复活前置条件 = 先用 D-1 探针在 **lockdep build vs 非 lockdep build** 上量化"残余 convoy 是否真实存在且误导判读"，据实测再选 A/B；避免无度量下重构脆弱检测器。
 
 ### D-3 CI 接入
 
