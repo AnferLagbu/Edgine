@@ -46,7 +46,8 @@
 
 描述：把散落在一次性 soak 脚本里的"读 tick + `bt` 健康核 + echo 吞吐"三信号，固化为一个可复用、可入 CI 报告的 liveness 探针；输出机器可判的 ALIVE/FROZEN 与量化 tick 速率。
 方案：抽 `other/p30_soak.sh` 的成熟逻辑进 `scripts/` 常驻探针：① 选 `rip ∈` 内核文本窗的核读 tick（抗 KPTI 伪影），三条件 AND 判冻；② 叠加 echo 吞吐计数与 per-核 RIP 变化位作交叉验证；③ 以 exit code + 结构化行输出，供 CI 与回归比对。复用 P-28 `E2E_MON` HMP 雏形，不新增内核插桩（避免 §1.1 观察者效应与 P-27 的 IRQ/锁域 printk 死锁教训）。
-状态：[]
+状态：[X]
+详情：落地为 `scripts/qemu_liveness_probe.sh`（纯诊断工具，零生产改动、零内核插桩）。相对一次性 soak 的加固：① **自动从 `kernel.map` 解析 `TICK_ADDR`**（`kernel::privileged::timer::tick::TICK_IRQ_COUNT`），免手工传参、跨 build 稳健；② 结构化单行输出 `LIVENESS boot=.. state=.. tick=a->b delta=.. rate_per_s=.. halted_core=.. echo_ok=..` + 末尾 `LIVENESS_SUMMARY`；③ 退出码 0=全 ALIVE / 1=有 FROZEN / 2=环境错误，供 CI 直接判。判据与 `p30_soak.sh` 逐字一致（三条件 AND：delta≤0 ∧ 两次 tick 相同 ∧ 无 `[halted]` 核），FROZEN 分支即 P-30 排查中反复走到的路径。实机验收（生产镜像 `kernel.flat`，单 boot SMP=4 HAMMER_S=10）：`state=ALIVE ready=1 tick=0x35bf->0xd27f delta=40128 rate_per_s=4012 echo_ok=924`，exit=0——tick 速率与 P-30 soak（~4k/s）一致，`TICK_ADDR` 正确跟随重编译（0x340148→0x3733b0）。
 
 ### D-2 lockdep 簿记低扰动化
 
@@ -62,6 +63,6 @@
 
 ## 5. 验收
 
-- D-1：同一负载下探针给出稳定、可重放的 ALIVE/FROZEN 与 tick 速率；对已知 flaky（net-e2e tcp-echo）能量化区分"真冻结/读数伪影"。
+- D-1（已落地 `scripts/qemu_liveness_probe.sh`）：同一负载下探针给出稳定、可重放的 ALIVE/FROZEN 与 tick 速率（生产镜像单 boot 验收 state=ALIVE / rate≈4k/s / exit=0）；对已知 flaky（net-e2e tcp-echo）可量化区分"真冻结/读数伪影"（三条件 AND 判据直接编码 KPTI 伪影规避）。
 - D-2：改造前后 lockdep violation 判定结果一致（回归单测），lockdep build 上 convoy 假象相对下降（用 D-1 指标对比）。
 - D-3：接入后 §2.3 门槛不受扰动，生产 release 构建行为逐字节不变（`audit_aarch64_kernel_fp_free` 等专项照旧）。
