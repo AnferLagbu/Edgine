@@ -942,11 +942,37 @@ fn proc_freg_rollback_cb() -> bool {
     proc_freg_rollback()
 }
 
-/// 注册进程表的故障恢复域 (域 id 4), 并绑定捕获与回滚回调。
+/// 进程表 FREG 恢复回调挂载的**安全护栏** (fail-closed, 默认关).
+///
+/// `proc_freg_capture` 直接快照进程表槽位内的 `NonNull<Process>` 裸指针,
+/// 既不 pin 也不加 refcount: 一旦某进程在 capture 之后、rollback 之前被释放,
+/// `proc_freg_rollback` 会把悬垂指针写回进程表 → rollback use-after-free.
+/// 该生命周期保护 (pin / refcount) 尚未实装, 立项见
+/// `docs/plan/freg-proc-rollback-uaf-guard.md`. 实装完成前 **显式拒绝挂载**
+/// capture/rollback 回调: 即便恢复域 id 归属被补全 (使 `find(4)` 返回 Some),
+/// 也不会把裸指针快照路径接入 FREG, 杜绝误激活引 UAF.
+const PROC_FREG_ROLLBACK_SAFE: bool = false;
+
+/// 注册进程表的故障恢复域 (域 id 4); capture/rollback 回调是否挂载由
+/// [`PROC_FREG_ROLLBACK_SAFE`] 护栏决定, 当前默认不挂载 (见护栏文档).
 pub fn proc_register_freg_domain() {
     crate::privileged::freg::recovery_domain_register(4);
-    if let Some(dom) = crate::privileged::freg::RECOVERY_MANAGER.lock().find(4) {
-        *dom.capture_cb.lock() = Some(proc_freg_capture_cb);
-        *dom.rollback_cb.lock() = Some(proc_freg_rollback_cb);
+    let mgr = crate::privileged::freg::RECOVERY_MANAGER.lock();
+    match mgr.find(4) {
+        // 护栏放行才挂载裸指针快照回调.
+        Some(dom) if PROC_FREG_ROLLBACK_SAFE => {
+            *dom.capture_cb.lock() = Some(proc_freg_capture_cb);
+            *dom.rollback_cb.lock() = Some(proc_freg_rollback_cb);
+        }
+        // 误激活警报: id 归属被补全 (find 返回 Some) 但 pin/refcount 尚未实装,
+        // 拒绝挂载并留 trace, 防 proc_freg_capture 的 NonNull<Process> rollback UAF.
+        Some(_dom) => {
+            crate::klog_ffi!(
+                klog_ffi_warn,
+                "[FREG] proc 恢复域回调按护栏拒绝挂载 (NonNull<Process> 快照无 pin/refcount)"
+            );
+        }
+        // 当前常态: 恢复域 id 归属未补全, find(4) 恒 None, 不挂载, 静默.
+        None => {}
     }
 }
