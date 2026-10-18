@@ -95,7 +95,7 @@ impl SpinLock {
             #[cfg(any(debug_assertions, feature = "lockdep"))]
             lockdep::acquire(
                 self.lockdep_class,
-                self as *const Self as usize,
+                core::ptr::from_ref(self) as usize,
                 lockdep::in_irq_context(),
             );
             return; // 成功获取
@@ -117,7 +117,7 @@ impl SpinLock {
         #[cfg(any(debug_assertions, feature = "lockdep"))]
         lockdep::acquire(
             self.lockdep_class,
-            self as *const Self as usize,
+            core::ptr::from_ref(self) as usize,
             lockdep::in_irq_context(),
         );
     }
@@ -181,7 +181,7 @@ impl SpinLock {
     /// 调用者必须持有该锁
     pub fn raw_unlock(&self) {
         #[cfg(any(debug_assertions, feature = "lockdep"))]
-        lockdep::release(self.lockdep_class, self as *const Self as usize);
+        lockdep::release(self.lockdep_class, core::ptr::from_ref(self) as usize);
 
         // 内存屏障: 确保所有写操作对其他 CPU 可见
         fence(Ordering::SeqCst);
@@ -207,7 +207,7 @@ impl SpinLock {
                 #[cfg(any(debug_assertions, feature = "lockdep"))]
                 lockdep::acquire(
                     self.lockdep_class,
-                    self as *const Self as usize,
+                    core::ptr::from_ref(self) as usize,
                     lockdep::in_irq_context(),
                 );
                 TryLockResult::Acquired

@@ -949,6 +949,7 @@ src/kernel/privileged/freg/domain.rs::check_proc_limit
 src/kernel/privileged/freg/domain.rs::check_quota
 src/kernel/privileged/freg/domain.rs::consume_quota_tick
 src/kernel/privileged/freg/domain.rs::is_quota_exceeded
+src/kernel/privileged/freg/mod.rs::check_and_clear_bsr_escalation
 src/kernel/privileged/freg/recoverable.rs::lock_fast
 src/kernel/privileged/freg/recovery.rs::cascade_recover
 src/kernel/privileged/freg/recovery.rs::hard_reset_domain

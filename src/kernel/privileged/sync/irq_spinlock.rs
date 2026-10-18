@@ -181,7 +181,7 @@ impl<T> IrqSpinLock<T> {
         #[cfg(any(debug_assertions, feature = "lockdep"))]
         let class = self.resolve_lockdep_class();
         #[cfg(any(debug_assertions, feature = "lockdep"))]
-        let instance = self as *const Self as usize;
+        let instance = core::ptr::from_ref(self) as usize;
         #[cfg(any(debug_assertions, feature = "lockdep"))]
         crate::privileged::sync::acquire(class, instance, true);
 
@@ -246,7 +246,7 @@ impl<T> IrqSpinLock<T> {
         #[cfg(any(debug_assertions, feature = "lockdep"))]
         let class = self.resolve_lockdep_class();
         #[cfg(any(debug_assertions, feature = "lockdep"))]
-        let instance = self as *const Self as usize;
+        let instance = core::ptr::from_ref(self) as usize;
         #[cfg(any(debug_assertions, feature = "lockdep"))]
         crate::privileged::sync::acquire(class, instance, true);
         Some(IrqSpinLockGuard {
@@ -320,10 +320,17 @@ impl<T> Drop for IrqSpinLockGuard<'_, T> {
         #[cfg(any(debug_assertions, feature = "lockdep"))]
         crate::privileged::sync::release(self.lockdep_class, self.lockdep_instance);
 
+        // 递减嵌套深度**必须在仍持有底层锁时**进行 —— 与 `lock()` 的
+        // `raw_lock`(先) → `fetch_add`(后) 严格对称. `raw_lock` 不可重入 + `lock()`
+        // 全程 `cli` ⇒ 同一核同一锁 `depth` 恒不超过 1, 故放锁前 `fetch_sub` 返回的
+        // `prev` 恒为 1. 旧实现把 `fetch_sub` 放在 `raw_unlock` **之后**, 两者之间留有
+        // 空窗: 本核放锁后、递减前, 对核可抢先 `lock` → `fetch_add` 使 depth=2 → 本核
+        // 读到 `prev`≥2 → 跳过 `restore_interrupts` → 本核 `IF` 永久停在 0 (永久聋,
+        // 不再收 tick / IPI) = P-30 病灶二 的无 #GP delta=0 冻结根因.
+        // SAFETY: 仍持 lock_ptr 上的锁, 任何其他访问者都被锁在外; cli 屏蔽中断.
+        let prev = unsafe { &*self.depth_ptr }.fetch_sub(1, Ordering::Relaxed);
         // SAFETY: 持有 lock_ptr 上的锁, 任何其他访问者都被锁在外; cli 屏蔽中断。
         unsafe { &*self.lock_ptr }.raw_unlock();
-        // SAFETY: 仅本线程访问 depth (cli 保证 ISR 不并发)。
-        let prev = unsafe { &*self.depth_ptr }.fetch_sub(1, Ordering::Relaxed);
         if prev == 1 {
             if let Some(flags) = self.prev_if.take() {
                 restore_interrupts(&flags);

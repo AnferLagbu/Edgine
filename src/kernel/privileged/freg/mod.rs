@@ -100,11 +100,16 @@ pub use api::recovery_test_rollback;
 pub use api::{recovery_get_fault_rate, recovery_set_fault_rate};
 
 pub static PANIC_FLAG: AtomicBool = AtomicBool::new(false);
-pub static PANIC_MSG: IrqSpinLock<[u8; 128]> = IrqSpinLock::new([0u8; 128]);
+// lockdep 可见性 (P-30 引入并保留): 命名 lockdep 类 (named_lazy, 首次 lock() 惰性注册; 非 lockdep 构建零成本).
+// FREG 全子系统的锁此前均为匿名 IrqSpinLock → lockdep 盲区, 正是 P-29 lockdep 运行从未
+// 标记 freg 反向取锁边的原因. 命名后 AB-BA 环检测得以按真名打印确切反向取锁对.
+pub static PANIC_MSG: IrqSpinLock<[u8; 128]> =
+    IrqSpinLock::named_lazy("FREG.PANIC_MSG", [0u8; 128]);
 pub static CRASH_RIP: AtomicU64 = AtomicU64::new(0);
 
+// lockdep 可见性 (P-30 引入并保留): FREG 层级-0 锚锁命名, 使其在 lockdep 下按真名参与 AB-BA 环检测 (匿名时为盲区).
 pub static RECOVERY_MANAGER: IrqSpinLock<RecoveryManager> =
-    IrqSpinLock::new(RecoveryManager::new());
+    IrqSpinLock::named_lazy("RECOVERY_MANAGER", RecoveryManager::new());
 pub static NEED_BSR_ESCALATION: AtomicBool = AtomicBool::new(false);
 
 /// 读取并清除 BSR 升级标志, 返回其先前值。

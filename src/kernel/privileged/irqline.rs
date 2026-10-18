@@ -128,10 +128,15 @@ impl IrqLine {
 const MAX_ISR_VECTORS: usize = 256;
 
 /// 全局 ISR 函数指针表, 由 idt handlers 分发调用。
-/// 使用 `IrqSpinLock` 保护, 中断安全 (`dispatch_irq` 在中断上下文调用).
-static ISR_TABLE: crate::privileged::sync::IrqSpinLock<
+///
+/// 启动期单线程注册 (见 `on_interrupt` / `register_isr` 约束), 运行期只读;
+/// 故用 `RacyCell` 无锁访问, **严禁在中断上下文持锁** (对齐 `SOFTIRQ_HANDLERS`
+/// 与设备 IRQ 表的既有惯例). P-30 前误用 `IrqSpinLock` 并在 `dispatch_irq`
+/// (中断上下文) 持 guard, 违反 `IrqSpinLock` 契约与本文件 B03-23 禁锁名单,
+/// 是单核 #GP 经对核 `raw_lock` 自旋放大成整机冻结的根因.
+static ISR_TABLE: crate::privileged::racy_cell::RacyCell<
     [Option<InterruptHandler>; MAX_ISR_VECTORS],
-> = crate::privileged::sync::IrqSpinLock::new([None; MAX_ISR_VECTORS]);
+> = crate::privileged::racy_cell::RacyCell::new([None; MAX_ISR_VECTORS]);
 
 /// 注册中断向量对应的 ISR 处理器。
 ///
@@ -144,16 +149,21 @@ static ISR_TABLE: crate::privileged::sync::IrqSpinLock<
 unsafe fn register_isr(vector: u8, handler: InterruptHandler) {
     let idx = vector as usize;
     if idx < MAX_ISR_VECTORS {
-        let mut table = ISR_TABLE.lock();
-        table[idx] = Some(handler);
+        // 启动期单线程调用 (无并发), 无锁写入; 运行期本表只读.
+        ISR_TABLE.get_mut()[idx] = Some(handler);
     }
 }
 
-/// 分发中断到已注册的 handler (由 IDT ISR stub 调用)。
+/// 分发中断到已注册的 handler (由 IDT ISR stub 调用).
 pub fn dispatch_irq(vector: u8) -> bool {
     let idx = vector as usize;
     if idx < MAX_ISR_VECTORS {
-        let table = ISR_TABLE.lock();
+        // P-30 根治: 中断上下文绝不持锁 (本文件 B03-23 禁锁名单 + IrqSpinLock
+        // "不可在中断上下文使用"). ISR_TABLE 启动期注册、运行期只读, 故无锁读
+        // (对齐 SOFTIRQ_HANDLERS 惯例): 先拷出 fn 指针再调用, 不在 handler()
+        // 期间持有任何借用/ guard.
+        // SAFETY: ISR_TABLE 启动期单线程注册、运行期只读, 此处仅无并发读.
+        let table = unsafe { ISR_TABLE.get() };
         if let Some(handler) = table[idx] {
             return handler();
         }

@@ -63,8 +63,14 @@ impl RecoveryDomain {
             last_crash_fingerprint: AtomicU64::new(0),
             last_rollback_time: AtomicU64::new(0),
             backoff_until: AtomicU64::new(0),
-            depends_on: IrqSpinLock::new([None; MAX_DOMAIN_DEPENDENCIES]),
-            depended_by: IrqSpinLock::new([None; MAX_DOMAIN_DEPENDENCIES]),
+            depends_on: IrqSpinLock::named_lazy(
+                "FREG.domain.depends_on",
+                [None; MAX_DOMAIN_DEPENDENCIES],
+            ),
+            depended_by: IrqSpinLock::named_lazy(
+                "FREG.domain.depended_by",
+                [None; MAX_DOMAIN_DEPENDENCIES],
+            ),
             dom_cap_mask: AtomicU64::new(u64::MAX),
             original_cap_mask: AtomicU64::new(u64::MAX),
             cpu_quota_max: 0,
@@ -75,10 +81,13 @@ impl RecoveryDomain {
             proc_limit_current: AtomicU32::new(0),
             last_heartbeat: AtomicU64::new(0),
             heartbeat_max_gap: 0,
-            undo: IrqSpinLock::new(UndoLog::new()),
-            capture_cb: IrqSpinLock::new(None),
-            rollback_cb: IrqSpinLock::new(None),
-            freg_stack: IrqSpinLock::new(
+            // lockdep 可见性 (P-30 引入并保留): 命名域内锁, 使 lockdep 能按真名打印
+            // RECOVERY_MANAGER → 域内锁 这一层取锁边 (匿名时为盲区; 非 lockdep 构建零成本).
+            undo: IrqSpinLock::named_lazy("FREG.domain.undo", UndoLog::new()),
+            capture_cb: IrqSpinLock::named_lazy("FREG.domain.capture_cb", None),
+            rollback_cb: IrqSpinLock::named_lazy("FREG.domain.rollback_cb", None),
+            freg_stack: IrqSpinLock::named_lazy(
+                "FREG.domain.freg_stack",
                 [FREGSnapshot {
                     generation: 0,
                     tick: 0,
@@ -86,7 +95,10 @@ impl RecoveryDomain {
                 }; MAX_FREG_SNAPSHOTS],
             ),
             freg_stack_top: AtomicU32::new(0),
-            addr_ranges: IrqSpinLock::new([(0, 0); MAX_ADDR_RANGES]),
+            addr_ranges: IrqSpinLock::named_lazy(
+                "FREG.domain.addr_ranges",
+                [(0, 0); MAX_ADDR_RANGES],
+            ),
             addr_range_count: AtomicU32::new(0),
         }
     }

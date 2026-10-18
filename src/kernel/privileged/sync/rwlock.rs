@@ -114,7 +114,7 @@ impl<T> RwLock<T> {
     pub fn raw_read_unlock(&self) {
         // Lockdep: 通知读锁释放
         #[cfg(debug_assertions)]
-        lockdep::release(self.lockdep_class, self as *const Self as usize);
+        lockdep::release(self.lockdep_class, core::ptr::from_ref(self) as usize);
 
         self.inner.lock.raw_lock();
 
@@ -160,7 +160,7 @@ impl<T> RwLock<T> {
     pub fn raw_write_unlock(&self) {
         // Lockdep: 通知写锁释放
         #[cfg(debug_assertions)]
-        lockdep::release(self.lockdep_class, self as *const Self as usize);
+        lockdep::release(self.lockdep_class, core::ptr::from_ref(self) as usize);
 
         self.inner.lock.raw_lock();
 
@@ -240,7 +240,7 @@ impl<T> RwLock<T> {
                 #[cfg(debug_assertions)]
                 lockdep::acquire(
                     self.lockdep_class,
-                    self as *const Self as usize,
+                    core::ptr::from_ref(self) as usize,
                     lockdep::in_irq_context(),
                 );
 
@@ -267,7 +267,7 @@ impl<T> RwLock<T> {
             #[cfg(debug_assertions)]
             lockdep::acquire(
                 self.lockdep_class,
-                self as *const Self as usize,
+                core::ptr::from_ref(self) as usize,
                 lockdep::in_irq_context(),
             );
 
@@ -300,7 +300,7 @@ impl<T> RwLock<T> {
                 #[cfg(debug_assertions)]
                 lockdep::acquire(
                     self.lockdep_class,
-                    self as *const Self as usize,
+                    core::ptr::from_ref(self) as usize,
                     lockdep::in_irq_context(),
                 );
 
@@ -327,7 +327,7 @@ impl<T> RwLock<T> {
             #[cfg(debug_assertions)]
             lockdep::acquire(
                 self.lockdep_class,
-                self as *const Self as usize,
+                core::ptr::from_ref(self) as usize,
                 lockdep::in_irq_context(),
             );
 

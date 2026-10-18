@@ -309,9 +309,11 @@ impl UefiSubsystem {
             firmware_vendor_addr: AtomicU64::new(0),
             firmware_revision: AtomicU32::new(0),
             epoch_offset_ns: AtomicU64::new(0),
-            gop_mode: IrqSpinLock::new(None),
-            variables: IrqSpinLock::new(Vec::new()),
-            memory_map: IrqSpinLock::new(Vec::new()),
+            // lockdep 可见性 (P-30 引入并保留): 命名 UEFI 驱动锁 (gop_mode 为 boot284 栈回溯的字面标签, 但匿名锁
+            // 可被 ICF 折叠同址使该标签不可单独尽信; 命名后由 lockdep 按真名消除歧义; 非 lockdep 构建零成本).
+            gop_mode: IrqSpinLock::named_lazy("UEFI.gop_mode", None),
+            variables: IrqSpinLock::named_lazy("UEFI.variables", Vec::new()),
+            memory_map: IrqSpinLock::named_lazy("UEFI.memory_map", Vec::new()),
             initialized: AtomicBool::new(false),
             has_uefi: AtomicBool::new(false),
         }

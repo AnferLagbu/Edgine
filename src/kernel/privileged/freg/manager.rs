@@ -6,8 +6,9 @@ use super::types::{
 };
 
 use crate::privileged::sync::IrqSpinLock;
+// lockdep 可见性 (P-30 引入并保留): 命名 FREG 回滚日志锁 (lockdep 盲区消除; 非 lockdep 构建零成本).
 pub static ROLLBACK_LOG: IrqSpinLock<[Option<RollbackEvent>; MAX_ROLLBACK_LOG]> =
-    IrqSpinLock::new([None; MAX_ROLLBACK_LOG]);
+    IrqSpinLock::named_lazy("FREG.ROLLBACK_LOG", [None; MAX_ROLLBACK_LOG]);
 static ROLLBACK_LOG_IDX: AtomicU32 = AtomicU32::new(0);
 
 fn log_rollback_event(event: RollbackEvent) {

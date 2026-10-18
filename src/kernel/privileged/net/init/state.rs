@@ -149,7 +149,8 @@ impl NetState {
 
 /// 全局网络状态, `IrqSpinLock` 保护 (替代原 `NET_LOCK` + 12 static mut).
 /// `poll_network` 使用 `try_lock()` 避免 ISR 上下文阻塞.
-pub static NET_STATE: Mutex<NetState> = Mutex::new(NetState::empty());
+// lockdep 可见性 (P-30 引入并保留): 命名 NET_STATE lockdep 类, 与 RECOVERY_MANAGER 一起构成可打印的 AB-BA 环两端.
+pub static NET_STATE: Mutex<NetState> = Mutex::named_lazy("NET_STATE", NetState::empty());
 
 // ============================================================================
 // 辅助函数

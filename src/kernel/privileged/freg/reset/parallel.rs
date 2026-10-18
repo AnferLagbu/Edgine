@@ -205,7 +205,7 @@ pub fn rollback_all() -> usize {
     if config::RECOVERY_CONFIG.is_parallel() {
         rollback_all_parallel()
     } else {
-        super::bsr::rollback_to_init()
+        super::bsr::rollback_to_init(&RECOVERY_MANAGER.lock())
     }
 }
 

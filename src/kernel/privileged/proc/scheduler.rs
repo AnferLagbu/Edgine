@@ -1811,21 +1811,13 @@ impl Scheduler {
         let new_tick = crate::privileged::timer::get_ticks();
         let per_cpu = per_cpu_for(cpu_id as u32);
 
-        crate::privileged::freg::RECOVERY_MANAGER
-            .lock()
-            .tick(new_tick);
-
-        if crate::privileged::freg::check_and_clear_bsr_escalation() {
-            crate::privileged::freg::reset::config::set_reset_in_progress(true);
-            crate::privileged::freg::reset::config::set_current_layer(
-                crate::privileged::freg::reset::config::RecoveryLayer::Layer2,
-            );
-            crate::privileged::freg::reset::bsr::freeze_all_domains();
-            crate::privileged::freg::reset::bsr::rollback_to_init();
-            crate::privileged::freg::reset::bsr::reset_devices();
-            crate::privileged::freg::reset::bsr::unfreeze_all_domains();
-            crate::privileged::freg::reset::bsr::clear_panic_state();
-        }
+        // P-30 根治: 调度器 tick 与 FREG 恢复解耦 —— 旧形态每 tick 都在本关中断
+        // 热路径里 `lock` 全局 RECOVERY_MANAGER 跑 `manager.tick()` 周期 FREG
+        // capture 与 BSR 升级序列. FREG 是阶段性版本 (恢复域回调 inert, 生产不可达
+        // DomainRecovery), 该周期维护本无收益, 却把每核热路径耦合到一把全局锁
+        // (lockdep 下 LockDepMap 元锁把各 IrqSpinLock 簿记串行化, 放大成可见 convoy).
+        // 摘除后 tick 不再触碰 RECOVERY_MANAGER; FREG 周期 capture / BSR 升级随之不
+        // 再由调度器驱动 (登记为 FREG 冻结版本的已知解耦项).
 
         crate::privileged::proc::oomd::OOMD.tick();
         // 进程级 user/sys 时间记账: 原经全局线程级 SchedulerEx.tick_accounting 驱动,
