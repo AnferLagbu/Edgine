@@ -64,6 +64,18 @@
 
 * **本轮用户裁定：暂缓 D-2**（§12.3 同步原语/TCB 谨慎原则）。复活前置条件 = 先用 D-1 探针在 **lockdep build vs 非 lockdep build** 上量化"残余 convoy 是否真实存在且误导判读"，据实测再选 A/B；避免无度量下重构脆弱检测器。
 
+* **D-1 复活前置度量已完成**（lockdep build vs 生产 build，同 `release` profile / 同负载 / 仅切 `KERNEL_FEATURES=lockdep`；`scripts/qemu_liveness_probe.sh` BOOTS=6 SMP=4 HAMMER_S=12 各一轮）：
+
+  | 度量 | 生产 (`TICK=0x3733b0`) | lockdep (`TICK=0x3dcfb8`) | 比值 |
+  | --- | --- | --- | --- |
+  | tick 稳态速率 /s（剔除慢 boot） | 3974/3999/3951/3991/3985（均值≈3980） | 668/662/616/636/641（均值≈644） | **≈6.2x↓** |
+  | tcp `echo_ok`（稳态 boot） | 931/948/902/939/921（≈928） | 60/59/293/51/54（中位≈59） | **≈15x↓** |
+  | 冻结判定 | 6/6 ALIVE / 0 FROZEN / exit=0 | 6/6 ALIVE / 0 FROZEN / exit=0 | — |
+
+  **结论**：观察者效应真实且巨大——仅点亮 lockdep feature 即令 tick 降 ~6x、echo 吞吐降 ~15x，坐实 P-30"lockdep build 上的 convoy 判读不能对应生产"。两 build 均无真冻结：`delta=0` 只出现在 `ready=0` 的慢 boot，因该 boot `halted_core=1` 使三条件 AND 的 (3) 不满足而正确判 ALIVE——判据有效、无误报。据此，若复活 D-2，**方案 A（仅把 `lockdep_log!` 移出 `LOCK_DEP_MAP` 持锁窗）已足以回收绝大部分扰动**（主放大器=持元锁串口自旋正属此档）；B 的"再合并临界区 + 去 `with_current_stack` 内 map 嵌套"的额外收益须在同一探针下再量化，不建议无度量先行。**D-2 维持暂缓。**
+
+  **附带修正**：对比运行中探针在慢 boot（`echo_ok=0`）触发出 `printf: 0\n0: 无效的数字`（`grep -ac ... || echo 0` 在 0 匹配时同时打印 `0` 又走 `||` 分支，双值喂给 `%d`）；已修为 `echo_ok=$(grep -acF ... ); echo_ok=${echo_ok:-0}`，`bash -n` + 0 匹配逻辑复验通过。属 D-1 交付物的健壮性修正，不改判冻语义。
+
 ### D-3 CI 接入
 
 描述：把 D-1 探针作为 boot 相关改动的可选 liveness 门禁（或定期回归 job）接入。

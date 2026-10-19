@@ -119,7 +119,7 @@ PY
     ad=$((16#${a#0x})); cd_=$((16#${c#0x})); delta=$((cd_ - ad))
     rate=$(( delta / (HAMMER_S>0?HAMMER_S:1) ))
     idle=0; grep -aqE "\[halted" "$BT" 2>/dev/null && idle=1
-    echo_ok=$(grep -acF "[tcp] Echo ok" "$LOG" 2>/dev/null || echo 0)
+    echo_ok=$(grep -acF "[tcp] Echo ok" "$LOG" 2>/dev/null); echo_ok=${echo_ok:-0}
     # FROZEN 需三条件同时: delta<=0 且 两次 tick 相同 且 无 halted 核
     if [ "$delta" -le 0 ] && [ "$a" = "$c" ] && [ "$idle" -eq 0 ]; then
         st=FROZEN; frozen=$((frozen+1))
