@@ -135,7 +135,9 @@ avail/used 地址（desc+0x4000 / desc+0x5000）落在驱动分配区之外**：
     `listen=0`（`[tcp] Listening` 缺失）；modern 跑还见过 EC=0x0E（Illegal exception
     return）。x86 e1000 路径无此问题。属 AGENTS §12.5 工程外预存问题，未擅自处置。
   - 方案：用户裁定（立独立工程 / 记 plan / 搁置）后单开。
-  - 状态：[]
+  - 状态：[X]
+  - 详情：用户 2026-10-19 裁定立独立根因工程 → 已立项 [P-32](./aarch64-el0-sysreg-sync-rootcause.md)，
+    取证数据与候选根因已移交其 E1/E3；本 plan 不再跟踪。
 
 ## 验证门槛
 
