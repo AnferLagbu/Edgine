@@ -132,8 +132,8 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - **U5: 无组播**
   - 描述：无法加入/离开组播组。
   - 方案：`sm_setsockopt` 增 `IP_ADD_MEMBERSHIP` 等选项，调用 `Interface::join_multicast_group`（D11）。
-  - 状态：[]
-  - 详情：见 [multicast.rs:104](../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs) / [multicast.rs:130](../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs)；错误类型 `MulticastError::{Unaddressable, GroupTableFull}`（[multicast.rs:14-18](../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs)）。需 `Interface` 可变借用，与 `sm_*` 的 `NET_STATE` 锁路径耦合（`stack.iface` 与 `socket_set()` 为两个独立 static，无借用冲突）。
+  - 状态：[X]
+  - 详情：见 [multicast.rs:104](../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs) / [multicast.rs:130](../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs)；错误类型 `MulticastError::{Unaddressable, GroupTableFull}`（[multicast.rs:14-18](../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs)）。需 `Interface` 可变借用，与 `sm_*` 的 `NET_STATE` 锁路径耦合（`stack.iface` 与 `socket_set()` 为两个独立 static，无借用冲突）。已随 P6/D11（DECISION-097，commit `474295a6`）实装：`privileged/net/mcast.rs` 按 socket 引用计数登记表 + `sm_fi.rs` `IP_ADD_MEMBERSHIP`/`IP_DROP_MEMBERSHIP` 走 iface join/leave（失败回滚），`multicast` feature + `iface-max-multicast-group-count-8` 已开；集成验证载体 `scripts/qemu_mcast_test.sh`。
 
 - **U6: 无 per-slot 端点表**
   - 描述：无 local/remote 端点记录，导致 U1/U2/G3/G5 缺公共地基。

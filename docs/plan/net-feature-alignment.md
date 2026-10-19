@@ -43,7 +43,8 @@
 
 描述：`socket-layer-completion.md` U5"无组播"仍标 `[]`，但组播已随 `474295a6` 实装（`mcast.rs` 按 socket 引用计数 + `IP_ADD/DROP_MEMBERSHIP` + `qemu_mcast_test.sh`）。
 方案：grep 核实使用路径 → U5 改 `[X]` 并补详情（指向 mcast.rs/commit），重跑文档门槛。
-状态：[]
+状态：[X]
+详情：grep 核实 `sm_fi.rs:93` `IP_ADD_MEMBERSHIP=35` → `mcast.rs` 登记表 → `iface.join_multicast_group` 全使用路径在链；U5 已改 `[X]` 并回填实装详情（纯文档同步，无代码变更）。
 
 ### T1 aarch64 virtio-net e2e 软观测（档位2，用户裁定口径 = 软）
 
