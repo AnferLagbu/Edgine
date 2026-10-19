@@ -1,16 +1,23 @@
-//! `VirtIO` virtqueue 实现 (`VirtIO` 1.0 split ring).
+//! `VirtIO` virtqueue 实现 (`VirtIO` 1.0 split ring, 兼容 0.9.5 legacy).
 //!
 //! 每个 virtqueue 由三段物理连续的内存区域组成:
 //! - 描述符表 (Descriptor Table): 16 字节描述符数组
 //! - 可用环 (Available Ring): 驱动→设备的通知环
 //! - 已用环 (Used Ring): 设备→驱动的完成环
 //!
-//! 内存布局遵循 `VirtIO` 1.0 规范第 2.6 节 "Split Virtqueues".
+//! 内存布局遵循 `VirtIO` 1.0 规范第 2.6 节 "Split Virtqueues" 与 0.9.5 legacy
+//! 口径: **环尺寸 `num` 为运行时量** (legacy 传输无 QueueNum 协商寄存器,
+//! 设备端按 realize 时固定的 num 自行推算 avail/used 地址, 驱动布局必须与
+//! 设备推算全量一致, 截断即错位 — P-31 根因).
 
 use crate::privileged::mm::{KERNEL_BASE, PAGE_SIZE};
 
-/// virtqueue 项最大数量 (必须为 2 的幂).
+/// modern 模式下驱动请求的队列尺寸 (经 QueueNum 协商, 可小于设备上限);
+/// 同时是 net 驱动 rx_buffers 槽位容量上限.
 pub const VQ_SIZE: u16 = 32;
+
+/// avail/used 环头部 (`flags: u16 + idx: u16`) 之后即环数组.
+const RING_HEAD_BYTES: usize = 4;
 
 /// Split virtqueue 描述符.
 #[repr(C)]
@@ -21,29 +28,12 @@ pub struct VqDesc {
     pub next: u16,  // 下一描述符索引 (链式描述符)
 }
 
-/// 可用环头 + 环数组.
-#[repr(C)]
-pub struct VqAvail {
-    pub flags: u16, // VRING_AVAIL_F_NO_INTERRUPT
-    pub idx: u16,   // 下一个可用环索引 (驱动递增)
-    pub ring: [u16; VQ_SIZE as usize],
-    // 当协商 VIRTIO_F_EVENT_IDX 时 used_event 紧跟 ring 之后
-}
-
 /// 已用环项.
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct VqUsedElem {
     pub id: u32,  // 描述符链头索引
     pub len: u32, // 设备写入的总字节数
-}
-
-/// 已用环头 + 环数组.
-#[repr(C)]
-pub struct VqUsed {
-    pub flags: u16, // VRING_USED_F_NO_NOTIFY
-    pub idx: u16,   // 下一个已用环索引 (设备递增)
-    pub ring: [VqUsedElem; VQ_SIZE as usize],
-    // 当协商 VIRTIO_F_EVENT_IDX 时 avail_event 紧跟 ring 之后
 }
 
 // ── 描述符标志 ──
@@ -60,20 +50,46 @@ pub const VQ_AVAIL_F_NO_INTERRUPT: u16 = 1;
 
 pub const VQ_USED_F_NO_NOTIFY: u16 = 1;
 
-/// 单个 virtqueue.
+/// 单个 virtqueue (运行时 `num` 驱动的 split ring 布局).
 pub struct VirtQueue {
     pub desc: *mut VqDesc,
-    pub avail: *mut VqAvail,
-    pub used: *mut VqUsed,
-    pub queue_size: u16,
+    /// avail 环基址 (头 4 字节 + `num` 项 u16 环 + used_event 2B).
+    pub avail: *mut u8,
+    /// used 环基址 (头 4 字节 + `num` 项 VqUsedElem + avail_event 4B).
+    pub used: *mut u8,
+    /// 环尺寸 (legacy: 设备 QueueNumMax 全量; modern: 驱动 QueueNum 协商值).
+    pub num: u16,
     pub free_head: u16,      // 空闲描述符链头
     pub last_used_idx: u16,  // 最近见到的 used ring 索引
     pub next_avail_idx: u16, // 驱动下次使用的 avail ring 索引
     // --- 所有权追踪 (用于 DMA 安全性) ---
-    /// 已分配页的物理地址 (用于 `x86_64` 上 phys↔virt 转换).
+    /// 已分配页的物理地址 (用于 phys↔virt 转换).
     pub desc_phys: u64,
     pub avail_phys: u64,
     pub used_phys: u64,
+}
+
+/// split ring 三段布局计算 (纯函数, 供单测锁位).
+///
+/// 返回 `(avail_off, used_off, total_size)`:
+/// - desc 恒在偏移 0, 长 `16*num`;
+/// - avail 紧跟 desc: 长 `4 + 2*num + 2` (头 + 环 + used_event 预留);
+/// - used: legacy 对齐 4096 (`VIRTIO_PCI_VRING_ALIGN`, QEMU legacy 设备端
+///   同口径推算), modern 对齐 4; 尾部预留 4B `avail_event` (防设备越界写);
+/// - total 向上取整到页.
+///
+/// 与 QEMU `vring_init_split` / Linux `virtio_ring` 的 legacy 分支一致:
+/// num=1024 时 avail@0x4000 / used@0x5000 (P-31 坐实的驱动侧对齐基准).
+pub const fn vring_layout(legacy: bool, num: u16) -> (usize, usize, usize) {
+    let n = num as usize;
+    let desc_bytes = 16 * n;
+    let avail_off = desc_bytes;
+    let avail_bytes = RING_HEAD_BYTES + 2 * n + 2;
+    let used_align = if legacy { PAGE_SIZE as usize } else { 4 };
+    let used_off = align_up(avail_off + avail_bytes, used_align);
+    let used_bytes = RING_HEAD_BYTES + 8 * n + 4;
+    let total = align_up(used_off + used_bytes, PAGE_SIZE as usize);
+    (avail_off, used_off, total)
 }
 
 // SAFETY: VirtQueue 裸指针指向 PMM 分配的 DMA 页.
@@ -84,28 +100,21 @@ unsafe impl Send for VirtQueue {}
 unsafe impl Sync for VirtQueue {}
 
 impl VirtQueue {
-    /// 分配并初始化一个 split virtqueue.
+    /// 分配并初始化一个 split virtqueue (运行时尺寸 `num`).
     ///
-    /// 当 `legacy` 为 true 时, used ring 对齐到 4096 字节边界
-    /// (QEMU 旧版 `VirtIO` 传输所要求 — `VIRTIO_PCI_VRING_ALIGN`).
-    /// 此时需要 2 个页而不是 1 个.
+    /// `legacy` 为 true 时 used ring 按 4096 对齐 (QEMU legacy 设备端同口径
+    /// 推算 — 布局不一致则设备读到错误 avail/used 地址, 永不回写 used, 即
+    /// P-31 TX 超时根因). `num` 必须由调用方按传输形态选定: legacy 取设备
+    /// `QueueNumMax` 全量, modern 取驱动协商值.
     // 有意窄化: 用户内存代理, 指针/长度上下文保证
     #[expect(clippy::cast_possible_truncation)]
-    pub fn new(legacy: bool) -> Option<Self> {
-        let desc_size = VQ_SIZE as usize * core::mem::size_of::<VqDesc>();
-        let avail_size = core::mem::size_of::<VqAvail>() + 2 /* event index padding */;
-        let used_size  = core::mem::size_of::<VqUsed>() + 2 /* event index padding */;
-
-        // 计算偏移: desc | avail (4 字节对齐) | used
-        let desc_off = 0usize;
-        let avail_off = desc_off + desc_size;
-        let used_off = if legacy {
-            PAGE_SIZE as usize // 旧版: used ring 必须页对齐 (QEMU 使用 VIRTIO_PCI_VRING_ALIGN)
-        } else {
-            align_up(avail_off + avail_size, 4)
-        };
-        let total_size = align_up(used_off + used_size, PAGE_SIZE as usize);
-
+    pub fn new(legacy: bool, num: u16) -> Option<Self> {
+        if num == 0 || !num.is_power_of_two() {
+            // split ring 规范要求 num 为 2 的幂 (取模即环回).
+            return None;
+        }
+        let (_avail_off, used_off, total_size) = vring_layout(legacy, num);
+        let desc_size = 16 * num as usize;
         let pages = total_size.div_ceil(PAGE_SIZE as usize);
         // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
         #[expect(
@@ -129,29 +138,25 @@ impl VirtQueue {
             core::ptr::write_bytes(mem_virt, 0, total_size);
 
             let desc_ptr = mem_virt as *mut VqDesc;
-            let avail_ptr = mem_virt.add(avail_off as usize) as *mut VqAvail;
-            let used_ptr = mem_virt.add(used_off as usize) as *mut VqUsed;
+            let avail_ptr = mem_virt.add(desc_size);
+            let used_ptr = mem_virt.add(used_off);
 
-            for i in 0..VQ_SIZE {
+            for i in 0..num {
                 let desc = &mut *desc_ptr.add(i as usize);
                 desc.flags = 0;
-                desc.next = if i + 1 < VQ_SIZE { i + 1 } else { 0xFFFF };
+                desc.next = if i + 1 < num { i + 1 } else { 0xFFFF };
             }
-
-            // 清零 avail 与 used ring (关键: 设备将读取这些)
-            core::ptr::write_bytes(avail_ptr as *mut u8, 0, avail_size);
-            core::ptr::write_bytes(used_ptr as *mut u8, 0, used_size);
 
             Some(Self {
                 desc: desc_ptr,
                 avail: avail_ptr,
                 used: used_ptr,
-                queue_size: VQ_SIZE,
+                num,
                 free_head: 0,
                 last_used_idx: 0,
                 next_avail_idx: 0,
-                desc_phys: mem_phys + desc_off as u64,
-                avail_phys: mem_phys + avail_off as u64,
+                desc_phys: mem_phys,
+                avail_phys: mem_phys + desc_size as u64,
                 used_phys: mem_phys + used_off as u64,
             })
         }
@@ -192,59 +197,53 @@ impl VirtQueue {
         head
     }
 
-    #[expect(
-        clippy::borrow_as_ptr,
-        reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-    )]
-    /// 提交描述符链到设备 (通知设备).
+    /// 提交描述符链到可用环 (不碰 idx, 由 `commit_and_kick` 发布).
     /// 返回已提交的可用环索引.
     pub fn submit(&mut self, desc_head: u16) -> u16 {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 调用方保证指针有效; 环槽位 = 头 4B + (idx % num) * 2
         unsafe {
-            core::ptr::write_volatile(
-                &mut (*self.avail).ring[self.next_avail_idx as usize % VQ_SIZE as usize],
-                desc_head,
-            );
+            let slot = self
+                .avail
+                .add(RING_HEAD_BYTES + (self.next_avail_idx as usize % self.num as usize) * 2)
+                as *mut u16;
+            core::ptr::write_volatile(slot, desc_head);
         }
         let idx = self.next_avail_idx;
         self.next_avail_idx = self.next_avail_idx.wrapping_add(1);
         idx
     }
 
-    #[expect(
-        clippy::borrow_as_ptr,
-        reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-    )]
-    /// 提交后通知设备 (调用方必须设置 avail->idx 并写 `QueueNotify`).
+    /// 提交后发布 avail.idx (调用方随后写 `QueueNotify`).
     pub fn commit_and_kick(&mut self) {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 调用方保证指针有效; avail.idx 位于环基址偏移 2
         unsafe {
             // 全内存屏障: 确保描述符与 ring 写入全局可见
             crate::privileged::sync::arch::fence();
             core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-            core::ptr::write_volatile(&mut (*self.avail).idx, self.next_avail_idx);
+            core::ptr::write_volatile(self.avail.add(2) as *mut u16, self.next_avail_idx);
         }
     }
 
     /// 检查是否有已用描述符可用, 有则返回.
     // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
     #[expect(clippy::cast_possible_truncation)]
-    #[expect(
-        clippy::borrow_as_ptr,
-        reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-    )]
     pub fn pop_used(&mut self) -> Option<(u16, u32)> {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 调用方保证指针有效; used.idx 位于基址偏移 2,
+        // 环项 = 头 4B + (idx % num) * size_of(VqUsedElem). 全部 volatile:
+        // 设备 DMA 写入, 普通读可被 spin 循环 CSE 提升致永不可见.
         unsafe {
-            let used_idx = core::ptr::read_volatile(&(*self.used).idx);
+            let used_idx = core::ptr::read_volatile(self.used.add(2) as *const u16);
             if self.last_used_idx == used_idx {
                 return None;
             }
-            let elem = &(*self.used).ring[self.last_used_idx as usize % VQ_SIZE as usize];
-            let id = elem.id as u16;
-            let len = elem.len;
+            let elem_ptr = self.used.add(
+                RING_HEAD_BYTES
+                    + (self.last_used_idx as usize % self.num as usize)
+                        * core::mem::size_of::<VqUsedElem>(),
+            ) as *const VqUsedElem;
+            let elem = core::ptr::read_volatile(elem_ptr);
             self.last_used_idx = self.last_used_idx.wrapping_add(1);
-            Some((id, len))
+            Some((elem.id as u16, elem.len))
         }
     }
 
@@ -449,6 +448,49 @@ impl Drop for DmaBuffer {
 }
 
 /// 将 `val` 向上对齐到 `align` 的下一个倍数.
-fn align_up(val: usize, align: usize) -> usize {
+const fn align_up(val: usize, align: usize) -> usize {
     (val + align - 1) & !(align - 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::vring_layout;
+
+    /// P-31 根因锚点: legacy num=1024 时布局必须与 QEMU 设备端推算一致 —
+    /// avail@desc+0x4000 / used@desc+0x5000 (页对齐). 不一致则设备读到的
+    /// avail.idx 恒 0, 永不取描述符也永不回写 used → TX 超时.
+    #[test]
+    fn legacy_1024_matches_device_inference() {
+        let (avail_off, used_off, total) = vring_layout(true, 1024);
+        assert_eq!(avail_off, 16 * 1024);
+        assert_eq!(avail_off, 0x4000);
+        assert_eq!(used_off, 0x5000);
+        assert_eq!(used_off % 4096, 0, "legacy used ring 必须页对齐");
+        assert_eq!(total, 0x8000, "num=1024 全布局共 8 页");
+    }
+
+    /// modern num=32: used 按 4 对齐 (规范 Split Ring Used Align = 4), 整体一页内.
+    #[test]
+    fn modern_32_uses_dword_align() {
+        let (avail_off, used_off, total) = vring_layout(false, 32);
+        assert_eq!(avail_off, 512);
+        assert_eq!(used_off, 584); // align(512 + 4 + 64 + 2, 4)
+        assert_eq!(used_off % 4, 0);
+        assert_eq!(total, 4096);
+    }
+
+    /// 通用下界: 任意 (legacy, num) 的 total 必须完整容纳 used 环项 +
+    /// 尾部 4B avail_event 预留, 且取整到页 (防设备尾部写抓出分配区).
+    #[test]
+    fn total_covers_all_segments() {
+        for &(legacy, num) in &[(true, 1024), (true, 256), (false, 32), (false, 256)] {
+            let (_, used_off, total) = vring_layout(legacy, num);
+            let used_end = used_off + 4 + 8 * num as usize + 4;
+            assert!(
+                total >= used_end,
+                "legacy={legacy} num={num}: total={total} < used_end={used_end}"
+            );
+            assert_eq!(total % 4096, 0);
+        }
+    }
 }

@@ -53,6 +53,8 @@
 状态：[X]
 详情（首轮实装+观测回填）：实装于 `scripts/qemu_boot_test.sh`：抽出共享宿主客户端 `e2e_host_client`（x86 硬门禁腿行为不变，已回归 1/1）；新增 `a64_e2e_observe`（TCP echo 入站单腿，SIMPLIFIED 标注；失败只 warn + 数据行，不进 RESULT）；aarch64 主 boot 与观测 boot 均带 hostfwd tcp::8081（与 x86 8080 隔离）；数据行扩展归因字段 `listen=/addr=/tx_timeout=`。首轮实测（最新码镜像）：boot 里程碑全过（含 KPTI-09/SMP/TLB shootdown/EL0 IRQ）；软观测 `A64_E2E observe=fail reason=not_ready listen=0 addr=1 tx_timeout=11`——失真坐实：virtio-net TX 自 0.035s 起持续超时（60s 内 11 次，含 4/8/10s 密集段与 20-60s 每 10s 周期段，周期段疑为 IGMP/MLD report 或 DHCP renew），DHCP 因 TX 不成落 fallback 静态（addr=1，S2 fallback 接线在 aarch64 无死锁验过）；用户态 `[tcp] Listening` 未出现（listen=0，aarch64 用户态 echo 服务链路不可达，待归因：服务未启动 vs 启动卡网络 syscall）. 本观测为档位3/P 系列（virtio-net TX 根因）的输入；qemu_liveness_probe.sh 手动观测按需跑.
 
+二轮观测（P-31 修复后，2026-10-19，详见 [aarch64-virtio-net-tx-rootcause.md](./aarch64-virtio-net-tx-rootcause.md)）：legacy（生产默认形态）DHCP 拿到租约（`DHCP configured (lease applied)`）+ IPv6 SLAAC，**TX 超时/掉帧计数 = 0**；数据行 `observe=fail reason=not_ready listen=0 addr=1 tx_timeout=0`——tx_timeout 归零达成 P-31 目标；残余 `listen=0` 归因于与 virtio 无关的预存 aarch64 EL0 启动 SYNC（EC=0x24 sysreg trap 杀死 init，已记 P-31 R7 移交项待裁定），软观测按裁定不阻断。
+
 ## 3. 验收
 
 - S0-S3：§2.3 六门槛全过（双架构 0w0e / clippy+fmt / 核心审计 / host-tests / QEMU x86_64 / kernel-host 单测）；生产路径行为变更仅限 `dns_resolve` 语义扩展（旧输入族输出不变）。

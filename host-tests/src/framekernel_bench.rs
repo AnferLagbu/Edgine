@@ -66,9 +66,7 @@ use edgine::kernel::functions::debug::ebpf_verifier::STANDARD_VERIFIER;
 //   与 `tests/pmm_buddy_host_test.rs` 一致)
 // - `IoMem`: 别名注册表唯一公共入口 (与 `tests/mm_iomem_alias_test.rs` 一致)
 // - `VirtQueue`: 描述符/环区操作用宿主堆块作 DMA 后备 (host 无 PMM, 见 §12 段注释)
-use edgine::kernel::privileged::driver::virtio::queue::{
-    VQ_SIZE, VirtQueue, VqAvail, VqDesc, VqUsed, VqUsedElem,
-};
+use edgine::kernel::privileged::driver::virtio::queue::{VQ_SIZE, VirtQueue, VqDesc, VqUsedElem};
 use edgine::kernel::privileged::sgeg::sha256::sha256;
 // 描述符标志位仅单测断言使用 (bench 体经 `prepare_desc` 的 write 参数间接设置)
 use edgine::kernel::functions::sgeg::policy::{
@@ -532,11 +530,12 @@ pub fn socket_wait_queue_bench(iters: u64) -> u128 {
 
 /// 4K 写请求的数据段长度
 const BLK_4K_BYTES: u32 = 4096;
-/// 环区宿主后备块字节数 (desc 512 + avail 68 + used 260, 分段放置于 4096 内)
+/// 环区宿主后备块字节数 (modern num=32 全布局 ≈ 848B, 余量防对齐误差)
 const VQ_BACKING_BYTES: usize = 4096;
-/// 环区分段偏移 (互不重叠且满足各自对齐: desc @0 / avail @1024 / used @2048)
-const VQ_AVAIL_OFFSET: usize = 1024;
-const VQ_USED_OFFSET: usize = 2048;
+/// 环区分段偏移 — 与内核 `vring_layout(modern, VQ_SIZE)` 同口径 (P-31 运行时 num):
+/// desc @0 (`16*num`) / avail 紧跟 desc / used = align(avail+4+2*num+2, 4)
+const VQ_AVAIL_OFFSET: usize = 16 * VQ_SIZE as usize;
+const VQ_USED_OFFSET: usize = (VQ_AVAIL_OFFSET + 4 + 2 * VQ_SIZE as usize + 2 + 3) & !3;
 
 /// 用宿主内存装配 bench 用 `VirtQueue`.
 ///
@@ -551,8 +550,8 @@ unsafe fn bench_virtqueue(backing: &mut [u64]) -> VirtQueue {
     // SAFETY: 见函数文档 — 后备块对齐/大小/存活性由调用方保证, 分段偏移在块内.
     unsafe {
         let desc = base.cast::<VqDesc>();
-        let avail = base.add(VQ_AVAIL_OFFSET).cast::<VqAvail>();
-        let used = base.add(VQ_USED_OFFSET).cast::<VqUsed>();
+        let avail = base.add(VQ_AVAIL_OFFSET);
+        let used = base.add(VQ_USED_OFFSET);
         for i in 0..VQ_SIZE {
             (*desc.add(i as usize)).next = if i + 1 < VQ_SIZE { i + 1 } else { 0xFFFF };
         }
@@ -560,7 +559,7 @@ unsafe fn bench_virtqueue(backing: &mut [u64]) -> VirtQueue {
             desc,
             avail,
             used,
-            queue_size: VQ_SIZE,
+            num: VQ_SIZE,
             free_head: 0,
             last_used_idx: 0,
             next_avail_idx: 0,
@@ -577,15 +576,20 @@ unsafe fn bench_virtqueue(backing: &mut [u64]) -> VirtQueue {
 /// # SAFETY
 /// `vq` 的 used 环必须指向有效后备块 (见 `bench_virtqueue`), 且调用方独占访问.
 unsafe fn bench_device_complete(vq: &mut VirtQueue, head: u16, len: u32) {
-    // SAFETY: 见函数文档.
+    // SAFETY: 见函数文档. used.idx 位于基址偏移 2, 环项 = 头 4B + (idx % num) * 8.
     unsafe {
         let used = vq.used;
-        let idx = (*used).idx;
-        (*used).ring[(idx % VQ_SIZE) as usize] = VqUsedElem {
-            id: u32::from(head),
-            len,
-        };
-        (*used).idx = idx.wrapping_add(1);
+        let idx = core::ptr::read_volatile(used.add(2) as *const u16);
+        let elem = used.add(4 + (usize::from(idx % vq.num)) * core::mem::size_of::<VqUsedElem>())
+            as *mut VqUsedElem;
+        core::ptr::write_volatile(
+            elem,
+            VqUsedElem {
+                id: u32::from(head),
+                len,
+            },
+        );
+        core::ptr::write_volatile(used.add(2) as *mut u16, idx.wrapping_add(1));
     }
 }
 

@@ -21,7 +21,7 @@
 //! 评估日期: 2026-06-04
 //! Phase 2.1.2 任务: VirtIO-net 网络设备迁移
 
-use crate::privileged::driver::virtio::queue::{DmaBuffer, VirtQueue};
+use crate::privileged::driver::virtio::queue::{DmaBuffer, VQ_SIZE, VirtQueue};
 use crate::privileged::driver::virtio::{VIRTIO_F_VERSION_1, VIRTIO_ID_NET, VirtioMmioDevice};
 use crate::slog_info;
 use crate::slog_warn;
@@ -30,8 +30,13 @@ use crate::slog_warn;
 // VirtIO-net 常量
 // ============================================================================
 
-/// `VirtIO` 网络头大小 (12 字节, 旧版与 v1 相同)
+/// `VirtIO` 网络头大小 (12 字节, v1 现代: 含 `num_buffers`)
 pub const NET_HDR_SIZE: usize = 12;
+
+/// `VirtIO` 0.9.5 传统网络头大小 (10 字节, 无 `num_buffers` — 未协商
+/// `MRG_RXBUF` 时设备按 10 字节解析, 驱动写 12 会把帧起点前移 2 字节
+/// 导致以太网头损坏 — P-31 legacy 线三层根因)
+pub const LEGACY_NET_HDR_SIZE: usize = 10;
 
 /// 默认 RX 缓冲区大小 (字节)
 pub const RX_BUFFER_SIZE: usize = 2048;
@@ -137,7 +142,7 @@ pub struct VirtioNetDriver {
     link_up: bool,
     /// 设备支持的特性位
     negotiated_features: u64,
-    /// 协商后的头大小: 10 (现代 `VERSION_1`) 或 12 (旧版)
+    /// 协商后的头大小: 12 (现代 `VERSION_1`) 或 10 (传统 0.9.5)
     hdr_size: usize,
     /// RX virtqueue (队列 0)
     rx_vq: VirtQueue,
@@ -206,9 +211,10 @@ impl VirtioNetDriver {
                 "virtio-net: 协商现代特性 (VERSION_1 + MAC + STATUS)"
             );
         } else {
-            // 传统模式: MAC + STATUS (如果设备支持)
+            // 传统模式: MAC + STATUS (如果设备支持). 头按 0.9.5 口径 10 字节
+            // (未协商 MRG_RXBUF 时设备无 num_buffers 字段)
             negotiated_v1 = false;
-            hdr_size = NET_HDR_SIZE;
+            hdr_size = LEGACY_NET_HDR_SIZE;
             let mut feat = VIRTIO_NET_F_MAC;
             if dev_features & VIRTIO_NET_F_STATUS != 0 {
                 feat |= VIRTIO_NET_F_STATUS;
@@ -223,10 +229,33 @@ impl VirtioNetDriver {
             return None;
         }
 
-        // 分配 RX/TX VirtQueue
-        let vq_legacy = !has_v1;
-        let rx_vq = VirtQueue::new(vq_legacy)?;
-        let tx_vq = VirtQueue::new(vq_legacy)?;
+        // Step 5.5 (legacy): 写 GuestPageSize — QEMU 设备端按 PFN << ctz32(本寄存器)
+        // 解析 vring 基址, 复位默认 0 会把 PFN 误读成字节地址 (P-31 二层根因)
+        if is_legacy {
+            device.set_guest_page_size(4096);
+        }
+
+        // 分配 RX/TX VirtQueue — 布局形态与环尺寸按**传输层**版本选定 (P-31:
+        // legacy 传输无 QueueNum 协商, 设备端按 realize 固定 num 推算 vring 布局,
+        // 驱动必须全量取 QueueNumMax 对齐, 截断即错位 → 永不回写 used → TX 超时)
+        let vq_legacy = is_legacy;
+        // 有意窄化: QueueNumMax 硬件为 u32, QEMU legacy 固定 1024 (2 的幂)
+        #[expect(clippy::cast_possible_truncation)]
+        let rx_num = if vq_legacy {
+            device.select_queue(RX_QUEUE_INDEX);
+            device.queue_num_max() as u16
+        } else {
+            VQ_SIZE
+        };
+        #[expect(clippy::cast_possible_truncation)]
+        let tx_num = if vq_legacy {
+            device.select_queue(TX_QUEUE_INDEX);
+            device.queue_num_max() as u16
+        } else {
+            VQ_SIZE
+        };
+        let rx_vq = VirtQueue::new(vq_legacy, rx_num)?;
+        let tx_vq = VirtQueue::new(vq_legacy, tx_num)?;
 
         // 从配置空间读取 MAC 地址
         let mut mac: [u8; 6] = [0; 6];
@@ -289,12 +318,14 @@ impl VirtioNetDriver {
     pub fn finalize(&mut self) {
         let _ = self.setup_queue(
             RX_QUEUE_INDEX,
+            self.rx_vq.num,
             self.rx_vq.desc_paddr(),
             self.rx_vq.avail_paddr(),
             self.rx_vq.used_paddr(),
         );
         let _ = self.setup_queue(
             TX_QUEUE_INDEX,
+            self.tx_vq.num,
             self.tx_vq.desc_paddr(),
             self.tx_vq.avail_paddr(),
             self.tx_vq.used_paddr(),
@@ -349,6 +380,7 @@ impl VirtioNetDriver {
     ///
     /// # 参数
     /// - `vq_index`: virtqueue 索引 (RX=0, TX=1)
+    /// - `num`: 队列尺寸 (modern 经 QueueNum 协商写入; legacy 忽略 — 设备端固定)
     /// - `desc_paddr`: 描述符表物理地址
     /// - `avail_paddr`: available ring 物理地址
     /// - `used_paddr`: used ring 物理地址
@@ -362,6 +394,7 @@ impl VirtioNetDriver {
     pub fn setup_queue(
         &self,
         vq_index: u16,
+        num: u16,
         desc_paddr: u64,
         avail_paddr: u64,
         used_paddr: u64,
@@ -370,17 +403,27 @@ impl VirtioNetDriver {
         let max_size = self.device.queue_num_max();
         slog_info!(Driver, "virtio-net: vq{} max_size={}", vq_index, max_size);
 
-        if self.is_legacy() {
-            // 传统模式: 使用 PFN 接口
+        // 队列寄存器形态锚定传输层版本 (P-31: legacy 接口与特性协商无关)
+        if self.device.is_legacy() {
+            // 传统模式: Linux legacy-mmio 驱动范式序 QueueNum(回写设备上限) →
+            // QueueAlign(4096) → QueuePFN — QEMU 在 Num/Align 写时触发设备端
+            // vring 重算 (update_rings), 仅写 PFN 的简序在部分 QEMU 版本
+            // 不触发 ring 布局刷新 (P-31 legacy 线残余故障域)
+            self.device.set_queue_num(num);
+            self.device.set_queue_align(4096);
+            // 注: legacy 无 QueueReady — 0x040 即 QueuePFN, 绝不可再写
+            // set_queue_ready(1) 覆掉刚写入的 PFN (PFN 写入本身即激活队列)
             self.device.setup_queue_legacy(desc_paddr);
+            slog_info!(Driver, "virtio-net: vq{} ready", vq_index);
         } else {
-            // 现代模式: 使用 64 位地址
+            // 现代模式: 规范序 QueueNum → 地址三段 → Ready
+            self.device.set_queue_num(num);
             self.device
                 .setup_queue_addrs(desc_paddr, avail_paddr, used_paddr);
+            self.device.set_queue_ready();
+            slog_info!(Driver, "virtio-net: vq{} ready", vq_index);
         }
 
-        self.device.set_queue_ready();
-        slog_info!(Driver, "virtio-net: vq{} ready", vq_index);
         Ok(max_size)
     }
 

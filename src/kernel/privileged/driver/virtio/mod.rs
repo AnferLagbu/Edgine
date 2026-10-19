@@ -15,6 +15,7 @@
 //! | 0x014  | DeviceFeaturesSel| W    | Selects which 32-bit feature word |
 //! | 0x020  | DriverFeatures  | W     | Bits 0..31 of driver features    |
 //! | 0x024  | DriverFeaturesSel| W    | Selects which 32-bit feature word |
+//! | 0x028  | GuestPageSize   | W     | Legacy only: guest page size (PFN 移位基数) |
 //! | 0x030  | QueueSel        | W     | Select virtqueue                  |
 //! | 0x034  | QueueNumMax     | R     | Max size of selected queue        |
 //! | 0x038  | QueueNum        | W     | Set size of selected queue        |
@@ -52,9 +53,12 @@ const DEVICE_FEATURES: usize = 0x010;
 const DEVICE_FEATURES_SEL: usize = 0x014;
 const DRIVER_FEATURES: usize = 0x020;
 const DRIVER_FEATURES_SEL: usize = 0x024;
+const GUEST_PAGE_SIZE: usize = 0x028; // 传统模式 (Legacy): GuestPageSize — PFN 解析移位基数
 const QUEUE_SEL: usize = 0x030;
 const QUEUE_NUM_MAX: usize = 0x034;
-const QUEUE_READY: usize = 0x044;
+const QUEUE_NUM: usize = 0x038; // 现代模式 (Modern): QueueNum (设置队列尺寸); legacy 设备同址寄存器用于触发设备端 vring 重算
+const QUEUE_ALIGN: usize = 0x03c; // 传统模式 (Legacy): QueueAlign — vring 内部对齐 (Linux legacy-mmio 驱动 PFN 前必写范式)
+const QUEUE_READY: usize = 0x044; // 现代模式 (Modern): QueueReady (规范偏移; P-31 二次取证: 误写 0x040 会覆盖 legacy PFN 且被 modern 设备拒绝)
 const QUEUE_PFN: usize = 0x040; // 传统模式 (Legacy): QueuePFN (队列物理页号)
 const QUEUE_NOTIFY: usize = 0x050;
 const INTERRUPT_STATUS: usize = 0x060;
@@ -286,6 +290,12 @@ impl VirtioMmioDevice {
         self.read32(QUEUE_NUM_MAX)
     }
 
+    /// 设置选中队列的尺寸 (modern 模式; 规范序 QueueNum → 地址三段 → QueueReady=1,
+    /// 必须在 Ready 置位前写入 — QEMU 至 Ready 写时才以已存 num 初始化 vring).
+    pub fn set_queue_num(&self, num: u16) {
+        self.write32(QUEUE_NUM, u32::from(num));
+    }
+
     /// 标记选中队列为 ready.
     pub fn set_queue_ready(&self) {
         self.write32(QUEUE_READY, 1);
@@ -303,12 +313,26 @@ impl VirtioMmioDevice {
         self.write64(QUEUE_DEVICE_LOW, QUEUE_DEVICE_HIGH, used_paddr);
     }
 
+    /// 设置 legacy 传输的 GuestPageSize (0.9.5 MMIO 接口).
+    ///
+    /// QEMU 设备端以 `PFN << ctz32(GuestPageSize)` 解析队列基址, 寄存器复位
+    /// 默认值为 0 — legacy 驱动若不写本寄存器, 设备会把 PFN 按 2^0 移位误读
+    /// vring 地址 (P-31: TX 超时二层根因). 必须在首次写 QueuePFN 之前调用.
+    pub fn set_guest_page_size(&self, size: u32) {
+        self.write32(GUEST_PAGE_SIZE, size);
+    }
+
     /// 设置选中队列的 PFN (legacy 模式).
     // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
     #[expect(clippy::cast_possible_truncation)]
     pub fn setup_queue_legacy(&self, paddr: u64) {
         let pfn = (paddr >> 12) as u32;
         self.write32(QUEUE_PFN, pfn);
+    }
+
+    /// 设置选中队列的 vring 对齐 (legacy 模式, 规范值 4096).
+    pub fn set_queue_align(&self, align: u32) {
+        self.write32(QUEUE_ALIGN, align);
     }
 
     // ── 中断 ──

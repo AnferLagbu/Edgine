@@ -21,7 +21,7 @@
 //! 评估日期: 2026-06-04
 //! Phase 2.1.3 任务: VirtIO-blk 块设备迁移
 
-use crate::privileged::driver::virtio::queue::{DmaBuffer, VirtQueue};
+use crate::privileged::driver::virtio::queue::{DmaBuffer, VQ_SIZE, VirtQueue};
 use crate::privileged::driver::virtio::{VIRTIO_F_VERSION_1, VIRTIO_ID_BLOCK, VirtioMmioDevice};
 use crate::slog_info;
 use crate::slog_warn;
@@ -222,8 +222,11 @@ impl VirtioBlkDriver {
         }
 
         // 分配 VirtQueue (块设备通常仅 vq0)
+        // SIMPLIFIED: blk 固定请求 modern 语义 num=VQ_SIZE(32), finalize 恒走 modern 寄存器序;
+        // 影响面: legacy virtio-blk 设备不可用; 何时需扩展: 出现真实 legacy blk 消费者时
+        // 按 net.rs 模板改走 PFN 路径 (布局由 queue.rs vring_layout 运行时 num 自然提供)
         let is_legacy = device.is_legacy();
-        let vq = VirtQueue::new(is_legacy)?;
+        let vq = VirtQueue::new(is_legacy, VQ_SIZE)?;
 
         // 读取配置空间: 容量
         let cap_lo = u64::from(device.read_config32(BLK_CONFIG_CAPACITY_LO));
@@ -261,6 +264,7 @@ impl VirtioBlkDriver {
     pub fn finalize(&mut self) {
         let vq_index = 0u16;
         self.device.select_queue(vq_index);
+        self.device.set_queue_num(self.vq.num);
         self.device.setup_queue_addrs(
             self.vq.desc_paddr(),
             self.vq.avail_paddr(),
@@ -345,6 +349,7 @@ impl VirtioBlkDriver {
     ///
     /// # 参数
     /// - `vq_index`: virtqueue 索引 (blk 通常为 0)
+    /// - `num`: 队列尺寸 (经 QueueNum 协商写入, 须与 VirtQueue 实际布局一致)
     /// - `desc_paddr`: 描述符表物理地址
     /// - `avail_paddr`: available ring 物理地址
     /// - `used_paddr`: used ring 物理地址
@@ -358,6 +363,7 @@ impl VirtioBlkDriver {
     pub fn setup_queue(
         &self,
         vq_index: u16,
+        num: u16,
         desc_paddr: u64,
         avail_paddr: u64,
         used_paddr: u64,
@@ -365,6 +371,7 @@ impl VirtioBlkDriver {
         self.device.select_queue(vq_index);
         let max_size = self.device.queue_num_max();
         slog_info!(Driver, "virtio-blk: vq{} max_size={}", vq_index, max_size);
+        self.device.set_queue_num(num);
         self.device
             .setup_queue_addrs(desc_paddr, avail_paddr, used_paddr);
         self.device.set_queue_ready();
