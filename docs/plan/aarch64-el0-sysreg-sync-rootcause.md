@@ -52,14 +52,29 @@ x86_64 路径无此问题（e1000 + 用户态 echo 全链 1/1），故障域限�
     坐实"哪个 sysreg、哪条访问指令、为何 trap"。
   - 方案：boot test 镜像复现 + 既有 SYNC 日志扩展（必要时临时诊断，用毕即撤，先例 P-31）；
     同步复现/判定 EC=0x0E 非法 ERET 路径。
-  - 状态：[]
+  - 状态：[X]
+  - 实测（2026-10-19，桌面取证 + 3 轮样本）：前提推翻 — 首轮 EL0 SYNC（EC=0x24，
+    ELR=0x4000D8）反汇编坐实为 init KPTI-09 探针的**预期行为**（探针子进程 ldrb
+    读内核别名被终止，父进程存活至 `[tcp] Listening` 段——但该段整体被
+    `#[cfg(target_arch = "x86_64")]` 门禁，aarch64 从未编译 echo 服务）：
+    **`listen=0` 的直接原因是用户态门禁而非内核缺陷**，旧门禁的"aarch64 无 NIC
+    环境"前提已随 P-31 翻绿失效。放行后又现**真预存 flaky 竞态**（3 样本：1 静默
+    死寂 / 1 未达就绪 / 1 全链达成 listen=1+accept/echo/close），两形签名：
+    ① 收割窗口（destroy_page_table/TLB shootdown 前后）全日志静默；
+    ② `socket_egress+0xa0` 跳转表野分支 SYNC（ESR=0x96000004，ELR 在 kernel text
+    内、FAR=0xFFFE000080532566 未映射，SocketSet 槽 state 字读出垃圾 → handler
+    WFI 死循环整机静默）。EC=0x24 异于预期 0x25 的细节归入签名②一族待查。
 
 - **E3: 根因裁定与修复**
-  - 描述：依 E1/E2 结论定修复——候选根因（不预设，逐项证实/证伪）：
-    a) 编译器运行库/启动代码访问 EL0 被 trap 的 sysreg（如 CNTVCT_EL0/TPIDRRO_EL0 未初始化或未放行）；
-    b) 内核进入 EL0 的 SPSR/上下文构造缺陷（对应 EC=0x0E 线索）；
-    c) 用户 ELF 入口/链接基址与内核交接约定不一致。
-  - 方案：待 E2 证据闭合后填（机制层放 privileged，策略层放 functions，遵归属决策树 §4.1）。
+  - 描述：主修复已落地；残余 flaky 竞态（E2 两形签名）为本条目下一攻坚对象。
+  - 方案：① 已完成 — `tcp_echo_server`/`delay_ms` 门禁改
+    `cfg(any(x86_64, aarch64))`（实现本已 arch 中性），run3 样本证明 aarch64
+    全链（Listening/accept/recv/send/close）可达成；其余 UDP/SLAAC/组播探针
+    依赖 x86 宿主 tap/dnsmasq 设施，维持门禁不动。② 待攻坚 — flaky 竞态按
+    P-29 范式扩样 + 埋点：候选域为 deferred-release/TLB epoch 窗口（崩溃时点
+    紧贴 destroy_page_table）与 SocketSet 槽内容被窗外写者破坏；对照
+    net-e2e-tcp-echo-flakiness 报告（x86 侧 CFS 双时基已根治 DECISION-099，
+    本侧形签名①需验证是否同类饥饿还是真死锁）。
   - 状态：[]
 
 - **E4: 回归测试**

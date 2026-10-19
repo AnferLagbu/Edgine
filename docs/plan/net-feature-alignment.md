@@ -55,6 +55,8 @@
 
 二轮观测（P-31 修复后，2026-10-19，详见 [aarch64-virtio-net-tx-rootcause.md](./aarch64-virtio-net-tx-rootcause.md)）：legacy（生产默认形态）DHCP 拿到租约（`DHCP configured (lease applied)`）+ IPv6 SLAAC，**TX 超时/掉帧计数 = 0**；数据行 `observe=fail reason=not_ready listen=0 addr=1 tx_timeout=0`——tx_timeout 归零达成 P-31 目标；残余 `listen=0` 归因于与 virtio 无关的预存 aarch64 EL0 启动 SYNC（EC=0x24 sysreg trap 杀死 init，已记 P-31 R7 移交项待裁定），软观测按裁定不阻断。
 
+三轮观测（P-32 E2/E3①，2026-10-19）：二轮「EL0 SYNC 杀死 init」归因被 P-32 E2 推翻 — 该 SYNC 实为 KPTI-09 探针预期行为，`listen=0` 直接原因是 init 的 echo 服务被 `cfg(x86_64)` 门禁（已放行为双架构）。3 轮样本：1 轮静默死寂 / 1 轮未达就绪 / **1 轮全链达成**（listen=1 + accept/echo/close 齐），坐实 aarch64 e2e 链路本身可通，残余为预存 flaky 竞态（两形签名见 P-32 E3② 待攻坚），软观测继续 warn 不阻断。
+
 ## 3. 验收
 
 - S0-S3：§2.3 六门槛全过（双架构 0w0e / clippy+fmt / 核心审计 / host-tests / QEMU x86_64 / kernel-host 单测）；生产路径行为变更仅限 `dns_resolve` 语义扩展（旧输入族输出不变）。
