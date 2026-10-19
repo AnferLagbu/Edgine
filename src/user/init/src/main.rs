@@ -102,10 +102,12 @@ pub extern "C" fn _start() -> ! {
     // 并继续 (与 ipv6_udp_probe 同款容错). 须在 echo fork 前同步完成并释放 fd.
     #[cfg(target_arch = "x86_64")]
     udp_echo_probe();
-    // P3 D6 端到端验证: 常驻 TCP echo 服务端 (仅 x86_64). 由
+    // P3 D6 端到端验证: 常驻 TCP echo 服务端 (双架构). 由
     // scripts/qemu_boot_test.sh 的端到端阶段经 hostfwd 入站连接驱动
     // (accept -> recv -> send 回显), 验证 D6 "先建后换" 交接语义.
-    #[cfg(target_arch = "x86_64")]
+    // aarch64 腿自 P-32 放行 (数据面已随 P-31 翻绿, 旧门禁的"无 NIC 环境"
+    // 前提失效), 由档位2 软观测腿 (hostfwd tcp::8081) 驱动.
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         let echo = fork();
         if echo == 0 {
@@ -627,9 +629,10 @@ fn udp_echo_probe() {
 /// 1. 连续多次入站连接下**监听槽持续可用** (每次 accept 后监听 fd 仍可再 accept);
 /// 2. 连接处理完 `close_socket` 后 FD 归还, 可被下一次 `accept` 复用 (FD 回收).
 ///
-/// 驱动方为 `scripts/qemu_boot_test.sh` 的端到端阶段: 该阶段以
+/// 驱动方为 `scripts/qemu_boot_test.sh` 的端到端阶段: x86_64 硬门禁腿以
 /// `-netdev user,...,hostfwd=tcp::8080-:80` 启动 QEMU, 宿主客户端连
-/// `localhost:8080`, 由 slirp 转发到 guest `:80` 触发本服务.
+/// `localhost:8080`; aarch64 软观测腿用 `tcp::8081-:80` (P-32 放行, 接档位2
+/// T1 观测). 均由 slirp 转发到 guest `:80` 触发本服务.
 ///
 /// 语义要点: 内核 TCP `recv` 在**无数据**与**对端关闭(EOF)**两种情况都返回
 /// `0` (smoltcp `recv_slice` 对已建立但 rx 缓冲为空的连接返回 `Ok(0)`),
@@ -639,7 +642,7 @@ fn udp_echo_probe() {
 /// `close` (尾包排空由内核 `sm_close` 的"close → 排空 egress → remove"三步序
 /// 负责, 用户态不再预留发送窗口 —— S-4). 本函数永不返回 (常驻), 失败路径以
 /// 忙等驻留 (不改变既有 APS-05/KPTI-09 断言).
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn tcp_echo_server() -> ! {
     // 监听端口与脚本 hostfwd (`tcp::8080-:80`) 及 Makefile `QEMU_NET` 约定一致.
     const PORT: u16 = 80;
@@ -820,9 +823,9 @@ fn tcp_echo_server() -> ! {
     }
 }
 
-/// 毫秒级休眠 (IPv6 探针重试节流): 以 `nanosleep` 让出 CPU, 使周期网络
-/// poll (timer IRQ) 得以推进 RA 处理与收发.
-#[cfg(target_arch = "x86_64")]
+/// 毫秒级休眠 (探针重试节流 / echo 服务 poll 让渡): 以 `nanosleep` 让出 CPU,
+/// 使周期网络 poll (timer IRQ) 得以推进 RA 处理与收发.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn delay_ms(ms: i64) {
     let ts = Timespec {
         tv_sec: 0,
