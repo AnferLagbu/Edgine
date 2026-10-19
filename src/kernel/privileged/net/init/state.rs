@@ -59,6 +59,10 @@ pub struct NetState {
     pub(crate) device: Option<EGDFNetDevice>,
     pub(crate) stack: Option<NetworkStack>,
     pub(crate) dhcp_handle: Option<SocketHandle>,
+    /// S2 DNS 接线 (net-feature-alignment.md): smoltcp `dns::Socket` 在
+    /// `SocketSet` 中的 handle, 由 `eg_net_init` Step3 写入, 查询/servers
+    /// 更新经 `raw::dns_handle()` 读取 (持 `NET_STATE` 锁).
+    pub(crate) dns_handle: Option<SocketHandle>,
     pub(crate) socket_table: Vec<Option<SocketHandle>>,
     pub(crate) fd_types: Vec<u8>,
     /// 各 FD 的本地端点 (D1): bind 成功时写入, 供端口冲突检测与 getsockname.
@@ -103,6 +107,7 @@ impl NetState {
             device: None,
             stack: None,
             dhcp_handle: None,
+            dns_handle: None,
             socket_table: Vec::new(),
             fd_types: Vec::new(),
             local_endpoints: Vec::new(),

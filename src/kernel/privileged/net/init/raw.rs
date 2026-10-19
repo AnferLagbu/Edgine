@@ -69,6 +69,20 @@ pub fn set_dhcp_handle(h: Option<SocketHandle>) {
     }
 }
 
+/// 安全读取 `dns_handle` (S2 DNS 接线, net-feature-alignment.md)
+pub fn dns_handle() -> Option<SocketHandle> {
+    // SAFETY: SocketHandle 是 Copy, 调用方持有锁.
+    unsafe { state().dns_handle }
+}
+
+/// 安全设置 `dns_handle` (S2 DNS 接线)
+pub fn set_dns_handle(h: Option<SocketHandle>) {
+    // SAFETY: 调用方持有 NET_STATE 锁.
+    unsafe {
+        state().dns_handle = h;
+    }
+}
+
 /// 安全清空网络全局状态
 pub fn clear_all() {
     // SAFETY: 调用方持有 NET_STATE 锁, 串行重置流程.
@@ -76,6 +90,7 @@ pub fn clear_all() {
     s.device = None;
     s.stack = None;
     s.dhcp_handle = None;
+    s.dns_handle = None;
 }
 
 // ========================================================================

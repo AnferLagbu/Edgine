@@ -137,12 +137,17 @@ pub fn get_dns_servers() -> [Option<[u8; 4]>; 3] {
 
 /// 简单 DNS 解析 (主机名 → IPv4)
 ///
-/// # 实现
-/// - 优先查静态 hosts 表 (`/etc/hosts` 风格, 内置)
+/// # 实现 (S2 接线后三级解析)
+/// - IPv4 字面量直返 → 静态 hosts 表 → smoltcp `dns::Socket` 真实查询
+///   (阻塞有界等待, servers 来自 DHCP option 6 / fallback 常量)
+///
+/// # 调用契约
+/// - 仅限**进程上下文**: 第三级查询内部 `poll_network` + 有界自旋,
+///   IRQ/持锁路径调用会死锁 (详见 `init::dns::dns_query_net`)
+/// - 网络未就绪 / 无 server / 查询失败均回退 `None`
 ///
 /// # 局限
-/// - 不发起 DNS UDP 查询 (后续 D 阶段可换 smoltcp wire/dns 升级)
-/// - 仅支持 IPv4 单地址 (无 AAAA / CNAME / SRV)
+/// - 仅支持 IPv4 单地址 (Type::A, 无 AAAA / search domain / 缓存)
 #[cfg(not(feature = "kernel_test"))]
 pub fn dns_resolve(name: &str) -> Option<[u8; 4]> {
     super::init::dns_resolve(name)

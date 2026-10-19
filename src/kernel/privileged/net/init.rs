@@ -3,7 +3,8 @@ use core::sync::atomic::Ordering;
 use crate::privileged::klog::{klog_init_msg, klog_net, klog_net_err};
 use crate::privileged::net::{EGDFNetDevice, NetworkStack};
 use smoltcp::iface::{SocketHandle, SocketSet};
-use smoltcp::socket::dhcpv4;
+// 本模块自有子模块 `mod dns` (静态 hosts 解析), smoltcp 客户端模块取别名.
+use smoltcp::socket::{dhcpv4, dns as smoltcp_dns};
 use smoltcp::socket::{tcp, udp};
 // W4.4: Ipv4Address/IpCidr/IpEndpoint/IpAddress 通过 NetStack trait 类型
 // 翻译层访问 (functions 边界), 直接使用 smoltcp wire 类型仅在 privileged
@@ -167,6 +168,12 @@ unsafe fn process_dhcp_events(_sockets: &mut SocketSet<'_>) {
             for (i, slot) in G_DNS.iter().enumerate() {
                 slot.store(u32::from_be_bytes(dns[i]), Ordering::Release);
             }
+            // S2 DNS 接线 (net-feature-alignment.md): 租约 server 同步进 dns::Socket.
+            // SIMPLIFIED: Idle (租约丢失) 时 servers 保留旧值直至下次 Bound 刷新;
+            //   影响面: 租约丢失窗口内查询因 iface 不可达自然超时返 None;
+            //   何时扩展: DHCP 重新配置语义需要清场时.
+            // 局部变量 `dns` 遮蔽了子模块名, 走全路径调用.
+            self::dns::apply_dns_servers(sockets_ptr, raw::dns_handle(), dns);
             crate::privileged::net::NET_CONFIGURED.store(true, Ordering::Release);
             raw::klog_msg("DHCP configured (lease applied)");
         }
@@ -639,6 +646,16 @@ pub extern "C" fn eg_net_init() {
             let dhcp_socket = dhcpv4::Socket::new();
             let handle = sockets.add(dhcp_socket);
             raw::set_dhcp_handle(Some(handle));
+            // S2 DNS 客户端接线 (net-feature-alignment.md): 注册 smoltcp dns::Socket.
+            // smoltcp 未启 alloc feature → 查询槽表须由外部借出定长数组;
+            // Box::leak 取 'static (同 sockets.rs::socket_storage 的堆分配先例).
+            // servers 初始为空, 由 DHCP Bound / static fallback 经 apply_dns_servers 注入.
+            let query_slots: &'static mut [Option<smoltcp_dns::DnsQuery>] = alloc::boxed::Box::leak(
+                alloc::boxed::Box::new([const { None }; dns::DNS_QUERY_SLOTS]),
+            );
+            let dns_socket = smoltcp_dns::Socket::new(&[], query_slots);
+            let dns_handle = sockets.add(dns_socket);
+            raw::set_dns_handle(Some(dns_handle));
         }
 
         crate::privileged::net::NET_READY.store(true, Ordering::Release);
@@ -663,7 +680,9 @@ pub extern "C" fn eg_net_init() {
 
         if !crate::privileged::net::NET_CONFIGURED.load(Ordering::Acquire) {
             // I-46: 引用 net::types 中的集中常量, 不再硬编码 10.0.2.15/24/10.0.2.2.
-            use crate::privileged::net::types::{FALLBACK_GATEWAY, FALLBACK_IPV4, FALLBACK_PREFIX};
+            use crate::privileged::net::types::{
+                FALLBACK_DNS, FALLBACK_GATEWAY, FALLBACK_IPV4, FALLBACK_PREFIX,
+            };
             let cidr = IpCidr::Ipv4(smoltcp::wire::Ipv4Cidr::new(
                 smoltcp::wire::Ipv4Address::new(
                     FALLBACK_IPV4[0],
@@ -690,6 +709,10 @@ pub extern "C" fn eg_net_init() {
                 // D1.2: 把 fallback IP/网关写进 G_IPV4/G_GATEWAY, 给 get_* 观测 API
                 G_IPV4.store(u32::from_be_bytes(FALLBACK_IPV4), Ordering::Release);
                 G_GATEWAY.store(u32::from_be_bytes(FALLBACK_GATEWAY), Ordering::Release);
+                // S2 DNS 接线: fallback 路径同步写 G_DNS + 注入 dns::Socket servers,
+                // 否则 dns_query_net 的 G_DNS[0] 短路检查在无 DHCP 环境恒 None.
+                G_DNS[0].store(u32::from_be_bytes(FALLBACK_DNS), Ordering::Release);
+                dns::apply_dns_servers(&mut *raw::socket_set(), raw::dns_handle(), [[0u8; 4]; 3]);
                 raw::klog_msg("Static IP (fallback, see net::types::FALLBACK_*)");
             }
         }
@@ -724,6 +747,22 @@ pub extern "C" fn eg_net_init() {
             crate::privileged::irq::SoftirqVec::NetTx,
             net_tx_softirq_handler,
         );
+
+        // S2 DNS 接线 (net-feature-alignment.md): 实机验证钩子 —— feature 门控,
+        // KERNEL_FEATURES=dns-selftest 点亮 (仿 lockdep/e1000-verbose 先例).
+        // boot 完成后发一次真实查询并 printk; 成败均不阻断 boot (只观测).
+        #[cfg(feature = "dns-selftest")]
+        match dns_resolve("example.com") {
+            Some(ip) => crate::klog_info!(
+                Net,
+                "dns-selftest: example.com -> {}.{}.{}.{}",
+                ip[0],
+                ip[1],
+                ip[2],
+                ip[3]
+            ),
+            None => crate::klog_warn!(Net, "dns-selftest: example.com -> None"),
+        }
     }
 }
 
@@ -963,6 +1002,14 @@ mod tests {
         assert_eq!(dns_resolve("nonexistent.example.com"), None);
         assert_eq!(dns_resolve(""), None);
         assert_eq!(dns_resolve("999.999.999.999"), None);
+    }
+
+    /// S2: host 侧 dns_query_net 短路护栏 —— NET_READY=false 时必须返 None
+    /// 且不碰任何 socket (host 单测安全门槛, 契约见 dns.rs::dns_query_net).
+    #[test]
+    fn test_dns_query_net_host_short_circuit() {
+        assert!(!crate::privileged::net::NET_READY.load(Ordering::Acquire));
+        assert_eq!(dns_resolve("example.com"), None);
     }
 
     #[test]
