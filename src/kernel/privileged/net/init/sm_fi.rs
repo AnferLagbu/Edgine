@@ -26,6 +26,13 @@ use crate::privileged::proc::{
 use crate::privileged::sync::in_irq_context;
 use crate::privileged::timer::hrtimer_clock_read;
 use core::sync::atomic::AtomicU16;
+// sockopt 跨层 ABI 常量单一权威源 (Linux x86_64 asm-generic 值域, 与 userlib
+// 共用; 见 plan socket-option-constants-unification 裁定记录).
+use edgine_abi::socket::{
+    IP_ADD_MEMBERSHIP, IP_DROP_MEMBERSHIP, IPPROTO_IP, IPPROTO_IPV6, IPPROTO_TCP,
+    IPV6_ADD_MEMBERSHIP, IPV6_DROP_MEMBERSHIP, SO_BROADCAST, SO_ERROR, SO_KEEPALIVE, SO_PASSCRED,
+    SO_RCVTIMEO, SO_REUSEADDR, SO_REUSEPORT, SO_SNDTIMEO, SO_TYPE, SOL_SOCKET, TCP_NODELAY,
+};
 use smoltcp::iface::MulticastError;
 use smoltcp::socket::{tcp, udp};
 use smoltcp::time::Duration;
@@ -54,49 +61,21 @@ const E_NOPROTOOPT: i32 = 92;
 const E_ADDRNOTAVAIL: i32 = 99;
 
 // ============================================================================
-// D8: socket 选项常量 (Linux asm-generic 值域)
+// D8: sock 类型回值 (sockopt 常量已迁 edgine-abi 单源, 见顶部 use)
 // ============================================================================
-const SOL_SOCKET: i32 = 1;
-const IPPROTO_TCP: i32 = 6;
-const SO_REUSEADDR: i32 = 2;
-const SO_TYPE: i32 = 3;
-const SO_ERROR: i32 = 4;
-const SO_KEEPALIVE: i32 = 9;
-const SO_REUSEPORT: i32 = 15;
-const SO_PASSCRED: i32 = 16;
-const TCP_NODELAY: i32 = 1;
 const SOCK_STREAM: i32 = 1;
 const SOCK_DGRAM: i32 = 2;
 
 // ============================================================================
-// D8c: recv/send flags + socket 超时选项 (P5d / DECISION-096, Linux 值域)
+// D8c: recv/send flags (P5d / DECISION-096); 超时选项 SO_RCVTIMEO/SO_SNDTIMEO
+// 已迁 edgine-abi 单源
 // ============================================================================
 /// `recv`/`send` 族 flags: 本次调用非阻塞 (不挂起, 立即返 -E_AGAIN).
 const MSG_DONTWAIT: i32 = 0x40;
-/// `SOL_SOCKET` 接收超时选项 (存 ns 于 per-slot, 治理 recv/recvfrom/accept).
-const SO_RCVTIMEO: i32 = 20;
-/// `SOL_SOCKET` 发送超时选项 (存 ns 于 per-slot, 治理 send/sendto/connect).
-const SO_SNDTIMEO: i32 = 21;
 
 // ============================================================================
-// D11: 组播成员管理选项 (P6 / DECISION-097, Linux 值域)
+// D11: 组播成员参数长度 (P6 / DECISION-097; 成员管理选项常量已迁 edgine-abi)
 // ============================================================================
-/// `IPPROTO_IP`: IPv4 层 sockopt 的 level (Linux = 0).
-const IPPROTO_IP: i32 = 0;
-/// `IPPROTO_IPV6`: IPv6 层 sockopt 的 level.
-///
-/// 取 **41** —— IANA 给 IPv6 协议号的永久分配, Linux (`<linux/in.h>` /
-/// glibc `<netinet/in.h>`) 与 BSD 系一致, 非本内核自造值. 用户态按 glibc
-/// 编译的程序传 `IPPROTO_IPV6` 可直接命中本常量块.
-const IPPROTO_IPV6: i32 = 41;
-/// 加入 IPv4 组播组 (参数 `struct ip_mreq`).
-const IP_ADD_MEMBERSHIP: i32 = 35;
-/// 离开 IPv4 组播组 (参数 `struct ip_mreq`).
-const IP_DROP_MEMBERSHIP: i32 = 36;
-/// 加入 IPv6 组播组 (参数 `struct ipv6_mreq`).
-const IPV6_ADD_MEMBERSHIP: i32 = 20;
-/// 离开 IPv6 组播组 (参数 `struct ipv6_mreq`).
-const IPV6_DROP_MEMBERSHIP: i32 = 21;
 /// `struct ip_mreq` 长度: `imr_multiaddr` (4B, 网络序) + `imr_interface` (4B).
 const IP_MREQ_LEN: u32 = 8;
 /// `struct ipv6_mreq` 长度: `ipv6mr_multiaddr` (16B) + `ipv6mr_interface` (4B).
@@ -2022,7 +2001,9 @@ fn mc_membership(slot: usize, addr: IpAddress, join: bool) -> i32 {
 /// - `IP_ADD_MEMBERSHIP`/`IP_DROP_MEMBERSHIP` (`IPPROTO_IP`/35、36) 与
 ///   `IPV6_ADD_MEMBERSHIP`/`IPV6_DROP_MEMBERSHIP` (`IPPROTO_IPV6`/20、21): 组播
 ///   成员管理, 参数 `struct ip_mreq` (8B) / `struct ipv6_mreq` (20B) (P6 / D11).
-/// - `SO_REUSEADDR`(2)/`SO_REUSEPORT`(15): 接受但忽略 (本内核无端口复用调度需求).
+/// - `SO_REUSEADDR`(2)/`SO_REUSEPORT`(15)/`SO_BROADCAST`(6): 接受但忽略 (本内核
+///   无端口复用调度需求; 广播闸门真语义待消费者出现时单开工程, 见 plan
+///   socket-option-constants-unification 裁定记录).
 /// - `SO_KEEPALIVE` (`SOL_SOCKET`/9, 仅 TCP): 置/清 keep-alive (7200s 缺省间隔).
 /// - `TCP_NODELAY` (`IPPROTO_TCP`/6, 仅 TCP): `val != 0` 关闭 Nagle.
 /// 其余 (`level`, `optname`): `-ENOPROTOOPT`.
@@ -2129,8 +2110,10 @@ pub unsafe extern "C" fn sm_setsockopt(
             return mc_membership(slot, addr, join);
         }
 
-        // D8: SOL_SOCKET 层的 REUSEADDR/REUSEPORT 接受但忽略.
-        if level == SOL_SOCKET && (optname == SO_REUSEADDR || optname == SO_REUSEPORT) {
+        // D8: SOL_SOCKET 层的 REUSEADDR/REUSEPORT/BROADCAST 接受但忽略.
+        if level == SOL_SOCKET
+            && (optname == SO_REUSEADDR || optname == SO_REUSEPORT || optname == SO_BROADCAST)
+        {
             return 0;
         }
 

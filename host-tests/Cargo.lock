@@ -118,10 +118,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "edgine-abi"
+version = "0.1.0"
+
+[[package]]
 name = "edgine-host-tests"
 version = "0.1.0"
 dependencies = [
  "edgine",
+ "edgine-abi",
  "serde",
  "serde_json",
 ]
@@ -172,6 +177,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.12.1",
  "ed25519-dalek",
+ "edgine-abi",
  "smoltcp",
  "zerocopy",
 ]

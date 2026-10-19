@@ -111,6 +111,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "edgine-abi"
+version = "0.1.0"
+
+[[package]]
 name = "fiat-crypto"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -150,6 +154,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.13.2",
  "ed25519-dalek",
+ "edgine-abi",
  "smoltcp",
  "zerocopy",
 ]

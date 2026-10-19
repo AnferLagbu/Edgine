@@ -563,38 +563,25 @@ pub const SOCK_STREAM: i32 = 1;
 pub const SOCK_DGRAM: i32 = 2;
 pub const SOCK_RAW: i32 = 3;
 
-// 协议
-pub const IPPROTO_TCP: i32 = 6;
-pub const IPPROTO_UDP: i32 = 17;
+// 协议 (IPPROTO_TCP/UDP 由 edgine-abi 单源提供, 见下方 re-export;
+// IPPROTO_RAW 非 sockopt 分派值域, 留本处).
 pub const IPPROTO_RAW: i32 = 255;
 
-// socket 选项级别
-pub const SOL_SOCKET: i32 = 1;
-pub const IPPROTO_IP: i32 = 0;
-/// IPv6 层 sockopt 的 level (兼作 `socket()` 的 protocol 号): IANA = 41.
-pub const IPPROTO_IPV6: i32 = 41;
+// Socket ABI 常量 (level + 选项 + 组播成员): 单一权威源 `edgine-abi`,
+// Linux x86_64 asm-generic 值域, 与内核 `privileged::net::init::sm_fi`
+// 引用同源. 历史漂移 `SO_KEEPALIVE`=8 / `SO_BROADCAST`=32 随单源引用修正为
+// 9/6 (plan socket-option-constants-unification 方案 A, 2026-10-19 裁定);
+// 内核侧 SO_BROADCAST 为"接受但忽略", SO_KEEPALIVE 已实装 (7200s 缺省).
+pub use edgine_abi::socket::{
+    IP_ADD_MEMBERSHIP, IP_DROP_MEMBERSHIP, IPPROTO_IP, IPPROTO_IPV6, IPPROTO_TCP, IPPROTO_UDP,
+    IPV6_ADD_MEMBERSHIP, IPV6_DROP_MEMBERSHIP, SO_BROADCAST, SO_ERROR, SO_KEEPALIVE, SO_PASSCRED,
+    SO_RCVTIMEO, SO_REUSEADDR, SO_REUSEPORT, SO_SNDTIMEO, SO_TYPE, SOL_SOCKET, TCP_NODELAY,
+};
 
-// socket 选项
-pub const SO_REUSEADDR: i32 = 2;
-pub const SO_KEEPALIVE: i32 = 8;
-pub const SO_BROADCAST: i32 = 32;
-
-// D8/D8b: TCP 选项与 poll 事件位 (与内核 sm_fi.rs D8/D8b 常量值域对齐).
-// SIMPLIFIED: 仅补齐 P4 e2e 所需项; SO_KEEPALIVE/SO_BROADCAST 沿用既有 (与
-// 内核 asm-generic 值域存在历史偏差), 未在本探针使用, 已独立立项统一
-// (见 docs/plan/socket-option-constants-unification.md).
-pub const TCP_NODELAY: i32 = 1;
+// D8b: poll 事件位 (与内核 `sm_fi.rs` D8b 同值域; poll 族不属 sockopt, 不在
+// 本轮 abi 统一范围, 见 plan S1 范围界定).
 pub const POLLIN: i16 = 1;
 pub const POLLOUT: i16 = 4;
-
-// D11 (P6 / DECISION-097): 组播成员管理选项 (Linux 值域, 与内核 `sm_fi.rs` 的
-// D11 常量块逐项对齐). `IPPROTO_IPV6` = 41 为 IANA 永久分配 (Linux/BSD 一致);
-// `IPV6_ADD/DROP_MEMBERSHIP` = 20/21 取 Linux 口径 (glibc 将 BSD 的
-// `IPV6_JOIN_GROUP`/`IPV6_LEAVE_GROUP` 别名到该值).
-pub const IP_ADD_MEMBERSHIP: i32 = 35;
-pub const IP_DROP_MEMBERSHIP: i32 = 36;
-pub const IPV6_ADD_MEMBERSHIP: i32 = 20;
-pub const IPV6_DROP_MEMBERSHIP: i32 = 21;
 
 // 标志 (Linux x86_64 / generic ABI 值域, 与内核侧 `MSG_DONTWAIT` /
 // `MSG_DONTWAIT_FLAG` 逐字一致 —— 由 host-tests 的 ABI 契约测试锁位).

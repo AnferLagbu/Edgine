@@ -8,7 +8,7 @@
 //! 2. 组表容量与 `Cargo.toml` 的 smoltcp feature 一致 (容量漂移会静默丢组)
 //! 3. smoltcp `multicast` feature 已启用 (整模块受该 feature 门控, 未启用时
 //!    `join/leave_multicast_group` 根本不存在 —— D11 曾长期误判为已实装)
-//! 4. sockopt 常量为 Linux/IANA 值域 (`IPPROTO_IPV6` = 41) 且内核与 userlib 一致
+//! 4. sockopt 常量为 Linux/IANA 值域 (edgine-abi 单源, 锁位在 abi_socket_constants_test)
 //! 5. `sm_setsockopt` 已把四个组播选项路由到 `mc_membership`
 //! 6. `mc_membership` 的 iface/簿记次序铁律 (join 失败回滚 / leave 先簿记后拆)
 //! 7. `sm_close` 拆组的"先取址后 force_leave"顺序 (倒转会静默丢订阅)
@@ -90,49 +90,42 @@ fn smoltcp_multicast_feature_is_enabled() {
 
 #[test]
 fn sockopt_constants_use_linux_abi() {
+    // 方案 A 单源 (plan socket-option-constants-unification, 2026-10-19 裁定):
+    // sockopt 常量值域由 edgine-abi 提供, 锁位断言在 abi_socket_constants_test;
+    // 本处只验内核侧确实引用单源, 未再就地私定选项常量.
     let src = read_src(SM_FI);
-    let linux = [
-        "const IPPROTO_IP: i32 = 0;",
-        "const IPPROTO_IPV6: i32 = 41;",
-        "const IP_ADD_MEMBERSHIP: i32 = 35;",
-        "const IP_DROP_MEMBERSHIP: i32 = 36;",
-        "const IPV6_ADD_MEMBERSHIP: i32 = 20;",
-        "const IPV6_DROP_MEMBERSHIP: i32 = 21;",
+    assert!(
+        src.contains("use edgine_abi::socket"),
+        "D11: sm_fi 应引用 edgine-abi 单源获取 sockopt 常量 (回归为就地 const 即漂移起点)"
+    );
+    // 内核内部件 (mreq 参数长度, 非跨层选项值域) 仍就地定义.
+    for c in [
         "const IP_MREQ_LEN: u32 = 8;",
         "const IPV6_MREQ_LEN: u32 = 20;",
-    ];
-    for c in linux {
-        assert!(
-            src.contains(c),
-            "D11: sockopt 常量偏离 Linux ABI 值域: `{c}`"
-        );
+    ] {
+        assert!(src.contains(c), "D11: 内核内部 mreq 长度常量偏离: `{c}`");
     }
-    // `IPPROTO_IPV6` = 41 是 IANA 给 IPv6 协议号的永久分配, Linux 与 BSD 一致;
-    // 任何自造值 (曾误取 10) 都会让 glibc 程序发完好的请求拿到 ENOPROTOOPT.
-    // IPv6 组播不在 e2e 注帧路径上, 该漂移只能靠本断言拦住.
-    for bad in ["i32 = 10;", "i32 = 43;", "i32 = 60;"] {
+    // 旧就地定义已移除 (否则两套同时存在 = 双写漂移复活).
+    for gone in [
+        "const IPPROTO_IPV6: i32 =",
+        "const IP_ADD_MEMBERSHIP: i32 =",
+    ] {
         assert!(
-            !src.contains(&format!("const IPPROTO_IPV6: {bad}")),
-            "D11: IPPROTO_IPV6 取了非 IANA 值 (`{bad}`)"
+            !src.contains(gone),
+            "D11: sm_fi 仍存在就地选项常量定义 `{gone}` (应迁 edgine-abi)"
         );
     }
 }
 
 #[test]
 fn userlib_membership_constants_mirror_kernel() {
-    // 用户态常量必须与内核逐项对齐 —— 任一侧漂移, 组播选项就会静默落到
-    // setsockopt 的未知选项分支.
+    // 方案 A 单源: userlib 的选项常量来自 edgine-abi re-export (与内核同源,
+    // 天然镜像); 本处验引用关系 + mreq 结构体仍可构造.
     let user = read_src(USERLIB);
-    for c in [
-        "pub const IPPROTO_IP: i32 = 0;",
-        "pub const IPPROTO_IPV6: i32 = 41;",
-        "pub const IP_ADD_MEMBERSHIP: i32 = 35;",
-        "pub const IP_DROP_MEMBERSHIP: i32 = 36;",
-        "pub const IPV6_ADD_MEMBERSHIP: i32 = 20;",
-        "pub const IPV6_DROP_MEMBERSHIP: i32 = 21;",
-    ] {
-        assert!(user.contains(c), "D11: userlib 常量与内核不一致: `{c}`");
-    }
+    assert!(
+        user.contains("pub use edgine_abi::socket"),
+        "D11: userlib 应 re-export edgine-abi 单源常量 (就地重定义 = 双写漂移复活)"
+    );
     // mreq 结构体必须是 repr(C) 且尺寸与内核期望的 optlen 下限一致.
     assert!(
         user.contains("pub struct IpMreq") && user.contains("pub struct Ipv6Mreq"),

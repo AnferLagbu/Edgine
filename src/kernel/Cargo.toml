@@ -39,6 +39,8 @@ debug = 2
 # 方案 D: kernel 直接依赖 (从 edgine Cargo.toml 迁移, 仅 kernel 实际使用).
 # zerocopy/ed25519-dalek 由 kernel 代码直接引用; bitflags 经 `bitflags::bitflags!`
 # 宏调用 (mm/sgeg/cpu 等 7 文件); smoltcp 为 kernel 内部 vendored.
+# sockopt 等跨层 ABI 常量单一权威源 (与 userlib 共用, 见 plan socket-option-constants-unification).
+edgine-abi = { path = "../rust/edgine-abi" }
 bitflags = "2.4"
 zerocopy = { version = "0.8", default-features = false, features = ["derive"] }
 # DECISION-078: 真实 Ed25519 签名验证 (RFC 8032). BSD-3-Clause OR Apache-2.0.

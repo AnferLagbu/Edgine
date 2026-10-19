@@ -2,3 +2,7 @@
 name = "userlib"
 version.workspace = true
 edition.workspace = true
+
+[dependencies]
+# sockopt 跨层 ABI 常量单一权威源 (与内核共用, plan socket-option-constants-unification 方案 A).
+edgine-abi = { path = "../../rust/edgine-abi" }
