@@ -56,6 +56,11 @@ E2E_PCAP_DIR="${E2E_PCAP_DIR:-}"
 # E2E_REPEATS=1 单次跑.
 E2E_CURRENT_ROUND="${E2E_CURRENT_ROUND:-1}"
 
+# --- T1 aarch64 e2e 软观测参数 (net-feature-alignment.md 档位2) ---
+# 宿主端口与 x86 (8080) 隔离, 两 arch 串行跑不冲突.
+A64_E2E_HOST_PORT="${A64_E2E_HOST_PORT:-8081}"
+A64_E2E_READY_TIMEOUT="${A64_E2E_READY_TIMEOUT:-60}"
+
 ok()   { echo -e "${GREEN}\u2713 $1${NC}"; }
 err()  { echo -e "${RED}\u2717 $1${NC}"; }
 warn() { echo -e "${YELLOW}! $1${NC}"; }
@@ -183,6 +188,50 @@ verify_image_arch() {
 }
 
 # ---------------------------------------------------------------------------
+# 宿主侧 TCP echo 客户端 (arch 无关, x86 硬门禁与 a64 软观测共用)
+# 参数: $1=宿主端口  $2=轮数  $3=载荷
+# 返回: 0 = 全部轮回显一致
+# ---------------------------------------------------------------------------
+e2e_host_client() {
+    local port="$1" rounds="$2" payload="$3"
+    E2E_HOST_PORT="$port" E2E_ROUNDS="$rounds" E2E_PAYLOAD="$payload" \
+        python3 - <<'PY'
+import os
+import socket
+import sys
+import time
+
+port = int(os.environ["E2E_HOST_PORT"])
+rounds = int(os.environ["E2E_ROUNDS"])
+payload = os.environ["E2E_PAYLOAD"].encode()
+
+for i in range(rounds):
+    try:
+        sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+    except OSError as exc:
+        print(f"round {i}: connect to 127.0.0.1:{port} failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+    got = b""
+    try:
+        sock.sendall(payload)
+        sock.shutdown(socket.SHUT_WR)
+        while len(got) < len(payload):
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            got += chunk
+    finally:
+        sock.close()
+    if got != payload:
+        print(f"round {i}: echo mismatch: sent={payload!r} got={got!r}", file=sys.stderr)
+        sys.exit(1)
+    time.sleep(0.2)
+
+print(f"OK: {rounds}/{rounds} rounds echoed")
+PY
+}
+
+# ---------------------------------------------------------------------------
 # 端到端 TCP echo 验证 (P3 D6 "先建后换" 交接, 仅 x86_64)
 #
 # 以 QEMU slirp hostfwd 把宿主端口映射到 guest 内用户态 echo 服务:
@@ -264,41 +313,7 @@ while True:
 
     # 宿主客户端: 逐轮连接 + 回显校验 (set -e 下以 || 捕获退出码).
     local py_rc=0
-    E2E_HOST_PORT="$E2E_HOST_PORT" E2E_ROUNDS="$E2E_ROUNDS" E2E_PAYLOAD="$payload" \
-        python3 - <<'PY' || py_rc=$?
-import os
-import socket
-import sys
-import time
-
-port = int(os.environ["E2E_HOST_PORT"])
-rounds = int(os.environ["E2E_ROUNDS"])
-payload = os.environ["E2E_PAYLOAD"].encode()
-
-for i in range(rounds):
-    try:
-        sock = socket.create_connection(("127.0.0.1", port), timeout=5)
-    except OSError as exc:
-        print(f"round {i}: connect to 127.0.0.1:{port} failed: {exc}", file=sys.stderr)
-        sys.exit(1)
-    got = b""
-    try:
-        sock.sendall(payload)
-        sock.shutdown(socket.SHUT_WR)
-        while len(got) < len(payload):
-            chunk = sock.recv(4096)
-            if not chunk:
-                break
-            got += chunk
-    finally:
-        sock.close()
-    if got != payload:
-        print(f"round {i}: echo mismatch: sent={payload!r} got={got!r}", file=sys.stderr)
-        sys.exit(1)
-    time.sleep(0.2)
-
-print(f"OK: {rounds}/{rounds} rounds echoed")
-PY
+    e2e_host_client "$E2E_HOST_PORT" "$E2E_ROUNDS" "$payload" || py_rc=$?
     if [ "$py_rc" -ne 0 ]; then
         warn "[x86_64] 宿主客户端回显校验失败 (exit=$py_rc)"
         cleanup_e2e
@@ -371,6 +386,82 @@ PY
         ok "[x86_64] 端到端 TCP echo 验证通过 (P3 D6 先建后换 + FD 回收)"
     fi
     return $rc
+}
+
+# ---------------------------------------------------------------------------
+# aarch64 virtio-net e2e 软观测 (T1, net-feature-alignment.md 档位2)
+#
+# 门禁口径 = **软观测** (用户裁定): 失败只 warn + 数据行, 不进 RESULT,
+# 先拿 aarch64 数据面失真数据作为档位3 (soak) 与 P 系列立项的输入.
+# SIMPLIFIED: 只跑 TCP echo 入站单腿 (无 UDP recvfrom 活体腿/P4 语义里程碑/
+#   pcap 取证/FD 回收断言); 影响面: UDP・组播・IPv6 的 aarch64 数据面不在
+#   本观测内; 何时扩展: 档位3 立项后按 x86 同等缺项补齐并升硬门禁.
+# 返回: 0 = 观测通过 (仅供台账, 不参与门禁).
+# ---------------------------------------------------------------------------
+a64_e2e_observe() {
+    local log="$LOG_DIR/qemu_e2e_tcp_aarch64.log"
+    local payload="EDGINE-TCP-ECHO-A64"
+    command -v python3 >/dev/null 2>&1 || { warn "[aarch64] 软观测缺依赖: python3"; return 1; }
+
+    rm -f "$log"
+    info "[aarch64] e2e 软观测: 启动后台 QEMU (hostfwd tcp::${A64_E2E_HOST_PORT}->:${E2E_GUEST_PORT})..."
+    qemu-system-aarch64 \
+        -serial "file:${log}" -display none -no-reboot \
+        -M virt,gic-version=3 -cpu max -m 512 -smp 2 \
+        -kernel other/build/aarch64/kernel-aarch64.img \
+        -device virtio-net-device,netdev=n0 \
+        -netdev "user,id=n0,hostfwd=tcp::${A64_E2E_HOST_PORT}-:${E2E_GUEST_PORT}" \
+        >/dev/null 2>&1 &
+    E2E_QEMU_PID=$!
+
+    # 就绪等待: echo 服务监听 + 地址落配置 (DHCP 租约或 fallback 静态IP 任一).
+    local waited=0
+    while [ "$waited" -lt "$A64_E2E_READY_TIMEOUT" ]; do
+        if grep -aqF "[tcp] Listening on 0.0.0.0:80" "$log" 2>/dev/null \
+            && grep -aqE "DHCP configured \(lease applied\)|Static IP \(fallback" "$log" 2>/dev/null; then
+            break
+        fi
+        if ! kill -0 "$E2E_QEMU_PID" 2>/dev/null; then
+            warn "[aarch64] 软观测: QEMU 在就绪前退出 (见 $log)"
+            cleanup_e2e
+            echo "A64_E2E observe=fail reason=qemu_exit"
+            return 1
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    if [ "$waited" -ge "$A64_E2E_READY_TIMEOUT" ]; then
+        warn "[aarch64] 软观测: 就绪超时 (${A64_E2E_READY_TIMEOUT}s, 见 $log)"
+        # 归因数据行: 缺哪条腿 + TX 超时计数 (档位3 立项输入, plan T1 方案⑤).
+        local saw_listen=0 saw_addr=0 tx_warns
+        grep -aqF "[tcp] Listening on 0.0.0.0:80" "$log" 2>/dev/null && saw_listen=1
+        grep -aqE "DHCP configured \(lease applied\)|Static IP \(fallback" "$log" 2>/dev/null && saw_addr=1
+        tx_warns=$(grep -acF "TX 超时" "$log" 2>/dev/null || true)
+        cleanup_e2e
+        echo "A64_E2E observe=fail reason=not_ready listen=${saw_listen} addr=${saw_addr} tx_timeout=${tx_warns:-0}"
+        return 1
+    fi
+
+    local client_rc=0
+    e2e_host_client "$A64_E2E_HOST_PORT" "$E2E_ROUNDS" "$payload" || client_rc=$?
+
+    # 日志完整落盘后再计数 (与 x86 腿同序).
+    cleanup_e2e
+    local accepted echoed addr_mode=none tx_warns
+    accepted=$(grep -acF "[tcp] Connection accepted" "$log" || true)
+    echoed=$(grep -acF "[tcp] Echo ok len=" "$log" || true)
+    tx_warns=$(grep -acF "TX 超时" "$log" 2>/dev/null || true)
+    grep -aqF "DHCP configured (lease applied)" "$log" && addr_mode=dhcp
+    grep -aqF "Static IP (fallback" "$log" && addr_mode=fallback
+
+    if [ "$client_rc" -eq 0 ] && [ "$accepted" -ge "$E2E_ROUNDS" ] && [ "$echoed" -ge "$E2E_ROUNDS" ]; then
+        ok "[aarch64] 软观测: ${E2E_ROUNDS} 轮回显全部通过"
+        echo "A64_E2E observe=pass accept=${accepted} echo=${echoed} addr=${addr_mode} tx_timeout=${tx_warns:-0}"
+        return 0
+    fi
+    warn "[aarch64] 软观测: 数据不完整 (client_rc=${client_rc} accept=${accepted} echo=${echoed})"
+    echo "A64_E2E observe=fail client_rc=${client_rc} accept=${accepted} echo=${echoed} addr=${addr_mode} tx_timeout=${tx_warns:-0}"
+    return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -521,7 +612,7 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
         if boot_and_check "aarch64" "$A64_LOG" "$TIMEOUT_QEMU" "VFS ready" \
             -M virt,gic-version=3 -cpu max -m 512 -smp 2 -kernel other/build/aarch64/kernel-aarch64.img \
             -device virtio-net-device,netdev=n0 \
-            -netdev user,id=n0; then
+            -netdev "user,id=n0,hostfwd=tcp::${A64_E2E_HOST_PORT}-:${E2E_GUEST_PORT}"; then
             # ISSUE-RT-002: GICv3 初始化成功里程碑 (初始化后置条件自检通过).
             # 缺失即表示 GIC 初始化 fail-fast 或回退静默路径 (fail-closed).
             if grep -q "GICv3 ready" "$A64_LOG"; then
@@ -599,6 +690,11 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 warn "[aarch64] 未观察到 EL0 来源 IRQ (ISSUE-RT-005 回归?)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+
+            # T1 (net-feature-alignment.md 档位2): virtio-net 数据面 e2e 软观测.
+            # 只记 warn/数据行, 不改 RESULT —— x86 硬门禁原样, aarch64 不因
+            # e2e 失败翻转 (用户裁定的软观测口径).
+            a64_e2e_observe || true
         else
             [ "$FAIL_OK" = "0" ] && RESULT=1
         fi

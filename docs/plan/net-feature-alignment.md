@@ -50,7 +50,8 @@
 
 描述：aarch64 网络数据面（virtio-net RX/TX + GIC INTx）从未被真实流量验证（boot test 注释自陈"偶发 TX 超时 WARN 属预期"）；x86 侧成熟的 tcp-echo/UDP 回显 e2e 与 liveness 探针全部只跑 x86。本项把最小 e2e 轮挂到 aarch64，**软观测**：结果只记 warn/数据行，不进 RESULT 阻断，先拿失真数据。
 方案：① `qemu_boot_test.sh` aarch64 分支 `-netdev` 加 hostfwd（宿主端口与 x86 隔离，两 arch 串行跑不冲突）；② 复用 arch 无关的 `e2e_tcp_echo` 函数体在 aarch64 分支调用，失败仅 `warn`；③ 汇总行输出 `A64_E2E observe=pass/fail` 供台账统计；④ `qemu_liveness_probe.sh` 的 TICK_ADDR 自动解析已 arch 无关，纳入手动观测；⑤ 首轮数据（tick 速率/echo 成败/TX 超时计数）写回本节详情，作为档位3 与 P 系列立项的输入。
-状态：[]
+状态：[X]
+详情（首轮实装+观测回填）：实装于 `scripts/qemu_boot_test.sh`：抽出共享宿主客户端 `e2e_host_client`（x86 硬门禁腿行为不变，已回归 1/1）；新增 `a64_e2e_observe`（TCP echo 入站单腿，SIMPLIFIED 标注；失败只 warn + 数据行，不进 RESULT）；aarch64 主 boot 与观测 boot 均带 hostfwd tcp::8081（与 x86 8080 隔离）；数据行扩展归因字段 `listen=/addr=/tx_timeout=`。首轮实测（最新码镜像）：boot 里程碑全过（含 KPTI-09/SMP/TLB shootdown/EL0 IRQ）；软观测 `A64_E2E observe=fail reason=not_ready listen=0 addr=1 tx_timeout=11`——失真坐实：virtio-net TX 自 0.035s 起持续超时（60s 内 11 次，含 4/8/10s 密集段与 20-60s 每 10s 周期段，周期段疑为 IGMP/MLD report 或 DHCP renew），DHCP 因 TX 不成落 fallback 静态（addr=1，S2 fallback 接线在 aarch64 无死锁验过）；用户态 `[tcp] Listening` 未出现（listen=0，aarch64 用户态 echo 服务链路不可达，待归因：服务未启动 vs 启动卡网络 syscall）. 本观测为档位3/P 系列（virtio-net TX 根因）的输入；qemu_liveness_probe.sh 手动观测按需跑.
 
 ## 3. 验收
 
