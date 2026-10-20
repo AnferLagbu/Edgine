@@ -4,7 +4,7 @@
 # 用法: ./ci/audit.sh [quick|full]
 #
 # - quick: clippy + 双架构 check (CI 默认)
-# - full:  quick + Lockbud + Miri 严格模式 + SAFETY 覆盖率统计
+# - full:  quick + 内核测试 release 维 compile-only + Lockbud + Miri 严格模式 + SAFETY 覆盖率统计
 
 set -euo pipefail
 
@@ -336,6 +336,25 @@ done
 if [ "$MODE" = "quick" ]; then
     echo -e "\n${GREEN}━━━ audit (quick) 完成 ━━━${NC}"
     exit 0
+fi
+
+# ── 2d. 内核测试构建 release 维 compile-only (P-44) ─────────────
+# 门槛 6 的判据是 debug 配方 (Makefile 的 test-kernel-host, 不带 --release). release 测试维
+# 自 P-43 起「可编译、可运行、零警告」, 但**此前不由任何门禁编译** —— 于是谁把测试侧 cfg
+# 改回与被测代码掩码不同形, 六门槛照样全绿: 修好的病灶没有回归锁.
+# 判据与实现见 scripts/check_kernel_test_release_dim.sh 顶部 (两条: 编译退出码 0 + 本 crate
+# 零告警; 只编译不跑用例 ⇒ 不产出 release 覆盖读数, lockdep 在该维用例数为 0 不得读成覆盖达成).
+# 置于 quick 早退分支之后 = 仅 full 执行 (增量成本: kernel crate 重编 ≈ 27s, 无改动时 ≈ 0.1s).
+step "2d/6 内核测试构建 release 维 compile-only (P-44)"
+if "$PROJECT_ROOT/scripts/check_kernel_test_release_dim.sh" 2>&1 | tail -40; then
+    RELEASE_DIM_RC=${PIPESTATUS[0]}
+    if [ "$RELEASE_DIM_RC" -eq 0 ]; then
+        ok "内核测试 release 维: 编译通过 + 本 crate 零告警"
+    else
+        err "内核测试 release 维检查失败 (exit=$RELEASE_DIM_RC, 见 scripts/check_kernel_test_release_dim.sh 输出)"
+    fi
+else
+    err "内核测试 release 维检查执行异常"
 fi
 
 # ── 3. SAFETY 注释覆盖率统计 ────────────────────────────────────

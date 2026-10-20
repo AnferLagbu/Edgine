@@ -147,7 +147,7 @@ USER_TEST_ELF = $(RUST_USER_TARGET)/proctest
 STAGE1_BIN = $(ARCH_BUILD_DIR)/stage1.bin
 DISK_IMAGE = $(ARCH_BUILD_DIR)/antx.img
 
-.PHONY: all clean run run-net debug log log-net iso run-iso disk run-disk user test test-host test-kernel-host test-kani test-unit \
+.PHONY: all clean run run-net debug log log-net iso run-iso disk run-disk user test test-host test-kernel-host test-kernel-host-release-compile test-kani test-unit \
          test-all test-chaos test-smp test-smp-multicore
 
 ifeq ($(ARCH),aarch64)
@@ -482,6 +482,19 @@ test-kernel-host:
 	@echo "╚══════════════════════════════════════════════╝"
 	@mkdir -p $(CURDIR)/$(REPORT_DIR)
 	@cd src/kernel && { log=$(CURDIR)/$(REPORT_DIR)/kernel_host_test_$$(date +%Y%m%d_%H%M%S).log; cargo test --features host-test --lib > "$$log" 2>&1; status=$$?; cat "$$log"; exit $$status; }
+	@echo ""
+
+# 内核单元测试 release 维检查 (P-44): 只编译 + 本 crate 零告警两条判据, 判据与实现在
+# scripts/check_kernel_test_release_dim.sh 顶部. **门槛 6 的判据仍是上面的 debug 配方** ——
+# 本目标不产出用例读数 (release 维比 debug 维少 11 例, lockdep 在该维为 0), 只拦
+# 「测试侧 cfg 与被测代码掩码不同形」一类回归 (P-43 病灶).
+# 已接入 ci/audit.sh full 步骤 2d; 本目标供单独复跑.
+test-kernel-host-release-compile:
+	@echo "╔══════════════════════════════════════════════╗"
+	@echo "║   Kernel release-dim test build (--no-run)   ║"
+	@echo "╚══════════════════════════════════════════════╝"
+	@mkdir -p $(CURDIR)/$(REPORT_DIR)
+	@{ log=$(CURDIR)/$(REPORT_DIR)/kernel_host_test_release_$$(date +%Y%m%d_%H%M%S).log; bash $(CURDIR)/scripts/check_kernel_test_release_dim.sh > "$$log" 2>&1; status=$$?; cat "$$log"; exit $$status; }
 	@echo ""
 
 # Kani 形式化验证: 独立 crate kani-harness/ 通过 #[path] 引真实 functions 源码,
