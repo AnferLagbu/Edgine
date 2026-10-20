@@ -31,7 +31,6 @@
 //! │   ├── sched/     调度器特质
 //! │   ├── syscall/   系统调用底层
 //! │   ├── timer/     时钟底层
-//! │   ├── wasm/      WASM 运行时底层
 //! │   ├── pci/       PCI 设备底层
 //! │   ├── tests/     框架单元测试
 //! │   └── frame.rs/vmspace.rs/usermode.rs/userctx.rs/userptr.rs
@@ -52,7 +51,8 @@
 //!     ├── freg/   弹性归因业务
 //!     ├── console/   控制台业务 (functions 实际通过 privileged::console 复用)
 //!     ├── klog/      日志业务 (functions 实际通过 privileged::klog 复用)
-//!     └── wasm/      WASM 运行时
+//!     └── wasm/      WASM 运行时 (解释器/运行时/WASI 已实装, 内核侧暂无调用者,
+//!                    现由 `kani-harness` 作 LEB128 形式化验证载体)
 //! ```
 //!
 //! ## 设计理念

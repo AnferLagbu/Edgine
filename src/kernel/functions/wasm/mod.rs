@@ -10,7 +10,7 @@
 //! - `types.rs` — WASM 1.0 类型定义
 //! - `leb128.rs` — LEB128 编解码器
 //!
-//! `privileged/wasm/` 仅保留 re-export shim, 保持向后兼容.
+//! `privileged/wasm/` 目录已在 T6-9 迁移时删除, 本目录即 WASM 的唯一实现位置 (无 re-export shim).
 
 /// T6-9: WASM 解释器 (原 privileged/wasm/interpreter.rs)
 pub mod interpreter;
