@@ -243,7 +243,9 @@ $(USER_BUILD_DIR)/init.bin: $(USER_INIT_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
 	@cp $< $@
 
-$(RUST_LIB): $(USER_BUILD_DIR)/init.bin
+# aarch64 侧同样需 kernel 源码前置依赖 (与下方 x86_64 规则 / RUST_LIB_TEST 的 E-06 教训同因):
+# 缺它则 .a 已存在时 make 跳过 cargo 重建, 静默沿用陈旧二进制.
+$(RUST_LIB): $(USER_BUILD_DIR)/init.bin $(shell find src/kernel -name '*.rs' 2>/dev/null)
 	@echo "Building Rust kernel module..."
 	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) $(if $(KERNEL_FEATURES),--features "$(KERNEL_FEATURES)") --target-dir ../../other/target
 else
