@@ -363,15 +363,20 @@ jobs:
       - name: 运行审计脚本自测
         run: |
           mkdir -p other/build/log
-          SELFTEST_OUT=$(python3 scripts/tests/audit_selftest.py 2>&1 || true)
+          # B01-24: 自测退出码 (4/4 全部通过才成功). RC 必须来自脚本本身 ——
+          # 旧写法把输出存进变量时带 `|| true` (RC 恒为 0), 再从 `echo|tee|tail`
+          # 管道读 PIPESTATUS[0] 取到的是 echo 的 0, 该 job 因此永不失败.
+          # B01-25 模式: set +e 捕获真实退出码, 再回放输出.
+          set +e
+          SELFTEST_OUT=$(python3 scripts/tests/audit_selftest.py 2>&1)
+          SELFTEST_RC=$?
+          set -e
           echo "$SELFTEST_OUT" | tee other/build/log/audit_selftest.txt | tail -30
-          # B01-24: 自测退出码 (4/4 全部通过才成功)
-          SELFTEST_RC=${PIPESTATUS[0]}
           if [ "$SELFTEST_RC" -ne 0 ]; then
-            echo "::error::审计脚本自测失败 (负测试未全部拦截违规样例)"
+            echo "::error::审计脚本自测失败 (audit_selftest.py RC=$SELFTEST_RC)"
             exit 1
           fi
-          echo "✅ 审计脚本自测 4/4 通过"
+          echo "✅ 审计脚本自测通过"
 
       - name: 上传报告
         if: always()

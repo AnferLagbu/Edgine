@@ -26,7 +26,11 @@ mkdir -p "$LOG_DIR"
 
 ARCH="${1:-all}"
 TIMEOUT_QEMU="${TIMEOUT_QEMU:-25}"
-FAIL_OK="${FAIL_OK:-1}"  # 1 = 允许部分里程碑不通过 (e1000 已知挂起)
+# 门禁强度: 默认 fail-closed —— 任一里程碑缺失即整轮 RC=1.
+# 旧默认 1 源自「x86_64 e1000 初始化挂起」(ISSUE-RT-001) 时期的放宽, 该病灶现已被
+# 本脚本的 e1000 / DHCP 里程碑回归覆盖, 放宽只剩副作用: 残缺轮以 `n/m 通过` + RC=0
+# 假绿通过 §2.3 第 5 条. 诊断性跑可显式 `FAIL_OK=1` 放宽, 放宽时脚本会打印软门禁横幅.
+FAIL_OK="${FAIL_OK:-0}"
 
 # --- P3 D6 端到端验证参数 (仅 x86_64, 可用环境变量覆盖) ---
 E2E_HOST_PORT="${E2E_HOST_PORT:-8080}"        # 宿主侧 hostfwd 监听端口
@@ -471,6 +475,11 @@ RESULT=0
 TESTED=0
 PASSED=0
 
+# 软门禁横幅: 让「放宽模式」在日志里显式可见, 不留下与硬门禁同形的 `n/m 通过`.
+if [ "$FAIL_OK" != "0" ]; then
+    warn "软门禁模式 (FAIL_OK=$FAIL_OK): 里程碑缺失不计失败, 本轮结果不可作为 §2.3 第 5 条验收依据"
+fi
+
 if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
     TESTED=$((TESTED+1))
     info "=== x86_64 QEMU 真实启动 ==="
@@ -703,7 +712,7 @@ fi
 
 echo ""
 echo "============================================"
-echo "QEMU 真实启动测试: ${PASSED}/${TESTED} 通过"
+echo "QEMU 真实启动测试: ${PASSED}/${TESTED} 通过 (门禁模式: FAIL_OK=${FAIL_OK})"
 echo "  日志: other/build/log/qemu_boot_*.log"
 echo "============================================"
 exit $RESULT

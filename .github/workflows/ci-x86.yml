@@ -36,11 +36,21 @@ jobs:
         working-directory: src/rust
         run: |
           # 方案 D: 裸机 check 指向 kernel manifest (edgine 壳仅 host); 方案 B: 注入 build-std
-          cargo check --manifest-path ../kernel/Cargo.toml --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target x86_64-unknown-none --target-dir ../../other/target 2>&1 | tee ../../other/build/log/cargo_check.txt
-          if grep -q "error\[" ../../other/build/log/cargo_check.txt; then
-            echo "::error::cargo check 失败"
+          # B01-25 模式: 旧写法 `| tee ../../other/build/log/...` 既无 mkdir (本 job 首步,
+          # fresh runner 上 other/ 属 gitignore 不存在 → tee 退出 1 直接把本步打断在 grep
+          # 之前, 编译结果从未被判定), 又只 grep `error\[` (漏 `error:` 前缀的链接期/
+          # manifest 类失败). 现改为直取 cargo 真实退出码.
+          mkdir -p ../../other/build/log
+          set +e
+          CHECK_OUT=$(cargo check --manifest-path ../kernel/Cargo.toml --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target x86_64-unknown-none --target-dir ../../other/target 2>&1)
+          CHECK_RC=$?
+          set -e
+          echo "$CHECK_OUT" | tee ../../other/build/log/cargo_check.txt | tail -20
+          if [ "$CHECK_RC" -ne 0 ]; then
+            echo "::error::cargo check 失败 (RC=$CHECK_RC)"
             exit 1
           fi
+          echo "✅ cargo check (x86_64) 通过"
 
   # ========================================================================
   # Job 2: clippy -D unsafe-code (functions 层 fail-fast)
@@ -84,7 +94,18 @@ jobs:
         run: |
           mkdir -p ../../other/build/log
           # 方案 D: 裸机 build 指向 kernel manifest; 方案 B: 注入 build-std
-          cargo build --manifest-path ../kernel/Cargo.toml --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target x86_64-unknown-none --target-dir ../../other/target --lib 2>&1 | tee ../../other/build/log/build_functions.txt | tail -5
+          # B01-25 模式: 旧写法 `| tee | tail -5` 的管道退出码是 tail 的 0, 且判据只
+          # grep unsafe 形态 ⇒ 与 unsafe 无关的编译失败会照打 ✅ 并 exit 0 (真 fail-open).
+          set +e
+          BUILD_OUT=$(cargo build --manifest-path ../kernel/Cargo.toml --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target x86_64-unknown-none --target-dir ../../other/target --lib 2>&1)
+          BUILD_RC=$?
+          set -e
+          echo "$BUILD_OUT" | tee ../../other/build/log/build_functions.txt | tail -5
+          if [ "$BUILD_RC" -ne 0 ]; then
+            echo "::error::kernel cargo build 失败 (RC=$BUILD_RC)"
+            echo "$BUILD_OUT" | grep -E "^error(\[|:)" | head -20
+            exit 1
+          fi
           if grep -E "error.*unsafe|functions/.*\.rs.*unsafe" ../../other/build/log/build_functions.txt >/dev/null; then
             echo "::error::functions 层检测到 unsafe 代码 (编译期 fail-fast 失败)"
             grep -E "error.*unsafe|functions/.*\.rs" ../../other/build/log/build_functions.txt | head -20

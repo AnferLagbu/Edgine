@@ -36,11 +36,19 @@ jobs:
         working-directory: src/rust
         run: |
           # 方案 D: 裸机 check 指向 kernel manifest; 方案 B: 注入 build-std
-          cargo check --manifest-path ../kernel/Cargo.toml --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target aarch64-unknown-none-softfloat --target-dir ../../other/target 2>&1 | tee ../../other/build/log/cargo_check_aarch64.txt
-          if grep -q "error\[" ../../other/build/log/cargo_check_aarch64.txt; then
-            echo "::error::cargo check 失败"
+          # B01-25 模式: 与 x86_64 同因 —— 本 job 无 mkdir 且 other/ 属 gitignore,
+          # `| tee` 先失败使下方 grep 永不执行; 判据也从 `error\[` 收紧为真实退出码.
+          mkdir -p ../../other/build/log
+          set +e
+          CHECK_OUT=$(cargo check --manifest-path ../kernel/Cargo.toml --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target aarch64-unknown-none-softfloat --target-dir ../../other/target 2>&1)
+          CHECK_RC=$?
+          set -e
+          echo "$CHECK_OUT" | tee ../../other/build/log/cargo_check_aarch64.txt | tail -20
+          if [ "$CHECK_RC" -ne 0 ]; then
+            echo "::error::cargo check 失败 (RC=$CHECK_RC)"
             exit 1
           fi
+          echo "✅ cargo check (aarch64) 通过"
 
   # ========================================================================
   # Job 2: aarch64 QEMU boot test
