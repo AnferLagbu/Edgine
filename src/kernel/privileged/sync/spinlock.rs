@@ -446,12 +446,14 @@ mod tests {
         assert!(!lock.is_locked());
     }
 
+    // 本用例唯一断言面是 `debug_assertions` 下的持锁断言, 故与断言同掩:
+    // release 测试构建里整条摘除, 避免 `lock` 成为未消费绑定 (与 P-43 同族的 cfg 错配).
+    #[cfg(debug_assertions)]
     #[test]
     fn test_spinlock_debug_assert() {
         let lock = SpinLock::new();
 
         // 未持有时断言应失败
-        #[cfg(debug_assertions)]
         std::panic::catch_unwind(|| {
             lock.assert_held();
         })

@@ -713,7 +713,12 @@ pub fn dump_state() {
 // 单元测试 (host 端)
 // ============================================================================
 
-#[cfg(test)]
+// P-43 甲: 本模块的被测符号 (`HeldLockStack` / `MAX_HELD_LOCKS` /
+// `LockDepMap::add_dependency`) 全在 `any(debug_assertions, feature = "lockdep")`
+// 掩码下, 故测试侧必须同掩; 否则 release 测试构建 (debug_assertions 关闭且未开
+// lockdep) 会引用不存在的符号而编译失败. 该掩码下 release 维的用例数为 0,
+// 不代表 lockdep 覆盖已达成 — 口径登记在 net-e2e-tcp-echo-flakiness.md §6 P-43.
+#[cfg(all(test, any(debug_assertions, feature = "lockdep")))]
 mod tests {
     use super::*;
 
