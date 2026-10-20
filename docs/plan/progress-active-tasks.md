@@ -53,10 +53,12 @@
 > **2026-10-20 漂移订正**: 总览表甲/乙计数由 17/11 校正为 16/12 —— `socket-option-constants-unification.md` 行原记「0/2 阻塞在用户裁定 + 漂移仍在原地」失效（该工程 `ac0d09a2` 已按方案 A 落地 `edgine-abi` 单源、sys.rs/sm_fi.rs 均改 `use edgine_abi::socket`、SO_BROADCAST 接受忽略分支 + 契约测试就位，专属 plan S1/S2 已 `[X]`），从甲表移入乙表；现总览表计数与 §变更历史「整表重新对账」行的 16/12 口径一致。
 >
 > **整表重新对账**: 工程计划 B 的 §现状总览表已由「5 份」扩为 `docs/plan/` 非归档 28 份（甲・仍开放项 16 份 / 乙・已闭环 12 份），并登记对账方法、判定口径与 4 类文档漂移。下表为工程计划 A 视角的初始基线五份，作为本计划自身结论保留不动；全量活跃任务视图以 B 表为准。
+>
+> **本轮漂移订正（总览表补行 + 计数对账 + 两处状态字段回填）**: `ls docs/plan/*.md` 实测非归档 plan 为 **33 份**，上行的 28 份口径已随之过期（原文保留作历史快照）。差异定位：总览表缺 5 行——`aarch64-virtio-net-tx-rootcause.md`（P-31）/ `aarch64-el0-sysreg-sync-rootcause.md`（P-32）/ `net-feature-alignment.md` 三份状态字段全量 `[X]` 却未入乙表，`freg-proc-rollback-uaf-guard.md` / `lockdep-observer-liveness-metric.md` 两份仍有开放项却未入甲表；另 `socket-layer-completion.md` 甲表行的判据失效（U5 组播实装于 `474295a6`，行内「`sm_setsockopt` 无组播分支」为假），已移入乙表。计数据此改定 **甲 17 / 乙 16 = 33**。同时按 §9.2 回填 `net-e2e-tcp-echo-flakiness.md` 两处状态字段（P-22 → `[X]`：记账腿随 P-29 route C 迁入 `proc_account_tick`；P-30 → `[X]`：闭合于 `a13bb808`，此前仅甲表关键差距列记其闭合而条目字段仍 `[]`）。逐条证据与第五统计形态缺口见 §对账中发现的文档漂移第 5-7 条。
 
 - **活跃 plan 文档与实装对齐总览**
   - 描述: 5 份文档 — ipv6-dual-stack 与源码完全对齐; test-compile-issues 已归档; clippy-pedantic-cleanup 已 DEPRECATED (被 stage-engineering-master.md 取代, 收敛至 0 警告); code-review-2026-08-01 8 项已落地; future-roadmap 远期未启动 (与实装吻合)
-  - 方案: 详见下表（A 视角初始基线；全量 28 份见工程计划 B §现状总览表）
+  - 方案: 详见下表（A 视角初始基线；全量 33 份见工程计划 B §现状总览表）
   - 状态: [X]
 
   | 文档 | 整体进度 | 一致性 | 关键差距 |
@@ -506,25 +508,26 @@
 ### 目标
 
 - **docs/plan 全量 plan 文档与实装对齐表**
-  - 描述: 一表覆盖 `docs/plan/` 全部非归档 plan（28 份），含主题 + 状态字段实测计数 + 仍开放条目 + 一致性评估
+  - 描述: 一表覆盖 `docs/plan/` 全部非归档 plan（33 份），含主题 + 状态字段实测计数 + 仍开放条目 + 一致性评估
   - 方案: 见 §现状 总览表（甲：仍开放项；乙：已闭环）+ 5 张早期基线详情表
   - 状态: [X] (见 §现状总览表 + 5 张详情表；总览表已按轮次整表重新对账)
 
 ### 现状 (2026-08-03)
 
 - **总览表（整表重新对账）**
-  - 描述: `docs/plan/` 非归档 28 份 plan 与实装的对齐情况，按「仍开放项 / 已闭环」分两张表（16 / 12）
+  - 描述: `docs/plan/` 非归档 33 份 plan 与实装的对齐情况，按「仍开放项 / 已闭环」分两张表（17 / 16）
   - 方案:
   - 状态: [X]
 
-  **甲・仍有开放项（16 份）**
+  **甲・仍有开放项（17 份）**
 
   | 文档 | 主题 | 完成/开放 | 仍开放条目 | 一致性判定 | 关键差距 |
   |---|---|---|---|---|---|
-  | net-e2e-tcp-echo-flakiness.md | TCP 回显 e2e 抖动根因工程（第二类病灶：调度器离核窗口） | 22 / 4 | §6 仍开放四件：P-18 socket 双入口（方向 A 已裁，单开工程）、P-19(c) x86_64 INTx 路由发现、P-22 进程时间记账从不执行、P-23 `per_cpu()` 热路径 APIC MMIO（P-30 已闭合，见关键差距列） | 已订正：S-1..S-7（含 S-3 E-IV 截止期 min 融合：入向 floor ⊕ 定时截止期取更早者登记 hrtimer，tick 腿不动、RX 零回归，e2e TCP echo 里程碑 10/10）与 P-8/P-10/P-11/P-13/P-14/P-15/P-16/P-17/P-20/P-21/P-24/P-25/P-26 均 `[X]`（P-21 = 投送屏障 `cfs_on_cpu` + 延迟投送 + prev 落地/`reap_off_cpu` 补投两条腿，TCP echo 里程碑 20/20 全绿，HEAD 基线同参数仅 4/10）；旧行两项陈述已失效 —— ① 「`E2E_REPEATS=20` 连续 20 轮 0 失败」（P-21 后 TCP 面已闭合，UDP 残项转 P-24）；② P-17 原判读「失败面转移到 net RX 入向」已被取证否证，真因 = `schedule()` 的“离核中 prev 无保护”窗口（证据链见 `docs/report/net-e2e-offcore-dequeue-window.md`）；P-1/P-7 不再是开放项（P-1 由 P-8 接线闭环，P-7 属用户裁定不做） | P-21 已闭合（用户裁定方案 C：prev 事务收口 + 显式 `on_cpu` 谓词）；P-24 已闭合（smoltcp 邻居发现限速由全缓存 single `silent_until` 改为 per-destination 有界 silent 环，正规本地化入库，UDP 出站首包 E2E 30 轮全绿）；P-26 已闭合（插桩根治遗留就绪超时 Mode A：`place_locked` 延迟支快照读 `on_cpu` 与置 `Ready` 分两次加锁的 TOCTOU 收进同一临界区复查；`E2E_REPEATS=40` Mode A 就绪超时 0/40，残留 1/40 为 net TX/RX recv 超时属 P-17 取证面）；P-27 已闭合（四轮插桩取证 1600 boot：Mode Y 零复现、fcntl 传播断层假设否证、recv/poll_network 两腿 0 命中排除，Mode X 坐实为全局冻结形态，证据链见 `docs/report/p27-e2e-flake-forensic-report.md`，残留判型转 P-28）；P-28 已闭合（QEMU HMP monitor 现场快照判型，零内核插桩：跨 forensic6/7/8 ~1200 boot 采得 4×③ + 1×② 现场，主形态坐实假说③ 关中断自旋死锁，自旋点经 DWARF addr2line 收敛到 `schedule()`→`reap_off_cpu`→`ProcessTable::with_process` 取 PROCESS_TABLE 锁死自旋，更正两处前序误判，证据链见 `docs/report/p28-mode-x-freeze-verdict.md`，锁序根因与修复转 P-29）；P-29 已闭合（以 tick 计数 delta=0 为唯一硬判据复核，否证前序 PROCESS_TABLE/NET_STATE 竞争误判，真因坐实为全局单例无锁 `SCHEDULER_EX` 被每核 tick 并发驱动→`boost_all` 不收敛 livelock；用户裁定 route C 彻底移除并行调度器实现，1000-boot soak `boost_all` 签名零复发，证据链见 `docs/report/p29-scheduler-ex-smp-livelock-route-c.md`，唯一残留 delta=0=boot284 freg 跨核冻结另立 P-30）；P-30 已闭合（生产（非 lockdep）镜像重 soak 得负结果：P-29 遗留的 1/1000 delta=0 冻结在生产里不复现——boot3 四核死自旋 convoy 主要是 lockdep 观察者效应（`LOCK_DEP_MAP` 元锁串行化各 `IrqSpinLock` 簿记 + `LOG_EMIT` 嵌套放大持锁窗），叠加 KPTI tick 读数伪影（用正处用户态 CPU 的 CR3 读内核 `.bss` 返用户指针）；排查中另坐实并根治两条真实锁误用（病灶一 `ISR_TABLE` 中断上下文持 `IrqSpinLock`→改 `RacyCell` 无锁；病灶二 `IrqSpinLock::Drop` `fetch_sub` 晚于 `raw_unlock` 跨核竞态致本核永久聋→对称重排）；用户裁定优雅根治形状：保留两条重排 + 摘除调度器 tick 对 `RECOVERY_MANAGER` 的周期耦合 + 移除投机的 P2 held-guard 登记簿/探针；`check_and_clear_bsr_escalation` 降为零引用 pub fn 已登记 `syscall-followup.md` 台账；FREG `proc_freg` 域 `id=0` 致 capture/rollback 回调惰性不可达（latent inert UAF）已加 fail-closed 挂载护栏（`PROC_FREG_ROLLBACK_SAFE`）钉死误激活路径；pin/refcount 生命周期与 lockdep 观察者效应/liveness 度量分别立项 `docs/plan/freg-proc-rollback-uaf-guard.md`、`docs/plan/lockdep-observer-liveness-metric.md`（FREG 冻结立场下不激活完整实装）；改后 16/16 soak ALIVE + QEMU 1/1；一并清偿 `irq_spinlock`/`mutex`/`rwlock`/`spinlock` 锁簿记里 16 处 dev-profile `ref_as_ptr`/`borrow_as_ptr` 预存 lint（`core::ptr::from_ref`/`&raw const`，使 `audit.sh` 2b 转绿）；证据链见 `docs/report/p30-boot-freeze-rootcause-diagnosis.md`）；后续开放面仅剩 Mode A 双派/同栈链条的定点复现验证 |
+  | net-e2e-tcp-echo-flakiness.md | TCP 回显 e2e 抖动根因工程（第二类病灶：调度器离核窗口） | 24 / 9 | §6 仍开放九件 —— 原三件：P-18 socket 双入口（方向 A 已裁，单开工程）、P-19(c) x86_64 INTx 路由发现、P-23 `per_cpu()` 热路径 APIC MMIO；本轮新增六件：P-33 `functions::wasm` 4,575 行零内核侧调用者（用户裁定单开工程接线，深度待 §11.3 询问）、P-34 `src/rust/edgine-tests` 孤儿 crate（381 例全绿但零门槛引用，甲/乙/丙待裁）、P-35 `test_call_rcu` 并行态 flaky（原 HANDOFF「未立案」，本轮立案）、P-36 plan 状态标记第 5 形态漏计、P-37 GitHub Actions 腿在 Gitee remote 上从不触发（§2.3 第 3 条纸面化）、P-39 `ci-rustdoc` 在 HEAD 上即红（30 error + 19 warning / 19 文件；该腿不在六门槛内，故历轮"全绿"从未覆盖它） | 已订正：S-1..S-7（含 S-3 E-IV 截止期 min 融合：入向 floor ⊕ 定时截止期取更早者登记 hrtimer，tick 腿不动、RX 零回归，e2e TCP echo 里程碑 10/10）与 P-8/P-10/P-11/P-13/P-14/P-15/P-16/P-17/P-20/P-21/P-24/P-25/P-26/P-22/P-30/P-38 均 `[X]`（P-22 已随 P-29 route C 清偿并回填状态字段：`scheduler.rs` 的 `proc_account_tick` 在生产路径 + `td10_utime_stime_test.rs` 契约在位；P-30 回填依据 = commit `a13bb808` + 报告 + 16/16 soak，非文档互引；P-38 = 门槛假绿根治的序列指针，正文在 `unresolved-issues` 第 0A 类）；旧行两项陈述已失效 —— ① 「`E2E_REPEATS=20` 连续 20 轮 0 失败」（P-21 后 TCP 面已闭合，UDP 残项转 P-24）；② P-17 原判读「失败面转移到 net RX 入向」已被取证否证，真因 = `schedule()` 的“离核中 prev 无保护”窗口（证据链见 `docs/report/net-e2e-offcore-dequeue-window.md`）；P-1/P-7 不再是开放项（P-1 由 P-8 接线闭环，P-7 属用户裁定不做）；P-21 = 投送屏障 `cfs_on_cpu` + 延迟投送 + prev 落地/`reap_off_cpu` 补投两条腿，TCP echo 里程碑 20/20 全绿，HEAD 基线同参数仅 4/10 | P-21 已闭合（用户裁定方案 C：prev 事务收口 + 显式 `on_cpu` 谓词）；P-24 已闭合（smoltcp 邻居发现限速由全缓存 single `silent_until` 改为 per-destination 有界 silent 环，正规本地化入库，UDP 出站首包 E2E 30 轮全绿）；P-26 已闭合（插桩根治遗留就绪超时 Mode A：`place_locked` 延迟支快照读 `on_cpu` 与置 `Ready` 分两次加锁的 TOCTOU 收进同一临界区复查；`E2E_REPEATS=40` Mode A 就绪超时 0/40，残留 1/40 为 net TX/RX recv 超时属 P-17 取证面）；P-27 已闭合（四轮插桩取证 1600 boot：Mode Y 零复现、fcntl 传播断层假设否证、recv/poll_network 两腿 0 命中排除，Mode X 坐实为全局冻结形态，证据链见 `docs/report/p27-e2e-flake-forensic-report.md`，残留判型转 P-28）；P-28 已闭合（QEMU HMP monitor 现场快照判型，零内核插桩：跨 forensic6/7/8 ~1200 boot 采得 4×③ + 1×② 现场，主形态坐实假说③ 关中断自旋死锁，自旋点经 DWARF addr2line 收敛到 `schedule()`→`reap_off_cpu`→`ProcessTable::with_process` 取 PROCESS_TABLE 锁死自旋，更正两处前序误判，证据链见 `docs/report/p28-mode-x-freeze-verdict.md`，锁序根因与修复转 P-29）；P-29 已闭合（以 tick 计数 delta=0 为唯一硬判据复核，否证前序 PROCESS_TABLE/NET_STATE 竞争误判，真因坐实为全局单例无锁 `SCHEDULER_EX` 被每核 tick 并发驱动→`boost_all` 不收敛 livelock；用户裁定 route C 彻底移除并行调度器实现，1000-boot soak `boost_all` 签名零复发，证据链见 `docs/report/p29-scheduler-ex-smp-livelock-route-c.md`，唯一残留 delta=0=boot284 freg 跨核冻结另立 P-30）；P-30 已闭合（生产（非 lockdep）镜像重 soak 得负结果：P-29 遗留的 1/1000 delta=0 冻结在生产里不复现——boot3 四核死自旋 convoy 主要是 lockdep 观察者效应（`LOCK_DEP_MAP` 元锁串行化各 `IrqSpinLock` 簿记 + `LOG_EMIT` 嵌套放大持锁窗），叠加 KPTI tick 读数伪影（用正处用户态 CPU 的 CR3 读内核 `.bss` 返用户指针）；排查中另坐实并根治两条真实锁误用（病灶一 `ISR_TABLE` 中断上下文持 `IrqSpinLock`→改 `RacyCell` 无锁；病灶二 `IrqSpinLock::Drop` `fetch_sub` 晚于 `raw_unlock` 跨核竞态致本核永久聋→对称重排）；用户裁定优雅根治形状：保留两条重排 + 摘除调度器 tick 对 `RECOVERY_MANAGER` 的周期耦合 + 移除投机的 P2 held-guard 登记簿/探针；`check_and_clear_bsr_escalation` 降为零引用 pub fn 已登记 `syscall-followup.md` 台账；FREG `proc_freg` 域 `id=0` 致 capture/rollback 回调惰性不可达（latent inert UAF）已加 fail-closed 挂载护栏（`PROC_FREG_ROLLBACK_SAFE`）钉死误激活路径；pin/refcount 生命周期与 lockdep 观察者效应/liveness 度量分别立项 `docs/plan/freg-proc-rollback-uaf-guard.md`、`docs/plan/lockdep-observer-liveness-metric.md`（FREG 冻结立场下不激活完整实装）；改后 16/16 soak ALIVE + QEMU 1/1；一并清偿 `irq_spinlock`/`mutex`/`rwlock`/`spinlock` 锁簿记里 16 处 dev-profile `ref_as_ptr`/`borrow_as_ptr` 预存 lint（`core::ptr::from_ref`/`&raw const`，使 `audit.sh` 2b 转绿）；证据链见 `docs/report/p30-boot-freeze-rootcause-diagnosis.md`）；后续开放面仅剩 Mode A 双派/同栈链条的定点复现验证 |
   | multithreading-project.md | 多线程模型（线程组 + 并发检测） | 0 / 11 | K-01..K-07（tgid/ThreadGroup、CLONE_THREAD 接线、CLONE_FILES/SIGHAND/FS 共享、调度统一、Mutex owner 迁线程指针、线程组 syscall、测试收口）+ A-1..A-4（lockdep 生产编译、feature 接线、AB-BA 静态检测、数据竞争检测） | 一致：全仓无 `ThreadGroup`；`functions/proc/clone.rs` 只校验 CLONE_THREAD 标志；`tgkill` 以 `tgid == tid` 等价替代并带 SIMPLIFIED 标注 | 未开工，台账中最大空白 |
   | fd-object-model-unification.md | fd 对象模型统一（终态退役 FdPlan） | 1 / 3 | 阶段 2 抽象落地、阶段 3 八个非 VFS 子系统迁移、阶段 4 `FdPlan`/`subsystem_of`/`idx_of` 退役 | 一致：`docs/design/fd-object-model-design.md` 已定稿；数值区间分发仍在生产路径 | 跨子系统长工程，未开工 |
-  | socket-layer-completion.md | Socket 层深度补全（TCP/UDP） | 52 / 1 | U5 组播（`IP_ADD_MEMBERSHIP` → `Interface::join_multicast_group`） | 一致：`sm_setsockopt` 无组播分支 | 仅余一项 |
+  | freg-proc-rollback-uaf-guard.md | FREG proc 恢复域 rollback UAF 护栏与生命周期 | 1 / 2 | D-2 pin/refcount 生命周期实装后翻护栏、D-3 pmm 侧同构 inert 复核 | 一致：D-1 fail-closed 挂载护栏 `PROC_FREG_ROLLBACK_SAFE` 在位 | FREG 冻结立场下不激活（须与 FREG 复活立项合并推进） |
+  | lockdep-observer-liveness-metric.md | lockdep 观察者效应消减 + 整机 liveness 度量 | 1 / 2 | D-2 lockdep 簿记低扰动化、D-3 探针接入 CI | 一致：D-1 `scripts/qemu_liveness_probe.sh` 已入档并实机验收 | D-2 属用户裁定暂缓（待 D-1 度量复活） |
   | msi-x-complete-project.md | MSI-X 完整接入 | 5 / 3 | MSIX-02 未验证路径汇总、MSIX-04 virtio-pci 接入评估、MSIX-05 多队列 vector 池评估 | 一致：NVMe MSI-X 已 QEMU 实测（MSIX-03/06 `[X]`），virtio 仍走 mmio INTx | 两项为纯评估项，可出结论即关闭 |
   | ipv6-dual-stack.md | IPv4/IPv6 双栈 | 14 / 1 | Phase 6 DHCPv6 / SLAAC（远期） | 一致：vendored smoltcp 无 DHCPv6 客户端 | 远期；`scripts/qemu_slaac_test.sh` 探针先于实现存在 |
   | aarch64-kernel-fp-free.md | aarch64 内核零浮点（KPTI-18b） | 8 / 1 | FP-08 Wu 抗锯齿 f32 → Q16 定点（DECISION-079 裁定登记不实施） | 一致：FP-01..FP-07 落地，FP-06 反汇编门禁已入 `ci/audit.sh` | 触发条件＝显示子系统接入 QEMU/真机并具备像素级回归 |
@@ -536,9 +539,9 @@
   | sgeg-capability-constants-plan.md | SGEG 能力位常量治理 | 表内形态：A 类 3 已治理 / B 类 5 + C 类 2 待实施 | B1-B5（reboot / open_by_handle_at / sethostname 魔法数 / mmap 无命名位 / `required=0` 可疑）、C1-C2（storage 域号冲突 / 裸数字域号） | 本轮未逐项复验源码（仅归集文档口径） | 文档自述「本计划不落地代码」，待委托 |
   | future-roadmap.md | 远期工程规划 | 1（F5 IPv6）/ F1-F4 无状态字段 | F1 mdBook、F2 RISC-V、F3 TDX、F4 NFS | 一致：无 mdBook 配置、无 `arch/riscv64/`、无 tdx 模块、无 `functions/fs/nfs/` | 远期未启动 |
   | unresolved-issues-2026-08-09.md | 未修复问题追踪清单 | 表内形态（复验订正：真正开放 ≈25 + 3 刻意维持） | RT-002 压测不可复现（保留）、RT-003 待真机、MIG×8 迁移中间态、B06-PRE×3、分册 3 遗留 ×3 | 一致（清单类文档，非执行 plan） | 作为后续 plan 制定的输入 |
-  | progress-active-tasks.md | 本文件：活跃任务进度对比基线 | 72 / 0（+1 `[~]`） | `[~]`：cast 1910 处 `try_from` 改造推未来阶段（DECISION-041 保留原状） | 一致 | 机制项，随轮更新 |
+  | progress-active-tasks.md | 本文件：活跃任务进度对比基线 | 75 / 0（+1 `[~]`） | `[~]`：cast 1910 处 `try_from` 改造推未来阶段（DECISION-041 保留原状） | 一致；按状态口径统计命中的 1 处 `状态：[]` 是乙表 duplicate-impl 行引用他文档文本，非待办。**计数口径（本轮踩坑后固化）**：① 只统计**行首**状态字段行（`^\s*(?:[-*]\s*)?状态\s*[:：]`），散文内作为被描述对象出现的形态字符串不计入；② 计数前先把 `**状态**：` 归一化成 `状态：`（少这步会把 bold 形态整批漏掉，本轮曾因此得 20/53 与 72/75 两组假读数）；③ 表格单元格形态 `[]`/`[X]` 仍不被此口径覆盖，见 §6 P-36 | 机制项，随轮更新 |
 
-  **乙・状态字段已全量闭环（12 份）**
+  **乙・状态字段已全量闭环（16 份）**
 
   | 文档 | 主题 | 完成 | 本轮判定 |
   |---|---|---|---|
@@ -554,15 +557,19 @@
   | pcache-frame-ownership.md | pcache 帧持有计数与映射生命周期对齐 | 7 | 开放 0 |
   | x86-init-probe-project.md | x86_64 `init_all` 探测阻塞根治 | 4 | 开放 0 |
   | socket-option-constants-unification.md | sockopt 常量值域治理（`edgine-abi` 单源） | 2 | 开放 0；`ac0d09a2` 落地方案 A（`src/rust/edgine-abi` 单源 + `SO_BROADCAST` 接受忽略），`abi_socket_constants_test` 契约在位 |
+  | socket-layer-completion.md | Socket 层深度补全（TCP/UDP） | 53 | 开放 0；U5 组播已随 P6/D11（DECISION-097，实装 commit `474295a6`）落地——`privileged/net/mcast.rs` per-socket 引用计数登记表 + `sm_fi.rs` 的 `IP_ADD_MEMBERSHIP`/`IPV6_ADD_MEMBERSHIP` 分支（[sm_fi.rs:2079-2081](../../src/kernel/privileged/net/init/sm_fi.rs)）+ `multicast` feature 开启，集成验证载体 `scripts/qemu_mcast_test.sh`；原甲表行「`sm_setsockopt` 无组播分支」判定失效 |
+  | aarch64-virtio-net-tx-rootcause.md | P-31 aarch64 virtio-net legacy-MMIO TX 超时根因工程 | 7 | 开放 0；`df2076eb` 四层修复（vring 布局 / `GuestPageSize` / legacy 激活序 / 10 字节 net header / `QUEUE_READY`=0x044），实测 `tx_timeout=0` |
+  | aarch64-el0-sysreg-sync-rootcause.md | P-32 aarch64 EL0 入口与 e2e 最后一公里 | 5 | 开放 0；`534afd5a` 根治 ERET-return-window 竞态（三处异常 epilogue 先 `msr daifset, #0xf` 再装 `elr/spsr`），回归锁死 `host-tests/tests/aarch64_eret_window_mask_test.rs`，e2e `observe=pass accept=3 echo=3 addr=dhcp` |
+  | net-feature-alignment.md | 网络功能面收口与双架构观测对齐（档位 1+2） | 5 | 开放 0；DNS 三级解析接线 `fdb22ce6` + aarch64 e2e 软观测 `fb2cd3c5`；档位 3（soak 基础设施移植 aarch64）按文档标题口径（档位 1+2）不在本 plan 范围内 |
 
 - **对账方法与判定口径**
   - 描述: 本轮对账的判据来源与强度，供下一轮复现，避免「看着像对过」的假闭环
-  - 方案: 状态标记按四种形态归一化统计——`状态：[X]` / `状态: [X]` / `**状态**: [X]` / 转义 `状态：\\[X]`，再叠加 markdown 勾选（`- [x]` 与 `1. [ ]` 有序列表形态）；开放项逐条定位到条目名并回源码复验漂移候选
+  - 方案: 状态标记按四种形态归一化统计——`状态：[X]` / `状态: [X]` / `**状态**: [X]` / 转义 `状态：\\[X]`，再叠加 markdown 勾选（`- [x]` 与 `1. [ ]` 有序列表形态）；开放项逐条定位到条目名并回源码复验漂移候选。**本轮实测补正的三条口径细则**（不改变上述四类清单，仅约束怎么数）：① 归一化必须把粗体标签连同其**外侧的全角冒号**一并折叠（实际文档里占多数的是 `**状态**：[X]` 而非清单所写的 `**状态**: [X]`；漏折叠会整批漏计——`socket-layer-completion.md` 53 项中有 33 项是该形态，本文件自计亦曾在 72/75 间摆动）；② 只统计**行首**状态字段行，散文内作为被描述对象出现的形态字符串（含本条自身）不得计入，否则虚高；③ markdown **表格单元格**形态 `| [] |` / `| [X] |` **仍不在**本口径内，是已登记的系统性低估源（见 `net-e2e-tcp-echo-flakiness.md` §6 P-36，涉及 munmap / future-roadmap / ipv6 / sgeg / unresolved-issues 五册的逐册重对账，属独立工程未开工）
   - 状态: [X]
   - 详情: 已闭环文档本轮只核对「状态字段自洽 + 签字符号仍在生产路径」，未做逐项源码复验；早期五份 plan 的逐项复验见下方详情表。
 
 - **对账中发现的文档漂移**
-  - 描述: 4 类，1 项本轮已修，3 项属他人工程的叙述性记录，登记待裁定
+  - 描述: 7 类——3 项已修（1 项前轮 + 2 项本轮，均为状态字段与实装的 §9.2 对账），2 项属他人工程的叙述性记录待裁定，2 项为统计口径教训/缺口登记
   - 方案:
   - 状态: [X]
   - 详情:
@@ -570,6 +577,9 @@
     2. **待裁定**：`stage-engineering-master.md` 长期待办「QEMU 实际验证（阶段 7-18 改动均未做运行时验证，仅静态）」口径已过期——AGENTS §2.3 第 5 条 QEMU e2e 现为每轮门槛；同文档 §待办「每轮开发完成重跑 5 条验证门槛」的数字也落后于现行 6 条。未改，因该条位于「永久保留」清单并带历史批次归因语义。
     3. **待裁定**：`kpti-complete-project.md` KPTI-17 实施记录称在 `syscall/clone.rs` aarch64 分支「新增 `map_kernel_stack_top_page`」，全仓（含 `.asm` / `.S`）0 命中；当前 `functions/proc/clone.rs` aarch64 分支注释明确写「本路径恒共享父线程页表……无需改写」，即该次新增已在后续批次回退。属实施记录与源码不符，未改。
     4. **统计口径教训**：旧总览表按单一形态统计，导致 6 份 plan（fd-object-model-unification / framekernel-paradigm-enforcement / stage-engineering-master / syscall-followup / ipv6-dual-stack / munmap-protect-pml4）的状态标记被漏计，进而被误判为「无进度信息」。
+    5. **已修（本轮）**：总览表自计「非归档 28 份 / 甲 16 / 乙 12」与实测 `ls docs/plan/*.md` = 33 份不符，缺 5 行（P-31 / P-32 / net-feature-alignment 三份全量闭环未入乙表；freg-proc-rollback-uaf-guard / lockdep-observer-liveness-metric 两份有开放项未入甲表）；`socket-layer-completion.md` 甲表行的「`sm_setsockopt` 无组播分支」判据与源码不符（组播分支在 [sm_fi.rs:2079-2081](../../src/kernel/privileged/net/init/sm_fi.rs)，登记表在 [mcast.rs](../../src/kernel/privileged/net/mcast.rs)），已移入乙表。计数改定甲 17 / 乙 16。
+    6. **已修（本轮）**：`net-e2e-tcp-echo-flakiness.md` 的 P-30 条目状态字段仍 `[]（新立，待开工）`，而其闭合早已登记于本表甲表关键差距列与 [docs/report/p30-boot-freeze-rootcause-diagnosis.md](../report/p30-boot-freeze-rootcause-diagnosis.md)（commit `a13bb808`）；P-22 条目状态字段仍 `[]`，而记账腿已由 P-29 route C 迁入 `Scheduler::tick` → `proc_account_tick`（[scheduler.rs:1826](../../src/kernel/privileged/proc/scheduler.rs)）并带回归 `td10_utime_stime_test.rs`。两处按 §9.2 回填 `[X]`，判据为源码而非文档互引。
+    7. **待裁定（第五统计形态缺口）**：本表 §对账方法的四种归一化形态仍漏计 **markdown 表格单元格内承载的状态标记**——`munmap-protect-pml4.md`、`future-roadmap.md`（F1-F4）、`ipv6-dual-stack.md`（Phase 6）、`sgeg-capability-constants-plan.md`、`unresolved-issues-2026-08-09.md` 均以表格单元格记录状态，故其「完成/开放」数不含单元格项；`ipv6-dual-stack.md` 与 `future-roadmap.md` 虽 `状态：` 字段全 `[X]` 仍留在甲表，即源于此口径。若要一次性覆盖第五形态做整表对账，属单开工程（改动面涉及多份 plan 的统计重算），未擅自动手。
 
 - **future-roadmap 6 项详情**
   - 描述: WASM WASI 已完成; F1-F5 (F5 见 ipv6-dual-stack) 远期/未启动

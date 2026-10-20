@@ -30,8 +30,9 @@
 | 跨文档矛盾 (code-review) | 8 | P1×3 + P2×3 + P3×2 | 🔄 已修复 (2026-09-26 复验; 归档快照冻结) |
 | 远期工程 | 6 | 远期 | ❌ 未启动 |
 | 本会话刻意维持 | 3 | 决策登记 | ⏸️ DECISION |
-| 构建/工具问题 | 3 (+2 本轮登记) | 工具 | 🔄 TOOL-001/002 已修复；TOOL-003 重评结案不施工；**TOOL-004/005 本轮登记即修复 (`[X]`)** |
+| 构建/工具问题 | 3 (+2 前轮登记) (+1 本轮) | 工具 | 🔄 TOOL-001/002 已修复；TOOL-003 重评结案不施工；TOOL-004/005 前轮登记即修复 (`[X]`)；❌ **TOOL-006 本轮登记，未修复**（`ci-rustdoc` 在 HEAD 上即红，不在 §2.3 六门槛内） |
 | 审计基线待清零 (2026-08-23) | 2 | F2×12 + F7×67 | 🔄 已处理 (2026-08-30) |
+| 审计脚本门禁修复登记 (2026-08-25) | 8 | 门槛 fail-open×8 | 🔄 全部已修复；004~008 本轮（AGENTS 目录表维护期门槛复验）登记即修复，见 AUDIT-TOOL-004..008 |
 | 分册 3 归档遗留 (2026-08-23) | 3 | 遗留×3 | ❌ 待下轮 |
 | lint 副作用 (已修复) | 2 | — | 🔄 已修复 |
 | 迁移中子系统状态 (2026-08-31) | 8 | MIG×8 | ⚠️ 迁移中 (有意识中间态) |
@@ -88,6 +89,7 @@
 ## 🔵 第 0A 类：审计脚本门禁修复登记（2026-08-25 追加）
 
 > 2026-08-25 修复 audit_invariants.py 误报与 CI fail-open 门禁失效，登记修复依据与验证结果。
+> 本类后续追加同类条目：004~008 由门槛复验产生（QEMU 软门禁默认值、workflow 内 4 处退出码采集缺陷、aarch64 `.a` 陈旧检测），均**本轮登记即修复**并带本地实测验证。
 
 ### AUDIT-TOOL-001: audit_invariants.py I2 误报 127 处（已修复）
 
@@ -115,6 +117,56 @@
 | **修复** | 与 AUDIT-TOOL-002 同样修复（移除 `|| true` + 显式捕获 `$?`），2026-08-25 与 AUDIT-TOOL-002 一并提交 |
 | **验证** | audit_coupling.py 当前返回 0（通过），修复后退出码可真实传递至 CI 判断 |
 | **状态** | [X]（2026-08-25） |
+
+### AUDIT-TOOL-004: qemu_boot_test.sh 默认软门禁使 §2.3 第 5 条假绿（已修复）
+
+| 字段 | 数据 |
+|---|---|
+| **状态** | 🔄 已修复（本轮登记即修复） |
+| **现象** | 里程碑缺失或 QEMU 启动失败时脚本仍返 0，`make test-qemu` / `Makefile.ci` / `ci-aarch64.yml` 三条调用方一律显示绿 |
+| **根因** | `FAIL_OK="${FAIL_OK:-1}"` 默认放宽，各里程碑失败点写作 `[ "$FAIL_OK" = "0" ] && RESULT=1` ⇒ 默认值下失败不置 `RESULT`；其原注释理由为"e1000 已知挂起"，而该前提已被本文档 ISSUE-RT-001 的修复推翻（现 x86_64 全里程碑通过），默认值与注释同时失效 |
+| **修复** | 默认改 `FAIL_OK:-0`（fail-closed）；诊断性跑仍可显式 `FAIL_OK=1` 放宽，但放宽时额外打 warn 横幅"本轮结果不可作为 §2.3 第 5 条验收依据"，汇总行同步打印当前门禁模式；端到端连通性那条（`:563`）原本即为硬门禁，不受放宽影响 |
+| **验证** | `bash -n` 通过；`FAIL_OK=0 ./scripts/qemu_boot_test.sh all` 实跑 **2/2 全里程碑绿**（含 aarch64 `A64_E2E observe=pass accept=3 echo=3 addr=dhcp tx_timeout=0`），证严格口径可承受；调用方 Makefile / `Makefile.ci` / `ci-aarch64.yml` 不传 FAIL_OK 自动继承严格值，`ci/audit.sh:392` 原已显式传 0 |
+| **后续** | 无（本轮闭环） |
+
+### AUDIT-TOOL-005: ci-lint.yml audit-selftest job 永不失败（已修复）
+
+| 字段 | 数据 |
+|---|---|
+| **状态** | 🔄 已修复（本轮登记即修复） |
+| **根因** | 写作 `SELFTEST_OUT=$(cmd || true)` 之后，再从 `echo "$OUT" \| tee \| tail` 管道读 `${PIPESTATUS[0]}` —— 取到的是 `echo` 的 0（且 `|| true` 已先把真实码抹成 0），该 job 无论自测结果如何都打 ✅；与 AUDIT-TOOL-002/003 同一族，但当时未覆盖到本 job |
+| **修复** | 改用本文件既有的 B01-25 模式：`set +e` / `SELFTEST_RC=$?` / `set -e` 后再回放输出并判 RC，非 0 则 `::error::` + `exit 1`；补 `mkdir -p other/build/log` |
+| **验证** | `python3 scripts/tests/audit_selftest.py` 本机实跑 4/4 通过 RC=0（改后判据不会误红）；YAML 解析通过 + 内嵌 run 脚本 `bash -n` 语法校验 0 失败 |
+
+### AUDIT-TOOL-006: 双架构 cargo check job 的判据 grep 不可达（已修复）
+
+| 字段 | 数据 |
+|---|---|
+| **状态** | 🔄 已修复（本轮登记即修复） |
+| **现象** | `ci-x86.yml` / `ci-aarch64.yml` 的 `cargo-check` job 从不真正判定编译结果 |
+| **根因** | 双重缺陷叠加：① 本 job 无 `mkdir -p ../../other/build/log`，而 `other/` 属 gitignore（`git ls-files other/` = 0 个跟踪文件），fresh runner 上该目录不存在 ⇒ `cargo check \| tee <不存在的目录>` 的管道退出码 = tee 的 1，在 Actions 默认 `bash -e` 下**当场打断本步**，后续 grep 永不执行（编译结果从未被判定，job 恒红且原因与代码无关）；② 即使目录存在，判据 `grep -q "error\["` 也漏 `error:` 前缀的链接期/manifest 类失败（同文件 clippy job 用的是更严的 `^error\[\|^error:`） |
+| **修复** | 两 job 均改 B01-25 模式：`mkdir -p` + `set +e` 捕获 cargo 真实退出码 + `echo "$OUT" \| tee \| tail -20` 回放 + `[ "$RC" -ne 0 ]` 阻断，判据从"文本形态"收紧为"退出码" |
+| **验证** | 本地模拟 fresh runner 语义：`bash -e -c 'echo hi \| tee no/such/dir/x.txt; echo CONTINUES'` → 只打印 tee 报错、`CONTINUES` 未出现、RC=1（证伪原 grep 判据可达性）；YAML 与 run 脚本语法校验通过 |
+| **关联** | 这些 workflow 在 Gitee remote 上根本不被触发（见 [net-e2e-tcp-echo-flakiness.md](./net-e2e-tcp-echo-flakiness.md) §6 P-37），修复的是"镜像到 GitHub 后判据是否可信"，不改变当前实际门槛只有本地 `ci/audit.sh` 这一事实 |
+
+### AUDIT-TOOL-007: ci-x86.yml functions 编译 job 真 fail-open（已修复）
+
+| 字段 | 数据 |
+|---|---|
+| **状态** | 🔄 已修复（本轮登记即修复） |
+| **根因** | `cargo build ... \| tee log \| tail -5` 的管道退出码 = `tail` 的 0（该 job 有 mkdir，故不会像 AUDIT-TOOL-006 那样打断），随后仅 `grep -E "error.*unsafe\|functions/.*\.rs.*unsafe"` 判 unsafe 形态 ⇒ 与 unsafe 无关的编译失败照样打 ✅ 并 exit 0，属真 fail-open |
+| **修复** | 保留 unsafe 形态 grep（它是该 job 的专项语义），在其之前补 B01-25 的 cargo 真实退出码判定，非 0 时打印 `^error(\|:)` 前 20 行并 `exit 1` |
+| **验证** | YAML 解析 + `bash -n` 通过；判据形状与 AUDIT-TOOL-006 一致，不再依赖管道退出码 |
+
+### AUDIT-TOOL-008: aarch64 `$(RUST_LIB)` 缺 kernel 源码前置依赖（已修复）
+
+| 字段 | 数据 |
+|---|---|
+| **状态** | 🔄 已修复（本轮登记即修复，用户裁定本轮一并修） |
+| **现象** | 只改 `src/kernel/**/*.rs` 时，`make ARCH=aarch64` 判定 `other/target/aarch64-unknown-none-softfloat/release/libkernel.a` "已是最新"并跳过 cargo 重建 ⇒ 链接静默沿用陈旧 `.a`（与 x86_64 侧同病灶，P-32 §4.4 "假象回归"一族） |
+| **根因** | Makefile 的 aarch64 分支 `$(RUST_LIB): $(USER_BUILD_DIR)/init.bin` 未带 `$(shell find src/kernel -name '*.rs')`，而 x86_64 分支带、`$(RUST_LIB_TEST)` 也带（后者注释即记 E-06 踩坑） |
+| **修复** | aarch64 分支补齐同一前置依赖，并加中文注释锚 E-06 先例；不顺手引入 x86 侧独有的 `$(STAGE1_BIN)`（aarch64 无 stage1 引导，保持最小改动） |
+| **验证** | 负控制实测：`touch src/kernel/build.rs` 后 `make -n` —— 旧规则 aarch64 触发 cargo 重建次数 **0**（漏检）/ x86_64 **1**；改后两架构均 **1**（判据 `grep -c "cargo build"`） |
 
 ---
 
@@ -514,7 +566,7 @@
 
 ---
 
-## ⚫ 第 6 类：构建/工具问题 (5 项)
+## ⚫ 第 6 类：构建/工具问题 (6 项)
 
 ### ISSUE-TOOL-001: Makefile 缺乏跨架构清理
 
@@ -573,6 +625,19 @@
 | **实测** | 收窄前全仓报 368 条 → 收窄后 `OK: 无文档路径漂移 (校验 14 份必须与代码同步的文档)` EXIT=0。反向验证：被纳入范围的 14 份活文档本身漂移 **0** → 收窄不是掩真实问题，而是删除范畴错误 |
 | **建议方案** | （已实施）AGENTS.md §6 补写“代码同步范围（源码路径新鲜度）”条款，把该语义固化为文档规则。工具依用户裁定**保持按需运行，不接入 CI 门禁**（不新增 §2.2 核心审计表行） |
 | **工作量** | 已闭合 |
+
+### ISSUE-TOOL-006: 本地一键 CI 的 rustdoc 腿在 HEAD 上即红，且不在 §2.3 六门槛内
+
+| 字段 | 数据 |
+|---|---|
+| **状态** | ❌ 未修复（本轮登记，处置深度待用户裁定；正文台账 [net-e2e-tcp-echo-flakiness.md §6 P-39](./net-e2e-tcp-echo-flakiness.md)） |
+| **现象** | `make -f Makefile.ci ci-rustdoc` 失败（RC=101）。判据 = `RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links"` 下的双架构 `cargo doc --no-deps` |
+| **实测分布** | x86_64 腿 **30 error + 19 warning**，涉 **19 个文件**：`privileged/mm/pmm.rs` 11 / `functions/driver/usb/xhci.rs` 4 / `privileged/mm/mod.rs` 3 / `vmm_x86_64.rs`·`functions/proc/process_vm.rs`·`functions/driver/char/mod.rs` 各 2 / 其余 13 文件各 1。两类形态 = `unresolved link`（`` `idx` `` / `` `24` `` / `` `gs:0` `` 等被反引号包裹却无对应可解析项）与 `links to private item`（pub API 文档指向私有符号） |
+| **与本轮改动的关系** | **无关**。本轮 Rust 侧只改 `src/kernel/lib.rs` 与 `functions/wasm/mod.rs` 的目录树注释，二者均不在失败名单；19 个失败文件本轮一个未碰。为验证该两处注释改动才首次实跑本腿，于是暴露历史红 |
+| **放大后果** | ① 同一 recipe 串联，x86 先红即中断 ⇒ aarch64 腿**从未被执行**；② §2.3 六门槛不含 rustdoc ⇒ 历轮"六门槛全绿"的验收里，文档链接这一路一直是坏的；③ 对应 workflow（`ci-lint.yml` rustdoc-check）同样会红，只是它在 Gitee remote 上从不被触发（见 P-37），红也没人看见 |
+| **门禁性质判定** | 本腿**不是** fail-open：`Makefile.ci` 有 `SHELL := /bin/bash -o pipefail`，`| tee | tail -5` 不掩盖退出码，报的是真红。问题在于"该门禁长期红，却不在验收集合内" |
+| **建议方案** | 独立文档卫生工程。每处三选一定型：① 改为可解析的真实路径；② 去反引号/改写使不成链接；③ 把被引符号升 `pub` 并配中文文档注释（§5 F8）—— 第 ②/③ 之间是 API 可见性判定，不能由工具代答。深度：甲 = 只清 30 error 使门禁转绿；乙 = 连 19 warning 一起收口并把 `-D` 面加压到 warning 级 |
+| **工作量** | 估 0.5–1 天（视甲/乙深度） |
 
 ---
 
@@ -801,6 +866,10 @@
 ---
 
 ## 变更历史
+
+- **本轮（门槛 fail-open 与台账失真根治 + 五项新开放登记）**: 由 AGENTS.md §1 目录表维护（用户授权一次）触发的门槛复验，坐实并闭合第 0A 类 **AUDIT-TOOL-004..008** 五项（`qemu_boot_test.sh` 的 `FAIL_OK` 默认软门禁使 §2.3 第 5 条假绿；`ci-lint.yml` audit-selftest job 的 RC 取自 `echo` 恒 0；双架构 `cargo check` job 因 `other/` 属 gitignore 而 tee 先失败、判据 grep 永不执行；`ci-x86.yml` functions 编译 job 管道退出码取自 `tail` 恒 0 的真 fail-open；aarch64 `$(RUST_LIB)` 缺 kernel 源码前置依赖，负控制读数 0/1）。每项均带**本地实测验证**而非仅改文本（严格口径 QEMU 实跑 2/2、`bash -e` 下 tee-to-missing-dir 打断语义模拟、`make -n` 新旧规则对拍、YAML + 内嵌 run 脚本语法校验）。
+  - 同时开放六项新预存问题，正文登记于 [net-e2e-tcp-echo-flakiness.md](./net-e2e-tcp-echo-flakiness.md) §6：**P-33** `functions::wasm` 4,575 行零内核侧调用者（用户已裁定单开工程接线实装，实现深度待 §11.3 询问）、**P-34** `src/rust/edgine-tests` 孤儿 crate（单独实测 381 passed / 0 failed，但全仓零门槛引用且属平行实现族；甲并入门槛 / 乙迁真源码 / 丙退役 三选一待裁）、**P-35** `test_call_rcu` 并行共享全局态 flaky（HANDOFF 记为"未立案"，本轮正式立案）、**P-36** plan 状态标记存在第 5 种形态（markdown 表格单元格 `[]`/`[X]`）不被 `progress-active-tasks.md` §对账方法 的归一化口径计数，致总览系统性低估、**P-37** 唯一 remote 为 Gitee 且仓内无 Gitee CI 配置 ⇒ `.github/workflows/` 5 份 workflow 从不被触发，AGENTS §2.3 第 3 条的"GitHub Actions"腿是纸面判据（处置方向待裁；`AGENTS.md` 本轮不再改动，授权额已用于 §1 一行）、**P-39** 本地一键 CI 的 `ci-rustdoc` 腿在 HEAD 上即红（30 error + 19 warning / 19 文件，非本轮改动引入；该腿不在六门槛内故历轮"全绿"从未覆盖它），同条已在本文档第 6 类追加 **ISSUE-TOOL-006**。
+  - 台账同步：`progress-active-tasks.md` §现状总览表补 6 行缺失文档并把 net-e2e 行从 `22/4` 对账到实测计数；两处历史失实判定（"U5 组播未实装"已由 `474295a6` 实装、socket-option 行已闭环）按 §9.2 源码复验订正。第 0A 类计数 3 → 8（总览新增一行）。
 
 - **本轮（第 6 类两项预存问题收敛 — TOOL-004/005 登记即修复）**: 用户裁定“这两个本轮修复”，同时登记并闭合两项工具/审计预存问题。
   - **ISSUE-TOOL-004**（deadlock 审计基线唯一 HIGH）：依用户裁定**删除** `privileged/arch/x86_64/smp_init.rs` 的 `AP_STARTUP_LOCK`（源码调研证明 `start_ap` 无第二个获取者：BSP 串行 `init()` 是唯一入口，AP 走 `ap_entry`；`spin::mutex::SpinMutex` 又**不做** IRQ save，因此脚本只能保守报 HIGH）。复跑 `audit_deadlock_matrix.py` → `扫描文件数: 693 / 问题总数: 0`（**审计基线建立以来首次全清**）；新增静态契约回归守卫 [arch_ap_startup_lock_removed_test.rs](../../host-tests/tests/arch_ap_startup_lock_removed_test.rs)（6 passed，含负控制）。同时订正 [code-audit-final-summary.md](./code-audit-final-summary.md) F-12 的“irq_spinlock 会 save/restore IRQ”错判。

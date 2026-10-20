@@ -280,7 +280,7 @@ C 组另一线索：同一构建下 `[tcp] Listening` 的内核时间戳在 7.68
   - 状态：[X]（屏障 + 延迟投送 + 两条腿落地，TCP 失败面 20/20 闭合；Mode A 双派按 P-17 口径仍属未定论项，本项不以其为验收依据。遗留的 e2e 就绪超时 Mode A（约 6%）另由 P-26 插桩根治 —— 坐实为本屏障延迟支的 `on_cpu` 判定 TOCTOU，非双派/同栈）
 
 - **P-22 进程时间记账实际上从不执行（由 P-17 取证附带发现）**：六轮实测所有任务态读数 `tk=0`（直读 `Process::tick_count`），用户态 `times()` 恒 0。链条存在：`Scheduler::tick` → `SCHEDULER_EX.tick_accounting()` → `proc_account_tick()`，但记账分支被 `current != 0` 门控，而该字段语义是 `*mut Thread` —— `ThreadManager::create_thread` 零生产调用者（仓内只剩注释引用），进程无对应 `Thread` 可解析 ⇒ 记账腿断线。调度器自己的 vruntime 推进走另一条路（`tick` 里钳 `min_vruntime`），故“时基单源已完成”与“进程时间记账从未接上”同时成立。
-  - 状态：[]（未开工；属 POSIX 语义缺口，与 P-21 正交，需先定“记账经 Thread 还是经 Process”的归属决策）
+  - 状态：[X]（§9.2 台账同步：本项已由 **P-29 route C 顺带清偿**，非独立开工。并行调度器 `SCHEDULER_EX`/`thread.rs` 被整体移除后，本条所述断腿（`tick_accounting()` 的 `current: *mut Thread` 非零门控）随之消失，进程级 user/sys 记账改由 per-CPU `Scheduler::tick` 直接调 `proc_account_tick(in_kern)`（[scheduler.rs:1826](../../src/kernel/privileged/proc/scheduler.rs)），归属决策即「经 Process」；回归载体 `host-tests/tests/td10_utime_stime_test.rs`。原描述中「需先定记账经 Thread 还是经 Process」的归属决策已随 route C 落定，前序六轮 `tk=0` 读数不再成立）
 
 - **P-23 `per_cpu()` 在热路径上走 APIC MMIO**：`per_cpu()` → `current_cpu_index()` → `Arch::cpu_id()` → `apic::get_id()` 是一笔 MMIO 读；P-17 取证实测调度表锁取次数达千万级（`FX_TBL_LOCK_N=91,451,663`）而每次都要走这笔读，是本工程里性价比最高的一项开销待治（fx3 gdb 快照里就有一核卡在 `apic::get_id()`）。
   - 状态：[]（未开工；需先把核号缓存到不碰 MMIO 的位置，属 TCB 边界改动，单开工程）
@@ -317,5 +317,39 @@ C 组另一线索：同一构建下 `[tcp] Listening` 的内核时间戳在 7.68
 - **P-30 Mode X 残留正交冻结：freg `RECOVERY_MANAGER` × `cfs_rq` 跨核自旋死锁（P-29 route C 验效暴露）**：route C 1000-boot soak 中唯一真冻结 boot284——两核关中断自旋于 `SpinLock::raw_lock`，一核在 `Scheduler::tick` 取 freg `RECOVERY_MANAGER` 锁、一核在 `Scheduler::load_balance` 取 `cfs_rq` 锁；串口触发链 `[tcp] Connection accepted` → `[FREG] Rollback result=-1` → `GPF idt index=0`（罕见 FREG BSR 升级/GPF）。经 HEAD 对拍该 `RECOVERY_MANAGER.lock()` 早于 route C 存在、route C 对 tick 仅替换记账不加锁，判为预存在跨核锁纪律问题，非 route C 靶心亦非其引入。
   - 描述：坐实并修复 boot284 型 freg `RECOVERY_MANAGER` × `cfs_rq` 跨核自旋冻结（复现率 1/1000，n=1；泛型锁类型受 ICF 折叠不可单独尽信）。
   - 方案：沿用 P-29 方法论（delta=0 硬判据 + 每次重建后 `nm` 重校正符号地址 + 连贯栈回溯），加采样本至复现率可信、精确 unwind 定住持锁者与取锁序（`RECOVERY_MANAGER`/`cfs_rq`/tick 的嵌套方向），审计 FREG BSR 升级/GPF 路径是否在持锁临界区内再入或阻塞；据根因选修复形状，实现深度由用户裁定后开工。
-  - 状态：[]（新立，待开工）
+  - 状态：[X]（P-30 已闭合，commit `a13bb808`，证据链见 [docs/report/p30-boot-freeze-rootcause-diagnosis.md](../report/p30-boot-freeze-rootcause-diagnosis.md)：生产（非 lockdep）镜像重 soak 得**负结果**——boot284 型 1/1000 delta=0 冻结在生产里不复现，判为 lockdep 观察者效应（`LOCK_DEP_MAP` 元锁串行化各 `IrqSpinLock` 簿记 + `LOG_EMIT` 嵌套放大持锁窗）叠加 KPTI tick 读数伪影；排查中另坐实并根治两条真实锁误用（病灶一 `ISR_TABLE` 中断上下文持 `IrqSpinLock` → 改 `RacyCell` 无锁，[irqline.rs:137](../../src/kernel/privileged/irqline.rs)；病灶二 `IrqSpinLockGuard::drop` 的 `fetch_sub` 晚于 `raw_unlock` 致本核永久聋 → 对称重排，[irq_spinlock.rs:317-330](../../src/kernel/privileged/sync/irq_spinlock.rs)）；用户裁定优雅根治形状 = 保留两条重排 + 摘除调度器 tick 对 `RECOVERY_MANAGER` 的周期耦合（[scheduler.rs:1815-1821](../../src/kernel/privileged/proc/scheduler.rs)）+ 移除投机的 P2 held-guard 登记簿/探针；FREG `proc_freg` 域 `id=0` 惰性不可达另加 fail-closed 护栏（`PROC_FREG_ROLLBACK_SAFE`）并单独立项 [freg-proc-rollback-uaf-guard.md](./freg-proc-rollback-uaf-guard.md)，lockdep 观察者效应/liveness 度量单独立项 [lockdep-observer-liveness-metric.md](./lockdep-observer-liveness-metric.md)；改后 16/16 soak ALIVE + QEMU 1/1）
 
+- **P-33 `functions::wasm` 4,575 行零内核侧调用者（已实装未接线子系统，用户裁定单开工程）**：AGENTS 目录表维护期的全仓引用扫描附带发现。
+  - 描述：`src/kernel/functions/wasm/`（解释器 + 运行时 + WASI）合计 4,575 行，全仓**唯一**引用是 [functions/mod.rs:99](../../src/kernel/functions/mod.rs) 的 `pub mod wasm;` 声明本身 —— syscall 分派表无 `EG_WASM_*` 臂、`kernel_init` 无 wasm 接线、EGDF/驱动侧无宿主，即生产路径完全不可达；当前唯一"执行者"是 `kani-harness` 借它作 LEB128 的形式化验证载体。§5 F9 判据下它既非纯死代码（有实现、有 harness 消费），也非完成品（无调用者），属"已实装未接线"第三态。同源订正：`src/kernel/lib.rs` 的目录树曾列 `privileged/wasm/`（不存在）与 `functions/wasm/` 的"re-export shim"说法（`functions/wasm/mod.rs` 亦同），两处失实文本本轮已按源码改订。
+  - 方案：用户裁定**单开工程接线实装**。开工前必须走 §11.3 前置询问实现深度（甲 简约：`EG_WASM_*` 最小臂 + 模块装载/调用生命周期；乙 相对完整：模块表 + WASI fd 表接进 UNKFS + 每模块内存预算 + 回归锁），因接线落点涉 syscall 编号空间（DECISION-037：0–299 走 Linux 号、500+ 走 `EG_*`）与 F/S 分层边界，AI 不自行择一。
+  - 状态：[ ]（已授权立项，未开工；深度选项待 §11.3 询问）
+
+- **P-34 `src/rust/edgine-tests` 孤儿 crate：381 例全绿却不在任何门槛上**：同批扫描附带发现，处置方式待裁定。
+  - 描述：独立 package（不隶属 workspace，与 `edgine-abi` 同形态），29 个 `tests/*.rs` 由 `[[test]]` 手工枚举；单独 `cargo test` 实测 **381 passed / 0 failed**（编译与用例本身都健康）。但全仓引用扫描显示 Makefile / `Makefile.ci` / `ci/*.sh` / `.github/workflows/*` / `host-tests` / `src/kernel` **零引用** ⇒ 它不在 §2.3 六条门槛的任何一条上，被改动的 functions 逻辑不会使它变红，它绿也不证明内核绿。其 `src/lib.rs`（98 个 `pub fn`）自述"re-implements functions layer validation logic for host std environment"，正是 [eliminate-parallel-implementations.md](./eliminate-parallel-implementations.md) 已结案的平行实现族成员；[socket-option-constants-unification.md:50](./socket-option-constants-unification.md) 另记它内含第二套 sockopt 镜像定义（当时按外科手术原则留置为可收敛项）。抽样复验：`mprotect` / `brk` / `mremap` / `rlimit` 在真源码侧**无** `mod tests`，即该 crate 目前是这些参数校验域的唯一覆盖 —— 故"直接退役"会净减覆盖。
+  - 方案：三选一待用户裁定 ——（甲）并入门槛：新增独立 make 目标并挂进 §2.3 第 4 条腿，成本最低，但把平行实现钉成永久资产且需同步 `edgine-abi` 单源口径；（乙）逐域迁入真源码 `#[cfg(test)]`：与 DECISION-080"单一 harness"立场一致，381 例按域搬运 + 删除 crate，平行实现族清零，工作量最大；（丙）退役：一次损失上述四域覆盖，列出来仅为穷尽选项。本轮只测量与登记，不擅自动手。
+  - 状态：[ ]（测量已闭环，处置待裁定）
+
+- **P-35 `test_call_rcu` 并行共享全局态 flaky**：HANDOFF §6.7 记为"发现但未处置、尚未单独立项"，本轮正式立案。
+  - 描述：[privileged/sync/rcu.rs:497](../../src/kernel/privileged/sync/rcu.rs) 的 `test_call_rcu` 在全量 `make test-kernel-host`（同一 lib test 二进制多线程并行）下偶发失败，单跑或复跑回到 989/0 通过。前序会话判定为与当时改动无关的预存并行态缺陷（asm-in-string 对 x86 host lib 零可见影响），但未复现率量化，也未定位它读写的 RCU 全局态（单例 + grace-period 计数）在并行用例间的可见性假设。属 §2.3 第 6 条门槛的稳定性缺陷，不改内核运行路径。
+  - 方案：先量化复现率（连续 N 次全量跑 + 记录失败样本与并行度），再据结果定形状：用例内改用私有状态、或以串行独占保护该全局、或根治 grace-period 假设本身。实现深度属同步原语域（§11.3 关键路径），动工前询问。
+  - 状态：[ ]（立案，待排查）
+
+- **P-36 plan 台账状态标记存在第 5 种形态，不被本文档自述口径计数**：本轮总览表对账时实测撞见。
+  - 描述：`progress-active-tasks.md` §对账方法 声明按四种形态归一化统计（`状态：[X]` / `状态: [X]` / `**状态**: [X]` / 转义形态，再叠加 markdown 勾选），但 **markdown 表格单元格**里的 `[]` / `[X]`（`munmap-protect-pml4`、`future-roadmap` F1–F4、`ipv6-dual-stack` Phase 6、`sgeg-capability-constants-plan`、`unresolved-issues` 清单）不在其列，导致总览计数系统性低估。已发生的后果：socket-option 行的表格形态 `[X]` 曾被上一轮判为"无进度信息"而错留在"仍开放"表内；同轮另有一句「`sm_setsockopt` 无组播分支」的一致性判定被源码否证（U5 实已于 `474295a6` 实装）。
+  - 方案：把表格单元格形态补进 §对账方法 作第 5 形态，并据此对 `docs/plan/` 全量重做一次对账（现为 33 份非归档文档逐项）。全量重对账属独立工程，本轮只补行/订正计数与两处失实状态字段，不擅自扩大成全量重做。
+  - 状态：[ ]（**口径部分闭合**：三条计数细则已写进 `progress-active-tasks.md` §对账方法（粗体外侧全角冒号折叠 / 只统计行首状态字段 / 表格形态不在口径内）；**仍开放**的是表格单元格形态的纳入与据此对 `docs/plan/` 33 份的全量重对账，属独立工程未开工）
+
+- **P-37 `AGENTS.md` §2.3 第 3 条的 GitHub Actions 腿在本仓实际不执行**：远程配置查询附带发现，方向待裁定。
+  - 描述：唯一 remote 是 `origin → git@gitee.com:AnferLagbu/Edgine.git`，仓内无 Gitee CI 配置（无 `.workflow/`、无 `.gitee/`），而 `.github/workflows/` 下 5 份 workflow 在 Gitee 上不会被触发 ⇒ §2.3 第 3 条"核心审计全部通过 + GitHub Actions"中的 Actions 部分是纸面判据，真正在跑的只有本地 `ci/audit.sh` 与 `Makefile.ci`（P-11 已把后者收口为薄封装）。叠加事实：本轮复验发现两份 workflow 的 `cargo check` job 即使在 GitHub runner 上也从未判定过编译结果（`other/` 属 gitignore，fresh runner 无 `other/build/log`，`| tee` 先把该步打断在判据 grep 之前），即"看起来有 CI"是双重失真；已随本轮根治（见 [unresolved-issues-2026-08-09.md](./unresolved-issues-2026-08-09.md) 第 0A 类 AUDIT-TOOL-004..008）。
+  - 方案：三选一待用户裁定 ——（甲）改 AGENTS §2.2/§2.3 把"GitHub Actions"替换为实际执行者（本地 `ci/audit.sh` + `Makefile.ci`），属文档保护条款需另行授权；（乙）把仓库镜像到 GitHub 使 workflow 真实生效；（丙）迁 Gitee Go（新建 `.workflow/` 并按 §2.3 六门槛重写判据）。本轮**不动 `AGENTS.md`**（既有授权额已用于 §1 目录表一行）。
+  - 状态：[ ]（待裁定）
+
+- **P-38 门槛假绿根治（本轮附带发现并已闭环，登记在他册）**：见 [unresolved-issues-2026-08-09.md](./unresolved-issues-2026-08-09.md) 第 0A 类 AUDIT-TOOL-004..008 —— `scripts/qemu_boot_test.sh` 的 `FAIL_OK` 默认值使 §2.3 第 5 条在里程碑缺失时仍返 0（且注释理由"e1000 已知挂起"已被 RT-001 修复推翻）、`ci-lint.yml` audit-selftest job 的 RC 取自 `echo` 恒 0、`ci-x86.yml` build job 管道退出码取自 `tail` 恒 0、双架构 `cargo check` job 判据 grep 不可达、aarch64 `$(RUST_LIB)` 缺 kernel 源码前置依赖（负控制实测：改 `src/kernel` 后旧规则 aarch64 判 0 重建 / x86_64 判 1）。此处只留 P-NN 序列指针，不重复正文。
+  - 状态：[X]（根治条目正文与验证读数登记于第 0A 类，本轮六门槛复跑全绿）
+
+
+
+- **P-39 本地一键 CI 的 rustdoc 腿在 HEAD 上即红（30 error + 19 warning，涉 19 文件），而它不在 §2.3 六门槛内**：本轮为验证 `src/kernel/lib.rs` 的目录树注释改动而跑 `make -f Makefile.ci ci-rustdoc` 时撞见。
+  - 描述：判据 = `RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links"` 下的双架构 `cargo doc --no-deps`。x86_64 腿直接失败（RC=101；`Makefile.ci` 有 `SHELL := /bin/bash -o pipefail`，故 `| tee | tail -5` 不掩盖退出码 —— **该门禁本身 fail-closed，报的是真红而非假绿**）。失败分布 19 文件：`privileged/mm/pmm.rs` 11 处、`functions/driver/usb/xhci.rs` 4 处、`privileged/mm/mod.rs` 3 处；`vmm_x86_64.rs` / `functions/proc/process_vm.rs` / `functions/driver/char/mod.rs` 各 2 处；`dtb.rs` / `arch/x86_64/gdt.rs` / `arch/x86_64/apic.rs` / `mm/cow.rs` / `timer/clockevent.rs` / `timer/calibration.rs` / `syscall/dispatch.rs` / `smp/mod.rs` / `proc/user_proc.rs` / `proc/process.rs` / `net/init/dns.rs` / `functions/proc/coredump.rs` / `functions/net/syscall.rs` 各 1 处。两类形态：`error: unresolved link`（`` `idx` `` / `` `24` `` / `` `gs:0` `` / `pl011_phys_base` 等被反引号包裹却无对应可解析项，rustdoc 将其当链接解析）与 `warning: public documentation for X links to private item Y`（pub API 文档指向私有符号）。**与本轮改动无关**：本轮 Rust 侧只改 `src/kernel/lib.rs` 与 `functions/wasm/mod.rs` 两处注释，二者均不在失败名单；失败文件本轮一个未碰。后果有二：aarch64 腿从未被执行（同一 recipe 串联，x86 先红即中断）；§2.3 不含 rustdoc ⇒ 历轮"六门槛全绿"的验收里文档链接这一路一直是坏的。对应 workflow（`ci-lint.yml` rustdoc-check）同样会红，只是它在 Gitee 上从不触发（P-37）。
+  - 方案：属独立文档卫生工程，非机械替换 —— 每处需三选一定型：① 把引用改成可解析的真实路径（`crate::path::to::Item`）；② 让该词不成链接（去反引号，或改写为文字描述）；③ 把被引符号升为 `pub` 并配中文文档注释（§5 F8）。第 ② / ③ 之间是 API 可见性判定，`links to private item` 一族尤其如此，不能由工具代答。开工前按 §11.3 询问深度（甲：只清 30 个 error 使门禁转绿；乙：连 19 个 private-link warning 一起收口，并把 `ci-rustdoc` 的 `-D` 面加压到 warning 级）。
+  - 状态：[ ]（已立案并给出实测分布，待裁定开工）
