@@ -66,26 +66,60 @@ x86_64 路径无此问题（e1000 + 用户态 echo 全链 1/1），故障域限�
     WFI 死循环整机静默）。EC=0x24 异于预期 0x25 的细节归入签名②一族待查。
 
 - **E3: 根因裁定与修复**
-  - 描述：主修复已落地；残余 flaky 竞态（E2 两形签名）为本条目下一攻坚对象。
+  - 描述：主修复已落地；残余 flaky 竞态（E2 两形签名）已根治 — 根因锁定为
+    **ERET-return-window 竞态**，非内存覆写族假说。
   - 方案：① 已完成 — `tcp_echo_server`/`delay_ms` 门禁改
     `cfg(any(x86_64, aarch64))`（实现本已 arch 中性），run3 样本证明 aarch64
     全链（Listening/accept/recv/send/close）可达成；其余 UDP/SLAAC/组播探针
-    依赖 x86 宿主 tap/dnsmasq 设施，维持门禁不动。② 待攻坚 — flaky 竞态按
-    P-29 范式扩样 + 埋点：候选域为 deferred-release/TLB epoch 窗口（崩溃时点
-    紧贴 destroy_page_table）与 SocketSet 槽内容被窗外写者破坏；对照
-    net-e2e-tcp-echo-flakiness 报告（x86 侧 CFS 双时基已根治 DECISION-099，
-    本侧形签名①需验证是否同类饥饿还是真死锁）。
-  - 状态：[]
+    依赖 x86 宿主 tap/dnsmasq 设施，维持门禁不动。② 已完成 — flaky 竞态按
+    P-31 范式扩样 + 埋点（批 2–11）逐层证伪内存假说，最终锁定系统寄存器竞态。
+  - 状态：[X]
+  - 详情（E3 根因裁定，2026-10-19，批 11 bracket 探针决定性取证）：
+    **根因 = ERET-return-window 竞态**。`handle_el1h_irq` 出口序列
+    `msr elr_el1,x0` → `msr spsr_el1,x1` → … → `ERET` 之间，若 `PSTATE.I` 处于
+    放行态（`irq_handler` 子树中 `do_softirq` 开中断 / `run_pending_resched`
+    上下文切换往返所致），一条异步异常可在此窗口被硬件取走，把刚写入的
+    `ELR_EL1/SPSR_EL1` **系统寄存器**覆写成嵌套现场 ⇒ 外层 `ERET` 返回错误上下文
+    → illegal ERET 级联（saved SPSR 被误判成 EL0/保留 EL1t → 核死寂或误杀服务进程）。
+    - **证伪链**：批 11 bracket 探针在 `irq_handler` 入口/出口比对 `frame.elr/spsr`
+      ⇒ `BRK DRIFT=0`（异常帧**内存**从未被改）→ 证伪 P-a 子树野写覆写活帧；
+      `BRK E` 暴露 `ELR=0xffff000040206100`（×64，恰落 epilogue `eret` 前一条）
+      → 证实 IRQ 在 epilogue 内被取走、此时 `PSTATE.I` 开着。H1 epoch / H2-kstack
+      （上段 `KSM=none` 已证伪）/ H3 跨调度栈 / poll_network / virtio OOB /
+      close UAF 全部排除。
+    - **修复**：三处 epilogue（`handle_el1h_sync` / `handle_el1h_irq` / `el0_return`）
+      在 `msr elr/spsr` 之前加 `msr daifset, #0xf`，返回序列全程屏蔽异步异常，
+      挂起项留待 `ERET` 依 SPSR 恢复放行后投递。净改动 = 17 行（仅 daifset + 中文注释）。
+    - **method-A 反转**：上段以为"softirq 延迟 poll 是卫生改进、保留"实为误判 —
+      它把 tick 腿 `poll_network` 延迟到 softirq，违反已提交 E-IV 契约
+      （`net_poll_at_hrtimer_test::eiv_tick_leg_untouched`），且正是 `echo=0` 成因。
+      回退 method-A（恢复 tick 腿无条件 `poll_network`）后崩溃（靠 daifset）与
+      echo（靠无条件 tick poll）同时解决。
+    - **经验确证**：修复后 16 轮跑样 silent_dead 8→0/16、`BRK E@epilogue` 64→0、
+      SYNC! 崩溃签名→0（残余 terminate 全为良性 KPTI-09 探针）。
 
 - **E4: 回归测试**
-  - 描述：锁死修复点防回归（sysreg trap 分发契约 / ERET 构造断言，按 E3 结论具体化）。
-  - 方案：kernel 内联单测 + host-tests 契约；`make test-kernel-host` 覆盖。
-  - 状态：[]
+  - 描述：锁死修复点防回归 — ERET 返回序列的异步异常屏蔽顺序契约。
+  - 方案：host-tests 文本契约测试 `aarch64_eret_window_mask_test.rs`（3 test）：
+    校验 `handle_el1h_irq` / `handle_el1h_sync` / `el0_return` 三处 epilogue 中
+    `msr daifset, #0xf` 严格早于 `msr elr_el1, x0`（若后续重排把 daifset 挪到
+    `msr elr/spsr` 之后即回归崩溃，测试阻断）。附带修正 `aarch64_el0_frame_symmetry_test`
+    因注释小写 `eret` 令 `slice_between` 提前截断的既有文本冲突（注释改大写 `ERET`）。
+  - 状态：[X]
 
 - **E5: 实机验证 + 台账收口**
-  - 描述：`./scripts/qemu_boot_test.sh aarch64` 软观测翻绿 + P-31 R7/net-feature-alignment T1 台账回填。
-  - 方案：数据行期望 `listen=1`，`observe=pass`（accept/echo ≥ E2E_ROUNDS）；双架构六门槛。
-  - 状态：[]
+  - 描述：`./scripts/qemu_boot_test.sh aarch64` 软观测翻绿 + 双架构六门槛全过。
+  - 方案：数据行期望 `listen=1`，`observe=pass`（accept/echo ≥ E2E_ROUNDS）。
+  - 状态：[X]
+  - 实测（2026-10-19，最终修复树）：aarch64 QEMU 完整启动至 EL0，KPTI 隔离断言
+    通过、SMP 双核上线、EL0 中断可达、双核并发 EL0；**e2e 软观测 `3/3 rounds echoed`，
+    数据行 `A64_E2E observe=pass accept=3 echo=3 addr=dhcp tx_timeout=0`** — E2 立案的
+    flaky 竞态与 `echo=0` 一并根治。六门槛复核：`./ci/build.sh all` Passed 6/Failed 0、
+    双架构 clippy（build-std 口径 + `-D warnings`）RC=0、`cargo fmt --check` 无漂移、
+    核心审计（functions_boundary/safety_coverage/comment_language/coupling/invariants/
+    deadlock_matrix）全过、host-tests 0 failed（含 `aarch64_eret_window_mask_test` 3/3）、
+    `make test-kernel-host` 989 passed/0 failed、x86_64 QEMU 腿不受影响（本次仅改
+    `arch/aarch64/exception.rs`，x86 二进制字节不变）。
 
 ## 验证门槛
 

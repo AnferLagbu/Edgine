@@ -122,6 +122,10 @@ handle_el1h_sync:
     mov  x0, sp
     bl   sync_exception_handler
 
+    // P-32 修复 (ERET-return-window): 同 handle_el1h_irq —— 屏蔽异步异常,
+    // 防其在 `msr elr/spsr` 与 `ERET` 之间覆写 ELR_EL1/SPSR_EL1.
+    msr  daifset, #0xf
+
     ldr  x30, [sp, #(8 * 30)]
     ldp  x0, x1, [sp, #(8 * 31)]
     msr  elr_el1, x0
@@ -173,6 +177,14 @@ handle_el1h_irq:
 
     mov  x0, sp
     bl   irq_handler
+
+    // P-32 根因修复 (ERET-return-window 竞态): `irq_handler` 子树 (do_softirq 开
+    // 中断 / run_pending_resched 上下文切换) 可能使本 handler 返回时 PSTATE.I 处于
+    // 放行态. 若在下方 `msr elr_el1/spsr_el1` 与 `ERET` 之间再进来一条异步异常,
+    // 硬件会把刚写好的 ELR_EL1/SPSR_EL1 覆写成嵌套现场 ⇒ 外层 `ERET` 返回错误
+    // 上下文 → illegal ERET 级联 (实测崩溃 PC 恒落此窗口). 返回序列全程屏蔽异步
+    // 异常, 挂起项留待 `ERET` 依 SPSR 恢复放行后投递.
+    msr  daifset, #0xf
 
     ldr  x30, [sp, #(8 * 30)]
     ldp  x0, x1, [sp, #(8 * 31)]
@@ -321,6 +333,11 @@ el0_return:
     // 恢复除 x3/x4 外的全部寄存器 (此刻内核栈仍可达).
     ldr  x1, [sp, #(8 * 33)]
     msr  sp_el0, x1
+    // P-32 修复 (ERET-return-window): `msr elr/spsr` 到末尾 `ERET` 之间夹着
+    // KPTI 切表 / tlbi 的长窗口; svc / el0_irq 子树 (do_softirq) 若令 PSTATE.I 放行,
+    // 期间进来的异步异常会覆写 ELR_EL1/SPSR_EL1 ⇒ 返回用户错乱. 全程屏蔽,
+    // `ERET` 依用户 SPSR (I 放行) 自动恢复.
+    msr  daifset, #0xf
     ldr  x30, [sp, #(8 * 30)]
     ldp  x0, x1, [sp, #(8 * 31)]
     msr  elr_el1, x0
