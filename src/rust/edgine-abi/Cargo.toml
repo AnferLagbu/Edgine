@@ -8,7 +8,7 @@ description = "Edgine 内核态/用户态共享 ABI 常量 crate（单一权威�
 [lib]
 path = "src/lib.rs"
 
-# 独立 package: 不隶属任何 workspace（与 edgine-tests 同形态）,
+# 独立 package: 不隶属任何 workspace,
 # 被 src/kernel、src/user/lib、host-tests 三处以 path 依赖引用.
 [workspace]
 
