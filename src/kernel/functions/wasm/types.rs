@@ -438,6 +438,22 @@ pub enum WasmError {
     InvalidVersion,
     Truncated,
     Leb128Overflow,
+    /// 段声明尺寸与其内容实际长度不符 (解析器提前停在段中, 或段尾有残余字节)
+    SectionSizeMismatch,
+    /// 段内声明的条目数超过该段剩余可用字节数 (每个条目至少占 1 字节)
+    ///
+    /// 解析期分配的上界判据: 不收此界时一句 `0xFFFF_FFFF` 即可让内核在
+    /// `Vec::with_capacity` 上分配失败。
+    TooManyEntries {
+        /// 段内声明的条目数
+        declared: usize,
+        /// 声明之后该段剩余的字节数
+        available: usize,
+    },
+    /// 值类型字节非法 (不是 `0x7F`/`0x7E`/`0x7D`/`0x7C` 之一)
+    BadValueType(u8),
+    /// 函数类型标签非法 (不是 `0x60`)
+    BadFuncTypeTag(u8),
     UnknownSection(u8),
     UnknownOpcode(u8),
     TypeMismatch,
