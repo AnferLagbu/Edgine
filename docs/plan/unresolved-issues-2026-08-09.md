@@ -30,7 +30,7 @@
 | 跨文档矛盾 (code-review) | 8 | P1×3 + P2×3 + P3×2 | 🔄 已修复 (2026-09-26 复验; 归档快照冻结) |
 | 远期工程 | 6 | 远期 | ❌ 未启动 |
 | 本会话刻意维持 | 3 | 决策登记 | ⏸️ DECISION |
-| 构建/工具问题 | 3 (+2 前轮登记) (+1 本轮) | 工具 | 🔄 TOOL-001/002 已修复；TOOL-003 重评结案不施工；TOOL-004/005 前轮登记即修复 (`[X]`)；❌ **TOOL-006 本轮登记，未修复**（`ci-rustdoc` 在 HEAD 上即红，不在 §2.3 六门槛内） |
+| 构建/工具问题 | 3 (+2 前轮登记) (+1 本轮) | 工具 | 🔄 TOOL-001/002 已修复；TOOL-003 重评结案不施工；TOOL-004/005 前轮登记即修复 (`[X]`)；❌ **TOOL-006 未修复**（`ci-rustdoc` 在 HEAD 上即红，不在 §2.3 六门槛内；用户裁定单开 ⇒ 正文已迁 [ci-rustdoc-closeout.md](./ci-rustdoc-closeout.md)） |
 | 审计基线待清零 (2026-08-23) | 2 | F2×12 + F7×67 | 🔄 已处理 (2026-08-30) |
 | 审计脚本门禁修复登记 (2026-08-25) | 8 | 门槛 fail-open×8 | 🔄 全部已修复；004~008 本轮（AGENTS 目录表维护期门槛复验）登记即修复，见 AUDIT-TOOL-004..008 |
 | 分册 3 归档遗留 (2026-08-23) | 3 | 遗留×3 | ❌ 待下轮 |
@@ -630,7 +630,7 @@
 
 | 字段 | 数据 |
 |---|---|
-| **状态** | ❌ 未修复（本轮登记，处置深度待用户裁定；正文台账 [net-e2e-tcp-echo-flakiness.md §6 P-39](./net-e2e-tcp-echo-flakiness.md)） |
+| **状态** | ❌ 未修复（用户裁定**单开**：正文工程册已建 [ci-rustdoc-closeout.md](./ci-rustdoc-closeout.md)（条目 R-1..R-6 + 验收判据），序列指针 [net-e2e-tcp-echo-flakiness.md §6 P-39](./net-e2e-tcp-echo-flakiness.md) 已改标 `[~]` 毕业；甲/乙深度仍待裁） |
 | **现象** | `make -f Makefile.ci ci-rustdoc` 失败（RC=101）。判据 = `RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links"` 下的双架构 `cargo doc --no-deps` |
 | **实测分布** | x86_64 腿 **30 error + 19 warning**，涉 **19 个文件**：`privileged/mm/pmm.rs` 11 / `functions/driver/usb/xhci.rs` 4 / `privileged/mm/mod.rs` 3 / `vmm_x86_64.rs`·`functions/proc/process_vm.rs`·`functions/driver/char/mod.rs` 各 2 / 其余 13 文件各 1。两类形态 = `unresolved link`（`` `idx` `` / `` `24` `` / `` `gs:0` `` 等被反引号包裹却无对应可解析项）与 `links to private item`（pub API 文档指向私有符号） |
 | **与本轮改动的关系** | **无关**。本轮 Rust 侧只改 `src/kernel/lib.rs` 与 `functions/wasm/mod.rs` 的目录树注释，二者均不在失败名单；19 个失败文件本轮一个未碰。为验证该两处注释改动才首次实跑本腿，于是暴露历史红 |
@@ -866,6 +866,13 @@
 ---
 
 ## 变更历史
+
+- **本轮（四项裁定执行 + 两份工程单开 + 退役去掩蔽暴露 R1 真值）**: 用户对上一轮登记的四个决策点给出裁定「退役 / 改为本地全绿 / 单开 / 相对完整」，逐条执行并全部回源码复验。
+  - **P-34 丙・退役**：`git rm -r src/rust/edgine-tests`（32 个受控文件）+ 清该 crate 324M 陈旧 `target/`；裁定前的"退役会净减覆盖"顾虑经核验**被否证**——该 crate `[dependencies]` 为空、29 个 `tests/*.rs` 全调自己 `src/lib.rs` 的镜像谓词、零引用 `src/kernel`，且镜像已漂移（[functions/mm/mremap.rs:46-51](../../src/kernel/functions/mm/mremap.rs) 的 `MAX_REMAP = 1 << 30` → `ENOMEM` 护栏在镜像里缺席）。真实残留缺口立案 **P-40**（`mprotect`/`brk`/`mremap`/`rlimit` 四域五个文件内联测试计数全 0，对照 `functions/` 层 129 文件 / 1,116 例的惯例属离群点）。
+  - **P-41（本轮新立，退役的直接后果）**：门槛 3 复跑由绿转 `HIGH=2`，明细 `functions/sync/futex.rs` 的 `is_wait_op`(L50) / `is_wake_op`(L55)。成因是**审计口径而非代码回归**——R1 按全仓词元计数判零引用，被退役 crate 的 `tests/phase_b.rs:21/:25` 各写了一份**同名镜像函数**并被同文件用例调用，把这两个名字的全仓计数抬到 >1，使内核侧真函数长期不进 R1 名单；镜像消失后计数回落到 1 ⇒ 真值显形（与 P-40 同属"平行实现掩盖两侧"病理族）。按**裁定六①**「新增删候选必须上报」，本轮**只登记不删**：入 [syscall-followup.md](./syscall-followup.md) **B-6** 区块 **452 → 454**，实测回 `CRITICAL=0 / HIGH=0 / INFO=435`；删/接/留三选一待裁。附带登记一处账面偏差：B-6 区块 454 条中仅 435 条命中当前 R1 集合，余 **19 条未命中**（三态＝已接线 / 已不存在 / 被豁免，须逐条定性），按"预存失效须用户裁决后才清"的先例本轮未动。
+  - **P-37 甲・判据改本地全绿**：`AGENTS.md` §2.3 第 3 条由"核心审计全部通过 + GitHub Actions"改为"核心审计全部通过（判据 = 本地 `bash ci/audit.sh` 全绿；远程仅 Gitee、无流水线配置，`.github/workflows/*` 从不触发，故不作验收依据）"；两处 `AGENTS.md` 改动（另 §1 目录表移除 `edgine-tests`）均**由本轮裁定直接要求**，属授权范围内的同步，非自主维护。五份 workflow 文件保留不动。
+  - **P-39 单开 + P-33 相对完整**：新建 [ci-rustdoc-closeout.md](./ci-rustdoc-closeout.md)（条目 R-1..R-6，甲/乙收口深度待裁，rustdoc 仍红未修）与 [wasm-runtime-wiring.md](./wasm-runtime-wiring.md)（实现深度 **乙・相对完整**）。后者 §1 以 **12 条源码实证推翻 P-33 的"已实装"前提**：解析器无 `.get(` 边界访问（截断字节码即内核 panic）、`wasi_function_table()` 零消费者（WASI 挂不进实例）、`CallIndirect` 直接返 `Unreachable`、块结构只 `advance_pc(1)`、浮点 opcode 全缺、`wasm/` 目录 0 个 `cfg(test)`；故第一施工项是**安全门槛**（W-2 解析器全函数化）而非接线，§3 另列五项待裁定。
+  - 台账同步：`progress-active-tasks.md` net-e2e 行 `26 / 6` → `26 / 7`（口径 A 实测 26 `[X]` / 4 `[ ]` / 3 第 6 形态 `[]` / 2 `[~]`）并把 P-41 计入本轮开放件；§对账方法 追加细则 ④（第 6 形态 `状态：[]`，实测使 33 份 plan 的开放项由 3 条跃至 31 条 ⇒ **28 条系统性漏计**）与细则 ⑤（须显式声明 A/B 口径，A＝466/46/4 对 B＝481/56/4）。第 0A 类计数不变（8）；第 6 类 **ISSUE-TOOL-006** 指针改指新册。
 
 - **本轮（门槛 fail-open 与台账失真根治 + 五项新开放登记）**: 由 AGENTS.md §1 目录表维护（用户授权一次）触发的门槛复验，坐实并闭合第 0A 类 **AUDIT-TOOL-004..008** 五项（`qemu_boot_test.sh` 的 `FAIL_OK` 默认软门禁使 §2.3 第 5 条假绿；`ci-lint.yml` audit-selftest job 的 RC 取自 `echo` 恒 0；双架构 `cargo check` job 因 `other/` 属 gitignore 而 tee 先失败、判据 grep 永不执行；`ci-x86.yml` functions 编译 job 管道退出码取自 `tail` 恒 0 的真 fail-open；aarch64 `$(RUST_LIB)` 缺 kernel 源码前置依赖，负控制读数 0/1）。每项均带**本地实测验证**而非仅改文本（严格口径 QEMU 实跑 2/2、`bash -e` 下 tee-to-missing-dir 打断语义模拟、`make -n` 新旧规则对拍、YAML + 内嵌 run 脚本语法校验）。
   - 同时开放六项新预存问题，正文登记于 [net-e2e-tcp-echo-flakiness.md](./net-e2e-tcp-echo-flakiness.md) §6：**P-33** `functions::wasm` 4,575 行零内核侧调用者（用户已裁定单开工程接线实装，实现深度待 §11.3 询问）、**P-34** `src/rust/edgine-tests` 孤儿 crate（单独实测 381 passed / 0 failed，但全仓零门槛引用且属平行实现族；甲并入门槛 / 乙迁真源码 / 丙退役 三选一待裁）、**P-35** `test_call_rcu` 并行共享全局态 flaky（HANDOFF 记为"未立案"，本轮正式立案）、**P-36** plan 状态标记存在第 5 种形态（markdown 表格单元格 `[]`/`[X]`）不被 `progress-active-tasks.md` §对账方法 的归一化口径计数，致总览系统性低估、**P-37** 唯一 remote 为 Gitee 且仓内无 Gitee CI 配置 ⇒ `.github/workflows/` 5 份 workflow 从不被触发，AGENTS §2.3 第 3 条的"GitHub Actions"腿是纸面判据（处置方向待裁；`AGENTS.md` 本轮不再改动，授权额已用于 §1 一行）、**P-39** 本地一键 CI 的 `ci-rustdoc` 腿在 HEAD 上即红（30 error + 19 warning / 19 文件，非本轮改动引入；该腿不在六门槛内故历轮"全绿"从未覆盖它），同条已在本文档第 6 类追加 **ISSUE-TOOL-006**。
