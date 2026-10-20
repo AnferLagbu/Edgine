@@ -50,7 +50,9 @@
 >
 > **本轮更新**: 新增活跃工程 [smp-ap-user-scheduling.md](./smp-ap-user-scheduling.md)（AP 参与用户态调度 + aarch64 KPTI per-CPU 化，**DECISION-084**，方案 C 相对完整）—— 使 ≥2 个用户任务可在多核并发处于 EL0（APS-01..APS-06 全部 `[X]`，批次 P1→{P2,P3}→P4 收口，并含收口期修复的批次 P5「次核 CPU 状态初始化」）。同族前置工程 [aarch64-smp-bringup.md](./archive/aarch64-smp-bringup.md)（DECISION-082）的后续专项 **KPTI-PCPU-01** 已由本工程落地结案。本文件据此更新活跃工程全景（既有一表沿用，本轮不新增表行，仅登记关联）。
 
-> **整表重新对账**: 工程计划 B 的 §现状总览表已由「5 份」扩为 `docs/plan/` 非归档 28 份（甲・仍开放项 17 份 / 乙・已闭环 11 份），并登记对账方法、判定口径与 4 类文档漂移。下表为工程计划 A 视角的初始基线五份，作为本计划自身结论保留不动；全量活跃任务视图以 B 表为准。
+> **2026-10-20 漂移订正**: 总览表甲/乙计数由 17/11 校正为 16/12 —— `socket-option-constants-unification.md` 行原记「0/2 阻塞在用户裁定 + 漂移仍在原地」失效（该工程 `ac0d09a2` 已按方案 A 落地 `edgine-abi` 单源、sys.rs/sm_fi.rs 均改 `use edgine_abi::socket`、SO_BROADCAST 接受忽略分支 + 契约测试就位，专属 plan S1/S2 已 `[X]`），从甲表移入乙表；现总览表计数与 §变更历史「整表重新对账」行的 16/12 口径一致。
+>
+> **整表重新对账**: 工程计划 B 的 §现状总览表已由「5 份」扩为 `docs/plan/` 非归档 28 份（甲・仍开放项 16 份 / 乙・已闭环 12 份），并登记对账方法、判定口径与 4 类文档漂移。下表为工程计划 A 视角的初始基线五份，作为本计划自身结论保留不动；全量活跃任务视图以 B 表为准。
 
 - **活跃 plan 文档与实装对齐总览**
   - 描述: 5 份文档 — ipv6-dual-stack 与源码完全对齐; test-compile-issues 已归档; clippy-pedantic-cleanup 已 DEPRECATED (被 stage-engineering-master.md 取代, 收敛至 0 警告); code-review-2026-08-01 8 项已落地; future-roadmap 远期未启动 (与实装吻合)
@@ -511,11 +513,11 @@
 ### 现状 (2026-08-03)
 
 - **总览表（整表重新对账）**
-  - 描述: `docs/plan/` 非归档 28 份 plan 与实装的对齐情况，按「仍开放项 / 已闭环」分两张表（17 / 11）
+  - 描述: `docs/plan/` 非归档 28 份 plan 与实装的对齐情况，按「仍开放项 / 已闭环」分两张表（16 / 12）
   - 方案:
   - 状态: [X]
 
-  **甲・仍有开放项（17 份）**
+  **甲・仍有开放项（16 份）**
 
   | 文档 | 主题 | 完成/开放 | 仍开放条目 | 一致性判定 | 关键差距 |
   |---|---|---|---|---|---|
@@ -523,7 +525,6 @@
   | multithreading-project.md | 多线程模型（线程组 + 并发检测） | 0 / 11 | K-01..K-07（tgid/ThreadGroup、CLONE_THREAD 接线、CLONE_FILES/SIGHAND/FS 共享、调度统一、Mutex owner 迁线程指针、线程组 syscall、测试收口）+ A-1..A-4（lockdep 生产编译、feature 接线、AB-BA 静态检测、数据竞争检测） | 一致：全仓无 `ThreadGroup`；`functions/proc/clone.rs` 只校验 CLONE_THREAD 标志；`tgkill` 以 `tgid == tid` 等价替代并带 SIMPLIFIED 标注 | 未开工，台账中最大空白 |
   | fd-object-model-unification.md | fd 对象模型统一（终态退役 FdPlan） | 1 / 3 | 阶段 2 抽象落地、阶段 3 八个非 VFS 子系统迁移、阶段 4 `FdPlan`/`subsystem_of`/`idx_of` 退役 | 一致：`docs/design/fd-object-model-design.md` 已定稿；数值区间分发仍在生产路径 | 跨子系统长工程，未开工 |
   | socket-layer-completion.md | Socket 层深度补全（TCP/UDP） | 52 / 1 | U5 组播（`IP_ADD_MEMBERSHIP` → `Interface::join_multicast_group`） | 一致：`sm_setsockopt` 无组播分支 | 仅余一项 |
-  | socket-option-constants-unification.md | sockopt 常量值域治理 | 0 / 2 | S1 值域对齐、S2 防漂移契约测试 | 一致，且**漂移仍在原地**：`src/user/lib/src/sys.rs` `SO_KEEPALIVE=8`/`SO_BROADCAST=32` vs `privileged/net/init/sm_fi.rs` `SO_KEEPALIVE=9` | 阻塞在「统一机制 A（共享常量源）vs B（对齐 + 契约测试）」的用户裁定 |
   | msi-x-complete-project.md | MSI-X 完整接入 | 5 / 3 | MSIX-02 未验证路径汇总、MSIX-04 virtio-pci 接入评估、MSIX-05 多队列 vector 池评估 | 一致：NVMe MSI-X 已 QEMU 实测（MSIX-03/06 `[X]`），virtio 仍走 mmio INTx | 两项为纯评估项，可出结论即关闭 |
   | ipv6-dual-stack.md | IPv4/IPv6 双栈 | 14 / 1 | Phase 6 DHCPv6 / SLAAC（远期） | 一致：vendored smoltcp 无 DHCPv6 客户端 | 远期；`scripts/qemu_slaac_test.sh` 探针先于实现存在 |
   | aarch64-kernel-fp-free.md | aarch64 内核零浮点（KPTI-18b） | 8 / 1 | FP-08 Wu 抗锯齿 f32 → Q16 定点（DECISION-079 裁定登记不实施） | 一致：FP-01..FP-07 落地，FP-06 反汇编门禁已入 `ci/audit.sh` | 触发条件＝显示子系统接入 QEMU/真机并具备像素级回归 |
@@ -537,7 +538,7 @@
   | unresolved-issues-2026-08-09.md | 未修复问题追踪清单 | 表内形态（复验订正：真正开放 ≈25 + 3 刻意维持） | RT-002 压测不可复现（保留）、RT-003 待真机、MIG×8 迁移中间态、B06-PRE×3、分册 3 遗留 ×3 | 一致（清单类文档，非执行 plan） | 作为后续 plan 制定的输入 |
   | progress-active-tasks.md | 本文件：活跃任务进度对比基线 | 72 / 0（+1 `[~]`） | `[~]`：cast 1910 处 `try_from` 改造推未来阶段（DECISION-041 保留原状） | 一致 | 机制项，随轮更新 |
 
-  **乙・状态字段已全量闭环（11 份）**
+  **乙・状态字段已全量闭环（12 份）**
 
   | 文档 | 主题 | 完成 | 本轮判定 |
   |---|---|---|---|
@@ -552,6 +553,7 @@
   | munmap-protect-pml4.md | munmap 拆除与 protect 目标页表修复 | 7 | 开放 0 |
   | pcache-frame-ownership.md | pcache 帧持有计数与映射生命周期对齐 | 7 | 开放 0 |
   | x86-init-probe-project.md | x86_64 `init_all` 探测阻塞根治 | 4 | 开放 0 |
+  | socket-option-constants-unification.md | sockopt 常量值域治理（`edgine-abi` 单源） | 2 | 开放 0；`ac0d09a2` 落地方案 A（`src/rust/edgine-abi` 单源 + `SO_BROADCAST` 接受忽略），`abi_socket_constants_test` 契约在位 |
 
 - **对账方法与判定口径**
   - 描述: 本轮对账的判据来源与强度，供下一轮复现，避免「看着像对过」的假闭环
