@@ -8,7 +8,7 @@
 
 对外暴露给用户态的接口遵循 Linux/POSIX 标准，确保生态兼容性：
 
-- **syscall 编号**：直接使用 Linux x86_64 标准编号（0-299），Edgine 私有扩展使用 500+
+- **syscall 编号**：Linux 标准调用直接使用 Linux x86_64 原始编号（0-299 起，实测延伸至该区间之外的真实 Linux 号，如 `name_to_handle_at=303`、`setns=308`）；**≥400 全为 Edgine 私有**，并按功能分区预留扩展空间。分区表的**唯一事实源**是 `src/kernel/privileged/syscall/types.rs` 的段注释，本文**不复抄**段表（复抄即制造第二个会漂移的事实源）
 - **文件系统接口**：/proc、/sys、/dev 遵循 Linux 标准格式，用户态工具（free/top/ps）可直接运行
 - **ELF 格式**：支持 Linux ELF 二进制，PT_INTERP 检测并改写动态链接器路径
 - **信号语义**：与 POSIX/Linux 一致（kill/sigaction/sigaltstack）

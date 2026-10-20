@@ -47,7 +47,7 @@ edgine 内核 100% Rust（privileged unsafe + functions safe），但 ABI 层面
 
 ### 编号设计
 
-直接使用 Linux syscall 编号，无需翻译层。(1) 标准 POSIX/Linux syscall 使用 Linux 原始编号（0-299）；(2) Edgine 私有扩展使用 400+（用户态 sgeg）与 700+（内核态）两段编号；(3) 无需 linuxulator 翻译层。
+直接使用 Linux syscall 编号，无需翻译层。(1) 标准 POSIX/Linux syscall 使用 Linux 原始编号（0-299 起，实测延伸至该区间外的真实 Linux 号）；(2) **≥400 全为 Edgine 私有**，按功能分区并预留扩展空间，分区表以 `src/kernel/privileged/syscall/types.rs` 的段注释为唯一事实源；(3) 无需 linuxulator 翻译层。
 
 ```rust
 // Linux 标准编号（直接使用）
@@ -62,15 +62,16 @@ pub const SYS_FORK: u64    = 57;
 pub const SYS_EXECVE: u64  = 59;
 pub const SYS_SOCKET: u64  = 41;
 
-// Edgine 私有扩展（400+/700+）
+// Edgine 私有扩展（≥400，按功能分区；段表以 types.rs 为准，本册不复抄）
 pub const SYS_SGEG_LOGIN: u64 = 400;
-pub const EG_UNAME: u64 = 700;
+pub const SYS_FB_OPEN: u64 = 720;
+pub const EG_FW_LOAD: u64 = 730;
 // ...
 ```
 
 ### 编号空间分配
 
-2 段编号空间。0-299 Linux 标准（直接兼容）/ 400+ 用户态私有扩展（sgeg 系统）与 700+ 内核态私有扩展（弹性恢复等）。
+两段归属，而非两段号区：**Linux 原生编号**（0 起，含 300 区间内 Linux 自己新增的号）与 **Edgine 私有编号**（≥400，按功能分区，实测 22 段；500-659 多为预留空段）。段名一律标注在 `privileged/syscall/types.rs` 的分区注释里，本册只记归属判据、不复抄段表。私有段内的常量名有两族——沿用 Linux 名的 `SYS_*`（如 `SYS_SGEG_LOGIN=400`、`SYS_seteuid=597`，后者行内注释自述"x86_64 无独立 seteuid syscall"）与 EG 自有的 `EG_*`（实测 730 起）。故旧表述"400+ 用户态 / 700+ 内核态"不成立：`SYS_FB_*` 720-722 与 `EG_FW_*` 730-733 同处 700 区却分属用户态与内核态语义。
 
 ### 关键认知
 
