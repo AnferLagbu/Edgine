@@ -37,7 +37,7 @@
 - **W-2 解析器全函数化（安全前置门槛，不得后置于接线）**：把 `parse_wasm` 变成对任意输入都不 panic 的全函数。
   - 描述：F8 意味着"接线"这个动作本身会把一条**用户可触达的内核 panic 路径**打开——只要有一条 syscall 能递交字节码，任意畸形输入即 DoS。按 §4.2 不变式与 §11.1.1 长远视角，这条必须在任何入口开放**之前**闭合，而不是与接线同批。
   - 方案：`module.rs` 全部切片访问改边界安全形式（`.get(..)` / `checked_*`），越界一律返 `WasmError::*` 而非 panic；同时补 `wasm/mod.rs` 层的 `WasmError → Errno` 映射所需错误变体（现 22 变体且无 `Display`）。回归锁 = 对每个段构造截断/超长/零长三类畸形样本的内核内单测（W-9 的 harness 就位后即可跑）。
-  - 状态：[ ]（本工程的**第一**施工项）
+  - 状态：[ ]（§3 戊裁定＝**本轮唯一施工项**；达标定义由 §3 乙钉死：解析期一次结清结构面并返 `Err`，运行期 linear memory 访问的 `.get()` 边界检查**不得**为快路径移除）
 
 - **W-3 结构化控制流**：block / loop / if 的标签栈与 `br*` 的正确 unwind。
   - 描述：F5 使分支回溯落到调用帧级，真实模块（几乎所有 `wat` 编译产物都含块结构）必然得到错误结果或直接 trap。这不是"新特性"而是**修正现有实现的语义错误**。
@@ -61,13 +61,13 @@
 
 - **W-7 装载格式派发抽象**：按 magic 选 loader（ELF vs `\0asm`）。
   - 描述：F11 的硬编码使"能装载 wasm"必须先动 exec 路径。落点选择（在 functions 侧做派发 vs 在 privileged 侧扩 loader 钩子）影响 TCB 边界，属 §9.1 灰色地带。
-  - 方案：最小派发 = `exec.rs` 读字节后按前 4 字节判格式，ELF 走现路、wasm 走新 `wasm::load_into_current_process`；抽象形状（trait `ImageLoader` vs 一句 match）由 §3 丙/丁裁定后定型。**注意**：动 exec/进程替换即涉调度与地址空间关键路径，施工前按 §11.3 再确认一次边界。
-  - 状态：[ ]（依 W-2；实现形状待 §3 裁定）
+  - 方案：最小派发 = `exec.rs` 读字节后按前 4 字节判格式，ELF 走现路、wasm 走新 `wasm::load_into_current_process`。形状已由 §3 丙裁定为**一句按 magic 的 match**，不抽 `ImageLoader`  trait。**注意**：动 exec/进程替换即涉调度与地址空间关键路径，施工前按 §11.3 再确认一次边界。
+  - 状态：[ ]（依 W-2；形状已定（§3 丙），本轮不施工（§3 戊＝只做 W-2））
 
 - **W-8 syscall 入口与错误映射**：`EG_WASM_*` 编号 + dispatch 臂 + `WasmError → Errno`。
   - 描述：F1/F10——编号未预留、`dispatch.rs` 无臂、`WasmError` 22 变体无到 `Errno` 的转换（用户态拿不到可判别错误）。
-  - 方案：在 F10 的空闲号段择一组登记进 `privileged/syscall/types.rs`（DECISION-037：500+ 走 `EG_*`），`functions/syscall/dispatch.rs` 加臂；补 `impl From<WasmError> for Errno`；`abi` 侧同步 `src/rust/edgine-abi` 常量单源。**R2 审计会自动校验"编号已分发"**，故编号与分派必须同批落地，不能先加常量。
-  - 状态：[ ]（依 W-2；与 W-7 可并行）
+  - 方案：按 §3 丁裁定，在 `privileged/syscall/types.rs` 新增段注释「766-779: WASM 运行时」并落 `EG_WASM_LOAD=766` / `EG_WASM_RUN=767` / `EG_WASM_GET_INFO=768` / `EG_WASM_UNLOAD=769`（实测 766–779 全空、不在任何已声明段内；**不占 0–299 Linux 号位**——Linux 无对应语义，占号既无兼容收益又破坏"0–299 == Linux"不变式）；`functions/syscall/dispatch.rs` 加臂；补 `impl From<WasmError> for Errno`；`abi` 侧同步 `src/rust/edgine-abi` 常量单源。**R2 审计会自动校验"编号已分发"**，故编号与分派必须同批落地，不能先加常量。
+  - 状态：[ ]（依 W-2；号段已定（§3 丁），本轮不施工（§3 戊＝只做 W-2））
 
 - **W-9 测试门槛**：内核内 `mod tests` + `host-tests` 集成 + 回归锁。
   - 描述：F9——wasm 目录零内联测试，唯一外部测试不执行模块。按 `docs/explain/spec-engineering.md` 的"公共 API 须单测 / 跨模块接口须集成测试"，"相对完整"路径下这条是硬门槛而非可选项。
@@ -79,15 +79,15 @@
   - 方案：`docs/explain/` 增 wasm 运行时说明（自由描述风格，禁结构化字段）；`docs/design/wasm-runtime-design.md` 写能力边界与开放议题；同步 `AGENTS.md` §1（若新增顶层模块需另行授权）。
   - 状态：[ ]（依 W-9）
 
-## 3. 待裁定（施工前必须闭合，AI 不自行择一）
+## 3. 裁定结果（用户 2026-10-20 裁毕，施工按此执行）
 
-| 代号 | 问题 | 选项 | 影响 |
+| 代号 | 问题 | 裁定 | 依据与代价 |
 | --- | --- | --- | --- |
-| 甲 | 浮点（F6）是否纳入本工程 | 甲1 纳入（f32/f64 全套 opcode + 线性内存 float load/store）／甲2 不纳入，遇浮点 opcode 明确返 `Unsupported` 并写进 design 的能力边界 | 甲1 估增数百行 + 大量单测；"相对完整"的定义不自动蕴含它 |
-| 乙 | 恶意字节码的隔离立场 | 乙1 解析器全函数化即视为足够（W-2）／乙2 另加模块级校验门（opcode 白名单 + 内存上限 + gas 配额按进程 rlimit） | 乙2 与 W-8/W-11 的资源配额耦合，涉策略层设计主张 |
-| 丙 | loader 派发形状 | 丙1 `exec.rs` 内一句按 magic 的 match（最小）／丙2 抽 `ImageLoader` trait 供后续格式复用 | 丙2 是"为将来预留扩展点"，与 §11.3 简约细则相斥，需用户显式授权 |
-| 丁 | wasm 的执行主体形态 | 丁1 只作 `execve` 可装载格式（进程即 wasm）／丁2 另加 `EG_WASM_*` 让已运行进程内联装载并调用导出函数 | 丁2 需额外的实例表与句柄域（fd 型对象），面更大 |
-| 戊 | 本工程的分轮边界 | 戊1 W-2..W-9 逐轮推进（每轮全门槛绿 + 提交）／戊2 先只推 W-2 + W-9（安全门槛与测试），把功能补全（W-3..W-6）作第二轮起 | 戊1 单轮跨度大；戊2 首轮即可闭合唯一的 DoS 面 |
+| 甲 | 浮点（F6）是否纳入 | **不纳入**：遇 F32/F64 opcode 明确返 `Unsupported`，并写进 design 的能力边界 | F1 使 functions 层 0 unsafe ⇒ 不能用 SSE/NEON 内联；纯 Rust 软浮点估 +600–1,200 行且需 libm 级用例背书；把 FP 原语下沉 privileged 则触 FREG 冻结立场与上下文切换的 FP 状态保存。"相对完整"的本项目定义不自动蕴含浮点 |
+| 乙 | 敌意字节码的隔离立场 | **两态分离**：结构面（表索引 / 操作数栈 / 分支目标 / 段边界）在解析期一次校验，不合规返 `Err`；运行期每次线性内存访问**仍**走 `.get()` 边界检查 | 运行期检查是 wasm 规范对 linear memory 的固要求，与"是否信任字节码"无关 ⇒ **不得**为快路径移除。W-2 只落解析侧全函数化；此项是 W-2 的达标定义 |
+| 丙 | loader 派发形状 | **`exec.rs` 内单点按 magic 的 match**，不抽 `ImageLoader` trait | 格式集短期就 ELF / wasm 两种；trait 属"为将来预留扩展点"（与 §11.3 简约细则相斥），且 trait / inherent 双入口已有 P-18 零消费者先例 |
+| 丁 | wasm 的运行入口 | **`EG_WASM_*` 走私有段，新开「766-779: WASM 运行时」功能段**；MVP 取 766 LOAD / 767 RUN / 768 GET_INFO / 769 UNLOAD | 一个号段选择，不是一条 ABI 主张：Linux **没有**"进程内加载并执行 wasm"的 syscall ⇒ 占用 0–299 的兼容收益恰为零，却会破坏"0–299 == Linux 号"这条承重不变式（`docs/explain/linux-compat-philosophy.md` §一）。wasm 侧的生态兼容载荷在 **WASI 保真度**（W-5 / W-6），与号位无关。766–779 实测全空且不在 `privileged/syscall/types.rs` 任何已声明段内。**订正**：本项首次裁定（735–746）基于我只查常量占用、未读源码段表注释的丕完整读数，该区间横穿 730-739 固件加载 / 740-745 POSIX Timer / 746-747 熵源三条已声明段，故作废重裁 |
+| 戊 | 本工程的分轮边界 | **本轮只推 W-2**（解析器全函数化 + 边界安全访问 + 畸形输入回归矩阵） | §1 实测的 DoS 面（截断字节码即内核 panic）是唯一的现网风险，先闭合它；W-3..W-8 待第二轮起，且届时受本表甲/乙两项约束 |
 
 ## 4. 验收判据
 
