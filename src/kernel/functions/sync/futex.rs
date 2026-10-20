@@ -46,16 +46,6 @@ pub fn futex_base_op(op: i32) -> i32 {
     op & 0x0F
 }
 
-/// 判断 op 是否为 WAIT 类
-pub fn is_wait_op(op: i32) -> bool {
-    matches!(futex_base_op(op), FUTEX_WAIT | FUTEX_WAIT_BITSET)
-}
-
-/// 判断 op 是否为 WAKE 类
-pub fn is_wake_op(op: i32) -> bool {
-    matches!(futex_base_op(op), FUTEX_WAKE | FUTEX_WAKE_BITSET)
-}
-
 // ============================================================================
 // 参数验证
 // ============================================================================
