@@ -17,7 +17,7 @@
 | `src/kernel/privileged/` | TCB 子树（允许 unsafe，硬件抽象） | 用户 决策 / AI 实施 |
 | `src/kernel/functions/` | 100% safe Rust 子树（策略与业务） | 用户 决策 / AI 实施 |
 | `src/kernel/functions/net/smoltcp/` | smoltcp vendored（3rd-party，锁定） | 升级时 用户 授权 + AI |
-| `src/user/`, `src/userland/`, `src/rust/` | 用户态程序与工具 | AI 实施 / 用户 审查 |
+| `src/user/`, `src/rust/`（含 `edgine-abi` ABI 常量单源、`edgine-tests`）, `kani-harness/` | 用户态程序、ABI 常量单源与形式化验证 harness | AI 实施 / 用户 审查 |
 | `host-tests/` | 主机端单元/集成测试（no_std + std） | AI 实施 / 用户 审查 |
 | `docs/plan/` | 工程与任务计划 | 用户 决策 + AI 撰写 |
 | `docs/design/` | 目标架构设计（子系统的设计立场文档，指向长期演化目标） | 用户 决策 + AI 撰写 |
