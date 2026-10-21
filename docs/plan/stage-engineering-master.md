@@ -312,7 +312,7 @@
 - **DECISION-045: rustdoc CI 阻断用 -D broken_intra_doc_links 而非 -D warnings** (2026-08-04)
   - 描述: rustdoc 0.75+ 内部生成 3 个 warning (unclosed HTML tag dyn/OpenFile + could not parse code block) 无源码位置, 是 rustdoc 自身行为非源码问题.
   - 方案: 阻断源码级 broken_intra_doc_links (阶段 15 已清零), 不阻断 -D warnings.
-  - 状态: [X]
+  - 状态: [X]（**阻断面已由第七轮用户裁定 R-1・乙 扩宽一档**：现为 `-D rustdoc::broken-intra-doc-links -D rustdoc::private_intra_doc_links`（`Makefile.ci` + `ci-lint.yml` 四腿同步，`host-tests/tests/ci_entrypoint_unified_test.rs` 的一致性锁把守）。本决策"不用 `-D warnings`"的立场未被推翻——新增的那条 lint 有源码位置，仍在"只阻断源码级问题"的判据内；无源码位置的三条至今仍不阻断，但三处病灶已在第七轮全部清零，是否把它们纳入阻断面转为 `docs/plan/ci-rustdoc-closeout.md` R-7 的新裁定项。§3 表行 7 是本阶段的历史验证快照，现行命令以该册 §4.3 为准。）
 
 - **DECISION-046: kernel `#[test]` 维持原状, 不迁移 host-tests** (2026-08-09)
   - 描述: 中期待办"kernel `#[test]` → host-tests 迁移"范畴属测试架构工程非静态检查工程; 1354 个 #[test] 中 527 个 smoltcp vendored 不动, 827 个 eg 自己测试中仅 ~70 个纯算法 (USB HID/MassStorage/XHCI/Enumerate/Ring 5 文件) 值得迁移, 其余 ~700 个需 mock Mutex/SpinLock/IRQ 上下文, mock 失真风险高.
