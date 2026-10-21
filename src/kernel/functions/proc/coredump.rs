@@ -148,7 +148,7 @@ fn note_size(namesz: u32, descsz: u32) -> u64 {
 // 策略注入 (CoredumpSink) — privileged 在信号默认动作为 Core 时调用
 // ============================================================================
 
-/// 标准核心转储实现 — 委托 [`do_coredump`] 生成 ELF core 文件
+/// 标准核心转储实现 — 委托 `do_coredump` 生成 ELF core 文件
 pub struct StandardCoredumpSink;
 
 impl CoredumpSink for StandardCoredumpSink {

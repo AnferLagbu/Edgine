@@ -1105,7 +1105,7 @@ impl UserProcManager {
     /// 内核分支执行 `mov cr3,0` → #PF → double fault → triple fault.
     ///
     /// 本方法在入队**之前**把上下文填为有效值 (entry/user_stack/cr3 取自权威
-    /// `Process`, 段选择子与 rflags 复用 [`ProcessContext::set_user_mode`], 与
+    /// `Process`, 段选择子与 rflags 复用 [`ProcessContext::set_user_mode`](crate::privileged::proc::types::ProcessContext::set_user_mode), 与
     /// `enter_user_asm` 载入的 0x1B/0x23/0x202 逐一对应), 恢复
     /// "可运行 ⇒ 上下文有效" 不变式, 使此后任意抢占 (含跨核 load_balance / IPI)
     /// 均能经调度器用户态出口正确进入用户态.

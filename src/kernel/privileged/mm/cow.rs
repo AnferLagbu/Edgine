@@ -448,7 +448,7 @@ fn release_child_table_frame(frame: u64) {
 /// # SMP Safety
 /// 帧持有计数判定 (`frame_ref_count`) 与其后的映射/帧归还**在同一临界区内**完成
 /// (`VMM_LOCK`), 消除"判定与映射之间被他核并发建映射改变帧计数"的 TOCTOU 窗口。
-/// 已持锁的路径必须直接用 [`cow_handle_fault_locked`], 否则构成递归加锁
+/// 已持锁的路径必须直接用 `cow_handle_fault_locked`, 否则构成递归加锁
 /// (`VMM_LOCK` 非重入)。
 pub fn cow_handle_fault(pml4: u64, fault_addr: u64) -> Option<u64> {
     let vmm_inst = vmm::get_vmm();

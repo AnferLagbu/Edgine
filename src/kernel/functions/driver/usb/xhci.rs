@@ -259,7 +259,7 @@ pub const PORTSC_OCC: u32 = 1 << 19;
 /// 复位变更
 pub const PORTSC_RC: u32 = 1 << 21;
 
-/// 回写 PORTSC 时须保留的 RWS 位掩码 (PLS[8:5] | PP[9] | PIC[14] | WCE[24])。
+/// 回写 PORTSC 时须保留的 RWS 位掩码 (`PLS[8:5]` | `PP[9]` | `PIC[14]` | `WCE[24]`)。
 ///
 /// PORTSC 中 RW1CS 位 (PED/CSC/PEC/WRC/OCC/PRC/PLC) 写 1 会产生副作用,
 /// 因此"读-改-写"型更新 (如应答变化位) 必须先屏蔽掉这些位, 否则会把

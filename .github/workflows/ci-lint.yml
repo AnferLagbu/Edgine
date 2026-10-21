@@ -232,12 +232,13 @@ jobs:
         run: |
           set -e
           echo "=== rustdoc --no-deps 阻断检查 ==="
-          echo "策略: 阻断 broken_intra_doc_links (源码级 link 错误),"
+          echo "策略: 阻断 broken_intra_doc_links (源码级 link 错误) 与"
+          echo "      private_intra_doc_links (pub API 文档指向私有项),"
           echo "      不阻断 rustdoc 内部 HTML tag 自动生成警告 (无源码位置)."
           cd src/rust
           # x86_64
           # 方案 D: 裸机 doc 指向 kernel manifest; 方案 B: 注入 build-std
-          RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links" cargo doc --release \
+          RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links -D rustdoc::private_intra_doc_links" cargo doc --release \
             --manifest-path ../kernel/Cargo.toml \
             --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' \
             --target x86_64-unknown-none --target-dir ../../other/target \
@@ -245,7 +246,7 @@ jobs:
           DOC_EXIT_X86=${PIPESTATUS[0]}
           # aarch64
           # 方案 D: 裸机 doc 指向 kernel manifest; 方案 B: 注入 build-std
-          RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links" cargo doc --release \
+          RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links -D rustdoc::private_intra_doc_links" cargo doc --release \
             --manifest-path ../kernel/Cargo.toml \
             --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' \
             --target aarch64-unknown-none-softfloat --target-dir ../../other/target \
@@ -255,7 +256,7 @@ jobs:
           echo "x86_64 rustdoc exit: $DOC_EXIT_X86"
           echo "aarch64 rustdoc exit: $DOC_EXIT_ARM"
           if [ "$DOC_EXIT_X86" -ne 0 ] || [ "$DOC_EXIT_ARM" -ne 0 ]; then
-            echo "::error::rustdoc broken_intra_doc_links 已变为非 0, 修复后再提交"
+            echo "::error::rustdoc intra-doc link 门禁 (broken + private) 已变为非 0, 修复后再提交"
             echo "--- x86_64 ---"
             tail -30 /tmp/rustdoc-x86.log
             echo "--- aarch64 ---"

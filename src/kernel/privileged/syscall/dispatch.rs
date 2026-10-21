@@ -42,7 +42,7 @@ static EL0_OBSERVED_PER_CPU: [core::sync::atomic::AtomicU32; crate::privileged::
 /// 每核打印上限 (见 [`EL0_OBSERVED_PER_CPU`]).
 const EL0_OBSERVE_LIMIT: u32 = 4;
 
-/// 记录一次来自 EL0 的 syscall 观测 (有界诊断, 见 [`EL0_OBSERVED_PER_CPU`]).
+/// 记录一次来自 EL0 的 syscall 观测 (有界诊断, 见 `EL0_OBSERVED_PER_CPU`).
 ///
 /// 由两个架构的 EL0 syscall 入口调用: x86_64 `syscall_dispatch_from_frame`、
 /// aarch64 `arch/aarch64/exception.rs::svc_handler` (刻意不置于架构中立的

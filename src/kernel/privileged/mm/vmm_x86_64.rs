@@ -792,9 +792,9 @@ impl VirtualMemoryManager {
 
     /// 映射单个页 —— **自持 `VMM_LOCK` 变体**
     ///
-    /// 语义与锁序约束见 [`Self::map_page_in_table_locked`]; 本入口只负责加/解锁,
+    /// 语义与锁序约束见 `Self::map_page_in_table_locked`; 本入口只负责加/解锁,
     /// 供不持 `VMM_LOCK` 的路径使用。已持锁的路径必须直接用
-    /// [`Self::map_page_in_table_locked`], 否则构成递归加锁 (`VMM_LOCK` 非重入)。
+    /// `Self::map_page_in_table_locked`, 否则构成递归加锁 (`VMM_LOCK` 非重入)。
     #[expect(
         clippy::used_underscore_binding,
         reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"

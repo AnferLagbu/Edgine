@@ -302,7 +302,7 @@ pub fn set_deadline(deadline: u64) {
 
 /// 探测本核 LAPIC 是否真正接受 TSC-Deadline 模式 (写 bit18 后回读)。
 ///
-/// CPUID.01H:ECX[24] 是 CPU 侧的架构性声明, 但 LAPIC 集成可能未实现该位而
+/// `CPUID.01H:ECX[24]` 是 CPU 侧的架构性声明, 但 LAPIC 集成可能未实现该位而
 /// CPUID 仍报支持; 若仅据 CPUID 选定 deadline 而硬件忽略 bit18, 定时器永不
 /// 到期 —— 表现为启动后该核再无 tick (挂死类故障, 事后极难归因). 回读探测
 /// 把该风险收敛成一个可判定的分支。

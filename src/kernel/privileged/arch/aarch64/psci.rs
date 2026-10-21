@@ -1,7 +1,7 @@
 //! PSCI (Power State Coordination Interface) — 电源状态协调接口
 //!
 //! ARM 电源管理标准接口，通过 SMC/HVC 调用实现关机/重启/次核上电。
-//! 调用通道 (conduit) 由设备树 `/psci` 节点的 `method` 属性决定 (见 [`conduit`]);
+//! 调用通道 (conduit) 由设备树 `/psci` 节点的 `method` 属性决定 (见 `conduit`);
 //! QEMU virt 使用 HVC (PSCI v0.2+), 多数真机使用 SMC。
 //! PSCI_VERSION 返回 (major<<16 | minor<<8 | patch), 取高位/低位都是 u32 已知安全.
 
@@ -115,7 +115,7 @@ impl PsciError {
 /// # Errors
 ///
 /// 固件不支持 PSCI 时返回 [`PsciError::NotSupported`]; 否则返回 PSCI `CPU_ON`
-/// 调用码经 [`PsciError::from_i64`] 映射得到的错误。
+/// 调用码经 `PsciError::from_i64` 映射得到的错误。
 pub fn cpu_on(mpidr: u64, entry_pa: u64, context_id: u64) -> Result<(), PsciError> {
     if psci_version().is_none() {
         return Err(PsciError::NotSupported);

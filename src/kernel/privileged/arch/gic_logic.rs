@@ -38,7 +38,7 @@ pub const GICD_CTLR_RWP_MASK: u32 = 1 << 31;
 /// `GICR_WAKER.ChildrenAsleep` (bit2) 掩码。
 pub const GICR_WAKER_CHILDREN_ASLEEP_MASK: u32 = 1 << 2;
 
-/// `GICR_TYPER.Affinity_Value` 位域起点 (bits[63:32])。
+/// `GICR_TYPER.Affinity_Value` 位域起点 (`bits[63:32]`)。
 ///
 /// 该 32 位字段为该 redistributor 帧所属核的**紧凑亲和值** (`Aff3:Aff2:Aff1:Aff0`,
 /// 每级 8 bit), 布局与 `aarch64/mod.rs` 的 `affinity_pack` 一致; 故可作为

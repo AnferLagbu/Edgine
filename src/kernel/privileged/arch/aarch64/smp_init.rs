@@ -2,8 +2,8 @@
 //!
 //! BSP 在 [`init`] 中依次经 PSCI `CPU_ON` 上电各 AP; 每个 AP 以 MMU 关 / 物理
 //! 地址进入 `boot/aarch64/start.S` 的 `ap_entry_asm` stub (SMP-03), 由 BSP 预写
-//! 的 [`ApBootInfo`] 槽装入 TTBR0/TTBR1/MAIR/TCR/SCTLR 与本核私有栈, 开 MMU 后
-//! 跳入 [`ap_main`]。
+//! 的 `ApBootInfo` 槽装入 TTBR0/TTBR1/MAIR/TCR/SCTLR 与本核私有栈, 开 MMU 后
+//! 跳入 `ap_main`。
 //!
 //! 握手协议: BSP 写满槽 → 按 cache line 清至 PoC → PSCI `CPU_ON` → 有界自旋等待
 //! AP 置 `done`。AP 在 GIC/per-CPU 状态登记完毕后置 `done=1`。
@@ -122,7 +122,7 @@ fn single_core_fallback() {
 /// 启动全部次核 (BSP 侧入口)。
 ///
 /// 由 `interrupt_late_init()` 在本核中断子系统就绪后调用; 无多核拓扑或仅单核时
-/// 退化为单核路径 (见 [`single_core_fallback`])。
+/// 退化为单核路径 (见 `single_core_fallback`)。
 #[inline(never)]
 pub fn init() {
     let Some(topology) = crate::privileged::dtb::cpu_topology() else {

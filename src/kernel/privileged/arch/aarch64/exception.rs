@@ -781,8 +781,8 @@ fn handle_irq(from_el0: bool) {
 
 /// EL0 IRQ 处理器 (用户态中断入口)。
 ///
-/// 与 EL1h 的 [`irq_handler`] 共用 [`handle_irq`]: 中断接收语义与异常级无关,
-/// EL0 期到达的内核 SGI (7/13/14) 必须与内核态同样处置 (历史缺陷见 [`handle_irq`])。
+/// 与 EL1h 的 [`irq_handler`] 共用 `handle_irq`: 中断接收语义与异常级无关,
+/// EL0 期到达的内核 SGI (7/13/14) 必须与内核态同样处置 (历史缺陷见 `handle_irq`)。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn irq_handler_el0(_frame: &ExceptionFrame) {
@@ -920,7 +920,7 @@ unsafe fn exc_puthex(val: u64) {
 
 /// 默认 IRQ 处理 (EL1h, 内核态中断入口)。
 ///
-/// 与 EL0 的 [`irq_handler_el0`] 共用 [`handle_irq`]。
+/// 与 EL0 的 [`irq_handler_el0`] 共用 `handle_irq`。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn irq_handler(_frame: &ExceptionFrame) {

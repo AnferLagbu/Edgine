@@ -15,7 +15,7 @@
 //! - `slot_mask[slot]`: 该 slot 的组成员位图, bit *i* 置位表示它持有 `groups[i]`
 //!   的成员资格.
 //!
-//! 与 smoltcp 的**调用次序约定** (由 [`super::net::init::raw`] 的包装函数遵守):
+//! 与 smoltcp 的**调用次序约定** (由 `privileged::net::init::raw` 的包装函数遵守):
 //! join 时先本表登记、再 `Interface::join_multicast_group`; 若后者失败必须调用
 //! [`McastRegistry::unjoin`] 回滚, 否则本表会谎报"已入组"而 iface 未入组, 导致
 //! 后续 join 跳过真实的 iface 调用而永久收不到流. leave 反之: 先本表递减、仅当

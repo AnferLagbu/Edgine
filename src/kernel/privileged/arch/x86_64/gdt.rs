@@ -334,7 +334,7 @@ pub struct GdtPtr {
 ///
 /// `user_rsp` (TRACK-INIT-RING3-SYSCALL-RET): syscall 入口保存当前用户 RSP,
 /// 供 iretq 帧的 RSP 槽位使用. 与 `kernel_rsp` 分离, 避免覆盖 (原实现复用
-/// [gs:0], 导致首次 syscall 后 kernel_rsp 丢失, 后续 syscall 用错内核栈).
+/// `gs:0`, 导致首次 syscall 后 kernel_rsp 丢失, 后续 syscall 用错内核栈).
 ///
 /// `trampoline_top` (KPTI-08): 本 CPU KPTI trampoline 栈顶 VA (高半区).
 /// `process_switch_asm` 的用户态出口在 `swapgs` 前读入该值, 切换到 trampoline

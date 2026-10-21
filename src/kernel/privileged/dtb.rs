@@ -113,7 +113,7 @@ pub fn parse(blob: &[u8]) -> Option<DtbInfo> {
 /// 从 FDT 头部前缀解出整棵树的字节数
 ///
 /// 调用方往往只能先拿到一个短切片 (头部), 需据此得知完整 blob 长度后再构造
-/// 完整切片. 校验幻数与 `totalsize` 合理性 (不小于头部, 不超过 [`FDT_MAX_SIZE`]).
+/// 完整切片. 校验幻数与 `totalsize` 合理性 (不小于头部, 不超过 `FDT_MAX_SIZE`).
 pub fn decode_header_prefix(header: &[u8]) -> Option<usize> {
     if read_be32(header, 0)? != FDT_MAGIC {
         return None;

@@ -536,7 +536,7 @@ const MSG_WAITFORONE_FLAG: u32 = 0x1_0000;
 /// struct timespec.tv_nsec 合法上界 (半开区间)
 const NSEC_PER_SEC: i64 = 1_000_000_000;
 
-/// socketpair(domain, sock_type, protocol, sv[2]) — 创建一对互相连接的套接字
+/// socketpair(domain, sock_type, protocol, `sv[2]`) — 创建一对互相连接的套接字
 ///
 /// 仅支持 `AF_UNIX(1)` (两端同类型互为 peer, 无路径绑定), FD 写回用户 `sv` (2 × i32)。
 ///

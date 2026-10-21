@@ -40,7 +40,7 @@ pub const GICR_STRIDE: u64 = 0x2_0000;
 ///
 /// GIC 始终使用 TTBR1_EL1 高半区别名 (VA = KERNEL_BASE + PA),
 /// 确保在 TTBR0_EL1 切换到用户页表后仍可访问。
-/// SGI frame 由 RD frame 基址推算 (RD + [`GICR_SGI_OFFSET`])。
+/// SGI frame 由 RD frame 基址推算 (RD + `GICR_SGI_OFFSET`)。
 pub fn set_bases(dist_pa: u64, redist_pa: u64) {
     let base = crate::privileged::mm::KERNEL_BASE;
     GICD_BASE.store(base + dist_pa, Ordering::Release);
@@ -301,7 +301,7 @@ unsafe fn wait_ctlr_rwp() -> Result<(), &'static str> {
 /// 3. 配置 PPI 触发模式
 /// 4. 为当前核启用 SGIs/PPIs
 ///
-/// `rd` / `sgi` 分别指向目标 CPU 的 RD 帧与 SGI 帧基地址 (由 [`redist_frames`] 定位)。
+/// `rd` / `sgi` 分别指向目标 CPU 的 RD 帧与 SGI 帧基地址 (由 `redist_frames` 定位)。
 ///
 /// # Errors
 ///
@@ -388,7 +388,7 @@ pub unsafe fn init_cpu_interface() {
 
 /// 使能指定 CPU 的 Timer PPI 中断
 ///
-/// `sgi` 为目标 CPU 的 SGI 帧基地址 (由 [`redist_frames`] 定位)。
+/// `sgi` 为目标 CPU 的 SGI 帧基地址 (由 `redist_frames` 定位)。
 ///
 /// # Safety
 ///
@@ -402,7 +402,7 @@ pub unsafe fn enable_timer_ppi(sgi: u64) {
 
 /// 使能指定 CPU SGI 帧中的一路 SGI。
 ///
-/// `sgi` 为目标 CPU 的 SGI 帧基地址 (由 [`redist_frames`] 定位); `intid` 为 SGI
+/// `sgi` 为目标 CPU 的 SGI 帧基地址 (由 `redist_frames` 定位); `intid` 为 SGI
 /// 编号 (0-15), 取自本模块的 `*_SGI` 常量。
 ///
 /// # Safety
@@ -453,7 +453,7 @@ pub fn deactivate(intid: u32) {
 ///
 /// BSP 经 [`init`] 完成启动核初始化 (内含 `init_per_cpu()`);
 /// 次核上线后由 SMP 启动路径调用本函数。本函数以**当前核硬件 id**定位自身
-/// Redistributor 帧 (见 [`redist_frames`]), 故 BSP 与 AP 共用同一入口, 无需传入
+/// Redistributor 帧 (见 `redist_frames`), 故 BSP 与 AP 共用同一入口, 无需传入
 /// 逻辑索引, 也不受稀疏/多簇拓扑下核序号错位的影响。
 ///
 /// 本函数是**每核中断能力的唯一入口**: 返回 `Ok` 后该核可接收定时器 PPI 与全部
@@ -461,7 +461,7 @@ pub fn deactivate(intid: u32) {
 ///
 /// # Errors
 ///
-/// 返回 `Err(原因)` 表示本核 redistributor 帧未定位到 (见 [`redist_frames`]) 或
+/// 返回 `Err(原因)` 表示本核 redistributor 帧未定位到 (见 `redist_frames`) 或
 /// 唤醒失败 (见 [`init_redistributor`]), 由调用方决定 fail-fast 或报错下线该核。
 ///
 /// # Safety
@@ -761,7 +761,7 @@ unsafe fn configure_and_enable_device_spi(irq: u32) {
 ///
 /// # Errors
 ///
-/// - `intid` 不在 SPI 范围 (< [`SPI_BASE`]);
+/// - `intid` 不在 SPI 范围 (< `SPI_BASE`);
 /// - `intid` 超出分发表范围;
 /// - 该 SPI 槽位已被占用。
 pub fn register_device_spi(intid: u32, handler: fn()) -> Result<(), &'static str> {

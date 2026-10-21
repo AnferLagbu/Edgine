@@ -3,8 +3,8 @@
 //! ## 架构 (2026 §6.4 直接方案 B 后)
 //!
 //! 字符设备业务已整体下沉 functions (functions/driver/char: serial/vga/pl011 权威)。
-//! privileged 仅保留 PL011 UART 早期控制台机制 ([arch::uart](crate::privileged::arch::uart),
-//! boot 阶段直接 MMIO 输出) 与平台 MMIO 基址安全面 ([`pl011_phys_base`]),
+//! privileged 仅保留 PL011 UART 早期控制台机制 (`arch::uart`,
+//! boot 阶段直接 MMIO 输出) 与平台 MMIO 基址安全面 (`pl011_phys_base`),
 //! 后者供 functions pl011 驱动构造 `IoMem` 使用。
 //!
 //! ## 历史
@@ -12,7 +12,7 @@
 //! - x86_64 serial.rs / vga.rs 已删除 (2026-09-12): 业务迁 functions,
 //!   privileged 保留 IoPort/IoMem 机制; EGDF 注册由 functions::driver::char::char_init 完成。
 //! - MIG-003: aarch64 PL011 业务迁 functions (functions/driver/char/pl011.rs),
-//!   privileged 删除 driver/char/pl011.rs, 仅暴露 [`pl011_phys_base`] 安全基址面。
+//!   privileged 删除 driver/char/pl011.rs, 仅暴露 `pl011_phys_base` 安全基址面。
 
 /// 返回 PL011 UART 物理基址 (aarch64 安全基址面)。
 ///

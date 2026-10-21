@@ -954,7 +954,7 @@ fn proc_freg_rollback_cb() -> bool {
 const PROC_FREG_ROLLBACK_SAFE: bool = false;
 
 /// 注册进程表的故障恢复域 (域 id 4); capture/rollback 回调是否挂载由
-/// [`PROC_FREG_ROLLBACK_SAFE`] 护栏决定, 当前默认不挂载 (见护栏文档).
+/// `PROC_FREG_ROLLBACK_SAFE` 护栏决定, 当前默认不挂载 (见护栏文档).
 pub fn proc_register_freg_domain() {
     crate::privileged::freg::recovery_domain_register(4);
     let mgr = crate::privileged::freg::RECOVERY_MANAGER.lock();

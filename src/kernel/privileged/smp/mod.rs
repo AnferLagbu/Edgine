@@ -62,7 +62,7 @@ pub fn get_cpu_count() -> u32 {
 
 /// 返回当前 CPU 的**逻辑索引** (`[0, get_cpu_count())`)。
 ///
-/// 读取本核硬件 id (`arch::cpu_id()`) 后在 [`CPU_HW_IDS`] 的已登记前缀内线性
+/// 读取本核硬件 id (`arch::cpu_id()`) 后在 `CPU_HW_IDS` 的已登记前缀内线性
 /// 扫描反查; 未命中 (例如极早期调用, 槽位尚未登记) 回退 BSP (0), 保证返回值
 /// 恒为有效索引。核数上限 [`crate::privileged::config::MAX_CPUS`] 有界, 扫描
 /// 成本可接受且为纯读, 可在中断上下文调用。

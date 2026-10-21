@@ -735,9 +735,9 @@ impl Aarch64Vmm {
 
     /// 从 `root_paddr` 遍历页表, 按需创建中间级, 设置最终页描述符 —— **自持 `VMM_LOCK` 变体**
     ///
-    /// 语义与锁序约束见 [`Self::map_page_in_table_locked`]; 本入口只负责加/解锁,
+    /// 语义与锁序约束见 `Self::map_page_in_table_locked`; 本入口只负责加/解锁,
     /// 供不持 `VMM_LOCK` 的路径使用。已持锁的路径必须直接用
-    /// [`Self::map_page_in_table_locked`], 否则构成递归加锁 (`VMM_LOCK` 非重入)。
+    /// `Self::map_page_in_table_locked`, 否则构成递归加锁 (`VMM_LOCK` 非重入)。
     #[expect(
         clippy::used_underscore_binding,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
@@ -1099,7 +1099,7 @@ impl Aarch64Vmm {
     }
 
     /// 为用户页表 `user_root` 建立配套的 **EL1 视图** (KPTI 方案 S3), 并把根表
-    /// 物理地址登记进 `user_root` 的保留槽 [`EL1_VIEW_SLOT`].
+    /// 物理地址登记进 `user_root` 的保留槽 `EL1_VIEW_SLOT`.
     ///
     /// # 为什么需要 EL1 视图
     ///

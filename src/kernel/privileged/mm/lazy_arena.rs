@@ -17,7 +17,7 @@
 //!
 //! 页池只持有页的直接映射别名, 故经 PMM 分配的页其物理地址必须落在内核
 //! 高半区直接映射范围内 (x86_64 为 phys `0..1GB`, aarch64 为 phys `0..2GB`).
-//! 该前提与框架既有 [`Frame::zero`](crate::privileged::mm::frame::Frame::zero)
+//! 该前提与框架既有 [`Frame::zero`](crate::privileged::frame::Frame::zero)
 //! 一致, 属框架当前直接映射范围的固有约束.
 
 use core::ptr;

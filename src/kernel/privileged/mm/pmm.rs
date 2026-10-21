@@ -11,7 +11,7 @@
 //!   16 字节/页, 哨兵 = u64::MAX; 链表关系与物理页内容解耦, host 可测).
 //! - 帧所有权槽存独立 FRAME_OWNER 数组 (16 字节/页: 分配点 + 最近归还点),
 //!   使“二次释放 / 释放未分配帧”从静默腐败变为可点名归因的告警
-//!   (语义与契约见 [`PhysicalMemoryManager::note_frame_retired_site`]).
+//!   (语义与契约见 `PhysicalMemoryManager::note_frame_retired_site`).
 //! - Buddy 合并使用按页的阶数元数据, 实现 O(1) 伙伴检查.
 //!
 //! # 安全
@@ -179,7 +179,7 @@ pub(crate) mod raw {
 ///
 /// # 实现
 /// - [`RawMetaStore`]: 生产实现, 基于 `phys + KERNEL_BASE` 裸指针 (行为不变)
-/// - [`VecMetaStore`]: host 测试实现, 基于 `Vec<u8>` 堆载体 (构造注入)
+/// - `VecMetaStore`: host 测试实现, 基于 `Vec<u8>` 堆载体 (构造注入)
 ///
 /// # 安全
 /// 所有读写方法都要求调用方持有 PMM 锁 (buddy 算法持锁执行);
@@ -210,9 +210,9 @@ pub trait MetaStore {
     /// 统计 bitmap 空闲位数 (清零位个数)
     fn bitmap_count_free(&self) -> u64;
 
-    /// 读 buddy_meta[idx] (0xFF=已分配, 0..=MAX_BUDDY_ORDER=空闲块头阶数)
+    /// 读 `buddy_meta[idx]` (0xFF=已分配, 0..=MAX_BUDDY_ORDER=空闲块头阶数)
     fn meta_read(&self, idx: usize) -> u8;
-    /// 写 buddy_meta[idx]
+    /// 写 `buddy_meta[idx]`
     fn meta_write(&self, idx: usize, val: u8);
 
     /// 读帧持有计数 (按 pfn 索引; 0 = 未计数帧, 见 `frame_inc`/`frame_dec` 契约)
@@ -227,13 +227,13 @@ pub trait MetaStore {
     /// 写帧归还点 (保留分配点归因)
     fn owner_mark_release(&self, idx: usize, site: u64);
 
-    /// 读 FREE_LINKS[idx].prev (存前驱块头 pfn, SENTINEL=无前驱)
+    /// 读 `FREE_LINKS[idx].prev` (存前驱块头 pfn, SENTINEL=无前驱)
     fn links_read_prev(&self, idx: usize) -> u64;
-    /// 读 FREE_LINKS[idx].next (存后继块头 pfn, SENTINEL=无后继)
+    /// 读 `FREE_LINKS[idx].next` (存后继块头 pfn, SENTINEL=无后继)
     fn links_read_next(&self, idx: usize) -> u64;
-    /// 写 FREE_LINKS[idx].prev
+    /// 写 `FREE_LINKS[idx].prev`
     fn links_set_prev(&self, idx: usize, val: u64);
-    /// 写 FREE_LINKS[idx].next
+    /// 写 `FREE_LINKS[idx].next`
     fn links_set_next(&self, idx: usize, val: u64);
 
     /// 读第 `order` 阶空闲链表头 (存块头 pfn, SENTINEL=空链表)
@@ -768,7 +768,7 @@ pub struct PhysicalMemoryManager {
     alloc_fail_countdown: AtomicU32,
     // ---- Buddy 分配器 ----
     /// H-04 (2026-09-09): 内存元数据载体 — 生产为 RawMetaStore (裸指针),
-    /// host 测试经 inject_meta_store 注入 VecMetaStore (Vec<u8> 堆载体).
+    /// host 测试经 inject_meta_store 注入 VecMetaStore (`Vec<u8>` 堆载体).
     /// 载体类型经 type alias `MetaStoreImpl` 编译期定死 (无 dyn/vtable).
     /// init_bitmap 单线程启动期设置; buddy 就绪后仅在 PMM 锁下访问.
     store: UnsafeCell<Option<MetaStoreImpl>>,
@@ -1096,8 +1096,8 @@ impl PhysicalMemoryManager {
 
     /// 分配单页.
     ///
-    /// 标 [`track_caller`] 以使帧所有权元数据记到真正的分配者 (见
-    /// [`Self::note_frame_alloc`]).
+    /// 标 `#[track_caller]` 以使帧所有权元数据记到真正的分配者 (见
+    /// `Self::note_frame_alloc`).
     #[track_caller]
     pub fn alloc_page(&self) -> Option<PhysAddr> {
         #[cfg(any(test, feature = "kernel_test"))]

@@ -172,14 +172,19 @@ fn test_audit_sh_carries_hard_rule_audits() {
 #[test]
 fn test_ci_rustdoc_matches_workflow_command() {
     // 本地入口与 workflow 的 rustdoc 判据必须同源, 否则本地绿仍可能在 CI 红.
+    // 阻断面 = broken_intra_doc_links + private_intra_doc_links (R-1 乙裁定加压).
     let mk = read(MAKEFILE_CI);
     let wf = read("../.github/workflows/ci-lint.yml");
     assert!(
-        mk.contains("RUSTDOCFLAGS=\"-D rustdoc::broken-intra-doc-links\""),
+        mk.contains(
+            "RUSTDOCFLAGS=\"-D rustdoc::broken-intra-doc-links -D rustdoc::private_intra_doc_links\""
+        ),
         "ci-rustdoc 缺少与 workflow 一致的 RUSTDOCFLAGS 阻断"
     );
     assert!(
-        wf.contains("RUSTDOCFLAGS=\"-D rustdoc::broken-intra-doc-links\""),
+        wf.contains(
+            "RUSTDOCFLAGS=\"-D rustdoc::broken-intra-doc-links -D rustdoc::private_intra_doc_links\""
+        ),
         "workflow 侧 rustdoc 判据已变, 需同步 ci-rustdoc"
     );
     for target in ["x86_64-unknown-none", "aarch64-unknown-none-softfloat"] {

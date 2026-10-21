@@ -362,7 +362,7 @@ pub const fn pml4_index(addr: u64) -> usize {
     clippy::inline_always,
     reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
 )]
-/// 提取地址的 PDPT (页目录指针表) 索引 (bits[38:30]).
+/// 提取地址的 PDPT (页目录指针表) 索引 (`bits[38:30]`).
 pub const fn pdpt_index(addr: u64) -> usize {
     ((addr >> 30) & 0x1FF) as usize
 }
@@ -372,7 +372,7 @@ pub const fn pdpt_index(addr: u64) -> usize {
     clippy::inline_always,
     reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
 )]
-/// 提取地址的 PD (页目录) 索引 (bits[29:21]).
+/// 提取地址的 PD (页目录) 索引 (`bits[29:21]`).
 pub const fn pd_index(addr: u64) -> usize {
     ((addr >> 21) & 0x1FF) as usize
 }
@@ -382,7 +382,7 @@ pub const fn pd_index(addr: u64) -> usize {
     clippy::inline_always,
     reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
 )]
-/// 提取地址的 PT (页表) 索引 (bits[20:12]).
+/// 提取地址的 PT (页表) 索引 (`bits[20:12]`).
 pub const fn pt_index(addr: u64) -> usize {
     ((addr >> 12) & 0x1FF) as usize
 }

@@ -5,7 +5,7 @@
 //! - **IO Port 抽象**: 安全的端口/MMIO操作
 //! - **DriverError**: 统一的错误码体系
 //!
-//! 设备注册/发现/管理统一由 [EGDF 框架](super::egdf) 提供。
+//! 设备注册/发现/管理统一由 [EGDF 框架](crate::privileged::egdf) 提供。
 //!
 //! ## 架构
 //!

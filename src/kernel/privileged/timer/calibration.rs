@@ -133,7 +133,7 @@ fn record_counter_hz(hz: u64) -> Result<u64, &'static str> {
 /// 测定硬件自由计数器频率 (Hz) 并登记
 ///
 /// - `x86_64`: 以 PIT 通道 0 (1.193182 MHz) 为参考时钟, 取
-///   [`DEFAULT_CALIBRATION_WINDOW_MS`] 的 `window_ms` 个三个样本的中位数.
+///   `DEFAULT_CALIBRATION_WINDOW_MS` 的 `window_ms` 个三个样本的中位数.
 ///   参考量由硬件倒计数器给出, **不依赖定时器中断**, 因此启动早期 (IF 未开)
 ///   也能测定.
 /// - aarch64: 通用定时器频率由 `CNTFRQ_EL0` 直接读出, 不需实测.

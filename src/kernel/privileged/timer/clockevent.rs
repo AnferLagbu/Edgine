@@ -349,7 +349,7 @@ fn hardware_mode() -> apic::TimerMode {
 /// **本路径不得打日志**: 这里是 hardirq, 格式化与串口发射既拉长中断时长
 /// (P-3 插桩取证实测一条 60+ 字符日志 ≈ 5 ms IRQ-off 自扰动), 又把 klog 的两级
 /// 栈缓冲区 (~600 B) 压在被中断现场的栈上. 取证信号留在启动上下文
-/// ([`verify_expiry_observed`]) 打, 本函数只累加计数器.
+/// (`verify_expiry_observed`) 打, 本函数只累加计数器.
 pub fn rearm_local() {
     TICK_DELIVERED.fetch_add(1, Ordering::AcqRel);
     let slot = local_slot();

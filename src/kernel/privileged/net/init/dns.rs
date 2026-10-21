@@ -62,7 +62,7 @@ const STATIC_HOSTS: &[HostEntry] = &[
 /// - 精确匹配主机名 (不区分大小写 — ASCII tolower)
 /// - 大小写不敏感: "Router" / "ROUTER" / "router" 都匹配
 /// - 静态表未命中时发起 smoltcp DNS 查询 (仅进程上下文, 见
-///   [`dns_query_net`] 契约); 未初始化/无 server/失败均返 `None`
+///   `dns_query_net` 契约); 未初始化/无 server/失败均返 `None`
 ///
 /// # 局限 (S2 SIMPLIFIED 口径)
 /// - 查询仅 IPv4 (Type::A), 不支持 AAAA / search domain / 缓存

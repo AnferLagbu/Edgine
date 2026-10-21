@@ -56,7 +56,7 @@ pub(crate) fn affinity_pack(mpidr: u64) -> u32 {
 // ── CoreArch: 基础核心 ──────────────────────────────────────────────────
 
 impl CoreArch for Aarch64 {
-    /// 获取当前核硬件 id: `MPIDR_EL1` 的紧凑亲和编码 (见 [`affinity_pack`])。
+    /// 获取当前核硬件 id: `MPIDR_EL1` 的紧凑亲和编码 (见 `affinity_pack`)。
     #[inline(always)]
     fn cpu_id() -> u32 {
         let mpidr: u64;
@@ -229,10 +229,10 @@ impl InterruptArch for Aarch64 {
 
     /// GICv3 SGI 单播 (ICC_SGI1R_EL1)。
     ///
-    /// `target_cpu` 是目标的紧凑亲和 id (见 [`affinity_pack`]); 本函数把 Aff1/2/3
-    /// 填回 `ICC_SGI1R_EL1` 的 [23:16]/[39:32]/[55:48], 并把 Aff0 编码为
-    /// TargetList 的对应位 (`1 << Aff0`) —— 误置于 [23:16] (Aff1) 会寻址到不存在
-    /// 的簇, SGI 永不投递。TargetList 仅覆盖簇内 Aff0 ∈ [0,15], 故 Aff0 取低 4 位。
+    /// `target_cpu` 是目标的紧凑亲和 id (见 `affinity_pack`); 本函数把 Aff1/2/3
+    /// 填回 `ICC_SGI1R_EL1` 的 `[23:16]`/`[39:32]`/`[55:48]`, 并把 Aff0 编码为
+    /// TargetList 的对应位 (`1 << Aff0`) —— 误置于 `[23:16]` (Aff1) 会寻址到不存在
+    /// 的簇, SGI 永不投递。TargetList 仅覆盖簇内 Aff0 ∈ `[0,15]`, 故 Aff0 取低 4 位。
     fn send_ipi(target_cpu: u32, vector: u8) {
         // ICC_SGI1R_EL1 字段: Aff3[55:48], Aff2[39:32], INTID[27:24], Aff1[23:16],
         // TargetList[15:0]。

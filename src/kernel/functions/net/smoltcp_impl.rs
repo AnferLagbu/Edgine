@@ -26,7 +26,7 @@
 //!   内存 + 创建 SmoltcpNetStack**, 本 trait 翻译层不实际构造 smoltcp 套接字.
 //!
 //! - **实际 `Interface::poll(ts, &mut device, &mut sockets)`**: 需要 device
-//!   引用, 与 self-referential 冲突. W4 整合时设计 (泛型 D 或 Box<dyn Device>).
+//!   引用, 与 self-referential 冲突. W4 整合时设计 (泛型 D 或 `Box<dyn Device>`).
 //!
 //! ## W3.2 价值
 //!

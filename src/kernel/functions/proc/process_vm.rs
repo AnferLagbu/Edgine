@@ -23,7 +23,7 @@
 //! SIMPLIFIED: 不实现 `/proc/pid/mem` 式的 `PTRACE_MODE_ATTACH_FSCREDS` 完整判据,
 //! 权限仅取「自身 / pwm 特权 / uid 相等」三档; 影响面为「细粒度 LSM 策略下的远程
 //! 内存访问放行范围可能与 Linux 存在差异」; 若后续引入 LSM/能力模型, 应在
-//! [`check_access`] 处接入.
+//! `check_access` 处接入.
 
 use crate::functions::fs::io::{IOV_MAX, read_iovecs};
 use crate::privileged::errno::Errno;
@@ -258,7 +258,7 @@ fn process_vm_rw(
 ///
 /// # Errors
 ///
-/// 见 [`process_vm_rw`].
+/// 见 `process_vm_rw`.
 pub fn process_vm_readv_syscall(
     pid: i32,
     local_iov: u64,
@@ -284,7 +284,7 @@ pub fn process_vm_readv_syscall(
 ///
 /// # Errors
 ///
-/// 见 [`process_vm_rw`].
+/// 见 `process_vm_rw`.
 pub fn process_vm_writev_syscall(
     pid: i32,
     local_iov: u64,

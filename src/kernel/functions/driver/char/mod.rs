@@ -9,7 +9,7 @@
 //!
 //! - [vga] — VGA 文本模式 (0xB8000 MMIO + 0x3D4/0x3D5 PIO), 0 unsafe (x86_64)
 //! - [serial] — 16550 UART 串口 (COM1-COM4 PIO), 0 unsafe (x86_64)
-//! - [pl011] — ARM PL011 UART 串口 (0x0900_0000 MMIO), 0 unsafe (aarch64)
+//! - `pl011` — ARM PL011 UART 串口 (0x0900_0000 MMIO), 0 unsafe (aarch64)
 //!
 //! 评估日期: 2026-06-04 (pl011 于 MIG-003 补入)
 
@@ -25,7 +25,7 @@ pub mod vga;
 /// - aarch64: PL011 UART 串口
 ///
 /// privileged 侧已退位 (删除 driver/char 业务, 保留 IoPort/IoMem 机制 +
-/// arch::uart 早期控制台 + [`pl011_phys_base`](crate::privileged::driver::pl011_phys_base) 安全基址面)。
+/// arch::uart 早期控制台 + `pl011_phys_base` 安全基址面)。
 ///
 /// SIMPLIFIED: 注册走 `egdf_register_driver` (无 CharOps 读写绑定)——EGDF char
 /// 读写路径 (`egdf_char_write/read`) 当前无生产消费者 (休眠); 待 devfs char 读写

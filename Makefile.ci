@@ -110,24 +110,31 @@ ci-test-aarch64:
 # ── rustdoc 0 warning (对齐 ci-lint.yml 的 rustdoc-check job) ────
 # 此前该门禁只存在于 workflow, 本地没有入口 —— 提交前无法自查, 只能在 CI 上看
 # 到红. 命令与 workflow 保持逐字一致 (裸机 doc 需 build-std 注入).
+# 两腿**串联但独立判定**: 旧形态 x86_64 先红即中断, aarch64 腿的 rustdoc 状态
+# 从不被测得 (P-39/R-5 病灶); 现在两腿都跑完再汇总退出码.
 ci-rustdoc:
 	@echo "[+] rustdoc --no-deps 双架构阻断..."
 	@mkdir -p $(LOG_DIR)
-	@cd src/rust && RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links" \
+	@cd src/rust && { RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links -D rustdoc::private_intra_doc_links" \
 		cargo doc --release \
 		--manifest-path ../kernel/Cargo.toml \
 		--config 'unstable.build-std=["core","compiler_builtins","alloc"]' \
 		--config 'unstable.build-std-features=["compiler-builtins-mem"]' \
 		--target x86_64-unknown-none --target-dir ../../other/target \
-		--lib --bins --examples --no-deps 2>&1 | tee ../../$(LOG_DIR)/rustdoc_x86_64.log | tail -5
-	@cd src/rust && RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links" \
+		--lib --bins --examples --no-deps 2>&1 | tee ../../$(LOG_DIR)/rustdoc_x86_64.log | tail -5; \
+	x86_status=$$?; \
+	RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links -D rustdoc::private_intra_doc_links" \
 		cargo doc --release \
 		--manifest-path ../kernel/Cargo.toml \
 		--config 'unstable.build-std=["core","compiler_builtins","alloc"]' \
 		--config 'unstable.build-std-features=["compiler-builtins-mem"]' \
 		--target aarch64-unknown-none-softfloat --target-dir ../../other/target \
-		--lib --bins --examples --no-deps 2>&1 | tee ../../$(LOG_DIR)/rustdoc_aarch64.log | tail -5
-	@echo "PASS: rustdoc 0 源码级 link 错误 (x86_64 + aarch64)"
+		--lib --bins --examples --no-deps 2>&1 | tee ../../$(LOG_DIR)/rustdoc_aarch64.log | tail -5; \
+	arm_status=$$?; \
+	echo "x86_64 rustdoc exit: $$x86_status"; \
+	echo "aarch64 rustdoc exit: $$arm_status"; \
+	if [ $$x86_status -ne 0 ] || [ $$arm_status -ne 0 ]; then exit 1; fi; }
+	@echo "PASS: rustdoc 0 源码级 link 错误 + 0 私有项链接 (x86_64 + aarch64 两腿都真跑)"
 
 # ── Bench: framekernel-bench + 15% 回归检查 (M6.9) ───────────────
 ci-bench:
