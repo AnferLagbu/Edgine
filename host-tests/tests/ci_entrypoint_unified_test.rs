@@ -159,9 +159,16 @@ fn test_ci_aggregate_covers_six_gates() {
 
 #[test]
 fn test_audit_sh_carries_hard_rule_audits() {
-    // AGENTS.md §2.2 把 F1+F2 / F4 / F8 列为强制门禁: 权威入口必须真跑这三项.
+    // AGENTS.md §2.2 把 F1+F2 / F4 / F8 / F3 列为强制门禁: 权威入口必须真跑这四项.
+    // coupling 一列由 P-45 收口时补入 —— 此前 F3 的指定检查方式在本地权威入口
+    // 没有调用点, 只在从不触发的 workflow 里存在 (文档标「强制」而无执法路径).
     let sh = read(AUDIT_SH);
-    for hard in ["functions_boundary", "safety_coverage", "deadlock_matrix"] {
+    for hard in [
+        "functions_boundary",
+        "safety_coverage",
+        "deadlock_matrix",
+        "coupling",
+    ] {
         assert!(
             sh.contains(hard),
             "ci/audit.sh 未接入 audit_{hard}.py —— §2.2 宣称的强制门禁与本地入口分叉"

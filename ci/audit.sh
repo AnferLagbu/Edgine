@@ -206,6 +206,30 @@ for HARD_RULE_AUDIT in functions_boundary safety_coverage deadlock_matrix; do
     fi
 done
 
+# ── 0.5k2 硬规则 F3 模块耦合审计 (P-45 接线) ────────────────────
+# AGENTS.md §5 F3 的「检查方式」一栏写的就是 audit_coupling.py, §2.2 还把它的 CI
+# 门禁列标为「强制」——但此前本脚本里它没有任何调用点, 仓内唯一一处在从不触发的
+# GitHub workflow (P-37 结案事实: 本仓只有 Gitee remote, 无流水线配置). 即 F3 长期
+# 处于「文档强制、无执法路径」状态. 本段把执法路径补上, 不改动脚本判据本身.
+# 接线点刻意选在 quick 早退分支 (:336) **之前** ⇒ quick 与 full 两个档位都覆盖
+# (脚本自测耗时 ≈0.8s, 不构成档位成本负担).
+# 退出码取自脚本本身: 用 `OUT=$(cmd) && RC=0 || RC=$?` 形态 (与 0.5i 的 FP-06 腿同
+# 写法), 不走管道 ⇒ 不依赖 pipefail, 也不会把退出码取自 tail/grep.
+# 刻意**不加** `if command -v python3 && [ -f … ]` 存在性包装 (P-46 的 fail-open 族):
+# 脚本缺失或 python3 不可用时本腿必须硬失败, 而不是静默跳过后仍 EXIT=0.
+# 判据强度边界 (脚本侧, 收口另见 §6 P-54 立案): 仅 (a) INTERNAL_PATTERNS 清单内的
+# 跨子系统内部访问 (severity 恒 HIGH ⇒ 阻断) 与 (b) 合计引用 > 20 的禁止环会 exit 1;
+# 存量 4 对小数环 (mm↔proc 14 / proc↔syscall 6 / proc↔sgeg 3 / arch↔mm 2) 只打印.
+step "0.5k2/6 硬规则 F3 模块耦合审计 (coupling)"
+COUPLING_OUT=$(python3 "$PROJECT_ROOT/scripts/audit_coupling.py" 2>&1) && COUPLING_RC=0 || COUPLING_RC=$?
+echo "$COUPLING_OUT" | grep -E '^ *⚠|^>>>' || true
+if [ "$COUPLING_RC" -eq 0 ]; then
+    ok "coupling: F3 门禁通过 (完整矩阵见脚本 [1]/[2] 段输出)"
+else
+    echo "$COUPLING_OUT" | tail -30
+    err "coupling: F3 被破坏 (跨子系统内部访问或严重循环依赖)! 见上方输出"
+fi
+
 # ── 0.5l P-8 初始化编排孤儿入口审计 ────────────────────────
 # O1 门禁: `#[unsafe(no_mangle)]` + 初始化语义 + 全仓 0 调用者 + 体内嵌套 ≥2 项 init
 # ⇒「孤儿编排入口」. scheduler_init 曾以该形态挂住 10 项子系统 init, 生产环境从未
