@@ -9,6 +9,7 @@
 //! 本测试锁住收口后的形态: Makefile.ci 只委派, ci/audit.sh 是 §2.2 的完整落地.
 
 use std::fs;
+use std::path::Path;
 
 const MAKEFILE_CI: &str = "../Makefile.ci";
 const AUDIT_SH: &str = "../ci/audit.sh";
@@ -172,6 +173,87 @@ fn test_audit_sh_carries_hard_rule_audits() {
         assert!(
             sh.contains(hard),
             "ci/audit.sh 未接入 audit_{hard}.py —— §2.2 宣称的强制门禁与本地入口分叉"
+        );
+    }
+}
+
+/// P-46 结构锁: `ci/audit.sh` 的审计腿存在性包装必须逐处 fail-closed, 且到位清单
+/// 不得点名不存在的脚本.
+///
+/// 病灶形态 (P-46 负控制实测): 13 处 `if command -v python3 && [ -f 脚本 ]` 包装
+/// 全部无 `else`, 而 `step` 头写在包装内部 ⇒ 脚本被改名 / 缺失 / 环境无 python3 时
+/// 该腿连一行日志都不留, 退出码仍是 0 ——「audit 全绿」与「少跑了几条腿」不可区分.
+///
+/// 锁的三条判据:
+/// ① 包装位点数 == `audit_leg_missing` 调用行数 (删任一 `else` 或新增第 14 处裸包装
+///    都立即不等 ⇒ 红);
+/// ② `AUDIT_REQUIRED_LEGS` 清单里的每个腿名都能在 `mark_leg "名"` 或 `for … in 列表`
+///    里找到登记点 (整条腿被摘掉 ⇒ 红);
+/// ③ 清单里每个名字对应的 `audit_<名>.py` 必须真实存在 (清单漂移 ⇒ 红).
+#[test]
+fn test_audit_sh_audit_legs_are_fail_closed() {
+    let sh = read(AUDIT_SH);
+    let wrapper_pat = "command -v python3 >/dev/null 2>&1 && [ -f";
+    let wrappers = sh.lines().filter(|l| l.contains(wrapper_pat)).count();
+    let guards = sh
+        .lines()
+        .filter(|l| l.trim_start().starts_with("audit_leg_missing "))
+        .count();
+    assert!(
+        wrappers > 0,
+        "ci/audit.sh 里找不到存在性包装腿, 测绘口径已变"
+    );
+    assert_eq!(
+        wrappers, guards,
+        "ci/audit.sh 有 {wrappers} 处 `[ -f 脚本 ]` 包装但只有 {guards} 处 audit_leg_missing \
+         硬失败出口 —— P-46 回退, 缺失的腿会静默消失且退出码仍为 0"
+    );
+
+    let required_line = sh
+        .lines()
+        .find(|l| l.trim_start().starts_with("AUDIT_REQUIRED_LEGS="))
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少 AUDIT_REQUIRED_LEGS 到位清单 (P-46 乙)"));
+    let required: Vec<&str> = required_line
+        .split('"')
+        .nth(1)
+        .unwrap_or_else(|| panic!("AUDIT_REQUIRED_LEGS 不是双引号字面量"))
+        .split_whitespace()
+        .collect();
+    assert!(
+        required.len() >= 18,
+        "AUDIT_REQUIRED_LEGS 只点名 {} 条腿, 低于实测的 18 条 (17 被包装 + coupling)",
+        required.len()
+    );
+
+    // 两个 for 循环里的腿名以列表形态出现, 不在 mark_leg 的字面量里.
+    let for_lines: Vec<&str> = sh
+        .lines()
+        .filter(|l| {
+            let t = l.trim_start();
+            t.starts_with("for ") && t.contains(" in ") && t.contains("; do")
+        })
+        .collect();
+    for leg in &required {
+        let marked = sh.contains(&format!("mark_leg \"{leg}\""));
+        let looped = for_lines.iter().any(|l| {
+            l.split_whitespace()
+                .map(|w| w.trim_end_matches(|c: char| !(c.is_alphanumeric() || c == '_')))
+                .any(|w| w == *leg)
+        });
+        assert!(
+            marked || looped,
+            "审计腿 {leg} 在 AUDIT_REQUIRED_LEGS 里点名却找不到登记点 (mark_leg / for 列表) \
+             —— 该腿已被摘除而清单未同步"
+        );
+        let script_exists = [
+            format!("../scripts/audit_{leg}.py"),
+            format!("../tools/audit_{leg}.py"),
+        ]
+        .iter()
+        .any(|p| Path::new(p).exists());
+        assert!(
+            script_exists,
+            "AUDIT_REQUIRED_LEGS 点名的 {leg} 无对应 audit_{leg}.py —— 清单与脚本集漂移"
         );
     }
 }

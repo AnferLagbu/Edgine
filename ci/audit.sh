@@ -28,6 +28,31 @@ step() { echo -e "\n${YELLOW}━━━ $1 ━━━${NC}"; }
 ok()   { echo -e "${GREEN}✓ $1${NC}"; }
 err()  { echo -e "${RED}✗ $1${NC}"; exit 1; }
 
+# ── P-46 甲: 审计腿存在性包装的 fail-closed 出口 ─────────────────
+# 本脚本用 `if command -v python3 && [ -f 脚本 ]` 包住 13 处审计腿, 且原先**全部没有
+# else**; step 头又写在包装内部 ⇒ 条件为假时该腿连一行日志都不留, 退出码仍是 0
+# (负控制实测: 把 audit_repr_c.py 改名 ⇒ quick 里 repr_c 出现 0 次且 EXIT=0).
+# 即「audit 全绿」与「少跑了几条腿」在日志上不可区分. 现每处补 else 走本函数,
+# 按用户裁定「缺 python3 与缺脚本一律硬失败」, 只在文案上区分成因.
+# 与 0.5k2 (P-45 coupling 腿) 同形态, 后者是本修法在仓内已有的先例.
+audit_leg_missing() {
+    local leg_name="$1" leg_path="$2"
+    if ! command -v python3 >/dev/null 2>&1; then
+        err "审计腿未执行: ${leg_name} —— 环境无 python3 (fail-closed, 不接受假绿)"
+    fi
+    err "审计腿未执行: ${leg_name} —— ${leg_path} 不存在 (fail-closed, 不接受假绿)"
+}
+
+# ── P-46 乙: 到位清单单点断言 ──────────────────────────────────
+# 甲把「静默消失」变成硬失败, 但 13 个维护点上新增第 14 条腿仍可能忘写 else.
+# 故再加一道: 每条腿调起前 mark_leg 登记, 0.5n 处单点比对「期望清单 == 实际到位」.
+# 期望清单是手写字面 ⇒ 由 host-tests 结构锁 `test_audit_sh_audit_legs_are_fail_closed`
+# 与本清单互校 (AGENTS.md §2.2 的强制项必须逐项出现在此), 防它自身漂移.
+# 18 项 = 17 条被存在性包装的腿 (含两个 for 循环各展开 3 条) + 0.5k2 的 coupling.
+AUDIT_REQUIRED_LEGS="tcb_ratio invariants unsafe block_registration once_cell c_naming comment_language tlb_receive_order aarch64_kernel_fp_free repr_c volatile_access static_mut functions_boundary safety_coverage deadlock_matrix coupling orphaned_init unwired_pub_fn"
+AUDIT_RUN_LEGS=""
+mark_leg() { AUDIT_RUN_LEGS="${AUDIT_RUN_LEGS} $1"; }
+
 # ── 0. TCB 安全边界门禁 (M2 里程碑硬约束) ────────────────────
 # 服务层 (functions/) 不允许任何 unsafe 代码。这是框内核架构的核心契约。
 # check_tcb.sh 是 fail-fast 门禁: 一旦发现立即 exit 1, 整个 audit 终止。
@@ -59,18 +84,24 @@ fi
 
 # ── 0.5b TCB 度量报告 (E10) ──────────────────────────────────────
 if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_tcb_ratio.py" ]; then
+    mark_leg "tcb_ratio"
     step "0.5b/6 TCB 度量报告 (E10)"
     "$PROJECT_ROOT/scripts/audit_tcb_ratio.py" 2>&1 | tail -20
+else
+    audit_leg_missing "tcb_ratio" "$PROJECT_ROOT/scripts/audit_tcb_ratio.py"
 fi
 
 # ── 0.5c 6 安全不变式审计 (E9) ────────────────────────────────────
 if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_invariants.py" ]; then
+    mark_leg "invariants"
     step "0.5c/6 6 安全不变式审计 (E9)"
     if "$PROJECT_ROOT/scripts/audit_invariants.py" 2>&1 | tail -12; then
         ok "6 安全不变式: 全部满足"
     else
         err "6 安全不变式: 有违反! 见上方输出"
     fi
+else
+    audit_leg_missing "invariants" "$PROJECT_ROOT/scripts/audit_invariants.py"
 fi
 
 # privileged 全量 SAFETY 注释覆盖审计
@@ -80,6 +111,7 @@ fi
 # 真实缺失 20 处已全部补齐, 基线归零 (0 容忍, 任何缺失即 CI 失败).
 EXPECTED_MAX_SAFETY_MISSING=0
 if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/tools/audit_unsafe.py" ]; then
+    mark_leg "unsafe"
     step "0.5/6 Privileged SAFETY 注释全量审计 (B01-27 工具修复, 基线 ≤${EXPECTED_MAX_SAFETY_MISSING})"
     AUDIT_RESULT=$("$PROJECT_ROOT/tools/audit_unsafe.py" --summary 2>&1 || true)
     echo "$AUDIT_RESULT" | tail -25
@@ -96,41 +128,53 @@ if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/tools/audit_unsafe.
         # 输出非空但未匹配 "缺 SAFETY:" 行 — 视为脚本异常
         err "audit_unsafe.py 输出格式异常 (未找到 缺 SAFETY: 行)"
     fi
+else
+    audit_leg_missing "unsafe" "$PROJECT_ROOT/tools/audit_unsafe.py"
 fi
 
 # I-43: 块设备抽象统一性 audit — 防驱动绕过 proto_block 桥接
 if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_block_registration.py" ]; then
+    mark_leg "block_registration"
     step "0.5d/6 块设备单一桥接入口 (I-43)"
     if "$PROJECT_ROOT/scripts/audit_block_registration.py" 2>&1 | tail -10; then
         ok "I-43: 块设备驱动统一通过 proto_block::register_block_device"
     else
         err "I-43: 有块设备驱动绕过 proto_block 桥接! 见上方输出"
     fi
+else
+    audit_leg_missing "block_registration" "$PROJECT_ROOT/scripts/audit_block_registration.py"
 fi
 
 # I-16: functions 层 OnceCell 抽象统一性 audit — 防 functions 绕过 OnceCell 用 spin::Once
 if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_once_cell.py" ]; then
+    mark_leg "once_cell"
     step "0.5e/6 functions OnceCell 单一抽象 (I-16)"
     if "$PROJECT_ROOT/scripts/audit_once_cell.py" 2>&1 | tail -8; then
         ok "I-16: functions 统一通过 sync::once::OnceCell"
     else
         err "I-16: 有 functions 模块绕过 OnceCell 抽象用 spin::Once! 见上方输出"
     fi
+else
+    audit_leg_missing "once_cell" "$PROJECT_ROOT/scripts/audit_once_cell.py"
 fi
 
 # I-07: C 风格命名残留 audit — 防 C 类型后缀/C 函数名混入 Rust 代码
 if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_c_naming.py" ]; then
+    mark_leg "c_naming"
     step "0.5f/6 C 风格命名残留 (I-07)"
     if "$PROJECT_ROOT/scripts/audit_c_naming.py" 2>&1 | tail -8; then
         ok "I-07: 0 C 风格类型后缀, kmalloc/kfree 仅限 extern \"C\""
     else
         err "I-07: 有 C 风格命名残留! 见上方输出"
     fi
+else
+    audit_leg_missing "c_naming" "$PROJECT_ROOT/scripts/audit_c_naming.py"
 fi
 
 # TD-22: 注释语言一致性 audit — 硬阈值门禁 (违规 > 0 即 CI 失败)
 # 已完成全部清理: 1983→0 (2026-06-15). 新代码引入英文段落注释将被阻断.
 if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_comment_language.py" ]; then
+    mark_leg "comment_language"
     step "0.5g/6 注释语言一致性 (TD-22, 硬阈值)"
     AUDIT_OUT=$("$PROJECT_ROOT/scripts/audit_comment_language.py" 2>&1 || true)
     if echo "$AUDIT_OUT" | grep -q "PASSED"; then
@@ -140,18 +184,23 @@ if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_comme
         FILE_COUNT=$(echo "$AUDIT_OUT" | grep -E "FAILED:" | head -1 | awk '{print $NF}' | tr -d '()')
         err "TD-22: 英文段落注释残留 ${VIOLATION_COUNT} 处, 涉及 ${FILE_COUNT} 文件 (硬阈值, 阻断 CI)"
     fi
+else
+    audit_leg_missing "comment_language" "$PROJECT_ROOT/scripts/audit_comment_language.py"
 fi
 
 # S-14: TLB 失效接收侧三段次序 audit — 防"先 flush 后读代"的假追平
 # (结构性次序问题, 运行期不可观测; 以静态 fail-closed 审计确定性覆盖,
 #  见 docs/plan/tlb-shootdown-epoch.md §5 注入 2)
 if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_tlb_receive_order.py" ]; then
+    mark_leg "tlb_receive_order"
     step "0.5h/6 TLB 失效接收侧三段次序 (S-14)"
     if "$PROJECT_ROOT/scripts/audit_tlb_receive_order.py" 2>&1 | tail -8; then
         ok "S-14: 接收侧次序正确 (读代 → 全量失效 → 声明追平)"
     else
         err "S-14: 接收侧三段次序被破坏 (假追平风险)! 见上方输出"
     fi
+else
+    audit_leg_missing "tlb_receive_order" "$PROJECT_ROOT/scripts/audit_tlb_receive_order.py"
 fi
 
 # FP-06: aarch64 内核「零 FP/SIMD」反汇编白名单审计 — 防 EL1 出现浮点/NEON
@@ -162,6 +211,7 @@ fi
 # 已两架构各自链接, 两种产物同时存在. 旧共用路径曾使本审计在 build all 之后必读到
 # x86_64 镜像而 fail-closed (假阳性, 非真实 FP 回退).
 if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_aarch64_kernel_fp_free.py" ]; then
+    mark_leg "aarch64_kernel_fp_free"
     step "0.5i/6 aarch64 内核零 FP/SIMD (FP-06)"
     FP_AUDIT_OUT=$("$PROJECT_ROOT/scripts/audit_aarch64_kernel_fp_free.py" 2>&1) && FP_AUDIT_RC=0 || FP_AUDIT_RC=$?
     echo "$FP_AUDIT_OUT" | tail -20
@@ -170,6 +220,8 @@ if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_aarch
     else
         err "FP-06: aarch64 内核存在白名单外 FP/SIMD 或不可检查 (fail-closed)! 见上方输出"
     fi
+else
+    audit_leg_missing "aarch64_kernel_fp_free" "$PROJECT_ROOT/scripts/audit_aarch64_kernel_fp_free.py"
 fi
 
 # ── 0.5j 内存安全静态防线 audit (repr(C) / volatile / static mut) ──
@@ -178,12 +230,15 @@ fi
 # 依赖 set -o pipefail 使 `cmd | tail` 管道正确反映脚本退出码 (B01-16 同源).
 for MEMSAFETY_AUDIT in repr_c volatile_access static_mut; do
     if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_${MEMSAFETY_AUDIT}.py" ]; then
+        mark_leg "$MEMSAFETY_AUDIT"
         step "0.5j/6 内存安全防线 audit (${MEMSAFETY_AUDIT})"
         if "$PROJECT_ROOT/scripts/audit_${MEMSAFETY_AUDIT}.py" 2>&1 | tail -8; then
             ok "${MEMSAFETY_AUDIT}: 内存安全防线通过"
         else
             err "${MEMSAFETY_AUDIT}: 内存安全防线被破坏! 见上方输出"
         fi
+    else
+        audit_leg_missing "$MEMSAFETY_AUDIT" "$PROJECT_ROOT/scripts/audit_${MEMSAFETY_AUDIT}.py"
     fi
 done
 
@@ -197,12 +252,15 @@ done
 # 依赖可执行位也不能保证跨 checkout 稳定 (与 workflow 保持同一调起形式).
 for HARD_RULE_AUDIT in functions_boundary safety_coverage deadlock_matrix; do
     if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_${HARD_RULE_AUDIT}.py" ]; then
+        mark_leg "$HARD_RULE_AUDIT"
         step "0.5k/6 硬规则核心 audit (${HARD_RULE_AUDIT})"
         if python3 "$PROJECT_ROOT/scripts/audit_${HARD_RULE_AUDIT}.py" 2>&1 | tail -10; then
             ok "${HARD_RULE_AUDIT}: 硬规则门禁通过"
         else
             err "${HARD_RULE_AUDIT}: 硬规则被破坏 (F1/F2/F4/F8)! 见上方输出"
         fi
+    else
+        audit_leg_missing "$HARD_RULE_AUDIT" "$PROJECT_ROOT/scripts/audit_${HARD_RULE_AUDIT}.py"
     fi
 done
 
@@ -211,8 +269,8 @@ done
 # 门禁列标为「强制」——但此前本脚本里它没有任何调用点, 仓内唯一一处在从不触发的
 # GitHub workflow (P-37 结案事实: 本仓只有 Gitee remote, 无流水线配置). 即 F3 长期
 # 处于「文档强制、无执法路径」状态. 本段把执法路径补上, 不改动脚本判据本身.
-# 接线点刻意选在 quick 早退分支 (:336) **之前** ⇒ quick 与 full 两个档位都覆盖
-# (脚本自测耗时 ≈0.8s, 不构成档位成本负担).
+# 接线点刻意选在 quick 早退分支 **之前** ⇒ quick 与 full 两个档位都覆盖
+# (脚本自测耗时 ≈0.8s, 不构成档位成本负担; 行号随本脚本改动位移, 定位请 grep 段名).
 # 退出码取自脚本本身: 用 `OUT=$(cmd) && RC=0 || RC=$?` 形态 (与 0.5i 的 FP-06 腿同
 # 写法), 不走管道 ⇒ 不依赖 pipefail, 也不会把退出码取自 tail/grep.
 # 刻意**不加** `if command -v python3 && [ -f … ]` 存在性包装 (P-46 的 fail-open 族):
@@ -221,6 +279,7 @@ done
 # 跨子系统内部访问 (severity 恒 HIGH ⇒ 阻断) 与 (b) 合计引用 > 20 的禁止环会 exit 1;
 # 存量 4 对小数环 (mm↔proc 14 / proc↔syscall 6 / proc↔sgeg 3 / arch↔mm 2) 只打印.
 step "0.5k2/6 硬规则 F3 模块耦合审计 (coupling)"
+mark_leg "coupling"
 COUPLING_OUT=$(python3 "$PROJECT_ROOT/scripts/audit_coupling.py" 2>&1) && COUPLING_RC=0 || COUPLING_RC=$?
 echo "$COUPLING_OUT" | grep -E '^ *⚠|^>>>' || true
 if [ "$COUPLING_RC" -eq 0 ]; then
@@ -238,6 +297,7 @@ fi
 # O2 (退化 FFI 包裹, 存量 11 项) 仅报告不阻塞 —— 登记见
 # docs/plan/net-e2e-tcp-echo-flakiness.md §6 P-12.
 if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_orphaned_init.py" ]; then
+    mark_leg "orphaned_init"
     step "0.5l/6 孤儿初始化编排入口 audit (P-8) — 自检"
     if python3 "$PROJECT_ROOT/scripts/audit_orphaned_init.py" --self-test 2>&1 | tail -6; then
         ok "orphaned_init: 检测器自检通过"
@@ -250,6 +310,8 @@ if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_orpha
     else
         err "orphaned_init: 发现孤儿编排入口! 子系统初始化从未执行"
     fi
+else
+    audit_leg_missing "orphaned_init" "$PROJECT_ROOT/scripts/audit_orphaned_init.py"
 fi
 
 # ── 0.5m P-13 零引用 pub fn / 未接线 syscall 编号审计 ──────────
@@ -265,12 +327,35 @@ fi
 # 性能前置: 本机无 ripgrep 时走脚本内降级路径; 该路径原为 O(待查名 × 全仓字节)
 # (实测 13 分钟不收敛), 现已改为单遍切词建索引 → O(全仓字节 + 待查名).
 if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_unwired_pub_fn.py" ]; then
+    mark_leg "unwired_pub_fn"
     step "0.5m/6 未接线公共 API audit (P-13, --strict)"
     if python3 "$PROJECT_ROOT/scripts/audit_unwired_pub_fn.py" --strict 2>&1 | tail -24; then
         ok "audit_unwired: 无未接线 syscall 编号, 且无未分类零引用 pub fn"
     else
         err "audit_unwired: R2 未分发 syscall 编号 (CRITICAL), 或未分类零引用 pub fn / 零引用 pub mod (--strict 阻断)"
     fi
+else
+    audit_leg_missing "unwired_pub_fn" "$PROJECT_ROOT/scripts/audit_unwired_pub_fn.py"
+fi
+
+# ── 0.5n 审计腿到位性单点断言 (P-46 乙) ─────────────────────────
+# 甲把「腿静默消失」变成该腿位置的硬失败; 本段是第二道: 期望清单与实际到位清单
+# 逐项比对. 位置在 quick 早退分支之前 ⇒ 两档都判. 期望清单是手写字面, 由
+# host-tests 的 test_audit_sh_audit_legs_are_fail_closed 与 AGENTS.md §2.2 强制
+# 名单互校 (删 else / 删 mark_leg / 删本断言, 三者任一都转红).
+step "0.5n/6 审计腿到位性断言 (P-46)"
+AUDIT_MISSING_LEGS=""
+for want_leg in $AUDIT_REQUIRED_LEGS; do
+    case " $AUDIT_RUN_LEGS " in
+        *" $want_leg "*) ;;
+        *) AUDIT_MISSING_LEGS="${AUDIT_MISSING_LEGS} $want_leg" ;;
+    esac
+done
+AUDIT_LEG_TOTAL=$(set -- $AUDIT_REQUIRED_LEGS; echo $#)
+if [ -z "$AUDIT_MISSING_LEGS" ]; then
+    ok "审计腿到位: ${AUDIT_LEG_TOTAL}/${AUDIT_LEG_TOTAL} (无静默跳过)"
+else
+    err "审计腿未到位:${AUDIT_MISSING_LEGS} —— 共 $(echo $AUDIT_MISSING_LEGS | wc -w) 条 (fail-closed, 不接受假绿)"
 fi
 
 # ── 1. 双架构 check ─────────────────────────────────────────────
