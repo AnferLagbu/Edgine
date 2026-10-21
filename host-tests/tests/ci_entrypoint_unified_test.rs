@@ -258,6 +258,67 @@ fn test_audit_sh_audit_legs_are_fail_closed() {
     }
 }
 
+/// P-47 结构锁: Lockbud 腿的「工具缺失」与「发现问题」两态必须分离, 且未执行台账
+/// 必须在两个档位出口都播报.
+///
+/// 病灶形态 (P-47 描述实测): `cargo lockbud … || LOCKBUD_RESULT=$?` 的非零结果只打成
+/// 一句 `⚠ lockbud 返回非零 (可能发现潜在问题或工具未安装)` 的黄字并继续 —— 本机
+/// `cargo-lockbud` 未安装 ⇒ `full` 每次都走这一支 ⇒ 该腿从未产生读数, 而退出码仍 0,
+/// 日志与「扫描通过」在语义上不可区分.
+///
+/// 锁的四条判据:
+/// ① 腿内含 `command -v cargo-lockbud` 存在性探测 (缺工具时不得让 cargo 去 registry 拉包);
+/// ② 缺工具分支调用 `skip_leg "lockbud"` (回退成合并黄字 ⇒ 红);
+/// ③ 真跑非零走 `err` 阻断, 且腿内不存在任何以黄字打印 lockbud 结果的语句 (合并态复活 ⇒ 红);
+/// ④ `report_unexecuted_legs` 定义存在且在 quick / full 两个出口各调用一次 (只报一档 ⇒ 红).
+#[test]
+fn test_audit_sh_lockbud_leg_separates_missing_tool_from_findings() {
+    let sh = read(AUDIT_SH);
+    let after_step = sh
+        .find("step \"4/6 Lockbud")
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少 Lockbud 腿 (P-47 状态分离失去执法路径)"));
+    let rest = &sh[after_step..];
+    let leg_end = rest.find("\n# ── 5.").unwrap_or_else(|| {
+        panic!("Lockbud 腿与下一条腿 (步骤 5) 的分界标记丢失, 结构锁无法定位块")
+    });
+    let leg = &rest[..leg_end];
+
+    assert!(
+        leg.contains("command -v cargo-lockbud >/dev/null 2>&1"),
+        "Lockbud 腿缺少工具存在性探测 —— 回退到 P-47 病灶: 未安装时让 cargo 去 registry 拉包并静默继续"
+    );
+    assert!(
+        leg.contains("skip_leg \"lockbud\""),
+        "Lockbud 腿的「工具缺失」态未登记进未执行台账 (skip_leg) —— \
+         缺失与发现问题的合并黄字复活, audit 全绿将重新包含从未执行的腿"
+    );
+    assert!(
+        leg.contains("err \"lockbud"),
+        "Lockbud 真跑返回非零时未阻断 —— §2.2 把该项列为「强制」, 只打黄字等于无门禁"
+    );
+    assert!(
+        !leg.lines().any(|l| {
+            let t = l.trim_start();
+            !t.starts_with('#') && t.contains("${YELLOW}") && t.contains("lockbud")
+        }),
+        "Lockbud 腿内仍存在非阻断的黄字出口 —— P-47 合并态 (未安装/有发现混为一谈) 回退"
+    );
+
+    let reports = sh
+        .lines()
+        .filter(|l| l.trim_start().starts_with("report_unexecuted_legs"))
+        .count();
+    assert!(
+        sh.contains("report_unexecuted_legs() {"),
+        "ci/audit.sh 缺少未执行腿台账函数 (P-47 甲)"
+    );
+    assert!(
+        reports >= 3,
+        "report_unexecuted_legs 只有 {reports} 处出现 (定义 1 + 出口 2 为期望) —— \
+         少一个档位出口意味着 quick 或 full 的绿里仍可混入未执行腿"
+    );
+}
+
 #[test]
 fn test_ci_rustdoc_matches_workflow_command() {
     // 本地入口与 workflow 的 rustdoc 判据必须同源, 否则本地绿仍可能在 CI 红.

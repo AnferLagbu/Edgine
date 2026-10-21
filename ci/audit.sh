@@ -53,6 +53,31 @@ AUDIT_REQUIRED_LEGS="tcb_ratio invariants unsafe block_registration once_cell c_
 AUDIT_RUN_LEGS=""
 mark_leg() { AUDIT_RUN_LEGS="${AUDIT_RUN_LEGS} $1"; }
 
+# ── P-47 甲: 「本腿未执行」台账 ────────────────────────────────
+# 外部工具型腿 (Lockbud) 在工具缺失时根本不产生读数, 原先这种状态与「工具发现了
+# 问题」共用同一句不阻断黄字 ⇒ 「audit 全绿」里混进了「这条腿从未跑过」.
+# 现拆两态并单列一张 skip 台账, 在 quick / full 两个出口都播报未执行腿数,
+# 让「绿」不再能被读成「所有腿都给出过验证」.
+# 只登记「腿已进入但因环境缺失而未执行」的腿; 档位本身不执行的 full-only 腿不在此列
+# (那属 P-48 的 quick-vs-full 口径).
+AUDIT_SKIPPED_COUNT=0
+AUDIT_SKIPPED_LEGS=""
+skip_leg() {
+    local leg_name="$1" leg_reason="$2"
+    AUDIT_SKIPPED_COUNT=$(( AUDIT_SKIPPED_COUNT + 1 ))
+    AUDIT_SKIPPED_LEGS="${AUDIT_SKIPPED_LEGS}  - ${leg_name}: ${leg_reason}"$'\n'
+    echo -e "${YELLOW}⚠ ${leg_name} 本腿未执行: ${leg_reason}${NC}"
+}
+
+report_unexecuted_legs() {
+    if [ "$AUDIT_SKIPPED_COUNT" -eq 0 ]; then
+        ok "本轮未执行腿数: 0"
+    else
+        echo -e "${YELLOW}━━━ 本轮未执行腿数: ${AUDIT_SKIPPED_COUNT} —— 以下腿零读数, 不可当作已验证 ━━━${NC}"
+        printf '%s' "$AUDIT_SKIPPED_LEGS"
+    fi
+}
+
 # ── 0. TCB 安全边界门禁 (M2 里程碑硬约束) ────────────────────
 # 服务层 (functions/) 不允许任何 unsafe 代码。这是框内核架构的核心契约。
 # check_tcb.sh 是 fail-fast 门禁: 一旦发现立即 exit 1, 整个 audit 终止。
@@ -443,6 +468,7 @@ for FMT_MANIFEST in src/kernel/Cargo.toml host-tests/Cargo.toml src/rust/Cargo.t
 done
 
 if [ "$MODE" = "quick" ]; then
+    report_unexecuted_legs
     echo -e "\n${GREEN}━━━ audit (quick) 完成 ━━━${NC}"
     exit 0
 fi
@@ -484,15 +510,28 @@ if [ "$TOTAL_UNSAFE" -gt 0 ]; then
 fi
 
 # ── 4. Lockbud 死锁/数据竞争扫描 ────────────────────────────────
+# P-47 甲「状态分离」: 原写法 `cargo lockbud … || LOCKBUD_RESULT=$?` 的非零结果只打成
+# 一句「可能发现潜在问题或工具未安装」的黄字且不改退出码. 本机实测 `command -v
+# cargo-lockbud` 为空 ⇒ full 每次都走该合并分支, §2.2 宣称的死锁/数据竞争扫描从未
+# 产生过一次读数, 而日志看起来像执行过. 现拆两态:
+#   工具缺失 → skip_leg 记入「本轮未执行腿数」(不改退出码; 缺外部工具是否阻断属 P-55 待裁);
+#   真跑非零 → err 阻断, 与 §2.2 把该项列为「强制」一致.
+# 存在性判据用 cargo 实际派发的子命令二进制名 `cargo-lockbud`: scripts/requirements.sh:936-945
+# 另记了一种装机名 (`lockbud`), 与本仓 `cargo lockbud` 的调用形态不符, 只探 `cargo-lockbud`
+# 才对应「这条腿能不能跑」; 探不到就直接跳过, 避免 cargo 去 registry 拉包 (数十秒静默 stall).
 step "4/6 Lockbud 死锁/数据竞争扫描"
 pushd src/rust > /dev/null
 unset RUSTC_WRAPPER
-LOCKBUD_RESULT=0
-cargo lockbud --manifest-path ../kernel/Cargo.toml --target x86_64-unknown-none --target-dir ../../other/target "${BUILD_STD_CFG[@]}" 2>&1 | tail -25 || LOCKBUD_RESULT=$?
-if [ $LOCKBUD_RESULT -eq 0 ]; then
-    ok "lockbud: passed"
+if command -v cargo-lockbud >/dev/null 2>&1; then
+    LOCKBUD_OUT=$(cargo lockbud --manifest-path ../kernel/Cargo.toml --target x86_64-unknown-none --target-dir ../../other/target "${BUILD_STD_CFG[@]}" 2>&1) && LOCKBUD_RC=0 || LOCKBUD_RC=$?
+    printf '%s\n' "$LOCKBUD_OUT" | tail -25
+    if [ "$LOCKBUD_RC" -eq 0 ]; then
+        ok "lockbud: 扫描通过 (零发现)"
+    else
+        err "lockbud: 扫描返回非零 (exit=${LOCKBUD_RC}) —— 按 §2.2「强制」判为发现问题并阻断 (P-47 甲)"
+    fi
 else
-    echo -e "${YELLOW}⚠ lockbud 返回非零 (可能发现潜在问题或工具未安装, 见上)${NC}"
+    skip_leg "lockbud" "工具缺失: cargo-lockbud 不在 PATH (本腿无安装步骤记录, 见 P-47 丙)"
 fi
 popd > /dev/null
 
@@ -534,4 +573,5 @@ else
     echo -e "${BLUE}-> 跳过 (仅 full 模式执行; quick 模式跑 SA bootstrap 即可)${NC}"
 fi
 
+report_unexecuted_legs
 echo -e "\n${GREEN}━━━ audit (full) 完成 ━━━${NC}"
