@@ -65,12 +65,17 @@ ci-build:
 ci-cargo: ci-build
 
 # ── 门槛 2 + 3: 权威审计栈 (clippy / fmt / 全部 audit_*.py) ─────
-# 委派 ci/audit.sh —— 它是 §2.2 表格的落地入口, 含 20+ 审计脚本与 clippy/fmt
-# 分支; quick 模式不依赖 Lockbud/Miri 等重工具, 与 CI 判据一致.
+# 委派 ci/audit.sh **full** —— 它是 §2.2 表格的落地入口. P-48 丙: 此前本目标调 quick,
+# 而 quick 到步骤 2c 即退出 ⇒ 一键入口不含 2d (P-44 release 维拦截) / 3、6 统计腿 /
+# 4 Lockbud / 7 QEMU, 与 §2.3 第 3 条「full 全绿」的判据不同源, 注释却称它是落地入口.
+# 代价 (第十轮实测, 同一棵树): full 2m22.0s vs quick 1m24.7s ⇒ 每次多 ≈ 57s.
+# 与聚合目标 ci 的 QEMU 重叠: full 的 7/7 腿跑一次, ci-boot 再逐架构各跑一次 (取独立读数).
+# 原文另称「quick 不依赖 Lockbud/Miri 等重工具, 与 CI 判据一致」——Miri 已弃用不在工具栈内,
+# 且远程仅 Gitee、无流水线, 「与 CI 判据一致」没有对应物 (见 §2.3 第 3 条的本地判据).
 ci-audit:
-	@echo "[2/6] 权威审计栈 (ci/audit.sh quick)..."
+	@echo "[2/6] 权威审计栈 (ci/audit.sh full)..."
 	@mkdir -p $(LOG_DIR)
-	@bash ci/audit.sh quick 2>&1 | tee $(LOG_DIR)/ci_audit.txt
+	@bash ci/audit.sh full 2>&1 | tee $(LOG_DIR)/ci_audit.txt
 
 # 单项快查入口: 只想复跑 functions 层 unsafe 扫描时用 (完整口径仍走 ci-audit).
 # clippy / fmt 不单独设目标 —— 它们已在 ci/audit.sh 内部, 再开入口就又是平行实现.

@@ -1,10 +1,17 @@
 #!/bin/bash
 # Edgine 内核代码审计脚本
-# 工具栈: cargo check + clippy (pedantic) + Lockbud + Miri 配置验证
-# 用法: ./ci/audit.sh [quick|full]
+# 工具栈: cargo check (双架构) + clippy (pedantic, 含 feature 维) + rustfmt
+#         + audit_*.py 审计腿群 + Lockbud 死锁/数据竞争扫描 + QEMU 真实启动 (full 档)
+# 用法: ./ci/audit.sh [quick|full]   (缺省档 = quick)
 #
-# - quick: clippy + 双架构 check (CI 默认)
-# - full:  quick + 内核测试 release 维 compile-only + Lockbud + Miri 严格模式 + SAFETY 覆盖率统计
+# - quick: 步骤 0–0.5n 审计腿群 + 1 双架构 check + 2/2b clippy + 2c rustfmt, 到 2c 后即退出
+# - full:  quick + 2d 内核测试 release 维 compile-only + 3/6 SAFETY 统计腿 + 4 Lockbud + 7 QEMU
+#
+# P-48 甲订正两处自述失真: 原工具栈行宣称含一个已于 2026-06-26 退役的 UB 检测工具 (退役
+# 记录见下方步骤 5, 那里是单源), 且原档位行把 quick 称作「CI 默认」—— 验收判据由 AGENTS
+# §2.3 第 3 条定为 **full 全绿** (quick 不含 2d / Lockbud / QEMU, 不构成验收依据), 而远程
+# 仅 Gitee、无流水线, 「CI 默认」本无对应物. 到位腿数**不写进本块**, 由 0.5n 腿单点断言,
+# 免得这里成为第二个会漂移的计数源; 本块的出现过的工具名一律以实际腿为准.
 
 set -euo pipefail
 
@@ -130,7 +137,7 @@ else
 fi
 
 # privileged 全量 SAFETY 注释覆盖审计
-# quick 模式也会跑 (核心 fail-fast 门禁, 不需要 Lockbud/Miri 等重工具)
+# quick 模式也会跑 (核心 fail-fast 门禁, 不需要 Lockbud 等 full 档重工具)
 # B01-27 修复: audit_unsafe.py 窗口逻辑缺陷 (属性闭合行/多行属性误报) 已修复,
 # 原 127 处"缺失"中 108 处实为工具误报 (已有 SAFETY 注释但未识别),
 # 真实缺失 20 处已全部补齐, 基线归零 (0 容忍, 任何缺失即 CI 失败).

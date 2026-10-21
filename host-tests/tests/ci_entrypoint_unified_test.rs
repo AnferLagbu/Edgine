@@ -14,6 +14,7 @@ use std::path::Path;
 const MAKEFILE_CI: &str = "../Makefile.ci";
 const AUDIT_SH: &str = "../ci/audit.sh";
 const BUILD_SH: &str = "../ci/build.sh";
+const AGENTS_MD: &str = "../AGENTS.md";
 
 fn read(path: &str) -> String {
     fs::read_to_string(path).unwrap_or_else(|e| panic!("read {} failed: {}", path, e))
@@ -70,9 +71,11 @@ fn phony_list(mk: &str) -> String {
 #[test]
 fn test_makefile_ci_delegates_instead_of_reimplementing() {
     let mk = read(MAKEFILE_CI);
-    // 委派到两个权威入口.
+    // 委派到两个权威入口. 档位字面量不在此断言 —— 由
+    // test_gate_criterion_mode_is_single_sourced 单点持有 (P-48), 两处锁同一字符串会
+    // 在做档位调整时互相绊住, 使「谁定的判据」重新变成两个源.
     assert!(
-        mk.contains("bash ci/audit.sh quick"),
+        mk.contains("bash ci/audit.sh"),
         "ci-audit 必须委派 ci/audit.sh (权威审计栈), 不再自己挑脚本"
     );
     assert!(
@@ -316,6 +319,89 @@ fn test_audit_sh_lockbud_leg_separates_missing_tool_from_findings() {
         reports >= 3,
         "report_unexecuted_legs 只有 {reports} 处出现 (定义 1 + 出口 2 为期望) —— \
          少一个档位出口意味着 quick 或 full 的绿里仍可混入未执行腿"
+    );
+}
+
+/// P-48 结构锁 (甲＋丙): 门槛 3 的**档位判据**必须单源, 且脚本自述不得宣称已退役的工具.
+///
+/// 病灶: `ci/audit.sh` 缺省档 = quick 而 quick 到步骤 2c 即退出; `Makefile.ci` 的 `ci-audit`
+/// 调 quick 却自称「§2.2 表格的落地入口」, AGENTS §2.3 第 3 条又不写档位 —— 于是「按文档
+/// 字面执行」拿到的是弱档绿. 同族: 工具栈自述仍列一个 2026-06-26 就退役的工具.
+///
+/// 四条判据:
+/// ① `Makefile.ci` 委派 `bash ci/audit.sh full`, 且全文不存在 `ci/audit.sh quick` 调用;
+/// ② AGENTS.md §2.3 第 3 条把判据写实为 `bash ci/audit.sh full` (档位必写);
+/// ③ `ci/audit.sh` 头部自述块 (`set -euo pipefail` 之前) 不出现退役工具名 Miri,
+///    且 `# 工具栈:` / `# - quick:` / `# - full:` 三类自述行齐备 (块被删空 ⇒ 红);
+/// ④ 自述的覆盖边界与实际结构一致: quick 早退分支必须位于 step 2c 之后、step 2d 之前,
+///    且 `# - full:` 行点名 QEMU (加 full-only 腿却漏自述 ⇒ 由此臂转红).
+#[test]
+fn test_gate_criterion_mode_is_single_sourced() {
+    let mk = read(MAKEFILE_CI);
+    let sh = read(AUDIT_SH);
+    let agents = read(AGENTS_MD);
+
+    assert!(
+        mk.contains("bash ci/audit.sh full"),
+        "Makefile.ci 的 ci-audit 不再委派 full —— 一键入口与 §2.3 第 3 条的判据重新分叉 (P-48 丙)"
+    );
+    assert!(
+        !mk.contains("bash ci/audit.sh quick"),
+        "Makefile.ci 重新出现 quick 委派 —— quick 不含 2d / Lockbud / QEMU, 一键绿不等于验收绿 (P-48 丙)"
+    );
+
+    let gate3 = agents
+        .lines()
+        .find(|l| l.trim_start().starts_with("3. 核心审计全部通过"))
+        .unwrap_or_else(|| panic!("AGENTS.md §2.3 第 3 条形态已变, 结构锁无法定位判据行"));
+    assert!(
+        gate3.contains("bash ci/audit.sh full"),
+        "AGENTS §2.3 第 3 条未写档位 —— 脚本缺省档是 quick, 按文档字面执行会落到弱档 (P-48 甲)"
+    );
+
+    let header_end = sh
+        .find("set -euo pipefail")
+        .unwrap_or_else(|| panic!("ci/audit.sh 头部自述块定位失败: 找不到 set -euo pipefail"));
+    let header = &sh[..header_end];
+    assert!(
+        !header.to_lowercase().contains("miri"),
+        "ci/audit.sh 头部自述仍宣称退役工具 (单源在步骤 5 的退役记录, 自述块不得复抄)"
+    );
+    let claim_lines: Vec<&str> = header
+        .lines()
+        .filter(|l| {
+            let t = l.trim_start();
+            t.starts_with("# 工具栈:") || t.starts_with("# - quick:") || t.starts_with("# - full:")
+        })
+        .collect();
+    assert!(
+        claim_lines.len() >= 3,
+        "ci/audit.sh 头部自述行只剩 {} 行 (工具栈 / quick / full 三行为期望) —— 自述面形态已变, \
+         本锁失去定位依据, 需同步本测试",
+        claim_lines.len()
+    );
+
+    let quick_exit = sh.find("if [ \"$MODE\" = \"quick\" ]").unwrap_or_else(|| {
+        panic!("ci/audit.sh 找不到 quick 早退分支 —— 档位语义已变, 需同步 §2.3 与本锁")
+    });
+    let step_2c = sh
+        .find("step \"2c/6")
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少步骤 2c (rustfmt 门禁)"));
+    let step_2d = sh
+        .find("step \"2d/6")
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少步骤 2d (P-44 release 维 compile-only)"));
+    assert!(
+        step_2c < quick_exit && quick_exit < step_2d,
+        "quick 早退位置变了 (2c={step_2c} exit={quick_exit} 2d={step_2d}) —— 头部自述与 §2.3 \
+         里「quick 到 2c 即退出」的覆盖边界陈述需同步"
+    );
+    let full_claim = claim_lines
+        .iter()
+        .find(|l| l.trim_start().starts_with("# - full:"))
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少 full 档自述行"));
+    assert!(
+        full_claim.contains("QEMU"),
+        "full 档自述未点名 QEMU 腿 —— full-only 腿与自述重新分叉 (P-48 甲的同族病灶)"
     );
 }
 
