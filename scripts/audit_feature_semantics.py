@@ -20,8 +20,8 @@ E-03 拆分后:
   (1) functions/ 下 kernel_test 门控出现位置 — 纯逻辑门控文件 (A 类已改 any)
       不得残留"仅 kernel_test"门控; B/C 类 (net 桩 smoltcp_impl.rs / net/mod.rs /
       config/caps.rs) 列入白名单允许
-  (2) privileged/tests/mod.rs — 纯逻辑 mod 用 any(kernel_test, host-test) 门控,
-      driver/net/idt/reset 用 kernel_test 门控, 两语义分离正确
+  (2) privileged/tests/mod.rs — 纯逻辑 mod (arch/string/sched/sync/sys/net/reset) 用
+      any(kernel_test, host-test) 门控, 硬件路径 mod (driver/idt) 用 kernel_test 门控
   (3) privileged/tests/ 门控外 test_* 模块内部禁止 kernel_test 门控;
       any 门控的纯逻辑 mod 文件内部也禁止 kernel_test 门控 (host-test 下语义翻转)
 
@@ -62,6 +62,41 @@ FUNCTIONS_WHITELIST = [
     'src/kernel/functions/net/mod.rs',
     'src/kernel/functions/config/caps.rs',
 ]
+
+# P-49 E-03 丙・定性收口: 13 处 functions 层 HIGH 逐项读码定性为**硬件路径/构建配置门控**
+# (不属「纯逻辑门控文件残留仅 kernel_test」缺陷类), 故登记后由 HIGH 降为 INFO, 不改代码.
+# 粒度刻意到「文件 + 门控表达式」而非整文件 —— dispatch.rs / io.rs / unix.rs 是大体积生产
+# 文件, 整文件豁免会让日后真正的语义错门控悄悄通过 (同 TESTS_RUNTIME_CFG_ALLOWANCE 机制).
+#   e1000.rs          E1000 真实实现 (DMA 环分配) 与探测桩的构建组合切换
+#   driver/net/mod.rs net_functions_probe 复合探测槽注册 (裸机 PCI/MMIO 枚举)
+#   virtio/mod.rs     virtio_net_registration 随唯一消费者同门控 (§5 F9 死代码防线)
+#   fs/io.rs          stdin 键盘输入源仅 x86_64 生产构建存在
+#   net/unix.rs       SO_PASSCRED 钩子注册对齐 privileged::net::init 门控 (FFI 层)
+#   sgeg/storage/disk.rs + syscall/dispatch.rs  引导安装 (磁盘扇区写) 仅 x86_64 生产实装
+FUNCTIONS_WHITELIST_GATES = {
+    ('src/kernel/functions/driver/net/e1000.rs',
+     '#[cfg(all(target_arch = "x86_64", not(feature = "kernel_test")))]'): 2,
+    ('src/kernel/functions/driver/net/e1000.rs',
+     '#[cfg(all(not(target_arch = "x86_64"), not(feature = "kernel_test")))]'): 1,
+    ('src/kernel/functions/driver/net/mod.rs',
+     '#[cfg(not(feature = "kernel_test"))]'): 2,
+    ('src/kernel/functions/driver/virtio/mod.rs',
+     '#[cfg(not(feature = "kernel_test"))]'): 1,
+    ('src/kernel/functions/fs/io.rs',
+     '#[cfg(all(target_arch = "x86_64", not(feature = "kernel_test")))]'): 1,
+    ('src/kernel/functions/net/unix.rs',
+     '#[cfg(not(feature = "kernel_test"))]'): 1,
+    ('src/kernel/functions/sgeg/storage/disk.rs',
+     '#[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]'): 1,
+    ('src/kernel/functions/sgeg/storage/disk.rs',
+     '#[cfg(feature = "kernel_test")]'): 1,
+    ('src/kernel/functions/syscall/dispatch.rs',
+     '#[cfg(any(feature = "kernel_test", target_arch = "x86_64"))]'): 1,
+    ('src/kernel/functions/syscall/dispatch.rs',
+     '#[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]'): 1,
+    ('src/kernel/functions/syscall/dispatch.rs',
+     '#[cfg(feature = "kernel_test")]'): 1,
+}
 
 # Vendored 3rd-party 目录: 审计豁免 (同 audit_functions_boundary.py)
 VENDORED_EXCLUDE = [
@@ -133,9 +168,16 @@ def classify_cfg_attr(line):
 
 def scan_functions_kernel_test_gates():
     """functions 层 kernel_test 门控扫描.
-    白名单文件允许 (记录 INFO); 其余文件出现"仅 kernel_test"门控即违规 (HIGH).
+
+    三级判定:
+      1. 文件在 FUNCTIONS_WHITELIST (B/C 类) → INFO (整文件允许, 既有机制不变);
+      2. 「文件 + 门控表达式 + 数量」命中 FUNCTIONS_WHITELIST_GATES 定量登记 → INFO;
+      3. 其余"仅 kernel_test"门控 → HIGH (语义混淆缺陷类).
+    登记表按数量对账: 实际多于登记数 = 新增未定性门控 (HIGH), 少于登记数 = 登记已过期
+    (HIGH) —— 双向都判, 否则定点名单会悄悄腐烂.
     """
     issues = []
+    gate_counts = defaultdict(int)
     files = sorted(BASE_FUNCTIONS.rglob('*.rs'))
     skipped = 0
     for f in files:
@@ -167,16 +209,44 @@ def scan_functions_kernel_test_gates():
                     'message': 'B/C 类硬件路径门控白名单文件, 允许 kernel_test 门控 (E-03 登记)',
                     'code': line.strip()[:200],
                 })
-            else:
-                issues.append({
-                    'file': rel,
-                    'line': lineno,
-                    'severity': 'HIGH',
-                    'type': 'FUNCTIONS_KERNEL_TEST_ONLY_GATE',
-                    'message': 'functions 纯逻辑门控文件残留"仅 kernel_test"门控, '
-                               '应按 E-03 改 any(kernel_test, host-test)',
-                    'code': line.strip()[:200],
-                })
+                continue
+            key = (rel, line.strip())
+            if key in FUNCTIONS_WHITELIST_GATES:
+                gate_counts[key] += 1
+                if gate_counts[key] <= FUNCTIONS_WHITELIST_GATES[key]:
+                    issues.append({
+                        'file': rel,
+                        'line': lineno,
+                        'severity': 'INFO',
+                        'type': 'FUNCTIONS_KERNEL_TEST_GATE_REGISTERED',
+                        'message': 'P-49 定性收口登记的硬件路径/构建配置门控 '
+                                   '(读码确认非纯逻辑语义混淆, 保留单端)',
+                        'code': line.strip()[:200],
+                    })
+                    continue
+            issues.append({
+                'file': rel,
+                'line': lineno,
+                'severity': 'HIGH',
+                'type': 'FUNCTIONS_KERNEL_TEST_ONLY_GATE',
+                'message': 'functions 纯逻辑门控文件残留"仅 kernel_test"门控, '
+                           '应按 E-03 改 any(kernel_test, host-test)'
+                           ' (或按 P-49 定性读码后登记门控数)',
+                'code': line.strip()[:200],
+            })
+    # 登记表下界对账: 登记数 > 实际数 = 门控已被删除/改写而名单未同步
+    for key, want in FUNCTIONS_WHITELIST_GATES.items():
+        got = gate_counts.get(key, 0)
+        if got < want:
+            issues.append({
+                'file': key[0],
+                'line': 0,
+                'severity': 'HIGH',
+                'type': 'FUNCTIONS_REGISTERED_GATE_STALE',
+                'message': f'定性登记过期: 门控 `{key[1]}` 实际 {got} 处 / 登记 {want} 处, '
+                           f'名单需同步',
+                'code': key[1],
+            })
     if skipped > 0:
         print(f'[INFO] 跳过 {skipped} 个 vendored 文件 (来自 VENDORED_EXCLUDE)', file=sys.stderr)
     return issues
@@ -187,14 +257,19 @@ def scan_functions_kernel_test_gates():
 # ============================================================================
 
 # E-03 语义拆分后的分类 (数据驱动, 新增 gated mod 需在此登记)
-GATED_PURE_LOGICAL = {'arch', 'string', 'sched', 'sync', 'sys'}
-GATED_KERNEL_ONLY = {'driver', 'net', 'idt', 'reset'}
+# P-49 定性修正: net/reset 在 UT-07 (2026-09-26) 已由 kernel_test 专属改归
+# any(kernel_test, host-test) —— e1000 硬件路径注册组删除后 net.rs 仅剩纯逻辑用例
+# (net::utils), reset.rs 的 freg 断言已改写为源侧 #[cfg(test)] #[test] —— 但本分类表
+# 未随之同步, 于是 mod.rs:20/26 与注册块长期被判 CRITICAL/HIGH. 两文件内部现无残留
+# kernel_test 门控 (grep 实测仅注释行), 改归纯逻辑不会引入新 HIGH.
+GATED_PURE_LOGICAL = {'arch', 'string', 'sched', 'sync', 'sys', 'net', 'reset'}
+GATED_KERNEL_ONLY = {'driver', 'idt'}
 
 # mod.rs 内注册调用 → 应归属的块
 REGISTER_CALL_BLOCK = {
     'driver::register_tests();': 'kt',
-    'net::register_tests();': 'kt',
-    'reset::register_tests();': 'kt',
+    'net::register_tests();': 'any',
+    'reset::register_tests();': 'any',
     'idt::register_tests();': 'kt',
     'arch::register_tests();': 'any',
     'sys::register_tests();': 'any',
@@ -288,8 +363,10 @@ def check_mod_rs(mod_rs):
         return issues
 
     # 逐行记录 feature cfg 上下文 + 关注调用
+    # 注意: 必须从 region_start 对应的**切片**起数, 否则 enumerate 会把整个文件从
+    # region_start 开始重新编号 (P-49 修复前的行号虚高 = region_start - 1).
     cur_cfg = None  # 'any' / 'kt' / None
-    for lineno, line in enumerate(lines, start=region_start):
+    for lineno, line in enumerate(lines[region_start - 1:], start=region_start):
         stripped = line.strip()
         kind = classify_cfg_attr(stripped)
         if kind is not None:
@@ -319,10 +396,10 @@ def check_mod_rs(mod_rs):
 
 def scan_tests_files():
     """privileged/tests/ 非 mod.rs 文件扫描.
-    - any 门控纯逻辑 mod 文件 (arch/string/sched/sync/sys): 内部 kernel_test 门控
+    - any 门控纯逻辑 mod 文件 (arch/string/sched/sync/sys/net/reset): 内部 kernel_test 门控
       会在 host-test 下语义翻转 → 违规 (HIGH)
     - 未门控 test_* 模块文件: kernel_test 门控 → 违规 (HIGH)
-    - kernel_test 单端门控 mod 文件 (driver/net/idt/reset): 内部门控允许 (INFO 记录)
+    - kernel_test 单端门控 mod 文件 (driver/idt): 内部门控允许 (INFO 记录)
     """
     issues = []
     for f in sorted(BASE_TESTS.glob('*.rs')):

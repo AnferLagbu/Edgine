@@ -1,0 +1,105 @@
+{
+  "_meta": {
+    "generated_by": "python3 scripts/audit_implicit_deps.py --update-baseline",
+    "口径": "functions 层生产上下文对 privileged static 项的引用 (§7.3: 注释与内联 cfg(test) 块不计)",
+    "disposition": "P-49 冻结存量债, 消解归 framekernel-paradigm-enforcement §7 批次 Z"
+  },
+  "totals": {
+    "sites": 48,
+    "items": 18,
+    "files": 17,
+    "globals": 11
+  },
+  "entries": [
+    [
+      "src/kernel/functions/config/kaslr.rs",
+      "KASLR_BASE_OFFSET",
+      1
+    ],
+    [
+      "src/kernel/functions/config/validate.rs",
+      "CONFIG_VALIDATE_HOOK",
+      2
+    ],
+    [
+      "src/kernel/functions/driver/storage/mod.rs",
+      "HOTPLUG_MANAGER",
+      3
+    ],
+    [
+      "src/kernel/functions/driver/usb/mod.rs",
+      "HOTPLUG_MANAGER",
+      2
+    ],
+    [
+      "src/kernel/functions/freg/audit_export.rs",
+      "ROLLBACK_LOG",
+      4
+    ],
+    [
+      "src/kernel/functions/fs/sendfile.rs",
+      "IPC_NAMESPACE",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/unkfs.rs",
+      "HOTPLUG_MANAGER",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/vfs_manager.rs",
+      "RECOVERY_MANAGER",
+      1
+    ],
+    [
+      "src/kernel/functions/ipc/async_ipc.rs",
+      "IPC_NAMESPACE",
+      4
+    ],
+    [
+      "src/kernel/functions/ipc/mod.rs",
+      "NEXT_IPC_ID",
+      4
+    ],
+    [
+      "src/kernel/functions/ipc/sem.rs",
+      "NEXT_IPC_ID",
+      1
+    ],
+    [
+      "src/kernel/functions/ipc/strategy.rs",
+      "IPC_STRATEGY",
+      2
+    ],
+    [
+      "src/kernel/functions/proc/mod.rs",
+      "SCHEDULER",
+      1
+    ],
+    [
+      "src/kernel/functions/proc/pidfd.rs",
+      "PROCESS_TABLE",
+      1
+    ],
+    [
+      "src/kernel/functions/proc/sched.rs",
+      "PROCESS_TABLE",
+      3
+    ],
+    [
+      "src/kernel/functions/proc/sched.rs",
+      "SCHEDULER",
+      5
+    ],
+    [
+      "src/kernel/functions/proc/session.rs",
+      "SESSION_MANAGER",
+      1
+    ],
+    [
+      "src/kernel/functions/proc/table.rs",
+      "PROCESS_TABLE",
+      8
+    ]
+  ]
+}

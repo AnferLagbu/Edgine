@@ -61,7 +61,7 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 | `audit_tcb_ratio.py` | TCB 占比统计（软 < 30%）| 软约束 | 报告 |
 
 > **附加门禁**：OnceCell / C 命名 / repr(C) / volatile / static_mut / orphaned_init / unwired_pub_fn 已接入 CI 强制，但不占 §5 的 F1-F9 零容忍编号（属内存/风格专项防线，映射 I2/I5/I6 不变式；orphaned_init 与 unwired_pub_fn 属 F9 死代码与接线断点的专项，后者仅 R2 未分发 syscall 编号阻断，R1 存量零引用名单待逐项甄别后开 `--strict`）。
-> **完整清单**：仓库共 24 个 `audit_*.py`（受控文件实测口径：`scripts/` 22 + `scripts/tests/audit_selftest.py` 1 + `tools/audit_unsafe.py` 1；本表为常用核心门禁项，非穷举）. `block_registration`(I-43) / `tlb_receive_order`(S-14) / `aarch64_kernel_fp_free`(FP-06) 等专项亦在 `ci/audit.sh` 强制但未列入本表; 其余为按需扩展审计（未接入 CI）.
+> **完整清单**：仓库共 25 个 `audit_*.py`（受控文件实测口径：`scripts/` 22 + `scripts/tests/` 2 + `tools/audit_unsafe.py` 1；本表为常用核心门禁项，非穷举）. `block_registration`(I-43) / `tlb_receive_order`(S-14) / `aarch64_kernel_fp_free`(FP-06) 等专项亦在 `ci/audit.sh` 强制但未列入本表; P-49 收口后另有一组**仅 `full` 档执行**的存量审计腿接入 `ci/audit.sh` 步骤 2e（单源清单 = `AUDIT_REQUIRED_LEGS_FULL`）——阻断腿 `audit_implicit_deps` / `audit_feature_semantics` / `audit_reverse_deps` / `audit_public_api_docs` / `audit_smoltcp_purity` + 自测腿 `audit_implicit_deps_selftest`，外加报告腿 `scan_antx_residue`（只播报读数、不判退出码，见 P-58）；真正未接入 CI 的只剩 `tools/check_doc_paths.py` 一类按需工具.
 
 ### 2.3 验证门槛
 

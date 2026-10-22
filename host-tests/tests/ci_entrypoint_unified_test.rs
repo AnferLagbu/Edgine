@@ -261,6 +261,157 @@ fn test_audit_sh_audit_legs_are_fail_closed() {
     }
 }
 
+/// P-49 结构锁: full 档存量审计腿清单必须逐条真实接线, 且只在 quick 早退之后执行.
+///
+/// 病灶形态 (P-49 测绘): 六条审计脚本在仓内**零调用者** —— §2.2 与 plan 点名它们,
+/// 却没有任何本地执法路径 (`ci/audit.sh` / `Makefile*` / `.github/workflows/*` 全仓 grep
+/// 无命中). 同族病灶是「脚本自己测自己」的自测也只有人手工跑.
+///
+/// 接线形态必须是「full 档 + 冻结基线」而非「quick 档 + 立刻红」: 存量债 (48 处隐式依赖)
+/// 不因接入而减少, 放进两档清单会让 quick 恒红, 于是下一次有人为了「先绿起来」把它
+/// 整条摘掉 —— 那正是 P-46 测绘的静默消失形态. 本锁把这三条约束钉死.
+///
+/// 六条判据:
+/// ① `AUDIT_REQUIRED_LEGS_FULL` 是 `腿名:相对路径` 成对的双引号字面量, ≥7 条
+///    (实测 7 = 6 存量脚本 + 1 自测腿);
+/// ② 每条相对路径在 `scripts/` 下真实存在 (含 `tests/` 子目录里的自测腿) —— 清单漂移即红;
+/// ③ 腿名与 quick 档清单不相交, 且 step 2e 位于 quick 早退分支**之后** —— 挪进 quick
+///    或把整块前移都会让弱档恒红, 由此臂转红;
+/// ④ 2e 块内「遍历清单 + mark_leg_full 登记 + P-46 存在性包装 + audit_leg_missing 出口 +
+///    到位断言」五要素齐备 —— 只留清单删掉执行体 ⇒ 红;
+/// ⑤ 报告腿的非阻断形态必须显式点名腿名并写明「不判退出码」与另立案号 —— 把报告腿
+///    伪装成门禁 (或把阻断腿悄悄降级) 都由此臂转红;
+/// ⑥ `# - full:` 头部自述行点名步骤 2e —— P-48 甲 收口的「档位自述与实际结构一致」
+///    是同族约束, 新增 full-only 腿却漏自述即回到该病灶.
+#[test]
+fn test_audit_sh_full_only_legs_are_wired() {
+    let sh = read(AUDIT_SH);
+
+    let required_line = sh
+        .lines()
+        .find(|l| l.trim_start().starts_with("AUDIT_REQUIRED_LEGS_FULL="))
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少 AUDIT_REQUIRED_LEGS_FULL 清单 (P-49)"));
+    let specs: Vec<&str> = required_line
+        .split('"')
+        .nth(1)
+        .unwrap_or_else(|| panic!("AUDIT_REQUIRED_LEGS_FULL 不是双引号字面量"))
+        .split_whitespace()
+        .collect();
+    assert!(
+        specs.len() >= 7,
+        "AUDIT_REQUIRED_LEGS_FULL 只点名 {} 条腿, 低于实测的 7 条 (6 存量脚本 + 1 自测腿)",
+        specs.len()
+    );
+    assert!(
+        specs
+            .iter()
+            .any(|s| s.starts_with("implicit_deps_selftest:")),
+        "清单里没有 implicit_deps_selftest 腿 —— 只有人手工跑的自测与「零调用者审计脚本」\
+         是同一个病灶 (P-49 甲), 接线时不给它调用点则本轮修法当场失效"
+    );
+
+    let quick_legs: Vec<&str> = sh
+        .lines()
+        .find(|l| l.trim_start().starts_with("AUDIT_REQUIRED_LEGS="))
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少 AUDIT_REQUIRED_LEGS 清单 (P-46 乙)"))
+        .split('"')
+        .nth(1)
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect();
+    for spec in &specs {
+        let (leg, rel) = spec.split_once(':').unwrap_or_else(|| {
+            panic!("AUDIT_REQUIRED_LEGS_FULL 的 {spec} 不是「腿名:scripts 相对路径」形态")
+        });
+        assert!(
+            Path::new("../scripts").join(rel).exists(),
+            "full 档腿 {leg} 点名 scripts/{rel} 但文件不存在 —— 接线清单与脚本集漂移"
+        );
+        assert!(
+            !quick_legs.contains(&leg),
+            "full 档腿 {leg} 同时进了 quick 档清单 —— 存量债腿会让 quick 恒红; \
+             要挪档需先把债项归零并同步本锁与 §2.3 档位自述"
+        );
+    }
+
+    let quick_exit = sh
+        .find("if [ \"$MODE\" = \"quick\" ]")
+        .unwrap_or_else(|| panic!("ci/audit.sh 找不到 quick 早退分支 —— 档位语义已变"));
+    let block_start = sh
+        .find("step \"2e/6")
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少步骤 2e (P-49 存量审计腿接入)"));
+    assert!(
+        quick_exit < block_start,
+        "步骤 2e 被挪到 quick 早退分支之前 (2e={block_start} exit={quick_exit}) —— full 档腿变\
+         成两档都跑, 与 §2.3/头部自述的覆盖边界分叉"
+    );
+    let block = &sh[block_start..];
+    let block = match block.find("\nstep \"") {
+        Some(next) => &block[..next],
+        None => block,
+    };
+
+    // ④ 五要素: 遍历清单 / 登记 / 存在性包装 / 硬失败出口 / 到位断言.
+    for element in [
+        "for P49_SPEC in $AUDIT_REQUIRED_LEGS_FULL",
+        "mark_leg_full",
+        "command -v python3 >/dev/null 2>&1 && [ -f",
+        "audit_leg_missing",
+        "AUDIT_MISSING_LEGS_FULL",
+    ] {
+        assert!(
+            block.contains(element),
+            "步骤 2e 块里找不到 {element} —— 接线体被摘除而清单仍在 (P-46 静默消失同族)"
+        );
+    }
+    assert!(
+        block.contains("elif (cd \"$PROJECT_ROOT\" && python3"),
+        "步骤 2e 里阻断腿不再走「判退出码 + 锚定仓库根」的调起形态 —— 所有腿一起变成只播报读数 \
+         (审计绿≠门禁绿, P-47/48 同族), 或改成借外层 cwd (P-50 扫描根同族)"
+    );
+    assert!(
+        block.contains("err \"审计腿"),
+        "步骤 2e 里阻断腿的非零出口消失 —— 判了退出码却不阻断, 等于没判"
+    );
+
+    // ⑤ 报告腿: 非阻断形态必须显式点名 + 写明不判退出码 + 指向另立案号.
+    let report_label = block
+        .lines()
+        .find(|l| l.contains("报告腿"))
+        .unwrap_or_else(|| {
+            panic!(
+                "步骤 2e 里没有「报告腿」标注 —— 报告腿被并入阻断腿时接入即恒红 \
+                                   (实装前实测 scan_antx_residue.py --actionable-only 53 处), \
+                                   把它悄悄降级又不标注是本锁要拦的形态"
+            )
+        });
+    assert!(
+        report_label.contains("不判退出码"),
+        "报告腿标注漏了「不判退出码」 —— 日志把报告腿写成门禁, 是 P-47/48 收口的「绿≠拦住」同族"
+    );
+    assert!(
+        report_label.contains("P-58"),
+        "报告腿标注未指向另立案号 P-58 —— 非阻断接入产生的残余债必须登记, 不许只留在日志里"
+    );
+    assert!(
+        block.contains("= \"antx_residue\" ]"),
+        "报告腿豁免改成无条件形态 (不再按腿名点名) —— 谁都能被塞进非阻断支路"
+    );
+
+    // ⑥ 档位自述与实际结构一致 (P-48 甲 同族).
+    let header = &sh[..sh
+        .find("set -euo pipefail")
+        .unwrap_or_else(|| panic!("audit.sh 头块定位失败"))];
+    let full_claim = header
+        .lines()
+        .find(|l| l.trim_start().starts_with("# - full:"))
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少 full 档自述行"));
+    assert!(
+        full_claim.contains("2e"),
+        "full 档自述没点名步骤 2e —— 新增 full-only 腿却漏自述, 回到 P-48 甲 收口的失真病灶"
+    );
+}
+
 /// P-47 结构锁: Lockbud 腿的「工具缺失」与「发现问题」两态必须分离, 且未执行台账
 /// 必须在两个档位出口都播报.
 ///

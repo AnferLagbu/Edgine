@@ -5,7 +5,7 @@
 # 用法: ./ci/audit.sh [quick|full]   (缺省档 = quick)
 #
 # - quick: 步骤 0–0.5n 审计腿群 + 1 双架构 check + 2/2b clippy + 2c rustfmt, 到 2c 后即退出
-# - full:  quick + 2d 内核测试 release 维 compile-only + 3/6 SAFETY 统计腿 + 4 Lockbud + 7 QEMU
+# - full:  quick + 2d 内核测试 release 维 compile-only + 2e 存量审计腿群 (P-49) + 3/6 SAFETY 统计腿 + 4 Lockbud + 7 QEMU
 #
 # P-48 甲订正两处自述失真: 原工具栈行宣称含一个已于 2026-06-26 退役的 UB 检测工具 (退役
 # 记录见下方步骤 5, 那里是单源), 且原档位行把 quick 称作「CI 默认」—— 验收判据由 AGENTS
@@ -57,6 +57,17 @@ audit_leg_missing() {
 # 与本清单互校 (AGENTS.md §2.2 的强制项必须逐项出现在此), 防它自身漂移.
 # 18 项 = 17 条被存在性包装的腿 (含两个 for 循环各展开 3 条) + 0.5k2 的 coupling.
 AUDIT_REQUIRED_LEGS="tcb_ratio invariants unsafe block_registration once_cell c_naming comment_language tlb_receive_order aarch64_kernel_fp_free repr_c volatile_access static_mut functions_boundary safety_coverage deadlock_matrix coupling orphaned_init unwired_pub_fn"
+# ── P-49: 仅 full 档执行的存量审计腿清单 ──────────────────────
+# 六条脚本此前在仓内**零调用者** (P-49 测绘), §2.2 与 plan 里点名它们却没有任何本地执法
+# 路径. 本轮接入 step 2e —— 位置在 quick 早退分支**之后** ⇒ 不进 AUDIT_REQUIRED_LEGS
+# (0.5n 在两档都断言, 放进去会让 quick 恒红), 改由 2e 段的 full 档到位断言单点比对.
+# 清单形态 = 「腿名:scripts/ 下相对路径」成对, 路径不套 audit_* 命名约定 (报告腿那条实为
+# scan_antx_residue.py, 自测那条在 tests/ 子目录), 由 host-tests 结构锁逐项核验真实存在.
+# 第 7 条 implicit_deps_selftest 是 P-49 甲・自测锁的执行点 —— 一个只有人手工跑的自测
+# 与"零调用者审计脚本"是同一个病灶, 接线时若不给它调用点, 本轮修法当场失效.
+AUDIT_REQUIRED_LEGS_FULL="implicit_deps:audit_implicit_deps.py implicit_deps_selftest:tests/audit_implicit_deps_selftest.py feature_semantics:audit_feature_semantics.py reverse_deps:audit_reverse_deps.py public_api_docs:audit_public_api_docs.py smoltcp_purity:audit_smoltcp_purity.py antx_residue:scan_antx_residue.py"
+AUDIT_RUN_LEGS_FULL=""
+mark_leg_full() { AUDIT_RUN_LEGS_FULL="${AUDIT_RUN_LEGS_FULL} $1"; }
 AUDIT_RUN_LEGS=""
 mark_leg() { AUDIT_RUN_LEGS="${AUDIT_RUN_LEGS} $1"; }
 
@@ -497,6 +508,59 @@ if "$PROJECT_ROOT/scripts/check_kernel_test_release_dim.sh" 2>&1 | tail -40; the
     fi
 else
     err "内核测试 release 维检查执行异常"
+fi
+
+# ── 2e. 存量审计腿接入 (P-49) ─────────────────────────────────
+# 用户裁定「丙・六脚本全接入 full」. 六条腿分两种形态, 日志里必须可区分:
+#   阻断腿 (5) implicit_deps / feature_semantics / reverse_deps / public_api_docs /
+#     smoltcp_purity —— 退出码判, 非零即 err 硬失败.
+#   报告腿 (1) antx_residue —— `scan_antx_residue.py` 默认形态**无条件退 0** (只有加
+#     --actionable-only 才判退出码, 该形态实测 53 处 ⇒ 接入即要求一轮命名迁移, 超出
+#     P-49 接线范围). 故本腿只播报 KEEP/MODIFY/REVIEW 分类读数且明写「不判退出码」,
+#     残余 53 处与阻断面加压另立 P-58; 不在日志里把报告腿伪装成门禁.
+# 存在性包装沿用 P-46 甲形态 (缺 python3 / 缺脚本一律 audit_leg_missing 硬失败), 包装位
+# 点数与 audit_leg_missing 调用数由 host-tests 结构锁互校, 新增裸包装即红.
+# 每条腿在 `cd "$PROJECT_ROOT"` 的子 shell 里调起, 不借外层 cwd: 本组腿的扫描根与 JSON
+# 落点都按脚本自身口径解析 (audit_feature_semantics.py:37-38 用相对路径, :521 写
+# other/target/audit/), 而本文件在 2e 前后有 pushd/popd (步骤 1/2 与 Lockbud) —— 一旦
+# 有人在别处补一对 pushd 而忘记 popd, 借 cwd 的腿会读错根 (实测 cwd=/ 时该腿 RC=2).
+# 置于 quick 早退分支之后 = 仅 full 执行. 耗时逐腿实测 (单跑合计 19.961s): implicit_deps 1.2 /
+# feature_semantics 0.1 / reverse_deps 0.3 / public_api_docs 3.8 / smoltcp_purity 3.4 /
+# antx_residue 6.2 / implicit_deps_selftest 4.9. 其中只有 smoltcp_purity 会浅克隆上游 + ls-remote
+# ⇒ 受网络影响; 该腿的联网检查在脚本内降级为 WARN (audit_smoltcp_purity.py:230-273),
+# 断网只改耗时不改判据, 不会因环境转红. 其余各腿都是纯文本扫描, 无改动时不会更贵.
+step "2e/6 存量审计腿接入 (P-49)"
+for P49_SPEC in $AUDIT_REQUIRED_LEGS_FULL; do
+    P49_LEG="${P49_SPEC%%:*}"
+    P49_SCRIPT="${P49_SPEC##*:}"
+    mark_leg_full "$P49_LEG"
+    if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/$P49_SCRIPT" ]; then
+        if [ "$P49_LEG" = "antx_residue" ]; then
+            (cd "$PROJECT_ROOT" && python3 "scripts/$P49_SCRIPT") 2>&1 | tail -14
+            ok "报告腿 ${P49_LEG}: 读数已播报 (不判退出码, 见 P-58)"
+        elif (cd "$PROJECT_ROOT" && python3 "scripts/$P49_SCRIPT") 2>&1 | tail -25; then
+            ok "审计腿 ${P49_LEG}: 通过"
+        else
+            err "审计腿 ${P49_LEG} 失败 (scripts/${P49_SCRIPT} 非零退出)"
+        fi
+    else
+        audit_leg_missing "$P49_LEG" "$PROJECT_ROOT/scripts/$P49_SCRIPT"
+    fi
+done
+
+# 到位断言 (full 档): 清单点名的腿必须逐条 mark 过, 否则该腿是被摘掉的而非"跑输了".
+AUDIT_MISSING_LEGS_FULL=""
+for want_leg_full in $AUDIT_REQUIRED_LEGS_FULL; do
+    case " $AUDIT_RUN_LEGS_FULL " in
+        *" ${want_leg_full%%:*} "*) ;;
+        *) AUDIT_MISSING_LEGS_FULL="${AUDIT_MISSING_LEGS_FULL} ${want_leg_full%%:*}" ;;
+    esac
+done
+AUDIT_LEG_FULL_TOTAL=$(set -- $AUDIT_REQUIRED_LEGS_FULL; echo $#)
+if [ -z "$AUDIT_MISSING_LEGS_FULL" ]; then
+    ok "P-49 存量审计腿到位: ${AUDIT_LEG_FULL_TOTAL}/${AUDIT_LEG_FULL_TOTAL} (无静默跳过)"
+else
+    err "P-49 存量审计腿未到位:${AUDIT_MISSING_LEGS_FULL} (fail-closed, 不接受假绿)"
 fi
 
 # ── 3. SAFETY 注释覆盖率统计 ────────────────────────────────────
