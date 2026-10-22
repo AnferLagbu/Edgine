@@ -494,14 +494,17 @@ if [ "$MODE" = "quick" ]; then
     exit 0
 fi
 
-# ── 2d. 内核测试构建 release 维 compile-only (P-44) ─────────────
+# ── 2d. 内核 release 维 compile-only (P-44 测试维 + P-51 feature 维) ──
 # 门槛 6 的判据是 debug 配方 (Makefile 的 test-kernel-host, 不带 --release). release 测试维
 # 自 P-43 起「可编译、可运行、零警告」, 但**此前不由任何门禁编译** —— 于是谁把测试侧 cfg
 # 改回与被测代码掩码不同形, 六门槛照样全绿: 修好的病灶没有回归锁.
-# 判据与实现见 scripts/check_kernel_test_release_dim.sh 顶部 (两条: 编译退出码 0 + 本 crate
-# 零告警; 只编译不跑用例 ⇒ 不产出 release 覆盖读数, lockdep 在该维用例数为 0 不得读成覆盖达成).
-# 置于 quick 早退分支之后 = 仅 full 执行 (增量成本: kernel crate 重编 ≈ 27s, 无改动时 ≈ 0.1s).
-step "2d/6 内核测试构建 release 维 compile-only (P-44)"
+# P-51 同族缺口: lockdep 的 cfg 全形如 any(debug_assertions, feature = "lockdep"), 常规
+# release 构建从不点亮它; e1000-real-hw 的真实硬件分支也只在该 feature 下编译.
+# 判据与实现分别见 scripts/check_kernel_test_release_dim.sh 与
+# scripts/check_kernel_feature_release_dims.sh 顶部 (两条: 编译退出码 0 + 本 crate 零告警;
+# 只编译不跑用例 ⇒ 不产出覆盖读数, 不得读成覆盖达成).
+# 置于 quick 早退分支之后 = 仅 full 执行 (增量成本: kernel crate 按 feature 组合重编).
+step "2d/6 内核 release 维 compile-only (P-44 测试维 + P-51 feature 维)"
 if "$PROJECT_ROOT/scripts/check_kernel_test_release_dim.sh" 2>&1 | tail -40; then
     RELEASE_DIM_RC=${PIPESTATUS[0]}
     if [ "$RELEASE_DIM_RC" -eq 0 ]; then
@@ -511,6 +514,17 @@ if "$PROJECT_ROOT/scripts/check_kernel_test_release_dim.sh" 2>&1 | tail -40; the
     fi
 else
     err "内核测试 release 维检查执行异常"
+fi
+
+if "$PROJECT_ROOT/scripts/check_kernel_feature_release_dims.sh" 2>&1 | tail -40; then
+    FEATURE_DIM_RC=${PIPESTATUS[0]}
+    if [ "$FEATURE_DIM_RC" -eq 0 ]; then
+        ok "内核 feature release 维 (lockdep + e1000-real-hw): 编译通过 + 本 crate 零告警"
+    else
+        err "内核 feature release 维检查失败 (exit=$FEATURE_DIM_RC, 见 scripts/check_kernel_feature_release_dims.sh 输出)"
+    fi
+else
+    err "内核 feature release 维检查执行异常"
 fi
 
 # ── 2e. 存量审计腿接入 (P-49) ─────────────────────────────────

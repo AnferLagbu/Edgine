@@ -90,9 +90,8 @@ smoltcp = { path = "functions/net/smoltcp", default-features = false, features =
 default = []
 # e1000 真实硬件 EEPROM 读取路径 (关闭时走 QEMU 仿真兼容路径).
 e1000-real-hw = []
-e1000-verbose = []
 # S2 DNS 接线 (net-feature-alignment.md): 实机验证钩子 —— boot 完成后发一次
-# 真实 DNS 查询并 printk 结果 (仿 lockdep/e1000-verbose 诊断 feature 先例,
+# 真实 DNS 查询并 printk 结果 (仿 lockdep 诊断 feature 先例,
 # 经 KERNEL_FEATURES= 点亮, 日常构建不含).
 dns-selftest = []
 # host-test: 剥离裸机专属顶层约束 (no_std/no_main/alloc_error_handler/panic_handler),
@@ -113,16 +112,6 @@ lockdep = []
 initramfs = []
 log = []
 json_export = []
-ipv6 = []
-dhcp = []
-http_client = []
-mdns = []
-mqtt = []
-sntp = []
-smtp = []
-tftp = []
-snmp = []
-netbios = []
 preempt = []
 kaslr = []
 freg = []

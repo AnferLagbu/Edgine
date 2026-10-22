@@ -147,7 +147,7 @@ USER_TEST_ELF = $(RUST_USER_TARGET)/proctest
 STAGE1_BIN = $(ARCH_BUILD_DIR)/stage1.bin
 DISK_IMAGE = $(ARCH_BUILD_DIR)/antx.img
 
-.PHONY: all clean run run-net debug log log-net iso run-iso disk run-disk user test test-host test-kernel-host test-kernel-host-release-compile test-kani test-unit \
+.PHONY: all clean run run-net debug log log-net iso run-iso disk run-disk user test test-host test-kernel-host test-kernel-host-release-compile test-kernel-feature-release-compile test-kani test-unit \
          test-all test-chaos test-smp test-smp-multicore
 
 ifeq ($(ARCH),aarch64)
@@ -495,6 +495,18 @@ test-kernel-host-release-compile:
 	@echo "╚══════════════════════════════════════════════╝"
 	@mkdir -p $(CURDIR)/$(REPORT_DIR)
 	@{ log=$(CURDIR)/$(REPORT_DIR)/kernel_host_test_release_$$(date +%Y%m%d_%H%M%S).log; bash $(CURDIR)/scripts/check_kernel_test_release_dim.sh > "$$log" 2>&1; status=$$?; cat "$$log"; exit $$status; }
+	@echo ""
+
+# 内核 feature 构建维 (P-51): lockdep 与 e1000-real-hw 两条 release + feature 组合的
+# compile-only 检查, 判据与实现在 scripts/check_kernel_feature_release_dims.sh 顶部.
+# 只证明「该组合可编译且本 crate 零告警」, 不产出运行/覆盖读数 (e1000-real-hw 无真硬件
+# 不可运行). 已接入 ci/audit.sh full 步骤 2d; 本目标供单独复跑.
+test-kernel-feature-release-compile:
+	@echo "╔══════════════════════════════════════════════════╗"
+	@echo "║   Kernel release feature dims (check, P-51)      ║"
+	@echo "╚══════════════════════════════════════════════════╝"
+	@mkdir -p $(CURDIR)/$(REPORT_DIR)
+	@{ log=$(CURDIR)/$(REPORT_DIR)/kernel_feature_release_$$(date +%Y%m%d_%H%M%S).log; bash $(CURDIR)/scripts/check_kernel_feature_release_dims.sh > "$$log" 2>&1; status=$$?; cat "$$log"; exit $$status; }
 	@echo ""
 
 # Kani 形式化验证: 独立 crate kani-harness/ 通过 #[path] 引真实 functions 源码,

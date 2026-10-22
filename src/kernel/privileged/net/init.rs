@@ -749,7 +749,7 @@ pub extern "C" fn eg_net_init() {
         );
 
         // S2 DNS 接线 (net-feature-alignment.md): 实机验证钩子 —— feature 门控,
-        // KERNEL_FEATURES=dns-selftest 点亮 (仿 lockdep/e1000-verbose 先例).
+        // KERNEL_FEATURES=dns-selftest 点亮 (仿 lockdep 诊断 feature 先例).
         // boot 完成后发一次真实查询并 printk; 成败均不阻断 boot (只观测).
         #[cfg(feature = "dns-selftest")]
         match dns_resolve("example.com") {
