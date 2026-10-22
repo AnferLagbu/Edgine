@@ -4,7 +4,7 @@
 #         + audit_*.py 审计腿群 + Lockbud 死锁/数据竞争扫描 + QEMU 真实启动 (full 档)
 # 用法: ./ci/audit.sh [quick|full]   (缺省档 = quick)
 #
-# - quick: 步骤 0–0.5n 审计腿群 + 1 双架构 check + 2/2b clippy + 2c rustfmt, 到 2c 后即退出
+# - quick: 步骤 0–0.5n 审计腿群 + 1 双架构 check + 2/2b clippy (2 双架构) + 2c rustfmt, 到 2c 后即退出
 # - full:  quick + 2d 内核测试 release 维 compile-only + 2e 存量审计腿群 (P-49) + 3/6 SAFETY 统计腿 + 4 Lockbud + 7 QEMU
 #
 # P-48 甲订正两处自述失真: 原工具栈行宣称含一个已于 2026-06-26 退役的 UB 检测工具 (退役
@@ -419,8 +419,8 @@ for target in x86_64-unknown-none aarch64-unknown-none-softfloat; do
 done
 popd > /dev/null
 
-# ── 2. Clippy pedantic (x86_64) ────────────────────────────────
-step "2/6 Clippy pedantic (x86_64, lib only)"
+# ── 2. Clippy pedantic (x86_64 + aarch64) ──────────────────────
+step "2/6 Clippy pedantic (x86_64 + aarch64, lib only)"
 pushd src/rust > /dev/null
 unset RUSTC_WRAPPER
 # B01-28 修复: clippy 命令与 CI (ci-x86.yml clippy-pedantic job) 对齐:
@@ -431,22 +431,31 @@ unset RUSTC_WRAPPER
 # B01-16 修复: 加 -D warnings 让任何 warning 阻断 CI, 失败走 err 而非仅警告.
 # 原代码 `if cmd | tail; then ok; else warn; fi` 中 `tail` 退出 0 总是成功,
 # 即使 cargo clippy 失败也被掩盖 (P0-05 类问题).
-if cargo clippy --manifest-path ../kernel/Cargo.toml --release --lib --bins --examples --target x86_64-unknown-none --target-dir ../../other/target \
-    "${BUILD_STD_CFG[@]}" \
-    -- -D warnings -D clippy::pedantic \
-    -A clippy::cast_possible_truncation \
-    -A clippy::cast_sign_loss \
-    -A clippy::cast_possible_wrap \
-    -A clippy::cast_precision_loss 2>&1 | tail -10; then
-    CLIPPY_RC=${PIPESTATUS[0]}
+# P-52 甲: 双架构循环 —— x86_64 单架构时 src/kernel 里 147 处
+# `target_arch = "aarch64"` 门控代码完全不经 clippy. 远端 ci-x86.yml 本有一条
+# aarch64 clippy 步骤, 但本仓仅 Gitee、workflow 从不执行 ⇒ 不能代替本地门禁.
+# 成本实测: aarch64 维 RC=0 (0 诊断), 增量 CPU ≈14s; build-std 由步骤 1 的
+# 双架构 check 先行构建, 本维只重编 kernel crate. 与步骤 1 同形 (两档都跑).
+for target in x86_64-unknown-none aarch64-unknown-none-softfloat; do
+    # 捕获式退出码 (B01-25 惯用法): `if cmd | tail` 在 pipefail 下失败即走 else,
+    # 于是 "失败 (exit=…)" 分支不可达、真因被「执行异常」吞掉 (P-55 同族).
+    set +e
+    CLIPPY_OUT=$(cargo clippy --manifest-path ../kernel/Cargo.toml --release --lib --bins --examples --target "${target}" --target-dir ../../other/target \
+        "${BUILD_STD_CFG[@]}" \
+        -- -D warnings -D clippy::pedantic \
+        -A clippy::cast_possible_truncation \
+        -A clippy::cast_sign_loss \
+        -A clippy::cast_possible_wrap \
+        -A clippy::cast_precision_loss 2>&1)
+    CLIPPY_RC=$?
+    set -e
+    printf '%s\n' "$CLIPPY_OUT" | tail -10
     if [ "$CLIPPY_RC" -eq 0 ]; then
-        ok "clippy pedantic (lib): passed"
+        ok "clippy pedantic (${target}): passed"
     else
-        err "clippy pedantic (lib) 失败 (exit=$CLIPPY_RC, 见上方输出)"
+        err "clippy pedantic (${target}) 失败 (exit=$CLIPPY_RC, 见上方输出)"
     fi
-else
-    err "clippy pedantic (lib) 执行异常"
-fi
+done
 popd > /dev/null
 
 # ── 2b. Clippy feature 维 (kernel_test + host-test, J-01/G-02/G-18) ──

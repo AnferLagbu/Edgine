@@ -661,6 +661,51 @@ fn test_gate_criterion_mode_is_single_sourced() {
     );
 }
 
+/// P-52 甲: clippy pedantic 必须双架构 —— 单架构时 `src/kernel` 里 147 处
+/// `target_arch = "aarch64"` 门控代码完全不经 clippy (远端 ci-x86.yml 的 aarch64
+/// 步骤因 Gitee-only 从不执行, 不能代替本地门禁).
+///
+/// 三臂:
+/// ① 步骤 2 块内含双三元组循环头, 两枚三元组都在循环头里 (只写进注释 ⇒ 红);
+/// ② 循环变量必须喂给 `--target` —— 否则三元组只是摆设;
+/// ③ 该块必须整体位于 quick 早退分支之前 (裁定为双档加维; 挪到 full-only ⇒ 红).
+#[test]
+fn test_audit_sh_clippy_covers_both_arches() {
+    let sh = read(AUDIT_SH);
+    let start = sh
+        .find("step \"2/6")
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少步骤 2 (clippy pedantic)"));
+    let block = &sh[start..];
+    let block = match block.find("\nstep \"") {
+        Some(next) => &block[..next],
+        None => block,
+    };
+    let loop_head = block
+        .lines()
+        .find(|l| l.trim_start().starts_with("for target in "))
+        .unwrap_or_else(|| panic!("步骤 2 没有双架构循环头 —— P-52 甲 裁定双档加维"));
+    for target in ["x86_64-unknown-none", "aarch64-unknown-none-softfloat"] {
+        assert!(
+            loop_head
+                .split_whitespace()
+                .any(|t| t.trim_end_matches(';') == target),
+            "步骤 2 的循环头未点名 {target} —— clippy 单架构会让目标门控代码成为 lint 盲区"
+        );
+    }
+    assert!(
+        block.contains("--target \"${target}\""),
+        "步骤 2 的循环变量没有喂给 --target —— 双三元组只写在注释里不算覆盖"
+    );
+    let quick_exit = sh
+        .find("if [ \"$MODE\" = \"quick\" ]")
+        .unwrap_or_else(|| panic!("ci/audit.sh 找不到 quick 早退分支"));
+    assert!(
+        start < quick_exit,
+        "步骤 2 被挪到 quick 早退之后 (2={start} exit={quick_exit}) —— 裁定是双档加维, \
+         quick 也必须有 aarch64 clippy"
+    );
+}
+
 #[test]
 fn test_ci_rustdoc_matches_workflow_command() {
     // 本地入口与 workflow 的 rustdoc 判据必须同源, 否则本地绿仍可能在 CI 红.
