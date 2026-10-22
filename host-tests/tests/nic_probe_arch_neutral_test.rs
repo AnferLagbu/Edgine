@@ -18,7 +18,7 @@ use std::path::Path;
 fn test_nic_probe_all_no_arch_mutex() {
     let probe_rs = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .unwrap() // Edgine workspace root
+        .unwrap() // Edgine 工作区根目录
         .join("src/kernel/privileged/net/init/probe.rs");
     let src = fs::read_to_string(&probe_rs)
         .unwrap_or_else(|e| panic!("无法读取 {}: {}", probe_rs.display(), e));

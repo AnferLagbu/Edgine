@@ -41,7 +41,7 @@ fn count_safety_boilerplate(src: &str) -> HashMap<String, usize> {
 fn check_boilerplate(file: &str, top_dupes: &[(&str, usize)]) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .unwrap() // Edgine workspace root (host-tests' parent)
+        .unwrap() // Edgine 工作区根目录 (host-tests 的父目录)
         .join("src/kernel/privileged")
         .join(file);
     let src =

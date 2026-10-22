@@ -635,7 +635,7 @@ pub fn virtio_blk_io_bench(iters: u64) -> u128 {
 // G-07: 本地 `MockBpfProg`/`VerifyResult`/`BpfVerifier`/`MockBpfVerifier`/
 // `MockBpfSubsystem` 复刻已全部删除, 直引内核真实类型:
 //   - privileged (机制): `privileged::debug::{BpfProg, BpfInsn, BpfProgType,
-//     BpfVerifier, VerifyResult}`
+//     BpfVerifier, VerifyResult}` (均取自内核真实定义)
 //   - functions (策略): `functions::debug::ebpf_verifier::STANDARD_VERIFIER`
 //     (7 条验证规则的 functions 实现)
 //
@@ -759,7 +759,7 @@ pub fn sysctl_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// T-4.1 (LEGACY-4): BlockDevice trait dispatch bench
+// T-4.1 (LEGACY-4): BlockDevice trait 派发基准
 // ============================================================================
 //
 // G-07: 本地 `HostBlockDevice` / `MockEGDFDevice` 复刻已删除, 直引内核
@@ -851,7 +851,7 @@ pub fn blk_dev_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// REVAL-6.1: VfsPollPolicy trait dispatch bench
+// REVAL-6.1: VfsPollPolicy trait 派发基准
 // ============================================================================
 //
 // G-07: 本地 `MockVfsFileType` / `MockVfsPollPolicy` / `MockEpollCheck` 复刻已删除,
@@ -908,7 +908,7 @@ pub fn vfs_poll_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// LEGACY-5.1: ZAP (UnkfsZap) dispatch bench
+// LEGACY-5.1: ZAP (UnkfsZap) 派发基准
 // ============================================================================
 //
 // G-07: 本地 `HostZapStore` / `StandardHostZap` (Mutex<HashMap>) 复刻已删除, 直引内核
@@ -952,7 +952,7 @@ pub fn zap_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// LEGACY-5.2: TXG (UnkfsTxgGroup) dispatch bench
+// LEGACY-5.2: TXG (UnkfsTxgGroup) 派发基准
 // ============================================================================
 //
 // G-07: 本地 `MockTxgState` / `HostTxgManager` / `StandardHostTxg` 复刻已删除, 直引内核
@@ -990,7 +990,7 @@ pub fn txg_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// LEGACY-5.4: DMU (UnkfsObjSet) dispatch bench
+// LEGACY-5.4: DMU (UnkfsObjSet) 派发基准
 // ============================================================================
 //
 // G-07: 本地 `MockDmuObject` / `HostDmuManager` / `StandardHostDmu` (Mutex<HashMap>)
@@ -1034,7 +1034,7 @@ pub fn dmu_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// LEGACY-5.5: SPA (UnkfsSpa) dispatch bench
+// LEGACY-5.5: SPA (UnkfsSpa) 派发基准
 // ============================================================================
 //
 // G-07: 本地 `SpaState` / `HostSpaManager` / `StandardHostSpa` 复刻已删除, 直引内核
@@ -1114,7 +1114,7 @@ pub fn raidz_dispatch_bench(iters: u64) -> u128 {
 /// ARC 初始容量 (内核 `HV_ARC_DEFAULT_SIZE` 量级, 保证预热后仍有淘汰余量)
 const BENCH_ARC_MAX_SIZE: usize = 100;
 
-/// bench: ARC trait dispatch (lookup / insert / hit_count / current_size) throughput
+/// 基准: ARC trait 派发 (lookup / insert / hit_count / current_size) 吞吐量
 pub fn arc_dispatch_bench(iters: u64) -> u128 {
     let arc: Box<dyn ArcCache> = Box::new(StandardArc::new());
     arc.init(BENCH_ARC_MAX_SIZE);
@@ -1343,14 +1343,14 @@ pub fn run_all() -> BenchReport {
         10_000,
         virtio_blk_io_bench,
     ));
-    // EBPF-3: eBPF verifier trait dispatch bench
+    // EBPF-3: eBPF 验证器 trait 派发基准
     results.push(measure(
         "bpf_verifier_dispatch",
         "ebpf",
         100_000,
         bpf_verifier_dispatch_bench,
     ));
-    // SYSCTL-2: sysctl register/write bench
+    // SYSCTL-2: sysctl 注册/写入基准
     results.push(measure("sysctl_rw", "config", 10_000, sysctl_bench));
     // T-4.1: BlockDevice trait dispatch bench (LEGACY-4 验证)
     results.push(measure(
@@ -1359,7 +1359,7 @@ pub fn run_all() -> BenchReport {
         100_000,
         blk_dev_dispatch_bench,
     ));
-    // REVAL-6.1: VfsPollPolicy dispatch bench
+    // REVAL-6.1: VfsPollPolicy 派发基准
     results.push(measure(
         "vfs_poll_dispatch",
         "epoll",
@@ -1372,7 +1372,7 @@ pub fn run_all() -> BenchReport {
     results.push(measure("txg_dispatch", "unkfs", 10_000, txg_dispatch_bench));
     // LEGACY-5.4: DMU dispatch bench (get_obj/obj_count 为 O(n) 线性扫描, 故缩小 iters)
     results.push(measure("dmu_dispatch", "unkfs", 1_000, dmu_dispatch_bench));
-    // LEGACY-5.5: SPA dispatch bench
+    // LEGACY-5.5: SPA 派发基准
     results.push(measure(
         "spa_dispatch",
         "unkfs",
@@ -1607,7 +1607,7 @@ mod tests {
         let _ = virtio_blk_io_bench(10);
     }
 
-    // ====== EBPF-3: BpfVerifier trait dispatch + bench ======
+    // ====== EBPF-3: BpfVerifier trait 派发 + 基准 ======
     // G-07: 直引内核真实实现 — privileged 机制 (`BpfProg`/`BpfVerifier` trait/
     // `BpfSubsystem`) + functions 策略 (`STANDARD_VERIFIER`), 无本地 mock.
 

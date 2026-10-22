@@ -247,7 +247,7 @@ fn e2e_snapshot_root_bp_immutable() {
     {
         let mut bp = root.root_bp.lock();
         bp.dva[0] = UnkfsDva::new(
-            /* vdev_id */ 1, /* offset */ 0x1000, /* asize */ 0x2000,
+            /* 字段 vdev_id */ 1, /* offset */ 0x1000, /* asize */ 0x2000,
         );
         bp.birth_txg = 2;
     }

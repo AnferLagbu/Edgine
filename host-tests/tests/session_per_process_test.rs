@@ -9,7 +9,7 @@
 // 3. PwmContext 凭证会话上下文必须绑定到 Process 结构体, 字段命名稳定:
 //    - Process::session: Mutex<PwmContext>
 //    - Process::session_elev_stack: Mutex<[PwmContext; 8]>
-//    - Process::session_elev_depth: AtomicIsize
+//    - Process::session_elev_depth: AtomicIsize (提权嵌套深度)
 // 4. Process::new 初始化三个新字段 (而非留未初始化).
 // 5. 公开 API 签名保持向后兼容 (login/logout/get_current_pwm/try_setuid 等).
 // 6. 跨进程隔离: 进程 A 写入 session, 进程 B 读取不到 (静态源码契约: 每进程

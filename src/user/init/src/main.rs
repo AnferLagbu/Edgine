@@ -348,7 +348,7 @@ fn mcast_probe() {
     // 从 12/12 通过退化为 8/13 失败): 本探针跑在 `tcp_echo_server` fork 之前, 窗口
     // 直接决定监听 socket 就绪时刻与后续入向连接能否被 `accept`. 抖动根因已定论:
     // CFS 时基背离 + 运行队列记账泄漏导致的秒级饥饿 (本窗口只是放大器), 详见
-    // docs/plan/net-e2e-tcp-echo-flakiness.md.
+    // 详见 docs/plan/net-e2e-tcp-echo-flakiness.md.
     const MAX_TRIES: u32 = 20;
 
     let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);

@@ -272,8 +272,8 @@ fn test_audit_sh_audit_legs_are_fail_closed() {
 /// 整条摘掉 —— 那正是 P-46 测绘的静默消失形态. 本锁把这三条约束钉死.
 ///
 /// 六条判据:
-/// ① `AUDIT_REQUIRED_LEGS_FULL` 是 `腿名:相对路径` 成对的双引号字面量, ≥7 条
-///    (实测 7 = 6 存量脚本 + 1 自测腿);
+/// ① `AUDIT_REQUIRED_LEGS_FULL` 是 `腿名:相对路径` 成对的双引号字面量, ≥8 条
+///    (实测 8 = 5 阻断腿 + 2 自测腿 + 1 报告腿; 第 8 条 audit_selftest 由 P-50 ③ 追加);
 /// ② 每条相对路径在 `scripts/` 下真实存在 (含 `tests/` 子目录里的自测腿) —— 清单漂移即红;
 /// ③ 腿名与 quick 档清单不相交, 且 step 2e 位于 quick 早退分支**之后** —— 挪进 quick
 ///    或把整块前移都会让弱档恒红, 由此臂转红;
@@ -298,8 +298,8 @@ fn test_audit_sh_full_only_legs_are_wired() {
         .split_whitespace()
         .collect();
     assert!(
-        specs.len() >= 7,
-        "AUDIT_REQUIRED_LEGS_FULL 只点名 {} 条腿, 低于实测的 7 条 (6 存量脚本 + 1 自测腿)",
+        specs.len() >= 8,
+        "AUDIT_REQUIRED_LEGS_FULL 只点名 {} 条腿, 低于实测的 8 条 (5 阻断腿 + 2 自测腿 + 1 报告腿)",
         specs.len()
     );
     assert!(
@@ -308,6 +308,11 @@ fn test_audit_sh_full_only_legs_are_wired() {
             .any(|s| s.starts_with("implicit_deps_selftest:")),
         "清单里没有 implicit_deps_selftest 腿 —— 只有人手工跑的自测与「零调用者审计脚本」\
          是同一个病灶 (P-49 甲), 接线时不给它调用点则本轮修法当场失效"
+    );
+    assert!(
+        specs.iter().any(|s| s.starts_with("audit_selftest:")),
+        "清单里没有 audit_selftest 腿 —— P-50 ③ 真调化后的四项自检若不进 CI, \
+         等于把 P-49 的「零调用者」病灶换个位置复现"
     );
 
     let quick_legs: Vec<&str> = sh
@@ -410,6 +415,106 @@ fn test_audit_sh_full_only_legs_are_wired() {
         full_claim.contains("2e"),
         "full 档自述没点名步骤 2e —— 新增 full-only 腿却漏自述, 回到 P-48 甲 收口的失真病灶"
     );
+}
+
+/// P-50 结构锁: 扫描根全扩与自测真调化两处口径必须落地, 且 §2.2 不得把定点锁读成树级防线.
+///
+/// 病灶 (P-50 测绘):
+/// - `audit_comment_language.py` (F7) 与 `audit_c_naming.py` (I-07) 此前只扫 `src/kernel`,
+///   于是「中文注释强制」只在内核层执法; host-tests / src/user / kani-harness 三树零覆盖
+///   (实测 66 + 3 + 2 处违规). 扩根后还必须逐根 fail-closed —— 根拼错要被读成配置错误,
+///   不能读成「扫描零违规」.
+/// - `scripts/tests/audit_selftest.py` 的四个用例在自测文件里**复制**了检测算法,
+///   检测器退化时自测照样全绿. 真调化后若不进 CI, 等于把 P-49 的「零调用者」换个位置复现.
+/// - `audit_repr_c.py` / `audit_volatile_access.py` / `audit_tlb_receive_order.py` 是
+///   冻结清单上的定点回归锁, §2.2 必须写明这一边界, 否则读者会把「清单内 0 违规」
+///   当成「全树无同类风险」.
+///
+/// 判据:
+/// ① 两个审计脚本的 BASES 各含四根, 且扫描循环由 BASES 驱动 (声明但不使用 ⇒ 红);
+/// ② 两脚本都有「覆盖根缺失」fail-closed 出口并点名 P-50 丙;
+/// ③ 自测文件按路径真调检测器 (`spec_from_file_location` + 四个真实入口), 且不再含
+///    「手动模拟」/「核心检测算法」这类复制实现的痕迹;
+/// ④ §2.2 的定点锁脚注点名三个脚本、冻结清单规模、「非树级防线」与 P-61 案号.
+#[test]
+fn test_p50_audit_scope_and_selftest_are_wired() {
+    let agents = read(AGENTS_MD);
+    let selftest = read("../scripts/tests/audit_selftest.py");
+
+    // ① + ②: 两个全树审计脚本的覆盖根与 fail-closed 出口.
+    for (path, tree) in [
+        ("../scripts/audit_comment_language.py", "F7"),
+        ("../scripts/audit_c_naming.py", "I-07"),
+    ] {
+        let py = read(path);
+        for root in [
+            r#"PROJECT_ROOT / "src" / "kernel""#,
+            r#"PROJECT_ROOT / "host-tests""#,
+            r#"PROJECT_ROOT / "src" / "user""#,
+            r#"PROJECT_ROOT / "kani-harness""#,
+        ] {
+            assert!(
+                py.contains(root),
+                "{path} 的 BASES 缺覆盖根 {root} —— {tree} 对三树重新失明 (P-50 丙)"
+            );
+        }
+        assert!(
+            py.contains("for b in BASES"),
+            "{path} 声明了 BASES 但扫描循环不遍历它 —— 加根不生效的静默形态"
+        );
+        assert!(
+            py.contains("覆盖根缺失 (fail-closed, P-50 丙)"),
+            "{path} 缺「覆盖根缺失」fail-closed 出口 —— 根拼错会被读成扫描零违规"
+        );
+    }
+
+    // ③: 自测与检测器同源.
+    assert!(
+        selftest.contains("importlib.util.spec_from_file_location"),
+        "audit_selftest.py 不再按路径加载检测器 —— 回到 sys.path 猜测或复制实现的形态"
+    );
+    for entry in ["check_forbidden_imports(", "detector.main()"] {
+        assert!(
+            selftest.contains(entry),
+            "audit_selftest.py 缺真实检测入口 {entry} —— 自测不再证明检测器本身有效"
+        );
+    }
+    assert!(
+        selftest.matches(".scan_file(").count() >= 2,
+        "audit_selftest.py 直接调用的 scan_file 少于 2 处 (deadlock_matrix + audit_unsafe 期望) \
+         —— 至少一个用例退回复制算法"
+    );
+    for marker in ["手动模拟", "核心检测算法"] {
+        assert!(
+            !selftest.contains(marker),
+            "audit_selftest.py 重新出现「{marker}」—— 自测复制检测算法后, 检测器退化时自测仍绿"
+        );
+    }
+
+    // ④: §2.2 的定点锁口径.
+    let sec_22_start = agents
+        .find("### 2.2 核心审计脚本（硬规则门槛）")
+        .unwrap_or_else(|| panic!("AGENTS.md 找不到 §2.2 标题"));
+    let sec_22_end = agents[sec_22_start..]
+        .find("### 2.3 验证门槛")
+        .map(|i| sec_22_start + i)
+        .unwrap_or_else(|| panic!("AGENTS.md 找不到 §2.3 标题 (无法界定 §2.2)"));
+    let sec_22 = &agents[sec_22_start..sec_22_end];
+    for needle in [
+        "定点锁口径",
+        "`audit_repr_c.py`",
+        "`audit_volatile_access.py`",
+        "`audit_tlb_receive_order.py`",
+        "2 struct / 4 字段 / 1 函数",
+        "非树级防线",
+        "P-61",
+        "`audit_selftest`",
+    ] {
+        assert!(
+            sec_22.contains(needle),
+            "AGENTS.md §2.2 缺 {needle} —— 定点锁边界 (P-50 甲) 或新接线腿未自述"
+        );
+    }
 }
 
 /// P-47 结构锁: Lockbud 腿的「工具缺失」与「发现问题」两态必须分离, 且未执行台账

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 // TD-20: functions 域 NetError / IpcError / SyncError / PiMutexError /
-//        DevTreeError / EGDFError / StorageError / PwmError /
+//        `DevTreeError / EGDFError / StorageError / PwmError` /
 //        AuditError / SessionError 收敛到 KernelError (TD-08 V6)
 //
 // 验收:
 //   - 每个错误枚举统一为 [N 字段特有] + Kernel(KernelError) 薄包装结构
 //   - 旧变体 (NoResources / BadFd / NotFound / WouldBlock / PermissionDenied /
 //     InvalidArgument / Other / NoResources / NotReady / Io / AlreadyExists /
-//     PathTooLong / OpenFailed / IoFailed / Truncated / TableFull /
+//     `PathTooLong / OpenFailed / IoFailed / Truncated / TableFull` /
 //     TooManySessions 等) 全部废弃, 改走 Kernel(KernelError::...) 包装
 //   - 10 个 to_errno() 方法 全部变体 → POSIX Errno 双向映射
 //

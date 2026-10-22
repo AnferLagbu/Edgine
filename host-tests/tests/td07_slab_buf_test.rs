@@ -45,7 +45,7 @@ fn test_buf_access_through_raw_module() {
 }
 
 #[test]
-fn test_socket_alloc_uses_kmalloc() {
+fn test_socket_alloc_uses_k_malloc() {
     let src = read_raw_sources();
     // TCP 路径必须用 k_malloc(TCP_BUF_SIZE)
     assert!(
@@ -60,7 +60,7 @@ fn test_socket_alloc_uses_kmalloc() {
 }
 
 #[test]
-fn test_socket_close_uses_kfree() {
+fn test_socket_close_uses_k_free() {
     let src = read_raw_sources();
     // close 路径必须对缓冲调用 k_free
     assert!(

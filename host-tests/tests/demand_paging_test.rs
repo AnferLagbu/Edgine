@@ -9,7 +9,7 @@
 //!
 //! ## 因内核 mm 层 host 不可测已移除 (handle_user_page_fault fallthrough)
 //! 原镜像的 fallthrough 决策测试 (no_vma_returns_sigsegv / guard_vma_returns_sigsegv /
-//! readonly_vma_write_triggers_cow / writable_vma_uses_vma_flags / decide_fallthrough)
+//! `readonly_vma_write_triggers_cow` / `writable_vma_uses_vma_flags` / `decide_fallthrough`)
 //! 已移除: 内核 `handle_user_page_fault`/`handle_page_fault` 依赖
 //! `read_user_cr3_asm()` (链接 isr.asm 的 `USER_CR3_SAVE` 汇编符号, host 无此符号),
 //! 以及 `vmm::get_vmm()` / `pmm::get_pmm()` / `swap` / `cow` / `get_current_mm()`

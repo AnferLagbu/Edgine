@@ -27,7 +27,7 @@ use std::path::Path;
 fn workspace_root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .unwrap() // Edgine workspace root
+        .unwrap() // Edgine 工作区根目录
         .to_path_buf()
 }
 

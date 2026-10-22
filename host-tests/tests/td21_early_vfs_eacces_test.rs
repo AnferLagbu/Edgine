@@ -206,7 +206,7 @@ fn matrix_out_of_range_is_silent() {
 fn matrix_superset_transitivity() {
     let root = CapMatrix::all();
     let admin = InMemoryMatrix::new();
-    // admin: FS READ|WRITE|EXECUTE + PROC FORK|EXEC|KILL + USER_MGMT LIST
+    // admin 权限: FS READ|WRITE|EXECUTE + PROC FORK|EXEC|KILL + USER_MGMT LIST
     // (USER_MGMT LIST 是内核 policy VIABLE_FLOOR 下界, admin 必须含之才能是全矩阵 superset)
     admin
         .set(

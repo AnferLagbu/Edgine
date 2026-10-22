@@ -8,7 +8,7 @@
 //!
 //! - 内核权威实现为 `privileged/arch/x86_64/acpi.rs::gsi_to_ioapic(gsi)` —
 //!   **签名不同**: 无参数表入参, 直接读取**私有**全局 `static IOAPICS:
-//!   IrqSpinLock<[Option<IoApicInfo>; MAX_IOAPICS]>`.
+//!   `IrqSpinLock<[Option<IoApicInfo>; MAX_IOAPICS]>`.
 //! - 该全局仅能由 `parse_madt(multiboot2_info_ptr)` 填充 (需真实 ACPI MADT /
 //!   Multiboot2 启动数据), host 无法构造; 且 `IOAPICS` 非 pub, 无公开 setter.
 //! - 因此 GSI→(ioapic_index, local_irq) 路由决策无法在 host 上对真实内核函数

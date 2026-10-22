@@ -1,4 +1,4 @@
-//! eash — easy shell (Edgine userland)
+//! eash — Edgine 用户态简易 shell
 //!
 //! 模块化 Shell: 主循环 + 提示符在此，命令实现位于 `commands/` 子目录。
 

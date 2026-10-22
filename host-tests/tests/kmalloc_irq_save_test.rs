@@ -12,7 +12,7 @@
 //! 删除本地 `IrqSaveFlags` / `IRQ_DISABLED` / `disable_interrupts` /
 //! `restore_interrupts` / `acquire_lock` / `release_lock` / `MockHeap` 平行镜像,
 //! 改引内核真实源码 `edgine::kernel::privileged::sync::{SpinLock, IrqSpinLock,
-//! IrqSaveFlags, disable_interrupts, restore_interrupts}`.
+//! `IrqSaveFlags, disable_interrupts, restore_interrupts}`.
 //! 内核 `disable_interrupts`/`restore_interrupts` 在 host-test 下为桩 (no-op,
 //! B08-14 前置: host 无中断语义, 原子自旋仍正确互斥); `SpinLock`/`IrqSpinLock`
 //! 的原子自旋在 host 多线程下仍正确互斥.

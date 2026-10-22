@@ -112,7 +112,7 @@ fn test_block_ops_thunk_signature_matches_trait() {
     // 验证 proto_block.rs 走 BlockDevice trait 路径 (无 thunk)。
     //
     // 历史: LEGACY-4.2 已于 maintenance-2026-06-11 周期删除 4 个 thunk
-    // (blk_read_thunk/write_thunk/is_present_thunk/total_sectors_thunk),
+    // (`blk_read_thunk`/`write_thunk`/`is_present_thunk`/`total_sectors_thunk`),
     // 全部迁移到 BlockDevice trait + egdf 桥接。
     // 本测试现在反向验证: proto_block.rs 中**不应**再出现 thunk 函数定义。
     let path = Path::new(KERNEL_DIR).join("privileged/egdf/proto_block.rs");

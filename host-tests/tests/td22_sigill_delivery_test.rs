@@ -34,7 +34,7 @@ const UD2_LEN: u64 = 2;
 #[test]
 fn create_handler_dispatches_vector_6() {
     // 内核 handlers.rs::create_handler 派发表静态契约 (host 无法链接 idt 模块):
-    // vector 6 → InvalidOpcodeHandler
+    // 向量 6 → InvalidOpcodeHandler
     let source = include_str!("../../src/kernel/privileged/idt/handlers.rs");
     let needle = format!("{VECTOR_UD} => &INVALID_OPCODE");
     assert!(
@@ -79,7 +79,7 @@ fn sigill_default_action_is_core() {
 #[test]
 fn sigill_related_signals_are_core() {
     // 内核 FallbackSignalPolicy (functions 注册前回退策略) 对 Core 组信号:
-    // QUIT(3)/ILL(4)/ABRT(6)/BUS(7)/FPE(8)/SEGV(11)/XCPU(24)/XFSZ(25)/SYS(31)
+    // 信号编号: QUIT(3)/ILL(4)/ABRT(6)/BUS(7)/FPE(8)/SEGV(11)/XCPU(24)/XFSZ(25)/SYS(31)
     for sig in [3u8, 4, 6, 7, 8, 11, 24, 25, 31] {
         assert_eq!(
             signal_default_action(sig),

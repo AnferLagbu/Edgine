@@ -7,10 +7,10 @@
 //!
 //! 覆盖:
 //! 1. Identify Controller: nn (offset 516, LE u32) + mn (offset 24, 40 字节空终止)
-//! 2. Identify Namespace: nsze (offset 0, LE u64) + flbas (offset 26) +
-//!    lbaf_data (offset 128 + lbaf_idx*4, LE u32)
+//! 2. Identify Namespace 字段: nsze (offset 0, LE u64) + flbas (offset 26) +
+//!    其中 lbaf_data (offset 128 + lbaf_idx*4, LE u32)
 //! 3. 短缓冲区: 长度不足返回 None
-//! 4. lbaf_idx >= 16: lbaf_data = 0
+//! 4. lbaf_idx >= 16 时, lbaf_data = 0
 
 use edgine::kernel::functions::driver::storage::nvme::{
     parse_identify_controller, parse_identify_namespace,

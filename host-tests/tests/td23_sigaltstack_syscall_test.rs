@@ -17,7 +17,7 @@
 //! old_ss 查询) 无法在 host 直接验证: 内核实现依赖
 //! `process_get_current_pid()` → `SCHEDULER.current()` (全局调度器每 CPU 当前 pid,
 //! host 下无法注入测试 pid 使 `process_with_mut` 命中测试进程). 对应用例
-//! (query_only_no_change / set_then_query_returns_value / disable_clears_addr_size
+//! (`query_only_no_change` / `set_then_query_returns_value` / `disable_clears_addr_size`
 //! 等) 已移除. 状态机真实覆盖由 QEMU 集成测试 (syscall 路径) 承担.
 
 use edgine::kernel::functions::syscall::types::SYS_sigaltstack;

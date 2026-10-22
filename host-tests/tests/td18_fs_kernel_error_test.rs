@@ -5,10 +5,10 @@
 //   - functions/fs/ramfs.rs 不再独立定义 16 字段 FsError enum
 //   - FsError 3 FS 特有字段 (NotInitialized/IoError/Overflow) + 1 Kernel 包装
 //   - 旧变体 NotFound/AlreadyExists/NoSpace/PermissionDenied/InvalidArgument/
-//     OutOfMemory/Busy/NotSupported/NotADirectory/IsDirectory/ReadOnly/
+//     `OutOfMemory/Busy/NotSupported/NotADirectory/IsDirectory/ReadOnly/`
 //     BadFileDescriptor/NameTooLong 全部废弃
 //   - KernelError 新增 FS 特有 POSIX 变体 (FileNotFound/AlreadyExists/Busy/
-//     NotADirectory/IsDirectory/ReadOnlyFilesystem/NameTooLong/NoSpace/CrossDevice)
+//     `NotADirectory/IsDirectory/ReadOnlyFilesystem/NameTooLong/NoSpace/CrossDevice`)
 //   - to_errno() 方法 4 变体全覆盖
 //   - From<KernelError> for FsError 包装实现
 //   - from_i32() 委托给 KernelError::from_i32
@@ -155,7 +155,7 @@ fn kernel_error_exposes_all_fs_posix_variants() {
 fn usages_all_use_kernel_wrapper() {
     let src = read(RAMFS_RS);
     // 至少 8 处用 FsError::Kernel(KernelError::...) 包装
-    // (7×NotFound + 1×NotADirectory + 1×InvalidArgument = 9,
+    // (7×NotFound + 1×NotADirectory + 1×InvalidArgument 共 9 处,
     //  减去 doc 注释中 1 行 引用 = 8 实际.
     //  原下界 10 含已删死的 ramfs 辅助 split_path/validate_path 之 3 处
     //  (2×InvalidArgument + 1×NameTooLong), 随 B09 冗余定型删除后下调为 8)

@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn mid_size_buffer() {
-        // 2 MiB huge page (order 9)
+        // 2 MiB 大页 (order 9)
         // SAFETY: 页对齐物理地址, 见 frame() 说明
         let d = DmaStream::from_frame(unsafe { frame(0x200000, 9) }, DmaDirection::Bidirectional)
             .unwrap();

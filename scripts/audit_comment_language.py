@@ -29,7 +29,15 @@ from pathlib import Path
 from typing import Iterator
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-BASE = PROJECT_ROOT / "src" / "kernel"
+# 覆盖根 (P-50 丙・全扩三树): 此前只有 src/kernel ⇒ F7 对 host-tests/ src/user/
+# kani-harness/ 完全不生效, 而 §5 F7 写的是「中文注释强制」而非「内核中文注释强制」.
+# 逐根 fail-closed: 任一根不存在即返 2 (不把"根拼错"读成"扫描零违规").
+BASES = [
+    PROJECT_ROOT / "src" / "kernel",
+    PROJECT_ROOT / "host-tests",
+    PROJECT_ROOT / "src" / "user",
+    PROJECT_ROOT / "kani-harness",
+]
 
 # 注释前缀 (/// 文档注释, // 行内, /* 块注释起始, * 块注释续行, // SAFETY:, // TODO:)
 COMMENT_PREFIX = re.compile(
@@ -421,7 +429,9 @@ def detect_violation(comment_text: str, continuation: bool = False) -> tuple[boo
         return False, ""
 
     # SPDX License 标识 (必须保留, 国际通用)
-    spdx_body = re.sub(r"^\s*(?:///?|\*|/\*)", "", stripped).strip()
+    # 前缀需覆盖 `//!`: 旧正则只剥 `//`/`///`, `//! SPDX-…` 剥完残留 `! SP…`,
+    # 前缀判据失配 ⇒ 15 个文件的许可证头被误报为英文段落.
+    spdx_body = re.sub(r"^\s*(?://[/!]?|\*|/\*)", "", stripped).strip()
     if spdx_body.startswith("SPDX-License-Identifier:"):
         return False, ""
 
@@ -684,15 +694,16 @@ def iter_comments(rs_file: Path) -> Iterator[tuple[int, str, bool]]:
 
 
 def main() -> int:
-    if not BASE.exists():
-        print(f"error: base dir not found: {BASE}", file=sys.stderr)
+    missing = [str(b.relative_to(PROJECT_ROOT)) for b in BASES if not b.exists()]
+    if missing:
+        print(f"error: 覆盖根缺失 (fail-closed, P-50 丙): {', '.join(missing)}", file=sys.stderr)
         return 2
 
     issues: list[str] = []
     files_scanned = 0
     files_with_issues: set[str] = set()
 
-    for rs_file in BASE.rglob("*.rs"):
+    for rs_file in sorted(p for b in BASES for p in b.rglob("*.rs")):
         files_scanned += 1
         rel = rs_file.relative_to(PROJECT_ROOT)
         rel_str = str(rel)

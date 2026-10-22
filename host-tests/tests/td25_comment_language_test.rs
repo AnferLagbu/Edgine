@@ -69,6 +69,11 @@ fn run_audit_on_fixture(files: &[(&str, &str)]) -> (i32, String, String) {
     let project_root = tmp.join("project");
     let p_kernel = project_root.join("src/kernel");
     fs::create_dir_all(&p_kernel).unwrap();
+    // 审计脚本的四个覆盖根逐根 fail-closed (P-50 丙): 骨架缺根时脚本会先报
+    // `覆盖根缺失` 并以退出码 2 结束, 所有 fixture 断言都会失真.
+    for root in ["host-tests", "src/user", "kani-harness"] {
+        fs::create_dir_all(project_root.join(root)).unwrap();
+    }
     // 复制脚本 (审计脚本会沿 PROJECT_ROOT 父目录找)
     let script_src = audit_script();
     let scripts_dst = project_root.join("scripts");
@@ -126,13 +131,18 @@ fn test_pure_chinese_comment_passes() {
 
 #[test]
 fn test_pure_english_paragraph_violates() {
+    // fixture 内英文必须保持原文 (被测对象就是英文段落), 故用 concat! 让每个
+    // 源码行以 `"` 起头: 若源码行自身以 `///` 起头, 本仓注释审计会把测试数据
+    // 当成真实注释误报.
     let files = &[(
         "mod_b.rs",
-        "/// This function calculates the sum of two integers.\n\
-         /// It accepts parameters a and b, returning the result.\n\
-         pub fn add(a: i32, b: i32) -> i32 {\n\
-             a + b\n\
-         }\n",
+        concat!(
+            "/// This function calculates the sum of two integers.\n",
+            "/// It accepts parameters a and b, returning the result.\n",
+            "pub fn add(a: i32, b: i32) -> i32 {\n",
+            "a + b\n",
+            "}\n",
+        ),
     )];
     let (code, stdout, _stderr) = run_audit_on_fixture(files);
     assert_eq!(code, 1, "纯英文段落应报违规, stdout={}", stdout);
@@ -292,14 +302,16 @@ fn test_bare_signature_passes() {
     // 无 POSIX 前缀的纯签名引用 (functions/net/syscall.rs 常见)
     let files = &[(
         "net.rs",
-        "/// sendto(fd, buf, len, flags, dest_addr, addrlen)\n\
-         pub fn sendto() {}\n\
-         \n\
-         /// recvfrom(fd, buf, len, flags, src_addr, addrlen)\n\
-         pub fn recvfrom() {}\n\
-         \n\
-         /// bind(fd, addr, addrlen)\n\
-         pub fn bind() {}\n",
+        concat!(
+            "/// sendto(fd, buf, len, flags, dest_addr, addrlen)\n",
+            "pub fn sendto() {}\n",
+            "\n",
+            "/// recvfrom(fd, buf, len, flags, src_addr, addrlen)\n",
+            "pub fn recvfrom() {}\n",
+            "\n",
+            "/// bind(fd, addr, addrlen)\n",
+            "pub fn bind() {}\n",
+        ),
     )];
     let (code, stdout, stderr) = run_audit_on_fixture(files);
     assert_eq!(
@@ -339,9 +351,11 @@ fn test_posix_marker_without_backtick_still_violates() {
     // 有 POSIX 标记但无反引号函数名 = 叙述性段落, 仍违规
     let files = &[(
         "doc.rs",
-        "/// POSIX compliance is required for all the system calls\n\
-         /// and the interface must follow the standard convention.\n\
-         pub fn f() {}\n",
+        concat!(
+            "/// POSIX compliance is required for all the system calls\n",
+            "/// and the interface must follow the standard convention.\n",
+            "pub fn f() {}\n",
+        ),
     )];
     let (code, _stdout, _stderr) = run_audit_on_fixture(files);
     assert_eq!(code, 1, "POSIX 叙述性段落应报违规 (无反引号函数名)");
@@ -410,10 +424,36 @@ fn test_low_marker_density_still_violates() {
     // 只有 1 个代码标记 (1 个 `;`), 视为叙述性段落
     let files = &[(
         "doc.rs",
-        "/// This is some English text; more English words here\n\
-         /// and even more English content for the documentation.\n\
-         pub fn f() {}\n",
+        concat!(
+            "/// This is some English text; more English words here\n",
+            "/// and even more English content for the documentation.\n",
+            "pub fn f() {}\n",
+        ),
     )];
     let (code, _stdout, _stderr) = run_audit_on_fixture(files);
     assert_eq!(code, 1, "低密度代码标记段落应报违规 (仅 1 个分号)");
+}
+
+// ── 11. SPDX 许可证头 (`//!` 形态) 豁免 ─────────────────────
+//
+// P-50 回归: 检测器的 SPDX 前缀判据此前只剥 `//` / `///`, 对 `//! SPDX-…`
+// 剥完残留 `! SP…`, 前缀判据失配 ⇒ 15 个文件的许可证头被误报为英文段落.
+// fixture 用 concat! 让源码行以 `"` 起头, 避免本仓 F7 自命中.
+
+#[test]
+fn test_spdx_doc_comment_passes() {
+    let files = &[(
+        "spdx.rs",
+        concat!(
+            "//! SPDX-License-Identifier: MPL-2.0\n",
+            "//! 模块文档注释\n",
+            "pub fn f() {}\n",
+        ),
+    )];
+    let (code, stdout, stderr) = run_audit_on_fixture(files);
+    assert_eq!(
+        code, 0,
+        "SPDX 许可证头 (`//!` 形态) 应豁免, stdout={}, stderr={}",
+        stdout, stderr
+    );
 }

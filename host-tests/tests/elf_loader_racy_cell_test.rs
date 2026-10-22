@@ -45,8 +45,8 @@ fn two_concurrent_loads_have_isolated_buffers() {
     assert_eq!(r1.len(), 100, "P1-I-32: cpu1 应记录 100 页");
 
     for (i, (&v0, &v1)) in r0.iter().zip(r1.iter()).enumerate() {
-        // cpu0: base = 0x0 + i
-        // cpu1: base = 0x1_0000_0000 + i
+        // cpu0: 基址 = 0x0 + i
+        // cpu1: 基址 = 0x1_0000_0000 + i
         assert_eq!(v0, i as u64, "P1-I-32: cpu0 第 {} 页 = {}", i, i);
         assert_eq!(
             v1,

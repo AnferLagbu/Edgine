@@ -106,7 +106,7 @@ fn alias_registry_semantics() {
     {
         let m = unsafe { IoMem::new(PhysAddr(0x1000), 0x100, "dev1") };
         assert!(m.is_ok());
-        drop(m); // IoMem Drop → ALIAS_REGISTRY.unregister
+        drop(m); // IoMem 析构 → ALIAS_REGISTRY.unregister
         // 释放后重新注册同物理地址
         // SAFETY: 同前
         let revived = unsafe { IoMem::new(PhysAddr(0x1000), 0x100, "dev1-revived") };

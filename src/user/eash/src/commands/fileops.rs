@@ -140,7 +140,7 @@ pub fn touch(cmd: &Cmd) {
 
 pub fn del(cmd: &Cmd) {
     if let Some(p) = path_arg(cmd) {
-        // try unlink first, then rmdir
+        // 先尝试 unlink, 失败再 rmdir
         if fs_unlink(&p) < 0 && fs_rmdir(&p) < 0 {
             print("del: cannot remove '");
             print_nb(&p);

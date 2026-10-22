@@ -127,7 +127,7 @@ fn mmap_syscall_passes_pwm_to_vma() {
 /// 此处模拟该路径: 验证 vma.file_pwm 是被读取的, 不是其它字段
 fn mock_handle_pf(vma: &Vma) -> u64 {
     // edgine page_fault::handle_file_fault miss 路径:
-    // vfs_pread_inode(vma.inode_id, file_off, dst, vma.file_pwm)
+    // `vfs_pread_inode(vma.inode_id, file_off, dst, vma.file_pwm)`
     vma.file_pwm
 }
 

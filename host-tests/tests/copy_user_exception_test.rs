@@ -300,7 +300,7 @@ fn signal_frame_layout_size_matches_push_order() {
     // 镜像内核 isr.asm: SignalFrame 由 push 顺序填充, 23 个 u64 字段 = 184 字节
     // 字段顺序: r15, r14, r13, r12, r11, r10, r9, r8,        (8)
     //          rdi, rsi, rbp, rdx, rcx, rbx, rax,              (7)
-    //          int_no, err_code, rip, cs, rflags, rsp, ss, signum (8)
+    //          int_no, err_code, rip, cs, rflags, rsp, ss, signum (8 个字段)
     assert_eq!(
         core::mem::size_of::<SignalFrame>(),
         23 * 8,

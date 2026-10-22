@@ -23,7 +23,14 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-BASE = PROJECT_ROOT / "src" / "kernel"
+# 覆盖根 (P-50 丙・全扩三树): I-07「C 命名残留」此前只扫 src/kernel, host-tests/
+# src/user/ kani-harness/ 长期不在覆盖内. 逐根 fail-closed, 根缺失即返 1.
+BASES = [
+    PROJECT_ROOT / "src" / "kernel",
+    PROJECT_ROOT / "host-tests",
+    PROJECT_ROOT / "src" / "user",
+    PROJECT_ROOT / "kani-harness",
+]
 
 # C 风格类型后缀 (用于类型别名/字段类型/参数)
 C_TYPE_SUFFIX = re.compile(r"\b(?:u8|u16|u32|u64|i8|i16|i32|i64|usize|isize)_t\b")
@@ -73,13 +80,14 @@ def is_allowed_line(line: str, prev_lines: list[str] = None) -> bool:
 
 
 def main() -> int:
-    if not BASE.exists():
-        print(f"error: base dir not found: {BASE}", file=sys.stderr)
+    missing = [str(b.relative_to(PROJECT_ROOT)) for b in BASES if not b.exists()]
+    if missing:
+        print(f"error: 覆盖根缺失 (fail-closed, P-50 丙): {', '.join(missing)}", file=sys.stderr)
         return 1
 
     issues: list[str] = []
 
-    for rs_file in BASE.rglob("*.rs"):
+    for rs_file in sorted(p for b in BASES for p in b.rglob("*.rs")):
         try:
             content = rs_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):

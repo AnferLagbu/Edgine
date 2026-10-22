@@ -65,7 +65,10 @@ AUDIT_REQUIRED_LEGS="tcb_ratio invariants unsafe block_registration once_cell c_
 # scan_antx_residue.py, 自测那条在 tests/ 子目录), 由 host-tests 结构锁逐项核验真实存在.
 # 第 7 条 implicit_deps_selftest 是 P-49 甲・自测锁的执行点 —— 一个只有人手工跑的自测
 # 与"零调用者审计脚本"是同一个病灶, 接线时若不给它调用点, 本轮修法当场失效.
-AUDIT_REQUIRED_LEGS_FULL="implicit_deps:audit_implicit_deps.py implicit_deps_selftest:tests/audit_implicit_deps_selftest.py feature_semantics:audit_feature_semantics.py reverse_deps:audit_reverse_deps.py public_api_docs:audit_public_api_docs.py smoltcp_purity:audit_smoltcp_purity.py antx_residue:scan_antx_residue.py"
+# 第 8 条 audit_selftest 是 P-50 ③ 的执行点, 同型但更隐蔽: 它的四个用例此前在自测文件里
+# "手动模拟"检测算法 (检测器退化时自测照样全绿). 真调化后若仍只留在从不触发的
+# .github/workflows/ci-lint.yml 里, 等于把 P-49 的病灶换个位置复现.
+AUDIT_REQUIRED_LEGS_FULL="implicit_deps:audit_implicit_deps.py implicit_deps_selftest:tests/audit_implicit_deps_selftest.py audit_selftest:tests/audit_selftest.py feature_semantics:audit_feature_semantics.py reverse_deps:audit_reverse_deps.py public_api_docs:audit_public_api_docs.py smoltcp_purity:audit_smoltcp_purity.py antx_residue:scan_antx_residue.py"
 AUDIT_RUN_LEGS_FULL=""
 mark_leg_full() { AUDIT_RUN_LEGS_FULL="${AUDIT_RUN_LEGS_FULL} $1"; }
 AUDIT_RUN_LEGS=""
@@ -524,9 +527,9 @@ fi
 # 落点都按脚本自身口径解析 (audit_feature_semantics.py:37-38 用相对路径, :521 写
 # other/target/audit/), 而本文件在 2e 前后有 pushd/popd (步骤 1/2 与 Lockbud) —— 一旦
 # 有人在别处补一对 pushd 而忘记 popd, 借 cwd 的腿会读错根 (实测 cwd=/ 时该腿 RC=2).
-# 置于 quick 早退分支之后 = 仅 full 执行. 耗时逐腿实测 (单跑合计 19.961s): implicit_deps 1.2 /
+# 置于 quick 早退分支之后 = 仅 full 执行. 耗时逐腿实测 (单跑合计 20.0s): implicit_deps 1.2 /
 # feature_semantics 0.1 / reverse_deps 0.3 / public_api_docs 3.8 / smoltcp_purity 3.4 /
-# antx_residue 6.2 / implicit_deps_selftest 4.9. 其中只有 smoltcp_purity 会浅克隆上游 + ls-remote
+# antx_residue 6.2 / implicit_deps_selftest 4.9 / audit_selftest 0.04. 其中只有 smoltcp_purity 会浅克隆上游 + ls-remote
 # ⇒ 受网络影响; 该腿的联网检查在脚本内降级为 WARN (audit_smoltcp_purity.py:230-273),
 # 断网只改耗时不改判据, 不会因环境转红. 其余各腿都是纯文本扫描, 无改动时不会更贵.
 step "2e/6 存量审计腿接入 (P-49)"

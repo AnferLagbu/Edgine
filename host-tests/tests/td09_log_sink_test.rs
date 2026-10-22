@@ -3,7 +3,7 @@
 //
 // 验收:
 //   - LogSink trait 存在且含 name/putc/write_str/write_bytes
-//   - SerialSink impl name() == "serial"
+//   - SerialSink 实现 name() == "serial"
 //   - 全局注册表容量 MAX_LOG_SINKS = 4
 //   - klog_output 改走 klog_broadcast_bytes 路径 (无 serial 直写)
 //   - klog_register_defaults 注册入口存在
