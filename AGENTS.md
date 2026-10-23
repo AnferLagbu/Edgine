@@ -58,10 +58,11 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 | `audit_repr_c.py` / `audit_volatile_access.py` / `audit_static_mut.py` | repr(C) 字段错位 / volatile 访问 / static mut 防线 | 附加门禁 | 强制 |
 | `audit_orphaned_init.py` | 孤儿 init 编排入口（`no_mangle` + 零调用 + 体内聚合 ≥2 项 init） | 附加门禁（F9 配套，P-8） | 强制 |
 | `audit_unwired_pub_fn.py` | 未接线 syscall 编号（R2 CRITICAL）；零引用 pub fn（R1）仅报告 | 附加门禁（F9 配套，P-13） | 强制（R2） |
+| `audit_dead_code_comment.py` | F9 全仓执法：死代码抑制（allow/expect 的 `dead_code`/`unused*` 族）硬零 + clippy 抑制对机器派生侧车基线双向对账 | F9 | 强制 |
 | `audit_tcb_ratio.py` | TCB 占比统计（软 < 30%）| 软约束 | 报告 |
 
 > **附加门禁**：OnceCell / C 命名 / repr(C) / volatile / static_mut / orphaned_init / unwired_pub_fn 已接入 CI 强制，但不占 §5 的 F1-F9 零容忍编号（属内存/风格专项防线，映射 I2/I5/I6 不变式；orphaned_init 与 unwired_pub_fn 属 F9 死代码与接线断点的专项，后者仅 R2 未分发 syscall 编号阻断，R1 存量零引用名单待逐项甄别后开 `--strict`）。
-> **完整清单**：仓库共 25 个 `audit_*.py`（受控文件实测口径：`scripts/` 22 + `scripts/tests/` 2 + `tools/audit_unsafe.py` 1；本表为常用核心门禁项，非穷举）. `block_registration`(I-43) / `tlb_receive_order`(S-14) / `aarch64_kernel_fp_free`(FP-06) 等专项亦在 `ci/audit.sh` 强制但未列入本表; P-49 收口后另有一组**仅 `full` 档执行**的存量审计腿接入 `ci/audit.sh` 步骤 2e（单源清单 = `AUDIT_REQUIRED_LEGS_FULL`）——阻断腿 `audit_implicit_deps` / `audit_feature_semantics` / `audit_reverse_deps` / `audit_public_api_docs` / `audit_smoltcp_purity` + 自测腿 `audit_implicit_deps_selftest` / `audit_selftest`，外加报告腿 `scan_antx_residue`（只播报读数、不判退出码，见 P-58）；真正未接入 CI 的只剩 `tools/check_doc_paths.py` 一类按需工具.
+> **完整清单**：仓库共 26 个 `audit_*.py`（受控文件实测口径：`scripts/` 23 + `scripts/tests/` 2 + `tools/audit_unsafe.py` 1；本表为常用核心门禁项，非穷举）. `block_registration`(I-43) / `tlb_receive_order`(S-14) / `aarch64_kernel_fp_free`(FP-06) 等专项亦在 `ci/audit.sh` 强制但未列入本表; P-49 收口后另有一组**仅 `full` 档执行**的存量审计腿接入 `ci/audit.sh` 步骤 2e（单源清单 = `AUDIT_REQUIRED_LEGS_FULL`）——阻断腿 `audit_implicit_deps` / `audit_feature_semantics` / `audit_reverse_deps` / `audit_public_api_docs` / `audit_smoltcp_purity` + 自测腿 `audit_implicit_deps_selftest` / `audit_selftest`，外加报告腿 `scan_antx_residue`（只播报读数、不判退出码，见 P-58）；真正未接入 CI 的只剩 `tools/check_doc_paths.py` 一类按需工具.
 > **定点锁口径**（P-50 甲）：`audit_repr_c.py` / `audit_volatile_access.py` / `audit_tlb_receive_order.py` 的判定对象是**冻结清单**（2 struct / 4 字段 / 1 函数），不是树级扫描 —— 它们只能证明清单内条目未丢掉 `repr(C)`、访问模式与调用次序，同类的**新**风险点不会被发现。定位为「定点回归锁，非树级防线」；树级扩围的成本与收益已登记 P-61.
 
 ### 2.3 验证门槛

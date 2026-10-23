@@ -25,10 +25,8 @@
 //! 本模块自带 8 个单元测试覆盖: 空程序/超长/EXIT 缺失/寄存器 OOB/回边超限/
 //! 未初始化读/合法最小程序/重复 set_verifier.
 
-// BpfInsn 在部分构建下未使用 (2026-09-11 实测: 移除则报 unused import: BpfInsn)
-#[allow(unused_imports)]
 use crate::privileged::debug::{
-    BPF_MAX_INSNS, BPF_REG_NUM, BPF_STACK_SIZE, BpfInsn, BpfProg, BpfVerifier, VerifyResult,
+    BPF_MAX_INSNS, BPF_REG_NUM, BPF_STACK_SIZE, BpfProg, BpfVerifier, VerifyResult,
 };
 
 /// 寄存器类型 (验证器内部状态, 策略相关, 不导出)
@@ -512,8 +510,8 @@ fn is_valid_helper(id: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::privileged::debug::BpfProgType;
     use crate::privileged::debug::opcode;
+    use crate::privileged::debug::{BpfInsn, BpfProgType};
     use alloc::vec;
     use alloc::vec::Vec;
 

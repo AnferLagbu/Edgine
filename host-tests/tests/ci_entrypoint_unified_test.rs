@@ -223,8 +223,8 @@ fn test_audit_sh_audit_legs_are_fail_closed() {
         .split_whitespace()
         .collect();
     assert!(
-        required.len() >= 18,
-        "AUDIT_REQUIRED_LEGS 只点名 {} 条腿, 低于实测的 18 条 (17 被包装 + coupling)",
+        required.len() >= 19,
+        "AUDIT_REQUIRED_LEGS 只点名 {} 条腿, 低于实测的 19 条 (18 被包装 + coupling)",
         required.len()
     );
 
@@ -259,6 +259,110 @@ fn test_audit_sh_audit_legs_are_fail_closed() {
             "AUDIT_REQUIRED_LEGS 点名的 {leg} 无对应 audit_{leg}.py —— 清单与脚本集漂移"
         );
     }
+}
+
+/// P-53 结构锁: F9 全仓执法路径 = 脚本 + 冻结侧车 + 两档 audit 腿, 三要素任一失效即红.
+///
+/// 病灶形态 (P-53 测绘): §5 F9 的「检查方式」只有 rustc dead_code lint, 而 rustc 只
+/// 覆盖被编译到的路径; 仓内兜底只有 4 份 host-tests 里按手抄文件清单跑的 grep. 同族的
+/// 三种退化必须被本锁挡住:
+/// ① 脚本写出来却不接线 (P-49 的「零调用者脚本」形态);
+/// ② 接线了但自检没有执行点 (P-50 ③ 的「自测只模拟算法」形态);
+/// ③ 有阻塞口径却没有冻结基线 —— 存量 292 处 clippy 抑制会让两档恒红, 下一个人只会
+///    把整条腿摘掉 (P-49 已实测的「为绿而摘」动力).
+///
+/// 五臂:
+/// ① 五树扫描根 / vendored 按路径分量排除 / 扫描根缺失 fail-closed 出口齐备;
+/// ② 属性位置锚定检测 + 自测执行点 + 死代码抑制先于基线写入 (dead_code 永不进基线);
+/// ③ 基线唯一写入口是 --update-baseline, 读取侧必须双向对账 (over + under);
+/// ④ 腿在 AUDIT_REQUIRED_LEGS 里, mark_leg 与 audit_leg_missing 成对, 且位于 0.5n
+///    到位断言之前 (放后面则「本腿未跑」不进单点比对);
+/// ⑤ 侧车快照真实存在, 且 _meta.disposition 点名承接工程 P-64.
+#[test]
+fn test_p53_f9_dead_code_comment_gate_is_wired() {
+    let sh = read(AUDIT_SH);
+    let py = read("../scripts/audit_dead_code_comment.py");
+    assert!(
+        Path::new("../scripts/audit_dead_code_comment.baseline.json").exists(),
+        "F9 冻结侧车 audit_dead_code_comment.baseline.json 缺失 —— \
+         无基线则 292 处存量抑制让腿恒红, 腿会被摘掉而不是被修"
+    );
+    let baseline = read("../scripts/audit_dead_code_comment.baseline.json");
+
+    for needle in [
+        r#"SCAN_ROOTS = ("src/kernel", "host-tests", "src/user", "src/rust", "kani-harness")"#,
+        r#"VENDORED_DIRS = {"smoltcp"}"#,
+        "for root in SCAN_ROOTS",
+        "扫描根不存在",
+        "if args.self_test:",
+        "if args.update_baseline:",
+    ] {
+        assert!(
+            py.contains(needle),
+            "audit_dead_code_comment.py 缺关键结构 `{needle}` —— P-53 甲 的检测面退化"
+        );
+    }
+    let dead_zero = py
+        .find("if dead_hits:")
+        .unwrap_or_else(|| panic!("脚本缺死代码抑制的阻断分支 (F9 硬零)"));
+    let baseline_write = py
+        .find("if args.update_baseline:")
+        .unwrap_or_else(|| panic!("脚本缺 --update-baseline 写入口"));
+    assert!(
+        dead_zero < baseline_write,
+        "死代码抑制的阻断分支位于基线写入之后 —— dead_code 族可被 --update-baseline 洗进基线"
+    );
+    assert!(
+        py.contains("if over or under:"),
+        "基线对账必须双向 (超出 + 减少) —— 单向只挡新增, 快照会永久过期"
+    );
+    assert!(
+        baseline.contains("P-64"),
+        "侧车 _meta.disposition 未点名 P-64 —— 存量 1661 处抑制的承接工程丢失"
+    );
+
+    let required_line = sh
+        .lines()
+        .find(|l| l.trim_start().starts_with("AUDIT_REQUIRED_LEGS="))
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少 AUDIT_REQUIRED_LEGS 到位清单"));
+    assert!(
+        required_line
+            .split('"')
+            .nth(1)
+            .is_some_and(|s| s.split_whitespace().any(|w| w == "dead_code_comment")),
+        "dead_code_comment 未进 AUDIT_REQUIRED_LEGS —— 0.5n 到位断言不再要求本腿执行"
+    );
+
+    let leg = sh
+        .find("mark_leg \"dead_code_comment\"")
+        .unwrap_or_else(|| panic!("ci/audit.sh 未登记 dead_code_comment 腿"));
+    let assertion_anchor = sh
+        .find("0.5n/6")
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺 0.5n 到位性断言"));
+    let quick_exit = sh
+        .find("if [ \"$MODE\" = \"quick\" ]")
+        .unwrap_or_else(|| panic!("ci/audit.sh 找不到 quick 早退分支"));
+    assert!(
+        leg < assertion_anchor,
+        "dead_code_comment 腿位于 0.5n 到位断言之后 —— 未执行时不会进缺失清单"
+    );
+    assert!(
+        leg < quick_exit,
+        "dead_code_comment 腿被挪到 quick 早退之后 —— F9 是 §5 硬规则, 两档都必须执法"
+    );
+    assert!(
+        sh.contains(r#"audit_leg_missing "dead_code_comment""#),
+        "dead_code_comment 腿缺 audit_leg_missing 出口 —— 脚本缺失时静默消失 (P-46 回退)"
+    );
+    assert!(
+        sh.contains(r#""$PROJECT_ROOT/scripts/audit_dead_code_comment.py" --self-test"#),
+        "audit.sh 未执行脚本自检 —— 检测器退化时门禁会静默全绿 (P-50 ③ 同族)"
+    );
+    assert!(
+        sh.contains("DC_RC=$?"),
+        "audit.sh 未捕获脚本退出码 (B01-25 惯用法) —— pipefail 下 `if cmd | tail` 的 \
+         失败分支不可达, 真因会被「执行异常」吞掉"
+    );
 }
 
 /// P-49 结构锁: full 档存量审计腿清单必须逐条真实接线, 且只在 quick 早退之后执行.

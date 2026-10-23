@@ -511,7 +511,6 @@ impl DmaEngine {
     ///
     /// `x86_64`: 缓存一致, 仅需栅栏 (addr/size 无须使用).
     /// aarch64: 按虚拟地址逐行失效 (DC IVAC).
-    #[cfg_attr(target_arch = "x86_64", allow(unused_variables))]
     #[inline(always)]
     #[expect(
         clippy::unused_self,
@@ -524,7 +523,9 @@ impl DmaEngine {
     fn cache_invalidate(&self, addr: VirtAddr, size: usize) {
         #[cfg(target_arch = "x86_64")]
         {
-            // x86_64: 缓存通常一致, 只需栅栏
+            // x86_64: 缓存通常一致, 只需栅栏; addr/size 在实现使用路径上显式消费,
+            // 以免为「不同架构参数用不用」再挂 allow(unused_variables).
+            let _ = (addr, size);
             core::sync::atomic::fence(Ordering::SeqCst);
         }
 

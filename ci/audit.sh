@@ -55,8 +55,8 @@ audit_leg_missing() {
 # 故再加一道: 每条腿调起前 mark_leg 登记, 0.5n 处单点比对「期望清单 == 实际到位」.
 # 期望清单是手写字面 ⇒ 由 host-tests 结构锁 `test_audit_sh_audit_legs_are_fail_closed`
 # 与本清单互校 (AGENTS.md §2.2 的强制项必须逐项出现在此), 防它自身漂移.
-# 18 项 = 17 条被存在性包装的腿 (含两个 for 循环各展开 3 条) + 0.5k2 的 coupling.
-AUDIT_REQUIRED_LEGS="tcb_ratio invariants unsafe block_registration once_cell c_naming comment_language tlb_receive_order aarch64_kernel_fp_free repr_c volatile_access static_mut functions_boundary safety_coverage deadlock_matrix coupling orphaned_init unwired_pub_fn"
+# 19 项 = 18 条被存在性包装的腿 (含两个 for 循环各展开 3 条) + 0.5k2 的 coupling.
+AUDIT_REQUIRED_LEGS="tcb_ratio invariants unsafe block_registration once_cell c_naming comment_language tlb_receive_order aarch64_kernel_fp_free repr_c volatile_access static_mut functions_boundary safety_coverage deadlock_matrix coupling orphaned_init unwired_pub_fn dead_code_comment"
 # ── P-49: 仅 full 档执行的存量审计腿清单 ──────────────────────
 # 六条脚本此前在仓内**零调用者** (P-49 测绘), §2.2 与 plan 里点名它们却没有任何本地执法
 # 路径. 本轮接入 step 2e —— 位置在 quick 早退分支**之后** ⇒ 不进 AUDIT_REQUIRED_LEGS
@@ -382,6 +382,41 @@ if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_unwir
     fi
 else
     audit_leg_missing "unwired_pub_fn" "$PROJECT_ROOT/scripts/audit_unwired_pub_fn.py"
+fi
+
+# ── 0.5m2 P-53 F9 死代码注释审计 (全仓) ─────────────────────────
+# F9 原文的检查方式只有「Rust 编译器 dead_code lint」, 而 rustc 只覆盖被编译到的路径
+# (feature 关闭 / cfg 掩码下的区域无人可见); 仓内原有兜底仅是 4 份 host-tests 里按
+# 手抄文件清单跑的 grep. 本腿补上全仓执法路径:
+#   · dead_code / unused / unused_* 抑制 = 硬零, 不进基线 (唯一两处真实存量已消除);
+#   · clippy 抑制族同属 F9 射程 (用户 2026-10-23 裁定), 存量 1661 处冻结在机器派生
+#     侧车 audit_dead_code_comment.baseline.json (逻辑属性行口径; 单行口径的 292 会
+#     漏计仓内既有的折行 `#[expect(clippy::…, reason = "…")]` 形态), 清零归 P-64;
+#     新增/减少均双向阻断.
+# 判定按**属性位置**锚定, 注释与字符串字面量里的同形文本不误报 (自测 12 例覆盖).
+if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_dead_code_comment.py" ]; then
+    mark_leg "dead_code_comment"
+    step "0.5m2/6 F9 死代码注释 audit (P-53)"
+    set +e
+    DC_OUT=$(python3 "$PROJECT_ROOT/scripts/audit_dead_code_comment.py" --self-test 2>&1)
+    DC_RC=$?
+    set -e
+    printf '%s\n' "$DC_OUT" | tail -3
+    if [ "$DC_RC" -ne 0 ]; then
+        err "dead_code_comment: 检测器自检失败 (exit=$DC_RC), 门禁不可信"
+    fi
+    set +e
+    DC_OUT=$(python3 "$PROJECT_ROOT/scripts/audit_dead_code_comment.py" 2>&1)
+    DC_RC=$?
+    set -e
+    printf '%s\n' "$DC_OUT" | tail -24
+    if [ "$DC_RC" -eq 0 ]; then
+        ok "dead_code_comment: 死代码抑制 0 处, clippy 抑制与冻结基线逐项一致"
+    else
+        err "dead_code_comment: 死代码抑制存在, 或 clippy 抑制与基线不符 (exit=$DC_RC)"
+    fi
+else
+    audit_leg_missing "dead_code_comment" "$PROJECT_ROOT/scripts/audit_dead_code_comment.py"
 fi
 
 # ── 0.5n 审计腿到位性单点断言 (P-46 乙) ─────────────────────────
