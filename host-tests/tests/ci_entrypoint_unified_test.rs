@@ -890,6 +890,75 @@ fn test_p54_coupling_judges_both_layers_and_reconciles_baseline() {
     );
 }
 
+/// P-55 结构锁 (乙 + ②四处全修): QEMU 腿缺工具必须进未执行台账, 且四条腿的失败成因
+/// 必须由捕获式退出码给出 (不能把真失败一律打印成「执行异常」).
+///
+/// 病灶: ① QEMU 腿缺 `qemu-system-*` 时只打黄字、退出码不变 ⇒ full 全绿里混着
+/// 一条从未执行的 gate 5; ② `if cmd 2>&1 | tail; then RC=${PIPESTATUS[0]}` 在
+/// `set -o pipefail` 下进入 then 已蕴含 RC=0 ⇒ 失败详情分支不可达.
+#[test]
+fn test_p55_qemu_skip_and_pipe_failure_causes_are_visible() {
+    let sh = read(AUDIT_SH);
+
+    let qemu_start = sh
+        .find("step \"7/7 QEMU")
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少 QEMU 腿 (P-55 的执法路径丢失)"));
+    let qemu = &sh[qemu_start..];
+    assert!(
+        qemu.contains("skip_leg \"qemu\""),
+        "QEMU 腿的「工具缺失」态未登记进未执行台账 —— 缺 qemu 的机器上 gate 5 从未执行, \
+         日志却仍只打黄字且 EXIT=0 (P-55 ① 病灶)"
+    );
+    assert!(
+        !qemu.contains("⚠ QEMU 二进制不可用, 跳过启动测试"),
+        "QEMU 腿仍存在不记账的黄色跳过出口 —— P-55 乙 要求该态必须进入 skip 台账"
+    );
+
+    // ② 四处同族: 失败成因必须来自捕获到的真实退出码.
+    for (probe, marker) in [
+        ("FEATURE_CLIPPY_OUT=$(cargo clippy", "2b clippy feature 维"),
+        ("RELEASE_DIM_OUT=$(", "2d 测试维"),
+        ("FEATURE_DIM_OUT=$(", "2d feature 维"),
+        ("QEMU_OUT=$(FAIL_OK=0", "QEMU 腿"),
+    ] {
+        assert!(
+            sh.contains(probe),
+            "{marker} 未使用 B01-25 捕获式退出码 —— 真失败会被打成「执行异常」(P-55 ②)"
+        );
+    }
+    for (old, marker) in [
+        (
+            "cast_precision_loss 2>&1 | tail -10; then",
+            "2b clippy feature 维",
+        ),
+        (
+            "check_kernel_test_release_dim.sh\" 2>&1 | tail -40; then",
+            "2d 测试维",
+        ),
+        (
+            "check_kernel_feature_release_dims.sh\" 2>&1 | tail -40; then",
+            "2d feature 维",
+        ),
+        ("qemu_boot_test.sh\" all 2>&1 | tail -6; then", "QEMU 腿"),
+    ] {
+        assert!(
+            !sh.contains(old),
+            "{marker} 回退到 `if cmd | tail; then` 形态 —— pipefail 下失败详情分支不可达"
+        );
+    }
+    for (var, rc) in [
+        ("FEATURE_CLIPPY_OUT", "FEATURE_CLIPPY_RC"),
+        ("RELEASE_DIM_OUT", "RELEASE_DIM_RC"),
+        ("FEATURE_DIM_OUT", "FEATURE_DIM_RC"),
+        ("QEMU_OUT", "QEMU_RC"),
+    ] {
+        assert!(
+            sh.contains(&format!("{rc}=$?")),
+            "{var} 未捕获 $? 到 {rc} —— 退出码未与输出分离, 失败成因仍可能丢失"
+        );
+    }
+}
+
 #[test]
 fn test_delegated_entrypoints_exist() {
     for p in [MAKEFILE_CI, AUDIT_SH, BUILD_SH] {

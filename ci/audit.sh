@@ -504,21 +504,23 @@ popd > /dev/null
 step "2b/6 Clippy feature 维 (kernel_test + host-test, host target)"
 for FEATURE in kernel_test host-test; do
     # 方案 D: feature 维 clippy 指向 kernel manifest (host target, 门控代码 lint)
-    if cargo clippy --manifest-path "$PROJECT_ROOT/src/kernel/Cargo.toml" --features "$FEATURE" --lib \
+    # 捕获式退出码 (B01-25 惯用法, P-55 ②): `if cmd | tail` 在 pipefail 下失败即走
+    # else, 于是 "失败 (exit=…)" 分支不可达、真因被「执行异常」吞掉.
+    set +e
+    FEATURE_CLIPPY_OUT=$(cargo clippy --manifest-path "$PROJECT_ROOT/src/kernel/Cargo.toml" --features "$FEATURE" --lib \
         --target-dir "$PROJECT_ROOT/other/target" \
         -- -D warnings -D clippy::pedantic \
         -A clippy::cast_possible_truncation \
         -A clippy::cast_sign_loss \
         -A clippy::cast_possible_wrap \
-        -A clippy::cast_precision_loss 2>&1 | tail -10; then
-        CLIPPY_RC=${PIPESTATUS[0]}
-        if [ "$CLIPPY_RC" -eq 0 ]; then
-            ok "clippy ${FEATURE} 维: passed"
-        else
-            err "clippy ${FEATURE} 维失败 (exit=$CLIPPY_RC, 见上方输出)"
-        fi
+        -A clippy::cast_precision_loss 2>&1)
+    FEATURE_CLIPPY_RC=$?
+    set -e
+    printf '%s\n' "$FEATURE_CLIPPY_OUT" | tail -10
+    if [ "$FEATURE_CLIPPY_RC" -eq 0 ]; then
+        ok "clippy ${FEATURE} 维: passed"
     else
-        err "clippy ${FEATURE} 维执行异常"
+        err "clippy ${FEATURE} 维失败 (exit=$FEATURE_CLIPPY_RC, 见上方输出)"
     fi
 done
 
@@ -553,26 +555,28 @@ fi
 # 只编译不跑用例 ⇒ 不产出覆盖读数, 不得读成覆盖达成).
 # 置于 quick 早退分支之后 = 仅 full 执行 (增量成本: kernel crate 按 feature 组合重编).
 step "2d/6 内核 release 维 compile-only (P-44 测试维 + P-51 feature 维)"
-if "$PROJECT_ROOT/scripts/check_kernel_test_release_dim.sh" 2>&1 | tail -40; then
-    RELEASE_DIM_RC=${PIPESTATUS[0]}
-    if [ "$RELEASE_DIM_RC" -eq 0 ]; then
-        ok "内核测试 release 维: 编译通过 + 本 crate 零告警"
-    else
-        err "内核测试 release 维检查失败 (exit=$RELEASE_DIM_RC, 见 scripts/check_kernel_test_release_dim.sh 输出)"
-    fi
+# 捕获式退出码 (B01-25 惯用法, P-55 ②): `if cmd | tail` 在 pipefail 下失败即走 else,
+# 「失败 (exit=…)」分支不可达、真因被「执行异常」吞掉.
+set +e
+RELEASE_DIM_OUT=$("$PROJECT_ROOT/scripts/check_kernel_test_release_dim.sh" 2>&1)
+RELEASE_DIM_RC=$?
+set -e
+printf '%s\n' "$RELEASE_DIM_OUT" | tail -40
+if [ "$RELEASE_DIM_RC" -eq 0 ]; then
+    ok "内核测试 release 维: 编译通过 + 本 crate 零告警"
 else
-    err "内核测试 release 维检查执行异常"
+    err "内核测试 release 维检查失败 (exit=$RELEASE_DIM_RC, 见 scripts/check_kernel_test_release_dim.sh 输出)"
 fi
 
-if "$PROJECT_ROOT/scripts/check_kernel_feature_release_dims.sh" 2>&1 | tail -40; then
-    FEATURE_DIM_RC=${PIPESTATUS[0]}
-    if [ "$FEATURE_DIM_RC" -eq 0 ]; then
-        ok "内核 feature release 维 (lockdep + e1000-real-hw): 编译通过 + 本 crate 零告警"
-    else
-        err "内核 feature release 维检查失败 (exit=$FEATURE_DIM_RC, 见 scripts/check_kernel_feature_release_dims.sh 输出)"
-    fi
+set +e
+FEATURE_DIM_OUT=$("$PROJECT_ROOT/scripts/check_kernel_feature_release_dims.sh" 2>&1)
+FEATURE_DIM_RC=$?
+set -e
+printf '%s\n' "$FEATURE_DIM_OUT" | tail -40
+if [ "$FEATURE_DIM_RC" -eq 0 ]; then
+    ok "内核 feature release 维 (lockdep + e1000-real-hw): 编译通过 + 本 crate 零告警"
 else
-    err "内核 feature release 维检查执行异常"
+    err "内核 feature release 维检查失败 (exit=$FEATURE_DIM_RC, 见 scripts/check_kernel_feature_release_dims.sh 输出)"
 fi
 
 # ── 2e. 存量审计腿接入 (P-49) ─────────────────────────────────
@@ -686,24 +690,26 @@ fi
 
 # ── 7. QEMU 真实启动测试 (full 模式) ──────────────────────────
 # 双架构内核必须在 QEMU 中真实启动通过
-# 跳过条件: QEMU 二进制不可用 (e.g. CI 镜像未装 qemu-system-*)
+# 跳过条件: QEMU 二进制不可用 ⇒ skip_leg 记账 (P-55 乙: 日志点名「本腿未执行」，退出码不变)
 step "7/7 QEMU 双架构真实启动测试"
 if [ "$MODE" = "full" ]; then
     if command -v qemu-system-x86_64 >/dev/null 2>&1 && command -v qemu-system-aarch64 >/dev/null 2>&1; then
         # B01-16 修复: 设置 FAIL_OK=0 让 QEMU 测试失败立即阻断.
         # 原脚本默认 FAIL_OK=1, 启动失败时仍返 0 (虚假通过).
-        if FAIL_OK=0 "$PROJECT_ROOT/scripts/qemu_boot_test.sh" all 2>&1 | tail -6; then
-            QEMU_RC=${PIPESTATUS[0]}
-            if [ "$QEMU_RC" -eq 0 ]; then
-                ok "QEMU 双架构启动测试: 2/2 通过"
-            else
-                err "QEMU 双架构启动测试失败 (exit=$QEMU_RC, 见 scripts/qemu_boot_test.sh 输出)"
-            fi
+        # 捕获式退出码 (B01-25 惯用法, P-55 ②): `if cmd | tail` 在 pipefail 下失败即走
+        # else, 「失败 (exit=…)」分支不可达、真因被「执行异常」吞掉.
+        set +e
+        QEMU_OUT=$(FAIL_OK=0 "$PROJECT_ROOT/scripts/qemu_boot_test.sh" all 2>&1)
+        QEMU_RC=$?
+        set -e
+        printf '%s\n' "$QEMU_OUT" | tail -6
+        if [ "$QEMU_RC" -eq 0 ]; then
+            ok "QEMU 双架构启动测试: 2/2 通过"
         else
-            err "QEMU 双架构启动测试执行异常"
+            err "QEMU 双架构启动测试失败 (exit=$QEMU_RC, 见 scripts/qemu_boot_test.sh 输出)"
         fi
     else
-        echo -e "${YELLOW}⚠ QEMU 二进制不可用, 跳过启动测试 (安装 qemu-system-x86 + qemu-system-aarch64 启用)${NC}"
+        skip_leg "qemu" "工具缺失: qemu-system-x86_64 / qemu-system-aarch64 不在 PATH (安装后本腿即执行)"
     fi
 else
     echo -e "${BLUE}-> 跳过 (仅 full 模式执行; quick 模式跑 SA bootstrap 即可)${NC}"
