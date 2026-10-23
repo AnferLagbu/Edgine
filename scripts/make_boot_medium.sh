@@ -150,13 +150,13 @@ build_x86_64() {
     info "构建 x86_64 内核与用户态并打包 ISO (make ARCH=x86_64 iso)..."
     make ARCH=x86_64 iso
 
-    if [ ! -f other/build/x86_64/antx.iso ]; then
-        err "未生成 other/build/x86_64/antx.iso, 请检查 make iso 输出"
+    if [ ! -f other/build/x86_64/edgine.iso ]; then
+        err "未生成 other/build/x86_64/edgine.iso, 请检查 make iso 输出"
         exit 1
     fi
 
     mkdir -p "$OUT_DIR"
-    cp other/build/x86_64/antx.iso "$ISO_OUT"
+    cp other/build/x86_64/edgine.iso "$ISO_OUT"
     ok "ISO 产物: $ISO_OUT"
     file "$ISO_OUT" || true
 }

@@ -66,14 +66,14 @@ AUDIT_REQUIRED_LEGS="tcb_ratio invariants unsafe block_registration once_cell c_
 # 六条脚本此前在仓内**零调用者** (P-49 测绘), §2.2 与 plan 里点名它们却没有任何本地执法
 # 路径. 本轮接入 step 2e —— 位置在 quick 早退分支**之后** ⇒ 不进 AUDIT_REQUIRED_LEGS
 # (0.5n 在两档都断言, 放进去会让 quick 恒红), 改由 2e 段的 full 档到位断言单点比对.
-# 清单形态 = 「腿名:scripts/ 下相对路径」成对, 路径不套 audit_* 命名约定 (报告腿那条实为
-# scan_antx_residue.py, 自测那条在 tests/ 子目录), 由 host-tests 结构锁逐项核验真实存在.
+# 清单形态 = 「腿名:scripts/ 下相对路径」成对, 路径不套 audit_* 命名约定 (废弃命名腿那条实为
+# scan_obsolete_naming.py, 自测那条在 tests/ 子目录), 由 host-tests 结构锁逐项核验真实存在.
 # 第 7 条 implicit_deps_selftest 是 P-49 甲・自测锁的执行点 —— 一个只有人手工跑的自测
 # 与"零调用者审计脚本"是同一个病灶, 接线时若不给它调用点, 本轮修法当场失效.
 # 第 8 条 audit_selftest 是 P-50 ③ 的执行点, 同型但更隐蔽: 它的四个用例此前在自测文件里
 # "手动模拟"检测算法 (检测器退化时自测照样全绿). 真调化后若仍只留在从不触发的
 # .github/workflows/ci-lint.yml 里, 等于把 P-49 的病灶换个位置复现.
-AUDIT_REQUIRED_LEGS_FULL="implicit_deps:audit_implicit_deps.py implicit_deps_selftest:tests/audit_implicit_deps_selftest.py audit_selftest:tests/audit_selftest.py feature_semantics:audit_feature_semantics.py reverse_deps:audit_reverse_deps.py public_api_docs:audit_public_api_docs.py smoltcp_purity:audit_smoltcp_purity.py antx_residue:scan_antx_residue.py"
+AUDIT_REQUIRED_LEGS_FULL="implicit_deps:audit_implicit_deps.py implicit_deps_selftest:tests/audit_implicit_deps_selftest.py audit_selftest:tests/audit_selftest.py feature_semantics:audit_feature_semantics.py reverse_deps:audit_reverse_deps.py public_api_docs:audit_public_api_docs.py smoltcp_purity:audit_smoltcp_purity.py obsolete_naming:scan_obsolete_naming.py"
 AUDIT_RUN_LEGS_FULL=""
 mark_leg_full() { AUDIT_RUN_LEGS_FULL="${AUDIT_RUN_LEGS_FULL} $1"; }
 AUDIT_RUN_LEGS=""
@@ -602,22 +602,22 @@ else
 fi
 
 # ── 2e. 存量审计腿接入 (P-49) ─────────────────────────────────
-# 用户裁定「丙・六脚本全接入 full」. 六条腿分两种形态, 日志里必须可区分:
-#   阻断腿 (5) implicit_deps / feature_semantics / reverse_deps / public_api_docs /
-#     smoltcp_purity —— 退出码判, 非零即 err 硬失败.
-#   报告腿 (1) antx_residue —— `scan_antx_residue.py` 默认形态**无条件退 0** (只有加
-#     --actionable-only 才判退出码, 该形态实测 53 处 ⇒ 接入即要求一轮命名迁移, 超出
-#     P-49 接线范围). 故本腿只播报 KEEP/MODIFY/REVIEW 分类读数且明写「不判退出码」,
-#     残余 53 处与阻断面加压另立 P-58; 不在日志里把报告腿伪装成门禁.
+# 用户裁定「丙・六脚本全接入 full」. P-49 时六条腿分两种形态; P-58 收口后**八条腿全部阻断**:
+#   P-49 的报告腿 obsolete_naming 当时用的是旧扫描脚本 (P-58 后更名为 `scan_obsolete_naming.py`) —— 默认无条件
+#   退 0, 只有 --actionable-only 才判退出码, 而那口径 53 处里 46 处是扫描器自身源文本、
+#   另有大量 plan/report 历史正文, 读数不收敛 ⇒ 只能作报告腿. P-58 裁定「校正 + 升阻断」:
+#   改为受控文本全量扫描 (git ls-files, 含无扩展名的 Makefile 与 .asm)、docs/plan 与
+#   docs/report 历史面 KEEP、自命中豁免、二值退出且读取失败 fail-closed; 检测器自检是
+#   每次扫描的前置断言 (自检失败退 2, 不给「零违规」). 现无豁免分支: 任一腿非零即 err.
 # 存在性包装沿用 P-46 甲形态 (缺 python3 / 缺脚本一律 audit_leg_missing 硬失败), 包装位
 # 点数与 audit_leg_missing 调用数由 host-tests 结构锁互校, 新增裸包装即红.
 # 每条腿在 `cd "$PROJECT_ROOT"` 的子 shell 里调起, 不借外层 cwd: 本组腿的扫描根与 JSON
 # 落点都按脚本自身口径解析 (audit_feature_semantics.py:37-38 用相对路径, :521 写
 # other/target/audit/), 而本文件在 2e 前后有 pushd/popd (步骤 1/2 与 Lockbud) —— 一旦
 # 有人在别处补一对 pushd 而忘记 popd, 借 cwd 的腿会读错根 (实测 cwd=/ 时该腿 RC=2).
-# 置于 quick 早退分支之后 = 仅 full 执行. 耗时逐腿实测 (单跑合计 20.0s): implicit_deps 1.2 /
+# 置于 quick 早退分支之后 = 仅 full 执行. 耗时逐腿实测 (单跑合计 ~14.5s): implicit_deps 1.2 /
 # feature_semantics 0.1 / reverse_deps 0.3 / public_api_docs 3.8 / smoltcp_purity 3.4 /
-# antx_residue 6.2 / implicit_deps_selftest 4.9 / audit_selftest 0.04. 其中只有 smoltcp_purity 会浅克隆上游 + ls-remote
+# obsolete_naming 0.2 / implicit_deps_selftest 4.9 / audit_selftest 0.04. 其中只有 smoltcp_purity 会浅克隆上游 + ls-remote
 # ⇒ 受网络影响; 该腿的联网检查在脚本内降级为 WARN (audit_smoltcp_purity.py:230-273),
 # 断网只改耗时不改判据, 不会因环境转红. 其余各腿都是纯文本扫描, 无改动时不会更贵.
 step "2e/6 存量审计腿接入 (P-49)"
@@ -626,10 +626,7 @@ for P49_SPEC in $AUDIT_REQUIRED_LEGS_FULL; do
     P49_SCRIPT="${P49_SPEC##*:}"
     mark_leg_full "$P49_LEG"
     if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/$P49_SCRIPT" ]; then
-        if [ "$P49_LEG" = "antx_residue" ]; then
-            (cd "$PROJECT_ROOT" && python3 "scripts/$P49_SCRIPT") 2>&1 | tail -14
-            ok "报告腿 ${P49_LEG}: 读数已播报 (不判退出码, 见 P-58)"
-        elif (cd "$PROJECT_ROOT" && python3 "scripts/$P49_SCRIPT") 2>&1 | tail -25; then
+        if (cd "$PROJECT_ROOT" && python3 "scripts/$P49_SCRIPT") 2>&1 | tail -25; then
             ok "审计腿 ${P49_LEG}: 通过"
         else
             err "审计腿 ${P49_LEG} 失败 (scripts/${P49_SCRIPT} 非零退出)"

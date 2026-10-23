@@ -4,7 +4,7 @@ use userlib::fs;
 use userlib::sys;
 use userlib::{delay_loop, println, read_line};
 
-const MARKER_FILE: &[u8] = b"/mnt/.antx_installed\0";
+const MARKER_FILE: &[u8] = b"/mnt/.edgine_installed\0";
 
 pub fn execute() -> i32 {
     println("");

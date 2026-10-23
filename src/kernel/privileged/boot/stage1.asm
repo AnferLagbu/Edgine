@@ -1,4 +1,4 @@
-; antx-stage1.asm — AntX Stage 1 Bootloader (M16 real mode)
+; stage1.asm — Edgine Stage 1 Bootloader (M16 real mode)
 ;
 ; BIOS -> sector 0 (0x7C00), read kernel to 0x100000, run E820 to obtain memory
 ; map, then transition to protected mode and jump to kernel entry.

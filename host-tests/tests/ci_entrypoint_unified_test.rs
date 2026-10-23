@@ -475,8 +475,8 @@ fn test_audit_sh_full_only_legs_are_wired() {
         );
     }
     assert!(
-        block.contains("elif (cd \"$PROJECT_ROOT\" && python3"),
-        "步骤 2e 里阻断腿不再走「判退出码 + 锚定仓库根」的调起形态 —— 所有腿一起变成只播报读数 \
+        block.contains("if (cd \"$PROJECT_ROOT\" && python3"),
+        "步骤 2e 里腿不再走「判退出码 + 锚定仓库根」的调起形态 —— 所有腿一起变成只播报读数 \
          (审计绿≠门禁绿, P-47/48 同族), 或改成借外层 cwd (P-50 扫描根同族)"
     );
     assert!(
@@ -484,28 +484,20 @@ fn test_audit_sh_full_only_legs_are_wired() {
         "步骤 2e 里阻断腿的非零出口消失 —— 判了退出码却不阻断, 等于没判"
     );
 
-    // ⑤ 报告腿: 非阻断形态必须显式点名 + 写明不判退出码 + 指向另立案号.
-    let report_label = block
-        .lines()
-        .find(|l| l.contains("报告腿"))
-        .unwrap_or_else(|| {
-            panic!(
-                "步骤 2e 里没有「报告腿」标注 —— 报告腿被并入阻断腿时接入即恒红 \
-                                   (实装前实测 scan_antx_residue.py --actionable-only 53 处), \
-                                   把它悄悄降级又不标注是本锁要拦的形态"
-            )
-        });
+    // ⑤ P-58: 报告腿已升为阻断腿 —— 步骤 2e 里不允许再出现任何非阻断豁免分支.
     assert!(
-        report_label.contains("不判退出码"),
-        "报告腿标注漏了「不判退出码」 —— 日志把报告腿写成门禁, 是 P-47/48 收口的「绿≠拦住」同族"
+        !block.contains("报告腿") && !block.contains("不判退出码"),
+        "步骤 2e 里又出现了报告腿 / 不判退出码的豁免标注 —— P-58 已裁定升为阻断腿, \
+         重新引入非阻断支路会让「审计绿」不再等于「旧名已清零」"
     );
     assert!(
-        report_label.contains("P-58"),
-        "报告腿标注未指向另立案号 P-58 —— 非阻断接入产生的残余债必须登记, 不许只留在日志里"
+        block.matches("(cd \"$PROJECT_ROOT\" && python3").count() == 1,
+        "步骤 2e 里判退出码的调起形态不是唯一形态 —— 存在绕过阻断的支路"
     );
     assert!(
-        block.contains("= \"antx_residue\" ]"),
-        "报告腿豁免改成无条件形态 (不再按腿名点名) —— 谁都能被塞进非阻断支路"
+        specs.iter().any(|s| s.starts_with("obsolete_naming:")),
+        "full 档清单里没有 obsolete_naming 腿 —— P-58 升阻断后的执法点丢失, \
+         废弃命名扫描退回无人执行的脚本"
     );
 
     // ⑥ 档位自述与实际结构一致 (P-48 甲 同族).
@@ -1164,5 +1156,113 @@ fn test_p57_log_self_reports_mode_and_environment_ledger() {
             .any(|l| l.trim_start().starts_with("ci:") && l.contains("ci-boot")),
         "聚合目标 ci 不再依赖 ci-boot —— P-57 丙 裁定保留重复 (聚合入口的 QEMU 硬失败面), \
          改动须重新裁定而非顺手去掉"
+    );
+}
+
+/// P-58 结构锁: 废弃命名扫描必须是「全仓受控文本 + 历史面豁免 + 自测前置 + 阻断」形态.
+///
+/// 病灶 (P-58 测绘, 旧扫描器实测):
+/// - **范围**: 按扩展名白名单 `rglob` ⇒ 无扩展名的 `Makefile` (10 行) 与 `.asm`
+///   整体零覆盖; 另有「短行 < 50 字符跳过」启发式吞掉脚本里的路径字面值.
+/// - **读数**: 不过滤工具自身 ⇒ 53 处 actionable 中 46 处是扫描器源文本 (86%);
+///   且「写一段说明就涨几个点」(53 → 65 → 69), 读数不可解释、永不收敛.
+/// - **判定**: 默认形态无条件退 0, 只有 `--actionable-only` 才判退出码 ⇒
+///   接入 CI 就是「绿 ≠ 拦住」; `--include-archive` 实为 no-op.
+/// 裁定 (用户): 废弃名彻底废弃 + 扫描器校正并升为阻断腿, 产物命名一律并入 Edgine.
+///
+/// 判据:
+/// ① 范围由 `git ls-files` 驱动, 无扩展名白名单 / 短行跳过 / 无效开关残留;
+/// ② 历史面 (docs/plan + docs/report) 命中只进 KEEP, 不进违规;
+/// ③ 自路径排除, 且自测是每次扫描的前置 (检测器坏了不许给「零违规」);
+/// ④ 判定二值 (0/1) + 读取失败 fail-closed (2);
+/// ⑤ `ci/audit.sh` 的 full 档清单接线本脚本, 且 2e 不存在非阻断支路.
+#[test]
+fn test_p58_obsolete_naming_gate_is_repo_wide() {
+    let py = read("../scripts/scan_obsolete_naming.py");
+    let sh = read(AUDIT_SH);
+    let agents = read(AGENTS_MD);
+
+    // ① 全仓受控文本范围.
+    assert!(
+        py.contains("\"ls-files\", \"-z\"") || py.contains("ls-files"),
+        "扫描范围不再由 git ls-files 驱动 —— 回到扩展名遍历会重新漏掉 Makefile / .asm"
+    );
+    for banned in [
+        "rglob",
+        ".suffix",
+        "strip()) < 50",
+        "--include-archive",
+        "--actionable-only",
+    ] {
+        assert!(
+            !py.contains(banned),
+            "扫描器残留 {banned} —— 扩展名白名单 / 短行启发式 / 无效开关都是 P-58 测绘出的漏检源或假旋钮"
+        );
+    }
+    assert!(
+        py.contains("\"Makefile\"") && py.contains("tracked_files()"),
+        "自测未验证 Makefile 在受控文件枚举内 —— 无扩展名文件正是旧口径的盲区"
+    );
+
+    // ② 历史面 KEEP 与违规分账.
+    assert!(
+        py.contains("HISTORY_PREFIXES = (\"docs/plan/\", \"docs/report/\")"),
+        "历史面前缀不再是 docs/plan + docs/report —— 少一个即让执行当时的历史记录推红门禁"
+    );
+    assert!(
+        py.contains("(kept if is_history(rel) else violations)"),
+        "历史面命中未与违规分账 —— 历史归档会推动退出码, 口径重新变成不可收敛"
+    );
+
+    // ③ 自排除 + 自测前置.
+    assert!(
+        py.contains("SELF_PATH") && py.contains("rel == self_rel"),
+        "扫描器不再排除自身 —— 工具源文本 (受检词 + 模式串) 会重新占据读数大头"
+    );
+    let selftest = py
+        .find("failures = self_test()")
+        .unwrap_or_else(|| panic!("扫描主流程缺少自测前置"));
+    let collect = py
+        .find("violations, kept, scanned = collect()")
+        .unwrap_or_else(|| panic!("扫描主流程缺少 collect 调用"));
+    assert!(
+        selftest < collect,
+        "自测在扫描之后才跑 —— 检测器退化时仍会先给出「零违规」读数"
+    );
+    assert!(
+        py.contains("scan_text(rel, text)") && py.contains("SELF_TEST_CASES"),
+        "自测没有真调检测器入口 —— 复制算法的自测在检测器退化时照样全绿 (P-50 ③ 同型)"
+    );
+
+    // ④ 二值判定 + fail-closed.
+    assert!(
+        py.contains("return 1 if violations else 0"),
+        "退出码不再只由违规数决定 —— 阻断腿必须「有违规即红」"
+    );
+    assert!(
+        py.contains("return 2") && py.contains("raise ScanError"),
+        "扫描失败出口消失 —— 读取失败/枚举失败被静默 continue 就是 fail-open"
+    );
+    assert!(
+        py.contains("BINARY_PROBE_BYTES") && py.contains("b\"\\0\""),
+        "缺少二进制判定 —— 二进制文件按 utf-8 替换解码会产生假命中"
+    );
+
+    // ⑤ CI 接线与 §2.2 自述一致.
+    let full_start = sh
+        .find("AUDIT_REQUIRED_LEGS_FULL=\"")
+        .map(|i| i + "AUDIT_REQUIRED_LEGS_FULL=\"".len())
+        .unwrap_or_else(|| panic!("full 档腿清单定位失败"));
+    let full_end = sh[full_start..]
+        .find('"')
+        .map(|i| full_start + i)
+        .unwrap_or_else(|| panic!("full 档腿清单缺少收尾"));
+    assert!(
+        sh[full_start..full_end].contains("obsolete_naming:scan_obsolete_naming.py"),
+        "full 档清单没有接线废弃命名腿 —— 扫描器退回零调用者 (P-49 同族)"
+    );
+    assert!(
+        agents.contains("scan_obsolete_naming"),
+        "AGENTS §2.2 未把该腿记为阻断 —— 文档仍描述成报告腿会让读者以为有残留也可过"
     );
 }

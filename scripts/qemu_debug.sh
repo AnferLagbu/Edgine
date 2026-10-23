@@ -153,7 +153,7 @@ build_qemu_args() {
 # ============================================================================
 
 generate_gdb_init() {
-    local GDB_INIT=".gdbinit.antx"
+    local GDB_INIT=".gdbinit.edgine"
     
     cat > "$GDB_INIT" << EOF
 # Edgine GDB Configuration
@@ -245,7 +245,7 @@ show_help() {
     echo "  # Debug mode with GDB"
     echo "  $0 -d"
     echo "  # Then in another terminal:"
-    echo "  gdb -x .gdbinit.antx"
+    echo "  gdb -x .gdbinit.edgine"
     echo ""
     echo "  # Headless mode with network"
     echo "  $0 -D none -n"

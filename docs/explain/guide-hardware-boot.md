@@ -34,10 +34,10 @@
 
 ### x86_64：GRUB2 multiboot2 ISO
 
-脚本执行 `make ARCH=x86_64 iso`，该目标把内核与用户态程序装入 `other/isodir/`，生成 GRUB 配置并以 `grub2-mkrescue` 打包为 `other/build/x86_64/antx.iso`，脚本再拷贝为 `edgine-x86_64.iso`。GRUB 配置（由 [Makefile](../../Makefile) `iso` 目标生成）以 multiboot2 协议加载内核：
+脚本执行 `make ARCH=x86_64 iso`，该目标把内核与用户态程序装入 `other/isodir/`，生成 GRUB 配置并以 `grub2-mkrescue` 打包为 `other/build/x86_64/edgine.iso`，脚本再拷贝为 `edgine-x86_64.iso`。GRUB 配置（由 [Makefile](../../Makefile) `iso` 目标生成）以 multiboot2 协议加载内核：
 
 ```
-menuentry "AntX" {
+menuentry "Edgine" {
     multiboot2 /boot/kernel.bin
 }
 ```

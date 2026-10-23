@@ -104,7 +104,7 @@ ifeq ($(ARCH),aarch64)
 else
     QEMU_FLAGS := -m 512 -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04
     QEMU_NET := -device e1000,netdev=n0 \
-                -netdev user,id=n0,hostfwd=tcp::8080-:80,hostname=antx
+                -netdev user,id=n0,hostfwd=tcp::8080-:80,hostname=edgine
     KERNEL_IMAGE := $(ARCH_BUILD_DIR)/kernel.flat
     QEMU_KERNEL_FLAG := -kernel
 endif
@@ -145,7 +145,7 @@ USER_HTTPSRV_ELF = $(RUST_USER_TARGET)/httpsrv
 USER_TEST_ELF = $(RUST_USER_TARGET)/proctest
 
 STAGE1_BIN = $(ARCH_BUILD_DIR)/stage1.bin
-DISK_IMAGE = $(ARCH_BUILD_DIR)/antx.img
+DISK_IMAGE = $(ARCH_BUILD_DIR)/edgine.img
 
 .PHONY: all clean run run-net debug log log-net iso run-iso disk run-disk user test test-host test-kernel-host test-kernel-host-release-compile test-kernel-feature-release-compile test-kani test-unit \
          test-all test-chaos test-smp test-smp-multicore
@@ -327,10 +327,10 @@ iso: all user
 	echo 'set timeout=0' > $(ISODIR)/boot/grub/grub.cfg
 	echo 'set default=0' >> $(ISODIR)/boot/grub/grub.cfg
 	echo '' >> $(ISODIR)/boot/grub/grub.cfg
-	echo 'menuentry "AntX" {' >> $(ISODIR)/boot/grub/grub.cfg
+	echo 'menuentry "Edgine" {' >> $(ISODIR)/boot/grub/grub.cfg
 	echo '    multiboot2 /boot/kernel.bin' >> $(ISODIR)/boot/grub/grub.cfg
 	echo '}' >> $(ISODIR)/boot/grub/grub.cfg
-	grub2-mkrescue -o $(ARCH_BUILD_DIR)/antx.iso $(ISODIR)
+	grub2-mkrescue -o $(ARCH_BUILD_DIR)/edgine.iso $(ISODIR)
 
 clean:
 	rm -rf $(BUILD_DIR)/ $(ISODIR)/
@@ -373,7 +373,7 @@ run-headless: all $(KERNEL_IMAGE)
 ifeq ($(ARCH),x86_64)
 run-iso: iso
 	@mkdir -p $(LOG_DIR)
-	$(QEMU) $(QEMU_FLAGS) -cdrom $(ARCH_BUILD_DIR)/antx.iso $(QEMU_DISPLAY)
+	$(QEMU) $(QEMU_FLAGS) -cdrom $(ARCH_BUILD_DIR)/edgine.iso $(QEMU_DISPLAY)
 else
 run-iso:
 	@echo "run-iso is not supported on aarch64 (BIOS/GRUB only)"
@@ -422,7 +422,7 @@ run-iso-debug: iso
 	@mkdir -p $(LOG_DIR)
 	@timestamp=$$(date +%Y%m%d_%H%M%S); \
 	timeout 30 $(QEMU) $(QEMU_FLAGS) \
-		-cdrom $(ARCH_BUILD_DIR)/antx.iso \
+		-cdrom $(ARCH_BUILD_DIR)/edgine.iso \
 		-serial file:$(LOG_DIR)/serial_$${timestamp}.log \
 		-display none \
 		-no-reboot \
@@ -442,7 +442,7 @@ run-iso-debug: iso
 debug-iso: iso
 	@mkdir -p $(LOG_DIR)
 	$(QEMU) $(QEMU_FLAGS) \
-		-cdrom $(ARCH_BUILD_DIR)/antx.iso \
+		-cdrom $(ARCH_BUILD_DIR)/edgine.iso \
 		-serial stdio \
 		-no-reboot \
 		-s -S &
@@ -534,17 +534,17 @@ test-unit: $(ARCH_BUILD_DIR)/kernel_test.bin user
 	@echo 'set timeout=0' > $(ISODIR)/boot/grub/grub.cfg
 	@echo 'set default=0' >> $(ISODIR)/boot/grub/grub.cfg
 	@echo '' >> $(ISODIR)/boot/grub/grub.cfg
-	@echo 'menuentry "AntX Test" {' >> $(ISODIR)/boot/grub/grub.cfg
+	@echo 'menuentry "Edgine Test" {' >> $(ISODIR)/boot/grub/grub.cfg
 	@echo '    multiboot2 /boot/kernel.bin' >> $(ISODIR)/boot/grub/grub.cfg
 	@echo '}' >> $(ISODIR)/boot/grub/grub.cfg
-	@grub2-mkrescue -o $(ARCH_BUILD_DIR)/antx_test.iso $(ISODIR) 2>/dev/null
+	@grub2-mkrescue -o $(ARCH_BUILD_DIR)/edgine_test.iso $(ISODIR) 2>/dev/null
 	@echo ""
 	@echo "▶ Starting QEMU (timeout: 300s, memory: 512MB)..."
 	@mkdir -p $(REPORT_DIR)
 	@timestamp=$$(date +%Y%m%d_%H%M%S); \
 	timeout 300 $(QEMU) $(QEMU_FLAGS) \
 		-m 512 \
-		-cdrom $(ARCH_BUILD_DIR)/antx_test.iso \
+		-cdrom $(ARCH_BUILD_DIR)/edgine_test.iso \
 		$(QEMU_NET) \
 		-serial file:$(REPORT_DIR)/unit_test_$${timestamp}.log \
 		-display none \
@@ -612,16 +612,16 @@ test-chaos: $(ARCH_BUILD_DIR)/kernel_chaos.bin user
 	@echo 'set timeout=0' > $(ISODIR)/boot/grub/grub.cfg
 	@echo 'set default=0' >> $(ISODIR)/boot/grub/grub.cfg
 	@echo '' >> $(ISODIR)/boot/grub/grub.cfg
-	@echo 'menuentry "AntX Chaos Test" {' >> $(ISODIR)/boot/grub/grub.cfg
+	@echo 'menuentry "Edgine Chaos Test" {' >> $(ISODIR)/boot/grub/grub.cfg
 	@echo '    multiboot2 /boot/kernel.bin' >> $(ISODIR)/boot/grub/grub.cfg
 	@echo '}' >> $(ISODIR)/boot/grub/grub.cfg
-	@grub2-mkrescue -o $(ARCH_BUILD_DIR)/antx_chaos.iso $(ISODIR) 2>/dev/null
+	@grub2-mkrescue -o $(ARCH_BUILD_DIR)/edgine_chaos.iso $(ISODIR) 2>/dev/null
 	@mkdir -p $(REPORT_DIR)
 	@timestamp=$$(date +%Y%m%d_%H%M%S); \
 	echo "▶ Starting QEMU with fault injection (rate=$(FAULT_RATE)/1000, timeout: 120s)..."; \
 	timeout 120 $(QEMU) $(QEMU_FLAGS) \
 		-m 512 \
-		-cdrom $(ARCH_BUILD_DIR)/antx_chaos.iso \
+		-cdrom $(ARCH_BUILD_DIR)/edgine_chaos.iso \
 		-serial file:$(REPORT_DIR)/chaos_test_$${timestamp}.log \
 		-display none \
 		-d cpu_reset 2>$(REPORT_DIR)/qemu_chaos_stderr_$${timestamp}.log || true
@@ -728,7 +728,7 @@ qemu-debug-gdb:
 	@echo "║  GDB Debug Session                           ║"
 	@echo "╠══════════════════════════════════════════════╣"
 	@echo "║  In another terminal, run:                   ║"
-	@echo "║  gdb -x .gdbinit.antx                        ║"
+	@echo "║  gdb -x .gdbinit.edgine                      ║"
 	@echo "╚══════════════════════════════════════════════╝"
 
 # 无头模式 (Headless mode)
