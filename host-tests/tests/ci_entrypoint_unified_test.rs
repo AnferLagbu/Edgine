@@ -15,6 +15,7 @@ const MAKEFILE_CI: &str = "../Makefile.ci";
 const AUDIT_SH: &str = "../ci/audit.sh";
 const BUILD_SH: &str = "../ci/build.sh";
 const AGENTS_MD: &str = "../AGENTS.md";
+const REQUIREMENTS_SH: &str = "../scripts/requirements.sh";
 
 fn read(path: &str) -> String {
     fs::read_to_string(path).unwrap_or_else(|e| panic!("read {} failed: {}", path, e))
@@ -638,11 +639,11 @@ fn test_p50_audit_scope_and_selftest_are_wired() {
 fn test_audit_sh_lockbud_leg_separates_missing_tool_from_findings() {
     let sh = read(AUDIT_SH);
     let after_step = sh
-        .find("step \"4/6 Lockbud")
+        .find("step \"3/6 Lockbud")
         .unwrap_or_else(|| panic!("ci/audit.sh 缺少 Lockbud 腿 (P-47 状态分离失去执法路径)"));
     let rest = &sh[after_step..];
-    let leg_end = rest.find("\n# ── 5.").unwrap_or_else(|| {
-        panic!("Lockbud 腿与下一条腿 (步骤 5) 的分界标记丢失, 结构锁无法定位块")
+    let leg_end = rest.find("\n# ── 已退役: miri").unwrap_or_else(|| {
+        panic!("Lockbud 腿与下一条腿 (已退役 miri 注记) 的分界标记丢失, 结构锁无法定位块")
     });
     let leg = &rest[..leg_end];
 
@@ -901,7 +902,7 @@ fn test_p55_qemu_skip_and_pipe_failure_causes_are_visible() {
     let sh = read(AUDIT_SH);
 
     let qemu_start = sh
-        .find("step \"7/7 QEMU")
+        .find("step \"4/6 QEMU")
         .unwrap_or_else(|| panic!("ci/audit.sh 缺少 QEMU 腿 (P-55 的执法路径丢失)"));
     let qemu = &sh[qemu_start..];
     assert!(
@@ -957,6 +958,113 @@ fn test_p55_qemu_skip_and_pipe_failure_causes_are_visible() {
             "{var} 未捕获 $? 到 {rc} —— 退出码未与输出分离, 失败成因仍可能丢失"
         );
     }
+}
+
+/// P-56 结构锁 (甲＋甲＋丙): 两条不承重的统计腿必须不存在, 剩余 full-only 步骤必须连续编号,
+/// 头部自述不得再把它们写回覆盖清单; Lockbud 腿须保留「缺失 / 已装但工具链不匹配 / 可跑」
+/// 三态, 且调用形态必须带 `--` 分界、`--exit-code-on-bug` 与 `-l kernel`.
+///
+/// 病灶: ① 「3 SAFETY 注释覆盖率统计」用 `grep -c "unsafe {"` 对 `grep -c "// SAFETY:"`
+/// 求比值, 实测 131% —— 与 0.5 组里恒阻断的 audit_safety_coverage.py (1722/1722) 同名不同尺,
+/// 且百分比本身不成立; ② 「6 模块级 SAFETY 不变式」数的是注释文案出现频次, 实测全仓仅
+/// user_proc.rs 1 个文件命中、阈值 >=5 ⇒ 每次 full 都稳定打黄字. 删除后 Lockbud 4→3,
+/// QEMU 7→4. ③ Lockbud 派发器把第一个 `--` 之前的参数当自身 flags (未知 flag 被
+/// unwrap_or_default 静默丢弃), 原调用无 `--` ⇒ `--manifest-path` 丢失、扫不到 kernel;
+/// 且默认 `exit_code_on_bug=false`, 有发现也退 0. 上游还要求项目与 lockbud 同版本 nightly,
+/// 已装但版本不匹配时必须记 skip 而不是让 full 永久转红.
+#[test]
+fn test_p56_statistics_legs_removed_steps_renumbered_and_lockbud_states() {
+    let sh = read(AUDIT_SH);
+
+    assert!(
+        !sh.contains("step \"3/6 SAFETY"),
+        "「SAFETY 注释覆盖率统计」统计腿复活 —— 它与 audit_safety_coverage.py 同名不同尺, \
+         实测打印过 131% 的伪覆盖率 (P-56 甲)"
+    );
+    assert!(
+        !sh.contains("step \"6/6"),
+        "「模块级 SAFETY 不变式」统计腿复活 —— 它数注释文案频次, 删除前每次都稳定打黄字 (P-56 甲)"
+    );
+    assert!(
+        !sh.contains("Framekernel privilege wrapper"),
+        "步骤 6 的魔数串探测残留 —— 该判据统计的不是不变式, 而是五个词的出现次数"
+    );
+
+    assert!(
+        sh.contains("step \"3/6 Lockbud"),
+        "Lockbud 腿未按 P-56 重编号为 3/6 —— 删除两条统计腿后步骤序号必须连续"
+    );
+    assert!(
+        sh.contains("step \"4/6 QEMU"),
+        "QEMU 腿未按 P-56 重编号为 4/6 (原 7/7 的编号本身也不自洽)"
+    );
+    assert!(
+        !sh.contains("step \"4/6 Lockbud"),
+        "旧的 Lockbud 步骤号 (4/6) 残留 —— 与 QEMU 的新编号冲突"
+    );
+    assert!(
+        !sh.contains("step \"7/7 QEMU"),
+        "旧的 QEMU 步骤号 (7/7) 残留 —— 重编号回退"
+    );
+
+    let header_line = sh
+        .lines()
+        .find(|l| l.starts_with("# - full:"))
+        .unwrap_or_else(|| panic!("ci/audit.sh 头部缺少 `# - full:` 覆盖自述行 (P-48 ③)"));
+    assert!(
+        header_line.contains("3 Lockbud") && header_line.contains("4 QEMU"),
+        "头部 `# - full:` 行未同步重编号后的步骤 (实际: {header_line})"
+    );
+    assert!(
+        !header_line.contains("SAFETY 统计腿"),
+        "头部仍把已删除的 SAFETY 统计腿写进 full 覆盖清单 (自述与结构脱节)"
+    );
+
+    // P-56 丙: Lockbud 三态与调用形态 (2026-10-23 按国内镜像真装一次后的实测口径).
+    assert!(
+        sh.contains("rustup run \"$REPO_TOOLCHAIN\" lockbud --version"),
+        "Lockbud 腿缺少「能否在仓库工具链下加载」的判据 —— 已装但版本不匹配时会直接真跑, \
+         把 full 永久染红 (上游要求项目与 lockbud 同版本 nightly, 见 P-56 丙)"
+    );
+    assert!(
+        sh.contains("工具与仓库工具链不匹配"),
+        "Lockbud 的「已装但不可执行」态消失 —— 它必须 skip 并点名实测原因, \
+         不能混进「工具缺失」或伪装成「真跑失败」"
+    );
+    assert!(
+        sh.contains("cargo lockbud --exit-code-on-bug -l kernel -- --manifest-path"),
+        "Lockbud 调用形态回退 (缺 --exit-code-on-bug / -l kernel / `--` 分界) —— \
+         派发器会把 `--manifest-path` 等误当 lockbud flags 并静默丢弃, 扫不到 kernel (P-56 ③)"
+    );
+    assert!(
+        !sh.contains("cargo lockbud --manifest-path"),
+        "旧的 Lockbud 调用形态残留 (无 `--` 分界) —— cargo 退化为在 src/rust 裸跑 cargo build"
+    );
+    assert!(
+        sh.contains("REPO_TOOLCHAIN=\"$(sed -n"),
+        "Lockbud 腿未从 rust-toolchain.toml 派生本仓工具链名 —— 硬编码通道名会随升级漂移"
+    );
+
+    let req = read(REQUIREMENTS_SH);
+    assert!(
+        req.contains("has_cmd cargo-lockbud && has_cmd lockbud"),
+        "requirements.sh 的 Lockbud 判据回退 —— 实测一次 cargo install 产出两个二进制, \
+         缺一即不可用 (P-56 丙①)"
+    );
+    assert!(
+        !req.contains("check_testing \"lockbud"),
+        "requirements.sh 重新用 check_testing 登记 lockbud —— 它会把非 crates.io 工具塞进 \
+         TESTING_PACKAGES, 安装器随后按系统包安装 (P-56 丙②)"
+    );
+    assert!(
+        !req.contains("cargo +nightly lockbud --help"),
+        "requirements.sh 仍用 `cargo +nightly lockbud --help` 作判据 —— 它只验证派发器能打印 \
+         帮助, 既不看 wrapper 能否加载, 又重复计数 (P-56 丙①③)"
+    );
+    assert!(
+        req.contains("rsproxy.cn") && req.contains("ghproxy.net"),
+        "requirements.sh 缺少国内镜像安装记录 (P-56 丙 的实测安装路径)"
+    );
 }
 
 #[test]

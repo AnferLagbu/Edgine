@@ -5,10 +5,15 @@
 # 用法: ./ci/audit.sh [quick|full]   (缺省档 = quick)
 #
 # - quick: 步骤 0–0.5n 审计腿群 + 1 双架构 check + 2/2b clippy (2 双架构) + 2c rustfmt, 到 2c 后即退出
-# - full:  quick + 2d 内核测试 release 维 compile-only + 2e 存量审计腿群 (P-49) + 3/6 SAFETY 统计腿 + 4 Lockbud + 7 QEMU
+# - full:  quick + 2d 内核测试 release 维 compile-only + 2e 存量审计腿群 (P-49) + 3 Lockbud + 4 QEMU
+#
+# P-56 甲: 原「3 SAFETY 注释覆盖率统计」与「6 模块级 SAFETY 不变式」两条统计腿已删除 ——
+# 前者与 0.5 组的 audit_safety_coverage.py 同名不同尺 (实测 131% 的「覆盖率」), 后者统计
+# 注释文案出现频次且在删除前每次都稳定打黄字 (实测仅 1 个文件命中、阈值 >=5). 两者都不
+# 承重, 只训练读者忽略黄字; 剩余步骤由此重编号 (Lockbud 4→3, QEMU 7→4).
 #
 # P-48 甲订正两处自述失真: 原工具栈行宣称含一个已于 2026-06-26 退役的 UB 检测工具 (退役
-# 记录见下方步骤 5, 那里是单源), 且原档位行把 quick 称作「CI 默认」—— 验收判据由 AGENTS
+# 记录见下方退役注记, 那里是单源), 且原档位行把 quick 称作「CI 默认」—— 验收判据由 AGENTS
 # §2.3 第 3 条定为 **full 全绿** (quick 不含 2d / Lockbud / QEMU, 不构成验收依据), 而远程
 # 仅 Gitee、无流水线, 「CI 默认」本无对应物. 到位腿数**不写进本块**, 由 0.5n 腿单点断言,
 # 免得这里成为第二个会漂移的计数源; 本块的出现过的工具名一律以实际腿为准.
@@ -632,66 +637,55 @@ else
     err "P-49 存量审计腿未到位:${AUDIT_MISSING_LEGS_FULL} (fail-closed, 不接受假绿)"
 fi
 
-# ── 3. SAFETY 注释覆盖率统计 ────────────────────────────────────
-step "3/6 SAFETY 注释覆盖率统计"
-KERNEL_DIR="$PROJECT_ROOT/src/kernel"
-TOTAL_UNSAFE=$(grep -rcE "unsafe \{" "$KERNEL_DIR" --include="*.rs" 2>/dev/null | awk -F: '{s+=$2} END{print s}')
-TOTAL_SAFETY=$(grep -rcE "// SAFETY:" "$KERNEL_DIR" --include="*.rs" 2>/dev/null | awk -F: '{s+=$2} END{print s}')
-if [ "$TOTAL_UNSAFE" -gt 0 ]; then
-    COVERAGE=$(( TOTAL_SAFETY * 100 / TOTAL_UNSAFE ))
-    echo "  unsafe blocks : $TOTAL_UNSAFE"
-    echo "  SAFETY 注释   : $TOTAL_SAFETY"
-    echo "  覆盖率        : ${COVERAGE}%"
-    if [ "$COVERAGE" -ge 50 ]; then
-        ok "SAFETY 覆盖率 >= 50%"
-    else
-        echo -e "${YELLOW}⚠ SAFETY 覆盖率 < 50%${NC}"
-    fi
-fi
-
-# ── 4. Lockbud 死锁/数据竞争扫描 ────────────────────────────────
+# ── 3. Lockbud 死锁/数据竞争扫描 ────────────────────────────────
 # P-47 甲「状态分离」: 原写法 `cargo lockbud … || LOCKBUD_RESULT=$?` 的非零结果只打成
 # 一句「可能发现潜在问题或工具未安装」的黄字且不改退出码. 本机实测 `command -v
 # cargo-lockbud` 为空 ⇒ full 每次都走该合并分支, §2.2 宣称的死锁/数据竞争扫描从未
-# 产生过一次读数, 而日志看起来像执行过. 现拆两态:
-#   工具缺失 → skip_leg 记入「本轮未执行腿数」(不改退出码; 缺外部工具是否阻断属 P-55 待裁);
+# 产生过一次读数, 而日志看起来像执行过. 现拆三态:
+#   工具缺失 → skip_leg 记入「本轮未执行腿数」(不改退出码, 与 P-55 乙 对 QEMU 的裁定同语义);
 #   真跑非零 → err 阻断, 与 §2.2 把该项列为「强制」一致.
-# 存在性判据用 cargo 实际派发的子命令二进制名 `cargo-lockbud`: scripts/requirements.sh:936-945
-# 另记了一种装机名 (`lockbud`), 与本仓 `cargo lockbud` 的调用形态不符, 只探 `cargo-lockbud`
-# 才对应「这条腿能不能跑」; 探不到就直接跳过, 避免 cargo 去 registry 拉包 (数十秒静默 stall).
-step "4/6 Lockbud 死锁/数据竞争扫描"
+# P-56 丙 (2026-10-23 按国内镜像真装一次) 的三条实测订正:
+#   ① 装机名两个: `cargo install --path .` 同时产出 `lockbud` (rustc wrapper) 与
+#      `cargo-lockbud` (cargo 子命令派发). 本仓调用 `cargo lockbud` 派发的是后者, 故存在性
+#      探 `cargo-lockbud`; 但缺 `lockbud` 时 wrapper 起不来, 两个都探. requirements.sh 原注
+#      「只装 lockbud」不成立, 已按实测改写.
+#   ② 上游硬前提: 项目必须用与 lockbud **同版本**的 nightly 编译 (上游 README). 本机装出的
+#      lockbud 内建 rustc = 1.95.0-nightly (efc9e1b50 2026-02-06), 本仓钉 nightly-2026-10-02;
+#      用 2026-02-07 编译本树实测失败: kernel 5 处 E0658 (`uint_bit_width` 未稳定) + sha2 0.11
+#      codegen `rustc-LLVM ERROR: Do not know how to split the result of this operator!`.
+#      ⇒ 「已安装」不等于「可执行」. 匹配判据 = 用仓库工具链加载一次 wrapper: 能加载 ⇒ 版本
+#      匹配可跑; `librustc_driver-*.so: cannot open shared object file` ⇒ skip 并点名实测原因.
+#   ③ 调用形态两处缺陷: 派发器把第一个 `--` **之前**的参数塞进 LOCKBUD_FLAGS (lockbud 的 clap
+#      解析, 无法识别的 flag 被 unwrap_or_default 静默丢弃), **之后**才原样交给 `cargo build`;
+#      原写法没有 `--`, `--manifest-path` 等全被丢弃 ⇒ 退化为在 src/rust 裸跑 `cargo build`,
+#      扫不到 kernel. 现补 `--` 分界; 另加 `--exit-code-on-bug` (默认 false, 有发现也退 0,
+#      「零发现」会假绿) 与 `-l kernel` (上游建议只分析本仓 crate, 避免依赖噪声).
+step "3/6 Lockbud 死锁/数据竞争扫描"
 pushd src/rust > /dev/null
 unset RUSTC_WRAPPER
-if command -v cargo-lockbud >/dev/null 2>&1; then
-    LOCKBUD_OUT=$(cargo lockbud --manifest-path ../kernel/Cargo.toml --target x86_64-unknown-none --target-dir ../../other/target "${BUILD_STD_CFG[@]}" 2>&1) && LOCKBUD_RC=0 || LOCKBUD_RC=$?
+REPO_TOOLCHAIN="$(sed -n 's/^channel *= *"\([^"]*\)"/\1/p' "$PROJECT_ROOT/rust-toolchain.toml")"
+if ! command -v cargo-lockbud >/dev/null 2>&1 || ! command -v lockbud >/dev/null 2>&1; then
+    skip_leg "lockbud" "工具缺失: lockbud / cargo-lockbud 不在 PATH (两者由同一次 cargo install 产出, 安装步骤见 scripts/requirements.sh)"
+elif ! LOCKBUD_RUSTC="$(timeout 5 rustup run "$REPO_TOOLCHAIN" lockbud --version 2>&1)"; then
+    skip_leg "lockbud" "工具与仓库工具链不匹配: lockbud 内建 rustc 无法在 ${REPO_TOOLCHAIN} 下加载 (上游要求项目与 lockbud 同版本 nightly; 实测内建 1.95.0-nightly 2026-02-06, 用该 nightly 编译本树失败 E0658 + sha2 LLVM error, 见 P-56)"
+else
+    LOCKBUD_OUT=$(cargo lockbud --exit-code-on-bug -l kernel -- --manifest-path ../kernel/Cargo.toml --target x86_64-unknown-none --target-dir ../../other/target "${BUILD_STD_CFG[@]}" 2>&1) && LOCKBUD_RC=0 || LOCKBUD_RC=$?
     printf '%s\n' "$LOCKBUD_OUT" | tail -25
     if [ "$LOCKBUD_RC" -eq 0 ]; then
-        ok "lockbud: 扫描通过 (零发现)"
+        ok "lockbud: 扫描通过 (零发现; 内建 ${LOCKBUD_RUSTC})"
     else
-        err "lockbud: 扫描返回非零 (exit=${LOCKBUD_RC}) —— 按 §2.2「强制」判为发现问题并阻断 (P-47 甲)"
+        err "lockbud: 扫描返回非零 (exit=${LOCKBUD_RC}) —— --exit-code-on-bug 下非零即发现问题, 按 §2.2「强制」阻断 (P-47 甲 / P-56 ③)"
     fi
-else
-    skip_leg "lockbud" "工具缺失: cargo-lockbud 不在 PATH (本腿无安装步骤记录, 见 P-47 丙)"
 fi
 popd > /dev/null
 
-# ── 5. miri 已于 2026-06-26 弃用 ──
+# ── 已退役: miri (2026-06-26 弃用) ──
 # 原 Miri 严格 provenance 配置验证已删除, UB 检测由 Rust 编译期 + 7 个审计脚本覆盖
 
-# ── 6. 模块级 SAFETY 不变式审计 ────────────────────────────────
-step "6/6 模块级 SAFETY 不变式 (框架特权层)"
-PRIVILEGE_MODULES=$(grep -rln "Framekernel privilege wrapper\|SAFETY invariant" "$KERNEL_DIR" --include="*.rs" 2>/dev/null | wc -l)
-echo "  含模块级 SAFETY 不变式的文件: $PRIVILEGE_MODULES"
-if [ "$PRIVILEGE_MODULES" -ge 5 ]; then
-    ok "框架特权层封装充分"
-else
-    echo -e "${YELLOW}⚠ 框架特权层模块数 < 5${NC}"
-fi
-
-# ── 7. QEMU 真实启动测试 (full 模式) ──────────────────────────
+# ── 4. QEMU 真实启动测试 (full 模式) ──────────────────────────
 # 双架构内核必须在 QEMU 中真实启动通过
 # 跳过条件: QEMU 二进制不可用 ⇒ skip_leg 记账 (P-55 乙: 日志点名「本腿未执行」，退出码不变)
-step "7/7 QEMU 双架构真实启动测试"
+step "4/6 QEMU 双架构真实启动测试"
 if [ "$MODE" = "full" ]; then
     if command -v qemu-system-x86_64 >/dev/null 2>&1 && command -v qemu-system-aarch64 >/dev/null 2>&1; then
         # B01-16 修复: 设置 FAIL_OK=0 让 QEMU 测试失败立即阻断.

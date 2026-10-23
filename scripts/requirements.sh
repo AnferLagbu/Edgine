@@ -932,16 +932,34 @@ if [ "$SKIP_OPTIONAL" = false ] && [ "$SKIP_TESTS" = false ]; then
     RECOMMENDED_TOTAL=$((RECOMMENDED_TOTAL + 1))
 
     print_subsection "并发安全与死锁 (ci/audit.sh full 模式)"
-    check_testing "lockbud (数据竞争/死锁静态分析)" "lockbud" "lockbud"
-    # 注: lockbud 是 cargo 子命令, 通过 `cargo +nightly lockbud` 调用
-    # 实际安装的二进制名为 `lockbud` (位于 ~/.cargo/bin/lockbud),
-    # 而非 `cargo-lockbud` (cargo install 创建 cargo-X 形式只是约定, 部分工具不遵循)
-    # 当 lockbud 二进制不存在时, `cargo +nightly lockbud` 会触发 cargo 尝试下载
-    # 其 registry index, 耗时数十秒. 因此用 `timeout 2` 快速失败, 避免挂起.
-    if has_cmd lockbud; then
-        if timeout 2 cargo +nightly lockbud --help &>/dev/null; then
-            TESTING_OK=$((TESTING_OK + 1))
+    # P-56 丙 (2026-10-23 按国内镜像真装一次) 订正四处:
+    #   ① 装机名两个 —— 一次 cargo install 产出 `lockbud` (rustc wrapper) 与 `cargo-lockbud`
+    #      (cargo 子命令派发); ci/audit.sh 调 `cargo lockbud` 派发后者, 且缺 wrapper 也跑不了,
+    #      故两个都探. 原注「实际安装的二进制名为 lockbud, 而非 cargo-lockbud」与实测相反.
+    #   ② 非 crates.io / 非系统包 ⇒ 不进 TESTING_PACKAGES (原写法会把它交给系统包管理器,
+    #      且提示一条不存在的 `cargo install --locked lockbud`). 实测安装步骤 (国内镜像):
+    #        RUSTUP_DIST_SERVER=https://rsproxy.cn rustup toolchain install nightly-2026-02-07 \
+    #            --component rust-src,rustc-dev,llvm-tools-preview
+    #        git clone https://ghproxy.net/https://github.com/BurtonQin/lockbud.git
+    #        cargo +nightly-2026-02-07 install --path lockbud
+    #   ③ 上游要求项目用与 lockbud **同版本**的 nightly 编译; 本仓钉 nightly-2026-10-02, 装出的
+    #      lockbud 内建 1.95.0-nightly (2026-02-06) 无法在仓库工具链下加载, 用 2026-02-07 编译
+    #      本树实测失败 (kernel 5 处 E0658 + sha2 0.11 codegen LLVM error) ⇒ 已装也不可执行,
+    #      ci/audit.sh full 记 skip 并点名 (P-56), 不再让「已装」被读成「跑过」.
+    #   ④ 本项**不计入** TESTING_TOTAL: 它既非系统包也非 crates.io 包, 安装器无从修复; 计入会让
+    #      「缺失 N 项」与下方可安装清单相差 1. 状态只作播报, 可执行性由 ci/audit.sh 的腿裁定.
+    print_check "lockbud (数据竞争/死锁静态分析)"
+    REQ_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    if has_cmd cargo-lockbud && has_cmd lockbud; then
+        if timeout 5 rustup run "$(sed -n 's/^channel *= *"\([^"]*\)"/\1/p' "$REQ_ROOT/rust-toolchain.toml")" \
+            lockbud --version &>/dev/null; then
+            print_ok
+        else
+            print_info "已装但与仓库工具链不匹配 (上游要求同版本 nightly), ci/audit.sh full 会记 skip 而非假绿"
         fi
+    else
+        print_recommended_missing
+        print_info "非 crates.io 包: 安装步骤见本块注释 (rsproxy + ghproxy)"
     fi
 
     print_subsection "代码覆盖率 (M6.9 bench + llvm-cov)"
