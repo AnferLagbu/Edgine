@@ -1083,3 +1083,86 @@ fn test_delegated_entrypoints_exist() {
         "ci/audit.sh 未开 set -e: 单步失败不会反映到整体退出码"
     );
 }
+
+/// P-57 甲: 日志收尾必须自报档位覆盖边界, 且与「环境缺失」台账分开播报.
+///
+/// 五臂:
+/// ① `report_mode_boundary` 恰有 2 个调用点 (quick 早退 + full 收尾);
+/// ② quick 出口先报环境缺失台账、再报档位边界;
+/// ③ quick 行点名 full 与不含的步骤 (2d/2e), 否则读日志仍会误判;
+/// ④ 旧的正向措辞「本轮未执行腿数」不得残留, 新措辞两个分支都在;
+/// ⑤ Makefile.ci 的聚合依赖仍含 ci-boot (P-57 丙 裁定保留重复执行).
+#[test]
+fn test_p57_log_self_reports_mode_and_environment_ledger() {
+    let sh = read(AUDIT_SH);
+    assert!(
+        sh.contains("report_mode_boundary() {"),
+        "ci/audit.sh 缺少日志侧档位自述函数 (P-57 甲)"
+    );
+    let call_sites = sh
+        .lines()
+        .filter(|l| l.trim() == "report_mode_boundary")
+        .count();
+    assert_eq!(
+        call_sites, 2,
+        "档位自述调用点不是 2 个 (quick 早退 + full 收尾) —— 少一处即有一个出口的日志仍不可自解释"
+    );
+
+    let quick_start = sh
+        .find("if [ \"$MODE\" = \"quick\" ]")
+        .unwrap_or_else(|| panic!("quick 早退分支定位失败"));
+    let quick_exit = sh[quick_start..]
+        .find("exit 0")
+        .unwrap_or_else(|| panic!("quick 早退分支缺少 exit 0"));
+    let quick = &sh[quick_start..quick_start + quick_exit];
+    let env = quick
+        .find("report_unexecuted_legs")
+        .unwrap_or_else(|| panic!("quick 出口缺少环境缺失台账播报"));
+    let mode = quick
+        .find("report_mode_boundary")
+        .unwrap_or_else(|| panic!("quick 出口缺少档位自述"));
+    assert!(
+        env < mode,
+        "quick 出口必须先播报环境缺失台账, 再播报档位边界"
+    );
+
+    let boundary = sh
+        .split("report_mode_boundary() {")
+        .nth(1)
+        .and_then(|s| s.split("\n}").next())
+        .unwrap_or_else(|| panic!("档位自述函数体定位失败"));
+    let quick_line = boundary
+        .lines()
+        .find(|l| l.contains("档位: quick"))
+        .unwrap_or_else(|| panic!("档位自述函数缺少 quick 行"));
+    assert!(
+        quick_line.contains("2d") && quick_line.contains("2e"),
+        "quick 档位行未点名 full-only 步骤 —— 自述不足以纠正「零未执行 = 全跑过」的误读"
+    );
+    assert!(
+        quick_line.contains("验收请用") && quick_line.contains("full"),
+        "quick 档位行未指向 full 档 —— 读日志的人不知道验收该用哪档"
+    );
+    assert!(
+        boundary.lines().any(|l| l.contains("档位: full")),
+        "full 档位行缺失 —— full 收尾同样需要自报覆盖边界"
+    );
+
+    assert!(
+        !sh.contains("本轮未执行腿数"),
+        "旧的正向措辞「本轮未执行腿数」残留 —— 它会被读成「所有腿都跑过」(P-57 甲)"
+    );
+    assert_eq!(
+        sh.matches("本轮因环境缺失未执行腿数").count(),
+        2,
+        "「因环境缺失未执行腿数」应同时出现在 0 与非 0 两个播报分支"
+    );
+
+    let mk = read(MAKEFILE_CI);
+    assert!(
+        mk.lines()
+            .any(|l| l.trim_start().starts_with("ci:") && l.contains("ci-boot")),
+        "聚合目标 ci 不再依赖 ci-boot —— P-57 丙 裁定保留重复 (聚合入口的 QEMU 硬失败面), \
+         改动须重新裁定而非顺手去掉"
+    );
+}

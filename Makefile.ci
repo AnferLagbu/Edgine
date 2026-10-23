@@ -40,6 +40,7 @@ PY := python3
 
 # ── §2.3 六条验证门槛的一键聚合 ─────────────────────────────────
 # 前置条件按依赖序排列: 先产出双架构产物 (build), 审计与 QEMU 才有可信输入.
+# ci-boot 与 ci-audit (full) 内的 QEMU 腿重复执行 —— P-57 丙 裁定保留, 代价与理由见 ci-audit 注释.
 ci: ci-build ci-audit ci-test-host ci-test-kernel-host ci-boot ci-bench ci-rustdoc
 	@echo ""
 	@echo "=========================================="
@@ -66,10 +67,13 @@ ci-cargo: ci-build
 
 # ── 门槛 2 + 3: 权威审计栈 (clippy / fmt / 全部 audit_*.py) ─────
 # 委派 ci/audit.sh **full** —— 它是 §2.2 表格的落地入口. P-48 丙: 此前本目标调 quick,
-# 而 quick 到步骤 2c 即退出 ⇒ 一键入口不含 2d (P-44 release 维拦截) / 3、6 统计腿 /
-# 4 Lockbud / 7 QEMU, 与 §2.3 第 3 条「full 全绿」的判据不同源, 注释却称它是落地入口.
+# 而 quick 到步骤 2c 即退出 ⇒ 一键入口不含 2d (P-44 release 维拦截) / 2e (P-49 存量审计腿) /
+# 3 Lockbud / 4 QEMU, 与 §2.3 第 3 条「full 全绿」的判据不同源, 注释却称它是落地入口.
 # 代价 (第十轮实测, 同一棵树): full 2m22.0s vs quick 1m24.7s ⇒ 每次多 ≈ 57s.
-# 与聚合目标 ci 的 QEMU 重叠: full 的 7/7 腿跑一次, ci-boot 再逐架构各跑一次 (取独立读数).
+# 与聚合目标 ci 的 QEMU 重复 (P-57 丙 裁定保留): full 的 4/6 QEMU 腿跑一次 (双架构 2/2),
+# ci-boot 再逐架构各跑一次 —— 后者保留独立读数, 且对「工具缺失」仍是硬失败 (full 的 QEMU
+# 按 P-55 乙 只记 skip). 重复成本实测 ≈ 62s/次 (full 内 all 腿 61.86s; ci-boot 逐架构
+# 34.81s + 27.25s) —— 聚合总时长增量 = 其中较小的一遍, 未整跑 `make ci` 故只记腿级读数.
 # 原文另称「quick 不依赖 Lockbud/Miri 等重工具, 与 CI 判据一致」——Miri 已弃用不在工具栈内,
 # 且远程仅 Gitee、无流水线, 「与 CI 判据一致」没有对应物 (见 §2.3 第 3 条的本地判据).
 ci-audit:

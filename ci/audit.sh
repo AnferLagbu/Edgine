@@ -85,7 +85,7 @@ mark_leg() { AUDIT_RUN_LEGS="${AUDIT_RUN_LEGS} $1"; }
 # 现拆两态并单列一张 skip 台账, 在 quick / full 两个出口都播报未执行腿数,
 # 让「绿」不再能被读成「所有腿都给出过验证」.
 # 只登记「腿已进入但因环境缺失而未执行」的腿; 档位本身不执行的 full-only 腿不在此列
-# (那属 P-48 的 quick-vs-full 口径).
+# (那属 P-48 的 quick-vs-full 口径, 由 P-57 甲的 report_mode_boundary 在日志里播报).
 AUDIT_SKIPPED_COUNT=0
 AUDIT_SKIPPED_LEGS=""
 skip_leg() {
@@ -97,10 +97,26 @@ skip_leg() {
 
 report_unexecuted_legs() {
     if [ "$AUDIT_SKIPPED_COUNT" -eq 0 ]; then
-        ok "本轮未执行腿数: 0"
+        ok "本轮因环境缺失未执行腿数: 0"
     else
-        echo -e "${YELLOW}━━━ 本轮未执行腿数: ${AUDIT_SKIPPED_COUNT} —— 以下腿零读数, 不可当作已验证 ━━━${NC}"
+        echo -e "${YELLOW}━━━ 本轮因环境缺失未执行腿数: ${AUDIT_SKIPPED_COUNT} —— 以下腿零读数, 不可当作已验证 ━━━${NC}"
         printf '%s' "$AUDIT_SKIPPED_LEGS"
+    fi
+}
+
+# ── P-57 甲: 档位覆盖边界进日志 ────────────────────────────────
+# P-48 把 quick 的覆盖边界写进了头部自述与 AGENTS §2.3, 但日志收尾只播报 skip 台账;
+# 旧收尾的「未执行腿数: 0」按 P-47 语义只代表「没有因环境缺失而中断的腿」, 不代表
+# full-only 腿跑过 —— 只看日志的人会得到反向结论. 两个出口各播报一次档位与边界,
+# 与 skip 台账各说各事; 结构锁 `test_p57_log_self_reports_mode_and_environment_ledger`
+# 锁住 quick 行必须点名 full 与不含的步骤.
+# 条件里用 ${MODE} 而非 $MODE: 三条既有结构锁按「MODE 等于 quick」的字面定位早退
+# 分支, 在本函数里复写同一字面会让它们把函数定义误认成早退位置.
+report_mode_boundary() {
+    if [ "${MODE}" = "quick" ]; then
+        echo -e "${BLUE}→ 档位: quick —— 覆盖步骤 0–2c; 不含 2d/2e/Lockbud/QEMU; 不构成 §2.3 第 3 条验收依据, 验收请用 bash ci/audit.sh full${NC}"
+    else
+        echo -e "${BLUE}→ 档位: full —— 覆盖步骤 0–4 全部腿 (含 2d/2e/Lockbud/QEMU)${NC}"
     fi
 }
 
@@ -545,6 +561,7 @@ done
 
 if [ "$MODE" = "quick" ]; then
     report_unexecuted_legs
+    report_mode_boundary
     echo -e "\n${GREEN}━━━ audit (quick) 完成 ━━━${NC}"
     exit 0
 fi
@@ -642,7 +659,7 @@ fi
 # 一句「可能发现潜在问题或工具未安装」的黄字且不改退出码. 本机实测 `command -v
 # cargo-lockbud` 为空 ⇒ full 每次都走该合并分支, §2.2 宣称的死锁/数据竞争扫描从未
 # 产生过一次读数, 而日志看起来像执行过. 现拆三态:
-#   工具缺失 → skip_leg 记入「本轮未执行腿数」(不改退出码, 与 P-55 乙 对 QEMU 的裁定同语义);
+#   工具缺失 → skip_leg 记入「因环境缺失未执行腿数」(不改退出码, 与 P-55 乙 对 QEMU 的裁定同语义);
 #   真跑非零 → err 阻断, 与 §2.2 把该项列为「强制」一致.
 # P-56 丙 (2026-10-23 按国内镜像真装一次) 的三条实测订正:
 #   ① 装机名两个: `cargo install --path .` 同时产出 `lockbud` (rustc wrapper) 与
@@ -710,4 +727,5 @@ else
 fi
 
 report_unexecuted_legs
+report_mode_boundary
 echo -e "\n${GREEN}━━━ audit (full) 完成 ━━━${NC}"
