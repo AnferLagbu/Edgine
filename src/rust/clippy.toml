@@ -20,6 +20,11 @@ trivial-copy-size-limit = 16
 
 # ── 文档要求 ──────────────────────────────────────────────────
 # 内核风格: 文档化所有公开 API
+# P-59 注记: 本项只被 `clippy::missing_docs_in_private_items` (restriction 组) 读取,
+# 而门槛从不启用该组 ⇒ 本行是**惰性配置**, 不构成 F8 的执法点 (旧文档据此写的
+# "clippy missing_docs_in_crate_items 强制" 是不存在的 lint 名). F8 存在性现由 rustc
+# `missing_docs` 作准: 已清零模块写 #![deny(missing_docs)], 存量由
+# scripts/audit_missing_docs_debt.py 棘轮拦新增.
 missing-docs-in-crate-items = true
 
 # 抑制部分对 no_std 内核不适用的 lint

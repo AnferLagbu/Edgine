@@ -1,0 +1,3264 @@
+{
+  "_meta": {
+    "generated_by": "python3 scripts/audit_missing_docs_debt.py --update-baseline",
+    "口径": "rustc missing_docs 在 kernel crate x86_64 --lib 单维的读数, 按 (文件, 项类型) 记数; vendored smoltcp 排除; bins/examples 与 aarch64 维不在射程",
+    "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
+  },
+  "totals": {
+    "sites": 4490,
+    "files": 239,
+    "keys": 650
+  },
+  "entries": [
+    [
+      "src/kernel/functions/config/sysctl.rs",
+      "a variant",
+      3
+    ],
+    [
+      "src/kernel/functions/driver/acpi.rs",
+      "a struct field",
+      14
+    ],
+    [
+      "src/kernel/functions/driver/char/serial.rs",
+      "a constant",
+      5
+    ],
+    [
+      "src/kernel/functions/driver/char/serial.rs",
+      "a struct field",
+      4
+    ],
+    [
+      "src/kernel/functions/driver/char/serial.rs",
+      "a variant",
+      20
+    ],
+    [
+      "src/kernel/functions/driver/char/vga.rs",
+      "a constant",
+      3
+    ],
+    [
+      "src/kernel/functions/driver/char/vga.rs",
+      "a struct field",
+      7
+    ],
+    [
+      "src/kernel/functions/driver/char/vga.rs",
+      "a variant",
+      16
+    ],
+    [
+      "src/kernel/functions/driver/display/controller.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/functions/driver/display/dp.rs",
+      "a struct field",
+      5
+    ],
+    [
+      "src/kernel/functions/driver/display/dp.rs",
+      "a variant",
+      18
+    ],
+    [
+      "src/kernel/functions/driver/display/hdmi.rs",
+      "a struct field",
+      58
+    ],
+    [
+      "src/kernel/functions/driver/display/hdmi.rs",
+      "a variant",
+      2
+    ],
+    [
+      "src/kernel/functions/driver/storage/ata.rs",
+      "a constant",
+      15
+    ],
+    [
+      "src/kernel/functions/driver/storage/nvme.rs",
+      "a struct field",
+      15
+    ],
+    [
+      "src/kernel/functions/driver/usb/hid.rs",
+      "a constant",
+      11
+    ],
+    [
+      "src/kernel/functions/driver/usb/mass_storage.rs",
+      "a constant",
+      9
+    ],
+    [
+      "src/kernel/functions/driver/usb/usb_core.rs",
+      "a method",
+      7
+    ],
+    [
+      "src/kernel/functions/driver/usb/usb_core.rs",
+      "a struct field",
+      48
+    ],
+    [
+      "src/kernel/functions/driver/usb/usb_core.rs",
+      "a variant",
+      62
+    ],
+    [
+      "src/kernel/functions/driver/usb/usb_core.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/functions/driver/usb/xhci.rs",
+      "a constant",
+      3
+    ],
+    [
+      "src/kernel/functions/egdf/devtree.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/functions/egdf/devtree.rs",
+      "a type alias",
+      1
+    ],
+    [
+      "src/kernel/functions/egdf/devtree.rs",
+      "an associated constant",
+      1
+    ],
+    [
+      "src/kernel/functions/egdf/devtree.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/egdf/mod.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/functions/egdf/mod.rs",
+      "a struct field",
+      4
+    ],
+    [
+      "src/kernel/functions/egdf/mod.rs",
+      "a variant",
+      11
+    ],
+    [
+      "src/kernel/functions/egdf/mod.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/freg/attribution.rs",
+      "a constant",
+      1
+    ],
+    [
+      "src/kernel/functions/freg/attribution.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/functions/freg/attribution.rs",
+      "a struct field",
+      17
+    ],
+    [
+      "src/kernel/functions/freg/attribution.rs",
+      "a variant",
+      6
+    ],
+    [
+      "src/kernel/functions/freg/attribution.rs",
+      "an associated function",
+      3
+    ],
+    [
+      "src/kernel/functions/freg/attribution.rs",
+      "an enum",
+      1
+    ],
+    [
+      "src/kernel/functions/freg/audit_export.rs",
+      "a struct field",
+      9
+    ],
+    [
+      "src/kernel/functions/freg/audit_export.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/freg/cascade.rs",
+      "a constant",
+      1
+    ],
+    [
+      "src/kernel/functions/freg/cascade.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/functions/freg/cascade.rs",
+      "a struct field",
+      11
+    ],
+    [
+      "src/kernel/functions/freg/cascade.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/functions/freg/health_monitor.rs",
+      "a constant",
+      1
+    ],
+    [
+      "src/kernel/functions/freg/health_monitor.rs",
+      "a struct field",
+      7
+    ],
+    [
+      "src/kernel/functions/freg/health_monitor.rs",
+      "a variant",
+      3
+    ],
+    [
+      "src/kernel/functions/freg/health_monitor.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/cgroupfs.rs",
+      "an associated function",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/configfs.rs",
+      "an associated function",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/dcache.rs",
+      "a struct field",
+      10
+    ],
+    [
+      "src/kernel/functions/fs/devfs.rs",
+      "a method",
+      6
+    ],
+    [
+      "src/kernel/functions/fs/devfs.rs",
+      "a struct field",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/devfs.rs",
+      "an associated function",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/devpts.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/exfat/dir.rs",
+      "a constant",
+      5
+    ],
+    [
+      "src/kernel/functions/fs/exfat/dir.rs",
+      "a struct field",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/exfat/fat.rs",
+      "a constant",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/exfat/mount.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/exfat/read.rs",
+      "a struct field",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/exfat/super_block.rs",
+      "a struct field",
+      18
+    ],
+    [
+      "src/kernel/functions/fs/exfat/super_block.rs",
+      "an associated constant",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/ext2/block_group.rs",
+      "a struct field",
+      8
+    ],
+    [
+      "src/kernel/functions/fs/ext2/dir.rs",
+      "a struct field",
+      5
+    ],
+    [
+      "src/kernel/functions/fs/ext2/inode.rs",
+      "a struct field",
+      18
+    ],
+    [
+      "src/kernel/functions/fs/ext2/mount.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/ext2/super_block.rs",
+      "a struct field",
+      48
+    ],
+    [
+      "src/kernel/functions/fs/ext2/super_block.rs",
+      "an associated constant",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/handle.rs",
+      "a function",
+      17
+    ],
+    [
+      "src/kernel/functions/fs/inode.rs",
+      "a trait",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/inotify.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/overlayfs.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/procfs_core.rs",
+      "a constant",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/procfs_core.rs",
+      "a function",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/procfs_core.rs",
+      "a method",
+      6
+    ],
+    [
+      "src/kernel/functions/fs/procfs_core.rs",
+      "a static",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/procfs_core.rs",
+      "a struct",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/procfs_core.rs",
+      "a struct field",
+      4
+    ],
+    [
+      "src/kernel/functions/fs/procfs_core.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/ramfs.rs",
+      "a constant",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/ramfs_core/mod.rs",
+      "a function",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/ramfs_core/mod.rs",
+      "a module",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/ramfs_core/mod.rs",
+      "a static",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/ramfs_core/ramfs_data.rs",
+      "a method",
+      19
+    ],
+    [
+      "src/kernel/functions/fs/ramfs_core/ramfs_data.rs",
+      "a struct",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/ramfs_core/ramfs_data.rs",
+      "a struct field",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/ramfs_core/ramfs_node.rs",
+      "a method",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/ramfs_core/ramfs_node.rs",
+      "a struct",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/ramfs_core/ramfs_node.rs",
+      "a struct field",
+      23
+    ],
+    [
+      "src/kernel/functions/fs/ramfs_core/ramfs_node.rs",
+      "an associated function",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/sendfile.rs",
+      "a constant",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/stat.rs",
+      "a struct field",
+      32
+    ],
+    [
+      "src/kernel/functions/fs/sysfs.rs",
+      "a struct field",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/sysfs.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/systree.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/arc.rs",
+      "a constant",
+      4
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/arc.rs",
+      "a method",
+      12
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/arc.rs",
+      "a struct",
+      4
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/arc.rs",
+      "a struct field",
+      26
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/arc.rs",
+      "a variant",
+      8
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/arc.rs",
+      "an associated function",
+      4
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/arc.rs",
+      "an enum",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/bp.rs",
+      "a constant",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/bp.rs",
+      "a method",
+      19
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/bp.rs",
+      "a struct",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/bp.rs",
+      "a struct field",
+      19
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/bp.rs",
+      "a variant",
+      11
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/bp.rs",
+      "an associated constant",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/bp.rs",
+      "an associated function",
+      6
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/bp.rs",
+      "an enum",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/checksum.rs",
+      "a constant",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/checksum.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/checksum.rs",
+      "a struct",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/checksum.rs",
+      "a struct field",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/checksum.rs",
+      "a trait",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/checksum.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/compress.rs",
+      "a constant",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/compress.rs",
+      "a function",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dataset.rs",
+      "a constant",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dataset.rs",
+      "a method",
+      12
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dataset.rs",
+      "a struct",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dataset.rs",
+      "a struct field",
+      31
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dataset.rs",
+      "a variant",
+      6
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dataset.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dataset.rs",
+      "an enum",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dedup.rs",
+      "a constant",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dedup.rs",
+      "a function",
+      12
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dedup.rs",
+      "a method",
+      8
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dedup.rs",
+      "a struct",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dedup.rs",
+      "a type alias",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dedup.rs",
+      "a variant",
+      4
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dedup.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dedup.rs",
+      "an enum",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dmu.rs",
+      "a constant",
+      5
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dmu.rs",
+      "a method",
+      14
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dmu.rs",
+      "a struct",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dmu.rs",
+      "a struct field",
+      24
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dmu.rs",
+      "a variant",
+      10
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dmu.rs",
+      "an associated function",
+      6
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/dmu.rs",
+      "an enum",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/metaslab.rs",
+      "a constant",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/metaslab.rs",
+      "a method",
+      5
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/metaslab.rs",
+      "a struct",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/metaslab.rs",
+      "a struct field",
+      14
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/metaslab.rs",
+      "a variant",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/metaslab.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/metaslab.rs",
+      "an enum",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/mod.rs",
+      "a module",
+      17
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/raidz.rs",
+      "a constant",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/raidz.rs",
+      "a method",
+      6
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/raidz.rs",
+      "a struct",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/raidz.rs",
+      "a struct field",
+      13
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/raidz.rs",
+      "a variant",
+      9
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/raidz.rs",
+      "an associated function",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/raidz.rs",
+      "an enum",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/snapshot.rs",
+      "a constant",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/snapshot.rs",
+      "a method",
+      8
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/snapshot.rs",
+      "a struct",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/snapshot.rs",
+      "a struct field",
+      11
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/snapshot.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/spa.rs",
+      "a constant",
+      8
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/spa.rs",
+      "a method",
+      18
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/spa.rs",
+      "a struct",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/spa.rs",
+      "a struct field",
+      35
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/spa.rs",
+      "a variant",
+      6
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/spa.rs",
+      "an associated function",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/spa.rs",
+      "an enum",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/txg.rs",
+      "a constant",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/txg.rs",
+      "a method",
+      22
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/txg.rs",
+      "a struct",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/txg.rs",
+      "a struct field",
+      25
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/txg.rs",
+      "a variant",
+      8
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/txg.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/txg.rs",
+      "an enum",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/unkfs_data.rs",
+      "a constant",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/unkfs_data.rs",
+      "a function",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/unkfs_data.rs",
+      "a method",
+      20
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/unkfs_data.rs",
+      "a struct",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/unkfs_data.rs",
+      "a struct field",
+      22
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/unkfs_data.rs",
+      "a variant",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/unkfs_data.rs",
+      "an enum",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/unkfs_inode.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/vdev.rs",
+      "a constant",
+      10
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/vdev.rs",
+      "a method",
+      5
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/vdev.rs",
+      "a struct",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/vdev.rs",
+      "a struct field",
+      21
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/vdev.rs",
+      "a variant",
+      8
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/vdev.rs",
+      "an associated function",
+      4
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/vdev.rs",
+      "an enum",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/zap.rs",
+      "a constant",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/zap.rs",
+      "a method",
+      14
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/zap.rs",
+      "a struct",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/zap.rs",
+      "a struct field",
+      8
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/zap.rs",
+      "a variant",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/zap.rs",
+      "an associated function",
+      4
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/zap.rs",
+      "an enum",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/zil.rs",
+      "a constant",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/zil.rs",
+      "a method",
+      7
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/zil.rs",
+      "a struct",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/zil.rs",
+      "a struct field",
+      17
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/zil.rs",
+      "a variant",
+      13
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/zil.rs",
+      "an associated function",
+      11
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/zil.rs",
+      "an enum",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/zil_persist.rs",
+      "a method",
+      6
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/zil_persist.rs",
+      "a struct",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/zil_persist.rs",
+      "a struct field",
+      18
+    ],
+    [
+      "src/kernel/functions/fs/unkfs/zil_persist.rs",
+      "an associated function",
+      5
+    ],
+    [
+      "src/kernel/functions/fs/vfs_manager.rs",
+      "a method",
+      13
+    ],
+    [
+      "src/kernel/functions/fs/vfs_manager.rs",
+      "a static",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/vfs_manager.rs",
+      "a struct",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/vfs_manager.rs",
+      "a struct field",
+      6
+    ],
+    [
+      "src/kernel/functions/fs/vfs_manager.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/vfs_mount.rs",
+      "a function",
+      5
+    ],
+    [
+      "src/kernel/functions/fs/vfs_path.rs",
+      "a function",
+      16
+    ],
+    [
+      "src/kernel/functions/fs/vfs_types.rs",
+      "a constant",
+      6
+    ],
+    [
+      "src/kernel/functions/fs/vfs_types.rs",
+      "a method",
+      6
+    ],
+    [
+      "src/kernel/functions/fs/vfs_types.rs",
+      "a struct",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/vfs_types.rs",
+      "a struct field",
+      16
+    ],
+    [
+      "src/kernel/functions/fs/vfs_types.rs",
+      "a trait",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/vfs_types.rs",
+      "a type alias",
+      3
+    ],
+    [
+      "src/kernel/functions/fs/vfs_types.rs",
+      "a variant",
+      11
+    ],
+    [
+      "src/kernel/functions/fs/vfs_types.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/vfs_types.rs",
+      "an enum",
+      2
+    ],
+    [
+      "src/kernel/functions/fs/virtiofs.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/functions/ipc/mod.rs",
+      "a struct field",
+      3
+    ],
+    [
+      "src/kernel/functions/ipc/mod.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/functions/ipc/pipe.rs",
+      "a function",
+      2
+    ],
+    [
+      "src/kernel/functions/mm/memory_pressure.rs",
+      "a function",
+      2
+    ],
+    [
+      "src/kernel/functions/mm/mmap.rs",
+      "a constant",
+      1
+    ],
+    [
+      "src/kernel/functions/mm/mprotect.rs",
+      "a constant",
+      3
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "a macro",
+      5
+    ],
+    [
+      "src/kernel/functions/net/mod.rs",
+      "a variant",
+      5
+    ],
+    [
+      "src/kernel/functions/net/mod.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/net/unix.rs",
+      "a function",
+      3
+    ],
+    [
+      "src/kernel/functions/net/unix.rs",
+      "a method",
+      2
+    ],
+    [
+      "src/kernel/functions/net/unix.rs",
+      "a static",
+      1
+    ],
+    [
+      "src/kernel/functions/net/unix.rs",
+      "a struct",
+      3
+    ],
+    [
+      "src/kernel/functions/net/unix.rs",
+      "a struct field",
+      29
+    ],
+    [
+      "src/kernel/functions/net/unix.rs",
+      "a type alias",
+      1
+    ],
+    [
+      "src/kernel/functions/net/unix.rs",
+      "a variant",
+      18
+    ],
+    [
+      "src/kernel/functions/net/unix.rs",
+      "an associated function",
+      3
+    ],
+    [
+      "src/kernel/functions/net/unix.rs",
+      "an enum",
+      3
+    ],
+    [
+      "src/kernel/functions/proc/elf.rs",
+      "a type alias",
+      1
+    ],
+    [
+      "src/kernel/functions/proc/madvise_mlock.rs",
+      "a method",
+      2
+    ],
+    [
+      "src/kernel/functions/proc/madvise_mlock.rs",
+      "a type alias",
+      1
+    ],
+    [
+      "src/kernel/functions/proc/madvise_mlock.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/proc/mod.rs",
+      "a type alias",
+      1
+    ],
+    [
+      "src/kernel/functions/proc/mod.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/proc/signal.rs",
+      "a type alias",
+      1
+    ],
+    [
+      "src/kernel/functions/proc/table.rs",
+      "a type alias",
+      1
+    ],
+    [
+      "src/kernel/functions/sgeg/audit.rs",
+      "a constant",
+      1
+    ],
+    [
+      "src/kernel/functions/sgeg/audit.rs",
+      "a method",
+      2
+    ],
+    [
+      "src/kernel/functions/sgeg/audit.rs",
+      "a struct",
+      1
+    ],
+    [
+      "src/kernel/functions/sgeg/audit.rs",
+      "a struct field",
+      11
+    ],
+    [
+      "src/kernel/functions/sgeg/audit.rs",
+      "a variant",
+      10
+    ],
+    [
+      "src/kernel/functions/sgeg/audit.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/sgeg/crypto.rs",
+      "a type alias",
+      1
+    ],
+    [
+      "src/kernel/functions/sgeg/grants.rs",
+      "a method",
+      2
+    ],
+    [
+      "src/kernel/functions/sgeg/grants.rs",
+      "a struct field",
+      12
+    ],
+    [
+      "src/kernel/functions/sgeg/grants.rs",
+      "a variant",
+      7
+    ],
+    [
+      "src/kernel/functions/sgeg/grants.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/functions/sgeg/grants.rs",
+      "an enum",
+      1
+    ],
+    [
+      "src/kernel/functions/sgeg/identity.rs",
+      "a function",
+      1
+    ],
+    [
+      "src/kernel/functions/sgeg/identity.rs",
+      "a type alias",
+      1
+    ],
+    [
+      "src/kernel/functions/sgeg/policy.rs",
+      "a method",
+      4
+    ],
+    [
+      "src/kernel/functions/sgeg/policy.rs",
+      "a variant",
+      8
+    ],
+    [
+      "src/kernel/functions/sgeg/policy.rs",
+      "an associated constant",
+      17
+    ],
+    [
+      "src/kernel/functions/sgeg/policy.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/functions/sgeg/policy.rs",
+      "an enum",
+      1
+    ],
+    [
+      "src/kernel/functions/sgeg/sessions.rs",
+      "a method",
+      2
+    ],
+    [
+      "src/kernel/functions/sgeg/sessions.rs",
+      "a struct",
+      2
+    ],
+    [
+      "src/kernel/functions/sgeg/sessions.rs",
+      "a struct field",
+      5
+    ],
+    [
+      "src/kernel/functions/sgeg/sessions.rs",
+      "a variant",
+      8
+    ],
+    [
+      "src/kernel/functions/sgeg/sessions.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/functions/sgeg/sessions.rs",
+      "an enum",
+      1
+    ],
+    [
+      "src/kernel/functions/sgeg/storage/disk.rs",
+      "a struct field",
+      5
+    ],
+    [
+      "src/kernel/functions/sync/futex.rs",
+      "a struct field",
+      2
+    ],
+    [
+      "src/kernel/functions/sync/mod.rs",
+      "a type alias",
+      1
+    ],
+    [
+      "src/kernel/functions/sync/mod.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/sync/pi_mutex.rs",
+      "a type alias",
+      1
+    ],
+    [
+      "src/kernel/functions/wasm/interpreter.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/functions/wasm/interpreter.rs",
+      "a struct",
+      1
+    ],
+    [
+      "src/kernel/functions/wasm/interpreter.rs",
+      "a struct field",
+      5
+    ],
+    [
+      "src/kernel/functions/wasm/interpreter.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/wasm/runtime.rs",
+      "a method",
+      7
+    ],
+    [
+      "src/kernel/functions/wasm/runtime.rs",
+      "a struct",
+      4
+    ],
+    [
+      "src/kernel/functions/wasm/runtime.rs",
+      "a struct field",
+      13
+    ],
+    [
+      "src/kernel/functions/wasm/runtime.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/wasm/types.rs",
+      "a constant",
+      15
+    ],
+    [
+      "src/kernel/functions/wasm/types.rs",
+      "a method",
+      3
+    ],
+    [
+      "src/kernel/functions/wasm/types.rs",
+      "a struct",
+      10
+    ],
+    [
+      "src/kernel/functions/wasm/types.rs",
+      "a struct field",
+      34
+    ],
+    [
+      "src/kernel/functions/wasm/types.rs",
+      "a variant",
+      136
+    ],
+    [
+      "src/kernel/functions/wasm/types.rs",
+      "an associated function",
+      3
+    ],
+    [
+      "src/kernel/functions/wasm/types.rs",
+      "an enum",
+      6
+    ],
+    [
+      "src/kernel/functions/wasm/wasi/errno.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/functions/wasm/wasi/errno.rs",
+      "a variant",
+      34
+    ],
+    [
+      "src/kernel/functions/wasm/wasi/fd_table.rs",
+      "a constant",
+      2
+    ],
+    [
+      "src/kernel/functions/wasm/wasi/fd_table.rs",
+      "a struct field",
+      6
+    ],
+    [
+      "src/kernel/functions/wasm/wasi/fd_table.rs",
+      "a variant",
+      5
+    ],
+    [
+      "src/kernel/functions/wasm/wasi/fd_table.rs",
+      "an associated constant",
+      3
+    ],
+    [
+      "src/kernel/functions/wasm/wasi/fd_table.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/functions/wasm/wasi/mod.rs",
+      "a struct field",
+      3
+    ],
+    [
+      "src/kernel/functions/wasm/wasi/mod.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/arch/shadow_stack.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/arch/x86_64/acpi.rs",
+      "a function",
+      5
+    ],
+    [
+      "src/kernel/privileged/arch/x86_64/acpi.rs",
+      "a struct field",
+      3
+    ],
+    [
+      "src/kernel/privileged/arch/x86_64/apic.rs",
+      "a function",
+      6
+    ],
+    [
+      "src/kernel/privileged/arch/x86_64/gdt.rs",
+      "a struct field",
+      8
+    ],
+    [
+      "src/kernel/privileged/arch/x86_64/ioapic.rs",
+      "a function",
+      6
+    ],
+    [
+      "src/kernel/privileged/arch/x86_64/mod.rs",
+      "a module",
+      1
+    ],
+    [
+      "src/kernel/privileged/arch/x86_64/smp_init.rs",
+      "a function",
+      3
+    ],
+    [
+      "src/kernel/privileged/boot/mod.rs",
+      "a constant",
+      4
+    ],
+    [
+      "src/kernel/privileged/boot/mod.rs",
+      "a function",
+      3
+    ],
+    [
+      "src/kernel/privileged/boot/mod.rs",
+      "a method",
+      3
+    ],
+    [
+      "src/kernel/privileged/boot/mod.rs",
+      "a struct field",
+      32
+    ],
+    [
+      "src/kernel/privileged/boot/mod.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/boot/multiboot2_fb.rs",
+      "a constant",
+      1
+    ],
+    [
+      "src/kernel/privileged/boot/multiboot2_fb.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/privileged/boot/multiboot2_fb.rs",
+      "a struct field",
+      12
+    ],
+    [
+      "src/kernel/privileged/boot/multiboot2_fb.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/config/caps.rs",
+      "a struct field",
+      9
+    ],
+    [
+      "src/kernel/privileged/config/error.rs",
+      "a struct field",
+      5
+    ],
+    [
+      "src/kernel/privileged/config/memory.rs",
+      "a constant",
+      5
+    ],
+    [
+      "src/kernel/privileged/console/gfx_console.rs",
+      "a method",
+      5
+    ],
+    [
+      "src/kernel/privileged/console/gfx_console.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/console/mod.rs",
+      "a module",
+      1
+    ],
+    [
+      "src/kernel/privileged/debug/ebpf.rs",
+      "a constant",
+      64
+    ],
+    [
+      "src/kernel/privileged/debug/ebpf.rs",
+      "a method",
+      3
+    ],
+    [
+      "src/kernel/privileged/debug/ebpf.rs",
+      "a struct field",
+      12
+    ],
+    [
+      "src/kernel/privileged/debug/ebpf.rs",
+      "a variant",
+      2
+    ],
+    [
+      "src/kernel/privileged/debug/ebpf.rs",
+      "an associated function",
+      5
+    ],
+    [
+      "src/kernel/privileged/debug/ftrace.rs",
+      "a struct field",
+      4
+    ],
+    [
+      "src/kernel/privileged/debug/ftrace.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/debug/kgdb.rs",
+      "a struct field",
+      18
+    ],
+    [
+      "src/kernel/privileged/dma/api.rs",
+      "a constant",
+      2
+    ],
+    [
+      "src/kernel/privileged/dma/api.rs",
+      "a struct field",
+      9
+    ],
+    [
+      "src/kernel/privileged/dma/api.rs",
+      "a variant",
+      6
+    ],
+    [
+      "src/kernel/privileged/dma/engine.rs",
+      "a method",
+      10
+    ],
+    [
+      "src/kernel/privileged/dma/engine.rs",
+      "a struct field",
+      6
+    ],
+    [
+      "src/kernel/privileged/dma/engine.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/dma/mod.rs",
+      "a constant",
+      3
+    ],
+    [
+      "src/kernel/privileged/dma/mod.rs",
+      "a struct field",
+      41
+    ],
+    [
+      "src/kernel/privileged/dma/mod.rs",
+      "a variant",
+      6
+    ],
+    [
+      "src/kernel/privileged/dma/mod.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/driver/display/font.rs",
+      "a struct field",
+      3
+    ],
+    [
+      "src/kernel/privileged/driver/display/font.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/driver/display/framebuffer.rs",
+      "a constant",
+      11
+    ],
+    [
+      "src/kernel/privileged/driver/display/framebuffer.rs",
+      "a struct field",
+      10
+    ],
+    [
+      "src/kernel/privileged/driver/display/framebuffer.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/driver/display/mod.rs",
+      "a module",
+      2
+    ],
+    [
+      "src/kernel/privileged/driver/hotplug.rs",
+      "a static",
+      1
+    ],
+    [
+      "src/kernel/privileged/driver/hotplug.rs",
+      "a struct field",
+      24
+    ],
+    [
+      "src/kernel/privileged/driver/hotplug.rs",
+      "a variant",
+      3
+    ],
+    [
+      "src/kernel/privileged/driver/hotplug.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/driver/infra.rs",
+      "a method",
+      2
+    ],
+    [
+      "src/kernel/privileged/driver/infra.rs",
+      "a struct field",
+      6
+    ],
+    [
+      "src/kernel/privileged/driver/infra.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/driver/input/keyboard.rs",
+      "a static",
+      1
+    ],
+    [
+      "src/kernel/privileged/driver/input/keyboard.rs",
+      "a struct field",
+      9
+    ],
+    [
+      "src/kernel/privileged/driver/input/keyboard.rs",
+      "a variant",
+      11
+    ],
+    [
+      "src/kernel/privileged/driver/input/mod.rs",
+      "a function",
+      1
+    ],
+    [
+      "src/kernel/privileged/driver/kexec.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/driver/net/dma_ring.rs",
+      "a struct field",
+      13
+    ],
+    [
+      "src/kernel/privileged/driver/net/mod.rs",
+      "a module",
+      1
+    ],
+    [
+      "src/kernel/privileged/driver/power.rs",
+      "a struct field",
+      4
+    ],
+    [
+      "src/kernel/privileged/driver/power.rs",
+      "an associated function",
+      7
+    ],
+    [
+      "src/kernel/privileged/driver/storage/ahci.rs",
+      "a struct field",
+      30
+    ],
+    [
+      "src/kernel/privileged/driver/storage/ahci.rs",
+      "a variant",
+      5
+    ],
+    [
+      "src/kernel/privileged/driver/storage/ahci.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/driver/storage/ahci.rs",
+      "an enum",
+      1
+    ],
+    [
+      "src/kernel/privileged/driver/storage/nvme.rs",
+      "a method",
+      2
+    ],
+    [
+      "src/kernel/privileged/driver/storage/nvme.rs",
+      "a struct field",
+      21
+    ],
+    [
+      "src/kernel/privileged/driver/storage/nvme.rs",
+      "a variant",
+      12
+    ],
+    [
+      "src/kernel/privileged/driver/storage/nvme.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/driver/uefi.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/privileged/driver/uefi.rs",
+      "a struct field",
+      21
+    ],
+    [
+      "src/kernel/privileged/driver/uefi.rs",
+      "a variant",
+      19
+    ],
+    [
+      "src/kernel/privileged/driver/uefi.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/driver/virtio/mod.rs",
+      "a constant",
+      3
+    ],
+    [
+      "src/kernel/privileged/driver/virtio/mod.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/privileged/driver/virtio/queue.rs",
+      "a constant",
+      5
+    ],
+    [
+      "src/kernel/privileged/driver/virtio/queue.rs",
+      "a struct field",
+      12
+    ],
+    [
+      "src/kernel/privileged/egdf/composite.rs",
+      "a function",
+      1
+    ],
+    [
+      "src/kernel/privileged/egdf/composite.rs",
+      "a method",
+      2
+    ],
+    [
+      "src/kernel/privileged/egdf/composite.rs",
+      "a variant",
+      2
+    ],
+    [
+      "src/kernel/privileged/egdf/composite.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/egdf/devtree.rs",
+      "a function",
+      3
+    ],
+    [
+      "src/kernel/privileged/egdf/devtree.rs",
+      "a method",
+      8
+    ],
+    [
+      "src/kernel/privileged/egdf/devtree.rs",
+      "a struct field",
+      13
+    ],
+    [
+      "src/kernel/privileged/egdf/devtree.rs",
+      "a variant",
+      6
+    ],
+    [
+      "src/kernel/privileged/egdf/devtree.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/egdf/firmware.rs",
+      "a constant",
+      6
+    ],
+    [
+      "src/kernel/privileged/egdf/firmware.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/privileged/egdf/firmware.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/egdf/mod.rs",
+      "a method",
+      4
+    ],
+    [
+      "src/kernel/privileged/egdf/mod.rs",
+      "a module",
+      2
+    ],
+    [
+      "src/kernel/privileged/egdf/mod.rs",
+      "a static",
+      1
+    ],
+    [
+      "src/kernel/privileged/egdf/mod.rs",
+      "a struct field",
+      8
+    ],
+    [
+      "src/kernel/privileged/egdf/mod.rs",
+      "a variant",
+      14
+    ],
+    [
+      "src/kernel/privileged/egdf/user_driver.rs",
+      "a constant",
+      7
+    ],
+    [
+      "src/kernel/privileged/egdf/user_driver.rs",
+      "a function",
+      2
+    ],
+    [
+      "src/kernel/privileged/egdf/user_driver.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/privileged/egdf/user_driver.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/freg/api.rs",
+      "a function",
+      15
+    ],
+    [
+      "src/kernel/privileged/freg/domain.rs",
+      "a method",
+      23
+    ],
+    [
+      "src/kernel/privileged/freg/domain.rs",
+      "a struct field",
+      27
+    ],
+    [
+      "src/kernel/privileged/freg/manager.rs",
+      "a method",
+      8
+    ],
+    [
+      "src/kernel/privileged/freg/manager.rs",
+      "a static",
+      1
+    ],
+    [
+      "src/kernel/privileged/freg/manager.rs",
+      "a struct field",
+      5
+    ],
+    [
+      "src/kernel/privileged/freg/manager.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/freg/mod.rs",
+      "a module",
+      6
+    ],
+    [
+      "src/kernel/privileged/freg/mod.rs",
+      "a static",
+      5
+    ],
+    [
+      "src/kernel/privileged/freg/recoverable.rs",
+      "a method",
+      2
+    ],
+    [
+      "src/kernel/privileged/freg/recoverable.rs",
+      "a trait",
+      1
+    ],
+    [
+      "src/kernel/privileged/freg/recoverable.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/freg/recovery.rs",
+      "a constant",
+      2
+    ],
+    [
+      "src/kernel/privileged/freg/recovery.rs",
+      "a struct field",
+      2
+    ],
+    [
+      "src/kernel/privileged/freg/recovery.rs",
+      "a trait",
+      1
+    ],
+    [
+      "src/kernel/privileged/freg/recovery.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/freg/reset/audit.rs",
+      "a constant",
+      1
+    ],
+    [
+      "src/kernel/privileged/freg/reset/audit.rs",
+      "a method",
+      6
+    ],
+    [
+      "src/kernel/privileged/freg/reset/audit.rs",
+      "a static",
+      1
+    ],
+    [
+      "src/kernel/privileged/freg/reset/audit.rs",
+      "a struct field",
+      8
+    ],
+    [
+      "src/kernel/privileged/freg/reset/audit.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/freg/reset/config.rs",
+      "a constant",
+      3
+    ],
+    [
+      "src/kernel/privileged/freg/reset/config.rs",
+      "a method",
+      3
+    ],
+    [
+      "src/kernel/privileged/freg/reset/config.rs",
+      "a static",
+      8
+    ],
+    [
+      "src/kernel/privileged/freg/reset/config.rs",
+      "a struct field",
+      9
+    ],
+    [
+      "src/kernel/privileged/freg/reset/config.rs",
+      "a variant",
+      8
+    ],
+    [
+      "src/kernel/privileged/freg/reset/config.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/freg/reset/layered.rs",
+      "a struct field",
+      5
+    ],
+    [
+      "src/kernel/privileged/freg/reset/parallel.rs",
+      "a constant",
+      2
+    ],
+    [
+      "src/kernel/privileged/freg/reset/parallel.rs",
+      "a method",
+      2
+    ],
+    [
+      "src/kernel/privileged/freg/reset/parallel.rs",
+      "a static",
+      2
+    ],
+    [
+      "src/kernel/privileged/freg/reset/parallel.rs",
+      "a struct field",
+      5
+    ],
+    [
+      "src/kernel/privileged/freg/reset/parallel.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/freg/snapshot.rs",
+      "a constant",
+      5
+    ],
+    [
+      "src/kernel/privileged/freg/snapshot.rs",
+      "a method",
+      14
+    ],
+    [
+      "src/kernel/privileged/freg/snapshot.rs",
+      "a static",
+      1
+    ],
+    [
+      "src/kernel/privileged/freg/snapshot.rs",
+      "a struct field",
+      10
+    ],
+    [
+      "src/kernel/privileged/freg/snapshot.rs",
+      "a variant",
+      7
+    ],
+    [
+      "src/kernel/privileged/freg/snapshot.rs",
+      "an associated function",
+      3
+    ],
+    [
+      "src/kernel/privileged/freg/types.rs",
+      "a constant",
+      13
+    ],
+    [
+      "src/kernel/privileged/freg/types.rs",
+      "a struct field",
+      16
+    ],
+    [
+      "src/kernel/privileged/freg/types.rs",
+      "a variant",
+      6
+    ],
+    [
+      "src/kernel/privileged/freg/types.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/freg/undo_log.rs",
+      "a method",
+      3
+    ],
+    [
+      "src/kernel/privileged/freg/undo_log.rs",
+      "a struct field",
+      3
+    ],
+    [
+      "src/kernel/privileged/fs/vfs/types_pod.rs",
+      "a variant",
+      4
+    ],
+    [
+      "src/kernel/privileged/fs/vfs/types_pod.rs",
+      "an enum",
+      1
+    ],
+    [
+      "src/kernel/privileged/fs/vfs_poll_trait.rs",
+      "a variant",
+      2
+    ],
+    [
+      "src/kernel/privileged/idt/handlers.rs",
+      "a method",
+      3
+    ],
+    [
+      "src/kernel/privileged/idt/handlers.rs",
+      "a struct field",
+      8
+    ],
+    [
+      "src/kernel/privileged/idt/handlers.rs",
+      "a variant",
+      7
+    ],
+    [
+      "src/kernel/privileged/idt/handlers.rs",
+      "an associated function",
+      3
+    ],
+    [
+      "src/kernel/privileged/idt/statistics.rs",
+      "a struct field",
+      12
+    ],
+    [
+      "src/kernel/privileged/idt/types.rs",
+      "a constant",
+      5
+    ],
+    [
+      "src/kernel/privileged/idt/types.rs",
+      "a struct field",
+      19
+    ],
+    [
+      "src/kernel/privileged/iomem.rs",
+      "a method",
+      4
+    ],
+    [
+      "src/kernel/privileged/ipc/api.rs",
+      "a constant",
+      5
+    ],
+    [
+      "src/kernel/privileged/ipc/api.rs",
+      "a variant",
+      4
+    ],
+    [
+      "src/kernel/privileged/ipc/dynamic.rs",
+      "a function",
+      6
+    ],
+    [
+      "src/kernel/privileged/ipc/dynamic.rs",
+      "a method",
+      8
+    ],
+    [
+      "src/kernel/privileged/ipc/dynamic.rs",
+      "a struct field",
+      5
+    ],
+    [
+      "src/kernel/privileged/ipc/dynamic.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/ipc/pipe.rs",
+      "a function",
+      1
+    ],
+    [
+      "src/kernel/privileged/ipc/types.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/privileged/ipc/types.rs",
+      "an associated function",
+      7
+    ],
+    [
+      "src/kernel/privileged/irq/mod.rs",
+      "a function",
+      2
+    ],
+    [
+      "src/kernel/privileged/irq/mod.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/privileged/irq/mod.rs",
+      "a variant",
+      8
+    ],
+    [
+      "src/kernel/privileged/irq/mod.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/irqline.rs",
+      "a method",
+      3
+    ],
+    [
+      "src/kernel/privileged/klog/mod.rs",
+      "a constant",
+      1
+    ],
+    [
+      "src/kernel/privileged/klog/mod.rs",
+      "a macro",
+      11
+    ],
+    [
+      "src/kernel/privileged/klog/mod.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/privileged/klog/mod.rs",
+      "a static",
+      1
+    ],
+    [
+      "src/kernel/privileged/klog/mod.rs",
+      "a variant",
+      21
+    ],
+    [
+      "src/kernel/privileged/klog/mod.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/mm/api.rs",
+      "a struct field",
+      4
+    ],
+    [
+      "src/kernel/privileged/mm/kmalloc.rs",
+      "a struct field",
+      9
+    ],
+    [
+      "src/kernel/privileged/mm/kmalloc.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/mm/mod.rs",
+      "a constant",
+      5
+    ],
+    [
+      "src/kernel/privileged/mm/mod.rs",
+      "a method",
+      4
+    ],
+    [
+      "src/kernel/privileged/mm/mod.rs",
+      "a struct field",
+      4
+    ],
+    [
+      "src/kernel/privileged/mm/mod.rs",
+      "a variant",
+      3
+    ],
+    [
+      "src/kernel/privileged/mm/mod.rs",
+      "an associated function",
+      4
+    ],
+    [
+      "src/kernel/privileged/mm/numa.rs",
+      "a method",
+      5
+    ],
+    [
+      "src/kernel/privileged/mm/numa.rs",
+      "an associated function",
+      4
+    ],
+    [
+      "src/kernel/privileged/mm/page_fault.rs",
+      "a static",
+      1
+    ],
+    [
+      "src/kernel/privileged/mm/page_fault.rs",
+      "a struct field",
+      6
+    ],
+    [
+      "src/kernel/privileged/mm/page_fault.rs",
+      "a variant",
+      5
+    ],
+    [
+      "src/kernel/privileged/mm/page_fault.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/mm/pmm.rs",
+      "a method",
+      10
+    ],
+    [
+      "src/kernel/privileged/mm/pmm.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/mm/pmm_trait.rs",
+      "a struct field",
+      3
+    ],
+    [
+      "src/kernel/privileged/mm/pressure.rs",
+      "a method",
+      3
+    ],
+    [
+      "src/kernel/privileged/mm/pressure.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/mm/slab.rs",
+      "a function",
+      1
+    ],
+    [
+      "src/kernel/privileged/mm/slab.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/privileged/mm/uffd.rs",
+      "a struct field",
+      21
+    ],
+    [
+      "src/kernel/privileged/mm/vma.rs",
+      "a function",
+      1
+    ],
+    [
+      "src/kernel/privileged/mm/vma.rs",
+      "a method",
+      9
+    ],
+    [
+      "src/kernel/privileged/mm/vma.rs",
+      "a struct field",
+      10
+    ],
+    [
+      "src/kernel/privileged/mm/vma.rs",
+      "a variant",
+      8
+    ],
+    [
+      "src/kernel/privileged/mm/vma.rs",
+      "an associated constant",
+      1
+    ],
+    [
+      "src/kernel/privileged/mm/vma.rs",
+      "an associated function",
+      5
+    ],
+    [
+      "src/kernel/privileged/mm/vmm_x86_64.rs",
+      "a method",
+      11
+    ],
+    [
+      "src/kernel/privileged/mm/vmm_x86_64.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "a module",
+      3
+    ],
+    [
+      "src/kernel/privileged/net/iface_trait.rs",
+      "a struct field",
+      1
+    ],
+    [
+      "src/kernel/privileged/net/init.rs",
+      "a function",
+      1
+    ],
+    [
+      "src/kernel/privileged/net/init/query.rs",
+      "a struct field",
+      6
+    ],
+    [
+      "src/kernel/privileged/net/init/query.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/net/init/sockets.rs",
+      "a constant",
+      1
+    ],
+    [
+      "src/kernel/privileged/net/init/sockets.rs",
+      "a static",
+      2
+    ],
+    [
+      "src/kernel/privileged/net/init/state.rs",
+      "a static",
+      5
+    ],
+    [
+      "src/kernel/privileged/net/init/state.rs",
+      "a variant",
+      5
+    ],
+    [
+      "src/kernel/privileged/net/mod.rs",
+      "a module",
+      1
+    ],
+    [
+      "src/kernel/privileged/net/netfilter.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/privileged/net/netfilter.rs",
+      "a struct field",
+      15
+    ],
+    [
+      "src/kernel/privileged/net/netfilter.rs",
+      "a variant",
+      9
+    ],
+    [
+      "src/kernel/privileged/net/netfilter.rs",
+      "an associated constant",
+      1
+    ],
+    [
+      "src/kernel/privileged/net/netfilter.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/net/route.rs",
+      "a struct field",
+      2
+    ],
+    [
+      "src/kernel/privileged/net/save.rs",
+      "a method",
+      3
+    ],
+    [
+      "src/kernel/privileged/net/save.rs",
+      "a struct field",
+      6
+    ],
+    [
+      "src/kernel/privileged/net/save.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/net/smoltcp_impl.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/privileged/net/smoltcp_impl.rs",
+      "a struct field",
+      4
+    ],
+    [
+      "src/kernel/privileged/net/smoltcp_impl.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/net/socket_types.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/privileged/net/socket_types.rs",
+      "a struct field",
+      4
+    ],
+    [
+      "src/kernel/privileged/net/socket_types.rs",
+      "an associated function",
+      4
+    ],
+    [
+      "src/kernel/privileged/net/types.rs",
+      "a constant",
+      3
+    ],
+    [
+      "src/kernel/privileged/net/wait_queue.rs",
+      "a static",
+      1
+    ],
+    [
+      "src/kernel/privileged/net/wait_queue.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/pci/api.rs",
+      "a constant",
+      7
+    ],
+    [
+      "src/kernel/privileged/pci/hotplug.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/privileged/pci/hotplug.rs",
+      "a struct field",
+      11
+    ],
+    [
+      "src/kernel/privileged/pci/hotplug.rs",
+      "a variant",
+      6
+    ],
+    [
+      "src/kernel/privileged/pci/hotplug.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/pci/mod.rs",
+      "a constant",
+      7
+    ],
+    [
+      "src/kernel/privileged/pci/mod.rs",
+      "a struct field",
+      22
+    ],
+    [
+      "src/kernel/privileged/pci/mod.rs",
+      "a variant",
+      4
+    ],
+    [
+      "src/kernel/privileged/proc/api.rs",
+      "a function",
+      4
+    ],
+    [
+      "src/kernel/privileged/proc/cfs.rs",
+      "a constant",
+      2
+    ],
+    [
+      "src/kernel/privileged/proc/cfs.rs",
+      "a method",
+      11
+    ],
+    [
+      "src/kernel/privileged/proc/cfs.rs",
+      "a struct field",
+      7
+    ],
+    [
+      "src/kernel/privileged/proc/cfs.rs",
+      "an associated function",
+      3
+    ],
+    [
+      "src/kernel/privileged/proc/cgroup.rs",
+      "a constant",
+      6
+    ],
+    [
+      "src/kernel/privileged/proc/cgroup.rs",
+      "a method",
+      19
+    ],
+    [
+      "src/kernel/privileged/proc/cgroup.rs",
+      "a struct field",
+      30
+    ],
+    [
+      "src/kernel/privileged/proc/cgroup.rs",
+      "a variant",
+      6
+    ],
+    [
+      "src/kernel/privileged/proc/cgroup.rs",
+      "an associated function",
+      7
+    ],
+    [
+      "src/kernel/privileged/proc/cpu_queue.rs",
+      "a method",
+      4
+    ],
+    [
+      "src/kernel/privileged/proc/cpu_queue.rs",
+      "a struct field",
+      4
+    ],
+    [
+      "src/kernel/privileged/proc/cpu_queue.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/proc/elf/mod.rs",
+      "a struct field",
+      27
+    ],
+    [
+      "src/kernel/privileged/proc/elf/mod.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/proc/fd_alloc.rs",
+      "a method",
+      3
+    ],
+    [
+      "src/kernel/privileged/proc/fd_alloc.rs",
+      "a struct field",
+      2
+    ],
+    [
+      "src/kernel/privileged/proc/fd_alloc.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/proc/madvise_mlock.rs",
+      "a constant",
+      11
+    ],
+    [
+      "src/kernel/privileged/proc/mod.rs",
+      "a module",
+      2
+    ],
+    [
+      "src/kernel/privileged/proc/namespace.rs",
+      "a constant",
+      6
+    ],
+    [
+      "src/kernel/privileged/proc/namespace.rs",
+      "a struct field",
+      15
+    ],
+    [
+      "src/kernel/privileged/proc/namespace.rs",
+      "a variant",
+      7
+    ],
+    [
+      "src/kernel/privileged/proc/namespace.rs",
+      "an associated function",
+      16
+    ],
+    [
+      "src/kernel/privileged/proc/oomd.rs",
+      "a method",
+      3
+    ],
+    [
+      "src/kernel/privileged/proc/oomd.rs",
+      "a static",
+      1
+    ],
+    [
+      "src/kernel/privileged/proc/oomd.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/proc/posix_timer.rs",
+      "a constant",
+      2
+    ],
+    [
+      "src/kernel/privileged/proc/posix_timer.rs",
+      "a struct field",
+      2
+    ],
+    [
+      "src/kernel/privileged/proc/posix_timer.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/proc/proc_ops.rs",
+      "a function",
+      9
+    ],
+    [
+      "src/kernel/privileged/proc/proc_ops.rs",
+      "a module",
+      1
+    ],
+    [
+      "src/kernel/privileged/proc/process.rs",
+      "a constant",
+      1
+    ],
+    [
+      "src/kernel/privileged/proc/process.rs",
+      "a method",
+      25
+    ],
+    [
+      "src/kernel/privileged/proc/process.rs",
+      "a static",
+      1
+    ],
+    [
+      "src/kernel/privileged/proc/process.rs",
+      "a struct field",
+      34
+    ],
+    [
+      "src/kernel/privileged/proc/process.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/proc/rlimit.rs",
+      "a constant",
+      17
+    ],
+    [
+      "src/kernel/privileged/proc/rlimit.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/proc/sched_ops.rs",
+      "a function",
+      6
+    ],
+    [
+      "src/kernel/privileged/proc/scheduler.rs",
+      "a method",
+      21
+    ],
+    [
+      "src/kernel/privileged/proc/scheduler.rs",
+      "a static",
+      2
+    ],
+    [
+      "src/kernel/privileged/proc/scheduler.rs",
+      "a struct field",
+      14
+    ],
+    [
+      "src/kernel/privileged/proc/scheduler.rs",
+      "a variant",
+      5
+    ],
+    [
+      "src/kernel/privileged/proc/scheduler.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/proc/seccomp.rs",
+      "a method",
+      7
+    ],
+    [
+      "src/kernel/privileged/proc/seccomp.rs",
+      "a struct field",
+      12
+    ],
+    [
+      "src/kernel/privileged/proc/seccomp.rs",
+      "a variant",
+      16
+    ],
+    [
+      "src/kernel/privileged/proc/seccomp.rs",
+      "an associated function",
+      3
+    ],
+    [
+      "src/kernel/privileged/proc/session.rs",
+      "a method",
+      3
+    ],
+    [
+      "src/kernel/privileged/proc/session.rs",
+      "a static",
+      1
+    ],
+    [
+      "src/kernel/privileged/proc/session.rs",
+      "a struct field",
+      8
+    ],
+    [
+      "src/kernel/privileged/proc/session.rs",
+      "a variant",
+      2
+    ],
+    [
+      "src/kernel/privileged/proc/session.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/proc/signal.rs",
+      "a struct field",
+      23
+    ],
+    [
+      "src/kernel/privileged/proc/types.rs",
+      "a method",
+      1
+    ],
+    [
+      "src/kernel/privileged/proc/types.rs",
+      "a struct field",
+      17
+    ],
+    [
+      "src/kernel/privileged/proc/types.rs",
+      "a type alias",
+      1
+    ],
+    [
+      "src/kernel/privileged/proc/types.rs",
+      "a variant",
+      18
+    ],
+    [
+      "src/kernel/privileged/proc/types.rs",
+      "an associated function",
+      3
+    ],
+    [
+      "src/kernel/privileged/proc/user_proc.rs",
+      "a constant",
+      5
+    ],
+    [
+      "src/kernel/privileged/proc/user_proc.rs",
+      "a method",
+      9
+    ],
+    [
+      "src/kernel/privileged/proc/user_proc.rs",
+      "a static",
+      3
+    ],
+    [
+      "src/kernel/privileged/proc/user_proc.rs",
+      "a struct",
+      1
+    ],
+    [
+      "src/kernel/privileged/proc/user_proc.rs",
+      "a struct field",
+      4
+    ],
+    [
+      "src/kernel/privileged/proc/user_proc.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/sgeg/api.rs",
+      "a function",
+      43
+    ],
+    [
+      "src/kernel/privileged/sgeg/audit.rs",
+      "a method",
+      3
+    ],
+    [
+      "src/kernel/privileged/sgeg/audit.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/sgeg/bootstrap.rs",
+      "a struct field",
+      3
+    ],
+    [
+      "src/kernel/privileged/sgeg/bootstrap.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/sgeg/capability.rs",
+      "a constant",
+      43
+    ],
+    [
+      "src/kernel/privileged/sgeg/identity.rs",
+      "a method",
+      11
+    ],
+    [
+      "src/kernel/privileged/sgeg/identity.rs",
+      "a struct field",
+      4
+    ],
+    [
+      "src/kernel/privileged/sgeg/mod.rs",
+      "a macro",
+      1
+    ],
+    [
+      "src/kernel/privileged/sgeg/mod.rs",
+      "a module",
+      7
+    ],
+    [
+      "src/kernel/privileged/sgeg/secure_boot.rs",
+      "a struct field",
+      1
+    ],
+    [
+      "src/kernel/privileged/sgeg/secure_boot.rs",
+      "an associated function",
+      4
+    ],
+    [
+      "src/kernel/privileged/sgeg/session.rs",
+      "a constant",
+      1
+    ],
+    [
+      "src/kernel/privileged/sgeg/types.rs",
+      "a constant",
+      6
+    ],
+    [
+      "src/kernel/privileged/sgeg/types.rs",
+      "a method",
+      30
+    ],
+    [
+      "src/kernel/privileged/sgeg/types.rs",
+      "a struct field",
+      33
+    ],
+    [
+      "src/kernel/privileged/sgeg/types.rs",
+      "a variant",
+      28
+    ],
+    [
+      "src/kernel/privileged/sgeg/types.rs",
+      "an associated constant",
+      24
+    ],
+    [
+      "src/kernel/privileged/sgeg/types.rs",
+      "an associated function",
+      2
+    ],
+    [
+      "src/kernel/privileged/smp/mod.rs",
+      "a function",
+      8
+    ],
+    [
+      "src/kernel/privileged/sync/mutex.rs",
+      "a method",
+      4
+    ],
+    [
+      "src/kernel/privileged/sync/mutex.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/sync/rcu.rs",
+      "a function",
+      4
+    ],
+    [
+      "src/kernel/privileged/sync/rcu.rs",
+      "a struct field",
+      2
+    ],
+    [
+      "src/kernel/privileged/sync/rcu.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/sync/seqlock.rs",
+      "a method",
+      7
+    ],
+    [
+      "src/kernel/privileged/sync/seqlock.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/sync/types.rs",
+      "a struct field",
+      6
+    ],
+    [
+      "src/kernel/privileged/syscall/epoll.rs",
+      "a constant",
+      2
+    ],
+    [
+      "src/kernel/privileged/syscall/mod.rs",
+      "a function",
+      1
+    ],
+    [
+      "src/kernel/privileged/syscall/signalfd.rs",
+      "a struct field",
+      17
+    ],
+    [
+      "src/kernel/privileged/syscall/timerfd.rs",
+      "a struct field",
+      2
+    ],
+    [
+      "src/kernel/privileged/syscall/timerfd.rs",
+      "an associated function",
+      1
+    ],
+    [
+      "src/kernel/privileged/syscall/types.rs",
+      "a constant",
+      259
+    ],
+    [
+      "src/kernel/privileged/syscall/types.rs",
+      "a type alias",
+      1
+    ],
+    [
+      "src/kernel/privileged/timer/tickless.rs",
+      "an associated function",
+      3
+    ],
+    [
+      "src/kernel/privileged/timer/time_sync.rs",
+      "a struct field",
+      2
+    ],
+    [
+      "src/kernel/privileged/timer/time_sync.rs",
+      "a variant",
+      5
+    ],
+    [
+      "src/kernel/privileged/timer/time_sync.rs",
+      "an associated function",
+      3
+    ],
+    [
+      "src/kernel/privileged/userctx.rs",
+      "a struct field",
+      18
+    ]
+  ]
+}

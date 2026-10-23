@@ -73,7 +73,11 @@ AUDIT_REQUIRED_LEGS="tcb_ratio invariants unsafe block_registration once_cell c_
 # 第 8 条 audit_selftest 是 P-50 ③ 的执行点, 同型但更隐蔽: 它的四个用例此前在自测文件里
 # "手动模拟"检测算法 (检测器退化时自测照样全绿). 真调化后若仍只留在从不触发的
 # .github/workflows/ci-lint.yml 里, 等于把 P-49 的病灶换个位置复现.
-AUDIT_REQUIRED_LEGS_FULL="implicit_deps:audit_implicit_deps.py implicit_deps_selftest:tests/audit_implicit_deps_selftest.py audit_selftest:tests/audit_selftest.py feature_semantics:audit_feature_semantics.py reverse_deps:audit_reverse_deps.py public_api_docs:audit_public_api_docs.py smoltcp_purity:audit_smoltcp_purity.py obsolete_naming:scan_obsolete_naming.py"
+# 第 9 条 missing_docs_debt 是 P-59 裁定 ① 的执行点: F8 的存在性由 rustc `missing_docs`
+# 作准 (AGENTS §5 原写的 `clippy::missing_docs_in_crate_items` 是不存在的 lint 名, 故编译器
+# 执法长期为零), 本腿取该口径读数与存量债册双向对账, 只拦新增不豁免存量 —— 每批补写完
+# 就把该模块转 `#![deny(missing_docs)]` 硬执法 (清零工程 P-66).
+AUDIT_REQUIRED_LEGS_FULL="implicit_deps:audit_implicit_deps.py implicit_deps_selftest:tests/audit_implicit_deps_selftest.py audit_selftest:tests/audit_selftest.py feature_semantics:audit_feature_semantics.py reverse_deps:audit_reverse_deps.py public_api_docs:audit_public_api_docs.py missing_docs_debt:audit_missing_docs_debt.py smoltcp_purity:audit_smoltcp_purity.py obsolete_naming:scan_obsolete_naming.py"
 AUDIT_RUN_LEGS_FULL=""
 mark_leg_full() { AUDIT_RUN_LEGS_FULL="${AUDIT_RUN_LEGS_FULL} $1"; }
 AUDIT_RUN_LEGS=""
@@ -602,24 +606,36 @@ else
 fi
 
 # ── 2e. 存量审计腿接入 (P-49) ─────────────────────────────────
-# 用户裁定「丙・六脚本全接入 full」. P-49 时六条腿分两种形态; P-58 收口后**八条腿全部阻断**:
+# 用户裁定「丙・六脚本全接入 full」. P-49 时六条腿分两种形态; P-58 收口后八条腿全部阻断,
+# P-59 追加第 9 条 (missing_docs_debt) 亦阻断 —— 现九条腿无一有豁免分支:
 #   P-49 的报告腿 obsolete_naming 当时用的是旧扫描脚本 (P-58 后更名为 `scan_obsolete_naming.py`) —— 默认无条件
 #   退 0, 只有 --actionable-only 才判退出码, 而那口径 53 处里 46 处是扫描器自身源文本、
 #   另有大量 plan/report 历史正文, 读数不收敛 ⇒ 只能作报告腿. P-58 裁定「校正 + 升阻断」:
 #   改为受控文本全量扫描 (git ls-files, 含无扩展名的 Makefile 与 .asm)、docs/plan 与
 #   docs/report 历史面 KEEP、自命中豁免、二值退出且读取失败 fail-closed; 检测器自检是
-#   每次扫描的前置断言 (自检失败退 2, 不给「零违规」). 现无豁免分支: 任一腿非零即 err.
+#   每次扫描的前置断言 (自检失败退 2, 不给「零违规」). 该腿由此无豁免分支: 非零即 err.
 # 存在性包装沿用 P-46 甲形态 (缺 python3 / 缺脚本一律 audit_leg_missing 硬失败), 包装位
 # 点数与 audit_leg_missing 调用数由 host-tests 结构锁互校, 新增裸包装即红.
 # 每条腿在 `cd "$PROJECT_ROOT"` 的子 shell 里调起, 不借外层 cwd: 本组腿的扫描根与 JSON
 # 落点都按脚本自身口径解析 (audit_feature_semantics.py:37-38 用相对路径, :521 写
 # other/target/audit/), 而本文件在 2e 前后有 pushd/popd (步骤 1/2 与 Lockbud) —— 一旦
 # 有人在别处补一对 pushd 而忘记 popd, 借 cwd 的腿会读错根 (实测 cwd=/ 时该腿 RC=2).
-# 置于 quick 早退分支之后 = 仅 full 执行. 耗时逐腿实测 (单跑合计 ~14.5s): implicit_deps 1.2 /
-# feature_semantics 0.1 / reverse_deps 0.3 / public_api_docs 3.8 / smoltcp_purity 3.4 /
-# obsolete_naming 0.2 / implicit_deps_selftest 4.9 / audit_selftest 0.04. 其中只有 smoltcp_purity 会浅克隆上游 + ls-remote
-# ⇒ 受网络影响; 该腿的联网检查在脚本内降级为 WARN (audit_smoltcp_purity.py:230-273),
-# 断网只改耗时不改判据, 不会因环境转红. 其余各腿都是纯文本扫描, 无改动时不会更贵.
+# 置于 quick 早退分支之后 = 仅 full 执行. 耗时逐腿实测 (本轮九腿连跑合计 37.0s; 单跑
+# implicit_deps 1.8 / implicit_deps_selftest 6.6 / audit_selftest 0.1 / feature_semantics 0.1
+# / reverse_deps 0.4 / public_api_docs 7.8 / missing_docs_debt 15.8 / smoltcp_purity 3.7 /
+# obsolete_naming 1.0; 实测时本机 load avg ~17, 绝对值随负载浮动, 只有量级可比 —— P-49 当年
+# 空闲机的八腿合计口径是 ~14.5s).
+# 只有 smoltcp_purity 会浅克隆上游 + ls-remote ⇒ 受网络影响; 该腿的联网检查在脚本内降级为
+# WARN (audit_smoltcp_purity.py:230-273), 断网只改耗时不改判据, 不会因环境转红.
+# public_api_docs 在 P-59 裁定 ② 后每次裸调都要逐 pub fn 判 impl 归属 (默认面硬零 + impl 面
+# 对账同源于一次扫描): 两面若靠 --strict 分流, 2e 的无参调起永远只判得到默认面, 533 处存量
+# 便没有执法点.
+# missing_docs_debt 是九腿里唯一真编译的腿 (其余各腿都是纯文本扫描, 无改动时不会更贵), 故它
+# 也是唯一受前序改动影响的腿: 刚动过 src/kernel 时实测 15.8s, 无改动热跑实测 7.7s, 首跑冷启
+# 30.2s. 它跑 `cargo clippy … -- -Dmissing_docs` 取编译器读数, 需工具链在位 (缺 cargo ⇒ RC=2
+# 转红, 与本文件步骤 2d 同语义), 并用独立 target 目录 other/target/audit-missing-docs
+# (实测 143M) 而非主目录: 尾旗标参与 cargo 的 unit fingerprint, 借主目录会把门槛 1/2 的全部
+# 产物判脏 (实测主目录门槛形 clippy 被搅脏后重编 kernel lib), 隔离目录只付自己的冷启动.
 step "2e/6 存量审计腿接入 (P-49)"
 for P49_SPEC in $AUDIT_REQUIRED_LEGS_FULL; do
     P49_LEG="${P49_SPEC%%:*}"

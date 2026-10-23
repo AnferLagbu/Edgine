@@ -377,8 +377,9 @@ fn test_p53_f9_dead_code_comment_gate_is_wired() {
 /// 整条摘掉 —— 那正是 P-46 测绘的静默消失形态. 本锁把这三条约束钉死.
 ///
 /// 六条判据:
-/// ① `AUDIT_REQUIRED_LEGS_FULL` 是 `腿名:相对路径` 成对的双引号字面量, ≥8 条
-///    (实测 8 = 5 阻断腿 + 2 自测腿 + 1 报告腿; 第 8 条 audit_selftest 由 P-50 ③ 追加);
+/// ① `AUDIT_REQUIRED_LEGS_FULL` 是 `腿名:相对路径` 成对的双引号字面量, ≥9 条
+///    (实测 9 = 6 存量阻断腿 + 2 自测腿 + 1 编译器口径债册腿; 第 8 条 audit_selftest 由
+///    P-50 ③ 追加, 第 9 条 missing_docs_debt 由 P-59 裁定 ① 追加);
 /// ② 每条相对路径在 `scripts/` 下真实存在 (含 `tests/` 子目录里的自测腿) —— 清单漂移即红;
 /// ③ 腿名与 quick 档清单不相交, 且 step 2e 位于 quick 早退分支**之后** —— 挪进 quick
 ///    或把整块前移都会让弱档恒红, 由此臂转红;
@@ -403,8 +404,9 @@ fn test_audit_sh_full_only_legs_are_wired() {
         .split_whitespace()
         .collect();
     assert!(
-        specs.len() >= 8,
-        "AUDIT_REQUIRED_LEGS_FULL 只点名 {} 条腿, 低于实测的 8 条 (5 阻断腿 + 2 自测腿 + 1 报告腿)",
+        specs.len() >= 9,
+        "AUDIT_REQUIRED_LEGS_FULL 只点名 {} 条腿, 低于实测的 9 条 (6 存量阻断腿 + 2 自测腿 + \
+         1 编译器口径债册腿)",
         specs.len()
     );
     assert!(
@@ -418,6 +420,12 @@ fn test_audit_sh_full_only_legs_are_wired() {
         specs.iter().any(|s| s.starts_with("audit_selftest:")),
         "清单里没有 audit_selftest 腿 —— P-50 ③ 真调化后的四项自检若不进 CI, \
          等于把 P-49 的「零调用者」病灶换个位置复现"
+    );
+    assert!(
+        specs.iter().any(|s| s.starts_with("missing_docs_debt:")),
+        "清单里没有 missing_docs_debt 腿 —— P-59 裁定 ① 把 F8 的存在性交 rustc \
+         `missing_docs` 作准, 本腿是该口径唯一的执法点; 摘掉它, 存量债册与「新增未文档\
+         公共项」一起退回无人执法"
     );
 
     let quick_legs: Vec<&str> = sh
@@ -1264,5 +1272,132 @@ fn test_p58_obsolete_naming_gate_is_repo_wide() {
     assert!(
         agents.contains("scan_obsolete_naming"),
         "AGENTS §2.2 未把该腿记为阻断 —— 文档仍描述成报告腿会让读者以为有残留也可过"
+    );
+}
+
+/// P-59 结构锁: F8 的存在性必须由 rustc `missing_docs` 执法, 且两面都要有真实执法点.
+///
+/// 病灶 (P-59 测绘, 三条都是实测而非推断):
+/// - AGENTS §5 F8 与 `docs/explain/spec-engineering.md` 4.4/10.2 都写「clippy
+///   `missing_docs_in_crate_items` 强制」, 而该 lint 名**不存在** (实测 `cargo clippy`
+///   报 `error[E0602]: unknown lint`); 真名 `clippy::missing_docs_in_private_items` 属
+///   restriction 组, 门槛从不启用 ⇒ kernel crate 的编译器 F8 执法长期为**零**.
+/// - `audit_public_api_docs.py` 的两面靠 `--strict` 分流, 而 CI 步骤 2e 按
+///   `python3 scripts/<腿>.py` **无参**调起 ⇒ 533 处 impl 面存量在门禁里根本没有执法点.
+/// - 脚本报告行号偏到声明前的空行 (`^\s*` 吞 `\n`), 实测 247 条错锚 —— 按行号施工会改错处.
+/// 裁定 (用户): ① rustc `missing_docs` 作准; ② 533 处基线对账升阻断; ③ 行号本轮顺带修;
+/// 追加「存量不应冻结 —— 既然会报就属于代码仍有问题」⇒ 债册是待办清单不是豁免面,
+/// 每批补写完就把该模块转 `#![deny(missing_docs)]` 硬执法 (清零工程 P-66).
+///
+/// 判据:
+/// ① 三处文档口径不再把不存在的 lint 当执法点, 且写明新的两层执法链;
+/// ② 默认面与 impl 面在同一次裸调里都判得到 (`--strict` 分流必须消失);
+/// ③ 债册腿以编译器为唯一尺、排除 vendored、用隔离 target 目录、失败 fail-closed;
+/// ④ 已清零模块的 `#![deny(missing_docs)]` 在位, 且该模块不重复占债册;
+/// ⑤ 到位断言的腿数由清单派生 (P-49 裁定: 禁止手写可由脚本派生的数字).
+#[test]
+fn test_p59_f8_is_enforced_by_rustc_missing_docs() {
+    let agents = read(AGENTS_MD);
+    let spec = read("../docs/explain/spec-engineering.md");
+    let api = read("../scripts/audit_public_api_docs.py");
+    let debt = read("../scripts/audit_missing_docs_debt.py");
+    let sh = read(AUDIT_SH);
+
+    // ① 文档口径: §5 F8 行与 4.4 都必须点名 rustc `missing_docs` 作准者.
+    let f8_line = agents
+        .lines()
+        .find(|l| l.trim_start().starts_with("| F8 |"))
+        .unwrap_or_else(|| panic!("AGENTS §5 找不到 F8 行"));
+    assert!(
+        f8_line.contains("rustc `missing_docs`") && f8_line.contains("audit_missing_docs_debt.py"),
+        "§5 F8 的检查方式没落到编译器口径 + 债册腿 —— 回到「clippy 强制」就是宣称一条\
+         不存在的门禁 (P-59 病灶本体)"
+    );
+    assert!(
+        !f8_line.contains("missing_docs_in_crate_items"),
+        "§5 F8 仍引用不存在的 lint 名 —— 该行是唯一执法链的入口, 失真会让整条 F8 无人执法"
+    );
+    let rule44 = spec
+        .lines()
+        .find(|l| l.contains("4.4 公共 API 必须有文档注释"))
+        .unwrap_or_else(|| panic!("spec-engineering 找不到 4.4 行"));
+    assert!(
+        rule44.contains("rustc `missing_docs`") && rule44.contains("不存在的 lint 名"),
+        "4.4 未把 F8 口径改为编译器作准 —— 编码规范与 §5 分叉即回到两处口径互不暴露"
+    );
+    let clippy_toml = read("../src/rust/clippy.toml");
+    assert!(
+        clippy_toml.contains("惰性配置"),
+        "clippy.toml 的 missing-docs-in-crate-items 未注明它只被从不启用 restriction 组的\
+         lint 读取 —— 留着「看起来像执法」的配置是本轮病灶的同型形态"
+    );
+
+    // ② 裸调即两面同判.
+    assert!(
+        !api.contains("\"--strict\"") && !api.contains("'--strict'"),
+        "脚本又用 --strict 分流两面, 而 2e 无参调起 ⇒ impl 面 533 处存量重新失去执法点"
+    );
+    assert!(
+        api.contains("default_violations") && api.contains("strict_violations"),
+        "一次扫描不再同时派生默认面与 impl 面 —— 两面若各自单独扫描, 门禁只判到其中一面"
+    );
+    assert!(
+        api.contains("return 2") && api.contains("基线快照缺失"),
+        "基线不可用时不再 fail-closed —— 侧车被删就变成「零违规」假绿"
+    );
+    // 裁定 ③ (行号顺带修): 声明正则的行首空白只吞 [ \\t] —— 吞 `\\s` 会把声明前的空行吃进
+    // match, 报告行号落到空行上 (实测 247 条错锚), 按行号施工即改错处. 只锁声明正则本身:
+    // `_in_nonpub_mod` 的模块正则是另一种用法 (位置不用于报告), 不在此锁范围.
+    assert!(
+        api.contains(r"r'^[ \t]*(?P<vis>pub"),
+        "声明正则不再是 `^[ \\\\t]` 起头 —— 报告行号会重新偏到声明前的空行 (P-59 裁定 ③ 的\
+         修法失效)"
+    );
+
+    // ③ 债册腿的取数与射程.
+    assert!(
+        debt.contains("LINT = \"missing_docs\"") && debt.contains("f\"-D{LINT}\""),
+        "债册腿不再以 rustc missing_docs 为唯一尺 —— 换回自定义口径就是 P-59 裁定的倒退"
+    );
+    assert!(
+        debt.contains("--message-format=json"),
+        "取数不是编译器结构化输出 —— 靠解析人读文本会随 rustc 文案变化而静默失明"
+    );
+    assert!(
+        debt.contains("smoltcp"),
+        "vendored smoltcp 不再排除 —— 锁定不可改的树会把债册变成不可能完成的清单"
+    );
+    assert!(
+        debt.contains("other/target/audit-missing-docs")
+            && !debt.contains("\"../../other/target\""),
+        "债册腿借用了主 target 目录 —— 尾旗标参与 cargo 的 unit fingerprint, 会把门槛 1/2\
+         的全部产物判脏 (实测主目录被搅脏后重编 kernel lib)"
+    );
+    assert!(
+        debt.contains("raise ScanError") && debt.contains("return 2"),
+        "取数失败不再 fail-closed —— cargo 缺失/编译中断会被读成「读数 0, 与债册不符」之外的\
+         任何形态"
+    );
+
+    // ④ 已清零模块转硬执法, 且不双计.
+    let errno = read("../src/kernel/privileged/errno.rs");
+    assert!(
+        errno.contains("#![deny(missing_docs)]"),
+        "errno 模块的 F8 存量已清零却没有转硬执法 —— 该模块的新增未文档项会退回债册记账"
+    );
+    let debt_baseline = read("../scripts/audit_missing_docs_debt.baseline.json");
+    assert!(
+        !debt_baseline.contains("privileged/errno.rs"),
+        "已加 #![deny(missing_docs)] 的模块仍占债册 —— 同一面被两处记账, 补写进度不可解释"
+    );
+    assert!(
+        Path::new("../scripts/audit_public_api_docs.baseline.json").exists(),
+        "impl 面侧车快照不在位 —— 2e 的 public_api_docs 腿会当场 RC=2"
+    );
+
+    // ⑤ 腿数由清单派生, 不许手写.
+    assert!(
+        sh.contains("AUDIT_LEG_FULL_TOTAL=$(set -- $AUDIT_REQUIRED_LEGS_FULL; echo $#)"),
+        "full 档到位腿数被改成手写字面量 —— P-49 裁定禁止手写可由脚本派生的数字"
     );
 }

@@ -59,10 +59,11 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 | `audit_orphaned_init.py` | 孤儿 init 编排入口（`no_mangle` + 零调用 + 体内聚合 ≥2 项 init） | 附加门禁（F9 配套，P-8） | 强制 |
 | `audit_unwired_pub_fn.py` | 未接线 syscall 编号（R2 CRITICAL）；零引用 pub fn（R1）仅报告 | 附加门禁（F9 配套，P-13） | 强制（R2） |
 | `audit_dead_code_comment.py` | F9 全仓执法：死代码抑制（allow/expect 的 `dead_code`/`unused*` 族）硬零 + clippy 抑制对机器派生侧车基线双向对账 | F9 | 强制 |
+| `audit_public_api_docs.py` + `audit_missing_docs_debt.py` | F8 两层执法：**语言面**（中文 doc 是否存在，`privileged/` 可达公共 API，默认面硬零 + impl 面对账）由前者判；**存在性面**由后者取 rustc `missing_docs` 编译器读数与存量债册棘轮对账（只拦新增）。已完成补写的模块改在文件内写 `#![deny(missing_docs)]`，由门槛 1/2 直接硬执法 | F8 | 强制（full 档） |
 | `audit_tcb_ratio.py` | TCB 占比统计（软 < 30%）| 软约束 | 报告 |
 
 > **附加门禁**：OnceCell / C 命名 / repr(C) / volatile / static_mut / orphaned_init / unwired_pub_fn 已接入 CI 强制，但不占 §5 的 F1-F9 零容忍编号（属内存/风格专项防线，映射 I2/I5/I6 不变式；orphaned_init 与 unwired_pub_fn 属 F9 死代码与接线断点的专项，后者仅 R2 未分发 syscall 编号阻断，R1 存量零引用名单待逐项甄别后开 `--strict`）。
-> **完整清单**：仓库共 26 个 `audit_*.py`（受控文件实测口径：`scripts/` 23 + `scripts/tests/` 2 + `tools/audit_unsafe.py` 1；本表为常用核心门禁项，非穷举）. `block_registration`(I-43) / `tlb_receive_order`(S-14) / `aarch64_kernel_fp_free`(FP-06) 等专项亦在 `ci/audit.sh` 强制但未列入本表; P-49 收口后另有一组**仅 `full` 档执行**的存量审计腿接入 `ci/audit.sh` 步骤 2e（单源清单 = `AUDIT_REQUIRED_LEGS_FULL`）——阻断腿 `audit_implicit_deps` / `audit_feature_semantics` / `audit_reverse_deps` / `audit_public_api_docs` / `audit_smoltcp_purity` / `scan_obsolete_naming`（受控文本全量扫描，含 `Makefile` / `.asm`；`docs/plan` 与 `docs/report` 历史面 KEEP）+ 自测腿 `audit_implicit_deps_selftest` / `audit_selftest`；真正未接入 CI 的只剩 `tools/check_doc_paths.py` 一类按需工具.
+> **完整清单**：仓库共 27 个 `audit_*.py`（受控文件实测口径：`scripts/` 24 + `scripts/tests/` 2 + `tools/audit_unsafe.py` 1；本表为常用核心门禁项，非穷举）. `block_registration`(I-43) / `tlb_receive_order`(S-14) / `aarch64_kernel_fp_free`(FP-06) 等专项亦在 `ci/audit.sh` 强制但未列入本表; P-49 收口后另有一组**仅 `full` 档执行**的存量审计腿接入 `ci/audit.sh` 步骤 2e（单源清单 = `AUDIT_REQUIRED_LEGS_FULL`，P-59 追加第 9 条后共 9 条腿）——阻断腿 `audit_implicit_deps` / `audit_feature_semantics` / `audit_reverse_deps` / `audit_public_api_docs` / `audit_missing_docs_debt` / `audit_smoltcp_purity` / `scan_obsolete_naming`（受控文本全量扫描，含 `Makefile` / `.asm`；`docs/plan` 与 `docs/report` 历史面 KEEP）+ 自测腿 `audit_implicit_deps_selftest` / `audit_selftest`；真正未接入 CI 的只剩 `tools/check_doc_paths.py` 一类按需工具.
 > **定点锁口径**（P-50 甲）：`audit_repr_c.py` / `audit_volatile_access.py` / `audit_tlb_receive_order.py` 的判定对象是**冻结清单**（2 struct / 4 字段 / 1 函数），不是树级扫描 —— 它们只能证明清单内条目未丢掉 `repr(C)`、访问模式与调用次序，同类的**新**风险点不会被发现。定位为「定点回归锁，非树级防线」；树级扩围的成本与收益已登记 P-61.
 
 ### 2.3 验证门槛
@@ -131,7 +132,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | F5 | 双架构编译 0 warning 0 error | `./ci/build.sh all` |
 | F6 | 核心审计全部通过 | 见 §2.2 |
 | F7 | 中文注释强制 | `audit_comment_language.py` 0 violations |
-| F8 | 公共 API 中文文档注释 | clippy `missing_docs_in_crate_items` |
+| F8 | 公共 API 中文文档注释 | **存在性**由 rustc `missing_docs` 作准：已清零模块写 `#![deny(missing_docs)]`（门槛 1/2 硬执法），存量由 `audit_missing_docs_debt.py` 棘轮拦新增；**中文语言面**由 `audit_public_api_docs.py` 判 |
 | F9 | 新增代码禁止任何类型的死代码注释（`#[allow(dead_code)]` / `#[allow(unused)]` 等），无豁免，无例外 | Rust 编译器 dead_code lint |
 
 > **编码规范（建议性）**: 见 `docs/explain/spec-engineering.md`. 软规范非拒收条款.

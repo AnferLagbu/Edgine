@@ -34,7 +34,7 @@
 
 ### 4 代码质量
 
-4 项代码质量规则：4.1 functions 层新文件首行 #![deny(unsafe_code)] + //! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 privileged API；4.2 privileged 层新 unsafe 块必须配 // SAFETY: <前提条件>; <调用方保证>; <硬件契约>；4.3 中文注释强制（audit_comment_language.py 硬阈值 0 violations）；4.4 公共 API 必须有文档注释（clippy missing_docs_in_crate_items 强制）。
+4 项代码质量规则：4.1 functions 层新文件首行 #![deny(unsafe_code)] + //! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 privileged API；4.2 privileged 层新 unsafe 块必须配 // SAFETY: <前提条件>; <调用方保证>; <硬件契约>；4.3 中文注释强制（audit_comment_language.py 硬阈值 0 violations）；4.4 公共 API 必须有文档注释（存在性由 rustc `missing_docs` 作准 —— 已清零模块写 #![deny(missing_docs)] 由编译门槛硬执法，存量由 audit_missing_docs_debt.py 棘轮拦新增；中文语言面由 audit_public_api_docs.py 判。旧文本写的 clippy missing_docs_in_crate_items 是不存在的 lint 名，据其声称的执法从未生效）。
 
 ### 5 中断与原子
 
@@ -58,7 +58,7 @@
 
 ### 10 文档
 
-4 条文档规则：10.1 修改模块接口或依赖关系时，必须同步更新 guide-dev.md 和 audit-*.md（新审计/报告写 docs/report/, 历史文档留在 docs/plan/）；10.2 公共 API 必中文文档注释（clippy missing_docs_in_crate_items）；10.3 plan/ 文档按新规则（标题+章节+条目描述+方案+状态+详情）；10.4 commit message 记录变更。
+4 条文档规则：10.1 修改模块接口或依赖关系时，必须同步更新 guide-dev.md 和 audit-*.md（新审计/报告写 docs/report/, 历史文档留在 docs/plan/）；10.2 公共 API 必中文文档注释（执法口径见 4.4）；10.3 plan/ 文档按新规则（标题+章节+条目描述+方案+状态+详情）；10.4 commit message 记录变更。
 
 ### 11 多架构
 

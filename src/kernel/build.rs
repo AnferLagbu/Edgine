@@ -1,3 +1,12 @@
+//! 内核 crate 的构建脚本 — 嵌入产物的存在性护栏与重编译触发器.
+//!
+//! 裸机 target 下检查 `other/build/<arch>/user/init.bin` (S-6 用户态产物) 与
+//! x86_64 专属的 `other/build/x86_64/stage1.bin` (引导码) 是否存在, 缺失即 panic
+//! (DECISION-H15: 不再生成全 0 占位符, 以免遮蔽真实产物缺失状态); 并对两者发出
+//! **绝对路径**的 `cargo:rerun-if-changed` —— cargo 以包根 `src/kernel` 解析相对
+//! 路径, 而 `include_bytes!` 以源文件为基准, 两者不同源时该指令会静默失效.
+//! host target (host-tests 触发) 不做上述检查, 避免干净 checkout 形成隐式 `make` 依赖.
+
 use std::path::Path;
 
 /// DECISION-H15: 构建产物缺失时直接报错, 不再生成全 0 占位符.
