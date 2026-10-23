@@ -3,15 +3,28 @@
 M6.4 模块耦合度审计脚本 — 循环依赖/依赖深度/公开接口/跨子系统直接访问
 
 检查规则:
-  (1) 检测 privileged 子模块间的双向依赖 (循环耦合)
+  (1) 检测 privileged 与 functions 两层子模块间的双向依赖 (循环耦合)
   (2) 检测 privileged 子模块间的跨子系统内部访问 (绕过 api.rs)
   (3) 统计各模块的公开接口比例 (pub 项 / 总项)
-  (4) 检测 functions 子模块间的隐式依赖传递
-  (5) 生成模块依赖矩阵 JSON 报告
+  (4) 生成模块依赖矩阵 JSON 报告
 
-退出码: 0 = 通过, 1 = 有严重违规
+F3 判据 (P-54 甲+丙a): 两层的禁止循环依赖全部与机器派生基线快照
+`scripts/audit_coupling.baseline.json` 对账 —— 基线外的环、基线环的计数增加
+(合计或任一方向) 一律阻断; 基线环减弱或消失而快照未同步同样阻断 (双向 ratchet,
+与 audit_implicit_deps 的 P-49 基线同构). 基线只能由 `--update-baseline` 从同一份
+扫描结果导出, 脚本内不保存任何手写环清单或阈值. functions 层没有「允许紧耦合」名单,
+其任一环都进入对账.
+
+边可见性口径 (P-54 实测, 见 §6 P-65): 依赖边只来自单行 `use ...;` 语句 —— 跨行
+use (36 处 / 15 对)、`pub use` (5 处 / 5 对) 与非 use 行的限定调用 (privileged 827 处 /
+145 对, functions 322 处 / 22 对) 都不成边. 三者全扩后禁止环 privileged 4 → 31、
+functions 1 → 5, 属红墙, 故本轮不扩边, 另立 P-65.
+
+用法: python3 scripts/audit_coupling.py [--update-baseline]
+退出码: 0 = 通过, 1 = 有违规 / 基线不符 / 快照缺失或不自洽
 """
 
+import argparse
 import os
 import re
 import sys
@@ -21,6 +34,7 @@ from pathlib import Path
 
 PRIVILEGED_BASE = Path('src/kernel/privileged')
 FUNCTIONS_BASE = Path('src/kernel/functions')
+BASELINE_FILE = Path(__file__).resolve().parent / 'audit_coupling.baseline.json'
 
 # privileged 子系统间允许的内部访问白名单
 # 格式: (源模块, 目标模块内部子模块) → 允许
@@ -155,8 +169,12 @@ def scan_cross_module_deps(base, layer_name):
     return dep_matrix, dep_details
 
 
-def detect_circular_deps(dep_matrix):
-    """检测双向依赖 (A→B 且 B→A), 区分允许/禁止的紧耦合."""
+def detect_circular_deps(dep_matrix, layer):
+    """检测双向依赖 (A→B 且 B→A), 区分允许/禁止的紧耦合.
+
+    ALLOWED_TIGHT_COUPLING 只描述 privileged 子系统对; functions 层不适用,
+    其任一双向依赖都按禁止环处理, 交给基线对账.
+    """
     circular = []
     allowed = []
     modules = sorted(dep_matrix.keys())
@@ -165,17 +183,102 @@ def detect_circular_deps(dep_matrix):
             if dep_matrix[a].get(b, 0) > 0 and dep_matrix[b].get(a, 0) > 0:
                 pair = (a, b) if a < b else (b, a)
                 entry = {
+                    'layer': layer,
                     'modules': (a, b),
                     'a_to_b': dep_matrix[a][b],
                     'b_to_a': dep_matrix[b][a],
                     'total': dep_matrix[a][b] + dep_matrix[b][a],
                 }
-                if pair in ALLOWED_TIGHT_COUPLING:
+                if layer == 'privileged' and pair in ALLOWED_TIGHT_COUPLING:
                     allowed.append(entry)
                 else:
                     circular.append(entry)
     return sorted(circular, key=lambda x: x['total'], reverse=True), \
            sorted(allowed, key=lambda x: x['total'], reverse=True)
+
+
+def cycles_to_entries(cycles):
+    """把循环依赖条目压成基线可对账的键值表: (层, 模块A, 模块B) → (A→B, B→A)."""
+    return {(c['layer'], c['modules'][0], c['modules'][1]):
+            (c['a_to_b'], c['b_to_a']) for c in cycles}
+
+
+def totals_of(entries):
+    """由条目自身求和得出的自洽校验位 (手改条目而不重跑 --update-baseline 即不自洽)."""
+    return {
+        'pairs': len(entries),
+        'refs': sum(a + b for a, b in entries.values()),
+        'privileged': sum(1 for layer, _, _ in entries if layer == 'privileged'),
+        'functions': sum(1 for layer, _, _ in entries if layer == 'functions'),
+    }
+
+
+def dump_baseline(entries):
+    """确定性序列化 (排序 + 固定缩进), 保证 --update-baseline 幂等到字节级."""
+    payload = {
+        '_meta': {
+            'generated_by': 'python3 scripts/audit_coupling.py --update-baseline',
+            '口径': 'privileged + functions 两层禁止循环依赖的冻结清单; 判定按 (层, 模块对) '
+                  '集合与双向 use 边计数, 计数增加/减少同样阻断',
+            'disposition': 'P-54 冻结存量环, 解耦归 F3 后续批次',
+        },
+        'totals': totals_of(entries),
+        'entries': [[layer, a, b, ab, ba]
+                    for (layer, a, b), (ab, ba) in sorted(entries.items())],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2) + '\n'
+
+
+def load_baseline():
+    """读快照; 返回 (条目, 错误说明). 读不到/不自洽都 fail-closed."""
+    if not BASELINE_FILE.is_file():
+        return None, (f'基线快照缺失: {repo_rel(BASELINE_FILE)} '
+                      f'(须显式跑 --update-baseline 生成并提交, 不接受自动放行)')
+    try:
+        payload = json.loads(BASELINE_FILE.read_text(encoding='utf-8'))
+        entries = {(e[0], e[1], e[2]): (int(e[3]), int(e[4]))
+                   for e in payload['entries']}
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        return None, f'基线快照无法解析: {exc}'
+    declared = payload.get('totals', {})
+    actual = totals_of(entries)
+    if declared != actual:
+        return None, (f'基线快照 totals 与 entries 不自洽: 声明 {declared} / 实算 {actual} '
+                      f'—— 手改过快照, 请重跑 --update-baseline')
+    return entries, ''
+
+
+def diff_baseline(actual, baseline):
+    """返回 (超出基线的项, 落后基线的项), 按方向逐项比较.
+
+    超出 = 新增环, 或已有环任一方向的 edge 数变大;
+    落后 = 已有环任一方向变小, 或基线中的环完全消失 —— 环消失是好事, 但快照必须
+    同步, 否则同一位置的死条目会掩盖将来重新引入的环.
+    """
+    over = []
+    under = []
+    for key in sorted(actual):
+        got = actual[key]
+        want = baseline.get(key)
+        if want is None:
+            over.append((key, got, None))
+            continue
+        if got[0] > want[0] or got[1] > want[1]:
+            over.append((key, got, want))
+        if got[0] < want[0] or got[1] < want[1]:
+            under.append((key, got, want))
+    for key in sorted(baseline):
+        if key not in actual:
+            under.append((key, (0, 0), baseline[key]))
+    return over, under
+
+
+def repo_rel(path):
+    """仓库内路径显示为相对路径; 仓库外 (自测用临时快照) 原样显示."""
+    try:
+        return str(path.relative_to(Path(__file__).resolve().parent.parent))
+    except ValueError:
+        return str(path)
 
 
 def check_internal_access(base, layer_name):
@@ -292,7 +395,8 @@ def count_pub_surface(base):
     return result
 
 
-def generate_dependency_matrix_json(fw_matrix, svc_matrix, circular, internal_issues, pub_surface):
+def generate_dependency_matrix_json(fw_matrix, svc_matrix, circular, internal_issues,
+                                    pub_surface, reconciliation):
     """生成依赖矩阵 JSON 报告."""
     report = {
         'timestamp': '2026-06-16',
@@ -301,6 +405,7 @@ def generate_dependency_matrix_json(fw_matrix, svc_matrix, circular, internal_is
         'circular_deps': circular,
         'internal_access_issues': len(internal_issues),
         'pub_surface': pub_surface,
+        'baseline_reconciliation': reconciliation,
     }
 
     for mod in sorted(fw_matrix.keys()):
@@ -313,10 +418,24 @@ def generate_dependency_matrix_json(fw_matrix, svc_matrix, circular, internal_is
 
 
 def main():
+    parser = argparse.ArgumentParser(description='模块耦合度审计 (F3)')
+    parser.add_argument('--update-baseline', action='store_true',
+                        help='用当前扫描结果重写基线快照 (环消解/重新引入后显式执行)')
+    args = parser.parse_args()
+
     print('=' * 78)
     print('M6.4 模块耦合度审计报告')
     print('=' * 78)
     print()
+
+    for base, label in ((PRIVILEGED_BASE, 'privileged'), (FUNCTIONS_BASE, 'functions')):
+        if not base.is_dir():
+            print(f'[FAIL-CLOSED] {label} 扫描根不存在: {base} '
+                  f'(须在仓库根执行, 否则空矩阵会伪装成全绿)', file=sys.stderr)
+            sys.exit(1)
+        if not get_submodules(base):
+            print(f'[FAIL-CLOSED] {label} 扫描根下没有子模块: {base}', file=sys.stderr)
+            sys.exit(1)
 
     # 1. privileged 子模块间交叉依赖
     print('[1] privileged 子模块间交叉依赖')
@@ -347,26 +466,75 @@ def main():
             print(f'  {mod} → {dep_str}')
     print()
 
-    # 3. 循环依赖检测
-    print('[3] 双向依赖 (循环耦合) 检测')
+    # 3. 循环依赖检测 — 两层都判定
+    print('[3] 双向依赖 (循环耦合) 检测 — privileged + functions')
     print('-' * 78)
-    circular, allowed_coupling = detect_circular_deps(fw_matrix)
-    if circular:
-        for c in circular:
-            a, b = c['modules']
-            print(f'  ⚠ {a} ↔ {b}: {c["a_to_b"]}/{c["b_to_a"]} (合计 {c["total"]}) — 必须解耦')
-    else:
-        print('  无禁止的循环依赖')
+    fw_circular, fw_allowed = detect_circular_deps(fw_matrix, 'privileged')
+    svc_circular, svc_allowed = detect_circular_deps(svc_matrix, 'functions')
+    circular = fw_circular + svc_circular
+    allowed_coupling = fw_allowed + svc_allowed
+    print(f'  privileged: 禁止 {len(fw_circular)} 对 / 允许 {len(fw_allowed)} 对')
+    print(f'  functions:  禁止 {len(svc_circular)} 对 / 允许 {len(svc_allowed)} 对')
+    for c in circular:
+        a, b = c['modules']
+        print(f'  ⚠ [{c["layer"]}] {a} ↔ {b}: {c["a_to_b"]}/{c["b_to_a"]} '
+              f'(合计 {c["total"]})')
     if allowed_coupling:
         print()
-        print('  [允许的紧耦合] (硬件抽象/调度核心通路):')
+        print('  [允许的紧耦合] (privileged 硬件抽象/调度核心通路):')
         for c in allowed_coupling:
             a, b = c['modules']
             print(f'    ✓ {a} ↔ {b}: {c["a_to_b"]}/{c["b_to_a"]} (合计 {c["total"]})')
     print()
 
-    # 4. 跨子系统内部访问检查
-    print('[4] 跨子系统内部访问检查')
+    # 4. 与机器派生基线对账 (P-54: 不再使用 >20 阈值)
+    print('[4] 禁止循环依赖与基线快照对账')
+    print('-' * 78)
+    actual_entries = cycles_to_entries(circular)
+
+    if args.update_baseline:
+        BASELINE_FILE.write_text(dump_baseline(actual_entries), encoding='utf-8')
+        totals = totals_of(actual_entries)
+        print(f'基线快照已重写: {repo_rel(BASELINE_FILE)} '
+              f'({totals["pairs"]} 对 / {totals["refs"]} 处引用; '
+              f'privileged {totals["privileged"]} / functions {totals["functions"]})')
+        print('该文件需随环增减一并提交, 并在 plan 的变更历史里说明增减原因.')
+        sys.exit(0)
+
+    baseline, err_msg = load_baseline()
+    if baseline is None:
+        print(f'[FAIL-CLOSED] {err_msg}', file=sys.stderr)
+        sys.exit(1)
+    print(f'基线快照: {len(baseline)} 对禁止环 '
+          f'({sum(a + b for a, b in baseline.values())} 处引用; {BASELINE_FILE.name})')
+
+    over, under = diff_baseline(actual_entries, baseline)
+    if over:
+        print()
+        print(f'[FAIL] 超出基线 {len(over)} 项 (新增或加剧的循环依赖):')
+        for (layer, a, b), got, want in over:
+            want_str = '基线中不存在' if want is None else f'{want[0]}/{want[1]}'
+            print(f'  [{layer}] {a} ↔ {b}: 实际 {got[0]}/{got[1]} / 基线 {want_str}')
+    if under:
+        print()
+        print(f'[FAIL] 基线过期 {len(under)} 项 (环已减弱或消失, 快照未同步):')
+        for (layer, a, b), got, want in under:
+            print(f'  [{layer}] {a} ↔ {b}: 实际 {got[0]}/{got[1]} / 基线 {want[0]}/{want[1]}')
+    print()
+
+    reconciliation = {
+        'baseline_pairs': len(baseline),
+        'over': [{'layer': k[0], 'modules': [k[1], k[2]],
+                  'actual': list(got),
+                  'baseline': list(want) if want is not None else None}
+                 for k, got, want in over],
+        'under': [{'layer': k[0], 'modules': [k[1], k[2]],
+                   'actual': list(got), 'baseline': list(want)}
+                  for k, got, want in under],
+    }
+
+    # 5. 跨子系统内部访问检查
+    print('[5] 跨子系统内部访问检查')
     print('-' * 78)
     internal_issues = check_internal_access(PRIVILEGED_BASE, 'privileged')
     if internal_issues:
@@ -386,8 +554,8 @@ def main():
         print('  无违规')
     print()
 
-    # 5. 公开接口比例
-    print('[5] privileged 公开接口比例')
+    # 6. 公开接口比例
+    print('[6] privileged 公开接口比例')
     print('-' * 78)
     pub_surface = count_pub_surface(PRIVILEGED_BASE)
     for mod in sorted(pub_surface.keys()):
@@ -395,29 +563,32 @@ def main():
         print(f'  {mod}: {info["pub"]}/{info["total"]} ({info["ratio"]}%)')
     print()
 
-    # 6. 生成 JSON 报告
+    # 7. 生成 JSON 报告
     json_path = Path('other/target/audit/dependency-matrix.json')
     json_path.parent.mkdir(parents=True, exist_ok=True)
-    report = generate_dependency_matrix_json(fw_matrix, svc_matrix, circular, internal_issues, pub_surface)
+    report = generate_dependency_matrix_json(fw_matrix, svc_matrix, circular,
+                                             internal_issues, pub_surface,
+                                             reconciliation)
     with open(json_path, 'w', encoding='utf-8') as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
     print(f'JSON 报告保存至: {json_path}')
     print()
 
-    # 7. 结果判定
+    # 8. 结果判定
     high_severity = [i for i in internal_issues if i['severity'] == 'HIGH']
-    severe_circular = [c for c in circular if c['total'] > 20]
 
-    if high_severity or severe_circular:
+    if high_severity or over or under:
         print('=' * 78)
         if high_severity:
             print(f'⚠  {len(high_severity)} 处跨子系统内部访问违规')
-        if severe_circular:
-            print(f'⚠  {len(severe_circular)} 对严重循环依赖 (合计引用 > 20)')
+        if over:
+            print(f'⚠  {len(over)} 项超出循环依赖基线')
+        if under:
+            print(f'⚠  {len(under)} 项循环依赖基线过期')
         print('>>> 耦合审计未通过 <<<')
         sys.exit(1)
     else:
-        print('>>> 耦合审计通过 <<<')
+        print('>>> 耦合审计通过 (两层禁止环与冻结基线逐项一致) <<<')
         sys.exit(0)
 
 

@@ -1,0 +1,50 @@
+{
+  "_meta": {
+    "generated_by": "python3 scripts/audit_coupling.py --update-baseline",
+    "口径": "privileged + functions 两层禁止循环依赖的冻结清单; 判定按 (层, 模块对) 集合与双向 use 边计数, 计数增加/减少同样阻断",
+    "disposition": "P-54 冻结存量环, 解耦归 F3 后续批次"
+  },
+  "totals": {
+    "pairs": 5,
+    "refs": 28,
+    "privileged": 4,
+    "functions": 1
+  },
+  "entries": [
+    [
+      "functions",
+      "fs",
+      "syscall",
+      2,
+      1
+    ],
+    [
+      "privileged",
+      "arch",
+      "mm",
+      1,
+      1
+    ],
+    [
+      "privileged",
+      "mm",
+      "proc",
+      2,
+      12
+    ],
+    [
+      "privileged",
+      "proc",
+      "sgeg",
+      1,
+      2
+    ],
+    [
+      "privileged",
+      "proc",
+      "syscall",
+      5,
+      1
+    ]
+  ]
+}

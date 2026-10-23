@@ -837,6 +837,60 @@ fn test_ci_rustdoc_matches_workflow_command() {
 }
 
 #[test]
+fn test_p54_coupling_judges_both_layers_and_reconciles_baseline() {
+    // P-54 病灶: 旧判据 = `合计引用 > 20` 才阻断, 于是 4 对 privileged 存量环整体放行,
+    // functions 层的环压根不进入判定. 现判据 = 两层都检测 + 机器派生基线双向对账.
+    let py = read("../scripts/audit_coupling.py");
+    assert!(
+        py.contains("detect_circular_deps(fw_matrix, 'privileged')"),
+        "privileged 层循环依赖未判定 —— F3 的原有覆盖面丢失"
+    );
+    assert!(
+        py.contains("detect_circular_deps(svc_matrix, 'functions')"),
+        "functions 层循环依赖未判定 —— P-54 甲 要求两层都进基线"
+    );
+    assert!(
+        !py.contains("severe_circular") && !py.contains("'total'] > 20"),
+        "旧「合计引用 > 20」阈值仍在 —— 存量环会被它整体放行 (P-54 立项病灶)"
+    );
+    for needle in [
+        "--update-baseline",
+        "BASELINE_FILE",
+        "cycles_to_entries",
+        "diff_baseline",
+        "totals_of",
+    ] {
+        assert!(
+            py.contains(needle),
+            "audit_coupling.py 缺基线结构 `{needle}` —— 判据回退成手写清单或阈值"
+        );
+    }
+    assert!(
+        py.contains("or over or under:"),
+        "基线对账必须双向 (超出 + 落后) —— 单向只挡新增, 环消解后快照会永久过期"
+    );
+
+    let baseline_path = Path::new("../scripts/audit_coupling.baseline.json");
+    assert!(
+        baseline_path.exists(),
+        "机器派生基线侧车缺失 —— 5 对存量环会让 F3 腿恒红 (而非被修)"
+    );
+    let baseline = read("../scripts/audit_coupling.baseline.json");
+    assert!(
+        baseline.contains("\"privileged\"") && baseline.contains("\"functions\""),
+        "基线侧车没有同时覆盖两层 —— functions 层的环会重新落回「不判定」"
+    );
+    assert!(
+        baseline.contains("P-54"),
+        "基线 _meta.disposition 未点名 P-54 —— 存量环的承接工程丢失"
+    );
+    assert!(
+        baseline.contains("\"pairs\"") && baseline.contains("\"refs\""),
+        "基线缺 totals 自洽校验位 —— 手改 entries 不会被脚本发现"
+    );
+}
+
+#[test]
 fn test_delegated_entrypoints_exist() {
     for p in [MAKEFILE_CI, AUDIT_SH, BUILD_SH] {
         assert!(

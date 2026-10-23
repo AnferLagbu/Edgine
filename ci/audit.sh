@@ -321,18 +321,22 @@ done
 # 写法), 不走管道 ⇒ 不依赖 pipefail, 也不会把退出码取自 tail/grep.
 # 刻意**不加** `if command -v python3 && [ -f … ]` 存在性包装 (P-46 的 fail-open 族):
 # 脚本缺失或 python3 不可用时本腿必须硬失败, 而不是静默跳过后仍 EXIT=0.
-# 判据强度边界 (脚本侧, 收口另见 §6 P-54 立案): 仅 (a) INTERNAL_PATTERNS 清单内的
-# 跨子系统内部访问 (severity 恒 HIGH ⇒ 阻断) 与 (b) 合计引用 > 20 的禁止环会 exit 1;
-# 存量 4 对小数环 (mm↔proc 14 / proc↔syscall 6 / proc↔sgeg 3 / arch↔mm 2) 只打印.
+# 判据 (P-54 收口, 取代旧的「合计引用 > 20 才阻断」): (a) INTERNAL_PATTERNS 清单内
+# 的跨子系统内部访问 (severity 恒 HIGH ⇒ 阻断); (b) privileged + functions 两层的禁止
+# 循环依赖与机器派生基线 scripts/audit_coupling.baseline.json 双向对账 —— 新环、任一
+# 方向计数增加、或快照过期都 exit 1. 存量 5 对环 (privileged 4 + functions 1) 冻结在
+# 侧车里, 那是快照不是放行阈值.
+# 仍不覆盖 (P-65 立案): 依赖边只取单行 `use ...;` —— 跨行 use / `pub use` / 非 use 行
+# 的限定调用都不成边; 三者全扩会新增 27 对 privileged 禁止环 (4 → 31), 属红墙.
 step "0.5k2/6 硬规则 F3 模块耦合审计 (coupling)"
 mark_leg "coupling"
 COUPLING_OUT=$(python3 "$PROJECT_ROOT/scripts/audit_coupling.py" 2>&1) && COUPLING_RC=0 || COUPLING_RC=$?
 echo "$COUPLING_OUT" | grep -E '^ *⚠|^>>>' || true
 if [ "$COUPLING_RC" -eq 0 ]; then
-    ok "coupling: F3 门禁通过 (完整矩阵见脚本 [1]/[2] 段输出)"
+    ok "coupling: F3 门禁通过 (两层循环依赖与基线一致, 完整矩阵见脚本 [1]/[2] 段输出)"
 else
     echo "$COUPLING_OUT" | tail -30
-    err "coupling: F3 被破坏 (跨子系统内部访问或严重循环依赖)! 见上方输出"
+    err "coupling: F3 被破坏 (跨子系统内部访问, 或循环依赖与基线不符)! 见上方输出"
 fi
 
 # ── 0.5l P-8 初始化编排孤儿入口审计 ────────────────────────
