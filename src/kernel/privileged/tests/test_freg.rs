@@ -76,7 +76,7 @@ fn test_undo_log_rollback() -> TestResult {
 
 fn test_domain_create() -> TestResult {
     let dom = RecoveryDomain::new(6);
-    check!(dom.id == 6, "domain id mismatch");
+    check!(dom.id() == 6, "domain id mismatch");
     TestResult::Pass
 }
 

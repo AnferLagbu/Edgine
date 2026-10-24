@@ -135,14 +135,31 @@ pub fn recovery_subdomain_save_checkpoint(domain_id: DomainId) {
     }
 }
 
-fn has_dependency(sub_id: DomainId, on_id: DomainId) -> bool {
-    let reg = RECOVERY_REGISTRY.lock();
-    for r in &reg.registered {
-        if r.id == sub_id {
-            return r.deps.contains(&on_id);
+/// 后序 DFS: 先递归恢复依赖, 再把当前域入序 (子域先于父域).
+///
+/// `visited` 在递归前置位, 既避免重复入序, 也防止依赖成环时无限递归.
+/// 递归深度受注册域数量约束 (MAX_RECOVERY_DOMAINS = 32), 不会压爆启动栈.
+fn push_post_order(
+    id: DomainId,
+    all_ids: &[DomainId],
+    registered: &[RegisteredDomain],
+    visited: &mut [bool],
+    order: &mut Vec<DomainId>,
+) {
+    let Some(idx) = all_ids.iter().position(|&x| x == id) else {
+        return;
+    };
+    if visited[idx] {
+        return;
+    }
+    visited[idx] = true;
+
+    if let Some(r) = registered.iter().find(|r| r.id == id) {
+        for &dep in r.deps {
+            push_post_order(dep, all_ids, registered, visited, order);
         }
     }
-    false
+    order.push(id);
 }
 
 /// 计算以 `root_id` 为根的恢复拓扑序 (子域先于父域)。
@@ -151,46 +168,26 @@ pub fn compute_recovery_order(root_id: DomainId) -> Vec<DomainId> {
     let all_ids: Vec<DomainId> = reg.registered.iter().map(|r| r.id).collect();
 
     let mut order = Vec::<DomainId>::new();
-    let mut visited = alloc::vec![false; 64];
-    let mut stack = Vec::<DomainId>::new();
+    let mut visited = alloc::vec![false; all_ids.len()];
 
-    stack.push(root_id);
+    push_post_order(root_id, &all_ids, &reg.registered, &mut visited, &mut order);
 
-    while let Some(id) = stack.pop() {
-        let idx = all_ids.iter().position(|&x| x == id);
-        if idx.is_none() {
+    // 依赖 root 的域 (父域) 在 root 之后恢复; 其自身依赖仍先于它入序.
+    // 注意: 此处不得调用旧的 `has_dependency` — 它会二次获取 RECOVERY_REGISTRY
+    // (非重入锁) 造成自死锁, 故直接查已持锁的 `registered`.
+    for &id in &all_ids {
+        let Some(idx) = all_ids.iter().position(|&x| x == id) else {
+            continue;
+        };
+        if visited[idx] {
             continue;
         }
-        if let Some(i) = idx {
-            if visited[i] {
-                continue;
-            }
-            visited[i] = true;
-
-            for r in &reg.registered {
-                if r.id == id {
-                    for &dep in r.deps {
-                        let dep_idx = all_ids.iter().position(|&x| x == dep);
-                        if let Some(di) = dep_idx {
-                            if !visited[di] {
-                                stack.push(dep);
-                            }
-                        }
-                    }
-                    break;
-                }
-            }
-        }
-        order.push(id);
-    }
-
-    for &id in &all_ids {
-        if let Some(idx) = all_ids.iter().position(|&x| x == id) {
-            if !visited[idx] && id != root_id {
-                if has_dependency(id, root_id) {
-                    order.push(id);
-                }
-            }
+        if reg
+            .registered
+            .iter()
+            .any(|r| r.id == id && r.deps.contains(&root_id))
+        {
+            push_post_order(id, &all_ids, &reg.registered, &mut visited, &mut order);
         }
     }
 

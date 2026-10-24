@@ -24,6 +24,10 @@
 
 ⇒ 今天不炸，纯粹是 **F2 的实现缺口意外挡住了激活路径**。一旦有人"顺手补全 `domain.id` 归属"（把 F2 当 bug 修），F3 立即翻转为 `Some` → 裸指针快照回调挂载 → 引爆 §1.1 的 UAF。护栏要钉死的就是这个翻转点。
 
+### 1.3 现状：id 归属已补全，改由护栏拦截
+
+`recovery_domain_register` 已实装注册时写回 `domain.id`（`id % 32` 槽位被不同 id 占用时拒绝注册），F2 缺口消除。激活路径不再由"id 恒 0"挡住，而由 §3 的 `PROC_FREG_ROLLBACK_SAFE = false` 拦截：`find(4)` 返回 `Some` 后走 `Some(_) =>` 分支拒绝挂载并留 warn trace（启动日志固定出现一条，非故障）。pmm 侧（域 3）挂载的是物理帧记账快照，无裸指针，不构成 §1.1 的 UAF；D-2/D-3 结论不变。
+
 ## 2. 源码调研结论
 
 - 挂载漏斗唯一：`proc_register_freg_domain`（`process.rs:946`），由 `src/kernel/lib.rs:711` 在开中断前调用一次。
@@ -60,5 +64,5 @@
 
 ## 5. 验收
 
-- D-1（本轮）：护栏在位；`find(4)` 恒 `None` → 无 boot 噪声；强制令 `find(4)` 返回 `Some` 的负向用例（或临时置 `PROC_FREG_ROLLBACK_SAFE=true` 的本地验证）能观测到"仅护栏放行才挂载"；§2.3 全门槛绿。
+- D-1（本轮）：护栏在位；`find(4)` 恒 `None` → 无 boot 噪声；强制令 `find(4)` 返回 `Some` 的负向用例（或临时置 `PROC_FREG_ROLLBACK_SAFE=true` 的本地验证）能观测到"仅护栏放行才挂载"；§2.3 全门槛绿。（id 归属补全后，第一条现表现为「护栏固定打一条 warn trace」——见 §1.3。）
 - D-2/D-3：待 FREG 复活立项时按各自判据验收。

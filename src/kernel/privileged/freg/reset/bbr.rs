@@ -33,7 +33,7 @@ pub fn locate_domain_from_panic(panic_location: &core::panic::PanicInfo<'_>) -> 
                 for j in 0..range_count {
                     let (start, end) = ranges[j];
                     if addr >= start && addr < end {
-                        return Some(domain.id);
+                        return Some(domain.id());
                     }
                 }
             }

@@ -128,7 +128,7 @@ fn measurement_consumes_tick_count(code_squashed: &str) -> bool {
     code_squashed.contains(&needle)
 }
 
-/// 时基建立的时序: `timer_init` → `establish_boot_timebase` → `scheduler::init`.
+/// 时基建立的时序: `timer_init` → `establish_boot_timebase` → 调度器初始化.
 ///
 /// 返回 `None` 表示三者未全部出现或顺序不符 (建锚需 tick 频率已配置, 调度器的
 /// 周期判断必须以单一时基为准).
@@ -136,10 +136,11 @@ fn measurement_consumes_tick_count(code_squashed: &str) -> bool {
 /// 以建锚点为锚做邻近查找, 而不是用首次出现位置: lib.rs 的测试模式启动路径
 /// (`kernel_test` / `host-test`) 也调了一次 `scheduler::init()`, 早于真机路径的
 /// 定时器步骤, 按首次出现判序会把这条合法分支误判为回退.
+/// 真机路径现经 `functions::proc::init()` 组合入口调用调度器初始化.
 fn timebase_wiring_position(lib_squashed: &str) -> Option<(usize, usize, usize)> {
     let established = lib_squashed.find("calibration::establish_boot_timebase()")?;
     let configured = lib_squashed[..established].rfind("timer::timer_init(")?;
-    let sched = lib_squashed[established..].find("proc::scheduler::init()")?;
+    let sched = lib_squashed[established..].find("functions::proc::init()")?;
     Some((configured, established, established + sched))
 }
 
@@ -436,7 +437,7 @@ fn test_negative_control_predicates_reject_regressions() {
     let early_anchor = squash(
         "calibration::establish_boot_timebase();
          timer::timer_init(DEFAULT_INTERRUPT_FREQ_HZ);
-         proc::scheduler::init();",
+         functions::proc::init();",
     );
     assert!(
         timebase_wiring_position(&early_anchor).is_none(),
@@ -444,7 +445,7 @@ fn test_negative_control_predicates_reject_regressions() {
     );
     let late_anchor = squash(
         "timer::timer_init(DEFAULT_INTERRUPT_FREQ_HZ);
-         proc::scheduler::init();
+         functions::proc::init();
          calibration::establish_boot_timebase();",
     );
     assert!(

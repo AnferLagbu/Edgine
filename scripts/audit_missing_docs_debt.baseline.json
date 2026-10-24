@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 4490,
+    "sites": 4484,
     "files": 239,
-    "keys": 650
+    "keys": 649
   },
   "entries": [
     [
@@ -2033,7 +2033,7 @@
     [
       "src/kernel/privileged/freg/domain.rs",
       "a struct field",
-      27
+      26
     ],
     [
       "src/kernel/privileged/freg/manager.rs",
@@ -2299,11 +2299,6 @@
       "src/kernel/privileged/iomem.rs",
       "a method",
       4
-    ],
-    [
-      "src/kernel/privileged/ipc/api.rs",
-      "a constant",
-      5
     ],
     [
       "src/kernel/privileged/ipc/api.rs",

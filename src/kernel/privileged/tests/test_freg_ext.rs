@@ -147,7 +147,7 @@ fn test_manager_register_find() -> TestResult {
 
     let found = mgr.find(10);
     check!(found.is_some(), "find should succeed");
-    check!(found.unwrap().id == 10, "found domain id mismatch");
+    check!(found.unwrap().id() == 10, "found domain id mismatch");
 
     let not_found = mgr.find(999);
     check!(not_found.is_none(), "find 999 should be None");

@@ -240,12 +240,13 @@ fn has_local_tick_stub(asm_squashed: &str, index: u32, vector: u32) -> bool {
 /// 返回 `None` 表示四者未全部出现或次序不符。以 `clockevent::setup()` 为锚做
 /// 邻近查找而不是取首次出现位置: lib.rs 的测试模式启动路径也调了
 /// `proc::scheduler::init()`, 按首次出现判序会把那条合法分支误判为回退.
+/// 真机路径现经 `functions::proc::init()` 组合入口调用调度器初始化.
 fn orchestration_position(lib_lines: &str) -> Option<(usize, usize, usize, usize)> {
     let lib = squash(lib_lines);
     let setup = lib.find("timer::clockevent::setup()")?;
     let anchored = lib[..setup].rfind("calibration::establish_boot_timebase()")?;
     let bringup = setup + lib[setup..].find("::secondary_cpu_bringup()")?;
-    let sched = bringup + lib[bringup..].find("proc::scheduler::init()")?;
+    let sched = bringup + lib[bringup..].find("functions::proc::init()")?;
     Some((anchored, setup, bringup, sched))
 }
 
@@ -614,7 +615,7 @@ fn test_negative_control_predicates_reject_regressions() {
     let early_cpu_up = "calibration::establish_boot_timebase();
          <Arch>::secondary_cpu_bringup();
          timer::clockevent::setup();
-         proc::scheduler::init();";
+         functions::proc::init();";
     assert!(
         orchestration_position(early_cpu_up).is_none(),
         "负控制失效: 顺序谓词未识别\"次级核上线早于 tick 源参数发布\""

@@ -91,7 +91,7 @@ pub fn compute_dependency_layers() -> DependencyLayers {
                     if let Some(dep_id) = *slot {
                         for j in 0..domain_count {
                             if let Some(d) = &manager.domains[j] {
-                                if d.id == dep_id {
+                                if d.id() == dep_id {
                                     if visited[j] {
                                         max_dep_level = max_dep_level.max(domain_levels[j] + 1);
                                     } else {
@@ -108,7 +108,7 @@ pub fn compute_dependency_layers() -> DependencyLayers {
                     visited[i] = true;
                     domain_levels[i] = max_dep_level;
                     let level = max_dep_level as usize;
-                    layers.add_to_layer(level, domain.id);
+                    layers.add_to_layer(level, domain.id());
                 }
             }
         }

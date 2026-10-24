@@ -163,7 +163,7 @@ fn test_deferred_block_ordered_after_scheduler_before_timer_start() {
     for call in DEFERRED_INIT_CALLS {
         assert_before(
             &lib,
-            "crate::privileged::proc::scheduler::init();",
+            "crate::functions::proc::init();",
             call,
             "延迟子系统编排必须晚于 scheduler init (tick_query / cgroup 依赖它)",
         );

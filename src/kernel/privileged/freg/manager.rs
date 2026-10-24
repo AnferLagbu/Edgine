@@ -87,13 +87,13 @@ impl RecoveryManager {
         if idx >= MAX_RECOVERY_DOMAINS {
             return None;
         }
-        let id = domain.id as usize;
+        let id = domain.id() as usize;
         if id < DIRECT_MAP_SIZE {
             self.direct_map[id] = Some(domain);
         }
         self.domains[idx] = Some(domain);
         self.count.fetch_add(1, Ordering::SeqCst);
-        Some(domain.id)
+        Some(domain.id())
     }
 
     pub fn tick(&self, current_tick: u64) {
@@ -117,7 +117,7 @@ impl RecoveryManager {
                     crate::klog_ffi!(
                         klog_ffi_warn,
                         "[FREG] domain {} heartbeat lost ({gap} ticks)",
-                        dom.id
+                        dom.id()
                     );
 
                     dom.consecutive_failures.fetch_add(1, Ordering::SeqCst);
@@ -127,7 +127,7 @@ impl RecoveryManager {
                         crate::klog_ffi!(
                             klog_ffi_info,
                             "[FREG] domain {} attempt domain-level rollback (failures={})",
-                            dom.id,
+                            dom.id(),
                             failures
                         );
                         if dom.try_rollback(current_tick, 0) {
@@ -135,7 +135,7 @@ impl RecoveryManager {
                             crate::klog_ffi!(
                                 klog_ffi_info,
                                 "[FREG] domain {} rollback recovered (entries={})",
-                                dom.id,
+                                dom.id(),
                                 entries
                             );
                             dom.mark_recovered();
@@ -148,7 +148,7 @@ impl RecoveryManager {
                         crate::klog_ffi!(
                             klog_ffi_warn,
                             "[FREG] domain {} persistent failures ({failures}), escalating to BSR",
-                            dom.id
+                            dom.id()
                         );
                         crate::privileged::freg::NEED_BSR_ESCALATION.store(true, Ordering::SeqCst);
                         return;
@@ -170,7 +170,7 @@ impl RecoveryManager {
             self.direct_map[idx]
         } else {
             (0..self.count.load(Ordering::SeqCst) as usize)
-                .find_map(|i| self.domains[i].filter(|d| d.id == id))
+                .find_map(|i| self.domains[i].filter(|d| d.id() == id))
         }
     }
 
@@ -183,7 +183,7 @@ impl RecoveryManager {
                     crate::klog_ffi!(
                         klog_ffi_warn,
                         "[FREG] domain {} has persistent crash fingerprint 0x{:X} ({} failures), starting in degraded mode",
-                        dom.id,
+                        dom.id(),
                         fp,
                         dom.consecutive_failures.load(Ordering::SeqCst)
                     );
@@ -199,7 +199,7 @@ impl RecoveryManager {
         for i in 0..count {
             if let Some(dom) = self.domains[i] {
                 if dom.contains_addr(fault_rip) {
-                    return Some(dom.id);
+                    return Some(dom.id());
                 }
             }
         }
@@ -214,7 +214,7 @@ impl RecoveryManager {
             if msg.len() >= mapping.prefix.len() && msg[..mapping.prefix.len()] == *mapping.prefix {
                 for i in 0..count {
                     if let Some(dom) = self.domains[i] {
-                        if dom.id == mapping.domain_id {
+                        if dom.id() == mapping.domain_id {
                             return Some(mapping.domain_id);
                         }
                     }
@@ -261,7 +261,7 @@ impl RecoveryManager {
 
         log_rollback_event(RollbackEvent {
             tick,
-            domain_id: dom.id,
+            domain_id: dom.id(),
             generation_from: gen_from,
             generation_to: target_gen,
             entries_rolled_back,
@@ -281,7 +281,8 @@ impl RecoveryManager {
         let mut visited = [false; MAX_RECOVERY_DOMAINS];
         let mut rolled_back = 0usize;
 
-        let target_idx = (0..count).find(|&i| self.domains[i].map_or(false, |d| d.id == domain_id));
+        let target_idx =
+            (0..count).find(|&i| self.domains[i].map_or(false, |d| d.id() == domain_id));
 
         if let Some(idx) = target_idx {
             visited[idx] = true;
@@ -314,7 +315,7 @@ impl RecoveryManager {
                                 break;
                             }
                             let dep_idx = (0..count)
-                                .find(|&i| self.domains[i].map_or(false, |d| d.id == dep_id));
+                                .find(|&i| self.domains[i].map_or(false, |d| d.id() == dep_id));
                             if let Some(di) = dep_idx {
                                 if !visited[di] {
                                     visited[di] = true;

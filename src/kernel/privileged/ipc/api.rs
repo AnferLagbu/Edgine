@@ -59,11 +59,11 @@ pub enum IpcResourceType {
 // 契约常量
 // ============================================================================
 
-pub const IPC_MAX_PIPES: usize = 64;
-pub const IPC_MAX_SHM_SEGS: usize = 16;
-pub const IPC_MAX_MSG_QUEUES: usize = 32;
-pub const IPC_MAX_SEMAPHORES: usize = 64;
-pub const MSG_MAX_SIZE: usize = 1024;
+// 单源: 一律 re-export types 的机制常量, 避免同值双源漂移
+// (曾出现 MSG_MAX_SIZE = 1024 而 types 为 4096 的不一致; 测试模式的缩减门控也随之统一).
+pub use super::types::{
+    IPC_MAX_MSG_QUEUES, IPC_MAX_PIPES, IPC_MAX_SEMAPHORES, IPC_MAX_SHM_SEGS, MSG_MAX_SIZE,
+};
 
 // ============================================================================
 // 契约: 生命周期

@@ -71,8 +71,14 @@ pub extern "C" fn recovery_domain_register(domain_id: u64) -> i32 {
     // 注: 取模而非用全局计数, 避免重启后 slot 已被占用的问题。
     let idx = (domain_id % MAX_RECOVERY_DOMAINS as u64) as usize;
     let domain: &'static RecoveryDomain = &recovery_domain_pool()[idx];
-    // 注: domain_id 字段在 const init 时已为 0; 在此设置实际 id.
-    // 由于 RecoveryDomain 字段都是 const-init, 这里仅是声明性归属。
+    // 写回实际 id (池内 const-init 时为 0; 不写回会导致管理器按 id 查找/注销全部失效).
+    // 注册均在启动期单线程执行, 原子写保证并发读者看到完整 id.
+    let prev = domain.id();
+    if prev != 0 && prev != domain_id {
+        // id % 32 槽位冲突: 拒绝覆盖已注册域, 避免破坏其归属.
+        return -1;
+    }
+    domain.id.store(domain_id, Ordering::Relaxed);
     match super::RECOVERY_MANAGER.lock().register(domain) {
         Some(_) => 0,
         None => -1,
@@ -86,7 +92,7 @@ pub extern "C" fn recovery_domain_unregister(domain_id: u64) -> i32 {
     let count = mgr.count.load(Ordering::SeqCst) as usize;
     for i in 0..count {
         if let Some(dom) = mgr.domains[i] {
-            if dom.id == domain_id {
+            if dom.id() == domain_id {
                 mgr.domains[i] = None;
                 let id_idx = domain_id as usize;
                 if id_idx < DIRECT_MAP_SIZE {
@@ -170,7 +176,7 @@ pub extern "C" fn recovery_try_recover_from_idt() -> i32 {
 
     for i in 0..count {
         if let Some(dom) = mgr.domains[i] {
-            let did = dom.id;
+            let did = dom.id();
             let rollbacks = mgr.cascade_rollback(did, tick, fingerprint);
             if rollbacks > 0 {
                 dom.persist_crash_fingerprint(fingerprint);

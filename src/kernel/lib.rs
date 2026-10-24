@@ -722,6 +722,18 @@ pub extern "C" fn kernel_init() {
             crate::klog_boot_info!("Swap subsystem init FAILED (degraded mode)");
         }
 
+        // 5.6. functions 内存策略注册 (T-02 / DECISION-O)
+        // 位置约束: 在 privileged mm (pmm/vmm/kmalloc) 与 swap_init 之后、中断使能之前.
+        // 此前无调用点, PMM/Slab/Swap/缺页/压力/分配决策策略全部停留在 privileged fallback.
+        crate::functions::mm::init();
+        crate::klog_boot_info!("MM policies registered");
+
+        // 5.7. IPC 机制初始化 (kmalloc 后、中断使能前)
+        // 此前无调用点: IPC_NAMESPACE 的 4 个资源数组保持空 Vec, 首次 pipe()/msgget()
+        // 即越界 panic. 必须在策略注册前填充槽位, 且单线程阶段完成.
+        crate::privileged::ipc::ipc_init();
+        crate::klog_boot_info!("IPC namespace initialized");
+
         // 5.75. IPC 策略注册契约点 (DECISION-K 2026-09-12: 注册点前置)
         // 紧随 privileged ipc_init() 后立即 (kernel_init 早期, 删去 VFS 后约束) —
         // DefaultIpcStrategy 零字段构造 + static 零初始化 + OnceLock 存指针, 注册零
@@ -788,8 +800,11 @@ pub extern "C" fn kernel_init() {
         );
         crate::klog_boot_info!("SMP: secondary CPUs online");
 
-        // 8. Scheduler
-        crate::privileged::proc::scheduler::init();
+        // 8. Scheduler + 进程策略注册
+        // functions::proc::init() 组合: 信号策略 (REVAL-1) + coredump sink (2J-C)
+        // + privileged scheduler::init + session::init. 此前仅调 scheduler::init,
+        // 信号/coredump 策略与 session 初始化从未执行 (全靠 privileged fallback).
+        crate::functions::proc::init();
         crate::klog_boot_info!("Scheduler ready");
 
         // 8-1. eBPF — functions::debug::ebpf::init() 注册契约 (DECISION-K 统一
