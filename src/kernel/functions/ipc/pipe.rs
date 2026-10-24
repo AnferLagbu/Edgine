@@ -11,8 +11,13 @@
 //! 对象承载 (per-process `FdTable` 分配), 因此 fork 继承 / dup / CLOEXEC /
 //! close 语义全部复用 VFS fd 对象模型.
 
-use crate::privileged::ipc::types::{IPC_MAX_PIPES, IpcId, IpcNamespace, PIPE_BUFFER_SIZE};
-use crate::privileged::sync::IrqSpinLock;
+use crate::privileged::ipc::types::{
+    IPC_MAX_PIPES, IpcId, IpcNamespace, PIPE_BUFFER_SIZE, WaitQueueItem,
+};
+use crate::privileged::proc::{
+    BlockReason, process_get_current_pid, scheduler_block, scheduler_yield_ex,
+};
+use crate::privileged::sync::{IrqSpinLock, in_irq_context};
 
 /// 管道全局自旋锁 (privileged 机制, 短临界区)
 static PIPE_LOCK: IrqSpinLock<()> = IrqSpinLock::new(());
@@ -256,4 +261,74 @@ pub fn pipe_close_safe(namespace: &mut IpcNamespace, key: i32) -> Result<(), i32
     }
 
     Ok(())
+}
+
+/// 阻塞等待端点可读 (空缓冲且仍有写者时睡眠).
+///
+/// 返回 `true` 表示调用方应**重试**读取 (条件可能已满足, 或端点已失效 —
+/// 重试会得到 EOF/EBADF 等确定结果); 返回 `false` 表示当前上下文无法阻塞
+/// (中断上下文 / 无进程上下文 / 等待队列满), 调用方应回退 `EAGAIN`.
+pub fn pipe_wait_readable(namespace: &mut IpcNamespace, key: i32) -> bool {
+    pipe_block_on(namespace, key, true)
+}
+
+/// 阻塞等待端点可写 (缓冲已满且仍有读者时睡眠).
+///
+/// 返回值语义同 [`pipe_wait_readable`]. 读端全部关闭时本函数立即返回 `true`,
+/// 由调用方重试写, 从而得到确定的 `EPIPE`.
+pub fn pipe_wait_writable(namespace: &mut IpcNamespace, key: i32) -> bool {
+    pipe_block_on(namespace, key, false)
+}
+
+/// 在 `PIPE_LOCK` 内置 `Blocked` 后入睡 — 关闭"唤醒先于入睡"的丢唤醒窗口.
+///
+/// 关键次序 (不可调整):
+/// 1. 持 `PIPE_LOCK` 复查条件并**入队**;
+/// 2. 仍持锁调用 `scheduler_block` 把当前进程标记为 `Blocked`;
+/// 3. 释放 `PIPE_LOCK` 后再 `yield`.
+///
+/// 唤醒方 (`pipe_read/write/close_safe`) 也持同一把 `PIPE_LOCK` 执行
+/// `scheduler_unblock`, 因此"入队 + 置 Blocked"与"出队 + 置 Ready"天然互斥;
+/// 若先释放锁再标记, 唤醒可能在两步之间发生并被丢弃 (永久睡眠).
+fn pipe_block_on(namespace: &mut IpcNamespace, key: i32, want_read: bool) -> bool {
+    if in_irq_context() {
+        // 中断上下文禁止睡眠 (持锁入睡会死锁).
+        return false;
+    }
+    let pid = process_get_current_pid();
+    if pid == 0 {
+        // idle / 无进程上下文: 无法真实阻塞.
+        return false;
+    }
+
+    let lock = PIPE_LOCK.lock();
+    let Some(idx) = pipe_find_by_key_index(namespace, key) else {
+        return false;
+    };
+    let pipe = &mut namespace.pipes[idx];
+
+    // 条件已满足 (或有意义的终态: 对端全关) ⇒ 直接重试, 无需睡眠.
+    let ready = if want_read {
+        key != pipe.read_key || pipe.count > 0 || pipe.writers == 0
+    } else {
+        key != pipe.write_key || pipe.count < PIPE_BUFFER_SIZE as u32 || pipe.readers == 0
+    };
+    if ready {
+        return true;
+    }
+
+    let queue = if want_read {
+        &mut pipe.read_wait
+    } else {
+        &mut pipe.write_wait
+    };
+    // 队列满 ⇒ 入队失败, 此时入睡将无人唤醒 (永久睡眠), 回退 EAGAIN.
+    if !queue.add(WaitQueueItem { pid }) {
+        return false;
+    }
+    // 持锁标记 Blocked (见函数文档的次序契约).
+    scheduler_block(BlockReason::WaitingForIo);
+    drop(lock);
+    scheduler_yield_ex();
+    true
 }

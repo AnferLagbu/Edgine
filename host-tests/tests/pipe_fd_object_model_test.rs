@@ -281,6 +281,77 @@ fn pipe_syscalls_route_through_fd_object_model() {
 }
 
 #[test]
+fn vfs_data_paths_notify_event_not_close() {
+    let handle = read_src("src/kernel/functions/fs/handle.rs");
+    assert!(
+        handle.contains("fd_notify::notify_fd_event(fd_idx as i32)"),
+        "管道读/写成功路径必须发 fd 事件通知 (epoll 重新求值就绪位)"
+    );
+    // 写路径不得误发 close 通知 (原预存 bug: 写入成功被 epoll 观测为 EPOLLHUP).
+    let write_slice = handle
+        .split("fn vfs_write_slice")
+        .nth(1)
+        .unwrap_or_default()
+        .split("fn vfs_write_internal")
+        .next()
+        .unwrap_or_default();
+    assert!(
+        !write_slice.contains("notify_fd_close"),
+        "写路径不得误发 fd 关闭通知"
+    );
+    assert!(
+        handle.contains("fd_notify::notify_fd_close(fd_idx as i32)"),
+        "真正的 fd 关闭路径必须保留关闭通知"
+    );
+
+    let notify = read_src("src/kernel/privileged/fd_notify.rs");
+    assert!(
+        notify.contains("pub fn notify_fd_event") && notify.contains("pub fn notify_fd_close"),
+        "fd 事件通知接口必须同时提供事件/关闭两个入口"
+    );
+}
+
+#[test]
+fn pipe_blocking_waits_outside_pipe_lock() {
+    let pipe_src = read_src("src/kernel/functions/ipc/pipe.rs");
+    assert!(
+        pipe_src.contains("pub fn pipe_wait_readable")
+            && pipe_src.contains("pub fn pipe_wait_writable"),
+        "端点策略必须提供阻塞等待原语"
+    );
+    assert!(
+        pipe_src.contains("scheduler_block(BlockReason::WaitingForIo)"),
+        "等待必须在持 PIPE_LOCK 期间标记 Blocked (关闭丢唤醒窗口)"
+    );
+    assert!(
+        pipe_src.contains("drop(lock)") && pipe_src.contains("scheduler_yield_ex()"),
+        "置 Blocked 后必须先释放 PIPE_LOCK 再 yield"
+    );
+
+    let pipe_fd = read_src("src/kernel/functions/fs/pipe_fd.rs");
+    assert!(
+        pipe_fd.contains("pub fn wait_readable")
+            && pipe_fd.contains("pub fn wait_writable")
+            && pipe_fd.contains("pub fn pipe_endpoint_of"),
+        "pipe_fd 必须向 syscall 层暴露等待门面与端点元数据"
+    );
+
+    let io = read_src("src/kernel/functions/fs/io.rs");
+    assert!(
+        io.contains("wait_readable(key)") && io.contains("wait_writable(key)"),
+        "read/write syscall 必须在 EAGAIN 时进入阻塞等待"
+    );
+    assert!(
+        io.contains("flags & O_NONBLOCK != 0"),
+        "pipe2 必须把 O_NONBLOCK 传给 create_pair"
+    );
+    assert!(
+        io.contains("of.set_nonblock(nonblock)"),
+        "fcntl(F_SETFL) 必须能切换管道端点的非阻塞位"
+    );
+}
+
+#[test]
 fn fd_table_reserves_standard_streams() {
     let src = read_src("src/kernel/privileged/proc/fd_table.rs");
     assert!(

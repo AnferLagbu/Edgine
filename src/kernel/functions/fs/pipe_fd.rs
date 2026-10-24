@@ -19,9 +19,10 @@
 //!
 //! ## 阻塞语义
 //!
-//! SIMPLIFIED: 空管道 (有写者) 与满管道返回 `EAGAIN` 而非阻塞等待;
-//! 影响面: 用户态需自行轮询或先写后读, `read`/`write` 不睡眠;
-//! 何时需扩展: 在 `PIPE_LOCK` 之外引入等待队列睡眠 (持锁期间不可 yield).
+//! 端点 Inode 自身的 `read`/`write` 是**非阻塞**的 (空/满返回 `EAGAIN`),
+//! 因为它们运行在 `PIPE_LOCK` 临界区内, 持锁睡眠会死锁. 真正的阻塞等待由
+//! syscall 层 (`functions::fs::io`) 在锁外完成: 收到 `EAGAIN` 且端点未置
+//! `O_NONBLOCK` 时调用 [`wait_readable`] / [`wait_writable`] 睡眠, 唤醒后重试.
 
 use alloc::sync::Arc;
 
@@ -66,7 +67,7 @@ impl Inode for PipeEndpointInode {
             count,
         ) {
             Ok(n) => Ok(n as usize),
-            // -4: 空管道且仍有写者 (SIMPLIFIED: 不阻塞, 返回 EAGAIN)
+            // -4: 空管道且仍有写者 ⇒ 非阻塞结果; 阻塞等待由 syscall 层转 [`wait_readable`]
             Err(-4) => Err(KernelError::WouldBlock),
             // -1/-2: 端点已关闭或方向不符
             Err(_) => Err(KernelError::BadFd),
@@ -87,7 +88,7 @@ impl Inode for PipeEndpointInode {
             Ok(n) => Ok(n as usize),
             // -3: 读端全部关闭 ⇒ EPIPE
             Err(-3) => Err(KernelError::BrokenPipe),
-            // -4: 缓冲区已满 (SIMPLIFIED: 不阻塞, 返回 EAGAIN)
+            // -4: 缓冲区已满 ⇒ 非阻塞结果; 阻塞等待由 syscall 层转 [`wait_writable`]
             Err(-4) => Err(KernelError::WouldBlock),
             Err(_) => Err(KernelError::BadFd),
         }
@@ -144,6 +145,7 @@ impl Drop for PipeEndpointInode {
 /// 创建一对管道端点并分配用户 fd (读端, 写端).
 ///
 /// 两个 fd 共用当前进程的 fd 空间 (与 VFS fd 同源), 编号互不重叠.
+/// `nonblock` 为 `pipe2(O_NONBLOCK)` 的初始状态, 之后可由 `fcntl(F_SETFL)` 切换.
 ///
 /// # Errors
 /// 管道槽位耗尽 / 全局 `OpenFile` 表满 / 进程 fd 表满 → `ProcessFileLimit` (EMFILE).
@@ -151,7 +153,7 @@ impl Drop for PipeEndpointInode {
     clippy::cast_possible_truncation,
     reason = "fd 编号受 MAX_FDS_PER_PROCESS(64) 约束, usize→i32 无损"
 )]
-pub fn create_pair(cloexec: bool) -> KernelResult<(i32, i32)> {
+pub fn create_pair(cloexec: bool, nonblock: bool) -> KernelResult<(i32, i32)> {
     let (read_end, write_end) = crate::functions::ipc::IpcLock
         .pipe_create(process_get_current_pid())
         .map_err(|_| KernelError::ProcessFileLimit)?;
@@ -161,6 +163,9 @@ pub fn create_pair(cloexec: bool) -> KernelResult<(i32, i32)> {
         Arc::new(PipeEndpointInode::new(read_key, true)),
         VfsOpenFlags::RDONLY.bits(),
         0,
+        read_key,
+        true,
+        nonblock,
     );
     let Some(read_handle) = OPEN_FILE_TABLE.alloc(read_of) else {
         // read_of 在 alloc 内随函数结束被丢弃 ⇒ 端点 Drop 自动释放 read_key
@@ -171,6 +176,9 @@ pub fn create_pair(cloexec: bool) -> KernelResult<(i32, i32)> {
         Arc::new(PipeEndpointInode::new(write_key, false)),
         VfsOpenFlags::WRONLY.bits(),
         0,
+        write_key,
+        false,
+        nonblock,
     );
     let Some(write_handle) = OPEN_FILE_TABLE.alloc(write_of) else {
         OPEN_FILE_TABLE.close(read_handle);
@@ -211,4 +219,41 @@ pub fn is_pipe_fd(fd: i32) -> bool {
     OPEN_FILE_TABLE
         .with_file(handle_id, OpenFile::is_pipe_endpoint)
         .unwrap_or(false)
+}
+
+/// 取管道端点元数据 `(key, 是否读端, 是否非阻塞)`; 非管道 fd 返回 `None`.
+///
+/// syscall 层据此决定是否需要阻塞等待, 以及等待哪个端点的队列.
+pub fn pipe_endpoint_of(fd: i32) -> Option<(i32, bool, bool)> {
+    if fd < 0 {
+        return None;
+    }
+    let handle_id = super::handle::vfs_get_fd_handle(fd as usize)?;
+    OPEN_FILE_TABLE
+        .with_file(handle_id, |of| {
+            of.pipe_endpoint()
+                .map(|(key, is_read)| (key, is_read, of.is_nonblock()))
+        })
+        .flatten()
+}
+
+/// 阻塞等待管道读端可读 (空缓冲且仍有写者时睡眠).
+///
+/// 返回 `true` 表示调用方应**重试**读取; `false` 表示当前上下文无法阻塞
+/// (中断上下文 / 无进程上下文 / 等待队列满), 调用方应回退 `EAGAIN`.
+pub fn wait_readable(key: i32) -> bool {
+    crate::functions::ipc::pipe::pipe_wait_readable(
+        crate::privileged::ipc::IPC_NAMESPACE.get_mut(),
+        key,
+    )
+}
+
+/// 阻塞等待管道写端可写 (缓冲已满且仍有读者时睡眠).
+///
+/// 返回值语义同 [`wait_readable`].
+pub fn wait_writable(key: i32) -> bool {
+    crate::functions::ipc::pipe::pipe_wait_writable(
+        crate::privileged::ipc::IPC_NAMESPACE.get_mut(),
+        key,
+    )
 }

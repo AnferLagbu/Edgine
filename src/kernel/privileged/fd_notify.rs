@@ -1,7 +1,8 @@
-//! fd 关闭通知接口 — 解耦 fs 与 syscall::epoll
+//! fd 事件通知接口 — 解耦 fs 与 syscall::epoll
 //!
-//! fs 在 fd 关闭时需要通知 epoll 等待者, 但 fs 不应直接依赖 syscall 子系统.
-//! 本模块提供全局函数指针注册机制: epoll 初始化时注册回调, fs 通过此模块调用.
+//! fs 在 fd 关闭或状态变化 (可读/可写) 时需要通知 epoll 等待者, 但 fs 不应
+//! 直接依赖 syscall 子系统. 本模块提供全局函数指针注册机制: epoll 初始化时
+//! 注册回调, fs 通过此模块调用.
 //!
 //! # 安全契约
 //!
@@ -25,10 +26,24 @@ pub unsafe fn register_pwake(func: PwakeFn) {
     PWAKE_FN.store(func as *mut (), Ordering::Release);
 }
 
-/// 通知 fd 关闭事件. 由 fs 在 fd 关闭时调用.
+/// 通知 fd 关闭事件 (epoll 侧表现为 `EPOLLHUP|EPOLLERR`).
 ///
-/// 若 epoll 未注册回调, 此函数为空操作.
+/// 由 fs 在 fd 关闭时调用; 若 epoll 未注册回调, 此函数为空操作.
 pub fn notify_fd_close(fd: i32) {
+    dispatch(fd);
+}
+
+/// 通知 fd 状态变化事件 (可读 / 可写), 由 epoll 重新计算就绪位.
+///
+/// fs 在 I/O 改变了 fd 就绪状态时调用 (管道读走数据 / 写入数据). 与
+/// [`notify_fd_close`] 走同一回调, 区别仅在语义: 关闭是终态挂断, 状态变化
+/// 是"重新求值就绪". 若 epoll 未注册回调, 此函数为空操作.
+pub fn notify_fd_event(fd: i32) {
+    dispatch(fd);
+}
+
+/// 调用已注册的 epoll 唤醒回调 (未注册则空操作).
+fn dispatch(fd: i32) {
     let ptr = PWAKE_FN.load(Ordering::Acquire);
     if !ptr.is_null() {
         // SAFETY: ptr 由 register_pwake 注册, 是有效的 PwakeFn 函数指针.

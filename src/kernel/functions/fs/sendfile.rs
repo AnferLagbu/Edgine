@@ -20,7 +20,7 @@
 //! ## FD 类型识别
 //!
 //! - VFS fd: 当前进程 fd 表中有映射 (fd → `OpenFileTable` handle 存在)
-//! - Pipe fd: 同样位于 VFS fd 空间, 由 `OpenFile` 的 `is_pipe` 标记区分
+//! - Pipe fd: 同样位于 VFS fd 空间, 由 `OpenFile` 的 `pipe_key` 标记区分
 //!   (`functions::fs::pipe_fd`)
 //! - Eventfd/Signalfd/Timerfd/Inotify: 各自独立 FD 空间, 不参与 sendfile/splice
 //!

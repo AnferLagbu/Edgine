@@ -277,6 +277,11 @@ fn vfs_read_slice(fd_idx: u32, dst: &mut [u8]) -> i32 {
             .map_or_else(KernelError::as_vfs_ret, |n| {
                 let new_offset = offset + n as u64;
                 open_file.set_offset(new_offset);
+                // 管道读走数据 ⇒ 对端可写状态可能变化, 通知 epoll 重新求值
+                // (普通文件就绪态恒定, 无需通知).
+                if open_file.is_pipe_endpoint() {
+                    fd_notify::notify_fd_event(fd_idx as i32);
+                }
                 n as i32
             })
     });
@@ -422,8 +427,11 @@ fn vfs_write_slice(fd_idx: u32, src: &[u8]) -> i32 {
             .map_or_else(KernelError::as_vfs_ret, |n| {
                 let new_offset = offset + n as u64;
                 open_file.set_offset(new_offset);
-                // inotify + fd_notify 通知
-                fd_notify::notify_fd_close(fd_idx as i32);
+                // 管道写入数据 ⇒ 对端可读状态变化, 通知 epoll 重新求值;
+                // 普通文件就绪态恒定, 不发事件 (原实现在写路径误调 close 通知).
+                if open_file.is_pipe_endpoint() {
+                    fd_notify::notify_fd_event(fd_idx as i32);
+                }
                 super::inotify::inotify_notify(node_id, super::inotify::IN_MODIFY, "", false);
                 n as i32
             })

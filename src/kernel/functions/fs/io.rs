@@ -39,6 +39,26 @@ fn fd_table_has_entry(fd: i32) -> bool {
             .is_some()
 }
 
+/// 管道端点因阻塞被返回 `EAGAIN` 时, 在 `PIPE_LOCK` 之外睡眠等待.
+///
+/// 端点 Inode 的 `read`/`write` 持 `PIPE_LOCK`, 锁内 yield 会死锁, 故阻塞
+/// 语义只能由 syscall 层承担: 收到 `EAGAIN` 后调用本函数睡眠, 被唤醒返回
+/// `true` 时调用方重试 I/O.
+///
+/// 返回 `false` = 不应阻塞 (非管道 fd / 方向不符 / 已置 `O_NONBLOCK` / 当前
+/// 上下文无法阻塞), 调用方维持 `EAGAIN` 语义.
+fn wait_pipe_eagain(fd: i32, want_read: bool) -> bool {
+    super::pipe_fd::pipe_endpoint_of(fd).is_some_and(|(key, is_read, nonblock)| {
+        !nonblock
+            && is_read == want_read
+            && if want_read {
+                super::pipe_fd::wait_readable(key)
+            } else {
+                super::pipe_fd::wait_writable(key)
+            }
+    })
+}
+
 /// read 系统调用策略
 ///
 /// fd 路由: 0/1/2 仅在 fd 表无对应条目时按标准流处理 (stdin 键盘 / stdout
@@ -99,12 +119,25 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
     if crate::privileged::mm::is_uffd_fd(fd) {
         return crate::functions::mm::uffd::read_event(fd, buf, count);
     }
-    // 常规 VFS 读 (vfs_read 将数据写入调用方地址空间的 buf)
-    ret_to_result(i64::from(crate::functions::fs::api::vfs_read(
-        fd as u32,
-        buf as *mut u8,
-        count as u32,
-    )))
+    // 常规 VFS 读 (vfs_read 将数据写入调用方地址空间的 buf).
+    //
+    // 管道读端在阻塞模式 (未置 `O_NONBLOCK`) 下空缓冲返回 `EAGAIN` ⇒ 在此处
+    // 睡眠等待后重试 (见 [`wait_pipe_eagain`]).
+    loop {
+        let ret = i64::from(crate::functions::fs::api::vfs_read(
+            fd as u32,
+            buf as *mut u8,
+            count as u32,
+        ));
+        if ret >= 0 {
+            return Ok(ret as usize);
+        }
+        let errno = Errno::from_ret(ret);
+        if errno == Errno::EAGAIN && wait_pipe_eagain(fd, true) {
+            continue;
+        }
+        return Err(errno);
+    }
 }
 
 /// write 系统调用策略
@@ -160,7 +193,10 @@ pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
             u64::from_ne_bytes(val_buf),
         ));
     }
-    // 文件写入: 分块拷贝用户数据到内核缓冲区, 再走 VFS
+    // 文件写入: 分块拷贝用户数据到内核缓冲区, 再走 VFS.
+    //
+    // 管道写端在阻塞模式 (未置 `O_NONBLOCK`) 下满缓冲返回 `EAGAIN` ⇒ 在此处
+    // 睡眠等待后重试 (见 [`wait_pipe_eagain`]).
     let total = (count as usize).min(4096);
     let mut kernel_buf = [0u8; 256];
     let mut written: usize = 0;
@@ -176,10 +212,14 @@ pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
         };
         let n = crate::functions::fs::api::vfs_write_kernel(fd as u32, &kernel_buf[..copied]);
         if n < 0 {
+            let errno = Errno::from_ret(i64::from(n));
+            if errno == Errno::EAGAIN && wait_pipe_eagain(fd, false) {
+                continue;
+            }
             if written > 0 {
                 break;
             }
-            return Err(Errno::from_ret(i64::from(n)));
+            return Err(errno);
         }
         if n == 0 {
             break;
@@ -212,9 +252,8 @@ pub fn pipe_syscall(fds: u64) -> Result<usize, Errno> {
 /// - `flags` 含未知位 → `EINVAL`
 /// - 资源耗尽 → `EMFILE`
 ///
-/// SIMPLIFIED: `O_NONBLOCK` 接受但不改变行为 — 管道读/写本就走非阻塞语义
-/// (空/满返回 `EAGAIN`); 影响面: `pipe2(O_NONBLOCK)` 与 `pipe()` 行为一致;
-/// 何时需扩展: 实现阻塞管道等待队列后, 需按该标志区分阻塞/非阻塞.
+/// `O_CLOEXEC` 落到 per-process fd 表, `O_NONBLOCK` 落到两端点 `OpenFile`
+/// (读/写空满时分别返回 `EAGAIN` 或睡眠等待).
 pub fn pipe2_syscall(fds: u64, flags: i32) -> Result<usize, Errno> {
     if fds == 0 || !raw::check_user_buf(fds, 8) {
         return Err(Errno::EFAULT);
@@ -223,8 +262,9 @@ pub fn pipe2_syscall(fds: u64, flags: i32) -> Result<usize, Errno> {
     if flags & !allowed != 0 {
         return Err(Errno::EINVAL);
     }
-    let (rfd, wfd) = super::pipe_fd::create_pair(flags & super::open::O_CLOEXEC != 0)
-        .map_err(super::vfs_types::KernelError::as_errno)?;
+    let (rfd, wfd) =
+        super::pipe_fd::create_pair(flags & super::open::O_CLOEXEC != 0, flags & O_NONBLOCK != 0)
+            .map_err(super::vfs_types::KernelError::as_errno)?;
     let pipefd: [i32; 2] = [rfd, wfd];
     if !crate::privileged::syscall::api::write_struct_to_user(fds, &pipefd) {
         // 用户数组写回失败: 回收刚分配的两个 fd (避免泄漏)
@@ -361,24 +401,38 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
             let Some(handle_id) = crate::functions::fs::vfs_get_fd_handle(fd as usize) else {
                 return Err(Errno::EBADF);
             };
-            match crate::functions::fs::OPEN_FILE_TABLE
-                .with_file(handle_id, crate::functions::fs::OpenFile::get_flags)
-            {
+            // 管道端点的 O_NONBLOCK 由 `OpenFile::nonblock` 承载 (独立于文件
+            // 状态标志), 需回填到 F_GETFL 结果.
+            match crate::functions::fs::OPEN_FILE_TABLE.with_file(handle_id, |of| {
+                let mut flags = of.get_flags();
+                if of.is_nonblock() {
+                    flags |= O_NONBLOCK as u32;
+                }
+                flags
+            }) {
                 Some(flags) => ret_to_result(i64::from(flags)),
                 None => Err(Errno::EBADF),
             }
         }
         F_SETFL => {
+            let nonblock = (arg as i32) & O_NONBLOCK != 0;
             // D10 (DECISION-092): socket fd 的 O_NONBLOCK 落到 privileged per-slot
-            // 阻塞标志; 非 socket fd 沿用既有 no-op (OpenFile status flags 未实现).
+            // 阻塞标志; 非 socket fd 沿用既有 no-op, 但管道端点例外 —— 非阻塞位
+            // 记录到 `OpenFile::nonblock`, 供 read/write syscall 层切换阻塞路径.
             if crate::functions::proc::fd_alloc::subsystem_of(fd)
                 == Some(crate::functions::proc::fd_alloc::FdSubsystem::Smoltcp)
             {
-                let nonblock = (arg as i32) & O_NONBLOCK != 0;
                 ret_to_result(i64::from(
                     crate::privileged::net_socket::sm_set_nonblocking(fd, nonblock),
                 ))
             } else {
+                if let Some(handle_id) = crate::functions::fs::vfs_get_fd_handle(fd as usize) {
+                    let _ = crate::functions::fs::OPEN_FILE_TABLE.with_file(handle_id, |of| {
+                        if of.is_pipe_endpoint() {
+                            of.set_nonblock(nonblock);
+                        }
+                    });
+                }
                 Ok(0)
             }
         }

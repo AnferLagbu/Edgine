@@ -502,7 +502,7 @@ pub trait FileSystem: Send + Sync {
 
 use super::inode::Inode;
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 /// 打开文件描述 — POSIX open file description 的 `Edgine` 实现
 ///
@@ -526,8 +526,14 @@ pub struct OpenFile {
     pub file_type: u8,
     /// 是否匿名文件 (memfd)
     pub is_anonymous: bool,
-    /// 是否匿名管道端点 (fd 路由: sendfile/splice 走内核缓冲 I/O 而非用户指针)
-    pub is_pipe: bool,
+    /// 匿名管道端点 key (`0` = 非管道端点; 由 `functions::ipc::pipe` 派生,
+    /// **非**用户 fd). syscall 层据此定位端点等待队列.
+    pub pipe_key: i32,
+    /// 管道端点方向 (`true` = 读端), 仅 `pipe_key != 0` 时有意义
+    pub pipe_is_read: bool,
+    /// 非阻塞标志 (`O_NONBLOCK`): 管道端点空/满时返回 `EAGAIN` 而非睡眠.
+    /// 独立于 `flags` 存放, 以便 `fcntl(F_SETFL)` 在 `&OpenFile` 上原子切换.
+    pub nonblock: AtomicBool,
 }
 
 impl core::fmt::Debug for OpenFile {
@@ -539,7 +545,12 @@ impl core::fmt::Debug for OpenFile {
             .field("refcount", &self.refcount)
             .field("file_type", &self.file_type)
             .field("is_anonymous", &self.is_anonymous)
-            .field("is_pipe", &self.is_pipe)
+            .field("pipe_key", &self.pipe_key)
+            .field("pipe_is_read", &self.pipe_is_read)
+            .field(
+                "nonblock",
+                &self.nonblock.load(core::sync::atomic::Ordering::Relaxed),
+            )
             .finish()
     }
 }
@@ -555,7 +566,9 @@ impl OpenFile {
             refcount: AtomicU32::new(1),
             file_type,
             is_anonymous: false,
-            is_pipe: false,
+            pipe_key: 0,
+            pipe_is_read: false,
+            nonblock: AtomicBool::new(false),
         }
     }
 
@@ -568,17 +581,47 @@ impl OpenFile {
 
     /// 创建匿名管道端点 `OpenFile`
     ///
-    /// 端点方向由 `inode` (`PipeEndpointInode`) 自身承载, `flags` 仅记录
-    /// 访问模式供 `F_GETFL` 等元数据查询使用.
-    pub fn new_pipe(inode: Arc<dyn Inode>, flags: u32, pwm: u64) -> Self {
+    /// - `pipe_key`: 端点 key (`functions::ipc::pipe` 派生, 非用户 fd)
+    /// - `is_read`: 端点方向
+    /// - `nonblock`: 初始 `O_NONBLOCK` 状态 (`pipe2` 标志)
+    pub fn new_pipe(
+        inode: Arc<dyn Inode>,
+        flags: u32,
+        pwm: u64,
+        pipe_key: i32,
+        is_read: bool,
+        nonblock: bool,
+    ) -> Self {
         let mut of = Self::new(inode, flags, pwm, VfsFileType::File.as_u8());
-        of.is_pipe = true;
+        of.pipe_key = pipe_key;
+        of.pipe_is_read = is_read;
+        of.nonblock = AtomicBool::new(nonblock);
         of
     }
 
     /// 是否为匿名管道端点
     pub fn is_pipe_endpoint(&self) -> bool {
-        self.is_pipe
+        self.pipe_key != 0
+    }
+
+    /// 取管道端点元数据 `(key, 是否读端)`; 非管道 fd 返回 `None`
+    pub fn pipe_endpoint(&self) -> Option<(i32, bool)> {
+        if self.pipe_key == 0 {
+            None
+        } else {
+            Some((self.pipe_key, self.pipe_is_read))
+        }
+    }
+
+    /// 是否非阻塞 (仅管道端点有意义)
+    pub fn is_nonblock(&self) -> bool {
+        self.nonblock.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// 设置非阻塞标志 (`fcntl(F_SETFL)`)
+    pub fn set_nonblock(&self, nonblock: bool) {
+        self.nonblock
+            .store(nonblock, core::sync::atomic::Ordering::Relaxed);
     }
 
     // ---- 兼容旧 API (折中实现过渡期) ----
