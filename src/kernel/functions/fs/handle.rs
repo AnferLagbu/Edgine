@@ -214,27 +214,19 @@ pub fn vfs_close_all_fds() {
     }
 }
 
-// 有意窄化: 用户内存代理, 指针/长度上下文保证
+/// VFS 读核心 — 以切片作为目标缓冲 (用户/内核路径共用).
+///
+/// 用户路径 (`vfs_read_internal`) 先经 `UserWritePtr` 校验; 内核路径
+/// (`vfs_read_kernel`) 由调用方保证切片有效, 用于管道/sendfile 等内核 bounce
+/// 缓冲 (内核地址无法通过 `UserWritePtr::checked_new`).
+// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
-pub extern "C" fn vfs_read_internal(fd_idx: u32, buf: *mut u8, count: u32) -> i32 {
-    if buf.is_null() || count == 0 {
-        return -1;
-    }
-
+fn vfs_read_slice(fd_idx: u32, dst: &mut [u8]) -> i32 {
+    let count = dst.len() as u32;
     // Plan B: 通过 OpenFile 的 Inode trait 执行 I/O
     // 获取 handle_id (B-9.5: 源自 per-process fd 表, 权威表)
-    let handle_id = match current_fd_handle(fd_idx as usize) {
-        Some(hid) => hid,
-        None => return -1,
-    };
-
-    // I4: 用户内存经 privileged 安全代理 (范围校验后构造可写视图)
-    let Some(mut user_buf) = UserWritePtr::checked_new(buf, count as usize) else {
-        return -1;
+    let Some(handle_id) = current_fd_handle(fd_idx as usize) else {
+        return KernelError::BadFd.as_vfs_ret();
     };
 
     // 通过 OpenFile 获取 offset 和 Inode
@@ -265,10 +257,9 @@ pub extern "C" fn vfs_read_internal(fd_idx: u32, buf: *mut u8, count: u32) -> i3
             if all_hit {
                 let mut all_ok = true;
                 for i in 0..npages {
-                    // 4KB 对齐保证该分片落在 [buf, buf+count) 内
-                    let dst = &mut user_buf.as_mut_slice()
-                        [i * PAGE_SIZE as usize..(i + 1) * PAGE_SIZE as usize];
-                    if !pcache::pcache_read_to_slice(node_id, first_pi + i as u64, dst) {
+                    // 4KB 对齐保证该分片落在 dst 内
+                    let part = &mut dst[i * PAGE_SIZE as usize..(i + 1) * PAGE_SIZE as usize];
+                    if !pcache::pcache_read_to_slice(node_id, first_pi + i as u64, part) {
                         all_ok = false;
                         break;
                     }
@@ -279,18 +270,41 @@ pub extern "C" fn vfs_read_internal(fd_idx: u32, buf: *mut u8, count: u32) -> i3
             }
         }
 
-        // 慢速路径: Inode trait 分发
+        // 慢速路径: Inode trait 分发 (错误保留 errno, 管道 EAGAIN/EPIPE/ESPIPE 依赖此传播)
         open_file
             .inode()
-            .read(offset, user_buf.as_mut_slice(), pwm)
-            .map_or(-1, |n| {
+            .read(offset, dst, pwm)
+            .map_or_else(KernelError::as_vfs_ret, |n| {
                 let new_offset = offset + n as u64;
                 open_file.set_offset(new_offset);
                 n as i32
             })
     });
 
-    result.unwrap_or(-1)
+    result.unwrap_or(KernelError::BadFd.as_vfs_ret())
+}
+
+pub extern "C" fn vfs_read_internal(fd_idx: u32, buf: *mut u8, count: u32) -> i32 {
+    if buf.is_null() || count == 0 {
+        return -1;
+    }
+
+    // I4: 用户内存经 privileged 安全代理 (范围校验后构造可写视图)
+    let Some(mut user_buf) = UserWritePtr::checked_new(buf, count as usize) else {
+        return -1;
+    };
+
+    vfs_read_slice(fd_idx, user_buf.as_mut_slice())
+}
+
+/// 内核缓冲读 — 调用方持有内核内存, 不经用户指针校验.
+///
+/// 供 functions 层内部 I/O 复用 (sendfile/splice/copy_file_range 等).
+pub fn vfs_read_kernel(fd: u32, dst: &mut [u8]) -> i32 {
+    if dst.is_empty() {
+        return KernelError::InvalidArgument.as_vfs_ret();
+    }
+    vfs_read_slice(fd, dst)
 }
 
 /// 按 `inode_id` 直接读取文件数据 (B2: mmap prewarm 用)
@@ -371,26 +385,21 @@ pub extern "C" fn vfs_truncate_internal(fd: u32, size: u64) -> i32 {
     result.unwrap_or(-1)
 }
 
+/// VFS 写核心 — 以切片作为源缓冲 (用户/内核路径共用).
+///
+/// 用户路径 (`vfs_write_internal`) 先经 `UserReadPtr` 校验; 内核路径
+/// (`vfs_write_kernel`) 由调用方保证切片有效 (内核 bounce 缓冲无法通过
+/// `UserReadPtr::checked_new`).
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
-pub extern "C" fn vfs_write_internal(fd_idx: u32, buf: *const u8, count: u32) -> i32 {
-    if buf.is_null() || count == 0 {
-        return -1;
+fn vfs_write_slice(fd_idx: u32, src: &[u8]) -> i32 {
+    if src.is_empty() {
+        return KernelError::InvalidArgument.as_vfs_ret();
     }
 
     // Plan B: 通过 OpenFile 的 Inode trait 执行 I/O
-    let handle_id = match current_fd_handle(fd_idx as usize) {
-        Some(hid) => hid,
-        None => return -1,
-    };
-
-    // I4: 用户内存经 privileged 安全代理 (范围校验后构造只读视图)
-    let Some(user_buf) = UserReadPtr::checked_new(buf, count as usize) else {
-        return -1;
+    let Some(handle_id) = current_fd_handle(fd_idx as usize) else {
+        return KernelError::BadFd.as_vfs_ret();
     };
 
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
@@ -409,8 +418,8 @@ pub extern "C" fn vfs_write_internal(fd_idx: u32, buf: *const u8, count: u32) ->
 
         open_file
             .inode()
-            .write(offset, user_buf.as_slice(), pwm)
-            .map_or(-1, |n| {
+            .write(offset, src, pwm)
+            .map_or_else(KernelError::as_vfs_ret, |n| {
                 let new_offset = offset + n as u64;
                 open_file.set_offset(new_offset);
                 // inotify + fd_notify 通知
@@ -420,7 +429,32 @@ pub extern "C" fn vfs_write_internal(fd_idx: u32, buf: *const u8, count: u32) ->
             })
     });
 
-    result.unwrap_or(-1)
+    result.unwrap_or(KernelError::BadFd.as_vfs_ret())
+}
+
+pub extern "C" fn vfs_write_internal(fd_idx: u32, buf: *const u8, count: u32) -> i32 {
+    if buf.is_null() || count == 0 {
+        return -1;
+    }
+
+    // I4: 用户内存经 privileged 安全代理 (范围校验后构造只读视图)
+    let Some(user_buf) = UserReadPtr::checked_new(buf, count as usize) else {
+        return -1;
+    };
+
+    vfs_write_slice(fd_idx, user_buf.as_slice())
+}
+
+/// 内核缓冲写 — 调用方持有内核内存, 不经用户指针校验.
+///
+/// 供 functions 层内部 I/O 复用 (bounce 缓冲: 管道写 / sendfile / splice /
+/// copy_file_range). 返回值语义同 [`vfs_write_internal`] (负 = -errno,
+/// 非负 = 已写字节数, 管道支持部分写).
+pub fn vfs_write_kernel(fd: u32, src: &[u8]) -> i32 {
+    if src.is_empty() {
+        return KernelError::InvalidArgument.as_vfs_ret();
+    }
+    vfs_write_slice(fd, src)
 }
 
 #[expect(
@@ -675,7 +709,7 @@ pub extern "C" fn vfs_seek(fd: u32, offset: i32, whence: u32) -> i32 {
     // Plan B: 通过 OpenFile 的 Inode trait 执行
     let handle_id = match current_fd_handle(fd as usize) {
         Some(hid) => hid,
-        None => return KernelError::InvalidArgument.as_i32(),
+        None => return KernelError::BadFd.as_vfs_ret(),
     };
 
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
@@ -683,13 +717,13 @@ pub extern "C" fn vfs_seek(fd: u32, offset: i32, whence: u32) -> i32 {
         open_file
             .inode()
             .seek(i64::from(offset), whence, current_offset)
-            .map_or(KernelError::InvalidArgument.as_i32(), |new_offset| {
+            .map_or_else(KernelError::as_vfs_ret, |new_offset| {
                 open_file.set_offset(new_offset);
                 new_offset as i32
             })
     });
 
-    result.unwrap_or(KernelError::InvalidArgument.as_i32())
+    result.unwrap_or(KernelError::BadFd.as_vfs_ret())
 }
 
 // ============================================================================

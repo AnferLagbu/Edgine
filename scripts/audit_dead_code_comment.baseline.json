@@ -5,8 +5,8 @@
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 1661,
-    "files": 302
+    "sites": 1660,
+    "files": 303
   },
   "entries": [
     [
@@ -462,7 +462,7 @@
     [
       "src/kernel/functions/fs/handle.rs",
       "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      11
+      9
     ],
     [
       "src/kernel/functions/fs/handle.rs",
@@ -522,6 +522,11 @@
     [
       "src/kernel/functions/fs/open.rs",
       "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
+      1
+    ],
+    [
+      "src/kernel/functions/fs/pipe_fd.rs",
+      "#[expect(clippy::cast_possible_truncation,reason=\"fd编号受MAX_FDS_PER_PROCESS(64)",
       1
     ],
     [

@@ -112,10 +112,10 @@ fn functions_fd_table_is_pure_reexport_shell() {
 
 #[test]
 fn fd_table_alloc_uses_first_fit_strategy() {
-    // P1-I-01 验收: 分配策略是 first-fit 线性扫描
+    // P1-I-01 验收: 分配策略是 first-fit 线性扫描 (0/1/2 保留给标准流)
     let src = privileged_fd_table_rs();
     assert!(
-        src.contains("for i in 0..MAX_FDS_PER_PROCESS"),
+        src.contains("for i in FIRST_USER_FD..MAX_FDS_PER_PROCESS"),
         "P1-I-01: alloc_fd 必须 first-fit 线性扫描 (O(MAX_FDS_PER_PROCESS))"
     );
     // 新实现使用 u32::MAX 表示空闲 (OpenFile handle_id)

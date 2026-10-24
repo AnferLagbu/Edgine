@@ -5,9 +5,9 @@
     "disposition": "P-49 冻结存量债, 消解归 framekernel-paradigm-enforcement §7 批次 Z"
   },
   "totals": {
-    "sites": 48,
-    "items": 18,
-    "files": 17,
+    "sites": 45,
+    "items": 17,
+    "files": 16,
     "globals": 11
   },
   "entries": [
@@ -35,11 +35,6 @@
       "src/kernel/functions/freg/audit_export.rs",
       "ROLLBACK_LOG",
       4
-    ],
-    [
-      "src/kernel/functions/fs/sendfile.rs",
-      "IPC_NAMESPACE",
-      3
     ],
     [
       "src/kernel/functions/fs/unkfs/unkfs.rs",

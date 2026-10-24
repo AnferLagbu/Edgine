@@ -142,9 +142,9 @@ fn process_fd_table_exposes_handle_lookup() {
 #[test]
 fn process_fd_table_alloc_is_first_fit() {
     let src = read_file("privileged/proc/fd_table.rs");
-    // first-fit: 从 0 起线性扫描首个空闲槽位
+    // first-fit: 从 FIRST_USER_FD (3, 保留 0/1/2 标准流) 起线性扫描首个空闲槽位
     assert!(
-        src.contains("for i in 0..MAX_FDS_PER_PROCESS"),
+        src.contains("for i in FIRST_USER_FD..MAX_FDS_PER_PROCESS"),
         "alloc_fd 必须 first-fit 线性扫描"
     );
 }

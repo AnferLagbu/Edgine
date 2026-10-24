@@ -17,7 +17,7 @@
 //! │   ├── msg_queues`[32]`   // 消息队列数组
 //! │   └── semaphores`[64]`   // 信号量数组
 //!
-//! ├── Pipe Module         // 管道管理
+//! ├── Pipe Buffer (类型层) // 管道环形缓冲 (用户 fd 级语义在 functions/fs/pipe_fd)
 //! ├── Shm Module          // 共享内存管理
 //! ├── MsgQ Module         // 消息队列管理
 //! ├── Semaphore Module    // 信号量管理
@@ -40,9 +40,6 @@ pub mod api;
 
 /// 数据类型定义
 pub mod types;
-
-/// 管道实现
-pub mod pipe;
 
 /// 共享内存实现
 pub mod shm;

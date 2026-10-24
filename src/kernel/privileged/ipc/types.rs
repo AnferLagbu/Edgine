@@ -288,10 +288,10 @@ pub struct Pipe {
     /// 写端 PID
     pub write_pid: u32,
 
-    /// 文件描述符 (读端)
-    pub read_fd: i32,
-    /// 文件描述符 (写端)
-    pub write_fd: i32,
+    /// 读端点标识 key (非用户 fd; 用户 fd 由 VFS `OpenFile` 承载)
+    pub read_key: i32,
+    /// 写端点标识 key (非用户 fd; 用户 fd 由 VFS `OpenFile` 承载)
+    pub write_key: i32,
 
     /// 当前读者数量
     pub readers: i32,
@@ -317,8 +317,8 @@ impl Pipe {
             count: 0,
             read_pid: 0,
             write_pid: 0,
-            read_fd: 0,
-            write_fd: 0,
+            read_key: 0,
+            write_key: 0,
             readers: 0,
             writers: 0,
             read_wait: WaitQueue::new(),

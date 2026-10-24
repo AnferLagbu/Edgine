@@ -137,10 +137,12 @@ class BaselineTest(unittest.TestCase):
 
     def test_snapshot_agrees_with_its_own_entries(self):
         # totals 由 entries 求和; 手改条目不重跑 --update-baseline ⇒ load_baseline 拒绝
+        # 篡改值由快照自身派生 (不写死数字): 基线站点数随债项增减而变, 写死会让本锁
+        # 随一次合法的 --update-baseline 静默失效.
         raw = aid.BASELINE_FILE.read_text(encoding="utf-8")
-        tampered = raw.replace('"sites": 48', '"sites": 47', 1)
-        if tampered == raw:
-            tampered = raw.replace('"items": 18', '"items": 19', 1)
+        payload_raw = json.loads(raw)
+        payload_raw["totals"]["sites"] += 1
+        tampered = json.dumps(payload_raw, ensure_ascii=False, indent=2) + "\n"
         payload = json.loads(tampered)
         self.assertNotEqual(payload["totals"], aid.totals_of(aid.parse_baseline(tampered)),
                             "篡改条目后 totals 仍自洽 —— 自洽校验位失效")

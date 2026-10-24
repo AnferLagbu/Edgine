@@ -6,13 +6,16 @@
 //!
 //! privileged/ipc FFI 边界 (pipe/shm/msgq) 经 `IpcStrategy` trait 注入调用策略,
 //! 消除 privileged→functions 直接引用 (13 处)。本模块为 functions 侧实现:
-//! 包装 `functions::ipc::{pipe,shm,msgq}` 的 `*_safe` 策略函数, 保持 T6 权威。
+//! 包装 `functions::ipc::{shm,msgq}` 的 `*_safe` 策略函数, 保持 T6 权威。
+//!
+//! 管道例外: 匿名管道已纳入 VFS fd 对象模型 (`functions::fs::pipe_fd`),
+//! 用户 fd 级语义由 VFS 路径承担, 故 pipe 不再经 `IpcStrategy` 分发.
 //!
 //! 注册时序: privileged ipc 机制先启 (IPC_NAMESPACE) → functions 经
 //! `register_default_ipc_strategy()` 注册 → FFI syscall 使用时经
 //! `current_ipc_strategy()` 获取。由 lib.rs 编排 (crate root 双向编排者)。
 
-use crate::functions::ipc::{msgq, pipe, shm};
+use crate::functions::ipc::{msgq, shm};
 use crate::privileged::ipc::IpcStrategy;
 use crate::privileged::ipc::types::{IpcId, IpcNamespace};
 
@@ -20,45 +23,6 @@ use crate::privileged::ipc::types::{IpcId, IpcNamespace};
 pub struct DefaultIpcStrategy;
 
 impl IpcStrategy for DefaultIpcStrategy {
-    // ── Pipe ──
-
-    fn is_pipe_fd(&self, fd: i32) -> bool {
-        pipe::is_pipe_fd(fd)
-    }
-
-    fn pipe_create(
-        &self,
-        ns: &mut IpcNamespace,
-        next_id: &mut IpcId,
-        pid: u32,
-    ) -> Result<(i32, i32), i32> {
-        pipe::pipe_create_safe(ns, next_id, pid)
-    }
-
-    fn pipe_read(
-        &self,
-        ns: &mut IpcNamespace,
-        fd: i32,
-        buf: &mut [u8],
-        count: u32,
-    ) -> Result<u32, i32> {
-        pipe::pipe_read_safe(ns, fd, buf, count)
-    }
-
-    fn pipe_write(
-        &self,
-        ns: &mut IpcNamespace,
-        fd: i32,
-        buf: &[u8],
-        count: u32,
-    ) -> Result<u32, i32> {
-        pipe::pipe_write_safe(ns, fd, buf, count)
-    }
-
-    fn pipe_close(&self, ns: &mut IpcNamespace, fd: i32) -> Result<(), i32> {
-        pipe::pipe_close_safe(ns, fd)
-    }
-
     // ── SHM ──
 
     fn shm_create(

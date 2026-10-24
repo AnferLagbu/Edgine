@@ -64,6 +64,10 @@ pub enum KernelError {
     NotADirectory,
     /// 是目录 (EISDIR=21)
     IsDirectory,
+    /// 管道破裂 — 写端无读者 (EPIPE=32)
+    BrokenPipe,
+    /// 不可定位 — 管道/socket 等流式对象 (ESPIPE=29)
+    IllegalSeek,
     /// 文件系统只读 (EROFS=30)
     ReadOnlyFilesystem,
     /// 文件名过长 (ENAMETOOLONG=36)
@@ -106,6 +110,8 @@ impl core::fmt::Display for KernelError {
             Self::Busy => write!(f, "资源忙"),
             Self::NotADirectory => write!(f, "不是目录"),
             Self::IsDirectory => write!(f, "是目录"),
+            Self::BrokenPipe => write!(f, "管道破裂"),
+            Self::IllegalSeek => write!(f, "不可定位"),
             Self::ReadOnlyFilesystem => write!(f, "文件系统只读"),
             Self::NameTooLong => write!(f, "文件名过长"),
             Self::NoSpace => write!(f, "空间不足"),
@@ -138,7 +144,9 @@ impl KernelError {
             22 => Self::InvalidArgument,
             23 => Self::ProcessFileLimit,
             28 => Self::NoSpace,
+            29 => Self::IllegalSeek,
             30 => Self::ReadOnlyFilesystem,
+            32 => Self::BrokenPipe,
             36 => Self::NameTooLong,
             95 => Self::NotSupported,
             97 => Self::AddrFamilyNotSupported,
@@ -175,6 +183,8 @@ impl KernelError {
             Self::InvalidArgument => Errno::EINVAL,
             Self::ProcessFileLimit => Errno::EMFILE,
             Self::NoSpace => Errno::ENOSPC,
+            Self::BrokenPipe => Errno::EPIPE,
+            Self::IllegalSeek => Errno::ESPIPE,
             Self::ReadOnlyFilesystem => Errno::EROFS,
             Self::NameTooLong => Errno::ENAMETOOLONG,
             Self::NotSupported => Errno::ENOTSUP,

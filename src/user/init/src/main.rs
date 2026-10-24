@@ -121,27 +121,52 @@ pub extern "C" fn _start() -> ! {
     busy_wait(b'+');
 }
 
-/// IPC 管道创建探针 (回归锁: `kernel_init` 必须接线 `ipc_init()`).
+/// IPC 管道端到端探针 (回归锁: 管道已纳入 VFS fd 对象模型).
 ///
-/// 只验**创建路径**: `read`/`write`/`close` 目前没有 pipe fd 路由
-/// (见 `functions/fs/io.rs`, 仅 `sendfile` 查询 `is_pipe_fd`), 故此处不做
-/// 收发断言 —— 那是预存缺口, 不应由本探针假装覆盖.
+/// 覆盖 `pipe()` 创建 → `write` 写端 → `read` 读端 → `close` 两端全链路
+/// (`functions/fs/pipe_fd.rs` + `functions/fs/io.rs` 的 VFS fd 路由).
 fn pipe_probe() {
     let mut fds = [-1i32; 2];
     let rc = pipe_create(&mut fds);
-    if rc == 0 && fds[0] >= 0 && fds[1] >= 0 && fds[0] != fds[1] {
-        print("[pipe] CREATE ok (rfd=");
-        print_dec(i64::from(fds[0]));
-        print(", wfd=");
-        print_dec(i64::from(fds[1]));
-        println(")");
-    } else {
+    if rc != 0 || fds[0] < 0 || fds[1] < 0 || fds[0] == fds[1] {
         print("[pipe] FAIL: pipe() rc=");
         print_dec(rc as i64);
         print(" fds=");
         print_dec(i64::from(fds[0]));
         print_char(b'/');
         print_dec(i64::from(fds[1]));
+        print_char(b'\n');
+        return;
+    }
+
+    let payload = b"edgine-pipe";
+    let wrote = fs_write(fds[1], payload);
+    let mut buf = [0u8; 16];
+    let read = fs_read(fds[0], &mut buf);
+    // 先关读端再关写端 (顺序无关; 两端都关后槽位才回收)
+    let close_r = fs_close(fds[0]);
+    let close_w = fs_close(fds[1]);
+
+    let ok = wrote == payload.len() as i32
+        && read == wrote
+        && buf[..payload.len()] == *payload
+        && close_r == 0
+        && close_w == 0;
+    if ok {
+        print("[pipe] CREATE+RW ok (rfd=");
+        print_dec(i64::from(fds[0]));
+        print(", wfd=");
+        print_dec(i64::from(fds[1]));
+        println(")");
+    } else {
+        print("[pipe] FAIL: write=");
+        print_dec(i64::from(wrote));
+        print(" read=");
+        print_dec(i64::from(read));
+        print(" close=");
+        print_dec(i64::from(close_r));
+        print_char(b'/');
+        print_dec(i64::from(close_w));
         print_char(b'\n');
     }
 }

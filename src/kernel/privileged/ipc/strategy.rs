@@ -1,10 +1,13 @@
 //! IPC 策略 trait — 策略-机制分离接口
 //!
 //! 本模块落实「framekernel 范式落实」工程 DECISION-I: privileged/ipc 的
-//! `pipe.rs`/`shm.rs`/`msgq.rs` FFI 边界直接调用 `functions::ipc::*_safe`
+//! `shm.rs`/`msgq.rs` FFI 边界直接调用 `functions::ipc::*_safe`
 //! (privileged→functions 反向依赖 13 处), 改为经 `IpcStrategy` trait 注入:
 //! privileged 定义契约, functions 实现并注册, FFI 边界经 `current_ipc_strategy()`
 //! 调用策略方法。
+//!
+//! 匿名管道不在此列: 管道已纳入 VFS fd 对象模型 (`functions::fs::pipe_fd`),
+//! privileged 侧不再保留 pipe FFI / 策略分发.
 //!
 //! ## 设计 (对齐 PageFaultPolicy/SwapPolicy 既有模式)
 //!
@@ -25,52 +28,6 @@ use super::types::{IpcId, IpcNamespace};
 /// 所有方法为纯策略逻辑 (参数校验 + 资源操作), 操作由调用方提供的
 /// `&mut IpcNamespace` (privileged 机制全局状态), 不涉及硬件或 unsafe.
 pub trait IpcStrategy: Send + Sync {
-    // ── Pipe ──
-
-    /// 判断 fd 是否为 pipe fd (供 sendfile/splice 使用)
-    fn is_pipe_fd(&self, fd: i32) -> bool;
-
-    /// 创建管道 (策略: 分配槽位 + 初始化等待队列)
-    ///
-    /// # Errors
-    /// 失败返回 `Err(errno)` (槽位耗尽或参数非法).
-    fn pipe_create(
-        &self,
-        ns: &mut IpcNamespace,
-        next_id: &mut IpcId,
-        pid: u32,
-    ) -> Result<(i32, i32), i32>;
-
-    /// 管道读 (策略: 缓冲复制 + 唤醒写端)
-    ///
-    /// # Errors
-    /// 失败返回 `Err(errno)` (fd 非法/已关闭).
-    fn pipe_read(
-        &self,
-        ns: &mut IpcNamespace,
-        fd: i32,
-        buf: &mut [u8],
-        count: u32,
-    ) -> Result<u32, i32>;
-
-    /// 管道写 (策略: 缓冲复制 + 唤醒读端)
-    ///
-    /// # Errors
-    /// 失败返回 `Err(errno)` (fd 非法/已关闭/缓冲不足).
-    fn pipe_write(
-        &self,
-        ns: &mut IpcNamespace,
-        fd: i32,
-        buf: &[u8],
-        count: u32,
-    ) -> Result<u32, i32>;
-
-    /// 关闭管道 (策略: 释放槽位)
-    ///
-    /// # Errors
-    /// 失败返回 `Err(errno)` (fd 非法).
-    fn pipe_close(&self, ns: &mut IpcNamespace, fd: i32) -> Result<(), i32>;
-
     // ── SHM ──
 
     /// 创建共享内存段 (策略: 分配槽位 + 物理页)

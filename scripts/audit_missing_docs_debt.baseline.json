@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 4484,
-    "files": 239,
-    "keys": 649
+    "sites": 4482,
+    "files": 238,
+    "keys": 648
   },
   "entries": [
     [
@@ -1133,7 +1133,7 @@
     [
       "src/kernel/functions/ipc/pipe.rs",
       "a function",
-      2
+      1
     ],
     [
       "src/kernel/functions/mm/memory_pressure.rs",
@@ -2323,11 +2323,6 @@
     [
       "src/kernel/privileged/ipc/dynamic.rs",
       "an associated function",
-      1
-    ],
-    [
-      "src/kernel/privileged/ipc/pipe.rs",
-      "a function",
       1
     ],
     [

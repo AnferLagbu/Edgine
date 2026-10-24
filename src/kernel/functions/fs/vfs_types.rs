@@ -526,6 +526,8 @@ pub struct OpenFile {
     pub file_type: u8,
     /// 是否匿名文件 (memfd)
     pub is_anonymous: bool,
+    /// 是否匿名管道端点 (fd 路由: sendfile/splice 走内核缓冲 I/O 而非用户指针)
+    pub is_pipe: bool,
 }
 
 impl core::fmt::Debug for OpenFile {
@@ -537,6 +539,7 @@ impl core::fmt::Debug for OpenFile {
             .field("refcount", &self.refcount)
             .field("file_type", &self.file_type)
             .field("is_anonymous", &self.is_anonymous)
+            .field("is_pipe", &self.is_pipe)
             .finish()
     }
 }
@@ -552,6 +555,7 @@ impl OpenFile {
             refcount: AtomicU32::new(1),
             file_type,
             is_anonymous: false,
+            is_pipe: false,
         }
     }
 
@@ -560,6 +564,21 @@ impl OpenFile {
         let mut of = Self::new(inode, flags, pwm, file_type);
         of.is_anonymous = true;
         of
+    }
+
+    /// 创建匿名管道端点 `OpenFile`
+    ///
+    /// 端点方向由 `inode` (`PipeEndpointInode`) 自身承载, `flags` 仅记录
+    /// 访问模式供 `F_GETFL` 等元数据查询使用.
+    pub fn new_pipe(inode: Arc<dyn Inode>, flags: u32, pwm: u64) -> Self {
+        let mut of = Self::new(inode, flags, pwm, VfsFileType::File.as_u8());
+        of.is_pipe = true;
+        of
+    }
+
+    /// 是否为匿名管道端点
+    pub fn is_pipe_endpoint(&self) -> bool {
+        self.is_pipe
     }
 
     // ---- 兼容旧 API (折中实现过渡期) ----

@@ -28,15 +28,27 @@ fn ret_to_result(r: i64) -> Result<usize, Errno> {
     }
 }
 
+/// 判断 fd 在当前进程 fd 表中是否有条目.
+///
+/// 0/1/2 默认不由 [`crate::privileged::proc::FdTable::alloc_fd`] 分配, 但
+/// `dup2` 可显式重定向到这些编号; 标准流语义仅在槽位空闲时生效.
+fn fd_table_has_entry(fd: i32) -> bool {
+    fd >= 0
+        && crate::privileged::proc::with_current_fd_table(|t| t.get_handle_id(fd as usize))
+            .flatten()
+            .is_some()
+}
+
 /// read 系统调用策略
 ///
-/// fd 路由: 0 = stdin (键盘), eventfd/signalfd/timerfd/inotify = 各自权威
-/// 实现, 其余走 VFS. fd 1/2 为 stdout/stderr 只写, 读返回 `EBADF`.
+/// fd 路由: 0/1/2 仅在 fd 表无对应条目时按标准流处理 (stdin 键盘 / stdout
+/// stderr 只写), 否则走 VFS (支持 `dup2` 重定向); eventfd/signalfd/timerfd/
+/// inotify = 各自权威实现, 其余走 VFS.
 ///
 /// # Errors
 /// - `buf` 为空或 `count` 为 0 → `EINVAL`
 /// - 用户缓冲区未通过校验 → `EFAULT`
-/// - fd 为 1/2 → `EBADF`; 其余错误由底层实现以对应 `Errno` 传播.
+/// - fd 为 1/2 且无 fd 表条目 → `EBADF`; 其余错误由底层实现以对应 `Errno` 传播.
 pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
     if buf == 0 || count == 0 {
         return Err(Errno::EINVAL);
@@ -44,10 +56,11 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
     if !raw::check_user_buf(buf, count) {
         return Err(Errno::EFAULT);
     }
-    if fd == 1 || fd == 2 {
+    let has_entry = fd_table_has_entry(fd);
+    if (fd == 1 || fd == 2) && !has_entry {
         return Err(Errno::EBADF);
     }
-    if fd == 0 {
+    if fd == 0 && !has_entry {
         // stdin: 键盘输入 (x86_64 生产构建); 其余配置无输入源, 返回 EOF
         #[cfg(all(target_arch = "x86_64", not(feature = "kernel_test")))]
         if let Some(c) = raw::read_keyboard_byte() {
@@ -96,7 +109,8 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
 
 /// write 系统调用策略
 ///
-/// fd 路由: 1/2 = 控制台 (串口输出), eventfd = 计数器写入, 其余走 VFS.
+/// fd 路由: 1/2 仅在 fd 表无对应条目时按控制台 (串口输出) 处理; eventfd =
+/// 计数器写入; 其余走 VFS (支持管道端点与 `dup2` 重定向).
 /// 用户数据经 `mm::copy_user::copy_from_user` (异常表兜底) 分块拷入内核.
 ///
 /// # Errors
@@ -111,7 +125,7 @@ pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
     if !raw::check_user_buf(buf, count) {
         return Err(Errno::EFAULT);
     }
-    if fd == 1 || fd == 2 {
+    if (fd == 1 || fd == 2) && !fd_table_has_entry(fd) {
         // 控制台: 分块拷贝用户数据 → 串口输出 (单次处理上限 4KB)
         let total = (count as usize).min(4096);
         let mut kernel_buf = [0u8; 256];
@@ -160,11 +174,17 @@ pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
             Ok(n) if n > 0 => n,
             _ => break,
         };
-        let n = crate::functions::fs::api::vfs_write_safe(fd as u32, &kernel_buf[..copied]);
+        let n = crate::functions::fs::api::vfs_write_kernel(fd as u32, &kernel_buf[..copied]);
         if n < 0 {
+            if written > 0 {
+                break;
+            }
             return Err(Errno::from_ret(i64::from(n)));
         }
-        written += copied;
+        if n == 0 {
+            break;
+        }
+        written += n as usize;
     }
     Ok(written)
 }
@@ -173,27 +193,14 @@ pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
 ///
 /// `fds` 指向用户空间 i32`[2]` 数组 (8 字节), 返回读端和写端文件描述符.
 ///
-/// 阶段 2-A (framekernel 范式): 管道创建机制经
-/// `privileged::ipc::pipe::ipc_pipe_create` (策略分发) 完成, 用户态写回在此用
-/// safe API 完成.
+/// 管道端点已纳入 VFS fd 对象模型 (`functions::fs::pipe_fd`): 两个 fd 由
+/// per-process fd 表分配 (与 VFS fd 同源), fork/dup/CLOEXEC/close 语义天然复用.
 ///
 /// # Errors
 /// - `fds` 为空指针或缓冲区未通过校验 → `EFAULT`
-/// - 策略创建失败 → `EBUSY`
+/// - 管道槽位 / `OpenFile` 表 / 进程 fd 表耗尽 → `EMFILE`
 pub fn pipe_syscall(fds: u64) -> Result<usize, Errno> {
-    if fds == 0 || !raw::check_user_buf(fds, 8) {
-        return Err(Errno::EFAULT);
-    }
-    // 保持原 `sys_pipe` 行为: 策略失败/未注册统一返回 EBUSY.
-    let (rfd, wfd) = crate::privileged::ipc::pipe::ipc_pipe_create().map_err(|_| Errno::EBUSY)?;
-    if rfd < 0 || wfd < 0 {
-        return Err(Errno::EBUSY);
-    }
-    let pipefd: [i32; 2] = [rfd, wfd];
-    if !crate::privileged::syscall::api::write_struct_to_user(fds, &pipefd) {
-        return Err(Errno::EFAULT);
-    }
-    Ok(0)
+    pipe2_syscall(fds, 0)
 }
 
 /// pipe2 系统调用 (支持 `flags`)
@@ -201,14 +208,31 @@ pub fn pipe_syscall(fds: u64) -> Result<usize, Errno> {
 /// `fds` 指向用户空间 i32`[2]` 数组 (8 字节)
 ///
 /// # Errors
-/// 与 [`pipe_syscall`] 一致.
+/// - 参数 / 用户缓冲区错误 → `EFAULT`
+/// - `flags` 含未知位 → `EINVAL`
+/// - 资源耗尽 → `EMFILE`
 ///
-/// SIMPLIFIED: flags (`O_CLOEXEC`/`O_NONBLOCK`) 当前忽略, 语义等同 `pipe`;
-/// 影响面: `pipe2(O_CLOEXEC)` 创建的 fd 不设置 close-on-exec 标志;
-/// 何时需扩展: 在 FD 表实现 close-on-exec 标志后接入 flags 语义.
+/// SIMPLIFIED: `O_NONBLOCK` 接受但不改变行为 — 管道读/写本就走非阻塞语义
+/// (空/满返回 `EAGAIN`); 影响面: `pipe2(O_NONBLOCK)` 与 `pipe()` 行为一致;
+/// 何时需扩展: 实现阻塞管道等待队列后, 需按该标志区分阻塞/非阻塞.
 pub fn pipe2_syscall(fds: u64, flags: i32) -> Result<usize, Errno> {
-    let _ = flags;
-    pipe_syscall(fds)
+    if fds == 0 || !raw::check_user_buf(fds, 8) {
+        return Err(Errno::EFAULT);
+    }
+    let allowed = super::open::O_CLOEXEC | O_NONBLOCK;
+    if flags & !allowed != 0 {
+        return Err(Errno::EINVAL);
+    }
+    let (rfd, wfd) = super::pipe_fd::create_pair(flags & super::open::O_CLOEXEC != 0)
+        .map_err(super::vfs_types::KernelError::as_errno)?;
+    let pipefd: [i32; 2] = [rfd, wfd];
+    if !crate::privileged::syscall::api::write_struct_to_user(fds, &pipefd) {
+        // 用户数组写回失败: 回收刚分配的两个 fd (避免泄漏)
+        crate::functions::fs::api::vfs_close(rfd as u32);
+        crate::functions::fs::api::vfs_close(wfd as u32);
+        return Err(Errno::EFAULT);
+    }
+    Ok(0)
 }
 
 /// dup 系统调用 — 复制文件描述符 (返回新 fd, 取最小可用值)
@@ -528,9 +552,9 @@ pub fn copy_file_range_syscall(
 
         let to_read = remaining.min(chunk_size);
 
-        // 从源 fd 读取
+        // 从源 fd 读取 (内核 bounce 缓冲: 不能走用户指针校验路径)
         let read_ret =
-            crate::functions::fs::api::vfs_read(fd_in as u32, buf.as_mut_ptr(), to_read as u32);
+            crate::functions::fs::api::vfs_read_kernel(fd_in as u32, &mut buf[..to_read]);
         if read_ret < 0 {
             if total_copied > 0 {
                 return Ok(total_copied);
@@ -542,9 +566,9 @@ pub fn copy_file_range_syscall(
             break; // EOF
         }
 
-        // 写入目标 fd
+        // 写入目标 fd (内核 bounce 缓冲)
         let write_ret =
-            crate::functions::fs::api::vfs_write(fd_out as u32, buf.as_ptr(), bytes_read as u32);
+            crate::functions::fs::api::vfs_write_kernel(fd_out as u32, &buf[..bytes_read]);
         if write_ret < 0 {
             if total_copied > 0 {
                 return Ok(total_copied);

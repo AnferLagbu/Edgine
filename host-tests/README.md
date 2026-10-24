@@ -143,6 +143,7 @@ criterion_main!(benches);
 | `td15_fd_idx_of_test.rs` | fd_alloc::idx_of 集中反查 | TD-15 |
 | `td18_fs_kernel_error_test.rs` | FS KernelError 迁移 | TD-18 |
 | `fs_permissions_regression_test.rs` | B06-02/03/07 权限与句柄回归 | B06-02/03/07 |
+| `pipe_fd_object_model_test.rs` | 匿名管道纳入 VFS fd 对象模型 (端点 key 语义 + fd 接入契约) | pipe 功能缺口收口 |
 
 #### 网络
 

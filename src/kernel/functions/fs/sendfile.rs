@@ -15,12 +15,13 @@
 //! 本模块为 `SYS_sendfile` / `SYS_splice` 的权威实现, 原
 //! `privileged::syscall::sendfile` 已删除 (机制归 privileged, 功能归 functions).
 //! 用户指针读写经 `privileged::syscall::api` 安全包装 (read/write_u64_to_user),
-//! VFS/IPC 访问经 privileged 公开 safe API.
+//! VFS 数据面经内核缓冲 I/O (`vfs_read_kernel` / `vfs_write_kernel`).
 //!
 //! ## FD 类型识别
 //!
 //! - VFS fd: 当前进程 fd 表中有映射 (fd → `OpenFileTable` handle 存在)
-//! - Pipe fd: 由 `ipc_pipe` 分配 (`pipe_id` * 2 / `pipe_id` * 2 + 1)
+//! - Pipe fd: 同样位于 VFS fd 空间, 由 `OpenFile` 的 `is_pipe` 标记区分
+//!   (`functions::fs::pipe_fd`)
 //! - Eventfd/Signalfd/Timerfd/Inotify: 各自独立 FD 空间, 不参与 sendfile/splice
 //!
 //! ## 安全约束
@@ -34,9 +35,6 @@
 use crate::functions::fs::OPEN_FILE_TABLE;
 use crate::functions::fs::api as vfs_api;
 use crate::functions::fs::vfs_get_fd_handle;
-use crate::privileged::ipc::IPC_NAMESPACE;
-use crate::privileged::ipc::current_ipc_strategy;
-use crate::privileged::ipc::pipe as ipc_pipe;
 use crate::privileged::syscall::Errno;
 
 /// sendfile 传输的 bounce buffer 大小 (8KB)
@@ -53,8 +51,10 @@ pub const SPLICE_F_GIFT: u32 = 8;
 // ============================================================================
 
 /// 判断 fd 是否为 VFS 文件 fd (非 pipe/eventfd/signalfd/timerfd/inotify/UDS)
+///
+/// 0/1/2 不预排除: `dup2` 可把普通文件/管道重定向到标准流编号.
 fn is_vfs_file_fd(fd: i32) -> bool {
-    if fd < 3 {
+    if fd < 0 {
         return false;
     }
     let fd_usize = fd as usize;
@@ -74,13 +74,16 @@ fn is_vfs_file_fd(fd: i32) -> bool {
     if crate::functions::fs::inotify::is_inotify_fd(fd) {
         return false;
     }
+    if super::pipe_fd::is_pipe_fd(fd) {
+        return false;
+    }
     // 检查当前进程 fd 表 (fd → OpenFileTable handle 映射存在即有效)
     vfs_get_fd_handle(fd_usize).is_some()
 }
 
-/// 判断 fd 是否为 pipe fd
+/// 判断 fd 是否为 pipe fd (VFS fd 空间内的管道端点)
 fn is_pipe_fd(fd: i32) -> bool {
-    ipc_pipe::is_pipe_fd(fd)
+    super::pipe_fd::is_pipe_fd(fd)
 }
 
 // ============================================================================
@@ -113,11 +116,6 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
         return Errno::EBADF.as_ret();
     }
 
-    // pipe 写端需要 IPC 策略 (DECISION-I); 未注册时降级 ENOSYS
-    let Some(svc) = current_ipc_strategy() else {
-        return Errno::ENOSYS.as_ret();
-    };
-
     // in_fd 的 OpenFile handle (offset 读写经 OpenFile 元数据源)
     let Some(in_handle) = vfs_get_fd_handle(in_fd as usize) else {
         return Errno::EBADF.as_ret();
@@ -143,34 +141,40 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
     while total_sent < count {
         let chunk = core::cmp::min(BOUNCE_SIZE, count - total_sent);
 
-        // 1. 从 in_fd 读取到 bounce buffer
-        // 临时设置 in_fd 的 offset (OpenFile 元数据源)
+        // 1. 从 in_fd 读取到 bounce buffer (先临时设定 in_fd 的 offset)
         let _ = OPEN_FILE_TABLE.with_file(in_handle, |of| of.set_offset(offset));
-        let nread = vfs_api::vfs_read_internal(in_fd as u32, bounce.as_mut_ptr(), chunk as u32);
-        if nread <= 0 {
-            break; // EOF 或错误
+        let nread = vfs_api::vfs_read_kernel(in_fd as u32, &mut bounce[..chunk]);
+        if nread < 0 {
+            if total_sent == 0 {
+                return i64::from(nread);
+            }
+            break;
+        }
+        if nread == 0 {
+            break; // EOF
         }
         let nread_usize = nread as usize;
 
-        // 2. 从 bounce buffer 写入 out_fd
-        let nwritten = if out_is_vfs {
-            vfs_api::vfs_write_internal(out_fd as u32, bounce.as_ptr(), nread as u32)
-        } else {
-            // pipe 写端 (DECISION-I: 策略经 IpcStrategy trait)
-            let ns = IPC_NAMESPACE.get_mut();
-            svc.pipe_write(ns, out_fd, &bounce[..nread_usize], nread as u32)
-                .map_or(-1, |n| n as i32)
-        };
-
-        if nwritten <= 0 {
-            // 写入失败, 但已从 in_fd 读取, 需要回退 offset
+        // 2. 从 bounce buffer 写入 out_fd (VFS 文件与管道端点同一路径)
+        let nwritten = vfs_api::vfs_write_kernel(out_fd as u32, &bounce[..nread_usize]);
+        if nwritten < 0 {
+            // 写入失败: in_fd offset 回退到本次读取前, 已发送部分按成功返回
+            let _ = OPEN_FILE_TABLE.with_file(in_handle, |of| of.set_offset(offset));
+            if total_sent == 0 {
+                return i64::from(nwritten);
+            }
+            break;
+        }
+        if nwritten == 0 {
             let _ = OPEN_FILE_TABLE.with_file(in_handle, |of| of.set_offset(offset));
             break;
         }
 
         let written_usize = nwritten as usize;
+        // in_fd 实际消费量 = 成功写入量 (部分写时回退多余读取)
         offset += written_usize as u64;
         total_sent += written_usize;
+        let _ = OPEN_FILE_TABLE.with_file(in_handle, |of| of.set_offset(offset));
 
         // 如果读取量小于请求量, 说明 EOF
         if nread_usize < chunk {
@@ -243,10 +247,7 @@ pub fn sys_splice(
         return Errno::EBADF.as_ret();
     }
 
-    // pipe 读写需要 IPC 策略 (DECISION-I); 未注册时降级 ENOSYS
-    let Some(svc) = current_ipc_strategy() else {
-        return Errno::ENOSYS.as_ret();
-    };
+    // pipe 读写不需要 IPC 策略: 管道端点同为 VFS fd, 走统一内核缓冲 I/O
 
     // pipe → pipe 不支持 (v1)
     if in_is_pipe && out_is_pipe {
@@ -259,31 +260,28 @@ pub fn sys_splice(
     while total_spliced < len {
         let chunk = core::cmp::min(BOUNCE_SIZE, len - total_spliced);
 
-        // 1. 从 fd_in 读取到 bounce buffer
-        let nread = if in_is_pipe {
-            let ns = IPC_NAMESPACE.get_mut();
-            svc.pipe_read(ns, fd_in, &mut bounce[..chunk], chunk as u32)
-                .map_or(-1, |n| n as i32)
-        } else {
-            // VFS 文件读取
-            vfs_api::vfs_read_internal(fd_in as u32, bounce.as_mut_ptr(), chunk as u32)
-        };
-
-        if nread <= 0 {
+        // 1. 从 fd_in 读取到 bounce buffer (VFS 文件与管道端点同一路径)
+        let nread = vfs_api::vfs_read_kernel(fd_in as u32, &mut bounce[..chunk]);
+        if nread < 0 {
+            if total_spliced == 0 {
+                return i64::from(nread);
+            }
             break;
+        }
+        if nread == 0 {
+            break; // EOF / 管道空
         }
         let nread_usize = nread as usize;
 
         // 2. 从 bounce buffer 写入 fd_out
-        let nwritten = if out_is_pipe {
-            let ns = IPC_NAMESPACE.get_mut();
-            svc.pipe_write(ns, fd_out, &bounce[..nread_usize], nread as u32)
-                .map_or(-1, |n| n as i32)
-        } else {
-            vfs_api::vfs_write_internal(fd_out as u32, bounce.as_ptr(), nread as u32)
-        };
-
-        if nwritten <= 0 {
+        let nwritten = vfs_api::vfs_write_kernel(fd_out as u32, &bounce[..nread_usize]);
+        if nwritten < 0 {
+            if total_spliced == 0 {
+                return i64::from(nwritten);
+            }
+            break;
+        }
+        if nwritten == 0 {
             break;
         }
 

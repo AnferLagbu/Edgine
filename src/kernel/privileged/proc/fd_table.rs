@@ -24,6 +24,9 @@ use crate::privileged::sync::IrqSpinLock;
 /// 每进程 FD 表上限
 pub const MAX_FDS_PER_PROCESS: usize = 64;
 
+/// 首个可分配的本地 fd 编号 (0/1/2 保留给 stdin/stdout/stderr)
+pub const FIRST_USER_FD: usize = 3;
+
 /// Per-process FD 表
 ///
 /// `entries[local_fd] = handle_id` (指向全局 `OpenFile` 表)
@@ -57,11 +60,11 @@ impl FdTable {
 
     /// 分配 per-process FD slot, 返回本地 fd 编号.
     ///
-    /// 策略: first-fit.
+    /// 策略: first-fit, 从 [`FIRST_USER_FD`] 起扫描 (0/1/2 保留给标准流).
     pub fn alloc_fd(&self, handle_id: u32, cloexec: bool) -> Option<usize> {
         let mut entries = self.entries.lock();
         let mut cloexec_lock = self.cloexec.lock();
-        for i in 0..MAX_FDS_PER_PROCESS {
+        for i in FIRST_USER_FD..MAX_FDS_PER_PROCESS {
             if entries[i] == u32::MAX {
                 entries[i] = handle_id;
                 cloexec_lock[i] = cloexec;

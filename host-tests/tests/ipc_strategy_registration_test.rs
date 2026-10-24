@@ -70,15 +70,12 @@ fn current_ipc_strategy_returns_option() {
 
 #[test]
 fn ffi_call_sites_degrade_to_enosys() {
-    // DECISION-K: 13 处 FFI 调用点未注册降级 ENOSYS (除 is_pipe_fd/create 类哨兵)
-    let pipe = read_src("src/kernel/privileged/ipc/pipe.rs");
+    // DECISION-K: FFI 调用点未注册降级 ENOSYS (pipe FFI 已随管道纳入 VFS
+    // fd 对象模型退役 — 见 functions/fs/pipe_fd.rs)
     let shm = read_src("src/kernel/privileged/ipc/shm.rs");
     let msgq = read_src("src/kernel/privileged/ipc/msgq.rs");
     // 降级标记: 每处 let-else + klog_warn + ENOSYS/无效 id
     let ffi_degrades = [
-        ("ipc_pipe_read", pipe.contains("ENOSYS")),
-        ("ipc_pipe_write", pipe.contains("ENOSYS")),
-        ("ipc_pipe_close", pipe.contains("ENOSYS")),
         ("ipc_shm_attach", shm.contains("ENOSYS")),
         ("ipc_shm_detach", shm.contains("ENOSYS")),
         ("ipc_shm_destroy", shm.contains("ENOSYS")),
@@ -91,20 +88,11 @@ fn ffi_call_sites_degrade_to_enosys() {
     }
     // create 类函数: 返回 0 (无效 id) + 日志
     assert!(
-        pipe.contains("IpcStrategy 未注册: ipc_pipe_create"),
-        "ipc_pipe_create 必须含未注册日志"
-    );
-    assert!(
         shm.contains("IpcStrategy 未注册: ipc_shm_create"),
         "ipc_shm_create 必须含未注册日志"
     );
     assert!(
         msgq.contains("IpcStrategy 未注册: ipc_msgq_create"),
         "ipc_msgq_create 必须含未注册日志"
-    );
-    // is_pipe_fd: 未注册返回 false
-    assert!(
-        pipe.contains("map_or(false"),
-        "is_pipe_fd 未注册必须返回 false"
     );
 }
