@@ -9,8 +9,8 @@ use super::undo_log::UndoLog;
 use crate::privileged::sync::IrqSpinLock;
 /// 恢复域: 承载 FREG 运行时状态、撤销日志与依赖拓扑。
 pub struct RecoveryDomain {
-    /// 恢复域 ID (注册时由 `recovery_domain_register` 写入)
-    pub id: AtomicU64,
+    /// 恢复域 ID (注册时写回, 注销时复位为 0; 仅经 `id()`/`assign_id()` 访问)
+    id: AtomicU64,
     state: AtomicU32,
     pub freg_generation: AtomicU64,
     pub freg_interval_ticks: u64,
@@ -108,6 +108,15 @@ impl RecoveryDomain {
     #[inline]
     pub fn id(&self) -> u64 {
         self.id.load(Ordering::Relaxed)
+    }
+
+    /// 写回恢复域 ID.
+    ///
+    /// 仅 `freg` 子树可见: 注册路径绑定 ID、注销路径复位为 0 (使池槽位可复用).
+    /// 注册/注销均在启动期单线程执行, Relaxed 足够.
+    #[inline]
+    pub(super) fn assign_id(&self, id: u64) {
+        self.id.store(id, Ordering::Relaxed);
     }
 
     pub fn set_state(&self, new_state: DomainState, ordering: Ordering) {

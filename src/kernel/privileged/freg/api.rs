@@ -22,7 +22,7 @@ use alloc::boxed::Box;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use super::domain::RecoveryDomain;
-use super::types::{DIRECT_MAP_SIZE, MAX_RECOVERY_DOMAINS};
+use super::types::MAX_RECOVERY_DOMAINS;
 use crate::privileged::sync::OnceLock;
 
 static RECOVERY_ATTEMPTED: AtomicBool = AtomicBool::new(false);
@@ -78,7 +78,7 @@ pub extern "C" fn recovery_domain_register(domain_id: u64) -> i32 {
         // id % 32 槽位冲突: 拒绝覆盖已注册域, 避免破坏其归属.
         return -1;
     }
-    domain.id.store(domain_id, Ordering::Relaxed);
+    domain.assign_id(domain_id);
     match super::RECOVERY_MANAGER.lock().register(domain) {
         Some(_) => 0,
         None => -1,
@@ -89,20 +89,15 @@ pub extern "C" fn recovery_domain_register(domain_id: u64) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_domain_unregister(domain_id: u64) -> i32 {
     let mut mgr = super::RECOVERY_MANAGER.lock();
-    let count = mgr.count.load(Ordering::SeqCst) as usize;
-    for i in 0..count {
-        if let Some(dom) = mgr.domains[i] {
-            if dom.id() == domain_id {
-                mgr.domains[i] = None;
-                let id_idx = domain_id as usize;
-                if id_idx < DIRECT_MAP_SIZE {
-                    mgr.direct_map[id_idx] = None;
-                }
-                return 0;
-            }
+    match mgr.unregister(domain_id) {
+        Some(dom) => {
+            // 复位池槽位 id: 否则同一 `id % MAX_RECOVERY_DOMAINS` 槽位被注销后永久
+            // 无法再注册 (注册路径会因 prev != 0 && prev != domain_id 而拒绝).
+            dom.assign_id(0);
+            0
         }
+        None => -1,
     }
-    -1
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作

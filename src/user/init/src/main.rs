@@ -30,6 +30,10 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 pub extern "C" fn _start() -> ! {
     print_char(b'X');
     print_char(b'\n');
+    // IPC 机制探针: 覆盖 `kernel_init` 的 `ipc_init()` 接线 (未接线时首次
+    // `pipe()` 会按 0..IPC_MAX_PIPES 索引空 Vec 而越界 panic). 须在 fork 前
+    // 同步完成, 避免与 echo 子进程的 fd 分配交错.
+    pipe_probe();
     // 第一次 fork：子进程立即退出，父进程 wait4 收割 —— 收割路径 `remove_and_free`
     // 使 `Process::drop` 运行并销毁其地址空间 (走 destroy_page_table)，该批待释放帧
     // 必然滞留 pending 链（远程核尚未追平代），父进程继续执行
@@ -115,6 +119,31 @@ pub extern "C" fn _start() -> ! {
         }
     }
     busy_wait(b'+');
+}
+
+/// IPC 管道创建探针 (回归锁: `kernel_init` 必须接线 `ipc_init()`).
+///
+/// 只验**创建路径**: `read`/`write`/`close` 目前没有 pipe fd 路由
+/// (见 `functions/fs/io.rs`, 仅 `sendfile` 查询 `is_pipe_fd`), 故此处不做
+/// 收发断言 —— 那是预存缺口, 不应由本探针假装覆盖.
+fn pipe_probe() {
+    let mut fds = [-1i32; 2];
+    let rc = pipe_create(&mut fds);
+    if rc == 0 && fds[0] >= 0 && fds[1] >= 0 && fds[0] != fds[1] {
+        print("[pipe] CREATE ok (rfd=");
+        print_dec(i64::from(fds[0]));
+        print(", wfd=");
+        print_dec(i64::from(fds[1]));
+        println(")");
+    } else {
+        print("[pipe] FAIL: pipe() rc=");
+        print_dec(rc as i64);
+        print(" fds=");
+        print_dec(i64::from(fds[0]));
+        print_char(b'/');
+        print_dec(i64::from(fds[1]));
+        print_char(b'\n');
+    }
 }
 
 /// 用户态 IPv6 UDP 收发探针 (P6a SLAAC 联调).

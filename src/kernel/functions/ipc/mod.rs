@@ -124,13 +124,13 @@ use crate::functions::sync::once::OnceCell;
 static GLOBAL_IPC: OnceCell<IpcNamespaceRef> = OnceCell::new();
 
 /// 初始化全局 IPC 命名空间
+///
+/// 信号决策策略 (`SignalDecision`) 由 `functions::proc::init()` 统一注册
+/// (`functions::proc::signal::StandardSignalPolicy`), 此处不重复注册.
 pub fn init_global() {
     let _ = GLOBAL_IPC.get_or_init(|slot| {
         slot.write(IpcNamespaceRef::new());
     });
-
-    // T1-2: 注册 functions 层信号决策策略
-    signal::init_signal_decision();
 }
 
 /// 获取全局 IPC 引用

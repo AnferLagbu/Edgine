@@ -10,9 +10,11 @@
 //! ## 使用
 //!
 //! ```text
-//! UNKFS init:  recovery_domain_register("unkfs", 2, &[SPA_DOMAIN]);
+//! UNKFS init:  recovery_domain_register("unkfs", 2, &[]);
 //! Net init:   recovery_domain_register("net",  5, &[]);
 //! ```
+//!
+//! 当前注册点均未声明依赖 (`deps` 为空), 拓扑字段为后续跨域依赖预留.
 //!
 //! ## SAFETY
 //!
@@ -137,61 +139,97 @@ pub fn recovery_subdomain_save_checkpoint(domain_id: DomainId) {
 
 /// 后序 DFS: 先递归恢复依赖, 再把当前域入序 (子域先于父域).
 ///
-/// `visited` 在递归前置位, 既避免重复入序, 也防止依赖成环时无限递归.
-/// 递归深度受注册域数量约束 (MAX_RECOVERY_DOMAINS = 32), 不会压爆启动栈.
-fn push_post_order(
+/// `visited` 在递归前置位, 既避免重复入序, 也防止依赖成环时无限递归;
+/// `in_scope` 限制只在目标闭包内展开, 闭包外的域直接跳过.
+fn push_post_order_edges(
     id: DomainId,
-    all_ids: &[DomainId],
-    registered: &[RegisteredDomain],
+    edges: &[(DomainId, &[DomainId])],
+    in_scope: &[bool],
     visited: &mut [bool],
     order: &mut Vec<DomainId>,
 ) {
-    let Some(idx) = all_ids.iter().position(|&x| x == id) else {
+    let Some(idx) = edges.iter().position(|(x, _)| *x == id) else {
         return;
     };
-    if visited[idx] {
+    if visited[idx] || !in_scope[idx] {
         return;
     }
     visited[idx] = true;
 
-    if let Some(r) = registered.iter().find(|r| r.id == id) {
-        for &dep in r.deps {
-            push_post_order(dep, all_ids, registered, visited, order);
-        }
+    for &dep in edges[idx].1 {
+        push_post_order_edges(dep, edges, in_scope, visited, order);
     }
     order.push(id);
 }
 
-/// 计算以 `root_id` 为根的恢复拓扑序 (子域先于父域)。
-pub fn compute_recovery_order(root_id: DomainId) -> Vec<DomainId> {
-    let reg = RECOVERY_REGISTRY.lock();
-    let all_ids: Vec<DomainId> = reg.registered.iter().map(|r| r.id).collect();
+/// 按依赖边计算以 `root_id` 为根的恢复拓扑序 (依赖先于被依赖者).
+///
+/// 纳入范围是 root 的**双向可达闭包**:
+/// - root 递归依赖的域 (必须先恢复, 否则 root 恢复时依赖不可用);
+/// - **直接或间接**依赖 root 的域 (必须在 root 之后恢复), 及其自身依赖.
+///
+/// 早期实现只纳入「直接依赖 root」的一层, 间接依赖者 (A→B→root) 永不进入恢复
+/// 序列; 本函数以双向扩展补齐该闭包. 递归深度受注册域数量约束 (注册表是
+/// 无界 `Vec`, 域数量本身很小), `visited` 前置位同时兜住成环.
+///
+/// `edges` 为 `(域 ID, 该域依赖的域 ID 列表)`; 纯函数, 便于单测覆盖线性链 /
+/// 菱形 / 成环 / root 未注册等拓扑. root 未注册时返回空序.
+pub(crate) fn order_from_edges(
+    root_id: DomainId,
+    edges: &[(DomainId, &[DomainId])],
+) -> Vec<DomainId> {
+    if !edges.iter().any(|(id, _)| *id == root_id) {
+        return Vec::new();
+    }
 
-    let mut order = Vec::<DomainId>::new();
-    let mut visited = alloc::vec![false; all_ids.len()];
-
-    push_post_order(root_id, &all_ids, &reg.registered, &mut visited, &mut order);
-
-    // 依赖 root 的域 (父域) 在 root 之后恢复; 其自身依赖仍先于它入序.
-    // 注意: 此处不得调用旧的 `has_dependency` — 它会二次获取 RECOVERY_REGISTRY
-    // (非重入锁) 造成自死锁, 故直接查已持锁的 `registered`.
-    for &id in &all_ids {
-        let Some(idx) = all_ids.iter().position(|&x| x == id) else {
-            continue;
-        };
-        if visited[idx] {
-            continue;
+    // 双向闭包扩展: 依赖方向 + 反向依赖方向各走一次.
+    let mut in_scope = alloc::vec![false; edges.len()];
+    if let Some(root_idx) = edges.iter().position(|(id, _)| *id == root_id) {
+        in_scope[root_idx] = true;
+    }
+    let mut pending = alloc::vec![root_id];
+    while let Some(cur) = pending.pop() {
+        // 正向: cur 的依赖
+        if let Some(i) = edges.iter().position(|(id, _)| *id == cur) {
+            for &dep in edges[i].1 {
+                if let Some(j) = edges.iter().position(|(id, _)| *id == dep) {
+                    if !in_scope[j] {
+                        in_scope[j] = true;
+                        pending.push(dep);
+                    }
+                }
+            }
         }
-        if reg
-            .registered
-            .iter()
-            .any(|r| r.id == id && r.deps.contains(&root_id))
-        {
-            push_post_order(id, &all_ids, &reg.registered, &mut visited, &mut order);
+        // 反向: 依赖 cur 的域
+        for (i, (id, deps)) in edges.iter().enumerate() {
+            if !in_scope[i] && deps.contains(&cur) {
+                in_scope[i] = true;
+                pending.push(*id);
+            }
         }
     }
 
+    let mut order = Vec::<DomainId>::new();
+    let mut visited = alloc::vec![false; edges.len()];
+    push_post_order_edges(root_id, edges, &in_scope, &mut visited, &mut order);
+    // 仅经反向边可达的域从 root 起 DFS 不可达, 按注册顺序补齐 (结果确定).
+    for (i, (id, _)) in edges.iter().enumerate() {
+        if in_scope[i] {
+            push_post_order_edges(*id, edges, &in_scope, &mut visited, &mut order);
+        }
+    }
     order
+}
+
+/// 计算以 `root_id` 为根的恢复拓扑序 (依赖先于被依赖者).
+pub fn compute_recovery_order(root_id: DomainId) -> Vec<DomainId> {
+    // 先复制边表再释放锁: DFS 不持 `RECOVERY_REGISTRY` 锁 (避免长临界区/关中断).
+    let edges: Vec<(DomainId, &'static [DomainId])> = {
+        let reg = RECOVERY_REGISTRY.lock();
+        reg.registered.iter().map(|r| (r.id, r.deps)).collect()
+    };
+
+    order_from_edges(root_id, &edges)
 }
 
 /// 按拓扑序级联恢复以 `domain_id` 为根的域, 返回成功恢复的域数量。

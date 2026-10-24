@@ -8,18 +8,15 @@
 //! 纯策略代码 (信号发送/注册/屏蔽/分发), 0 unsafe.
 //! privileged 仅保留 re-export.
 //!
-//! ## T1-2 信号决策 trait 实现
-//!
-//! 2026-06-20: 实现 `SignalDecision` trait, 将信号默认动作、不可捕获判定、
-//! 优先级选择策略从 privileged 提取到 functions. privileged 通过 trait 注入模式调用.
+//! 信号决策策略 (`SignalDecision` 实现) 归属 `functions::proc::signal`:
+//! 本模块仅保留信号发送/注册/屏蔽/分发策略, 不重复注册决策 trait.
 //!
 //! 提供异步进程间通知能力
 //! 功能等价于 POSIX signals
 
 use super::types::{IPC_MAX_SIGNALS, SignalHandlerFn};
 use crate::privileged::proc::{
-    SignalDecision, SignalDefaultAction, process_get_by_pid, process_get_current_pwm,
-    process_get_pwm_by_pid, register_signal_decision,
+    process_get_by_pid, process_get_current_pwm, process_get_pwm_by_pid,
 };
 
 /// 发送信号到指定进程 (Rust 安全接口)
@@ -178,53 +175,4 @@ pub fn ipc_signal_unblock(sig: i32) -> i32 {
 /// FFI: 分发信号
 pub fn ipc_signal_dispatch() {
     signal_dispatch_safe();
-}
-
-// ============================================================================
-// SignalDecision trait 实现 — T1-2 信号投递策略提取
-// ============================================================================
-
-/// functions 层信号决策策略
-///
-/// 实现 POSIX 标准信号语义, 可通过修改此结构体定制信号策略.
-pub struct FunctionsSignalPolicy;
-
-impl SignalDecision for FunctionsSignalPolicy {
-    fn default_action(&self, sig: u8) -> SignalDefaultAction {
-        match sig {
-            // 忽略: CHLD(17), URG(23)
-            17 | 23 => SignalDefaultAction::Ign,
-            // 停止: STOP(19), TSTP(20), TTIN(21), TTOU(22)
-            19 | 20 | 21 | 22 => SignalDefaultAction::Stop,
-            // 继续: CONT(18)
-            18 => SignalDefaultAction::Cont,
-            // 核心转储: QUIT(3), ILL(4), ABRT(6), BUS(7), FPE(8), SEGV(11), SYS(31), XCPU(24), XFSZ(25)
-            3 | 4 | 6 | 7 | 8 | 11 | 31 | 24 | 25 => SignalDefaultAction::Core,
-            // 终止: 其余所有信号
-            _ => SignalDefaultAction::Term,
-        }
-    }
-
-    fn is_uncatchable(&self, sig: u8) -> bool {
-        sig == 9 || sig == 19 // SIGKILL, SIGSTOP
-    }
-
-    fn pick_next_signal(&self, deliverable: u64) -> Option<u8> {
-        if deliverable == 0 {
-            return None;
-        }
-        let sig_bit = deliverable.trailing_zeros() as u8;
-        if sig_bit == 0 || sig_bit > 31 {
-            return None;
-        }
-        Some(sig_bit)
-    }
-}
-
-/// 注册 functions 层信号决策策略
-///
-/// 在 functions `init()` 中调用, 替换 privileged 默认回退策略.
-pub fn init_signal_decision() {
-    static POLICY: FunctionsSignalPolicy = FunctionsSignalPolicy;
-    let _ = register_signal_decision(&POLICY);
 }

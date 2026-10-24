@@ -83,17 +83,54 @@ impl RecoveryManager {
     // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
     #[expect(clippy::cast_possible_truncation)]
     pub fn register(&mut self, domain: &'static RecoveryDomain) -> Option<u64> {
-        let idx = self.count.load(Ordering::SeqCst) as usize;
-        if idx >= MAX_RECOVERY_DOMAINS {
+        let count = self.count.load(Ordering::SeqCst) as usize;
+        // 指针等价去重: 同一域重复注册会让 tick / 快照 / 回滚路径对同域执行两次
+        // (且 `domains` 线性扫描会命中首项, 后者成为不可达重复项).
+        if let Some(existing) = self.domains[..count]
+            .iter()
+            .flatten()
+            .find(|d| core::ptr::eq(**d, domain))
+        {
+            return Some(existing.id());
+        }
+        if count >= MAX_RECOVERY_DOMAINS {
             return None;
         }
         let id = domain.id() as usize;
         if id < DIRECT_MAP_SIZE {
             self.direct_map[id] = Some(domain);
         }
-        self.domains[idx] = Some(domain);
-        self.count.fetch_add(1, Ordering::SeqCst);
+        self.domains[count] = Some(domain);
+        self.count.store(count as u32 + 1, Ordering::SeqCst);
         Some(domain.id())
+    }
+
+    /// 注销指定 id 的恢复域, 返回被移除的域指针 (未注册返回 `None`).
+    ///
+    /// 采用 swap-remove: 末项填坑并递减 `count`, 保持 `domains[..count]` 无空洞
+    /// (否则 tick / 回滚的线性扫描会提前结束而漏掉后续域). 同步清理 `direct_map`
+    /// 中指向该域的快速索引 —— 只在索引确实指向被移除域时清除, 避免误伤同槽位
+    /// 的新注册项.
+    pub fn unregister(&mut self, domain_id: u64) -> Option<&'static RecoveryDomain> {
+        let count = self.count.load(Ordering::SeqCst) as usize;
+        let idx = (0..count).find(|&i| self.domains[i].is_some_and(|d| d.id() == domain_id))?;
+        let removed = self.domains[idx].take()?;
+
+        let last = count - 1;
+        if idx != last {
+            self.domains[idx] = self.domains[last];
+            self.domains[last] = None;
+        }
+        self.count.fetch_sub(1, Ordering::SeqCst);
+
+        let direct_idx = domain_id as usize;
+        if direct_idx < DIRECT_MAP_SIZE
+            && self.direct_map[direct_idx].is_some_and(|d| core::ptr::eq(d, removed))
+        {
+            self.direct_map[direct_idx] = None;
+        }
+
+        Some(removed)
     }
 
     pub fn tick(&self, current_tick: u64) {

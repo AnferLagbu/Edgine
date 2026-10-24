@@ -37,6 +37,9 @@ const PRIV_DISPATCH: &str = "../src/kernel/privileged/syscall/dispatch.rs";
 const FUNC_DISPATCH: &str = "../src/kernel/functions/syscall/dispatch.rs";
 const AUDIT_PY: &str = "../scripts/audit_orphaned_init.py";
 const CI_AUDIT: &str = "../ci/audit.sh";
+const FUNC_PROC_MOD: &str = "../src/kernel/functions/proc/mod.rs";
+const FUNC_IPC_MOD: &str = "../src/kernel/functions/ipc/mod.rs";
+const FUNC_IPC_SIGNAL: &str = "../src/kernel/functions/ipc/signal.rs";
 
 /// 「延迟子系统编排」块应接线的 10 项 init (逐字对应 lib.rs 的调用行).
 const DEFERRED_INIT_CALLS: &[&str] = &[
@@ -437,4 +440,90 @@ pub extern "C" fn legacy_agg_init() {
 "#;
     let (code, stdout) = run_audit_on_fixture(&[("privileged/proc/note.rs", comment_only)]);
     assert_eq!(code, 1, "注释里的名字不得被当作调用点:\n{stdout}");
+}
+
+// ── 7. 跨层 init 接线顺序 (802b8298 修复的回归锁) ─────────────────────────
+
+#[test]
+fn test_boot_path_wires_mm_ipc_strategy_proc_in_order() {
+    // 4 项此前无生产调用点 (mm::init / ipc::init / ipc 策略注册 / proc::init),
+    // 缺失后果各自不同: MM 策略停留 fallback、首次 pipe() 越界 panic、策略未注册
+    // 降级 ENOSYS、信号与 coredump 策略从不注册.
+    let lib = code_text(&read(KERNEL_LIB));
+    let gate = "#[cfg(not(any(feature = \"kernel_test\", feature = \"host-test\")))]";
+    let gate_pos = lib
+        .find(gate)
+        .unwrap_or_else(|| panic!("真机引导块门控 {gate:?} 必须存在"));
+    let boot = &lib[gate_pos..];
+
+    const MM_INIT: &str = "crate::functions::mm::init();";
+    const IPC_INIT: &str = "crate::privileged::ipc::ipc_init();";
+    const IPC_STRATEGY: &str = "crate::functions::ipc::strategy::register_default_ipc_strategy()";
+    const PROC_INIT: &str = "crate::functions::proc::init();";
+
+    assert_contains(boot, MM_INIT, "真机引导必须注册 functions MM 策略");
+    assert_contains(boot, IPC_INIT, "真机引导必须初始化 IPC 机制槽位");
+    assert_contains(boot, IPC_STRATEGY, "真机引导必须注册 IPC 策略");
+    assert_contains(boot, PROC_INIT, "真机引导必须走 proc::init 组合入口");
+
+    // 槽位必须早于策略注册 (策略方法惰性调用, 但未分配槽位时首个 pipe() 即 panic);
+    // 前三项必须在中断使能前完成 (单线程阶段, 无 IRQ 竞态). proc::init 依赖
+    // SMP 上线后的 per-CPU 调度器, 故位于中断使能之后 (步骤 8).
+    assert_before(boot, MM_INIT, IPC_INIT, "MM 策略注册应早于 IPC 机制初始化");
+    assert_before(
+        boot,
+        IPC_INIT,
+        IPC_STRATEGY,
+        "IPC 槽位必须早于 IPC 策略注册",
+    );
+    assert_before(
+        boot,
+        IPC_STRATEGY,
+        PROC_INIT,
+        "IPC 策略注册应早于 scheduler 组合入口",
+    );
+    for call in [MM_INIT, IPC_INIT, IPC_STRATEGY] {
+        assert_before(
+            boot,
+            call,
+            "interrupt_late_init(",
+            "策略注册 / IPC 槽位填充必须在中断使能前完成",
+        );
+    }
+
+    // 真机路径不得再直调 privileged scheduler::init —— 由 proc::init 组合入口取代
+    // (直调会跳过信号策略与 coredump sink 注册).
+    assert!(
+        !boot.contains("crate::privileged::proc::scheduler::init()"),
+        "真机引导不得绕过 functions::proc::init 直调 privileged scheduler::init"
+    );
+}
+
+#[test]
+fn test_signal_policy_registered_only_by_proc_init() {
+    // 信号决策策略的唯一权威实现是 `functions::proc::signal::StandardSignalPolicy`;
+    // ipc 层曾另有一份语义不同的重复实现 (`FunctionsSignalPolicy`), 双实现会让
+    // "改哪份生效" 取决于注册顺序, 必须保持零重复.
+    let sig = code_text(&read(FUNC_IPC_SIGNAL));
+    assert!(
+        !sig.contains("impl SignalDecision for"),
+        "ipc/signal.rs 不得再实现 SignalDecision (权威实现归 functions::proc::signal)"
+    );
+    assert!(
+        !sig.contains("init_signal_decision"),
+        "ipc/signal.rs 不得再提供信号决策注册入口"
+    );
+
+    let ipc_mod = code_text(&read(FUNC_IPC_MOD));
+    assert!(
+        !ipc_mod.contains("init_signal_decision"),
+        "ipc::init_global 不得注册信号决策 (重复注册会 panic)"
+    );
+
+    let proc_mod = code_text(&read(FUNC_PROC_MOD));
+    assert_contains(
+        &proc_mod,
+        "signal::register_standard_signal_policy()",
+        "信号策略必须由 functions::proc::init 注册",
+    );
 }
