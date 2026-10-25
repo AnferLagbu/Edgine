@@ -1479,3 +1479,69 @@ fn test_p59_f8_is_enforced_by_rustc_missing_docs() {
         "full 档到位腿数被改成手写字面量 —— P-49 裁定禁止手写可由脚本派生的数字"
     );
 }
+
+/// P-67 结构锁: 债册腿必须自带 `missing_docs` 抑制的定点检查, 且在取数之前.
+///
+/// 病灶 (P-59 债册腿设计时读源, 本轮首次补做负控制): 债册只看编译器读数, 而
+/// `#![allow(missing_docs)]` 会让读数下降 —— 「真补写」与「关灯」在门禁里同形,
+/// 重导快照即可复绿. F9 的 `audit_dead_code_comment.py` 族清单只含 dead_code/unused*
+/// 与 `clippy::`, 不含一般 rustc lint ⇒ 这一盏灯原本无人看.
+///
+/// 判据:
+/// ① 扫描根 = kernel 树, vendored smoltcp 按路径组件排除;
+/// ② 抑制族只含 allow/expect (`deny`/`forbid` 是 P-59 裁定 ④ 要求的合法硬执法);
+/// ③ 属性实参里的字符串先剥掉再匹配 —— `reason = "missing_docs"` 不是抑制;
+/// ④ 抑制检查在取数之前调用 —— 命中即零耗时转红, 不给「更绿的读数」出场机会;
+/// ⑤ fail-closed: 扫描根缺失/读取失败走 return 2, 不是「扫不动就当没有」.
+#[test]
+fn test_p67_missing_docs_suppression_is_policed_by_debt_leg() {
+    let debt = read("../scripts/audit_missing_docs_debt.py");
+
+    // ① 射程.
+    assert!(
+        debt.contains("SCAN_ROOT = os.path.join(ROOT, \"src\", \"kernel\")"),
+        "抑制扫描根不再是 kernel 树 —— 换了根就漏判一半子树"
+    );
+    assert!(
+        debt.contains("VENDORED_DIRS = (\"smoltcp\",)"),
+        "vendored smoltcp 不再按路径组件排除 —— 锁定不可改的树一旦出现抑制即恒红"
+    );
+
+    // ② 只判 allow/expect.
+    let sup_line = debt
+        .lines()
+        .find(|l| l.trim_start().starts_with("SUPPRESSION_RE ="))
+        .unwrap_or_else(|| panic!("缺少 SUPPRESSION_RE 定义"));
+    assert!(
+        sup_line.contains("(allow|expect)"),
+        "抑制族不再是 allow/expect —— 判族一改, P-67 的射程随之漂移"
+    );
+    assert!(
+        !sup_line.contains("deny") && !sup_line.contains("forbid"),
+        "抑制正则收进了 deny/forbid —— 模块级 `#![deny(missing_docs)]` 会被误判成绕过"
+    );
+
+    // ③ 字符串先剥.
+    assert!(
+        debt.contains("STRING_RE = re.compile") && debt.contains("STRING_RE.sub"),
+        "属性实参里的字符串未剥除 —— `reason = \"missing_docs\"` 会被读成抑制"
+    );
+
+    // ④ 在取数之前调用.
+    let scan = debt
+        .find("suppressions = scan_suppressions()")
+        .unwrap_or_else(|| panic!("主流程没有调起抑制扫描 —— P-67 的检查退化成死函数 (F9)"));
+    let compile = debt
+        .find("entries = run_compiler()")
+        .unwrap_or_else(|| panic!("主流程缺少取数调用"));
+    assert!(
+        scan < compile,
+        "抑制检查在取数之后 (scan={scan} compile={compile}) —— 先拿到「更绿的读数」再报抑制, 顺序不承重"
+    );
+
+    // ⑤ fail-closed.
+    assert!(
+        debt.contains("抑制扫描失败") && debt.contains("return 2"),
+        "抑制扫描失败没有 fail-closed 出口 —— 扫不动会被读成「无抑制」假绿"
+    );
+}

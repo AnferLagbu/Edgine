@@ -24,18 +24,22 @@ P-59 裁定 ①: F8「公共 API 中文文档」的**存在性**由 rustc `missi
 - 读数恒为真编译: 存量未清零时 `-Dmissing_docs` 让该 unit 每次都编译失败, cargo 不
   判 Fresh ⇒ 不会出现"缓存导致 0 读数"的假绿. 存量归零后 unit 转 Fresh, 此时任何新增
   未文档项都会改源码 ⇒ 重新编译 ⇒ 照样转红;
-- 绕过面: 在文件里写 `#![allow(missing_docs)]` 会让读数下降 (须重导快照才不红),
-  本腿只拦"静默新增"; `audit_dead_code_comment.py` 的 F9 族清单只含 dead_code/unused
-  与 `clippy::` 抑制, **不含任意 rustc lint 抑制**, 故该形态当前无人拦 —— 已立案 P-67.
+- 绕过面: 在文件里写 `#![allow(missing_docs)]` 会让读数下降 (重导快照即复绿), 与真补写
+  在门禁里同形. F9 的 `audit_dead_code_comment.py` 族清单只含 dead_code/unused 与
+  `clippy::` 抑制, **不含任意 rustc lint 抑制** ⇒ 本腿自带这一盏灯的定点检查 (P-67 乙):
+  kernel 树内出现 `allow/expect(missing_docs)` 即在取数之前转红 (零耗时); `deny/forbid`
+  是合法硬执法不判. 本腿仍只保 missing_docs; 其它 rustc lint 的抑制是否入 F9 射程属
+  P-53/P-64 的既有裁定面, 不在本条扩围.
 
 用法:
   python3 scripts/audit_missing_docs_debt.py                    # 与基线对账
   python3 scripts/audit_missing_docs_debt.py --update-baseline  # 重写基线 (唯一写者)
-退出码: 0=与基线一致, 1=新增或快照过期, 2=取数失败/编译失败/基线不可用 (fail-closed)
+退出码: 0=与基线一致, 1=新增/快照过期/出现 missing_docs 抑制, 2=取数失败/编译失败/基线不可用 (fail-closed)
 """
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -54,9 +58,51 @@ DEBT_TARGET_DIR = "../../other/target/audit-missing-docs"
 # 本腿唯一判据的 lint; 其它诊断只用于识别"编译失败"
 LINT = "missing_docs"
 
+# ── P-67: 抑制面定点检查 (在取数之前, 零耗时) ────────────────────
+# 债册只读编译器 ⇒「真补写」与「关掉这盏灯」都只表现为读数下降, 重导快照即可复绿.
+# F9 的族清单不含一般 rustc lint, 故这一盏灯由唯一关心它的腿自己看住.
+# 只判 allow/expect: deny/forbid 是 P-59 裁定 ④ 要求的模块级硬执法, 属合法写法.
+SCAN_ROOT = os.path.join(ROOT, "src", "kernel")
+VENDORED_DIRS = ("smoltcp",)  # vendored 锁定不可改, 按路径组件排除
+# 属性整段 `#[...]` / `#![...]` (本仓属性实参不嵌方括号; cfg_attr 的圆括号由下一正则覆盖)
+ATTRIBUTE_RE = re.compile(r"#!?\[([^\]]*)\]")
+SUPPRESSION_RE = re.compile(r"\b(allow|expect)\s*\(([^()]*)\)")
+STRING_RE = re.compile(r'"(?:[^"\\]|\\.)*"')  # reason = "…" 里的词不是抑制
+
 
 class ScanError(Exception):
     """取数无法完成 (cargo 缺失 / 编译失败 / 输出不可解析)."""
+
+
+def scan_suppressions() -> list:
+    """P-67: 扫 kernel 树里的 `allow/expect(missing_docs)`, 返回「路径:行号 片段」列表.
+
+    扫描根不存在或读取失败一律抛 OSError, 由 main 走 fail-closed (return 2) ——
+    与取数失败的处置同语义, 不允许「扫不动就当没抑制」.
+    """
+    if not os.path.isdir(SCAN_ROOT):
+        raise OSError(f"扫描根不存在: {os.path.relpath(SCAN_ROOT, ROOT)}")
+    hits = []
+    for dirpath, dirnames, filenames in os.walk(SCAN_ROOT):
+        dirnames[:] = sorted(d for d in dirnames if d not in VENDORED_DIRS)
+        for name in sorted(filenames):
+            if not name.endswith(".rs"):
+                continue
+            path = os.path.join(dirpath, name)
+            rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
+            with open(path, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+            for attr in ATTRIBUTE_RE.finditer(text):
+                body = STRING_RE.sub('""', attr.group(1))
+                sup = SUPPRESSION_RE.search(body)
+                if not sup:
+                    continue
+                lints = {t.strip() for t in sup.group(2).split(",")}
+                if LINT not in lints:
+                    continue
+                line = text.count("\n", 0, attr.start()) + 1
+                hits.append(f"{rel}:{line}  {' '.join(attr.group(0).split())[:120]}")
+    return hits
 
 
 def run_compiler() -> dict:
@@ -185,6 +231,24 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="F8 编译器口径存量债册 (rustc missing_docs)")
     parser.add_argument("--update-baseline", action="store_true", help="按当前读数重写快照")
     args = parser.parse_args(argv)
+
+    # P-67: 先判抑制面再取数 —— 有 allow/expect(missing_docs) 时读数下降与真补写同形,
+    # 且此时跑编译器也只会给出一个「更绿」的读数, 故零耗时转红, 连 --update-baseline 也拦.
+    try:
+        suppressions = scan_suppressions()
+    except OSError as exc:
+        print(f"✗ audit_missing_docs_debt: 抑制扫描失败: {exc} (fail-closed, 不接受假绿)")
+        return 2
+    if suppressions:
+        print("=== audit_missing_docs_debt: F8 抑制检查 (P-67) ===")
+        for item in suppressions[:15]:
+            print(f"    ✗ {item}")
+        if len(suppressions) > 15:
+            print(f"    ... 共 {len(suppressions)} 处")
+        print("allow/expect(missing_docs) 让编译器读数下降 ⇒ 与真补写同形, 重导快照即可绕过."
+              "请补文档; 要模块级硬执法就写 #![deny(missing_docs)], 不要关灯.")
+        return 1
+    print(f"✓ P-67 抑制检查: 无 allow/expect({LINT})(deny/forbid 属硬执法, 不判)")
 
     try:
         entries = run_compiler()
