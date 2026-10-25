@@ -313,7 +313,7 @@ for MEMSAFETY_AUDIT in repr_c volatile_access static_mut; do
     fi
 done
 
-# ── 0.5k 硬规则 F1+F2 / F4 / F8 核心审计 ────────────────────────
+# ── 0.5k 硬规则 F1+F2 / F4 + 锁顺序专项核心审计 ────────────────
 # 这三项在 AGENTS.md §2.2 里被列为「强制」门禁, 但此前只接入了 GitHub
 # workflow (ci-lint.yml), 本地权威入口本脚本反而没跑 —— 本地绿而 CI 红 (或反之)
 # 的根源. 现在归位: 本地一键门禁 = CI 同一判据, 且都是 fail-closed
@@ -328,7 +328,7 @@ for HARD_RULE_AUDIT in functions_boundary safety_coverage deadlock_matrix; do
         if python3 "$PROJECT_ROOT/scripts/audit_${HARD_RULE_AUDIT}.py" 2>&1 | tail -10; then
             ok "${HARD_RULE_AUDIT}: 硬规则门禁通过"
         else
-            err "${HARD_RULE_AUDIT}: 硬规则被破坏 (F1/F2/F4/F8)! 见上方输出"
+            err "${HARD_RULE_AUDIT}: 硬规则被破坏 (F1/F2/F4 或锁顺序专项)! 见上方输出"
         fi
     else
         audit_leg_missing "$HARD_RULE_AUDIT" "$PROJECT_ROOT/scripts/audit_${HARD_RULE_AUDIT}.py"

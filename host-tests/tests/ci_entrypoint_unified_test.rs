@@ -5,7 +5,8 @@
 //! 旧 Makefile.ci 平行实现了一套弱化判据 (只跑 3 个审计脚本、`grep "^error["`
 //! 漏 warning 与 link 阶段、dev profile、`cmd | tee` 把失败掩盖成成功), 与本地
 //! 权威入口 ci/build.sh + ci/audit.sh 分叉; 而 AGENTS.md §2.2 宣称「强制」的
-//! F1+F2 / F4 / F8 三项审计当时只接入了 GitHub workflow, 本地一键门禁反而不跑.
+//! F1+F2 / F4 两项硬规则审计与锁顺序专项 (附加门禁, P-68) 当时只接入了 GitHub
+//! workflow, 本地一键门禁反而不跑.
 //! 本测试锁住收口后的形态: Makefile.ci 只委派, ci/audit.sh 是 §2.2 的完整落地.
 
 use std::fs;
@@ -164,7 +165,8 @@ fn test_ci_aggregate_covers_six_gates() {
 
 #[test]
 fn test_audit_sh_carries_hard_rule_audits() {
-    // AGENTS.md §2.2 把 F1+F2 / F4 / F8 / F3 列为强制门禁: 权威入口必须真跑这四项.
+    // AGENTS.md §2.2 把 F1+F2 / F4 / F3 与锁顺序专项 (附加门禁, P-68) 列为强制门禁:
+    // 权威入口必须真跑这四项.
     // coupling 一列由 P-45 收口时补入 —— 此前 F3 的指定检查方式在本地权威入口
     // 没有调用点, 只在从不触发的 workflow 里存在 (文档标「强制」而无执法路径).
     let sh = read(AUDIT_SH);
@@ -614,10 +616,12 @@ fn test_p50_audit_scope_and_selftest_are_wired() {
         "非树级防线",
         "P-61",
         "`audit_selftest`",
+        // P-68: deadlock_matrix 不得再被标成 F8 (F8 = 公共 API 文档), 改列附加门禁.
+        "附加门禁（锁顺序/中断上下文专项，P-68）",
     ] {
         assert!(
             sec_22.contains(needle),
-            "AGENTS.md §2.2 缺 {needle} —— 定点锁边界 (P-50 甲) 或新接线腿未自述"
+            "AGENTS.md §2.2 缺 {needle} —— 定点锁边界 (P-50 甲) / 编号口径 (P-68) 或新接线腿未自述"
         );
     }
 }
