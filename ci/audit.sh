@@ -83,6 +83,52 @@ mark_leg_full() { AUDIT_RUN_LEGS_FULL="${AUDIT_RUN_LEGS_FULL} $1"; }
 AUDIT_RUN_LEGS=""
 mark_leg() { AUDIT_RUN_LEGS="${AUDIT_RUN_LEGS} $1"; }
 
+# ── P-69 乙: 腿清单与 AGENTS §2.2 反向对账 ──────────────────────
+# 病灶 (P-59 负控制 C5a 实测): 两处到位断言的期望值与实测值同源于清单变量本身,
+# 把整条腿从清单摘掉时 runtime 仍打「到位」全绿 (9/9 → 8/8), 只有 host-tests 会红.
+# 本段把「文档说强制」作为外部期望: §2.2 里以反引号点名过的每个 audit_*/scan_* 脚本,
+# 其腿名必须出现在两档清单之一 —— 文档有而清单无, 即摘腿 / 新增脚本未接线, 硬失败.
+# 反向 (清单腿未在文档里点名) 不判: §2.2 自述「本表为常用核心门禁项, 非穷举」,
+# 如 quick 档的 unsafe 腿映射 tools/audit_unsafe.py, 全量清单脚注才有它.
+# 若 python3 缺失也走 else 分支硬失败, 与 13 条 python 审计腿的 fail-closed 同语义.
+if python3 - "$PROJECT_ROOT/AGENTS.md" "$AUDIT_REQUIRED_LEGS" "$AUDIT_REQUIRED_LEGS_FULL" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+doc_path, quick_line, full_line = sys.argv[1:4]
+doc = Path(doc_path).read_text(encoding="utf-8")
+sec = doc[doc.index("### 2.2"):doc.index("### 2.3")]
+
+# §2.2 内反引号点名的审计脚本 (可带 .py): 含表格「脚本」列与两条脚注的腿清单.
+declared = set(re.findall(r"`((?:audit|scan)_[a-z_]+)(?:\.py)?`", sec))
+wired = {s.split(":", 1)[0] for s in (quick_line.split() + full_line.split())}
+
+
+def leg_names(ident):
+    # 腿名约定: 多数去掉 audit_ / scan_ 前缀即为腿名 (scan_obsolete_naming 对应
+    # obsolete_naming), 少数保留全名 (audit_selftest 登记的就是 audit_selftest),
+    # 故同时给出两个候选与清单求交.
+    out = {ident}
+    for prefix in ("audit_", "scan_"):
+        if ident.startswith(prefix):
+            out.add(ident[len(prefix):])
+    return out
+
+
+missing = sorted(i for i in declared if not leg_names(i) & wired)
+if missing:
+    for ident in missing:
+        print(f"AGENTS §2.2 点名 {ident}, 但两档清单都没有对应腿", file=sys.stderr)
+    sys.exit(1)
+print(f"✓ {len(declared)} 条文档点名腿全部在册")
+PY
+then
+    ok "P-69 腿清单与 AGENTS §2.2 反向对账: 通过 (文档点名腿无摘除)"
+else
+    err "P-69: §2.2 点名的审计腿不在两档清单里 —— 摘腿或未接线 (fail-closed, 不接受假绿)"
+fi
+
 # ── P-47 甲: 「本腿未执行」台账 ────────────────────────────────
 # 外部工具型腿 (Lockbud) 在工具缺失时根本不产生读数, 原先这种状态与「工具发现了
 # 问题」共用同一句不阻断黄字 ⇒ 「audit 全绿」里混进了「这条腿从未跑过」.

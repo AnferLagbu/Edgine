@@ -524,6 +524,80 @@ fn test_audit_sh_full_only_legs_are_wired() {
     );
 }
 
+/// P-69 结构锁: 两档到位断言的期望值不得与实测值同源 (self-referential).
+///
+/// 病灶形态 (P-59 负控制 C5a 实测): 两处到位断言都用「清单变量 − 已登记腿」求差,
+/// 把整条腿从清单里摘掉时差集仍为空 ⇒ runtime 打「到位 9/9 → 8/8」全绿, 只有
+/// host-tests 会红. 即在 CI 日志层面「少跑一条腿」不可见.
+///
+/// 五条判据:
+/// ① 对账块存在, 且文案点名 §2.2 与 P-69;
+/// ② 块内同时把 `AGENTS.md` 与两档清单传入 —— 只读清单即回到自参照;
+/// ③ 文档切片字面量 `### 2.2` / `### 2.3` 与双前缀正则 `(?:audit|scan)_` 齐备, 且两个
+///    前缀都会被剥离后再与清单求交 (`scan_obsolete_naming` → `obsolete_naming`);
+/// ④ fail-closed: 出口是 `err "P-69:` 而非只打印黄字; 且前置无 `command -v python3`
+///    守卫 —— 缺 python3 时走 else 而非静默跳过 (P-46 同族);
+/// ⑤ 位置在两档清单定义之后、首个 `step "` 之前 —— 挪到任何门禁之后都让「先跑门禁
+///    再报假绿」重新出现.
+#[test]
+fn test_p69_leg_manifest_is_reconciled_against_agents() {
+    let sh = read(AUDIT_SH);
+    let start = sh
+        .find("# ── P-69 乙: 腿清单与 AGENTS §2.2 反向对账")
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少 P-69 反向对账块 —— 到位断言退回自参照"));
+    let rest = &sh[start..];
+    let end = rest
+        .find("# ── P-47 甲")
+        .unwrap_or_else(|| panic!("P-69 对账块尾部定位失败 (P-47 台账标记消失?)"));
+    let block = &rest[..end];
+
+    assert!(
+        block.contains("err \"P-69:"),
+        "P-69 对账块缺硬失败出口 —— 文档点名腿被摘除时只打印不阻断, 假绿照样收尾"
+    );
+    assert!(
+        block.contains(
+            "if python3 - \"$PROJECT_ROOT/AGENTS.md\" \"$AUDIT_REQUIRED_LEGS\" \
+             \"$AUDIT_REQUIRED_LEGS_FULL\""
+        ),
+        "对账块未同时把 AGENTS.md 与两档清单传入 —— 少传清单就只剩自参照, 摘腿仍绿"
+    );
+    assert!(
+        !block.contains("command -v python3"),
+        "对账块前置 command -v python3 守卫 —— 环境缺 python3 时该腿静默跳过 (P-46 同族)"
+    );
+    for literal in [
+        "### 2.2",
+        "### 2.3",
+        "(?:audit|scan)_",
+        "\"audit_\"",
+        "\"scan_\"",
+    ] {
+        assert!(
+            block.contains(literal),
+            "对账块缺切片/前缀字面量 {literal} —— 文档结构或腿名命名一改就静默放过"
+        );
+    }
+
+    let quick_line = sh
+        .find("AUDIT_REQUIRED_LEGS=\"")
+        .unwrap_or_else(|| panic!("缺少 AUDIT_REQUIRED_LEGS 清单"));
+    let full_line = sh
+        .find("AUDIT_REQUIRED_LEGS_FULL=\"")
+        .unwrap_or_else(|| panic!("缺少 AUDIT_REQUIRED_LEGS_FULL 清单"));
+    let first_step = sh
+        .find("\nstep \"0/6")
+        .unwrap_or_else(|| panic!("找不到步骤 0 头"));
+    assert!(
+        start > quick_line && start > full_line,
+        "P-69 对账块在清单定义之前使用它们 —— 读到空/未定义值, 对账恒绿"
+    );
+    assert!(
+        start < first_step,
+        "P-69 对账块被挪到门禁之后 (start={start} step={first_step}) —— 摘腿的假绿已先播报"
+    );
+}
+
 /// P-50 结构锁: 扫描根全扩与自测真调化两处口径必须落地, 且 §2.2 不得把定点锁读成树级防线.
 ///
 /// 病灶 (P-50 测绘):
