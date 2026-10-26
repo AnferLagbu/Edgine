@@ -1125,7 +1125,7 @@ src/kernel/privileged/syscall/epoll.rs::epoll_destroy
 src/kernel/privileged/timer/tick.rs::format_duration
 src/kernel/privileged/timer/tick.rs::get_uptime_tsc
 src/kernel/privileged/timer/tick.rs::reset_ticks
-src/kernel/privileged/timer/time_sync.rs::client_request
+src/kernel/functions/timer/time_sync.rs::client_request
 src/kernel/privileged/vmspace.rs::map_huge
 src/kernel/functions/freg/audit_export.rs::count_failure
 src/kernel/functions/freg/audit_export.rs::count_success
@@ -1936,10 +1936,10 @@ src/kernel/privileged/proc/scheduler.rs::add_rt_task
 | `privileged/timer/hrtimer.rs` | 1 | `hrtimer_ns_to_cycles` |
 | `privileged/timer/tick.rs` | 2 | `reset_ticks` `get_uptime_tsc` |
 | `privileged/timer/tickless.rs` | 2 | `enter_tickless` `exit_tickless` |
-| `privileged/timer/time_sync.rs` | 1 | `client_request` |
 | `privileged/vmspace.rs` | 1 | `map_huge` |
 | `functions/fs/{sysfs,cgroupfs,configfs,virtiofs,systree}.rs` | 5 | `mount_sysfs` `mount_cgroupfs` `mount_configfs` `mount_virtiofs` `mount_systree`（实现完整，待 VFS mount 集成） |
 | `functions/net/unix.rs` | 1 | `uds_recv_with_creds`（recvmsg UDS 凭据分流点缺失） |
+| `functions/timer/time_sync.rs` | 1 | `client_request` |
 
 #### D. 原「预留」205 项（按子系统计数；已并入「未来功能」桶）
 

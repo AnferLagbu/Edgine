@@ -217,7 +217,7 @@ pub fn on_timer_interrupt() {
 
     // D9: 时钟渐进调整 — 消耗 adjtimex(ADJ_OFFSET) 登记的待调整偏移 (斜率推进).
     // 仅原子操作, 无锁/无分配, 因此可在 hardirq 上下文安全调用.
-    super::time_sync::timesync_subsystem().tick_adjust();
+    super::time_sync::clock_adj_state().tick_adjust();
 }
 
 /// 安全的 64 位乘除: `(value * mul) / div`, 128 位中间值不溢出

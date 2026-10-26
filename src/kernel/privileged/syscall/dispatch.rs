@@ -337,8 +337,8 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         // (functions::timer::tickless::tickless_syscall, 委托 privileged sys_tickless).
 
         // ==================== D9: NTP/PTP 时钟同步 ====================
-        // P-8 门面收口: EG_TIMESYNC 分支已迁至 functions
-        // (functions::timer::time_sync::timesync_syscall, 委托 privileged sys_timesync).
+        // P-8 门面收口 + §6.3 下沉: EG_TIMESYNC 分支由 functions 权威实现
+        // (functions::timer::time_sync::timesync_syscall, 含 cmd 分发).
 
         // ==================== D10: kexec ====================
         // T2 批 4 (syscall-followup): SYS_kexec_load 分支已迁至 functions

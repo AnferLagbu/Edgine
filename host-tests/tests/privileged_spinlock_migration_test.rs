@@ -102,13 +102,14 @@ fn irq_spinlock_adopted_in_migrated_files() {
     let files = [
         "driver/kexec.rs",
         "driver/uefi.rs",
-        "timer/time_sync.rs",
         "arch/shadow_stack.rs",
         "sgeg/secure_boot.rs",
         "debug/ebpf.rs",
         "proc/process.rs",
         // cgroup/namespace/seccomp/io_uring 已迁移到 functions 层, privileged 仅 re-export
         // driver/power.rs, mm/numa.rs 不使用 IrqSpinLock
+        // timer/time_sync.rs: NTP/PTP 策略与配置已下沉 functions, privileged 侧仅剩
+        // tick 中断消费的纯原子状态 (无锁), 故不再列入本契约
     ];
     for f in files {
         let content = read_src(f);

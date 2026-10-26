@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 529,
-    "files": 84,
-    "keys": 460
+    "sites": 526,
+    "files": 83,
+    "keys": 459
   },
   "entries": [
     [
@@ -2703,12 +2703,6 @@
       "fn",
       "zeroed",
       1
-    ],
-    [
-      "src/kernel/privileged/timer/time_sync.rs",
-      "fn",
-      "new",
-      3
     ],
     [
       "src/kernel/privileged/userctx.rs",

@@ -1295,6 +1295,16 @@
       1
     ],
     [
+      "src/kernel/functions/timer/time_sync.rs",
+      "#![expect(clippy::unused_self,reason=\"unused_self:策略方法读写全局tick状态(privilegedclock_adj_state)",
+      1
+    ],
+    [
+      "src/kernel/functions/timer/time_sync.rs",
+      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
+      2
+    ],
+    [
       "src/kernel/functions/wasm/interpreter.rs",
       "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       1
@@ -4262,16 +4272,6 @@
     [
       "src/kernel/privileged/timer/tick.rs",
       "#[expect(clippy::items_after_statements,reason=\"items_after_statements:测试注册函数内嵌套测试fn为内核测试惯用模式;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/timer/time_sync.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      2
-    ],
-    [
-      "src/kernel/privileged/timer/time_sync.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
       1
     ],
     [

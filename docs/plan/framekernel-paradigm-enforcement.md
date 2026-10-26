@@ -44,7 +44,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 描述：达成 Asterinas 范式对齐。
 方案：
-1. [ ] TCB 占比 < 30%（阶段 6 实测 56.7%，未达标；privileged 110,637 vs functions 79,821 LoC raw，smoltcp 排除，见 `docs/report/framekernel-paradigm-validation.md`）
+1. [X] TCB 占比改为持续收敛软指标（2026-10-26 用户裁定：**不再追求 <30% 硬目标**，改为「尽可能缩小 TCB」；阶段 6 实测 56.7%，当前审计约 57.0%，仅作趋势跟踪，不再作为验收阻断项）
 2. [X] privileged→functions 反向依赖 = 0（生产口径 = privileged 生产代码引用 `crate::functions`；经 `audit_reverse_deps.py` 核验 0 文件/0 行，原 136 处/78 文件已全部下沉/反转/收敛/按 §7.3 豁免）
 3. [X] 功能层 functions 权威（driver / fs 核心 / net 策略 / proc 策略 / syscall 业务；阶段 6 核验通过，见 `docs/report/framekernel-paradigm-validation.md`）
 4. [ ] privileged 仅机制/契约/安全代理（阶段 6 实测 privileged `.rs` 300 个，未收敛至 §6.6 规划的 200；见 §6.6）
@@ -144,7 +144,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | privileged/mm/page_fault.rs | ✅ 已完成（M1）：`PageFaultPolicy` trait 由 `functions/mm/page_fault_policy::StackGrowthPolicy` 实现并在 `functions::mm::init` 注册；栈顶经新增安全访问器 `privileged::mm::user_addr_max` 取地址空间上限。privileged 仅保留 `FallbackPageFaultPolicy` 作 functions 初始化前的启动兜底 | #PF 中断上下文只查询策略阈值；demand paging/COW/swap-in 机制留 privileged |
 | privileged/mm/pcache.rs | 🔒 复核保留（M2）：策略面仅剩两个容量常量（`PCACHE_HASH_BUCKETS`/`PCACHE_BUCKET_CAPACITY`），属缓存几何参数；函数体为哈希桶/引用计数/脏页机制。privileged 读 functions 被 `audit_reverse_deps` 阻断，为两常量加注册钩子属过度设计（§11.3） | 机制常量保留 privileged；容量若将来需要可调，再评估注册式配置 |
 | privileged/mm/swap.rs | LruList/kswapd 决策已 trait 化；slot I/O/swap-in-out 机制保留 | ✅ 已有 SwapPolicy trait（functions/swap_policy 权威）|
-| privileged/timer/time_sync.rs | NTP/PLL 算法迁出；ClockAdjState 状态承接 | 状态留 privileged API 承接，算法纯函数经 privileged 时钟查询 |
+| privileged/timer/time_sync.rs | ✅ 已完成（本批）：NTP/PTP 类型与算法、时钟调整策略、`timesync` syscall 分发全量下沉 `functions/timer/time_sync`（0 unsafe）；privileged 侧仅保留 tick 中断消费的 `ClockAdjState` + `tick_adjust` + 安全原子访问面 | 状态留 privileged（`clock_adj_state()` 暴露 7 个原子访问器）；时钟读数经 privileged `timer::{get_ticks, ticks_to_ns}`；tick 中断调用 `clock_adj_state().tick_adjust()` |
 | privileged/timer/tickless.rs | ✅ 已完成（D8）：NO_HZ 协议与 per-CPU 模式状态机整体下沉 `functions/timer/tickless`（0 unsafe）；privileged 侧源文件已删 | 决策与状态机在 functions；装填经 privileged `timer::clockevent` 安全入口（`program_oneshot_ns`/`arm_periodic`），查询经 privileged `timer`（`get_frequency`/`hrtimer_clock_read`/`hrtimer_next_expiry`） |
 | privileged/timer/sleep.rs | adaptive_sleep 阈值/轮询策略迁出；busy_wait 机制保留 | 阈值参数经 privileged 常量 API；busy_wait 机制留框架 |
 | privileged/timer/calibration.rs | 采样算法迁出；static 频率缓存留框架 API 承接 | ⚠ boot 早期调用，经**回调注册**（privileged 注册采样回调，functions 实现）|
@@ -418,7 +418,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 4. host-tests 全过
 5. QEMU 集成测试（boot/驱动改动必跑）
 6. **反向依赖计数单调下降至 0**（`crate::functions` 引用，生产口径；起点 136 处/78 文件 → 0，核验脚本 `audit_reverse_deps.py`）
-7. **TCB 占比逐阶段下降**（60.1% → <30%）
+7. **TCB 占比持续下降（软指标，不设硬阈值）**（2026-10-26 起不再追求 <30%；历史 60.1% → 阶段 6 56.7% → 当前约 57.0%，仅作趋势跟踪）
 
 ## 10. 关联工程
 
@@ -1488,3 +1488,21 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 **验证**：§2.3 六门槛全绿——双架构 `./ci/build.sh all` Passed 6 / Failed 0（0 error / 0 warning）；四 crate `cargo fmt --check` 无漂移；CI 口径 clippy pedantic（x86_64 + aarch64，`-D warnings`）0；`bash ci/audit.sh full` 全腿通过（含 reverse_deps 生产 0、F1-F9、QEMU 双架构 2/2）；`make test-host` 全过；`make test-kernel-host` 427 passed / 0 failed。Lockbud 腿仍因工具链不匹配未执行（既有环境项 P-56，非本批引入）。
 
 **状态**: [X]（去裸指针完成；绘图策略迁 functions 仍待独立批次）
+
+### DECISION-Y: timer/time_sync 策略下沉（状态留 privileged，策略/类型/syscall 迁 functions）
+
+> **背景**：§6.3 登记 `privileged/timer/time_sync.rs` 为「NTP/PLL 算法迁出；ClockAdjState 状态承接」。该文件的 NTP/PTP 类型、偏移/频率调整策略与 `sys_timesync` 分发均为纯策略/业务，仅 `tick_adjust` 需在 tick 中断上下文直接消费状态。按 §4.1 归属判据与「状态留 TCB、策略进 functions」的最小切口实施。
+
+**方案与实施**：
+
+1. `privileged/timer/time_sync.rs` 缩减为状态承接层：保留 `ClockAdjState`（7 个原子字段）、`ADJ_RATE_NS`、`tick_adjust()`（原样，仅原子操作，hardirq 安全）、`clock_adj_state()`，新增 7 个安全原子访问器（`freq_adj_ppb`/`offset_remaining`/`total_offset_adj`/`total_freq_adj`/`last_sync_time`/`sync_count`/`synced`）。删除 NTP/PTP 类型、`apply_ntp_result`/`adj_freq`/`adj_time`/`set_time`/`get_adjusted_time_ns`、`TimeSyncSubsystem`、`sys_timesync` FFI 与 `timesync_init`。
+2. `functions/timer/time_sync.rs` 为权威实现（`#![deny(unsafe_code)]`）：NTP 纪元/端口常量、`NtpTimestamp`/`NtpPacket`/`NtpResult`/`PtpMessageType`、`TimeSyncSubsystem` 策略方法与 `timesync_syscall` 全 cmd 0-9 分发。原 `IrqSpinLock` 配置字段改为自然原子量（`AtomicU32`/`AtomicBool`），functions 侧不引入锁。时钟读数经 privileged `timer::{get_ticks, ticks_to_ns}`。
+3. 接线同步：`privileged/timer/tick.rs` 改调 `clock_adj_state().tick_adjust()`；`privileged/syscall/dispatch.rs` D9 注释改为「分支由 functions 权威实现」。`kernel_tests/sys.rs` 的渐进调整用例改为经 `clock_adj_state()` 触发同一 tick 机制。
+4. 契约与台账同步：`host-tests/tests/privileged_spinlock_migration_test.rs` 的 P1-I-17 清单移除 `timer/time_sync.rs`（privileged 侧已无锁）；`docs/plan/syscall-followup.md` 的 B-6 已分类清单与汇总表中 `client_request` 路径改记 `functions/timer/time_sync.rs`。
+5. 为保留既有 `subsystem().method()` 调用面（`functions/timer/clock.rs`、内核单测共 20+ 调用点），`TimeSyncSubsystem` 的 6 个不读 `self` 的策略方法用文件级 `#![expect(clippy::unused_self, reason = ...)]` 标注，而非改成关联函数造成大面积调用面改写。
+
+**影响面**：privileged 侧 time_sync 从「类型 + 策略 + syscall + 状态」缩为「状态 + tick 机制」，functions 侧 0 unsafe 且 `audit_reverse_deps` 生产反向依赖仍为 0 文件/0 行。路径键基线随之重导：`audit_dead_code_comment`（expect 随文件迁移，净 1750 处不变）、`audit_public_api_docs`（529→526 处 / 459 键）、`audit_missing_docs_debt`（4471→4461 处，`NtpTimestamp` 两字段补中文 doc、privileged 侧旧债随删除消解）。
+
+**验证**：§2.3 六门槛全绿——双架构 `./ci/build.sh all` Passed 6 / Failed 0（0 error / 0 warning）；四 crate `cargo fmt --check` 无漂移；CI 口径 clippy pedantic（x86_64 + aarch64，`-D warnings`）0；`bash ci/audit.sh full` 全腿通过（含 reverse_deps 生产 0、F1-F9、QEMU 双架构 2/2）；`make test-host` 全过；`make test-kernel-host` 427 passed / 0 failed。Lockbud 腿仍因工具链不匹配未执行（既有环境项 P-56，非本批引入）。
+
+**状态**: [X]

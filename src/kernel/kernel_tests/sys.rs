@@ -347,8 +347,10 @@ fn wall_clock_gradual_adjust() -> TestResult {
 
     // 5ms 渐进偏移; ADJ_RATE_NS = 1000ns/tick → 5000 次 tick 消耗完毕
     check!(sub.adj_time(5_000_000), "adj_time accepted");
+    // tick 机制属 privileged (tick 中断消费), 策略层经安全访问面触发同一状态
+    let adj_state = crate::privileged::timer::time_sync::clock_adj_state();
     for _ in 0..6_000 {
-        sub.tick_adjust();
+        adj_state.tick_adjust();
     }
     check!(
         sub.get_adjusted_time_ns() >= original + 5_000_000,
