@@ -95,11 +95,11 @@ pub mod calibration;
 /// 高精度定时器框架 (纳秒级回调)
 pub mod hrtimer;
 
-/// D8: Tickless (NO_HZ)
-pub mod tickless;
-
 /// D9: NTP/PTP 时钟同步
 pub mod time_sync;
+
+// D8: Tickless (NO_HZ) 已按 §4.1 归属判据下沉 functions (`functions::timer::tickless`):
+// per-CPU 模式状态机与空闲记账属策略, 定时器装填经本层 `clockevent` 安全入口调用.
 
 // ============================================================================
 // 公共 API 导出 (便捷访问)
@@ -165,8 +165,8 @@ pub use hrtimer::{
     hrtimer_start_rel, is_hrtimer_ready,
 };
 
-// tickless/time_sync 公共接口 re-export — 避免跨子系统直接访问 timer 内部子模块
-pub use tickless::*;
+// tickless 已下沉 functions; time_sync 公共接口 re-export — 避免跨子系统直接
+// 访问 timer 内部子模块
 pub use time_sync::*;
 
 // ============================================================================

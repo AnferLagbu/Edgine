@@ -1285,6 +1285,16 @@
       2
     ],
     [
+      "src/kernel/functions/timer/tickless.rs",
+      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
+      1
+    ],
+    [
+      "src/kernel/functions/timer/tickless.rs",
+      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
+      1
+    ],
+    [
       "src/kernel/functions/wasm/interpreter.rs",
       "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       1
@@ -4257,16 +4267,6 @@
     [
       "src/kernel/privileged/timer/tick.rs",
       "#[expect(clippy::items_after_statements,reason=\"items_after_statements:测试注册函数内嵌套测试fn为内核测试惯用模式;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/timer/tickless.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
-    ],
-    [
-      "src/kernel/privileged/timer/tickless.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       1
     ],
     [

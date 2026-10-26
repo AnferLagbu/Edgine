@@ -39,7 +39,7 @@ const IDT_MOD: &str = "../src/kernel/privileged/idt/mod.rs";
 const ISR_ASM: &str = "../src/kernel/privileged/boot/isr.asm";
 const TIMER_IRQ: &str = "../src/kernel/privileged/timer/irq.rs";
 const CLOCKEVENT: &str = "../src/kernel/privileged/timer/clockevent.rs";
-const TICKLESS: &str = "../src/kernel/privileged/timer/tickless.rs";
+const TICKLESS: &str = "../src/kernel/functions/timer/tickless.rs";
 const APIC: &str = "../src/kernel/privileged/arch/x86_64/apic.rs";
 const FEATURE: &str = "../src/kernel/privileged/cpu/feature.rs";
 const ARCH_X86: &str = "../src/kernel/privileged/arch/x86_64/mod.rs";
@@ -486,7 +486,7 @@ fn test_tickless_delegates_programming_to_clockevent() {
     );
     // 频率调整同样要先与簿记频率对齐, 否则名义 hz 与实际错位.
     assert!(
-        tk.contains("ifhz!=super::get_frequency(){returnfalse;}"),
+        tk.contains("ifhz!=get_frequency(){returnfalse;}"),
         "set_hz 未前置校验频率一致性"
     );
 }

@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 4475,
-    "files": 237,
-    "keys": 647
+    "sites": 4472,
+    "files": 236,
+    "keys": 646
   },
   "entries": [
     [
@@ -3219,11 +3219,6 @@
       "src/kernel/privileged/syscall/types.rs",
       "a type alias",
       1
-    ],
-    [
-      "src/kernel/privileged/timer/tickless.rs",
-      "an associated function",
-      3
     ],
     [
       "src/kernel/privileged/timer/time_sync.rs",

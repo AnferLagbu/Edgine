@@ -103,7 +103,6 @@ fn irq_spinlock_adopted_in_migrated_files() {
         "driver/kexec.rs",
         "driver/uefi.rs",
         "timer/time_sync.rs",
-        "timer/tickless.rs",
         "arch/shadow_stack.rs",
         "sgeg/secure_boot.rs",
         "debug/ebpf.rs",
@@ -114,15 +113,28 @@ fn irq_spinlock_adopted_in_migrated_files() {
     for f in files {
         let content = read_src(f);
         assert!(
-            content.contains("use crate::privileged::sync::IrqSpinLock")
-                || content.contains("use crate::privileged::sync::IrqSpinLock as Mutex",)
-                || content.contains("use crate::privileged::sync::irq_spinlock::IrqSpinLock")
-                || content
-                    .contains("use crate::privileged::sync::irq_spinlock::IrqSpinLock as Mutex",),
+            uses_privileged_irq_spinlock(&content),
             "P1-I-17: {} 必须从 privileged 路径导入 IrqSpinLock",
             f
         );
     }
+    // D8: tickless 已按 §4.1 归属判据下沉 functions, 锁仍来自 privileged 安全 API.
+    let tickless_path = format!(
+        "{}/../src/kernel/functions/timer/tickless.rs",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let tickless = fs::read_to_string(&tickless_path)
+        .unwrap_or_else(|e| panic!("read {}: {}", tickless_path, e));
+    assert!(
+        uses_privileged_irq_spinlock(&tickless),
+        "P1-I-17: functions/timer/tickless.rs 必须从 privileged 路径导入 IrqSpinLock",
+    );
+}
+
+/// 源码是否从 privileged 路径导入 IrqSpinLock (别名导入亦算).
+fn uses_privileged_irq_spinlock(content: &str) -> bool {
+    content.contains("use crate::privileged::sync::IrqSpinLock")
+        || content.contains("use crate::privileged::sync::irq_spinlock::IrqSpinLock")
 }
 
 #[test]
