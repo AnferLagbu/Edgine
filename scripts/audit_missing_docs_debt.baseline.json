@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 4177,
-    "files": 232,
-    "keys": 636
+    "sites": 3970,
+    "files": 231,
+    "keys": 629
   },
   "entries": [
     [
@@ -1429,41 +1429,6 @@
       "src/kernel/functions/wasm/runtime.rs",
       "an associated function",
       1
-    ],
-    [
-      "src/kernel/functions/wasm/types.rs",
-      "a constant",
-      15
-    ],
-    [
-      "src/kernel/functions/wasm/types.rs",
-      "a method",
-      3
-    ],
-    [
-      "src/kernel/functions/wasm/types.rs",
-      "a struct",
-      10
-    ],
-    [
-      "src/kernel/functions/wasm/types.rs",
-      "a struct field",
-      34
-    ],
-    [
-      "src/kernel/functions/wasm/types.rs",
-      "a variant",
-      136
-    ],
-    [
-      "src/kernel/functions/wasm/types.rs",
-      "an associated function",
-      3
-    ],
-    [
-      "src/kernel/functions/wasm/types.rs",
-      "an enum",
-      6
     ],
     [
       "src/kernel/functions/wasm/wasi/errno.rs",
