@@ -19,10 +19,11 @@ use crate::privileged::mm::PhysAddr;
 // E1000 寄存器偏移常量
 // ============================================================================
 
-// B04-AUDIT-005 #4: 内部 register 常量改为 `pub(crate)` 让同 crate 内 functions
-// E1000NetDriver 内部方法 (send_packet/recv_packet/handle_irq) 引用. 仍不暴露给
-// privileged 外部.
-// 中断原因 + RX tail 等外部确实需要的常量保留 `pub`.
+// P-71: functions 已独立为 crate (glue 侧模块), `pub(crate)` 不再跨 crate 可见 —
+// E1000NetDriver 内部方法 (send_packet/recv_packet/handle_irq) 实际引用的 22 个
+// 寄存器常量仍为 `pub` (F8: 均配中文文档); 其余仅供 TCB 内部使用的收窄回
+// `pub(crate)`, 与拆分前语义一致 —— 公开面不因拆分而扩大. 本文件属 safe 常量视图,
+// 不涉及不变量 I1-I6.
 
 // 控制寄存器 (位定义对齐 Intel 8254x 数据手册 / e1000_defines.h)
 pub(crate) const E1000_CTRL: u32 = 0x0000;
@@ -30,14 +31,19 @@ pub(crate) const E1000_CTRL: u32 = 0x0000;
 ///
 /// ISSUE-RT-001: 早期误用 bit31 (0x8000_0000). 该位实为 `E1000_CTRL_PHY_RST`
 /// (PHY 复位), 82540EM 不会因它触发全局复位, 导致复位轮询超时 -> 初始化失败.
-pub(crate) const E1000_CTRL_RST: u32 = 1 << 26;
-pub(crate) const E1000_CTRL_SLU: u32 = 1 << 6;
-pub(crate) const E1000_CTRL_ASDE: u32 = 1 << 5;
-pub(crate) const E1000_CTRL_SPEED_1000: u32 = 2 << 8;
+pub const E1000_CTRL_RST: u32 = 1 << 26;
+/// CTRL.SLU (bit6): 置链路 Up.
+pub const E1000_CTRL_SLU: u32 = 1 << 6;
+/// CTRL.ASDE (bit5): 自动速度检测使能.
+pub const E1000_CTRL_ASDE: u32 = 1 << 5;
+/// CTRL.SPEED (bit8-9 = 10b): 选择 1000 Mb/s.
+pub const E1000_CTRL_SPEED_1000: u32 = 2 << 8;
 /// 强制双工 (Force Duplex, bit12). 早期误用 bit14.
-pub(crate) const E1000_CTRL_FRCDPX: u32 = 1 << 12;
-pub(crate) const E1000_CTRL_FD: u32 = 1 << 0;
-pub(crate) const E1000_CTRL_FRCSPD: u32 = 1 << 11;
+pub const E1000_CTRL_FRCDPX: u32 = 1 << 12;
+/// CTRL.FD (bit0): 全双工指示.
+pub const E1000_CTRL_FD: u32 = 1 << 0;
+/// CTRL.FRCSPD (bit11): 强制速度, 与 `FRCDPX` 配合跳过自动协商.
+pub const E1000_CTRL_FRCSPD: u32 = 1 << 11;
 
 // 状态寄存器
 pub(crate) const E1000_STATUS: u32 = 0x0008;
@@ -53,25 +59,35 @@ pub(crate) const E1000_EERD_DONE: u32 = 1 << 4;
 
 // 接收控制
 pub(crate) const E1000_RCTL: u32 = 0x0100;
-pub(crate) const E1000_RCTL_EN: u32 = 1 << 1;
-pub(crate) const E1000_RCTL_SBP: u32 = 1 << 2;
-pub(crate) const E1000_RCTL_UPE: u32 = 1 << 3;
-pub(crate) const E1000_RCTL_MPE: u32 = 1 << 4;
-pub(crate) const E1000_RCTL_BAM: u32 = 1 << 15;
-pub(crate) const E1000_RCTL_SECRC: u32 = 1 << 26;
-/// RX 缓冲区尺寸字段 (RCTL.BSIZE, bits[17:16]): BSEX=0 时 00b 即 2048 字节.
+/// RCTL.EN (bit1): 接收器使能.
+pub const E1000_RCTL_EN: u32 = 1 << 1;
+/// RCTL.SBP (bit2): 接受超长帧.
+pub const E1000_RCTL_SBP: u32 = 1 << 2;
+/// RCTL.UPE (bit3): 接受单播帧.
+pub const E1000_RCTL_UPE: u32 = 1 << 3;
+/// RCTL.MPE (bit4): 接受多播帧.
+pub const E1000_RCTL_MPE: u32 = 1 << 4;
+/// RCTL.BAM (bit15): 接受广播帧.
+pub const E1000_RCTL_BAM: u32 = 1 << 15;
+/// RCTL.SECRC (bit26): 剥离帧尾 CRC.
+pub const E1000_RCTL_SECRC: u32 = 1 << 26;
+/// RX 缓冲区尺寸字段 (RCTL.BSIZE, bits\[17:16\]): BSEX=0 时 00b 即 2048 字节.
 ///
 /// 注意: bit25 是 `RCTL_BSEX` (缓冲区尺寸扩展), 并非尺寸编码. 早期误用
 /// `1 << 25` 会置位 BSEX 并把 BSIZE 留在保留组合 (BSEX=1, 00b), 与已分配的
 /// 2048 字节 RX 缓冲区不一致.
-pub(crate) const E1000_RCTL_BSIZE_2048: u32 = 0x0;
+pub const E1000_RCTL_BSIZE_2048: u32 = 0x0;
 
 // 发送控制
 pub(crate) const E1000_TCTL: u32 = 0x0400;
-pub(crate) const E1000_TCTL_EN: u32 = 1 << 1;
-pub(crate) const E1000_TCTL_PSP: u32 = 1 << 3;
-pub(crate) const E1000_TCTL_COLD_FD: u32 = 0x40 << 12;
-pub(crate) const E1000_TCTL_CT_FD: u32 = 0x10 << 4;
+/// TCTL.EN (bit1): 发送器使能.
+pub const E1000_TCTL_EN: u32 = 1 << 1;
+/// TCTL.PSP (bit3): 发送前填充.
+pub const E1000_TCTL_PSP: u32 = 1 << 3;
+/// TCTL.COLD (bit12-21): 全双工冲突阈值, 取数据手册推荐值 0x40.
+pub const E1000_TCTL_COLD_FD: u32 = 0x40 << 12;
+/// TCTL.CT (bit4-11): 全双工冲突窗口, 取数据手册推荐值 0x10.
+pub const E1000_TCTL_CT_FD: u32 = 0x10 << 4;
 
 // TX 描述符环寄存器
 pub(crate) const E1000_TDBAL: u32 = 0x3800;
@@ -86,7 +102,7 @@ pub(crate) const E1000_RDBAH: u32 = 0x2804;
 pub(crate) const E1000_RDLEN: u32 = 0x2808;
 pub(crate) const E1000_RDH: u32 = 0x2810;
 /// RX tail 寄存器偏移 (privileged 层 `dump_regs` 使用)
-pub const E1000_RDT: u32 = 0x2818;
+pub(crate) const E1000_RDT: u32 = 0x2818;
 
 // 中断控制
 pub(crate) const E1000_IMC: u32 = 0x00D8;
@@ -110,7 +126,8 @@ pub(crate) const E1000_RAH0: u32 = 0x5404;
 pub(crate) const E1000_RAH_AV: u32 = 1 << 31;
 
 // 超时常量
-pub(crate) const E1000_TIMEOUT: u32 = 100000;
+/// 复位/链路轮询的迭代上限 (100000 次, QEMU 与真机实测足够).
+pub const E1000_TIMEOUT: u32 = 100000;
 
 // ============================================================================
 // 安全的 E1000 MMIO 访问器

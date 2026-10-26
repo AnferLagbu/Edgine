@@ -280,7 +280,7 @@ REGISTER_CALL_BLOCK = {
 
 
 def check_mod_rs(mod_rs):
-    """检查 mod.rs: (a) mod 声明门控分类; (b) test_runner_init 注册块归属."""
+    """检查 mod.rs: (a) mod 声明门控分类; (b) 测试注册块的 feature 归属."""
     issues = []
     try:
         with open(mod_rs, 'r', encoding='utf-8', errors='replace') as fh:
@@ -345,10 +345,13 @@ def check_mod_rs(mod_rs):
                     'code': line.strip()[:200],
                 })
 
-    # --- (b) test_runner_init 注册块归属 ---
+    # --- (b) 测试注册块的 feature 归属 ---
+    # P-71: crate 拆分后 `test_runner_init` 已上移出 TCB (glue 的 kernel_tests/mod.rs,
+    # 因 TCB 不能反向依赖 functions); privileged 侧保留的注册编排入口是
+    # `register_all_tests` —— 硬件路径 / 纯逻辑注册块的归属仍由本函数承载.
     region_start = None
     for lineno, line in enumerate(lines, start=1):
-        if 'pub fn test_runner_init' in line:
+        if 'pub fn register_all_tests' in line:
             region_start = lineno
             break
     if region_start is None:
@@ -357,7 +360,7 @@ def check_mod_rs(mod_rs):
             'line': 1,
             'severity': 'CRITICAL',
             'type': 'TEST_RUNNER_INIT_MISSING',
-            'message': 'mod.rs 未找到 pub fn test_runner_init',
+            'message': 'mod.rs 未找到 pub fn register_all_tests',
             'code': '',
         })
         return issues

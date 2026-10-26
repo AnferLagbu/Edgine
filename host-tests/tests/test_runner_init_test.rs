@@ -12,11 +12,14 @@
 //! `register_all_tests()` (kernel_test 的 test_runner_init 与 host 入口
 //! host_test_runner_main 共用), 本文件扫描目标同步迁移至 register_all_tests.
 //!
+//! P-71 (2026-10-26): 该 init 调用随跨层测试上移出 TCB — 扫描目标改为 glue crate
+//! 的 `kernel_tests::register_tests()` (privileged 已独立为 crate, 不可再反向依赖 functions).
+//!
 //! 本测试验证修复通过静态扫描 source 存在, 防止后续误删.
 
 use std::fs;
 
-const TESTS_MOD_PATH: &str = "../src/kernel/privileged/tests/mod.rs";
+const TESTS_MOD_PATH: &str = "../src/kernel/kernel_tests/mod.rs";
 
 fn read_source() -> String {
     fs::read_to_string(TESTS_MOD_PATH)
@@ -29,8 +32,8 @@ fn test_runner_init_calls_devfs_init_global() {
     // 验收: 注册入口必须 init devfs 全局单例
     let content = read_source();
     let fn_start = content
-        .find("pub fn register_all_tests()")
-        .expect("应有 pub fn register_all_tests");
+        .find("pub fn register_tests()")
+        .expect("应有 pub fn register_tests");
     // 找下一个 fn 起始 (粗略)
     let remaining = &content[fn_start..];
     let next_fn = remaining
@@ -39,8 +42,8 @@ fn test_runner_init_calls_devfs_init_global() {
         .unwrap_or(remaining.len());
     let body = &remaining[..next_fn];
     assert!(
-        body.contains("devfs::init_global"),
-        "register_all_tests 应调用 devfs::init_global(), 否则 DevFS::mount 测试会 panic"
+        body.contains("prepare_test_env"),
+        "register_tests 应调用 prepare_test_env() (含 devfs::init_global), 否则 DevFS::mount 测试会 panic"
     );
 }
 
@@ -50,8 +53,8 @@ fn test_runner_init_calls_procfs_init_global() {
     // 验收: 注册入口应 init procfs 全局单例
     let content = read_source();
     let fn_start = content
-        .find("pub fn register_all_tests()")
-        .expect("应有 pub fn register_all_tests");
+        .find("pub fn prepare_test_env()")
+        .expect("应有 pub fn prepare_test_env");
     let remaining = &content[fn_start..];
     let next_fn = remaining
         .find("\npub fn ")
@@ -60,7 +63,7 @@ fn test_runner_init_calls_procfs_init_global() {
     let body = &remaining[..next_fn];
     assert!(
         body.contains("procfs::init_global"),
-        "register_all_tests 应调用 procfs::init_global(), 否则 procfs 测试会 panic"
+        "prepare_test_env 应调用 procfs::init_global(), 否则 procfs 测试会 panic"
     );
 }
 

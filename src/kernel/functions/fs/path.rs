@@ -148,7 +148,14 @@ pub fn chroot_syscall(path_ptr: u64) -> Result<usize, Errno> {
 /// - `put_old` 与 `new_root` 相同或不在 `new_root` 之下 → `EINVAL`
 ///
 /// 入参均为**真实路径** (已归一化).
-pub(crate) fn pivot_root_plan(
+///
+/// P-71: functions 独立成 crate 后, 跨层测试载体 (`kernel_tests`) 不再共享
+/// `pub(crate)` 可见域, 故本函数提升为 `pub`.
+///
+/// # Errors
+/// `new_root` 等于当前根返回 `EBUSY`; `put_old` 与 `new_root` 相同或不在其下
+/// 返回 `EINVAL`.
+pub fn pivot_root_plan(
     new_root_real: &str,
     put_old_real: &str,
     current_root: &str,

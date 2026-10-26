@@ -55,7 +55,8 @@ use core::ffi::CStr;
 /// 超过此长度的指针会被截断到该上限,避免恶意或损坏的指针触发
 /// 长时间无界扫描(可能访问未映射内存)。
 ///
-/// 4 KiB 选自 VFS 默认路径长度上限 [`crate::functions::fs::VFS_MAX_PATH`],
+/// 4 KiB 选自 VFS 默认路径长度上限 (`functions::fs::VFS_MAX_PATH`; functions 已
+/// 独立为 crate, TCB 不再反向链接其文档项),
 /// 兼顾"覆盖绝大多数合法场景"和"防止误读"。
 pub const MAX_CSTR_LEN: usize = 4096;
 

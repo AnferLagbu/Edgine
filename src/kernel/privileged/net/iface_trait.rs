@@ -91,19 +91,19 @@ impl SocketHandle {
         self.0 != 0
     }
 
-    /// 内部 u32 索引 (functions 内部使用, 外部不可见).
+    /// 内部 u32 索引 (P-71: functions 已跨 crate, 需 `pub` 才能访问).
     #[inline(always)]
     #[expect(
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
-    pub(crate) const fn raw(self) -> u32 {
+    pub const fn raw(self) -> u32 {
         self.0
     }
 
-    /// 由 functions 内部构造 (来自 smoltcp 句柄的 u32 转换).
+    /// 由 functions 内部构造 (来自 smoltcp 句柄的 u32 转换, P-71: 已跨 crate).
     #[inline(always)]
-    pub(crate) const fn from_raw(raw: u32) -> Self {
+    pub const fn from_raw(raw: u32) -> Self {
         Self(raw)
     }
 }

@@ -20,6 +20,15 @@ const DRAM_WINDOW_BASE: u64 = 0x4000_0000;
 /// 引导页表 DRAM 映射窗口上界.
 const DRAM_WINDOW_END: u64 = 0x8000_0000;
 
+// P-71: `kernel_init` 由 glue crate 定义 (`#[unsafe(no_mangle)] extern "C"`),
+// TCB 不再是同一 crate, 故以外部符号声明完成引导链交接 (声明置于模块作用域,
+// 不放在函数体内语句之后 — clippy::items_after_statements).
+// SAFETY: 符号在最终链接产物中唯一, 签名与调用约定与 glue 侧定义一致.
+unsafe extern "C" {
+    /// glue crate 的统一内核入口.
+    fn kernel_init();
+}
+
 // ============================================================================
 // 启动入口
 // ============================================================================
@@ -107,9 +116,9 @@ pub unsafe extern "C" fn entry() -> ! {
         crate::privileged::arch::exception::TIMER_INTERVAL_TICKS
             .store(interval, core::sync::atomic::Ordering::Relaxed);
 
-        // 7. 跳转统一内核入口
+        // 7. 跳转统一内核入口 (外部符号声明见本模块顶部)
         uart::puts("[BOOT] Booting kernel...");
-        crate::kernel_init();
+        kernel_init();
 
         // 不应该到达这里
         loop {

@@ -6,7 +6,6 @@
 //! 启动期 `validate_system_config` 在硬件相关 IO (APIC 等) 初始化前不可
 //! 安全调用, 故本测试只测纯函数与不变式, 不调用 `init()`。
 
-use super::{assert_eq_test, check};
 use crate::privileged::config::{
     HUGE_PAGE_1G_SHIFT, HUGE_PAGE_2M_SHIFT, KERNEL_STACK_SIZE, KernelCapabilities, MAX_CPUS,
     MAX_IRQS, MAX_OPEN_FILES, MAX_PROCESSES, MAX_SESSIONS, MAX_THREADS, MAX_THREADS_PER_PROCESS,
@@ -15,6 +14,7 @@ use crate::privileged::config::{
     SLAB_MIN_OBJECT_SIZE, USER_CODE_BASE, USER_STACK_GUARD, USER_STACK_SIZE, USER_STACK_TOP,
     get_config_summary, print_config_table,
 };
+use crate::privileged::tests::{assert_eq_test, check};
 // DECISION-O ②: CFS_* 权威归 privileged/config/sched (机制常量), functions 侧
 // 纯 re-export; ConfigError/validate_* 为 functions 策略项, tests 经 functions
 // 公共 API 访问 (§7.3 允许 privileged/tests 访问 functions)

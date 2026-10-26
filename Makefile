@@ -475,13 +475,15 @@ test-host:
 # 内核单元测试（host 侧）: 执行 src/kernel 源文件内 `#[cfg(test)]` 内联用例.
 # 与 test-host 独立 (后者跑 host-tests/ 集成套件); 必须在 src/kernel 目录内执行,
 # 以便加载该目录 .cargo/config.toml 的 target-dir 与 curve25519 后端固化.
+# P-71: privileged 已拆为独立 crate, 故用 --workspace 让 kernel + kernel-privileged
+# 两个测试目标都执行 (否则 privileged 的内联用例静默不跑).
 # 详见 docs/plan/kernel-unit-test-harness-unification.md.
 test-kernel-host:
 	@echo "╔══════════════════════════════════════════════╗"
 	@echo "║   Running Kernel Host-Side Unit Tests        ║"
 	@echo "╚══════════════════════════════════════════════╝"
 	@mkdir -p $(CURDIR)/$(REPORT_DIR)
-	@cd src/kernel && { log=$(CURDIR)/$(REPORT_DIR)/kernel_host_test_$$(date +%Y%m%d_%H%M%S).log; cargo test --features host-test --lib > "$$log" 2>&1; status=$$?; cat "$$log"; exit $$status; }
+	@cd src/kernel && { log=$(CURDIR)/$(REPORT_DIR)/kernel_host_test_$$(date +%Y%m%d_%H%M%S).log; cargo test --workspace --features host-test --lib > "$$log" 2>&1; status=$$?; cat "$$log"; exit $$status; }
 	@echo ""
 
 # 内核单元测试 release 维检查 (P-44): 只编译 + 本 crate 零告警两条判据, 判据与实现在

@@ -1,4 +1,3 @@
-#![deny(unsafe_code)]
 //! Edgine Functions 层 — 100% safe Rust (去特权)
 //!
 //! **禁止** 包含任何 `unsafe` 代码。
@@ -30,9 +29,87 @@
 //! tools/check_tcb.sh  # 自动检查 functions/ 中无 unsafe
 //! ```
 
+// P-71: functions 已独立为 `kernel-functions` crate (100% safe 业务层).
+// host-test (std) 下剥离裸机约束, 与 kernel-privileged 同构.
+#![cfg_attr(not(feature = "host-test"), no_std)]
+// F1: 本 crate 全树禁止 unsafe (crate 级 deny 覆盖所有子模块).
+#![deny(unsafe_code)]
+// ── P-71: crate 级 lint 豁免 ──────────────────────────────────────────
+// 以下豁免原以 `#![allow(...)]` 写在 glue crate 根 (src/kernel/lib.rs), 单 crate 时覆盖
+// 全树; functions 独立成 crate 后须各持一份 (lint 属性不跨 crate 继承). 条目与 lib.rs
+// 逐项对应 ⇒ 拆分前后豁免面完全一致, 属**迁移**而非新增抑制 (清零工程仍归 P-64).
+// 不用 Cargo `[lints]` 表: 命令行 `-D clippy::pedantic` 优先级高于 manifest 表, 会让
+// `[lints]` 的 allow 在 ci/audit.sh 里全部失效 (实测 1623 条误报).
+// 详细理由见 lib.rs 各同名条目注释.
+// rustc 家族: C 互操作命名 / FFI 类型 / 全局可变静态
+#![allow(static_mut_refs)]
+#![allow(non_upper_case_globals)]
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+#![allow(improper_ctypes)]
+// clippy 家族
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+#![allow(clippy::mut_from_ref)]
+#![allow(clippy::manual_c_str_literals)]
+#![allow(clippy::empty_line_after_doc_comments)]
+#![allow(clippy::result_unit_err)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::module_inception)]
+#![allow(clippy::new_without_default)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::single_match)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::transmute_ptr_to_ptr)]
+#![allow(clippy::missing_transmute_annotations)]
+#![allow(clippy::let_and_return)]
+#![allow(clippy::wrong_self_convention)]
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::manual_find)]
+#![allow(clippy::unnecessary_cast)]
+#![allow(clippy::unnecessary_lazy_evaluations)]
+#![allow(clippy::manual_div_ceil)]
+#![allow(clippy::manual_unwrap_or_default)]
+#![allow(clippy::manual_unwrap_or)]
+#![allow(clippy::unnecessary_map_or)]
+#![allow(clippy::derivable_impls)]
+#![allow(clippy::manual_checked_ops)]
+#![allow(clippy::question_mark)]
+#![allow(clippy::manual_range_patterns)]
+#![allow(clippy::manual_flatten)]
+#![allow(clippy::collapsible_match)]
+#![allow(clippy::empty_loop)]
+#![allow(clippy::explicit_counter_loop)]
+#![allow(clippy::pointers_in_nomem_asm_block)]
+#![allow(clippy::doc_lazy_continuation)]
+#![allow(clippy::doc_overindented_list_items)]
+#![allow(clippy::must_use_candidate)]
+#![allow(clippy::unreadable_literal)]
+#![allow(clippy::inline_always)]
+#![allow(clippy::struct_field_names)]
+#![allow(clippy::pub_underscore_fields)]
+#![allow(clippy::struct_excessive_bools)]
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::ptr_as_ptr)]
+#![allow(clippy::cast_ptr_alignment)]
+#![allow(clippy::zero_sized_map_values)]
+#![allow(clippy::missing_fields_in_debug)]
+
 // ============================================================================
 // 子系统声明
 // ============================================================================
+
+// ── P-71: crate 根适配 ────────────────────────────────────────────────
+// `crate::functions::…` (768 处) 与 `crate::privileged::…` (1078 处) 均零改写:
+// 自别名 + 对 kernel_privileged 的别名再导出覆盖了两种旧路径.
+extern crate alloc;
+pub use crate as functions;
+pub use kernel_privileged as privileged;
+// privileged `#[macro_export]` 宏的再导出: 本层既有 `crate::slog_*!` /
+// `crate::klog_*!` / `crate::arch!` 调用点继续成立 (glue 侧另有自己的再导出清单).
+pub use kernel_privileged::{
+    arch, klog_boot_info, klog_err, slog_debug, slog_err, slog_info, slog_warn,
+};
 
 /// 系统调用 — POSIX + SGEG 分发 (通过 privileged::UserContext)
 pub mod syscall;
@@ -117,39 +194,11 @@ pub mod config;
 pub mod userctx;
 
 // ============================================================================
-// Functions 层日志宏 — safe 封装, 无 unsafe 展开
+// 日志宏
 //
-// 用法与 privileged 层 klog_info! 等一致, 但展开后只调用
-// privileged::klog::log_info 等 safe 函数, 不含任何 unsafe 块。
-//
-// 示例:
-//   slog_info!(FS, "UNKFS 已初始化: pool={}", name);
-//   slog_warn!(Kernel, "内存不足: 剩余 {} 页", free);
-//   slog_err!(Driver, "未找到磁盘 {}", id);
+// P-71: `slog*` 宏定义随 `privileged::klog::log` 一并归 TCB (kernel-privileged),
+// 由 glue crate 根再导出, 本层既有 `crate::slog_*!` 调用点保持不变.
 // ============================================================================
-
-/// Functions 层通用日志宏 — 指定级别与分类
-#[macro_export]
-macro_rules! slog {
-    ($lvl:ident, $cat:ident, $($arg:tt)*) => {
-        $crate::privileged::klog::log(
-            $crate::privileged::klog::LogLevel::$lvl,
-            $crate::privileged::klog::LogCategory::$cat,
-            format_args!($($arg)*),
-        )
-    };
-}
-
-#[macro_export]
-macro_rules! slog_info  { ($cat:ident, $($arg:tt)*) => { $crate::slog!(Info,  $cat, $($arg)*) }; }
-#[macro_export]
-macro_rules! slog_warn  { ($cat:ident, $($arg:tt)*) => { $crate::slog!(Warn,  $cat, $($arg)*) }; }
-#[macro_export]
-macro_rules! slog_err   { ($cat:ident, $($arg:tt)*) => { $crate::slog!(Error, $cat, $($arg)*) }; }
-#[macro_export]
-macro_rules! slog_debug { ($cat:ident, $($arg:tt)*) => { $crate::slog!(Debug, $cat, $($arg)*) }; }
-#[macro_export]
-macro_rules! slog_crit  { ($cat:ident, $($arg:tt)*) => { $crate::slog!(Crit,  $cat, $($arg)*) }; }
 
 // ============================================================================
 // CI 自检 (编译时)

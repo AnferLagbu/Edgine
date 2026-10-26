@@ -36,50 +36,16 @@ opt-level = 0
 debug = 2
 
 [dependencies]
-# 方案 D: kernel 直接依赖 (从 edgine Cargo.toml 迁移, 仅 kernel 实际使用).
-# zerocopy/ed25519-dalek 由 kernel 代码直接引用; bitflags 经 `bitflags::bitflags!`
-# 宏调用 (mm/sgeg/cpu 等 7 文件); smoltcp 为 kernel 内部 vendored.
-# sockopt 等跨层 ABI 常量单一权威源 (与 userlib 共用, 见 plan socket-option-constants-unification).
-edgine-abi = { path = "../rust/edgine-abi" }
-bitflags = "2.4"
-zerocopy = { version = "0.8", default-features = false, features = ["derive"] }
-# DECISION-078: 真实 Ed25519 签名验证 (RFC 8032). BSD-3-Clause OR Apache-2.0.
-ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
-smoltcp = { path = "functions/net/smoltcp", default-features = false, features = [
-    "medium-ethernet",
-    # 双栈地址池容量: link-local IPv6 + SLAAC 全局 IPv6 + DHCP IPv4 需 3 槽,
-    # 默认容量 2 会致 DHCP IPv4 入池失败 → iface 无 IPv4 → 单播 SYN 被丢.
-    # 取 4 留一档余量 (smoltcp 仅提供 2 的幂 feature, 故不能取 3).
-    "iface-max-addr-count-4",
-    "proto-ipv4",
-    "proto-ipv4-fragmentation",
-    "proto-ipv6",
-    "proto-ipv6-slaac",
-    "proto-dhcpv4",
-    "proto-dns",
-    # P6 / D11 (DECISION-097): 组播成员管理. smoltcp 的 `iface/interface/multicast.rs`
-    # 整体被 `#[cfg(feature = "multicast")]` 门控 —— 不开启则
-    # `Interface::join_multicast_group` / `MulticastError` 不参与编译, `setsockopt`
-    # 的 `IP_ADD/DROP_MEMBERSHIP` 无法实装. IGMP/MLD 报告由 `Interface::poll` 内部
-    # 状态机自动产生, Edgine 侧无需额外 socket.
-    # 容量取 8 而非默认 4: 开启 multicast 后 smoltcp 会在 `update_ip_addrs` 路径
-    # 为 IPv6 **自动 join** solicited-node 组 (multicast.rs:176), 与用户组播共用
-    # 同一张表; 留 4 槽余量避免 NDP 挤压用户组容量致偶发 -E_NOMEM.
-    # 仅启用 feature 与容量选项, 不改 smoltcp 源码 (见 scripts/vendor_smoltcp.sh 口径).
-    "multicast",
-    "iface-max-multicast-group-count-8",
-    # S0 纪律收口 (net-feature-alignment.md): 移除 socket-raw / socket-icmp ——
-    # 全仓零 `raw::Socket`/`icmp::Socket` 消费者 (ARP 由 iface 内部处理, ICMP echo
-    # 应答由下方 auto-icmp-echo-reply 承担), 让启用面 = 使用面.
-    "socket-udp",
-    "socket-tcp",
-    "socket-tcp-cubic",
-    "socket-dhcpv4",
-    "socket-dns",
-    # P6a 联调: 由 smoltcp Interface 直接回显 ICMP/ICMPv6 EchoRequest, 无需上层 socket
-    # (宿主机 ping/ping6 内核地址可被自动应答, 用于证明链路双向连通).
-    "auto-icmp-echo-reply",
-] }
+# P-71 crate 拆分: privileged 层独立 crate (唯一允许 unsafe 的 TCB),
+# functions 层独立 crate (100% safe 业务). 本 crate 退化为 glue:
+# 只持有启动/panic/分配器等裸机专属顶层约束与跨层测试, 并把两者重新导出为
+# 同名模块 (`pub use kernel_privileged as privileged;` 等), 使既有
+# `crate::privileged::…` / `crate::functions::…` 路径零改写.
+# 原 kernel 直依赖 (edgine-abi / bitflags / zerocopy / ed25519-dalek / smoltcp)
+# 已随代码分别归入这两个子 crate — 拆出后 glue 自身零引用, 保留会触发
+# `unused_dependencies`.
+kernel-privileged = { path = "privileged" }
+kernel-functions = { path = "functions" }
 
 # x86_64 SMP 启动路径的 `AP_STARTUP_LOCK` (`spin::mutex::SpinMutex`) 已依调用图调研
 # 删除 (见 docs/plan/unresolved-issues-2026-08-09.md ISSUE-TOOL-004); 全仓已无任何
@@ -88,32 +54,47 @@ smoltcp = { path = "functions/net/smoltcp", default-features = false, features =
 
 [features]
 default = []
-# e1000 真实硬件 EEPROM 读取路径 (关闭时走 QEMU 仿真兼容路径).
-e1000-real-hw = []
+# P-71: 两个子 crate 用到的 feature 必须逐项转发 (privileged / functions 各一组);
+# 未转发的 feature 在子 crate 里恒为关闭, 会让其 cfg 分支静默消失.
+# e1000 真实硬件 EEPROM 读取路径 (关闭时走 QEMU 仿真兼容路径) — 使用点在 functions.
+e1000-real-hw = ["kernel-functions/e1000-real-hw"]
 # S2 DNS 接线 (net-feature-alignment.md): 实机验证钩子 —— boot 完成后发一次
 # 真实 DNS 查询并 printk 结果 (仿 lockdep 诊断 feature 先例,
 # 经 KERNEL_FEATURES= 点亮, 日常构建不含).
-dns-selftest = []
+dns-selftest = ["kernel-privileged/dns-selftest"]
 # host-test: 剥离裸机专属顶层约束 (no_std/no_main/alloc_error_handler/panic_handler),
 # 供 host-tests 经 edgine 壳引用 functions 真实源码.
-host-test = []
-kernel_test = []
-fault_injection = []
-smp = []
-net = []
-alloc = []
-async = []
-debug_mutex = []
+host-test = ["kernel-privileged/host-test", "kernel-functions/host-test"]
+kernel_test = ["kernel-privileged/kernel_test", "kernel-functions/kernel_test"]
+fault_injection = ["kernel-privileged/fault_injection"]
+smp = ["kernel-privileged/smp"]
+net = ["kernel-privileged/net"]
+alloc = ["kernel-privileged/alloc"]
+async = ["kernel-functions/async"]
+debug_mutex = ["kernel-privileged/debug_mutex"]
 # lockdep: 独立点亮锁依赖检测体系 (AB-BA / IRQ 取睡眠锁 / 递归 / 释放未持有),
 # 使 release boot 镜像也能在其余仍为 release 的前提下单独启用锁序取证.
 # 详见 docs/plan/multithreading-project.md A-1..A-4 与 P-29 根因诊断.
-lockdep = []
+lockdep = ["kernel-privileged/lockdep"]
 # initramfs: 从 other/build/x86_64/user/initramfs.cpio 加载根文件系统 (产物按架构分目录)
-initramfs = []
-log = []
-json_export = []
-preempt = []
-kaslr = []
-freg = []
+initramfs = ["kernel-functions/initramfs"]
+log = ["kernel-privileged/log"]
+json_export = ["kernel-privileged/json_export"]
+preempt = ["kernel-privileged/preempt"]
+kaslr = ["kernel-privileged/kaslr"]
+freg = ["kernel-privileged/freg"]
 # syscall 入口诊断串口输出 (仅调试)
-debug_syscall = []
+debug_syscall = ["kernel-privileged/debug_syscall"]
+
+[workspace]
+# P-71: src/kernel 由「单 crate」变为「glue + privileged + functions」工作区.
+# 根 package 仍是 kernel (staticlib 产物名不变, Makefile 无需改动).
+# `functions` 不写进 members: 它是 root package 的 path 依赖, cargo 会自动把它纳入
+# workspace 成员 (--workspace / -p kernel-functions 均可见). 反之若显式列入 members,
+# 其目录内的 vendored smoltcp 会因「显式成员目录内的 path 依赖不受 exclude 约束」
+# 而被强行拉成成员, 触发其 manifest 里 [[example]] 指向已被 vendor 脚本裁掉的文件
+# 而解析失败 (实测: members=["privileged","functions"] + exclude 仍解析 smoltcp).
+# privileged 是纯目录成员, 无此问题, 故显式列出.
+members = ["privileged"]
+exclude = ["functions/net/smoltcp"]
+resolver = "3"

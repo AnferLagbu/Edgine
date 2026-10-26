@@ -8,8 +8,8 @@
 //! - 关闭 listener 同步取消 pending client
 //!
 //! 所有测试在 UDS TCB 的全局表上操作, 顺序执行 (单核 + 启动期)
-use super::{TestResult, runner};
 use crate::functions::net::unix as uds;
+use crate::privileged::tests::{TestResult, runner};
 use crate::register_tests_inner;
 
 #[expect(

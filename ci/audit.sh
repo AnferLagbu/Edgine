@@ -550,7 +550,7 @@ for target in x86_64-unknown-none aarch64-unknown-none-softfloat; do
     # 捕获式退出码 (B01-25 惯用法): `if cmd | tail` 在 pipefail 下失败即走 else,
     # 于是 "失败 (exit=…)" 分支不可达、真因被「执行异常」吞掉 (P-55 同族).
     set +e
-    CLIPPY_OUT=$(cargo clippy --manifest-path ../kernel/Cargo.toml --release --lib --bins --examples --target "${target}" --target-dir ../../other/target \
+    CLIPPY_OUT=$(cargo clippy --manifest-path ../kernel/Cargo.toml --workspace --release --lib --bins --examples --target "${target}" --target-dir ../../other/target \
         "${BUILD_STD_CFG[@]}" \
         -- -D warnings -D clippy::pedantic \
         -A clippy::cast_possible_truncation \
@@ -578,7 +578,7 @@ for FEATURE in kernel_test host-test; do
     # 捕获式退出码 (B01-25 惯用法, P-55 ②): `if cmd | tail` 在 pipefail 下失败即走
     # else, 于是 "失败 (exit=…)" 分支不可达、真因被「执行异常」吞掉.
     set +e
-    FEATURE_CLIPPY_OUT=$(cargo clippy --manifest-path "$PROJECT_ROOT/src/kernel/Cargo.toml" --features "$FEATURE" --lib \
+    FEATURE_CLIPPY_OUT=$(cargo clippy --manifest-path "$PROJECT_ROOT/src/kernel/Cargo.toml" --workspace --features "$FEATURE" --lib \
         --target-dir "$PROJECT_ROOT/other/target" \
         -- -D warnings -D clippy::pedantic \
         -A clippy::cast_possible_truncation \
@@ -601,7 +601,16 @@ done
 # kernel / host-tests / edgine 壳; rustfmt.toml 与 rust-toolchain.toml 均在仓库根.
 # 补入 src/user (2026-10-09): 用户态七 crate 此前不受任何 fmt 门禁, 漂移静默积累.
 step "2c/6 rustfmt 风格门禁 (kernel + host-tests + edgine 壳 + user 态)"
-for FMT_MANIFEST in src/kernel/Cargo.toml host-tests/Cargo.toml src/rust/Cargo.toml src/user/Cargo.toml; do
+# P-71: src/kernel 已是 workspace, 用 `-p` 显式点名 kernel + kernel-privileged +
+# kernel-functions 三个成员.
+# 不用 `--all`: 该开关会连带格式化 path 依赖 (vendored smoltcp 虽已 exclude 仍被
+# `--all` 的「本地路径依赖」语义波及), 破坏「smoltcp 锁定, 仅升级时动」的口径.
+if cargo fmt --manifest-path src/kernel/Cargo.toml -p kernel -p kernel-privileged -p kernel-functions -- --check; then
+    ok "fmt: src/kernel/Cargo.toml (kernel + kernel-privileged + kernel-functions) 通过"
+else
+    err "fmt: src/kernel/Cargo.toml 存在格式漂移 — 运行 cargo fmt --manifest-path src/kernel/Cargo.toml -p kernel -p kernel-privileged -p kernel-functions 修复"
+fi
+for FMT_MANIFEST in host-tests/Cargo.toml src/rust/Cargo.toml src/user/Cargo.toml; do
     if cargo fmt --manifest-path "$FMT_MANIFEST" -- --check; then
         ok "fmt: ${FMT_MANIFEST} 通过"
     else

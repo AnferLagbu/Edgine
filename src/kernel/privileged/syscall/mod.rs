@@ -100,7 +100,8 @@ pub unsafe extern "C" fn syscall_init() {
 //   上下文中调用，不可在持锁睡眠上下文中调用。
 // ============================================================================
 
-pub(crate) mod raw {
+/// 特权态原始访问接口: 集中 syscall 侧的全部 unsafe FFI 声明与用户内存读写原语.
+pub mod raw {
     // ============= 集中 FFI 声明 =============
     // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
     unsafe extern "C" {
@@ -359,7 +360,10 @@ pub(crate) mod raw {
     // ============= CPU 控制指令集中点 =============
 
     /// 加载空 IDT 后触发异常，重启 `CPU（x86_64`）。
-    /// # SAFETY: 不返回；调用方须确保已关闭其他 CPU。
+    ///
+    /// # Safety
+    ///
+    /// 本函数不返回；调用方须确保已关闭其他 CPU。
     #[cfg(target_arch = "x86_64")]
     pub unsafe fn reboot_via_idt() -> ! {
         unsafe {
@@ -374,7 +378,10 @@ pub(crate) mod raw {
     }
 
     /// 通过 SVC 触发 PSCI reset（aarch64）。
-    /// # SAFETY: 不返回；调用方须确保已关闭其他 CPU。
+    ///
+    /// # Safety
+    ///
+    /// 本函数不返回；调用方须确保已关闭其他 CPU。
     #[cfg(target_arch = "aarch64")]
     pub unsafe fn reboot_via_psci() -> ! {
         unsafe {

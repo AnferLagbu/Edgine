@@ -17,8 +17,8 @@ pub use super::sync::{
     call_rcu, rcu_assign_pointer, rcu_dereference, rcu_read_lock, rcu_read_unlock, synchronize_rcu,
 };
 
-pub use super::alloc::frame_alloc::{BuddyFrameAlloc, FrameAlloc};
-pub use super::alloc::slab_alloc::{KmallocSlabAlloc, SlabAlloc};
+pub use super::mem_alloc::frame_alloc::{BuddyFrameAlloc, FrameAlloc};
+pub use super::mem_alloc::slab_alloc::{KmallocSlabAlloc, SlabAlloc};
 
 pub use super::dma_buf::{DmaDirection, DmaStream};
 pub use super::iomem::IoMem;

@@ -152,11 +152,28 @@ dependencies = [
 name = "kernel"
 version = "0.1.0"
 dependencies = [
+ "kernel-functions",
+ "kernel-privileged",
+]
+
+[[package]]
+name = "kernel-functions"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.13.2",
+ "kernel-privileged",
+ "smoltcp",
+ "zerocopy",
+]
+
+[[package]]
+name = "kernel-privileged"
+version = "0.1.0"
+dependencies = [
  "bitflags 2.13.2",
  "ed25519-dalek",
  "edgine-abi",
  "smoltcp",
- "zerocopy",
 ]
 
 [[package]]

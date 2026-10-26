@@ -973,7 +973,7 @@ fn test_frame_handle_clone_drop_pairing() -> TestResult {
 /// ⇒ "未归零不得归还"与"归零即归还"两侧均失去观测面 (本用例同时判两侧).
 #[cfg(not(feature = "host-test"))]
 fn test_frame_handle_clone_drop_pairing() -> TestResult {
-    use crate::privileged::alloc::frame_alloc::{BuddyFrameAlloc, FrameAlloc};
+    use crate::privileged::mem_alloc::frame_alloc::{BuddyFrameAlloc, FrameAlloc};
     use crate::privileged::mm::pmm::get_pmm;
 
     let pmm = get_pmm();
@@ -1035,8 +1035,8 @@ fn test_frame_dma_buffer_raii_release() -> TestResult {
 /// 硬编码 order 9), 析构会按错阶释放 ⇒ 归还页数与分配页数不等 (本用例按页数判据捕捉).
 #[cfg(not(feature = "host-test"))]
 fn test_frame_dma_buffer_raii_release() -> TestResult {
-    use crate::privileged::alloc::frame_alloc::{BuddyFrameAlloc, FrameAlloc};
     use crate::privileged::driver::storage::nvme_alloc_dma_buffer;
+    use crate::privileged::mem_alloc::frame_alloc::{BuddyFrameAlloc, FrameAlloc};
     use crate::privileged::mm::pmm::get_pmm;
 
     let pmm = get_pmm();

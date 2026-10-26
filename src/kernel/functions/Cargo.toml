@@ -1,0 +1,50 @@
+[package]
+name = "kernel-functions"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Edgine 内核 functions 层 (framekernel 业务策略, 100% safe Rust)"
+repository = "https://gitee.com/AnferLagbu/Edgine"
+readme = "../../../README.md"
+
+[lib]
+# P-71: 既有 functions/mod.rs 直接作为 crate 根, 文件零移动.
+name = "kernel_functions"
+path = "mod.rs"
+
+[dependencies]
+kernel-privileged = { path = "../privileged" }
+bitflags = "2.4"
+zerocopy = { version = "0.8", default-features = false, features = ["derive"] }
+smoltcp = { path = "net/smoltcp", default-features = false, features = [
+    "medium-ethernet",
+    "iface-max-addr-count-4",
+    "proto-ipv4",
+    "proto-ipv4-fragmentation",
+    "proto-ipv6",
+    "proto-ipv6-slaac",
+    "proto-dhcpv4",
+    "proto-dns",
+    "multicast",
+    "iface-max-multicast-group-count-8",
+    "socket-udp",
+    "socket-tcp",
+    "socket-tcp-cubic",
+    "socket-dhcpv4",
+    "socket-dns",
+    "auto-icmp-echo-reply",
+] }
+
+[features]
+default = []
+# 与 glue 同名 feature 一一对应, 由 glue 逐项转发.
+async = []
+e1000-real-hw = []
+host-test = []
+initramfs = []
+kernel_test = []
+
+# P-71: 此处原有 `[lints.rust]` / `[lints.clippy]` 豁免表, 已迁至 crate 根
+# (`functions/mod.rs` 的 `#![allow(...)]` 块). 原因: 命令行 `-D clippy::pedantic`
+# 优先级高于 manifest `[lints]` 表, 保留在此会让 allow 在 ci/audit.sh 中全部失效.
+

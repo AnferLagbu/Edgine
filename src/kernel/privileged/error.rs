@@ -222,6 +222,14 @@ impl KernelError {
     pub const fn as_vfs_ret(self) -> i32 {
         -(self.as_errno().as_i32())
     }
+
+    /// VFS 风格返回的短别名 (原 `functions/fs/vfs_types.rs` 的同名 inherent impl).
+    ///
+    /// P-71: `KernelError` 定义迁入本 crate 后, functions 侧的外观 impl 不再合法
+    /// (E0116), 故一并归位; 语义与 [`KernelError::as_vfs_ret`] 相同.
+    pub const fn as_i32(self) -> i32 {
+        self.as_vfs_ret()
+    }
 }
 
 /// 全内核统一 Result 别名 (默认错误类型为 `KernelError`).

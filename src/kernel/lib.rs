@@ -207,11 +207,32 @@ mod memory_allocator;
 // 顶层声明: 仅 2 个目录
 // ============================================================================
 
-/// 框内核 Privileged (TCB) — 唯一允许 unsafe 的模块
-pub mod privileged;
+// P-71: privileged 已独立为 `kernel-privileged` crate (TCB, 唯一允许 unsafe).
+// 既有 `crate::privileged::…` 调用点零改写: 此处把子 crate 根重新导出为同名模块.
+pub use kernel_privileged as privileged;
+
+// P-71: privileged 导出宏的再导出 — 本 crate 的 `crate::klog_*!` / `crate::slog_*!`
+// 调用点 (含 functions 子树) 继续成立.
+pub use kernel_privileged::{
+    arch, klog_boot_info, klog_err, klog_ffi, klog_kern_warn, klog_warn, slog, slog_crit,
+    slog_debug, slog_err, slog_info, slog_warn,
+};
+// P-71: 测试注册宏仅随 privileged::tests 编译 (与被再导出宏的定义处门控同步).
+#[cfg(any(feature = "kernel_test", feature = "host-test"))]
+pub use kernel_privileged::register_tests_inner;
 
 /// Functions 层 — 去特权 100% safe Rust (框内核架构)
-pub mod functions;
+///
+/// P-71: functions 已独立为 `kernel-functions` crate; 此处重新导出为同名模块,
+/// 使全仓 `crate::functions::…` / `kernel::functions::…` 路径零改写.
+pub use kernel_functions as functions;
+
+/// 跨层测试 (P-71 上移出 TCB): 同时依赖 privileged 与 functions 的用例载体.
+///
+/// `privileged` 独立成 crate 后不能再反向依赖 functions, 故这些用例改由本 crate 注册
+/// 到同一 `privileged::tests::runner()`; 与 privileged 侧注册入口合并后执行集不变.
+#[cfg(any(feature = "kernel_test", feature = "host-test"))]
+pub mod kernel_tests;
 // B08-12: 以下符号仅 panic_handler/kernel_test 路径使用, host-test 下为死代码
 #[cfg(not(feature = "host-test"))]
 use core::panic::PanicInfo;
@@ -619,7 +640,7 @@ pub extern "C" fn kernel_init() {
             crate::klog_boot_info!("[CHAOS] Fault injection enabled, rate={}/1000", rate);
         }
 
-        crate::privileged::tests::test_runner_init();
+        crate::kernel_tests::test_runner_init();
         crate::klog_boot_info!("Tests complete");
 
         let r = crate::privileged::tests::runner();

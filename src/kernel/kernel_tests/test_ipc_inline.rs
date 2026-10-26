@@ -1,13 +1,15 @@
-//! IPC 压力测试与边界测试
+//! IPC 压力测试与边界测试 (P-71 上移出 TCB)
 //!
 //! 验证 IPC 子系统在高负载和极端条件下的稳定性：
 //! - **压力测试**: 高并发、大数据量、长时间运行
 //! - **边界测试**: 空数据、满缓冲区、无效参数
 //! - **竞态条件**: 多线程同时访问
 //! - **资源泄漏**: 频繁创建/销毁
+//!
+//! 原位于 `privileged/ipc/stress_tests.rs`. 本组用例经 `functions::ipc` 访问业务层
+//! 策略函数, `privileged` 独立成 crate 后不允许反向依赖 `functions`, 故迁至 glue crate.
 
-use super::types::*;
-use super::*;
+use crate::privileged::ipc::types::*;
 // T6-1: pipe/shm/msgq 策略函数已迁移到 functions; DECISION-J: sem 壳已删, 亦走 functions
 use crate::functions::ipc::types::PIPE_BUFFER_SIZE;
 use crate::functions::ipc::{msgq, pipe, sem, shm};
@@ -313,4 +315,144 @@ fn create_test_namespace() -> IpcNamespace {
     let mut ns = IpcNamespace::empty();
     ns.allocate();
     ns
+}
+
+// ============================================================================
+// IPC 基础用例 (P-71 自 `privileged/ipc/mod.rs` 的 `#[cfg(test)] mod tests` 上移)
+// ============================================================================
+
+#[cfg(test)]
+mod ipc_tests {
+    use crate::privileged::ipc::types::{IpcId, IpcNamespace, MSG_MAX_SIZE};
+    // DECISION-J: sem/signal 壳已删, tests 经 functions 公共 API 访问 (测试代码)
+    use crate::functions::ipc::{sem, signal};
+
+    #[test]
+    fn test_pipe_create_and_close() {
+        let mut ns = IpcNamespace::empty();
+        ns.allocate();
+
+        let mut next_id: IpcId = 1;
+        let pid: u32 = 100;
+
+        // 测试创建管道 (T6-1: 委托 functions 策略)
+        match crate::functions::ipc::pipe::pipe_create_safe(&mut ns, &mut next_id, pid) {
+            Ok((rfd, wfd)) => {
+                assert!(rfd > 0);
+                assert!(wfd > 0);
+                assert_eq!(wfd, rfd + 1);
+
+                // 测试关闭读端
+                assert!(crate::functions::ipc::pipe::pipe_close_safe(&mut ns, rfd).is_ok());
+
+                // 测试关闭写端
+                assert!(crate::functions::ipc::pipe::pipe_close_safe(&mut ns, wfd).is_ok());
+            }
+            Err(e) => panic!("Failed to create pipe: {}", e),
+        }
+    }
+
+    // UT-06 (2026-09-24): test_shm_lifecycle 已迁出 — shm_create_safe 依赖裸机
+    // PMM (host 下不可用); 等价断言迁至 kernel_tests/test_ipc.rs
+    // (register_ipc_tests 注册), 在 kernel_test (QEMU 裸机) 执行.
+
+    #[test]
+    fn test_msgq_send_recv() {
+        let mut ns = IpcNamespace::empty();
+        ns.allocate();
+
+        let mut next_id: IpcId = 1;
+        let pid: u32 = 300;
+
+        // 创建消息队列 (T6-1: 委托 functions 策略)
+        let id = match crate::functions::ipc::msgq::msgq_create_safe(
+            &mut ns,
+            &mut next_id,
+            0o666,
+            pid,
+        ) {
+            Ok(id) => id,
+            Err(e) => panic!("Failed to create MsgQ: {}", e),
+        };
+
+        // 发送消息
+        let data = b"Hello, IPC!";
+        assert!(
+            crate::functions::ipc::msgq::msgq_send_safe(
+                &mut ns,
+                id,
+                42,
+                Some(data),
+                data.len(),
+                pid
+            )
+            .is_ok()
+        );
+
+        // 接收消息
+        let mut type_out: u64 = 0;
+        let mut buf = [0u8; MSG_MAX_SIZE];
+        let mut size_out: u64 = 0;
+
+        let read_size = match crate::functions::ipc::msgq::msgq_recv_safe(
+            &mut ns,
+            id,
+            Some(&mut type_out),
+            Some(&mut buf),
+            Some(&mut size_out),
+        ) {
+            Ok(n) => n,
+            Err(e) => panic!("Failed to receive message: {}", e),
+        };
+
+        assert_eq!(type_out, 42);
+        assert_eq!(read_size, data.len());
+        assert_eq!(&buf[..data.len()], data);
+
+        // 销毁队列
+        assert!(crate::functions::ipc::msgq::msgq_destroy_safe(&mut ns, id).is_ok());
+    }
+
+    #[test]
+    fn test_semaphore_operations() {
+        let mut ns = IpcNamespace::empty();
+        ns.allocate();
+
+        let mut next_id: IpcId = 1;
+        let pid: u32 = 400;
+
+        // 创建计数为 1 的信号量 (互斥锁)
+        let id = match sem::sem_create_safe(&mut ns, &mut next_id, 1, 10, pid) {
+            Ok(id) => id,
+            Err(e) => panic!("Failed to create semaphore: {}", e),
+        };
+
+        // P 操作 (应该成功)
+        assert!(sem::sem_wait_safe(&mut ns, id).is_ok());
+
+        // V 操作
+        assert!(sem::sem_post_safe(&mut ns, id).is_ok());
+
+        // 销毁信号量
+        assert!(sem::sem_destroy_safe(&mut ns, id).is_ok());
+    }
+
+    #[test]
+    fn test_signal_validation() {
+        // 测试有效信号. 注: signal_send_safe 需目标进程存在才返回 Ok, host 与
+        // kernel_test 均无进程表 → 环境容差接受 Err(-2) (口径同 privileged/proc/
+        // signal.rs 的 kill_broadcast 用例), 但不得为范围错误 Err(-1).
+        let sent = signal::signal_send_safe(1, 100); // SIGINT
+        assert!(sent.is_ok() || sent == Err(-2), "got {:?}", sent);
+        assert!(signal::signal_register_safe(1, None, 0).is_ok());
+        assert!(signal::signal_block_safe(1).is_ok());
+        assert!(signal::signal_unblock_safe(1).is_ok());
+
+        // 测试无效信号 (超出范围)
+        assert!(signal::signal_send_safe(0, 100).is_err()); // 信号 0 无效
+        assert!(signal::signal_send_safe(33, 100).is_err()); // 超出最大值
+        assert!(signal::signal_register_safe(0, None, 0).is_err());
+        assert!(signal::signal_block_safe(0).is_err());
+        assert!(signal::signal_unblock_safe(34).is_err());
+    }
 }

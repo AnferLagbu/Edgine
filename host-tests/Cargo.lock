@@ -175,11 +175,28 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 name = "kernel"
 version = "0.1.0"
 dependencies = [
+ "kernel-functions",
+ "kernel-privileged",
+]
+
+[[package]]
+name = "kernel-functions"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.12.1",
+ "kernel-privileged",
+ "smoltcp",
+ "zerocopy",
+]
+
+[[package]]
+name = "kernel-privileged"
+version = "0.1.0"
+dependencies = [
  "bitflags 2.12.1",
  "ed25519-dalek",
  "edgine-abi",
  "smoltcp",
- "zerocopy",
 ]
 
 [[package]]

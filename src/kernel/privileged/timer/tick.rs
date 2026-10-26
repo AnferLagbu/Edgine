@@ -610,8 +610,9 @@ pub fn get_time_info() -> (u64, u32, u64, u64, u64) {
 /// `tick` / `calibration` / `sleep` 三个子模块的用例都会读写时基全局状态
 /// (频率登记 / 锚点 / 频率置 0 / 忙等待折算), 并行 test runner 下必须共用一把锁,
 /// 否则偶发失败 (2026-09-24 UT-06 同源问题).
+// P-71: `pub(in …)` 路径走不了 crate 内的 `privileged` 自别名 (E0578), 直接用真实模块路径.
 #[cfg(test)]
-pub(in crate::privileged::timer) static FREQ_TEST_LOCK: crate::privileged::sync::IrqSpinLock<()> =
+pub(in crate::timer) static FREQ_TEST_LOCK: crate::privileged::sync::IrqSpinLock<()> =
     crate::privileged::sync::IrqSpinLock::new(());
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 //! E-04 (2026-09-06): 测试运行器双端适配 — host 端共享测试集执行载体
 //!
-//! 调用内核 `privileged::tests::host_test_runner_main()`, 在 host (std) 下执行与
+//! 调用内核 `kernel_tests::host_test_runner_main()`, 在 host (std) 下执行与
 //! kernel_test (QEMU) 共享的同一套纯逻辑测试代码 (privileged/tests 门控外 15 mod
 //! + any(kernel_test, host-test) 5 mod), 断言 0 failed.
 //!
@@ -9,7 +9,8 @@
 //!
 //! 本文件保留为 E-05 共享测试集的 host 端执行载体.
 
-use edgine::kernel::privileged::tests::host_test_runner_main;
+// P-71: 跨层注册上移出 TCB, host 端入口随之迁到 glue 的 `kernel_tests`.
+use edgine::kernel::kernel_tests::host_test_runner_main;
 
 #[test]
 fn e04_shared_runner_zero_failed() {

@@ -121,25 +121,32 @@ ci-test-aarch64:
 # 到红. 命令与 workflow 保持逐字一致 (裸机 doc 需 build-std 注入).
 # 两腿**串联但独立判定**: 旧形态 x86_64 先红即中断, aarch64 腿的 rustdoc 状态
 # 从不被测得 (P-39/R-5 病灶); 现在两腿都跑完再汇总退出码.
+# P-71: `src/kernel` 已拆为 workspace, 加 `--workspace` 让 kernel-privileged 的文档
+# 也进入本腿 (否则 TCB 的 intra-doc link 无人检查, 与 missing_docs 同型漏检).
+# 同轮修复本腿既有的退出码缺陷: 原 `cargo doc … | tee | tail; rc=$?` 取的是 **tail**
+# 的退出码 (恒 0), 故 `-D rustdoc::…` 报告再多错误也判绿 —— 改为重定向到日志后
+# 单独取 rc, 再 tail 展示最后 5 行.
 ci-rustdoc:
 	@echo "[+] rustdoc --no-deps 双架构阻断..."
 	@mkdir -p $(LOG_DIR)
 	@cd src/rust && { RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links -D rustdoc::private_intra_doc_links" \
 		cargo doc --release \
 		--manifest-path ../kernel/Cargo.toml \
+		--workspace \
 		--config 'unstable.build-std=["core","compiler_builtins","alloc"]' \
 		--config 'unstable.build-std-features=["compiler-builtins-mem"]' \
 		--target x86_64-unknown-none --target-dir ../../other/target \
-		--lib --bins --examples --no-deps 2>&1 | tee ../../$(LOG_DIR)/rustdoc_x86_64.log | tail -5; \
-	x86_status=$$?; \
+		--lib --bins --examples --no-deps > ../../$(LOG_DIR)/rustdoc_x86_64.log 2>&1; \
+	x86_status=$$?; tail -5 ../../$(LOG_DIR)/rustdoc_x86_64.log; \
 	RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links -D rustdoc::private_intra_doc_links" \
 		cargo doc --release \
 		--manifest-path ../kernel/Cargo.toml \
+		--workspace \
 		--config 'unstable.build-std=["core","compiler_builtins","alloc"]' \
 		--config 'unstable.build-std-features=["compiler-builtins-mem"]' \
 		--target aarch64-unknown-none-softfloat --target-dir ../../other/target \
-		--lib --bins --examples --no-deps 2>&1 | tee ../../$(LOG_DIR)/rustdoc_aarch64.log | tail -5; \
-	arm_status=$$?; \
+		--lib --bins --examples --no-deps > ../../$(LOG_DIR)/rustdoc_aarch64.log 2>&1; \
+	arm_status=$$?; tail -5 ../../$(LOG_DIR)/rustdoc_aarch64.log; \
 	echo "x86_64 rustdoc exit: $$x86_status"; \
 	echo "aarch64 rustdoc exit: $$arm_status"; \
 	if [ $$x86_status -ne 0 ] || [ $$arm_status -ne 0 ]; then exit 1; fi; }

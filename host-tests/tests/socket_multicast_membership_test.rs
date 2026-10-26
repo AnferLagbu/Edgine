@@ -30,7 +30,10 @@ fn read_src(rel: &str) -> String {
 const MCAST: &str = "src/kernel/privileged/net/mcast.rs";
 const SM_FI: &str = "src/kernel/privileged/net/init/sm_fi.rs";
 const RAW: &str = "src/kernel/privileged/net/init/raw.rs";
-const CARGO: &str = "src/kernel/Cargo.toml";
+// P-71: smoltcp 依赖 (及其 feature 组合) 已随 functions 层独立成 crate 而迁到
+// `functions/Cargo.toml`; glue 只做同名再导出, 自身不再声明 smoltcp. 本契约锁的是
+// "实际消费 smoltcp 的那份 manifest", 故指向 functions.
+const CARGO: &str = "src/kernel/functions/Cargo.toml";
 const SYSCALL: &str = "src/kernel/privileged/net/syscall.rs";
 const USERLIB: &str = "src/user/lib/src/sys.rs";
 

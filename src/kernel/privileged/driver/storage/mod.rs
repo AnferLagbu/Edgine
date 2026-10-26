@@ -199,8 +199,8 @@ pub fn nvme_alloc_io_queues() -> Option<((u64, u64), (u64, u64))> {
 /// 物理页由 `BuddyFrameAlloc` 分配并清零, 句柄析构即按持有计数归还物理帧
 /// (取代原 `alloc_coherent` + `free_coherent` 双键反查路径)。
 fn alloc_dma_buffer(size: usize) -> Option<DmaStream> {
-    use crate::privileged::alloc::frame_alloc::{BuddyFrameAlloc, FrameAlloc};
     use crate::privileged::dma::get_dma;
+    use crate::privileged::mem_alloc::frame_alloc::{BuddyFrameAlloc, FrameAlloc};
     use crate::privileged::mm::PAGE_SIZE;
 
     if size == 0 {

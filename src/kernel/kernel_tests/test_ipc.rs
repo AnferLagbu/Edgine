@@ -1,16 +1,16 @@
-use super::check;
 use crate::privileged::ipc::types::{IpcId, IpcNamespace};
+use crate::privileged::tests::check;
 // T6-1: pipe/shm 策略函数已迁移到 functions; DECISION-J: sem 壳已删, 亦走 functions
 use crate::functions::ipc::{pipe, sem, shm};
 use crate::privileged::tests::{TestResult, runner};
 use crate::register_tests_inner;
 // UT-06 (2026-09-24): 迁移用例 (裸机 PMM 依赖) 专属导入, host-test 下编译为空
 #[cfg(not(feature = "host-test"))]
-use super::assert_eq_test;
-#[cfg(not(feature = "host-test"))]
 use crate::functions::ipc::msgq;
 #[cfg(not(feature = "host-test"))]
 use crate::privileged::ipc::dynamic::DynIpcNamespace;
+#[cfg(not(feature = "host-test"))]
+use crate::privileged::tests::assert_eq_test;
 
 fn create_test_namespace() -> IpcNamespace {
     let mut ns = IpcNamespace::empty();

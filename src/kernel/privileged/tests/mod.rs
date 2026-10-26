@@ -26,21 +26,17 @@ pub mod net;
 pub mod reset;
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod sched;
-#[cfg(any(feature = "kernel_test", feature = "host-test"))]
-pub mod sys;
-pub mod test_config;
 pub mod test_freg;
 pub mod test_freg_ext;
-// UT-07 (2026-09-26): test_sgeg 注册载体已删 — functions::sgeg::policy
-// (CapBits/CapMatrix/InMemoryMatrix) 纯逻辑断言以该文件源侧 #[cfg(test)] 为唯一归属.
-pub mod test_ipc;
 pub mod test_mm;
 pub mod test_new_features;
 pub mod test_pi_mutex;
 pub mod test_proc;
-pub mod test_pwm;
 pub mod test_smp;
-pub mod test_uds;
+// UT-07 (2026-09-26): test_sgeg 注册载体已删 — functions::sgeg::policy
+// (CapBits/CapMatrix/InMemoryMatrix) 纯逻辑断言以该文件源侧 #[cfg(test)] 为唯一归属.
+// P-71: sys / test_config / test_ipc / test_pwm / test_uds 五个跨层载体已上移至
+// glue crate 的 `kernel_tests` (TCB 不可反向依赖 functions).
 
 pub type TestFn = fn() -> TestResult;
 
@@ -123,6 +119,11 @@ impl TestRunner {
 
     pub fn register(&self, module: &'static str, name: &'static str, func: TestFn) {
         self.registry.lock().register(module, name, func);
+    }
+
+    /// 已注册用例数 (P-71: glue crate 的编排入口读取注册计数).
+    pub fn count(&self) -> usize {
+        self.registry.lock().count
     }
 
     pub fn run_all(&self) {
@@ -395,71 +396,14 @@ macro_rules! register_tests_inner {
 
 pub use {assert_eq_test, check, skip_test};
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
-pub fn test_runner_init() {
-    crate::klog_boot_info!("[TEST] === Edgine Test Privileged ===");
-
-    register_all_tests();
-
-    let r = runner();
-    let count = r.registry.lock().count;
-    crate::klog_boot_info!("[TEST] Registered {} test cases", count);
-
-    // 诊断: test 运行前检查页表
-    {
-        let read_u64 = |phys: u64, idx: usize| -> u64 {
-            let va = phys + crate::privileged::mm::KERNEL_BASE + idx as u64 * 8;
-            // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
-            unsafe { core::ptr::read_volatile(va as *const u64) }
-        };
-        let pd24 = read_u64(0x109000, 24);
-        let pd63 = read_u64(0x109000, 63);
-        crate::klog_boot_info!(
-            "[PAGETABLE] before run_all: pd[24]=0x{:016X} pd[63]=0x{:016X}",
-            pd24,
-            pd63
-        );
-    }
-
-    r.run_all();
-
-    let p = r.passed.load(Ordering::Relaxed);
-    let f = r.failed.load(Ordering::Relaxed);
-    if f == 0 {
-        crate::klog_boot_info!(
-            "[TEST] ALL TESTS PASSED ({}/{})",
-            p,
-            p + r.skipped.load(Ordering::Relaxed)
-        );
-    } else {
-        crate::klog_boot_info!("[TEST] COMPLETE: {} passed, {} FAILED", p, f);
-    }
-}
-
 // E-04 (2026-09-06): 测试运行器双端适配 — 注册入口抽取.
-// kernel_test 启动路径 (test_runner_init) 与 host-test 入口 (host_test_runner_main)
-// 共用同一注册逻辑, 保证双端注册同一套纯逻辑测试集 (注册数一致).
-// 门控外 15 mod + any(kernel_test, host-test) 5 mod 在双端均注册;
-// kernel_test 硬件路径 (driver/idt/timer/signal/...) 保持 kernel_test 专属,
-// host-test 下不编译 (这些 mod 在 host 下不存在).
+// kernel_test 启动路径与 host-test 入口共用同一注册逻辑, 保证双端注册同一套
+// 纯逻辑测试集 (注册数一致). P-71 起跨层载体 (sys/config/pwm/ipc/uds) 由 glue
+// crate 的 `kernel_tests::register_upper_tests()` 承担, 本函数只注册 TCB 内用例.
 pub fn register_all_tests() {
-    // FS 全局单例初始化 — 测试模式下需主动 init, 否则后续
-    // 调用 global() 会 panic (e.g. devfs::global() called before init_global()).
-    // init_global 是幂等的 (OnceCell::get_or_init), 多次调用安全.
-    // 注: ramfs::init_global 需要 mount_point 参数, 在 mount 测试内显式调用.
-    crate::functions::fs::devfs::init_global();
-    crate::functions::fs::procfs::init_global();
-
     test_freg::register_freg_tests();
     test_freg_ext::register_freg_ext_tests();
-    test_config::register_config_tests();
-    test_pwm::register_pwm_tests();
     test_mm::register_mm_tests();
-    test_ipc::register_ipc_tests();
-    test_uds::register_uds_tests();
     test_pi_mutex::register_pi_mutex_tests();
     test_proc::register_proc_tests();
     test_new_features::register_new_tests();
@@ -472,7 +416,6 @@ pub fn register_all_tests() {
         #[cfg(target_arch = "x86_64")]
         {
             arch::register_tests();
-            sys::register_tests();
         }
         sched::register_tests();
         net::register_tests();
@@ -519,21 +462,4 @@ pub struct TestSummary {
     pub passed: u32,
     pub failed: u32,
     pub skipped: u32,
-}
-
-/// E-04 (2026-09-06): 测试运行器双端适配 — host-test 侧测试入口.
-///
-/// 与 kernel_test 的 `test_runner_init` 等价: 注册全部纯逻辑测试 + 执行 `run_all()`
-/// (输出经 `serial_print` host 分支走 stdout), 返回汇总供 host-tests 断言.
-/// 仅 host-test feature 下编译 (F9 死代码零容忍); kernel_test/裸机构建不包含本函数.
-#[cfg(feature = "host-test")]
-pub fn host_test_runner_main() -> TestSummary {
-    register_all_tests();
-    let r = runner();
-    r.run_all();
-    TestSummary {
-        passed: r.passed.load(Ordering::Relaxed),
-        failed: r.failed.load(Ordering::Relaxed),
-        skipped: r.skipped.load(Ordering::Relaxed),
-    }
 }

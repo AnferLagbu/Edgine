@@ -1,3 +1,68 @@
+#![cfg_attr(not(feature = "host-test"), no_std)]
+// P-71: 模块 `lib` 与 library target 根同名, 触发 special_module_name (原单 crate
+// 下嵌套于 `privileged::lib`, 无此特例). 重命名会改动 privileged::lib 公共路径,
+// 故在 crate 级豁免该命名特例 lint.
+#![allow(special_module_name)]
+// ── P-71: crate 级 lint 豁免 ──────────────────────────────────────────
+// 以下豁免原以 `#![allow(...)]` 写在 glue crate 根 (src/kernel/lib.rs), 单 crate 时覆盖
+// 全树; privileged 独立成 crate 后须各持一份 (lint 属性不跨 crate 继承). 条目与 lib.rs
+// 逐项对应 ⇒ 拆分前后豁免面完全一致, 属**迁移**而非新增抑制 (清零工程仍归 P-64).
+// 不用 Cargo `[lints]` 表: 命令行 `-D clippy::pedantic` 优先级高于 manifest 表, 会让
+// `[lints]` 的 allow 在 ci/audit.sh 里全部失效 (实测 1623 条误报).
+// 详细理由见 lib.rs 各同名条目注释.
+// rustc 家族: C 互操作命名 / FFI 类型 / 全局可变静态
+#![allow(static_mut_refs)]
+#![allow(non_upper_case_globals)]
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+#![allow(improper_ctypes)]
+// clippy 家族
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+#![allow(clippy::mut_from_ref)]
+#![allow(clippy::manual_c_str_literals)]
+#![allow(clippy::empty_line_after_doc_comments)]
+#![allow(clippy::result_unit_err)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::module_inception)]
+#![allow(clippy::new_without_default)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::single_match)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::transmute_ptr_to_ptr)]
+#![allow(clippy::missing_transmute_annotations)]
+#![allow(clippy::let_and_return)]
+#![allow(clippy::wrong_self_convention)]
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::manual_find)]
+#![allow(clippy::unnecessary_cast)]
+#![allow(clippy::unnecessary_lazy_evaluations)]
+#![allow(clippy::manual_div_ceil)]
+#![allow(clippy::manual_unwrap_or_default)]
+#![allow(clippy::manual_unwrap_or)]
+#![allow(clippy::unnecessary_map_or)]
+#![allow(clippy::derivable_impls)]
+#![allow(clippy::manual_checked_ops)]
+#![allow(clippy::question_mark)]
+#![allow(clippy::manual_range_patterns)]
+#![allow(clippy::manual_flatten)]
+#![allow(clippy::collapsible_match)]
+#![allow(clippy::empty_loop)]
+#![allow(clippy::explicit_counter_loop)]
+#![allow(clippy::pointers_in_nomem_asm_block)]
+#![allow(clippy::doc_lazy_continuation)]
+#![allow(clippy::doc_overindented_list_items)]
+#![allow(clippy::must_use_candidate)]
+#![allow(clippy::unreadable_literal)]
+#![allow(clippy::inline_always)]
+#![allow(clippy::struct_field_names)]
+#![allow(clippy::pub_underscore_fields)]
+#![allow(clippy::struct_excessive_bools)]
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::ptr_as_ptr)]
+#![allow(clippy::cast_ptr_alignment)]
+#![allow(clippy::zero_sized_map_values)]
+#![allow(clippy::missing_fields_in_debug)]
 //! Edgine Framekernel — 特权 OS Framework (TCB)
 //!
 //! 这是整个内核中**唯一**允许包含 `unsafe` Rust 代码的模块。
@@ -63,7 +128,13 @@
 //! 2. 调用方保证: 哪些条件由调用上下文的类型/生命周期保证
 //! 3. 硬件契约: 对 CPU/MMU/DMA 行为的假设
 
-pub mod alloc;
+// ── P-71: crate 根适配 ────────────────────────────────────────────────
+// 既有代码里 1736 处 `crate::privileged::…` 自我引用不作改写: 自别名把本 crate
+// 根重新导出成 `privileged` 模块; glue 侧再 `pub use kernel_privileged as privileged`.
+// host-test 下启用 std (与 glue 的门控同语义), 裸机目标保持 no_std.
+extern crate alloc;
+pub use crate as privileged;
+
 pub mod arch;
 pub mod boot;
 pub mod config;
@@ -84,6 +155,13 @@ pub mod iobuf;
 pub mod ipc;
 pub mod irq;
 pub mod klog;
+/// 内存分配器 TCB — `FrameAlloc` / `SlabAlloc` trait 注入点.
+///
+/// P-71: 本模块原名 `alloc`. 独立成 crate 后, 根级 `alloc` 会与 `extern crate alloc`
+/// 的 crate 绑定同名冲突 (E0260), 故改名 `mem_alloc`, 避免迫使 202 处 `alloc::…` 路径改写.
+pub mod mem_alloc;
+// P-71: 模块名 `lib` 与本 crate 的 library target 根同名, 触发 special_module_name
+// (原单 crate 下嵌套于 `privileged::lib`, 无此特例). 路径保持不变以免影响调用方.
 pub mod lib;
 pub mod mm;
 pub mod net;
@@ -146,3 +224,39 @@ pub mod tick_query;
 
 /// 进程退出清理回调接口 (消除 proc 对 egdf::user_driver 的直接依赖)
 pub mod process_cleanup;
+
+// ============================================================================
+// P-71: 日志宏归 TCB (原 functions/mod.rs 定义)
+//
+// 展开后只调用本 crate 的 safe 函数 `klog::log`, 不含任何 unsafe 块.
+// 定义随 TCB 下沉后, `privileged` 自身与 glue crate 的 functions 层共用同一份宏
+// (`$crate::privileged::klog::…` 经 crate 内自别名解析).
+// ============================================================================
+
+/// 通用日志宏 — 指定级别与分类.
+#[macro_export]
+macro_rules! slog {
+    ($lvl:ident, $cat:ident, $($arg:tt)*) => {
+        $crate::privileged::klog::log(
+            $crate::privileged::klog::LogLevel::$lvl,
+            $crate::privileged::klog::LogCategory::$cat,
+            format_args!($($arg)*),
+        )
+    };
+}
+
+/// `Info` 级日志宏.
+#[macro_export]
+macro_rules! slog_info  { ($cat:ident, $($arg:tt)*) => { $crate::slog!(Info,  $cat, $($arg)*) }; }
+/// `Warn` 级日志宏.
+#[macro_export]
+macro_rules! slog_warn  { ($cat:ident, $($arg:tt)*) => { $crate::slog!(Warn,  $cat, $($arg)*) }; }
+/// `Error` 级日志宏.
+#[macro_export]
+macro_rules! slog_err   { ($cat:ident, $($arg:tt)*) => { $crate::slog!(Error, $cat, $($arg)*) }; }
+/// `Debug` 级日志宏.
+#[macro_export]
+macro_rules! slog_debug { ($cat:ident, $($arg:tt)*) => { $crate::slog!(Debug, $cat, $($arg)*) }; }
+/// `Crit` 级日志宏.
+#[macro_export]
+macro_rules! slog_crit  { ($cat:ident, $($arg:tt)*) => { $crate::slog!(Crit,  $cat, $($arg)*) }; }

@@ -162,7 +162,7 @@ pub fn devtree_root_id() -> NodeId {
 }
 
 /// 创建新的设备树节点
-pub(crate) fn devtree_create_node_impl(
+pub fn devtree_create_node_impl(
     name: &'static str,
     proto: EGDFProto,
     parent_id: Option<NodeId>,

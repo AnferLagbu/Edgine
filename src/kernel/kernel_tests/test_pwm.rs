@@ -1,7 +1,7 @@
-use super::check;
 use crate::privileged::sgeg::capability;
 use crate::privileged::sgeg::engine;
 use crate::privileged::sgeg::types::{CapBits, CapDomain, GrantRecord, PwmEntry, PwmFlags, PwmId};
+use crate::privileged::tests::check;
 use crate::privileged::tests::{TestResult, runner};
 use crate::register_tests_inner;
 

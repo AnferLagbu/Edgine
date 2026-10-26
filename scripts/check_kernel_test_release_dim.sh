@@ -6,8 +6,9 @@
 # 测试维此前不由任何门禁编译 ⇒ 把掩码改回去时六门槛照样全绿.
 #
 # 两条判据, 缺一即失败:
-#   1. cargo test --release --features host-test --lib --no-run 退出码为 0
+#   1. cargo test --workspace --release --features host-test --lib --no-run 退出码为 0
 #      —— 拦 error 类错配 (lockdep 形态: 测试引用被掩码摘除的符号)
+#      P-71: privileged 已拆为独立 crate, --workspace 使两个测试目标都受检.
 #   2. 本 crate 诊断路径下的告警数为 0
 #      —— 拦 warning 类错配 (spinlock 的历史形态: 整条用例不掩 + 内层语句掩 ⇒ unused variable)
 #
@@ -29,7 +30,7 @@ set -uo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL_DIR="$PROJECT_ROOT/src/kernel"
 
-OUT="$(cd "$KERNEL_DIR" && cargo test --release --features host-test --lib --no-run 2>&1)"
+OUT="$(cd "$KERNEL_DIR" && cargo test --workspace --release --features host-test --lib --no-run 2>&1)"
 RC=$?
 
 SELF_WARN="$(printf '%s\n' "$OUT" | grep -cE '^[[:space:]]*--> [^/[:space:]]')"

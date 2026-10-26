@@ -1,0 +1,58 @@
+[package]
+name = "kernel-privileged"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Edgine 内核 TCB (framekernel privileged 层) — 唯一允许 unsafe 的 crate"
+repository = "https://gitee.com/AnferLagbu/Edgine"
+readme = "../../../README.md"
+
+[lib]
+# P-71: 不移动既有文件, 直接以目录下既存的 mod.rs 作为 crate 根.
+# 旧写法 `pub mod privileged;` 由 glue 的 `pub use kernel_privileged as privileged;`
+# 顶替, 全仓 `crate::privileged::…` 路径因此零改写.
+name = "kernel_privileged"
+path = "mod.rs"
+
+[dependencies]
+edgine-abi = { path = "../../rust/edgine-abi" }
+bitflags = "2.4"
+# DECISION-078: 真实 Ed25519 签名验证 (RFC 8032). BSD-3-Clause OR Apache-2.0.
+ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
+smoltcp = { path = "../functions/net/smoltcp", default-features = false, features = [
+    "medium-ethernet",
+    "iface-max-addr-count-4",
+    "proto-ipv4",
+    "proto-ipv4-fragmentation",
+    "proto-ipv6",
+    "proto-ipv6-slaac",
+    "proto-dhcpv4",
+    "proto-dns",
+    "multicast",
+    "iface-max-multicast-group-count-8",
+    "socket-udp",
+    "socket-tcp",
+    "socket-tcp-cubic",
+    "socket-dhcpv4",
+    "socket-dns",
+    "auto-icmp-echo-reply",
+] }
+
+[features]
+default = []
+# 与 glue 的同名 feature 一一对应, 由 glue 逐项转发 (见 src/kernel/Cargo.toml).
+alloc = []
+debug_mutex = []
+debug_syscall = []
+dns-selftest = []
+fault_injection = []
+freg = []
+host-test = []
+json_export = []
+kaslr = []
+kernel_test = []
+lockdep = []
+log = []
+net = []
+preempt = []
+smp = []

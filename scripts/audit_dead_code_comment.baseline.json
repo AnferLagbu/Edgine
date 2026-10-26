@@ -5,8 +5,8 @@
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 1660,
-    "files": 303
+    "sites": 1752,
+    "files": 306
   },
   "entries": [
     [
@@ -845,6 +845,236 @@
       3
     ],
     [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::cast_ptr_alignment)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::collapsible_if)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::collapsible_match)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::derivable_impls)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::doc_lazy_continuation)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::doc_markdown)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::doc_overindented_list_items)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::empty_line_after_doc_comments)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::empty_loop)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::explicit_counter_loop)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::inline_always)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::let_and_return)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::manual_c_str_literals)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::manual_checked_ops)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::manual_div_ceil)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::manual_find)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::manual_flatten)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::manual_range_patterns)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::manual_unwrap_or)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::manual_unwrap_or_default)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::missing_fields_in_debug)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::missing_transmute_annotations)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::module_inception)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::must_use_candidate)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::mut_from_ref)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::needless_range_loop)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::new_without_default)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::not_unsafe_ptr_arg_deref)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::pointers_in_nomem_asm_block)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::ptr_as_ptr)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::pub_underscore_fields)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::question_mark)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::result_unit_err)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::single_match)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::struct_excessive_bools)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::struct_field_names)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::too_many_arguments)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::too_many_lines)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::transmute_ptr_to_ptr)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::type_complexity)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::unnecessary_cast)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::unnecessary_lazy_evaluations)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::unnecessary_map_or)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::unreadable_literal)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::wrong_self_convention)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(clippy::zero_sized_map_values)",
+      1
+    ],
+    [
       "src/kernel/functions/net/dhcp_policy.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       1
@@ -1120,6 +1350,26 @@
       1
     ],
     [
+      "src/kernel/kernel_tests/mod.rs",
+      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
+      1
+    ],
+    [
+      "src/kernel/kernel_tests/test_ipc.rs",
+      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
+      4
+    ],
+    [
+      "src/kernel/kernel_tests/test_ipc.rs",
+      "#[expect(clippy::similar_names,reason=\"变量名相似表达同族概念(pd/pt/bm等)",
+      1
+    ],
+    [
+      "src/kernel/kernel_tests/test_uds.rs",
+      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
+      1
+    ],
+    [
       "src/kernel/lib.rs",
       "#![allow(clippy::cast_ptr_alignment)",
       1
@@ -1367,11 +1617,6 @@
     [
       "src/kernel/memory_allocator.rs",
       "#[expect(clippy::match_same_arms,reason=\"TAG_KMALLOC与wildcardbody相同是已知安全;显式列举便于未来扩展\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/alloc/frame_alloc.rs",
-      "#[expect(clippy::match_wildcard_for_single_variants,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
     ],
     [
@@ -2490,6 +2735,11 @@
       5
     ],
     [
+      "src/kernel/privileged/mem_alloc/frame_alloc.rs",
+      "#[expect(clippy::match_wildcard_for_single_variants,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
+      1
+    ],
+    [
       "src/kernel/privileged/mm/api.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       1
@@ -2918,6 +3168,236 @@
       "src/kernel/privileged/mm/vmm_x86_64.rs",
       "#[expect(clippy::used_underscore_binding,reason=\"下划线前缀表示私有约定或局部清理;重命名需追改所有访问点,风险高\")",
       12
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::cast_ptr_alignment)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::collapsible_if)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::collapsible_match)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::derivable_impls)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::doc_lazy_continuation)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::doc_markdown)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::doc_overindented_list_items)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::empty_line_after_doc_comments)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::empty_loop)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::explicit_counter_loop)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::inline_always)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::let_and_return)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::manual_c_str_literals)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::manual_checked_ops)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::manual_div_ceil)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::manual_find)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::manual_flatten)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::manual_range_patterns)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::manual_unwrap_or)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::manual_unwrap_or_default)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::missing_fields_in_debug)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::missing_transmute_annotations)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::module_inception)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::must_use_candidate)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::mut_from_ref)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::needless_range_loop)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::new_without_default)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::not_unsafe_ptr_arg_deref)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::pointers_in_nomem_asm_block)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::ptr_as_ptr)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::pub_underscore_fields)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::question_mark)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::result_unit_err)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::single_match)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::struct_excessive_bools)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::struct_field_names)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::too_many_arguments)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::too_many_lines)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::transmute_ptr_to_ptr)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::type_complexity)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::unnecessary_cast)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::unnecessary_lazy_evaluations)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::unnecessary_map_or)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::unreadable_literal)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::wrong_self_convention)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(clippy::zero_sized_map_values)",
+      1
     ],
     [
       "src/kernel/privileged/net/iface_trait.rs",
@@ -3680,24 +4160,9 @@
       1
     ],
     [
-      "src/kernel/privileged/tests/mod.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
-    ],
-    [
       "src/kernel/privileged/tests/test_freg.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       3
-    ],
-    [
-      "src/kernel/privileged/tests/test_ipc.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      4
-    ],
-    [
-      "src/kernel/privileged/tests/test_ipc.rs",
-      "#[expect(clippy::similar_names,reason=\"变量名相似表达同族概念(pd/pt/bm等)",
-      1
     ],
     [
       "src/kernel/privileged/tests/test_mm.rs",
@@ -3733,11 +4198,6 @@
       "src/kernel/privileged/tests/test_smp.rs",
       "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
       3
-    ],
-    [
-      "src/kernel/privileged/tests/test_uds.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
     ],
     [
       "src/kernel/privileged/timer/calibration.rs",

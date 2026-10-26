@@ -26,12 +26,8 @@ pub type IoError = crate::privileged::error::KernelError;
 pub type OutOfMemory = crate::privileged::error::KernelError;
 pub type ReadOnly = crate::privileged::error::KernelError;
 
-impl KernelError {
-    /// VFS 风格返回: 负 errno (POSIX `-|errno|` 约定)
-    pub fn as_i32(self) -> i32 {
-        -(self.as_errno() as i32)
-    }
-}
+// P-71: `impl KernelError { as_i32 }` 已归位 privileged/error.rs — KernelError 定义
+// 在本 crate 之外, 此处再写 inherent impl 触发 E0116. 方法经上方的 re-export 可用.
 
 // 统一到 privileged::error (阶段 4b: 定义迁回 privileged, 本处 re-export)
 pub use crate::privileged::error::KernelResult;
