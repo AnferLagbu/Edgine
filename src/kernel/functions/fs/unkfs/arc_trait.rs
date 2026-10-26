@@ -38,7 +38,7 @@ use super::arc::{UnkfsArc, UnkfsArcBufType, UnkfsArcKey};
 /// - `init` 应只调用一次 (初始化 `hash_table` + `max_size`)
 /// - `lookup` 返回 true 表示命中, false 表示未命中
 /// - `insert` 在容量满时会按 ARC 策略淘汰
-/// - `release` 减少 `ref_count`, 0 时可淘汰
+/// - `release` 为兼容接口: 数据寿命由实现的共享句柄保证, 不参与淘汰判定
 pub trait ArcCache: Send + Sync {
     /// 初始化缓存
     fn init(&self, max_size: usize);

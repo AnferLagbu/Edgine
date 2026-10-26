@@ -1,11 +1,11 @@
 {
   "_meta": {
     "generated_by": "python3 scripts/audit_missing_docs_debt.py --update-baseline",
-    "口径": "rustc missing_docs 在 src/kernel workspace 两个成员 (kernel + kernel-privileged) x86_64 --lib 单维的读数, 按 (文件, 项类型) 记数; vendored smoltcp 排除; bins/examples 与 aarch64 维不在射程",
+    "口径": "rustc missing_docs 在 src/kernel workspace 三个成员 (kernel + kernel-privileged + kernel-functions) x86_64 --lib 单维的读数, 按 (文件, 项类型) 记数; vendored smoltcp 排除; bins/examples 与 aarch64 维不在射程",
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 4477,
+    "sites": 4475,
     "files": 237,
     "keys": 647
   },
@@ -483,7 +483,7 @@
     [
       "src/kernel/functions/fs/unkfs/arc.rs",
       "a method",
-      12
+      10
     ],
     [
       "src/kernel/functions/fs/unkfs/arc.rs",

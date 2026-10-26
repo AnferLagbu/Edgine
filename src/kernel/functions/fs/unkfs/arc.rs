@@ -1,7 +1,7 @@
 #![deny(unsafe_code)]
 use crate::functions::sync::irq_lock::IrqSpinLock as Mutex;
-use alloc::boxed::Box;
 use alloc::collections::VecDeque;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
@@ -62,7 +62,7 @@ impl UnkfsArcKey {
 
 pub struct UnkfsArcBuf {
     pub key: UnkfsArcKey,
-    pub data: Box<[u8]>,
+    pub data: Arc<[u8]>,
     pub size: usize,
     pub buf_type: UnkfsArcBufType,
     pub state: UnkfsArcState,
@@ -76,15 +76,11 @@ pub struct UnkfsArcBuf {
 // SAFETY (Framekernel P2.2.2): UnkfsArcBuf 全部字段自动 Send + Sync。
 
 impl UnkfsArcBuf {
-    pub fn new(key: UnkfsArcKey, size: usize, buf_type: UnkfsArcBufType) -> Self {
-        // 2026-09-11 实测: with_capacity+resize 触发 slow_vector_initialization, 需豁免
-        #[allow(clippy::slow_vector_initialization)]
-        let mut data = Vec::with_capacity(size);
-        data.resize(size, 0);
+    pub fn new(key: UnkfsArcKey, data: &[u8], buf_type: UnkfsArcBufType) -> Self {
         Self {
             key,
-            data: data.into_boxed_slice(),
-            size,
+            data: Arc::from(data),
+            size: data.len(),
             buf_type,
             state: UnkfsArcState::Anon,
             ref_count: AtomicU32::new(1),
@@ -93,14 +89,6 @@ impl UnkfsArcBuf {
             l2cached: false,
             compressed: false,
         }
-    }
-
-    pub fn is_referenced(&self) -> bool {
-        self.ref_count.load(Ordering::Acquire) > 0
-    }
-
-    pub fn add_ref(&self) {
-        self.ref_count.fetch_add(1, Ordering::AcqRel);
     }
 
     pub fn release(&self) -> u32 {
@@ -218,11 +206,11 @@ impl UnkfsArc {
         self.initialized.store(true, Ordering::Release);
     }
 
-    pub fn lookup(&self, key: &UnkfsArcKey) -> Option<*const u8> {
+    pub fn lookup(&self, key: &UnkfsArcKey) -> Option<Arc<[u8]>> {
         let mut inner = self.inner.lock();
         let bucket_idx = (key.hash() as usize) % HV_ARC_HASH_BUCKETS;
         let mut found_idx: Option<usize> = None;
-        let mut found_ptr: Option<*const u8> = None;
+        let mut found_data: Option<Arc<[u8]>> = None;
         let mut promote_to_mfu = false;
 
         for &idx in &inner.hash_table[bucket_idx] {
@@ -242,8 +230,8 @@ impl UnkfsArc {
                         if buf.state == UnkfsArcState::Mru {
                             promote_to_mfu = true;
                         }
-                        buf.add_ref();
-                        found_ptr = Some(buf.data.as_ptr());
+                        // ARC 共享句柄: 持有期间缓冲区不会被淘汰回收.
+                        found_data = Some(Arc::clone(&buf.data));
                     }
                     found_idx = Some(idx);
                     break;
@@ -258,7 +246,7 @@ impl UnkfsArc {
                 }
                 inner.mfu.push_back(idx);
             }
-            return found_ptr;
+            return found_data;
         }
         if let Some(pos) = inner.ghost_mru.iter().position(|k| {
             k.vdev_id == key.vdev_id && k.offset == key.offset && k.birth_txg == key.birth_txg
@@ -287,11 +275,12 @@ impl UnkfsArc {
         None
     }
 
-    /// Framekernel P2.2.2: 安全地获取缓存切片，通过 privileged `arc_safe::ptr_to_slice` 封装 unsafe
-    /// 调用者仍需在访问后调用 release(key) 释放引用计数
-    pub fn lookup_slice(&self, key: &UnkfsArcKey, len: usize) -> Option<&[u8]> {
-        let ptr = self.lookup(key)?;
-        crate::privileged::fs::unkfs::arc_safe::ptr_to_slice(ptr, len)
+    /// 安全地获取缓存数据的共享句柄 (0 unsafe)
+    ///
+    /// 返回 `Arc<[u8]>`: 持有期间该缓冲区不会被淘汰回收, 无需配对 release。
+    /// 返回长度为缓存条目的实际长度, 调用方按 `data.len()` 自行裁剪范围。
+    pub fn lookup_slice(&self, key: &UnkfsArcKey) -> Option<Arc<[u8]>> {
+        self.lookup(key)
     }
 
     pub fn insert(
@@ -299,12 +288,11 @@ impl UnkfsArc {
         key: UnkfsArcKey,
         data: &[u8],
         buf_type: UnkfsArcBufType,
-    ) -> Option<*const u8> {
+    ) -> Option<Arc<[u8]>> {
         let mut inner = self.inner.lock();
         self.remove_key(&mut inner, &key);
         self.evict_if_needed(&mut inner, data.len());
-        let mut buf = UnkfsArcBuf::new(key, data.len(), buf_type);
-        buf.data[..data.len()].copy_from_slice(data);
+        let mut buf = UnkfsArcBuf::new(key, data, buf_type);
         buf.state = UnkfsArcState::Mru;
         let slot_idx = inner.buffers.iter().position(core::option::Option::is_none);
         let idx = if let Some(i) = slot_idx {
@@ -332,10 +320,7 @@ impl UnkfsArc {
         self.stats
             .mru_size
             .fetch_add(data.len() as u64, Ordering::Relaxed);
-        inner.buffers[idx].as_ref().map(|b| {
-            b.add_ref();
-            b.data.as_ptr()
-        })
+        inner.buffers[idx].as_ref().map(|b| Arc::clone(&b.data))
     }
 
     fn remove_key(&self, inner: &mut UnkfsArcInner, key: &UnkfsArcKey) {
@@ -530,10 +515,27 @@ mod tests {
         let key = UnkfsArcKey::new(0, 4096, 1);
         let data: [u8; 16] = [0xAA; 16];
         let _ = arc.insert(key, &data, UnkfsArcBufType::Data);
-        let Some(found) = arc.lookup_slice(&key, 16) else {
+        let Some(found) = arc.lookup_slice(&key) else {
             panic!("should find inserted entry");
         };
         assert_eq!(found[0], 0xAA, "data mismatch");
+    }
+
+    /// 驱逐不得使已持有的共享句柄失效 (P1 回归).
+    #[test]
+    fn test_arc_slice_survives_eviction() {
+        let arc = UnkfsArc::new();
+        arc.init(1);
+        let key = UnkfsArcKey::new(0, 0, 1);
+        let _ = arc.insert(key, &[0xAAu8; 64], UnkfsArcBufType::Data);
+        let held = arc.lookup_slice(&key).expect("should find entry");
+        // 插入新条目触发驱逐; 已持有的 Arc 句柄必须仍然有效.
+        let _ = arc.insert(
+            UnkfsArcKey::new(0, 4096, 1),
+            &[0xBBu8; 64],
+            UnkfsArcBufType::Data,
+        );
+        assert_eq!(held[0], 0xAA, "held slice must survive eviction");
     }
 
     /// 多次插入后缓存应产生统计活动.

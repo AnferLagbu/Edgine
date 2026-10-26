@@ -672,15 +672,18 @@ impl UnkfsData {
         }
         let block_offset = (offset / HV_POOL_BLOCK_SIZE) * HV_POOL_BLOCK_SIZE;
         let block_key = UnkfsArcKey::new(0, (obj_id << 40) | block_offset, obj.birth_txg);
-        if let Some(data) = self
-            .spa
-            .arc
-            .lookup_slice(&block_key, HV_POOL_BLOCK_SIZE as usize)
-        {
+        if let Some(data) = self.spa.arc.lookup_slice(&block_key) {
             let start = (offset - block_offset) as usize;
             let end = (start + to_read).min(HV_POOL_BLOCK_SIZE as usize);
-            buf[..end - start].copy_from_slice(&data[start..end]);
-            self.spa.arc.release(&block_key);
+            // 缓存条目可能只覆盖已写入的前缀, 超出部分按稀疏块补零.
+            let src_end = end.min(data.len());
+            let copied = if start < src_end {
+                buf[..src_end - start].copy_from_slice(&data[start..src_end]);
+                src_end - start
+            } else {
+                0
+            };
+            buf[copied..to_read].fill(0);
         } else if self.is_disk_mode() && !obj.bp.is_null() {
             let mut disk_buf = vec![0u8; obj.bp.prop.physical_size as usize];
             if self.spa.read_bp(&obj.bp, &mut disk_buf) == 0 {
@@ -1208,8 +1211,11 @@ impl UnkfsData {
         let to_read = target_len.min(buf.len());
 
         let block_key = UnkfsArcKey::new(0, 0, obj.birth_txg);
-        if let Some(data) = self.spa.arc.lookup_slice(&block_key, target_len) {
-            buf[..to_read].copy_from_slice(&data[..to_read]);
+        if let Some(data) = self.spa.arc.lookup_slice(&block_key) {
+            let n = to_read.min(data.len());
+            buf[..n].copy_from_slice(&data[..n]);
+            // 缓存条目短于请求长度时, 尾部按稀疏块补零.
+            buf[n..to_read].fill(0);
             return to_read as i32;
         }
 

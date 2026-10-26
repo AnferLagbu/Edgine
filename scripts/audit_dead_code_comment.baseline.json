@@ -5,7 +5,7 @@
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 1752,
+    "sites": 1751,
     "files": 306
   },
   "entries": [
@@ -598,11 +598,6 @@
       "src/kernel/functions/fs/systree.rs",
       "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
       3
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/arc.rs",
-      "#[allow(clippy::slow_vector_initialization)",
-      1
     ],
     [
       "src/kernel/functions/fs/unkfs/arc.rs",

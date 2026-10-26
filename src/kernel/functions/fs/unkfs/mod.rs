@@ -2,7 +2,7 @@
 //! `UNKFS` (Hypervisor File System) — functions 层完整实现
 //!
 //! 从 privileged 层迁移而来 (E6-6 阶段 2).
-//! 所有业务逻辑在此, privileged 层仅保留 `arc_safe.rs` (unsafe 封装) 和 re-export.
+//! 所有业务逻辑在此; ARC 缓存经 `Arc<[u8]>` 共享句柄访问, privileged 侧无残留适配层.
 
 pub mod arc;
 pub mod arc_trait;
