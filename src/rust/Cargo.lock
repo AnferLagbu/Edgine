@@ -118,6 +118,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "edgine-abi"
+version = "0.1.0"
+
+[[package]]
 name = "fiat-crypto"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -155,10 +159,28 @@ dependencies = [
 name = "kernel"
 version = "0.1.0"
 dependencies = [
+ "kernel-functions",
+ "kernel-privileged",
+]
+
+[[package]]
+name = "kernel-functions"
+version = "0.1.0"
+dependencies = [
  "bitflags 2.11.1",
- "ed25519-dalek",
+ "kernel-privileged",
  "smoltcp",
  "zerocopy",
+]
+
+[[package]]
+name = "kernel-privileged"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.11.1",
+ "ed25519-dalek",
+ "edgine-abi",
+ "smoltcp",
 ]
 
 [[package]]

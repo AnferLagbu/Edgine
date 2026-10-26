@@ -25,7 +25,7 @@
 //! │   ├── smp/       多核支持
 //! │   ├── lib/       底层工具
 //! │   ├── link/      链接脚本
-//! │   ├── alloc/     全局分配器
+//! │   ├── mem_alloc/ 全局分配器 (P-71: 原名 alloc/, 避免与 `extern crate alloc` 同名)
 //! │   ├── sync/      同步原语 TCB (11 子模块: spinlock/mutex/rwlock/rcu/atomic/seqlock/types/arch/once_lock/once_cell/irq_spinlock)
 //! │   ├── proc/      进程管理 TCB (types/process/session/elf/api/scheduler/cfs/cpu_queue/oomd/user_proc)
 //! │   ├── sched/     调度器特质
@@ -204,7 +204,7 @@ extern crate alloc;
 #[cfg(not(feature = "host-test"))]
 mod memory_allocator;
 // ============================================================================
-// 顶层声明: 仅 2 个目录
+// 顶层声明: 两个子 crate 的再导出 + 跨层测试
 // ============================================================================
 
 // P-71: privileged 已独立为 `kernel-privileged` crate (TCB, 唯一允许 unsafe).
