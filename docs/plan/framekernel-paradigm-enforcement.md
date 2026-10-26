@@ -140,12 +140,12 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 | 文件 | 拆分说明 | 拆分接口（交互方式） |
 |---|---|---|
-| privileged/mm/vma.rs | mremap/madvise_range/mlock/mincore/mprotect 策略迁出；MmStruct/Vma/find/insert/remove 保留 | ⚠ functions 经 privileged 提供的 VMA 查询/修改 API + vmm map/unmap 机制编排 mremap 流程（MmStruct 无私有访问权）|
-| privileged/mm/page_fault.rs | 栈扩展参数/阈值策略迁出；demand paging/COW/swap-in 机制保留 | ⚠ **PageFaultPolicy trait 注入**（#PF 中断上下文；参数由 boot 注册或框架承接）|
-| privileged/mm/pcache.rs | 容量参数策略化；哈希桶/引用计数/脏页机制保留 | 参数移 functions config，机制经 privileged 常量 API 读取 |
+| privileged/mm/vma.rs | 🔒 复核保留（M2）：`mprotect`/`mremap` 的参数校验与 flag 转换已在 functions（`functions/mm/mprotect.rs`、`functions/mm/mremap.rs`）；`MmStruct` 方法体内是 VMA 拆分/合并 + 页表保护/拆除（`protect_page_in_table`/`remove_range`/`cr3`），属机制。madvise 的 advice→flag 表在 `privileged/proc/madvise_mlock.rs`，DECISION-J 已裁定该闭包留 privileged。 | 若将来要拆，按「意图级入口」设计（`apply_range_flags`/`evict_range`），属架构级改动，需先出设计文档 |
+| privileged/mm/page_fault.rs | ✅ 已完成（M1）：`PageFaultPolicy` trait 由 `functions/mm/page_fault_policy::StackGrowthPolicy` 实现并在 `functions::mm::init` 注册；栈顶经新增安全访问器 `privileged::mm::user_addr_max` 取地址空间上限。privileged 仅保留 `FallbackPageFaultPolicy` 作 functions 初始化前的启动兜底 | #PF 中断上下文只查询策略阈值；demand paging/COW/swap-in 机制留 privileged |
+| privileged/mm/pcache.rs | 🔒 复核保留（M2）：策略面仅剩两个容量常量（`PCACHE_HASH_BUCKETS`/`PCACHE_BUCKET_CAPACITY`），属缓存几何参数；函数体为哈希桶/引用计数/脏页机制。privileged 读 functions 被 `audit_reverse_deps` 阻断，为两常量加注册钩子属过度设计（§11.3） | 机制常量保留 privileged；容量若将来需要可调，再评估注册式配置 |
 | privileged/mm/swap.rs | LruList/kswapd 决策已 trait 化；slot I/O/swap-in-out 机制保留 | ✅ 已有 SwapPolicy trait（functions/swap_policy 权威）|
 | privileged/timer/time_sync.rs | NTP/PLL 算法迁出；ClockAdjState 状态承接 | 状态留 privileged API 承接，算法纯函数经 privileged 时钟查询 |
-| privileged/timer/tickless.rs | NO_HZ 协议迁出；LAPIC 编程机制保留 | 决策经 privileged 调度查询 safe API（sched_ops），编程经 privileged apic API |
+| privileged/timer/tickless.rs | ✅ 已完成（D8）：NO_HZ 协议与 per-CPU 模式状态机整体下沉 `functions/timer/tickless`（0 unsafe）；privileged 侧源文件已删 | 决策与状态机在 functions；装填经 privileged `timer::clockevent` 安全入口（`program_oneshot_ns`/`arm_periodic`），查询经 privileged `timer`（`get_frequency`/`hrtimer_clock_read`/`hrtimer_next_expiry`） |
 | privileged/timer/sleep.rs | adaptive_sleep 阈值/轮询策略迁出；busy_wait 机制保留 | 阈值参数经 privileged 常量 API；busy_wait 机制留框架 |
 | privileged/timer/calibration.rs | 采样算法迁出；static 频率缓存留框架 API 承接 | ⚠ boot 早期调用，经**回调注册**（privileged 注册采样回调，functions 实现）|
 | privileged/freg/domain.rs | apply_degradation 降级策略迁出；RecoveryDomain 状态机保留 | ⚠ **FREGDegradePolicy trait 注入**（panic/中断上下文；privileged 提供原子状态访问 API）|

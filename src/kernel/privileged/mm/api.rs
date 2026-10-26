@@ -670,6 +670,14 @@ pub use super::cross_process::{copy_from_user_in_mm, copy_to_user_in_mm};
 // page_fault re-export — 避免跨子系统直接引用 mm::page_fault 内部
 pub use super::page_fault::{PageFaultInfo, PfResult, handle_page_fault, handle_user_page_fault};
 
+/// 用户态地址空间上界 (安全访问器)
+///
+/// 单源为 [`crate::privileged::constants::limits::USER_ADDR_MAX`]. functions 层
+/// 缺页策略 (栈顶 = 地址空间上限) 经本函数读取, 不在策略实现里重复架构常量.
+pub fn user_addr_max() -> u64 {
+    crate::privileged::constants::limits::USER_ADDR_MAX
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -20,6 +20,8 @@ pub mod mprotect;
 pub mod mremap;
 /// D3: NUMA 安全封装
 pub mod numa;
+/// M1: 缺页策略 (用户栈扩展参数/阈值) — functions 层权威实现
+pub mod page_fault_policy;
 /// T2-2: PMM 策略 (阶数选择/碎片化/回收阈值/水位线) — functions 层
 pub mod pmm_policy;
 /// T2-3: Slab 策略 (缓存大小选择/对象数计算/分配优先级/大小限制) — functions 层
@@ -47,4 +49,7 @@ pub fn init() {
     let _ = slab_policy::register_default_slab_policy();
     // T2-4: 注册 functions 层 Swap 策略
     let _ = swap_policy::register_default_swap_policy();
+    // M1: 注册用户栈扩展策略 (#PF 机制在 privileged, 阈值决策在 functions)
+    let _ =
+        crate::privileged::mm::register_page_fault_policy(&page_fault_policy::STACK_GROWTH_POLICY);
 }
