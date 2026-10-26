@@ -71,6 +71,16 @@ pub fn get_framebuffer()
     if guard.is_some() { Some(guard) } else { None }
 }
 
+/// 以非阻塞方式获取全局帧缓冲的锁守卫
+///
+/// 供 panic 上下文使用: panic 可能发生在已持有帧缓冲锁的路径内, 阻塞获取会
+/// 同核自旋死锁, 故锁被占用时返回 `None`, 由调用方跳过图形输出.
+pub fn try_get_framebuffer()
+-> Option<crate::privileged::sync::IrqSpinLockGuard<'static, Option<Framebuffer>>> {
+    let guard = GLOBAL_FRAMEBUFFER.try_lock()?;
+    if guard.is_some() { Some(guard) } else { None }
+}
+
 // ============================================================================
 // 像素格式推断
 // ============================================================================
@@ -283,10 +293,6 @@ fn probe_vga_fb_via_pci() -> Option<VgaFbInfo> {
 /// 未找到可用帧缓冲或创建 Framebuffer 失败时返回 Err。
 // 有意窄化: 用户内存代理, 指针/长度上下文保证
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::ref_as_ptr,
-    reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
-)]
 #[cfg_attr(
     target_arch = "aarch64",
     expect(
@@ -353,36 +359,36 @@ pub fn display_init() -> infra::Result<()> {
             .map_err(|_| DriverError::HardwareError)?
     };
 
-    GLOBAL_FRAMEBUFFER.with_mut(|opt| {
-        *opt = Some(Framebuffer::new(fb_iomem, width, height, pitch, format));
-
-        if let Some(ref mut fb) = *opt {
-            let _ = fb.init();
-
-            crate::klog_info!(
-                Driver,
-                "[DISPLAY] OK: {}x{}x{} @ 0x{:X}",
-                width,
-                height,
-                bpp,
-                fb_addr
-            );
-
-            let font = font::default_font();
-            let failures = self_test::framebuffer_self_test(fb, font);
-            if failures == 0 {
-                crate::klog_info!(Driver, "[DISPLAY] self-test: ALL PASSED");
-            } else {
-                crate::klog_drv_warn!("[DISPLAY] self-test: {} FAILURES", failures);
-            }
-
-            let console = alloc::boxed::Box::new(
-                crate::privileged::console::gfx_console::GfxConsole::new(fb as *mut _, font),
-            );
-            crate::privileged::console::gfx_console_init(alloc::boxed::Box::leak(console));
-            crate::klog_info!(Driver, "[DISPLAY] GfxConsole initialized");
-        }
+    let font = font::default_font();
+    let self_test_failures = GLOBAL_FRAMEBUFFER.with_mut(|opt| {
+        let mut fb = Framebuffer::new(fb_iomem, width, height, pitch, format);
+        let _ = fb.init();
+        let failures = self_test::framebuffer_self_test(&mut fb, font);
+        *opt = Some(fb);
+        failures
     });
+
+    crate::klog_info!(
+        Driver,
+        "[DISPLAY] OK: {}x{}x{} @ 0x{:X}",
+        width,
+        height,
+        bpp,
+        fb_addr
+    );
+    if self_test_failures == 0 {
+        crate::klog_info!(Driver, "[DISPLAY] self-test: ALL PASSED");
+    } else {
+        crate::klog_drv_warn!("[DISPLAY] self-test: {} FAILURES", self_test_failures);
+    }
+
+    // 控制台必须在帧缓冲锁外初始化: klog 的图形输出会获取该锁, 若仍在
+    // `GLOBAL_FRAMEBUFFER.with_mut` 内初始化并打日志, 会形成同核自旋死锁.
+    let console = alloc::boxed::Box::new(crate::privileged::console::gfx_console::GfxConsole::new(
+        width, height, font,
+    ));
+    crate::privileged::console::gfx_console_init(alloc::boxed::Box::leak(console));
+    crate::klog_info!(Driver, "[DISPLAY] GfxConsole initialized");
 
     crate::privileged::egdf::egdf_register_driver(
         "vga-display",

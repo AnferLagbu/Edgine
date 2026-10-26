@@ -1,5 +1,6 @@
 pub mod gfx_console;
 
+use crate::privileged::driver::Framebuffer;
 use core::sync::atomic::{AtomicPtr, Ordering};
 use gfx_console::GfxConsole;
 
@@ -35,26 +36,49 @@ pub fn gfx_console_init(console: &'static mut GfxConsole) {
 
 /// 安全访问 GfxConsole (闭包形式).
 ///
-/// 集中处理 null 指针 + 解引用 unsafe, 避免每个调用方各自处理.
+/// 集中处理 console 指针 + 解引用 unsafe, 并在**帧缓冲锁内**取得
+/// `&mut Framebuffer` 一并无锁外裸访问地交给闭包. 先判 console 是否已初始化,
+/// 未初始化时直接返回 `None` (不触碰帧缓冲锁, 避免 boot 早期 klog 的无效加锁).
 ///
 /// # 单核约束
 ///
-/// 当前闭包在多核并发下会触发 `&mut` 别名 UB. 限制为 BSP 单线程阶段调用.
-/// 详见模块顶部并发约束注释.
+/// 闭包对 `GfxConsole` 的 `&mut` 借用在多核并发下仍会构成别名风险. 限制为
+/// BSP 单线程阶段调用。详见模块顶部并发约束注释.
 fn with_console<F, R>(f: F) -> Option<R>
 where
-    F: FnOnce(&mut GfxConsole) -> R,
+    F: FnOnce(&mut GfxConsole, &mut Framebuffer) -> R,
 {
     let ptr = GFX_CONSOLE_PTR.load(Ordering::Acquire);
     if ptr.is_null() {
         return None;
     }
+    let mut guard = crate::privileged::driver::get_framebuffer()?;
+    let fb = guard.as_mut()?;
     // SAFETY: 初始化时 gfx_console_init 保证指针来自 `Box::leak` 静态存储;
     //          一旦设置不再重置; 闭包 f 持有唯一借用, **当前仅在 BSP 单线程
     //          boot 阶段调用** (klog_output 串行化 + panic_reclaim 单线程 panic
     //          handler), 不与其它访问并发. SMP 启用后必须重构 (见模块顶部).
     let console = unsafe { &mut *ptr };
-    Some(f(console))
+    Some(f(console, fb))
+}
+
+/// 非阻塞版本的 [`with_console`] — panic 上下文专用.
+///
+/// panic 可能发生在持有帧缓冲锁的路径内, 阻塞获取会自旋死锁; 锁被占用时返回
+/// `None`, 由调用方跳过图形输出 (串口日志仍可用).
+fn with_console_try<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&mut GfxConsole, &mut Framebuffer) -> R,
+{
+    let ptr = GFX_CONSOLE_PTR.load(Ordering::Acquire);
+    if ptr.is_null() {
+        return None;
+    }
+    let mut guard = crate::privileged::driver::try_get_framebuffer()?;
+    let fb = guard.as_mut()?;
+    // SAFETY: 同 `with_console`; panic handler 单线程串行执行, 不与其它访问并发.
+    let console = unsafe { &mut *ptr };
+    Some(f(console, fb))
 }
 
 /// 将内核日志同步到图形控制台（在 `klog_output` 中调用）
@@ -62,7 +86,7 @@ where
 /// **单核约束**: 仅 BSP 单线程 boot 阶段调用. SMP 启用后需重构.
 pub fn gfx_console_write(msg: &[u8]) {
     if let Ok(s) = core::str::from_utf8(msg) {
-        let _ = with_console(|c| c.write_str(s));
+        let _ = with_console(|c, fb| c.write_str(fb, s));
     }
 }
 
@@ -73,7 +97,7 @@ pub fn gfx_console_write(msg: &[u8]) {
 ///
 /// **单核约束**: panic handler 串行触发, 不与其它 with_console 调用并发.
 pub fn gfx_console_panic_reclaim(msg: &str) {
-    let _ = with_console(|c| c.panic_reclaim(msg));
+    let _ = with_console_try(|c, fb| c.panic_reclaim(fb, msg));
 }
 
 /// Panic 模式下向图形控制台追加崩溃详情
@@ -82,5 +106,5 @@ pub fn gfx_console_panic_reclaim(msg: &str) {
 ///
 /// **单核约束**: 见 `gfx_console_panic_reclaim`.
 pub fn gfx_console_panic_write(msg: &str) {
-    let _ = with_console(|c| c.panic_write(msg));
+    let _ = with_console_try(|c, fb| c.panic_write(fb, msg));
 }

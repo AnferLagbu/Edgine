@@ -341,12 +341,6 @@ impl Framebuffer {
         self.bpp
     }
 
-    /// 获取帧缓冲 `IoMem` 句柄（仅 crate 内部）
-    #[inline]
-    pub(crate) fn iomem(&self) -> &IoMem {
-        &self.iomem
-    }
-
     /// 计算像素偏移量
     #[inline]
     fn pixel_offset(&self, x: u32, y: u32) -> usize {
@@ -733,6 +727,39 @@ impl Framebuffer {
                 );
                 intery += gradient;
             }
+        }
+    }
+
+    /// 向上滚动像素行区间 (机制原语: 帧缓冲内存搬移)
+    ///
+    /// 将像素行区间 `[region_top, region_bottom)` 整体上移 `lines` 行, 并把区间
+    /// 底部腾出的 `lines` 行清零. 用于图形控制台的文本滚动.
+    /// 参数越界时按有效高度裁剪; 区间为空或 `lines` 超出区间高度时不执行任何操作.
+    pub fn scroll_rows_up(&mut self, region_top: u32, region_bottom: u32, lines: u32) {
+        let top = region_top.min(self.height);
+        let bottom = region_bottom.min(self.height);
+        if lines == 0 || top >= bottom || lines > bottom - top {
+            return;
+        }
+
+        let pitch = self.pitch as usize;
+        let shift_bytes = lines as usize * pitch;
+        let copy_bytes = (bottom - top - lines) as usize * pitch;
+        let top_off = top as usize * pitch;
+        let clear_off = (bottom - lines) as usize * pitch;
+
+        // SAFETY: `iomem` 覆盖整个帧缓冲 `[0, pitch*height)`; `top`/`bottom` 已按
+        // height 裁剪, `lines` 已收敛到区间高度以内, 故源区间
+        // `[top+lines, bottom)` 与目标区间 `[top, bottom-lines)` 均落在缓冲内;
+        // 两者可能重叠, `core::ptr::copy` 按搬移方向自行处理重叠.
+        unsafe {
+            let base = self.iomem.virt_ptr();
+            core::ptr::copy(
+                base.add(top_off + shift_bytes),
+                base.add(top_off),
+                copy_bytes,
+            );
+            core::ptr::write_bytes(base.add(clear_off), 0u8, shift_bytes);
         }
     }
 

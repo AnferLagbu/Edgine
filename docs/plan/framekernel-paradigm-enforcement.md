@@ -151,7 +151,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | privileged/freg/domain.rs | apply_degradation 降级策略迁出；RecoveryDomain 状态机保留 | ⚠ **FREGDegradePolicy trait 注入**（panic/中断上下文；privileged 提供原子状态访问 API）|
 | privileged/freg/reset/bsr.rs | freeze/unfreeze/rollback 编排迁出；mmio_write32 机制保留 | 编排经 privileged 恢复机制 API（RECOVERY_MANAGER）；mmio 写留框架 |
 | privileged/debug/ebpf.rs | 验证器策略已 trait 化（functions）；解释执行引擎保留 | ✅ 已有 BpfVerifier trait（functions/ebpf_verifier 权威）|
-| privileged/driver/display/framebuffer.rs（+ font/self_test）| Framebuffer 绘图策略（set_pixel/fill/fill_rect/draw_line/blend/aa 等）迁 functions；IoMem 映射、`FB_PHYS_ADDR`/`FB_PHYS_SIZE`、`get_framebuffer` 机制原语保留 | ⚠ 2-E 后续（登记项，见 §11 DECISION-S）：**前置**需先解除 `gfx_console` 对 `*mut Framebuffer` 的裸指针绑定（klog/panic 机制经 trait 注入或回调注册消费绘图能力），再将绘图策略拆至 functions + privileged 留机制原语 |
+| privileged/driver/display/framebuffer.rs（+ font/self_test）| Framebuffer 绘图策略（set_pixel/fill/fill_rect/draw_line/blend/aa 等）迁 functions；IoMem 映射、`FB_PHYS_ADDR`/`FB_PHYS_SIZE`、`get_framebuffer` 机制原语保留 | ⚠ 2-E 后续（登记项，见 §11 DECISION-S / DECISION-X）：**裸指针前置已完成**——`gfx_console` 已 0 unsafe（绘制经锁内 `&mut Framebuffer` 传入，panic 走 `try_get_framebuffer` 非阻塞兜底）；**剩余** = 绘图策略经 trait 注入迁 functions（需 boot 顺序与未注册回落兜底，待独立批次） |
 | privileged/sgeg/storage.rs（2-F 后续登记）| ✅ **已由阶段 4b 全量下沉收口**：序列化算法（0 unsafe 纯函数）+ `save/load/remove_database` 编排整体迁 `functions/sgeg/persist`；privileged 侧源文件删除，**无 `vfs_*_internal` C FFI 薄层残留**（63 处 `no_mangle` 壳随 4b 一并删除）；`PwmEntrySnapshot` POD 解绑序列化对 sgeg TCB `PwmEntry` 原子字段直读，`sgeg/api.rs` 三处 FFI 改调 functions 编排 |（判据见 §11 DECISION-T）|
 
 ### 6.4 双份合并（functions 权威，privileged 删业务）——20 文件
@@ -1470,3 +1470,21 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **门槛顺序敏感性登记**：`ci/audit.sh` 的 FP-06 读 `build/kernel.bin` 需 aarch64 链接产物，`1/6` 的 x86_64 维需 `build/stage1.bin` 存在；二者并存需 `./ci/build.sh aarch64` 后补 `make ARCH=x86_64 build/stage1.bin`（仅汇编引导码，不触碰 `kernel.bin`）。
 
 状态：[X]（验证执行完成；§3 项 1 / 项 4 未达标，后续收敛待裁决）
+
+### DECISION-X: Framebuffer/gfx_console 去裸指针（2-E 后续前置解除；绘图策略下沉仍待续）
+
+> **背景**：DECISION-S 将「Framebuffer 机制/策略拆分 + gfx_console 去裸指针重构」登记为 §6.3 后续独立条目，并注明前置是解除 `gfx_console` 对 `*mut Framebuffer` 的裸指针绑定。本轮按用户裁决取**方案 B（仅去裸指针，绘图策略暂留 privileged）**：该路径不改 TCB 归属、不动 boot 顺序，先消除控制台的多点裸指针解引用；真正的绘图策略下沉（需 trait 注册 + panic 未注册回落 + boot 顺序兜底）另立批次。
+
+**方案与实施**：
+
+1. `privileged/console/gfx_console.rs` 删除 `fb: *mut Framebuffer` 字段与 `fb_mut()` 解引用原语；`GfxConsole::new(width, height, font)` 只接收几何参数，所有绘制方法改为接收调用方传入的 `&mut Framebuffer`。该文件 unsafe 由 7 处降为 **0**。
+2. 滚动内存搬移（原 `scroll_up` 内 `core::ptr::copy` / `write_bytes`）收敛为 `Framebuffer::scroll_rows_up(region_top, region_bottom, lines)` 单一机制原语（`framebuffer.rs`，1 处 unsafe + `// SAFETY`）；边界按帧缓冲高度裁剪。
+3. `privileged/console/mod.rs` 的 `with_console` 在判空 console 后于**帧缓冲锁内**取得 `&mut Framebuffer` 并交闭包；panic 入口改用新增的 `with_console_try`（`try_get_framebuffer` 非阻塞获取），锁被占用即跳过图形输出，串口仍可用。
+4. `privileged/driver/display/mod.rs` 拆分 `display_init` 持锁段：帧缓冲构造、`init()` 与自检在 `GLOBAL_FRAMEBUFFER.with_mut` 内完成；控制台初始化与后续 klog 移到锁外——否则 klog → `gfx_console_write` → 帧缓冲锁会在同核形成自旋死锁。新增 `try_get_framebuffer()` 安全访问器并顶层 re-export。
+5. `Framebuffer::iomem()`（`pub(crate)` 访问器）随唯一调用点消失而删除，避免 F9 死代码。
+
+**影响面**：privileged 控制台 0 unsafe；`framebuffer.rs` 新增 1 处机制 unsafe（内存搬移）；绘图策略（`set_pixel`/`fill`/`fill_rect`/`draw_line`/`blend`/`aa` 与字体渲染）仍留 privileged，§6.3 条目保持「⚠ 后续」并已订正为「前置完成、剩余策略下沉」。TCB 归属与 TCB 行数口径不变。路径键基线三处随抑制/文档增减重导：`audit_dead_code_comment`（-1 expect）、`audit_public_api_docs`（`GfxConsole::new` 补中文 doc）、`audit_missing_docs_debt`（同项补写 -1）。
+
+**验证**：§2.3 六门槛全绿——双架构 `./ci/build.sh all` Passed 6 / Failed 0（0 error / 0 warning）；四 crate `cargo fmt --check` 无漂移；CI 口径 clippy pedantic（x86_64 + aarch64，`-D warnings`）0；`bash ci/audit.sh full` 全腿通过（含 reverse_deps 生产 0、F1-F9、QEMU 双架构 2/2）；`make test-host` 全过；`make test-kernel-host` 427 passed / 0 failed。Lockbud 腿仍因工具链不匹配未执行（既有环境项 P-56，非本批引入）。
+
+**状态**: [X]（去裸指针完成；绘图策略迁 functions 仍待独立批次）

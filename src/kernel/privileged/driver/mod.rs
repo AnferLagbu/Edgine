@@ -106,7 +106,7 @@ pub use block::{
 // --- 显示设备导出 ---
 pub use display::font::Font;
 pub use display::framebuffer::{Color, Framebuffer, PixelFormat, Rect, colors};
-pub use display::{FB_PHYS_ADDR, FB_PHYS_SIZE, display_init, get_framebuffer};
+pub use display::{FB_PHYS_ADDR, FB_PHYS_SIZE, display_init, get_framebuffer, try_get_framebuffer};
 // MIG-008 接线补齐: 显示控制器工厂槽 (DECISION-K 单向注册契约) re-export
 pub use display::{display_probe_controllers, register_display_controller_factory};
 

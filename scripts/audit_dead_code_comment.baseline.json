@@ -5,7 +5,7 @@
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 1751,
+    "sites": 1750,
     "files": 306
   },
   "entries": [
@@ -2102,11 +2102,6 @@
     [
       "src/kernel/privileged/driver/display/mod.rs",
       "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/display/mod.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
       1
     ],
     [

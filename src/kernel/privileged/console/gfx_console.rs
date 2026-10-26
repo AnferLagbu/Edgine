@@ -18,8 +18,13 @@ pub static PANIC_MODE: AtomicBool = AtomicBool::new(false);
 /// 1. 立即清屏并绘制红色顶部横幅
 /// 2. 禁用滚动，保留完整崩溃信息
 /// 3. 光标定位到横幅下方，准备输出崩溃详情
+///
+/// ## 帧缓冲访问
+///
+/// 控制台**不持有**帧缓冲引用（已移除历史上的 `*mut Framebuffer` 裸指针）。
+/// 每次绘制由调用方传入 `&mut Framebuffer`，该引用由 [`super::with_console`]
+/// 在帧缓冲锁内取得，从而消除多处裸指针解引用带来的别名风险。
 pub struct GfxConsole {
-    fb: *mut Framebuffer,
     font: &'static Font,
     cursor_x: u32,
     cursor_y: u32,
@@ -32,13 +37,11 @@ pub struct GfxConsole {
 }
 
 impl GfxConsole {
-    pub fn new(fb: *mut Framebuffer, font: &'static Font) -> Self {
-        // SAFETY: `fb` 由调用方保证为有效指针; 只读访问
-        let fb_ref = unsafe { &*fb };
-        let cols = fb_ref.width() / font.glyph_width;
-        let rows = fb_ref.height() / font.glyph_height;
+    /// 以帧缓冲尺寸与字体创建控制台（不持有帧缓冲）
+    pub fn new(width: u32, height: u32, font: &'static Font) -> Self {
+        let cols = width / font.glyph_width;
+        let rows = height / font.glyph_height;
         Self {
-            fb,
             font,
             cursor_x: 0,
             cursor_y: 0,
@@ -51,12 +54,6 @@ impl GfxConsole {
         }
     }
 
-    #[inline]
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    unsafe fn fb_mut(&self) -> &mut Framebuffer {
-        unsafe { &mut *self.fb }
-    }
-
     pub fn set_margin(&mut self, top: u32) {
         self.top_margin = top.min(self.rows);
     }
@@ -66,9 +63,7 @@ impl GfxConsole {
         self.bg_color = bg;
     }
 
-    pub fn clear(&mut self) {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        let fb = unsafe { self.fb_mut() };
+    pub fn clear(&mut self, fb: &mut Framebuffer) {
         fb.fill_rect(Rect::new(0, 0, fb.width(), fb.height()), self.bg_color);
         self.cursor_x = 0;
         self.cursor_y = self.top_margin;
@@ -84,10 +79,8 @@ impl GfxConsole {
     /// 5. 禁用后续滚动，保留崩溃现场
     // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
     #[expect(clippy::cast_possible_truncation)]
-    pub fn panic_reclaim(&mut self, msg: &str) {
+    pub fn panic_reclaim(&mut self, fb: &mut Framebuffer, msg: &str) {
         PANIC_MODE.store(true, Ordering::Release);
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        let fb = unsafe { self.fb_mut() };
         let fb_w = fb.width();
         let fb_h = fb.height();
         let glyph_h = self.font.glyph_height;
@@ -112,12 +105,10 @@ impl GfxConsole {
             0
         };
         let text_y = glyph_h / 2; // 垂直居中在条内
-        // SAFETY: `self` 由调用方保证为有效指针; 只读访问
-        let fb_ref = unsafe { &mut *self.fb };
         for (i, &ch) in banner_text.iter().enumerate() {
             let px = text_x + i as u32 * glyph_w;
             self.font.render_char(
-                fb_ref,
+                fb,
                 ch as char,
                 px,
                 text_y,
@@ -134,13 +125,13 @@ impl GfxConsole {
         self.top_margin = banner_rows + 1;
 
         // 5. 输出消息
-        self.write_str(msg);
+        self.write_str(fb, msg);
     }
 
     /// Panic 模式下写入 — 不滚动，直接追加
-    pub fn panic_write(&mut self, s: &str) {
+    pub fn panic_write(&mut self, fb: &mut Framebuffer, s: &str) {
         if !PANIC_MODE.load(Ordering::Acquire) {
-            self.write_str(s);
+            self.write_str(fb, s);
             return;
         }
         // Panic 模式下：不滚动，超出行数则截断
@@ -148,11 +139,11 @@ impl GfxConsole {
             if self.cursor_y >= self.rows {
                 break; // 屏幕已满，停止输出
             }
-            self.putchar_no_scroll(ch);
+            self.putchar_no_scroll(fb, ch);
         }
     }
 
-    fn putchar_no_scroll(&mut self, ch: char) {
+    fn putchar_no_scroll(&mut self, fb: &mut Framebuffer, ch: char) {
         match ch {
             '\n' => {
                 self.cursor_x = 0;
@@ -167,8 +158,6 @@ impl GfxConsole {
                     let py = self.cursor_y * self.font.glyph_height;
                     let fg = self.fg_color;
                     let bg = self.bg_color;
-                    // SAFETY: `self` 由调用方保证为有效指针; 只读访问
-                    let fb = unsafe { &mut *self.fb };
                     self.font.render_char(fb, ' ', px, py, fg, bg);
                 }
             }
@@ -178,8 +167,6 @@ impl GfxConsole {
                     let py = self.cursor_y * self.font.glyph_height;
                     let fg = self.fg_color;
                     let bg = self.bg_color;
-                    // SAFETY: `self` 由调用方保证为有效指针; 只读访问
-                    let fb = unsafe { &mut *self.fb };
                     self.font.render_char(fb, ch, px, py, fg, bg);
                     self.cursor_x += 1;
                     if self.cursor_x >= self.cols {
@@ -191,9 +178,9 @@ impl GfxConsole {
         }
     }
 
-    pub fn putchar(&mut self, ch: char) {
+    pub fn putchar(&mut self, fb: &mut Framebuffer, ch: char) {
         if PANIC_MODE.load(Ordering::Acquire) {
-            return self.putchar_no_scroll(ch);
+            return self.putchar_no_scroll(fb, ch);
         }
         match ch {
             '\n' => {
@@ -209,8 +196,6 @@ impl GfxConsole {
                     let py = self.cursor_y * self.font.glyph_height;
                     let fg = self.fg_color;
                     let bg = self.bg_color;
-                    // SAFETY: `self` 由调用方保证为有效指针; 只读访问
-                    let fb = unsafe { &mut *self.fb };
                     self.font.render_char(fb, ' ', px, py, fg, bg);
                 }
             }
@@ -220,8 +205,6 @@ impl GfxConsole {
                     let py = self.cursor_y * self.font.glyph_height;
                     let fg = self.fg_color;
                     let bg = self.bg_color;
-                    // SAFETY: `self` 由调用方保证为有效指针; 只读访问
-                    let fb = unsafe { &mut *self.fb };
                     self.font.render_char(fb, ch, px, py, fg, bg);
                     self.cursor_x += 1;
                 }
@@ -233,43 +216,15 @@ impl GfxConsole {
             self.cursor_y += 1;
         }
         if self.cursor_y >= self.rows {
-            self.scroll_up(1);
+            self.scroll_up(fb, 1);
         }
     }
 
-    fn scroll_up(&mut self, lines: u32) {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        let fb = unsafe { self.fb_mut() };
+    fn scroll_up(&mut self, fb: &mut Framebuffer, lines: u32) {
         let glyph_h = self.font.glyph_height;
         let margin_px = self.top_margin * glyph_h;
-        let scroll_h = glyph_h * lines;
-        let scroll_start = margin_px + scroll_h;
-        let scroll_end = fb.height();
-
-        if scroll_start >= scroll_end {
-            return;
-        }
-
-        let pitch = fb.pitch();
-
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        unsafe {
-            let src = fb.iomem().virt_ptr().add((scroll_start * pitch) as usize);
-            let dst = fb
-                .iomem()
-                .virt_ptr()
-                .add(margin_px as usize * pitch as usize);
-            let count = ((scroll_end - scroll_start) * pitch) as usize;
-            core::ptr::copy(src, dst, count);
-
-            let clear_start = (scroll_end - scroll_h) * pitch;
-            let clear_size = (scroll_h * pitch) as usize;
-            core::ptr::write_bytes(
-                fb.iomem().virt_ptr().add(clear_start as usize),
-                0u8,
-                clear_size,
-            );
-        }
+        // 内存搬移属帧缓冲机制原语, 由 Framebuffer 的安全方法完成 (0 unsafe).
+        fb.scroll_rows_up(margin_px, fb.height(), glyph_h * lines);
 
         self.cursor_y -= lines;
         if self.cursor_y < self.top_margin {
@@ -277,16 +232,9 @@ impl GfxConsole {
         }
     }
 
-    pub fn write_str(&mut self, s: &str) {
+    pub fn write_str(&mut self, fb: &mut Framebuffer, s: &str) {
         for ch in s.chars() {
-            self.putchar(ch);
+            self.putchar(fb, ch);
         }
-    }
-}
-
-impl core::fmt::Write for GfxConsole {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        self.write_str(s);
-        Ok(())
     }
 }
