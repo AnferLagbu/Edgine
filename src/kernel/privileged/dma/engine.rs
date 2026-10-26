@@ -31,6 +31,7 @@ unsafe impl Send for DmaEngine {}
 unsafe impl Sync for DmaEngine {}
 
 impl DmaEngine {
+    /// 构造未初始化的 DMA 引擎.
     pub const fn new() -> Self {
         Self {
             initialized: AtomicBool::new(false),
@@ -42,6 +43,7 @@ impl DmaEngine {
 
     // =============== Lifecycle ===============
 
+    /// 初始化引擎 (幂等).
     pub fn init(&self) {
         if self.initialized.load(Ordering::Acquire) {
             return;
@@ -51,6 +53,7 @@ impl DmaEngine {
 
     // 有意窄化: 用户内存代理, 指针/长度上下文保证
     #[expect(clippy::cast_possible_truncation)]
+    /// 关闭引擎: 释放一致性内存、解除 MMIO 映射并清零统计.
     pub fn shutdown(&self) {
         if !self.initialized.load(Ordering::Acquire) {
             return;
@@ -79,6 +82,7 @@ impl DmaEngine {
         self.initialized.store(false, Ordering::Release);
     }
 
+    /// 引擎是否已初始化.
     pub fn is_initialized(&self) -> bool {
         self.initialized.load(Ordering::Acquire)
     }
@@ -364,6 +368,7 @@ impl DmaEngine {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
+    /// 重置散聚表 (清空条目与总长度).
     pub fn sg_init(&self, sglist: &mut DmaScatterList) {
         sglist.entry_count = 0;
         sglist.total_length = 0;
@@ -375,6 +380,7 @@ impl DmaEngine {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
+    /// 向散聚表追加一个条目; 参数非法或表满返回 -1, 成功返回 0.
     pub fn sg_add_entry(&self, sglist: &mut DmaScatterList, addr: VirtAddr, length: usize) -> i32 {
         if addr.0 == 0 || length == 0 {
             return -1;
@@ -401,16 +407,19 @@ impl DmaEngine {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
+    /// 返回散聚表全部条目总长度 (字节).
     pub fn sg_total_length(&self, sglist: &DmaScatterList) -> usize {
         sglist.total_length
     }
 
     // =============== 统计 ===============
 
+    /// 取得统计快照.
     pub fn get_stats(&self) -> DmaPoolStats {
         self.stats.snapshot()
     }
 
+    /// 清零统计计数器.
     pub fn reset_stats(&self) {
         self.stats.reset();
     }
@@ -638,11 +647,17 @@ pub(crate) fn dma() -> &'static DmaEngine {
 /// DMA 传输请求描述符 (源/目的物理地址、大小、方向与完成回调).
 #[repr(C)]
 pub struct DmaTransfer {
+    /// 源地址.
     pub src_addr: PhysAddr,
+    /// 目的地址.
     pub dst_addr: PhysAddr,
+    /// 传输长度 (字节).
     pub size: usize,
+    /// 传输方向.
     pub direction: DmaDirection,
+    /// 完成标记.
     pub completed: core::sync::atomic::AtomicBool,
+    /// 完成回调.
     pub callback: Option<DmaCallback>,
 }
 
@@ -650,6 +665,7 @@ pub struct DmaTransfer {
 pub type DmaCallback = fn(*const DmaTransfer);
 
 impl DmaTransfer {
+    /// 构造一次尚未完成的 DMA 传输请求.
     pub const fn new(src: PhysAddr, dst: PhysAddr, size: usize, dir: DmaDirection) -> Self {
         Self {
             src_addr: src,
@@ -661,10 +677,12 @@ impl DmaTransfer {
         }
     }
 
+    /// 传输是否已完成.
     pub fn is_complete(&self) -> bool {
         self.completed.load(Ordering::Acquire)
     }
 
+    /// 自旋等待传输完成.
     pub fn wait(&self) {
         while !self.is_complete() {
             core::hint::spin_loop();

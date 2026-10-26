@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 431,
-    "files": 78,
-    "keys": 379
+    "sites": 417,
+    "files": 76,
+    "keys": 367
   },
   "entries": [
     [
@@ -93,78 +93,6 @@
       "fn",
       "zero",
       1
-    ],
-    [
-      "src/kernel/privileged/dma/engine.rs",
-      "fn",
-      "get_stats",
-      1
-    ],
-    [
-      "src/kernel/privileged/dma/engine.rs",
-      "fn",
-      "init",
-      1
-    ],
-    [
-      "src/kernel/privileged/dma/engine.rs",
-      "fn",
-      "is_complete",
-      1
-    ],
-    [
-      "src/kernel/privileged/dma/engine.rs",
-      "fn",
-      "is_initialized",
-      1
-    ],
-    [
-      "src/kernel/privileged/dma/engine.rs",
-      "fn",
-      "new",
-      2
-    ],
-    [
-      "src/kernel/privileged/dma/engine.rs",
-      "fn",
-      "reset_stats",
-      1
-    ],
-    [
-      "src/kernel/privileged/dma/engine.rs",
-      "fn",
-      "sg_add_entry",
-      1
-    ],
-    [
-      "src/kernel/privileged/dma/engine.rs",
-      "fn",
-      "sg_init",
-      1
-    ],
-    [
-      "src/kernel/privileged/dma/engine.rs",
-      "fn",
-      "sg_total_length",
-      1
-    ],
-    [
-      "src/kernel/privileged/dma/engine.rs",
-      "fn",
-      "shutdown",
-      1
-    ],
-    [
-      "src/kernel/privileged/dma/engine.rs",
-      "fn",
-      "wait",
-      1
-    ],
-    [
-      "src/kernel/privileged/dma/mod.rs",
-      "fn",
-      "new",
-      2
     ],
     [
       "src/kernel/privileged/driver/display/font.rs",

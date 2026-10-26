@@ -63,7 +63,10 @@ fn test_unkfs_close_uses_atomic_claim_and_clear() {
     let body_start = src
         .find("pub fn close(&self, fd: u32) -> i32")
         .expect("UnkfsDmu::close 必须存在");
-    let body = &src[body_start..body_start + 600];
+    let body = &src[body_start..];
+    // 按字符截取窗口: 源码含中文注释, 按字节切片可能落在非字符边界上
+    let window: String = body.chars().take(600).collect();
+    let body = window.as_str();
     // 锁内同时含 used 检查与清零
     assert!(
         body.contains("let mut fds = self.fds.lock();"),

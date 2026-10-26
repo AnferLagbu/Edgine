@@ -31,7 +31,9 @@ use crate::privileged::mm::PhysAddr;
 // 契约常量
 // ============================================================================
 
+/// 同时存在的 DMA 映射条目上限.
 pub const DMA_MAX_MAPPINGS: usize = 256;
+/// 单个散聚表可容纳的条目上限.
 pub const DMA_MAX_SCATTER_ENTRIES: usize = 64;
 
 // ============================================================================
@@ -41,31 +43,42 @@ pub const DMA_MAX_SCATTER_ENTRIES: usize = 64;
 /// DMA 传输方向
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DmaDirection {
+    /// CPU 内存 → 设备.
     ToDevice,
+    /// 设备 → CPU 内存.
     FromDevice,
+    /// 双向传输.
     Bidirectional,
 }
 
 /// DMA 缓存策略
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DmaCachePolicy {
+    /// 无缓存 (一致性内存).
     None,
+    /// 写回策略.
     Writeback,
+    /// 写穿策略.
     Writethrough,
 }
 
 /// DMA 映射描述符 (契约视角: 只暴露驱动需要的信息)
 #[derive(Debug)]
 pub struct DmaMapping {
+    /// 设备侧物理 (总线) 地址.
     pub dma_addr: PhysAddr,
+    /// 映射长度 (字节).
     pub size: usize,
+    /// 传输方向.
     pub direction: DmaDirection,
 }
 
 /// 散射聚集列表条目
 #[derive(Clone, Copy, Debug)]
 pub struct DmaScatterEntry {
+    /// 条目物理地址.
     pub phys_addr: u64,
+    /// 条目长度 (字节).
     pub length: usize,
 }
 
@@ -100,8 +113,12 @@ pub trait DmaEngine: Send + Sync {
 /// DMA 池统计 (契约视角: 只读快照)
 #[derive(Debug, Clone, Default)]
 pub struct DmaPoolStats {
+    /// 累计分配次数.
     pub total_allocations: u64,
+    /// 累计释放次数.
     pub total_frees: u64,
+    /// 当前占用中的分配数.
     pub current_in_use: u64,
+    /// 累计分配字节数.
     pub total_bytes_allocated: u64,
 }

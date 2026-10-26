@@ -1,69 +1,120 @@
 #![deny(unsafe_code)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //! ext2 超级块数据结构
+#![deny(missing_docs)]
 
 /// ext2 超级块 (磁盘偏移 1024 字节, 大小 1024 字节)
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct Ext2SuperBlock {
+    /// inode 总数.
     pub s_inodes_count: u32,
+    /// 块总数.
     pub s_blocks_count: u32,
+    /// 保留块数 (仅 root 可用).
     pub s_r_blocks_count: u32,
+    /// 空闲块数.
     pub s_free_blocks_count: u32,
+    /// 空闲 inode 数.
     pub s_free_inodes_count: u32,
+    /// 首个数据块编号.
     pub s_first_data_block: u32,
+    /// 块大小位移 (log2(块大小) - 10).
     pub s_log_block_size: u32,
+    /// 片段大小位移.
     pub s_log_frag_size: u32,
+    /// 每块组的块数.
     pub s_blocks_per_group: u32,
+    /// 每块组的片段数.
     pub s_frags_per_group: u32,
+    /// 每块组的 inode 数.
     pub s_inodes_per_group: u32,
+    /// 最后挂载时间.
     pub s_mtime: u32,
+    /// 最后写入时间.
     pub s_wtime: u32,
+    /// 已挂载次数.
     pub s_mnt_count: u16,
+    /// 最大挂载次数.
     pub s_max_mnt_count: u16,
+    /// 魔数 (0xEF53).
     pub s_magic: u16,
+    /// 文件系统状态.
     pub s_state: u16,
+    /// 错误处理策略.
     pub s_errors: u16,
+    /// 次版本号.
     pub s_minor_rev_level: u16,
+    /// 最后一致性检查时间.
     pub s_lastcheck: u32,
+    /// 检查间隔.
     pub s_checkinterval: u32,
+    /// 创建该文件系统的操作系统.
     pub s_creator_os: u32,
+    /// 主版本号.
     pub s_rev_level: u32,
+    /// 默认 uid.
     pub s_def_resuid: u16,
+    /// 默认 gid.
     pub s_def_resgid: u16,
     // EXT2_DYNAMIC_REV
+    /// 首个非保留 inode 编号.
     pub s_first_ino: u32,
+    /// inode 大小 (字节).
     pub s_inode_size: u16,
+    /// 本超级块所属块组号.
     pub s_block_group_nr: u16,
+    /// 兼容特性位图.
     pub s_feature_compat: u32,
+    /// 不兼容特性位图.
     pub s_feature_incompat: u32,
+    /// 只读兼容特性位图.
     pub s_feature_ro_compat: u32,
+    /// 卷 UUID.
     pub s_uuid: [u8; 16],
+    /// 卷名.
     pub s_volume_name: [u8; 16],
+    /// 最后挂载点路径.
     pub s_last_mounted: [u8; 64],
+    /// 压缩算法位图.
     pub s_algo_bitmap: u32,
     // 性能调整
+    /// 预分配块数.
     pub s_prealloc_blocks: u8,
+    /// 目录预分配块数.
     pub s_prealloc_dir_blocks: u8,
+    /// 对齐填充.
     pub _padding: [u8; 2],
     // journaling
+    /// 日志 UUID.
     pub s_journal_uuid: [u8; 16],
+    /// 日志 inode 编号.
     pub s_journal_inum: u32,
+    /// 日志设备号.
     pub s_journal_dev: u32,
+    /// 孤儿 inode 链表头.
     pub s_last_orphan: u32,
     // 哈希种子
+    /// 目录哈希种子.
     pub s_hash_seed: [u32; 4],
+    /// 默认哈希算法版本.
     pub s_def_hash_version: u8,
+    /// 对齐填充.
     pub _padding2: [u8; 3],
     // 其他
+    /// 默认挂载选项.
     pub s_default_mount_opts: u32,
+    /// 首个元数据块组.
     pub s_first_meta_bg: u32,
     // 保留
+    /// 保留区.
     pub _reserved: [u8; 760],
 }
 
 impl Ext2SuperBlock {
+    /// ext2 魔数.
     pub const MAGIC: u16 = 0xEF53;
+    /// 超级块在磁盘上的固定偏移 (字节).
     pub const EXT2_BASE_OFFSET: u64 = 1024;
 
     /// 从字节切片解析超级块

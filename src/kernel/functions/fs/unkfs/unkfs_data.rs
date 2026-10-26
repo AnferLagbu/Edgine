@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 
 use crate::functions::fs::KernelError;
 use crate::functions::fs::unkfs::arc::{UnkfsArcBufType, UnkfsArcKey};
@@ -38,43 +39,71 @@ fn unkfs_reset() {
     get_unkfs().reset();
 }
 
+/// 打开文件描述符表容量.
 pub const UNKFS_MAX_FDS: usize = 256;
 
 #[derive(Debug, Clone, Copy)]
+/// 打开文件描述符: 关联对象、数据集、偏移、标志与属主.
 pub struct UnkfsFd {
+    /// 描述符编号.
     pub fd: u32,
+    /// 关联对象编号.
     pub obj_id: u64,
+    /// 所属数据集编号.
     pub ds_id: u64,
+    /// 当前读写偏移.
     pub offset: u64,
+    /// 打开标志.
     pub flags: u32,
+    /// 属主 PWM 身份字.
     pub pwm: u64,
+    /// 槽位是否占用.
     pub used: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+/// UNKFS 运行模式: 纯内存或真实磁盘.
 pub enum UnkfsMode {
+    /// 纯内存模式.
     Memory = 0,
+    /// 磁盘模式.
     Disk = 1,
 }
 
+/// UNKFS 全局状态: 存储池、事务组、数据集、快照、意图日志与描述符表.
 pub struct UnkfsData {
+    /// 存储池抽象.
     pub spa: UnkfsSpa,
+    /// 当前事务组 (仅在打开期间存在).
     pub txg_group: Mutex<Option<UnkfsTxgGroup>>,
+    /// 已注册数据集列表.
     pub datasets: Mutex<Vec<UnkfsDataset>>,
+    /// 快照管理器.
     pub snap_mgr: UnkfsSnapshotManager,
+    /// 意图日志.
     pub zil: UnkfsZil,
+    /// 描述符表.
     pub fds: Mutex<[UnkfsFd; UNKFS_MAX_FDS]>,
+    /// 下一个待分配的描述符编号.
     pub next_fd: AtomicU32,
+    /// 当前进程的 PWM 身份字.
     pub current_pwm: AtomicU64,
+    /// 当前工作目录对象编号.
     pub current_dir: AtomicU64,
+    /// 是否已挂载.
     pub mounted: AtomicBool,
+    /// 是否已初始化.
     pub initialized: AtomicBool,
+    /// 根数据集编号.
     pub root_ds_id: AtomicU64,
+    /// 当前运行模式 (`UnkfsMode` 编码).
     pub mode: AtomicU8,
     /// 已发现的 Edgine/UNKFS 磁盘驱动器列表 (`drive_id`, `partition_start_lba`)
     pub drives_discovered: Mutex<Vec<(u8, u32)>>,
+    /// 当前使用的磁盘驱动器号.
     pub disk_drive: AtomicU8,
+    /// 当前磁盘分区起始 LBA.
     pub partition_start: AtomicU32,
 }
 
@@ -83,6 +112,7 @@ pub struct UnkfsData {
 
 static UNKFS_DATA: OnceCell<UnkfsData> = OnceCell::new();
 
+/// 取得 UNKFS 全局状态单例 (首次调用时惰性初始化).
 pub fn get_unkfs() -> &'static UnkfsData {
     UNKFS_DATA.get_or_init(|slot| {
         slot.write(UnkfsData {
@@ -154,6 +184,7 @@ impl UnkfsData {
         clippy::assigning_clones,
         reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
     )]
+    /// 首次初始化: 探测并挂载磁盘 (磁盘模式) 或建立内存数据集, 幂等.
     pub fn init(&self) {
         // J-03 (2026-09-08, G-10 方案 C): init 幂等化 — 重复 init 不再重建 objset.
         // 原行为: 重复 init 经 setup_zil_datasets → UnkfsObjSet::init 清空 objects,
@@ -312,6 +343,7 @@ impl UnkfsData {
         }
     }
 
+    /// 格式化指定驱动器: 建立存储池元数据并使用给定分区起始偏移.
     pub fn format_drive(&self, drive_id: u8, part_start: u32) {
         if !block::hdd_is_present(drive_id) {
             crate::slog_warn!(FS, "[UNKFS] FORMAT: No disk present");
@@ -446,6 +478,7 @@ impl UnkfsData {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
+    /// 以给定分区起始偏移挂载指定驱动器, 成功返回 true.
     pub fn mount_drive(&self, drive_id: u8, part_start: u32) -> bool {
         if !block::hdd_is_present(drive_id) {
             return false;
@@ -521,10 +554,12 @@ impl UnkfsData {
         true
     }
 
+    /// 是否已初始化.
     pub fn is_initialized(&self) -> bool {
         self.initialized.load(Ordering::Acquire)
     }
 
+    /// 当前是否运行于磁盘模式.
     pub fn is_disk_mode(&self) -> bool {
         self.mode.load(Ordering::Acquire) == UnkfsMode::Disk as u8
     }
@@ -624,6 +659,7 @@ impl UnkfsData {
         Ok(fd_idx as i32)
     }
 
+    /// 关闭描述符并释放槽位, 成功返回 0.
     pub fn close(&self, fd: u32) -> i32 {
         let idx = fd as usize;
         if idx >= UNKFS_MAX_FDS {
@@ -642,6 +678,7 @@ impl UnkfsData {
         0
     }
 
+    /// 从描述符当前偏移读取数据并推进偏移, 返回实际读取字节数.
     pub fn read(&self, fd: u32, buf: &mut [u8], count: u32) -> i32 {
         let (obj_id, offset, pwm) = {
             let fds = self.fds.lock();
@@ -707,6 +744,7 @@ impl UnkfsData {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
+    /// 向描述符当前偏移写入数据并推进偏移, 返回实际写入字节数.
     pub fn write(&self, fd: u32, buf: &[u8], count: u32) -> i32 {
         let (obj_id, offset, pwm, flags) = {
             let fds = self.fds.lock();
@@ -790,6 +828,7 @@ impl UnkfsData {
         to_write as i32
     }
 
+    /// 创建目录, 成功返回 0.
     pub fn mkdir(&self, path: &str, pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
@@ -811,6 +850,7 @@ impl UnkfsData {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
+    /// 删除文件或目录项, 成功返回 0.
     pub fn unlink(&self, path: &str, pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
@@ -849,6 +889,7 @@ impl UnkfsData {
         0
     }
 
+    /// 查询路径对应对象元数据, 不存在或无权限时返回 None.
     pub fn stat(&self, path: &str, pwm: u64) -> Option<UnkfsDmuObject> {
         if !self.is_initialized() {
             return None;
@@ -868,6 +909,7 @@ impl UnkfsData {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
+    /// 修改文件权限位, 成功返回 0.
     pub fn chmod(&self, path: &str, mode: u16, pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
@@ -906,6 +948,7 @@ impl UnkfsData {
         KernelError::Io.as_i32()
     }
 
+    /// 修改文件属主, 成功返回 0.
     pub fn chown(&self, path: &str, owner_pwm: u64, pwm: u64) -> i32 {
         self.chown_ext(path, owner_pwm, 0, pwm)
     }
@@ -914,6 +957,7 @@ impl UnkfsData {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
+    /// 同时修改文件属主与属组, 成功返回 0.
     pub fn chown_ext(&self, path: &str, owner_pwm: u64, group_pwm: u64, pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
@@ -1006,6 +1050,7 @@ impl UnkfsData {
         }
     }
 
+    /// 重命名文件或目录, 成功返回 0.
     pub fn rename(&self, old_path: &str, new_path: &str, pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
@@ -1053,6 +1098,7 @@ impl UnkfsData {
         0
     }
 
+    /// 创建符号链接, 成功返回 0.
     pub fn symlink(&self, target: &str, linkpath: &str, pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
@@ -1114,6 +1160,7 @@ impl UnkfsData {
         0
     }
 
+    /// 创建硬链接, 成功返回 0.
     pub fn link(&self, old_path: &str, new_path: &str, pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
@@ -1173,6 +1220,7 @@ impl UnkfsData {
         0
     }
 
+    /// 读取符号链接目标, 返回写入缓冲区的字节数.
     pub fn readlink(&self, path: &str, buf: &mut [u8], pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
@@ -1415,6 +1463,7 @@ impl UnkfsData {
         hash
     }
 
+    /// 同步所有未提交数据 (提交事务组并落盘), 成功返回 0.
     pub fn sync(&self) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
@@ -1943,6 +1992,7 @@ impl UnkfsData {
             )
     }
 
+    /// 调整描述符偏移 (`whence` 语义同 lseek), 返回新偏移.
     pub fn seek(&self, fd: u32, offset: i64, whence: u32) -> i64 {
         let (obj_id, cur_offset) = {
             let fds = self.fds.lock();

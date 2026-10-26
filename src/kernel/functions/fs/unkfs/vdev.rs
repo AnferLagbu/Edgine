@@ -1,34 +1,55 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 use crate::functions::fs::KernelError;
 use crate::privileged::driver::block;
 use alloc::vec::Vec;
 
+/// 单个存储池可注册的 vdev 上限.
 pub const HV_VDEV_MAX: usize = 8;
+/// vdev 类型: 单盘.
 pub const HV_VDEV_TYPE_DISK: u8 = 0;
+/// vdev 类型: 镜像.
 pub const HV_VDEV_TYPE_MIRROR: u8 = 1;
+/// vdev 类型: 单校验 RAID-Z.
 pub const HV_VDEV_TYPE_RAIDZ1: u8 = 2;
+/// vdev 类型: 双校验 RAID-Z.
 pub const HV_VDEV_TYPE_RAIDZ2: u8 = 3;
+/// vdev 类型: 三校验 RAID-Z.
 pub const HV_VDEV_TYPE_RAIDZ3: u8 = 4;
+/// vdev 类型: 热备.
 pub const HV_VDEV_TYPE_SPARE: u8 = 5;
+/// vdev 类型: 独立日志.
 pub const HV_VDEV_TYPE_LOG: u8 = 6;
+/// vdev 类型: L2 缓存.
 pub const HV_VDEV_TYPE_L2CACHE: u8 = 7;
 
+/// 探测不到实际容量时使用的默认 vdev 可分配大小 (32 MiB).
 pub const HV_VDEV_ASIZE_DEFAULT: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+/// vdev 生命周期与健康状态.
 pub enum UnkfsVdevState {
+    /// 未知状态.
     Unknown = 0,
+    /// 已关闭.
     Closed = 1,
+    /// 离线.
     Offline = 2,
+    /// 已移除.
     Removed = 3,
+    /// 无法打开.
     CantOpen = 4,
+    /// 故障.
     Faulted = 5,
+    /// 降级 (部分成员不可用).
     Degraded = 6,
+    /// 健康.
     Healthy = 7,
 }
 
 impl UnkfsVdevState {
+    /// 由编码值还原状态, 未知值归一为 `Unknown`.
     pub fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::Closed,
@@ -44,21 +65,34 @@ impl UnkfsVdevState {
 }
 
 #[derive(Debug, Clone)]
+/// vdev 配置: 标识、类型、路径、扇区位移与子成员数.
 pub struct UnkfsVdevConfig {
+    /// vdev 编号 (单盘时对应驱动器号).
     pub vdev_id: u16,
+    /// vdev 类型 (`HV_VDEV_TYPE_*`).
     pub vdev_type: u8,
+    /// 全局唯一标识.
     pub guid: u64,
+    /// 设备路径 (NUL 填充的定长字节数组).
     pub path: [u8; 64],
+    /// 扇区大小位移 (log2 字节数).
     pub ashift: u8,
+    /// 可分配大小 (字节).
     pub asize: u64,
+    /// 校验盘数量.
     pub nparity: u8,
+    /// 子 vdev 数量.
     pub children: u16,
+    /// 是否作为独立日志设备.
     pub is_log: bool,
+    /// 扇区总数.
     pub sector_count: u64,
+    /// 分区起始扇区.
     pub partition_start: u32,
 }
 
 impl UnkfsVdevConfig {
+    /// 构造单盘 vdev 配置, 初始容量取默认值、扇区数待探测.
     pub fn new_disk(vdev_id: u16, path: &str, ashift: u8) -> Self {
         let mut p = [0u8; 64];
         let b = path.as_bytes();
@@ -80,16 +114,27 @@ impl UnkfsVdevConfig {
     }
 }
 
+/// vdev 运行时实例: 配置、健康状态、子成员关系与读写计数.
 pub struct UnkfsVdev {
+    /// 静态配置.
     pub config: UnkfsVdevConfig,
+    /// 当前状态.
     pub state: UnkfsVdevState,
+    /// 父 vdev 编号.
     pub parent_id: Option<u16>,
+    /// 子 vdev 编号列表.
     pub child_ids: Vec<u16>,
+    /// 元数据区数量.
     pub ms_count: u32,
+    /// 已激活的元数据区数量.
     pub ms_active: u32,
+    /// 是否正在初始化.
     pub initializing: bool,
+    /// 是否支持 TRIM.
     pub trim_supported: bool,
+    /// 累计读次数.
     pub total_reads: u64,
+    /// 累计写次数.
     pub total_writes: u64,
 }
 
@@ -97,6 +142,7 @@ pub struct UnkfsVdev {
 // SAFETY (Framekernel P2.2.2): UnkfsVdev 全部字段 (Mutex<T>, Atomic*, [T; N]) 自动 Send + Sync。
 
 impl UnkfsVdev {
+    /// 以配置构造 vdev, 初始状态为已关闭.
     pub fn new(config: UnkfsVdevConfig) -> Self {
         Self {
             config,
@@ -112,6 +158,7 @@ impl UnkfsVdev {
         }
     }
 
+    /// 探测指定驱动器的容量 (字节): 优先读注册表, 回退二分扫描, 失败取默认值.
     pub fn probe_disk_size(drive: u8) -> u64 {
         if !block::hdd_is_present(drive) {
             return 0;
@@ -146,10 +193,12 @@ impl UnkfsVdev {
         }
     }
 
+    /// 是否处于健康状态.
     pub fn is_healthy(&self) -> bool {
         self.state == UnkfsVdevState::Healthy
     }
 
+    /// 是否可读写 (健康或降级).
     pub fn is_available(&self) -> bool {
         matches!(
             self.state,
@@ -157,6 +206,7 @@ impl UnkfsVdev {
         )
     }
 
+    /// 打开 vdev: 单盘探测到设备则置健康并回填容量/扇区数, 否则置无法打开.
     pub fn open(&mut self) {
         if self.config.vdev_type == HV_VDEV_TYPE_DISK {
             let present = block::hdd_is_present(self.config.vdev_id as u8);
@@ -174,6 +224,7 @@ impl UnkfsVdev {
         }
     }
 
+    /// 按扇区读取数据 (扣除分区偏移), 缓冲区不足返回 `InvalidArgument`.
     pub fn read_sectors(&mut self, sector: u64, count: u32, buf: &mut [u8]) -> i32 {
         let need_bytes = u64::from(count) * 512;
         if buf.len() < need_bytes as usize {
@@ -201,6 +252,7 @@ impl UnkfsVdev {
         0
     }
 
+    /// 按扇区写入数据 (扣除分区偏移), 缓冲区不足返回 `InvalidArgument`.
     pub fn write_sectors(&mut self, sector: u64, count: u32, buf: &[u8]) -> i32 {
         let need_bytes = u64::from(count) * 512;
         if buf.len() < need_bytes as usize {

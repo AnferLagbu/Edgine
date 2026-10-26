@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 2993,
-    "files": 217,
-    "keys": 549
+    "sites": 2703,
+    "files": 210,
+    "keys": 516
   },
   "entries": [
     [
@@ -299,16 +299,6 @@
       "src/kernel/functions/fs/ext2/mount.rs",
       "an associated function",
       1
-    ],
-    [
-      "src/kernel/functions/fs/ext2/super_block.rs",
-      "a struct field",
-      48
-    ],
-    [
-      "src/kernel/functions/fs/ext2/super_block.rs",
-      "an associated constant",
-      2
     ],
     [
       "src/kernel/functions/fs/handle.rs",
@@ -621,78 +611,8 @@
       2
     ],
     [
-      "src/kernel/functions/fs/unkfs/unkfs_data.rs",
-      "a constant",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/unkfs_data.rs",
-      "a function",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/unkfs_data.rs",
-      "a method",
-      20
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/unkfs_data.rs",
-      "a struct",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/unkfs_data.rs",
-      "a struct field",
-      22
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/unkfs_data.rs",
-      "a variant",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/unkfs_data.rs",
-      "an enum",
-      1
-    ],
-    [
       "src/kernel/functions/fs/unkfs/unkfs_inode.rs",
       "an associated function",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/vdev.rs",
-      "a constant",
-      10
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/vdev.rs",
-      "a method",
-      5
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/vdev.rs",
-      "a struct",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/vdev.rs",
-      "a struct field",
-      21
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/vdev.rs",
-      "a variant",
-      8
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/vdev.rs",
-      "an associated function",
-      4
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/vdev.rs",
-      "an enum",
       1
     ],
     [
@@ -727,41 +647,6 @@
     ],
     [
       "src/kernel/functions/fs/unkfs/zap.rs",
-      "an enum",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zil.rs",
-      "a constant",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zil.rs",
-      "a method",
-      7
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zil.rs",
-      "a struct",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zil.rs",
-      "a struct field",
-      17
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zil.rs",
-      "a variant",
-      13
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zil.rs",
-      "an associated function",
-      11
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zil.rs",
       "an enum",
       1
     ],
@@ -1304,56 +1189,6 @@
       "src/kernel/privileged/debug/kgdb.rs",
       "a struct field",
       18
-    ],
-    [
-      "src/kernel/privileged/dma/api.rs",
-      "a constant",
-      2
-    ],
-    [
-      "src/kernel/privileged/dma/api.rs",
-      "a struct field",
-      9
-    ],
-    [
-      "src/kernel/privileged/dma/api.rs",
-      "a variant",
-      6
-    ],
-    [
-      "src/kernel/privileged/dma/engine.rs",
-      "a method",
-      10
-    ],
-    [
-      "src/kernel/privileged/dma/engine.rs",
-      "a struct field",
-      6
-    ],
-    [
-      "src/kernel/privileged/dma/engine.rs",
-      "an associated function",
-      2
-    ],
-    [
-      "src/kernel/privileged/dma/mod.rs",
-      "a constant",
-      3
-    ],
-    [
-      "src/kernel/privileged/dma/mod.rs",
-      "a struct field",
-      41
-    ],
-    [
-      "src/kernel/privileged/dma/mod.rs",
-      "a variant",
-      6
-    ],
-    [
-      "src/kernel/privileged/dma/mod.rs",
-      "an associated function",
-      2
     ],
     [
       "src/kernel/privileged/driver/display/font.rs",

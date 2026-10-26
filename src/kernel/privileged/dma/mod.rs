@@ -5,6 +5,7 @@
 //!
 //! 取代 `src/kernel/dma.c` 中的 C 实现, 采用类型安全的
 //! `PhysAddr`/`VirtAddr` 与无锁统计.
+#![deny(missing_docs)]
 
 use crate::privileged::mm::get_vmm;
 use crate::privileged::mm::{CACHE_LINE_SIZE, KERNEL_BASE, PAGE_SIZE, PhysAddr, VirtAddr};
@@ -13,20 +14,28 @@ use alloc::collections::BTreeMap;
 use core::ptr::{self};
 use core::sync::atomic::{AtomicU64, Ordering};
 
+/// DMA 安全代理层: 对 functions 暴露的映射/分配安全 API.
 pub mod api;
+/// DMA 引擎实现: 一致性内存池、映射表与统计.
 pub mod engine;
 
 // Constants
+/// 同时存在的 DMA 映射条目上限.
 pub const DMA_MAX_MAPPINGS: usize = 256;
+/// 单个散聚表可容纳的条目上限.
 pub const DMA_MAX_SCATTER_ENTRIES: usize = 64;
+/// MMIO 虚拟地址区间的起始基址.
 pub const MMIO_VIRT_BASE: u64 = 0xFFFF900000000000;
 
 /// DMA 传输方向 (到设备/自设备/双向)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum DmaDirection {
+    /// CPU 内存 → 设备.
     ToDevice = 0,
+    /// 设备 → CPU 内存.
     FromDevice = 1,
+    /// 双向传输.
     Bidirectional = 2,
 }
 
@@ -34,20 +43,30 @@ pub enum DmaDirection {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum DmaCachePolicy {
+    /// 无缓存 (一致性内存).
     None = 0,
+    /// 写回策略.
     Writeback = 1,
+    /// 写穿策略.
     Writethrough = 2,
 }
 
 /// DMA 映射条目, 记录 CPU/设备地址、大小、方向与缓存/一致性标志
 #[derive(Debug)]
 pub struct DmaMapping {
+    /// CPU 侧虚拟地址.
     pub cpu_addr: VirtAddr,
+    /// 设备侧物理 (总线) 地址.
     pub dma_addr: PhysAddr,
+    /// 映射长度 (字节).
     pub size: usize,
+    /// 传输方向.
     pub direction: DmaDirection,
+    /// 缓存策略.
     pub cache: DmaCachePolicy,
+    /// 是否为一致性映射.
     pub is_coherent: bool,
+    /// 映射是否仍然有效.
     pub is_mapped: bool,
 }
 
@@ -55,8 +74,11 @@ pub struct DmaMapping {
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct DmaScatterEntry {
+    /// 条目物理地址.
     pub phys_addr: u64,
+    /// 条目长度 (字节).
     pub length: usize,
+    /// 条目所在页地址.
     pub page_addr: usize,
 }
 
@@ -64,13 +86,18 @@ pub struct DmaScatterEntry {
 #[derive(Debug)]
 #[repr(C)]
 pub struct DmaScatterList {
+    /// 已填充条目数.
     pub entry_count: u32,
+    /// 条目数组.
     pub entries: [DmaScatterEntry; DMA_MAX_SCATTER_ENTRIES],
+    /// 全部条目总长度 (字节).
     pub total_length: usize,
+    /// 传输方向 (`DmaDirection` 编码).
     pub direction: u32,
 }
 
 impl DmaScatterList {
+    /// 构造空散聚表.
     pub const fn new() -> Self {
         Self {
             entry_count: 0,
@@ -91,14 +118,23 @@ pub type DmaCallback = fn(*mut u8, i32);
 /// DMA 传输请求 (opaque — C 端使用指针)
 #[derive(Debug)]
 pub struct DmaTransfer {
+    /// 源地址.
     pub src_addr: u64,
+    /// 目的地址.
     pub dst_addr: u64,
+    /// 传输长度 (字节).
     pub length: usize,
+    /// 传输方向.
     pub direction: DmaDirection,
+    /// 是否同步等待完成.
     pub synchronous: bool,
+    /// 是否已完成.
     pub completed: bool,
+    /// 传输结果码 (0 = 成功).
     pub result: i32,
+    /// 完成回调.
     pub callback: Option<DmaCallback>,
+    /// 回调私有数据指针.
     pub private_data: *mut u8,
 }
 
@@ -106,31 +142,50 @@ pub struct DmaTransfer {
 #[derive(Debug, Clone, Default)]
 #[repr(C)]
 pub struct DmaPoolStats {
+    /// 累计分配次数.
     pub total_allocations: u64,
+    /// 累计释放次数.
     pub total_frees: u64,
+    /// 累计映射次数.
     pub total_mappings: u64,
+    /// 累计解除映射次数.
     pub total_unmappings: u64,
+    /// 当前占用中的分配数.
     pub current_in_use: u64,
+    /// 历史最大并发分配数.
     pub max_concurrent: u64,
+    /// 一致性校验失败次数.
     pub coherence_fails: u64,
+    /// 累计分配字节数.
     pub total_bytes_allocated: u64,
+    /// 当前占用字节数.
     pub current_bytes_used: u64,
 }
 
 /// 无锁统计计数器
 pub struct DmaStats {
+    /// 累计分配次数.
     pub total_allocations: AtomicU64,
+    /// 累计释放次数.
     pub total_frees: AtomicU64,
+    /// 累计映射次数.
     pub total_mappings: AtomicU64,
+    /// 累计解除映射次数.
     pub total_unmappings: AtomicU64,
+    /// 当前占用中的分配数.
     pub current_in_use: AtomicU64,
+    /// 历史最大并发分配数.
     pub max_concurrent: AtomicU64,
+    /// 一致性校验失败次数.
     pub coherence_fails: AtomicU64,
+    /// 累计分配字节数.
     pub total_bytes_allocated: AtomicU64,
+    /// 当前占用字节数.
     pub current_bytes_used: AtomicU64,
 }
 
 impl DmaStats {
+    /// 构造全部计数为零的统计实例.
     pub const fn new() -> Self {
         Self {
             total_allocations: AtomicU64::new(0),
