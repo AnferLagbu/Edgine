@@ -44,10 +44,10 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 描述：达成 Asterinas 范式对齐。
 方案：
-1. [X] TCB 占比改为持续收敛软指标（2026-10-26 用户裁定：**不再追求 <30% 硬目标**，改为「尽可能缩小 TCB」；阶段 6 实测 56.7%，当前审计约 57.0%，仅作趋势跟踪，不再作为验收阻断项）
+1. [X] TCB 占比改为持续收敛软指标（2026-10-26 用户裁定：**不再追求 <30% 硬目标**，改为「尽可能缩小 TCB」；阶段 6 实测 56.7%，当前审计 56.5%，仅作趋势跟踪，不再作为验收阻断项）
 2. [X] privileged→functions 反向依赖 = 0（生产口径 = privileged 生产代码引用 `crate::functions`；经 `audit_reverse_deps.py` 核验 0 文件/0 行，原 136 处/78 文件已全部下沉/反转/收敛/按 §7.3 豁免）
 3. [X] 功能层 functions 权威（driver / fs 核心 / net 策略 / proc 策略 / syscall 业务；阶段 6 核验通过，见 `docs/report/framekernel-paradigm-validation.md`）
-4. [ ] privileged 仅机制/契约/安全代理（阶段 6 实测 privileged `.rs` 300 个，未收敛至 §6.6 规划的 200；见 §6.6）
+4. [X] privileged 仅机制/契约/安全代理（2026-10-26 收口，见 §11 DECISION-AA：实测 privileged 315 个 `.rs`，文件数 200 不再作为验收阻断项、改为趋势跟踪；验收以 §6.1–§6.5 的逐文件服务对象判定闭环为准）
 5. [X] functions 保持 0 unsafe（F1 不回归；阶段 6 核验 0，真实 unsafe 仅 vendored smoltcp 3rd-party 锁定子树）
 6. [X] §2.3 五条验证门槛（双架构 0w0e / clippy 0 / 核心审计 / host-tests / QEMU；阶段 6 全绿）
 
@@ -199,6 +199,8 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | timer（1）| mod |
 
 ### 6.6 保留 privileged（机制/TCB）——200 文件
+
+> **口径更新（2026-10-26，DECISION-AA）**：本节 200 文件为治理前规划基数，现仅作构成参考与趋势跟踪；实测 privileged 315 个 `.rs`（含 `tests/` 13 个测试文件），超出部分主要来自 DECISION-J「壳删除 = 所有权反转」迁回的机制常量/类型，不构成策略残留。验收以服务对象准则的逐文件判定为准。
 
 - **arch（19）**：x86_64/aarch64 全部（页表/中断/上下文切换/APIC/GIC/PSCI/UART/启动）
 - **sync（14）**：全部同步原语（含 pi_mutex 优先级继承协议、lockdep）
@@ -1522,5 +1524,22 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 **影响面**：绘图算法（约 400 行）迁入 functions 且 0 unsafe；privileged 仅余像素格式转换 + MMIO + 滚动机制，`gfx_console`/`font` 的逐像素字体落盘仍走 `Framebuffer::set_pixel` 机制。三份机器派生基线随之重导：`audit_dead_code_comment`（1749 → 1744 处，减少 5 处随算法迁出失效的 clippy 抑制）、`audit_public_api_docs`（526 → 524 处 / 459 → 458 键，补齐 `Point::new`/`Rect::new` 与 `Color`/`Point`/`Rect` 字段中文 doc）、`audit_missing_docs_debt`（4438 处 / 639 键，framebuffer.rs 的 10 字段 + 2 关联函数债务清偿）。
 
 **验证**：§2.3 六门槛全绿——双架构 `./ci/build.sh all` Passed 6 / Failed 0（0 error / 0 warning）；四 crate `cargo fmt --check` 无漂移；CI 口径 clippy pedantic（x86_64 + aarch64，`-D warnings`）0；`bash ci/audit.sh full` 全腿通过（含 reverse_deps 生产 0、F1-F9、QEMU 双架构 2/2）；`make test-host` 全过；`make test-kernel-host` kernel 426 / kernel-functions 599 / kernel-privileged 12 passed，0 failed。
+
+**状态**: [X]
+
+### DECISION-AA: §3 目标 4 收口（文件数目标退役，改形态验收 + 趋势跟踪）
+
+> **背景**：§3 目标 4 原以「privileged `.rs` 收敛至 §6.6 规划的 200」为验收口径。§6.1–§6.5 逐文件治理收口后实测 privileged 315 个 `.rs`（含 `tests/` 13 个，生产 302），远超 200。成因不是策略残留，而是 **DECISION-J「壳删除 = 所有权反转」** 把机制常量/类型（`config/*`、`ipc/types`、`net/{wait_queue,netfilter,route}`、`mm/numa`、`io/iouring` 等）迁回 privileged——这些文件均为机制定义或 privileged 机制的安全导出面，不应下沉。
+
+**调研结论（2026-10-26，逐文件复核）**：
+
+- 剩余 0-unsafe 文件按服务对象准则（§2）复核，绝大多数是 trait 契约（`*_trait.rs` / `mechanism.rs` / `types_pod.rs`）、注册表、机制常量/类型，或 DECISION-F 已裁定保留项。
+- 仅 4 个文件仍具「策略」性质：`driver/display/self_test.rs`（自检图案，需注册钩子）、`driver/hotplug.rs`（事件分发，需回调注册）、`driver/bus/{mod,pci}.rs`（枚举编排，依赖 PCI 配置空间原语）、`egdf/firmware.rs`（`FirmwareBlob` 被 privileged `devtree` 直接持有，属机制数据结构）。合计约 878 行，真实 TCB 缩减有限且均需新增契约，风险/收益不划算（§11.3）。
+
+**裁决（用户 2026-10-26）**：采纳「收口目标 4」——文件数 200 不再作为验收阻断项，改为趋势跟踪；验收口径回到定性判据「privileged 只保留机制/契约/安全代理」，以 §6.1–§6.5 的逐文件判定闭环为证。真实 TCB 缩减若继续，应另立专项按 unsafe 集中度（mm/arch/net/proc/sync）拆分机制内策略，不在本工程内追加范围（§11.3 禁止事后追加）。
+
+**影响面**：仅文档（§3 目标 4 状态、§6.6 注记、本决策）；无代码与基线变动。
+
+**验证**：纯文档收口，无需重跑 §2.3 门槛；现状读数 `audit_tcb_ratio` 56.5%、`audit_reverse_deps` 生产 0 文件/0 行、`audit_functions_boundary` 0 问题。
 
 **状态**: [X]
