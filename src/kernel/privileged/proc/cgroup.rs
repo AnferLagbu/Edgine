@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 privileged API。
 //! cgroup (Control Group) — 资源限制、统计与隔离 — privileged 机制实现
 //!
@@ -29,11 +30,17 @@ use crate::privileged::sync::OnceLock;
 // 常量
 // ============================================================================
 
+/// cgroup 允许的最大嵌套深度.
 pub const CGROUP_MAX_DEPTH: usize = 2;
+/// 单个 cgroup 可挂载的进程数上限.
 pub const CGROUP_MAX_PROCS: u32 = 4096;
+/// CFS 调度周期的默认值 (微秒, 即 1 秒).
 pub const CPU_CFS_PERIOD_DEFAULT_US: u64 = 1_000_000;
+/// CFS 配额的"不限额"哨兵值.
 pub const CPU_CFS_QUOTA_MAX: u64 = u64::MAX;
+/// 内存上限的"不限额"哨兵值.
 pub const MEMORY_LIMIT_MAX: u64 = u64::MAX;
+/// PID 数量上限的"不限额"哨兵值.
 pub const PIDS_MAX_DEFAULT: u64 = u64::MAX;
 
 // ============================================================================
@@ -53,14 +60,20 @@ fn alloc_cgroup_id() -> u64 {
 /// CPU 控制器 — 按 CFS 配额与周期限制 CPU 带宽, 并统计运行时长与节流次数。
 #[derive(Debug)]
 pub struct CpuController {
+    /// 每个周期允许消耗的 CPU 时间 (微秒).
     pub cfs_quota_us: AtomicU64,
+    /// CFS 统计周期 (微秒).
     pub cfs_period_us: AtomicU64,
+    /// 当前周期已消耗的 CPU 时间 (微秒).
     pub runtime_used: AtomicU64,
+    /// 因超配额被节流的累计次数.
     pub nr_throttled: AtomicU64,
+    /// 累计被节流的时长 (微秒).
     pub throttled_time: AtomicU64,
 }
 
 impl CpuController {
+    /// 构造不限额的控制器: 配额为哨兵值, 周期取默认 1 秒.
     pub fn new() -> Self {
         Self {
             cfs_quota_us: AtomicU64::new(CPU_CFS_QUOTA_MAX),
@@ -71,6 +84,7 @@ impl CpuController {
         }
     }
 
+    /// 记入 `delta_us` 并判断本周期是否仍在配额内; 不限额时恒为 `true`.
     pub fn check_budget(&self, delta_us: u64) -> bool {
         let quota = self.cfs_quota_us.load(Ordering::Acquire);
         if quota == CPU_CFS_QUOTA_MAX {
@@ -80,6 +94,7 @@ impl CpuController {
         used + delta_us <= quota
     }
 
+    /// 开启新周期: 清零已用时间, 超出配额的部分计入节流统计.
     pub fn period_reset(&self) {
         let quota = self.cfs_quota_us.load(Ordering::Acquire);
         if quota != CPU_CFS_QUOTA_MAX {
@@ -92,10 +107,12 @@ impl CpuController {
         }
     }
 
+    /// 设置每周期可用的 CPU 时间配额 (微秒).
     pub fn set_quota(&self, quota_us: u64) {
         self.cfs_quota_us.store(quota_us, Ordering::Release);
     }
 
+    /// 设置 CFS 统计周期; 传入 0 时忽略.
     pub fn set_period(&self, period_us: u64) {
         if period_us > 0 {
             self.cfs_period_us.store(period_us, Ordering::Release);
@@ -110,14 +127,20 @@ impl CpuController {
 /// 内存控制器 — 限制 cgroup 内存用量, 并统计峰值用量与 OOM 击杀次数。
 #[derive(Debug)]
 pub struct MemoryController {
+    /// 内存用量上限 (字节).
     pub limit_in_bytes: AtomicU64,
+    /// 当前已计入的内存用量 (字节).
     pub usage_in_bytes: AtomicU64,
+    /// 历史峰值用量 (字节).
     pub max_usage_in_bytes: AtomicU64,
+    /// 因超限触发 OOM 击杀的累计次数.
     pub oom_kill_count: AtomicU64,
+    /// 非零时禁用 OOM 击杀.
     pub oom_kill_disable: AtomicU32,
 }
 
 impl MemoryController {
+    /// 构造不限额的控制器: 上限为哨兵值, 用量统计归零.
     pub fn new() -> Self {
         Self {
             limit_in_bytes: AtomicU64::new(MEMORY_LIMIT_MAX),
@@ -132,6 +155,7 @@ impl MemoryController {
         clippy::needless_continue,
         reason = "needless_continue: continue 提升循环可读性; 当前优先 expect"
     )]
+    /// 尝试计入 `bytes` 内存; 超限返回 `false` 且不改变用量.
     pub fn try_charge(&self, bytes: u64) -> bool {
         let limit = self.limit_in_bytes.load(Ordering::Acquire);
         if limit == MEMORY_LIMIT_MAX {
@@ -159,6 +183,7 @@ impl MemoryController {
         }
     }
 
+    /// 归还 `bytes` 内存; 下溢时把用量钳到 0.
     pub fn uncharge(&self, bytes: u64) {
         let prev = self.usage_in_bytes.fetch_sub(bytes, Ordering::AcqRel);
         if prev < bytes {
@@ -166,10 +191,12 @@ impl MemoryController {
         }
     }
 
+    /// 设置内存用量上限 (字节).
     pub fn set_limit(&self, limit_bytes: u64) {
         self.limit_in_bytes.store(limit_bytes, Ordering::Release);
     }
 
+    /// 当前用量是否已超上限; 不限额时恒为 `false`.
     pub fn is_over_limit(&self) -> bool {
         let limit = self.limit_in_bytes.load(Ordering::Acquire);
         if limit == MEMORY_LIMIT_MAX {
@@ -208,12 +235,16 @@ impl MemoryController {
 /// PID 控制器 — 限制 cgroup 内进程/线程总数, 并统计 fork 失败次数。
 #[derive(Debug)]
 pub struct PidsController {
+    /// 进程/线程数量上限.
     pub pids_max: AtomicU64,
+    /// 当前挂载的进程数.
     pub current: AtomicU64,
+    /// 因达到上限而失败的 fork 次数.
     pub events_fork_fail: AtomicU64,
 }
 
 impl PidsController {
+    /// 构造不限额的控制器: 上限为哨兵值, 计数归零.
     pub fn new() -> Self {
         Self {
             pids_max: AtomicU64::new(PIDS_MAX_DEFAULT),
@@ -226,6 +257,7 @@ impl PidsController {
         clippy::needless_continue,
         reason = "needless_continue: continue 提升循环可读性; 当前优先 expect"
     )]
+    /// 尝试占用一个 PID 名额; 已达上限时记一次失败并返回 `false`.
     pub fn try_fork(&self) -> bool {
         let max = self.pids_max.load(Ordering::Acquire);
         if max == PIDS_MAX_DEFAULT {
@@ -250,6 +282,7 @@ impl PidsController {
         }
     }
 
+    /// 释放一个 PID 名额; 计数下溢时钳到 0.
     pub fn exit(&self) {
         let prev = self.current.fetch_sub(1, Ordering::AcqRel);
         if prev == 0 {
@@ -257,6 +290,7 @@ impl PidsController {
         }
     }
 
+    /// 设置 PID 数量上限.
     pub fn set_max(&self, max: u64) {
         self.pids_max.store(max, Ordering::Release);
     }
@@ -269,17 +303,26 @@ impl PidsController {
 /// IO 控制器 — 统计 cgroup 的读写字节数与 IO 次数, 并提供带宽/IOPS 上限字段。
 #[derive(Debug)]
 pub struct IoController {
+    /// 读带宽上限 (字节/秒).
     pub read_bps_max: AtomicU64,
+    /// 写带宽上限 (字节/秒).
     pub write_bps_max: AtomicU64,
+    /// 读 IOPS 上限.
     pub read_iops_max: AtomicU64,
+    /// 写 IOPS 上限.
     pub write_iops_max: AtomicU64,
+    /// 累计读字节数.
     pub stat_read_bytes: AtomicU64,
+    /// 累计写字节数.
     pub stat_write_bytes: AtomicU64,
+    /// 累计读 IO 次数.
     pub stat_read_ios: AtomicU64,
+    /// 累计写 IO 次数.
     pub stat_write_ios: AtomicU64,
 }
 
 impl IoController {
+    /// 构造不限额、统计归零的控制器.
     pub fn new() -> Self {
         Self {
             read_bps_max: AtomicU64::new(u64::MAX),
@@ -293,11 +336,13 @@ impl IoController {
         }
     }
 
+    /// 记入一次读操作及其字节数.
     pub fn account_read(&self, bytes: u64) {
         self.stat_read_bytes.fetch_add(bytes, Ordering::Relaxed);
         self.stat_read_ios.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// 记入一次写操作及其字节数.
     pub fn account_write(&self, bytes: u64) {
         self.stat_write_bytes.fetch_add(bytes, Ordering::Relaxed);
         self.stat_write_ios.fetch_add(1, Ordering::Relaxed);
@@ -311,18 +356,28 @@ impl IoController {
 /// cgroup 运行时实例 — 保存层级关系、成员进程及各资源控制器。
 #[derive(Debug)]
 pub struct CgroupRq {
+    /// cgroup 的唯一编号; 根组为 0.
     pub id: u64,
+    /// cgroup 名称, 由自旋锁保护.
     pub name: IrqSpinLock<String>,
+    /// 父 cgroup 的编号.
     pub parent_id: u64,
+    /// 直接子 cgroup 的编号列表.
     pub children: IrqSpinLock<Vec<u64>>,
+    /// 挂载到本组的进程列表.
     pub procs: IrqSpinLock<Vec<Pid>>,
+    /// CPU 控制器.
     pub cpu: CpuController,
+    /// 内存控制器.
     pub memory: MemoryController,
+    /// PID 控制器.
     pub pids: PidsController,
+    /// IO 控制器.
     pub io: IoController,
 }
 
 impl CgroupRq {
+    /// 构造 id=0、名称为 `/` 的根 cgroup.
     pub fn new_root() -> Self {
         Self {
             id: 0,
@@ -337,6 +392,7 @@ impl CgroupRq {
         }
     }
 
+    /// 构造带新分配编号的子 cgroup.
     pub fn new_child(name: &str, parent_id: u64) -> Self {
         Self {
             id: alloc_cgroup_id(),
@@ -351,6 +407,7 @@ impl CgroupRq {
         }
     }
 
+    /// 把进程加入本组 (重复加入视为成功); 超过组容量时返回 `false`.
     pub fn attach_proc(&self, pid: Pid) -> bool {
         let mut procs = self.procs.lock();
         if procs.len() >= CGROUP_MAX_PROCS as usize {
@@ -363,6 +420,7 @@ impl CgroupRq {
         self.pids.try_fork()
     }
 
+    /// 把进程从本组移除, 并释放其占用的 PID 名额.
     pub fn detach_proc(&self, pid: Pid) {
         let mut procs = self.procs.lock();
         if let Some(pos) = procs.iter().position(|&p| p == pid) {
@@ -383,6 +441,7 @@ pub struct CgroupSubsystem {
 }
 
 impl CgroupSubsystem {
+    /// 构造管理器并建立根 cgroup.
     pub fn new() -> Self {
         let root = Arc::new(CgroupRq::new_root());
         let mut groups = BTreeMap::new();
@@ -394,10 +453,12 @@ impl CgroupSubsystem {
         }
     }
 
+    /// 返回根 cgroup 的共享句柄.
     pub fn root(&self) -> &Arc<CgroupRq> {
         &self.root
     }
 
+    /// 在父组下创建子组并返回新编号; 父组不存在或层级已满返回 0.
     pub fn create_cgroup(&self, parent_id: u64, name: &str) -> u64 {
         let mut groups = self.groups.lock();
 
@@ -462,6 +523,7 @@ impl CgroupSubsystem {
         Ok(())
     }
 
+    /// 按编号查找 cgroup.
     pub fn find(&self, id: u64) -> Option<Arc<CgroupRq>> {
         self.groups.lock().get(&id).map(Arc::clone)
     }
@@ -496,6 +558,7 @@ impl CgroupSubsystem {
         Ok(())
     }
 
+    /// 查找进程当前所属的 cgroup.
     pub fn cgroup_of(&self, pid: Pid) -> Option<Arc<CgroupRq>> {
         let groups = self.groups.lock();
         for cg in groups.values() {
@@ -516,11 +579,17 @@ impl CgroupSubsystem {
 #[repr(u64)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum Errno {
+    /// 操作不被允许.
     EPERM = 1,
+    /// 目标 cgroup 不存在.
     ENOENT = 2,
+    /// 资源暂时不足, 可重试.
     EAGAIN = 11,
+    /// 内存不足.
     ENOMEM = 12,
+    /// 目标仍被占用 (存在进程或子组).
     EBUSY = 16,
+    /// 参数非法.
     EINVAL = 22,
 }
 

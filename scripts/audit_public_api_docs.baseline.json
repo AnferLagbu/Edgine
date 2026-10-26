@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 484,
-    "files": 80,
-    "keys": 426
+    "sites": 458,
+    "files": 79,
+    "keys": 404
   },
   "entries": [
     [
@@ -1592,138 +1592,6 @@
       "src/kernel/privileged/proc/cfs.rs",
       "fn",
       "utilization_pct",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "account_read",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "account_write",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "attach_proc",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "cgroup_of",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "check_budget",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "create_cgroup",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "detach_proc",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "exit",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "find",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "is_over_limit",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "new",
-      5
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "new_child",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "new_root",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "period_reset",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "root",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "set_limit",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "set_max",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "set_period",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "set_quota",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "try_charge",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "try_fork",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "fn",
-      "uncharge",
       1
     ],
     [

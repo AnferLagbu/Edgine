@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 3642,
-    "files": 228,
-    "keys": 614
+    "sites": 3293,
+    "files": 222,
+    "keys": 577
   },
   "entries": [
     [
@@ -491,46 +491,6 @@
       2
     ],
     [
-      "src/kernel/functions/fs/unkfs/bp.rs",
-      "a constant",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/bp.rs",
-      "a method",
-      19
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/bp.rs",
-      "a struct",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/bp.rs",
-      "a struct field",
-      19
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/bp.rs",
-      "a variant",
-      11
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/bp.rs",
-      "an associated constant",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/bp.rs",
-      "an associated function",
-      6
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/bp.rs",
-      "an enum",
-      2
-    ],
-    [
       "src/kernel/functions/fs/unkfs/checksum.rs",
       "a constant",
       3
@@ -716,11 +676,6 @@
       1
     ],
     [
-      "src/kernel/functions/fs/unkfs/mod.rs",
-      "a module",
-      17
-    ],
-    [
       "src/kernel/functions/fs/unkfs/raidz.rs",
       "a constant",
       2
@@ -778,76 +733,6 @@
     [
       "src/kernel/functions/fs/unkfs/snapshot.rs",
       "an associated function",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/spa.rs",
-      "a constant",
-      8
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/spa.rs",
-      "a method",
-      18
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/spa.rs",
-      "a struct",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/spa.rs",
-      "a struct field",
-      35
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/spa.rs",
-      "a variant",
-      6
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/spa.rs",
-      "an associated function",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/spa.rs",
-      "an enum",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/txg.rs",
-      "a constant",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/txg.rs",
-      "a method",
-      22
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/txg.rs",
-      "a struct",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/txg.rs",
-      "a struct field",
-      25
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/txg.rs",
-      "a variant",
-      8
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/txg.rs",
-      "an associated function",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/txg.rs",
-      "an enum",
       2
     ],
     [
@@ -1134,51 +1019,6 @@
       "src/kernel/functions/net/mod.rs",
       "an associated function",
       1
-    ],
-    [
-      "src/kernel/functions/net/unix.rs",
-      "a function",
-      3
-    ],
-    [
-      "src/kernel/functions/net/unix.rs",
-      "a method",
-      2
-    ],
-    [
-      "src/kernel/functions/net/unix.rs",
-      "a static",
-      1
-    ],
-    [
-      "src/kernel/functions/net/unix.rs",
-      "a struct",
-      3
-    ],
-    [
-      "src/kernel/functions/net/unix.rs",
-      "a struct field",
-      29
-    ],
-    [
-      "src/kernel/functions/net/unix.rs",
-      "a type alias",
-      1
-    ],
-    [
-      "src/kernel/functions/net/unix.rs",
-      "a variant",
-      18
-    ],
-    [
-      "src/kernel/functions/net/unix.rs",
-      "an associated function",
-      3
-    ],
-    [
-      "src/kernel/functions/net/unix.rs",
-      "an enum",
-      3
     ],
     [
       "src/kernel/functions/proc/elf.rs",
@@ -2634,31 +2474,6 @@
       "src/kernel/privileged/proc/cfs.rs",
       "an associated function",
       3
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "a constant",
-      6
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "a method",
-      19
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "a struct field",
-      30
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "a variant",
-      6
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "an associated function",
-      7
     ],
     [
       "src/kernel/privileged/proc/cpu_queue.rs",

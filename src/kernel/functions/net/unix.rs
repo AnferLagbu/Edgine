@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 privileged API。
 //! Unix Domain Socket (`AF_UNIX`) — functions 层策略主体
 //!
@@ -48,19 +49,30 @@ pub const UNIX_LISTEN_BACKLOG: usize = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
+/// UDS 内部错误码, 取 POSIX errno 数值以便直接转成系统调用返回值.
 pub enum UdsError {
+    /// 文件描述符无效或不属于 UDS 子系统 (EBADF).
     BadFd = 9,
+    /// 非阻塞操作当前无法完成 (EAGAIN).
     Again = 11,
+    /// 内存或槽位不足 (ENOMEM).
     NoMem = 12,
+    /// 地址族不支持 (EAFNOSUPPORT).
     AddrFamily = 97,
+    /// 路径已被其他套接字绑定 (EADDRINUSE).
     AddrInUse = 98,
+    /// 对端拒绝连接 (ECONNREFUSED).
     ConnRefused = 111,
+    /// 参数非法 (EINVAL).
     Invalid = 22,
+    /// 目标路径或套接字不存在 (ENOENT).
     NotFound = 2,
+    /// 当前实现不支持该操作 (ENOSYS).
     NoSys = 38,
 }
 
 impl UdsError {
+    /// 转为系统调用返回值形式, 即对应 errno 的负值.
     pub fn as_ret(self) -> i32 {
         -(self as i32)
     }
@@ -72,12 +84,16 @@ impl UdsError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+/// UDS 套接字类型.
 pub enum UnixSockType {
+    /// 面向连接的字节流 (SOCK_STREAM).
     Stream = 1,
+    /// 保留消息边界的数据报 (SOCK_DGRAM).
     Dgram = 2,
 }
 
 impl UnixSockType {
+    /// 由 `socket()` 传入的类型值解析; 非 1 / 2 返回 `None`.
     pub fn from_i32(t: i32) -> Option<Self> {
         match t {
             1 => Some(Self::Stream),
@@ -89,35 +105,58 @@ impl UnixSockType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+/// UDS 套接字生命周期状态.
 pub enum UnixSockState {
+    /// 尚未绑定路径.
     Unbound = 0,
+    /// 已绑定路径, 尚未监听.
     Bound = 1,
+    /// 处于监听态, 可接受连接.
     Listening = 2,
+    /// 已与对端建立连接.
     Connected = 3,
+    /// 已关闭, 等待回收.
     Closed = 4,
 }
 
 #[derive(Debug, Clone)]
+/// 单个 UDS 套接字: 绑定路径、监听队列、连接对端与收发缓冲.
 pub struct UnixSocket {
+    /// 套接字内部编号; 0 表示槽位空闲.
     pub id: u32,
+    /// 套接字类型 (流 / 数据报).
     pub sock_type: UnixSockType,
+    /// 当前生命周期状态.
     pub state: UnixSockState,
+    /// 绑定的路径字节 (未绑定时为全零).
     pub bound_path: [u8; UNIX_PATH_MAX],
+    /// 绑定路径的有效字节数.
     pub bound_path_len: u16,
 
+    /// 监听队列中待 accept 的套接字编号 (环形缓冲).
     pub listen_pending: [u32; UNIX_LISTEN_BACKLOG],
+    /// 监听队列队头下标.
     pub listen_head: u8,
+    /// 监听队列队尾下标.
     pub listen_tail: u8,
+    /// 监听队列当前长度.
     pub listen_count: u8,
 
+    /// 已连接对端的套接字编号.
     pub peer: Option<u32>,
 
+    /// 流式套接字的接收缓冲.
     pub stream_buf: [u8; UNIX_STREAM_BUF],
+    /// 流式缓冲中的有效字节数.
     pub stream_len: u32,
+    /// 对端是否已关闭写方向.
     pub peer_closed: bool,
 
+    /// 数据报套接字的接收缓冲 (仅保留一条消息).
     pub dgram_buf: [u8; UNIX_DGRAM_MAX],
+    /// 数据报缓冲中的有效字节数.
     pub dgram_len: u32,
+    /// 数据报缓冲中是否有待读取消息.
     pub dgram_pending: bool,
 
     /// v2: `SO_PASSCRED` 选项 — 对端 socket 设置后, 发送消息自动附加
@@ -126,6 +165,7 @@ pub struct UnixSocket {
 }
 
 impl UnixSocket {
+    /// 构造全零的空套接字 (类型默认流式, 状态未绑定).
     pub const fn empty() -> Self {
         Self {
             id: 0,
@@ -150,14 +190,20 @@ impl UnixSocket {
 }
 
 #[derive(Debug, Clone, Copy)]
+/// 路径绑定表项: 记录一条已绑定路径及其所属套接字槽位.
 pub struct UnixPathBinding {
+    /// 绑定路径字节.
     pub path: [u8; UNIX_PATH_MAX],
+    /// 路径的有效字节数.
     pub path_len: u16,
+    /// 占用该路径的套接字槽位下标.
     pub sock_idx: u8,
+    /// 表项是否在使用中.
     pub used: bool,
 }
 
 impl UnixPathBinding {
+    /// 构造全零的空表项.
     pub const fn empty() -> Self {
         Self {
             path: [0u8; UNIX_PATH_MAX],
@@ -173,8 +219,11 @@ impl UnixPathBinding {
 // ============================================================================
 
 #[derive(Debug)]
+/// UDS 子系统的全局状态: 套接字表与路径绑定表.
 pub struct UdsState {
+    /// 全部套接字槽位.
     pub sockets: Vec<UnixSocket>,
+    /// 全部路径绑定表项.
     pub paths: Vec<UnixPathBinding>,
 }
 
@@ -245,6 +294,7 @@ impl UdsState {
     }
 }
 
+/// UDS 全局状态 (受中断自旋锁保护).
 pub static UDS_STATE: IrqSpinLock<UdsState> = IrqSpinLock::new(UdsState::empty());
 
 static NEXT_SOCK_ID: IrqSpinLock<u32> = IrqSpinLock::new(1);
@@ -273,6 +323,7 @@ fn fd_to_idx(fd: i32) -> Result<u8, UdsError> {
 // 公开 API
 // ============================================================================
 
+/// 初始化 UDS 子系统: 惰性堆置两张表、重置编号并注册 `SO_PASSCRED` 钩子.
 pub fn uds_init() {
     // 惰性堆置: 在堆就绪后填充 sockets/paths 两表 (与旧静态数组语义等价).
     UDS_STATE.with_mut(UdsState::allocate);
@@ -991,8 +1042,11 @@ pub fn uds_getsockopt_passcred(fd: i32) -> i32 {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ScmCredentials {
+    /// 发送方进程号.
     pub pid: u32,
+    /// 发送方用户号.
     pub uid: u32,
+    /// 发送方组号.
     pub gid: u32,
 }
 
@@ -1040,9 +1094,13 @@ pub fn uds_peer_creds(fd: i32) -> Option<ScmCredentials> {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Cmsghdr {
+    /// 整个 cmsg (含头部) 的字节长度.
     pub cmsg_len: usize,
+    /// 控制消息所属协议层级.
     pub cmsg_level: i32,
+    /// 控制消息类型.
     pub cmsg_type: i32,
+    /// 变长数据区起点, 通过指针偏移访问.
     pub data: [u8; 0], // flex array, 通过指针偏移访问
 }
 
@@ -1061,6 +1119,7 @@ pub fn uds_parse_path(path: &[u8]) -> Option<(&[u8], bool)> {
     }
 }
 
+/// 重置 UDS 子系统到初始态 (仅供测试使用).
 pub fn uds_reset_for_test() {
     // 惰性堆置等价语义: 直接重建两表 (保证已堆置且全部归零).
     UDS_STATE.with_mut(UdsState::allocate);
@@ -1089,11 +1148,14 @@ pub use UnixSockType as SockType;
 /// UDS 错误 (functions 层映射)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnixSocketError {
+    /// 目标路径不存在.
     PathNotFound,
+    /// 内核通用错误.
     Kernel(crate::functions::error::KernelError),
 }
 
 impl UnixSocketError {
+    /// 映射为系统调用错误码.
     pub fn to_errno(self) -> Errno {
         match self {
             Self::PathNotFound => Errno::ENOENT,
@@ -1125,6 +1187,7 @@ impl From<crate::functions::error::KernelError> for UnixSocketError {
     }
 }
 
+/// UDS 层通用结果类型.
 pub type UnixResult<T> = Result<T, UnixSocketError>;
 
 /// `struct sockaddr_un` 包装
@@ -1255,6 +1318,7 @@ pub fn unlink(addr: &SockAddrUn) -> UnixResult<()> {
     uds_unlink(addr.path_slice()).map_err(Into::into)
 }
 
+/// 判断 FD 是否落在 UDS 子系统的编号区间内.
 #[inline]
 pub fn is_uds_fd(fd: i32) -> bool {
     (FD_BASE..FD_END).contains(&fd)

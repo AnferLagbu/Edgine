@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 use crate::functions::fs::KernelError;
 use crate::functions::fs::unkfs::arc::UnkfsArc;
 use crate::functions::fs::unkfs::bp::{
@@ -13,43 +14,70 @@ use crate::privileged::driver::block;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
+/// SPA uberblock 魔数 (小端 "HVSF"), 用于识别本池的根元数据块.
 pub const HV_SPA_MAGIC: u32 = 0x48564653;
+/// 每个 vdev 标签内的 uberblock 槽位数, 写出时按 txg 取模环形复用.
 pub const HV_UBERBLOCK_COUNT: usize = 128;
+/// uberblock 区的起始扇区号.
 pub const HV_UBERBLOCK_SECTOR: u32 = 0;
+/// vdev 标签区字节数, 位于 metaslab 分配区之前.
 pub const HV_VDEV_LABEL_SIZE: u64 = 262144;
+/// 池名缓冲区长度上限 (含结尾 NUL).
 pub const HV_POOL_MAX_NAME: usize = 64;
 
+/// 池内块大小的基线, 分配尺寸按此对齐.
 pub const HV_POOL_BLOCK_SIZE: u64 = 4096;
+/// 单个 metaslab 大小的移位量 (2^24 = 16 MiB).
 pub const HV_POOL_METASLAB_SHIFT: u8 = 24;
+/// 单个 metaslab 的字节数.
 pub const HV_POOL_METASLAB_SIZE: u64 = 1 << HV_POOL_METASLAB_SHIFT;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+/// 池的生命周期状态.
 pub enum UnkfsPoolState {
+    /// 池尚未初始化.
     Uninit = 0,
+    /// 池已导入并正常服务.
     Active = 1,
+    /// 池已导出, 可在其他系统重新导入.
     Exported = 2,
+    /// 池已销毁, 数据不可再使用.
     Destroyed = 3,
+    /// 因 I/O 错误或管理操作暂停服务.
     Suspended = 4,
+    /// 只读模式, 拒绝一切写入.
     ReadOnly = 5,
 }
 
 #[derive(Debug, Clone, Copy, zerocopy::IntoBytes, zerocopy::Immutable)]
 #[repr(C)]
+/// 池的根元数据块, 记录最近一次成功事务组的位置与校验信息.
 pub struct UnkfsUberblock {
+    /// 该 uberblock 对应的事务组编号.
     pub txg: u64,
+    /// 指向对象集根块树的块指针.
     pub root_bp: UnkfsBlockPointer,
+    /// 写入该 uberblock 的时间戳 (秒).
     pub timestamp: u64,
+    /// 根数据集对象号.
     pub root_dataset_obj: u64,
+    /// 池的全局唯一标识.
     pub pool_guid: u64,
+    /// 最近一次 checkpoint 的事务组编号; 0 表示无.
     pub checkpoint_txg: u64,
+    /// 覆盖本块其余字段的 4×64 位 Fletcher4 校验和.
     pub checksum: [u64; 4],
+    /// 魔数; 等于 HV_SPA_MAGIC 时才视为有效.
     pub magic: u32,
+    /// 归属的 PWM (功率/写管理) 域编号.
     pub pwm_domain_id: u16,
+    /// 对齐填充, 使块尾保持 8 字节边界.
     pub _pad: [u8; 2],
 }
 
 impl UnkfsUberblock {
+    /// 构造全零的无效 uberblock (magic 为 0).
     pub const fn null() -> Self {
         Self {
             txg: 0,
@@ -65,16 +93,19 @@ impl UnkfsUberblock {
         }
     }
 
+    /// 魔数匹配时返回 `true`.
     pub fn is_valid(&self) -> bool {
         self.magic == HV_SPA_MAGIC
     }
 
+    /// 以 Fletcher4 重算校验和并写回 (计算前先把校验和字段清零).
     pub fn compute_checksum(&mut self) {
         self.checksum = [0; 4];
         let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, self.as_bytes());
         self.checksum = ck.value;
     }
 
+    /// 按存储的校验和重算比对, 一致时返回 `true`.
     pub fn verify_checksum(&self) -> bool {
         let mut copy = *self;
         let saved = copy.checksum;
@@ -133,16 +164,24 @@ impl UnkfsUberblock {
 // 编译期断言: UnkfsUberblock 必须装入 512 字节的 uberblock 区 (UBERBLOCK_MAX_SIZE).
 const _: () = assert!(core::mem::size_of::<UnkfsUberblock>() <= 512);
 
+/// 池的静态配置: 名称、GUID、块尺寸与只读标志.
 pub struct UnkfsSpaConfig {
+    /// 池名, NUL 结尾.
     pub name: [u8; HV_POOL_MAX_NAME],
+    /// 池的唯一标识; 0 表示尚未生成.
     pub guid: u64,
+    /// 块大小移位量 (2^ashift 为最小块字节数).
     pub ashift: u8,
+    /// 逻辑块字节数.
     pub block_size: u32,
+    /// 允许加入的 vdev 数量上限.
     pub max_vdevs: u16,
+    /// 是否以只读方式导入.
     pub readonly: bool,
 }
 
 impl UnkfsSpaConfig {
+    /// 由名称构造默认配置 (ashift=12, 4 KiB 块, 最多 8 个 vdev).
     pub fn new(name: &str) -> Self {
         let mut n = [0u8; HV_POOL_MAX_NAME];
         let b = name.as_bytes();
@@ -159,31 +198,52 @@ impl UnkfsSpaConfig {
     }
 }
 
+/// 存储池抽象 (SPA), 聚合配置、vdev、metaslab、ARC 与事务组状态.
 pub struct UnkfsSpa {
+    /// 池配置, 由自旋锁保护.
     pub config: Mutex<UnkfsSpaConfig>,
+    /// 池状态 (UnkfsPoolState 的 u8 编码).
     pub state: AtomicU8,
+    /// 当前生效的根元数据块.
     pub uberblock: Mutex<UnkfsUberblock>,
+    /// 已加入的虚拟设备列表.
     pub vdevs: Mutex<Vec<UnkfsVdev>>,
+    /// 全部 metaslab 分配单元.
     pub metaslabs: Mutex<Vec<UnkfsMetaslab>>,
+    /// 该池的读缓存.
     pub arc: UnkfsArc,
+    /// 当前事务组编号.
     pub txg_current: AtomicU64,
+    /// 是否正在同步事务组.
     pub txg_syncing: AtomicBool,
+    /// 累计分配次数.
     pub alloc_count: AtomicU64,
+    /// 累计释放次数.
     pub free_count: AtomicU64,
+    /// 累计块读取次数.
     pub read_count: AtomicU64,
+    /// 累计块写入次数.
     pub write_count: AtomicU64,
+    /// 池是否已完成初始化.
     pub initialized: AtomicBool,
+    /// 底层磁盘是否存在.
     pub disk_present: AtomicBool,
+    /// 磁盘上是否已有有效池格式.
     pub formatted: AtomicBool,
+    /// 最近一次 uberblock 落盘的时间戳.
     pub last_sync_time: AtomicU64,
+    /// 是否正在执行 scrub.
     pub scrub_in_progress: AtomicBool,
+    /// 最近一次 scrub 覆盖的事务组.
     pub scrub_last_txg: AtomicU64,
+    /// 池所在分区的起始扇区偏移.
     pub partition_start: AtomicU32,
 }
 
 // SAFETY (Framekernel P2.2.2): UnkfsSpa 全部字段 (Mutex<T>, Atomic*, Vec) 自动 Send + Sync。
 
 impl UnkfsSpa {
+    /// 构造未初始化的空池: 状态 Uninit, 计数与时间戳归零.
     pub fn new() -> Self {
         Self {
             config: Mutex::new(UnkfsSpaConfig::new("")),
@@ -248,6 +308,7 @@ impl UnkfsSpa {
         block::hdd_write_sector(drive, u64::from(phys), buf)
     }
 
+    /// 以给定名称初始化池: 生成 GUID、激活 ARC、置 Active 并写入首个 uberblock.
     pub fn init(&self, name: &str) {
         {
             let mut cfg = self.config.lock();
@@ -269,6 +330,7 @@ impl UnkfsSpa {
         }
     }
 
+    /// 加入 vdev 并按容量切分 metaslab; 超过 `max_vdevs` 时返回 `false`.
     pub fn add_vdev(&self, config: UnkfsVdevConfig) -> bool {
         let mut vdevs = self.vdevs.lock();
         let max_vdevs = self.config.lock().max_vdevs;
@@ -298,6 +360,7 @@ impl UnkfsSpa {
         true
     }
 
+    /// 在可用 metaslab 中按权重挑选最合适者, 分配对齐块并返回块指针.
     pub fn allocate(
         &self,
         size: u64,
@@ -338,6 +401,7 @@ impl UnkfsSpa {
         Some(bp)
     }
 
+    /// 按块指针中的 DVA 把空间归还给对应的 metaslab.
     pub fn free(&self, bp: &UnkfsBlockPointer, _txg: u64) {
         for i in 0..HV_DVA_MAX {
             if let Some(dva) = bp.get_dva(i) {
@@ -356,6 +420,7 @@ impl UnkfsSpa {
         self.free_count.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// 按块指针把数据块读入 `buf`; 成功返回 0, 全部 DVA 失败返回 -1.
     pub fn read_bp(&self, bp: &UnkfsBlockPointer, buf: &mut [u8]) -> i32 {
         for i in 0..HV_DVA_MAX {
             if let Some(dva) = bp.get_dva(i) {
@@ -374,6 +439,7 @@ impl UnkfsSpa {
         -1
     }
 
+    /// 按块指针写入数据块; 成功返回 0, 否则返回底层错误码.
     pub fn write_bp(&self, bp: &UnkfsBlockPointer, buf: &[u8]) -> i32 {
         for i in 0..HV_DVA_MAX {
             if let Some(dva) = bp.get_dva(i) {
@@ -392,6 +458,7 @@ impl UnkfsSpa {
         0
     }
 
+    /// 计算校验和, 把当前 uberblock 写入环形槽位, 并更新落盘时间戳.
     pub fn write_uberblock_to_disk(&self) {
         let ub = self.uberblock.lock();
         if !ub.is_valid() {
@@ -415,6 +482,7 @@ impl UnkfsSpa {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
+    /// 从最新槽位向前扫描, 返回首个 magic 与校验和均有效的 uberblock.
     pub fn read_uberblock_from_disk(&self) -> Option<UnkfsUberblock> {
         for i in (0..HV_UBERBLOCK_COUNT as u32).rev() {
             let sector = HV_UBERBLOCK_SECTOR + i;
@@ -433,10 +501,12 @@ impl UnkfsSpa {
         None
     }
 
+    /// 把当前 uberblock 同步落盘.
     pub fn sync_uberblock(&self) {
         self.write_uberblock_to_disk();
     }
 
+    /// 返回计数器快照: (分配数, 释放数, 读次数, 写次数, 当前 txg).
     pub fn get_stats(&self) -> (u64, u64, u64, u64, u64) {
         (
             self.alloc_count.load(Ordering::Relaxed),
@@ -447,22 +517,27 @@ impl UnkfsSpa {
         )
     }
 
+    /// 池是否已完成初始化.
     pub fn is_initialized(&self) -> bool {
         self.initialized.load(Ordering::Acquire)
     }
 
+    /// 底层磁盘是否在位.
     pub fn is_disk_present(&self) -> bool {
         self.disk_present.load(Ordering::Acquire)
     }
 
+    /// 磁盘上是否已有有效的池格式.
     pub fn is_formatted(&self) -> bool {
         self.formatted.load(Ordering::Acquire)
     }
 
+    /// 事务组自增并返回新编号.
     pub fn advance_txg(&self) -> u64 {
         self.txg_current.fetch_add(1, Ordering::AcqRel) + 1
     }
 
+    /// 返回当前事务组编号.
     pub fn current_txg(&self) -> u64 {
         self.txg_current.load(Ordering::Acquire)
     }
