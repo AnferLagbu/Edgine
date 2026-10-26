@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 492,
-    "files": 81,
-    "keys": 431
+    "sites": 484,
+    "files": 80,
+    "keys": 426
   },
   "entries": [
     [
@@ -80,36 +80,6 @@
       "src/kernel/privileged/console/gfx_console.rs",
       "fn",
       "write_str",
-      1
-    ],
-    [
-      "src/kernel/privileged/debug/ebpf.rs",
-      "fn",
-      "class",
-      1
-    ],
-    [
-      "src/kernel/privileged/debug/ebpf.rs",
-      "fn",
-      "dst",
-      1
-    ],
-    [
-      "src/kernel/privileged/debug/ebpf.rs",
-      "fn",
-      "from_u32",
-      2
-    ],
-    [
-      "src/kernel/privileged/debug/ebpf.rs",
-      "fn",
-      "new",
-      3
-    ],
-    [
-      "src/kernel/privileged/debug/ebpf.rs",
-      "fn",
-      "src",
       1
     ],
     [

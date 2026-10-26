@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 3728,
-    "files": 229,
-    "keys": 619
+    "sites": 3642,
+    "files": 228,
+    "keys": 614
   },
   "entries": [
     [
@@ -1564,31 +1564,6 @@
       "src/kernel/privileged/console/mod.rs",
       "a module",
       1
-    ],
-    [
-      "src/kernel/privileged/debug/ebpf.rs",
-      "a constant",
-      64
-    ],
-    [
-      "src/kernel/privileged/debug/ebpf.rs",
-      "a method",
-      3
-    ],
-    [
-      "src/kernel/privileged/debug/ebpf.rs",
-      "a struct field",
-      12
-    ],
-    [
-      "src/kernel/privileged/debug/ebpf.rs",
-      "a variant",
-      2
-    ],
-    [
-      "src/kernel/privileged/debug/ebpf.rs",
-      "an associated function",
-      5
     ],
     [
       "src/kernel/privileged/debug/ftrace.rs",

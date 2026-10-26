@@ -29,6 +29,9 @@
 //! 验证器保证程序安全 (无越界/无限循环/非法内存访问).
 //! Map 操作通过 Mutex 保护.
 
+// P-59 裁定 ①: 本模块 F8 存量清零, 转由编译器硬执法 (无基线、无豁免).
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use alloc::collections::BTreeMap;
@@ -61,76 +64,128 @@ pub const BPF_REG_NUM: usize = 11;
 /// eBPF 指令操作码 — 高 3 bit = class, 低 5 bit = operation
 pub mod opcode {
     // Classes
+    /// 直接加载指令类 (含 64 位立即数加载).
     pub const LD: u8 = 0x00;
+    /// 以源寄存器加偏移加载的指令类.
     pub const LDX: u8 = 0x01;
+    /// 向内存写入立即数的存储指令类.
     pub const ST: u8 = 0x02;
+    /// 把源寄存器值写入内存的存储指令类.
     pub const STX: u8 = 0x03;
+    /// 32 位算术逻辑指令类.
     pub const ALU: u8 = 0x04;
+    /// 64 位跳转指令类.
     pub const JMP: u8 = 0x05;
+    /// 32 位跳转指令类.
     pub const JMP32: u8 = 0x06;
+    /// 64 位算术逻辑指令类.
     pub const ALU64: u8 = 0x07;
 
     // Size modifiers
-    pub const W: u8 = 0x00; // 32-bit
-    pub const H: u8 = 0x08; // 16-bit
-    pub const B: u8 = 0x10; // 8-bit
-    pub const DW: u8 = 0x18; // 64-bit
+    /// 宽度修饰: 32 位访问.
+    pub const W: u8 = 0x00;
+    /// 宽度修饰: 16 位访问.
+    pub const H: u8 = 0x08;
+    /// 宽度修饰: 8 位访问.
+    pub const B: u8 = 0x10;
+    /// 宽度修饰: 64 位访问.
+    pub const DW: u8 = 0x18;
 
     // Mode modifiers (for LD/ST)
+    /// LD/ST 模式位: 立即数寻址.
     pub const IMM: u8 = 0x00;
+    /// LD 模式位: 以报文绝对偏移寻址.
     pub const ABS: u8 = 0x20;
+    /// LD 模式位: 以源寄存器值加偏移寻址.
     pub const IND: u8 = 0x40;
+    /// LD/ST 模式位: 以源寄存器加偏移访问内存.
     pub const MEM: u8 = 0x60;
+    /// STX 模式位: 原子内存操作.
     pub const ATOMIC: u8 = 0xc0;
 
     // ALU operations
+    /// 加法.
     pub const ADD: u8 = 0x00;
+    /// 减法.
     pub const SUB: u8 = 0x10;
+    /// 乘法.
     pub const MUL: u8 = 0x20;
+    /// 无符号除法 (除数为 0 时结果取 0).
     pub const DIV: u8 = 0x30;
+    /// 按位或.
     pub const OR: u8 = 0x40;
+    /// 按位与.
     pub const AND: u8 = 0x50;
+    /// 左移.
     pub const LSH: u8 = 0x60;
+    /// 逻辑右移.
     pub const RSH: u8 = 0x70;
+    /// 取补 (按位取反后加一).
     pub const NEG: u8 = 0x80;
+    /// 无符号取模 (除数为 0 时结果取 0).
     pub const MOD: u8 = 0x90;
+    /// 按位异或.
     pub const XOR: u8 = 0xa0;
+    /// 传送 (源操作数写入目的寄存器).
     pub const MOV: u8 = 0xb0;
+    /// 算术右移 (保留符号位).
     pub const ARSH: u8 = 0xc0;
+    /// 字节序转换 (按立即数选择 16/32/64 位).
     pub const END: u8 = 0xd0;
 
     // JMP operations
+    /// 无条件跳转.
     pub const JA: u8 = 0x00;
+    /// 相等时跳转.
     pub const JEQ: u8 = 0x10;
+    /// 无符号大于时跳转.
     pub const JGT: u8 = 0x20;
+    /// 无符号大于等于时跳转.
     pub const JGE: u8 = 0x30;
+    /// 按位与非零时跳转.
     pub const JSET: u8 = 0x40;
+    /// 不相等时跳转.
     pub const JNE: u8 = 0x50;
+    /// 有符号大于时跳转.
     pub const JSGT: u8 = 0x60;
+    /// 有符号大于等于时跳转.
     pub const JSGE: u8 = 0x70;
+    /// 调用 helper 函数.
     pub const CALL: u8 = 0x80;
+    /// 结束程序并返回 R0.
     pub const EXIT: u8 = 0x90;
+    /// 无符号小于时跳转.
     pub const JLT: u8 = 0xa0;
+    /// 无符号小于等于时跳转.
     pub const JLE: u8 = 0xb0;
+    /// 有符号小于时跳转.
     pub const JSLT: u8 = 0xc0;
+    /// 有符号小于等于时跳转.
     pub const JSLE: u8 = 0xd0;
 
     // Source modifier
-    pub const K: u8 = 0x00; // immediate
-    pub const X: u8 = 0x08; // register
+    /// 源操作数修饰: 立即数.
+    pub const K: u8 = 0x00;
+    /// 源操作数修饰: 寄存器.
+    pub const X: u8 = 0x08;
 }
 
 /// eBPF 8-byte 指令格式
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct BpfInsn {
+    /// 操作码: 高 3 位为指令类, 低 5 位为具体操作.
     pub op: u8,
-    pub dst_reg: u8, // 低 4 bit = dst, 高 4 bit = src
+    /// 寄存器打包字节: 低 4 位目的寄存器, 高 4 位源寄存器.
+    pub dst_reg: u8,
+    /// 跳转偏移或内存访问偏移 (有符号 16 位).
     pub off: i16,
+    /// 立即数 (有符号 32 位).
     pub imm: i32,
 }
 
 impl BpfInsn {
+    /// 按操作码、目的/源寄存器编号、偏移与立即数组装一条指令.
     pub fn new(op: u8, dst: u8, src: u8, off: i16, imm: i32) -> Self {
         Self {
             op,
@@ -144,6 +199,7 @@ impl BpfInsn {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 取目的寄存器编号 (低 4 位).
     pub fn dst(&self) -> u8 {
         self.dst_reg & 0xf
     }
@@ -151,6 +207,7 @@ impl BpfInsn {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 取源寄存器编号 (高 4 位).
     pub fn src(&self) -> u8 {
         (self.dst_reg >> 4) & 0xf
     }
@@ -158,6 +215,7 @@ impl BpfInsn {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 取指令类码 (操作码低 3 位).
     pub fn class(&self) -> u8 {
         self.op & 0x07
     }
@@ -169,17 +227,28 @@ impl BpfInsn {
 
 /// eBPF 寄存器编号
 pub mod reg {
-    pub const R0: usize = 0; // 返回值
-    pub const R1: usize = 1; // 参数 1
-    pub const R2: usize = 2; // 参数 2
-    pub const R3: usize = 3; // 参数 3
-    pub const R4: usize = 4; // 参数 4
-    pub const R5: usize = 5; // 参数 5
-    pub const R6: usize = 6; // callee-saved
-    pub const R7: usize = 7; // callee-saved
-    pub const R8: usize = 8; // callee-saved
-    pub const R9: usize = 9; // callee-saved
-    pub const R10: usize = 10; // 栈帧指针 (只读)
+    /// 返回值寄存器.
+    pub const R0: usize = 0;
+    /// 第 1 个参数 (程序入口处为上下文指针).
+    pub const R1: usize = 1;
+    /// 第 2 个参数.
+    pub const R2: usize = 2;
+    /// 第 3 个参数.
+    pub const R3: usize = 3;
+    /// 第 4 个参数.
+    pub const R4: usize = 4;
+    /// 第 5 个参数.
+    pub const R5: usize = 5;
+    /// 被调用者保存寄存器 6.
+    pub const R6: usize = 6;
+    /// 被调用者保存寄存器 7.
+    pub const R7: usize = 7;
+    /// 被调用者保存寄存器 8.
+    pub const R8: usize = 8;
+    /// 被调用者保存寄存器 9.
+    pub const R9: usize = 9;
+    /// 栈帧指针, 只读.
+    pub const R10: usize = 10;
 }
 
 // ============================================================================
@@ -199,6 +268,7 @@ pub enum BpfProgType {
 }
 
 impl BpfProgType {
+    /// 由 u32 程序类型值解析枚举; 未知值返回 `None`.
     pub fn from_u32(v: u32) -> Option<Self> {
         match v {
             1 => Some(Self::SocketFilter),
@@ -228,6 +298,7 @@ pub enum BpfMapType {
 }
 
 impl BpfMapType {
+    /// 由 u32 Map 类型值解析枚举; 未知值返回 `None`.
     pub fn from_u32(v: u32) -> Option<Self> {
         match v {
             1 => Some(Self::Hash),
@@ -242,9 +313,13 @@ impl BpfMapType {
 /// BPF Map 定义
 #[derive(Debug)]
 pub struct BpfMapDef {
+    /// Map 类型 (哈希表或数组).
     pub map_type: BpfMapType,
+    /// 键的固定字节数.
     pub key_size: u32,
+    /// 值的固定字节数.
     pub value_size: u32,
+    /// 最大条目数: 数组为容量, 哈希表为插入上限.
     pub max_entries: u32,
 }
 
@@ -252,12 +327,16 @@ pub struct BpfMapDef {
 pub enum BpfMap {
     /// 哈希表: key → value
     Hash {
+        /// Map 定义 (键值尺寸与条目上限).
         def: BpfMapDef,
+        /// 哈希表存储, 由自旋锁保护.
         data: IrqSpinLock<BTreeMap<Vec<u8>, Vec<u8>>>,
     },
     /// 数组: index → value
     Array {
+        /// Map 定义 (键值尺寸与容量).
         def: BpfMapDef,
+        /// 数组槽位; 空槽为 `None`.
         data: IrqSpinLock<Vec<Option<Vec<u8>>>>,
     },
 }
@@ -452,6 +531,7 @@ pub struct BpfProg {
 impl BpfProg {
     // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
     #[expect(clippy::cast_possible_truncation)]
+    /// 以程序类型与指令序列创建程序实例, 引用计数初始化为 1.
     pub fn new(prog_type: BpfProgType, insns: Vec<BpfInsn>) -> Self {
         let insn_cnt = insns.len() as u32;
         Self {
@@ -476,7 +556,9 @@ impl BpfProg {
 /// 验证结果 (T4-3: 仍定义在 privileged, 作为 trait 接口的契约类型)
 #[derive(Debug)]
 pub enum VerifyResult {
+    /// 验证通过, 程序可被加载执行.
     Ok,
+    /// 验证失败, 载荷为面向用户的错误说明.
     Err(Vec<u8>),
 }
 
@@ -508,11 +590,17 @@ pub trait BpfVerifier: Sync + Send {
 
 /// Helper 函数 ID
 pub mod helper_id {
+    /// bpf_trace_printk 的 helper 编号.
     pub const TRACE_PRINTK: u32 = 6;
+    /// bpf_ktime_get_ns 的 helper 编号.
     pub const KTIME_GET_NS: u32 = 5;
+    /// bpf_get_smp_processor_id 的 helper 编号.
     pub const GET_SMP_PROCESSOR: u32 = 8;
+    /// bpf_map_lookup_elem 的 helper 编号.
     pub const MAP_LOOKUP_ELEM: u32 = 1;
+    /// bpf_map_update_elem 的 helper 编号.
     pub const MAP_UPDATE_ELEM: u32 = 2;
+    /// bpf_map_delete_elem 的 helper 编号.
     pub const MAP_DELETE_ELEM: u32 = 3;
 }
 
@@ -1016,6 +1104,7 @@ pub struct BpfSubsystem {
 }
 
 impl BpfSubsystem {
+    /// 构造空的子系统状态: 无 Map、无程序、未初始化、未注册 verifier.
     pub const fn new() -> Self {
         Self {
             maps: IrqSpinLock::new(BTreeMap::new()),
