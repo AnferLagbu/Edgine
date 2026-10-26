@@ -22,7 +22,7 @@ pub static PANIC_MODE: AtomicBool = AtomicBool::new(false);
 /// ## 帧缓冲访问
 ///
 /// 控制台**不持有**帧缓冲引用（已移除历史上的 `*mut Framebuffer` 裸指针）。
-/// 每次绘制由调用方传入 `&mut Framebuffer`，该引用由 [`super::with_console`]
+/// 每次绘制由调用方传入 `&mut Framebuffer`，该引用由 `super::with_console`
 /// 在帧缓冲锁内取得，从而消除多处裸指针解引用带来的别名风险。
 pub struct GfxConsole {
     font: &'static Font,

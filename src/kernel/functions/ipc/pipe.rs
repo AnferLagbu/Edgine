@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! 管道策略 — T6-1 从 privileged/ipc/pipe.rs 提取
 //!
 //! 纯策略逻辑: 槽位查找、环形缓冲区读写、端点计数.
@@ -22,6 +23,9 @@ use crate::privileged::sync::{IrqSpinLock, in_irq_context};
 /// 管道全局自旋锁 (privileged 机制, 短临界区)
 static PIPE_LOCK: IrqSpinLock<()> = IrqSpinLock::new(());
 
+/// 在命名空间中查找首个空闲管道槽位.
+///
+/// 空闲判据为槽位 `id == 0` (未分配); 全部占满时返回 `None`.
 pub fn pipe_find_free_index(namespace: &IpcNamespace) -> Option<usize> {
     for i in 0..IPC_MAX_PIPES {
         if namespace.pipes[i].id == 0 {

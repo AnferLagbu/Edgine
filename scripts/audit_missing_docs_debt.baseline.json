@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 4438,
-    "files": 234,
-    "keys": 639
+    "sites": 4177,
+    "files": 232,
+    "keys": 636
   },
   "entries": [
     [
@@ -1129,11 +1129,6 @@
       "src/kernel/functions/ipc/mod.rs",
       "an associated function",
       2
-    ],
-    [
-      "src/kernel/functions/ipc/pipe.rs",
-      "a function",
-      1
     ],
     [
       "src/kernel/functions/mm/memory_pressure.rs",
@@ -3188,16 +3183,6 @@
     [
       "src/kernel/privileged/syscall/timerfd.rs",
       "an associated function",
-      1
-    ],
-    [
-      "src/kernel/privileged/syscall/types.rs",
-      "a constant",
-      259
-    ],
-    [
-      "src/kernel/privileged/syscall/types.rs",
-      "a type alias",
       1
     ],
     [

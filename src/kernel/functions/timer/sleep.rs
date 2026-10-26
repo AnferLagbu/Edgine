@@ -24,7 +24,7 @@ const BUSY_WAIT_THRESHOLD_MS: u64 = 1;
 
 /// 自适应睡眠: 按延时长度选择忙等待或调度器阻塞
 ///
-/// - `< `[`BUSY_WAIT_THRESHOLD_MS`]: 忙等待 (避免调度开销)
+/// - `< `BUSY_WAIT_THRESHOLD_MS`: 忙等待 (避免调度开销)
 /// - 其余: 调度器阻塞 (睡眠期间让出 CPU)
 ///
 /// # Arguments

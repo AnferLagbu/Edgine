@@ -226,7 +226,7 @@ pub enum PtpMessageType {
 /// 时间同步子系统
 ///
 /// 本结构仅持策略配置与初始化标志; 时钟调整状态 (tick 中断消费) 在
-/// privileged [`ClockAdjState`], 经 [`clock_adj_state`] 访问.
+/// privileged `ClockAdjState`, 经 [`clock_adj_state`] 访问.
 pub struct TimeSyncSubsystem {
     /// NTP 服务器地址 (IPv4, 网络字节序)
     ntp_server: AtomicU32,
