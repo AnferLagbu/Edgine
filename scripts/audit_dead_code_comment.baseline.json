@@ -5,7 +5,7 @@
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 1750,
+    "sites": 1749,
     "files": 306
   },
   "entries": [
@@ -4257,7 +4257,7 @@
     [
       "src/kernel/privileged/timer/sleep.rs",
       "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      2
+      1
     ],
     [
       "src/kernel/privileged/timer/tick.rs",

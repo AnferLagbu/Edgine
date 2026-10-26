@@ -1322,6 +1322,7 @@ src/kernel/functions/proc/mod.rs::priority_from_u32
 src/kernel/functions/proc/shadow_stack.rs::cet_syscall
 src/kernel/functions/proc/signal.rs::cont
 src/kernel/functions/syscall/mod.rs::dispatch_from_ctx_typed
+src/kernel/functions/timer/sleep.rs::adaptive_sleep
 src/kernel/functions/timer/tickless.rs::tickless_syscall
 src/kernel/functions/timer/time_sync.rs::timesync_syscall
 src/kernel/functions/wasm/interpreter.rs::instantiate

@@ -134,8 +134,8 @@ pub use tick::{
 
 /// 使用 `sleep` 模块的所有睡眠函数
 pub use sleep::{
-    adaptive_sleep, busy_wait_ms, busy_wait_ns, busy_wait_us, measure_time, measure_time_ticks,
-    sleep_ns, timer_sleep as timer_sleep_safe, wait_with_timeout,
+    busy_wait_ms, busy_wait_ns, busy_wait_us, measure_time, measure_time_ticks, sleep_ns,
+    timer_sleep as timer_sleep_safe, wait_with_timeout,
 };
 
 // --- PIT 底层控制 ---

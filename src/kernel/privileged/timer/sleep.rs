@@ -4,7 +4,7 @@
 //! - **忙等待 (Busy-wait)**: 极短延时，精确但浪费 CPU
 //! - **调度器阻塞**: 长延时，高效利用 CPU
 //! - **TSC 高精度**: 微秒/纳秒级延时
-//! - **自适应策略**: 根据时长自动选择最佳方式
+//! - **自适应策略**: 已下沉 functions (`functions::timer::sleep::adaptive_sleep`)
 //!
 //! ## 使用指南
 //!
@@ -292,50 +292,8 @@ where
 }
 
 // ============================================================================
-// 自适应 Sleep 策略
+// 兼容 C 接口
 // ============================================================================
-
-/// 自适应睡眠函数
-///
-/// 根据延时长度自动选择最优策略：
-/// - **< 1 ms**: 忙等待 (避免调度开销)
-/// - **≥ 1 ms**: 调度器阻塞 (节省 CPU)
-///
-/// # Arguments
-/// * `ms` - 睡眠时间 (毫秒)
-pub fn adaptive_sleep(ms: u64) {
-    if ms == 0 {
-        return;
-    }
-
-    // 阈值: 1 毫秒
-    #[expect(
-        clippy::items_after_statements,
-        reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-    )]
-    const BUSY_WAIT_THRESHOLD_MS: u64 = 1;
-
-    if ms < BUSY_WAIT_THRESHOLD_MS {
-        // 短延时: 忙等待
-        busy_wait_ms(ms);
-    } else {
-        // 长延时: 调度器阻塞
-        let _ = timer_sleep(ms);
-    }
-}
-
-/// 兼容 C 接口的 sleep 函数
-///
-/// 与原始 `timer_sleep()` C 函数签名完全兼容，
-/// 用于平滑迁移现有代码。
-///
-/// # Arguments
-/// * `ms` - 睡眠时间 (毫秒)
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
-pub extern "C" fn timer_sleep_compat(ms: u64) {
-    adaptive_sleep(ms);
-}
 
 /// 兼容 C 接口的忙等待 sleep 函数
 ///
@@ -452,16 +410,6 @@ mod tests {
     fn test_timer_sleep_zero() {
         // 零延时应该成功
         assert!(timer_sleep(0).is_ok());
-    }
-
-    #[test]
-    fn test_adaptive_sleep_behavior() {
-        // 测试自适应策略选择
-        // 注意: 这些测试只验证不会 panic
-
-        adaptive_sleep(0); // 应该立即返回
-        adaptive_sleep(1); // 忙等待
-        adaptive_sleep(100); // 调度器阻塞
     }
 
     #[test]
