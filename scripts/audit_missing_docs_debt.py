@@ -318,7 +318,7 @@ def main(argv=None) -> int:
 
     over = sorted((key, entries[key], baseline.get(key, 0))
                   for key in entries if entries[key] > baseline.get(key, 0))
-    under = sorted((key, baseline[key], entries.get(key, 0))
+    under = sorted((key, entries.get(key, 0), baseline[key])
                    for key in baseline if baseline[key] > entries.get(key, 0))
     print(f"  债册: {totals_of(baseline)['sites']} 处 / {len(baseline)} 键 "
           f"({os.path.basename(BASELINE_FILE)})")
