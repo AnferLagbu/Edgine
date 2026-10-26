@@ -1,4 +1,4 @@
-use crate::privileged::driver::{Color, Font, Framebuffer, Rect, colors};
+use crate::privileged::driver::{Color, Font, Framebuffer, Rect, colors, current_framebuffer_ops};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 /// 全局紧急/panic 标记 — 当为 true 时，GfxConsole 输出使用 panic 专用配色
@@ -64,7 +64,11 @@ impl GfxConsole {
     }
 
     pub fn clear(&mut self, fb: &mut Framebuffer) {
-        fb.fill_rect(Rect::new(0, 0, fb.width(), fb.height()), self.bg_color);
+        let (fb_w, fb_h) = (fb.width(), fb.height());
+        // 绘图策略未注册时 fail-quiet 跳过 (启动早期串口日志仍可用)
+        if let Some(ops) = current_framebuffer_ops() {
+            ops.fill_rect(fb, Rect::new(0, 0, fb_w, fb_h), self.bg_color);
+        }
         self.cursor_x = 0;
         self.cursor_y = self.top_margin;
     }
@@ -87,13 +91,15 @@ impl GfxConsole {
         let glyph_w = self.font.glyph_width;
 
         // 1. 全屏黑色背景
-        fb.fill_rect(Rect::new(0, 0, fb_w, fb_h), colors::BLACK);
-
         // 2. 红色横幅条 (2 行高度)
         let banner_rows: u32 = 2;
         let banner_px = banner_rows * glyph_h;
         let banner_rect = Rect::new(0, 0, fb_w, banner_px);
-        fb.fill_rect(banner_rect, Color::new(180, 0, 0));
+        // 绘图策略未注册时 fail-quiet 跳过 (panic 现场仍保留串口输出)
+        if let Some(ops) = current_framebuffer_ops() {
+            ops.fill_rect(fb, Rect::new(0, 0, fb_w, fb_h), colors::BLACK);
+            ops.fill_rect(fb, banner_rect, Color::new(180, 0, 0));
+        }
         self.panic_banner_height = banner_rows;
 
         // 3. 横幅文字 "[ KERNEL PANIC ]" — 居中放置

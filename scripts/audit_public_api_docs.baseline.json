@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 526,
-    "files": 83,
-    "keys": 459
+    "sites": 524,
+    "files": 82,
+    "keys": 458
   },
   "entries": [
     [
@@ -201,12 +201,6 @@
       "fn",
       "builtin_8x16",
       1
-    ],
-    [
-      "src/kernel/privileged/driver/display/framebuffer.rs",
-      "fn",
-      "new",
-      2
     ],
     [
       "src/kernel/privileged/driver/hotplug.rs",

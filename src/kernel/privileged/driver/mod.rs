@@ -107,6 +107,8 @@ pub use block::{
 pub use display::font::Font;
 pub use display::framebuffer::{Color, Framebuffer, PixelFormat, Rect, colors};
 pub use display::{FB_PHYS_ADDR, FB_PHYS_SIZE, display_init, get_framebuffer, try_get_framebuffer};
+// §6.3 绘图策略下沉: 契约 trait + 注册表 (functions 实现, privileged 调用)
+pub use display::{FramebufferOps, PixelCanvas, current_framebuffer_ops, register_framebuffer_ops};
 // MIG-008 接线补齐: 显示控制器工厂槽 (DECISION-K 单向注册契约) re-export
 pub use display::{display_probe_controllers, register_display_controller_factory};
 

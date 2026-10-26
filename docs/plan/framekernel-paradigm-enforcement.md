@@ -151,7 +151,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | privileged/freg/domain.rs | 🔒 受 DECISION-L 阻塞（待 freg 整体重构后处理，本轮跳过）：apply_degradation 降级策略迁出；RecoveryDomain 状态机保留 | ⚠ **FREGDegradePolicy trait 注入**（panic/中断上下文；privileged 提供原子状态访问 API）——DECISION-L 挂起清单同时包含本项与阶段 0 的 trait 定义，按裁决不做下沉/改造/新开发 |
 | privileged/freg/reset/bsr.rs | 🔒 受 DECISION-L 阻塞（待 freg 整体重构后处理，本轮跳过）：freeze/unfreeze/rollback 编排迁出；mmio_write32 机制保留 | 编排经 privileged 恢复机制 API（RECOVERY_MANAGER）；mmio 写留框架 |
 | privileged/debug/ebpf.rs | 验证器策略已 trait 化（functions）；解释执行引擎保留 | ✅ 已有 BpfVerifier trait（functions/ebpf_verifier 权威）|
-| privileged/driver/display/framebuffer.rs（+ font/self_test）| Framebuffer 绘图策略（set_pixel/fill/fill_rect/draw_line/blend/aa 等）迁 functions；IoMem 映射、`FB_PHYS_ADDR`/`FB_PHYS_SIZE`、`get_framebuffer` 机制原语保留 | ⚠ 2-E 后续（登记项，见 §11 DECISION-S / DECISION-X）：**裸指针前置已完成**——`gfx_console` 已 0 unsafe（绘制经锁内 `&mut Framebuffer` 传入，panic 走 `try_get_framebuffer` 非阻塞兜底）；**剩余** = 绘图策略经 trait 注入迁 functions（需 boot 顺序与未注册回落兜底，待独立批次） |
+| privileged/driver/display/framebuffer.rs（+ font/self_test）| ✅ 已完成（方案 A 最小切口，见 §11 DECISION-Z）：`Framebuffer` 保留像素格式转换 + MMIO 读写（`set_pixel`/`get_pixel`）、几何（`Point`/`Rect`/`pixel_offset`）与滚动机制 `scroll_rows_up`；绘图算法（`fill`/`clear`/`fill_rect`/`draw_hline`/`draw_vline`/Bresenham `draw_line`/`draw_rect`/中点 `draw_circle`/`fill_circle`/`blend_pixel`/Wu `draw_line_aa`）经 `PixelCanvas` + `FramebufferOps` trait 注入下沉 `functions::driver::display::framebuffer_ops`（0 unsafe，内存 mock 画布单测） | `gfx_console`/`self_test` 经 `current_framebuffer_ops()` 消费，未注册 fail-quiet 跳过；crate root 在 `privileged::driver::init_all()` 前调用 `functions::driver::display::init_render_policy()` 注册（该链路内 `display_init` 自检与 `GfxConsole` 初始化依赖该策略） |
 | privileged/sgeg/storage.rs（2-F 后续登记）| ✅ **已由阶段 4b 全量下沉收口**：序列化算法（0 unsafe 纯函数）+ `save/load/remove_database` 编排整体迁 `functions/sgeg/persist`；privileged 侧源文件删除，**无 `vfs_*_internal` C FFI 薄层残留**（63 处 `no_mangle` 壳随 4b 一并删除）；`PwmEntrySnapshot` POD 解绑序列化对 sgeg TCB `PwmEntry` 原子字段直读，`sgeg/api.rs` 三处 FFI 改调 functions 编排 |（判据见 §11 DECISION-T）|
 
 ### 6.4 双份合并（functions 权威，privileged 删业务）——20 文件
@@ -1504,5 +1504,23 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 **影响面**：privileged 侧 time_sync 从「类型 + 策略 + syscall + 状态」缩为「状态 + tick 机制」，functions 侧 0 unsafe 且 `audit_reverse_deps` 生产反向依赖仍为 0 文件/0 行。路径键基线随之重导：`audit_dead_code_comment`（expect 随文件迁移，净 1750 处不变）、`audit_public_api_docs`（529→526 处 / 459 键）、`audit_missing_docs_debt`（4471→4461 处，`NtpTimestamp` 两字段补中文 doc、privileged 侧旧债随删除消解）。
 
 **验证**：§2.3 六门槛全绿——双架构 `./ci/build.sh all` Passed 6 / Failed 0（0 error / 0 warning）；四 crate `cargo fmt --check` 无漂移；CI 口径 clippy pedantic（x86_64 + aarch64，`-D warnings`）0；`bash ci/audit.sh full` 全腿通过（含 reverse_deps 生产 0、F1-F9、QEMU 双架构 2/2）；`make test-host` 全过；`make test-kernel-host` 427 passed / 0 failed。Lockbud 腿仍因工具链不匹配未执行（既有环境项 P-56，非本批引入）。
+
+**状态**: [X]
+
+### DECISION-Z: Framebuffer 绘图策略经 trait 注入下沉（方案 A 最小切口）
+
+> **背景**：§6.3 登记 `privileged/driver/display/framebuffer.rs` 的绘图策略迁出。该文件同时承载机制（像素格式转换 + MMIO 读写 + 滚动内存搬移）与策略（填充/直线/矩形/圆/alpha 混合/Wu 反走样）。其绘图方法的调用点（`console/gfx_console.rs`、`display/self_test.rs`、`font.rs`）全部在 privileged，直接迁移会触发 `audit_reverse_deps` 生产反向依赖；且 `self_test` 在 `privileged::driver::init_all()` 内执行，早于 crate root 的 functions 显示初始化。用户裁定取**方案 A（保留像素读写机制，仅迁算法）**：以 `PixelCanvas` + `FramebufferOps` trait 注入，未注册 fail-quiet。
+
+**方案与实施**：
+
+1. 新增 `privileged/driver/display/framebuffer_ops.rs`：`PixelCanvas`（宽/高 + `set_pixel`/`get_pixel` 最小画布契约，由 `Framebuffer` 实现）、`FramebufferOps`（11 个绘图方法，`Send + Sync`）、`OnceLock` 注册表与 `register_framebuffer_ops` / `current_framebuffer_ops`（未注册返回 `None`）。
+2. `framebuffer.rs` 缩减为机制层：保留 `PixelFormat`/`Color`/`colors`/`Point`/`Rect`/`pixel_offset`/`set_pixel`/`get_pixel`/`scroll_rows_up` 与 `Driver` impl，新增 `impl PixelCanvas for Framebuffer`；删除 `fill`/`clear`/`fill_rect`/`draw_hline`/`draw_vline`/`draw_line`/`draw_rect`/`draw_circle`/`set_pixel_if_valid`/`fill_circle`/`blend_pixel`/`draw_line_aa`（约 400 行），随算法迁出同步删除 5 处失效 clippy 抑制。
+3. 新增 `functions/driver/display/framebuffer_ops.rs`（`#![deny(unsafe_code)]`）：`StandardFramebufferOps` 原样承接算法（对 `&mut dyn PixelCanvas` 编程）、`STANDARD_FRAMEBUFFER_OPS` 静态实例与 `init_render_policy()` 注册入口；13 个内存 mock 画布单测覆盖矩形裁剪、水平/垂直线、Bresenham 直线、矩形边框、中点圆、填充圆、alpha 混合（0/255/半透明）与 Wu 反走样（无需 MMIO）。
+4. 消费点改造：`privileged/console/gfx_console.rs`（`clear` 与 `panic_reclaim` 的填充）与 `privileged/driver/display/self_test.rs`（全部绘图调用）改经 `current_framebuffer_ops()`；未注册时前者跳过绘制，后者记录告警并整轮跳过（返回 0 = 无失败）。
+5. 接线：`privileged/driver/{display,mod}.rs` 顶层 re-export 契约与注册表（functions 经 `crate::privileged::driver` 单向导入，符合 F2）；crate root `lib.rs` 在 `privileged::driver::init_all()` 前调用 `functions::driver::display::init_render_policy()`——该链路内 `display_init()` 的帧缓冲自检与 `GfxConsole` 初始化均消费该策略。
+
+**影响面**：绘图算法（约 400 行）迁入 functions 且 0 unsafe；privileged 仅余像素格式转换 + MMIO + 滚动机制，`gfx_console`/`font` 的逐像素字体落盘仍走 `Framebuffer::set_pixel` 机制。三份机器派生基线随之重导：`audit_dead_code_comment`（1749 → 1744 处，减少 5 处随算法迁出失效的 clippy 抑制）、`audit_public_api_docs`（526 → 524 处 / 459 → 458 键，补齐 `Point::new`/`Rect::new` 与 `Color`/`Point`/`Rect` 字段中文 doc）、`audit_missing_docs_debt`（4438 处 / 639 键，framebuffer.rs 的 10 字段 + 2 关联函数债务清偿）。
+
+**验证**：§2.3 六门槛全绿——双架构 `./ci/build.sh all` Passed 6 / Failed 0（0 error / 0 warning）；四 crate `cargo fmt --check` 无漂移；CI 口径 clippy pedantic（x86_64 + aarch64，`-D warnings`）0；`bash ci/audit.sh full` 全腿通过（含 reverse_deps 生产 0、F1-F9、QEMU 双架构 2/2）；`make test-host` 全过；`make test-kernel-host` kernel 426 / kernel-functions 599 / kernel-privileged 12 passed，0 failed。
 
 **状态**: [X]

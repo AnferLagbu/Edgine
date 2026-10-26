@@ -1,22 +1,17 @@
 //! Framebuffer 驱动 (Framebuffer Driver)
 //!
-//! 提供直接帧缓冲访问和图形绘制功能：
+//! 提供帧缓冲机制层访问：
 //! - **多种像素格式**: RGB565、RGB888、ARGB8888等
-//! - **图形绘制**: 点、线、矩形、圆形等
-//! - **字体渲染**: 基本文本输出
-//! - **双缓冲**: 支持双缓冲避免撕裂
+//! - **像素读写机制**: 像素格式转换 + MMIO 写入
+//! - **滚动机制原语**: 帧缓冲内存搬移
 //!
-//! ## 架构
-//!
-//! ```text
-//! Framebuffer
-//! ├── 像素格式转换
-//! ├── 图形绘制原语
-//! ├── 字体渲染
-//! └── 双缓冲支持
-//! ```
+//! 绘图算法 (填充/直线/矩形/圆/alpha 混合/反走样) 已按
+//! `docs/plan/framekernel-paradigm-enforcement.md` §6.3 下沉
+//! `functions::driver::display::framebuffer_ops`, 经
+//! [`super::framebuffer_ops::FramebufferOps`] trait 注入调用.
 
 use super::super::infra::{DeviceInfo, DeviceType, Driver, Result};
+use super::framebuffer_ops::PixelCanvas;
 use crate::privileged::iomem::IoMem;
 
 // ============================================================================
@@ -76,9 +71,13 @@ impl PixelFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C, packed)]
 pub struct Color {
+    /// 红色分量
     pub r: u8,
+    /// 绿色分量
     pub g: u8,
+    /// 蓝色分量
     pub b: u8,
+    /// 透明度分量
     pub a: u8,
 }
 
@@ -178,16 +177,27 @@ impl Color {
 pub mod colors {
     use super::Color;
 
+    /// 黑色
     pub const BLACK: Color = Color::new(0, 0, 0);
+    /// 白色
     pub const WHITE: Color = Color::new(255, 255, 255);
+    /// 红色
     pub const RED: Color = Color::new(255, 0, 0);
+    /// 绿色
     pub const GREEN: Color = Color::new(0, 255, 0);
+    /// 蓝色
     pub const BLUE: Color = Color::new(0, 0, 255);
+    /// 黄色
     pub const YELLOW: Color = Color::new(255, 255, 0);
+    /// 青色
     pub const CYAN: Color = Color::new(0, 255, 255);
+    /// 品红
     pub const MAGENTA: Color = Color::new(255, 0, 255);
+    /// 灰色
     pub const GRAY: Color = Color::new(128, 128, 128);
+    /// 浅灰色
     pub const LIGHT_GRAY: Color = Color::new(192, 192, 192);
+    /// 深灰色
     pub const DARK_GRAY: Color = Color::new(64, 64, 64);
 }
 
@@ -198,11 +208,14 @@ pub mod colors {
 /// 2D点
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Point {
+    /// 水平坐标
     pub x: i32,
+    /// 垂直坐标
     pub y: i32,
 }
 
 impl Point {
+    /// 构造点
     pub const fn new(x: i32, y: i32) -> Self {
         Self { x, y }
     }
@@ -211,13 +224,18 @@ impl Point {
 /// 2D矩形
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rect {
+    /// 左上角水平坐标
     pub x: i32,
+    /// 左上角垂直坐标
     pub y: i32,
+    /// 宽度
     pub width: u32,
+    /// 高度
     pub height: u32,
 }
 
 impl Rect {
+    /// 构造矩形
     pub const fn new(x: i32, y: i32, width: u32, height: u32) -> Self {
         Self {
             x,
@@ -422,314 +440,6 @@ impl Framebuffer {
         }
     }
 
-    /// 填充整个屏幕
-    pub fn fill(&mut self, color: Color) {
-        for y in 0..self.height {
-            for x in 0..self.width {
-                self.set_pixel(x, y, color);
-            }
-        }
-    }
-
-    /// 填充矩形区域
-    pub fn fill_rect(&mut self, rect: Rect, color: Color) {
-        let x_start = rect.x.max(0) as u32;
-        let y_start = rect.y.max(0) as u32;
-        let x_end = (rect.x + rect.width as i32).min(self.width as i32) as u32;
-        let y_end = (rect.y + rect.height as i32).min(self.height as i32) as u32;
-
-        for y in y_start..y_end {
-            for x in x_start..x_end {
-                self.set_pixel(x, y, color);
-            }
-        }
-    }
-
-    /// 绘制水平线
-    pub fn draw_hline(&mut self, x: i32, y: i32, length: u32, color: Color) {
-        if y < 0 || y >= self.height as i32 {
-            return;
-        }
-
-        let x_start = x.max(0) as u32;
-        let x_end = (x + length as i32).min(self.width as i32) as u32;
-
-        for x in x_start..x_end {
-            self.set_pixel(x, y as u32, color);
-        }
-    }
-
-    /// 绘制垂直线
-    pub fn draw_vline(&mut self, x: i32, y: i32, length: u32, color: Color) {
-        if x < 0 || x >= self.width as i32 {
-            return;
-        }
-
-        let y_start = y.max(0) as u32;
-        let y_end = (y + length as i32).min(self.height as i32) as u32;
-
-        for y in y_start..y_end {
-            self.set_pixel(x as u32, y, color);
-        }
-    }
-
-    /// 绘制线条 (Bresenham算法)
-    pub fn draw_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: Color) {
-        let dx = (x1 - x0).abs();
-        let dy = (y1 - y0).abs();
-        let sx = if x0 < x1 { 1 } else { -1 };
-        let sy = if y0 < y1 { 1 } else { -1 };
-        let mut err = dx - dy;
-
-        let mut x = x0;
-        let mut y = y0;
-
-        loop {
-            if x >= 0 && x < self.width as i32 && y >= 0 && y < self.height as i32 {
-                self.set_pixel(x as u32, y as u32, color);
-            }
-
-            if x == x1 && y == y1 {
-                break;
-            }
-
-            let e2 = 2 * err;
-            if e2 > -dy {
-                err -= dy;
-                x += sx;
-            }
-            if e2 < dx {
-                err += dx;
-                y += sy;
-            }
-        }
-    }
-
-    /// 绘制矩形边框
-    pub fn draw_rect(&mut self, rect: Rect, color: Color) {
-        self.draw_hline(rect.x, rect.y, rect.width, color);
-        self.draw_hline(rect.x, rect.y + rect.height as i32 - 1, rect.width, color);
-        self.draw_vline(rect.x, rect.y, rect.height, color);
-        self.draw_vline(rect.x + rect.width as i32 - 1, rect.y, rect.height, color);
-    }
-
-    /// 绘制圆形 (中点圆算法)
-    pub fn draw_circle(&mut self, cx: i32, cy: i32, radius: u32, color: Color) {
-        let r = radius as i32;
-        let mut x = r;
-        let mut y = 0;
-        let mut err = 0;
-
-        while x >= y {
-            self.set_pixel_if_valid(cx + x, cy + y, color);
-            self.set_pixel_if_valid(cx + y, cy + x, color);
-            self.set_pixel_if_valid(cx - y, cy + x, color);
-            self.set_pixel_if_valid(cx - x, cy + y, color);
-            self.set_pixel_if_valid(cx - x, cy - y, color);
-            self.set_pixel_if_valid(cx - y, cy - x, color);
-            self.set_pixel_if_valid(cx + y, cy - x, color);
-            self.set_pixel_if_valid(cx + x, cy - y, color);
-
-            y += 1;
-            err += 1 + 2 * y;
-            if 2 * (err - x) + 1 > 0 {
-                x -= 1;
-                err += 1 - 2 * x;
-            }
-        }
-    }
-
-    /// 设置像素（带边界检查）
-    #[inline]
-    fn set_pixel_if_valid(&mut self, x: i32, y: i32, color: Color) {
-        if x >= 0 && x < self.width as i32 && y >= 0 && y < self.height as i32 {
-            self.set_pixel(x as u32, y as u32, color);
-        }
-    }
-
-    /// 绘制填充圆（水平线扫描法）
-    pub fn fill_circle(&mut self, cx: i32, cy: i32, radius: u32, color: Color) {
-        let r = radius as i32;
-        let mut x = r;
-        let mut y = 0;
-        let mut err = 0;
-
-        while x >= y {
-            self.draw_hline(cx - x, cy + y, (2 * x) as u32, color);
-            self.draw_hline(cx - x, cy - y, (2 * x) as u32, color);
-            self.draw_hline(cx - y, cy + x, (2 * y) as u32, color);
-            self.draw_hline(cx - y, cy - x, (2 * y) as u32, color);
-
-            y += 1;
-            err += 1 + 2 * y;
-            if 2 * (err - x) + 1 > 0 {
-                x -= 1;
-                err += 1 - 2 * x;
-            }
-        }
-    }
-
-    /// Alpha 混合设置像素（读-改-写）
-    ///
-    /// 若 `color.a == 0` 则不执行任何操作；若 `color.a == 255` 则退化为 `set_pixel`。
-    pub fn blend_pixel(&mut self, x: u32, y: u32, color: Color) {
-        if x >= self.width || y >= self.height || color.a == 0 {
-            return;
-        }
-        if color.a == 255 {
-            self.set_pixel(x, y, color);
-            return;
-        }
-        if let Some(existing) = self.get_pixel(x, y) {
-            let blended = color.blend(&existing);
-            self.set_pixel(x, y, blended);
-        }
-    }
-
-    /// Wu 反走样直线
-    // 有意窄化: 颜色分量/透明度经规范化计算, 值域 [0,255]
-    #[expect(clippy::cast_possible_truncation)]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-    )]
-    pub fn draw_line_aa(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: Color) {
-        let steep = (y1 - y0).abs() > (x1 - x0).abs();
-        let (mut x0, mut y0, mut x1, mut y1) = (x0, y0, x1, y1);
-
-        if steep {
-            core::mem::swap(&mut x0, &mut y0);
-            core::mem::swap(&mut x1, &mut y1);
-        }
-        if x0 > x1 {
-            core::mem::swap(&mut x0, &mut x1);
-            core::mem::swap(&mut y0, &mut y1);
-        }
-
-        let dx = (x1 - x0) as f32;
-        let dy = (y1 - y0) as f32;
-        let gradient = if dx == 0.0 { 1.0f32 } else { dy / dx };
-
-        // 有意窄化: 浮点光栅化坐标/透明度取整, 值域有界
-        #[expect(clippy::cast_possible_truncation)]
-        #[expect(
-            clippy::items_after_statements,
-            reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-        )]
-        fn fpart(x: f32) -> f32 {
-            x - (x as i32 as f32)
-        }
-        #[expect(
-            clippy::items_after_statements,
-            reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-        )]
-        fn rfpart(x: f32) -> f32 {
-            1.0f32 - fpart(x)
-        }
-
-        let xend_i = ((x0 as f32) + 0.5) as i32;
-        let xend_f = xend_i as f32;
-        let yend_f = y0 as f32 + gradient * (xend_f - x0 as f32);
-        let xgap = rfpart(x0 as f32 + 0.5);
-        let xpxl1 = xend_i;
-        let ypxl1 = yend_f as i32;
-
-        let a1 = (rfpart(yend_f) * xgap * 255.0) as u8;
-        let a2 = (fpart(yend_f) * xgap * 255.0) as u8;
-        if steep {
-            self.blend_pixel(
-                ypxl1 as u32,
-                xpxl1 as u32,
-                Color::new_alpha(color.r, color.g, color.b, a1),
-            );
-            self.blend_pixel(
-                (ypxl1 + 1) as u32,
-                xpxl1 as u32,
-                Color::new_alpha(color.r, color.g, color.b, a2),
-            );
-        } else {
-            self.blend_pixel(
-                xpxl1 as u32,
-                ypxl1 as u32,
-                Color::new_alpha(color.r, color.g, color.b, a1),
-            );
-            self.blend_pixel(
-                xpxl1 as u32,
-                (ypxl1 + 1) as u32,
-                Color::new_alpha(color.r, color.g, color.b, a2),
-            );
-        }
-
-        let mut intery = yend_f + gradient;
-
-        let xend_i = ((x1 as f32) + 0.5) as i32;
-        let xend_f = xend_i as f32;
-        let yend_f = y1 as f32 + gradient * (xend_f - x1 as f32);
-        let xgap = fpart(x1 as f32 + 0.5);
-        let xpxl2 = xend_i;
-        let ypxl2 = yend_f as i32;
-
-        let a1 = (rfpart(yend_f) * xgap * 255.0) as u8;
-        let a2 = (fpart(yend_f) * xgap * 255.0) as u8;
-        if steep {
-            self.blend_pixel(
-                ypxl2 as u32,
-                xpxl2 as u32,
-                Color::new_alpha(color.r, color.g, color.b, a1),
-            );
-            self.blend_pixel(
-                (ypxl2 + 1) as u32,
-                xpxl2 as u32,
-                Color::new_alpha(color.r, color.g, color.b, a2),
-            );
-        } else {
-            self.blend_pixel(
-                xpxl2 as u32,
-                ypxl2 as u32,
-                Color::new_alpha(color.r, color.g, color.b, a1),
-            );
-            self.blend_pixel(
-                xpxl2 as u32,
-                (ypxl2 + 1) as u32,
-                Color::new_alpha(color.r, color.g, color.b, a2),
-            );
-        }
-
-        if steep {
-            for x in (xpxl1 + 1)..xpxl2 {
-                let alpha = (rfpart(intery) * 255.0) as u8;
-                self.blend_pixel(
-                    intery as u32,
-                    x as u32,
-                    Color::new_alpha(color.r, color.g, color.b, alpha),
-                );
-                let alpha = (fpart(intery) * 255.0) as u8;
-                self.blend_pixel(
-                    (intery + 1.0) as u32,
-                    x as u32,
-                    Color::new_alpha(color.r, color.g, color.b, alpha),
-                );
-                intery += gradient;
-            }
-        } else {
-            for x in (xpxl1 + 1)..xpxl2 {
-                let alpha = (rfpart(intery) * 255.0) as u8;
-                self.blend_pixel(
-                    x as u32,
-                    intery as u32,
-                    Color::new_alpha(color.r, color.g, color.b, alpha),
-                );
-                let alpha = (fpart(intery) * 255.0) as u8;
-                self.blend_pixel(
-                    x as u32,
-                    (intery + 1.0) as u32,
-                    Color::new_alpha(color.r, color.g, color.b, alpha),
-                );
-                intery += gradient;
-            }
-        }
-    }
-
     /// 向上滚动像素行区间 (机制原语: 帧缓冲内存搬移)
     ///
     /// 将像素行区间 `[region_top, region_bottom)` 整体上移 `lines` 行, 并把区间
@@ -762,10 +472,25 @@ impl Framebuffer {
             core::ptr::write_bytes(base.add(clear_off), 0u8, shift_bytes);
         }
     }
+}
 
-    /// 清屏
-    pub fn clear(&mut self) {
-        self.fill(colors::BLACK);
+// SAFETY: 像素读写与滚动均经 `Framebuffer` 的安全方法/机制原语,
+// `PixelCanvas` 不引入新的别名或裸指针暴露.
+impl PixelCanvas for Framebuffer {
+    fn width(&self) -> u32 {
+        self.width
+    }
+
+    fn height(&self) -> u32 {
+        self.height
+    }
+
+    fn set_pixel(&mut self, x: u32, y: u32, color: Color) {
+        Framebuffer::set_pixel(self, x, y, color);
+    }
+
+    fn get_pixel(&self, x: u32, y: u32) -> Option<Color> {
+        Framebuffer::get_pixel(self, x, y)
     }
 }
 

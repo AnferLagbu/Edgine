@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 4461,
-    "files": 235,
-    "keys": 642
+    "sites": 4438,
+    "files": 234,
+    "keys": 639
   },
   "entries": [
     [
@@ -1724,21 +1724,6 @@
       "src/kernel/privileged/driver/display/font.rs",
       "an associated function",
       1
-    ],
-    [
-      "src/kernel/privileged/driver/display/framebuffer.rs",
-      "a constant",
-      11
-    ],
-    [
-      "src/kernel/privileged/driver/display/framebuffer.rs",
-      "a struct field",
-      10
-    ],
-    [
-      "src/kernel/privileged/driver/display/framebuffer.rs",
-      "an associated function",
-      2
     ],
     [
       "src/kernel/privileged/driver/display/mod.rs",

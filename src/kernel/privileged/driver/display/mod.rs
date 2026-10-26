@@ -12,15 +12,23 @@
 //! ```
 //!
 //! 显示控制器管理策略 (`controller.rs`) 已于 2-E 批次迁至
-//! `functions::driver::display::controller`; framebuffer/font 因被
-//! privileged 图形控制台机制 (gfx_console) 直接绑定而保留于此。
+//! `functions::driver::display::controller`; framebuffer 的**绘图算法**已按
+//! `docs/plan/framekernel-paradigm-enforcement.md` §6.3 下沉
+//! `functions::driver::display::framebuffer_ops`, 此处仅保留像素格式转换、
+//! MMIO 读写与滚动机制原语 (font 因被 gfx_console 机制直接绑定而保留)。
 
 pub mod font;
 pub mod framebuffer;
+/// 帧缓冲绘图策略契约与注册表 (functions 实现, privileged 调用)
+pub mod framebuffer_ops;
 pub mod self_test;
 
 // 导出Framebuffer类型
 pub use framebuffer::{Color, Framebuffer, PixelFormat, Point, Rect, colors};
+// 绘图策略契约与注册表 (functions 实现, privileged 调用)
+pub use framebuffer_ops::{
+    FramebufferOps, PixelCanvas, current_framebuffer_ops, register_framebuffer_ops,
+};
 
 use super::infra;
 use super::infra::{Driver, DriverError};

@@ -5,7 +5,7 @@
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 1749,
+    "sites": 1744,
     "files": 306
   },
   "entries": [
@@ -2072,12 +2072,7 @@
     [
       "src/kernel/privileged/driver/display/framebuffer.rs",
       "#[expect(clippy::cast_possible_truncation)",
-      3
-    ],
-    [
-      "src/kernel/privileged/driver/display/framebuffer.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      2
+      1
     ],
     [
       "src/kernel/privileged/driver/display/framebuffer.rs",
@@ -2087,11 +2082,6 @@
     [
       "src/kernel/privileged/driver/display/framebuffer.rs",
       "#[expect(clippy::return_self_not_must_use,reason=\"return_self_not_must_use:返回Self是builder/fluentAPI;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/display/framebuffer.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
     ],
     [

@@ -1,6 +1,7 @@
 use super::font::Font;
 use super::framebuffer::colors;
 use super::framebuffer::{Color, Framebuffer, Rect};
+use super::framebuffer_ops::current_framebuffer_ops;
 
 /// 帧缓冲自检——绘制完整测试图案并验证功能正确性
 ///
@@ -33,22 +34,32 @@ pub fn framebuffer_self_test(fb: &mut Framebuffer, font: &Font) -> usize {
     let fw = fb.width();
     let fh = fb.height();
 
+    // 绘图策略由 functions 注册 (crate root 在 driver init_all 之前完成);
+    // 未注册时自检无从绘制, fail-quiet 跳过并返回 0 (无失败计数).
+    let Some(ops) = current_framebuffer_ops() else {
+        crate::klog_drv_warn!("[DISPLAY] framebuffer draw policy unregistered, self-test skipped");
+        return 0;
+    };
+
     // ========================================================================
     // 1. 纯色条 (R/G/B/W) — 顶部 48 像素
     // ========================================================================
     let stripe_h: u32 = 48;
     let stripe_w: u32 = fw / 4;
 
-    fb.fill_rect(Rect::new(0, 0, stripe_w, stripe_h), colors::RED);
-    fb.fill_rect(
+    ops.fill_rect(fb, Rect::new(0, 0, stripe_w, stripe_h), colors::RED);
+    ops.fill_rect(
+        fb,
         Rect::new(stripe_w as i32, 0, stripe_w, stripe_h),
         colors::GREEN,
     );
-    fb.fill_rect(
+    ops.fill_rect(
+        fb,
         Rect::new(2 * stripe_w as i32, 0, stripe_w, stripe_h),
         colors::BLUE,
     );
-    fb.fill_rect(
+    ops.fill_rect(
+        fb,
         Rect::new(3 * stripe_w as i32, 0, stripe_w, stripe_h),
         colors::WHITE,
     );
@@ -150,22 +161,22 @@ pub fn framebuffer_self_test(fb: &mut Framebuffer, font: &Font) -> usize {
         let prim_y: i32 = 130;
 
         // 矩形边框
-        fb.draw_rect(Rect::new(10, prim_y, 64, 48), colors::CYAN);
+        ops.draw_rect(fb, Rect::new(10, prim_y, 64, 48), colors::CYAN);
 
         // 直线 (Bresenham)
-        fb.draw_line(95, prim_y + 48, 155, prim_y, colors::MAGENTA);
+        ops.draw_line(fb, 95, prim_y + 48, 155, prim_y, colors::MAGENTA);
 
         // 圆形边框
-        fb.draw_circle(210, prim_y + 24, 22, colors::YELLOW);
+        ops.draw_circle(fb, 210, prim_y + 24, 22, colors::YELLOW);
 
         // 填充圆
-        fb.fill_circle(280, prim_y + 24, 16, colors::GREEN);
+        ops.fill_circle(fb, 280, prim_y + 24, 16, colors::GREEN);
 
         // 反走样直线 (Wu)
-        fb.draw_line_aa(10, prim_y + 60, 180, prim_y + 100, colors::WHITE);
+        ops.draw_line_aa(fb, 10, prim_y + 60, 180, prim_y + 100, colors::WHITE);
 
         // 水平反走样直线
-        fb.draw_line_aa(200, prim_y + 80, 310, prim_y + 80, colors::LIGHT_GRAY);
+        ops.draw_line_aa(fb, 200, prim_y + 80, 310, prim_y + 80, colors::LIGHT_GRAY);
 
         // 验证填充圆
         if let Some(c) = fb.get_pixel(280, prim_y as u32 + 24) {

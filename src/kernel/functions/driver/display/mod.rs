@@ -21,11 +21,17 @@ pub mod dp;
 /// 显示控制器管理策略 (从 privileged 迁移, 0 unsafe)
 pub mod controller;
 
+/// 帧缓冲绘图策略 (从 privileged 下沉, 0 unsafe)
+pub mod framebuffer_ops;
+
 // 重新导出 DisplayPort 公共类型
 pub use dp::{
     AuxCommand, AuxTransaction, DpController, DpError, DpIo, Dpcd, LaneCount, LinkRate,
     REQUIRED_IOMEM_SIZE, TrainingState, assert_iomem_size_at_least,
 };
+
+// 帧缓冲绘图策略注册入口 (crate root 在 privileged::driver::init_all 之前调用)
+pub use framebuffer_ops::init_render_policy;
 
 /// 初始化显示控制器子系统并注册到 EGDF (MIG-008 接线补齐, DECISION-K 契约)
 ///

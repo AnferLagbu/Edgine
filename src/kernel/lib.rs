@@ -861,6 +861,10 @@ pub extern "C" fn kernel_init() {
         }
 
         // 10-10.6. Driver subsystem init
+        // §6.3 绘图策略下沉: functions 侧帧缓冲绘图算法必须先于 driver init_all
+        // 注册 —— 该链路内 display_init 会执行帧缓冲自检与 GfxConsole 初始化,
+        // 两者均经 privileged::driver::current_framebuffer_ops 消费该策略.
+        crate::functions::driver::display::init_render_policy();
         crate::privileged::driver::init_all();
         // §6.4 直接方案 B: 字符设备 (x86_64 vga/serial + aarch64 pl011) 权威迁 functions,
         // 由 crate root (合法双向编排者) 调用 functions char_init 注册进 EGDF.
