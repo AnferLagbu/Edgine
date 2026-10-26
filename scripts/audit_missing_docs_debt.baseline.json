@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 3847,
-    "files": 230,
-    "keys": 623
+    "sites": 3728,
+    "files": 229,
+    "keys": 619
   },
   "entries": [
     [
@@ -94,26 +94,6 @@
       "src/kernel/functions/driver/usb/mass_storage.rs",
       "a constant",
       9
-    ],
-    [
-      "src/kernel/functions/driver/usb/usb_core.rs",
-      "a method",
-      7
-    ],
-    [
-      "src/kernel/functions/driver/usb/usb_core.rs",
-      "a struct field",
-      48
-    ],
-    [
-      "src/kernel/functions/driver/usb/usb_core.rs",
-      "a variant",
-      62
-    ],
-    [
-      "src/kernel/functions/driver/usb/usb_core.rs",
-      "an associated function",
-      2
     ],
     [
       "src/kernel/functions/driver/usb/xhci.rs",
