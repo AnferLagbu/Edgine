@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。纯类型定义和常量。
 //! SGEG v1 类型定义 — privileged 层权威定义
 //!
@@ -15,11 +16,17 @@
 
 use core::sync::atomic::{AtomicU8, AtomicU16, AtomicU32, AtomicU64};
 
+/// PWM 表的最大条目数 (固定容量静态表).
 pub const MAX_PWM_ENTRIES: usize = 256;
+/// 条目备注字段的字节容量 (含结尾 NUL).
 pub const PWM_NOTE_LEN: usize = 64;
+/// 条目密码哈希字段的字节容量.
 pub const PWM_HASH_LEN: usize = 48;
+/// 密码派生所用盐值的字节长度.
 pub const PWM_SALT_LEN: usize = 16;
+/// 密码派生输出的摘要字节长度.
 pub const PWM_DIGEST_LEN: usize = 32;
+/// 授权记录表的最大条目数.
 pub const MAX_GRANT_RECORDS: usize = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -28,12 +35,14 @@ pub const MAX_GRANT_RECORDS: usize = 1024;
 pub struct PwmId(pub u64);
 
 impl PwmId {
+    /// 无效/未分配标识的哨兵值.
     pub const ZERO: Self = Self(0);
 
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 判断该标识是否为已分配 (非零).
     pub fn is_valid(&self) -> bool {
         self.0 != 0
     }
@@ -42,6 +51,7 @@ impl PwmId {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 取出内部 u64 原始值.
     pub fn as_u64(&self) -> u64 {
         self.0
     }
@@ -59,15 +69,20 @@ impl Default for PwmId {
 pub struct DomainId(pub u64);
 
 impl DomainId {
+    /// 无活动域的哨兵值.
     pub const ZERO: Self = Self(0);
+    /// 内核自身域的保留编号 (uid 1).
     pub const KERNEL: Self = Self(1);
+    /// 根用户域的保留编号 (uid 1000).
     pub const ROOT: Self = Self(1000);
+    /// 无特权用户域的保留编号 (uid 65534).
     pub const NOBODY: Self = Self(65534);
 
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 判断是否关联了活动域 (非零).
     pub fn is_valid(&self) -> bool {
         self.0 != 0
     }
@@ -76,10 +91,12 @@ impl DomainId {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 取出内部 u64 原始值.
     pub fn as_u64(&self) -> u64 {
         self.0
     }
 
+    /// 由 POSIX uid 派生域身份.
     pub fn from_uid(uid: u32) -> Self {
         Self(u64::from(uid))
     }
@@ -88,6 +105,7 @@ impl DomainId {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 转换为对应的 POSIX uid (截断为 u32).
     pub fn to_uid(&self) -> u32 {
         self.0 as u32
     }
@@ -124,15 +142,25 @@ impl Default for DomainId {
 // `SYSTEM_CAP_SET_DOMAIN_FLAGS`.
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    /// 域级行为门控标志 (按进程生效, 在 syscall 咽喉点裁决).
     pub struct DomainFlags: u32 {
+        /// 无门控 (默认值, 不改变任何调用行为).
         const NONE       = 0;
+        /// 拒绝 fork/clone/clone3.
         const NO_FORK    = 1 << 0;
+        /// 拒绝 execve/execveat.
         const NO_EXEC    = 1 << 1;
+        /// 拒绝网络类系统调用.
         const NO_NET     = 1 << 2;
+        /// 拒绝设备类调用 (ioctl/mount/umount2).
         const NO_DEVICE  = 1 << 3;
+        /// 复合位: 严格白名单, 仅放行 read/write/exit/exit_group/rt_sigreturn.
         const SANDBOX    = 1 << 4;
+        /// 拒绝写类调用及带写意图的 open/openat.
         const READONLY   = 1 << 5;
+        /// 元数据位: 生命周期标记, 不参与门控.
         const TEMP       = 1 << 6;
+        /// 元数据位: 特权标记, 不参与门控.
         const SYSTEM     = 1 << 7;
     }
 }
@@ -143,27 +171,44 @@ bitflags::bitflags! {
 pub struct CapDomain(pub u16);
 
 impl CapDomain {
+    /// 系统管理与全局策略域.
     pub const SYSTEM: Self = Self(0);
+    /// 文件系统域.
     pub const FS: Self = Self(1);
+    /// 网络栈域.
     pub const NET: Self = Self(2);
+    /// 进程管理域.
     pub const PROC: Self = Self(3);
+    /// 设备访问域.
     pub const DEVICE: Self = Self(4);
+    /// 用户与身份管理域.
     pub const USER_MGMT: Self = Self(5);
+    /// 进程间通信域.
     pub const IPC: Self = Self(6);
+    /// 内存管理域.
     pub const MEM: Self = Self(7);
+    /// 时钟与定时器域.
     pub const TIME: Self = Self(8);
+    /// 文件记录 (FREG) 域.
     pub const FREG: Self = Self(9);
+    /// 信号投递域.
     pub const SIGNAL: Self = Self(10);
+    /// 共享内存域.
     pub const SHM: Self = Self(11);
+    /// 信号量域.
     pub const SEM: Self = Self(12);
+    /// 消息队列域.
     pub const MSGQ: Self = Self(13);
+    /// DMA 缓冲区域.
     pub const DMA: Self = Self(14);
+    /// 预留域 (未分配语义).
     pub const RESERVED: Self = Self(15);
 
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 转为能力矩阵下标 (对 16 取模, 保证不越界).
     pub fn as_usize(&self) -> usize {
         (self.0 as usize) % 16
     }
@@ -172,6 +217,7 @@ impl CapDomain {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 取出内部 u16 原始值.
     pub fn as_u16(&self) -> u16 {
         self.0
     }
@@ -189,13 +235,16 @@ impl From<u16> for CapDomain {
 pub struct CapBits(pub u64);
 
 impl CapBits {
+    /// 空能力集 (无任何位).
     pub const NONE: Self = Self(0);
+    /// 全集: 所有能力位均置位.
     pub const ALL: Self = Self(0xFFFFFFFFFFFFFFFF);
 
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 判断当前集合是否完整包含另一集合的全部位.
     pub fn contains(&self, other: Self) -> bool {
         (self.0 & other.0) == other.0
     }
@@ -204,6 +253,7 @@ impl CapBits {
         clippy::trivially_copy_pass_by_ref,
         reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
     )]
+    /// 取出内部 u64 位图.
     pub fn as_u64(&self) -> u64 {
         self.0
     }
@@ -245,10 +295,15 @@ impl core::ops::Not for CapBits {
 bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug)]
+    /// PWM 条目的生命周期与状态标志.
     pub struct PwmFlags: u16 {
+        /// 无标志 (默认值).
         const NONE       = 0;
+        /// 条目已被禁用, 身份校验直接拒绝.
         const DISABLED   = 1 << 0;
+        /// 条目已变更 (待持久化的差异标记).
         const MODIFIED   = 1 << 3;
+        /// 连续登录失败达上限后被临时锁定.
         const LOCKED     = 1 << 4;
     }
 }
@@ -262,21 +317,33 @@ impl Default for PwmFlags {
 /// PWM 表条目: 身份的标识、凭证、标志、能力与登录状态的原子化字段集合。
 #[repr(C)]
 pub struct PwmEntry {
+    /// 该条目的 PWM 标识; 0 表示空槽.
     pub pwm: AtomicU64,
+    /// 映射的 POSIX 用户 ID.
     pub posix_uid: AtomicU32,
+    /// 映射的 POSIX 组 ID.
     pub posix_gid: AtomicU32,
+    /// 创建该条目的 PWM 标识 (权限授予链的源头).
     pub creator_pwm: AtomicU64,
+    /// 特权级别; 默认 0xFF 表示未设置.
     pub privilege_level: AtomicU8,
+    /// 标志位原始值 (见 [`PwmFlags`]).
     pub flags: AtomicU16,
+    /// 16 个能力域的能力位图 (每域一个 u64).
     pub caps: [AtomicU64; 16],
     /// 备注 (T4-1 全 Atomic 化: u8 数组 → `AtomicU8` 数组, 支持 &self 写入)
     pub note: [AtomicU8; PWM_NOTE_LEN],
     /// 密码哈希 (T4-1 全 Atomic 化: u8 数组 → `AtomicU8` 数组, 支持 &self 写入)
     pub password_hash: [AtomicU8; PWM_HASH_LEN],
+    /// 条目创建时间戳.
     pub created_time: AtomicU64,
+    /// 凭证过期时间戳; 0 表示永不过期.
     pub expires_at: AtomicU64,
+    /// 登录失败锁定的截止时间戳.
     pub lockout_until: AtomicU64,
+    /// 连续登录失败次数.
     pub failed_attempts: AtomicU32,
+    /// 最近一次成功登录时间戳.
     pub last_login_time: AtomicU64,
 }
 
@@ -346,41 +413,50 @@ impl Default for PwmEntrySnapshot {
 }
 
 impl PwmEntry {
+    /// 创建全默认 (未分配) 的条目.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// 判断条目是否已分配 (PWM 标识非零).
     pub fn is_valid(&self) -> bool {
         self.pwm.load(core::sync::atomic::Ordering::Acquire) != 0
     }
 
+    /// 读取条目自身的 PWM 标识.
     pub fn get_pwm(&self) -> PwmId {
         PwmId(self.pwm.load(core::sync::atomic::Ordering::Acquire))
     }
 
+    /// 读取创建者 PWM 标识.
     pub fn get_creator_pwm(&self) -> PwmId {
         PwmId(self.creator_pwm.load(core::sync::atomic::Ordering::Acquire))
     }
 
+    /// 读取标志位并转为 [`PwmFlags`] (未知位被丢弃).
     pub fn get_flags(&self) -> PwmFlags {
         PwmFlags::from_bits_truncate(self.flags.load(core::sync::atomic::Ordering::Acquire))
     }
 
+    /// 整体覆盖标志位.
     pub fn set_flags(&self, flags: PwmFlags) {
         self.flags
             .store(flags.bits(), core::sync::atomic::Ordering::Release);
     }
 
+    /// 按位或加入指定标志.
     pub fn add_flags(&self, flags: PwmFlags) {
         let current = self.get_flags();
         self.set_flags(current | flags);
     }
 
+    /// 按位清除指定标志.
     pub fn remove_flags(&self, flags: PwmFlags) {
         let current = self.get_flags();
         self.set_flags(current & !flags);
     }
 
+    /// 判断是否置位了全部给定标志.
     pub fn has_flag(&self, flag: PwmFlags) -> bool {
         self.get_flags().contains(flag)
     }
@@ -424,44 +500,53 @@ impl PwmEntry {
         raw::bytes_to_str(&buf[..len]) == other
     }
 
+    /// 读取指定能力域的能力位图.
     pub fn load_caps(&self, domain: CapDomain) -> CapBits {
         let idx = domain.as_usize();
         CapBits(self.caps[idx].load(core::sync::atomic::Ordering::Acquire))
     }
 
+    /// 整体覆盖指定能力域的能力位图.
     pub fn store_caps(&self, domain: CapDomain, caps: CapBits) {
         let idx = domain.as_usize();
         self.caps[idx].store(caps.0, core::sync::atomic::Ordering::Release);
     }
 
+    /// 对指定能力域原子按位或 (用于授予能力).
     pub fn fetch_or_caps(&self, domain: CapDomain, caps: CapBits) {
         let idx = domain.as_usize();
         self.caps[idx].fetch_or(caps.0, core::sync::atomic::Ordering::AcqRel);
     }
 
+    /// 对指定能力域原子按位与 (用于回收能力).
     pub fn fetch_and_caps(&self, domain: CapDomain, caps: CapBits) {
         let idx = domain.as_usize();
         self.caps[idx].fetch_and(caps.0, core::sync::atomic::Ordering::AcqRel);
     }
 
+    /// 判断指定能力域是否已具备所需能力位 (子集判定).
     pub fn has_capability(&self, domain: CapDomain, required: CapBits) -> bool {
         let current = self.load_caps(domain);
         current.contains(required)
     }
 
+    /// 读取映射的 POSIX 用户 ID.
     pub fn get_uid(&self) -> u32 {
         self.posix_uid.load(core::sync::atomic::Ordering::Acquire)
     }
 
+    /// 读取映射的 POSIX 组 ID.
     pub fn get_gid(&self) -> u32 {
         self.posix_gid.load(core::sync::atomic::Ordering::Acquire)
     }
 
+    /// 写入映射的 POSIX 用户 ID.
     pub fn set_uid(&self, uid: u32) {
         self.posix_uid
             .store(uid, core::sync::atomic::Ordering::Release);
     }
 
+    /// 写入映射的 POSIX 组 ID.
     pub fn set_gid(&self, gid: u32) {
         self.posix_gid
             .store(gid, core::sync::atomic::Ordering::Release);
@@ -530,15 +615,25 @@ impl PwmEntry {
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
 pub struct PwmContext {
+    /// 指向该会话当前生效的 PWM 条目 (只读引用).
     pub current_entry: *const PwmEntry,
+    /// 本次登录会话绑定的 PWM 标识.
     pub session_pwm: PwmId,
+    /// 缓存的 POSIX 用户 ID (热路径免重复解析).
     pub cached_uid: u32,
+    /// 缓存的 POSIX 组 ID (热路径免重复解析).
     pub cached_gid: u32,
+    /// 有效用户 ID (euid).
     pub euid: u32,
+    /// 有效组 ID (egid).
     pub egid: u32,
+    /// 保存的用户 ID (供临时提权后恢复).
     pub saved_euid: u32,
+    /// 保存的组 ID (供临时提权后恢复).
     pub saved_egid: u32,
+    /// 当前活动域身份.
     pub active_domain_id: DomainId,
+    /// 提权所依据的授权方 PWM 标识.
     pub elevation_granted_pwm: PwmId,
 }
 
@@ -546,14 +641,20 @@ pub struct PwmContext {
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct GrantRecord {
+    /// 授权方 PWM 标识.
     pub grantor_pwm: PwmId,
+    /// 被授权方 PWM 标识.
     pub grantee_pwm: PwmId,
+    /// 授予的能力域.
     pub domain: CapDomain,
+    /// 授予的能力位集合.
     pub caps: CapBits,
+    /// 授权生效的时间戳.
     pub granted_at: u64,
 }
 
 impl GrantRecord {
+    /// 空记录: 表示未占用的授权槽位.
     pub const EMPTY: Self = Self {
         grantor_pwm: PwmId::ZERO,
         grantee_pwm: PwmId::ZERO,
@@ -562,6 +663,7 @@ impl GrantRecord {
         granted_at: 0,
     };
 
+    /// 判断记录是否为未占用槽位 (授权方为空).
     pub fn is_empty(&self) -> bool {
         self.grantor_pwm == PwmId::ZERO
     }
@@ -571,24 +673,40 @@ impl GrantRecord {
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PwmError {
+    /// 操作成功.
     Ok = 0,
+    /// 目标 PWM 条目不存在.
     NotFound = -1,
+    /// 目标条目已被禁用.
     Disabled = -2,
+    /// 密码校验失败.
     PasswordIncorrect = -3,
+    /// 调用方权限不足 (门控拒绝).
     PermissionDenied = -4,
+    /// PWM 表已满, 无法创建新条目.
     TableFull = -5,
+    /// 同标识的条目已存在.
     AlreadyExists = -6,
+    /// 目标特权级别高于允许授予的上限.
     InsufficientPrivilege = -7,
+    /// 缺少完成该操作所需的授权.
     NotAuthorized = -8,
+    /// 调用方不是该条目的创建者.
     NotCreator = -9,
+    /// 操作会突破特权下界约束.
     WouldBreakFloor = -10,
+    /// 特权级别或能力位溢出上限.
     PrivilegeOverflow = -11,
+    /// 首次令牌已被使用过.
     TokenUsed = -12,
+    /// 尚未签发首次令牌.
     NoFirstToken = -13,
+    /// 密码格式或内容不合法.
     InvalidPassword = -14,
 }
 
 impl PwmError {
+    /// 取出错误码的 i32 表示 (0 成功, 负值失败).
     pub fn as_i32(self) -> i32 {
         self as i32
     }
@@ -598,20 +716,31 @@ impl PwmError {
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Default)]
 pub enum AuditAction {
+    /// 登录.
     #[default]
     Login = 1,
+    /// 登出.
     Logout = 2,
+    /// 创建身份条目.
     Create = 3,
+    /// 删除身份条目.
     Delete = 4,
+    /// 修改身份条目.
     Modify = 5,
+    /// 修改密码.
     PasswordChange = 8,
+    /// 授予能力.
     Grant = 10,
+    /// 回收能力.
     Revoke = 11,
+    /// 转移创建者.
     TransferCreator = 12,
+    /// 签发首次令牌.
     FirstTokenGrant = 13,
 }
 
 impl AuditAction {
+    /// 取出动作的 u32 判别式 (与磁盘审计格式一致).
     pub fn as_u32(self) -> u32 {
         self as u32
     }
@@ -621,13 +750,17 @@ impl AuditAction {
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Default)]
 pub enum AuditResult {
+    /// 操作成功.
     #[default]
     Success = 0,
+    /// 操作失败.
     Failure = 1,
+    /// 被门控拒绝.
     Denied = 2,
 }
 
 impl AuditResult {
+    /// 取出结果的 u32 判别式 (与磁盘审计格式一致).
     pub fn as_u32(self) -> u32 {
         self as u32
     }
@@ -637,11 +770,17 @@ impl AuditResult {
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
 pub struct AuditEntry {
+    /// 事件发生的时间戳.
     pub timestamp: u64,
+    /// 执行动作的主体 PWM 标识.
     pub pwm: PwmId,
+    /// 审计动作类型.
     pub action: AuditAction,
+    /// 动作执行结果.
     pub result: AuditResult,
+    /// 动作作用的目标 PWM 标识 (无目标时为 0).
     pub target_pwm: PwmId,
+    /// 动作相关的附加细节 (语义由动作类型决定).
     pub details: u64,
 }
 

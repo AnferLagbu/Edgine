@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 3970,
-    "files": 231,
-    "keys": 629
+    "sites": 3847,
+    "files": 230,
+    "keys": 623
   },
   "entries": [
     [
@@ -3049,36 +3049,6 @@
       "src/kernel/privileged/sgeg/session.rs",
       "a constant",
       1
-    ],
-    [
-      "src/kernel/privileged/sgeg/types.rs",
-      "a constant",
-      6
-    ],
-    [
-      "src/kernel/privileged/sgeg/types.rs",
-      "a method",
-      30
-    ],
-    [
-      "src/kernel/privileged/sgeg/types.rs",
-      "a struct field",
-      33
-    ],
-    [
-      "src/kernel/privileged/sgeg/types.rs",
-      "a variant",
-      28
-    ],
-    [
-      "src/kernel/privileged/sgeg/types.rs",
-      "an associated constant",
-      24
-    ],
-    [
-      "src/kernel/privileged/sgeg/types.rs",
-      "an associated function",
-      2
     ],
     [
       "src/kernel/privileged/smp/mod.rs",
