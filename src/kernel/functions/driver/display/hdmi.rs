@@ -8,6 +8,7 @@
 //! - 像素时钟计算
 //!
 //! 硬件寄存器访问通过 IoMem 安全代理, 无 unsafe.
+#![deny(missing_docs)]
 
 use crate::privileged::driver::{DeviceType, Driver, DriverError, DriverResult};
 use crate::privileged::iomem::IoMem;
@@ -78,19 +79,28 @@ const V_SYNC_PW_REG: usize = 0x076;
 /// 视频模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VideoMode {
+    /// 水平像素数.
     pub width: u16,
+    /// 垂直像素数.
     pub height: u16,
+    /// 刷新率 (Hz).
     pub refresh_rate: u8,
+    /// 像素时钟频率 (kHz).
     pub pixel_clock_khz: u32,
+    /// 扫描方式与同步极性标志.
     pub flags: VideoModeFlags,
 }
 
 /// 视频模式标志
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VideoModeFlags {
+    /// 是否隔行扫描.
     pub interlaced: bool,
+    /// 是否双扫描 (每帧行数减半刷新加倍).
     pub double_scan: bool,
+    /// 水平同步是否为正极性.
     pub hsync_positive: bool,
+    /// 垂直同步是否为正极性.
     pub vsync_positive: bool,
 }
 
@@ -108,58 +118,96 @@ impl Default for VideoModeFlags {
 /// HDMI 时序参数 (从 `VideoMode` 派生)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VideoTiming {
+    /// 水平有效像素数.
     pub h_active: u16,
+    /// 水平总像素数 (含消隐区).
     pub h_total: u16,
+    /// 水平同步起点偏移 (像素).
     pub h_sync_offset: u16,
+    /// 水平同步脉冲宽度 (像素).
     pub h_sync_pulse_width: u16,
+    /// 垂直有效行数.
     pub v_active: u16,
+    /// 垂直总行数 (含消隐区).
     pub v_total: u16,
+    /// 垂直同步起点偏移 (行).
     pub v_sync_offset: u16,
+    /// 垂直同步脉冲宽度 (行).
     pub v_sync_pulse_width: u16,
 }
 
 /// EDID 基本显示参数
 #[derive(Debug, Clone, Copy)]
 pub struct EdidBasicDisplay {
+    /// 视频输入类型 (数字/模拟及其位深等编码).
     pub video_input_type: u8,
+    /// 屏幕水平尺寸 (厘米).
     pub horizontal_image_size: u8,
+    /// 屏幕垂直尺寸 (厘米).
     pub vertical_image_size: u8,
+    /// 显示传输特性 (伽马编码).
     pub display_transfer_characteristic: u8,
+    /// 特性支持位 (电源管理、首选时序等).
     pub feature_support: u8,
 }
 
 /// EDID 颜色特性
 #[derive(Debug, Clone, Copy)]
 pub struct EdidColorCharacteristics {
+    /// 红/绿低 2 位色度打包字节.
     pub red_green_low: u8,
+    /// 蓝/白低 2 位色度打包字节.
     pub blue_white_low: u8,
+    /// 红色度 x 高位.
     pub red_x: u8,
+    /// 红色度 y 高位.
     pub red_y: u8,
+    /// 绿色度 x 高位.
     pub green_x: u8,
+    /// 绿色度 y 高位.
     pub green_y: u8,
+    /// 蓝色度 x 高位.
     pub blue_x: u8,
+    /// 蓝色度 y 高位.
     pub blue_y: u8,
+    /// 白色点色度 x 高位.
     pub white_x: u8,
+    /// 白色点色度 y 高位.
     pub white_y: u8,
 }
 
 /// EDID 详细时序描述符
 #[derive(Debug, Clone, Copy)]
 pub struct EdidDetailedTiming {
+    /// 像素时钟 (10 kHz 单位).
     pub pixel_clock: u16,
+    /// 水平有效像素低 8 位.
     pub horizontal_active: u8,
+    /// 水平消隐像素低 8 位.
     pub horizontal_blanking: u8,
+    /// 水平有效像素高 4 位 (bit 7..4).
     pub horizontal_active_high: u8,
+    /// 水平消隐像素高 4 位 (bit 3..0).
     pub horizontal_blanking_high: u8,
+    /// 垂直有效行低 8 位.
     pub vertical_active: u8,
+    /// 垂直消隐行低 8 位.
     pub vertical_blanking: u8,
+    /// 垂直有效/消隐行高 4 位打包字节.
     pub vertical_active_blanking_high: u8,
+    /// 水平同步偏移 (像素).
     pub horizontal_sync_offset: u8,
+    /// 水平同步脉冲宽度 (像素).
     pub horizontal_sync_pulse_width: u8,
+    /// 垂直同步偏移与脉宽打包字节.
     pub vertical_sync_offset_width: u8,
+    /// 同步类型标志 (数字分离/复合、极性等).
     pub sync_type: u8,
+    /// 图像尺寸 (毫米, 高/宽各 4 位).
     pub image_size: u8,
+    /// 边框像素 (上/下/左/右各 2 位).
     pub border: u8,
+    /// 特性标志 (隔行扫描等).
     pub features: u8,
 }
 
@@ -216,16 +264,27 @@ const EDID_HEADER: [u8; 8] = [0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00];
 /// 完整 EDID 数据结构
 #[derive(Debug, Clone)]
 pub struct Edid {
+    /// 原始 EDID 字节 (含扩展块).
     pub raw: [u8; EDID_MAX_LENGTH],
+    /// 厂商 ID (3 字符编码 + 终止符).
     pub manufacturer: [u8; 4],
+    /// 产品代码.
     pub product_code: u16,
+    /// 序列号.
     pub serial_number: u32,
+    /// 生产周 (1..=54).
     pub week: u8,
+    /// 生产年份.
     pub year: u16,
+    /// EDID 主版本号.
     pub version: u8,
+    /// EDID 次版本号.
     pub revision: u8,
+    /// 基本显示参数.
     pub basic_display: EdidBasicDisplay,
+    /// 颜色特性参数.
     pub color_characteristics: EdidColorCharacteristics,
+    /// 最多 4 个详细时序描述符 (空槽为 `None`).
     pub detailed_timings: [Option<EdidDetailedTiming>; 4],
 }
 
@@ -327,7 +386,9 @@ impl Edid {
 /// EDID 解析错误
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EdidError {
+    /// EDID 头 8 字节与标准魔数不符.
     InvalidHeader,
+    /// 块校验和不为 0.
     ChecksumMismatch,
 }
 

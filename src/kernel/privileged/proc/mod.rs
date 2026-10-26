@@ -61,6 +61,7 @@ pub mod namespace;
 pub mod oomd;
 pub mod posix_timer;
 pub mod proc_ops;
+/// 进程表与 PCB: 进程 CRUD、状态机、引用计数回收与 FREG 恢复域
 pub mod process;
 pub mod rlimit;
 /// 进程退出清理 (robust futex / CLEARTID) — 机制层

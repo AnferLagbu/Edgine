@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 use crate::functions::fs::unkfs::bp::UnkfsBlockPointer;
 use crate::functions::fs::unkfs::dmu::{UnkfsObjSet, UnkfsObjType};
 use crate::functions::fs::unkfs::zap::UnkfsZap;
@@ -7,32 +8,53 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
+/// 数据集名/快照名的最大字节数.
 pub const HV_DS_MAX_NAME: usize = 128;
+/// 单个存储池可注册的数据集上限.
 pub const HV_DS_MAX_DATASETS: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+/// 数据集生命周期状态.
 pub enum UnkfsDsState {
+    /// 未初始化.
     Uninit = 0,
+    /// 正在创建.
     Creating = 1,
+    /// 正常可用.
     Active = 2,
+    /// 正在销毁.
     Destroying = 3,
+    /// 已挂起 (不可访问).
     Suspended = 4,
+    /// 只读挂载.
     ReadOnly = 5,
 }
 
 #[derive(Debug, Clone)]
+/// 数据集属性: 记录大小、压缩/校验策略、配额与属主等.
 pub struct UnkfsDsProps {
+    /// 记录大小 (字节).
     pub record_size: u32,
+    /// 压缩算法编码.
     pub compression: u8,
+    /// 校验算法编码.
     pub checksum: u8,
+    /// 是否更新访问时间.
     pub atime: bool,
+    /// 同步写入策略编码.
     pub sync: u8,
+    /// 敏感度等级.
     pub sensitivity: u8,
+    /// 属主 PWM 身份字.
     pub owner_pwm: u64,
+    /// 数据配额 (字节).
     pub quota: u64,
+    /// 空间预留 (字节).
     pub reservation: u64,
+    /// 引用计数配额.
     pub ref_quota: u64,
+    /// 引用计数空间预留.
     pub ref_reservation: u64,
 }
 
@@ -43,6 +65,7 @@ impl UnkfsDsProps {
         clippy::unreadable_literal,
         reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
     )]
+    /// 返回 ZFS 风格默认属性: 128 KiB 记录、Fletcher4 校验、开启 atime.
     pub fn default() -> Self {
         Self {
             record_size: 131072,
@@ -60,26 +83,47 @@ impl UnkfsDsProps {
     }
 }
 
+/// 一个数据集 (文件系统实例): 对象集、目录 ZAP 与快照链.
 pub struct UnkfsDataset {
+    /// 数据集编号.
     pub ds_id: u64,
+    /// 数据集名 (NUL 填充的定长字节数组).
     pub name: [u8; HV_DS_MAX_NAME],
+    /// 生命周期状态 (`UnkfsDsState` 编码).
     pub state: AtomicU8,
+    /// 数据集属性.
     pub props: UnkfsDsProps,
+    /// 本数据集的对象集.
     pub objset: UnkfsObjSet,
+    /// 根目录项 ZAP (名字 → 对象编号).
     pub dir_zap: UnkfsZap,
+    /// 扩展属性 ZAP.
     pub xattr_zap: UnkfsZap,
+    /// 父数据集编号.
     pub parent_id: Option<u64>,
+    /// 子数据集编号列表.
     pub child_ids: Vec<u64>,
+    /// 已用空间 (字节).
     pub used_space: AtomicU64,
+    /// 引用计数.
     pub ref_count: AtomicU64,
+    /// 出生事务组号.
     pub birth_txg: AtomicU64,
+    /// 根块指针 (受锁保护).
     pub root_bp: Mutex<UnkfsBlockPointer>,
+    /// 是否为快照.
     pub is_snapshot: bool,
+    /// 快照对应的源数据集编号.
     pub snapshot_origin: Option<u64>,
+    /// 快照链上的前一个快照.
     pub prev_snap: Option<u64>,
+    /// 快照链上的后一个快照.
     pub next_snap: Option<u64>,
+    /// 快照名 (定长字节数组).
     pub snap_name: [u8; HV_DS_MAX_NAME],
+    /// 是否允许写入.
     pub writeable: bool,
+    /// 是否已挂载.
     pub mounted: AtomicBool,
 }
 
@@ -87,6 +131,7 @@ pub struct UnkfsDataset {
 // SAFETY (Framekernel P2.2.2): UnkfsDataset 全部字段自动 Send + Sync。
 
 impl UnkfsDataset {
+    /// 以编号、名称与属主创建数据集, 初始状态 Creating、可写.
     pub fn new(ds_id: u64, name: &str, owner_pwm: u64) -> Self {
         let mut n = [0u8; HV_DS_MAX_NAME];
         let b = name.as_bytes();
@@ -118,6 +163,7 @@ impl UnkfsDataset {
         }
     }
 
+    /// 以 UTF-8 返回数据集名 (去除 NUL 填充; 非法编码返回空串).
     pub fn get_name(&self) -> &str {
         let end = self
             .name
@@ -127,6 +173,7 @@ impl UnkfsDataset {
         core::str::from_utf8(&self.name[..end]).unwrap_or("")
     }
 
+    /// 初始化对象集并把状态转为 Active、标记为已挂载.
     pub fn init(&self, owner_pwm: u64) {
         self.objset.init(owner_pwm);
         self.state
@@ -134,14 +181,17 @@ impl UnkfsDataset {
         self.mounted.store(true, Ordering::Release);
     }
 
+    /// 是否处于 Active 状态.
     pub fn is_active(&self) -> bool {
         self.state.load(Ordering::Acquire) == UnkfsDsState::Active as u8
     }
 
+    /// 是否可写 (写权限位为真且状态为 Active).
     pub fn is_writeable(&self) -> bool {
         self.writeable && self.state.load(Ordering::Acquire) == UnkfsDsState::Active as u8
     }
 
+    /// 在根目录创建普通文件并返回对象编号; 不可写或分配失败返回 `None`.
     pub fn create_file(&self, name: &str, owner_pwm: u64) -> Option<u64> {
         if !self.is_writeable() {
             return None;
@@ -151,6 +201,7 @@ impl UnkfsDataset {
         Some(obj_id)
     }
 
+    /// 在根目录创建子目录并返回对象编号; 不可写或分配失败返回 `None`.
     pub fn create_dir(&self, name: &str, owner_pwm: u64) -> Option<u64> {
         if !self.is_writeable() {
             return None;
@@ -160,10 +211,12 @@ impl UnkfsDataset {
         Some(obj_id)
     }
 
+    /// 按名字查根目录项, 返回对象编号.
     pub fn lookup(&self, name: &str) -> Option<u64> {
         self.dir_zap.lookup_u64(name)
     }
 
+    /// 删除根目录下的名字并释放对应对象; 不可写或名字不存在返回 false.
     pub fn unlink(&self, name: &str) -> bool {
         if !self.is_writeable() {
             return false;
@@ -175,6 +228,7 @@ impl UnkfsDataset {
         })
     }
 
+    /// 把已有对象编号以给定名字登记到根目录; 不可写返回 false.
     pub fn link(&self, name: &str, obj_id: u64) -> bool {
         if !self.is_writeable() {
             return false;
@@ -183,6 +237,7 @@ impl UnkfsDataset {
         true
     }
 
+    /// 列出根目录全部 (名字, 对象编号) 项.
     pub fn list_entries(&self) -> Vec<(String, u64)> {
         let keys = self.dir_zap.keys();
         let mut result = Vec::new();
@@ -194,10 +249,12 @@ impl UnkfsDataset {
         result
     }
 
+    /// 读取已用空间 (字节).
     pub fn get_used(&self) -> u64 {
         self.used_space.load(Ordering::Relaxed)
     }
 
+    /// 读取引用计数.
     pub fn get_ref_count(&self) -> u64 {
         self.ref_count.load(Ordering::Relaxed)
     }

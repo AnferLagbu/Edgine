@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 3293,
-    "files": 222,
-    "keys": 577
+    "sites": 2993,
+    "files": 217,
+    "keys": 549
   },
   "entries": [
     [
@@ -64,16 +64,6 @@
       "src/kernel/functions/driver/display/dp.rs",
       "a variant",
       18
-    ],
-    [
-      "src/kernel/functions/driver/display/hdmi.rs",
-      "a struct field",
-      58
-    ],
-    [
-      "src/kernel/functions/driver/display/hdmi.rs",
-      "a variant",
-      2
     ],
     [
       "src/kernel/functions/driver/storage/ata.rs",
@@ -456,41 +446,6 @@
       2
     ],
     [
-      "src/kernel/functions/fs/unkfs/arc.rs",
-      "a constant",
-      4
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/arc.rs",
-      "a method",
-      10
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/arc.rs",
-      "a struct",
-      4
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/arc.rs",
-      "a struct field",
-      26
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/arc.rs",
-      "a variant",
-      8
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/arc.rs",
-      "an associated function",
-      4
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/arc.rs",
-      "an enum",
-      2
-    ],
-    [
       "src/kernel/functions/fs/unkfs/checksum.rs",
       "a constant",
       3
@@ -531,41 +486,6 @@
       2
     ],
     [
-      "src/kernel/functions/fs/unkfs/dataset.rs",
-      "a constant",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dataset.rs",
-      "a method",
-      12
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dataset.rs",
-      "a struct",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dataset.rs",
-      "a struct field",
-      31
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dataset.rs",
-      "a variant",
-      6
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dataset.rs",
-      "an associated function",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dataset.rs",
-      "an enum",
-      1
-    ],
-    [
       "src/kernel/functions/fs/unkfs/dedup.rs",
       "a constant",
       1
@@ -602,41 +522,6 @@
     ],
     [
       "src/kernel/functions/fs/unkfs/dedup.rs",
-      "an enum",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dmu.rs",
-      "a constant",
-      5
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dmu.rs",
-      "a method",
-      14
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dmu.rs",
-      "a struct",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dmu.rs",
-      "a struct field",
-      24
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dmu.rs",
-      "a variant",
-      10
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dmu.rs",
-      "an associated function",
-      6
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dmu.rs",
       "an enum",
       1
     ],
@@ -2523,7 +2408,7 @@
     [
       "src/kernel/privileged/proc/mod.rs",
       "a module",
-      2
+      1
     ],
     [
       "src/kernel/privileged/proc/namespace.rs",
@@ -2584,31 +2469,6 @@
       "src/kernel/privileged/proc/proc_ops.rs",
       "a module",
       1
-    ],
-    [
-      "src/kernel/privileged/proc/process.rs",
-      "a constant",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/process.rs",
-      "a method",
-      25
-    ],
-    [
-      "src/kernel/privileged/proc/process.rs",
-      "a static",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/process.rs",
-      "a struct field",
-      34
-    ],
-    [
-      "src/kernel/privileged/proc/process.rs",
-      "an associated function",
-      2
     ],
     [
       "src/kernel/privileged/proc/rlimit.rs",

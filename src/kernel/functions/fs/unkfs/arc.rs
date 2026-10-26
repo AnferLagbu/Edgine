@@ -1,41 +1,61 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 use crate::functions::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
+/// ARC 默认容量 (条目数).
 pub const HV_ARC_DEFAULT_SIZE: usize = 256;
+/// ARC 容量上限 (条目数).
 pub const HV_ARC_MAX_SIZE: usize = 4096;
+/// 数据缓冲区大小 (字节).
 pub const HV_ARC_BUF_SIZE: usize = 4096;
+/// 元数据缓冲区大小 (字节).
 pub const HV_ARC_META_SIZE: usize = 16384;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+/// ARC 缓冲区状态 (MRU/MFU 链表与幽灵链表归属).
 pub enum UnkfsArcState {
+    /// 匿名/尚未归类.
     Anon = 0,
+    /// 位于最近使用 (MRU) 链表.
     Mru = 1,
+    /// 位于最常使用 (MFU) 链表.
     Mfu = 2,
+    /// 位于 MRU 幽灵链表 (已淘汰, 仅保留键).
     MruGhost = 3,
+    /// 位于 MFU 幽灵链表.
     MfuGhost = 4,
+    /// 位于二级缓存.
     L2Cache = 5,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+/// ARC 缓冲区数据类型.
 pub enum UnkfsArcBufType {
+    /// 数据块.
     Data = 0,
+    /// 元数据块.
     Metadata = 1,
 }
 
 #[derive(Debug, Clone, Copy)]
+/// ARC 缓存键: 由 vdev、偏移与出生事务组唯一确定一个块.
 pub struct UnkfsArcKey {
+    /// 所属 vdev 编号.
     pub vdev_id: u16,
+    /// 块在 vdev 内的字节偏移.
     pub offset: u64,
+    /// 块的出生事务组号.
     pub birth_txg: u64,
 }
 
 impl UnkfsArcKey {
+    /// 以 vdev 编号、偏移与出生事务组构造缓存键.
     pub fn new(vdev_id: u16, offset: u64, birth_txg: u64) -> Self {
         Self {
             vdev_id,
@@ -48,6 +68,7 @@ impl UnkfsArcKey {
         clippy::unreadable_literal,
         reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
     )]
+    /// 计算该键的 64 位 FNV-1a 哈希, 用作哈希桶索引.
     pub fn hash(&self) -> u64 {
         let mut h: u64 = 14695981039346656037;
         h ^= u64::from(self.vdev_id);
@@ -60,22 +81,34 @@ impl UnkfsArcKey {
     }
 }
 
+/// 一个已缓存的块: 键、只读数据句柄与淘汰状态.
 pub struct UnkfsArcBuf {
+    /// 缓存键.
     pub key: UnkfsArcKey,
+    /// 块数据的共享只读句柄.
     pub data: Arc<[u8]>,
+    /// 数据字节数.
     pub size: usize,
+    /// 缓冲区数据类型.
     pub buf_type: UnkfsArcBufType,
+    /// 当前所处的链表状态.
     pub state: UnkfsArcState,
+    /// 引用计数.
     pub ref_count: AtomicU32,
+    /// 累计访问次数 (MFU 晋升判据).
     pub access_count: u32,
+    /// 是否存在未回写的修改.
     pub dirty: bool,
+    /// 是否已进入二级缓存.
     pub l2cached: bool,
+    /// 是否以压缩形态存放.
     pub compressed: bool,
 }
 
 // SAFETY (Framekernel P2.2.2): UnkfsArcBuf 全部字段自动 Send + Sync。
 
 impl UnkfsArcBuf {
+    /// 以键、数据与类型构造缓冲区 (状态 Anon, 引用计数 1).
     pub fn new(key: UnkfsArcKey, data: &[u8], buf_type: UnkfsArcBufType) -> Self {
         Self {
             key,
@@ -91,6 +124,7 @@ impl UnkfsArcBuf {
         }
     }
 
+    /// 原子递减引用计数; 已为 0 时返回 0 (不下溢).
     pub fn release(&self) -> u32 {
         let mut current = self.ref_count.load(Ordering::Acquire);
         loop {
@@ -110,23 +144,38 @@ impl UnkfsArcBuf {
     }
 }
 
+/// ARC 命中与容量统计计数器集合.
 pub struct UnkfsArcStats {
+    /// 命中总数.
     pub hits: AtomicU64,
+    /// 未命中总数.
     pub misses: AtomicU64,
+    /// MRU 链表命中数.
     pub mru_hits: AtomicU64,
+    /// MFU 链表命中数.
     pub mfu_hits: AtomicU64,
+    /// 幽灵链表命中数.
     pub ghost_hits: AtomicU64,
+    /// 淘汰次数.
     pub evicts: AtomicU64,
+    /// 当前缓存总字节数.
     pub size: AtomicU64,
+    /// MRU 占用字节数.
     pub mru_size: AtomicU64,
+    /// MFU 占用字节数.
     pub mfu_size: AtomicU64,
+    /// MRU 幽灵链表占用字节数.
     pub ghost_mru_size: AtomicU64,
+    /// MFU 幽灵链表占用字节数.
     pub ghost_mfu_size: AtomicU64,
+    /// 数据块占用字节数.
     pub data_size: AtomicU64,
+    /// 元数据块占用字节数.
     pub meta_size: AtomicU64,
 }
 
 impl UnkfsArcStats {
+    /// 构造全部计数为 0 的统计集合.
     pub fn new() -> Self {
         Self {
             hits: AtomicU64::new(0),
@@ -159,6 +208,7 @@ struct UnkfsArcInner {
     p: usize,
 }
 
+/// 自适应替换缓存 (ARC): MRU/MFU 双链表加幽灵链表的块缓存.
 pub struct UnkfsArc {
     inner: Mutex<UnkfsArcInner>,
     stats: UnkfsArcStats,
@@ -169,6 +219,7 @@ pub struct UnkfsArc {
 // 都自动实现 Send + Sync。
 
 impl UnkfsArc {
+    /// 构造空 ARC, 容量取 [`HV_ARC_DEFAULT_SIZE`].
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(UnkfsArcInner {
@@ -186,6 +237,7 @@ impl UnkfsArc {
         }
     }
 
+    /// 按请求容量初始化并清空缓存; 0 取默认值, 上限 [`HV_ARC_MAX_SIZE`].
     pub fn init(&self, max_size: usize) {
         let max = if max_size == 0 {
             HV_ARC_DEFAULT_SIZE
@@ -206,6 +258,7 @@ impl UnkfsArc {
         self.initialized.store(true, Ordering::Release);
     }
 
+    /// 按键查缓存; 命中返回数据共享句柄并更新命中/访问计数, 未命中返回 `None`.
     pub fn lookup(&self, key: &UnkfsArcKey) -> Option<Arc<[u8]>> {
         let mut inner = self.inner.lock();
         let bucket_idx = (key.hash() as usize) % HV_ARC_HASH_BUCKETS;
@@ -283,6 +336,7 @@ impl UnkfsArc {
         self.lookup(key)
     }
 
+    /// 插入或替换一个块 (必要时先淘汰), 返回新缓冲区的数据句柄.
     pub fn insert(
         &self,
         key: UnkfsArcKey,
@@ -387,6 +441,7 @@ impl UnkfsArc {
         }
     }
 
+    /// 按键递减对应缓冲区的引用计数; 键不存在时无操作.
     pub fn release(&self, key: &UnkfsArcKey) {
         let mut inner = self.inner.lock();
         if let Some(buf) = inner.buffers.iter_mut().find_map(|slot| {
@@ -400,6 +455,7 @@ impl UnkfsArc {
         }
     }
 
+    /// 按键把对应缓冲区标记为脏; 键不存在时无操作.
     pub fn mark_dirty(&self, key: &UnkfsArcKey) {
         let mut inner = self.inner.lock();
         if let Some(buf) = inner.buffers.iter_mut().find_map(|slot| {
@@ -413,6 +469,7 @@ impl UnkfsArc {
         }
     }
 
+    /// 返回当前仍为脏的缓冲区个数 (只统计, 不执行回写).
     pub fn flush_dirty(&self) -> usize {
         let inner = self.inner.lock();
         let mut count = 0;
@@ -426,6 +483,7 @@ impl UnkfsArc {
         count
     }
 
+    /// 返回 (命中数, 未命中数, 当前字节数, 淘汰数) 四元组.
     pub fn get_stats(&self) -> (u64, u64, u64, u64) {
         (
             self.stats.hits.load(Ordering::Relaxed),
@@ -435,6 +493,7 @@ impl UnkfsArc {
         )
     }
 
+    /// 是否已完成 [`UnkfsArc::init`] 初始化.
     pub fn is_initialized(&self) -> bool {
         self.initialized.load(Ordering::Acquire)
     }

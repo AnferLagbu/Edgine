@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 use super::rlimit::RlimitTable;
 use super::scheduler::SchedPolicy;
 use super::types::{
@@ -28,6 +29,7 @@ unsafe extern "C" {
     fn vmm_destroy_page_table(cr3: u64);
 }
 
+/// boot 栈与内核栈顶部 canary 的哨兵值; 被改写即判定栈溢出.
 pub const KERNEL_STACK_CANARY: u64 = 0xDEADBEEF_CAFEBABE;
 
 /// [`Process::cfs_rq_cpu`] 的"不在任何核的运行队列上"哨兵值.
@@ -148,22 +150,36 @@ pub fn kernel_stack_write_canary(stack_top: u64) {
 
 /// 进程控制块 (PCB) — 保存标识、状态、调度信息、地址空间与资源统计等运行时状态。
 pub struct Process {
+    /// 进程标识符, 与进程表槽位下标一致.
     pub pid: ProcessId,
+    /// 进程 PWM 身份/权限字 (由 SGEG 凭证子系统解释); 0 表示未初始化.
     pub pwm: AtomicU64,
+    /// 进程状态 (`ProcessState` 的 u32 编码).
     pub state: AtomicU32,
+    /// 进程优先级 (`ProcessPriority` 的 u32 编码).
     pub priority: AtomicU32,
+    /// 进程标志位 (`ProcessFlags` 位掩码).
     pub flags: AtomicU32,
 
+    /// 进程名 (受锁保护, 可在运行时改写).
     pub name: Mutex<String>,
+    /// 父进程 PID; `None` 表示无父进程 (idle / 已脱离).
     pub parent: Option<ProcessId>,
+    /// 子进程 PID 列表 (受锁保护).
     pub children: Mutex<Vec<ProcessId>>,
 
+    /// 保存/恢复的 CPU 上下文 (寄存器快照, 受锁保护).
     pub context: Mutex<ProcessContext>,
+    /// 用户页表根 (x86_64 `CR3` / aarch64 `TTBR0`); 0 表示未分配.
     pub cr3: AtomicU64,
+    /// 内核栈顶高半区虚拟地址; 0 表示未分配.
     pub kernel_stack: AtomicU64,
+    /// 用户栈顶虚拟地址 (fork/exec 初始化时使用).
     pub user_stack: AtomicU64,
 
+    /// 退出码 (由 `wait4` 报告给父进程).
     pub exit_code: AtomicU32,
+    /// 累计 CPU 时间 (tick).
     pub cpu_time: AtomicU64,
 
     /// POSIX `times()` 报告的用户态 CPU 时间 (ticks)
@@ -173,15 +189,23 @@ pub struct Process {
     /// 进程累积运行 tick 计数 (由调度器每 tick 增加)
     pub tick_count: AtomicU64,
 
+    /// 阻塞原因 (`BlockReason` 编码), 仅在 `Blocked` 状态有意义.
     pub block_reason: AtomicU32,
 
+    /// 调度策略 (`SchedPolicy` 编码).
     pub sched_policy: AtomicU32,
+    /// 实时调度优先级 (仅实时策略使用).
     pub rt_priority: AtomicU32,
 
+    /// CFS nice 值 (0..=39, 映射为调度权重).
     pub nice: AtomicU32,
+    /// CFS 虚拟运行时间; 与运行队列共用同一时基 (不变式 IC1).
     pub cfs_vruntime: AtomicU64,
+    /// CFS 调度权重, 由 nice 派生.
     pub cfs_weight: AtomicU64,
+    /// 累计实际运行时间 (供 schedstat 统计).
     pub cfs_sum_exec_runtime: AtomicU64,
+    /// 可运行记账凭证: true 表示本任务已记入某核 `cfs_rq` (含正上核运行期间).
     pub cfs_on_rq: AtomicBool,
     /// 本任务可运行记账所在的核 `cfs_rq` 索引; 不在任何队列上时为 [`NO_RQ_CPU`].
     ///
@@ -206,15 +230,22 @@ pub struct Process {
     /// 上下文未保存完就允许别核投送 = 两个核交叠使用同一块进程内核栈.
     pub cfs_on_cpu: AtomicBool,
 
+    /// 截止时间调度 (SCHED_DEADLINE) 的每次激活运行时间预算 (纳秒).
     pub dl_runtime: AtomicU64,
+    /// 截止时间调度相对截止期 (纳秒).
     pub dl_deadline: AtomicU64,
+    /// 截止时间调度周期 (纳秒).
     pub dl_period: AtomicU64,
+    /// 当前激活周期的绝对截止时刻 (tick 时基).
     pub dl_abs: AtomicU64,
+    /// 当前周期内剩余可用运行时间 (纳秒).
     pub dl_remaining: AtomicU64,
 
+    /// POSIX 会话 ID (`sid`).
     pub session_id: AtomicU64,
     /// POSIX 进程组 ID (pgid); 0 表示未初始化 (实际默认为 pid).
     pub pgid: AtomicU32,
+    /// 本进程的文件描述符表.
     pub fd_table: FdTable,
 
     /// CPU 亲和性掩码 (C2 完整实现):
@@ -228,7 +259,9 @@ pub struct Process {
     /// `timer::sleep::timer_sleep` 写入, 调度器 tick 的睡眠唤醒扫描消费后清零
     pub sleep_until: AtomicU64,
 
+    /// PCB 引用计数; 归零后才允许实际释放.
     pub ref_count: AtomicU32,
+    /// 待释放标志: PCB 已从进程表移除但仍有引用, 由最后一个 `dec_ref` 完成释放.
     pub pending_free: AtomicBool,
     /// 退出中标志 + 自引用锚点 (方案 B: exit/回收竞态根治).
     ///
@@ -239,6 +272,7 @@ pub struct Process {
     /// 自引用由 `Scheduler::schedule()` 入口的 `reap_off_cpu` 钩子在确认本
     /// 进程已离开 CPU 后释放并完成实际回收 (否则退出进程返回用户态 = UAF).
     pub exiting: AtomicBool,
+    /// 待处理信号位图 (bit i = 信号 i+1).
     pub pending_signals: AtomicU64,
 
     // --- POSIX 信号处理字段 ---
@@ -251,8 +285,10 @@ pub struct Process {
 
     /// 信号替换栈 (sigaltstack), 0 = 未设置
     pub sigaltstack_addr: AtomicU64,
+    /// 信号替换栈大小 (字节).
     pub sigaltstack_size: AtomicU64,
-    pub sigaltstack_flags: AtomicU32, // SS_ONSTACK / SS_DISABLE
+    /// 信号替换栈标志 (`SS_ONSTACK` / `SS_DISABLE`).
+    pub sigaltstack_flags: AtomicU32,
 
     /// Per-process 资源限制表 (RLIMIT_*)
     pub rlimit_table: Mutex<RlimitTable>,
@@ -359,6 +395,7 @@ pub struct Process {
 // 所有字段 (Mutex<T>, Atomic*, u32, u64, bool, Option<ProcessId>) 自动 Send+Sync.
 
 impl Process {
+    /// 创建指定 PID、名称与父进程的进程控制块, 其余字段取默认值.
     pub fn new(pid: Pid, name: &str, parent: Option<ProcessId>) -> Self {
         Self {
             pid: ProcessId(pid),
@@ -435,6 +472,7 @@ impl Process {
         }
     }
 
+    /// 从物理页分配器取一段内核栈并写入栈顶 canary; 分配失败返回 false.
     pub fn allocate_kernel_stack(&self) -> bool {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
@@ -513,6 +551,7 @@ impl Process {
         ctx.gs = entry; // ELR_EL1
     }
 
+    /// 创建本进程独立的用户页表并记入 `cr3`; 创建失败返回 false.
     pub fn allocate_user_space(&self) -> bool {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
@@ -525,6 +564,7 @@ impl Process {
         }
     }
 
+    /// 读取当前进程状态.
     pub fn get_state(&self) -> ProcessState {
         ProcessState::from_u8(self.state.load(Ordering::SeqCst) as u8)
     }
@@ -582,19 +622,23 @@ impl Process {
         let _ = self.set_state_safe(state);
     }
 
+    /// 读取进程优先级.
     pub fn get_priority(&self) -> ProcessPriority {
         ProcessPriority::from_u32(self.priority.load(Ordering::SeqCst))
     }
 
+    /// 设置进程优先级.
     pub fn set_priority(&self, priority: ProcessPriority) {
         self.priority.store(priority as u32, Ordering::SeqCst);
     }
 
+    /// 是否为内核线程 (`ProcessFlags::IS_KERNEL`).
     pub fn is_kernel(&self) -> bool {
         let flags = self.flags.load(Ordering::SeqCst);
         (flags & ProcessFlags::IS_KERNEL.bits()) != 0
     }
 
+    /// 设置或清除内核线程标志.
     pub fn set_kernel(&self, is_kernel: bool) {
         let mut flags = self.flags.load(Ordering::SeqCst);
         if is_kernel {
@@ -605,31 +649,38 @@ impl Process {
         self.flags.store(flags, Ordering::SeqCst);
     }
 
+    /// 读取调度策略.
     pub fn get_sched_policy(&self) -> SchedPolicy {
         SchedPolicy::from_u32(self.sched_policy.load(Ordering::SeqCst))
     }
 
+    /// 设置调度策略.
     pub fn set_sched_policy(&self, policy: SchedPolicy) {
         self.sched_policy.store(policy as u32, Ordering::SeqCst);
     }
 
+    /// 读取实时调度优先级.
     pub fn get_rt_priority(&self) -> u8 {
         self.rt_priority.load(Ordering::SeqCst) as u8
     }
 
+    /// 设置实时调度优先级.
     pub fn set_rt_priority(&self, priority: u8) {
         self.rt_priority
             .store(u32::from(priority), Ordering::SeqCst);
     }
 
+    /// 读取进程 PWM 身份/权限字.
     pub fn get_pwm(&self) -> u64 {
         self.pwm.load(Ordering::SeqCst)
     }
 
+    /// 设置进程 PWM 身份/权限字.
     pub fn set_pwm(&self, pwm: u64) {
         self.pwm.store(pwm, Ordering::SeqCst);
     }
 
+    /// 尝试增加引用计数; 计数已归零时失败返回 false (阻止复活已释放的 PCB).
     pub fn try_inc_ref(&self) -> bool {
         self.ref_count
             .try_update(Ordering::AcqRel, Ordering::Acquire, |v| {
@@ -638,19 +689,23 @@ impl Process {
             .is_ok()
     }
 
+    /// 减少引用计数, 返回递减后的值.
     pub fn dec_ref(&self) -> u32 {
         self.ref_count.fetch_sub(1, Ordering::AcqRel) - 1
     }
 
+    /// 置位指定信号的待处理位.
     pub fn signal_pending_set(&self, sig: u32) {
         self.pending_signals
             .fetch_or(1u64 << sig, Ordering::Release);
     }
 
+    /// 读取待处理信号位图.
     pub fn signal_pending_get(&self) -> u64 {
         self.pending_signals.load(Ordering::Acquire)
     }
 
+    /// 清除 `mask` 中置位的待处理信号.
     pub fn signal_pending_clear(&self, mask: u64) {
         self.pending_signals.fetch_and(!mask, Ordering::Release);
     }
@@ -694,6 +749,7 @@ unsafe impl Send for ProcessTable {}
 unsafe impl Sync for ProcessTable {}
 
 impl ProcessTable {
+    /// 构造空进程表: 全部槽位为空, PID 位图清零, 从 PID 2 开始分配.
     pub const fn new() -> Self {
         Self {
             processes: Mutex::named_lazy("PROCESS_TABLE.processes", [None; MAX_PROCESSES]),
@@ -743,6 +799,7 @@ impl ProcessTable {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
+    /// 按 `process.pid` 把裸指针放入对应槽位; 指针为空或 PID 越界返回 false.
     pub fn insert(&self, process: *mut Process) -> bool {
         // SAFETY: caller guarantees process is a valid non-null pointer.
         let nn = match NonNull::new(process) {
@@ -759,6 +816,7 @@ impl ProcessTable {
         true
     }
 
+    /// 按 PID 取进程裸指针; 槽位为空或越界返回 `None` (生命周期由调用方负责).
     pub fn get(&self, pid: Pid) -> Option<*mut Process> {
         let table = self.processes.lock();
         if pid as usize >= MAX_PROCESSES {
@@ -767,6 +825,7 @@ impl ProcessTable {
         table[pid as usize].map(core::ptr::NonNull::as_ptr)
     }
 
+    /// 在进程表锁保护下以只读引用调用 `f`; 找不到该 PID 返回 `None`.
     pub fn with_process<F, R>(&self, pid: Pid, f: F) -> Option<R>
     where
         F: FnOnce(&Process) -> R,
@@ -779,6 +838,7 @@ impl ProcessTable {
         table[pid as usize].map(|nn| unsafe { nn.as_ref() }).map(f)
     }
 
+    /// 在进程表锁保护下以可变引用调用 `f`; 找不到该 PID 返回 `None`.
     pub fn with_process_mut<F, R>(&self, pid: Pid, f: F) -> Option<R>
     where
         F: FnOnce(&mut Process) -> R,
@@ -794,6 +854,7 @@ impl ProcessTable {
             .map(f)
     }
 
+    /// 从槽位摘除进程并返回其裸指针, 不释放 PCB 内存.
     pub fn remove(&self, pid: Pid) -> Option<*mut Process> {
         let mut table = self.processes.lock();
         if pid as usize >= MAX_PROCESSES {
@@ -838,6 +899,7 @@ impl ProcessTable {
         }
     }
 
+    /// 若 PID 有效则尝试增加其进程引用计数; 无效或计数已归零返回 false.
     pub fn try_inc_ref(&self, pid: Pid) -> bool {
         let table = self.processes.lock();
         if pid as usize >= MAX_PROCESSES {
@@ -850,6 +912,7 @@ impl ProcessTable {
         })
     }
 
+    /// 减少引用计数; 归零且已置 `pending_free` 时摘槽、回收镜像与 PID 并释放 PCB.
     pub fn dec_ref_and_maybe_free(&self, pid: Pid) {
         let mut table = self.processes.lock();
         if pid as usize >= MAX_PROCESSES {
@@ -895,6 +958,7 @@ impl ProcessTable {
     }
 }
 
+/// 全局进程表实例; 进程槽位与 PID 分配的唯一权威来源.
 pub static PROCESS_TABLE: ProcessTable = ProcessTable::new();
 
 #[derive(Clone, Copy)]
