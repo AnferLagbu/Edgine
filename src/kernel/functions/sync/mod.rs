@@ -58,6 +58,13 @@ pub use types::RwLockReadGuard;
 /// 写锁 RAII 守卫
 pub use types::RwLockWriteGuard;
 
+// ============================================================================
+// 闭包作用域 API
+// ============================================================================
+
+/// 闭包作用域锁 API (`with` / `with_mut` / `try_with`), 保证守卫不逃出临界区
+pub mod scoped;
+
 /// 优先级继承互斥锁 (Phase P1 #3)
 pub mod pi_mutex;
 

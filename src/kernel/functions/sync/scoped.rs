@@ -19,13 +19,7 @@
 //! ## @SAFE
 //! 不含 `unsafe`. 委托 `privileged::sync` 的 Guard 实现.
 
-use core::ops::{Deref, DerefMut};
-
-use crate::privileged::sync::{
-    mutex::{Mutex, MutexGuard},
-    rwlock::{RwLock, RwLockReadGuard, RwLockWriteGuard},
-    spinlock::{SpinLock, SpinLockGuard},
-};
+use crate::privileged::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 // ============================================================================
 // Mutex 扩展
@@ -48,17 +42,17 @@ pub trait MutexExt<T> {
 impl<T> MutexExt<T> for Mutex<T> {
     fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
         let guard: MutexGuard<'_, T> = self.lock();
-        f(guard.deref())
+        f(&*guard)
     }
 
     fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
         let mut guard: MutexGuard<'_, T> = self.lock();
-        f(guard.deref_mut())
+        f(&mut *guard)
     }
 
     fn try_with<R>(&self, f: impl FnOnce(&mut T) -> R) -> Option<R> {
         let mut guard = self.try_lock()?;
-        Some(f(guard.deref_mut()))
+        Some(f(&mut *guard))
     }
 }
 
@@ -78,47 +72,12 @@ pub trait RwLockExt<T> {
 impl<T> RwLockExt<T> for RwLock<T> {
     fn read_with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
         let guard: RwLockReadGuard<'_, T> = self.read();
-        f(guard.deref())
+        f(&*guard)
     }
 
     fn write_with<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
         let mut guard: RwLockWriteGuard<'_, T> = self.write();
-        f(guard.deref_mut())
-    }
-}
-
-// ============================================================================
-// SpinLock 扩展
-// ============================================================================
-
-/// `SpinLock<T>` 的闭包作用域扩展。
-///
-/// SpinLock 没有 `Read` Guard (非公平), 仅提供 `with` / `with_mut`。
-pub trait SpinLockExt<T> {
-    /// 不可变闭包 (与 `with_mut` 等价, SpinLock 总是独占访问)。
-    fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R;
-
-    /// 可变闭包。
-    fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> R;
-
-    /// 尝试获取 (非阻塞)。
-    fn try_with<R>(&self, f: impl FnOnce(&mut T) -> R) -> Option<R>;
-}
-
-impl<T> SpinLockExt<T> for SpinLock<T> {
-    fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
-        let guard: SpinLockGuard<'_, T> = self.lock();
-        f(guard.deref())
-    }
-
-    fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
-        let mut guard: SpinLockGuard<'_, T> = self.lock();
-        f(guard.deref_mut())
-    }
-
-    fn try_with<R>(&self, f: impl FnOnce(&mut T) -> R) -> Option<R> {
-        let mut guard = self.try_lock()?;
-        Some(f(guard.deref_mut()))
+        f(&mut *guard)
     }
 }
 
@@ -144,12 +103,5 @@ mod tests {
         assert_eq!(v, 100);
         rw.write_with(|g| *g = 200);
         assert_eq!(rw.read_with(|g| *g), 200);
-    }
-
-    #[test]
-    fn spinlock_try_with() {
-        let l = SpinLock::new(0u32);
-        l.try_with(|g| *g = 7).unwrap();
-        assert_eq!(l.with(|g| *g), 7);
     }
 }
