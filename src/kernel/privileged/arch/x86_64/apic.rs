@@ -217,21 +217,17 @@ pub enum TimerMode {
     TscDeadline,
 }
 
-#[expect(
-    clippy::match_same_arms,
-    reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-)]
-/// 分频值 → DCR 编码 (硬件编码不连续, 保留完整分支以对照硬件手册阅读).
+/// 分频值 → DCR 编码 (硬件编码不连续; 16 与未列出值共用默认分支).
 const fn timer_div_bits(divisor: u32) -> u32 {
     match divisor {
         1 => TIMER_DIV_1,
         2 => TIMER_DIV_2,
         4 => TIMER_DIV_4,
         8 => TIMER_DIV_8,
-        16 => TIMER_DIV_16,
         32 => TIMER_DIV_32,
         64 => TIMER_DIV_64,
         128 => TIMER_DIV_128,
+        // 未列出的分频值 (含 16) 回退为 /16 编码
         _ => TIMER_DIV_16,
     }
 }

@@ -190,10 +190,6 @@ impl PageFaultHandler {
 }
 
 impl ExceptionHandler for PageFaultHandler {
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
         // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
         let fault_addr = unsafe { (*frame).fault_address() };
@@ -218,9 +214,9 @@ impl ExceptionHandler for PageFaultHandler {
             let pid = crate::privileged::proc::process_get_current_pid();
             match crate::privileged::mm::handle_user_page_fault(pf_info) {
                 PfResult::Fixed => return RecoveryAction::Recovered,
-                PfResult::SignalSegv => return RecoveryAction::TerminateProcess(pid),
-                PfResult::SignalBus => return RecoveryAction::TerminateProcess(pid),
-                PfResult::Oom => return RecoveryAction::TerminateProcess(pid),
+                PfResult::SignalSegv | PfResult::SignalBus | PfResult::Oom => {
+                    return RecoveryAction::TerminateProcess(pid);
+                }
                 PfResult::Unhandled => {
                     // demand paging 也未识别, 走原本的 SIGKILL 路径
                 }
@@ -439,10 +435,6 @@ impl GeneralProtectionFaultHandler {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     fn print_detailed_gpf_info(&self, frame: &InterruptFrame) {
         let selector = frame.err_code as u16;
 
@@ -453,10 +445,9 @@ impl GeneralProtectionFaultHandler {
         let index = (selector >> 3) & 0x1FFF;
 
         let table_name = match table {
-            0 => "IDT",
+            0 | 3 => "IDT",
             1 => "GDT",
             2 => "LDT",
-            3 => "IDT",
             _ => "Unknown",
         };
 

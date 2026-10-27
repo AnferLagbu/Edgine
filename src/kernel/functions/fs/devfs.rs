@@ -280,19 +280,14 @@ impl DevfsData {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     /// 按设备类型读取，返回写入 `buf` 的字节数（负数为错误码）。
     pub fn read(&self, dev_type: u8, buf: &mut [u8]) -> i32 {
         match DevKind::from_u8(dev_type) {
-            Some(DevKind::Null) => 0,
+            Some(DevKind::Null | DevKind::Console | DevKind::Tty) => 0,
             Some(DevKind::Zero) => {
                 buf.fill(0);
                 buf.len() as i32
             }
-            Some(DevKind::Console | DevKind::Tty) => 0,
             Some(DevKind::SGEG) => {
                 let pwm = crate::privileged::sgeg::session::get_current_pwm();
                 let euid = crate::privileged::sgeg::session::get_euid();
@@ -352,21 +347,14 @@ impl DevfsData {
                     len as i32
                 }
             }
-            Some(DevKind::Block | DevKind::Char | DevKind::Net | DevKind::Input) => {
-                // E6-9a: 物理设备 I/O 路由待 E6-9b (EGDF 桥接) 实现
-                -1
-            }
-            None => -1,
+            // E6-9a: 物理设备 I/O 路由待 E6-9b (EGDF 桥接) 实现; 未知类型同样拒绝
+            Some(DevKind::Block | DevKind::Char | DevKind::Net | DevKind::Input) | None => -1,
         }
     }
 
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
     )]
     /// 按设备类型写入，返回消耗的字节数（负数为错误码）。
     pub fn write(&self, dev_type: u8, buf: &[u8]) -> i32 {
@@ -391,11 +379,8 @@ impl DevfsData {
                         buf.len() as i32
                     })
             }
-            Some(DevKind::Block | DevKind::Char | DevKind::Net | DevKind::Input) => {
-                // E6-9a: 物理设备 I/O 路由待 E6-9b (EGDF 桥接) 实现
-                -1
-            }
-            None => -1,
+            // E6-9a: 物理设备 I/O 路由待 E6-9b (EGDF 桥接) 实现; 未知类型同样拒绝
+            Some(DevKind::Block | DevKind::Char | DevKind::Net | DevKind::Input) | None => -1,
         }
     }
 

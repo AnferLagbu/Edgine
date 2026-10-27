@@ -6,10 +6,6 @@ use alloc::vec::Vec;
 /// 压缩生效的最小数据长度 (短于此值不压缩)。
 pub const HV_COMP_MIN_SIZE: usize = 64;
 
-#[expect(
-    clippy::match_same_arms,
-    reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-)]
 /// 按指定算法压缩数据; 数据短于 `HV_COMP_MIN_SIZE` 或算法为 `Off` 时返回 `None`。
 pub fn compress(data: &[u8], comp_type: UnkfsCompType) -> Option<Vec<u8>> {
     if data.len() < HV_COMP_MIN_SIZE {
@@ -19,8 +15,7 @@ pub fn compress(data: &[u8], comp_type: UnkfsCompType) -> Option<Vec<u8>> {
         UnkfsCompType::Off => None,
         UnkfsCompType::LZ4 => compress_lz4(data),
         UnkfsCompType::ZSTD => compress_zstd_fallback(data),
-        UnkfsCompType::Gzip1 => compress_rle(data),
-        UnkfsCompType::Gzip9 => compress_rle(data),
+        UnkfsCompType::Gzip1 | UnkfsCompType::Gzip9 => compress_rle(data),
         UnkfsCompType::ZLE => compress_zle(data),
     }
 }

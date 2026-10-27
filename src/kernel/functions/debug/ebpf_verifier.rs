@@ -189,10 +189,6 @@ impl BpfVerifier for StandardBpfVerifier {
         clippy::too_many_lines,
         reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
     )]
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     fn verify(&self, prog: &BpfProg) -> VerifyResult {
         // 规则 1: 指令数量
         if prog.insn_cnt == 0 {
@@ -464,10 +460,8 @@ impl BpfVerifier for StandardBpfVerifier {
                     );
                 }
                 match regs[dst].r#type {
-                    RegType::StackPtr => {}
-                    RegType::CtxPtr => {
-                        // 简化: 允许 CtxPtr 写入
-                    }
+                    // StackPtr/CtxPtr: 允许写入
+                    RegType::StackPtr | RegType::CtxPtr => {}
                     _ => {
                         return VerifyResult::Err(
                             alloc::format!(

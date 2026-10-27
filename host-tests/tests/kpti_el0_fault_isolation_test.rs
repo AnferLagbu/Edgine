@@ -65,7 +65,7 @@ fn test_x64_user_fault_terminates_process() {
     let body = fn_body(&src, "impl ExceptionHandler for PageFaultHandler");
 
     assert!(
-        body.contains("PfResult::SignalSegv => return RecoveryAction::TerminateProcess(pid)"),
+        body.contains("PfResult::SignalSegv | PfResult::SignalBus | PfResult::Oom"),
         "x86_64 用户态 #PF 未识别为可修复时必须终止进程 (而非返回用户态重执行故障指令)"
     );
     assert!(

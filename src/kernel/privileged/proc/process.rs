@@ -569,10 +569,6 @@ impl Process {
         ProcessState::from_u8(self.state.load(Ordering::SeqCst) as u8)
     }
 
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     /// ✅ 安全的状态设置 (带合法性检查和审计日志)
     ///
     /// # Arguments
@@ -589,21 +585,30 @@ impl Process {
         let current = self.get_state();
 
         // ✅ 状态机合法性检查 (防止非法转换)
+        // 允许的正常转换: 创建→就绪, 就绪↔运行, 运行→阻塞/僵尸/冻结, 就绪/阻塞→冻结,
+        // 阻塞→就绪/僵尸, 僵尸→终止, 冻结→就绪/阻塞 (thaw 后仍需等待)
         match (current, new_state) {
-            // 允许的正常转换
-            (ProcessState::Created, ProcessState::Ready) => {}
-            (ProcessState::Ready, ProcessState::Running) => {}
-            (ProcessState::Running, ProcessState::Ready) => {} // 时间片耗尽/抢占
-            (ProcessState::Running, ProcessState::Blocked) => {} // 阻塞系统调用
-            (ProcessState::Running, ProcessState::Zombie) => {} // exit()
-            (ProcessState::Running, ProcessState::Frozen) => {} // freeze
-            (ProcessState::Ready, ProcessState::Frozen) => {}  // freeze
-            (ProcessState::Blocked, ProcessState::Frozen) => {} // freeze
-            (ProcessState::Blocked, ProcessState::Ready) => {} // 事件完成唤醒
-            (ProcessState::Blocked, ProcessState::Zombie) => {} // 被 kill
-            (ProcessState::Zombie, ProcessState::Terminated) => {} // wait() 回收
-            (ProcessState::Frozen, ProcessState::Ready) => {}  // thaw 唤醒
-            (ProcessState::Frozen, ProcessState::Blocked) => {} // thaw 后仍需等待
+            // 创建→就绪
+            (ProcessState::Created, ProcessState::Ready)
+            // 就绪→运行/冻结
+            | (ProcessState::Ready, ProcessState::Running | ProcessState::Frozen)
+            // 运行→就绪/阻塞/僵尸/冻结
+            | (
+                ProcessState::Running,
+                ProcessState::Ready
+                | ProcessState::Blocked
+                | ProcessState::Zombie
+                | ProcessState::Frozen,
+            )
+            // 阻塞→就绪/僵尸/冻结
+            | (
+                ProcessState::Blocked,
+                ProcessState::Ready | ProcessState::Zombie | ProcessState::Frozen,
+            )
+            // 僵尸→终止
+            | (ProcessState::Zombie, ProcessState::Terminated)
+            // 冻结→就绪/阻塞
+            | (ProcessState::Frozen, ProcessState::Ready | ProcessState::Blocked) => {}
 
             // ❌ 禁止的非法转换
             _ => return Err("Illegal process state transition"),

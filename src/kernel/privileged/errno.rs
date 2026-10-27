@@ -192,10 +192,6 @@ impl Errno {
         -(self as i64)
     }
 
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     /// 从负返回值恢复 Errno
     ///
     /// 输入: privileged 层返回的负错误码 (如 -ENOMEM)
@@ -228,7 +224,6 @@ impl Errno {
             19 => Self::ENODEV,
             20 => Self::ENOTDIR,
             21 => Self::EISDIR,
-            22 => Self::EINVAL,
             23 => Self::ENFILE,
             24 => Self::EMFILE,
             25 => Self::ENOTTY,

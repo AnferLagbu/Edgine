@@ -74,15 +74,10 @@ impl Inode for UnkfsInode {
         Err(KernelError::NotSupported)
     }
 
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     fn seek(&self, offset: i64, whence: VfsSeekWhence, current_offset: u64) -> KernelResult<u64> {
         let new_offset = match whence {
             VfsSeekWhence::Set => offset as u64,
-            VfsSeekWhence::Cur => current_offset.saturating_add(offset as u64),
-            VfsSeekWhence::End => current_offset.saturating_add(offset as u64),
+            VfsSeekWhence::Cur | VfsSeekWhence::End => current_offset.saturating_add(offset as u64),
         };
         Ok(new_offset)
     }

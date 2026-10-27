@@ -262,14 +262,9 @@ pub enum FreqGovernor {
 }
 
 impl FreqGovernor {
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     /// 由 `u32` 值构造频率调节策略 (未知值回落 `Performance`).
     pub fn from_u32(v: u32) -> Self {
         match v {
-            0 => Self::Performance,
             1 => Self::Powersave,
             2 => Self::Ondemand,
             _ => Self::Performance,

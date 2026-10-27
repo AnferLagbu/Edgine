@@ -88,13 +88,8 @@ pub enum SeccompAction {
 
 impl SeccompAction {
     /// 由 Linux `SECCOMP_RET_*` 编码解析动作。
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     pub fn from_linux(ret: u32) -> Self {
         match ret & 0xFFFF_0000 {
-            0x7FFF_0000 => Self::Allow,
             0x0000_0000 => Self::KillThread,
             0x8000_0000 => Self::KillProcess,
             0x0003_0000 => Self::Trap,
@@ -288,10 +283,6 @@ impl SeccompState {
 // ============================================================================
 
 #[inline(never)]
-#[expect(
-    clippy::match_same_arms,
-    reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-)]
 /// seccomp 检查入口 — 按当前进程模式判定 `syscall_nr`, 返回拦截时的负错误码, 放行返回 `None`。
 pub fn seccomp_check(syscall_nr: u64, args: &[u64; 6]) -> Option<i64> {
     let pid = process_get_current_pid();
@@ -325,17 +316,8 @@ pub fn seccomp_check(syscall_nr: u64, args: &[u64; 6]) -> Option<i64> {
                 .unwrap_or(SeccompAction::Allow);
 
             match action {
-                SeccompAction::Allow => None,
-                SeccompAction::Log => None,
-                SeccompAction::KillThread => {
-                    let _ = do_signal_send(pid as Pid, 31);
-                    Some(-(Errno::EPERM as i64))
-                }
-                SeccompAction::KillProcess => {
-                    let _ = do_signal_send(pid as Pid, 31);
-                    Some(-(Errno::EPERM as i64))
-                }
-                SeccompAction::Trap => {
+                SeccompAction::Allow | SeccompAction::Log => None,
+                SeccompAction::KillThread | SeccompAction::KillProcess | SeccompAction::Trap => {
                     let _ = do_signal_send(pid as Pid, 31);
                     Some(-(Errno::EPERM as i64))
                 }

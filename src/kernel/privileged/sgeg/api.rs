@@ -453,17 +453,12 @@ pub fn umask_get() -> u32 {
 /// 按动作编号写入一条 PWM 审计记录
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::match_same_arms,
-    reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-)]
 pub extern "C" fn pwm_audit_log(pwm: u64, action: u32, target: u64, details: u64) {
     let act = match action {
         1 => AuditAction::Login,
         2 => AuditAction::Logout,
         3 => AuditAction::Create,
         4 => AuditAction::Delete,
-        5 => AuditAction::Modify,
         8 => AuditAction::PasswordChange,
         10 => AuditAction::Grant,
         11 => AuditAction::Revoke,

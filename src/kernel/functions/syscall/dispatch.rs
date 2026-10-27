@@ -91,10 +91,6 @@ impl SyscallDispatch for FunctionsSyscallDispatch {
 // 子系统分发函数
 // ============================================================================
 
-#[expect(
-    clippy::match_same_arms,
-    reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-)]
 /// 文件系统相关系统调用
 fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::functions::syscall::types::{
@@ -208,9 +204,8 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
 
         // 同步与挂载
         SYS_sync => as_ret(crate::functions::fs::misc::sync_syscall()),
-        SYS_fsync => as_ret(crate::functions::fs::misc::fsync_syscall(a0 as i32)),
         // fdatasync (分册 9 批次 3): 与 fsync 同语义复用 (VFS 整体同步, 无数据/元数据区分)
-        SYS_fdatasync => as_ret(crate::functions::fs::misc::fsync_syscall(a0 as i32)),
+        SYS_fsync | SYS_fdatasync => as_ret(crate::functions::fs::misc::fsync_syscall(a0 as i32)),
         SYS_mount => as_ret(crate::functions::fs::mount::mount_syscall(a0, a1, a2)),
         SYS_umount2 => as_ret(crate::functions::fs::mount::umount2_syscall(a0, a1 as i32)),
 
@@ -235,10 +230,11 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
 
         // 文件操作
         SYS_ioctl => crate::functions::fs::file_ops::ioctl_syscall(a0 as i32, a1, a2),
-        SYS_poll => crate::functions::fs::file_ops::poll_syscall(a0, a1 as u32, a2 as i32),
+        SYS_poll | SYS_select => {
+            crate::functions::fs::file_ops::poll_syscall(a0, a1 as u32, a2 as i32)
+        }
         // ppoll (T1 G5 实装): poll + timespec 超时 + 临时信号屏蔽字
         SYS_ppoll => crate::functions::fs::file_ops::ppoll_syscall(a0, a1 as u32, a2, a3, a4),
-        SYS_select => crate::functions::fs::file_ops::poll_syscall(a0, a1 as u32, a2 as i32),
         SYS_chown => crate::functions::fs::file_ops::chown_syscall(a0, a1 as u32, a2 as u32),
         SYS_truncate => crate::functions::fs::file_ops::truncate_syscall(a0, a1 as i64),
         SYS_ftruncate => crate::functions::fs::file_ops::ftruncate_syscall(a0 as i32, a1 as i64),
@@ -349,10 +345,6 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
     })
 }
 
-#[expect(
-    clippy::match_same_arms,
-    reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-)]
 /// 进程相关系统调用
 fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::functions::syscall::types::{
@@ -433,11 +425,10 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_execveat => as_ret(crate::functions::proc::exec::execveat_syscall(
             a0 as i32, a1, a2, a3, a4 as i32,
         )),
-        SYS_exit => crate::functions::proc::lifecycle::exit_syscall(a0 as i32),
         // SIMPLIFIED: exit_group 暂等同 exit (B05-43 返工登记); 影响面: 线程组未实现
         // 组级终止, 仅结束当前进程; 何时需扩展: 引入 tgid/线程组基础结构后遍历组内
         // 全部线程终止 (审查 DECISION-071 关联).
-        SYS_exit_group => crate::functions::proc::lifecycle::exit_syscall(a0 as i32),
+        SYS_exit | SYS_exit_group => crate::functions::proc::lifecycle::exit_syscall(a0 as i32),
         SYS_sched_yield => crate::functions::proc::lifecycle::sched_yield_syscall(),
 
         // 系统信息
@@ -681,10 +672,6 @@ fn dispatch_mm(num: u64, args: [u64; 6]) -> Option<i64> {
     })
 }
 
-#[expect(
-    clippy::match_same_arms,
-    reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-)]
 /// 同步原语相关系统调用
 fn dispatch_sync(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::functions::syscall::types::{
@@ -700,23 +687,22 @@ fn dispatch_sync(num: u64, args: [u64; 6]) -> Option<i64> {
             match crate::functions::sync::futex::futex_syscall(
                 a0, a1 as i32, a2 as i32, a3, a4 as u32,
             ) {
-                Ok(crate::functions::sync::futex::FutexResult::Woken) => 0,
+                Ok(
+                    crate::functions::sync::futex::FutexResult::Woken
+                    | crate::functions::sync::futex::FutexResult::Pending,
+                ) => 0,
                 Ok(crate::functions::sync::futex::FutexResult::WokenCount(n)) => i64::from(n),
                 Ok(crate::functions::sync::futex::FutexResult::Requeued { woken, .. }) => {
                     i64::from(woken)
                 }
-                Ok(crate::functions::sync::futex::FutexResult::Pending) => 0,
                 Err(e) => e.as_ret(),
             }
         }
 
         // epoll
-        SYS_epoll_create => as_ret(crate::functions::sync::epoll::epoll_create_syscall(
-            a0 as i32,
-        )),
-        SYS_epoll_create1 => as_ret(crate::functions::sync::epoll::epoll_create_syscall(
-            a0 as i32,
-        )),
+        SYS_epoll_create | SYS_epoll_create1 => as_ret(
+            crate::functions::sync::epoll::epoll_create_syscall(a0 as i32),
+        ),
         SYS_epoll_ctl => as_ret(crate::functions::sync::epoll::epoll_ctl_syscall(
             a0 as i64, a1 as i32, a2 as i32, a3,
         )),
@@ -729,18 +715,12 @@ fn dispatch_sync(num: u64, args: [u64; 6]) -> Option<i64> {
         )),
 
         // eventfd
-        SYS_eventfd => as_ret(crate::functions::sync::eventfd::eventfd_syscall(
-            a0, a1 as i32,
-        )),
-        SYS_eventfd2 => as_ret(crate::functions::sync::eventfd::eventfd_syscall(
+        SYS_eventfd | SYS_eventfd2 => as_ret(crate::functions::sync::eventfd::eventfd_syscall(
             a0, a1 as i32,
         )),
 
         // signalfd
-        SYS_signalfd => as_ret(crate::functions::sync::signalfd::signalfd_syscall(
-            a0 as i32, a1, a2 as i32,
-        )),
-        SYS_signalfd4 => as_ret(crate::functions::sync::signalfd::signalfd_syscall(
+        SYS_signalfd | SYS_signalfd4 => as_ret(crate::functions::sync::signalfd::signalfd_syscall(
             a0 as i32, a1, a2 as i32,
         )),
 

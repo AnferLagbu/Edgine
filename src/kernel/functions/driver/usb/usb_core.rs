@@ -284,20 +284,16 @@ impl EndpointDescriptor {
     }
 
     #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
-    #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
     /// 从端点属性提取传输类型.
     pub fn transfer_type(&self) -> TransferType {
         match self.attributes & 0x03 {
-            0 => TransferType::Control,
             1 => TransferType::Isochronous,
             2 => TransferType::Bulk,
             3 => TransferType::Interrupt,
+            // 未识别传输类型 (含 0 = Control) 回退为 Control
             _ => TransferType::Control,
         }
     }

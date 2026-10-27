@@ -35,13 +35,8 @@ pub enum RecoveryLayer {
 
 impl RecoveryLayer {
     /// 由 `u32` 编码还原恢复层级 (未知值退化为 `Layer1`)
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     pub fn from_u32(v: u32) -> Self {
         match v {
-            1 => Self::Layer1,
             2 => Self::Layer2,
             3 => Self::Layer3,
             _ => Self::Layer1,

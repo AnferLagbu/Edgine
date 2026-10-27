@@ -79,18 +79,15 @@ impl ElfError {
         }
     }
 
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     /// 从内核返回的 `&'static str` 翻译为 `ElfError`
     pub fn from_kernel_str(s: &'static str) -> Self {
         use crate::functions::error::KernelError as K;
         match s {
             "Invalid ELF header" => Self::Truncated,
             "No program headers" => Self::BadMagic,
-            "ELF: vaddr + memsz overflow" => Self::Kernel(K::InvalidArgument),
-            "ELF: p_offset + p_filesz overflow" => Self::Kernel(K::InvalidArgument),
+            "ELF: vaddr + memsz overflow" | "ELF: p_offset + p_filesz overflow" => {
+                Self::Kernel(K::InvalidArgument)
+            }
             other => {
                 // 通用兜底: 归类为 NoSuchProcess 之外的通用错误
                 // 实际未知字符串属低频路径, 走 NoSuchProcess 占位不准确,

@@ -479,15 +479,10 @@ impl BpfMap {
         }
     }
 
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     /// 获取 Map 定义
     pub fn def(&self) -> &BpfMapDef {
         match self {
-            Self::Hash { def, .. } => def,
-            Self::Array { def, .. } => def,
+            Self::Hash { def, .. } | Self::Array { def, .. } => def,
         }
     }
 
@@ -797,10 +792,6 @@ impl BpfInterpreter {
     // 有意窄化: 显式收窄, 调用方保证值域
     #[expect(clippy::cast_possible_truncation)]
     #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
-    #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
@@ -851,7 +842,6 @@ impl BpfInterpreter {
                 match insn.imm {
                     16 => u64::from(regs[dst] as u16),
                     32 => u64::from(regs[dst] as u32),
-                    64 => regs[dst],
                     _ => regs[dst],
                 }
             }

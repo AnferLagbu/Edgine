@@ -116,10 +116,6 @@ impl Trb {
     }
 
     #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
-    #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
@@ -127,7 +123,6 @@ impl Trb {
     pub fn trb_type(&self) -> TrbType {
         let ty = (self.control >> 10) & 0x3F;
         match ty {
-            1 => TrbType::Normal,
             2 => TrbType::SetupStage,
             3 => TrbType::DataStage,
             4 => TrbType::StatusStage,
@@ -147,6 +142,7 @@ impl Trb {
             32 => TrbType::TransferEvent,
             33 => TrbType::CommandCompletionEvent,
             34 => TrbType::PortStatusChangeEvent,
+            // 未识别 TRB 类型 (含 1 = Normal) 回退为 Normal
             _ => TrbType::Normal,
         }
     }

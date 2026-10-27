@@ -837,10 +837,6 @@ pub unsafe extern "C" fn klog_init() {
     clippy::ptr_as_ptr,
     reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
 )]
-#[expect(
-    clippy::match_same_arms,
-    reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-)]
 ///
 /// # Safety
 ///
@@ -871,7 +867,6 @@ pub unsafe extern "C" fn klog_write(
 
         let category = match cat {
             0 => LogCategory::Boot,
-            1 => LogCategory::Kernel,
             2 => LogCategory::Memory,
             3 => LogCategory::Process,
             4 => LogCategory::FS,

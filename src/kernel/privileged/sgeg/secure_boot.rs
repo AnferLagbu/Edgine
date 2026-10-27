@@ -596,10 +596,6 @@ pub extern "C" fn sys_secure_boot(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
-#[expect(
-    clippy::match_same_arms,
-    reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-)]
 pub extern "C" fn sys_tpm(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     if !tpm_is_initialized() && cmd != 5 {
         return -(11i64); // EAGAIN
@@ -647,10 +643,6 @@ pub extern "C" fn sys_tpm(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
                 None => -(5i64),
             }
         }
-        3 => {
-            // unseal (简化: 总是返回未实现)
-            -(38i64) // ENOSYS - 需要传入密封数据, 简化跳过
-        }
         4 => {
             // quote
             let nonce = if a2 == 0 {
@@ -668,6 +660,7 @@ pub extern "C" fn sys_tpm(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
             // is_initialized
             i64::from(tpm_is_initialized())
         }
+        // 3 = unseal: 需要传入密封数据, 简化跳过; 未知命令同样返回 ENOSYS
         _ => -(38i64), // ENOSYS
     }
 }

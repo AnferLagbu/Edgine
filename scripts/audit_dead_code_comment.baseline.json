@@ -5,8 +5,8 @@
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 1573,
-    "files": 287
+    "sites": 1517,
+    "files": 275
   },
   "entries": [
     [
@@ -63,11 +63,6 @@
       "src/kernel/functions/config/validate.rs",
       "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
       2
-    ],
-    [
-      "src/kernel/functions/debug/ebpf_verifier.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
     ],
     [
       "src/kernel/functions/debug/ebpf_verifier.rs",
@@ -141,11 +136,6 @@
     ],
     [
       "src/kernel/functions/driver/storage/ahci.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/driver/storage/ahci.rs",
       "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
       1
     ],
@@ -211,11 +201,6 @@
     ],
     [
       "src/kernel/functions/driver/usb/usb_core.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/driver/usb/usb_core.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       4
     ],
@@ -227,11 +212,6 @@
     [
       "src/kernel/functions/driver/usb/xhci.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/driver/usb/xhci.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       1
     ],
     [
@@ -341,11 +321,6 @@
     ],
     [
       "src/kernel/functions/fs/devfs.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/devfs.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       5
     ],
@@ -370,16 +345,6 @@
       1
     ],
     [
-      "src/kernel/functions/fs/exfat/mount.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/ext2/inode.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/functions/fs/ext2/inode.rs",
       "#[expect(clippy::no_effect_underscore_binding,reason=\"no_effect_underscore_binding:let_=expr用于类型推导/副作用;当前优先expect\")",
       1
@@ -387,11 +352,6 @@
     [
       "src/kernel/functions/fs/ext2/read.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/file_ops.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       1
     ],
     [
@@ -486,11 +446,6 @@
     ],
     [
       "src/kernel/functions/fs/procfs_core.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/procfs_core.rs",
       "#[expect(clippy::no_effect_underscore_binding,reason=\"no_effect_underscore_binding:let_=expr用于类型推导/副作用;当前优先expect\")",
       1
     ],
@@ -523,11 +478,6 @@
       "src/kernel/functions/fs/ramfs_core/ramfs_data.rs",
       "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       7
-    ],
-    [
-      "src/kernel/functions/fs/ramfs_core/ramfs_data.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
     ],
     [
       "src/kernel/functions/fs/ramfs_core/ramfs_data.rs",
@@ -565,16 +515,6 @@
       1
     ],
     [
-      "src/kernel/functions/fs/unkfs/checksum.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/compress.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/functions/fs/unkfs/dataset.rs",
       "#[allow(clippy::should_implement_trait)",
       1
@@ -583,11 +523,6 @@
       "src/kernel/functions/fs/unkfs/raidz.rs",
       "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
       1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/raidz.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      2
     ],
     [
       "src/kernel/functions/fs/unkfs/raidz.rs",
@@ -630,11 +565,6 @@
       3
     ],
     [
-      "src/kernel/functions/fs/unkfs/unkfs_inode.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/functions/fs/unkfs/zil_persist.rs",
       "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       1
@@ -647,11 +577,6 @@
     [
       "src/kernel/functions/fs/vfs_manager.rs",
       "#[expect(clippy::assigning_clones,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/vfs_mount.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       1
     ],
     [
@@ -677,11 +602,6 @@
     [
       "src/kernel/functions/fs/virtiofs.rs",
       "#[expect(clippy::large_stack_arrays,reason=\"large_stack_arrays:大栈数组是性能权衡(避免堆分配)",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/virtiofs.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       1
     ],
     [
@@ -1050,18 +970,8 @@
       1
     ],
     [
-      "src/kernel/functions/proc/elf.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/functions/proc/exec.rs",
       "#[expect(clippy::similar_names,reason=\"argv/envp是POSIXexecveABI标准参数名,重命名会破坏与Linux语义的对应关系\")",
-      1
-    ],
-    [
-      "src/kernel/functions/proc/madvise_mlock.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       1
     ],
     [
@@ -1082,11 +992,6 @@
     [
       "src/kernel/functions/proc/signal.rs",
       "#[expect(clippy::similar_names,reason=\"变量名相似表达同族概念(tgid/tid)",
-      1
-    ],
-    [
-      "src/kernel/functions/proc/table.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       1
     ],
     [
@@ -1121,11 +1026,6 @@
     ],
     [
       "src/kernel/functions/sgeg/sessions.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/sgeg/sessions.rs",
       "#[expect(clippy::match_wildcard_for_single_variants,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
     ],
@@ -1140,11 +1040,6 @@
       1
     ],
     [
-      "src/kernel/functions/sync/futex.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/functions/sync/mod.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       1
@@ -1153,11 +1048,6 @@
       "src/kernel/functions/sync/pi_mutex.rs",
       "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
       1
-    ],
-    [
-      "src/kernel/functions/syscall/dispatch.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      3
     ],
     [
       "src/kernel/functions/timer/clock.rs",
@@ -1183,11 +1073,6 @@
       "src/kernel/functions/timer/time_sync.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       2
-    ],
-    [
-      "src/kernel/functions/wasm/interpreter.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
     ],
     [
       "src/kernel/functions/wasm/interpreter.rs",
@@ -1510,11 +1395,6 @@
       2
     ],
     [
-      "src/kernel/memory_allocator.rs",
-      "#[expect(clippy::match_same_arms,reason=\"TAG_KMALLOC与wildcardbody相同是已知安全;显式列举便于未来扩展\")",
-      1
-    ],
-    [
       "src/kernel/privileged/arch/aarch64/exception.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
       1
@@ -1578,11 +1458,6 @@
       "src/kernel/privileged/arch/x86_64/apic.rs",
       "#[expect(clippy::cast_possible_truncation)",
       5
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/apic.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
     ],
     [
       "src/kernel/privileged/arch/x86_64/gdt.rs",
@@ -1791,11 +1666,6 @@
     ],
     [
       "src/kernel/privileged/debug/ebpf.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      2
-    ],
-    [
-      "src/kernel/privileged/debug/ebpf.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
     ],
@@ -1870,11 +1740,6 @@
       1
     ],
     [
-      "src/kernel/privileged/dma_buf.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/privileged/driver/bus/mod.rs",
       "#[expect(clippy::missing_errors_doc,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
       1
@@ -1892,11 +1757,6 @@
     [
       "src/kernel/privileged/driver/display/framebuffer.rs",
       "#[expect(clippy::cast_possible_truncation)",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/display/framebuffer.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       1
     ],
     [
@@ -1972,16 +1832,6 @@
     [
       "src/kernel/privileged/driver/kexec.rs",
       "#[expect(clippy::cast_possible_truncation)",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/kexec.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      2
-    ],
-    [
-      "src/kernel/privileged/driver/power.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       1
     ],
     [
@@ -2135,16 +1985,6 @@
       1
     ],
     [
-      "src/kernel/privileged/errno.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/error.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/privileged/frame.rs",
       "#[expect(clippy::cast_possible_truncation)",
       1
@@ -2211,11 +2051,6 @@
     ],
     [
       "src/kernel/privileged/freg/reset/config.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/config.rs",
       "#[expect(clippy::similar_names,reason=\"变量名相似表达同族概念(pd/pt/bm等)",
       1
     ],
@@ -2241,11 +2076,6 @@
     ],
     [
       "src/kernel/privileged/idt/handlers.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      2
-    ],
-    [
-      "src/kernel/privileged/idt/handlers.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       2
     ],
@@ -2267,11 +2097,6 @@
     [
       "src/kernel/privileged/idt/idt.rs",
       "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      1
-    ],
-    [
-      "src/kernel/privileged/idt/idt.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       1
     ],
     [
@@ -2390,11 +2215,6 @@
       1
     ],
     [
-      "src/kernel/privileged/ipc/types.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/privileged/irqline.rs",
       "#[expect(clippy::cast_possible_truncation)",
       2
@@ -2427,11 +2247,6 @@
     [
       "src/kernel/privileged/klog/mod.rs",
       "#[expect(clippy::large_stack_arrays,reason=\"large_stack_arrays:大栈数组是性能权衡(避免堆分配)",
-      1
-    ],
-    [
-      "src/kernel/privileged/klog/mod.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       1
     ],
     [
@@ -2738,11 +2553,6 @@
       "src/kernel/privileged/mm/vma.rs",
       "#[expect(clippy::cast_possible_truncation)",
       9
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
     ],
     [
       "src/kernel/privileged/mm/vma.rs",
@@ -3145,18 +2955,8 @@
       2
     ],
     [
-      "src/kernel/privileged/net/init/query.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/privileged/net/init/raw.rs",
       "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/init/raw.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       1
     ],
     [
@@ -3405,18 +3205,8 @@
       1
     ],
     [
-      "src/kernel/privileged/proc/process.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/privileged/proc/scheduler.rs",
       "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       1
     ],
     [
@@ -3443,11 +3233,6 @@
       "src/kernel/privileged/proc/scheduler.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       14
-    ],
-    [
-      "src/kernel/privileged/proc/seccomp.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      2
     ],
     [
       "src/kernel/privileged/proc/session.rs",
@@ -3478,11 +3263,6 @@
       "src/kernel/privileged/proc/signal.rs",
       "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
       1
-    ],
-    [
-      "src/kernel/privileged/proc/types.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      2
     ],
     [
       "src/kernel/privileged/proc/types.rs",
@@ -3538,11 +3318,6 @@
       "src/kernel/privileged/proc/user_proc.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       3
-    ],
-    [
-      "src/kernel/privileged/sgeg/api.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
-      1
     ],
     [
       "src/kernel/privileged/sgeg/api.rs",
@@ -3607,11 +3382,6 @@
     [
       "src/kernel/privileged/sgeg/secure_boot.rs",
       "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/secure_boot.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       1
     ],
     [
@@ -3787,11 +3557,6 @@
     [
       "src/kernel/privileged/timer/clockevent.rs",
       "#[expect(clippy::cast_possible_truncation)",
-      1
-    ],
-    [
-      "src/kernel/privileged/timer/hrtimer.rs",
-      "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       1
     ],
     [

@@ -372,10 +372,6 @@ impl RamFsData {
         self.block_set_free(double_indirect_block);
     }
 
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     fn check_permission(&self, node: &RamFsNode, pwm: u64, cap: u64) -> bool {
         let level = pwm_api::pwm_get_privilege_level(pwm);
 
@@ -385,8 +381,7 @@ impl RamFsData {
 
         if level > 0 && node.sensitivity > 0 {
             let clearance = match level {
-                0 => 255u8,
-                1 => 255u8,
+                0 | 1 => 255u8,
                 2 => 128u8,
                 _ => 64u8,
             };

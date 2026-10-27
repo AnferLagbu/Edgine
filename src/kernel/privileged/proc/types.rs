@@ -62,14 +62,9 @@ pub enum ProcessState {
 }
 
 impl ProcessState {
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     /// 安全的从 u8 值转换为 `ProcessState`
     pub fn from_u8(value: u8) -> Self {
         match value {
-            0 => Self::Created,
             1 => Self::Ready,
             2 => Self::Running,
             3 => Self::Blocked,
@@ -171,16 +166,11 @@ pub enum ProcessPriority {
 }
 
 impl ProcessPriority {
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     /// 由原始 `u32` 值解析优先级 (未知值回落为 `Normal`)
     pub fn from_u32(value: u32) -> Self {
         match value {
             0 => Self::Idle,
             1 => Self::Low,
-            2 => Self::Normal,
             3 => Self::High,
             4 => Self::RealTime,
             _ => Self::Normal,

@@ -68,14 +68,9 @@ pub enum VirtioFsOp {
 }
 
 impl VirtioFsOp {
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     /// 从操作码解析
     pub fn from_opcode(opcode: u32) -> Self {
         match opcode {
-            1 => Self::Lookup,
             3 => Self::GetAttr,
             4 => Self::SetAttr,
             11 => Self::Mkdir,
@@ -90,6 +85,7 @@ impl VirtioFsOp {
             24 => Self::Release,
             27 => Self::Readdir,
             31 => Self::StatFs,
+            // 未识别操作码 (含 1 = Lookup) 回退为 Lookup
             _ => Self::Lookup,
         }
     }

@@ -41,19 +41,15 @@ impl UnkfsChecksum {
         }
     }
 
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     /// 按算法类型对 `data` 计算校验和.
     pub fn compute(kind: UnkfsCksumType, data: &[u8]) -> Self {
         let mut ck = Self::new(kind);
         match kind {
             UnkfsCksumType::Off => {}
             UnkfsCksumType::Fletcher2 => ck.fletcher2(data),
-            UnkfsCksumType::Fletcher4 => ck.fletcher4(data),
+            // EdonR 简化回落 Fletcher4
+            UnkfsCksumType::Fletcher4 | UnkfsCksumType::EdonR => ck.fletcher4(data),
             UnkfsCksumType::SHA256 => ck.sha256(data),
-            UnkfsCksumType::EdonR => ck.fletcher4(data),
         }
         ck
     }

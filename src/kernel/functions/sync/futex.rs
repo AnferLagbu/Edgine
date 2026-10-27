@@ -118,10 +118,6 @@ impl FutexResult {
     }
 }
 
-#[expect(
-    clippy::match_same_arms,
-    reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-)]
 /// safe 包装: futex 系统调用
 ///
 /// # Errors
@@ -148,8 +144,8 @@ pub fn futex_syscall(
         let errno = match (-ret) as i32 {
             11 => Errno::EAGAIN, // EAGAIN = 11 (Linux)
             14 => Errno::EFAULT,
-            22 => Errno::EINVAL,
             38 => Errno::ENOSYS,
+            // 未识别错误码 (含 22 = EINVAL) 回退为 EINVAL
             _ => Errno::EINVAL,
         };
         return Err(errno);

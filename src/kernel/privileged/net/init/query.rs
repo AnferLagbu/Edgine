@@ -94,10 +94,6 @@ pub(crate) fn ipv4_from_atomic(v: u32) -> Option<[u8; 4]> {
     if v == 0 { None } else { Some(v.to_be_bytes()) }
 }
 
-#[expect(
-    clippy::match_same_arms,
-    reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-)]
 /// 主动触发网络初始化 (非阻塞; 失败返回 false)
 ///
 /// # 行为
@@ -107,8 +103,7 @@ pub(crate) fn ipv4_from_atomic(v: u32) -> Option<[u8; 4]> {
 /// - 状态机 = Failed 时, 不重试, 返回 false
 pub fn trigger_init() -> bool {
     match get_init_state() {
-        InitState::FullyInitialized => true,
-        InitState::HardwareProbed | InitState::InterfaceReady => {
+        InitState::FullyInitialized | InitState::HardwareProbed | InitState::InterfaceReady => {
             // DHCP 已经在轮询路径里跑了, 此处仅给上层一个"我已确认"信号
             true
         }

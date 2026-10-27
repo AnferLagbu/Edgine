@@ -90,10 +90,6 @@ impl DmaStream {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     /// 从 Frame 创建流式 DMA 映射。
     ///
     /// 验证 Frame 物理地址 + 大小满足:
@@ -128,11 +124,10 @@ impl DmaStream {
         }
 
         let initial_state = match dir {
-            // ToDevice: CPU 端刚分配完, 准备写, 状态为 CpuReady
-            DmaDirection::ToDevice => SyncState::CpuReady,
+            // ToDevice/Bidirectional: CPU 端刚分配完, 准备写, 状态为 CpuReady
+            DmaDirection::ToDevice | DmaDirection::Bidirectional => SyncState::CpuReady,
             // FromDevice: 设备已写入过, 状态为 DeviceReady
             DmaDirection::FromDevice => SyncState::DeviceReady,
-            DmaDirection::Bidirectional => SyncState::CpuReady,
         };
 
         Ok(Self {

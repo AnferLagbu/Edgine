@@ -218,16 +218,12 @@ pub enum AhciDeviceKind {
 }
 
 impl AhciDeviceKind {
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     /// 从 `PxSIG` 寄存器解析
     pub fn from_signature(sig: u32) -> Self {
         match sig {
             SATA_SIG_ATA => Self::Ata,
             SATA_SIG_ATAPI => Self::Atapi,
-            0xFFFF_FFFF | 0x0000_0000 => Self::None,
+            // 0xFFFF_FFFF / 0x0000_0000 及未知签名均视为无设备
             _ => Self::None,
         }
     }

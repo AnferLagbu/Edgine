@@ -659,10 +659,6 @@ impl IdtManager {
     /// 处理异常 (从 `exception_handler` FFI 调用)
     // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
     #[expect(clippy::cast_possible_truncation)]
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     pub fn handle_exception(&self, frame: *mut InterruptFrame) {
         if frame.is_null() {
             return;
@@ -725,12 +721,7 @@ impl IdtManager {
                 // IRQ 处理
                 self.handle_irq(frame, vector);
             } else {
-                // 其他向量 (syscall, recovery 等)
-                match vector {
-                    0x80 => { /* System call - handled by syscall handler */ }
-                    0x82 => { /* Recovery interrupt - handled by freg-stack */ }
-                    _ => {} // 忽略未知向量
-                }
+                // 其他向量 (syscall 0x80 / recovery 0x82 等) 由各自处理器处理, 此处忽略
             }
 
             // 恢复嵌套计数

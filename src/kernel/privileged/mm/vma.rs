@@ -146,10 +146,6 @@ pub enum VmaType {
 
 impl VmaType {
     /// 由 `u8` 编码还原 VMA 类型 (未知编码退化为 `Guard`)
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     pub fn from_u8(v: u8) -> Self {
         match v {
             0 => Self::Anonymous,
@@ -158,7 +154,6 @@ impl VmaType {
             3 => Self::Heap,
             4 => Self::Vdso,
             5 => Self::Vsvar,
-            6 => Self::Guard,
             7 => Self::Device,
             _ => Self::Guard,
         }

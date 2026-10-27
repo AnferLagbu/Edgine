@@ -124,13 +124,8 @@ pub enum SignalNum {
 }
 
 impl From<u8> for SignalNum {
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     fn from(val: u8) -> Self {
         match val {
-            0 => Self::None,
             1 => Self::Int,
             2 => Self::Ill,
             3 => Self::Fpe,

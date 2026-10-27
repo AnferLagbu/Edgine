@@ -114,7 +114,12 @@ fn elf_error_from_kernel_str_uses_kernel_wrapper() {
     let from_block_start = src
         .find("pub fn from_kernel_str(s: &'static str) -> Self")
         .expect("from_kernel_str 存在");
-    let block = &src[from_block_start..from_block_start + 800];
+    // 取函数起 800 字节窗口; 中文注释是 UTF-8 多字节, 需回退到字符边界
+    let mut block_end = (from_block_start + 800).min(src.len());
+    while !src.is_char_boundary(block_end) {
+        block_end -= 1;
+    }
+    let block = &src[from_block_start..block_end];
     // ELF 溢出错误应改走 Kernel(K::InvalidArgument) 包装
     let kernel_count = block.matches("Self::Kernel(K::").count()
         + block

@@ -850,10 +850,6 @@ impl ProcfsData {
         reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
     )]
     #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
-    #[expect(
         clippy::no_effect_underscore_binding,
         reason = "no_effect_underscore_binding: let _ = expr 用于类型推导/副作用; 当前优先 expect"
     )]
@@ -872,13 +868,11 @@ impl ProcfsData {
             // 用户时间, 系统时间, 子用户时间, 子系统时间, 优先级, nice值,
             // 线程数, 虚拟启动时间, 虚拟内存大小, 常驻集大小
             let state = match proc.state.load(core::sync::atomic::Ordering::SeqCst) {
-                0 => "R", // Created
-                1 => "R", // Ready
-                2 => "R", // Running
-                3 => "S", // Blocked
-                4 => "T", // Frozen
-                5 => "Z", // Zombie
-                _ => "X", // Terminated
+                0 | 1 | 2 => "R", // Created/Ready/Running 均显示 R
+                3 => "S",         // Blocked
+                4 => "T",         // Frozen
+                5 => "Z",         // Zombie
+                _ => "X",         // Terminated
             };
 
             let ppid = proc.parent.map_or(0, |p| p.0);

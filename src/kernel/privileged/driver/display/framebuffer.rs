@@ -35,10 +35,6 @@ pub enum PixelFormat {
 
 impl PixelFormat {
     #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
-    #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
@@ -46,10 +42,8 @@ impl PixelFormat {
     pub fn bytes_per_pixel(&self) -> usize {
         match self {
             Self::Rgb565 => 2,
-            Self::Rgb888 => 3,
-            Self::Argb8888 => 4,
-            Self::Bgr888 => 3,
-            Self::Bgra8888 => 4,
+            Self::Rgb888 | Self::Bgr888 => 3,
+            Self::Argb8888 | Self::Bgra8888 => 4,
         }
     }
 

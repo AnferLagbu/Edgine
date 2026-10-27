@@ -159,10 +159,6 @@ impl KernelError {
         }
     }
 
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     /// 反向映射: 强类型 → POSIX errno.
     pub const fn as_errno(self) -> Errno {
         match self {
@@ -171,7 +167,7 @@ impl KernelError {
             Self::FileNotFound => Errno::ENOENT,
             Self::NoSuchProcess => Errno::ESRCH,
             Self::BadFd => Errno::EBADF,
-            Self::WouldBlock => Errno::EAGAIN,
+            Self::WouldBlock | Self::NotReady => Errno::EAGAIN,
             Self::NoMemory => Errno::ENOMEM,
             Self::Fault => Errno::EFAULT,
             Self::Busy => Errno::EBUSY,
@@ -180,7 +176,9 @@ impl KernelError {
             Self::NoDevice => Errno::ENODEV,
             Self::NotADirectory => Errno::ENOTDIR,
             Self::IsDirectory => Errno::EISDIR,
-            Self::InvalidArgument => Errno::EINVAL,
+            Self::InvalidArgument | Self::NotInitialized | Self::Overflow | Self::Other(_) => {
+                Errno::EINVAL
+            }
             Self::ProcessFileLimit => Errno::EMFILE,
             Self::NoSpace => Errno::ENOSPC,
             Self::BrokenPipe => Errno::EPIPE,
@@ -194,10 +192,6 @@ impl KernelError {
             Self::ConnectionReset => Errno::ECONNRESET,
             Self::NotConnected => Errno::ENOTCONN,
             Self::ConnectionRefused => Errno::ECONNREFUSED,
-            Self::NotReady => Errno::EAGAIN,
-            Self::NotInitialized => Errno::EINVAL,
-            Self::Overflow => Errno::EINVAL,
-            Self::Other(_) => Errno::EINVAL,
         }
     }
 }

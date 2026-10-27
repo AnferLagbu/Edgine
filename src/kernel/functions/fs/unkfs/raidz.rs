@@ -33,28 +33,19 @@ pub enum UnkfsRaidzLevel {
 
 impl UnkfsRaidzLevel {
     #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
-    #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
     /// 返回该冗余级别的校验列数量。
     pub fn parity_cols(&self) -> usize {
         match self {
-            Self::Single => 0,
+            Self::Single | Self::Mirror => 0,
             Self::RaidZ1 => 1,
             Self::RaidZ2 => 2,
             Self::RaidZ3 => 3,
-            Self::Mirror => 0,
         }
     }
 
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
@@ -63,10 +54,9 @@ impl UnkfsRaidzLevel {
     pub fn max_failures(&self) -> usize {
         match self {
             Self::Single => 0,
-            Self::RaidZ1 => 1,
+            Self::RaidZ1 | Self::Mirror => 1,
             Self::RaidZ2 => 2,
             Self::RaidZ3 => 3,
-            Self::Mirror => 1,
         }
     }
 }

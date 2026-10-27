@@ -273,10 +273,6 @@ pub fn fallocate_syscall(fd: i32, mode: i32, offset: u64, len: u64) -> i64 {
     0
 }
 
-#[expect(
-    clippy::match_same_arms,
-    reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-)]
 /// flock(fd, operation) 策略
 pub fn flock_syscall(fd: i32, operation: i32) -> i64 {
     use crate::functions::fs::{FlockResult, sys_flock as do_flock};
@@ -303,9 +299,8 @@ pub fn flock_syscall(fd: i32, operation: i32) -> i64 {
     match do_flock(fd, operation, pid, ino) {
         FlockResult::Ok => 0,
         FlockResult::WouldBlock => Errno::EAGAIN.as_ret(),
-        FlockResult::Invalid => Errno::EINVAL.as_ret(),
         FlockResult::NoSpace => Errno::ENOLCK.as_ret(),
-        FlockResult::NotHeld => Errno::EINVAL.as_ret(),
+        FlockResult::Invalid | FlockResult::NotHeld => Errno::EINVAL.as_ret(),
     }
 }
 

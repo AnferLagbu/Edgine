@@ -81,10 +81,6 @@ unsafe impl GlobalAlloc for KernelAllocator {
         }
     }
 
-    #[expect(
-        clippy::match_same_arms,
-        reason = "TAG_KMALLOC 与 wildcard body 相同是已知安全; 显式列举便于未来扩展"
-    )]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe {
             if ptr.is_null() {
@@ -96,9 +92,6 @@ unsafe impl GlobalAlloc for KernelAllocator {
                 let raw = ptr.sub(TAG_SIZE);
                 let tag = *(raw as *const u64);
                 match tag {
-                    TAG_KMALLOC => {
-                        kfree(raw as *mut u8);
-                    }
                     TAG_PMM_PAGE => {
                         let phys_addr = (raw as u64) - KERNEL_BASE;
                         pmm_free_page_phys(PhysAddr(phys_addr));
@@ -108,6 +101,7 @@ unsafe impl GlobalAlloc for KernelAllocator {
                         let pages_needed = (size + TAG_SIZE).div_ceil(4096);
                         pmm_free_pages_phys(PhysAddr(phys_addr), pages_needed);
                     }
+                    // 未知标签 (含 TAG_KMALLOC) 回退按 kmalloc 块释放
                     _ => {
                         kfree(raw as *mut u8);
                     }

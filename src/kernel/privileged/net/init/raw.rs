@@ -784,10 +784,6 @@ pub fn smoltcp_net_stack_poll() -> crate::privileged::net::iface_trait::PollOutc
     }
 }
 
-#[expect(
-    clippy::match_same_arms,
-    reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-)]
 /// `DhcpState` tag → `DhcpState` 翻译.
 ///
 /// tag 值 (来自 `PREV_DHCP_TAG)`:
@@ -801,7 +797,6 @@ fn tag_to_dhcp_state(tag: u8) -> crate::privileged::net::iface_trait::DhcpState 
     use crate::privileged::net::iface_trait::DhcpState;
     use core::sync::atomic::Ordering;
     match tag {
-        0 => DhcpState::Idle,
         1 => DhcpState::Discovering,
         2 => DhcpState::Requesting,
         3 => {

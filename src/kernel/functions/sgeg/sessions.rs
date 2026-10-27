@@ -329,10 +329,6 @@ impl<'a> SessionManager<'a> {
     }
 
     #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
-    #[expect(
         clippy::match_wildcard_for_single_variants,
         reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
     )]
@@ -361,10 +357,10 @@ impl<'a> SessionManager<'a> {
                     .create(pwm, matrix_caps, current_tick, expires_tick, pid)
                 {
                     Ok(id) => id,
-                    Err(SessionError::Kernel(crate::functions::error::KernelError::WouldBlock)) => {
-                        return LoginResult::Denied(LoginDeny::TooManySessions);
-                    }
-                    Err(SessionError::TableFull) => {
+                    Err(
+                        SessionError::Kernel(crate::functions::error::KernelError::WouldBlock)
+                        | SessionError::TableFull,
+                    ) => {
                         return LoginResult::Denied(LoginDeny::TooManySessions);
                     }
                     Err(_) => return LoginResult::Denied(LoginDeny::AccountLocked),

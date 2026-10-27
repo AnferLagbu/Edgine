@@ -79,17 +79,12 @@ pub enum TableError {
 }
 
 impl TableError {
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     /// 映射为 POSIX errno
     pub fn to_errno(self) -> crate::privileged::syscall::Errno {
         use crate::privileged::syscall::Errno as E;
         match self {
-            Self::TableFull => E::EAGAIN,              // 表满, 资源暂时不可用
-            Self::RefCountUnderflow => E::EINVAL,      // 内部状态错误
-            Self::InvalidStateTransition => E::EINVAL, // 非法状态转换
+            Self::TableFull => E::EAGAIN, // 表满, 资源暂时不可用
+            Self::RefCountUnderflow | Self::InvalidStateTransition => E::EINVAL, // 内部状态错误 / 非法状态转换
             Self::Kernel(e) => e.as_errno(),
         }
     }

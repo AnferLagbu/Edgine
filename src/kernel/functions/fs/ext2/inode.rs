@@ -46,21 +46,15 @@ pub struct Ext2Inode {
 }
 
 impl Ext2Inode {
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     /// 文件类型 (从 `i_mode` 提取)
     pub fn file_type(&self) -> u8 {
         match self.i_mode & 0xF000 {
-            0x8000 => 0, // 普通文件
-            0x4000 => 1, // 目录
-            0xA000 => 3, // 符号链接
-            0x2000 => 2, // 字符设备
-            0x6000 => 2, // 块设备
-            0x1000 => 4, // FIFO
-            0xC000 => 5, // socket
-            _ => 0,
+            0x4000 => 1,          // 目录
+            0xA000 => 3,          // 符号链接
+            0x2000 | 0x6000 => 2, // 字符设备 / 块设备
+            0x1000 => 4,          // FIFO
+            0xC000 => 5,          // socket
+            _ => 0,               // 普通文件 (0x8000) 及未知类型
         }
     }
 

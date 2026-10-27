@@ -426,10 +426,6 @@ impl Interpreter {
         clippy::too_many_lines,
         reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
     )]
-    #[expect(
-        clippy::match_same_arms,
-        reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-    )]
     fn execute_call_stack(&mut self) -> Result<(), WasmError> {
         while let Some(frame) = self.call_stack.last() {
             if frame.pc >= frame.code.len() {
@@ -458,7 +454,7 @@ impl Interpreter {
 
             match op {
                 Ok(Opcode::Unreachable) => return Err(WasmError::Unreachable),
-                Ok(Opcode::Nop) => {
+                Ok(Opcode::Nop | Opcode::Block | Opcode::Loop) => {
                     self.advance_pc(1)?;
                 }
                 Ok(Opcode::End) => {
@@ -474,12 +470,6 @@ impl Interpreter {
                     }
                 }
 
-                Ok(Opcode::Block) => {
-                    self.advance_pc(1)?;
-                }
-                Ok(Opcode::Loop) => {
-                    self.advance_pc(1)?;
-                }
                 Ok(Opcode::If) => {
                     self.execute_if()?;
                 }

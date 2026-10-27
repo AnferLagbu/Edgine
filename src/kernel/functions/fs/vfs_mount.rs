@@ -19,10 +19,6 @@ static RAMFS_MOUNTED: core::sync::atomic::AtomicBool = core::sync::atomic::Atomi
 // VFS 核心接口 (内部)
 // ============================================================================
 
-#[expect(
-    clippy::match_same_arms,
-    reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
-)]
 /// C ABI 内部挂载入口: 按文件系统名分发挂载, 返回 0 或负 errno
 pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32 {
     let path = ptr_to_str(path);
@@ -47,15 +43,9 @@ pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32
                 let _ = fs.fs_init();
             }
         }
-        FsType::DevFs => {
-            // DevFS 初始化由 init()/init_with_egdf_bridge() 完成
-        }
-        FsType::Ext2 => {
-            // ext2 挂载由 Ext2FileSystem::fs_mount 处理
-        }
-        FsType::ExFat => {
-            // exfat 挂载由 ExfatFileSystem::fs_mount 处理
-        }
+        // DevFS 初始化由 init()/init_with_egdf_bridge() 完成;
+        // ext2 / exfat 挂载分别由 Ext2FileSystem / ExfatFileSystem::fs_mount 处理
+        FsType::DevFs | FsType::Ext2 | FsType::ExFat => {}
         FsType::TmpFs | FsType::OverlayFs => {
             // tmpfs/overlayfs 挂载策略归 functions: 经注册表解析 FileSystem trait object
             // 并调用其 fs_mount 完成挂载; 未注册 (functions::fs::init 之前) 时 fail-closed.
