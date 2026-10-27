@@ -1,22 +1,37 @@
 #![deny(unsafe_code)]
+//! UNKFS ZAP 键值存储 — 属性名到字节值的哈希表
+//!
+//! 提供 `ZFS` ZAP (ZFS Attribute Processor) 的语义子集: 定长条目槽位 +
+//! 名字哈希加速查找, 支持插入 / 覆盖 / 查询 / 删除与容量上限.
+#![deny(missing_docs)]
 use crate::functions::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+/// 条目名的最大字节数 (定长槽位容量, 超长部分截断)
 pub const HV_ZAP_MAX_NAME: usize = 64;
+/// 条目值的最大字节数 (定长槽位容量, 超长部分截断)
 pub const HV_ZAP_MAX_VALUE: usize = 128;
+/// ZAP 表的默认条目容量上限
 pub const HV_ZAP_MAX_ENTRIES: usize = 256;
 
+/// 单个 ZAP 条目: 定长名字与值槽位 + 预计算的名字哈希
 #[derive(Debug, Clone)]
 pub struct UnkfsZapEntry {
+    /// 条目名 (定长字节数组, 未使用部分为 0)
     pub name: [u8; HV_ZAP_MAX_NAME],
+    /// 条目值 (定长字节数组)
     pub value: [u8; HV_ZAP_MAX_VALUE],
+    /// 值的有效字节数
     pub value_len: u16,
+    /// 条目名的 FNV-1a 哈希 (加速查找)
     pub hash: u64,
+    /// 条目是否被占用
     pub used: bool,
 }
 
 impl UnkfsZapEntry {
+    /// 由名字与字节值构造条目 (超出定长槽位的部分截断)
     pub fn new(name: &str, value: &[u8]) -> Self {
         let mut n = [0u8; HV_ZAP_MAX_NAME];
         let mut v = [0u8; HV_ZAP_MAX_VALUE];
@@ -34,6 +49,7 @@ impl UnkfsZapEntry {
         }
     }
 
+    /// 以 `&str` 形式返回条目名 (非 UTF-8 时退化为空串)
     pub fn get_name(&self) -> &str {
         let end = self
             .name
@@ -43,10 +59,12 @@ impl UnkfsZapEntry {
         core::str::from_utf8(&self.name[..end]).unwrap_or("")
     }
 
+    /// 返回值的有效字节切片
     pub fn get_value(&self) -> &[u8] {
         &self.value[..self.value_len as usize]
     }
 
+    /// 将值按小端解释为 `u64` (不足 8 字节返回 0)
     pub fn get_value_u64(&self) -> u64 {
         if self.value_len as usize >= 8 {
             let mut arr = [0u8; 8];
@@ -57,6 +75,7 @@ impl UnkfsZapEntry {
         }
     }
 
+    /// 计算名字的 FNV-1a 64 位哈希
     #[expect(
         clippy::unreadable_literal,
         reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
@@ -71,23 +90,32 @@ impl UnkfsZapEntry {
     }
 }
 
+/// ZAP 键值表: 受锁保护的条目集合, 带容量上限与表类型
 pub struct UnkfsZap {
+    /// 受自旋锁保护的条目列表
     pub entries: Mutex<Vec<UnkfsZapEntry>>,
+    /// 条目容量上限
     pub capacity: usize,
+    /// 表类型 (micro / normal / leaf)
     pub zap_type: UnkfsZapType,
 }
 
+/// ZAP 表类型 (决定容量与槽位布局策略)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum UnkfsZapType {
+    /// 微表: 小容量 (≤64 条目)
     Micro = 0,
+    /// 普通表
     Normal = 1,
+    /// 叶子表 (供更大规模索引使用)
     Leaf = 2,
 }
 
 // SAFETY (Framekernel P2.2.2): UnkfsZap 全部字段 (Mutex<T>, AtomicU64) 自动 Send + Sync。
 
 impl UnkfsZap {
+    /// 创建默认容量 (`HV_ZAP_MAX_ENTRIES`) 的 micro 表
     pub fn new() -> Self {
         Self {
             entries: Mutex::new(Vec::new()),
@@ -96,6 +124,7 @@ impl UnkfsZap {
         }
     }
 
+    /// 按指定容量创建表 (≤64 为 micro, 否则 normal)
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             entries: Mutex::new(Vec::new()),
@@ -108,6 +137,7 @@ impl UnkfsZap {
         }
     }
 
+    /// 插入条目 (同名则覆盖), 超出容量上限返回 false
     pub fn insert(&self, name: &str, value: &[u8]) -> bool {
         let mut entries = self.entries.lock();
         if entries.len() >= self.capacity {
@@ -127,10 +157,12 @@ impl UnkfsZap {
         true
     }
 
+    /// 以小端 `u64` 值插入条目
     pub fn insert_u64(&self, name: &str, value: u64) -> bool {
         self.insert(name, &value.to_le_bytes())
     }
 
+    /// 按名查询条目值 (不存在返回 `None`)
     pub fn lookup(&self, name: &str) -> Option<Vec<u8>> {
         let entries = self.entries.lock();
         let hash = UnkfsZapEntry::hash_name(name);
@@ -142,6 +174,7 @@ impl UnkfsZap {
         None
     }
 
+    /// 按名查询 `u64` 值 (不存在返回 `None`)
     pub fn lookup_u64(&self, name: &str) -> Option<u64> {
         let entries = self.entries.lock();
         let hash = UnkfsZapEntry::hash_name(name);
@@ -153,6 +186,7 @@ impl UnkfsZap {
         None
     }
 
+    /// 删除指定名字的条目 (不存在返回 false)
     pub fn remove(&self, name: &str) -> bool {
         let mut entries = self.entries.lock();
         let hash = UnkfsZapEntry::hash_name(name);
@@ -165,6 +199,7 @@ impl UnkfsZap {
         })
     }
 
+    /// 判断指定名字的条目是否存在
     pub fn contains(&self, name: &str) -> bool {
         let entries = self.entries.lock();
         let hash = UnkfsZapEntry::hash_name(name);
@@ -173,14 +208,17 @@ impl UnkfsZap {
             .any(|e| e.used && e.hash == hash && e.get_name() == name)
     }
 
+    /// 返回当前条目数
     pub fn len(&self) -> usize {
         self.entries.lock().iter().filter(|e| e.used).count()
     }
 
+    /// 表是否为空 (无条目)
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// 返回全部条目名
     pub fn keys(&self) -> Vec<String> {
         let entries = self.entries.lock();
         entries
@@ -190,6 +228,7 @@ impl UnkfsZap {
             .collect()
     }
 
+    /// 返回全部 (名字, 值) 对
     pub fn entries(&self) -> Vec<(String, Vec<u8>)> {
         let entries = self.entries.lock();
         entries
@@ -199,6 +238,7 @@ impl UnkfsZap {
             .collect()
     }
 
+    /// 清空全部条目
     pub fn clear(&self) {
         self.entries.lock().clear();
     }

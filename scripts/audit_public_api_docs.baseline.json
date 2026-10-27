@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 308,
-    "files": 65,
-    "keys": 275
+    "sites": 286,
+    "files": 62,
+    "keys": 255
   },
   "entries": [
     [
@@ -111,24 +111,6 @@
       "fn",
       "new",
       4
-    ],
-    [
-      "src/kernel/privileged/driver/storage/nvme.rs",
-      "fn",
-      "is_success",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/storage/nvme.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/storage/nvme.rs",
-      "fn",
-      "status_code",
-      1
     ],
     [
       "src/kernel/privileged/driver/virtio/mod.rs",
@@ -386,36 +368,6 @@
       "src/kernel/privileged/freg/reset/audit.rs",
       "fn",
       "record_simple",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/config.rs",
-      "fn",
-      "default",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/config.rs",
-      "fn",
-      "from_u32",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/config.rs",
-      "fn",
-      "is_parallel",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/config.rs",
-      "fn",
-      "is_success",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/config.rs",
-      "fn",
-      "should_escalate",
       1
     ],
     [
@@ -812,78 +764,6 @@
       "src/kernel/privileged/mm/slab.rs",
       "fn",
       "active_objects",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "fn",
-      "bits",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "fn",
-      "contains",
-      2
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "fn",
-      "from_bits",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "fn",
-      "from_u8",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "fn",
-      "insert",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "fn",
-      "is_empty",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "fn",
-      "is_guard",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "fn",
-      "is_stack",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "fn",
-      "new",
-      2
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "fn",
-      "remove",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "fn",
-      "size",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "fn",
-      "with_offset",
       1
     ],
     [

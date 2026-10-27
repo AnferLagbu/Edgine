@@ -10,22 +10,31 @@
 //! functions 侧改 `pub use crate::privileged::freg::reset::config::*`
 //! 保持 API 兼容。本文件 0 unsafe (纯配置 + 原子状态).
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
+/// 恢复成功的结果码
 pub const RESET_SUCCESS: u32 = 0;
+/// 恢复失败的结果码
 pub const RESET_FAILED: u32 = 1;
+/// 需升级到下一层恢复的结果码
 pub const RESET_ESCALATE: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 /// FREG 恢复层级 (Layer1=BBR, Layer2=BSR, Layer3=BHR)。
 pub enum RecoveryLayer {
+    /// 第 1 层恢复 (BBR)
     Layer1 = 1,
+    /// 第 2 层恢复 (BSR)
     Layer2 = 2,
+    /// 第 3 层恢复 (BHR)
     Layer3 = 3,
 }
 
 impl RecoveryLayer {
+    /// 由 `u32` 编码还原恢复层级 (未知值退化为 `Layer1`)
     #[expect(
         clippy::match_same_arms,
         reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
@@ -44,8 +53,11 @@ impl RecoveryLayer {
 #[repr(u32)]
 /// 单层恢复的执行结果 (成功/失败/需升级到下一层)。
 pub enum RecoveryResult {
+    /// 恢复成功
     Success = RESET_SUCCESS,
+    /// 恢复失败
     Failed = RESET_FAILED,
+    /// 需升级到下一层
     Escalate = RESET_ESCALATE,
 }
 
@@ -54,6 +66,7 @@ impl RecoveryResult {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 是否为成功结果
     pub fn is_success(&self) -> bool {
         matches!(self, Self::Success)
     }
@@ -62,6 +75,7 @@ impl RecoveryResult {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 是否需要升级到下一层恢复
     pub fn should_escalate(&self) -> bool {
         matches!(self, Self::Escalate)
     }
@@ -71,25 +85,37 @@ impl RecoveryResult {
 #[repr(u32)]
 /// 回滚模式: 串行或并行执行多域回滚。
 pub enum RollbackMode {
+    /// 串行回滚
     Serial = 0,
+    /// 并行回滚
     Parallel = 1,
 }
 
 #[derive(Debug)]
 /// 恢复配置: 各层开关、失败阈值、设备超时与并行回滚参数。
 pub struct RecoveryConfig {
+    /// 是否启用第 1 层 (BBR) 恢复
     pub enable_layer1: bool,
+    /// 是否启用第 2 层 (BSR) 恢复
     pub enable_layer2: bool,
+    /// 是否启用第 3 层 (BHR) 恢复
     pub enable_layer3: bool,
+    /// 第 1 层连续失败阈值 (超过则升级到下一层)
     pub layer1_failure_threshold: u32,
+    /// 第 2 层设备操作超时 (tick)
     pub layer2_device_timeout_ticks: u64,
+    /// 第 2 层最大尝试次数
     pub layer2_max_attempts: u32,
+    /// 是否启用审计记录
     pub audit_enabled: bool,
+    /// 多域回滚模式
     pub rollback_mode: RollbackMode,
+    /// 并行回滚最大工作线程数
     pub parallel_max_workers: u32,
 }
 
 impl RecoveryConfig {
+    /// 返回默认配置 (三层全开、串行回滚)
     pub const fn default() -> Self {
         Self {
             enable_layer1: true,
@@ -104,19 +130,28 @@ impl RecoveryConfig {
         }
     }
 
+    /// 是否启用并行回滚
     pub fn is_parallel(&self) -> bool {
         matches!(self.rollback_mode, RollbackMode::Parallel)
     }
 }
 
+/// 全局只读恢复配置
 pub static RECOVERY_CONFIG: RecoveryConfig = RecoveryConfig::default();
 
+/// 当前恢复层级编码 (0 = 未进行恢复)
 pub static CURRENT_LAYER: AtomicU32 = AtomicU32::new(0);
+/// 恢复流程进行中标志
 pub static RESET_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+/// BBR (Layer1) 尝试计数
 pub static BBR_ATTEMPT_COUNT: AtomicU32 = AtomicU32::new(0);
+/// BSR (Layer2) 尝试计数
 pub static BSR_ATTEMPT_COUNT: AtomicU32 = AtomicU32::new(0);
+/// BHR (Layer3) 尝试计数
 pub static BHR_ATTEMPT_COUNT: AtomicU32 = AtomicU32::new(0);
+/// 上次恢复发起的 tick
 pub static LAST_RESET_TICK: AtomicU64 = AtomicU64::new(0);
+/// 并行回滚进行中标志
 pub static PARALLEL_ROLLBACK_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// 返回当前是否已有恢复流程正在进行。
@@ -177,11 +212,13 @@ pub fn reset_stats() {
 }
 
 // E-03 (2026-09-06): feature 语义拆分 — 纯逻辑测试模块, host-test 下同样编译
+/// 恢复配置与状态机的纯逻辑测试 (kernel_test / host-test 下编译)
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod tests {
     // J-01 (2026-09-08): wildcard_imports 清理 — 显式列出本模块使用的 super 符号
     use super::{RecoveryConfig, RecoveryLayer, RecoveryResult, get_stats, reset_stats};
 
+    /// 验证恢复结果判定 (成功 / 需升级)
     pub fn test_recovery_result() -> bool {
         let success = RecoveryResult::Success;
         let failed = RecoveryResult::Failed;
@@ -195,6 +232,7 @@ pub mod tests {
             && escalate.should_escalate()
     }
 
+    /// 验证恢复层级编码值
     pub fn test_recovery_layer() -> bool {
         let layer1 = RecoveryLayer::Layer1;
         let layer2 = RecoveryLayer::Layer2;
@@ -203,6 +241,7 @@ pub mod tests {
         layer1 as u32 == 1 && layer2 as u32 == 2 && layer3 as u32 == 3
     }
 
+    /// 验证默认配置的层级开关与阈值
     pub fn test_config_default() -> bool {
         let config = RecoveryConfig::default();
         config.enable_layer1
@@ -211,6 +250,7 @@ pub mod tests {
             && config.layer1_failure_threshold == 5
     }
 
+    /// 验证统计清零后各计数为 0
     pub fn test_stats() -> bool {
         reset_stats();
         let (bsr, bhr, tick) = get_stats();

@@ -15,6 +15,8 @@
 //! `MmStruct` 内部保护由 `spin::Mutex` 提供。
 //! `Vma` 中的物理页映射感知与 PMM 协作。
 
+#![deny(missing_docs)]
+
 use super::numa::NumaRangePolicy;
 use super::{PAGE_SIZE, PageFlags, VirtAddr};
 use crate::privileged::sync::IrqSpinLock as Mutex;
@@ -34,6 +36,7 @@ use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 pub struct VmFlags(pub u32);
 
 impl VmFlags {
+    /// 空标志集 (无任何策略位)
     pub const EMPTY: Self = Self(0);
 
     // ─── mlock 族 ────────────────────────────────────────────
@@ -58,6 +61,7 @@ impl VmFlags {
     /// `MADV_WILLNEED`: 预读 (触发 readahead)
     pub const MADV_WILLNEED: Self = Self(1 << 9);
 
+    /// 返回原始位掩码
     #[inline]
     #[expect(
         clippy::trivially_copy_pass_by_ref,
@@ -66,14 +70,17 @@ impl VmFlags {
     pub const fn bits(&self) -> u32 {
         self.0
     }
+    /// 由原始位掩码构造 (不校验未定义位)
     #[inline]
     pub const fn from_bits(bits: u32) -> Self {
         Self(bits)
     }
+    /// 是否包含 `other` 的全部标志位
     #[inline]
     pub const fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
     }
+    /// 置位并返回新标志集
     #[inline]
     #[expect(
         clippy::return_self_not_must_use,
@@ -82,6 +89,7 @@ impl VmFlags {
     pub const fn insert(self, other: Self) -> Self {
         Self(self.0 | other.0)
     }
+    /// 清位并返回新标志集
     #[inline]
     #[expect(
         clippy::return_self_not_must_use,
@@ -90,6 +98,7 @@ impl VmFlags {
     pub const fn remove(self, other: Self) -> Self {
         Self(self.0 & !other.0)
     }
+    /// 是否不含任何标志位
     #[inline]
     pub const fn is_empty(self) -> bool {
         self.0 == 0
@@ -123,17 +132,26 @@ impl core::ops::BitAndAssign for VmFlags {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum VmaType {
-    Anonymous = 0,  // 匿名映射 (malloc / mmap(MAP_ANONYMOUS))
-    FileBacked = 1, // mmap file
-    Stack = 2,      // 用户栈 (向下增长)
-    Heap = 3,       // 堆 (brk/sbrk)
-    Vdso = 4,       // vDSO
-    Vsvar = 5,      // vsyscall / vvar
-    Guard = 6,      // 保护页 (不可访问)
-    Device = 7,     // 设备MMIO映射
+    /// 匿名映射 (malloc / `mmap(MAP_ANONYMOUS)`)
+    Anonymous = 0,
+    /// 文件映射 (mmap file)
+    FileBacked = 1,
+    /// 用户栈 (向下增长)
+    Stack = 2,
+    /// 堆 (brk/sbrk)
+    Heap = 3,
+    /// vDSO
+    Vdso = 4,
+    /// vsyscall / vvar
+    Vsvar = 5,
+    /// 保护页 (不可访问)
+    Guard = 6,
+    /// 设备 MMIO 映射
+    Device = 7,
 }
 
 impl VmaType {
+    /// 由 `u8` 编码还原 VMA 类型 (未知编码退化为 `Guard`)
     #[expect(
         clippy::match_same_arms,
         reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
@@ -156,10 +174,15 @@ impl VmaType {
 /// 虚拟内存区域 (VMA): 描述一段地址区间的映射属性与后端信息.
 #[derive(Debug, Clone)]
 pub struct Vma {
+    /// 区间起始地址 (含, 页对齐)
     pub start: usize,
+    /// 区间结束地址 (不含)
     pub end: usize,
+    /// 页表硬件标志
     pub flags: PageFlags,
+    /// VMA 类型
     pub vma_type: VmaType,
+    /// 文件映射在文件内的起始偏移
     pub offset: u64,
     /// 文件映射: inode 编号 (0 = 无文件后端)
     pub inode_id: u32,
@@ -182,6 +205,7 @@ pub struct Vma {
 }
 
 impl Vma {
+    /// 创建匿名 VMA (无文件后端、无特殊策略)
     pub fn new(start: usize, end: usize, flags: PageFlags, vma_type: VmaType) -> Self {
         Self {
             start,
@@ -198,6 +222,7 @@ impl Vma {
         }
     }
 
+    /// 创建带文件偏移的 VMA (类型固定为 `FileBacked`)
     pub fn with_offset(start: usize, end: usize, flags: PageFlags, offset: u64) -> Self {
         Self {
             start,
@@ -245,21 +270,25 @@ impl Vma {
         }
     }
 
+    /// 区间字节数 (`end - start`)
     #[inline]
     pub fn size(&self) -> usize {
         self.end - self.start
     }
 
+    /// 地址是否落在区间内 (`[start, end)`)
     #[inline]
     pub fn contains(&self, addr: usize) -> bool {
         addr >= self.start && addr < self.end
     }
 
+    /// 是否为保护页 VMA
     #[inline]
     pub fn is_guard(&self) -> bool {
         self.vma_type == VmaType::Guard
     }
 
+    /// 是否为用户栈 VMA
     #[inline]
     pub fn is_stack(&self) -> bool {
         self.vma_type == VmaType::Stack
@@ -274,10 +303,15 @@ impl Vma {
 
 /// 进程地址空间描述符 (mm): 持有 VMA 列表、brk 边界与 mlock 状态.
 pub struct MmStruct {
+    /// 按起始地址排序的 VMA 列表 (受锁保护)
     pub vmas: Mutex<Vec<Vma>>,
+    /// 堆起始地址
     pub start_brk: AtomicUsize,
+    /// 当前程序间断点 (堆顶)
     pub brk: AtomicUsize,
+    /// 用户栈初始栈顶地址
     pub start_stack: usize,
+    /// mmap 区域分配起始地址
     pub mmap_base: usize,
     /// 已锁定物理字节数 (mlock 累计). 用于 `RLIMIT_MEMLOCK` 校验.
     /// 跨 fork 共享 (`MmStruct` 在 fork 中不复制, 见 `sys_fork`).
@@ -287,6 +321,7 @@ pub struct MmStruct {
 }
 
 impl MmStruct {
+    /// 创建空的地址空间描述符
     pub fn new() -> Self {
         Self {
             vmas: Mutex::new(Vec::new()),
@@ -1324,6 +1359,7 @@ pub fn get_current_mm() -> Option<&'static MmStruct> {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// FFI: 查询 `addr` 所在 VMA, 返回 `(start << 32) | flags` (未命中返回 0)
 #[unsafe(no_mangle)]
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]

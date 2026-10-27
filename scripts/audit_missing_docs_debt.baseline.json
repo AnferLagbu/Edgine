@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 2060,
-    "files": 194,
-    "keys": 445
+    "sites": 1887,
+    "files": 189,
+    "keys": 420
   },
   "entries": [
     [
@@ -581,41 +581,6 @@
       1
     ],
     [
-      "src/kernel/functions/fs/unkfs/zap.rs",
-      "a constant",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zap.rs",
-      "a method",
-      14
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zap.rs",
-      "a struct",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zap.rs",
-      "a struct field",
-      8
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zap.rs",
-      "a variant",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zap.rs",
-      "an associated function",
-      4
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zap.rs",
-      "an enum",
-      1
-    ],
-    [
       "src/kernel/functions/fs/unkfs/zil_persist.rs",
       "a method",
       6
@@ -941,16 +906,6 @@
       1
     ],
     [
-      "src/kernel/functions/wasm/wasi/errno.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/functions/wasm/wasi/errno.rs",
-      "a variant",
-      34
-    ],
-    [
       "src/kernel/functions/wasm/wasi/fd_table.rs",
       "a constant",
       2
@@ -1159,26 +1114,6 @@
       "src/kernel/privileged/driver/power.rs",
       "an associated function",
       7
-    ],
-    [
-      "src/kernel/privileged/driver/storage/nvme.rs",
-      "a method",
-      2
-    ],
-    [
-      "src/kernel/privileged/driver/storage/nvme.rs",
-      "a struct field",
-      21
-    ],
-    [
-      "src/kernel/privileged/driver/storage/nvme.rs",
-      "a variant",
-      12
-    ],
-    [
-      "src/kernel/privileged/driver/storage/nvme.rs",
-      "an associated function",
-      1
     ],
     [
       "src/kernel/privileged/driver/virtio/mod.rs",
@@ -1397,36 +1332,6 @@
     ],
     [
       "src/kernel/privileged/freg/reset/audit.rs",
-      "an associated function",
-      2
-    ],
-    [
-      "src/kernel/privileged/freg/reset/config.rs",
-      "a constant",
-      3
-    ],
-    [
-      "src/kernel/privileged/freg/reset/config.rs",
-      "a method",
-      3
-    ],
-    [
-      "src/kernel/privileged/freg/reset/config.rs",
-      "a static",
-      8
-    ],
-    [
-      "src/kernel/privileged/freg/reset/config.rs",
-      "a struct field",
-      9
-    ],
-    [
-      "src/kernel/privileged/freg/reset/config.rs",
-      "a variant",
-      8
-    ],
-    [
-      "src/kernel/privileged/freg/reset/config.rs",
       "an associated function",
       2
     ],
@@ -1694,36 +1599,6 @@
       "src/kernel/privileged/mm/uffd.rs",
       "a struct field",
       21
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "a function",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "a method",
-      9
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "a struct field",
-      10
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "a variant",
-      8
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "an associated constant",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "an associated function",
-      5
     ],
     [
       "src/kernel/privileged/mm/vmm_x86_64.rs",
