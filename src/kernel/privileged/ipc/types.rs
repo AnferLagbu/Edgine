@@ -11,6 +11,8 @@
 //! functions 侧改 `pub use crate::privileged::ipc::types::*` 保持 API 兼容。
 //! 本文件 0 unsafe (纯类型定义 + 常量 + 等待队列机制)。
 
+#![deny(missing_docs)]
+
 use alloc::vec::Vec;
 use core::sync::atomic::AtomicPtr;
 
@@ -28,6 +30,7 @@ pub type IpcId = u32;
 // (kernel_test + host-test 同语义), 统一改 any 门控
 #[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
 pub const IPC_MAX_PIPES: usize = 64;
+/// 最大管道数量 (测试模式缩减至 2)
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub const IPC_MAX_PIPES: usize = 2;
 /// 最大信号数量
@@ -37,6 +40,7 @@ pub const IPC_MAX_SIGNALS: usize = 32;
 /// 测试模式下缩减至 2 以节省内存
 #[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
 pub const IPC_MAX_SHM_SEGS: usize = 16;
+/// 最大共享内存段数量 (测试模式缩减至 2)
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub const IPC_MAX_SHM_SEGS: usize = 2;
 /// 最大消息队列数量
@@ -44,6 +48,7 @@ pub const IPC_MAX_SHM_SEGS: usize = 2;
 /// 测试模式下缩减至 2 以节省内存
 #[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
 pub const IPC_MAX_MSG_QUEUES: usize = 32;
+/// 最大消息队列数量 (测试模式缩减至 2)
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub const IPC_MAX_MSG_QUEUES: usize = 2;
 /// 最大信号量数量
@@ -51,6 +56,7 @@ pub const IPC_MAX_MSG_QUEUES: usize = 2;
 /// 测试模式下缩减至 2 以节省内存
 #[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
 pub const IPC_MAX_SEMAPHORES: usize = 64;
+/// 最大信号量数量 (测试模式缩减至 2)
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub const IPC_MAX_SEMAPHORES: usize = 2;
 
@@ -188,6 +194,7 @@ pub struct WaitQueue {
 }
 
 impl WaitQueue {
+    /// 构造全零等待队列 (常量上下文可用)
     pub const fn new() -> Self {
         Self {
             items: [const { None }; 4],
@@ -197,6 +204,7 @@ impl WaitQueue {
         }
     }
 
+    /// 重置等待队列为空
     pub fn init(&mut self) {
         self.items = [None; 4];
         self.count = 0;
@@ -308,6 +316,7 @@ pub struct Pipe {
 }
 
 impl Pipe {
+    /// 构造空管道 (常量上下文可用)
     pub const fn new() -> Self {
         Self {
             id: 0,
@@ -358,6 +367,7 @@ pub struct SignalPending {
 }
 
 impl SignalPending {
+    /// 构造空信号待处理表 (常量上下文可用)
     pub const fn new() -> Self {
         Self {
             pending: 0,
@@ -400,6 +410,7 @@ pub struct ShmSegment {
 }
 
 impl ShmSegment {
+    /// 构造空共享内存段 (常量上下文可用)
     pub const fn new() -> Self {
         Self {
             id: 0,
@@ -431,6 +442,7 @@ pub struct Message {
 }
 
 impl Message {
+    /// 构造空消息 (常量上下文可用)
     pub const fn new() -> Self {
         Self {
             type_: 0,
@@ -473,6 +485,7 @@ pub struct MsgQueue {
 }
 
 impl MsgQueue {
+    /// 构造空消息队列 (常量上下文可用)
     pub const fn new() -> Self {
         Self {
             id: 0,
@@ -513,6 +526,7 @@ pub struct Semaphore {
 }
 
 impl Semaphore {
+    /// 构造空信号量 (常量上下文可用)
     pub const fn new() -> Self {
         Self {
             id: 0,

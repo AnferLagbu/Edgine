@@ -2,6 +2,8 @@
 //!
 //! 多处理器初始化、IPI 与每 CPU 状态管理.
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 static SMP_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -351,41 +353,49 @@ pub fn tlb_probe_wait_remotes(seq: u64, expect: u8) -> u32 {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// SMP 初始化 C ABI 入口 (转调 init)
 #[unsafe(no_mangle)]
 pub extern "C" fn smp_init() {
     init();
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 查询 SMP 是否已启用 (C ABI)
 #[unsafe(no_mangle)]
 pub extern "C" fn smp_is_enabled() -> bool {
     is_enabled()
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 取已注册 CPU 数 (C ABI)
 #[unsafe(no_mangle)]
 pub extern "C" fn smp_get_cpu_count() -> u32 {
     get_cpu_count()
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 取当前 CPU 逻辑索引 (C ABI)
 #[unsafe(no_mangle)]
 pub extern "C" fn smp_get_current_cpu() -> u32 {
     get_current_cpu()
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 注册一个 CPU 的硬件 id (C ABI)
 #[unsafe(no_mangle)]
 pub extern "C" fn smp_register_cpu(hw_id: u32) -> bool {
     register_cpu(hw_id)
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 向目标 CPU 发送 TLB 失效 IPI (C ABI)
 #[unsafe(no_mangle)]
 pub extern "C" fn smp_send_tlb_invalidate_ipi(cpu_index: u32) {
     send_tlb_invalidate_ipi(cpu_index);
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 广播 TLB 失效 (C ABI)
 #[unsafe(no_mangle)]
 pub extern "C" fn smp_broadcast_tlb_invalidate() {
     broadcast_tlb_invalidate();
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 向目标 CPU 发送重调度 IPI (C ABI)
 #[unsafe(no_mangle)]
 pub extern "C" fn smp_send_reschedule_ipi(cpu_index: u32) {
     send_reschedule_ipi(cpu_index);

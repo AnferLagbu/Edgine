@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 99,
-    "files": 33,
-    "keys": 90
+    "sites": 91,
+    "files": 32,
+    "keys": 88
   },
   "entries": [
     [
@@ -147,18 +147,6 @@
       "fn",
       "phys",
       1
-    ],
-    [
-      "src/kernel/privileged/ipc/types.rs",
-      "fn",
-      "init",
-      1
-    ],
-    [
-      "src/kernel/privileged/ipc/types.rs",
-      "fn",
-      "new",
-      7
     ],
     [
       "src/kernel/privileged/irqline.rs",

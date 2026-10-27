@@ -29,6 +29,8 @@
 //! ✅ TSS 描述符 (自动处理高32位)
 //! ✅ lgdt 汇编封装 (safe wrapper)
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::privileged::racy_cell::RacyCell;
@@ -348,13 +350,21 @@ pub struct GdtPtr {
 /// 完整. 仅 syscall_entry 使用, 每次入口写后读, 无跨 CPU 复用.
 #[repr(C)]
 pub struct SyscallPerCpu {
+    /// syscall 入口使用的内核栈顶
     pub kernel_rsp: u64,
+    /// 内核页表 CR3 (高半区)
     pub kernel_pml4: u64,
+    /// 用户页表 CR3
     pub user_pml4: u64,
+    /// 保存的用户栈指针
     pub user_rsp: u64,
+    /// 蹦床栈顶
     pub trampoline_top: u64,
+    /// r12 暂存 (KPTI 切 CR3 窗口)
     pub scratch_r12: u64,
+    /// r14 暂存 (KPTI 切 CR3 窗口)
     pub scratch_r14: u64,
+    /// r15 暂存 (KPTI 切 CR3 窗口)
     pub scratch_r15: u64,
 }
 

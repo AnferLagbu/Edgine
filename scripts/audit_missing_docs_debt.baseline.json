@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 362,
-    "files": 103,
-    "keys": 153
+    "sites": 322,
+    "files": 98,
+    "keys": 145
   },
   "entries": [
     [
@@ -301,24 +301,9 @@
       1
     ],
     [
-      "src/kernel/privileged/arch/x86_64/acpi.rs",
-      "a function",
-      5
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/acpi.rs",
-      "a struct field",
-      3
-    ],
-    [
       "src/kernel/privileged/arch/x86_64/apic.rs",
       "a function",
       6
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/gdt.rs",
-      "a struct field",
-      8
     ],
     [
       "src/kernel/privileged/arch/x86_64/ioapic.rs",
@@ -406,16 +391,6 @@
       1
     ],
     [
-      "src/kernel/privileged/freg/mod.rs",
-      "a module",
-      3
-    ],
-    [
-      "src/kernel/privileged/freg/mod.rs",
-      "a static",
-      5
-    ],
-    [
       "src/kernel/privileged/freg/recoverable.rs",
       "a method",
       2
@@ -489,16 +464,6 @@
       "src/kernel/privileged/ipc/api.rs",
       "a variant",
       4
-    ],
-    [
-      "src/kernel/privileged/ipc/types.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/privileged/ipc/types.rs",
-      "an associated function",
-      7
     ],
     [
       "src/kernel/privileged/irqline.rs",
@@ -709,11 +674,6 @@
       "src/kernel/privileged/sgeg/session.rs",
       "a constant",
       1
-    ],
-    [
-      "src/kernel/privileged/smp/mod.rs",
-      "a function",
-      8
     ],
     [
       "src/kernel/privileged/sync/mutex.rs",

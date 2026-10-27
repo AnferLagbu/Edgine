@@ -27,6 +27,8 @@
 //!   0x09 — x2APIC
 //! ```
 
+#![deny(missing_docs)]
+
 use crate::privileged::sync::{IrqSpinLock, OnceLock};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -46,8 +48,11 @@ static MADT_FOUND: AtomicBool = AtomicBool::new(false);
 /// 发现的 AP LAPIC 信息
 #[derive(Debug, Clone, Copy)]
 pub struct ApInfo {
+    /// 本核 LAPIC id
     pub lapic_id: u32,
+    /// ACPI 报告的 APIC id
     pub apic_id: u32,
+    /// 该 AP 是否可用
     pub enabled: bool,
 }
 
@@ -523,12 +528,14 @@ pub fn get_lapic_base() -> u64 {
     u64::from(madt.local_apic_addr)
 }
 
+/// MADT 解析 C ABI 入口 (转调 parse_madt)
 #[unsafe(no_mangle)]
 pub extern "C" fn acpi_parse_madt(mb2_ptr: u64) -> bool {
     parse_madt(mb2_ptr)
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 取已发现 AP 数量 (C ABI)
 #[unsafe(no_mangle)]
 pub extern "C" fn acpi_get_ap_count() -> u32 {
     get_ap_count()
@@ -993,18 +1000,21 @@ pub fn parse_all_tables(multiboot2_info_ptr: u64) -> bool {
 // ============================================================================
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 全部 ACPI 表解析 C ABI 入口 (转调 parse_all_tables)
 #[unsafe(no_mangle)]
 pub extern "C" fn acpi_parse_all(mb2_ptr: u64) -> bool {
     parse_all_tables(mb2_ptr)
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 系统关机 C ABI 入口 (不返回)
 #[unsafe(no_mangle)]
 pub extern "C" fn acpi_shutdown_system() -> ! {
     acpi_shutdown()
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 系统重启 C ABI 入口 (不返回)
 #[unsafe(no_mangle)]
 pub extern "C" fn acpi_reboot_system() -> ! {
     acpi_reboot()
