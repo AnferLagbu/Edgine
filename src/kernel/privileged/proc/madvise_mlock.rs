@@ -17,6 +17,7 @@
 //! - mlock/munlock: 物理页锁定/解锁 (参数验证 + 委托 privileged)
 //! - mlockall/munlockall: 进程级锁定 (委托 privileged)
 //! - mincore: 每页驻留性查询 (参数验证 + copy_to_user)
+#![deny(missing_docs)]
 
 use crate::privileged::errno::Errno;
 use crate::privileged::mm::PAGE_SIZE;
@@ -28,21 +29,32 @@ use crate::privileged::userptr;
 // madvise advice 常量
 // ============================================================================
 
+/// 常规访问模式建议: 无特殊提示 (Linux `MADV_NORMAL`).
 pub const MADV_NORMAL: u32 = 0;
+/// 随机访问模式建议: 关闭预读启发 (Linux `MADV_RANDOM`).
 pub const MADV_RANDOM: u32 = 1;
+/// 顺序访问模式建议: 加大预读 (Linux `MADV_SEQUENTIAL`).
 pub const MADV_SEQUENTIAL: u32 = 2;
+/// 预期即将访问: 提前把区间读入 (Linux `MADV_WILLNEED`).
 pub const MADV_WILLNEED: u32 = 3;
+/// 不再需要该区间内容: 允许丢弃以回收 (Linux `MADV_DONTNEED`).
 pub const MADV_DONTNEED: u32 = 4;
+/// 该区间内容可被回收但暂不丢弃 (Linux `MADV_FREE`).
 pub const MADV_FREE: u32 = 5;
+/// 从指定区间移除映射 (Linux `MADV_REMOVE`).
 pub const MADV_REMOVE: u32 = 9;
+/// 建议把区间中的页换出 (Linux `MADV_PAGEOUT`).
 pub const MADV_PAGEOUT: u32 = 21;
 
 // ============================================================================
 // mlockall 标志
 // ============================================================================
 
+/// 锁定调用时刻已映射的全部页 (Linux `MCL_CURRENT`).
 pub const MCL_CURRENT: u32 = 1;
+/// 锁定今后新映射的页 (Linux `MCL_FUTURE`).
 pub const MCL_FUTURE: u32 = 2;
+/// 页被访问时才锁定, 减少启动开销 (Linux `MCL_ONFAULT`).
 pub const MCL_ONFAULT: u32 = 4;
 
 // ============================================================================

@@ -52,6 +52,7 @@
 //! - 本文件 0 unsafe
 
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -657,7 +658,12 @@ impl ICache {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DCacheResult {
     /// 正缓存命中: 找到 inode
-    Hit { ino: u32, file_type: u8 },
+    Hit {
+        /// 命中的 inode 号
+        ino: u32,
+        /// 文件类型 (`DT_*` 编码)
+        file_type: u8,
+    },
     /// 负缓存命中: 该路径不存在
     Negative,
     /// 缓存未命中
@@ -667,13 +673,21 @@ pub enum DCacheResult {
 /// icache 查找结果
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ICacheResult {
+    /// inode 号
     pub ino: u32,
+    /// 文件类型 (`DT_*` 编码)
     pub file_type: u8,
+    /// 权限位
     pub perm: u16,
+    /// 文件大小 (字节)
     pub size: u32,
+    /// 修改时间
     pub mtime: u64,
+    /// 状态变更时间
     pub ctime: u64,
+    /// 属主标识
     pub owner_pwm: u64,
+    /// 属组标识
     pub group_pwm: u64,
 }
 

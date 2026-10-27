@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 503,
-    "files": 118,
-    "keys": 188
+    "sites": 452,
+    "files": 113,
+    "keys": 176
   },
   "entries": [
     [
@@ -51,16 +51,6 @@
       1
     ],
     [
-      "src/kernel/functions/freg/audit_export.rs",
-      "a struct field",
-      9
-    ],
-    [
-      "src/kernel/functions/freg/audit_export.rs",
-      "an associated function",
-      1
-    ],
-    [
       "src/kernel/functions/fs/cgroupfs.rs",
       "an associated function",
       3
@@ -69,11 +59,6 @@
       "src/kernel/functions/fs/configfs.rs",
       "an associated function",
       3
-    ],
-    [
-      "src/kernel/functions/fs/dcache.rs",
-      "a struct field",
-      10
     ],
     [
       "src/kernel/functions/fs/devpts.rs",
@@ -167,36 +152,6 @@
     ],
     [
       "src/kernel/functions/fs/systree.rs",
-      "an associated function",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/checksum.rs",
-      "a constant",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/checksum.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/checksum.rs",
-      "a struct",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/checksum.rs",
-      "a struct field",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/checksum.rs",
-      "a trait",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/checksum.rs",
       "an associated function",
       2
     ],
@@ -676,16 +631,6 @@
       2
     ],
     [
-      "src/kernel/privileged/net/init/state.rs",
-      "a static",
-      5
-    ],
-    [
-      "src/kernel/privileged/net/init/state.rs",
-      "a variant",
-      5
-    ],
-    [
       "src/kernel/privileged/net/mod.rs",
       "a module",
       1
@@ -789,11 +734,6 @@
       "src/kernel/privileged/proc/fd_alloc.rs",
       "an associated function",
       1
-    ],
-    [
-      "src/kernel/privileged/proc/madvise_mlock.rs",
-      "a constant",
-      11
     ],
     [
       "src/kernel/privileged/proc/oomd.rs",

@@ -4,6 +4,7 @@
 //! `NetState` / `NET_STATE` / `transition_state` / `set_failed`.
 //! 抽出为独立子模块后, init.rs 通过 `pub use state::*` re-export,
 //! 保持 init 主体与子模块 (raw/sm_fi) 的 `super::NET_STATE` 等引用不变.
+#![deny(missing_docs)]
 
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
@@ -25,22 +26,32 @@ use super::{TOTAL_SLOTS, UDP_META_COUNT};
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InitState {
+    /// 未初始化 (初始态)
     Uninitialized = 0,
+    /// 已完成硬件探测
     HardwareProbed = 1,
+    /// 网络接口已就绪
     InterfaceReady = 2,
+    /// 完全初始化完成 (终态: 就绪)
     FullyInitialized = 3,
+    /// 初始化失败 (终态: 不再重试)
     Failed = 255,
 }
 
+/// 网络初始化状态机的当前阶段 (`InitState` 值的原子快照).
 pub static G_INIT_STATE: AtomicU8 = AtomicU8::new(InitState::Uninitialized as u8);
 
 // 当前网络配置快照 (D1.1/D1.2 高层 API 支撑)
 // 全部为 Atomic, 单字段读写无需 NET_LOCK; 多字段一致性由 NetStatus::capture 原子复制.
 // 未配置时全部 = 0; 0.0.0.0 表示"无".
 // pub: 供 init.rs 主体 (NetStatus::capture 等) 与 `pub use state::*` re-export 访问.
-pub static G_MAC: AtomicU64 = AtomicU64::new(0); // 6 字节大端打包为 u64
-pub static G_IPV4: AtomicU32 = AtomicU32::new(0); // 网络字节序
-pub static G_GATEWAY: AtomicU32 = AtomicU32::new(0); // 网络字节序
+/// MAC 地址 (6 字节大端打包为 u64)
+pub static G_MAC: AtomicU64 = AtomicU64::new(0);
+/// IPv4 地址 (网络字节序)
+pub static G_IPV4: AtomicU32 = AtomicU32::new(0);
+/// 默认网关 (网络字节序)
+pub static G_GATEWAY: AtomicU32 = AtomicU32::new(0);
+/// DNS 服务器地址列表 (最多 3 个, 网络字节序)
 pub static G_DNS: [AtomicU32; 3] = [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)];
 
 // ============================================================================

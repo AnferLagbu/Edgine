@@ -1,8 +1,12 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 use crate::functions::fs::unkfs::bp::UnkfsCksumType;
 
+/// ZFS On-Disk 校验和类型 ID: Fletcher-2.
 pub const HV_CKSUM_FLETCHER2: usize = 1;
+/// ZFS On-Disk 校验和类型 ID: Fletcher-4.
 pub const HV_CKSUM_FLETCHER4: usize = 2;
+/// ZFS On-Disk 校验和类型 ID: SHA-256.
 pub const HV_CKSUM_SHA256: usize = 3;
 
 // I-04: 引入 `Checksum` trait, 让 spa/dedup 等调用方依赖抽象而非具体类型.
@@ -11,6 +15,7 @@ pub const HV_CKSUM_SHA256: usize = 3;
 // SAFETY: 该 trait 在 no_std 内核环境下使用, 方法均无内存分配 / 阻塞,
 // 可在中断上下文调用. 实现方必须保证 `compute` 与 `verify` 对同一输入
 // 返回稳定结果 (无内部可变状态).
+/// 校验和算法抽象 — 使 spa/dedup 等调用方依赖抽象而非具体类型 (I-04).
 pub trait Checksum: Send + Sync {
     /// 给定算法类型与数据, 计算校验和
     fn compute(&self, kind: UnkfsCksumType, data: &[u8]) -> [u64; 4];
@@ -18,13 +23,17 @@ pub trait Checksum: Send + Sync {
     fn verify(&self, kind: UnkfsCksumType, data: &[u8], expected: &[u64; 4]) -> bool;
 }
 
+/// 校验和结果载体: 算法类型 + 四字校验值.
 #[derive(Debug, Clone, Copy)]
 pub struct UnkfsChecksum {
+    /// 使用的校验和算法类型
     pub kind: UnkfsCksumType,
+    /// 校验值 (四字, 具体布局依算法而定)
     pub value: [u64; 4],
 }
 
 impl UnkfsChecksum {
+    /// 构造指定算法类型的零值校验和.
     pub fn new(kind: UnkfsCksumType) -> Self {
         Self {
             kind,
@@ -36,6 +45,7 @@ impl UnkfsChecksum {
         clippy::match_same_arms,
         reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
     )]
+    /// 按算法类型对 `data` 计算校验和.
     pub fn compute(kind: UnkfsCksumType, data: &[u8]) -> Self {
         let mut ck = Self::new(kind);
         match kind {
@@ -48,6 +58,7 @@ impl UnkfsChecksum {
         ck
     }
 
+    /// 用自身算法重算 `data`, 与保存的校验值比较是否一致.
     pub fn verify(&self, data: &[u8]) -> bool {
         let computed = Self::compute(self.kind, data);
         self.value == computed.value

@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! 审计日志导出器 — functions/freg/ 业务层
 //!
 //! ## 职责
@@ -17,13 +18,21 @@ use crate::privileged::freg::{ROLLBACK_LOG, recovery_rollback_log_count};
 /// 审计摘要 (压缩视图, 适合 dmesg 导出)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RollbackSummary {
+    /// 回滚所属的域 ID
     pub domain_id: u64,
+    /// 回滚起始代数 (被撤销前)
     pub generation_from: u64,
+    /// 回滚目标代数 (撤销后自洽态)
     pub generation_to: u64,
+    /// 本次回滚涉及的条目数
     pub entries: usize,
+    /// 级联回滚深度
     pub cascade_depth: usize,
+    /// 回滚结果码 (0 = 成功, 负值 = errno)
     pub result: i32,
+    /// 回滚发生时的内核 tick
     pub tick: u64,
+    /// 回滚事件的指纹 (用于去重/校验)
     pub fingerprint: u64,
 }
 
@@ -115,10 +124,12 @@ fn write_i32(buf: &mut [u8], mut v: i32) -> usize {
 pub struct AuditExporter {
     /// 输出 buffer (固定大小, 避免 alloc)
     pub output_buf: [u8; 4096],
+    /// 当前已写入 `output_buf` 的字节数
     pub output_count: usize,
 }
 
 impl AuditExporter {
+    /// 构造空的导出器: buffer 清零, 计数归零
     pub const fn new() -> Self {
         Self {
             output_buf: [0u8; 4096],
