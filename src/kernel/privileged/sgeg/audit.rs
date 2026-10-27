@@ -1,3 +1,9 @@
+//! SGEG 审计日志 — 固定容量环形缓冲, 记录身份与能力相关安全事件。
+//!
+//! 写入经 `IrqSpinLock` 保护 (多核安全), 支持按序全量转储到串口。
+
+#![deny(missing_docs)]
+
 use super::types::{AuditAction, AuditEntry, AuditResult, PwmId};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -10,6 +16,7 @@ pub struct AuditLog {
 }
 
 impl AuditLog {
+    /// 创建空审计日志。
     pub const fn new() -> Self {
         Self {
             entries: [AuditEntry {
@@ -36,6 +43,7 @@ impl AuditLog {
         clippy::unreadable_literal,
         reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
     )]
+    /// 追加一条审计项 (环形覆盖最旧记录)。
     pub fn log(&self, pwm: u64, action: AuditAction, target_pwm: u64, domain: u64, caps: u64) {
         let now = super::bootstrap::pwm_now();
         let idx = self.count.fetch_add(1, Ordering::AcqRel) % AUDIT_CAPACITY;
@@ -57,6 +65,7 @@ impl AuditLog {
         clippy::no_effect_underscore_binding,
         reason = "no_effect_underscore_binding: let _ = expr 用于类型推导/副作用; 当前优先 expect"
     )]
+    /// 将全部有效审计条目打印到串口。
     pub fn dump(&self) {
         let count = self.count.load(Ordering::Acquire);
         let len = if count > AUDIT_CAPACITY {
@@ -82,6 +91,7 @@ impl AuditLog {
         }
     }
 
+    /// 返回固定容量条目的只读视图 (按写入顺序)。
     pub fn get_entries(&self) -> &[AuditEntry; AUDIT_CAPACITY] {
         &self.entries
     }

@@ -17,6 +17,8 @@
 //! - 未注册 fallback: 返回 Normal (functions::mm::init 之前的早期启动窗口,
 //!   同 `FallbackAllocPolicy` 风格)
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use crate::privileged::sync::OnceLock;
@@ -40,6 +42,7 @@ pub enum MemoryPressure {
 }
 
 impl MemoryPressure {
+    /// 由原始 `u8` 值还原压力级别 (未知值回退 `Normal`)。
     pub fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::Warning,
@@ -53,6 +56,7 @@ impl MemoryPressure {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 是否处于严重或紧急压力 (`Critical` / `Emergency`)。
     pub fn is_critical(&self) -> bool {
         matches!(self, Self::Critical | Self::Emergency)
     }
@@ -61,6 +65,7 @@ impl MemoryPressure {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 是否处于紧急压力 (`Emergency`)。
     pub fn is_emergency(&self) -> bool {
         matches!(self, Self::Emergency)
     }
@@ -69,6 +74,7 @@ impl MemoryPressure {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 压力级别的英文短描述 (用于日志)。
     pub fn description(&self) -> &'static str {
         match self {
             Self::Normal => "normal",

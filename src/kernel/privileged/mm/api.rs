@@ -27,6 +27,8 @@
 //! - 提供纯 Rust 抽象,无 C ABI 依赖
 //! - 异常路径:空指针 / 越界 / 内存不足一律返回 0 / -1 / null,调用方按需检查
 
+#![deny(missing_docs)]
+
 use super::{
     PageFlags, PageSize, PhysAddr, VirtAddr, get_kmalloc, get_kmalloc_mut, get_pmm, get_vmm,
 };
@@ -36,9 +38,13 @@ use core::sync::atomic::AtomicU64;
 /// 内核 malloc 统计结构 (C 兼容)
 #[repr(C)]
 pub struct KmallocStats {
+    /// 累计分配次数
     pub total_allocs: u64,
+    /// 累计释放次数
     pub total_frees: u64,
+    /// 当前占用字节数
     pub current_usage: u64,
+    /// 峰值占用字节数
     pub peak_usage: u64,
 }
 

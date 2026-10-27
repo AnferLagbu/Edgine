@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 41,
-    "files": 15,
-    "keys": 40
+    "sites": 33,
+    "files": 13,
+    "keys": 32
   },
   "entries": [
     [
@@ -80,30 +80,6 @@
       "src/kernel/privileged/mm/pmm.rs",
       "fn",
       "const_default",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/pressure.rs",
-      "fn",
-      "description",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/pressure.rs",
-      "fn",
-      "from_u8",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/pressure.rs",
-      "fn",
-      "is_critical",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/pressure.rs",
-      "fn",
-      "is_emergency",
       1
     ],
     [
@@ -212,30 +188,6 @@
       "src/kernel/privileged/sched/sched_trait.rs",
       "fn",
       "pid",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/audit.rs",
-      "fn",
-      "dump",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/audit.rs",
-      "fn",
-      "get_entries",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/audit.rs",
-      "fn",
-      "log",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/audit.rs",
-      "fn",
-      "new",
       1
     ],
     [

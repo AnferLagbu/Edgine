@@ -32,6 +32,8 @@
 //! - 进程创建: O(N) PID 扫描 (N ≤ 65536)
 //! - 上下文切换: asm stub, ~200 CPU cycles
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::Ordering;
 
 use super::proc_ops;
@@ -49,12 +51,14 @@ pub use sched_ops::*;
 // ============================================================================
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 初始化会话管理器。
 #[unsafe(no_mangle)]
 pub extern "C" fn session_init() {
     super::session::SESSION_MANAGER.init();
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 初始化用户进程管理器。
 #[unsafe(no_mangle)]
 pub extern "C" fn user_proc_init() {
     USER_PROC_MANAGER.init();
@@ -82,6 +86,7 @@ pub fn set_init_status(s: u32) {
 // ============================================================================
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 从内存中的 ELF 镜像加载用户进程。
 #[unsafe(no_mangle)]
 pub extern "C" fn user_proc_load_elf_from_memory(
     elf_data: *const u8,
@@ -127,6 +132,7 @@ pub unsafe extern "C" fn user_proc_setup_argv(
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 按 PID 进入指定用户进程 (Ring 3 / EL0)。
 #[unsafe(no_mangle)]
 pub extern "C" fn user_proc_enter_by_pid(pid: u32) -> i32 {
     crate::klog_boot_info!("[USER] user_proc_enter_by_pid: pid={}", pid);

@@ -27,6 +27,8 @@
 //! - 消息队列: O(1) 固定槽位
 //! - 资源上限: pipes`[64]` / shm`[16]` / msgq`[32]` / sem`[64]`
 
+#![deny(missing_docs)]
+
 // ============================================================================
 // 契约 trait: IpcResource — 所有 IPC 资源类型必须实现
 // ============================================================================
@@ -49,9 +51,13 @@ pub trait IpcResource {
 /// IPC 资源类型 (管道/共享内存/消息队列/信号量)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IpcResourceType {
+    /// 管道
     Pipe,
+    /// 共享内存段
     Shm,
+    /// 消息队列
     MsgQueue,
+    /// 信号量
     Semaphore,
 }
 

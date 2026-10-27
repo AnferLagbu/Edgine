@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 131,
-    "files": 62,
-    "keys": 75
+    "sites": 111,
+    "files": 57,
+    "keys": 68
   },
   "entries": [
     [
@@ -246,34 +246,14 @@
       2
     ],
     [
-      "src/kernel/privileged/ipc/api.rs",
-      "a variant",
-      4
-    ],
-    [
       "src/kernel/privileged/irqline.rs",
       "a method",
       3
     ],
     [
-      "src/kernel/privileged/mm/api.rs",
-      "a struct field",
-      4
-    ],
-    [
       "src/kernel/privileged/mm/pmm_trait.rs",
       "a struct field",
       3
-    ],
-    [
-      "src/kernel/privileged/mm/pressure.rs",
-      "a method",
-      3
-    ],
-    [
-      "src/kernel/privileged/mm/pressure.rs",
-      "an associated function",
-      1
     ],
     [
       "src/kernel/privileged/mm/slab.rs",
@@ -334,21 +314,6 @@
       "src/kernel/privileged/net/wait_queue.rs",
       "an associated function",
       2
-    ],
-    [
-      "src/kernel/privileged/proc/api.rs",
-      "a function",
-      4
-    ],
-    [
-      "src/kernel/privileged/sgeg/audit.rs",
-      "a method",
-      3
-    ],
-    [
-      "src/kernel/privileged/sgeg/audit.rs",
-      "an associated function",
-      1
     ],
     [
       "src/kernel/privileged/sgeg/bootstrap.rs",
