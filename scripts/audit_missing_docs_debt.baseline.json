@@ -5,15 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 1,
-    "files": 1,
-    "keys": 1
+    "sites": 0,
+    "files": 0,
+    "keys": 0
   },
-  "entries": [
-    [
-      "src/kernel/privileged/syscall/mod.rs",
-      "a function",
-      1
-    ]
-  ]
+  "entries": []
 }

@@ -46,6 +46,7 @@ pub mod types;
 
 pub use dispatch::*;
 
+/// 校验单个用户态指针是否落在用户可访问地址范围内.
 pub fn validate_user_ptr(ptr: u64) -> bool {
     crate::privileged::userptr::validate_user_ptr(ptr)
 }
