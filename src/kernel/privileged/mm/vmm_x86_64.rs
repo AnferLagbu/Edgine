@@ -505,10 +505,6 @@ impl VirtualMemoryManager {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
-    #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
     /// 在指定页表中翻译虚拟地址, 返回物理地址与叶子项可写标志.
     ///
     /// 与 [`Self::get_physical_in_pml4`] 同一遍历逻辑, 额外透出叶子表项的写位,
@@ -564,9 +560,9 @@ impl VirtualMemoryManager {
             }
 
             // SAFETY: pde present && !huge → valid PT pointer
-            let pt_virt = (pde & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
-            let pt_raw = pt_virt as *const u64;
-            let pte = pt_raw.add(virt.pt_idx()).read_volatile();
+            let pt_page_virt = (pde & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
+            let pt_page_raw = pt_page_virt as *const u64;
+            let pte = pt_page_raw.add(virt.pt_idx()).read_volatile();
             if (pte & 1) == 0 {
                 return None;
             }
@@ -583,10 +579,6 @@ impl VirtualMemoryManager {
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    #[expect(
-        clippy::similar_names,
-        reason = "similar_names: 变量名相似表达同族概念; 当前优先 expect"
     )]
     /// 读取 PTE 原始值 (用于 swap entry 检测)
     ///
@@ -620,18 +612,14 @@ impl VirtualMemoryManager {
                 return None;
             }
 
-            let pt_virt = (pde & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
-            let pt_raw = pt_virt as *const u64;
-            let pte = pt_raw.add(virt.pt_idx()).read_volatile();
+            let pt_page_virt = (pde & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
+            let pt_page_raw = pt_page_virt as *const u64;
+            let pte = pt_page_raw.add(virt.pt_idx()).read_volatile();
 
             Some(pte)
         }
     }
 
-    #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
     /// 直接写入 PTE 原始值 (用于 swap 替换)
     ///
     /// 沿 PML4→PDPT→PD→PT 找到最终 PTE, 写入 `raw_pte` 后 TLB flush.
@@ -670,9 +658,9 @@ impl VirtualMemoryManager {
                 return;
             }
 
-            let pt_virt = (pde & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
-            let pt_ptr = (pt_virt as *mut u64).add(virt.pt_idx());
-            pt_ptr.write_volatile(raw_pte);
+            let pt_page_virt = (pde & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
+            let pt_page_ptr = (pt_page_virt as *mut u64).add(virt.pt_idx());
+            pt_page_ptr.write_volatile(raw_pte);
 
             // 替换既有翻译 (swap-in/out 改写 PTE): 远程核可能缓存旧条目, 必须远程失效 (S-9)
             self.flush_tlb_remote(virt.0);
@@ -775,10 +763,6 @@ impl VirtualMemoryManager {
     /// 本地/远程 TLB 失效。`flush_tlb_remote` 只置位"本临界区需远程失效"标志,
     /// 实际代发布与定向 IPI 在 `release_lock` 出口统一进行, 故本函数可安全用于
     /// 持锁路径 (如 COW fault 的判定-映射原子化)。
-    #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
     pub(crate) fn map_page_in_table_locked(
         &self,
         pml4: u64,
@@ -825,7 +809,7 @@ impl VirtualMemoryManager {
                 return;
             }
 
-            let (pt, split_pt) =
+            let (pt, split_leaf) =
                 self.get_or_create_table_entry(pd.add(virt.pd_idx()), true, PAGE_SIZE);
             if pt.is_null() {
                 crate::klog_boot_info!(
@@ -851,7 +835,7 @@ impl VirtualMemoryManager {
 
             // 判定"本次写入是否为替换" (叶项原本存在 / 本次拆分了巨页) ⇒ 远程失效;
             // 纯新建 (用户地址空间该 VA 首次映射, 或进程页表首次建立中间级) ⇒ 仅本核 (S-9).
-            if split_pdpt || split_pd || split_pt || leaf_was_present {
+            if split_pdpt || split_pd || split_leaf || leaf_was_present {
                 self.flush_tlb_remote(virt.0);
             } else {
                 self.flush_tlb_local(virt.0);
@@ -859,10 +843,6 @@ impl VirtualMemoryManager {
         }
     }
 
-    #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
     /// 在指定页表中拆除单页翻译并触发远程失效; `pml4 == 0` 为空操作.
     ///
     /// 内核高半区受 fail-closed 保护, 命中即跳过.
@@ -964,9 +944,9 @@ impl VirtualMemoryManager {
                         super::release_table_frame_locked(PhysAddr(pt_phys));
 
                         if self.is_table_empty(pd) {
-                            let pd_phys = pdpte.frame().as_u64();
+                            let pd_frame_phys = pdpte.frame().as_u64();
                             (*pdpt.add(virt.pdpt_idx())).set_value(0);
-                            super::release_table_frame_locked(PhysAddr(pd_phys));
+                            super::release_table_frame_locked(PhysAddr(pd_frame_phys));
 
                             if self.is_table_empty(pdpt) {
                                 let pdpt_phys = pml4e.frame().as_u64();
@@ -983,10 +963,6 @@ impl VirtualMemoryManager {
         self.release_lock(&guard);
     }
 
-    #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
     /// 销毁指定用户页表: 拆除映射并延迟释放其占用的页帧; `pml4 == 0` 为空操作.
     pub fn destroy_page_table(&self, pml4: u64) {
         if pml4 == 0 {
@@ -1037,9 +1013,9 @@ impl VirtualMemoryManager {
                                 let pde = &*pd.add(k);
 
                                 if pde.is_present() && !pde.is_huge() {
-                                    let pt_phys = pde.frame().as_u64();
-                                    let pt_virt = PhysAddr(pt_phys).to_virt();
-                                    let pt = pt_virt.0 as *mut PageTableEntry;
+                                    let pt_table_phys = pde.frame().as_u64();
+                                    let pt_table_virt = PhysAddr(pt_table_phys).to_virt();
+                                    let pt = pt_table_virt.0 as *mut PageTableEntry;
 
                                     // 遍历 leaf PTE 释放用户数据物理页 (仅 4KB USER 页).
                                     //
@@ -1063,7 +1039,7 @@ impl VirtualMemoryManager {
                                         }
                                     }
 
-                                    super::release_table_frame_locked(PhysAddr(pt_phys));
+                                    super::release_table_frame_locked(PhysAddr(pt_table_phys));
                                 }
                             }
 
@@ -1122,10 +1098,6 @@ impl VirtualMemoryManager {
 
     // ==================== 私有方法 ====================
 
-    #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
     fn map_page_internal(
         &self,
         virt: VirtAddr,
@@ -1172,7 +1144,7 @@ impl VirtualMemoryManager {
                 return Err("Failed to allocate PD");
             }
 
-            let (pt, split_pt) =
+            let (pt, split_leaf) =
                 self.get_or_create_table_entry(pd.add(virt.pd_idx()), true, PAGE_SIZE);
             if pt.is_null() {
                 return Err("Failed to allocate PT");
@@ -1186,7 +1158,7 @@ impl VirtualMemoryManager {
             // 判定"本次写入是否为替换": 叶子项原本已存在 (覆盖), 或本次调用拆分了巨页
             // (旧巨页条目被换成下一级表指针). 二者皆否 = 纯新建 (该 VA 此前无翻译),
             // 远程核不可能缓存陈旧条目 ⇒ 只失效本核, 不登记远程需求 (S-9).
-            if split_pdpt || split_pd || split_pt || leaf_was_present {
+            if split_pdpt || split_pd || split_leaf || leaf_was_present {
                 self.flush_tlb_remote(virt.0);
             } else {
                 self.flush_tlb_local(virt.0);
@@ -1581,10 +1553,6 @@ impl VirtualMemoryManager {
     // 有意窄化: 显式收窄, 调用方保证值域
     #[expect(clippy::cast_possible_truncation)]
     #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
-    #[expect(
         clippy::too_many_lines,
         reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
     )]
@@ -1707,36 +1675,36 @@ impl VirtualMemoryManager {
                         continue;
                     }
 
-                    let child_pt_phys = pmm.alloc_page()?;
-                    let child_pt = child_pt_phys.to_virt().0 as *mut u64;
-                    // SAFETY: child_pt from PMM
+                    let child_table_phys = pmm.alloc_page()?;
+                    let child_table = child_table_phys.to_virt().0 as *mut u64;
+                    // SAFETY: child_table from PMM
                     unsafe {
-                        core::ptr::write_bytes(child_pt, 0, PAGE_SIZE as usize);
+                        core::ptr::write_bytes(child_table, 0, PAGE_SIZE as usize);
                     }
 
                     let mut child_pde_v = parent_pde;
                     child_pde_v =
-                        (child_pde_v & 0xFFF) | (child_pt_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
+                        (child_pde_v & 0xFFF) | (child_table_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
                     // SAFETY: child_pd valid; volatile write
                     unsafe {
                         child_pd.add(k as usize).write_volatile(child_pde_v);
                     }
 
                     // SAFETY: parent_pde present && !huge → valid PT pointer
-                    let parent_pt_virt = (parent_pde & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
-                    let parent_pt = parent_pt_virt as *const u64;
+                    let parent_table_virt = (parent_pde & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
+                    let parent_table = parent_table_virt as *const u64;
 
                     for l in 0..512u16 {
                         // SAFETY: l in 0..511 within PT page; volatile read
-                        let parent_pte = unsafe { parent_pt.add(l as usize).read_volatile() };
-                        if (parent_pte & 1) == 0 {
+                        let parent_leaf = unsafe { parent_table.add(l as usize).read_volatile() };
+                        if (parent_leaf & 1) == 0 {
                             continue;
                         }
 
                         let child_page_phys = pmm.alloc_page()?;
                         let child_page_virt = PhysAddr(child_page_phys.as_u64()).to_virt().0;
                         // SAFETY: parent_page_virt is valid kernel VA from PTE
-                        let parent_page_virt = (parent_pte & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
+                        let parent_page_virt = (parent_leaf & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
 
                         // SAFETY: Both addresses are valid 4KB kernel VAs
                         unsafe {
@@ -1747,12 +1715,12 @@ impl VirtualMemoryManager {
                             );
                         }
 
-                        let mut child_pte_v = parent_pte;
-                        child_pte_v = (child_pte_v & 0xFFF)
+                        let mut child_leaf_v = parent_leaf;
+                        child_leaf_v = (child_leaf_v & 0xFFF)
                             | (child_page_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
-                        // SAFETY: child_pt valid; volatile write
+                        // SAFETY: child_table valid; volatile write
                         unsafe {
-                            child_pt.add(l as usize).write_volatile(child_pte_v);
+                            child_table.add(l as usize).write_volatile(child_leaf_v);
                         }
                     }
                 }
@@ -2096,10 +2064,6 @@ pub fn tlb_probe_selftest() -> bool {
 ///
 /// # 调用约束
 /// 调用方不得在已持 `VMM_LOCK` 的情况下调用本函数.
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pdpt/pd/pt 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
 pub fn count_present_user_pages(cr3: u64) -> Option<u64> {
     if cr3 == 0 {
         return Some(0);
@@ -2148,10 +2112,10 @@ pub fn count_present_user_pages(cr3: u64) -> Option<u64> {
                         pages += 512;
                         continue;
                     }
-                    let pt_ptr = pde.frame().to_virt().0 as *const PageTableEntry;
+                    let pt_page_ptr = pde.frame().to_virt().0 as *const PageTableEntry;
 
                     for l in 0..512usize {
-                        if (&*pt_ptr.add(l)).is_present() {
+                        if (&*pt_page_ptr.add(l)).is_present() {
                             pages += 1;
                         }
                     }

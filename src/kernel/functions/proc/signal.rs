@@ -523,18 +523,14 @@ pub fn kill_syscall(pid: i32, sig: i32) -> Result<usize, crate::privileged::sysc
 ///
 /// - `tgid <= 0` 或 `tid <= 0` 或 `sig` 不在 `0..=63` → `EINVAL`
 /// - tgid/tid 不匹配或目标进程不存在 → `ESRCH`
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (tgid/tid); 重命名会破坏 POSIX 语义对应, 仅在确实混淆时才人工拆分"
-)]
 pub fn tgkill_syscall(
     tgid: i32,
-    tid: i32,
+    thread_id: i32,
     sig: i32,
 ) -> Result<usize, crate::privileged::syscall::Errno> {
     use crate::privileged::syscall::Errno;
 
-    if tgid <= 0 || tid <= 0 {
+    if tgid <= 0 || thread_id <= 0 {
         return Err(Errno::EINVAL);
     }
     if !(0..=63).contains(&sig) {
@@ -542,8 +538,8 @@ pub fn tgkill_syscall(
     }
 
     // 目标存在性校验 (tid 在当前模型下即 pid)
-    let target =
-        crate::privileged::proc::api::process_with(tid as u32, |p| p.pid).ok_or(Errno::ESRCH)?;
+    let target = crate::privileged::proc::api::process_with(thread_id as u32, |p| p.pid)
+        .ok_or(Errno::ESRCH)?;
     if target.0 != tgid as u32 {
         // 无线程组模型下 tid 所属进程的 tgid 即其 pid
         return Err(Errno::ESRCH);
@@ -552,7 +548,7 @@ pub fn tgkill_syscall(
         return Ok(0);
     }
 
-    let ret = crate::privileged::syscall::api::sys_kill(tid, sig);
+    let ret = crate::privileged::syscall::api::sys_kill(thread_id, sig);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {

@@ -246,10 +246,6 @@ pub fn clear_lockout(pwm: u64) -> Result<(), PwmError> {
 // ============================================================================
 
 #[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
-#[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
@@ -264,7 +260,7 @@ pub fn elevate_for_suid(target_pwm: u64) -> bool {
         None => return false,
     };
     let target_uid = target_entry.get_uid();
-    let target_gid = target_entry.get_gid();
+    let desired_gid = target_entry.get_gid();
 
     let result = PROCESS_TABLE.with_process(pid, |p| {
         let depth = p.session_elev_depth.load(Ordering::Acquire);
@@ -276,9 +272,9 @@ pub fn elevate_for_suid(target_pwm: u64) -> bool {
             let mut ctx = p.session.lock();
             session_pwm = ctx.session_pwm.as_u64();
             ctx.euid = target_uid;
-            ctx.egid = target_gid;
+            ctx.egid = desired_gid;
             ctx.saved_euid = target_uid;
-            ctx.saved_egid = target_gid;
+            ctx.saved_egid = desired_gid;
             ctx.active_domain_id = DomainId::from_uid(target_uid);
             ctx.elevation_granted_pwm = PwmId(target_pwm);
             *ctx
@@ -481,12 +477,8 @@ pub fn try_setegid(target_egid: u32) -> bool {
     }
 }
 
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
 /// POSIX setreuid 语义: 按需同时设置缓存 uid 与有效 uid, 参数为 `u32::MAX` 表示保持原值。
-pub fn try_setreuid(target_ruid: u32, target_euid: u32) -> bool {
+pub fn try_setreuid(target_ruid: u32, euid_arg: u32) -> bool {
     #[inline]
     fn has_uid_privilege(table: &identity::IdentityTable, uid: u32, current_pwm: u64) -> bool {
         table.find_by_uid(uid).map_or(false, |entry| {
@@ -500,16 +492,16 @@ pub fn try_setreuid(target_ruid: u32, target_euid: u32) -> bool {
     };
 
     let ruid_is_set = target_ruid != u32::MAX;
-    let euid_is_set = target_euid != u32::MAX;
+    let euid_is_set = euid_arg != u32::MAX;
 
     let new_ruid = if ruid_is_set {
         target_ruid
     } else {
         old_cached_uid
     };
-    let new_euid = if euid_is_set { target_euid } else { old_euid };
+    let euid_next = if euid_is_set { euid_arg } else { old_euid };
 
-    if new_ruid == old_cached_uid && new_euid == old_euid {
+    if new_ruid == old_cached_uid && euid_next == old_euid {
         return true;
     }
 
@@ -522,32 +514,28 @@ pub fn try_setreuid(target_ruid: u32, target_euid: u32) -> bool {
         }
     }
 
-    if euid_is_set && new_euid != old_euid {
-        let ok = has_uid_privilege(table, new_euid, current_pwm)
-            || new_euid == old_cached_uid
-            || new_euid == old_saved_euid;
+    if euid_is_set && euid_next != old_euid {
+        let ok = has_uid_privilege(table, euid_next, current_pwm)
+            || euid_next == old_cached_uid
+            || euid_next == old_saved_euid;
         if !ok {
             return false;
         }
     }
 
-    let saved_euid_should_update = ruid_is_set || (euid_is_set && new_euid != old_cached_uid);
+    let saved_euid_should_update = ruid_is_set || (euid_is_set && euid_next != old_cached_uid);
     try_with_current_ctx(false, |ctx| {
         ctx.cached_uid = new_ruid;
-        ctx.euid = new_euid;
+        ctx.euid = euid_next;
         if saved_euid_should_update {
-            ctx.saved_euid = new_euid;
+            ctx.saved_euid = euid_next;
         }
         true
     })
 }
 
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
 /// POSIX setregid 语义: 按需同时设置缓存 gid 与有效 gid, 参数为 `u32::MAX` 表示保持原值。
-pub fn try_setregid(target_rgid: u32, target_egid: u32) -> bool {
+pub fn try_setregid(target_rgid: u32, egid_arg: u32) -> bool {
     #[inline]
     fn has_gid_privilege(table: &identity::IdentityTable, gid: u32, current_pwm: u64) -> bool {
         table.find_by_gid(gid).map_or(false, |entry| {
@@ -561,16 +549,16 @@ pub fn try_setregid(target_rgid: u32, target_egid: u32) -> bool {
     };
 
     let rgid_is_set = target_rgid != u32::MAX;
-    let egid_is_set = target_egid != u32::MAX;
+    let egid_is_set = egid_arg != u32::MAX;
 
     let new_rgid = if rgid_is_set {
         target_rgid
     } else {
         old_cached_gid
     };
-    let new_egid = if egid_is_set { target_egid } else { old_egid };
+    let egid_next = if egid_is_set { egid_arg } else { old_egid };
 
-    if new_rgid == old_cached_gid && new_egid == old_egid {
+    if new_rgid == old_cached_gid && egid_next == old_egid {
         return true;
     }
 
@@ -583,21 +571,21 @@ pub fn try_setregid(target_rgid: u32, target_egid: u32) -> bool {
         }
     }
 
-    if egid_is_set && new_egid != old_egid {
-        let ok = has_gid_privilege(table, new_egid, current_pwm)
-            || new_egid == old_cached_gid
-            || new_egid == old_saved_egid;
+    if egid_is_set && egid_next != old_egid {
+        let ok = has_gid_privilege(table, egid_next, current_pwm)
+            || egid_next == old_cached_gid
+            || egid_next == old_saved_egid;
         if !ok {
             return false;
         }
     }
 
-    let saved_egid_should_update = rgid_is_set || (egid_is_set && new_egid != old_cached_gid);
+    let saved_egid_should_update = rgid_is_set || (egid_is_set && egid_next != old_cached_gid);
     try_with_current_ctx(false, |ctx| {
         ctx.cached_gid = new_rgid;
-        ctx.egid = new_egid;
+        ctx.egid = egid_next;
         if saved_egid_should_update {
-            ctx.saved_egid = new_egid;
+            ctx.saved_egid = egid_next;
         }
         true
     })

@@ -37,21 +37,17 @@ pub fn tcgetpgrp_syscall(_fd: i32) -> i64 {
 ///
 /// T2 批 2 自 privileged 回退层迁移. 校验 pgid 属于当前会话的进程组后,
 /// 委托 `SESSION_MANAGER.set_foreground_pgid`. POSIX 简化语义: `fd` 忽略.
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pid/pgid); 重命名会破坏 POSIX 语义对应, 仅在确实混淆时才人工拆分"
-)]
 pub fn tcsetpgrp_syscall(_fd: i32, pgid: i32) -> i64 {
     if pgid <= 0 {
         return Errno::EINVAL.as_ret();
     }
 
-    let pid = process_get_current_pid();
-    if pid == 0 {
+    let proc_id = process_get_current_pid();
+    if proc_id == 0 {
         return -1;
     }
 
-    let sid = process_with(pid, |p| p.session_id.load(Ordering::SeqCst)).unwrap_or(0);
+    let sid = process_with(proc_id, |p| p.session_id.load(Ordering::SeqCst)).unwrap_or(0);
     if sid == 0 {
         return -1;
     }
@@ -59,8 +55,8 @@ pub fn tcsetpgrp_syscall(_fd: i32, pgid: i32) -> i64 {
     let mut found = false;
     process_for_each(|proc| {
         let pg = proc.pgid.load(Ordering::SeqCst);
-        let proc_sid = proc.session_id.load(Ordering::SeqCst);
-        if pg == pgid as u32 && proc_sid == sid {
+        let iter_sid = proc.session_id.load(Ordering::SeqCst);
+        if pg == pgid as u32 && iter_sid == sid {
             found = true;
         }
         true

@@ -103,10 +103,6 @@ pub extern "C" fn user_proc_load_elf_from_memory(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
-#[expect(
-    clippy::similar_names,
-    reason = "similar_names: 变量名相似表达同族概念; 当前优先 expect"
-)]
 ///
 /// # Safety
 ///
@@ -114,9 +110,9 @@ pub extern "C" fn user_proc_load_elf_from_memory(
 pub unsafe extern "C" fn user_proc_setup_argv(
     pid: u32,
     argv: *const *const u8,
-    argc: u32,
+    arg_count: u32,
     envp: *const *const u8,
-    envc: u32,
+    env_count: u32,
 ) -> i32 {
     // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
     unsafe {
@@ -125,7 +121,13 @@ pub unsafe extern "C" fn user_proc_setup_argv(
             None => return -1,
         };
 
-        let sp = USER_PROC_MANAGER.setup_user_stack(proc, argv, argc as usize, envp, envc as usize);
+        let sp = USER_PROC_MANAGER.setup_user_stack(
+            proc,
+            argv,
+            arg_count as usize,
+            envp,
+            env_count as usize,
+        );
 
         if sp == 0 { -1 } else { 0 }
     }

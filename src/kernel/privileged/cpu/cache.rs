@@ -52,10 +52,6 @@ impl CacheInfo {
 #[cfg(target_arch = "x86_64")]
 // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
 pub(super) fn detect_cache(
     cache_out: &mut CacheInfo,
     max_std: u32,
@@ -111,9 +107,9 @@ pub(super) fn detect_cache(
     // AMD: 使用扩展缓存信息 (Leaf 80000005/6)
     else if vendor == CpuVendor::Amd && max_ext >= 0x8000_0006 {
         // L1 数据/指令缓存 (Leaf 80000005)
-        let (_, _, ecx_l1, edx_l1) = cpuid::cpuid(0x8000_0005, 0);
+        let (_, _, ecx_l1, edx_l1i) = cpuid::cpuid(0x8000_0005, 0);
         cache_out.l1d_size = (ecx_l1 >> 24) * 1024; // KB → Bytes
-        cache_out.l1i_size = (edx_l1 >> 24) * 1024;
+        cache_out.l1i_size = (edx_l1i >> 24) * 1024;
 
         // L2 Unified (Leaf 80000006)
         let (_, _, ecx_l2, _) = cpuid::cpuid(0x8000_0006, 0);

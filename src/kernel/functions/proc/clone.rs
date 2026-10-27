@@ -62,10 +62,6 @@ pub fn clone_syscall(
 }
 
 #[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
-#[expect(
     clippy::too_many_lines,
     reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
 )]
@@ -236,10 +232,10 @@ fn clone_impl(
     {
         let parent_kstack =
             api::process_with(parent_pid, |p| p.kernel_stack.load(Ordering::SeqCst)).unwrap_or(0);
-        let child_kstack = child.kernel_stack.load(Ordering::SeqCst);
+        let child_kernel_sp = child.kernel_stack.load(Ordering::SeqCst);
         let stack_size: usize = 65536;
-        raw::copy_kstack(child_kstack, parent_kstack, stack_size);
-        crate::privileged::proc::kernel_stack_write_canary(child_kstack);
+        raw::copy_kstack(child_kernel_sp, parent_kstack, stack_size);
+        crate::privileged::proc::kernel_stack_write_canary(child_kernel_sp);
     }
 
     // 上下文初始化 (分架构: x86_64 的 cr3/rax/rsp 与 aarch64 的 x29/x25/x27 复用

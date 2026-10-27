@@ -94,14 +94,10 @@ pub extern "C" fn pwm_try_genesis(password: *const u8) -> i64 {
 /// 创建新身份 (密码 / 备注 / 创建者 PWM), 返回新 PWM (失败返回负错误码)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
 pub extern "C" fn pwm_create(password: *const u8, note: *const u8, creator_pwm: u64) -> i64 {
     let pwd = password.as_kstr();
-    let nte = note.as_kstr();
-    match identity::get_table().create(pwd, nte, creator_pwm) {
+    let note_kstr = note.as_kstr();
+    match identity::get_table().create(pwd, note_kstr, creator_pwm) {
         Ok(pwm) => pwm as i64,
         Err(e) => i64::from(e.as_i32()),
     }

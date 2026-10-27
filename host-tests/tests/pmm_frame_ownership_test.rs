@@ -146,7 +146,7 @@ fn has_frame_owner_region(init_bitmap_squashed: &str) -> bool {
     let need_all = [
         "total_pages*core::mem::size_of::<OwnerIndex>()",
         "store.setup_owner(owner_phys,owner_bytes)",
-        "letfo_start_page=phys_to_page(owner_phys)asusize",
+        "letowner_start_page=phys_to_page(owner_phys)asusize",
         "self.set_bit(i)",
         "[PMM]FRAME_OWNER",
     ];

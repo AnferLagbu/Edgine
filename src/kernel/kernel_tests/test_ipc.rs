@@ -126,14 +126,10 @@ fn test_semaphore_high_concurrency() -> TestResult {
     TestResult::Pass
 }
 
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
 fn test_invalid_ids() -> TestResult {
     let mut ns = create_test_namespace();
     let invalid_fd: i32 = 99999;
-    let invalid_id: IpcId = 99999;
+    let bad_ipc_id: IpcId = 99999;
     let pid: u32 = 1200;
 
     check!(
@@ -145,11 +141,11 @@ fn test_invalid_ids() -> TestResult {
         "pipe_read should fail with invalid fd"
     );
     check!(
-        shm::shm_attach_safe(&mut ns, invalid_id, pid).is_err(),
+        shm::shm_attach_safe(&mut ns, bad_ipc_id, pid).is_err(),
         "shm_attach should fail with invalid id"
     );
     check!(
-        sem::sem_wait_safe(&mut ns, invalid_id).is_err(),
+        sem::sem_wait_safe(&mut ns, bad_ipc_id).is_err(),
         "sem_wait should fail with invalid id"
     );
 

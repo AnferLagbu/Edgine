@@ -684,10 +684,6 @@ pub(super) unsafe fn map_text_region_in_user_pml4(
 // 均已被 cfg 排除, host 下无调用者, 函数整体不编译 (避免 dead_code).
 #[cfg(not(feature = "host-test"))]
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
 unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _desc: &str) {
     // SAFETY: 调用方保证 user_pml4 有效; vma/phys 是合法地址;
     // boot 阶段单线程执行, 无并发修改页表. PMM 分配的页已对齐且属于内核.
@@ -696,7 +692,7 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
         let pml4_idx = (vma >> 39) & 0x1FF;
         let pdpt_idx = (vma >> 30) & 0x1FF;
         let pd_idx = (vma >> 21) & 0x1FF;
-        let pt_idx = (vma >> 12) & 0x1FF;
+        let pt_slot_idx = (vma >> 12) & 0x1FF;
 
         // 确保 PML4[pml4_idx] 存在 (分配 PDPT 页)
         let pml4e = core::ptr::read_volatile(user_pml4.add(pml4_idx as usize));
@@ -740,7 +736,7 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
         // 作为防御: 一旦将来有代码把大页映射进用户页表, 拆分语义仍是唯一正确解,
         // 且拆的是本页表私有的 PD, 不再污染内核页表.
         let pde = core::ptr::read_volatile(pd.add(pd_idx as usize));
-        let pt_phys = if pde & 1 != 0 {
+        let pt_frame_phys = if pde & 1 != 0 {
             if pde & (1 << 7) != 0 {
                 // PS=1: 2MB 大页 → 直接拆分
                 const PS_BIT: u64 = 1 << 7;
@@ -782,10 +778,10 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
             core::ptr::write_volatile(pd.add(pd_idx as usize), new_page | 0x7);
             new_page
         };
-        let pt = (pt_phys + KERNEL_BASE) as *mut u64;
+        let pt = (pt_frame_phys + KERNEL_BASE) as *mut u64;
 
-        // 设置 PT[pt_idx] = phys | flags
-        core::ptr::write_volatile(pt.add(pt_idx as usize), phys | flags);
+        // 设置 PT 槽位 = phys | flags
+        core::ptr::write_volatile(pt.add(pt_slot_idx as usize), phys | flags);
     }
 }
 

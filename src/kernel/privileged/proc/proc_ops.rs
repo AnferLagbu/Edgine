@@ -427,10 +427,6 @@ pub extern "C" fn process_unblock(pid: u32) {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 #[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
-#[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
@@ -439,7 +435,7 @@ pub extern "C" fn proc_exec_replace(
     elf_data: *const u8,
     elf_size: u64,
     argv: *const *const u8,
-    argc: u32,
+    arg_count: u32,
 ) -> i32 {
     if elf_data.is_null() {
         return -1;
@@ -511,11 +507,11 @@ pub extern "C" fn proc_exec_replace(
     PROCESS_TABLE.remove_and_free(new_pid_u32);
 
     // 5. 设置 argv/envp
-    if !argv.is_null() && argc > 0 {
+    if !argv.is_null() && arg_count > 0 {
         let envp: *const *const u8 = core::ptr::null();
         // SAFETY: argv 来自 C ABI 调用方, 由本函数 C ABI contract 保证。
         unsafe {
-            super::api::user_proc_setup_argv(current_pid, argv, argc, envp, 0);
+            super::api::user_proc_setup_argv(current_pid, argv, arg_count, envp, 0);
         }
     }
 
@@ -925,10 +921,6 @@ pub extern "C" fn proc_get_create_time(pid: u32) -> u64 {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 #[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
-#[expect(
     clippy::ptr_as_ptr,
     reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
 )]
@@ -956,16 +948,16 @@ pub extern "C" fn proc_get_rusage(pid: u32, who: i32, out: *mut u8, out_len: u64
         (0, 0)
     };
     let ut_sec = (user / hz) as i64;
-    let ut_usec = ((user % hz) * 1_000_000 / hz) as i64;
+    let ut_micros = ((user % hz) * 1_000_000 / hz) as i64;
     let st_sec = (sys / hz) as i64;
-    let st_usec = ((sys % hz) * 1_000_000 / hz) as i64;
+    let st_micros = ((sys % hz) * 1_000_000 / hz) as i64;
 
     // SAFETY: out 至少 32 字节可写, who 合法.
     unsafe {
         core::ptr::write_unaligned(out as *mut i64, ut_sec);
-        core::ptr::write_unaligned(out.add(8) as *mut i64, ut_usec);
+        core::ptr::write_unaligned(out.add(8) as *mut i64, ut_micros);
         core::ptr::write_unaligned(out.add(16) as *mut i64, st_sec);
-        core::ptr::write_unaligned(out.add(24) as *mut i64, st_usec);
+        core::ptr::write_unaligned(out.add(24) as *mut i64, st_micros);
         let tail = (out_len as usize).saturating_sub(32);
         if tail > 0 {
             core::ptr::write_bytes(out.add(32), 0u8, tail);

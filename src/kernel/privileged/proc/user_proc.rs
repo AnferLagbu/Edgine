@@ -1160,10 +1160,6 @@ impl UserProcManager {
     }
 
     #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
-    #[expect(
         clippy::too_many_lines,
         reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
     )]
@@ -1186,7 +1182,7 @@ impl UserProcManager {
 
         let kstack = proc_ref.load_kernel_stack();
         let rip_val = proc_ref.entry();
-        let rsp_val = proc_ref.load_user_stack();
+        let rsp_initial = proc_ref.load_user_stack();
         let cr3 = proc_ref.load_cr3();
 
         // 调试日志: 追踪 kstack 值
@@ -1194,7 +1190,7 @@ impl UserProcManager {
             "[USER] enter: kstack={:#X} rip={:#X} rsp={:#X} cr3={:#X}",
             kstack,
             rip_val,
-            rsp_val,
+            rsp_initial,
             cr3
         );
         let _ss_val = GDT_USER_DATA | 0x03;
@@ -1288,21 +1284,21 @@ impl UserProcManager {
             }
 
             // 检查用户栈页 (第一次压栈将访问 rsp - 8 所在页)
-            let first_access_virt = (rsp_val - 8) & !(PAGE_SIZE - 1);
+            let first_access_virt = (rsp_initial - 8) & !(PAGE_SIZE - 1);
             if let Some(phys) =
                 vmm.get_physical_in_pml4(cr3, crate::privileged::mm::VirtAddr(first_access_virt))
             {
                 crate::klog_boot_info!(
                     "[USER] SELF-CHECK: user_stack_first_access virt={:#X} (rsp-8={:#X}) -> phys={:#X} ✓",
                     first_access_virt,
-                    rsp_val - 8,
+                    rsp_initial - 8,
                     phys.0
                 );
             } else {
                 crate::klog_boot_info!(
                     "[USER] SELF-CHECK: user_stack_first_access virt={:#X} (rsp-8={:#X}) NOT MAPPED ✗",
                     first_access_virt,
-                    rsp_val - 8
+                    rsp_initial - 8
                 );
             }
 
@@ -1349,7 +1345,7 @@ impl UserProcManager {
             crate::klog_boot_info!(
                 "[USER] SELF-CHECK: entering user mode with rip={:#X} rsp={:#X} cr3={:#X}",
                 rip_val,
-                rsp_val,
+                rsp_initial,
                 cr3
             );
 
@@ -1369,7 +1365,7 @@ impl UserProcManager {
                 rip_val,
                 GDT_USER_CODE | 0x03,
                 0x202,
-                rsp_val,
+                rsp_initial,
                 GDT_USER_DATA | 0x03
             );
 
@@ -1518,7 +1514,7 @@ impl UserProcManager {
             let pml4_idx = (vaddr >> 39) & 0x1FF;
             let pdpt_idx = (vaddr >> 30) & 0x1FF;
             let pd_idx = (vaddr >> 21) & 0x1FF;
-            let pt_idx = (vaddr >> 12) & 0x1FF;
+            let pt_slot_idx = (vaddr >> 12) & 0x1FF;
 
             // SAFETY: 使用物理地址 + KERNEL_BASE 访问页表, 只读操作
             unsafe {
@@ -1592,32 +1588,33 @@ impl UserProcManager {
                         }
 
                         if pde_present && !pde_huge {
-                            let pt_virt = (pde_frame + crate::privileged::mm::KERNEL_BASE as u64)
+                            let pt_page_virt = (pde_frame
+                                + crate::privileged::mm::KERNEL_BASE as u64)
                                 as *const u64;
-                            let pte = pt_virt.add(pt_idx as usize).read_volatile();
-                            let pte_present = (pte & 1) != 0;
-                            let pte_user = (pte & 4) != 0;
-                            let pte_nx = (pte & (1u64 << 63)) != 0;
-                            let pte_frame = pte & 0x000F_FFFF_FFFF_F000;
+                            let pte = pt_page_virt.add(pt_slot_idx as usize).read_volatile();
+                            let leaf_present = (pte & 1) != 0;
+                            let leaf_user = (pte & 4) != 0;
+                            let leaf_nx = (pte & (1u64 << 63)) != 0;
+                            let leaf_frame = pte & 0x000F_FFFF_FFFF_F000;
                             crate::klog_boot_info!(
                                 "[USER] SELF-CHECK PT-WALK: PTE[{}]={:#x} P={} U={} NX={} frame={:#x}",
-                                pt_idx,
+                                pt_slot_idx,
                                 pte,
-                                u8::from(pte_present),
-                                u8::from(pte_user),
-                                u8::from(pte_nx),
-                                pte_frame
+                                u8::from(leaf_present),
+                                u8::from(leaf_user),
+                                u8::from(leaf_nx),
+                                leaf_frame
                             );
-                            if pte_present && !pte_user {
+                            if leaf_present && !leaf_user {
                                 crate::klog_boot_info!(
                                     "[USER] SELF-CHECK: *** BUG: PTE[{}] U=0! Ring 3 cannot access this page! ***",
-                                    pt_idx
+                                    pt_slot_idx
                                 );
                             }
-                            if pte_present && pte_nx {
+                            if leaf_present && leaf_nx {
                                 crate::klog_boot_info!(
                                     "[USER] SELF-CHECK: *** BUG: PTE[{}] NX=1! Ring 3 cannot execute this page! ***",
-                                    pt_idx
+                                    pt_slot_idx
                                 );
                             }
                         }
@@ -1630,7 +1627,7 @@ impl UserProcManager {
 
         crate::arch!(enter_user(
             rip_val as usize,
-            rsp_val as usize,
+            rsp_initial as usize,
             0,
             cr3,
             kstack
@@ -1640,10 +1637,6 @@ impl UserProcManager {
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
     )]
     /// 将 argc/argv/envp 写入用户进程栈
     /// 返回设置后的新栈指针 (RSP)
@@ -1655,7 +1648,7 @@ impl UserProcManager {
         &self,
         proc: *mut UserProcess,
         argv: *const *const u8,
-        argc: usize,
+        arg_count: usize,
         _envp: *const *const u8,
         envc: usize,
     ) -> u64 {
@@ -1668,13 +1661,13 @@ impl UserProcManager {
         let stack_top = proc_ref.load_user_stack();
         let cr3 = proc_ref.load_cr3();
 
-        // 所需空间: argc(8) + argv 指针(8*(argc+1)) + envp 指针(8*(envc+1)) + 字符串
+        // 所需空间: arg_count(8) + argv 指针(8*(arg_count+1)) + envp 指针(8*(envc+1)) + 字符串
         let mut string_bytes: usize = 0;
         let mut arg_lens: alloc::vec::Vec<usize> = alloc::vec::Vec::new();
 
         if !argv.is_null() {
-            for i in 0..argc {
-                // SAFETY: argv 由调用方保证至少 argc 个有效指针。
+            for i in 0..arg_count {
+                // SAFETY: argv 由调用方保证至少 arg_count 个有效指针。
                 let s = unsafe { *argv.add(i) };
                 if s.is_null() {
                     arg_lens.push(1);
@@ -1691,7 +1684,7 @@ impl UserProcManager {
             }
         }
 
-        let ptr_count = 1 + (argc + 1) + (envc + 1); // 指针数: argc(1) + argv(n+1) + envp(m+1)
+        let ptr_count = 1 + (arg_count + 1) + (envc + 1); // 指针数: arg_count(1) + argv(n+1) + envp(m+1)
         let total = ptr_count * 8 + string_bytes;
         // 确保 16 字节对齐
         let total = (total + 15) & !15;
@@ -1704,11 +1697,11 @@ impl UserProcManager {
         let mut pos = new_sp as usize;
 
         // 写入 argc
-        let argc_off = pos;
+        let arg_count_off = pos;
         pos += 8;
         // 跳过 argv 指针 (在字符串写完之后回填)
         let argv_start_off = pos;
-        pos += (argc + 1) * 8;
+        pos += (arg_count + 1) * 8;
         // 跳过 envp 指针
         let envp_start_off = pos;
         pos += (envc + 1) * 8;
@@ -1716,16 +1709,16 @@ impl UserProcManager {
         let strings_off = pos;
 
         // Write argc
-        raw::write_user_u64(cr3, argc_off, argc as u64);
+        raw::write_user_u64(cr3, arg_count_off, arg_count as u64);
 
         // 写入 argv 字符串与指针
         let mut str_off = strings_off;
-        for i in 0..argc {
+        for i in 0..arg_count {
             let abs_addr = str_off as u64;
             raw::write_user_u64(cr3, argv_start_off + i * 8, abs_addr);
 
-            if !argv.is_null() && (i < argc) {
-                // SAFETY: argv 由调用方保证, i < argc 有效。
+            if !argv.is_null() && (i < arg_count) {
+                // SAFETY: argv 由调用方保证, i < arg_count 有效。
                 let src = unsafe { *argv.add(i) };
                 let l = arg_lens[i];
                 for j in 0..l {
@@ -1740,7 +1733,7 @@ impl UserProcManager {
             }
         }
         // argv 末尾 NULL 哨兵
-        raw::write_user_u64(cr3, argv_start_off + argc * 8, 0u64);
+        raw::write_user_u64(cr3, argv_start_off + arg_count * 8, 0u64);
 
         // envp 指针 (暂时全填 NULL)
         for i in 0..=envc {

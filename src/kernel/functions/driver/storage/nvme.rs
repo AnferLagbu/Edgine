@@ -580,13 +580,9 @@ impl NvmeController {
 
     // ── Admin 队列配置 ──
 
-    #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
     /// 写 AQA (Admin Queue Attributes)
-    pub fn set_aqa(&self, asqs: u16, acqs: u16) {
-        let val = u32::from(asqs) | (u32::from(acqs) << 16);
+    pub fn set_aqa(&self, asqs: u16, cq_size: u16) {
+        let val = u32::from(asqs) | (u32::from(cq_size) << 16);
         self.write32(NVME_REG_AQA, val);
     }
 
@@ -869,10 +865,6 @@ impl NvmeController {
     }
 
     #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
-    #[expect(
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
@@ -901,8 +893,8 @@ impl NvmeController {
         }
 
         // 创建 I/O Submission Queue (Admin 命令)
-        let cmd_sq = fw_nvme::NvmeCommand::create_sq(IO_QID, IO_QID, sq_phys);
-        if self.submit_admin_cmd(cmd_sq).is_err() {
+        let sq_cmd = fw_nvme::NvmeCommand::create_sq(IO_QID, IO_QID, sq_phys);
+        if self.submit_admin_cmd(sq_cmd).is_err() {
             slog_warn!(Driver, "创建 I/O SQ 失败");
             return false;
         }
@@ -946,10 +938,6 @@ impl NvmeController {
     // ── 数据读写 ──
 
     #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
-    #[expect(
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
@@ -977,14 +965,14 @@ impl NvmeController {
             None => return Err(()),
         };
         let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
-        let buf_paddr = buf.dma_addr().as_u64();
+        let buf_dma_addr = buf.dma_addr().as_u64();
 
         let nlb = ((byte_count + (self.lba_format_size as usize) - 1)
             / (self.lba_format_size as usize)) as u16;
 
         // 构造读命令
-        let mut cmd = fw_nvme::NvmeCommand::read(nsid, lba, nlb, buf_paddr);
-        cmd.mptr = buf_paddr;
+        let mut cmd = fw_nvme::NvmeCommand::read(nsid, lba, nlb, buf_dma_addr);
+        cmd.mptr = buf_dma_addr;
         cmd.prp2 = 0;
 
         let result = self.submit_io_cmd(cmd);
@@ -997,10 +985,6 @@ impl NvmeController {
         result
     }
 
-    #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
     #[expect(
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -1029,7 +1013,7 @@ impl NvmeController {
             None => return Err(()),
         };
         let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
-        let buf_paddr = buf.dma_addr().as_u64();
+        let buf_dma_addr = buf.dma_addr().as_u64();
 
         // 复制数据到 DMA 缓冲区
         crate::privileged::driver::storage::nvme_copy_to_dma(buf_vaddr, buffer, byte_count);
@@ -1037,8 +1021,8 @@ impl NvmeController {
         let nlb = ((byte_count + (self.lba_format_size as usize) - 1)
             / (self.lba_format_size as usize)) as u16;
 
-        let mut cmd = fw_nvme::NvmeCommand::write(nsid, lba, nlb, buf_paddr);
-        cmd.mptr = buf_paddr;
+        let mut cmd = fw_nvme::NvmeCommand::write(nsid, lba, nlb, buf_dma_addr);
+        cmd.mptr = buf_dma_addr;
         cmd.prp2 = 0;
 
         let result = self.submit_io_cmd(cmd);

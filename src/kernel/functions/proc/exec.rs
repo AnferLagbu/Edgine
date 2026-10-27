@@ -32,10 +32,6 @@ pub(crate) const ELF_MAX_SIZE: usize = 1024 * 1024;
 /// - `path` 为空或未通过用户指针校验 → `EFAULT`
 /// - `argv` 数组遍历中任一指针 (槽位或条目) 非法 → `EFAULT`
 /// - 进程替换失败 → `ENOENT` (与原 privileged 实现语义一致)
-#[expect(
-    clippy::similar_names,
-    reason = "argv/envp 是 POSIX execve ABI 标准参数名, 重命名会破坏与 Linux 语义的对应关系"
-)]
 pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
     use crate::privileged::syscall::api;
     use crate::privileged::syscall::raw;
@@ -46,7 +42,7 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
     let _ = envp;
 
     // argv 扫描: 逐项读取用户空间指针数组, 统计 argc 直到 NULL 终止
-    let mut argc: u32 = 0;
+    let mut arg_count: u32 = 0;
     if argv != 0 {
         if !raw::check_user_ptr(argv) {
             return Err(Errno::EFAULT);
@@ -65,7 +61,7 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
             if !raw::check_user_ptr(entry) {
                 return Err(Errno::EFAULT);
             }
-            argc += 1;
+            arg_count += 1;
             slot += 8;
         }
     }
@@ -93,7 +89,7 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
         elf.as_ptr(),
         elf.len() as u64,
         argv as *const *const u8,
-        argc,
+        arg_count,
     );
     if result < 0 {
         Err(Errno::ENOENT)

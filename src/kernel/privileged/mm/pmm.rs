@@ -868,10 +868,6 @@ impl PhysicalMemoryManager {
 
     // 有意窄化: 显式收窄, 调用方保证值域
     #[expect(clippy::cast_possible_truncation)]
-    #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
     /// 初始化 buddy 元数据 (bitmap / buddy_meta / FREE_LINKS) 并建立空闲链表
     ///
     /// `reserved_after_kernel`: 内核镜像末尾之后额外预留的字节数 (向上取整到页),
@@ -1030,8 +1026,8 @@ impl PhysicalMemoryManager {
         }
 
         // 标记 buddy-meta 页已用
-        let bm_start_page = phys_to_page(buddy_meta_phys) as usize;
-        for i in bm_start_page..(bm_start_page + buddy_meta_pages as usize).min(total_pages) {
+        let buddy_start_page = phys_to_page(buddy_meta_phys) as usize;
+        for i in buddy_start_page..(buddy_start_page + buddy_meta_pages as usize).min(total_pages) {
             self.set_bit(i);
         }
 
@@ -1042,14 +1038,14 @@ impl PhysicalMemoryManager {
         }
 
         // 标记帧持有计数页已用
-        let fc_start_page = phys_to_page(counts_phys) as usize;
-        for i in fc_start_page..(fc_start_page + counts_pages as usize).min(total_pages) {
+        let counts_start_page = phys_to_page(counts_phys) as usize;
+        for i in counts_start_page..(counts_start_page + counts_pages as usize).min(total_pages) {
             self.set_bit(i);
         }
 
         // 标记帧所有权槽页已用
-        let fo_start_page = phys_to_page(owner_phys) as usize;
-        for i in fo_start_page..(fo_start_page + owner_pages as usize).min(total_pages) {
+        let owner_start_page = phys_to_page(owner_phys) as usize;
+        for i in owner_start_page..(owner_start_page + owner_pages as usize).min(total_pages) {
             self.set_bit(i);
         }
 

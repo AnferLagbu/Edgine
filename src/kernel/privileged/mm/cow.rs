@@ -74,10 +74,6 @@ pub fn clone_user_page_table_cow(parent_pml4: u64) -> Option<u64> {
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
 #[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
-#[expect(
     clippy::too_many_lines,
     reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
 )]
@@ -199,26 +195,27 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
                 }
 
                 // 分配失败即回滚: 释放已建的子树页表帧 (此刻父页表未被改动、未登记任何持有者)
-                let Some(child_pt_phys) = pmm.alloc_page() else {
+                let Some(child_table_phys) = pmm.alloc_page() else {
                     free_child_page_table_tree(child_pml4_phys.as_u64());
                     return None;
                 };
-                let child_pt_virt = child_pt_phys.to_virt().0 as *mut u64;
+                let child_table_virt = child_table_phys.to_virt().0 as *mut u64;
                 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                 unsafe {
                     // B05-55C 根治: cast *mut u8, 否则清零 8 页覆盖后续物理页
-                    core::ptr::write_bytes(child_pt_virt as *mut u8, 0, PAGE_SIZE as usize);
+                    core::ptr::write_bytes(child_table_virt as *mut u8, 0, PAGE_SIZE as usize);
                 }
 
                 let mut child_pde = parent_pde;
-                child_pde = (child_pde & 0xFFF) | (child_pt_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
+                child_pde =
+                    (child_pde & 0xFFF) | (child_table_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
                 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                 unsafe {
                     child_pd_virt.add(k).write_volatile(child_pde);
                 }
 
-                // SAFETY: parent_pt 物理地址来自有效 PDE (阶段 1 只读该页)
-                let parent_pt_virt =
+                // SAFETY: parent_table 物理地址来自有效 PDE (阶段 1 只读该页)
+                let parent_table_virt =
                     PhysAddr(parent_pde & 0x000F_FFFF_FFFF_F000).to_virt().0 as *const u64;
 
                 // 阶段 1 只建结构: leaf PTE 逐项原值复制 —— 不改父页表、不改子 PTE、
@@ -227,13 +224,13 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
                 // 阶段 2, 而阶段 2 无分配 ⇒ 不会失败).
                 for l in 0..512usize {
                     // SAFETY: pt 索引在页范围内
-                    let parent_pte = unsafe { parent_pt_virt.add(l).read_volatile() };
-                    if (parent_pte & 1) == 0 {
+                    let parent_leaf = unsafe { parent_table_virt.add(l).read_volatile() };
+                    if (parent_leaf & 1) == 0 {
                         continue;
                     }
-                    // SAFETY: child_pt_virt 指向有效 PT 页, l 在页范围内
+                    // SAFETY: child_table_virt 指向有效 PT 页, l 在页范围内
                     unsafe {
-                        child_pt_virt.add(l).write_volatile(parent_pte);
+                        child_table_virt.add(l).write_volatile(parent_leaf);
                     }
                 }
             }
@@ -286,10 +283,6 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
 /// `(父槽位, 子槽位, 父 PTE 原值)`.
 ///
 /// 跳过 PD 级大页 (`PS` 位) —— 大页不参与 COW.
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
 fn for_each_cow_leaf_in_pd(
     parent_pd: *mut u64,
     child_pd: *mut u64,
@@ -307,18 +300,18 @@ fn for_each_cow_leaf_in_pd(
             continue;
         }
 
-        let parent_pt = PhysAddr(pde & 0x000F_FFFF_FFFF_F000).to_virt().0 as *mut u64;
-        let child_pt = PhysAddr(child_pde & 0x000F_FFFF_FFFF_F000).to_virt().0 as *mut u64;
+        let parent_table = PhysAddr(pde & 0x000F_FFFF_FFFF_F000).to_virt().0 as *mut u64;
+        let child_table = PhysAddr(child_pde & 0x000F_FFFF_FFFF_F000).to_virt().0 as *mut u64;
 
         for l in 0..512usize {
             // SAFETY: l 在 PT 页范围内
-            let pte = unsafe { parent_pt.add(l).read_volatile() };
+            let pte = unsafe { parent_table.add(l).read_volatile() };
             if (pte & 1) == 0 {
                 continue;
             }
             // SAFETY: 两端槽位均在有效 PT 页内; 写权限由调用方持有的 VMM_LOCK 保证
             unsafe {
-                f(parent_pt.add(l), child_pt.add(l), pte);
+                f(parent_table.add(l), child_table.add(l), pte);
             }
         }
     }

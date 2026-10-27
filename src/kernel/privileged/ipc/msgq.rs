@@ -188,10 +188,6 @@ pub unsafe extern "C" fn ipc_msgq_send(id: IpcId, type_: u64, data: *const u8, s
 /// `data` 必须是有效可写指针, 至少 `size` 字节; `type_out` 用于返回消息类型。
 /// 由 `sys_msgrcv` 分发, cred 校验已通过。
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
 pub unsafe extern "C" fn ipc_msgq_recv(
     id: IpcId,
     type_out: *mut u64,
@@ -200,7 +196,7 @@ pub unsafe extern "C" fn ipc_msgq_recv(
 ) -> i64 {
     let ns = super::IPC_NAMESPACE.get_mut();
 
-    let mut type_opt = if type_out.is_null() {
+    let mut type_slot = if type_out.is_null() {
         None
     } else {
         // SAFETY: caller guarantees type_out is a valid pointer to u64 in user memory.
@@ -216,7 +212,7 @@ pub unsafe extern "C" fn ipc_msgq_recv(
         Some(buf)
     };
 
-    let mut size_opt = if size_out.is_null() {
+    let mut size_slot = if size_out.is_null() {
         None
     } else {
         // SAFETY: caller guarantees size_out is a valid pointer to u64 in user memory.
@@ -225,13 +221,13 @@ pub unsafe extern "C" fn ipc_msgq_recv(
     };
 
     // 将 privileged 包装器转换为安全 Rust 类型
-    let type_ref = type_opt
+    let type_ref = type_slot
         .as_mut()
         .map(super::super::userptr::UserRefMut::as_mut);
     let data_ref = data_opt
         .as_mut()
         .map(super::super::userptr::UserWritePtr::as_mut_slice);
-    let size_ref = size_opt
+    let size_ref = size_slot
         .as_mut()
         .map(super::super::userptr::UserRefMut::as_mut);
 

@@ -219,19 +219,15 @@ pub fn settimeofday_syscall(tv: u64, tz: u64) -> Result<usize, Errno> {
 ///
 /// - `tv_sec` 为负或 `tv_usec` 越界 → `EINVAL`
 /// - 调用者无特权 (euid != 0) → `EPERM`
-#[expect(
-    clippy::similar_names,
-    reason = "tv_sec/tv_usec 是 struct timeval 的 ABI 字段名; 改名会与用户态 ABI 语义脱节"
-)]
-pub fn apply_settimeofday(tv_sec: i64, tv_usec: i64) -> Result<usize, Errno> {
-    if tv_sec < 0 || !(0..USEC_PER_SEC).contains(&tv_usec) {
+pub fn apply_settimeofday(tv_sec: i64, micros: i64) -> Result<usize, Errno> {
+    if tv_sec < 0 || !(0..USEC_PER_SEC).contains(&micros) {
         return Err(Errno::EINVAL);
     }
     if !has_time_privilege() {
         return Err(Errno::EPERM);
     }
 
-    let ns = tv_sec as u64 * NS_PER_SEC + tv_usec as u64 * NS_PER_USEC;
+    let ns = tv_sec as u64 * NS_PER_SEC + micros as u64 * NS_PER_USEC;
     if !crate::functions::timer::time_sync::subsystem().set_time(ns) {
         return Err(Errno::EINVAL);
     }
@@ -291,15 +287,11 @@ pub fn clock_nanosleep_syscall(
 /// - `flags` 含 `TIMER_ABSTIME` 之外的位 → `EINVAL`
 /// - 时钟 ID 不受支持 → `EINVAL`
 /// - `tv_sec` / `tv_nsec` 越界 → `EINVAL`
-#[expect(
-    clippy::similar_names,
-    reason = "tv_sec/tv_nsec 是 struct timespec 的 ABI 字段名; 改名会与用户态 ABI 语义脱节"
-)]
 pub fn clock_nanosleep_wait_ns(
     clockid: i32,
     flags: i32,
     tv_sec: i64,
-    tv_nsec: i64,
+    nanos: i64,
 ) -> Result<u64, Errno> {
     if flags & !TIMER_ABSTIME != 0 {
         return Err(Errno::EINVAL);
@@ -307,11 +299,11 @@ pub fn clock_nanosleep_wait_ns(
     let Some(now_ns) = clock_now_ns(clockid) else {
         return Err(Errno::EINVAL);
     };
-    if tv_sec < 0 || tv_nsec < 0 || tv_nsec >= NS_PER_SEC as i64 {
+    if tv_sec < 0 || nanos < 0 || nanos >= NS_PER_SEC as i64 {
         return Err(Errno::EINVAL);
     }
 
-    let req_ns = tv_sec as u64 * NS_PER_SEC + tv_nsec as u64;
+    let req_ns = tv_sec as u64 * NS_PER_SEC + nanos as u64;
     Ok(if flags & TIMER_ABSTIME != 0 {
         // 绝对时刻: 目标已过则立即返回 (Linux 不报错)
         req_ns.saturating_sub(now_ns)
@@ -441,21 +433,17 @@ pub fn adjtimex_syscall(buf: u64) -> i64 {
 ///
 /// - `modes` 含不支持的位, 或 `ADJ_SETOFFSET` 的 `time` 字段越界 → `EINVAL`
 /// - 调用者无特权 (euid != 0) → `EPERM`
-#[expect(
-    clippy::similar_names,
-    reason = "tv_sec/tv_usec 是 struct timeval 的 ABI 字段名; 改名会与用户态 ABI 语义脱节"
-)]
 pub fn apply_adjtimex(
     modes: u32,
     offset: i64,
     freq: i64,
     tv_sec: i64,
-    tv_usec: i64,
+    micros: i64,
 ) -> Result<i64, Errno> {
     if modes & !ADJ_SUPPORTED_MODES != 0 {
         return Err(Errno::EINVAL);
     }
-    if modes & ADJ_SETOFFSET != 0 && !(-USEC_PER_SEC..USEC_PER_SEC).contains(&tv_usec) {
+    if modes & ADJ_SETOFFSET != 0 && !(-USEC_PER_SEC..USEC_PER_SEC).contains(&micros) {
         return Err(Errno::EINVAL);
     }
     if !has_time_privilege() {
@@ -466,7 +454,10 @@ pub fn apply_adjtimex(
 
     // ADJ_SETOFFSET: 在墙钟上叠加增量 (加性跳变)
     if modes & ADJ_SETOFFSET != 0 {
-        let delta = Timeval { tv_sec, tv_usec };
+        let delta = Timeval {
+            tv_sec,
+            tv_usec: micros,
+        };
         let delta_ns = timeval_to_ns_signed(delta);
         let target = if delta_ns >= 0 {
             wall_clock_ns().saturating_add(delta_ns as u64)

@@ -294,10 +294,6 @@ pub fn init() {
 // 系统调用策略
 // ============================================================================
 
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
 /// setsid — 创建新会话
 pub fn proc_setsid() -> i64 {
     let pid = process_get_current_pid();
@@ -307,8 +303,8 @@ pub fn proc_setsid() -> i64 {
 
     let is_group_leader = PROCESS_TABLE
         .with_process(pid, |p| {
-            let pgid = p.pgid.load(Ordering::SeqCst);
-            let effective_pgid = if pgid == 0 { p.pid.0 } else { pgid };
+            let proc_pgid = p.pgid.load(Ordering::SeqCst);
+            let effective_pgid = if proc_pgid == 0 { p.pid.0 } else { proc_pgid };
             effective_pgid == pid
         })
         .unwrap_or(false);
@@ -354,30 +350,30 @@ pub fn proc_getsid(pid: i32) -> i64 {
         .unwrap_or(-3)
 }
 
-#[expect(
-    clippy::similar_names,
-    reason = "similar_names: 变量名相似表达同族概念; 当前优先 expect"
-)]
 /// setpgid(pid, pgid) — 设置进程组
-pub fn proc_setpgid(pid: i32, pgid: i32) -> i64 {
-    if pid < 0 || pgid < 0 {
+pub fn proc_setpgid(pid: i32, pgid_arg: i32) -> i64 {
+    if pid < 0 || pgid_arg < 0 {
         return -22;
     }
 
     let current_pid = process_get_current_pid();
     let target_pid = if pid == 0 { current_pid } else { pid as u32 };
-    let new_pgid = if pgid == 0 { target_pid } else { pgid as u32 };
+    let new_pgid = if pgid_arg == 0 {
+        target_pid
+    } else {
+        pgid_arg as u32
+    };
 
     if target_pid == 0 {
         return -3;
     }
 
-    let current_sid = PROCESS_TABLE
+    let sid_current = PROCESS_TABLE
         .with_process(current_pid, |p| p.session_id.load(Ordering::SeqCst))
         .unwrap_or(0);
 
     // 阶段 1: 单次加锁校验 target 的会话与关系.
-    let Some((target_sid, is_self, is_child)) = PROCESS_TABLE.with_process(target_pid, |p| {
+    let Some((sid_target, is_self, is_child)) = PROCESS_TABLE.with_process(target_pid, |p| {
         (
             p.session_id.load(Ordering::SeqCst),
             p.pid.0 == current_pid,
@@ -387,7 +383,7 @@ pub fn proc_setpgid(pid: i32, pgid: i32) -> i64 {
         return -3;
     };
 
-    if current_sid != target_sid {
+    if sid_current != sid_target {
         return -1;
     }
     if !is_self && !is_child {
@@ -399,7 +395,7 @@ pub fn proc_setpgid(pid: i32, pgid: i32) -> i64 {
     if new_pgid != target_pid && new_pgid != 0 {
         let group_in_session = PROCESS_TABLE
             .with_process(new_pgid, |leader| {
-                leader.session_id.load(Ordering::SeqCst) == current_sid
+                leader.session_id.load(Ordering::SeqCst) == sid_current
             })
             .unwrap_or(false);
 
@@ -408,7 +404,7 @@ pub fn proc_setpgid(pid: i32, pgid: i32) -> i64 {
             PROCESS_TABLE.for_each(|proc| {
                 let pg = proc.pgid.load(Ordering::SeqCst);
                 let sid = proc.session_id.load(Ordering::SeqCst);
-                if pg == new_pgid && sid == current_sid {
+                if pg == new_pgid && sid == sid_current {
                     found = true;
                 }
                 true
@@ -428,10 +424,6 @@ pub fn proc_setpgid(pid: i32, pgid: i32) -> i64 {
     }
 }
 
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
 /// getpgid(pid) — 取进程组 ID
 pub fn proc_getpgid(pid: i32) -> i64 {
     if pid < 0 {
@@ -447,11 +439,11 @@ pub fn proc_getpgid(pid: i32) -> i64 {
     }
     PROCESS_TABLE
         .with_process(target_pid, |proc| {
-            let pgid = proc.pgid.load(Ordering::SeqCst);
-            if pgid == 0 {
+            let proc_pgid = proc.pgid.load(Ordering::SeqCst);
+            if proc_pgid == 0 {
                 i64::from(proc.pid.0)
             } else {
-                i64::from(pgid)
+                i64::from(proc_pgid)
             }
         })
         .unwrap_or(-3)

@@ -718,10 +718,6 @@ impl ProcfsData {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
-    #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
     /// 读取进程状态 /proc/[pid]/status
     fn read_process_status(&self, pid: u32, buf: &mut [u8]) -> i32 {
         use crate::privileged::proc::api::process_with;
@@ -744,8 +740,8 @@ impl ProcfsData {
             write_str(buf, &mut pos, "\nState:\tR (running)\n");
             write_str(buf, &mut pos, &alloc::format!("\nTgid:\t{pid}\n"));
             write_str(buf, &mut pos, &alloc::format!("Pid:\t{pid}\n"));
-            let ppid = proc.parent.map_or(0, |p| p.0);
-            write_str(buf, &mut pos, &alloc::format!("PPid:\t{ppid}\n"));
+            let parent_pid = proc.parent.map_or(0, |p| p.0);
+            write_str(buf, &mut pos, &alloc::format!("PPid:\t{parent_pid}\n"));
             write_str(buf, &mut pos, "TracerPid:\t0\n");
             write_str(buf, &mut pos, "Uid:\t0\t0\t0\t0\n");
             write_str(buf, &mut pos, "Gid:\t0\t0\t0\t0\n");
@@ -846,10 +842,6 @@ impl ProcfsData {
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
     #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
-    #[expect(
         clippy::no_effect_underscore_binding,
         reason = "no_effect_underscore_binding: let _ = expr 用于类型推导/副作用; 当前优先 expect"
     )]
@@ -875,7 +867,7 @@ impl ProcfsData {
                 _ => "X",         // Terminated
             };
 
-            let ppid = proc.parent.map_or(0, |p| p.0);
+            let parent_pid = proc.parent.map_or(0, |p| p.0);
             let utime = proc.user_time.load(core::sync::atomic::Ordering::SeqCst);
             let stime = proc.sys_time.load(core::sync::atomic::Ordering::SeqCst);
             // 使用 create_time 作为进程启动时间 (ticks)
@@ -884,7 +876,7 @@ impl ProcfsData {
             let _rss = 0u64; // 暂时返回 0
 
             let s = alloc::format!(
-                "{pid} ({name}) {state} {ppid} {pid} 0 0 0 0 0 0 {utime} {stime} 0 0 0 {start} 1 0 0 {vsize} 0 0 0 0 0 0 0 0 0 0\n"
+                "{pid} ({name}) {state} {parent_pid} {pid} 0 0 0 0 0 0 {utime} {stime} 0 0 0 {start} 1 0 0 {vsize} 0 0 0 0 0 0 0 0 0 0\n"
             );
 
             let bytes = s.as_bytes();

@@ -761,10 +761,6 @@ impl AhciPort {
     }
 
     #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
-    #[expect(
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
@@ -793,10 +789,10 @@ impl AhciPort {
                 None => return Err(()),
             };
         let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
-        let buf_paddr = buf.dma_addr().as_u64();
+        let buf_dma_addr = buf.dma_addr().as_u64();
 
         let fis = H2dFis::read_dma(lba, count);
-        let result = self.submit_dma_command(hba, &fis, buf_paddr, byte_count, false);
+        let result = self.submit_dma_command(hba, &fis, buf_dma_addr, byte_count, false);
 
         // 复制数据到用户 buffer
         if result.is_ok() {
@@ -810,10 +806,6 @@ impl AhciPort {
         result
     }
 
-    #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
     #[expect(
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -849,7 +841,7 @@ impl AhciPort {
                 None => return Err(()),
             };
         let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
-        let buf_paddr = buf.dma_addr().as_u64();
+        let buf_dma_addr = buf.dma_addr().as_u64();
 
         // 复制数据到 DMA 缓冲区
         crate::privileged::driver::storage::ahci_copy_to_dma(
@@ -859,15 +851,11 @@ impl AhciPort {
         );
 
         let fis = H2dFis::write_dma(lba, count);
-        let result = self.submit_dma_command(hba, &fis, buf_paddr, byte_count, true);
+        let result = self.submit_dma_command(hba, &fis, buf_dma_addr, byte_count, true);
 
         result
     }
 
-    #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (buf_vaddr/buf_paddr 虚拟/物理地址对); 与同文件 read/write_dma 一致, 重命名破坏领域语义连续性"
-    )]
     /// ATA IDENTIFY DEVICE (0xEC, PIO-in 经 PRDT 传输)
     ///
     /// 读取 512B 设备标识到 `buffer`。AHCI 下 PIO-in 数据同样经命令表
@@ -891,10 +879,10 @@ impl AhciPort {
             return Err(());
         };
         let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
-        let buf_paddr = buf.dma_addr().as_u64();
+        let buf_dma_addr = buf.dma_addr().as_u64();
 
         let fis = H2dFis::identify();
-        let result = self.submit_dma_command(hba, &fis, buf_paddr, byte_count, false);
+        let result = self.submit_dma_command(hba, &fis, buf_dma_addr, byte_count, false);
 
         if result.is_ok() {
             crate::privileged::driver::storage::ahci_copy_from_dma(

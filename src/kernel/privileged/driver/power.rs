@@ -190,10 +190,6 @@ impl CpuIdleDriver {
     }
 
     #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
-    #[expect(
         clippy::unnecessary_wraps,
         reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
     )]
@@ -207,8 +203,8 @@ impl CpuIdleDriver {
             return Some(CpuIdleState::C1Halt);
         }
         let max_cstate = stats[cpu_id as usize].max_cstate.load(Ordering::Acquire);
-        let state = CpuIdleState::from_u32(max_cstate.min(2));
-        Some(state)
+        let idle_state = CpuIdleState::from_u32(max_cstate.min(2));
+        Some(idle_state)
     }
 
     /// 获取 CPU 空闲统计
@@ -675,22 +671,18 @@ pub fn arch_halt() {
     }
 }
 
-#[expect(
-    clippy::similar_names,
-    reason = "similar_names: 变量名相似表达同族概念; 当前优先 expect"
-)]
 /// CPU 进入空闲 (调度器 idle 调用)
 ///
 /// 组合策略选择 (functions) + 硬件 halt (privileged)
 pub fn pm_idle(cpu_id: u32) {
-    let state = PM_SUBSYSTEM
+    let idle_state = PM_SUBSYSTEM
         .cpuidle
         .select_cstate(cpu_id)
         .unwrap_or(CpuIdleState::C1Halt);
 
     let stats = PM_SUBSYSTEM.cpuidle.per_cpu_stats.lock();
     if (cpu_id as usize) < stats.len() {
-        stats[cpu_id as usize].enter_idle(state);
+        stats[cpu_id as usize].enter_idle(idle_state);
         stats[cpu_id as usize].set_idle_entry_ts(read_timestamp());
     }
     drop(stats);
