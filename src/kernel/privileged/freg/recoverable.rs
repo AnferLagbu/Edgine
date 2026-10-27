@@ -1,9 +1,14 @@
+//! FREG 可恢复对象接口与带撤销日志的互斥锁
+
+#![deny(missing_docs)]
+
 use core::sync::atomic::Ordering;
 
 use super::fault_inject::maybe_inject_fault;
 use super::undo_log::UndoLog;
 use crate::privileged::sync::{IrqSpinLock, IrqSpinLockGuard};
 
+/// 可快照/恢复的值接口
 pub trait Snapshot: Copy + Sized {
     #[expect(
         clippy::return_self_not_must_use,
@@ -50,6 +55,7 @@ unsafe impl<T: Snapshot + Send> Send for RecoverableMutex<T> {}
 unsafe impl<T: Snapshot + Sync> Sync for RecoverableMutex<T> {}
 
 impl<T: Snapshot + 'static> RecoverableMutex<T> {
+    /// 构造带撤销日志的互斥锁
     pub const fn new(val: T, domain_id: u64) -> Self {
         Self {
             inner: IrqSpinLock::new(val),
@@ -57,6 +63,7 @@ impl<T: Snapshot + 'static> RecoverableMutex<T> {
         }
     }
 
+    /// 获取锁并记录字段快照到撤销日志
     #[expect(
         clippy::borrow_as_ptr,
         reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
@@ -80,6 +87,7 @@ impl<T: Snapshot + 'static> RecoverableMutex<T> {
         guard
     }
 
+    /// 快速加锁 (不记录撤销日志)
     pub fn lock_fast(&self) -> IrqSpinLockGuard<'_, T> {
         self.inner.lock()
     }

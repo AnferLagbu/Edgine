@@ -5,21 +5,15 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 50,
-    "files": 19,
-    "keys": 49
+    "sites": 41,
+    "files": 15,
+    "keys": 40
   },
   "entries": [
     [
       "src/kernel/privileged/arch/shadow_stack.rs",
       "fn",
       "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/display/font.rs",
-      "fn",
-      "builtin_8x16",
       1
     ],
     [
@@ -32,54 +26,6 @@
       "src/kernel/privileged/driver/kexec.rs",
       "fn",
       "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/virtio/mod.rs",
-      "fn",
-      "read_config64",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/recoverable.rs",
-      "fn",
-      "lock",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/recoverable.rs",
-      "fn",
-      "lock_fast",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/recoverable.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/iomem.rs",
-      "fn",
-      "is_empty",
-      1
-    ],
-    [
-      "src/kernel/privileged/iomem.rs",
-      "fn",
-      "len",
-      1
-    ],
-    [
-      "src/kernel/privileged/iomem.rs",
-      "fn",
-      "name",
-      1
-    ],
-    [
-      "src/kernel/privileged/iomem.rs",
-      "fn",
-      "phys",
       1
     ],
     [

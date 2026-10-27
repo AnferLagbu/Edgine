@@ -45,12 +45,16 @@ use alloc::vec::Vec;
 
 /// WASI 运行时上下文 (每个 WASM 实例一个)
 pub struct WasiContext {
+    /// 文件描述符表
     pub fd_table: WasiFdTable,
+    /// 命令行参数
     pub args: Vec<String>,
+    /// 环境变量 (键值对)
     pub env: Vec<(String, String)>,
 }
 
 impl WasiContext {
+    /// 构造默认 WASI 运行时上下文 (fd 表容量 256, 空参数与环境)
     pub fn new() -> Self {
         Self {
             fd_table: WasiFdTable::new(256),

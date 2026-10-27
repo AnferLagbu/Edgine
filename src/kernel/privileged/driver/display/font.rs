@@ -1,3 +1,7 @@
+//! 内嵌位图字体 — 在帧缓冲上绘制字形
+
+#![deny(missing_docs)]
+
 use super::framebuffer::{Color, Framebuffer};
 
 /// 内嵌的 8x16 位图字体 (256 字形, 每字形 16 字节)
@@ -9,12 +13,16 @@ const GLYPH_HEIGHT: u32 = 16;
 /// 位图字体 (字形数据 + 字形宽高与字形数元数据)
 pub struct Font {
     data: &'static [u8],
+    /// 字形高度 (像素)
     pub glyph_height: u32,
+    /// 字形宽度 (像素)
     pub glyph_width: u32,
+    /// 字形数量
     pub glyph_count: u32,
 }
 
 impl Font {
+    /// 构造内嵌 8x16 位图字体
     pub fn builtin_8x16() -> Self {
         Self {
             data: FONT8X16_DATA,

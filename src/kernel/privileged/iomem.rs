@@ -13,6 +13,8 @@
 //! - 所有读/写操作检查 offset 在 [0, len) 范围内。
 //! - 底层访问使用 `read_volatile/write_volatile` 保证 MMIO 语义。
 
+#![deny(missing_docs)]
+
 use core::fmt;
 use core::ptr::NonNull;
 
@@ -262,6 +264,7 @@ impl IoMem {
         }
     }
 
+    /// 返回 MMIO 区域物理基地址
     #[expect(
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
@@ -270,6 +273,7 @@ impl IoMem {
     pub fn phys(&self) -> PhysAddr {
         self.phys_base
     }
+    /// 返回 MMIO 区域长度 (字节)
     #[expect(
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
@@ -278,6 +282,7 @@ impl IoMem {
     pub fn len(&self) -> usize {
         self.len
     }
+    /// 判断 MMIO 区域是否为空
     #[expect(
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
@@ -286,6 +291,7 @@ impl IoMem {
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
+    /// 返回 MMIO 区域名称
     #[expect(
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"

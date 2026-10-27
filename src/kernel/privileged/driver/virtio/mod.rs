@@ -36,6 +36,8 @@
 //! QEMU virt aarch64 将 virtio-mmio 设备放置在 0x0a000000 起始地址,
 //! 每个设备之间步长 0x200 字节.
 
+#![deny(missing_docs)]
+
 pub mod queue;
 
 use crate::klog_info;
@@ -86,8 +88,11 @@ const STATUS_FAILED: u32 = 0x80;
 
 // ── Device IDs ──
 
+/// VirtIO 块设备 ID
 pub const VIRTIO_ID_BLOCK: u32 = 2;
+/// VirtIO 网络设备 ID
 pub const VIRTIO_ID_NET: u32 = 1;
+/// VirtIO GPU 设备 ID
 pub const VIRTIO_ID_GPU: u32 = 16;
 
 // ── MMIO region ──
@@ -433,6 +438,7 @@ impl VirtioMmioDevice {
         self.read32(0x100 + offset)
     }
 
+    /// 从设备特定配置空间读取 64 位值
     pub fn read_config64(&self, offset: usize) -> u64 {
         self.read64(0x100 + offset, 0x100 + offset + 4)
     }

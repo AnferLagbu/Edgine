@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 152,
-    "files": 67,
-    "keys": 85
+    "sites": 131,
+    "files": 62,
+    "keys": 75
   },
   "entries": [
     [
@@ -206,16 +206,6 @@
       1
     ],
     [
-      "src/kernel/functions/wasm/wasi/mod.rs",
-      "a struct field",
-      3
-    ],
-    [
-      "src/kernel/functions/wasm/wasi/mod.rs",
-      "an associated function",
-      1
-    ],
-    [
       "src/kernel/privileged/arch/shadow_stack.rs",
       "an associated function",
       1
@@ -231,19 +221,9 @@
       3
     ],
     [
-      "src/kernel/privileged/driver/display/font.rs",
-      "a struct field",
-      3
-    ],
-    [
-      "src/kernel/privileged/driver/display/font.rs",
-      "an associated function",
-      1
-    ],
-    [
       "src/kernel/privileged/driver/display/mod.rs",
       "a module",
-      2
+      1
     ],
     [
       "src/kernel/privileged/driver/input/mod.rs",
@@ -261,39 +241,9 @@
       1
     ],
     [
-      "src/kernel/privileged/driver/virtio/mod.rs",
-      "a constant",
-      3
-    ],
-    [
-      "src/kernel/privileged/driver/virtio/mod.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/recoverable.rs",
-      "a method",
-      2
-    ],
-    [
-      "src/kernel/privileged/freg/recoverable.rs",
-      "a trait",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/recoverable.rs",
-      "an associated function",
-      1
-    ],
-    [
       "src/kernel/privileged/fs/vfs_poll_trait.rs",
       "a variant",
       2
-    ],
-    [
-      "src/kernel/privileged/iomem.rs",
-      "a method",
-      4
     ],
     [
       "src/kernel/privileged/ipc/api.rs",
