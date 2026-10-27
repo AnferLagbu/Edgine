@@ -1,14 +1,22 @@
+//! SGEG 引导阶段 — 首次令牌 (First Token) 的生成、使用与一次性授权凭证。
+
+#![deny(missing_docs)]
+
 use super::types::{AuditAction, CapBits, CapDomain, PwmError};
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// 首次令牌 (First Token): 初始化阶段向首个身份授予全部权限的一次性凭证。
 pub struct FirstToken {
+    /// 令牌标识 (由 TSC 派生, 用于审计追溯)。
     pub token_id: u64,
+    /// 令牌是否已被使用 (true 表示凭证已消费, 不可重复授权)。
     pub granted: AtomicBool,
+    /// 令牌创建时刻 (PWM 时基)。
     pub created_at: u64,
 }
 
 impl FirstToken {
+    /// 创建新的未使用首次令牌, 记录标识与创建时刻。
     pub fn new(token_id: u64, created_at: u64) -> Self {
         Self {
             token_id,

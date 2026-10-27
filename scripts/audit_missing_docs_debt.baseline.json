@@ -5,35 +5,15 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 111,
-    "files": 57,
-    "keys": 68
+    "sites": 95,
+    "files": 52,
+    "keys": 62
   },
   "entries": [
-    [
-      "src/kernel/functions/config/sysctl.rs",
-      "a variant",
-      3
-    ],
     [
       "src/kernel/functions/driver/display/controller.rs",
       "an associated function",
       2
-    ],
-    [
-      "src/kernel/functions/driver/usb/xhci.rs",
-      "a constant",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/cgroupfs.rs",
-      "an associated function",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/configfs.rs",
-      "an associated function",
-      3
     ],
     [
       "src/kernel/functions/fs/devpts.rs",
@@ -314,16 +294,6 @@
       "src/kernel/privileged/net/wait_queue.rs",
       "an associated function",
       2
-    ],
-    [
-      "src/kernel/privileged/sgeg/bootstrap.rs",
-      "a struct field",
-      3
-    ],
-    [
-      "src/kernel/privileged/sgeg/bootstrap.rs",
-      "an associated function",
-      1
     ],
     [
       "src/kernel/privileged/sgeg/session.rs",

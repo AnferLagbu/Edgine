@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! configfs — 配置文件系统
 //!
 //! @SAFE: 本文件不含 unsafe 代码。
@@ -50,6 +51,7 @@ pub struct ConfigNode {
 }
 
 impl ConfigNode {
+    /// 创建空的 configfs 节点 (名称与值均为零长度, 默认可写)。
     pub const fn new() -> Self {
         Self {
             name: [0u8; MAX_NAME_LEN],
@@ -132,6 +134,7 @@ pub struct ConfigDir {
 }
 
 impl ConfigDir {
+    /// 创建空的 configfs 目录。
     pub const fn new() -> Self {
         Self {
             name: [0u8; MAX_NAME_LEN],
@@ -224,6 +227,7 @@ impl ConfigFs {
         clippy::large_stack_arrays,
         reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
     )]
+    /// 创建空的 configfs 实例。
     pub const fn new() -> Self {
         Self {
             dirs: [const { ConfigDir::new() }; MAX_DIRS],

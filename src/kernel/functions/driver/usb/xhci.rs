@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //!
 //! xHCI (eXtensible Host Controller Interface) USB 3.0 驱动 — functions 层安全代理 (Phase 2.1.6)
@@ -200,6 +201,7 @@ pub const OP_CONFIG: usize = 0x38;
 
 /// 端口 1 状态与控制寄存器 (n=0..MaxPorts-1)
 pub const OP_PORTSC_BASE: usize = 0x400;
+/// 相邻端口 PORTSC 寄存器之间的字节步长
 pub const OP_PORTSC_STRIDE: usize = 0x10;
 
 // ── USBCMD 位 ──
@@ -269,7 +271,9 @@ pub const PORTSC_RWS: u32 = (0xF << 5) | PORTSC_PP | (1 << 14) | (1 << 24);
 
 // ── PORTSC 速度 (PORTSC[10:13]) ──
 
+/// 端口速度字段 (`PORTSC[13:10]`) 的位掩码
 pub const PORTSC_SPEED_MASK: u32 = 0xF << 10;
+/// 端口速度字段 (`PORTSC[13:10]`) 的位偏移
 pub const PORTSC_SPEED_SHIFT: u32 = 10;
 
 /// 全速 (12 Mbps)

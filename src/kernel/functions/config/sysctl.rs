@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。所有数据通过 IrqSpinLock + 原子类型保护。
 //!
 //! LEGACY-6: 运行时 sysctl 框架 — functions 层安全实现
@@ -78,8 +79,11 @@ impl SysctlValue {
 /// sysctl 值类型标识
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SysctlKind {
+    /// 有符号 64 位整数
     Int,
+    /// 无符号 64 位整数
     UInt,
+    /// 布尔
     Bool,
 }
 

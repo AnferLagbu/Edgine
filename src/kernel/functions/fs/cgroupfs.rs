@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! cgroupfs — 控制组文件系统
 //!
 //! @SAFE: 本文件不含 unsafe 代码。
@@ -95,6 +96,7 @@ pub struct CgroupNode {
 }
 
 impl CgroupNode {
+    /// 创建空的 cgroup 节点 (名称与值均为零长度)。
     pub const fn new() -> Self {
         Self {
             name: [0u8; MAX_NAME_LEN],
@@ -151,6 +153,7 @@ pub struct CgroupGroup {
 }
 
 impl CgroupGroup {
+    /// 创建空的 cgroup 组, 绑定指定控制器。
     pub const fn new(controller: CgroupController) -> Self {
         Self {
             name: [0u8; MAX_NAME_LEN],
@@ -225,6 +228,7 @@ pub struct CgroupFs {
 }
 
 impl CgroupFs {
+    /// 创建空的 cgroup 文件系统实例。
     pub const fn new() -> Self {
         Self {
             groups: [const { CgroupGroup::new(CgroupController::Cpu) }; MAX_GROUPS],

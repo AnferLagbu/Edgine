@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 33,
-    "files": 13,
-    "keys": 32
+    "sites": 32,
+    "files": 12,
+    "keys": 31
   },
   "entries": [
     [
@@ -188,12 +188,6 @@
       "src/kernel/privileged/sched/sched_trait.rs",
       "fn",
       "pid",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/bootstrap.rs",
-      "fn",
-      "new",
       1
     ],
     [
