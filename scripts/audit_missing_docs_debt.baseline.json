@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 560,
-    "files": 123,
-    "keys": 197
+    "sites": 503,
+    "files": 118,
+    "keys": 188
   },
   "entries": [
     [
@@ -19,11 +19,6 @@
       "src/kernel/functions/driver/display/controller.rs",
       "an associated function",
       2
-    ],
-    [
-      "src/kernel/functions/driver/usb/hid.rs",
-      "a constant",
-      11
     ],
     [
       "src/kernel/functions/driver/usb/mass_storage.rs",
@@ -496,16 +491,6 @@
       1
     ],
     [
-      "src/kernel/privileged/driver/power.rs",
-      "a struct field",
-      4
-    ],
-    [
-      "src/kernel/privileged/driver/power.rs",
-      "an associated function",
-      7
-    ],
-    [
       "src/kernel/privileged/driver/virtio/mod.rs",
       "a constant",
       3
@@ -621,16 +606,6 @@
       4
     ],
     [
-      "src/kernel/privileged/mm/kmalloc.rs",
-      "a struct field",
-      9
-    ],
-    [
-      "src/kernel/privileged/mm/kmalloc.rs",
-      "an associated function",
-      2
-    ],
-    [
       "src/kernel/privileged/mm/numa.rs",
       "a method",
       5
@@ -639,16 +614,6 @@
       "src/kernel/privileged/mm/numa.rs",
       "an associated function",
       4
-    ],
-    [
-      "src/kernel/privileged/mm/pmm.rs",
-      "a method",
-      10
-    ],
-    [
-      "src/kernel/privileged/mm/pmm.rs",
-      "an associated function",
-      2
     ],
     [
       "src/kernel/privileged/mm/pmm_trait.rs",
@@ -673,16 +638,6 @@
     [
       "src/kernel/privileged/mm/slab.rs",
       "a method",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "a method",
-      11
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "an associated function",
       1
     ],
     [

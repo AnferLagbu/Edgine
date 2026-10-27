@@ -20,6 +20,7 @@
 //! - 全局电源管理子系统 (PM_SUBSYSTEM): C-state 空闲 + DVFS 频率 + Suspend/Resume
 //! - `sys_pm` syscall 分发
 //! - 架构相关硬件操作 (hlt/wfi/rdtsc/arch_shutdown)
+#![deny(missing_docs)]
 
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
@@ -58,6 +59,7 @@ pub enum CpuIdleState {
 }
 
 impl CpuIdleState {
+    /// 由 `u32` 值构造 C-state (未知值回落 `C0Running`).
     pub fn from_u32(v: u32) -> Self {
         match v {
             1 => Self::C1Halt,
@@ -112,6 +114,7 @@ pub struct CpuIdleStats {
 }
 
 impl CpuIdleStats {
+    /// 构造 CPU 空闲统计实例 (各计数清零, 初始状态 `C0Running`).
     pub fn new() -> Self {
         Self {
             current_state: AtomicU32::new(CpuIdleState::C0Running as u32),
@@ -169,6 +172,7 @@ pub struct CpuIdleDriver {
 }
 
 impl CpuIdleDriver {
+    /// 构造未启用的 `CpuIdle` 驱动 (统计表为空).
     pub const fn new() -> Self {
         Self {
             per_cpu_stats: IrqSpinLock::new(Vec::new()),
@@ -262,6 +266,7 @@ impl FreqGovernor {
         clippy::match_same_arms,
         reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
     )]
+    /// 由 `u32` 值构造频率调节策略 (未知值回落 `Performance`).
     pub fn from_u32(v: u32) -> Self {
         match v {
             0 => Self::Performance,
@@ -298,6 +303,7 @@ pub struct CpuFreqDriver {
 }
 
 impl CpuFreqDriver {
+    /// 构造未启用的 `CpuFreq` 驱动 (频率表为空, 默认 `Performance` 策略).
     pub const fn new() -> Self {
         Self {
             freq_table: IrqSpinLock::new(Vec::new()),
@@ -491,6 +497,7 @@ pub enum SystemPowerState {
 }
 
 impl SystemPowerState {
+    /// 由 `u32` 值构造系统电源状态 (未知值回落 `S0Working`).
     pub fn from_u32(v: u32) -> Self {
         match v {
             3 => Self::S3SuspendToRam,
@@ -507,9 +514,13 @@ pub type ResumeCallback = fn() -> i32;
 
 /// 挂起/恢复通知器
 pub struct SuspendNotifier {
+    /// 通知器名称 (定长 16 字节, 未用位补 0).
     pub name: [u8; 16],
+    /// 挂起回调 (进入挂起流程时按优先级调用).
     pub suspend: SuspendCallback,
+    /// 恢复回调 (从挂起恢复后按优先级调用).
     pub resume: ResumeCallback,
+    /// 调用优先级 (数值越小越先调用).
     pub priority: u32,
 }
 
@@ -528,6 +539,7 @@ pub struct PmSubsystem {
 }
 
 impl PmSubsystem {
+    /// 构造电源管理子系统实例 (状态 S0, 通知器与驱动为空, 未初始化).
     pub const fn new() -> Self {
         Self {
             state: AtomicU32::new(SystemPowerState::S0Working as u32),

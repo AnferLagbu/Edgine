@@ -7,6 +7,7 @@
 //! - 通过 VMM/PMM 自动扩展堆
 //! - 早期引导阶段堆支持
 //! - 内存统计与调试
+#![deny(missing_docs)]
 
 /// 串口打印宏 (占位)
 macro_rules! serial_println {
@@ -72,6 +73,7 @@ pub struct HeapHeader {
 }
 
 impl HeapHeader {
+    /// 构造堆块头: 记录大小与空闲标志, 魔数置 `HEAP_MAGIC`, 链表指针置空.
     pub fn new(size: u64, is_free: bool) -> Self {
         Self {
             size,
@@ -455,6 +457,7 @@ unsafe impl Send for KernelHeap {}
 const EARLY_BUFFER_SIZE: usize = PAGE_SIZE as usize;
 
 impl KernelHeap {
+    /// 构造未初始化的内核堆 (堆区间为零, 空空闲链表, 统计清零).
     pub const fn new() -> Self {
         Self {
             heap_start: VirtAddr(0),
@@ -1046,14 +1049,23 @@ impl KernelHeap {
 /// 堆统计结构
 #[derive(Debug, Clone, Copy)]
 pub struct HeapStats {
+    /// 堆起始虚拟地址.
     pub heap_start: VirtAddr,
+    /// 堆结束虚拟地址 (不含).
     pub heap_end: VirtAddr,
+    /// 累计分配字节数.
     pub total_allocated: u64,
+    /// 累计释放字节数.
     pub total_freed: u64,
+    /// 当前占用字节数.
     pub current_usage: u64,
+    /// 历史峰值占用字节数.
     pub peak_usage: u64,
+    /// 累计分配次数.
     pub alloc_count: u64,
+    /// 累计释放次数.
     pub free_count: u64,
+    /// 分配失败次数.
     pub failed_allocs: u64,
 }
 

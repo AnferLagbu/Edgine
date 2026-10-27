@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 159,
-    "files": 40,
-    "keys": 138
+    "sites": 125,
+    "files": 38,
+    "keys": 112
   },
   "entries": [
     [
@@ -93,18 +93,6 @@
       "fn",
       "new",
       1
-    ],
-    [
-      "src/kernel/privileged/driver/power.rs",
-      "fn",
-      "from_u32",
-      3
-    ],
-    [
-      "src/kernel/privileged/driver/power.rs",
-      "fn",
-      "new",
-      4
     ],
     [
       "src/kernel/privileged/driver/virtio/mod.rs",
@@ -215,12 +203,6 @@
       1
     ],
     [
-      "src/kernel/privileged/mm/kmalloc.rs",
-      "fn",
-      "new",
-      2
-    ],
-    [
       "src/kernel/privileged/mm/mod.rs",
       "fn",
       "is_huge",
@@ -291,72 +273,6 @@
       "fn",
       "const_default",
       1
-    ],
-    [
-      "src/kernel/privileged/mm/pmm.rs",
-      "fn",
-      "dump_stats",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/pmm.rs",
-      "fn",
-      "free_huge_page",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/pmm.rs",
-      "fn",
-      "free_page",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/pmm.rs",
-      "fn",
-      "free_pages",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/pmm.rs",
-      "fn",
-      "get_free_pages",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/pmm.rs",
-      "fn",
-      "get_info",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/pmm.rs",
-      "fn",
-      "get_total_pages",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/pmm.rs",
-      "fn",
-      "get_used_pages",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/pmm.rs",
-      "fn",
-      "init",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/pmm.rs",
-      "fn",
-      "is_aligned_for_huge",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/pmm.rs",
-      "fn",
-      "new",
-      3
     ],
     [
       "src/kernel/privileged/mm/pressure.rs",
@@ -468,78 +384,6 @@
     ],
     [
       "src/kernel/privileged/mm/vmm_aarch64.rs",
-      "fn",
-      "unmap_page_in_table",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "fn",
-      "clone_user_page_table",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "fn",
-      "destroy_page_table",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "fn",
-      "ensure_path_user",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "fn",
-      "ensure_pml4_user",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "fn",
-      "get_physical",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "fn",
-      "get_stats",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "fn",
-      "init",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "fn",
-      "release_lock",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "fn",
-      "switch_page_table",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "fn",
-      "unmap_page",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
       "fn",
       "unmap_page_in_table",
       1

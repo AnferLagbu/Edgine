@@ -16,6 +16,7 @@
 //!
 //! # 安全
 //! 所有修改都在内部 `AtomicBool` 自旋锁下进行.
+#![deny(missing_docs)]
 
 macro_rules! klog_pmm {
     ($($arg:tt)*) => {
@@ -266,6 +267,9 @@ pub struct RawMetaStore {
 }
 
 impl RawMetaStore {
+    /// 构造生产 `MetaStore` 实现, 绑定宿主 `buddy_heads` 字段指针.
+    ///
+    /// 各元数据载体区段先留空, 由后续 `setup_*` 调用记录虚拟地址.
     pub const fn new(heads: *mut [u64; MAX_BUDDY_ORDER as usize + 1]) -> Self {
         Self {
             bitmap: None,
@@ -509,6 +513,7 @@ pub struct VecMetaStore {
 
 #[cfg(any(test, feature = "host-test"))]
 impl VecMetaStore {
+    /// 构造空载体的 host 测试 `MetaStore` 实现 (各载体待 `setup_*` 惰性分配).
     pub const fn new() -> Self {
         Self {
             bitmap: RefCell::new(None),
@@ -788,6 +793,9 @@ unsafe impl Sync for PhysicalMemoryManager {}
 unsafe impl Send for PhysicalMemoryManager {}
 
 impl PhysicalMemoryManager {
+    /// 构造未初始化的 PMM 实例 (零规模 / 空空闲链表 / 元数据载体待装配).
+    ///
+    /// 用于全局静态初始化; 实际内存规模与位图交由 `init` 建立.
     pub const fn new() -> Self {
         Self {
             bitmap_size: Cell::new(0),
@@ -832,6 +840,9 @@ impl PhysicalMemoryManager {
         unsafe { *self.store.get() = Some(store) };
     }
 
+    /// 初始化 PMM: 记录内存规模与内核结束地址, 建立位图/元数据载体并置 buddy 就绪.
+    ///
+    /// 启动期单线程调用; 已初始化时直接返回.
     pub fn init(&self, mem_size: u64, kernel_end: u64) {
         self.mem_size.set(mem_size);
         self.kernel_end.set(kernel_end);
@@ -1123,6 +1134,7 @@ impl PhysicalMemoryManager {
     }
 
     #[track_caller]
+    /// 释放单页: 仅当帧持有计数归零时才真正归还 PMM; `addr == 0` 为空操作.
     pub fn free_page(&self, addr: PhysAddr) {
         if addr.0 == 0 {
             return;
@@ -1393,6 +1405,7 @@ impl PhysicalMemoryManager {
     }
 
     #[track_caller]
+    /// 释放连续物理页: 按 `count` 取整到 buddy 阶数后整块归还; `addr == 0` 或 `count == 0` 为空操作.
     pub fn free_pages(&self, addr: PhysAddr, count: usize) {
         if addr.0 == 0 || count == 0 {
             return;
@@ -1612,6 +1625,9 @@ impl PhysicalMemoryManager {
     // 有意窄化: 显式收窄, 调用方保证值域
     #[expect(clippy::cast_possible_truncation)]
     #[track_caller]
+    /// 按页规格释放大页 (4KB / 2MB / 1GB).
+    ///
+    /// 1GB 路径逐页清位并压回 buddy 空闲链表 (同时尝试伙伴合并).
     pub fn free_huge_page(&self, addr: PhysAddr, size_type: PageSize) {
         match size_type {
             PageSize::Size4K => self.free_page(addr),
@@ -1635,23 +1651,29 @@ impl PhysicalMemoryManager {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
+    /// 判断 `addr` 是否按 `size_type` 的页规格对齐 (大页映射前置校验).
     pub fn is_aligned_for_huge(&self, addr: PhysAddr, size_type: PageSize) -> bool {
         size_type.is_aligned(addr.0)
     }
 
+    /// 返回当前空闲物理页数.
     pub fn get_free_pages(&self) -> u64 {
         self.info.get().free_pages
     }
+    /// 返回物理内存总页数.
     pub fn get_total_pages(&self) -> u64 {
         self.info.get().total_pages
     }
+    /// 返回已用物理页数.
     pub fn get_used_pages(&self) -> u64 {
         self.info.get().used_pages
     }
+    /// 返回 PMM 内存信息快照.
     pub fn get_info(&self) -> MemoryInfo {
         self.info.get()
     }
 
+    /// 打印 PMM 统计 (总量 / 空闲 / 已用, 以及分配 / 释放 / 失败计数).
     pub fn dump_stats(&self) {
         let info = self.info.get();
         klog_pmm!("=== PMM (Buddy) ===");

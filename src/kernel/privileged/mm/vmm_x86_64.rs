@@ -38,6 +38,7 @@
 //! - `user_driver.rs`: VMM 操作 (map/unmap) → 释放 `VMM_LOCK` → VMA 操作 (insert/remove)
 //! - `page_fault.rs`: VMA 查找 (`find_vma`) → 释放 `VMA_LOCK` → VMM 操作 (`map_page`)
 //! - `MmStruct::remove_range`: 持有 `VMA_LOCK` → 获取 `VMM_LOCK` (反向顺序安全)
+#![deny(missing_docs)]
 
 use super::{
     HUGE_PAGE_1G_SIZE, HUGE_PAGE_2M_SIZE, KERNEL_BASE, PAGE_NX, PAGE_PRESENT, PAGE_SIZE, PAGE_USER,
@@ -112,6 +113,7 @@ pub struct VirtualMemoryManager {
 unsafe impl Sync for VirtualMemoryManager {}
 
 impl VirtualMemoryManager {
+    /// 构造 VMM 实例: 清零页表槽位与统计计数器.
     pub const fn new() -> Self {
         Self {
             user_tables: UnsafeCell::new(
@@ -127,6 +129,7 @@ impl VirtualMemoryManager {
         }
     }
 
+    /// 初始化 VMM: 读取 CR3 记录内核 PML4, 并按 KPTI 配置装配用户页表入口依赖面.
     pub fn init(&self) {
         // SAFETY: read_cr3() reads the CR3 control register — safe at any time
         let cr3 = unsafe { self.read_cr3() };
@@ -219,6 +222,9 @@ impl VirtualMemoryManager {
         clippy::used_underscore_binding,
         reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
     )]
+    /// 拆除内核页表中的单页翻译 (含 4KB / 2MB / 1GB 三种形态) 并触发远程 TLB 失效.
+    ///
+    /// 内核高半区 (`PML4[256..511]`) 受 fail-closed 保护, 命中即跳过.
     pub fn unmap_page(&self, virt: VirtAddr) {
         let _flags = self.acquire_lock();
 
@@ -503,6 +509,7 @@ impl VirtualMemoryManager {
         self.release_lock(&_flags);
     }
 
+    /// 在内核页表中翻译虚拟地址, 返回对应物理地址 (`None` 表示未映射).
     pub fn get_physical(&self, virt: VirtAddr) -> Option<PhysAddr> {
         self.get_physical_in_pml4(KERNEL_PML4.load(Ordering::Acquire), virt)
     }
@@ -710,6 +717,7 @@ impl VirtualMemoryManager {
         self.release_lock(&_flags);
     }
 
+    /// 切换 CR3 指向的页表 (加载新 PML4).
     pub fn switch_page_table(&self, pml4: u64) {
         // SAFETY: pml4 must point to a valid PML4 table; CR3 write is privileged
         unsafe {
@@ -903,6 +911,9 @@ impl VirtualMemoryManager {
         clippy::used_underscore_binding,
         reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
     )]
+    /// 在指定页表中拆除单页翻译并触发远程失效; `pml4 == 0` 为空操作.
+    ///
+    /// 内核高半区受 fail-closed 保护, 命中即跳过.
     pub fn unmap_page_in_table(&self, pml4: u64, virt: VirtAddr) {
         if pml4 == 0 {
             return;
@@ -1028,6 +1039,7 @@ impl VirtualMemoryManager {
         clippy::used_underscore_binding,
         reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
     )]
+    /// 销毁指定用户页表: 拆除映射并延迟释放其占用的页帧; `pml4 == 0` 为空操作.
     pub fn destroy_page_table(&self, pml4: u64) {
         if pml4 == 0 {
             return;
@@ -1151,6 +1163,7 @@ impl VirtualMemoryManager {
         );
     }
 
+    /// 返回 (映射次数, 拆除次数, 缺页次数) 统计快照.
     pub fn get_stats(&self) -> (u64, u64, u64) {
         (
             self.total_maps.load(Ordering::Relaxed),
@@ -1540,6 +1553,7 @@ impl VirtualMemoryManager {
         result
     }
 
+    /// 确保 `virt` 所在 PML4 项置 USER 位 (内核高半区跳过并触发远程失效).
     pub fn ensure_pml4_user(&self, virt: u64) {
         let pml4_base = KERNEL_PML4.load(Ordering::Acquire);
         if pml4_base == 0 {
@@ -1569,6 +1583,7 @@ impl VirtualMemoryManager {
         }
     }
 
+    /// 确保 `virt` 的 PML4 → PDPT → PD 各级均置 USER 位 (内核高半区跳过).
     pub fn ensure_path_user(&self, virt: u64) {
         let pml4_base = KERNEL_PML4.load(Ordering::Acquire);
         if pml4_base == 0 {
@@ -1641,6 +1656,9 @@ impl VirtualMemoryManager {
         clippy::unreadable_literal,
         reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
     )]
+    /// 以 `parent_pml4` 为模板克隆用户页表 (COW 前置), 返回子页表物理地址.
+    ///
+    /// `parent_pml4 == 0` 返回 `None`.
     pub fn clone_user_page_table(&self, parent_pml4: u64) -> Option<u64> {
         if parent_pml4 == 0 {
             return None;
@@ -1878,6 +1896,7 @@ impl VirtualMemoryManager {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是既有 API 约定 (改传值会波及调用点); 当前优先 expect"
     )]
+    /// 释放 `VMM_LOCK`: 摘走本临界区延迟释放批次, 执行待决远程 TLB 失效并恢复中断状态.
     pub fn release_lock(&self, flags: &IrqSaveFlags) {
         // 仍持锁时读取并清除"本临界区需远程失效"标志: VMM_LOCK 是全局锁, 此刻本核
         // 是唯一写者, 故读-清不会漏掉本临界区自身的置位.

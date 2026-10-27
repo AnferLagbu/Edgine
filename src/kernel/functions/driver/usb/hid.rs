@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //!
 //! USB HID (Human Interface Device 人机接口设备) 类驱动 - USB-1.7
@@ -196,13 +197,21 @@ impl BootKeyboardReport {
 
 /// Modifier 键常量 (USB HID Usage Table / Keyboard §10).
 pub mod modifier {
+    /// 左 Ctrl 修饰键位 (bit 0).
     pub const LCTRL: u8 = 1 << 0;
+    /// 左 Shift 修饰键位 (bit 1).
     pub const LSHIFT: u8 = 1 << 1;
+    /// 左 Alt 修饰键位 (bit 2).
     pub const LALT: u8 = 1 << 2;
+    /// 左 GUI (Super/Win) 修饰键位 (bit 3).
     pub const LGUI: u8 = 1 << 3;
+    /// 右 Ctrl 修饰键位 (bit 4).
     pub const RCTRL: u8 = 1 << 4;
+    /// 右 Shift 修饰键位 (bit 5).
     pub const RSHIFT: u8 = 1 << 5;
+    /// 右 Alt 修饰键位 (bit 6).
     pub const RALT: u8 = 1 << 6;
+    /// 右 GUI (Super/Win) 修饰键位 (bit 7).
     pub const RGUI: u8 = 1 << 7;
 }
 
@@ -267,8 +276,11 @@ impl BootMouseReport {
 
 /// Mouse buttons 键常量.
 pub mod mouse_button {
+    /// 鼠标左键位 (bit 0).
     pub const LEFT: u8 = 1 << 0;
+    /// 鼠标右键位 (bit 1).
     pub const RIGHT: u8 = 1 << 1;
+    /// 鼠标中键位 (bit 2).
     pub const MIDDLE: u8 = 1 << 2;
 }
 
