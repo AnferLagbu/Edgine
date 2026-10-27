@@ -16,11 +16,14 @@ const MIN_STRIPE_SIZE: u64 = 512;
 /// 复合块设备类型 (RAID0 条带 / RAID1 镜像).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompositeType {
+    /// RAID0 条带 (无冗余, 容量累加).
     Raid0,
+    /// RAID1 镜像 (全冗余, 容量取最小值).
     Raid1,
 }
 
 impl CompositeType {
+    /// 返回设备树 compatible 字符串 (`eg,raid0` / `eg,raid1`).
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
@@ -32,6 +35,7 @@ impl CompositeType {
         }
     }
 
+    /// 按 compatible 字符串解析复合类型 (`eg,raid1` 与 `eg,mirror` 均视为 RAID1).
     pub fn from_compatible(compat: &str) -> Option<Self> {
         match compat {
             "eg,raid0" => Some(Self::Raid0),
@@ -40,6 +44,7 @@ impl CompositeType {
         }
     }
 
+    /// 返回用于设备名与日志的显示名 (`RAID0` / `RAID1`).
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
@@ -81,6 +86,10 @@ impl Clone for CompositeBlockDevice {
 }
 
 impl CompositeBlockDevice {
+    /// 创建复合设备并计算总容量.
+    ///
+    /// RAID0 容量 = 各子盘对齐到条带后的最小值 × 子盘数; RAID1 容量 = 各子盘最小值。
+    /// 子盘数量为 0、超过上限、任一子盘容量不足时返回 `None`。
     // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
     #[expect(clippy::cast_possible_truncation)]
     pub fn new(device_type: CompositeType, child_drives: &[u8], stripe_size: u64) -> Option<Self> {
@@ -458,6 +467,7 @@ pub fn devtree_probe_composites() -> usize {
 #[unsafe(no_mangle)]
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
+/// FFI 入口: 探测并注册设备树中的复合块设备, 返回创建数量.
 pub extern "C" fn composite_probe() -> u32 {
     devtree_probe_composites() as u32
 }

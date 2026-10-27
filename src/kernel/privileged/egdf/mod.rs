@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 //! EGDF设备驱动框架 (EGDF Driver Framework) — **API 层**
 //!
 //! `Edgine` 的统一设备驱动模型 — 唯一的注册/发现/初始化/I/O 入口。
@@ -56,6 +57,7 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 // ── 协议模块 ──
+/// 复合块设备 (RAID0 条带 / RAID1 镜像) 的探测与注册.
 pub mod composite;
 pub mod devtree;
 pub mod proto_block;
@@ -65,6 +67,7 @@ pub use devtree::*;
 pub mod proto_char;
 pub mod proto_input;
 pub mod proto_net;
+/// 用户态设备驱动接口: 设备节点绑定/解绑与 MMIO 映射/解除.
 pub mod user_driver;
 
 // composite 公共接口 re-export — 避免跨子系统直接访问 egdf::composite 内部
@@ -82,6 +85,7 @@ pub use proto_input::InputOps;
 
 // proto_block 公共接口 re-export
 pub use proto_block::register_block_device;
+/// 设备固件 blob 的加载、绑定与查询.
 pub mod firmware;
 
 // ── BlockDevice Trait (设备框架层定义, driver::block re-export) ──
@@ -108,15 +112,22 @@ pub trait BlockDevice: Send + Sync {
 /// 设备协议分类 (块/字符/网络/输入/总线/其他).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EGDFProto {
+    /// 块设备 (按扇区读写).
     Block,
+    /// 字符设备 (字节流读写).
     Char,
+    /// 网络设备.
     Net,
+    /// 输入设备 (键盘/鼠标等).
     Input,
+    /// 总线桥 (platform/PCI host bridge).
     Bus,
+    /// 其他未归类设备.
     Other,
 }
 
 impl EGDFProto {
+    /// 返回协议类别的短名称 (`block` / `char` / `net` / `input` / `bus` / `other`).
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
@@ -151,10 +162,15 @@ impl From<super::driver::DeviceType> for EGDFProto {
 /// 设备生命周期状态.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceState {
+    /// 尚未初始化.
     Uninit,
+    /// 正在探测.
     Probing,
+    /// 就绪可用.
     Ready,
+    /// 初始化或运行失败.
     Failed,
+    /// 已移除 (墓碑状态, 索引保留但 I/O 拒绝).
     Removed,
 }
 
@@ -162,8 +178,11 @@ pub enum DeviceState {
 
 /// 协议级 I/O 操作表 (联合体, 按协议类型取对应变体)
 pub enum EGDFOps {
+    /// 字符设备操作表.
     Char(&'static proto_char::CharOps),
+    /// 网络设备操作表.
     Net(&'static proto_net::NetOps),
+    /// 输入设备操作表.
     Input(&'static proto_input::InputOps),
 }
 
@@ -174,12 +193,19 @@ pub enum EGDFOps {
 /// 每个设备在注册表中占用一个条目。`driver_data` 指向内核堆上
 /// 的实际驱动结构体, `ops` 提供协议级 I/O 操作表 (Char/Net/Input).
 pub struct EGDFDevice {
+    /// 设备唯一 id (注册时自增分配).
     pub id: u32,
+    /// 设备名 (注册期给定的静态字符串).
     pub name: &'static str,
+    /// 设备协议类别.
     pub proto: EGDFProto,
+    /// 设备生命周期状态.
     pub state: DeviceState,
+    /// MMIO/PIO 基址.
     pub io_base: Option<u64>,
+    /// 中断号.
     pub irq: Option<u8>,
+    /// 驱动私有数据裸指针 (生命周期由 `driver_owned` 决定).
     pub driver_data: *mut u8,
     /// 驱动所有权标记: `true` 表示 `driver_data` 指向 EGDF 自有的 `DriverObject`
     /// (经 `egdf_register_driver` / `egdf_register_driver_with_ops` 注册),
@@ -187,6 +213,7 @@ pub struct EGDFDevice {
     /// 自持的裸驱动指针 (经 `egdf_register` / `egdf_register_with_ops` 注册),
     /// EGDF 不管理其生命周期 (避免 `driver_from_obj` 类型混淆)。
     pub driver_owned: bool,
+    /// 协议级 I/O 操作表 (未注册时为空).
     pub ops: Option<EGDFOps>,
     /// 块设备 trait 引用
     /// 当 `proto == EGDFProto::Block` 且驱动通过 `register_block_device` 注册时,
@@ -233,6 +260,7 @@ impl EGDFDevice {
         unsafe { &*(self.driver_data as *const T) }
     }
 
+    /// 取字符设备操作表; 非字符设备返回 `None`.
     pub fn char_ops(&self) -> Option<&'static proto_char::CharOps> {
         match &self.ops {
             Some(EGDFOps::Char(ops)) => Some(ops),
@@ -240,6 +268,7 @@ impl EGDFDevice {
         }
     }
 
+    /// 取网络设备操作表; 非网络设备返回 `None`.
     pub fn net_ops(&self) -> Option<&'static proto_net::NetOps> {
         match &self.ops {
             Some(EGDFOps::Net(ops)) => Some(ops),
@@ -247,6 +276,7 @@ impl EGDFDevice {
         }
     }
 
+    /// 取输入设备操作表; 非输入设备返回 `None`.
     pub fn input_ops(&self) -> Option<&'static proto_input::InputOps> {
         match &self.ops {
             Some(EGDFOps::Input(ops)) => Some(ops),
@@ -282,6 +312,7 @@ fn notify_last_registered() {
     }
 }
 
+/// 全局设备注册表 (spinlock 保护, 按注册次序排列).
 pub static EGDF_DEVICES: Mutex<Vec<EGDFDevice>> = Mutex::new(Vec::new());
 
 // ── 注册函数 ──

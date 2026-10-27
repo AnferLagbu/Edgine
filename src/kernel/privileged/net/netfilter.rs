@@ -9,6 +9,8 @@
 //!
 //! functions 侧改 `pub use crate::privileged::net::netfilter::*` 保持 API 兼容。
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::string::String;
@@ -35,14 +37,20 @@ pub const MAX_HOOKS_PER_POINT: usize = 8;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum NfHook {
+    /// 进入本机路由决策之前.
     Prerouting = 0,
+    /// 报文目的地为本机, 交付上层协议之前.
     Input = 1,
+    /// 报文经本机转发 (目的非本机).
     Forward = 2,
+    /// 本机发出的报文进入协议栈之前.
     Output = 3,
+    /// 报文即将离开本机网卡之前.
     Postrouting = 4,
 }
 
 impl NfHook {
+    /// 按数值解析钩子点, 非法值返回 `None`.
     pub fn from_u8(v: u8) -> Option<Self> {
         match v {
             0 => Some(Self::Prerouting),
@@ -54,6 +62,7 @@ impl NfHook {
         }
     }
 
+    /// 钩子点总数.
     pub const COUNT: usize = 5;
 }
 
@@ -65,13 +74,18 @@ impl NfHook {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum NfVerdict {
+    /// 放行报文, 继续后续处理.
     Accept = 0,
+    /// 丢弃报文.
     Drop = 1,
+    /// 报文已被处理方接管 (如用户态队列), 协议栈不再处理.
     Stolen = 2,
+    /// 报文排队等待异步处理.
     Queue = 3,
 }
 
 impl NfVerdict {
+    /// 按数值解析判定结果, 非法值返回 `None`.
     pub fn from_i32(v: i32) -> Option<Self> {
         match v {
             0 => Some(Self::Accept),
@@ -90,12 +104,19 @@ impl NfVerdict {
 /// 报文元信息 — 供 netfilter 规则匹配使用的五元组与接口索引
 #[derive(Debug, Clone)]
 pub struct NfPacketInfo {
+    /// 源 IPv4 地址 (网络序字节).
     pub src_ip: [u8; 4],
+    /// 目的 IPv4 地址 (网络序字节).
     pub dst_ip: [u8; 4],
+    /// 源端口 (0 表示非 TCP/UDP 报文).
     pub src_port: u16,
+    /// 目的端口 (0 表示非 TCP/UDP 报文).
     pub dst_port: u16,
+    /// IP 协议号 (如 6 = TCP, 17 = UDP).
     pub protocol: u8,
+    /// 入接口索引, 本机发出的报文为 `None`.
     pub in_ifindex: Option<u32>,
+    /// 出接口索引, 交付本机的报文为 `None`.
     pub out_ifindex: Option<u32>,
 }
 
@@ -106,17 +127,26 @@ pub struct NfPacketInfo {
 /// netfilter 过滤规则 — 按 CIDR/端口/协议匹配报文, 并给出判定与优先级
 #[derive(Debug, Clone)]
 pub struct NfRule {
+    /// 规则名, 同一钩子点内用于删除与查重.
     pub name: String,
+    /// 源地址 CIDR (网络地址 + 前缀长度), `None` 表示不限.
     pub src_cidr: Option<([u8; 4], u8)>,
+    /// 目的地址 CIDR (网络地址 + 前缀长度), `None` 表示不限.
     pub dst_cidr: Option<([u8; 4], u8)>,
+    /// 源端口闭区间, `None` 表示不限.
     pub src_port_range: Option<(u16, u16)>,
+    /// 目的端口闭区间, `None` 表示不限.
     pub dst_port_range: Option<(u16, u16)>,
+    /// 匹配的 IP 协议号, `None` 表示不限.
     pub protocol: Option<u8>,
+    /// 命中本规则时的判定动作.
     pub verdict: NfVerdict,
+    /// 优先级, 数值越小越先匹配.
     pub priority: i32,
 }
 
 impl NfRule {
+    /// 判断报文是否命中本规则 (所有已设置的匹配条件取与).
     pub fn matches(&self, pkt: &NfPacketInfo) -> bool {
         if let Some((net, prefix_len)) = self.src_cidr {
             if !cidr_match(net, prefix_len, pkt.src_ip) {

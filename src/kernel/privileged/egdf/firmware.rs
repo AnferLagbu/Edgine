@@ -58,6 +58,7 @@ pub struct FirmwareBlob {
 }
 
 impl FirmwareBlob {
+    /// 构造固件 blob (内容 + 名称 hash + 版本号).
     pub fn new(data: Vec<u8>, name_hash: u32, version: u32) -> Self {
         Self {
             data,
@@ -66,6 +67,7 @@ impl FirmwareBlob {
         }
     }
 
+    /// 返回固件内容的字节数.
     pub fn size(&self) -> usize {
         self.data.len()
     }
@@ -133,11 +135,17 @@ pub fn devtree_detach_firmware(node_id: NodeId) -> bool {
 
 // ── 错误码 (与 syscall 共享) ──
 
+/// 固件操作成功.
 pub const FW_OK: i32 = 0;
+/// 固件或设备节点不存在.
 pub const FW_ERR_NOT_FOUND: i32 = -1;
+/// 固件尺寸超过 [`MAX_FIRMWARE_SIZE`].
 pub const FW_ERR_TOO_LARGE: i32 = -2;
+/// 内存不足.
 pub const FW_ERR_OOM: i32 = -3;
+/// 参数非法.
 pub const FW_ERR_INVALID: i32 = -4;
+/// 底层 I/O 失败.
 pub const FW_ERR_IO: i32 = -5;
 
 // ── 锁静态检查 (在 no_std 下由审计工具覆盖, 此处仅文档化) ──

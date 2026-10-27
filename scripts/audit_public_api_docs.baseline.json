@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 274,
-    "files": 59,
-    "keys": 243
+    "sites": 258,
+    "files": 53,
+    "keys": 227
   },
   "entries": [
     [
@@ -110,78 +110,6 @@
       "src/kernel/privileged/driver/virtio/mod.rs",
       "fn",
       "read_config64",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/composite.rs",
-      "fn",
-      "compatible_str",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/composite.rs",
-      "fn",
-      "display_name",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/composite.rs",
-      "fn",
-      "from_compatible",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/composite.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/firmware.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/firmware.rs",
-      "fn",
-      "size",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/mod.rs",
-      "fn",
-      "as_str",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/mod.rs",
-      "fn",
-      "char_ops",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/mod.rs",
-      "fn",
-      "input_ops",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/mod.rs",
-      "fn",
-      "net_ops",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/user_driver.rs",
-      "fn",
-      "code",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/user_driver.rs",
-      "fn",
-      "new",
       1
     ],
     [
@@ -869,24 +797,6 @@
       1
     ],
     [
-      "src/kernel/privileged/net/netfilter.rs",
-      "fn",
-      "from_i32",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/netfilter.rs",
-      "fn",
-      "from_u8",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/netfilter.rs",
-      "fn",
-      "matches",
-      1
-    ],
-    [
       "src/kernel/privileged/net/save.rs",
       "fn",
       "compute_checksum",
@@ -1040,12 +950,6 @@
       "src/kernel/privileged/proc/cpu_queue.rs",
       "fn",
       "take_need_reschedule",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/elf/mod.rs",
-      "fn",
-      "empty",
       1
     ],
     [

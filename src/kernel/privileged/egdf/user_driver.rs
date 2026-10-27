@@ -25,20 +25,29 @@ pub struct UserDriverError {
 }
 
 impl UserDriverError {
+    /// 以负 errno 码构造错误.
     pub const fn new(code: i32) -> Self {
         Self { code }
     }
+    /// 返回内部错误码.
     pub const fn code(&self) -> i32 {
         self.code
     }
 }
 
+/// 操作成功.
 pub const ERR_OK: i32 = 0;
+/// 进程或设备节点不存在.
 pub const ERR_NOT_FOUND: i32 = -1;
+/// PWM 缺少所需设备能力.
 pub const ERR_NOT_AUTHORIZED: i32 = -2;
+/// 节点状态不允许该操作.
 pub const ERR_INVALID_STATE: i32 = -3;
+/// 节点缺少可映射的 MMIO 资源.
 pub const ERR_NO_MMIO: i32 = -4;
+/// 节点已绑定到其他进程.
 pub const ERR_PID_MISMATCH: i32 = -5;
+/// 内存或地址空间不足.
 pub const ERR_OOM: i32 = -6;
 
 fn has_device_cap(pwm: u64, required: u64) -> bool {
@@ -377,6 +386,7 @@ pub fn egdf_forward_irq(node_id: NodeId) -> bool {
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
+/// FFI 入口: 将设备节点绑定到用户进程, 返回 0 或负 errno.
 pub extern "C" fn user_driver_bind(node_id: u32, pid: u32, pwm: u64) -> i32 {
     match devtree_bind_user_device(node_id, pid, pwm) {
         Ok(()) => 0,
@@ -386,6 +396,7 @@ pub extern "C" fn user_driver_bind(node_id: u32, pid: u32, pwm: u64) -> i32 {
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
+/// FFI 入口: 解除设备节点与用户进程的绑定 (含 MMIO 卸载), 返回 0 或负 errno.
 pub extern "C" fn user_driver_unbind(node_id: u32, pid: u32, pwm: u64, mm: *const MmStruct) -> i32 {
     if mm.is_null() {
         return ERR_NOT_FOUND;

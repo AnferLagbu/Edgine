@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 1553,
-    "files": 177,
-    "keys": 372
+    "sites": 1388,
+    "files": 169,
+    "keys": 339
   },
   "entries": [
     [
@@ -19,21 +19,6 @@
       "src/kernel/functions/driver/acpi.rs",
       "a struct field",
       14
-    ],
-    [
-      "src/kernel/functions/driver/char/vga.rs",
-      "a constant",
-      3
-    ],
-    [
-      "src/kernel/functions/driver/char/vga.rs",
-      "a struct field",
-      7
-    ],
-    [
-      "src/kernel/functions/driver/char/vga.rs",
-      "a variant",
-      16
     ],
     [
       "src/kernel/functions/driver/display/controller.rs",
@@ -404,41 +389,6 @@
       "src/kernel/functions/fs/unkfs/compress.rs",
       "a function",
       2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/metaslab.rs",
-      "a constant",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/metaslab.rs",
-      "a method",
-      5
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/metaslab.rs",
-      "a struct",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/metaslab.rs",
-      "a struct field",
-      14
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/metaslab.rs",
-      "a variant",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/metaslab.rs",
-      "an associated function",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/metaslab.rs",
-      "an enum",
-      1
     ],
     [
       "src/kernel/functions/fs/unkfs/snapshot.rs",
@@ -961,86 +911,6 @@
       12
     ],
     [
-      "src/kernel/privileged/egdf/composite.rs",
-      "a function",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/composite.rs",
-      "a method",
-      2
-    ],
-    [
-      "src/kernel/privileged/egdf/composite.rs",
-      "a variant",
-      2
-    ],
-    [
-      "src/kernel/privileged/egdf/composite.rs",
-      "an associated function",
-      2
-    ],
-    [
-      "src/kernel/privileged/egdf/firmware.rs",
-      "a constant",
-      6
-    ],
-    [
-      "src/kernel/privileged/egdf/firmware.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/firmware.rs",
-      "an associated function",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/mod.rs",
-      "a method",
-      4
-    ],
-    [
-      "src/kernel/privileged/egdf/mod.rs",
-      "a module",
-      2
-    ],
-    [
-      "src/kernel/privileged/egdf/mod.rs",
-      "a static",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/mod.rs",
-      "a struct field",
-      8
-    ],
-    [
-      "src/kernel/privileged/egdf/mod.rs",
-      "a variant",
-      14
-    ],
-    [
-      "src/kernel/privileged/egdf/user_driver.rs",
-      "a constant",
-      7
-    ],
-    [
-      "src/kernel/privileged/egdf/user_driver.rs",
-      "a function",
-      2
-    ],
-    [
-      "src/kernel/privileged/egdf/user_driver.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/user_driver.rs",
-      "an associated function",
-      1
-    ],
-    [
       "src/kernel/privileged/freg/api.rs",
       "a function",
       15
@@ -1461,31 +1331,6 @@
       1
     ],
     [
-      "src/kernel/privileged/net/netfilter.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/netfilter.rs",
-      "a struct field",
-      15
-    ],
-    [
-      "src/kernel/privileged/net/netfilter.rs",
-      "a variant",
-      9
-    ],
-    [
-      "src/kernel/privileged/net/netfilter.rs",
-      "an associated constant",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/netfilter.rs",
-      "an associated function",
-      2
-    ],
-    [
       "src/kernel/privileged/net/route.rs",
       "a struct field",
       2
@@ -1587,16 +1432,6 @@
     ],
     [
       "src/kernel/privileged/proc/cpu_queue.rs",
-      "an associated function",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/elf/mod.rs",
-      "a struct field",
-      27
-    ],
-    [
-      "src/kernel/privileged/proc/elf/mod.rs",
       "an associated function",
       1
     ],

@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //!
 //! VGA 文本模式驱动 — functions 层安全代理 (Phase 2.1.5)
@@ -55,8 +56,11 @@ pub const VGA_REG_CURSOR_START: u8 = 0x0A;
 
 // ── 屏幕尺寸 ──
 
+/// 屏幕文本列数
 pub const SCREEN_WIDTH: usize = 80;
+/// 屏幕文本行数
 pub const SCREEN_HEIGHT: usize = 25;
+/// 屏幕可容纳的文本单元总数 (列 × 行)
 pub const SCREEN_CELLS: usize = SCREEN_WIDTH * SCREEN_HEIGHT;
 
 // ============================================================================
@@ -67,21 +71,37 @@ pub const SCREEN_CELLS: usize = SCREEN_WIDTH * SCREEN_HEIGHT;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Color {
+    /// 黑
     Black = 0,
+    /// 蓝
     Blue = 1,
+    /// 绿
     Green = 2,
+    /// 青
     Cyan = 3,
+    /// 红
     Red = 4,
+    /// 品红
     Magenta = 5,
+    /// 棕
     Brown = 6,
+    /// 浅灰
     LightGrey = 7,
+    /// 深灰
     DarkGrey = 8,
+    /// 浅蓝
     LightBlue = 9,
+    /// 浅绿
     LightGreen = 10,
+    /// 浅青
     LightCyan = 11,
+    /// 浅红
     LightRed = 12,
+    /// 浅品红
     LightMagenta = 13,
+    /// 黄
     Yellow = 14,
+    /// 白
     White = 15,
 }
 
@@ -119,8 +139,11 @@ impl Default for Color {
 /// VGA 文本属性 (前景色 + 背景色 + 闪烁)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextAttribute {
+    /// 前景色
     pub foreground: Color,
+    /// 背景色
     pub background: Color,
+    /// 是否闪烁
     pub blink: bool,
 }
 
@@ -166,7 +189,9 @@ impl Default for TextAttribute {
 /// VGA 文本单元 (字符 + 属性)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VgaCell {
+    /// 字符编码 (ASCII / 代码页)
     pub character: u8,
+    /// 颜色属性字节 (高 4 位背景, 低 4 位前景)
     pub attribute: u8,
 }
 
@@ -208,7 +233,9 @@ impl VgaCell {
 /// 光标坐标 (列, 行)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CursorPos {
+    /// 列坐标 (0..`SCREEN_WIDTH`)
     pub x: usize,
+    /// 行坐标 (0..`SCREEN_HEIGHT`)
     pub y: usize,
 }
 

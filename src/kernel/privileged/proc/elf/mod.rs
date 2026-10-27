@@ -20,6 +20,8 @@
 //! `elf_data` 必须是有效的内核虚拟地址，指向完整 ELF 文件。
 //! 调用者负责保证 ELF 数据在加载期间不被修改。
 
+#![deny(missing_docs)]
+
 // P1-I-33: ELF 验证抽到 verify 子模块, 单一来源
 pub mod verify;
 
@@ -30,19 +32,33 @@ use crate::privileged::mm::{PAGE_SIZE, PageFlags, VirtAddr};
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Elf64Header {
+    /// ELF 魔数、文件类、字节序与版本标识 (16 字节).
     pub e_ident: [u8; 16],
+    /// 文件类型 (`ET_EXEC` / `ET_DYN` 等).
     pub e_type: u16,
+    /// 目标指令集架构 (`EM_X86_64` / `EM_AARCH64` 等).
     pub e_machine: u16,
+    /// ELF 版本号.
     pub e_version: u32,
+    /// 程序入口虚拟地址.
     pub e_entry: u64,
+    /// 程序头表在文件中的偏移.
     pub e_phoff: u64,
+    /// 节头表在文件中的偏移.
     pub e_shoff: u64,
+    /// 处理器相关的标志位.
     pub e_flags: u32,
+    /// ELF 文件头自身的大小.
     pub e_ehsize: u16,
+    /// 单个程序头条目的大小.
     pub e_phentsize: u16,
+    /// 程序头表条目数量.
     pub e_phnum: u16,
+    /// 单个节头条目的大小.
     pub e_shentsize: u16,
+    /// 节头表条目数量.
     pub e_shnum: u16,
+    /// 节头字符串表在节头表中的索引.
     pub e_shstrndx: u16,
 }
 
@@ -50,13 +66,21 @@ pub struct Elf64Header {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Elf64Phdr {
+    /// 段类型 (`PT_LOAD` / `PT_INTERP` / `PT_GNU_STACK` 等).
     pub p_type: u32,
+    /// 段权限位 (`PF_R` / `PF_W` / `PF_X`).
     pub p_flags: u32,
+    /// 段内容在文件中的偏移.
     pub p_offset: u64,
+    /// 段在内存中的虚拟地址.
     pub p_vaddr: u64,
+    /// 段在内存中的物理地址 (通常与虚拟地址相同).
     pub p_paddr: u64,
+    /// 段在文件中的字节数.
     pub p_filesz: u64,
+    /// 段在内存中的字节数 (可大于文件字节数, 差额置零).
     pub p_memsz: u64,
+    /// 段的对齐要求.
     pub p_align: u64,
 }
 
@@ -74,14 +98,20 @@ const ET_DYN: u16 = 3;
 
 /// ELF 加载结果 — 返回入口地址、程序头表位置、brk 基址与用户栈顶。
 pub struct ElfLoadResult {
+    /// 程序入口地址 (已加上加载偏移).
     pub entry: u64,
+    /// 程序头表在用户地址空间中的地址.
     pub phdr_addr: u64,
+    /// 程序头表条目数量.
     pub phdr_count: u16,
+    /// 堆区起始地址 (所有已加载段之后的页对齐地址).
     pub brk_base: u64,
+    /// 用户栈顶地址.
     pub stack_top: u64,
 }
 
 impl ElfLoadResult {
+    /// 构造全零的加载结果, 用于错误路径或占位.
     pub const fn empty() -> Self {
         Self {
             entry: 0,
