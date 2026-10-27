@@ -1,18 +1,33 @@
 #![deny(unsafe_code)]
+//! Unkfs RAID-Z 冗余编码与数据重建 — 纯策略实现。
+//!
+//! 提供 GF(2^8) 有限域运算、条带校验生成、故障列数据重建与校验校验,
+//! 支撑 Single / RAID-Z1 / RAID-Z2 / RAID-Z3 / Mirror 五种冗余级别.
+
+#![deny(missing_docs)]
+
 use crate::functions::fs::unkfs::spa::HV_POOL_BLOCK_SIZE;
 use alloc::vec;
 use alloc::vec::Vec;
 
+/// RAID-Z 条带允许的最小列数。
 pub const HV_RAIDZ_MIN_COLS: usize = 2;
+/// RAID-Z 条带允许的最大列数。
 pub const HV_RAIDZ_MAX_COLS: usize = 16;
 
+/// Unkfs 条带的冗余级别。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum UnkfsRaidzLevel {
+    /// 单副本: 无校验列, 无容错能力。
     Single = 0,
+    /// RAID-Z1: 单校验列, 容忍一列故障。
     RaidZ1 = 1,
+    /// RAID-Z2: 双校验列, 容忍两列故障。
     RaidZ2 = 2,
+    /// RAID-Z3: 三校验列, 容忍三列故障。
     RaidZ3 = 3,
+    /// 镜像: 无校验列, 容忍一份副本故障。
     Mirror = 4,
 }
 
@@ -25,6 +40,7 @@ impl UnkfsRaidzLevel {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 返回该冗余级别的校验列数量。
     pub fn parity_cols(&self) -> usize {
         match self {
             Self::Single => 0,
@@ -43,6 +59,7 @@ impl UnkfsRaidzLevel {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 返回该冗余级别可容忍的最大故障列数。
     pub fn max_failures(&self) -> usize {
         match self {
             Self::Single => 0,
@@ -54,20 +71,33 @@ impl UnkfsRaidzLevel {
     }
 }
 
+/// Unkfs RAID-Z 条带映射 — 描述一条条带的布局与其中各列的数据。
 pub struct UnkfsRaidzMap {
+    /// 条带的冗余级别。
     pub level: UnkfsRaidzLevel,
+    /// 条带总列数 (数据列 + 校验列)。
     pub ncols: usize,
+    /// 校验列数量。
     pub nparity: usize,
+    /// 块大小位移 (2 的幂), 用于确定块内偏移单位。
     pub ashift: u8,
+    /// 条带中的各列。
     pub cols: Vec<UnkfsRaidzCol>,
 }
 
+/// Unkfs RAID-Z 条带中的单列 — 承载该列的数据与其承载位置。
 pub struct UnkfsRaidzCol {
+    /// 列在条带中的序号。
     pub col_id: usize,
+    /// 该列对应的设备索引。
     pub devidx: usize,
+    /// 该列在设备上的字节偏移。
     pub offset: u64,
+    /// 该列的数据长度 (字节)。
     pub size: usize,
+    /// 该列的数据内容。
     pub data: Vec<u8>,
+    /// 该列是否为校验列。
     pub is_parity: bool,
 }
 
@@ -181,6 +211,7 @@ fn gf_invert_matrix(mat: &mut [Vec<u8>], n: usize) -> bool {
 }
 
 impl UnkfsRaidzMap {
+    /// 按冗余级别构造条带映射; 列数会夹取到 [MIN, MAX] 区间。
     pub fn new(level: UnkfsRaidzLevel, ncols: usize, ashift: u8) -> Self {
         let nparity = level.parity_cols();
         Self {
@@ -192,10 +223,14 @@ impl UnkfsRaidzMap {
         }
     }
 
+    /// 返回数据列数量 (总列数减去校验列数)。
     pub fn data_cols(&self) -> usize {
         self.ncols.saturating_sub(self.nparity)
     }
 
+    /// 依据数据内容生成整条条带的各列缓冲, 含数据列与校验列。
+    ///
+    /// 返回长度等于 `ncols` 的列向量, 前 `nparity` 项为校验列。
     pub fn generate_parity(&mut self, data: &[u8]) -> Vec<Vec<u8>> {
         let unit_size = HV_POOL_BLOCK_SIZE as usize;
         let data_cols = self.data_cols();
@@ -236,6 +271,10 @@ impl UnkfsRaidzMap {
         result
     }
 
+    /// 由已知列重建故障列数据, 失败列数超出容错上限或无解时返回 `None`。
+    ///
+    /// `parity_data` 为完整条带的各列缓冲, `failed_cols` 为需要重建的列序号;
+    /// 成功时返回按数据列顺序拼接的重建结果。
     pub fn reconstruct_data(
         &self,
         parity_data: &[Vec<u8>],
@@ -342,6 +381,7 @@ impl UnkfsRaidzMap {
         Some(output)
     }
 
+    /// 复算并比对全部校验列, 一致返回 `true`, 否则返回 `false`。
     pub fn verify_parity(&self, parity_data: &[Vec<u8>]) -> bool {
         let unit_size = HV_POOL_BLOCK_SIZE as usize;
         let data_cols = self.data_cols();
@@ -376,13 +416,16 @@ impl UnkfsRaidzMap {
     }
 }
 
+/// Unkfs RAID-Z 引擎 — 条带创建与块级校验的对外入口。
 pub struct UnkfsRaidzEngine;
 
 impl UnkfsRaidzEngine {
+    /// 按冗余级别创建一条条带映射。
     pub fn create_stripe(level: UnkfsRaidzLevel, ncols: usize, ashift: u8) -> UnkfsRaidzMap {
         UnkfsRaidzMap::new(level, ncols, ashift)
     }
 
+    /// 校验一个块的校验列, 返回清理完成或损坏的诊断结果。
     pub fn scrub_block(map: &UnkfsRaidzMap, parity_data: &[Vec<u8>]) -> UnkfsScrubResult {
         if map.verify_parity(parity_data) {
             UnkfsScrubResult::Clean
@@ -394,10 +437,21 @@ impl UnkfsRaidzEngine {
     }
 }
 
+/// Unkfs 块级校验 (scrub) 的结果。
 #[derive(Debug, Clone)]
 pub enum UnkfsScrubResult {
+    /// 校验一致, 无损坏。
     Clean,
-    Corrupted { failed_cols: Vec<usize> },
-    Repaired { repaired_cols: Vec<usize> },
+    /// 检测到损坏, 记录疑似故障列。
+    Corrupted {
+        /// 疑似故障的列序号。
+        failed_cols: Vec<usize>,
+    },
+    /// 损坏已被重建修复, 记录修复的列序号。
+    Repaired {
+        /// 已修复的列序号。
+        repaired_cols: Vec<usize>,
+    },
+    /// 损坏无法修复 (故障列数超出容错上限)。
     Unrepairable,
 }

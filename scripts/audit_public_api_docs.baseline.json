@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 325,
-    "files": 69,
-    "keys": 289
+    "sites": 308,
+    "files": 65,
+    "keys": 275
   },
   "entries": [
     [
@@ -111,12 +111,6 @@
       "fn",
       "new",
       4
-    ],
-    [
-      "src/kernel/privileged/driver/storage/ahci.rs",
-      "fn",
-      "new",
-      2
     ],
     [
       "src/kernel/privileged/driver/storage/nvme.rs",
@@ -443,18 +437,6 @@
       2
     ],
     [
-      "src/kernel/privileged/freg/types.rs",
-      "fn",
-      "from_u32",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/types.rs",
-      "fn",
-      "from_u32_fallback",
-      1
-    ],
-    [
       "src/kernel/privileged/freg/undo_log.rs",
       "fn",
       "compact_keeping",
@@ -615,18 +597,6 @@
       "fn",
       "vector",
       1
-    ],
-    [
-      "src/kernel/privileged/klog/mod.rs",
-      "fn",
-      "as_slice",
-      1
-    ],
-    [
-      "src/kernel/privileged/klog/mod.rs",
-      "fn",
-      "new",
-      2
     ],
     [
       "src/kernel/privileged/mm/kmalloc.rs",
@@ -1340,60 +1310,6 @@
       "src/kernel/privileged/proc/scheduler.rs",
       "fn",
       "remove_quota",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/seccomp.rs",
-      "fn",
-      "check",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/seccomp.rs",
-      "fn",
-      "evaluate",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/seccomp.rs",
-      "fn",
-      "from_linux",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/seccomp.rs",
-      "fn",
-      "get_mode",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/seccomp.rs",
-      "fn",
-      "is_no_new_privs",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/seccomp.rs",
-      "fn",
-      "matches",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/seccomp.rs",
-      "fn",
-      "new",
-      2
-    ],
-    [
-      "src/kernel/privileged/proc/seccomp.rs",
-      "fn",
-      "set_no_new_privs",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/seccomp.rs",
-      "fn",
-      "to_linux",
       1
     ],
     [

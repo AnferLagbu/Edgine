@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 2249,
-    "files": 199,
-    "keys": 470
+    "sites": 2060,
+    "files": 194,
+    "keys": 445
   },
   "entries": [
     [
@@ -549,41 +549,6 @@
       "src/kernel/functions/fs/unkfs/metaslab.rs",
       "an enum",
       1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/raidz.rs",
-      "a constant",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/raidz.rs",
-      "a method",
-      6
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/raidz.rs",
-      "a struct",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/raidz.rs",
-      "a struct field",
-      13
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/raidz.rs",
-      "a variant",
-      9
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/raidz.rs",
-      "an associated function",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/raidz.rs",
-      "an enum",
-      2
     ],
     [
       "src/kernel/functions/fs/unkfs/snapshot.rs",
@@ -1196,26 +1161,6 @@
       7
     ],
     [
-      "src/kernel/privileged/driver/storage/ahci.rs",
-      "a struct field",
-      30
-    ],
-    [
-      "src/kernel/privileged/driver/storage/ahci.rs",
-      "a variant",
-      5
-    ],
-    [
-      "src/kernel/privileged/driver/storage/ahci.rs",
-      "an associated function",
-      2
-    ],
-    [
-      "src/kernel/privileged/driver/storage/ahci.rs",
-      "an enum",
-      1
-    ],
-    [
       "src/kernel/privileged/driver/storage/nvme.rs",
       "a method",
       2
@@ -1388,7 +1333,7 @@
     [
       "src/kernel/privileged/freg/mod.rs",
       "a module",
-      5
+      4
     ],
     [
       "src/kernel/privileged/freg/mod.rs",
@@ -1516,26 +1461,6 @@
       2
     ],
     [
-      "src/kernel/privileged/freg/types.rs",
-      "a constant",
-      13
-    ],
-    [
-      "src/kernel/privileged/freg/types.rs",
-      "a struct field",
-      16
-    ],
-    [
-      "src/kernel/privileged/freg/types.rs",
-      "a variant",
-      6
-    ],
-    [
-      "src/kernel/privileged/freg/types.rs",
-      "an associated function",
-      2
-    ],
-    [
       "src/kernel/privileged/freg/undo_log.rs",
       "a method",
       3
@@ -1659,36 +1584,6 @@
       "src/kernel/privileged/irqline.rs",
       "a method",
       3
-    ],
-    [
-      "src/kernel/privileged/klog/mod.rs",
-      "a constant",
-      1
-    ],
-    [
-      "src/kernel/privileged/klog/mod.rs",
-      "a macro",
-      11
-    ],
-    [
-      "src/kernel/privileged/klog/mod.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/privileged/klog/mod.rs",
-      "a static",
-      1
-    ],
-    [
-      "src/kernel/privileged/klog/mod.rs",
-      "a variant",
-      21
-    ],
-    [
-      "src/kernel/privileged/klog/mod.rs",
-      "an associated function",
-      2
     ],
     [
       "src/kernel/privileged/mm/api.rs",
@@ -2149,26 +2044,6 @@
       "src/kernel/privileged/proc/sched_ops.rs",
       "a function",
       6
-    ],
-    [
-      "src/kernel/privileged/proc/seccomp.rs",
-      "a method",
-      7
-    ],
-    [
-      "src/kernel/privileged/proc/seccomp.rs",
-      "a struct field",
-      12
-    ],
-    [
-      "src/kernel/privileged/proc/seccomp.rs",
-      "a variant",
-      16
-    ],
-    [
-      "src/kernel/privileged/proc/seccomp.rs",
-      "an associated function",
-      3
     ],
     [
       "src/kernel/privileged/proc/session.rs",

@@ -27,17 +27,25 @@
 //! # Safety
 //! AHCI驱动涉及MMIO寄存器和DMA操作。
 
+#![deny(missing_docs)]
+
 // ============================================================================
 // SATA 命令定义
 // ============================================================================
 
+/// ATA 命令码 — 驱动用到的 SATA/ATA 命令集 (含 LBA48 DMA 与 NCQ)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum AtaCommand {
-    ReadDma = 0x25,  // 读 DMA (LBA28) — 也用作 READ DMA EXT (LBA48)
-    WriteDma = 0x35, // 写 DMA (LBA28) — 也用作 WRITE DMA EXT (LBA48)
+    /// 读 DMA (LBA28) — 也用作 READ DMA EXT (LBA48)。
+    ReadDma = 0x25,
+    /// 写 DMA (LBA28) — 也用作 WRITE DMA EXT (LBA48)。
+    WriteDma = 0x35,
+    /// 读取设备识别信息。
     Identify = 0xEC,
+    /// NCQ 队列读 (FPDMA QUEUED READ)。
     ReadFpdmaQueued = 0x60,
+    /// NCQ 队列写 (FPDMA QUEUED WRITE)。
     WriteFpdmaQueued = 0x61,
 }
 
@@ -54,14 +62,20 @@ pub enum AtaCommand {
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed)]
 pub struct AhciCommandHeader {
-    pub dw0: u32,   // CFL(5) | A(1) | W(1) | P(1) | R(1) | B(1) | C(1) | PMP(4) | PRDTL(16)
-    pub prdbc: u32, // DW1: PRDT 已传输字节计数 (硬件维护, 软件清零)
-    pub ctba: u32,  // DW2: 命令表基址低32位
-    pub ctbau: u32, // DW3: 命令表基址高32位
+    /// DW0: CFL/A/W/P/R/B/C 标志位与高 16 位 PRDTL。
+    pub dw0: u32,
+    /// DW1: PRDT 已传输字节计数 (硬件维护, 软件清零)。
+    pub prdbc: u32,
+    /// DW2: 命令表基址低 32 位。
+    pub ctba: u32,
+    /// DW3: 命令表基址高 32 位。
+    pub ctbau: u32,
+    /// DW4-7: 规范保留字段。
     pub rsvd: [u32; 4],
 }
 
 impl AhciCommandHeader {
+    /// 构造全零的命令头。
     pub fn new() -> Self {
         Self {
             dw0: 0,
@@ -77,19 +91,27 @@ impl AhciCommandHeader {
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed)]
 pub struct PhysicalRegionDescriptor {
-    pub dba: u32,  // 数据基址低32位
-    pub dbau: u32, // 数据基址高32位
+    /// 数据基址低 32 位。
+    pub dba: u32,
+    /// 数据基址高 32 位。
+    pub dbau: u32,
+    /// 规范保留字段。
     pub rsvd: u32,
-    pub dbc: u32, // 字节计数 (高1位 = 中断完成标记)
+    /// 字节计数 (高 1 位 = 中断完成标记)。
+    pub dbc: u32,
 }
 
 /// AHCI 命令表
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed)]
 pub struct AhciCommandTable {
-    pub cfis: [u8; 64], // 命令FIS
-    pub acmd: [u8; 16], // ATAPI命令
+    /// 命令 FIS (64 字节)。
+    pub cfis: [u8; 64],
+    /// ATAPI 命令 (16 字节)。
+    pub acmd: [u8; 16],
+    /// 规范保留字段。
     pub rsvd: [u8; 48],
+    /// 物理区域描述符表。
     pub prdt: [PhysicalRegionDescriptor; 8],
 }
 
@@ -101,26 +123,44 @@ pub struct AhciCommandTable {
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed)]
 pub struct H2dFis {
+    /// FIS 类型 (H2D 固定为 0x27)。
     pub fis_type: u8,
+    /// 标志位 (bit7 为写方向标记)。
     pub flags: u8,
+    /// ATA 命令码。
     pub command: u8,
+    /// 特性低字节。
     pub feature0: u8,
+    /// LBA 第 0 字节。
     pub lba0: u8,
+    /// LBA 第 1 字节。
     pub lba1: u8,
+    /// LBA 第 2 字节。
     pub lba2: u8,
+    /// LBA 第 3 字节。
     pub lba3: u8,
+    /// 设备/头寄存器选择字节。
     pub device: u8,
+    /// LBA 第 4 字节 (LBA48 高段)。
     pub lba4: u8,
+    /// LBA 第 5 字节 (LBA48 高段)。
     pub lba5: u8,
+    /// 特性高字节。
     pub feature1: u8,
+    /// 扇区计数低字节。
     pub count0: u8,
+    /// 扇区计数高字节。
     pub count1: u8,
+    /// 命令完成中断控制字节。
     pub icc: u8,
+    /// 控制寄存器字节。
     pub control: u8,
+    /// 规范保留字段。
     pub rsvd: [u32; 4],
 }
 
 impl H2dFis {
+    /// 构造全零的主机到设备 FIS。
     pub fn new() -> Self {
         Self {
             fis_type: 0,

@@ -9,6 +9,8 @@
 //!
 //! 所有内核模块通过 klog_* FFI 统一输出。
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicU8, Ordering};
 
 // 时间戳时基: 只取 timer 顶层 re-export 的公共 API (`get_ticks` / `ticks_to_us`),
@@ -28,6 +30,7 @@ use crate::privileged::timer::{get_ticks, ticks_to_us};
 //   klog_err!(Driver, "驱动错误: {}", code);
 // ============================================================================
 
+/// 单条日志正文的最大字节数 (栈上格式化缓冲区容量)。
 pub const KLOG_BUF: usize = 256;
 
 /// 固定容量 (256 字节) 的栈上缓冲区写入器, 收集格式化后的日志字节.
@@ -36,6 +39,7 @@ pub struct KlogWriter {
     pos: usize,
 }
 impl KlogWriter {
+    /// 构造空的栈上写入器。
     pub const fn new() -> Self {
         Self {
             buf: [0; KLOG_BUF],
@@ -55,6 +59,7 @@ impl core::fmt::Write for KlogWriter {
 }
 
 impl KlogWriter {
+    /// 返回已写入的字节切片。
     pub fn as_slice(&self) -> &[u8] {
         &self.buf[..self.pos]
     }
@@ -67,6 +72,7 @@ pub struct CursorWriter<'a> {
 }
 
 impl<'a> CursorWriter<'a> {
+    /// 借用外部缓冲与游标构造写入器。
     pub fn new(buf: &'a mut [u8], cursor: &'a mut usize) -> Self {
         Self { buf, cursor }
     }
@@ -129,31 +135,42 @@ macro_rules! klog_fmt {
 /// 便捷宏: 按级别
 #[macro_export]
 macro_rules! klog_info  { ($cat:ident, $($arg:tt)*) => { $crate::klog_fmt!(Info,  $cat, $($arg)*) }; }
+/// 以 Warn 级别输出指定分类的日志。
 #[macro_export]
 macro_rules! klog_warn  { ($cat:ident, $($arg:tt)*) => { $crate::klog_fmt!(Warn,  $cat, $($arg)*) }; }
+/// 以 Error 级别输出指定分类的日志。
 #[macro_export]
 macro_rules! klog_err   { ($cat:ident, $($arg:tt)*) => { $crate::klog_fmt!(Error, $cat, $($arg)*) }; }
+/// 以 Debug 级别输出指定分类的日志。
 #[macro_export]
 macro_rules! klog_debug { ($cat:ident, $($arg:tt)*) => { $crate::klog_fmt!(Debug, $cat, $($arg)*) }; }
+/// 以 Crit 级别输出指定分类的日志。
 #[macro_export]
 macro_rules! klog_crit  { ($cat:ident, $($arg:tt)*) => { $crate::klog_fmt!(Crit,  $cat, $($arg)*) }; }
 
 /// 便捷宏: 按类别+级别 (常用组合)
 #[macro_export]
 macro_rules! klog_boot_info  { ($($arg:tt)*) => { $crate::klog_info!(Boot, $($arg)*) }; }
+/// 以 Kernel 分类 + Warn 级别输出日志。
 #[macro_export]
 macro_rules! klog_kern_warn { ($($arg:tt)*) => { $crate::klog_warn!(Kernel, $($arg)*) }; }
+/// 以 Kernel 分类 + Error 级别输出日志。
 #[macro_export]
 macro_rules! klog_kern_err  { ($($arg:tt)*) => { $crate::klog_err!(Kernel, $($arg)*) }; }
+/// 以 Driver 分类 + Warn 级别输出日志。
 #[macro_export]
 macro_rules! klog_drv_warn  { ($($arg:tt)*) => { $crate::klog_warn!(Driver, $($arg)*) }; }
+/// 以 Driver 分类 + Error 级别输出日志。
 #[macro_export]
 macro_rules! klog_drv_err   { ($($arg:tt)*) => { $crate::klog_err!(Driver, $($arg)*) }; }
 
+/// 以 Kernel 分类 + Error 级别输出日志 (历史命名别名)。
 #[macro_export]
 macro_rules! klog_error { ($($arg:tt)*) => { $crate::klog_err!(Kernel, $($arg)*) }; }
+/// 以 Memory 分类 + Info 级别输出日志 (内存分配路径常用)。
 #[macro_export]
 macro_rules! klog_slab  { ($($arg:tt)*) => { $crate::klog_info!(Memory, $($arg)*) }; }
+/// 以 Kernel 分类 + Info 级别输出日志 (简化形式)。
 #[macro_export]
 macro_rules! klog_info_simple { ($($arg:tt)*) => { $crate::klog_info!(Kernel, $($arg)*) }; }
 
@@ -501,6 +518,7 @@ static RING: RingLock = RingLock {
 // ============================================================================
 
 static MIN_LEVEL: AtomicU8 = AtomicU8::new(LogLevel::Info as u8);
+/// klog 是否已完成初始化 (`klog_init` 置位).
 pub static KLOG_INIT: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 // ============================================================================
@@ -511,11 +529,17 @@ pub static KLOG_INIT: core::sync::atomic::AtomicBool = core::sync::atomic::Atomi
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum LogLevel {
+    /// 调试级 (最详细)。
     Debug = 0,
+    /// 信息级。
     Info = 1,
+    /// 提示级 (比 Info 更值得注意)。
     Note = 2,
+    /// 告警级。
     Warn = 3,
+    /// 错误级。
     Error = 4,
+    /// 严重级 (最高)。
     Crit = 5,
 }
 
@@ -524,20 +548,35 @@ pub enum LogLevel {
 #[repr(u8)]
 #[allow(clippy::upper_case_acronyms)] // IPC 子系统名
 pub enum LogCategory {
+    /// 启动阶段。
     Boot = 0,
+    /// 内核通用。
     Kernel = 1,
+    /// 内存管理。
     Memory = 2,
+    /// 进程管理。
     Process = 3,
+    /// 文件系统。
     FS = 4,
+    /// 网络子系统。
     Net = 5,
+    /// 驱动子系统。
     Driver = 6,
+    /// 系统调用。
     Syscall = 7,
+    /// 进程间通信。
     IPC = 8,
+    /// 安全子系统。
     Security = 9,
+    /// 测试。
     Test = 10,
+    /// 同步原语。
     Sync = 11,
+    /// 交换子系统。
     Swap = 12,
+    /// ACPI 子系统。
     Acpi = 13,
+    /// 定时器子系统。
     Timer = 14,
 }
 
