@@ -18,18 +18,13 @@ fn create_test_namespace() -> IpcNamespace {
     ns
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 fn test_pipe_basic() -> TestResult {
     let mut ns = create_test_namespace();
     let mut next_id: IpcId = 1;
     let pid: u32 = 500;
 
-    let (rfd, wfd) = match pipe::pipe_create_safe(&mut ns, &mut next_id, pid) {
-        Ok(pair) => pair,
-        Err(_) => return TestResult::Fail("pipe_create failed"),
+    let Ok((rfd, wfd)) = pipe::pipe_create_safe(&mut ns, &mut next_id, pid) else {
+        return TestResult::Fail("pipe_create failed");
     };
 
     let data = [0x41u8; 4];
@@ -58,10 +53,6 @@ fn test_shm_rapid_attach_detach() -> TestResult {
     TestResult::Skip("E-04: host 无 PMM 初始化, 跳过 (依赖裸机物理内存分配)")
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 #[cfg(not(feature = "host-test"))]
 fn test_shm_rapid_attach_detach() -> TestResult {
     crate::klog_ffi!(klog_ffi_info, "[SHM] creating ns");
@@ -83,9 +74,8 @@ fn test_shm_rapid_attach_detach() -> TestResult {
     crate::klog_ffi!(klog_ffi_info, "[SHM] create ok");
 
     for _i in 0..100 {
-        let addr = match shm::shm_attach_safe(&mut ns, id, pid) {
-            Ok(a) => a,
-            Err(_) => return TestResult::Fail("shm_attach failed"),
+        let Ok(addr) = shm::shm_attach_safe(&mut ns, id, pid) else {
+            return TestResult::Fail("shm_attach failed");
         };
         check!(addr != 0, "attach returned null");
         if shm::shm_detach_safe(&mut ns, id, pid).is_err() {
@@ -99,18 +89,13 @@ fn test_shm_rapid_attach_detach() -> TestResult {
     TestResult::Pass
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 fn test_semaphore_high_concurrency() -> TestResult {
     let mut ns = create_test_namespace();
     let mut next_id: IpcId = 1;
     let pid: u32 = 800;
 
-    let id = match sem::sem_create_safe(&mut ns, &mut next_id, 10, 20, pid) {
-        Ok(id) => id,
-        Err(_) => return TestResult::Fail("sem_create failed"),
+    let Ok(id) = sem::sem_create_safe(&mut ns, &mut next_id, 10, 20, pid) else {
+        return TestResult::Fail("sem_create failed");
     };
 
     for _ in 0..1000 {
@@ -152,18 +137,13 @@ fn test_invalid_ids() -> TestResult {
     TestResult::Pass
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 fn test_duplicate_close() -> TestResult {
     let mut ns = create_test_namespace();
     let mut next_id: IpcId = 1;
     let pid: u32 = 1300;
 
-    let (rfd, wfd) = match pipe::pipe_create_safe(&mut ns, &mut next_id, pid) {
-        Ok(pair) => pair,
-        Err(_) => return TestResult::Fail("pipe_create failed"),
+    let Ok((rfd, wfd)) = pipe::pipe_create_safe(&mut ns, &mut next_id, pid) else {
+        return TestResult::Fail("pipe_create failed");
     };
 
     check!(

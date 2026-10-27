@@ -439,10 +439,6 @@ impl UnkfsZilPersist {
         Some(block)
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 从磁盘 block 回放 ZIL 记录 (块校验失败时返回空 vec, 按 `seq` 升序)
     pub fn deserialize_zil_from_block(block: &[u8]) -> Vec<UnkfsZilRecord> {
         let mut records = Vec::new();
@@ -451,9 +447,8 @@ impl UnkfsZilPersist {
             return records;
         }
 
-        let header = match ZilBlockHeader::from_block(block) {
-            Some(h) => h,
-            None => return records,
+        let Some(header) = ZilBlockHeader::from_block(block) else {
+            return records;
         };
 
         if !header.is_valid() || !header.verify_header() {
@@ -469,9 +464,8 @@ impl UnkfsZilPersist {
             .try_into()
             .ok()
             .map(u32::from_le_bytes);
-        let (tail_magic, block_checksum) = match (tail_magic_raw, block_checksum_raw) {
-            (Some(m), Some(c)) => (m, c),
-            _ => return records,
+        let (Some(tail_magic), Some(block_checksum)) = (tail_magic_raw, block_checksum_raw) else {
+            return records;
         };
         let trailer = ZilBlockTrailer {
             tail_magic,

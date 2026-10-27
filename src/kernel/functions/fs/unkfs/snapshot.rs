@@ -149,16 +149,11 @@ impl UnkfsSnapshotManager {
             .collect()
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 将数据集回滚到指定快照; 快照不存在或归属不符时返回 `false`
     pub fn rollback(&self, snap_id: u64, ds: &UnkfsDataset) -> bool {
         let snaps = self.snapshots.lock();
-        let snap = match snaps.iter().find(|s| s.snap_id == snap_id) {
-            Some(s) => s,
-            None => return false,
+        let Some(snap) = snaps.iter().find(|s| s.snap_id == snap_id) else {
+            return false;
         };
         if snap.ds_id != ds.ds_id {
             return false;

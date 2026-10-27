@@ -592,10 +592,6 @@ pub extern "C" fn sys_secure_boot(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
 #[unsafe(no_mangle)]
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub extern "C" fn sys_tpm(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     if !tpm_is_initialized() && cmd != 5 {
         return -(11i64); // EAGAIN
@@ -604,9 +600,8 @@ pub extern "C" fn sys_tpm(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     match cmd {
         0 => {
             // extend
-            let pcr_idx = match PcrIndex::from_u32(a1 as u32) {
-                Some(idx) => idx,
-                None => return -(22i64),
+            let Some(pcr_idx) = PcrIndex::from_u32(a1 as u32) else {
+                return -(22i64);
             };
             if a2 == 0 {
                 return -(22i64);
@@ -621,9 +616,8 @@ pub extern "C" fn sys_tpm(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
         }
         1 => {
             // read_pcr
-            let pcr_idx = match PcrIndex::from_u32(a1 as u32) {
-                Some(idx) => idx,
-                None => return -(22i64),
+            let Some(pcr_idx) = PcrIndex::from_u32(a1 as u32) else {
+                return -(22i64);
             };
             let pcr = tpm_subsystem().read_pcr(pcr_idx);
             // 返回哈希前 8 字节作为 u64

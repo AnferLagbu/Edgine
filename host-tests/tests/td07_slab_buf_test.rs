@@ -81,7 +81,9 @@ fn test_buf_lifetime_safe_through_socket_remove() {
     let src = read(NET_SM_FI);
     let close_marker = "pub unsafe extern \"C\" fn sm_close(";
     let start = src.find(close_marker).expect("sm_close not found");
-    let body = &src[start..start + 5000];
+    // 按字符截取窗口: 源码含中文注释, 按字节切片可能落在非字符边界上
+    let window: String = src[start..].chars().take(5000).collect();
+    let body = window.as_str();
     let remove_idx = body
         .find("sockets.remove(handle);")
         .expect("sockets.remove missing");

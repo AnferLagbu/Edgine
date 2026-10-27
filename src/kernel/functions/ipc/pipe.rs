@@ -51,10 +51,6 @@ pub fn pipe_find_by_key_index(namespace: &IpcNamespace, key: i32) -> Option<usiz
     None
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 创建管道, 返回 `(读端点 key, 写端点 key)`.
 ///
 /// 端点 key 仅用于本模块内部寻址, 不等于用户 fd; 用户 fd 由调用方
@@ -69,9 +65,8 @@ pub fn pipe_create_safe(
 ) -> Result<(i32, i32), i32> {
     let _lock = PIPE_LOCK.lock();
 
-    let idx = match pipe_find_free_index(namespace) {
-        Some(i) => i,
-        None => return Err(-1),
+    let Some(idx) = pipe_find_free_index(namespace) else {
+        return Err(-1);
     };
 
     let pipe = &mut namespace.pipes[idx];
@@ -100,10 +95,6 @@ pub fn pipe_create_safe(
     Ok((pipe.read_key, pipe.write_key))
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 从管道读取数据到 `buf`.
 ///
 /// # Errors
@@ -117,9 +108,8 @@ pub fn pipe_read_safe(
 ) -> Result<u32, i32> {
     let _lock = PIPE_LOCK.lock();
 
-    let idx = match pipe_find_by_key_index(namespace, key) {
-        Some(i) => i,
-        None => return Err(-1),
+    let Some(idx) = pipe_find_by_key_index(namespace, key) else {
+        return Err(-1);
     };
 
     let pipe = &mut namespace.pipes[idx];
@@ -160,10 +150,6 @@ pub fn pipe_read_safe(
     Ok(read_count)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 将 `buf` 中的数据写入管道.
 ///
 /// # Errors
@@ -178,9 +164,8 @@ pub fn pipe_write_safe(
 ) -> Result<u32, i32> {
     let _lock = PIPE_LOCK.lock();
 
-    let idx = match pipe_find_by_key_index(namespace, key) {
-        Some(i) => i,
-        None => return Err(-1),
+    let Some(idx) = pipe_find_by_key_index(namespace, key) else {
+        return Err(-1);
     };
 
     let pipe = &mut namespace.pipes[idx];
@@ -223,10 +208,6 @@ pub fn pipe_write_safe(
     Ok(written)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 关闭管道的一个端点 key.
 ///
 /// 端点关闭以 `OpenFile` 引用计数归零为准 (最后一份 fd 释放时调用),
@@ -237,9 +218,8 @@ pub fn pipe_write_safe(
 pub fn pipe_close_safe(namespace: &mut IpcNamespace, key: i32) -> Result<(), i32> {
     let _lock = PIPE_LOCK.lock();
 
-    let idx = match pipe_find_by_key_index(namespace, key) {
-        Some(i) => i,
-        None => return Err(-1),
+    let Some(idx) = pipe_find_by_key_index(namespace, key) else {
+        return Err(-1);
     };
 
     let pipe = &mut namespace.pipes[idx];

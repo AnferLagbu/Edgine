@@ -298,15 +298,10 @@ impl IoUring {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 执行单个操作
     fn execute_op(&self, sqe: &Sqe) -> i32 {
-        let opcode = match IoOpCode::from_u8(sqe.opcode) {
-            Some(op) => op,
-            None => return -(Errno::EINVAL as i32),
+        let Some(opcode) = IoOpCode::from_u8(sqe.opcode) else {
+            return -(Errno::EINVAL as i32);
         };
 
         match opcode {

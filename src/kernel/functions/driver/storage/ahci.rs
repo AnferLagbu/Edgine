@@ -543,10 +543,6 @@ impl AhciPort {
         }
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 分配 DMA 内存并设置寄存器 (幂等: 已分配时直接返回)
     pub fn setup_dma(&mut self, hba: &AhciHba) -> bool {
         // 幂等防护: enable() 与 init_controller 检测序列都会调用,
@@ -554,9 +550,7 @@ impl AhciPort {
         if self.dma.is_some() {
             return true;
         }
-        let handle = if let Some(h) = crate::privileged::driver::storage::ahci_alloc_port_dma() {
-            h
-        } else {
+        let Some(handle) = crate::privileged::driver::storage::ahci_alloc_port_dma() else {
             slog_warn!(Driver, "端口 {} DMA 分配失败", self.port_num);
             return false;
         };
@@ -657,10 +651,6 @@ impl AhciPort {
         clippy::ref_as_ptr,
         reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
     )]
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 提交 DMA 命令并等待完成
     ///
     /// 通过 privileged safe wrapper 填充命令头、FIS、PRDT,
@@ -673,9 +663,8 @@ impl AhciPort {
         byte_count: u32,
         is_write: bool,
     ) -> Result<(), ()> {
-        let dma = match self.dma.as_ref() {
-            Some(d) => d,
-            None => return Err(()),
+        let Some(dma) = self.dma.as_ref() else {
+            return Err(());
         };
 
         let slot = 0u32; // 使用 slot 0
@@ -760,10 +749,6 @@ impl AhciPort {
         self.ack_interrupt(hba, 0xFFFF_FFFF);
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 读取扇区 (DMA)
     ///
     /// # Errors
@@ -783,11 +768,11 @@ impl AhciPort {
         let byte_count = u32::from(count) * SECTOR_SIZE as u32;
 
         // 分配 DMA 缓冲区 (RAII 句柄: 函数返回即归还)
-        let buf =
-            match crate::privileged::driver::storage::ahci_alloc_dma_buffer(byte_count as usize) {
-                Some(v) => v,
-                None => return Err(()),
-            };
+        let Some(buf) =
+            crate::privileged::driver::storage::ahci_alloc_dma_buffer(byte_count as usize)
+        else {
+            return Err(());
+        };
         let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
         let buf_dma_addr = buf.dma_addr().as_u64();
 
@@ -806,10 +791,6 @@ impl AhciPort {
         result
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 写入扇区 (DMA)
     ///
     /// # Errors
@@ -835,11 +816,11 @@ impl AhciPort {
         let byte_count = u32::from(count) * SECTOR_SIZE as u32;
 
         // 分配 DMA 缓冲区 (RAII 句柄: 函数返回即归还)
-        let buf =
-            match crate::privileged::driver::storage::ahci_alloc_dma_buffer(byte_count as usize) {
-                Some(v) => v,
-                None => return Err(()),
-            };
+        let Some(buf) =
+            crate::privileged::driver::storage::ahci_alloc_dma_buffer(byte_count as usize)
+        else {
+            return Err(());
+        };
         let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
         let buf_dma_addr = buf.dma_addr().as_u64();
 

@@ -287,10 +287,6 @@ pub fn wasi_path_rename(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
     Ok(())
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// WASI `path_filestat_get`: 获取文件/目录状态
 ///
 /// # Errors
@@ -313,9 +309,7 @@ pub fn wasi_path_filestat_get(
     let stat = crate::functions::fs::api::with_cstr(&abs_path, |ptr| {
         crate::functions::fs::api::vfs_stat_safe(ptr, 0)
     });
-    let stat = if let Some(s) = stat {
-        s
-    } else {
+    let Some(stat) = stat else {
         interp
             .stack
             .push(Value::I32(wasi_errno(WasiErrno::Noent)))?;

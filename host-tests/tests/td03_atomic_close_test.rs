@@ -51,7 +51,7 @@ fn test_vfs_close_uses_atomic_claim_and_clear() {
     );
     // 验: 快照为空 (未使用 fd / 无进程上下文) 必须提前返回 0, 跳过副作用
     assert!(
-        body.contains("None | Some(None) => return 0,"),
+        body.contains("let Some(Some(handle_id)) = snapshot else {") && body.contains("return 0;"),
         "TD-03: 快照为空时必须 return 0, 跳过 pcache/inotify (原子回收后幂等)"
     );
 }
@@ -97,7 +97,7 @@ fn test_vfs_close_second_call_is_noop() {
     );
     // snapshot 为空时必须 return 0 (跳过副作用)
     assert!(
-        body.contains("None | Some(None) => return 0,"),
+        body.contains("let Some(Some(handle_id)) = snapshot else {") && body.contains("return 0;"),
         "TD-03: snapshot 为空时必须 return 0, 跳过 pcache/inotify"
     );
 }

@@ -93,10 +93,6 @@ impl DmaEngine {
     /// 返回 `(cpu_virt_addr, dma_phys_addr)`.
     // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
     #[expect(clippy::cast_possible_truncation)]
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     pub fn alloc_coherent(&self, size: usize) -> Option<(VirtAddr, PhysAddr)> {
         if size == 0 || !self.initialized.load(Ordering::Acquire) {
             return None;
@@ -104,9 +100,7 @@ impl DmaEngine {
 
         let pages = (size as u64).div_ceil(PAGE_SIZE);
 
-        let phys = if let Some(p) = pmm_alloc_pages_phys(pages as usize) {
-            p
-        } else {
+        let Some(phys) = pmm_alloc_pages_phys(pages as usize) else {
             self.stats.coherence_fails.fetch_add(1, Ordering::Relaxed);
             return None;
         };

@@ -86,10 +86,6 @@ pub struct DmaStream {
 }
 
 impl DmaStream {
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 从 Frame 创建流式 DMA 映射。
     ///
     /// 验证 Frame 物理地址 + 大小满足:
@@ -101,9 +97,8 @@ impl DmaStream {
     pub fn from_frame(frame: Frame, dir: DmaDirection) -> Result<Self, DmaError> {
         let size = frame.size();
         let phys = frame.phys();
-        let cpu_ptr = match NonNull::new(frame.as_virt_ptr()) {
-            Some(p) => p,
-            None => return Err(DmaError::InvalidFrame),
+        let Some(cpu_ptr) = NonNull::new(frame.as_virt_ptr()) else {
+            return Err(DmaError::InvalidFrame);
         };
 
         if size == 0 {

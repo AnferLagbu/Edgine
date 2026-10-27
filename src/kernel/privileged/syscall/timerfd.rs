@@ -145,10 +145,6 @@ static TFD_COUNT: AtomicU32 = AtomicU32::new(0);
 // 系统调用实现
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `timerfd_create` — 创建 timerfd 实例
 ///
 /// `clockid`: `CLOCK_MONOTONIC` 或 `CLOCK_REALTIME`
@@ -167,16 +163,14 @@ pub fn sys_timerfd_create(clockid: i32, flags: i32) -> i64 {
     }
 
     // V2: 使用集中分配器获取 FD
-    let fd = match crate::privileged::proc::fd_alloc::alloc_fd(
+    let Some(fd) = crate::privileged::proc::fd_alloc::alloc_fd(
         crate::privileged::proc::fd_alloc::FdSubsystem::TimerFd,
-    ) {
-        Some(f) => f,
-        None => return Errno::EMFILE.as_ret(),
+    ) else {
+        return Errno::EMFILE.as_ret();
     };
 
-    let slot = match crate::privileged::proc::fd_alloc::idx_of(fd) {
-        Some((_sub, s)) => s,
-        None => return Errno::EBADF.as_ret(),
+    let Some((_sub, slot)) = crate::privileged::proc::fd_alloc::idx_of(fd) else {
+        return Errno::EBADF.as_ret();
     };
 
     let mut table = TFD_TABLE.lock();
@@ -198,10 +192,6 @@ pub fn sys_timerfd_create(clockid: i32, flags: i32) -> i64 {
     i64::from(fd)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `timerfd_settime` — 设置定时器
 ///
 /// `fd`: timerfd 文件描述符
@@ -210,9 +200,8 @@ pub fn sys_timerfd_create(clockid: i32, flags: i32) -> i64 {
 /// `old_value_ptr`: 指向旧 itimerspec 的用户空间指针 (可为 null)
 /// 返回 0 或负 errno
 pub fn sys_timerfd_settime(fd: i32, flags: i32, new_value_ptr: u64, old_value_ptr: u64) -> i64 {
-    let idx = match fd_to_idx(fd) {
-        Some(i) => i,
-        None => return Errno::EBADF.as_ret(),
+    let Some(idx) = fd_to_idx(fd) else {
+        return Errno::EBADF.as_ret();
     };
 
     // flags 校验
@@ -309,19 +298,14 @@ pub fn sys_timerfd_settime(fd: i32, flags: i32, new_value_ptr: u64, old_value_pt
     0
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `timerfd_gettime` — 获取定时器状态
 ///
 /// `fd`: timerfd 文件描述符
 /// `curr_value_ptr`: 指向 itimerspec 的用户空间指针
 /// 返回 0 或负 errno
 pub fn sys_timerfd_gettime(fd: i32, curr_value_ptr: u64) -> i64 {
-    let idx = match fd_to_idx(fd) {
-        Some(i) => i,
-        None => return Errno::EBADF.as_ret(),
+    let Some(idx) = fd_to_idx(fd) else {
+        return Errno::EBADF.as_ret();
     };
 
     if curr_value_ptr == 0 {
@@ -356,19 +340,14 @@ pub fn sys_timerfd_gettime(fd: i32, curr_value_ptr: u64) -> i64 {
     0
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// timerfd read — 读取到期次数
 ///
 /// `fd`: timerfd 文件描述符
 /// `buf`: 用户空间 8 字节缓冲区
 /// 返回 8 (成功), 或负 errno
 pub fn sys_timerfd_read(fd: i32, buf: u64) -> i64 {
-    let idx = match fd_to_idx(fd) {
-        Some(i) => i,
-        None => return Errno::EBADF.as_ret(),
+    let Some(idx) = fd_to_idx(fd) else {
+        return Errno::EBADF.as_ret();
     };
 
     let mut table = TFD_TABLE.lock();
@@ -399,15 +378,10 @@ pub fn sys_timerfd_read(fd: i32, buf: u64) -> i64 {
     8
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// timerfd close — 关闭 timerfd
 pub fn sys_timerfd_close(fd: i32) -> i64 {
-    let idx = match fd_to_idx(fd) {
-        Some(i) => i,
-        None => return Errno::EBADF.as_ret(),
+    let Some(idx) = fd_to_idx(fd) else {
+        return Errno::EBADF.as_ret();
     };
 
     let mut table = TFD_TABLE.lock();
@@ -444,10 +418,6 @@ pub fn sys_timerfd_close(fd: i32) -> i64 {
     clippy::ref_as_ptr,
     reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
 )]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// timerfd 定时器回调
 ///
 /// 在中断上下文执行: 递增 `expiry_count`, 唤醒 epoll.
@@ -474,9 +444,8 @@ fn timerfd_callback(timer: &HrTimer) -> HrTimerRestart {
     {
         let mut table = TFD_TABLE.lock();
         // 重新定位 slot (因为锁释放后 table 可能被移动? 不, 是静态的)
-        let idx = match fd_to_idx(fd) {
-            Some(i) => i,
-            None => return HrTimerRestart::OneShot,
+        let Some(idx) = fd_to_idx(fd) else {
+            return HrTimerRestart::OneShot;
         };
         table.slots[idx].expiry_count += 1;
     }
@@ -512,19 +481,14 @@ fn timerfd_callback(timer: &HrTimer) -> HrTimerRestart {
 // epoll 集成
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 检查 timerfd 是否就绪 (供 epoll `check_fd_ready` 调用)
 ///
 /// 返回 EPOLLIN (有到期事件) 或 0
 pub fn timerfd_poll_events(fd: i32) -> u32 {
     use crate::privileged::syscall::{EPOLLERR, EPOLLIN};
 
-    let idx = match fd_to_idx(fd) {
-        Some(i) => i,
-        None => return EPOLLERR,
+    let Some(idx) = fd_to_idx(fd) else {
+        return EPOLLERR;
     };
 
     let table = TFD_TABLE.lock();

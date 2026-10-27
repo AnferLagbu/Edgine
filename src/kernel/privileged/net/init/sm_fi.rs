@@ -586,10 +586,6 @@ pub unsafe extern "C" fn sm_bind(fd: i32, addr: *const u8, addrlen: u32) -> i32 
 /// # Safety
 /// - `addr` 必须是有效的 sockaddr 指针, 含 `_addrlen` 字节已初始化。
 /// - 调用方必须持有 `NET_STATE` 锁 (非可重入自旋锁, 重复加锁会死锁)。
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 unsafe fn sm_bind_locked(fd: i32, addr: *const u8, _addrlen: u32) -> i32 {
     unsafe {
         let Some(slot) = sm_slot(fd) else {
@@ -598,9 +594,8 @@ unsafe fn sm_bind_locked(fd: i32, addr: *const u8, _addrlen: u32) -> i32 {
         if raw::fd_type(slot) == 0 {
             return -E_BADF;
         }
-        let handle = match raw::socket_handle(slot) {
-            Some(h) => h,
-            None => return -E_BADF,
+        let Some(handle) = raw::socket_handle(slot) else {
+            return -E_BADF;
         };
 
         let sockets = &mut *socket_set();
@@ -609,9 +604,8 @@ unsafe fn sm_bind_locked(fd: i32, addr: *const u8, _addrlen: u32) -> i32 {
             2 => {
                 let sock = sockets.get_mut::<udp::Socket>(handle);
                 // D1: 解析为 trait 端点, 便于写入本地端点表.
-                let mut ep = match parse_endpoint_trait(addr) {
-                    Some(ep) => ep,
-                    None => return -E_INVAL,
+                let Some(mut ep) = parse_endpoint_trait(addr) else {
+                    return -E_INVAL;
                 };
                 // D2: port == 0 表示请求内核自动分配临时端口.
                 if ep.port == 0 {
@@ -648,9 +642,8 @@ unsafe fn sm_bind_locked(fd: i32, addr: *const u8, _addrlen: u32) -> i32 {
             1 => {
                 // D3: TCP 不调用 smoltcp bind (tcp::Socket 无此方法), 仅登记本地端点,
                 // 供 listen (D4) / connect (D5) 复用; 通配地址在 D1 表内保留族.
-                let mut ep = match parse_endpoint_trait(addr) {
-                    Some(ep) => ep,
-                    None => return -E_INVAL,
+                let Some(mut ep) = parse_endpoint_trait(addr) else {
+                    return -E_INVAL;
                 };
                 // D2: port == 0 表示请求内核自动分配临时端口.
                 if ep.port == 0 {
@@ -687,10 +680,6 @@ pub unsafe extern "C" fn sm_listen(fd: i32, backlog: i32) -> i32 {
 ///
 /// # Safety
 /// 调用方必须持有 `NET_STATE` 锁 (非可重入自旋锁, 重复加锁会死锁)。
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 unsafe fn sm_listen_locked(fd: i32, _backlog: i32) -> i32 {
     unsafe {
         let Some(slot) = sm_slot(fd) else {
@@ -699,9 +688,8 @@ unsafe fn sm_listen_locked(fd: i32, _backlog: i32) -> i32 {
         if raw::fd_type(slot) == 0 {
             return -E_BADF;
         }
-        let handle = match raw::socket_handle(slot) {
-            Some(h) => h,
-            None => return -E_BADF,
+        let Some(handle) = raw::socket_handle(slot) else {
+            return -E_BADF;
         };
 
         if raw::fd_type(slot) != 1 {
@@ -712,9 +700,8 @@ unsafe fn sm_listen_locked(fd: i32, _backlog: i32) -> i32 {
         let local_ep = match raw::socket_local_endpoint(slot) {
             Some(ep) if ep.port != 0 => ep,
             _ => {
-                let port = match next_ephemeral() {
-                    Some(p) => p,
-                    None => return -E_ADDRINUSE,
+                let Some(port) = next_ephemeral() else {
+                    return -E_ADDRINUSE;
                 };
                 let ep = crate::privileged::net::iface_trait::NetEndpoint::new(
                     crate::privileged::net::iface_trait::IpAddr::V4(
@@ -800,10 +787,6 @@ pub unsafe extern "C" fn sm_accept(fd: i32, addr: *mut u8, addrlen: *mut u32) ->
 /// # Safety
 /// - `addr`/`addrlen` 同 [`sm_accept`]。
 /// - 调用方必须持有 `NET_STATE` 锁 (非可重入自旋锁, 重复加锁会死锁)。
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 unsafe fn sm_accept_locked(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
     unsafe {
         let Some(slot) = sm_slot(fd) else {
@@ -813,9 +796,8 @@ unsafe fn sm_accept_locked(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
             return -E_BADF;
         }
         let listen_slot = slot;
-        let conn_handle = match raw::socket_handle(listen_slot) {
-            Some(h) => h,
-            None => return -E_BADF,
+        let Some(conn_handle) = raw::socket_handle(listen_slot) else {
+            return -E_BADF;
         };
         if raw::fd_type(listen_slot) != 1 {
             return -E_NOTSUPP;
@@ -854,9 +836,7 @@ unsafe fn sm_accept_locked(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
         // 步骤 3: 在槽 n 建新监听 socket (新 handle + 新缓冲).
         // socket_open_stub 失败时已内部归还缓冲, 此处只需归还 FD 编号.
         let kind = crate::privileged::net::iface_trait::SocketKind::Tcp;
-        let new_handle = if let Some(h) = raw::socket_open_stub(sockets, kind, conn_slot) {
-            h
-        } else {
+        let Some(new_handle) = raw::socket_open_stub(sockets, kind, conn_slot) else {
             crate::privileged::proc::fd_alloc::free_fd(
                 crate::privileged::proc::fd_alloc::FdSubsystem::Smoltcp,
                 conn_fd,
@@ -1011,10 +991,6 @@ pub unsafe extern "C" fn sm_connect(fd: i32, addr: *const u8, addrlen: u32) -> i
 /// # Safety
 /// - `addr` 必须指向有效的 sockaddr 结构, 至少 `_addrlen` 字节。
 /// - 调用方必须持有 `NET_STATE` 锁 (非可重入自旋锁, 重复加锁会死锁)。
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 unsafe fn sm_connect_locked(fd: i32, addr: *const u8, _addrlen: u32) -> i32 {
     unsafe {
         let Some(slot) = sm_slot(fd) else {
@@ -1023,25 +999,22 @@ unsafe fn sm_connect_locked(fd: i32, addr: *const u8, _addrlen: u32) -> i32 {
         if raw::fd_type(slot) == 0 {
             return -E_BADF;
         }
-        let handle = match raw::socket_handle(slot) {
-            Some(h) => h,
-            None => return -E_BADF,
+        let Some(handle) = raw::socket_handle(slot) else {
+            return -E_BADF;
         };
 
         if !crate::privileged::net::NET_CONFIGURED.load(Ordering::Acquire) {
             return -E_NODEV;
         }
 
-        let endpoint = match parse_endpoint(addr) {
-            Some(ep) => ep,
-            None => return -E_INVAL,
+        let Some(endpoint) = parse_endpoint(addr) else {
+            return -E_INVAL;
         };
 
         // D9: UDP connect — 登记对端到 D1 remote 表; 未 bind 时按 D2 分配临时端口并 bind.
         if raw::fd_type(slot) == 2 {
-            let net_remote = match endpoint_from_smol(endpoint) {
-                Some(ep) => ep,
-                None => return -E_INVAL,
+            let Some(net_remote) = endpoint_from_smol(endpoint) else {
+                return -E_INVAL;
             };
             raw::set_socket_remote_endpoint(slot, Some(net_remote));
 
@@ -1087,9 +1060,8 @@ unsafe fn sm_connect_locked(fd: i32, addr: *const u8, _addrlen: u32) -> i32 {
         let local_ep = match raw::socket_local_endpoint(slot) {
             Some(ep) if ep.port != 0 => ep,
             _ => {
-                let port = match next_ephemeral() {
-                    Some(p) => p,
-                    None => return -E_ADDRINUSE,
+                let Some(port) = next_ephemeral() else {
+                    return -E_ADDRINUSE;
                 };
                 let ep = crate::privileged::net::iface_trait::NetEndpoint::new(
                     crate::privileged::net::iface_trait::IpAddr::V4(
@@ -1103,9 +1075,8 @@ unsafe fn sm_connect_locked(fd: i32, addr: *const u8, _addrlen: u32) -> i32 {
         };
         let local = endpoint_to_listen(local_ep);
 
-        let stack = match raw::stack_mut() {
-            Some(s) => s,
-            None => return -E_NODEV,
+        let Some(stack) = raw::stack_mut() else {
+            return -E_NODEV;
         };
 
         let sockets = &mut *socket_set();
@@ -1127,10 +1098,6 @@ unsafe fn sm_connect_locked(fd: i32, addr: *const u8, _addrlen: u32) -> i32 {
 #[unsafe(no_mangle)]
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, flags: i32) -> i32 {
     // P5b (DECISION-094): TCP 发送缓冲满 (can_send=false) 且连接存活时, 阻塞 fd
     // 登记 WAITER_WRITE 等待者 → 释放 NET_STATE → block+schedule → 回顶重查.
@@ -1150,9 +1117,8 @@ pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, flags: i32) 
             if raw::fd_type(slot) == 0 {
                 return -E_BADF;
             }
-            let handle = match raw::socket_handle(slot) {
-                Some(h) => h,
-                None => return -E_BADF,
+            let Some(handle) = raw::socket_handle(slot) else {
+                return -E_BADF;
             };
             if buf.is_null() || len == 0 {
                 return -E_INVAL;
@@ -1177,9 +1143,8 @@ pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, flags: i32) 
                 }
                 2 => {
                     // D9: UDP send 依赖 connect 登记的对端 (D1 remote 表); 未 connect → ENOTCONN.
-                    let remote = match raw::socket_remote_endpoint(slot) {
-                        Some(ep) => ep,
-                        None => return -E_NOTCONN,
+                    let Some(remote) = raw::socket_remote_endpoint(slot) else {
+                        return -E_NOTCONN;
                     };
                     let smol = IpEndpoint {
                         addr: wire_to_smol(remote.addr),
@@ -1231,10 +1196,6 @@ pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, flags: i32) 
 #[unsafe(no_mangle)]
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub unsafe extern "C" fn sm_recv(fd: i32, buf: *mut u8, len: u32, flags: i32) -> i32 {
     // P5b (DECISION-094): TCP 空缓冲且连接存活 / UDP 无数据报时, 阻塞 fd 登记
     // WAITER_READ → 释放 NET_STATE → block+schedule → 回顶重查. 连接关闭 (EOF) 由
@@ -1255,9 +1216,8 @@ pub unsafe extern "C" fn sm_recv(fd: i32, buf: *mut u8, len: u32, flags: i32) ->
             if raw::fd_type(slot) == 0 {
                 return -E_BADF;
             }
-            let handle = match raw::socket_handle(slot) {
-                Some(h) => h,
-                None => return -E_BADF,
+            let Some(handle) = raw::socket_handle(slot) else {
+                return -E_BADF;
             };
             if buf.is_null() || len == 0 {
                 return -E_INVAL;
@@ -1331,10 +1291,6 @@ pub unsafe extern "C" fn sm_recv(fd: i32, buf: *mut u8, len: u32, flags: i32) ->
 #[unsafe(no_mangle)]
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub unsafe extern "C" fn sm_sendto(
     fd: i32,
     buf: *const u8,
@@ -1360,17 +1316,15 @@ pub unsafe extern "C" fn sm_sendto(
             if raw::fd_type(slot) == 0 {
                 return -E_BADF;
             }
-            let handle = match raw::socket_handle(slot) {
-                Some(h) => h,
-                None => return -E_BADF,
+            let Some(handle) = raw::socket_handle(slot) else {
+                return -E_BADF;
             };
             if buf.is_null() || len == 0 {
                 return -E_INVAL;
             }
 
-            let endpoint = match parse_endpoint(addr) {
-                Some(ep) => ep,
-                None => return -E_INVAL,
+            let Some(endpoint) = parse_endpoint(addr) else {
+                return -E_INVAL;
             };
             let blocking = raw::is_blocking(slot) && !dontwait;
 
@@ -1433,10 +1387,6 @@ pub unsafe extern "C" fn sm_sendto(
 #[unsafe(no_mangle)]
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub unsafe extern "C" fn sm_recvfrom(
     fd: i32,
     buf: *mut u8,
@@ -1463,9 +1413,8 @@ pub unsafe extern "C" fn sm_recvfrom(
             if raw::fd_type(slot) == 0 {
                 return -E_BADF;
             }
-            let handle = match raw::socket_handle(slot) {
-                Some(h) => h,
-                None => return -E_BADF,
+            let Some(handle) = raw::socket_handle(slot) else {
+                return -E_BADF;
             };
             if buf.is_null() || len == 0 {
                 return -E_INVAL;
@@ -1547,10 +1496,6 @@ pub unsafe extern "C" fn sm_recvfrom(
     clippy::ptr_as_ptr,
     reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
 )]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32 {
     unsafe {
         if msg.is_null() {
@@ -1596,9 +1541,8 @@ pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32
         if total == 0 {
             return 0;
         }
-        let region = match crate::privileged::iobuf::IobRegion::alloc(total) {
-            Some(r) => r,
-            None => return -E_NOMEM,
+        let Some(region) = crate::privileged::iobuf::IobRegion::alloc(total) else {
+            return -E_NOMEM;
         };
         let mut off: usize = 0;
         for i in 0..msg_iovlen_us {
@@ -1629,10 +1573,6 @@ pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32
 #[expect(
     clippy::ptr_as_ptr,
     reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
 pub unsafe extern "C" fn sm_recvmsg(fd: i32, msg: *mut u8, _flags: i32) -> i32 {
     unsafe {
@@ -1674,9 +1614,8 @@ pub unsafe extern "C" fn sm_recvmsg(fd: i32, msg: *mut u8, _flags: i32) -> i32 {
         if cap == 0 {
             return 0;
         }
-        let region = match crate::privileged::iobuf::IobRegion::alloc(cap) {
-            Some(r) => r,
-            None => return -E_NOMEM,
+        let Some(region) = crate::privileged::iobuf::IobRegion::alloc(cap) else {
+            return -E_NOMEM;
         };
         let n = sm_recv(fd, region.as_mut_ptr(), cap as u32, 0);
         if n <= 0 {
@@ -1707,10 +1646,6 @@ pub unsafe extern "C" fn sm_recvmsg(fd: i32, msg: *mut u8, _flags: i32) -> i32 {
 /// # Safety
 /// `NET_LOCK` 持有; 由 `sys_close` 分发, cred 校验已通过。
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub unsafe extern "C" fn sm_close(fd: i32) -> i32 {
     unsafe {
         let _guard = NET_STATE.lock();
@@ -1721,9 +1656,8 @@ pub unsafe extern "C" fn sm_close(fd: i32) -> i32 {
         if raw::fd_type(slot) == 0 {
             return -E_BADF;
         }
-        let handle = match raw::socket_handle(slot) {
-            Some(h) => h,
-            None => return -E_BADF,
+        let Some(handle) = raw::socket_handle(slot) else {
+            return -E_BADF;
         };
 
         let stype = raw::fd_type(slot);
@@ -2283,10 +2217,6 @@ pub unsafe extern "C" fn sm_getsockopt(
 /// - `_addrlen` 必须是可写 u32 指针 (写回实际长度).
 /// - `NET_LOCK` 持有; 由 `sys_getsockname` 分发.
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub unsafe extern "C" fn sm_getsockname(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
     unsafe {
         let _guard = NET_STATE.lock();
@@ -2297,9 +2227,8 @@ pub unsafe extern "C" fn sm_getsockname(fd: i32, addr: *mut u8, addrlen: *mut u3
         if raw::fd_type(slot) == 0 {
             return -E_BADF;
         }
-        let handle = match raw::socket_handle(slot) {
-            Some(h) => h,
-            None => return -E_BADF,
+        let Some(handle) = raw::socket_handle(slot) else {
+            return -E_BADF;
         };
         if addr.is_null() || addrlen.is_null() {
             return -E_INVAL;
@@ -2345,14 +2274,12 @@ pub unsafe extern "C" fn sm_getsockname(fd: i32, addr: *mut u8, addrlen: *mut u3
             _ => return -E_NOTSUPP,
         };
 
-        let endpoint = match endpoint_opt {
-            Some(e) => e,
-            None => return -E_NOTCONN, // TCP 未 connect
+        let Some(endpoint) = endpoint_opt else {
+            return -E_NOTCONN; // TCP 未 connect
         };
         // 双栈 (DECISION-032): 翻译为 NetEndpoint 后按 V4/V6 分支写 sockaddr_in / sockaddr_in6
-        let ep = match endpoint_from_smol(endpoint) {
-            Some(ep) => ep,
-            None => return -E_AFNOSUPPORT,
+        let Some(ep) = endpoint_from_smol(endpoint) else {
+            return -E_AFNOSUPPORT;
         };
         // SAFETY: write_sockaddr 按 ep.addr 分支写对应 sockaddr 结构, addr 已校验非空且 ≥ 28 字节
         write_sockaddr(addr, addrlen, &ep);
@@ -2369,10 +2296,6 @@ pub unsafe extern "C" fn sm_getsockname(fd: i32, addr: *mut u8, addrlen: *mut u3
 /// - `_addrlen` 必须是可写 u32 指针 (写回实际长度).
 /// - `NET_LOCK` 持有; 由 `sys_getpeername` 分发.
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub unsafe extern "C" fn sm_getpeername(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
     unsafe {
         let _guard = NET_STATE.lock();
@@ -2383,9 +2306,8 @@ pub unsafe extern "C" fn sm_getpeername(fd: i32, addr: *mut u8, addrlen: *mut u3
         if raw::fd_type(slot) == 0 {
             return -E_BADF;
         }
-        let handle = match raw::socket_handle(slot) {
-            Some(h) => h,
-            None => return -E_BADF,
+        let Some(handle) = raw::socket_handle(slot) else {
+            return -E_BADF;
         };
         if addr.is_null() || addrlen.is_null() {
             return -E_INVAL;
@@ -2412,14 +2334,12 @@ pub unsafe extern "C" fn sm_getpeername(fd: i32, addr: *mut u8, addrlen: *mut u3
             _ => return -E_NOTSUPP,
         };
 
-        let endpoint = match endpoint_opt {
-            Some(e) => e,
-            None => return -E_NOTCONN,
+        let Some(endpoint) = endpoint_opt else {
+            return -E_NOTCONN; // TCP 未 connect
         };
         // 双栈 (DECISION-032): 翻译为 NetEndpoint 后按 V4/V6 分支写 sockaddr_in / sockaddr_in6
-        let ep = match endpoint_from_smol(endpoint) {
-            Some(ep) => ep,
-            None => return -E_AFNOSUPPORT,
+        let Some(ep) = endpoint_from_smol(endpoint) else {
+            return -E_AFNOSUPPORT;
         };
         // SAFETY: write_sockaddr 按 ep.addr 分支写对应 sockaddr 结构, addr 已校验非空且 ≥ 28 字节
         write_sockaddr(addr, addrlen, &ep);

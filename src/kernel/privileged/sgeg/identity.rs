@@ -234,14 +234,9 @@ impl IdentityTable {
     }
 
     /// 常数时间校验指定 PWM 的密码 (SHA-256 加盐拉伸后比对 digest)
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     pub fn verify_password(&self, pwm: u64, password: &str) -> bool {
-        let entry = match self.find(pwm) {
-            Some(e) => e,
-            None => return false,
+        let Some(entry) = self.find(pwm) else {
+            return false;
         };
         // T4-1: 原子读取 password_hash 中的 salt 部分 (PWM_DIGEST_LEN..PWM_HASH_LEN)
         let mut salt = [0u8; PWM_SALT_LEN];
@@ -257,10 +252,6 @@ impl IdentityTable {
         constant_time_eq(&computed, &stored_digest)
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// T4-1: 全 Atomic 化后, create 改用 &self (替代 &mut self)
     /// 注: 调用方必须保证并发安全 (create 内已有 self.acquire/release 锁)
     /// # Errors
@@ -298,9 +289,7 @@ impl IdentityTable {
             s
         };
 
-        let slot = if let Some(s) = slot {
-            s
-        } else {
+        let Some(slot) = slot else {
             self.release();
             return Err(PwmError::TableFull);
         };

@@ -21,10 +21,6 @@ pub fn msgq_find_by_id(namespace: &mut IpcNamespace, id: IpcId) -> Option<&mut M
     namespace.msg_queues.iter_mut().find(|q| q.id == id)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 创建消息队列 (策略: 槽位分配 + 初始化)
 ///
 /// # Errors
@@ -35,9 +31,8 @@ pub fn msgq_create_safe(
     perm: i32,
     current_pid: u32,
 ) -> Result<IpcId, i32> {
-    let mq = match msgq_find_free(namespace) {
-        Some(q) => q,
-        None => return Err(-1),
+    let Some(mq) = msgq_find_free(namespace) else {
+        return Err(-1);
     };
 
     // 初始化消息队列
@@ -59,10 +54,6 @@ pub fn msgq_create_safe(
     Ok(mq.id)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 向消息队列发送消息 (策略: 参数校验 + 容量检查 + 入队 + 唤醒)
 ///
 /// # Errors
@@ -84,9 +75,8 @@ pub fn msgq_send_safe(
         return Err(-2);
     }
 
-    let mq = match msgq_find_by_id(namespace, id) {
-        Some(q) => q,
-        None => return Err(-1),
+    let Some(mq) = msgq_find_by_id(namespace, id) else {
+        return Err(-1);
     };
 
     // 检查队列是否已满
@@ -95,9 +85,8 @@ pub fn msgq_send_safe(
     }
 
     // 分配消息结构体 (委托 privileged 机制)
-    let msg_nn = match raw::allocate() {
-        Some(m) => m,
-        None => return Err(-4),
+    let Some(msg_nn) = raw::allocate() else {
+        return Err(-4);
     };
 
     // SAFETY: msg 刚由 `allocate` 分配, 非空, 后续由
@@ -138,10 +127,6 @@ pub fn msgq_send_safe(
     Ok(())
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 从消息队列接收消息 (策略: 出队 + 数据拷贝 + 释放 + 唤醒)
 ///
 /// # Errors
@@ -156,9 +141,8 @@ pub fn msgq_recv_safe(
     data_out: Option<&mut [u8]>,
     size_out: Option<&mut u64>,
 ) -> Result<usize, i32> {
-    let mq = match msgq_find_by_id(namespace, id) {
-        Some(q) => q,
-        None => return Err(-1),
+    let Some(mq) = msgq_find_by_id(namespace, id) else {
+        return Err(-1);
     };
 
     // 检查队列是否为空
@@ -210,10 +194,6 @@ pub fn msgq_recv_safe(
 }
 
 #[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
-#[expect(
     clippy::missing_panics_doc,
     reason = "missing_panics_doc: msgq_destroy_safe 释放消息链表时若 head 指针本应非空却为 null 会 panic (链表不变量被破坏, 见函数内 expect)"
 )]
@@ -222,9 +202,8 @@ pub fn msgq_recv_safe(
 /// # Errors
 /// 当队列不存在时返回 `Err(-1)`.
 pub fn msgq_destroy_safe(namespace: &mut IpcNamespace, id: IpcId) -> Result<(), i32> {
-    let mq = match msgq_find_by_id(namespace, id) {
-        Some(q) => q,
-        None => return Err(-1),
+    let Some(mq) = msgq_find_by_id(namespace, id) else {
+        return Err(-1);
     };
 
     // 释放所有剩余消息

@@ -1810,14 +1810,9 @@ impl PhysicalMemoryManager {
     /// 合并吞掉已置位的 reserve 区 (B05-55); do_free 等路径传 `total_pages`.
     // 有意窄化: 显式收窄, 调用方保证值域
     #[expect(clippy::cast_possible_truncation)]
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     fn buddy_try_merge(&self, mut pfn: u64, mut order: u8, limit_pfn: u64) -> (u64, u8) {
-        let store = match self.meta_store() {
-            Some(s) => s,
-            None => return (pfn, order),
+        let Some(store) = self.meta_store() else {
+            return (pfn, order);
         };
         let total = core::cmp::min(self.info.get().total_pages, limit_pfn);
 
@@ -2042,17 +2037,12 @@ impl PhysicalMemoryManager {
     /// 指定阶数执行核心分配.
     // 有意窄化: 显式收窄, 调用方保证值域
     #[expect(clippy::cast_possible_truncation)]
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     fn buddy_alloc(&self, order: u8) -> Option<(u64, u8)> {
         if order > MAX_BUDDY_ORDER {
             return None;
         }
-        let store = match self.meta_store() {
-            Some(s) => s,
-            None => return None,
+        let Some(store) = self.meta_store() else {
+            return None;
         };
 
         // 寻找 >= 请求阶数的最小可用阶
@@ -2188,14 +2178,9 @@ impl PhysicalMemoryManager {
     /// 扫描所有空闲页 (位未置位), 合并为最大阶的 buddy 块.
     // 有意窄化: 显式收窄, 调用方保证值域
     #[expect(clippy::cast_possible_truncation)]
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     fn buddy_init_free_lists(&self, total_pages: usize) {
-        let store = match self.meta_store() {
-            Some(s) => s,
-            None => return,
+        let Some(store) = self.meta_store() else {
+            return;
         };
 
         let mut pfn = 0usize;

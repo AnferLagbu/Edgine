@@ -227,10 +227,6 @@ static SLAAC_OBSERVED: core::sync::atomic::AtomicBool = core::sync::atomic::Atom
 /// 下一 tick 电平重扫唤醒 (自愈); 影响面为极端批量就绪 (正常负载远不到此量级).
 const WAKE_BATCH: usize = 128;
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 轮询网络栈 (驱动 TX/RX、定时器、DHCP)。
 ///
 /// 在 timer ISR 或网络任务中调用, 内部 `try_lock` 避免阻塞。
@@ -254,18 +250,13 @@ pub unsafe fn poll_network() {
             WakeReason,
         };
         use crate::privileged::timer::hrtimer_clock_read;
-        let _guard = match NET_STATE.try_lock() {
-            Some(g) => g,
-            None => return,
+        let Some(_guard) = NET_STATE.try_lock() else {
+            return;
         };
 
-        let nic = match raw::device_mut() {
-            Some(d) => d,
-            None => return,
-        };
-        let stack = match raw::stack_mut() {
-            Some(s) => s,
-            None => return,
+        let Some(nic) = raw::device_mut() else { return };
+        let Some(stack) = raw::stack_mut() else {
+            return;
         };
         let sockets = &mut *raw::socket_set();
         next_poll_ns = crate::privileged::net::poll_stack(nic, stack, sockets);
@@ -578,10 +569,6 @@ unsafe fn net_reset() {
     clippy::too_many_lines,
     reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
 )]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub extern "C" fn eg_net_init() {
     // SAFETY: 网络初始化由启动流程串行调用, 无并发访问全局状态。
     unsafe {
@@ -610,9 +597,7 @@ pub extern "C" fn eg_net_init() {
 
         raw::klog_msg("Step1: hardware probe");
 
-        let mut nic = if let Some(n) = probe::nic_probe_all() {
-            n
-        } else {
+        let Some(mut nic) = probe::nic_probe_all() else {
             let _ = transition_state(InitState::HardwareProbed, InitState::FullyInitialized);
             raw::klog_msg("No NIC found, running without network");
             raw::klog_init("--- Network Subsystem Ready (No Network) ---");

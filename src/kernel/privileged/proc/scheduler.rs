@@ -1068,10 +1068,6 @@ impl Scheduler {
         clippy::ptr_as_ptr,
         reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
     )]
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 调度决策入口: 按 DL → RT → CFS 顺序选下一个任务并完成上下文切换; 无候选时返回 `None`
     pub fn schedule(&self) -> Option<Pid> {
         let saved_flags = crate::arch!(interrupt_disable()) as u64;
@@ -1095,9 +1091,7 @@ impl Scheduler {
             let mut rt_queue = per_cpu.rt_queue.lock();
 
             while !rt_queue.is_empty() {
-                let rt_task = if let Some(task) = rt_queue.pop_front() {
-                    task
-                } else {
+                let Some(rt_task) = rt_queue.pop_front() else {
                     klog_sched_warn!("[SCHEDULER] RT queue race condition detected");
                     break;
                 };
@@ -1182,9 +1176,7 @@ impl Scheduler {
             }
         }
 
-        let next = if let Some(pid) = next_pid {
-            pid
-        } else {
+        let Some(next) = next_pid else {
             if saved_flags & 0x200 != 0 {
                 crate::arch!(interrupt_enable());
             }

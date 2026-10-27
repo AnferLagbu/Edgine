@@ -12,22 +12,16 @@ use crate::functions::net::unix as uds;
 use crate::privileged::tests::{TestResult, runner};
 use crate::register_tests_inner;
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// STREAM 完整生命周期
 fn test_uds_stream_echo() -> TestResult {
     use uds::{UdsError, UnixSockType};
     uds::uds_reset_for_test();
 
-    let srv = match uds::uds_create(UnixSockType::Stream) {
-        Ok(fd) => fd,
-        Err(_) => return TestResult::Fail("srv create failed"),
+    let Ok(srv) = uds::uds_create(UnixSockType::Stream) else {
+        return TestResult::Fail("srv create failed");
     };
-    let cli = match uds::uds_create(UnixSockType::Stream) {
-        Ok(fd) => fd,
-        Err(_) => return TestResult::Fail("cli create failed"),
+    let Ok(cli) = uds::uds_create(UnixSockType::Stream) else {
+        return TestResult::Fail("cli create failed");
     };
 
     if uds::uds_bind(srv, b"/tmp/uds_test_stream.sock").is_err() {
@@ -39,26 +33,23 @@ fn test_uds_stream_echo() -> TestResult {
     if uds::uds_connect(cli, b"/tmp/uds_test_stream.sock").is_err() {
         return TestResult::Fail("cli connect failed");
     }
-    let accepted = match uds::uds_accept(srv) {
-        Ok(fd) => fd,
-        Err(_) => return TestResult::Fail("accept failed"),
+    let Ok(accepted) = uds::uds_accept(srv) else {
+        return TestResult::Fail("accept failed");
     };
     if accepted == srv {
         return TestResult::Fail("accept should return new FD");
     }
 
     // cli → accepted
-    let n = match uds::uds_send(cli, b"hello") {
-        Ok(n) => n,
-        Err(_) => return TestResult::Fail("send failed"),
+    let Ok(n) = uds::uds_send(cli, b"hello") else {
+        return TestResult::Fail("send failed");
     };
     if n != 5 {
         return TestResult::Fail("send returned wrong count");
     }
     let mut buf = [0u8; 16];
-    let m = match uds::uds_recv(accepted, &mut buf) {
-        Ok(n) => n,
-        Err(_) => return TestResult::Fail("recv failed"),
+    let Ok(m) = uds::uds_recv(accepted, &mut buf) else {
+        return TestResult::Fail("recv failed");
     };
     if m != 5 || &buf[..5] != b"hello" {
         return TestResult::Fail("recv data mismatch");

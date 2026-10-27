@@ -43,17 +43,12 @@ pub fn locate_domain_from_panic(panic_location: &core::panic::PanicInfo<'_>) -> 
     None
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 尝试回滚单个恢复域; 域不存在或回滚失败时返回 Escalate 触发升级。
 pub fn try_rollback_single(domain_id: u64, tick: u64, fingerprint: u64) -> RecoveryResult {
     let manager = RECOVERY_MANAGER.lock();
 
-    let domain = match manager.find(domain_id) {
-        Some(d) => d,
-        None => return RecoveryResult::Escalate,
+    let Some(domain) = manager.find(domain_id) else {
+        return RecoveryResult::Escalate;
     };
 
     if !domain.try_rollback(tick, fingerprint) {

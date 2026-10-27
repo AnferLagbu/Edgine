@@ -17,10 +17,6 @@ pub fn shm_find_by_id(namespace: &mut IpcNamespace, id: IpcId) -> Option<&mut Sh
     namespace.shm_segs.iter_mut().find(|s| s.id == id)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 创建共享内存段 (策略: 参数校验 + 槽位分配 + 物理页分配 + 初始化)
 ///
 /// # Errors
@@ -39,9 +35,8 @@ pub fn shm_create_safe(
     }
 
     // 查找空闲槽位
-    let shm = match shm_find_free(namespace) {
-        Some(s) => s,
-        None => return Err(-2),
+    let Some(shm) = shm_find_free(namespace) else {
+        return Err(-2);
     };
 
     // 计算需要的页数并分配物理内存 (委托 privileged 机制)
@@ -67,10 +62,6 @@ pub fn shm_create_safe(
     Ok(shm.id)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 将共享内存段附加到当前进程地址空间 (策略: 重复附加检查 + 限制检查 + 引用计数)
 ///
 /// # Errors
@@ -80,9 +71,8 @@ pub fn shm_attach_safe(
     id: IpcId,
     current_pid: u32,
 ) -> Result<u64, i32> {
-    let shm = match shm_find_by_id(namespace, id) {
-        Some(s) => s,
-        None => return Err(-1),
+    let Some(shm) = shm_find_by_id(namespace, id) else {
+        return Err(-1);
     };
 
     // 检查是否已经附加过
@@ -105,10 +95,6 @@ pub fn shm_attach_safe(
     Ok(shm.phys_addr)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 从当前进程分离共享内存段 (策略: 附加记录查找 + 引用计数递减)
 ///
 /// # Errors
@@ -118,9 +104,8 @@ pub fn shm_detach_safe(
     id: IpcId,
     current_pid: u32,
 ) -> Result<(), i32> {
-    let shm = match shm_find_by_id(namespace, id) {
-        Some(s) => s,
-        None => return Err(-1),
+    let Some(shm) = shm_find_by_id(namespace, id) else {
+        return Err(-1);
     };
 
     // 查找并移除当前进程的附加记录
@@ -137,18 +122,13 @@ pub fn shm_detach_safe(
     Err(-2)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 销毁共享内存段 (策略: 引用计数检查 + 物理页释放 + 结构体清理)
 ///
 /// # Errors
 /// 当共享内存段不存在时返回 `Err(-1)`; 当仍有进程附加时返回 `Err(-2)`.
 pub fn shm_destroy_safe(namespace: &mut IpcNamespace, id: IpcId) -> Result<(), i32> {
-    let shm = match shm_find_by_id(namespace, id) {
-        Some(s) => s,
-        None => return Err(-1),
+    let Some(shm) = shm_find_by_id(namespace, id) else {
+        return Err(-1);
     };
 
     // 检查是否有进程仍附加

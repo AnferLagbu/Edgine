@@ -151,10 +151,6 @@ pub fn sys_epoll_create(size: i32) -> i64 {
     id as i64
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `epoll_ctl` — 控制 epoll 实例
 ///
 /// - `EPOLL_CTL_ADD`: 注册 fd
@@ -172,9 +168,8 @@ pub fn sys_epoll_ctl(epfd: i64, op: i32, fd: i32, event: *const EpollEvent) -> i
     let mut instances = EPOLL_INSTANCES.lock();
 
     // 查找 epoll 实例
-    let idx = match instances.iter().position(|i| i.id == epfd_id) {
-        Some(i) => i,
-        None => return Errno::EBADF.as_ret(),
+    let Some(idx) = instances.iter().position(|i| i.id == epfd_id) else {
+        return Errno::EBADF.as_ret();
     };
 
     match op {
@@ -217,9 +212,8 @@ pub fn sys_epoll_ctl(epfd: i64, op: i32, fd: i32, event: *const EpollEvent) -> i
             );
         }
         EPOLL_CTL_MOD => {
-            let item = match instances[idx].interest_list.iter_mut().find(|i| i.fd == fd) {
-                Some(i) => i,
-                None => return Errno::ENOENT.as_ret(),
+            let Some(item) = instances[idx].interest_list.iter_mut().find(|i| i.fd == fd) else {
+                return Errno::ENOENT.as_ret();
             };
 
             let ev = if event.is_null() {
@@ -266,10 +260,6 @@ pub fn sys_epoll_ctl(epfd: i64, op: i32, fd: i32, event: *const EpollEvent) -> i
     0
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `epoll_wait` — 等待事件
 ///
 /// `maxevents` 必须大于 0.
@@ -284,9 +274,8 @@ pub fn sys_epoll_wait(epfd: i64, events: *mut EpollEvent, maxevents: i32, timeou
     let mut instances = EPOLL_INSTANCES.lock();
 
     // 查找 epoll 实例
-    let idx = match instances.iter().position(|i| i.id == epfd_id) {
-        Some(i) => i,
-        None => return Errno::EBADF.as_ret(),
+    let Some(idx) = instances.iter().position(|i| i.id == epfd_id) else {
+        return Errno::EBADF.as_ret();
     };
 
     // 扫描 interest_list, 检查哪些 fd 就绪 (完整 VFS poll)
@@ -419,10 +408,6 @@ fn instance_watches_fd(instance: &EpollInstance, fd: i32) -> bool {
     instance.interest_list.iter().any(|item| item.fd == fd)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 策略: 把 fd 的就绪事件加入 epoll 实例的 `ready_list`
 ///
 /// REVAL-6.2: 从 `epoll_pwake` 提取, 封装:
@@ -433,9 +418,8 @@ fn instance_watches_fd(instance: &EpollInstance, fd: i32) -> bool {
 /// 返回: 是否成功入队 (true = 新增, false = 重复跳过)
 fn enqueue_ready_for_fd(instance: &mut EpollInstance, fd: i32) -> bool {
     // 找到该 fd 在 interest_list 中的位置
-    let pos = match instance.interest_list.iter().position(|item| item.fd == fd) {
-        Some(p) => p,
-        None => return false,
+    let Some(pos) = instance.interest_list.iter().position(|item| item.fd == fd) else {
+        return false;
     };
 
     let events = instance.interest_list[pos].events;
@@ -464,10 +448,6 @@ fn enqueue_ready_for_fd(instance: &mut EpollInstance, fd: i32) -> bool {
 // 辅助函数
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 检查 fd 是否就绪 (完整集成 VFS)
 ///
 /// REVAL-6.1: 4 种 VFS `file_type` → events 位映射改走 `VfsPollPolicy` trait dispatch
@@ -508,9 +488,8 @@ fn check_fd_ready(fd: i32, events: u32) -> u32 {
     };
 
     // M6: 处理非法 file_type
-    let vfs_file_type = match VfsFileType::from_u8(file_type) {
-        Some(t) => t,
-        None => return 0, // 非法类型视为无事件
+    let Some(vfs_file_type) = VfsFileType::from_u8(file_type) else {
+        return 0; // 非法类型视为无事件
     };
 
     // REVAL-6.1: 通过 VfsPollPolicy trait dispatch 决策

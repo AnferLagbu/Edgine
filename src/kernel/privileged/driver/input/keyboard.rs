@@ -580,10 +580,6 @@ impl KeyboardDriver {
         }
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 处理 IRQ1 键盘中断
     ///
     /// 从 PS/2 数据端口读取 scancode 并转换后存入缓冲区。
@@ -593,9 +589,8 @@ impl KeyboardDriver {
     /// * `None` - 无有效数据或特殊按键
     pub fn handle_interrupt(&mut self) -> Option<u8> {
         // 读取 scancode
-        let scancode = match keyboard_read_data(&self.cmd_port, &self.data_port) {
-            Some(s) => s,
-            None => return None,
+        let Some(scancode) = keyboard_read_data(&self.cmd_port, &self.data_port) else {
+            return None;
         };
 
         // 检测释放码 (0xE0 或 0xE1 前缀)

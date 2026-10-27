@@ -83,7 +83,7 @@ fn s3_registration_happens_outside_net_state() {
 
     // 临界区的收尾大括号 (rustfmt 稳定形态: 与 `unsafe {{` 同级的 4 空格缩进).
     let guard_at = src
-        .find("let _guard = match NET_STATE.try_lock()")
+        .find("let Some(_guard) = NET_STATE.try_lock()")
         .expect("S-3: poll_network 不再以 try_lock 进入 NET_STATE 临界区");
     let block_end = src[guard_at..]
         .find("\n    }\n")

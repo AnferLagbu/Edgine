@@ -290,10 +290,6 @@ impl BlockDevice for CompositeBlockDevice {
     clippy::too_many_lines,
     reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
 )]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 遍历设备树, 为匹配 `eg,raid0`/`eg,raid1` 的节点创建并注册复合块设备, 返回创建数量.
 pub fn devtree_probe_composites() -> usize {
     let composite_compatibles: &[&str] = &["eg,raid0", "eg,raid1"];
@@ -333,9 +329,7 @@ pub fn devtree_probe_composites() -> usize {
         let mut child_drives: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
 
         for &child_id in &children {
-            let child_node = if let Some(n) = devtree_get_node(child_id) {
-                n
-            } else {
+            let Some(child_node) = devtree_get_node(child_id) else {
                 klog_warn!(
                     Driver,
                     "EGDF: composite child node {} not found, skipping",
@@ -403,9 +397,8 @@ pub fn devtree_probe_composites() -> usize {
         }
 
         let stripe_size: u64 = {
-            let node = match devtree_get_node(node_id) {
-                Some(n) => n,
-                None => continue,
+            let Some(node) = devtree_get_node(node_id) else {
+                continue;
             };
             node.get_prop("stripe_size")
                 .and_then(super::devtree::PropertyValue::as_u64)
@@ -432,11 +425,8 @@ pub fn devtree_probe_composites() -> usize {
         // 这是有界分配 —— 初始化时每个复合设备一份.
         let name_leaked: &'static str = dev_name.leak();
 
-        let composite = if let Some(c) =
-            CompositeBlockDevice::new(composite_type, &child_drives, stripe_size)
-        {
-            c
-        } else {
+        let Some(composite) = CompositeBlockDevice::new(composite_type, &child_drives, stripe_size)
+        else {
             klog_warn!(
                 Driver,
                 "EGDF: failed to create composite device '{}'",

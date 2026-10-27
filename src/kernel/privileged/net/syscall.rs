@@ -238,23 +238,17 @@ pub fn raw_write_sockaddr_un(ptr: u64, addrlen_ptr: u64, addr: &SockAddrUn) -> R
 // Socket 12 Syscall TCB 实现
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// socket — 创建 socket
 pub fn socket_syscall(domain: i32, sock_type: i32, _protocol: i32) -> i64 {
-    let d = match Domain::from_i32(domain) {
-        Some(x) => x,
-        None => return Errno::EAFNOSUPPORT.as_ret(),
+    let Some(d) = Domain::from_i32(domain) else {
+        return Errno::EAFNOSUPPORT.as_ret();
     };
     // D10 (DECISION-092): SOCK_NONBLOCK 是 type 参数的标志位, 非 socket 类型本身.
     // 校验前剥离本位, 只对基础类型过 SockType; 创建成功后据此置 per-slot 非阻塞标志.
     let nonblock = sock_type & SOCK_NONBLOCK != 0;
     let base_type = sock_type & !SOCK_NONBLOCK;
-    let t = match SockType::from_i32(base_type) {
-        Some(x) => x,
-        None => return Errno::EINVAL.as_ret(),
+    let Some(t) = SockType::from_i32(base_type) else {
+        return Errno::EINVAL.as_ret();
     };
     let fd = net_socket::sm_socket(d as i32, t as i32, 0);
     if fd < 0 {

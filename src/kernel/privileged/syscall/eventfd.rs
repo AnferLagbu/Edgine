@@ -97,10 +97,6 @@ static EFD_COUNT: AtomicU32 = AtomicU32::new(0);
 // 系统调用实现
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// eventfd — 创建 eventfd 实例
 ///
 /// `initval`: 初始计数器值
@@ -116,17 +112,15 @@ pub fn sys_eventfd(initval: u64, flags: i32) -> i64 {
     let semaphore = (flags & EFD_SEMAPHORE) != 0;
 
     // V2: 使用集中分配器获取 FD
-    let fd = match crate::privileged::proc::fd_alloc::alloc_fd(
+    let Some(fd) = crate::privileged::proc::fd_alloc::alloc_fd(
         crate::privileged::proc::fd_alloc::FdSubsystem::EventFd,
-    ) {
-        Some(f) => f,
-        None => return Errno::EMFILE.as_ret(),
+    ) else {
+        return Errno::EMFILE.as_ret();
     };
 
     // V2: FD 编号由 alloc_fd 计算 (底层使用 fd_at(EventFd, slot))
-    let slot = match crate::privileged::proc::fd_alloc::idx_of(fd) {
-        Some((_sub, s)) => s,
-        None => return Errno::EBADF.as_ret(),
+    let Some((_sub, slot)) = crate::privileged::proc::fd_alloc::idx_of(fd) else {
+        return Errno::EBADF.as_ret();
     };
 
     let mut table = EFD_TABLE.lock();
@@ -146,10 +140,6 @@ pub fn sys_eventfd(initval: u64, flags: i32) -> i64 {
     i64::from(fd)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// eventfd read — 读取计数器
 ///
 /// - semaphore=false: 返回 counter 并清零
@@ -160,9 +150,8 @@ pub fn sys_eventfd(initval: u64, flags: i32) -> i64 {
 /// `buf`: 用户空间 8 字节缓冲区指针
 /// 返回 8 (成功), 或负 errno
 pub fn sys_eventfd_read(fd: i32, buf: u64) -> i64 {
-    let idx = match fd_to_idx(fd) {
-        Some(i) => i,
-        None => return Errno::EBADF.as_ret(),
+    let Some(idx) = fd_to_idx(fd) else {
+        return Errno::EBADF.as_ret();
     };
 
     let mut table = EFD_TABLE.lock();
@@ -199,10 +188,6 @@ pub fn sys_eventfd_read(fd: i32, buf: u64) -> i64 {
     8 // 成功读取 8 字节
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// eventfd write — 递增计数器
 ///
 /// `fd`: eventfd 文件描述符
@@ -213,9 +198,8 @@ pub fn sys_eventfd_write(fd: i32, value: u64) -> i64 {
         return Errno::EINVAL.as_ret();
     }
 
-    let idx = match fd_to_idx(fd) {
-        Some(i) => i,
-        None => return Errno::EBADF.as_ret(),
+    let Some(idx) = fd_to_idx(fd) else {
+        return Errno::EBADF.as_ret();
     };
 
     let mut table = EFD_TABLE.lock();
@@ -242,17 +226,12 @@ pub fn sys_eventfd_write(fd: i32, value: u64) -> i64 {
     8
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// eventfd close — 关闭 eventfd
 ///
 /// 释放槽位, 返回 0 或负 errno
 pub fn sys_eventfd_close(fd: i32) -> i64 {
-    let idx = match fd_to_idx(fd) {
-        Some(i) => i,
-        None => return Errno::EBADF.as_ret(),
+    let Some(idx) = fd_to_idx(fd) else {
+        return Errno::EBADF.as_ret();
     };
 
     let mut table = EFD_TABLE.lock();
@@ -282,19 +261,14 @@ pub fn sys_eventfd_close(fd: i32) -> i64 {
 // epoll 集成
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 检查 eventfd 是否就绪 (供 epoll `check_fd_ready` 调用)
 ///
 /// 返回 EPOLLIN (可读) / EPOLLOUT (可写) 事件掩码
 pub fn eventfd_poll_events(fd: i32) -> u32 {
     use crate::privileged::syscall::{EPOLLERR, EPOLLIN, EPOLLOUT};
 
-    let idx = match fd_to_idx(fd) {
-        Some(i) => i,
-        None => return EPOLLERR,
+    let Some(idx) = fd_to_idx(fd) else {
+        return EPOLLERR;
     };
 
     let table = EFD_TABLE.lock();

@@ -329,10 +329,6 @@ static INOTIFY_OPS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU6
 // inotify 系统调用实现
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `inotify_init1` — 创建 inotify 实例
 pub fn sys_inotify_init1(flags: i32) -> i64 {
     INOTIFY_OPS.fetch_add(1, Ordering::Relaxed);
@@ -342,32 +338,25 @@ pub fn sys_inotify_init1(flags: i32) -> i64 {
     }
 
     // V2: 使用集中分配器获取 FD
-    let fd = match crate::privileged::proc::fd_alloc::alloc_fd(
+    let Some(fd) = crate::privileged::proc::fd_alloc::alloc_fd(
         crate::privileged::proc::fd_alloc::FdSubsystem::Inotify,
-    ) {
-        Some(f) => f,
-        None => return Errno::EMFILE.as_ret(),
+    ) else {
+        return Errno::EMFILE.as_ret();
     };
 
-    let slot_idx = match crate::privileged::proc::fd_alloc::idx_of(fd) {
-        Some((_sub, s)) => s,
-        None => return Errno::EBADF.as_ret(),
+    let Some((_sub, slot_idx)) = crate::privileged::proc::fd_alloc::idx_of(fd) else {
+        return Errno::EBADF.as_ret();
     };
 
     let mut instances = INOTIFY_INSTANCES.lock();
-    let slot = match instances.iter_mut().find(|i| !i.valid) {
-        Some(s) => s,
-        None => return Errno::EMFILE.as_ret(),
+    let Some(slot) = instances.iter_mut().find(|i| !i.valid) else {
+        return Errno::EMFILE.as_ret();
     };
     slot.init(slot_idx);
 
     i64::from(fd)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `inotify_add_watch` — 添加 watch
 pub fn sys_inotify_add_watch(fd: i64, ino: u32, mask: u32) -> i64 {
     INOTIFY_OPS.fetch_add(1, Ordering::Relaxed);
@@ -383,9 +372,8 @@ pub fn sys_inotify_add_watch(fd: i64, ino: u32, mask: u32) -> i64 {
     let slot = fd_to_slot(fd as i32);
     let mut instances = INOTIFY_INSTANCES.lock();
 
-    let instance = match instances.iter_mut().find(|i| i.valid && i.slot_idx == slot) {
-        Some(i) => i,
-        None => return Errno::EBADF.as_ret(),
+    let Some(instance) = instances.iter_mut().find(|i| i.valid && i.slot_idx == slot) else {
+        return Errno::EBADF.as_ret();
     };
 
     match instance.add_watch(ino, mask) {
@@ -394,10 +382,6 @@ pub fn sys_inotify_add_watch(fd: i64, ino: u32, mask: u32) -> i64 {
     }
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `inotify_rm_watch` — 移除 watch
 pub fn sys_inotify_rm_watch(fd: i64, wd: i32) -> i64 {
     INOTIFY_OPS.fetch_add(1, Ordering::Relaxed);
@@ -409,9 +393,8 @@ pub fn sys_inotify_rm_watch(fd: i64, wd: i32) -> i64 {
     let slot = fd_to_slot(fd as i32);
     let mut instances = INOTIFY_INSTANCES.lock();
 
-    let instance = match instances.iter_mut().find(|i| i.valid && i.slot_idx == slot) {
-        Some(i) => i,
-        None => return Errno::EBADF.as_ret(),
+    let Some(instance) = instances.iter_mut().find(|i| i.valid && i.slot_idx == slot) else {
+        return Errno::EBADF.as_ret();
     };
 
     if instance.find_watch_by_wd(wd).is_some() {
@@ -431,10 +414,6 @@ pub fn sys_inotify_rm_watch(fd: i64, wd: i32) -> i64 {
     }
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `inotify_read` — 从 inotify fd 读取事件 (safe 部分)
 ///
 /// 返回事件列表和总字节数。用户指针写入由 privileged 层处理。
@@ -446,18 +425,16 @@ pub fn inotify_read_events(fd: i64, max_count: usize) -> Option<(Vec<InotifyEven
     let slot = fd_to_slot(fd as i32);
     let mut instances = INOTIFY_INSTANCES.lock();
 
-    let instance = match instances.iter_mut().find(|i| i.valid && i.slot_idx == slot) {
-        Some(i) => i,
-        None => return None,
+    let Some(instance) = instances.iter_mut().find(|i| i.valid && i.slot_idx == slot) else {
+        return None;
     };
 
     let mut events = Vec::new();
     let mut written = 0usize;
 
     while written + InotifyEvent::FULL_SIZE <= max_count {
-        let event = match instance.pop_event() {
-            Some(e) => e,
-            None => break,
+        let Some(event) = instance.pop_event() else {
+            break;
         };
         events.push(event);
         written += InotifyEvent::FULL_SIZE;
@@ -470,10 +447,6 @@ pub fn inotify_read_events(fd: i64, max_count: usize) -> Option<(Vec<InotifyEven
     }
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `inotify_read` — 从 inotify fd 读取事件 (用户缓冲区写入)
 ///
 /// 用户缓冲区写入经 privileged `write_struct_to_user` 安全包装 (0 unsafe)。
@@ -483,9 +456,8 @@ pub fn sys_inotify_read(fd: i64, buf: *mut u8, count: usize) -> i64 {
         return Errno::EINVAL.as_ret();
     }
 
-    let (events, _written) = match inotify_read_events(fd, count) {
-        Some(r) => r,
-        None => return Errno::EAGAIN.as_ret(),
+    let Some((events, _written)) = inotify_read_events(fd, count) else {
+        return Errno::EAGAIN.as_ret();
     };
 
     let mut written = 0usize;
@@ -514,10 +486,6 @@ fn fd_to_slot(fd: i32) -> usize {
     (fd - INOTIFY_FD_BASE) as usize
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 通知所有监控指定 inode 的 inotify 实例
 pub fn inotify_notify(ino: u32, mask: u32, name: &str, is_dir: bool) {
     if ino == 0 {
@@ -533,9 +501,8 @@ pub fn inotify_notify(ino: u32, mask: u32, name: &str, is_dir: bool) {
             continue;
         }
 
-        let watch_idx = match instance.find_watch_by_ino(ino) {
-            Some(idx) => idx,
-            None => continue,
+        let Some(watch_idx) = instance.find_watch_by_ino(ino) else {
+            continue;
         };
 
         let watch = &instance.watches[watch_idx];

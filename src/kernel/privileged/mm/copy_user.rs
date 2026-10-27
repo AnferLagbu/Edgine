@@ -241,17 +241,12 @@ pub fn is_user_ptr(ptr: u64) -> bool {
 
 /// 检查缓冲区 (ptr + len) 是否完全位于用户空间
 #[inline]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub fn is_user_buf(ptr: u64, len: usize) -> bool {
     if len == 0 {
         return true;
     }
-    let end = match ptr.checked_add(len as u64) {
-        Some(e) => e,
-        None => return false,
+    let Some(end) = ptr.checked_add(len as u64) else {
+        return false;
     };
     is_user_ptr(ptr) && end <= USER_ADDR_MAX
 }

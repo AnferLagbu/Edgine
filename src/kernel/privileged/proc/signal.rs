@@ -506,10 +506,6 @@ pub fn do_signal_default_action(pid: Pid, sig: u8, frame_addr: u64) {
     clippy::borrow_as_ptr,
     reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
 )]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 投递待处理信号 (在返回用户态前调用)
 ///
 /// 遍历当前进程的 pending & ~blocked, 逐个投递:
@@ -530,14 +526,12 @@ pub fn do_signal_default_action(pid: Pid, sig: u8, frame_addr: u64) {
 /// - frame 指针必须有效且指向当前 CPU 的中断帧
 /// - 仅在返回用户态前调用 (中断上下文或系统调用出口)
 pub fn do_signal_deliver(frame: *mut crate::privileged::idt::InterruptFrame) -> bool {
-    let pid = match super::scheduler::SCHEDULER.current() {
-        Some(p) => p,
-        None => return false,
+    let Some(pid) = super::scheduler::SCHEDULER.current() else {
+        return false;
     };
 
-    let proc_ptr = match PROCESS_TABLE.get(pid) {
-        Some(p) => p,
-        None => return false,
+    let Some(proc_ptr) = PROCESS_TABLE.get(pid) else {
+        return false;
     };
 
     // SAFETY: 当前进程一定有效
@@ -693,15 +687,10 @@ pub fn do_signal_deliver(frame: *mut crate::privileged::idt::InterruptFrame) -> 
 // 便利函数
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 检查当前进程是否有可投递信号
 pub fn has_deliverable_signal(pid: Pid) -> bool {
-    let proc_ptr = match PROCESS_TABLE.get(pid) {
-        Some(p) => p,
-        None => return false,
+    let Some(proc_ptr) = PROCESS_TABLE.get(pid) else {
+        return false;
     };
     // SAFETY: PROCESS_TABLE 保证指针有效
     let proc = unsafe { &*proc_ptr };
@@ -730,30 +719,20 @@ pub fn sanitize_blocked_mask(mask: u64) -> u64 {
     mask & !UNCATCHABLE_SIGNAL_BITS
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 获取进程的信号屏蔽字
 pub fn get_blocked_mask(pid: Pid) -> u64 {
-    let proc_ptr = match PROCESS_TABLE.get(pid) {
-        Some(p) => p,
-        None => return 0,
+    let Some(proc_ptr) = PROCESS_TABLE.get(pid) else {
+        return 0;
     };
     // SAFETY: PROCESS_TABLE 保证指针有效
     let proc = unsafe { &*proc_ptr };
     proc.blocked_mask.load(Ordering::Acquire)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 设置进程的信号屏蔽字
 pub fn set_blocked_mask(pid: Pid, mask: u64) {
-    let proc_ptr = match PROCESS_TABLE.get(pid) {
-        Some(p) => p,
-        None => return,
+    let Some(proc_ptr) = PROCESS_TABLE.get(pid) else {
+        return;
     };
     // SAFETY: PROCESS_TABLE 保证指针有效
     let proc = unsafe { &*proc_ptr };
@@ -809,18 +788,13 @@ pub fn set_sigaction(pid: Pid, sig: u8, action: u64) -> Option<u64> {
 //   即可在此实现, 保持调用点稳定.
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// I-48: 显式重置 execve 后进程的信号状态.
 ///
 /// 当前实现为幂等 no-op (新进程已由 `user_proc_load_elf` 分配, 默认状态已正确).
 /// 函数存在是为 (1) 文档化语义, (2) 未来扩展的稳定 hook.
 pub fn reset_signal_state_on_exec(pid: Pid) {
-    let proc_ptr = match PROCESS_TABLE.get(pid) {
-        Some(p) => p,
-        None => return,
+    let Some(proc_ptr) = PROCESS_TABLE.get(pid) else {
+        return;
     };
     // SAFETY: PROCESS_TABLE.get() 返回有效指针, 进程在表中期间不会释放
     let proc = unsafe { &*proc_ptr };

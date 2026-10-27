@@ -22,10 +22,6 @@ use crate::privileged::userptr::{UserReadPtr, UserWritePtr};
 // VFS 核心接口 (内部)
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 删除目录项 — VFS 核心实现.
 ///
 /// 删除前记录 inode 号, 成功后释放该 inode 上的 POSIX 锁并发 inotify
@@ -36,9 +32,8 @@ pub extern "C" fn vfs_unlink_internal(path: *const u8, pwm: u64) -> i32 {
     let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
         return -1;
     };
-    let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
-        Some(r) => r,
-        None => return -1,
+    let Some((mount_idx, _fs_type, fs_opt)) = VFS_MANAGER.resolve_mount_fs(path) else {
+        return -1;
     };
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
@@ -71,10 +66,6 @@ pub extern "C" fn vfs_unlink_internal(path: *const u8, pwm: u64) -> i32 {
 // 调整 privileged 实现即可. 当前未保留 stub, 避免假实现.
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 创建目录 — VFS 核心实现.
 ///
 /// 成功后向父目录发 inotify `IN_CREATE`; 成功返回 0, 失败返回 `-1`.
@@ -85,9 +76,8 @@ pub extern "C" fn vfs_mkdir_internal(path: *const u8, pwm: u64) -> i32 {
         return -1;
     };
 
-    let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
-        Some(r) => r,
-        None => return -1,
+    let Some((mount_idx, _fs_type, fs_opt)) = VFS_MANAGER.resolve_mount_fs(path) else {
+        return -1;
     };
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
@@ -107,10 +97,6 @@ pub extern "C" fn vfs_mkdir_internal(path: *const u8, pwm: u64) -> i32 {
     })
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 删除空目录 — VFS 核心实现.
 ///
 /// 成功返回 0, 失败返回 `-1`.
@@ -120,9 +106,8 @@ pub extern "C" fn vfs_rmdir_internal(path: *const u8, pwm: u64) -> i32 {
     let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
         return -1;
     };
-    let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
-        Some(r) => r,
-        None => return -1,
+    let Some((mount_idx, _fs_type, fs_opt)) = VFS_MANAGER.resolve_mount_fs(path) else {
+        return -1;
     };
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
@@ -133,10 +118,6 @@ pub extern "C" fn vfs_rmdir_internal(path: *const u8, pwm: u64) -> i32 {
     })
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 #[expect(
     clippy::no_effect_underscore_binding,
     reason = "no_effect_underscore_binding: let _ = expr 用于类型推导/副作用; 当前优先 expect"
@@ -155,9 +136,8 @@ pub extern "C" fn vfs_stat_internal(path: *const u8, st: *mut VfsStat, pwm: u64)
     let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
         return -1;
     };
-    let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
-        Some(r) => r,
-        None => return -1,
+    let Some((mount_idx, _fs_type, fs_opt)) = VFS_MANAGER.resolve_mount_fs(path) else {
+        return -1;
     };
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
@@ -294,10 +274,6 @@ pub extern "C" fn vfs_mkdir(path: *const u8, pwm: u64) -> i32 {
     vfs_mkdir_internal(path, pwm)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `chmod(2)` — 按路径修改文件权限位.
 ///
 /// 成功返回 0, 失败返回 `-1`.
@@ -307,9 +283,8 @@ pub extern "C" fn vfs_chmod(path: *const u8, mode: u16, pwm: u64) -> i32 {
     let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
         return -1;
     };
-    let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
-        Some(r) => r,
-        None => return -1,
+    let Some((mount_idx, _fs_type, fs_opt)) = VFS_MANAGER.resolve_mount_fs(path) else {
+        return -1;
     };
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
@@ -325,10 +300,6 @@ pub extern "C" fn vfs_chown(path: *const u8, owner_pwm: u64, pwm: u64) -> i32 {
     vfs_chown_ext(path, owner_pwm, 0, pwm)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `chown(2)` 扩展形式 — 同时指定所有者与所属组.
 ///
 /// 成功返回 0, 失败返回 `-1`.
@@ -338,9 +309,8 @@ pub extern "C" fn vfs_chown_ext(path: *const u8, owner_pwm: u64, group_pwm: u64,
     let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
         return -1;
     };
-    let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
-        Some(r) => r,
-        None => return -1,
+    let Some((mount_idx, _fs_type, fs_opt)) = VFS_MANAGER.resolve_mount_fs(path) else {
+        return -1;
     };
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
@@ -359,19 +329,14 @@ pub extern "C" fn vfs_chown_ext(path: *const u8, owner_pwm: u64, group_pwm: u64,
 /// - `atime`: 访问时间 (纳秒), `u64::MAX` 表示不修改
 /// - `mtime`: 修改时间 (纳秒), `u64::MAX` 表示不修改
 /// - `pwm`: 权限凭证
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub extern "C" fn vfs_utimensat(path: *const u8, atime: u64, mtime: u64, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
     let mut pbuf = [0u8; VFS_MAX_PATH];
     let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
         return -1;
     };
-    let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
-        Some(r) => r,
-        None => return -1,
+    let Some((mount_idx, _fs_type, fs_opt)) = VFS_MANAGER.resolve_mount_fs(path) else {
+        return -1;
     };
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
@@ -390,10 +355,6 @@ pub extern "C" fn vfs_unlink(path: *const u8, pwm: u64) -> i32 {
 
 /// link(oldpath, newpath) — 创建硬链接.
 /// E6-5: 通过 trait object 分发
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub extern "C" fn vfs_link(oldpath: *const u8, newpath: *const u8, pwm: u64) -> i32 {
     let old_path = ptr_to_str(oldpath);
     let new_path = ptr_to_str(newpath);
@@ -410,9 +371,8 @@ pub extern "C" fn vfs_link(oldpath: *const u8, newpath: *const u8, pwm: u64) -> 
     };
     let pwm_eff = pwm;
 
-    let (_, _, fs_opt) = match VFS_MANAGER.resolve_mount_fs(old_path) {
-        Some(r) => r,
-        None => return -2,
+    let Some((_, _, fs_opt)) = VFS_MANAGER.resolve_mount_fs(old_path) else {
+        return -2;
     };
     fs_opt.map_or(-1, |fs| match fs.fs_link(old_path, new_path, pwm_eff) {
         Ok(()) => 0,
@@ -422,10 +382,6 @@ pub extern "C" fn vfs_link(oldpath: *const u8, newpath: *const u8, pwm: u64) -> 
 
 /// symlink(target, linkpath) — 创建符号链接.
 /// E6-5: 通过 trait object 分发
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub extern "C" fn vfs_symlink(target: *const u8, linkpath: *const u8, pwm: u64) -> i32 {
     let tgt = ptr_to_str(target);
     let link_path = ptr_to_str(linkpath);
@@ -439,9 +395,8 @@ pub extern "C" fn vfs_symlink(target: *const u8, linkpath: *const u8, pwm: u64) 
     };
     let pwm_eff = pwm;
 
-    let (_, _, fs_opt) = match VFS_MANAGER.resolve_mount_fs(link_path) {
-        Some(r) => r,
-        None => return -2,
+    let Some((_, _, fs_opt)) = VFS_MANAGER.resolve_mount_fs(link_path) else {
+        return -2;
     };
     fs_opt.map_or(-1, |fs| match fs.fs_symlink(tgt, link_path, pwm_eff) {
         Ok(()) => 0,
@@ -453,10 +408,6 @@ pub extern "C" fn vfs_symlink(target: *const u8, linkpath: *const u8, pwm: u64) 
 /// E6-5: 通过 trait object 分发
 // 有意窄化: 用户内存代理, 指针/长度上下文保证
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub extern "C" fn vfs_readlink(path: *const u8, buf: *mut u8, bufsiz: u64, pwm: u64) -> i32 {
     let _ = pwm;
     let p = ptr_to_str(path);
@@ -471,9 +422,8 @@ pub extern "C" fn vfs_readlink(path: *const u8, buf: *mut u8, bufsiz: u64, pwm: 
         return -2;
     };
 
-    let (_, _, fs_opt) = match VFS_MANAGER.resolve_mount_fs(p) {
-        Some(r) => r,
-        None => return -2,
+    let Some((_, _, fs_opt)) = VFS_MANAGER.resolve_mount_fs(p) else {
+        return -2;
     };
     fs_opt.map_or(-1, |fs| {
         // I4: 用户内存经 privileged 安全代理 (范围校验后构造可写视图)
@@ -487,10 +437,6 @@ pub extern "C" fn vfs_readlink(path: *const u8, buf: *mut u8, bufsiz: u64, pwm: 
     })
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `rename(2)` — 同卷内重命名 (跨挂载点返回 `-EXDEV`).
 ///
 /// 成功返回 0, 路径解析或后端失败返回负值.
@@ -506,13 +452,12 @@ pub extern "C" fn vfs_rename(old: *const u8, new: *const u8, pwm: u64) -> i32 {
         return -1;
     };
 
-    let (old_mount_idx, _old_fs_type, old_fs_opt) = match VFS_MANAGER.resolve_mount_fs(old_path) {
-        Some(r) => r,
-        None => return -1,
+    let Some((old_mount_idx, _old_fs_type, old_fs_opt)) = VFS_MANAGER.resolve_mount_fs(old_path)
+    else {
+        return -1;
     };
-    let (new_mount_idx, _new_fs_type, _) = match VFS_MANAGER.resolve_mount_fs(new_path) {
-        Some(r) => r,
-        None => return -1,
+    let Some((new_mount_idx, _new_fs_type, _)) = VFS_MANAGER.resolve_mount_fs(new_path) else {
+        return -1;
     };
 
     // rename 跨卷不支持 (简化)
@@ -550,10 +495,6 @@ pub extern "C" fn vfs_set_cwd(path: *const u8) {
 // ============================================================================
 
 /// 设置扩展属性
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub extern "C" fn vfs_setxattr_internal(
     path: *const u8,
     name: *const u8,
@@ -578,9 +519,8 @@ pub extern "C" fn vfs_setxattr_internal(
         return -2;
     };
 
-    let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
-        Some(r) => r,
-        None => return -2, // ENOENT
+    let Some((mount_idx, _fs_type, fs_opt)) = VFS_MANAGER.resolve_mount_fs(path) else {
+        return -2; // ENOENT
     };
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
@@ -593,10 +533,6 @@ pub extern "C" fn vfs_setxattr_internal(
 /// 获取扩展属性
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub extern "C" fn vfs_getxattr_internal(
     path: *const u8,
     name: *const u8,
@@ -622,9 +558,8 @@ pub extern "C" fn vfs_getxattr_internal(
         return -2;
     };
 
-    let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
-        Some(r) => r,
-        None => return -2, // ENOENT
+    let Some((mount_idx, _fs_type, fs_opt)) = VFS_MANAGER.resolve_mount_fs(path) else {
+        return -2; // ENOENT
     };
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
@@ -637,10 +572,6 @@ pub extern "C" fn vfs_getxattr_internal(
 /// 列出扩展属性
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub extern "C" fn vfs_listxattr_internal(
     path: *const u8,
     list: *mut u8,
@@ -664,9 +595,8 @@ pub extern "C" fn vfs_listxattr_internal(
         return -2;
     };
 
-    let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
-        Some(r) => r,
-        None => return -2, // ENOENT
+    let Some((mount_idx, _fs_type, fs_opt)) = VFS_MANAGER.resolve_mount_fs(path) else {
+        return -2; // ENOENT
     };
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
@@ -677,10 +607,6 @@ pub extern "C" fn vfs_listxattr_internal(
 }
 
 /// 删除扩展属性
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub extern "C" fn vfs_removexattr_internal(path: *const u8, name: *const u8, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
     let name = ptr_to_str(name);
@@ -690,9 +616,8 @@ pub extern "C" fn vfs_removexattr_internal(path: *const u8, name: *const u8, pwm
         return -2;
     };
 
-    let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
-        Some(r) => r,
-        None => return -2, // ENOENT
+    let Some((mount_idx, _fs_type, fs_opt)) = VFS_MANAGER.resolve_mount_fs(path) else {
+        return -2; // ENOENT
     };
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 

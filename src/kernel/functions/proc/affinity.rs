@@ -13,10 +13,6 @@
 use crate::privileged::syscall::Errno;
 
 #[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
-#[expect(
     clippy::comparison_chain,
     reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
 )]
@@ -34,9 +30,8 @@ pub fn sched_setaffinity_syscall(pid: i32, cpusetsize: u32, mask_ptr: u64) -> i6
         return Errno::EFAULT.as_ret();
     }
 
-    let mask = match crate::privileged::syscall::api::read_u64_from_user(mask_ptr) {
-        Some(v) => v,
-        None => return Errno::EFAULT.as_ret(),
+    let Some(mask) = crate::privileged::syscall::api::read_u64_from_user(mask_ptr) else {
+        return Errno::EFAULT.as_ret();
     };
 
     let target_pid = if pid == 0 {

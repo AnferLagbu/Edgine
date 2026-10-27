@@ -51,10 +51,6 @@ pub unsafe extern "C" fn eg_net_start_dhcp() -> i32 {
 /// - `cidr_str` 与 `gw_str` 必须是有效的 C 字符串指针 (NUL 终止),
 ///   指向的内存必须在调用期间保持有效。
 /// - 调用方保证 NET 已初始化。
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: eg_net_static_ip 内 5 处 `match Option { Some(v)=>v, None=>return -1 }` 用于 FFI 参数 (cidr/gw) 解析的提前返回; 保持 match-return 结构以最小化 diff, 当前优先 expect 兑底"
-)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn eg_net_static_ip(cidr_str: *const u8, gw_str: *const u8) -> i32 {
     unsafe {
@@ -64,31 +60,26 @@ pub unsafe extern "C" fn eg_net_static_ip(cidr_str: *const u8, gw_str: *const u8
 
         let _guard = NET_STATE.lock();
 
-        let stack = match raw::stack_mut() {
-            Some(s) => s,
-            None => return -1,
+        let Some(stack) = raw::stack_mut() else {
+            return -1;
         };
 
         // 解析 CIDR 字符串 "a.b.c.d/prefix" (复用 dns::parse_cidr)
-        let cidr_str = match cstr_to_str(cidr_str) {
-            Some(s) => s,
-            None => return -1,
+        let Some(cidr_str) = cstr_to_str(cidr_str) else {
+            return -1;
         };
-        let (ip_octets, prefix) = match parse_cidr(cidr_str) {
-            Some(v) => v,
-            None => return -1,
+        let Some((ip_octets, prefix)) = parse_cidr(cidr_str) else {
+            return -1;
         };
         let ip =
             smoltcp::wire::Ipv4Address::new(ip_octets[0], ip_octets[1], ip_octets[2], ip_octets[3]);
 
         // 解析网关 (复用 dns::parse_ipv4_literal)
-        let gw_str = match cstr_to_str(gw_str) {
-            Some(s) => s,
-            None => return -1,
+        let Some(gw_str) = cstr_to_str(gw_str) else {
+            return -1;
         };
-        let gw_octets = match parse_ipv4_literal(gw_str) {
-            Some(v) => v,
-            None => return -1,
+        let Some(gw_octets) = parse_ipv4_literal(gw_str) else {
+            return -1;
         };
         let gw =
             smoltcp::wire::Ipv4Address::new(gw_octets[0], gw_octets[1], gw_octets[2], gw_octets[3]);

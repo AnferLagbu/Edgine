@@ -356,17 +356,12 @@ const LINUX_INTERP_PREFIXES: &[&[u8]] = &[
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 扫描 ELF program headers, 检测 `PT_INTERP` 是否为 Linux 动态链接器.
 ///
 /// 返回 true 表示需要改写 `PT_INTERP` (Linux 二进制).
 pub fn needs_interp_rewrite(elf_data: *const u8, elf_size: u64) -> bool {
-    let header = match elf_validate(elf_data, elf_size) {
-        Some(h) => h,
-        None => return false,
+    let Some(header) = elf_validate(elf_data, elf_size) else {
+        return false;
     };
 
     if header.e_phoff == 0 || header.e_phnum == 0 {
@@ -415,19 +410,14 @@ pub fn needs_interp_rewrite(elf_data: *const u8, elf_size: u64) -> bool {
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 改写 ELF 数据中的 `PT_INTERP` 路径为 edgine 动态链接器.
 ///
 /// # Safety
 /// `elf_data` 必须指向可写的有效 ELF 数据 (内核拷贝缓冲区).
 pub unsafe fn rewrite_interp_path(elf_data: *mut u8, elf_size: u64) {
     unsafe {
-        let header = match elf_validate(elf_data as *const u8, elf_size) {
-            Some(h) => h,
-            None => return,
+        let Some(header) = elf_validate(elf_data as *const u8, elf_size) else {
+            return;
         };
 
         if header.e_phoff == 0 || header.e_phnum == 0 {

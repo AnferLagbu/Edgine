@@ -198,10 +198,6 @@ pub fn wasi_fd_prestat_dir_name(
     Ok(())
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// WASI `fd_stat_get`: 获取 fd 状态信息
 ///
 /// # Errors
@@ -220,10 +216,7 @@ pub fn wasi_fd_stat_get(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
     };
 
     // 调用 VFS fstat 获取文件信息
-    let stat = if let Some(s) = crate::functions::fs::api::vfs_fstat_safe(entry.inner_fd as u32, 0)
-    {
-        s
-    } else {
+    let Some(stat) = crate::functions::fs::api::vfs_fstat_safe(entry.inner_fd as u32, 0) else {
         interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
         return Ok(());
     };

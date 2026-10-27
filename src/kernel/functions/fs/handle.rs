@@ -32,10 +32,6 @@ fn current_fd_handle(fd_idx: usize) -> Option<u32> {
 
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 打开文件 — VFS 核心实现 (trait object 分发).
 ///
 /// 归一化用户路径 + 解析挂载点后调用 `fs_open`; 目标不存在且带 `CREAT`
@@ -52,9 +48,8 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
         return -1;
     };
 
-    let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
-        Some(r) => r,
-        None => return -1,
+    let Some((mount_idx, _fs_type, fs_opt)) = VFS_MANAGER.resolve_mount_fs(path) else {
+        return -1;
     };
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
@@ -67,21 +62,17 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
                 let open_file = OpenFile::new(inode, flags, pwm, file_type);
 
                 // 插入全局 OpenFile 表
-                let handle_id = match OPEN_FILE_TABLE.alloc(open_file) {
-                    Some(id) => id,
-                    None => return -1,
+                let Some(handle_id) = OPEN_FILE_TABLE.alloc(open_file) else {
+                    return -1;
                 };
 
                 // B-9.5: 在 per-process fd 表 (Process.fd_table, 权威表) 分配本地 fd.
                 // 元数据 (node_id/flags/offset) 统一由共享 OpenFile 承载, 不再写入
                 // 全局 VfsManager.fd_table. 无进程上下文 (host 侧单测) 时返回 -1.
-                let fd_idx = if let Some(i) = crate::privileged::proc::with_current_fd_table(|t| {
+                let Some(fd_idx) = crate::privileged::proc::with_current_fd_table(|t| {
                     t.alloc_fd(handle_id, cloexec)
                 })
-                .flatten()
-                {
-                    i
-                } else {
+                .flatten() else {
                     OPEN_FILE_TABLE.close(handle_id);
                     return -1;
                 };
@@ -97,20 +88,15 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
                         let inode_id = inode.node_id();
                         let open_file = OpenFile::new(inode, flags, pwm, file_type);
 
-                        let handle_id = match OPEN_FILE_TABLE.alloc(open_file) {
-                            Some(id) => id,
-                            None => return -1,
+                        let Some(handle_id) = OPEN_FILE_TABLE.alloc(open_file) else {
+                            return -1;
                         };
 
                         // B-9.5: 同 fs_open 分支, per-process fd 表分配 (元数据改源 OpenFile)
-                        let fd_idx = if let Some(i) =
-                            crate::privileged::proc::with_current_fd_table(|t| {
-                                t.alloc_fd(handle_id, cloexec)
-                            })
-                            .flatten()
-                        {
-                            i
-                        } else {
+                        let Some(fd_idx) = crate::privileged::proc::with_current_fd_table(|t| {
+                            t.alloc_fd(handle_id, cloexec)
+                        })
+                        .flatten() else {
                             OPEN_FILE_TABLE.close(handle_id);
                             return -1;
                         };
@@ -144,10 +130,6 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
 
 // 注意: 保持 Rust ABI — vfs_close_internal 为内核内部调用 (fd 表原子回收),
 //        TD-03 契约测试按 Rust ABI 签名匹配该函数体.
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 关闭 fd — 原子 claim-and-clear 后释放 OpenFile 引用.
 ///
 /// 幂等: 无进程上下文 / fd 未使用 / 已关闭均返回 0. 关闭路径同时触发
@@ -158,10 +140,9 @@ pub fn vfs_close_internal(fd_idx: u32) -> i32 {
     // 并清空槽位 (entries→u32::MAX, cloexec→false), 避免双核同时 close 同一 fd
     // 导致 pcache/inotify 二次触发. 未使用 fd 或越界返回 None, 天然保持幂等.
     let snapshot = crate::privileged::proc::with_current_fd_table(|t| t.close_fd(fd_idx_us));
-    let handle_id = match snapshot {
-        Some(Some(hid)) => hid,
+    let Some(Some(handle_id)) = snapshot else {
         // 无进程上下文 (host 侧单测), 或 fd 已关闭/未使用 → 跳过全部副作用
-        None | Some(None) => return 0,
+        return 0;
     };
 
     // B-9.5: 元数据改源 OpenFile (退役全局 VfsManager.fd_table 的 node_id/flags 副本)
@@ -343,10 +324,6 @@ pub fn vfs_read_kernel(fd: u32, dst: &mut [u8]) -> i32 {
 // 注意: 保持 Rust ABI — 参数含 `Option<usize>` / `&mut [u8]` 等非 FFI-safe 类型
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub fn vfs_pread_inode(
     mount_idx: Option<usize>,
     node_id: u32,
@@ -358,9 +335,8 @@ pub fn vfs_pread_inode(
     // 非 RamFS (UNKFS/DevFS 等) 挂载 mmap 时无法工作. 现按 mount_idx
     // 派发, 无挂载则返回 -1 (EIO). mmap prewarm 由 page_fault 传入
     // vma.mount_idx (mmap 时已解析).
-    let mount_idx = match mount_idx {
-        Some(i) => i,
-        None => return -1,
+    let Some(mount_idx) = mount_idx else {
+        return -1;
     };
     let fs = {
         let mounts = VFS_MANAGER.mounts.lock();
@@ -369,18 +345,11 @@ pub fn vfs_pread_inode(
             _ => return -1,
         }
     };
-    let fs = match fs {
-        Some(f) => f,
-        None => return -1,
-    };
+    let Some(fs) = fs else { return -1 };
     fs.fs_pread_inode(node_id, file_offset, dst, pwm)
         .map_or(-1, |n| n as i32)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 截断 fd 对应文件到 `size` 字节.
 ///
 /// 经 OpenFile 的 Inode trait 执行; 成功发 inotify `IN_MODIFY`.
@@ -389,9 +358,8 @@ pub extern "C" fn vfs_truncate_internal(fd: u32, size: u64) -> i32 {
     // B-9.5: 边界由 per-process fd 表 (MAX_FDS_PER_PROCESS) 承担, 不再用
     // 全局 VFS_MAX_FDS=32 检查 (否则会误拒 32..64 的合法 per-process fd).
     // Plan B: 通过 OpenFile 的 Inode trait 执行
-    let handle_id = match current_fd_handle(fd as usize) {
-        Some(hid) => hid,
-        None => return -1,
+    let Some(handle_id) = current_fd_handle(fd as usize) else {
+        return -1;
     };
 
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
@@ -488,10 +456,6 @@ pub fn vfs_write_kernel(fd: u32, src: &[u8]) -> i32 {
     vfs_write_slice(fd, src)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 读目录项 — 从 fd 当前偏移取一项并写入用户空间.
 ///
 /// 成功返回 1 (已写入一项) / 0 (目录读完) / 负 errno; 用户结构体写入
@@ -502,9 +466,8 @@ pub extern "C" fn vfs_readdir_internal(fd: u32, entry: *mut VfsDirEntry) -> i32 
     }
 
     // Plan B: 通过 OpenFile 的 Inode trait 执行
-    let handle_id = match current_fd_handle(fd as usize) {
-        Some(hid) => hid,
-        None => return -1,
+    let Some(handle_id) = current_fd_handle(fd as usize) else {
+        return -1;
     };
 
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
@@ -688,18 +651,13 @@ pub extern "C" fn vfs_readdir(fd: u32, entry: *mut VfsDirEntry) -> i32 {
 // fchmod — 按 fd 修改文件权限
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `fchmod(2)` — 按 fd 修改文件权限位.
 ///
 /// fd 无效或无进程上下文返回 `-EBADF`, 后端拒绝返回 `-1`.
 pub extern "C" fn vfs_fchmod(fd: u32, mode: u16) -> i32 {
     // Plan B: 通过 OpenFile 的 Inode trait 执行
-    let handle_id = match current_fd_handle(fd as usize) {
-        Some(hid) => hid,
-        None => return -9,
+    let Some(handle_id) = current_fd_handle(fd as usize) else {
+        return -9;
     };
 
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
@@ -716,19 +674,14 @@ pub extern "C" fn vfs_fchmod(fd: u32, mode: u16) -> i32 {
 // fchown — 按 fd 修改文件所有者
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `fchown(2)` — 按 fd 修改文件所有者 / 所属组.
 ///
 /// `owner_pwm` / `group_pwm` 为 SGEG 身份凭证; fd 无效返回 `-EBADF`,
 /// 后端拒绝返回 `-1`.
 pub extern "C" fn vfs_fchown(fd: u32, owner_pwm: u64, group_pwm: u64, pwm: u64) -> i32 {
     // Plan B: 通过 OpenFile 的 Inode trait 执行
-    let handle_id = match current_fd_handle(fd as usize) {
-        Some(hid) => hid,
-        None => return -9,
+    let Some(handle_id) = current_fd_handle(fd as usize) else {
+        return -9;
     };
 
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
@@ -743,24 +696,18 @@ pub extern "C" fn vfs_fchown(fd: u32, owner_pwm: u64, group_pwm: u64, pwm: u64) 
 
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `lseek(2)` — 调整 fd 当前偏移.
 ///
 /// `whence` 由 [`VfsSeekWhence::from_u32`] 解析; 成功返回新偏移,
 /// 参数非法返回 `-EINVAL`, fd 无效返回 `-EBADF`.
 pub extern "C" fn vfs_seek(fd: u32, offset: i32, whence: u32) -> i32 {
-    let whence = match VfsSeekWhence::from_u32(whence) {
-        Some(w) => w,
-        None => return KernelError::InvalidArgument.as_i32(),
+    let Some(whence) = VfsSeekWhence::from_u32(whence) else {
+        return KernelError::InvalidArgument.as_i32();
     };
 
     // Plan B: 通过 OpenFile 的 Inode trait 执行
-    let handle_id = match current_fd_handle(fd as usize) {
-        Some(hid) => hid,
-        None => return KernelError::BadFd.as_vfs_ret(),
+    let Some(handle_id) = current_fd_handle(fd as usize) else {
+        return KernelError::BadFd.as_vfs_ret();
     };
 
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
@@ -781,10 +728,6 @@ pub extern "C" fn vfs_seek(fd: u32, offset: i32, whence: u32) -> i32 {
 // fstat — 从 fd 获取文件属性
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `fstat(2)` — 从 fd 取文件属性并写入用户空间.
 ///
 /// 属性中的 uid/gid 经 SGEG 身份表映射 (I4 写入用户内存); fd 无效返回
@@ -795,9 +738,8 @@ pub extern "C" fn vfs_fstat(fd: u32, st: *mut VfsStat, _pwm: u64) -> i32 {
     }
 
     // Plan B: 通过 OpenFile 的 Inode trait 执行
-    let handle_id = match current_fd_handle(fd as usize) {
-        Some(hid) => hid,
-        None => return -9,
+    let Some(handle_id) = current_fd_handle(fd as usize) else {
+        return -9;
     };
 
     // I4: 用户内存经 privileged 安全代理 (范围校验后写入)

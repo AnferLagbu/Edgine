@@ -486,18 +486,13 @@ pub fn pcache_fill(inode_id: u32, page_index: u64, src: &[u8]) -> bool {
     guard.fill(inode_id, page_index, src)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 读取缓存页内容到目标缓冲区
 ///
 /// 用于把 pcache 物理页的数据复制到用户缓冲 / 其他位置.
 /// `dst.len()` 不得超过 `PAGE_SIZE`.
 pub fn pcache_read_to_slice(inode_id: u32, page_index: u64, dst: &mut [u8]) -> bool {
-    let phys = match pcache_lookup(inode_id, page_index) {
-        Some(p) => p,
-        None => return false,
+    let Some(phys) = pcache_lookup(inode_id, page_index) else {
+        return false;
     };
     copy_from_phys_page(phys, dst);
     true

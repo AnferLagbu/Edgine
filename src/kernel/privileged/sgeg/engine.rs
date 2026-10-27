@@ -2,10 +2,6 @@ use super::identity;
 use super::types::{CapBits, CapDomain, PwmFlags};
 use core::sync::atomic::Ordering;
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 检查 PWM 在指定能力域是否拥有所需能力位; PWM 0 (bootstrap) 恒为真, 身份缺失或被禁用为假。
 pub fn check(pwm: u64, domain: CapDomain, required: CapBits) -> bool {
     // PWM 0 是 bootstrap 身份, 拥有全部能力. 内核首个用户进程 (init) 在
@@ -16,9 +12,8 @@ pub fn check(pwm: u64, domain: CapDomain, required: CapBits) -> bool {
         return true;
     }
 
-    let entry = match identity::find(pwm) {
-        Some(e) => e,
-        None => return false,
+    let Some(entry) = identity::find(pwm) else {
+        return false;
     };
 
     if entry.has_flag(PwmFlags::DISABLED) {
@@ -28,23 +23,17 @@ pub fn check(pwm: u64, domain: CapDomain, required: CapBits) -> bool {
     entry.has_capability(domain, required)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 判断操作者 PWM 的权限级别是否严于目标 PWM (级别数值越小特权越高); 操作者为 PWM 0 恒为真。
 pub fn check_privilege(operator_pwm: u64, target_pwm: u64) -> bool {
     if operator_pwm == 0 {
         return true;
     }
 
-    let operator = match identity::find(operator_pwm) {
-        Some(e) => e,
-        None => return false,
+    let Some(operator) = identity::find(operator_pwm) else {
+        return false;
     };
-    let target = match identity::find(target_pwm) {
-        Some(e) => e,
-        None => return false,
+    let Some(target) = identity::find(target_pwm) else {
+        return false;
     };
 
     let op_level = operator.privilege_level.load(Ordering::Acquire);

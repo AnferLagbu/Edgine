@@ -340,15 +340,10 @@ impl FileSystem for RamFsFileSystem {
             })
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     fn fs_link(&self, old_path: &str, new_path: &str, pwm: u64) -> KernelResult<()> {
         let mut ramfs = RAMFS_DATA.lock();
-        let target_node = match ramfs.resolve_path(old_path) {
-            Some(n) => n,
-            None => return Err(KernelError::FileNotFound),
+        let Some(target_node) = ramfs.resolve_path(old_path) else {
+            return Err(KernelError::FileNotFound);
         };
         if (target_node as usize) >= ramfs.nodes.len() || !ramfs.nodes[target_node as usize].used {
             return Err(KernelError::FileNotFound);
@@ -366,9 +361,8 @@ impl FileSystem for RamFsFileSystem {
         if name.is_empty() || name.contains('/') {
             return Err(KernelError::InvalidArgument);
         }
-        let parent_num = match ramfs.resolve_path(parent_path) {
-            Some(n) => n,
-            None => return Err(KernelError::FileNotFound),
+        let Some(parent_num) = ramfs.resolve_path(parent_path) else {
+            return Err(KernelError::FileNotFound);
         };
         let result = ramfs.link(parent_num, target_node, name, pwm);
         if result == 0 {

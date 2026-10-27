@@ -73,10 +73,6 @@ where
 // 登录 / 登出
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 使用 note 与密码执行登录, 成功后把会话信息写入当前进程的 `PwmContext`。
 /// # Errors
 /// 当前进程不存在、note 对应的 PWM 不存在、身份被禁用、处于锁定期或密码错误时返回 Err。
@@ -88,9 +84,8 @@ pub fn login(note: &str, password: &str) -> Result<u64, PwmError> {
     }
 
     let t = identity::get_table();
-    let entry = match t.find_by_note(note) {
-        Some(e) => e,
-        None => return Err(PwmError::NotFound),
+    let Some(entry) = t.find_by_note(note) else {
+        return Err(PwmError::NotFound);
     };
 
     if entry.has_flag(PwmFlags::DISABLED) {
@@ -245,19 +240,14 @@ pub fn clear_lockout(pwm: u64) -> Result<(), PwmError> {
 // SUID 提权 (per-process 栈)
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 以目标 PWM 的 uid/gid 提升当前进程权限, 并将当前上下文快照压入 SUID 提权栈; 栈满返回 false。
 pub fn elevate_for_suid(target_pwm: u64) -> bool {
     let pid = process_get_current_pid();
     if pid == 0 {
         return false;
     }
-    let target_entry = match identity::find(target_pwm) {
-        Some(e) => e,
-        None => return false,
+    let Some(target_entry) = identity::find(target_pwm) else {
+        return false;
     };
     let target_uid = target_entry.get_uid();
     let desired_gid = target_entry.get_gid();
@@ -333,16 +323,11 @@ pub fn has_elevation_authority(target_pwm: u64) -> bool {
 // POSIX setuid / setgid / setreuid / setregid 系列调用
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 尝试将当前进程 uid 切换到目标 uid 对应身份 (需特权或已有提权授权); 成功返回 true。
 pub fn try_setuid(target_uid: u32) -> bool {
     let table = identity::get_table();
-    let target_entry = match table.find_by_uid(target_uid) {
-        Some(e) => e,
-        None => return false,
+    let Some(target_entry) = table.find_by_uid(target_uid) else {
+        return false;
     };
     let target_pwm = target_entry.get_pwm().0;
 
@@ -357,10 +342,6 @@ pub fn try_setuid(target_uid: u32) -> bool {
     }
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 尝试将当前进程 gid 切换到目标 gid; 特权时同时设置 egid/saved_egid,
 /// 否则仅当目标等于缓存或保存 gid 时设置 egid。
 pub fn try_setgid(target_gid: u32) -> bool {
@@ -370,9 +351,8 @@ pub fn try_setgid(target_gid: u32) -> bool {
     }
 
     let table = identity::get_table();
-    let target_entry = match table.find_by_gid(target_gid) {
-        Some(e) => e,
-        None => return false,
+    let Some(target_entry) = table.find_by_gid(target_gid) else {
+        return false;
     };
     let target_pwm = target_entry.get_pwm().0;
 
@@ -397,10 +377,6 @@ pub fn try_setgid(target_gid: u32) -> bool {
     }
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 尝试设置当前进程有效 uid (euid); 特权时同时更新 saved_euid,
 /// 否则仅当目标等于缓存或保存 euid 时更新 euid。
 pub fn try_seteuid(target_euid: u32) -> bool {
@@ -410,9 +386,8 @@ pub fn try_seteuid(target_euid: u32) -> bool {
     }
 
     let table = identity::get_table();
-    let target_entry = match table.find_by_uid(target_euid) {
-        Some(e) => e,
-        None => return false,
+    let Some(target_entry) = table.find_by_uid(target_euid) else {
+        return false;
     };
     let target_pwm = target_entry.get_pwm().0;
 
@@ -437,10 +412,6 @@ pub fn try_seteuid(target_euid: u32) -> bool {
     }
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 尝试设置当前进程有效 gid (egid); 特权时同时更新 saved_egid,
 /// 否则仅当目标等于缓存或保存 egid 时更新 egid。
 pub fn try_setegid(target_egid: u32) -> bool {
@@ -450,9 +421,8 @@ pub fn try_setegid(target_egid: u32) -> bool {
     }
 
     let table = identity::get_table();
-    let target_entry = match table.find_by_gid(target_egid) {
-        Some(e) => e,
-        None => return false,
+    let Some(target_entry) = table.find_by_gid(target_egid) else {
+        return false;
     };
     let target_pwm = target_entry.get_pwm().0;
 

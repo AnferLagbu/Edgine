@@ -158,10 +158,6 @@ fn parse_next_entry(data: &[u8], offset: usize) -> Option<(CpioEntry<'_>, usize)
 /// 归档为空或 cpio 归档格式非法时返回 Err。
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub fn unpack(data: &[u8]) -> Result<usize, &'static str> {
     if data.is_empty() {
         return Err("initramfs: empty data");
@@ -175,9 +171,8 @@ pub fn unpack(data: &[u8]) -> Result<usize, &'static str> {
     let _ = crate::functions::fs::vfs_mkdir(b"/\0".as_ptr(), pwm);
 
     while offset < data.len() {
-        let (entry, next_offset) = match parse_next_entry(data, offset) {
-            Some(e) => e,
-            None => break, // TRAILER 或数据结束
+        let Some((entry, next_offset)) = parse_next_entry(data, offset) else {
+            break; // TRAILER 或数据结束
         };
 
         offset = next_offset;

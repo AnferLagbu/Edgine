@@ -928,10 +928,6 @@ impl UserProcManager {
         }
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 替换进程的用户地址空间 (execve 路径).
     ///
     /// 销毁旧页表 (旧用户栈页作为 USER leaf 由其单源归还), 然后将
@@ -945,9 +941,8 @@ impl UserProcManager {
         new_user_stack: u64,
         new_stack_bottom: u64,
     ) {
-        let proc = match self.processes.lock().get(&pid).copied() {
-            Some(p) => p,
-            None => return,
+        let Some(proc) = self.processes.lock().get(&pid).copied() else {
+            return;
         };
         // SAFETY: proc 来自 BTreeMap 中的 NonNull, 进程存活期间有效.
         let proc_ref = unsafe { UserProcRef::new_unchecked(proc.as_ptr()) };
@@ -1757,10 +1752,6 @@ impl UserProcManager {
         clippy::cast_ptr_alignment,
         reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
     )]
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 从内存中的 ELF 映像加载用户进程, 返回新 pid (失败为负值)
     pub fn load_elf_from_memory(&self, elf_data: *const u8, elf_size: u64, pwm: u64) -> i32 {
         crate::klog_boot_info!("[ELF] load_elf_from_memory: entry");
@@ -1773,10 +1764,7 @@ impl UserProcManager {
         //
         // SAFETY: elf_data 区间已校验 (非空 + size >= header), verify_elf 内部仅读借用。
         crate::klog_boot_info!("[ELF] calling verify_elf...");
-        let verified = if let Ok(v) = unsafe { super::elf::verify::verify_elf(elf_data, elf_size) }
-        {
-            v
-        } else {
+        let Ok(verified) = (unsafe { super::elf::verify::verify_elf(elf_data, elf_size) }) else {
             crate::klog_boot_info!("[ELF] verify_elf failed");
             return -1;
         };
@@ -1932,10 +1920,6 @@ impl UserProcManager {
         }
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 从扁平二进制映像创建用户进程, 返回新 pid (失败为负值)
     pub fn create_from_binary(&self, code: *const u8, code_size: u64, pwm: u64) -> i32 {
         let info = UserProcInfo {
@@ -1945,9 +1929,8 @@ impl UserProcManager {
             code_data: code,
         };
 
-        let proc = match self.create(&info, pwm) {
-            Some(p) => p,
-            None => return -1,
+        let Some(proc) = self.create(&info, pwm) else {
+            return -1;
         };
 
         // SAFETY: proc 由 create 返回, 生命周期由 UserProcManager 管理。
@@ -2031,14 +2014,9 @@ pub extern "C" fn proc_alloc_pid() -> u32 {
 /// 子进程的 CR3 和内核栈已在 `sys_fork` 中分配好，此处仅创建 `UserProcess` 记录
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub extern "C" fn user_proc_clone(parent_pid: u32, child_pid: u32) -> i32 {
-    let parent_proc = match USER_PROC_MANAGER.get(parent_pid) {
-        Some(p) => p,
-        None => return -1,
+    let Some(parent_proc) = USER_PROC_MANAGER.get(parent_pid) else {
+        return -1;
     };
 
     let child_kernel_proc = match PROCESS_TABLE.get(child_pid) {
@@ -2088,10 +2066,6 @@ pub extern "C" fn user_proc_clone(parent_pid: u32, child_pid: u32) -> i32 {
     0
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 按缺页地址尝试向下扩展用户栈 — 若 `fault_addr` 落在可扩展区间内, 则映射其所在页。
 ///
 /// 返回是否成功扩展; 地址已越过栈顶、低于扩展下限或当前无进程时返回 `false`。
@@ -2103,9 +2077,8 @@ pub fn try_expand_user_stack(fault_addr: u64) -> bool {
         return false;
     }
 
-    let proc = match USER_PROC_MANAGER.get_current() {
-        Some(p) => p,
-        None => return false,
+    let Some(proc) = USER_PROC_MANAGER.get_current() else {
+        return false;
     };
 
     // SAFETY: proc 由管理器返回, 有效。

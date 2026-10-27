@@ -728,10 +728,6 @@ impl NamespaceSet {
         Ok(())
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// setns: 切换到目标 namespace
     ///
     /// # Errors
@@ -739,9 +735,8 @@ impl NamespaceSet {
     /// 当注册表中找不到 `target_id` 对应的 namespace 时返回 `EINVAL`.
     pub fn setns_by_type(&mut self, ns_type: NsType, target_id: u64) -> Result<(), Errno> {
         let registry = NS_REGISTRY.lock();
-        let entry = match registry.find(target_id) {
-            Some(e) => e,
-            None => return Err(Errno::EINVAL),
+        let Some(entry) = registry.find(target_id) else {
+            return Err(Errno::EINVAL);
         };
 
         match ns_type {

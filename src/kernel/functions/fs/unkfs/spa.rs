@@ -474,10 +474,6 @@ impl UnkfsSpa {
             .store(crate::arch!(timestamp()), Ordering::Relaxed);
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 从最新槽位向前扫描, 返回首个 magic 与校验和均有效的 uberblock.
     pub fn read_uberblock_from_disk(&self) -> Option<UnkfsUberblock> {
         for i in (0..HV_UBERBLOCK_COUNT as u32).rev() {
@@ -486,9 +482,8 @@ impl UnkfsSpa {
             if self.read_sector(sector, &mut sector_buf) != 0 {
                 continue;
             }
-            let ub = match UnkfsUberblock::from_bytes_unaligned(&sector_buf) {
-                Some(u) => u,
-                None => continue,
+            let Some(ub) = UnkfsUberblock::from_bytes_unaligned(&sector_buf) else {
+                continue;
             };
             if ub.is_valid() && ub.verify_checksum() {
                 return Some(ub);

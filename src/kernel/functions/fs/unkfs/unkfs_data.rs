@@ -474,10 +474,6 @@ impl UnkfsData {
         }
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 以给定分区起始偏移挂载指定驱动器, 成功返回 true.
     pub fn mount_drive(&self, drive_id: u8, part_start: u32) -> bool {
         if !block::hdd_is_present(drive_id) {
@@ -492,9 +488,7 @@ impl UnkfsData {
             "[UNKFS] MOUNT: Reading uberblock from disk (partition @LBA {})...",
             part_start
         );
-        let ub = if let Some(u) = self.spa.read_uberblock_from_disk() {
-            u
-        } else {
+        let Some(ub) = self.spa.read_uberblock_from_disk() else {
             crate::slog_warn!(FS, "[UNKFS] MOUNT: No valid uberblock found");
             return false;
         };
@@ -600,10 +594,6 @@ impl UnkfsData {
         pwm_api::pwm_has_capability(pwm, 3, cap)
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 打开 unkfs 中的对象并分配文件描述符.
     ///
     /// # Errors
@@ -628,24 +618,21 @@ impl UnkfsData {
                 Some,
             )
         };
-        let obj_id = match obj_id {
-            Some(id) => id,
-            None => return Err(KernelError::FileNotFound),
+        let Some(obj_id) = obj_id else {
+            return Err(KernelError::FileNotFound);
         };
         let obj = {
             let datasets = self.datasets.lock();
             datasets[0].objset.get_obj(obj_id)
         };
-        let obj = match obj {
-            Some(o) => o,
-            None => return Err(KernelError::FileNotFound),
+        let Some(obj) = obj else {
+            return Err(KernelError::FileNotFound);
         };
         if !self.check_permission(&obj, pwm, 0x01) {
             return Err(KernelError::PermissionDenied);
         }
-        let fd_idx = match self.alloc_fd() {
-            Some(i) => i,
-            None => return Err(KernelError::NoSpace),
+        let Some(fd_idx) = self.alloc_fd() else {
+            return Err(KernelError::NoSpace);
         };
         {
             let mut fds = self.fds.lock();
@@ -740,10 +727,6 @@ impl UnkfsData {
         to_read as i32
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 向描述符当前偏移写入数据并推进偏移, 返回实际写入字节数.
     pub fn write(&self, fd: u32, buf: &[u8], count: u32) -> i32 {
         let (obj_id, offset, pwm, flags) = {
@@ -781,12 +764,11 @@ impl UnkfsData {
         let comp_type = UnkfsCompType::Off;
         let compressed = compress::compress(&buf[..to_write], comp_type);
         let write_data = compressed.as_deref().unwrap_or(&buf[..to_write]);
-        let new_bp = match self
+        let Some(new_bp) = self
             .spa
             .allocate(write_data.len() as u64, cksum_type, comp_type, txg)
-        {
-            Some(bp) => bp,
-            None => return KernelError::NoSpace.as_i32(),
+        else {
+            return KernelError::NoSpace.as_i32();
         };
         if self.is_disk_mode() {
             if self.spa.write_bp(&new_bp, write_data) != 0 {
@@ -846,10 +828,6 @@ impl UnkfsData {
         )
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 删除文件或目录项, 成功返回 0.
     pub fn unlink(&self, path: &str, pwm: u64) -> i32 {
         if !self.is_initialized() {
@@ -860,9 +838,8 @@ impl UnkfsData {
             let datasets = self.datasets.lock();
             datasets[0].lookup(name)
         };
-        let obj_id = match obj_id {
-            Some(id) => id,
-            None => return KernelError::FileNotFound.as_i32(),
+        let Some(obj_id) = obj_id else {
+            return KernelError::FileNotFound.as_i32();
         };
         let obj = {
             let datasets = self.datasets.lock();
@@ -905,10 +882,6 @@ impl UnkfsData {
         Some(obj)
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 修改文件权限位, 成功返回 0.
     pub fn chmod(&self, path: &str, mode: u16, pwm: u64) -> i32 {
         if !self.is_initialized() {
@@ -918,14 +891,12 @@ impl UnkfsData {
 
         let mut datasets = self.datasets.lock();
         let ds = &mut datasets[0];
-        let obj_id = match ds.lookup(name) {
-            Some(id) => id,
-            None => return KernelError::FileNotFound.as_i32(),
+        let Some(obj_id) = ds.lookup(name) else {
+            return KernelError::FileNotFound.as_i32();
         };
 
-        let mut obj = match ds.objset.get_obj(obj_id) {
-            Some(o) => o,
-            None => return KernelError::FileNotFound.as_i32(),
+        let Some(mut obj) = ds.objset.get_obj(obj_id) else {
+            return KernelError::FileNotFound.as_i32();
         };
 
         if obj.owner_pwm != pwm {
@@ -953,10 +924,6 @@ impl UnkfsData {
         self.chown_ext(path, owner_pwm, 0, pwm)
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 同时修改文件属主与属组, 成功返回 0.
     pub fn chown_ext(&self, path: &str, owner_pwm: u64, group_pwm: u64, pwm: u64) -> i32 {
         if !self.is_initialized() {
@@ -972,14 +939,12 @@ impl UnkfsData {
 
         let mut datasets = self.datasets.lock();
         let ds = &mut datasets[0];
-        let obj_id = match ds.lookup(name) {
-            Some(id) => id,
-            None => return KernelError::FileNotFound.as_i32(),
+        let Some(obj_id) = ds.lookup(name) else {
+            return KernelError::FileNotFound.as_i32();
         };
 
-        let mut obj = match ds.objset.get_obj(obj_id) {
-            Some(o) => o,
-            None => return KernelError::FileNotFound.as_i32(),
+        let Some(mut obj) = ds.objset.get_obj(obj_id) else {
+            return KernelError::FileNotFound.as_i32();
         };
 
         obj.owner_pwm = owner_pwm;
@@ -1656,10 +1621,6 @@ impl UnkfsData {
         clippy::too_many_lines,
         reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
     )]
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     fn deserialize_dataset_metadata(&self, bp: &UnkfsBlockPointer) -> bool {
         const OBJ_RECORD_SIZE: usize = 222;
         const MAX_DESERIALIZE_OBJECTS: usize = 65536;
@@ -1688,9 +1649,8 @@ impl UnkfsData {
             Some(v) => v as usize,
             None => return false,
         };
-        let next_obj_id = match Self::read_le64(&buf, 16) {
-            Some(v) => v,
-            None => return false,
+        let Some(next_obj_id) = Self::read_le64(&buf, 16) else {
+            return false;
         };
 
         if obj_count > MAX_DESERIALIZE_OBJECTS || zap_count > MAX_DESERIALIZE_ENTRIES {
@@ -1721,85 +1681,71 @@ impl UnkfsData {
                     return false;
                 }
 
-                let obj_id = match Self::read_le64(&buf, off) {
-                    Some(v) => v,
-                    None => return false,
+                let Some(obj_id) = Self::read_le64(&buf, off) else {
+                    return false;
                 };
                 off += 8;
                 let obj_type = UnkfsObjType::from_u8(buf[off]);
                 off += 1;
-                let _block_size = match Self::read_le32(&buf, off) {
-                    Some(v) => v,
-                    None => return false,
+                let Some(_block_size) = Self::read_le32(&buf, off) else {
+                    return false;
                 };
                 off += 4;
-                let nblocks = match Self::read_le64(&buf, off) {
-                    Some(v) => v,
-                    None => return false,
+                let Some(nblocks) = Self::read_le64(&buf, off) else {
+                    return false;
                 };
                 off += 8;
-                let size = match Self::read_le64(&buf, off) {
-                    Some(v) => v,
-                    None => return false,
+                let Some(size) = Self::read_le64(&buf, off) else {
+                    return false;
                 };
                 off += 8;
 
                 if off + UnkfsBlockPointer::BYTES > buf.len() {
                     return false;
                 }
-                let bp_val = match UnkfsBlockPointer::from_bytes(
-                    &buf[off..off + UnkfsBlockPointer::BYTES],
-                ) {
-                    Some(v) => v,
-                    None => return false,
+                let Some(bp_val) =
+                    UnkfsBlockPointer::from_bytes(&buf[off..off + UnkfsBlockPointer::BYTES])
+                else {
+                    return false;
                 };
                 off += UnkfsBlockPointer::BYTES;
 
-                let atime = match Self::read_le64(&buf, off) {
-                    Some(v) => v,
-                    None => return false,
+                let Some(atime) = Self::read_le64(&buf, off) else {
+                    return false;
                 };
                 off += 8;
-                let mtime = match Self::read_le64(&buf, off) {
-                    Some(v) => v,
-                    None => return false,
+                let Some(mtime) = Self::read_le64(&buf, off) else {
+                    return false;
                 };
                 off += 8;
-                let ctime = match Self::read_le64(&buf, off) {
-                    Some(v) => v,
-                    None => return false,
+                let Some(ctime) = Self::read_le64(&buf, off) else {
+                    return false;
                 };
                 off += 8;
-                let owner_pwm = match Self::read_le64(&buf, off) {
-                    Some(v) => v,
-                    None => return false,
+                let Some(owner_pwm) = Self::read_le64(&buf, off) else {
+                    return false;
                 };
                 off += 8;
-                let group_pwm = match Self::read_le64(&buf, off) {
-                    Some(v) => v,
-                    None => return false,
+                let Some(group_pwm) = Self::read_le64(&buf, off) else {
+                    return false;
                 };
                 off += 8;
                 let sensitivity = buf[off];
                 off += 1;
-                let pwm_perm = match Self::read_le16(&buf, off) {
-                    Some(v) => v,
-                    None => return false,
+                let Some(pwm_perm) = Self::read_le16(&buf, off) else {
+                    return false;
                 };
                 off += 2;
-                let link_count = match Self::read_le32(&buf, off) {
-                    Some(v) => v,
-                    None => return false,
+                let Some(link_count) = Self::read_le32(&buf, off) else {
+                    return false;
                 };
                 off += 4;
-                let flags = match Self::read_le32(&buf, off) {
-                    Some(v) => v,
-                    None => return false,
+                let Some(flags) = Self::read_le32(&buf, off) else {
+                    return false;
                 };
                 off += 4;
-                let birth_txg = match Self::read_le64(&buf, off) {
-                    Some(v) => v,
-                    None => return false,
+                let Some(birth_txg) = Self::read_le64(&buf, off) else {
+                    return false;
                 };
                 off += 8;
                 let used = buf[off] != 0;
@@ -1853,9 +1799,8 @@ impl UnkfsData {
                 }
                 let name = core::str::from_utf8(&buf[off..off + name_len]).unwrap_or("?");
                 off += name_len;
-                let obj_id = match Self::read_le64(&buf, off) {
-                    Some(v) => v,
-                    None => return false,
+                let Some(obj_id) = Self::read_le64(&buf, off) else {
+                    return false;
                 };
                 off += 8;
                 ds.dir_zap.insert_u64(name, obj_id);

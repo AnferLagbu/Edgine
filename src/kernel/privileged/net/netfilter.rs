@@ -435,10 +435,6 @@ pub fn list_rules(hook: NfHook) -> Vec<NfRule> {
 // Syscall 接口
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `sys_nf_add_rule` — 从 u64 syscall 参数构造并添加一条 IPv4 netfilter 规则
 ///
 /// 当 hook 或 verdict 非法时返回 `-EINVAL`; 成功返回 0, 规则数量达上限时返回对应内核错误码。
@@ -450,14 +446,12 @@ pub fn sys_nf_add_rule(
     dst_prefix: u64,
     verdict: u64,
 ) -> i64 {
-    let hook = match NfHook::from_u8(hook as u8) {
-        Some(h) => h,
-        None => return -(Errno::EINVAL as i64),
+    let Some(hook) = NfHook::from_u8(hook as u8) else {
+        return -(Errno::EINVAL as i64);
     };
 
-    let vf = match NfVerdict::from_i32(verdict as i32) {
-        Some(v) => v,
-        None => return -(Errno::EINVAL as i64),
+    let Some(vf) = NfVerdict::from_i32(verdict as i32) else {
+        return -(Errno::EINVAL as i64);
     };
 
     let rule = NfRule {
@@ -485,17 +479,12 @@ pub fn sys_nf_add_rule(
     }
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `sys_nf_del_rule` — 按 hook 与规则序号删除 IPv4 netfilter 规则
 ///
 /// 当 hook 非法时返回 `-EINVAL`; 成功返回 0, 规则不存在时返回 `-ENOENT`。
 pub fn sys_nf_del_rule(hook: u64, rule_index: u64) -> i64 {
-    let hook = match NfHook::from_u8(hook as u8) {
-        Some(h) => h,
-        None => return -(Errno::EINVAL as i64),
+    let Some(hook) = NfHook::from_u8(hook as u8) else {
+        return -(Errno::EINVAL as i64);
     };
 
     let name = alloc::format!("rule_{rule_index}");

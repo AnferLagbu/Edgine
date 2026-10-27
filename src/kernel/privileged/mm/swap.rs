@@ -803,10 +803,6 @@ pub fn swap_info() -> (u64, u64) {
 // #PF Swap Entry 检测
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 处理 swap-in 缺页
 ///
 /// 当 #PF 检测到 PTE 为 swap entry 时调用.
@@ -815,20 +811,17 @@ pub fn handle_swap_fault(pml4: u64, fault_addr: u64) -> PfResult {
     let vmm_inst = vmm::get_vmm();
 
     // 读取当前 PTE
-    let pte = match vmm_inst.get_pte_value(pml4, VirtAddr(fault_addr)) {
-        Some(v) => v,
-        None => return PfResult::SignalSegv,
+    let Some(pte) = vmm_inst.get_pte_value(pml4, VirtAddr(fault_addr)) else {
+        return PfResult::SignalSegv;
     };
 
-    let entry = match SwapEntry::from_pte(pte) {
-        Some(e) => e,
-        None => return PfResult::SignalSegv,
+    let Some(entry) = SwapEntry::from_pte(pte) else {
+        return PfResult::SignalSegv;
     };
 
     // 换入
-    let new_phys = match swap_in(entry) {
-        Some(p) => p,
-        None => return PfResult::Oom,
+    let Some(new_phys) = swap_in(entry) else {
+        return PfResult::Oom;
     };
 
     // 重新建立映射

@@ -383,10 +383,6 @@ impl SafeRamFs {
 
     // ── 目录枚举 (Phase 2.2.1 增补) ──
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 列出目录内容
     ///
     /// # 参数
@@ -399,23 +395,17 @@ impl SafeRamFs {
     /// 当路径不存在时返回 `FileNotFound`; 当路径不是目录时返回 `NotADirectory`.
     pub fn readdir(&self, path: &str) -> FsResult<Vec<VfsDirEntry>> {
         let fs = self.inner.lock();
-        let node_id = match fs.resolve_path(path) {
-            Some(id) => id,
-            None => {
-                return Err(FsError::Kernel(
-                    crate::functions::error::KernelError::FileNotFound,
-                ));
-            }
+        let Some(node_id) = fs.resolve_path(path) else {
+            return Err(FsError::Kernel(
+                crate::functions::error::KernelError::FileNotFound,
+            ));
         };
 
         // 通过 stat 验证是目录
-        let st = match fs.stat(node_id) {
-            Some(s) => s,
-            None => {
-                return Err(FsError::Kernel(
-                    crate::functions::error::KernelError::FileNotFound,
-                ));
-            }
+        let Some(st) = fs.stat(node_id) else {
+            return Err(FsError::Kernel(
+                crate::functions::error::KernelError::FileNotFound,
+            ));
         };
         if VfsFileType::from_u8(st.file_type) != Some(VfsFileType::Dir) {
             return Err(FsError::Kernel(

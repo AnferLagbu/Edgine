@@ -155,16 +155,11 @@ impl VirtioMmioDevice {
         self.write32(high_off, (val >> 32) as u32);
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 探测给定 MMIO 基址的设备是否为合法的 virtio 设备.
     pub fn probe(mmio_base: u64) -> Option<Self> {
         // 为 MMIO 区域创建 IoMem (每个设备 0x200 字节)
-        let iomem = match IoMem::from_pci_bar(PhysAddr::new(mmio_base), 0x200, "virtio-mmio") {
-            Ok(m) => m,
-            Err(_) => return None,
+        let Ok(iomem) = IoMem::from_pci_bar(PhysAddr::new(mmio_base), 0x200, "virtio-mmio") else {
+            return None;
         };
 
         let magic = iomem.read_u32(MAGIC_VALUE);

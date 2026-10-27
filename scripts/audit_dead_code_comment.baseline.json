@@ -5,8 +5,8 @@
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 1469,
-    "files": 271
+    "sites": 1254,
+    "files": 244
   },
   "entries": [
     [
@@ -131,11 +131,6 @@
     ],
     [
       "src/kernel/functions/driver/storage/ahci.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      4
-    ],
-    [
-      "src/kernel/functions/driver/storage/ahci.rs",
       "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
       1
     ],
@@ -158,11 +153,6 @@
       "src/kernel/functions/driver/storage/mod.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       2
-    ],
-    [
-      "src/kernel/functions/driver/storage/nvme.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      6
     ],
     [
       "src/kernel/functions/driver/usb/hid.rs",
@@ -216,11 +206,6 @@
     ],
     [
       "src/kernel/functions/driver/virtio/blk.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      2
-    ],
-    [
-      "src/kernel/functions/driver/virtio/blk.rs",
       "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
       1
     ],
@@ -232,11 +217,6 @@
     [
       "src/kernel/functions/driver/virtio/net.rs",
       "#[expect(clippy::cast_possible_truncation,reason=\"RX缓冲区上限2048字节(RX_BUFFER_SIZE)",
-      1
-    ],
-    [
-      "src/kernel/functions/driver/virtio/net.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       1
     ],
     [
@@ -346,11 +326,6 @@
     ],
     [
       "src/kernel/functions/fs/flock.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/flock.rs",
       "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
       1
     ],
@@ -366,11 +341,6 @@
     ],
     [
       "src/kernel/functions/fs/handle.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      9
-    ],
-    [
-      "src/kernel/functions/fs/handle.rs",
       "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
       1
     ],
@@ -378,16 +348,6 @@
       "src/kernel/functions/fs/initramfs.rs",
       "#[expect(clippy::cast_possible_truncation)",
       1
-    ],
-    [
-      "src/kernel/functions/fs/initramfs.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/inotify.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      6
     ],
     [
       "src/kernel/functions/fs/io.rs",
@@ -445,21 +405,6 @@
       4
     ],
     [
-      "src/kernel/functions/fs/ramfs.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/ramfs_core/mod.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/ramfs_core/ramfs_data.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      7
-    ],
-    [
       "src/kernel/functions/fs/ramfs_core/ramfs_data.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
@@ -511,28 +456,13 @@
     ],
     [
       "src/kernel/functions/fs/unkfs/snapshot.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/snapshot.rs",
       "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/spa.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       1
     ],
     [
       "src/kernel/functions/fs/unkfs/unkfs_data.rs",
       "#[expect(clippy::assigning_clones,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/unkfs_data.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      7
     ],
     [
       "src/kernel/functions/fs/unkfs/unkfs_data.rs",
@@ -543,11 +473,6 @@
       "src/kernel/functions/fs/unkfs/unkfs_data.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       3
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zil_persist.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
     ],
     [
       "src/kernel/functions/fs/unkfs/zil_persist.rs",
@@ -571,11 +496,6 @@
     ],
     [
       "src/kernel/functions/fs/vfs_path.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      15
-    ],
-    [
-      "src/kernel/functions/fs/vfs_path.rs",
       "#[expect(clippy::no_effect_underscore_binding,reason=\"no_effect_underscore_binding:let_=expr用于类型推导/副作用;当前优先expect\")",
       1
     ],
@@ -596,38 +516,13 @@
     ],
     [
       "src/kernel/functions/ipc/msgq.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      4
-    ],
-    [
-      "src/kernel/functions/ipc/msgq.rs",
       "#[expect(clippy::missing_panics_doc,reason=\"missing_panics_doc:msgq_destroy_safe释放消息链表时若head指针本应非空却为null会panic(链表不变量被破坏,见函数内expect)",
       1
-    ],
-    [
-      "src/kernel/functions/ipc/pipe.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      4
-    ],
-    [
-      "src/kernel/functions/ipc/sem.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      4
-    ],
-    [
-      "src/kernel/functions/ipc/shm.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      4
     ],
     [
       "src/kernel/functions/klog.rs",
       "#[expect(clippy::case_sensitive_file_extension_comparisons,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
-    ],
-    [
-      "src/kernel/functions/mm/mmap.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      2
     ],
     [
       "src/kernel/functions/mm/swap.rs",
@@ -920,16 +815,6 @@
       2
     ],
     [
-      "src/kernel/functions/proc/affinity.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/functions/proc/clone.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
       "src/kernel/functions/proc/clone.rs",
       "#[expect(clippy::ptr_cast_constness,reason=\"ptr_cast_constness:*mutTas*constT是已知安全(Rust2024可用ptr.cast_const或&rawconst;当前优先expect\")",
       1
@@ -947,11 +832,6 @@
     [
       "src/kernel/functions/proc/mod.rs",
       "#[expect(clippy::missing_panics_doc,reason=\"missing_panics_doc:init在信号/coredump策略重复注册时panic以暴露启动期配置错误(privileged契约:仅注册一次,见B05-36/B05-44)",
-      1
-    ],
-    [
-      "src/kernel/functions/proc/priority.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       1
     ],
     [
@@ -1057,26 +937,6 @@
     [
       "src/kernel/functions/wasm/wasi/fd_ops.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/wasm/wasi/fd_ops.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/functions/wasm/wasi/path_ops.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/kernel_tests/test_ipc.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      4
-    ],
-    [
-      "src/kernel/kernel_tests/test_uds.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       1
     ],
     [
@@ -1386,11 +1246,6 @@
     ],
     [
       "src/kernel/privileged/arch/x86_64/acpi.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      2
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/acpi.rs",
       "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
       5
     ],
@@ -1601,11 +1456,6 @@
     ],
     [
       "src/kernel/privileged/debug/ebpf.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      5
-    ],
-    [
-      "src/kernel/privileged/debug/ebpf.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
     ],
@@ -1618,11 +1468,6 @@
       "src/kernel/privileged/debug/kgdb.rs",
       "#[expect(clippy::cast_possible_truncation)",
       2
-    ],
-    [
-      "src/kernel/privileged/debug/kgdb.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
     ],
     [
       "src/kernel/privileged/debug/kgdb.rs",
@@ -1661,11 +1506,6 @@
     ],
     [
       "src/kernel/privileged/dma/engine.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/dma/engine.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       6
     ],
@@ -1673,11 +1513,6 @@
       "src/kernel/privileged/dma_buf.rs",
       "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
       4
-    ],
-    [
-      "src/kernel/privileged/dma_buf.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
     ],
     [
       "src/kernel/privileged/driver/bus/mod.rs",
@@ -1703,11 +1538,6 @@
       "src/kernel/privileged/driver/display/framebuffer.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       9
-    ],
-    [
-      "src/kernel/privileged/driver/display/mod.rs",
-      "#[cfg_attr( target_arch = \"aarch64\", expect( clippy::manual_let_else, reason = \"aarch64 display_init 是占位; x86_64 走 multiboot2 + pci 两条路径\" ) )]",
-      1
     ],
     [
       "src/kernel/privileged/driver/display/mod.rs",
@@ -1748,11 +1578,6 @@
       "src/kernel/privileged/driver/input/keyboard.rs",
       "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
       3
-    ],
-    [
-      "src/kernel/privileged/driver/input/keyboard.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
     ],
     [
       "src/kernel/privileged/driver/input/keyboard.rs",
@@ -1830,11 +1655,6 @@
       1
     ],
     [
-      "src/kernel/privileged/driver/virtio/mod.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
       "src/kernel/privileged/driver/virtio/queue.rs",
       "#[expect(clippy::cast_possible_truncation)",
       5
@@ -1848,11 +1668,6 @@
       "src/kernel/privileged/egdf/composite.rs",
       "#[expect(clippy::cast_possible_truncation)",
       6
-    ],
-    [
-      "src/kernel/privileged/egdf/composite.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
     ],
     [
       "src/kernel/privileged/egdf/composite.rs",
@@ -1898,11 +1713,6 @@
       "src/kernel/privileged/egdf/user_driver.rs",
       "#[expect(clippy::cast_possible_truncation)",
       3
-    ],
-    [
-      "src/kernel/privileged/egdf/user_driver.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      5
     ],
     [
       "src/kernel/privileged/egdf/user_driver.rs",
@@ -1967,11 +1777,6 @@
     [
       "src/kernel/privileged/freg/recoverable.rs",
       "#[expect(clippy::ptr_cast_constness,reason=\"ptr_cast_constness:*mutTas*constT是已知安全(Rust2024可用ptr.cast_const或&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/bbr.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       1
     ],
     [
@@ -2072,11 +1877,6 @@
     [
       "src/kernel/privileged/idt/types.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/io/iouring.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       1
     ],
     [
@@ -2235,11 +2035,6 @@
       4
     ],
     [
-      "src/kernel/privileged/mm/copy_user.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
       "src/kernel/privileged/mm/cow.rs",
       "#[expect(clippy::cast_possible_truncation)",
       2
@@ -2355,19 +2150,9 @@
       7
     ],
     [
-      "src/kernel/privileged/mm/page_fault.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      6
-    ],
-    [
       "src/kernel/privileged/mm/pcache.rs",
       "#[expect(clippy::cast_possible_truncation)",
       5
-    ],
-    [
-      "src/kernel/privileged/mm/pcache.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
     ],
     [
       "src/kernel/privileged/mm/pmm.rs",
@@ -2378,11 +2163,6 @@
       "src/kernel/privileged/mm/pmm.rs",
       "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
       4
-    ],
-    [
-      "src/kernel/privileged/mm/pmm.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      3
     ],
     [
       "src/kernel/privileged/mm/pmm.rs",
@@ -2436,11 +2216,6 @@
     ],
     [
       "src/kernel/privileged/mm/swap.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/swap.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       3
     ],
@@ -2476,18 +2251,8 @@
     ],
     [
       "src/kernel/privileged/mm/vmm_aarch64.rs",
-      "#[expect(clippy::manual_let_else,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      2
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_aarch64.rs",
       "#[expect(clippy::missing_errors_doc,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
       3
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_aarch64.rs",
-      "#[expect(clippy::single_match_else,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      1
     ],
     [
       "src/kernel/privileged/mm/vmm_aarch64.rs",
@@ -2513,11 +2278,6 @@
       "src/kernel/privileged/mm/vmm_x86_64.rs",
       "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
       4
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
     ],
     [
       "src/kernel/privileged/mm/vmm_x86_64.rs",
@@ -2816,28 +2576,13 @@
     ],
     [
       "src/kernel/privileged/net/init.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      2
-    ],
-    [
-      "src/kernel/privileged/net/init.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/init/cmd.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:eg_net_static_ip内5处`matchOption{Some(v)",
       1
     ],
     [
       "src/kernel/privileged/net/init/dns.rs",
       "#[expect(clippy::cast_possible_truncation)",
       2
-    ],
-    [
-      "src/kernel/privileged/net/init/raw.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
     ],
     [
       "src/kernel/privileged/net/init/sm_fi.rs",
@@ -2848,11 +2593,6 @@
       "src/kernel/privileged/net/init/sm_fi.rs",
       "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
       2
-    ],
-    [
-      "src/kernel/privileged/net/init/sm_fi.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      13
     ],
     [
       "src/kernel/privileged/net/init/sm_fi.rs",
@@ -2868,16 +2608,6 @@
       "src/kernel/privileged/net/init/state.rs",
       "#[expect(clippy::missing_errors_doc,reason=\"missing_errors_doc:transition_state返回Result<()",
       1
-    ],
-    [
-      "src/kernel/privileged/net/netfilter.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      2
-    ],
-    [
-      "src/kernel/privileged/net/route.rs",
-      "#[cfg_attr( not(feature = \"kernel_test\"), expect( clippy::manual_let_else, reason = \"manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底\" ) )]",
-      2
     ],
     [
       "src/kernel/privileged/net/route.rs",
@@ -2900,18 +2630,8 @@
       6
     ],
     [
-      "src/kernel/privileged/net/syscall.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
       "src/kernel/privileged/net/wait_queue.rs",
       "#[allow(clippy::large_stack_arrays)",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/wait_queue.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       1
     ],
     [
@@ -2922,11 +2642,6 @@
     [
       "src/kernel/privileged/page_table.rs",
       "#[expect(clippy::uninlined_format_args,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/pci/hotplug.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       1
     ],
     [
@@ -2950,11 +2665,6 @@
       2
     ],
     [
-      "src/kernel/privileged/proc/api.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
       "src/kernel/privileged/proc/cfs.rs",
       "#[expect(clippy::zero_sized_map_values,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       2
@@ -2965,19 +2675,9 @@
       1
     ],
     [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      2
-    ],
-    [
       "src/kernel/privileged/proc/elf/mod.rs",
       "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
       4
-    ],
-    [
-      "src/kernel/privileged/proc/elf/mod.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      2
     ],
     [
       "src/kernel/privileged/proc/elf/mod.rs",
@@ -3010,24 +2710,9 @@
       1
     ],
     [
-      "src/kernel/privileged/proc/madvise_mlock.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      6
-    ],
-    [
       "src/kernel/privileged/proc/mod.rs",
       "#![allow(ambiguous_glob_reexports)",
       1
-    ],
-    [
-      "src/kernel/privileged/proc/namespace.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/posix_timer.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      4
     ],
     [
       "src/kernel/privileged/proc/posix_timer.rs",
@@ -3042,11 +2727,6 @@
     [
       "src/kernel/privileged/proc/proc_ops.rs",
       "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/proc_ops.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       1
     ],
     [
@@ -3067,16 +2747,6 @@
     [
       "src/kernel/privileged/proc/proc_ops.rs",
       "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/process.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       1
     ],
     [
@@ -3116,11 +2786,6 @@
     ],
     [
       "src/kernel/privileged/proc/signal.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      5
-    ],
-    [
-      "src/kernel/privileged/proc/signal.rs",
       "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
       1
     ],
@@ -3143,11 +2808,6 @@
       "src/kernel/privileged/proc/user_proc.rs",
       "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
       17
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      5
     ],
     [
       "src/kernel/privileged/proc/user_proc.rs",
@@ -3205,16 +2865,6 @@
       1
     ],
     [
-      "src/kernel/privileged/sgeg/engine.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      2
-    ],
-    [
-      "src/kernel/privileged/sgeg/identity.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      2
-    ],
-    [
       "src/kernel/privileged/sgeg/identity.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       1
@@ -3228,16 +2878,6 @@
       "src/kernel/privileged/sgeg/secure_boot.rs",
       "#[expect(clippy::cast_possible_truncation)",
       2
-    ],
-    [
-      "src/kernel/privileged/sgeg/secure_boot.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/session.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      6
     ],
     [
       "src/kernel/privileged/sgeg/sha256.rs",
@@ -3330,29 +2970,9 @@
       1
     ],
     [
-      "src/kernel/privileged/syscall/epoll.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      4
-    ],
-    [
-      "src/kernel/privileged/syscall/eventfd.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      5
-    ],
-    [
       "src/kernel/privileged/syscall/mod.rs",
       "#[cfg_attr( not(feature = \"host-test\"), expect( clippy::borrow_as_ptr, reason = \"borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect\" ) )]",
       2
-    ],
-    [
-      "src/kernel/privileged/syscall/signalfd.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      4
-    ],
-    [
-      "src/kernel/privileged/syscall/timerfd.rs",
-      "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      7
     ],
     [
       "src/kernel/privileged/syscall/timerfd.rs",

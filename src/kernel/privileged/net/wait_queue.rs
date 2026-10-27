@@ -232,16 +232,11 @@ impl SocketWaitQueue {
         n
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// ISR / poll 端: 状态变化时调用 wake. 必须 `try_lock` 避免阻塞.
     /// 返回 true 表示成功唤醒了至少一个等待者.
     pub fn try_wake(&self, reason: WakeReason) -> bool {
-        let _guard = match self.lock.try_lock() {
-            Some(g) => g,
-            None => return false,
+        let Some(_guard) = self.lock.try_lock() else {
+            return false;
         };
         let was_pending = self.pending.swap(false, Ordering::AcqRel);
         if was_pending {

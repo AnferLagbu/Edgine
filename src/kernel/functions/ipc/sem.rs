@@ -24,10 +24,6 @@ fn sem_find_by_id(namespace: &mut IpcNamespace, id: IpcId) -> Option<&mut Semaph
     namespace.semaphores.iter_mut().find(|s| s.id == id)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 创建信号量 (Rust 安全接口)
 ///
 /// # Arguments
@@ -50,9 +46,8 @@ pub fn sem_create_safe(
     max_count: u32,
     current_pid: u32,
 ) -> Result<IpcId, i32> {
-    let sem = match sem_find_free(namespace) {
-        Some(s) => s,
-        None => return Err(-1),
+    let Some(sem) = sem_find_free(namespace) else {
+        return Err(-1);
     };
 
     // 初始化信号量
@@ -70,10 +65,6 @@ pub fn sem_create_safe(
     Ok(sem.id)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 等待/获取信号量 (P 操作) (Rust 安全接口)
 ///
 /// 如果计数 > 0，则减少计数并立即返回；
@@ -90,9 +81,8 @@ pub fn sem_create_safe(
 /// # Errors
 /// 当信号量 ID 无效、不存在时返回 `Err(-1)`.
 pub fn sem_wait_safe(namespace: &mut IpcNamespace, id: IpcId) -> Result<(), i32> {
-    let sem = match sem_find_by_id(namespace, id) {
-        Some(s) => s,
-        None => return Err(-1),
+    let Some(sem) = sem_find_by_id(namespace, id) else {
+        return Err(-1);
     };
 
     // 等待直到计数 > 0 (B07-15: 真实阻塞替代忙等待)
@@ -114,10 +104,6 @@ pub fn sem_wait_safe(namespace: &mut IpcNamespace, id: IpcId) -> Result<(), i32>
     Ok(())
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 释放/通知信号量 (V 操作) (Rust 安全接口)
 ///
 /// 增加计数并唤醒一个等待的线程。
@@ -133,9 +119,8 @@ pub fn sem_wait_safe(namespace: &mut IpcNamespace, id: IpcId) -> Result<(), i32>
 /// # Errors
 /// 当信号量 ID 无效、不存在时返回 `Err(-1)`.
 pub fn sem_post_safe(namespace: &mut IpcNamespace, id: IpcId) -> Result<(), i32> {
-    let sem = match sem_find_by_id(namespace, id) {
-        Some(s) => s,
-        None => return Err(-1),
+    let Some(sem) = sem_find_by_id(namespace, id) else {
+        return Err(-1);
     };
 
     // 增加计数 (不超过最大值)
@@ -151,10 +136,6 @@ pub fn sem_post_safe(namespace: &mut IpcNamespace, id: IpcId) -> Result<(), i32>
     Ok(())
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 销毁信号量 (Rust 安全接口)
 ///
 /// # Arguments
@@ -168,9 +149,8 @@ pub fn sem_post_safe(namespace: &mut IpcNamespace, id: IpcId) -> Result<(), i32>
 /// # Errors
 /// 当信号量 ID 无效、不存在时返回 `Err(-1)`.
 pub fn sem_destroy_safe(namespace: &mut IpcNamespace, id: IpcId) -> Result<(), i32> {
-    let sem = match sem_find_by_id(namespace, id) {
-        Some(s) => s,
-        None => return Err(-1),
+    let Some(sem) = sem_find_by_id(namespace, id) else {
+        return Err(-1);
     };
 
     // 唤醒所有等待的线程 (B07-15: 经调度器真实唤醒)

@@ -426,10 +426,6 @@ pub extern "C" fn process_unblock(pid: u32) {
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 用给定 ELF 镜像替换当前进程映像 (exec), 成功返回 0, 失败返回 -1.
 pub extern "C" fn proc_exec_replace(
     elf_data: *const u8,
@@ -474,10 +470,7 @@ pub extern "C" fn proc_exec_replace(
         })
         .flatten();
 
-    let (new_cr3, new_entry, new_user_stack, new_stack_bottom) = if let Some(info) = new_addr_space
-    {
-        info
-    } else {
+    let Some((new_cr3, new_entry, new_user_stack, new_stack_bottom)) = new_addr_space else {
         USER_PROC_MANAGER.destroy_by_pid(new_pid_u32);
         PROCESS_TABLE.remove_and_free(new_pid_u32);
         return -1;

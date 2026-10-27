@@ -549,19 +549,14 @@ impl RamFsData {
         0
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 打开路径对应节点并校验读权限; 返回 (节点号, 会话句柄, 文件类型)
     pub fn open(&mut self, path: &str, _flags: u32, pwm: u64) -> Option<(u32, u64, u8)> {
         if path.is_empty() {
             return None;
         }
 
-        let node_id = match self.resolve_path(path) {
-            Some(n) => n,
-            None => return None,
+        let Some(node_id) = self.resolve_path(path) else {
+            return None;
         };
 
         if node_id as usize >= RAMFS_MAX_NODES || !self.nodes[node_id as usize].used {
@@ -1031,15 +1026,10 @@ impl RamFsData {
         0
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 删除路径对应目录项并释放节点与数据块; 错误返回负错误码
     pub fn unlink(&mut self, path: &str, pwm: u64) -> i32 {
-        let node_id = match self.resolve_path(path) {
-            Some(n) => n,
-            None => return KernelError::FileNotFound.as_i32(),
+        let Some(node_id) = self.resolve_path(path) else {
+            return KernelError::FileNotFound.as_i32();
         };
 
         {
@@ -1060,9 +1050,8 @@ impl RamFsData {
             }
         });
 
-        let parent_num = match self.resolve_path(parent_path) {
-            Some(n) => n,
-            None => return KernelError::FileNotFound.as_i32(),
+        let Some(parent_num) = self.resolve_path(parent_path) else {
+            return KernelError::FileNotFound.as_i32();
         };
 
         let parent_block = self.nodes[parent_num as usize].direct_blocks[0];
@@ -1096,19 +1085,14 @@ impl RamFsData {
         0
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 在父目录下创建普通文件; 已存在或父目录无效时返回 `None`
     pub fn create_file(&mut self, parent_path: &str, name: &str, pwm: u64) -> Option<u32> {
         if name.is_empty() || name.contains('/') {
             return None;
         }
 
-        let parent_num = match self.resolve_path(parent_path) {
-            Some(n) => n,
-            None => return None,
+        let Some(parent_num) = self.resolve_path(parent_path) else {
+            return None;
         };
 
         if parent_num as usize >= RAMFS_MAX_NODES || !self.nodes[parent_num as usize].used {
@@ -1171,19 +1155,14 @@ impl RamFsData {
         Some(new_node_id)
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 在父目录下创建子目录 (预置 `.`/`..`); 错误返回负错误码
     pub fn mkdir(&mut self, parent_path: &str, name: &str, pwm: u64) -> i32 {
         if name.is_empty() || name.contains('/') {
             return KernelError::InvalidArgument.as_i32();
         }
 
-        let parent_num = match self.resolve_path(parent_path) {
-            Some(n) => n,
-            None => return KernelError::FileNotFound.as_i32(),
+        let Some(parent_num) = self.resolve_path(parent_path) else {
+            return KernelError::FileNotFound.as_i32();
         };
 
         if parent_num as usize >= RAMFS_MAX_NODES {
@@ -1227,9 +1206,8 @@ impl RamFsData {
             }
         }
 
-        let new_node_id = match self.alloc_node(VfsFileType::Dir as u8, pwm) {
-            Some(n) => n,
-            None => return KernelError::FileNotFound.as_i32(),
+        let Some(new_node_id) = self.alloc_node(VfsFileType::Dir as u8, pwm) else {
+            return KernelError::FileNotFound.as_i32();
         };
 
         let block = self.nodes[new_node_id as usize].direct_blocks[0];
@@ -1304,15 +1282,10 @@ impl RamFsData {
         })
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 修改节点权限位; 仅属主或特权级 0 允许, 错误返回负错误码
     pub fn chmod(&mut self, path: &str, mode: u16, pwm: u64) -> i32 {
-        let node_id = match self.resolve_path(path) {
-            Some(n) => n,
-            None => return KernelError::FileNotFound.as_i32(),
+        let Some(node_id) = self.resolve_path(path) else {
+            return KernelError::FileNotFound.as_i32();
         };
 
         let node = &mut self.nodes[node_id as usize];
@@ -1337,15 +1310,10 @@ impl RamFsData {
         self.chown_ext(path, owner_pwm, 0, pwm)
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 修改节点属主与属组; 仅特权级 0 允许, 错误返回负错误码
     pub fn chown_ext(&mut self, path: &str, owner_pwm: u64, group_pwm: u64, pwm: u64) -> i32 {
-        let node_id = match self.resolve_path(path) {
-            Some(n) => n,
-            None => return KernelError::FileNotFound.as_i32(),
+        let Some(node_id) = self.resolve_path(path) else {
+            return KernelError::FileNotFound.as_i32();
         };
 
         let node = &mut self.nodes[node_id as usize];
@@ -1516,10 +1484,6 @@ impl RamFsData {
         0
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 创建符号链接节点并写入目录项; 返回新节点号 (负值为错误码)
     pub fn symlink(&mut self, target: &str, parent_path: &str, name: &str, pwm: u64) -> i32 {
         if name.is_empty() || name.contains('/') {
@@ -1528,9 +1492,8 @@ impl RamFsData {
         if target.is_empty() || target.len() >= 128 {
             return KernelError::NameTooLong.as_i32();
         }
-        let parent_num = match self.resolve_path(parent_path) {
-            Some(n) => n,
-            None => return KernelError::FileNotFound.as_i32(),
+        let Some(parent_num) = self.resolve_path(parent_path) else {
+            return KernelError::FileNotFound.as_i32();
         };
         if parent_num as usize >= RAMFS_MAX_NODES || !self.nodes[parent_num as usize].used {
             return KernelError::FileNotFound.as_i32();
@@ -1564,9 +1527,8 @@ impl RamFsData {
             }
         }
 
-        let new_id = match self.alloc_node(VfsFileType::Symlink as u8, pwm) {
-            Some(id) => id,
-            None => return KernelError::FileNotFound.as_i32(),
+        let Some(new_id) = self.alloc_node(VfsFileType::Symlink as u8, pwm) else {
+            return KernelError::FileNotFound.as_i32();
         };
         let now = Self::get_time();
         let target_bytes = target.as_bytes();

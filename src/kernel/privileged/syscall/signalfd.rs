@@ -168,10 +168,6 @@ static SFD_COUNT: AtomicU32 = AtomicU32::new(0);
 // 系统调用实现
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// signalfd — 创建/修改 signalfd 实例
 ///
 /// `fd`: -1 创建新实例, ≥ `SFD_FD_BASE` 修改已有实例的掩码
@@ -223,16 +219,14 @@ pub fn sys_signalfd(fd: i32, mask_ptr: u64, flags: i32) -> i64 {
     }
 
     // V2: 使用集中分配器获取 FD (底层使用 fd_at(SignalFd, slot))
-    let new_fd = match crate::privileged::proc::fd_alloc::alloc_fd(
+    let Some(new_fd) = crate::privileged::proc::fd_alloc::alloc_fd(
         crate::privileged::proc::fd_alloc::FdSubsystem::SignalFd,
-    ) {
-        Some(f) => f,
-        None => return Errno::EMFILE.as_ret(),
+    ) else {
+        return Errno::EMFILE.as_ret();
     };
 
-    let slot = match crate::privileged::proc::fd_alloc::idx_of(new_fd) {
-        Some((_sub, s)) => s,
-        None => return Errno::EBADF.as_ret(),
+    let Some((_sub, slot)) = crate::privileged::proc::fd_alloc::idx_of(new_fd) else {
+        return Errno::EBADF.as_ret();
     };
 
     let mut table = SFD_TABLE.lock();
@@ -246,10 +240,6 @@ pub fn sys_signalfd(fd: i32, mask_ptr: u64, flags: i32) -> i64 {
     i64::from(new_fd)
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// signalfd read — 读取一个待处理信号
 ///
 /// 检查当前进程 pending & sigmask, 取最低编号信号,
@@ -259,9 +249,8 @@ pub fn sys_signalfd(fd: i32, mask_ptr: u64, flags: i32) -> i64 {
 /// `buf`: 用户空间缓冲区 (至少 128 字节)
 /// 返回 128 (成功), 或负 errno
 pub fn sys_signalfd_read(fd: i32, buf: u64) -> i64 {
-    let idx = match fd_to_idx(fd) {
-        Some(i) => i,
-        None => return Errno::EBADF.as_ret(),
+    let Some(idx) = fd_to_idx(fd) else {
+        return Errno::EBADF.as_ret();
     };
 
     let current_pid = crate::privileged::proc::process_get_current_pid();
@@ -312,15 +301,10 @@ pub fn sys_signalfd_read(fd: i32, buf: u64) -> i64 {
     SIGNALFD_SIGINFO_SIZE as i64
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// signalfd close — 关闭 signalfd
 pub fn sys_signalfd_close(fd: i32) -> i64 {
-    let idx = match fd_to_idx(fd) {
-        Some(i) => i,
-        None => return Errno::EBADF.as_ret(),
+    let Some(idx) = fd_to_idx(fd) else {
+        return Errno::EBADF.as_ret();
     };
 
     let mut table = SFD_TABLE.lock();
@@ -349,19 +333,14 @@ pub fn sys_signalfd_close(fd: i32) -> i64 {
 // epoll 集成
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 检查 signalfd 是否就绪 (供 epoll `check_fd_ready` 调用)
 ///
 /// 返回 EPOLLIN (有待处理信号) 或 0
 pub fn signalfd_poll_events(fd: i32) -> u32 {
     use crate::privileged::syscall::{EPOLLERR, EPOLLIN};
 
-    let idx = match fd_to_idx(fd) {
-        Some(i) => i,
-        None => return EPOLLERR,
+    let Some(idx) = fd_to_idx(fd) else {
+        return EPOLLERR;
     };
 
     let current_pid = crate::privileged::proc::process_get_current_pid();

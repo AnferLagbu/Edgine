@@ -99,10 +99,6 @@ pub extern "C" fn user_proc_load_elf_from_memory(
 /// 在 ELF 加载完成后, 在用户栈上建立 argv/envp (供 exec 系统调用使用)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 ///
 /// # Safety
 ///
@@ -116,9 +112,8 @@ pub unsafe extern "C" fn user_proc_setup_argv(
 ) -> i32 {
     // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
     unsafe {
-        let proc = match USER_PROC_MANAGER.get(pid) {
-            Some(p) => p,
-            None => return -1,
+        let Some(proc) = USER_PROC_MANAGER.get(pid) else {
+            return -1;
         };
 
         let sp = USER_PROC_MANAGER.setup_user_stack(

@@ -304,13 +304,6 @@ fn probe_vga_fb_via_pci() -> Option<VgaFbInfo> {
 /// 未找到可用帧缓冲或创建 Framebuffer 失败时返回 Err。
 // 有意窄化: 用户内存代理, 指针/长度上下文保证
 #[expect(clippy::cast_possible_truncation)]
-#[cfg_attr(
-    target_arch = "aarch64",
-    expect(
-        clippy::manual_let_else,
-        reason = "aarch64 display_init 是占位; x86_64 走 multiboot2 + pci 两条路径"
-    )
-)]
 pub fn display_init() -> infra::Result<()> {
     crate::klog_boot_info!("[DISPLAY] display_init: probing framebuffer");
 
@@ -335,24 +328,23 @@ pub fn display_init() -> infra::Result<()> {
     };
 
     // ── 方案 B: PCI VGA BAR0 probing (QEMU -kernel boot, x86 only) ──
-    let (fb_addr, width, height, bpp, pitch) = match fb_info {
-        Some(info) => info,
-        None => {
-            #[cfg(target_arch = "x86_64")]
-            {
-                if let Some(info) = probe_vga_fb_via_pci() {
-                    (info.addr, info.width, info.height, info.bpp, info.pitch)
-                } else {
-                    crate::klog_drv_warn!("[DISPLAY] no VGA device found via PCI");
-                    return Ok(());
-                }
-            }
-            #[cfg(not(target_arch = "x86_64"))]
-            {
-                crate::klog_drv_warn!("[DISPLAY] no framebuffer info on non-x86 platform");
-                return Ok(());
-            }
-        }
+    // Multiboot2 tag 缺失时 x86_64 回落到 PCI 探测; aarch64 无该来源.
+    #[cfg(target_arch = "x86_64")]
+    let fb_info = match fb_info {
+        Some(info) => Some(info),
+        None => probe_vga_fb_via_pci()
+            .map(|info| (info.addr, info.width, info.height, info.bpp, info.pitch)),
+    };
+
+    #[cfg(target_arch = "x86_64")]
+    let Some((fb_addr, width, height, bpp, pitch)) = fb_info else {
+        crate::klog_drv_warn!("[DISPLAY] no VGA device found via PCI");
+        return Ok(());
+    };
+    #[cfg(not(target_arch = "x86_64"))]
+    let Some((fb_addr, width, height, bpp, pitch)) = fb_info else {
+        crate::klog_drv_warn!("[DISPLAY] no framebuffer info on non-x86 platform");
+        return Ok(());
     };
 
     let fb_size = u64::from(pitch) * u64::from(height);

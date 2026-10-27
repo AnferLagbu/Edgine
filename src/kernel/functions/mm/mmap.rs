@@ -311,10 +311,6 @@ fn prot_to_vma_flags(prot: i32) -> VmaFlags {
 // syscall 入口 — 从 privileged::syscall::sys_mmap/sys_munmap 迁移的策略层
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// mmap syscall 策略入口
 pub fn mmap_syscall_entry(
     addr: u64,
@@ -338,9 +334,8 @@ pub fn mmap_syscall_entry(
     }
 
     // 有 mm 时走 VMA 路径
-    let mm = match crate::privileged::mm::vma_get_current_mm() {
-        Some(m) => m,
-        None => return Errno::ENOMEM.as_ret(),
+    let Some(mm) = crate::privileged::mm::vma_get_current_mm() else {
+        return Errno::ENOMEM.as_ret();
     };
 
     match mmap_syscall(mm, addr, size, prot, flags, fd, offset, pwm) {
@@ -349,10 +344,6 @@ pub fn mmap_syscall_entry(
     }
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// munmap syscall 策略入口
 pub fn munmap_syscall_entry(addr: u64, size: u64) -> i64 {
     if addr == 0 || size == 0 {
@@ -365,9 +356,8 @@ pub fn munmap_syscall_entry(addr: u64, size: u64) -> i64 {
         return 0;
     }
 
-    let mm = match crate::privileged::mm::vma_get_current_mm() {
-        Some(m) => m,
-        None => return Errno::ENOMEM.as_ret(),
+    let Some(mm) = crate::privileged::mm::vma_get_current_mm() else {
+        return Errno::ENOMEM.as_ret();
     };
 
     match munmap_syscall(mm, addr, size) {

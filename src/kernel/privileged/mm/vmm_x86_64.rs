@@ -1378,10 +1378,6 @@ impl VirtualMemoryManager {
         clippy::ptr_as_ptr,
         reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
     )]
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     pub fn split_2mb_page(&self, virt: u64) -> Result<(), &'static str> {
         let pml4_base = KERNEL_PML4.load(Ordering::Acquire);
         if pml4_base == 0 {
@@ -1435,9 +1431,8 @@ impl VirtualMemoryManager {
                 let huge_flags = pd_entry.flags();
 
                 let pmm = get_pmm();
-                let pt_page = match pmm.alloc_page() {
-                    Some(p) => p,
-                    None => return Err("Failed to allocate PT"),
+                let Some(pt_page) = pmm.alloc_page() else {
+                    return Err("Failed to allocate PT");
                 };
                 let pt = pt_page.to_virt().0 as *mut PageTableEntry;
                 core::ptr::write_bytes(pt as *mut u8, 0, PAGE_SIZE as usize);

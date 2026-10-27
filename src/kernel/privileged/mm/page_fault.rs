@@ -185,10 +185,6 @@ pub fn handle_user_page_fault(info: PageFaultInfo) -> PfResult {
 
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 fn handle_stack_expansion_simple(addr: usize, user_cr3: u64) -> PfResult {
     let page_aligned = addr & !(PAGE_SIZE as usize - 1);
 
@@ -197,9 +193,8 @@ fn handle_stack_expansion_simple(addr: usize, user_cr3: u64) -> PfResult {
     }
 
     let pmm_inst = pmm::get_pmm();
-    let phys = match pmm_inst.alloc_page() {
-        Some(p) => p,
-        None => return PfResult::Oom,
+    let Some(phys) = pmm_inst.alloc_page() else {
+        return PfResult::Oom;
     };
 
     let phys_virt = phys.to_virt();
@@ -218,10 +213,6 @@ fn handle_stack_expansion_simple(addr: usize, user_cr3: u64) -> PfResult {
 
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 fn handle_vma_fault_with_mm(
     mm: &MmStruct,
     vma: &Vma,
@@ -259,9 +250,8 @@ fn handle_vma_fault_with_mm(
 
     // ── 普通匿名页分配 ──
     let pmm_inst = pmm::get_pmm();
-    let phys = match pmm_inst.alloc_page() {
-        Some(p) => p,
-        None => return PfResult::Oom,
+    let Some(phys) = pmm_inst.alloc_page() else {
+        return PfResult::Oom;
     };
 
     let phys_virt = phys.to_virt();
@@ -283,15 +273,10 @@ fn handle_vma_fault_with_mm(
 /// userfaultfd: 用户态已提供数据的页 → 分配物理页 + 填充 + 按 VMA 权限映射
 ///
 /// 由 `handle_vma_fault_with_mm` 在 `UffdFaultOutcome::Ready` 时调用.
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 fn handle_uffd_provided(vma: &Vma, aligned: usize, user_cr3: u64) -> PfResult {
     let pmm_inst = pmm::get_pmm();
-    let phys = match pmm_inst.alloc_page() {
-        Some(p) => p,
-        None => return PfResult::Oom,
+    let Some(phys) = pmm_inst.alloc_page() else {
+        return PfResult::Oom;
     };
 
     if !super::uffd::fill_provided_page(aligned as u64, phys) {
@@ -310,10 +295,6 @@ fn handle_uffd_provided(vma: &Vma, aligned: usize, user_cr3: u64) -> PfResult {
 /// 文件映射缺页处理: 从 Page Cache 获取/创建缓存页
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 fn handle_file_fault(
     _mm: &MmStruct,
     vma: &Vma,
@@ -326,14 +307,10 @@ fn handle_file_fault(
     // 建立侧唯一入口 (§8.1 规则 2): 登记「本 VA 映射持有该文件缓存页」.
     // 入口内含幂等判据 (该 VA 已持有 ⇒ 不重复登记) 与被替换旧帧的注销,
     // 与拆除侧 `pcache_release_for_va` 共用同一判据实现.
-    let (cache_phys, newly_inserted) = match super::pcache::pcache_acquire_for_va(
-        user_cr3,
-        aligned as u64,
-        vma.inode_id,
-        page_index,
-    ) {
-        Some(v) => v,
-        None => return PfResult::Oom,
+    let Some((cache_phys, newly_inserted)) =
+        super::pcache::pcache_acquire_for_va(user_cr3, aligned as u64, vma.inode_id, page_index)
+    else {
+        return PfResult::Oom;
     };
 
     // Demand Paging (B2 第三步真语义): 新插入的条目内容仍是零页 ⇒ 同步从 vfs 读
@@ -377,9 +354,8 @@ fn handle_file_fault(
         // 写入时 COW: 分配新页, 复制数据, 可写映射
         if info.write {
             let pmm_inst = pmm::get_pmm();
-            let new_phys = match pmm_inst.alloc_page() {
-                Some(p) => p,
-                None => return PfResult::Oom,
+            let Some(new_phys) = pmm_inst.alloc_page() else {
+                return PfResult::Oom;
             };
 
             // 从缓存页复制数据到新页
@@ -423,10 +399,6 @@ fn is_stack_expansion_candidate(addr: usize) -> bool {
 
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 fn handle_stack_expansion(mm: &MmStruct, addr: usize, user_cr3: u64) -> PfResult {
     let page_aligned = addr & !(PAGE_SIZE as usize - 1);
 
@@ -439,9 +411,8 @@ fn handle_stack_expansion(mm: &MmStruct, addr: usize, user_cr3: u64) -> PfResult
     }
 
     let pmm_inst = pmm::get_pmm();
-    let phys = match pmm_inst.alloc_page() {
-        Some(p) => p,
-        None => return PfResult::Oom,
+    let Some(phys) = pmm_inst.alloc_page() else {
+        return PfResult::Oom;
     };
 
     let phys_virt = phys.to_virt();
@@ -477,23 +448,17 @@ fn handle_stack_expansion(mm: &MmStruct, addr: usize, user_cr3: u64) -> PfResult
 
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 fn do_cow_copy_with_mm(_mm: &MmStruct, _vma: &Vma, addr: usize, user_cr3: u64) -> PfResult {
     let vmm_inst = vmm::get_vmm();
     let pml4 = user_cr3;
 
-    let old_phys = match vmm_inst.get_physical_in_pml4(pml4, VirtAddr(addr as u64)) {
-        Some(p) => p,
-        None => return PfResult::SignalSegv,
+    let Some(old_phys) = vmm_inst.get_physical_in_pml4(pml4, VirtAddr(addr as u64)) else {
+        return PfResult::SignalSegv;
     };
 
     let pmm_inst = pmm::get_pmm();
-    let new_phys = match pmm_inst.alloc_page() {
-        Some(p) => p,
-        None => return PfResult::Oom,
+    let Some(new_phys) = pmm_inst.alloc_page() else {
+        return PfResult::Oom;
     };
 
     let old_virt = old_phys.to_virt();

@@ -449,10 +449,6 @@ impl VirtioNetDriver {
 
     // ── 数据路径: 网络包收发 ──
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 发送网络包.
     ///
     /// `data` 包含完整以太网帧 (不含 `VirtIO` 头). 框架自动添加头.
@@ -468,9 +464,7 @@ impl VirtioNetDriver {
 
         // DMA 缓冲区: VirtIO 头 + 帧数据
         let total = self.hdr_size + data.len();
-        let mut dma = if let Some(b) = DmaBuffer::new(total) {
-            b
-        } else {
+        let Some(mut dma) = DmaBuffer::new(total) else {
             slog_warn!(Driver, "virtio-net: TX DMA 缓冲区分配失败");
             return Err(());
         };

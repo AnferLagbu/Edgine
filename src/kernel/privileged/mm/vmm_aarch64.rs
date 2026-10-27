@@ -746,10 +746,6 @@ impl Aarch64Vmm {
 
     /// 从 `root_paddr` 遍历页表, 按需创建中间级, 设置最终页描述符 ——
     /// **要求调用方已持 `VMM_LOCK`**
-    #[expect(
-        clippy::manual_let_else,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
     pub(crate) fn map_page_in_table_locked(
         &self,
         root_paddr: u64,
@@ -764,30 +760,21 @@ impl Aarch64Vmm {
         let l0 = phys_to_virt(root_paddr) as *mut u64;
         let l0_idx = l0_index(vaddr);
 
-        let l1 = match self.ensure_next_level(l0, l0_idx) {
-            Ok(t) => t,
-            Err(_) => {
-                return;
-            }
+        let Ok(l1) = self.ensure_next_level(l0, l0_idx) else {
+            return;
         };
         // KPTI 方案 S3: 该 L0 槽位可能是本轮才新建 (用户栈 L0[255] / PIE L0[170] 均在
         // `create_user_page_table` 之后映射), 须同步进本进程 EL1 视图.
         Self::mirror_l0_slot_to_el1_view(l0, l0_idx);
         let l1_idx = l1_index(vaddr);
 
-        let l2 = match self.ensure_next_level(l1, l1_idx) {
-            Ok(t) => t,
-            Err(_) => {
-                return;
-            }
+        let Ok(l2) = self.ensure_next_level(l1, l1_idx) else {
+            return;
         };
         let l2_idx = l2_index(vaddr);
 
-        let l3 = match self.ensure_next_level(l2, l2_idx) {
-            Ok(t) => t,
-            Err(_) => {
-                return;
-            }
+        let Ok(l3) = self.ensure_next_level(l2, l2_idx) else {
+            return;
         };
         let l3_idx = l3_index(vaddr);
 
@@ -1000,14 +987,6 @@ impl Aarch64Vmm {
 
     // ─── 用户页表操作 ──────────────────────────────────
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
-    #[expect(
-        clippy::single_match_else,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
     /// 为用户空间 (TTBR0_EL1) 分配并返回一张干净的 L0 页表物理地址; 分配失败返回 None.
     pub fn create_user_page_table(&self) -> Option<u64> {
         // 为用户空间 (TTBR0_EL1) 分配一张干净的 L0 表
@@ -1018,25 +997,19 @@ impl Aarch64Vmm {
         // Device 内存属性, 不适合用户代码执行. 共享它们也会导致
         // 用户页表修改 (例如把 2MB BLOCK 替换为 TABLE 描述符) 破坏
         // 内核恒等映射.
-        let user_l1 = match self.alloc_table() {
-            Some(t) => t,
-            None => {
-                self.free_table(user_l0);
-                return None;
-            }
+        let Some(user_l1) = self.alloc_table() else {
+            self.free_table(user_l0);
+            return None;
         };
 
         // KPTI 方案 S3: 用户低区 L2 必须 **eager** 建立.
         // EL1 视图的 `L1_el1[0]` 直接指向本页 (与用户视图 `L1_u[0]` 同页共享 ⇒
         // 零同步); 若留待 `map_page_in_table` 惰性创建, EL1 视图将长期持有
         // stale 项 (指向 0), 内核态解引用用户裸指针即翻译失败.
-        let user_l2 = match self.alloc_table() {
-            Some(t) => t,
-            None => {
-                self.free_table(user_l1);
-                self.free_table(user_l0);
-                return None;
-            }
+        let Some(user_l2) = self.alloc_table() else {
+            self.free_table(user_l1);
+            self.free_table(user_l0);
+            return None;
         };
 
         let kernel_l0 = phys_to_virt(self.kernel_l0) as *const u64;

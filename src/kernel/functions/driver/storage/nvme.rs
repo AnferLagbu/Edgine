@@ -704,10 +704,6 @@ impl NvmeController {
         self.wait_disabled(1_000_000)
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 初始化控制器 (MMIO + 队列配置)
     pub fn init_controller(&mut self) -> bool {
         // 读取控制器版本
@@ -730,13 +726,12 @@ impl NvmeController {
         }
 
         // 分配 Admin 队列 DMA 内存 (virt 供 CPU 侧访问, phys 供寄存器写入)
-        let ((sq_virt, sq_phys), (cq_virt, cq_phys)) =
-            if let Some(v) = crate::privileged::driver::storage::nvme_alloc_admin_queues() {
-                v
-            } else {
-                slog_warn!(Driver, "Admin 队列 DMA 分配失败");
-                return false;
-            };
+        let Some(((sq_virt, sq_phys), (cq_virt, cq_phys))) =
+            crate::privileged::driver::storage::nvme_alloc_admin_queues()
+        else {
+            slog_warn!(Driver, "Admin 队列 DMA 分配失败");
+            return false;
+        };
         self.admin_sq_virt = sq_virt;
         self.admin_sq_phys = sq_phys;
         self.admin_cq_virt = cq_virt;
@@ -763,20 +758,13 @@ impl NvmeController {
         true
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// Identify 控制器
     pub fn identify_controller(&mut self) -> bool {
         let buf_size = 4096; // Identify 数据为 4KB
-        let buf =
-            if let Some(v) = crate::privileged::driver::storage::nvme_alloc_dma_buffer(buf_size) {
-                v
-            } else {
-                slog_warn!(Driver, "Identify 缓冲区分配失败");
-                return false;
-            };
+        let Some(buf) = crate::privileged::driver::storage::nvme_alloc_dma_buffer(buf_size) else {
+            slog_warn!(Driver, "Identify 缓冲区分配失败");
+            return false;
+        };
         let vaddr = buf.cpu_addr().as_ptr() as u64;
         let paddr = buf.dma_addr().as_u64();
 
@@ -810,20 +798,13 @@ impl NvmeController {
         success
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// Identify 命名空间
     pub fn identify_namespace(&mut self, nsid: u32) -> bool {
         let buf_size = 4096;
-        let buf =
-            if let Some(v) = crate::privileged::driver::storage::nvme_alloc_dma_buffer(buf_size) {
-                v
-            } else {
-                slog_warn!(Driver, "Identify NS 缓冲区分配失败");
-                return false;
-            };
+        let Some(buf) = crate::privileged::driver::storage::nvme_alloc_dma_buffer(buf_size) else {
+            slog_warn!(Driver, "Identify NS 缓冲区分配失败");
+            return false;
+        };
         let vaddr = buf.cpu_addr().as_ptr() as u64;
         let paddr = buf.dma_addr().as_u64();
 
@@ -864,20 +845,15 @@ impl NvmeController {
         success
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 创建 I/O 队列对 (CQ + SQ)
     pub fn create_io_queue(&mut self) -> bool {
         // 分配 I/O 队列 DMA 内存 (virt 供 CPU 侧访问, phys 供 Create 命令)
-        let ((sq_virt, sq_phys), (cq_virt, cq_phys)) =
-            if let Some(v) = crate::privileged::driver::storage::nvme_alloc_io_queues() {
-                v
-            } else {
-                slog_warn!(Driver, "I/O 队列 DMA 分配失败");
-                return false;
-            };
+        let Some(((sq_virt, sq_phys), (cq_virt, cq_phys))) =
+            crate::privileged::driver::storage::nvme_alloc_io_queues()
+        else {
+            slog_warn!(Driver, "I/O 队列 DMA 分配失败");
+            return false;
+        };
         self.io_sq_virt = sq_virt;
         self.io_sq_phys = sq_phys;
         self.io_cq_virt = cq_virt;
@@ -937,10 +913,6 @@ impl NvmeController {
 
     // ── 数据读写 ──
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 读取扇区 (通过 privileged DMA)
     ///
     /// # Errors
@@ -960,9 +932,9 @@ impl NvmeController {
         let byte_count = (count as usize) * self.lba_format_size as usize;
 
         // 分配 DMA 缓冲区 (RAII 句柄: 函数返回即归还)
-        let buf = match crate::privileged::driver::storage::nvme_alloc_dma_buffer(byte_count) {
-            Some(v) => v,
-            None => return Err(()),
+        let Some(buf) = crate::privileged::driver::storage::nvme_alloc_dma_buffer(byte_count)
+        else {
+            return Err(());
         };
         let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
         let buf_dma_addr = buf.dma_addr().as_u64();
@@ -985,10 +957,6 @@ impl NvmeController {
         result
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 写入扇区 (通过 privileged DMA)
     ///
     /// # Errors
@@ -1008,9 +976,9 @@ impl NvmeController {
         let byte_count = (count as usize) * self.lba_format_size as usize;
 
         // 分配 DMA 缓冲区 (RAII 句柄: 函数返回即归还)
-        let buf = match crate::privileged::driver::storage::nvme_alloc_dma_buffer(byte_count) {
-            Some(v) => v,
-            None => return Err(()),
+        let Some(buf) = crate::privileged::driver::storage::nvme_alloc_dma_buffer(byte_count)
+        else {
+            return Err(());
         };
         let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
         let buf_dma_addr = buf.dma_addr().as_u64();

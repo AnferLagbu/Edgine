@@ -744,10 +744,6 @@ pub fn smoltcp_net_stack_socket_close(slot_idx: usize) -> bool {
     }
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `SmoltcpNetStack::poll` 的 safe wrapper (W4.2.3.4).
 ///
 /// 驱动 smoltcp 协议栈轮询 (TX/RX + 定时器 + DHCP), 返回 `PollOutcome`.
@@ -756,13 +752,11 @@ pub fn smoltcp_net_stack_socket_close(slot_idx: usize) -> bool {
 pub fn smoltcp_net_stack_poll() -> crate::privileged::net::iface_trait::PollOutcome {
     use crate::privileged::net::iface_trait::PollOutcome;
 
-    let nic = match device_mut() {
-        Some(d) => d,
-        None => return PollOutcome::idle(),
+    let Some(nic) = device_mut() else {
+        return PollOutcome::idle();
     };
-    let stack = match stack_mut() {
-        Some(s) => s,
-        None => return PollOutcome::idle(),
+    let Some(stack) = stack_mut() else {
+        return PollOutcome::idle();
     };
     // SAFETY: socket_set() 返回已初始化的 SocketSet 指针, 调用方持有 NET_LOCK.
     let sockets = unsafe { &mut *socket_set() };

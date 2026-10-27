@@ -61,10 +61,6 @@ pub const MCL_ONFAULT: u32 = 4;
 // madvise
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `sys_madvise(addr, len, advice) -> 0/-errno` — 对当前地址空间指定区间应用内存建议。
 pub fn sys_madvise(addr: u64, len: u64, advice: u64) -> i64 {
     let advice = advice as u32;
@@ -81,14 +77,12 @@ pub fn sys_madvise(addr: u64, len: u64, advice: u64) -> i64 {
         return 0;
     }
 
-    let mm = match vma_get_current_mm() {
-        Some(m) => m,
-        None => return Errno::EFAULT.as_ret(),
+    let Some(mm) = vma_get_current_mm() else {
+        return Errno::EFAULT.as_ret();
     };
 
-    let len_usize = match (len as usize).checked_add(0usize) {
-        Some(v) => v,
-        None => return Errno::ENOMEM.as_ret(),
+    let Some(len_usize) = (len as usize).checked_add(0usize) else {
+        return Errno::ENOMEM.as_ret();
     };
     match mm.madvise_range(addr as usize, len_usize, advice) {
         Ok(_) => 0,
@@ -100,10 +94,6 @@ pub fn sys_madvise(addr: u64, len: u64, advice: u64) -> i64 {
 // mlock
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `sys_mlock(addr, len) -> 0/-errno` — 锁定指定区间, 防止其被换出。
 pub fn sys_mlock(addr: u64, len: u64) -> i64 {
     if addr & (PAGE_SIZE - 1) != 0 {
@@ -114,9 +104,8 @@ pub fn sys_mlock(addr: u64, len: u64) -> i64 {
     }
     let len_usize = len as usize;
 
-    let mm = match vma_get_current_mm() {
-        Some(m) => m,
-        None => return Errno::EFAULT.as_ret(),
+    let Some(mm) = vma_get_current_mm() else {
+        return Errno::EFAULT.as_ret();
     };
 
     match mm.mlock_range(addr as usize, len_usize) {
@@ -129,10 +118,6 @@ pub fn sys_mlock(addr: u64, len: u64) -> i64 {
 // munlock
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `sys_munlock(addr, len) -> 0/-errno` — 解除指定区间的内存锁定。
 pub fn sys_munlock(addr: u64, len: u64) -> i64 {
     if addr & (PAGE_SIZE - 1) != 0 {
@@ -143,9 +128,8 @@ pub fn sys_munlock(addr: u64, len: u64) -> i64 {
     }
     let len_usize = len as usize;
 
-    let mm = match vma_get_current_mm() {
-        Some(m) => m,
-        None => return Errno::EFAULT.as_ret(),
+    let Some(mm) = vma_get_current_mm() else {
+        return Errno::EFAULT.as_ret();
     };
 
     match mm.munlock_range(addr as usize, len_usize) {
@@ -158,16 +142,11 @@ pub fn sys_munlock(addr: u64, len: u64) -> i64 {
 // mlockall
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `sys_mlockall(flags) -> 0/-errno` — 按 `flags` 锁定当前及未来的内存映射。
 pub fn sys_mlockall(flags: u64) -> i64 {
     let flags = flags as u32;
-    let mm = match vma_get_current_mm() {
-        Some(m) => m,
-        None => return Errno::EFAULT.as_ret(),
+    let Some(mm) = vma_get_current_mm() else {
+        return Errno::EFAULT.as_ret();
     };
 
     match mm.mlock_all(flags) {
@@ -180,15 +159,10 @@ pub fn sys_mlockall(flags: u64) -> i64 {
 // munlockall
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `sys_munlockall() -> 0/-errno` — 解除本进程全部内存锁定。
 pub fn sys_munlockall() -> i64 {
-    let mm = match vma_get_current_mm() {
-        Some(m) => m,
-        None => return Errno::EFAULT.as_ret(),
+    let Some(mm) = vma_get_current_mm() else {
+        return Errno::EFAULT.as_ret();
     };
 
     match mm.munlock_all() {
@@ -201,10 +175,6 @@ pub fn sys_munlockall() -> i64 {
 // mincore
 // ============================================================================
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// `sys_mincore(addr, len, vec_ptr) -> 0/-errno` — 查询区间各页是否驻留, 驻留位图写入 `vec_ptr`。
 pub fn sys_mincore(addr: u64, len: u64, vec_ptr: u64) -> i64 {
     const MAX_STACK_PAGES: usize = 1024;
@@ -226,9 +196,8 @@ pub fn sys_mincore(addr: u64, len: u64, vec_ptr: u64) -> i64 {
         return Errno::EFAULT.as_ret();
     }
 
-    let mm = match vma_get_current_mm() {
-        Some(m) => m,
-        None => return Errno::EFAULT.as_ret(),
+    let Some(mm) = vma_get_current_mm() else {
+        return Errno::EFAULT.as_ret();
     };
 
     if n_pages > MAX_STACK_PAGES {

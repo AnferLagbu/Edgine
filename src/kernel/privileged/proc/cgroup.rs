@@ -659,10 +659,6 @@ pub fn sys_cgroup_attach(cg_id: u64, pid: u64) -> i64 {
     }
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 设置指定 cgroup 的资源上限。
 ///
 /// `controller`: 0=CFS 配额, 1=CFS 周期, 2=内存, 3=PID 上限。
@@ -672,9 +668,8 @@ pub fn sys_cgroup_set_limit(cg_id: u64, controller: u64, value: u64) -> i64 {
         return -(Errno::EINVAL as i64);
     }
 
-    let cg = match cgroup_subsystem().find(cg_id) {
-        Some(c) => c,
-        None => return -(Errno::ENOENT as i64),
+    let Some(cg) = cgroup_subsystem().find(cg_id) else {
+        return -(Errno::ENOENT as i64);
     };
 
     match controller {
@@ -688,10 +683,6 @@ pub fn sys_cgroup_set_limit(cg_id: u64, controller: u64, value: u64) -> i64 {
     0
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 读取指定 cgroup 的统计值。
 ///
 /// `stat_type` 选择统计项, 成功返回非负值, 初始化未完成或项非法时返回负错误码。
@@ -700,9 +691,8 @@ pub fn sys_cgroup_get_stat(cg_id: u64, stat_type: u64) -> i64 {
         return -(Errno::EINVAL as i64);
     }
 
-    let cg = match cgroup_subsystem().find(cg_id) {
-        Some(c) => c,
-        None => return -(Errno::ENOENT as i64),
+    let Some(cg) = cgroup_subsystem().find(cg_id) else {
+        return -(Errno::ENOENT as i64);
     };
 
     match stat_type {

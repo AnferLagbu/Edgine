@@ -267,7 +267,7 @@ fn collect_waiters_is_non_destructive() {
         .find("pub fn collect_waiters")
         .expect("P5b: 缺 collect_waiters");
     let end = src[start..]
-        .find("#[expect")
+        .find("pub fn collect_expired")
         .map(|i| start + i)
         .unwrap_or(src.len());
     let body = &src[start..end];
@@ -367,8 +367,7 @@ fn p5d_wait_queue_has_deadline_and_collect_expired() {
         .expect("P5d: 缺 collect_expired");
     let end = start
         + wq[start..]
-            .find("}\n    \n")
-            .or_else(|| wq[start..].find("#[expect"))
+            .find("pub fn try_wake")
             .unwrap_or(wq.len() - start);
     let body = &wq[start..end];
     assert!(

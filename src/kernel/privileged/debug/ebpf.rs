@@ -373,10 +373,6 @@ impl BpfMap {
         }
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 查找元素
     pub fn lookup(&self, key: &[u8], value_out: &mut [u8]) -> bool {
         match self {
@@ -395,9 +391,8 @@ impl BpfMap {
                 if key.len() != def.key_size as usize {
                     return false;
                 }
-                let idx = match Self::key_to_index(key, def.key_size) {
-                    Some(i) => i,
-                    None => return false,
+                let Some(idx) = Self::key_to_index(key, def.key_size) else {
+                    return false;
                 };
                 let map = data.lock();
                 if idx < map.len() {
@@ -413,10 +408,6 @@ impl BpfMap {
         }
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 更新/插入元素
     pub fn update(&self, key: &[u8], value: &[u8]) -> bool {
         match self {
@@ -435,9 +426,8 @@ impl BpfMap {
                 if key.len() != def.key_size as usize || value.len() != def.value_size as usize {
                     return false;
                 }
-                let idx = match Self::key_to_index(key, def.key_size) {
-                    Some(i) => i,
-                    None => return false,
+                let Some(idx) = Self::key_to_index(key, def.key_size) else {
+                    return false;
                 };
                 let mut map = data.lock();
                 if idx < map.len() {
@@ -450,10 +440,6 @@ impl BpfMap {
         }
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 删除元素
     pub fn delete(&self, key: &[u8]) -> bool {
         match self {
@@ -464,9 +450,8 @@ impl BpfMap {
                 data.lock().remove(key).is_some()
             }
             Self::Array { def, data } => {
-                let idx = match Self::key_to_index(key, def.key_size) {
-                    Some(i) => i,
-                    None => return false,
+                let Some(idx) = Self::key_to_index(key, def.key_size) else {
+                    return false;
                 };
                 let mut map = data.lock();
                 if idx < map.len() {
@@ -1171,10 +1156,6 @@ impl BpfSubsystem {
         }
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
     /// 加载程序
     pub fn prog_load(&self, prog_type: BpfProgType, insns: Vec<BpfInsn>) -> i64 {
         let prog = BpfProg::new(prog_type, insns);
@@ -1182,9 +1163,7 @@ impl BpfSubsystem {
         // T4-3: 验证通过动态分派到注册的 verifier
         // 安全默认: 未注册时拒绝所有程序
         let verifier_slot = self.verifier.lock();
-        let verifier = if let Some(v) = *verifier_slot {
-            v
-        } else {
+        let Some(verifier) = *verifier_slot else {
             drop(verifier_slot);
             crate::klog_ffi!(
                 klog_ffi_warn,
@@ -1324,10 +1303,6 @@ pub fn bpf_is_initialized() -> bool {
     clippy::too_many_lines,
     reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
 )]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 pub extern "C" fn sys_bpf(cmd: u64, attr: u64, size: u64) -> i64 {
     if !bpf_is_initialized() {
         return -(11i64); // EAGAIN
@@ -1350,9 +1325,8 @@ pub extern "C" fn sys_bpf(cmd: u64, attr: u64, size: u64) -> i64 {
                     core::ptr::read_unaligned(attr_ptr.add(3)),
                 )
             };
-            let mt = match BpfMapType::from_u32(map_type) {
-                Some(t) => t,
-                None => return -(22i64),
+            let Some(mt) = BpfMapType::from_u32(map_type) else {
+                return -(22i64);
             };
             bpf_subsystem().map_create(mt, key_size, value_size, max_entries)
         }
@@ -1463,9 +1437,8 @@ pub extern "C" fn sys_bpf(cmd: u64, attr: u64, size: u64) -> i64 {
                 let hi = core::ptr::read_unaligned(attr_ptr.add(0)) >> 32;
                 (lo, hi as u32, core::ptr::read_unaligned(attr_ptr.add(1)))
             };
-            let pt = match BpfProgType::from_u32(prog_type) {
-                Some(t) => t,
-                None => return -(22i64),
+            let Some(pt) = BpfProgType::from_u32(prog_type) else {
+                return -(22i64);
             };
             if insn_cnt == 0 || insn_cnt > BPF_MAX_INSNS {
                 return -(22i64);

@@ -318,15 +318,9 @@ struct MadtIoApic {
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 解析 ACPI MADT 表, 填充 AP 与 IOAPIC 信息; 成功返回 true。
 pub fn parse_madt(multiboot2_info_ptr: u64) -> bool {
-    let rsdp = if let Some(addr) = find_rsdp(multiboot2_info_ptr) {
-        addr
-    } else {
+    let Some(rsdp) = find_rsdp(multiboot2_info_ptr) else {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
             crate::privileged::klog::klog_info(c"[ACPI] RSDP not found".as_ptr());
@@ -334,9 +328,7 @@ pub fn parse_madt(multiboot2_info_ptr: u64) -> bool {
         return false;
     };
 
-    let rsdt_or_xsdt = if let Some(sdt) = get_rsdt(rsdp) {
-        sdt
-    } else {
+    let Some(rsdt_or_xsdt) = get_rsdt(rsdp) else {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
             crate::privileged::klog::klog_info(c"[ACPI] RSDT/XSDT not found".as_ptr());
@@ -912,24 +904,16 @@ pub fn get_dmar_host_addr_width() -> u8 {
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
 /// 解析所有 ACPI 表 (MADT + FADT + HPET + DMAR)
 ///
 /// 在内核启动时调用, 替代仅解析 MADT 的 `parse_madt`.
 pub fn parse_all_tables(multiboot2_info_ptr: u64) -> bool {
-    let rsdp = if let Some(addr) = find_rsdp(multiboot2_info_ptr) {
-        addr
-    } else {
+    let Some(rsdp) = find_rsdp(multiboot2_info_ptr) else {
         crate::klog_warn!(Acpi, "[ACPI] RSDP not found");
         return false;
     };
 
-    let rsdt_or_xsdt = if let Some(sdt) = get_rsdt(rsdp) {
-        sdt
-    } else {
+    let Some(rsdt_or_xsdt) = get_rsdt(rsdp) else {
         crate::klog_warn!(Acpi, "[ACPI] RSDT/XSDT not found");
         return false;
     };
