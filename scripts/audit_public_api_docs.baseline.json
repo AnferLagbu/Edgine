@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 417,
-    "files": 76,
-    "keys": 367
+    "sites": 352,
+    "files": 73,
+    "keys": 315
   },
   "entries": [
     [
@@ -173,24 +173,6 @@
       1
     ],
     [
-      "src/kernel/privileged/driver/uefi.rs",
-      "fn",
-      "from_u32",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/uefi.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/uefi.rs",
-      "fn",
-      "to_unix_ns",
-      1
-    ],
-    [
       "src/kernel/privileged/driver/virtio/mod.rs",
       "fn",
       "read_config64",
@@ -320,144 +302,6 @@
       "src/kernel/privileged/egdf/user_driver.rs",
       "fn",
       "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "add_addr_range",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "add_depended_by",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "add_dependency",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "check_health",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "check_proc_limit",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "check_quota",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "clear_boot_fingerprint",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "consume_quota_tick",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "contains_addr",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "dependency_count",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "depends_on_id",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "get_rollback_generation",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "get_state",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "heartbeat",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "is_active",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "is_quota_exceeded",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "load_boot_fingerprint",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "mark_recovered",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "persist_crash_fingerprint",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "push_freg_snapshot",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "reset_quota",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "set_state",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "fn",
-      "try_rollback",
       1
     ],
     [
@@ -1583,24 +1427,6 @@
       1
     ],
     [
-      "src/kernel/privileged/proc/namespace.rs",
-      "fn",
-      "fork_from",
-      6
-    ],
-    [
-      "src/kernel/privileged/proc/namespace.rs",
-      "fn",
-      "new",
-      4
-    ],
-    [
-      "src/kernel/privileged/proc/namespace.rs",
-      "fn",
-      "new_from",
-      6
-    ],
-    [
       "src/kernel/privileged/proc/oomd.rs",
       "fn",
       "disable",
@@ -1645,145 +1471,7 @@
     [
       "src/kernel/privileged/proc/scheduler.rs",
       "fn",
-      "add",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "add_rt_task",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "add_to_run_queue",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "block",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "create_process",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "current",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "exit",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "from_u32",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "get_current_process",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "get_rt_count",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "has_runnable",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "init",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "is_initialized",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "load_balance",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
       "remove_quota",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "schedule",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "set_current",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "set_need_reschedule",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "set_sched_policy",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "should_reschedule",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "tick",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "unblock",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "fn",
-      "yield_current",
       1
     ],
     [

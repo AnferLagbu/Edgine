@@ -22,6 +22,8 @@
 //! 本模块属于 privileged/TCB, 允许 unsafe.
 //! UEFI 运行时服务调用涉及物理地址映射和固件调用.
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use crate::privileged::sync::IrqSpinLock;
@@ -72,19 +74,29 @@ pub const EFI_VARIABLE_RUNTIME_ACCESS: u32 = 0x00000004;
 /// EFI 时间结构
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EfiTime {
+    /// 年 (公历)
     pub year: u16,
+    /// 月 (1-12)
     pub month: u8,
+    /// 日 (1-31)
     pub day: u8,
+    /// 时 (0-23)
     pub hour: u8,
+    /// 分 (0-59)
     pub minute: u8,
+    /// 秒 (0-59)
     pub second: u8,
+    /// 纳秒 (0-999_999_999)
     pub nanosecond: u32,
+    /// 时区偏移 (分钟); 0=UTC, -2047=未指定
     pub timezone: i16, // 0=UTC, -2047=未指定
-    pub daylight: u8,  // bit0=ADJUST (调整), bit1=DST (夏令时)
+    /// 夏令时标志 (bit0=ADJUST 调整, bit1=DST 夏令时)
+    pub daylight: u8, // bit0=ADJUST (调整), bit1=DST (夏令时)
 }
 
 impl EfiTime {
     // 有意窄化: 用户内存代理, 指针/长度上下文保证
+    /// 转换为 Unix 纳秒时间戳 (1970-01-01 为 0 点基准)
     #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::trivially_copy_pass_by_ref,
@@ -168,24 +180,40 @@ impl EfiTime {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum EfiMemoryType {
+    /// 保留
     Reserved = 0,
+    /// 加载器代码
     LoaderCode = 1,
+    /// 加载器数据
     LoaderData = 2,
+    /// 引导服务代码
     BootServicesCode = 3,
+    /// 引导服务数据
     BootServicesData = 4,
+    /// 运行时服务代码
     RuntimeServicesCode = 5,
+    /// 运行时服务数据
     RuntimeServicesData = 6,
+    /// 常规可用内存
     Conventional = 7,
+    /// 不可用内存
     Unusable = 8,
+    /// ACPI 可回收内存
     AcpiReclaim = 9,
+    /// ACPI NVS 内存
     AcpiNvs = 10,
+    /// 内存映射 I/O
     MemoryMappedIo = 11,
+    /// 内存映射 I/O 端口空间
     MemoryMappedIoPortSpace = 12,
+    /// PAL 代码
     PalCode = 13,
+    /// 持久内存
     Persistent = 14,
 }
 
 impl EfiMemoryType {
+    /// 由原始 `u32` 值解析内存类型 (未知值回落为 `Reserved`)
     pub fn from_u32(v: u32) -> Self {
         match v {
             1 => Self::LoaderCode,
@@ -214,10 +242,15 @@ impl EfiMemoryType {
 /// EFI 内存描述符
 #[derive(Debug, Clone, Copy)]
 pub struct EfiMemoryDescriptor {
+    /// 内存类型
     pub memory_type: EfiMemoryType,
+    /// 物理起始地址
     pub physical_start: u64,
+    /// 虚拟起始地址
     pub virtual_start: u64,
+    /// 页数
     pub number_of_pages: u64,
+    /// 内存属性
     pub attribute: u64,
 }
 
@@ -229,21 +262,32 @@ pub struct EfiMemoryDescriptor {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum EfiPixelFormat {
+    /// RGB 各 8 位, 保留 8 位
     RedGreenBlueReserved8BitPerColor = 0,
+    /// BGR 各 8 位, 保留 8 位
     BlueGreenRedReserved8BitPerColor = 1,
+    /// 位掩码格式
     BitMask = 2,
+    /// 仅支持块传输
     BltOnly = 3,
 }
 
 /// GOP 模式信息
 #[derive(Debug, Clone, Copy)]
 pub struct EfiGopModeInfo {
+    /// GOP 协议版本
     pub version: u32,
+    /// 水平分辨率 (像素)
     pub horizontal_resolution: u32,
+    /// 垂直分辨率 (像素)
     pub vertical_resolution: u32,
+    /// 像素格式
     pub pixel_format: EfiPixelFormat,
+    /// 每扫描行像素数
     pub pixels_per_scan_line: u32,
+    /// 帧缓冲物理基址
     pub frame_buffer_base: u64,
+    /// 帧缓冲大小 (字节)
     pub frame_buffer_size: u64,
 }
 
@@ -299,6 +343,7 @@ pub struct UefiSubsystem {
 }
 
 impl UefiSubsystem {
+    /// 创建未初始化的 UEFI 子系统 (const 上下文可用, 供静态初始化)
     pub const fn new() -> Self {
         Self {
             system_table_addr: AtomicU64::new(0),

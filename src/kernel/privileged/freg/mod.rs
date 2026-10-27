@@ -48,6 +48,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use crate::privileged::sync::IrqSpinLock;
 pub mod api;
 pub mod degrade_policy;
+/// 恢复域运行时状态与撤销日志
 pub mod domain;
 pub mod fault_inject;
 pub mod manager;

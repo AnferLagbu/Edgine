@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 privileged API。
 //! Linux 兼容 Namespace 框架 (D1) — privileged 机制实现
 //!
@@ -49,11 +50,17 @@ use crate::privileged::syscall::Errno;
 
 /// `CLONE_NEW`* 标志位 (与 Linux 一致)
 pub const CLONE_NEWNS: u64 = 0x00020000; // Mount namespace
+/// `CLONE_NEWUTS` — 新建 UTS namespace
 pub const CLONE_NEWUTS: u64 = 0x04000000; // UTS namespace
+/// `CLONE_NEWIPC` — 新建 IPC namespace
 pub const CLONE_NEWIPC: u64 = 0x08000000; // IPC namespace
+/// `CLONE_NEWUSER` — 新建 User namespace
 pub const CLONE_NEWUSER: u64 = 0x10000000; // User namespace
+/// `CLONE_NEWPID` — 新建 PID namespace
 pub const CLONE_NEWPID: u64 = 0x20000000; // PID namespace
+/// `CLONE_NEWNET` — 新建 Network namespace
 pub const CLONE_NEWNET: u64 = 0x40000000; // Network namespace
+/// `CLONE_NEWCGROUP` — 新建 Cgroup namespace
 pub const CLONE_NEWCGROUP: u64 = 0x02000000; // Cgroup namespace
 
 /// 所有 `CLONE_NEW`* 掩码
@@ -73,12 +80,19 @@ pub const CLONE_NEW_ALL: u64 = CLONE_NEWNS
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum NsType {
+    /// Mount namespace (挂载点隔离)
     Mount = 0,
+    /// UTS namespace (主机名/域名隔离)
     Uts = 1,
+    /// IPC namespace (System V IPC 隔离)
     Ipc = 2,
+    /// User namespace (UID/GID 映射隔离)
     User = 3,
+    /// PID namespace (进程号隔离)
     Pid = 4,
+    /// Network namespace (网络栈隔离)
     Net = 5,
+    /// Cgroup namespace (cgroup 根路径隔离)
     Cgroup = 6,
 }
 
@@ -234,6 +248,7 @@ pub struct IpcNamespace {
 }
 
 impl IpcNamespace {
+    /// 创建新的 IPC namespace (使用默认各项数量上限)
     pub fn new() -> Self {
         Self {
             id: alloc_ns_id(),
@@ -243,10 +258,12 @@ impl IpcNamespace {
         }
     }
 
+    /// fork 继承: 共享父 namespace 引用
     pub fn fork_from(parent: &Arc<Self>) -> Arc<Self> {
         Arc::clone(parent)
     }
 
+    /// 创建独立的新 IPC namespace (`CLONE_NEWIPC` / unshare)
     pub fn new_from(_parent: &Arc<Self>) -> Arc<Self> {
         Arc::new(Self::new())
     }
@@ -295,10 +312,12 @@ impl PidNamespace {
         }
     }
 
+    /// fork 继承: 共享父 PID namespace 引用
     pub fn fork_from(parent: &Arc<Self>) -> Arc<Self> {
         Arc::clone(parent)
     }
 
+    /// 创建子 PID namespace (`CLONE_NEWPID` / unshare)
     pub fn new_from(parent: &Arc<Self>) -> Arc<Self> {
         Arc::new(Self::new_child(parent))
     }
@@ -340,6 +359,7 @@ pub struct MountNamespace {
 }
 
 impl MountNamespace {
+    /// 创建新的 Mount namespace (根路径为 `/`, 挂载计数 0)
     pub fn new() -> Self {
         Self {
             id: alloc_ns_id(),
@@ -348,10 +368,12 @@ impl MountNamespace {
         }
     }
 
+    /// fork 继承: 共享父 namespace 引用
     pub fn fork_from(parent: &Arc<Self>) -> Arc<Self> {
         Arc::clone(parent)
     }
 
+    /// 创建独立的新 Mount namespace (复制父挂载计数与根路径)
     pub fn new_from(parent: &Arc<Self>) -> Arc<Self> {
         let new = Self {
             id: alloc_ns_id(),
@@ -409,10 +431,12 @@ impl UserNamespace {
         }
     }
 
+    /// fork 继承: 共享父 User namespace 引用
     pub fn fork_from(parent: &Arc<Self>) -> Arc<Self> {
         Arc::clone(parent)
     }
 
+    /// 创建子 User namespace (`CLONE_NEWUSER` / unshare)
     pub fn new_from(parent: &Arc<Self>) -> Arc<Self> {
         Arc::new(Self::new_child(parent))
     }
@@ -507,10 +531,12 @@ impl NetNamespace {
         }
     }
 
+    /// fork 继承: 共享父 Network namespace 引用
     pub fn fork_from(parent: &Arc<Self>) -> Arc<Self> {
         Arc::clone(parent)
     }
 
+    /// 创建独立的新 Network namespace (`CLONE_NEWNET` / unshare)
     pub fn new_from(_parent: &Arc<Self>) -> Arc<Self> {
         Arc::new(Self::new())
     }
@@ -530,6 +556,7 @@ pub struct CgroupNamespace {
 }
 
 impl CgroupNamespace {
+    /// 创建新的 Cgroup namespace (根路径为 `/`)
     pub fn new() -> Self {
         Self {
             id: alloc_ns_id(),
@@ -537,10 +564,12 @@ impl CgroupNamespace {
         }
     }
 
+    /// fork 继承: 共享父 namespace 引用
     pub fn fork_from(parent: &Arc<Self>) -> Arc<Self> {
         Arc::clone(parent)
     }
 
+    /// 创建独立的新 Cgroup namespace (复制父根路径)
     pub fn new_from(parent: &Arc<Self>) -> Arc<Self> {
         Arc::new(Self {
             id: alloc_ns_id(),
@@ -556,12 +585,19 @@ impl CgroupNamespace {
 /// 进程的命名空间集合
 #[derive(Debug)]
 pub struct NamespaceSet {
+    /// UTS namespace (主机名/域名)
     pub uts: Arc<UtsNamespace>,
+    /// IPC namespace (System V IPC)
     pub ipc: Arc<IpcNamespace>,
+    /// PID namespace (进程号)
     pub pid: Arc<PidNamespace>,
+    /// Mount namespace (挂载点)
     pub mount: Arc<MountNamespace>,
+    /// User namespace (UID/GID 映射)
     pub user: Arc<UserNamespace>,
+    /// Network namespace (网络栈)
     pub net: Arc<NetNamespace>,
+    /// Cgroup namespace (cgroup 根路径)
     pub cgroup: Arc<CgroupNamespace>,
 }
 
@@ -756,13 +792,21 @@ impl NamespaceSet {
 
 /// 注册表中的 namespace 条目
 pub struct NsRegistryEntry {
+    /// 条目 ID (取所属集合中 UTS namespace 的 ID)
     pub id: u64,
+    /// 该集合的 UTS namespace
     pub uts: Option<Arc<UtsNamespace>>,
+    /// 该集合的 IPC namespace
     pub ipc: Option<Arc<IpcNamespace>>,
+    /// 该集合的 PID namespace
     pub pid: Option<Arc<PidNamespace>>,
+    /// 该集合的 Mount namespace
     pub mount: Option<Arc<MountNamespace>>,
+    /// 该集合的 User namespace
     pub user: Option<Arc<UserNamespace>>,
+    /// 该集合的 Network namespace
     pub net: Option<Arc<NetNamespace>>,
+    /// 该集合的 Cgroup namespace
     pub cgroup: Option<Arc<CgroupNamespace>>,
 }
 
@@ -772,6 +816,7 @@ pub struct NsRegistry {
 }
 
 impl NsRegistry {
+    /// 创建空注册表 (const 上下文可用, 供静态初始化)
     pub const fn new() -> Self {
         Self {
             entries: Vec::new(),

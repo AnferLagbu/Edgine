@@ -22,6 +22,8 @@
 //! `schedule()` 严格按 DL → RT → CFS 顺序回退, 每个层级内部找不到可运行任务时
 //! 立即降级到下一层级, 与 Linux `pick_next_task` 行为一致.
 
+#![deny(missing_docs)]
+
 use crate::privileged::sync::{IrqSpinLock as Mutex, OnceLock};
 use alloc::collections::VecDeque;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
@@ -101,11 +103,17 @@ const RQ_CLAIM_RETRY: usize = 32;
 /// `max_runtime` 与 `period` 构成带宽约束: 每 `period` 内任务最多运行
 /// `max_runtime`; `consumed`/`next_reset` 用于跨 tick 累计与周期重置。
 pub struct PwidQuota {
+    /// 归属的 PWM 凭证
     pub pwm: u64,
+    /// 槽位是否已被占用
     pub used: bool,
+    /// 每周期最大运行时间
     pub max_runtime: u64,
+    /// 统计周期长度
     pub period: u64,
+    /// 本周期已消耗的运行时间
     pub consumed: u64,
+    /// 下一次周期重置时刻 (tick)
     pub next_reset: u64,
 }
 
@@ -128,9 +136,13 @@ use crate::privileged::constants::limits::{MAX_LIMITS, MAX_QUOTAS};
 ///
 /// `max_procs` 为上限, `current` 为当前已归属该 PWM 的进程数。
 pub struct PwidLimit {
+    /// 归属的 PWM 凭证
     pub pwm: u64,
+    /// 槽位是否已被占用
     pub used: bool,
+    /// 允许的最大进程数
     pub max_procs: u32,
+    /// 当前已归属该 PWM 的进程数
     pub current: u32,
 }
 
@@ -154,10 +166,15 @@ static LAST_REAP_TICK: AtomicU64 = AtomicU64::new(0);
 /// `Idle` 仅在本核无其它可运行任务时执行; `Deadline` 为截止时间调度。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchedPolicy {
+    /// CFS 公平调度 (`SCHED_NORMAL`)
     Normal = 0,
+    /// 实时先进先出 (`SCHED_FIFO`)
     Fifo = 1,
+    /// 实时时间片轮转 (`SCHED_RR`)
     Rr = 2,
+    /// 空闲调度 (仅无其它可运行任务时执行)
     Idle = 3,
+    /// 截止时间调度 (`SCHED_DEADLINE`)
     Deadline = 4,
 }
 
@@ -166,6 +183,7 @@ impl SchedPolicy {
         clippy::match_same_arms,
         reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
     )]
+    /// 由原始 `u32` 值解析调度策略 (未知值回落为 `Normal`)
     pub fn from_u32(value: u32) -> Self {
         match value {
             0 => Self::Normal,
@@ -180,9 +198,13 @@ impl SchedPolicy {
 
 /// 实时任务信息 — 记录实时运行队列中任务的 pid、静态实时优先级、调度策略与剩余时间片。
 pub struct RtTaskInfo {
+    /// 任务 pid
     pub pid: Pid,
+    /// 静态实时优先级
     pub rt_priority: u8,
+    /// 调度策略
     pub policy: SchedPolicy,
+    /// 本时间片剩余 tick 数
     pub time_slice_remaining: u64,
 }
 
@@ -411,6 +433,7 @@ pub struct Scheduler {
 // All fields (Mutex<[PwidQuota; N]>, Mutex<[PwidLimit; N]>, AtomicBool) auto-implement Send + Sync.
 
 impl Scheduler {
+    /// 创建未初始化的全局调度器 (const 上下文可用, 供静态初始化)
     pub const fn new() -> Self {
         const QUOTA_ZERO: PwidQuota = PwidQuota::new();
         const LIMIT_ZERO: PwidLimit = PwidLimit {
@@ -426,6 +449,7 @@ impl Scheduler {
         }
     }
 
+    /// 初始化调度器: 建立 0 号核运行队列与 idle 任务, 并创建 init 进程
     pub fn init(&self) {
         let _ = init_per_cpu_sched(0);
 
@@ -468,6 +492,7 @@ impl Scheduler {
         clippy::ptr_as_ptr,
         reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
     )]
+    /// 创建进程 (受 PWM 进程数上限约束); 分配失败或触限时返回 `None`
     pub fn create_process(&self, name: &str, parent: Option<Pid>, pwm: u64) -> Option<Pid> {
         let pid = PROCESS_TABLE.allocate_pid()?;
 
@@ -577,6 +602,7 @@ impl Scheduler {
         Some(idle_pid)
     }
 
+    /// 把任务加入 CFS 运行队列 (语义等价 `cfs_enqueue`)
     pub fn add(&self, pid: Pid) {
         self.cfs_enqueue(pid);
     }
@@ -916,6 +942,7 @@ impl Scheduler {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
+    /// 按实时优先级把任务插入本核 RT 运行队列 (高优先级在前)
     pub fn add_rt_task(&self, pid: Pid, rt_priority: u8, policy: SchedPolicy) {
         let priority = rt_priority.min(RT_PRIORITY_MAX);
 
@@ -1050,6 +1077,7 @@ impl Scheduler {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
+    /// 调度决策入口: 按 DL → RT → CFS 顺序选下一个任务并完成上下文切换; 无候选时返回 `None`
     pub fn schedule(&self) -> Option<Pid> {
         let saved_flags = crate::arch!(interrupt_disable()) as u64;
 
@@ -1477,6 +1505,7 @@ impl Scheduler {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
+    /// 本核当前任务 pid; 无任务 (pid 0) 时返回 `None`
     pub fn current(&self) -> Option<Pid> {
         let pid = per_cpu().current.load(Ordering::SeqCst);
         if pid == 0 { None } else { Some(pid) }
@@ -1486,6 +1515,7 @@ impl Scheduler {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
+    /// 本核当前任务的 `Process` 指针; 无任务或 pid 不存在时返回 `None`
     pub fn get_current_process(&self) -> Option<*mut Process> {
         let pid = per_cpu().current.load(Ordering::SeqCst);
         if pid == 0 {
@@ -1495,6 +1525,7 @@ impl Scheduler {
         }
     }
 
+    /// 阻塞本核当前任务: 置 `Blocked`、记录阻塞原因并撤出可运行集
     pub fn block(&self, reason: BlockReason) {
         let per_cpu = per_cpu();
         if let Some(pid) = self.current() {
@@ -1509,6 +1540,7 @@ impl Scheduler {
         }
     }
 
+    /// 唤醒任务: 按策略重新放入运行队列 (已在可运行记账中的任务不重复投送)
     pub fn unblock(&self, pid: Pid) {
         let sched_policy = PROCESS_TABLE
             .with_process(pid, |proc| {
@@ -1614,6 +1646,7 @@ impl Scheduler {
         crate::privileged::proc::cpu_queue::mark_resched_pending_local();
     }
 
+    /// 当前任务退出: 置 Zombie、处理子进程并切换到下一个任务
     pub fn exit(&self, exit_code: u32) {
         let per_cpu = per_cpu();
         if let Some(pid) = self.current() {
@@ -1707,6 +1740,7 @@ impl Scheduler {
         self.schedule();
     }
 
+    /// 主动让出 CPU 并立即重调度
     pub fn yield_current(&self) {
         per_cpu().need_reschedule.store(true, Ordering::SeqCst);
         self.schedule();
@@ -1716,6 +1750,7 @@ impl Scheduler {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
+    /// 置本核重调度标志 (由 IRQ 退出路径消费)
     pub fn set_need_reschedule(&self) {
         per_cpu().need_reschedule.store(true, Ordering::SeqCst);
     }
@@ -1724,10 +1759,12 @@ impl Scheduler {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
+    /// 读取并清除本核重调度标志 (返回清除前的值)
     pub fn should_reschedule(&self) -> bool {
         per_cpu().need_reschedule.swap(false, Ordering::SeqCst)
     }
 
+    /// 把任务投入运行队列 (优先空闲核, 跨核时发重调度 IPI)
     pub fn add_to_run_queue(&self, pid: Pid) {
         // I-35: 重定向到 cfs_enqueue. 历史 MLFQ queues[0] 路径曾导致新进程
         // 永远不会被 pick_cfs_task 选中 (调度器只读 cfs_rq, 不读 queues[]).
@@ -1758,6 +1795,7 @@ impl Scheduler {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
+    /// 设置本核当前任务 pid, 并同步内核态当前进程指针
     pub fn set_current(&self, pid: Pid) {
         per_cpu().current.store(pid, Ordering::SeqCst);
 
@@ -1769,6 +1807,7 @@ impl Scheduler {
         }
     }
 
+    /// 调度器是否已完成初始化
     pub fn is_initialized(&self) -> bool {
         self.initialized.load(Ordering::SeqCst)
     }
@@ -1777,6 +1816,7 @@ impl Scheduler {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
+    /// 本核是否存在可运行任务 (DL/RT/CFS 任一非空)
     pub fn has_runnable(&self) -> bool {
         let per_cpu = per_cpu();
         if !per_cpu.dl_rq.lock().is_empty() {
@@ -1800,6 +1840,7 @@ impl Scheduler {
         clippy::too_many_lines,
         reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
     )]
+    /// 每 tick 调度记账: 推进 vruntime、抢占领与周期任务
     pub fn tick(&self, cpu_id: usize) {
         // SMP: 禁用中断保护整个 tick 临界区
         // 防止非中断上下文的 schedule() 调用与 timer ISR 的 tick() 并发修改 per-CPU 状态
@@ -2086,6 +2127,7 @@ impl Scheduler {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
+    /// 修改任务调度策略与实时优先级; pid 不存在时返回 `false`
     pub fn set_sched_policy(&self, pid: Pid, policy: SchedPolicy, rt_priority: u8) -> bool {
         PROCESS_TABLE
             .with_process(pid, |proc| {
@@ -2099,6 +2141,7 @@ impl Scheduler {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
+    /// 本核实时运行队列中的任务数量
     pub fn get_rt_count(&self) -> usize {
         per_cpu().rt_queue.lock().len()
     }
@@ -2205,6 +2248,7 @@ impl Scheduler {
         count
     }
 
+    /// 跨核负载均衡: 按 `LOAD_BALANCE_THRESHOLD` 把任务从重载核搬到空闲核
     pub fn load_balance(&self) {
         let cpu_count = crate::privileged::smp::get_cpu_count();
         if cpu_count <= 1 {
@@ -2420,8 +2464,10 @@ impl Scheduler {
     }
 }
 
+/// 全局调度器实例
 pub static SCHEDULER: Scheduler = Scheduler::new();
 
+/// 调度器就绪标志 (初始化为 false, 初始化入口执行完毕后置 true)
 pub static SCHEDULER_READY: AtomicBool = AtomicBool::new(false);
 
 /// 调度器子系统初始化入口 — 初始化全局调度器并置位 [`SCHEDULER_READY`]。

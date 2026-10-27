@@ -13,8 +13,13 @@
 //! - Inode trait 定义于 `super::inode`, 本文件引用之.
 //! - 各文件系统 (ramfs/unkfs/ext2/exfat/...) 在本模块树内实现本 trait.
 
+#![deny(missing_docs)]
+
+/// 路径缓冲区最大字节数 (含结尾 NUL)
 pub const VFS_MAX_PATH: usize = 128;
+/// 单个目录项名称最大字节数 (含结尾 NUL)
 pub const VFS_MAX_NAME: usize = 64;
+/// 同时挂载的文件系统最大数量
 pub const VFS_MAX_MOUNTS: usize = 8;
 
 // 统一到 privileged::error (P0-2 迁回)
@@ -22,8 +27,11 @@ pub use crate::privileged::error::KernelError;
 
 /// fs 层特有的类型别名 (向后兼容旧变体名)
 pub type NotFound = crate::privileged::error::KernelError;
+/// I/O 错误别名 (向后兼容旧变体名, 实际统一为 `KernelError`)
 pub type IoError = crate::privileged::error::KernelError;
+/// 内存不足错误别名 (向后兼容旧变体名, 实际统一为 `KernelError`)
 pub type OutOfMemory = crate::privileged::error::KernelError;
+/// 只读文件系统错误别名 (向后兼容旧变体名, 实际统一为 `KernelError`)
 pub type ReadOnly = crate::privileged::error::KernelError;
 
 // P-71: `impl KernelError { as_i32 }` 已归位 privileged/error.rs — KernelError 定义
@@ -32,7 +40,9 @@ pub type ReadOnly = crate::privileged::error::KernelError;
 // 统一到 privileged::error (阶段 4b: 定义迁回 privileged, 本处 re-export)
 pub use crate::privileged::error::KernelResult;
 
+/// syscall 返回值转换 — 把 `KernelResult` 折叠为 i32 错误码
 pub trait IntoI32 {
+    /// 转换为 syscall 返回码 (`0` = 成功, 负值 = 错误)
     fn as_i32(self) -> i32;
 }
 
@@ -48,18 +58,28 @@ impl IntoI32 for Result<(), KernelError> {
 // 阶段 4b: `VfsFileType` 抽留 privileged `types_pod`, 此处 re-export 保持路径兼容.
 pub use crate::privileged::fs::vfs::types_pod::VfsFileType;
 
+/// 权限位: 读
 pub const VFS_PERM_R: u16 = 0x04;
+/// 权限位: 写
 pub const VFS_PERM_W: u16 = 0x02;
+/// 权限位: 执行
 pub const VFS_PERM_X: u16 = 0x01;
 
 bitflags::bitflags! {
+    /// 打开文件标志位 (与 Linux `O_*` 数值对齐)
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct VfsOpenFlags: u32 {
+        /// 只读打开
         const RDONLY = 0x0001;
+        /// 只写打开
         const WRONLY = 0x0002;
+        /// 读写打开
         const RDWR   = 0x0004;
+        /// 文件不存在时创建
         const CREAT  = 0x0100;
+        /// 打开时截断为空文件
         const TRUNC  = 0x0200;
+        /// 写入追加到文件末尾
         const APPEND = 0x0400;
         /// fd 级 close-on-exec 标志 (对应 O_CLOEXEC, 与 Linux 数值一致);
         /// 由 `vfs_open_internal` 消费后从文件状态标志中剥离.
@@ -67,10 +87,14 @@ bitflags::bitflags! {
     }
 }
 
+/// `lseek` 偏移基准
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VfsSeekWhence {
+    /// 以文件开头为基准
     Set,
+    /// 以当前偏移为基准
     Cur,
+    /// 以文件末尾为基准
     End,
 }
 
@@ -88,19 +112,29 @@ impl VfsSeekWhence {
     }
 }
 
+/// 已注册文件系统类型标识
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FsType {
+    /// 内存文件系统
     RamFs,
+    /// UNKFS 文件系统
     Unkfs,
+    /// 设备文件系统
     DevFs,
+    /// ext2 文件系统
     Ext2,
+    /// exFAT 文件系统
     ExFat,
+    /// 临时文件系统
     TmpFs,
+    /// 叠加文件系统
     OverlayFs,
+    /// 未知/未识别类型
     Unknown,
 }
 
 impl FsType {
+    /// 由文件系统名称字符串解析类型 (未知名称映射为 `Unknown`)
     pub fn from_name(name: &str) -> Self {
         match name {
             "ramfs" => Self::RamFs,
@@ -114,6 +148,7 @@ impl FsType {
         }
     }
 
+    /// 回写文件系统名称字符串
     pub fn as_str(self) -> &'static str {
         match self {
             Self::RamFs => "ramfs",
@@ -128,21 +163,35 @@ impl FsType {
     }
 }
 
+/// 文件属性 (`stat` 结果)
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct VfsStat {
+    /// 节点 ID
     pub node_id: u32,
+    /// POSIX 权限位
     pub mode: u16,
+    /// 所有者 UID
     pub uid: u32,
+    /// 所属组 GID
     pub gid: u32,
+    /// 文件大小 (字节)
     pub size: u32,
+    /// 最后访问时间
     pub atime: u64,
+    /// 最后修改时间
     pub mtime: u64,
+    /// 状态变更时间
     pub ctime: u64,
+    /// 所有者 PWM 凭证
     pub owner_pwm: u64,
+    /// 所属组 PWM 凭证
     pub group_pwm: u64,
+    /// 已解析的权限掩码
     pub perm: u16,
+    /// 文件类型 (`VfsFileType::as_u8`)
     pub file_type: u8,
+    /// 敏感级别
     pub sensitivity: u8,
 }
 
@@ -166,11 +215,15 @@ impl Default for VfsStat {
     }
 }
 
+/// 目录项 (`readdir` 结果)
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct VfsDirEntry {
+    /// 节点 ID
     pub node: u32,
+    /// 文件类型 (`VfsFileType::as_u8`)
     pub file_type: u8,
+    /// 名称缓冲区 (NUL 结尾)
     pub name: [u8; VFS_MAX_NAME],
 }
 
@@ -185,6 +238,7 @@ impl Default for VfsDirEntry {
 }
 
 impl VfsDirEntry {
+    /// 创建空白目录项 (节点/类型/名称均为 0)
     pub fn new() -> Self {
         Self {
             node: 0,
@@ -193,6 +247,7 @@ impl VfsDirEntry {
         }
     }
 
+    /// 写入名称 (超长截断, 并保证 NUL 结尾)
     pub fn set_name(&mut self, name: &str) {
         let bytes = name.as_bytes();
         let len = bytes.len().min(VFS_MAX_NAME - 1);
@@ -200,6 +255,7 @@ impl VfsDirEntry {
         self.name[len] = 0;
     }
 
+    /// 读取名称 (以首个 NUL 为界, 非法 UTF-8 返回空串)
     pub fn get_name(&self) -> &str {
         let end = self
             .name
@@ -400,9 +456,11 @@ pub trait FileSystem: Send + Sync {
     ) -> KernelResult<u64> {
         Err(KernelError::NotSupported)
     }
+    /// 把相对路径解析为 FS 内部节点 ID (默认实现返回 `None` 表示不支持)
     fn fs_resolve_path(&self, _rel_path: &str) -> Option<u32> {
         None
     }
+    /// 由 FS 内部节点 ID 还原 Inode (默认实现返回 `None` 表示不支持)
     fn fs_resolve_inode(&self, _inode_id: u32, _mount_idx: u32) -> Option<Arc<dyn Inode>> {
         None
     }
