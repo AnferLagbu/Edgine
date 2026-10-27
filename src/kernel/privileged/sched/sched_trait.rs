@@ -41,7 +41,7 @@ impl Task {
         Self { proc_ptr, pid }
     }
 
-    /// PID
+    /// 返回任务所属进程的 PID.
     #[inline(always)]
     pub fn pid(&self) -> Pid {
         self.pid

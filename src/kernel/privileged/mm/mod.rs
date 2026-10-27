@@ -708,7 +708,7 @@ impl PageTableEntry {
         self.bits.store(value, Ordering::Release);
     }
 
-    /// Is present?
+    /// 判断页表项是否置 Present (存在) 位.
     pub fn is_present(&self) -> bool {
         self.bits.load(Ordering::Acquire) & PAGE_PRESENT != 0
     }
@@ -724,7 +724,7 @@ impl PageTableEntry {
         self.bits.store(val, Ordering::Release);
     }
 
-    /// Is writable?
+    /// 判断页表项是否置 Writable (可写) 位.
     pub fn is_writable(&self) -> bool {
         self.bits.load(Ordering::Acquire) & PAGE_WRITABLE != 0
     }
@@ -740,7 +740,7 @@ impl PageTableEntry {
         self.bits.store(val, Ordering::Release);
     }
 
-    /// Is user accessible?
+    /// 判断页表项是否置 User (用户可访问) 位.
     pub fn is_user(&self) -> bool {
         self.bits.load(Ordering::Acquire) & PAGE_USER != 0
     }
@@ -756,7 +756,7 @@ impl PageTableEntry {
         self.bits.store(val, Ordering::Release);
     }
 
-    /// Is huge page?
+    /// 判断页表项是否置 Huge (大页) 位.
     pub fn is_huge(&self) -> bool {
         self.bits.load(Ordering::Acquire) & PAGE_HUGE != 0
     }

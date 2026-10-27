@@ -2417,7 +2417,7 @@ impl Scheduler {
         }
     }
 
-    /// Remove CPU quota for a PWM
+    /// 移除指定 PWM 的 CPU 配额记录 (释放槽位供后续分配复用).
     pub fn remove_quota(&self, pwm: u64) {
         let mut quotas = self.quotas.lock();
         for q in quotas.iter_mut() {

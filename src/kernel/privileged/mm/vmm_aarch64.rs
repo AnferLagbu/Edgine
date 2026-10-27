@@ -233,6 +233,7 @@ pub struct Aarch64Vmm {
 }
 
 impl Aarch64Vmm {
+    /// 构造未初始化的 VMM 实例 (内核 L0 表地址 0, 用户页表计数器 0).
     pub fn new() -> Self {
         Self {
             kernel_l0: 0,
@@ -282,6 +283,7 @@ impl Aarch64Vmm {
         clippy::trivially_copy_pass_by_ref,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
+    /// 释放 VMM 锁并恢复中断标志; 释放后执行延迟释放收尾 (发布新代 + 定向 IPI + 机会式归还已追平帧).
     pub fn release_lock(&self, flags: &IrqSaveFlags) {
         // 仍持锁时读取并清除"本临界区需远程失效"标志: VMM_LOCK 是全局锁, 此刻本核
         // 是唯一写者, 故读-清不会漏掉本临界区自身的置位.
@@ -418,6 +420,7 @@ impl Aarch64Vmm {
         clippy::missing_errors_doc,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
+    /// 在内核高半区 L0 表映射单个 4KB 页 (低半区地址 virt >> 48 == 0 直接返回 Ok).
     pub fn map_page(
         &self,
         virt: VirtAddr,
@@ -439,6 +442,7 @@ impl Aarch64Vmm {
         clippy::missing_errors_doc,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
+    /// 在内核高半区映射页, 按 `size_type` 分派 4KB 页映射或 2MB 块映射.
     pub fn map_huge_page(
         &self,
         virt: VirtAddr,
@@ -523,6 +527,7 @@ impl Aarch64Vmm {
         clippy::unused_self,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
+    /// 卸载单个虚拟页映射 (aarch64 上为空操作, 与 x86_64 接口对齐).
     pub fn unmap_page(&self, _virt: VirtAddr) {}
 
     #[expect(
@@ -724,6 +729,7 @@ impl Aarch64Vmm {
         clippy::missing_errors_doc,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
+    /// 拆分 2MB 块映射 (aarch64 上为空操作: 可并存 4KB 页, 仅为与 x86_64 接口对齐).
     pub fn split_2mb_page(&self, _virt: u64) -> Result<(), &'static str> {
         // 在 aarch64 上, L2 块 (2MB) 是块映射的默认.
         // 无需拆分 — 可直接分配 L3 表并使用 4KB 页.
@@ -856,6 +862,7 @@ impl Aarch64Vmm {
         clippy::used_underscore_binding,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
+    /// 在指定根页表中卸载单个虚拟页映射 (根地址为 0 时直接返回).
     pub fn unmap_page_in_table(&self, root_paddr: u64, virt: VirtAddr) {
         if root_paddr == 0 {
             return;
@@ -1021,6 +1028,7 @@ impl Aarch64Vmm {
         clippy::single_match_else,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
+    /// 为用户空间 (TTBR0_EL1) 分配并返回一张干净的 L0 页表物理地址; 分配失败返回 None.
     pub fn create_user_page_table(&self) -> Option<u64> {
         // 为用户空间 (TTBR0_EL1) 分配一张干净的 L0 表
         let user_l0 = self.alloc_table()?;
@@ -1234,6 +1242,7 @@ impl Aarch64Vmm {
         clippy::unused_self,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
+    /// 确保路径上的表项带 USER 位 (aarch64 上为空操作: 用户/内核表经 TTBR0/TTBR1 天然分离).
     pub fn ensure_pml4_user(&self, _virt: u64) {
         // 在 aarch64 上, 内核与用户表是分离的 (TTBR0 vs TTBR1).
         // 内核表项无需 USER 位 — 用户访问走 TTBR0, 内核走 TTBR1.
@@ -1244,6 +1253,7 @@ impl Aarch64Vmm {
         clippy::unused_self,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
+    /// 确保虚拟地址路径上的中间表项存在 (aarch64 上由 `map_page_in_table` 保证, 本函数仅保留接口).
     pub fn ensure_path_user(&self, virt: u64) {
         // 在 aarch64 上, 仅当路径位于用户页表才相关.
         // 由于用户表在 TTBR0 且天然用户可访问, 只需确保所有
@@ -1258,6 +1268,7 @@ impl Aarch64Vmm {
         clippy::unused_self,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
+    /// 切换用户页表: 写入 TTBR0_EL1 并执行全局 TLB 失效 (dsb/isb 屏障包裹).
     pub fn switch_page_table(&self, ttbr0: u64) {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
@@ -1273,6 +1284,7 @@ impl Aarch64Vmm {
         }
     }
 
+    /// 在内核 L0 表中翻译虚拟地址并返回物理地址 (未映射返回 None).
     pub fn get_physical(&self, virt: VirtAddr) -> Option<PhysAddr> {
         self.get_physical_in_pml4(self.kernel_l0, virt)
     }
@@ -1448,6 +1460,7 @@ impl Aarch64Vmm {
 
     // ─── Clone / Destroy User Page Table ────────────────────────────
 
+    /// 复制父进程用户页表 (逐项拷贝 L0 表), 返回子表物理地址; 分配失败返回 None.
     pub fn clone_user_page_table(&self, parent_paddr: u64) -> Option<u64> {
         let child_paddr = self.alloc_table()?;
 
@@ -1469,6 +1482,7 @@ impl Aarch64Vmm {
         clippy::used_underscore_binding,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
+    /// 销毁指定用户页表并归还其占用帧 (根地址为 0 时直接返回).
     pub fn destroy_page_table(&self, root_paddr: u64) {
         if root_paddr == 0 {
             return;

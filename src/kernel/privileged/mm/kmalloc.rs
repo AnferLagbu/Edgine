@@ -42,6 +42,7 @@ struct EarlyHeapAlloc {
 }
 
 impl EarlyHeapAlloc {
+    /// 构造全零 (空指针 / 零大小) 的早期分配记录, 供 `const` 数组初始化使用.
     pub const fn const_default() -> Self {
         Self {
             ptr: core::ptr::null_mut(),

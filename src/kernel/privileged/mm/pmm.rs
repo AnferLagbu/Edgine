@@ -92,6 +92,7 @@ struct EarlyAlloc {
 }
 
 impl EarlyAlloc {
+    /// 构造全零 (地址 0 / 大小 0) 的早期分配记录, 供 `const` 数组初始化使用.
     pub const fn const_default() -> Self {
         Self { addr: 0, size: 0 }
     }
