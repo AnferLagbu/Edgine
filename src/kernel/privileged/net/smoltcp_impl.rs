@@ -14,6 +14,8 @@
 //!             └── virtio-net
 //! ```
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::slog_warn;
@@ -62,6 +64,7 @@ fn smoltcp_now() -> Instant {
 pub struct EGDFNetDevice {
     ops: &'static NetOps,
     driver_data: *mut core::ffi::c_void,
+    /// 本设备 MAC 地址
     pub mac: [u8; 6],
     rx_buf: [u8; RX_BUF_SIZE],
     rx_len: usize,
@@ -81,6 +84,7 @@ pub struct EGDFTxToken<'a> {
 }
 
 impl EGDFNetDevice {
+    /// 以 EGDF `NetOps` 句柄、驱动私有数据指针与 MAC 地址构造设备
     pub fn new(ops: &'static NetOps, driver_data: *mut core::ffi::c_void, mac: [u8; 6]) -> Self {
         Self {
             ops,
@@ -190,12 +194,16 @@ impl TxToken for EGDFTxToken<'_> {
 
 /// smoltcp 网络栈句柄 — 封装 Interface 与 MAC/初始化标志
 pub struct NetworkStack {
+    /// smoltcp 网络接口
     pub iface: Interface,
+    /// 本栈 MAC 地址
     pub mac: [u8; 6],
+    /// 是否已完成初始化
     pub initialized: bool,
 }
 
 impl NetworkStack {
+    /// 驱动一次 smoltcp 轮询 (处理收发与协议栈定时任务)
     pub fn poll<D: Device>(&mut self, device: &mut D, sockets: &mut SocketSet<'_>) -> PollResult {
         self.iface.poll(smoltcp_now(), device, sockets)
     }

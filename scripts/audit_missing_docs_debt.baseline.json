@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 256,
-    "files": 88,
-    "keys": 124
+    "sites": 226,
+    "files": 83,
+    "keys": 114
   },
   "entries": [
     [
@@ -371,16 +371,6 @@
       5
     ],
     [
-      "src/kernel/privileged/freg/undo_log.rs",
-      "a method",
-      3
-    ],
-    [
-      "src/kernel/privileged/freg/undo_log.rs",
-      "a struct field",
-      3
-    ],
-    [
       "src/kernel/privileged/fs/vfs/types_pod.rs",
       "a variant",
       4
@@ -476,21 +466,6 @@
       2
     ],
     [
-      "src/kernel/privileged/net/smoltcp_impl.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/smoltcp_impl.rs",
-      "a struct field",
-      4
-    ],
-    [
-      "src/kernel/privileged/net/smoltcp_impl.rs",
-      "an associated function",
-      1
-    ],
-    [
       "src/kernel/privileged/net/types.rs",
       "a constant",
       3
@@ -511,21 +486,6 @@
       4
     ],
     [
-      "src/kernel/privileged/proc/fd_alloc.rs",
-      "a method",
-      3
-    ],
-    [
-      "src/kernel/privileged/proc/fd_alloc.rs",
-      "a struct field",
-      2
-    ],
-    [
-      "src/kernel/privileged/proc/fd_alloc.rs",
-      "an associated function",
-      1
-    ],
-    [
       "src/kernel/privileged/proc/oomd.rs",
       "a method",
       3
@@ -554,11 +514,6 @@
       "src/kernel/privileged/proc/posix_timer.rs",
       "an associated function",
       1
-    ],
-    [
-      "src/kernel/privileged/proc/sched_ops.rs",
-      "a function",
-      6
     ],
     [
       "src/kernel/privileged/sgeg/audit.rs",
@@ -604,11 +559,6 @@
       "src/kernel/privileged/sync/mutex.rs",
       "an associated function",
       1
-    ],
-    [
-      "src/kernel/privileged/sync/types.rs",
-      "a struct field",
-      6
     ],
     [
       "src/kernel/privileged/syscall/epoll.rs",

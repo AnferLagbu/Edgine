@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 78,
-    "files": 27,
-    "keys": 75
+    "sites": 69,
+    "files": 24,
+    "keys": 66
   },
   "entries": [
     [
@@ -86,24 +86,6 @@
       "src/kernel/privileged/freg/recoverable.rs",
       "fn",
       "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/undo_log.rs",
-      "fn",
-      "compact_keeping",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/undo_log.rs",
-      "fn",
-      "record",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/undo_log.rs",
-      "fn",
-      "rollback_to",
       1
     ],
     [
@@ -299,46 +281,10 @@
       1
     ],
     [
-      "src/kernel/privileged/net/smoltcp_impl.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/smoltcp_impl.rs",
-      "fn",
-      "poll",
-      1
-    ],
-    [
       "src/kernel/privileged/net/wait_queue.rs",
       "fn",
       "new",
       2
-    ],
-    [
-      "src/kernel/privileged/proc/fd_alloc.rs",
-      "fn",
-      "contains",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/fd_alloc.rs",
-      "fn",
-      "end_exclusive",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/fd_alloc.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/fd_alloc.rs",
-      "fn",
-      "overlaps",
-      1
     ],
     [
       "src/kernel/privileged/proc/oomd.rs",

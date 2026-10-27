@@ -16,6 +16,8 @@
 //! 保留的 `SCHEDULER` 侧方法本体（RT / quota / limit / should_reschedule 面）
 //! 登记为「机制已实现、入口待 syscall 接线」，见 `docs/plan/net-e2e-tcp-echo-flakiness.md` §6。
 
+#![deny(missing_docs)]
+
 use super::process::PROCESS_TABLE;
 use super::scheduler::SCHEDULER;
 use super::types::{BlockReason, Pid, ProcessPriority};
@@ -53,24 +55,28 @@ pub fn scheduler_add_to_run_queue(pid: u32) {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// C ABI 导出: 让出当前 CPU 并触发重新调度 (扩展版)
 #[unsafe(no_mangle)]
 pub extern "C" fn scheduler_yield_ex() {
     SCHEDULER.yield_current();
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// C ABI 导出: 让出当前 CPU 并触发重新调度
 #[unsafe(no_mangle)]
 pub extern "C" fn scheduler_yield() {
     SCHEDULER.yield_current();
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// C ABI 导出: 选择下一个可运行进程, 返回其 PID (无则返回 0)
 #[unsafe(no_mangle)]
 pub extern "C" fn scheduler_schedule() -> Pid {
     SCHEDULER.schedule().unwrap_or(0)
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// C ABI 导出: 定时器中断驱动的调度器 tick (记账/抢占/负载均衡)
 #[unsafe(no_mangle)]
 pub extern "C" fn scheduler_tick() {
     // D6: 定时器中断统一驱动**进程级**调度器 tick.
@@ -92,6 +98,7 @@ pub extern "C" fn scheduler_tick() {
 // ============================================================================
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// C ABI 导出: 返回当前进程的 PWM (比例权重) 值, 无当前进程则返回 0
 #[unsafe(no_mangle)]
 pub extern "C" fn scheduler_get_current_pwm() -> u64 {
     SCHEDULER
@@ -105,6 +112,7 @@ pub extern "C" fn scheduler_get_current_pwm() -> u64 {
 // ============================================================================
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// C ABI 导出: 设置指定进程的调度优先级 (成功 0 / 进程不存在 -1)
 #[unsafe(no_mangle)]
 pub extern "C" fn proc_set_priority(pid: Pid, priority: u32) -> i32 {
     if PROCESS_TABLE

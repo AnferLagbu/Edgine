@@ -68,6 +68,8 @@
 //! V2 位图分配器支持槽位回收, 替代 V1 单调计数器.
 //! `subsystem_of` 保留供 FD 分发使用 (测试要求暴露).
 
+#![deny(missing_docs)]
+
 // ============================================================================
 // 子系统枚举
 // ============================================================================
@@ -124,23 +126,29 @@ impl FdSubsystem {
 /// 子系统 FD 范围 (基址 + 容量)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FdRange {
+    /// 段起始 FD
     pub base: i32,
+    /// 段容量 (FD 个数)
     pub capacity: u16,
 }
 
 impl FdRange {
+    /// 以基址与容量构造 FD 段
     pub const fn new(base: i32, capacity: u16) -> Self {
         Self { base, capacity }
     }
 
+    /// 返回段的排他上界 (base + capacity)
     pub const fn end_exclusive(self) -> i32 {
         self.base + self.capacity as i32
     }
 
+    /// 判断 `fd` 是否落在本段内
     pub const fn contains(self, fd: i32) -> bool {
         fd >= self.base && fd < self.end_exclusive()
     }
 
+    /// 判断本段与另一段是否重叠
     pub const fn overlaps(self, other: Self) -> bool {
         self.base < other.end_exclusive() && other.base < self.end_exclusive()
     }

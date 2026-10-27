@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 use super::types::{MAX_UNDO_ENTRIES, UndoEntry};
 
 #[expect(
@@ -16,8 +18,11 @@ pub fn fnv1a_32(data: &[u8]) -> u32 {
 
 /// 恢复域的撤销日志: 定长条目数组 + 有效计数 + 当前代数。
 pub struct UndoLog {
+    /// 定长撤销条目数组
     pub entries: [UndoEntry; MAX_UNDO_ENTRIES],
+    /// 当前有效条目数
     pub count: usize,
+    /// 当前代数 (用于按代回滚)
     pub current_generation: u64,
 }
 
@@ -45,6 +50,7 @@ impl UndoLog {
         }
     }
 
+    /// 记录一次字段旧值 (同代同地址去重; 容量满时先紧急压缩)
     pub fn record<T: Copy>(&mut self, field: *mut T, old_value: T) {
         let field_ptr = field as *mut u8;
         let size = core::mem::size_of::<T>().min(8);
@@ -84,6 +90,7 @@ impl UndoLog {
         self.count += 1;
     }
 
+    /// 回滚到目标代数, 返回实际回滚的条目数
     pub fn rollback_to(&mut self, target_generation: u64) -> usize {
         let mut rolled_back = 0;
         while self.count > 0 {
@@ -160,6 +167,7 @@ impl UndoLog {
 
     // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
     #[expect(clippy::cast_possible_truncation)]
+    /// 压缩日志, 仅保留最近 `keep_generations` 个代数的条目
     pub fn compact_keeping(&mut self, keep_generations: usize) {
         if self.count == 0 {
             return;

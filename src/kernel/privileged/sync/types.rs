@@ -11,6 +11,8 @@
 //! functions 侧改 `pub use crate::privileged::sync::types::*` 保持 API 兼容。
 //! 本文件 0 unsafe (纯类型 + 原子操作).
 
+#![deny(missing_docs)]
+
 // ============================================================================
 // 同步原语数据类型定义
 // ============================================================================
@@ -51,11 +53,14 @@ pub struct SpinLockInner {
     pub locked: AtomicU32,
 
     #[cfg(debug_assertions)]
-    pub owner: *const (), // 调试: 持有者 RSP
+    /// 调试信息: 持有者 RSP 指针 (仅 debug 构建)
+    pub owner: *const (),
     #[cfg(debug_assertions)]
-    pub acquire_time: u64, // debug: 获取时间戳 (TSC)
+    /// 调试信息: 获取时间戳 (TSC, 仅 debug 构建)
+    pub acquire_time: u64,
     #[cfg(debug_assertions)]
-    pub name: &'static str, // debug: 锁名称
+    /// 调试信息: 锁名称 (仅 debug 构建)
+    pub name: &'static str,
 }
 
 impl Default for SpinLockInner {
@@ -294,7 +299,9 @@ impl<T> Drop for SpinLockGuard<'_, T> {
 /// 支持**递归锁定**：同一线程可多次 lock，
 /// 但必须配对相同次数的 unlock。
 pub struct MutexGuard<'a, T> {
+    /// 被保护数据的可变引用
     pub data: &'a mut T,
+    /// 对应的 Mutex 内部状态
     pub _mutex: &'a MutexInner,
     /// Lockdep 锁类 ID (debug 或 feature="lockdep" 下使用); `drop` 完全解锁时通知释放.
     #[cfg(any(debug_assertions, feature = "lockdep"))]
@@ -343,7 +350,9 @@ impl<T> Drop for MutexGuard<'_, T> {
 
 /// 读锁守卫 (RAII for `RwLock` read mode)
 pub struct RwLockReadGuard<'a, T> {
+    /// 被保护数据的共享引用
     pub data: &'a T,
+    /// 对应的 RwLock 内部状态
     pub _rwlock: &'a RwLockInner,
 }
 
@@ -370,7 +379,9 @@ impl<T> Drop for RwLockReadGuard<'_, T> {
 
 /// 写锁守卫 (RAII for `RwLock` write mode)
 pub struct RwLockWriteGuard<'a, T> {
+    /// 被保护数据的可变引用
     pub data: &'a mut T,
+    /// 对应的 RwLock 内部状态
     pub _rwlock: &'a RwLockInner,
 }
 
