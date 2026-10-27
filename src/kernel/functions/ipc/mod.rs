@@ -47,6 +47,7 @@ impl IpcError {
         }
     }
 
+    /// 由 C ABI 返回码构造 `IpcError` (负数按 errno 语义映射, 未知码归入 `Other`)
     pub fn from_i32(rc: i32) -> Self {
         use crate::functions::error::KernelError as K;
         match rc {
@@ -91,6 +92,7 @@ pub use types::IpcId;
 /// 管道文件描述符
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PipeFd {
+    /// 管道文件描述符值
     pub fd: i32,
 }
 
@@ -106,12 +108,14 @@ pub struct ShmHandle {
 /// 消息队列句柄
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MsgqHandle {
+    /// 消息队列 ID
     pub id: IpcId,
 }
 
 /// 信号量句柄
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SemHandle {
+    /// 信号量 ID
     pub id: IpcId,
 }
 
@@ -147,6 +151,7 @@ pub fn global() -> &'static IpcNamespaceRef {
 pub struct IpcNamespaceRef;
 
 impl IpcNamespaceRef {
+    /// 构造 IPC 命名空间安全视图
     pub fn new() -> Self {
         Self
     }

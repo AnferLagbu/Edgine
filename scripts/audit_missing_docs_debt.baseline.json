@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 226,
-    "files": 83,
-    "keys": 114
+    "sites": 201,
+    "files": 78,
+    "keys": 108
   },
   "entries": [
     [
@@ -74,11 +74,6 @@
       "src/kernel/functions/fs/exfat/read.rs",
       "a struct field",
       2
-    ],
-    [
-      "src/kernel/functions/fs/ext2/dir.rs",
-      "a struct field",
-      5
     ],
     [
       "src/kernel/functions/fs/ext2/mount.rs",
@@ -151,22 +146,7 @@
       1
     ],
     [
-      "src/kernel/functions/fs/vfs_mount.rs",
-      "a function",
-      5
-    ],
-    [
       "src/kernel/functions/fs/virtiofs.rs",
-      "an associated function",
-      2
-    ],
-    [
-      "src/kernel/functions/ipc/mod.rs",
-      "a struct field",
-      3
-    ],
-    [
-      "src/kernel/functions/ipc/mod.rs",
       "an associated function",
       2
     ],
@@ -241,11 +221,6 @@
       1
     ],
     [
-      "src/kernel/functions/sgeg/storage/disk.rs",
-      "a struct field",
-      5
-    ],
-    [
       "src/kernel/functions/sync/futex.rs",
       "a struct field",
       2
@@ -289,11 +264,6 @@
       "src/kernel/privileged/arch/x86_64/smp_init.rs",
       "a function",
       3
-    ],
-    [
-      "src/kernel/privileged/config/error.rs",
-      "a struct field",
-      5
     ],
     [
       "src/kernel/privileged/config/memory.rs",

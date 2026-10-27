@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 // SPDX-License-Identifier: MPL-2.0
 //! SGEG 私有存储子系统 syscall — functions 层安全代理
 //!
@@ -28,10 +29,15 @@ const PWM_DOMAIN_STORAGE: u16 = 4;
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct UserDiskInfo {
+    /// 块设备 ID
     pub disk_id: u32,
+    /// 设备是否在位 (0/1)
     pub present: u32,
+    /// 设备总扇区数
     pub total_sectors: u32,
+    /// 写回的用户缓冲可容纳扇区数
     pub sectors: u32,
+    /// 设备型号字符串 (定长 64 字节, 未占满填 0)
     pub model: [u8; 64],
 }
 

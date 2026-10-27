@@ -1,14 +1,20 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //! ext2 目录项数据结构
 
 /// ext2 目录项 (变长, 最小 8 字节)
 #[derive(Debug, Clone)]
 pub struct Ext2DirEntry {
+    /// inode 号
     pub inode: u32,
+    /// 目录项长度 (含填充)
     pub rec_len: u16,
+    /// 名称长度 (不含终止符)
     pub name_len: u8,
+    /// 文件类型 (ext2 dirent 类型码)
     pub file_type: u8,
+    /// 文件名 (最多 255 字节, 未占满部分填 0)
     pub name: [u8; 255],
 }
 

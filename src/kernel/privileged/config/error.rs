@@ -11,21 +11,31 @@
 //! (config 子模块私有, 经顶层显式转发) 保持 API 兼容。
 //! 本文件 0 unsafe (纯类型 + Display).
 
+#![deny(missing_docs)]
+
 use core::fmt;
 
 /// 配置校验结果.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigError {
     /// 检测到的 CPU 数超过 `MAX_CPUS`.
-    CpuCountExceedsMax { actual: u32, max: usize },
+    CpuCountExceedsMax {
+        /// 实际检测到的 CPU 数
+        actual: u32,
+        /// 编译期上限 `MAX_CPUS`
+        max: usize,
+    },
     /// 内存布局不一致 (例如 `PAGE_SIZE` 不是 2 的幂).
     MemoryLayoutInvalid,
     /// 检测到的中断控制器 (APIC/IOAPIC/PIC) 未初始化.
     IrqControllerUnavailable,
     /// 跨模块常量冲突.
     InconsistentConstant {
+        /// 冲突常量名
         name: &'static str,
+        /// 左操作数值
         lhs: u64,
+        /// 右操作数值
         rhs: u64,
     },
     /// 驱动特定配置非法.

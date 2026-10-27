@@ -4,6 +4,8 @@
 //! 以及 RamFS 挂载去重标志 `RAMFS_MOUNTED`. 本模块由 `api.rs` 经
 //! `pub use vfs_mount::*;` 汇聚, 保持调用路径不变.
 
+#![deny(missing_docs)]
+
 use super::api::ptr_to_str;
 use super::backend_trait::{current_fs_backend, unkfs_fs};
 use super::vfs_manager::VFS_MANAGER;
@@ -21,6 +23,7 @@ static RAMFS_MOUNTED: core::sync::atomic::AtomicBool = core::sync::atomic::Atomi
     clippy::match_same_arms,
     reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
 )]
+/// C ABI 内部挂载入口: 按文件系统名分发挂载, 返回 0 或负 errno
 pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32 {
     let path = ptr_to_str(path);
     let fs_name = ptr_to_str(fs_name);
@@ -105,6 +108,7 @@ pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32
 // 公共 VFS API
 // ============================================================================
 
+/// C ABI 导出: 挂载文件系统 (path / fs_name 为 null 终止的 C 字符串)
 pub extern "C" fn vfs_mount(path: *const u8, fs_name: *const u8) -> i32 {
     vfs_mount_internal(path, fs_name)
 }
@@ -123,6 +127,7 @@ pub fn vfs_mount_safe(path: &str, fs_name: &str) -> i32 {
     vfs_mount_internal(path_buf.as_ptr(), fs_buf.as_ptr())
 }
 
+/// C ABI 内部卸载入口: 卸载指定挂载点, 返回 0 或负 errno
 pub extern "C" fn vfs_umount_internal(path: *const u8, _flags: i32) -> i32 {
     if path.is_null() {
         return -22; // -EINVAL
@@ -134,12 +139,14 @@ pub extern "C" fn vfs_umount_internal(path: *const u8, _flags: i32) -> i32 {
     }
 }
 
+/// C ABI 导出: 卸载文件系统 (path 为 null 终止的 C 字符串)
 pub extern "C" fn vfs_umount(path: *const u8, flags: i32) -> i32 {
     vfs_umount_internal(path, flags)
 }
 
 // 注意: 保持 Rust ABI — vfs_sync 为内核内部调用 (fs_sync trait 分发),
 //        P3-I-18 契约测试按 Rust ABI 签名匹配该函数.
+/// 遍历所有挂载点并同步各文件系统, 返回 0 或最近一次负 errno
 pub fn vfs_sync() -> i32 {
     // P3-I-18: 遍历所有挂载点, 通过 FileSystem trait 的 fs_sync 分发.
     // 替换原 unkfs_sync_internal() 单 FS 写死的实现.
