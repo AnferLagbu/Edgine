@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 //! E1000 DMA 描述符环 (硬件格式, repr(C))
 //!
 //! B04-19: 从 functions::driver::net::e1000 上移到 privileged/driver/net/dma_ring.rs,
@@ -16,12 +18,19 @@
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct E1000TxDesc {
+    /// 发送缓冲区物理地址
     pub addr: u64,
+    /// 本描述符承载的字节数
     pub length: u16,
+    /// 校验和偏移 (硬件校验和卸载)
     pub cso: u8,
+    /// 命令位 (取值见 `E1000_TXD_CMD_EOP` 等同族常量)
     pub cmd: u8,
+    /// 状态位 (取值见 `E1000_TXD_STAT_DD`)
     pub status: u8,
+    /// 校验和起始位置
     pub css: u8,
+    /// 硬件保留字段
     pub special: u16,
 }
 
@@ -29,11 +38,17 @@ pub struct E1000TxDesc {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct E1000RxDesc {
+    /// 接收缓冲区物理地址
     pub addr: u64,
+    /// 本描述符承载的字节数 (硬件回写)
     pub length: u16,
+    /// 硬件校验和
     pub checksum: u16,
+    /// 状态位 (取值见 `E1000_RXD_STAT_DD`)
     pub status: u8,
+    /// 错误位 (取值见 `E1000_RXD_ERR_CE` 等同族常量)
     pub errors: u8,
+    /// 硬件保留字段
     pub special: u16,
 }
 

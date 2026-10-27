@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 186,
-    "files": 45,
-    "keys": 164
+    "sites": 166,
+    "files": 43,
+    "keys": 144
   },
   "entries": [
     [
@@ -110,60 +110,6 @@
       "src/kernel/privileged/driver/virtio/mod.rs",
       "fn",
       "read_config64",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/manager.rs",
-      "fn",
-      "cascade_rollback",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/manager.rs",
-      "fn",
-      "check_boot_fingerprints",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/manager.rs",
-      "fn",
-      "find",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/manager.rs",
-      "fn",
-      "locate_domain_by_addr",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/manager.rs",
-      "fn",
-      "locate_domain_by_panic_msg",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/manager.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/manager.rs",
-      "fn",
-      "register",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/manager.rs",
-      "fn",
-      "rollback_domain",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/manager.rs",
-      "fn",
-      "tick",
       1
     ],
     [
@@ -824,72 +770,6 @@
       "src/kernel/privileged/sgeg/bootstrap.rs",
       "fn",
       "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/identity.rs",
-      "fn",
-      "any_identity_exists",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/identity.rs",
-      "fn",
-      "clear_modified",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/identity.rs",
-      "fn",
-      "find",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/identity.rs",
-      "fn",
-      "find_by_gid",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/identity.rs",
-      "fn",
-      "find_by_note",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/identity.rs",
-      "fn",
-      "find_mut",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/identity.rs",
-      "fn",
-      "generate_pwm",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/identity.rs",
-      "fn",
-      "init",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/identity.rs",
-      "fn",
-      "is_modified",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/identity.rs",
-      "fn",
-      "set_modified",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/identity.rs",
-      "fn",
-      "verify_password",
       1
     ],
     [

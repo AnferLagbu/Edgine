@@ -25,6 +25,7 @@
 pub mod attribution;
 pub mod audit_export;
 pub mod cascade;
+/// 业务层健康监控 (跨域聚合判定隔离/降级)
 pub mod health_monitor;
 pub mod recovery_policy;
 /// T6-6: 恢复配置与类型定义 (原 privileged/freg/reset/config.rs)

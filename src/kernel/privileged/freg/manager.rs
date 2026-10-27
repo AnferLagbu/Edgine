@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use super::domain::RecoveryDomain;
@@ -6,6 +8,7 @@ use super::types::{
 };
 
 use crate::privileged::sync::IrqSpinLock;
+/// 回滚事件环形日志 (最近 `MAX_ROLLBACK_LOG` 条, 供故障取证读取).
 // lockdep 可见性 (P-30 引入并保留): 命名 FREG 回滚日志锁 (lockdep 盲区消除; 非 lockdep 构建零成本).
 pub static ROLLBACK_LOG: IrqSpinLock<[Option<RollbackEvent>; MAX_ROLLBACK_LOG]> =
     IrqSpinLock::named_lazy("FREG.ROLLBACK_LOG", [None; MAX_ROLLBACK_LOG]);
@@ -32,7 +35,9 @@ fn log_rollback_event(event: RollbackEvent) {
 /// panic 前缀到恢复域标识的静态映射 (如 "PMM" → 3)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PanicDomainMapping {
+    /// panic 消息前缀 (ASCII 字节串, 如 `b"PMM"`)
     pub prefix: &'static [u8],
+    /// 该前缀对应的恢复域标识
     pub domain_id: u64,
 }
 
@@ -65,12 +70,16 @@ const PANIC_DOMAIN_MAP: [PanicDomainMapping; 6] = [
 
 /// FREG 恢复管理器: 登记所有恢复域并提供查找与回滚能力。
 pub struct RecoveryManager {
+    /// 已注册恢复域的紧凑列表, 有效区间为 `domains[..count]`
     pub domains: [Option<&'static RecoveryDomain>; MAX_RECOVERY_DOMAINS],
+    /// 域标识 → 域指针的直接索引 (标识小于 `DIRECT_MAP_SIZE` 时命中)
     pub direct_map: [Option<&'static RecoveryDomain>; DIRECT_MAP_SIZE],
+    /// 已注册域数量
     pub count: AtomicU32,
 }
 
 impl RecoveryManager {
+    /// 构造空的恢复管理器 (无已注册域)
     pub const fn new() -> Self {
         const NONE: Option<&'static RecoveryDomain> = None;
         Self {
@@ -80,6 +89,7 @@ impl RecoveryManager {
         }
     }
 
+    /// 注册恢复域, 返回其标识; 重复注册 (`core::ptr::eq` 判等) 与表满返回既有标识 / `None`.
     // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
     #[expect(clippy::cast_possible_truncation)]
     pub fn register(&mut self, domain: &'static RecoveryDomain) -> Option<u64> {
@@ -133,6 +143,7 @@ impl RecoveryManager {
         Some(removed)
     }
 
+    /// 周期 tick: 推进 FREG 代际与快照, 检查心跳并升级失败域, 按配额周期重置 CPU 配额.
     pub fn tick(&self, current_tick: u64) {
         if self.count.load(Ordering::Relaxed) == 0 {
             return;
@@ -199,6 +210,7 @@ impl RecoveryManager {
         }
     }
 
+    /// 按域标识查找恢复域 (`direct_map` 命中则 O(1), 否则线性扫描).
     // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
     #[expect(clippy::cast_possible_truncation)]
     pub fn find(&self, id: u64) -> Option<&'static RecoveryDomain> {
@@ -211,6 +223,7 @@ impl RecoveryManager {
         }
     }
 
+    /// 启动时核对各域的持久化崩溃指纹: 连续失败已达 3 次的域置为 Degraded 并清除指纹.
     pub fn check_boot_fingerprints(&self) {
         let count = self.count.load(Ordering::SeqCst) as usize;
         for i in 0..count {
@@ -231,6 +244,7 @@ impl RecoveryManager {
         }
     }
 
+    /// 按故障指令地址 (`fault_rip`) 归属到所属恢复域, 返回域标识.
     pub fn locate_domain_by_addr(&self, fault_rip: u64) -> Option<u64> {
         let count = self.count.load(Ordering::SeqCst) as usize;
         for i in 0..count {
@@ -243,6 +257,7 @@ impl RecoveryManager {
         None
     }
 
+    /// 按 panic 消息前缀 (静态映射表) 归属到已注册的恢复域, 返回域标识.
     pub fn locate_domain_by_panic_msg(&self) -> Option<u64> {
         let msg = super::PANIC_MSG.lock();
         let count = self.count.load(Ordering::SeqCst) as usize;
@@ -261,6 +276,7 @@ impl RecoveryManager {
         None
     }
 
+    /// 对单个域执行指定深度的回滚, 返回 (回滚条目数, 起始代际, 目标代际, 结果码).
     // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
     #[expect(clippy::cast_possible_truncation)]
     #[expect(
@@ -310,6 +326,7 @@ impl RecoveryManager {
         (entries_rolled_back, gen_from, target_gen, result)
     }
 
+    /// 以 BFS 沿依赖边级联回滚 (起点为 `domain_id`), 返回实际完成回滚的域数.
     pub fn cascade_rollback(&self, domain_id: u64, tick: u64, fingerprint: u64) -> usize {
         let count = self.count.load(Ordering::SeqCst) as usize;
         let mut queue: [u64; MAX_RECOVERY_DOMAINS] = [0; MAX_RECOVERY_DOMAINS];

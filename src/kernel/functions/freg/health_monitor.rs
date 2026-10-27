@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! 健康监控器 — functions/freg/ 业务层
 //!
 //! ## 职责
@@ -21,14 +22,20 @@ use super::recovery_policy::{FaultSignal, RecoveryAction, RecoveryPolicy};
 /// 域健康快照 (functions 层聚合视图)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DomainHealth {
+    /// 恢复域标识
     pub domain_id: u64,
+    /// 连续失败次数
     pub consecutive_failures: u32,
+    /// 当前降级层级 (0 表示正常)
     pub current_tier: u32,
+    /// 最近一次检查判定为健康
     pub is_healthy: bool,
+    /// 最近一次检查的 tick
     pub last_check_tick: u64,
 }
 
 impl DomainHealth {
+    /// 构造 "未知但健康" 的初始快照 (零失败, 层级 0)
     pub const fn unknown(domain_id: u64) -> Self {
         Self {
             domain_id,
@@ -68,9 +75,11 @@ pub struct HealthMonitor<'a> {
     pub last_check_tick: u64,
 }
 
+/// 可同时监控的恢复域上限
 pub const MAX_MONITOR_DOMAINS: usize = 16;
 
 impl<'a> HealthMonitor<'a> {
+    /// 以给定的失败记录数组构造监控器 (快照全部初始化为健康, 检查间隔 100 tick)
     pub const fn new(records: &'a mut [DomainFailureRecord]) -> Self {
         Self {
             records,
@@ -186,9 +195,18 @@ impl<'a> HealthMonitor<'a> {
 /// 监控动作
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MonitorAction {
+    /// 无需操作
     Noop,
-    RecoverBatch { count: usize },
-    QuarantineBatch { count: usize },
+    /// 对 `count` 个域执行恢复
+    RecoverBatch {
+        /// 待恢复域数
+        count: usize,
+    },
+    /// 对 `count` 个域执行隔离
+    QuarantineBatch {
+        /// 待隔离域数
+        count: usize,
+    },
 }
 
 #[cfg(test)]

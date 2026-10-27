@@ -17,6 +17,7 @@ pub mod capability;
 pub mod csprng;
 pub mod engine;
 pub mod grant;
+/// 全局身份表与 PWM 能力授予 / 撤销
 pub mod identity;
 /// D6: 安全启动 + TPM 2.0
 pub mod secure_boot;

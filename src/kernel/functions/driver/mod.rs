@@ -37,6 +37,7 @@
 //! | 2.1.5  | VGA/串口/Framebuffer | ✅ | `char/{vga,serial}.rs` + `display/` |
 //! | 2.1.6  | USB/XHCI | ✅ | `usb/xhci.rs` (2-D 整体下沉, 唯一权威) |
 
+/// ACPI 电源管理安全代理 (x86_64; aarch64 走 FDT)
 pub mod acpi;
 pub mod char;
 pub mod firmware;

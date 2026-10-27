@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 #![cfg(target_arch = "x86_64")]
 //! ACPI 电源管理 — functions 层安全代理
 //!
@@ -88,9 +89,13 @@ pub fn ioapic_gsib() -> u32 {
 /// IOAPIC 信息 (safe 拷贝)
 #[derive(Debug, Clone, Copy)]
 pub struct IoApicInfoSafe {
+    /// IOAPIC 硬件标识
     pub id: u8,
+    /// MMIO 基址
     pub base_addr: u64,
+    /// 该 IOAPIC 负责的首个全局系统中断号
     pub gsi_base: u32,
+    /// 最大重定向表项索引
     pub max_irq: u8,
 }
 
@@ -123,9 +128,13 @@ pub fn ioapic_count() -> u32 {
 /// HPET 信息 (拷贝自框架层, 避免 functions 持有裸指针)
 #[derive(Debug, Clone, Copy)]
 pub struct HpetInfoSafe {
+    /// HPET MMIO 基址
     pub base_addr: u64,
+    /// HPET 编号 (同机多个 HPET 块时区分)
     pub hpet_number: u8,
+    /// 比较器 (timer) 数量
     pub comparator_count: u8,
+    /// 主计数器位宽 (0 表示 32 位, 1 表示 64 位)
     pub counter_size: u8,
 }
 
@@ -191,11 +200,17 @@ pub fn acpi_reboot() -> ! {
 /// ACPI 整体状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AcpiStatus {
+    /// 是否找到 RSDP
     pub has_rsdp: bool,
+    /// 是否解析过 MADT
     pub has_madt: bool,
+    /// 是否解析过 FADT
     pub has_fadt: bool,
+    /// 是否解析过 HPET
     pub has_hpet: bool,
+    /// 是否解析过 DMAR
     pub has_dmar: bool,
+    /// AP (应用处理器) 数量
     pub ap_count: u32,
 }
 

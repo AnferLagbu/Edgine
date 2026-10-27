@@ -5,6 +5,7 @@
 //! - `e1000_io`: E1000Io MMIO 安全访问器 + 寄存器偏移常量 (B04-AUDIT-005 #4 修复: 从 functions 迁回)
 //! - `e1000`: TxRing/RxRing 环机制安全包装 (业务/FFI 面已迁 functions::driver::net::e1000)
 
+/// E1000 DMA 描述符环结构与位掩码 (硬件格式)
 pub mod dma_ring;
 pub mod e1000;
 /// E1000Io MMIO 安全访问器 (framekernel 阶段 3: 唯一消费者是 functions x86_64 E1000

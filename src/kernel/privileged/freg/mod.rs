@@ -51,6 +51,7 @@ pub mod degrade_policy;
 /// 恢复域运行时状态与撤销日志
 pub mod domain;
 pub mod fault_inject;
+/// 恢复域登记、周期 tick 与回滚编排
 pub mod manager;
 pub mod recoverable;
 pub mod recovery;

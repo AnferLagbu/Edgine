@@ -5,20 +5,15 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 694,
-    "files": 133,
-    "keys": 226
+    "sites": 622,
+    "files": 128,
+    "keys": 214
   },
   "entries": [
     [
       "src/kernel/functions/config/sysctl.rs",
       "a variant",
       3
-    ],
-    [
-      "src/kernel/functions/driver/acpi.rs",
-      "a struct field",
-      14
     ],
     [
       "src/kernel/functions/driver/display/controller.rs",
@@ -69,26 +64,6 @@
       "src/kernel/functions/freg/audit_export.rs",
       "an associated function",
       1
-    ],
-    [
-      "src/kernel/functions/freg/health_monitor.rs",
-      "a constant",
-      1
-    ],
-    [
-      "src/kernel/functions/freg/health_monitor.rs",
-      "a struct field",
-      7
-    ],
-    [
-      "src/kernel/functions/freg/health_monitor.rs",
-      "a variant",
-      3
-    ],
-    [
-      "src/kernel/functions/freg/health_monitor.rs",
-      "an associated function",
-      2
     ],
     [
       "src/kernel/functions/fs/cgroupfs.rs",
@@ -531,11 +506,6 @@
       2
     ],
     [
-      "src/kernel/privileged/driver/net/dma_ring.rs",
-      "a struct field",
-      13
-    ],
-    [
       "src/kernel/privileged/driver/net/mod.rs",
       "a module",
       1
@@ -561,29 +531,9 @@
       1
     ],
     [
-      "src/kernel/privileged/freg/manager.rs",
-      "a method",
-      8
-    ],
-    [
-      "src/kernel/privileged/freg/manager.rs",
-      "a static",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/manager.rs",
-      "a struct field",
-      5
-    ],
-    [
-      "src/kernel/privileged/freg/manager.rs",
-      "an associated function",
-      1
-    ],
-    [
       "src/kernel/privileged/freg/mod.rs",
       "a module",
-      4
+      3
     ],
     [
       "src/kernel/privileged/freg/mod.rs",
@@ -1041,16 +991,6 @@
       1
     ],
     [
-      "src/kernel/privileged/sgeg/identity.rs",
-      "a method",
-      11
-    ],
-    [
-      "src/kernel/privileged/sgeg/identity.rs",
-      "a struct field",
-      4
-    ],
-    [
       "src/kernel/privileged/sgeg/mod.rs",
       "a macro",
       1
@@ -1058,7 +998,7 @@
     [
       "src/kernel/privileged/sgeg/mod.rs",
       "a module",
-      7
+      6
     ],
     [
       "src/kernel/privileged/sgeg/secure_boot.rs",

@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 use super::audit;
 use super::bootstrap;
 use super::capability::VIABLE_FLOOR;
@@ -57,9 +59,13 @@ pub(crate) fn hash_with_salt(password: &str, salt: &[u8; PWM_SALT_LEN]) -> [u8; 
 
 /// 全局身份表: 固定容量的 `PwmEntry` 集合, 含并发自旋锁与变更标记字段。
 pub struct IdentityTable {
+    /// 固定容量的身份条目集合 (槽位按 `pwm != 0` 判占用)
     pub entries: alloc::vec::Vec<PwmEntry>,
+    /// 已占用条目数
     pub count: AtomicUsize,
+    /// 是否至少存在一个身份 (供登录流程快速判定)
     pub any_identity_exists: AtomicBool,
+    /// 下一个分配的 uid/gid 计数器
     pub next_uid: AtomicU32,
     modified: AtomicBool,
     lock: AtomicBool,
@@ -97,18 +103,22 @@ impl IdentityTable {
         self.lock.store(false, Ordering::Release);
     }
 
+    /// 标记身份表已变更 (供持久化层判定是否需要回写)
     pub fn set_modified(&self) {
         self.modified.store(true, Ordering::Release);
     }
 
+    /// 查询 "已变更" 标记
     pub fn is_modified(&self) -> bool {
         self.modified.load(Ordering::Acquire)
     }
 
+    /// 清除 "已变更" 标记 (持久化回写完成后调用)
     pub fn clear_modified(&self) {
         self.modified.store(false, Ordering::Release);
     }
 
+    /// 清空全部身份条目 (初始化 / 测试复位用)
     pub fn init(&self) {
         self.acquire();
         for entry in &self.entries {
@@ -155,6 +165,7 @@ impl IdentityTable {
         false
     }
 
+    /// 由 "密码 + 备注" 派生 64 位 PWM 标识 (SHA-256 前 8 字节, 0 归一为 1)
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
@@ -183,6 +194,7 @@ impl IdentityTable {
         pwm
     }
 
+    /// 按 PWM 查找身份条目 (`pwm == 0` 视为无效, 返回 `None`)
     pub fn find(&self, pwm: u64) -> Option<&PwmEntry> {
         if pwm == 0 {
             return None;
@@ -195,6 +207,7 @@ impl IdentityTable {
         None
     }
 
+    /// 按 PWM 查找身份条目的可变引用 (`pwm == 0` 视为无效, 返回 `None`)
     pub fn find_mut(&mut self, pwm: u64) -> Option<&mut PwmEntry> {
         if pwm == 0 {
             return None;
@@ -207,6 +220,7 @@ impl IdentityTable {
         None
     }
 
+    /// 按备注 (`note`) 查找身份条目, 跳过未占用槽位
     pub fn find_by_note(&self, note: &str) -> Option<&PwmEntry> {
         for entry in &self.entries {
             if !entry.is_valid() {
@@ -219,6 +233,7 @@ impl IdentityTable {
         None
     }
 
+    /// 常数时间校验指定 PWM 的密码 (SHA-256 加盐拉伸后比对 digest)
     #[expect(
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
@@ -601,6 +616,7 @@ impl IdentityTable {
         Ok(())
     }
 
+    /// 是否存在至少一个身份
     pub fn any_identity_exists(&self) -> bool {
         self.any_identity_exists.load(Ordering::Acquire)
     }
@@ -615,6 +631,7 @@ impl IdentityTable {
             .find(|e| e.is_valid() && e.get_uid() == uid)
     }
 
+    /// gid → `PwmEntry` (POSIX chown/chgrp 等 syscall 用)
     pub fn find_by_gid(&self, gid: u32) -> Option<&PwmEntry> {
         if gid == 0xFFFF_FFFF {
             return None;
@@ -677,6 +694,7 @@ pub fn get_table() -> &'static IdentityTable {
 //
 // 历史保留: 此前 raw 子模块实现见 git log, 此处仅作迁移说明.
 
+/// 按 PWM 在全局身份表中查找条目 (便捷入口, 等价于 `get_table().find(pwm)`)
 pub fn find(pwm: u64) -> Option<&'static PwmEntry> {
     get_table().find(pwm)
 }
