@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! 进程表 CRUD 安全代理
 //!
 //! 把 `kernel::process::ProcessTable` 的 `*mut Process` 裸指针接口
@@ -100,6 +101,7 @@ impl From<crate::functions::error::KernelError> for TableError {
     }
 }
 
+/// 进程表子系统统一结果类型 (成功值或 `TableError`)。
 pub type TableResult<T> = Result<T, TableError>;
 
 // ============================================================================

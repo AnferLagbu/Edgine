@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! mmap/munmap/mprotect 系统调用实现 — functions 层策略主体
 //!
 //! @SAFE: 本文件不含 unsafe 代码。
@@ -31,6 +32,7 @@ pub const MAP_ANONYMOUS: i32 = 0x20;
 /// `MAP_FIXED`: 强制使用指定地址
 pub const MAP_FIXED: i32 = 0x10;
 
+/// mmap 系统调用的标志位基准值 (0, 标志位由调用侧按需 OR 组合)。
 pub const SYS_MMAP_FLAGS: u64 = 0;
 
 // ============================================================================

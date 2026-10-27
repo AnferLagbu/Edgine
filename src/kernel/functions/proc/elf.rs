@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! ELF 加载器 — functions 层安全代理
 //!
 //! ## 状态 (v2.14, 2026-06-04)
@@ -101,6 +102,7 @@ impl ElfError {
     }
 }
 
+/// ELF 加载子系统统一结果类型 (成功值或 `ElfError`)。
 pub type ElfResult<T> = Result<T, ElfError>;
 
 // ============================================================================

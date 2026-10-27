@@ -5,36 +5,11 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 16,
-    "files": 16,
-    "keys": 16
+    "sites": 11,
+    "files": 11,
+    "keys": 11
   },
   "entries": [
-    [
-      "src/kernel/functions/fs/unkfs/unkfs_inode.rs",
-      "an associated function",
-      1
-    ],
-    [
-      "src/kernel/functions/mm/mmap.rs",
-      "a constant",
-      1
-    ],
-    [
-      "src/kernel/functions/proc/elf.rs",
-      "a type alias",
-      1
-    ],
-    [
-      "src/kernel/functions/proc/signal.rs",
-      "a type alias",
-      1
-    ],
-    [
-      "src/kernel/functions/proc/table.rs",
-      "a type alias",
-      1
-    ],
     [
       "src/kernel/functions/sgeg/crypto.rs",
       "a type alias",

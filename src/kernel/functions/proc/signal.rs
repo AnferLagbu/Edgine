@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! 信号系统 — functions 层安全代理
 //!
 //! ## 状态 (v2.16, 2026-06-12)
@@ -269,6 +270,7 @@ impl SignalAction {
 /// signal 子系统私有错误, 因此退化为 alias. 旧名保留以避免破坏外部引用.
 pub use crate::functions::error::KernelError as SignalError;
 
+/// 信号子系统统一结果类型 (成功值或 `SignalError`)。
 pub type SignalResult<T> = Result<T, SignalError>;
 
 // ============================================================================
