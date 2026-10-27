@@ -17,6 +17,8 @@
 //! 旧版 `IpcNamespace` 保持不变（向后兼容）。
 //! 新代码使用 `DynIpcNamespace`，通过 FFI 桥接暴露给 C。
 
+#![deny(missing_docs)]
+
 use super::types::{
     IpcId, Message, MsgQueue, Pipe, SHM_MAX_SIZE, Semaphore, ShmSegment, WaitQueue,
 };
@@ -71,14 +73,20 @@ use raw::MessageRef;
 
 /// 动态 IPC 命名空间, 持有管道/共享内存/消息队列/信号量集合与 ID 分配器.
 pub struct DynIpcNamespace {
+    /// 管道集合
     pub pipes: Mutex<Vec<Pipe>>,
+    /// 共享内存段集合
     pub shm_segs: Mutex<Vec<ShmSegment>>,
+    /// 消息队列集合
     pub msg_queues: Mutex<Vec<MsgQueue>>,
+    /// 信号量集合
     pub semaphores: Mutex<Vec<Semaphore>>,
+    /// 下一个可分配的 IPC ID
     pub next_id: Mutex<IpcId>,
 }
 
 impl DynIpcNamespace {
+    /// 构造空的动态 IPC 命名空间 (ID 从 1 开始)
     pub fn new() -> Self {
         Self {
             pipes: Mutex::new(Vec::new()),
@@ -98,6 +106,7 @@ impl DynIpcNamespace {
 
     // ─── Pipe ────────────────────────────────────────────────
 
+    /// 创建管道并返回其 IPC ID
     pub fn pipe_create(&self, read_pid: u32, write_pid: u32) -> IpcId {
         let id = self.allocate_id();
         let mut pipe = Pipe::new();
@@ -120,10 +129,12 @@ impl DynIpcNamespace {
         Ok(())
     }
 
+    /// 指定管道是否存在
     pub fn pipe_exists(&self, id: IpcId) -> bool {
         self.pipes.lock().iter().any(|p| p.id == id)
     }
 
+    /// 当前管道数
     pub fn pipe_count(&self) -> usize {
         self.pipes.lock().len()
     }
@@ -176,6 +187,7 @@ impl DynIpcNamespace {
         Ok(())
     }
 
+    /// 当前共享内存段数
     pub fn shm_count(&self) -> usize {
         self.shm_segs.lock().len()
     }
@@ -232,10 +244,12 @@ impl DynIpcNamespace {
         Ok(())
     }
 
+    /// 指定消息队列是否存在
     pub fn msgq_exists(&self, id: IpcId) -> bool {
         self.msg_queues.lock().iter().any(|q| q.id == id)
     }
 
+    /// 当前消息队列数
     pub fn msgq_count(&self) -> usize {
         self.msg_queues.lock().len()
     }
@@ -274,10 +288,12 @@ impl DynIpcNamespace {
         Ok(())
     }
 
+    /// 当前信号量数
     pub fn sem_count(&self) -> usize {
         self.semaphores.lock().len()
     }
 
+    /// 全部 IPC 对象总数 (管道 + 共享内存段 + 消息队列 + 信号量)
     pub fn total_count(&self) -> usize {
         self.pipe_count() + self.shm_count() + self.msgq_count() + self.sem_count()
     }
@@ -303,18 +319,21 @@ pub fn get_dyn_ipc() -> &'static DynIpcNamespace {
     DYN_IPC.get_ref()
 }
 
+/// 初始化全局动态 IPC 命名空间 (C ABI 导出, 启动期单线程调用一次)
 #[unsafe(no_mangle)]
 pub extern "C" fn dyn_ipc_init() {
     dyn_ipc_init_impl();
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 创建管道 (C ABI 导出, 返回 IPC ID)
 #[unsafe(no_mangle)]
 pub extern "C" fn dyn_ipc_pipe_create(read_pid: u32, write_pid: u32) -> u32 {
     get_dyn_ipc().pipe_create(read_pid, write_pid)
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 销毁管道 (C ABI 导出, 返回 0 或负 errno)
 #[unsafe(no_mangle)]
 pub extern "C" fn dyn_ipc_pipe_destroy(id: u32) -> i32 {
     match get_dyn_ipc().pipe_destroy(id) {
@@ -324,6 +343,7 @@ pub extern "C" fn dyn_ipc_pipe_destroy(id: u32) -> i32 {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 创建消息队列 (C ABI 导出, 失败返回 0)
 #[unsafe(no_mangle)]
 pub extern "C" fn dyn_ipc_msgq_create(owner_pid: u32, max_msgs: u32, max_size: u32) -> u32 {
     get_dyn_ipc()
@@ -332,12 +352,14 @@ pub extern "C" fn dyn_ipc_msgq_create(owner_pid: u32, max_msgs: u32, max_size: u
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 创建共享内存段 (C ABI 导出, 失败返回 0)
 #[unsafe(no_mangle)]
 pub extern "C" fn dyn_ipc_shm_create(owner_pid: u32, size: u64) -> u32 {
     get_dyn_ipc().shm_create(owner_pid, size).unwrap_or(0)
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 创建信号量 (C ABI 导出, 失败返回 0)
 #[unsafe(no_mangle)]
 pub extern "C" fn dyn_ipc_sem_create(owner_pid: u32, count: u32, max_count: u32) -> u32 {
     get_dyn_ipc()

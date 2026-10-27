@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 1040,
-    "files": 153,
-    "keys": 284
+    "sites": 943,
+    "files": 148,
+    "keys": 266
   },
   "entries": [
     [
@@ -209,11 +209,6 @@
       "src/kernel/functions/fs/ext2/dir.rs",
       "a struct field",
       5
-    ],
-    [
-      "src/kernel/functions/fs/ext2/inode.rs",
-      "a struct field",
-      18
     ],
     [
       "src/kernel/functions/fs/ext2/mount.rs",
@@ -458,36 +453,6 @@
     [
       "src/kernel/functions/sgeg/identity.rs",
       "a type alias",
-      1
-    ],
-    [
-      "src/kernel/functions/sgeg/sessions.rs",
-      "a method",
-      2
-    ],
-    [
-      "src/kernel/functions/sgeg/sessions.rs",
-      "a struct",
-      2
-    ],
-    [
-      "src/kernel/functions/sgeg/sessions.rs",
-      "a struct field",
-      5
-    ],
-    [
-      "src/kernel/functions/sgeg/sessions.rs",
-      "a variant",
-      8
-    ],
-    [
-      "src/kernel/functions/sgeg/sessions.rs",
-      "an associated function",
-      2
-    ],
-    [
-      "src/kernel/functions/sgeg/sessions.rs",
-      "an enum",
       1
     ],
     [
@@ -896,26 +861,6 @@
       4
     ],
     [
-      "src/kernel/privileged/ipc/dynamic.rs",
-      "a function",
-      6
-    ],
-    [
-      "src/kernel/privileged/ipc/dynamic.rs",
-      "a method",
-      8
-    ],
-    [
-      "src/kernel/privileged/ipc/dynamic.rs",
-      "a struct field",
-      5
-    ],
-    [
-      "src/kernel/privileged/ipc/dynamic.rs",
-      "an associated function",
-      1
-    ],
-    [
       "src/kernel/privileged/ipc/types.rs",
       "a method",
       1
@@ -964,31 +909,6 @@
       "src/kernel/privileged/mm/kmalloc.rs",
       "an associated function",
       2
-    ],
-    [
-      "src/kernel/privileged/mm/mod.rs",
-      "a constant",
-      5
-    ],
-    [
-      "src/kernel/privileged/mm/mod.rs",
-      "a method",
-      4
-    ],
-    [
-      "src/kernel/privileged/mm/mod.rs",
-      "a struct field",
-      4
-    ],
-    [
-      "src/kernel/privileged/mm/mod.rs",
-      "a variant",
-      3
-    ],
-    [
-      "src/kernel/privileged/mm/mod.rs",
-      "an associated function",
-      4
     ],
     [
       "src/kernel/privileged/mm/numa.rs",
@@ -1259,16 +1179,6 @@
       "src/kernel/privileged/proc/proc_ops.rs",
       "a module",
       1
-    ],
-    [
-      "src/kernel/privileged/proc/rlimit.rs",
-      "a constant",
-      17
-    ],
-    [
-      "src/kernel/privileged/proc/rlimit.rs",
-      "an associated function",
-      2
     ],
     [
       "src/kernel/privileged/proc/sched_ops.rs",

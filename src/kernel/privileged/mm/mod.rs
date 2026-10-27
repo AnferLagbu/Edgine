@@ -208,6 +208,7 @@ pub use crate::privileged::config::{
 pub const KERNEL_BASE: u64 = 0xFFFF800000000000u64;
 #[cfg(target_arch = "aarch64")]
 pub const KERNEL_BASE: u64 = 0xFFFF000000000000u64;
+/// 物理地址空间基址 (`0`, 恒等映射起点)
 pub const PHYSICAL_BASE: u64 = 0x0000000000000000u64;
 
 /// 用户空间低地址保护阈值.
@@ -250,9 +251,13 @@ pub const KERNEL_TEXT_BASE: u64 = KERNEL_BASE + 0x4008_0000;
 
 /// 页表项标志 (与 C 定义一致)
 pub const PAGE_PRESENT: u64 = 1 << 0;
+/// 可写位 (bit1)
 pub const PAGE_WRITABLE: u64 = 1 << 1;
+/// 用户态可访问位 (bit2)
 pub const PAGE_USER: u64 = 1 << 2;
+/// 大页标志 (bit7)
 pub const PAGE_HUGE: u64 = 1 << 7; // 大页标志 (huge page)
+/// 禁止执行位 (bit63)
 pub const PAGE_NX: u64 = 1u64 << 63;
 
 /// 裸 `u64` 页表项是否为**用户 leaf** —— 帧持有计数面的唯一判据.
@@ -408,12 +413,16 @@ pub const fn virt_to_phys(virt: u64) -> u64 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PageSize {
+    /// 标准 4KB 页
     Size4K = 0, // Standard 4KB page
+    /// 2MB 大页
     Size2M = 1, // 2MB huge page
+    /// 1GB 巨型页
     Size1G = 2, // 1GB giant page
 }
 
 impl PageSize {
+    /// 返回当前页大小 (字节)
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
@@ -426,6 +435,7 @@ impl PageSize {
         }
     }
 
+    /// 返回当前页大小对应的位移量 (log2 字节数)
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
@@ -453,9 +463,13 @@ impl PageSize {
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct MemoryInfo {
+    /// 物理页总数
     pub total_pages: u64,
+    /// 空闲物理页数
     pub free_pages: u64,
+    /// 已用物理页数
     pub used_pages: u64,
+    /// 内核映像结束地址 (可用内存起点)
     pub kernel_end: u64,
 }
 
@@ -471,6 +485,7 @@ impl Default for MemoryInfo {
 }
 
 impl MemoryInfo {
+    /// 全零构造 (const, 供静态初始化)
     pub const fn const_default() -> Self {
         Self {
             total_pages: 0,
@@ -486,10 +501,12 @@ impl MemoryInfo {
 pub struct PhysAddr(pub u64);
 
 impl PhysAddr {
+    /// 由裸物理地址构造
     pub fn new(addr: u64) -> Self {
         Self(addr)
     }
 
+    /// 返回裸地址值
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
@@ -545,10 +562,12 @@ impl PhysAddr {
 pub struct VirtAddr(pub u64);
 
 impl VirtAddr {
+    /// 由裸虚拟地址构造
     pub fn new(addr: u64) -> Self {
         Self(addr)
     }
 
+    /// 返回裸地址值
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
@@ -665,6 +684,7 @@ pub struct PageTableEntry {
 }
 
 impl PageTableEntry {
+    /// 构造全零页表项
     pub fn new() -> Self {
         Self {
             bits: AtomicU64::new(0),

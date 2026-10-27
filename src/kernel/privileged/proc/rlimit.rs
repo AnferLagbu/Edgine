@@ -27,6 +27,8 @@
 //! - `RLIMIT_NPROC` 默认 `MAX_PROCESSES` (256)
 //! - `RLIMIT_STACK` 默认 8MB
 
+#![deny(missing_docs)]
+
 use crate::privileged::config::{MAX_OPEN_FILES, MAX_PROCESSES};
 use crate::privileged::proc::PROCESS_TABLE;
 use crate::privileged::proc::process_get_current_pid;
@@ -36,22 +38,39 @@ use crate::privileged::syscall::Errno;
 // POSIX 资源类型常量
 // ============================================================================
 
+/// `RLIMIT_CPU`: CPU 时间上限 (秒)
 pub const RLIMIT_CPU: usize = 0;
+/// `RLIMIT_FSIZE`: 可创建文件大小上限 (字节)
 pub const RLIMIT_FSIZE: usize = 1;
+/// `RLIMIT_DATA`: 数据段大小上限 (字节)
 pub const RLIMIT_DATA: usize = 2;
+/// `RLIMIT_STACK`: 栈大小上限 (字节)
 pub const RLIMIT_STACK: usize = 3;
+/// `RLIMIT_CORE`: core dump 文件大小上限 (字节)
 pub const RLIMIT_CORE: usize = 4;
+/// `RLIMIT_RSS`: 常驻内存集大小上限 (页)
 pub const RLIMIT_RSS: usize = 5;
+/// `RLIMIT_NPROC`: 进程数上限
 pub const RLIMIT_NPROC: usize = 6;
+/// `RLIMIT_NOFILE`: 打开文件描述符数上限
 pub const RLIMIT_NOFILE: usize = 7;
+/// `RLIMIT_MEMLOCK`: 可锁定内存上限 (字节)
 pub const RLIMIT_MEMLOCK: usize = 8;
+/// `RLIMIT_AS`: 地址空间大小上限 (字节)
 pub const RLIMIT_AS: usize = 9;
+/// `RLIMIT_LOCKS`: 文件锁数上限
 pub const RLIMIT_LOCKS: usize = 10;
+/// `RLIMIT_SIGPENDING`: 待处理信号数上限
 pub const RLIMIT_SIGPENDING: usize = 11;
+/// `RLIMIT_MSGQUEUE`: POSIX 消息队列字节数上限
 pub const RLIMIT_MSGQUEUE: usize = 12;
+/// `RLIMIT_NICE`: nice 值可调下限
 pub const RLIMIT_NICE: usize = 13;
+/// `RLIMIT_RTPRIO`: 实时优先级上限
 pub const RLIMIT_RTPRIO: usize = 14;
+/// `RLIMIT_RTTIME`: 实时调度 CPU 时间上限 (微秒)
 pub const RLIMIT_RTTIME: usize = 15;
+/// `RLIMIT_NLIMITS`: 资源类型条目数 (表容量)
 pub const RLIMIT_NLIMITS: usize = 16;
 
 /// POSIX `RLIM_INFINITY`
@@ -67,10 +86,12 @@ pub struct Rlimit {
 }
 
 impl Rlimit {
+    /// 由软/硬限制构造
     pub const fn new(cur: u64, max: u64) -> Self {
         Self { cur, max }
     }
 
+    /// 构造无限制条目 (`RLIM_INFINITY` / `RLIM_INFINITY`)
     pub const fn infinity() -> Self {
         Self::new(RLIM_INFINITY, RLIM_INFINITY)
     }

@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! 会话生命周期 (functions 层)
 //!
 //! ## 框内核中的表达
@@ -49,12 +50,16 @@ pub enum SessionState {
     Quarantined,
 }
 
+/// 会话标识 (单调递增分配)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionId(pub u32);
 
+/// 已认证的活跃登录会话记录
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Session {
+    /// 会话标识
     pub id: SessionId,
+    /// 关联的持久身份 (PWM) 标识
     pub pwm: u64,
     /// 创建 tick
     pub created_tick: u64,
@@ -81,6 +86,7 @@ pub struct SessionTable {
 }
 
 impl SessionTable {
+    /// 构造空会话表 (const, 供静态初始化)
     pub const fn new() -> Self {
         const NONE: Option<Session> = None;
         const EMPTY_CAPS: [CapBits; CAP_DOMAINS] = [CapBits(0); CAP_DOMAINS];
@@ -239,10 +245,12 @@ impl SessionTable {
         count
     }
 
+    /// 当前活跃会话数
     pub fn active_count(&self) -> u64 {
         self.active.load(Ordering::Acquire)
     }
 
+    /// 遍历全部活跃会话
     pub fn iter(&self) -> impl Iterator<Item = &Session> {
         self.records.iter().filter_map(|s| s.as_ref())
     }
@@ -256,7 +264,9 @@ impl SessionTable {
 ///   - `Kernel(KernelError)`: 共享错误 (`NotFound` / TooManySessions→WouldBlock / Other) 全部走单一来源
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionError {
+    /// 会话表已满 (无空闲槽位)
     TableFull,
+    /// 会话不处于活跃状态
     NotActive,
     /// 共享 `KernelError` 包装
     Kernel(crate::functions::error::KernelError),
@@ -279,26 +289,37 @@ use crate::privileged::syscall::Errno;
 /// 登录认证结果
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoginResult {
+    /// 认证通过, 返回新建会话标识
     Success(SessionId),
+    /// 认证被拒, 携带拒绝原因
     Denied(LoginDeny),
 }
 
+/// 登录被拒原因
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoginDeny {
+    /// 凭证无效
     InvalidCredentials,
+    /// 账户已锁定
     AccountLocked,
+    /// 能力校验未通过
     CapabilityDenied(PolicyResult),
+    /// 并发会话数超限
     TooManySessions,
 }
 
-/// 登录管理器
+/// 登录管理器: 绑定会话表与能力策略, 执行认证流程
 pub struct SessionManager<'a> {
+    /// 会话表 (由调用方持有)
     pub table: &'a mut SessionTable,
+    /// 能力策略引擎
     pub policy: &'a PolicyEngine,
+    /// 失败登录次数上限
     pub max_failed_attempts: u32,
 }
 
 impl<'a> SessionManager<'a> {
+    /// 构造登录管理器 (失败次数上限默认 5)
     pub fn new(table: &'a mut SessionTable, policy: &'a PolicyEngine) -> Self {
         Self {
             table,

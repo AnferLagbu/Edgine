@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //! ext2 inode 数据结构
 
@@ -6,23 +7,41 @@
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct Ext2Inode {
+    /// 文件类型与权限位
     pub i_mode: u16,
+    /// 所有者 UID
     pub i_uid: u16,
+    /// 文件大小 (字节, 低 32 位)
     pub i_size: u32,
+    /// 最后访问时间 (Unix 时间戳)
     pub i_atime: u32,
+    /// inode 变更时间 (Unix 时间戳)
     pub i_ctime: u32,
+    /// 最后修改时间 (Unix 时间戳)
     pub i_mtime: u32,
+    /// 删除时间 (0 = 未删除)
     pub i_dtime: u32,
+    /// 所属组 GID
     pub i_gid: u16,
+    /// 硬链接数
     pub i_links_count: u16,
+    /// 占用块数 (512 字节为单位)
     pub i_blocks: u32,
+    /// 文件标志位
     pub i_flags: u32,
+    /// 操作系统保留字段 1
     pub i_osd1: u32,
+    /// 块指针数组 (12 直接 + 1 一次间接 + 1 二次间接 + 1 三次间接)
     pub i_block: [u32; 15], // 12 direct + 1 indirect + 1 double + 1 triple
+    /// 文件版本号 (NFS 使用)
     pub i_generation: u32,
+    /// 扩展属性块号
     pub i_file_acl: u32,
+    /// 目录 ACL 块号 (高 32 位大小)
     pub i_dir_acl: u32,
+    /// 碎片地址
     pub i_faddr: u32,
+    /// 操作系统保留字段 2
     pub i_osd2: [u8; 12],
 }
 
