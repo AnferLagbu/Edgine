@@ -17,10 +17,13 @@
 //! `functions::driver::display::framebuffer_ops`, 此处仅保留像素格式转换、
 //! MMIO 读写与滚动机制原语 (font 因被 gfx_console 机制直接绑定而保留)。
 
+#![deny(missing_docs)]
+
 pub mod font;
 pub mod framebuffer;
 /// 帧缓冲绘图策略契约与注册表 (functions 实现, privileged 调用)
 pub mod framebuffer_ops;
+/// 帧缓冲自检: 初始化后校验绘制、滚动与像素读写的基本功能
 pub mod self_test;
 
 // 导出Framebuffer类型

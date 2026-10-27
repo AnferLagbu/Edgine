@@ -36,6 +36,8 @@
 //! Shadow Stack 操作涉及 CR4/MSR 写入, 需在 Ring 0 执行.
 //! CET 启用失败不会 panic, 仅记录日志并回退.
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::privileged::config::PAGE_SIZE;
@@ -161,6 +163,7 @@ pub struct CetSubsystem {
 }
 
 impl CetSubsystem {
+    /// 构造一个未初始化 (能力探测结果全为 false) 的 CET 子系统实例。
     pub const fn new() -> Self {
         Self {
             caps: IrqSpinLock::new(CetCapabilities {

@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! SGEG 密码学原语 — functions 层安全代理
 //!
 //! ## 状态 (v2.17, 2026-06-04)
@@ -269,6 +270,7 @@ impl StorageError {
     }
 }
 
+/// SGEG 存储子系统统一结果类型 (成功值或 `StorageError`)。
 pub type StorageResult<T> = Result<T, StorageError>;
 
 use crate::privileged::syscall::Errno;

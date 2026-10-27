@@ -5,36 +5,11 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 11,
-    "files": 11,
-    "keys": 11
+    "sites": 6,
+    "files": 6,
+    "keys": 6
   },
   "entries": [
-    [
-      "src/kernel/functions/sgeg/crypto.rs",
-      "a type alias",
-      1
-    ],
-    [
-      "src/kernel/functions/sync/pi_mutex.rs",
-      "a type alias",
-      1
-    ],
-    [
-      "src/kernel/privileged/arch/shadow_stack.rs",
-      "an associated function",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/display/mod.rs",
-      "a module",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/input/mod.rs",
-      "a function",
-      1
-    ],
     [
       "src/kernel/privileged/driver/net/mod.rs",
       "a module",

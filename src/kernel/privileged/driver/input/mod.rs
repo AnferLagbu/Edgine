@@ -14,12 +14,15 @@
 //! └── joystick.rs # 游戏手柄 (未来)
 //! ```
 
+#![deny(missing_docs)]
+
 #[cfg(target_arch = "x86_64")]
 pub mod keyboard;
 
 #[cfg(target_arch = "x86_64")]
 pub use keyboard::KeyboardDriver;
 
+/// 初始化输入设备子系统 (x86_64: 经 `keyboard_init` 注册 PS/2 键盘并绑定 IRQ1)
 #[cfg(target_arch = "x86_64")]
 pub fn input_init() {
     // 键盘注册唯一入口: `keyboard_init()` 内经 `egdf_register_with_ops` 注册

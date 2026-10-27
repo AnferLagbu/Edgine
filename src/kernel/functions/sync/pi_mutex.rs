@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! Priority Inheritance Mutex — functions 层安全代理
 //!
 //! ## 职责
@@ -46,6 +47,7 @@ impl PiMutexError {
     }
 }
 
+/// PI Mutex 子系统统一结果类型 (成功值或 `PiMutexError`)。
 pub type PiMutexResult<T> = Result<T, PiMutexError>;
 
 // ============================================================================
