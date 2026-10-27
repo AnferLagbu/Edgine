@@ -2,6 +2,8 @@
 //!
 //! `x86_64` Local APIC: 每 CPU 中断控制、定时器与 IPI。
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 const APIC_BASE_MSR: u32 = 0x1B;
@@ -348,31 +350,37 @@ pub fn unmask_lint1(mode: u32) {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// C ABI 导出: 初始化 Local APIC 硬件
 #[unsafe(no_mangle)]
 pub extern "C" fn apic_init() {
     init();
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// C ABI 导出: 发送 EOI 结束当前中断
 #[unsafe(no_mangle)]
 pub extern "C" fn apic_eoi() {
     eoi();
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// C ABI 导出: 返回 Local APIC 是否已初始化
 #[unsafe(no_mangle)]
 pub extern "C" fn apic_is_ready() -> bool {
     is_initialized()
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// C ABI 导出: 返回当前 CPU 的 Local APIC ID
 #[unsafe(no_mangle)]
 pub extern "C" fn apic_get_id() -> u32 {
     get_id()
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// C ABI 导出: 向指定 APIC ID 的 CPU 发送 IPI
 #[unsafe(no_mangle)]
 pub extern "C" fn apic_send_ipi(apic_id: u8, vector: u8) {
     send_ipi(apic_id, vector);
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// C ABI 导出: 向所有 CPU 广播 IPI
 #[unsafe(no_mangle)]
 pub extern "C" fn apic_broadcast_ipi(vector: u8) {
     broadcast_ipi(vector);

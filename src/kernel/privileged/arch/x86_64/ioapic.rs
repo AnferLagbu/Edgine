@@ -3,6 +3,8 @@
 //! 将外部硬件中断路由到指定 CPU 核心.
 //! 支持多 IOAPIC 控制器, 通过 GSI (Global System Interrupt) 路由.
 
+#![deny(missing_docs)]
+
 use crate::privileged::sync::IrqSpinLock;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -357,26 +359,31 @@ pub fn delivery_extint() -> u64 {
 // ============================================================================
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// C ABI 导出: 以给定 MMIO 基址初始化 IOAPIC
 #[unsafe(no_mangle)]
 pub extern "C" fn ioapic_init(base_addr: u64) {
     init(base_addr);
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// C ABI 导出: 屏蔽指定 IRQ 线
 #[unsafe(no_mangle)]
 pub extern "C" fn ioapic_mask_irq(irq: u8) {
     mask_irq(irq);
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// C ABI 导出: 解除指定 IRQ 线屏蔽
 #[unsafe(no_mangle)]
 pub extern "C" fn ioapic_unmask_irq(irq: u8) {
     unmask_irq(irq);
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// C ABI 导出: 配置指定 IRQ 线的向量、目标 CPU 与屏蔽状态
 #[unsafe(no_mangle)]
 pub extern "C" fn ioapic_set_irq(irq: u8, vector: u8, apic_id: u8, masked: bool) {
     set_irq(irq, vector, apic_id, masked);
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// C ABI 导出: 配置指定 IRQ 线, 并附带投递模式 (如电平/边沿)
 #[unsafe(no_mangle)]
 pub extern "C" fn ioapic_set_irq_with_mode(
     irq: u8,
@@ -388,6 +395,7 @@ pub extern "C" fn ioapic_set_irq_with_mode(
     set_irq_with_mode(irq, vector, apic_id, masked, mode);
 }
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// C ABI 导出: 将指定 IRQ 线路由到目标 CPU
 #[unsafe(no_mangle)]
 pub extern "C" fn ioapic_route_irq_to_cpu(irq: u8, apic_id: u8) {
     route_irq_to_cpu(irq, apic_id);

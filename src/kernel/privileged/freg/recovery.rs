@@ -20,6 +20,8 @@
 //!
 //! 子系统的 save/restore/reset 回调在中断上下文中执行, 必须无阻塞、无锁竞争。
 
+#![deny(missing_docs)]
+
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -28,9 +30,12 @@ use crate::privileged::sync::IrqSpinLock;
 /// 恢复域标识符 (u64 别名)。
 pub type DomainId = u64;
 
+/// UNKFS 文件系统恢复域 ID
 pub const DOMAIN_ID_UNKFS: DomainId = 2;
+/// 网络栈恢复域 ID
 pub const DOMAIN_ID_NET: DomainId = 5;
 
+/// 可恢复子系统域: 提供检查点保存/恢复/重置与依赖拓扑查询接口
 pub trait RecoverableDomain: Send + Sync {
     /// 返回该域名称 (用于日志与拓扑展示)。
     fn name(&self) -> &'static str;
@@ -65,11 +70,14 @@ impl RegisteredDomain {}
 /// 恢复域注册表: 维护已注册域及其 save/restore/reset 回调。
 pub struct RecoveryRegistry {
     pub(crate) registered: Vec<RegisteredDomain>,
+    /// 下一个可分配的域 ID (自增)
     pub next_id: AtomicU64,
+    /// 注册表是否已初始化
     pub initialized: bool,
 }
 
 impl RecoveryRegistry {
+    /// 构造空的恢复域注册表 (初始域 ID 从 16 起分配)
     pub const fn new() -> Self {
         Self {
             registered: Vec::new(),

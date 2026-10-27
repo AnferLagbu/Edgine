@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 81,
-    "files": 29,
-    "keys": 78
+    "sites": 78,
+    "files": 27,
+    "keys": 75
   },
   "entries": [
     [
@@ -44,18 +44,6 @@
       "src/kernel/privileged/console/gfx_console.rs",
       "fn",
       "write_str",
-      1
-    ],
-    [
-      "src/kernel/privileged/debug/ftrace.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/debug/ftrace.rs",
-      "fn",
-      "zero",
       1
     ],
     [
@@ -96,12 +84,6 @@
     ],
     [
       "src/kernel/privileged/freg/recoverable.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/recovery.rs",
       "fn",
       "new",
       1

@@ -33,10 +33,15 @@ pub fn net_stack() -> Option<&'static Mutex<SmoltcpNetStack>> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum InitState {
+    /// 尚未初始化
     Uninitialized = 0,
+    /// 硬件探测完成
     HardwareProbed = 1,
+    /// 网络接口就绪
     InterfaceReady = 2,
+    /// 完全初始化 (协议栈可用)
     FullyInitialized = 3,
+    /// 初始化失败
     Failed = 255,
 }
 
@@ -137,6 +142,7 @@ impl NetError {
         }
     }
 
+    /// 由 C ABI 返回码构造 `NetError` (负数按 errno 语义映射, 未知码归入 `Other`)
     pub fn from_i32(rc: i32) -> Self {
         use crate::functions::error::KernelError as K;
         match rc {

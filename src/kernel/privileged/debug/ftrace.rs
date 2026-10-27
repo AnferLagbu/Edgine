@@ -22,6 +22,8 @@
 //! - 总开关关闭时 `trace_event!` 展开为单条 `if false { ... }`, 编译期消除
 //! - 启用时单事件约 30 ns (无锁 ring push)
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use super::ringbuf::RingBuffer;
@@ -44,13 +46,18 @@ pub struct TraceEvent {
     pub timestamp: u64,
     /// 跟踪点名称 hash (FNV-1a 32-bit, 高 32 位填 0)
     pub name_hash: u64,
+    /// 事件参数 0 (含义由各跟踪点自定义)
     pub arg0: u64,
+    /// 事件参数 1 (含义由各跟踪点自定义)
     pub arg1: u64,
+    /// 事件参数 2 (含义由各跟踪点自定义)
     pub arg2: u64,
+    /// 事件参数 3 (含义由各跟踪点自定义)
     pub arg3: u64,
 }
 
 impl TraceEvent {
+    /// 构造全零事件 (时间戳与所有参数为 0)
     pub const fn zero() -> Self {
         Self {
             timestamp: 0,
@@ -78,6 +85,7 @@ pub struct FtraceState {
 }
 
 impl FtraceState {
+    /// 构造初始 (禁用) 状态的 `FtraceState`
     pub const fn new() -> Self {
         Self {
             buf: RingBuffer::new(),

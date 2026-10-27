@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 286,
-    "files": 93,
-    "keys": 134
+    "sites": 256,
+    "files": 88,
+    "keys": 124
   },
   "entries": [
     [
@@ -186,16 +186,6 @@
       3
     ],
     [
-      "src/kernel/functions/net/mod.rs",
-      "a variant",
-      5
-    ],
-    [
-      "src/kernel/functions/net/mod.rs",
-      "an associated function",
-      1
-    ],
-    [
       "src/kernel/functions/proc/elf.rs",
       "a type alias",
       1
@@ -291,16 +281,6 @@
       1
     ],
     [
-      "src/kernel/privileged/arch/x86_64/apic.rs",
-      "a function",
-      6
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/ioapic.rs",
-      "a function",
-      6
-    ],
-    [
       "src/kernel/privileged/arch/x86_64/mod.rs",
       "a module",
       1
@@ -329,16 +309,6 @@
       "src/kernel/privileged/console/mod.rs",
       "a module",
       1
-    ],
-    [
-      "src/kernel/privileged/debug/ftrace.rs",
-      "a struct field",
-      4
-    ],
-    [
-      "src/kernel/privileged/debug/ftrace.rs",
-      "an associated function",
-      2
     ],
     [
       "src/kernel/privileged/driver/display/font.rs",
@@ -392,26 +362,6 @@
     ],
     [
       "src/kernel/privileged/freg/recoverable.rs",
-      "an associated function",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/recovery.rs",
-      "a constant",
-      2
-    ],
-    [
-      "src/kernel/privileged/freg/recovery.rs",
-      "a struct field",
-      2
-    ],
-    [
-      "src/kernel/privileged/freg/recovery.rs",
-      "a trait",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/recovery.rs",
       "an associated function",
       1
     ],
