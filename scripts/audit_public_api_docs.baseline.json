@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 284,
-    "files": 61,
-    "keys": 253
+    "sites": 274,
+    "files": 59,
+    "keys": 243
   },
   "entries": [
     [
@@ -62,12 +62,6 @@
       "src/kernel/privileged/driver/display/font.rs",
       "fn",
       "builtin_8x16",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/hotplug.rs",
-      "fn",
-      "new",
       1
     ],
     [
@@ -140,60 +134,6 @@
       "src/kernel/privileged/egdf/composite.rs",
       "fn",
       "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/devtree.rs",
-      "fn",
-      "add_prop",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/devtree.rs",
-      "fn",
-      "as_bool",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/devtree.rs",
-      "fn",
-      "as_str",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/devtree.rs",
-      "fn",
-      "as_u32",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/devtree.rs",
-      "fn",
-      "as_u64",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/devtree.rs",
-      "fn",
-      "get_prop",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/devtree.rs",
-      "fn",
-      "matches_compatible",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/devtree.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/devtree.rs",
-      "fn",
-      "set_compatible",
       1
     ],
     [

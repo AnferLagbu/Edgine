@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 1700,
-    "files": 182,
-    "keys": 398
+    "sites": 1553,
+    "files": 177,
+    "keys": 372
   },
   "entries": [
     [
@@ -19,21 +19,6 @@
       "src/kernel/functions/driver/acpi.rs",
       "a struct field",
       14
-    ],
-    [
-      "src/kernel/functions/driver/char/serial.rs",
-      "a constant",
-      5
-    ],
-    [
-      "src/kernel/functions/driver/char/serial.rs",
-      "a struct field",
-      4
-    ],
-    [
-      "src/kernel/functions/driver/char/serial.rs",
-      "a variant",
-      20
     ],
     [
       "src/kernel/functions/driver/char/vga.rs",
@@ -128,36 +113,6 @@
     [
       "src/kernel/functions/egdf/mod.rs",
       "an associated function",
-      1
-    ],
-    [
-      "src/kernel/functions/freg/attribution.rs",
-      "a constant",
-      1
-    ],
-    [
-      "src/kernel/functions/freg/attribution.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/functions/freg/attribution.rs",
-      "a struct field",
-      17
-    ],
-    [
-      "src/kernel/functions/freg/attribution.rs",
-      "a variant",
-      6
-    ],
-    [
-      "src/kernel/functions/freg/attribution.rs",
-      "an associated function",
-      3
-    ],
-    [
-      "src/kernel/functions/freg/attribution.rs",
-      "an enum",
       1
     ],
     [
@@ -449,46 +404,6 @@
       "src/kernel/functions/fs/unkfs/compress.rs",
       "a function",
       2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dedup.rs",
-      "a constant",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dedup.rs",
-      "a function",
-      12
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dedup.rs",
-      "a method",
-      8
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dedup.rs",
-      "a struct",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dedup.rs",
-      "a type alias",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dedup.rs",
-      "a variant",
-      4
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dedup.rs",
-      "an associated function",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dedup.rs",
-      "an enum",
-      1
     ],
     [
       "src/kernel/functions/fs/unkfs/metaslab.rs",
@@ -966,26 +881,6 @@
       2
     ],
     [
-      "src/kernel/privileged/driver/hotplug.rs",
-      "a static",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/hotplug.rs",
-      "a struct field",
-      24
-    ],
-    [
-      "src/kernel/privileged/driver/hotplug.rs",
-      "a variant",
-      3
-    ],
-    [
-      "src/kernel/privileged/driver/hotplug.rs",
-      "an associated function",
-      1
-    ],
-    [
       "src/kernel/privileged/driver/infra.rs",
       "a method",
       2
@@ -1084,31 +979,6 @@
       "src/kernel/privileged/egdf/composite.rs",
       "an associated function",
       2
-    ],
-    [
-      "src/kernel/privileged/egdf/devtree.rs",
-      "a function",
-      3
-    ],
-    [
-      "src/kernel/privileged/egdf/devtree.rs",
-      "a method",
-      8
-    ],
-    [
-      "src/kernel/privileged/egdf/devtree.rs",
-      "a struct field",
-      13
-    ],
-    [
-      "src/kernel/privileged/egdf/devtree.rs",
-      "a variant",
-      6
-    ],
-    [
-      "src/kernel/privileged/egdf/devtree.rs",
-      "an associated function",
-      1
     ],
     [
       "src/kernel/privileged/egdf/firmware.rs",

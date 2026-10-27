@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 //! 设备热插拔管理器 (Device Hotplug Manager)
 //!
 //! 统一管理 PCIe/USB 等总线的设备插入/移除事件，
@@ -30,8 +31,11 @@ use core::sync::atomic::{AtomicBool, Ordering};
 /// 总线类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BusType {
+    /// PCIe 总线.
     Pcie,
+    /// USB 总线.
     Usb,
+    /// virtio 总线.
     Virtio,
     /// SATA (AHCI 端口级热插拔)
     Sata,
@@ -40,10 +44,15 @@ pub enum BusType {
 /// 设备位置标识
 #[derive(Debug, Clone, Copy)]
 pub struct DeviceLocation {
+    /// 总线类型.
     pub bus_type: BusType,
+    /// 总线号.
     pub bus: u8,
+    /// 设备号.
     pub device: u8,
+    /// 功能号.
     pub function: u8,
+    /// 槽位号.
     pub slot: u8,
 }
 
@@ -51,11 +60,20 @@ pub struct DeviceLocation {
 #[derive(Debug, Clone)]
 pub enum HotplugEvent {
     /// 设备已插入，需重新扫描并注册
-    DeviceAdded { location: DeviceLocation },
+    DeviceAdded {
+        /// 设备位置.
+        location: DeviceLocation,
+    },
     /// 设备已移除 (正常流程)
-    DeviceRemoved { location: DeviceLocation },
+    DeviceRemoved {
+        /// 设备位置.
+        location: DeviceLocation,
+    },
     /// 意外拔出 (未事先通知)
-    SurpriseRemoval { location: DeviceLocation },
+    SurpriseRemoval {
+        /// 设备位置.
+        location: DeviceLocation,
+    },
 }
 
 // ── 监听器 ──
@@ -83,6 +101,7 @@ pub struct HotplugManager {
 }
 
 impl HotplugManager {
+    /// 创建未初始化的管理器 (空槽位表、空监听器表).
     pub const fn new() -> Self {
         Self {
             slots: Mutex::new(Vec::new()),
@@ -236,36 +255,53 @@ impl HotplugManager {
 /// 单个热插拔槽位状态
 #[derive(Debug, Clone, Copy)]
 pub struct HotplugSlotInfo {
+    /// 总线号.
     pub bus: u8,
+    /// 设备号.
     pub device: u8,
+    /// 功能号.
     pub function: u8,
+    /// 槽位号.
     pub slot_number: u8,
+    /// 当前是否有设备在位.
     pub presence: bool,
+    /// 是否支持意外拔出.
     pub surprise_capable: bool,
+    /// 是否支持热插拔.
     pub hotplug_capable: bool,
 }
 
 /// 单个块设备状态
 #[derive(Debug, Clone, Copy)]
 pub struct BlockDeviceState {
+    /// 块设备全局下标.
     pub drive: u8,
+    /// 设备当前是否在位.
     pub present: bool,
+    /// 是否正在移除.
     pub removing: bool,
+    /// 累计 I/O 次数.
     pub io_count: u32,
 }
 
 /// 热插拔系统状态汇总
 #[derive(Debug, Clone)]
 pub struct HotplugStatus {
+    /// 管理器是否已初始化.
     pub enabled: bool,
+    /// 热插拔槽位数量.
     pub slot_count: u32,
+    /// 槽位状态列表.
     pub slots: Vec<HotplugSlotInfo>,
+    /// 块设备数量.
     pub blk_device_count: u32,
+    /// 块设备状态列表.
     pub blk_devices: Vec<BlockDeviceState>,
 }
 
 // ── 全局单例 ──
 
+/// 全局热插拔管理器单例.
 pub static HOTPLUG_MANAGER: HotplugManager = HotplugManager::new();
 
 /// DECISION-K: functions 侧总线重枚举回调 (无捕获函数指针)。

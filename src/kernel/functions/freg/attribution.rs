@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! FREG恢复 — 跨 privileged/functions 边界的故障归属 (functions 层)
 //!
 //! ## 框内核中的 TCB/Functions 故障边界
@@ -37,30 +38,51 @@ use crate::functions::sgeg::policy::{CapBits, CapDomain, CapabilityMatrix, InMem
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FaultAttribution {
     /// 归属到具体服务域
-    Service { domain_id: u64, recoverable: bool },
+    Service {
+        /// 服务域标识.
+        domain_id: u64,
+        /// 是否可恢复.
+        recoverable: bool,
+    },
     /// TCB 内故障, 不可恢复
-    Tcb { module: TcbModule },
+    Tcb {
+        /// 出错的 TCB 模块.
+        module: TcbModule,
+    },
     /// 跨层调用中, 需进一步判定
-    CrossLayer { caller: u64, callee: TcbModule },
+    CrossLayer {
+        /// functions 侧调用方标识.
+        caller: u64,
+        /// TCB 侧被调用模块.
+        callee: TcbModule,
+    },
     /// 未知地址
     Unknown,
 }
 
+/// TCB 模块标识 (用于故障归属定位).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[expect(
     clippy::upper_case_acronyms,
     reason = "TCB 归属枚举按子系统缩写命名 (FREG/SGEG), 缩写即语义标识且无更长形式"
 )]
 pub enum TcbModule {
+    /// 故障恢复子系统.
     FREG,
+    /// 服务域引擎子系统.
     SGEG,
+    /// 内存管理子系统.
     Memory,
+    /// 同步原语子系统.
     Sync,
+    /// 中断描述符表子系统.
     Idt,
+    /// 其他未归类模块.
     Other,
 }
 
 impl TcbModule {
+    /// 按模块路径名 (字节串) 推断所属 TCB 模块, 无法识别时归入 `Other`.
     pub const fn from_name(name: &[u8]) -> Self {
         if contains_substr(name, b"freg") {
             Self::FREG
@@ -107,12 +129,16 @@ const fn contains_substr(haystack: &[u8], needle: &[u8]) -> bool {
 /// 地址范围 (用于归属判定)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AddrRange {
+    /// 起始地址 (含).
     pub start: u64,
+    /// 结束地址 (不含).
     pub end: u64,
+    /// 该范围对应的模块名.
     pub name: &'static [u8],
 }
 
 impl AddrRange {
+    /// 判断 `addr` 是否落在 `[start, end)` 内.
     pub const fn contains(&self, addr: u64) -> bool {
         addr >= self.start && addr < self.end
     }
@@ -219,15 +245,22 @@ impl FaultAttributor {
 
 /// 服务域失败记录
 pub struct DomainFailureRecord {
+    /// 服务域标识.
     pub domain_id: u64,
+    /// 连续失败次数 (成功即清零).
     pub consecutive_failures: AtomicU32,
+    /// 累计失败次数.
     pub total_failures: AtomicU64,
+    /// 最近一次失败的 tick.
     pub last_failure_tick: AtomicU64,
+    /// 累计降级次数.
     pub downgraded: AtomicU32,
+    /// 当前降级层级 (0=正常, 1=降级, 2=隔离).
     pub current_tier: AtomicU32, // 0=正常, 1=降级, 2=隔离
 }
 
 impl DomainFailureRecord {
+    /// 创建指定服务域的失败记录 (所有计数归零, tier 为 0).
     pub const fn new(domain_id: u64) -> Self {
         Self {
             domain_id,
@@ -302,14 +335,19 @@ pub fn downgrade_for_tier(tier: u32) -> CapBits {
 
 /// 跨层故障处理器
 pub struct CrossLayerHandler<'a> {
+    /// 能力矩阵 (降级目标).
     pub matrix: &'a InMemoryMatrix,
+    /// 各服务域的失败记录表.
     pub records: &'a mut [DomainFailureRecord; MAX_SERVICE_DOMAINS],
+    /// 当前 tick.
     pub current_tick: u64,
 }
 
+/// 服务域记录表的最大容量.
 pub const MAX_SERVICE_DOMAINS: usize = 16;
 
 impl<'a> CrossLayerHandler<'a> {
+    /// 构造跨层故障处理器 (绑定能力矩阵、失败记录表与当前 tick).
     pub fn new(
         matrix: &'a InMemoryMatrix,
         records: &'a mut [DomainFailureRecord; MAX_SERVICE_DOMAINS],

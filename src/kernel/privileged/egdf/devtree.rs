@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 //! EGDF设备树 (EGDF Device Tree)
 //!
 //! 构建内核设备拓扑层次结构，支持：
@@ -34,15 +35,22 @@ use core::sync::atomic::{AtomicU32, Ordering};
 /// 设备树节点的属性值 (支持 u32/u64/字符串/布尔及定长数组).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PropertyValue {
+    /// 32 位无符号整数属性.
     U32(u32),
+    /// 64 位无符号整数属性.
     U64(u64),
+    /// 静态字符串属性.
     String(&'static str),
+    /// 布尔属性.
     Bool(bool),
+    /// 32 位无符号整数定长数组属性.
     U32Array(&'static [u32]),
+    /// 64 位无符号整数定长数组属性.
     U64Array(&'static [u64]),
 }
 
 impl PropertyValue {
+    /// 以 `u32` 读取属性值; 类型不匹配时返回 `None`.
     pub fn as_u32(&self) -> Option<u32> {
         match self {
             Self::U32(v) => Some(*v),
@@ -50,6 +58,7 @@ impl PropertyValue {
         }
     }
 
+    /// 以 `u64` 读取属性值; 类型不匹配时返回 `None`.
     pub fn as_u64(&self) -> Option<u64> {
         match self {
             Self::U64(v) => Some(*v),
@@ -57,6 +66,7 @@ impl PropertyValue {
         }
     }
 
+    /// 以 `bool` 读取属性值; 类型不匹配时返回 `None`.
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Self::Bool(v) => Some(*v),
@@ -64,6 +74,7 @@ impl PropertyValue {
         }
     }
 
+    /// 以静态字符串读取属性值; 类型不匹配时返回 `None`.
     pub fn as_str(&self) -> Option<&'static str> {
         match self {
             Self::String(s) => Some(s),
@@ -75,7 +86,9 @@ impl PropertyValue {
 /// 设备树节点的单个属性 (名称 + 值).
 #[derive(Debug, Clone)]
 pub struct Property {
+    /// 属性名.
     pub name: &'static str,
+    /// 属性值.
     pub value: PropertyValue,
 }
 
@@ -85,20 +98,32 @@ pub type NodeId = u32;
 /// 设备树中的一个设备节点 (含层级、compatible、属性与状态).
 #[derive(Debug, Clone)]
 pub struct EGDFNode {
+    /// 节点唯一标识.
     pub id: NodeId,
+    /// 节点名称.
     pub name: &'static str,
+    /// compatible 字符串列表 (驱动绑定匹配).
     pub compatible: Vec<&'static str>,
+    /// 设备协议类别.
     pub proto: EGDFProto,
+    /// 节点属性表 (名称 → 属性值).
     pub properties: BTreeMap<&'static str, PropertyValue>,
+    /// 父节点标识; 根节点为 `None`.
     pub parent: Option<NodeId>,
+    /// 直接子节点标识列表.
     pub children: Vec<NodeId>,
+    /// 绑定到全局设备表后的设备 id (`None` 表示尚未注册).
     pub device_id: Option<u32>,
+    /// 节点生命周期状态.
     pub state: DeviceState,
+    /// 已绑定该设备的用户进程 pid (`None` 表示未绑定).
     pub user_mapped: Option<u32>,
+    /// 随节点携带的固件 blob (如 ACPI/DTB 片段).
     pub firmware: Option<super::firmware::FirmwareBlob>,
 }
 
 impl EGDFNode {
+    /// 创建一个未挂载的节点 (无父节点、无属性、状态为 `Uninit`).
     pub fn new(id: NodeId, name: &'static str, proto: EGDFProto) -> Self {
         Self {
             id,
@@ -115,18 +140,22 @@ impl EGDFNode {
         }
     }
 
+    /// 添加或覆盖一个属性.
     pub fn add_prop(&mut self, name: &'static str, value: PropertyValue) {
         self.properties.insert(name, value);
     }
 
+    /// 按名称读取属性; 不存在时返回 `None`.
     pub fn get_prop(&self, name: &str) -> Option<&PropertyValue> {
         self.properties.get(name)
     }
 
+    /// 设置 compatible 字符串列表.
     pub fn set_compatible(&mut self, compat: Vec<&'static str>) {
         self.compatible = compat;
     }
 
+    /// 判断本节点是否声明了给定的 compatible 字符串.
     pub fn matches_compatible(&self, needle: &str) -> bool {
         self.compatible.contains(&needle)
     }
@@ -370,18 +399,24 @@ fn devtree_print_impl() {
     }
 }
 
+/// 打印整棵设备树 (DFS 顺序) 到内核日志.
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn devtree_print() {
     devtree_print_impl();
 }
 
+/// 初始化设备树 (创建 platform 根节点).
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn devtree_init() {
     devtree_init_impl();
 }
 
+/// 从 C 字符串创建节点, 返回新节点 id (失败时返回 0).
+///
+/// `proto` 为协议类别编号 (1=Block / 2=Char / 3=Net / 4=Input / 5=Bus, 其他为 `Other`);
+/// `parent_id` 为 0 时挂载到根节点.
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 #[expect(

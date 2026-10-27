@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //!
 //! 16550 UART 串口驱动 — functions 层安全代理 (Phase 2.1.5)
@@ -34,10 +35,15 @@ pub const SERIAL_BUFFER_SIZE: usize = 256;
 
 // ── COM 端口基址 ──
 
+/// COM1 端口基址 (0x3F8).
 pub const COM1_BASE: u16 = 0x3F8;
+/// COM2 端口基址 (0x2F8).
 pub const COM2_BASE: u16 = 0x2F8;
+/// COM3 端口基址 (0x3E8).
 pub const COM3_BASE: u16 = 0x3E8;
+/// COM4 端口基址 (0x2E8).
 pub const COM4_BASE: u16 = 0x2E8;
+/// 单个 COM 端口占用的 I/O 寄存器跨度 (字节).
 pub const COM_PORT_COUNT: u16 = 8;
 
 // ── UART 寄存器偏移 (相对基址) ──
@@ -100,10 +106,15 @@ pub const MCR_OUT2: u8 = 0x08;
 /// 波特率
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BaudRate {
+    /// 9600 波特.
     Baud9600,
+    /// 19200 波特.
     Baud19200,
+    /// 38400 波特.
     Baud38400,
+    /// 57600 波特.
     Baud57600,
+    /// 115200 波特.
     Baud115200,
 }
 
@@ -129,9 +140,13 @@ impl Default for BaudRate {
 /// 数据位
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataBits {
+    /// 5 位数据.
     Bits5,
+    /// 6 位数据.
     Bits6,
+    /// 7 位数据.
     Bits7,
+    /// 8 位数据.
     Bits8,
 }
 
@@ -156,7 +171,9 @@ impl Default for DataBits {
 /// 停止位
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StopBits {
+    /// 1 位停止位.
     One,
+    /// 2 位停止位.
     Two,
 }
 
@@ -179,10 +196,15 @@ impl Default for StopBits {
 /// 校验模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParityMode {
+    /// 无校验.
     None,
+    /// 奇校验.
     Odd,
+    /// 偶校验.
     Even,
+    /// 固定标记位校验.
     Mark,
+    /// 固定空格位校验.
     Space,
 }
 
@@ -208,9 +230,13 @@ impl Default for ParityMode {
 /// 串口配置
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SerialConfig {
+    /// 波特率.
     pub baud_rate: BaudRate,
+    /// 数据位宽.
     pub data_bits: DataBits,
+    /// 停止位宽.
     pub stop_bits: StopBits,
+    /// 校验模式.
     pub parity: ParityMode,
 }
 
@@ -233,9 +259,13 @@ impl SerialConfig {
 /// COM 端口编号 (0-3)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComPort {
+    /// COM1 (0x3F8, IRQ4).
     Com1 = 0,
+    /// COM2 (0x2F8, IRQ3).
     Com2 = 1,
+    /// COM3 (0x3E8, IRQ4).
     Com3 = 2,
+    /// COM4 (0x2E8, IRQ3).
     Com4 = 3,
 }
 
