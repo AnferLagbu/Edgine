@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //! exFAT 读取核心逻辑
 
@@ -11,7 +12,9 @@ use alloc::vec::Vec;
 
 /// exFAT 文件系统实例
 pub struct ExfatFs {
+    /// 已解析的超级块信息
     pub super_block: ExfatSuperBlock,
+    /// 底层块设备索引
     pub device_idx: u8,
 }
 

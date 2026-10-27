@@ -45,8 +45,10 @@ pub(crate) const FS_CAP_CREATE: u64 = 1 << 3;
 // 全局实例
 // ============================================================================
 
+/// 全局 RamFS 挂载树单例 (由 Mutex 保护)。
 pub static RAMFS_DATA: Mutex<RamFsData> = Mutex::new(RamFsData::new());
 
+/// 初始化 RamFS: 在根路径 `/` 挂载全局实例。
 pub fn init() {
     let mut ramfs = RAMFS_DATA.lock();
     ramfs.mount("/");

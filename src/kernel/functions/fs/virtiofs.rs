@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! virtiofs — virtio 文件系统 (VM 通信)
 //!
 //! @SAFE: 本文件不含 unsafe 代码。
@@ -118,6 +119,7 @@ pub struct VirtioFsNode {
 }
 
 impl VirtioFsNode {
+    /// 构造一个 virtiofs 节点 (链接数为 1, 无名称)。
     pub const fn new(id: u64, parent_id: u64, mode: u32) -> Self {
         Self {
             id,
@@ -163,6 +165,7 @@ impl VirtioFs {
         clippy::large_stack_arrays,
         reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
     )]
+    /// 构造空的 virtiofs 实例 (无节点)。
     pub const fn new() -> Self {
         Self {
             nodes: [const { VirtioFsNode::new(0, 0, 0) }; MAX_NODES],

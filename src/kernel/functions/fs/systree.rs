@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! systree — 动态系统树
 //!
 //! @SAFE: 本文件不含 unsafe 代码。
@@ -70,6 +71,7 @@ pub struct SystreeAttr {
 }
 
 impl SystreeAttr {
+    /// 构造一个默认属性项 (权限 0o644, 无读写回调)。
     pub const fn new() -> Self {
         Self {
             name: [0u8; MAX_NAME_LEN],
@@ -132,6 +134,7 @@ pub struct SystreeNode {
 }
 
 impl SystreeNode {
+    /// 构造一个空节点 (指定节点 id 与父节点 id)。
     pub const fn new(id: u32, parent_id: u32) -> Self {
         Self {
             id,

@@ -5,25 +5,15 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 51,
-    "files": 36,
-    "keys": 41
+    "sites": 41,
+    "files": 31,
+    "keys": 35
   },
   "entries": [
-    [
-      "src/kernel/functions/fs/exfat/fat.rs",
-      "a constant",
-      2
-    ],
     [
       "src/kernel/functions/fs/exfat/mount.rs",
       "an associated function",
       1
-    ],
-    [
-      "src/kernel/functions/fs/exfat/read.rs",
-      "a struct field",
-      2
     ],
     [
       "src/kernel/functions/fs/ext2/mount.rs",
@@ -46,29 +36,9 @@
       1
     ],
     [
-      "src/kernel/functions/fs/ramfs_core/mod.rs",
-      "a function",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/ramfs_core/mod.rs",
-      "a static",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/systree.rs",
-      "an associated function",
-      2
-    ],
-    [
       "src/kernel/functions/fs/unkfs/unkfs_inode.rs",
       "an associated function",
       1
-    ],
-    [
-      "src/kernel/functions/fs/virtiofs.rs",
-      "an associated function",
-      2
     ],
     [
       "src/kernel/functions/mm/memory_pressure.rs",

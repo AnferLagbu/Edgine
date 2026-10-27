@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //! exFAT FAT 表操作
 
@@ -8,7 +9,9 @@ use crate::privileged::egdf::{egdf_blk_read_sectors, egdf_blk_write_sectors};
 
 /// FAT 表条目常量
 pub const FAT_FREE: u32 = 0x00000000;
+/// 坏簇标记 (BAD cluster)
 pub const FAT_BAD: u32 = 0xFFFFFFF7;
+/// FAT 链结束标记 (END of chain)
 pub const FAT_END: u32 = 0x0FFFFFFF;
 
 #[expect(
