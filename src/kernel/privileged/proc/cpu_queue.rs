@@ -21,6 +21,8 @@
 //!                          resched_ipi() → raise_softirq(Sched)
 //! ```
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 
 use super::types::Pid;
@@ -28,15 +30,20 @@ use crate::privileged::racy_cell::RacyCell;
 
 /// 单 CPU 运行队列状态 — 记录当前运行 pid、重调度请求、idle 任务 pid 与上线状态。
 pub struct CpuQueue {
+    /// 当前运行任务 PID (0 表示无任务)
     pub current: AtomicU32,
+    /// 本核挂起重调度标志
     pub need_reschedule: AtomicBool,
+    /// 本核 idle 任务 PID
     pub idle_pid: AtomicU32,
+    /// 本核是否已上线
     pub online: AtomicBool,
 }
 
 // 所有字段 (AtomicU32, AtomicBool) 自动实现 Send + Sync.
 
 impl CpuQueue {
+    /// 构造全零队列状态 (常量上下文可用, 供静态实例落 `.bss`)
     pub const fn new() -> Self {
         Self {
             current: AtomicU32::new(0),
@@ -46,22 +53,26 @@ impl CpuQueue {
         }
     }
 
+    /// 读取当前运行任务 PID (0 视为无任务, 返回 None)
     #[inline]
     pub fn get_current(&self) -> Option<Pid> {
         let pid = self.current.load(Ordering::Acquire);
         if pid == 0 { None } else { Some(pid) }
     }
 
+    /// 设置当前运行任务 PID
     #[inline]
     pub fn set_current(&self, pid: Pid) {
         self.current.store(pid, Ordering::Release);
     }
 
+    /// 置位本核挂起重调度标志
     #[inline]
     pub fn set_need_reschedule(&self) {
         self.need_reschedule.store(true, Ordering::Release);
     }
 
+    /// 取走并清空挂起重调度标志 (返回取走前的值)
     #[inline]
     pub fn take_need_reschedule(&self) -> bool {
         self.need_reschedule.swap(false, Ordering::AcqRel)

@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //! ext2 块组描述符数据结构
 
@@ -6,13 +7,21 @@
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct Ext2BlockGroupDescriptor {
+    /// 块位图所在块号
     pub bg_block_bitmap: u32,
+    /// inode 位图所在块号
     pub bg_inode_bitmap: u32,
+    /// inode 表起始块号
     pub bg_inode_table: u32,
+    /// 本组空闲块数
     pub bg_free_blocks_count: u16,
+    /// 本组空闲 inode 数
     pub bg_free_inodes_count: u16,
+    /// 本组已用目录数
     pub bg_used_dirs_count: u16,
+    /// 填充字段 (对齐用)
     pub bg_pad: u16,
+    /// 保留字段 (12 字节)
     pub bg_reserved: [u8; 12],
 }
 

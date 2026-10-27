@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。纯解释器实现。
 //! WASM 解释器 — functions 层策略主体
 //!
@@ -35,12 +36,18 @@ use super::types::{
 // 解释器
 // ============================================================================
 
+/// WASM 解释器 — 字节码执行引擎实例
 pub struct Interpreter {
+    /// 操作数栈
     pub stack: ValueStack,
+    /// 线性内存 (模块无内存段时为 None)
     pub memory: Option<LinearMemory>,
     call_stack: Vec<CallFrame>,
+    /// 解释器配置 (gas 上限等)
     pub config: InterpreterConfig,
+    /// 已消耗的 gas 量
     pub gas_used: u64,
+    /// 退出码
     pub exit_code: i32,
     module: WasmModule,
     host_functions: Vec<Box<dyn Fn(&mut Self) -> Result<(), WasmError>>>,
@@ -52,6 +59,7 @@ pub struct Interpreter {
 }
 
 impl Interpreter {
+    /// 由 WASM 模块与配置构造解释器 (统计 import 数并初始化全局量与表)
     pub fn new(module: WasmModule, config: InterpreterConfig) -> Self {
         let import_func_count = module
             .imports
@@ -212,6 +220,7 @@ impl Interpreter {
         }
     }
 
+    /// 注册匿名 host function (追加到调用表末尾)
     pub fn register_host_function(&mut self, f: Box<dyn Fn(&mut Self) -> Result<(), WasmError>>) {
         self.host_functions.push(f);
     }

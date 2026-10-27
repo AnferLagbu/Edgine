@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 405,
-    "files": 108,
-    "keys": 166
+    "sites": 362,
+    "files": 103,
+    "keys": 153
   },
   "entries": [
     [
@@ -84,11 +84,6 @@
       "src/kernel/functions/fs/exfat/read.rs",
       "a struct field",
       2
-    ],
-    [
-      "src/kernel/functions/fs/ext2/block_group.rs",
-      "a struct field",
-      8
     ],
     [
       "src/kernel/functions/fs/ext2/dir.rs",
@@ -288,26 +283,6 @@
     [
       "src/kernel/functions/sync/pi_mutex.rs",
       "a type alias",
-      1
-    ],
-    [
-      "src/kernel/functions/wasm/interpreter.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/functions/wasm/interpreter.rs",
-      "a struct",
-      1
-    ],
-    [
-      "src/kernel/functions/wasm/interpreter.rs",
-      "a struct field",
-      5
-    ],
-    [
-      "src/kernel/functions/wasm/interpreter.rs",
-      "an associated function",
       1
     ],
     [
@@ -536,16 +511,6 @@
       4
     ],
     [
-      "src/kernel/privileged/mm/numa.rs",
-      "a method",
-      5
-    ],
-    [
-      "src/kernel/privileged/mm/numa.rs",
-      "an associated function",
-      4
-    ],
-    [
       "src/kernel/privileged/mm/pmm_trait.rs",
       "a struct field",
       3
@@ -631,21 +596,6 @@
       1
     ],
     [
-      "src/kernel/privileged/net/socket_types.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/socket_types.rs",
-      "a struct field",
-      4
-    ],
-    [
-      "src/kernel/privileged/net/socket_types.rs",
-      "an associated function",
-      4
-    ],
-    [
       "src/kernel/privileged/net/types.rs",
       "a constant",
       3
@@ -664,21 +614,6 @@
       "src/kernel/privileged/proc/api.rs",
       "a function",
       4
-    ],
-    [
-      "src/kernel/privileged/proc/cpu_queue.rs",
-      "a method",
-      4
-    ],
-    [
-      "src/kernel/privileged/proc/cpu_queue.rs",
-      "a struct field",
-      4
-    ],
-    [
-      "src/kernel/privileged/proc/cpu_queue.rs",
-      "an associated function",
-      1
     ],
     [
       "src/kernel/privileged/proc/fd_alloc.rs",

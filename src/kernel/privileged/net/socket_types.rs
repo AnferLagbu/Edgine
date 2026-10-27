@@ -20,6 +20,8 @@
 //! - [`SockAddrUn`]: UDS 地址 (sun_path 包装)
 //! - [`UNIX_PATH_MAX`]: POSIX `sun_path` 最大长度
 
+#![deny(missing_docs)]
+
 // ============================================================================
 // 协议族 / 类型
 // ============================================================================
@@ -37,6 +39,7 @@ pub enum Domain {
 }
 
 impl Domain {
+    /// 由协议族判别值构造 (未知值返回 None)
     pub fn from_i32(d: i32) -> Option<Self> {
         match d {
             1 => Some(Self::Unix),
@@ -63,6 +66,7 @@ pub enum SockType {
 pub const SOCK_NONBLOCK: i32 = 0o4000;
 
 impl SockType {
+    /// 由类型判别值构造 (未知值返回 None)
     pub fn from_i32(t: i32) -> Option<Self> {
         match t {
             1 => Some(Self::Stream),
@@ -79,11 +83,14 @@ impl SockType {
 /// IPv4 Socket 地址 (端口 + 4 字节 IP)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SockAddrIn {
+    /// 端口号 (按 wire 布局存放)
     pub port: u16,
+    /// IPv4 地址字节 (4 字节)
     pub ip: [u8; 4],
 }
 
 impl SockAddrIn {
+    /// 构造 IPv4 Socket 地址
     pub fn new(port: u16, ip: [u8; 4]) -> Self {
         Self { port, ip }
     }
@@ -95,11 +102,14 @@ pub const UNIX_PATH_MAX: usize = 108;
 /// `struct sockaddr_un` 包装
 #[derive(Debug, Clone, Copy)]
 pub struct SockAddrUn {
+    /// 路径字节缓冲 (零填充至 `UNIX_PATH_MAX`)
     pub path: [u8; UNIX_PATH_MAX],
+    /// 路径实际长度
     pub path_len: u16,
 }
 
 impl SockAddrUn {
+    /// 由路径字节构造; 空路径或超长返回 None
     pub fn new(path: &[u8]) -> Option<Self> {
         if path.is_empty() || path.len() > UNIX_PATH_MAX {
             return None;
@@ -112,6 +122,7 @@ impl SockAddrUn {
         })
     }
 
+    /// 返回有效路径字节切片
     pub fn path_slice(&self) -> &[u8] {
         &self.path[..self.path_len as usize]
     }

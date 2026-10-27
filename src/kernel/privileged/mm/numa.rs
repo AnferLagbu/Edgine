@@ -9,6 +9,8 @@
 //!
 //! functions 侧改 `pub use crate::privileged::mm::numa::*` 保持 API 兼容。
 
+#![deny(missing_docs)]
+
 use crate::privileged::mm::PAGE_SIZE;
 use crate::privileged::sync::IrqSpinLock;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -46,6 +48,7 @@ pub enum NumaPolicy {
 }
 
 impl NumaPolicy {
+    /// 由判别值构造策略 (未知值回退 `Default`)
     pub fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::Bind,
@@ -106,6 +109,7 @@ pub struct NumaMempolicy {
 }
 
 impl NumaMempolicy {
+    /// 构造默认内存策略 (Default 模式 / 空节点掩码 / 交织索引归零)
     pub fn new() -> Self {
         Self {
             mode: IrqSpinLock::new(NumaPolicy::Default),
@@ -181,6 +185,7 @@ pub struct NumaNode {
 }
 
 impl NumaNode {
+    /// 以节点 ID 构造空节点 (CPU 列表与内存区间待后续填充)
     pub fn new(id: u32) -> Self {
         Self {
             id,
@@ -192,10 +197,12 @@ impl NumaNode {
         }
     }
 
+    /// 判断本节点是否包含指定 CPU
     pub fn contains_cpu(&self, cpu_id: u32) -> bool {
         self.cpus.contains(&cpu_id)
     }
 
+    /// 计算空闲页占比 (百分比); 未设内存大小时返回 100
     pub fn free_ratio(&self) -> u32 {
         let total = self.memory_size / PAGE_SIZE;
         if total == 0 {
@@ -220,6 +227,7 @@ pub struct NumaTopology {
 }
 
 impl NumaTopology {
+    /// 构造空拓扑 (常量上下文可用, 供静态实例初始化)
     pub const fn new() -> Self {
         Self {
             nodes: IrqSpinLock::new(Vec::new()),
@@ -323,14 +331,17 @@ impl NumaTopology {
         nodes.iter().find(|n| n.id == node_id).map(Arc::clone)
     }
 
+    /// 当前已登记的 NUMA 节点数
     pub fn num_nodes(&self) -> u32 {
         self.num_nodes.load(Ordering::Acquire)
     }
 
+    /// 拓扑是否已完成初始化
     pub fn is_initialized(&self) -> bool {
         self.initialized.load(Ordering::Acquire)
     }
 
+    /// 返回全部节点的快照 (克隆 Arc 列表)
     pub fn all_nodes(&self) -> Vec<Arc<NumaNode>> {
         self.nodes.lock().clone()
     }

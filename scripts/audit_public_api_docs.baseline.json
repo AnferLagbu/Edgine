@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 118,
-    "files": 36,
-    "keys": 105
+    "sites": 99,
+    "files": 33,
+    "keys": 90
   },
   "entries": [
     [
@@ -209,48 +209,6 @@
       1
     ],
     [
-      "src/kernel/privileged/mm/numa.rs",
-      "fn",
-      "all_nodes",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/numa.rs",
-      "fn",
-      "contains_cpu",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/numa.rs",
-      "fn",
-      "free_ratio",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/numa.rs",
-      "fn",
-      "from_u8",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/numa.rs",
-      "fn",
-      "is_initialized",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/numa.rs",
-      "fn",
-      "new",
-      3
-    ],
-    [
-      "src/kernel/privileged/mm/numa.rs",
-      "fn",
-      "num_nodes",
-      1
-    ],
-    [
       "src/kernel/privileged/mm/pmm.rs",
       "fn",
       "const_default",
@@ -389,58 +347,10 @@
       1
     ],
     [
-      "src/kernel/privileged/net/socket_types.rs",
-      "fn",
-      "from_i32",
-      2
-    ],
-    [
-      "src/kernel/privileged/net/socket_types.rs",
-      "fn",
-      "new",
-      2
-    ],
-    [
-      "src/kernel/privileged/net/socket_types.rs",
-      "fn",
-      "path_slice",
-      1
-    ],
-    [
       "src/kernel/privileged/net/wait_queue.rs",
       "fn",
       "new",
       2
-    ],
-    [
-      "src/kernel/privileged/proc/cpu_queue.rs",
-      "fn",
-      "get_current",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cpu_queue.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cpu_queue.rs",
-      "fn",
-      "set_current",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cpu_queue.rs",
-      "fn",
-      "set_need_reschedule",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cpu_queue.rs",
-      "fn",
-      "take_need_reschedule",
-      1
     ],
     [
       "src/kernel/privileged/proc/fd_alloc.rs",
