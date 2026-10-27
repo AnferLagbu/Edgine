@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 60,
-    "files": 22,
-    "keys": 57
+    "sites": 50,
+    "files": 19,
+    "keys": 49
   },
   "entries": [
     [
@@ -257,12 +257,6 @@
       2
     ],
     [
-      "src/kernel/privileged/proc/posix_timer.rs",
-      "fn",
-      "zeroed",
-      1
-    ],
-    [
       "src/kernel/privileged/proc/scheduler.rs",
       "fn",
       "remove_quota",
@@ -302,48 +296,6 @@
       "src/kernel/privileged/sgeg/bootstrap.rs",
       "fn",
       "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/secure_boot.rs",
-      "fn",
-      "from_u32",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/secure_boot.rs",
-      "fn",
-      "new",
-      3
-    ],
-    [
-      "src/kernel/privileged/sync/mutex.rs",
-      "fn",
-      "broadcast",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/mutex.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/mutex.rs",
-      "fn",
-      "signal",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/mutex.rs",
-      "fn",
-      "wait",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/mutex.rs",
-      "fn",
-      "wait_timeout",
       1
     ],
     [

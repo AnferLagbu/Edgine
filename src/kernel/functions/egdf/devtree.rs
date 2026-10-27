@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! 设备树 (Device Tree) — functions 层安全代理
 //!
 //! ## 状态 (v2.10, 2026-06-04)
@@ -34,8 +35,10 @@ pub use crate::privileged::egdf::{EGDFNode, NodeId, Property, PropertyValue};
 pub struct DevTreeNodeId(pub NodeId);
 
 impl DevTreeNodeId {
+    /// 根节点 ID (恒为 0)
     pub const ROOT: Self = Self(0);
 
+    /// 取出底层 `NodeId` 原始值
     pub fn raw(self) -> NodeId {
         self.0
     }
@@ -69,6 +72,7 @@ impl DevTreeError {
         }
     }
 
+    /// 从 C 风格返回码构造错误 (`-2`/`-22`/`-19` 映射, 其余归 `Other`)
     pub fn from_i32(rc: i32) -> Self {
         use crate::functions::error::KernelError as K;
         match rc {
@@ -80,6 +84,7 @@ impl DevTreeError {
     }
 }
 
+/// 设备树操作结果类型别名
 pub type DevTreeResult<T> = Result<T, DevTreeError>;
 
 use crate::privileged::syscall::Errno;

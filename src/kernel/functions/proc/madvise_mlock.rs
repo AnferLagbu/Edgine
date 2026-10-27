@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 privileged API。
 //! madvise / mlock / mincore — functions 层安全代理
 //!
@@ -143,11 +144,13 @@ impl MlockAllFlags {
     /// 空
     pub const EMPTY: Self = Self(0);
 
+    /// 返回原始位标志
     #[inline]
     pub const fn bits(self) -> u32 {
         self.0
     }
 
+    /// 判断是否包含 `other` 的全部位
     #[inline]
     pub const fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
@@ -189,6 +192,7 @@ impl MlockError {
         }
     }
 
+    /// 从 POSIX errno 构造错误
     pub fn from_errno(e: Errno) -> Self {
         use crate::functions::error::KernelError as K;
         match e {
@@ -204,6 +208,7 @@ impl MlockError {
     }
 }
 
+/// madvise/mlock 操作结果类型别名
 pub type MlockResult<T> = Result<T, MlockError>;
 
 // ============================================================================

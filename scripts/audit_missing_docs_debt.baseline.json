@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 175,
-    "files": 72,
-    "keys": 99
+    "sites": 152,
+    "files": 67,
+    "keys": 85
   },
   "entries": [
     [
@@ -24,26 +24,6 @@
       "src/kernel/functions/driver/usb/xhci.rs",
       "a constant",
       3
-    ],
-    [
-      "src/kernel/functions/egdf/devtree.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/functions/egdf/devtree.rs",
-      "a type alias",
-      1
-    ],
-    [
-      "src/kernel/functions/egdf/devtree.rs",
-      "an associated constant",
-      1
-    ],
-    [
-      "src/kernel/functions/egdf/devtree.rs",
-      "an associated function",
-      1
     ],
     [
       "src/kernel/functions/fs/cgroupfs.rs",
@@ -168,21 +148,6 @@
     [
       "src/kernel/functions/proc/elf.rs",
       "a type alias",
-      1
-    ],
-    [
-      "src/kernel/functions/proc/madvise_mlock.rs",
-      "a method",
-      2
-    ],
-    [
-      "src/kernel/functions/proc/madvise_mlock.rs",
-      "a type alias",
-      1
-    ],
-    [
-      "src/kernel/functions/proc/madvise_mlock.rs",
-      "an associated function",
       1
     ],
     [
@@ -426,21 +391,6 @@
       4
     ],
     [
-      "src/kernel/privileged/proc/posix_timer.rs",
-      "a constant",
-      2
-    ],
-    [
-      "src/kernel/privileged/proc/posix_timer.rs",
-      "a struct field",
-      2
-    ],
-    [
-      "src/kernel/privileged/proc/posix_timer.rs",
-      "an associated function",
-      1
-    ],
-    [
       "src/kernel/privileged/sgeg/audit.rs",
       "a method",
       3
@@ -459,30 +409,10 @@
       "src/kernel/privileged/sgeg/bootstrap.rs",
       "an associated function",
       1
-    ],
-    [
-      "src/kernel/privileged/sgeg/secure_boot.rs",
-      "a struct field",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/secure_boot.rs",
-      "an associated function",
-      4
     ],
     [
       "src/kernel/privileged/sgeg/session.rs",
       "a constant",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/mutex.rs",
-      "a method",
-      4
-    ],
-    [
-      "src/kernel/privileged/sync/mutex.rs",
-      "an associated function",
       1
     ],
     [

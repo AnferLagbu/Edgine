@@ -24,6 +24,8 @@
 //! 本模块属于 privileged/TCB, 允许 unsafe.
 //! 签名验证失败将拒绝加载, 不可绕过.
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use crate::privileged::sync::IrqSpinLock;
@@ -71,10 +73,12 @@ pub fn sha256_extend(a: &[u8; SHA256_LEN], b: &[u8; SHA256_LEN]) -> [u8; SHA256_
 /// Ed25519 公钥
 #[derive(Debug, Clone)]
 pub struct Ed25519PubKey {
+    /// 公钥字节 (32 字节)
     pub key: [u8; ED25519_PUBKEY_LEN],
 }
 
 impl Ed25519PubKey {
+    /// 从 32 字节公钥构造
     pub fn new(key: [u8; ED25519_PUBKEY_LEN]) -> Self {
         Self { key }
     }
@@ -154,6 +158,7 @@ pub struct SecureBootSubsystem {
 }
 
 impl SecureBootSubsystem {
+    /// 构造未启用的安全启动子系统
     pub const fn new() -> Self {
         Self {
             trust_chain: IrqSpinLock::new(Vec::new()),
@@ -308,6 +313,7 @@ pub enum PcrIndex {
 }
 
 impl PcrIndex {
+    /// 从原始索引转换为 PCR 枚举 (越界返回 `None`)
     pub fn from_u32(v: u32) -> Option<Self> {
         match v {
             0 => Some(Self::Firmware),
@@ -336,6 +342,7 @@ pub struct TpmSubsystem {
 }
 
 impl TpmSubsystem {
+    /// 构造未初始化的软件模拟 TPM
     pub const fn new() -> Self {
         Self {
             pcrs: IrqSpinLock::new([[0u8; SHA256_LEN]; PCR_COUNT]),

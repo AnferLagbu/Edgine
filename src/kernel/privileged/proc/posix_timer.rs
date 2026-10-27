@@ -46,6 +46,8 @@
 //! `timer_id` 不暴露绝对地址, 而是用 `slot_index + 1` (1-based).
 //! Linux 同样使用非 0 整数 ID, 0 表示无效。
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use crate::privileged::proc::{Pid, do_signal_send};
@@ -66,10 +68,12 @@ pub const MAX_POSIX_TIMERS: usize = 32;
 /// - `SIGEV_NONE = 1`: 不通知, 仅 `timer_gettime` 可见
 /// - `SIGEV_SIGNAL = 2`: 发送 `sigev_signo` 信号
 pub const SIGEV_NONE: i32 = 1;
+/// 发送 `sigev_signo` 指定的信号
 pub const SIGEV_SIGNAL: i32 = 2;
 
 /// 时钟 ID
 pub const CLOCK_REALTIME: i32 = 0;
+/// 单调时钟 (不受系统时间调整影响)
 pub const CLOCK_MONOTONIC: i32 = 1;
 
 /// `timer_settime` flags
@@ -115,13 +119,16 @@ pub struct Sigevent {
 pub struct Itimerspec {
     /// 周期间隔
     pub it_interval_sec: i64,
+    /// 周期间隔 (纳秒部分)
     pub it_interval_nsec: i64,
     /// 初次到期时间
     pub it_value_sec: i64,
+    /// 初次到期时间 (纳秒部分)
     pub it_value_nsec: i64,
 }
 
 impl Itimerspec {
+    /// 构造全零 `itimerspec`
     pub const fn zeroed() -> Self {
         Self {
             it_interval_sec: 0,

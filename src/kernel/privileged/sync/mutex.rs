@@ -26,6 +26,8 @@
 //! - **公平性**: 竞争时偶尔让出 CPU，避免饥饿
 //! - **调试信息**: 记录持有者 PID 和获取时间
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::Ordering;
 
 #[cfg(any(debug_assertions, feature = "lockdep"))]
@@ -304,12 +306,14 @@ pub struct CondVar {
 }
 
 impl CondVar {
+    /// 构造等待者计数为 0 的条件变量
     pub const fn new() -> Self {
         Self {
             waiters: core::sync::atomic::AtomicU32::new(0),
         }
     }
 
+    /// 等待通知 (释放 `mutex` 并让出 CPU, 唤醒后重新获取)
     pub fn wait<T>(&self, mutex: &Mutex<T>) {
         self.waiters.fetch_add(1, Ordering::AcqRel);
         mutex.raw_unlock();
@@ -318,6 +322,7 @@ impl CondVar {
         self.waiters.fetch_sub(1, Ordering::AcqRel);
     }
 
+    /// 带超时的等待 (当前实现为忙等 `timeout_ms` 毫秒后返回 true)
     pub fn wait_timeout<T>(&self, mutex: &Mutex<T>, timeout_ms: u32) -> bool {
         self.waiters.fetch_add(1, Ordering::AcqRel);
         mutex.raw_unlock();
@@ -340,12 +345,14 @@ impl CondVar {
         true
     }
 
+    /// 唤醒一个等待者
     pub fn signal(&self) {
         if self.waiters.load(Ordering::Acquire) > 0 {
             scheduler_yield();
         }
     }
 
+    /// 唤醒所有等待者
     pub fn broadcast(&self) {
         let count = self.waiters.load(Ordering::Acquire);
         if count > 0 {
