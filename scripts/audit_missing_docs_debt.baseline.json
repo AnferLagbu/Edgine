@@ -5,36 +5,11 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 6,
-    "files": 6,
-    "keys": 6
+    "sites": 1,
+    "files": 1,
+    "keys": 1
   },
   "entries": [
-    [
-      "src/kernel/privileged/driver/net/mod.rs",
-      "a module",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/iface_trait.rs",
-      "a struct field",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/init.rs",
-      "a function",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/mod.rs",
-      "a module",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/session.rs",
-      "a constant",
-      1
-    ],
     [
       "src/kernel/privileged/syscall/mod.rs",
       "a function",

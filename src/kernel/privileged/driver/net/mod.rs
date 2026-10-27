@@ -7,6 +7,7 @@
 
 /// E1000 DMA 描述符环结构与位掩码 (硬件格式)
 pub mod dma_ring;
+/// E1000 Tx/Rx 环机制安全包装 (描述符环的最小访问原语)
 pub mod e1000;
 /// E1000Io MMIO 安全访问器 (framekernel 阶段 3: 唯一消费者是 functions x86_64 E1000
 /// 驱动, 其实现同样受此 cfg 门控; aarch64 与 kernel_test 构建下无使用者, 故不编译

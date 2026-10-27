@@ -41,6 +41,8 @@
 //!
 //! REVAL-W 第 5 组 (W1), 2026-06-24 实装.
 
+#![deny(missing_docs)]
+
 use core::fmt;
 
 // ============================================================================
@@ -289,7 +291,10 @@ pub enum DhcpState {
         lease_expires_at: u64,
     },
     /// 租约续期中
-    Renewing { ipv4: [u8; 4] },
+    Renewing {
+        /// 续期中保留的 IPv4 地址
+        ipv4: [u8; 4],
+    },
     /// 失败 (N 次重试后), 走 fallback 静态 IP
     Failed,
 }

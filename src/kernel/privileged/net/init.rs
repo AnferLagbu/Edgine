@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 use core::sync::atomic::Ordering;
 
 use crate::privileged::klog::{klog_init_msg, klog_net, klog_net_err};
@@ -574,6 +576,7 @@ unsafe fn net_reset() {
 // ============================================================================
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 初始化网络子系统 (C ABI 导出, 由启动流程串行调用; 内部走 InitState 状态机).
 #[unsafe(no_mangle)]
 #[expect(
     clippy::too_many_lines,

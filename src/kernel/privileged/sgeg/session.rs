@@ -18,6 +18,9 @@
 // SAFETY: 所有 UnsafeCell 已删除. 不再有 `unsafe impl Send/Sync for SessionManager`.
 //         Process 本身已通过 `unsafe impl Send/Sync` 标注 (process.rs 中),
 //         `Mutex<...>` 字段提供内部可变性.
+
+#![deny(missing_docs)]
+
 use super::identity;
 use super::types::{AuditAction, DomainId, PwmContext, PwmEntry, PwmError, PwmFlags, PwmId};
 use crate::privileged::proc::PROCESS_TABLE;
@@ -28,8 +31,7 @@ const MAX_ELEVATION_DEPTH: isize = 8;
 const MAX_LOGIN_ATTEMPTS: u32 = 5;
 const LOCKOUT_DURATION_SECS: u64 = 300;
 
-// 进程级 SUID 提权栈容量, 与 MAX_ELEVATION_DEPTH 一致.
-// 必须为 const, 用于 Process::new 中 `[T; N]` 数组初始化.
+/// 进程级 SUID 提权栈容量 (与 `MAX_ELEVATION_DEPTH` 一致; 必须为 const, 供 `Process::new` 中 `[T; N]` 数组初始化).
 pub const SESSION_ELEV_STACK_CAP: usize = 8;
 
 // ============================================================================

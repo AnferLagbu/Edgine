@@ -9,6 +9,7 @@ pub mod driver;
 /// REVAL-W: 网络协议栈抽象 — Framekernel Safe API (W1 子任务, 2026-06-24)
 /// 设计见 [docs/plan/smoltcp-framekernel-wrapper.md]
 pub mod iface_trait;
+/// 网络协议栈初始化 (启动流程串行调用的状态机入口)
 #[cfg(not(feature = "kernel_test"))]
 pub mod init;
 /// P6 (D11 / DECISION-097): 组播成员引用计数登记表 (纯 bookkeeping, 0 unsafe).
