@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //! overlayfs 文件系统实现
 
@@ -347,6 +348,7 @@ pub struct OverlayFsInode {
 }
 
 impl OverlayFsInode {
+    /// 由节点 id、挂载索引与文件类型构造 OverlayFS inode。
     pub fn new(node_id: u32, mount_idx: u32, file_type: u8) -> Self {
         Self {
             node_id,

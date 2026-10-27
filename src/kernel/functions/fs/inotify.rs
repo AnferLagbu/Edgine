@@ -14,6 +14,8 @@
 //! - 事件队列使用 `IrqSpinLock` 保护, 中断安全
 //! - 用户缓冲区写入经 privileged `write_struct_to_user` 安全包装 (0 unsafe)
 
+#![deny(missing_docs)]
+
 use alloc::vec::Vec;
 
 use crate::privileged::errno::Errno;
@@ -113,6 +115,7 @@ impl Default for InotifyEvent {
 }
 
 impl InotifyEvent {
+    /// 构造一个全零的 inotify 事件 (无 watch、无事件掩码、无文件名)。
     pub const fn new() -> Self {
         Self {
             wd: 0,

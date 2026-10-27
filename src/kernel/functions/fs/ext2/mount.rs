@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //! ext2 `FileSystem` trait 实现
 
@@ -26,6 +27,7 @@ pub struct Ext2Inode {
 }
 
 impl Ext2Inode {
+    /// 由 inode 编号与挂载索引构造 ext2 inode。
     pub fn new(inode_num: u32, mount_idx: u32) -> Self {
         Self {
             inode_num,

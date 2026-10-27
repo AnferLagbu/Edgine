@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //! exFAT `FileSystem` trait 实现
 
@@ -25,6 +26,7 @@ pub struct ExfatInode {
 }
 
 impl ExfatInode {
+    /// 由起始簇号与挂载索引构造 exFAT inode。
     pub fn new(cluster: u32, mount_idx: u32) -> Self {
         Self { cluster, mount_idx }
     }

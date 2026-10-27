@@ -21,11 +21,13 @@
 //! 共享 offset, Inode 本身是无状态的 I/O 执行器.
 
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 
 use alloc::sync::Arc;
 
 use super::vfs_types::{KernelError, KernelResult, VfsFileType, VfsSeekWhence, VfsStat};
 
+/// Inode trait — 已打开文件的句柄级操作抽象 (read/write/stat by handle)。
 pub trait Inode: Send + Sync {
     /// 读取文件数据
     ///
