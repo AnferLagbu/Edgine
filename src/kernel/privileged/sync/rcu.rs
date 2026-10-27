@@ -20,6 +20,8 @@
 //! `synchronize_rcu()` 等待所有在线 CPU 报告静止状态后
 //! 才认为宽限期结束。
 
+#![deny(missing_docs)]
+
 use core::cell::UnsafeCell;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering, fence};
@@ -28,12 +30,15 @@ use crate::privileged::racy_cell::RacyCell;
 
 /// RCU 回调链表节点: 记录下一个节点与宽限期结束后执行的回调.
 pub struct RcuHead {
+    /// 链表后继节点指针 (`null` 表示链尾)
     pub next: *mut Self,
     // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
+    /// 宽限期结束后的回调函数 (`None` 表示未注册)
     pub func: Option<unsafe fn(*mut Self)>,
 }
 
 impl RcuHead {
+    /// 构造未注册回调的 RCU 链表节点 (全零, 常量上下文可用).
     pub const fn new() -> Self {
         Self {
             next: ptr::null_mut(),
@@ -447,24 +452,28 @@ pub fn rcu_callback_count() -> u32 {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 进入 RCU 读临界区 (C ABI 导出)
 #[unsafe(no_mangle)]
 pub extern "C" fn rcu_read_lock() {
     rcu_read_lock_impl();
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 退出 RCU 读临界区 (C ABI 导出)
 #[unsafe(no_mangle)]
 pub extern "C" fn rcu_read_unlock() {
     rcu_read_unlock_impl();
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 阻塞直到当前宽限期结束 (C ABI 导出)
 #[unsafe(no_mangle)]
 pub extern "C" fn synchronize_rcu() {
     synchronize_rcu_impl();
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 初始化 RCU 宽限期计数器 (C ABI 导出)
 #[unsafe(no_mangle)]
 pub extern "C" fn rcu_init() {
     RCU_GP_COUNTER.store(1, Ordering::Release);

@@ -24,6 +24,8 @@
 //! `AtomicUsize sequence` (奇数=正在写) 保证. `unsafe impl Sync`
 //! 是 sound 的, 因为所有写操作都在顺序锁保护下进行.
 
+#![deny(missing_docs)]
+
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicUsize, Ordering, compiler_fence};
 
@@ -37,6 +39,7 @@ pub struct SeqLock<T> {
 unsafe impl<T: Send> Sync for SeqLock<T> {}
 
 impl<T> SeqLock<T> {
+    /// 构造顺序锁, 以 `data` 作为初始受保护值, 序号从 0 开始.
     pub const fn new(data: T) -> Self {
         Self {
             sequence: AtomicUsize::new(0),
@@ -44,10 +47,12 @@ impl<T> SeqLock<T> {
         }
     }
 
+    /// 读取当前序号 (Relaxed 语义, 仅供观测; 奇数值表示写者持有锁).
     pub fn current_sequence(&self) -> usize {
         self.sequence.load(Ordering::Relaxed)
     }
 
+    /// 获取读守卫: 自旋等待无写者后返回, 读期间须用 `is_valid` 复检一致性.
     pub fn read(&self) -> SeqLockReadGuard<'_, T> {
         loop {
             let seq1 = self.sequence.load(Ordering::Acquire);
@@ -63,6 +68,7 @@ impl<T> SeqLock<T> {
         }
     }
 
+    /// 获取写守卫: 自旋取得写者独占权 (序号置奇), `Drop` 时递增序号结束临界区.
     pub fn write(&self) -> SeqLockWriteGuard<'_, T> {
         loop {
             let current = self.sequence.load(Ordering::Relaxed);
@@ -81,6 +87,7 @@ impl<T> SeqLock<T> {
         }
     }
 
+    /// 尝试获取写守卫: 无写者时立即返回 `Some`, 否则返回 `None` 而不阻塞.
     pub fn try_write(&self) -> Option<SeqLockWriteGuard<'_, T>> {
         let current = self.sequence.load(Ordering::Relaxed);
         if current & 1 == 1 {
@@ -107,17 +114,20 @@ pub struct SeqLockReadGuard<'a, T> {
 }
 
 impl<T> SeqLockReadGuard<'_, T> {
+    /// 复检读期间无写者介入 (序号未变即数据保持一致).
     pub fn is_valid(&self) -> bool {
         compiler_fence(Ordering::Release);
         let seq2 = self.lock.sequence.load(Ordering::Acquire);
         seq2 == self.seq1
     }
 
+    /// 直接获取受保护数据的共享引用 (不校验一致性, 一致性由 `is_valid` 负责).
     pub fn get(&self) -> &T {
         // SAFETY: `self` 由调用方保证为有效指针; 只读访问
         unsafe { &*self.lock.data.get() }
     }
 
+    /// 校验一致性后返回数据引用; 若读期间发生写入则返回 `None`.
     pub fn get_valid(&self) -> Option<&T> {
         if self.is_valid() {
             Some(self.get())

@@ -7,6 +7,8 @@
 //! 抽出为独立子模块后, init.rs 通过 `pub use query::*` re-export,
 //! 保持 init 主体与外部调用方 (net/api.rs) 的 `init::xxx` 路径不变.
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::Ordering;
 
 use crate::privileged::net::{NET_CONFIGURED, NET_READY};
@@ -47,15 +49,22 @@ pub fn get_init_state() -> InitState {
 /// 网络状态快照 (单次原子读, 多字段可能轻微不一致 — 用于观测/debug)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NetStatus {
+    /// 初始化状态机当前状态
     pub state: InitState,
+    /// 网卡 MAC 地址
     pub mac: [u8; 6],
+    /// 已配置的 IPv4 地址 (`None` 表示尚未配置)
     pub ipv4: Option<[u8; 4]>,
+    /// 默认网关 IPv4 地址 (`None` 表示尚未配置)
     pub gateway: Option<[u8; 4]>,
+    /// 三个 DNS 服务器 IPv4 地址槽位
     pub dns: [Option<[u8; 4]>; 3],
+    /// DHCP 是否已完成配置
     pub dhcp_configured: bool,
 }
 
 impl NetStatus {
+    /// 采集当前网络状态快照 (逐字段原子读).
     pub fn capture() -> Self {
         let mac_raw = G_MAC.load(Ordering::Acquire);
         let mac = mac_raw.to_be_bytes()[2..8].try_into().unwrap_or([0; 6]);

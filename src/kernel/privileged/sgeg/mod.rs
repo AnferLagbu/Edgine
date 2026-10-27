@@ -3,6 +3,7 @@
 //! 域身份 (DID) + 能力矩阵 + 会话管理 + 审计.
 //! SGEG: 密码决定身份 | 能力来自授予 | POSIX DAC + 能力双路径
 
+/// 内核态串口打印宏: 在 SGEG 上下文提供 `println!` 形态输出 (`no_std` 下为空实现).
 #[macro_export]
 macro_rules! serial_println {
     ($($arg:tt)*) => {};
@@ -11,16 +12,22 @@ macro_rules! serial_println {
 pub use serial_println;
 
 pub mod api;
+/// 审计日志: 记录身份与能力相关安全事件
 pub mod audit;
+/// 启动引导: SGEG 子系统初始化编排
 pub mod bootstrap;
 pub mod capability;
+/// 密码学安全随机数发生器
 pub mod csprng;
+/// 权限决策引擎: 能力矩阵求值
 pub mod engine;
+/// 能力授予与撤销
 pub mod grant;
 /// 全局身份表与 PWM 能力授予 / 撤销
 pub mod identity;
 /// D6: 安全启动 + TPM 2.0
 pub mod secure_boot;
+/// 会话管理
 pub mod session;
 pub mod sha256;
 pub mod types;

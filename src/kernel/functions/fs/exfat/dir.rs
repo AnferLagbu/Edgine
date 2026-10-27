@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //! exFAT 目录项数据结构
 
@@ -10,17 +11,24 @@ use alloc::vec::Vec;
 
 /// exFAT 目录项类型
 pub const DIR_ENTRY_END: u8 = 0x00; // 空目录项 (结束标记)
+/// 已删除目录项标记
 pub const DIR_ENTRY_DELETED: u8 = 0xE5; // 已删除
+/// 文件条目类型标记
 pub const DIR_ENTRY_FILE: u8 = 0x85; // 文件条目
+/// 流扩展条目类型 (承载文件名)
 pub const DIR_ENTRY_STREAM: u8 = 0xC0; // 流扩展 (文件名)
+/// 卷标条目类型标记
 pub const DIR_ENTRY_VOLUME: u8 = 0x81; // 卷标
+/// 分配位图条目类型标记
 pub const DIR_ENTRY_ALLOC: u8 = 0xA0; // 分配位图
 
 /// exFAT 目录项 (32 字节)
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct ExfatDirEntry {
+    /// 目录项类型字节 (决定条目语义)
     pub entry_type: u8,
+    /// 类型相关载荷 (前 31 字节)
     pub data: [u8; 31],
 }
 

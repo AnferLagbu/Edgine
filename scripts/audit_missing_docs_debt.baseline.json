@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 322,
-    "files": 98,
-    "keys": 145
+    "sites": 286,
+    "files": 93,
+    "keys": 134
   },
   "entries": [
     [
@@ -58,16 +58,6 @@
     [
       "src/kernel/functions/fs/devpts.rs",
       "an associated function",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/exfat/dir.rs",
-      "a constant",
-      5
-    ],
-    [
-      "src/kernel/functions/fs/exfat/dir.rs",
-      "a struct field",
       2
     ],
     [
@@ -516,16 +506,6 @@
       1
     ],
     [
-      "src/kernel/privileged/net/init/query.rs",
-      "a struct field",
-      6
-    ],
-    [
-      "src/kernel/privileged/net/init/query.rs",
-      "an associated function",
-      1
-    ],
-    [
       "src/kernel/privileged/net/init/sockets.rs",
       "a constant",
       1
@@ -651,16 +631,6 @@
       1
     ],
     [
-      "src/kernel/privileged/sgeg/mod.rs",
-      "a macro",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/mod.rs",
-      "a module",
-      6
-    ],
-    [
       "src/kernel/privileged/sgeg/secure_boot.rs",
       "a struct field",
       1
@@ -682,31 +652,6 @@
     ],
     [
       "src/kernel/privileged/sync/mutex.rs",
-      "an associated function",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/rcu.rs",
-      "a function",
-      4
-    ],
-    [
-      "src/kernel/privileged/sync/rcu.rs",
-      "a struct field",
-      2
-    ],
-    [
-      "src/kernel/privileged/sync/rcu.rs",
-      "an associated function",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/seqlock.rs",
-      "a method",
-      7
-    ],
-    [
-      "src/kernel/privileged/sync/seqlock.rs",
       "an associated function",
       1
     ],

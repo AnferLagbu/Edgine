@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 91,
-    "files": 32,
-    "keys": 88
+    "sites": 81,
+    "files": 29,
+    "keys": 78
   },
   "entries": [
     [
@@ -317,12 +317,6 @@
       1
     ],
     [
-      "src/kernel/privileged/net/init/query.rs",
-      "fn",
-      "capture",
-      1
-    ],
-    [
       "src/kernel/privileged/net/smoltcp_impl.rs",
       "fn",
       "new",
@@ -476,60 +470,6 @@
       "src/kernel/privileged/sync/mutex.rs",
       "fn",
       "wait_timeout",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/rcu.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/seqlock.rs",
-      "fn",
-      "current_sequence",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/seqlock.rs",
-      "fn",
-      "get",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/seqlock.rs",
-      "fn",
-      "get_valid",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/seqlock.rs",
-      "fn",
-      "is_valid",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/seqlock.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/seqlock.rs",
-      "fn",
-      "read",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/seqlock.rs",
-      "fn",
-      "try_write",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/seqlock.rs",
-      "fn",
-      "write",
       1
     ],
     [
