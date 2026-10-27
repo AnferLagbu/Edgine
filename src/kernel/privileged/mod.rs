@@ -138,6 +138,7 @@ pub use crate as privileged;
 pub mod arch;
 pub mod boot;
 pub mod config;
+/// 图形/文本控制台输出子系统。
 pub mod console;
 /// TCB 内部容量常量 (与 privileged::config 职责正交, 见 constants/mod.rs)
 pub mod constants;
@@ -162,6 +163,7 @@ pub mod klog;
 pub mod mem_alloc;
 // P-71: 模块名 `lib` 与本 crate 的 library target 根同名, 触发 special_module_name
 // (原单 crate 下嵌套于 `privileged::lib`, 无此特例). 路径保持不变以免影响调用方.
+/// crate 内部的 glue/兼容层模块 (模块名与 library target 根同名)。
 pub mod lib;
 pub mod mm;
 pub mod net;
@@ -171,6 +173,7 @@ pub mod sched;
 pub mod sgeg;
 pub mod smp;
 pub mod sync;
+/// syscall 分发入口与各系统调用的 privileged 侧机制实现。
 pub mod syscall;
 // B4 (内存过配治理): 内核测试框架 (TEST_RUNNER 等) 仅在 kernel_test / host-test
 // 维度编译, 绝不进入 release 及 host 生产构建. 生产路径所需的 qemu_exit 已迁往

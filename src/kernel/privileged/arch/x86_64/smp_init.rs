@@ -1,3 +1,7 @@
+//! x86_64 SMP 初始化 — BSP 经 INIT-SIPI 序列启动所有 Application Processor (AP)。
+
+#![deny(missing_docs)]
+
 use alloc;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -87,18 +91,21 @@ unsafe extern "C" {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// BSP 侧 SMP 初始化入口 (C ABI 导出)。
 #[unsafe(no_mangle)]
 pub extern "C" fn smp_init_bsp() {
     init();
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 查询 SMP 初始化是否已全部完成 (C ABI 导出)。
 #[unsafe(no_mangle)]
 pub extern "C" fn smp_ready() -> bool {
     SMP_FULLY_INITIALIZED.load(Ordering::Acquire)
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 返回已成功启动的 AP 数量 (C ABI 导出)。
 #[unsafe(no_mangle)]
 pub extern "C" fn smp_get_ap_count() -> u32 {
     AP_STARTED_COUNT.load(Ordering::Acquire)

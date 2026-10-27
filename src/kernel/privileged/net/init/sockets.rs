@@ -5,6 +5,8 @@
 //! `configure_max_sockets` / `get_max_sockets` / `set_max_sockets`.
 //! 抽出为独立子模块后, init.rs 通过 `pub use sockets::*` re-export.
 
+#![deny(missing_docs)]
+
 use alloc::boxed::Box;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use smoltcp::iface::{SocketSet, SocketStorage};
@@ -14,14 +16,17 @@ use smoltcp::iface::{SocketSet, SocketStorage};
 // 每个 socket 携带 TCP/UDP 静态缓冲, BSS 占用 ≈ 6 KB/连接 (TCP_RX 4K + UDP_RX 2K).
 // 256 → ≈ 1.5 MB BSS; 生产环境按物理内存调整.
 // 改本值后须同步 SOCKET_STORAGE 的尺寸.
+/// 编译期 socket 容量上限 (默认 256)。
 pub const MAX_SOCKETS: usize = 256;
 
 // SOCKET_STORAGE 改为惰性堆置指针容器 (原静态数组 144 KB BSS → 首次初始化时按需分配).
 // SOCKET_SET 是自引用结构 (smoltcp SocketSet 借用 storage), 无法安全放入 NetState, 保留 static mut.
 // 持有首个元素瘦指针 (切片长度恒为 MAX_SOCKETS, 由重建时显式给出).
 static mut SOCKET_STORAGE: *mut SocketStorage<'static> = core::ptr::null_mut();
+/// 全局 socket 集合 (首次初始化时由 `socket_storage` 提供后端存储)。
 pub static mut SOCKET_SET: core::mem::MaybeUninit<SocketSet<'static>> =
     core::mem::MaybeUninit::uninit();
+/// socket 存储与集合是否已完成首次初始化。
 pub static SOCKETS_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 /// 惰性获取 socket storage 堆切片: 首次调用分配 `MAX_SOCKETS` 项, 之后复用.

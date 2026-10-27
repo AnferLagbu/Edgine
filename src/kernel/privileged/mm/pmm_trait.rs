@@ -17,6 +17,8 @@
 //!
 //! 两者互补, 共同构成完整的 PMM 策略面.
 
+#![deny(missing_docs)]
+
 /// PMM 策略上下文 — 传递给策略决策的只读信息
 #[derive(Debug, Clone, Copy)]
 pub struct PmmPolicyContext {
@@ -38,8 +40,11 @@ pub struct PmmPolicyContext {
 /// - **min**: 紧急阈值 (低于此值时阻塞分配, 等待回收完成)
 #[derive(Debug, Clone, Copy)]
 pub struct Watermarks {
+    /// 高位水位: 空闲页高于此值时 kswapd 停止回收。
     pub high: u64,
+    /// 低位水位: kswapd 开始后台回收的阈值。
     pub low: u64,
+    /// 最低水位: 空闲页低于此值时阻塞分配, 等待回收完成。
     pub min: u64,
 }
 

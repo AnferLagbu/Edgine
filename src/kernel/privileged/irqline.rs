@@ -13,6 +13,8 @@
 //! - ISR 在中断上下文中调用: 不可 sleep / 不可持 Mutex / 不可阻塞。
 //! - 中断向量 ≤ 255 (`x86_64`) 或 ≤ 1023 (aarch64 GIC)。
 
+#![deny(missing_docs)]
+
 /// 中断处理函数签名。
 ///
 /// # 约束
@@ -48,6 +50,7 @@ impl IrqLine {
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
     #[inline(always)]
+    /// 返回该中断线对应的硬件中断请求号 (IRQ)。
     pub fn irq(&self) -> u32 {
         self.irq
     }
@@ -56,6 +59,7 @@ impl IrqLine {
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
     #[inline(always)]
+    /// 返回该中断线对应的 IDT 中断向量号。
     pub fn vector(&self) -> u8 {
         self.vector
     }
@@ -116,6 +120,7 @@ impl IrqLine {
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
     #[inline(always)]
+    /// 返回该中断线是否已注册 ISR。
     pub fn is_registered(&self) -> bool {
         self.registered
     }

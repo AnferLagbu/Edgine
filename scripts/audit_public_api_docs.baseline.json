@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 32,
-    "files": 12,
-    "keys": 31
+    "sites": 29,
+    "files": 11,
+    "keys": 28
   },
   "entries": [
     [
@@ -26,24 +26,6 @@
       "src/kernel/privileged/driver/kexec.rs",
       "fn",
       "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/irqline.rs",
-      "fn",
-      "irq",
-      1
-    ],
-    [
-      "src/kernel/privileged/irqline.rs",
-      "fn",
-      "is_registered",
-      1
-    ],
-    [
-      "src/kernel/privileged/irqline.rs",
-      "fn",
-      "vector",
       1
     ],
     [

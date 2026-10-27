@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 80,
-    "files": 47,
-    "keys": 55
+    "sites": 64,
+    "files": 41,
+    "keys": 48
   },
   "entries": [
     [
@@ -156,16 +156,6 @@
       1
     ],
     [
-      "src/kernel/privileged/arch/x86_64/mod.rs",
-      "a module",
-      1
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/smp_init.rs",
-      "a function",
-      3
-    ],
-    [
       "src/kernel/privileged/driver/display/mod.rs",
       "a module",
       1
@@ -191,16 +181,6 @@
       2
     ],
     [
-      "src/kernel/privileged/irqline.rs",
-      "a method",
-      3
-    ],
-    [
-      "src/kernel/privileged/mm/pmm_trait.rs",
-      "a struct field",
-      3
-    ],
-    [
       "src/kernel/privileged/mm/slab.rs",
       "a function",
       1
@@ -209,11 +189,6 @@
       "src/kernel/privileged/mm/slab.rs",
       "a method",
       1
-    ],
-    [
-      "src/kernel/privileged/mod.rs",
-      "a module",
-      3
     ],
     [
       "src/kernel/privileged/net/iface_trait.rs",
@@ -224,16 +199,6 @@
       "src/kernel/privileged/net/init.rs",
       "a function",
       1
-    ],
-    [
-      "src/kernel/privileged/net/init/sockets.rs",
-      "a constant",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/init/sockets.rs",
-      "a static",
-      2
     ],
     [
       "src/kernel/privileged/net/mod.rs",
