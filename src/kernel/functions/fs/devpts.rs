@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! devpts — 伪终端文件系统 (PTY)
 //!
 //! @SAFE: 本文件不含 unsafe 代码。
@@ -54,6 +55,7 @@ pub struct PtyDevice {
 }
 
 impl PtyDevice {
+    /// 构造一个未分配的 PTY 设备槽 (空名称)。
     pub const fn new(id: u32) -> Self {
         Self {
             id,
@@ -75,6 +77,7 @@ pub struct PtyTable {
 }
 
 impl PtyTable {
+    /// 构造全空的 PTY 设备表。
     pub const fn new() -> Self {
         Self {
             devices: [const { PtyDevice::new(0) }; MAX_PTY_DEVICES],

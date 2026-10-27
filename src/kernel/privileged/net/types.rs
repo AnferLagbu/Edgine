@@ -10,6 +10,8 @@
 //! functions 侧改 `pub use crate::privileged::net::types::*` 保持 API 兼容。
 //! 本文件 0 unsafe (纯常量 + AtomicBool 全局状态).
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::AtomicBool;
 
 /// 网络子系统公共状态 (smoltcp 状态机共享)
@@ -32,8 +34,11 @@ pub static NET_CONFIGURED: AtomicBool = AtomicBool::new(false);
 // 通过 eg_net_static_ip() 或配置覆盖.
 //
 // 注意: 不要在多处重复这 4 个数字, 一改全改; 引用本常量保持单一来源.
+/// DHCP 失败时的 fallback 静态 IPv4 地址 (QEMU user-mode 默认子网 10.0.2.0/24)。
 pub const FALLBACK_IPV4: [u8; 4] = [10, 0, 2, 15];
+/// DHCP 失败时的 fallback 子网前缀长度 (单位: 位)。
 pub const FALLBACK_PREFIX: u8 = 24;
+/// DHCP 失败时的 fallback 默认网关 IPv4 地址。
 pub const FALLBACK_GATEWAY: [u8; 4] = [10, 0, 2, 2];
 /// S2 DNS 接线 (net-feature-alignment.md): QEMU `-netdev user` (slirp) 内置
 /// nameserver 惯例地址. DHCP 租约未带 option 6 / static fallback 路径时作

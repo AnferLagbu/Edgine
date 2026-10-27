@@ -11,6 +11,8 @@
 //! framebuffer/font 等被 privileged 图形控制台机制 (gfx_console) 直接绑定的
 //! 原语仍留 privileged。
 
+#![deny(missing_docs)]
+
 use crate::privileged::driver::{
     DeviceInfo, DeviceType, Driver, DriverError, DriverResult as Result, Framebuffer, PixelFormat,
 };
@@ -57,6 +59,7 @@ pub struct DisplayMode {
 }
 
 impl DisplayMode {
+    /// 构造一个显示模式描述 (默认非首选模式)。
     pub fn new(width: u32, height: u32, refresh_rate: u32, pixel_format: PixelFormat) -> Self {
         Self {
             width,
@@ -120,6 +123,7 @@ pub struct MonitorInfo {
 }
 
 impl MonitorInfo {
+    /// 构造一个显示器信息条目 (未连接、未启用, 无显示模式)。
     pub fn new(id: u32, output: DisplayOutput) -> Self {
         Self {
             id,

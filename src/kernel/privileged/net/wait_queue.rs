@@ -1,3 +1,13 @@
+//! Socket WaitQueue 基础设施 — privileged 侧机制实现 (P2-I-41)。
+//!
+//! 每个 fd 关联一个轻量级等待队列, 记录阻塞在其上的等待者 pid 与兴趣方向;
+//! smoltcp 状态机在 `poll_network` 末尾遍历各 fd 经 `collect_waiters` 采集就绪者,
+//! 释放 `NET_STATE` 后逐个 `scheduler_unblock`。
+//!
+//! 归属反转记录、非阻塞回退语义与并发契约详见下方块注释。
+
+#![deny(missing_docs)]
+
 // ============================================================================
 // P2-I-41: Socket WaitQueue 基础设施 — privileged 机制实现
 // ============================================================================
@@ -122,6 +132,7 @@ pub struct SocketWaitQueue {
 }
 
 impl SocketWaitQueue {
+    /// 构造一个空的等待队列 (全部槽位为空, 无超时死线)。
     pub const fn new() -> Self {
         Self {
             pending: AtomicBool::new(false),
@@ -269,6 +280,7 @@ pub struct SocketWaitQueueTable {
 }
 
 impl SocketWaitQueueTable {
+    /// 构造 `MAX_SM_FD` 个空队列的静态表 (const, 常驻 .bss)。
     // 固定容量表 (MAX_SM_FD) 仅在全局 static `SOCKET_WAIT_QUEUES` 中物化, 常驻
     // .bss 而非栈; const 构造要求数组字面量在此函数体内展开, clippy 的
     // large_stack_arrays 仅在 host target (kernel_test/host-test 维) 按放大后的
@@ -292,6 +304,7 @@ impl SocketWaitQueueTable {
 // 全局表 (单例). 与 MAX_SM_FD 对齐.
 // ============================================================================
 
+/// 全局 per-fd 等待队列表 (单例, 与 `MAX_SM_FD` 对齐)。
 pub static SOCKET_WAIT_QUEUES: SocketWaitQueueTable = SocketWaitQueueTable::new();
 
 #[cfg(test)]

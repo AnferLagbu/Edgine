@@ -30,6 +30,8 @@
 //! - `HrTimer` 回调在中断上下文执行, 仅递增 `expiry_count` 和唤醒 epoll
 //! - `HrTimer` 对象嵌入 `TimerFdSlot`, 生命周期与槽位一致
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::privileged::sync::IrqSpinLock as Mutex;
@@ -64,13 +66,16 @@ pub const CLOCK_REALTIME: i32 = 0;
 pub struct Itimerspec {
     /// 间隔时间
     pub it_interval_sec: i64,
+    /// 间隔时间纳秒部分 (与秒部分合计为间隔时长)
     pub it_interval_nsec: i64,
     /// 初次到期时间
     pub it_value_sec: i64,
+    /// 初次到期时间纳秒部分 (与秒部分合计为绝对到期时刻)
     pub it_value_nsec: i64,
 }
 
 impl Itimerspec {
+    /// 构造全零的 itimerspec (无间隔、无到期时间)。
     pub const fn zeroed() -> Self {
         Self {
             it_interval_sec: 0,
