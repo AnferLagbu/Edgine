@@ -19,6 +19,8 @@
 //! └── Panic(info)                // 系统崩溃
 //! ```
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use super::idt::IdtManager;
@@ -45,12 +47,16 @@ pub enum RecoveryAction {
 /// Kernel panic 信息
 #[derive(Debug, Clone, PartialEq)]
 pub struct PanicInfo {
+    /// 崩溃原因描述
     pub reason: &'static str,
+    /// 触发崩溃的中断向量号
     pub vector: u8,
+    /// 崩溃时的指令指针
     pub rip: u64,
 }
 
 impl PanicInfo {
+    /// 构造崩溃信息记录
     pub fn new(reason: &'static str, vector: u8, rip: u64) -> Self {
         Self {
             reason,
@@ -350,32 +356,44 @@ impl ExceptionHandler for InvalidOpcodeHandler {
 /// Page Fault 分析结果
 #[derive(Debug, Clone, Copy)]
 pub struct PageFaultAnalysis {
+    /// 故障页是否已映射 (P 位)
     pub present: bool,
+    /// 触发故障的访问类型 (读/写)
     pub access_type: AccessType,
+    /// 故障发生时的特权级 (内核/用户)
     pub mode: Mode,
+    /// 故障原因分类
     pub cause: FaultCause,
+    /// 故障是否由取指令触发
     pub instruction_fetch: bool,
 }
 
 /// 缺页访问类型 (读/写)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessType {
+    /// 读访问
     Read,
+    /// 写访问
     Write,
 }
 
 /// 缺页发生时 CPU 所处特权级 (内核/用户)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
+    /// 内核态
     Kernel,
+    /// 用户态
     User,
 }
 
 /// 缺页原因分类
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FaultCause {
+    /// 页未映射 (P=0)
     PageNotPresent,
+    /// 保护违规 (P=1 但权限不足)
     ProtectionViolation,
+    /// 页表预留位被置位
     ReservedBitSet,
 }
 
@@ -517,6 +535,7 @@ pub struct DefaultHandler {
 }
 
 impl DefaultHandler {
+    /// 构造指定向量号的默认处理器
     pub fn new(vector: u8) -> Self {
         Self { vector }
     }
@@ -592,6 +611,7 @@ pub struct ExceptionStatisticsCollector {
 }
 
 impl ExceptionStatisticsCollector {
+    /// 构造全零的统计收集器
     pub const fn new() -> Self {
         Self {
             total_exceptions: AtomicU64::new(0),
@@ -603,14 +623,17 @@ impl ExceptionStatisticsCollector {
         }
     }
 
+    /// 返回累计处理的异常总数
     pub fn total(&self) -> u64 {
         self.total_exceptions.load(Ordering::Relaxed)
     }
 
+    /// 返回因异常终止的进程总数
     pub fn terminations(&self) -> u64 {
         self.process_terminations.load(Ordering::Relaxed)
     }
 
+    /// 按索引返回指定异常分类的计数 (`idx` 对应 `ExceptionCategory` 序号)
     pub fn category_count(&self, idx: usize) -> u64 {
         if idx < 6 {
             self.by_category[idx].load(Ordering::Relaxed)

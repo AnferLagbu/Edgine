@@ -18,6 +18,8 @@
 //! # Safety
 //! 此模块直接操作 PS/2 控制器硬件。
 
+#![deny(missing_docs)]
+
 use crate::privileged::driver::{DeviceInfo, DeviceType, Driver, DriverError, DriverResult};
 use crate::privileged::ioport::IoPort;
 use crate::privileged::sync::IrqSpinLock as Mutex;
@@ -113,16 +115,27 @@ pub enum SpecialKey {
     ArrowRight,
     /// F1-F12 功能键
     F1,
+    /// F2 功能键
     F2,
+    /// F3 功能键
     F3,
+    /// F4 功能键
     F4,
+    /// F5 功能键
     F5,
+    /// F6 功能键
     F6,
+    /// F7 功能键
     F7,
+    /// F8 功能键
     F8,
+    /// F9 功能键
     F9,
+    /// F10 功能键
     F10,
+    /// F11 功能键
     F11,
+    /// F12 功能键
     F12,
 }
 
@@ -167,14 +180,23 @@ pub(crate) fn get_special_key(scancode: u8) -> SpecialKey {
 /// 键盘修饰键状态
 #[derive(Debug, Clone, Copy)]
 pub struct ModifierState {
+    /// 左 Shift 是否按下
     pub left_shift: bool,
+    /// 右 Shift 是否按下
     pub right_shift: bool,
+    /// 左 Ctrl 是否按下
     pub left_ctrl: bool,
+    /// 右 Ctrl 是否按下
     pub right_ctrl: bool,
+    /// 左 Alt 是否按下
     pub left_alt: bool,
+    /// 右 Alt 是否按下
     pub right_alt: bool,
+    /// Caps Lock 是否激活
     pub caps_lock: bool,
+    /// Num Lock 是否激活
     pub num_lock: bool,
+    /// Scroll Lock 是否激活
     pub scroll_lock: bool,
 }
 
@@ -1008,6 +1030,7 @@ extern "C" fn kb_input_irq(driver_data: *mut u8) {
     kb.handle_interrupt();
 }
 
+/// PS/2 键盘的 EGDF `InputOps` 契约实现 (read_char / has_char / handle_irq)
 pub static PS2_KEYBOARD_INPUT_OPS: InputOps = InputOps {
     read_char: kb_input_read,
     has_char: kb_input_has,

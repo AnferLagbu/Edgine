@@ -73,6 +73,7 @@ pub mod session;
 pub mod signal;
 pub mod signal_trait;
 pub mod types;
+/// 用户进程 — 创建 / 地址空间装载 / 进入 Ring 3 与销毁
 pub mod user_proc;
 
 // LATER(polish): 用显式导入替代 glob re-export 消除歧义

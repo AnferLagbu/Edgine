@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 244,
-    "files": 52,
-    "keys": 216
+    "sites": 228,
+    "files": 50,
+    "keys": 202
   },
   "entries": [
     [
@@ -272,30 +272,6 @@
       "src/kernel/privileged/freg/undo_log.rs",
       "fn",
       "rollback_to",
-      1
-    ],
-    [
-      "src/kernel/privileged/idt/handlers.rs",
-      "fn",
-      "category_count",
-      1
-    ],
-    [
-      "src/kernel/privileged/idt/handlers.rs",
-      "fn",
-      "new",
-      3
-    ],
-    [
-      "src/kernel/privileged/idt/handlers.rs",
-      "fn",
-      "terminations",
-      1
-    ],
-    [
-      "src/kernel/privileged/idt/handlers.rs",
-      "fn",
-      "total",
       1
     ],
     [
@@ -981,66 +957,6 @@
       "fn",
       "new",
       2
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "fn",
-      "create",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "fn",
-      "create_from_binary",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "fn",
-      "destroy_by_pid",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "fn",
-      "destroy_by_pid_no_kstack",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "fn",
-      "enter",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "fn",
-      "get_current",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "fn",
-      "init",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "fn",
-      "load_elf_from_memory",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "fn",
-      "set_current",
-      1
     ],
     [
       "src/kernel/privileged/sched/sched_trait.rs",

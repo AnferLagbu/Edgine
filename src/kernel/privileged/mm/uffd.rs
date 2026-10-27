@@ -41,6 +41,8 @@
 //! - 本模块 0 unsafe (仅用 `PhysAddr::to_virt` + `copy_nonoverlapping` 于
 //!   `fill_provided_page`, 已带 SAFETY 注释).
 
+#![deny(missing_docs)]
+
 use alloc::boxed::Box;
 
 use super::{PAGE_SIZE, PhysAddr};
@@ -85,8 +87,11 @@ pub const UFFDIO_RANGE_SIZE: usize = 16;
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UffdIoApi {
+    /// 协商的 API 版本 (`UFFD_API`)
     pub api: u64,
+    /// 请求 / 回填的特性位
     pub features: u64,
+    /// 支持的 ioctl 命令位图
     pub ioctls: u64,
 }
 
@@ -94,7 +99,9 @@ pub struct UffdIoApi {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UffdIoRange {
+    /// 区间起始地址
     pub start: u64,
+    /// 区间长度 (字节)
     pub len: u64,
 }
 
@@ -102,8 +109,11 @@ pub struct UffdIoRange {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UffdIoRegister {
+    /// 待注册的地址区间
     pub range: UffdIoRange,
+    /// 缺页模式 (`UFFDIO_REGISTER_MODE_*`)
     pub mode: u64,
+    /// 内核回填: 实际生效的 ioctl 位图
     pub ioctls: u64,
 }
 
@@ -111,9 +121,13 @@ pub struct UffdIoRegister {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UffdIoCopy {
+    /// 目标地址 (缺页页)
     pub dst: u64,
+    /// 源数据地址
     pub src: u64,
+    /// 拷贝长度 (字节)
     pub len: u64,
+    /// 拷贝模式位
     pub mode: u64,
     /// 内核回填: 成功拷贝的字节数
     pub copy: i64,
@@ -123,7 +137,9 @@ pub struct UffdIoCopy {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UffdIoZeropage {
+    /// 待填零的地址区间
     pub range: UffdIoRange,
+    /// 填零模式位
     pub mode: u64,
     /// 内核回填: 成功置零的字节数
     pub zeropage: i64,
@@ -133,14 +149,21 @@ pub struct UffdIoZeropage {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UffdMsgPagefault {
+    /// 事件类型 (`UFFD_EVENT_PAGEFAULT`)
     pub event: u8,
+    /// 保留字段
     pub reserved1: u8,
+    /// 保留字段
     pub reserved2: u16,
+    /// 保留字段
     pub reserved3: u32,
+    /// 缺页标志位 (`UFFD_PAGEFAULT_FLAG_*`)
     pub flags: u64,
+    /// 触发缺页的地址
     pub address: u64,
     /// 缺页进程 pid (`feat.ptid`)
     pub ptid: u32,
+    /// 保留字段
     pub reserved4: u32,
 }
 

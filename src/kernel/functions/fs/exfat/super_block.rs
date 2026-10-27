@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //! exFAT 超级块数据结构
 
@@ -6,30 +7,49 @@
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct ExfatSuperBlock {
-    // 引导扇区
+    /// 跳转引导指令 (0xEB/0xE9 开头)
     pub jump_boot: [u8; 3],
+    /// 文件系统名 ("EXFAT" + 填充)
     pub fs_name: [u8; 8],
+    /// 必须为零的保留区
     pub must_be_zero: [u8; 53],
+    /// 分区起始偏移 (扇区)
     pub partition_offset: u64,
+    /// 卷总扇区数
     pub volume_length: u64,
+    /// FAT 起始扇区
     pub fat_offset: u32,
+    /// FAT 长度 (扇区)
     pub fat_length: u32,
+    /// 簇堆起始扇区
     pub cluster_heap_offset: u32,
+    /// 簇总数
     pub cluster_count: u32,
+    /// 根目录首簇号
     pub root_dir_first_cluster: u32,
+    /// 卷标志 (脏位 / 媒体故障位)
     pub volume_flags: u16,
+    /// 每扇区字节数的移位量 (`log2`)
     pub bytes_per_sector_shift: u8,
+    /// 每簇扇区数的移位量 (`log2`)
     pub sectors_per_cluster_shift: u8,
+    /// FAT 表数量
     pub num_fats: u8,
+    /// 驱动器选择号
     pub drive_select: u8,
     percent_in_use: u8,
+    /// 保留字段
     pub reserved: [u8; 7],
+    /// 引导代码区
     pub boot_code: [u8; 390],
+    /// 引导扇区签名 (0xAA55)
     pub boot_signature: u16,
 }
 
 impl ExfatSuperBlock {
+    /// 文件系统魔数 ("EXFAT")
     pub const MAGIC: [u8; 5] = *b"EXFAT";
+    /// 引导扇区结束签名 (0xAA55)
     pub const BOOT_SIGNATURE: u16 = 0xAA55;
 
     /// 从字节切片解析超级块

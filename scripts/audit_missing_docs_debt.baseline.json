@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 1147,
-    "files": 159,
-    "keys": 301
+    "sites": 1040,
+    "files": 153,
+    "keys": 284
   },
   "entries": [
     [
@@ -198,16 +198,6 @@
     [
       "src/kernel/functions/fs/exfat/read.rs",
       "a struct field",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/exfat/super_block.rs",
-      "a struct field",
-      18
-    ],
-    [
-      "src/kernel/functions/fs/exfat/super_block.rs",
-      "an associated constant",
       2
     ],
     [
@@ -691,21 +681,6 @@
       1
     ],
     [
-      "src/kernel/privileged/driver/input/keyboard.rs",
-      "a static",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/input/keyboard.rs",
-      "a struct field",
-      9
-    ],
-    [
-      "src/kernel/privileged/driver/input/keyboard.rs",
-      "a variant",
-      11
-    ],
-    [
       "src/kernel/privileged/driver/input/mod.rs",
       "a function",
       1
@@ -906,26 +881,6 @@
       2
     ],
     [
-      "src/kernel/privileged/idt/handlers.rs",
-      "a method",
-      3
-    ],
-    [
-      "src/kernel/privileged/idt/handlers.rs",
-      "a struct field",
-      8
-    ],
-    [
-      "src/kernel/privileged/idt/handlers.rs",
-      "a variant",
-      7
-    ],
-    [
-      "src/kernel/privileged/idt/handlers.rs",
-      "an associated function",
-      3
-    ],
-    [
       "src/kernel/privileged/idt/statistics.rs",
       "a struct field",
       12
@@ -1101,11 +1056,6 @@
       1
     ],
     [
-      "src/kernel/privileged/mm/uffd.rs",
-      "a struct field",
-      21
-    ],
-    [
       "src/kernel/privileged/mm/vmm_x86_64.rs",
       "a method",
       11
@@ -1271,11 +1221,6 @@
       11
     ],
     [
-      "src/kernel/privileged/proc/mod.rs",
-      "a module",
-      1
-    ],
-    [
       "src/kernel/privileged/proc/oomd.rs",
       "a method",
       3
@@ -1354,36 +1299,6 @@
       "src/kernel/privileged/proc/session.rs",
       "an associated function",
       2
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "a constant",
-      5
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "a method",
-      9
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "a static",
-      3
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "a struct",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "a struct field",
-      4
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "an associated function",
-      1
     ],
     [
       "src/kernel/privileged/sgeg/audit.rs",

@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 use super::process::{PROCESS_TABLE, Process};
 use super::types::{ProcessId, ProcessState};
 use crate::klog_error;
@@ -7,10 +8,12 @@ use crate::privileged::sync::IrqSpinLock as Mutex;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
+/// 进入用户态前待切换的 CR3 (由汇编入口读取并写入控制寄存器)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub static user_entry_cr3: AtomicU64 = AtomicU64::new(0);
 
+/// 进入用户态后的跳转目标地址 (由汇编入口读取并跳转)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub static user_entry_target: AtomicU64 = AtomicU64::new(0);
@@ -55,16 +58,21 @@ pub const USER_STACK_EXPAND_LIMIT: u64 = USER_STACK_TOP - USER_STACK_MAX_SIZE;
 #[deprecated(note = "use privileged::mm::PageFlags 替代 (类型安全 + 编译期检查)")]
 pub const PAGE_PRESENT: u64 = 1;
 #[deprecated(note = "use privileged::mm::PageFlags::WRITABLE 替代")]
+/// `PAGE_WRITABLE` 旧式裸值: 页可写
 pub const PAGE_WRITABLE: u64 = 2;
 #[deprecated(note = "use privileged::mm::PageFlags::USER 替代")]
+/// `PAGE_USER` 旧式裸值: 页允许用户态访问
 pub const PAGE_USER: u64 = 4;
 
 /// 类型化页面标志 (从 `privileged::mm` 引入, 在 FFI 边界通过 .`bits()` 转 u64)
 use crate::privileged::mm::PageFlags;
 
+/// GDT 用户数据段选择子 (Ring 3)
 pub const GDT_USER_DATA: u64 = 0x18;
+/// GDT 用户代码段选择子 (Ring 3)
 pub const GDT_USER_CODE: u64 = 0x20;
 
+/// ELF 程序头类型: 可加载段
 pub const PT_LOAD: u32 = 1;
 
 /// ELF 头部 / 程序头 — 重导出 elf.rs canonical 定义
@@ -74,10 +82,15 @@ pub const PT_LOAD: u32 = 1;
 pub use super::elf::{Elf64Header as ElfHeader, Elf64Phdr as ElfPhdr};
 
 #[repr(C)]
+/// 用户进程创建参数 — 入口地址、名称与代码映像
 pub struct UserProcInfo {
+    /// 用户态入口地址
     pub entry: u64,
+    /// 进程名称 (NUL 补齐)
     pub name: [u8; 64],
+    /// 代码映像字节数
     pub code_size: u64,
+    /// 代码映像基址 (内核可读指针)
     pub code_data: *const u8,
 }
 
@@ -785,6 +798,7 @@ unsafe impl Send for UserProcManager {}
 unsafe impl Sync for UserProcManager {}
 
 impl UserProcManager {
+    /// 构造空的管理器 (映射表为空, 当前进程未设置)
     pub const fn new() -> Self {
         Self {
             current: AtomicU64::new(0),
@@ -796,6 +810,7 @@ impl UserProcManager {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
+    /// 初始化占位 (`const` 构造已完成全部初始化, 此处无额外动作)
     pub fn init(&self) {}
 
     fn destroy(&self, proc: NonNull<UserProcess>, keep_kstack: bool) {
@@ -883,6 +898,7 @@ impl UserProcManager {
         })
     }
 
+    /// 销毁指定 pid 的非运行进程 (Zombie/Terminated)
     pub fn destroy_by_pid(&self, pid: u32) {
         // 先在独立语句中取句柄 (guard 随该语句结束释放), 再进入 destroy —
         // destroy 内部会重新获取同一把 IrqSpinLock; 若把取句柄写在 `if let`
@@ -898,6 +914,7 @@ impl UserProcManager {
         }
     }
 
+    /// 销毁指定 pid 已退出的进程并保留内核栈 (fork 失败回滚路径)
     pub fn destroy_by_pid_no_kstack(&self, pid: u32) {
         // 同 destroy_by_pid: 取句柄与 destroy 的锁必须分离, 避免同锁自锁死.
         let proc = self.processes.lock().get(&pid).copied();
@@ -960,6 +977,7 @@ impl UserProcManager {
         self.processes.lock().remove(&pid);
     }
 
+    /// 按 `info` 创建用户进程 (分配 PID / 页表 / 内核栈), 失败返回 `None`
     pub fn create(&self, info: &UserProcInfo, pwm: u64) -> Option<*mut UserProcess> {
         // ✅ 单源真相: 优先分配权威 Process, 再分配 UserProcess 镜像并关联.
         //    此顺序保证 UserProcess::process NonNull 字段构造时即指向有效 Process.
@@ -1153,6 +1171,7 @@ impl UserProcManager {
         clippy::no_effect_underscore_binding,
         reason = "no_effect_underscore_binding: let _ = expr 用于类型推导/副作用; 当前优先 expect"
     )]
+    /// 切换到该进程的地址空间并进入 Ring 3 执行 (不返回)
     pub fn enter(&self, proc: *mut UserProcess) {
         crate::klog_boot_info!("[USER] enter() called with proc={:#X}", proc as u64);
         if proc.is_null() {
@@ -1749,6 +1768,7 @@ impl UserProcManager {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
+    /// 从内存中的 ELF 映像加载用户进程, 返回新 pid (失败为负值)
     pub fn load_elf_from_memory(&self, elf_data: *const u8, elf_size: u64, pwm: u64) -> i32 {
         crate::klog_boot_info!("[ELF] load_elf_from_memory: entry");
         if elf_data.is_null() || elf_size < core::mem::size_of::<ElfHeader>() as u64 {
@@ -1923,6 +1943,7 @@ impl UserProcManager {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
+    /// 从扁平二进制映像创建用户进程, 返回新 pid (失败为负值)
     pub fn create_from_binary(&self, code: *const u8, code_size: u64, pwm: u64) -> i32 {
         let info = UserProcInfo {
             entry: USER_CODE_BASE,
@@ -1970,6 +1991,7 @@ impl UserProcManager {
         proc_ref.pid() as i32
     }
 
+    /// 返回当前正在运行的 `UserProcess` 裸指针 (未设置时为 `None`)
     pub fn get_current(&self) -> Option<*mut UserProcess> {
         let current = self.current.load(Ordering::SeqCst);
         if current != 0 {
@@ -1979,6 +2001,7 @@ impl UserProcManager {
         }
     }
 
+    /// 设置当前运行的 `UserProcess` (`None` 表示清空)
     pub fn set_current(&self, proc: Option<*mut UserProcess>) {
         if let Some(p) = proc {
             self.current.store(p as u64, Ordering::SeqCst);
@@ -1988,6 +2011,7 @@ impl UserProcManager {
     }
 }
 
+/// 全局用户进程管理器单例
 pub static USER_PROC_MANAGER: UserProcManager = UserProcManager::new();
 
 /// 用户进程子系统初始化入口 — 初始化全局 [`USER_PROC_MANAGER`] 并注册 memlock 限制查询回调。
