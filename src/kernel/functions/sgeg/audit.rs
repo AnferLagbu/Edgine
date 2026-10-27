@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! 审计日志 — 仅追加 / 哈希链 / 不可篡改 (functions 层)
 //!
 //! ## 框内核中的表达
@@ -24,15 +25,25 @@ use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 /// 审计事件类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuditEventKind {
+    /// 登录成功
     LoginSuccess,
+    /// 登录失败
     LoginFailed,
+    /// 登出
     Logout,
+    /// 能力授予
     CapabilityGranted,
+    /// 能力撤销
     CapabilityRevoked,
+    /// 会话被终止
     SessionKilled,
+    /// 策略违规
     PolicyViolation,
+    /// FREG 恢复事件
     FREGRecovery,
+    /// FREG 复位事件
     FREGReset,
+    /// 自定义事件 (由调用方指定标签)
     Custom(u8),
 }
 
@@ -54,23 +65,35 @@ impl AuditEventKind {
     }
 }
 
+/// 单条审计事件
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AuditEvent {
+    /// 事件类型
     pub kind: AuditEventKind,
+    /// 事件发生时的时间戳 tick
     pub tick: u64,
+    /// 关联的 PWM (进程权重标识)
     pub pwm: u64,
+    /// 关联的会话号
     pub session_id: u32,
+    /// 关联的域标识
     pub domain_id: u8,
+    /// 事件附带的能力位
     pub bits: u64,
+    /// 事件结果 (0 成功, 负数表示错误码)
     pub result: i32,
 }
 
 /// 哈希链节点
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HashChainNode {
+    /// 节点在链中的全局索引 (单调递增)
     pub index: u32,
+    /// 节点承载的审计事件
     pub event: AuditEvent,
+    /// 前驱节点的哈希
     pub prev_hash: u64,
+    /// 本节点哈希 (`prev_hash` 与 `event` 的 FNV-1a 派生)
     pub hash: u64,
 }
 
@@ -90,6 +113,7 @@ pub struct AuditLog {
     total: AtomicU64,
 }
 
+/// 环形审计缓冲的槽位数量
 pub const AUDIT_BUFFER_SIZE: usize = 1024;
 
 impl AuditLog {
@@ -97,6 +121,7 @@ impl AuditLog {
         clippy::large_stack_arrays,
         reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
     )]
+    /// 构造空审计日志 (全部槽位为占位节点)
     pub const fn new() -> Self {
         const EMPTY_NODE: HashChainNode = HashChainNode {
             index: 0,
@@ -237,10 +262,12 @@ impl AuditLog {
         out
     }
 
+    /// 累计写入的事件总数 (含已被环形覆盖的)
     pub fn total(&self) -> u64 {
         self.total.load(Ordering::Acquire)
     }
 
+    /// 因环形覆盖而丢弃的事件数量
     pub fn dropped(&self) -> u64 {
         self.dropped.load(Ordering::Acquire)
     }

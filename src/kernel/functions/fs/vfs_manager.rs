@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 //! VFS 管理器 (挂载表 + 路径解析) — functions 策略实现
 //!
 //! ## 阶段 4b 归属收敛 (当前权威)
@@ -27,11 +28,14 @@ use crate::functions::fs::vfs_types::{
 use crate::privileged::sync::IrqSpinLock as Mutex;
 use alloc::string::String;
 
+/// 单个挂载点条目 (路径 + 文件系统标识)
 pub struct VfsMount {
+    /// 挂载点在真实路径空间中的位置 (NUL 结尾)
     pub path: [u8; VFS_MAX_PATH],
     fs_type: FsType,
     /// E6-4: trait object 分发 (优先于 `fs_type` match)
     fs: Option<&'static dyn FileSystem>,
+    /// 该槽位是否已被占用
     pub used: bool,
 }
 
@@ -47,6 +51,7 @@ impl Clone for VfsMount {
 }
 
 impl VfsMount {
+    /// 构造空挂载点 (未占用, 路径为空, 类型 `Unknown`)
     pub const fn new() -> Self {
         Self {
             path: [0; VFS_MAX_PATH],
@@ -56,6 +61,7 @@ impl VfsMount {
         }
     }
 
+    /// 写入挂载路径 (超长部分截断, 只保留前 `VFS_MAX_PATH - 1` 字节)
     pub fn set_path(&mut self, path: &str) {
         let bytes = path.as_bytes();
         let len = bytes.len().min(VFS_MAX_PATH - 1);
@@ -63,6 +69,7 @@ impl VfsMount {
         self.path[len] = 0;
     }
 
+    /// 读取挂载路径 (非 UTF-8 时返回空串)
     pub fn get_path(&self) -> &str {
         let end = self
             .path
@@ -72,14 +79,17 @@ impl VfsMount {
         core::str::from_utf8(&self.path[..end]).unwrap_or("")
     }
 
+    /// 按名称设置文件系统类型 (名称不可识别时记为 `Unknown`)
     pub fn set_fs_type(&mut self, name: &str) {
         self.fs_type = FsType::from_name(name);
     }
 
+    /// 读取文件系统类型
     pub fn get_fs_type(&self) -> FsType {
         self.fs_type
     }
 
+    /// 读取文件系统类型的名称
     pub fn get_fs_name(&self) -> &str {
         self.fs_type.as_str()
     }
@@ -95,15 +105,21 @@ impl VfsMount {
     }
 }
 
+/// 路径解析结果 (命中的挂载点 + 相对路径)
 pub struct ResolvedMount {
+    /// 挂载点表中的槽位索引
     pub mount_idx: usize,
+    /// 挂载点内的相对路径
     pub rel_path: &'static str,
+    /// 该挂载点登记的文件系统类型
     pub fs_type: FsType,
     /// E6-4: trait object (优先于 `fs_type`)
     pub fs: Option<&'static dyn FileSystem>,
 }
 
+/// 全局 VFS 管理器 (挂载表 / cwd / 根前缀 / 快照)
 pub struct VfsManager {
+    /// 挂载点表
     pub mounts: Mutex<[VfsMount; VFS_MAX_MOUNTS]>,
     cwd: Mutex<[u8; VFS_MAX_PATH]>,
     /// 根前缀 (`chroot` / `pivot_root` 机制) — 用户视图 "/" 对应的真实路径
@@ -135,6 +151,7 @@ fn truncate_to_parent(s: &[u8]) -> usize {
 }
 
 impl VfsManager {
+    /// 构造未初始化的管理器 (挂载表全空, 根前缀为 "/")
     pub const fn new() -> Self {
         Self {
             mounts: Mutex::new([
@@ -154,6 +171,7 @@ impl VfsManager {
         }
     }
 
+    /// 复位挂载表 / cwd / 根前缀, 并置初始化完成
     pub fn init(&self) {
         let mut mounts = self.mounts.lock();
         for mount in mounts.iter_mut() {
@@ -174,6 +192,7 @@ impl VfsManager {
         *self.initialized.lock() = true;
     }
 
+    /// 查找覆盖给定路径的最长挂载点, 返回其槽位索引
     pub fn find_mount(&self, path: &str) -> Option<usize> {
         let mounts = self.mounts.lock();
         let mut best_idx: Option<usize> = None;
@@ -205,6 +224,7 @@ impl VfsManager {
         best_idx
     }
 
+    /// 去掉挂载点前缀后的相对路径 (去掉前导 '/'; 恰好落在挂载点时返回 "/")
     pub fn get_relative_path<'a>(&self, path: &'a str, mount_idx: usize) -> &'a str {
         let mounts = self.mounts.lock();
         if mount_idx >= VFS_MAX_MOUNTS {
@@ -219,6 +239,7 @@ impl VfsManager {
         if rel_path.is_empty() { "/" } else { rel_path }
     }
 
+    /// 解析路径命中的挂载点及其文件系统类型 (类型未知时返回 `None`)
     pub fn resolve_mount(&self, path: &str) -> Option<(usize, FsType)> {
         let mount_idx = self.find_mount(path)?;
         let fs_type = {
@@ -332,6 +353,7 @@ impl VfsManager {
         Err(KernelError::FileNotFound)
     }
 
+    /// 设置当前工作目录 (视图路径; 超长部分截断)
     pub fn set_cwd(&self, path: &str) {
         let mut cwd = self.cwd.lock();
         let bytes = path.as_bytes();
@@ -340,6 +362,7 @@ impl VfsManager {
         cwd[len] = 0;
     }
 
+    /// 读取当前工作目录 (视图路径)
     pub fn get_cwd(&self) -> String {
         let cwd = self.cwd.lock();
         let end = cwd.iter().position(|&b| b == 0).unwrap_or(VFS_MAX_PATH);
@@ -497,6 +520,7 @@ impl VfsManager {
         core::str::from_utf8(&out[..len]).ok()
     }
 
+    /// 捕获当前挂载表 / cwd / 根前缀快照 (供 freg 回滚)
     pub fn capture_snapshot(&self) {
         let mounts_data = {
             let m = self.mounts.lock();
@@ -515,6 +539,7 @@ impl VfsManager {
         clippy::assigning_clones,
         reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
     )]
+    /// 从最近一次快照恢复挂载表 / cwd / 根前缀 (无快照时为空操作)
     pub fn restore_from_snapshot(&self) {
         if let Some(ref snap) = *self.snapshot.lock() {
             *self.mounts.lock() = snap.mounts.clone();
@@ -524,6 +549,7 @@ impl VfsManager {
     }
 }
 
+/// 全局 VFS 管理器实例
 pub static VFS_MANAGER: VfsManager = VfsManager::new();
 
 /// VFS 子系统初始化 — 注册 freg 回调 + 初始化 VFS_MANAGER

@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 1388,
-    "files": 169,
-    "keys": 339
+    "sites": 1264,
+    "files": 164,
+    "keys": 314
   },
   "entries": [
     [
@@ -391,59 +391,9 @@
       2
     ],
     [
-      "src/kernel/functions/fs/unkfs/snapshot.rs",
-      "a constant",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/snapshot.rs",
-      "a method",
-      8
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/snapshot.rs",
-      "a struct",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/snapshot.rs",
-      "a struct field",
-      11
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/snapshot.rs",
-      "an associated function",
-      2
-    ],
-    [
       "src/kernel/functions/fs/unkfs/unkfs_inode.rs",
       "an associated function",
       1
-    ],
-    [
-      "src/kernel/functions/fs/vfs_manager.rs",
-      "a method",
-      13
-    ],
-    [
-      "src/kernel/functions/fs/vfs_manager.rs",
-      "a static",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/vfs_manager.rs",
-      "a struct",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/vfs_manager.rs",
-      "a struct field",
-      6
-    ],
-    [
-      "src/kernel/functions/fs/vfs_manager.rs",
-      "an associated function",
-      2
     ],
     [
       "src/kernel/functions/fs/vfs_mount.rs",
@@ -536,63 +486,8 @@
       1
     ],
     [
-      "src/kernel/functions/sgeg/audit.rs",
-      "a constant",
-      1
-    ],
-    [
-      "src/kernel/functions/sgeg/audit.rs",
-      "a method",
-      2
-    ],
-    [
-      "src/kernel/functions/sgeg/audit.rs",
-      "a struct",
-      1
-    ],
-    [
-      "src/kernel/functions/sgeg/audit.rs",
-      "a struct field",
-      11
-    ],
-    [
-      "src/kernel/functions/sgeg/audit.rs",
-      "a variant",
-      10
-    ],
-    [
-      "src/kernel/functions/sgeg/audit.rs",
-      "an associated function",
-      1
-    ],
-    [
       "src/kernel/functions/sgeg/crypto.rs",
       "a type alias",
-      1
-    ],
-    [
-      "src/kernel/functions/sgeg/grants.rs",
-      "a method",
-      2
-    ],
-    [
-      "src/kernel/functions/sgeg/grants.rs",
-      "a struct field",
-      12
-    ],
-    [
-      "src/kernel/functions/sgeg/grants.rs",
-      "a variant",
-      7
-    ],
-    [
-      "src/kernel/functions/sgeg/grants.rs",
-      "an associated function",
-      2
-    ],
-    [
-      "src/kernel/functions/sgeg/grants.rs",
-      "an enum",
       1
     ],
     [
@@ -677,26 +572,6 @@
     ],
     [
       "src/kernel/functions/wasm/interpreter.rs",
-      "an associated function",
-      1
-    ],
-    [
-      "src/kernel/functions/wasm/runtime.rs",
-      "a method",
-      7
-    ],
-    [
-      "src/kernel/functions/wasm/runtime.rs",
-      "a struct",
-      4
-    ],
-    [
-      "src/kernel/functions/wasm/runtime.rs",
-      "a struct field",
-      13
-    ],
-    [
-      "src/kernel/functions/wasm/runtime.rs",
       "an associated function",
       1
     ],

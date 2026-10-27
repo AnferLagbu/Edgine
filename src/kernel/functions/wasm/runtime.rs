@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。纯数据结构定义。
 //! 运行时数据结构 — functions 层策略主体
 //!
@@ -22,11 +23,14 @@ use super::types::{Value, WASM_PAGE_SIZE, WasmError};
 // 值栈
 // ============================================================================
 
+/// WASM 值栈 (栈式虚拟机操作数栈)
 pub struct ValueStack {
+    /// 栈内存储的操作数值
     pub data: Vec<Value>,
 }
 
 impl ValueStack {
+    /// 构造空值栈 (预留 256 个槽位容量)
     pub fn new() -> Self {
         Self {
             data: Vec::with_capacity(256),
@@ -81,22 +85,27 @@ impl ValueStack {
         }
     }
 
+    /// 查看栈顶值 (不弹出)
     pub fn peek(&self) -> Option<&Value> {
         self.data.last()
     }
 
+    /// 当前栈深度
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
+    /// 栈是否为空
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
+    /// 将栈截断到指定深度 (丢弃多余项)
     pub fn drain_to(&mut self, new_len: usize) {
         self.data.truncate(new_len);
     }
 
+    /// 清空值栈
     pub fn clear(&mut self) {
         self.data.clear();
     }
@@ -106,17 +115,26 @@ impl ValueStack {
 // 调用帧
 // ============================================================================
 
+/// 函数调用帧 (记录一次 WASM 函数调用的执行上下文)
 pub struct CallFrame {
+    /// 被调函数在模块函数表中的索引
     pub func_idx: u32,
+    /// 局部变量槽
     pub locals: Vec<Value>,
+    /// 指向 `code` 的指令指针
     pub pc: usize,
+    /// 该函数体字节码
     pub code: Vec<u8>,
+    /// 参数个数
     pub arity: usize,
+    /// 返回后恢复的调用方指令指针
     pub return_pc: usize,
+    /// 该帧在值栈中的基准位置
     pub stack_base: usize,
 }
 
 impl CallFrame {
+    /// 读取 `pc` 处的一个字节 (越界时返回 `None`)
     pub fn read_u8(&self) -> Option<u8> {
         if self.pc < self.code.len() {
             Some(self.code[self.pc])
@@ -130,8 +148,11 @@ impl CallFrame {
 // 线性内存
 // ============================================================================
 
+/// WASM 线性内存 (按页组织的字节数组)
 pub struct LinearMemory {
+    /// 内存字节 (长度恒为页大小的整数倍)
     pub data: Vec<u8>,
+    /// 页数上限 (`None` 表示不限制)
     pub max_pages: Option<u32>,
 }
 
@@ -181,6 +202,7 @@ impl LinearMemory {
         Ok(current_pages)
     }
 
+    /// 当前内存页数
     pub fn pages(&self) -> u32 {
         (self.data.len() / WASM_PAGE_SIZE as usize) as u32
     }
@@ -326,9 +348,13 @@ impl LinearMemory {
 // 解释器配置
 // ============================================================================
 
+/// 解释器资源上限配置
 pub struct InterpreterConfig {
+    /// 最大调用深度
     pub max_call_depth: u32,
+    /// 最大 gas 消耗
     pub max_gas: u64,
+    /// 最大内存页数
     pub max_memory_pages: u32,
 }
 

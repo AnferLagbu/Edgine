@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! 能力委托 — 链式委托 / 时间约束 / 撤销传播 (functions 层)
 //!
 //! ## 框内核中的表达
@@ -32,6 +33,7 @@ bitflags::bitflags! {
     /// 委托标志
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct GrantFlags: u32 {
+        /// 空标志集
         const NONE       = 0;
         /// 不可再委托
         const NON_DELEGATABLE = 1 << 0;
@@ -45,14 +47,23 @@ bitflags::bitflags! {
 /// 委托记录
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GrantRecord {
+    /// 委托者 PWM
     pub from_pwm: u64,
+    /// 受托者 PWM
     pub to_pwm: u64,
+    /// 被委托的能力域
     pub domain: CapDomain,
+    /// 被授予的能力位
     pub bits: CapBits,
+    /// 委托创建时刻
     pub created_tick: u64,
+    /// 过期时刻 (0 表示永不过期)
     pub expires_tick: u64,
+    /// 委托代数 (表内唯一, 0 表示空槽)
     pub generation: u32,
+    /// 父委托代数 (链式委托; 0 表示根委托)
     pub parent_gen: u32,
+    /// 委托标志
     pub flags: GrantFlags,
 }
 
@@ -62,12 +73,16 @@ pub const GRANT_TABLE_CAPACITY: usize = 256;
 
 /// 委托表 (固定大小, 避免动态分配)
 pub struct GrantTable {
+    /// 固定容量的委托记录槽
     records: [GrantRecord; GRANT_TABLE_CAPACITY],
+    /// 下一个可分配的委托代数
     next_gen: AtomicU32,
+    /// 已占用槽位数量
     used: AtomicU32,
 }
 
 impl GrantTable {
+    /// 构造空委托表 (代数从 1 开始分配)
     pub const fn new() -> Self {
         const EMPTY: GrantRecord = GrantRecord {
             from_pwm: 0,
@@ -195,10 +210,12 @@ impl GrantTable {
         count
     }
 
+    /// 当前占用的委托记录数
     pub fn len(&self) -> usize {
         self.used.load(Ordering::Acquire) as usize
     }
 
+    /// 委托表是否为空
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -207,26 +224,40 @@ impl GrantTable {
 /// 委托操作结果
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DelegationResult {
-    Granted { r#gen: u32 },
+    /// 委托成功, 携带新记录的代数
+    Granted {
+        /// 新委托记录的代数
+        r#gen: u32,
+    },
+    /// 委托被拒绝, 携带拒绝原因
     Denied(DelegationDeny),
 }
 
+/// 委托被拒绝的原因
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DelegationDeny {
+    /// 父委托标记为不可再委托
     NonDelegatable,
+    /// 委托表已满
     TableFull,
+    /// 过期时刻非法 (不晚于当前时刻, 或父委托已失效)
     InvalidExpiry,
+    /// 委托者与受托者相同
     SamePwm,
+    /// 策略引擎拒绝了该能力位组合
     Policy(GrantResult),
 }
 
-/// 委托引擎
+/// 委托引擎 (绑定一张委托表与一个策略引擎)
 pub struct DelegationEngine<'a> {
+    /// 委托记录表
     pub table: &'a mut GrantTable,
+    /// 能力策略引擎
     pub policy: &'a PolicyEngine,
 }
 
 impl<'a> DelegationEngine<'a> {
+    /// 绑定委托表与策略引擎
     pub fn new(table: &'a mut GrantTable, policy: &'a PolicyEngine) -> Self {
         Self { table, policy }
     }
