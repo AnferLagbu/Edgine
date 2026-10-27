@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 452,
-    "files": 113,
-    "keys": 176
+    "sites": 405,
+    "files": 108,
+    "keys": 166
   },
   "entries": [
     [
@@ -19,11 +19,6 @@
       "src/kernel/functions/driver/display/controller.rs",
       "an associated function",
       2
-    ],
-    [
-      "src/kernel/functions/driver/usb/mass_storage.rs",
-      "a constant",
-      9
     ],
     [
       "src/kernel/functions/driver/usb/xhci.rs",
@@ -366,11 +361,6 @@
       3
     ],
     [
-      "src/kernel/privileged/config/caps.rs",
-      "a struct field",
-      9
-    ],
-    [
       "src/kernel/privileged/config/error.rs",
       "a struct field",
       5
@@ -414,21 +404,6 @@
       "src/kernel/privileged/driver/display/mod.rs",
       "a module",
       2
-    ],
-    [
-      "src/kernel/privileged/driver/infra.rs",
-      "a method",
-      2
-    ],
-    [
-      "src/kernel/privileged/driver/infra.rs",
-      "a struct field",
-      6
-    ],
-    [
-      "src/kernel/privileged/driver/infra.rs",
-      "an associated function",
-      1
     ],
     [
       "src/kernel/privileged/driver/input/mod.rs",
@@ -641,21 +616,6 @@
       2
     ],
     [
-      "src/kernel/privileged/net/save.rs",
-      "a method",
-      3
-    ],
-    [
-      "src/kernel/privileged/net/save.rs",
-      "a struct field",
-      6
-    ],
-    [
-      "src/kernel/privileged/net/save.rs",
-      "an associated function",
-      1
-    ],
-    [
       "src/kernel/privileged/net/smoltcp_impl.rs",
       "a method",
       1
@@ -763,16 +723,6 @@
     [
       "src/kernel/privileged/proc/posix_timer.rs",
       "an associated function",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/proc_ops.rs",
-      "a function",
-      9
-    ],
-    [
-      "src/kernel/privileged/proc/proc_ops.rs",
-      "a module",
       1
     ],
     [

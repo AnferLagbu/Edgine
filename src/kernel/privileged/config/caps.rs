@@ -10,6 +10,7 @@
 //!
 //! functions 侧改 `pub use crate::privileged::config::caps::*` 保持 API 兼容。
 //! 本文件 0 unsafe (纯类型 + 编译期 cfg 检测 + 运行时查询函数).
+#![deny(missing_docs)]
 
 // ============================================================================
 // 类型定义
@@ -18,16 +19,25 @@
 /// 配置摘要结构.
 #[derive(Debug, Clone, Copy)]
 pub struct ConfigSummary {
+    /// 编译期编译入的最大 CPU 数
     pub max_cpus: usize,
+    /// 运行时探测到的实际 CPU 数
     pub actual_cpus: u32,
+    /// 编译期最大中断线数
     pub max_irqs: usize,
+    /// 最大进程数
     pub max_processes: usize,
+    /// 最大线程数
     pub max_threads: usize,
+    /// 是否启用本地 APIC
     pub apic_enabled: bool,
+    /// 是否启用 IOAPIC
     pub ioapic_enabled: bool,
+    /// 页大小 (字节)
     pub page_size: u64,
     /// 演进 9: 运行时 KASLR 偏移 (由 bootloader/entry 设置).
     pub kaslr_offset: u64,
+    /// 编译期 + 运行时能力标志
     pub capabilities: KernelCapabilities,
 }
 

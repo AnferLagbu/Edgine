@@ -20,6 +20,7 @@
 //!   ├── egdf_init_all() ── 批量初始化
 //!   └── egdf_find_by_*() ── 设备发现
 //! ```
+#![deny(missing_docs)]
 
 // ============================================================================
 // IO 端口操作安全封装
@@ -223,15 +224,22 @@ impl core::fmt::Display for DeviceType {
 /// 此结构体保留用于驱动内部的元数据存储和向后兼容。
 #[derive(Debug, Clone)]
 pub struct DeviceInfo {
+    /// 设备标识 (由 `new` 分配的递增 ID)
     pub id: u32,
+    /// 设备名称
     pub name: &'static str,
+    /// 设备类型
     pub device_type: DeviceType,
+    /// 是否已初始化
     pub initialized: bool,
+    /// IO 端口基址 (无则为 `None`)
     pub io_base: Option<u16>,
+    /// 中断线号 (无则为 `None`)
     pub irq: Option<u8>,
 }
 
 impl DeviceInfo {
+    /// 构造设备描述信息 (分配新 ID, 未初始化).
     pub fn new(name: &'static str, device_type: DeviceType) -> Self {
         static NEXT_INFO_ID: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(1);
         Self {
@@ -248,6 +256,7 @@ impl DeviceInfo {
         clippy::return_self_not_must_use,
         reason = "return_self_not_must_use: 返回 Self 是 builder/fluent API; 当前优先 expect"
     )]
+    /// 设置 IO 端口基址 (builder 风格, 返回 `self`).
     pub fn with_io_base(mut self, base: u16) -> Self {
         self.io_base = Some(base);
         self
@@ -257,6 +266,7 @@ impl DeviceInfo {
         clippy::return_self_not_must_use,
         reason = "return_self_not_must_use: 返回 Self 是 builder/fluent API; 当前优先 expect"
     )]
+    /// 设置中断线号 (builder 风格, 返回 `self`).
     pub fn with_irq(mut self, irq: u8) -> Self {
         self.irq = Some(irq);
         self

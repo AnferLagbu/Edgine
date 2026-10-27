@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //!
 //! USB 大容量存储类驱动 (BBB / Bulk-Only Transport 仅批量传输) - USB-1.8
@@ -137,8 +138,11 @@ pub struct CommandStatusWrapper {
 
 /// CSW 状态码 (USB MSC BBB §3.2).
 pub mod csw_status {
+    /// 命令成功
     pub const SUCCESS: u8 = 0;
+    /// 命令失败
     pub const FAILURE: u8 = 1;
+    /// 协议阶段错误
     pub const PHASE_ERROR: u8 = 2;
 }
 
@@ -186,11 +190,17 @@ impl CommandStatusWrapper {
 
 /// SCSI 操作码 (常用).
 pub mod scsi_op {
+    /// 测试单元就绪 (TEST UNIT READY, 0x00)
     pub const TEST_UNIT_READY: u8 = 0x00;
+    /// 请求感知数据 (REQUEST SENSE, 0x03)
     pub const REQUEST_SENSE: u8 = 0x03;
+    /// 查询设备信息 (INQUIRY, 0x12)
     pub const INQUIRY: u8 = 0x12;
+    /// 读容量 10 (READ CAPACITY 10, 0x25)
     pub const READ_CAPACITY_10: u8 = 0x25;
+    /// 读 10 (READ 10, 0x28)
     pub const READ_10: u8 = 0x28;
+    /// 写 10 (WRITE 10, 0x2A)
     pub const WRITE_10: u8 = 0x2A;
 }
 

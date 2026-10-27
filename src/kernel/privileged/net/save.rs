@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 // ============================================================================
 // P2-I-44: 网络快照 (net_save / net_restore 完整实现)
 // ============================================================================
@@ -52,7 +53,9 @@ pub const SNAPSHOT_DNS_COUNT: usize = 4;
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct NetSnapshot {
+    /// 快照魔数 (应为 `NET_SNAPSHOT_MAGIC`)
     pub magic: u32,
+    /// 快照格式版本 (应为 `NET_SNAPSHOT_VERSION`)
     pub version: u32,
     /// MAC (6 字节)
     pub mac: [u8; 6],
@@ -66,17 +69,22 @@ pub struct NetSnapshot {
     pub dns: [[u8; 4]; SNAPSHOT_DNS_COUNT],
     /// FD 表 (type, handle u32)
     pub fd_types: [u8; SNAPSHOT_FD_COUNT],
+    /// FD 表 (对应 `fd_types` 的句柄; 0 = free)
     pub fd_handles: [u32; SNAPSHOT_FD_COUNT],
-    /// 状态
+    /// 网络是否已就绪 (`net_ready`)
     pub net_ready: bool,
+    /// 网络是否已完成配置 (IP/网关已绑定)
     pub net_configured: bool,
+    /// socket 表是否已初始化
     pub sockets_initialized: bool,
+    /// 保存时的初始化状态机阶段 (`InitState` 值)
     pub init_state: u8,
     /// 校验: 所有字节 XOR (排除 magic 自身)
     pub checksum: u32,
 }
 
 impl NetSnapshot {
+    /// 构造全零快照 (魔数 / 版本 / 校验均未设置).
     pub const fn empty() -> Self {
         Self {
             magic: 0,
@@ -96,12 +104,14 @@ impl NetSnapshot {
         }
     }
 
+    /// 校验快照的魔数 / 版本 / 校验和是否一致.
     pub fn is_valid(&self) -> bool {
         self.magic == NET_SNAPSHOT_MAGIC
             && self.version == NET_SNAPSHOT_VERSION
             && self.checksum == self.compute_checksum()
     }
 
+    /// 计算快照校验和 (所有字段字节 XOR / 旋转混合, 排除魔数自身).
     pub fn compute_checksum(&self) -> u32 {
         let mut h: u32 = 0xA5A5_5A5A;
         h ^= self.version;
@@ -133,6 +143,7 @@ impl NetSnapshot {
         h
     }
 
+    /// 写入魔数 / 版本并计算校验和, 使快照生效.
     pub fn seal(&mut self) {
         self.magic = NET_SNAPSHOT_MAGIC;
         self.version = NET_SNAPSHOT_VERSION;

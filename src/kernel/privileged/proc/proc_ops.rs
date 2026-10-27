@@ -8,6 +8,7 @@
 //! - `process::PROCESS_TABLE` — 进程表
 //! - `scheduler::SCHEDULER` — 调度器
 //! - `user_proc::USER_PROC_MANAGER` — 用户进程管理
+#![deny(missing_docs)]
 
 use core::sync::atomic::Ordering;
 
@@ -26,6 +27,7 @@ use crate::privileged::racy_cell::RacyCell;
 // 本子模块包含所有与 C ABI、裸指针 (进程表 entry) 以及 extern "C" FFI 交互
 // 的 `unsafe` 代码。本模块的其余部分 (`api.rs` 顶层) 保持 100% 安全 Rust,
 // 通过 `raw::*` 安全函数访问底层功能。
+/// 特权层裸指针 / C ABI FFI 桥接子模块.
 pub mod raw {
     use super::{
         Process, ProcessId, vmm_clone_user_page_table_cow, vmm_destroy_page_table,
@@ -196,6 +198,7 @@ pub(crate) static C_CURRENT_PROCESS: RacyCell<CProcess> = RacyCell::new(CProcess
 // ============================================================================
 
 #[unsafe(no_mangle)]
+/// 更新当前进程指针缓存 (`C_CURRENT_PROCESS`) 为给定地址.
 pub extern "C" fn update_current_process_ptr(ptr: u64) {
     CURRENT_PROCESS_PTR.store(ptr, Ordering::SeqCst);
     if ptr != 0 {
@@ -212,6 +215,7 @@ pub extern "C" fn update_current_process_ptr(ptr: u64) {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 返回当前调度进程的 PID (无则返回 0).
 #[unsafe(no_mangle)]
 pub extern "C" fn process_get_current_pid() -> u32 {
     SCHEDULER.current().unwrap_or(0)
@@ -330,6 +334,7 @@ where
     clippy::used_underscore_binding,
     reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
 )]
+/// 按 PID 返回进程表项地址 (0 = 未找到); 命中当前进程时返回缓存指针.
 pub extern "C" fn process_get_by_pid(_pid: u32) -> u64 {
     if u64::from(_pid) == C_CURRENT_PROCESS.map(|p| p.pid) {
         C_CURRENT_PROCESS.as_ptr() as u64
@@ -339,6 +344,7 @@ pub extern "C" fn process_get_by_pid(_pid: u32) -> u64 {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 返回当前调度进程的 PWM 值 (无则 0).
 #[unsafe(no_mangle)]
 pub extern "C" fn process_get_current_pwm() -> u64 {
     let pid = SCHEDULER.current().unwrap_or(0);
@@ -351,6 +357,7 @@ pub extern "C" fn process_get_current_pwm() -> u64 {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 按 PID 返回进程的 PWM 值 (无则 0).
 #[unsafe(no_mangle)]
 pub extern "C" fn process_get_pwm_by_pid(pid: u32) -> u64 {
     if pid == 0 {
@@ -362,6 +369,7 @@ pub extern "C" fn process_get_pwm_by_pid(pid: u32) -> u64 {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 终止当前进程: 释放文件锁与 fd 表, 回收进程表项.
 #[unsafe(no_mangle)]
 pub extern "C" fn process_exit(exit_code: u32) {
     let current_pid = SCHEDULER.current().unwrap_or(0);
@@ -430,6 +438,7 @@ pub extern "C" fn process_unblock(pid: u32) {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 用给定 ELF 镜像替换当前进程映像 (exec), 成功返回 0, 失败返回 -1.
 pub extern "C" fn proc_exec_replace(
     elf_data: *const u8,
     elf_size: u64,
@@ -843,6 +852,7 @@ pub extern "C" fn sys_fork() -> Pid {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 返回指定进程的父进程 PID (无父进程则 0).
 #[unsafe(no_mangle)]
 pub extern "C" fn proc_get_ppid(pid: Pid) -> Pid {
     PROCESS_TABLE
@@ -851,6 +861,7 @@ pub extern "C" fn proc_get_ppid(pid: Pid) -> Pid {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 设置指定进程的 PWM 值, 成功返回 0, 进程不存在返回 -1.
 #[unsafe(no_mangle)]
 pub extern "C" fn proc_set_pwm(pid: Pid, pwm: u64) -> i32 {
     if PROCESS_TABLE

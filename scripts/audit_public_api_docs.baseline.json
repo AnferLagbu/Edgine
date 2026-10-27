@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 125,
-    "files": 38,
-    "keys": 112
+    "sites": 118,
+    "files": 36,
+    "keys": 105
   },
   "entries": [
     [
@@ -62,24 +62,6 @@
       "src/kernel/privileged/driver/display/font.rs",
       "fn",
       "builtin_8x16",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/infra.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/infra.rs",
-      "fn",
-      "with_io_base",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/infra.rs",
-      "fn",
-      "with_irq",
       1
     ],
     [
@@ -392,30 +374,6 @@
       "src/kernel/privileged/net/init/query.rs",
       "fn",
       "capture",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/save.rs",
-      "fn",
-      "compute_checksum",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/save.rs",
-      "fn",
-      "empty",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/save.rs",
-      "fn",
-      "is_valid",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/save.rs",
-      "fn",
-      "seal",
       1
     ],
     [
