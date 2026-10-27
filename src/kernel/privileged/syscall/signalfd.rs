@@ -27,6 +27,8 @@
 //!   通过 `IrqSpinLock` 保证互斥
 //! - `signalfd_siginfo` 写入用户空间前由 functions 层校验指针
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::privileged::sync::IrqSpinLock as Mutex;
@@ -58,23 +60,40 @@ pub const SIGNALFD_SIGINFO_SIZE: usize = 128;
 /// 布局与 Linux `struct signalfd_siginfo` 兼容 (128 字节)
 #[repr(C)]
 pub struct SignalFdSigInfo {
-    pub ssi_signo: u32,   // 0: 信号编号
-    pub ssi_errno: i32,   // 4: 错误码 (通常 0)
-    pub ssi_code: i32,    // 8: 信号来源码
-    pub ssi_pid: u32,     // 12: 发送者 PID
-    pub ssi_uid: u32,     // 16: 发送者 UID
-    pub ssi_fd: i32,      // 20: 文件描述符 (SIGIO)
-    pub ssi_band: u32,    // 24: 带宽事件 (SIGIO)
-    pub ssi_tid: u32,     // 28: 定时器 ID (SIGEV_THREAD_ID)
-    pub ssi_overrun: u32, // 32: 定时器溢出计数
-    pub ssi_trapno: u32,  // 36: 陷阱号
-    pub ssi_status: i32,  // 40: 退出状态 / 信号码
-    pub ssi_int: i32,     // 44: POSIX.1b 信号值 (int)
-    pub ssi_ptr: u64,     // 48: POSIX.1b 信号值 (ptr)
-    pub ssi_utime: u64,   // 56: 用户 CPU 时间
-    pub ssi_stime: u64,   // 64: 系统 CPU 时间
-    pub ssi_addr: u64,    // 72: 触发地址
-    pub _pad: [u8; 48],   // 80-127: 填充到 128 字节
+    /// 0: 信号编号
+    pub ssi_signo: u32,
+    /// 4: 错误码 (通常 0)
+    pub ssi_errno: i32,
+    /// 8: 信号来源码
+    pub ssi_code: i32,
+    /// 12: 发送者 PID
+    pub ssi_pid: u32,
+    /// 16: 发送者 UID
+    pub ssi_uid: u32,
+    /// 20: 文件描述符 (SIGIO)
+    pub ssi_fd: i32,
+    /// 24: 带宽事件 (SIGIO)
+    pub ssi_band: u32,
+    /// 28: 定时器 ID (SIGEV_THREAD_ID)
+    pub ssi_tid: u32,
+    /// 32: 定时器溢出计数
+    pub ssi_overrun: u32,
+    /// 36: 陷阱号
+    pub ssi_trapno: u32,
+    /// 40: 退出状态 / 信号码
+    pub ssi_status: i32,
+    /// 44: POSIX.1b 信号值 (int)
+    pub ssi_int: i32,
+    /// 48: POSIX.1b 信号值 (ptr)
+    pub ssi_ptr: u64,
+    /// 56: 用户 CPU 时间
+    pub ssi_utime: u64,
+    /// 64: 系统 CPU 时间
+    pub ssi_stime: u64,
+    /// 72: 触发地址
+    pub ssi_addr: u64,
+    /// 80-127: 填充到 128 字节
+    pub _pad: [u8; 48],
 }
 
 impl SignalFdSigInfo {

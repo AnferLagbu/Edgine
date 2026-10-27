@@ -4,6 +4,8 @@
 //! chmod/chown/utimensat/stat/cwd) 及其 safe 包装. `api.rs` 通过
 //! `pub use vfs_path::*;` 保持对外调用路径不变.
 
+#![deny(missing_docs)]
+
 use super::api::{ptr_to_str, split_parent_name, with_cstr};
 use super::vfs_manager::VFS_MANAGER;
 use super::vfs_types::{VFS_MAX_PATH, VfsStat};
@@ -24,6 +26,10 @@ use crate::privileged::userptr::{UserReadPtr, UserWritePtr};
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 删除目录项 — VFS 核心实现.
+///
+/// 删除前记录 inode 号, 成功后释放该 inode 上的 POSIX 锁并发 inotify
+/// `IN_DELETE` / `IN_DELETE_SELF`. 成功返回 0, 失败返回 `-1`.
 pub extern "C" fn vfs_unlink_internal(path: *const u8, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
     let mut pbuf = [0u8; VFS_MAX_PATH];
@@ -69,6 +75,9 @@ pub extern "C" fn vfs_unlink_internal(path: *const u8, pwm: u64) -> i32 {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 创建目录 — VFS 核心实现.
+///
+/// 成功后向父目录发 inotify `IN_CREATE`; 成功返回 0, 失败返回 `-1`.
 pub extern "C" fn vfs_mkdir_internal(path: *const u8, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
     let mut pbuf = [0u8; VFS_MAX_PATH];
@@ -102,6 +111,9 @@ pub extern "C" fn vfs_mkdir_internal(path: *const u8, pwm: u64) -> i32 {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 删除空目录 — VFS 核心实现.
+///
+/// 成功返回 0, 失败返回 `-1`.
 pub extern "C" fn vfs_rmdir_internal(path: *const u8, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
     let mut pbuf = [0u8; VFS_MAX_PATH];
@@ -129,6 +141,10 @@ pub extern "C" fn vfs_rmdir_internal(path: *const u8, pwm: u64) -> i32 {
     clippy::no_effect_underscore_binding,
     reason = "no_effect_underscore_binding: let _ = expr 用于类型推导/副作用; 当前优先 expect"
 )]
+/// `stat(2)` — 按路径取文件属性并写入用户空间.
+///
+/// uid/gid 经 SGEG 身份表映射后经安全代理写入 (I4); 成功返回 0,
+/// 失败返回 `-1`.
 pub extern "C" fn vfs_stat_internal(path: *const u8, st: *mut VfsStat, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
     let _pwm = pwm;
@@ -167,6 +183,9 @@ pub extern "C" fn vfs_stat_internal(path: *const u8, st: *mut VfsStat, pwm: u64)
     result
 }
 
+/// 设置当前工作目录 (chroot 视图路径).
+///
+/// 归一化失败 (超长 / 非 UTF-8) 时静默保持原 cwd — FFI 无返回值可上报.
 pub extern "C" fn vfs_set_cwd_internal(path: *const u8) {
     let path = ptr_to_str(path);
     // cwd 保存视图路径 (归一化但不加根前缀): 相对路径解析须以视图为基准,
@@ -182,6 +201,9 @@ pub extern "C" fn vfs_set_cwd_internal(path: *const u8) {
 
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
+/// 取当前工作目录并写入用户缓冲 (含 NUL 结尾).
+///
+/// 成功返回写入字节数 (不含 NUL), 参数非法返回 `-1`.
 pub extern "C" fn vfs_get_cwd_internal(buf: *mut u8, size: u32) -> i32 {
     if buf.is_null() || size == 0 {
         return -1;
@@ -245,6 +267,7 @@ pub fn vfs_utimensat_safe(path: &str, atime: u64, mtime: u64, pwm: u64) -> i32 {
     with_cstr(path, |ptr| vfs_utimensat(ptr, atime, mtime, pwm))
 }
 
+/// `stat(2)` 入口 — 转 [`vfs_stat_internal`].
 pub extern "C" fn vfs_stat(path: *const u8, st: *mut VfsStat, pwm: u64) -> i32 {
     vfs_stat_internal(path, st, pwm)
 }
@@ -266,6 +289,7 @@ pub fn vfs_stat_safe(path: *const u8, pwm: u64) -> Option<VfsStat> {
     if r < 0 { None } else { Some(st) }
 }
 
+/// `mkdir(2)` 入口 — 转 [`vfs_mkdir_internal`].
 pub extern "C" fn vfs_mkdir(path: *const u8, pwm: u64) -> i32 {
     vfs_mkdir_internal(path, pwm)
 }
@@ -274,6 +298,9 @@ pub extern "C" fn vfs_mkdir(path: *const u8, pwm: u64) -> i32 {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// `chmod(2)` — 按路径修改文件权限位.
+///
+/// 成功返回 0, 失败返回 `-1`.
 pub extern "C" fn vfs_chmod(path: *const u8, mode: u16, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
     let mut pbuf = [0u8; VFS_MAX_PATH];
@@ -293,6 +320,7 @@ pub extern "C" fn vfs_chmod(path: *const u8, mode: u16, pwm: u64) -> i32 {
     })
 }
 
+/// `chown(2)` — 按路径修改文件所有者 (不修改所属组).
 pub extern "C" fn vfs_chown(path: *const u8, owner_pwm: u64, pwm: u64) -> i32 {
     vfs_chown_ext(path, owner_pwm, 0, pwm)
 }
@@ -301,6 +329,9 @@ pub extern "C" fn vfs_chown(path: *const u8, owner_pwm: u64, pwm: u64) -> i32 {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// `chown(2)` 扩展形式 — 同时指定所有者与所属组.
+///
+/// 成功返回 0, 失败返回 `-1`.
 pub extern "C" fn vfs_chown_ext(path: *const u8, owner_pwm: u64, group_pwm: u64, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
     let mut pbuf = [0u8; VFS_MAX_PATH];
@@ -352,6 +383,7 @@ pub extern "C" fn vfs_utimensat(path: *const u8, atime: u64, mtime: u64, pwm: u6
     })
 }
 
+/// `unlink(2)` 入口 — 转 [`vfs_unlink_internal`].
 pub extern "C" fn vfs_unlink(path: *const u8, pwm: u64) -> i32 {
     vfs_unlink_internal(path, pwm)
 }
@@ -459,6 +491,9 @@ pub extern "C" fn vfs_readlink(path: *const u8, buf: *mut u8, bufsiz: u64, pwm: 
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// `rename(2)` — 同卷内重命名 (跨挂载点返回 `-EXDEV`).
+///
+/// 成功返回 0, 路径解析或后端失败返回负值.
 pub extern "C" fn vfs_rename(old: *const u8, new: *const u8, pwm: u64) -> i32 {
     let old_path = ptr_to_str(old);
     let new_path = ptr_to_str(new);
@@ -495,14 +530,17 @@ pub extern "C" fn vfs_rename(old: *const u8, new: *const u8, pwm: u64) -> i32 {
     })
 }
 
+/// `rmdir(2)` 入口 — 转 [`vfs_rmdir_internal`].
 pub extern "C" fn vfs_rmdir(path: *const u8, pwm: u64) -> i32 {
     vfs_rmdir_internal(path, pwm)
 }
 
+/// `getcwd(2)` 入口 — 转 [`vfs_get_cwd_internal`].
 pub extern "C" fn vfs_get_cwd(buf: *mut u8, size: u32) -> i32 {
     vfs_get_cwd_internal(buf, size)
 }
 
+/// `chdir(2)` 入口 — 转 [`vfs_set_cwd_internal`].
 pub extern "C" fn vfs_set_cwd(path: *const u8) {
     vfs_set_cwd_internal(path);
 }

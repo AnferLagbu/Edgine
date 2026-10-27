@@ -4,6 +4,8 @@
 //! fstat/fchmod/fchown/dup/dup2) 及其 safe 包装与 fd 表操作. `api.rs` 通过
 //! `pub use handle::*;` 保持对外调用路径不变.
 
+#![deny(missing_docs)]
+
 use super::api::{
     PCACHE_FAST_MAX_BYTES, PCACHE_FAST_MIN_BYTES, ptr_to_str, split_parent_name, with_cstr,
 };
@@ -34,6 +36,11 @@ fn current_fd_handle(fd_idx: usize) -> Option<u32> {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 打开文件 — VFS 核心实现 (trait object 分发).
+///
+/// 归一化用户路径 + 解析挂载点后调用 `fs_open`; 目标不存在且带 `CREAT`
+/// 时改走 `fs_create`. 成功返回本地 fd, 失败返回负 errno. `CLOEXEC` 从
+/// `flags` 剥离, 作为 fd 级标志交由 per-process fd 表保存.
 pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i32 {
     // CLOEXEC 是 fd 级标志 (fcntl F_GETFD/F_SETFD 语义), 不属于文件状态标志;
     // 从 flags 中剥离, 避免其经 OpenFile::get_flags 被 F_GETFL 误报.
@@ -141,6 +148,10 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 关闭 fd — 原子 claim-and-clear 后释放 OpenFile 引用.
+///
+/// 幂等: 无进程上下文 / fd 未使用 / 已关闭均返回 0. 关闭路径同时触发
+/// pcache 失效、inotify `IN_CLOSE_*` 通知与 epoll 等待者唤醒.
 pub fn vfs_close_internal(fd_idx: u32) -> i32 {
     let fd_idx_us = fd_idx as usize;
     // TD-03: 原子 claim-and-clear — FdTable::close_fd 在同一临界区内快照 handle_id
@@ -289,6 +300,10 @@ fn vfs_read_slice(fd_idx: u32, dst: &mut [u8]) -> i32 {
     result.unwrap_or(KernelError::BadFd.as_vfs_ret())
 }
 
+/// 读 fd — 用户缓冲入口.
+///
+/// 用户内存经 `UserWritePtr` 校验 (I4) 后转 `vfs_read_slice`; 成功返回
+/// 读取字节数, 失败返回负 errno.
 pub extern "C" fn vfs_read_internal(fd_idx: u32, buf: *mut u8, count: u32) -> i32 {
     if buf.is_null() || count == 0 {
         return -1;
@@ -366,6 +381,10 @@ pub fn vfs_pread_inode(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 截断 fd 对应文件到 `size` 字节.
+///
+/// 经 OpenFile 的 Inode trait 执行; 成功发 inotify `IN_MODIFY`.
+/// 成功返回 0, fd 无效或后端失败返回负值.
 pub extern "C" fn vfs_truncate_internal(fd: u32, size: u64) -> i32 {
     // B-9.5: 边界由 per-process fd 表 (MAX_FDS_PER_PROCESS) 承担, 不再用
     // 全局 VFS_MAX_FDS=32 检查 (否则会误拒 32..64 的合法 per-process fd).
@@ -440,6 +459,10 @@ fn vfs_write_slice(fd_idx: u32, src: &[u8]) -> i32 {
     result.unwrap_or(KernelError::BadFd.as_vfs_ret())
 }
 
+/// 写 fd — 用户缓冲入口.
+///
+/// 用户内存经 `UserReadPtr` 校验 (I4) 后转 `vfs_write_slice`; 成功返回
+/// 写入字节数, 失败返回负 errno.
 pub extern "C" fn vfs_write_internal(fd_idx: u32, buf: *const u8, count: u32) -> i32 {
     if buf.is_null() || count == 0 {
         return -1;
@@ -469,6 +492,10 @@ pub fn vfs_write_kernel(fd: u32, src: &[u8]) -> i32 {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// 读目录项 — 从 fd 当前偏移取一项并写入用户空间.
+///
+/// 成功返回 1 (已写入一项) / 0 (目录读完) / 负 errno; 用户结构体写入
+/// 经 privileged 安全代理 (I4).
 pub extern "C" fn vfs_readdir_internal(fd: u32, entry: *mut VfsDirEntry) -> i32 {
     if entry.is_null() {
         return -1;
@@ -632,22 +659,27 @@ pub fn vfs_readdir_safe(fd: u32, entry: &mut super::vfs_types::VfsDirEntry) -> i
     vfs_readdir(fd, entry as *mut _)
 }
 
+/// `open(2)` 入口 — 转 [`vfs_open_internal`].
 pub extern "C" fn vfs_open(path: *const u8, flags: u32, pwm: u64) -> i32 {
     vfs_open_internal(path, flags, pwm)
 }
 
+/// `close(2)` 入口 — 转 [`vfs_close_internal`].
 pub extern "C" fn vfs_close(fd: u32) -> i32 {
     vfs_close_internal(fd)
 }
 
+/// `read(2)` 入口 — 转 [`vfs_read_internal`].
 pub extern "C" fn vfs_read(fd: u32, buf: *mut u8, count: u32) -> i32 {
     vfs_read_internal(fd, buf, count)
 }
 
+/// `write(2)` 入口 — 转 [`vfs_write_internal`].
 pub extern "C" fn vfs_write(fd: u32, buf: *const u8, count: u32) -> i32 {
     vfs_write_internal(fd, buf, count)
 }
 
+/// `getdents` 入口 — 转 [`vfs_readdir_internal`].
 pub extern "C" fn vfs_readdir(fd: u32, entry: *mut VfsDirEntry) -> i32 {
     vfs_readdir_internal(fd, entry)
 }
@@ -660,6 +692,9 @@ pub extern "C" fn vfs_readdir(fd: u32, entry: *mut VfsDirEntry) -> i32 {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// `fchmod(2)` — 按 fd 修改文件权限位.
+///
+/// fd 无效或无进程上下文返回 `-EBADF`, 后端拒绝返回 `-1`.
 pub extern "C" fn vfs_fchmod(fd: u32, mode: u16) -> i32 {
     // Plan B: 通过 OpenFile 的 Inode trait 执行
     let handle_id = match current_fd_handle(fd as usize) {
@@ -685,6 +720,10 @@ pub extern "C" fn vfs_fchmod(fd: u32, mode: u16) -> i32 {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// `fchown(2)` — 按 fd 修改文件所有者 / 所属组.
+///
+/// `owner_pwm` / `group_pwm` 为 SGEG 身份凭证; fd 无效返回 `-EBADF`,
+/// 后端拒绝返回 `-1`.
 pub extern "C" fn vfs_fchown(fd: u32, owner_pwm: u64, group_pwm: u64, pwm: u64) -> i32 {
     // Plan B: 通过 OpenFile 的 Inode trait 执行
     let handle_id = match current_fd_handle(fd as usize) {
@@ -708,6 +747,10 @@ pub extern "C" fn vfs_fchown(fd: u32, owner_pwm: u64, group_pwm: u64, pwm: u64) 
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// `lseek(2)` — 调整 fd 当前偏移.
+///
+/// `whence` 由 [`VfsSeekWhence::from_u32`] 解析; 成功返回新偏移,
+/// 参数非法返回 `-EINVAL`, fd 无效返回 `-EBADF`.
 pub extern "C" fn vfs_seek(fd: u32, offset: i32, whence: u32) -> i32 {
     let whence = match VfsSeekWhence::from_u32(whence) {
         Some(w) => w,
@@ -742,6 +785,10 @@ pub extern "C" fn vfs_seek(fd: u32, offset: i32, whence: u32) -> i32 {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+/// `fstat(2)` — 从 fd 取文件属性并写入用户空间.
+///
+/// 属性中的 uid/gid 经 SGEG 身份表映射 (I4 写入用户内存); fd 无效返回
+/// `-EBADF`, 后端失败返回 `-1`.
 pub extern "C" fn vfs_fstat(fd: u32, st: *mut VfsStat, _pwm: u64) -> i32 {
     if st.is_null() {
         return -1;
@@ -802,6 +849,9 @@ pub fn vfs_get_fd_handle(fd_idx: usize) -> Option<u32> {
 
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
+/// `dup(2)` — 复制 fd, 新旧 fd 共享同一 OpenFile (offset/flags 共享).
+///
+/// 新 fd 无 CLOEXEC; 源 fd 无效返回 `-EBADF`, fd 表满返回 `-EMFILE`.
 pub extern "C" fn vfs_dup(oldfd: u32) -> i32 {
     let old_usize = oldfd as usize;
     // B-9.5: 源 fd 取自 per-process fd 表; 无效 → EBADF
@@ -823,6 +873,10 @@ pub extern "C" fn vfs_dup(oldfd: u32) -> i32 {
     new_fd as i32
 }
 
+/// `dup2(2)` — 把 `oldfd` 复制到指定 `newfd`, 覆盖其原有打开文件.
+///
+/// 覆盖前先释放 `newfd` 原有 OpenFile 引用; 结果 fd 无 CLOEXEC.
+/// `oldfd` 无效或 `newfd` 越界返回 `-EBADF`.
 pub extern "C" fn vfs_dup2(oldfd: u32, newfd: u32) -> i32 {
     let old_usize = oldfd as usize;
     let new_usize = newfd as usize;

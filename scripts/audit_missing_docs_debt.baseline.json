@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 854,
-    "files": 143,
-    "keys": 248
+    "sites": 770,
+    "files": 138,
+    "keys": 238
   },
   "entries": [
     [
@@ -196,11 +196,6 @@
       1
     ],
     [
-      "src/kernel/functions/fs/handle.rs",
-      "a function",
-      17
-    ],
-    [
       "src/kernel/functions/fs/inode.rs",
       "a trait",
       1
@@ -299,11 +294,6 @@
       "src/kernel/functions/fs/vfs_mount.rs",
       "a function",
       5
-    ],
-    [
-      "src/kernel/functions/fs/vfs_path.rs",
-      "a function",
-      16
     ],
     [
       "src/kernel/functions/fs/virtiofs.rs",
@@ -442,31 +432,6 @@
     ],
     [
       "src/kernel/functions/wasm/interpreter.rs",
-      "an associated function",
-      1
-    ],
-    [
-      "src/kernel/functions/wasm/wasi/fd_table.rs",
-      "a constant",
-      2
-    ],
-    [
-      "src/kernel/functions/wasm/wasi/fd_table.rs",
-      "a struct field",
-      6
-    ],
-    [
-      "src/kernel/functions/wasm/wasi/fd_table.rs",
-      "a variant",
-      5
-    ],
-    [
-      "src/kernel/functions/wasm/wasi/fd_table.rs",
-      "an associated constant",
-      3
-    ],
-    [
-      "src/kernel/functions/wasm/wasi/fd_table.rs",
       "an associated function",
       1
     ],
@@ -624,16 +589,6 @@
       "src/kernel/privileged/driver/virtio/mod.rs",
       "a method",
       1
-    ],
-    [
-      "src/kernel/privileged/driver/virtio/queue.rs",
-      "a constant",
-      5
-    ],
-    [
-      "src/kernel/privileged/driver/virtio/queue.rs",
-      "a struct field",
-      12
     ],
     [
       "src/kernel/privileged/freg/api.rs",
@@ -1234,11 +1189,6 @@
       "src/kernel/privileged/syscall/mod.rs",
       "a function",
       1
-    ],
-    [
-      "src/kernel/privileged/syscall/signalfd.rs",
-      "a struct field",
-      17
     ],
     [
       "src/kernel/privileged/syscall/timerfd.rs",

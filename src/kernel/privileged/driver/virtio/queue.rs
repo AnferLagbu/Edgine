@@ -10,6 +10,8 @@
 //! 设备端按 realize 时固定的 num 自行推算 avail/used 地址, 驱动布局必须与
 //! 设备推算全量一致, 截断即错位 — P-31 根因).
 
+#![deny(missing_docs)]
+
 use crate::privileged::mm::{KERNEL_BASE, PAGE_SIZE};
 
 /// modern 模式下驱动请求的队列尺寸 (经 QueueNum 协商, 可小于设备上限);
@@ -22,36 +24,48 @@ const RING_HEAD_BYTES: usize = 4;
 /// Split virtqueue 描述符.
 #[repr(C)]
 pub struct VqDesc {
-    pub addr: u64,  // 缓冲区客户机物理地址
-    pub len: u32,   // 缓冲区长度
-    pub flags: u16, // VRING_DESC_F_*
-    pub next: u16,  // 下一描述符索引 (链式描述符)
+    /// 缓冲区客户机物理地址
+    pub addr: u64,
+    /// 缓冲区长度
+    pub len: u32,
+    /// `VRING_DESC_F_*` 标志位
+    pub flags: u16,
+    /// 下一描述符索引 (链式描述符)
+    pub next: u16,
 }
 
 /// 已用环项.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct VqUsedElem {
-    pub id: u32,  // 描述符链头索引
-    pub len: u32, // 设备写入的总字节数
+    /// 描述符链头索引
+    pub id: u32,
+    /// 设备写入的总字节数
+    pub len: u32,
 }
 
 // ── 描述符标志 ──
 
-pub const VQ_DESC_F_NEXT: u16 = 1; // 链接通过 this.next 继续
-pub const VQ_DESC_F_WRITE: u16 = 2; // 设备可写入此缓冲区
-pub const VQ_DESC_F_INDIRECT: u16 = 4; // 间接描述符表
+/// 链接通过 `this.next` 继续
+pub const VQ_DESC_F_NEXT: u16 = 1;
+/// 设备可写入此缓冲区
+pub const VQ_DESC_F_WRITE: u16 = 2;
+/// 间接描述符表
+pub const VQ_DESC_F_INDIRECT: u16 = 4;
 
 // ── 可用环标志 ──
 
+/// 驱动请求设备暂不发送中断
 pub const VQ_AVAIL_F_NO_INTERRUPT: u16 = 1;
 
 // ── 已用环标志 ──
 
+/// 设备请求驱动暂不发送通知
 pub const VQ_USED_F_NO_NOTIFY: u16 = 1;
 
 /// 单个 virtqueue (运行时 `num` 驱动的 split ring 布局).
 pub struct VirtQueue {
+    /// 描述符表基址 (virt)
     pub desc: *mut VqDesc,
     /// avail 环基址 (头 4 字节 + `num` 项 u16 环 + used_event 2B).
     pub avail: *mut u8,
@@ -59,13 +73,18 @@ pub struct VirtQueue {
     pub used: *mut u8,
     /// 环尺寸 (legacy: 设备 QueueNumMax 全量; modern: 驱动 QueueNum 协商值).
     pub num: u16,
-    pub free_head: u16,      // 空闲描述符链头
-    pub last_used_idx: u16,  // 最近见到的 used ring 索引
-    pub next_avail_idx: u16, // 驱动下次使用的 avail ring 索引
+    /// 空闲描述符链头
+    pub free_head: u16,
+    /// 最近见到的 used ring 索引
+    pub last_used_idx: u16,
+    /// 驱动下次使用的 avail ring 索引
+    pub next_avail_idx: u16,
     // --- 所有权追踪 (用于 DMA 安全性) ---
     /// 已分配页的物理地址 (用于 phys↔virt 转换).
     pub desc_phys: u64,
+    /// avail 环物理地址
     pub avail_phys: u64,
+    /// used 环物理地址
     pub used_phys: u64,
 }
 

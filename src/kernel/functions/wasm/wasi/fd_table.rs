@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! WASI 文件描述符表 (独立于 POSIX fd 表)
 
 use super::errno::WasiErrno;
@@ -6,32 +7,43 @@ use alloc::vec::Vec;
 
 /// WASI 标准 fd 编号
 pub const WASI_STDIN: u32 = 0;
+/// 标准输出 fd 编号 (1)
 pub const WASI_STDOUT: u32 = 1;
+/// 标准错误 fd 编号 (2)
 pub const WASI_STDERR: u32 = 2;
 
 /// WASI 文件类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WasiFileType {
+    /// 目录
     Directory,
+    /// 普通文件
     RegularFile,
+    /// 符号链接
     Symlink,
+    /// 字符设备
     CharacterDevice,
+    /// 套接字
     Socket,
 }
 
 /// WASI 权限 (base + inheriting)
 #[derive(Debug, Clone, Copy)]
 pub struct WasiRights {
+    /// 当前对象上的权限位
     pub base: u64,
+    /// 新建对象继承的权限位
     pub inheriting: u64,
 }
 
 impl WasiRights {
+    /// 全部权限 (base / inheriting 均取满位)
     pub const ALL: Self = Self {
         base: u64::MAX,
         inheriting: u64::MAX,
     };
 
+    /// 目录默认权限 (含遍历 / 创建 / 删除等目录类权限)
     pub const DIRECTORY: Self = Self {
         base: 0x10000000
             | 0x800
@@ -49,6 +61,7 @@ impl WasiRights {
         inheriting: u64::MAX,
     };
 
+    /// 普通文件默认权限 (不含目录类权限)
     pub const FILE: Self = Self {
         base: 0x800 | 0x400 | 0x200 | 0x100 | 0x80 | 0x40 | 0x20 | 0x10 | 0x08 | 0x04 | 0x02 | 0x01,
         inheriting: 0x800
@@ -68,7 +81,9 @@ impl WasiRights {
 
 /// WASI fd 表条目
 pub struct WasiFdEntry {
+    /// 文件类型
     pub file_type: WasiFileType,
+    /// 该 fd 携带的权限
     pub rights: WasiRights,
     /// 映射到 VFS 的内部 fd (edgine 内部使用)
     pub inner_fd: i32,
@@ -86,6 +101,7 @@ pub struct WasiFdTable {
 }
 
 impl WasiFdTable {
+    /// 创建容量为 `max_fds` 的空 fd 表 (0/1/2 预留给标准流)
     pub fn new(max_fds: u32) -> Self {
         let mut entries = Vec::with_capacity(max_fds as usize);
         entries.resize_with(max_fds as usize, || None);
@@ -164,7 +180,9 @@ impl WasiFdTable {
 
 /// 从 WASM 线性内存读取 iovec 数组
 pub struct WasiIoVec {
+    /// 线性内存中的缓冲区起始偏移
     pub buf: u32,
+    /// 缓冲区字节长度
     pub len: u32,
 }
 
