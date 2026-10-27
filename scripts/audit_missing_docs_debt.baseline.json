@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 770,
-    "files": 138,
-    "keys": 238
+    "sites": 694,
+    "files": 133,
+    "keys": 226
   },
   "entries": [
     [
@@ -24,16 +24,6 @@
       "src/kernel/functions/driver/display/controller.rs",
       "an associated function",
       2
-    ],
-    [
-      "src/kernel/functions/driver/storage/ata.rs",
-      "a constant",
-      15
-    ],
-    [
-      "src/kernel/functions/driver/storage/nvme.rs",
-      "a struct field",
-      15
     ],
     [
       "src/kernel/functions/driver/usb/hid.rs",
@@ -79,26 +69,6 @@
       "src/kernel/functions/freg/audit_export.rs",
       "an associated function",
       1
-    ],
-    [
-      "src/kernel/functions/freg/cascade.rs",
-      "a constant",
-      1
-    ],
-    [
-      "src/kernel/functions/freg/cascade.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/functions/freg/cascade.rs",
-      "a struct field",
-      11
-    ],
-    [
-      "src/kernel/functions/freg/cascade.rs",
-      "an associated function",
-      2
     ],
     [
       "src/kernel/functions/freg/health_monitor.rs",
@@ -591,11 +561,6 @@
       1
     ],
     [
-      "src/kernel/privileged/freg/api.rs",
-      "a function",
-      15
-    ],
-    [
       "src/kernel/privileged/freg/manager.rs",
       "a method",
       8
@@ -1054,31 +1019,6 @@
       "src/kernel/privileged/proc/sched_ops.rs",
       "a function",
       6
-    ],
-    [
-      "src/kernel/privileged/proc/session.rs",
-      "a method",
-      3
-    ],
-    [
-      "src/kernel/privileged/proc/session.rs",
-      "a static",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/session.rs",
-      "a struct field",
-      8
-    ],
-    [
-      "src/kernel/privileged/proc/session.rs",
-      "a variant",
-      2
-    ],
-    [
-      "src/kernel/privileged/proc/session.rs",
-      "an associated function",
-      2
     ],
     [
       "src/kernel/privileged/sgeg/audit.rs",

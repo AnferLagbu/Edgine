@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 //! 故障恢复 API (Recovery FREG 对外接口)
 //!
 //! ## 调用方契约
@@ -47,6 +48,7 @@ fn recovery_domain_pool() -> &'static [RecoveryDomain] {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 周期维护入口 — 推进恢复 tick, 首次调用时校验启动指纹。
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_freg_maintenance() {
     let tick = crate::privileged::tick_query::current_tick();
@@ -65,6 +67,7 @@ pub extern "C" fn recovery_freg_maintenance() {
 // 若 id 超出预分配池容量 (理论上注册点仅 4 处且均在启动期), 返回 -1。
 //
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 注册恢复域 — 按 `domain_id % MAX_RECOVERY_DOMAINS` 取池槽位; 成功返回 0, 冲突或满返回 -1。
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_domain_register(domain_id: u64) -> i32 {
     // 取 id 低 5 位作为索引 (0..32)。若超出 MAX_RECOVERY_DOMAINS, 失败。
@@ -86,6 +89,7 @@ pub extern "C" fn recovery_domain_register(domain_id: u64) -> i32 {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 注销恢复域并复位其池槽位 id; 成功返回 0, 域不存在返回 -1。
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_domain_unregister(domain_id: u64) -> i32 {
     let mut mgr = super::RECOVERY_MANAGER.lock();
@@ -101,6 +105,7 @@ pub extern "C" fn recovery_domain_unregister(domain_id: u64) -> i32 {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 测试专用 — 触发一次级联回滚; 成功返回 0, 否则 -1。
 #[cfg(feature = "kernel_test")]
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_test_rollback(domain_id: u64, crash_fingerprint: u64) -> i32 {
@@ -111,18 +116,21 @@ pub extern "C" fn recovery_test_rollback(domain_id: u64, crash_fingerprint: u64)
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 读取 panic 标志 (无锁 atomic, 可在任何上下文调用)。
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_panic_flag_is_set() -> bool {
     super::PANIC_FLAG.load(Ordering::SeqCst)
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 清除 panic 标志 (无锁 atomic, 可在任何上下文调用)。
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_panic_flag_clear() {
     super::PANIC_FLAG.store(false, Ordering::SeqCst);
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// IDT 路径尝试恢复一次 — 0 成功, -1 无可恢复域, -2 已尝试, -3 管理器忙。
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_try_recover_from_idt() -> i32 {
     let tick = crate::privileged::tick_query::current_tick();
@@ -195,6 +203,7 @@ pub extern "C" fn recovery_trigger_panic() -> ! {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 查询是否已尝试过恢复 (1 = 已尝试, 0 = 未尝试)。
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_was_attempted() -> i32 {
     i32::from(RECOVERY_ATTEMPTED.load(Ordering::SeqCst))
@@ -221,6 +230,7 @@ pub fn recovery_domain_set_cbs(
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 记录一条 undo 项 (字段指针 + 旧值); 成功返回 0, 域不存在返回 -1。
 #[unsafe(no_mangle)]
 #[expect(
     clippy::ptr_as_ptr,
@@ -240,6 +250,7 @@ pub extern "C" fn recovery_undo_record(domain_id: u64, field_ptr: *mut u8, old_v
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 查询指定域的 undo 项数量; 域不存在返回 -1。
 #[unsafe(no_mangle)]
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
@@ -250,6 +261,7 @@ pub extern "C" fn recovery_undo_count(domain_id: u64) -> i32 {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 为恢复域添加依赖边 (双向登记); 成功返回 0, 域不存在或已满返回 -1。
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_domain_add_dep(domain_id: u64, dep_id: u64) -> i32 {
     let mgr = super::RECOVERY_MANAGER.lock();
@@ -266,6 +278,7 @@ pub extern "C" fn recovery_domain_add_dep(domain_id: u64, dep_id: u64) -> i32 {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 查询指定域的依赖数量; 域不存在返回 -1。
 #[unsafe(no_mangle)]
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
@@ -276,6 +289,7 @@ pub extern "C" fn recovery_domain_dep_count(domain_id: u64) -> i32 {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 为恢复域登记地址区间, 用于按故障 RIP 定位所属域; 成功返回 0, 否则 -1。
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_domain_add_addr_range(domain_id: u64, start: u64, end: u64) -> i32 {
     let mgr = super::RECOVERY_MANAGER.lock();
@@ -289,6 +303,7 @@ pub extern "C" fn recovery_domain_add_addr_range(domain_id: u64, start: u64, end
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 查询回滚日志中的有效条目数。
 #[unsafe(no_mangle)]
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
@@ -298,6 +313,7 @@ pub extern "C" fn recovery_rollback_log_count() -> i32 {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 查询指定域当前恢复状态 (u32 编码); 域不存在返回 -1。
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_domain_get_state(domain_id: u64) -> i32 {
     let mgr = super::RECOVERY_MANAGER.lock();
@@ -305,6 +321,7 @@ pub extern "C" fn recovery_domain_get_state(domain_id: u64) -> i32 {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 查询指定域的连续失败次数; 域不存在返回 -1。
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_domain_get_failures(domain_id: u64) -> i32 {
     let mgr = super::RECOVERY_MANAGER.lock();
@@ -314,6 +331,7 @@ pub extern "C" fn recovery_domain_get_failures(domain_id: u64) -> i32 {
 }
 
 // SAFETY: FFI 导出函数, 通过 C ABI 与外部代码互操作
+/// 设置故障注入速率 (测试特性, 每 N 次操作注入一次故障)。
 #[cfg(feature = "fault_injection")]
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_set_fault_rate(rate: u32) {
@@ -321,6 +339,7 @@ pub extern "C" fn recovery_set_fault_rate(rate: u32) {
 }
 
 // SAFETY: FFI 导出函数, 通过 C ABI 与外部代码互操作
+/// 读取当前故障注入速率 (测试特性)。
 #[cfg(feature = "fault_injection")]
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_get_fault_rate() -> u32 {

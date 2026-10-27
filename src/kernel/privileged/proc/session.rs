@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 privileged API。
 //! 会话 / 进程组 / 控制终端 — privileged 机制实现
 //!
@@ -57,28 +58,39 @@ fn log_num(n: u64) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SessionState {
+    /// 会话有效, 可被查找与分配
     Active = 0,
+    /// 会话待回收或槽位空闲
     Zombie = 1,
 }
 
 /// 会话结构体
 #[repr(C)]
 pub struct Session {
+    /// 会话 ID (SID; 0 表示槽位空闲)
     pub session_id: core::sync::atomic::AtomicU64,
+    /// 创建者 PWM (进程权重管理) 标识
     pub pwm: core::sync::atomic::AtomicU64,
+    /// 父会话 SID (0 = 无父会话)
     pub parent_sid: core::sync::atomic::AtomicU64,
     /// 控制终端设备号 (0 = 无)
     pub terminal: core::sync::atomic::AtomicU64,
     /// 前台进程组 ID
     pub foreground_pgid: core::sync::atomic::AtomicU32,
+    /// 会话创建时刻
     pub create_time: core::sync::atomic::AtomicU64,
+    /// 会话状态 (`SessionState` 的 u32 编码)
     pub state: core::sync::atomic::AtomicU32,
+    /// 会话内进程链表头 (进程 ID 链)
     pub process_list: core::sync::atomic::AtomicU64,
+    /// 会话内进程数量
     pub process_count: core::sync::atomic::AtomicU32,
+    /// 会话表内下一个槽位索引 (0 = 无)
     pub next: core::sync::atomic::AtomicU64,
 }
 
 impl Session {
+    /// 构造全零初始化的会话槽位 (状态为 `Zombie`)
     pub const fn new() -> Self {
         Self {
             session_id: core::sync::atomic::AtomicU64::new(0),
@@ -106,6 +118,7 @@ pub struct SessionManager {
 }
 
 impl SessionManager {
+    /// 构造会话管理器 (会话表置空, 会话 ID 从 1 起分配)
     pub const fn new() -> Self {
         Self {
             session_table: Mutex::new([const { Session::new() }; MAX_SESSIONS]),
@@ -113,6 +126,7 @@ impl SessionManager {
         }
     }
 
+    /// 初始化会话管理器 (输出初始化日志)
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
@@ -183,6 +197,7 @@ impl SessionManager {
         Some(sid)
     }
 
+    /// 销毁会话: 清空 SID 与终端关联, 状态置 `Zombie`, 槽位可复用
     pub fn destroy(&self, session_id: u64) {
         if let Some(idx) = self.find_session(session_id) {
             let mut table = self.session_table.lock();
@@ -213,6 +228,7 @@ impl SessionManager {
         None
     }
 
+    /// 按 SID 查找会话槽位索引
     pub fn get_session(&self, session_id: u64) -> Option<usize> {
         self.find_session(session_id)
     }
@@ -266,6 +282,7 @@ impl SessionManager {
     }
 }
 
+/// 全局会话管理器实例
 pub static SESSION_MANAGER: SessionManager = SessionManager::new();
 
 /// 会话子系统初始化入口 — 初始化全局 [`SESSION_MANAGER`]。

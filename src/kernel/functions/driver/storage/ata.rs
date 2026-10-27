@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //!
 //! ATA/IDE 磁盘驱动 — functions 层真实 PIO 实现 (framekernel 阶段 3)
@@ -45,13 +46,21 @@ pub const ATA_SECONDARY_CTRL: u16 = 0x376;
 
 /// I/O 寄存器偏移量
 pub const ATA_DATA: u16 = 0;
+/// Error 寄存器 (读) / Features 寄存器 (写)
 pub const ATA_ERROR: u16 = 1;
+/// 扇区计数寄存器
 pub const ATA_SECTOR_COUNT: u16 = 2;
+/// LBA 低 8 位寄存器 (或 CHS 扇区号)
 pub const ATA_SECTOR_NUM: u16 = 3;
+/// LBA 中 8 位寄存器 (或 CHS 柱面号低 8 位)
 pub const ATA_CYLINDER_LOW: u16 = 4;
+/// LBA 高 8 位寄存器 (或 CHS 柱面号高 8 位)
 pub const ATA_CYLINDER_HIGH: u16 = 5;
+/// 驱动器/磁头选择寄存器
 pub const ATA_DRIVE_HEAD: u16 = 6;
+/// 状态寄存器 (读)
 pub const ATA_STATUS: u16 = 7;
+/// 命令寄存器 (写)
 pub const ATA_COMMAND: u16 = 7;
 
 /// 控制端口块偏移: 替代状态寄存器 (读) / 设备控制寄存器 (写)
@@ -59,15 +68,22 @@ const ATA_CTRL_ALT_STATUS: u16 = 0;
 
 /// 状态寄存器标志位
 pub const ATA_STATUS_BSY: u8 = 0x80;
+/// 驱动器就绪 (Device Ready)
 pub const ATA_STATUS_DRDY: u8 = 0x40;
+/// 驱动器故障 (Device Fault)
 pub const ATA_STATUS_DF: u8 = 0x20;
+/// 数据请求就绪 (Data Request)
 pub const ATA_STATUS_DRQ: u8 = 0x08;
+/// 上一次命令出错 (Error)
 pub const ATA_STATUS_ERR: u8 = 0x01;
 
 /// ATA 命令集
 pub const ATA_CMD_IDENTIFY: u8 = 0xEC;
+/// 读扇区 (LBA28)
 pub const ATA_CMD_READ_SECTORS: u8 = 0x20;
+/// 写扇区 (LBA28)
 pub const ATA_CMD_WRITE_SECTORS: u8 = 0x30;
+/// 刷新写缓存
 pub const ATA_CMD_FLUSH_CACHE: u8 = 0xE7;
 
 /// 扇区大小

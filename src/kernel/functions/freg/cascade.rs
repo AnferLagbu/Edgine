@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! 拓扑感知级联策略 — functions/freg/ 业务层
 //!
 //! ## 职责
@@ -35,9 +36,13 @@ pub enum CascadeDirection {
 /// 域节点
 #[derive(Debug, Clone, Copy)]
 pub struct DomainNode {
+    /// 域标识
     pub id: u64,
+    /// 域名称 (静态字符串)
     pub name: &'static str,
+    /// 父域 ID (`None` = 根域)
     pub parent: Option<u64>,
+    /// 直接子域数量
     pub children_count: u32,
 }
 
@@ -49,13 +54,17 @@ pub struct DomainNode {
 /// Domain { id: 3, name: "net",  parent: Some(1), children_count: 0 }
 /// ```
 pub struct DomainTopology {
+    /// 域节点数组 (前 `count` 项有效)
     pub nodes: [DomainNode; MAX_TOPOLOGY_DOMAINS],
+    /// 已登记节点数量
     pub count: usize,
 }
 
+/// 拓扑最多容纳的域节点数
 pub const MAX_TOPOLOGY_DOMAINS: usize = 16;
 
 impl DomainTopology {
+    /// 构造空拓扑
     pub const fn new() -> Self {
         const EMPTY: DomainNode = DomainNode {
             id: 0,
@@ -140,17 +149,21 @@ impl DomainTopology {
 /// 级联队列
 #[derive(Debug, Clone, Copy)]
 pub struct CascadeQueue {
+    /// 域 ID 队列 (前 `count` 项有效)
     pub order: [u64; MAX_TOPOLOGY_DOMAINS],
+    /// 队列内元素数量
     pub count: usize,
 }
 
 impl CascadeQueue {
+    /// 构造空级联队列
     pub const fn new() -> Self {
         Self {
             order: [0; MAX_TOPOLOGY_DOMAINS],
             count: 0,
         }
     }
+    /// 入队一个域 ID (队列满时静默丢弃)
     pub fn push(&mut self, id: u64) {
         if self.count < MAX_TOPOLOGY_DOMAINS {
             self.order[self.count] = id;
@@ -233,8 +246,11 @@ impl FaultSignal {
 /// 级联计划
 #[derive(Debug, Clone, Copy)]
 pub struct CascadePlan {
+    /// 本次采用的恢复动作
     pub action: RecoveryAction,
+    /// 级联方向
     pub direction: CascadeDirection,
+    /// 恢复队列
     pub queue: CascadeQueue,
 }
 

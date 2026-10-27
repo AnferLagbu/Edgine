@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //!
 //! `NVMe` (Non-Volatile Memory Express) 驱动 — functions 层安全代理 (Phase 2.1.3)
@@ -321,13 +322,21 @@ impl NvmeQueuePair {
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed)]
 pub struct NvmeIdentifyController {
+    /// PCI 厂商 ID
     pub vid: u16,
+    /// PCI 子系统厂商 ID
     pub ssvid: u16,
+    /// 序列号 (ASCII, 空终止)
     pub sn: [u8; 20],
+    /// 型号 (ASCII, 空终止)
     pub mn: [u8; 40],
+    /// 固件版本 (ASCII)
     pub fr: [u8; 8],
+    /// 保留字段 (对齐至 offset 516)
     pub rsvd1: [u8; 444],
-    pub nn: u32, // offset 516: 命名空间数量
+    /// 命名空间数量 (offset 516, LE u32)
+    pub nn: u32,
+    /// 保留字段 (补齐 4096 字节结构)
     pub rsvd2: [u8; 3756],
 }
 
@@ -335,12 +344,19 @@ pub struct NvmeIdentifyController {
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed)]
 pub struct NvmeIdentifyNamespace {
+    /// 命名空间容量 (LBA 数, offset 0, LE u64)
     pub nsze: u64,
+    /// 命名空间可分配容量 (LBA 数)
     pub ncap: u64,
+    /// 命名空间已使用容量 (LBA 数)
     pub nuse: u64,
+    /// 命名空间特性标志
     pub nsfeat: u8,
+    /// LBA Format 表项数减一
     pub nlbaf: u8,
+    /// 当前使用的 LBA Format 索引
     pub flbas: u8,
+    /// 保留字段 (补齐 4096 字节结构)
     pub rsvd: [u8; 4085],
 }
 
