@@ -25,6 +25,8 @@
 //! - 进入 KGDB 前必须关闭中断 (cli / msr daifset)
 //! - 串口 read/write 在轮询模式, 不允许睡眠
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use super::ftrace;
@@ -219,23 +221,41 @@ pub fn kgdb_recv_packet(out: &mut [u8]) -> usize {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct KgdbRegs {
+    /// 通用寄存器 RAX
     pub rax: u64,
+    /// 通用寄存器 RBX
     pub rbx: u64,
+    /// 通用寄存器 RCX
     pub rcx: u64,
+    /// 通用寄存器 RDX
     pub rdx: u64,
+    /// 通用寄存器 RSI
     pub rsi: u64,
+    /// 通用寄存器 RDI
     pub rdi: u64,
+    /// 通用寄存器 RBP
     pub rbp: u64,
+    /// 栈指针 RSP
     pub rsp: u64,
+    /// 通用寄存器 R8
     pub r8: u64,
+    /// 通用寄存器 R9
     pub r9: u64,
+    /// 通用寄存器 R10
     pub r10: u64,
+    /// 通用寄存器 R11
     pub r11: u64,
+    /// 通用寄存器 R12
     pub r12: u64,
+    /// 通用寄存器 R13
     pub r13: u64,
+    /// 通用寄存器 R14
     pub r14: u64,
+    /// 通用寄存器 R15
     pub r15: u64,
+    /// 指令指针 RIP
     pub rip: u64,
+    /// 标志寄存器 EFLAGS
     pub eflags: u64,
 }
 
@@ -244,39 +264,73 @@ pub struct KgdbRegs {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct KgdbRegs {
+    /// 通用寄存器 X0
     pub x0: u64,
+    /// 通用寄存器 X1
     pub x1: u64,
+    /// 通用寄存器 X2
     pub x2: u64,
+    /// 通用寄存器 X3
     pub x3: u64,
+    /// 通用寄存器 X4
     pub x4: u64,
+    /// 通用寄存器 X5
     pub x5: u64,
+    /// 通用寄存器 X6
     pub x6: u64,
+    /// 通用寄存器 X7
     pub x7: u64,
+    /// 通用寄存器 X8
     pub x8: u64,
+    /// 通用寄存器 X9
     pub x9: u64,
+    /// 通用寄存器 X10
     pub x10: u64,
+    /// 通用寄存器 X11
     pub x11: u64,
+    /// 通用寄存器 X12
     pub x12: u64,
+    /// 通用寄存器 X13
     pub x13: u64,
+    /// 通用寄存器 X14
     pub x14: u64,
+    /// 通用寄存器 X15
     pub x15: u64,
+    /// 通用寄存器 X16
     pub x16: u64,
+    /// 通用寄存器 X17
     pub x17: u64,
+    /// 通用寄存器 X18
     pub x18: u64,
+    /// 通用寄存器 X19
     pub x19: u64,
+    /// 通用寄存器 X20
     pub x20: u64,
+    /// 通用寄存器 X21
     pub x21: u64,
+    /// 通用寄存器 X22
     pub x22: u64,
+    /// 通用寄存器 X23
     pub x23: u64,
+    /// 通用寄存器 X24
     pub x24: u64,
+    /// 通用寄存器 X25
     pub x25: u64,
+    /// 通用寄存器 X26
     pub x26: u64,
+    /// 通用寄存器 X27
     pub x27: u64,
+    /// 通用寄存器 X28
     pub x28: u64,
+    /// 帧指针 X29
     pub x29: u64,
+    /// 链接寄存器 X30
     pub x30: u64,
+    /// 栈指针 SP
     pub sp: u64,
+    /// 程序计数器 PC
     pub pc: u64,
+    /// 处理器状态 PSTATE
     pub pstate: u64,
 }
 

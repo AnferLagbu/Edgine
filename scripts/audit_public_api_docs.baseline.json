@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 209,
-    "files": 48,
-    "keys": 186
+    "sites": 191,
+    "files": 46,
+    "keys": 168
   },
   "entries": [
     [
@@ -188,54 +188,6 @@
       "src/kernel/privileged/freg/recovery.rs",
       "fn",
       "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/audit.rs",
-      "fn",
-      "clear",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/audit.rs",
-      "fn",
-      "count_by_layer",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/audit.rs",
-      "fn",
-      "count_by_result",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/audit.rs",
-      "fn",
-      "empty",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/audit.rs",
-      "fn",
-      "last",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/audit.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/audit.rs",
-      "fn",
-      "record",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/audit.rs",
-      "fn",
-      "record_simple",
       1
     ],
     [
@@ -1064,66 +1016,6 @@
       "src/kernel/privileged/syscall/timerfd.rs",
       "fn",
       "zeroed",
-      1
-    ],
-    [
-      "src/kernel/privileged/userctx.rs",
-      "fn",
-      "arg0",
-      1
-    ],
-    [
-      "src/kernel/privileged/userctx.rs",
-      "fn",
-      "arg1",
-      1
-    ],
-    [
-      "src/kernel/privileged/userctx.rs",
-      "fn",
-      "arg2",
-      1
-    ],
-    [
-      "src/kernel/privileged/userctx.rs",
-      "fn",
-      "arg3",
-      1
-    ],
-    [
-      "src/kernel/privileged/userctx.rs",
-      "fn",
-      "arg4",
-      1
-    ],
-    [
-      "src/kernel/privileged/userctx.rs",
-      "fn",
-      "arg5",
-      1
-    ],
-    [
-      "src/kernel/privileged/userctx.rs",
-      "fn",
-      "set_return_value",
-      1
-    ],
-    [
-      "src/kernel/privileged/userctx.rs",
-      "fn",
-      "syscall_number",
-      1
-    ],
-    [
-      "src/kernel/privileged/userctx.rs",
-      "fn",
-      "user_ip",
-      1
-    ],
-    [
-      "src/kernel/privileged/userctx.rs",
-      "fn",
-      "user_sp",
       1
     ]
   ]

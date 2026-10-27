@@ -20,6 +20,8 @@
 //! - privileged 层的 unsafe 代码可读取/写入字段, functions 层只通过 `UserContext`
 //!   类型化访问, 不直接操作 asm stub.
 
+#![deny(missing_docs)]
+
 /// `x86_64` 用户态寄存器快照
 ///
 /// 由 `isr.asm` 的 `int 0x80` / `syscall` stub 在栈上填充.
@@ -27,23 +29,41 @@
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct UserContext {
+    /// 通用寄存器 RAX (系统调用号 / 返回值)
     pub rax: u64,
+    /// 通用寄存器 RBX
     pub rbx: u64,
+    /// 通用寄存器 RCX
     pub rcx: u64,
+    /// 通用寄存器 RDX (参数 2)
     pub rdx: u64,
+    /// 通用寄存器 RSI (参数 1)
     pub rsi: u64,
+    /// 通用寄存器 RDI (参数 0)
     pub rdi: u64,
+    /// 通用寄存器 RBP
     pub rbp: u64,
+    /// 通用寄存器 R8 (参数 4)
     pub r8: u64,
+    /// 通用寄存器 R9 (参数 5)
     pub r9: u64,
+    /// 通用寄存器 R10 (参数 3)
     pub r10: u64,
+    /// 通用寄存器 R11
     pub r11: u64,
+    /// 通用寄存器 R12
     pub r12: u64,
+    /// 通用寄存器 R13
     pub r13: u64,
+    /// 通用寄存器 R14
     pub r14: u64,
+    /// 通用寄存器 R15
     pub r15: u64,
+    /// 用户态返回地址 RIP
     pub rip: u64,
+    /// 用户态标志寄存器 RFLAGS
     pub rflags: u64,
+    /// 用户态栈指针 RSP
     pub rsp: u64,
 }
 
@@ -54,28 +74,50 @@ pub struct UserContext {
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct UserContext {
+    /// 通用寄存器 X0 (返回值)
     pub x0: u64,
+    /// 通用寄存器 X1 (参数 1)
     pub x1: u64,
+    /// 通用寄存器 X2 (参数 2)
     pub x2: u64,
+    /// 通用寄存器 X3 (参数 3)
     pub x3: u64,
+    /// 通用寄存器 X4 (参数 4)
     pub x4: u64,
+    /// 通用寄存器 X5 (参数 5)
     pub x5: u64,
+    /// 通用寄存器 X6
     pub x6: u64,
+    /// 通用寄存器 X7
     pub x7: u64,
+    /// 通用寄存器 X8 (系统调用号)
     pub x8: u64,
+    /// 通用寄存器 X9
     pub x9: u64,
+    /// 通用寄存器 X10
     pub x10: u64,
+    /// 通用寄存器 X11
     pub x11: u64,
+    /// 通用寄存器 X12
     pub x12: u64,
+    /// 通用寄存器 X13
     pub x13: u64,
+    /// 通用寄存器 X14
     pub x14: u64,
+    /// 通用寄存器 X15
     pub x15: u64,
+    /// 通用寄存器 X16
     pub x16: u64,
+    /// 通用寄存器 X17
     pub x17: u64,
+    /// 通用寄存器 X18
     pub x18: u64,
-    pub elr_el1: u64,  // exception link register (返回地址)
+    /// 异常返回地址 (ELR_EL1)
+    pub elr_el1: u64, // exception link register (返回地址)
+    /// 已保存的程序状态寄存器 (SPSR_EL1)
     pub spsr_el1: u64, // 已保存的程序状态寄存器 (SPSR)
-    pub sp_el0: u64,   // user stack pointer
+    /// 用户态栈指针 (SP_EL0)
+    pub sp_el0: u64, // user stack pointer
 }
 
 impl UserContext {
@@ -92,6 +134,7 @@ impl UserContext {
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
+    /// 系统调用号
     pub fn syscall_number(&self) -> u64 {
         self.x8
     }
@@ -109,6 +152,7 @@ impl UserContext {
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
+    /// 设置返回值
     pub fn set_return_value(&mut self, val: u64) {
         self.x0 = val;
     }
@@ -126,6 +170,7 @@ impl UserContext {
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
+    /// 参数 0
     pub fn arg0(&self) -> u64 {
         self.x0
     }
@@ -143,6 +188,7 @@ impl UserContext {
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
+    /// 参数 1
     pub fn arg1(&self) -> u64 {
         self.x1
     }
@@ -160,6 +206,7 @@ impl UserContext {
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
+    /// 参数 2
     pub fn arg2(&self) -> u64 {
         self.x2
     }
@@ -177,6 +224,7 @@ impl UserContext {
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
+    /// 参数 3
     pub fn arg3(&self) -> u64 {
         self.x3
     }
@@ -194,6 +242,7 @@ impl UserContext {
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
+    /// 参数 4
     pub fn arg4(&self) -> u64 {
         self.x4
     }
@@ -211,6 +260,7 @@ impl UserContext {
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
+    /// 参数 5
     pub fn arg5(&self) -> u64 {
         self.x5
     }
@@ -228,6 +278,7 @@ impl UserContext {
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
+    /// 用户态栈指针
     pub fn user_sp(&self) -> u64 {
         self.sp_el0
     }
@@ -241,6 +292,7 @@ impl UserContext {
 
     #[cfg(target_arch = "aarch64")]
     #[inline(always)]
+    /// 用户态返回地址
     pub fn user_ip(&self) -> u64 {
         self.elr_el1
     }

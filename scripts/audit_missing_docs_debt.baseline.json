@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 943,
-    "files": 148,
-    "keys": 266
+    "sites": 854,
+    "files": 143,
+    "keys": 248
   },
   "entries": [
     [
@@ -67,26 +67,6 @@
     ],
     [
       "src/kernel/functions/egdf/devtree.rs",
-      "an associated function",
-      1
-    ],
-    [
-      "src/kernel/functions/egdf/mod.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/functions/egdf/mod.rs",
-      "a struct field",
-      4
-    ],
-    [
-      "src/kernel/functions/egdf/mod.rs",
-      "a variant",
-      11
-    ],
-    [
-      "src/kernel/functions/egdf/mod.rs",
       "an associated function",
       1
     ],
@@ -234,41 +214,6 @@
       "src/kernel/functions/fs/overlayfs.rs",
       "an associated function",
       1
-    ],
-    [
-      "src/kernel/functions/fs/procfs_core.rs",
-      "a constant",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/procfs_core.rs",
-      "a function",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/procfs_core.rs",
-      "a method",
-      6
-    ],
-    [
-      "src/kernel/functions/fs/procfs_core.rs",
-      "a static",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/procfs_core.rs",
-      "a struct",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/procfs_core.rs",
-      "a struct field",
-      4
-    ],
-    [
-      "src/kernel/functions/fs/procfs_core.rs",
-      "an associated function",
-      2
     ],
     [
       "src/kernel/functions/fs/ramfs.rs",
@@ -611,11 +556,6 @@
       2
     ],
     [
-      "src/kernel/privileged/debug/kgdb.rs",
-      "a struct field",
-      18
-    ],
-    [
       "src/kernel/privileged/driver/display/font.rs",
       "a struct field",
       3
@@ -764,31 +704,6 @@
       "src/kernel/privileged/freg/recovery.rs",
       "an associated function",
       1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/audit.rs",
-      "a constant",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/audit.rs",
-      "a method",
-      6
-    ],
-    [
-      "src/kernel/privileged/freg/reset/audit.rs",
-      "a static",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/audit.rs",
-      "a struct field",
-      8
-    ],
-    [
-      "src/kernel/privileged/freg/reset/audit.rs",
-      "an associated function",
-      2
     ],
     [
       "src/kernel/privileged/freg/reset/layered.rs",
@@ -1334,11 +1249,6 @@
       "src/kernel/privileged/syscall/timerfd.rs",
       "an associated function",
       1
-    ],
-    [
-      "src/kernel/privileged/userctx.rs",
-      "a struct field",
-      18
     ]
   ]
 }

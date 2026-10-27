@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //!
 //! `ProcFS` 核心实现 — functions 层 (E6-8 迁移)
@@ -11,18 +12,26 @@ use crate::privileged::mm::api::{SlabCacheInfo, slab_get_cache_infos, slab_get_s
 use crate::privileged::sync::IrqSpinLock as Mutex;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+/// `procfs` 条目表容量
 pub const PROCFS_MAX_ENTRIES: usize = 32;
+/// `procfs` 条目名最大字节数 (含结束符)
 pub const PROCFS_MAX_NAME: usize = 32;
 
+/// 单个 `procfs` 目录项
 #[derive(Debug, Clone, Copy)]
 pub struct ProcfsEntry {
+    /// 条目名 (NUL 结尾)
     pub name: [u8; PROCFS_MAX_NAME],
+    /// 关联进程 pid (0 = 全局条目)
     pub pid: u32,
+    /// 条目类型 (1 = 目录, 2 = 文件, 3 = 进程, 4 = 只读伪文件)
     pub entry_type: u8,
+    /// 槽位是否占用
     pub used: bool,
 }
 
 impl ProcfsEntry {
+    /// 构造空条目 (const, 供静态初始化)
     pub const fn new() -> Self {
         Self {
             name: [0; PROCFS_MAX_NAME],
@@ -33,6 +42,7 @@ impl ProcfsEntry {
     }
 }
 
+/// `procfs` 全局数据 (条目表 + 有效条目计数)
 pub struct ProcfsData {
     entries: Mutex<[ProcfsEntry; PROCFS_MAX_ENTRIES]>,
     entry_count: AtomicU32,
@@ -41,6 +51,7 @@ pub struct ProcfsData {
 // SAFETY (Framekernel P2.2.3): ProcfsData 全部字段自动 Send + Sync。
 
 impl ProcfsData {
+    /// 构造空 `procfs` 数据 (const, 供静态初始化)
     pub const fn new() -> Self {
         Self {
             entries: Mutex::new([const { ProcfsEntry::new() }; PROCFS_MAX_ENTRIES]),
@@ -55,6 +66,7 @@ impl ProcfsData {
         entry.name[len] = 0;
     }
 
+    /// 挂载 `procfs` 并填充固定条目 (成功返回 0)
     pub fn mount(&self, _path: &str) -> i32 {
         let mut entries = self.entries.lock();
 
@@ -113,6 +125,7 @@ impl ProcfsData {
         0
     }
 
+    /// 新增进程条目 (成功返回 0, 表满返回 -1)
     pub fn add_process(&self, pid: u32, name: &str) -> i32 {
         let mut entries = self.entries.lock();
 
@@ -131,6 +144,7 @@ impl ProcfsData {
         -1
     }
 
+    /// 移除指定 pid 的进程条目 (成功返回 0, 未找到返回 -1)
     pub fn remove_process(&self, pid: u32) -> i32 {
         let mut entries = self.entries.lock();
 
@@ -146,6 +160,7 @@ impl ProcfsData {
         -1
     }
 
+    /// 读取命名条目内容到 `buf`, 返回写入字节数 (未知条目返回 ENOENT)
     #[expect(
         clippy::too_many_lines,
         reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
@@ -675,6 +690,7 @@ impl ProcfsData {
         crate::functions::fs::KernelError::FileNotFound.as_i32()
     }
 
+    /// 按索引枚举目录项, 返回 (名称, pid, 条目类型)
     pub fn readdir(&self, index: usize) -> Option<([u8; 32], u32, u8)> {
         let entries = self.entries.lock();
         let mut count = 0;
@@ -693,6 +709,7 @@ impl ProcfsData {
         None
     }
 
+    /// 当前有效条目数
     pub fn entry_count(&self) -> u32 {
         self.entry_count.load(Ordering::SeqCst)
     }
@@ -886,6 +903,8 @@ impl ProcfsData {
     }
 }
 
+/// `procfs` 全局数据实例
 pub static PROCFS_DATA: ProcfsData = ProcfsData::new();
 
+/// 初始化 `procfs` (条目由 `mount` 填充, 此入口当前为空)
 pub fn init() {}

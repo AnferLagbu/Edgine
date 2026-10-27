@@ -67,6 +67,7 @@ impl EGDFError {
         }
     }
 
+    /// 由底层 `i32` 错误码 (负 errno) 构造错误值
     pub fn from_i32(rc: i32) -> Self {
         use crate::functions::error::KernelError as K;
         match rc {
@@ -117,11 +118,17 @@ impl DeviceId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Proto {
+    /// 块设备
     Block = 1,
+    /// 字符设备
     Char = 2,
+    /// 网络设备
     Net = 3,
+    /// 输入设备
     Input = 4,
+    /// 总线设备
     Bus = 5,
+    /// 其他协议
     Other = 255,
 }
 
@@ -130,6 +137,7 @@ impl Proto {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    /// 协议名称字符串
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Block => "block",
@@ -158,10 +166,15 @@ impl From<egdf::EGDFProto> for Proto {
 /// 设备状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceState {
+    /// 未初始化
     Uninit,
+    /// 探测中
     Probing,
+    /// 就绪
     Ready,
+    /// 探测失败
     Failed,
+    /// 已移除
     Removed,
 }
 
@@ -180,9 +193,13 @@ impl From<egdf::DeviceState> for DeviceState {
 /// 设备描述符
 #[derive(Debug, Clone)]
 pub struct DeviceInfo {
+    /// 设备 ID
     pub id: DeviceId,
+    /// 设备名称
     pub name: alloc::string::String,
+    /// 设备协议
     pub proto: Proto,
+    /// 设备状态
     pub state: DeviceState,
 }
 
