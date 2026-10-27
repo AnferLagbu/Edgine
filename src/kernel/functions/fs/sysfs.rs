@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! sysfs — functions 层安全代理 (Phase C4)
 //!
 //! @SAFE: 本文件不含 unsafe 代码。
@@ -35,11 +36,14 @@ pub enum SysfsValue {
 /// 节点元信息
 #[derive(Debug, Clone, Copy)]
 pub struct SysfsNode {
+    /// 节点名称
     pub name: &'static str,
-    pub perm: u16, // 0o444 默认只读
+    /// 节点权限位 (默认 0o444 只读)
+    pub perm: u16,
 }
 
 impl SysfsNode {
+    /// 创建只读 sysfs 节点 (默认权限 0o444)。
     pub const fn new(name: &'static str) -> Self {
         Self { name, perm: 0o444 }
     }

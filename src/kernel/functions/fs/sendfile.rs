@@ -31,6 +31,7 @@
 //! - offset 更新在传输成功后
 
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 
 use crate::functions::fs::OPEN_FILE_TABLE;
 use crate::functions::fs::api as vfs_api;
@@ -42,8 +43,11 @@ const BOUNCE_SIZE: usize = 8192;
 
 /// splice 标志
 pub const SPLICE_F_MOVE: u32 = 1;
+/// splice 非阻塞标志 (无数据可搬时立即返回)。
 pub const SPLICE_F_NONBLOCK: u32 = 2;
+/// splice 提示后续还有数据 (用于网络发送减少包数)。
 pub const SPLICE_F_MORE: u32 = 4;
+/// splice 提示页可赠予 (调用方放弃对源页的引用)。
 pub const SPLICE_F_GIFT: u32 = 8;
 
 // ============================================================================

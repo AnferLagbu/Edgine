@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 95,
-    "files": 52,
-    "keys": 62
+    "sites": 80,
+    "files": 47,
+    "keys": 55
   },
   "entries": [
     [
@@ -56,11 +56,6 @@
       1
     ],
     [
-      "src/kernel/functions/fs/ramfs.rs",
-      "a constant",
-      3
-    ],
-    [
       "src/kernel/functions/fs/ramfs_core/mod.rs",
       "a function",
       1
@@ -71,33 +66,8 @@
       1
     ],
     [
-      "src/kernel/functions/fs/sendfile.rs",
-      "a constant",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/sysfs.rs",
-      "a struct field",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/sysfs.rs",
-      "an associated function",
-      1
-    ],
-    [
       "src/kernel/functions/fs/systree.rs",
       "an associated function",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/compress.rs",
-      "a constant",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/compress.rs",
-      "a function",
       2
     ],
     [
@@ -119,11 +89,6 @@
       "src/kernel/functions/mm/mmap.rs",
       "a constant",
       1
-    ],
-    [
-      "src/kernel/functions/mm/mprotect.rs",
-      "a constant",
-      3
     ],
     [
       "src/kernel/functions/proc/elf.rs",

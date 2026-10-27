@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。
 //!
 //! 内存文件系统 (`RamFS`) — functions 层安全代理 (Phase 2.2.1)
@@ -28,8 +29,11 @@ use alloc::vec::Vec;
 use crate::functions::fs::ramfs_core::RamFsData;
 
 // functions 层透出的常量 (镜像 kernel/fs/ramfs/ramfs.rs 内部常量)
+/// 内存文件系统的块大小 (等于内核页大小)。
 pub const RAMFS_BLOCK_SIZE: usize = crate::privileged::mm::PAGE_SIZE as usize;
+/// 内存文件系统支持的最大节点数。
 pub const RAMFS_MAX_NODES: usize = 256;
+/// 内存文件系统支持的最大块数。
 pub const RAMFS_MAX_BLOCKS: usize = 2048;
 pub use crate::functions::fs::{
     VFS_MAX_NAME, VfsDirEntry, VfsFileType, VfsOpenFlags, VfsSeekWhence, VfsStat,

@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! mprotect — functions 层策略主体
 //!
 //! @SAFE: 本文件不含 unsafe 代码。
@@ -19,8 +20,11 @@ use crate::privileged::syscall::Errno;
 
 /// PROT 常量
 pub const PROT_NONE: i32 = 0x0;
+/// 页可读。
 pub const PROT_READ: i32 = 0x1;
+/// 页可写。
 pub const PROT_WRITE: i32 = 0x2;
+/// 页可执行。
 pub const PROT_EXEC: i32 = 0x4;
 
 /// 将 POSIX prot 转换为 `PageFlags` (策略决策)

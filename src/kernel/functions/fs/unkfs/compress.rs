@@ -1,13 +1,16 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 use crate::functions::fs::unkfs::bp::UnkfsCompType;
 use alloc::vec::Vec;
 
+/// 压缩生效的最小数据长度 (短于此值不压缩)。
 pub const HV_COMP_MIN_SIZE: usize = 64;
 
 #[expect(
     clippy::match_same_arms,
     reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
 )]
+/// 按指定算法压缩数据; 数据短于 `HV_COMP_MIN_SIZE` 或算法为 `Off` 时返回 `None`。
 pub fn compress(data: &[u8], comp_type: UnkfsCompType) -> Option<Vec<u8>> {
     if data.len() < HV_COMP_MIN_SIZE {
         return None;
@@ -22,6 +25,7 @@ pub fn compress(data: &[u8], comp_type: UnkfsCompType) -> Option<Vec<u8>> {
     }
 }
 
+/// 按指定算法解压数据至 `expected_size` 字节大小。
 pub fn decompress(
     compressed: &[u8],
     expected_size: usize,
