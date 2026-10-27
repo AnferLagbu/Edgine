@@ -1,12 +1,12 @@
 {
   "_meta": {
     "generated_by": "python3 scripts/audit_dead_code_comment.py --update-baseline",
-    "口径": "clippy 抑制族 (allow/expect(clippy::…)) 的存量冻结, 按逻辑属性行累积 (含 rustfmt 折行的 reason 形态); dead_code/unused 族不进基线, 恒为硬零",
+    "口径": "clippy 与一般 rustc lint 抑制族 (allow/expect(…)) 的存量冻结, 按逻辑属性行累积 (含 rustfmt 折行的 reason 形态); dead_code/unused 族与构建参数 (-A dead_code / --cap-lints allow) 不进基线, 恒为硬零",
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 1744,
-    "files": 306
+    "sites": 1762,
+    "files": 308
   },
   "entries": [
     [
@@ -1070,6 +1070,31 @@
       1
     ],
     [
+      "src/kernel/functions/mod.rs",
+      "#![allow(improper_ctypes)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(non_camel_case_types)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(non_snake_case)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(non_upper_case_globals)",
+      1
+    ],
+    [
+      "src/kernel/functions/mod.rs",
+      "#![allow(static_mut_refs)",
+      1
+    ],
+    [
       "src/kernel/functions/net/dhcp_policy.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       1
@@ -1612,6 +1637,31 @@
     [
       "src/kernel/lib.rs",
       "#![allow(clippy::zero_sized_map_values)",
+      1
+    ],
+    [
+      "src/kernel/lib.rs",
+      "#![allow(improper_ctypes)",
+      1
+    ],
+    [
+      "src/kernel/lib.rs",
+      "#![allow(non_camel_case_types)",
+      1
+    ],
+    [
+      "src/kernel/lib.rs",
+      "#![allow(non_snake_case)",
+      1
+    ],
+    [
+      "src/kernel/lib.rs",
+      "#![allow(non_upper_case_globals)",
+      1
+    ],
+    [
+      "src/kernel/lib.rs",
+      "#![allow(static_mut_refs)",
       1
     ],
     [
@@ -3400,6 +3450,36 @@
       1
     ],
     [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(improper_ctypes)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(non_camel_case_types)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(non_snake_case)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(non_upper_case_globals)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(special_module_name)",
+      1
+    ],
+    [
+      "src/kernel/privileged/mod.rs",
+      "#![allow(static_mut_refs)",
+      1
+    ],
+    [
       "src/kernel/privileged/net/iface_trait.rs",
       "#[expect(clippy::cast_possible_truncation)",
       1
@@ -3668,6 +3748,11 @@
       "src/kernel/privileged/proc/madvise_mlock.rs",
       "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       6
+    ],
+    [
+      "src/kernel/privileged/proc/mod.rs",
+      "#![allow(ambiguous_glob_reexports)",
+      1
     ],
     [
       "src/kernel/privileged/proc/namespace.rs",
@@ -4287,6 +4372,11 @@
     [
       "src/kernel/privileged/vmspace.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
+      1
+    ],
+    [
+      "src/user/lib/src/sys.rs",
+      "#![allow(non_upper_case_globals)",
       1
     ]
   ]

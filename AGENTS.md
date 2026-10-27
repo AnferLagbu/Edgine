@@ -58,7 +58,7 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 | `audit_repr_c.py` / `audit_volatile_access.py` / `audit_static_mut.py` | repr(C) 字段错位 / volatile 访问 / static mut 防线 | 附加门禁 | 强制 |
 | `audit_orphaned_init.py` | 孤儿 init 编排入口（`no_mangle` + 零调用 + 体内聚合 ≥2 项 init） | 附加门禁（F9 配套，P-8） | 强制 |
 | `audit_unwired_pub_fn.py` | 未接线 syscall 编号（R2 CRITICAL）；零引用 pub fn（R1）仅报告 | 附加门禁（F9 配套，P-13） | 强制（R2） |
-| `audit_dead_code_comment.py` | F9 全仓执法：死代码抑制（allow/expect 的 `dead_code`/`unused*` 族）硬零 + clippy 抑制对机器派生侧车基线双向对账 | F9 | 强制 |
+| `audit_dead_code_comment.py` | F9 全仓执法：死代码抑制（allow/expect 的 `dead_code`/`unused*` 族）硬零 + 构建参数层逃逸口（`-A dead_code` / `-A unused*` / `--cap-lints allow`）硬零 + clippy 与一般 rustc lint 抑制对机器派生侧车基线双向对账 | F9 | 强制 |
 | `audit_public_api_docs.py` + `audit_missing_docs_debt.py` | F8 两层执法：**语言面**（中文 doc 是否存在，`privileged/` 可达公共 API，默认面硬零 + impl 面对账）由前者判；**存在性面**由后者取 rustc `missing_docs` 编译器读数与存量债册棘轮对账（只拦新增）。已完成补写的模块改在文件内写 `#![deny(missing_docs)]`，由门槛 1/2 直接硬执法 | F8 | 强制（full 档） |
 | `audit_tcb_ratio.py` | TCB 占比统计（软 < 30%）| 软约束 | 报告 |
 
@@ -133,7 +133,21 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | F6 | 核心审计全部通过 | 见 §2.2 |
 | F7 | 中文注释强制 | `audit_comment_language.py` 0 violations |
 | F8 | 公共 API 中文文档注释 | **存在性**由 rustc `missing_docs` 作准：已清零模块写 `#![deny(missing_docs)]`（门槛 1/2 硬执法），存量由 `audit_missing_docs_debt.py` 棘轮拦新增；**中文语言面**由 `audit_public_api_docs.py` 判 |
-| F9 | 新增代码禁止任何类型的死代码注释（`#[allow(dead_code)]` / `#[allow(unused)]` 等），无豁免，无例外 | Rust 编译器 dead_code lint |
+| F9 | 禁止死代码抑制与审计逃逸标注：`dead_code` / `unused*` 族**零容忍无豁免**；clippy 与一般 rustc lint 抑制只允许侧车已登记的存量；构建参数不得关掉上述 lint。**禁用清单见本节末 F9 专条** | `audit_dead_code_comment.py`（源码属性 + 构建参数双路）+ rustc `dead_code` lint |
+
+**F9 禁用清单（零容忍；新增一律拒收，存量按侧车逐项冻结）**
+
+| 类别 | 禁用形态 | 判定 |
+|---|---|---|
+| 死代码族 | `#[allow(dead_code)]` / `#[allow(unused…)]` / `#[expect(同族)]` / crate 级 `#![allow(unused…)]` | 硬零（0 处） |
+| 抑制包裹 | 用 `#[cfg_attr(<任意条件>, allow(dead_code / unused…))]` 或宏、属性间接包出上述形态 | 同死代码族，硬零 |
+| 审计豁免标签 | 任何 `#[allow(missing_docs)]` / `#[expect(missing_docs)]`（`doc` 族同义） | 禁止（`audit_missing_docs_debt.py` 内置检查） |
+| 构建参数 | `-A dead_code` / `-A unused*` / `--cap-lints allow`，扫描面 = `ci/`、`scripts/`、`Makefile*`、`.cargo/config.toml`（仅 `ci/`+`scripts/` 下的 `.sh` / `.py` / `.mk` / `.toml` 与无扩展名脚本） | 硬零（0 处） |
+| clippy 与一般 rustc lint | `#[allow(clippy::…)]` / `#[expect(clippy::…)]` / `#[allow(<rustc lint>)]` | 只允许侧车已登记形态；新增即红 |
+
+- **本文不抄录数量**：权威读数 = `scripts/audit_dead_code_comment.baseline.json` 的 `totals`（机器派生，`--update-baseline` 为唯一写者）；本文只定义口径，避免与侧车双写漂移。
+- **消除方式**：实现使用路径（让 `#[cfg]` 真正编译到）/ 移入测试模块 / 用实现消解常量 —— **不是**再加一层标注；也**不是**扩大基线。
+- **侧车收缩**：清理抑制时用 `--update-baseline` 收缩快照并与源改动同批提交；某族清零后由脚本转硬零，不再进基线。
 
 > **编码规范（建议性）**: 见 `docs/explain/spec-engineering.md`. 软规范非拒收条款.
 
