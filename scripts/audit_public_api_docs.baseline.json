@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 166,
-    "files": 43,
-    "keys": 144
+    "sites": 159,
+    "files": 40,
+    "keys": 138
   },
   "entries": [
     [
@@ -137,24 +137,6 @@
       1
     ],
     [
-      "src/kernel/privileged/freg/reset/parallel.rs",
-      "fn",
-      "add",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/parallel.rs",
-      "fn",
-      "add_to_layer",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/parallel.rs",
-      "fn",
-      "new",
-      2
-    ],
-    [
       "src/kernel/privileged/freg/undo_log.rs",
       "fn",
       "compact_keeping",
@@ -207,18 +189,6 @@
       "fn",
       "new",
       7
-    ],
-    [
-      "src/kernel/privileged/irq/mod.rs",
-      "fn",
-      "from_u8",
-      1
-    ],
-    [
-      "src/kernel/privileged/irq/mod.rs",
-      "fn",
-      "to_idx",
-      1
     ],
     [
       "src/kernel/privileged/irqline.rs",
@@ -314,12 +284,6 @@
       "src/kernel/privileged/mm/numa.rs",
       "fn",
       "num_nodes",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/page_fault.rs",
-      "fn",
-      "from_error_code",
       1
     ],
     [

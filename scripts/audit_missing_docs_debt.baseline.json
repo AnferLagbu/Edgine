@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 622,
-    "files": 128,
-    "keys": 214
+    "sites": 560,
+    "files": 123,
+    "keys": 197
   },
   "entries": [
     [
@@ -79,21 +79,6 @@
       "src/kernel/functions/fs/dcache.rs",
       "a struct field",
       10
-    ],
-    [
-      "src/kernel/functions/fs/devfs.rs",
-      "a method",
-      6
-    ],
-    [
-      "src/kernel/functions/fs/devfs.rs",
-      "a struct field",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/devfs.rs",
-      "an associated function",
-      3
     ],
     [
       "src/kernel/functions/fs/devpts.rs",
@@ -581,31 +566,6 @@
       5
     ],
     [
-      "src/kernel/privileged/freg/reset/parallel.rs",
-      "a constant",
-      2
-    ],
-    [
-      "src/kernel/privileged/freg/reset/parallel.rs",
-      "a method",
-      2
-    ],
-    [
-      "src/kernel/privileged/freg/reset/parallel.rs",
-      "a static",
-      2
-    ],
-    [
-      "src/kernel/privileged/freg/reset/parallel.rs",
-      "a struct field",
-      5
-    ],
-    [
-      "src/kernel/privileged/freg/reset/parallel.rs",
-      "an associated function",
-      2
-    ],
-    [
       "src/kernel/privileged/freg/undo_log.rs",
       "a method",
       3
@@ -631,11 +591,6 @@
       2
     ],
     [
-      "src/kernel/privileged/idt/statistics.rs",
-      "a struct field",
-      12
-    ],
-    [
       "src/kernel/privileged/iomem.rs",
       "a method",
       4
@@ -654,26 +609,6 @@
       "src/kernel/privileged/ipc/types.rs",
       "an associated function",
       7
-    ],
-    [
-      "src/kernel/privileged/irq/mod.rs",
-      "a function",
-      2
-    ],
-    [
-      "src/kernel/privileged/irq/mod.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/privileged/irq/mod.rs",
-      "a variant",
-      8
-    ],
-    [
-      "src/kernel/privileged/irq/mod.rs",
-      "an associated function",
-      1
     ],
     [
       "src/kernel/privileged/irqline.rs",
@@ -704,26 +639,6 @@
       "src/kernel/privileged/mm/numa.rs",
       "an associated function",
       4
-    ],
-    [
-      "src/kernel/privileged/mm/page_fault.rs",
-      "a static",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/page_fault.rs",
-      "a struct field",
-      6
-    ],
-    [
-      "src/kernel/privileged/mm/page_fault.rs",
-      "a variant",
-      5
-    ],
-    [
-      "src/kernel/privileged/mm/page_fault.rs",
-      "an associated function",
-      1
     ],
     [
       "src/kernel/privileged/mm/pmm.rs",

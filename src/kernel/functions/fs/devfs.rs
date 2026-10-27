@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 privileged API。
 //! 设备文件系统 (`DevFS`) — functions 策略实现
 //!
@@ -142,12 +143,16 @@ fn write_u32_dec(buf: &mut [u8], mut off: usize, mut val: u32) -> usize {
 /// 设备条目
 #[derive(Debug, Clone, Copy)]
 pub struct DevfsDevice {
+    /// 设备名（NUL 结尾，定长存储）。
     pub name: [u8; DEVFS_MAX_NAME],
+    /// 设备类型（`DevKind` 的 `u8` 表示）。
     pub dev_type: u8,
+    /// 表项是否已占用。
     pub used: bool,
 }
 
 impl DevfsDevice {
+    /// 构造空设备条目。
     pub const fn new() -> Self {
         Self {
             name: [0; DEVFS_MAX_NAME],
@@ -171,6 +176,7 @@ pub struct DevfsData {
 // AtomicU32 也是 Send + Sync, 无需手动实现.
 
 impl DevfsData {
+    /// 构造空的 `DevFS` 数据实例。
     pub const fn new() -> Self {
         Self {
             devices: Mutex::new([const { DevfsDevice::new() }; DEVFS_MAX_DEVICES]),
@@ -241,6 +247,7 @@ impl DevfsData {
         Err(KernelError::FileNotFound)
     }
 
+    /// 挂载 `DevFS` 到指定路径，并清零设备计数。
     pub fn mount(&self, _path: &str) -> i32 {
         // E6-9a: 不再硬编码设备, 改为通过 register_device 注册
         // 标准虚拟设备由启动流程显式调用 register_standard() 注册
@@ -248,6 +255,7 @@ impl DevfsData {
         0
     }
 
+    /// 按路径查找设备，返回 `(节点索引, 设备类型)`。
     pub fn open(&self, path: &str) -> Option<(u32, u8)> {
         let dev_name = path.trim_start_matches('/');
 
@@ -276,6 +284,7 @@ impl DevfsData {
         clippy::match_same_arms,
         reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
     )]
+    /// 按设备类型读取，返回写入 `buf` 的字节数（负数为错误码）。
     pub fn read(&self, dev_type: u8, buf: &mut [u8]) -> i32 {
         match DevKind::from_u8(dev_type) {
             Some(DevKind::Null) => 0,
@@ -359,6 +368,7 @@ impl DevfsData {
         clippy::match_same_arms,
         reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
     )]
+    /// 按设备类型写入，返回消耗的字节数（负数为错误码）。
     pub fn write(&self, dev_type: u8, buf: &[u8]) -> i32 {
         match DevKind::from_u8(dev_type) {
             Some(DevKind::Null | DevKind::Zero) => buf.len() as i32,
@@ -389,6 +399,7 @@ impl DevfsData {
         }
     }
 
+    /// 按索引读取目录项，返回 `(设备名, 设备类型)`。
     pub fn readdir(&self, index: usize) -> Option<([u8; 32], u8)> {
         let devices = self.devices.lock();
         let mut count = 0;
@@ -407,6 +418,7 @@ impl DevfsData {
         None
     }
 
+    /// 返回当前已注册的设备数。
     pub fn device_count(&self) -> u32 {
         self.device_count.load(Ordering::SeqCst)
     }
@@ -659,6 +671,7 @@ pub struct DevFsInode {
 }
 
 impl DevFsInode {
+    /// 构造设备文件 Inode。
     pub fn new(dev_type: u8, mount_idx: u32) -> Self {
         Self {
             dev_type,

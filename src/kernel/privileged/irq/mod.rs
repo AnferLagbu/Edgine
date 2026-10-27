@@ -24,6 +24,8 @@
 //! - `running` 标志防止重入
 //! - handlers 在 `open_softirq()` 时一次性注册，运行时只读
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 
 use crate::privileged::config::MAX_CPUS;
@@ -35,26 +37,36 @@ const MAX_SOFTIRQS: usize = 10;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SoftirqVec {
+    /// 最高优先级软中断。
     High = 0,
+    /// 定时器账本更新。
     Timer = 1,
+    /// 网络接收上送。
     NetRx = 2,
+    /// 网络发送完成回收。
     NetTx = 3,
+    /// 块设备 IO 完成。
     Block = 4,
+    /// 通用 tasklet。
     Tasklet = 5,
+    /// 调度器延后工作。
     Sched = 6,
     /// Kswapd: 内存回收/页面换出 (B3 完整实现)
     Kswapd = 7,
     /// Hotplug: PCIe/USB 热插拔槽位轮询 (由 scheduler tick 周期驱动)
     Hotplug = 8,
+    /// 软中断向量总数（哨兵值）。
     Count = 9,
 }
 
 impl SoftirqVec {
+    /// 返回本向量对应的位图索引。
     #[inline]
     pub const fn to_idx(self) -> usize {
         self as usize
     }
 
+    /// 由 `u8` 解析软中断向量；未知值返回 `None`。
     #[inline]
     pub fn from_u8(v: u8) -> Option<Self> {
         match v {
@@ -260,6 +272,7 @@ pub fn pending_softirq() -> bool {
     }
 }
 
+/// FFI 入口：初始化 softirq 子系统（注册 tasklet 处理程序）。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn softirq_init() {
@@ -268,6 +281,7 @@ pub extern "C" fn softirq_init() {
     // 默认: Timer/NetRx/NetTx/Block 由各子系统在初始化时注册.
 }
 
+/// FFI 入口：执行当前 CPU 的待处理 softirq。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn softirq_do() {

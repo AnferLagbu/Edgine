@@ -23,6 +23,8 @@
 //!   确保用户态不会看到脏数据（信息泄漏防护）。
 //! - `PAGE_FAULT_COUNT` 使用 `AtomicU64`, 无竞争条件。
 
+#![deny(missing_docs)]
+
 use super::page_fault_policy::current_page_fault_policy;
 use super::pmm;
 use super::vma::{MmStruct, Vma, VmaType};
@@ -33,10 +35,15 @@ use core::sync::atomic::{AtomicU64, Ordering};
 /// 缺页处理结果: 指示 #PF 处理器应采取的处置动作.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PfResult {
+    /// 缺页已修复，处理器可直接返回用户态。
     Fixed = 0,
+    /// 需向进程投递 `SIGSEGV`。
     SignalSegv = 1,
+    /// 需向进程投递 `SIGBUS`。
     SignalBus = 2,
+    /// 物理内存不足，缺页无法修复。
     Oom = 3,
+    /// 未识别的缺页，交由上层兜底处理。
     Unhandled = 4,
     /// userfaultfd: 缺页已登记事件并入队, 当前进程需转入阻塞等待用户态提供页
     ///
@@ -48,15 +55,22 @@ pub enum PfResult {
 /// 缺页错误信息: 故障地址与错误码解码后的标志位.
 #[derive(Debug, Clone, Copy)]
 pub struct PageFaultInfo {
+    /// 触发缺页的虚拟地址（CR2）。
     pub fault_addr: u64,
+    /// 错误码 P 位：页是否已存在。
     pub present: bool,
+    /// 错误码 W/R 位：是否为写访问。
     pub write: bool,
+    /// 错误码 U/S 位：是否来自用户态。
     pub user: bool,
+    /// 错误码 RSVD 位：是否使用保留位。
     pub reserved: bool,
+    /// 错误码 I/D 位：是否为取指访问。
     pub instruction: bool,
 }
 
 impl PageFaultInfo {
+    /// 由 x86_64 缺页错误码解码出各标志位。
     pub fn from_error_code(fault_addr: u64, error_code: u64) -> Self {
         Self {
             fault_addr,
@@ -503,6 +517,7 @@ fn do_cow_copy_with_mm(_mm: &MmStruct, _vma: &Vma, addr: usize, user_cr3: u64) -
 
 // ── 统计 ──
 
+/// 累计缺页处理次数。
 pub static PAGE_FAULT_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// 返回累计缺页处理次数.

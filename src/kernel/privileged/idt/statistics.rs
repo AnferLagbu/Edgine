@@ -10,6 +10,8 @@
 //! - **JSON 导出**: 标准格式输出，便于测试框架解析
 //! - **历史记录**: 保留最近 N 次异常的详细信息
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use super::types::{IRQ_BASE, InterruptFrame};
@@ -35,27 +37,39 @@ pub struct DetailedStatistics {
     pub total_count: AtomicU64,
 
     // 异常统计 (32 个标准异常)
+    /// 各标准异常的累计计数（下标为向量号）。
     pub exception_counts: [AtomicU64; 32],
 
     // IRQ 统计 (16 个 IRQ)
+    /// 各 IRQ 的累计计数（下标为 IRQ 号）。
     pub irq_counts: [AtomicU64; 16],
 
     // 特殊向量统计
-    pub syscall_count: AtomicU64,  // int 0x80
+    /// `int 0x80` 系统调用中断次数。
+    pub syscall_count: AtomicU64, // int 0x80
+    /// `int 0x82` 恢复中断次数。
     pub recovery_count: AtomicU64, // int 0x82
 
     // 嵌套中断统计
+    /// 嵌套中断发生的累计次数。
     pub nested_interrupts: AtomicU64,
+    /// 观测到的最大嵌套深度。
     pub max_nesting_depth: AtomicU64,
 
     // User/Kernel 模式分布
+    /// 来自用户态的中断次数。
     pub user_mode_interrupts: AtomicU64,
+    /// 来自内核态的中断次数。
     pub kernel_mode_interrupts: AtomicU64,
 
     // 恢复动作统计
+    /// 成功恢复的次数。
     pub recoveries: AtomicU64,
+    /// 因异常终止进程的次数。
     pub process_terminations: AtomicU64,
+    /// 触发域恢复的次数。
     pub domain_recoveries: AtomicU64,
+    /// 触发 panic 的次数。
     pub panics: AtomicU64,
 
     // 历史记录 (环形缓冲区, IrqSpinLock 保证中断安全)

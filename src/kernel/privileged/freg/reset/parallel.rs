@@ -2,24 +2,32 @@
 //!
 //! 支持 SMP 并行回滚多个独立的恢复域
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use super::config;
 use crate::privileged::freg::DomainState;
 use crate::privileged::freg::RECOVERY_MANAGER;
 
+/// 依赖分层允许的最大层数。
 pub const MAX_DEPENDENCY_LAYERS: usize = 8;
+/// 单个依赖层内可容纳的最大恢复域数。
 pub const MAX_DOMAINS_PER_LAYER: usize = 16;
 
 /// 单个依赖层级: 同一层内的恢复域互相无依赖, 可并行回滚。
 #[derive(Debug, Clone, Copy)]
 pub struct DependencyLayer {
+    /// 本层内已登记的恢复域 ID 列表（前 `count` 项有效）。
     pub domains: [u64; MAX_DOMAINS_PER_LAYER],
+    /// 本层已登记的恢复域数量。
     pub count: usize,
+    /// 本层在依赖拓扑中的层级号（从 0 起）。
     pub level: usize,
 }
 
 impl DependencyLayer {
+    /// 构造指定层级的空依赖层。
     pub const fn new(level: usize) -> Self {
         Self {
             domains: [0; MAX_DOMAINS_PER_LAYER],
@@ -28,6 +36,7 @@ impl DependencyLayer {
         }
     }
 
+    /// 向本层追加一个恢复域 ID；层已满时返回 `false`。
     pub fn add(&mut self, domain_id: u64) -> bool {
         if self.count >= MAX_DOMAINS_PER_LAYER {
             return false;
@@ -41,11 +50,14 @@ impl DependencyLayer {
 /// 按依赖拓扑分层后的恢复域集合, 层级由低到高排列。
 #[derive(Debug)]
 pub struct DependencyLayers {
+    /// 各层级的依赖层数组（前 `count` 层有效）。
     pub layers: [DependencyLayer; MAX_DEPENDENCY_LAYERS],
+    /// 已使用的层数。
     pub count: usize,
 }
 
 impl DependencyLayers {
+    /// 构造空的依赖分层集合。
     pub const fn new() -> Self {
         const EMPTY_LAYER: DependencyLayer = DependencyLayer::new(0);
         Self {
@@ -54,6 +66,7 @@ impl DependencyLayers {
         }
     }
 
+    /// 把恢复域 ID 放入指定层级；层级越界时返回 `false`。
     pub fn add_to_layer(&mut self, level: usize, domain_id: u64) -> bool {
         if level >= MAX_DEPENDENCY_LAYERS {
             return false;
@@ -209,7 +222,9 @@ pub fn rollback_all() -> usize {
     }
 }
 
+/// 并行回滚累计执行次数统计。
 pub static PARALLEL_ROLLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
+/// 并行回滚累计耗时统计（单位由调用方约定）。
 pub static PARALLEL_ROLLBACK_TIME: AtomicU32 = AtomicU32::new(0);
 
 /// 读取并行回滚统计 (累计回滚次数, 耗时)。
