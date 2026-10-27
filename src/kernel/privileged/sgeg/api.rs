@@ -36,6 +36,8 @@
 //!
 //! 所有公开函数使用 `#[no_mangle]` 以保证跨模块符号名稳定。
 
+#![deny(missing_docs)]
+
 use super::audit;
 use super::engine;
 use super::identity;
@@ -51,6 +53,7 @@ macro_rules! klog_pwm {
 
 static INITIALIZED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// 初始化 PWM 身份子系统 (仅首次调用生效, 重复调用直接返回)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_init() {
@@ -70,12 +73,14 @@ pub extern "C" fn pwm_init() {
     klog_pwm!("PWM v5 initialized");
 }
 
+/// 查询身份表中是否已存在任何身份 (用于判定是否需要 genesis 引导)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_any_identity_exists() -> bool {
     identity::get_table().any_identity_exists()
 }
 
+/// 以给定密码创建首个 root 身份, 返回新 PWM (失败返回负错误码)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_try_genesis(password: *const u8) -> i64 {
@@ -86,6 +91,7 @@ pub extern "C" fn pwm_try_genesis(password: *const u8) -> i64 {
     }
 }
 
+/// 创建新身份 (密码 / 备注 / 创建者 PWM), 返回新 PWM (失败返回负错误码)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 #[expect(
@@ -101,6 +107,7 @@ pub extern "C" fn pwm_create(password: *const u8, note: *const u8, creator_pwm: 
     }
 }
 
+/// 删除指定 PWM 的身份 (0 = 成功, 非零 = 错误码)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_delete(pwm: u64) -> i32 {
@@ -110,6 +117,7 @@ pub extern "C" fn pwm_delete(pwm: u64) -> i32 {
     }
 }
 
+/// 停用指定 PWM 的身份 (0 = 成功, 非零 = 错误码)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_disable(pwm: u64) -> i32 {
@@ -119,6 +127,7 @@ pub extern "C" fn pwm_disable(pwm: u64) -> i32 {
     }
 }
 
+/// 重新启用指定 PWM 的身份 (0 = 成功, 非零 = 错误码)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_enable(pwm: u64) -> i32 {
@@ -128,6 +137,7 @@ pub extern "C" fn pwm_enable(pwm: u64) -> i32 {
     }
 }
 
+/// 校验指定 PWM 的密码 (密码指针为空直接判失败)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_verify_password(pwm: u64, password: *const u8) -> bool {
@@ -138,6 +148,7 @@ pub extern "C" fn pwm_verify_password(pwm: u64, password: *const u8) -> bool {
     identity::get_table().verify_password(pwm, pwd)
 }
 
+/// 修改指定 PWM 的密码 (旧密码校验通过后写入新密码)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_change_password(pwm: u64, old: *const u8, new: *const u8) -> i32 {
@@ -149,12 +160,14 @@ pub extern "C" fn pwm_change_password(pwm: u64, old: *const u8, new: *const u8) 
     }
 }
 
+/// 判定指定 PWM 是否存在于身份表
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_find(pwm: u64) -> bool {
     identity::find(pwm).is_some()
 }
 
+/// 取得指定 PWM 的身份条目只读指针 (不存在时返回空指针)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 #[expect(
@@ -165,12 +178,14 @@ pub extern "C" fn pwm_find_entry(pwm: u64) -> *const PwmEntry {
     identity::find(pwm).map_or(core::ptr::null(), |e| e as *const PwmEntry)
 }
 
+/// 取指定 PWM 在指定能力域上的全部能力位 (原始 u64 形式)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_has_cap_raw(pwm: u64, domain: u16, _cap_bit: u8) -> u64 {
     engine::get_caps(pwm, CapDomain(domain)).as_u64()
 }
 
+/// 以给定密码创建首个身份, 返回新 PWM (genesis 的别名入口)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_create_first_identity(password: *const u8) -> i64 {
@@ -181,18 +196,21 @@ pub extern "C" fn pwm_create_first_identity(password: *const u8) -> i64 {
     }
 }
 
+/// 取指定 PWM 在文件系统能力域上的能力位
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_get_fs_capability(pwm: u64) -> u64 {
     engine::get_caps(pwm, CapDomain::FS).as_u64()
 }
 
+/// 判定指定 PWM 在指定域上是否具备所要求的能力位
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_has_capability(pwm: u64, domain: u16, required: u64) -> bool {
     engine::check(pwm, CapDomain(domain), CapBits(required))
 }
 
+/// 取指定 PWM 在指定能力域上的能力位 (原始 u64 形式)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_get_capability_raw(pwm: u64, domain: u16) -> u64 {
@@ -229,18 +247,21 @@ pub fn pwm_set_current_capability_raw(domain: u16, caps: u64) -> i32 {
     0
 }
 
+/// 取指定 PWM 的权限等级
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_get_privilege_level(pwm: u64) -> u8 {
     engine::get_privilege_level(pwm)
 }
 
+/// 取指定 PWM 的创建者 PWM (无创建者时返回 0)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_get_creator(pwm: u64) -> u64 {
     engine::get_creator(pwm)
 }
 
+/// 由授权方向受让方授予指定能力 (0 = 成功, 非零 = 错误码)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_grant(grantor_pwm: u64, grantee_pwm: u64, domain: u16, caps: u64) -> i32 {
@@ -250,6 +271,7 @@ pub extern "C" fn pwm_grant(grantor_pwm: u64, grantee_pwm: u64, domain: u16, cap
     }
 }
 
+/// 由撤销方回收目标方的指定能力 (0 = 成功, 非零 = 错误码)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_revoke(revoker_pwm: u64, target_pwm: u64, domain: u16, caps: u64) -> i32 {
@@ -259,6 +281,7 @@ pub extern "C" fn pwm_revoke(revoker_pwm: u64, target_pwm: u64, domain: u16, cap
     }
 }
 
+/// 转移指定身份的创建者归属 (0 = 成功, 非零 = 错误码)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_transfer_creator(current_creator: u64, target: u64, new_creator: u64) -> i32 {
@@ -268,12 +291,14 @@ pub extern "C" fn pwm_transfer_creator(current_creator: u64, target: u64, new_cr
     }
 }
 
+/// 判定操作方对目标方是否具备管辖权限
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_check_privilege(operator: u64, target: u64) -> bool {
     engine::check_privilege(operator, target)
 }
 
+/// 以备注与密码登录会话, 返回登录后的 PWM (失败返回负错误码)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_login(note: *const u8, password: *const u8) -> i64 {
@@ -285,78 +310,91 @@ pub extern "C" fn pwm_login(note: *const u8, password: *const u8) -> i64 {
     }
 }
 
+/// 注销当前会话
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_logout() {
     session::logout();
 }
 
+/// 取当前会话的 PWM (未登录返回 0)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_get_current() -> u64 {
     session::get_current_pwm()
 }
 
+/// 取当前会话身份条目的只读指针 (未登录返回空指针)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_get_current_entry() -> *const PwmEntry {
     session::get_current_entry()
 }
 
+/// 判定当前是否已登录
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_is_logged_in() -> bool {
     session::is_logged_in()
 }
 
+/// 取当前会话的 UID
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_get_current_uid() -> u32 {
     session::get_current_uid()
 }
 
+/// 取当前会话的 GID
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_get_current_gid() -> u32 {
     session::get_current_gid()
 }
 
+/// 取当前会话的有效 UID
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_get_euid() -> u32 {
     session::get_euid()
 }
 
+/// 取当前会话的有效 GID
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_get_egid() -> u32 {
     session::get_egid()
 }
 
+/// 为 set-uid 场景临时提升到目标身份的权力
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_elevate_for_suid(target_pwm: u64) -> bool {
     session::elevate_for_suid(target_pwm)
 }
 
+/// 放弃 set-uid 场景的临时提权
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_drop_elevation() -> bool {
     session::drop_elevation()
 }
 
+/// 判定当前会话是否具备对目标身份的提权权限
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_has_elevation_authority(target_pwm: u64) -> bool {
     session::has_elevation_authority(target_pwm)
 }
 
+/// 尝试把当前会话切换到目标 UID
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_try_setuid(target_uid: u32) -> bool {
     session::try_setuid(target_uid)
 }
 
+/// 取指定 PWM 的 UID (身份不存在时返回 `0xFFFFFFFF`)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 #[expect(
@@ -367,6 +405,7 @@ pub extern "C" fn pwm_get_uid(pwm: u64) -> u32 {
     identity::find(pwm).map_or(0xFFFFFFFF, PwmEntry::get_uid)
 }
 
+/// 取指定 PWM 的 GID (身份不存在时返回 `0xFFFFFFFF`)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 #[expect(
@@ -377,6 +416,7 @@ pub extern "C" fn pwm_get_gid(pwm: u64) -> u32 {
     identity::find(pwm).map_or(0xFFFFFFFF, PwmEntry::get_gid)
 }
 
+/// 清除指定 PWM 的登录锁定状态 (0 = 成功, 非零 = 错误码)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_clear_lockout(pwm: u64) -> i32 {
@@ -386,12 +426,14 @@ pub extern "C" fn pwm_clear_lockout(pwm: u64) -> i32 {
     }
 }
 
+/// 判定身份表自上次持久化以来是否被修改
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_is_modified() -> bool {
     identity::get_table().is_modified()
 }
 
+/// 标记身份表已被修改, 触发下一次持久化
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_set_modified() {
@@ -416,6 +458,7 @@ pub fn umask_get() -> u32 {
     UMASK.load(Ordering::SeqCst)
 }
 
+/// 按动作编号写入一条 PWM 审计记录
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 #[expect(
@@ -439,12 +482,14 @@ pub extern "C" fn pwm_audit_log(pwm: u64, action: u32, target: u64, details: u64
     audit::log(pwm, act, target, 0, details);
 }
 
+/// 输出全部审计记录
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_audit_dump() {
     audit::dump();
 }
 
+/// 以首个身份凭据恢复身份表, 返回恢复出的 PWM (失败返回负错误码)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_recover_first(password: *const u8, note: *const u8) -> i64 {

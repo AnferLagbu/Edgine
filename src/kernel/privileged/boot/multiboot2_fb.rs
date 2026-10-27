@@ -8,26 +8,40 @@
 //! `FRAMEBUFFER_TAG_TYPE` = 8 对应 Multiboot2 spec 3.6.12。
 
 use crate::privileged::sync::OnceLock;
+/// Multiboot2 帧缓冲信息 tag 的类型编号 (spec 3.6.12)
 pub const MULTIBOOT2_TAG_FRAMEBUFFER: u32 = 8;
 
 /// Multiboot2 帧缓冲信息 (物理地址 / 行距 / 分辨率 / 位深 / 通道掩码)
 #[derive(Debug, Clone, Copy)]
 pub struct FramebufferInfo {
+    /// 帧缓冲物理起始地址
     pub addr: u64,
+    /// 每行字节数 (含填充)
     pub pitch: u32,
+    /// 水平像素数
     pub width: u32,
+    /// 垂直像素数
     pub height: u32,
+    /// 每像素位深
     pub bpp: u8,
+    /// 帧缓冲类型 (0 = 索引色, 1 = RGB, 2 = 文本)
     pub fb_type: u8,
+    /// 红色通道起始位
     pub red_field_position: u8,
+    /// 红色通道位宽
     pub red_mask_size: u8,
+    /// 绿色通道起始位
     pub green_field_position: u8,
+    /// 绿色通道位宽
     pub green_mask_size: u8,
+    /// 蓝色通道起始位
     pub blue_field_position: u8,
+    /// 蓝色通道位宽
     pub blue_mask_size: u8,
 }
 
 impl FramebufferInfo {
+    /// 构造全零初值 (尚未解析 tag 时的占位)
     pub const fn new() -> Self {
         Self {
             addr: 0,
@@ -45,6 +59,7 @@ impl FramebufferInfo {
         }
     }
 
+    /// 判定帧缓冲信息是否有效 (地址非零且分辨率与位深均大于零)
     pub fn is_valid(&self) -> bool {
         self.addr != 0 && self.width > 0 && self.height > 0 && self.bpp > 0
     }

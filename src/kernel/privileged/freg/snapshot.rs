@@ -2,26 +2,38 @@
 //!
 //! 用于 FREG Soft Reset (BSR) 时捕获和恢复设备状态。
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::privileged::sync::IrqSpinLock;
+/// 快照注册表可容纳的设备数上限
 pub const MAX_DEVICE_SNAPSHOTS: usize = 16;
+/// 单个设备可快照的寄存器数上限
 pub const MAX_REGISTERS_PER_DEVICE: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 /// 设备类型分类, 用于快照分组与恢复。
 pub enum DeviceType {
+    /// 未识别设备
     Unknown = 0,
+    /// 键盘控制器
     Keyboard = 1,
+    /// 串口
     Serial = 2,
+    /// 定时器
     Timer = 3,
+    /// 网络控制器
     Network = 4,
+    /// 存储控制器
     Storage = 5,
+    /// 显示控制器
     Display = 6,
 }
 
 impl DeviceType {
+    /// 由原始 `u32` 值解析设备类型 (未知值回落为 `Unknown`)
     pub fn from_u32(v: u32) -> Self {
         match v {
             1 => Self::Keyboard,
@@ -38,7 +50,9 @@ impl DeviceType {
 #[derive(Debug, Clone, Copy)]
 /// 单个设备寄存器的快照 (寄存器偏移 + 值)。
 pub struct RegisterState {
+    /// 寄存器相对 MMIO 基址的字节偏移
     pub offset: u32,
+    /// 寄存器值
     pub value: u32,
 }
 
@@ -54,17 +68,26 @@ impl Default for RegisterState {
 #[derive(Debug)]
 /// 单个设备的 MMIO 寄存器快照集合。
 pub struct DeviceSnapshot {
+    /// 设备唯一标识
     pub device_id: u64,
+    /// 设备类型分类
     pub device_type: DeviceType,
+    /// 设备名称 (静态字符串)
     pub name: &'static str,
+    /// 设备 MMIO 基址 (0 表示无 MMIO)
     pub mmio_base: u64,
+    /// 寄存器快照数组
     pub registers: [RegisterState; MAX_REGISTERS_PER_DEVICE],
+    /// 实际记录的有效寄存器数
     pub register_count: usize,
+    /// 恢复优先级 (数值小者先恢复)
     pub priority: u32,
+    /// 快照状态标志位 (`SNAPSHOT_FLAG_*`)
     pub flags: u32,
 }
 
 impl DeviceSnapshot {
+    /// 构造空快照 (无寄存器, 未捕获)
     pub const fn new(
         device_id: u64,
         device_type: DeviceType,
@@ -88,6 +111,7 @@ impl DeviceSnapshot {
         }
     }
 
+    /// 追加一个待快照寄存器 (容量满时静默丢弃)
     pub fn add_register(&mut self, offset: u32, value: u32) {
         if self.register_count < MAX_REGISTERS_PER_DEVICE {
             self.registers[self.register_count] = RegisterState { offset, value };
@@ -95,15 +119,18 @@ impl DeviceSnapshot {
         }
     }
 
+    /// 清空已记录的寄存器并重置标志位
     pub fn clear(&mut self) {
         self.register_count = 0;
         self.flags = 0;
     }
 
+    /// 判定当前是否未记录任何寄存器
     pub fn is_empty(&self) -> bool {
         self.register_count == 0
     }
 
+    /// 用给定读函数捕获全部已记录寄存器的当前值
     pub fn capture(&mut self, read_fn: fn(u64, u32) -> u32) {
         for i in 0..self.register_count {
             let offset = self.registers[i].offset;
@@ -112,6 +139,7 @@ impl DeviceSnapshot {
         self.flags |= SNAPSHOT_FLAG_CAPTURED;
     }
 
+    /// 用给定写函数回写全部寄存器 (MMIO 基址为 0 时直接失败)
     pub fn restore(&self, write_fn: fn(u64, u32, u32)) -> bool {
         if self.mmio_base == 0 {
             return false;
@@ -124,8 +152,11 @@ impl DeviceSnapshot {
     }
 }
 
+/// 快照标志位: 已捕获过寄存器值
 pub const SNAPSHOT_FLAG_CAPTURED: u32 = 0x01;
+/// 快照标志位: 快照内容有效
 pub const SNAPSHOT_FLAG_VALID: u32 = 0x02;
+/// 快照标志位: 已执行过恢复
 pub const SNAPSHOT_FLAG_RESTORED: u32 = 0x04;
 
 #[derive(Debug)]
@@ -137,6 +168,7 @@ pub struct DeviceSnapshotRegistry {
 }
 
 impl DeviceSnapshotRegistry {
+    /// 构造空注册表
     pub const fn new() -> Self {
         const NONE: Option<DeviceSnapshot> = None;
         Self {
@@ -146,6 +178,7 @@ impl DeviceSnapshotRegistry {
         }
     }
 
+    /// 注册一份设备快照 (容量满时返回 false)
     pub fn register(&mut self, snapshot: DeviceSnapshot) -> bool {
         if self.count >= MAX_DEVICE_SNAPSHOTS {
             return false;
@@ -155,6 +188,7 @@ impl DeviceSnapshotRegistry {
         true
     }
 
+    /// 按设备 id 注销快照 (末位快照前移填补空洞)
     pub fn unregister(&mut self, device_id: u64) -> bool {
         for i in 0..self.count {
             if let Some(ref snap) = self.snapshots[i] {
@@ -171,6 +205,7 @@ impl DeviceSnapshotRegistry {
         false
     }
 
+    /// 按设备 id 取可变快照引用
     pub fn get_mut(&mut self, device_id: u64) -> Option<&mut DeviceSnapshot> {
         for i in 0..self.count {
             if let Some(ref snap) = self.snapshots[i] {
@@ -182,6 +217,7 @@ impl DeviceSnapshotRegistry {
         None
     }
 
+    /// 按设备 id 取只读快照引用
     pub fn get(&self, device_id: u64) -> Option<&DeviceSnapshot> {
         for i in 0..self.count {
             if let Some(ref snap) = self.snapshots[i] {
@@ -193,6 +229,7 @@ impl DeviceSnapshotRegistry {
         None
     }
 
+    /// 捕获全部已注册设备的初始寄存器状态并置位已捕获标志
     pub fn capture_all_init(&mut self, read_fn: fn(u64, u32) -> u32) {
         for i in 0..self.count {
             if let Some(ref mut snap) = self.snapshots[i] {
@@ -202,6 +239,7 @@ impl DeviceSnapshotRegistry {
         self.init_captured.store(1, Ordering::SeqCst);
     }
 
+    /// 按优先级升序恢复全部设备, 返回 (成功数, 失败数)
     pub fn restore_all(&self, write_fn: fn(u64, u32, u32)) -> (usize, usize) {
         let mut success = 0usize;
         let mut failed = 0usize;
@@ -241,10 +279,12 @@ impl DeviceSnapshotRegistry {
         (success, failed)
     }
 
+    /// 返回当前已注册设备数
     pub fn count(&self) -> usize {
         self.count
     }
 
+    /// 返回初始设备快照是否已捕获
     pub fn is_init_captured(&self) -> bool {
         self.init_captured.load(Ordering::SeqCst) == 1
     }
@@ -253,6 +293,7 @@ impl DeviceSnapshotRegistry {
         clippy::iter_without_into_iter,
         reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
     )]
+    /// 返回遍历全部已注册快照的只读迭代器
     pub fn iter(&self) -> DeviceSnapshotIter<'_> {
         DeviceSnapshotIter {
             registry: self,
@@ -282,6 +323,7 @@ impl<'a> Iterator for DeviceSnapshotIter<'a> {
     }
 }
 
+/// 全局设备快照注册表 (受中断安全自旋锁保护)
 pub static DEVICE_SNAPSHOTS: IrqSpinLock<DeviceSnapshotRegistry> =
     IrqSpinLock::new(DeviceSnapshotRegistry::new());
 
@@ -327,10 +369,12 @@ pub fn snapshot_is_init_captured() -> bool {
 }
 
 #[cfg(feature = "kernel_test")]
+/// 设备快照机制的单元测试集合。
 pub mod tests {
     // J-01 (2026-09-08): wildcard_imports 清理 — 显式列出本模块使用的 super 符号
     use super::{DeviceSnapshot, DeviceSnapshotRegistry, DeviceType};
 
+    /// 验证单设备快照的寄存器追加与计数。
     pub fn test_snapshot_basic() -> bool {
         let mut snap = DeviceSnapshot::new(1, DeviceType::Timer, "test_timer", 0xF000, 10);
         snap.add_register(0x00, 0x1234);
@@ -338,6 +382,7 @@ pub mod tests {
         snap.register_count == 2
     }
 
+    /// 验证注册表注册设备后计数递增。
     pub fn test_registry_register() -> bool {
         let mut registry = DeviceSnapshotRegistry::new();
         let snap = DeviceSnapshot::new(1, DeviceType::Keyboard, "kbd", 0x60, 5);
@@ -345,6 +390,7 @@ pub mod tests {
         registry.count() == 1
     }
 
+    /// 验证注册表按优先级升序恢复全部设备且无失败。
     pub fn test_registry_priority_order() -> bool {
         // J-01 (2026-09-08): 嵌套辅助 fn 移至函数顶部 (items_after_statements 清理)
         fn dummy_write(_base: u64, _offset: u32, _value: u32) {}

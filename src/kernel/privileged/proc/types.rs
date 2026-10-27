@@ -13,6 +13,9 @@
 //! functions 侧改 `pub use crate::privileged::proc::types::*`
 //! 保持 API 兼容 (functions→privileged 合法方向)。
 
+#![deny(missing_docs)]
+
+/// 进程标识符 (PID) 的底层整数类型。
 pub type Pid = u32;
 /// 线程标识符 (TID) 的底层整数类型。
 pub type Tid = u32;
@@ -42,12 +45,19 @@ pub struct ThreadId(pub Tid);
 /// - Frozen:     被挂起 (SIGSTOP/cgroup freezer/调试断点)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessState {
+    /// 已创建: PCB 已分配, 资源初始化中 (尚不可运行)
     Created = 0,
+    /// 就绪: 除 CPU 外资源就绪, 等待调度
     Ready = 1,
+    /// 运行中: 正在 CPU 上执行
     Running = 2,
+    /// 阻塞: 等待事件 (I/O / 子进程 / 信号 / 睡眠)
     Blocked = 3,
+    /// 僵尸: 已退出但 PCB 保留供父进程回收
     Zombie = 4,
+    /// 已终止: PCB 已回收, PID 可重用
     Terminated = 5,
+    /// 已冻结: 被挂起 (SIGSTOP / cgroup freezer / 调试断点)
     Frozen = 6,
 }
 
@@ -117,15 +127,22 @@ impl ProcessState {
 /// 进程阻塞原因 — 记录线程因何事件进入阻塞态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockReason {
+    /// 等待 I/O 完成
     WaitingForIo = 0,
+    /// 等待子进程状态变化
     WaitingForChild = 1,
+    /// 等待信号
     WaitingForSignal = 2,
+    /// 定时睡眠
     Sleeping = 3,
+    /// 等待 futex 唤醒
     FutexWait = 4,
+    /// 未知原因
     Unknown = 255,
 }
 
 impl BlockReason {
+    /// 由原始 `u8` 值解析阻塞原因 (未知值回落为 `Unknown`)
     pub fn from_u8(value: u8) -> Self {
         match value {
             0 => Self::WaitingForIo,
@@ -141,10 +158,15 @@ impl BlockReason {
 /// 进程优先级等级 — 从 Idle 到 RealTime 共五档, 供调度器使用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessPriority {
+    /// 空闲级 (最低)
     Idle = 0,
+    /// 低优先级
     Low = 1,
+    /// 普通优先级
     Normal = 2,
+    /// 高优先级
     High = 3,
+    /// 实时优先级 (最高)
     RealTime = 4,
 }
 
@@ -153,6 +175,7 @@ impl ProcessPriority {
         clippy::match_same_arms,
         reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
     )]
+    /// 由原始 `u32` 值解析优先级 (未知值回落为 `Normal`)
     pub fn from_u32(value: u32) -> Self {
         match value {
             0 => Self::Idle,
@@ -167,9 +190,13 @@ impl ProcessPriority {
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    /// 进程标志位 (内核态 / 被跟踪 / 已停止)
     pub struct ProcessFlags: u32 {
+        /// 内核线程标志
         const IS_KERNEL = 1 << 0;
+        /// 被跟踪 (ptrace 等调试器附加) 标志
         const IS_TRACED = 1 << 1;
+        /// 已停止 (收到停止信号) 标志
         const IS_STOPPED = 1 << 2;
     }
 }
@@ -178,22 +205,39 @@ bitflags::bitflags! {
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct ProcessContext {
+    /// 通用寄存器 r15
     pub r15: u64,
+    /// 通用寄存器 r14
     pub r14: u64,
+    /// 通用寄存器 r13
     pub r13: u64,
+    /// 通用寄存器 r12
     pub r12: u64,
+    /// 通用寄存器 rbx (被调用者保存)
     pub rbx: u64,
+    /// 栈帧基址 rbp
     pub rbp: u64,
+    /// 通用寄存器 rax (fork 返回值的传递通道)
     pub rax: u64, // ✅ fork 返回值控制
+    /// 指令指针 rip
     pub rip: u64,
+    /// 栈指针 rsp
     pub rsp: u64,
+    /// 标志寄存器 rflags
     pub rflags: u64,
+    /// 页表基址 cr3
     pub cr3: u64,
+    /// 代码段选择子 cs
     pub cs: u64,
+    /// 数据段选择子 ds
     pub ds: u64,
+    /// 附加数据段选择子 es
     pub es: u64,
+    /// 段选择子 fs
     pub fs: u64,
+    /// 段选择子 gs
     pub gs: u64,
+    /// 栈段选择子 ss
     pub ss: u64,
     /// 填充字段，确保 `fpu_state` 16 字节对齐
     /// fxsave/fxrstor 要求内存地址 16 字节对齐
@@ -227,6 +271,7 @@ pub struct ProcessContext {
 }
 
 impl ProcessContext {
+    /// 构造全零上下文
     pub const fn new() -> Self {
         Self {
             r15: 0,
@@ -254,6 +299,7 @@ impl ProcessContext {
         }
     }
 
+    /// 把上下文设置为用户态 (x86_64 Ring 3 段选择子与初始 rflags)
     pub fn set_user_mode(&mut self) {
         self.cs = 0x23;
         self.ds = 0x1B;

@@ -5,49 +5,13 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 352,
-    "files": 73,
-    "keys": 315
+    "sites": 325,
+    "files": 69,
+    "keys": 289
   },
   "entries": [
     [
       "src/kernel/privileged/arch/shadow_stack.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/boot/mod.rs",
-      "fn",
-      "base_addr",
-      1
-    ],
-    [
-      "src/kernel/privileged/boot/mod.rs",
-      "fn",
-      "is_available",
-      1
-    ],
-    [
-      "src/kernel/privileged/boot/mod.rs",
-      "fn",
-      "length",
-      1
-    ],
-    [
-      "src/kernel/privileged/boot/mod.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/boot/multiboot2_fb.rs",
-      "fn",
-      "is_valid",
-      1
-    ],
-    [
-      "src/kernel/privileged/boot/multiboot2_fb.rs",
       "fn",
       "new",
       1
@@ -477,102 +441,6 @@
       "fn",
       "new",
       2
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "fn",
-      "add_register",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "fn",
-      "capture",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "fn",
-      "capture_all_init",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "fn",
-      "clear",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "fn",
-      "count",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "fn",
-      "from_u32",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "fn",
-      "get",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "fn",
-      "get_mut",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "fn",
-      "is_empty",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "fn",
-      "is_init_captured",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "fn",
-      "iter",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "fn",
-      "new",
-      2
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "fn",
-      "register",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "fn",
-      "restore",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "fn",
-      "restore_all",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "fn",
-      "unregister",
-      1
     ],
     [
       "src/kernel/privileged/freg/types.rs",
@@ -1551,30 +1419,6 @@
       "fn",
       "new",
       2
-    ],
-    [
-      "src/kernel/privileged/proc/types.rs",
-      "fn",
-      "from_u32",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/types.rs",
-      "fn",
-      "from_u8",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/types.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/types.rs",
-      "fn",
-      "set_user_mode",
-      1
     ],
     [
       "src/kernel/privileged/proc/user_proc.rs",

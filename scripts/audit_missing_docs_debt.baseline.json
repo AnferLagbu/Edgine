@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 2473,
-    "files": 205,
-    "keys": 492
+    "sites": 2249,
+    "files": 199,
+    "keys": 470
   },
   "entries": [
     [
@@ -1061,51 +1061,6 @@
       3
     ],
     [
-      "src/kernel/privileged/boot/mod.rs",
-      "a constant",
-      4
-    ],
-    [
-      "src/kernel/privileged/boot/mod.rs",
-      "a function",
-      3
-    ],
-    [
-      "src/kernel/privileged/boot/mod.rs",
-      "a method",
-      3
-    ],
-    [
-      "src/kernel/privileged/boot/mod.rs",
-      "a struct field",
-      32
-    ],
-    [
-      "src/kernel/privileged/boot/mod.rs",
-      "an associated function",
-      1
-    ],
-    [
-      "src/kernel/privileged/boot/multiboot2_fb.rs",
-      "a constant",
-      1
-    ],
-    [
-      "src/kernel/privileged/boot/multiboot2_fb.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/privileged/boot/multiboot2_fb.rs",
-      "a struct field",
-      12
-    ],
-    [
-      "src/kernel/privileged/boot/multiboot2_fb.rs",
-      "an associated function",
-      1
-    ],
-    [
       "src/kernel/privileged/config/caps.rs",
       "a struct field",
       9
@@ -1559,36 +1514,6 @@
       "src/kernel/privileged/freg/reset/parallel.rs",
       "an associated function",
       2
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "a constant",
-      5
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "a method",
-      14
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "a static",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "a struct field",
-      10
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "a variant",
-      7
-    ],
-    [
-      "src/kernel/privileged/freg/snapshot.rs",
-      "an associated function",
-      3
     ],
     [
       "src/kernel/privileged/freg/types.rs",
@@ -2276,31 +2201,6 @@
       23
     ],
     [
-      "src/kernel/privileged/proc/types.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/types.rs",
-      "a struct field",
-      17
-    ],
-    [
-      "src/kernel/privileged/proc/types.rs",
-      "a type alias",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/types.rs",
-      "a variant",
-      18
-    ],
-    [
-      "src/kernel/privileged/proc/types.rs",
-      "an associated function",
-      3
-    ],
-    [
       "src/kernel/privileged/proc/user_proc.rs",
       "a constant",
       5
@@ -2331,11 +2231,6 @@
       1
     ],
     [
-      "src/kernel/privileged/sgeg/api.rs",
-      "a function",
-      43
-    ],
-    [
       "src/kernel/privileged/sgeg/audit.rs",
       "a method",
       3
@@ -2354,11 +2249,6 @@
       "src/kernel/privileged/sgeg/bootstrap.rs",
       "an associated function",
       1
-    ],
-    [
-      "src/kernel/privileged/sgeg/capability.rs",
-      "a constant",
-      43
     ],
     [
       "src/kernel/privileged/sgeg/identity.rs",

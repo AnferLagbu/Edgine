@@ -14,6 +14,8 @@
 //! 之后只读). `MULTIBOOT_INFO_PTR` 使用 `spin::Mutex`, 因为它在 init
 //! 之前设置, 在 init 期间读取.
 
+#![deny(missing_docs)]
+
 use crate::privileged::sync::IrqSpinLock;
 
 use crate::privileged::sync::OnceLock;
@@ -21,38 +23,65 @@ use crate::privileged::sync::OnceLock;
 pub mod aarch64;
 pub mod multiboot2_fb;
 
+/// Multiboot1 引导器魔数 (EAX 寄存器在跳转时携带该值)
 pub const MULTIBOOT1_MAGIC: u32 = 0x2BADB002;
+/// Multiboot2 引导器魔数 (EAX 寄存器在跳转时携带该值)
 pub const MULTIBOOT2_MAGIC: u32 = 0x36D76289;
 
+/// Multiboot1 信息结构标志位: 基本内存信息 (`mem_lower` / `mem_upper`) 有效
 pub const MBOOT1_FLAG_MEM: u32 = 1 << 0;
+/// Multiboot1 信息结构标志位: 内存映射 (`mmap_length` / `mmap_addr`) 有效
 pub const MBOOT1_FLAG_MMAP: u32 = 1 << 6;
 
 /// Multiboot1 引导信息结构 (Multiboot1 spec 定义的机器状态块)
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct Multiboot1Info {
+    /// 有效标志位 (决定后续哪些字段可信)
     pub flags: u32,
+    /// 低端内存大小 (KB, 自 0 起)
     pub mem_lower: u32,
+    /// 高端内存大小 (KB, 自 1MB 起)
     pub mem_upper: u32,
+    /// 引导设备编号 (BIOS 驱动器号)
     pub boot_device: u32,
+    /// 内核命令行字符串的物理地址
     pub cmdline: u32,
+    /// 引导模块数量
     pub mods_count: u32,
+    /// 引导模块数组的物理地址
     pub mods_addr: u32,
+    /// a.out 符号表 (tab_size / str_size / addr / reserved)
     pub syms: [u32; 4],
+    /// 内存映射缓冲区字节长度
     pub mmap_length: u32,
+    /// 内存映射缓冲区的物理地址
     pub mmap_addr: u32,
+    /// 第一个驱动器分区表的字节长度
     pub drives_length: u32,
+    /// 第一个驱动器分区表的物理地址
     pub drives_addr: u32,
+    /// ROM 配置表的物理地址
     pub config_table: u32,
+    /// 引导器名称字符串的物理地址
     pub boot_loader_name: u32,
+    /// APM 表的物理地址
     pub apm_table: u32,
+    /// VBE 控制信息的物理地址
     pub vbe_control_info: u32,
+    /// VBE 模式信息的物理地址
     pub vbe_mode_info: u32,
+    /// 当前 VBE 模式号
     pub vbe_mode: u16,
+    /// VBE 接口代码段
     pub vbe_interface_seg: u16,
+    /// VBE 接口代码偏移
     pub vbe_interface_off: u16,
+    /// VBE 接口代码长度
     pub vbe_interface_len: u16,
+    /// VBE 控制信息的高 32 位物理地址
     pub vbe_control_info_high: u64,
+    /// VBE 模式信息的高 32 位物理地址
     pub vbe_mode_info_high: u64,
 }
 
@@ -60,23 +89,32 @@ pub struct Multiboot1Info {
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct MemoryMapEntry {
+    /// 本条目字节数 (不含该 size 字段自身的 4 字节)
     pub size: u32,
+    /// 基址低 32 位
     pub base_addr_low: u32,
+    /// 基址高 32 位
     pub base_addr_high: u32,
+    /// 长度低 32 位
     pub length_low: u32,
+    /// 长度高 32 位
     pub length_high: u32,
+    /// 区域类型 (1 = 可用 RAM)
     pub mtype: u32,
 }
 
 impl MemoryMapEntry {
+    /// 组合高低 32 位得到 64 位基址
     pub fn base_addr(&self) -> u64 {
         u64::from(self.base_addr_high) << 32 | u64::from(self.base_addr_low)
     }
 
+    /// 组合高低 32 位得到 64 位区域长度
     pub fn length(&self) -> u64 {
         u64::from(self.length_high) << 32 | u64::from(self.length_low)
     }
 
+    /// 判定该区域是否为可用 RAM (`mtype == 1`)
     pub fn is_available(&self) -> bool {
         self.mtype == 1
     }
@@ -85,12 +123,16 @@ impl MemoryMapEntry {
 /// 引导阶段汇总的启动信息 (可用内存大小 / 内核结束地址 / 内存映射条目数)
 #[derive(Debug, Clone, Copy)]
 pub struct BootInfo {
+    /// 可用物理内存大小 (字节)
     pub mem_size: u64,
+    /// 内核映像结束的物理地址
     pub kernel_end: u64,
+    /// 引导器报告的内存映射条目数
     pub mmap_entries: usize,
 }
 
 impl BootInfo {
+    /// 构造全零初值 (尚未解析引导信息时的占位)
     pub const fn new() -> Self {
         Self {
             mem_size: 0,
@@ -128,6 +170,7 @@ pub fn get_boot_info() -> &'static BootInfo {
         .expect("[BOOT] accessed before initialization")
 }
 
+/// 保存引导器传入的魔数与启动信息指针 (由汇编引导入口在跳转前调用)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn boot_set_multiboot_info(magic: u32, ptr: *const u8) {
@@ -365,12 +408,14 @@ pub fn init() -> BootInfo {
     info
 }
 
+/// C ABI 查询: 可用物理内存大小 (字节)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn boot_get_mem_size() -> u64 {
     get_boot_info().mem_size
 }
 
+/// C ABI 查询: 内核映像结束的物理地址
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn boot_get_kernel_end() -> u64 {

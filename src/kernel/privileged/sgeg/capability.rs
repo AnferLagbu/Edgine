@@ -7,23 +7,42 @@
 //! 判据: 持有类型/安全原语归 privileged) 反转归位本文件.
 //! functions/sgeg/capability.rs 为 re-export 壳保持路径兼容.
 
+#![deny(missing_docs)]
+
+/// 全能力掩码 (全部 64 位有效), 仅用于 bootstrap 身份初始化
 pub const SYS_CAP_ALL: u64 = 0xFFFFFFFFFFFFFFFF;
 
+/// 能力域 0: 系统管理 (挂载 / 命名空间 / 身份设置等)
 pub const CAP_DOMAIN_SYSTEM: u16 = 0;
+/// 能力域 1: 文件系统
 pub const CAP_DOMAIN_FS: u16 = 1;
+/// 能力域 2: 网络
 pub const CAP_DOMAIN_NET: u16 = 2;
+/// 能力域 3: 进程管理
 pub const CAP_DOMAIN_PROC: u16 = 3;
+/// 能力域 4: 设备访问 (MMIO / IRQ / DMA)
 pub const CAP_DOMAIN_DEVICE: u16 = 4;
+/// 能力域 5: 用户管理
 pub const CAP_DOMAIN_USER_MGMT: u16 = 5;
+/// 能力域 6: 进程间通信
 pub const CAP_DOMAIN_IPC: u16 = 6;
+/// 能力域 7: 内存管理
 pub const CAP_DOMAIN_MEM: u16 = 7;
+/// 能力域 8: 时间与定时器
 pub const CAP_DOMAIN_TIME: u16 = 8;
+/// 能力域 9: FREG 故障恢复
 pub const CAP_DOMAIN_FREG: u16 = 9;
+/// 能力域 10: 信号
 pub const CAP_DOMAIN_SIGNAL: u16 = 10;
+/// 能力域 11: 共享内存
 pub const CAP_DOMAIN_SHM: u16 = 11;
+/// 能力域 12: 信号量
 pub const CAP_DOMAIN_SEM: u16 = 12;
+/// 能力域 13: 消息队列
 pub const CAP_DOMAIN_MSGQ: u16 = 13;
+/// 能力域 14: DMA 传输
 pub const CAP_DOMAIN_DMA: u16 = 14;
+/// 能力域 15: 保留 (未分配语义)
 pub const CAP_DOMAIN_RESERVED: u16 = 15;
 
 /// SYSTEM 域 bit1 — 设置进程 PWM 身份 (B07-05, DECISION-078 新增专用位)
@@ -47,36 +66,62 @@ pub const SYSTEM_CAP_SET_DOMAIN_FLAGS: u64 = 1 << 2;
 /// 的 `setdomainname_syscall` 复用 (语义与既有 sethostname 判定完全一致).
 pub const SYSTEM_CAP_UTS_SETNAME: u64 = 1 << 9;
 
+/// FS 域: 读取文件内容与元数据
 pub const FS_CAP_READ: u64 = 1 << 0;
+/// FS 域: 写入文件内容
 pub const FS_CAP_WRITE: u64 = 1 << 1;
+/// FS 域: 执行文件
 pub const FS_CAP_EXECUTE: u64 = 1 << 2;
+/// FS 域: 创建文件或目录
 pub const FS_CAP_CREATE: u64 = 1 << 3;
+/// FS 域: 删除文件或目录
 pub const FS_CAP_DELETE: u64 = 1 << 4;
+/// FS 域: 修改文件属主
 pub const FS_CAP_CHOWN: u64 = 1 << 5;
+/// FS 域: 修改文件权限位
 pub const FS_CAP_CHMOD: u64 = 1 << 6;
 
+/// NET 域: 发送数据
 pub const NET_CAP_SEND: u64 = 1 << 0;
+/// NET 域: 接收数据
 pub const NET_CAP_RECV: u64 = 1 << 1;
+/// NET 域: 发起连接
 pub const NET_CAP_CONNECT: u64 = 1 << 2;
+/// NET 域: 监听端口
 pub const NET_CAP_LISTEN: u64 = 1 << 3;
+/// NET 域: 绑定本地地址
 pub const NET_CAP_BIND: u64 = 1 << 4;
 
+/// PROC 域: 创建子进程
 pub const PROC_CAP_FORK: u64 = 1 << 0;
+/// PROC 域: 加载并执行新映像
 pub const PROC_CAP_EXEC: u64 = 1 << 1;
+/// PROC 域: 向其它进程发信号
 pub const PROC_CAP_KILL: u64 = 1 << 2;
+/// PROC 域: 等待子进程结束
 pub const PROC_CAP_WAIT: u64 = 1 << 3;
+/// PROC 域: 创建独立进程
 pub const PROC_CAP_CREATE: u64 = 1 << 4;
 
+/// USER_MGMT 域: 枚举用户
 pub const USER_MGMT_CAP_LIST: u64 = 1 << 0;
+/// USER_MGMT 域: 创建用户
 pub const USER_MGMT_CAP_CREATE: u64 = 1 << 1;
+/// USER_MGMT 域: 删除用户
 pub const USER_MGMT_CAP_DELETE: u64 = 1 << 2;
+/// USER_MGMT 域: 修改用户属性
 pub const USER_MGMT_CAP_MODIFY: u64 = 1 << 3;
 
+/// DEVICE 域: 访问设备 MMIO 区域
 pub const DEVICE_CAP_MMIO: u64 = 1 << 0;
+/// DEVICE 域: 注册设备中断
 pub const DEVICE_CAP_IRQ: u64 = 1 << 1;
+/// DEVICE 域: 发起 DMA 传输
 pub const DEVICE_CAP_DMA: u64 = 1 << 2;
+/// DEVICE 域: 绑定设备驱动
 pub const DEVICE_CAP_BIND: u64 = 1 << 3;
 
+/// 各能力域的最小可用能力下限 (revoke / capset 不得跌破)
 pub const VIABLE_FLOOR: [u64; 16] = {
     let mut f = [0u64; 16];
     f[CAP_DOMAIN_FS as usize] = FS_CAP_READ | FS_CAP_EXECUTE;
