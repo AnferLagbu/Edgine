@@ -38,6 +38,8 @@
 //! - `epoll_pwake` 在文件 I/O 路径 (write/close) 调用, 持锁时不可睡眠
 //! - 阻塞在 `epoll_wait` 中调用 `SCHEDULER.yield_to_wait`, 无需额外锁保护
 
+#![deny(missing_docs)]
+
 use crate::privileged::fs::vfs_poll_trait::{VfsPollContext, current_vfs_poll_policy};
 use crate::privileged::ipc::{WaitQueue, WaitQueueItem};
 use crate::privileged::sync::IrqSpinLock as Mutex;
@@ -65,7 +67,9 @@ pub const EPOLLONESHOT: u32 = 1 << 30;
 
 /// `epoll_ctl` 操作
 pub const EPOLL_CTL_ADD: i32 = 1;
+/// `epoll_ctl` 操作: 从实例中删除 fd
 pub const EPOLL_CTL_DEL: i32 = 2;
+/// `epoll_ctl` 操作: 修改 fd 的关注事件
 pub const EPOLL_CTL_MOD: i32 = 3;
 
 // ============================================================================

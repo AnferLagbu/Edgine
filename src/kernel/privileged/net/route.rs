@@ -11,6 +11,8 @@
 //! functions 侧改 `pub use crate::privileged::net::route::*` 保持 API 兼容。
 //! 本文件 0 unsafe (策略逻辑) + privileged smoltcp 同步 (依赖 raw::stack_mut)。
 
+#![deny(missing_docs)]
+
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::Ordering;
@@ -72,7 +74,9 @@ impl RouteEntry {
 /// 路由查询结果
 #[derive(Debug, Clone)]
 pub struct RouteQueryResult {
+    /// 下一跳网关地址
     pub gateway: IpAddr,
+    /// 目标前缀长度 (单位: 位)
     pub prefix_len: u8,
 }
 

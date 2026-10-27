@@ -29,6 +29,8 @@
 //! 本模块属于 privileged/TCB, 允许 unsafe.
 //! kexec 涉及物理内存操作、设备关闭、直接跳转, 极度危险.
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use crate::privileged::sync::IrqSpinLock;
@@ -113,6 +115,7 @@ pub struct KexecSubsystem {
 }
 
 impl KexecSubsystem {
+    /// 构造一个空闲 (未加载) 的 kexec 子系统实例。
     pub const fn new() -> Self {
         Self {
             state: AtomicU32::new(KexecState::Idle as u32),
@@ -381,6 +384,7 @@ impl KexecSubsystem {
 }
 
 impl KexecState {
+    /// 由 u32 状态码还原 kexec 状态 (未知值按空闲处理)。
     pub fn from_u32(v: u32) -> Self {
         match v {
             1 => Self::Loaded,

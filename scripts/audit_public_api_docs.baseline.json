@@ -5,25 +5,13 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 26,
-    "files": 9,
-    "keys": 26
+    "sites": 23,
+    "files": 7,
+    "keys": 23
   },
   "entries": [
     [
       "src/kernel/privileged/arch/shadow_stack.rs",
-      "fn",
-      "new",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/kexec.rs",
-      "fn",
-      "from_u32",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/kexec.rs",
       "fn",
       "new",
       1
@@ -62,12 +50,6 @@
       "src/kernel/privileged/mm/pmm.rs",
       "fn",
       "const_default",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/slab.rs",
-      "fn",
-      "active_objects",
       1
     ],
     [

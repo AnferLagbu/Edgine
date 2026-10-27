@@ -25,6 +25,8 @@
 //! - 0 thunk (trait dispatch 走 vtable)
 //! - 编译期类型安全 (驱动方必须 impl `VfsPollPolicy`)
 
+#![deny(missing_docs)]
+
 use super::VfsFileType;
 use crate::privileged::sync::IrqSpinLock as Mutex;
 
@@ -122,7 +124,9 @@ pub fn current_vfs_poll_policy() -> VfsPollPolicyRef<'static> {
 
 /// `VfsPollPolicy` 引用 — 可能是注册的或 fallback
 pub enum VfsPollPolicyRef<'a> {
+    /// 已注册的策略 (functions 侧实现)
     Registered(&'a dyn VfsPollPolicy),
+    /// 未注册时的内置 fallback 策略
     Fallback,
 }
 

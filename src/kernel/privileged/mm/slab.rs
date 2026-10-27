@@ -30,6 +30,8 @@
 //! └── bitmap: [u8; M]          // 分配位图
 //! ```
 
+#![deny(missing_docs)]
+
 // ============================================================================
 // 日志宏 (与 pmm.rs 保持一致)
 // ============================================================================
@@ -415,6 +417,7 @@ impl KmemCache {
         )
     }
 
+    /// 当前活跃对象数 (已分配未释放)。
     pub fn active_objects(&self) -> u64 {
         self.total_allocs.saturating_sub(self.total_frees)
     }
@@ -1037,6 +1040,7 @@ pub extern "C" fn slab_alloc(size: usize) -> *mut u8 {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 释放由 `slab_alloc` 分配的对象 (C ABI 导出, 空指针或未初始化时为 no-op)。
 #[unsafe(no_mangle)]
 pub extern "C" fn slab_free(ptr: *mut u8) {
     if ptr.is_null() {

@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 31,
-    "files": 26,
-    "keys": 27
+    "sites": 21,
+    "files": 21,
+    "keys": 21
   },
   "entries": [
     [
@@ -86,28 +86,8 @@
       1
     ],
     [
-      "src/kernel/privileged/driver/kexec.rs",
-      "an associated function",
-      2
-    ],
-    [
       "src/kernel/privileged/driver/net/mod.rs",
       "a module",
-      1
-    ],
-    [
-      "src/kernel/privileged/fs/vfs_poll_trait.rs",
-      "a variant",
-      2
-    ],
-    [
-      "src/kernel/privileged/mm/slab.rs",
-      "a function",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/slab.rs",
-      "a method",
       1
     ],
     [
@@ -126,19 +106,9 @@
       1
     ],
     [
-      "src/kernel/privileged/net/route.rs",
-      "a struct field",
-      2
-    ],
-    [
       "src/kernel/privileged/sgeg/session.rs",
       "a constant",
       1
-    ],
-    [
-      "src/kernel/privileged/syscall/epoll.rs",
-      "a constant",
-      2
     ],
     [
       "src/kernel/privileged/syscall/mod.rs",
