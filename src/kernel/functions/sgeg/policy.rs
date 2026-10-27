@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! 身份与权限 — PWM/能力矩阵/会话 (functions 层)
 //!
 //! ## 框内核中的 PWID 表达
@@ -35,23 +36,40 @@ pub const CAP_BITS_PER_DOMAIN: u64 = 64;
 pub struct CapDomain(pub u8);
 
 impl CapDomain {
+    /// 系统域 (域 0)
     pub const SYSTEM: Self = Self(0);
+    /// 文件系统域 (域 1)
     pub const FS: Self = Self(1);
+    /// 网络域 (域 2)
     pub const NET: Self = Self(2);
+    /// 进程域 (域 3)
     pub const PROC: Self = Self(3);
+    /// 设备域 (域 4)
     pub const DEVICE: Self = Self(4);
+    /// 用户管理域 (域 5)
     pub const USER_MGMT: Self = Self(5);
+    /// 进程间通信域 (域 6)
     pub const IPC: Self = Self(6);
+    /// 内存管理域 (域 7)
     pub const MEM: Self = Self(7);
+    /// 时间域 (域 8)
     pub const TIME: Self = Self(8);
+    /// 崩溃恢复域 (域 9)
     pub const FREG: Self = Self(9);
+    /// 信号域 (域 10)
     pub const SIGNAL: Self = Self(10);
+    /// 共享内存域 (域 11)
     pub const SHM: Self = Self(11);
+    /// 信号量域 (域 12)
     pub const SEM: Self = Self(12);
+    /// 消息队列域 (域 13)
     pub const MSGQ: Self = Self(13);
+    /// DMA 域 (域 14)
     pub const DMA: Self = Self(14);
+    /// 保留域 (域 15)
     pub const RESERVED: Self = Self(15);
 
+    /// 域 ID 是否在有效范围 (`< CAP_DOMAINS`) 内
     pub fn is_valid(self) -> bool {
         (self.0 as usize) < CAP_DOMAINS
     }
@@ -63,18 +81,22 @@ impl CapDomain {
 pub struct CapBits(pub u64);
 
 impl CapBits {
+    /// 空能力位 (无任何权限)
     pub const NONE: Self = Self(0);
     /// 全能力 (所有 64 位)
     pub const ALL: Self = Self(u64::MAX);
 
+    /// 是否包含 `other` 的全部置位
     pub fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
     }
 
+    /// 是否为空能力位
     pub fn is_empty(self) -> bool {
         self.0 == 0
     }
 
+    /// 返回 `self` 中剔除 `other` 置位后的能力位
     #[expect(
         clippy::return_self_not_must_use,
         reason = "return_self_not_must_use: 返回 Self 是 builder/fluent API; 当前优先 expect"
@@ -114,6 +136,7 @@ pub enum PolicyResult {
     Deny(DenyReason),
 }
 
+/// 策略拒绝的具体原因
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DenyReason {
     /// 域 ID 非法
@@ -131,18 +154,26 @@ pub enum DenyReason {
 /// 委托结果
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GrantResult {
+    /// 委托成功
     Granted,
+    /// 委托方不具备所需能力
     NoAuthority,
+    /// 域 ID 非法
     InvalidDomain,
+    /// 委托能力位为空
     Empty,
 }
 
 /// 撤销结果
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RevokeResult {
+    /// 撤销成功
     Revoked,
+    /// 无可撤销的能力位 (实际未变更)
     NoChange,
+    /// 域 ID 非法
     InvalidDomain,
+    /// 试图撤销可行下界, 被保护拒绝
     FloorProtected,
 }
 
@@ -205,6 +236,7 @@ impl CapMatrix {
 }
 
 impl InMemoryMatrix {
+    /// 构造全零 (所有域均为空) 的内存能力矩阵
     pub const fn new() -> Self {
         Self {
             rows: [
@@ -284,6 +316,7 @@ pub struct PolicyEngine {
 }
 
 impl PolicyEngine {
+    /// 构造无状态策略引擎
     pub const fn new() -> Self {
         Self {}
     }

@@ -32,13 +32,20 @@ use crate::privileged::sync::IrqSpinLock;
 // 契约常量
 // ============================================================================
 
+/// 类别码: 存储控制器
 pub const CLASS_STORAGE: u8 = 0x01;
+/// 类别码: 网络控制器
 pub const CLASS_NETWORK: u8 = 0x02;
+/// 类别码: 显示控制器
 pub const CLASS_DISPLAY: u8 = 0x03;
+/// 类别码: 桥设备
 pub const CLASS_BRIDGE: u8 = 0x06;
 
+/// Command 寄存器: 允许端口 I/O 空间访问
 pub const PCI_CMD_IO_SPACE: u16 = 1 << 0;
+/// Command 寄存器: 允许内存空间访问
 pub const PCI_CMD_MEMORY_SPACE: u16 = 1 << 1;
+/// Command 寄存器: 允许设备发起总线主控 (DMA)
 pub const PCI_CMD_BUS_MASTER: u16 = 1 << 2;
 
 // ============================================================================

@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! `UNKFS` ZIL Persistence Layer (WAL 磁盘持久化)
 //!
 //! 增强现有内存 ZIL:
@@ -45,9 +46,19 @@ use core::sync::atomic::{AtomicBool, Ordering};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnkfsZilPersistError {
     /// 缓冲区长度不足, 不可能通过外部 `assert!(buf.len() >= 256)` 触发
-    BufferTooShort { need: usize, got: usize },
+    BufferTooShort {
+        /// 所需的最小字节数
+        need: usize,
+        /// 实际提供的字节数
+        got: usize,
+    },
     /// CRC32 校验失败 — 物理 bit rot 或上层写入错误
-    CrcMismatch { expected: u32, computed: u32 },
+    CrcMismatch {
+        /// 记录中存储的期望校验和
+        expected: u32,
+        /// 现场计算得到的校验和
+        computed: u32,
+    },
     /// record 类型字段不在 enum 范围内 (1..=13)
     UnknownRecordType(u8),
     /// header / trailer magic 或 version 异常
@@ -55,6 +66,7 @@ pub enum UnkfsZilPersistError {
 }
 
 impl UnkfsZilPersistError {
+    /// 返回错误的静态字符串标识 (供日志/诊断使用)
     pub fn as_static_str(&self) -> &'static str {
         match self {
             Self::BufferTooShort { .. } => "buffer_too_short",
@@ -80,30 +92,45 @@ const ZIL_MAX_RECORDS_PER_BLOCK: usize =
 const ZIL_RECORD_PAYLOAD: usize = 209;
 const _ASSERT_RECORD_FITS: () = assert!(ZIL_RECORD_PAYLOAD <= ZIL_RECORD_DISK_SIZE);
 
+/// ZIL block 头 — 定长 64 字节的磁盘布局 (magic + 事务组 + 记录计数 + 校验和)
 #[repr(C)]
 #[derive(Debug, Clone, Copy, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct ZilBlockHeader {
+    /// 块魔数 (`ZIL1`)
     pub magic: u32,
+    /// 布局版本号
     pub version: u16,
+    /// 标志位 (当前恒 0)
     pub flags: u16,
+    /// 事务组编号
     pub txg: u64,
+    /// 首条记录序号 (用于回放排序)
     pub seq_start: u64,
+    /// 实际写入的记录条数
     pub record_count: u16,
+    /// 本块可容纳的记录容量
     pub record_capacity: u16,
+    /// 块总字节数
     pub total_size: u32,
+    /// 头部自身 CRC32
     pub header_checksum: u32,
     /// J-04 (2026-09-08, G-09 长期最优): 已弃用 — 保持 0 (块级单一校验, block CRC
     /// 覆盖 record 区, data CRC 为结构性冗余). 字段保留仅因 #[repr(C)] 磁盘布局
     /// 兼容 (64B header, 落盘数据不受影响), 序列化不再写入、反序列化不再校验.
     pub data_checksum: u32,
+    /// 链式下一块号 (0 表示链尾)
     pub next_block: u64,
+    /// 对齐填充 (保持 64 字节定长布局)
     pub padding: [u8; 16],
 }
 
+/// ZIL block 尾 — 8 字节 (尾魔数 + 整块 CRC32)
 #[repr(C)]
 #[derive(Debug, Clone, Copy, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct ZilBlockTrailer {
+    /// 尾魔数 (`END\0`)
     pub tail_magic: u32,
+    /// 整块 (header + record 区) 的 CRC32
     pub block_checksum: u32,
 }
 
@@ -122,6 +149,7 @@ const _ASSERT_TRAILER_SIZE: () = {
 };
 
 impl ZilBlockHeader {
+    /// 构造指定事务组与首序号的空 block 头
     pub fn new(txg: u64, seq_start: u64) -> Self {
         Self {
             magic: ZIL_MAGIC,
@@ -139,15 +167,18 @@ impl ZilBlockHeader {
         }
     }
 
+    /// 头部 magic 与版本号是否合法
     pub fn is_valid(&self) -> bool {
         self.magic == ZIL_MAGIC && self.version >= 1
     }
 
+    /// 重算并回填头部 CRC32 (计算前将自身校验和置 0)
     pub fn compute_header_checksum(&mut self) {
         self.header_checksum = 0;
         self.header_checksum = crc32_checksum(self.as_bytes());
     }
 
+    /// 校验头部 CRC32 是否与内容一致
     pub fn verify_header(&self) -> bool {
         let mut copy = *self;
         copy.compute_header_checksum();
@@ -187,6 +218,7 @@ impl ZilBlockHeader {
 }
 
 impl ZilBlockTrailer {
+    /// 构造空 block 尾 (尾魔数正确, 校验和置 0)
     pub fn new() -> Self {
         Self {
             tail_magic: ZIL_TAIL_MAGIC,
@@ -198,6 +230,7 @@ impl ZilBlockTrailer {
         clippy::trivially_copy_pass_by_ref,
         reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
     )]
+    /// 尾部 magic 是否合法
     pub fn is_valid(&self) -> bool {
         self.tail_magic == ZIL_TAIL_MAGIC
     }
@@ -350,19 +383,23 @@ fn try_deserialize_record(buf: &[u8]) -> Result<UnkfsZilRecord, UnkfsZilPersistE
     })
 }
 
+/// ZIL 持久化状态 — 记录是否已发生过落盘写入
 pub struct UnkfsZilPersist {
+    /// 是否已写入过 ZIL block (`Release` 语义置位)
     pub zil_blocks_written: AtomicBool,
 }
 
 // SAFETY (Framekernel P2.2.2): UnkfsZilPersist 全部字段 (AtomicBool) 自动 Send + Sync。
 
 impl UnkfsZilPersist {
+    /// 构造初始状态 (尚未写入)
     pub const fn new() -> Self {
         Self {
             zil_blocks_written: AtomicBool::new(false),
         }
     }
 
+    /// 将 ZIL 记录序列化为单个磁盘 block (空 ZIL 返回 `None`)
     pub fn serialize_zil_to_block(zil: &UnkfsZil, txg: u64) -> Option<Vec<u8>> {
         let records = zil.records.lock();
         if records.is_empty() {
@@ -410,6 +447,7 @@ impl UnkfsZilPersist {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
+    /// 从磁盘 block 回放 ZIL 记录 (块校验失败时返回空 vec, 按 `seq` 升序)
     pub fn deserialize_zil_from_block(block: &[u8]) -> Vec<UnkfsZilRecord> {
         let mut records = Vec::new();
 
@@ -484,6 +522,7 @@ impl UnkfsZilPersist {
         records
     }
 
+    /// 标记已写入过 ZIL block (`Release` 语义)
     pub fn mark_written(&self) {
         self.zil_blocks_written.store(true, Ordering::Release);
     }

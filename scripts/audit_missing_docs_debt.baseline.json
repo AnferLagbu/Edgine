@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 1887,
-    "files": 189,
-    "keys": 420
+    "sites": 1700,
+    "files": 182,
+    "keys": 398
   },
   "entries": [
     [
@@ -368,7 +368,7 @@
     [
       "src/kernel/functions/fs/ramfs_core/mod.rs",
       "a module",
-      2
+      1
     ],
     [
       "src/kernel/functions/fs/ramfs_core/mod.rs",
@@ -391,34 +391,9 @@
       3
     ],
     [
-      "src/kernel/functions/fs/ramfs_core/ramfs_node.rs",
-      "a method",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/ramfs_core/ramfs_node.rs",
-      "a struct",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/ramfs_core/ramfs_node.rs",
-      "a struct field",
-      23
-    ],
-    [
-      "src/kernel/functions/fs/ramfs_core/ramfs_node.rs",
-      "an associated function",
-      3
-    ],
-    [
       "src/kernel/functions/fs/sendfile.rs",
       "a constant",
       3
-    ],
-    [
-      "src/kernel/functions/fs/stat.rs",
-      "a struct field",
-      32
     ],
     [
       "src/kernel/functions/fs/sysfs.rs",
@@ -579,26 +554,6 @@
       "src/kernel/functions/fs/unkfs/unkfs_inode.rs",
       "an associated function",
       1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zil_persist.rs",
-      "a method",
-      6
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zil_persist.rs",
-      "a struct",
-      3
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zil_persist.rs",
-      "a struct field",
-      18
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zil_persist.rs",
-      "an associated function",
-      5
     ],
     [
       "src/kernel/functions/fs/vfs_manager.rs",
@@ -783,31 +738,6 @@
     [
       "src/kernel/functions/sgeg/identity.rs",
       "a type alias",
-      1
-    ],
-    [
-      "src/kernel/functions/sgeg/policy.rs",
-      "a method",
-      4
-    ],
-    [
-      "src/kernel/functions/sgeg/policy.rs",
-      "a variant",
-      8
-    ],
-    [
-      "src/kernel/functions/sgeg/policy.rs",
-      "an associated constant",
-      17
-    ],
-    [
-      "src/kernel/functions/sgeg/policy.rs",
-      "an associated function",
-      2
-    ],
-    [
-      "src/kernel/functions/sgeg/policy.rs",
-      "an enum",
       1
     ],
     [
@@ -1749,46 +1679,6 @@
       "src/kernel/privileged/net/wait_queue.rs",
       "an associated function",
       2
-    ],
-    [
-      "src/kernel/privileged/pci/api.rs",
-      "a constant",
-      7
-    ],
-    [
-      "src/kernel/privileged/pci/hotplug.rs",
-      "a method",
-      1
-    ],
-    [
-      "src/kernel/privileged/pci/hotplug.rs",
-      "a struct field",
-      11
-    ],
-    [
-      "src/kernel/privileged/pci/hotplug.rs",
-      "a variant",
-      6
-    ],
-    [
-      "src/kernel/privileged/pci/hotplug.rs",
-      "an associated function",
-      1
-    ],
-    [
-      "src/kernel/privileged/pci/mod.rs",
-      "a constant",
-      7
-    ],
-    [
-      "src/kernel/privileged/pci/mod.rs",
-      "a struct field",
-      22
-    ],
-    [
-      "src/kernel/privileged/pci/mod.rs",
-      "a variant",
-      4
     ],
     [
       "src/kernel/privileged/proc/api.rs",

@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 286,
-    "files": 62,
-    "keys": 255
+    "sites": 284,
+    "files": 61,
+    "keys": 253
   },
   "entries": [
     [
@@ -1005,18 +1005,6 @@
       "fn",
       "new",
       2
-    ],
-    [
-      "src/kernel/privileged/pci/hotplug.rs",
-      "fn",
-      "from_cap_reg",
-      1
-    ],
-    [
-      "src/kernel/privileged/pci/hotplug.rs",
-      "fn",
-      "is_hotplug_capable",
-      1
     ],
     [
       "src/kernel/privileged/proc/cfs.rs",

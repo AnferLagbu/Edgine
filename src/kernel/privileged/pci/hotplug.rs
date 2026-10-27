@@ -45,15 +45,22 @@ const SLOTSTS_DLL_STATE_CHANGED: u16 = 1 << 7;
 /// `PCIe` 端口类型 (Capability Register bits 7:4)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PciePortType {
+    /// PCIe 端点设备
     PcieEndpoint = 0,
+    /// 传统端点设备
     LegacyEndpoint = 1,
+    /// 根端口
     RootPort = 4,
+    /// 上行端口
     UpstreamPort = 5,
+    /// 下行端口
     DownstreamPort = 6,
+    /// PCIe 到 PCI 桥
     PcieToPciBridge = 7,
 }
 
 impl PciePortType {
+    /// 由 Capability Register 解析端口类型 (bits 7:4, 未知值返回 `None`)
     pub fn from_cap_reg(val: u16) -> Option<Self> {
         match (val >> 4) & 0xF {
             0 => Some(Self::PcieEndpoint),
@@ -66,6 +73,7 @@ impl PciePortType {
         }
     }
 
+    /// 该端口类型是否支持热插拔 (根端口 / 下行端口)
     pub fn is_hotplug_capable(self) -> bool {
         matches!(self, Self::RootPort | Self::DownstreamPort)
     }
@@ -74,16 +82,27 @@ impl PciePortType {
 /// `PCIe` 热插拔槽位描述
 #[derive(Debug, Clone)]
 pub struct PcieHotplugSlot {
+    /// 总线号
     pub bus: u8,
+    /// 设备号
     pub device: u8,
+    /// 功能号
     pub function: u8,
+    /// 槽位号 (Slot Capability 编码)
     pub slot_number: u8,
+    /// 端口类型
     pub port_type: PciePortType,
+    /// 是否具备注意按钮
     pub attn_button: bool,
+    /// 是否具备电源控制器
     pub power_controller: bool,
+    /// 是否具备 MRL 传感器
     pub mrl_sensor: bool,
+    /// 是否支持热插拔
     pub hotplug_capable: bool,
+    /// 是否支持意外拔出
     pub surprise_removal: bool,
+    /// 当前是否存在设备
     pub presence_state: bool,
     pready_events: u16,
 }

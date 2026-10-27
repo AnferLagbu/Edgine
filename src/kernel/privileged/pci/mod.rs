@@ -34,6 +34,8 @@
 //! 这是有意为之: e1000 需要特殊的 MMIO 页表设置, 与其 probe 紧耦合.
 //! 详见 `src/net/driver/e1000.c` → `e1000_probe()`.
 
+#![deny(missing_docs)]
+
 use crate::privileged::sync::IrqSpinLock as Mutex;
 use alloc::vec::Vec;
 use core::fmt;
@@ -110,17 +112,24 @@ const REG_INT_LINE: u8 = 0x3C;
 const REG_INT_PIN: u8 = 0x3D;
 
 // Command bits
+/// Command 寄存器: 允许端口 I/O 空间访问
 pub const PCI_CMD_IO_SPACE: u16 = 1 << 0;
+/// Command 寄存器: 允许内存空间访问
 pub const PCI_CMD_MEMORY_SPACE: u16 = 1 << 1;
+/// Command 寄存器: 允许设备发起总线主控 (DMA)
 pub const PCI_CMD_BUS_MASTER: u16 = 1 << 2;
 
 // Header type
 const HEADER_MULTIFUNC: u8 = 0x80;
 
 // Class codes
+/// 类别码: 存储控制器
 pub const CLASS_STORAGE: u8 = 0x01;
+/// 类别码: 网络控制器
 pub const CLASS_NETWORK: u8 = 0x02;
+/// 类别码: 显示控制器
 pub const CLASS_DISPLAY: u8 = 0x03;
+/// 类别码: 桥设备
 pub const CLASS_BRIDGE: u8 = 0x06;
 
 // ── Data types ──
@@ -128,19 +137,28 @@ pub const CLASS_BRIDGE: u8 = 0x06;
 /// PCI BAR 类型: 未使用 / 端口 I/O / 32 位内存 / 64 位内存.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BarType {
+    /// 未使用的 BAR 槽位
     None = 0,
+    /// 端口 I/O BAR
     Io = 1,
+    /// 32 位内存 BAR
     Memory32 = 2,
+    /// 64 位内存 BAR (占用两个槽位)
     Memory64 = 3,
 }
 
 /// 单个 PCI BAR: 基址 / 尺寸 / 类型 / 是否可预取 / 是否 64 位.
 #[derive(Debug, Clone, Copy)]
 pub struct PciBar {
+    /// BAR 基址
     pub base_addr: u64,
+    /// BAR 尺寸 (字节)
     pub size: u64,
+    /// BAR 类型
     pub bar_type: BarType,
+    /// 是否可预取
     pub prefetchable: bool,
+    /// 是否为 64 位 BAR
     pub is_64bit: bool,
 }
 
@@ -159,22 +177,39 @@ impl PciBar {
 /// 一个 PCI 设备: 拓扑位置 / 厂商与设备 ID / 类别码 / 中断线 / BAR 列表等.
 #[derive(Debug, Clone)]
 pub struct PciDevice {
+    /// 总线号
     pub bus: u8,
+    /// 设备号 (0-31)
     pub device: u8,
+    /// 功能号 (0-7)
     pub function: u8,
+    /// 厂商 ID
     pub vendor_id: u16,
+    /// 设备 ID
     pub device_id: u16,
+    /// 主类别码
     pub class_code: u8,
+    /// 子类别码
     pub subclass_code: u8,
+    /// 编程接口
     pub prog_if: u8,
+    /// 版本号
     pub revision_id: u8,
+    /// 头类型 (bit7 表示多功能设备)
     pub header_type: u8,
+    /// Command 寄存器值
     pub command: u16,
+    /// Status 寄存器值
     pub status: u16,
+    /// 中断线
     pub interrupt_line: u8,
+    /// 中断引脚
     pub interrupt_pin: u8,
+    /// BAR 列表 (按配置空间槽位索引)
     pub bars: [PciBar; 6],
+    /// 有效 BAR 数量
     pub bar_count: usize,
+    /// Capability 链表头偏移
     pub capabilities_ptr: u8,
 }
 

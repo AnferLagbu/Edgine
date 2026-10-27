@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 privileged API。
 //! 文件状态系统调用 — functions 层安全代理
 //!
@@ -102,37 +103,69 @@ pub fn fstat_syscall(fd: i32, st_buf_ptr: u64) -> Result<usize, Errno> {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Statx {
+    /// 请求/返回的字段掩码
     pub mask: u32,
+    /// 文件系统块大小
     pub blksize: u32,
+    /// 文件属性 (文件系统特有)
     pub attributes: u64,
+    /// 硬链接数
     pub nlink: u32,
+    /// 属主用户 ID
     pub uid: u32,
+    /// 属组 ID
     pub gid: u32,
+    /// 文件类型与权限位
     pub mode: u16,
+    /// 保留字段
     pub spare0: [u16; 1],
+    /// inode 编号
     pub ino: u64,
+    /// 文件字节数
     pub size: u64,
+    /// 占用的 512 字节块数
     pub blocks: u64,
+    /// 属性支持掩码
     pub attributes_mask: u64,
+    /// 访问时间 (秒)
     pub atime_sec: i64,
+    /// 访问时间 (纳秒)
     pub atime_nsec: u32,
+    /// 保留字段
     pub atime_reserved: i32,
+    /// 创建时间 (秒)
     pub btime_sec: i64,
+    /// 创建时间 (纳秒)
     pub btime_nsec: u32,
+    /// 保留字段
     pub btime_reserved: i32,
+    /// 状态变更时间 (秒)
     pub ctime_sec: i64,
+    /// 状态变更时间 (纳秒)
     pub ctime_nsec: u32,
+    /// 保留字段
     pub ctime_reserved: i32,
+    /// 修改时间 (秒)
     pub mtime_sec: i64,
+    /// 修改时间 (纳秒)
     pub mtime_nsec: u32,
+    /// 保留字段
     pub mtime_reserved: i32,
+    /// 设备号主设备号
     pub rdev_major: u32,
+    /// 设备号次设备号
     pub rdev_minor: u32,
+    /// 所在文件系统主设备号
     pub dev_major: u32,
+    /// 所在文件系统次设备号
     pub dev_minor: u32,
+    /// 挂载 ID
     pub mnt_id: u64,
+    /// 直接 I/O 内存对齐要求
     pub dio_mem_align: u32,
+    /// 直接 I/O 偏移对齐要求
     pub dio_offset_align: u32,
+    /// 保留字段
     pub spare3: [u64; 12],
 }
 
