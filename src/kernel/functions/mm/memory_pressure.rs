@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! 内存压力策略 (Memory Pressure) — functions 层
 //!
 //! ## 框架责任分离 (DECISION-O ② 2026-09-13)
@@ -89,10 +90,12 @@ pub fn register_pressure_classifier() -> Result<(), ()> {
     crate::privileged::mm::pressure::register_pressure_classifier(classify_pressure).map_err(|_| ())
 }
 
+/// 查询当前内存压力是否已达临界级 (critical)。
 pub fn is_pressure_critical() -> bool {
     current_pressure().is_critical()
 }
 
+/// 查询当前内存压力是否已达紧急级 (emergency)。
 pub fn is_pressure_emergency() -> bool {
     current_pressure().is_emergency()
 }

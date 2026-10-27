@@ -101,6 +101,7 @@ impl ProcError {
         }
     }
 
+    /// 由 C 风格返回码构造进程错误 (负值为 errno, 0 视为其他错误)。
     pub fn from_i32(rc: i32) -> Self {
         use crate::functions::error::KernelError as K;
         match rc {
@@ -114,6 +115,7 @@ impl ProcError {
     }
 }
 
+/// 进程子系统统一结果类型 (成功值或 `ProcError`)。
 pub type ProcResult<T> = Result<T, ProcError>;
 
 // ============================================================================

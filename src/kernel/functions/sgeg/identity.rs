@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! PWM 身份 (Identity) — functions 层安全代理
 //!
 //! ## 状态 (v2.16, 2026-06-04)
@@ -88,6 +89,7 @@ impl PwmError {
     }
 }
 
+/// PWM 身份子系统统一结果类型 (成功值或 `PwmError`)。
 pub type PwmResult<T> = Result<T, PwmError>;
 
 use crate::privileged::syscall::Errno;
@@ -382,6 +384,7 @@ pub fn uid(pwm: PwmId) -> u32 {
     sgeg::api::pwm_get_uid(pwm.0)
 }
 
+/// 查询身份对应的组 ID (GID)。
 pub fn gid(pwm: PwmId) -> u32 {
     sgeg::api::pwm_get_gid(pwm.0)
 }

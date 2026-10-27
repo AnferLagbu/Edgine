@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! Futex — functions 层安全代理
 //!
 //! @SAFE: 本文件不含 unsafe 代码。
@@ -90,7 +91,12 @@ pub enum FutexResult {
     /// WAKE 唤醒的线程数
     WokenCount(u32),
     /// REQUEUE 唤醒 + 迁移的线程数
-    Requeued { woken: u32, requeued: u32 },
+    Requeued {
+        /// 被唤醒的线程数
+        woken: u32,
+        /// 被迁移到新 futex 地址的线程数
+        requeued: u32,
+    },
     /// 等待中 (未返回)
     Pending,
 }

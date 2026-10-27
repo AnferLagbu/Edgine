@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 41,
-    "files": 31,
-    "keys": 35
+    "sites": 31,
+    "files": 26,
+    "keys": 27
   },
   "entries": [
     [
@@ -41,11 +41,6 @@
       1
     ],
     [
-      "src/kernel/functions/mm/memory_pressure.rs",
-      "a function",
-      2
-    ],
-    [
       "src/kernel/functions/mm/mmap.rs",
       "a constant",
       1
@@ -53,16 +48,6 @@
     [
       "src/kernel/functions/proc/elf.rs",
       "a type alias",
-      1
-    ],
-    [
-      "src/kernel/functions/proc/mod.rs",
-      "a type alias",
-      1
-    ],
-    [
-      "src/kernel/functions/proc/mod.rs",
-      "an associated function",
       1
     ],
     [
@@ -78,31 +63,6 @@
     [
       "src/kernel/functions/sgeg/crypto.rs",
       "a type alias",
-      1
-    ],
-    [
-      "src/kernel/functions/sgeg/identity.rs",
-      "a function",
-      1
-    ],
-    [
-      "src/kernel/functions/sgeg/identity.rs",
-      "a type alias",
-      1
-    ],
-    [
-      "src/kernel/functions/sync/futex.rs",
-      "a struct field",
-      2
-    ],
-    [
-      "src/kernel/functions/sync/mod.rs",
-      "a type alias",
-      1
-    ],
-    [
-      "src/kernel/functions/sync/mod.rs",
-      "an associated function",
       1
     ],
     [

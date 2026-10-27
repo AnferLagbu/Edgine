@@ -176,6 +176,7 @@ impl SyncError {
         }
     }
 
+    /// 由 C 风格返回码构造同步错误 (负值为 errno)。
     pub fn from_i32(rc: i32) -> Self {
         use crate::functions::error::KernelError as K;
         match rc {
@@ -187,6 +188,7 @@ impl SyncError {
     }
 }
 
+/// 同步子系统统一结果类型 (成功值或 `SyncError`)。
 pub type SyncResult<T> = Result<T, SyncError>;
 
 use crate::privileged::syscall::Errno;
