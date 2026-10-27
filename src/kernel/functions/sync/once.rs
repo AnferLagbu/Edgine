@@ -56,10 +56,6 @@ impl Once {
         }
     }
 
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
     /// 执行闭包, 多线程下仅首次调用方真正执行, 后续方阻塞等待完成。
     ///
     /// # Panics
@@ -71,13 +67,13 @@ impl Once {
         }
 
         // 慢路径: 获取锁, 二次检查。
-        let _guard = self.lock.lock();
+        let guard = self.lock.lock();
         match self.state.load(Ordering::Acquire) {
             DONE => (),
             UNINITIALIZED => {
                 self.state.store(IN_PROGRESS, Ordering::Release);
                 // drop guard 临时, 让其他等待者能进入 (但 state 已是 IN_PROGRESS, 不会重复执行)
-                drop(_guard);
+                drop(guard);
 
                 // 执行闭包 (panic 安全: 用 catch_unwind? 但内核无 std)。
                 // 此处直接执行, panic 由 caller 传播。

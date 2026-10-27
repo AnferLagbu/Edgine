@@ -330,16 +330,12 @@ where
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::used_underscore_binding,
-    reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-)]
 /// 按 PID 返回进程表项地址 (0 = 未找到); 命中当前进程时返回缓存指针.
-pub extern "C" fn process_get_by_pid(_pid: u32) -> u64 {
-    if u64::from(_pid) == C_CURRENT_PROCESS.map(|p| p.pid) {
+pub extern "C" fn process_get_by_pid(pid: u32) -> u64 {
+    if u64::from(pid) == C_CURRENT_PROCESS.map(|p| p.pid) {
         C_CURRENT_PROCESS.as_ptr() as u64
     } else {
-        PROCESS_TABLE.get(_pid).map_or(0, |p| p as u64)
+        PROCESS_TABLE.get(pid).map_or(0, |p| p as u64)
     }
 }
 
@@ -610,12 +606,6 @@ pub fn proc_save_user_regs(pid: Pid, f: &crate::privileged::idt::InterruptFrame)
 /// **不写** `@96` (SP_EL1) 与 `@104` (EL1 侧 TTBR0): 二者由调度切换保存侧维护,
 /// 未调度过的新任务由创建方 (fork / init) 预置.
 #[cfg(target_arch = "aarch64")]
-#[expect(
-    clippy::used_underscore_binding,
-    reason = "used_underscore_binding: `_fpu_pad` 是历史填充槽名 (@136), 已被复用为 \
-              用户页表槽位并被 switch.asm / context.rs 偏移表按名引用, 改名波及跨文件文档; \
-              当前优先 expect"
-)]
 pub fn proc_save_user_regs_aarch64(
     pid: Pid,
     f: &crate::privileged::arch::aarch64::exception::ExceptionFrame,
@@ -640,8 +630,8 @@ pub fn proc_save_user_regs_aarch64(
         ctx.fs = f.spsr;
         ctx.gs = f.elr;
         ctx.ss = f.sp;
-        // 用户页表 (本进程页表的权威来源); @136 复用 _fpu_pad 槽位.
-        ctx._fpu_pad = p.cr3.load(Ordering::SeqCst);
+        // 用户页表 (本进程页表的权威来源); @136 复用 fpu_pad 槽位.
+        ctx.fpu_pad = p.cr3.load(Ordering::SeqCst);
         ctx.extra_regs[0] = f.x0;
         ctx.extra_regs[1] = f.x1;
         ctx.extra_regs[2] = f.x2;
@@ -792,19 +782,14 @@ pub extern "C" fn sys_fork() -> Pid {
         }
         #[cfg(target_arch = "aarch64")]
         {
-            #![expect(
-                clippy::used_underscore_binding,
-                reason = "used_underscore_binding: `_fpu_pad` 是历史填充槽名 (@136), 复用为子进程 \
-                          用户页表槽位; 改名会波及 switch.asm / context.rs 偏移表, 当前优先 expect"
-            )]
             // KPTI-17: 子进程首次被调度时必须能正确进入 EL0 (恢复侧按 SPSR.M == 0
             // 走 EL0 路径), 故预置:
-            //   `_fpu_pad`(@136) = 子进程用户页表 (EL0 的 TTBR0)
+            //   `fpu_pad`(@136) = 子进程用户页表 (EL0 的 TTBR0)
             //   `es`(@104)       = 子进程 EL1 视图根 (EL1 侧 TTBR0)
             //   `ds`(@96)        = 子内核栈顶 (SP_EL1: 首次陷入 EL1 时压帧的落点;
             //                      沿用父进程的值会写进父进程的栈页)
             //   `extra_regs[0]`  = x0 = 0 (fork 返回值; 恢复侧 EL0 路径恢复 x0-x7)
-            child_ctx._fpu_pad = child_cr3;
+            child_ctx.fpu_pad = child_cr3;
             child_ctx.es = child_el1_view;
             child_ctx.ds = child.kernel_stack.load(Ordering::SeqCst) & !0xF;
             child_ctx.extra_regs[0] = 0;

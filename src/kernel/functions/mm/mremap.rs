@@ -34,6 +34,8 @@ pub fn mremap_syscall(
     new_size: u64,
     flags: i32,
 ) -> Result<usize, Errno> {
+    const MAX_REMAP: u64 = 1 << 30;
+    const MREMAP_MAYMOVE: i32 = 1;
     // 1. 参数验证
     if old_addr == 0 || old_size == 0 || new_size == 0 {
         return Err(Errno::EINVAL);
@@ -42,20 +44,10 @@ pub fn mremap_syscall(
         return Err(Errno::EINVAL);
     }
     // 限制最大搬迁大小: 1 GiB 防止恶意/错误请求耗尽地址空间
-    #[expect(
-        clippy::items_after_statements,
-        reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-    )]
-    const MAX_REMAP: u64 = 1 << 30;
     if old_size > MAX_REMAP || new_size > MAX_REMAP {
         return Err(Errno::ENOMEM);
     }
     // flags 仅允许 MAYMOVE=1
-    #[expect(
-        clippy::items_after_statements,
-        reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-    )]
-    const MREMAP_MAYMOVE: i32 = 1;
     if flags & !MREMAP_MAYMOVE != 0 {
         return Err(Errno::EINVAL);
     }

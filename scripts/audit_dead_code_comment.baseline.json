@@ -5,8 +5,8 @@
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 1649,
-    "files": 295
+    "sites": 1573,
+    "files": 287
   },
   "entries": [
     [
@@ -93,11 +93,6 @@
       "src/kernel/functions/driver/display/dp.rs",
       "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
       5
-    ],
-    [
-      "src/kernel/functions/driver/display/dp.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      2
     ],
     [
       "src/kernel/functions/driver/display/dp.rs",
@@ -365,11 +360,6 @@
       1
     ],
     [
-      "src/kernel/functions/fs/devfs.rs",
-      "#[expect(clippy::used_underscore_binding,reason=\"下划线前缀表示私有约定或局部清理;重命名需追改所有访问点,风险高\")",
-      2
-    ],
-    [
       "src/kernel/functions/fs/devpts.rs",
       "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
       1
@@ -397,16 +387,6 @@
     [
       "src/kernel/functions/fs/ext2/read.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/file_handle.rs",
-      "#[expect(clippy::items_after_statements,reason=\"items_after_statements:item紧邻使用点声明便于阅读上下文;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/file_ops.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
       1
     ],
     [
@@ -457,11 +437,6 @@
     [
       "src/kernel/functions/fs/initramfs.rs",
       "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/inode.rs",
-      "#[expect(clippy::items_after_statements,reason=\"items_after_statements:item紧邻使用点声明便于阅读上下文;当前优先expect\")",
       1
     ],
     [
@@ -755,11 +730,6 @@
       2
     ],
     [
-      "src/kernel/functions/mm/mremap.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      2
-    ],
-    [
       "src/kernel/functions/mm/swap.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       3
@@ -1040,18 +1010,8 @@
       3
     ],
     [
-      "src/kernel/functions/net/syscall.rs",
-      "#[expect(clippy::used_underscore_binding,reason=\"下划线前缀表示私有约定或局部清理;重命名需追改所有访问点,风险高\")",
-      1
-    ],
-    [
       "src/kernel/functions/net/unix.rs",
       "#[expect(clippy::many_single_char_names,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
-      1
-    ],
-    [
-      "src/kernel/functions/net/unix.rs",
-      "#[expect(clippy::used_underscore_binding,reason=\"下划线前缀表示私有约定或局部清理;重命名需追改所有访问点,风险高\")",
       1
     ],
     [
@@ -1125,11 +1085,6 @@
       1
     ],
     [
-      "src/kernel/functions/proc/sysinfo.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      2
-    ],
-    [
       "src/kernel/functions/proc/table.rs",
       "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       1
@@ -1192,11 +1147,6 @@
     [
       "src/kernel/functions/sync/mod.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      1
-    ],
-    [
-      "src/kernel/functions/sync/once.rs",
-      "#[expect(clippy::used_underscore_binding,reason=\"下划线前缀表示私有约定或局部清理;重命名需追改所有访问点,风险高\")",
       1
     ],
     [
@@ -1272,11 +1222,6 @@
     [
       "src/kernel/functions/wasm/wasi/fd_ops.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/wasm/wasi/fd_ops.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
       1
     ],
     [
@@ -1561,11 +1506,6 @@
     ],
     [
       "src/kernel/lib.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      3
-    ],
-    [
-      "src/kernel/lib.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       2
     ],
@@ -1635,11 +1575,6 @@
       2
     ],
     [
-      "src/kernel/privileged/arch/x86_64/acpi.rs",
-      "#[expect(clippy::used_underscore_binding,reason=\"下划线前缀表示私有约定或局部清理;重命名需追改所有访问点,风险高\")",
-      1
-    ],
-    [
       "src/kernel/privileged/arch/x86_64/apic.rs",
       "#[expect(clippy::cast_possible_truncation)",
       5
@@ -1663,11 +1598,6 @@
       "src/kernel/privileged/arch/x86_64/gdt.rs",
       "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
       1
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/gdt.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      5
     ],
     [
       "src/kernel/privileged/arch/x86_64/gdt.rs",
@@ -1703,11 +1633,6 @@
       "src/kernel/privileged/arch/x86_64/mod.rs",
       "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
       15
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/mod.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      1
     ],
     [
       "src/kernel/privileged/arch/x86_64/mod.rs",
@@ -1780,11 +1705,6 @@
       5
     ],
     [
-      "src/kernel/privileged/cpu/arch.rs",
-      "#[expect(clippy::used_underscore_binding,reason=\"下划线前缀表示私有约定或局部清理;重命名需追改所有访问点,风险高\")",
-      1
-    ],
-    [
       "src/kernel/privileged/cpu/cache.rs",
       "#[expect(clippy::cast_possible_truncation)",
       1
@@ -1813,11 +1733,6 @@
       "src/kernel/privileged/cpu/mod.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       1
-    ],
-    [
-      "src/kernel/privileged/cpu/mod.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      2
     ],
     [
       "src/kernel/privileged/cpu/mod.rs",
@@ -2146,11 +2061,6 @@
     ],
     [
       "src/kernel/privileged/driver/virtio/queue.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      2
-    ],
-    [
-      "src/kernel/privileged/driver/virtio/queue.rs",
       "#[expect(clippy::no_effect_underscore_binding,reason=\"no_effect_underscore_binding:let_=expr用于类型推导/副作用;当前优先expect\")",
       1
     ],
@@ -2178,11 +2088,6 @@
       "src/kernel/privileged/egdf/composite.rs",
       "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
       1
-    ],
-    [
-      "src/kernel/privileged/egdf/devtree.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      2
     ],
     [
       "src/kernel/privileged/egdf/devtree.rs",
@@ -2336,11 +2241,6 @@
     ],
     [
       "src/kernel/privileged/idt/handlers.rs",
-      "#[expect(clippy::items_after_statements,reason=\"items_after_statements:item紧邻使用点声明便于阅读上下文;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/idt/handlers.rs",
       "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       2
     ],
@@ -2388,11 +2288,6 @@
       "src/kernel/privileged/idt/mod.rs",
       "#[expect(clippy::cast_possible_truncation)",
       2
-    ],
-    [
-      "src/kernel/privileged/idt/mod.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      1
     ],
     [
       "src/kernel/privileged/idt/mod.rs",
@@ -2630,11 +2525,6 @@
       1
     ],
     [
-      "src/kernel/privileged/mm/cow.rs",
-      "#[expect(clippy::used_underscore_binding,reason=\"下划线前缀表示私有约定或局部清理;重命名需追改所有访问点,风险高\")",
-      1
-    ],
-    [
       "src/kernel/privileged/mm/frame.rs",
       "#[expect(clippy::cast_possible_truncation)",
       4
@@ -2816,11 +2706,6 @@
     ],
     [
       "src/kernel/privileged/mm/slab.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/slab.rs",
       "#[expect(clippy::ptr_as_ptr,reason=\"pageas*mutSlabHeader:pmm_alloc_pages返回页对齐*mutu8,安全cast\")",
       1
     ],
@@ -2915,11 +2800,6 @@
       14
     ],
     [
-      "src/kernel/privileged/mm/vmm_aarch64.rs",
-      "#[expect(clippy::used_underscore_binding,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      7
-    ],
-    [
       "src/kernel/privileged/mm/vmm_x86_64.rs",
       "#[expect(clippy::cast_possible_truncation)",
       6
@@ -2968,11 +2848,6 @@
       "src/kernel/privileged/mm/vmm_x86_64.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       10
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "#[expect(clippy::used_underscore_binding,reason=\"下划线前缀表示私有约定或局部清理;重命名需追改所有访问点,风险高\")",
-      12
     ],
     [
       "src/kernel/privileged/mod.rs",
@@ -3251,11 +3126,6 @@
     ],
     [
       "src/kernel/privileged/net/init.rs",
-      "#[expect(clippy::items_after_statements,reason=\"items_after_statements:item紧邻使用点声明便于阅读上下文;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/init.rs",
       "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       2
     ],
@@ -3351,11 +3221,6 @@
     ],
     [
       "src/kernel/privileged/net/syscall.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/syscall.rs",
       "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       1
     ],
@@ -3392,11 +3257,6 @@
     [
       "src/kernel/privileged/pci/mod.rs",
       "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      1
-    ],
-    [
-      "src/kernel/privileged/pci/mod.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
       1
     ],
     [
@@ -3476,11 +3336,6 @@
     ],
     [
       "src/kernel/privileged/proc/madvise_mlock.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/madvise_mlock.rs",
       "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       6
     ],
@@ -3507,11 +3362,6 @@
     [
       "src/kernel/privileged/proc/posix_timer.rs",
       "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/proc_ops.rs",
-      "#![expect(clippy::used_underscore_binding,reason=\"used_underscore_binding:`_fpu_pad`是历史填充槽名(@136)",
       1
     ],
     [
@@ -3548,16 +3398,6 @@
       "src/kernel/privileged/proc/proc_ops.rs",
       "#[expect(clippy::similar_names,reason=\"变量名相似表达同族概念(pd/pt/bm等)",
       2
-    ],
-    [
-      "src/kernel/privileged/proc/proc_ops.rs",
-      "#[expect(clippy::used_underscore_binding,reason=\"used_underscore_binding:`_fpu_pad`是历史填充槽名(@136)",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/proc_ops.rs",
-      "#[expect(clippy::used_underscore_binding,reason=\"下划线前缀表示私有约定或局部清理;重命名需追改所有访问点,风险高\")",
-      1
     ],
     [
       "src/kernel/privileged/proc/process.rs",
@@ -3830,11 +3670,6 @@
       1
     ],
     [
-      "src/kernel/privileged/sync/mutex.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      1
-    ],
-    [
       "src/kernel/privileged/sync/pi_mutex.rs",
       "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:?Sized宽指针需先转瘦指针取数据地址再转usize作lockdep实例键,语义已知安全\")",
       1
@@ -3853,11 +3688,6 @@
       "src/kernel/privileged/sync/rcu.rs",
       "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
       3
-    ],
-    [
-      "src/kernel/privileged/sync/rcu.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      1
     ],
     [
       "src/kernel/privileged/sync/spinlock.rs",
@@ -3880,23 +3710,8 @@
       1
     ],
     [
-      "src/kernel/privileged/sync/types.rs",
-      "#[expect(clippy::used_underscore_binding,reason=\"下划线前缀表示私有约定或局部清理;重命名需追改所有访问点,风险高\")",
-      4
-    ],
-    [
-      "src/kernel/privileged/syscall/dispatch.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      1
-    ],
-    [
       "src/kernel/privileged/syscall/dispatch.rs",
       "#[expect(clippy::missing_panics_doc,reason=\"missing_panics_doc:get_framebuffer守卫在fb_addr/ENODEV前置检查后必有值(FB已初始化)",
-      1
-    ],
-    [
-      "src/kernel/privileged/syscall/epoll.rs",
-      "#[expect(clippy::items_after_statements,reason=\"items_after_statements:item紧邻使用点声明便于阅读上下文;当前优先expect\")",
       1
     ],
     [
@@ -3970,19 +3785,9 @@
       1
     ],
     [
-      "src/kernel/privileged/timer/calibration.rs",
-      "#[expect(clippy::items_after_statements,reason=\"items_after_statements:测试注册函数内嵌套测试fn为内核测试惯用模式;当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/privileged/timer/clockevent.rs",
       "#[expect(clippy::cast_possible_truncation)",
       1
-    ],
-    [
-      "src/kernel/privileged/timer/hrtimer.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      2
     ],
     [
       "src/kernel/privileged/timer/hrtimer.rs",
@@ -4010,16 +3815,6 @@
       1
     ],
     [
-      "src/kernel/privileged/timer/sleep.rs",
-      "#[expect(clippy::items_after_statements,reason=\"items_after_statements:测试注册函数内嵌套测试fn为内核测试惯用模式;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/timer/sleep.rs",
-      "#[expect(clippy::items_after_statements,reason=\"item紧邻使用点声明以便阅读上下文;移至scope顶部会割裂逻辑块,必要时手动重构\")",
-      1
-    ],
-    [
       "src/kernel/privileged/timer/tick.rs",
       "#[expect(clippy::cast_possible_truncation,reason=\"cast_possible_truncation:已先min(u64::MAX)",
       1
@@ -4027,11 +3822,6 @@
     [
       "src/kernel/privileged/timer/tick.rs",
       "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      1
-    ],
-    [
-      "src/kernel/privileged/timer/tick.rs",
-      "#[expect(clippy::items_after_statements,reason=\"items_after_statements:测试注册函数内嵌套测试fn为内核测试惯用模式;当前优先expect\")",
       1
     ],
     [

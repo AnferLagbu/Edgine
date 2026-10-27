@@ -90,7 +90,7 @@ impl<T> RwLock<T> {
         RwLockReadGuard {
             // SAFETY: read lock acquired — shared access to T is safe
             data: unsafe { &*self.data.get() },
-            _rwlock: &self.inner,
+            rwlock: &self.inner,
         }
     }
 
@@ -100,7 +100,7 @@ impl<T> RwLock<T> {
             Some(RwLockReadGuard {
                 // SAFETY: try_read succeeded — shared access to T is safe
                 data: unsafe { &*self.data.get() },
-                _rwlock: &self.inner,
+                rwlock: &self.inner,
             })
         } else {
             None
@@ -139,7 +139,7 @@ impl<T> RwLock<T> {
         RwLockWriteGuard {
             // SAFETY: write lock acquired — exclusive mutable access to T
             data: unsafe { &mut *self.data.get() },
-            _rwlock: &self.inner,
+            rwlock: &self.inner,
         }
     }
 
@@ -149,7 +149,7 @@ impl<T> RwLock<T> {
             Some(RwLockWriteGuard {
                 // SAFETY: try_write succeeded — exclusive mutable access to T
                 data: unsafe { &mut *self.data.get() },
-                _rwlock: &self.inner,
+                rwlock: &self.inner,
             })
         } else {
             None

@@ -424,6 +424,7 @@ pub fn recvfrom_syscall(
     src_ptr: u64,
     src_len_ptr: u64,
 ) -> i64 {
+    const MAX: usize = 4096;
     if fd < 0 {
         return Errno::EBADF.as_ret();
     }
@@ -434,11 +435,6 @@ pub fn recvfrom_syscall(
         return Errno::EFAULT.as_ret();
     }
     // 在栈上准备临时缓冲
-    #[expect(
-        clippy::items_after_statements,
-        reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-    )]
-    const MAX: usize = 4096;
     let want = (len as usize).min(MAX);
     let mut stack_buf = [0u8; MAX];
     // D9: 改调 sm_recvfrom 取回对端地址; data 仍走内核栈 bounce (保 P0-I-37 异常表保护),

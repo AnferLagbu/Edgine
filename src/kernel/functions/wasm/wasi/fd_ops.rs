@@ -231,13 +231,6 @@ pub fn wasi_fd_stat_get(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
     // 写入 WASI filestat 结构到线性内存
     // filestat: { dev: u64, ino: u64, filetype: u8, nlink: u64, size: u64, atim: u64, mtim: u64, ctim: u64 }
     if let Some(ref mut mem) = interp.memory {
-        let base = u64::from(buf_ptr);
-
-        // 辅助函数: 写入 u64 到线性内存
-        #[expect(
-            clippy::items_after_statements,
-            reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-        )]
         fn write_u64_to(
             mem: &mut crate::functions::wasm::runtime::LinearMemory,
             base: u64,
@@ -249,6 +242,9 @@ pub fn wasi_fd_stat_get(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
                 let _ = mem.write_u8((base + off + i) as u32, bytes[i as usize]);
             }
         }
+        let base = u64::from(buf_ptr);
+
+        // 辅助函数: 写入 u64 到线性内存
 
         write_u64_to(mem, base, 0, u64::from(stat.node_id)); // dev
         write_u64_to(mem, base, 8, u64::from(stat.node_id)); // ino

@@ -231,10 +231,6 @@ const WAKE_BATCH: usize = 128;
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
-#[expect(
-    clippy::items_after_statements,
-    reason = "items_after_statements: item 紧邻使用点声明便于阅读上下文; 当前优先 expect"
-)]
 /// 轮询网络栈 (驱动 TX/RX、定时器、DHCP)。
 ///
 /// 在 timer ISR 或网络任务中调用, 内部 `try_lock` 避免阻塞。
@@ -253,6 +249,11 @@ pub unsafe fn poll_network() {
     // 不预先赋 `None`: 临界区内的早退路径直接 `return`, 能走到下面即已赋值.
     let next_poll_ns: Option<u64>;
     unsafe {
+        use crate::privileged::net::{
+            SOCKET_WAIT_QUEUES, WAITER_ACCEPT, WAITER_CONNECT, WAITER_READ, WAITER_WRITE,
+            WakeReason,
+        };
+        use crate::privileged::timer::hrtimer_clock_read;
         let _guard = match NET_STATE.try_lock() {
             Some(g) => g,
             None => return,
@@ -289,11 +290,6 @@ pub unsafe fn poll_network() {
 
         // P2-I-41: poll 完毕后通知所有 fd 的等待者, 让 sm_send/sm_recv
         // (未来阻塞扩展点) 重新检查 socket 状态. try_wake 持锁时间 O(1).
-        use crate::privileged::net::{
-            SOCKET_WAIT_QUEUES, WAITER_ACCEPT, WAITER_CONNECT, WAITER_READ, WAITER_WRITE,
-            WakeReason,
-        };
-        use crate::privileged::timer::hrtimer_clock_read;
         // P5d: 死线到点判定用单调时钟 (纳秒). 每 tick 采一次, 全 fd 循环复用.
         let now_ns = hrtimer_clock_read();
         for fd in 0..MAX_SM_FD {

@@ -57,10 +57,6 @@ fn mark_cow_readonly(entry: u64) -> u64 {
     }
 }
 
-#[expect(
-    clippy::used_underscore_binding,
-    reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-)]
 /// COW 感知的页表克隆: 共享用户空间物理页, 双方标记只读
 /// 相比 deep copy 版本, 该版本不分配新物理页, 也不复制数据
 ///
@@ -69,9 +65,9 @@ fn mark_cow_readonly(entry: u64) -> u64 {
 /// 函数返回前刷新全部 TLB 条目使被清除 WRITABLE 位的 PTE 失效。
 pub fn clone_user_page_table_cow(parent_pml4: u64) -> Option<u64> {
     let vmm_inst = vmm::get_vmm();
-    let _vmm_flags = vmm_inst.acquire_lock();
+    let guard = vmm_inst.acquire_lock();
     let result = clone_user_page_table_cow_inner(parent_pml4);
-    vmm_inst.release_lock(&_vmm_flags);
+    vmm_inst.release_lock(&guard);
     result
 }
 

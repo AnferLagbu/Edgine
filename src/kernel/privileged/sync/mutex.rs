@@ -105,7 +105,7 @@ impl<T> Mutex<T> {
         MutexGuard {
             // SAFETY: `self` 由调用方保证为有效指针; 只读访问
             data: unsafe { &mut *self.data.get() },
-            _mutex: &self.inner,
+            mutex: &self.inner,
             #[cfg(any(debug_assertions, feature = "lockdep"))]
             lockdep_class: self.lockdep_class,
             #[cfg(any(debug_assertions, feature = "lockdep"))]
@@ -119,7 +119,7 @@ impl<T> Mutex<T> {
             Some(MutexGuard {
                 // SAFETY: `self` 由调用方保证为有效指针; 只读访问
                 data: unsafe { &mut *self.data.get() },
-                _mutex: &self.inner,
+                mutex: &self.inner,
                 #[cfg(any(debug_assertions, feature = "lockdep"))]
                 lockdep_class: self.lockdep_class,
                 #[cfg(any(debug_assertions, feature = "lockdep"))]
@@ -324,17 +324,13 @@ impl CondVar {
 
     /// 带超时的等待 (当前实现为忙等 `timeout_ms` 毫秒后返回 true)
     pub fn wait_timeout<T>(&self, mutex: &Mutex<T>, timeout_ms: u32) -> bool {
-        self.waiters.fetch_add(1, Ordering::AcqRel);
-        mutex.raw_unlock();
-
-        // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
-        #[expect(
-            clippy::items_after_statements,
-            reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-        )]
+        // SAFETY: timer_sleep_busy 由框架定时器提供, 符号与 C ABI 声明一致
         unsafe extern "C" {
             fn timer_sleep_busy(ms: u64);
         }
+        self.waiters.fetch_add(1, Ordering::AcqRel);
+        mutex.raw_unlock();
+
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
             timer_sleep_busy(u64::from(timeout_ms));

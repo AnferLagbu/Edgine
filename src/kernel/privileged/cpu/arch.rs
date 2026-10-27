@@ -85,19 +85,15 @@ pub fn broadcast_ipi(vector: u8) {
 /// 局部量与返回地址失真 (D5 缺陷)。
 /// aarch64: 无操作 — `SP_EL1` 由上下文切换直接管理。
 #[inline(always)]
-#[expect(
-    clippy::used_underscore_binding,
-    reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-)]
-pub fn set_kernel_stack(_stack: u64) {
+pub fn set_kernel_stack(stack: u64) {
     #[cfg(target_arch = "x86_64")]
     {
-        crate::privileged::arch::tss::tss_set_kernel_stack(_stack);
+        crate::privileged::arch::tss::tss_set_kernel_stack(stack);
 
-        crate::privileged::arch::gdt::gdt_set_kernel_rsp(_stack);
+        crate::privileged::arch::gdt::gdt_set_kernel_rsp(stack);
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
-        let _ = _stack;
+        let _ = stack;
     }
 }

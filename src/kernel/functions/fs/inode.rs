@@ -314,11 +314,8 @@ impl Inode for RamFsInode {
         }
     }
 
-    #[expect(
-        clippy::items_after_statements,
-        reason = "items_after_statements: item 紧邻使用点声明便于阅读上下文; 当前优先 expect"
-    )]
     fn stat(&self, pwm: u64) -> KernelResult<VfsStat> {
+        use crate::functions::fs::ramfs_core::RAMFS_DATA;
         // icache 快速路径: 避免 RAMFS_DATA 锁
         if let Some(cached) = crate::functions::fs::dcache::icache_lookup(self.fs_id, self.inode_id)
         {
@@ -335,7 +332,6 @@ impl Inode for RamFsInode {
             });
         }
         // 缓存未命中: 回退到完整 stat
-        use crate::functions::fs::ramfs_core::RAMFS_DATA;
         let ramfs = RAMFS_DATA.lock();
         let st = ramfs.get_stat(self.inode_id, pwm)?;
         // 填充 icache

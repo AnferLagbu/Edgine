@@ -435,10 +435,6 @@ impl Aarch64Vmm {
     }
 
     #[expect(
-        clippy::used_underscore_binding,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
-    #[expect(
         clippy::missing_errors_doc,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
@@ -456,7 +452,7 @@ impl Aarch64Vmm {
         match size_type {
             PageSize::Size4K => self.map_page(virt, phys, flags),
             PageSize::Size2M => {
-                let _lock_flags = self.acquire_lock();
+                let guard = self.acquire_lock();
 
                 let vaddr = virt.as_u64();
                 let paddr = phys.as_u64();
@@ -467,7 +463,7 @@ impl Aarch64Vmm {
                 let l1 = match self.ensure_next_level(l0, l0_idx) {
                     Ok(t) => t,
                     Err(e) => {
-                        self.release_lock(&_lock_flags);
+                        self.release_lock(&guard);
                         return Err(e);
                     }
                 };
@@ -475,7 +471,7 @@ impl Aarch64Vmm {
                 let l2 = match self.ensure_next_level(l1, l1_idx) {
                     Ok(t) => t,
                     Err(e) => {
-                        self.release_lock(&_lock_flags);
+                        self.release_lock(&guard);
                         return Err(e);
                     }
                 };
@@ -489,11 +485,11 @@ impl Aarch64Vmm {
                     ptr::write_volatile(l2.add(l2_idx), desc);
                 }
 
-                self.release_lock(&_lock_flags);
+                self.release_lock(&guard);
                 Ok(())
             }
             PageSize::Size1G => {
-                let _lock_flags = self.acquire_lock();
+                let guard = self.acquire_lock();
 
                 let vaddr = virt.as_u64();
                 let paddr = phys.as_u64();
@@ -504,7 +500,7 @@ impl Aarch64Vmm {
                 let l1 = match self.ensure_next_level(l0, l0_idx) {
                     Ok(t) => t,
                     Err(e) => {
-                        self.release_lock(&_lock_flags);
+                        self.release_lock(&guard);
                         return Err(e);
                     }
                 };
@@ -517,7 +513,7 @@ impl Aarch64Vmm {
                     ptr::write_volatile(l1.add(l1_idx), desc);
                 }
 
-                self.release_lock(&_lock_flags);
+                self.release_lock(&guard);
                 Ok(())
             }
         }
@@ -530,16 +526,12 @@ impl Aarch64Vmm {
     /// 卸载单个虚拟页映射 (aarch64 上为空操作, 与 x86_64 接口对齐).
     pub fn unmap_page(&self, _virt: VirtAddr) {}
 
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
     /// 修改虚拟页的保护属性 (mprotect 核心实现)
     ///
     /// 遍历 aarch64 页表, 找到目标页/块描述符, 保留物理地址,
     /// 仅修改 AP (访问权限) 和 UXN/PXN (执行权限) 位, 然后 TLB invalidate.
     pub fn protect_page(&self, virt: VirtAddr, new_flags: PageFlags) {
-        let _lock_flags = self.acquire_lock();
+        let guard = self.acquire_lock();
 
         let vaddr = virt.as_u64();
         let raw_flags = new_flags.bits();
@@ -550,7 +542,7 @@ impl Aarch64Vmm {
 
         let l1 = self.get_next_level(l0, l0_idx);
         if l1.is_null() {
-            self.release_lock(&_lock_flags);
+            self.release_lock(&guard);
             return;
         }
         let l1_idx = l1_index(vaddr);
@@ -566,14 +558,14 @@ impl Aarch64Vmm {
                     block_flags_to_descriptor(raw_flags, paddr, 1, 0x0000_FFFF_FFFF_F000);
                 ptr::write_volatile(l1.add(l1_idx), new_desc);
                 core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
-                self.release_lock(&_lock_flags);
+                self.release_lock(&guard);
                 return;
             }
         }
 
         let l2 = self.get_next_level(l1, l1_idx);
         if l2.is_null() {
-            self.release_lock(&_lock_flags);
+            self.release_lock(&guard);
             return;
         }
         let l2_idx = l2_index(vaddr);
@@ -589,14 +581,14 @@ impl Aarch64Vmm {
                     block_flags_to_descriptor(raw_flags, paddr, 2, 0x0000_FFFF_FFFF_F000);
                 ptr::write_volatile(l2.add(l2_idx), new_desc);
                 core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
-                self.release_lock(&_lock_flags);
+                self.release_lock(&guard);
                 return;
             }
         }
 
         let l3 = self.get_next_level(l2, l2_idx);
         if l3.is_null() {
-            self.release_lock(&_lock_flags);
+            self.release_lock(&guard);
             return;
         }
         let l3_idx = l3_index(vaddr);
@@ -607,7 +599,7 @@ impl Aarch64Vmm {
             let l3_entry = ptr::read_volatile(l3.add(l3_idx));
             if l3_entry == 0 {
                 // 页未映射, 无需修改
-                self.release_lock(&_lock_flags);
+                self.release_lock(&guard);
                 return;
             }
             let paddr = l3_entry & 0x0000_FFFF_FFFF_F000;
@@ -616,13 +608,9 @@ impl Aarch64Vmm {
             core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
         }
 
-        self.release_lock(&_lock_flags);
+        self.release_lock(&guard);
     }
 
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
     /// 修改**指定页表**中虚拟页的保护属性 (mprotect 显式变体)
     ///
     /// 与 [`Self::protect_page`] 的唯一区别是目标页表根由调用方显式给出
@@ -637,7 +625,7 @@ impl Aarch64Vmm {
             return;
         }
 
-        let _lock_flags = self.acquire_lock();
+        let guard = self.acquire_lock();
 
         let vaddr = virt.as_u64();
         let raw_flags = new_flags.bits();
@@ -648,7 +636,7 @@ impl Aarch64Vmm {
 
         let l1 = self.get_next_level(l0, l0_idx);
         if l1.is_null() {
-            self.release_lock(&_lock_flags);
+            self.release_lock(&guard);
             return;
         }
         let l1_idx = l1_index(vaddr);
@@ -664,14 +652,14 @@ impl Aarch64Vmm {
                     block_flags_to_descriptor(raw_flags, paddr, 1, 0x0000_FFFF_FFFF_F000);
                 ptr::write_volatile(l1.add(l1_idx), new_desc);
                 core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
-                self.release_lock(&_lock_flags);
+                self.release_lock(&guard);
                 return;
             }
         }
 
         let l2 = self.get_next_level(l1, l1_idx);
         if l2.is_null() {
-            self.release_lock(&_lock_flags);
+            self.release_lock(&guard);
             return;
         }
         let l2_idx = l2_index(vaddr);
@@ -687,14 +675,14 @@ impl Aarch64Vmm {
                     block_flags_to_descriptor(raw_flags, paddr, 2, 0x0000_FFFF_FFFF_F000);
                 ptr::write_volatile(l2.add(l2_idx), new_desc);
                 core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
-                self.release_lock(&_lock_flags);
+                self.release_lock(&guard);
                 return;
             }
         }
 
         let l3 = self.get_next_level(l2, l2_idx);
         if l3.is_null() {
-            self.release_lock(&_lock_flags);
+            self.release_lock(&guard);
             return;
         }
         let l3_idx = l3_index(vaddr);
@@ -705,7 +693,7 @@ impl Aarch64Vmm {
             let l3_entry = ptr::read_volatile(l3.add(l3_idx));
             if l3_entry == 0 {
                 // 页未映射, 无需修改
-                self.release_lock(&_lock_flags);
+                self.release_lock(&guard);
                 return;
             }
             let paddr = l3_entry & 0x0000_FFFF_FFFF_F000;
@@ -714,7 +702,7 @@ impl Aarch64Vmm {
             core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
         }
 
-        self.release_lock(&_lock_flags);
+        self.release_lock(&guard);
     }
 
     #[expect(
@@ -744,10 +732,6 @@ impl Aarch64Vmm {
     /// 语义与锁序约束见 `Self::map_page_in_table_locked`; 本入口只负责加/解锁,
     /// 供不持 `VMM_LOCK` 的路径使用。已持锁的路径必须直接用
     /// `Self::map_page_in_table_locked`, 否则构成递归加锁 (`VMM_LOCK` 非重入)。
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
     pub fn map_page_in_table(
         &self,
         root_paddr: u64,
@@ -755,9 +739,9 @@ impl Aarch64Vmm {
         phys: PhysAddr,
         flags: PageFlags,
     ) {
-        let _lock_flags = self.acquire_lock();
+        let guard = self.acquire_lock();
         self.map_page_in_table_locked(root_paddr, virt, phys, flags);
-        self.release_lock(&_lock_flags);
+        self.release_lock(&guard);
     }
 
     /// 从 `root_paddr` 遍历页表, 按需创建中间级, 设置最终页描述符 ——
@@ -858,17 +842,13 @@ impl Aarch64Vmm {
         }
     }
 
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
     /// 在指定根页表中卸载单个虚拟页映射 (根地址为 0 时直接返回).
     pub fn unmap_page_in_table(&self, root_paddr: u64, virt: VirtAddr) {
         if root_paddr == 0 {
             return;
         }
 
-        let _lock_flags = self.acquire_lock();
+        let guard = self.acquire_lock();
 
         let vaddr = virt.as_u64();
 
@@ -878,21 +858,21 @@ impl Aarch64Vmm {
 
         let l1 = self.get_next_level(l0, l0_idx);
         if l1.is_null() {
-            self.release_lock(&_lock_flags);
+            self.release_lock(&guard);
             return;
         }
         let l1_idx = l1_index(vaddr);
 
         let l2 = self.get_next_level(l1, l1_idx);
         if l2.is_null() {
-            self.release_lock(&_lock_flags);
+            self.release_lock(&guard);
             return;
         }
         let l2_idx = l2_index(vaddr);
 
         let l3 = self.get_next_level(l2, l2_idx);
         if l3.is_null() {
-            self.release_lock(&_lock_flags);
+            self.release_lock(&guard);
             return;
         }
         let l3_idx = l3_index(vaddr);
@@ -979,7 +959,7 @@ impl Aarch64Vmm {
             super::deferred_free::mark_remote_shootdown();
         }
 
-        self.release_lock(&_lock_flags);
+        self.release_lock(&guard);
     }
 
     #[expect(
@@ -1405,10 +1385,6 @@ impl Aarch64Vmm {
         Some(l3_entry)
     }
 
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
     /// 直接写入 L3 PTE 原始值 (用于 swap 替换)
     ///
     /// 沿 L0→L1→L2→L3 找到最终 PTE, 写入 raw_pte 后 TLB invalidate.
@@ -1417,7 +1393,7 @@ impl Aarch64Vmm {
     pub fn set_pte_value(&self, root_paddr: u64, virt: VirtAddr, raw_pte: u64) {
         let vaddr = virt.as_u64();
 
-        let _flags = self.acquire_lock();
+        let guard = self.acquire_lock();
 
         // SAFETY: VMM_LOCK held; 四级页表查找 PTE 并直接写入
         unsafe {
@@ -1425,7 +1401,7 @@ impl Aarch64Vmm {
             let l0_idx = l0_index(vaddr);
             let l0_entry = ptr::read_volatile(l0.add(l0_idx));
             if l0_entry & 0b11 != 0b11 {
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -1433,7 +1409,7 @@ impl Aarch64Vmm {
             let l1_idx = l1_index(vaddr);
             let l1_entry = ptr::read_volatile(l1.add(l1_idx));
             if l1_entry & 0b11 != 0b11 {
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -1441,7 +1417,7 @@ impl Aarch64Vmm {
             let l2_idx = l2_index(vaddr);
             let l2_entry = ptr::read_volatile(l2.add(l2_idx));
             if l2_entry & 0b11 != 0b11 {
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -1455,7 +1431,7 @@ impl Aarch64Vmm {
             core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
         }
 
-        self.release_lock(&_flags);
+        self.release_lock(&guard);
     }
 
     // ─── Clone / Destroy User Page Table ────────────────────────────
@@ -1478,10 +1454,6 @@ impl Aarch64Vmm {
         Some(child_paddr)
     }
 
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
     /// 销毁指定用户页表并归还其占用帧 (根地址为 0 时直接返回).
     pub fn destroy_page_table(&self, root_paddr: u64) {
         if root_paddr == 0 {
@@ -1494,7 +1466,7 @@ impl Aarch64Vmm {
         // 拆除整表会逐 leaf 注销帧引用并归还各级页表页 (经延迟释放, 见
         // `free_table_locked`), 与 x86_64 的 `destroy_page_table` 同语义: 全程持
         // `VMM_LOCK` 串行化页表改动, 并保证帧入批次链的"锁内单写者"前提.
-        let _lock_flags = self.acquire_lock();
+        let guard = self.acquire_lock();
 
         // 释放前先做一次系统级失效: 本函数会归还用户数据帧与各级页表帧,
         // 必须确保所有核已停止用该页表 (复用 switch_page_table 的广播形态).
@@ -1532,7 +1504,7 @@ impl Aarch64Vmm {
             super::deferred_free::mark_remote_shootdown();
         }
 
-        self.release_lock(&_lock_flags);
+        self.release_lock(&guard);
 
         // 埋点 (见 docs/plan/tlb-shootdown-epoch.md S-10): "销毁路径是否被走到" 是释放
         // 覆盖判别的第一分位 —— 整轮日志无本行 ⇒ 进程从未被回收, 而非"帧入链但代未追平".

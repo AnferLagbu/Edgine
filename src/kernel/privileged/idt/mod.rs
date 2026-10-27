@@ -155,16 +155,7 @@ pub type CIrqHandler = extern "C" fn(*mut InterruptFrame);
     reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
 )]
 pub extern "C" fn idt_init() -> i32 {
-    use crate::klog_error;
-
-    let manager = IdtManager::instance();
-
-    // 获取 ISR 地址表 (从 isr.asm 导出的符号, 使用 fn 指针)
-    // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
-    #[expect(
-        clippy::items_after_statements,
-        reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-    )]
+    // SAFETY: isr* / syscall_handler 等符号由 isr.asm 导出, 签名与 C ABI 声明一致
     unsafe extern "C" {
         fn isr0();
         fn isr1();
@@ -336,6 +327,11 @@ pub extern "C" fn idt_init() -> i32 {
         fn syscall_handler();
         fn isr0x82();
     }
+    use crate::klog_error;
+
+    let manager = IdtManager::instance();
+
+    // 获取 ISR 地址表 (从 isr.asm 导出的符号, 使用 fn 指针)
 
     // KPTI: x86_64 上 ISR stub 由链接器分配在低半部分地址,
     // 但用户页表只映射了高半部分内核空间. 中断在用户态触发时,

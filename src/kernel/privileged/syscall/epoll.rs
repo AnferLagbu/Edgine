@@ -468,10 +468,6 @@ fn enqueue_ready_for_fd(instance: &mut EpollInstance, fd: i32) -> bool {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
-#[expect(
-    clippy::items_after_statements,
-    reason = "items_after_statements: item 紧邻使用点声明便于阅读上下文; 当前优先 expect"
-)]
 /// 检查 fd 是否就绪 (完整集成 VFS)
 ///
 /// REVAL-6.1: 4 种 VFS `file_type` → events 位映射改走 `VfsPollPolicy` trait dispatch
@@ -484,6 +480,7 @@ fn enqueue_ready_for_fd(instance: &mut EpollInstance, fd: i32) -> bool {
 ///
 /// 与 user 事件掩码做 AND 运算, 只报告 user 关心的位.
 fn check_fd_ready(fd: i32, events: u32) -> u32 {
+    use crate::privileged::fs::VfsFileType;
     // 1. eventfd 空间 [200, 216)
     if crate::privileged::syscall::eventfd::is_eventfd_fd(fd) {
         let raw = crate::privileged::syscall::eventfd::eventfd_poll_events(fd);
@@ -503,7 +500,6 @@ fn check_fd_ready(fd: i32, events: u32) -> u32 {
     }
 
     // 4. VFS fd 空间 — REVAL-6.1: 委托给 VfsPollPolicy
-    use crate::privileged::fs::VfsFileType;
 
     // 查询 VFS 真实状态 (经 VfsOps 契约 → 当前进程 fd 表 → OpenFile 元数据源)
     let (valid, file_type) = match crate::privileged::fs::current_vfs_ops().fd_file_type(fd) {

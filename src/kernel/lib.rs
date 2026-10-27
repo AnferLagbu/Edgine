@@ -652,6 +652,11 @@ pub extern "C" fn kernel_init() {
     // kt/ht 同属"测试环境" (E-03 约定扩展). host-test 下不编译裸机引导链.
     #[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
     {
+        // kmalloc 堆容量与 PMM 位图预留间隙 (常量前置: 作用域内项目自块起始可见)
+        const KMALLOC_HEAP_SIZE: u64 = 8 * 1024 * 1024; // 8 MB (b4d: 实测全程峰值 16KB, 由 16MB 缩容)
+        const GAP_SIZE: u64 = 0x200000;
+        const BITMAP_GAP_SIZE: u64 = 0x200000;
+
         let boot_info = crate::privileged::boot::init();
         crate::klog_boot_info!(
             "Boot info: mem={} MB, kernel_end=0x{:X}",
@@ -678,11 +683,6 @@ pub extern "C" fn kernel_init() {
         );
 
         // 4. kmalloc — 内核堆初始化
-        #[expect(
-            clippy::items_after_statements,
-            reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-        )]
-        const KMALLOC_HEAP_SIZE: u64 = 8 * 1024 * 1024; // 8 MB (b4d: 实测全程峰值 16KB, 由 16MB 缩容)
         // 双架构统一为 KERNEL_BASE + 物理偏移: 堆的**物理布局**不变
         // (仍自 kernel_end + 0x200000 起), 仅访问别名改走高半区直射区,
         // 从而在 TTBR0/CR3 切至 per-process 视图时堆仍经内核高半区可达
@@ -710,16 +710,6 @@ pub extern "C" fn kernel_init() {
         // GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE = 0x200000 + 8MB + 0x200000 = 10MB
         // 注: 堆扩容自 heap_end 向上映射, 仅能吃到尾部 BITMAP_GAP_SIZE(2MB),
         // 故堆最大容量 = KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE = 10MB.
-        #[expect(
-            clippy::items_after_statements,
-            reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-        )]
-        const GAP_SIZE: u64 = 0x200000;
-        #[expect(
-            clippy::items_after_statements,
-            reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-        )]
-        const BITMAP_GAP_SIZE: u64 = 0x200000;
         let reserved_after_kernel = GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE;
         crate::privileged::mm::pmm::pmm_init_bitmap(reserved_after_kernel);
         crate::klog_boot_info!("PMM bitmap initialized");

@@ -128,6 +128,10 @@ impl VirtQueue {
     // 有意窄化: 用户内存代理, 指针/长度上下文保证
     #[expect(clippy::cast_possible_truncation)]
     pub fn new(legacy: bool, num: u16) -> Option<Self> {
+        // SAFETY: pmm_alloc_pages 由 PMM 模块提供, 符号与 C ABI 声明一致
+        unsafe extern "C" {
+            fn pmm_alloc_pages(count: u64) -> *mut u8;
+        }
         if num == 0 || !num.is_power_of_two() {
             // split ring 规范要求 num 为 2 的幂 (取模即环回).
             return None;
@@ -135,14 +139,6 @@ impl VirtQueue {
         let (_avail_off, used_off, total_size) = vring_layout(legacy, num);
         let desc_size = 16 * num as usize;
         let pages = total_size.div_ceil(PAGE_SIZE as usize);
-        // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
-        #[expect(
-            clippy::items_after_statements,
-            reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-        )]
-        unsafe extern "C" {
-            fn pmm_alloc_pages(count: u64) -> *mut u8;
-        }
         // SAFETY: extern 函数的参数/返回值类型与 C ABI 声明一致; 调用方保证指针有效
         let mem = unsafe { pmm_alloc_pages(pages as u64) };
         if mem.is_null() {
@@ -320,15 +316,11 @@ impl DmaBuffer {
     // 有意窄化: 用户内存代理, 指针/长度上下文保证
     #[expect(clippy::cast_possible_truncation)]
     pub fn new(size: usize) -> Option<Self> {
-        let pages = (size + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
-        // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
-        #[expect(
-            clippy::items_after_statements,
-            reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-        )]
+        // SAFETY: pmm_alloc_pages 由 PMM 模块提供, 符号与 C ABI 声明一致
         unsafe extern "C" {
             fn pmm_alloc_pages(count: u64) -> *mut u8;
         }
+        let pages = (size + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
         // SAFETY: pmm_alloc_pages 由 PMM 模块提供, 参数与返回值类型匹配
         let ptr = unsafe { pmm_alloc_pages(pages as u64) };
         if ptr.is_null() {

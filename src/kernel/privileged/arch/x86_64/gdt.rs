@@ -630,6 +630,7 @@ fn trampoline_top_of(gdt: &PerCpuGdt) -> u64 {
     reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
 )]
 pub fn gdt_init() -> i32 {
+    static OK_MSG: &[u8] = b"GDT and TSS initialized successfully (BSP)\0";
     use crate::privileged::klog::{LogCategory, LogLevel, klog_write};
 
     static INIT_MSG: &[u8] = b"Initializing GDT and TSS (BSP)...\0";
@@ -647,6 +648,8 @@ pub fn gdt_init() -> i32 {
 
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
+        const IA32_GS_BASE: u32 = 0xC000_0101;
+        const IA32_KERNEL_GS_BASE: u32 = 0xC000_0102;
         let gdt = per_cpu_gdt_mut(0);
 
         gdt.ptr.limit = (core::mem::size_of::<[GdtEntry; GDT_MAX_ENTRIES]>() - 1) as u16;
@@ -700,16 +703,6 @@ pub fn gdt_init() -> i32 {
         // 进入 enter_user_asm 时在内核态, IA32_GS_BASE = per_cpu_addr.
         // 执行 swapgs 后, IA32_GS_BASE = 0 (用户态), IA32_KERNEL_GS_BASE = per_cpu_addr.
         // 用户态执行 syscall 时, syscall_entry 的 swapgs 将其换回 per_cpu_addr.
-        #[expect(
-            clippy::items_after_statements,
-            reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-        )]
-        const IA32_GS_BASE: u32 = 0xC000_0101;
-        #[expect(
-            clippy::items_after_statements,
-            reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-        )]
-        const IA32_KERNEL_GS_BASE: u32 = 0xC000_0102;
         crate::privileged::cpu::msr::write_msr(IA32_GS_BASE, &gdt.syscall as *const _ as u64);
         crate::privileged::cpu::msr::write_msr(IA32_KERNEL_GS_BASE, 0);
 
@@ -732,11 +725,6 @@ pub fn gdt_init() -> i32 {
         );
     }
 
-    #[expect(
-        clippy::items_after_statements,
-        reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-    )]
-    static OK_MSG: &[u8] = b"GDT and TSS initialized successfully (BSP)\0";
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
         klog_write(
@@ -804,6 +792,8 @@ pub fn alloc_ap_gdt(cpu_index: u32) -> bool {
 pub fn gdt_init_ap(cpu_index: u32) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
+        const IA32_GS_BASE: u32 = 0xC000_0101;
+        const IA32_KERNEL_GS_BASE: u32 = 0xC000_0102;
         let ap = per_cpu_gdt_mut(cpu_index);
 
         ap.ptr.limit = (core::mem::size_of::<[GdtEntry; GDT_MAX_ENTRIES]>() - 1) as u16;
@@ -862,16 +852,6 @@ pub fn gdt_init_ap(cpu_index: u32) {
         // `mov gs` 遗留的 0 ⇒ `process_switch_asm` 的 `[gs:TRAMPOLINE_TOP_OFF]`
         // 读到线性地址 0x20 的垃圾值, 用户态出口栈错乱 (首次上下文切换即
         // #PF → #DF); 且用户态 syscall 的 swapgs 也拿不到 per-CPU 基址。
-        #[expect(
-            clippy::items_after_statements,
-            reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-        )]
-        const IA32_GS_BASE: u32 = 0xC000_0101;
-        #[expect(
-            clippy::items_after_statements,
-            reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-        )]
-        const IA32_KERNEL_GS_BASE: u32 = 0xC000_0102;
         crate::privileged::cpu::msr::write_msr(IA32_GS_BASE, &ap.syscall as *const _ as u64);
         crate::privileged::cpu::msr::write_msr(IA32_KERNEL_GS_BASE, 0);
     }

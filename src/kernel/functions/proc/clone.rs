@@ -272,7 +272,7 @@ fn clone_impl(
             // SP_EL1 (@96) 必须是子线程**自己的**内核栈顶: 沿用父线程的值会
             // 让子线程首次陷入 EL1 时把异常帧压进父线程的栈页.
             child_ctx.ds = child.kernel_stack.load(Ordering::SeqCst) & !0xF;
-            // `_fpu_pad`(@136, EL0 的 TTBR0) 与 `es`(@104, EL1 视图根) 随 ctx
+            // `fpu_pad`(@136, EL0 的 TTBR0) 与 `es`(@104, EL1 视图根) 随 ctx
             // 复制而来: 本路径恒共享父线程页表 (上文 cr3 = parent_cr3), 二者
             // 对父子线程同值, 无需改写.
         }

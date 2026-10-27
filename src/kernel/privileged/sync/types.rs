@@ -266,7 +266,7 @@ pub struct SpinLockGuard<'a, T> {
     /// 被保护的数据引用
     pub data: &'a mut T,
     /// 锁的引用 (用于 unlock)
-    pub _lock: &'a SpinLockInner,
+    pub lock: &'a SpinLockInner,
 }
 
 impl<T> core::ops::Deref for SpinLockGuard<'_, T> {
@@ -284,13 +284,9 @@ impl<T> core::ops::DerefMut for SpinLockGuard<'_, T> {
 }
 
 impl<T> Drop for SpinLockGuard<'_, T> {
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
     fn drop(&mut self) {
         core::sync::atomic::fence(Ordering::SeqCst);
-        self._lock.locked.store(0, Ordering::Release);
+        self.lock.locked.store(0, Ordering::Release);
     }
 }
 
@@ -302,7 +298,7 @@ pub struct MutexGuard<'a, T> {
     /// 被保护数据的可变引用
     pub data: &'a mut T,
     /// 对应的 Mutex 内部状态
-    pub _mutex: &'a MutexInner,
+    pub mutex: &'a MutexInner,
     /// Lockdep 锁类 ID (debug 或 feature="lockdep" 下使用); `drop` 完全解锁时通知释放.
     #[cfg(any(debug_assertions, feature = "lockdep"))]
     pub lockdep_class: LockClassId,
@@ -326,25 +322,21 @@ impl<T> core::ops::DerefMut for MutexGuard<'_, T> {
 }
 
 impl<T> Drop for MutexGuard<'_, T> {
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
     fn drop(&mut self) {
-        self._mutex.inner_spinlock.raw_lock();
+        self.mutex.inner_spinlock.raw_lock();
 
-        let depth = self._mutex.depth.fetch_sub(1, Ordering::AcqRel);
+        let depth = self.mutex.depth.fetch_sub(1, Ordering::AcqRel);
         if depth <= 1 {
             // Lockdep: 与 `acquire_lock_internal` 单次 acquire 对齐 — 仅真正解锁
             // (深度归零) 时通知释放, 避免递归锁的多层 guard 过度 release.
             #[cfg(any(debug_assertions, feature = "lockdep"))]
             crate::privileged::sync::lockdep::release(self.lockdep_class, self.lockdep_instance);
-            self._mutex.locked.store(0, Ordering::Release);
-            self._mutex.owner.store(-1, Ordering::Release);
-            self._mutex.acquire_time.store(0, Ordering::Release);
+            self.mutex.locked.store(0, Ordering::Release);
+            self.mutex.owner.store(-1, Ordering::Release);
+            self.mutex.acquire_time.store(0, Ordering::Release);
         }
 
-        self._mutex.inner_spinlock.raw_unlock();
+        self.mutex.inner_spinlock.raw_unlock();
     }
 }
 
@@ -353,7 +345,7 @@ pub struct RwLockReadGuard<'a, T> {
     /// 被保护数据的共享引用
     pub data: &'a T,
     /// 对应的 RwLock 内部状态
-    pub _rwlock: &'a RwLockInner,
+    pub rwlock: &'a RwLockInner,
 }
 
 impl<T> core::ops::Deref for RwLockReadGuard<'_, T> {
@@ -365,12 +357,8 @@ impl<T> core::ops::Deref for RwLockReadGuard<'_, T> {
 }
 
 impl<T> Drop for RwLockReadGuard<'_, T> {
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
     fn drop(&mut self) {
-        let prev_readers = self._rwlock.readers.fetch_sub(1, Ordering::AcqRel);
+        let prev_readers = self.rwlock.readers.fetch_sub(1, Ordering::AcqRel);
 
         // 边界检查 (debug 模式)
         debug_assert!(prev_readers > 0, "RwLock: read_unlock without read_lock");
@@ -382,7 +370,7 @@ pub struct RwLockWriteGuard<'a, T> {
     /// 被保护数据的可变引用
     pub data: &'a mut T,
     /// 对应的 RwLock 内部状态
-    pub _rwlock: &'a RwLockInner,
+    pub rwlock: &'a RwLockInner,
 }
 
 impl<T> core::ops::Deref for RwLockWriteGuard<'_, T> {
@@ -400,14 +388,10 @@ impl<T> core::ops::DerefMut for RwLockWriteGuard<'_, T> {
 }
 
 impl<T> Drop for RwLockWriteGuard<'_, T> {
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
     fn drop(&mut self) {
         core::sync::atomic::fence(Ordering::SeqCst);
-        self._rwlock.writer.store(0, Ordering::Release);
-        self._rwlock.lock.locked.store(0, Ordering::Release);
+        self.rwlock.writer.store(0, Ordering::Release);
+        self.rwlock.lock.locked.store(0, Ordering::Release);
     }
 }
 

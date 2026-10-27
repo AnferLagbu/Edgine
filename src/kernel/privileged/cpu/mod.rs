@@ -393,6 +393,7 @@ pub fn get_cpu_info() -> Option<&'static CpuInfo> {
     reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
 )]
 pub extern "C" fn cpu_init() -> i32 {
+    static OK_MSG: &[u8] = b"CPU driver initialized successfully\0";
     use crate::privileged::klog::{LogCategory, LogLevel, klog_write};
 
     static INIT_MSG: &[u8] = b"Initializing EG AMD64 CPU driver...\0";
@@ -492,11 +493,6 @@ pub extern "C" fn cpu_init() -> i32 {
         return -1;
     }
 
-    #[expect(
-        clippy::items_after_statements,
-        reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-    )]
-    static OK_MSG: &[u8] = b"CPU driver initialized successfully\0";
     // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
     unsafe {
         klog_write(
@@ -754,6 +750,7 @@ pub(crate) fn init_msr(features: &CpuFeatures) -> Result<(), &'static str> {
     if features.contains(CpuFeatures::SYSCALL) {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
+            const SFMASK_IF: u64 = 1 << 9;
             // 启用 SYSCALL 指令 (设置 EFER.SCE)
             let efer = self::msr::read_msr(self::msr::IA32_EFER);
             self::msr::write_msr(self::msr::IA32_EFER, efer | self::msr::EFER_SCE);
@@ -770,11 +767,6 @@ pub(crate) fn init_msr(features: &CpuFeatures) -> Result<(), &'static str> {
             self::msr::write_msr(self::msr::IA32_LSTAR, entry_hi);
 
             // SFMASK: 进入内核时清除 IF (bit 9) 以禁用中断
-            #[expect(
-                clippy::items_after_statements,
-                reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-            )]
-            const SFMASK_IF: u64 = 1 << 9;
             self::msr::write_msr(self::msr::IA32_SFMASK, SFMASK_IF);
         }
     }

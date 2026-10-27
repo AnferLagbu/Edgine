@@ -207,6 +207,7 @@ pub fn sys_munlockall() -> i64 {
 )]
 /// `sys_mincore(addr, len, vec_ptr) -> 0/-errno` — 查询区间各页是否驻留, 驻留位图写入 `vec_ptr`。
 pub fn sys_mincore(addr: u64, len: u64, vec_ptr: u64) -> i64 {
+    const MAX_STACK_PAGES: usize = 1024;
     if addr & (PAGE_SIZE - 1) != 0 {
         return Errno::EINVAL.as_ret();
     }
@@ -230,11 +231,6 @@ pub fn sys_mincore(addr: u64, len: u64, vec_ptr: u64) -> i64 {
         None => return Errno::EFAULT.as_ret(),
     };
 
-    #[expect(
-        clippy::items_after_statements,
-        reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-    )]
-    const MAX_STACK_PAGES: usize = 1024;
     if n_pages > MAX_STACK_PAGES {
         return Errno::ENOMEM.as_ret();
     }

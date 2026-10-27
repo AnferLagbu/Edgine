@@ -547,14 +547,8 @@ mod tests {
 
 /// 注册硬件计数器频率测定相关测试用例 (kernel_test)
 #[cfg(feature = "kernel_test")]
-// J-01 (2026-09-08): items_after_statements — 测试注册函数内嵌套测试 fn 为内核测试惯用模式
-#[expect(
-    clippy::items_after_statements,
-    reason = "items_after_statements: 测试注册函数内嵌套测试 fn 为内核测试惯用模式; 当前优先 expect"
-)]
 pub fn register_timer_calibration_tests() {
     use crate::privileged::tests::{TestFn, TestResult, runner};
-    let r = runner();
 
     /// E-I 接线验证: 启动编排已登记频率, 且读数可用
     fn boot_timebase_recorded() -> TestResult {
@@ -587,6 +581,7 @@ pub fn register_timer_calibration_tests() {
         TestResult::Pass
     }
 
+    let r = runner();
     r.register(
         "timer::calibration",
         "boot_timebase_recorded",

@@ -151,10 +151,6 @@ impl VirtualMemoryManager {
         }
     }
 
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
     /// 映射单个 4KB 页到内核页表 (`KERNEL_PML4`), 并累加映射计数.
     ///
     /// # Errors
@@ -166,7 +162,7 @@ impl VirtualMemoryManager {
         phys: PhysAddr,
         flags: PageFlags,
     ) -> Result<(), &'static str> {
-        let _flags = self.acquire_lock();
+        let guard = self.acquire_lock();
 
         let result = self.map_page_internal(virt, phys, flags);
 
@@ -174,14 +170,10 @@ impl VirtualMemoryManager {
             self.total_maps.fetch_add(1, Ordering::Relaxed);
         }
 
-        self.release_lock(&_flags);
+        self.release_lock(&guard);
         result
     }
 
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
     /// 映射大页 (2MB/1GB, 或退回 4KB) 到内核页表, 并累加映射计数.
     ///
     /// # Errors
@@ -199,7 +191,7 @@ impl VirtualMemoryManager {
             return Err("Address not aligned for huge page");
         }
 
-        let _flags = self.acquire_lock();
+        let guard = self.acquire_lock();
 
         let mut flags = flags;
         flags.insert(PageFlags::HUGE_PAGE);
@@ -214,23 +206,19 @@ impl VirtualMemoryManager {
             self.total_maps.fetch_add(1, Ordering::Relaxed);
         }
 
-        self.release_lock(&_flags);
+        self.release_lock(&guard);
         result
     }
 
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
     /// 拆除内核页表中的单页翻译 (含 4KB / 2MB / 1GB 三种形态) 并触发远程 TLB 失效.
     ///
     /// 内核高半区 (`PML4[256..511]`) 受 fail-closed 保护, 命中即跳过.
     pub fn unmap_page(&self, virt: VirtAddr) {
-        let _flags = self.acquire_lock();
+        let guard = self.acquire_lock();
 
         let pml4_base = KERNEL_PML4.load(Ordering::Acquire);
         if pml4_base == 0 {
-            self.release_lock(&_flags);
+            self.release_lock(&guard);
             return;
         }
 
@@ -248,7 +236,7 @@ impl VirtualMemoryManager {
                 virt.0,
                 virt.pml4_idx()
             );
-            self.release_lock(&_flags);
+            self.release_lock(&guard);
             return;
         }
 
@@ -259,7 +247,7 @@ impl VirtualMemoryManager {
             let pml4e = &*pml4.add(virt.pml4_idx());
 
             if !pml4e.is_present() {
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -268,7 +256,7 @@ impl VirtualMemoryManager {
             let pdpte = &*pdpt.add(virt.pdpt_idx());
 
             if !pdpte.is_present() {
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -283,7 +271,7 @@ impl VirtualMemoryManager {
                 let pde = &*pd.add(virt.pd_idx());
 
                 if !pde.is_present() {
-                    self.release_lock(&_flags);
+                    self.release_lock(&guard);
                     return;
                 }
 
@@ -302,23 +290,19 @@ impl VirtualMemoryManager {
         }
 
         self.total_unmaps.fetch_add(1, Ordering::Relaxed);
-        self.release_lock(&_flags);
+        self.release_lock(&guard);
     }
 
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
     /// 修改虚拟页的保护属性 (mprotect 核心实现)
     ///
     /// 遍历四级页表找到 PTE, 修改 R/W/U/NX 位, 然后 flush TLB.
     /// 如果页不存在, 静默跳过 (mprotect 对未映射页无操作).
     pub fn protect_page(&self, virt: VirtAddr, new_flags: PageFlags) {
-        let _flags = self.acquire_lock();
+        let guard = self.acquire_lock();
 
         let pml4_base = KERNEL_PML4.load(Ordering::Acquire);
         if pml4_base == 0 {
-            self.release_lock(&_flags);
+            self.release_lock(&guard);
             return;
         }
 
@@ -335,7 +319,7 @@ impl VirtualMemoryManager {
                 virt.0,
                 virt.pml4_idx()
             );
-            self.release_lock(&_flags);
+            self.release_lock(&guard);
             return;
         }
 
@@ -345,7 +329,7 @@ impl VirtualMemoryManager {
             let pml4e = &*pml4.add(virt.pml4_idx());
 
             if !pml4e.is_present() {
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -353,7 +337,7 @@ impl VirtualMemoryManager {
             let pdpte = &*pdpt.add(virt.pdpt_idx());
 
             if !pdpte.is_present() {
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -367,7 +351,7 @@ impl VirtualMemoryManager {
                 (*entry).set_value(val);
                 // 权限变更 (mprotect): 远程核可能缓存旧 R/W/U/NX 位, 必须远程失效 (S-9)
                 self.flush_tlb_remote(virt.0);
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -375,7 +359,7 @@ impl VirtualMemoryManager {
             let pde = &*pd.add(virt.pd_idx());
 
             if !pde.is_present() {
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -388,7 +372,7 @@ impl VirtualMemoryManager {
                 (*entry).set_value(val);
                 // 权限变更 (mprotect): 远程核可能缓存旧 R/W/U/NX 位, 必须远程失效 (S-9)
                 self.flush_tlb_remote(virt.0);
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -403,13 +387,9 @@ impl VirtualMemoryManager {
             self.flush_tlb_remote(virt.0);
         }
 
-        self.release_lock(&_flags);
+        self.release_lock(&guard);
     }
 
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
     /// 修改**指定页表**中虚拟页的保护属性 (mprotect 显式变体)
     ///
     /// 与 [`Self::protect_page`] 的唯一区别是目标页表由调用方显式给出 (`pml4`),
@@ -437,7 +417,7 @@ impl VirtualMemoryManager {
             return;
         }
 
-        let _flags = self.acquire_lock();
+        let guard = self.acquire_lock();
 
         // SAFETY: pml4 是进程用户页表根物理地址; phys_to_virt 给出内核 VA.
         let pml4_virt = PhysAddr(pml4).to_virt();
@@ -448,7 +428,7 @@ impl VirtualMemoryManager {
             let pml4e = &*pml4.add(virt.pml4_idx());
 
             if !pml4e.is_present() {
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -456,7 +436,7 @@ impl VirtualMemoryManager {
             let pdpte = &*pdpt.add(virt.pdpt_idx());
 
             if !pdpte.is_present() {
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -470,7 +450,7 @@ impl VirtualMemoryManager {
                 (*entry).set_value(val);
                 // 权限变更 (mprotect): 远程核可能缓存旧 R/W/U/NX 位, 必须远程失效 (S-9)
                 self.flush_tlb_remote(virt.0);
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -478,7 +458,7 @@ impl VirtualMemoryManager {
             let pde = &*pd.add(virt.pd_idx());
 
             if !pde.is_present() {
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -491,7 +471,7 @@ impl VirtualMemoryManager {
                 (*entry).set_value(val);
                 // 权限变更 (mprotect): 远程核可能缓存旧 R/W/U/NX 位, 必须远程失效 (S-9)
                 self.flush_tlb_remote(virt.0);
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -506,7 +486,7 @@ impl VirtualMemoryManager {
             self.flush_tlb_remote(virt.0);
         }
 
-        self.release_lock(&_flags);
+        self.release_lock(&guard);
     }
 
     /// 在内核页表中翻译虚拟地址, 返回对应物理地址 (`None` 表示未映射).
@@ -652,10 +632,6 @@ impl VirtualMemoryManager {
         clippy::similar_names,
         reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
     )]
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
     /// 直接写入 PTE 原始值 (用于 swap 替换)
     ///
     /// 沿 PML4→PDPT→PD→PT 找到最终 PTE, 写入 `raw_pte` 后 TLB flush.
@@ -666,7 +642,7 @@ impl VirtualMemoryManager {
             return;
         }
 
-        let _flags = self.acquire_lock();
+        let guard = self.acquire_lock();
         let pml4_virt = PhysAddr(pml4).to_virt();
 
         // SAFETY: VMM_LOCK held; 四级页表查找 PTE 并直接写入
@@ -674,7 +650,7 @@ impl VirtualMemoryManager {
             let pml4_raw = pml4_virt.0 as *const u64;
             let pml4e = pml4_raw.add(virt.pml4_idx()).read_volatile();
             if (pml4e & 1) == 0 {
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -682,7 +658,7 @@ impl VirtualMemoryManager {
             let pdpt_raw = pdpt_virt as *const u64;
             let pdpte = pdpt_raw.add(virt.pdpt_idx()).read_volatile();
             if (pdpte & 1) == 0 || (pdpte & 0x80) != 0 {
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -690,7 +666,7 @@ impl VirtualMemoryManager {
             let pd_raw = pd_virt as *const u64;
             let pde = pd_raw.add(virt.pd_idx()).read_volatile();
             if (pde & 1) == 0 || (pde & 0x80) != 0 {
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -702,7 +678,7 @@ impl VirtualMemoryManager {
             self.flush_tlb_remote(virt.0);
         }
 
-        self.release_lock(&_flags);
+        self.release_lock(&guard);
     }
 
     /// 切换 CR3 指向的页表 (加载新 PML4).
@@ -722,10 +698,6 @@ impl VirtualMemoryManager {
     /// 该 unwrap 实际不会触发 panic.
     // 有意窄化: 显式收窄, 调用方保证值域
     #[expect(clippy::cast_possible_truncation)]
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
     pub fn create_user_page_table(&self) -> Option<u64> {
         let pmm = get_pmm();
         let pml4_phys = pmm.alloc_page()?;
@@ -760,7 +732,7 @@ impl VirtualMemoryManager {
             crate::privileged::mm::kpti::assemble_kernel_half(pml4_phys.as_u64(), kernel_pml4);
         }
 
-        let _flags = self.acquire_lock();
+        let guard = self.acquire_lock();
 
         let idx = self.find_free_user_slot();
         if idx < MAX_USER_PAGE_TABLES {
@@ -773,7 +745,7 @@ impl VirtualMemoryManager {
             self.user_table_count.fetch_add(1, Ordering::Relaxed);
         }
 
-        self.release_lock(&_flags);
+        self.release_lock(&guard);
 
         // GDT / IDT / TSS 头区 / 各栈顶页的内核映射已由上方 `assemble_kernel_half`
         // 统一装配 (KPTI 激活时逐页; 未激活时由复制的高半区条目覆盖), 故此前紧跟
@@ -791,14 +763,10 @@ impl VirtualMemoryManager {
     /// 语义与锁序约束见 `Self::map_page_in_table_locked`; 本入口只负责加/解锁,
     /// 供不持 `VMM_LOCK` 的路径使用。已持锁的路径必须直接用
     /// `Self::map_page_in_table_locked`, 否则构成递归加锁 (`VMM_LOCK` 非重入)。
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
     pub fn map_page_in_table(&self, pml4: u64, virt: VirtAddr, phys: PhysAddr, flags: PageFlags) {
-        let _flags = self.acquire_lock();
+        let guard = self.acquire_lock();
         self.map_page_in_table_locked(pml4, virt, phys, flags);
-        self.release_lock(&_flags);
+        self.release_lock(&guard);
     }
 
     /// 映射单个页 —— **要求调用方已持 `VMM_LOCK`**
@@ -895,10 +863,6 @@ impl VirtualMemoryManager {
         clippy::similar_names,
         reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
     )]
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
     /// 在指定页表中拆除单页翻译并触发远程失效; `pml4 == 0` 为空操作.
     ///
     /// 内核高半区受 fail-closed 保护, 命中即跳过.
@@ -921,7 +885,7 @@ impl VirtualMemoryManager {
             return;
         }
 
-        let _flags = self.acquire_lock();
+        let guard = self.acquire_lock();
 
         // SAFETY: pml4 = process CR3 value. phys_to_virt gives valid kernel VA.
         let pml4_virt = PhysAddr(pml4).to_virt();
@@ -935,7 +899,7 @@ impl VirtualMemoryManager {
             let pml4e = &*pml4_tbl.add(virt.pml4_idx());
 
             if !pml4e.is_present() {
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -944,7 +908,7 @@ impl VirtualMemoryManager {
             let pdpte = &*pdpt.add(virt.pdpt_idx());
 
             if !pdpte.is_present() {
-                self.release_lock(&_flags);
+                self.release_lock(&guard);
                 return;
             }
 
@@ -959,7 +923,7 @@ impl VirtualMemoryManager {
                 let pde = &*pd.add(virt.pd_idx());
 
                 if !pde.is_present() {
-                    self.release_lock(&_flags);
+                    self.release_lock(&guard);
                     return;
                 }
 
@@ -1016,16 +980,12 @@ impl VirtualMemoryManager {
         }
 
         self.total_unmaps.fetch_add(1, Ordering::Relaxed);
-        self.release_lock(&_flags);
+        self.release_lock(&guard);
     }
 
     #[expect(
         clippy::similar_names,
         reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
     )]
     /// 销毁指定用户页表: 拆除映射并延迟释放其占用的页帧; `pml4 == 0` 为空操作.
     pub fn destroy_page_table(&self, pml4: u64) {
@@ -1036,7 +996,7 @@ impl VirtualMemoryManager {
         // 埋点基线: 与函数末尾的差值为本次调用真正送入延迟释放链的帧数.
         let admitted_before = super::deferred_free::admitted();
 
-        let _flags = self.acquire_lock();
+        let guard = self.acquire_lock();
 
         // SAFETY: pml4 valid; VMM_LOCK held
         let pml4_virt = PhysAddr(pml4).to_virt();
@@ -1138,7 +1098,7 @@ impl VirtualMemoryManager {
             super::deferred_free::mark_remote_shootdown();
         }
 
-        self.release_lock(&_flags);
+        self.release_lock(&guard);
 
         // 埋点 (见 docs/plan/tlb-shootdown-epoch.md S-10): "销毁路径是否被走到" 是释放
         // 覆盖判别的第一分位 —— 整轮日志无本行 ⇒ 进程从未被回收 (`Process::drop` 未运行),
@@ -1443,10 +1403,6 @@ impl VirtualMemoryManager {
     // 有意窄化: 显式收窄, 调用方保证值域
     #[expect(clippy::cast_possible_truncation)]
     #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
-    #[expect(
         clippy::ptr_as_ptr,
         reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
     )]
@@ -1474,7 +1430,7 @@ impl VirtualMemoryManager {
             return Err("Cannot split kernel-half 2MB page (KPTI shared)");
         }
 
-        let _flags = self.acquire_lock();
+        let guard = self.acquire_lock();
 
         let result: Result<(), &'static str> = (|| {
             let pml4_virt = PhysAddr(pml4_base).to_virt();
@@ -1533,7 +1489,7 @@ impl VirtualMemoryManager {
             Ok(())
         })();
 
-        self.release_lock(&_flags);
+        self.release_lock(&guard);
         result
     }
 
@@ -1629,10 +1585,6 @@ impl VirtualMemoryManager {
         reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
     )]
     #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
-    #[expect(
         clippy::too_many_lines,
         reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
     )]
@@ -1644,7 +1596,7 @@ impl VirtualMemoryManager {
             return None;
         }
 
-        let _flags = self.acquire_lock();
+        let guard = self.acquire_lock();
 
         let pmm = get_pmm();
         let child_pml4_phys = pmm.alloc_page()?;
@@ -1807,7 +1759,7 @@ impl VirtualMemoryManager {
             }
         }
 
-        self.release_lock(&_flags);
+        self.release_lock(&guard);
         Some(child_pml4_phys.as_u64())
     }
 

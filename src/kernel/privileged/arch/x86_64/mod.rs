@@ -344,6 +344,10 @@ impl InterruptArch for X8664 {
 
             // SAFETY: MSR 写入在 boot 阶段单线程执行
             unsafe {
+                // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
+                unsafe extern "C" {
+                    fn syscall_entry();
+                }
                 let efer = crate::privileged::cpu::msr::read_msr(IA32_EFER);
                 crate::privileged::cpu::msr::write_msr(IA32_EFER, efer | EFER_SCE);
 
@@ -362,14 +366,6 @@ impl InterruptArch for X8664 {
                 // 此时 phys = VA - KERNEL_BASE 由直接映射 (pd_high 大页) 天然正确,
                 // 数据引用 (绝对低地址 + RIP-relative) 全部可达, 且与异常/IRQ 路径
                 // (IDT 门指向 0xFFFF80000012xxxx) 保持一致.
-                // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
-                #[expect(
-                    clippy::items_after_statements,
-                    reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-                )]
-                unsafe extern "C" {
-                    fn syscall_entry();
-                }
                 let entry_lma = syscall_entry as *const () as u64;
                 let entry_hi = entry_lma + 0xFFFF_8000_0000_0000_u64;
                 crate::klog_boot_info!(

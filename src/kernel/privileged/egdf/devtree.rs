@@ -334,16 +334,6 @@ pub fn devtree_walk<F>(mut f: F)
 where
     F: FnMut(&EGDFNode),
 {
-    let tree = DEV_TREE.lock();
-    let root_id = ROOT_NODE_ID.load(Ordering::Acquire);
-    if root_id == 0 {
-        return;
-    }
-
-    #[expect(
-        clippy::items_after_statements,
-        reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-    )]
     fn walk_children<F: FnMut(&EGDFNode)>(nodes: &[EGDFNode], id: NodeId, f: &mut F) {
         if let Some(node) = nodes.iter().find(|n| n.id == id) {
             f(node);
@@ -351,6 +341,11 @@ where
                 walk_children(nodes, *child_id, f);
             }
         }
+    }
+    let tree = DEV_TREE.lock();
+    let root_id = ROOT_NODE_ID.load(Ordering::Acquire);
+    if root_id == 0 {
+        return;
     }
 
     walk_children(&tree.nodes, root_id, &mut f);
@@ -377,13 +372,6 @@ pub fn devtree_count() -> usize {
 }
 
 fn devtree_print_impl() {
-    let tree = DEV_TREE.lock();
-    let root_id = ROOT_NODE_ID.load(Ordering::Acquire);
-
-    #[expect(
-        clippy::items_after_statements,
-        reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-    )]
     fn print_node(nodes: &[EGDFNode], id: NodeId, depth: usize) {
         if let Some(node) = nodes.iter().find(|n| n.id == id) {
             let _ = depth;
@@ -393,6 +381,8 @@ fn devtree_print_impl() {
             }
         }
     }
+    let tree = DEV_TREE.lock();
+    let root_id = ROOT_NODE_ID.load(Ordering::Acquire);
 
     if root_id != 0 {
         print_node(&tree.nodes, root_id, 0);

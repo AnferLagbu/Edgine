@@ -20,10 +20,6 @@ use crate::privileged::syscall::raw;
 // 12 个 Socket Syscall 安全代理
 // ============================================================================
 
-#[expect(
-    clippy::used_underscore_binding,
-    reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-)]
 /// socket(domain, type, protocol) — 返回新 FD
 ///
 /// 分流: `AF_UNIX(1)` → UDS 子系统; `AF_INET(2)` → smoltcp 协议栈; 其他 → EAFNOSUPPORT
@@ -32,7 +28,7 @@ use crate::privileged::syscall::raw;
 ///
 /// 当 `AF_UNIX` 的 `sock_type` 非 Stream/Dgram 时返回 `Err(Errno::EINVAL)`; 不支持的协议族返回
 /// `Err(Errno::EAFNOSUPPORT)`; 底层创建失败时返回对应的 `Errno`。
-pub fn socket_syscall(domain: i32, sock_type: i32, _protocol: i32) -> Result<usize, Errno> {
+pub fn socket_syscall(domain: i32, sock_type: i32, protocol: i32) -> Result<usize, Errno> {
     // AF_UNIX 分流
     if domain == 1 {
         let st = match sock_type {
@@ -45,7 +41,7 @@ pub fn socket_syscall(domain: i32, sock_type: i32, _protocol: i32) -> Result<usi
             .map_err(super::unix::UnixSocketError::to_errno);
     }
     // AF_INET (smoltcp)
-    let r = fw::socket_syscall(domain, sock_type, _protocol);
+    let r = fw::socket_syscall(domain, sock_type, protocol);
     if r < 0 {
         Err(Errno::from_ret(r))
     } else {

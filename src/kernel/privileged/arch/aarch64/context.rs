@@ -15,7 +15,7 @@
 //! | 112      | fs          | SPSR_EL1 |
 //! | 120      | gs          | ELR_EL1 |
 //! | 128      | ss          | SP_EL0 (用户栈指针) |
-//! | 136      | _fpu_pad    | 用户页表 (EL0 的 TTBR0) |
+//! | 136      | fpu_pad    | 用户页表 (EL0 的 TTBR0) |
 //! | 144..656 | fpu_state   | V0-V31 |
 //! | 656, 664 | fpcr, fpsr  | FPCR / FPSR |
 //! | 672..728 | extra_regs  | x0..x7 |
@@ -54,7 +54,7 @@ context_switch_asm:
     //   x23→rbx(32)  x24→rbp(40)  x25→rax(48)  x26→rip(56)
     //   x27→rsp(64)  x28→rflags(72)  x29→cr3(80)  x30→cs(88)
     //   sp→ds(96)  TTBR0→es(104)  常量0x3C5→fs(112)  x30→gs(120)
-    //   SP_EL0→ss(128)  用户页表→_fpu_pad(136)  (系统寄存器映射)
+    //   SP_EL0→ss(128)  用户页表→fpu_pad(136)  (系统寄存器映射)
 
     str  x19, [x0, #0]
     str  x20, [x0, #8]
@@ -98,7 +98,7 @@ context_switch_asm:
 
     // 保存 FPU/SIMD 状态 (V0-V31, FPCR, FPSR)
     // fpu_state 在 offset 144 (18 * 8 = 144 bytes)
-    // 需要 16 字节对齐，ProcessContext 已添加 _fpu_pad 保证对齐
+    // 需要 16 字节对齐，ProcessContext 已添加 fpu_pad 保证对齐
     add  x2, x0, #144
     stp  q0, q1, [x2, #0]
     stp  q2, q3, [x2, #32]
@@ -278,7 +278,7 @@ pub struct Aarch64Context {
     pub spsr: u64,       // offset 112 → fs  (恢复路径分派依据)
     pub elr: u64,        // offset 120 → gs
     pub sp_el0: u64,     // offset 128 → ss  (用户栈指针)
-    pub user_ttbr0: u64, // offset 136 → _fpu_pad (EL0 的 TTBR0)
+    pub user_ttbr0: u64, // offset 136 → fpu_pad (EL0 的 TTBR0)
 }
 
 // SAFETY: C ABI 互操作，函数签名与外部代码约定一致

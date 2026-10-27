@@ -248,7 +248,7 @@ impl SpinLock {
 
         SpinLockGuard {
             data: data_ref,
-            _lock: &self.inner,
+            lock: &self.inner,
         }
     }
 

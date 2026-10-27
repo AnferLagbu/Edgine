@@ -224,6 +224,7 @@ pub unsafe fn rcu_assign_pointer<T>(slot: *mut *const T, new_val: *const T) {
 /// 2. 等待每个 CPU 报告 `GP_DONE` (通过 `rcu_note_quiescent_state`)
 /// 3. 处理回调
 fn synchronize_rcu_impl() {
+    const SYNC_TIMEOUT_SPINS: u32 = 50_000_000;
     let start_gp = RCU_GP_COUNTER.load(Ordering::Relaxed);
     RCU_GP_COUNTER.store(start_gp.wrapping_add(1), Ordering::Release);
 
@@ -252,11 +253,6 @@ fn synchronize_rcu_impl() {
         }
     }
 
-    #[expect(
-        clippy::items_after_statements,
-        reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-    )]
-    const SYNC_TIMEOUT_SPINS: u32 = 50_000_000;
     for i in 0..cpu_count {
         if i == current_cpu {
             continue;

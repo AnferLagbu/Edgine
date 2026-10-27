@@ -36,16 +36,8 @@ pub fn getrusage_syscall(who: i32, rusage_ptr: u64) -> i64 {
 
 /// sysinfo(info) 策略
 pub fn sysinfo_syscall(info_ptr: u64) -> i64 {
-    if info_ptr == 0 {
-        return Errno::EINVAL.as_ret();
-    }
-
     #[repr(C)]
     #[derive(Copy, Clone)]
-    #[expect(
-        clippy::items_after_statements,
-        reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-    )]
     struct SysInfo {
         uptime: i64,
         loads: [u64; 3],
@@ -60,6 +52,9 @@ pub fn sysinfo_syscall(info_ptr: u64) -> i64 {
         totalhigh: u64,
         freehigh: u64,
         mem_unit: u32,
+    }
+    if info_ptr == 0 {
+        return Errno::EINVAL.as_ret();
     }
 
     let ticks = crate::privileged::syscall::api::get_ticks();
@@ -123,19 +118,14 @@ pub fn setrlimit_syscall(resource: i32, rlim_ptr: u64) -> i64 {
 
 /// getrlimit(resource, rlim) 策略
 pub fn getrlimit_syscall(_resource: i32, rlim_ptr: u64) -> i64 {
-    if rlim_ptr == 0 {
-        return Errno::EINVAL.as_ret();
-    }
-
     #[repr(C)]
     #[derive(Copy, Clone)]
-    #[expect(
-        clippy::items_after_statements,
-        reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-    )]
     struct Rlimit {
         rlim_cur: u64,
         rlim_max: u64,
+    }
+    if rlim_ptr == 0 {
+        return Errno::EINVAL.as_ret();
     }
 
     let r = Rlimit {

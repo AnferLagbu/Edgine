@@ -194,10 +194,6 @@ impl ExceptionHandler for PageFaultHandler {
         clippy::match_same_arms,
         reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
     )]
-    #[expect(
-        clippy::items_after_statements,
-        reason = "items_after_statements: item 紧邻使用点声明便于阅读上下文; 当前优先 expect"
-    )]
     fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
         // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
         let fault_addr = unsafe { (*frame).fault_address() };
@@ -206,6 +202,7 @@ impl ExceptionHandler for PageFaultHandler {
 
         // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
         if unsafe { (*frame).is_user_mode() } {
+            use crate::privileged::mm::PfResult;
             if crate::privileged::proc::try_expand_user_stack(fault_addr) {
                 return RecoveryAction::Recovered;
             }
@@ -218,7 +215,6 @@ impl ExceptionHandler for PageFaultHandler {
                 // SAFETY: 调用方保证指针/类型有效
                 unsafe { (*frame).err_code },
             );
-            use crate::privileged::mm::PfResult;
             let pid = crate::privileged::proc::process_get_current_pid();
             match crate::privileged::mm::handle_user_page_fault(pf_info) {
                 PfResult::Fixed => return RecoveryAction::Recovered,

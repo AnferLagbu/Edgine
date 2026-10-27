@@ -241,7 +241,7 @@ pub struct ProcessContext {
     pub ss: u64,
     /// 填充字段，确保 `fpu_state` 16 字节对齐
     /// fxsave/fxrstor 要求内存地址 16 字节对齐
-    pub _fpu_pad: u64,
+    pub fpu_pad: u64,
     /// FPU/SSE 状态预留区域 (512 bytes for V0-V31)
     ///
     /// Phase 1: 预留空间，不实际保存/恢复
@@ -291,7 +291,7 @@ impl ProcessContext {
             fs: 0,
             gs: 0,
             ss: 0,
-            _fpu_pad: 0,
+            fpu_pad: 0,
             fpu_state: [0; 64],
             fpcr: 0,
             fpsr: 0,

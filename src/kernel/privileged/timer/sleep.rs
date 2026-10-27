@@ -203,17 +203,12 @@ fn timer_sleep_yield(ms: u64) -> Result<(), i32> {
     // SAFETY: get_ticks() 读取全局原子计数器, scheduler_yield_ex() 是
     // 正常的调度器让出函数; 均可在进程上下文安全调用.
     unsafe {
-        let start_tick = get_ticks();
-        let target_ticks = ms_to_ticks(ms);
-
-        #[expect(
-            clippy::items_after_statements,
-            reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-        )]
-        // SAFETY: scheduler_yield_ex 由框架调度器提供, 进程上下文安全调用
+        // SAFETY: scheduler_yield_ex 由框架调度器提供, 符号与 C ABI 声明一致
         unsafe extern "C" {
             fn scheduler_yield_ex();
         }
+        let start_tick = get_ticks();
+        let target_ticks = ms_to_ticks(ms);
 
         loop {
             let elapsed = get_ticks().saturating_sub(start_tick);
@@ -442,14 +437,8 @@ mod tests {
 
 /// 注册忙等待 (sleep) 相关测试用例 (kernel_test)
 #[cfg(feature = "kernel_test")]
-// J-01 (2026-09-08): items_after_statements — 测试注册函数内嵌套测试 fn 为内核测试惯用模式
-#[expect(
-    clippy::items_after_statements,
-    reason = "items_after_statements: 测试注册函数内嵌套测试 fn 为内核测试惯用模式; 当前优先 expect"
-)]
 pub fn register_timer_sleep_tests() {
     use crate::privileged::tests::{TestFn, TestResult, runner};
-    let r = runner();
 
     fn busy_wait_zero_duration() -> TestResult {
         let start = read_tsc();
@@ -486,6 +475,7 @@ pub fn register_timer_sleep_tests() {
         TestResult::Pass
     }
 
+    let r = runner();
     r.register(
         "timer::sleep",
         "busy_wait_zero",

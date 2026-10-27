@@ -853,10 +853,6 @@ pub fn uds_send_connected(fd: i32, data: &[u8]) -> Result<usize, UdsError> {
     }
 }
 
-#[expect(
-    clippy::used_underscore_binding,
-    reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-)]
 /// 从 UDS 数据报套接字接收数据
 ///
 /// # Errors
@@ -864,8 +860,8 @@ pub fn uds_send_connected(fd: i32, data: &[u8]) -> Result<usize, UdsError> {
 /// 传播自 [`uds_recvfrom_with_creds`]: `fd` 无效或非数据报类型时返回 `Err(UdsError::Invalid)`;
 /// 无待收数据时返回 `Err(UdsError::Again)`。
 pub fn uds_recvfrom(fd: i32, out: &mut [u8]) -> Result<usize, UdsError> {
-    let (_n, _cred) = uds_recvfrom_with_creds(fd, out)?;
-    Ok(_n)
+    let (n, _cred) = uds_recvfrom_with_creds(fd, out)?;
+    Ok(n)
 }
 
 /// v2: DGRAM 接收并提取凭据

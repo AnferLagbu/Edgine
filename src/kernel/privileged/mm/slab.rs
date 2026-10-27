@@ -699,15 +699,12 @@ impl KmemCache {
         // SAFETY: slab 由 new_slab 中 pmm_alloc_pages 分配,
         // 释放同等数量页. 调用方保证 slab 已不在任何链表中且不持有活动对象.
         unsafe {
-            let pages_needed = SLAB_DEFAULT_SIZE.div_ceil(PAGE_SIZE as usize);
-            #[expect(
-                clippy::items_after_statements,
-                reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-            )]
-            // SAFETY: pmm_free_pages 由 PMM 层提供, 释放 destroy_slab 持有的 slab 物理页
+            // SAFETY: pmm_free_pages 由 PMM 层提供, 符号与 C ABI 声明一致
             unsafe extern "C" {
                 fn pmm_free_pages(addr: *mut u8, count: u64);
             }
+            let pages_needed = SLAB_DEFAULT_SIZE.div_ceil(PAGE_SIZE as usize);
+            // SAFETY: pmm_free_pages 由 PMM 层提供, 释放 destroy_slab 持有的 slab 物理页
             pmm_free_pages(slab as *mut u8, pages_needed as u64);
         }
     }

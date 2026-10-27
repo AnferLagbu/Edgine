@@ -397,17 +397,13 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
 // ============================================================================
 
 pub(crate) fn sys_nanosleep(req: u64, rem: u64) -> i64 {
-    if req == 0 || !raw::check_user_ptr(req) {
-        return Errno::EINVAL.as_ret();
-    }
     #[repr(C)]
-    #[expect(
-        clippy::items_after_statements,
-        reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-    )]
     struct Timespec {
         tv_sec: i64,
         tv_nsec: i64,
+    }
+    if req == 0 || !raw::check_user_ptr(req) {
+        return Errno::EINVAL.as_ret();
     }
     // SAFETY: `const` 由调用方保证为有效指针; 只读访问
     let ts = unsafe { core::ptr::read_volatile(req as *const Timespec) };

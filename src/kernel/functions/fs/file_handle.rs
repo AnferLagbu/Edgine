@@ -41,10 +41,6 @@ const HANDLE_TYPE_OFF: usize = 8;
 const HANDLE_HBYTES_OFF: usize = 12;
 const HANDLE_SERIALIZED_SIZE: usize = 16;
 
-#[expect(
-    clippy::items_after_statements,
-    reason = "items_after_statements: item 紧邻使用点声明便于阅读上下文; 当前优先 expect"
-)]
 /// `name_to_handle_at` — 导出文件句柄
 ///
 /// 将文件路径导出为可序列化的文件句柄, 用于跨进程传递或持久化.
@@ -69,6 +65,7 @@ pub fn name_to_handle_at_syscall(
     mnt_id: u64,
     _flags: u32,
 ) -> Result<i64, Errno> {
+    use crate::privileged::lib::CStrExt;
     if handle_buf == 0 {
         return Err(Errno::EFAULT);
     }
@@ -77,7 +74,6 @@ pub fn name_to_handle_at_syscall(
     }
 
     // 通过 VFS 解析路径, 获取 inode_id 和 mount_idx
-    use crate::privileged::lib::CStrExt;
     let path_ptr_raw = path_ptr as *const u8;
     let path = path_ptr_raw.as_kstr();
     if path.is_empty() {

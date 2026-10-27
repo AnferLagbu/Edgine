@@ -856,14 +856,8 @@ mod tests {
 
 /// 注册定时器 tick 子系统测试用例 (kernel_test)
 #[cfg(feature = "kernel_test")]
-// J-01 (2026-09-08): items_after_statements — 测试注册函数内嵌套测试 fn 为内核测试惯用模式
-#[expect(
-    clippy::items_after_statements,
-    reason = "items_after_statements: 测试注册函数内嵌套测试 fn 为内核测试惯用模式; 当前优先 expect"
-)]
 pub fn register_timer_tick_tests() {
     use crate::privileged::tests::{TestFn, TestResult, runner};
-    let r = runner();
 
     fn initial_state() -> TestResult {
         crate::assert_eq_test!(get_ticks(), 0, "ticks");
@@ -911,6 +905,7 @@ pub fn register_timer_tick_tests() {
         TestResult::Pass
     }
 
+    let r = runner();
     r.register("timer::tick", "initial_state", initial_state as TestFn);
     r.register(
         "timer::tick",

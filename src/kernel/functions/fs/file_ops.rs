@@ -67,20 +67,15 @@ pub fn ioctl_syscall(fd: i32, request: u64, arg: u64) -> i64 {
 
 /// poll(fds, nfds, timeout) 策略
 pub fn poll_syscall(fds_ptr: u64, nfds: u32, _timeout: i32) -> i64 {
-    if fds_ptr == 0 || nfds == 0 {
-        return 0;
-    }
-
     #[repr(C)]
     #[derive(Copy, Clone)]
-    #[expect(
-        clippy::items_after_statements,
-        reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-    )]
     struct PollFd {
         fd: i32,
         events: i16,
         revents: i16,
+    }
+    if fds_ptr == 0 || nfds == 0 {
+        return 0;
     }
 
     let mut ready: i32 = 0;

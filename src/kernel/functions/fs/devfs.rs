@@ -774,19 +774,9 @@ impl FileSystem for DevfsData {
         Ok(())
     }
 
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
-    fn fs_read(
-        &self,
-        _handle: u32,
-        _offset: u64,
-        buf: &mut [u8],
-        _pwm: u64,
-    ) -> KernelResult<usize> {
+    fn fs_read(&self, handle: u32, _offset: u64, buf: &mut [u8], _pwm: u64) -> KernelResult<usize> {
         // DevFS read 需要 dev_type, handle 即为 dev_type
-        let result = self.read(_handle as u8, buf);
+        let result = self.read(handle as u8, buf);
         if result < 0 {
             Err(KernelError::Io)
         } else {
@@ -794,12 +784,8 @@ impl FileSystem for DevfsData {
         }
     }
 
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
-    fn fs_write(&self, _handle: u32, _offset: u64, buf: &[u8], _pwm: u64) -> KernelResult<usize> {
-        let result = self.write(_handle as u8, buf);
+    fn fs_write(&self, handle: u32, _offset: u64, buf: &[u8], _pwm: u64) -> KernelResult<usize> {
+        let result = self.write(handle as u8, buf);
         if result < 0 {
             Err(KernelError::Io)
         } else {

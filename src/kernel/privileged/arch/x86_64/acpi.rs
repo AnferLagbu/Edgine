@@ -727,8 +727,8 @@ pub fn acpi_reboot() -> ! {
 struct HpetTable {
     header: SdtHeader,
     _hardware_rev_id: u8,
-    _comparator_count: u8,
-    _counter_size: u8,
+    comparator_count: u8,
+    counter_size: u8,
     _reserved1: u8,
     _pci_vendor_id: u16,
     address: [u8; 12], // 通用地址结构 (Generic Address Structure)
@@ -752,10 +752,6 @@ pub struct HpetInfo {
 
 static HPET_INFO: IrqSpinLock<Option<HpetInfo>> = IrqSpinLock::new(None);
 
-#[expect(
-    clippy::used_underscore_binding,
-    reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-)]
 fn parse_hpet(hpet_ptr: u64) {
     // SAFETY: `hpet_ptr` 指向已验证有效的 ACPI/BIOS 表头 (长度 ≥ sizeof(HpetTable)); 只读访问
     let hpet = unsafe { &*(hpet_ptr as *const HpetTable) };
@@ -775,8 +771,8 @@ fn parse_hpet(hpet_ptr: u64) {
     let info = HpetInfo {
         base_addr,
         hpet_number: hpet.hpet_number,
-        comparator_count: hpet._comparator_count,
-        counter_size: hpet._counter_size,
+        comparator_count: hpet.comparator_count,
+        counter_size: hpet.counter_size,
     };
 
     crate::klog_info!(
