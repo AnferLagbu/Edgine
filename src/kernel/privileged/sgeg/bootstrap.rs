@@ -30,15 +30,11 @@ static FIRST_TOKEN_USED: AtomicBool = AtomicBool::new(true);
 static FIRST_TOKEN_ID: AtomicU64 = AtomicU64::new(0);
 static FIRST_TOKEN_CREATED: AtomicU64 = AtomicU64::new(0);
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 /// 生成新的首次令牌: 由 TSC 派生 token_id, 标记为未使用并记录创建时间。
 pub fn generate_first_token() {
     let token_id = {
         let tsc = crate::arch!(timestamp());
-        tsc.wrapping_mul(0x9e3779b97f4a7c15) >> 32
+        tsc.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32
     };
     FIRST_TOKEN_ID.store(token_id, Ordering::Release);
     FIRST_TOKEN_USED.store(false, Ordering::Release);

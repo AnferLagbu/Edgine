@@ -151,10 +151,6 @@ impl MemoryController {
         }
     }
 
-    #[expect(
-        clippy::needless_continue,
-        reason = "needless_continue: continue 提升循环可读性; 当前优先 expect"
-    )]
     /// 尝试计入 `bytes` 内存; 超限返回 `false` 且不改变用量.
     pub fn try_charge(&self, bytes: u64) -> bool {
         let limit = self.limit_in_bytes.load(Ordering::Acquire);
@@ -178,7 +174,7 @@ impl MemoryController {
                     self.update_max(current + bytes);
                     return true;
                 }
-                Err(_) => continue,
+                Err(_) => {}
             }
         }
     }
@@ -205,10 +201,6 @@ impl MemoryController {
         self.usage_in_bytes.load(Ordering::Acquire) > limit
     }
 
-    #[expect(
-        clippy::needless_continue,
-        reason = "needless_continue: continue 提升循环可读性; 当前优先 expect"
-    )]
     fn update_max(&self, current: u64) {
         loop {
             let max = self.max_usage_in_bytes.load(Ordering::Acquire);
@@ -222,7 +214,7 @@ impl MemoryController {
                 Ordering::Acquire,
             ) {
                 Ok(_) => break,
-                Err(_) => continue,
+                Err(_) => {}
             }
         }
     }
@@ -253,10 +245,6 @@ impl PidsController {
         }
     }
 
-    #[expect(
-        clippy::needless_continue,
-        reason = "needless_continue: continue 提升循环可读性; 当前优先 expect"
-    )]
     /// 尝试占用一个 PID 名额; 已达上限时记一次失败并返回 `false`.
     pub fn try_fork(&self) -> bool {
         let max = self.pids_max.load(Ordering::Acquire);
@@ -277,7 +265,7 @@ impl PidsController {
                 Ordering::Acquire,
             ) {
                 Ok(_) => return true,
-                Err(_) => continue,
+                Err(_) => {}
             }
         }
     }

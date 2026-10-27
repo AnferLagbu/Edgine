@@ -18,10 +18,6 @@ use crate::privileged::proc::{process_get_current_pid, process_with};
 static ENTROPY_POOL: AtomicU64 = AtomicU64::new(0x1234_5678_DEAD_BEEFu64);
 static PER_PROC_SEED: AtomicU64 = AtomicU64::new(0x5A5A_5A5A_5A5A_5A5Au64);
 
-#[expect(
-    clippy::needless_continue,
-    reason = "needless_continue: continue 提升循环可读性; 当前优先 expect"
-)]
 /// LFSR-64 推进一步并返回新值.
 ///
 /// 多项式: x^64 + x^63 + x^61 + x^60 + 1 (最大周期 2^64 - 1).
@@ -33,7 +29,7 @@ pub fn next_random_u64() -> u64 {
         let new = (old << 1) | (bit & 1);
         match ENTROPY_POOL.compare_exchange_weak(old, new, Ordering::AcqRel, Ordering::Acquire) {
             Ok(_) => return new,
-            Err(_) => continue,
+            Err(_) => {}
         }
     }
 }

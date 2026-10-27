@@ -45,7 +45,7 @@ impl WasiRights {
 
     /// 目录默认权限 (含遍历 / 创建 / 删除等目录类权限)
     pub const DIRECTORY: Self = Self {
-        base: 0x10000000
+        base: 0x1000_0000
             | 0x800
             | 0x400
             | 0x200

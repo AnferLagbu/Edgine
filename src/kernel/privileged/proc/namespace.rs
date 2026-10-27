@@ -49,19 +49,19 @@ use crate::privileged::syscall::Errno;
 // ============================================================================
 
 /// `CLONE_NEW`* 标志位 (与 Linux 一致)
-pub const CLONE_NEWNS: u64 = 0x00020000; // Mount namespace
+pub const CLONE_NEWNS: u64 = 0x0002_0000; // Mount namespace
 /// `CLONE_NEWUTS` — 新建 UTS namespace
-pub const CLONE_NEWUTS: u64 = 0x04000000; // UTS namespace
+pub const CLONE_NEWUTS: u64 = 0x0400_0000; // UTS namespace
 /// `CLONE_NEWIPC` — 新建 IPC namespace
-pub const CLONE_NEWIPC: u64 = 0x08000000; // IPC namespace
+pub const CLONE_NEWIPC: u64 = 0x0800_0000; // IPC namespace
 /// `CLONE_NEWUSER` — 新建 User namespace
-pub const CLONE_NEWUSER: u64 = 0x10000000; // User namespace
+pub const CLONE_NEWUSER: u64 = 0x1000_0000; // User namespace
 /// `CLONE_NEWPID` — 新建 PID namespace
-pub const CLONE_NEWPID: u64 = 0x20000000; // PID namespace
+pub const CLONE_NEWPID: u64 = 0x2000_0000; // PID namespace
 /// `CLONE_NEWNET` — 新建 Network namespace
-pub const CLONE_NEWNET: u64 = 0x40000000; // Network namespace
+pub const CLONE_NEWNET: u64 = 0x4000_0000; // Network namespace
 /// `CLONE_NEWCGROUP` — 新建 Cgroup namespace
-pub const CLONE_NEWCGROUP: u64 = 0x02000000; // Cgroup namespace
+pub const CLONE_NEWCGROUP: u64 = 0x0200_0000; // Cgroup namespace
 
 /// 所有 `CLONE_NEW`* 掩码
 pub const CLONE_NEW_ALL: u64 = CLONE_NEWNS

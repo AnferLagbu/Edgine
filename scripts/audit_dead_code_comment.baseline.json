@@ -5,8 +5,8 @@
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 1762,
-    "files": 308
+    "sites": 1649,
+    "files": 295
   },
   "entries": [
     [
@@ -73,11 +73,6 @@
       "src/kernel/functions/debug/ebpf_verifier.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
-    ],
-    [
-      "src/kernel/functions/driver/char/vga.rs",
-      "#[expect(clippy::return_self_not_must_use,reason=\"return_self_not_must_use:返回Self是builder/fluentAPI;当前优先expect\")",
-      2
     ],
     [
       "src/kernel/functions/driver/char/vga.rs",
@@ -296,11 +291,6 @@
     ],
     [
       "src/kernel/functions/freg/attribution.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
-    ],
-    [
-      "src/kernel/functions/freg/attribution.rs",
       "#[expect(clippy::upper_case_acronyms,reason=\"TCB归属枚举按子系统缩写命名(FREG/SGEG)",
       1
     ],
@@ -355,11 +345,6 @@
       1
     ],
     [
-      "src/kernel/functions/fs/dcache.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      2
-    ],
-    [
       "src/kernel/functions/fs/devfs.rs",
       "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       2
@@ -392,11 +377,6 @@
     [
       "src/kernel/functions/fs/exfat/fat.rs",
       "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/exfat/fat.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
       1
     ],
     [
@@ -590,28 +570,13 @@
       1
     ],
     [
-      "src/kernel/functions/fs/sysfs.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
-    ],
-    [
       "src/kernel/functions/fs/systree.rs",
       "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
       3
     ],
     [
-      "src/kernel/functions/fs/unkfs/arc.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
-    ],
-    [
       "src/kernel/functions/fs/unkfs/bp.rs",
       "#[allow(clippy::upper_case_acronyms)",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/bp.rs",
-      "#[expect(clippy::return_self_not_must_use,reason=\"return_self_not_must_use:返回Self是builder/fluentAPI;当前优先expect\")",
       1
     ],
     [
@@ -630,33 +595,13 @@
       1
     ],
     [
-      "src/kernel/functions/fs/unkfs/checksum.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:FIPS180-4SHA-256('')",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/checksum.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:FIPS180-4SHA-256('abc')",
-      1
-    ],
-    [
       "src/kernel/functions/fs/unkfs/compress.rs",
       "#[expect(clippy::match_same_arms,reason=\"match_same_arms:matcharm重复是为可读性/调试断点;当前优先expect\")",
       1
     ],
     [
-      "src/kernel/functions/fs/unkfs/compress.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
-    ],
-    [
       "src/kernel/functions/fs/unkfs/dataset.rs",
       "#[allow(clippy::should_implement_trait)",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/dataset.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
       1
     ],
     [
@@ -690,11 +635,6 @@
       1
     ],
     [
-      "src/kernel/functions/fs/unkfs/spa.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      2
-    ],
-    [
       "src/kernel/functions/fs/unkfs/unkfs_data.rs",
       "#[expect(clippy::assigning_clones,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
@@ -720,11 +660,6 @@
       1
     ],
     [
-      "src/kernel/functions/fs/unkfs/zap.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
-    ],
-    [
       "src/kernel/functions/fs/unkfs/zil_persist.rs",
       "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       1
@@ -732,11 +667,6 @@
     [
       "src/kernel/functions/fs/unkfs/zil_persist.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zil_persist.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
       1
     ],
     [
@@ -783,11 +713,6 @@
       "src/kernel/functions/fs/virtiofs.rs",
       "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
       3
-    ],
-    [
-      "src/kernel/functions/fs/virtiofs.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
     ],
     [
       "src/kernel/functions/ipc/mod.rs",
@@ -1056,11 +981,6 @@
     ],
     [
       "src/kernel/functions/mod.rs",
-      "#![allow(clippy::unreadable_literal)",
-      1
-    ],
-    [
-      "src/kernel/functions/mod.rs",
       "#![allow(clippy::wrong_self_convention)",
       1
     ],
@@ -1230,11 +1150,6 @@
       1
     ],
     [
-      "src/kernel/functions/sgeg/audit.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
-    ],
-    [
       "src/kernel/functions/sgeg/persist.rs",
       "#[expect(clippy::cast_possible_truncation)",
       2
@@ -1243,11 +1158,6 @@
       "src/kernel/functions/sgeg/persist.rs",
       "#[expect(clippy::large_stack_arrays,reason=\"large_stack_arrays:大栈数组是性能权衡(避免堆分配)",
       2
-    ],
-    [
-      "src/kernel/functions/sgeg/policy.rs",
-      "#[expect(clippy::return_self_not_must_use,reason=\"return_self_not_must_use:返回Self是builder/fluentAPI;当前优先expect\")",
-      1
     ],
     [
       "src/kernel/functions/sgeg/policy.rs",
@@ -1308,11 +1218,6 @@
       "src/kernel/functions/timer/clock.rs",
       "#[expect(clippy::similar_names,reason=\"tv_sec/tv_usec是structtimeval的ABI字段名;改名会与用户态ABI语义脱节\")",
       2
-    ],
-    [
-      "src/kernel/functions/timer/tickless.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
     ],
     [
       "src/kernel/functions/timer/tickless.rs",
@@ -1382,16 +1287,6 @@
     [
       "src/kernel/functions/wasm/wasi/path_ops.rs",
       "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/functions/wasm/wasi/path_ops.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
-    ],
-    [
-      "src/kernel/kernel_tests/mod.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
       1
     ],
     [
@@ -1626,11 +1521,6 @@
     ],
     [
       "src/kernel/lib.rs",
-      "#![allow(clippy::unreadable_literal)",
-      1
-    ],
-    [
-      "src/kernel/lib.rs",
       "#![allow(clippy::wrong_self_convention)",
       1
     ],
@@ -1700,23 +1590,8 @@
       1
     ],
     [
-      "src/kernel/privileged/arch/aarch64/gic.rs",
-      "#[expect(clippy::cast_lossless,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      9
-    ],
-    [
       "src/kernel/privileged/arch/aarch64/mmu.rs",
       "#[allow(clippy::identity_op)",
-      1
-    ],
-    [
-      "src/kernel/privileged/arch/aarch64/mod.rs",
-      "#[expect(clippy::cast_lossless,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/arch/aarch64/uart.rs",
-      "#[expect(clippy::cast_lossless,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
       1
     ],
     [
@@ -1805,11 +1680,6 @@
       1
     ],
     [
-      "src/kernel/privileged/arch/x86_64/gdt.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      2
-    ],
-    [
       "src/kernel/privileged/arch/x86_64/ioapic.rs",
       "#[expect(clippy::cast_possible_truncation)",
       5
@@ -1843,11 +1713,6 @@
       "src/kernel/privileged/arch/x86_64/mod.rs",
       "#[expect(clippy::needless_return,reason=\"needless_return:host桩分支显式return与裸机分支保持结构对称;当前优先expect\")",
       5
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/mod.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
     ],
     [
       "src/kernel/privileged/arch/x86_64/smp_init.rs",
@@ -2025,11 +1890,6 @@
       5
     ],
     [
-      "src/kernel/privileged/debug/ftrace.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
-    ],
-    [
       "src/kernel/privileged/debug/kgdb.rs",
       "#[expect(clippy::cast_possible_truncation)",
       2
@@ -2037,11 +1897,6 @@
     [
       "src/kernel/privileged/debug/kgdb.rs",
       "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/debug/kgdb.rs",
-      "#[expect(clippy::needless_continue,reason=\"needless_continue:continue提升循环可读性;当前优先expect\")",
       1
     ],
     [
@@ -2131,11 +1986,6 @@
     ],
     [
       "src/kernel/privileged/driver/display/framebuffer.rs",
-      "#[expect(clippy::return_self_not_must_use,reason=\"return_self_not_must_use:返回Self是builder/fluentAPI;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/display/framebuffer.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       9
     ],
@@ -2175,11 +2025,6 @@
       5
     ],
     [
-      "src/kernel/privileged/driver/infra.rs",
-      "#[expect(clippy::return_self_not_must_use,reason=\"return_self_not_must_use:返回Self是builder/fluentAPI;当前优先expect\")",
-      2
-    ],
-    [
       "src/kernel/privileged/driver/input/keyboard.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       2
@@ -2208,11 +2053,6 @@
       "src/kernel/privileged/driver/input/keyboard.rs",
       "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
       3
-    ],
-    [
-      "src/kernel/privileged/driver/input/keyboard.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
     ],
     [
       "src/kernel/privileged/driver/kexec.rs",
@@ -2273,11 +2113,6 @@
       "src/kernel/privileged/driver/storage/nvme.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       3
-    ],
-    [
-      "src/kernel/privileged/driver/storage/nvme.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      2
     ],
     [
       "src/kernel/privileged/driver/uefi.rs",
@@ -2355,19 +2190,9 @@
       1
     ],
     [
-      "src/kernel/privileged/egdf/firmware.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
-    ],
-    [
       "src/kernel/privileged/egdf/mod.rs",
       "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
       2
-    ],
-    [
-      "src/kernel/privileged/egdf/mod.rs",
-      "#[expect(clippy::needless_continue,reason=\"needless_continue:continue提升循环可读性;当前优先expect\")",
-      5
     ],
     [
       "src/kernel/privileged/egdf/mod.rs",
@@ -2470,11 +2295,6 @@
       1
     ],
     [
-      "src/kernel/privileged/freg/recoverable.rs",
-      "#[expect(clippy::return_self_not_must_use,reason=\"return_self_not_must_use:返回Self是builder/fluentAPI;当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/privileged/freg/reset/bbr.rs",
       "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       1
@@ -2482,11 +2302,6 @@
     [
       "src/kernel/privileged/freg/reset/bbr.rs",
       "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/bbr.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
       1
     ],
     [
@@ -2512,11 +2327,6 @@
     [
       "src/kernel/privileged/freg/undo_log.rs",
       "#[expect(clippy::cast_possible_truncation)",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/undo_log.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
       1
     ],
     [
@@ -2571,11 +2381,6 @@
     ],
     [
       "src/kernel/privileged/idt/idt.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      2
-    ],
-    [
-      "src/kernel/privileged/idt/idt.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       6
     ],
@@ -2621,11 +2426,6 @@
     ],
     [
       "src/kernel/privileged/idt/types.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      3
-    ],
-    [
-      "src/kernel/privileged/idt/types.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       1
     ],
@@ -2658,11 +2458,6 @@
       "src/kernel/privileged/iomem.rs",
       "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
       3
-    ],
-    [
-      "src/kernel/privileged/iomem.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
     ],
     [
       "src/kernel/privileged/ioport.rs",
@@ -2771,11 +2566,6 @@
     ],
     [
       "src/kernel/privileged/lib/string.rs",
-      "#[expect(clippy::needless_continue,reason=\"needless_continue:continue提升循环可读性;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/lib/string.rs",
       "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
       6
     ],
@@ -2838,11 +2628,6 @@
       "src/kernel/privileged/mm/cow.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
-    ],
-    [
-      "src/kernel/privileged/mm/cow.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      5
     ],
     [
       "src/kernel/privileged/mm/cow.rs",
@@ -2921,11 +2706,6 @@
     ],
     [
       "src/kernel/privileged/mm/kpti.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      4
-    ],
-    [
-      "src/kernel/privileged/mm/kpti.rs",
       "#[expect(clippy::verbose_bit_mask,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
     ],
@@ -2946,11 +2726,6 @@
     ],
     [
       "src/kernel/privileged/mm/mod.rs",
-      "#[expect(clippy::return_self_not_must_use,reason=\"return_self_not_must_use:返回Self是builder/fluentAPI;当前优先expect\")",
-      4
-    ],
-    [
-      "src/kernel/privileged/mm/mod.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       3
     ],
@@ -2958,11 +2733,6 @@
       "src/kernel/privileged/mm/mod.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       12
-    ],
-    [
-      "src/kernel/privileged/mm/mod.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      3
     ],
     [
       "src/kernel/privileged/mm/numa.rs",
@@ -2992,11 +2762,6 @@
     [
       "src/kernel/privileged/mm/pcache.rs",
       "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/pcache.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
       1
     ],
     [
@@ -3101,11 +2866,6 @@
     ],
     [
       "src/kernel/privileged/mm/vma.rs",
-      "#[expect(clippy::return_self_not_must_use,reason=\"return_self_not_must_use:返回Self是builder/fluentAPI;当前优先expect\")",
-      2
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
     ],
@@ -3203,11 +2963,6 @@
       "src/kernel/privileged/mm/vmm_x86_64.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是既有API约定(改传值会波及调用点)",
       1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      5
     ],
     [
       "src/kernel/privileged/mm/vmm_x86_64.rs",
@@ -3436,11 +3191,6 @@
     ],
     [
       "src/kernel/privileged/mod.rs",
-      "#![allow(clippy::unreadable_literal)",
-      1
-    ],
-    [
-      "src/kernel/privileged/mod.rs",
       "#![allow(clippy::wrong_self_convention)",
       1
     ],
@@ -3636,11 +3386,6 @@
     ],
     [
       "src/kernel/privileged/pci/mod.rs",
-      "#[expect(clippy::cast_lossless,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/pci/mod.rs",
       "#[expect(clippy::cast_possible_truncation)",
       1
     ],
@@ -3675,11 +3420,6 @@
       1
     ],
     [
-      "src/kernel/privileged/proc/canary.rs",
-      "#[expect(clippy::needless_continue,reason=\"needless_continue:continue提升循环可读性;当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/privileged/proc/cfs.rs",
       "#[expect(clippy::zero_sized_map_values,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       2
@@ -3693,11 +3433,6 @@
       "src/kernel/privileged/proc/cgroup.rs",
       "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       2
-    ],
-    [
-      "src/kernel/privileged/proc/cgroup.rs",
-      "#[expect(clippy::needless_continue,reason=\"needless_continue:continue提升循环可读性;当前优先expect\")",
-      3
     ],
     [
       "src/kernel/privileged/proc/elf/mod.rs",
@@ -3980,11 +3715,6 @@
       1
     ],
     [
-      "src/kernel/privileged/sgeg/api.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      2
-    ],
-    [
       "src/kernel/privileged/sgeg/audit.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       1
@@ -4000,16 +3730,6 @@
       1
     ],
     [
-      "src/kernel/privileged/sgeg/audit.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/bootstrap.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
-    ],
-    [
       "src/kernel/privileged/sgeg/csprng.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       1
@@ -4017,11 +3737,6 @@
     [
       "src/kernel/privileged/sgeg/csprng.rs",
       "#[expect(clippy::cast_possible_truncation)",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/csprng.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
       1
     ],
     [
@@ -4180,11 +3895,6 @@
       1
     ],
     [
-      "src/kernel/privileged/syscall/dispatch.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
-    ],
-    [
       "src/kernel/privileged/syscall/epoll.rs",
       "#[expect(clippy::items_after_statements,reason=\"items_after_statements:item紧邻使用点声明便于阅读上下文;当前优先expect\")",
       1
@@ -4198,11 +3908,6 @@
       "src/kernel/privileged/syscall/eventfd.rs",
       "#[expect(clippy::manual_let_else,reason=\"manual_let_else:if-let+unwrap模式改let-else语法;部分场景有returnvalue需改match,当前优先expect兑底\")",
       5
-    ],
-    [
-      "src/kernel/privileged/syscall/futex.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
     ],
     [
       "src/kernel/privileged/syscall/mod.rs",
@@ -4250,11 +3955,6 @@
       3
     ],
     [
-      "src/kernel/privileged/tests/test_mm.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      6
-    ],
-    [
       "src/kernel/privileged/tests/test_new_features.rs",
       "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
       1
@@ -4265,24 +3965,9 @@
       1
     ],
     [
-      "src/kernel/privileged/tests/test_new_features.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      3
-    ],
-    [
       "src/kernel/privileged/tests/test_proc.rs",
       "#[allow(clippy::eq_op)",
       1
-    ],
-    [
-      "src/kernel/privileged/tests/test_proc.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      1
-    ],
-    [
-      "src/kernel/privileged/tests/test_smp.rs",
-      "#[expect(clippy::unreadable_literal,reason=\"unreadable_literal:长数字常量无下划线分隔;内核硬件常量(MMIO地址/位掩码)",
-      3
     ],
     [
       "src/kernel/privileged/timer/calibration.rs",

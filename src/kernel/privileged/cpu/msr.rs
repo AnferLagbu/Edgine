@@ -7,15 +7,15 @@
 // 本文件常量供 `cpu` 模块内初始化路径使用。
 
 /// `IA32_EFER` MSR 地址 — SYSCALL/SYSRET 与 NX 位控制
-pub(crate) const IA32_EFER: u32 = 0xC0000080;
+pub(crate) const IA32_EFER: u32 = 0xC000_0080;
 /// `IA32_EFER.SCE` — 启用 SYSCALL/SYSRET 指令
 pub(crate) const EFER_SCE: u64 = 1 << 0;
 /// `IA32_STAR` — SYSCALL 目标 CS/SS 和 SYSRET 基址
-pub(crate) const IA32_STAR: u32 = 0xC0000081;
+pub(crate) const IA32_STAR: u32 = 0xC000_0081;
 /// `IA32_LSTAR` — SYSCALL 入口点 (64-bit 模式)
-pub(crate) const IA32_LSTAR: u32 = 0xC0000082;
+pub(crate) const IA32_LSTAR: u32 = 0xC000_0082;
 /// `IA32_SFMASK` — SYSCALL 期间清零的标志位
-pub(crate) const IA32_SFMASK: u32 = 0xC0000084;
+pub(crate) const IA32_SFMASK: u32 = 0xC000_0084;
 
 /// 读取 64 位 MSR 寄存器
 ///
@@ -134,7 +134,7 @@ fn is_msr_likely_valid(msr: u32) -> bool {
         return true;
     }
     // AMD K8/K10/MSR: 0xC0000000..0xC0001FFF + 0xC0010000..0xC0011FFF
-    if (0xC0000000..0xC0002000).contains(&msr) || (0xC0010000..0xC0012000).contains(&msr) {
+    if (0xC000_0000..0xC000_2000).contains(&msr) || (0xC001_0000..0xC001_2000).contains(&msr) {
         return true;
     }
     // 其他范围视为非法 (vmx/svm 特权 MSR, 型号特定 MSR 等)

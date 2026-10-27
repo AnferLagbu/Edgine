@@ -397,23 +397,15 @@ pub extern "C" fn pwm_try_setuid(target_uid: u32) -> bool {
 /// 取指定 PWM 的 UID (身份不存在时返回 `0xFFFFFFFF`)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 pub extern "C" fn pwm_get_uid(pwm: u64) -> u32 {
-    identity::find(pwm).map_or(0xFFFFFFFF, PwmEntry::get_uid)
+    identity::find(pwm).map_or(0xFFFF_FFFF, PwmEntry::get_uid)
 }
 
 /// 取指定 PWM 的 GID (身份不存在时返回 `0xFFFFFFFF`)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 pub extern "C" fn pwm_get_gid(pwm: u64) -> u32 {
-    identity::find(pwm).map_or(0xFFFFFFFF, PwmEntry::get_gid)
+    identity::find(pwm).map_or(0xFFFF_FFFF, PwmEntry::get_gid)
 }
 
 /// 清除指定 PWM 的登录锁定状态 (0 = 成功, 非零 = 错误码)

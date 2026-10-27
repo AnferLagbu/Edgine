@@ -177,7 +177,7 @@ pub fn load(mm: &MmStruct, elf_data: &[u8]) -> ElfResult<ElfLoadResult> {
 pub const PT_LOAD: u32 = 1;
 
 /// `PT_GNU_STACK`: GNU 栈属性
-pub const PT_GNU_STACK: u32 = 0x6474E551;
+pub const PT_GNU_STACK: u32 = 0x6474_E551;
 
 /// `PF_X`: 可执行
 pub const PF_X: u32 = 1;

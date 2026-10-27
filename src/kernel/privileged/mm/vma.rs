@@ -82,19 +82,13 @@ impl VmFlags {
     }
     /// 置位并返回新标志集
     #[inline]
-    #[expect(
-        clippy::return_self_not_must_use,
-        reason = "return_self_not_must_use: 返回 Self 是 builder/fluent API; 当前优先 expect"
-    )]
+    #[must_use]
     pub const fn insert(self, other: Self) -> Self {
         Self(self.0 | other.0)
     }
     /// 清位并返回新标志集
     #[inline]
-    #[expect(
-        clippy::return_self_not_must_use,
-        reason = "return_self_not_must_use: 返回 Self 是 builder/fluent API; 当前优先 expect"
-    )]
+    #[must_use]
     pub const fn remove(self, other: Self) -> Self {
         Self(self.0 & !other.0)
     }

@@ -53,7 +53,6 @@
 #![allow(clippy::doc_lazy_continuation)]
 #![allow(clippy::doc_overindented_list_items)]
 #![allow(clippy::must_use_candidate)]
-#![allow(clippy::unreadable_literal)]
 #![allow(clippy::inline_always)]
 #![allow(clippy::struct_field_names)]
 #![allow(clippy::pub_underscore_fields)]

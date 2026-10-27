@@ -321,10 +321,6 @@ pub fn umount_virtiofs() -> Result<(), Errno> {
     Ok(())
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 /// 处理请求
 ///
 /// # Errors
@@ -375,7 +371,7 @@ pub fn handle_request(
         }
         VirtioFsOp::Create => {
             let name = core::str::from_utf8(data).map_err(|_| Errno::EINVAL)?;
-            fs.create_node(node_id, name, 0o100644)?;
+            fs.create_node(node_id, name, 0o10_0644)?;
             Ok(0)
         }
         VirtioFsOp::Unlink | VirtioFsOp::Rmdir => {

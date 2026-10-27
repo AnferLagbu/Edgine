@@ -14,7 +14,7 @@ use crate::privileged::config::get_config_summary;
 use crate::privileged::sync::IrqSpinLock;
 
 const ENCODED_LEN: usize = 64;
-const HEADER_MAGIC: u32 = 0xC0FFEE01;
+const HEADER_MAGIC: u32 = 0xC0FF_EE01;
 const TAIL_MAGIC: [u8; 8] = [0xEE, 0xFF, 0xC0, 0x01, 0x00, 0x00, 0x00, 0x00];
 
 /// 全局 "启动镜像" —— 由 `init()` 一次性填充.

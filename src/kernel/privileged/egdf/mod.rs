@@ -463,10 +463,6 @@ pub fn egdf_count_by_proto(proto: EGDFProto) -> usize {
         .count()
 }
 
-#[expect(
-    clippy::needless_continue,
-    reason = "needless_continue: continue 提升循环可读性; 当前优先 expect"
-)]
 /// 查找第一个网络设备, 返回其 `NetOps` + `driver_data` + MAC 地址
 ///
 /// 供 `smoltcp_impl` 使用——协议栈不关心具体驱动类型, 只需要
@@ -490,7 +486,7 @@ pub fn egdf_find_net_device() -> Option<(
                 net_ops.get_mac(dev.driver_data, &mut mac);
                 return Some((net_ops, dev.driver_data, mac));
             }
-            _ => continue,
+            _ => {}
         }
     }
     None
@@ -781,10 +777,6 @@ pub fn egdf_blk_is_removed(drive: u8) -> bool {
 
 // ── 字符设备 I/O (统一入口) ──
 
-#[expect(
-    clippy::needless_continue,
-    reason = "needless_continue: continue 提升循环可读性; 当前优先 expect"
-)]
 /// 通过 EGDF 向第一个就绪字符设备写入字节
 ///
 /// 遍历 `EGDF_DEVICES` 查找第一个 proto=Char+Ready 且携带 `CharOps` 的设备,
@@ -803,15 +795,11 @@ pub fn egdf_char_write(data: &[u8]) {
                 ops.write(dev.driver_data, data);
                 return;
             }
-            None => continue,
+            None => {}
         }
     }
 }
 
-#[expect(
-    clippy::needless_continue,
-    reason = "needless_continue: continue 提升循环可读性; 当前优先 expect"
-)]
 /// 通过 EGDF 从第一个就绪字符设备读取字节
 pub fn egdf_char_read(buf: &mut [u8]) -> usize {
     let devices = EGDF_DEVICES.lock();
@@ -824,7 +812,7 @@ pub fn egdf_char_read(buf: &mut [u8]) -> usize {
         }
         match dev.char_ops() {
             Some(ops) => return ops.read(dev.driver_data, buf),
-            None => continue,
+            None => {}
         }
     }
     0
@@ -832,10 +820,6 @@ pub fn egdf_char_read(buf: &mut [u8]) -> usize {
 
 // ── 输入设备 I/O (统一入口) ──
 
-#[expect(
-    clippy::needless_continue,
-    reason = "needless_continue: continue 提升循环可读性; 当前优先 expect"
-)]
 /// 通过 EGDF 从第一个就绪输入设备读取一个字符
 pub fn egdf_input_read() -> Option<u8> {
     let devices = EGDF_DEVICES.lock();
@@ -848,16 +832,12 @@ pub fn egdf_input_read() -> Option<u8> {
         }
         match dev.input_ops() {
             Some(ops) => return ops.read_char(dev.driver_data),
-            None => continue,
+            None => {}
         }
     }
     None
 }
 
-#[expect(
-    clippy::needless_continue,
-    reason = "needless_continue: continue 提升循环可读性; 当前优先 expect"
-)]
 /// 通过 EGDF 检查第一个就绪输入设备是否有数据
 pub fn egdf_input_has_data() -> bool {
     let devices = EGDF_DEVICES.lock();
@@ -870,7 +850,7 @@ pub fn egdf_input_has_data() -> bool {
         }
         match dev.input_ops() {
             Some(ops) => return ops.has_char(dev.driver_data),
-            None => continue,
+            None => {}
         }
     }
     false

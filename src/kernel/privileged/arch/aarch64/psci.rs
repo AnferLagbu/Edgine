@@ -8,9 +8,9 @@
 use crate::privileged::dtb::{self, PsciMethod};
 
 /// PSCI 函数 ID (SMC64)
-const PSCI_SYSTEM_OFF: u32 = 0x84000008;
-const PSCI_SYSTEM_RESET: u32 = 0x84000009;
-const PSCI_VERSION: u32 = 0x84000000;
+const PSCI_SYSTEM_OFF: u32 = 0x8400_0008;
+const PSCI_SYSTEM_RESET: u32 = 0x8400_0009;
+const PSCI_VERSION: u32 = 0x8400_0000;
 
 /// `CPU_ON` 的 SMC64 函数 ID (ARM PSCI v0.2+)
 ///

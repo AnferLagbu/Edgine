@@ -14,10 +14,10 @@ unsafe extern "C" {
 }
 
 #[cfg(target_arch = "aarch64")]
-const KERNEL_BASE: u64 = 0xFFFF000000000000u64;
+const KERNEL_BASE: u64 = 0xFFFF_0000_0000_0000_u64;
 
 #[cfg(not(target_arch = "aarch64"))]
-const KERNEL_BASE: u64 = 0xFFFF800000000000u64;
+const KERNEL_BASE: u64 = 0xFFFF_8000_0000_0000_u64;
 
 pub struct KernelAllocator;
 

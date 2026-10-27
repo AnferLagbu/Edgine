@@ -205,7 +205,7 @@ pub fn msi_enable(dev: &pci::PciDevice) -> Option<MsiConfig> {
     // x86_64: LAPIC 地址 = 0xFEE00000, 目标 CPU = 0
     // 格式: [31:20] = 0xFEE, [19:12] = Destination ID, [11:0] = 0
     #[cfg(target_arch = "x86_64")]
-    let msg_addr: u32 = 0xFEE00000; // CPU 0
+    let msg_addr: u32 = 0xFEE0_0000; // CPU 0
 
     #[cfg(target_arch = "aarch64")]
     let msg_addr: u32 = 0; // ARM GIC ITS: 后续集成
@@ -378,7 +378,7 @@ pub fn msix_enable(dev: &pci::PciDevice, num_vectors: u16) -> Option<MsixConfig>
                     // 此前硬编码 0xFEE00000 (dest=0) 在多 LAPIC 系统上不投递 (QEMU 默认
                     // LAPIC ID=0x01000000 拆 bits 19:12 = 0x10, dest=0 无法匹配任何 CPU).
                     let lapic_id = crate::privileged::arch::apic::get_id() as u32;
-                    entry.msg_addr_lo = 0xFEE00000 | ((lapic_id & 0xFF) << 12);
+                    entry.msg_addr_lo = 0xFEE0_0000 | ((lapic_id & 0xFF) << 12);
                     entry.msg_addr_hi = 0;
                 }
                 #[cfg(target_arch = "aarch64")]

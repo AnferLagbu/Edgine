@@ -30,7 +30,7 @@ unsafe extern "C" {
 }
 
 /// boot 栈与内核栈顶部 canary 的哨兵值; 被改写即判定栈溢出.
-pub const KERNEL_STACK_CANARY: u64 = 0xDEADBEEF_CAFEBABE;
+pub const KERNEL_STACK_CANARY: u64 = 0xDEAD_BEEF_CAFE_BABE;
 
 /// [`Process::cfs_rq_cpu`] 的"不在任何核的运行队列上"哨兵值.
 ///

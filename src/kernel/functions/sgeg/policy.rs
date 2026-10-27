@@ -97,10 +97,7 @@ impl CapBits {
     }
 
     /// 返回 `self` 中剔除 `other` 置位后的能力位
-    #[expect(
-        clippy::return_self_not_must_use,
-        reason = "return_self_not_must_use: 返回 Self 是 builder/fluent API; 当前优先 expect"
-    )]
+    #[must_use]
     pub fn diff(self, other: Self) -> Self {
         Self(self.0 & !other.0)
     }

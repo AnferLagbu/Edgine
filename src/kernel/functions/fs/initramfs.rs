@@ -42,13 +42,13 @@ const CPIO_NEWC_HEADER_SIZE: usize = 110;
 const CPIO_TRAILER_NAME: &[u8] = b"TRAILER!!!";
 
 /// cpio 文件类型掩码
-const CPIO_S_IFMT: u32 = 0o170000;
+const CPIO_S_IFMT: u32 = 0o17_0000;
 /// 常规文件
-const CPIO_S_IFREG: u32 = 0o100000;
+const CPIO_S_IFREG: u32 = 0o10_0000;
 /// 目录
-const CPIO_S_IFDIR: u32 = 0o040000;
+const CPIO_S_IFDIR: u32 = 0o04_0000;
 /// 符号链接
-const CPIO_S_IFLNK: u32 = 0o120000;
+const CPIO_S_IFLNK: u32 = 0o12_0000;
 
 /// cpio newc 条目 (解析后的中间表示)
 struct CpioEntry<'a> {

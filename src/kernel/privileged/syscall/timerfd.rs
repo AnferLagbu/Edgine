@@ -50,7 +50,7 @@ pub const TFD_MAX_SLOTS: usize = 16;
 /// 不再硬编码 240 (旧值与 smoltcp [0, 256) 重叠).
 pub const TFD_FD_BASE: i32 = crate::privileged::proc::FdPlan::TIMER_FD.base;
 /// `TFD_CLOEXEC`
-pub const TFD_CLOEXEC: i32 = 0o2000000;
+pub const TFD_CLOEXEC: i32 = 0o200_0000;
 /// `TFD_NONBLOCK`
 pub const TFD_NONBLOCK: i32 = 0o4000;
 /// `TFD_TIMER_ABSTIME`

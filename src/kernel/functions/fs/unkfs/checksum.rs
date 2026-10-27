@@ -366,10 +366,6 @@ mod tests {
     }
 
     /// SHA256('abc') 应匹配 FIPS 180-4 标准向量.
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: FIPS 180-4 SHA-256('abc') 测试向量按 u64 四字面值书写, 有明确标准出处"
-    )]
     #[test]
     fn test_checksum_sha256_known_vector() {
         let ck = UnkfsChecksum::compute(UnkfsCksumType::SHA256, b"abc");
@@ -383,10 +379,6 @@ mod tests {
     }
 
     /// SHA256('') 应匹配 FIPS 180-4 标准向量.
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: FIPS 180-4 SHA-256('') 测试向量按 u64 四字面值书写, 有明确标准出处"
-    )]
     #[test]
     fn test_checksum_sha256_empty() {
         let ck = UnkfsChecksum::compute(UnkfsCksumType::SHA256, b"");

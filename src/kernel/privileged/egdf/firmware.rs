@@ -73,18 +73,14 @@ impl FirmwareBlob {
     }
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 /// FNV-1a 32-bit hash
 ///
 /// 用于固件名快速比对; 用户态与内核态均使用同一算法。
 pub fn fnv1a_32(s: &str) -> u32 {
-    let mut h: u32 = 0x811c9dc5;
+    let mut h: u32 = 0x811C_9DC5;
     for b in s.as_bytes() {
         h ^= u32::from(*b);
-        h = h.wrapping_mul(0x01000193);
+        h = h.wrapping_mul(0x0100_0193);
     }
     h
 }

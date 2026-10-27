@@ -265,10 +265,6 @@ pub struct IdtEntry {
 }
 
 impl IdtEntry {
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     /// 创建新的 IDT 门描述符
     pub fn new(handler: u64, selector: u16, type_attr: u8) -> Self {
         Self {
@@ -277,15 +273,11 @@ impl IdtEntry {
             ist: 0,
             type_attr,
             offset_mid: ((handler >> 16) & 0xFFFF) as u16,
-            offset_high: ((handler >> 32) & 0xFFFFFFFF) as u32,
+            offset_high: ((handler >> 32) & 0xFFFF_FFFF) as u32,
             reserved: 0,
         }
     }
 
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     /// 创建带 IST 索引的 IDT 门描述符
     pub fn new_with_ist(handler: u64, selector: u16, type_attr: u8, ist_index: u8) -> Self {
         Self {
@@ -294,20 +286,16 @@ impl IdtEntry {
             ist: ist_index & 0x07,
             type_attr,
             offset_mid: ((handler >> 16) & 0xFFFF) as u16,
-            offset_high: ((handler >> 32) & 0xFFFFFFFF) as u32,
+            offset_high: ((handler >> 32) & 0xFFFF_FFFF) as u32,
             reserved: 0,
         }
     }
 
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     /// 设置 handler 地址
     pub fn set_handler(&mut self, handler: u64) {
         self.offset_low = (handler & 0xFFFF) as u16;
         self.offset_mid = ((handler >> 16) & 0xFFFF) as u16;
-        self.offset_high = ((handler >> 32) & 0xFFFFFFFF) as u32;
+        self.offset_high = ((handler >> 32) & 0xFFFF_FFFF) as u32;
     }
 
     #[expect(

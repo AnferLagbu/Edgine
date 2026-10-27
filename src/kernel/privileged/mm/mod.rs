@@ -205,11 +205,11 @@ pub use crate::privileged::config::{
 /// `x86_64`: 高半核映射 (`0xFFFF_8000_0000_0000`)
 /// aarch64: 高半区内核区 (`0xFFFF_0000_0000_0000`, 内核区 VMA = LMA + 本常量)
 #[cfg(target_arch = "x86_64")]
-pub const KERNEL_BASE: u64 = 0xFFFF800000000000u64;
+pub const KERNEL_BASE: u64 = 0xFFFF_8000_0000_0000_u64;
 #[cfg(target_arch = "aarch64")]
-pub const KERNEL_BASE: u64 = 0xFFFF000000000000u64;
+pub const KERNEL_BASE: u64 = 0xFFFF_0000_0000_0000_u64;
 /// 物理地址空间基址 (`0`, 恒等映射起点)
-pub const PHYSICAL_BASE: u64 = 0x0000000000000000u64;
+pub const PHYSICAL_BASE: u64 = 0x0000_0000_0000_0000_u64;
 
 /// 用户空间低地址保护阈值.
 /// 低于此地址的指针视为空指针/不可解引用区域, 用于 canary 校验、
@@ -245,7 +245,7 @@ pub const TLB_PROBE_VA: u64 = 0x0000_7F80_0000_0000;
 ///   和 RIP/地址分类 (内核文本段 vs 直接映射区).
 /// aarch64: 内核镜像装载基址 (LMA 0x40080000) 的高半区地址.
 #[cfg(target_arch = "x86_64")]
-pub const KERNEL_TEXT_BASE: u64 = 0xFFFFFFFF80000000;
+pub const KERNEL_TEXT_BASE: u64 = 0xFFFF_FFFF_8000_0000;
 #[cfg(target_arch = "aarch64")]
 pub const KERNEL_TEXT_BASE: u64 = KERNEL_BASE + 0x4008_0000;
 
@@ -518,10 +518,6 @@ impl PhysAddr {
     /// 向上对齐到页边界
     #[inline(always)]
     #[expect(
-        clippy::return_self_not_must_use,
-        reason = "return_self_not_must_use: 返回 Self 是 builder/fluent API; 当前优先 expect"
-    )]
-    #[expect(
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
@@ -529,6 +525,7 @@ impl PhysAddr {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
+    #[must_use]
     pub fn align_up(&self, align: u64) -> Self {
         Self((self.0 + align - 1) & !(align - 1))
     }
@@ -536,13 +533,10 @@ impl PhysAddr {
     /// 向下对齐到页边界
     #[inline(always)]
     #[expect(
-        clippy::return_self_not_must_use,
-        reason = "return_self_not_must_use: 返回 Self 是 builder/fluent API; 当前优先 expect"
-    )]
-    #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
     )]
+    #[must_use]
     pub fn align_down(&self, align: u64) -> Self {
         Self(self.0 & !(align - 1))
     }
@@ -583,13 +577,10 @@ impl VirtAddr {
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
     #[expect(
-        clippy::return_self_not_must_use,
-        reason = "return_self_not_must_use: 返回 Self 是 builder/fluent API; 当前优先 expect"
-    )]
-    #[expect(
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
+    #[must_use]
     pub fn align_up(&self, align: u64) -> Self {
         Self((self.0 + align - 1) & !(align - 1))
     }
@@ -600,10 +591,7 @@ impl VirtAddr {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
-    #[expect(
-        clippy::return_self_not_must_use,
-        reason = "return_self_not_must_use: 返回 Self 是 builder/fluent API; 当前优先 expect"
-    )]
+    #[must_use]
     pub fn align_down(&self, align: u64) -> Self {
         Self(self.0 & !(align - 1))
     }
@@ -761,23 +749,15 @@ impl PageTableEntry {
         self.bits.load(Ordering::Acquire) & PAGE_HUGE != 0
     }
 
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     /// 返回帧地址 (页的物理地址).
     pub fn frame(&self) -> PhysAddr {
-        PhysAddr(self.bits.load(Ordering::Acquire) & 0x000FFFFFFFFFF000)
+        PhysAddr(self.bits.load(Ordering::Acquire) & 0x000F_FFFF_FFFF_F000)
     }
 
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     /// 设置帧地址.
     pub fn set_frame(&self, frame: PhysAddr) {
         let mut val = self.bits.load(Ordering::Acquire);
-        val = (val & !0x000FFFFFFFFFF000) | (frame.0 & 0x000FFFFFFFFFF000);
+        val = (val & !0x000F_FFFF_FFFF_F000) | (frame.0 & 0x000F_FFFF_FFFF_F000);
         self.bits.store(val, Ordering::Release);
     }
 
@@ -800,10 +780,6 @@ impl Default for PageTableEntry {
     }
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 /// 将帧缓冲物理地址映射到内核虚拟地址空间
 ///
 /// 帧缓冲位于 PCI MMIO 区域（高位物理地址），启动页表的恒等映射
@@ -817,7 +793,7 @@ pub fn map_framebuffer(phys_addr: u64, size: u64) -> *mut u8 {
 
     let vmm = get_vmm();
 
-    let page_2m: u64 = 0x200000;
+    let page_2m: u64 = 0x20_0000;
     let start_page = phys_addr & !(page_2m - 1);
     let end = phys_addr + size;
     let end_page = (end + page_2m - 1) & !(page_2m - 1);

@@ -20,10 +20,10 @@ use core::fmt;
 use crate::privileged::mm::{PageFlags, PageSize, PhysAddr, VirtAddr, get_vmm};
 
 #[cfg(target_arch = "x86_64")]
-const USER_VADDR_MASK: u64 = 0x00007FFF_FFFFFFFF;
+const USER_VADDR_MASK: u64 = 0x0000_7FFF_FFFF_FFFF;
 
 #[cfg(target_arch = "aarch64")]
-const USER_VADDR_MASK: u64 = 0x0000FFFF_FFFFFFFF;
+const USER_VADDR_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
 
 use super::frame::Frame;
 

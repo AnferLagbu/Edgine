@@ -29,7 +29,7 @@ const _SLOTCAP_ATTN_IND: u32 = 1 << 3;
 const _SLOTCAP_PWR_IND: u32 = 1 << 4;
 const SLOTCAP_HOTPLUG_SURPRISE: u32 = 1 << 5;
 const SLOTCAP_HOTPLUG: u32 = 1 << 6;
-const SLOTCAP_SLOT_NUM_MASK: u32 = 0x00007F80;
+const SLOTCAP_SLOT_NUM_MASK: u32 = 0x0000_7F80;
 const SLOTCAP_SLOT_NUM_SHIFT: u32 = 7;
 
 // ── Slot Status 位定义 (PCIE_SLOTSTS) ──

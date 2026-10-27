@@ -127,10 +127,6 @@ fn pkt_checksum(data: &[u8]) -> u8 {
     data.iter().fold(0u8, |a, b| a.wrapping_add(*b))
 }
 
-#[expect(
-    clippy::needless_continue,
-    reason = "needless_continue: continue 提升循环可读性; 当前优先 expect"
-)]
 /// 发送一个 packet (含 ACK 等待)
 pub fn kgdb_send_packet(payload: &[u8]) {
     kgdb_putc(b'$');
@@ -158,7 +154,6 @@ pub fn kgdb_send_packet(payload: &[u8]) {
                 kgdb_putc(b'#');
                 kgdb_putc(hi);
                 kgdb_putc(lo);
-                continue;
             }
         }
     }

@@ -77,8 +77,8 @@ impl UnkfsZilPersistError {
     }
 }
 
-const ZIL_MAGIC: u32 = 0x5A494C31u32; // "ZIL1"
-const ZIL_TAIL_MAGIC: u32 = 0x454E4400u32; // "END\0"
+const ZIL_MAGIC: u32 = 0x5A49_4C31_u32; // "ZIL1"
+const ZIL_TAIL_MAGIC: u32 = 0x454E_4400_u32; // "END\0"
 const ZIL_BLOCK_SIZE: usize = HV_POOL_BLOCK_SIZE as usize;
 const ZIL_HEADER_SIZE: usize = 64;
 const ZIL_TRAILER_SIZE: usize = 8;
@@ -241,17 +241,13 @@ impl ZilBlockTrailer {
     }
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 fn crc32_checksum(data: &[u8]) -> u32 {
-    let mut crc: u32 = 0xFFFFFFFF;
+    let mut crc: u32 = 0xFFFF_FFFF;
     for &byte in data {
         crc ^= u32::from(byte);
         for _ in 0..8 {
             if crc & 1 != 0 {
-                crc = (crc >> 1) ^ 0xEDB88320;
+                crc = (crc >> 1) ^ 0xEDB8_8320;
             } else {
                 crc >>= 1;
             }

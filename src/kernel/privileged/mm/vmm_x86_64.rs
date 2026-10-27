@@ -529,10 +529,6 @@ impl VirtualMemoryManager {
         clippy::similar_names,
         reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
     )]
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     /// 在指定页表中翻译虚拟地址, 返回物理地址与叶子项可写标志.
     ///
     /// 与 [`Self::get_physical_in_pml4`] 同一遍历逻辑, 额外透出叶子表项的写位,
@@ -554,7 +550,7 @@ impl VirtualMemoryManager {
             }
 
             // SAFETY: pml4e present → frame bits point to valid PDPT
-            let pdpt_virt = (pml4e & 0x000FFFFFFFFFF000) + KERNEL_BASE;
+            let pdpt_virt = (pml4e & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
             let pdpt_raw = pdpt_virt as *const u64;
             let pdpte = pdpt_raw.add(virt.pdpt_idx()).read_volatile();
             if (pdpte & 1) == 0 {
@@ -562,7 +558,7 @@ impl VirtualMemoryManager {
             }
 
             if (pdpte & 0x80) != 0 {
-                let frame = pdpte & 0x000FFFFFFFFFF000;
+                let frame = pdpte & 0x000F_FFFF_FFFF_F000;
                 let offset = virt.0 & (HUGE_PAGE_1G_SIZE - 1);
                 return Some(PageTranslation {
                     phys: PhysAddr(frame + offset),
@@ -571,7 +567,7 @@ impl VirtualMemoryManager {
             }
 
             // SAFETY: pdpte present && !huge → valid PD pointer
-            let pd_virt = (pdpte & 0x000FFFFFFFFFF000) + KERNEL_BASE;
+            let pd_virt = (pdpte & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
             let pd_raw = pd_virt as *const u64;
             let pde = pd_raw.add(virt.pd_idx()).read_volatile();
             if (pde & 1) == 0 {
@@ -579,7 +575,7 @@ impl VirtualMemoryManager {
             }
 
             if (pde & 0x80) != 0 {
-                let frame = pde & 0x000FFFFFFFFFF000;
+                let frame = pde & 0x000F_FFFF_FFFF_F000;
                 let offset = virt.0 & (HUGE_PAGE_2M_SIZE - 1);
                 return Some(PageTranslation {
                     phys: PhysAddr(frame + offset),
@@ -588,14 +584,14 @@ impl VirtualMemoryManager {
             }
 
             // SAFETY: pde present && !huge → valid PT pointer
-            let pt_virt = (pde & 0x000FFFFFFFFFF000) + KERNEL_BASE;
+            let pt_virt = (pde & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
             let pt_raw = pt_virt as *const u64;
             let pte = pt_raw.add(virt.pt_idx()).read_volatile();
             if (pte & 1) == 0 {
                 return None;
             }
 
-            let frame = pte & 0x000FFFFFFFFFF000;
+            let frame = pte & 0x000F_FFFF_FFFF_F000;
             let offset = virt.0 & (PAGE_SIZE - 1);
             Some(PageTranslation {
                 phys: PhysAddr(frame + offset),
@@ -607,10 +603,6 @@ impl VirtualMemoryManager {
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
     )]
     #[expect(
         clippy::similar_names,
@@ -634,21 +626,21 @@ impl VirtualMemoryManager {
                 return None;
             }
 
-            let pdpt_virt = (pml4e & 0x000FFFFFFFFFF000) + KERNEL_BASE;
+            let pdpt_virt = (pml4e & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
             let pdpt_raw = pdpt_virt as *const u64;
             let pdpte = pdpt_raw.add(virt.pdpt_idx()).read_volatile();
             if (pdpte & 1) == 0 || (pdpte & 0x80) != 0 {
                 return None;
             }
 
-            let pd_virt = (pdpte & 0x000FFFFFFFFFF000) + KERNEL_BASE;
+            let pd_virt = (pdpte & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
             let pd_raw = pd_virt as *const u64;
             let pde = pd_raw.add(virt.pd_idx()).read_volatile();
             if (pde & 1) == 0 || (pde & 0x80) != 0 {
                 return None;
             }
 
-            let pt_virt = (pde & 0x000FFFFFFFFFF000) + KERNEL_BASE;
+            let pt_virt = (pde & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
             let pt_raw = pt_virt as *const u64;
             let pte = pt_raw.add(virt.pt_idx()).read_volatile();
 
@@ -663,10 +655,6 @@ impl VirtualMemoryManager {
     #[expect(
         clippy::used_underscore_binding,
         reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
     )]
     /// 直接写入 PTE 原始值 (用于 swap 替换)
     ///
@@ -690,7 +678,7 @@ impl VirtualMemoryManager {
                 return;
             }
 
-            let pdpt_virt = (pml4e & 0x000FFFFFFFFFF000) + KERNEL_BASE;
+            let pdpt_virt = (pml4e & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
             let pdpt_raw = pdpt_virt as *const u64;
             let pdpte = pdpt_raw.add(virt.pdpt_idx()).read_volatile();
             if (pdpte & 1) == 0 || (pdpte & 0x80) != 0 {
@@ -698,7 +686,7 @@ impl VirtualMemoryManager {
                 return;
             }
 
-            let pd_virt = (pdpte & 0x000FFFFFFFFFF000) + KERNEL_BASE;
+            let pd_virt = (pdpte & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
             let pd_raw = pd_virt as *const u64;
             let pde = pd_raw.add(virt.pd_idx()).read_volatile();
             if (pde & 1) == 0 || (pde & 0x80) != 0 {
@@ -706,7 +694,7 @@ impl VirtualMemoryManager {
                 return;
             }
 
-            let pt_virt = (pde & 0x000FFFFFFFFFF000) + KERNEL_BASE;
+            let pt_virt = (pde & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
             let pt_ptr = (pt_virt as *mut u64).add(virt.pt_idx());
             pt_ptr.write_volatile(raw_pte);
 
@@ -997,7 +985,7 @@ impl VirtualMemoryManager {
                     // 物理帧归内核所有, 参与计数会被计入零 → 误释放内核页;
                     // 设备/MMIO 映射的 pfn 越界, frame_dec 侧 fail-closed 拒绝.
                     if old_pte & PAGE_PRESENT != 0 && old_pte & PAGE_USER != 0 {
-                        let user_phys = old_pte & 0x000FFFFFFFFFF000;
+                        let user_phys = old_pte & 0x000F_FFFF_FFFF_F000;
                         if get_pmm().frame_dec(PhysAddr(user_phys)) {
                             super::release_frame_locked(PhysAddr(user_phys));
                         }
@@ -1358,10 +1346,6 @@ impl VirtualMemoryManager {
         clippy::ptr_as_ptr,
         reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
     )]
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     /// 取 (必要时创建) `entry` 指向的下一级页表, 返回 `(表指针, 本次是否拆分巨页)`.
     ///
     /// 第二个返回值供调用方判定"本次叶子写入是否为替换": 拆分把既有巨页条目换成下一级
@@ -1435,7 +1419,7 @@ impl VirtualMemoryManager {
                         // 但实际导致用户代码区 (0x400000 所在 PDE) 整体禁执行 →
                         // 用户态取指 #PF (e=0x15, P=1 U=1 I/D=1). 页表页的安全性由
                         // "用户页表低半区不映射页表页帧" 保证, 无需中间条目 NX.
-                        let new_val = (page.as_u64() & 0x000FFFFFFFFFF000)
+                        let new_val = (page.as_u64() & 0x000F_FFFF_FFFF_F000)
                             | (PageFlags::PRESENT | PageFlags::WRITABLE).bits();
                         (*entry).set_value(new_val);
 
@@ -1652,10 +1636,6 @@ impl VirtualMemoryManager {
         clippy::too_many_lines,
         reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
     )]
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     /// 以 `parent_pml4` 为模板克隆用户页表 (COW 前置), 返回子页表物理地址.
     ///
     /// `parent_pml4 == 0` 返回 `None`.
@@ -1705,14 +1685,15 @@ impl VirtualMemoryManager {
             }
 
             let mut child_pml4e = parent_pml4e;
-            child_pml4e = (child_pml4e & 0xFFF) | (child_pdpt_phys.as_u64() & 0x000FFFFFFFFFF000);
+            child_pml4e =
+                (child_pml4e & 0xFFF) | (child_pdpt_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
             // SAFETY: child_pml4_base 是合法的 4KB PML4 页; volatile 写以保证 TLB 一致性
             unsafe {
                 child_pml4_base.add(i as usize).write_volatile(child_pml4e);
             }
 
             // SAFETY: parent_pml4e present → frame bits point to valid PDPT
-            let parent_pdpt_virt = (parent_pml4e & 0x000FFFFFFFFFF000) + KERNEL_BASE;
+            let parent_pdpt_virt = (parent_pml4e & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
             let parent_pdpt = parent_pdpt_virt as *const u64;
 
             for j in 0..512u16 {
@@ -1734,14 +1715,14 @@ impl VirtualMemoryManager {
 
                 let mut child_pdpte_v = parent_pdpte;
                 child_pdpte_v =
-                    (child_pdpte_v & 0xFFF) | (child_pd_phys.as_u64() & 0x000FFFFFFFFFF000);
+                    (child_pdpte_v & 0xFFF) | (child_pd_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
                 // SAFETY: child_pdpt valid; volatile write
                 unsafe {
                     child_pdpt.add(j as usize).write_volatile(child_pdpte_v);
                 }
 
                 // SAFETY: parent_pdpte present → valid PD pointer
-                let parent_pd_virt = (parent_pdpte & 0x000FFFFFFFFFF000) + KERNEL_BASE;
+                let parent_pd_virt = (parent_pdpte & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
                 let parent_pd = parent_pd_virt as *const u64;
 
                 for k in 0..512u16 {
@@ -1756,7 +1737,7 @@ impl VirtualMemoryManager {
                         let huge_phys = pmm.alloc_pages(512)?;
                         let huge_virt = PhysAddr(huge_phys.as_u64()).to_virt().0;
                         // SAFETY: parent_huge is valid 2MB kernel VA
-                        let parent_huge = (parent_pde & 0x000FFFFFFFFFF000) + KERNEL_BASE;
+                        let parent_huge = (parent_pde & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
                         unsafe {
                             core::ptr::copy_nonoverlapping(
                                 parent_huge as *const u8,
@@ -1766,7 +1747,7 @@ impl VirtualMemoryManager {
                         }
                         let mut child_pde_v = parent_pde;
                         child_pde_v =
-                            (child_pde_v & 0xFFF) | (huge_phys.as_u64() & 0x000FFFFFFFFFF000);
+                            (child_pde_v & 0xFFF) | (huge_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
                         // SAFETY: child_pd valid; volatile write
                         unsafe {
                             child_pd.add(k as usize).write_volatile(child_pde_v);
@@ -1783,14 +1764,14 @@ impl VirtualMemoryManager {
 
                     let mut child_pde_v = parent_pde;
                     child_pde_v =
-                        (child_pde_v & 0xFFF) | (child_pt_phys.as_u64() & 0x000FFFFFFFFFF000);
+                        (child_pde_v & 0xFFF) | (child_pt_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
                     // SAFETY: child_pd valid; volatile write
                     unsafe {
                         child_pd.add(k as usize).write_volatile(child_pde_v);
                     }
 
                     // SAFETY: parent_pde present && !huge → valid PT pointer
-                    let parent_pt_virt = (parent_pde & 0x000FFFFFFFFFF000) + KERNEL_BASE;
+                    let parent_pt_virt = (parent_pde & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
                     let parent_pt = parent_pt_virt as *const u64;
 
                     for l in 0..512u16 {
@@ -1803,7 +1784,7 @@ impl VirtualMemoryManager {
                         let child_page_phys = pmm.alloc_page()?;
                         let child_page_virt = PhysAddr(child_page_phys.as_u64()).to_virt().0;
                         // SAFETY: parent_page_virt is valid kernel VA from PTE
-                        let parent_page_virt = (parent_pte & 0x000FFFFFFFFFF000) + KERNEL_BASE;
+                        let parent_page_virt = (parent_pte & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
 
                         // SAFETY: Both addresses are valid 4KB kernel VAs
                         unsafe {
@@ -1815,8 +1796,8 @@ impl VirtualMemoryManager {
                         }
 
                         let mut child_pte_v = parent_pte;
-                        child_pte_v =
-                            (child_pte_v & 0xFFF) | (child_page_phys.as_u64() & 0x000FFFFFFFFFF000);
+                        child_pte_v = (child_pte_v & 0xFFF)
+                            | (child_page_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
                         // SAFETY: child_pt valid; volatile write
                         unsafe {
                             child_pt.add(l as usize).write_volatile(child_pte_v);

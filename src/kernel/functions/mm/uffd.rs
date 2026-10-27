@@ -20,7 +20,7 @@ use crate::privileged::syscall::Errno;
 use crate::privileged::syscall::api::{read_struct_from_user, write_struct_to_user};
 
 /// `O_CLOEXEC`
-const O_CLOEXEC: u32 = 0o2000000;
+const O_CLOEXEC: u32 = 0o200_0000;
 /// `O_NONBLOCK`
 const O_NONBLOCK: u32 = 0o4000;
 

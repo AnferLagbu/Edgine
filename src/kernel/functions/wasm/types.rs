@@ -20,7 +20,7 @@
 use alloc::vec::Vec;
 
 /// 模块头魔数 (小端读数, 即 ASCII 的 `\0asm`)。
-pub const WASM_MAGIC: u32 = 0x6D736100;
+pub const WASM_MAGIC: u32 = 0x6D73_6100;
 /// 当前支持的 WASM 规范版本号 (1)。
 pub const WASM_VERSION: u32 = 1;
 

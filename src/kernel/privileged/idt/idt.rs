@@ -233,10 +233,6 @@ pub fn idt_entries_base_lma() -> u64 {
 }
 
 impl IdtManager {
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     /// 获取全局 IDT 管理器实例
     pub fn instance() -> &'static Self {
         IDT_MANAGER_INSTANCE.get_or_init(|slot| {
@@ -245,7 +241,7 @@ impl IdtManager {
                 stats: InterruptStatistics::new(),
                 detailed_stats: DetailedStatistics::new(), // Phase 3
                 nested_count: AtomicU64::new(0),
-                current_vector: AtomicU64::new(0xFFFFFFFFFFFFFFFF),
+                current_vector: AtomicU64::new(0xFFFF_FFFF_FFFF_FFFF),
             });
         })
     }
@@ -664,10 +660,6 @@ impl IdtManager {
     // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
     #[expect(clippy::cast_possible_truncation)]
     #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
-    #[expect(
         clippy::match_same_arms,
         reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
     )]
@@ -744,7 +736,7 @@ impl IdtManager {
             // 恢复嵌套计数
             self.nested_count.fetch_sub(1, Ordering::SeqCst);
             self.current_vector
-                .store(0xFFFFFFFFFFFFFFFF, Ordering::SeqCst);
+                .store(0xFFFF_FFFF_FFFF_FFFF, Ordering::SeqCst);
         }
     }
 

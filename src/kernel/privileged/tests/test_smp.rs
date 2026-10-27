@@ -108,26 +108,18 @@ fn test_sched_policy_discriminant() -> TestResult {
     TestResult::Pass
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 fn test_sched_quota_operations() -> TestResult {
     use crate::privileged::proc::SCHEDULER;
-    let test_pwm: u64 = 0xDEAD0000;
+    let test_pwm: u64 = 0xDEAD_0000;
     SCHEDULER.set_quota(test_pwm, 100_000_000, 1_000_000_000);
     SCHEDULER.remove_quota(test_pwm);
     TestResult::Pass
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 fn test_sched_limit_init() -> TestResult {
     use crate::privileged::proc::SCHEDULER;
-    SCHEDULER.set_limit(0x100001, 5);
-    SCHEDULER.remove_quota(0x100001);
+    SCHEDULER.set_limit(0x10_0001, 5);
+    SCHEDULER.remove_quota(0x10_0001);
     TestResult::Pass
 }
 
@@ -155,15 +147,11 @@ fn test_rt_policy_switching_self() -> TestResult {
     TestResult::Pass
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 fn test_rt_invalid_pid() -> TestResult {
     use crate::privileged::proc::SCHEDULER;
     use crate::privileged::proc::SchedPolicy;
 
-    let result = SCHEDULER.set_sched_policy(0xFFFFFFFF, SchedPolicy::Fifo, 50);
+    let result = SCHEDULER.set_sched_policy(0xFFFF_FFFF, SchedPolicy::Fifo, 50);
     check!(!result, "invalid PID must fail");
     TestResult::Pass
 }

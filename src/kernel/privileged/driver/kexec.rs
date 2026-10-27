@@ -47,9 +47,9 @@ pub const KEXEC_MAX_INITRD_SIZE: usize = 128 * 1024 * 1024;
 /// 命令行最大长度
 pub const KEXEC_MAX_CMDLINE: usize = 4096;
 /// 默认内核加载地址 (16MB, 避开低地址)
-pub const KEXEC_DEFAULT_LOAD_ADDR: u64 = 0x01000000;
+pub const KEXEC_DEFAULT_LOAD_ADDR: u64 = 0x0100_0000;
 /// 默认 initrd 加载地址
-pub const KEXEC_DEFAULT_INITRD_ADDR: u64 = 0x08000000;
+pub const KEXEC_DEFAULT_INITRD_ADDR: u64 = 0x0800_0000;
 
 // ============================================================================
 // kexec 段描述

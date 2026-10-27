@@ -28,7 +28,7 @@ const PT_ATTR_DEVICE: u64 = 0; // Device-nGnRnE memory (AttrIndx=0, MAIR[0]=0x44
 const PT_AP_EL1_RW: u64 = 0 << 6; // EL1 read/write
 const PT_AP_ALL_RW: u64 = 1 << 6; // EL1+EL0 read/write
 
-const L2_BLOCK_SIZE: u64 = 0x200000; // 2MB (4KB 粒度下的 L2 块)
+const L2_BLOCK_SIZE: u64 = 0x20_0000; // 2MB (4KB 粒度下的 L2 块)
 
 // ============================================================================
 // 页表 (static, BSS)
@@ -115,7 +115,7 @@ pub unsafe fn init() {
         }
 
         // L1[1]: VA 1-2GB → PA 1-2GB (DRAM, kernel @ 0x40080000, Normal 内存)
-        L1_IDMAP.0[1] = 0x40000000 | PT_TYPE_BLOCK | PT_AF | PT_ATTR_NORMAL | PT_AP_EL1_RW;
+        L1_IDMAP.0[1] = 0x4000_0000 | PT_TYPE_BLOCK | PT_AF | PT_ATTR_NORMAL | PT_AP_EL1_RW;
 
         // 设置 TTBR0_EL1 (TTBR 承载表物理地址)
         set_ttbr0(virt_to_phys(L0_TABLE.0.as_ptr() as u64));

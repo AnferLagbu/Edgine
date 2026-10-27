@@ -188,19 +188,15 @@ fn test_dyn_ipc_sem_create() -> TestResult {
 // VMA
 // ============================================================
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 fn test_vma_creation() -> TestResult {
     use crate::privileged::mm::PageFlags;
     use crate::privileged::mm::{Vma, VmaType};
     let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
-    let vma = Vma::new(0x400000, 0x401000, flags, VmaType::Anonymous);
-    assert_eq_test!(vma.start, 0x400000usize, "start");
-    assert_eq_test!(vma.end, 0x401000usize, "end");
-    check!(vma.contains(0x400500), "contains addr inside");
-    check!(!vma.contains(0x402000), "not contains addr outside");
+    let vma = Vma::new(0x40_0000, 0x40_1000, flags, VmaType::Anonymous);
+    assert_eq_test!(vma.start, 0x40_0000_usize, "start");
+    assert_eq_test!(vma.end, 0x40_1000_usize, "end");
+    check!(vma.contains(0x40_0500), "contains addr inside");
+    check!(!vma.contains(0x40_2000), "not contains addr outside");
     TestResult::Pass
 }
 
@@ -212,10 +208,6 @@ fn test_mm_struct_operations() -> TestResult {
     TestResult::Skip("E-04: host 无 VMM 初始化, 跳过 (依赖裸机虚拟内存管理)")
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 #[cfg(not(feature = "host-test"))]
 fn test_mm_struct_operations() -> TestResult {
     use crate::privileged::mm::PageFlags;
@@ -223,31 +215,27 @@ fn test_mm_struct_operations() -> TestResult {
     let mm = MmStruct::new();
     let flags = PageFlags::PRESENT | PageFlags::USER;
 
-    let vma = Vma::new(0x400000, 0x401000, flags, VmaType::Anonymous);
+    let vma = Vma::new(0x40_0000, 0x40_1000, flags, VmaType::Anonymous);
     mm.insert_vma(vma).unwrap();
 
-    let found = mm.find_vma(0x400500);
+    let found = mm.find_vma(0x40_0500);
     check!(found.is_some(), "find_vma");
     if let Some(v) = found {
-        assert_eq_test!(v.start, 0x400000usize, "found start");
+        assert_eq_test!(v.start, 0x40_0000_usize, "found start");
     }
 
     // cr3 = 0: 本测试只校验 VMA 描述符增删, 不建页表; 显式变体对 cr3 == 0 直接返回.
-    mm.remove_range(0x400000, 0x401000, 0);
-    let not_found = mm.find_vma(0x400500);
+    mm.remove_range(0x40_0000, 0x40_1000, 0);
+    let not_found = mm.find_vma(0x40_0500);
     check!(not_found.is_none(), "removed");
 
     TestResult::Pass
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 fn test_vma_stack_guard() -> TestResult {
     use crate::privileged::mm::PageFlags;
     use crate::privileged::mm::{Vma, VmaType};
-    let guard = Vma::new(0x700000, 0x701000, PageFlags::empty(), VmaType::Guard);
+    let guard = Vma::new(0x70_0000, 0x70_1000, PageFlags::empty(), VmaType::Guard);
     check!(guard.is_guard(), "is_guard");
     check!(!guard.is_stack(), "not stack");
     TestResult::Pass

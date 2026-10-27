@@ -25,7 +25,7 @@ pub const DMA_MAX_MAPPINGS: usize = 256;
 /// 单个散聚表可容纳的条目上限.
 pub const DMA_MAX_SCATTER_ENTRIES: usize = 64;
 /// MMIO 虚拟地址区间的起始基址.
-pub const MMIO_VIRT_BASE: u64 = 0xFFFF900000000000;
+pub const MMIO_VIRT_BASE: u64 = 0xFFFF_9000_0000_0000;
 
 /// DMA 传输方向 (到设备/自设备/双向)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

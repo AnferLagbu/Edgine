@@ -23,16 +23,12 @@ fn read_path(interp: &Interpreter, ptr: u32, len: u32) -> Result<String, WasiErr
         .map_err(|_| WasiErrno::Inval)
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 /// 解析路径: 将 dirfd + relative path 组合为绝对路径
 ///
 /// WASI 语义: dirfd 是 preopen fd (通过 `fd_prestat_get` 获取), relative path
 /// 相对于 dirfd 的 preopen `路径。AT_FDCWD` (0xffffff9c) 表示使用当前工作目录。
 fn resolve_path(ctx: &WasiContext, dirfd: u32, path: &str) -> Result<String, WasiErrno> {
-    if dirfd == 0xffffff9c {
+    if dirfd == 0xFFFF_FF9C {
         return Ok(String::from(path));
     }
 

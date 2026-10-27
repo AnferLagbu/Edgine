@@ -87,7 +87,7 @@ pub struct Elf64Phdr {
 const PT_LOAD: u32 = 1;
 /// `PT_INTERP`: 动态链接器路径 (指向 ELF 解释器)
 const PT_INTERP: u32 = 3;
-const PT_GNU_STACK: u32 = 0x6474E551;
+const PT_GNU_STACK: u32 = 0x6474_E551;
 const PF_X: u32 = 1;
 const PF_W: u32 = 2;
 const PF_R: u32 = 4;

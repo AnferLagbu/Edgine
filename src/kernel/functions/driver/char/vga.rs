@@ -157,11 +157,8 @@ impl TextAttribute {
         }
     }
 
-    #[expect(
-        clippy::return_self_not_must_use,
-        reason = "return_self_not_must_use: 返回 Self 是 builder/fluent API; 当前优先 expect"
-    )]
     /// 设置闪烁位
+    #[must_use]
     pub const fn with_blink(mut self) -> Self {
         self.blink = true;
         self
@@ -240,11 +237,8 @@ pub struct CursorPos {
 }
 
 impl CursorPos {
-    #[expect(
-        clippy::return_self_not_must_use,
-        reason = "return_self_not_must_use: 返回 Self 是 builder/fluent API; 当前优先 expect"
-    )]
     /// 钳制到屏幕范围内
+    #[must_use]
     pub fn clamp(self) -> Self {
         Self {
             x: self.x.min(SCREEN_WIDTH - 1),

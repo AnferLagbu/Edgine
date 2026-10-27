@@ -44,7 +44,7 @@ pub const SFD_MAX_SLOTS: usize = 16;
 /// TD-02: 基址来源已迁移至 `privileged::proc::FdPlan::SIGNAL_FD` 单一来源, 不再硬编码.
 pub const SFD_FD_BASE: i32 = crate::privileged::proc::FdPlan::SIGNAL_FD.base;
 /// `SFD_CLOEXEC`
-pub const SFD_CLOEXEC: i32 = 0o2000000;
+pub const SFD_CLOEXEC: i32 = 0o200_0000;
 /// `SFD_NONBLOCK`
 pub const SFD_NONBLOCK: i32 = 0o4000;
 

@@ -15,13 +15,13 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 /// SPA uberblock 魔数 (小端 "HVSF"), 用于识别本池的根元数据块.
-pub const HV_SPA_MAGIC: u32 = 0x48564653;
+pub const HV_SPA_MAGIC: u32 = 0x4856_4653;
 /// 每个 vdev 标签内的 uberblock 槽位数, 写出时按 txg 取模环形复用.
 pub const HV_UBERBLOCK_COUNT: usize = 128;
 /// uberblock 区的起始扇区号.
 pub const HV_UBERBLOCK_SECTOR: u32 = 0;
 /// vdev 标签区字节数, 位于 metaslab 分配区之前.
-pub const HV_VDEV_LABEL_SIZE: u64 = 262144;
+pub const HV_VDEV_LABEL_SIZE: u64 = 262_144;
 /// 池名缓冲区长度上限 (含结尾 NUL).
 pub const HV_POOL_MAX_NAME: usize = 64;
 
@@ -268,17 +268,13 @@ impl UnkfsSpa {
         }
     }
 
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     fn generate_guid() -> u64 {
         let t = crate::arch!(timestamp());
-        let mut h: u64 = 14695981039346656037;
+        let mut h: u64 = 14_695_981_039_346_656_037;
         h ^= t;
-        h = h.wrapping_mul(1099511628211);
+        h = h.wrapping_mul(1_099_511_628_211);
         h ^= t.rotate_left(17);
-        h = h.wrapping_mul(1099511628211);
+        h = h.wrapping_mul(1_099_511_628_211);
         h | 1
     }
 
@@ -587,10 +583,6 @@ mod tests {
     }
 
     /// magic 被篡改后应判定无效.
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     #[test]
     fn test_spa_uberblock_invalid_magic() {
         let mut ub = UnkfsUberblock::null();

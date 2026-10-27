@@ -24,9 +24,9 @@ pub mod aarch64;
 pub mod multiboot2_fb;
 
 /// Multiboot1 引导器魔数 (EAX 寄存器在跳转时携带该值)
-pub const MULTIBOOT1_MAGIC: u32 = 0x2BADB002;
+pub const MULTIBOOT1_MAGIC: u32 = 0x2BAD_B002;
 /// Multiboot2 引导器魔数 (EAX 寄存器在跳转时携带该值)
-pub const MULTIBOOT2_MAGIC: u32 = 0x36D76289;
+pub const MULTIBOOT2_MAGIC: u32 = 0x36D7_6289;
 
 /// Multiboot1 信息结构标志位: 基本内存信息 (`mem_lower` / `mem_upper`) 有效
 pub const MBOOT1_FLAG_MEM: u32 = 1 << 0;

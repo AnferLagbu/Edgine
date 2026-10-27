@@ -85,10 +85,6 @@ pub fn clone_user_page_table_cow(parent_pml4: u64) -> Option<u64> {
     clippy::too_many_lines,
     reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
 )]
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
     if parent_pml4 == 0 {
         return None;
@@ -152,7 +148,7 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
         }
 
         let mut child_pml4e = parent_pml4e;
-        child_pml4e = (child_pml4e & 0xFFF) | (child_pdpt_phys.as_u64() & 0x000FFFFFFFFFF000);
+        child_pml4e = (child_pml4e & 0xFFF) | (child_pdpt_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
         // SAFETY: child_pml4_virt 指向有效 PML4 页
         unsafe {
             child_pml4_virt.add(i).write_volatile(child_pml4e);
@@ -160,7 +156,7 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
 
         // SAFETY: parent_pml4e 已检验 present, phys_to_virt 映射有效
         let parent_pdpt_virt =
-            PhysAddr(parent_pml4e & 0x000FFFFFFFFFF000).to_virt().0 as *const u64;
+            PhysAddr(parent_pml4e & 0x000F_FFFF_FFFF_F000).to_virt().0 as *const u64;
 
         for j in 0..512usize {
             // SAFETY: pdpt 索引在页范围内
@@ -181,13 +177,13 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
             }
 
             let mut child_pdpte = parent_pdpte;
-            child_pdpte = (child_pdpte & 0xFFF) | (child_pd_phys.as_u64() & 0x000FFFFFFFFFF000);
+            child_pdpte = (child_pdpte & 0xFFF) | (child_pd_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
             unsafe {
                 child_pdpt_virt.add(j).write_volatile(child_pdpte);
             }
 
             let parent_pd_virt =
-                PhysAddr(parent_pdpte & 0x000FFFFFFFFFF000).to_virt().0 as *const u64;
+                PhysAddr(parent_pdpte & 0x000F_FFFF_FFFF_F000).to_virt().0 as *const u64;
 
             for k in 0..512usize {
                 // SAFETY: pd 索引在页范围内
@@ -219,7 +215,7 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
                 }
 
                 let mut child_pde = parent_pde;
-                child_pde = (child_pde & 0xFFF) | (child_pt_phys.as_u64() & 0x000FFFFFFFFFF000);
+                child_pde = (child_pde & 0xFFF) | (child_pt_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
                 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                 unsafe {
                     child_pd_virt.add(k).write_volatile(child_pde);
@@ -227,7 +223,7 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
 
                 // SAFETY: parent_pt 物理地址来自有效 PDE (阶段 1 只读该页)
                 let parent_pt_virt =
-                    PhysAddr(parent_pde & 0x000FFFFFFFFFF000).to_virt().0 as *const u64;
+                    PhysAddr(parent_pde & 0x000F_FFFF_FFFF_F000).to_virt().0 as *const u64;
 
                 // 阶段 1 只建结构: leaf PTE 逐项原值复制 —— 不改父页表、不改子 PTE、
                 // 不登记任何持有者. 使本阶段任一分配失败只需释放已建子树页表帧,
@@ -267,7 +263,7 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
                 return;
             }
             // fork: 父子各持引用 (每 leaf 一次), PMM 帧持有计数 +1
-            pmm.frame_inc(PhysAddr(parent_pte & 0x000FFFFFFFFFF000));
+            pmm.frame_inc(PhysAddr(parent_pte & 0x000F_FFFF_FFFF_F000));
 
             // 仅当 COW 标记确有变化时才写回 (aarch64 分支恒为原值 ⇒ 两侧都不写)
             let ro_entry = mark_cow_readonly(parent_pte);
@@ -298,10 +294,6 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
     clippy::similar_names,
     reason = "变量名相似表达同族概念 (pd/pt 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
 )]
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 fn for_each_cow_leaf_in_pd(
     parent_pd: *mut u64,
     child_pd: *mut u64,
@@ -319,8 +311,8 @@ fn for_each_cow_leaf_in_pd(
             continue;
         }
 
-        let parent_pt = PhysAddr(pde & 0x000FFFFFFFFFF000).to_virt().0 as *mut u64;
-        let child_pt = PhysAddr(child_pde & 0x000FFFFFFFFFF000).to_virt().0 as *mut u64;
+        let parent_pt = PhysAddr(pde & 0x000F_FFFF_FFFF_F000).to_virt().0 as *mut u64;
+        let child_pt = PhysAddr(child_pde & 0x000F_FFFF_FFFF_F000).to_virt().0 as *mut u64;
 
         for l in 0..512usize {
             // SAFETY: l 在 PT 页范围内
@@ -340,10 +332,6 @@ fn for_each_cow_leaf_in_pd(
 /// `(父槽位, 子槽位, 父 PTE 原值)`.
 ///
 /// 高半区 (索引 256-511, 内核映射) 不属于用户地址空间、不参与 COW, 故不在遍历范围.
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 fn for_each_cow_leaf(
     parent_root: u64,
     child_root: u64,
@@ -363,8 +351,8 @@ fn for_each_cow_leaf(
             continue;
         }
 
-        let parent_pdpt = PhysAddr(pml4e & 0x000FFFFFFFFFF000).to_virt().0 as *mut u64;
-        let child_pdpt = PhysAddr(child_pml4e & 0x000FFFFFFFFFF000).to_virt().0 as *mut u64;
+        let parent_pdpt = PhysAddr(pml4e & 0x000F_FFFF_FFFF_F000).to_virt().0 as *mut u64;
+        let child_pdpt = PhysAddr(child_pml4e & 0x000F_FFFF_FFFF_F000).to_virt().0 as *mut u64;
 
         for j in 0..512usize {
             // SAFETY: j 在 PDPT 页范围内
@@ -378,8 +366,8 @@ fn for_each_cow_leaf(
                 continue;
             }
 
-            let parent_pd = PhysAddr(pdpte & 0x000FFFFFFFFFF000).to_virt().0 as *mut u64;
-            let child_pd = PhysAddr(child_pdpte & 0x000FFFFFFFFFF000).to_virt().0 as *mut u64;
+            let parent_pd = PhysAddr(pdpte & 0x000F_FFFF_FFFF_F000).to_virt().0 as *mut u64;
+            let child_pd = PhysAddr(child_pdpte & 0x000F_FFFF_FFFF_F000).to_virt().0 as *mut u64;
 
             for_each_cow_leaf_in_pd(parent_pd, child_pd, &mut f);
         }
@@ -392,10 +380,6 @@ fn for_each_cow_leaf(
 /// 故其低半区任何 present 槽位必为本次克隆所建; 高半区是内核页表的副本, 不在范围内.
 ///
 /// 调用方须持有 `VMM_LOCK` (`defer_free` 的 `BATCH_HEAD` 单写者前提).
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 fn free_child_page_table_tree(root: u64) {
     if root == 0 {
         return;
@@ -408,7 +392,7 @@ fn free_child_page_table_tree(root: u64) {
         if (pml4e & 1) == 0 {
             continue;
         }
-        let pdpt = PhysAddr(pml4e & 0x000FFFFFFFFFF000).to_virt().0 as *mut u64;
+        let pdpt = PhysAddr(pml4e & 0x000F_FFFF_FFFF_F000).to_virt().0 as *mut u64;
 
         for j in 0..512usize {
             // SAFETY: j 在 PDPT 页范围内
@@ -417,7 +401,7 @@ fn free_child_page_table_tree(root: u64) {
             if (pdpte & 1) == 0 || (pdpte & 0x80) != 0 {
                 continue;
             }
-            let pd = PhysAddr(pdpte & 0x000FFFFFFFFFF000).to_virt().0 as *mut u64;
+            let pd = PhysAddr(pdpte & 0x000F_FFFF_FFFF_F000).to_virt().0 as *mut u64;
 
             for k in 0..512usize {
                 // SAFETY: k 在 PD 页范围内
@@ -425,11 +409,11 @@ fn free_child_page_table_tree(root: u64) {
                 if (pde & 1) == 0 || (pde & 0x80) != 0 {
                     continue;
                 }
-                release_child_table_frame(pde & 0x000FFFFFFFFFF000);
+                release_child_table_frame(pde & 0x000F_FFFF_FFFF_F000);
             }
-            release_child_table_frame(pdpte & 0x000FFFFFFFFFF000);
+            release_child_table_frame(pdpte & 0x000F_FFFF_FFFF_F000);
         }
-        release_child_table_frame(pml4e & 0x000FFFFFFFFFF000);
+        release_child_table_frame(pml4e & 0x000F_FFFF_FFFF_F000);
     }
     release_child_table_frame(root);
 }
@@ -465,16 +449,12 @@ pub fn cow_handle_fault(pml4: u64, fault_addr: u64) -> Option<u64> {
 /// 不取 `VMM_LOCK`, 可在持锁下安全调用。
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 fn cow_handle_fault_locked(pml4: u64, fault_addr: u64) -> Option<u64> {
     let vmm_inst = vmm::get_vmm();
     let page_aligned = fault_addr & !(PAGE_SIZE - 1);
 
     let old_phys = vmm_inst.get_physical_in_pml4(pml4, VirtAddr(page_aligned))?;
-    let old_frame = old_phys.as_u64() & 0x000FFFFFFFFFF000;
+    let old_frame = old_phys.as_u64() & 0x000F_FFFF_FFFF_F000;
 
     let pmm_inst = super::pmm::get_pmm();
 

@@ -2,16 +2,12 @@
 
 use super::types::{MAX_UNDO_ENTRIES, UndoEntry};
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 /// 计算 FNV-1a 32 位哈希, 用于撤销记录校验和。
 pub fn fnv1a_32(data: &[u8]) -> u32 {
-    let mut h: u32 = 2166136261;
+    let mut h: u32 = 2_166_136_261;
     for &b in data {
         h ^= u32::from(b);
-        h = h.wrapping_mul(16777619);
+        h = h.wrapping_mul(16_777_619);
     }
     h
 }

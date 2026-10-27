@@ -76,15 +76,11 @@ impl UnkfsZapEntry {
     }
 
     /// 计算名字的 FNV-1a 64 位哈希
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     pub fn hash_name(name: &str) -> u64 {
-        let mut h: u64 = 14695981039346656037;
+        let mut h: u64 = 14_695_981_039_346_656_037;
         for &b in name.as_bytes() {
             h ^= u64::from(b);
-            h = h.wrapping_mul(1099511628211);
+            h = h.wrapping_mul(1_099_511_628_211);
         }
         h
     }

@@ -56,11 +56,8 @@ impl UnkfsDva {
         }
     }
 
-    #[expect(
-        clippy::return_self_not_must_use,
-        reason = "return_self_not_must_use: 返回 Self 是 builder/fluent API; 当前优先 expect"
-    )]
     /// 把本 DVA 标记为 gang 块成员并返回自身.
+    #[must_use]
     pub fn with_gang(mut self) -> Self {
         self.gang = 1;
         self

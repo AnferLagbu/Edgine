@@ -18,7 +18,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 pub const KASLR_ENABLED: bool = cfg!(feature = "kaslr");
 
 /// 偏移对齐粒度 (2MB, 与 2M-huge-page 对齐, 与 `x86_64/aarch64` linker 一致).
-pub const KASLR_ALIGN: u64 = 0x200000;
+pub const KASLR_ALIGN: u64 = 0x20_0000;
 
 /// 默认偏移 — 未启用 KASLR 时为 0, 等同"加载到 linker 脚本指定的地址".
 pub const KASLR_DEFAULT_OFFSET: u64 = 0;

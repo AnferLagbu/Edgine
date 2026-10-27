@@ -874,7 +874,7 @@ pub fn register_timer_tick_tests() {
 
     fn zero_frequency_handling() -> TestResult {
         crate::assert_eq_test!(ticks_to_ms(1000), 1000, "ticks_to_ms");
-        crate::assert_eq_test!(ticks_to_us(1000), 1000000, "ticks_to_us");
+        crate::assert_eq_test!(ticks_to_us(1000), 1_000_000, "ticks_to_us");
         crate::assert_eq_test!(ms_to_ticks(1000), 1000, "ms_to_ticks");
         TestResult::Pass
     }

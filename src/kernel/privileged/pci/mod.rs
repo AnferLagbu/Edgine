@@ -223,16 +223,12 @@ static PCI_INITIALIZED: core::sync::atomic::AtomicBool = core::sync::atomic::Ato
 /// 计算给定 (bus, device, function, offset) 对应的 ECAM MMIO 地址.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-#[expect(
-    clippy::cast_lossless,
-    reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-)]
 fn ecam_addr(bus: u8, dev: u8, func: u8, offset: u8) -> u64 {
     ECAM_BASE.load(core::sync::atomic::Ordering::Relaxed)
-        | ((bus as u64) << 20)
-        | (((dev & 0x1F) as u64) << 15)
-        | (((func & 0x07) as u64) << 12)
-        | (offset as u64 & 0xFFF)
+        | (u64::from(bus) << 20)
+        | (u64::from(dev & 0x1F) << 15)
+        | (u64::from(func & 0x07) << 12)
+        | (u64::from(offset) & 0xFFF)
 }
 
 /// B04-03: 设置 ECAM 基址 (从 ACPI MCFG / 设备树获取)

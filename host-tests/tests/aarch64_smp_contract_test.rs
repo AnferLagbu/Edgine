@@ -93,16 +93,16 @@ const AP_BOOT_FIELD_OFFSETS: [&str; 10] = [
 fn psci_function_ids_frozen() {
     let src = read(PSCI_RS);
     assert!(
-        src.contains("const PSCI_SYSTEM_OFF: u32 = 0x84000008;"),
-        "PSCI_SYSTEM_OFF 必须为 0x84000008 (ARM PSCI v0.2+ 规范值)"
+        src.contains("const PSCI_SYSTEM_OFF: u32 = 0x8400_0008;"),
+        "PSCI_SYSTEM_OFF 必须为 0x8400_0008 (ARM PSCI v0.2+ 规范值)"
     );
     assert!(
-        src.contains("const PSCI_SYSTEM_RESET: u32 = 0x84000009;"),
-        "PSCI_SYSTEM_RESET 必须为 0x84000009 (ARM PSCI v0.2+ 规范值)"
+        src.contains("const PSCI_SYSTEM_RESET: u32 = 0x8400_0009;"),
+        "PSCI_SYSTEM_RESET 必须为 0x8400_0009 (ARM PSCI v0.2+ 规范值)"
     );
     assert!(
-        src.contains("const PSCI_VERSION: u32 = 0x84000000;"),
-        "PSCI_VERSION 必须为 0x84000000 (ARM PSCI v0.2+ 规范值)"
+        src.contains("const PSCI_VERSION: u32 = 0x8400_0000;"),
+        "PSCI_VERSION 必须为 0x8400_0000 (ARM PSCI v0.2+ 规范值)"
     );
     assert!(
         src.contains("pub const PSCI_CPU_ON: u32 = 0xC400_0003;"),

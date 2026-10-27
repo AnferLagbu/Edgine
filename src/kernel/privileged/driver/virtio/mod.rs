@@ -75,7 +75,7 @@ const QUEUE_DEVICE_HIGH: usize = 0x0a4;
 
 // ── Register magic ──
 
-const VIRTIO_MAGIC: u32 = 0x74726976;
+const VIRTIO_MAGIC: u32 = 0x7472_6976;
 
 // ── 设备状态位 ──
 

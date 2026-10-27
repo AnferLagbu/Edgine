@@ -44,7 +44,7 @@ pub const EFD_MAX_SLOTS: usize = 16;
 /// TD-02: 基址来源已迁移至 `privileged::proc::FdPlan::EVENT_FD` 单一来源, 不再硬编码.
 pub const EFD_FD_BASE: i32 = crate::privileged::proc::FdPlan::EVENT_FD.base;
 /// `EFD_CLOEXEC` (与 Linux 一致)
-pub const EFD_CLOEXEC: i32 = 0o2000000;
+pub const EFD_CLOEXEC: i32 = 0o200_0000;
 /// `EFD_NONBLOCK` (与 Linux 一致)
 pub const EFD_NONBLOCK: i32 = 0o4000;
 /// `EFD_SEMAPHORE` (与 Linux 一致)

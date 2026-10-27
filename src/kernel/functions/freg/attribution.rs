@@ -310,10 +310,6 @@ impl DomainFailureRecord {
     }
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 /// 能力降级策略
 ///
 /// tier 1: 撤销可写能力 (WRITE/SEND/CREATE)
@@ -323,11 +319,11 @@ pub fn downgrade_for_tier(tier: u32) -> CapBits {
         0 => CapBits::ALL,
         1 => {
             // tier 1: 撤销 WRITE 位 (bit 0 of each cap)
-            CapBits(0xFFFFFFFFFFFFFFFE) // 假设每个能力域 bit 0 = WRITE
+            CapBits(0xFFFF_FFFF_FFFF_FFFE) // 假设每个能力域 bit 0 = WRITE
         }
         2 => {
             // tier 2: 撤销 WRITE/CREATE 位
-            CapBits(0xFFFFFFFFFFFFFFFC) // 保留 READ (bit 0) + EXEC (bit 1) 之类
+            CapBits(0xFFFF_FFFF_FFFF_FFFC) // 保留 READ (bit 0) + EXEC (bit 1) 之类
         }
         _ => CapBits::NONE,
     }

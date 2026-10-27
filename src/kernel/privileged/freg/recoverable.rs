@@ -10,11 +10,8 @@ use crate::privileged::sync::{IrqSpinLock, IrqSpinLockGuard};
 
 /// 可快照/恢复的值接口
 pub trait Snapshot: Copy + Sized {
-    #[expect(
-        clippy::return_self_not_must_use,
-        reason = "return_self_not_must_use: 返回 Self 是 builder/fluent API; 当前优先 expect"
-    )]
     /// 返回该值的快照副本 (默认返回自身拷贝)。
+    #[must_use]
     fn snapshot(&self) -> Self {
         *self
     }

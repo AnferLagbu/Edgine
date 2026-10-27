@@ -238,7 +238,7 @@ impl CapBits {
     /// 空能力集 (无任何位).
     pub const NONE: Self = Self(0);
     /// 全集: 所有能力位均置位.
-    pub const ALL: Self = Self(0xFFFFFFFFFFFFFFFF);
+    pub const ALL: Self = Self(0xFFFF_FFFF_FFFF_FFFF);
 
     #[expect(
         clippy::trivially_copy_pass_by_ref,

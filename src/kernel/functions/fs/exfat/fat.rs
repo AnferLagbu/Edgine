@@ -8,19 +8,15 @@ use crate::functions::fs::KernelError;
 use crate::privileged::egdf::{egdf_blk_read_sectors, egdf_blk_write_sectors};
 
 /// FAT 表条目常量
-pub const FAT_FREE: u32 = 0x00000000;
+pub const FAT_FREE: u32 = 0x0000_0000;
 /// 坏簇标记 (BAD cluster)
-pub const FAT_BAD: u32 = 0xFFFFFFF7;
+pub const FAT_BAD: u32 = 0xFFFF_FFF7;
 /// FAT 链结束标记 (END of chain)
-pub const FAT_END: u32 = 0x0FFFFFFF;
+pub const FAT_END: u32 = 0x0FFF_FFFF;
 
 #[expect(
     clippy::unnecessary_wraps,
     reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
 )]
 /// 从 FAT 表读取簇链
 ///
@@ -58,7 +54,7 @@ pub fn read_fat_chain(
             sector_data[fat_offset as usize + 3],
         ]);
 
-        if entry >= 0x0FFFFFF8 || entry == FAT_END {
+        if entry >= 0x0FFF_FFF8 || entry == FAT_END {
             break;
         }
 

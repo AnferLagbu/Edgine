@@ -90,19 +90,15 @@ pub fn has_node(name: &str) -> bool {
 // 节点值格式化
 // ============================================================================
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 /// 把节点值写到 buffer, 返写入字节数
 ///
 /// # Errors
 /// 当节点不存在时返回 `ENOENT`; 当缓冲区过小 (装不下格式化结果) 时返回 `EINVAL`.
 pub fn write_node_value(name: &str, buf: &mut [u8]) -> Result<usize, Errno> {
     let val = match name {
-        "cpu_count" => SysfsValue::Integer(1),          // 简化: BSP=1
-        "mem_total" => SysfsValue::Integer(0x10000000), // 256 MiB
-        "mem_free" => SysfsValue::Integer(0x08000000),  // 128 MiB
+        "cpu_count" => SysfsValue::Integer(1),           // 简化: BSP=1
+        "mem_total" => SysfsValue::Integer(0x1000_0000), // 256 MiB
+        "mem_free" => SysfsValue::Integer(0x0800_0000),  // 128 MiB
         "uptime_secs" => SysfsValue::Integer(0),
         "version" => SysfsValue::String("edgine-0.1.0"),
         "boot_status" => SysfsValue::Bool(true),

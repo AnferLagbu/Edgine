@@ -409,10 +409,6 @@ pub fn is_initialized() -> bool {
 ///   3 = `get_cpu_stats(cpu`: a1) → (enter 位于高 32 位 | exit 位于低 32 位) 或 `idle_time`
 ///   4 = `set_hz(cpu`: a1, hz: a2)
 ///   5 = `is_initialized()` → bool (是否已初始化)
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 pub fn tickless_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
     if !is_initialized() && cmd != 5 {
         return -(11i64); // EAGAIN
@@ -445,7 +441,7 @@ pub fn tickless_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
                     // 返回: 高32位=enter_count, 低32位=exit_count
                     // idle_ns 通过第二次调用返回 (简化)
                     let _ = idle_ns;
-                    ((enter as i64) << 32) | (exit as i64 & 0xFFFFFFFF)
+                    ((enter as i64) << 32) | (exit as i64 & 0xFFFF_FFFF)
                 }
                 None => -(22i64),
             }

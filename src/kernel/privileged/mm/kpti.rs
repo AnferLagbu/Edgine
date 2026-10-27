@@ -128,12 +128,8 @@ pub unsafe fn invpcid_flush_single(pcid: u16, vaddr: u64) {
 
 /// CR3 值中嵌入 PCID: PML4 物理地址 | PCID.
 #[inline(always)]
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 pub const fn cr3_with_pcid(pml4_phys: u64, pcid: u64) -> u64 {
-    (pml4_phys & 0x000FFFFFFFFFF000) | (pcid & 0xFFF)
+    (pml4_phys & 0x000F_FFFF_FFFF_F000) | (pcid & 0xFFF)
 }
 
 /// 检查 CPU 是否支持 INVPCID.
@@ -589,10 +585,6 @@ pub unsafe fn map_rsp0_page(user_pml4_phys: u64, kernel_stack_top: u64) {
 // 符号桩化 (host-test): 唯一调用点 (`map_kernel_pages_in_user_pml4`) 已整段 cfg,
 // host 下无调用者, 函数整体不编译 (避免 dead_code).
 #[cfg(not(feature = "host-test"))]
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 /// 在用户页表中映射 `.text` 入口区段 (PRESENT only, SMEP-safe).
 ///
 /// 对区段内每个物理页映射 **3 个别名**, 三者分别被不同路径使用 (KPTI-08 实证):
@@ -627,7 +619,7 @@ pub(super) unsafe fn map_text_region_in_user_pml4(
     text_end_phys: u64,
 ) {
     // 链接脚本镜像别名偏移 (`_kernel_text_vma = 0xFFFF800001000000 + .`).
-    const LINKER_VMA_OFFSET: u64 = 0xFFFF800001000000;
+    const LINKER_VMA_OFFSET: u64 = 0xFFFF_8000_0100_0000;
 
     // 权限位: PRESENT (bit 0) = 0x1
     // 不设置 USER (bit 2): SMEP 启用时 Ring 0 不能执行 USER 页,
@@ -696,10 +688,6 @@ pub(super) unsafe fn map_text_region_in_user_pml4(
     clippy::similar_names,
     reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
 )]
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _desc: &str) {
     // SAFETY: 调用方保证 user_pml4 有效; vma/phys 是合法地址;
     // boot 阶段单线程执行, 无并发修改页表. PMM 分配的页已对齐且属于内核.
@@ -713,7 +701,7 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
         // 确保 PML4[pml4_idx] 存在 (分配 PDPT 页)
         let pml4e = core::ptr::read_volatile(user_pml4.add(pml4_idx as usize));
         let pdpt_phys = if pml4e & 1 != 0 {
-            pml4e & 0x000FFFFFFFFFF000
+            pml4e & 0x000F_FFFF_FFFF_F000
         } else {
             let new_page = pmm_alloc_page() as u64;
             assert!(new_page != 0, "[KPTI] map_text_page: alloc PDPT failed");
@@ -729,7 +717,7 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
         // 确保 PDPT[pdpt_idx] 存在 (分配 PD 页)
         let pdpte = core::ptr::read_volatile(pdpt.add(pdpt_idx as usize));
         let pd_phys = if pdpte & 1 != 0 {
-            pdpte & 0x000FFFFFFFFFF000
+            pdpte & 0x000F_FFFF_FFFF_F000
         } else {
             let new_page = pmm_alloc_page() as u64;
             assert!(new_page != 0, "[KPTI] map_text_page: alloc PD failed");
@@ -756,7 +744,7 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
             if pde & (1 << 7) != 0 {
                 // PS=1: 2MB 大页 → 直接拆分
                 const PS_BIT: u64 = 1 << 7;
-                let huge_base = pde & 0x000FFFFFFFE00000; // bits 51:21
+                let huge_base = pde & 0x000F_FFFF_FFE0_0000; // bits 51:21
                 let pde_flags = pde & 0xFFF & !PS_BIT; // 保留权限, 清 PS
 
                 let new_pt = pmm_alloc_page() as u64;
@@ -783,7 +771,7 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
                 new_pt
             } else {
                 // PS=0: 普通 PDE → 已指向 PT 页
-                pde & 0x000FFFFFFFFFF000
+                pde & 0x000F_FFFF_FFFF_F000
             }
         } else {
             let new_page = pmm_alloc_page() as u64;
@@ -806,10 +794,6 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
 // 符号桩化 (host-test): 唯一调用点 (`map_kernel_pages_in_user_pml4`) 与
 // USER_CR3_SAVE 汇编符号在 host 维均不存在, 函数整体不编译 (避免 dead_code).
 #[cfg(not(feature = "host-test"))]
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 /// KPTI 中断/系统调用入口在 CR3 切换前需要访问的数据页面。
 ///
 /// 当 CPU 在用户态触发中断/异常/系统调用时, `isr_common / irq_common /
@@ -861,7 +845,7 @@ pub(super) unsafe fn map_kpti_data_pages(user_pml4: *mut u64) {
     // 避免暴露内核 PML4 物理地址与 per-CPU 内核栈.
     const FLAGS: u64 = 0x3; // PRESENT | WRITABLE
     // 链接脚本镜像别名偏移 (与 `map_text_region_in_user_pml4` 同源).
-    const LINKER_VMA_OFFSET: u64 = 0xFFFF800001000000;
+    const LINKER_VMA_OFFSET: u64 = 0xFFFF_8000_0100_0000;
 
     // 1. USER_CR3_SAVE 所在页
     //    USER_CR3_SAVE 位于 .bss 段, isr.asm 用绝对寻址 `mov [USER_CR3_SAVE], rax`,

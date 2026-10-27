@@ -916,10 +916,6 @@ fn write_le32(buf: &mut [u8], offset: usize, val: u32) {
 const BOOT_PART_SECTORS: u32 = 16384;
 
 #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 /// `sys_boot_install` — 引导安装 (机制: 磁盘扇区写 + stage1/内核拷贝, 仅 x86_64)
 ///
 /// T2 批 5 (syscall-followup): syscall 策略入口迁至 functions
@@ -955,17 +951,17 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
     let unkfs_sectors = if total_sectors > u64::from(unkfs_start) + 1 {
         total_sectors - u64::from(unkfs_start)
     } else {
-        0xFFFFFFFFu64
+        0xFFFF_FFFF_u64
     };
-    write_le32(&mut mbr, 446, 0x00000800);
-    write_le32(&mut mbr, 450, 0x06FEFFFF);
+    write_le32(&mut mbr, 446, 0x0000_0800);
+    write_le32(&mut mbr, 450, 0x06FE_FFFF);
     write_le32(&mut mbr, 454, 64u32);
     write_le32(&mut mbr, 458, BOOT_PART_SECTORS - 64);
     write_le32(&mut mbr, 462, unkfs_start);
-    write_le32(&mut mbr, 466, 0x83FEFFFF);
+    write_le32(&mut mbr, 466, 0x83FE_FFFF);
     write_le32(&mut mbr, 470, unkfs_start);
-    let unkfs_len = if unkfs_sectors > 0xFFFFFFFF {
-        0xFFFFFFFFu32
+    let unkfs_len = if unkfs_sectors > 0xFFFF_FFFF {
+        0xFFFF_FFFF_u32
     } else {
         unkfs_sectors as u32
     };

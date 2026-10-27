@@ -156,10 +156,7 @@ impl Color {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
-    #[expect(
-        clippy::return_self_not_must_use,
-        reason = "return_self_not_must_use: 返回 Self 是 builder/fluent API; 当前优先 expect"
-    )]
+    #[must_use]
     pub fn blend(&self, other: &Self) -> Self {
         let alpha = u32::from(self.a);
         let inv_alpha = 255 - alpha;

@@ -59,13 +59,13 @@ fn test_aarch64_kernel_base_is_ttbr1_window_base() {
 
     assert!(
         n.contains(
-            r#"#[cfg(target_arch = "aarch64")] pub const KERNEL_BASE: u64 = 0xFFFF000000000000u64;"#
+            r#"#[cfg(target_arch = "aarch64")] pub const KERNEL_BASE: u64 = 0xFFFF_0000_0000_0000_u64;"#
         ),
         "aarch64 KERNEL_BASE 必须为 TTBR1 窗口基址 0xFFFF_0000_0000_0000 (L1-02 裁定)"
     );
     assert!(
         n.contains(
-            r#"#[cfg(target_arch = "x86_64")] pub const KERNEL_BASE: u64 = 0xFFFF800000000000u64;"#
+            r#"#[cfg(target_arch = "x86_64")] pub const KERNEL_BASE: u64 = 0xFFFF_8000_0000_0000_u64;"#
         ),
         "x86_64 KERNEL_BASE 分叉必须保留 (L1 不迁移 x86_64 形态)"
     );

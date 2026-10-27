@@ -629,10 +629,6 @@ fn trampoline_top_of(gdt: &PerCpuGdt) -> u64 {
     clippy::borrow_as_ptr,
     reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
 )]
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 pub fn gdt_init() -> i32 {
     use crate::privileged::klog::{LogCategory, LogLevel, klog_write};
 
@@ -708,12 +704,12 @@ pub fn gdt_init() -> i32 {
             clippy::items_after_statements,
             reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
         )]
-        const IA32_GS_BASE: u32 = 0xC0000101;
+        const IA32_GS_BASE: u32 = 0xC000_0101;
         #[expect(
             clippy::items_after_statements,
             reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
         )]
-        const IA32_KERNEL_GS_BASE: u32 = 0xC0000102;
+        const IA32_KERNEL_GS_BASE: u32 = 0xC000_0102;
         crate::privileged::cpu::msr::write_msr(IA32_GS_BASE, &gdt.syscall as *const _ as u64);
         crate::privileged::cpu::msr::write_msr(IA32_KERNEL_GS_BASE, 0);
 
@@ -805,10 +801,6 @@ pub fn alloc_ap_gdt(cpu_index: u32) -> bool {
     clippy::borrow_as_ptr,
     reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
 )]
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 pub fn gdt_init_ap(cpu_index: u32) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
@@ -874,12 +866,12 @@ pub fn gdt_init_ap(cpu_index: u32) {
             clippy::items_after_statements,
             reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
         )]
-        const IA32_GS_BASE: u32 = 0xC0000101;
+        const IA32_GS_BASE: u32 = 0xC000_0101;
         #[expect(
             clippy::items_after_statements,
             reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
         )]
-        const IA32_KERNEL_GS_BASE: u32 = 0xC0000102;
+        const IA32_KERNEL_GS_BASE: u32 = 0xC000_0102;
         crate::privileged::cpu::msr::write_msr(IA32_GS_BASE, &ap.syscall as *const _ as u64);
         crate::privileged::cpu::msr::write_msr(IA32_KERNEL_GS_BASE, 0);
     }

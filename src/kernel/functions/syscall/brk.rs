@@ -18,7 +18,7 @@ const USER_ADDR_MAX: u64 = 0x7FFF_FFFF_FFFF;
 const USER_ADDR_MAX: u64 = 0x0000_FFFF_FFFF_FFFF;
 
 /// 全局静态 brk 回退 (无 `MmStruct` 时使用)
-static BRK: AtomicU64 = AtomicU64::new(0x400000 + 65536);
+static BRK: AtomicU64 = AtomicU64::new(0x40_0000 + 65536);
 
 /// brk 系统调用实现
 pub fn sys_brk(addr: u64) -> i64 {

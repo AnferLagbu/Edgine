@@ -229,10 +229,6 @@ impl IoMem {
     // 由 `mmu::init` 的 L2_DEVICE 静态提供, 不存在"需要动态补映射"的情形
     // (见 `mmio_virt`). 故整个函数在 aarch64 不参与编译, 避免死代码 (F9).
     #[cfg(target_arch = "x86_64")]
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     /// 确保 MMIO 物理地址范围在内核页表中有映射.
     /// 使用 2MB 大页映射, 覆盖 [phys, phys + len) 所在的所有 2MB 页.
     /// 如果映射已存在 (同一 2MB 页), `map_huge_page` 会安全地跳过或覆盖.
@@ -241,7 +237,7 @@ impl IoMem {
         use crate::privileged::mm::{PageFlags, PageSize, VirtAddr};
 
         let vmm = get_vmm();
-        let page_2m: u64 = 0x200000;
+        let page_2m: u64 = 0x20_0000;
         let start_page = phys & !(page_2m - 1);
         let end = phys + len as u64;
         let end_page = (end + page_2m - 1) & !(page_2m - 1);

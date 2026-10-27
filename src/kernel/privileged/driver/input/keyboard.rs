@@ -351,13 +351,9 @@ fn wait_input_buffer_empty(cmd_port: &IoPort) {
     }
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 /// 等待输出缓冲区满
 fn wait_output_buffer_full(cmd_port: &IoPort) -> bool {
-    let mut timeout: u32 = 100000;
+    let mut timeout: u32 = 100_000;
 
     while timeout > 0 {
         if cmd_port.read_u8(0) & PS2_STATUS_OUTPUT_FULL != 0 {

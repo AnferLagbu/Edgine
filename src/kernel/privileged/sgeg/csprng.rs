@@ -55,10 +55,6 @@ fn rdrand_u64() -> Option<u64> {
     clippy::borrow_as_ptr,
     reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
 )]
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 fn fallback_entropy_byte(idx: usize) -> u8 {
     use core::sync::atomic::AtomicU64;
     static COUNTER: AtomicU64 = AtomicU64::new(0x5A3C_9E17_F2D8_4B61);
@@ -70,9 +66,9 @@ fn fallback_entropy_byte(idx: usize) -> u8 {
         .wrapping_add(stack_addr)
         .wrapping_mul(0x1329_4A6B_3C7D_8E0F)
         .wrapping_add(counter)
-        .wrapping_add(idx as u64 * 0x517CC1B727220A95);
+        .wrapping_add(idx as u64 * 0x517C_C1B7_2722_0A95);
     v = v
-        .wrapping_mul(0x9e3779b97f4a7c15)
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
         .wrapping_add(tsc.rotate_left(idx as u32));
     ((v >> 56) as u8) ^ ((v >> 40) as u8)
 }

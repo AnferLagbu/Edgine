@@ -311,14 +311,10 @@ static PAGE_CACHE: [IrqSpinLock<PageCacheBucket>; PCACHE_HASH_BUCKETS] =
 /// 计算哈希桶索引
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 fn pcache_hash(inode_id: u32, page_index: u64) -> usize {
     let h = u64::from(inode_id)
-        .wrapping_mul(0x9E3779B97F4A7C15)
-        .wrapping_add(page_index.wrapping_mul(0x517CC1B727220A95));
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(page_index.wrapping_mul(0x517C_C1B7_2722_0A95));
     (h as usize) & (PCACHE_HASH_BUCKETS - 1)
 }
 
@@ -515,7 +511,7 @@ pub fn pcache_read_to_slice(inode_id: u32, page_index: u64, dst: &mut [u8]) -> b
 fn test_pcache_hash_range() -> crate::privileged::tests::TestResult {
     use crate::privileged::tests::{TestResult, check};
     for &inode in &[1u32, 42, 1000, 0xFFFF] {
-        for &pg in &[0u64, 1, 100, 0xFFFFFFFF] {
+        for &pg in &[0u64, 1, 100, 0xFFFF_FFFF] {
             let idx = pcache_hash(inode, pg);
             check!(idx < PCACHE_HASH_BUCKETS, "hash in range");
         }

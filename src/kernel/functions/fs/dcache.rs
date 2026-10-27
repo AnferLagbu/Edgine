@@ -209,27 +209,23 @@ impl DCache {
         }
     }
 
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     /// FNV-1a 哈希: (`fs_id`, `parent_ino`, name) → u64
     fn hash_key(fs_id: u32, parent_ino: u32, name: &str) -> u64 {
-        let mut h: u64 = 14695981039346656037;
+        let mut h: u64 = 14_695_981_039_346_656_037;
         // 混入 fs_id (实例命名空间)
         for &b in &fs_id.to_le_bytes() {
             h ^= u64::from(b);
-            h = h.wrapping_mul(1099511628211);
+            h = h.wrapping_mul(1_099_511_628_211);
         }
         // 混入 parent_ino
         for &b in &parent_ino.to_le_bytes() {
             h ^= u64::from(b);
-            h = h.wrapping_mul(1099511628211);
+            h = h.wrapping_mul(1_099_511_628_211);
         }
         // 混入 name
         for &b in name.as_bytes() {
             h ^= u64::from(b);
-            h = h.wrapping_mul(1099511628211);
+            h = h.wrapping_mul(1_099_511_628_211);
         }
         h
     }
@@ -411,20 +407,16 @@ impl ICache {
         }
     }
 
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     /// FNV-1a 哈希: (`fs_id`, ino) → u64
     fn hash_key(fs_id: u32, ino: u32) -> u64 {
-        let mut h: u64 = 14695981039346656037;
+        let mut h: u64 = 14_695_981_039_346_656_037;
         for &b in &fs_id.to_le_bytes() {
             h ^= u64::from(b);
-            h = h.wrapping_mul(1099511628211);
+            h = h.wrapping_mul(1_099_511_628_211);
         }
         for &b in &ino.to_le_bytes() {
             h ^= u64::from(b);
-            h = h.wrapping_mul(1099511628211);
+            h = h.wrapping_mul(1_099_511_628_211);
         }
         h
     }

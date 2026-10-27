@@ -299,14 +299,10 @@ impl AuditError {
 
 use crate::privileged::syscall::Errno;
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 /// FNV-1a 64 位哈希 (functions 层, 用于审计链)
 fn compute_hash(prev: u64, event: &AuditEvent) -> u64 {
-    const OFFSET: u64 = 0xcbf29ce484222325;
-    const PRIME: u64 = 0x100000001b3;
+    const OFFSET: u64 = 0xCBF2_9CE4_8422_2325;
+    const PRIME: u64 = 0x100_0000_01B3;
 
     let mut h = prev ^ OFFSET;
     h = (h ^ (event.tick as u64)).wrapping_mul(PRIME);

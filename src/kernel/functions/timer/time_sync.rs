@@ -36,7 +36,7 @@ use crate::privileged::timer::time_sync::{ADJ_RATE_NS, clock_adj_state};
 // ============================================================================
 
 /// NTP 纪元偏移: 1970-01-01 00:00:00 相对于 NTP 纪元 (1900-01-01) 的秒数
-pub const NTP_EPOCH_OFFSET: u64 = 2208988800;
+pub const NTP_EPOCH_OFFSET: u64 = 2_208_988_800;
 
 /// NTP 端口
 pub const NTP_PORT: u16 = 123;
@@ -47,7 +47,7 @@ pub const PTP_EVENT_PORT: u16 = 319;
 pub const PTP_GENERAL_PORT: u16 = 320;
 
 /// 最大频率调整 (ppm, 百万分之一)
-pub const MAX_FREQ_ADJUST_PPM: i64 = 500000; // ±500 ppm
+pub const MAX_FREQ_ADJUST_PPM: i64 = 500_000; // ±500 ppm
 /// 最大单次偏移调整 (ns)
 pub const MAX_OFFSET_NS: i64 = 500_000_000; // 500ms
 

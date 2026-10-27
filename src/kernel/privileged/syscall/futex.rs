@@ -241,13 +241,9 @@ fn futex_table() -> &'static FutexHashTable {
     })
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 /// 计算哈希桶索引
 fn hash_uaddr(uaddr: u64) -> usize {
-    let hash = (uaddr.wrapping_mul(0x9E3779B97F4A7C15)) >> 58;
+    let hash = (uaddr.wrapping_mul(0x9E37_79B9_7F4A_7C15)) >> 58;
     (hash as usize) & (FUTEX_HASH_BUCKETS - 1)
 }
 
@@ -385,7 +381,7 @@ fn test_futex_op_mask() -> crate::privileged::tests::TestResult {
 #[cfg(feature = "kernel_test")]
 fn test_futex_hash() -> crate::privileged::tests::TestResult {
     use crate::privileged::tests::{TestResult, check};
-    for &addr in &[0x1000u64, 0x2000, 0x7FFF00000000, 0xDEADBEEF] {
+    for &addr in &[0x1000u64, 0x2000, 0x7FFF_0000_0000, 0xDEAD_BEEF] {
         let idx = hash_uaddr(addr);
         check!(idx < FUTEX_HASH_BUCKETS, "hash in range");
     }

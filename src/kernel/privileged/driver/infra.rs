@@ -252,21 +252,15 @@ impl DeviceInfo {
         }
     }
 
-    #[expect(
-        clippy::return_self_not_must_use,
-        reason = "return_self_not_must_use: 返回 Self 是 builder/fluent API; 当前优先 expect"
-    )]
     /// 设置 IO 端口基址 (builder 风格, 返回 `self`).
+    #[must_use]
     pub fn with_io_base(mut self, base: u16) -> Self {
         self.io_base = Some(base);
         self
     }
 
-    #[expect(
-        clippy::return_self_not_must_use,
-        reason = "return_self_not_must_use: 返回 Self 是 builder/fluent API; 当前优先 expect"
-    )]
     /// 设置中断线号 (builder 风格, 返回 `self`).
+    #[must_use]
     pub fn with_irq(mut self, irq: u8) -> Self {
         self.irq = Some(irq);
         self

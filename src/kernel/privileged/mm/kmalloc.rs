@@ -23,7 +23,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use crate::privileged::sync::{IrqSaveFlags, disable_interrupts, restore_interrupts};
 
 /// 堆头校验魔数
-const HEAP_MAGIC: u32 = 0xDEADBEEF;
+const HEAP_MAGIC: u32 = 0xDEAD_BEEF;
 
 /// 最小块大小 (容纳头部 + 少量数据)
 const MIN_BLOCK_SIZE: u64 = 64;

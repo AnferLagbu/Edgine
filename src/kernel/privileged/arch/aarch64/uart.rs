@@ -119,17 +119,13 @@ pub unsafe fn init() {
 ///
 /// 调用者必须确保 UART 已初始化且 PL011_BASE MMIO 区域已映射。
 #[inline(always)]
-#[expect(
-    clippy::cast_lossless,
-    reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-)]
 pub unsafe fn putc(c: u8) {
     unsafe {
         // 等待 TX FIFO 非满
         while read(UARTFR) & UARTFR_TXFF != 0 {
             core::hint::spin_loop();
         }
-        write(UARTDR, c as u32);
+        write(UARTDR, u32::from(c));
     }
 }
 

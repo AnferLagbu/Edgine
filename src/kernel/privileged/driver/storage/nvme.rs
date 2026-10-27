@@ -136,10 +136,6 @@ impl NvmeCommand {
         }
     }
 
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     /// 创建读命令
     pub fn read(nsid: u32, slba: u64, nlb: u16, prp1: u64) -> Self {
         Self {
@@ -152,8 +148,8 @@ impl NvmeCommand {
             mptr: 0,
             prp1,
             prp2: 0,
-            cdw10: (slba & 0xFFFFFFFF) as u32,
-            cdw11: ((slba >> 32) & 0xFFFFFFFF) as u32,
+            cdw10: (slba & 0xFFFF_FFFF) as u32,
+            cdw11: ((slba >> 32) & 0xFFFF_FFFF) as u32,
             cdw12: (u32::from(nlb) - 1) & 0xFFFF, // NLB = #blocks - 1
             cdw13: 0,
             cdw14: 0,
@@ -161,10 +157,6 @@ impl NvmeCommand {
         }
     }
 
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     /// 创建写命令
     pub fn write(nsid: u32, slba: u64, nlb: u16, prp1: u64) -> Self {
         Self {
@@ -177,8 +169,8 @@ impl NvmeCommand {
             mptr: 0,
             prp1,
             prp2: 0,
-            cdw10: (slba & 0xFFFFFFFF) as u32,
-            cdw11: ((slba >> 32) & 0xFFFFFFFF) as u32,
+            cdw10: (slba & 0xFFFF_FFFF) as u32,
+            cdw11: ((slba >> 32) & 0xFFFF_FFFF) as u32,
             cdw12: (u32::from(nlb) - 1) & 0xFFFF,
             cdw13: 0,
             cdw14: 0,

@@ -94,7 +94,7 @@ pub const WORDS_PER_SECTOR: usize = 256;
 pub const MAX_ATA_DEVICES: usize = 4;
 
 /// 轮询超时值 (循环次数)
-const ATA_TIMEOUT: u32 = 100000;
+const ATA_TIMEOUT: u32 = 100_000;
 
 // ============================================================================
 // 设备状态结构体

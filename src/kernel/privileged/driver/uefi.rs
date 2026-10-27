@@ -35,7 +35,7 @@ use alloc::vec::Vec;
 // ============================================================================
 
 /// EFI_SYSTEM_TABLE 签名 — "IBI SYST"
-pub const EFI_SYSTEM_TABLE_SIGNATURE: u64 = 0x5453595320494249;
+pub const EFI_SYSTEM_TABLE_SIGNATURE: u64 = 0x5453_5953_2049_4249;
 
 /// `EFI_TABLE_HEADER.Signature` 偏移 (0x00)
 const ST_OFF_SIGNATURE: u64 = 0x00;
@@ -61,11 +61,11 @@ pub const EFI_MAX_VAR_NAME: usize = 1024;
 /// UEFI 变量最大数据大小
 pub const EFI_MAX_VAR_DATA: usize = 32768;
 /// UEFI 变量属性: 非易失性
-pub const EFI_VARIABLE_NON_VOLATILE: u32 = 0x00000001;
+pub const EFI_VARIABLE_NON_VOLATILE: u32 = 0x0000_0001;
 /// UEFI 变量属性: 引导服务访问
-pub const EFI_VARIABLE_BOOTSERVICE_ACCESS: u32 = 0x00000002;
+pub const EFI_VARIABLE_BOOTSERVICE_ACCESS: u32 = 0x0000_0002;
 /// UEFI 变量属性: 运行时访问
-pub const EFI_VARIABLE_RUNTIME_ACCESS: u32 = 0x00000004;
+pub const EFI_VARIABLE_RUNTIME_ACCESS: u32 = 0x0000_0004;
 
 // ============================================================================
 // EFI 时间

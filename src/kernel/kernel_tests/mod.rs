@@ -46,10 +46,6 @@ pub fn register_tests() {
 ///
 /// 页表诊断读取与 `run_all()` 编排依赖 glue 侧可见的 `privileged` 与 `functions`,
 /// 故随跨层注册一并从 TCB 上移.
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 pub fn test_runner_init() {
     crate::klog_boot_info!("[TEST] === Edgine Test Privileged ===");
 
@@ -66,8 +62,8 @@ pub fn test_runner_init() {
             // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
             unsafe { core::ptr::read_volatile(va as *const u64) }
         };
-        let pd24 = read_u64(0x109000, 24);
-        let pd63 = read_u64(0x109000, 63);
+        let pd24 = read_u64(0x10_9000, 24);
+        let pd63 = read_u64(0x10_9000, 63);
         crate::klog_boot_info!(
             "[PAGETABLE] before run_all: pd[24]=0x{:016X} pd[63]=0x{:016X}",
             pd24,

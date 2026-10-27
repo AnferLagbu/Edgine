@@ -44,7 +44,7 @@ pub fn check_user_boundary(vaddr: VirtAddr, flags: PageFlags) {
 )]
 pub fn check_user_boundary(vaddr: VirtAddr, flags: PageFlags) {
     let va = vaddr.as_u64();
-    if va >= 0xFFFF000000000000 {
+    if va >= 0xFFFF_0000_0000_0000 {
         debug_assert!(
             !flags.contains(PageFlags::USER),
             "PageTableChecker: kernel address 0x{:x} must not have PAGE_USER flag",

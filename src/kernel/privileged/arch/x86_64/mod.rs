@@ -325,10 +325,6 @@ impl InterruptArch for X8664 {
         crate::privileged::idt::idt_init();
     }
 
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     fn interrupt_late_init() {
         // cpu_init 必须在 gdt_init 之前调用:
         // kpti_init 依赖 has_invpcid() → get_cpu_info() → cpu_init
@@ -340,10 +336,10 @@ impl InterruptArch for X8664 {
         // 设置 EFER.SCE, STAR, LSTAR (高半部分地址), SFMASK
         #[cfg(target_arch = "x86_64")]
         {
-            const IA32_EFER: u32 = 0xC0000080;
-            const IA32_STAR: u32 = 0xC0000081;
-            const IA32_LSTAR: u32 = 0xC0000082;
-            const IA32_SFMASK: u32 = 0xC0000084;
+            const IA32_EFER: u32 = 0xC000_0080;
+            const IA32_STAR: u32 = 0xC000_0081;
+            const IA32_LSTAR: u32 = 0xC000_0082;
+            const IA32_SFMASK: u32 = 0xC000_0084;
             const EFER_SCE: u64 = 1 << 0;
 
             // SAFETY: MSR 写入在 boot 阶段单线程执行
@@ -375,7 +371,7 @@ impl InterruptArch for X8664 {
                     fn syscall_entry();
                 }
                 let entry_lma = syscall_entry as *const () as u64;
-                let entry_hi = entry_lma + 0xFFFF800000000000u64;
+                let entry_hi = entry_lma + 0xFFFF_8000_0000_0000_u64;
                 crate::klog_boot_info!(
                     "[SYSCALL] syscall_entry LMA={:#X}, LSTAR VMA={:#X}",
                     entry_lma,

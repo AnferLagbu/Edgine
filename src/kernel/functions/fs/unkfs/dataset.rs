@@ -61,14 +61,10 @@ pub struct UnkfsDsProps {
 impl UnkfsDsProps {
     // 2026-09-11 实测: default 触发 should_implement_trait, 需豁免
     #[allow(clippy::should_implement_trait)]
-    #[expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )]
     /// 返回 ZFS 风格默认属性: 128 KiB 记录、Fletcher4 校验、开启 atime.
     pub fn default() -> Self {
         Self {
-            record_size: 131072,
+            record_size: 131_072,
             compression: 0,
             checksum: 2,
             atime: true,

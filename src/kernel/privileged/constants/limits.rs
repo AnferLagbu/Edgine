@@ -45,7 +45,7 @@ pub const MAX_LIMITS: usize = 32;
 /// 两处边界语义不同, 不得混用.
 ///
 /// **超限行为**: `sys_fb_mmap` 对 `target_vaddr > 本值 - size` 返回 `EINVAL`.
-pub const FB_MMAP_ADDR_MAX: u64 = 0x7FFFFFFFE000;
+pub const FB_MMAP_ADDR_MAX: u64 = 0x7FFF_FFFF_E000;
 
 /// 用户态地址空间上界 (指针校验边界, 2^47 量级)
 ///

@@ -252,13 +252,9 @@ impl InterruptArch for Aarch64 {
         }
     }
 
-    #[expect(
-        clippy::cast_lossless,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
     /// GICv3 SGI 广播 (IRM=1)。
     fn broadcast_ipi(vector: u8) {
-        let sgi: u64 = (1u64 << 40) | ((vector & 0xF) as u64) << 24;
+        let sgi: u64 = (1u64 << 40) | u64::from(vector & 0xF) << 24;
         // SAFETY: msr icc_sgi1r_el1 广播 SGI；IRM bit 40 设置为 1 触发广播。
         unsafe {
             asm!("msr icc_sgi1r_el1, {}", in(reg) sgi);
@@ -426,7 +422,7 @@ impl SystemArch for Aarch64 {
         // SAFETY: smc #0 是 aarch64 安全监控调用；PSCI SYSTEM_OFF
         // 不会返回；loop + wfi 兜底防止固件未实现时的意外返回。
         unsafe {
-            let func: u64 = 0x84000008;
+            let func: u64 = 0x8400_0008;
             asm!("smc #0", in("x0") func, options(nostack));
         }
         loop {
@@ -440,7 +436,7 @@ impl SystemArch for Aarch64 {
     fn reboot() -> ! {
         // SAFETY: smc #0 + PSCI SYSTEM_RESET；不会返回。
         unsafe {
-            let func: u64 = 0x84000009;
+            let func: u64 = 0x8400_0009;
             asm!("smc #0", in("x0") func, options(nostack));
         }
         loop {

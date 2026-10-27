@@ -1420,12 +1420,12 @@ impl UserProcManager {
         // ═══ 自检式调试: SYSCALL/SYSRET 配置验证 ═══
         #[cfg(target_arch = "x86_64")]
         {
-            const IA32_EFER: u32 = 0xC0000080;
-            const IA32_STAR: u32 = 0xC0000081;
-            const IA32_LSTAR: u32 = 0xC0000082;
-            const IA32_SFMASK: u32 = 0xC0000084;
-            const IA32_GS_BASE: u32 = 0xC0000101;
-            const IA32_KERNEL_GS_BASE: u32 = 0xC0000102;
+            const IA32_EFER: u32 = 0xC000_0080;
+            const IA32_STAR: u32 = 0xC000_0081;
+            const IA32_LSTAR: u32 = 0xC000_0082;
+            const IA32_SFMASK: u32 = 0xC000_0084;
+            const IA32_GS_BASE: u32 = 0xC000_0101;
+            const IA32_KERNEL_GS_BASE: u32 = 0xC000_0102;
 
             // SAFETY: 仅读取 MSR, 无副作用, boot 阶段单线程
             unsafe {
@@ -1526,7 +1526,7 @@ impl UserProcManager {
                 let pml4e = pml4_virt.add(pml4_idx as usize).read_volatile();
                 let pml4e_present = (pml4e & 1) != 0;
                 let pml4e_user = (pml4e & 4) != 0;
-                let pml4e_frame = pml4e & 0x000FFFFFFFFFF000;
+                let pml4e_frame = pml4e & 0x000F_FFFF_FFFF_F000;
                 crate::klog_boot_info!(
                     "[USER] SELF-CHECK PT-WALK user_code {:#x}: PML4E[{}]={:#x} P={} U={} frame={:#x}",
                     vaddr,
@@ -1550,7 +1550,7 @@ impl UserProcManager {
                     let pdpte_present = (pdpte & 1) != 0;
                     let pdpte_user = (pdpte & 4) != 0;
                     let pdpte_huge = (pdpte & 0x80) != 0;
-                    let pdpte_frame = pdpte & 0x000FFFFFFFFFF000;
+                    let pdpte_frame = pdpte & 0x000F_FFFF_FFFF_F000;
                     crate::klog_boot_info!(
                         "[USER] SELF-CHECK PT-WALK: PDPTE[{}]={:#x} P={} U={} HUGE={} frame={:#x}",
                         pdpt_idx,
@@ -1574,7 +1574,7 @@ impl UserProcManager {
                         let pde_present = (pde & 1) != 0;
                         let pde_user = (pde & 4) != 0;
                         let pde_huge = (pde & 0x80) != 0;
-                        let pde_frame = pde & 0x000FFFFFFFFFF000;
+                        let pde_frame = pde & 0x000F_FFFF_FFFF_F000;
                         crate::klog_boot_info!(
                             "[USER] SELF-CHECK PT-WALK: PDE[{}]={:#x} P={} U={} HUGE={} frame={:#x}",
                             pd_idx,
@@ -1598,7 +1598,7 @@ impl UserProcManager {
                             let pte_present = (pte & 1) != 0;
                             let pte_user = (pte & 4) != 0;
                             let pte_nx = (pte & (1u64 << 63)) != 0;
-                            let pte_frame = pte & 0x000FFFFFFFFFF000;
+                            let pte_frame = pte & 0x000F_FFFF_FFFF_F000;
                             crate::klog_boot_info!(
                                 "[USER] SELF-CHECK PT-WALK: PTE[{}]={:#x} P={} U={} NX={} frame={:#x}",
                                 pt_idx,

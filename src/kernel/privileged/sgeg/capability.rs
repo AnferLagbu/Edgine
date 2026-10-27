@@ -10,7 +10,7 @@
 #![deny(missing_docs)]
 
 /// 全能力掩码 (全部 64 位有效), 仅用于 bootstrap 身份初始化
-pub const SYS_CAP_ALL: u64 = 0xFFFFFFFFFFFFFFFF;
+pub const SYS_CAP_ALL: u64 = 0xFFFF_FFFF_FFFF_FFFF;
 
 /// 能力域 0: 系统管理 (挂载 / 命名空间 / 身份设置等)
 pub const CAP_DOMAIN_SYSTEM: u16 = 0;

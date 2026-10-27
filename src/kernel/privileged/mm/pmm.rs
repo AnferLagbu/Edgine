@@ -56,7 +56,7 @@ const ALLOC_FAIL_DISARMED: u32 = u32::MAX;
 #[cfg(target_arch = "x86_64")]
 const RAM_BASE: u64 = 0;
 #[cfg(target_arch = "aarch64")]
-const RAM_BASE: u64 = 0x40000000;
+const RAM_BASE: u64 = 0x4000_0000;
 
 #[inline(always)]
 #[expect(

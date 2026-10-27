@@ -9,18 +9,14 @@ use crate::privileged::mm::{
 use crate::privileged::tests::{TestResult, runner};
 use crate::register_tests_inner;
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 fn test_phys_addr() -> TestResult {
     let pa = PhysAddr::new(0x1000);
     check!(pa.as_u64() == 0x1000, "PhysAddr as_u64 mismatch");
 
-    let aligned = pa.align_up(0x200000);
-    check!(aligned.as_u64() == 0x200000, "align_up 2M mismatch");
+    let aligned = pa.align_up(0x20_0000);
+    check!(aligned.as_u64() == 0x20_0000, "align_up 2M mismatch");
 
-    let down = pa.align_down(0x200000);
+    let down = pa.align_down(0x20_0000);
     check!(down.as_u64() == 0, "align_down 2M mismatch");
 
     let va = pa.to_virt();
@@ -41,10 +37,6 @@ fn test_virt_addr() -> TestResult {
     TestResult::Pass
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 fn test_page_size() -> TestResult {
     let s4k = PageSize::Size4K;
     check!(s4k.size() == 4096, "4K size mismatch");
@@ -54,7 +46,7 @@ fn test_page_size() -> TestResult {
 
     let s2m = PageSize::Size2M;
     check!(s2m.size() == 2 * 1024 * 1024, "2M size mismatch");
-    check!(s2m.is_aligned(0x200000), "0x200000 should be 2M aligned");
+    check!(s2m.is_aligned(0x20_0000), "0x200000 should be 2M aligned");
     TestResult::Pass
 }
 
@@ -106,12 +98,8 @@ fn test_memory_info() -> TestResult {
     TestResult::Pass
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 fn test_address_translation() -> TestResult {
-    let phys: u64 = 0x1234000;
+    let phys: u64 = 0x123_4000;
     let virt = phys_to_virt(phys);
     check!(virt == KERNEL_BASE + phys, "phys_to_virt mismatch");
 
@@ -133,10 +121,6 @@ fn test_page_index_helpers() -> TestResult {
     TestResult::Pass
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 /// VMA 级 NUMA 策略: mbind 落地路径 (设置 / 查询 / 覆盖校验 / 清除)
 fn test_vma_numa_policy() -> TestResult {
     use crate::privileged::mm::numa::{NumaPolicy, NumaRangePolicy};
@@ -144,12 +128,12 @@ fn test_vma_numa_policy() -> TestResult {
 
     let mm = MmStruct::new();
     let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
-    let vma = Vma::new(0x400000, 0x402000, flags, VmaType::Anonymous);
+    let vma = Vma::new(0x40_0000, 0x40_2000, flags, VmaType::Anonymous);
     check!(mm.insert_vma(vma).is_ok(), "insert_vma failed");
 
     // 未设置 → None (回退进程级策略)
     check!(
-        mm.numa_policy_at(0x400000).is_none(),
+        mm.numa_policy_at(0x40_0000).is_none(),
         "policy should start empty"
     );
 
@@ -157,40 +141,40 @@ fn test_vma_numa_policy() -> TestResult {
         mode: NumaPolicy::Bind,
         nodemask: 0b01,
     };
-    match mm.set_numa_policy_range(0x400000, 0x402000, Some(policy)) {
+    match mm.set_numa_policy_range(0x40_0000, 0x40_2000, Some(policy)) {
         Ok(bytes) => check!(bytes == 0x2000, "covered bytes mismatch"),
         Err(_) => return TestResult::Fail("set_numa_policy_range failed"),
     }
     check!(
-        mm.numa_policy_at(0x401000) == Some(policy),
+        mm.numa_policy_at(0x40_1000) == Some(policy),
         "policy query mismatch"
     );
 
     // 空洞范围 (无 VMA 覆盖) → EFAULT
     check!(
-        mm.set_numa_policy_range(0x500000, 0x501000, Some(policy))
+        mm.set_numa_policy_range(0x50_0000, 0x50_1000, Some(policy))
             .is_err(),
         "hole range should fail"
     );
     // 部分覆盖 (超出 VMA 边界) → EFAULT (SIMPLIFIED: 无 split_vma)
     check!(
-        mm.set_numa_policy_range(0x400000, 0x403000, Some(policy))
+        mm.set_numa_policy_range(0x40_0000, 0x40_3000, Some(policy))
             .is_err(),
         "partial overlap should fail"
     );
     // 失败调用不得改动已生效策略
     check!(
-        mm.numa_policy_at(0x400000) == Some(policy),
+        mm.numa_policy_at(0x40_0000) == Some(policy),
         "failed call must not modify policy"
     );
 
     // MPOL_DEFAULT 语义: 清除范围策略
     check!(
-        mm.set_numa_policy_range(0x400000, 0x402000, None).is_ok(),
+        mm.set_numa_policy_range(0x40_0000, 0x40_2000, None).is_ok(),
         "clear failed"
     );
     check!(
-        mm.numa_policy_at(0x400000).is_none(),
+        mm.numa_policy_at(0x40_0000).is_none(),
         "policy should be cleared"
     );
     TestResult::Pass
@@ -269,10 +253,6 @@ fn test_uffd_instance_lifecycle() -> TestResult {
     TestResult::Pass
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 /// userfaultfd 参数校验 (不触及当前地址空间的前置校验分支)
 fn test_uffd_register_arg_validation() -> TestResult {
     use crate::privileged::mm::uffd::{UFFD_API, UFFDIO_REGISTER_MODE_MISSING};
@@ -288,52 +268,52 @@ fn test_uffd_register_arg_validation() -> TestResult {
 
     let mode = UFFDIO_REGISTER_MODE_MISSING;
     check!(
-        uffd_register(fd, 0x400000, 0, mode).is_err(),
+        uffd_register(fd, 0x40_0000, 0, mode).is_err(),
         "zero length should fail"
     );
     check!(
-        uffd_register(fd, 0x400001, PAGE_SIZE, mode).is_err(),
+        uffd_register(fd, 0x40_0001, PAGE_SIZE, mode).is_err(),
         "unaligned start should fail"
     );
     check!(
-        uffd_register(fd, 0x400000, PAGE_SIZE + 1, mode).is_err(),
+        uffd_register(fd, 0x40_0000, PAGE_SIZE + 1, mode).is_err(),
         "unaligned len should fail"
     );
     check!(
-        uffd_register(fd, 0x400000, PAGE_SIZE, 0).is_err(),
+        uffd_register(fd, 0x40_0000, PAGE_SIZE, 0).is_err(),
         "empty mode should fail"
     );
     check!(
-        uffd_register(fd, 0x400000, PAGE_SIZE, 2).is_err(),
+        uffd_register(fd, 0x40_0000, PAGE_SIZE, 2).is_err(),
         "mode without MISSING should fail"
     );
     check!(
-        uffd_register(5, 0x400000, PAGE_SIZE, mode).is_err(),
+        uffd_register(5, 0x40_0000, PAGE_SIZE, mode).is_err(),
         "non-uffd fd should fail"
     );
 
     // 无匹配注册区间 → EINVAL
     check!(
-        uffd_unregister(fd, 0x400000, PAGE_SIZE).is_err(),
+        uffd_unregister(fd, 0x40_0000, PAGE_SIZE).is_err(),
         "unregister without match should fail"
     );
     // 无挂起缺页 → 唤醒为空操作 (Ok(false))
-    match uffd_wake(fd, 0x400000, PAGE_SIZE) {
+    match uffd_wake(fd, 0x40_0000, PAGE_SIZE) {
         Ok(woken) => check!(!woken, "wake without pending fault should be no-op"),
         Err(_) => return TestResult::Fail("wake should not fail"),
     }
 
     let full_page = [0u8; PAGE_SIZE as usize];
     check!(
-        provide_page(fd, 0x400001, None).is_err(),
+        provide_page(fd, 0x40_0001, None).is_err(),
         "unaligned page should fail"
     );
     check!(
-        provide_page(fd, 0x400000, Some(&[0u8; 8][..])).is_err(),
+        provide_page(fd, 0x40_0000, Some(&[0u8; 8][..])).is_err(),
         "short data should fail"
     );
     check!(
-        provide_page(fd, 0x400000, Some(&full_page[..])).is_err(),
+        provide_page(fd, 0x40_0000, Some(&full_page[..])).is_err(),
         "provide without pending fault should fail"
     );
 
@@ -356,7 +336,7 @@ fn test_uffd_register_and_fault_flow() -> TestResult {
     use crate::privileged::mm::vma::{MmStruct, Vma, VmaType};
     use crate::privileged::mm::{uffd_create, uffd_release, vma_set_current_mm};
 
-    const BASE: u64 = 0x400000;
+    const BASE: u64 = 0x40_0000;
 
     let Some(fd) = uffd_create(1) else {
         return TestResult::Fail("uffd_create failed");
@@ -388,10 +368,6 @@ fn test_uffd_register_and_fault_flow() -> TestResult {
     result
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 #[cfg(not(feature = "host-test"))]
 fn uffd_flow_body(fd: i32) -> TestResult {
     use crate::privileged::mm::uffd::{
@@ -404,13 +380,13 @@ fn uffd_flow_body(fd: i32) -> TestResult {
 
     /// `UffdInstance::ranges` 容量 (`privileged/mm/uffd.rs::MAX_RANGES`)
     const MAX_RANGES: usize = 4;
-    const BASE: u64 = 0x400000;
+    const BASE: u64 = 0x40_0000;
     const MODE: u64 = UFFDIO_REGISTER_MODE_MISSING;
 
     check!(api_negotiate(fd, UFFD_API, 0).is_ok(), "handshake failed");
     // 未被 VMA 覆盖的区间 → EFAULT
     check!(
-        uffd_register(fd, 0x600000, PAGE_SIZE, MODE).is_err(),
+        uffd_register(fd, 0x60_0000, PAGE_SIZE, MODE).is_err(),
         "unmapped range should fail"
     );
     // 同一区间重复注册至容量上限, 再注册 → ENOSPC

@@ -8,7 +8,7 @@
 use crate::privileged::sync::IrqSpinLock;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-const IOAPIC_BASE_DEFAULT: u64 = 0xFEC00000;
+const IOAPIC_BASE_DEFAULT: u64 = 0xFEC0_0000;
 
 const IOREGSEL: u32 = 0x00;
 const IOWIN: u32 = 0x10;
