@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ②: 基线只拦新增, 不是豁免; 收缩归 P-66 分批补写工程"
   },
   "totals": {
-    "sites": 258,
-    "files": 53,
-    "keys": 227
+    "sites": 244,
+    "files": 52,
+    "keys": 216
   },
   "entries": [
     [
@@ -855,72 +855,6 @@
       "fn",
       "new",
       2
-    ],
-    [
-      "src/kernel/privileged/proc/cfs.rs",
-      "fn",
-      "calc_time_slice",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cfs.rs",
-      "fn",
-      "dequeue",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cfs.rs",
-      "fn",
-      "enqueue",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cfs.rs",
-      "fn",
-      "get_weighted_load",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cfs.rs",
-      "fn",
-      "is_empty",
-      2
-    ],
-    [
-      "src/kernel/privileged/proc/cfs.rs",
-      "fn",
-      "is_valid",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cfs.rs",
-      "fn",
-      "new",
-      3
-    ],
-    [
-      "src/kernel/privileged/proc/cfs.rs",
-      "fn",
-      "pick_next",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cfs.rs",
-      "fn",
-      "reinsert",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cfs.rs",
-      "fn",
-      "steal_highest_vruntime",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/cfs.rs",
-      "fn",
-      "utilization_pct",
-      1
     ],
     [
       "src/kernel/privileged/proc/cpu_queue.rs",

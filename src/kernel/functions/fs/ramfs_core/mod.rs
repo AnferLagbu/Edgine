@@ -15,6 +15,7 @@
 //! - DECISION-K 项 5: 回迁 privileged, Inode 构造改走 backend 工厂钩子
 //! - VFS 完整下沉: 随 VFS 子系统整体下沉 functions, 挂载点经 `ramfs_fs()` 暴露
 
+/// RamFS 数据区 — 节点表 / 惰性页池 / 位图 / ACE 表
 pub mod ramfs_data;
 pub mod ramfs_node;
 

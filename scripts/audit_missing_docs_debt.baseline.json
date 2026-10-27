@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 1264,
-    "files": 164,
-    "keys": 314
+    "sites": 1147,
+    "files": 159,
+    "keys": 301
   },
   "entries": [
     [
@@ -24,16 +24,6 @@
       "src/kernel/functions/driver/display/controller.rs",
       "an associated function",
       2
-    ],
-    [
-      "src/kernel/functions/driver/display/dp.rs",
-      "a struct field",
-      5
-    ],
-    [
-      "src/kernel/functions/driver/display/dp.rs",
-      "a variant",
-      18
     ],
     [
       "src/kernel/functions/driver/storage/ata.rs",
@@ -307,28 +297,8 @@
     ],
     [
       "src/kernel/functions/fs/ramfs_core/mod.rs",
-      "a module",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/ramfs_core/mod.rs",
       "a static",
       1
-    ],
-    [
-      "src/kernel/functions/fs/ramfs_core/ramfs_data.rs",
-      "a method",
-      19
-    ],
-    [
-      "src/kernel/functions/fs/ramfs_core/ramfs_data.rs",
-      "a struct",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/ramfs_core/ramfs_data.rs",
-      "a struct field",
-      3
     ],
     [
       "src/kernel/functions/fs/sendfile.rs",
@@ -961,16 +931,6 @@
       12
     ],
     [
-      "src/kernel/privileged/idt/types.rs",
-      "a constant",
-      5
-    ],
-    [
-      "src/kernel/privileged/idt/types.rs",
-      "a struct field",
-      19
-    ],
-    [
       "src/kernel/privileged/iomem.rs",
       "a method",
       4
@@ -1276,26 +1236,6 @@
       4
     ],
     [
-      "src/kernel/privileged/proc/cfs.rs",
-      "a constant",
-      2
-    ],
-    [
-      "src/kernel/privileged/proc/cfs.rs",
-      "a method",
-      11
-    ],
-    [
-      "src/kernel/privileged/proc/cfs.rs",
-      "a struct field",
-      7
-    ],
-    [
-      "src/kernel/privileged/proc/cfs.rs",
-      "an associated function",
-      3
-    ],
-    [
       "src/kernel/privileged/proc/cpu_queue.rs",
       "a method",
       4
@@ -1414,11 +1354,6 @@
       "src/kernel/privileged/proc/session.rs",
       "an associated function",
       2
-    ],
-    [
-      "src/kernel/privileged/proc/signal.rs",
-      "a struct field",
-      23
     ],
     [
       "src/kernel/privileged/proc/user_proc.rs",

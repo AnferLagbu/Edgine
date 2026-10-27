@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! DisplayPort 驱动 — functions 层安全实现
 //!
 //! 通过 `DpIo` 安全代理访问 DP 控制器 MMIO 寄存器, 无 unsafe.
@@ -326,9 +327,13 @@ impl DpIo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum LinkRate {
-    Rbr = 0x06,  // 1.62 Gbps per lane
-    Hbr = 0x0A,  // 2.7 Gbps per lane
+    /// 1.62 Gbps per lane
+    Rbr = 0x06, // 1.62 Gbps per lane
+    /// 2.7 Gbps per lane
+    Hbr = 0x0A, // 2.7 Gbps per lane
+    /// 5.4 Gbps per lane
     Hbr2 = 0x14, // 5.4 Gbps per lane
+    /// 8.1 Gbps per lane
     Hbr3 = 0x1E, // 8.1 Gbps per lane
 }
 
@@ -363,8 +368,11 @@ impl LinkRate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum LaneCount {
+    /// 单通道
     One = 1,
+    /// 双通道
     Two = 2,
+    /// 四通道
     Four = 4,
 }
 
@@ -383,10 +391,15 @@ impl LaneCount {
 /// 链路训练状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrainingState {
+    /// 训练未开始
     Disabled,
+    /// 训练阶段 1 (CR/EQ)
     Training1,
+    /// 训练阶段 2 (通道对齐)
     Training2,
+    /// 训练完成
     Trained,
+    /// 训练失败
     Error,
 }
 
@@ -473,21 +486,32 @@ impl Dpcd {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum AuxCommand {
+    /// I2C 写
     I2cWrite = 0x00,
+    /// I2C 读
     I2cRead = 0x01,
+    /// I2C 写状态
     I2cWriteStatus = 0x02,
+    /// I2C 读状态
     I2cReadStatus = 0x03,
+    /// DPCD 写
     Write = 0x04,
+    /// DPCD 读
     Read = 0x05,
 }
 
 /// AUX事务结果
 #[derive(Debug, Clone, Copy)]
 pub struct AuxTransaction {
+    /// AUX 命令类型
     pub command: AuxCommand,
+    /// DPCD 目标地址
     pub address: u16,
+    /// 事务数据长度
     pub length: u8,
+    /// 事务数据缓冲 (最多 16 字节)
     pub data: [u8; 16],
+    /// 实际读取的字节数
     pub bytes_read: usize,
 }
 

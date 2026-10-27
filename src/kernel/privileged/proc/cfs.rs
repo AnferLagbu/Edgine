@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 privileged API。
 //! CFS (Completely Fair Scheduler) — 调度策略 — privileged 机制实现
 //!
@@ -31,12 +32,14 @@ pub use crate::privileged::config::{
     CFS_NICE0_WEIGHT as NICE0_WEIGHT, CFS_TARGET_LATENCY as TARGET_LATENCY_TICKS,
 };
 
+/// 负载均衡触发阈值 (权重差)
 pub const LOAD_BALANCE_THRESHOLD: u64 = 1024;
 
 // ============================================================================
 // NICE → 权重映射
 // ============================================================================
 
+/// nice 值 (-20..=19) 到 CFS 权重的查表 (索引 = nice + 20)
 pub const NICE_TO_WEIGHT: [u64; 40] = [
     88761, 71755, 56483, 46273, 36291, 29154, 23254, 18705, 14949, 11916, 9548, 7620, 6100, 4904,
     3906, 3121, 2501, 1991, 1586, 1277, 1024, 820, 655, 526, 423, 335, 272, 215, 172, 137, 110, 87,
@@ -79,12 +82,16 @@ pub fn weight_to_nice(weight: u64) -> i8 {
 /// Deadline (EDF + CBS) 调度参数 — 运行时、相对截止期与周期。
 #[derive(Debug, Clone, Copy)]
 pub struct DeadlineParams {
+    /// 每周期运行预算 (tick)
     pub runtime: u64,
+    /// 相对截止期 (tick)
     pub deadline: u64,
+    /// 调度周期 (tick)
     pub period: u64,
 }
 
 impl DeadlineParams {
+    /// 构造全零参数 (初始为无效状态)
     pub const fn new() -> Self {
         Self {
             runtime: 0,
@@ -93,6 +100,7 @@ impl DeadlineParams {
         }
     }
 
+    /// 校验参数是否满足 EDF + CBS 约束
     pub fn is_valid(&self) -> bool {
         self.runtime >= DL_MIN_RUNTIME_TICKS
             && self.deadline >= self.runtime
@@ -100,6 +108,7 @@ impl DeadlineParams {
             && self.period >= DL_MIN_PERIOD_TICKS
     }
 
+    /// 计算利用率百分比 (`runtime / period * 100`)
     pub fn utilization_pct(&self) -> u64 {
         if self.period == 0 {
             return 0;
@@ -137,11 +146,13 @@ impl DeadlineParams {
 /// 树内移动 (`pick_next` 拣出 / `enqueue` 去重重投) 不动账。记账凭证由 `Process::cfs_on_rq`
 /// 承载 (语义同 Linux 的 `on_rq`: 处于可运行记账中, 上核运行期间仍为 true)。
 pub struct CfsRunQueue {
+    /// 可运行任务树, 键 = (vruntime, pid) (IC2 唯一真相)
     pub tree: BTreeMap<(u64, Pid), ()>,
     /// 本核 vruntime 下界 (IC3: 单调不减)。字段刻意私有 —— 只允许经
     /// [`Self::floor`] 读、[`Self::advance_floor`] 写, 防止调用点重新引入
     /// "重设"语义。
     min_vruntime: AtomicU64,
+    /// 可运行集权重和 (树上 + 正在本核运行的)
     pub total_weight: AtomicU64,
 }
 
@@ -150,6 +161,7 @@ impl CfsRunQueue {
         clippy::zero_sized_map_values,
         reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
     )]
+    /// 构造空的 CFS 运行队列
     pub fn new() -> Self {
         Self {
             tree: BTreeMap::new(),
@@ -281,6 +293,7 @@ impl CfsRunQueue {
         n
     }
 
+    /// 按权重占比计算时间片 (tick); 下限为最小粒度
     pub fn calc_time_slice(&self, weight: u64) -> u64 {
         let total_w = self.total_weight.load(Ordering::Acquire);
         if total_w == 0 || weight == 0 {
@@ -290,16 +303,19 @@ impl CfsRunQueue {
         slice.max(MIN_GRANULARITY_TICKS)
     }
 
+    /// 读取可运行集权重和 (负载均衡判据)
     pub fn get_weighted_load(&self) -> u64 {
         self.total_weight.load(Ordering::Acquire)
     }
 
+    /// 树上是否无任务 (IC2: 结构即真相)
     pub fn is_empty(&self) -> bool {
         // IC2: 结构即真相 —— 绝不按并行计数器判定 (旧 `nr_running` 失真是
         // 本核任务隐形饥饿的直接根因).
         self.tree.is_empty()
     }
 
+    /// 摘出树上 vruntime 最大者 (跨核偷取候选), 返回 (pid, vruntime)
     pub fn steal_highest_vruntime(&mut self) -> Option<(Pid, u64)> {
         let (&(vruntime, pid), ()) = self.tree.last_key_value()?;
         self.tree.remove(&(vruntime, pid));
@@ -315,7 +331,9 @@ impl CfsRunQueue {
 ///
 /// 可运行性判据与 CFS 同款取结构真相 (IC2: 树即真相, 不并行维护计数器)。
 pub struct DlRunQueue {
+    /// 截止期任务树, 键 = (绝对截止期, pid)
     pub tree: BTreeMap<(u64, Pid), ()>,
+    /// 总利用率 (百分比之和)
     pub total_utilization: u64,
 }
 
@@ -324,6 +342,7 @@ impl DlRunQueue {
         clippy::zero_sized_map_values,
         reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
     )]
+    /// 构造空的 Deadline 运行队列
     pub fn new() -> Self {
         Self {
             tree: BTreeMap::new(),
@@ -331,6 +350,7 @@ impl DlRunQueue {
         }
     }
 
+    /// 入队: 利用率超限时拒绝并返回 `false`, 否则插入并累加利用率
     pub fn enqueue(&mut self, pid: Pid, deadline_abs: u64, util_pct: u64) -> bool {
         if self.total_utilization.saturating_add(util_pct) > DL_MAX_UTILIZATION_PCT {
             return false;
@@ -340,22 +360,26 @@ impl DlRunQueue {
         true
     }
 
+    /// 出队: 仅在树中命中时扣减利用率
     pub fn dequeue(&mut self, pid: Pid, deadline_abs: u64, util_pct: u64) {
         if self.tree.remove(&(deadline_abs, pid)).is_some() {
             self.total_utilization = self.total_utilization.saturating_sub(util_pct);
         }
     }
 
+    /// 拣出最早截止期任务, 返回 (pid, 绝对截止期)
     pub fn pick_next(&mut self) -> Option<(Pid, u64)> {
         let (&(dl_abs, pid), ()) = self.tree.first_key_value()?;
         self.tree.remove(&(dl_abs, pid));
         Some((pid, dl_abs))
     }
 
+    /// 重新插入任务到新的绝对截止期 (周期续期)
     pub fn reinsert(&mut self, pid: Pid, dl_abs: u64) {
         self.tree.insert((dl_abs, pid), ());
     }
 
+    /// 树上是否无截止期任务
     pub fn is_empty(&self) -> bool {
         self.tree.is_empty()
     }

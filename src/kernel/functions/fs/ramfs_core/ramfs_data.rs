@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -14,6 +15,7 @@ use crate::functions::fs::{VFS_MAX_NAME, VfsFileType, VfsSeekWhence, VfsStat};
 use crate::privileged::mm::LazyPageArena;
 use crate::privileged::sgeg::api as pwm_api;
 
+/// RamFS 数据区 — 节点表 / 惰性页池 / 位图 / ACE 表 / 链接目标表
 pub struct RamFsData {
     /// 文件系统实例标识 (dcache/icache 命名空间, 0 = 未挂载)
     ///
@@ -35,8 +37,11 @@ pub struct RamFsData {
     pub symlink_targets: Vec<[u8; 128]>,
     /// 符号链接长度 — 惰性堆置
     pub symlink_lens: Vec<u8>,
+    /// 根节点号 (挂载后恒为 1)
     pub root_node: u32,
+    /// 空闲节点计数
     pub free_nodes: AtomicU32,
+    /// 空闲数据块计数
     pub free_blocks: AtomicU32,
 }
 
@@ -419,6 +424,7 @@ impl RamFsData {
         false
     }
 
+    /// 解析路径为节点号 (dcache 命中加速; 未命中时线性扫描目录项并回填缓存)
     pub fn resolve_path(&self, path: &str) -> Option<u32> {
         let mut current = self.root_node;
         let p = path.trim_start_matches('/');
@@ -495,6 +501,7 @@ impl RamFsData {
         Some(current)
     }
 
+    /// 挂载: 分配 fs 实例标识, 惰性堆置各表并建立根目录 (节点 1); 恒返回 0
     pub fn mount(&mut self, _path: &str) -> i32 {
         // 分配全局唯一的 fs 实例标识, 使共享的 dcache/icache 按实例隔离
         self.fs_id = alloc_fs_id();
@@ -551,6 +558,7 @@ impl RamFsData {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
+    /// 打开路径对应节点并校验读权限; 返回 (节点号, 会话句柄, 文件类型)
     pub fn open(&mut self, path: &str, _flags: u32, pwm: u64) -> Option<(u32, u64, u8)> {
         if path.is_empty() {
             return None;
@@ -574,6 +582,7 @@ impl RamFsData {
         Some((node_id, 0, self.nodes[node_id as usize].file_type))
     }
 
+    /// 分配空节点槽并初始化 (目录预置数据块); 无空槽返回 `None`
     pub fn alloc_node(&mut self, file_type: u8, pwm: u64) -> Option<u32> {
         for i in 1..RAMFS_MAX_NODES {
             if !self.nodes[i].used {
@@ -606,6 +615,7 @@ impl RamFsData {
         None
     }
 
+    /// 按偏移读取节点数据到 `buf`; 返回实际读取字节数 (负值为错误码)
     pub fn read(&mut self, node_id: u32, offset: &mut u64, buf: &mut [u8], pwm: u64) -> i32 {
         let node = &self.nodes[node_id as usize];
 
@@ -653,6 +663,7 @@ impl RamFsData {
         bytes_read as i32
     }
 
+    /// 按偏移写入 `buf` 到节点; 返回实际写入字节数 (负值为错误码)
     pub fn write(&mut self, node_id: u32, offset: &mut u64, buf: &[u8], pwm: u64) -> i32 {
         if !self.check_permission(&self.nodes[node_id as usize], pwm, FS_CAP_CREATE) {
             return KernelError::PermissionDenied.as_i32();
@@ -868,6 +879,7 @@ impl RamFsData {
         clippy::too_many_lines,
         reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
     )]
+    /// 将节点截断到 `new_size`: 收缩时释放尾部块, 归零时释放全部数据块
     pub fn truncate(&mut self, node_id: u32, new_size: u64, pwm: u64) -> i32 {
         if node_id as usize >= RAMFS_MAX_NODES {
             return KernelError::InvalidArgument.as_i32();
@@ -1028,6 +1040,7 @@ impl RamFsData {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
+    /// 删除路径对应目录项并释放节点与数据块; 错误返回负错误码
     pub fn unlink(&mut self, path: &str, pwm: u64) -> i32 {
         let node_id = match self.resolve_path(path) {
             Some(n) => n,
@@ -1092,6 +1105,7 @@ impl RamFsData {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
+    /// 在父目录下创建普通文件; 已存在或父目录无效时返回 `None`
     pub fn create_file(&mut self, parent_path: &str, name: &str, pwm: u64) -> Option<u32> {
         if name.is_empty() || name.contains('/') {
             return None;
@@ -1166,6 +1180,7 @@ impl RamFsData {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
+    /// 在父目录下创建子目录 (预置 `.`/`..`); 错误返回负错误码
     pub fn mkdir(&mut self, parent_path: &str, name: &str, pwm: u64) -> i32 {
         if name.is_empty() || name.contains('/') {
             return KernelError::InvalidArgument.as_i32();
@@ -1269,6 +1284,7 @@ impl RamFsData {
         0
     }
 
+    /// 获取节点 stat; 节点未使用或越界返回 `None`
     pub fn stat(&self, node_id: u32) -> Option<VfsStat> {
         let node = &self.nodes[node_id as usize];
 
@@ -1297,6 +1313,7 @@ impl RamFsData {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
+    /// 修改节点权限位; 仅属主或特权级 0 允许, 错误返回负错误码
     pub fn chmod(&mut self, path: &str, mode: u16, pwm: u64) -> i32 {
         let node_id = match self.resolve_path(path) {
             Some(n) => n,
@@ -1320,6 +1337,7 @@ impl RamFsData {
         0
     }
 
+    /// 修改节点属主 (属组默认跟随属主)
     pub fn chown(&mut self, path: &str, owner_pwm: u64, pwm: u64) -> i32 {
         self.chown_ext(path, owner_pwm, 0, pwm)
     }
@@ -1328,6 +1346,7 @@ impl RamFsData {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
+    /// 修改节点属主与属组; 仅特权级 0 允许, 错误返回负错误码
     pub fn chown_ext(&mut self, path: &str, owner_pwm: u64, group_pwm: u64, pwm: u64) -> i32 {
         let node_id = match self.resolve_path(path) {
             Some(n) => n,
@@ -1392,6 +1411,7 @@ impl RamFsData {
         0
     }
 
+    /// 按 `whence` 计算新偏移; 节点无效或结果为负返回 `None`
     pub fn seek(
         &self,
         node_id: u32,
@@ -1426,6 +1446,7 @@ impl RamFsData {
         Some(new_offset as u64)
     }
 
+    /// 获取节点文件大小; 节点无效或未使用返回 `None`
     pub fn get_file_size(&self, node_id: u32) -> Option<u32> {
         if node_id as usize >= RAMFS_MAX_NODES {
             return None;
@@ -1439,6 +1460,7 @@ impl RamFsData {
         Some(node.size)
     }
 
+    /// 在父目录下为目标节点创建硬链接目录项; 错误返回负错误码
     pub fn link(&mut self, parent_node: u32, target_node: u32, name: &str, _pwm: u64) -> i32 {
         if name.is_empty() || name.contains('/') {
             return KernelError::InvalidArgument.as_i32();
@@ -1503,6 +1525,7 @@ impl RamFsData {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
+    /// 创建符号链接节点并写入目录项; 返回新节点号 (负值为错误码)
     pub fn symlink(&mut self, target: &str, parent_path: &str, name: &str, pwm: u64) -> i32 {
         if name.is_empty() || name.contains('/') {
             return KernelError::InvalidArgument.as_i32();
@@ -1592,6 +1615,7 @@ impl RamFsData {
         new_id as i32
     }
 
+    /// 读取符号链接目标到 `buf`; 返回字节数 (负值为错误码)
     pub fn readlink(&self, node_id: u32, buf: &mut [u8]) -> i32 {
         if node_id as usize >= RAMFS_MAX_NODES {
             return KernelError::InvalidArgument.as_i32();

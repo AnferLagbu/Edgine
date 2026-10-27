@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 //! POSIX 信号投递 — privileged 层核心实现
 //!
 //! 提供信号发送、投递和默认动作执行的完整机制：
@@ -66,34 +67,57 @@ use super::types::{Pid, ProcessState};
 #[repr(C)]
 pub struct SignalFrame {
     // 通用寄存器 (与 InterruptFrame 顺序一致)
+    /// 通用寄存器 r15
     pub r15: u64,
+    /// 通用寄存器 r14
     pub r14: u64,
+    /// 通用寄存器 r13
     pub r13: u64,
+    /// 通用寄存器 r12
     pub r12: u64,
+    /// 通用寄存器 r11
     pub r11: u64,
+    /// 通用寄存器 r10
     pub r10: u64,
+    /// 通用寄存器 r9
     pub r9: u64,
+    /// 通用寄存器 r8
     pub r8: u64,
+    /// 通用寄存器 rdi (handler 第一参数)
     pub rdi: u64,
+    /// 通用寄存器 rsi
     pub rsi: u64,
+    /// 通用寄存器 rbp
     pub rbp: u64,
+    /// 通用寄存器 rdx
     pub rdx: u64,
+    /// 通用寄存器 rcx
     pub rcx: u64,
+    /// 通用寄存器 rbx
     pub rbx: u64,
+    /// 通用寄存器 rax
     pub rax: u64,
 
     // 中断元数据
+    /// 中断向量号
     pub int_no: u64,
+    /// 错误码 (部分异常有)
     pub err_code: u64,
 
     // 返回地址信息
+    /// 信号 handler 返回后恢复的指令指针
     pub rip: u64,
+    /// 代码段选择子
     pub cs: u64,
+    /// 恢复的 RFLAGS
     pub rflags: u64,
+    /// 恢复的栈指针
     pub rsp: u64,
+    /// 栈段选择子
     pub ss: u64,
 
     // 信号编号 (handler 参数)
+    /// 信号编号 (handler 第一参数)
     pub signum: u64,
 }
 
@@ -114,6 +138,7 @@ pub struct SignalFrame {
 #[cfg(target_arch = "x86_64")]
 pub const SIGRETURN_TRAMPOLINE: [u8; 7] = [0xB8, 0x0F, 0x00, 0x00, 0x00, 0x0F, 0x05];
 
+/// sigreturn trampoline 代码 (aarch64 8 字节分支, 机器码与语义见上方两架构说明)
 #[cfg(target_arch = "aarch64")]
 pub const SIGRETURN_TRAMPOLINE: [u8; 8] = [0xD2, 0x80, 0x11, 0x68, 0xD4, 0x00, 0x00, 0x01];
 

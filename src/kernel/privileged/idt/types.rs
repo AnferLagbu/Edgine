@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 //! # IDT 数据类型定义
 //!
 //! 安全的 x86-64 中断描述符表数据结构。
@@ -31,21 +32,26 @@ pub const TICK_IRQ: u8 = 16;
 /// 内核 tick 的 IDT 向量号 (`IRQ_BASE + TICK_IRQ` = 0x30).
 pub const TICK_VECTOR: u8 = IRQ_BASE + TICK_IRQ;
 
-/// IDT 门描述符类型标志
+/// IDT 中断门描述符类型标志 (DPL=0)
 pub const IDT_TYPE_INTERRUPT: u8 = 0x8E; // 中断门 (DPL=0)
+/// IDT 陷阱门描述符类型标志 (DPL=0)
 pub const IDT_TYPE_TRAP: u8 = 0x8F; // 陷阱门 (DPL=0)
+/// IDT 描述符的用户态权限位 (DPL=3)
 pub const IDT_DPL_USER: u8 = 0x60; // 用户态权限位
 
 /// GDT 内核代码段选择子
 pub const GDT_KERNEL_CODE: u16 = 0x08;
 
-/// 模块初始化成功/失败码
+/// 模块初始化成功码
 pub const MODULE_INIT_SUCCESS: i32 = 0;
+/// 模块初始化失败码
 pub const MODULE_INIT_FAILURE: i32 = -1;
 
-/// IRQ 标志位
+/// IRQ 标志位: 允许共享
 pub const IRQ_FLAG_SHARED: u32 = 0x01;
+/// IRQ 标志位: 边沿触发
 pub const IRQ_FLAG_EDGE: u32 = 0x02;
+/// IRQ 标志位: 电平触发
 pub const IRQ_FLAG_LEVEL: u32 = 0x04;
 
 /// 中断帧结构 (与 isr.asm 的 push 序列完全匹配)
@@ -58,33 +64,52 @@ pub const IRQ_FLAG_LEVEL: u32 = 0x04;
 /// 任何修改都必须同步更新汇编代码。
 #[repr(C, packed)]
 pub struct InterruptFrame {
-    /// 通用寄存器 (按栈顺序排列)
+    /// 通用寄存器 r15 (按栈顺序排列)
     pub r15: u64,
+    /// 通用寄存器 r14
     pub r14: u64,
+    /// 通用寄存器 r13
     pub r13: u64,
+    /// 通用寄存器 r12
     pub r12: u64,
+    /// 通用寄存器 r11
     pub r11: u64,
+    /// 通用寄存器 r10
     pub r10: u64,
+    /// 通用寄存器 r9
     pub r9: u64,
+    /// 通用寄存器 r8
     pub r8: u64,
+    /// 通用寄存器 rdi
     pub rdi: u64,
+    /// 通用寄存器 rsi
     pub rsi: u64,
+    /// 通用寄存器 rbp
     pub rbp: u64,
+    /// 通用寄存器 rdx
     pub rdx: u64,
+    /// 通用寄存器 rcx
     pub rcx: u64,
+    /// 通用寄存器 rbx
     pub rbx: u64,
+    /// 通用寄存器 rax
     pub rax: u64,
 
-    /// 中断元数据
+    /// 中断向量号
     pub int_no: u64, // 中断向量号
+    /// 错误码 (部分异常有)
     pub err_code: u64, // 错误码 (部分异常有)
 
-    /// 返回地址信息
+    /// 指令指针
     pub rip: u64, // 指令指针
-    pub cs: u64,     // 代码段选择子
+    /// 代码段选择子
+    pub cs: u64, // 代码段选择子
+    /// RFLAGS 寄存器
     pub rflags: u64, // RFLAGS 寄存器
-    pub rsp: u64,    // 栈指针
-    pub ss: u64,     // 栈段选择子
+    /// 栈指针
+    pub rsp: u64, // 栈指针
+    /// 栈段选择子
+    pub ss: u64, // 栈段选择子
 }
 
 // 编译时静态断言：确保结构体大小正确
@@ -197,11 +222,17 @@ impl InterruptFrame {
 // Page Fault 错误码位域标志
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    /// Page Fault 错误码位域标志
     pub struct ErrorFlags: u32 {
+        /// 页是否存在
         const PRESENT     = 1 << 0;  // 页是否存在
+        /// 是否写操作
         const WRITE       = 1 << 1;  // 是否写操作
+        /// 是否来自 user-mode
         const USER        = 1 << 2;  // 是否 user-mode
+        /// 预留位被置位
         const RESERVED    = 1 << 3;  // 预留位被置位
+        /// 是否取指令
         const INSTRUCTION = 1 << 4;  // 是否取指令
     }
 }
