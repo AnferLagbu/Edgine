@@ -10,6 +10,8 @@
 //! functions 侧改 `pub use crate::privileged::config::memory::*` 保持 API 兼容。
 //! 本文件 0 unsafe (纯常量 + 运行时函数).
 
+#![deny(missing_docs)]
+
 // ============================================================================
 // 页大小
 // ============================================================================
@@ -26,10 +28,12 @@ pub const PAGE_SHIFT: u64 = 12;
 
 /// 2 MiB huge page.
 pub const HUGE_PAGE_2M_SIZE: u64 = 2 * 1024 * 1024;
+/// 2 MiB 大页的 `log2` 大小 (21).
 pub const HUGE_PAGE_2M_SHIFT: u64 = 21;
 
 /// 1 GiB huge page.
 pub const HUGE_PAGE_1G_SIZE: u64 = 1024 * 1024 * 1024;
+/// 1 GiB 大页的 `log2` 大小 (30).
 pub const HUGE_PAGE_1G_SHIFT: u64 = 30;
 
 // ============================================================================
@@ -63,8 +67,11 @@ pub const USER_CODE_BASE: u64 = 0x400000;
 /// 8 位 = 256 种偏移, 偏移范围 = 256 * `PAGE_SIZE` = 1 MiB.
 /// Linux `x86_64` 默认 28 位 (mmap), 此处保守取 8 位以简化实现.
 pub const ASLR_STACK_BITS: u64 = 8;
+/// ASLR 熵位数 — mmap 区域随机偏移位数.
 pub const ASLR_MMAP_BITS: u64 = 8;
+/// ASLR 熵位数 — 堆区域随机偏移位数.
 pub const ASLR_HEAP_BITS: u64 = 8;
+/// ASLR 熵位数 — PIE 加载基址随机偏移位数.
 pub const ASLR_PIE_BITS: u64 = 8;
 
 /// mmap 区域基址 (ASLR 偏移前).

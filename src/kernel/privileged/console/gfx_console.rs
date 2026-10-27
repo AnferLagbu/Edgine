@@ -1,3 +1,10 @@
+//! 图形控制台 — 在帧缓冲上模拟文本终端.
+//!
+//! 通过 PSF 字体在帧缓冲上绘制字符, 支持自动换行/屏幕滚动与 panic 紧急模式.
+//! 控制台本身不持有帧缓冲引用, 每次绘制由调用方传入 `&mut Framebuffer`.
+
+#![deny(missing_docs)]
+
 use crate::privileged::driver::{Color, Font, Framebuffer, Rect, colors, current_framebuffer_ops};
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -54,15 +61,18 @@ impl GfxConsole {
         }
     }
 
+    /// 设置顶部保留边距 (行数, 不超过总行数).
     pub fn set_margin(&mut self, top: u32) {
         self.top_margin = top.min(self.rows);
     }
 
+    /// 设置前景色与背景色.
     pub fn set_colors(&mut self, fg: Color, bg: Color) {
         self.fg_color = fg;
         self.bg_color = bg;
     }
 
+    /// 以背景色清屏并将光标移至顶部边距起始处.
     pub fn clear(&mut self, fb: &mut Framebuffer) {
         let (fb_w, fb_h) = (fb.width(), fb.height());
         // 绘图策略未注册时 fail-quiet 跳过 (启动早期串口日志仍可用)
@@ -184,6 +194,7 @@ impl GfxConsole {
         }
     }
 
+    /// 输出单个字符 — 处理换行/回车/制表/退格, 自动换行并在越界时滚动.
     pub fn putchar(&mut self, fb: &mut Framebuffer, ch: char) {
         if PANIC_MODE.load(Ordering::Acquire) {
             return self.putchar_no_scroll(fb, ch);
@@ -238,6 +249,7 @@ impl GfxConsole {
         }
     }
 
+    /// 逐字符输出字符串 (内部委托 `putchar`).
     pub fn write_str(&mut self, fb: &mut Framebuffer, s: &str) {
         for ch in s.chars() {
             self.putchar(fb, ch);

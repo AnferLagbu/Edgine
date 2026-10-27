@@ -22,6 +22,8 @@
 //! | Critical | Top-3 RSS 进程降优先级, 阻塞新 mmap |
 //! | Emergency | SIGTERM → 最大 RSS 进程, 5s 后 SIGKILL |
 
+#![deny(missing_docs)]
+
 use crate::privileged::mm::{self as mm_api};
 use crate::privileged::proc::types::ProcessState;
 // DECISION-O ②: 压力类型/状态/update_pressure 包装归 privileged::mm::pressure
@@ -46,6 +48,7 @@ pub struct OomDaemon {
 }
 
 impl OomDaemon {
+    /// 构造 OOM 守护器 (启用状态, 计数清零).
     pub const fn new() -> Self {
         Self {
             last_check: AtomicU64::new(0),
@@ -56,6 +59,7 @@ impl OomDaemon {
         }
     }
 
+    /// 周期检查内存压力并按级别回收 (由调度器 tick 驱动).
     pub fn tick(&self) {
         if !self.enabled.load(Ordering::Relaxed) {
             return;
@@ -163,6 +167,7 @@ impl OomDaemon {
         }
     }
 
+    /// 返回 (告警次数, 终止次数) 统计.
     pub fn stats(&self) -> (u64, u64) {
         (
             self.warned_count.load(Ordering::Relaxed),
@@ -182,11 +187,13 @@ impl OomDaemon {
         self.terminated_count.load(Ordering::Relaxed)
     }
 
+    /// 禁用 OOM 守护器 (后续 `tick` 立即返回).
     pub fn disable(&self) {
         self.enabled.store(false, Ordering::Release);
     }
 }
 
+/// 全局 OOM 守护器实例.
 pub static OOMD: OomDaemon = OomDaemon::new();
 
 /// Emergency 牺牲者择优判据 — 判定候选进程是否应取代当前 victim.

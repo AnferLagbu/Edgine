@@ -8,6 +8,8 @@
 //! Layer 3: BHR (FREG Hard Reset)     ~120ms ~100%成功率
 //! ```
 
+#![deny(missing_docs)]
+
 use core::sync::atomic::Ordering;
 
 use super::bbr;
@@ -115,10 +117,15 @@ pub fn get_recovery_status() -> RecoveryStatus {
 /// 恢复状态快照: 当前恢复层级、是否正在重置及 BBR/BSR/BHR 尝试计数。
 #[derive(Debug, Clone, Copy)]
 pub struct RecoveryStatus {
+    /// 当前恢复层级.
     pub current_layer: RecoveryLayer,
+    /// 是否正在执行重置.
     pub reset_in_progress: bool,
+    /// BBR (基础恢复) 尝试计数.
     pub bbr_count: u32,
+    /// BSR (软重置) 尝试计数.
     pub bsr_count: u32,
+    /// BHR (硬重置) 尝试计数.
     pub bhr_count: u32,
 }
 

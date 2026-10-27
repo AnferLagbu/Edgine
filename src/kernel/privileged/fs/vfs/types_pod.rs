@@ -10,11 +10,18 @@
 //! functions 侧经 `crate::functions::fs::vfs_types` re-export 本类型, 保证
 //! 既有调用方路径不变.
 
+#![deny(missing_docs)]
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// VFS 文件类型 — `privileged` 侧保留的价值类型.
 pub enum VfsFileType {
+    /// 普通文件
     File,
+    /// 目录
     Dir,
+    /// 设备节点
     Dev,
+    /// 符号链接
     Symlink,
 }
 

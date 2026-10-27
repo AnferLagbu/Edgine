@@ -5,9 +5,9 @@
     "disposition": "P-59 裁定 ①: 待办清单而非豁免面 —— 每批补写完成后该模块加 #![deny(missing_docs)] 转硬执法, 清零工程归 P-66"
   },
   "totals": {
-    "sites": 201,
-    "files": 78,
-    "keys": 108
+    "sites": 175,
+    "files": 72,
+    "keys": 99
   },
   "entries": [
     [
@@ -266,21 +266,6 @@
       3
     ],
     [
-      "src/kernel/privileged/config/memory.rs",
-      "a constant",
-      5
-    ],
-    [
-      "src/kernel/privileged/console/gfx_console.rs",
-      "a method",
-      5
-    ],
-    [
-      "src/kernel/privileged/console/mod.rs",
-      "a module",
-      1
-    ],
-    [
       "src/kernel/privileged/driver/display/font.rs",
       "a struct field",
       3
@@ -333,21 +318,6 @@
     [
       "src/kernel/privileged/freg/recoverable.rs",
       "an associated function",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/layered.rs",
-      "a struct field",
-      5
-    ],
-    [
-      "src/kernel/privileged/fs/vfs/types_pod.rs",
-      "a variant",
-      4
-    ],
-    [
-      "src/kernel/privileged/fs/vfs/types_pod.rs",
-      "an enum",
       1
     ],
     [
@@ -454,21 +424,6 @@
       "src/kernel/privileged/proc/api.rs",
       "a function",
       4
-    ],
-    [
-      "src/kernel/privileged/proc/oomd.rs",
-      "a method",
-      3
-    ],
-    [
-      "src/kernel/privileged/proc/oomd.rs",
-      "a static",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/oomd.rs",
-      "an associated function",
-      1
     ],
     [
       "src/kernel/privileged/proc/posix_timer.rs",
