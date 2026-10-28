@@ -7,8 +7,9 @@
 use super::{
     CACHE_LINE_SIZE, DMA_MAX_SCATTER_ENTRIES, DmaCachePolicy, DmaDirection, DmaMapping,
     DmaPoolStats, DmaScatterEntry, DmaScatterList, DmaStats, KERNEL_BASE, PAGE_SIZE,
-    alloc_mmio_virt, get_vmm, ptr,
+    alloc_mmio_virt, ptr,
 };
+use crate::privileged::mm::get_vmm;
 use crate::privileged::mm::{PageFlags, PhysAddr, VirtAddr};
 use crate::privileged::mm::{pmm_alloc_pages_phys, pmm_free_pages_phys};
 use crate::privileged::sync::IrqSpinLock as Mutex;
@@ -72,7 +73,12 @@ impl DmaEngine {
         for (virt, _phys, size) in regions.drain(..) {
             let pages = (size as u64).div_ceil(PAGE_SIZE);
             for i in 0..pages {
+                #[cfg(target_arch = "x86_64")]
                 get_vmm().unmap_page(VirtAddr(virt.0 + i * PAGE_SIZE));
+                #[cfg(target_arch = "aarch64")]
+                crate::privileged::mm::vmm::Aarch64Vmm::unmap_page(VirtAddr(
+                    virt.0 + i * PAGE_SIZE,
+                ));
             }
         }
 
@@ -115,7 +121,7 @@ impl DmaEngine {
         }
 
         // 确保清零对设备可见
-        self.cache_flush(virt, size);
+        Self::cache_flush(virt, size);
 
         self.stats.total_allocations.fetch_add(1, Ordering::Relaxed);
         self.stats
@@ -174,16 +180,12 @@ impl DmaEngine {
         }
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 获取 CPU 虚拟地址对应的设备 (物理) DMA 地址
-    pub fn device_address(&self, cpu_addr: VirtAddr) -> Option<PhysAddr> {
+    pub fn device_address(cpu_addr: VirtAddr) -> Option<PhysAddr> {
         if cpu_addr.0 == 0 {
             return None;
         }
-        get_vmm().get_physical(cpu_addr)
+        crate::privileged::mm::Vmm::get_physical(cpu_addr)
     }
 
     // =============== ioremap (MMIO) ===============
@@ -221,7 +223,10 @@ impl DmaEngine {
                 // Rollback
                 for j in 0..i {
                     let unmap_virt = VirtAddr(virt.0 + j * PAGE_SIZE);
+                    #[cfg(target_arch = "x86_64")]
                     get_vmm().unmap_page(unmap_virt);
+                    #[cfg(target_arch = "aarch64")]
+                    crate::privileged::mm::vmm::Aarch64Vmm::unmap_page(unmap_virt);
                 }
                 // B04-13: 失败时回收 MMIO 区间, 避免泄漏.
                 crate::privileged::dma::free_mmio_virt(virt);
@@ -241,7 +246,12 @@ impl DmaEngine {
 
         let pages = (size as u64).div_ceil(PAGE_SIZE);
         for i in 0..pages {
+            #[cfg(target_arch = "x86_64")]
             get_vmm().unmap_page(VirtAddr(virt_addr.0 + i * PAGE_SIZE));
+            #[cfg(target_arch = "aarch64")]
+            crate::privileged::mm::vmm::Aarch64Vmm::unmap_page(VirtAddr(
+                virt_addr.0 + i * PAGE_SIZE,
+            ));
         }
 
         let mut regions = self.mmio_regions.lock();
@@ -268,7 +278,7 @@ impl DmaEngine {
             return None;
         }
 
-        let dma_addr = get_vmm().get_physical(buffer)?;
+        let dma_addr = crate::privileged::mm::Vmm::get_physical(buffer)?;
 
         // 交叉验证: 通过 virt_to_phys 独立路径确认物理地址一致性
         debug_assert_eq!(
@@ -338,49 +348,41 @@ impl DmaEngine {
     // =============== 缓存同步 ===============
 
     /// 为设备访问同步 (CPU → Device)
-    pub fn sync_for_device(&self, mapping: &DmaMapping, offset: usize, size: usize) {
+    pub fn sync_for_device(mapping: &DmaMapping, offset: usize, size: usize) {
         // B04-11: 非一致性设备需要刷写 CPU 缓存. 一致性设备仅需屏障.
         if !mapping.is_coherent {
             let addr = VirtAddr(mapping.cpu_addr.0 + offset as u64);
             // offset 后的 size 区间 → 直接刷整 cache line 区间
-            self.cache_flush(addr, size);
+            Self::cache_flush(addr, size);
         }
         Self::freg_device();
     }
 
     /// 为 CPU 访问同步 (Device → CPU)
-    pub fn sync_for_cpu(&self, mapping: &DmaMapping, offset: usize, size: usize) {
+    pub fn sync_for_cpu(mapping: &DmaMapping, offset: usize, size: usize) {
         if !mapping.is_coherent {
             let addr = VirtAddr(mapping.cpu_addr.0 + offset as u64);
-            self.cache_invalidate(addr, size);
+            Self::cache_invalidate(addr, size);
         }
         Self::freg_cpu();
     }
 
     /// 双向同步
-    pub fn sync_both(&self, mapping: &DmaMapping, offset: usize, size: usize) {
-        self.sync_for_device(mapping, offset, size);
-        self.sync_for_cpu(mapping, offset, size);
+    pub fn sync_both(mapping: &DmaMapping, offset: usize, size: usize) {
+        Self::sync_for_device(mapping, offset, size);
+        Self::sync_for_cpu(mapping, offset, size);
     }
 
     // =============== 散聚表 (Scatter-Gather) ===============
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 重置散聚表 (清空条目与总长度).
-    pub fn sg_init(&self, sglist: &mut DmaScatterList) {
+    pub fn sg_init(sglist: &mut DmaScatterList) {
         sglist.entry_count = 0;
         sglist.total_length = 0;
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 向散聚表追加一个条目; 参数非法或表满返回 -1, 成功返回 0.
-    pub fn sg_add_entry(&self, sglist: &mut DmaScatterList, addr: VirtAddr, length: usize) -> i32 {
+    pub fn sg_add_entry(sglist: &mut DmaScatterList, addr: VirtAddr, length: usize) -> i32 {
         if addr.0 == 0 || length == 0 {
             return -1;
         }
@@ -389,7 +391,7 @@ impl DmaEngine {
         }
 
         let idx = sglist.entry_count as usize;
-        let phys = get_vmm().get_physical(addr);
+        let phys = crate::privileged::mm::Vmm::get_physical(addr);
 
         sglist.entries[idx] = DmaScatterEntry {
             phys_addr: phys.map_or(0, |p| p.0),
@@ -402,12 +404,8 @@ impl DmaEngine {
         0
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 返回散聚表全部条目总长度 (字节).
-    pub fn sg_total_length(&self, sglist: &DmaScatterList) -> usize {
+    pub fn sg_total_length(sglist: &DmaScatterList) -> usize {
         sglist.total_length
     }
 
@@ -428,15 +426,11 @@ impl DmaEngine {
     /// 刷新 CPU 缓存以确保 DMA 一致性.
     /// 该函数与架构相关, 对非一致性 DMA 至关重要.
     #[inline]
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 刷新 CPU 缓存, 使 CPU 写入对设备可见 (一致性 DMA 分配后调用)。
     ///
     /// `pub(crate)`: privileged 内其它 DMA 分配入口 (如 `driver/storage` 的
     /// `DmaStream` 句柄路径) 复用同一实现, 避免缓存刷新逻辑出现第二份.
-    pub(crate) fn cache_flush(&self, addr: VirtAddr, size: usize) {
+    pub(crate) fn cache_flush(addr: VirtAddr, size: usize) {
         // 架构相关缓存刷新
         #[cfg(target_arch = "x86_64")]
         {
@@ -516,11 +510,7 @@ impl DmaEngine {
     /// `x86_64`: 缓存一致, 仅需栅栏 (addr/size 无须使用).
     /// aarch64: 按虚拟地址逐行失效 (DC IVAC).
     #[inline]
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    fn cache_invalidate(&self, addr: VirtAddr, size: usize) {
+    fn cache_invalidate(addr: VirtAddr, size: usize) {
         #[cfg(target_arch = "x86_64")]
         {
             // x86_64: 缓存通常一致, 只需栅栏; addr/size 在实现使用路径上显式消费,

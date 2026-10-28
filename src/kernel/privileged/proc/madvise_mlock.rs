@@ -198,16 +198,16 @@ pub fn sys_mincore(addr: u64, len: u64, vec_ptr: u64) -> i64 {
         return Errno::EFAULT.as_ret();
     }
 
-    let Some(mm) = vma_get_current_mm() else {
+    if vma_get_current_mm().is_none() {
         return Errno::EFAULT.as_ret();
-    };
+    }
 
     if n_pages > MAX_STACK_PAGES {
         return Errno::ENOMEM.as_ret();
     }
     let mut stack_buf = [0u8; MAX_STACK_PAGES];
 
-    match mm.mincore_range(
+    match crate::privileged::mm::MmStruct::mincore_range(
         crate::privileged::lib::usize_from_u64(addr),
         crate::privileged::lib::usize_from_u64(len),
         &mut stack_buf[..n_pages],

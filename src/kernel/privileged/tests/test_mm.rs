@@ -872,7 +872,6 @@ fn test_mprotect_targets_user_table() -> TestResult {
 /// - 逆向改回可精确还原原 PTE (往返一致性).
 #[cfg(not(feature = "host-test"))]
 fn test_mprotect_targets_user_table() -> TestResult {
-    use crate::privileged::mm::get_vmm;
     use crate::privileged::mm::mechanism::{vmm_destroy_page_table, vmm_get_physical_in_table};
     use crate::privileged::mm::pmm::get_pmm;
     use crate::privileged::mm::vma::{MmStruct, Vma, VmaType};
@@ -882,9 +881,8 @@ fn test_mprotect_targets_user_table() -> TestResult {
         Ok(v) => v,
         Err(msg) => return TestResult::Fail(msg),
     };
-    let vmm = get_vmm();
     let va = COW_TEST_VA;
-    let Some(pte_before) = vmm.get_pte_value(pml4, VirtAddr(va)) else {
+    let Some(pte_before) = crate::privileged::mm::Vmm::get_pte_value(pml4, VirtAddr(va)) else {
         vmm_destroy_page_table(pml4);
         return TestResult::Fail("get_pte_value 应读到已映射 PTE");
     };
@@ -916,7 +914,7 @@ fn test_mprotect_targets_user_table() -> TestResult {
         vmm_destroy_page_table(pml4);
         return TestResult::Fail("mprotect 至只读失败");
     }
-    let Some(pte_ro) = vmm.get_pte_value(pml4, VirtAddr(va)) else {
+    let Some(pte_ro) = crate::privileged::mm::Vmm::get_pte_value(pml4, VirtAddr(va)) else {
         vmm_destroy_page_table(pml4);
         return TestResult::Fail("改权限后 PTE 不得消失 (禁止 unmap→remap 形态)");
     };
@@ -947,7 +945,7 @@ fn test_mprotect_targets_user_table() -> TestResult {
         return TestResult::Fail("mprotect 改回可写失败");
     }
     check!(
-        vmm.get_pte_value(pml4, VirtAddr(va)) == Some(pte_before),
+        crate::privileged::mm::Vmm::get_pte_value(pml4, VirtAddr(va)) == Some(pte_before),
         "往返改权限应精确还原 PTE"
     );
     check!(pmm.frame_ref_count(phys) == 1, "往返后持有者仍为 1");

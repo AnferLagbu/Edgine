@@ -1,8 +1,4 @@
 #![deny(unsafe_code)]
-#![expect(
-    clippy::unused_self,
-    reason = "unused_self: 策略方法读写全局 tick 状态 (privileged clock_adj_state); 保留子系统方法形态以维持既有调用面"
-)]
 //! NTP/PTP 时钟同步 — functions 层权威实现 (0 unsafe)
 //!
 //! 自 privileged 下沉 (见 docs/plan §6.3): NTP/PTP 类型与纯算法、时钟调整策略、
@@ -258,7 +254,7 @@ impl TimeSyncSubsystem {
     }
 
     /// 应用 NTP 同步结果
-    pub fn apply_ntp_result(&self, result: &NtpResult) -> bool {
+    pub fn apply_ntp_result(result: &NtpResult) -> bool {
         if !result.valid {
             return false;
         }
@@ -306,7 +302,7 @@ impl TimeSyncSubsystem {
     }
 
     /// 获取调整后的时间 (ns)
-    pub fn get_adjusted_time_ns(&self) -> u64 {
+    pub fn get_adjusted_time_ns() -> u64 {
         let raw_ns = read_clock_ns();
         let state = clock_adj_state();
         let offset = state.total_offset_adj().load(Ordering::Acquire);
@@ -326,7 +322,7 @@ impl TimeSyncSubsystem {
     }
 
     /// 手动设置频率调整 (ppb)
-    pub fn adj_freq(&self, ppb: i64) -> bool {
+    pub fn adj_freq(ppb: i64) -> bool {
         let state = clock_adj_state();
         let clamped = ppb.clamp(-MAX_FREQ_ADJUST_PPM * 1000, MAX_FREQ_ADJUST_PPM * 1000);
         state.freq_adj_ppb().store(clamped, Ordering::Release);
@@ -341,7 +337,7 @@ impl TimeSyncSubsystem {
     }
 
     /// 手动设置时间偏移 (ns, 渐进调整)
-    pub fn adj_time(&self, offset_ns: i64) -> bool {
+    pub fn adj_time(offset_ns: i64) -> bool {
         let clamped = offset_ns.clamp(-MAX_OFFSET_NS, MAX_OFFSET_NS);
         clock_adj_state()
             .offset_remaining()
@@ -350,7 +346,7 @@ impl TimeSyncSubsystem {
     }
 
     /// 直接设置系统时间 (ns)
-    pub fn set_time(&self, time_ns: u64) -> bool {
+    pub fn set_time(time_ns: u64) -> bool {
         let state = clock_adj_state();
         let current = read_clock_ns();
         let diff = if time_ns > current {
@@ -382,7 +378,7 @@ impl TimeSyncSubsystem {
     }
 
     /// 获取同步状态
-    pub fn get_sync_status(&self) -> (bool, u64, i64, i64) {
+    pub fn get_sync_status() -> (bool, u64, i64, i64) {
         let state = clock_adj_state();
         (
             state.synced().load(Ordering::Acquire),
@@ -451,12 +447,16 @@ pub fn timesync_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
         0 => {
             // adj_freq
             let ppb = a1.cast_signed();
-            if subsystem().adj_freq(ppb) { 0 } else { -22 }
+            if TimeSyncSubsystem::adj_freq(ppb) {
+                0
+            } else {
+                -22
+            }
         }
         1 => {
             // adj_time
             let offset_ns = a1.cast_signed();
-            if subsystem().adj_time(offset_ns) {
+            if TimeSyncSubsystem::adj_time(offset_ns) {
                 0
             } else {
                 -22
@@ -464,7 +464,11 @@ pub fn timesync_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
         }
         2 => {
             // set_time
-            if subsystem().set_time(a1) { 0 } else { -22 }
+            if TimeSyncSubsystem::set_time(a1) {
+                0
+            } else {
+                -22
+            }
         }
         3 => {
             // set_ntp_server
@@ -477,7 +481,7 @@ pub fn timesync_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
         }
         5 => {
             // get_sync_status
-            let (synced, count, freq_ppb, offset_ns) = subsystem().get_sync_status();
+            let (synced, count, freq_ppb, offset_ns) = TimeSyncSubsystem::get_sync_status();
             let _ = offset_ns;
             let _ = freq_ppb;
             // 高16位: synced, 中32位: count, 低16位: 保留
@@ -485,7 +489,7 @@ pub fn timesync_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
         }
         6 => {
             // get_adjusted_time
-            subsystem().get_adjusted_time_ns().cast_signed()
+            TimeSyncSubsystem::get_adjusted_time_ns().cast_signed()
         }
         7 => {
             // set_ptp_domain
@@ -501,7 +505,7 @@ pub fn timesync_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
                 stratum: 1,
                 valid: true,
             };
-            if subsystem().apply_ntp_result(&result) {
+            if TimeSyncSubsystem::apply_ntp_result(&result) {
                 0
             } else {
                 -22

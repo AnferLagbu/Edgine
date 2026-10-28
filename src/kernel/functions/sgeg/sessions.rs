@@ -352,7 +352,7 @@ impl<'a> SessionManager<'a> {
         // 失败计数: 简化处理 (实际应有 PWM 关联的失败计数表)
         // 检查策略
         let matrix = InMemoryCaps(matrix_caps);
-        match self.policy.check(&matrix, domain, required) {
+        match PolicyEngine::check(&matrix, domain, required) {
             PolicyResult::Allow => {
                 let id = match self
                     .table

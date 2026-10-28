@@ -55,7 +55,8 @@ pub fn try_rollback_single(domain_id: u64, tick: u64, fingerprint: u64) -> Recov
         return RecoveryResult::Escalate;
     }
 
-    let (_entries, _from, _to, result_code) = manager.rollback_domain(domain, tick, fingerprint, 1);
+    let (_entries, _from, _to, result_code) =
+        crate::privileged::freg::RecoveryManager::rollback_domain(domain, tick, fingerprint, 1);
 
     if result_code == 0 {
         RecoveryResult::Success

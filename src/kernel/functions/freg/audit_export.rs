@@ -176,24 +176,16 @@ impl AuditExporter {
         self.output_count
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 统计: 成功回滚次数
-    pub fn count_success(&self) -> usize {
+    pub fn count_success() -> usize {
         let log = ROLLBACK_LOG.lock();
         log.iter()
             .filter(|e| e.is_some_and(|x| x.result == 0))
             .count()
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 统计: 失败回滚次数
-    pub fn count_failure(&self) -> usize {
+    pub fn count_failure() -> usize {
         let log = ROLLBACK_LOG.lock();
         log.iter()
             .filter(|e| e.is_some_and(|x| x.result != 0))

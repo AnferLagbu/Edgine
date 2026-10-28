@@ -363,7 +363,7 @@ extern "C" fn ap_main(cpu_index: u64) -> ! {
         // 中断会在 `wfi` 前被处理, 随后的 `wfi` 可能错过唤醒 (对齐 `idle_entry`
         // 的 `sti; hlt` 融合手法)。
         crate::arch!(interrupt_disable());
-        let _ = crate::privileged::proc::SCHEDULER.schedule();
+        let _ = crate::privileged::proc::Scheduler::schedule();
         // SAFETY: wfi 在 EL1 合法; msr daifclr 为立即数指令, 无内存/栈副作用.
         unsafe {
             core::arch::asm!("msr daifclr, #2; wfi", options(nomem, nostack));

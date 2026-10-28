@@ -150,9 +150,9 @@ impl Drop for PipeEndpointInode {
 /// # Errors
 /// 管道槽位耗尽 / 全局 `OpenFile` 表满 / 进程 fd 表满 → `ProcessFileLimit` (EMFILE).
 pub fn create_pair(cloexec: bool, nonblock: bool) -> KernelResult<(i32, i32)> {
-    let (read_end, write_end) = crate::functions::ipc::IpcLock
-        .pipe_create(process_get_current_pid())
-        .map_err(|_| KernelError::ProcessFileLimit)?;
+    let (read_end, write_end) =
+        crate::functions::ipc::IpcLock::pipe_create(process_get_current_pid())
+            .map_err(|_| KernelError::ProcessFileLimit)?;
     let (read_key, write_key) = (read_end.fd, write_end.fd);
 
     let read_of = OpenFile::new_pipe(

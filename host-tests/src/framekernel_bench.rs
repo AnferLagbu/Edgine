@@ -254,7 +254,6 @@ pub fn capability_check_bench(iters: u64) -> u128 {
     let _ = m.set(CapDomain::PROC, CapBits(0b10101));
     let _ = m.set(CapDomain::NET, CapBits(0b1111));
     let _ = m.set(CapDomain::USER_MGMT, CapBits(0b1));
-    let engine = PolicyEngine::new();
     const BATCH: u64 = 64;
     let start = Instant::now();
     let mut sink: u64 = 0;
@@ -262,7 +261,7 @@ pub fn capability_check_bench(iters: u64) -> u128 {
         for j in 0..BATCH {
             let dom = BENCH_CAP_DOMAINS[((i * BATCH + j) as usize) & 0xF];
             let bits = CapBits(1u64 << ((i + j) & 0x1F));
-            if engine.check(&m, dom, bits) == PolicyResult::Allow {
+            if PolicyEngine::check(&m, dom, bits) == PolicyResult::Allow {
                 sink ^= 1;
             }
         }
@@ -1463,19 +1462,18 @@ mod tests {
         // G-07: 直引内核 `PolicyEngine::check` + `InMemoryMatrix`
         let m = InMemoryMatrix::new();
         let _ = m.set(CapDomain::FS, CapBits(0b11));
-        let engine = PolicyEngine::new();
         // 已授予且不含可行下界 (FS 下界 = READ|EXEC = 0b101) → 允许
         assert_eq!(
-            engine.check(&m, CapDomain::FS, CapBits(0b01)),
+            PolicyEngine::check(&m, CapDomain::FS, CapBits(0b01)),
             PolicyResult::Allow
         );
         assert_eq!(
-            engine.check(&m, CapDomain::FS, CapBits(0b10)),
+            PolicyEngine::check(&m, CapDomain::FS, CapBits(0b10)),
             PolicyResult::Allow
         );
         // 未授予位 → 无权限
         assert!(matches!(
-            engine.check(&m, CapDomain::FS, CapBits(0b100)),
+            PolicyEngine::check(&m, CapDomain::FS, CapBits(0b100)),
             PolicyResult::Deny(_)
         ));
     }

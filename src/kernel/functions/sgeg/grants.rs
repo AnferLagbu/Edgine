@@ -289,7 +289,7 @@ impl<'a> DelegationEngine<'a> {
         if parent_gen != 0 && !self.table.is_valid(parent_gen, current_tick) {
             return DelegationResult::Denied(DelegationDeny::InvalidExpiry);
         }
-        let grant_res = self.policy.grant(from_matrix, to_matrix, domain, bits);
+        let grant_res = PolicyEngine::grant(from_matrix, to_matrix, domain, bits);
         match grant_res {
             GrantResult::Granted => {
                 let flags = if non_delegatable {
@@ -323,7 +323,7 @@ impl<'a> DelegationEngine<'a> {
             if rec.flags.contains(GrantFlags::REVOKED) {
                 return false;
             }
-            let _ = self.policy.revoke(matrix, rec.domain, rec.bits);
+            let _ = PolicyEngine::revoke(matrix, rec.domain, rec.bits);
             self.table.mark_revoked(r#gen);
             true
         } else {

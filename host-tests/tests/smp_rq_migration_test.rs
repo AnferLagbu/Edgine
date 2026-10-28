@@ -189,8 +189,8 @@ fn test_credential_clear_always_paires_with_owner_clear() {
     // 写归属字段, 必须经认领凭证 (commit), 否则并发搬动者手里的 `MIGRATE_PENDING`
     // 会被覆写成陈旧值.
     for (sig, why) in [
-        ("fncfs_deactivate(&self,pid:Pid)", "阻塞/不可重排撤账"),
-        ("fnpick_cfs_task(&self)", "拣出但不可调度撤账"),
+        ("fncfs_deactivate(pid:Pid)", "阻塞/不可重排撤账"),
+        ("fnpick_cfs_task()", "拣出但不可调度撤账"),
         ("fnsteal_locked(", "偷取时遇不可调度者撤账"),
     ] {
         let body = fn_body(&sched, sig).unwrap_or_else(|| panic!("{sig} 不存在"));
@@ -229,9 +229,9 @@ fn test_credential_clear_always_paires_with_owner_clear() {
 #[test]
 fn test_wake_path_never_flips_state_before_placement() {
     let sched = prod_squashed(SCHED);
-    let unblock = fn_body(&sched, "pubfnunblock(&self,pid:Pid)").expect("unblock 不存在");
+    let unblock = fn_body(&sched, "pubfnunblock(pid:Pid)").expect("unblock 不存在");
     let at_place = unblock
-        .find("self.cfs_enqueue_to(")
+        .find("Self::cfs_enqueue_to(")
         .expect("unblock 的 CFS 路由未经搬定入口");
     // 全由搬定写 Ready 也合法: find 发 None 时无需断言.
     if let Some(at_ready) = unblock.find("set_state_safe(ProcessState::Ready)") {
@@ -242,7 +242,7 @@ fn test_wake_path_never_flips_state_before_placement() {
     }
     // 搬定失败必须早退 (不能当作已成功继续跑唤醒不变式).
     assert!(
-        unblock.contains("if!self.cfs_enqueue_to("),
+        unblock.contains("if!Self::cfs_enqueue_to("),
         "unblock 未根据搬定结果决定后续 (失败被静默忽略)"
     );
     // 成功路径的 Ready 由持锁主体写.
@@ -258,7 +258,7 @@ fn test_wake_path_never_flips_state_before_placement() {
         !place.contains("policy!=SchedPolicy::Normal"),
         "搬定层重新卡 policy 准入: RT 降级入队与唤醒投送会静默失效"
     );
-    let pick = fn_body(&sched, "fnpick_cfs_task(&self)").expect("pick_cfs_task 不存在");
+    let pick = fn_body(&sched, "fnpick_cfs_task()").expect("pick_cfs_task 不存在");
     assert!(
         pick.contains("p.get_sched_policy()==SchedPolicy::Normal"),
         "policy 准入必须在拣选层 (否则上面那条禁令就只是拆护栏)"
@@ -273,7 +273,7 @@ fn test_wake_path_never_flips_state_before_placement() {
 fn test_membership_change_requires_claim_and_claim_never_blocks() {
     let sched = prod_squashed(SCHED);
     let claim =
-        fn_body(&sched, "fntry_claim_rq(&self,pid:Pid)").expect("try_claim_rq (非阻塞认领) 不存在");
+        fn_body(&sched, "fntry_claim_rq(pid:Pid)").expect("try_claim_rq (非阻塞认领) 不存在");
     assert!(
         claim.contains("ifcur==MIGRATE_PENDING{returnNone;}")
             && claim.contains("compare_exchange(cur,MIGRATE_PENDING"),
@@ -285,7 +285,7 @@ fn test_membership_change_requires_claim_and_claim_never_blocks() {
         "try_claim_rq 内出现等待: 持 rq 锁调用它即死锁"
     );
 
-    let wait = fn_body(&sched, "fnclaim_rq(&self,pid:Pid)").expect("claim_rq 不存在");
+    let wait = fn_body(&sched, "fnclaim_rq(pid:Pid)").expect("claim_rq 不存在");
     assert!(
         wait.contains("for_in0..RQ_CLAIM_RETRY") && wait.contains("core::hint::spin_loop()"),
         "重试等待必须在 PCB 锁外 (持锁自旋会与认领者互锁)"
@@ -294,11 +294,11 @@ fn test_membership_change_requires_claim_and_claim_never_blocks() {
     // 一切归属变更都经认领 (搬定主体 = cfs_place_on_inner, 公有入口只做委托).
     for (sig, needle) in [
         (
-            "fncfs_place_on_inner(&self,pid:Pid,dst_cpu:u32,owner_landing:bool)",
-            "self.claim_rq(pid)",
+            "fncfs_place_on_inner(pid:Pid,dst_cpu:u32,owner_landing:bool)",
+            "Self::claim_rq(pid)",
         ),
-        ("fncfs_deactivate(&self,pid:Pid)", "self.claim_rq(pid)"),
-        ("fnsteal_locked(", "self.try_claim_rq(pid)"),
+        ("fncfs_deactivate(pid:Pid)", "Self::claim_rq(pid)"),
+        ("fnsteal_locked(", "Self::try_claim_rq(pid)"),
     ] {
         let body = fn_body(&sched, sig).unwrap_or_else(|| panic!("{sig} 不存在"));
         assert!(
@@ -327,10 +327,10 @@ fn test_enqueue_is_single_entry_under_ascending_double_lock() {
     );
 
     // 入队唯一入口收口到 cfs_place_on.
-    let enqueue_to = fn_body(&sched, "fncfs_enqueue_to(&self,pid:Pid,cpu_id:u32)")
-        .expect("cfs_enqueue_to 不存在");
+    let enqueue_to =
+        fn_body(&sched, "fncfs_enqueue_to(pid:Pid,cpu_id:u32)").expect("cfs_enqueue_to 不存在");
     assert!(
-        enqueue_to.contains("self.cfs_place_on(pid,cpu_id)"),
+        enqueue_to.contains("Self::cfs_place_on(pid,cpu_id)"),
         "cfs_enqueue_to 未委托 cfs_place_on (搬定出现第二条路径)"
     );
 
@@ -338,14 +338,14 @@ fn test_enqueue_is_single_entry_under_ascending_double_lock() {
     // 搬定主体在 `cfs_place_on_inner` (多一个 `owner_landing` 参数, 见 P-21),
     // 公有入口 `cfs_place_on` 只做一层委托 —— 委托不丢, 否则等于开出第二条入口.
     let entry =
-        fn_body(&sched, "fncfs_place_on(&self,pid:Pid,dst_cpu:u32)").expect("cfs_place_on 不存在");
+        fn_body(&sched, "fncfs_place_on(pid:Pid,dst_cpu:u32)").expect("cfs_place_on 不存在");
     assert!(
-        entry.contains("self.cfs_place_on_inner(pid,dst_cpu,false)"),
+        entry.contains("Self::cfs_place_on_inner(pid,dst_cpu,false)"),
         "cfs_place_on 未把 owner_landing 固定为 false 再委托 (屏障可被任意入口绕过)"
     );
     let place = fn_body(
         &sched,
-        "fncfs_place_on_inner(&self,pid:Pid,dst_cpu:u32,owner_landing:bool)",
+        "fncfs_place_on_inner(pid:Pid,dst_cpu:u32,owner_landing:bool)",
     )
     .expect("cfs_place_on_inner 不存在");
     assert!(
@@ -353,7 +353,7 @@ fn test_enqueue_is_single_entry_under_ascending_double_lock() {
             && place.contains("}elseifsrc_cpu<dst_cpu{"),
         "cfs_place_on 未把\"同锁单持 / 异锁升序双持\"分支写全 (嵌套同一把锁即自死锁)"
     );
-    let lb = fn_body(&sched, "fnload_balance(&self)").expect("load_balance 不存在");
+    let lb = fn_body(&sched, "fnload_balance()").expect("load_balance 不存在");
     assert!(
         lb.contains("ifbusiest_cpu<this_cpu{")
             && lb.contains("per_cpu_for(busiest_cpu).cfs_rq.lock();letmutdst_rq=per_cpu_for(this_cpu).cfs_rq.lock();")
@@ -392,7 +392,7 @@ fn test_running_task_is_never_stolen() {
 #[test]
 fn test_tick_body_uses_carry_cas_for_every_periodic_side_effect() {
     let sched = prod_squashed(SCHED);
-    let tick = fn_body(&sched, "fntick(&self,cpu_id:usize)").expect("Scheduler::tick 不存在");
+    let tick = fn_body(&sched, "fntick(cpu_id:usize)").expect("Scheduler::tick 不存在");
     assert!(
         !tick.contains("is_multiple_of("),
         "tick 体重新用 is_multiple_of 判周期: 派生 tick 跳值会整窗漏触发, 且各核同窗各自发起"
@@ -528,6 +528,6 @@ fn test_negative_control_predicates() {
         1,
         "真源码已存在多处归属直接写入: 单写入者契约已破"
     );
-    let tick = fn_body(&sched, "fntick(&self,cpu_id:usize)").expect("Scheduler::tick 不存在");
+    let tick = fn_body(&sched, "fntick(cpu_id:usize)").expect("Scheduler::tick 不存在");
     assert!(!tick.contains("is_multiple_of("));
 }

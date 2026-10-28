@@ -5,8 +5,8 @@
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 579,
-    "files": 149
+    "sites": 455,
+    "files": 130
   },
   "entries": [
     [
@@ -60,23 +60,8 @@
       1
     ],
     [
-      "src/kernel/functions/driver/char/vga.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      2
-    ],
-    [
       "src/kernel/functions/driver/display/dp.rs",
       "#[expect(clippy::no_effect_underscore_binding,reason=\"no_effect_underscore_binding:let_=expr用于类型推导/副作用;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/driver/display/dp.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      5
-    ],
-    [
-      "src/kernel/functions/driver/display/hdmi.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       1
     ],
     [
@@ -88,11 +73,6 @@
       "src/kernel/functions/driver/storage/ahci.rs",
       "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
       1
-    ],
-    [
-      "src/kernel/functions/driver/usb/usb_core.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      2
     ],
     [
       "src/kernel/functions/driver/usb/xhci.rs",
@@ -110,11 +90,6 @@
       1
     ],
     [
-      "src/kernel/functions/freg/audit_export.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      2
-    ],
-    [
       "src/kernel/functions/fs/configfs.rs",
       "#[expect(clippy::large_stack_arrays,reason=\"large_stack_arrays:大栈数组是性能权衡(避免堆分配)",
       1
@@ -123,11 +98,6 @@
       "src/kernel/functions/fs/dcache.rs",
       "#[expect(clippy::too_many_arguments,reason=\"too_many_arguments:icache需完整VfsStat字段,拆结构体收益不抵改动面;当前优先expect\")",
       1
-    ],
-    [
-      "src/kernel/functions/fs/devfs.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      2
     ],
     [
       "src/kernel/functions/fs/devfs.rs",
@@ -180,11 +150,6 @@
       1
     ],
     [
-      "src/kernel/functions/fs/procfs_core.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      4
-    ],
-    [
       "src/kernel/functions/fs/ramfs_core/ramfs_data.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
@@ -215,11 +180,6 @@
       2
     ],
     [
-      "src/kernel/functions/fs/unkfs/unkfs_data.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      3
-    ],
-    [
       "src/kernel/functions/fs/vfs_manager.rs",
       "#[expect(clippy::assigning_clones,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
@@ -238,11 +198,6 @@
       "src/kernel/functions/fs/virtiofs.rs",
       "#[expect(clippy::large_stack_arrays,reason=\"large_stack_arrays:大栈数组是性能权衡(避免堆分配)",
       1
-    ],
-    [
-      "src/kernel/functions/ipc/mod.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      17
     ],
     [
       "src/kernel/functions/ipc/msgq.rs",
@@ -510,11 +465,6 @@
       1
     ],
     [
-      "src/kernel/functions/net/smoltcp_impl.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      1
-    ],
-    [
       "src/kernel/functions/net/unix.rs",
       "#[expect(clippy::many_single_char_names,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
@@ -555,11 +505,6 @@
       2
     ],
     [
-      "src/kernel/functions/sgeg/policy.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      3
-    ],
-    [
       "src/kernel/functions/sgeg/sessions.rs",
       "#[expect(clippy::match_wildcard_for_single_variants,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
@@ -567,16 +512,6 @@
     [
       "src/kernel/functions/sync/futex.rs",
       "#[expect(clippy::comparison_chain,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
-      1
-    ],
-    [
-      "src/kernel/functions/timer/tickless.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      1
-    ],
-    [
-      "src/kernel/functions/timer/time_sync.rs",
-      "#![expect(clippy::unused_self,reason=\"unused_self:策略方法读写全局tick状态(privilegedclock_adj_state)",
       1
     ],
     [
@@ -875,16 +810,6 @@
       1
     ],
     [
-      "src/kernel/privileged/arch/shadow_stack.rs",
-      "#[cfg_attr( target_arch = \"aarch64\", expect( clippy::unused_self, reason = \"aarch64 CET 兼容占位函数, 不依赖 self 字段\" ) )]",
-      2
-    ],
-    [
-      "src/kernel/privileged/arch/shadow_stack.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      2
-    ],
-    [
       "src/kernel/privileged/arch/x86_64/acpi.rs",
       "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
       4
@@ -1015,19 +940,9 @@
       1
     ],
     [
-      "src/kernel/privileged/debug/ringbuf.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      1
-    ],
-    [
       "src/kernel/privileged/dma/engine.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       2
-    ],
-    [
-      "src/kernel/privileged/dma/engine.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      6
     ],
     [
       "src/kernel/privileged/driver/display/self_test.rs",
@@ -1105,11 +1020,6 @@
       1
     ],
     [
-      "src/kernel/privileged/freg/manager.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      1
-    ],
-    [
       "src/kernel/privileged/freg/recoverable.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       1
@@ -1130,11 +1040,6 @@
       1
     ],
     [
-      "src/kernel/privileged/idt/handlers.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      2
-    ],
-    [
       "src/kernel/privileged/idt/idt.rs",
       "#[cfg_attr( target_arch = \"aarch64\", expect( clippy::unnecessary_wraps, reason = \"aarch64 IDT init 占位函数, 直接返回 Ok\" ) )]",
       1
@@ -1143,11 +1048,6 @@
       "src/kernel/privileged/idt/idt.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       1
-    ],
-    [
-      "src/kernel/privileged/idt/idt.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      6
     ],
     [
       "src/kernel/privileged/idt/mod.rs",
@@ -1160,16 +1060,6 @@
       1
     ],
     [
-      "src/kernel/privileged/idt/types.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/io/iouring.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      1
-    ],
-    [
       "src/kernel/privileged/iomem.rs",
       "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
       6
@@ -1178,11 +1068,6 @@
       "src/kernel/privileged/iomem.rs",
       "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
       3
-    ],
-    [
-      "src/kernel/privileged/ioport.rs",
-      "#[expect(clippy::unused_self,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      6
     ],
     [
       "src/kernel/privileged/klog/mod.rs",
@@ -1280,11 +1165,6 @@
       1
     ],
     [
-      "src/kernel/privileged/mm/kmalloc.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      1
-    ],
-    [
       "src/kernel/privileged/mm/kpti.rs",
       "#[expect(clippy::verbose_bit_mask,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
@@ -1300,18 +1180,8 @@
       1
     ],
     [
-      "src/kernel/privileged/mm/pmm.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      1
-    ],
-    [
       "src/kernel/privileged/mm/slab.rs",
       "#[expect(clippy::ptr_as_ptr,reason=\"pageas*mutSlabHeader:pmm_alloc_pages返回页对齐*mutu8,安全cast\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/slab.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       1
     ],
     [
@@ -1325,19 +1195,9 @@
       1
     ],
     [
-      "src/kernel/privileged/mm/vma.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      2
-    ],
-    [
       "src/kernel/privileged/mm/vmm_aarch64.rs",
       "#[expect(clippy::missing_errors_doc,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
       1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_aarch64.rs",
-      "#[expect(clippy::unused_self,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      14
     ],
     [
       "src/kernel/privileged/mm/vmm_x86_64.rs",
@@ -1348,11 +1208,6 @@
       "src/kernel/privileged/mm/vmm_x86_64.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      10
     ],
     [
       "src/kernel/privileged/mod.rs",
@@ -1740,26 +1595,6 @@
       2
     ],
     [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名:归属写回是凭证的方法,凭证持&Scheduler\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便与其余调度路径统一用法(归属写入已集中到认领凭证,本函数不再直击self)",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      14
-    ],
-    [
-      "src/kernel/privileged/proc/session.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      1
-    ],
-    [
       "src/kernel/privileged/proc/signal.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       1
@@ -1795,11 +1630,6 @@
       2
     ],
     [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      3
-    ],
-    [
       "src/kernel/privileged/sgeg/api.rs",
       "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
       1
@@ -1825,18 +1655,8 @@
       1
     ],
     [
-      "src/kernel/privileged/sgeg/identity.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      1
-    ],
-    [
       "src/kernel/privileged/sgeg/sha256.rs",
       "#[expect(clippy::many_single_char_names,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/types.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       1
     ],
     [
@@ -1942,11 +1762,6 @@
     [
       "src/kernel/privileged/userptr.rs",
       "#[expect(clippy::ptr_cast_constness,reason=\"ptr_cast_constness:*mutTas*constT是已知安全(Rust2024可用ptr.cast_const或&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/vmspace.rs",
-      "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       1
     ],
     [

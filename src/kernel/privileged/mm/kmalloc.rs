@@ -716,7 +716,7 @@ impl KernelHeap {
 
             if block_size >= size {
                 if block_size >= size + MIN_BLOCK_SIZE + core::mem::size_of::<HeapHeader>() as u64 {
-                    self.split_block(cur, size);
+                    Self::split_block(cur, size);
                 }
 
                 cur.set_free(false);
@@ -732,11 +732,7 @@ impl KernelHeap {
     }
 
     /// 将一个块拆分为两个
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    fn split_block(&self, header: HeaderRef, size: u64) {
+    fn split_block(header: HeaderRef, size: u64) {
         let original_size = header.size();
         let remaining = original_size - size;
 
@@ -885,7 +881,10 @@ impl KernelHeap {
             if map_failed {
                 for j in 0..i {
                     let unmap_virt = VirtAddr(new_start.0 + j * PAGE_SIZE);
+                    #[cfg(target_arch = "x86_64")]
                     vmm.unmap_page(unmap_virt);
+                    #[cfg(target_arch = "aarch64")]
+                    crate::privileged::mm::vmm::Aarch64Vmm::unmap_page(unmap_virt);
                 }
                 pmm.free_pages(phys, crate::privileged::lib::usize_from_u64(pages_needed));
                 return None;

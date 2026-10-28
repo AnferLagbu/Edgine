@@ -169,27 +169,27 @@ pub struct EdgineScheduler;
 
 impl Scheduler for EdgineScheduler {
     fn enqueue(&self, pid: Pid) {
-        crate::privileged::proc::SCHEDULER.add(pid);
+        crate::privileged::proc::scheduler::Scheduler::add(pid);
     }
 
     fn set_nice(&self, pid: Pid, nice: i8) {
-        crate::privileged::proc::SCHEDULER.set_nice(pid, nice);
+        crate::privileged::proc::scheduler::Scheduler::set_nice(pid, nice);
     }
 
     fn schedule(&self) -> Option<Pid> {
-        crate::privileged::proc::SCHEDULER.schedule()
+        crate::privileged::proc::Scheduler::schedule()
     }
 
     fn current(&self) -> Option<Pid> {
-        crate::privileged::proc::SCHEDULER.current()
+        crate::privileged::proc::scheduler::Scheduler::current()
     }
 
     fn block_current(&self, reason: BlockReason) {
-        crate::privileged::proc::SCHEDULER.block(reason);
+        crate::privileged::proc::scheduler::Scheduler::block(reason);
     }
 
     fn unblock(&self, pid: Pid) {
-        crate::privileged::proc::SCHEDULER.unblock(pid);
+        crate::privileged::proc::scheduler::Scheduler::unblock(pid);
     }
 
     fn exit_current(&self, exit_code: u32) {
@@ -197,14 +197,14 @@ impl Scheduler for EdgineScheduler {
     }
 
     fn yield_current(&self) {
-        crate::privileged::proc::SCHEDULER.yield_current();
+        crate::privileged::proc::Scheduler::yield_current();
     }
 
     fn set_need_reschedule(&self) {
-        crate::privileged::proc::SCHEDULER.set_need_reschedule();
+        crate::privileged::proc::scheduler::Scheduler::set_need_reschedule();
     }
 
     fn has_runnable(&self) -> bool {
-        crate::privileged::proc::SCHEDULER.has_any_runnable()
+        crate::privileged::proc::scheduler::Scheduler::has_any_runnable()
     }
 }

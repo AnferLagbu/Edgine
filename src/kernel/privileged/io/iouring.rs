@@ -277,7 +277,7 @@ impl IoUring {
     pub fn process_pending(&self) -> u32 {
         let mut processed = 0u32;
         while let Some(sqe) = self.consume_sqe() {
-            let result = self.execute_op(&sqe);
+            let result = Self::execute_op(&sqe);
             let cqe = Cqe {
                 user_data: sqe.user_data,
                 result,
@@ -294,12 +294,8 @@ impl IoUring {
         processed
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 执行单个操作
-    fn execute_op(&self, sqe: &Sqe) -> i32 {
+    fn execute_op(sqe: &Sqe) -> i32 {
         let Some(opcode) = IoOpCode::from_u8(sqe.opcode) else {
             return -(Errno::EINVAL as i32);
         };
@@ -412,7 +408,7 @@ fn process_after_relock(id: u32, to_process: u32) -> Result<u32, Errno> {
         for _ in 0..to_process {
             // SAFETY/语义: None 时退出循环是合理 fallback, 等价于 break
             let Some(sqe) = u.consume_sqe() else { break };
-            let result = u.execute_op(&sqe);
+            let result = IoUring::execute_op(&sqe);
             let cqe = Cqe {
                 user_data: sqe.user_data,
                 result,

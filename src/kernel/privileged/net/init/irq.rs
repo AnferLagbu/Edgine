@@ -84,7 +84,7 @@ pub fn net_register_msix_isr(msi_vector: u8) -> Result<(), &'static str> {
     let manager = IdtManager::instance();
     manager.register_msi_irq(irq, net_msix_irq_handler, "net-msix")?;
     // 与 NVMe MSI-X 注册一致: IDT 抽象统一要求 enable_irq 以免向量被屏蔽。
-    manager.enable_irq(irq);
+    IdtManager::enable_irq(irq);
     Ok(())
 }
 

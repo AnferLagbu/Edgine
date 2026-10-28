@@ -172,7 +172,7 @@ fn notify_donation(holder_pid: u32, donated_prio: u32) {
         proc.priority.store(donated_prio, Ordering::SeqCst);
     }
     // 通知调度器有优先级变化
-    crate::privileged::proc::scheduler::SCHEDULER.yield_current();
+    crate::privileged::proc::scheduler::Scheduler::yield_current();
 }
 
 #[inline]
@@ -184,7 +184,7 @@ fn notify_revoke(pid: u32) {
         let proc = unsafe { &*proc_ptr };
         proc.priority.store(2, Ordering::SeqCst);
     }
-    crate::privileged::proc::scheduler::SCHEDULER.yield_current();
+    crate::privileged::proc::scheduler::Scheduler::yield_current();
 }
 
 // ============================================================================
@@ -751,5 +751,5 @@ fn current_pid() -> u32 {
 
 fn scheduler_yield() {
     // v2.6: 用进程级 SCHEDULER.yield_current() 让出 CPU (线程级 SchedulerEx 并行实现已移除, P-29 route C)
-    crate::privileged::proc::scheduler::SCHEDULER.yield_current();
+    crate::privileged::proc::scheduler::Scheduler::yield_current();
 }

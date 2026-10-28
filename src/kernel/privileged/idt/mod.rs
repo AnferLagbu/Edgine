@@ -670,16 +670,14 @@ pub extern "C" fn idt_unregister_irq(irq: u8, handler: CIrqHandler) -> i32 {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn idt_enable_irq(irq: u8) {
-    let manager = IdtManager::instance();
-    manager.enable_irq(irq);
+    IdtManager::enable_irq(irq);
 }
 
 /// 禁用指定 IRQ
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn idt_disable_irq(irq: u8) {
-    let manager = IdtManager::instance();
-    manager.disable_irq(irq);
+    IdtManager::disable_irq(irq);
 }
 
 /// 导出 IDT 状态 (用于调试)

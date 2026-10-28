@@ -156,12 +156,8 @@ impl IpcNamespaceRef {
         Self
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 获取命名空间锁 (spin, 短临界区)
-    pub fn lock(&self) -> IpcLock {
+    pub fn lock() -> IpcLock {
         IpcLock
     }
 }
@@ -172,15 +168,11 @@ pub struct IpcLock;
 impl IpcLock {
     // ── Pipe ──
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 创建管道
     ///
     /// # Errors
     /// 当底层创建失败 (如资源耗尽等) 时以对应的 `IpcError` 返回.
-    pub fn pipe_create(&self, current_pid: u32) -> Result<(PipeFd, PipeFd), IpcError> {
+    pub fn pipe_create(current_pid: u32) -> Result<(PipeFd, PipeFd), IpcError> {
         let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
         let next_id = crate::privileged::ipc::NEXT_IPC_ID.get_mut();
         self::pipe::pipe_create_safe(ns, next_id, current_pid)
@@ -188,15 +180,11 @@ impl IpcLock {
             .map_err(IpcError::from_i32)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 管道读
     ///
     /// # Errors
     /// 当管道未打开、无数据可读或底层读失败时以对应的 `IpcError` 返回.
-    pub fn pipe_read(&self, fd: PipeFd, buf: &mut [u8]) -> Result<usize, IpcError> {
+    pub fn pipe_read(fd: PipeFd, buf: &mut [u8]) -> Result<usize, IpcError> {
         let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
         self::pipe::pipe_read_safe(
             ns,
@@ -208,15 +196,11 @@ impl IpcLock {
         .map_err(IpcError::from_i32)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 管道写
     ///
     /// # Errors
     /// 当管道未打开、缓冲区非法或底层写失败时以对应的 `IpcError` 返回.
-    pub fn pipe_write(&self, fd: PipeFd, buf: &[u8]) -> Result<usize, IpcError> {
+    pub fn pipe_write(fd: PipeFd, buf: &[u8]) -> Result<usize, IpcError> {
         let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
         self::pipe::pipe_write_safe(
             ns,
@@ -228,30 +212,22 @@ impl IpcLock {
         .map_err(IpcError::from_i32)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 关闭管道
     ///
     /// # Errors
     /// 当管道未打开或底层关闭失败时以对应的 `IpcError` 返回.
-    pub fn pipe_close(&self, fd: PipeFd) -> Result<(), IpcError> {
+    pub fn pipe_close(fd: PipeFd) -> Result<(), IpcError> {
         let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
         self::pipe::pipe_close_safe(ns, fd.fd).map_err(IpcError::from_i32)
     }
 
     // ── SHM ──
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 创建共享内存段
     ///
     /// # Errors
     /// 当底层创建失败 (如资源耗尽等) 时以对应的 `IpcError` 返回.
-    pub fn shm_create(&self, current_pid: u32, size: usize) -> Result<ShmHandle, IpcError> {
+    pub fn shm_create(current_pid: u32, size: usize) -> Result<ShmHandle, IpcError> {
         let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
         let next_id = crate::privileged::ipc::NEXT_IPC_ID.get_mut();
         self::shm::shm_create_safe(ns, next_id, size as u64, 0, current_pid)
@@ -259,58 +235,42 @@ impl IpcLock {
             .map_err(IpcError::from_i32)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 附加共享内存段
     ///
     /// # Errors
     /// 当共享内存段不存在、无权限或底层附加失败时以对应的 `IpcError` 返回.
-    pub fn shm_attach(&self, id: IpcId, current_pid: u32) -> Result<ShmHandle, IpcError> {
+    pub fn shm_attach(id: IpcId, current_pid: u32) -> Result<ShmHandle, IpcError> {
         let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
         self::shm::shm_attach_safe(ns, id, current_pid)
             .map(|phys_addr| ShmHandle { id, phys_addr })
             .map_err(IpcError::from_i32)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 分离共享内存段
     ///
     /// # Errors
     /// 当句柄无效、无权限或底层分离失败时以对应的 `IpcError` 返回.
-    pub fn shm_detach(&self, handle: ShmHandle, current_pid: u32) -> Result<(), IpcError> {
+    pub fn shm_detach(handle: ShmHandle, current_pid: u32) -> Result<(), IpcError> {
         let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
         self::shm::shm_detach_safe(ns, handle.id, current_pid).map_err(IpcError::from_i32)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 删除共享内存段
     ///
     /// # Errors
     /// 当共享内存段不存在或底层删除失败时以对应的 `IpcError` 返回.
-    pub fn shm_destroy(&self, id: IpcId) -> Result<(), IpcError> {
+    pub fn shm_destroy(id: IpcId) -> Result<(), IpcError> {
         let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
         self::shm::shm_destroy_safe(ns, id).map_err(IpcError::from_i32)
     }
 
     // ── MsgQ ──
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 创建消息队列
     ///
     /// # Errors
     /// 当底层创建失败 (如资源耗尽等) 时以对应的 `IpcError` 返回.
-    pub fn msgq_create(&self, current_pid: u32) -> Result<MsgqHandle, IpcError> {
+    pub fn msgq_create(current_pid: u32) -> Result<MsgqHandle, IpcError> {
         let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
         let next_id = crate::privileged::ipc::NEXT_IPC_ID.get_mut();
         self::msgq::msgq_create_safe(ns, next_id, 0, current_pid)
@@ -318,29 +278,21 @@ impl IpcLock {
             .map_err(IpcError::from_i32)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 发送消息
     ///
     /// # Errors
     /// 当队列不存在、队列已满、数据非法或底层发送失败时以对应的 `IpcError` 返回.
-    pub fn msgq_send(&self, q: MsgqHandle, data: &[u8], current_pid: u32) -> Result<(), IpcError> {
+    pub fn msgq_send(q: MsgqHandle, data: &[u8], current_pid: u32) -> Result<(), IpcError> {
         let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
         self::msgq::msgq_send_safe(ns, q.id, 0, Some(data), data.len(), current_pid)
             .map_err(IpcError::from_i32)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 接收消息
     ///
     /// # Errors
     /// 当队列不存在、队列为空或底层接收失败时以对应的 `IpcError` 返回.
-    pub fn msgq_recv(&self, q: MsgqHandle, buf: &mut [u8]) -> Result<usize, IpcError> {
+    pub fn msgq_recv(q: MsgqHandle, buf: &mut [u8]) -> Result<usize, IpcError> {
         let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
         let mut type_buf = 0u64;
         let mut size_buf = 0u64;
@@ -355,31 +307,22 @@ impl IpcLock {
         .map_err(IpcError::from_i32)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 销毁消息队列
     ///
     /// # Errors
     /// 当队列不存在或底层销毁失败时以对应的 `IpcError` 返回.
-    pub fn msgq_destroy(&self, q: MsgqHandle) -> Result<(), IpcError> {
+    pub fn msgq_destroy(q: MsgqHandle) -> Result<(), IpcError> {
         let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
         self::msgq::msgq_destroy_safe(ns, q.id).map_err(IpcError::from_i32)
     }
 
     // ── Semaphore ──
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 创建信号量
     ///
     /// # Errors
     /// 当参数非法或底层创建失败 (如资源耗尽等) 时以对应的 `IpcError` 返回.
     pub fn sem_create(
-        &self,
         initial: u32,
         max_count: u32,
         current_pid: u32,
@@ -391,41 +334,29 @@ impl IpcLock {
             .map_err(IpcError::from_i32)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// P 操作 (wait)
     ///
     /// # Errors
     /// 当信号量不存在或底层等待失败时以对应的 `IpcError` 返回.
-    pub fn sem_wait(&self, s: SemHandle) -> Result<(), IpcError> {
+    pub fn sem_wait(s: SemHandle) -> Result<(), IpcError> {
         let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
         sem::sem_wait_safe(ns, s.id).map_err(IpcError::from_i32)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// V 操作 (signal/post)
     ///
     /// # Errors
     /// 当信号量不存在或底层释放失败时以对应的 `IpcError` 返回.
-    pub fn sem_post(&self, s: SemHandle) -> Result<(), IpcError> {
+    pub fn sem_post(s: SemHandle) -> Result<(), IpcError> {
         let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
         sem::sem_post_safe(ns, s.id).map_err(IpcError::from_i32)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 销毁信号量
     ///
     /// # Errors
     /// 当信号量不存在或底层销毁失败时以对应的 `IpcError` 返回.
-    pub fn sem_destroy(&self, s: SemHandle) -> Result<(), IpcError> {
+    pub fn sem_destroy(s: SemHandle) -> Result<(), IpcError> {
         let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
         sem::sem_destroy_safe(ns, s.id).map_err(IpcError::from_i32)
     }
@@ -465,7 +396,7 @@ impl SemHandle {
 /// # Errors
 /// 错误条件与 [`IpcLock::pipe_create`] 相同, 参见其 `# Errors` 段.
 pub fn pipe_create(current_pid: u32) -> Result<(PipeFd, PipeFd), IpcError> {
-    global().lock().pipe_create(current_pid)
+    IpcLock::pipe_create(current_pid)
 }
 
 /// 管道读
@@ -473,7 +404,7 @@ pub fn pipe_create(current_pid: u32) -> Result<(PipeFd, PipeFd), IpcError> {
 /// # Errors
 /// 错误条件与 [`IpcLock::pipe_read`] 相同, 参见其 `# Errors` 段.
 pub fn pipe_read(fd: PipeFd, buf: &mut [u8]) -> Result<usize, IpcError> {
-    global().lock().pipe_read(fd, buf)
+    IpcLock::pipe_read(fd, buf)
 }
 
 /// 管道写
@@ -481,7 +412,7 @@ pub fn pipe_read(fd: PipeFd, buf: &mut [u8]) -> Result<usize, IpcError> {
 /// # Errors
 /// 错误条件与 [`IpcLock::pipe_write`] 相同, 参见其 `# Errors` 段.
 pub fn pipe_write(fd: PipeFd, buf: &[u8]) -> Result<usize, IpcError> {
-    global().lock().pipe_write(fd, buf)
+    IpcLock::pipe_write(fd, buf)
 }
 
 /// 关闭管道
@@ -489,7 +420,7 @@ pub fn pipe_write(fd: PipeFd, buf: &[u8]) -> Result<usize, IpcError> {
 /// # Errors
 /// 错误条件与 [`IpcLock::pipe_close`] 相同, 参见其 `# Errors` 段.
 pub fn pipe_close(fd: PipeFd) -> Result<(), IpcError> {
-    global().lock().pipe_close(fd)
+    IpcLock::pipe_close(fd)
 }
 
 // ============================================================================
@@ -501,7 +432,7 @@ pub fn pipe_close(fd: PipeFd) -> Result<(), IpcError> {
 /// # Errors
 /// 错误条件与 [`IpcLock::shm_create`] 相同, 参见其 `# Errors` 段.
 pub fn shm_create(current_pid: u32, size: usize) -> Result<ShmHandle, IpcError> {
-    global().lock().shm_create(current_pid, size)
+    IpcLock::shm_create(current_pid, size)
 }
 
 /// 附加共享内存段
@@ -509,7 +440,7 @@ pub fn shm_create(current_pid: u32, size: usize) -> Result<ShmHandle, IpcError> 
 /// # Errors
 /// 错误条件与 [`IpcLock::shm_attach`] 相同, 参见其 `# Errors` 段.
 pub fn shm_attach(id: IpcId, current_pid: u32) -> Result<ShmHandle, IpcError> {
-    global().lock().shm_attach(id, current_pid)
+    IpcLock::shm_attach(id, current_pid)
 }
 
 /// 分离共享内存段
@@ -517,7 +448,7 @@ pub fn shm_attach(id: IpcId, current_pid: u32) -> Result<ShmHandle, IpcError> {
 /// # Errors
 /// 错误条件与 [`IpcLock::shm_detach`] 相同, 参见其 `# Errors` 段.
 pub fn shm_detach(handle: ShmHandle, current_pid: u32) -> Result<(), IpcError> {
-    global().lock().shm_detach(handle, current_pid)
+    IpcLock::shm_detach(handle, current_pid)
 }
 
 /// 删除共享内存段
@@ -525,7 +456,7 @@ pub fn shm_detach(handle: ShmHandle, current_pid: u32) -> Result<(), IpcError> {
 /// # Errors
 /// 错误条件与 [`IpcLock::shm_destroy`] 相同, 参见其 `# Errors` 段.
 pub fn shm_destroy(id: IpcId) -> Result<(), IpcError> {
-    global().lock().shm_destroy(id)
+    IpcLock::shm_destroy(id)
 }
 
 /// 创建消息队列
@@ -533,7 +464,7 @@ pub fn shm_destroy(id: IpcId) -> Result<(), IpcError> {
 /// # Errors
 /// 错误条件与 [`IpcLock::msgq_create`] 相同, 参见其 `# Errors` 段.
 pub fn msgq_create(current_pid: u32) -> Result<MsgqHandle, IpcError> {
-    global().lock().msgq_create(current_pid)
+    IpcLock::msgq_create(current_pid)
 }
 
 /// 发送消息
@@ -541,7 +472,7 @@ pub fn msgq_create(current_pid: u32) -> Result<MsgqHandle, IpcError> {
 /// # Errors
 /// 错误条件与 [`IpcLock::msgq_send`] 相同, 参见其 `# Errors` 段.
 pub fn msgq_send(q: MsgqHandle, data: &[u8], current_pid: u32) -> Result<(), IpcError> {
-    global().lock().msgq_send(q, data, current_pid)
+    IpcLock::msgq_send(q, data, current_pid)
 }
 
 /// 接收消息
@@ -549,7 +480,7 @@ pub fn msgq_send(q: MsgqHandle, data: &[u8], current_pid: u32) -> Result<(), Ipc
 /// # Errors
 /// 错误条件与 [`IpcLock::msgq_recv`] 相同, 参见其 `# Errors` 段.
 pub fn msgq_recv(q: MsgqHandle, buf: &mut [u8]) -> Result<usize, IpcError> {
-    global().lock().msgq_recv(q, buf)
+    IpcLock::msgq_recv(q, buf)
 }
 
 /// 销毁消息队列
@@ -557,7 +488,7 @@ pub fn msgq_recv(q: MsgqHandle, buf: &mut [u8]) -> Result<usize, IpcError> {
 /// # Errors
 /// 错误条件与 [`IpcLock::msgq_destroy`] 相同, 参见其 `# Errors` 段.
 pub fn msgq_destroy(q: MsgqHandle) -> Result<(), IpcError> {
-    global().lock().msgq_destroy(q)
+    IpcLock::msgq_destroy(q)
 }
 
 /// 创建信号量
@@ -565,7 +496,7 @@ pub fn msgq_destroy(q: MsgqHandle) -> Result<(), IpcError> {
 /// # Errors
 /// 错误条件与 [`IpcLock::sem_create`] 相同, 参见其 `# Errors` 段.
 pub fn sem_create(initial: u32, max_count: u32, current_pid: u32) -> Result<SemHandle, IpcError> {
-    global().lock().sem_create(initial, max_count, current_pid)
+    IpcLock::sem_create(initial, max_count, current_pid)
 }
 
 /// P 操作 (wait)
@@ -573,7 +504,7 @@ pub fn sem_create(initial: u32, max_count: u32, current_pid: u32) -> Result<SemH
 /// # Errors
 /// 错误条件与 [`IpcLock::sem_wait`] 相同, 参见其 `# Errors` 段.
 pub fn sem_wait(s: SemHandle) -> Result<(), IpcError> {
-    global().lock().sem_wait(s)
+    IpcLock::sem_wait(s)
 }
 
 /// V 操作 (signal/post)
@@ -581,7 +512,7 @@ pub fn sem_wait(s: SemHandle) -> Result<(), IpcError> {
 /// # Errors
 /// 错误条件与 [`IpcLock::sem_post`] 相同, 参见其 `# Errors` 段.
 pub fn sem_post(s: SemHandle) -> Result<(), IpcError> {
-    global().lock().sem_post(s)
+    IpcLock::sem_post(s)
 }
 
 /// 销毁信号量
@@ -589,7 +520,7 @@ pub fn sem_post(s: SemHandle) -> Result<(), IpcError> {
 /// # Errors
 /// 错误条件与 [`IpcLock::sem_destroy`] 相同, 参见其 `# Errors` 段.
 pub fn sem_destroy(s: SemHandle) -> Result<(), IpcError> {
-    global().lock().sem_destroy(s)
+    IpcLock::sem_destroy(s)
 }
 
 // ============================================================================

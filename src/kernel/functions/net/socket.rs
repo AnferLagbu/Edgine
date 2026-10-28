@@ -20,6 +20,7 @@
 //! 评估日期: 2026-06-04
 
 use super::net_stack;
+use super::smoltcp_impl::SmoltcpNetStack;
 use crate::privileged::net::iface_trait::{Ipv4Addr, NetEndpoint};
 
 // ============================================================================
@@ -229,8 +230,9 @@ pub fn getsockopt(fd: i32, level: i32, optname: i32) -> SocketResult<u32> {
 /// 当网络栈尚未就绪时返回 `SocketError::NotReady`; 底层轮询失败时返回对应的 `SocketError`。
 pub fn poll_all() -> SocketResult<i32> {
     let s = net_stack().ok_or(SocketError::NotReady)?;
-    let s = s.lock();
-    s.poll_all_fd().map_err(map_net_error)?;
+    // 保持既有语义: 轮询期间持有 functions 层网络栈互斥锁
+    let _guard = s.lock();
+    SmoltcpNetStack::poll_all_fd().map_err(map_net_error)?;
     Ok(0)
 }
 

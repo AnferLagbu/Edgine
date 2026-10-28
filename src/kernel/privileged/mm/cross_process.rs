@@ -25,7 +25,7 @@
 //! 影响面为「对目标进程只读页的远程写会 EFAULT 而非成功并 COW」; 若后续需对齐
 //! Linux 的 `FOLL_WRITE` 语义, 应在此接入页面 COW 分裂后再写入.
 
-use super::{PAGE_SIZE, VirtAddr, get_vmm, is_user_buf};
+use super::{PAGE_SIZE, VirtAddr, Vmm, is_user_buf};
 
 /// 从目标进程的用户内存读取 `len` 字节到内核缓冲区.
 ///
@@ -126,7 +126,6 @@ fn copy_in_mm(
         return Err(());
     }
 
-    let vmm = get_vmm();
     let mut done: usize = 0;
     while done < len {
         let cur = user_addr + done as u64;
@@ -136,7 +135,7 @@ fn copy_in_mm(
             crate::privileged::lib::usize_from_u64(PAGE_SIZE) - page_off,
         );
 
-        let Some(t) = vmm.translate_in_pml4(target_cr3, VirtAddr(cur)) else {
+        let Some(t) = Vmm::translate_in_pml4(target_cr3, VirtAddr(cur)) else {
             return Err(());
         };
         if write_to_target && !t.writable {

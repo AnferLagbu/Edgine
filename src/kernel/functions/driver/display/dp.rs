@@ -610,17 +610,17 @@ impl DpController {
 
         if let Some(ref io) = self.io {
             // 真实硬件路径: AUX 寄存器事务 (通过 DpIo 安全代理, 无 unsafe)
-            self.aux_read_via_mmio(io, address, length)
+            Self::aux_read_via_mmio(io, address, length)
         } else {
             // 无硬件 fallback: 返回模拟 DPCD 数据 (保持原行为)
-            Ok(self.aux_read_fallback(address, length))
+            Ok(Self::aux_read_fallback(address, length))
         }
     }
 
     /// AUX 真实硬件读事务 (DISPLAY-2.5) — 通过 `DpIo` 安全代理, 无 unsafe.
-    fn aux_read_via_mmio(&self, io: &DpIo, address: u16, length: u8) -> Result<Vec<u8>, DpError> {
+    fn aux_read_via_mmio(io: &DpIo, address: u16, length: u8) -> Result<Vec<u8>, DpError> {
         // 1. 等待控制器空闲
-        self.aux_wait_not_busy(io)?;
+        Self::aux_wait_not_busy(io)?;
 
         // 2. 先写 address 到 DAT0 (8-bit 低字节), 高字节到 DAT0+1 (部分控制器要求).
         io.write8(AUX_DAT0_REG_OFFSET, (address & 0x00FF) as u8);
@@ -680,12 +680,8 @@ impl DpController {
         Ok(data)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// AUX 无硬件 fallback 读取 (保持原行为, 兼容 QEMU).
-    fn aux_read_fallback(&mut self, address: u16, length: u8) -> Vec<u8> {
+    fn aux_read_fallback(address: u16, length: u8) -> Vec<u8> {
         let mut data = vec![0u8; length as usize];
 
         if address == 0x0000 && length >= 16 {
@@ -723,13 +719,13 @@ impl DpController {
 
         self.io
             .as_ref()
-            .map_or(Ok(()), |io| self.aux_write_via_mmio(io, address, data))
+            .map_or(Ok(()), |io| Self::aux_write_via_mmio(io, address, data))
     }
 
     /// AUX 真实硬件写事务 (DISPLAY-2.5) — 通过 `DpIo` 安全代理, 无 unsafe.
-    fn aux_write_via_mmio(&self, io: &DpIo, address: u16, data: &[u8]) -> Result<(), DpError> {
+    fn aux_write_via_mmio(io: &DpIo, address: u16, data: &[u8]) -> Result<(), DpError> {
         // 1. 等待控制器空闲
-        self.aux_wait_not_busy(io)?;
+        Self::aux_wait_not_busy(io)?;
 
         // 2. 先写 address 到 DAT0 (8-bit 低字节) + DAT0+1 (8-bit 高字节).
         io.write8(AUX_DAT0_REG_OFFSET, (address & 0x00FF) as u8);
@@ -783,12 +779,8 @@ impl DpController {
         Ok(())
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 等待 AUX 控制器进入空闲状态 (busy == 0).
-    fn aux_wait_not_busy(&self, io: &DpIo) -> Result<(), DpError> {
+    fn aux_wait_not_busy(io: &DpIo) -> Result<(), DpError> {
         let mut elapsed_iters: usize = 0;
         loop {
             if elapsed_iters > AUX_TRANSACTION_TIMEOUT_ITERS {
@@ -893,7 +885,7 @@ impl DpController {
 
         if let Some(ref io) = self.io {
             // 真实硬件路径: 轮询 LANE 状态寄存器直到训练完成或超时
-            self.poll_lane_status_until_trained(io, lane_count)?;
+            Self::poll_lane_status_until_trained(io, lane_count)?;
         } else {
             // 无硬件 fallback: 模拟训练立即成功
         }
@@ -911,11 +903,7 @@ impl DpController {
     /// `CR_DONE` / `CHANNEL_EQ_DONE` / `SYMBOL_LOCKED` (= 0b111 per lane).
     ///
     /// 超时时间 ~10 ms (与 VESA DP 1.4 推荐训练超时一致).
-    fn poll_lane_status_until_trained(
-        &self,
-        io: &DpIo,
-        lane_count: LaneCount,
-    ) -> Result<(), DpError> {
+    fn poll_lane_status_until_trained(io: &DpIo, lane_count: LaneCount) -> Result<(), DpError> {
         const MAX_TRAINING_ITERS: usize = 5_000;
         let mut elapsed_iters: usize = 0;
         // 单次迭代 ~50 spin_loops ≈ 1-2 µs, 10 ms = ~5_000 iters
@@ -926,7 +914,7 @@ impl DpController {
             }
 
             // 读取 LANE0 + LANE1 状态 (1 lane 配置时仅 LANE0 有效)
-            let lane01 = self.aux_read_via_mmio(io, aux_address::LANE0_1_STATUS, 1)?;
+            let lane01 = Self::aux_read_via_mmio(io, aux_address::LANE0_1_STATUS, 1)?;
             let status01 = lane01[0];
 
             let trained_2lanes = match lane_count {
@@ -940,7 +928,7 @@ impl DpController {
                 }
                 LaneCount::Four => {
                     // 4-lane: 同时检查 LANE0/1 (status01) + LANE2/3 (status23)
-                    let lane23 = self.aux_read_via_mmio(io, aux_address::LANE2_3_STATUS, 1)?;
+                    let lane23 = Self::aux_read_via_mmio(io, aux_address::LANE2_3_STATUS, 1)?;
                     let status23 = lane23[0];
                     (status01 & 0x77) == 0x77 && (status23 & 0x77) == 0x77
                 }
@@ -948,12 +936,11 @@ impl DpController {
 
             if trained_2lanes {
                 // 读取接收器请求的调整 (用于 phase 2 前的电压/预加重调整)
-                let adjust01 = self.aux_read_via_mmio(io, aux_address::ADJUST_REQ_LANE0_1, 1)?;
+                let adjust01 = Self::aux_read_via_mmio(io, aux_address::ADJUST_REQ_LANE0_1, 1)?;
                 let _adjust = adjust01[0]; // 真实硬件应据此调整 transmitter swing/pre-emphasis
                 if matches!(lane_count, LaneCount::Four) {
                     // 4-lane 时还需读取 LANE2/3 的调整请求
-                    let adjust23 =
-                        self.aux_read_via_mmio(io, aux_address::ADJUST_REQ_LANE2_3, 1)?;
+                    let adjust23 = Self::aux_read_via_mmio(io, aux_address::ADJUST_REQ_LANE2_3, 1)?;
                     let _adjust23 = adjust23[0];
                 }
                 return Ok(());
@@ -988,7 +975,7 @@ impl DpController {
 
         if let Some(ref io) = self.io {
             // 真实硬件路径: 轮询 LANE_ALIGN_STATUS_UPDATED bit 0 直到对齐完成
-            self.poll_lane_align_status(io)?;
+            Self::poll_lane_align_status(io)?;
         } else {
             // 无硬件 fallback: 模拟训练立即成功
         }
@@ -1005,7 +992,7 @@ impl DpController {
     /// 该位在所有活动 lane 完成 inter-lane deskew 后置 1.
     ///
     /// 超时时间 ~10 ms (与 VESA DP 1.4 推荐训练超时一致).
-    fn poll_lane_align_status(&self, io: &DpIo) -> Result<(), DpError> {
+    fn poll_lane_align_status(io: &DpIo) -> Result<(), DpError> {
         const MAX_TRAINING_ITERS: usize = 5_000;
         let mut elapsed_iters: usize = 0;
         // 单次迭代 ~50 spin_loops ≈ 1-2 µs, 10 ms = ~5_000 iters
@@ -1016,7 +1003,7 @@ impl DpController {
             }
 
             // 读取 LANE_ALIGN_STATUS_UPDATED 寄存器
-            let status = self.aux_read_via_mmio(io, aux_address::LANE_ALIGN_STATUS_UPDATED, 1)?;
+            let status = Self::aux_read_via_mmio(io, aux_address::LANE_ALIGN_STATUS_UPDATED, 1)?;
             let align = status[0];
 
             // bit 0 = LANE_ALIGN_STATUS_UPDATED (1 = 已对齐)
@@ -1066,11 +1053,11 @@ impl DpController {
         }
 
         // 派生 VideoTiming (优先 DMT lookup, fallback 到简化公式)
-        let timing = self.derive_dp_video_timing(mode);
+        let timing = Self::derive_dp_video_timing(mode);
 
         if let Some(ref io) = self.io {
             // 真实硬件路径: 写 8 个 16-bit 时序寄存器 + sync + output enable
-            self.write_dp_timing_registers(io, timing, mode);
+            Self::write_dp_timing_registers(io, timing, mode);
         } else {
             // 无硬件 fallback: 静默成功
         }
@@ -1078,15 +1065,11 @@ impl DpController {
         Ok(())
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 派生 DP 视频时序 (复用 `hdmi::lookup_dmt_timing` + 简化公式 fallback).
     ///
     /// 注: 此方法**不依赖** `hdmi::derive_video_timing` (它是 `pub`),
     ///     而是用 lookup + 复制一份等价公式, 保持 dp.rs 独立.
-    fn derive_dp_video_timing(&self, mode: VideoMode) -> VideoTiming {
+    fn derive_dp_video_timing(mode: VideoMode) -> VideoTiming {
         // P0-3 精度扩展: DMT lookup 优先
         if let Some(timing) = lookup_dmt_timing(mode) {
             return timing;
@@ -1128,12 +1111,8 @@ impl DpController {
         }
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 写入 DP 时序 + sync + output enable 寄存器 — 通过 `DpIo` 安全代理, 无 unsafe.
-    fn write_dp_timing_registers(&self, io: &DpIo, timing: VideoTiming, mode: VideoMode) {
+    fn write_dp_timing_registers(io: &DpIo, timing: VideoTiming, mode: VideoMode) {
         // 写 8 个 16-bit 时序寄存器
         io.write16(DP_H_TOTAL_REG_OFFSET, timing.h_total);
         io.write16(DP_H_ACTIVE_REG_OFFSET, timing.h_active);
@@ -1160,12 +1139,8 @@ impl DpController {
         io.write8(DP_OUTPUT_ENABLE_REG_OFFSET, DP_OUTPUT_ENABLE_BIT);
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 获取设备名称
-    pub fn name(&self) -> &'static str {
+    pub fn name() -> &'static str {
         "DisplayPort Controller"
     }
 
@@ -1221,7 +1196,7 @@ impl DpController {
 /// inherent `init`/`shutdown` 返回 `()`, 此处按 trait 契约包装为 `Ok(())`.
 impl Driver for DpController {
     fn name(&self) -> &'static str {
-        DpController::name(self)
+        DpController::name()
     }
 
     fn device_type(&self) -> DeviceType {
@@ -1633,7 +1608,6 @@ mod tests {
 
     #[test]
     fn test_dp_video_timing_derive_dmt_1080p60() {
-        let ctrl = DpController::new(0xFE000000);
         let mode = VideoMode {
             width: 1920,
             height: 1080,
@@ -1646,7 +1620,7 @@ mod tests {
                 vsync_positive: false,
             },
         };
-        let timing = ctrl.derive_dp_video_timing(mode);
+        let timing = DpController::derive_dp_video_timing(mode);
         assert_eq!(timing.h_active, 1920);
         assert_eq!(timing.v_active, 1080);
         assert_eq!(timing.h_total, 2200);

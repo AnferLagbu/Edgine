@@ -46,7 +46,9 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::privileged::irq::{self, SoftirqVec};
 use crate::privileged::mm::PfResult;
-use crate::privileged::mm::{PAGE_SIZE, PhysAddr, VirtAddr, pmm, vmm};
+#[cfg(target_arch = "x86_64")]
+use crate::privileged::mm::vmm;
+use crate::privileged::mm::{PAGE_SIZE, PhysAddr, VirtAddr, pmm};
 use crate::privileged::sync::IrqSpinLock;
 
 // ============================================================================
@@ -612,8 +614,7 @@ pub fn swap_out(virt_addr: u64, phys_addr: u64, _dirty: bool) -> Option<SwapEntr
 /// - `virt_addr` 对应的 PTE 当前必须是 present 页
 pub fn swap_out_to_pte(pml4: u64, virt_addr: u64) -> Option<SwapEntry> {
     // 1. 读取当前 PTE 获取物理地址
-    let vmm_inst = vmm::get_vmm();
-    let pte = vmm_inst.get_pte_value(pml4, VirtAddr(virt_addr))?;
+    let pte = super::Vmm::get_pte_value(pml4, VirtAddr(virt_addr))?;
     if (pte & 1) == 0 {
         // 已是非 present 页, 不应再换出
         return None;
@@ -624,7 +625,7 @@ pub fn swap_out_to_pte(pml4: u64, virt_addr: u64) -> Option<SwapEntry> {
     let entry = swap_out(virt_addr, phys_addr, false)?;
 
     // 3. 替换 PTE 为 swap entry
-    vmm_inst.set_pte_value(pml4, VirtAddr(virt_addr), entry.to_pte());
+    super::Vmm::set_pte_value(pml4, VirtAddr(virt_addr), entry.to_pte());
 
     crate::klog_debug!(
         Swap,
@@ -756,8 +757,12 @@ pub fn reclaim_pages(max_count: u32) -> u32 {
                 } else {
                     // 无 pml4 记录 (老 LRU 条目): 退化路径, 走 unmap
                     if swap_out(entry.virt_addr, entry.phys_addr, entry.dirty).is_some() {
-                        let vmm_inst = vmm::get_vmm();
-                        vmm_inst.unmap_page(VirtAddr(entry.virt_addr));
+                        #[cfg(target_arch = "x86_64")]
+                        vmm::get_vmm().unmap_page(VirtAddr(entry.virt_addr));
+                        #[cfg(target_arch = "aarch64")]
+                        crate::privileged::mm::vmm::Aarch64Vmm::unmap_page(VirtAddr(
+                            entry.virt_addr,
+                        ));
                         let pmm_inst = pmm::get_pmm();
                         pmm_inst.free_page(PhysAddr(entry.phys_addr));
                         reclaimed += 1;
@@ -796,10 +801,8 @@ pub fn swap_info() -> (u64, u64) {
 /// 当 #PF 检测到 PTE 为 swap entry 时调用.
 /// 分配新物理页, 从 swap 读取数据, 重新建立映射.
 pub fn handle_swap_fault(pml4: u64, fault_addr: u64) -> PfResult {
-    let vmm_inst = vmm::get_vmm();
-
     // 读取当前 PTE
-    let Some(pte) = vmm_inst.get_pte_value(pml4, VirtAddr(fault_addr)) else {
+    let Some(pte) = super::Vmm::get_pte_value(pml4, VirtAddr(fault_addr)) else {
         return PfResult::SignalSegv;
     };
 
@@ -816,7 +819,7 @@ pub fn handle_swap_fault(pml4: u64, fault_addr: u64) -> PfResult {
     let flags = crate::privileged::mm::PageFlags::PRESENT
         | crate::privileged::mm::PageFlags::WRITABLE
         | crate::privileged::mm::PageFlags::USER;
-    vmm_inst.map_page_in_table(pml4, VirtAddr(fault_addr), new_phys, flags);
+    super::Vmm::map_page_in_table(pml4, VirtAddr(fault_addr), new_phys, flags);
 
     PfResult::Fixed
 }

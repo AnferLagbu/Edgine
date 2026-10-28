@@ -260,8 +260,9 @@ mod tests {
     /// 依赖当前进程上下文. host 侧共享测试集无当前进程 ⇒ open 恒失败.
     /// 安装/拆除模式参照 [test_proc.rs] 的 `test_fork_cow_failure_rolls_back`.
     fn with_temp_process<F: FnOnce()>(name: &str, f: F) {
+        use crate::privileged::proc::PROCESS_TABLE;
         use crate::privileged::proc::raw;
-        use crate::privileged::proc::{PROCESS_TABLE, SCHEDULER};
+        use crate::privileged::proc::scheduler::Scheduler;
 
         let Some(pid) = PROCESS_TABLE.allocate_pid() else {
             panic!("临时进程: 无空闲 pid");
@@ -273,12 +274,12 @@ mod tests {
             panic!("临时进程: 插入进程表失败");
         }
 
-        let prev_current = SCHEDULER.current();
-        SCHEDULER.set_current(pid);
+        let prev_current = Scheduler::current();
+        Scheduler::set_current(pid);
 
         f();
 
-        SCHEDULER.set_current(prev_current.unwrap_or(0));
+        Scheduler::set_current(prev_current.unwrap_or(0));
         let _ = PROCESS_TABLE.remove(pid);
         raw::drop_boxed_process(proc_ptr);
         PROCESS_TABLE.free_pid(pid);

@@ -127,8 +127,8 @@ impl SafeProcFs {
     ///
     /// # Errors
     /// 当条目不存在或底层读取失败时返回 `Io`.
-    pub fn read(&self, name: &str, buf: &mut [u8]) -> Result<usize, KernelError> {
-        let rc = self.inner.read(name, buf);
+    pub fn read(name: &str, buf: &mut [u8]) -> Result<usize, KernelError> {
+        let rc = ProcfsData::read(name, buf);
         if rc < 0 {
             Err(KernelError::Io)
         } else {
@@ -213,7 +213,7 @@ pub fn remove_process(pid: u32) -> Result<(), KernelError> {
 /// # Errors
 /// 错误条件与 [`SafeProcFs::read`] 相同, 参见其 `# Errors` 段.
 pub fn read(name: &str, buf: &mut [u8]) -> Result<usize, KernelError> {
-    global().read(name, buf)
+    SafeProcFs::read(name, buf)
 }
 
 /// 条目名最大长度

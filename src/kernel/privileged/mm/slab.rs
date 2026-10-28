@@ -476,7 +476,7 @@ impl KmemCache {
             // 方法独占缓存, 无并发别名; SlabRef::new_unchecked 仅包装指针.
             let sr = unsafe { SlabRef::new_unchecked(slab) };
             let next = sr.next();
-            self.destroy_slab(slab);
+            Self::destroy_slab(slab);
             slab = next;
         }
 
@@ -486,7 +486,7 @@ impl KmemCache {
             // SAFETY: 同上, slab 由 slabs_partial 链表保证是合法 Slab 头.
             let sr = unsafe { SlabRef::new_unchecked(slab) };
             let next = sr.next();
-            self.destroy_slab(slab);
+            Self::destroy_slab(slab);
             slab = next;
         }
 
@@ -496,7 +496,7 @@ impl KmemCache {
             // SAFETY: 同上, slab 由 slabs_free 链表保证是合法 Slab 头.
             let sr = unsafe { SlabRef::new_unchecked(slab) };
             let next = sr.next();
-            self.destroy_slab(slab);
+            Self::destroy_slab(slab);
             slab = next;
         }
 
@@ -615,11 +615,7 @@ impl KmemCache {
     }
 
     /// 销毁单个 Slab (释放物理页)
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    fn destroy_slab(&self, slab: *mut SlabHeader) {
+    fn destroy_slab(slab: *mut SlabHeader) {
         if slab.is_null() {
             return;
         }

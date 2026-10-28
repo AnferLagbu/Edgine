@@ -415,7 +415,7 @@ extern "C" fn ap_entry(lapic_id: u32) -> ! {
     // (STI 影子指令), 对齐 `idle_entry` 手法。
     loop {
         crate::arch!(interrupt_disable());
-        let _ = crate::privileged::proc::SCHEDULER.schedule();
+        let _ = crate::privileged::proc::Scheduler::schedule();
         // SAFETY: sti/hlt 在 ring 0 合法; 不读写内存也不修改栈, options 与之一致.
         unsafe {
             core::arch::asm!("sti; hlt", options(nomem, nostack));

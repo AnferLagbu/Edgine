@@ -484,18 +484,18 @@ impl MmStruct {
 
             if start <= vma_start && end >= vma_end {
                 let removed = vmas.remove(i);
-                self.unmap_vma_pages(&removed, cr3);
+                Self::unmap_vma_pages(&removed, cr3);
             } else if start <= vma_start {
                 let mut truncated = vmas.remove(i);
                 truncated.start = end;
                 vmas.insert(i, truncated);
-                self.unmap_vma_pages(&Vma::new(start, end, vma_flags, vma_type), cr3);
+                Self::unmap_vma_pages(&Vma::new(start, end, vma_flags, vma_type), cr3);
                 i += 1;
             } else if end >= vma_end {
                 let mut truncated = vmas.remove(i);
                 truncated.end = start;
                 vmas.insert(i, truncated);
-                self.unmap_vma_pages(&Vma::new(start, vma_end, vma_flags, vma_type), cr3);
+                Self::unmap_vma_pages(&Vma::new(start, vma_end, vma_flags, vma_type), cr3);
                 i += 1;
             } else {
                 let left = Vma::new(vma_start, start, vma_flags, vma_type);
@@ -504,26 +504,24 @@ impl MmStruct {
                 vmas.remove(i);
                 vmas.insert(i, right);
                 vmas.insert(i, left);
-                self.unmap_vma_pages(&mid, cr3);
+                Self::unmap_vma_pages(&mid, cr3);
                 i += 2;
             }
         }
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    fn unmap_vma_pages(&self, vma: &Vma, cr3: u64) {
+    fn unmap_vma_pages(vma: &Vma, cr3: u64) {
         // 锁序: 调用者持有 VMA_LOCK, 此处获取 VMM_LOCK
         // 这是唯一合法的嵌套方向 (VMA → VMM).
         // 禁止在持有 VMM_LOCK 时获取 VMA_LOCK 以避免 ABBA 死锁.
-        let vmm = super::vmm::get_vmm();
         let mut addr = vma.start;
         while addr < vma.end {
             // 显式变体: 拆除作用在进程用户页表上 (与建立侧同表),
             // 并承担 §8.1 规则 3 的帧持有注销 (frame_dec + 归零才延迟释放).
-            vmm.unmap_page_in_table(cr3, VirtAddr(addr as u64));
+            #[cfg(target_arch = "x86_64")]
+            super::vmm::get_vmm().unmap_page_in_table(cr3, VirtAddr(addr as u64));
+            #[cfg(target_arch = "aarch64")]
+            super::vmm::Aarch64Vmm::unmap_page_in_table(cr3, VirtAddr(addr as u64));
             addr += crate::privileged::lib::usize_from_u64(PAGE_SIZE);
         }
     }
@@ -677,25 +675,15 @@ impl MmStruct {
         *vmas = fragments;
 
         // 修改页表权限
-        #[cfg(target_arch = "x86_64")]
-        {
-            let vmm = crate::privileged::mm::vmm::get_vmm();
-            let page_start = start & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
-            let mut addr = page_start;
-            while addr < end {
-                vmm.protect_page_in_table(cr3, VirtAddr(addr as u64), new_flags);
-                addr += crate::privileged::lib::usize_from_u64(PAGE_SIZE);
-            }
-        }
-        #[cfg(target_arch = "aarch64")]
-        {
-            let vmm = crate::privileged::mm::vmm::get_vmm();
-            let page_start = start & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
-            let mut addr = page_start;
-            while addr < end {
-                vmm.protect_page_in_table(cr3, VirtAddr(addr as u64), new_flags);
-                addr += crate::privileged::lib::usize_from_u64(PAGE_SIZE);
-            }
+        let page_start = start & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
+        let mut addr = page_start;
+        while addr < end {
+            crate::privileged::mm::Vmm::protect_page_in_table(
+                cr3,
+                VirtAddr(addr as u64),
+                new_flags,
+            );
+            addr += crate::privileged::lib::usize_from_u64(PAGE_SIZE);
         }
 
         Ok(())
@@ -1249,12 +1237,7 @@ impl MmStruct {
     /// # Errors
     /// 当 `len` 为 0 时返回 `EINVAL`; 当 `out_vec` 容量不足以容纳全部页的驻留状态
     /// (`out_vec.len() < n_pages`) 时返回 `ENOMEM`.
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     pub fn mincore_range(
-        &self,
         start: usize,
         len: usize,
         out_vec: &mut [u8],
@@ -1273,13 +1256,12 @@ impl MmStruct {
             return Err(Errno::ENOMEM);
         }
 
-        let vmm_inst = vmm::get_vmm();
         let pml4 = vmm::get_current_pml4();
         let mut resident = 0usize;
 
         for i in 0..n_pages {
             let addr = start + i * page_size;
-            let pte = vmm_inst.get_pte_value(pml4, VirtAddr(addr as u64));
+            let pte = crate::privileged::mm::Vmm::get_pte_value(pml4, VirtAddr(addr as u64));
             let present = pte.is_some_and(|p| (p & 1) != 0);
             out_vec[i] = u8::from(present);
             if present {

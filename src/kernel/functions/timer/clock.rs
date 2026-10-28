@@ -104,7 +104,7 @@ const TIMEX_RESERVED_BYTES: usize = 44;
 
 /// 墙钟当前时间 (ns) — 原始 tick 计数 + 时间同步机制持有的偏移
 fn wall_clock_ns() -> u64 {
-    crate::functions::timer::time_sync::subsystem().get_adjusted_time_ns()
+    crate::functions::timer::time_sync::TimeSyncSubsystem::get_adjusted_time_ns()
 }
 
 /// 单调时钟当前时间 (ns) — 原始 tick 计数 (ms 精度)
@@ -228,7 +228,7 @@ pub fn apply_settimeofday(tv_sec: i64, micros: i64) -> Result<usize, Errno> {
     }
 
     let ns = tv_sec.cast_unsigned() * NS_PER_SEC + micros.cast_unsigned() * NS_PER_USEC;
-    if !crate::functions::timer::time_sync::subsystem().set_time(ns) {
+    if !crate::functions::timer::time_sync::TimeSyncSubsystem::set_time(ns) {
         return Err(Errno::EINVAL);
     }
     Ok(0)
@@ -380,9 +380,9 @@ pub fn adjtimex_syscall(buf: u64) -> i64 {
     }
 
     // 回填时钟状态快照
-    let subsystem = crate::functions::timer::time_sync::subsystem();
     let nano_units = input.modes & ADJ_NANO != 0;
-    let (synced, _count, freq_ppb, offset_ns) = subsystem.get_sync_status();
+    let (synced, _count, freq_ppb, offset_ns) =
+        crate::functions::timer::time_sync::TimeSyncSubsystem::get_sync_status();
     let now_ns = wall_clock_ns();
     let tick_us = 1_000_000 / i64::from(crate::privileged::timer::get_frequency().max(1));
     let payload = Timex {
@@ -450,8 +450,6 @@ pub fn apply_adjtimex(
         return Err(Errno::EPERM);
     }
 
-    let subsystem = crate::functions::timer::time_sync::subsystem();
-
     // ADJ_SETOFFSET: 在墙钟上叠加增量 (加性跳变)
     if modes & ADJ_SETOFFSET != 0 {
         let delta = Timeval {
@@ -464,7 +462,7 @@ pub fn apply_adjtimex(
         } else {
             wall_clock_ns().saturating_sub(delta_ns.unsigned_abs())
         };
-        subsystem.set_time(target);
+        crate::functions::timer::time_sync::TimeSyncSubsystem::set_time(target);
     }
 
     // ADJ_OFFSET: 渐进调整 (由 tick 中断按斜率消耗)
@@ -474,12 +472,12 @@ pub fn apply_adjtimex(
         } else {
             offset * NS_PER_USEC.cast_signed()
         };
-        subsystem.adj_time(offset_ns);
+        crate::functions::timer::time_sync::TimeSyncSubsystem::adj_time(offset_ns);
     }
 
     // ADJ_FREQUENCY: freq 单位 2^-16 ppm → ppb
     if modes & ADJ_FREQUENCY != 0 {
-        subsystem.adj_freq(freq * 1_000 / FREQ_SCALE);
+        crate::functions::timer::time_sync::TimeSyncSubsystem::adj_freq(freq * 1_000 / FREQ_SCALE);
     }
 
     Ok(TIME_OK)

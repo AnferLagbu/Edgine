@@ -127,11 +127,7 @@ impl SessionManager {
     }
 
     /// 初始化会话管理器 (输出初始化日志)
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    pub fn init(&self) {
+    pub fn init() {
         log("Session manager initialized\n");
     }
 
@@ -287,7 +283,7 @@ pub static SESSION_MANAGER: SessionManager = SessionManager::new();
 
 /// 会话子系统初始化入口 — 初始化全局 [`SESSION_MANAGER`]。
 pub fn init() {
-    SESSION_MANAGER.init();
+    SessionManager::init();
 }
 
 // ============================================================================

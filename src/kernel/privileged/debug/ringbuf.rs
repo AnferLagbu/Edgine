@@ -60,11 +60,7 @@ impl<const CAP: usize> RingBuffer<{ CAP }> {
 
     /// 容量
     #[inline]
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    pub const fn capacity(&self) -> usize {
+    pub const fn capacity() -> usize {
         CAP
     }
 

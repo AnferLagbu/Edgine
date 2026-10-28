@@ -10,7 +10,7 @@
 #![deny(unsafe_code)]
 
 use crate::privileged::proc::PROCESS_TABLE;
-use crate::privileged::proc::SCHEDULER;
+use crate::privileged::proc::Scheduler;
 
 /// C2: 设置进程的 CPU 亲和性掩码
 ///
@@ -19,7 +19,7 @@ use crate::privileged::proc::SCHEDULER;
 /// 返回 0 成功, 负值 errno (Linux 兼容).
 pub fn sched_setaffinity(pid: u32, mask: u64) -> i64 {
     let target_pid = if pid == 0 {
-        SCHEDULER.current().unwrap_or(0)
+        Scheduler::current().unwrap_or(0)
     } else {
         pid
     };
@@ -46,7 +46,7 @@ pub fn sched_setaffinity(pid: u32, mask: u64) -> i64 {
 /// 返回 `Some(mask)` 成功, `None` 表示 pid 不存在.
 pub fn sched_getaffinity(pid: u32) -> Option<u64> {
     let target_pid = if pid == 0 {
-        SCHEDULER.current().unwrap_or(0)
+        Scheduler::current().unwrap_or(0)
     } else {
         pid
     };
@@ -60,14 +60,14 @@ pub fn sched_getaffinity(pid: u32) -> Option<u64> {
 
 /// C2: 检查 CPU 是否在进程 allowed cpuset 中
 pub fn is_cpu_allowed(pid: u32, cpu_id: u32) -> bool {
-    SCHEDULER.is_cpu_allowed(pid, cpu_id)
+    Scheduler::is_cpu_allowed(pid, cpu_id)
 }
 
 /// C2: 为进程选择最合适的 CPU
 ///
 /// 策略: 在 allowed cpuset 中选 load 最低的 CPU.
 pub fn select_cpu_for(pid: u32, hint_cpu: u32) -> u32 {
-    SCHEDULER.select_cpu_for(pid, hint_cpu)
+    Scheduler::select_cpu_for(pid, hint_cpu)
 }
 
 // ============================================================================

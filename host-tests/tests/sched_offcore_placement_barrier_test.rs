@@ -303,7 +303,7 @@ fn prev_landing_goes_through_the_single_placement_entry() {
     assert!(
         has(
             &fn_body(&sched, "fn cfs_place_on"),
-            "self.cfs_place_on_inner(pid, dst_cpu, false)"
+            "Self::cfs_place_on_inner(pid, dst_cpu, false)"
         ),
         "P-21: 公有入口必须把 `owner_landing` 固定为 false"
     );

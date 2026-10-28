@@ -294,7 +294,12 @@ pub extern "C" fn pmm_is_aligned_for_huge(addr: *const u8, size_type: PageSize) 
         return 0;
     }
 
-    i32::from(get_pmm().is_aligned_for_huge(PhysAddr(addr as u64), size_type))
+    i32::from(
+        crate::privileged::mm::pmm::PhysicalMemoryManager::is_aligned_for_huge(
+            PhysAddr(addr as u64),
+            size_type,
+        ),
+    )
 }
 
 // ============================================================
@@ -350,7 +355,10 @@ pub extern "C" fn vmm_map_huge_page(virt: u64, phys: u64, flags: u64, size_type:
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn vmm_unmap_page(virt: u64) {
+    #[cfg(target_arch = "x86_64")]
     get_vmm().unmap_page(VirtAddr(virt));
+    #[cfg(target_arch = "aarch64")]
+    crate::privileged::mm::vmm::Aarch64Vmm::unmap_page(VirtAddr(virt));
 }
 
 /// 将 2MB 大页拆分为 512 个 4KB 页
@@ -359,13 +367,13 @@ pub extern "C" fn vmm_unmap_page(virt: u64) {
 #[unsafe(no_mangle)]
 pub extern "C" fn vmm_split_2mb_page(virt: u64) -> i32 {
     #[cfg(target_arch = "x86_64")]
-    match get_vmm().split_2mb_page(virt) {
+    match super::Vmm::split_2mb_page(virt) {
         Ok(()) => 0,
         Err(_) => -1,
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
-        get_vmm().split_2mb_page(virt);
+        crate::privileged::mm::vmm::Aarch64Vmm::split_2mb_page(virt);
         0
     }
 }
@@ -375,7 +383,10 @@ pub extern "C" fn vmm_split_2mb_page(virt: u64) -> i32 {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn vmm_ensure_pml4_user(virt: u64) {
-    get_vmm().ensure_pml4_user(virt);
+    #[cfg(target_arch = "x86_64")]
+    super::Vmm::ensure_pml4_user(virt);
+    #[cfg(target_arch = "aarch64")]
+    crate::privileged::mm::vmm::Aarch64Vmm::ensure_pml4_user(virt);
 }
 
 /// 为路径上所有页表项设置 USER 标志, 以允许用户态访问
@@ -383,7 +394,10 @@ pub extern "C" fn vmm_ensure_pml4_user(virt: u64) {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn vmm_ensure_path_user(virt: u64) {
-    get_vmm().ensure_path_user(virt);
+    #[cfg(target_arch = "x86_64")]
+    super::Vmm::ensure_path_user(virt);
+    #[cfg(target_arch = "aarch64")]
+    crate::privileged::mm::vmm::Aarch64Vmm::ensure_path_user(virt);
 }
 
 /// 获取虚拟地址对应的物理地址
@@ -391,9 +405,7 @@ pub extern "C" fn vmm_ensure_path_user(virt: u64) {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn vmm_get_physical(virt: u64) -> u64 {
-    get_vmm()
-        .get_physical(VirtAddr(virt))
-        .map_or(0, PhysAddr::as_u64)
+    super::Vmm::get_physical(VirtAddr(virt)).map_or(0, PhysAddr::as_u64)
 }
 
 /// 在指定页表上下文中获取物理地址
@@ -401,9 +413,7 @@ pub extern "C" fn vmm_get_physical(virt: u64) -> u64 {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn vmm_get_physical_in_table(pml4: u64, virt: u64) -> u64 {
-    get_vmm()
-        .get_physical_in_pml4(pml4, VirtAddr(virt))
-        .map_or(0, PhysAddr::as_u64)
+    super::Vmm::get_physical_in_pml4(pml4, VirtAddr(virt)).map_or(0, PhysAddr::as_u64)
 }
 
 /// 切换到其它页表 (加载 CR3)
@@ -411,7 +421,10 @@ pub extern "C" fn vmm_get_physical_in_table(pml4: u64, virt: u64) -> u64 {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn vmm_switch_page_table(cr3: u64) {
-    get_vmm().switch_page_table(cr3);
+    #[cfg(target_arch = "x86_64")]
+    super::Vmm::switch_page_table(cr3);
+    #[cfg(target_arch = "aarch64")]
+    crate::privileged::mm::vmm::Aarch64Vmm::switch_page_table(cr3);
 }
 
 /// 创建用户态页表
@@ -443,7 +456,7 @@ pub extern "C" fn vmm_map_page_in_table(pml4: u64, virt: u64, phys: u64, flags: 
     let phys_addr = PhysAddr(phys);
     let page_flags = PageFlags::from_bits_truncate(flags);
 
-    get_vmm().map_page_in_table(pml4, virt_addr, phys_addr, page_flags);
+    super::Vmm::map_page_in_table(pml4, virt_addr, phys_addr, page_flags);
 }
 
 /// 克隆用户页表 (深拷贝所有用户态映射)
@@ -451,7 +464,7 @@ pub extern "C" fn vmm_map_page_in_table(pml4: u64, virt: u64, phys: u64, flags: 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn vmm_clone_user_page_table(parent_pml4: u64) -> u64 {
-    get_vmm().clone_user_page_table(parent_pml4).unwrap_or(0)
+    super::Vmm::clone_user_page_table(parent_pml4).unwrap_or(0)
 }
 
 /// 使用 COW (写时复制) 克隆用户页表
@@ -468,7 +481,10 @@ pub extern "C" fn vmm_clone_user_page_table_cow(parent_pml4: u64) -> u64 {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn vmm_destroy_page_table(pml4: u64) {
+    #[cfg(target_arch = "x86_64")]
     get_vmm().destroy_page_table(pml4);
+    #[cfg(target_arch = "aarch64")]
+    super::Vmm::destroy_page_table(pml4);
 }
 
 /// 获取内核 PML4 地址 (访问全局变量)

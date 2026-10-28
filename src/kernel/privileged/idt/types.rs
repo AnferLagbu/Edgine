@@ -173,11 +173,7 @@ impl InterruptFrame {
     /// # Safety
     /// 仅在 Page Fault (#PF) 异常中调用此方法
     #[inline]
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    pub unsafe fn fault_address(&self) -> u64 {
+    pub unsafe fn fault_address() -> u64 {
         crate::arch!(read_fault_address()) as u64
     }
 

@@ -32,7 +32,7 @@
 //! - 脏页写回由文件系统负责 (当前阶段仅标记)
 //! - 仅 `pcache_copy_to_user` 保留 unsafe (用户态指针操作)
 
-use crate::privileged::mm::{PAGE_SIZE, PhysAddr, VirtAddr, pmm, vmm};
+use crate::privileged::mm::{PAGE_SIZE, PhysAddr, VirtAddr, pmm};
 use crate::privileged::sync::IrqSpinLock;
 
 // ============================================================================
@@ -395,10 +395,7 @@ pub fn pcache_acquire_for_va(
     if pml4 == 0 {
         return None;
     }
-    let vmm_inst = vmm::get_vmm();
-    let old = vmm_inst
-        .get_physical_in_pml4(pml4, VirtAddr(va))
-        .map_or(0, PhysAddr::as_u64);
+    let old = super::Vmm::get_physical_in_pml4(pml4, VirtAddr(va)).map_or(0, PhysAddr::as_u64);
 
     // 幂等: 该 VA 已持有本页缓存帧
     if old != 0 && pcache_lookup(inode_id, page_index) == Some(old) {
@@ -439,9 +436,7 @@ pub fn pcache_release_for_va(pml4: u64, va: u64, inode_id: u32, page_index: u64)
         return None;
     }
     let cur = pcache_lookup(inode_id, page_index)?;
-    let mapped = vmm::get_vmm()
-        .get_physical_in_pml4(pml4, VirtAddr(va))
-        .map_or(0, PhysAddr::as_u64);
+    let mapped = super::Vmm::get_physical_in_pml4(pml4, VirtAddr(va)).map_or(0, PhysAddr::as_u64);
     if mapped != cur {
         return None;
     }

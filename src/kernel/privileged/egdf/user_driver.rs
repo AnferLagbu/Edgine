@@ -5,6 +5,7 @@ use crate::privileged::egdf::{
     NodeId, PropertyValue, devtree_clear_user_mapped, devtree_clear_user_mapped_by_pid,
     devtree_get_node, devtree_get_user_mapped, devtree_set_user_mapped,
 };
+#[cfg(target_arch = "x86_64")]
 use crate::privileged::mm::get_vmm;
 use crate::privileged::mm::{MmStruct, Vma, VmaType};
 use crate::privileged::mm::{PAGE_SIZE, PageFlags, PhysAddr, VirtAddr};
@@ -150,11 +151,16 @@ pub fn devtree_unbind_user_device(
             }
         };
 
-        let vmm = get_vmm();
         for (start, end) in &device_ranges {
             let mut addr = *start;
             while addr < *end {
-                vmm.unmap_page_in_table(cr3, VirtAddr(addr as u64));
+                #[cfg(target_arch = "x86_64")]
+                get_vmm().unmap_page_in_table(cr3, VirtAddr(addr as u64));
+                #[cfg(target_arch = "aarch64")]
+                crate::privileged::mm::vmm::Aarch64Vmm::unmap_page_in_table(
+                    cr3,
+                    VirtAddr(addr as u64),
+                );
                 addr += crate::privileged::lib::usize_from_u64(PAGE_SIZE);
             }
         }
@@ -237,12 +243,11 @@ pub fn devtree_map_user_device(
         }
     };
 
-    let vmm = get_vmm();
     for i in 0..pages {
         let page_phys = PhysAddr(phys_addr + (i as u64 * PAGE_SIZE));
         let page_virt =
             VirtAddr((map_base + i * crate::privileged::lib::usize_from_u64(PAGE_SIZE)) as u64);
-        vmm.map_page_in_table(cr3, page_virt, page_phys, page_flags);
+        crate::privileged::mm::Vmm::map_page_in_table(cr3, page_virt, page_phys, page_flags);
     }
 
     let vma = Vma::new(
@@ -255,7 +260,10 @@ pub fn devtree_map_user_device(
         for i in 0..pages {
             let unmap_virt =
                 VirtAddr((map_base + i * crate::privileged::lib::usize_from_u64(PAGE_SIZE)) as u64);
-            vmm.unmap_page_in_table(cr3, unmap_virt);
+            #[cfg(target_arch = "x86_64")]
+            get_vmm().unmap_page_in_table(cr3, unmap_virt);
+            #[cfg(target_arch = "aarch64")]
+            crate::privileged::mm::vmm::Aarch64Vmm::unmap_page_in_table(cr3, unmap_virt);
         }
         process_dec_ref(pid);
         return Err(UserDriverError::new(ERR_OOM));
@@ -321,11 +329,13 @@ pub fn devtree_unmap_user_device(
         }
     };
 
-    let vmm = get_vmm();
     for i in 0..pages {
         let page_virt =
             VirtAddr((virt_addr + i * crate::privileged::lib::usize_from_u64(PAGE_SIZE)) as u64);
-        vmm.unmap_page_in_table(cr3, page_virt);
+        #[cfg(target_arch = "x86_64")]
+        get_vmm().unmap_page_in_table(cr3, page_virt);
+        #[cfg(target_arch = "aarch64")]
+        crate::privileged::mm::vmm::Aarch64Vmm::unmap_page_in_table(cr3, page_virt);
     }
 
     mm.remove_range(

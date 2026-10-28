@@ -286,7 +286,6 @@ pub fn elf_load_with_bias(
         mm.insert_vma(vma).map_err(|_| "VMA insertion failed")?;
 
         // 复制段数据到物理页
-        let vmm_inst = crate::privileged::mm::get_vmm();
         let pml4 = crate::privileged::mm::get_current_pml4();
 
         let file_end = file_offset + filesz;
@@ -327,7 +326,12 @@ pub fn elf_load_with_bias(
                 }
             }
 
-            vmm_inst.map_page_in_table(pml4, VirtAddr(cur), phys, page_flags | PageFlags::PRESENT);
+            crate::privileged::mm::Vmm::map_page_in_table(
+                pml4,
+                VirtAddr(cur),
+                phys,
+                page_flags | PageFlags::PRESENT,
+            );
             cur += PAGE_SIZE;
         }
     }

@@ -493,16 +493,12 @@ impl SmoltcpNetStack {
         }
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 轮询所有 fd 的 Socket 状态.
     ///
     /// # Errors
     ///
     /// 当底层 `sm_net_poll_sockets` 失败时返回 `Err(NetError::Other)`。
-    pub fn poll_all_fd(&self) -> Result<()> {
+    pub fn poll_all_fd() -> Result<()> {
         let rc = fw_net_socket::sm_net_poll_sockets();
         if rc >= 0 {
             Ok(())

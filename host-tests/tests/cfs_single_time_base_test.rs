@@ -146,7 +146,7 @@ fn enqueue_placement_is_written_back_to_task() {
     // 入口只能有一条: 委托给搬定主体, 不得自带第二套投送逻辑.
     let to = code_only(&fn_body(&sched, "fn cfs_enqueue_to"));
     assert!(
-        has(&to, "self.cfs_place_on(pid, cpu_id)"),
+        has(&to, "Self::cfs_place_on(pid, cpu_id)"),
         "IC1/IC4: 入队出现第二条搬定路径 (绕过归属认领)"
     );
 }
@@ -157,12 +157,12 @@ fn blocking_and_dead_prev_deactivate_accounting() {
     let sched = read_src(SCHED);
     let block_body = code_only(&fn_body(&sched, "pub fn block"));
     assert!(
-        has(&block_body, "self.cfs_deactivate(pid)"),
+        has(&block_body, "Self::cfs_deactivate(pid)"),
         "IC4: 阻塞即离开可运行集 —— block() 必须撤账"
     );
     let schedule_body = code_only(&fn_body(&sched, "pub fn schedule"));
     assert!(
-        has(&schedule_body, "self.cfs_deactivate(current_pid)"),
+        has(&schedule_body, "Self::cfs_deactivate(current_pid)"),
         "IC4: prev 不可重排 (Blocked/Zombie) 时必须撤账, 否则 total_weight 单调虚增"
     );
     let deactivate = code_only(&fn_body(&sched, "fn cfs_deactivate"));

@@ -192,7 +192,7 @@ impl PageFaultHandler {
 impl ExceptionHandler for PageFaultHandler {
     fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
         // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
-        let fault_addr = unsafe { (*frame).fault_address() };
+        let fault_addr = unsafe { InterruptFrame::fault_address() };
         // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
         let analysis = Self::analyze_error_code(unsafe { (*frame).err_code });
 
@@ -401,7 +401,7 @@ impl ExceptionHandler for GeneralProtectionFaultHandler {
         } else {
             // Kernel GPF: 打印栈回溯后尝试恢复
             // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
-            self.print_detailed_gpf_info(unsafe { &*frame });
+            Self::print_detailed_gpf_info(unsafe { &*frame });
             RecoveryAction::DomainRecovery
         }
     }
@@ -429,11 +429,7 @@ impl ExceptionHandler for GeneralProtectionFaultHandler {
 }
 
 impl GeneralProtectionFaultHandler {
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    fn print_detailed_gpf_info(&self, frame: &InterruptFrame) {
+    fn print_detailed_gpf_info(frame: &InterruptFrame) {
         let selector = crate::privileged::lib::low_u16_from_u64(frame.err_code);
 
         // 解析错误码位域
@@ -471,7 +467,7 @@ impl ExceptionHandler for DoubleFaultHandler {
         let count = DOUBLE_FAULT_COUNT.fetch_add(1, Ordering::SeqCst);
 
         // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
-        self.print_double_fault_context(unsafe { &*frame });
+        Self::print_double_fault_context(unsafe { &*frame });
 
         if count <= 3 {
             // 前 3 次 DF: 尝试调度切换恢复
@@ -501,11 +497,7 @@ impl ExceptionHandler for DoubleFaultHandler {
 }
 
 impl DoubleFaultHandler {
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    fn print_double_fault_context(&self, _frame: &InterruptFrame) {
+    fn print_double_fault_context(_frame: &InterruptFrame) {
         let count = DOUBLE_FAULT_COUNT.load(Ordering::Relaxed);
         let nesting = IdtManager::instance().nested_count.load(Ordering::Relaxed);
 

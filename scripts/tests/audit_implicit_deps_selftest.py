@@ -184,7 +184,7 @@ class BaselineTest(unittest.TestCase):
 
     def test_debt_reduction_still_requires_baseline_update(self):
         actual = Counter(self.baseline)
-        key = ("src/kernel/functions/proc/mod.rs", "SCHEDULER")
+        key = ("src/kernel/functions/proc/pidfd.rs", "PROCESS_TABLE")
         del actual[key]
         _, under = aid.diff_baseline(actual, self.baseline)
         self.assertIn(key, [k for k, _, _ in under])

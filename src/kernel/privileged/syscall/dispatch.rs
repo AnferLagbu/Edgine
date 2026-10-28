@@ -57,7 +57,7 @@ pub fn observe_el0_syscall() {
         return;
     }
     counter.store(seen + 1, Ordering::Relaxed);
-    let pid = crate::privileged::proc::SCHEDULER.current().unwrap_or(0);
+    let pid = crate::privileged::proc::scheduler::Scheduler::current().unwrap_or(0);
     crate::klog_info!(Kernel, "[SMP] EL0 pid={} cpu={}", pid, cpu);
 }
 
@@ -97,7 +97,7 @@ pub unsafe extern "C" fn syscall_dispatch_from_frame(frame: *mut InterruptFrame)
         // make test-smp 门槛埋点: 首次收到来自用户态 (CPL3) 的 syscall 时打印一行
         // 固定文案, 证明用户态确实执行过指令 (仅首次打印, 避免刷屏).
         if !FIRST_USER_SYSCALL_LOGGED.swap(true, Ordering::SeqCst) {
-            let pid = crate::privileged::proc::SCHEDULER.current().unwrap_or(0);
+            let pid = crate::privileged::proc::scheduler::Scheduler::current().unwrap_or(0);
             crate::klog_info!(Kernel, "[SMP] first user syscall from pid={}", pid);
         }
 
@@ -109,7 +109,7 @@ pub unsafe extern "C" fn syscall_dispatch_from_frame(frame: *mut InterruptFrame)
         // 需在 rt_sigreturn 处理前保存 (sigreturn 之后 frame 被恢复为 signal 帧,
         // 保存的是恢复后的用户寄存器, 同样正确).
         {
-            let cur = crate::privileged::proc::SCHEDULER.current().unwrap_or(0);
+            let cur = crate::privileged::proc::scheduler::Scheduler::current().unwrap_or(0);
             if cur != 0 {
                 crate::privileged::proc::proc_save_user_regs(cur, f);
             }
@@ -858,7 +858,6 @@ pub fn sys_fb_mmap(target_vaddr: u64, size: u64, _prot: u64) -> i64 {
         return Errno::ENODEV.as_ret();
     }
 
-    let vmm = crate::privileged::mm::get_vmm();
     let flags = crate::privileged::mm::PageFlags::PRESENT
         | crate::privileged::mm::PageFlags::WRITABLE
         | crate::privileged::mm::PageFlags::USER
@@ -874,7 +873,7 @@ pub fn sys_fb_mmap(target_vaddr: u64, size: u64, _prot: u64) -> i64 {
         );
         let va =
             crate::privileged::mm::VirtAddr(target_vaddr + i * crate::privileged::mm::PAGE_SIZE);
-        vmm.map_page_in_table(cr3, va, pa, flags);
+        crate::privileged::mm::Vmm::map_page_in_table(cr3, va, pa, flags);
     }
 
     // 记录映射区间供 release 解除 (单槽, 见 FB_MAP_RECORD SIMPLIFIED 注释)
@@ -889,14 +888,19 @@ pub fn sys_fb_mmap(target_vaddr: u64, size: u64, _prot: u64) -> i64 {
 /// `sys_fb_mmap` 建立的映射并清记录. syscall 策略入口迁至 functions
 /// (functions::driver::fb::fb_release_syscall).
 pub fn sys_fb_release(vaddr: u64) -> i64 {
-    let vmm = crate::privileged::mm::get_vmm();
     let mut record = FB_MAP_RECORD.lock();
     if let Some((cr3, va, pages)) = *record {
         if vaddr != va {
             return Errno::EINVAL.as_ret();
         }
         for i in 0..pages {
-            vmm.unmap_page_in_table(
+            #[cfg(target_arch = "x86_64")]
+            crate::privileged::mm::get_vmm().unmap_page_in_table(
+                cr3,
+                crate::privileged::mm::VirtAddr(va + i * crate::privileged::mm::PAGE_SIZE),
+            );
+            #[cfg(target_arch = "aarch64")]
+            crate::privileged::mm::vmm::Aarch64Vmm::unmap_page_in_table(
                 cr3,
                 crate::privileged::mm::VirtAddr(va + i * crate::privileged::mm::PAGE_SIZE),
             );

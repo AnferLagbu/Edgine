@@ -134,8 +134,7 @@ pub fn handle_user_page_fault(info: PageFaultInfo) -> PfResult {
     // Swap-in: PTE 为 swap entry (present=0 但非零)
     if !info.present && info.user {
         let pml4 = user_cr3;
-        let vmm_inst = vmm::get_vmm();
-        if let Some(pte) = vmm_inst.get_pte_value(pml4, VirtAddr(info.fault_addr)) {
+        if let Some(pte) = super::Vmm::get_pte_value(pml4, VirtAddr(info.fault_addr)) {
             if super::swap::is_swap_pte(pte) {
                 let result = super::swap::handle_swap_fault(pml4, info.fault_addr);
                 if result == PfResult::Fixed {
@@ -202,8 +201,12 @@ fn handle_stack_expansion_simple(addr: usize, user_cr3: u64) -> PfResult {
     }
 
     let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
-    let vmm_inst = vmm::get_vmm();
-    vmm_inst.map_page_in_table(user_cr3, VirtAddr(page_aligned as u64), phys, flags);
+    crate::privileged::mm::Vmm::map_page_in_table(
+        user_cr3,
+        VirtAddr(page_aligned as u64),
+        phys,
+        flags,
+    );
 
     PAGE_FAULT_COUNT.fetch_add(1, Ordering::Relaxed);
     PfResult::Fixed
@@ -262,10 +265,9 @@ fn handle_vma_fault_with_mm(
     }
 
     let flags = vma.flags | PageFlags::PRESENT;
-    let vmm_inst = vmm::get_vmm();
     let pml4 = user_cr3;
 
-    vmm_inst.map_page_in_table(pml4, VirtAddr(aligned as u64), phys, flags);
+    crate::privileged::mm::Vmm::map_page_in_table(pml4, VirtAddr(aligned as u64), phys, flags);
 
     PAGE_FAULT_COUNT.fetch_add(1, Ordering::Relaxed);
     PfResult::Fixed
@@ -287,7 +289,7 @@ fn handle_uffd_provided(vma: &Vma, aligned: usize, user_cr3: u64) -> PfResult {
     }
 
     let flags = vma.flags | PageFlags::PRESENT;
-    vmm::get_vmm().map_page_in_table(user_cr3, VirtAddr(aligned as u64), phys, flags);
+    crate::privileged::mm::Vmm::map_page_in_table(user_cr3, VirtAddr(aligned as u64), phys, flags);
 
     PAGE_FAULT_COUNT.fetch_add(1, Ordering::Relaxed);
     PfResult::Fixed
@@ -337,13 +339,17 @@ fn handle_file_fault(
         // n <= 0 (EOF / 文件短): 保持插入时的零页 (POSIX: mmap 文件尾零填充)
     }
 
-    let vmm_inst = vmm::get_vmm();
     let pml4 = user_cr3;
 
     if vma.shared {
         // MAP_SHARED: 可写映射, 写入回写 Page Cache
         let flags = vma.flags | PageFlags::PRESENT | PageFlags::WRITABLE;
-        vmm_inst.map_page_in_table(pml4, VirtAddr(aligned as u64), PhysAddr(cache_phys), flags);
+        crate::privileged::mm::Vmm::map_page_in_table(
+            pml4,
+            VirtAddr(aligned as u64),
+            PhysAddr(cache_phys),
+            flags,
+        );
 
         // 写入时标记脏页
         if info.write {
@@ -352,7 +358,12 @@ fn handle_file_fault(
     } else {
         // MAP_PRIVATE: 只读映射, 写入时触发 COW
         let flags = (vma.flags | PageFlags::PRESENT) & !PageFlags::WRITABLE;
-        vmm_inst.map_page_in_table(pml4, VirtAddr(aligned as u64), PhysAddr(cache_phys), flags);
+        crate::privileged::mm::Vmm::map_page_in_table(
+            pml4,
+            VirtAddr(aligned as u64),
+            PhysAddr(cache_phys),
+            flags,
+        );
 
         // 写入时 COW: 分配新页, 复制数据, 可写映射
         if info.write {
@@ -379,7 +390,12 @@ fn handle_file_fault(
 
             // 用新页替换映射 (可写)
             let cow_flags = vma.flags | PageFlags::PRESENT | PageFlags::WRITABLE;
-            vmm_inst.map_page_in_table(pml4, VirtAddr(aligned as u64), new_phys, cow_flags);
+            crate::privileged::mm::Vmm::map_page_in_table(
+                pml4,
+                VirtAddr(aligned as u64),
+                new_phys,
+                cow_flags,
+            );
 
             // §8.1 规则 3: 该 VA 的旧映射被替换 ⇒ 注销它持有的那份缓存帧引用.
             // (pcache 条目自身那份持有在 ref_count 归零时由 deref 释放, 已含在上面
@@ -427,8 +443,12 @@ fn handle_stack_expansion(mm: &MmStruct, addr: usize, user_cr3: u64) -> PfResult
     }
 
     let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
-    let vmm_inst = vmm::get_vmm();
-    vmm_inst.map_page_in_table(user_cr3, VirtAddr(page_aligned as u64), phys, flags);
+    crate::privileged::mm::Vmm::map_page_in_table(
+        user_cr3,
+        VirtAddr(page_aligned as u64),
+        phys,
+        flags,
+    );
 
     let stack_vma = Vma::new(
         page_aligned,
@@ -441,7 +461,10 @@ fn handle_stack_expansion(mm: &MmStruct, addr: usize, user_cr3: u64) -> PfResult
         // (后续 munmap/mprotect 无法覆盖此区域).
         // 帧的归还由 unmap 统一承担 (§8.1 规则 3: 每 USER leaf 拆除即 frame_dec,
         // 归零才延迟释放) —— 此处不得再显式 free_page, 否则同一帧被注销两次.
-        vmm_inst.unmap_page_in_table(user_cr3, VirtAddr(page_aligned as u64));
+        #[cfg(target_arch = "x86_64")]
+        vmm::get_vmm().unmap_page_in_table(user_cr3, VirtAddr(page_aligned as u64));
+        #[cfg(target_arch = "aarch64")]
+        vmm::Aarch64Vmm::unmap_page_in_table(user_cr3, VirtAddr(page_aligned as u64));
         return PfResult::Oom;
     }
 
@@ -452,10 +475,9 @@ fn handle_stack_expansion(mm: &MmStruct, addr: usize, user_cr3: u64) -> PfResult
 // ── COW (Copy-on-Write) ──
 
 fn do_cow_copy_with_mm(_mm: &MmStruct, _vma: &Vma, addr: usize, user_cr3: u64) -> PfResult {
-    let vmm_inst = vmm::get_vmm();
     let pml4 = user_cr3;
 
-    let Some(old_phys) = vmm_inst.get_physical_in_pml4(pml4, VirtAddr(addr as u64)) else {
+    let Some(old_phys) = super::Vmm::get_physical_in_pml4(pml4, VirtAddr(addr as u64)) else {
         return PfResult::SignalSegv;
     };
 
@@ -477,7 +499,7 @@ fn do_cow_copy_with_mm(_mm: &MmStruct, _vma: &Vma, addr: usize, user_cr3: u64) -
     }
 
     let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
-    vmm_inst.map_page_in_table(pml4, VirtAddr(addr as u64), new_phys, flags);
+    crate::privileged::mm::Vmm::map_page_in_table(pml4, VirtAddr(addr as u64), new_phys, flags);
 
     PAGE_FAULT_COUNT.fetch_add(1, Ordering::Relaxed);
     PfResult::Fixed

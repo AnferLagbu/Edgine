@@ -347,7 +347,7 @@ pub fn sys_timer_create(clockid: i32, sigev_ptr: u64, timer_id_ptr: u64) -> i64 
     }
 
     // 当前进程 pid
-    let current_pid = crate::privileged::proc::SCHEDULER.current().unwrap_or(0);
+    let current_pid = crate::privileged::proc::scheduler::Scheduler::current().unwrap_or(0);
 
     let mut mgr = TIMER_MANAGER.lock();
     for i in 0..MAX_POSIX_TIMERS {

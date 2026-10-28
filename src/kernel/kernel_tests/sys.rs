@@ -17,6 +17,7 @@ use crate::functions::timer::clock::{
     adjtimex_syscall, apply_adjtimex, apply_settimeofday, clock_gettime_syscall,
     clock_nanosleep_syscall, clock_nanosleep_wait_ns, settimeofday_syscall,
 };
+use crate::functions::timer::time_sync::TimeSyncSubsystem;
 
 fn syscall_error_conversion() -> TestResult {
     assert_eq_test!(Errno::EPERM.as_ret(), -1, "EPERM");
@@ -154,8 +155,7 @@ fn clock_gettime_validation() -> TestResult {
 
 /// `settimeofday` 参数校验 + 墙钟写入策略
 fn settimeofday_apply() -> TestResult {
-    let sub = crate::functions::timer::time_sync::subsystem();
-    let original = sub.get_adjusted_time_ns();
+    let original = TimeSyncSubsystem::get_adjusted_time_ns();
 
     // tv 为 NULL: Linux 语义为"只设置时区", 本实装无操作
     check!(settimeofday_syscall(0, 0) == Ok(0), "null tv is no-op");
@@ -193,13 +193,13 @@ fn settimeofday_apply() -> TestResult {
     );
     let expect = TARGET_SEC as u64 * 1_000_000_000 + 500_000 * 1_000;
     check!(
-        sub.get_adjusted_time_ns().abs_diff(expect) < CLOCK_TOLERANCE_NS,
+        TimeSyncSubsystem::get_adjusted_time_ns().abs_diff(expect) < CLOCK_TOLERANCE_NS,
         "wall clock reflects settimeofday"
     );
 
-    check!(sub.set_time(original), "restore wall clock");
+    check!(TimeSyncSubsystem::set_time(original), "restore wall clock");
     check!(
-        sub.get_adjusted_time_ns().abs_diff(original) < CLOCK_TOLERANCE_NS,
+        TimeSyncSubsystem::get_adjusted_time_ns().abs_diff(original) < CLOCK_TOLERANCE_NS,
         "wall clock restored"
     );
     TestResult::Pass
@@ -273,26 +273,27 @@ fn adjtimex_policy() -> TestResult {
         return TestResult::Pass;
     }
 
-    let sub = crate::functions::timer::time_sync::subsystem();
-    let original = sub.get_adjusted_time_ns();
+    let original = TimeSyncSubsystem::get_adjusted_time_ns();
 
     // ADJ_FREQUENCY: freq 单位 2^-16 ppm → 65536 即 1ppm = 1000ppb
     check!(
         apply_adjtimex(ADJ_FREQUENCY, 0, 65_536, 0, 0) == Ok(0),
         "ADJ_FREQUENCY accepted"
     );
-    check!(sub.get_sync_status().2 == 1_000, "frequency applied as ppb");
-    check!(sub.adj_freq(0), "frequency reset");
+    check!(
+        TimeSyncSubsystem::get_sync_status().2 == 1_000,
+        "frequency applied as ppb"
+    );
+    check!(TimeSyncSubsystem::adj_freq(0), "frequency reset");
 
     // ADJ_SETOFFSET: 加性跳变 +1s
-    let before = sub.get_adjusted_time_ns();
+    let before = TimeSyncSubsystem::get_adjusted_time_ns();
     check!(
         apply_adjtimex(ADJ_SETOFFSET, 0, 0, 1, 0) == Ok(0),
         "ADJ_SETOFFSET accepted"
     );
     check!(
-        sub.get_adjusted_time_ns()
-            .abs_diff(before.saturating_add(1_000_000_000))
+        TimeSyncSubsystem::get_adjusted_time_ns().abs_diff(before.saturating_add(1_000_000_000))
             < CLOCK_TOLERANCE_NS,
         "wall clock stepped by +1s"
     );
@@ -303,9 +304,9 @@ fn adjtimex_policy() -> TestResult {
         "ADJ_OFFSET accepted"
     );
 
-    check!(sub.set_time(original), "restore wall clock");
+    check!(TimeSyncSubsystem::set_time(original), "restore wall clock");
     check!(
-        sub.get_adjusted_time_ns().abs_diff(original) < CLOCK_TOLERANCE_NS,
+        TimeSyncSubsystem::get_adjusted_time_ns().abs_diff(original) < CLOCK_TOLERANCE_NS,
         "wall clock restored"
     );
     TestResult::Pass
@@ -313,28 +314,30 @@ fn adjtimex_policy() -> TestResult {
 
 /// 同步机制: `set_time` 跳变反映 + 频率调整后基准重算 (不因 elapsed 累积偏离)
 fn wall_clock_freq_baseline() -> TestResult {
-    let sub = crate::functions::timer::time_sync::subsystem();
-    let original = sub.get_adjusted_time_ns();
+    let original = TimeSyncSubsystem::get_adjusted_time_ns();
     let target = original + 3_600_000_000_000; // +1h
 
-    check!(sub.set_time(target), "set_time accepted");
+    check!(TimeSyncSubsystem::set_time(target), "set_time accepted");
     check!(
-        sub.get_adjusted_time_ns().abs_diff(target) < CLOCK_TOLERANCE_NS,
+        TimeSyncSubsystem::get_adjusted_time_ns().abs_diff(target) < CLOCK_TOLERANCE_NS,
         "wall clock reflects set_time"
     );
 
     // 频率调整 (500ppm 上界) 后基准重置: 若沿用启动时刻基准, 补偿量会按
     // 全部 uptime 累积并产生秒级偏离, 超出容差.
-    check!(sub.adj_freq(500_000_000), "adj_freq accepted");
     check!(
-        sub.get_adjusted_time_ns().abs_diff(target) < CLOCK_TOLERANCE_NS,
+        TimeSyncSubsystem::adj_freq(500_000_000),
+        "adj_freq accepted"
+    );
+    check!(
+        TimeSyncSubsystem::get_adjusted_time_ns().abs_diff(target) < CLOCK_TOLERANCE_NS,
         "frequency compensation baseline reset"
     );
 
-    check!(sub.adj_freq(0), "frequency restored");
-    check!(sub.set_time(original), "wall clock restored");
+    check!(TimeSyncSubsystem::adj_freq(0), "frequency restored");
+    check!(TimeSyncSubsystem::set_time(original), "wall clock restored");
     check!(
-        sub.get_adjusted_time_ns().abs_diff(original) < CLOCK_TOLERANCE_NS,
+        TimeSyncSubsystem::get_adjusted_time_ns().abs_diff(original) < CLOCK_TOLERANCE_NS,
         "wall clock restored exactly"
     );
     TestResult::Pass
@@ -342,24 +345,23 @@ fn wall_clock_freq_baseline() -> TestResult {
 
 /// 渐进调整: `adj_time` 登记的偏移由 tick 机制 (timesync tick_adjust) 消耗
 fn wall_clock_gradual_adjust() -> TestResult {
-    let sub = crate::functions::timer::time_sync::subsystem();
-    let original = sub.get_adjusted_time_ns();
+    let original = TimeSyncSubsystem::get_adjusted_time_ns();
 
     // 5ms 渐进偏移; ADJ_RATE_NS = 1000ns/tick → 5000 次 tick 消耗完毕
-    check!(sub.adj_time(5_000_000), "adj_time accepted");
+    check!(TimeSyncSubsystem::adj_time(5_000_000), "adj_time accepted");
     // tick 机制属 privileged (tick 中断消费), 策略层经安全访问面触发同一状态
     let adj_state = crate::privileged::timer::time_sync::clock_adj_state();
     for _ in 0..6_000 {
         adj_state.tick_adjust();
     }
     check!(
-        sub.get_adjusted_time_ns() >= original + 5_000_000,
+        TimeSyncSubsystem::get_adjusted_time_ns() >= original + 5_000_000,
         "gradual offset fully consumed by tick mechanism"
     );
 
-    check!(sub.set_time(original), "wall clock restored");
+    check!(TimeSyncSubsystem::set_time(original), "wall clock restored");
     check!(
-        sub.get_adjusted_time_ns().abs_diff(original) < CLOCK_TOLERANCE_NS,
+        TimeSyncSubsystem::get_adjusted_time_ns().abs_diff(original) < CLOCK_TOLERANCE_NS,
         "wall clock restored"
     );
     TestResult::Pass

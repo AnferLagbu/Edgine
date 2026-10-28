@@ -165,7 +165,7 @@ impl ProcfsData {
         clippy::too_many_lines,
         reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
     )]
-    pub fn read(&self, name: &str, buf: &mut [u8]) -> i32 {
+    pub fn read(name: &str, buf: &mut [u8]) -> i32 {
         // /proc/cpuinfo
         if name == "cpuinfo" {
             let mut pos = 0usize;
@@ -560,7 +560,7 @@ impl ProcfsData {
         if name.starts_with('/') && name.ends_with("/status") {
             let pid_str = &name[1..name.len() - 7];
             if let Ok(pid) = pid_str.parse::<u32>() {
-                return self.read_process_status(pid, buf);
+                return Self::read_process_status(pid, buf);
             }
         }
 
@@ -568,7 +568,7 @@ impl ProcfsData {
         if name.starts_with('/') && name.ends_with("/cmdline") {
             let pid_str = &name[1..name.len() - 8];
             if let Ok(pid) = pid_str.parse::<u32>() {
-                return self.read_process_cmdline(pid, buf);
+                return Self::read_process_cmdline(pid, buf);
             }
         }
 
@@ -576,7 +576,7 @@ impl ProcfsData {
         if name.starts_with('/') && name.ends_with("/fd") {
             let pid_str = &name[1..name.len() - 3];
             if let Ok(pid) = pid_str.parse::<u32>() {
-                return self.read_process_fd(pid, buf);
+                return Self::read_process_fd(pid, buf);
             }
         }
 
@@ -584,7 +584,7 @@ impl ProcfsData {
         if name.starts_with('/') && name.ends_with("/stat") && !name.ends_with("/status") {
             let pid_str = &name[1..name.len() - 5];
             if let Ok(pid) = pid_str.parse::<u32>() {
-                return self.read_process_stat(pid, buf);
+                return Self::read_process_stat(pid, buf);
             }
         }
 
@@ -728,12 +728,8 @@ impl ProcfsData {
         self.entry_count.load(Ordering::SeqCst)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 读取进程状态 /proc/[pid]/status
-    fn read_process_status(&self, pid: u32, buf: &mut [u8]) -> i32 {
+    fn read_process_status(pid: u32, buf: &mut [u8]) -> i32 {
         use crate::privileged::proc::api::process_with;
 
         let result = process_with(pid, |proc| {
@@ -794,12 +790,8 @@ impl ProcfsData {
         result.unwrap_or(-1)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 读取进程命令行 /proc/[pid]/cmdline
-    fn read_process_cmdline(&self, pid: u32, buf: &mut [u8]) -> i32 {
+    fn read_process_cmdline(pid: u32, buf: &mut [u8]) -> i32 {
         use crate::privileged::proc::api::process_with;
 
         let result = process_with(pid, |proc| {
@@ -818,12 +810,8 @@ impl ProcfsData {
         result.unwrap_or(-1)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 读取进程文件描述符 /proc/[pid]/fd
-    fn read_process_fd(&self, pid: u32, buf: &mut [u8]) -> i32 {
+    fn read_process_fd(pid: u32, buf: &mut [u8]) -> i32 {
         use crate::privileged::proc::api::process_with;
 
         let result = process_with(pid, |proc| {
@@ -852,15 +840,11 @@ impl ProcfsData {
     }
 
     #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    #[expect(
         clippy::no_effect_underscore_binding,
         reason = "no_effect_underscore_binding: let _ = expr 用于类型推导/副作用; 当前优先 expect"
     )]
     /// 读取进程统计 /proc/[pid]/stat
-    fn read_process_stat(&self, pid: u32, buf: &mut [u8]) -> i32 {
+    fn read_process_stat(pid: u32, buf: &mut [u8]) -> i32 {
         use crate::privileged::proc::api::process_with;
 
         let result = process_with(pid, |proc| {

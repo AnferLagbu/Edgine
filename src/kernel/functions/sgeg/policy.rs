@@ -318,13 +318,8 @@ impl PolicyEngine {
         Self {}
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 检查 (matrix, domain, required) 是否被允许
     pub fn check<M: CapabilityMatrix>(
-        &self,
         matrix: &M,
         domain: CapDomain,
         required: CapBits,
@@ -349,13 +344,8 @@ impl PolicyEngine {
         PolicyResult::Allow
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 委托 (使用 CAS 保证并发安全)
     pub fn grant<M: CapabilityMatrix>(
-        &self,
         from: &M,
         to: &M,
         domain: CapDomain,
@@ -384,13 +374,8 @@ impl PolicyEngine {
         }
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 撤销 (保护可行下界)
     pub fn revoke<M: CapabilityMatrix>(
-        &self,
         matrix: &M,
         domain: CapDomain,
         bits: CapBits,
@@ -436,15 +421,14 @@ mod tests {
         let m = make_matrix();
         m.set(CapDomain::FS, CapBits(0xFF)).unwrap();
 
-        let p = PolicyEngine::new();
         // 0x08 (bit3) 不含 FS 的可行性下界 (READ|EXEC = 0b101), 故仅需矩阵授权即 Allow
         // (原用 0x0F 含下界位, 必被 FloorProtected 拒绝; 2026-09-24 UT-06 修正)
         assert_eq!(
-            p.check(&m, CapDomain::FS, CapBits(0x08)),
+            PolicyEngine::check(&m, CapDomain::FS, CapBits(0x08)),
             PolicyResult::Allow
         );
         assert_eq!(
-            p.check(&m, CapDomain::FS, CapBits(0x100)),
+            PolicyEngine::check(&m, CapDomain::FS, CapBits(0x100)),
             PolicyResult::Deny(DenyReason::NoAuthority)
         );
     }
@@ -452,9 +436,8 @@ mod tests {
     #[test]
     fn policy_invalid_domain() {
         let m = make_matrix();
-        let p = PolicyEngine::new();
         assert_eq!(
-            p.check(&m, CapDomain(20), CapBits(0x01)),
+            PolicyEngine::check(&m, CapDomain(20), CapBits(0x01)),
             PolicyResult::Deny(DenyReason::InvalidDomain)
         );
     }
@@ -462,10 +445,9 @@ mod tests {
     #[test]
     fn policy_empty_required() {
         let m = make_matrix();
-        let p = PolicyEngine::new();
         // 无要求即通过
         assert_eq!(
-            p.check(&m, CapDomain::FS, CapBits::NONE),
+            PolicyEngine::check(&m, CapDomain::FS, CapBits::NONE),
             PolicyResult::Allow
         );
     }
@@ -474,12 +456,11 @@ mod tests {
     fn policy_floor_protection() {
         let m = make_matrix();
         m.set(CapDomain::FS, CapBits(0xFF)).unwrap();
-        let p = PolicyEngine::new();
         // FS 底限 = READ | EXEC = 0b0101
         // 试图"撤销" 0b0101 应被 FloorProtected 拒绝
         // 实际语义: check(FS, required=0b0101) — 但 required=owned ⊆ owned 总是 true
         // 我们要求 required 包含 floor bits → 拒绝
-        let result = p.check(&m, CapDomain::FS, CapBits(0b0101));
+        let result = PolicyEngine::check(&m, CapDomain::FS, CapBits(0b0101));
         assert_eq!(result, PolicyResult::Deny(DenyReason::FloorProtected));
     }
 
@@ -490,13 +471,12 @@ mod tests {
         let m = make_matrix();
         m.set(CapDomain::NET, CapBits(0x03)).unwrap();
         m.set(CapDomain::SYSTEM, CapBits(0x01)).unwrap();
-        let p = PolicyEngine::new();
         assert_eq!(
-            p.check(&m, CapDomain::NET, CapBits(0x03)),
+            PolicyEngine::check(&m, CapDomain::NET, CapBits(0x03)),
             PolicyResult::Allow
         );
         assert_eq!(
-            p.check(&m, CapDomain::SYSTEM, CapBits(0x01)),
+            PolicyEngine::check(&m, CapDomain::SYSTEM, CapBits(0x01)),
             PolicyResult::Allow
         );
     }
@@ -507,8 +487,7 @@ mod tests {
         let to = make_matrix();
         from.set(CapDomain::FS, CapBits(0b1111)).unwrap();
 
-        let p = PolicyEngine::new();
-        let r = p.grant(&from, &to, CapDomain::FS, CapBits(0b1000));
+        let r = PolicyEngine::grant(&from, &to, CapDomain::FS, CapBits(0b1000));
         assert_eq!(r, GrantResult::Granted);
         assert_eq!(to.get(CapDomain::FS), Some(CapBits(0b1000)));
     }
@@ -517,8 +496,7 @@ mod tests {
     fn grant_no_authority() {
         let from = make_matrix();
         let to = make_matrix();
-        let p = PolicyEngine::new();
-        let r = p.grant(&from, &to, CapDomain::FS, CapBits(0b0001));
+        let r = PolicyEngine::grant(&from, &to, CapDomain::FS, CapBits(0b0001));
         assert_eq!(r, GrantResult::NoAuthority);
     }
 
@@ -526,8 +504,7 @@ mod tests {
     fn grant_invalid_domain() {
         let from = make_matrix();
         let to = make_matrix();
-        let p = PolicyEngine::new();
-        let r = p.grant(&from, &to, CapDomain(20), CapBits(0b0001));
+        let r = PolicyEngine::grant(&from, &to, CapDomain(20), CapBits(0b0001));
         assert_eq!(r, GrantResult::InvalidDomain);
     }
 
@@ -535,8 +512,7 @@ mod tests {
     fn revoke_basic() {
         let m = make_matrix();
         m.set(CapDomain::FS, CapBits(0b1111)).unwrap();
-        let p = PolicyEngine::new();
-        let r = p.revoke(&m, CapDomain::FS, CapBits(0b1000));
+        let r = PolicyEngine::revoke(&m, CapDomain::FS, CapBits(0b1000));
         assert_eq!(r, RevokeResult::Revoked);
         assert_eq!(m.get(CapDomain::FS), Some(CapBits(0b0111)));
     }
@@ -545,25 +521,22 @@ mod tests {
     fn revoke_floor_protected() {
         let m = make_matrix();
         m.set(CapDomain::FS, CapBits(0b1111)).unwrap();
-        let p = PolicyEngine::new();
         // 试图撤销 floor (READ|EXEC = 0b0101)
-        let r = p.revoke(&m, CapDomain::FS, CapBits(0b0101));
+        let r = PolicyEngine::revoke(&m, CapDomain::FS, CapBits(0b0101));
         assert_eq!(r, RevokeResult::FloorProtected);
     }
 
     #[test]
     fn revoke_invalid_domain() {
         let m = make_matrix();
-        let p = PolicyEngine::new();
-        let r = p.revoke(&m, CapDomain(20), CapBits(0b0001));
+        let r = PolicyEngine::revoke(&m, CapDomain(20), CapBits(0b0001));
         assert_eq!(r, RevokeResult::InvalidDomain);
     }
 
     #[test]
     fn revoke_empty() {
         let m = make_matrix();
-        let p = PolicyEngine::new();
-        let r = p.revoke(&m, CapDomain::FS, CapBits::NONE);
+        let r = PolicyEngine::revoke(&m, CapDomain::FS, CapBits::NONE);
         assert_eq!(r, RevokeResult::NoChange);
     }
 

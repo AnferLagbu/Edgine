@@ -399,7 +399,7 @@ fn test_fork_cow_failure_rolls_back() -> TestResult {
     use crate::privileged::mm::mechanism::vmm_destroy_page_table;
     use crate::privileged::mm::pmm::get_pmm;
     use crate::privileged::proc::raw;
-    use crate::privileged::proc::{PROCESS_TABLE, SCHEDULER, sys_fork};
+    use crate::privileged::proc::{PROCESS_TABLE, Scheduler, sys_fork};
     use core::sync::atomic::Ordering;
 
     let pmm = get_pmm();
@@ -423,8 +423,8 @@ fn test_fork_cow_failure_rolls_back() -> TestResult {
         return TestResult::Fail("parent must be inserted into PROCESS_TABLE");
     }
 
-    let prev_current = SCHEDULER.current();
-    SCHEDULER.set_current(pid);
+    let prev_current = Scheduler::current();
+    Scheduler::set_current(pid);
 
     let result = (|| -> TestResult {
         // 首轮迭代可能触发内核分配器缓存增长 (子进程描述符), 故以首轮后的空闲页数
@@ -462,7 +462,7 @@ fn test_fork_cow_failure_rolls_back() -> TestResult {
 
     // 拆除 (无条件执行): 恢复调度器当前进程 → 摘表 → 释放描述符
     // (`Process::drop` 在计数归零时销毁 parent_pml4 ⇒ 表格帧与数据帧一并归还)
-    SCHEDULER.set_current(prev_current.unwrap_or(0));
+    Scheduler::set_current(prev_current.unwrap_or(0));
     let _ = PROCESS_TABLE.remove(pid);
     raw::drop_boxed_process(parent_ptr);
     PROCESS_TABLE.free_pid(pid);

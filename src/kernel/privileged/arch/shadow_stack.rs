@@ -182,7 +182,7 @@ impl CetSubsystem {
             return;
         }
 
-        let caps = self.detect_capabilities();
+        let caps = Self::detect_capabilities();
         crate::klog_ffi!(
             klog_ffi_info,
             "[CET] capabilities: shadow_stack={}, ibt={}, wrss={}",
@@ -193,19 +193,15 @@ impl CetSubsystem {
 
         if caps.shadow_stack {
             // 尝试启用内核态 Shadow Stack
-            self.enable_kernel_shadow_stack();
+            Self::enable_kernel_shadow_stack();
         }
 
         *self.caps.lock() = caps;
         self.initialized.store(true, Ordering::Release);
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 检测 CPU CET 能力
-    fn detect_capabilities(&self) -> CetCapabilities {
+    fn detect_capabilities() -> CetCapabilities {
         #[cfg(target_arch = "x86_64")]
         {
             // CPUID.07H.0 功能位: ECX[7]=CET_IBT, ECX[20]=CET_SS, EDX[14]=WRSS
@@ -256,12 +252,8 @@ impl CetSubsystem {
         caps
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 启用内核态 Shadow Stack
-    fn enable_kernel_shadow_stack(&self) -> bool {
+    fn enable_kernel_shadow_stack() -> bool {
         #[cfg(target_arch = "x86_64")]
         {
             // 1. 设置 CR4.CET 位
@@ -399,50 +391,45 @@ impl CetSubsystem {
     ///
     /// # Safety
     ///
-    /// 调用方必须确保:
-    /// - CET 已初始化 (`caps.shadow_stack_enabled` = true)
-    /// - ssp 指向有效的 Shadow Stack 内存
-    #[cfg_attr(
-        target_arch = "aarch64",
-        expect(
-            clippy::unused_self,
-            reason = "aarch64 CET 兼容占位函数, 不依赖 self 字段"
-        )
-    )]
-    /// 配置用户态影子栈 (CET MSR).
-    /// - 仅在从内核态切换到用户态前调用
+    /// 调用方必须确保 `caps.shadow_stack_enabled` 为 true 且 `ssp` 指向有效
+    /// Shadow Stack 内存 (x86_64 实装).
+    #[cfg(target_arch = "x86_64")]
     pub unsafe fn configure_user_cet_msr(&self, ssp: u64) {
-        // aarch64 无 CET, 抑制 unused 警告
-        #[cfg(target_arch = "aarch64")]
-        let _ = ssp;
-        #[cfg(target_arch = "x86_64")]
-        {
-            if !self.caps.lock().shadow_stack_enabled {
-                return;
-            }
-
-            // IA32_U_CET: 启用用户态 Shadow Stack
-            // Bit 0 = SH_STK_EN (Shadow Stack 启用)
-            // Bit 1 = WR_SHSTK_EN (WRSS 启用)
-            let u_cet_val: u64 = 0x3;
-
-            // SAFETY: 写入 IA32_U_CET 配置用户态 CET
-            unsafe {
-                crate::privileged::cpu::msr::write_msr(x86_msrs::IA32_U_CET, u_cet_val);
-            }
-
-            // SAFETY: 写入 IA32_PL3_SSP 设置用户态 Shadow Stack 指针
-            unsafe {
-                crate::privileged::cpu::msr::write_msr(x86_msrs::IA32_PL3_SSP, ssp);
-            }
-
-            crate::klog_ffi!(
-                klog_ffi_info,
-                "[CET] user MSR configured: U_CET=0x{:x}, PL3_SSP=0x{:x}",
-                u_cet_val,
-                ssp
-            );
+        if !self.caps.lock().shadow_stack_enabled {
+            return;
         }
+
+        // IA32_U_CET: 启用用户态 Shadow Stack
+        // Bit 0 = SH_STK_EN (Shadow Stack 启用)
+        // Bit 1 = WR_SHSTK_EN (WRSS 启用)
+        let u_cet_val: u64 = 0x3;
+
+        // SAFETY: 写入 IA32_U_CET 配置用户态 CET
+        unsafe {
+            crate::privileged::cpu::msr::write_msr(x86_msrs::IA32_U_CET, u_cet_val);
+        }
+
+        // SAFETY: 写入 IA32_PL3_SSP 设置用户态 Shadow Stack 指针
+        unsafe {
+            crate::privileged::cpu::msr::write_msr(x86_msrs::IA32_PL3_SSP, ssp);
+        }
+
+        crate::klog_ffi!(
+            klog_ffi_info,
+            "[CET] user MSR configured: U_CET=0x{:x}, PL3_SSP=0x{:x}",
+            u_cet_val,
+            ssp
+        );
+    }
+
+    /// aarch64 无 CET: 同形入口保留为无接收者空操作 (无实例状态可读).
+    ///
+    /// # Safety
+    ///
+    /// 无前置条件 (当前实现为空操作).
+    #[cfg(target_arch = "aarch64")]
+    pub unsafe fn configure_user_cet_msr(ssp: u64) {
+        let _ = ssp;
     }
 
     /// 配置中断 Shadow Stack 表 (IDT 集成)
@@ -451,41 +438,34 @@ impl CetSubsystem {
     ///
     /// # Safety
     ///
-    #[cfg_attr(
-        target_arch = "aarch64",
-        expect(
-            clippy::unused_self,
-            reason = "aarch64 CET 兼容占位函数, 不依赖 self 字段"
-        )
-    )]
-    /// 配置中断态影子栈表.
-    /// 调用方必须确保:
-    /// - CET 已初始化
-    /// - `table_addr` 指向有效的 SSP 表内存 (16 字节对齐)
+    /// 调用方必须确保 `caps.shadow_stack` 为 true 且 `table_addr` 指向有效的
+    /// SSP 表内存 (16 字节对齐; x86_64 实装).
+    #[cfg(target_arch = "x86_64")]
     pub unsafe fn configure_interrupt_ssp_table(&self, table_addr: u64) {
-        // aarch64 无 CET, 抑制 unused 警告
-        #[cfg(target_arch = "aarch64")]
-        let _ = table_addr;
-        #[cfg(target_arch = "x86_64")]
-        {
-            if !self.caps.lock().shadow_stack {
-                return;
-            }
-
-            // SAFETY: 写入 IA32_INTERRUPT_SSP_TABLE 设置中断 Shadow Stack 表
-            unsafe {
-                crate::privileged::cpu::msr::write_msr(
-                    x86_msrs::IA32_INTERRUPT_SSP_TABLE,
-                    table_addr,
-                );
-            }
-
-            crate::klog_ffi!(
-                klog_ffi_info,
-                "[CET] interrupt SSP table configured: addr=0x{:x}",
-                table_addr
-            );
+        if !self.caps.lock().shadow_stack {
+            return;
         }
+
+        // SAFETY: 写入 IA32_INTERRUPT_SSP_TABLE 设置中断 Shadow Stack 表
+        unsafe {
+            crate::privileged::cpu::msr::write_msr(x86_msrs::IA32_INTERRUPT_SSP_TABLE, table_addr);
+        }
+
+        crate::klog_ffi!(
+            klog_ffi_info,
+            "[CET] interrupt SSP table configured: addr=0x{:x}",
+            table_addr
+        );
+    }
+
+    /// aarch64 无 CET: 同形入口保留为无接收者空操作 (无实例状态可读).
+    ///
+    /// # Safety
+    ///
+    /// 无前置条件 (当前实现为空操作).
+    #[cfg(target_arch = "aarch64")]
+    pub unsafe fn configure_interrupt_ssp_table(table_addr: u64) {
+        let _ = table_addr;
     }
 
     /// 获取功能支持

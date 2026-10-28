@@ -5,10 +5,10 @@
     "disposition": "P-49 冻结存量债, 消解归 framekernel-paradigm-enforcement §7 批次 Z"
   },
   "totals": {
-    "sites": 45,
-    "items": 17,
-    "files": 16,
-    "globals": 11
+    "sites": 39,
+    "items": 15,
+    "files": 15,
+    "globals": 10
   },
   "entries": [
     [
@@ -67,11 +67,6 @@
       2
     ],
     [
-      "src/kernel/functions/proc/mod.rs",
-      "SCHEDULER",
-      1
-    ],
-    [
       "src/kernel/functions/proc/pidfd.rs",
       "PROCESS_TABLE",
       1
@@ -80,11 +75,6 @@
       "src/kernel/functions/proc/sched.rs",
       "PROCESS_TABLE",
       3
-    ],
-    [
-      "src/kernel/functions/proc/sched.rs",
-      "SCHEDULER",
-      5
     ],
     [
       "src/kernel/functions/proc/session.rs",

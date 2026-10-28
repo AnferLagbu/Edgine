@@ -301,7 +301,7 @@ impl IdtManager {
 
         // 2. 设置异常门描述符 (向量 0-31)
         for i in 0..32u8 {
-            self.set_gate_internal(
+            Self::set_gate_internal(
                 &mut state,
                 i,
                 isr_table[i as usize],
@@ -337,7 +337,7 @@ impl IdtManager {
         // 3. 设置 IRQ 门描述符 (向量 32-47)
         for i in 0..16u8 {
             let vector = IRQ_BASE + i;
-            self.set_gate_internal(
+            Self::set_gate_internal(
                 &mut state,
                 vector,
                 irq_table[i as usize],
@@ -347,7 +347,7 @@ impl IdtManager {
         }
 
         // 4. 设置系统调用门 (int 0x80, DPL=3 允许 user 调用)
-        self.set_gate_internal(
+        Self::set_gate_internal(
             &mut state,
             0x80,
             syscall_handler,
@@ -387,7 +387,7 @@ impl IdtManager {
         let mut state = self.state.lock();
         for (i, &handler_addr) in msi_table.iter().enumerate() {
             let vector = 0x40 + crate::privileged::lib::low_u8_from_usize(i);
-            self.set_gate_internal(
+            Self::set_gate_internal(
                 &mut state,
                 vector,
                 handler_addr,
@@ -407,7 +407,7 @@ impl IdtManager {
         let mut state = self.state.lock();
         for (i, &handler_addr) in ipi_table.iter().enumerate() {
             let vector = 0xFD + crate::privileged::lib::low_u8_from_usize(i);
-            self.set_gate_internal(
+            Self::set_gate_internal(
                 &mut state,
                 vector,
                 handler_addr,
@@ -426,7 +426,7 @@ impl IdtManager {
     /// irq 槽落在 16-31, `handle_irq` 走 descriptor + LAPIC EOI 分支。
     pub fn init_local_vector(&self, vector: u8, handler_addr: u64) {
         let mut state = self.state.lock();
-        self.set_gate_internal(
+        Self::set_gate_internal(
             &mut state,
             vector,
             handler_addr,
@@ -436,13 +436,8 @@ impl IdtManager {
         crate::klog_info!(Kernel, "IDT: local vector {:#04x} programmed", vector);
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 内部函数: 设置门描述符 (需要 &mut state)
     fn set_gate_internal(
-        &self,
         state: &mut IdtState,
         num: u8,
         handler: u64,
@@ -580,12 +575,8 @@ impl IdtManager {
         Err("Handler not found")
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 启用指定 IRQ
-    pub fn enable_irq(&self, irq: u8) {
+    pub fn enable_irq(irq: u8) {
         // 使用 GSI 路由, 不再限制 irq < 16
         #[cfg(target_arch = "x86_64")]
         {
@@ -613,12 +604,8 @@ impl IdtManager {
         }
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 禁用指定 IRQ
-    pub fn disable_irq(&self, irq: u8) {
+    pub fn disable_irq(irq: u8) {
         // 使用 GSI 路由, 不再限制 irq < 16
         #[cfg(target_arch = "x86_64")]
         {
@@ -681,7 +668,7 @@ impl IdtManager {
                     let err = (*frame).err_code;
                     let rip = (*frame).rip;
                     let rsp = (*frame).rsp;
-                    let cr2 = (*frame).fault_address();
+                    let cr2 = InterruptFrame::fault_address();
                     crate::klog_err!(
                         Kernel,
                         "[IDT] user exception: vec={} err={:#X} rip={:#X} rsp={:#X} cr2={:#X}",
@@ -695,7 +682,7 @@ impl IdtManager {
 
                 self.detailed_stats.record_recovery_action(&action);
 
-                self.execute_recovery_action(&action, &*frame);
+                Self::execute_recovery_action(&action, &*frame);
 
                 if let Some(c_handler) = self.state.lock().handlers[vector as usize] {
                     c_handler(frame); // C handler 可能会执行额外的副作用
@@ -717,7 +704,7 @@ impl IdtManager {
     }
 
     /// 执行恢复动作 (Phase 3 结构化错误处理)
-    fn execute_recovery_action(&self, action: &RecoveryAction, _frame: &InterruptFrame) {
+    fn execute_recovery_action(action: &RecoveryAction, _frame: &InterruptFrame) {
         match action {
             RecoveryAction::Recovered => {
                 // 成功恢复，无需额外操作
@@ -755,11 +742,11 @@ impl IdtManager {
                         0 => {} // Recovery 成功
                         -2 => {
                             // 已尝试过，拒绝循环 → panic
-                            self.kernel_panic("Recovery already attempted");
+                            Self::kernel_panic("Recovery already attempted");
                         }
                         _ => {
                             // Recovery 失败 → panic
-                            self.kernel_panic("Domain recovery failed");
+                            Self::kernel_panic("Domain recovery failed");
                         }
                     }
                 }
@@ -767,17 +754,13 @@ impl IdtManager {
 
             RecoveryAction::Panic(info) => {
                 // 无法恢复 → kernel panic
-                self.kernel_panic(info.reason);
+                Self::kernel_panic(info.reason);
             }
         }
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// Kernel panic (停止系统)
-    fn kernel_panic(&self, message: &str) {
+    fn kernel_panic(message: &str) {
         let _ = message;
 
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -799,7 +782,7 @@ impl IdtManager {
         if vector == 0xFD {
             crate::privileged::smp::tlb_catch_up_local();
             crate::privileged::smp::tlb_probe_report();
-            self.send_eoi_local();
+            Self::send_eoi_local();
             return;
         }
         // 0xFE (reschedule): 接线既有 resched_ipi_handler 登记本核挂起重调度;
@@ -807,7 +790,7 @@ impl IdtManager {
         // 执行切换 (本路径不进 do_softirq/信号投递).
         if vector == 0xFE {
             crate::privileged::proc::cpu_queue::resched_ipi_handler();
-            self.send_eoi_local();
+            Self::send_eoi_local();
             crate::privileged::proc::cpu_queue::run_pending_resched();
             return;
         }
@@ -836,7 +819,7 @@ impl IdtManager {
             }
 
             // MSI EOI: LAPIC 路径
-            self.send_eoi_local();
+            Self::send_eoi_local();
 
             crate::privileged::irq::do_softirq();
 
@@ -895,7 +878,7 @@ impl IdtManager {
                 handler(frame);
             }
 
-            self.send_eoi_legacy(irq);
+            Self::send_eoi_legacy(irq);
 
             crate::privileged::irq::do_softirq();
 
@@ -914,34 +897,26 @@ impl IdtManager {
         } else {
             // MSI 向量 (0x40-0x7F → irq 0x10-0x3F): 通过 ISR_TABLE 分发
             crate::privileged::irqline::dispatch_irq(vector);
-            self.send_eoi_local();
+            Self::send_eoi_local();
         }
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 发送本地 APIC EOI (IPI / MSI 恒由 LAPIC 投递).
     ///
     /// `apic::eoi` 内部自带 `is_initialized` 检查, 未初始化时为 no-op.
-    fn send_eoi_local(&self) {
+    fn send_eoi_local() {
         #[cfg(target_arch = "x86_64")]
         {
             crate::privileged::arch::apic::eoi();
         }
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 发送 legacy IRQ (<16) 的 EOI.
     ///
     /// 判据与投递侧一致 (单一真源 `legacy_irq_via_ioapic`):
     /// - IOAPIC 投递 ⇒ LAPIC EOI;
     /// - 8259A PIC 投递 ⇒ 传统 PIC EOI (从片先于主片).
-    fn send_eoi_legacy(&self, irq: u8) {
+    fn send_eoi_legacy(irq: u8) {
         #[cfg(target_arch = "x86_64")]
         {
             if legacy_irq_via_ioapic() {

@@ -196,7 +196,7 @@ pub fn mark_resched_pending_local() {
 /// 直接成因). 故调度点必须在 `do_softirq()` 完整返回之后.
 pub fn run_pending_resched() {
     if current_cpu_queue().take_need_reschedule() {
-        super::scheduler::SCHEDULER.schedule();
+        super::scheduler::Scheduler::schedule();
     }
 }
 

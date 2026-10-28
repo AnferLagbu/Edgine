@@ -64,10 +64,9 @@ fn mark_cow_readonly(entry: u64) -> u64 {
 /// 本函数持有 `VMM_LOCK` 保护所有页表修改, 确保多核并发安全。
 /// 函数返回前刷新全部 TLB 条目使被清除 WRITABLE 位的 PTE 失效。
 pub fn clone_user_page_table_cow(parent_pml4: u64) -> Option<u64> {
-    let vmm_inst = vmm::get_vmm();
-    let guard = vmm_inst.acquire_lock();
+    let guard = super::Vmm::acquire_lock();
     let result = clone_user_page_table_cow_inner(parent_pml4);
-    vmm_inst.release_lock(guard);
+    super::Vmm::release_lock(guard);
     result
 }
 
@@ -438,10 +437,9 @@ fn release_child_table_frame(frame: u64) {
 /// 已持锁的路径必须直接用 `cow_handle_fault_locked`, 否则构成递归加锁
 /// (`VMM_LOCK` 非重入)。
 pub fn cow_handle_fault(pml4: u64, fault_addr: u64) -> Option<u64> {
-    let vmm_inst = vmm::get_vmm();
-    let lock_flags = vmm_inst.acquire_lock();
+    let lock_flags = super::Vmm::acquire_lock();
     let result = cow_handle_fault_locked(pml4, fault_addr);
-    vmm_inst.release_lock(lock_flags);
+    super::Vmm::release_lock(lock_flags);
     result
 }
 
@@ -451,10 +449,9 @@ pub fn cow_handle_fault(pml4: u64, fault_addr: u64) -> Option<u64> {
 /// `release_frame_locked` (不自取锁)。读路径 `get_physical_in_pml4` 只做只读遍历,
 /// 不取 `VMM_LOCK`, 可在持锁下安全调用。
 fn cow_handle_fault_locked(pml4: u64, fault_addr: u64) -> Option<u64> {
-    let vmm_inst = vmm::get_vmm();
     let page_aligned = fault_addr & !(PAGE_SIZE - 1);
 
-    let old_phys = vmm_inst.get_physical_in_pml4(pml4, VirtAddr(page_aligned))?;
+    let old_phys = super::Vmm::get_physical_in_pml4(pml4, VirtAddr(page_aligned))?;
     let old_frame = old_phys.as_u64() & 0x000F_FFFF_FFFF_F000;
 
     let pmm_inst = super::pmm::get_pmm();
@@ -466,7 +463,7 @@ fn cow_handle_fault_locked(pml4: u64, fault_addr: u64) -> Option<u64> {
     if should_reuse {
         // 唯一引用: 直接恢复 WRITABLE 位, 无需分配新页
         let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
-        vmm_inst.map_page_in_table_locked(pml4, VirtAddr(page_aligned), old_phys, flags);
+        super::Vmm::map_page_in_table_locked(pml4, VirtAddr(page_aligned), old_phys, flags);
         return Some(old_phys.as_u64());
     }
 
@@ -492,7 +489,7 @@ fn cow_handle_fault_locked(pml4: u64, fault_addr: u64) -> Option<u64> {
     }
 
     let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
-    vmm_inst.map_page_in_table_locked(pml4, VirtAddr(page_aligned), new_phys, flags);
+    super::Vmm::map_page_in_table_locked(pml4, VirtAddr(page_aligned), new_phys, flags);
 
     Some(new_phys.as_u64())
 }

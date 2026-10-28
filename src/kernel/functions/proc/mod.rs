@@ -156,7 +156,7 @@ pub fn init() {
 ///
 /// 由架构中断处理代码调用。
 pub fn schedule() {
-    crate::privileged::proc::SCHEDULER.schedule();
+    crate::privileged::proc::Scheduler::schedule();
 }
 
 // ============================================================================

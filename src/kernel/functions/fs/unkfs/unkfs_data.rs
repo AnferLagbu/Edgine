@@ -147,13 +147,9 @@ pub fn get_unkfs() -> &'static UnkfsData {
 }
 
 impl UnkfsData {
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 扫描所有已注册的块设备，返回检测到的驱动器列表 (`drive_id`, `partition_start_lba`)
     /// 对于已格式化的磁盘读取 `Edgine` 签名，对于空白磁盘使用默认分区起始偏移
-    fn scan_all_drives(&self) -> Vec<(u8, u32)> {
+    fn scan_all_drives() -> Vec<(u8, u32)> {
         let mut discovered = Vec::new();
         // 扫描 0..8 号驱动器 (足够覆盖当前硬件)
         for drive in 0..8u8 {
@@ -200,7 +196,7 @@ impl UnkfsData {
         crate::slog_info!(FS, "[UNKFS] Initializing...");
 
         // Step 1: 扫描所有块设备, 发现 Edgine/UNKFS 磁盘
-        let discovered = self.scan_all_drives();
+        let discovered = Self::scan_all_drives();
         let has_any_disk = !discovered.is_empty();
 
         self.spa.disk_present.store(has_any_disk, Ordering::Release);
@@ -248,7 +244,7 @@ impl UnkfsData {
                         "disk",
                         12,
                     );
-                    vdev_cfg.asize = self.probe_partition_size_for_drive(*drive_id, *part_start);
+                    vdev_cfg.asize = Self::probe_partition_size_for_drive(*drive_id, *part_start);
                     vdev_cfg.partition_start = *part_start;
                     self.spa.add_vdev(vdev_cfg);
                 }
@@ -367,7 +363,7 @@ impl UnkfsData {
             "disk",
             12,
         );
-        vdev_cfg.asize = self.probe_partition_size_for_drive(drive_id, part_start);
+        vdev_cfg.asize = Self::probe_partition_size_for_drive(drive_id, part_start);
         vdev_cfg.partition_start = part_start;
         self.spa.add_vdev(vdev_cfg);
         self.spa.formatted.store(true, Ordering::Release);
@@ -410,7 +406,7 @@ impl UnkfsData {
             "disk",
             12,
         );
-        vdev_cfg.asize = self.probe_partition_size_for_drive(drive, part_start);
+        vdev_cfg.asize = Self::probe_partition_size_for_drive(drive, part_start);
         vdev_cfg.partition_start = part_start;
         self.spa.add_vdev(vdev_cfg);
 
@@ -446,11 +442,7 @@ impl UnkfsData {
         false
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    fn probe_partition_size_for_drive(&self, drive_id: u8, part_start: u32) -> u64 {
+    fn probe_partition_size_for_drive(drive_id: u8, part_start: u32) -> u64 {
         if !block::hdd_is_present(drive_id) {
             return 0;
         }
@@ -506,7 +498,7 @@ impl UnkfsData {
             "disk",
             12,
         );
-        vdev_cfg.asize = self.probe_partition_size_for_drive(drive_id, part_start);
+        vdev_cfg.asize = Self::probe_partition_size_for_drive(drive_id, part_start);
         vdev_cfg.partition_start = part_start;
         self.spa.add_vdev(vdev_cfg);
         {
@@ -571,11 +563,7 @@ impl UnkfsData {
         None
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    fn check_permission(&self, obj: &UnkfsDmuObject, pwm: u64, cap: u64) -> bool {
+    fn check_permission(obj: &UnkfsDmuObject, pwm: u64, cap: u64) -> bool {
         if pwm == 0 {
             return false;
         }
@@ -628,7 +616,7 @@ impl UnkfsData {
         let Some(obj) = obj else {
             return Err(KernelError::FileNotFound);
         };
-        if !self.check_permission(&obj, pwm, 0x01) {
+        if !Self::check_permission(&obj, pwm, 0x01) {
             return Err(KernelError::PermissionDenied);
         }
         let Some(fd_idx) = self.alloc_fd() else {
@@ -682,7 +670,7 @@ impl UnkfsData {
                 None => return KernelError::FileNotFound.as_i32(),
             }
         };
-        if !self.check_permission(&obj, pwm, 0x01) {
+        if !Self::check_permission(&obj, pwm, 0x01) {
             return KernelError::PermissionDenied.as_i32();
         }
         let available = if offset < obj.size {
@@ -754,7 +742,7 @@ impl UnkfsData {
                 None => return KernelError::FileNotFound.as_i32(),
             }
         };
-        if !self.check_permission(&obj, pwm, 0x02) {
+        if !Self::check_permission(&obj, pwm, 0x02) {
             return KernelError::PermissionDenied.as_i32();
         }
         let to_write = (count as usize).min(buf.len());
@@ -850,7 +838,7 @@ impl UnkfsData {
                 None => return KernelError::FileNotFound.as_i32(),
             }
         };
-        if !self.check_permission(&obj, pwm, 0x02) {
+        if !Self::check_permission(&obj, pwm, 0x02) {
             return KernelError::PermissionDenied.as_i32();
         }
         {
@@ -878,7 +866,7 @@ impl UnkfsData {
         let ds = &datasets[0];
         let obj_id = ds.lookup(name)?;
         let obj = ds.objset.get_obj(obj_id)?;
-        if !self.check_permission(&obj, pwm, 0x01) {
+        if !Self::check_permission(&obj, pwm, 0x01) {
             return None;
         }
         Some(obj)
@@ -1040,7 +1028,7 @@ impl UnkfsData {
                 None => return KernelError::FileNotFound.as_i32(),
             }
         };
-        if !self.check_permission(&obj, pwm, 0x02) {
+        if !Self::check_permission(&obj, pwm, 0x02) {
             return KernelError::PermissionDenied.as_i32();
         }
 
@@ -1154,7 +1142,7 @@ impl UnkfsData {
             return KernelError::IsDirectory.as_i32();
         }
 
-        if !self.check_permission(&obj, pwm, 0x02) {
+        if !Self::check_permission(&obj, pwm, 0x02) {
             return KernelError::PermissionDenied.as_i32();
         }
 
@@ -1214,7 +1202,7 @@ impl UnkfsData {
             return KernelError::InvalidArgument.as_i32();
         }
 
-        if !self.check_permission(&obj, pwm, 0x01) {
+        if !Self::check_permission(&obj, pwm, 0x01) {
             return KernelError::PermissionDenied.as_i32();
         }
 
@@ -1259,7 +1247,7 @@ impl UnkfsData {
                 None => return KernelError::FileNotFound.as_i32(),
             }
         };
-        if !self.check_permission(&obj, pwm, 0x02) {
+        if !Self::check_permission(&obj, pwm, 0x02) {
             return KernelError::PermissionDenied.as_i32();
         }
 
@@ -1307,7 +1295,7 @@ impl UnkfsData {
             }
         };
 
-        if !self.check_permission(&obj, pwm, 0x01) {
+        if !Self::check_permission(&obj, pwm, 0x01) {
             return KernelError::PermissionDenied.as_i32();
         }
 
@@ -1348,7 +1336,7 @@ impl UnkfsData {
             }
         };
 
-        if !self.check_permission(&obj, pwm, 0x01) {
+        if !Self::check_permission(&obj, pwm, 0x01) {
             return KernelError::PermissionDenied.as_i32();
         }
 
@@ -1389,7 +1377,7 @@ impl UnkfsData {
                 None => return KernelError::FileNotFound.as_i32(),
             }
         };
-        if !self.check_permission(&obj, pwm, 0x02) {
+        if !Self::check_permission(&obj, pwm, 0x02) {
             return KernelError::PermissionDenied.as_i32();
         }
 

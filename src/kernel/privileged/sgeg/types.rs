@@ -425,15 +425,11 @@ impl PwmEntry {
         self.get_flags().contains(flag)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// T4-1: 全 Atomic 化后此 API 行为变化.
     /// 原因: [`AtomicU8`; N] 不能直接借用为 &[u8], 返回 owned &str 需要内部静态缓冲.
     /// 当前实现: 返回静态空串占位. 推荐使用 `note_bytes()` 复制 + 自行转换.
     /// 兼容保留: 签名不变, 行为退化为"返回空串 (新值前为 None)". 调用方应迁移.
-    pub fn get_note_str(&self) -> &'static str {
+    pub fn get_note_str() -> &'static str {
         // T4-1: 静态生命周期 &str, 仅占位 (此 API 已废弃, 推荐 note_bytes/note_equals)
         ""
     }

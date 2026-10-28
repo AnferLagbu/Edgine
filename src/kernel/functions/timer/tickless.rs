@@ -187,7 +187,7 @@ impl TicklessSubsystem {
         state.idle_entry_time.store(now_ns, Ordering::Release);
 
         // 计算下一个定时器到期时间
-        let next_expiry = self.get_next_timer_expiry(cpu_id);
+        let next_expiry = Self::get_next_timer_expiry(cpu_id);
         state
             .next_timer_expiry
             .store(next_expiry, Ordering::Release);
@@ -234,15 +234,11 @@ impl TicklessSubsystem {
         Self::program_periodic(hz);
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 获取下一个定时器到期时间 (绝对纳秒, 单调时钟)
     ///
     /// 委托 hrtimer 子系统查询最早到期定时器; `0` 表示无待触发定时器
     /// (进入 tickless 后无限期停 tick, 等外部/设备中断唤醒)。
-    fn get_next_timer_expiry(&self, _cpu_id: u32) -> u64 {
+    fn get_next_timer_expiry(_cpu_id: u32) -> u64 {
         hrtimer_next_expiry().unwrap_or(0)
     }
 

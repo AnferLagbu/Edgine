@@ -744,12 +744,8 @@ impl UserProcManager {
         }
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 初始化占位 (`const` 构造已完成全部初始化, 此处无额外动作)
-    pub fn init(&self) {}
+    pub fn init() {}
 
     fn destroy(&self, proc: NonNull<UserProcess>, keep_kstack: bool) {
         // SAFETY: proc 是 NonNull<UserProcess>, 由 kmalloc 分配并插入
@@ -1064,11 +1060,7 @@ impl UserProcManager {
     /// `enter_user_asm` 快路径保持不变: 二者是同一状态的两个入口, 择一胜出结果
     /// 一致 (调度器侧亦执行 `set_kernel_stack` / `gdt_set_user_cr3` /
     /// `map_rsp0_page`, 见 `Scheduler::schedule`).
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    pub fn init_first_entry_context(&self, proc: *mut UserProcess) {
+    pub fn init_first_entry_context(proc: *mut UserProcess) {
         if proc.is_null() {
             return;
         }
@@ -1166,22 +1158,22 @@ impl UserProcManager {
         // 自检式调试: 验证用户页表关键映射
         #[cfg(target_arch = "x86_64")]
         {
-            let vmm = crate::privileged::mm::get_vmm();
-
             // 检查用户代码页 (0x400000) — 含 PTE 权限位自检
             let code_page_virt = rip_val & !(PAGE_SIZE - 1);
-            if let Some(phys) =
-                vmm.get_physical_in_pml4(cr3, crate::privileged::mm::VirtAddr(code_page_virt))
-            {
+            if let Some(phys) = crate::privileged::mm::Vmm::get_physical_in_pml4(
+                cr3,
+                crate::privileged::mm::VirtAddr(code_page_virt),
+            ) {
                 crate::klog_boot_info!(
                     "[USER] SELF-CHECK: user_code virt={:#X} -> phys={:#X} ✓",
                     code_page_virt,
                     phys.0
                 );
                 // 检查 PTE 原始值: 验证 PRESENT/USER/NX 位
-                if let Some(pte_raw) =
-                    vmm.get_pte_value(cr3, crate::privileged::mm::VirtAddr(code_page_virt))
-                {
+                if let Some(pte_raw) = crate::privileged::mm::VirtualMemoryManager::get_pte_value(
+                    cr3,
+                    crate::privileged::mm::VirtAddr(code_page_virt),
+                ) {
                     let present = (pte_raw & 0x001) != 0;
                     let writable = (pte_raw & 0x002) != 0;
                     let user = (pte_raw & 0x004) != 0;
@@ -1218,9 +1210,10 @@ impl UserProcManager {
 
             // 检查用户栈页 (第一次压栈将访问 rsp - 8 所在页)
             let first_access_virt = (rsp_initial - 8) & !(PAGE_SIZE - 1);
-            if let Some(phys) =
-                vmm.get_physical_in_pml4(cr3, crate::privileged::mm::VirtAddr(first_access_virt))
-            {
+            if let Some(phys) = crate::privileged::mm::Vmm::get_physical_in_pml4(
+                cr3,
+                crate::privileged::mm::VirtAddr(first_access_virt),
+            ) {
                 crate::klog_boot_info!(
                     "[USER] SELF-CHECK: user_stack_first_access virt={:#X} (rsp-8={:#X}) -> phys={:#X} ✓",
                     first_access_virt,
@@ -1243,9 +1236,10 @@ impl UserProcManager {
             let guard_page = proc_ref
                 .load_stack_bottom()
                 .saturating_sub(USER_STACK_GUARD);
-            if let Some(phys) =
-                vmm.get_physical_in_pml4(cr3, crate::privileged::mm::VirtAddr(guard_page))
-            {
+            if let Some(phys) = crate::privileged::mm::Vmm::get_physical_in_pml4(
+                cr3,
+                crate::privileged::mm::VirtAddr(guard_page),
+            ) {
                 crate::klog_boot_info!(
                     "[USER] SELF-CHECK: user_stack_guard_page virt={:#X} -> phys={:#X} (unexpected: should be unmapped)",
                     guard_page,
@@ -1260,9 +1254,10 @@ impl UserProcManager {
 
             // 检查内核栈页 (RSP0, iretq 帧所在页)
             let rsp0_check_virt = (kstack - 40) & !(PAGE_SIZE - 1);
-            if let Some(phys) =
-                vmm.get_physical_in_pml4(cr3, crate::privileged::mm::VirtAddr(rsp0_check_virt))
-            {
+            if let Some(phys) = crate::privileged::mm::Vmm::get_physical_in_pml4(
+                cr3,
+                crate::privileged::mm::VirtAddr(rsp0_check_virt),
+            ) {
                 crate::klog_boot_info!(
                     "[USER] SELF-CHECK: rsp0_stack virt={:#X} -> phys={:#X} ✓",
                     rsp0_check_virt,
@@ -1310,9 +1305,10 @@ impl UserProcManager {
 
             // 扩展自检: 验证用户代码页内容 (检查是否有有效指令)
             let code_page_virt = rip_val & !(PAGE_SIZE - 1);
-            if let Some(phys) =
-                vmm.get_physical_in_pml4(cr3, crate::privileged::mm::VirtAddr(code_page_virt))
-            {
+            if let Some(phys) = crate::privileged::mm::Vmm::get_physical_in_pml4(
+                cr3,
+                crate::privileged::mm::VirtAddr(code_page_virt),
+            ) {
                 // 通过内核映射读取用户代码页内容
                 let kernel_virt = phys.0 + crate::privileged::mm::KERNEL_BASE as u64;
                 let code_ptr = kernel_virt as *const u8;
@@ -1396,12 +1392,15 @@ impl UserProcManager {
 
                 // 验证 LSTAR 页面在用户页表中映射且可执行
                 let lstar_page = lstar & !(PAGE_SIZE - 1);
-                let vmm = crate::privileged::mm::get_vmm();
-                if let Some(phys) =
-                    vmm.get_physical_in_pml4(cr3, crate::privileged::mm::VirtAddr(lstar_page))
-                {
+                if let Some(phys) = crate::privileged::mm::Vmm::get_physical_in_pml4(
+                    cr3,
+                    crate::privileged::mm::VirtAddr(lstar_page),
+                ) {
                     if let Some(pte_raw) =
-                        vmm.get_pte_value(cr3, crate::privileged::mm::VirtAddr(lstar_page))
+                        crate::privileged::mm::VirtualMemoryManager::get_pte_value(
+                            cr3,
+                            crate::privileged::mm::VirtAddr(lstar_page),
+                        )
                     {
                         let present = (pte_raw & 0x001) != 0;
                         let user = (pte_raw & 0x004) != 0;
@@ -1567,10 +1566,6 @@ impl UserProcManager {
         ));
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 将 argc/argv/envp 写入用户进程栈
     /// 返回设置后的新栈指针 (RSP)
     ///
@@ -1578,7 +1573,6 @@ impl UserProcManager {
     ///
     /// `pid` 对应一个活动进程. 调用方必须持有进程表锁.
     pub unsafe fn setup_user_stack(
-        &self,
         proc: *mut UserProcess,
         argv: *const *const u8,
         arg_count: usize,
@@ -1933,7 +1927,7 @@ pub static USER_PROC_MANAGER: UserProcManager = UserProcManager::new();
 
 /// 用户进程子系统初始化入口 — 初始化全局 [`USER_PROC_MANAGER`] 并注册 memlock 限制查询回调。
 pub fn init() {
-    USER_PROC_MANAGER.init();
+    UserProcManager::init();
 
     // 注册 memlock 限制查询回调, 解耦 mm→proc 依赖
     // SAFETY: get_memlock_limit 是 'static 函数指针, 在内核运行期间始终有效.

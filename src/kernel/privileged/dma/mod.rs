@@ -7,7 +7,6 @@
 //! `PhysAddr`/`VirtAddr` 与无锁统计.
 #![deny(missing_docs)]
 
-use crate::privileged::mm::get_vmm;
 use crate::privileged::mm::{CACHE_LINE_SIZE, KERNEL_BASE, PAGE_SIZE, PhysAddr, VirtAddr};
 use crate::privileged::sync::IrqSpinLock as Mutex;
 use alloc::collections::BTreeMap;
@@ -233,9 +232,7 @@ fn virt_to_phys(virt: *const u8) -> u64 {
     if virt.is_null() {
         return 0;
     }
-    get_vmm()
-        .get_physical(VirtAddr(virt as u64))
-        .map_or(0, |p| p.0)
+    crate::privileged::mm::Vmm::get_physical(VirtAddr(virt as u64)).map_or(0, |p| p.0)
 }
 
 /// MMIO 虚拟地址区间分配器 (B04-13)

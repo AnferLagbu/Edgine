@@ -217,7 +217,7 @@ fn pipe_endpoint_is_vfs_open_file_with_drop_release() {
         "端点 Drop 必须释放 key (OpenFile 引用计数归零才触发 ⇒ fork/dup 共享语义)"
     );
     assert!(
-        src.contains(".pipe_create("),
+        src.contains("IpcLock::pipe_create("),
         "create_pair 必须经 functions 层 IPC 门面创建端点 key"
     );
     assert!(

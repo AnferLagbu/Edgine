@@ -62,20 +62,20 @@ fn test_per_cpu_sched_init() -> TestResult {
 }
 
 fn test_per_cpu_current_valid() -> TestResult {
-    use crate::privileged::proc::SCHEDULER;
-    let _current = SCHEDULER.current();
+    use crate::privileged::proc::Scheduler;
+    let _current = Scheduler::current();
     TestResult::Pass
 }
 
 fn test_per_cpu_has_runnable() -> TestResult {
-    use crate::privileged::proc::SCHEDULER;
-    let _runnable = SCHEDULER.has_any_runnable();
+    use crate::privileged::proc::Scheduler;
+    let _runnable = Scheduler::has_any_runnable();
     TestResult::Pass
 }
 
 fn test_per_cpu_rt_count() -> TestResult {
-    use crate::privileged::proc::SCHEDULER;
-    let count = SCHEDULER.get_rt_count();
+    use crate::privileged::proc::Scheduler;
+    let count = Scheduler::get_rt_count();
     check!(count <= 256, "RT task count bounded");
     TestResult::Pass
 }
@@ -128,30 +128,30 @@ fn test_sched_limit_init() -> TestResult {
 // ============================================================
 
 fn test_rt_policy_switching_self() -> TestResult {
-    use crate::privileged::proc::SCHEDULER;
     use crate::privileged::proc::SchedPolicy;
+    use crate::privileged::proc::Scheduler;
 
-    let pid = SCHEDULER.current().unwrap_or(0);
+    let pid = Scheduler::current().unwrap_or(0);
     if pid == 0 {
         return TestResult::Skip("no current process to switch policy");
     }
 
-    let result = SCHEDULER.set_sched_policy(pid, SchedPolicy::Fifo, 50);
+    let result = Scheduler::set_sched_policy(pid, SchedPolicy::Fifo, 50);
     check!(result, "set_sched_policy on current should succeed");
 
-    let result = SCHEDULER.set_sched_policy(pid, SchedPolicy::Rr, 30);
+    let result = Scheduler::set_sched_policy(pid, SchedPolicy::Rr, 30);
     check!(result, "switch Fifo → Rr should succeed");
 
-    let result = SCHEDULER.set_sched_policy(pid, SchedPolicy::Normal, 0);
+    let result = Scheduler::set_sched_policy(pid, SchedPolicy::Normal, 0);
     check!(result, "switch Rr → Normal should succeed");
     TestResult::Pass
 }
 
 fn test_rt_invalid_pid() -> TestResult {
-    use crate::privileged::proc::SCHEDULER;
     use crate::privileged::proc::SchedPolicy;
+    use crate::privileged::proc::Scheduler;
 
-    let result = SCHEDULER.set_sched_policy(0xFFFF_FFFF, SchedPolicy::Fifo, 50);
+    let result = Scheduler::set_sched_policy(0xFFFF_FFFF, SchedPolicy::Fifo, 50);
     check!(!result, "invalid PID must fail");
     TestResult::Pass
 }
@@ -161,8 +161,8 @@ fn test_rt_invalid_pid() -> TestResult {
 // ============================================================
 
 fn test_load_balance_no_panic() -> TestResult {
-    use crate::privileged::proc::SCHEDULER;
-    SCHEDULER.load_balance();
+    use crate::privileged::proc::Scheduler;
+    Scheduler::load_balance();
     TestResult::Pass
 }
 

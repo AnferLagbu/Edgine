@@ -13,7 +13,7 @@
 use core::sync::atomic::Ordering;
 
 use super::process::{PROCESS_TABLE, Process};
-use super::scheduler::SCHEDULER;
+use super::scheduler::{SCHEDULER, Scheduler};
 use super::types::{Pid, ProcessId, ProcessState};
 pub use super::user_proc::proc_alloc_pid;
 use super::user_proc::{USER_PROC_MANAGER, user_proc_clone};
@@ -218,7 +218,7 @@ pub extern "C" fn update_current_process_ptr(ptr: u64) {
 /// 返回当前调度进程的 PID (无则返回 0).
 #[unsafe(no_mangle)]
 pub extern "C" fn process_get_current_pid() -> u32 {
-    SCHEDULER.current().unwrap_or(0)
+    Scheduler::current().unwrap_or(0)
 }
 
 /// 检查指定 PID 的进程是否存在.
@@ -321,7 +321,7 @@ pub fn with_current_fd_table<F, R>(f: F) -> Option<R>
 where
     F: FnOnce(&super::process::FdTable) -> R,
 {
-    let ptr = SCHEDULER.get_current_process()?;
+    let ptr = Scheduler::get_current_process()?;
     // SAFETY: ptr 由 PROCESS_TABLE.get(当前 pid) 返回, 指向已注册且正在运行的
     // 当前进程 PCB; 当前进程持有对自身的引用, 本次调用期间不会被释放。
     let proc = unsafe { &*ptr };
@@ -343,7 +343,7 @@ pub extern "C" fn process_get_by_pid(pid: u32) -> u64 {
 /// 返回当前调度进程的 PWM 值 (无则 0).
 #[unsafe(no_mangle)]
 pub extern "C" fn process_get_current_pwm() -> u64 {
-    let pid = SCHEDULER.current().unwrap_or(0);
+    let pid = Scheduler::current().unwrap_or(0);
     if pid == 0 {
         return 0;
     }
@@ -368,7 +368,7 @@ pub extern "C" fn process_get_pwm_by_pid(pid: u32) -> u64 {
 /// 终止当前进程: 释放文件锁与 fd 表, 回收进程表项.
 #[unsafe(no_mangle)]
 pub extern "C" fn process_exit(exit_code: u32) {
-    let current_pid = SCHEDULER.current().unwrap_or(0);
+    let current_pid = Scheduler::current().unwrap_or(0);
     if current_pid != 0 {
         // 释放该进程持有的所有文件锁 (flock + POSIX lock)
         crate::privileged::fs::current_vfs_ops().release_pid_locks(current_pid);
@@ -402,12 +402,12 @@ pub extern "C" fn process_block(pid: u32) {
     if pid == 0 {
         return;
     }
-    let current_pid = SCHEDULER.current().unwrap_or(0);
+    let current_pid = Scheduler::current().unwrap_or(0);
     if pid != current_pid {
         return;
     }
-    SCHEDULER.block(BlockReason::FutexWait);
-    SCHEDULER.schedule();
+    Scheduler::block(BlockReason::FutexWait);
+    Scheduler::schedule();
 }
 
 /// 解除进程阻塞 (用于 futex wake / I/O 完成等)
@@ -417,7 +417,7 @@ pub extern "C" fn process_unblock(pid: u32) {
     if pid == 0 {
         return;
     }
-    SCHEDULER.unblock(pid);
+    Scheduler::unblock(pid);
 }
 
 // ============================================================================
@@ -437,7 +437,7 @@ pub extern "C" fn proc_exec_replace(
         return -1;
     }
 
-    let current_pid = SCHEDULER.current().unwrap_or(0);
+    let current_pid = Scheduler::current().unwrap_or(0);
     if current_pid == 0 {
         return -1;
     }
@@ -644,7 +644,7 @@ pub fn proc_save_user_regs_aarch64(
     reason = "ptr_cast_constness: *mut T as *const T 是已知安全 (Rust 2024 可用 ptr.cast_const 或 &raw const; 当前优先 expect"
 )]
 pub extern "C" fn sys_fork() -> Pid {
-    let parent_pid = SCHEDULER.current().unwrap_or(0);
+    let parent_pid = Scheduler::current().unwrap_or(0);
     if parent_pid == 0 {
         return 0;
     }
@@ -822,7 +822,7 @@ pub extern "C" fn sys_fork() -> Pid {
         p.children.lock().push(ProcessId(child_pid));
     });
     let _ = child.set_state_safe(ProcessState::Ready);
-    SCHEDULER.add_to_run_queue(child_pid);
+    Scheduler::add_to_run_queue(child_pid);
     child_pid
 }
 

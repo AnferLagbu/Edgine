@@ -38,7 +38,6 @@ use core::sync::atomic::Ordering;
 
 use super::proc_ops;
 use super::sched_ops;
-use super::scheduler::SCHEDULER;
 use super::user_proc::USER_PROC_MANAGER;
 
 // 向后兼容 re-export: 将已拆分至 proc_ops / sched_ops 的函数重新导出
@@ -54,14 +53,14 @@ pub use sched_ops::*;
 /// 初始化会话管理器。
 #[unsafe(no_mangle)]
 pub extern "C" fn session_init() {
-    super::session::SESSION_MANAGER.init();
+    super::session::SessionManager::init();
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 /// 初始化用户进程管理器。
 #[unsafe(no_mangle)]
 pub extern "C" fn user_proc_init() {
-    USER_PROC_MANAGER.init();
+    super::user_proc::UserProcManager::init();
 }
 
 // ============================================================================
@@ -116,7 +115,7 @@ pub unsafe extern "C" fn user_proc_setup_argv(
             return -1;
         };
 
-        let sp = USER_PROC_MANAGER.setup_user_stack(
+        let sp = super::user_proc::UserProcManager::setup_user_stack(
             proc,
             argv,
             arg_count as usize,
@@ -163,7 +162,7 @@ pub extern "C" fn user_proc_enter_by_pid(pid: u32) -> i32 {
         p.parent_pid = 1;
     });
 
-    SCHEDULER.set_current(pid);
+    super::scheduler::Scheduler::set_current(pid);
 
     crate::klog_boot_info!("[USER] calling USER_PROC_MANAGER.get({})", pid);
     USER_PROC_MANAGER.get(pid).map_or(-1, |proc| {
@@ -210,7 +209,7 @@ pub fn enter_user_process(pid: u32) {
     // 仍需先把 ProcessContext 填成有效用户态上下文 (cr3/rip/rsp), 维持
     // "可运行 ⇒ 上下文有效" 不变式, 使此后任意抢占路径均能正确进入用户态.
     if let Some(proc) = USER_PROC_MANAGER.get(pid) {
-        USER_PROC_MANAGER.init_first_entry_context(proc);
+        super::user_proc::UserProcManager::init_first_entry_context(proc);
     }
 
     user_proc_enter_by_pid(pid);

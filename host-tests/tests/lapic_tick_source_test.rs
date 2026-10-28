@@ -335,7 +335,7 @@ fn test_pit_retired_from_tick_delivery() {
         "重新 enable_irq(0): PIT 又会向 8259 投递 tick"
     );
     assert!(
-        irq.contains("manager.disable_irq(0)"),
+        irq.contains("IdtManager::disable_irq(0)"),
         "PIT 退役未显式屏蔽 PIC bit0 (不得依赖上游 boot 的 mask 状态)"
     );
 }

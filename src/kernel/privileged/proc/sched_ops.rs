@@ -19,7 +19,7 @@
 #![deny(missing_docs)]
 
 use super::process::PROCESS_TABLE;
-use super::scheduler::SCHEDULER;
+use super::scheduler::Scheduler;
 use super::types::{BlockReason, Pid, ProcessPriority};
 
 // ============================================================================
@@ -28,8 +28,7 @@ use super::types::{BlockReason, Pid, ProcessPriority};
 
 /// 获取当前调度进程的 CPU 时间 (tick 计数).
 pub fn scheduler_current_cputime() -> u64 {
-    SCHEDULER
-        .current()
+    Scheduler::current()
         .and_then(|pid| {
             PROCESS_TABLE.with_process(pid, |p| {
                 p.user_time.load(core::sync::atomic::Ordering::Acquire)
@@ -41,38 +40,38 @@ pub fn scheduler_current_cputime() -> u64 {
 
 /// 解除进程阻塞 (加入就绪队列).
 pub fn scheduler_unblock(pid: u32) {
-    SCHEDULER.unblock(pid);
+    Scheduler::unblock(pid);
 }
 
 /// 阻塞当前进程并让出 CPU.
 pub fn scheduler_block(reason: BlockReason) {
-    SCHEDULER.block(reason);
+    Scheduler::block(reason);
 }
 
 /// 将进程加入就绪队列.
 pub fn scheduler_add_to_run_queue(pid: u32) {
-    SCHEDULER.add_to_run_queue(pid);
+    Scheduler::add_to_run_queue(pid);
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 /// C ABI 导出: 让出当前 CPU 并触发重新调度 (扩展版)
 #[unsafe(no_mangle)]
 pub extern "C" fn scheduler_yield_ex() {
-    SCHEDULER.yield_current();
+    Scheduler::yield_current();
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 /// C ABI 导出: 让出当前 CPU 并触发重新调度
 #[unsafe(no_mangle)]
 pub extern "C" fn scheduler_yield() {
-    SCHEDULER.yield_current();
+    Scheduler::yield_current();
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 /// C ABI 导出: 选择下一个可运行进程, 返回其 PID (无则返回 0)
 #[unsafe(no_mangle)]
 pub extern "C" fn scheduler_schedule() -> Pid {
-    SCHEDULER.schedule().unwrap_or(0)
+    Scheduler::schedule().unwrap_or(0)
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
@@ -84,7 +83,7 @@ pub extern "C" fn scheduler_tick() {
     // 线程级 `SCHEDULER_EX` 并行实现已移除 (P-29 route C): 进程级 CFS 记账/抢占判定/
     // 睡眠唤醒/僵尸回收/周期负载均衡均由本 `Scheduler::tick` per-CPU 路径单点承担,
     // 其中 user/sys 时间记账直接调 `proc_account_tick`.
-    SCHEDULER.tick(crate::privileged::smp::get_current_cpu() as usize);
+    Scheduler::tick(crate::privileged::smp::get_current_cpu() as usize);
 }
 
 // 初始化职责已移出本文件 (P-8 init 编排收口): 原 `#[unsafe(no_mangle)]
@@ -101,8 +100,7 @@ pub extern "C" fn scheduler_tick() {
 /// C ABI 导出: 返回当前进程的 PWM (比例权重) 值, 无当前进程则返回 0
 #[unsafe(no_mangle)]
 pub extern "C" fn scheduler_get_current_pwm() -> u64 {
-    SCHEDULER
-        .current()
+    Scheduler::current()
         .and_then(|pid| PROCESS_TABLE.with_process(pid, super::process::Process::get_pwm))
         .unwrap_or(0)
 }

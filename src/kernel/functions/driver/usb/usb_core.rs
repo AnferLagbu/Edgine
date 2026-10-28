@@ -612,10 +612,10 @@ impl UsbCore {
         device.state = DeviceState::Addressed;
 
         // 获取设备描述符
-        self.get_device_descriptor(controller, &mut device)?;
+        Self::get_device_descriptor(controller, &mut device)?;
 
         // 配置设备
-        self.configure_device(controller, &mut device)?;
+        Self::configure_device(controller, &mut device)?;
 
         // 添加到设备列表
         self.devices.push(device);
@@ -623,13 +623,8 @@ impl UsbCore {
         Ok(())
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 获取设备描述符
     fn get_device_descriptor(
-        &self,
         controller: &mut dyn HostController,
         device: &mut UsbDevice,
     ) -> Result<()> {
@@ -680,16 +675,8 @@ impl UsbCore {
         Ok(())
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 配置设备
-    fn configure_device(
-        &self,
-        controller: &mut dyn HostController,
-        device: &mut UsbDevice,
-    ) -> Result<()> {
+    fn configure_device(controller: &mut dyn HostController, device: &mut UsbDevice) -> Result<()> {
         let setup = UsbSetupPacket {
             request_type: 0x00,
             request: StandardRequest::SetConfiguration as u8,

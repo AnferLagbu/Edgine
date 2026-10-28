@@ -292,7 +292,7 @@ pub fn do_signal_send_extended(pid: i32, sig: u8) -> Result<usize, i32> {
             0 => {
                 // 至少检查当前进程存在
                 if PROCESS_TABLE
-                    .get(super::scheduler::SCHEDULER.current().unwrap_or(0))
+                    .get(super::scheduler::Scheduler::current().unwrap_or(0))
                     .is_some()
                 {
                     Ok(1)
@@ -340,7 +340,7 @@ pub fn do_signal_send_extended(pid: i32, sig: u8) -> Result<usize, i32> {
         }
         0 => {
             // 广播到同进程组
-            let current = super::scheduler::SCHEDULER.current().unwrap_or(0);
+            let current = super::scheduler::Scheduler::current().unwrap_or(0);
             let current_pgid = PROCESS_TABLE
                 .get(current)
                 // SAFETY: PROCESS_TABLE 保证指针有效, 进程在表中期间不会释放; 只读 pgid
@@ -526,7 +526,7 @@ pub fn do_signal_default_action(pid: Pid, sig: u8, frame_addr: u64) {
 /// - frame 指针必须有效且指向当前 CPU 的中断帧
 /// - 仅在返回用户态前调用 (中断上下文或系统调用出口)
 pub fn do_signal_deliver(frame: *mut crate::privileged::idt::InterruptFrame) -> bool {
-    let Some(pid) = super::scheduler::SCHEDULER.current() else {
+    let Some(pid) = super::scheduler::Scheduler::current() else {
         return false;
     };
 

@@ -95,7 +95,7 @@ pub fn register_timer_irq() -> Result<(), &'static str> {
 
     // PIT 退役: 显式屏蔽 PIC bit0. boot.asm 启动即全 mask 8259, 旧写法靠此处
     // enable_irq(0) 解 mask 才能收到 tick; 现在不得再解, 且不依赖上游状态.
-    manager.disable_irq(0);
+    IdtManager::disable_irq(0);
 
     Ok(())
 }

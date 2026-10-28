@@ -69,6 +69,17 @@ pub mod vmm;
 #[path = "vmm_aarch64.rs"]
 pub mod vmm;
 
+/// 架构无关的 VMM 类型别名 (x86_64 为 `VirtualMemoryManager`, aarch64 为 `Aarch64Vmm`).
+///
+/// 跨架构共用代码在调用两架构同形的关联函数 (如 `acquire_lock` / `get_pte_value`)
+/// 时使用本别名, 避免把架构专有类型名写进 `cow` / `swap` 等共享模块.
+#[cfg(target_arch = "x86_64")]
+pub use vmm::VirtualMemoryManager as Vmm;
+
+/// 架构无关的 VMM 类型别名 (x86_64 为 `VirtualMemoryManager`, aarch64 为 `Aarch64Vmm`).
+#[cfg(target_arch = "aarch64")]
+pub use vmm::Aarch64Vmm as Vmm;
+
 /// T-02: 物理页帧分配决策 trait
 pub mod alloc_trait;
 pub mod api;
@@ -347,10 +358,9 @@ pub(crate) fn release_table_frame_locked(phys: PhysAddr) {
 /// 直接用 `release_frame_locked`, 否则构成递归加锁.
 #[track_caller]
 pub(crate) fn release_frame(phys: PhysAddr) {
-    let vmm_inst = vmm::get_vmm();
-    let lock_flags = vmm_inst.acquire_lock();
+    let lock_flags = Vmm::acquire_lock();
     release_frame_locked(phys);
-    vmm_inst.release_lock(lock_flags);
+    Vmm::release_lock(lock_flags);
 }
 
 /// 页表索引辅助宏

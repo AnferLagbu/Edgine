@@ -21,8 +21,7 @@ use core::arch::asm;
 /// 封装一个有效的 I/O 端口范围, 提供类型安全的读写。
 pub struct IoPort {
     base: u16,
-    /// 端口长度, 用于 `check_offset` 越界校验. 仅 `x86_64` PIO 路径使用.
-    #[cfg(target_arch = "x86_64")]
+    /// 端口长度, 用于 `check_offset` 越界校验 (两架构共同的调用契约校验).
     len: u16,
     name: &'static str,
 }
@@ -42,12 +41,7 @@ impl IoPort {
         if base.checked_add(len).is_none() {
             return Err("IoPort: port range overflow");
         }
-        Ok(Self {
-            base,
-            #[cfg(target_arch = "x86_64")]
-            len,
-            name,
-        })
+        Ok(Self { base, len, name })
     }
 
     /// 安全 PIO 构造 (已知 base/len 合法)
@@ -73,8 +67,7 @@ impl IoPort {
         self.name
     }
 
-    /// 检查偏移量是否在端口范围内 (仅 `x86_64` 使用)
-    #[cfg(target_arch = "x86_64")]
+    /// 检查偏移量是否在端口范围内 (两架构共同调用, aarch64 桩亦据此校验契约)
     fn check_offset(&self, offset: u16, size: u16) -> Result<u16, &'static str> {
         if offset.saturating_add(size) > self.len {
             return Err("IoPort: access out of bounds");
@@ -106,13 +99,14 @@ impl IoPort {
     ///
     /// aarch64 无 PIO 概念, 应使用 MMIO 替代。此处返回 0xFF 以保持 API 兼容,
     /// 编译期由 `#[cfg(target_arch = "x86_64")]` 关闭实际定义。
+    ///
+    /// # Panics
+    /// 端口偏移越界时 panic (与 x86 实装同口径校验)。
     #[cfg(target_arch = "aarch64")]
     #[inline]
-    #[expect(
-        clippy::unused_self,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
-    pub fn read_u8(&self, _offset: u16) -> u8 {
+    pub fn read_u8(&self, offset: u16) -> u8 {
+        self.check_offset(offset, 1)
+            .expect("IoPort::read_u8: offset+1 越界");
         0xFF
     }
 
@@ -136,13 +130,14 @@ impl IoPort {
     }
 
     /// 读取 u16 (aarch64 桩)。
+    ///
+    /// # Panics
+    /// 端口偏移越界时 panic (与 x86 实装同口径校验)。
     #[cfg(target_arch = "aarch64")]
     #[inline]
-    #[expect(
-        clippy::unused_self,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
-    pub fn read_u16(&self, _offset: u16) -> u16 {
+    pub fn read_u16(&self, offset: u16) -> u16 {
+        self.check_offset(offset, 2)
+            .expect("IoPort::read_u16: offset+2 越界");
         0xFFFF
     }
 
@@ -166,13 +161,14 @@ impl IoPort {
     }
 
     /// 读取 u32 (aarch64 桩)。
+    ///
+    /// # Panics
+    /// 端口偏移越界时 panic (与 x86 实装同口径校验)。
     #[cfg(target_arch = "aarch64")]
     #[inline]
-    #[expect(
-        clippy::unused_self,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
-    pub fn read_u32(&self, _offset: u16) -> u32 {
+    pub fn read_u32(&self, offset: u16) -> u32 {
+        self.check_offset(offset, 4)
+            .expect("IoPort::read_u32: offset+4 越界");
         0xFFFF_FFFF
     }
 
@@ -197,14 +193,15 @@ impl IoPort {
     ///
     /// aarch64 上无 PIO, 编译期由 cfg 关闭实际 PIO 实现。
     /// 调用方应使用 MMIO 寄存器访问 (IoMem) 替代。
+    ///
+    /// # Panics
+    /// 端口偏移越界时 panic (与 x86 实装同口径校验)。
     #[cfg(target_arch = "aarch64")]
     #[inline]
-    #[expect(
-        clippy::unused_self,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
-    pub fn write_u8(&self, _offset: u16, _val: u8) {
-        // no-op on aarch64: PIO is x86-only.
+    pub fn write_u8(&self, offset: u16, _val: u8) {
+        // no-op on aarch64: PIO is x86-only; 仅按 x86 同口径校验偏移契约.
+        self.check_offset(offset, 1)
+            .expect("IoPort::write_u8: offset+1 越界");
     }
 
     /// 写入 u16
@@ -225,14 +222,15 @@ impl IoPort {
     }
 
     /// 写入 u16 (aarch64 桩)。
+    ///
+    /// # Panics
+    /// 端口偏移越界时 panic (与 x86 实装同口径校验)。
     #[cfg(target_arch = "aarch64")]
     #[inline]
-    #[expect(
-        clippy::unused_self,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
-    pub fn write_u16(&self, _offset: u16, _val: u16) {
-        // no-op on aarch64.
+    pub fn write_u16(&self, offset: u16, _val: u16) {
+        // no-op on aarch64; 仅按 x86 同口径校验偏移契约.
+        self.check_offset(offset, 2)
+            .expect("IoPort::write_u16: offset+2 越界");
     }
 
     /// 写入 u32
@@ -253,14 +251,15 @@ impl IoPort {
     }
 
     /// 写入 u32 (aarch64 桩)。
+    ///
+    /// # Panics
+    /// 端口偏移越界时 panic (与 x86 实装同口径校验)。
     #[cfg(target_arch = "aarch64")]
     #[inline]
-    #[expect(
-        clippy::unused_self,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
-    pub fn write_u32(&self, _offset: u16, _val: u32) {
-        // no-op on aarch64.
+    pub fn write_u32(&self, offset: u16, _val: u32) {
+        // no-op on aarch64; 仅按 x86 同口径校验偏移契约.
+        self.check_offset(offset, 4)
+            .expect("IoPort::write_u32: offset+4 越界");
     }
 }
 

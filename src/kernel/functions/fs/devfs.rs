@@ -268,12 +268,8 @@ impl DevfsData {
         None
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 按设备类型读取，返回写入 `buf` 的字节数（负数为错误码）。
-    pub fn read(&self, dev_type: u8, buf: &mut [u8]) -> i32 {
+    pub fn read(dev_type: u8, buf: &mut [u8]) -> i32 {
         match DevKind::from_u8(dev_type) {
             Some(DevKind::Null | DevKind::Console | DevKind::Tty) => 0,
             Some(DevKind::Zero) => {
@@ -344,12 +340,8 @@ impl DevfsData {
         }
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 按设备类型写入，返回消耗的字节数（负数为错误码）。
-    pub fn write(&self, dev_type: u8, buf: &[u8]) -> i32 {
+    pub fn write(dev_type: u8, buf: &[u8]) -> i32 {
         match DevKind::from_u8(dev_type) {
             Some(DevKind::Null | DevKind::Zero) => {
                 crate::functions::intcast::low_i32_from_usize(buf.len())
@@ -515,8 +507,8 @@ impl SafeDevFs {
     ///
     /// # Errors
     /// 当底层设备读操作失败时返回 `Io`.
-    pub fn read(&self, dev: DevFile, buf: &mut [u8]) -> Result<usize, KernelError> {
-        let rc = self.inner.read(dev.kind as u8, buf);
+    pub fn read(dev: DevFile, buf: &mut [u8]) -> Result<usize, KernelError> {
+        let rc = DevfsData::read(dev.kind as u8, buf);
         if rc < 0 {
             Err(KernelError::Io)
         } else {
@@ -528,8 +520,8 @@ impl SafeDevFs {
     ///
     /// # Errors
     /// 当底层设备写操作失败时返回 `Io`.
-    pub fn write(&self, dev: DevFile, buf: &[u8]) -> Result<usize, KernelError> {
-        let rc = self.inner.write(dev.kind as u8, buf);
+    pub fn write(dev: DevFile, buf: &[u8]) -> Result<usize, KernelError> {
+        let rc = DevfsData::write(dev.kind as u8, buf);
         if rc < 0 {
             Err(KernelError::Io)
         } else {
@@ -649,7 +641,7 @@ impl DevFsInode {
 
 impl Inode for DevFsInode {
     fn read(&self, _offset: u64, buf: &mut [u8], _pwm: u64) -> KernelResult<usize> {
-        let result = DEVFS_DATA.read(self.dev_type, buf);
+        let result = DevfsData::read(self.dev_type, buf);
         if result < 0 {
             Err(KernelError::Io)
         } else {
@@ -658,7 +650,7 @@ impl Inode for DevFsInode {
     }
 
     fn write(&self, _offset: u64, buf: &[u8], _pwm: u64) -> KernelResult<usize> {
-        let result = DEVFS_DATA.write(self.dev_type, buf);
+        let result = DevfsData::write(self.dev_type, buf);
         if result < 0 {
             Err(KernelError::Io)
         } else {
@@ -743,7 +735,7 @@ impl FileSystem for DevfsData {
 
     fn fs_read(&self, handle: u32, _offset: u64, buf: &mut [u8], _pwm: u64) -> KernelResult<usize> {
         // DevFS read 需要 dev_type, handle 即为 dev_type
-        let result = self.read(crate::functions::intcast::low_u8_from_u32(handle), buf);
+        let result = DevfsData::read(crate::functions::intcast::low_u8_from_u32(handle), buf);
         if result < 0 {
             Err(KernelError::Io)
         } else {
@@ -752,7 +744,7 @@ impl FileSystem for DevfsData {
     }
 
     fn fs_write(&self, handle: u32, _offset: u64, buf: &[u8], _pwm: u64) -> KernelResult<usize> {
-        let result = self.write(crate::functions::intcast::low_u8_from_u32(handle), buf);
+        let result = DevfsData::write(crate::functions::intcast::low_u8_from_u32(handle), buf);
         if result < 0 {
             Err(KernelError::Io)
         } else {
@@ -907,17 +899,15 @@ mod tests {
 
     #[test]
     fn test_devfs_read_null() {
-        let devfs = DevfsData::new();
         let mut buf = [0xAAu8; 16];
-        let n = devfs.read(0, &mut buf);
+        let n = DevfsData::read(0, &mut buf);
         assert_eq!(n, 0, "null device should return 0 bytes");
     }
 
     #[test]
     fn test_devfs_read_zero() {
-        let devfs = DevfsData::new();
         let mut buf = [0xFFu8; 16];
-        let n = devfs.read(1, &mut buf);
+        let n = DevfsData::read(1, &mut buf);
         assert_eq!(n, 16, "zero device should fill buffer");
         assert_eq!(buf, [0u8; 16], "zero device should fill with zeros");
     }

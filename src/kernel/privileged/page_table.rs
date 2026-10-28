@@ -18,7 +18,9 @@
 
 #[cfg(target_arch = "x86_64")]
 use crate::privileged::mm::KERNEL_BASE;
-use crate::privileged::mm::{PAGE_SIZE, PageFlags, PhysAddr, VirtAddr, get_vmm};
+#[cfg(target_arch = "x86_64")]
+use crate::privileged::mm::get_vmm;
+use crate::privileged::mm::{PAGE_SIZE, PageFlags, PhysAddr, VirtAddr};
 
 /// 检查虚拟地址是否在用户地址空间内。
 ///
@@ -73,8 +75,7 @@ pub fn check_wxorx(vaddr: VirtAddr, flags: PageFlags) {
 /// 遍历当前激活的页表, 确认 phys 存在且 flags 匹配。
 /// 仅在 `debug_assertions` 启用时调用以避免性能开销。
 pub fn verify_mapping(vaddr: VirtAddr, expected_phys: PhysAddr) {
-    let vmm = get_vmm();
-    if let Some(actual) = vmm.get_physical(vaddr) {
+    if let Some(actual) = crate::privileged::mm::Vmm::get_physical(vaddr) {
         debug_assert_eq!(
             actual.as_u64(),
             expected_phys.as_u64(),
@@ -88,11 +89,10 @@ pub fn verify_mapping(vaddr: VirtAddr, expected_phys: PhysAddr) {
 
 /// 内核镜像保护: 确保内核代码段不可写。
 pub fn verify_kernel_code_protection(kernel_text_start: VirtAddr, kernel_text_end: VirtAddr) {
-    let vmm = get_vmm();
     let mut addr = kernel_text_start.as_u64() & !(PAGE_SIZE - 1);
     let end = kernel_text_end.as_u64();
     while addr < end {
-        if let Some(phys) = vmm.get_physical(VirtAddr(addr)) {
+        if let Some(phys) = crate::privileged::mm::Vmm::get_physical(VirtAddr(addr)) {
             // 不检查 flags(页表遍历不应触发缺页),
             // 仅确认映射存在且物理地址非零。
             debug_assert!(

@@ -226,9 +226,9 @@ unsafe extern "C" {
 /// 调用方保证: `kernel_ttbr1` 是当前 TTBR1_EL1 的有效物理地址; PMM 已初始化;
 /// KPTI 全局状态在 boot 阶段被独占写入.
 ///
-/// `vmm` 由调用方以 `&self` 传入 (而非经 `get_vmm()`): 本函数在
-/// `vmm_init` 的 `OnceLock` 初始化**过程中**被调用, 此刻全局实例尚不可获取.
-pub unsafe fn kpti_init(vmm: &super::vmm::Aarch64Vmm, kernel_ttbr1: u64) {
+/// 页表操作走关联函数 (不依赖实例状态), 故本函数可在 `vmm_init` 的
+/// `OnceLock` 初始化**过程中**被调用 —— 此刻全局实例尚不可获取.
+pub unsafe fn kpti_init(kernel_ttbr1: u64) {
     if kpti_is_active() {
         return;
     }
@@ -263,7 +263,7 @@ pub unsafe fn kpti_init(vmm: &super::vmm::Aarch64Vmm, kernel_ttbr1: u64) {
     let mut pa = virt_to_phys(&raw const _vectors_start as u64);
     let vectors_end = virt_to_phys(&raw const _vectors_end as u64);
     while pa < vectors_end {
-        vmm.map_page_in_table(
+        super::vmm::Aarch64Vmm::map_page_in_table(
             tramp_l0_phys,
             super::VirtAddr(phys_to_virt(pa)),
             super::PhysAddr(pa),
@@ -272,7 +272,7 @@ pub unsafe fn kpti_init(vmm: &super::vmm::Aarch64Vmm, kernel_ttbr1: u64) {
         pa += PAGE_SIZE;
     }
     let globals_pa = virt_to_phys(core::ptr::addr_of!(KPTI_GLOBALS) as u64) & !(PAGE_SIZE - 1);
-    vmm.map_page_in_table(
+    super::vmm::Aarch64Vmm::map_page_in_table(
         tramp_l0_phys,
         super::VirtAddr(phys_to_virt(globals_pa)),
         super::PhysAddr(globals_pa),
@@ -286,7 +286,7 @@ pub unsafe fn kpti_init(vmm: &super::vmm::Aarch64Vmm, kernel_ttbr1: u64) {
     let cpu_slots_end = cpu_slots_pa + core::mem::size_of::<KptiCpuStateArray>() as u64;
     let mut pa = cpu_slots_pa;
     while pa < cpu_slots_end {
-        vmm.map_page_in_table(
+        super::vmm::Aarch64Vmm::map_page_in_table(
             tramp_l0_phys,
             super::VirtAddr(phys_to_virt(pa)),
             super::PhysAddr(pa),

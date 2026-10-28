@@ -231,11 +231,11 @@ fn aarch64_destroy_takes_vmm_lock() {
     let src = read(VMM_AARCH64_RS);
     let body = slice_between(&src, "pub fn destroy_page_table", "\n    }");
     assert!(
-        body.contains("self.acquire_lock()"),
+        body.contains("Self::acquire_lock()"),
         "aarch64 destroy_page_table 必须持 VMM_LOCK (帧入批次链的单写者前提)"
     );
     assert!(
-        body.contains("self.release_lock(guard)"),
+        body.contains("Self::release_lock(guard)"),
         "aarch64 destroy_page_table 必须在收尾释放 VMM_LOCK"
     );
 }

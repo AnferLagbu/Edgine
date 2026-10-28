@@ -180,7 +180,7 @@ impl RecoveryManager {
                             failures
                         );
                         if dom.try_rollback(current_tick, 0) {
-                            let (entries, _, _, _) = self.rollback_domain(dom, current_tick, 0, 0);
+                            let (entries, _, _, _) = Self::rollback_domain(dom, current_tick, 0, 0);
                             crate::klog_ffi!(
                                 klog_ffi_info,
                                 "[FREG] domain {} rollback recovered (entries={})",
@@ -276,12 +276,7 @@ impl RecoveryManager {
     }
 
     /// 对单个域执行指定深度的回滚, 返回 (回滚条目数, 起始代际, 目标代际, 结果码).
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     pub fn rollback_domain(
-        &self,
         dom: &RecoveryDomain,
         tick: u64,
         fingerprint: u64,
@@ -348,7 +343,7 @@ impl RecoveryManager {
             if let Some(dom) = self.find(current_id) {
                 if dom.try_rollback(tick, fingerprint) {
                     let (entries, _, _, _) =
-                        self.rollback_domain(dom, tick, fingerprint, rolled_back);
+                        Self::rollback_domain(dom, tick, fingerprint, rolled_back);
                     if entries > 0 {
                         rolled_back += 1;
                     }

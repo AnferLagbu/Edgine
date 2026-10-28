@@ -117,7 +117,7 @@ pub fn nvme_register_msix_isr(msi_vector: u8) -> Result<(), &'static str> {
     manager.register_msi_irq(irq, nvme_msix_irq_handler, "nvme-msix")?;
     // enable_irq 用于 PIC IRQ 路径; MSI vector 不需 enable (LAPIC 已 mask).
     // 但 IDT 抽象统一要求 enable_irq (否则 vector 被屏蔽). 调用以保持一致性.
-    manager.enable_irq(irq);
+    IdtManager::enable_irq(irq);
     crate::klog_info!(
         Driver,
         "NVMe MSI-X ISR registered: vector={}, irq={}",
@@ -199,7 +199,6 @@ pub fn nvme_alloc_io_queues() -> Option<((u64, u64), (u64, u64))> {
 /// 物理页由 `BuddyFrameAlloc` 分配并清零, 句柄析构即按持有计数归还物理帧
 /// (取代原 `alloc_coherent` + `free_coherent` 双键反查路径)。
 fn alloc_dma_buffer(size: usize) -> Option<DmaStream> {
-    use crate::privileged::dma::get_dma;
     use crate::privileged::mem_alloc::frame_alloc::{BuddyFrameAlloc, FrameAlloc};
     use crate::privileged::mm::PAGE_SIZE;
 
@@ -213,7 +212,10 @@ fn alloc_dma_buffer(size: usize) -> Option<DmaStream> {
     let stream = DmaStream::from_frame(frame, DmaDirection::Bidirectional).ok()?;
     // 保持既有 alloc_coherent 的"清零对设备可见"语义
     // (x86_64: CLFLUSH 循环; aarch64: DC CVAU + dsb ish)
-    get_dma().cache_flush(stream.dma_addr().to_virt(), stream.size());
+    crate::privileged::dma::engine::DmaEngine::cache_flush(
+        stream.dma_addr().to_virt(),
+        stream.size(),
+    );
     Some(stream)
 }
 

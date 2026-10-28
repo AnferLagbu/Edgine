@@ -85,18 +85,17 @@ impl VmSpace {
         if va & !USER_VADDR_MASK != 0 {
             return Err("vaddr outside user address space");
         }
-        let vmm = get_vmm();
-
-        vmm.map_page_in_table(self.pt_root.as_u64(), vaddr, frame.phys(), flags);
+        crate::privileged::mm::Vmm::map_page_in_table(
+            self.pt_root.as_u64(),
+            vaddr,
+            frame.phys(),
+            flags,
+        );
 
         frame.inc_ref();
         Ok(())
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
     /// 映射大页 (2MB / 1GB)
     ///
     /// # Errors
@@ -104,7 +103,6 @@ impl VmSpace {
     /// 当底层 `map_huge_page` 失败 (如地址未按大页对齐、中间页表分配失败) 时
     /// 返回其 `Err`.
     pub fn map_huge(
-        &self,
         vaddr: VirtAddr,
         frame: &Frame,
         flags: PageFlags,
@@ -130,9 +128,10 @@ impl VmSpace {
         if va & !USER_VADDR_MASK != 0 {
             return Err("vaddr outside user address space");
         }
-        let vmm = get_vmm();
-
-        vmm.unmap_page_in_table(self.pt_root.as_u64(), vaddr);
+        #[cfg(target_arch = "x86_64")]
+        get_vmm().unmap_page_in_table(self.pt_root.as_u64(), vaddr);
+        #[cfg(target_arch = "aarch64")]
+        crate::privileged::mm::vmm::Aarch64Vmm::unmap_page_in_table(self.pt_root.as_u64(), vaddr);
 
         Ok(())
     }
@@ -147,11 +146,10 @@ impl VmSpace {
         if va & !USER_VADDR_MASK != 0 {
             return Err("vaddr outside user address space");
         }
-        let vmm = get_vmm();
         // 就地改权限: 不拆除映射, 故不触及帧持有计数面.
         // (原 "先 unmap 再 map" 形态在 unmap 侧会 `frame_dec`, 若该 leaf 是唯一
         // 持有者则计数归零进入延迟释放, 随后又把待释放帧挂回 ⇒ UAF.)
-        vmm.protect_page_in_table(self.pt_root.as_u64(), vaddr, new_flags);
+        crate::privileged::mm::Vmm::protect_page_in_table(self.pt_root.as_u64(), vaddr, new_flags);
         Ok(())
     }
 
@@ -161,9 +159,7 @@ impl VmSpace {
     /// 仅由调度器在 context switch 时调用。
     /// 调用方确保当前 CPU 不在中断上下文中。
     pub unsafe fn activate(&self) {
-        let vmm = get_vmm();
-
-        vmm.switch_page_table(self.pt_root.as_u64());
+        crate::privileged::mm::Vmm::switch_page_table(self.pt_root.as_u64());
     }
 
     /// 销毁地址空间（释放页表页）。
@@ -171,9 +167,10 @@ impl VmSpace {
     /// # SAFETY
     /// 调用前确保无 CPU 运行在此地址空间上。
     pub unsafe fn destroy(&self) {
-        let vmm = get_vmm();
-
-        vmm.destroy_page_table(self.pt_root.as_u64());
+        #[cfg(target_arch = "x86_64")]
+        get_vmm().destroy_page_table(self.pt_root.as_u64());
+        #[cfg(target_arch = "aarch64")]
+        crate::privileged::mm::Vmm::destroy_page_table(self.pt_root.as_u64());
     }
 }
 
