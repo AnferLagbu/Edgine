@@ -317,7 +317,7 @@ pub unsafe fn call_rcu(head: *mut RcuHead, func: unsafe fn(*mut RcuHead)) {
     data.callback_count.fetch_add(1, Ordering::Relaxed);
     data.need_callback_process.store(true, Ordering::Release);
 
-    crate::privileged::sync::restore_interrupts(&flags);
+    crate::privileged::sync::restore_interrupts(flags);
 
     crate::privileged::irq::raise_softirq(crate::privileged::irq::SoftirqVec::High);
 }
@@ -347,7 +347,7 @@ pub fn process_callbacks() {
     data.callback_count.store(0, Ordering::Relaxed);
     data.need_callback_process.store(false, Ordering::Release);
 
-    crate::privileged::sync::restore_interrupts(&flags);
+    crate::privileged::sync::restore_interrupts(flags);
 
     let mut cur = head;
     while !cur.is_null() {
@@ -404,7 +404,7 @@ pub fn rcu_process_all_callbacks() {
             }
             data.callback_count.store(0, Ordering::Relaxed);
             data.need_callback_process.store(false, Ordering::Release);
-            crate::privileged::sync::restore_interrupts(&flags);
+            crate::privileged::sync::restore_interrupts(flags);
 
             let mut cur = head;
             while !cur.is_null() {

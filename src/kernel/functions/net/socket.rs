@@ -78,16 +78,12 @@ pub fn socket(domain: Domain, sock_type: SockType, _protocol: i32) -> SocketResu
         .map_err(map_net_error)
 }
 
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-)]
 /// POSIX `bind(fd, addr, addrlen)`
 ///
 /// # Errors
 ///
 /// 当网络栈尚未就绪时返回 `SocketError::NotReady`; `fd` 无效、地址非法或地址已被占用等底层错误被映射为对应的 `SocketError`。
-pub fn bind(fd: i32, addr: &SockAddrIn) -> SocketResult<()> {
+pub fn bind(fd: i32, addr: SockAddrIn) -> SocketResult<()> {
     let ep = NetEndpoint::new_v4(Ipv4Addr::from_octets(addr.ip), addr.port);
     let s = net_stack().ok_or(SocketError::NotReady)?;
     let s = s.lock();
@@ -116,16 +112,12 @@ pub fn accept(fd: i32) -> SocketResult<i32> {
     s.accept_fd(fd).map_err(map_net_error)
 }
 
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-)]
 /// POSIX `connect(fd, addr, addrlen)`
 ///
 /// # Errors
 ///
 /// 当网络栈尚未就绪时返回 `SocketError::NotReady`; `fd` 无效或连接失败等底层错误被映射为对应的 `SocketError`。
-pub fn connect(fd: i32, addr: &SockAddrIn) -> SocketResult<()> {
+pub fn connect(fd: i32, addr: SockAddrIn) -> SocketResult<()> {
     let ep = NetEndpoint::new_v4(Ipv4Addr::from_octets(addr.ip), addr.port);
     let s = net_stack().ok_or(SocketError::NotReady)?;
     let s = s.lock();
@@ -156,16 +148,12 @@ pub fn recv(fd: i32, out: &mut [u8]) -> SocketResult<usize> {
     s.recv_fd(fd, out).map_err(map_net_error)
 }
 
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-)]
 /// POSIX `sendto(fd, buf, len, flags, dest_addr, addrlen)`
 ///
 /// # Errors
 ///
 /// 当网络栈尚未就绪时返回 `SocketError::NotReady`; `fd` 无效或发送失败等底层错误被映射为对应的 `SocketError`。
-pub fn sendto(fd: i32, buf: &[u8], dest: &SockAddrIn) -> SocketResult<usize> {
+pub fn sendto(fd: i32, buf: &[u8], dest: SockAddrIn) -> SocketResult<usize> {
     let ep = NetEndpoint::new_v4(Ipv4Addr::from_octets(dest.ip), dest.port);
     let s = net_stack().ok_or(SocketError::NotReady)?;
     let s = s.lock();

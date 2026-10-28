@@ -1000,9 +1000,9 @@ impl SmoltcpNetStack {
         lease_duration_ms: u64,
     ) -> DhcpAction {
         policy.decide(
-            &self.dhcp_state,
+            self.dhcp_state,
             &self.config,
-            policy_cfg,
+            *policy_cfg,
             retry_count,
             elapsed_ms,
             lease_duration_ms,
@@ -1457,9 +1457,9 @@ mod tests {
         impl DhcpPolicy for AlwaysContinue {
             fn decide(
                 &self,
-                _state: &DhcpState,
+                _state: DhcpState,
                 _cfg: &NetConfig,
-                _pc: &DhcpPolicyConfig,
+                _pc: DhcpPolicyConfig,
                 _retry: u32,
                 _elapsed: u64,
                 _lease: u64,
@@ -1513,7 +1513,7 @@ mod tests {
         let pc = DhcpPolicyConfig::default();
         // 纯策略调用, 不经过 stack
         assert_eq!(
-            policy.decide(&DhcpState::Idle, &cfg, &pc, 0, 0, 0),
+            policy.decide(DhcpState::Idle, &cfg, pc, 0, 0, 0),
             DhcpAction::Continue
         );
     }

@@ -80,12 +80,8 @@ impl ProcessState {
         Self::from_u8(crate::privileged::lib::low_u8_from_u32(value))
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 获取状态名称 (用于日志和调试)
-    pub fn name(&self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::Created => "Created",
             Self::Ready => "Ready",
@@ -97,21 +93,13 @@ impl ProcessState {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// ✅ 检查进程是否存活 (未终止或僵尸)
-    pub fn is_alive(&self) -> bool {
+    pub fn is_alive(self) -> bool {
         !matches!(self, Self::Zombie | Self::Terminated)
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// ✅ 检查进程是否可以被唤醒 (从 Frozen 解冻后应转到的状态)
-    pub fn thaw_target_state(&self) -> Option<Self> {
+    pub fn thaw_target_state(self) -> Option<Self> {
         match self {
             Self::Frozen => Some(Self::Ready), // 默认解冻到 Ready
             _ => None,

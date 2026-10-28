@@ -152,39 +152,23 @@ impl BootKeyboardReport {
         })
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 检查 Ctrl 是否按下.
-    pub fn ctrl_pressed(&self) -> bool {
+    pub fn ctrl_pressed(self) -> bool {
         self.modifier & 0x01 != 0 || self.modifier & 0x10 != 0
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 检查 Shift 是否按下.
-    pub fn shift_pressed(&self) -> bool {
+    pub fn shift_pressed(self) -> bool {
         self.modifier & 0x02 != 0 || self.modifier & 0x20 != 0
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 检查 Alt 是否按下.
-    pub fn alt_pressed(&self) -> bool {
+    pub fn alt_pressed(self) -> bool {
         self.modifier & 0x04 != 0 || self.modifier & 0x40 != 0
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 返回当前按下的所有 keycode 列表 (去重).
-    pub fn pressed_keys(&self) -> Vec<u8> {
+    pub fn pressed_keys(self) -> Vec<u8> {
         let mut keys = Vec::new();
         for &kc in &self.keycodes {
             if kc != 0 && !keys.contains(&kc) {
@@ -246,30 +230,18 @@ impl BootMouseReport {
         })
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// Left button 是否按下.
-    pub fn left_pressed(&self) -> bool {
+    pub fn left_pressed(self) -> bool {
         self.buttons & 0x01 != 0
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// Right button 是否按下.
-    pub fn right_pressed(&self) -> bool {
+    pub fn right_pressed(self) -> bool {
         self.buttons & 0x02 != 0
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// Middle button 是否按下.
-    pub fn middle_pressed(&self) -> bool {
+    pub fn middle_pressed(self) -> bool {
         self.buttons & 0x04 != 0
     }
 }

@@ -156,61 +156,37 @@ bitflags::bitflags! {
 impl CpuFeatures {
     /// 检查是否为 Intel 处理器 (基于特性组合判断)
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub const fn is_intel_style(&self) -> bool {
+    pub const fn is_intel_style(self) -> bool {
         self.contains(Self::VMX) && !self.contains(Self::SVM)
     }
 
     /// 检查是否为 AMD 处理器
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub const fn is_amd_style(&self) -> bool {
+    pub const fn is_amd_style(self) -> bool {
         self.contains(Self::SVM) && !self.contains(Self::VMX)
     }
 
     /// 检查是否支持 x86-64 长模式
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub const fn supports_64bit(&self) -> bool {
+    pub const fn supports_64bit(self) -> bool {
         self.contains(Self::LM)
     }
 
     /// 检查是否支持 SIMD 向量指令
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn supports_simd(&self) -> bool {
+    pub fn supports_simd(self) -> bool {
         self.contains(Self::SSE | Self::SSE2)
     }
 
     /// 检查是否支持 AVX/AVX2
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn supports_avx(&self) -> bool {
+    pub fn supports_avx(self) -> bool {
         self.contains(Self::AVX | Self::AVX2)
     }
 
     /// 检查是否支持虚拟化扩展
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn supports_virtualization(&self) -> bool {
+    pub fn supports_virtualization(self) -> bool {
         self.contains(Self::VMX | Self::SVM)
     }
 }

@@ -370,7 +370,7 @@ fn count_present_user_pages_returns_none_when_vmm_lock_held() {
     let flags = vmm.acquire_lock();
     // 0xDEAD_BEEF 非有效页表根: 仅在 "未获取锁即放弃 (不遍历)" 时才安全.
     let held = count_present_user_pages(0xDEAD_BEEF);
-    vmm.release_lock(&flags);
+    vmm.release_lock(flags);
 
     assert_eq!(
         held, None,

@@ -32,12 +32,8 @@ pub enum UnkfsRaidzLevel {
 }
 
 impl UnkfsRaidzLevel {
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 返回该冗余级别的校验列数量。
-    pub fn parity_cols(&self) -> usize {
+    pub fn parity_cols(self) -> usize {
         match self {
             Self::Single | Self::Mirror => 0,
             Self::RaidZ1 => 1,
@@ -46,12 +42,8 @@ impl UnkfsRaidzLevel {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 返回该冗余级别可容忍的最大故障列数。
-    pub fn max_failures(&self) -> usize {
+    pub fn max_failures(self) -> usize {
         match self {
             Self::Single => 0,
             Self::RaidZ1 | Self::Mirror => 1,

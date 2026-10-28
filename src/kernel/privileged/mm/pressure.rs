@@ -52,30 +52,18 @@ impl MemoryPressure {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 是否处于严重或紧急压力 (`Critical` / `Emergency`)。
-    pub fn is_critical(&self) -> bool {
+    pub fn is_critical(self) -> bool {
         matches!(self, Self::Critical | Self::Emergency)
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 是否处于紧急压力 (`Emergency`)。
-    pub fn is_emergency(&self) -> bool {
+    pub fn is_emergency(self) -> bool {
         matches!(self, Self::Emergency)
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 压力级别的英文短描述 (用于日志)。
-    pub fn description(&self) -> &'static str {
+    pub fn description(self) -> &'static str {
         match self {
             Self::Normal => "normal",
             Self::Warning => "warning",

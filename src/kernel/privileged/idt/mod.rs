@@ -543,7 +543,7 @@ pub extern "C" fn idt_init() -> i32 {
 
     // 编程 IPI 向量 IDT 门 (0xFD TLB 失效 / 0xFE reschedule)
     let ipi_table: [u64; 2] = [addr!(irq253), addr!(irq254)];
-    manager.init_ipi_idt(&ipi_table);
+    manager.init_ipi_idt(ipi_table);
 
     MODULE_INIT_SUCCESS
 }

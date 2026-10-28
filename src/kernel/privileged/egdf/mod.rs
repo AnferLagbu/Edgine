@@ -128,11 +128,7 @@ pub enum EGDFProto {
 
 impl EGDFProto {
     /// 返回协议类别的短名称 (`block` / `char` / `net` / `input` / `bus` / `other`).
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Block => "block",
             Self::Char => "char",

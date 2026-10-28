@@ -34,12 +34,8 @@ pub enum PixelFormat {
 }
 
 impl PixelFormat {
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 获取每像素字节数
-    pub fn bytes_per_pixel(&self) -> usize {
+    pub fn bytes_per_pixel(self) -> usize {
         match self {
             Self::Rgb565 => 2,
             Self::Rgb888 | Self::Bgr888 => 3,
@@ -47,12 +43,8 @@ impl PixelFormat {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 获取每像素位数
-    pub fn bits_per_pixel(&self) -> usize {
+    pub fn bits_per_pixel(self) -> usize {
         self.bytes_per_pixel() * 8
     }
 }
@@ -86,33 +78,21 @@ impl Color {
         Self { r, g, b, a }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 转换为RGB565格式
-    pub fn to_rgb565(&self) -> u16 {
+    pub fn to_rgb565(self) -> u16 {
         let r = (u16::from(self.r) >> 3) & 0x1F;
         let g = (u16::from(self.g) >> 2) & 0x3F;
         let b = (u16::from(self.b) >> 3) & 0x1F;
         (r << 11) | (g << 5) | b
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 转换为RGB888格式 (返回u32方便使用)
-    pub fn to_rgb888(&self) -> u32 {
+    pub fn to_rgb888(self) -> u32 {
         (u32::from(self.r) << 16) | (u32::from(self.g) << 8) | u32::from(self.b)
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 转换为ARGB8888格式
-    pub fn to_argb8888(&self) -> u32 {
+    pub fn to_argb8888(self) -> u32 {
         (u32::from(self.a) << 24)
             | (u32::from(self.r) << 16)
             | (u32::from(self.g) << 8)
@@ -144,12 +124,8 @@ impl Color {
     }
 
     /// 混合两个颜色 (alpha混合)
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     #[must_use]
-    pub fn blend(&self, other: &Self) -> Self {
+    pub fn blend(self, other: Self) -> Self {
         let alpha = u32::from(self.a);
         let inv_alpha = 255 - alpha;
 
@@ -240,36 +216,24 @@ impl Rect {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 检查点是否在矩形内
-    pub fn contains(&self, point: Point) -> bool {
+    pub fn contains(self, point: Point) -> bool {
         point.x >= self.x
             && point.x < self.x + self.width.cast_signed()
             && point.y >= self.y
             && point.y < self.y + self.height.cast_signed()
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 检查是否与另一个矩形相交
-    pub fn intersects(&self, other: &Self) -> bool {
+    pub fn intersects(self, other: Self) -> bool {
         self.x < other.x + other.width.cast_signed()
             && self.x + self.width.cast_signed() > other.x
             && self.y < other.y + other.height.cast_signed()
             && self.y + self.height.cast_signed() > other.y
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 获取两个矩形的交集
-    pub fn intersection(&self, other: &Self) -> Option<Self> {
+    pub fn intersection(self, other: Self) -> Option<Self> {
         if !self.intersects(other) {
             return None;
         }
@@ -584,8 +548,8 @@ mod tests {
         let rect2 = Rect::new(50, 50, 100, 100);
         let rect3 = Rect::new(200, 200, 100, 100);
 
-        assert!(rect1.intersects(&rect2));
-        assert!(!rect1.intersects(&rect3));
+        assert!(rect1.intersects(rect2));
+        assert!(!rect1.intersects(rect3));
     }
 
     #[test]
@@ -593,7 +557,7 @@ mod tests {
         let blue = Color::new(0, 0, 255);
         let half_red = Color::new_alpha(255, 0, 0, 128);
 
-        let blended = half_red.blend(&blue);
+        let blended = half_red.blend(blue);
 
         // 混合后应该是紫色偏蓝
         assert!(blended.r > 0 && blended.r < 255);

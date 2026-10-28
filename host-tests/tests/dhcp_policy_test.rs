@@ -65,9 +65,9 @@ fn test_dhcp_policy_decide_signature() {
     let after = &content[idx..];
     let required_params = [
         "&self",
-        "&DhcpState",
+        "state: DhcpState",
         "&NetConfig",
-        "&DhcpPolicyConfig",
+        "policy_cfg: DhcpPolicyConfig",
         "retry_count: u32",
         "elapsed_ms: u64",
         "lease_duration_ms: u64",

@@ -176,13 +176,9 @@ impl CascadeQueue {
 pub struct CascadePolicy;
 
 impl CascadePolicy {
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 给定故障域 + 拓扑, 决定级联方向
     pub fn direction(
-        attribution: &FaultAttribution,
+        attribution: FaultAttribution,
         topo: &DomainTopology,
         failed_id: u64,
     ) -> CascadeDirection {
@@ -219,7 +215,7 @@ impl CascadePolicy {
     /// 返回: 实际执行的恢复动作 + 队列
     pub fn orchestrate(signal: &FaultSignal, topo: &DomainTopology) -> CascadePlan {
         let action = RecoveryPolicy::decide(signal);
-        let direction = Self::direction(&signal.attribution, topo, signal.domain_id());
+        let direction = Self::direction(signal.attribution, topo, signal.domain_id());
         let queue = match direction {
             CascadeDirection::BottomUp => topo.bottom_up_order(signal.domain_id()),
             CascadeDirection::TopDown => topo.top_down_order(signal.domain_id()),
@@ -329,7 +325,7 @@ mod tests {
         let attr = FaultAttribution::Tcb {
             module: TcbModule::FREG,
         };
-        let dir = CascadePolicy::direction(&attr, &topo, 2);
+        let dir = CascadePolicy::direction(attr, &topo, 2);
         assert_eq!(dir, CascadeDirection::Isolated);
     }
 
@@ -340,7 +336,7 @@ mod tests {
             domain_id: 4,
             recoverable: true,
         };
-        let dir = CascadePolicy::direction(&attr, &topo, 4);
+        let dir = CascadePolicy::direction(attr, &topo, 4);
         assert_eq!(dir, CascadeDirection::BottomUp);
     }
 
@@ -351,7 +347,7 @@ mod tests {
             domain_id: 1,
             recoverable: true,
         };
-        let dir = CascadePolicy::direction(&attr, &topo, 1);
+        let dir = CascadePolicy::direction(attr, &topo, 1);
         assert_eq!(dir, CascadeDirection::TopDown);
     }
 

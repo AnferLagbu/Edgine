@@ -269,30 +269,18 @@ pub struct NvmeCompletion {
 }
 
 impl NvmeCompletion {
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 阶段标记匹配 = 完成
-    pub fn is_completed(&self, phase: u16) -> bool {
+    pub fn is_completed(self, phase: u16) -> bool {
         (self.status & 0x01) == phase
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 提取状态码 (status 位 `[30:17]`)
-    pub fn status_code(&self) -> u16 {
+    pub fn status_code(self) -> u16 {
         (self.status >> 1) & 0x7FF
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 状态码为 0 即命令成功完成
-    pub fn is_success(&self) -> bool {
+    pub fn is_success(self) -> bool {
         self.status_code() == 0
     }
 }

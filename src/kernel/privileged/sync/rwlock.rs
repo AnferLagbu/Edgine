@@ -185,7 +185,7 @@ impl<T> RwLock<T> {
     /// 释放读锁并恢复中断
     pub fn read_unlock_irqrestore(_guard: RwLockReadGuard<'_, T>, flags: IrqSaveFlags) {
         // guard 的 drop 会自动释放读锁
-        restore_interrupts(&flags);
+        restore_interrupts(flags);
     }
 
     /// 获取写锁并禁用中断
@@ -198,7 +198,7 @@ impl<T> RwLock<T> {
     /// 释放写锁并恢复中断
     pub fn write_unlock_irqrestore(_guard: RwLockWriteGuard<'_, T>, flags: IrqSaveFlags) {
         // guard 的 drop 会自动释放写锁
-        restore_interrupts(&flags);
+        restore_interrupts(flags);
     }
 
     // ========================================================================

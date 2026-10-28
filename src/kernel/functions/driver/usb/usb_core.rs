@@ -101,12 +101,8 @@ pub enum UsbSpeed {
 }
 
 impl UsbSpeed {
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 返回该速度的理论带宽 (Mbps); 未知速度返回 0.
-    pub fn bandwidth_mbps(&self) -> u32 {
+    pub fn bandwidth_mbps(self) -> u32 {
         match self {
             Self::Low => 1,
             Self::Full => 12,
@@ -261,12 +257,8 @@ pub struct EndpointDescriptor {
 }
 
 impl EndpointDescriptor {
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 从端点地址提取传输方向.
-    pub fn direction(&self) -> Direction {
+    pub fn direction(self) -> Direction {
         if self.endpoint_address & 0x80 != 0 {
             Direction::In
         } else {
@@ -274,21 +266,13 @@ impl EndpointDescriptor {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 从端点地址提取端点编号 (0..15).
-    pub fn number(&self) -> u8 {
+    pub fn number(self) -> u8 {
         self.endpoint_address & 0x0F
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 从端点属性提取传输类型.
-    pub fn transfer_type(&self) -> TransferType {
+    pub fn transfer_type(self) -> TransferType {
         match self.attributes & 0x03 {
             1 => TransferType::Isochronous,
             2 => TransferType::Bulk,

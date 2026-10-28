@@ -102,7 +102,7 @@ pub fn wasi_sock_connect(ctx: &mut WasiContext, interp: &mut Interpreter) -> Res
 
     let addr = crate::functions::net::socket::SockAddrIn::new(sin_port, sin_addr);
 
-    match crate::functions::net::socket::connect(entry.inner_fd, &addr) {
+    match crate::functions::net::socket::connect(entry.inner_fd, addr) {
         Ok(()) => {
             interp.stack.push(Value::I32(wasi_success()))?;
         }

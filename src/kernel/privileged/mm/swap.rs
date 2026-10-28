@@ -84,30 +84,18 @@ impl SwapEntry {
         Some(Self(pte))
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 获取 swap slot 索引
-    pub fn slot(&self) -> u64 {
+    pub fn slot(self) -> u64 {
         (self.0 >> 2) & 0x003F_FFFF_FFFF_FFFF
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 转换为 PTE 值
-    pub fn to_pte(&self) -> u64 {
+    pub fn to_pte(self) -> u64 {
         self.0
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 是否为有效的 swap entry
-    pub fn is_valid(&self) -> bool {
+    pub fn is_valid(self) -> bool {
         self.0 != 0
     }
 }

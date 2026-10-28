@@ -252,12 +252,8 @@ impl SataStatus {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 设备是否已建立通信 (PxSSTS.DET == 3)
-    pub fn is_connected(&self) -> bool {
+    pub fn is_connected(self) -> bool {
         self.device_detection == 3
     }
 }

@@ -86,24 +86,16 @@ impl DevKind {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 是否为虚拟设备 (内核内部实现)
-    pub fn is_virtual(&self) -> bool {
+    pub fn is_virtual(self) -> bool {
         matches!(
             self,
             Self::Null | Self::Zero | Self::Console | Self::Tty | Self::SGEG
         )
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 是否为物理设备 (由 EGDF 驱动提供)
-    pub fn is_physical(&self) -> bool {
+    pub fn is_physical(self) -> bool {
         matches!(self, Self::Block | Self::Char | Self::Net | Self::Input)
     }
 }
@@ -460,13 +452,9 @@ pub struct DevFile {
 }
 
 impl DevFile {
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 设备名 (如 "null", "zero", "console")
     /// 物理设备无固定名称, 返回 "device"
-    pub fn name(&self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self.kind {
             DevKind::Null => "null",
             DevKind::Zero => "zero",
@@ -523,15 +511,11 @@ impl SafeDevFs {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 从设备读
     ///
     /// # Errors
     /// 当底层设备读操作失败时返回 `Io`.
-    pub fn read(&self, dev: &DevFile, buf: &mut [u8]) -> Result<usize, KernelError> {
+    pub fn read(&self, dev: DevFile, buf: &mut [u8]) -> Result<usize, KernelError> {
         let rc = self.inner.read(dev.kind as u8, buf);
         if rc < 0 {
             Err(KernelError::Io)
@@ -540,15 +524,11 @@ impl SafeDevFs {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 向设备写
     ///
     /// # Errors
     /// 当底层设备写操作失败时返回 `Io`.
-    pub fn write(&self, dev: &DevFile, buf: &[u8]) -> Result<usize, KernelError> {
+    pub fn write(&self, dev: DevFile, buf: &[u8]) -> Result<usize, KernelError> {
         let rc = self.inner.write(dev.kind as u8, buf);
         if rc < 0 {
             Err(KernelError::Io)

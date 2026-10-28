@@ -83,12 +83,8 @@ pub fn disable_interrupts() -> IrqSaveFlags {
     crate::privileged::sync::disable_interrupts()
 }
 
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-)]
 /// 恢复中断到指定 flags
-pub fn restore_interrupts(flags: &IrqSaveFlags) {
+pub fn restore_interrupts(flags: IrqSaveFlags) {
     crate::privileged::sync::restore_interrupts(flags);
 }
 
@@ -108,7 +104,7 @@ impl IrqDisabled {
 
 impl Drop for IrqDisabled {
     fn drop(&mut self) {
-        restore_interrupts(&self.flags);
+        restore_interrupts(self.flags);
     }
 }
 

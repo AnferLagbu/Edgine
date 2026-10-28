@@ -318,12 +318,8 @@ pub enum LinkRate {
 }
 
 impl LinkRate {
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 返回链路速率对应的带宽 (10 Mbps 为单位, 即 162 = 1.62 Gbps)
-    pub fn bandwidth_gbps(&self) -> u32 {
+    pub fn bandwidth_gbps(self) -> u32 {
         match self {
             Self::Rbr => 162,
             Self::Hbr => 270,
@@ -1070,11 +1066,11 @@ impl DpController {
         }
 
         // 派生 VideoTiming (优先 DMT lookup, fallback 到简化公式)
-        let timing = self.derive_dp_video_timing(&mode);
+        let timing = self.derive_dp_video_timing(mode);
 
         if let Some(ref io) = self.io {
             // 真实硬件路径: 写 8 个 16-bit 时序寄存器 + sync + output enable
-            self.write_dp_timing_registers(io, &timing, &mode);
+            self.write_dp_timing_registers(io, timing, mode);
         } else {
             // 无硬件 fallback: 静默成功
         }
@@ -1086,15 +1082,11 @@ impl DpController {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 派生 DP 视频时序 (复用 `hdmi::lookup_dmt_timing` + 简化公式 fallback).
     ///
     /// 注: 此方法**不依赖** `hdmi::derive_video_timing` (它是 `pub`),
     ///     而是用 lookup + 复制一份等价公式, 保持 dp.rs 独立.
-    fn derive_dp_video_timing(&self, mode: &VideoMode) -> VideoTiming {
+    fn derive_dp_video_timing(&self, mode: VideoMode) -> VideoTiming {
         // P0-3 精度扩展: DMT lookup 优先
         if let Some(timing) = lookup_dmt_timing(mode) {
             return timing;
@@ -1140,12 +1132,8 @@ impl DpController {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 写入 DP 时序 + sync + output enable 寄存器 — 通过 `DpIo` 安全代理, 无 unsafe.
-    fn write_dp_timing_registers(&self, io: &DpIo, timing: &VideoTiming, mode: &VideoMode) {
+    fn write_dp_timing_registers(&self, io: &DpIo, timing: VideoTiming, mode: VideoMode) {
         // 写 8 个 16-bit 时序寄存器
         io.write16(DP_H_TOTAL_REG_OFFSET, timing.h_total);
         io.write16(DP_H_ACTIVE_REG_OFFSET, timing.h_active);
@@ -1658,7 +1646,7 @@ mod tests {
                 vsync_positive: false,
             },
         };
-        let timing = ctrl.derive_dp_video_timing(&mode);
+        let timing = ctrl.derive_dp_video_timing(mode);
         assert_eq!(timing.h_active, 1920);
         assert_eq!(timing.v_active, 1080);
         assert_eq!(timing.h_total, 2200);

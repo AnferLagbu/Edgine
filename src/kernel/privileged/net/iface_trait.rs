@@ -229,11 +229,7 @@ impl PollOutcome {
 
     /// 是否有任何事件 (用于调度器快速判断).
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub const fn has_events(&self) -> bool {
+    pub const fn has_events(self) -> bool {
         self.packet_received || self.socket_woken || self.dhcp_progressed || self.tx_pending > 0
     }
 }
@@ -270,22 +266,14 @@ pub enum DhcpState {
 impl DhcpState {
     /// 是否处于"已配置"状态 (Bound 或 Renewing).
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub const fn is_configured(&self) -> bool {
+    pub const fn is_configured(self) -> bool {
         matches!(self, Self::Bound { .. } | Self::Renewing { .. })
     }
 
     /// 获取已绑定的 IPv4 (若已配置).
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn ipv4(&self) -> Option<[u8; 4]> {
-        match *self {
+    pub fn ipv4(self) -> Option<[u8; 4]> {
+        match self {
             Self::Bound { ipv4, .. } | Self::Renewing { ipv4 } => Some(ipv4),
             _ => None,
         }

@@ -449,7 +449,7 @@ pub extern "C" fn spin_lock_irqsave_raw(lock: *const SpinLockInner) -> IrqSaveFl
 #[unsafe(no_mangle)]
 pub extern "C" fn spin_unlock_irqrestore(lock: *const SpinLockInner, flags: &IrqSaveFlags) {
     spin_unlock(lock);
-    restore_interrupts(flags);
+    restore_interrupts(*flags);
 }
 
 /// 获取自旋锁并禁用中断 (不保存标志)
@@ -510,7 +510,7 @@ pub extern "C" fn read_lock_irqsave(rw: *const RwLockInner) -> IrqSaveFlags {
 #[unsafe(no_mangle)]
 pub extern "C" fn read_unlock_irqrestore(rw: *const RwLockInner, flags: &IrqSaveFlags) {
     read_unlock(rw);
-    restore_interrupts(flags);
+    restore_interrupts(*flags);
 }
 
 /// 获取写锁并禁用中断
@@ -527,7 +527,7 @@ pub extern "C" fn write_lock_irqsave(rw: *const RwLockInner) -> IrqSaveFlags {
 #[unsafe(no_mangle)]
 pub extern "C" fn write_unlock_irqrestore(rw: *const RwLockInner, flags: &IrqSaveFlags) {
     write_unlock(rw);
-    restore_interrupts(flags);
+    restore_interrupts(*flags);
 }
 
 /// 尝试获取写锁 (非阻塞)

@@ -221,7 +221,7 @@ impl TestRunner {
         // B03-15: 恢复中断状态 (而非保持 disable 状态)。
         // SAFETY: saved_flags 由 interrupt_save() 获取, 与 interrupt_disable()
         // 配套使用恢复原状态。
-        crate::privileged::sync::restore_interrupts(&saved_flags);
+        crate::privileged::sync::restore_interrupts(saved_flags);
     }
 
     fn serial_print(s: &[u8]) {

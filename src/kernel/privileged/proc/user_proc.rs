@@ -268,22 +268,14 @@ pub(crate) mod raw {
             unsafe { (*self.0).process().state.load(Ordering::SeqCst) }
         }
 
-        #[expect(
-            clippy::trivially_copy_pass_by_ref,
-            reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-        )]
         /// 检查进程是否在运行状态 (Running = 2)
-        pub fn is_running(&self) -> bool {
+        pub fn is_running(self) -> bool {
             use crate::privileged::proc::types::ProcessState;
             ProcessState::from_u32(self.load_state()).is_alive()
         }
 
-        #[expect(
-            clippy::trivially_copy_pass_by_ref,
-            reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-        )]
         /// 检查进程是否已退出 (Zombie = 4 或 Terminated = 5)
-        pub fn is_exited(&self) -> bool {
+        pub fn is_exited(self) -> bool {
             use crate::privileged::proc::types::ProcessState;
             let state = ProcessState::from_u32(self.load_state());
             matches!(state, ProcessState::Zombie | ProcessState::Terminated)

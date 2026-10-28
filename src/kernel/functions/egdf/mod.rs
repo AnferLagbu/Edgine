@@ -100,12 +100,8 @@ use crate::privileged::syscall::Errno;
 pub struct DeviceId(pub u32);
 
 impl DeviceId {
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 原始 ID
-    pub fn raw(&self) -> u32 {
+    pub fn raw(self) -> u32 {
         self.0
     }
 }
@@ -133,12 +129,8 @@ pub enum Proto {
 }
 
 impl Proto {
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 协议名称字符串
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Block => "block",
             Self::Char => "char",

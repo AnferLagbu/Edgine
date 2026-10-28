@@ -2110,7 +2110,7 @@ impl Scheduler {
             crate::privileged::proc::cpu_queue::mark_resched_pending_local();
         }
 
-        crate::privileged::sync::restore_interrupts(&flags);
+        crate::privileged::sync::restore_interrupts(flags);
     }
 
     #[expect(

@@ -77,7 +77,7 @@ fn try_acquire_lock() -> Option<IrqSaveFlags> {
         .is_err()
     {
         // 未取得锁: 恢复进入时的中断状态, 不留副作用.
-        restore_interrupts(&flags);
+        restore_interrupts(flags);
         return None;
     }
     #[cfg(debug_assertions)]
@@ -170,7 +170,7 @@ impl VirtualMemoryManager {
             self.total_maps.fetch_add(1, Ordering::Relaxed);
         }
 
-        self.release_lock(&guard);
+        self.release_lock(guard);
         result
     }
 
@@ -206,7 +206,7 @@ impl VirtualMemoryManager {
             self.total_maps.fetch_add(1, Ordering::Relaxed);
         }
 
-        self.release_lock(&guard);
+        self.release_lock(guard);
         result
     }
 
@@ -218,7 +218,7 @@ impl VirtualMemoryManager {
 
         let pml4_base = KERNEL_PML4.load(Ordering::Acquire);
         if pml4_base == 0 {
-            self.release_lock(&guard);
+            self.release_lock(guard);
             return;
         }
 
@@ -236,7 +236,7 @@ impl VirtualMemoryManager {
                 virt.0,
                 virt.pml4_idx()
             );
-            self.release_lock(&guard);
+            self.release_lock(guard);
             return;
         }
 
@@ -247,7 +247,7 @@ impl VirtualMemoryManager {
             let pml4e = &*pml4.add(virt.pml4_idx());
 
             if !pml4e.is_present() {
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -256,7 +256,7 @@ impl VirtualMemoryManager {
             let pdpte = &*pdpt.add(virt.pdpt_idx());
 
             if !pdpte.is_present() {
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -271,7 +271,7 @@ impl VirtualMemoryManager {
                 let pde = &*pd.add(virt.pd_idx());
 
                 if !pde.is_present() {
-                    self.release_lock(&guard);
+                    self.release_lock(guard);
                     return;
                 }
 
@@ -290,7 +290,7 @@ impl VirtualMemoryManager {
         }
 
         self.total_unmaps.fetch_add(1, Ordering::Relaxed);
-        self.release_lock(&guard);
+        self.release_lock(guard);
     }
 
     /// 修改虚拟页的保护属性 (mprotect 核心实现)
@@ -302,7 +302,7 @@ impl VirtualMemoryManager {
 
         let pml4_base = KERNEL_PML4.load(Ordering::Acquire);
         if pml4_base == 0 {
-            self.release_lock(&guard);
+            self.release_lock(guard);
             return;
         }
 
@@ -319,7 +319,7 @@ impl VirtualMemoryManager {
                 virt.0,
                 virt.pml4_idx()
             );
-            self.release_lock(&guard);
+            self.release_lock(guard);
             return;
         }
 
@@ -329,7 +329,7 @@ impl VirtualMemoryManager {
             let pml4e = &*pml4.add(virt.pml4_idx());
 
             if !pml4e.is_present() {
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -337,7 +337,7 @@ impl VirtualMemoryManager {
             let pdpte = &*pdpt.add(virt.pdpt_idx());
 
             if !pdpte.is_present() {
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -351,7 +351,7 @@ impl VirtualMemoryManager {
                 (*entry).set_value(val);
                 // 权限变更 (mprotect): 远程核可能缓存旧 R/W/U/NX 位, 必须远程失效 (S-9)
                 self.flush_tlb_remote(virt.0);
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -359,7 +359,7 @@ impl VirtualMemoryManager {
             let pde = &*pd.add(virt.pd_idx());
 
             if !pde.is_present() {
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -372,7 +372,7 @@ impl VirtualMemoryManager {
                 (*entry).set_value(val);
                 // 权限变更 (mprotect): 远程核可能缓存旧 R/W/U/NX 位, 必须远程失效 (S-9)
                 self.flush_tlb_remote(virt.0);
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -387,7 +387,7 @@ impl VirtualMemoryManager {
             self.flush_tlb_remote(virt.0);
         }
 
-        self.release_lock(&guard);
+        self.release_lock(guard);
     }
 
     /// 修改**指定页表**中虚拟页的保护属性 (mprotect 显式变体)
@@ -428,7 +428,7 @@ impl VirtualMemoryManager {
             let pml4e = &*pml4.add(virt.pml4_idx());
 
             if !pml4e.is_present() {
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -436,7 +436,7 @@ impl VirtualMemoryManager {
             let pdpte = &*pdpt.add(virt.pdpt_idx());
 
             if !pdpte.is_present() {
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -450,7 +450,7 @@ impl VirtualMemoryManager {
                 (*entry).set_value(val);
                 // 权限变更 (mprotect): 远程核可能缓存旧 R/W/U/NX 位, 必须远程失效 (S-9)
                 self.flush_tlb_remote(virt.0);
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -458,7 +458,7 @@ impl VirtualMemoryManager {
             let pde = &*pd.add(virt.pd_idx());
 
             if !pde.is_present() {
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -471,7 +471,7 @@ impl VirtualMemoryManager {
                 (*entry).set_value(val);
                 // 权限变更 (mprotect): 远程核可能缓存旧 R/W/U/NX 位, 必须远程失效 (S-9)
                 self.flush_tlb_remote(virt.0);
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -486,7 +486,7 @@ impl VirtualMemoryManager {
             self.flush_tlb_remote(virt.0);
         }
 
-        self.release_lock(&guard);
+        self.release_lock(guard);
     }
 
     /// 在内核页表中翻译虚拟地址, 返回对应物理地址 (`None` 表示未映射).
@@ -638,7 +638,7 @@ impl VirtualMemoryManager {
             let pml4_raw = pml4_virt.0 as *const u64;
             let pml4e = pml4_raw.add(virt.pml4_idx()).read_volatile();
             if (pml4e & 1) == 0 {
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -646,7 +646,7 @@ impl VirtualMemoryManager {
             let pdpt_raw = pdpt_virt as *const u64;
             let pdpte = pdpt_raw.add(virt.pdpt_idx()).read_volatile();
             if (pdpte & 1) == 0 || (pdpte & 0x80) != 0 {
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -654,7 +654,7 @@ impl VirtualMemoryManager {
             let pd_raw = pd_virt as *const u64;
             let pde = pd_raw.add(virt.pd_idx()).read_volatile();
             if (pde & 1) == 0 || (pde & 0x80) != 0 {
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -666,7 +666,7 @@ impl VirtualMemoryManager {
             self.flush_tlb_remote(virt.0);
         }
 
-        self.release_lock(&guard);
+        self.release_lock(guard);
     }
 
     /// 切换 CR3 指向的页表 (加载新 PML4).
@@ -735,7 +735,7 @@ impl VirtualMemoryManager {
             self.user_table_count.fetch_add(1, Ordering::Relaxed);
         }
 
-        self.release_lock(&guard);
+        self.release_lock(guard);
 
         // GDT / IDT / TSS 头区 / 各栈顶页的内核映射已由上方 `assemble_kernel_half`
         // 统一装配 (KPTI 激活时逐页; 未激活时由复制的高半区条目覆盖), 故此前紧跟
@@ -756,7 +756,7 @@ impl VirtualMemoryManager {
     pub fn map_page_in_table(&self, pml4: u64, virt: VirtAddr, phys: PhysAddr, flags: PageFlags) {
         let guard = self.acquire_lock();
         self.map_page_in_table_locked(pml4, virt, phys, flags);
-        self.release_lock(&guard);
+        self.release_lock(guard);
     }
 
     /// 映射单个页 —— **要求调用方已持 `VMM_LOCK`**
@@ -881,7 +881,7 @@ impl VirtualMemoryManager {
             let pml4e = &*pml4_tbl.add(virt.pml4_idx());
 
             if !pml4e.is_present() {
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -890,7 +890,7 @@ impl VirtualMemoryManager {
             let pdpte = &*pdpt.add(virt.pdpt_idx());
 
             if !pdpte.is_present() {
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -905,7 +905,7 @@ impl VirtualMemoryManager {
                 let pde = &*pd.add(virt.pd_idx());
 
                 if !pde.is_present() {
-                    self.release_lock(&guard);
+                    self.release_lock(guard);
                     return;
                 }
 
@@ -962,7 +962,7 @@ impl VirtualMemoryManager {
         }
 
         self.total_unmaps.fetch_add(1, Ordering::Relaxed);
-        self.release_lock(&guard);
+        self.release_lock(guard);
     }
 
     /// 销毁指定用户页表: 拆除映射并延迟释放其占用的页帧; `pml4 == 0` 为空操作.
@@ -1076,7 +1076,7 @@ impl VirtualMemoryManager {
             super::deferred_free::mark_remote_shootdown();
         }
 
-        self.release_lock(&guard);
+        self.release_lock(guard);
 
         // 埋点 (见 docs/plan/tlb-shootdown-epoch.md S-10): "销毁路径是否被走到" 是释放
         // 覆盖判别的第一分位 —— 整轮日志无本行 ⇒ 进程从未被回收 (`Process::drop` 未运行),
@@ -1462,7 +1462,7 @@ impl VirtualMemoryManager {
             Ok(())
         })();
 
-        self.release_lock(&guard);
+        self.release_lock(guard);
         result
     }
 
@@ -1742,7 +1742,7 @@ impl VirtualMemoryManager {
             }
         }
 
-        self.release_lock(&guard);
+        self.release_lock(guard);
         Some(child_pml4_phys.as_u64())
     }
 
@@ -1800,12 +1800,8 @@ impl VirtualMemoryManager {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是既有 API 约定 (改传值会波及调用点); 当前优先 expect"
-    )]
     /// 释放 `VMM_LOCK`: 摘走本临界区延迟释放批次, 执行待决远程 TLB 失效并恢复中断状态.
-    pub fn release_lock(&self, flags: &IrqSaveFlags) {
+    pub fn release_lock(&self, flags: IrqSaveFlags) {
         // 仍持锁时读取并清除"本临界区需远程失效"标志: VMM_LOCK 是全局锁, 此刻本核
         // 是唯一写者, 故读-清不会漏掉本临界区自身的置位.
         let shootdown_needed = super::deferred_free::clear_shootdown_flag();
@@ -2119,6 +2115,6 @@ pub fn count_present_user_pages(cr3: u64) -> Option<u64> {
         }
     }
 
-    vmm.release_lock(&flags);
+    vmm.release_lock(flags);
     Some(pages)
 }

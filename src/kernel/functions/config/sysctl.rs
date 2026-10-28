@@ -37,13 +37,9 @@ pub enum SysctlValue {
 }
 
 impl SysctlValue {
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 序列化为文本 (用于 /proc/sys/* 节点读取)
-    pub fn write_to(&self, buf: &mut [u8]) -> usize {
-        match *self {
+    pub fn write_to(self, buf: &mut [u8]) -> usize {
+        match self {
             Self::Int(v) => write_i64(buf, v),
             Self::UInt(v) => write_u64(buf, v),
             Self::Bool(v) => write_bool(buf, v),

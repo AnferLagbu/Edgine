@@ -36,12 +36,8 @@ impl UnkfsDva {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// vdev 编号、偏移与长度均为 0 时视为空 DVA.
-    pub fn is_null(&self) -> bool {
+    pub fn is_null(self) -> bool {
         self.vdev_id == 0 && self.offset == 0 && self.asize == 0
     }
 
@@ -63,12 +59,8 @@ impl UnkfsDva {
         self
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 是否为 gang 块成员.
-    pub fn is_gang(&self) -> bool {
+    pub fn is_gang(self) -> bool {
         self.gang != 0
     }
 
@@ -189,21 +181,13 @@ impl UnkfsBpProp {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 把压缩算法编码解析为枚举.
-    pub fn comp_type(&self) -> UnkfsCompType {
+    pub fn comp_type(self) -> UnkfsCompType {
         UnkfsCompType::from_u8(self.comp_type)
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 把校验算法编码解析为枚举.
-    pub fn cksum_type(&self) -> UnkfsCksumType {
+    pub fn cksum_type(self) -> UnkfsCksumType {
         UnkfsCksumType::from_u8(self.cksum_type)
     }
 
@@ -217,12 +201,8 @@ impl UnkfsBpProp {
         self.cksum_type = v as u8;
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 块是否已加密.
-    pub fn is_encrypted(&self) -> bool {
+    pub fn is_encrypted(self) -> bool {
         self.encrypted != 0
     }
 

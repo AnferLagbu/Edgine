@@ -1134,7 +1134,7 @@ impl PhysicalMemoryManager {
                 self.failed_allocs.fetch_add(1, Ordering::Relaxed);
             }
         }
-        self.release_lock(&flags);
+        self.release_lock(flags);
         result
     }
 
@@ -1150,7 +1150,7 @@ impl PhysicalMemoryManager {
             self.do_free(addr, 0);
             self.total_frees.fetch_add(1, Ordering::Relaxed);
         }
-        self.release_lock(&flags);
+        self.release_lock(flags);
     }
 
     // ====================================================================
@@ -1193,7 +1193,7 @@ impl PhysicalMemoryManager {
         };
         let flags = self.acquire_lock();
         self.owner_mark_first_release_locked(pfn, site);
-        self.release_lock(&flags);
+        self.release_lock(flags);
     }
 
     /// 记**首次**退役点 (调用方已持有 PMM 锁).
@@ -1256,7 +1256,7 @@ impl PhysicalMemoryManager {
             }
             None => false,
         };
-        self.release_lock(&flags);
+        self.release_lock(flags);
         ok
     }
 
@@ -1287,7 +1287,7 @@ impl PhysicalMemoryManager {
             }
             None => false,
         };
-        self.release_lock(&flags);
+        self.release_lock(flags);
         zero
     }
 
@@ -1300,7 +1300,7 @@ impl PhysicalMemoryManager {
         let count = self
             .frame_counts_pfn(addr)
             .map_or(0, |pfn| self.frame_counts_read(pfn));
-        self.release_lock(&flags);
+        self.release_lock(flags);
         count
     }
 
@@ -1408,7 +1408,7 @@ impl PhysicalMemoryManager {
                 self.failed_allocs.fetch_add(1, Ordering::Relaxed);
             }
         }
-        self.release_lock(&flags);
+        self.release_lock(flags);
         result
     }
 
@@ -1434,7 +1434,7 @@ impl PhysicalMemoryManager {
             self.do_free(addr, order);
             self.total_frees.fetch_add(npages as u64, Ordering::Relaxed);
         }
-        self.release_lock(&flags);
+        self.release_lock(flags);
     }
 
     /// B03-04: 标记物理地址范围为已用 (反向声明) — 用于 swap/persistent buffer 等
@@ -1479,13 +1479,13 @@ impl PhysicalMemoryManager {
         // 拒绝范围与已分配页重叠 (避免 PMM 簿记破坏)
         for i in start_pfn..end_pfn {
             if self.test_bit(i) {
-                self.release_lock(&flags);
+                self.release_lock(flags);
                 return Err("PMM reserve_range: range overlaps allocated/reserved page");
             }
         }
         // 摘除空闲链表中重叠的块 + 置位位图 + 更新统计
         self.buddy_reserve_pfn_range(start_pfn as u64, npages as u64);
-        self.release_lock(&flags);
+        self.release_lock(flags);
 
         klog_pmm!(
             "[PMM] Reserved range: base=0x{:X} size={} ({} pages, {} KB)",
@@ -1532,7 +1532,7 @@ impl PhysicalMemoryManager {
         // 校验范围全部处于 reserved 簿记 (set_bit == 1); 若有 free 页, 拒绝
         for i in start_pfn..end_pfn {
             if !self.test_bit(i) {
-                self.release_lock(&flags);
+                self.release_lock(flags);
                 return Err("PMM unreserve_range: range contains non-reserved page");
             }
         }
@@ -1543,7 +1543,7 @@ impl PhysicalMemoryManager {
         // 压回 buddy 空闲链表 (并尝试合并), 保持链表与位图同步
         self.buddy_free_insert_range(start_pfn as u64, npages as u64);
         self.stats_free(npages as u64);
-        self.release_lock(&flags);
+        self.release_lock(flags);
 
         klog_pmm!(
             "[PMM] Unreserved range: base=0x{:X} size={} ({} pages, {} KB)",
@@ -1601,7 +1601,7 @@ impl PhysicalMemoryManager {
             }
             None
         })();
-        self.release_lock(&flags);
+        self.release_lock(flags);
         result
     }
 
@@ -1624,7 +1624,7 @@ impl PhysicalMemoryManager {
                 } else {
                     self.failed_allocs.fetch_add(1, Ordering::Relaxed);
                 }
-                self.release_lock(&flags);
+                self.release_lock(flags);
                 result
             }
         }
@@ -1648,7 +1648,7 @@ impl PhysicalMemoryManager {
                 // 压回 buddy 空闲链表 (并尝试合并), 保持链表与位图同步
                 self.buddy_free_insert_range(start as u64, np as u64);
                 self.total_frees.fetch_add(np as u64, Ordering::Relaxed);
-                self.release_lock(&flags);
+                self.release_lock(flags);
             }
         }
     }
@@ -1720,11 +1720,7 @@ impl PhysicalMemoryManager {
     }
 
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    fn release_lock(&self, flags: &IrqSaveFlags) {
+    fn release_lock(&self, flags: IrqSaveFlags) {
         self.lock.store(false, Ordering::Release);
         restore_interrupts(flags);
     }

@@ -70,23 +70,15 @@ impl DisplayMode {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 计算像素时钟 (kHz)
-    pub fn pixel_clock_khz(&self) -> u64 {
+    pub fn pixel_clock_khz(self) -> u64 {
         // 简化计算，实际需要考虑消隐时间
         let total_pixels = u64::from(self.width) * u64::from(self.height);
         total_pixels * u64::from(self.refresh_rate) / 1000
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 计算带宽 (MB/s)
-    pub fn bandwidth_mbps(&self) -> u64 {
+    pub fn bandwidth_mbps(self) -> u64 {
         self.pixel_clock_khz() * self.pixel_format.bytes_per_pixel() as u64 / 1000
     }
 }

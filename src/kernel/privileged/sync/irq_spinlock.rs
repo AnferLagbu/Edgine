@@ -333,7 +333,7 @@ impl<T> Drop for IrqSpinLockGuard<'_, T> {
         unsafe { &*self.lock_ptr }.raw_unlock();
         if prev == 1 {
             if let Some(flags) = self.prev_if.take() {
-                restore_interrupts(&flags);
+                restore_interrupts(flags);
             }
         }
     }

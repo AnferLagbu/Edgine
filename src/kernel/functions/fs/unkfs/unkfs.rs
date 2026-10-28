@@ -20,7 +20,7 @@ impl HotplugListener for UnkfsHotplugListener {
         };
         // 事件定位到的是 PCIe 端口 (端口 BDF), 块设备挂在该端口 secondary bus
         // 上的存储控制器之后; 需先解析出对应的 EGDF 块设备编号再挂盘。
-        let drives = crate::functions::driver::storage::drives_for_location(location);
+        let drives = crate::functions::driver::storage::drives_for_location(*location);
         let mut claimed = false;
         for drive in drives {
             crate::slog_info!(
@@ -41,7 +41,7 @@ impl HotplugListener for UnkfsHotplugListener {
             | HotplugEvent::SurpriseRemoval { location } => location,
             HotplugEvent::DeviceAdded { .. } => return,
         };
-        let drives = crate::functions::driver::storage::drives_for_location(location);
+        let drives = crate::functions::driver::storage::drives_for_location(*location);
         for drive in drives {
             crate::slog_info!(FS, "[UNKFS] HOTPLUG: device removed -> drive={}", drive);
             get_unkfs().hotplug_remove_disk(drive);

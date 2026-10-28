@@ -26,16 +26,12 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-)]
-pub(crate) fn hash_with_salt(password: &str, salt: &[u8; PWM_SALT_LEN]) -> [u8; 32] {
+pub(crate) fn hash_with_salt(password: &str, salt: [u8; PWM_SALT_LEN]) -> [u8; 32] {
     const STRETCH_ROUNDS: usize = 32768;
     let mut input = [0u8; 256];
     let mut pos = 0usize;
     for byte in salt {
-        input[pos] = *byte;
+        input[pos] = byte;
         pos += 1;
     }
     for byte in password.bytes().take(255 - pos) {
@@ -50,7 +46,7 @@ pub(crate) fn hash_with_salt(password: &str, salt: &[u8; PWM_SALT_LEN]) -> [u8; 
         stretch_input[..32].copy_from_slice(&hash);
         let round_bytes = (round as u64).to_le_bytes();
         stretch_input[32..40].copy_from_slice(&round_bytes);
-        stretch_input[40..40 + PWM_SALT_LEN].copy_from_slice(salt);
+        stretch_input[40..40 + PWM_SALT_LEN].copy_from_slice(&salt);
         let full = sha256::sha256(&stretch_input[..40 + PWM_SALT_LEN]);
         hash.copy_from_slice(&full[..32]);
     }
@@ -243,7 +239,7 @@ impl IdentityTable {
         for i in 0..PWM_SALT_LEN {
             salt[i] = entry.password_hash[PWM_DIGEST_LEN + i].load(Ordering::Acquire);
         }
-        let computed = hash_with_salt(password, &salt);
+        let computed = hash_with_salt(password, salt);
         // T4-1: 原子读取 stored digest 与 computed 比较
         let mut stored_digest = [0u8; PWM_DIGEST_LEN];
         for i in 0..PWM_DIGEST_LEN {
@@ -304,7 +300,7 @@ impl IdentityTable {
         entry.flags.store(0, Ordering::Release);
 
         let salt = csprng::generate_salt();
-        let digest = hash_with_salt(password, &salt);
+        let digest = hash_with_salt(password, salt);
         // T4-1: 原子写入 password_hash (digest 32 字节 + salt 16 字节)
         for i in 0..PWM_DIGEST_LEN {
             entry.password_hash[i].store(digest[i], Ordering::Release);
@@ -593,7 +589,7 @@ impl IdentityTable {
         }
         let entry = self.find(pwm).ok_or(PwmError::NotFound)?;
         let salt = csprng::generate_salt();
-        let digest = hash_with_salt(new, &salt);
+        let digest = hash_with_salt(new, salt);
         // T4-1: 原子写入 digest (32 字节) + salt (16 字节)
         for i in 0..PWM_DIGEST_LEN {
             entry.password_hash[i].store(digest[i], Ordering::Release);

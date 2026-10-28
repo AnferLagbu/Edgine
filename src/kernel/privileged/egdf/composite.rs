@@ -24,11 +24,7 @@ pub enum CompositeType {
 
 impl CompositeType {
     /// 返回设备树 compatible 字符串 (`eg,raid0` / `eg,raid1`).
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn compatible_str(&self) -> &'static str {
+    pub fn compatible_str(self) -> &'static str {
         match self {
             Self::Raid0 => "eg,raid0",
             Self::Raid1 => "eg,raid1",
@@ -45,11 +41,7 @@ impl CompositeType {
     }
 
     /// 返回用于设备名与日志的显示名 (`RAID0` / `RAID1`).
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn display_name(&self) -> &'static str {
+    pub fn display_name(self) -> &'static str {
         match self {
             Self::Raid0 => "RAID0",
             Self::Raid1 => "RAID1",

@@ -239,12 +239,8 @@ pub struct CondVarInner {
 pub struct IrqSaveFlags(pub u64);
 
 impl IrqSaveFlags {
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 检查中断是否启用 (IF bit = bit 9)
-    pub fn interrupts_enabled(&self) -> bool {
+    pub fn interrupts_enabled(self) -> bool {
         (self.0 & (1 << 9)) != 0
     }
 }

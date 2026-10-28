@@ -173,17 +173,13 @@ fn cidr_contains(entry: &RouteEntry, dest: &IpAddr) -> bool {
             let net_entry = u32::from_be_bytes(net.octets()) & mask;
             net_dest == net_entry
         }
-        (IpAddr::V6(net), IpAddr::V6(d)) => ipv6_cidr_contains(&net, &d, entry.prefix_len),
+        (IpAddr::V6(net), IpAddr::V6(d)) => ipv6_cidr_contains(net, d, entry.prefix_len),
         _ => false, // family 不匹配
     }
 }
 
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-)]
 /// IPv6 CIDR 匹配: 按 `prefix_len` (0-128) 逐字节掩码比较.
-fn ipv6_cidr_contains(net: &Ipv6Addr, dest: &Ipv6Addr, prefix_len: u8) -> bool {
+fn ipv6_cidr_contains(net: Ipv6Addr, dest: Ipv6Addr, prefix_len: u8) -> bool {
     let n = prefix_len as usize;
     if n >= 128 {
         return net == dest;

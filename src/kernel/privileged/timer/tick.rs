@@ -300,7 +300,7 @@ pub fn establish_timebase(counter_hz: u64) -> Result<(), &'static str> {
     ANCHOR_COUNTER.store(anchor_counter, Ordering::Relaxed);
     COUNTER_HZ.store(counter_hz, Ordering::Relaxed);
     COUNTERS_PER_TICK.store(counters_per_tick, Ordering::Release);
-    crate::privileged::sync::restore_interrupts(&flags);
+    crate::privileged::sync::restore_interrupts(flags);
 
     Ok(())
 }
@@ -385,7 +385,7 @@ pub fn reset_ticks() {
     ANCHOR_TICK.store(0, Ordering::Relaxed);
     ANCHOR_NS.store(0, Ordering::Relaxed);
     ANCHOR_COUNTER.store(counter_read(), Ordering::Relaxed);
-    crate::privileged::sync::restore_interrupts(&flags);
+    crate::privileged::sync::restore_interrupts(flags);
 }
 
 // ============================================================================

@@ -393,7 +393,7 @@ pub extern "C" fn vmm_ensure_path_user(virt: u64) {
 pub extern "C" fn vmm_get_physical(virt: u64) -> u64 {
     get_vmm()
         .get_physical(VirtAddr(virt))
-        .map_or(0, |phys| phys.as_u64())
+        .map_or(0, PhysAddr::as_u64)
 }
 
 /// 在指定页表上下文中获取物理地址
@@ -403,7 +403,7 @@ pub extern "C" fn vmm_get_physical(virt: u64) -> u64 {
 pub extern "C" fn vmm_get_physical_in_table(pml4: u64, virt: u64) -> u64 {
     get_vmm()
         .get_physical_in_pml4(pml4, VirtAddr(virt))
-        .map_or(0, |phys| phys.as_u64())
+        .map_or(0, PhysAddr::as_u64)
 }
 
 /// 切换到其它页表 (加载 CR3)

@@ -97,11 +97,7 @@ pub struct EfiTime {
 impl EfiTime {
     // 有意窄化: 用户内存代理, 指针/长度上下文保证
     /// 转换为 Unix 纳秒时间戳 (1970-01-01 为 0 点基准)
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn to_unix_ns(&self) -> u64 {
+    pub fn to_unix_ns(self) -> u64 {
         // 简化: 转换为秒数
         let days_before_month: [u64; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
         let y = u64::from(self.year);
@@ -475,27 +471,19 @@ impl UefiSubsystem {
         });
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 获取 UEFI 变量
-    pub fn get_variable(&self, name: &[u8], guid: &[u8; 16]) -> Option<(u32, Vec<u8>)> {
+    pub fn get_variable(&self, name: &[u8], guid: [u8; 16]) -> Option<(u32, Vec<u8>)> {
         let vars = self.variables.lock();
         for v in vars.iter() {
-            if v.name == name && v.guid == *guid {
+            if v.name == name && v.guid == guid {
                 return Some((v.attributes, v.data.clone()));
             }
         }
         None
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 设置 UEFI 变量
-    pub fn set_variable(&self, name: &[u8], guid: &[u8; 16], attrs: u32, data: &[u8]) -> bool {
+    pub fn set_variable(&self, name: &[u8], guid: [u8; 16], attrs: u32, data: &[u8]) -> bool {
         if name.len() > EFI_MAX_VAR_NAME || data.len() > EFI_MAX_VAR_DATA {
             return false;
         }
@@ -503,7 +491,7 @@ impl UefiSubsystem {
         let mut vars = self.variables.lock();
         // 查找已有变量
         for v in vars.iter_mut() {
-            if v.name == name && v.guid == *guid {
+            if v.name == name && v.guid == guid {
                 v.attributes = attrs;
                 v.data = data.to_vec();
                 return true;
@@ -512,22 +500,18 @@ impl UefiSubsystem {
         // 新变量
         vars.push(EfiVariable {
             name: name.to_vec(),
-            guid: *guid,
+            guid,
             attributes: attrs,
             data: data.to_vec(),
         });
         true
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 删除 UEFI 变量
-    pub fn delete_variable(&self, name: &[u8], guid: &[u8; 16]) -> bool {
+    pub fn delete_variable(&self, name: &[u8], guid: [u8; 16]) -> bool {
         let mut vars = self.variables.lock();
         let before = vars.len();
-        vars.retain(|v| !(v.name == name && v.guid == *guid));
+        vars.retain(|v| !(v.name == name && v.guid == guid));
         vars.len() != before
     }
 
@@ -548,16 +532,12 @@ impl UefiSubsystem {
         EfiTime::from_unix_ns(wall_ns)
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 设置时间 — 写入 epoch 基准使 `get_time` 返回设定时刻
     ///
     /// 软件模拟语义: 将 `time` 转 Unix 纳秒后, 减去当前单调时间得到
     /// `epoch_offset_ns`; 之后 `get_time` = 设定值 + 已流逝的单调时间.
     /// 返回 `true` (无固件写入失败路径).
-    pub fn set_time(&self, time: &EfiTime) -> bool {
+    pub fn set_time(&self, time: EfiTime) -> bool {
         let now_ns = crate::privileged::timer::ticks_to_ns(crate::privileged::timer::get_ticks());
         let target_ns = time.to_unix_ns();
         self.epoch_offset_ns
@@ -674,7 +654,7 @@ pub extern "C" fn sys_uefi(cmd: u64, a1: u64, a2: u64) -> i64 {
         }
         4 => {
             // set_time(ns: a1) — 写入 epoch 基准, 使后续 get_time 反映设定时刻
-            i64::from(uefi_subsystem().set_time(&EfiTime::from_unix_ns(a1)))
+            i64::from(uefi_subsystem().set_time(EfiTime::from_unix_ns(a1)))
         }
         5 => {
             // get_gop_mode → fb_base
@@ -779,7 +759,7 @@ mod tests {
             daylight: 0,
         };
         let target_ns = target.to_unix_ns();
-        assert!(sub.set_time(&target));
+        assert!(sub.set_time(target));
         let got_ns = sub.get_time().to_unix_ns();
         assert!(
             got_ns >= target_ns,

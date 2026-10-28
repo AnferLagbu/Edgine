@@ -296,21 +296,13 @@ impl IdtEntry {
         self.offset_high = ((handler >> 32) & 0xFFFF_FFFF) as u32;
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 判断门是否有效 (Present bit set)
-    pub fn is_present(&self) -> bool {
+    pub fn is_present(self) -> bool {
         (self.type_attr & 0x80) != 0
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 获取完整的 handler 地址
-    pub fn handler_address(&self) -> u64 {
+    pub fn handler_address(self) -> u64 {
         u64::from(self.offset_high) << 32
             | u64::from(self.offset_mid) << 16
             | u64::from(self.offset_low)

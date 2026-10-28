@@ -219,40 +219,24 @@ impl Default for ModifierState {
 impl ModifierState {
     /// 检查是否有 Shift 键按下
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn shift_pressed(&self) -> bool {
+    pub fn shift_pressed(self) -> bool {
         self.left_shift || self.right_shift
     }
 
     /// 检查是否有 Ctrl 键按下
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn ctrl_pressed(&self) -> bool {
+    pub fn ctrl_pressed(self) -> bool {
         self.left_ctrl || self.right_ctrl
     }
 
     /// 检查是否有 Alt 键按下
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn alt_pressed(&self) -> bool {
+    pub fn alt_pressed(self) -> bool {
         self.left_alt || self.right_alt
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 计算 LED 状态字节
-    pub fn to_led_byte(&self) -> u8 {
+    pub fn to_led_byte(self) -> u8 {
         let mut led: u8 = 0;
         if self.scroll_lock {
             led |= KB_LED_SCROLL_LOCK;
@@ -408,12 +392,8 @@ fn keyboard_read_data(cmd_port: &IoPort, data_port: &IoPort) -> Option<u8> {
     Some(data_port.read_u8(0))
 }
 
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-)]
 /// 更新键盘 LED 状态
-fn update_leds(cmd_port: &IoPort, data_port: &IoPort, modifiers: &ModifierState) {
+fn update_leds(cmd_port: &IoPort, data_port: &IoPort, modifiers: ModifierState) {
     keyboard_send_data(cmd_port, data_port, KB_CMD_SET_LED);
     // 等待 ACK (0xFA)
     let _ = keyboard_read_data(cmd_port, data_port);
@@ -518,7 +498,7 @@ impl Driver for KeyboardDriver {
         negotiate_scancode_set(&self.cmd_port, &self.data_port);
 
         // 4. 发送 SET LED 命令设置初始 LED 状态
-        update_leds(&self.cmd_port, &self.data_port, &self.modifiers);
+        update_leds(&self.cmd_port, &self.data_port, self.modifiers);
 
         // 5. 清空缓冲区
         self.buffer.clear();
@@ -625,7 +605,7 @@ impl KeyboardDriver {
                 // Caps Lock
                 if pressed {
                     self.modifiers.caps_lock = !self.modifiers.caps_lock;
-                    update_leds(&self.cmd_port, &self.data_port, &self.modifiers);
+                    update_leds(&self.cmd_port, &self.data_port, self.modifiers);
                 }
                 return None;
             }
@@ -633,7 +613,7 @@ impl KeyboardDriver {
                 // Num Lock
                 if pressed {
                     self.modifiers.num_lock = !self.modifiers.num_lock;
-                    update_leds(&self.cmd_port, &self.data_port, &self.modifiers);
+                    update_leds(&self.cmd_port, &self.data_port, self.modifiers);
                 }
                 return None;
             }
@@ -641,7 +621,7 @@ impl KeyboardDriver {
                 // Scroll Lock
                 if pressed {
                     self.modifiers.scroll_lock = !self.modifiers.scroll_lock;
-                    update_leds(&self.cmd_port, &self.data_port, &self.modifiers);
+                    update_leds(&self.cmd_port, &self.data_port, self.modifiers);
                 }
                 return None;
             }

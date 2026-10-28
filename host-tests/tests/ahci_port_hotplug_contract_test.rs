@@ -97,11 +97,11 @@ fn sata_hotplug_event_routes_through_manager() {
 fn drives_for_location_empty_without_controller() {
     // 未运行 storage_init ⇒ PROBED 为空 ⇒ SATA 查询落空
     assert!(
-        drives_for_location(&sata_location(0)).is_empty(),
+        drives_for_location(sata_location(0)).is_empty(),
         "无已探测控制器时 SATA 位置应解析为空"
     );
     assert!(
-        drives_for_location(&sata_location(31)).is_empty(),
+        drives_for_location(sata_location(31)).is_empty(),
         "越界端口号在无台账时同样应解析为空"
     );
 
@@ -120,11 +120,11 @@ fn drives_for_location_empty_without_controller() {
         slot: 0,
     };
     assert!(
-        drives_for_location(&usb).is_empty(),
+        drives_for_location(usb).is_empty(),
         "USB 总线不解析存储块设备"
     );
     assert!(
-        drives_for_location(&virtio).is_empty(),
+        drives_for_location(virtio).is_empty(),
         "Virtio 总线不解析存储块设备"
     );
 }

@@ -38,21 +38,13 @@ impl PwmId {
     /// 无效/未分配标识的哨兵值.
     pub const ZERO: Self = Self(0);
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 判断该标识是否为已分配 (非零).
-    pub fn is_valid(&self) -> bool {
+    pub fn is_valid(self) -> bool {
         self.0 != 0
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 取出内部 u64 原始值.
-    pub fn as_u64(&self) -> u64 {
+    pub fn as_u64(self) -> u64 {
         self.0
     }
 }
@@ -78,21 +70,13 @@ impl DomainId {
     /// 无特权用户域的保留编号 (uid 65534).
     pub const NOBODY: Self = Self(65534);
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 判断是否关联了活动域 (非零).
-    pub fn is_valid(&self) -> bool {
+    pub fn is_valid(self) -> bool {
         self.0 != 0
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 取出内部 u64 原始值.
-    pub fn as_u64(&self) -> u64 {
+    pub fn as_u64(self) -> u64 {
         self.0
     }
 
@@ -101,12 +85,8 @@ impl DomainId {
         Self(u64::from(uid))
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 转换为对应的 POSIX uid (截断为 u32).
-    pub fn to_uid(&self) -> u32 {
+    pub fn to_uid(self) -> u32 {
         crate::privileged::lib::low_u32_from_u64(self.0)
     }
 }
@@ -204,21 +184,13 @@ impl CapDomain {
     /// 预留域 (未分配语义).
     pub const RESERVED: Self = Self(15);
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 转为能力矩阵下标 (对 16 取模, 保证不越界).
-    pub fn as_usize(&self) -> usize {
+    pub fn as_usize(self) -> usize {
         (self.0 as usize) % 16
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 取出内部 u16 原始值.
-    pub fn as_u16(&self) -> u16 {
+    pub fn as_u16(self) -> u16 {
         self.0
     }
 }
@@ -240,21 +212,13 @@ impl CapBits {
     /// 全集: 所有能力位均置位.
     pub const ALL: Self = Self(0xFFFF_FFFF_FFFF_FFFF);
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 判断当前集合是否完整包含另一集合的全部位.
-    pub fn contains(&self, other: Self) -> bool {
+    pub fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-    )]
     /// 取出内部 u64 位图.
-    pub fn as_u64(&self) -> u64 {
+    pub fn as_u64(self) -> u64 {
         self.0
     }
 }

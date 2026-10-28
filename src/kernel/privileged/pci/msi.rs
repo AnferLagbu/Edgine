@@ -265,11 +265,7 @@ pub fn msi_enable(dev: &pci::PciDevice) -> Option<MsiConfig> {
 }
 
 /// 禁用 MSI
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是既有 API 约定 (改传值会波及调用点); 当前优先 expect"
-)]
-pub fn msi_disable(dev: &pci::PciDevice, config: &MsiConfig) {
+pub fn msi_disable(dev: &pci::PciDevice, config: MsiConfig) {
     let ctrl = pci::read_config_word(dev.bus, dev.device, dev.function, config.cap_offset + 0x02);
     let new_ctrl = ctrl & !MSI_CTRL_ENABLE;
     pci::write_config_word(
@@ -428,11 +424,7 @@ pub fn msix_enable(dev: &pci::PciDevice, num_vectors: u16) -> Option<MsixConfig>
 }
 
 /// 禁用 MSI-X
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是既有 API 约定 (改传值会波及调用点); 当前优先 expect"
-)]
-pub fn msix_disable(dev: &pci::PciDevice, config: &MsixConfig) {
+pub fn msix_disable(dev: &pci::PciDevice, config: MsixConfig) {
     let ctrl = pci::read_config_word(dev.bus, dev.device, dev.function, config.cap_offset + 0x02);
     let new_ctrl = ctrl & !MSIX_CTRL_ENABLE;
     pci::write_config_word(

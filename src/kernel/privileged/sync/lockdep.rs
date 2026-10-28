@@ -465,7 +465,7 @@ fn with_current_stack<R>(f: impl FnOnce(&mut HeldLockStack) -> R) -> Option<R> {
     // SAFETY: 已屏蔽本 CPU 中断 → 本核无并发访问 `slots[cpu]`; 其他 CPU 访问不同格,
     // 无 `&mut` 别名 (见 `PerCpuHeldStacks` Sync 契约).
     let r = f(unsafe { &mut *HELD_LOCK_STACKS.slots[cpu].get() });
-    crate::privileged::sync::restore_interrupts(&prev);
+    crate::privileged::sync::restore_interrupts(prev);
     Some(r)
 }
 

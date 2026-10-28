@@ -494,11 +494,7 @@ fn event_location(event: &HotplugEvent) -> &DeviceLocation {
 ///
 /// 返回空表示该位置下无已注册的存储块设备 (或总线类型不支持)。
 #[cfg(target_arch = "x86_64")]
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-)]
-pub fn drives_for_location(location: &DeviceLocation) -> Vec<u8> {
+pub fn drives_for_location(location: DeviceLocation) -> Vec<u8> {
     match location.bus_type {
         BusType::Pcie => {
             let secondary = crate::privileged::pci::read_config_byte(
@@ -655,11 +651,7 @@ fn ahci_port_poll() {
 
 /// aarch64 (QEMU virt) 无 PCIe 热插拔槽位, 恒返回空。
 #[cfg(not(target_arch = "x86_64"))]
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-)]
-pub fn drives_for_location(_location: &DeviceLocation) -> Vec<u8> {
+pub fn drives_for_location(_location: DeviceLocation) -> Vec<u8> {
     Vec::new()
 }
 

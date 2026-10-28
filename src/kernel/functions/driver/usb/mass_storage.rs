@@ -163,21 +163,13 @@ impl CommandStatusWrapper {
         })
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 是否成功.
-    pub fn is_success(&self) -> bool {
+    pub fn is_success(self) -> bool {
         self.status == csw_status::SUCCESS
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 是否为 Phase Error (协议层错误, 通常需 reset recovery).
-    pub fn is_phase_error(&self) -> bool {
+    pub fn is_phase_error(self) -> bool {
         self.status == csw_status::PHASE_ERROR
     }
 }

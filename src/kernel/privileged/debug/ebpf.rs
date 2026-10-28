@@ -195,28 +195,16 @@ impl BpfInsn {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 取目的寄存器编号 (低 4 位).
-    pub fn dst(&self) -> u8 {
+    pub fn dst(self) -> u8 {
         self.dst_reg & 0xf
     }
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 取源寄存器编号 (高 4 位).
-    pub fn src(&self) -> u8 {
+    pub fn src(self) -> u8 {
         (self.dst_reg >> 4) & 0xf
     }
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 取指令类码 (操作码低 3 位).
-    pub fn class(&self) -> u8 {
+    pub fn class(self) -> u8 {
         self.op & 0x07
     }
 }
@@ -746,7 +734,7 @@ impl BpfInterpreter {
 
             match class {
                 opcode::ALU | opcode::ALU64 => {
-                    Self::exec_alu(insn, &mut regs);
+                    Self::exec_alu(*insn, &mut regs);
                     pc += 1;
                 }
                 opcode::LD | opcode::LDX => {
@@ -758,7 +746,7 @@ impl BpfInterpreter {
                     pc += 1;
                 }
                 opcode::JMP | opcode::JMP32 => {
-                    if let Some(next) = Self::exec_jmp(insn, &mut regs, pc, ctx.maps) {
+                    if let Some(next) = Self::exec_jmp(*insn, &mut regs, pc, ctx.maps) {
                         pc = next;
                     } else {
                         break; // EXIT
@@ -774,11 +762,7 @@ impl BpfInterpreter {
         regs[reg::R0]
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    fn exec_alu(insn: &BpfInsn, regs: &mut [u64; BPF_REG_NUM]) {
+    fn exec_alu(insn: BpfInsn, regs: &mut [u64; BPF_REG_NUM]) {
         let dst = insn.dst() as usize;
         let src = insn.src() as usize;
         let is_64 = insn.class() == opcode::ALU64;
@@ -1007,12 +991,8 @@ impl BpfInterpreter {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     fn exec_jmp(
-        insn: &BpfInsn,
+        insn: BpfInsn,
         regs: &mut [u64; BPF_REG_NUM],
         pc: usize,
         maps: &BTreeMap<u32, Arc<BpfMap>>,

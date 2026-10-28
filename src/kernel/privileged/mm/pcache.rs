@@ -398,7 +398,7 @@ pub fn pcache_acquire_for_va(
     let vmm_inst = vmm::get_vmm();
     let old = vmm_inst
         .get_physical_in_pml4(pml4, VirtAddr(va))
-        .map_or(0, |p| p.as_u64());
+        .map_or(0, PhysAddr::as_u64);
 
     // 幂等: 该 VA 已持有本页缓存帧
     if old != 0 && pcache_lookup(inode_id, page_index) == Some(old) {
@@ -441,7 +441,7 @@ pub fn pcache_release_for_va(pml4: u64, va: u64, inode_id: u32, page_index: u64)
     let cur = pcache_lookup(inode_id, page_index)?;
     let mapped = vmm::get_vmm()
         .get_physical_in_pml4(pml4, VirtAddr(va))
-        .map_or(0, |p| p.as_u64());
+        .map_or(0, PhysAddr::as_u64);
     if mapped != cur {
         return None;
     }

@@ -403,11 +403,7 @@ impl IdtManager {
     /// 两个 IPI 向量使用与传统 IRQ 相同的 `irq_common` 入口, DPL0 且不占用 IST.
     /// 分发由 `handle_irq` 的向量前置分支承担, 不进入 `irq_descriptors` 表.
     // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是既有 API 约定 (改传值会波及调用点); 当前优先 expect"
-    )]
-    pub fn init_ipi_idt(&self, ipi_table: &[u64; 2]) {
+    pub fn init_ipi_idt(&self, ipi_table: [u64; 2]) {
         let mut state = self.state.lock();
         for (i, &handler_addr) in ipi_table.iter().enumerate() {
             let vector = 0xFD + crate::privileged::lib::low_u8_from_usize(i);

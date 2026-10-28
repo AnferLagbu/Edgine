@@ -100,16 +100,12 @@ pub enum CpuVendor {
 }
 
 impl CpuVendor {
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 从厂商字符串识别厂商
     ///
     /// # Arguments
     /// * `vendor_str` - 12字节的厂商ID (如 "`GenuineIntel`")
-    pub fn from_vendor_string(vendor_str: &[u8; VENDOR_STRING_LEN]) -> Self {
-        match vendor_str {
+    pub fn from_vendor_string(vendor_str: [u8; VENDOR_STRING_LEN]) -> Self {
+        match &vendor_str {
             b"GenuineIntel" => Self::Intel,
             b"AuthenticAMD" => Self::Amd,
             b"CentaurHauls" => Self::Via,
@@ -121,11 +117,7 @@ impl CpuVendor {
 
     /// 获取厂商名称 (用于显示)
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub const fn name(&self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
             Self::Intel => "Intel",
             Self::Amd => "AMD",
@@ -139,11 +131,7 @@ impl CpuVendor {
 
     /// 是否为虚拟化环境
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub const fn is_virtualized(&self) -> bool {
+    pub const fn is_virtualized(self) -> bool {
         matches!(self, Self::Qemu | Self::Unknown) // Unknown 可能是VMware等
     }
 }
@@ -181,11 +169,7 @@ impl CpuSignature {
     /// - 如果 Family != 0xF, `Effective_Family` = Family
     /// - 如果 Family == 0xF, `Effective_Family` = `Extended_Family` + Family
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub const fn effective_family(&self) -> u8 {
+    pub const fn effective_family(self) -> u8 {
         if self.family == 0x0F {
             self.ext_family.saturating_add(self.family)
         } else {
@@ -195,11 +179,7 @@ impl CpuSignature {
 
     /// 计算有效的型号 (同上逻辑)
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub const fn effective_model(&self) -> u8 {
+    pub const fn effective_model(self) -> u8 {
         if self.family == 0x06 || self.family == 0x0F {
             (self.ext_model << 4).saturating_add(self.model)
         } else {
@@ -207,13 +187,9 @@ impl CpuSignature {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 格式化为人类可读字符串 (如 "6-158-10" 表示 Family 6, Model 158, Stepping 10)
     /// 返回一个静态数组 (避免堆分配)
-    pub fn to_string(&self) -> [u8; 16] {
+    pub fn to_string(self) -> [u8; 16] {
         let mut buf = [0u8; 16];
         let fam = self.effective_family();
         let mod_ = self.effective_model();
@@ -442,8 +418,8 @@ pub extern "C" fn cpu_init() -> i32 {
     // Step 5: 探测拓扑
     self::topology::detect_topology(
         &mut info.topology,
-        &info.signature,
-        &info.features,
+        info.signature,
+        info.features,
         info.max_standard_leaf,
         info.max_ext_leaf,
         info.vendor,
@@ -668,7 +644,7 @@ fn detect_vendor(vendor_out: &mut [u8; VENDOR_STRING_LEN]) -> CpuVendor {
     vendor_out[8..12].copy_from_slice(&ecx.to_le_bytes());
     vendor_out[11] = 0; // null 终止
 
-    CpuVendor::from_vendor_string(vendor_out)
+    CpuVendor::from_vendor_string(*vendor_out)
 }
 
 /// 获取 CPU 签名 (通过 CPUID Leaf 1 EAX)
@@ -853,24 +829,24 @@ mod tests {
     #[test]
     fn test_cpu_vendor_recognition() {
         assert_eq!(
-            CpuVendor::from_vendor_string(b"GenuineIntel"),
+            CpuVendor::from_vendor_string(*b"GenuineIntel"),
             CpuVendor::Intel
         );
         assert_eq!(
-            CpuVendor::from_vendor_string(b"AuthenticAMD"),
+            CpuVendor::from_vendor_string(*b"AuthenticAMD"),
             CpuVendor::Amd
         );
         assert_eq!(
-            CpuVendor::from_vendor_string(b"CentaurHauls"),
+            CpuVendor::from_vendor_string(*b"CentaurHauls"),
             CpuVendor::Via
         );
         // from_vendor_string 取定长 12 字节数组; QEMU 分支只判前 9 字节前缀.
         assert_eq!(
-            CpuVendor::from_vendor_string(b"TCGTCGTCGXYZ"),
+            CpuVendor::from_vendor_string(*b"TCGTCGTCGXYZ"),
             CpuVendor::Qemu
         );
         assert_eq!(
-            CpuVendor::from_vendor_string(b"Unrecognized"),
+            CpuVendor::from_vendor_string(*b"Unrecognized"),
             CpuVendor::Unknown
         );
     }

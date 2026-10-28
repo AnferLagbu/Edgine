@@ -67,7 +67,7 @@ pub fn clone_user_page_table_cow(parent_pml4: u64) -> Option<u64> {
     let vmm_inst = vmm::get_vmm();
     let guard = vmm_inst.acquire_lock();
     let result = clone_user_page_table_cow_inner(parent_pml4);
-    vmm_inst.release_lock(&guard);
+    vmm_inst.release_lock(guard);
     result
 }
 
@@ -441,7 +441,7 @@ pub fn cow_handle_fault(pml4: u64, fault_addr: u64) -> Option<u64> {
     let vmm_inst = vmm::get_vmm();
     let lock_flags = vmm_inst.acquire_lock();
     let result = cow_handle_fault_locked(pml4, fault_addr);
-    vmm_inst.release_lock(&lock_flags);
+    vmm_inst.release_lock(lock_flags);
     result
 }
 

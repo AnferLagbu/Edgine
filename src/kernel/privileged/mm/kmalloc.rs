@@ -480,7 +480,7 @@ impl KernelHeap {
         if result.is_none() {
             self.failed_allocs.fetch_add(1, Ordering::Relaxed);
         }
-        self.release_lock(&flags);
+        self.release_lock(flags);
         result
     }
 
@@ -494,7 +494,7 @@ impl KernelHeap {
 
         if !self.initialized.load(Ordering::Acquire) {
             serial_println!("[Kmalloc] Warning: Cannot free before initialization");
-            self.release_lock(&flags);
+            self.release_lock(flags);
             return;
         }
 
@@ -507,13 +507,13 @@ impl KernelHeap {
                 header.magic(),
                 HEAP_MAGIC
             );
-            self.release_lock(&flags);
+            self.release_lock(flags);
             return;
         }
 
         if header.is_free() {
             serial_println!("[Kmalloc] Warning: Double free detected");
-            self.release_lock(&flags);
+            self.release_lock(flags);
             return;
         }
 
@@ -527,7 +527,7 @@ impl KernelHeap {
         let effective = self.coalesce(header);
         self.add_to_free_list(effective);
 
-        self.release_lock(&flags);
+        self.release_lock(flags);
     }
 
     /// 重新分配内存块
@@ -546,7 +546,7 @@ impl KernelHeap {
         // SAFETY: ptr was returned by kmalloc; magic/size validated below
         let header = unsafe { HeaderRef::from_data_ptr(ptr) };
         if header.magic() != HEAP_MAGIC || header.is_free() {
-            self.release_lock(&flags);
+            self.release_lock(flags);
             return None;
         }
 
@@ -556,7 +556,7 @@ impl KernelHeap {
         let new_aligned = crate::privileged::lib::usize_from_u64(align_up(size as u64, ALIGNMENT));
 
         if new_aligned <= old_data_size {
-            self.release_lock(&flags);
+            self.release_lock(flags);
             return Some(ptr);
         }
 
@@ -582,7 +582,7 @@ impl KernelHeap {
             }
             p
         } else {
-            self.release_lock(&flags);
+            self.release_lock(flags);
             return None;
         };
 
@@ -601,7 +601,7 @@ impl KernelHeap {
         let effective = self.coalesce(header);
         self.add_to_free_list(effective);
 
-        self.release_lock(&flags);
+        self.release_lock(flags);
         Some(new_ptr)
     }
 
@@ -664,13 +664,13 @@ impl KernelHeap {
 
             if cur.magic() != HEAP_MAGIC {
                 serial_println!("[Kmalloc] Validate: Bad magic at {:p}", cur.as_ptr());
-                self.release_lock(&flags);
+                self.release_lock(flags);
                 return false;
             }
 
             if !cur.is_free() {
                 serial_println!("[Kmalloc] Validate: Non-free block in free list");
-                self.release_lock(&flags);
+                self.release_lock(flags);
                 return false;
             }
 
@@ -683,7 +683,7 @@ impl KernelHeap {
                 let next_prev = next.prev();
                 if !next_prev.is_null() && next_prev != current {
                     serial_println!("[Kmalloc] Validate: Broken backward link");
-                    self.release_lock(&flags);
+                    self.release_lock(flags);
                     return false;
                 }
             }
@@ -693,12 +693,12 @@ impl KernelHeap {
 
             if count > 10000 {
                 serial_println!("[Kmalloc] Validate: Too many nodes (possible cycle)");
-                self.release_lock(&flags);
+                self.release_lock(flags);
                 return false;
             }
         }
 
-        self.release_lock(&flags);
+        self.release_lock(flags);
         true
     }
 
@@ -970,11 +970,7 @@ impl KernelHeap {
     }
 
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    fn release_lock(&self, flags: &IrqSaveFlags) {
+    fn release_lock(&self, flags: IrqSaveFlags) {
         self.lock.store(false, Ordering::Release);
         restore_interrupts(flags);
     }

@@ -268,15 +268,11 @@ impl SpinLock {
         flags
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 释放锁并恢复中断标志
     ///
     /// # Arguments
     /// * `flags` - 之前保存的中断标志
-    pub fn unlock_irqrestore(&mut self, flags: &IrqSaveFlags) {
+    pub fn unlock_irqrestore(&mut self, flags: IrqSaveFlags) {
         self.raw_unlock();
         restore_interrupts(flags);
     }
@@ -350,15 +346,11 @@ pub fn disable_interrupts() -> IrqSaveFlags {
     IrqSaveFlags(0)
 }
 
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-)]
 /// 恢复中断标志
 ///
 /// 通过 Arch trait 的 `interrupt_restore` 实现，架构无关。
 #[cfg(not(feature = "host-test"))]
-pub fn restore_interrupts(flags: &IrqSaveFlags) {
+pub fn restore_interrupts(flags: IrqSaveFlags) {
     crate::arch!(interrupt_restore(crate::privileged::lib::usize_from_u64(
         flags.0
     )));
@@ -368,12 +360,8 @@ pub fn restore_interrupts(flags: &IrqSaveFlags) {
 // J-01 (2026-09-08): 与裸机变体一致的 trivially_copy_pass_by_ref expect —
 // host-test 编译下该变体同样传引用 (API 签名一致性), lint 与裸机对齐处理.
 #[cfg(feature = "host-test")]
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (与裸机变体签名一致); 当前优先 expect"
-)]
 /// 恢复先前保存的中断状态 (host-test 下为 no-op).
-pub fn restore_interrupts(_flags: &IrqSaveFlags) {}
+pub fn restore_interrupts(_flags: IrqSaveFlags) {}
 
 // ============================================================================
 // 内存屏障辅助函数
@@ -436,7 +424,7 @@ mod tests {
         let flags = lock.lock_irqsave();
         assert!(lock.is_locked());
 
-        lock.unlock_irqrestore(&flags);
+        lock.unlock_irqrestore(flags);
         assert!(!lock.is_locked());
     }
 

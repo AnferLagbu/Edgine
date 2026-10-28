@@ -69,35 +69,23 @@ pub enum Value {
 
 impl Value {
     /// 若为 `I32` 则取出 32 位整数, 否则返回 `None`。
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn as_i32(&self) -> Option<i32> {
+    pub fn as_i32(self) -> Option<i32> {
         match self {
-            Self::I32(v) => Some(*v),
+            Self::I32(v) => Some(v),
             _ => None,
         }
     }
     /// 若为 `I32` 则按无符号解释取出, 否则返回 `None`。
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn as_u32(&self) -> Option<u32> {
+    pub fn as_u32(self) -> Option<u32> {
         match self {
-            Self::I32(v) => Some((*v).cast_unsigned()),
+            Self::I32(v) => Some(v.cast_unsigned()),
             _ => None,
         }
     }
     /// 若为 `I64` 则取出 64 位整数, 否则返回 `None`。
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn as_i64(&self) -> Option<i64> {
+    pub fn as_i64(self) -> Option<i64> {
         match self {
-            Self::I64(v) => Some(*v),
+            Self::I64(v) => Some(v),
             _ => None,
         }
     }

@@ -1,8 +1,8 @@
 //! kmalloc 中断安全锁契约测试 (P1-I-28)
 //!
 //! 验证:
-//! 1. kmalloc.rs::acquire_lock/release_lock 签名变更为 (无) -> IrqSaveFlags / (&flags) -> ()
-//! 2. 源码静态扫描确认调用点一致 (let flags = self.acquire_lock(); ... self.release_lock(&flags);)
+//! 1. kmalloc.rs::acquire_lock/release_lock 签名变更为 (无) -> IrqSaveFlags / (flags) -> ()
+//! 2. 源码静态扫描确认调用点一致 (let flags = self.acquire_lock(); ... self.release_lock(flags);)
 //! 3. 中断安全锁配对契约: lock_irqsave 返回 flags, unlock_irqrestore 接 flags
 //!
 //! 分册 9 项 2 (B09-21): 原第 2 条 (kmalloc_slab.rs 源文本静态扫描) 随
@@ -33,7 +33,7 @@ fn lock_acquire_release_paired_with_flags() {
     let mut lock = SpinLock::new();
     let flags: IrqSaveFlags = lock.lock_irqsave();
     assert!(lock.is_locked(), "持锁期间 is_locked 必须为 true");
-    lock.unlock_irqrestore(&flags);
+    lock.unlock_irqrestore(flags);
     assert!(!lock.is_locked(), "释放后 lock 必为 false");
 }
 
@@ -57,9 +57,9 @@ fn nested_critical_section_with_distinct_locks() {
     assert!(outer.is_locked());
     let flags2 = inner.lock_irqsave();
     assert!(inner.is_locked());
-    inner.unlock_irqrestore(&flags2);
+    inner.unlock_irqrestore(flags2);
     assert!(!inner.is_locked());
-    outer.unlock_irqrestore(&flags1);
+    outer.unlock_irqrestore(flags1);
     assert!(!outer.is_locked());
 }
 
@@ -69,9 +69,9 @@ fn irq_disable_restore_host_stub_pairing() {
     // host-test 下为 no-op (B08-14): disable 返回 IrqSaveFlags(0), restore 无操作,
     // 但调用配对不 panic, 保证裸机/宿主两套实现同一调用面.
     let flags = disable_interrupts();
-    restore_interrupts(&flags);
+    restore_interrupts(flags);
     let flags2 = disable_interrupts();
-    restore_interrupts(&flags2);
+    restore_interrupts(flags2);
 }
 
 #[test]
@@ -84,8 +84,8 @@ fn kmalloc_source_uses_irq_save_flags_signature() {
         "P1-I-28: kmalloc.rs::acquire_lock 签名必须返回 IrqSaveFlags"
     );
     assert!(
-        source.contains("fn release_lock(&self, flags: &IrqSaveFlags)"),
-        "P1-I-28: kmalloc.rs::release_lock 签名必须接 &IrqSaveFlags"
+        source.contains("fn release_lock(&self, flags: IrqSaveFlags)"),
+        "P1-I-28: kmalloc.rs::release_lock 签名必须接 IrqSaveFlags"
     );
     // 必须导入 disable_interrupts / restore_interrupts
     assert!(

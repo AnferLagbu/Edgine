@@ -27,11 +27,7 @@ pub struct TopologyInfo {
 impl TopologyInfo {
     /// 获取每物理核心的逻辑线程数
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub const fn threads_per_core(&self) -> u8 {
+    pub const fn threads_per_core(self) -> u8 {
         if self.physical_cores > 0 && self.logical_threads >= self.physical_cores {
             self.logical_threads / self.physical_cores
         } else {
@@ -41,11 +37,7 @@ impl TopologyInfo {
 
     /// 检查是否为单核 CPU
     #[inline]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub const fn is_single_core(&self) -> bool {
+    pub const fn is_single_core(self) -> bool {
         self.physical_cores <= 1 && self.logical_threads <= 1
     }
 }
@@ -55,14 +47,10 @@ impl TopologyInfo {
 /// B03-16 语义: 未知厂商 (`CpuVendor::Unknown`) 时跳过所有厂商特定 CPUID
 /// 分支, 回退到"按逻辑线程数假定无超线程" (或超线程时 2 threads/core 假设).
 #[cfg(target_arch = "x86_64")]
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-)]
 pub(super) fn detect_topology(
     topo_out: &mut TopologyInfo,
-    _sig: &CpuSignature,
-    feat: &CpuFeatures,
+    _sig: CpuSignature,
+    feat: CpuFeatures,
     max_std: u32,
     max_ext: u32,
     vendor: CpuVendor,

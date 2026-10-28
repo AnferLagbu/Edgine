@@ -114,12 +114,8 @@ impl Trb {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 提取 TRB 类型 (control`[15:10]`)
-    pub fn trb_type(&self) -> TrbType {
+    pub fn trb_type(self) -> TrbType {
         let ty = (self.control >> 10) & 0x3F;
         match ty {
             2 => TrbType::SetupStage,
@@ -146,12 +142,8 @@ impl Trb {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 获取 cycle bit (control`[0]`)
-    pub fn cycle_bit(&self) -> bool {
+    pub fn cycle_bit(self) -> bool {
         self.control & 1 != 0
     }
 }
@@ -729,10 +721,6 @@ impl XhciController {
         self.set_crcr(val);
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 提交命令 TRB 到 Command Ring 并触发 Doorbell.
     ///
     /// # 参数
@@ -743,7 +731,7 @@ impl XhciController {
     /// 1. 写 TRB 到 Command Ring (由调用方管理的 DMA 内存)
     /// 2. 更新 CRCR 的 Ring Consumer Cycle State
     /// 3. 写 Doorbell slot 0 触发控制器处理
-    pub fn submit_command(&self, _trb: &Trb, ring_tail_phys: u64) {
+    pub fn submit_command(&self, _trb: Trb, ring_tail_phys: u64) {
         // 注意: TRB 实际写入由调用方通过 DMA 内存完成.
         // 此处仅更新 CRCR 并触发 Doorbell.
         // CRCR 低 3 位: [0] = RCS (环消费者循环状态),
@@ -879,10 +867,6 @@ impl TransferRing {
         true
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 提交控制传输 (Setup → Data → Status, xHCI 规范 §4.11.2.3).
     ///
     /// # 参数
@@ -893,14 +877,14 @@ impl TransferRing {
     /// - `trb_interrupt_on_completion`: 是否在 Status Stage TRB 上设置 IOC
     pub fn push_control_transfer(
         &mut self,
-        setup_packet: &[u8; 8],
+        setup_packet: [u8; 8],
         data_phys: u64,
         data_len: u32,
         is_device_to_host: bool,
         trb_interrupt_on_completion: bool,
     ) -> bool {
         // Setup Stage TRB 构造 (USB-1.5 §6.4.1.1)
-        let setup_parameter = u64::from_ne_bytes(*setup_packet);
+        let setup_parameter = u64::from_ne_bytes(setup_packet);
         let setup_control = (TrbType::SetupStage as u32) << 10
             | 1 << 6 // ICE (Interrupt on Completion)
             | 1 << 5 // IOC

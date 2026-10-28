@@ -208,7 +208,7 @@ fn try_acquire_lock() -> Option<IrqSaveFlags> {
         .is_err()
     {
         // 未取得锁: 恢复进入时的中断状态, 不留副作用.
-        restore_interrupts(&flags);
+        restore_interrupts(flags);
         return None;
     }
     #[cfg(debug_assertions)]
@@ -279,12 +279,8 @@ impl Aarch64Vmm {
         clippy::unused_self,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
     /// 释放 VMM 锁并恢复中断标志; 释放后执行延迟释放收尾 (发布新代 + 定向 IPI + 机会式归还已追平帧).
-    pub fn release_lock(&self, flags: &IrqSaveFlags) {
+    pub fn release_lock(&self, flags: IrqSaveFlags) {
         // 仍持锁时读取并清除"本临界区需远程失效"标志: VMM_LOCK 是全局锁, 此刻本核
         // 是唯一写者, 故读-清不会漏掉本临界区自身的置位.
         let shootdown_needed = super::deferred_free::clear_shootdown_flag();
@@ -452,7 +448,7 @@ impl Aarch64Vmm {
                 let l1 = match self.ensure_next_level(l0, l0_idx) {
                     Ok(t) => t,
                     Err(e) => {
-                        self.release_lock(&guard);
+                        self.release_lock(guard);
                         return Err(e);
                     }
                 };
@@ -460,7 +456,7 @@ impl Aarch64Vmm {
                 let l2 = match self.ensure_next_level(l1, l1_idx) {
                     Ok(t) => t,
                     Err(e) => {
-                        self.release_lock(&guard);
+                        self.release_lock(guard);
                         return Err(e);
                     }
                 };
@@ -474,7 +470,7 @@ impl Aarch64Vmm {
                     ptr::write_volatile(l2.add(l2_idx), desc);
                 }
 
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 Ok(())
             }
             PageSize::Size1G => {
@@ -489,7 +485,7 @@ impl Aarch64Vmm {
                 let l1 = match self.ensure_next_level(l0, l0_idx) {
                     Ok(t) => t,
                     Err(e) => {
-                        self.release_lock(&guard);
+                        self.release_lock(guard);
                         return Err(e);
                     }
                 };
@@ -502,7 +498,7 @@ impl Aarch64Vmm {
                     ptr::write_volatile(l1.add(l1_idx), desc);
                 }
 
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 Ok(())
             }
         }
@@ -531,7 +527,7 @@ impl Aarch64Vmm {
 
         let l1 = self.get_next_level(l0, l0_idx);
         if l1.is_null() {
-            self.release_lock(&guard);
+            self.release_lock(guard);
             return;
         }
         let l1_idx = l1_index(vaddr);
@@ -547,14 +543,14 @@ impl Aarch64Vmm {
                     block_flags_to_descriptor(raw_flags, paddr, 1, 0x0000_FFFF_FFFF_F000);
                 ptr::write_volatile(l1.add(l1_idx), new_desc);
                 core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
         }
 
         let l2 = self.get_next_level(l1, l1_idx);
         if l2.is_null() {
-            self.release_lock(&guard);
+            self.release_lock(guard);
             return;
         }
         let l2_idx = l2_index(vaddr);
@@ -570,14 +566,14 @@ impl Aarch64Vmm {
                     block_flags_to_descriptor(raw_flags, paddr, 2, 0x0000_FFFF_FFFF_F000);
                 ptr::write_volatile(l2.add(l2_idx), new_desc);
                 core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
         }
 
         let l3 = self.get_next_level(l2, l2_idx);
         if l3.is_null() {
-            self.release_lock(&guard);
+            self.release_lock(guard);
             return;
         }
         let l3_idx = l3_index(vaddr);
@@ -588,7 +584,7 @@ impl Aarch64Vmm {
             let l3_entry = ptr::read_volatile(l3.add(l3_idx));
             if l3_entry == 0 {
                 // 页未映射, 无需修改
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
             let paddr = l3_entry & 0x0000_FFFF_FFFF_F000;
@@ -597,7 +593,7 @@ impl Aarch64Vmm {
             core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
         }
 
-        self.release_lock(&guard);
+        self.release_lock(guard);
     }
 
     /// 修改**指定页表**中虚拟页的保护属性 (mprotect 显式变体)
@@ -625,7 +621,7 @@ impl Aarch64Vmm {
 
         let l1 = self.get_next_level(l0, l0_idx);
         if l1.is_null() {
-            self.release_lock(&guard);
+            self.release_lock(guard);
             return;
         }
         let l1_idx = l1_index(vaddr);
@@ -641,14 +637,14 @@ impl Aarch64Vmm {
                     block_flags_to_descriptor(raw_flags, paddr, 1, 0x0000_FFFF_FFFF_F000);
                 ptr::write_volatile(l1.add(l1_idx), new_desc);
                 core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
         }
 
         let l2 = self.get_next_level(l1, l1_idx);
         if l2.is_null() {
-            self.release_lock(&guard);
+            self.release_lock(guard);
             return;
         }
         let l2_idx = l2_index(vaddr);
@@ -664,14 +660,14 @@ impl Aarch64Vmm {
                     block_flags_to_descriptor(raw_flags, paddr, 2, 0x0000_FFFF_FFFF_F000);
                 ptr::write_volatile(l2.add(l2_idx), new_desc);
                 core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
         }
 
         let l3 = self.get_next_level(l2, l2_idx);
         if l3.is_null() {
-            self.release_lock(&guard);
+            self.release_lock(guard);
             return;
         }
         let l3_idx = l3_index(vaddr);
@@ -682,7 +678,7 @@ impl Aarch64Vmm {
             let l3_entry = ptr::read_volatile(l3.add(l3_idx));
             if l3_entry == 0 {
                 // 页未映射, 无需修改
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
             let paddr = l3_entry & 0x0000_FFFF_FFFF_F000;
@@ -691,7 +687,7 @@ impl Aarch64Vmm {
             core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
         }
 
-        self.release_lock(&guard);
+        self.release_lock(guard);
     }
 
     #[expect(
@@ -721,7 +717,7 @@ impl Aarch64Vmm {
     ) {
         let guard = self.acquire_lock();
         self.map_page_in_table_locked(root_paddr, virt, phys, flags);
-        self.release_lock(&guard);
+        self.release_lock(guard);
     }
 
     /// 从 `root_paddr` 遍历页表, 按需创建中间级, 设置最终页描述符 ——
@@ -825,21 +821,21 @@ impl Aarch64Vmm {
 
         let l1 = self.get_next_level(l0, l0_idx);
         if l1.is_null() {
-            self.release_lock(&guard);
+            self.release_lock(guard);
             return;
         }
         let l1_idx = l1_index(vaddr);
 
         let l2 = self.get_next_level(l1, l1_idx);
         if l2.is_null() {
-            self.release_lock(&guard);
+            self.release_lock(guard);
             return;
         }
         let l2_idx = l2_index(vaddr);
 
         let l3 = self.get_next_level(l2, l2_idx);
         if l3.is_null() {
-            self.release_lock(&guard);
+            self.release_lock(guard);
             return;
         }
         let l3_idx = l3_index(vaddr);
@@ -926,7 +922,7 @@ impl Aarch64Vmm {
             super::deferred_free::mark_remote_shootdown();
         }
 
-        self.release_lock(&guard);
+        self.release_lock(guard);
     }
 
     #[expect(
@@ -1354,7 +1350,7 @@ impl Aarch64Vmm {
             let l0_idx = l0_index(vaddr);
             let l0_entry = ptr::read_volatile(l0.add(l0_idx));
             if l0_entry & 0b11 != 0b11 {
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -1362,7 +1358,7 @@ impl Aarch64Vmm {
             let l1_idx = l1_index(vaddr);
             let l1_entry = ptr::read_volatile(l1.add(l1_idx));
             if l1_entry & 0b11 != 0b11 {
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -1370,7 +1366,7 @@ impl Aarch64Vmm {
             let l2_idx = l2_index(vaddr);
             let l2_entry = ptr::read_volatile(l2.add(l2_idx));
             if l2_entry & 0b11 != 0b11 {
-                self.release_lock(&guard);
+                self.release_lock(guard);
                 return;
             }
 
@@ -1384,7 +1380,7 @@ impl Aarch64Vmm {
             core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
         }
 
-        self.release_lock(&guard);
+        self.release_lock(guard);
     }
 
     // ─── Clone / Destroy User Page Table ────────────────────────────
@@ -1457,7 +1453,7 @@ impl Aarch64Vmm {
             super::deferred_free::mark_remote_shootdown();
         }
 
-        self.release_lock(&guard);
+        self.release_lock(guard);
 
         // 埋点 (见 docs/plan/tlb-shootdown-epoch.md S-10): "销毁路径是否被走到" 是释放
         // 覆盖判别的第一分位 —— 整轮日志无本行 ⇒ 进程从未被回收, 而非"帧入链但代未追平".
@@ -1641,7 +1637,7 @@ pub fn count_present_user_pages(root_paddr: u64) -> Option<u64> {
         }
     }
 
-    vmm.release_lock(&flags);
+    vmm.release_lock(flags);
     Some(pages)
 }
 

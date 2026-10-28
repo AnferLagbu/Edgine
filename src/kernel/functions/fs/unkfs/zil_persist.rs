@@ -228,12 +228,8 @@ impl ZilBlockTrailer {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-    )]
     /// 尾部 magic 是否合法
-    pub fn is_valid(&self) -> bool {
+    pub fn is_valid(self) -> bool {
         self.tail_magic == ZIL_TAIL_MAGIC
     }
 

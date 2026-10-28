@@ -5,8 +5,8 @@
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 745,
-    "files": 178
+    "sites": 579,
+    "files": 149
   },
   "entries": [
     [
@@ -50,11 +50,6 @@
       1
     ],
     [
-      "src/kernel/functions/config/sysctl.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      1
-    ],
-    [
       "src/kernel/functions/config/validate.rs",
       "#[cfg_attr( target_arch = \"aarch64\", expect( clippy::unnecessary_wraps, reason = \"aarch64 上 APIC/IOAPIC 检查已禁用, 返回 Ok; x86_64 才真正检查\" ) )]",
       1
@@ -66,17 +61,7 @@
     ],
     [
       "src/kernel/functions/driver/char/vga.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      1
-    ],
-    [
-      "src/kernel/functions/driver/char/vga.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
-      2
-    ],
-    [
-      "src/kernel/functions/driver/display/controller.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       2
     ],
     [
@@ -86,23 +71,8 @@
     ],
     [
       "src/kernel/functions/driver/display/dp.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      3
-    ],
-    [
-      "src/kernel/functions/driver/display/dp.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       5
-    ],
-    [
-      "src/kernel/functions/driver/display/hdmi.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
-      1
-    ],
-    [
-      "src/kernel/functions/driver/display/hdmi.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      4
     ],
     [
       "src/kernel/functions/driver/display/hdmi.rs",
@@ -120,31 +90,6 @@
       1
     ],
     [
-      "src/kernel/functions/driver/storage/ahci.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      1
-    ],
-    [
-      "src/kernel/functions/driver/storage/mod.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      2
-    ],
-    [
-      "src/kernel/functions/driver/usb/hid.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      7
-    ],
-    [
-      "src/kernel/functions/driver/usb/mass_storage.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      2
-    ],
-    [
-      "src/kernel/functions/driver/usb/usb_core.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      4
-    ],
-    [
       "src/kernel/functions/driver/usb/usb_core.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       2
@@ -160,16 +105,6 @@
       1
     ],
     [
-      "src/kernel/functions/driver/usb/xhci.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      4
-    ],
-    [
-      "src/kernel/functions/egdf/mod.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      2
-    ],
-    [
       "src/kernel/functions/freg/attribution.rs",
       "#[expect(clippy::upper_case_acronyms,reason=\"TCB归属枚举按子系统缩写命名(FREG/SGEG)",
       1
@@ -180,21 +115,6 @@
       2
     ],
     [
-      "src/kernel/functions/freg/cascade.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      1
-    ],
-    [
-      "src/kernel/functions/freg/recovery_policy.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/cgroupfs.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      1
-    ],
-    [
       "src/kernel/functions/fs/configfs.rs",
       "#[expect(clippy::large_stack_arrays,reason=\"large_stack_arrays:大栈数组是性能权衡(避免堆分配)",
       1
@@ -203,11 +123,6 @@
       "src/kernel/functions/fs/dcache.rs",
       "#[expect(clippy::too_many_arguments,reason=\"too_many_arguments:icache需完整VfsStat字段,拆结构体收益不抵改动面;当前优先expect\")",
       1
-    ],
-    [
-      "src/kernel/functions/fs/devfs.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      5
     ],
     [
       "src/kernel/functions/fs/devfs.rs",
@@ -280,11 +195,6 @@
       1
     ],
     [
-      "src/kernel/functions/fs/unkfs/bp.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      5
-    ],
-    [
       "src/kernel/functions/fs/unkfs/checksum.rs",
       "#[expect(clippy::many_single_char_names,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
@@ -293,11 +203,6 @@
       "src/kernel/functions/fs/unkfs/dataset.rs",
       "#[allow(clippy::should_implement_trait)",
       1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/raidz.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      2
     ],
     [
       "src/kernel/functions/fs/unkfs/unkfs_data.rs",
@@ -313,11 +218,6 @@
       "src/kernel/functions/fs/unkfs/unkfs_data.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       3
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/zil_persist.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
-      1
     ],
     [
       "src/kernel/functions/fs/vfs_manager.rs",
@@ -353,11 +253,6 @@
       "src/kernel/functions/klog.rs",
       "#[expect(clippy::case_sensitive_file_extension_comparisons,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
-    ],
-    [
-      "src/kernel/functions/mm/swap.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      3
     ],
     [
       "src/kernel/functions/mod.rs",
@@ -605,11 +500,6 @@
       1
     ],
     [
-      "src/kernel/functions/net/dhcp_policy.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      1
-    ],
-    [
       "src/kernel/functions/net/smoltcp_impl.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       4
@@ -623,11 +513,6 @@
       "src/kernel/functions/net/smoltcp_impl.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       1
-    ],
-    [
-      "src/kernel/functions/net/socket.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      3
     ],
     [
       "src/kernel/functions/net/unix.rs",
@@ -685,11 +570,6 @@
       1
     ],
     [
-      "src/kernel/functions/sync/mod.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      1
-    ],
-    [
       "src/kernel/functions/timer/tickless.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       1
@@ -700,11 +580,6 @@
       1
     ],
     [
-      "src/kernel/functions/timer/time_sync.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      2
-    ],
-    [
       "src/kernel/functions/wasm/interpreter.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
@@ -713,11 +588,6 @@
       "src/kernel/functions/wasm/types.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
-    ],
-    [
-      "src/kernel/functions/wasm/types.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      3
     ],
     [
       "src/kernel/functions/wasm/wasi/errno.rs",
@@ -1105,11 +975,6 @@
       1
     ],
     [
-      "src/kernel/privileged/cpu/feature.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      6
-    ],
-    [
       "src/kernel/privileged/cpu/mod.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       1
@@ -1125,16 +990,6 @@
       1
     ],
     [
-      "src/kernel/privileged/cpu/mod.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      6
-    ],
-    [
-      "src/kernel/privileged/cpu/topology.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      3
-    ],
-    [
       "src/kernel/privileged/debug/ebpf.rs",
       "#[expect(clippy::bool_to_int_with_if,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
@@ -1143,11 +998,6 @@
       "src/kernel/privileged/debug/ebpf.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
-    ],
-    [
-      "src/kernel/privileged/debug/ebpf.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      5
     ],
     [
       "src/kernel/privileged/debug/kgdb.rs",
@@ -1180,11 +1030,6 @@
       6
     ],
     [
-      "src/kernel/privileged/driver/display/framebuffer.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      9
-    ],
-    [
       "src/kernel/privileged/driver/display/self_test.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
@@ -1205,29 +1050,9 @@
       3
     ],
     [
-      "src/kernel/privileged/driver/input/keyboard.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      5
-    ],
-    [
       "src/kernel/privileged/driver/power.rs",
       "#[expect(clippy::match_wildcard_for_single_variants,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
-    ],
-    [
-      "src/kernel/privileged/driver/power.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      2
-    ],
-    [
-      "src/kernel/privileged/driver/storage/nvme.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      3
-    ],
-    [
-      "src/kernel/privileged/driver/uefi.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      5
     ],
     [
       "src/kernel/privileged/driver/virtio/queue.rs",
@@ -1238,11 +1063,6 @@
       "src/kernel/privileged/egdf/composite.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
-    ],
-    [
-      "src/kernel/privileged/egdf/composite.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      2
     ],
     [
       "src/kernel/privileged/egdf/devtree.rs",
@@ -1258,11 +1078,6 @@
       "src/kernel/privileged/egdf/mod.rs",
       "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
       6
-    ],
-    [
-      "src/kernel/privileged/egdf/mod.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      1
     ],
     [
       "src/kernel/privileged/egdf/user_driver.rs",
@@ -1310,11 +1125,6 @@
       1
     ],
     [
-      "src/kernel/privileged/freg/reset/config.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      2
-    ],
-    [
       "src/kernel/privileged/freg/snapshot.rs",
       "#[expect(clippy::iter_without_into_iter,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
@@ -1336,11 +1146,6 @@
     ],
     [
       "src/kernel/privileged/idt/idt.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是既有API约定(改传值会波及调用点)",
-      1
-    ],
-    [
-      "src/kernel/privileged/idt/idt.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       6
     ],
@@ -1353,11 +1158,6 @@
       "src/kernel/privileged/idt/mod.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
-    ],
-    [
-      "src/kernel/privileged/idt/types.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      2
     ],
     [
       "src/kernel/privileged/idt/types.rs",
@@ -1481,11 +1281,6 @@
     ],
     [
       "src/kernel/privileged/mm/kmalloc.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/kmalloc.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       1
     ],
@@ -1505,29 +1300,9 @@
       1
     ],
     [
-      "src/kernel/privileged/mm/mod.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
-      3
-    ],
-    [
-      "src/kernel/privileged/mm/mod.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      12
-    ],
-    [
-      "src/kernel/privileged/mm/pmm.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      1
-    ],
-    [
       "src/kernel/privileged/mm/pmm.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       1
-    ],
-    [
-      "src/kernel/privileged/mm/pressure.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      3
     ],
     [
       "src/kernel/privileged/mm/slab.rs",
@@ -1538,11 +1313,6 @@
       "src/kernel/privileged/mm/slab.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       1
-    ],
-    [
-      "src/kernel/privileged/mm/swap.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      3
     ],
     [
       "src/kernel/privileged/mm/vma.rs",
@@ -1556,22 +1326,12 @@
     ],
     [
       "src/kernel/privileged/mm/vma.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       2
     ],
     [
       "src/kernel/privileged/mm/vmm_aarch64.rs",
       "#[expect(clippy::missing_errors_doc,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_aarch64.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
       1
     ],
     [
@@ -1587,11 +1347,6 @@
     [
       "src/kernel/privileged/mm/vmm_x86_64.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是既有API约定(改传值会波及调用点)",
       1
     ],
     [
@@ -1850,11 +1605,6 @@
       1
     ],
     [
-      "src/kernel/privileged/net/iface_trait.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      3
-    ],
-    [
       "src/kernel/privileged/net/init.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
@@ -1872,11 +1622,6 @@
     [
       "src/kernel/privileged/net/init/state.rs",
       "#[expect(clippy::missing_errors_doc,reason=\"missing_errors_doc:transition_state返回Result<()",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/route.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       1
     ],
     [
@@ -1898,11 +1643,6 @@
       "src/kernel/privileged/page_table.rs",
       "#[expect(clippy::uninlined_format_args,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
       1
-    ],
-    [
-      "src/kernel/privileged/pci/msi.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是既有API约定(改传值会波及调用点)",
-      2
     ],
     [
       "src/kernel/privileged/proc/cfs.rs",
@@ -2030,11 +1770,6 @@
       1
     ],
     [
-      "src/kernel/privileged/proc/types.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      3
-    ],
-    [
       "src/kernel/privileged/proc/user_proc.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       2
@@ -2057,11 +1792,6 @@
     [
       "src/kernel/privileged/proc/user_proc.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      2
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       2
     ],
     [
@@ -2096,11 +1826,6 @@
     ],
     [
       "src/kernel/privileged/sgeg/identity.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/identity.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       1
     ],
@@ -2108,16 +1833,6 @@
       "src/kernel/privileged/sgeg/sha256.rs",
       "#[expect(clippy::many_single_char_names,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
-    ],
-    [
-      "src/kernel/privileged/sgeg/types.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/types.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      8
     ],
     [
       "src/kernel/privileged/sgeg/types.rs",
@@ -2157,21 +1872,6 @@
     [
       "src/kernel/privileged/sync/rcu.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/spinlock.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(与裸机变体签名一致)",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/spinlock.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      2
-    ],
-    [
-      "src/kernel/privileged/sync/types.rs",
-      "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       1
     ],
     [

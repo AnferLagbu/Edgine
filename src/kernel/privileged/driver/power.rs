@@ -69,12 +69,8 @@ impl CpuIdleState {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 进入该 C-state 的预期延迟 (微秒)
-    pub fn latency_us(&self) -> u32 {
+    pub fn latency_us(self) -> u32 {
         match self {
             Self::C0Running => 0,
             Self::C1Halt => 1,
@@ -83,12 +79,8 @@ impl CpuIdleState {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 该 C-state 的功耗节省比例 (0-100)
-    pub fn power_saving(&self) -> u32 {
+    pub fn power_saving(self) -> u32 {
         match self {
             Self::C0Running => 0,
             Self::C1Halt => 40,

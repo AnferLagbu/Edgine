@@ -60,12 +60,8 @@ impl RecoveryAction {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 决策是否需要执行硬件级重置 (BHR)
-    pub fn is_hardware_reset(&self) -> bool {
+    pub fn is_hardware_reset(self) -> bool {
         matches!(self, Self::FREGHardReset)
     }
 }

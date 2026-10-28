@@ -57,21 +57,13 @@ pub enum RecoveryResult {
 }
 
 impl RecoveryResult {
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 是否为成功结果
-    pub fn is_success(&self) -> bool {
+    pub fn is_success(self) -> bool {
         matches!(self, Self::Success)
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 是否需要升级到下一层恢复
-    pub fn should_escalate(&self) -> bool {
+    pub fn should_escalate(self) -> bool {
         matches!(self, Self::Escalate)
     }
 }

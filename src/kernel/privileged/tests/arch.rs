@@ -10,27 +10,27 @@ use crate::register_tests_inner;
 
 fn cpu_vendor_recognition() -> TestResult {
     assert_eq_test!(
-        CpuVendor::from_vendor_string(b"GenuineIntel"),
+        CpuVendor::from_vendor_string(*b"GenuineIntel"),
         CpuVendor::Intel,
         "Intel vendor"
     );
     assert_eq_test!(
-        CpuVendor::from_vendor_string(b"AuthenticAMD"),
+        CpuVendor::from_vendor_string(*b"AuthenticAMD"),
         CpuVendor::Amd,
         "AMD vendor"
     );
     assert_eq_test!(
-        CpuVendor::from_vendor_string(b"CentaurHauls"),
+        CpuVendor::from_vendor_string(*b"CentaurHauls"),
         CpuVendor::Via,
         "VIA vendor"
     );
     assert_eq_test!(
-        CpuVendor::from_vendor_string(b"TCGTCGTCG??\0"),
+        CpuVendor::from_vendor_string(*b"TCGTCGTCG??\0"),
         CpuVendor::Qemu,
         "QEMU vendor"
     );
     assert_eq_test!(
-        CpuVendor::from_vendor_string(b"UnknownVend\0"),
+        CpuVendor::from_vendor_string(*b"UnknownVend\0"),
         CpuVendor::Unknown,
         "Unknown vendor"
     );

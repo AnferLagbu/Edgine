@@ -212,31 +212,19 @@ pub struct EdidDetailedTiming {
 }
 
 impl EdidDetailedTiming {
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 获取水平分辨率
-    pub fn horizontal_resolution(&self) -> u16 {
+    pub fn horizontal_resolution(self) -> u16 {
         u16::from(self.horizontal_active) | ((u16::from(self.horizontal_active_high) & 0xF0) << 4)
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 获取垂直分辨率
-    pub fn vertical_resolution(&self) -> u16 {
+    pub fn vertical_resolution(self) -> u16 {
         u16::from(self.vertical_active)
             | ((u16::from(self.vertical_active_blanking_high) & 0xF0) << 4)
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 获取刷新率 (近似)
-    pub fn refresh_rate(&self) -> u32 {
+    pub fn refresh_rate(self) -> u32 {
         if self.pixel_clock == 0 {
             return 60;
         }
@@ -665,12 +653,8 @@ const DMT_TIMINGS: &[(u16, u16, u8, VideoTiming)] = &[
     ),
 ];
 
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-)]
 /// 在 DMT lookup table 中查找精确时序参数
-pub fn lookup_dmt_timing(mode: &VideoMode) -> Option<VideoTiming> {
+pub fn lookup_dmt_timing(mode: VideoMode) -> Option<VideoTiming> {
     for &(w, h, rate, timing) in DMT_TIMINGS {
         if w == mode.width && h == mode.height && rate == mode.refresh_rate {
             return Some(timing);
@@ -679,12 +663,8 @@ pub fn lookup_dmt_timing(mode: &VideoMode) -> Option<VideoTiming> {
     None
 }
 
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-)]
 /// 从 `VideoMode` 派生时序参数 (DMT lookup 优先, 公式 fallback)
-pub fn derive_video_timing(mode: &VideoMode) -> VideoTiming {
+pub fn derive_video_timing(mode: VideoMode) -> VideoTiming {
     if let Some(timing) = lookup_dmt_timing(mode) {
         return timing;
     }
@@ -917,7 +897,7 @@ impl HdmiController {
         }
 
         // 第 2 步: 配置时序参数
-        let timing = derive_video_timing(&mode);
+        let timing = derive_video_timing(mode);
         if let Some(iomem) = &self.iomem {
             write_timing_register(iomem, H_TOTAL_REG_OFFSET, timing.h_total);
             write_timing_register(iomem, H_ACTIVE_REG_OFFSET, timing.h_active);

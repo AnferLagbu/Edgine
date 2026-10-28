@@ -290,7 +290,7 @@ fn blend_pixel_impl(canvas: &mut dyn PixelCanvas, x: u32, y: u32, color: Color) 
         return;
     }
     if let Some(existing) = canvas.get_pixel(x, y) {
-        let blended = color.blend(&existing);
+        let blended = color.blend(existing);
         canvas.set_pixel(x, y, blended);
     }
 }

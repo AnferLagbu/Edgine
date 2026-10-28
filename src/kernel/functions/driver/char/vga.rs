@@ -164,12 +164,8 @@ impl TextAttribute {
         self
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 编码为 u8 (VGA 显存格式)
-    pub const fn as_u8(&self) -> u8 {
+    pub const fn as_u8(self) -> u8 {
         let fg = self.foreground as u8;
         let bg = (self.background as u8) << 4;
         let blink = if self.blink { 0x80 } else { 0 };

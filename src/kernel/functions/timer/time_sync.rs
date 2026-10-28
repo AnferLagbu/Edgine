@@ -86,12 +86,8 @@ impl NtpTimestamp {
         }
     }
 
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 转换为 Unix 时间 (ns)
-    pub fn to_unix_ns(&self) -> u64 {
+    pub fn to_unix_ns(self) -> u64 {
         let sec = u64::from(
             self.sec
                 .wrapping_sub(crate::functions::intcast::low_u32_from_u64(
@@ -174,19 +170,15 @@ pub struct NtpResult {
 }
 
 impl NtpResult {
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 从 NTP 交换计算偏移和延迟
     ///
     /// offset = ((T2 - T1) + (T3 - T4)) / 2
     /// delay  = (T4 - T1) - (T3 - T2)
     pub fn compute(
-        t1: &NtpTimestamp, // 客户端发送时间
-        t2: &NtpTimestamp, // 服务器接收时间
-        t3: &NtpTimestamp, // 服务器发送时间
-        t4: &NtpTimestamp, // 客户端接收时间
+        t1: NtpTimestamp, // 客户端发送时间
+        t2: NtpTimestamp, // 服务器接收时间
+        t3: NtpTimestamp, // 服务器发送时间
+        t4: NtpTimestamp, // 客户端接收时间
     ) -> Self {
         let t1_ns = t1.to_unix_ns().cast_signed();
         let t2_ns = t2.to_unix_ns().cast_signed();

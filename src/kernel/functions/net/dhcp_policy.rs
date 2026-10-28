@@ -102,10 +102,6 @@ impl Default for DhcpPolicyConfig {
 /// - `dhcp_state`: 报告**当前**状态 (观察)
 /// - `dhcp_policy::decide`: 决定**下一步**动作 (策略)
 pub trait DhcpPolicy {
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     /// 给定当前状态 + 上下文, 返回下一步 Action.
     ///
     /// ## 参数
@@ -118,9 +114,9 @@ pub trait DhcpPolicy {
     /// - `lease_duration_ms`: 租期总长 (ms)
     fn decide(
         &self,
-        state: &DhcpState,
+        state: DhcpState,
         cfg: &NetConfig,
-        policy_cfg: &DhcpPolicyConfig,
+        policy_cfg: DhcpPolicyConfig,
         retry_count: u32,
         elapsed_ms: u64,
         lease_duration_ms: u64,
@@ -149,9 +145,9 @@ pub struct DefaultDhcpPolicy;
 impl DhcpPolicy for DefaultDhcpPolicy {
     fn decide(
         &self,
-        state: &DhcpState,
+        state: DhcpState,
         cfg: &NetConfig,
-        policy_cfg: &DhcpPolicyConfig,
+        policy_cfg: DhcpPolicyConfig,
         retry_count: u32,
         elapsed_ms: u64,
         lease_duration_ms: u64,
@@ -226,7 +222,7 @@ mod tests {
         let policy = DefaultDhcpPolicy;
         let cfg = NetConfig::empty();
         let pc = DhcpPolicyConfig::default();
-        let action = policy.decide(&DhcpState::Idle, &cfg, &pc, 0, 0, 0);
+        let action = policy.decide(DhcpState::Idle, &cfg, pc, 0, 0, 0);
         assert_eq!(action, DhcpAction::Continue);
     }
 
@@ -238,7 +234,7 @@ mod tests {
         let pc = DhcpPolicyConfig::default(); // max_retries = 4
         // retry_count=3 < 4: 继续
         assert_eq!(
-            policy.decide(&DhcpState::Discovering, &cfg, &pc, 3, 0, 0),
+            policy.decide(DhcpState::Discovering, &cfg, pc, 3, 0, 0),
             DhcpAction::Continue
         );
     }
@@ -252,7 +248,7 @@ mod tests {
         let pc = DhcpPolicyConfig::default(); // 默认配置: max_retries=4, fallback=true
         // retry_count=4 >= 4: 回退
         assert_eq!(
-            policy.decide(&DhcpState::Discovering, &cfg, &pc, 4, 0, 0),
+            policy.decide(DhcpState::Discovering, &cfg, pc, 4, 0, 0),
             DhcpAction::FallbackToStatic(Ipv4Addr::from_octets([192, 168, 1, 100]))
         );
     }
@@ -264,7 +260,7 @@ mod tests {
         let cfg = NetConfig::empty(); // static_ipv4 = None
         let pc = DhcpPolicyConfig::default();
         assert_eq!(
-            policy.decide(&DhcpState::Discovering, &cfg, &pc, 4, 0, 0),
+            policy.decide(DhcpState::Discovering, &cfg, pc, 4, 0, 0),
             DhcpAction::GiveUp
         );
     }
@@ -281,7 +277,7 @@ mod tests {
         };
         // 租期 3600s, t1=1800s, elapsed=1000s < 1800s
         assert_eq!(
-            policy.decide(&state, &cfg, &pc, 0, 1_000_000, 3_600_000),
+            policy.decide(state, &cfg, pc, 0, 1_000_000, 3_600_000),
             DhcpAction::Continue
         );
     }
@@ -298,7 +294,7 @@ mod tests {
         };
         // 租期 1000s, t1=500s, t2=875s, elapsed=600s (T1..T2)
         assert_eq!(
-            policy.decide(&state, &cfg, &pc, 0, 600_000, 1_000_000),
+            policy.decide(state, &cfg, pc, 0, 600_000, 1_000_000),
             DhcpAction::Renew
         );
     }
@@ -315,7 +311,7 @@ mod tests {
         };
         // 租期 1000s, t1=500s, t2=875s, elapsed=900s (>T2)
         assert_eq!(
-            policy.decide(&state, &cfg, &pc, 0, 900_000, 1_000_000),
+            policy.decide(state, &cfg, pc, 0, 900_000, 1_000_000),
             DhcpAction::Renew
         );
     }
@@ -328,7 +324,7 @@ mod tests {
         cfg.static_ipv4 = Some([10, 0, 0, 5]);
         let pc = DhcpPolicyConfig::default();
         assert_eq!(
-            policy.decide(&DhcpState::Failed, &cfg, &pc, 0, 0, 0),
+            policy.decide(DhcpState::Failed, &cfg, pc, 0, 0, 0),
             DhcpAction::FallbackToStatic(Ipv4Addr::from_octets([10, 0, 0, 5]))
         );
     }
@@ -341,7 +337,7 @@ mod tests {
         let mut pc = DhcpPolicyConfig::default();
         pc.fallback_to_static = false;
         assert_eq!(
-            policy.decide(&DhcpState::Failed, &cfg, &pc, 0, 0, 0),
+            policy.decide(DhcpState::Failed, &cfg, pc, 0, 0, 0),
             DhcpAction::GiveUp
         );
     }
