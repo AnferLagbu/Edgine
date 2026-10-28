@@ -195,7 +195,7 @@ pub fn sys_fw_get(a0: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     let slice = &blob.data[offset..offset + avail];
 
     if write_user_bytes(a1, slice) {
-        avail as i64
+        crate::functions::intcast::i64_from_usize(avail)
     } else {
         EFAULT
     }

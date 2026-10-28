@@ -59,8 +59,10 @@
 /// └── net/              # 使用 lib 的网络子系统
 /// ```
 pub mod cstr;
+pub mod intcast;
 pub mod string;
 
 // 导出常用函数，方便通过 crate::privileged::lib::* 直接使用
 pub use cstr::*;
+pub use intcast::*;
 pub use string::*;

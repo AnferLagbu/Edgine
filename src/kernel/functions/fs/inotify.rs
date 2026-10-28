@@ -469,7 +469,7 @@ pub fn sys_inotify_read(fd: i64, buf: *mut u8, count: usize) -> i64 {
         written += InotifyEvent::FULL_SIZE;
     }
 
-    written as i64
+    crate::functions::intcast::i64_from_usize(written)
 }
 
 // ============================================================================
@@ -478,7 +478,9 @@ pub fn sys_inotify_read(fd: i64, buf: *mut u8, count: usize) -> i64 {
 
 /// 判断 fd 是否属于 inotify FD 空间
 pub fn is_inotify_fd(fd: i32) -> bool {
-    fd >= INOTIFY_FD_BASE && fd < INOTIFY_FD_BASE + INOTIFY_MAX_INSTANCES as i32
+    fd >= INOTIFY_FD_BASE
+        && fd
+            < INOTIFY_FD_BASE + crate::functions::intcast::low_i32_from_usize(INOTIFY_MAX_INSTANCES)
 }
 
 /// fd → slot 索引

@@ -117,7 +117,7 @@ pub fn ioctl_uffd(fd: i32, request: u64, arg: u64) -> i64 {
             }
             match crate::privileged::mm::provide_page(fd, cp.dst, Some(&page)) {
                 Ok(()) => {
-                    cp.copy = cp.len as i64;
+                    cp.copy = cp.len.cast_signed();
                     if !write_struct_to_user(arg, &cp) {
                         return Errno::EFAULT.as_ret();
                     }
@@ -138,7 +138,7 @@ pub fn ioctl_uffd(fd: i32, request: u64, arg: u64) -> i64 {
             }
             match crate::privileged::mm::provide_page(fd, zp.range.start, None) {
                 Ok(()) => {
-                    zp.zeropage = zp.range.len as i64;
+                    zp.zeropage = zp.range.len.cast_signed();
                     if !write_struct_to_user(arg, &zp) {
                         return Errno::EFAULT.as_ret();
                     }

@@ -817,7 +817,7 @@ impl BpfInterpreter {
             opcode::ARSH => {
                 // 算术右移
                 if is_64 {
-                    (regs[dst] as i64).wrapping_shr(src_val as u32) as u64
+                    regs[dst].cast_signed().wrapping_shr(src_val as u32) as u64
                 } else {
                     (regs[dst] as i32).wrapping_shr(src_val as u32) as u64
                 }
@@ -984,7 +984,9 @@ impl BpfInterpreter {
         let is_32 = insn.class() == opcode::JMP32;
 
         match op_low {
-            opcode::JA => Some((pc as i64 + 1 + i64::from(insn.off)) as usize),
+            opcode::JA => Some(
+                (crate::privileged::lib::i64_from_usize(pc) + 1 + i64::from(insn.off)) as usize,
+            ),
             opcode::EXIT => None,
             opcode::CALL => {
                 let helper_id = insn.imm as u32;
@@ -1014,7 +1016,10 @@ impl BpfInterpreter {
                     Self::eval_cond64(op_low, dst_val, src_val)
                 };
                 if taken {
-                    Some((pc as i64 + 1 + i64::from(insn.off)) as usize)
+                    Some(
+                        (crate::privileged::lib::i64_from_usize(pc) + 1 + i64::from(insn.off))
+                            as usize,
+                    )
                 } else {
                     Some(pc + 1)
                 }
@@ -1029,12 +1034,12 @@ impl BpfInterpreter {
             opcode::JGE => dst >= src,
             opcode::JSET => dst & src != 0,
             opcode::JNE => dst != src,
-            opcode::JSGT => (dst as i64) > (src as i64),
-            opcode::JSGE => (dst as i64) >= (src as i64),
+            opcode::JSGT => dst.cast_signed() > src.cast_signed(),
+            opcode::JSGE => dst.cast_signed() >= src.cast_signed(),
             opcode::JLT => dst < src,
             opcode::JLE => dst <= src,
-            opcode::JSLT => (dst as i64) < (src as i64),
-            opcode::JSLE => (dst as i64) <= (src as i64),
+            opcode::JSLT => dst.cast_signed() < src.cast_signed(),
+            opcode::JSLE => dst.cast_signed() <= src.cast_signed(),
             _ => false,
         }
     }
@@ -1046,12 +1051,12 @@ impl BpfInterpreter {
             opcode::JGE => dst >= src,
             opcode::JSET => dst & src != 0,
             opcode::JNE => dst != src,
-            opcode::JSGT => (dst as i32) > (src as i32),
-            opcode::JSGE => (dst as i32) >= (src as i32),
+            opcode::JSGT => dst.cast_signed() > src.cast_signed(),
+            opcode::JSGE => dst.cast_signed() >= src.cast_signed(),
             opcode::JLT => dst < src,
             opcode::JLE => dst <= src,
-            opcode::JSLT => (dst as i32) < (src as i32),
-            opcode::JSLE => (dst as i32) <= (src as i32),
+            opcode::JSLT => dst.cast_signed() < src.cast_signed(),
+            opcode::JSLE => dst.cast_signed() <= src.cast_signed(),
             _ => false,
         }
     }
@@ -1247,7 +1252,7 @@ impl BpfSubsystem {
             data: ctx_data,
             maps: &maps_snapshot,
         };
-        BpfInterpreter::run(&prog, &ctx) as i64
+        BpfInterpreter::run(&prog, &ctx).cast_signed()
     }
 
     /// 获取 Map (供 Helper 使用)

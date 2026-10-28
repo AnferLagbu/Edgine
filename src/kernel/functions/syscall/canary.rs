@@ -24,7 +24,7 @@ use crate::privileged::proc;
 pub fn sys_getrandom(arg0: u64, arg1: u64, _arg2: u64) -> i64 {
     let buf = arg0;
     let len = arg1 as usize;
-    proc::get_random_bytes(buf, len) as i64
+    crate::functions::intcast::i64_from_usize(proc::get_random_bytes(buf, len))
 }
 
 /// `get_canary(buf, buflen)` — 读取当前进程 8 字节 stack canary, 写入用户 buffer

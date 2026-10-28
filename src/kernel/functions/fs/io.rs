@@ -514,7 +514,7 @@ fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
             match crate::functions::fs::OPEN_FILE_TABLE
                 .with_file(handle_id, crate::functions::fs::OpenFile::get_offset)
             {
-                Some(offset) => (offset as i64 + l_start) as u64,
+                Some(offset) => (offset.cast_signed() + l_start) as u64,
                 None => return Err(Errno::EBADF),
             }
         }
@@ -544,7 +544,7 @@ fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
                 // 保留结构体其余字段原值.
                 let ct = conflict.lock_type as i16;
                 raw[0..2].copy_from_slice(&ct.to_ne_bytes());
-                let cpid = conflict.pid as i32;
+                let cpid = conflict.pid.cast_signed();
                 raw[20..24].copy_from_slice(&cpid.to_ne_bytes());
                 if !crate::privileged::syscall::api::write_struct_to_user(arg, &raw) {
                     return Err(Errno::EFAULT);

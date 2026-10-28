@@ -144,8 +144,8 @@ pub fn clock_gettime_syscall(clk_id: i32, tp_ptr: u64) -> i64 {
     };
 
     let t = Timespec {
-        tv_sec: (ns / NS_PER_SEC) as i64,
-        tv_nsec: (ns % NS_PER_SEC) as i64,
+        tv_sec: (ns / NS_PER_SEC).cast_signed(),
+        tv_nsec: (ns % NS_PER_SEC).cast_signed(),
     };
 
     if !crate::privileged::syscall::api::write_struct_to_user(tp_ptr, &t) {
@@ -169,8 +169,8 @@ pub fn gettimeofday_syscall(tv: u64) -> Result<usize, Errno> {
 
     let ns = wall_clock_ns();
     let t = Timeval {
-        tv_sec: (ns / NS_PER_SEC) as i64,
-        tv_usec: ((ns % NS_PER_SEC) / NS_PER_USEC) as i64,
+        tv_sec: (ns / NS_PER_SEC).cast_signed(),
+        tv_usec: ((ns % NS_PER_SEC) / NS_PER_USEC).cast_signed(),
     };
 
     if !crate::privileged::syscall::api::write_struct_to_user(tv, &t) {
@@ -299,7 +299,7 @@ pub fn clock_nanosleep_wait_ns(
     let Some(now_ns) = clock_now_ns(clockid) else {
         return Err(Errno::EINVAL);
     };
-    if tv_sec < 0 || nanos < 0 || nanos >= NS_PER_SEC as i64 {
+    if tv_sec < 0 || nanos < 0 || nanos >= NS_PER_SEC.cast_signed() {
         return Err(Errno::EINVAL);
     }
 
@@ -391,7 +391,7 @@ pub fn adjtimex_syscall(buf: u64) -> i64 {
         offset: if nano_units {
             offset_ns
         } else {
-            offset_ns / NS_PER_USEC as i64
+            offset_ns / NS_PER_USEC.cast_signed()
         },
         freq: freq_ppb * FREQ_SCALE / 1_000,
         maxerror: 0,
@@ -402,8 +402,8 @@ pub fn adjtimex_syscall(buf: u64) -> i64 {
         precision: 1,
         tolerance: 0,
         time: Timeval {
-            tv_sec: (now_ns / NS_PER_SEC) as i64,
-            tv_usec: ((now_ns % NS_PER_SEC) / NS_PER_USEC) as i64,
+            tv_sec: (now_ns / NS_PER_SEC).cast_signed(),
+            tv_usec: ((now_ns % NS_PER_SEC) / NS_PER_USEC).cast_signed(),
         },
         tick: tick_us,
         ppsfreq: 0,
@@ -472,7 +472,7 @@ pub fn apply_adjtimex(
         let offset_ns = if modes & ADJ_NANO != 0 {
             offset
         } else {
-            offset * NS_PER_USEC as i64
+            offset * NS_PER_USEC.cast_signed()
         };
         subsystem.adj_time(offset_ns);
     }

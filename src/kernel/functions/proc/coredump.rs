@@ -375,7 +375,7 @@ fn build_prstatus(pid: u32, sig: u8, frame_addr: u64) -> PrStatus {
         _pad1: 0,
         pr_sigpend: 0,
         pr_sighold: 0,
-        pr_pid: pid as i32,
+        pr_pid: pid.cast_signed(),
         pr_ppid: 0,
         pr_pgrp: 0,
         pr_sid: 0,
@@ -388,8 +388,8 @@ fn build_prstatus(pid: u32, sig: u8, frame_addr: u64) -> PrStatus {
 
     // 填充进程信息 (pid 不存在时 process_with 返回 None, 保持初值)
     let _ = process_with(pid, |p| {
-        prstatus.pr_ppid = p.parent.map_or(0, |pp| pp.0 as i32);
-        prstatus.pr_pgrp = p.pgid.load(Ordering::SeqCst) as i32;
+        prstatus.pr_ppid = p.parent.map_or(0, |pp| pp.0.cast_signed());
+        prstatus.pr_pgrp = p.pgid.load(Ordering::SeqCst).cast_signed();
         prstatus.pr_sid = p.session_id.load(Ordering::SeqCst) as i32;
         prstatus.pr_sigpend = p.signal_pending_get();
         prstatus.pr_utime = p.user_time.load(Ordering::SeqCst);

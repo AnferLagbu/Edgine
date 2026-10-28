@@ -85,5 +85,5 @@ pub fn sgeg_proc_cputime_syscall(pid: u32) -> i64 {
     }
 
     let cputime = crate::privileged::proc::scheduler_current_cputime();
-    cputime as i64
+    cputime.cast_signed()
 }

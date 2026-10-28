@@ -47,7 +47,9 @@ fn test_fd_plan_constants_match_td01() {
         "VFS 段应以基址 0 纳入 FdPlan (方案 C 重叠校验)"
     );
     assert!(
-        src.contains("SMOLTCP: FdRange = FdRange::new(VFS_FD_WIDTH as i32,"),
+        src.contains(
+            "SMOLTCP: FdRange = FdRange::new(\n        crate::privileged::lib::low_i32_from_usize(VFS_FD_WIDTH),"
+        ),
         "Smoltcp 范围基址应从 VFS_FD_WIDTH 派生, 与 VFS [0,64) 不重叠 (方案 C)"
     );
     assert!(

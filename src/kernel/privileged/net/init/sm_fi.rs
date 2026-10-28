@@ -1089,8 +1089,6 @@ unsafe fn sm_connect_locked(fd: i32, addr: *const u8, _addrlen: u32) -> i32 {
 /// `buf` 必须指向至少 `len` 字节的有效可读内存, 内存必须在调用期间保持有效。
 /// `NET_LOCK` 持有; 由 `sys_send` 分发, cred 校验已通过。
 #[unsafe(no_mangle)]
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, flags: i32) -> i32 {
     // P5b (DECISION-094): TCP 发送缓冲满 (can_send=false) 且连接存活时, 阻塞 fd
     // 登记 WAITER_WRITE 等待者 → 释放 NET_STATE → block+schedule → 回顶重查.
@@ -1129,7 +1127,9 @@ pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, flags: i32) 
                     if !sock.is_open() {
                         Some(-E_CONNRESET)
                     } else if sock.can_send() || !(blocking && can_block) {
-                        Some(sock.send_slice(data).map_or(-E_CONNRESET, |n| n as i32))
+                        Some(sock.send_slice(data).map_or(-E_CONNRESET, |n| {
+                            crate::privileged::lib::low_i32_from_usize(n)
+                        }))
                     } else {
                         None // 阻塞 fd + 连接存活 + 缓冲满 → 挂起等可写
                     }
@@ -1146,7 +1146,7 @@ pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, flags: i32) 
                     let sock = sockets.get_mut::<udp::Socket>(handle);
                     // UDP 数据报: 维持原语义, 不阻塞 (send 侧无"半包等待"概念).
                     Some(match sock.send_slice(data, smol) {
-                        Ok(()) => len as i32,
+                        Ok(()) => len.cast_signed(),
                         Err(_) => -E_CONNRESET,
                     })
                 }
@@ -1187,8 +1187,6 @@ pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, flags: i32) 
 /// `buf` 必须指向至少 `len` 字节的有效可写内存, 内存必须在调用期间保持有效。
 /// `NET_LOCK` 持有; 由 `sys_recv` 分发。
 #[unsafe(no_mangle)]
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub unsafe extern "C" fn sm_recv(fd: i32, buf: *mut u8, len: u32, flags: i32) -> i32 {
     // P5b (DECISION-094): TCP 空缓冲且连接存活 / UDP 无数据报时, 阻塞 fd 登记
     // WAITER_READ → 释放 NET_STATE → block+schedule → 回顶重查. 连接关闭 (EOF) 由
@@ -1225,7 +1223,10 @@ pub unsafe extern "C" fn sm_recv(fd: i32, buf: *mut u8, len: u32, flags: i32) ->
                 1 => {
                     let sock = sockets.get_mut::<tcp::Socket>(handle);
                     if sock.can_recv() {
-                        Some(sock.recv_slice(data).map_or(0, |n| n as i32))
+                        Some(
+                            sock.recv_slice(data)
+                                .map_or(0, crate::privileged::lib::low_i32_from_usize),
+                        )
                     } else if !sock.is_open() {
                         Some(-E_CONNRESET) // 无数据且连接关闭 (沿用旧 eager 语义: 未细分 EOF/RST)
                     } else if blocking && can_block {
@@ -1237,10 +1238,9 @@ pub unsafe extern "C" fn sm_recv(fd: i32, buf: *mut u8, len: u32, flags: i32) ->
                 2 => {
                     let sock = sockets.get_mut::<udp::Socket>(handle);
                     if sock.can_recv() {
-                        Some(
-                            sock.recv_slice(data)
-                                .map_or(-E_AGAIN, |(n, _meta)| n as i32),
-                        )
+                        Some(sock.recv_slice(data).map_or(-E_AGAIN, |(n, _meta)| {
+                            crate::privileged::lib::low_i32_from_usize(n)
+                        }))
                     } else if blocking && can_block {
                         None
                     } else {
@@ -1282,8 +1282,6 @@ pub unsafe extern "C" fn sm_recv(fd: i32, buf: *mut u8, len: u32, flags: i32) ->
 /// `buf`/`addr` 必须是有效指针, 内存至少含 `len`/`_addrlen` 字节。
 /// `NET_LOCK` 持有; 由 `sys_sendto` 分发。
 #[unsafe(no_mangle)]
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub unsafe extern "C" fn sm_sendto(
     fd: i32,
     buf: *const u8,
@@ -1329,7 +1327,7 @@ pub unsafe extern "C" fn sm_sendto(
                     let sock = sockets.get_mut::<udp::Socket>(handle);
                     // UDP sendto: 数据报 eager, 不阻塞.
                     Some(match sock.send_slice(data, endpoint) {
-                        Ok(()) => len as i32,
+                        Ok(()) => len.cast_signed(),
                         Err(_) => -E_CONNRESET,
                     })
                 }
@@ -1338,7 +1336,9 @@ pub unsafe extern "C" fn sm_sendto(
                     if !sock.is_open() {
                         Some(-E_CONNRESET)
                     } else if sock.can_send() || !(blocking && can_block) {
-                        Some(sock.send_slice(data).map_or(-E_CONNRESET, |n| n as i32))
+                        Some(sock.send_slice(data).map_or(-E_CONNRESET, |n| {
+                            crate::privileged::lib::low_i32_from_usize(n)
+                        }))
                     } else {
                         None
                     }
@@ -1378,8 +1378,6 @@ pub unsafe extern "C" fn sm_sendto(
 /// `buf` 必须是有效可写指针, 至少 `len` 字节; `addr`/`addrlen` 可选地写入对端地址。
 /// `NET_LOCK` 持有; 由 `sys_recvfrom` 分发。
 #[unsafe(no_mangle)]
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub unsafe extern "C" fn sm_recvfrom(
     fd: i32,
     buf: *mut u8,
@@ -1426,7 +1424,7 @@ pub unsafe extern "C" fn sm_recvfrom(
                             // 再写入 sockaddr_in 供用户态读取对端地址.
                             let ep = endpoint_from_smol(meta.endpoint);
                             write_sockaddr(addr, addrlen, &ep);
-                            n as i32
+                            crate::privileged::lib::low_i32_from_usize(n)
                         }))
                     } else if blocking && can_block {
                         None
@@ -1437,7 +1435,10 @@ pub unsafe extern "C" fn sm_recvfrom(
                 1 => {
                     let sock = sockets.get_mut::<tcp::Socket>(handle);
                     if sock.can_recv() {
-                        Some(sock.recv_slice(data).map_or(0, |n| n as i32))
+                        Some(
+                            sock.recv_slice(data)
+                                .map_or(0, crate::privileged::lib::low_i32_from_usize),
+                        )
                     } else if !sock.is_open() {
                         Some(-E_CONNRESET)
                     } else if blocking && can_block {

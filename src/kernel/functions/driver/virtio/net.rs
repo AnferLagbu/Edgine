@@ -591,16 +591,11 @@ impl crate::privileged::net::NetDeviceOps for VirtioNetDriver {
         }
     }
 
-    // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "RX 缓冲区上限 2048 字节 (RX_BUFFER_SIZE), usize→i32 截断不可达"
-    )]
     fn try_receive(&mut self, buf: &mut [u8]) -> i32 {
         // 审核 P1-1: 显式全路径调用 — trait impl 块内 `self.try_receive(buf)`
         // 存在同名方法解析风险 (trait 方法与 inherent 方法同签名), 必须显式
         // 限定 inherent 方法, 杜绝解析到 trait 方法自身造成无限递归。
-        VirtioNetDriver::try_receive(self, buf) as i32
+        crate::functions::intcast::low_i32_from_usize(VirtioNetDriver::try_receive(self, buf))
     }
 
     fn get_mac(&self) -> [u8; 6] {

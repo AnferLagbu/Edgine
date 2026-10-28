@@ -1916,7 +1916,7 @@ impl UserProcManager {
 
             proc_ref.set_entry(entry);
 
-            proc_ref.pid() as i32
+            proc_ref.pid().cast_signed()
         }
     }
 
@@ -1964,7 +1964,7 @@ impl UserProcManager {
             raw::map_code_page(cr3, vaddr, page as u64);
         }
 
-        proc_ref.pid() as i32
+        proc_ref.pid().cast_signed()
     }
 
     /// 返回当前正在运行的 `UserProcess` 裸指针 (未设置时为 `None`)

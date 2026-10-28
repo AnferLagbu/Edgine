@@ -284,7 +284,7 @@ fn pipe_syscalls_route_through_fd_object_model() {
 fn vfs_data_paths_notify_event_not_close() {
     let handle = read_src("src/kernel/functions/fs/handle.rs");
     assert!(
-        handle.contains("fd_notify::notify_fd_event(fd_idx as i32)"),
+        handle.contains("fd_notify::notify_fd_event(fd_idx.cast_signed())"),
         "管道读/写成功路径必须发 fd 事件通知 (epoll 重新求值就绪位)"
     );
     // 写路径不得误发 close 通知 (原预存 bug: 写入成功被 epoll 观测为 EPOLLHUP).
@@ -300,7 +300,7 @@ fn vfs_data_paths_notify_event_not_close() {
         "写路径不得误发 fd 关闭通知"
     );
     assert!(
-        handle.contains("fd_notify::notify_fd_close(fd_idx as i32)"),
+        handle.contains("fd_notify::notify_fd_close(fd_idx.cast_signed())"),
         "真正的 fd 关闭路径必须保留关闭通知"
     );
 

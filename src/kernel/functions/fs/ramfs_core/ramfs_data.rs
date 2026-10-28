@@ -650,7 +650,7 @@ impl RamFsData {
 
         self.nodes[node_id as usize].atime = Self::get_time();
 
-        bytes_read as i32
+        crate::functions::intcast::low_i32_from_usize(bytes_read)
     }
 
     /// 按偏移写入 `buf` 到节点; 返回实际写入字节数 (负值为错误码)
@@ -704,7 +704,7 @@ impl RamFsData {
 
         dcache::icache_invalidate(self.fs_id, node_id);
 
-        bytes_written as i32
+        crate::functions::intcast::low_i32_from_usize(bytes_written)
     }
 
     // ========================================================================
@@ -1396,7 +1396,7 @@ impl RamFsData {
         let new_offset = match whence {
             VfsSeekWhence::Set => offset,
             VfsSeekWhence::Cur => {
-                let current = current_offset as i64;
+                let current = current_offset.cast_signed();
                 current + offset
             }
             VfsSeekWhence::End => file_size + offset,
@@ -1569,7 +1569,7 @@ impl RamFsData {
 
         dcache::dcache_invalidate_parent(self.fs_id, parent_num);
 
-        new_id as i32
+        new_id.cast_signed()
     }
 
     /// 读取符号链接目标到 `buf`; 返回字节数 (负值为错误码)
@@ -1586,7 +1586,7 @@ impl RamFsData {
             return KernelError::NoSpace.as_i32();
         }
         buf[..len].copy_from_slice(&self.symlink_targets[node_id as usize][..len]);
-        len as i32
+        crate::functions::intcast::low_i32_from_usize(len)
     }
 }
 

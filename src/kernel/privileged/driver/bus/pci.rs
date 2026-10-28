@@ -47,10 +47,8 @@ impl Driver for PciBusDriver {
 /// `pci::scan_all_buses()` 单独加锁调用.
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn pci_init() -> i32 {
-    let count = crate::privileged::pci::init() as i32;
+    let count = crate::privileged::lib::low_i32_from_usize(crate::privileged::pci::init());
 
     crate::privileged::egdf::egdf_register_driver(
         "pci-bus",

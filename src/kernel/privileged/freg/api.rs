@@ -252,12 +252,11 @@ pub extern "C" fn recovery_undo_record(domain_id: u64, field_ptr: *mut u8, old_v
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 /// 查询指定域的 undo 项数量; 域不存在返回 -1。
 #[unsafe(no_mangle)]
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn recovery_undo_count(domain_id: u64) -> i32 {
     let mgr = super::RECOVERY_MANAGER.lock();
-    mgr.find(domain_id)
-        .map_or(-1, |dom| dom.undo.lock().count as i32)
+    mgr.find(domain_id).map_or(-1, |dom| {
+        crate::privileged::lib::low_i32_from_usize(dom.undo.lock().count)
+    })
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
@@ -280,12 +279,11 @@ pub extern "C" fn recovery_domain_add_dep(domain_id: u64, dep_id: u64) -> i32 {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 /// 查询指定域的依赖数量; 域不存在返回 -1。
 #[unsafe(no_mangle)]
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn recovery_domain_dep_count(domain_id: u64) -> i32 {
     let mgr = super::RECOVERY_MANAGER.lock();
-    mgr.find(domain_id)
-        .map_or(-1, |dom| dom.dependency_count() as i32)
+    mgr.find(domain_id).map_or(-1, |dom| {
+        crate::privileged::lib::low_i32_from_usize(dom.dependency_count())
+    })
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
@@ -305,11 +303,9 @@ pub extern "C" fn recovery_domain_add_addr_range(domain_id: u64, start: u64, end
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 /// 查询回滚日志中的有效条目数。
 #[unsafe(no_mangle)]
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn recovery_rollback_log_count() -> i32 {
     let log = super::manager::ROLLBACK_LOG.lock();
-    log.iter().filter(|e| e.is_some()).count() as i32
+    crate::privileged::lib::low_i32_from_usize(log.iter().filter(|e| e.is_some()).count())
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
@@ -326,7 +322,9 @@ pub extern "C" fn recovery_domain_get_state(domain_id: u64) -> i32 {
 pub extern "C" fn recovery_domain_get_failures(domain_id: u64) -> i32 {
     let mgr = super::RECOVERY_MANAGER.lock();
     mgr.find(domain_id).map_or(-1, |dom| {
-        dom.consecutive_failures.load(Ordering::SeqCst) as i32
+        dom.consecutive_failures
+            .load(Ordering::SeqCst)
+            .cast_signed()
     })
 }
 

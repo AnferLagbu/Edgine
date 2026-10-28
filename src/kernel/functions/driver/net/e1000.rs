@@ -270,7 +270,8 @@ mod e1000_impl {
         }
 
         fn try_receive(&mut self, buf: &mut [u8]) -> i32 {
-            self.receive_packet(buf).map_or(0, |n| n as i32)
+            self.receive_packet(buf)
+                .map_or(0, crate::functions::intcast::low_i32_from_usize)
         }
 
         fn get_mac(&self) -> [u8; 6] {

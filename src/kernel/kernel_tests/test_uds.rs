@@ -184,7 +184,10 @@ fn test_uds_err_mapping() -> TestResult {
 fn release_all_uds_bitmap_bits() {
     use crate::privileged::proc::fd_alloc::{FdSubsystem, free_fd};
     for i in 0..uds::MAX_UDS_FD {
-        let _ = free_fd(FdSubsystem::Uds, uds::FD_BASE + i as i32);
+        let _ = free_fd(
+            FdSubsystem::Uds,
+            uds::FD_BASE + crate::privileged::lib::low_i32_from_usize(i),
+        );
     }
 }
 

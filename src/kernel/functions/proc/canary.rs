@@ -22,7 +22,7 @@ pub fn getrandom(buf: u64, len: usize, flags: u32) -> i64 {
     if written == 0 && len > 0 {
         -1
     } else {
-        written as i64
+        crate::functions::intcast::i64_from_usize(written)
     }
 }
 

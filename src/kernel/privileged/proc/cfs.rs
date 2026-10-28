@@ -69,7 +69,7 @@ pub fn weight_to_nice(weight: u64) -> i8 {
         let diff = w.abs_diff(weight);
         if diff < best_diff {
             best_diff = diff;
-            best = (i as i32 - 20) as i8;
+            best = (crate::privileged::lib::low_i32_from_usize(i) - 20) as i8;
         }
     }
     best

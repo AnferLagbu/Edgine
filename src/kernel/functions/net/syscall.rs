@@ -606,7 +606,7 @@ pub fn sendmmsg_syscall(fd: i32, msgvec_ptr: u64, vlen: u32, flags: u32) -> Resu
         let r = if uds_path {
             sendmmsg_uds_entry(fd, entry)
         } else {
-            sendmsg_syscall(fd, entry, flags as i32)
+            sendmsg_syscall(fd, entry, flags.cast_signed())
         };
         match r {
             Ok(n) => {
@@ -734,7 +734,7 @@ pub fn recvmmsg_syscall(
         if sec_raw > i64::MAX as u64 || nsec_raw > i64::MAX as u64 {
             return Err(Errno::EINVAL);
         }
-        let (sec, nsec) = (sec_raw as i64, nsec_raw as i64);
+        let (sec, nsec) = (sec_raw.cast_signed(), nsec_raw.cast_signed());
         if sec < 0 || !(0..NSEC_PER_SEC).contains(&nsec) {
             return Err(Errno::EINVAL);
         }
@@ -766,7 +766,7 @@ pub fn recvmmsg_syscall(
         let r = loop {
             let attempt = match st {
                 Some(t) => recvmmsg_uds_entry(fd, entry, t),
-                None => recvmsg_syscall(fd, entry, flags as i32),
+                None => recvmsg_syscall(fd, entry, flags.cast_signed()),
             };
             match attempt {
                 Err(Errno::EAGAIN) => {

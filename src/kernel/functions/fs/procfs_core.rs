@@ -245,7 +245,7 @@ impl ProcfsData {
                 }
             }
 
-            return pos as i32;
+            return crate::functions::intcast::low_i32_from_usize(pos);
         }
 
         // /proc/meminfo
@@ -351,7 +351,7 @@ impl ProcfsData {
                 "DirectMap4k:     0 kB\nDirectMap2M:     0 kB\nDirectMap1G:     0 kB\n",
             );
 
-            return pos as i32;
+            return crate::functions::intcast::low_i32_from_usize(pos);
         }
 
         // /proc/version
@@ -360,7 +360,7 @@ impl ProcfsData {
             let bytes = version.as_bytes();
             let len = bytes.len().min(buf.len());
             buf[..len].copy_from_slice(&bytes[..len]);
-            return len as i32;
+            return crate::functions::intcast::low_i32_from_usize(len);
         }
 
         // /proc/uptime
@@ -372,7 +372,7 @@ impl ProcfsData {
             let bytes = s.as_bytes();
             let len = bytes.len().min(buf.len());
             buf[..len].copy_from_slice(&bytes[..len]);
-            return len as i32;
+            return crate::functions::intcast::low_i32_from_usize(len);
         }
 
         // /proc/stat
@@ -405,7 +405,7 @@ impl ProcfsData {
                 &alloc::format!("softirq {ticks} 0 0 0 0 0 0 0 0 0 0\n"),
             );
 
-            return pos as i32;
+            return crate::functions::intcast::low_i32_from_usize(pos);
         }
 
         // /proc/slabinfo
@@ -458,7 +458,7 @@ impl ProcfsData {
                 );
             }
 
-            return pos as i32;
+            return crate::functions::intcast::low_i32_from_usize(pos);
         }
 
         // /proc/fs/dcache
@@ -490,7 +490,7 @@ impl ProcfsData {
             write_str(buf, &mut pos, "icache_entries: ");
             write_str(buf, &mut pos, &alloc::format!("{i_count}\n"));
 
-            return pos as i32;
+            return crate::functions::intcast::low_i32_from_usize(pos);
         }
 
         // /proc/fs/unkfs
@@ -517,7 +517,7 @@ impl ProcfsData {
             write_str(buf, &mut pos, "writes: ");
             write_str(buf, &mut pos, &alloc::format!("{writes}\n"));
 
-            return pos as i32;
+            return crate::functions::intcast::low_i32_from_usize(pos);
         }
 
         // /proc/mounts
@@ -547,7 +547,7 @@ impl ProcfsData {
                 "tmpfs /tmp tmpfs rw,nosuid,nodev,relatime 0 0\n",
             );
 
-            return pos as i32;
+            return crate::functions::intcast::low_i32_from_usize(pos);
         }
 
         // 检查进程状态 /proc/[pid]/status
@@ -611,9 +611,9 @@ impl ProcfsData {
                 let info = b"CPU: x86_64 (Unknown)\nVendor: N/A\nCores: 1\n";
                 let len = info.len().min(buf.len());
                 buf[..len].copy_from_slice(&info[..len]);
-                return len as i32;
+                return crate::functions::intcast::low_i32_from_usize(len);
             }
-            return pos as i32;
+            return crate::functions::intcast::low_i32_from_usize(pos);
         }
 
         if name == "sys/memory" {
@@ -660,30 +660,38 @@ impl ProcfsData {
             write_u64(buf, &mut pos, free_mb);
             write_str(buf, &mut pos, " MB)\n");
 
-            return pos as i32;
+            return crate::functions::intcast::low_i32_from_usize(pos);
         }
 
         if name == "current" {
             let info = b"PID: 0\nName: kernel\n";
             let len = info.len().min(buf.len());
             buf[..len].copy_from_slice(&info[..len]);
-            return len as i32;
+            return crate::functions::intcast::low_i32_from_usize(len);
         }
 
         if name == "sys/config" {
-            return crate::functions::config::procfs::read_sys_config(buf) as i32;
+            return crate::functions::intcast::low_i32_from_usize(
+                crate::functions::config::procfs::read_sys_config(buf),
+            );
         }
 
         if name == "sys/config.json" {
-            return crate::functions::config::procfs::read_sys_config_json(buf) as i32;
+            return crate::functions::intcast::low_i32_from_usize(
+                crate::functions::config::procfs::read_sys_config_json(buf),
+            );
         }
 
         // TD-09 V2: /proc/sys/klog/sinks — 运行时 sink 列表
         if name == "sys/klog/sinks" {
-            return crate::functions::klog::render_text(buf) as i32;
+            return crate::functions::intcast::low_i32_from_usize(
+                crate::functions::klog::render_text(buf),
+            );
         }
         if name == "sys/klog/sinks.json" {
-            return crate::functions::klog::render_json(buf) as i32;
+            return crate::functions::intcast::low_i32_from_usize(
+                crate::functions::klog::render_json(buf),
+            );
         }
 
         // 未知 entry → ENOENT (VFS 边界约定, 不要返回裸 -1)
@@ -774,7 +782,7 @@ impl ProcfsData {
             write_str(buf, &mut pos, "voluntary_ctxt_switches:\t0\n");
             write_str(buf, &mut pos, "nonvoluntary_ctxt_switches:\t0\n");
 
-            pos as i32
+            crate::functions::intcast::low_i32_from_usize(pos)
         });
 
         result.unwrap_or(-1)
@@ -798,7 +806,7 @@ impl ProcfsData {
             buf[..len].copy_from_slice(&bytes[..len]);
             buf[len] = 0;
 
-            (len + 1) as i32
+            crate::functions::intcast::low_i32_from_usize(len + 1)
         });
 
         result.unwrap_or(-1)
@@ -831,7 +839,7 @@ impl ProcfsData {
                 );
             }
 
-            pos as i32
+            crate::functions::intcast::low_i32_from_usize(pos)
         });
 
         result.unwrap_or(-1)
@@ -882,7 +890,7 @@ impl ProcfsData {
             let bytes = s.as_bytes();
             let len = bytes.len().min(buf.len());
             buf[..len].copy_from_slice(&bytes[..len]);
-            len as i32
+            crate::functions::intcast::low_i32_from_usize(len)
         });
 
         result.unwrap_or(-1)

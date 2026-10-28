@@ -55,7 +55,7 @@ pub fn sem_create_safe(
     *next_id += 1;
 
     sem.owner = current_pid;
-    sem.count = count as i32;
+    sem.count = count.cast_signed();
     sem.max_count = max_count;
     sem.flags = 0;
     sem.perm = 0o666; // 默认权限

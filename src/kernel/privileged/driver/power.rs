@@ -344,7 +344,7 @@ impl CpuFreqDriver {
         let mut best_idx = 0;
         let mut best_diff = u32::MAX;
         for (i, level) in table.iter().enumerate() {
-            let diff = (level.freq_mhz as i32 - target_mhz as i32).unsigned_abs();
+            let diff = (level.freq_mhz.cast_signed() - target_mhz.cast_signed()).unsigned_abs();
             if diff < best_diff {
                 best_diff = diff;
                 best_idx = i;

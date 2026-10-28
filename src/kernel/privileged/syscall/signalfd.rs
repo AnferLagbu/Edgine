@@ -298,7 +298,7 @@ pub fn sys_signalfd_read(fd: i32, buf: u64) -> i64 {
     }
 
     crate::klog_debug!(Sync, "[signalfd] Read fd={} signo={}", fd, signo);
-    SIGNALFD_SIGINFO_SIZE as i64
+    crate::privileged::lib::i64_from_usize(SIGNALFD_SIGINFO_SIZE)
 }
 
 /// signalfd close — 关闭 signalfd

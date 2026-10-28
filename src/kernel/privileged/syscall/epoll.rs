@@ -148,7 +148,7 @@ pub fn sys_epoll_create(size: i32) -> i64 {
     EPOLL_INSTANCES.lock().push(instance);
 
     crate::klog_debug!(Sync, "[epoll] Created instance id={}", id);
-    id as i64
+    id.cast_signed()
 }
 
 /// `epoll_ctl` — 控制 epoll 实例
@@ -293,7 +293,7 @@ pub fn sys_epoll_wait(epfd: i64, events: *mut EpollEvent, maxevents: i32, timeou
             // oneshot: 标记已就绪, 不再报告
         }
 
-        if ready_events.len() as i32 >= maxevents {
+        if crate::privileged::lib::low_i32_from_usize(ready_events.len()) >= maxevents {
             break;
         }
     }
@@ -326,7 +326,7 @@ pub fn sys_epoll_wait(epfd: i64, events: *mut EpollEvent, maxevents: i32, timeou
                             data: item.data,
                         });
                     }
-                    if ready_events.len() as i32 >= maxevents {
+                    if crate::privileged::lib::low_i32_from_usize(ready_events.len()) >= maxevents {
                         break;
                     }
                 }
@@ -351,7 +351,7 @@ pub fn sys_epoll_wait(epfd: i64, events: *mut EpollEvent, maxevents: i32, timeou
         epfd_id,
         count
     );
-    count as i64
+    crate::privileged::lib::i64_from_usize(count)
 }
 
 // ============================================================================

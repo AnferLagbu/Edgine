@@ -155,7 +155,7 @@ impl<T> Mutex<T> {
             // raw_unlock 递减 (depth<=1 才完全释放). 此检测须在 inner_spinlock
             // 内进行, 保证 owner/depth 读改写原子.
             // SAFETY: process_get_current_pid 声明于模块顶部 (C ABI)
-            let cur = unsafe { process_get_current_pid() } as i32;
+            let cur = (unsafe { process_get_current_pid() }).cast_signed();
             if self.inner.owner.load(Ordering::Acquire) == cur {
                 self.inner.depth.fetch_add(1, Ordering::AcqRel);
                 self.inner.inner_spinlock.raw_unlock();
@@ -234,7 +234,7 @@ impl<T> Mutex<T> {
         // 设置持有者 PID (从模块级 extern 获取, 见文件顶部 G-17 说明)
         // SAFETY: process_get_current_pid 声明于模块顶部 (C ABI)
         let pid = unsafe { process_get_current_pid() };
-        self.inner.owner.store(pid as i32, Ordering::Release);
+        self.inner.owner.store(pid.cast_signed(), Ordering::Release);
 
         // 重置递归深度
         self.inner.depth.store(1, Ordering::Release);

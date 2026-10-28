@@ -237,7 +237,7 @@ pub unsafe extern "C" fn ipc_msgq_recv(
         return -(Errno::ENOSYS as i64);
     };
     s.msgq_recv(ns, id, type_ref, data_ref, size_ref)
-        .map_or(-1, |n| n as i64)
+        .map_or(-1, crate::privileged::lib::i64_from_usize)
 }
 
 /// FFI: 销毁消息队列

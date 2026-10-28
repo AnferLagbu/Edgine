@@ -493,7 +493,7 @@ pub extern "C" fn sys_kexec(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
         }
         6 => {
             // get_segment_count
-            kexec_subsystem().get_segment_count() as i64
+            crate::privileged::lib::i64_from_usize(kexec_subsystem().get_segment_count())
         }
         7 => {
             // is_initialized

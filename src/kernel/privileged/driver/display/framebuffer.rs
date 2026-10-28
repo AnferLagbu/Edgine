@@ -243,9 +243,9 @@ impl Rect {
     /// 检查点是否在矩形内
     pub fn contains(&self, point: Point) -> bool {
         point.x >= self.x
-            && point.x < self.x + self.width as i32
+            && point.x < self.x + self.width.cast_signed()
             && point.y >= self.y
-            && point.y < self.y + self.height as i32
+            && point.y < self.y + self.height.cast_signed()
     }
 
     #[expect(
@@ -254,10 +254,10 @@ impl Rect {
     )]
     /// 检查是否与另一个矩形相交
     pub fn intersects(&self, other: &Self) -> bool {
-        self.x < other.x + other.width as i32
-            && self.x + self.width as i32 > other.x
-            && self.y < other.y + other.height as i32
-            && self.y + self.height as i32 > other.y
+        self.x < other.x + other.width.cast_signed()
+            && self.x + self.width.cast_signed() > other.x
+            && self.y < other.y + other.height.cast_signed()
+            && self.y + self.height.cast_signed() > other.y
     }
 
     #[expect(
@@ -272,8 +272,8 @@ impl Rect {
 
         let x = self.x.max(other.x);
         let y = self.y.max(other.y);
-        let x2 = (self.x + self.width as i32).min(other.x + other.width as i32);
-        let y2 = (self.y + self.height as i32).min(other.y + other.height as i32);
+        let x2 = (self.x + self.width.cast_signed()).min(other.x + other.width.cast_signed());
+        let y2 = (self.y + self.height.cast_signed()).min(other.y + other.height.cast_signed());
 
         Some(Self::new(x, y, (x2 - x) as u32, (y2 - y) as u32))
     }

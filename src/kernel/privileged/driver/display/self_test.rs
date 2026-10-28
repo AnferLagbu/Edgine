@@ -50,17 +50,17 @@ pub fn framebuffer_self_test(fb: &mut Framebuffer, font: &Font) -> usize {
     ops.fill_rect(fb, Rect::new(0, 0, stripe_w, stripe_h), colors::RED);
     ops.fill_rect(
         fb,
-        Rect::new(stripe_w as i32, 0, stripe_w, stripe_h),
+        Rect::new(stripe_w.cast_signed(), 0, stripe_w, stripe_h),
         colors::GREEN,
     );
     ops.fill_rect(
         fb,
-        Rect::new(2 * stripe_w as i32, 0, stripe_w, stripe_h),
+        Rect::new(2 * stripe_w.cast_signed(), 0, stripe_w, stripe_h),
         colors::BLUE,
     );
     ops.fill_rect(
         fb,
-        Rect::new(3 * stripe_w as i32, 0, stripe_w, stripe_h),
+        Rect::new(3 * stripe_w.cast_signed(), 0, stripe_w, stripe_h),
         colors::WHITE,
     );
 

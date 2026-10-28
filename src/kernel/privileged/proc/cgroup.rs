@@ -630,7 +630,7 @@ pub fn sys_cgroup_create(parent_id: u64, _name_ptr: u64, _name_len: u64) -> i64 
     if id == 0 {
         return -(Errno::EINVAL as i64);
     }
-    id as i64
+    id.cast_signed()
 }
 
 /// 销毁指定 cgroup。
@@ -696,14 +696,26 @@ pub fn sys_cgroup_get_stat(cg_id: u64, stat_type: u64) -> i64 {
     };
 
     match stat_type {
-        0 => cg.cpu.runtime_used.load(Ordering::Acquire) as i64,
-        1 => cg.memory.usage_in_bytes.load(Ordering::Acquire) as i64,
-        2 => cg.pids.current.load(Ordering::Acquire) as i64,
-        3 => cg.io.stat_read_bytes.load(Ordering::Acquire) as i64,
-        4 => cg.io.stat_write_bytes.load(Ordering::Acquire) as i64,
-        5 => cg.cpu.nr_throttled.load(Ordering::Acquire) as i64,
-        6 => cg.memory.max_usage_in_bytes.load(Ordering::Acquire) as i64,
-        7 => cg.pids.events_fork_fail.load(Ordering::Acquire) as i64,
+        0 => cg.cpu.runtime_used.load(Ordering::Acquire).cast_signed(),
+        1 => cg
+            .memory
+            .usage_in_bytes
+            .load(Ordering::Acquire)
+            .cast_signed(),
+        2 => cg.pids.current.load(Ordering::Acquire).cast_signed(),
+        3 => cg.io.stat_read_bytes.load(Ordering::Acquire).cast_signed(),
+        4 => cg.io.stat_write_bytes.load(Ordering::Acquire).cast_signed(),
+        5 => cg.cpu.nr_throttled.load(Ordering::Acquire).cast_signed(),
+        6 => cg
+            .memory
+            .max_usage_in_bytes
+            .load(Ordering::Acquire)
+            .cast_signed(),
+        7 => cg
+            .pids
+            .events_fork_fail
+            .load(Ordering::Acquire)
+            .cast_signed(),
         _ => -(Errno::EINVAL as i64),
     }
 }

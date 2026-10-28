@@ -621,13 +621,13 @@ pub extern "C" fn sys_cet(cmd: u64, a1: u64, _a2: u64) -> i64 {
             if caps.ibt_enabled {
                 flags |= 1 << 4;
             }
-            flags as i64
+            flags.cast_signed()
         }
         1 => {
             // create_user_shadow_stack
             cet_subsystem()
                 .create_user_shadow_stack(a1 as usize)
-                .map_or(-(12i64), |ss| ss.get_ssp() as i64) // ENOMEM
+                .map_or(-(12i64), |ss| ss.get_ssp().cast_signed()) // ENOMEM
         }
         2 => {
             // is_initialized

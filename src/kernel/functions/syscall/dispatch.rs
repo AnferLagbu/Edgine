@@ -41,7 +41,7 @@ use crate::privileged::syscall::dispatch_trait::{SyscallDispatch, register_sysca
 #[inline]
 fn as_ret(r: Result<usize, Errno>) -> i64 {
     match r {
-        Ok(v) => v as i64,
+        Ok(v) => crate::functions::intcast::i64_from_usize(v),
         Err(e) => e.as_ret(),
     }
 }
@@ -138,13 +138,19 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         // preadv/pwritev (T1 G1 实装): 显式偏移向量 I/O (pos 为负时 -EINVAL)
         SYS_preadv => match i32::try_from(a0) {
             Ok(fd) => as_ret(crate::functions::fs::io::preadv_syscall(
-                fd, a1, a2, a3 as i64,
+                fd,
+                a1,
+                a2,
+                a3.cast_signed(),
             )),
             Err(_) => Errno::EINVAL.as_ret(),
         },
         SYS_pwritev => match i32::try_from(a0) {
             Ok(fd) => as_ret(crate::functions::fs::io::pwritev_syscall(
-                fd, a1, a2, a3 as i64,
+                fd,
+                a1,
+                a2,
+                a3.cast_signed(),
             )),
             Err(_) => Errno::EINVAL.as_ret(),
         },
@@ -236,25 +242,31 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         // ppoll (T1 G5 实装): poll + timespec 超时 + 临时信号屏蔽字
         SYS_ppoll => crate::functions::fs::file_ops::ppoll_syscall(a0, a1 as u32, a2, a3, a4),
         SYS_chown => crate::functions::fs::file_ops::chown_syscall(a0, a1 as u32, a2 as u32),
-        SYS_truncate => crate::functions::fs::file_ops::truncate_syscall(a0, a1 as i64),
-        SYS_ftruncate => crate::functions::fs::file_ops::ftruncate_syscall(a0 as i32, a1 as i64),
+        SYS_truncate => crate::functions::fs::file_ops::truncate_syscall(a0, a1.cast_signed()),
+        SYS_ftruncate => {
+            crate::functions::fs::file_ops::ftruncate_syscall(a0 as i32, a1.cast_signed())
+        }
         // fallocate (T1 G1 实装): 预分配 (仅 mode=0, 扩展文件大小)
         SYS_fallocate => {
             crate::functions::fs::file_ops::fallocate_syscall(a0 as i32, a1 as i32, a2, a3)
         }
         SYS_flock => crate::functions::fs::file_ops::flock_syscall(a0 as i32, a1 as i32),
-        SYS_lseek => crate::functions::fs::dir_ops::lseek_syscall(a0 as i32, a1 as i64, a2 as i32),
+        SYS_lseek => {
+            crate::functions::fs::dir_ops::lseek_syscall(a0 as i32, a1.cast_signed(), a2 as i32)
+        }
         SYS_getdents => crate::functions::fs::dir_ops::getdents_syscall(a0 as i32, a1, a2),
 
         // inotify
         SYS_inotify_init1 => crate::functions::fs::inotify::sys_inotify_init1(a0 as i32),
         // inotify_init (T1 G5 实装): 遗留接口, 等价 inotify_init1(0)
         SYS_inotify_init => crate::functions::fs::inotify::sys_inotify_init1(0),
-        SYS_inotify_add_watch => {
-            crate::functions::fs::inotify::sys_inotify_add_watch(a0 as i64, a1 as u32, a2 as u32)
-        }
+        SYS_inotify_add_watch => crate::functions::fs::inotify::sys_inotify_add_watch(
+            a0.cast_signed(),
+            a1 as u32,
+            a2 as u32,
+        ),
         SYS_inotify_rm_watch => {
-            crate::functions::fs::inotify::sys_inotify_rm_watch(a0 as i64, a1 as i32)
+            crate::functions::fs::inotify::sys_inotify_rm_watch(a0.cast_signed(), a1 as i32)
         }
 
         // 时间与统计
@@ -262,7 +274,9 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_times => as_ret(crate::functions::fs::misc::times_syscall(a0)),
         SYS_time => as_ret(crate::functions::fs::misc::time_syscall(a0)),
         SYS_getitimer => as_ret(crate::functions::fs::misc::getitimer_syscall(a0 as i32, a1)),
-        SYS_alarm => crate::functions::fs::misc::alarm_syscall(a0 as u32) as i64,
+        SYS_alarm => crate::functions::intcast::i64_from_usize(
+            crate::functions::fs::misc::alarm_syscall(a0 as u32),
+        ),
         SYS_setitimer => as_ret(crate::functions::fs::misc::setitimer_syscall(
             a0 as i32, a1, a2,
         )),
@@ -363,10 +377,16 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
 
     Some(match num {
         // 进程信息
-        SYS_getpid => crate::functions::proc::info::getpid_syscall() as i64,
-        SYS_getppid => crate::functions::proc::info::getppid_syscall() as i64,
+        SYS_getpid => {
+            crate::functions::intcast::i64_from_usize(crate::functions::proc::info::getpid_syscall())
+        }
+        SYS_getppid => crate::functions::intcast::i64_from_usize(
+            crate::functions::proc::info::getppid_syscall(),
+        ),
         SYS_getpgid => as_ret(crate::functions::proc::info::getpgid_syscall(a0 as i32)),
-        SYS_gettid => crate::functions::proc::info::gettid_syscall() as i64,
+        SYS_gettid => {
+            crate::functions::intcast::i64_from_usize(crate::functions::proc::info::gettid_syscall())
+        }
         SYS_setsid => crate::functions::proc::session::proc_setsid(),
         SYS_getsid => crate::functions::proc::session::proc_getsid(a0 as i32),
         SYS_setpgid => crate::functions::proc::session::proc_setpgid(a0 as i32, a1 as i32),
@@ -375,7 +395,9 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
 
         // seccomp / prctl (T2 批 2, syscall-followup)
         SYS_seccomp => crate::functions::proc::seccomp::seccomp_syscall(a0 as u32, a1 as u32, a2),
-        SYS_prctl => crate::functions::proc::seccomp::prctl_syscall(a0 as i64, a1, a2, a3, a4),
+        SYS_prctl => {
+            crate::functions::proc::seccomp::prctl_syscall(a0.cast_signed(), a1, a2, a3, a4)
+        }
 
         // namespace (T2 批 4, syscall-followup)
         SYS_unshare => crate::functions::proc::namespace::unshare_syscall(a0),
@@ -637,7 +659,7 @@ fn dispatch_mm(num: u64, args: [u64; 6]) -> Option<i64> {
                 Some(mm) => match i32::try_from(a3) {
                     Ok(flags) => {
                         match crate::functions::mm::mremap::mremap_syscall(mm, a0, a1, a2, flags) {
-                            Ok(addr) => addr as i64,
+                            Ok(addr) => crate::functions::intcast::i64_from_usize(addr),
                             Err(e) => e.as_ret(),
                         }
                     }
@@ -704,14 +726,25 @@ fn dispatch_sync(num: u64, args: [u64; 6]) -> Option<i64> {
             crate::functions::sync::epoll::epoll_create_syscall(a0 as i32),
         ),
         SYS_epoll_ctl => as_ret(crate::functions::sync::epoll::epoll_ctl_syscall(
-            a0 as i64, a1 as i32, a2 as i32, a3,
+            a0.cast_signed(),
+            a1 as i32,
+            a2 as i32,
+            a3,
         )),
         SYS_epoll_wait => as_ret(crate::functions::sync::epoll::epoll_wait_syscall(
-            a0 as i64, a1, a2 as i32, a3 as i32,
+            a0.cast_signed(),
+            a1,
+            a2 as i32,
+            a3 as i32,
         )),
         // epoll_pwait (T1 G5 实装): epoll_wait + 临时信号屏蔽字 (a4/a5)
         SYS_epoll_pwait => as_ret(crate::functions::sync::epoll::epoll_pwait_syscall(
-            a0 as i64, a1, a2 as i32, a3 as i32, a4, a5,
+            a0.cast_signed(),
+            a1,
+            a2 as i32,
+            a3 as i32,
+            a4,
+            a5,
         )),
 
         // eventfd
@@ -761,12 +794,20 @@ fn dispatch_sgeg(num: u64, args: [u64; 6]) -> Option<i64> {
 
     Some(match num {
         // 凭证 - UID/GID
-        SYS_getuid => crate::functions::sgeg::uid::getuid_syscall() as i64,
-        SYS_getgid => crate::functions::sgeg::uid::getgid_syscall() as i64,
+        SYS_getuid => {
+            crate::functions::intcast::i64_from_usize(crate::functions::sgeg::uid::getuid_syscall())
+        }
+        SYS_getgid => {
+            crate::functions::intcast::i64_from_usize(crate::functions::sgeg::uid::getgid_syscall())
+        }
         SYS_setuid => as_ret(crate::functions::sgeg::uid::setuid_syscall(a0 as u32)),
         SYS_setgid => as_ret(crate::functions::sgeg::uid::setgid_syscall(a0 as u32)),
-        SYS_geteuid => crate::functions::sgeg::uid::geteuid_syscall() as i64,
-        SYS_getegid => crate::functions::sgeg::uid::getegid_syscall() as i64,
+        SYS_geteuid => {
+            crate::functions::intcast::i64_from_usize(crate::functions::sgeg::uid::geteuid_syscall())
+        }
+        SYS_getegid => {
+            crate::functions::intcast::i64_from_usize(crate::functions::sgeg::uid::getegid_syscall())
+        }
         SYS_seteuid => as_ret(crate::functions::sgeg::uid::seteuid_syscall(a0 as u32)),
         SYS_setegid => as_ret(crate::functions::sgeg::uid::setegid_syscall(a0 as u32)),
         SYS_setreuid => as_ret(crate::functions::sgeg::uid::setreuid_syscall(

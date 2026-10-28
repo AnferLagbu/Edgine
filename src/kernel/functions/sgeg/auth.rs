@@ -103,7 +103,7 @@ pub fn auth_check_cap_syscall(pwm: u64, domain: u16, required: u64) -> i64 {
 
 /// `auth_get_caps(pwm`, domain) 策略
 pub fn auth_get_caps_syscall(pwm: u64, domain: u16) -> i64 {
-    crate::privileged::sgeg::pwm_get_capability_raw(pwm, domain) as i64
+    crate::privileged::sgeg::pwm_get_capability_raw(pwm, domain).cast_signed()
 }
 
 /// Linux `_LINUX_CAPABILITY_VERSION_3` — 每个能力集 64 位 (2 个 `cap_data` 字)
@@ -272,7 +272,7 @@ pub fn capset_syscall(header: u64, data: u64) -> i64 {
 
 /// `pwm_get()` 策略
 pub fn pwm_get_syscall() -> i64 {
-    crate::privileged::sgeg::pwm_get_current() as i64
+    crate::privileged::sgeg::pwm_get_current().cast_signed()
 }
 
 /// `pwm_set(pwm)` 策略

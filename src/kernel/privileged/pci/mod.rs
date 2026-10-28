@@ -677,10 +677,8 @@ pub extern "C" fn pci_rust_init() -> i32 {
 
 /// C FFI: get device count
 #[unsafe(no_mangle)]
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn pci_get_device_count() -> i32 {
-    device_count() as i32
+    crate::privileged::lib::low_i32_from_usize(device_count())
 }
 
 /// C FFI: 读取配置字 (供 e1000 兜底兼容使用)

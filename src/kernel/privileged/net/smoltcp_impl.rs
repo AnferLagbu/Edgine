@@ -51,9 +51,9 @@ fn smoltcp_now() -> Instant {
     let ns = hrtimer_clock_read();
     let ms = ns / 1_000_000;
     if ms > i64::MAX as u64 {
-        return Instant::from_millis(get_uptime_ms() as i64);
+        return Instant::from_millis(get_uptime_ms().cast_signed());
     }
-    Instant::from_millis(ms as i64)
+    Instant::from_millis(ms.cast_signed())
 }
 
 // ============================================================================

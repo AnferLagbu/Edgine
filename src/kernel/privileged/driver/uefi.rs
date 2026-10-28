@@ -664,7 +664,7 @@ pub extern "C" fn sys_uefi(cmd: u64, a1: u64, a2: u64) -> i64 {
         3 => {
             // get_time → ns
             let time = uefi_subsystem().get_time();
-            time.to_unix_ns() as i64
+            time.to_unix_ns().cast_signed()
         }
         4 => {
             // set_time(ns: a1) — 写入 epoch 基准, 使后续 get_time 反映设定时刻
@@ -674,11 +674,11 @@ pub extern "C" fn sys_uefi(cmd: u64, a1: u64, a2: u64) -> i64 {
             // get_gop_mode → fb_base
             uefi_subsystem()
                 .get_gop_mode()
-                .map_or(0, |mode| mode.frame_buffer_base as i64)
+                .map_or(0, |mode| mode.frame_buffer_base.cast_signed())
         }
         6 => {
             // list_variables → count
-            uefi_subsystem().list_variables().len() as i64
+            crate::privileged::lib::i64_from_usize(uefi_subsystem().list_variables().len())
         }
         7 => {
             // has_uefi

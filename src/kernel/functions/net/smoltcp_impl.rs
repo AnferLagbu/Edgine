@@ -235,7 +235,9 @@ impl SmoltcpNetStack {
         for (i, slot) in self.handle_map.iter().enumerate() {
             if let Some((u, _)) = slot {
                 if *u == h.raw() {
-                    return Some((fw_init::smoltcp_net_stack_slot_base() + i) as i32);
+                    return Some(crate::functions::intcast::low_i32_from_usize(
+                        fw_init::smoltcp_net_stack_slot_base() + i,
+                    ));
                 }
             }
         }

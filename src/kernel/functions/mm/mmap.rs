@@ -339,7 +339,7 @@ pub fn mmap_syscall_entry(
     };
 
     match mmap_syscall(mm, addr, size, prot, flags, fd, offset, pwm) {
-        Ok(a) => a as i64,
+        Ok(a) => crate::functions::intcast::i64_from_usize(a),
         Err(e) => e.as_ret(),
     }
 }

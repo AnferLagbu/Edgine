@@ -149,10 +149,6 @@ impl Drop for PipeEndpointInode {
 ///
 /// # Errors
 /// 管道槽位耗尽 / 全局 `OpenFile` 表满 / 进程 fd 表满 → `ProcessFileLimit` (EMFILE).
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "fd 编号受 MAX_FDS_PER_PROCESS(64) 约束, usize→i32 无损"
-)]
 pub fn create_pair(cloexec: bool, nonblock: bool) -> KernelResult<(i32, i32)> {
     let (read_end, write_end) = crate::functions::ipc::IpcLock
         .pipe_create(process_get_current_pid())
@@ -198,7 +194,10 @@ pub fn create_pair(cloexec: bool, nonblock: bool) -> KernelResult<(i32, i32)> {
     .flatten();
 
     if let Some((r, w)) = fds {
-        Ok((r as i32, w as i32))
+        Ok((
+            crate::functions::intcast::low_i32_from_usize(r),
+            crate::functions::intcast::low_i32_from_usize(w),
+        ))
     } else {
         OPEN_FILE_TABLE.close(read_handle);
         OPEN_FILE_TABLE.close(write_handle);

@@ -147,10 +147,10 @@ pub fn pidfd_send_signal(pidfd: u32, sig: i32, _siginfo: u64, _flags: u32) -> Re
         return Err(Errno::EINVAL);
     }
 
-    let pid = pid_of_fd(pidfd as i32).ok_or(Errno::EBADF)?;
+    let pid = pid_of_fd(pidfd.cast_signed()).ok_or(Errno::EBADF)?;
 
     // 复用 kill_syscall 的 pid>0 语义 (privileged 内部 4 路径分发)
-    let ret = crate::privileged::syscall::api::sys_kill(pid as i32, sig);
+    let ret = crate::privileged::syscall::api::sys_kill(pid.cast_signed(), sig);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {

@@ -173,7 +173,10 @@ impl FdPlan {
     /// `MAX_SOCKETS` 与 buf 静态表尺寸 (`TCP_RX_BUFS` / `TCP_TX_BUFS` / UDP_*_BUFS)).
     /// 方案 C: 基址紧贴 VFS 段上界, 与 [0, 64) 不重叠; fd → 槽位索引一律经
     /// `idx_of` 换算 (消费方唯一切换面, fd 对象模型终态工程整体退役该层).
-    pub const SMOLTCP: FdRange = FdRange::new(VFS_FD_WIDTH as i32, 256);
+    pub const SMOLTCP: FdRange = FdRange::new(
+        crate::privileged::lib::low_i32_from_usize(VFS_FD_WIDTH),
+        256,
+    );
 
     /// UDS FD 空间 (TD-01: 历史 100 → 1000, 跳出 smoltcp)
     pub const UDS: FdRange = FdRange::new(1000, 16);
@@ -277,7 +280,7 @@ pub fn alloc_fd(sub: FdSubsystem) -> Option<i32> {
         if byte & (1 << bit_idx) == 0 {
             // 找到空闲槽位, 标记为占用
             FD_BITMAPS[byte_idx].store(byte | (1 << bit_idx), Ordering::Release);
-            return Some((base + i) as i32);
+            return Some(crate::privileged::lib::low_i32_from_usize(base + i));
         }
     }
     None
@@ -345,7 +348,7 @@ pub fn verify_plan() {
 /// `const fn`, 可在静态表初始化与 `panic!` 等不可变上下文中使用.
 #[inline]
 pub const fn fd_at(sub: FdSubsystem, slot: usize) -> i32 {
-    FdPlan::range_for(sub).base + slot as i32
+    FdPlan::range_for(sub).base + crate::privileged::lib::low_i32_from_usize(slot)
 }
 
 /// 给定子系统, 返回最大 slot 数 (用于 `for i in 0..max_slots(sub)` 替代硬编码 `MAX_xxx`)

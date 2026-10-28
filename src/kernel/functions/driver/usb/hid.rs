@@ -241,8 +241,8 @@ impl BootMouseReport {
         }
         Ok(Self {
             buttons: data[0],
-            x: data[1] as i8,
-            y: data[2] as i8,
+            x: data[1].cast_signed(),
+            y: data[2].cast_signed(),
         })
     }
 

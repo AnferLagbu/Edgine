@@ -196,7 +196,7 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
         return 0; // sendfile 在 EOF 时返回 0
     }
 
-    total_sent as i64
+    crate::functions::intcast::i64_from_usize(total_sent)
 }
 
 // ============================================================================
@@ -305,7 +305,7 @@ pub fn sys_splice(
         return 0; // EOF
     }
 
-    total_spliced as i64
+    crate::functions::intcast::i64_from_usize(total_spliced)
 }
 
 // ============================================================================

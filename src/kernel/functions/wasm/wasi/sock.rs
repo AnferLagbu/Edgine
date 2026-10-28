@@ -40,7 +40,7 @@ pub fn wasi_sock_accept(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
             };
             match ctx.fd_table.alloc(new_entry) {
                 Ok(wasi_fd) => {
-                    interp.stack.push(Value::I32(wasi_fd as i32))?;
+                    interp.stack.push(Value::I32(wasi_fd.cast_signed()))?;
                 }
                 Err(e) => {
                     interp.stack.push(Value::I32(wasi_errno(e)))?;

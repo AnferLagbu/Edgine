@@ -5,8 +5,8 @@
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 1186,
-    "files": 225
+    "sites": 1165,
+    "files": 223
   },
   "entries": [
     [
@@ -190,11 +190,6 @@
       2
     ],
     [
-      "src/kernel/functions/driver/virtio/net.rs",
-      "#[expect(clippy::cast_possible_truncation,reason=\"RX缓冲区上限2048字节(RX_BUFFER_SIZE)",
-      1
-    ],
-    [
       "src/kernel/functions/egdf/mod.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       2
@@ -277,7 +272,7 @@
     [
       "src/kernel/functions/fs/handle.rs",
       "#[expect(clippy::cast_possible_truncation)",
-      10
+      4
     ],
     [
       "src/kernel/functions/fs/handle.rs",
@@ -297,11 +292,6 @@
     [
       "src/kernel/functions/fs/misc.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/pipe_fd.rs",
-      "#[expect(clippy::cast_possible_truncation,reason=\"fd编号受MAX_FDS_PER_PROCESS(64)",
       1
     ],
     [
@@ -387,7 +377,7 @@
     [
       "src/kernel/functions/fs/vfs_path.rs",
       "#[expect(clippy::cast_possible_truncation)",
-      4
+      1
     ],
     [
       "src/kernel/functions/fs/vfs_path.rs",
@@ -732,7 +722,7 @@
     [
       "src/kernel/functions/sgeg/persist.rs",
       "#[expect(clippy::cast_possible_truncation)",
-      2
+      1
     ],
     [
       "src/kernel/functions/sgeg/persist.rs",
@@ -1375,11 +1365,6 @@
       4
     ],
     [
-      "src/kernel/privileged/driver/bus/pci.rs",
-      "#[expect(clippy::cast_possible_truncation)",
-      1
-    ],
-    [
       "src/kernel/privileged/driver/display/framebuffer.rs",
       "#[expect(clippy::cast_possible_truncation)",
       1
@@ -1563,11 +1548,6 @@
       "src/kernel/privileged/frame.rs",
       "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
       4
-    ],
-    [
-      "src/kernel/privileged/freg/api.rs",
-      "#[expect(clippy::cast_possible_truncation)",
-      3
     ],
     [
       "src/kernel/privileged/freg/api.rs",
@@ -2392,7 +2372,7 @@
     [
       "src/kernel/privileged/net/init/sm_fi.rs",
       "#[expect(clippy::cast_possible_truncation)",
-      7
+      3
     ],
     [
       "src/kernel/privileged/net/init/sm_fi.rs",
@@ -2437,11 +2417,6 @@
     [
       "src/kernel/privileged/page_table.rs",
       "#[expect(clippy::uninlined_format_args,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/pci/mod.rs",
-      "#[expect(clippy::cast_possible_truncation)",
       1
     ],
     [

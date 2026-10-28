@@ -161,7 +161,7 @@ pub fn ppoll_syscall(
         if sec_raw > i64::MAX as u64 || nsec_raw > i64::MAX as u64 {
             return Errno::EINVAL.as_ret();
         }
-        let (sec, nsec) = (sec_raw as i64, nsec_raw as i64);
+        let (sec, nsec) = (sec_raw.cast_signed(), nsec_raw.cast_signed());
         if sec < 0 || !(0..NSEC_PER_SEC).contains(&nsec) {
             return Errno::EINVAL.as_ret();
         }

@@ -179,8 +179,6 @@ pub extern "C" fn vfs_set_cwd_internal(path: *const u8) {
     }
 }
 
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 /// 取当前工作目录并写入用户缓冲 (含 NUL 结尾).
 ///
 /// 成功返回写入字节数 (不含 NUL), 参数非法返回 `-1`.
@@ -198,7 +196,7 @@ pub extern "C" fn vfs_get_cwd_internal(buf: *mut u8, size: u32) -> i32 {
     let slice = user_buf.as_mut_slice();
     slice[..len].copy_from_slice(&bytes[..len]);
     slice[len] = 0;
-    len as i32
+    crate::functions::intcast::low_i32_from_usize(len)
 }
 
 // ============================================================================
@@ -431,7 +429,7 @@ pub extern "C" fn vfs_readlink(path: *const u8, buf: *mut u8, bufsiz: u64, pwm: 
             return -1;
         };
         match fs.fs_readlink(p, user_buf.as_mut_slice()) {
-            Ok(n) => n as i32,
+            Ok(n) => crate::functions::intcast::low_i32_from_usize(n),
             Err(e) => e.as_i32(),
         }
     })
@@ -531,8 +529,6 @@ pub extern "C" fn vfs_setxattr_internal(
 }
 
 /// 获取扩展属性
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn vfs_getxattr_internal(
     path: *const u8,
     name: *const u8,
@@ -565,13 +561,11 @@ pub extern "C" fn vfs_getxattr_internal(
 
     fs_opt.map_or(-38, |fs| {
         fs.fs_getxattr(rel_path, name, buf, pwm)
-            .map_or(-1, |len| len as i32)
+            .map_or(-1, crate::functions::intcast::low_i32_from_usize)
     })
 }
 
 /// 列出扩展属性
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn vfs_listxattr_internal(
     path: *const u8,
     list: *mut u8,
@@ -602,7 +596,7 @@ pub extern "C" fn vfs_listxattr_internal(
 
     fs_opt.map_or(-38, |fs| {
         fs.fs_listxattr(rel_path, buf, pwm)
-            .map_or(-1, |len| len as i32)
+            .map_or(-1, crate::functions::intcast::low_i32_from_usize)
     })
 }
 

@@ -59,7 +59,7 @@ pub fn sysinfo_syscall(info_ptr: u64) -> i64 {
 
     let ticks = crate::privileged::syscall::api::get_ticks();
     let si = SysInfo {
-        uptime: (ticks / 1000) as i64,
+        uptime: (ticks / 1000).cast_signed(),
         loads: [0, 0, 0],
         totalram: 128 * 1024 * 1024,
         freeram: 97 * 1024 * 1024,
@@ -91,7 +91,7 @@ pub fn setrlimit_syscall(resource: i32, rlim_ptr: u64) -> i64 {
     if rlim_ptr == 0 {
         return Errno::EINVAL.as_ret();
     }
-    if !(0..RLIMIT_NLIMITS as i32).contains(&resource) {
+    if !(0..crate::functions::intcast::low_i32_from_usize(RLIMIT_NLIMITS)).contains(&resource) {
         return Errno::EINVAL.as_ret();
     }
 

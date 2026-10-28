@@ -236,7 +236,6 @@ jobs:
             -D clippy::pedantic \
             -A clippy::cast_possible_truncation \
             -A clippy::cast_sign_loss \
-            -A clippy::cast_possible_wrap \
             -A clippy::cast_precision_loss \
             2>&1 | tee ../../other/build/log/clippy_pedantic.txt | tail -20
           if grep -qE "^error\[|^error:" ../../other/build/log/clippy_pedantic.txt; then
@@ -254,7 +253,6 @@ jobs:
             -D clippy::pedantic \
             -A clippy::cast_possible_truncation \
             -A clippy::cast_sign_loss \
-            -A clippy::cast_possible_wrap \
             -A clippy::cast_precision_loss \
             2>&1 | tee ../../other/build/log/clippy_pedantic_aarch64.txt | tail -20
           if grep -qE "^error\[|^error:" ../../other/build/log/clippy_pedantic_aarch64.txt; then
@@ -274,7 +272,6 @@ jobs:
             -D warnings -D clippy::pedantic \
             -A clippy::cast_possible_truncation \
             -A clippy::cast_sign_loss \
-            -A clippy::cast_possible_wrap \
             -A clippy::cast_precision_loss \
             2>&1 | tee other/build/log/clippy_pedantic_kernel_test.txt | tail -20
           if grep -qE "^error\[|^error:" other/build/log/clippy_pedantic_kernel_test.txt; then
@@ -294,7 +291,6 @@ jobs:
             -D warnings -D clippy::pedantic \
             -A clippy::cast_possible_truncation \
             -A clippy::cast_sign_loss \
-            -A clippy::cast_possible_wrap \
             -A clippy::cast_precision_loss \
             2>&1 | tee other/build/log/clippy_pedantic_host_test.txt | tail -20
           if grep -qE "^error\[|^error:" other/build/log/clippy_pedantic_host_test.txt; then

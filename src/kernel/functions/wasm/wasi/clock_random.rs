@@ -35,7 +35,7 @@ pub fn wasi_clock_time_get(
         }
     };
 
-    write_i64_to_memory(interp, result_ptr, nanos as i64);
+    write_i64_to_memory(interp, result_ptr, nanos.cast_signed());
     interp.stack.push(Value::I32(wasi_success()))?;
     Ok(())
 }

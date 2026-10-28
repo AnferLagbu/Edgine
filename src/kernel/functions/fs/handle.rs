@@ -30,8 +30,6 @@ fn current_fd_handle(fd_idx: usize) -> Option<u32> {
 // VFS 核心接口 (内部)
 // ============================================================================
 
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 /// 打开文件 — VFS 核心实现 (trait object 分发).
 ///
 /// 归一化用户路径 + 解析挂载点后调用 `fs_open`; 目标不存在且带 `CREAT`
@@ -77,7 +75,7 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
                     return -1;
                 };
 
-                fd_idx as i32
+                crate::functions::intcast::low_i32_from_usize(fd_idx)
             }
             Err(KernelError::FileNotFound) if (flags & VfsOpenFlags::CREAT.bits()) != 0 => {
                 // CREAT: 文件不存在, 尝试创建
@@ -115,7 +113,7 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
                             "",
                             false,
                         );
-                        fd_idx as i32
+                        crate::functions::intcast::low_i32_from_usize(fd_idx)
                     }
                     Err(_) => -1,
                 }
@@ -164,7 +162,7 @@ pub fn vfs_close_internal(fd_idx: u32) -> i32 {
         };
     super::inotify::inotify_notify(node_id, close_mask, "", false);
     // C1: fd 关闭 → 唤醒该 fd 注册的所有 epoll 等待者 (EPOLLHUP|EPOLLERR)
-    fd_notify::notify_fd_close(fd_idx as i32);
+    fd_notify::notify_fd_close(fd_idx.cast_signed());
     0
 }
 
@@ -257,7 +255,7 @@ fn vfs_read_slice(fd_idx: u32, dst: &mut [u8]) -> i32 {
                     }
                 }
                 if all_ok {
-                    return count as i32;
+                    return count.cast_signed();
                 }
             }
         }
@@ -272,9 +270,9 @@ fn vfs_read_slice(fd_idx: u32, dst: &mut [u8]) -> i32 {
                 // 管道读走数据 ⇒ 对端可写状态可能变化, 通知 epoll 重新求值
                 // (普通文件就绪态恒定, 无需通知).
                 if open_file.is_pipe_endpoint() {
-                    fd_notify::notify_fd_event(fd_idx as i32);
+                    fd_notify::notify_fd_event(fd_idx.cast_signed());
                 }
-                n as i32
+                crate::functions::intcast::low_i32_from_usize(n)
             })
     });
 
@@ -322,8 +320,6 @@ pub fn vfs_read_kernel(fd: u32, dst: &mut [u8]) -> i32 {
 ///
 /// 返回: 实际读取字节数, 负数表示错误.
 // 注意: 保持 Rust ABI — 参数含 `Option<usize>` / `&mut [u8]` 等非 FFI-safe 类型
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 pub fn vfs_pread_inode(
     mount_idx: Option<usize>,
     node_id: u32,
@@ -347,7 +343,7 @@ pub fn vfs_pread_inode(
     };
     let Some(fs) = fs else { return -1 };
     fs.fs_pread_inode(node_id, file_offset, dst, pwm)
-        .map_or(-1, |n| n as i32)
+        .map_or(-1, crate::functions::intcast::low_i32_from_usize)
 }
 
 /// 截断 fd 对应文件到 `size` 字节.
@@ -382,8 +378,6 @@ pub extern "C" fn vfs_truncate_internal(fd: u32, size: u64) -> i32 {
 /// 用户路径 (`vfs_write_internal`) 先经 `UserReadPtr` 校验; 内核路径
 /// (`vfs_write_kernel`) 由调用方保证切片有效 (内核 bounce 缓冲无法通过
 /// `UserReadPtr::checked_new`).
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 fn vfs_write_slice(fd_idx: u32, src: &[u8]) -> i32 {
     if src.is_empty() {
         return KernelError::InvalidArgument.as_vfs_ret();
@@ -417,10 +411,10 @@ fn vfs_write_slice(fd_idx: u32, src: &[u8]) -> i32 {
                 // 管道写入数据 ⇒ 对端可读状态变化, 通知 epoll 重新求值;
                 // 普通文件就绪态恒定, 不发事件 (原实现在写路径误调 close 通知).
                 if open_file.is_pipe_endpoint() {
-                    fd_notify::notify_fd_event(fd_idx as i32);
+                    fd_notify::notify_fd_event(fd_idx.cast_signed());
                 }
                 super::inotify::inotify_notify(node_id, super::inotify::IN_MODIFY, "", false);
-                n as i32
+                crate::functions::intcast::low_i32_from_usize(n)
             })
     });
 
@@ -546,8 +540,6 @@ pub fn vfs_write_pod<T: Copy>(fd: u32, val: &T) -> i32 {
 /// SIMPLIFIED: 不走 pcache 快路径 (直接 Inode trait 分发), 影响面: 4KB
 /// 对齐大读性能低于 vfs_read 快路径; 何时需扩展: 复用 vfs_read_internal 的
 /// 对齐检测 + pcache 快路径后.
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 pub fn vfs_pread(fd: u32, buf: *mut u8, count: u32, offset: u64) -> i32 {
     if buf.is_null() || count == 0 {
         return -1;
@@ -565,7 +557,7 @@ pub fn vfs_pread(fd: u32, buf: *mut u8, count: u32, offset: u64) -> i32 {
             open_file
                 .inode()
                 .read(offset, user_buf.as_mut_slice(), pwm)
-                .map_or(-1, |n| n as i32)
+                .map_or(-1, crate::functions::intcast::low_i32_from_usize)
         })
         .unwrap_or(-1)
 }
@@ -573,8 +565,6 @@ pub fn vfs_pread(fd: u32, buf: *mut u8, count: u32, offset: u64) -> i32 {
 /// pwrite — 从显式 offset 写入, 不更新 fd 当前偏移 (POSIX pwrite 语义)
 ///
 /// 忽略 O_APPEND (pwrite 不受 append 模式影响, 写固定 offset).
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 pub fn vfs_pwrite(fd: u32, buf: *const u8, count: u32, offset: u64) -> i32 {
     if buf.is_null() || count == 0 {
         return -1;
@@ -596,7 +586,7 @@ pub fn vfs_pwrite(fd: u32, buf: *const u8, count: u32, offset: u64) -> i32 {
                 .map_or(-1, |n| {
                     // inotify IN_MODIFY 通知 (与 vfs_write 一致)
                     super::inotify::inotify_notify(node_id, super::inotify::IN_MODIFY, "", false);
-                    n as i32
+                    crate::functions::intcast::low_i32_from_usize(n)
                 })
         })
         .unwrap_or(-1)
@@ -789,8 +779,6 @@ pub fn vfs_get_fd_handle(fd_idx: usize) -> Option<u32> {
 // dup / dup2 — 文件描述符复制
 // ============================================================================
 
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 /// `dup(2)` — 复制 fd, 新旧 fd 共享同一 OpenFile (offset/flags 共享).
 ///
 /// 新 fd 无 CLOEXEC; 源 fd 无效返回 `-EBADF`, fd 表满返回 `-EMFILE`.
@@ -812,7 +800,7 @@ pub extern "C" fn vfs_dup(oldfd: u32) -> i32 {
 
     // 增加 OpenFile 引用计数 (POSIX dup 语义)
     OPEN_FILE_TABLE.inc_ref(handle_id);
-    new_fd as i32
+    crate::functions::intcast::low_i32_from_usize(new_fd)
 }
 
 /// `dup2(2)` — 把 `oldfd` 复制到指定 `newfd`, 覆盖其原有打开文件.
@@ -834,7 +822,7 @@ pub extern "C" fn vfs_dup2(oldfd: u32, newfd: u32) -> i32 {
         return -9; // EBADF
     }
     if new_usize == old_usize {
-        return newfd as i32;
+        return newfd.cast_signed();
     }
 
     // POSIX dup2: 原子替换 newfd 槽位 (结果为无 CLOEXEC 的副本, 共享同一 OpenFile).
@@ -852,5 +840,5 @@ pub extern "C" fn vfs_dup2(oldfd: u32, newfd: u32) -> i32 {
     }
     // 共享 OpenFile: 增加引用计数
     OPEN_FILE_TABLE.inc_ref(old_handle_id);
-    newfd as i32
+    newfd.cast_signed()
 }

@@ -25,9 +25,9 @@ pub fn sys_brk(addr: u64) -> i64 {
     if addr == 0 {
         // 返回当前 brk (VMA 优先)
         if let Some(mm) = vma_get_current_mm() {
-            return mm.brk.load(Ordering::Acquire) as i64;
+            return crate::functions::intcast::i64_from_usize(mm.brk.load(Ordering::Acquire));
         }
-        return BRK.load(Ordering::SeqCst) as i64;
+        return BRK.load(Ordering::SeqCst).cast_signed();
     }
 
     if addr > USER_ADDR_MAX {
@@ -45,7 +45,7 @@ pub fn sys_brk(addr: u64) -> i64 {
             return Errno::ENOMEM.as_ret();
         };
         match mm.set_brk(addr as usize, cr3) {
-            Ok(new_brk) => return new_brk as i64,
+            Ok(new_brk) => return crate::functions::intcast::i64_from_usize(new_brk),
             Err(_) => return Errno::ENOMEM.as_ret(),
         }
     }
@@ -62,5 +62,5 @@ pub fn sys_brk(addr: u64) -> i64 {
         }
     }
     BRK.store(addr, Ordering::SeqCst);
-    addr as i64
+    addr.cast_signed()
 }

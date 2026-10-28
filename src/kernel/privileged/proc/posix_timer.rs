@@ -368,7 +368,7 @@ pub fn sys_timer_create(clockid: i32, sigev_ptr: u64, timer_id_ptr: u64) -> i64 
             // 初始化 hrtimer, 回调 dispatch 通过 slot 内部指针
             slot.timer.init(posix_timer_callback);
 
-            let timer_id = (i + 1) as i32;
+            let timer_id = crate::privileged::lib::low_i32_from_usize(i + 1);
             if !crate::privileged::userptr::write_struct_to_user(timer_id_ptr, &timer_id) {
                 return Errno::EFAULT.as_ret();
             }
@@ -437,10 +437,10 @@ pub fn sys_timer_settime(timer_id: i32, flags: i32, new_value_ptr: u64, old_valu
             0
         };
         let old = Itimerspec {
-            it_interval_sec: (slot.interval_ns / 1_000_000_000) as i64,
-            it_interval_nsec: (slot.interval_ns % 1_000_000_000) as i64,
-            it_value_sec: (remaining_ns / 1_000_000_000) as i64,
-            it_value_nsec: (remaining_ns % 1_000_000_000) as i64,
+            it_interval_sec: (slot.interval_ns / 1_000_000_000).cast_signed(),
+            it_interval_nsec: (slot.interval_ns % 1_000_000_000).cast_signed(),
+            it_value_sec: (remaining_ns / 1_000_000_000).cast_signed(),
+            it_value_nsec: (remaining_ns % 1_000_000_000).cast_signed(),
         };
         if !userptr::write_struct_to_user(old_value_ptr, &old) {
             return Errno::EFAULT.as_ret();
@@ -515,10 +515,10 @@ pub fn sys_timer_gettime(timer_id: i32, curr_value_ptr: u64) -> i64 {
         0
     };
     let curr = Itimerspec {
-        it_interval_sec: (slot.interval_ns / 1_000_000_000) as i64,
-        it_interval_nsec: (slot.interval_ns % 1_000_000_000) as i64,
-        it_value_sec: (remaining_ns / 1_000_000_000) as i64,
-        it_value_nsec: (remaining_ns % 1_000_000_000) as i64,
+        it_interval_sec: (slot.interval_ns / 1_000_000_000).cast_signed(),
+        it_interval_nsec: (slot.interval_ns % 1_000_000_000).cast_signed(),
+        it_value_sec: (remaining_ns / 1_000_000_000).cast_signed(),
+        it_value_nsec: (remaining_ns % 1_000_000_000).cast_signed(),
     };
     if !userptr::write_struct_to_user(curr_value_ptr, &curr) {
         return Errno::EFAULT.as_ret();

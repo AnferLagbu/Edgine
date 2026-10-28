@@ -181,10 +181,10 @@ impl NtpResult {
         t3: &NtpTimestamp, // 服务器发送时间
         t4: &NtpTimestamp, // 客户端接收时间
     ) -> Self {
-        let t1_ns = t1.to_unix_ns() as i64;
-        let t2_ns = t2.to_unix_ns() as i64;
-        let t3_ns = t3.to_unix_ns() as i64;
-        let t4_ns = t4.to_unix_ns() as i64;
+        let t1_ns = t1.to_unix_ns().cast_signed();
+        let t2_ns = t2.to_unix_ns().cast_signed();
+        let t3_ns = t3.to_unix_ns().cast_signed();
+        let t4_ns = t4.to_unix_ns().cast_signed();
 
         let offset = i64::midpoint(t2_ns - t1_ns, t3_ns - t4_ns);
         let delay = (t4_ns - t1_ns) - (t3_ns - t2_ns);
@@ -316,7 +316,7 @@ impl TimeSyncSubsystem {
         // 频率补偿: elapsed * freq_adj / 1e9
         let last_sync = state.last_sync_time().load(Ordering::Acquire);
         let elapsed = raw_ns.saturating_sub(last_sync);
-        let freq_compensation = (elapsed as i64 * freq) / 1_000_000_000;
+        let freq_compensation = (elapsed.cast_signed() * freq) / 1_000_000_000;
 
         let total_adj = offset + freq_compensation;
         if total_adj >= 0 {
@@ -355,9 +355,9 @@ impl TimeSyncSubsystem {
         let state = clock_adj_state();
         let current = read_clock_ns();
         let diff = if time_ns > current {
-            (time_ns - current) as i64
+            (time_ns - current).cast_signed()
         } else {
-            -((current - time_ns) as i64)
+            -(current - time_ns).cast_signed()
         };
         state.total_offset_adj().store(diff, Ordering::Release);
         state.offset_remaining().store(0, Ordering::Release);
@@ -451,12 +451,12 @@ pub fn timesync_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
     match cmd {
         0 => {
             // adj_freq
-            let ppb = a1 as i64;
+            let ppb = a1.cast_signed();
             if subsystem().adj_freq(ppb) { 0 } else { -22 }
         }
         1 => {
             // adj_time
-            let offset_ns = a1 as i64;
+            let offset_ns = a1.cast_signed();
             if subsystem().adj_time(offset_ns) {
                 0
             } else {
@@ -482,11 +482,11 @@ pub fn timesync_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
             let _ = offset_ns;
             let _ = freq_ppb;
             // 高16位: synced, 中32位: count, 低16位: 保留
-            (i64::from(synced) << 48) | (count as i64 & 0xFFFF_FFFF_FFFF)
+            (i64::from(synced) << 48) | (count.cast_signed() & 0xFFFF_FFFF_FFFF)
         }
         6 => {
             // get_adjusted_time
-            subsystem().get_adjusted_time_ns() as i64
+            subsystem().get_adjusted_time_ns().cast_signed()
         }
         7 => {
             // set_ptp_domain
@@ -496,8 +496,8 @@ pub fn timesync_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
         8 => {
             // apply_ntp_result (简化: 直接传 offset 和 delay)
             let result = NtpResult {
-                offset_ns: a1 as i64,
-                delay_ns: a2 as i64,
+                offset_ns: a1.cast_signed(),
+                delay_ns: a2.cast_signed(),
                 dispersion_ns: 0,
                 stratum: 1,
                 valid: true,

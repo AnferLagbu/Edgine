@@ -539,7 +539,7 @@ impl Interpreter {
                         .memory
                         .as_ref()
                         .map_or(0, super::runtime::LinearMemory::pages);
-                    self.stack.push(Value::I32(pages as i32))?;
+                    self.stack.push(Value::I32(pages.cast_signed()))?;
                 }
                 Ok(Opcode::MemoryGrow) => {
                     self.advance_pc(1);
@@ -549,7 +549,7 @@ impl Interpreter {
                     } else {
                         u32::MAX
                     };
-                    self.stack.push(Value::I32(result as i32))?;
+                    self.stack.push(Value::I32(result.cast_signed()))?;
                 }
 
                 Ok(Opcode::I32Const) => self.execute_i32_const()?,
@@ -588,7 +588,7 @@ impl Interpreter {
                 Ok(Opcode::I32Shl) => self.execute_i32_binop(|a, b| a.wrapping_shl(b as u32))?,
                 Ok(Opcode::I32ShrS) => self.execute_i32_binop(|a, b| a.wrapping_shr(b as u32))?,
                 Ok(Opcode::I32ShrU) => {
-                    self.execute_i32_binop(|a, b| (a as u32).wrapping_shr(b as u32) as i32)?;
+                    self.execute_i32_binop(|a, b| (a as u32).wrapping_shr(b as u32).cast_signed())?;
                 }
 
                 Ok(Opcode::I64Add) => self.execute_i64_binop(i64::wrapping_add)?,
@@ -987,8 +987,9 @@ impl Interpreter {
         if b == 0 {
             return Err(WasmError::DivisionByZero);
         }
-        self.stack
-            .push(Value::I32(((a as u32).wrapping_div(b as u32)) as i32))?;
+        self.stack.push(Value::I32(
+            ((a as u32).wrapping_div(b as u32)).cast_signed(),
+        ))?;
         Ok(())
     }
 
@@ -1013,8 +1014,9 @@ impl Interpreter {
         if b == 0 {
             return Err(WasmError::DivisionByZero);
         }
-        self.stack
-            .push(Value::I32(((a as u32).wrapping_rem(b as u32)) as i32))?;
+        self.stack.push(Value::I32(
+            ((a as u32).wrapping_rem(b as u32)).cast_signed(),
+        ))?;
         Ok(())
     }
 
@@ -1061,7 +1063,7 @@ impl Interpreter {
         match size {
             4 => {
                 let val = mem.read_u32(addr)?;
-                self.stack.push(Value::I32(val as i32))?;
+                self.stack.push(Value::I32(val.cast_signed()))?;
             }
             _ => return Err(WasmError::InternalError),
         }
@@ -1082,7 +1084,7 @@ impl Interpreter {
 
         let mem = self.memory.as_ref().ok_or(WasmError::MemoryOutOfBounds)?;
         let val = mem.read_u64(addr)?;
-        self.stack.push(Value::I64(val as i64))?;
+        self.stack.push(Value::I64(val.cast_signed()))?;
         Ok(())
     }
 
@@ -1103,7 +1105,7 @@ impl Interpreter {
             1 => {
                 let val = mem.read_u8(addr)?;
                 if signed {
-                    self.stack.push(Value::I32(i32::from(val as i8)))?;
+                    self.stack.push(Value::I32(i32::from(val.cast_signed())))?;
                 } else {
                     self.stack.push(Value::I32(i32::from(val)))?;
                 }
@@ -1111,7 +1113,7 @@ impl Interpreter {
             2 => {
                 let val = mem.read_u16(addr)?;
                 if signed {
-                    self.stack.push(Value::I32(i32::from(val as i16)))?;
+                    self.stack.push(Value::I32(i32::from(val.cast_signed())))?;
                 } else {
                     self.stack.push(Value::I32(i32::from(val)))?;
                 }

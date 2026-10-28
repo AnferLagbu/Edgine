@@ -643,7 +643,7 @@ impl UnkfsData {
             fds[fd_idx].pwm = pwm;
         }
         self.zil.add_record(UnkfsZilRecord::new_create(0, 0, name));
-        Ok(fd_idx as i32)
+        Ok(crate::functions::intcast::low_i32_from_usize(fd_idx))
     }
 
     /// 关闭描述符并释放槽位, 成功返回 0.
@@ -724,7 +724,7 @@ impl UnkfsData {
             let mut fds = self.fds.lock();
             fds[fd as usize].offset += to_read as u64;
         }
-        to_read as i32
+        crate::functions::intcast::low_i32_from_usize(to_read)
     }
 
     /// 向描述符当前偏移写入数据并推进偏移, 返回实际写入字节数.
@@ -807,7 +807,7 @@ impl UnkfsData {
             let mut fds = self.fds.lock();
             fds[fd as usize].offset += to_write as u64;
         }
-        to_write as i32
+        crate::functions::intcast::low_i32_from_usize(to_write)
     }
 
     /// 创建目录, 成功返回 0.
@@ -1229,7 +1229,7 @@ impl UnkfsData {
             buf[..n].copy_from_slice(&data[..n]);
             // 缓存条目短于请求长度时, 尾部按稀疏块补零.
             buf[n..to_read].fill(0);
-            return to_read as i32;
+            return crate::functions::intcast::low_i32_from_usize(to_read);
         }
 
         KernelError::Io.as_i32()
@@ -1316,7 +1316,7 @@ impl UnkfsData {
                 let hash_bytes = value_hash.to_le_bytes();
                 let to_copy = hash_bytes.len().min(buf.len());
                 buf[..to_copy].copy_from_slice(&hash_bytes[..to_copy]);
-                return to_copy as i32;
+                return crate::functions::intcast::low_i32_from_usize(to_copy);
             }
         }
 
@@ -1362,7 +1362,7 @@ impl UnkfsData {
             }
         }
 
-        offset as i32
+        crate::functions::intcast::low_i32_from_usize(offset)
     }
 
     /// 删除扩展属性
@@ -1954,15 +1954,15 @@ impl UnkfsData {
         };
         let new_offset = match whence {
             0 => offset as u64,
-            1 => (cur_offset as i64 + offset) as u64,
-            2 => (obj.size as i64 + offset) as u64,
+            1 => (cur_offset.cast_signed() + offset) as u64,
+            2 => (obj.size.cast_signed() + offset) as u64,
             _ => return i64::from(KernelError::InvalidArgument.as_i32()),
         };
         {
             let mut fds = self.fds.lock();
             fds[fd as usize].offset = new_offset;
         }
-        new_offset as i64
+        new_offset.cast_signed()
     }
 
     /// 获取 `UNKFS` 池统计 (allocs, frees, reads, writes)

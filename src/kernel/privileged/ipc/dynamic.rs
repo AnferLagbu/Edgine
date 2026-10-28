@@ -256,7 +256,7 @@ impl DynIpcNamespace {
         let sem = Semaphore {
             id,
             owner: owner_pid,
-            count: count as i32,
+            count: count.cast_signed(),
             max_count,
             wait: WaitQueue::new(),
             flags: 0,

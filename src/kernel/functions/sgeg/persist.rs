@@ -250,8 +250,6 @@ pub fn save_database() -> i32 {
 /// 从磁盘加载身份表 (`/pwm.db`).
 ///
 /// 文件不存在返回 `0` (视为空库); 校验失败/IO 失败返回 `-1`.
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 #[expect(
     clippy::large_stack_arrays,
     reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
@@ -264,7 +262,7 @@ pub fn load_database() -> i32 {
 
     let mut hdr = [0u8; HDR_SZ];
     let rd = vfs_read_safe(fd as u32, &mut hdr);
-    if rd < HDR_SZ as i32 {
+    if rd < crate::functions::intcast::low_i32_from_usize(HDR_SZ) {
         vfs_close_safe(fd as u32);
         return -1;
     }
@@ -296,7 +294,7 @@ pub fn load_database() -> i32 {
     let mut data = [0u8; BUF_SZ];
     let dr = vfs_read_safe(fd as u32, &mut data[..ds]);
     vfs_close_safe(fd as u32);
-    if dr < ds as i32 {
+    if dr < crate::functions::intcast::low_i32_from_usize(ds) {
         return -1;
     }
 

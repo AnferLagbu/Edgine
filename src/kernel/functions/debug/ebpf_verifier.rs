@@ -255,7 +255,8 @@ impl BpfVerifier for StandardBpfVerifier {
                 let op_low = insn.op & 0xf0;
                 if op_low == opcode::JA {
                     // 无条件跳转
-                    let target = pc as i64 + 1 + i64::from(insn.off);
+                    let target =
+                        crate::functions::intcast::i64_from_usize(pc) + 1 + i64::from(insn.off);
                     if target < 0 || target as usize >= prog.insn_cnt as usize {
                         return VerifyResult::Err(
                             alloc::format!("jump out of bounds at pc={pc}: target={target}")
@@ -263,7 +264,7 @@ impl BpfVerifier for StandardBpfVerifier {
                         );
                     }
                     // 规则 4: 回边检测
-                    if target < pc as i64 {
+                    if target < crate::functions::intcast::i64_from_usize(pc) {
                         path_depth += 1;
                         if path_depth > BPF_MAX_PATH_DEPTH {
                             return VerifyResult::Err(
@@ -305,14 +306,15 @@ impl BpfVerifier for StandardBpfVerifier {
                     regs[reg::R1] = RegState::scalar();
                 } else if op_low != opcode::EXIT {
                     // 条件跳转
-                    let target = pc as i64 + 1 + i64::from(insn.off);
+                    let target =
+                        crate::functions::intcast::i64_from_usize(pc) + 1 + i64::from(insn.off);
                     if target < 0 || target as usize >= prog.insn_cnt as usize {
                         return VerifyResult::Err(
                             alloc::format!("conditional jump OOB at pc={pc}: target={target}")
                                 .into_bytes(),
                         );
                     }
-                    if target < pc as i64 {
+                    if target < crate::functions::intcast::i64_from_usize(pc) {
                         path_depth += 1;
                         if path_depth > BPF_MAX_PATH_DEPTH {
                             return VerifyResult::Err(
@@ -424,7 +426,9 @@ impl BpfVerifier for StandardBpfVerifier {
                         // B07-18 规则 14: 栈读偏移深度验证 — R10 基地址的 off
                         // 必须在 [-BPF_STACK_SIZE, 0] (R10 指向栈底+512, 负偏移访问栈内).
                         // 原实现不校验 off, 恶意程序可 [R10+large] 越界读.
-                        if insn.off < -(BPF_STACK_SIZE as i16) || insn.off > 0 {
+                        if insn.off < -crate::functions::intcast::low_i16_from_usize(BPF_STACK_SIZE)
+                            || insn.off > 0
+                        {
                             return VerifyResult::Err(
                                 alloc::format!(
                                     "stack load offset out of range at pc={pc}: off={}",

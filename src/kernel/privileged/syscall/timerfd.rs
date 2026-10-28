@@ -238,10 +238,10 @@ pub fn sys_timerfd_settime(fd: i32, flags: i32, new_value_ptr: u64, old_value_pt
             0
         };
         let old = Itimerspec {
-            it_interval_sec: (slot.interval_ns / 1_000_000_000) as i64,
-            it_interval_nsec: (slot.interval_ns % 1_000_000_000) as i64,
-            it_value_sec: (remaining / 1_000_000_000) as i64,
-            it_value_nsec: (remaining % 1_000_000_000) as i64,
+            it_interval_sec: (slot.interval_ns / 1_000_000_000).cast_signed(),
+            it_interval_nsec: (slot.interval_ns % 1_000_000_000).cast_signed(),
+            it_value_sec: (remaining / 1_000_000_000).cast_signed(),
+            it_value_nsec: (remaining % 1_000_000_000).cast_signed(),
         };
         // SAFETY: old_value_ptr 由 syscall 入口验证
         unsafe {
@@ -326,10 +326,10 @@ pub fn sys_timerfd_gettime(fd: i32, curr_value_ptr: u64) -> i64 {
         0
     };
     let curr = Itimerspec {
-        it_interval_sec: (slot.interval_ns / 1_000_000_000) as i64,
-        it_interval_nsec: (slot.interval_ns % 1_000_000_000) as i64,
-        it_value_sec: (remaining / 1_000_000_000) as i64,
-        it_value_nsec: (remaining % 1_000_000_000) as i64,
+        it_interval_sec: (slot.interval_ns / 1_000_000_000).cast_signed(),
+        it_interval_nsec: (slot.interval_ns % 1_000_000_000).cast_signed(),
+        it_value_sec: (remaining / 1_000_000_000).cast_signed(),
+        it_value_nsec: (remaining % 1_000_000_000).cast_signed(),
     };
 
     // SAFETY: curr_value_ptr 由 syscall 入口验证

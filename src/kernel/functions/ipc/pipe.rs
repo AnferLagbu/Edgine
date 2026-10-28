@@ -82,8 +82,8 @@ pub fn pipe_create_safe(
     pipe.read_pid = current_pid;
     pipe.write_pid = current_pid;
 
-    pipe.read_key = (pipe.id * 2) as i32;
-    pipe.write_key = (pipe.id * 2 + 1) as i32;
+    pipe.read_key = (pipe.id * 2).cast_signed();
+    pipe.write_key = (pipe.id * 2 + 1).cast_signed();
 
     pipe.readers = 1;
     pipe.writers = 1;

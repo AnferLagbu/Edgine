@@ -113,6 +113,9 @@ pub use kernel_privileged::{
 /// 系统调用 — POSIX + SGEG 分发 (通过 privileged::UserContext)
 pub mod syscall;
 
+/// 整数位级转换助手 (functions 层副本; 与 privileged/lib/intcast.rs 同构)
+pub mod intcast;
+
 /// TD-08: functions 层统一错误 (单一来源, SocketError/UnixSocketError 共享)
 pub mod error;
 

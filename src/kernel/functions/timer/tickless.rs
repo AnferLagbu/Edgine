@@ -441,7 +441,7 @@ pub fn tickless_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
                     // 返回: 高32位=enter_count, 低32位=exit_count
                     // idle_ns 通过第二次调用返回 (简化)
                     let _ = idle_ns;
-                    ((enter as i64) << 32) | (exit as i64 & 0xFFFF_FFFF)
+                    (enter.cast_signed() << 32) | (exit.cast_signed() & 0xFFFF_FFFF)
                 }
                 None => -(22i64),
             }

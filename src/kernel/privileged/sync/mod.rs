@@ -181,7 +181,7 @@ pub extern "C" fn spin_is_locked(lock: *const SpinLockInner) -> i32 {
         return 0;
     }
 
-    raw::spin_locked(lock).load(Ordering::Acquire) as i32
+    raw::spin_locked(lock).load(Ordering::Acquire).cast_signed()
 }
 
 /// 初始化互斥锁
@@ -222,7 +222,7 @@ pub extern "C" fn mutex_lock(m: *const MutexInner) {
         if !is_locked {
             // 成功获取
             raw::mutex_locked(m).store(1, Ordering::Release);
-            raw::mutex_owner(m).store(raw::current_pid() as i32, Ordering::Release);
+            raw::mutex_owner(m).store(raw::current_pid().cast_signed(), Ordering::Release);
             raw::mutex_depth(m).store(1, Ordering::Release);
             spin_unlock(inner_lock);
             return;
@@ -239,7 +239,7 @@ pub extern "C" fn mutex_lock(m: *const MutexInner) {
 
         if !is_locked {
             raw::mutex_locked(m).store(1, Ordering::Release);
-            raw::mutex_owner(m).store(raw::current_pid() as i32, Ordering::Release);
+            raw::mutex_owner(m).store(raw::current_pid().cast_signed(), Ordering::Release);
             raw::mutex_depth(m).store(1, Ordering::Release);
             spin_unlock(inner_lock);
             return;
@@ -292,7 +292,7 @@ pub extern "C" fn mutex_trylock(m: *const MutexInner) -> i32 {
 
     let result = if raw::mutex_locked(m).load(Ordering::Acquire) == 0 {
         raw::mutex_locked(m).store(1, Ordering::Release);
-        raw::mutex_owner(m).store(raw::current_pid() as i32, Ordering::Release);
+        raw::mutex_owner(m).store(raw::current_pid().cast_signed(), Ordering::Release);
         raw::mutex_depth(m).store(1, Ordering::Release);
         1 // 成功
     } else {
@@ -312,7 +312,7 @@ pub extern "C" fn mutex_is_locked(m: *const MutexInner) -> i32 {
         return 0;
     }
 
-    raw::mutex_locked(m).load(Ordering::Acquire) as i32
+    raw::mutex_locked(m).load(Ordering::Acquire).cast_signed()
 }
 
 /// 初始化读写锁

@@ -582,7 +582,7 @@ pub fn wasi_fd_dup(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<()
 
     match ctx.fd_table.alloc(new_entry) {
         Ok(new_fd) => {
-            interp.stack.push(Value::I32(new_fd as i32))?;
+            interp.stack.push(Value::I32(new_fd.cast_signed()))?;
         }
         Err(e) => {
             interp.stack.push(Value::I32(wasi_errno(e)))?;

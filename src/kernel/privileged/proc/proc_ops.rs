@@ -940,10 +940,10 @@ pub extern "C" fn proc_get_rusage(pid: u32, who: i32, out: *mut u8, out_len: u64
     } else {
         (0, 0)
     };
-    let ut_sec = (user / hz) as i64;
-    let ut_micros = ((user % hz) * 1_000_000 / hz) as i64;
-    let st_sec = (sys / hz) as i64;
-    let st_micros = ((sys % hz) * 1_000_000 / hz) as i64;
+    let ut_sec = (user / hz).cast_signed();
+    let ut_micros = ((user % hz) * 1_000_000 / hz).cast_signed();
+    let st_sec = (sys / hz).cast_signed();
+    let st_micros = ((sys % hz) * 1_000_000 / hz).cast_signed();
 
     // SAFETY: out 至少 32 字节可写, who 合法.
     unsafe {

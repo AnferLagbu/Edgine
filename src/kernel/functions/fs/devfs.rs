@@ -286,7 +286,7 @@ impl DevfsData {
             Some(DevKind::Null | DevKind::Console | DevKind::Tty) => 0,
             Some(DevKind::Zero) => {
                 buf.fill(0);
-                buf.len() as i32
+                crate::functions::intcast::low_i32_from_usize(buf.len())
             }
             Some(DevKind::SGEG) => {
                 let pwm = crate::privileged::sgeg::session::get_current_pwm();
@@ -339,12 +339,12 @@ impl DevfsData {
                         buf[off] = b'\n';
                         off += 1;
                     }
-                    off as i32
+                    crate::functions::intcast::low_i32_from_usize(off)
                 } else {
                     let msg = b"ERR not_authenticated\n";
                     let len = msg.len().min(buf.len());
                     buf[..len].copy_from_slice(&msg[..len]);
-                    len as i32
+                    crate::functions::intcast::low_i32_from_usize(len)
                 }
             }
             // E6-9a: 物理设备 I/O 路由待 E6-9b (EGDF 桥接) 实现; 未知类型同样拒绝
@@ -359,11 +359,13 @@ impl DevfsData {
     /// 按设备类型写入，返回消耗的字节数（负数为错误码）。
     pub fn write(&self, dev_type: u8, buf: &[u8]) -> i32 {
         match DevKind::from_u8(dev_type) {
-            Some(DevKind::Null | DevKind::Zero) => buf.len() as i32,
+            Some(DevKind::Null | DevKind::Zero) => {
+                crate::functions::intcast::low_i32_from_usize(buf.len())
+            }
             Some(DevKind::Console | DevKind::Tty) => {
                 // functions 层不能使用 klog_info! (含 unsafe), 改用 safe 串口输出
                 crate::privileged::klog::serial_write_bytes(buf);
-                buf.len() as i32
+                crate::functions::intcast::low_i32_from_usize(buf.len())
             }
             Some(DevKind::SGEG) => {
                 let input = core::str::from_utf8(buf).unwrap_or("");
@@ -376,7 +378,7 @@ impl DevfsData {
                 }
                 crate::privileged::sgeg::session::login(note, password)
                     .map_or(KernelError::PermissionDenied.as_i32(), |_pwm| {
-                        buf.len() as i32
+                        crate::functions::intcast::low_i32_from_usize(buf.len())
                     })
             }
             // E6-9a: 物理设备 I/O 路由待 E6-9b (EGDF 桥接) 实现; 未知类型同样拒绝

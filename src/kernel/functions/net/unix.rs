@@ -1122,7 +1122,7 @@ pub fn uds_reset_for_test() {
     NEXT_SOCK_ID.with_mut(|id| *id = 1);
     // UT-06 (2026-09-24): 同步归零本子系统 FD 位图. 此前仅清 UDS_STATE,
     // 未回收 fd_alloc 位, 导致跨用例位图残留 (占满 16 槽后 alloc_fd 恒 None).
-    for i in 0..MAX_UDS_FD as i32 {
+    for i in 0..crate::functions::intcast::low_i32_from_usize(MAX_UDS_FD) {
         let _ = free_fd(FdSubsystem::Uds, UDS_FD_BASE + i);
     }
 }
@@ -1134,7 +1134,7 @@ pub fn uds_reset_for_test() {
 /// UDS FD 起点
 pub const FD_BASE: i32 = UDS_FD_BASE;
 /// UDS FD 上限 (不含)
-pub const FD_END: i32 = UDS_FD_BASE + MAX_UDS_FD as i32;
+pub const FD_END: i32 = UDS_FD_BASE + crate::functions::intcast::low_i32_from_usize(MAX_UDS_FD);
 /// 路径最大长度
 pub const PATH_MAX: usize = UNIX_PATH_MAX;
 

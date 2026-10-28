@@ -868,7 +868,7 @@ pub fn sys_fb_mmap(target_vaddr: u64, size: u64, _prot: u64) -> i64 {
     // 记录映射区间供 release 解除 (单槽, 见 FB_MAP_RECORD SIMPLIFIED 注释)
     *FB_MAP_RECORD.lock() = Some((cr3, target_vaddr, pages));
 
-    target_vaddr as i64
+    target_vaddr.cast_signed()
 }
 
 /// `sys_fb_release` — 解除帧缓冲页映射 (机制: 页表操作)

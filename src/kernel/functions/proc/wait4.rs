@@ -197,7 +197,7 @@ pub fn wait4_syscall(pid: i32, wstatus_ptr: u64, options: i32) -> Result<usize, 
         WaitOutcome::Reaped(info) => {
             if wstatus_ptr != 0 {
                 // 写 wstatus (WIFEXITED | exit_code << 8)
-                let status: i32 = (info.exit_code as i32) << 8;
+                let status: i32 = info.exit_code.cast_signed() << 8;
                 if !crate::privileged::syscall::api::write_struct_to_user(wstatus_ptr, &status) {
                     return Err(Errno::EFAULT);
                 }
@@ -327,9 +327,9 @@ pub fn waitid_syscall(idtype: i32, id: u64, infop: u64, options: i32) -> Result<
                     si_errno: 0,
                     si_code: CLD_EXITED,
                     __pad0: 0,
-                    si_pid: info.pid as i32,
+                    si_pid: info.pid.cast_signed(),
                     si_uid: 0,
-                    si_status: info.exit_code as i32,
+                    si_status: info.exit_code.cast_signed(),
                     si_utime: 0,
                     si_stime: 0,
                     __pad: [0; 96],

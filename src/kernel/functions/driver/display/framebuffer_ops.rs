@@ -126,8 +126,8 @@ fn fill_impl(canvas: &mut dyn PixelCanvas, color: Color) {
 fn fill_rect_impl(canvas: &mut dyn PixelCanvas, rect: Rect, color: Color) {
     let x_start = rect.x.max(0) as u32;
     let y_start = rect.y.max(0) as u32;
-    let x_end = (rect.x + rect.width as i32).min(canvas.width() as i32) as u32;
-    let y_end = (rect.y + rect.height as i32).min(canvas.height() as i32) as u32;
+    let x_end = (rect.x + rect.width.cast_signed()).min(canvas.width().cast_signed()) as u32;
+    let y_end = (rect.y + rect.height.cast_signed()).min(canvas.height().cast_signed()) as u32;
 
     for y in y_start..y_end {
         for x in x_start..x_end {
@@ -138,12 +138,12 @@ fn fill_rect_impl(canvas: &mut dyn PixelCanvas, rect: Rect, color: Color) {
 
 /// 绘制水平线
 fn draw_hline_impl(canvas: &mut dyn PixelCanvas, x: i32, y: i32, length: u32, color: Color) {
-    if y < 0 || y >= canvas.height() as i32 {
+    if y < 0 || y >= canvas.height().cast_signed() {
         return;
     }
 
     let x_start = x.max(0) as u32;
-    let x_end = (x + length as i32).min(canvas.width() as i32) as u32;
+    let x_end = (x + length.cast_signed()).min(canvas.width().cast_signed()) as u32;
 
     for x in x_start..x_end {
         canvas.set_pixel(x, y as u32, color);
@@ -152,12 +152,12 @@ fn draw_hline_impl(canvas: &mut dyn PixelCanvas, x: i32, y: i32, length: u32, co
 
 /// 绘制垂直线
 fn draw_vline_impl(canvas: &mut dyn PixelCanvas, x: i32, y: i32, length: u32, color: Color) {
-    if x < 0 || x >= canvas.width() as i32 {
+    if x < 0 || x >= canvas.width().cast_signed() {
         return;
     }
 
     let y_start = y.max(0) as u32;
-    let y_end = (y + length as i32).min(canvas.height() as i32) as u32;
+    let y_end = (y + length.cast_signed()).min(canvas.height().cast_signed()) as u32;
 
     for y in y_start..y_end {
         canvas.set_pixel(x as u32, y, color);
@@ -200,14 +200,14 @@ fn draw_rect_impl(canvas: &mut dyn PixelCanvas, rect: Rect, color: Color) {
     draw_hline_impl(
         canvas,
         rect.x,
-        rect.y + rect.height as i32 - 1,
+        rect.y + rect.height.cast_signed() - 1,
         rect.width,
         color,
     );
     draw_vline_impl(canvas, rect.x, rect.y, rect.height, color);
     draw_vline_impl(
         canvas,
-        rect.x + rect.width as i32 - 1,
+        rect.x + rect.width.cast_signed() - 1,
         rect.y,
         rect.height,
         color,
@@ -216,7 +216,7 @@ fn draw_rect_impl(canvas: &mut dyn PixelCanvas, rect: Rect, color: Color) {
 
 /// 绘制圆形边框 (中点圆算法)
 fn draw_circle_impl(canvas: &mut dyn PixelCanvas, cx: i32, cy: i32, radius: u32, color: Color) {
-    let r = radius as i32;
+    let r = radius.cast_signed();
     let mut x = r;
     let mut y = 0;
     let mut err = 0;
@@ -243,14 +243,14 @@ fn draw_circle_impl(canvas: &mut dyn PixelCanvas, cx: i32, cy: i32, radius: u32,
 /// 设置像素 (带边界检查)
 #[inline]
 fn set_pixel_if_valid(canvas: &mut dyn PixelCanvas, x: i32, y: i32, color: Color) {
-    if x >= 0 && x < canvas.width() as i32 && y >= 0 && y < canvas.height() as i32 {
+    if x >= 0 && x < canvas.width().cast_signed() && y >= 0 && y < canvas.height().cast_signed() {
         canvas.set_pixel(x as u32, y as u32, color);
     }
 }
 
 /// 绘制填充圆 (水平线扫描法)
 fn fill_circle_impl(canvas: &mut dyn PixelCanvas, cx: i32, cy: i32, radius: u32, color: Color) {
-    let r = radius as i32;
+    let r = radius.cast_signed();
     let mut x = r;
     let mut y = 0;
     let mut err = 0;

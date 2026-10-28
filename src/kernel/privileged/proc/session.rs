@@ -318,7 +318,7 @@ pub fn proc_setsid() -> i64 {
             p.session_id.store(sid, Ordering::SeqCst);
             p.pgid.store(pid, Ordering::SeqCst);
         });
-        sid as i64
+        sid.cast_signed()
     })
 }
 
@@ -344,7 +344,7 @@ pub fn proc_getsid(pid: i32) -> i64 {
             if sid == 0 {
                 i64::from(p.pid.0)
             } else {
-                sid as i64
+                sid.cast_signed()
             }
         })
         .unwrap_or(-3)
@@ -531,7 +531,7 @@ pub fn signal_foreground_pgid(sig: u8) {
     if pgid == 0 {
         return;
     }
-    crate::privileged::proc::do_signal_send_extended(-(pgid as i32), sig).ok();
+    crate::privileged::proc::do_signal_send_extended(-pgid.cast_signed(), sig).ok();
 }
 
 /// 会话 leader 退出时释放控制终端
@@ -546,8 +546,8 @@ pub fn session_leader_exit(pid: u32) {
 
     let fg_pgid = SESSION_MANAGER.get_foreground_pgid(sid);
     if fg_pgid != 0 {
-        crate::privileged::proc::do_signal_send_extended(-(fg_pgid as i32), 1).ok();
-        crate::privileged::proc::do_signal_send_extended(-(fg_pgid as i32), 18).ok();
+        crate::privileged::proc::do_signal_send_extended(-fg_pgid.cast_signed(), 1).ok();
+        crate::privileged::proc::do_signal_send_extended(-fg_pgid.cast_signed(), 18).ok();
     }
 
     SESSION_MANAGER.release_controlling_terminal(sid);

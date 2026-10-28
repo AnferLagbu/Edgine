@@ -210,5 +210,5 @@ pub fn open_by_handle_at_syscall(
         return Err(Errno::EMFILE);
     };
 
-    Ok(fd_idx as i64)
+    Ok(crate::functions::intcast::i64_from_usize(fd_idx))
 }

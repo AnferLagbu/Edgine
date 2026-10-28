@@ -190,16 +190,16 @@ impl Statx {
             size: u64::from(s.size),
             blocks: 0,
             attributes_mask: 0,
-            atime_sec: s.atime as i64,
+            atime_sec: s.atime.cast_signed(),
             atime_nsec: 0,
             atime_reserved: 0,
             btime_sec: 0,
             btime_nsec: 0,
             btime_reserved: 0,
-            ctime_sec: s.ctime as i64,
+            ctime_sec: s.ctime.cast_signed(),
             ctime_nsec: 0,
             ctime_reserved: 0,
-            mtime_sec: s.mtime as i64,
+            mtime_sec: s.mtime.cast_signed(),
             mtime_nsec: 0,
             mtime_reserved: 0,
             rdev_major: 0,
@@ -271,8 +271,8 @@ pub fn utimensat_syscall(dirfd: i32, path_ptr: u64, times_ptr: u64, _flags: i32)
         if !crate::privileged::syscall::api::read_struct_from_user(times_ptr, &mut times) {
             return Errno::EFAULT.as_ret();
         }
-        let atime_sec = times[0] as i64;
-        let mtime_sec = times[2] as i64;
+        let atime_sec = times[0].cast_signed();
+        let mtime_sec = times[2].cast_signed();
         let atime_v = if atime_sec == -1 { u64::MAX } else { times[0] };
         let mtime_v = if mtime_sec == -1 { u64::MAX } else { times[2] };
         (atime_v, mtime_v)

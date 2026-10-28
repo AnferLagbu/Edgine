@@ -114,7 +114,7 @@ fn clone_impl(
 
         // CLONE_PARENT_SETTID: 写 TID 到 parent_tidptr
         if flags & CLONE_PARENT_SETTID != 0 && parent_tidptr != 0 {
-            let tid: i32 = child_pid as i32;
+            let tid: i32 = child_pid.cast_signed();
             let _ = crate::privileged::syscall::api::write_struct_to_user(parent_tidptr, &tid);
         }
 
@@ -285,13 +285,13 @@ fn clone_impl(
 
     // CLONE_PARENT_SETTID
     if flags & CLONE_PARENT_SETTID != 0 && parent_tidptr != 0 {
-        let tid: i32 = child_pid as i32;
+        let tid: i32 = child_pid.cast_signed();
         let _ = crate::privileged::syscall::api::write_struct_to_user(parent_tidptr, &tid);
     }
 
     // CLONE_CHILD_SETTID: 写子进程 TID 到 child_tidptr (共享地址空间, 子可直接读到)
     if flags & CLONE_CHILD_SETTID != 0 && child_tidptr != 0 {
-        let tid: i32 = child_pid as i32;
+        let tid: i32 = child_pid.cast_signed();
         let _ = crate::privileged::syscall::api::write_struct_to_user(child_tidptr, &tid);
     }
 

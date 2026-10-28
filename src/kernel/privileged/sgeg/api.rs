@@ -86,7 +86,7 @@ pub extern "C" fn pwm_any_identity_exists() -> bool {
 pub extern "C" fn pwm_try_genesis(password: *const u8) -> i64 {
     let pwd = password.as_kstr();
     match identity::get_table().bootstrap(pwd, "root") {
-        Ok(pwm) => pwm as i64,
+        Ok(pwm) => pwm.cast_signed(),
         Err(e) => i64::from(e.as_i32()),
     }
 }
@@ -98,7 +98,7 @@ pub extern "C" fn pwm_create(password: *const u8, note: *const u8, creator_pwm: 
     let pwd = password.as_kstr();
     let note_kstr = note.as_kstr();
     match identity::get_table().create(pwd, note_kstr, creator_pwm) {
-        Ok(pwm) => pwm as i64,
+        Ok(pwm) => pwm.cast_signed(),
         Err(e) => i64::from(e.as_i32()),
     }
 }
@@ -187,7 +187,7 @@ pub extern "C" fn pwm_has_cap_raw(pwm: u64, domain: u16, _cap_bit: u8) -> u64 {
 pub extern "C" fn pwm_create_first_identity(password: *const u8) -> i64 {
     let pwd = password.as_kstr();
     match identity::get_table().bootstrap(pwd, "root") {
-        Ok(pwm) => pwm as i64,
+        Ok(pwm) => pwm.cast_signed(),
         Err(e) => i64::from(e.as_i32()),
     }
 }
@@ -301,7 +301,7 @@ pub extern "C" fn pwm_login(note: *const u8, password: *const u8) -> i64 {
     let n = note.as_kstr();
     let p = password.as_kstr();
     match session::login(n, p) {
-        Ok(pwm) => pwm as i64,
+        Ok(pwm) => pwm.cast_signed(),
         Err(e) => i64::from(e.as_i32()),
     }
 }
@@ -479,7 +479,7 @@ pub extern "C" fn pwm_recover_first(password: *const u8, note: *const u8) -> i64
     let p = password.as_kstr();
     let n = note.as_kstr();
     match identity::get_table().recover_with_first(p, n) {
-        Ok(pwm) => pwm as i64,
+        Ok(pwm) => pwm.cast_signed(),
         Err(e) => i64::from(e.as_i32()),
     }
 }
