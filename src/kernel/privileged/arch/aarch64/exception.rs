@@ -949,10 +949,6 @@ pub extern "C" fn serror_handler(_frame: &ExceptionFrame) {
     }
 }
 
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-)]
 /// 设置 VBAR_EL1 指向异常向量表 (仅设寄存器, 不开中断)
 ///
 /// # Safety
@@ -967,7 +963,7 @@ pub extern "C" fn serror_handler(_frame: &ExceptionFrame) {
 /// AP 侧刻意不在此时开中断 (延后至 per-CPU 状态就绪, 见 `smp_init::ap_main`).
 pub unsafe fn init_vectors() {
     unsafe {
-        let vbar = &exception_vector_table as *const u8 as u64;
+        let vbar = &raw const exception_vector_table as u64;
         core::arch::asm!("msr vbar_el1, {}", in(reg) vbar);
 
         // ISB 确保写 VBAR 在取指前完成

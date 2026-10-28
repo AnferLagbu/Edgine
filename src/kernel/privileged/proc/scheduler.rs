@@ -481,10 +481,6 @@ impl Scheduler {
         }
     }
 
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
     /// 创建进程 (受 PWM 进程数上限约束); 分配失败或触限时返回 `None`
     pub fn create_process(&self, name: &str, parent: Option<Pid>, pwm: u64) -> Option<Pid> {
         let pid = PROCESS_TABLE.allocate_pid()?;
@@ -513,7 +509,7 @@ impl Scheduler {
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
             unsafe {
                 alloc::alloc::dealloc(
-                    process_ptr as *mut u8,
+                    process_ptr.cast::<u8>(),
                     alloc::alloc::Layout::new::<Process>(),
                 );
             };
@@ -1039,10 +1035,6 @@ impl Scheduler {
         clippy::too_many_lines,
         reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
     )]
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
     /// 调度决策入口: 按 DL → RT → CFS 顺序选下一个任务并完成上下文切换; 无候选时返回 `None`
     pub fn schedule() -> Option<Pid> {
         let saved_flags = crate::arch!(interrupt_disable()) as u64;
@@ -1342,13 +1334,13 @@ impl Scheduler {
 
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         let prev_ctx_ptr = prev_ptr.map_or(core::ptr::null_mut(), |p| unsafe {
-            &raw mut (*p).context as *mut Mutex<ProcessContext>
+            (&raw mut (*p).context).cast::<Mutex<ProcessContext>>()
         });
 
         let next_ctx_ptr = next_ptr.map_or(core::ptr::null(), |p| {
             // SAFETY: next_ptr 来自 PROCESS_TABLE.get(), 它返回指向活动
             // Process 的合法指针. 这里只读取 context 字段地址.
-            unsafe { &raw const (*p).context as *const Mutex<ProcessContext> }
+            unsafe { (&raw const (*p).context).cast::<Mutex<ProcessContext>>() }
         });
 
         // `context_switch` 会在**本任务稍后被重新调度上核时返回** —— 恢复点即
@@ -1369,7 +1361,7 @@ impl Scheduler {
             unsafe {
                 let prev_ctx = core::ptr::addr_of_mut!(*((*prev_ctx_ptr).get_mut_unchecked()));
                 let next_ctx = core::ptr::addr_of!(*((*next_ctx_ptr).get_mut_unchecked()));
-                crate::arch!(context_switch(prev_ctx as *mut u8, next_ctx as *const u8));
+                crate::arch!(context_switch(prev_ctx.cast::<u8>(), next_ctx.cast::<u8>()));
             }
             // 恢复路径: 本任务已被重新调度上核, 本次切换早已由"切走本任务的那次
             // schedule()"完成. 仅做 RCU 收尾并按原语义返回 (返回值调用方不依赖).
@@ -1402,8 +1394,8 @@ impl Scheduler {
             let next_ctx = core::ptr::addr_of!(*((*next_ctx_ptr).get_mut_unchecked()));
             let scratch_ctx = per_cpu.scratch_ctx.map_mut(|c| core::ptr::addr_of_mut!(*c));
             crate::arch!(context_switch(
-                scratch_ctx as *mut u8,
-                next_ctx as *const u8
+                scratch_ctx.cast::<u8>(),
+                next_ctx.cast::<u8>()
             ));
         }
         // context_switch 永不返回; 以下仅为类型收尾.

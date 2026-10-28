@@ -244,14 +244,6 @@ pub fn is_hrtimer_ready() -> bool {
     HRTIMER_READY.load(Ordering::Acquire)
 }
 
-#[expect(
-    clippy::ref_as_ptr,
-    reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
-)]
-#[expect(
-    clippy::ptr_cast_constness,
-    reason = "ptr_cast_constness: *mut T as *const T 是已知安全 (Rust 2024 可用 ptr.cast_const 或 &raw const; 当前优先 expect"
-)]
 /// 启动定时器 (绝对时间)
 ///
 /// 将定时器以绝对到期时间 `expiry_ns` 入队。
@@ -301,7 +293,9 @@ pub fn hrtimer_start(timer: &HrTimer, expiry_ns: u64) {
         .unwrap_or(queue.len());
 
     // SAFETY: timer 由调用方保证在回调前有效, NonNull::new_unchecked 因引用非空
-    let ptr = unsafe { core::ptr::NonNull::new_unchecked(timer as *const HrTimer as *mut HrTimer) };
+    let ptr = unsafe {
+        core::ptr::NonNull::new_unchecked(core::ptr::from_ref::<HrTimer>(timer).cast_mut())
+    };
     queue.insert(insert_pos, TimerEntry { timer: ptr, seq });
 }
 

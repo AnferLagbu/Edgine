@@ -125,10 +125,6 @@ impl ElfLoadResult {
 
 // P1-I-33: 委托给 `verify::verify_elf` 单一来源
 #[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
@@ -138,7 +134,7 @@ pub fn elf_validate(elf_data: *const u8, elf_size: u64) -> Option<&'static Elf64
     let _ = unsafe { verify::verify_elf(elf_data, elf_size) }.ok()?;
 
     // SAFETY: 已通过 verify_elf 校验
-    Some(unsafe { &*(elf_data as *const Elf64Header) })
+    Some(unsafe { &*elf_data.cast::<Elf64Header>() })
 }
 
 /// 加载 ELF 文件到当前进程地址空间 (`ET_EXEC`, 固定地址加载, 等价于 `load_bias = 0`).
@@ -159,14 +155,6 @@ pub fn elf_load(
 #[expect(
     clippy::too_many_lines,
     reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
-    clippy::ref_as_ptr,
-    reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
 )]
 #[expect(
     clippy::cast_ptr_alignment,
@@ -216,7 +204,9 @@ pub fn elf_load_with_bias(
     for i in 0..phdr_count {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         let phdr = unsafe {
-            &*(phdr_base.add(i as usize * core::mem::size_of::<Elf64Phdr>()) as *const Elf64Phdr)
+            &*phdr_base
+                .add(i as usize * core::mem::size_of::<Elf64Phdr>())
+                .cast::<Elf64Phdr>()
         };
 
         if phdr.p_filesz > phdr.p_memsz {
@@ -339,7 +329,7 @@ pub fn elf_load_with_bias(
     result.brk_base = (max_vaddr + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
 
     // 连接 MmStruct 到当前进程
-    crate::privileged::mm::vma_set_current_mm(mm as *const MmStruct);
+    crate::privileged::mm::vma_set_current_mm(core::ptr::from_ref::<MmStruct>(mm));
 
     Ok(result)
 }
@@ -358,10 +348,6 @@ const LINUX_INTERP_PREFIXES: &[&[u8]] = &[
     b"/lib/ld-musl-aarch64.so.1",
 ];
 
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 #[expect(
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
@@ -384,7 +370,9 @@ pub fn needs_interp_rewrite(elf_data: *const u8, elf_size: u64) -> bool {
     for i in 0..header.e_phnum {
         // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
         let phdr = unsafe {
-            &*(phdr_base.add(i as usize * core::mem::size_of::<Elf64Phdr>()) as *const Elf64Phdr)
+            &*phdr_base
+                .add(i as usize * core::mem::size_of::<Elf64Phdr>())
+                .cast::<Elf64Phdr>()
         };
 
         if phdr.p_type != PT_INTERP || phdr.p_filesz == 0 {
@@ -413,10 +401,6 @@ pub fn needs_interp_rewrite(elf_data: *const u8, elf_size: u64) -> bool {
 }
 
 #[expect(
-    clippy::ptr_cast_constness,
-    reason = "ptr_cast_constness: *mut T as *const T 是已知安全 (Rust 2024 可用 ptr.cast_const 或 &raw const; 当前优先 expect"
-)]
-#[expect(
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
@@ -426,7 +410,7 @@ pub fn needs_interp_rewrite(elf_data: *const u8, elf_size: u64) -> bool {
 /// `elf_data` 必须指向可写的有效 ELF 数据 (内核拷贝缓冲区).
 pub unsafe fn rewrite_interp_path(elf_data: *mut u8, elf_size: u64) {
     unsafe {
-        let Some(header) = elf_validate(elf_data as *const u8, elf_size) else {
+        let Some(header) = elf_validate(elf_data.cast_const(), elf_size) else {
             return;
         };
 

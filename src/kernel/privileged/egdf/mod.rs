@@ -233,17 +233,13 @@ unsafe impl Sync for EGDFDevice {}
 
 impl EGDFDevice {
     #[inline]
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
     ///
     /// # Safety
     ///
     /// `self.driver_data` 由驱动在 probe 阶段设置. 调用方必须保证
     /// `T` 与 `set_driver_data` 写入时的具体类型一致.
     pub unsafe fn driver_as_mut<T>(&self) -> &mut T {
-        unsafe { &mut *(self.driver_data as *mut T) }
+        unsafe { &mut *self.driver_data.cast::<T>() }
     }
 
     #[inline]
@@ -854,13 +850,9 @@ pub fn egdf_input_has_data() -> bool {
 
 // ── 工具 ──
 
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 /// 将 `Box` 转换为裸指针 (`Box::into_raw`) 并擦除类型, 所有权移交调用方.
 pub fn box_to_raw<T: ?Sized>(b: Box<T>) -> *mut u8 {
-    Box::into_raw(b) as *mut u8
+    Box::into_raw(b).cast::<u8>()
 }
 
 // ── Driver trait 集成 ──
@@ -878,10 +870,6 @@ impl Drop for DriverObject {
     }
 }
 
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 /// 注册由 EGDF 持有所有权的 `Driver` 设备 (自动调用其 `init`), 返回设备 id.
 pub fn egdf_register_driver(
     name: &'static str,
@@ -893,7 +881,7 @@ pub fn egdf_register_driver(
     let _ = driver.init();
     let raw = Box::into_raw(driver);
     let obj = Box::new(DriverObject { ptr: raw });
-    let obj_ptr = Box::into_raw(obj) as *mut u8;
+    let obj_ptr = Box::into_raw(obj).cast::<u8>();
     let id = NEXT_DEVICE_ID.fetch_add(1, Ordering::Relaxed);
     let dev = EGDFDevice {
         id,
@@ -915,10 +903,6 @@ pub fn egdf_register_driver(
     id
 }
 
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 /// 注册带 Driver trait 和 I/O 操作表的设备
 pub fn egdf_register_driver_with_ops(
     name: &'static str,
@@ -931,7 +915,7 @@ pub fn egdf_register_driver_with_ops(
     let _ = driver.init();
     let raw = Box::into_raw(driver);
     let obj = Box::new(DriverObject { ptr: raw });
-    let obj_ptr = Box::into_raw(obj) as *mut u8;
+    let obj_ptr = Box::into_raw(obj).cast::<u8>();
     let id = NEXT_DEVICE_ID.fetch_add(1, Ordering::Relaxed);
     let dev = EGDFDevice {
         id,
@@ -954,16 +938,12 @@ pub fn egdf_register_driver_with_ops(
 }
 
 #[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
 fn driver_from_obj<'a>(ptr: *mut u8) -> &'a mut dyn Driver {
     // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
-    let obj: &mut DriverObject = unsafe { &mut *(ptr as *mut DriverObject) };
+    let obj: &mut DriverObject = unsafe { &mut *ptr.cast::<DriverObject>() };
     // SAFETY: `obj` 由调用方保证为有效指针; 只读访问
     unsafe { &mut *obj.ptr }
 }
@@ -989,10 +969,6 @@ pub fn egdf_init_all() {
 }
 
 #[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
@@ -1010,7 +986,7 @@ pub fn egdf_shutdown_all() {
             // `egdf_register_driver*` 经 `Box::into_raw(DriverObject)` 写入,
             // 类型一致且归 EGDF 所有; 非空已由上方条件校验。
             unsafe {
-                drop(Box::from_raw(dev.driver_data as *mut DriverObject));
+                drop(Box::from_raw(dev.driver_data.cast::<DriverObject>()));
             }
             dev.driver_data = core::ptr::null_mut();
         }

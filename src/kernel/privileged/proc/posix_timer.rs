@@ -261,14 +261,6 @@ fn id_to_idx(timer_id: i32) -> Option<usize> {
     Some(idx)
 }
 
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
-    clippy::ref_as_ptr,
-    reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
-)]
 /// POSIX Timer 回调
 ///
 /// 在中断上下文执行:
@@ -278,7 +270,7 @@ fn posix_timer_callback(timer: &HrTimer) -> HrTimerRestart {
     // SAFETY: hrtimer 框架保证 timer 嵌入在 PosixTimerSlot 中, 槽位在 ARMED
     // 状态, 生命周期内有效. 全局 spinlock 在回调执行时可能未持, 我们只读
     // 不变字段, 写操作限定在 *const → *mut 转换后对单字段更新.
-    let slot_ptr = timer as *const HrTimer as *const PosixTimerSlot;
+    let slot_ptr = core::ptr::from_ref::<HrTimer>(timer).cast::<PosixTimerSlot>();
 
     // SAFETY: 见上 SAFETY 段.
     let slot = unsafe { &*slot_ptr };

@@ -13,16 +13,12 @@ use super::config::{self, RecoveryLayer, RecoveryResult};
 use crate::privileged::freg::DomainState;
 use crate::privileged::freg::RECOVERY_MANAGER;
 
-#[expect(
-    clippy::ref_as_ptr,
-    reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
-)]
 /// 依据 panic 位置在恢复域的地址区间中反查所属域, 未命中返回 None。
 pub fn locate_domain_from_panic(panic_location: &core::panic::PanicInfo<'_>) -> Option<u64> {
     let manager = RECOVERY_MANAGER.lock();
 
     if let Some(loc) = panic_location.location() {
-        let addr = loc as *const _ as u64;
+        let addr = core::ptr::from_ref(loc) as u64;
         let count = manager.count.load(Ordering::SeqCst) as usize;
 
         for i in 0..count {

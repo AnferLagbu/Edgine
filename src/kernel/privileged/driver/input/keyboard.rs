@@ -746,25 +746,17 @@ static KEYBOARD_DEVICE: Mutex<Option<Box<KeyboardDriver>>> = Mutex::new(None);
 /// 初始化键盘 (C 兼容接口)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
 pub extern "C" fn keyboard_init() {
     let mut driver = Box::new(KeyboardDriver::new());
     let _ = driver.init();
 
-    let raw_ptr: *mut KeyboardDriver = &mut *driver;
+    let raw_ptr: *mut KeyboardDriver = &raw mut *driver;
     let _id = crate::privileged::egdf::egdf_register_with_ops(
         "ps2_keyboard",
         crate::privileged::egdf::EGDFProto::Input,
         None,
         Some(1),
-        raw_ptr as *mut u8,
+        raw_ptr.cast::<u8>(),
         crate::privileged::egdf::EGDFOps::Input(&PS2_KEYBOARD_INPUT_OPS),
     );
 
@@ -926,14 +918,6 @@ mod tests {
 use crate::privileged::egdf::InputOps;
 
 #[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
-#[expect(
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
@@ -942,11 +926,11 @@ extern "C" fn kb_input_read(driver_data: *mut u8) -> *const u8 {
         return core::ptr::null();
     }
     // SAFETY: driver_data 由 EGDF InputOps 契约保证有效。
-    let kb = unsafe { &mut *(driver_data as *mut KeyboardDriver) };
+    let kb = unsafe { &mut *driver_data.cast::<KeyboardDriver>() };
     kb.read_char().map_or(core::ptr::null(), |b| {
         // 使用原子槽位存放返回值, 调用方在返回后立即拷贝
         KB_READ_SLOT.store(b, Ordering::Relaxed);
-        &KB_READ_SLOT as *const AtomicU8 as *const u8
+        (&raw const KB_READ_SLOT).cast::<u8>()
     })
 }
 
@@ -968,10 +952,6 @@ extern "C" fn kb_input_has(driver_data: *mut u8) -> bool {
 }
 
 #[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
@@ -980,7 +960,7 @@ extern "C" fn kb_input_irq(driver_data: *mut u8) {
         return;
     }
     // SAFETY: driver_data 由 EGDF InputOps 契约保证有效。
-    let kb = unsafe { &mut *(driver_data as *mut KeyboardDriver) };
+    let kb = unsafe { &mut *driver_data.cast::<KeyboardDriver>() };
     kb.handle_interrupt();
 }
 

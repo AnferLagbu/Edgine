@@ -57,7 +57,6 @@
 #![allow(clippy::pub_underscore_fields)]
 #![allow(clippy::struct_excessive_bools)]
 #![allow(clippy::doc_markdown)]
-#![allow(clippy::ptr_as_ptr)]
 #![allow(clippy::cast_ptr_alignment)]
 #![allow(clippy::zero_sized_map_values)]
 #![allow(clippy::missing_fields_in_debug)]

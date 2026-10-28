@@ -639,14 +639,6 @@ impl AhciPort {
         self.port_initialized = false;
     }
 
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
-    #[expect(
-        clippy::ref_as_ptr,
-        reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
-    )]
     /// 提交 DMA 命令并等待完成
     ///
     /// 通过 privileged safe wrapper 填充命令头、FIS、PRDT,
@@ -668,7 +660,7 @@ impl AhciPort {
         // 1. 填充命令表: H2D FIS + PRDT
         crate::privileged::driver::storage::ahci_fill_h2d_fis(
             dma.cmd_table_virt,
-            fis as *const _ as *const u8 as usize,
+            core::ptr::from_ref(fis).cast::<u8>() as usize,
             core::mem::size_of::<H2dFis>(),
         );
         crate::privileged::driver::storage::ahci_fill_prdt(

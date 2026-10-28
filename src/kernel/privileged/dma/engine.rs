@@ -263,10 +263,6 @@ impl DmaEngine {
 
     // =============== 流式 DMA 映射 ===============
 
-    #[expect(
-        clippy::borrow_as_ptr,
-        reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-    )]
     /// 将已有内核缓冲区映射为 DMA 缓冲区
     pub fn map_single(
         &self,
@@ -328,7 +324,7 @@ impl DmaEngine {
         }
 
         // 返回可传给 C 的指针 — 使用 Vec 内部指针
-        Some(&mappings[idx] as *const DmaMapping)
+        Some(&raw const mappings[idx])
     }
 
     /// 解除流式 DMA 映射
@@ -704,10 +700,6 @@ pub fn submit_transfer(
     Some(0)
 }
 
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
 /// 异步提交 DMA 传输请求, 提交完成后立即调用回调.
 pub fn submit_transfer_async(
     src: PhysAddr,
@@ -725,7 +717,7 @@ pub fn submit_transfer_async(
         completed: core::sync::atomic::AtomicBool::new(true),
         callback: Some(callback),
     };
-    callback(&transfer);
+    callback(&raw const transfer);
     Some(id)
 }
 

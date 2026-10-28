@@ -210,17 +210,17 @@ pub struct SlabStats {
     pub total_caches: u32,
 }
 
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
 /// 获取 slab 分配器系统级统计
 pub fn slab_get_stats() -> SlabStats {
     let mut total_memory = 0u64;
     let mut used_memory = 0u64;
     let mut total_caches = 0u32;
 
-    super::slab::slab_get_system_stats(&mut total_memory, &mut used_memory, &mut total_caches);
+    super::slab::slab_get_system_stats(
+        &raw mut total_memory,
+        &raw mut used_memory,
+        &raw mut total_caches,
+    );
 
     SlabStats {
         total_memory,
@@ -502,27 +502,17 @@ pub static kernel_pml4: AtomicU64 = AtomicU64::new(0);
 ///
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 pub extern "C" fn k_malloc(size: usize) -> *mut u8 {
-    get_kmalloc()
-        .allocate(size)
-        .map_or(core::ptr::null_mut(), |ptr| ptr as *mut u8)
+    get_kmalloc().allocate(size).unwrap_or_default()
 }
 
 /// 释放 `k_malloc` 分配的内存
 ///
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 pub extern "C" fn k_free(ptr: *mut u8) {
     if !ptr.is_null() {
-        get_kmalloc().deallocate(ptr as *mut u8);
+        get_kmalloc().deallocate(ptr);
     }
 }
 
@@ -530,14 +520,8 @@ pub extern "C" fn k_free(ptr: *mut u8) {
 ///
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 pub extern "C" fn k_realloc(ptr: *mut u8, size: usize) -> *mut u8 {
-    get_kmalloc()
-        .reallocate(ptr as *mut u8, size)
-        .map_or(core::ptr::null_mut(), |new_ptr| new_ptr as *mut u8)
+    get_kmalloc().reallocate(ptr, size).unwrap_or_default()
 }
 
 /// 初始化内核堆
@@ -600,10 +584,6 @@ pub extern "C" fn krealloc(ptr: *mut u8, size: u64) -> *mut u8 {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 #[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
@@ -616,7 +596,7 @@ pub extern "C" fn kmalloc_stats(stats: *mut u8) {
 
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
-        let stats_ptr = stats as *mut KmallocStats;
+        let stats_ptr = stats.cast::<KmallocStats>();
         (*stats_ptr).total_allocs = heap_stats.alloc_count;
         (*stats_ptr).total_frees = heap_stats.free_count;
         (*stats_ptr).current_usage = heap_stats.current_usage;

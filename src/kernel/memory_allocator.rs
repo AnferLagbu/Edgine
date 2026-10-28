@@ -37,8 +37,8 @@ unsafe impl GlobalAlloc for KernelAllocator {
             if size <= PAGE_THRESHOLD {
                 let kmalloc_ptr = kmalloc((size + tag_offset) as u64);
                 if !kmalloc_ptr.is_null() {
-                    let raw = kmalloc_ptr as *mut u8;
-                    let tag_ptr = raw as *mut u64;
+                    let raw = kmalloc_ptr.cast::<u8>();
+                    let tag_ptr = raw.cast::<u64>();
                     *tag_ptr = TAG_KMALLOC;
                     return raw.add(TAG_SIZE);
                 }
@@ -59,7 +59,7 @@ unsafe impl GlobalAlloc for KernelAllocator {
                 };
                 let virt = (phys.as_u64() + KERNEL_BASE) as *mut u8;
                 if tag_offset > 0 {
-                    let tag_ptr = virt as *mut u64;
+                    let tag_ptr = virt.cast::<u64>();
                     *tag_ptr = tag;
                     virt.add(TAG_SIZE)
                 } else {
@@ -71,7 +71,7 @@ unsafe impl GlobalAlloc for KernelAllocator {
                 };
                 let virt = (phys.as_u64() + KERNEL_BASE) as *mut u8;
                 if tag_offset > 0 {
-                    let tag_ptr = virt as *mut u64;
+                    let tag_ptr = virt.cast::<u64>();
                     *tag_ptr = tag;
                     virt.add(TAG_SIZE)
                 } else {
@@ -103,7 +103,7 @@ unsafe impl GlobalAlloc for KernelAllocator {
                     }
                     // 未知标签 (含 TAG_KMALLOC) 回退按 kmalloc 块释放
                     _ => {
-                        kfree(raw as *mut u8);
+                        kfree(raw.cast::<u8>());
                     }
                 }
             } else {

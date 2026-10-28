@@ -192,7 +192,7 @@ macro_rules! dispatch {
                 core::ptr::null(),
                 core::ptr::null(),
                 0,
-                $name.as_ptr() as *const u8,
+                $name.as_ptr(),
             );
         }
         ret

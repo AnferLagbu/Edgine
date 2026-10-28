@@ -157,7 +157,7 @@ impl VirtQueue {
         unsafe {
             core::ptr::write_bytes(mem_virt, 0, total_size);
 
-            let desc_ptr = mem_virt as *mut VqDesc;
+            let desc_ptr = mem_virt.cast::<VqDesc>();
             let avail_ptr = mem_virt.add(desc_size);
             let used_ptr = mem_virt.add(used_off);
 
@@ -225,7 +225,7 @@ impl VirtQueue {
             let slot = self
                 .avail
                 .add(RING_HEAD_BYTES + (self.next_avail_idx as usize % self.num as usize) * 2)
-                as *mut u16;
+                .cast::<u16>();
             core::ptr::write_volatile(slot, desc_head);
         }
         let idx = self.next_avail_idx;
@@ -240,7 +240,7 @@ impl VirtQueue {
             // 全内存屏障: 确保描述符与 ring 写入全局可见
             crate::privileged::sync::arch::fence();
             core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-            core::ptr::write_volatile(self.avail.add(2) as *mut u16, self.next_avail_idx);
+            core::ptr::write_volatile(self.avail.add(2).cast::<u16>(), self.next_avail_idx);
         }
     }
 

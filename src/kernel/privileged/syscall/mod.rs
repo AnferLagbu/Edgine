@@ -312,13 +312,6 @@ pub mod raw {
     #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
     // 符号桩化 (host-test): 触发 borrow_as_ptr 的 `&_kernel_start as *const u8`
     // 仅存在于真机分支, expect 须同步收窄.
-    #[cfg_attr(
-        not(feature = "host-test"),
-        expect(
-            clippy::borrow_as_ptr,
-            reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-        )
-    )]
     pub fn kernel_start_ptr() -> *const u8 {
         // 符号桩化 (host-test): host 无 _kernel_start 链接脚本符号且不执行
         // sys_boot_install 内核映像布局查询, 常量中性返回 null.
@@ -326,7 +319,7 @@ pub mod raw {
         {
             // SAFETY: _kernel_start 是链接器符号 (extern "C")，是静态地址，
             // boot 后由 VMM 建立映射可读。
-            unsafe { &_kernel_start as *const u8 }
+            &raw const _kernel_start
         }
         #[cfg(feature = "host-test")]
         {
@@ -339,20 +332,13 @@ pub mod raw {
     #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
     // 符号桩化 (host-test): 触发 borrow_as_ptr 的 `&_kernel_end as *const u8`
     // 仅存在于真机分支, expect 须同步收窄.
-    #[cfg_attr(
-        not(feature = "host-test"),
-        expect(
-            clippy::borrow_as_ptr,
-            reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-        )
-    )]
     pub fn kernel_end_phys(hhdm_offset: usize) -> usize {
         // 符号桩化 (host-test): host 无 _kernel_end 链接脚本符号, 常量中性返回 0.
         #[cfg(not(feature = "host-test"))]
         {
             // SAFETY: _kernel_end 是链接器符号, 地址有效; hhdm_offset 由调用方保证
             // 与启动时一致.
-            unsafe { (&_kernel_end as *const u8 as usize).wrapping_sub(hhdm_offset) }
+            (&raw const _kernel_end as usize).wrapping_sub(hhdm_offset)
         }
         #[cfg(feature = "host-test")]
         {

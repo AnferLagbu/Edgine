@@ -360,16 +360,12 @@ const KLOG_LINE_MAX: usize = KLOG_BUF + 48;
 ///
 /// # Safety
 /// `sink` 必须是 `'static` (其内部任何状态都不可被释放).
-#[expect(
-    clippy::ref_as_ptr,
-    reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
-)]
 pub unsafe fn klog_register_sink(sink: &'static dyn LogSink) -> Option<usize> {
     let idx = LOG_SINK_COUNT.load(Ordering::SeqCst) as usize;
     if idx >= MAX_LOG_SINKS {
         return None;
     }
-    let ptr = sink as *const dyn LogSink;
+    let ptr = core::ptr::from_ref::<dyn LogSink>(sink);
     let mut sinks = LOG_SINKS.lock();
     sinks[idx] = SinkPtr { fat: ptr };
     drop(sinks);
@@ -830,10 +826,6 @@ pub unsafe extern "C" fn klog_init() {
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 ///
 /// # Safety
 ///
@@ -885,7 +877,7 @@ pub unsafe extern "C" fn klog_write(
             return 0;
         }
 
-        let msg = cstr_slice(fmt as *const u8);
+        let msg = cstr_slice(fmt.cast::<u8>());
         klog_output(lvl, category, msg);
         0
     }
@@ -941,10 +933,6 @@ pub unsafe extern "C" fn klog_ffi_error(msg: *const u8) {
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 ///
 /// # Safety
 ///
@@ -954,17 +942,13 @@ pub unsafe extern "C" fn klog_net(fmt: *const u8) {
         if fmt.is_null() {
             return;
         }
-        let s = cstr_slice(fmt as *const u8);
+        let s = cstr_slice(fmt.cast::<u8>());
         klog_output(LogLevel::Info, LogCategory::Net, s);
     }
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 ///
 /// # Safety
 ///
@@ -974,17 +958,13 @@ pub unsafe extern "C" fn klog_net_err(fmt: *const u8) {
         if fmt.is_null() {
             return;
         }
-        let s = cstr_slice(fmt as *const u8);
+        let s = cstr_slice(fmt.cast::<u8>());
         klog_output(LogLevel::Error, LogCategory::Net, s);
     }
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 ///
 /// # Safety
 ///
@@ -994,17 +974,13 @@ pub unsafe extern "C" fn klog_init_msg(fmt: *const i8) {
         if fmt.is_null() {
             return;
         }
-        let s = cstr_slice(fmt as *const u8);
+        let s = cstr_slice(fmt.cast::<u8>());
         klog_output(LogLevel::Info, LogCategory::Boot, s);
     }
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 ///
 /// # Safety
 ///
@@ -1014,17 +990,13 @@ pub unsafe extern "C" fn klog_kern(fmt: *const i8) {
         if fmt.is_null() {
             return;
         }
-        let s = cstr_slice(fmt as *const u8);
+        let s = cstr_slice(fmt.cast::<u8>());
         klog_output(LogLevel::Info, LogCategory::Kernel, s);
     }
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 ///
 /// # Safety
 ///
@@ -1034,17 +1006,13 @@ pub unsafe extern "C" fn klog_syscall(fmt: *const i8) {
         if fmt.is_null() {
             return;
         }
-        let s = cstr_slice(fmt as *const u8);
+        let s = cstr_slice(fmt.cast::<u8>());
         klog_output(LogLevel::Info, LogCategory::Syscall, s);
     }
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 ///
 /// # Safety
 ///
@@ -1054,7 +1022,7 @@ pub unsafe extern "C" fn klog_info(fmt: *const i8) {
         if fmt.is_null() {
             return;
         }
-        let s = cstr_slice(fmt as *const u8);
+        let s = cstr_slice(fmt.cast::<u8>());
         klog_output(LogLevel::Info, LogCategory::Kernel, s);
     }
 }

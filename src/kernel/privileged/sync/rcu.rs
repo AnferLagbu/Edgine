@@ -182,14 +182,10 @@ fn rcu_read_unlock_impl() {
 /// # Safety
 /// 调用者必须在 RCU 读临界区内
 #[inline]
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
 pub unsafe fn rcu_dereference<T>(ptr: *const T) -> *const T {
     unsafe {
         fence(Ordering::Acquire);
-        ptr::read_volatile(&ptr)
+        ptr::read_volatile(&raw const ptr)
     }
 }
 

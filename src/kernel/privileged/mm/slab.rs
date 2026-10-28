@@ -549,10 +549,6 @@ impl KmemCache {
     // ========================================================================
 
     /// 创建新的 Slab (分配一页物理内存)
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "page as *mut SlabHeader: pmm_alloc_pages 返回页对齐 *mut u8, 安全 cast"
-    )]
     fn new_slab(&self) -> Option<*mut SlabHeader> {
         // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
         unsafe extern "C" {
@@ -567,14 +563,14 @@ impl KmemCache {
             return None;
         }
 
-        let slab = page as *mut SlabHeader;
+        let slab = page.cast::<SlabHeader>();
 
         // SAFETY: slab points to a PMM-allocated page
         let sr = unsafe { SlabRef::new_unchecked(slab) };
         sr.write_default();
         // SAFETY: page 是 pmm_alloc_pages 分配的页对齐指针; add 偏移在 page
         // 范围内 (page 至少 SLAB_DEFAULT_SIZE 字节, header 后还有 bitmap 空间);
-        sr.set_start_addr(unsafe { page.add(core::mem::size_of::<SlabHeader>()) } as *mut u8);
+        sr.set_start_addr(unsafe { page.add(core::mem::size_of::<SlabHeader>()) }.cast::<u8>());
         sr.set_obj_count(self.objects_per_slab);
 
         let bitmap_bytes = self.objects_per_slab.div_ceil(8);
@@ -585,7 +581,7 @@ impl KmemCache {
         // 仅作指针运算, 后续零内存操作前还有 bounds check.
         let bitmap_end = unsafe { bitmap_start.add(bitmap_bytes as usize) };
         // SAFETY: 同上, page 是 PMM 分配指针, add 偏移在 page 范围内.
-        let page_end = unsafe { page.add(SLAB_DEFAULT_SIZE) } as *mut u8;
+        let page_end = unsafe { page.add(SLAB_DEFAULT_SIZE) }.cast::<u8>();
 
         if bitmap_end > page_end {
             // SAFETY: pmm_free_pages 由 PMM 层提供, 释放 new_slab 中分配的页
@@ -629,7 +625,7 @@ impl KmemCache {
             let pages_needed =
                 SLAB_DEFAULT_SIZE.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE));
             // SAFETY: pmm_free_pages 由 PMM 层提供, 释放 destroy_slab 持有的 slab 物理页
-            pmm_free_pages(slab as *mut u8, pages_needed as u64);
+            pmm_free_pages(slab.cast::<u8>(), pages_needed as u64);
         }
     }
 

@@ -26,12 +26,11 @@ static GFX_CONSOLE_PTR: AtomicPtr<GfxConsole> = AtomicPtr::new(core::ptr::null_m
 /// - `console` 必须来自静态存储（`Box::leak` 出品）
 /// - 仅调用一次
 /// - **必须在 BSP 单线程阶段调用** (AP 未启动). SMP 启动后调用需重新设计见上方并发约束.
-#[expect(
-    clippy::ref_as_ptr,
-    reason = "console 为 &'static mut 引用, 需取其裸指针存入 AtomicPtr"
-)]
 pub fn gfx_console_init(console: &'static mut GfxConsole) {
-    GFX_CONSOLE_PTR.store(console as *mut GfxConsole, Ordering::Release);
+    GFX_CONSOLE_PTR.store(
+        core::ptr::from_mut::<GfxConsole>(console),
+        Ordering::Release,
+    );
 }
 
 /// 安全访问 GfxConsole (闭包形式).

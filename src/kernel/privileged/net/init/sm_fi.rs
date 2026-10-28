@@ -259,10 +259,6 @@ pub(crate) fn endpoint_from_smol(
 /// # Safety
 /// `addr` 非空时必须指向至少 28 字节可写内存 (V6 路径); `addrlen` 非空时必须指向有效 u32.
 #[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
@@ -283,7 +279,7 @@ pub(crate) unsafe fn write_sockaddr(
                     sin_addr: v4.octets(),
                     sin_zero: [0; 8],
                 };
-                core::ptr::write(addr as *mut SockaddrIn, sin);
+                core::ptr::write(addr.cast::<SockaddrIn>(), sin);
                 if !addrlen.is_null() {
                     core::ptr::write(
                         addrlen,
@@ -301,7 +297,7 @@ pub(crate) unsafe fn write_sockaddr(
                     sin6_addr: v6.octets(),
                     sin6_scope_id: 0,
                 };
-                core::ptr::write(addr as *mut SockaddrIn6, sin6);
+                core::ptr::write(addr.cast::<SockaddrIn6>(), sin6);
                 if !addrlen.is_null() {
                     core::ptr::write(
                         addrlen,
@@ -334,10 +330,6 @@ struct SockaddrIn6 {
 }
 
 #[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
@@ -360,10 +352,10 @@ pub(crate) unsafe fn parse_endpoint_trait(
             return None;
         }
         // 读取族字段 (前 2 字节, 主机字节序)
-        let family = core::ptr::read_unaligned(addr as *const u16);
+        let family = core::ptr::read_unaligned(addr.cast::<u16>());
         match family {
             2 => {
-                let sin = &*(addr as *const SockaddrIn);
+                let sin = &*addr.cast::<SockaddrIn>();
                 let octets = sin.sin_addr;
                 let port = u16::from_be(sin.sin_port);
                 Some(crate::privileged::net::iface_trait::NetEndpoint::new_v4(
@@ -372,7 +364,7 @@ pub(crate) unsafe fn parse_endpoint_trait(
                 ))
             }
             10 => {
-                let sin6 = &*(addr as *const SockaddrIn6);
+                let sin6 = &*addr.cast::<SockaddrIn6>();
                 let octets = sin6.sin6_addr;
                 let port = u16::from_be(sin6.sin6_port);
                 Some(crate::privileged::net::iface_trait::NetEndpoint::new_v6(
@@ -1491,10 +1483,6 @@ pub unsafe extern "C" fn sm_recvfrom(
 /// 调用方 (functions) 须先校验可读范围.
 /// `NET_LOCK` 持有; 由 `sys_sendmsg` 分发.
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32 {
     unsafe {
         if msg.is_null() {
@@ -1507,9 +1495,9 @@ pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32
         }
         // 读 Msghdr
         // SAFETY: msg 由 functions 校验可读 56 字节 (u64 Linux x86_64 / aarch64 布局).
-        let msg_iov_ptr = core::ptr::read_unaligned(msg.add(16) as *const u64);
+        let msg_iov_ptr = core::ptr::read_unaligned(msg.add(16).cast::<u64>());
         let msg_iovlen_us = crate::privileged::lib::usize_from_u64(core::ptr::read_unaligned(
-            msg.add(24) as *const u64,
+            msg.add(24).cast::<u64>(),
         ));
         if msg_iovlen_us == 0 || msg_iovlen_us > 1024 {
             return -E_INVAL;
@@ -1525,9 +1513,9 @@ pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32
         for i in 0..msg_iovlen_us {
             // SAFETY: msg_iov + i*Iovec(16) 可读 16 字节 (functions 校验 iov 范围).
             let iov_base =
-                core::ptr::read_unaligned((msg_iov_ptr as *const u8).add(i * 16) as *const u64);
+                core::ptr::read_unaligned((msg_iov_ptr as *const u8).add(i * 16).cast::<u64>());
             let iov_len = crate::privileged::lib::usize_from_u64(core::ptr::read_unaligned(
-                (msg_iov_ptr as *const u8).add(i * 16 + 8) as *const u64,
+                (msg_iov_ptr as *const u8).add(i * 16 + 8).cast::<u64>(),
             ));
             bases[i] = iov_base;
             lens[i] = iov_len;
@@ -1574,10 +1562,6 @@ pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32
 /// `msg` 必须是有效可写用户指针, functions 校验.
 /// `NET_LOCK` 持有; 由 `sys_recvmsg` 分发.
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 pub unsafe extern "C" fn sm_recvmsg(fd: i32, msg: *mut u8, _flags: i32) -> i32 {
     unsafe {
         if msg.is_null() {
@@ -1603,9 +1587,9 @@ pub unsafe extern "C" fn sm_recvmsg(fd: i32, msg: *mut u8, _flags: i32) -> i32 {
         let mut bases: [u64; 1024] = [0u64; 1024];
         for i in 0..msg_iovlen_us {
             let iov_base =
-                core::ptr::read_unaligned((msg_iov_ptr as *const u8).add(i * 16) as *const u64);
+                core::ptr::read_unaligned((msg_iov_ptr as *const u8).add(i * 16).cast::<u64>());
             let iov_len = crate::privileged::lib::usize_from_u64(core::ptr::read_unaligned(
-                (msg_iov_ptr as *const u8).add(i * 16 + 8) as *const u64,
+                (msg_iov_ptr as *const u8).add(i * 16 + 8).cast::<u64>(),
             ));
             bases[i] = iov_base;
             lens[i] = iov_len;
@@ -1956,10 +1940,6 @@ fn mc_membership(slot: usize, addr: IpAddress, join: bool) -> i32 {
 /// # Safety
 /// `optval` 必须是 syscall 层提供的有效内核指针 (i32 选项 4 字节 / `SO_RCVTIMEO`、`SO_SNDTIMEO` 的 `struct timeval` 16 字节 / 组播选项的 `ip_mreq` 8 字节、`ipv6_mreq` 20 字节), `optlen` 为其长度。
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 pub unsafe extern "C" fn sm_setsockopt(
     fd: i32,
     level: i32,
@@ -1974,7 +1954,7 @@ pub unsafe extern "C" fn sm_setsockopt(
             if optlen < 4 {
                 return -E_INVAL;
             }
-            let val = core::ptr::read_unaligned(optval as *const i32);
+            let val = core::ptr::read_unaligned(optval.cast::<i32>());
             // 第二十六批: UDS 策略经注册钩子委托 (未注册 fail-closed, 早期
             // 启动无用户态进程, -ENOPROTOOPT 窗口安全; 符号与全文件
             // 负 errno 返回惯例一致)
@@ -1995,10 +1975,10 @@ pub unsafe extern "C" fn sm_setsockopt(
             // 负值非法 (POSIX EINVAL); try_from 兼拦负值与类型边界, 免 cast lint.
             // 直读 struct timeval 两字段 (i64 @0 = 秒, i64 @8 = 微秒), 不引入中间
             // 同名绑定 (免 clippy similar_names 对 tv_sec/tv_usec 相似命名的误报).
-            let Ok(sec) = u64::try_from(core::ptr::read_unaligned(optval as *const i64)) else {
+            let Ok(sec) = u64::try_from(core::ptr::read_unaligned(optval.cast::<i64>())) else {
                 return -E_INVAL;
             };
-            let Ok(usec) = u64::try_from(core::ptr::read_unaligned(optval.add(8) as *const i64))
+            let Ok(usec) = u64::try_from(core::ptr::read_unaligned(optval.add(8).cast::<i64>()))
             else {
                 return -E_INVAL;
             };
@@ -2036,10 +2016,10 @@ pub unsafe extern "C" fn sm_setsockopt(
             // `optval` 由 syscall 层拷入内核栈缓冲, 长度已按上面的 `optlen` 校验,
             // `read_unaligned` 避免对齐假设 (用户态 mreq 可能奇数地址).
             let addr = if is_v6 {
-                let octets = core::ptr::read_unaligned(optval as *const [u8; 16]);
+                let octets = core::ptr::read_unaligned(optval.cast::<[u8; 16]>());
                 IpAddress::from(Ipv6Address::from_octets(octets))
             } else {
-                let octets = core::ptr::read_unaligned(optval as *const [u8; 4]);
+                let octets = core::ptr::read_unaligned(optval.cast::<[u8; 4]>());
                 IpAddress::from(Ipv4Address::from_octets(octets))
             };
             // SIMPLIFIED: mreq 的接口字段 (`imr_interface` / `ipv6mr_interface`) 被
@@ -2071,7 +2051,7 @@ pub unsafe extern "C" fn sm_setsockopt(
         if optlen < 4 {
             return -E_INVAL;
         }
-        let val = core::ptr::read_unaligned(optval as *const i32);
+        let val = core::ptr::read_unaligned(optval.cast::<i32>());
 
         let _guard = NET_STATE.lock();
         let Some(slot) = sm_slot(fd) else {
@@ -2113,10 +2093,6 @@ pub unsafe extern "C" fn sm_setsockopt(
 /// # Safety
 /// `optval` 必须是 syscall 层提供的可写内核指针 (i32 选项 ≥ 4 字节 / 超时选项 ≥ 16 字节), `optlen` 为可写内核 u32 指针。
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 pub unsafe extern "C" fn sm_getsockopt(
     fd: i32,
     level: i32,
@@ -2148,8 +2124,8 @@ pub unsafe extern "C" fn sm_getsockopt(
             // ns 拆回秒 + 微秒; try_from 兜底钳制 (免 cast lint), 实际值域远小于 i64::MAX.
             let sec = i64::try_from(ns / 1_000_000_000).unwrap_or(i64::MAX);
             let usec = i64::try_from((ns % 1_000_000_000) / 1_000).unwrap_or(i64::MAX);
-            core::ptr::write_unaligned(optval as *mut i64, sec);
-            core::ptr::write_unaligned(optval.add(8) as *mut i64, usec);
+            core::ptr::write_unaligned(optval.cast::<i64>(), sec);
+            core::ptr::write_unaligned(optval.add(8).cast::<i64>(), usec);
             core::ptr::write_unaligned(optlen, 16);
             return 0;
         }
@@ -2212,7 +2188,7 @@ pub unsafe extern "C" fn sm_getsockopt(
                 _ => return -E_NOPROTOOPT,
             }
         };
-        core::ptr::write_unaligned(optval as *mut i32, out);
+        core::ptr::write_unaligned(optval.cast::<i32>(), out);
         core::ptr::write_unaligned(optlen, 4);
         0
     }

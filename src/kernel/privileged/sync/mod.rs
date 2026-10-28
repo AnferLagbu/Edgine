@@ -187,16 +187,12 @@ pub extern "C" fn spin_is_locked(lock: *const SpinLockInner) -> i32 {
 /// 初始化互斥锁
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_cast_constness,
-    reason = "ptr_cast_constness: *mut T as *const T 是已知安全 (Rust 2024 可用 ptr.cast_const 或 &raw const; 当前优先 expect"
-)]
 pub extern "C" fn mutex_init(m: *mut MutexInner) {
     if !m.is_null() {
-        raw::mutex_locked(m as *const MutexInner).store(0, Ordering::Relaxed);
-        raw::mutex_owner(m as *const MutexInner).store(-1i32, Ordering::Relaxed); // -1 表示无主
-        raw::mutex_depth(m as *const MutexInner).store(0, Ordering::Relaxed);
-        raw::mutex_acquire_time(m as *const MutexInner).store(0, Ordering::Relaxed);
+        raw::mutex_locked(m.cast_const()).store(0, Ordering::Relaxed);
+        raw::mutex_owner(m.cast_const()).store(-1i32, Ordering::Relaxed); // -1 表示无主
+        raw::mutex_depth(m.cast_const()).store(0, Ordering::Relaxed);
+        raw::mutex_acquire_time(m.cast_const()).store(0, Ordering::Relaxed);
 
         // 初始化内部自旋锁
         spin_init(raw::mutex_inner_spinlock_mut(m));
@@ -318,22 +314,14 @@ pub extern "C" fn mutex_is_locked(m: *const MutexInner) -> i32 {
 /// 初始化读写锁
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ref_as_ptr,
-    reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
-)]
-#[expect(
-    clippy::ptr_cast_constness,
-    reason = "ptr_cast_constness: *mut T as *const T 是已知安全 (Rust 2024 可用 ptr.cast_const 或 &raw const; 当前优先 expect"
-)]
 pub extern "C" fn rwlock_init(rw: *mut RwLockInner) {
     if !rw.is_null() {
-        raw::rwlock_readers(rw as *const RwLockInner).store(0, Ordering::Relaxed);
-        raw::rwlock_writer(rw as *const RwLockInner).store(0, Ordering::Relaxed);
-        raw::rwlock_pending_writers(rw as *const RwLockInner).store(0, Ordering::Relaxed);
+        raw::rwlock_readers(rw.cast_const()).store(0, Ordering::Relaxed);
+        raw::rwlock_writer(rw.cast_const()).store(0, Ordering::Relaxed);
+        raw::rwlock_pending_writers(rw.cast_const()).store(0, Ordering::Relaxed);
 
         // 初始化内部自旋锁 (获取可写指针)
-        let inner_lock_ptr = raw::rwlock_inner_lock_mut(rw) as *mut SpinLockInner;
+        let inner_lock_ptr = core::ptr::from_mut::<SpinLockInner>(raw::rwlock_inner_lock_mut(rw));
         spin_init(inner_lock_ptr);
     }
 }

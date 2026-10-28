@@ -205,14 +205,10 @@ unsafe extern "C" {
 }
 
 // SAFETY: `clear_bss` 是有效的 C ABI 函数指针; 参数列表与声明一致
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-)]
 unsafe fn clear_bss() {
     unsafe {
-        let bss_start = &mut __bss_start as *mut u8;
-        let bss_end = &_kernel_end as *const u8 as usize;
+        let bss_start = &raw mut __bss_start;
+        let bss_end = &raw const _kernel_end as usize;
 
         if bss_start as usize >= bss_end {
             return;

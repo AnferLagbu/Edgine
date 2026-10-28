@@ -1250,10 +1250,6 @@ impl VirtualMemoryManager {
     }
 
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
     /// 取 (必要时创建) `entry` 指向的下一级页表, 返回 `(表指针, 本次是否拆分巨页)`.
     ///
     /// 第二个返回值供调用方判定"本次叶子写入是否为替换": 拆分把既有巨页条目换成下一级
@@ -1281,7 +1277,7 @@ impl VirtualMemoryManager {
                         let page_virt = page.to_virt();
                         let pt = page_virt.0 as *mut PageTableEntry;
                         core::ptr::write_bytes(
-                            pt as *mut u8,
+                            pt.cast::<u8>(),
                             0,
                             crate::privileged::lib::usize_from_u64(PAGE_SIZE),
                         );
@@ -1351,10 +1347,6 @@ impl VirtualMemoryManager {
     /// 当 PDPT/PD 不存在或 PD 条目未映射时分别返回 `Err("PDPT not present")`,
     /// `Err("PD not present")`, `Err("PD entry not present")`;
     /// 当分配新的页表页失败时返回 `Err("Failed to allocate PT")`.
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
     pub fn split_2mb_page(virt: u64) -> Result<(), &'static str> {
         let pml4_base = KERNEL_PML4.load(Ordering::Acquire);
         if pml4_base == 0 {
@@ -1413,7 +1405,7 @@ impl VirtualMemoryManager {
                 };
                 let pt = pt_page.to_virt().0 as *mut PageTableEntry;
                 core::ptr::write_bytes(
-                    pt as *mut u8,
+                    pt.cast::<u8>(),
                     0,
                     crate::privileged::lib::usize_from_u64(PAGE_SIZE),
                 );

@@ -198,10 +198,6 @@ impl Itimerval {
     }
 }
 
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
 /// times(buf) — 读取当前进程 user/sys 时间与子进程时间.
 ///
 /// 真实实现: 通过 `privileged/proc/api::proc_get_times` 读取已累计的 jiffies,
@@ -217,7 +213,7 @@ pub fn times_syscall(buf_ptr: u64) -> Result<usize, Errno> {
     let pid = current_pid();
     let mut utime: u64 = 0;
     let mut stime: u64 = 0;
-    let r = proc_fw::proc_get_times(pid, &mut utime as *mut u64, &mut stime as *mut u64);
+    let r = proc_fw::proc_get_times(pid, &raw mut utime, &raw mut stime);
     if r < 0 {
         return Err(Errno::EFAULT);
     }

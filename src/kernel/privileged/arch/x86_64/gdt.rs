@@ -617,14 +617,6 @@ fn trampoline_top_of(gdt: &PerCpuGdt) -> u64 {
 /// 3. 设置 TSS 描述符 (占用2个槽位)
 /// 4. 加载 GDTR (lgdt 指令)
 /// 5. 加载 TR (ltr 指令, 任务寄存器)
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
 pub fn gdt_init() -> i32 {
     static OK_MSG: &[u8] = b"GDT and TSS initialized successfully (BSP)\0";
     use crate::privileged::klog::{LogCategory, LogLevel, klog_write};
@@ -638,7 +630,7 @@ pub fn gdt_init() -> i32 {
             core::ptr::null(),
             core::ptr::null(),
             0,
-            INIT_MSG.as_ptr() as *const u8,
+            INIT_MSG.as_ptr().cast::<u8>(),
         );
     }
 
@@ -664,7 +656,7 @@ pub fn gdt_init() -> i32 {
             super::tss::TaskStateSegment,
         >());
 
-        let tss_addr = &gdt.tss as *const _ as u64;
+        let tss_addr = &raw const gdt.tss as u64;
         let tss_size = crate::privileged::lib::low_u16_from_usize(
             core::mem::size_of::<super::tss::TaskStateSegment>() - 1,
         );
@@ -705,7 +697,7 @@ pub fn gdt_init() -> i32 {
         // 进入 enter_user_asm 时在内核态, IA32_GS_BASE = per_cpu_addr.
         // 执行 swapgs 后, IA32_GS_BASE = 0 (用户态), IA32_KERNEL_GS_BASE = per_cpu_addr.
         // 用户态执行 syscall 时, syscall_entry 的 swapgs 将其换回 per_cpu_addr.
-        crate::privileged::cpu::msr::write_msr(IA32_GS_BASE, &gdt.syscall as *const _ as u64);
+        crate::privileged::cpu::msr::write_msr(IA32_GS_BASE, &raw const gdt.syscall as u64);
         crate::privileged::cpu::msr::write_msr(IA32_KERNEL_GS_BASE, 0);
 
         // 诊断: 验证 write_msr 后 IA32_GS_BASE 的实际值
@@ -714,13 +706,13 @@ pub fn gdt_init() -> i32 {
         crate::klog_boot_info!(
             "[GDT] GS MSR verify: IA32_GS_BASE={:#x} (expect {:#x}), IA32_KERNEL_GS_BASE={:#x} (expect 0)",
             gs_base_readback,
-            &gdt.syscall as *const _ as u64,
+            &raw const gdt.syscall as u64,
             kernel_gs_base_readback
         );
 
         crate::klog_boot_info!(
             "[GDT] syscall base={:#x}, kernel_rsp={:#x}, kernel_pml4={:#x}, user_pml4={:#x}",
-            &gdt.syscall as *const _ as u64,
+            &raw const gdt.syscall as u64,
             gdt.syscall.kernel_rsp,
             gdt.syscall.kernel_pml4,
             gdt.syscall.user_pml4,
@@ -735,7 +727,7 @@ pub fn gdt_init() -> i32 {
             core::ptr::null(),
             core::ptr::null(),
             0,
-            OK_MSG.as_ptr() as *const u8,
+            OK_MSG.as_ptr().cast::<u8>(),
         );
     }
 
@@ -785,10 +777,6 @@ pub fn alloc_ap_gdt(cpu_index: u32) -> bool {
 ///
 /// Trampoline 已通过 `lgdt [gdt_ptr]` 加载了 BSP 的 GDT 作为过渡，
 /// 本函数在 AP 进入长模式后调用，为目标 CPU 初始化独立的 GDT + TSS。
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
 pub fn gdt_init_ap(cpu_index: u32) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
@@ -812,7 +800,7 @@ pub fn gdt_init_ap(cpu_index: u32) {
             super::tss::TaskStateSegment,
         >());
 
-        let tss_addr = &ap.tss as *const _ as u64;
+        let tss_addr = &raw const ap.tss as u64;
         let tss_size = crate::privileged::lib::low_u16_from_usize(
             core::mem::size_of::<super::tss::TaskStateSegment>() - 1,
         );
@@ -858,7 +846,7 @@ pub fn gdt_init_ap(cpu_index: u32) {
         // `mov gs` 遗留的 0 ⇒ `process_switch_asm` 的 `[gs:TRAMPOLINE_TOP_OFF]`
         // 读到线性地址 0x20 的垃圾值, 用户态出口栈错乱 (首次上下文切换即
         // #PF → #DF); 且用户态 syscall 的 swapgs 也拿不到 per-CPU 基址。
-        crate::privileged::cpu::msr::write_msr(IA32_GS_BASE, &ap.syscall as *const _ as u64);
+        crate::privileged::cpu::msr::write_msr(IA32_GS_BASE, &raw const ap.syscall as u64);
         crate::privileged::cpu::msr::write_msr(IA32_KERNEL_GS_BASE, 0);
     }
 }

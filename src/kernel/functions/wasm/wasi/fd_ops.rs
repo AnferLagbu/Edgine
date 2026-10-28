@@ -607,10 +607,6 @@ pub fn wasi_fd_dup(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<()
     Ok(())
 }
 
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
 /// WASI `fd_readdir`: 读取目录内容
 ///
 /// # Errors
@@ -633,10 +629,8 @@ pub fn wasi_fd_readdir(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resul
 
     // 调用 VFS readdir
     let mut dir_entry = crate::functions::fs::vfs_types::VfsDirEntry::default();
-    let result = crate::functions::fs::api::vfs_readdir(
-        entry.inner_fd.cast_unsigned(),
-        &mut dir_entry as *mut _,
-    );
+    let result =
+        crate::functions::fs::api::vfs_readdir(entry.inner_fd.cast_unsigned(), &raw mut dir_entry);
 
     if result < 0 {
         write_u32_to_memory(interp, buf_used_ptr, 0);

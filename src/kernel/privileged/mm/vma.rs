@@ -1284,15 +1284,11 @@ unsafe impl Sync for MmStruct {}
 static CURRENT_MM: core::sync::atomic::AtomicPtr<MmStruct> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-#[expect(
-    clippy::ptr_cast_constness,
-    reason = "ptr_cast_constness: *mut T as *const T 是已知安全 (Rust 2024 可用 ptr.cast_const 或 &raw const; 当前优先 expect"
-)]
 /// 设置当前进程的地址空间指针 (进程切换时由调度器调用).
 pub fn set_current_mm(mm: *const MmStruct) {
     // SAFETY: CURRENT_MM 是当前 CPU 的 per-CPU 状态指针，
     // 仅在进程切换时由调度器写入，调用者保证无并发写入。
-    CURRENT_MM.store(mm as *mut MmStruct, core::sync::atomic::Ordering::Release);
+    CURRENT_MM.store(mm.cast_mut(), core::sync::atomic::Ordering::Release);
 }
 
 /// 获取当前进程的地址空间引用 (未设置时为 `None`).

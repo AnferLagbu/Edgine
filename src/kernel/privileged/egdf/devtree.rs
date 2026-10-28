@@ -409,10 +409,6 @@ pub extern "C" fn devtree_init() {
 /// `parent_id` 为 0 时挂载到根节点.
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 pub extern "C" fn devtree_create_node(name: *const u8, proto: u32, parent_id: u32) -> u32 {
     let name_str = if name.is_null() {
         "unknown"
@@ -420,7 +416,7 @@ pub extern "C" fn devtree_create_node(name: *const u8, proto: u32, parent_id: u3
         // SAFETY: name 来自 FFI 的 C 字符串; 调用方保证其以 NUL 结尾,
         // 且在函数执行期间持续有效.
         unsafe {
-            let bytes = core::ffi::CStr::from_ptr(name as *const core::ffi::c_char);
+            let bytes = core::ffi::CStr::from_ptr(name.cast::<core::ffi::c_char>());
             bytes.to_str().unwrap_or("unknown")
         }
     };

@@ -48,7 +48,7 @@ impl UndoLog {
 
     /// 记录一次字段旧值 (同代同地址去重; 容量满时先紧急压缩)
     pub fn record<T: Copy>(&mut self, field: *mut T, old_value: T) {
-        let field_ptr = field as *mut u8;
+        let field_ptr = field.cast::<u8>();
         let size = core::mem::size_of::<T>().min(8);
 
         if self.count > 0 {

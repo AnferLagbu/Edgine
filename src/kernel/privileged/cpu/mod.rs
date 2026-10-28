@@ -364,10 +364,6 @@ pub fn get_cpu_info() -> Option<&'static CpuInfo> {
 #[unsafe(no_mangle)]
 /// FFI 导出函数 (C 可调用)
 #[cfg(target_arch = "x86_64")]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 pub extern "C" fn cpu_init() -> i32 {
     static OK_MSG: &[u8] = b"CPU driver initialized successfully\0";
     use crate::privileged::klog::{LogCategory, LogLevel, klog_write};
@@ -382,7 +378,7 @@ pub extern "C" fn cpu_init() -> i32 {
             core::ptr::null(),
             core::ptr::null(),
             0,
-            INIT_MSG.as_ptr() as *const u8,
+            INIT_MSG.as_ptr().cast::<u8>(),
         );
     }
 
@@ -441,7 +437,7 @@ pub extern "C" fn cpu_init() -> i32 {
                 core::ptr::null(),
                 core::ptr::null(),
                 0,
-                msg_buf.as_ptr() as *const u8,
+                msg_buf.as_ptr().cast::<u8>(),
             );
         }
     }
@@ -463,7 +459,7 @@ pub extern "C" fn cpu_init() -> i32 {
                 core::ptr::null(),
                 core::ptr::null(),
                 0,
-                ERR_MSG.as_ptr() as *const u8,
+                ERR_MSG.as_ptr().cast::<u8>(),
             );
         }
         return -1;
@@ -477,7 +473,7 @@ pub extern "C" fn cpu_init() -> i32 {
             core::ptr::null(),
             core::ptr::null(),
             0,
-            OK_MSG.as_ptr() as *const u8,
+            OK_MSG.as_ptr().cast::<u8>(),
         );
     }
 
@@ -502,14 +498,10 @@ pub extern "C" fn cpu_init() -> i32 {
 /// FFI 导出函数 (C 可调用)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ref_as_ptr,
-    reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
-)]
 /// FFI 导出函数 (C 可调用)
 pub extern "C" fn cpu_get_info() -> *const CpuInfo {
     // SAFETY: `as_ref` 是有效的 C ABI 函数指针; 参数列表与声明一致
-    get_cpu_info().map_or(core::ptr::null(), |info| info as *const CpuInfo)
+    get_cpu_info().map_or(core::ptr::null(), core::ptr::from_ref::<CpuInfo>)
 }
 
 /// 检查 CPU 是否支持指定特性 (FFI兼容)
@@ -619,14 +611,10 @@ pub extern "C" fn cpu_get_signature() -> CpuSignature {
 /// FFI 导出函数 (C 可调用)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
 /// FFI 导出函数 (C 可调用)
 pub extern "C" fn cpu_get_cache_info() -> *const CacheInfo {
     // SAFETY: `as_ref` 是有效的 C ABI 函数指针; 参数列表与声明一致
-    get_cpu_info().map_or(core::ptr::null(), |info| &info.cache as *const CacheInfo)
+    get_cpu_info().map_or(core::ptr::null(), |info| &raw const info.cache)
 }
 
 // ============================================================================

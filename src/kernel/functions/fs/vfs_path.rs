@@ -250,10 +250,6 @@ pub extern "C" fn vfs_stat(path: *const u8, st: *mut VfsStat, pwm: u64) -> i32 {
     vfs_stat_internal(path, st, pwm)
 }
 
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
 /// Safe 包装: functions 层用, 返回 `VfsStat` 而非 raw pointer.
 ///
 /// 内部复用 `vfs_stat_internal`, 在 stack 上接收结果, 然后转为 Option 返回.
@@ -263,7 +259,7 @@ pub fn vfs_stat_safe(path: *const u8, pwm: u64) -> Option<VfsStat> {
         return None;
     }
     let mut st = VfsStat::default();
-    let r = vfs_stat_internal(path, &mut st as *mut VfsStat, pwm);
+    let r = vfs_stat_internal(path, &raw mut st, pwm);
     if r < 0 { None } else { Some(st) }
 }
 

@@ -411,14 +411,6 @@ pub fn sys_timerfd_close(fd: i32) -> i64 {
 // HrTimer 回调
 // ============================================================================
 
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
-    clippy::ref_as_ptr,
-    reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
-)]
 /// timerfd 定时器回调
 ///
 /// 在中断上下文执行: 递增 `expiry_count`, 唤醒 epoll.
@@ -426,7 +418,7 @@ pub fn sys_timerfd_close(fd: i32) -> i64 {
 fn timerfd_callback(timer: &HrTimer) -> HrTimerRestart {
     // 从 timer 指针反推 slot index
     // HrTimer 嵌入在 TimerFdSlot 中, 偏移量为 0 (第一个字段)
-    let slot_ptr = timer as *const HrTimer as *const TimerFdSlot;
+    let slot_ptr = core::ptr::from_ref::<HrTimer>(timer).cast::<TimerFdSlot>();
     // SAFETY: timer 嵌入在 slot 中, 指针有效
     let slot = unsafe { &*slot_ptr };
 

@@ -83,12 +83,8 @@ fn test_elf_validation_null() -> TestResult {
     TestResult::Pass
 }
 
-#[expect(
-    clippy::ref_as_ptr,
-    reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
-)]
 fn test_elf_validation_small() -> TestResult {
-    let result = crate::privileged::proc::elf_validate(&0u8 as *const u8, 10);
+    let result = crate::privileged::proc::elf_validate(core::ptr::from_ref::<u8>(&0u8), 10);
     check!(result.is_none(), "too small rejected");
     TestResult::Pass
 }

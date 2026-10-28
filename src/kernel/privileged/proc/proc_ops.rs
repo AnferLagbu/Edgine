@@ -54,10 +54,6 @@ pub mod raw {
     }
 
     #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
-    #[expect(
         clippy::cast_ptr_alignment,
         reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
     )]
@@ -69,7 +65,7 @@ pub mod raw {
         // SAFETY: alloc/dealloc 配对, 见 dealloc_process。
         unsafe {
             let layout = alloc::alloc::Layout::new::<Process>();
-            let ptr = alloc::alloc::alloc(layout) as *mut Process;
+            let ptr = alloc::alloc::alloc(layout).cast::<Process>();
             core::ptr::write(ptr, Process::new(pid, name, parent));
             ptr
         }
@@ -282,13 +278,11 @@ where
     PROCESS_TABLE.for_each(f);
 }
 
-#[expect(
-    clippy::ptr_cast_constness,
-    reason = "ptr_cast_constness: *mut T as *const T 是已知安全 (Rust 2024 可用 ptr.cast_const 或 &raw const; 当前优先 expect"
-)]
 /// 获取进程的原始指针 (用于需要直接访问进程的场景).
 pub fn process_get_raw(pid: u32) -> Option<*const super::process::Process> {
-    PROCESS_TABLE.get(pid).map(|p| p as *const _)
+    PROCESS_TABLE
+        .get(pid)
+        .map(<*mut super::process::Process>::cast_const)
 }
 
 /// 释放子进程 PCB (wait4 回收).
@@ -635,14 +629,6 @@ pub fn proc_save_user_regs_aarch64(
 /// fork 系统调用实现 (COW 页表克隆 + namespace 继承)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ref_as_ptr,
-    reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
-)]
-#[expect(
-    clippy::ptr_cast_constness,
-    reason = "ptr_cast_constness: *mut T as *const T 是已知安全 (Rust 2024 可用 ptr.cast_const 或 &raw const; 当前优先 expect"
-)]
 pub extern "C" fn sys_fork() -> Pid {
     let parent_pid = Scheduler::current().unwrap_or(0);
     if parent_pid == 0 {
@@ -804,7 +790,7 @@ pub extern "C" fn sys_fork() -> Pid {
             crate::privileged::fs::current_vfs_ops().inc_open_file_ref(hid);
         }
     }
-    PROCESS_TABLE.insert(child as *const Process as *mut Process);
+    PROCESS_TABLE.insert(core::ptr::from_ref::<Process>(child).cast_mut());
     // 为子进程创建 UserProc 镜像记录, 使 fork 子进程与父进程同源注册.
     //
     // 该注册是调度切换路径装配 per-CPU 用户 CR3 与"任务内核栈顶页"的前置条件:
@@ -914,10 +900,6 @@ pub extern "C" fn proc_get_create_time(pid: u32) -> u64 {
 /// POSIX getrusage(who, rusage) — 写回进程/子进程 user/sys 时间.
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 pub extern "C" fn proc_get_rusage(pid: u32, who: i32, out: *mut u8, out_len: u64) -> i32 {
     if out.is_null() || out_len < 32 {
         return -1;
@@ -948,10 +930,10 @@ pub extern "C" fn proc_get_rusage(pid: u32, who: i32, out: *mut u8, out_len: u64
 
     // SAFETY: out 至少 32 字节可写, who 合法.
     unsafe {
-        core::ptr::write_unaligned(out as *mut i64, ut_sec);
-        core::ptr::write_unaligned(out.add(8) as *mut i64, ut_micros);
-        core::ptr::write_unaligned(out.add(16) as *mut i64, st_sec);
-        core::ptr::write_unaligned(out.add(24) as *mut i64, st_micros);
+        core::ptr::write_unaligned(out.cast::<i64>(), ut_sec);
+        core::ptr::write_unaligned(out.add(8).cast::<i64>(), ut_micros);
+        core::ptr::write_unaligned(out.add(16).cast::<i64>(), st_sec);
+        core::ptr::write_unaligned(out.add(24).cast::<i64>(), st_micros);
         let tail = crate::privileged::lib::usize_from_u64(out_len).saturating_sub(32);
         if tail > 0 {
             core::ptr::write_bytes(out.add(32), 0u8, tail);

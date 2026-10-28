@@ -115,10 +115,6 @@ impl UFrame {
     /// # Errors
     /// 偏移越界或访问用户内存时发生页错误时返回 Err。
     #[inline]
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
     pub fn read_pod<T: Pod>(&self, offset: usize) -> Result<T, ()> {
         let size = core::mem::size_of::<T>();
         if offset.saturating_add(size) > crate::privileged::lib::usize_from_u64(PAGE_SIZE) {
@@ -130,7 +126,7 @@ impl UFrame {
             // SAFETY: val 是 MaybeUninit::uninit(), 指针有效; 长度 size 由
             // 上方 bounds check 保证; from_raw_parts_mut 仅借用指针供后续
             // copy_from_user 填充, 不在 unsafe 块内读取, 不会读到未初始化数据.
-            unsafe { core::slice::from_raw_parts_mut(val.as_mut_ptr() as *mut u8, size) };
+            unsafe { core::slice::from_raw_parts_mut(val.as_mut_ptr().cast::<u8>(), size) };
         copy_from_user(dst, self.uaddr + offset as u64, size)?;
         // SAFETY: copy_from_user 返回 Ok 表示 dst 已被初始化 size 字节 (T 是 Pod,
         // POD 不要求位有效, 只要求位是有效的字节模式, 而 copy_from_user 写入是
@@ -145,14 +141,6 @@ impl UFrame {
     /// # Errors
     /// 偏移越界或访问用户内存时发生页错误时返回 Err。
     #[inline]
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
-    #[expect(
-        clippy::ref_as_ptr,
-        reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
-    )]
     pub fn write_pod<T: Pod>(&self, offset: usize, val: &T) -> Result<(), ()> {
         let size = core::mem::size_of::<T>();
         if offset.saturating_add(size) > crate::privileged::lib::usize_from_u64(PAGE_SIZE) {
@@ -162,7 +150,7 @@ impl UFrame {
         let src =
             // SAFETY: val 是 &T, 指针有效; size = size_of::<T>(), 完全在 val
             // 内存范围内; from_raw_parts 仅借用字节视图供 copy_to_user 读取.
-            unsafe { core::slice::from_raw_parts(val as *const T as *const u8, size) };
+            unsafe { core::slice::from_raw_parts(core::ptr::from_ref::<T>(val).cast::<u8>(), size) };
         copy_to_user(self.uaddr + offset as u64, src, size)?;
         Ok(())
     }
@@ -250,10 +238,6 @@ impl USegment {
     /// # Errors
     /// 偏移越界或访问用户内存时发生页错误时返回 Err。
     #[inline]
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
     pub fn read_pod<T: Pod>(&self, offset: usize) -> Result<T, ()> {
         let size = core::mem::size_of::<T>();
         if offset.saturating_add(size) > self.len {
@@ -265,7 +249,7 @@ impl USegment {
             // SAFETY: val 是 MaybeUninit::uninit(), 指针有效; 长度 size 由
             // 上方 bounds check 保证; from_raw_parts_mut 仅借用指针供后续
             // copy_from_user 填充, 不在 unsafe 块内读取.
-            unsafe { core::slice::from_raw_parts_mut(val.as_mut_ptr() as *mut u8, size) };
+            unsafe { core::slice::from_raw_parts_mut(val.as_mut_ptr().cast::<u8>(), size) };
         copy_from_user(dst, self.base + offset as u64, size)?;
         // SAFETY: copy_from_user 返回 Ok 表示 dst 已被初始化 size 字节,
         // 满足 T: Pod 的位有效性要求.
@@ -278,14 +262,6 @@ impl USegment {
     /// # Errors
     /// 偏移越界或访问用户内存时发生页错误时返回 Err。
     #[inline]
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
-    #[expect(
-        clippy::ref_as_ptr,
-        reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
-    )]
     pub fn write_pod<T: Pod>(&self, offset: usize, val: &T) -> Result<(), ()> {
         let size = core::mem::size_of::<T>();
         if offset.saturating_add(size) > self.len {
@@ -295,7 +271,7 @@ impl USegment {
         let src =
             // SAFETY: val 是 &T, 指针有效; size = size_of::<T>(), 完全在 val
             // 内存范围内; from_raw_parts 仅借用字节视图供 copy_to_user 读取.
-            unsafe { core::slice::from_raw_parts(val as *const T as *const u8, size) };
+            unsafe { core::slice::from_raw_parts(core::ptr::from_ref::<T>(val).cast::<u8>(), size) };
         copy_to_user(self.base + offset as u64, src, size)?;
         Ok(())
     }

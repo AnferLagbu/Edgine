@@ -159,17 +159,13 @@ pub unsafe extern "C" fn atomic_set(ptr: *mut i32, val: i32) {
 /// 原子读取 (Atomic load)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 ///
 /// # Safety
 ///
 /// `ptr` 是指向 `i32` 的有效且正确对齐的指针, 在调用期间持续有效.
 pub unsafe extern "C" fn atomic_read(ptr: *const i32) -> i32 {
     unsafe {
-        let atomic = &*(ptr as *const core::sync::atomic::AtomicI32);
+        let atomic = &*ptr.cast::<core::sync::atomic::AtomicI32>();
         atomic.load(Ordering::SeqCst)
     }
 }

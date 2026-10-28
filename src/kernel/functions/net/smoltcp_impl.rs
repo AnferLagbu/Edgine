@@ -391,10 +391,6 @@ impl SmoltcpNetStack {
         }
     }
 
-    #[expect(
-        clippy::borrow_as_ptr,
-        reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-    )]
     /// 接收数据报并获取来源端点信息 (UDP 主要场景).
     ///
     /// # Errors
@@ -412,7 +408,7 @@ impl SmoltcpNetStack {
             crate::functions::intcast::low_u32_from_usize(buf.len()),
             0,
             src.as_mut_ptr(),
-            &mut addrlen,
+            &raw mut addrlen,
         );
         if rc >= 0 {
             let ep =
@@ -464,10 +460,6 @@ impl SmoltcpNetStack {
         }
     }
 
-    #[expect(
-        clippy::borrow_as_ptr,
-        reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-    )]
     /// 通过 fd 获取 Socket 选项.
     ///
     /// # Errors
@@ -484,8 +476,13 @@ impl SmoltcpNetStack {
             return Err(NetError::InvalidHandle);
         }
         let mut out_len = crate::functions::intcast::low_u32_from_usize(out.len());
-        let rc =
-            fw_net_socket::sm_net_getsockopt(fd, level, optname, out.as_mut_ptr(), &mut out_len);
+        let rc = fw_net_socket::sm_net_getsockopt(
+            fd,
+            level,
+            optname,
+            out.as_mut_ptr(),
+            &raw mut out_len,
+        );
         if rc == 0 {
             Ok(out_len as usize)
         } else {
@@ -810,10 +807,6 @@ impl NetStack for SmoltcpNetStack {
         }
     }
 
-    #[expect(
-        clippy::borrow_as_ptr,
-        reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-    )]
     /// 从监听 Socket 的已完成连接队列中取出一个新连接.
     fn accept(&mut self, h: SocketHandle, peer: Option<&mut NetEndpoint>) -> Result<SocketHandle> {
         if !self.initialized || !h.is_valid() {
@@ -822,7 +815,7 @@ impl NetStack for SmoltcpNetStack {
         let fd = self.handle_to_fd(h).ok_or(NetError::InvalidHandle)?;
         let mut addr_buf = [0u8; 28];
         let mut addrlen = 28u32;
-        let new_fd = fw_net_socket::sm_net_accept(fd, addr_buf.as_mut_ptr(), &mut addrlen);
+        let new_fd = fw_net_socket::sm_net_accept(fd, addr_buf.as_mut_ptr(), &raw mut addrlen);
         if new_fd < 0 {
             return Err(NetError::Other);
         }
@@ -917,10 +910,6 @@ impl NetStack for SmoltcpNetStack {
         }
     }
 
-    #[expect(
-        clippy::borrow_as_ptr,
-        reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-    )]
     /// 接收数据报并获取来源端点信息 (UDP 主要场景).
     fn recvfrom(
         &mut self,
@@ -941,7 +930,7 @@ impl NetStack for SmoltcpNetStack {
             crate::functions::intcast::low_u32_from_usize(buf.len()),
             flags,
             addr_buf.as_mut_ptr(),
-            &mut addrlen,
+            &raw mut addrlen,
         );
         if rc >= 0 {
             if let Some(ep) = src {

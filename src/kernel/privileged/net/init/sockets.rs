@@ -43,7 +43,7 @@ pub unsafe fn socket_storage() -> &'static mut [SocketStorage<'static>] {
             let boxed = (0..MAX_SOCKETS)
                 .map(|_| SocketStorage::EMPTY)
                 .collect::<Box<[_]>>();
-            SOCKET_STORAGE = Box::into_raw(boxed) as *mut SocketStorage<'static>;
+            SOCKET_STORAGE = Box::into_raw(boxed).cast::<SocketStorage<'static>>();
         }
         core::slice::from_raw_parts_mut(SOCKET_STORAGE, MAX_SOCKETS)
     }

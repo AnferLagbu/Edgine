@@ -820,14 +820,6 @@ impl TransferRing {
         self.cycle
     }
 
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
-    #[expect(
-        clippy::borrow_as_ptr,
-        reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-    )]
     /// 写入一个 TRB 到 enqueue 位置, 自动设置 cycle bit.
     ///
     /// 到达末尾时写入 Link TRB 并翻转 cycle, 回绕到起点.
@@ -847,7 +839,7 @@ impl TransferRing {
         // 通过 privileged safe wrapper 写入 TRB
         // 创建 raw pointer 是 safe 操作; 实际解引用由 privileged 内部 unsafe 完成
         let vaddr = self.dma.cpu_addr().as_ptr() as u64;
-        let trb_ptr: *const u8 = &trb as *const Trb as *const u8;
+        let trb_ptr: *const u8 = (&raw const trb).cast::<u8>();
         crate::privileged::driver::storage::xhci_write_trb(vaddr, self.enqueue_index, trb_ptr);
 
         self.enqueue_index += 1;
@@ -858,7 +850,7 @@ impl TransferRing {
                 | 1 << 1 // Toggle Cycle
                 | u32::from(self.cycle);
             let link_trb = Trb::new(self.dma.dma_addr().as_u64(), 0, link_control);
-            let link_ptr: *const u8 = &link_trb as *const Trb as *const u8;
+            let link_ptr: *const u8 = (&raw const link_trb).cast::<u8>();
             crate::privileged::driver::storage::xhci_write_trb(vaddr, self.enqueue_index, link_ptr);
             self.enqueue_index = 0;
             self.cycle = !self.cycle;

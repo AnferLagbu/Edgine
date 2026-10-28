@@ -294,6 +294,6 @@ unsafe extern "C" {
 #[inline]
 pub unsafe fn switch(from: *mut u8, to: *const u8) {
     unsafe {
-        context_switch_asm(from as *const u64, to as *const u64);
+        context_switch_asm(from as *const u64, to.cast::<u64>());
     }
 }

@@ -5,8 +5,8 @@
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 455,
-    "files": 130
+    "sites": 289,
+    "files": 98
   },
   "entries": [
     [
@@ -65,26 +65,6 @@
       1
     ],
     [
-      "src/kernel/functions/driver/storage/ahci.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      1
-    ],
-    [
-      "src/kernel/functions/driver/storage/ahci.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/driver/usb/xhci.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/driver/usb/xhci.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      1
-    ],
-    [
       "src/kernel/functions/freg/attribution.rs",
       "#[expect(clippy::upper_case_acronyms,reason=\"TCB归属枚举按子系统缩写命名(FREG/SGEG)",
       1
@@ -120,23 +100,8 @@
       1
     ],
     [
-      "src/kernel/functions/fs/handle.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/handle.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/functions/fs/io.rs",
       "#[expect(clippy::comparison_chain,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/misc.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       1
     ],
     [
@@ -182,11 +147,6 @@
     [
       "src/kernel/functions/fs/vfs_manager.rs",
       "#[expect(clippy::assigning_clones,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/vfs_path.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       1
     ],
     [
@@ -351,11 +311,6 @@
     ],
     [
       "src/kernel/functions/mod.rs",
-      "#![allow(clippy::ptr_as_ptr)",
-      1
-    ],
-    [
-      "src/kernel/functions/mod.rs",
       "#![allow(clippy::pub_underscore_fields)",
       1
     ],
@@ -456,11 +411,6 @@
     ],
     [
       "src/kernel/functions/net/smoltcp_impl.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      4
-    ],
-    [
-      "src/kernel/functions/net/smoltcp_impl.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"policy_cfg需为引用(受traitDhcpPolicy::decide约束)",
       1
     ],
@@ -473,16 +423,6 @@
       "src/kernel/functions/proc/affinity.rs",
       "#[expect(clippy::comparison_chain,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       2
-    ],
-    [
-      "src/kernel/functions/proc/clone.rs",
-      "#[expect(clippy::ptr_cast_constness,reason=\"ptr_cast_constness:*mutTas*constT是已知安全(Rust2024可用ptr.cast_const或&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/proc/clone.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
-      1
     ],
     [
       "src/kernel/functions/proc/clone.rs",
@@ -527,11 +467,6 @@
     [
       "src/kernel/functions/wasm/wasi/errno.rs",
       "#[expect(clippy::needless_pass_by_value,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
-      1
-    ],
-    [
-      "src/kernel/functions/wasm/wasi/fd_ops.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       1
     ],
     [
@@ -672,11 +607,6 @@
     [
       "src/kernel/lib.rs",
       "#![allow(clippy::pointers_in_nomem_asm_block)",
-      1
-    ],
-    [
-      "src/kernel/lib.rs",
-      "#![allow(clippy::ptr_as_ptr)",
       1
     ],
     [
@@ -791,11 +721,6 @@
     ],
     [
       "src/kernel/privileged/arch/aarch64/exception.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/arch/aarch64/exception.rs",
       "#[expect(clippy::no_effect_underscore_binding,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
       1
     ],
@@ -815,28 +740,8 @@
       4
     ],
     [
-      "src/kernel/privileged/arch/x86_64/acpi.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      5
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/acpi.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
-      2
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/gdt.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      2
-    ],
-    [
       "src/kernel/privileged/arch/x86_64/gdt.rs",
       "#[expect(clippy::large_stack_arrays,reason=\"PerCpuGdt的syscall/IST栈数组布局于BSP_GDT/PMM分配的APGDT,非栈上分配\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/gdt.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
       1
     ],
     [
@@ -850,16 +755,6 @@
       1
     ],
     [
-      "src/kernel/privileged/boot/aarch64/entry.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/boot/mod.rs",
-      "#[cfg_attr( not(feature = \"host-test\"), expect( clippy::borrow_as_ptr, reason = \"borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect\" ) )]",
-      1
-    ],
-    [
       "src/kernel/privileged/boot/mod.rs",
       "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
       2
@@ -870,18 +765,8 @@
       1
     ],
     [
-      "src/kernel/privileged/boot/mod.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      2
-    ],
-    [
       "src/kernel/privileged/boot/multiboot2_fb.rs",
       "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/boot/multiboot2_fb.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
       1
     ],
     [
@@ -890,28 +775,8 @@
       1
     ],
     [
-      "src/kernel/privileged/console/mod.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"console为&'staticmut引用,需取其裸指针存入AtomicPtr\")",
-      1
-    ],
-    [
       "src/kernel/privileged/cpu/feature.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      1
-    ],
-    [
-      "src/kernel/privileged/cpu/mod.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/cpu/mod.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      1
-    ],
-    [
-      "src/kernel/privileged/cpu/mod.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
       1
     ],
     [
@@ -925,43 +790,13 @@
       1
     ],
     [
-      "src/kernel/privileged/debug/kgdb.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      2
-    ],
-    [
-      "src/kernel/privileged/debug/kgdb.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/debug/ringbuf.rs",
-      "#[expect(clippy::ptr_cast_constness,reason=\"ptr_cast_constness:*mutTas*constT是已知安全(Rust2024可用ptr.cast_const或&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/dma/engine.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      2
-    ],
-    [
       "src/kernel/privileged/driver/display/self_test.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
     ],
     [
       "src/kernel/privileged/driver/input/keyboard.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      2
-    ],
-    [
-      "src/kernel/privileged/driver/input/keyboard.rs",
       "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
-      3
-    ],
-    [
-      "src/kernel/privileged/driver/input/keyboard.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
       3
     ],
     [
@@ -980,19 +815,9 @@
       1
     ],
     [
-      "src/kernel/privileged/egdf/devtree.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      1
-    ],
-    [
       "src/kernel/privileged/egdf/mod.rs",
       "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
       2
-    ],
-    [
-      "src/kernel/privileged/egdf/mod.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      6
     ],
     [
       "src/kernel/privileged/egdf/user_driver.rs",
@@ -1015,26 +840,6 @@
       1
     ],
     [
-      "src/kernel/privileged/freg/api.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/recoverable.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/recoverable.rs",
-      "#[expect(clippy::ptr_cast_constness,reason=\"ptr_cast_constness:*mutTas*constT是已知安全(Rust2024可用ptr.cast_const或&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/reset/bbr.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/privileged/freg/snapshot.rs",
       "#[expect(clippy::iter_without_into_iter,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
@@ -1042,16 +847,6 @@
     [
       "src/kernel/privileged/idt/idt.rs",
       "#[cfg_attr( target_arch = \"aarch64\", expect( clippy::unnecessary_wraps, reason = \"aarch64 IDT init 占位函数, 直接返回 Ok\" ) )]",
-      1
-    ],
-    [
-      "src/kernel/privileged/idt/idt.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/idt/mod.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
       1
     ],
     [
@@ -1063,11 +858,6 @@
       "src/kernel/privileged/iomem.rs",
       "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
       6
-    ],
-    [
-      "src/kernel/privileged/iomem.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      3
     ],
     [
       "src/kernel/privileged/klog/mod.rs",
@@ -1080,54 +870,14 @@
       1
     ],
     [
-      "src/kernel/privileged/klog/mod.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      7
-    ],
-    [
-      "src/kernel/privileged/klog/mod.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/lib/cstr.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      2
-    ],
-    [
-      "src/kernel/privileged/lib/cstr.rs",
-      "#[expect(clippy::ptr_cast_constness,reason=\"ptr_cast_constness:*mutTas*constT是已知安全(Rust2024可用ptr.cast_const或&rawconst;当前优先expect\")",
-      2
-    ],
-    [
-      "src/kernel/privileged/lib/string.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      6
-    ],
-    [
-      "src/kernel/privileged/lib/string.rs",
-      "#[expect(clippy::ptr_cast_constness,reason=\"ptr_cast_constness:*mutTas*constT是已知安全(Rust2024可用ptr.cast_const或&rawconst;当前优先expect\")",
-      5
-    ],
-    [
       "src/kernel/privileged/mem_alloc/frame_alloc.rs",
       "#[expect(clippy::match_wildcard_for_single_variants,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
     ],
     [
       "src/kernel/privileged/mm/api.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/api.rs",
       "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
       1
-    ],
-    [
-      "src/kernel/privileged/mm/api.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      4
     ],
     [
       "src/kernel/privileged/mm/cow.rs",
@@ -1135,34 +885,9 @@
       1
     ],
     [
-      "src/kernel/privileged/mm/frame.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      4
-    ],
-    [
-      "src/kernel/privileged/mm/frame.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
-      2
-    ],
-    [
       "src/kernel/privileged/mm/kmalloc.rs",
       "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
       2
-    ],
-    [
-      "src/kernel/privileged/mm/kmalloc.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      6
-    ],
-    [
-      "src/kernel/privileged/mm/kmalloc.rs",
-      "#[expect(clippy::ptr_cast_constness,reason=\"ptr_cast_constness:*mutTas*constT是已知安全(Rust2024可用ptr.cast_const或&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/kmalloc.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
-      1
     ],
     [
       "src/kernel/privileged/mm/kpti.rs",
@@ -1180,16 +905,6 @@
       1
     ],
     [
-      "src/kernel/privileged/mm/slab.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"pageas*mutSlabHeader:pmm_alloc_pages返回页对齐*mutu8,安全cast\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "#[expect(clippy::ptr_cast_constness,reason=\"ptr_cast_constness:*mutTas*constT是已知安全(Rust2024可用ptr.cast_const或&rawconst;当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/privileged/mm/vma.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
@@ -1198,11 +913,6 @@
       "src/kernel/privileged/mm/vmm_aarch64.rs",
       "#[expect(clippy::missing_errors_doc,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
       1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      2
     ],
     [
       "src/kernel/privileged/mm/vmm_x86_64.rs",
@@ -1347,11 +1057,6 @@
     [
       "src/kernel/privileged/mod.rs",
       "#![allow(clippy::pointers_in_nomem_asm_block)",
-      1
-    ],
-    [
-      "src/kernel/privileged/mod.rs",
-      "#![allow(clippy::ptr_as_ptr)",
       1
     ],
     [
@@ -1470,18 +1175,8 @@
       2
     ],
     [
-      "src/kernel/privileged/net/init/sm_fi.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      6
-    ],
-    [
       "src/kernel/privileged/net/init/state.rs",
       "#[expect(clippy::missing_errors_doc,reason=\"missing_errors_doc:transition_state返回Result<()",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/smoltcp_impl.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
       1
     ],
     [
@@ -1516,21 +1211,6 @@
     ],
     [
       "src/kernel/privileged/proc/elf/mod.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      3
-    ],
-    [
-      "src/kernel/privileged/proc/elf/mod.rs",
-      "#[expect(clippy::ptr_cast_constness,reason=\"ptr_cast_constness:*mutTas*constT是已知安全(Rust2024可用ptr.cast_const或&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/elf/mod.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/elf/mod.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
     ],
@@ -1540,23 +1220,8 @@
       1
     ],
     [
-      "src/kernel/privileged/proc/elf/verify.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      1
-    ],
-    [
       "src/kernel/privileged/proc/mod.rs",
       "#![allow(ambiguous_glob_reexports)",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/posix_timer.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/posix_timer.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
       1
     ],
     [
@@ -1570,43 +1235,8 @@
       2
     ],
     [
-      "src/kernel/privileged/proc/proc_ops.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      2
-    ],
-    [
-      "src/kernel/privileged/proc/proc_ops.rs",
-      "#[expect(clippy::ptr_cast_constness,reason=\"ptr_cast_constness:*mutTas*constT是已知安全(Rust2024可用ptr.cast_const或&rawconst;当前优先expect\")",
-      2
-    ],
-    [
-      "src/kernel/privileged/proc/proc_ops.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      2
-    ],
-    [
       "src/kernel/privileged/proc/scheduler.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      2
-    ],
-    [
-      "src/kernel/privileged/proc/signal.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/signal.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       2
     ],
     [
@@ -1621,37 +1251,12 @@
     ],
     [
       "src/kernel/privileged/proc/user_proc.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      6
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       2
     ],
     [
-      "src/kernel/privileged/sgeg/api.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/audit.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/privileged/sgeg/audit.rs",
       "#[expect(clippy::no_effect_underscore_binding,reason=\"no_effect_underscore_binding:let_=expr用于类型推导/副作用;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/audit.rs",
-      "#[expect(clippy::ptr_cast_constness,reason=\"ptr_cast_constness:*mutTas*constT是已知安全(Rust2024可用ptr.cast_const或&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/csprng.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       1
     ],
     [
@@ -1660,58 +1265,8 @@
       1
     ],
     [
-      "src/kernel/privileged/smp/mod.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/atomic.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/mod.rs",
-      "#[expect(clippy::ptr_cast_constness,reason=\"ptr_cast_constness:*mutTas*constT是已知安全(Rust2024可用ptr.cast_const或&rawconst;当前优先expect\")",
-      2
-    ],
-    [
-      "src/kernel/privileged/sync/mod.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/pi_mutex.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:?Sized宽指针需先转瘦指针取数据地址再转usize作lockdep实例键,语义已知安全\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/pi_mutex.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:?Sized宽指针需先转瘦指针取数据地址再转usize作登记键,语义已知安全\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/rcu.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/privileged/syscall/dispatch.rs",
       "#[expect(clippy::missing_panics_doc,reason=\"missing_panics_doc:get_framebuffer守卫在fb_addr/ENODEV前置检查后必有值(FB已初始化)",
-      1
-    ],
-    [
-      "src/kernel/privileged/syscall/mod.rs",
-      "#[cfg_attr( not(feature = \"host-test\"), expect( clippy::borrow_as_ptr, reason = \"borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect\" ) )]",
-      2
-    ],
-    [
-      "src/kernel/privileged/syscall/timerfd.rs",
-      "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
-      1
-    ],
-    [
-      "src/kernel/privileged/syscall/timerfd.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
       1
     ],
     [
@@ -1725,18 +1280,8 @@
       1
     ],
     [
-      "src/kernel/privileged/tests/test_freg.rs",
-      "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      3
-    ],
-    [
       "src/kernel/privileged/tests/test_new_features.rs",
       "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/tests/test_new_features.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
       1
     ],
     [
@@ -1745,23 +1290,8 @@
       1
     ],
     [
-      "src/kernel/privileged/timer/hrtimer.rs",
-      "#[expect(clippy::ptr_cast_constness,reason=\"ptr_cast_constness:*mutTas*constT是已知安全(Rust2024可用ptr.cast_const或&rawconst;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/timer/hrtimer.rs",
-      "#[expect(clippy::ref_as_ptr,reason=\"ref_as_ptr:&Tas*constT是已知安全(Rust2024可用&rawconst;当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/privileged/userptr.rs",
       "#[allow(clippy::should_implement_trait)",
-      1
-    ],
-    [
-      "src/kernel/privileged/userptr.rs",
-      "#[expect(clippy::ptr_cast_constness,reason=\"ptr_cast_constness:*mutTas*constT是已知安全(Rust2024可用ptr.cast_const或&rawconst;当前优先expect\")",
       1
     ],
     [

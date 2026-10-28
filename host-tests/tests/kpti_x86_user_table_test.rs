@@ -354,7 +354,7 @@ fn test_sys_fork_registers_child_in_user_proc_manager() {
     let body = &after[..end];
 
     let insert = body
-        .find("PROCESS_TABLE.insert(child as *const Process as *mut Process);")
+        .find("PROCESS_TABLE.insert(core::ptr::from_ref::<Process>(child).cast_mut());")
         .expect("sys_fork 必须把子进程插入进程表");
     let clone = body
         .find("user_proc_clone(parent_pid, child_pid)")

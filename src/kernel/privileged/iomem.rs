@@ -410,10 +410,6 @@ impl IoMem {
         }
     }
     #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
-    #[expect(
         clippy::cast_ptr_alignment,
         reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
     )]
@@ -433,13 +429,13 @@ impl IoMem {
             .expect("IoMem: write_u16 offset+2 越界 (构造函数保证合法范围)");
         // SAFETY: `check_offset(offset, 2)` 已验证 2 字节写不越界; 2 字节对齐由 MMIO 基地址页对齐保证。
         unsafe {
-            (self.virt.as_ptr().add(offset) as *mut u16).write_volatile(val);
+            self.virt
+                .as_ptr()
+                .add(offset)
+                .cast::<u16>()
+                .write_volatile(val);
         }
     }
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
     #[expect(
         clippy::cast_ptr_alignment,
         reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
@@ -460,13 +456,13 @@ impl IoMem {
             .expect("IoMem: write_u32 offset+4 越界 (构造函数保证合法范围)");
         // SAFETY: `check_offset(offset, 4)` 已验证 4 字节写不越界; 4 字节自然对齐由页对齐保证。
         unsafe {
-            (self.virt.as_ptr().add(offset) as *mut u32).write_volatile(val);
+            self.virt
+                .as_ptr()
+                .add(offset)
+                .cast::<u32>()
+                .write_volatile(val);
         }
     }
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
     #[expect(
         clippy::cast_ptr_alignment,
         reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
@@ -487,7 +483,11 @@ impl IoMem {
             .expect("IoMem: write_u64 offset+8 越界 (构造函数保证合法范围)");
         // SAFETY: `check_offset(offset, 8)` 已验证 8 字节写不越界; 8 字节自然对齐由页对齐保证。
         unsafe {
-            (self.virt.as_ptr().add(offset) as *mut u64).write_volatile(val);
+            self.virt
+                .as_ptr()
+                .add(offset)
+                .cast::<u64>()
+                .write_volatile(val);
         }
     }
 }

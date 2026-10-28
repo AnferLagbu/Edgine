@@ -85,21 +85,13 @@ impl HeapHeader {
         }
     }
 
-    #[expect(
-        clippy::ref_as_ptr,
-        reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
-    )]
     /// 获取本头部之后的数据区指针
     pub fn data_ptr(&self) -> *mut u8 {
         // SAFETY: self 是对 HeapHeader 的有效引用; 加上 size_of::<Self>()
         // 仍在同一分配块内 (头部紧跟数据).
-        unsafe { (self as *const Self as *mut u8).add(core::mem::size_of::<Self>()) }
+        unsafe { (core::ptr::from_ref::<Self>(self) as *mut u8).add(core::mem::size_of::<Self>()) }
     }
 
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
     #[expect(
         clippy::cast_ptr_alignment,
         reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
@@ -109,7 +101,7 @@ impl HeapHeader {
     /// # Safety
     /// 调用方须保证 `data` 由某次合法分配返回
     pub unsafe fn from_data_ptr(data: *mut u8) -> *mut Self {
-        unsafe { data.sub(core::mem::size_of::<Self>()) as *mut Self }
+        unsafe { data.sub(core::mem::size_of::<Self>()).cast::<Self>() }
     }
 }
 
@@ -229,27 +221,19 @@ pub(crate) mod raw {
 
         /// 取得本头部的字节地址.
         #[inline]
-        #[expect(
-            clippy::ptr_as_ptr,
-            reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-        )]
         pub fn byte_ptr(self) -> *mut u8 {
-            self.0 as *mut u8
+            self.0.cast::<u8>()
         }
 
         /// 通过字节偏移计算相邻的下一个头部.
         #[inline]
-        #[expect(
-            clippy::ptr_as_ptr,
-            reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-        )]
         #[expect(
             clippy::cast_ptr_alignment,
             reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
         )]
         pub fn adjacent_next(&self, offset: usize) -> Self {
             // SAFETY: 调用方保证偏移仍在堆区范围内
-            unsafe { Self::new_unchecked(self.byte_ptr().add(offset) as *mut HeapHeader) }
+            unsafe { Self::new_unchecked(self.byte_ptr().add(offset).cast::<HeapHeader>()) }
         }
     }
 
@@ -266,14 +250,10 @@ pub(crate) mod raw {
             Self { ptr }
         }
 
-        #[expect(
-            clippy::ptr_as_ptr,
-            reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-        )]
         pub fn get(&self) -> *mut HeapHeader {
             // SAFETY: 持有堆锁; UnsafeCell 是 repr(transparent).
             // 用 read_volatile 强制 LTO 不可 cache/错位.
-            unsafe { core::ptr::read_volatile(self.ptr as *const *mut HeapHeader) }
+            unsafe { core::ptr::read_volatile(self.ptr.cast::<*mut HeapHeader>()) }
         }
 
         pub fn set(&self, val: *mut HeapHeader) {
@@ -296,14 +276,10 @@ pub(crate) mod raw {
             Self { ptr }
         }
 
-        #[expect(
-            clippy::ptr_as_ptr,
-            reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-        )]
         pub fn get(&self) -> VirtAddr {
             // SAFETY: 持有堆锁; UnsafeCell 是 repr(transparent).
             // 用 read_volatile 强制 LTO 不可 cache/错位.
-            unsafe { core::ptr::read_volatile(self.ptr as *const VirtAddr) }
+            unsafe { core::ptr::read_volatile(self.ptr.cast::<VirtAddr>()) }
         }
 
         pub fn set(&self, val: VirtAddr) {
@@ -904,14 +880,6 @@ impl KernelHeap {
         self.allocate_first_fit(size)
     }
 
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
-    #[expect(
-        clippy::ptr_cast_constness,
-        reason = "ptr_cast_constness: *mut T as *const T 是已知安全 (Rust 2024 可用 ptr.cast_const 或 &raw const; 当前优先 expect"
-    )]
     /// 早期分配 (堆初始化前)
     fn early_allocate(&self, size: usize) -> Option<*mut u8> {
         let current = self.early_pos.fetch_add(size, Ordering::Relaxed);
@@ -923,14 +891,17 @@ impl KernelHeap {
         }
 
         // SAFETY: current is checked above to be within early_buffer bounds
-        let ptr = unsafe { self.early_buffer.as_ptr().add(current) as *mut u8 };
+        let ptr = unsafe { self.early_buffer.as_ptr().add(current).cast_mut() };
 
         let idx = self.early_count.fetch_add(1, Ordering::Relaxed);
         if idx < MAX_EARLY_ALLOCS {
             // SAFETY: idx < MAX_EARLY_ALLOCS guards the bounds
             unsafe {
-                let alloc_ptr = self.early_allocs.as_ptr().add(idx) as *mut EarlyHeapAlloc;
-                raw::zero_memory(alloc_ptr as *mut u8, core::mem::size_of::<EarlyHeapAlloc>());
+                let alloc_ptr = self.early_allocs.as_ptr().add(idx).cast_mut();
+                raw::zero_memory(
+                    alloc_ptr.cast::<u8>(),
+                    core::mem::size_of::<EarlyHeapAlloc>(),
+                );
                 (*alloc_ptr).ptr = ptr;
                 (*alloc_ptr).size = size;
             }

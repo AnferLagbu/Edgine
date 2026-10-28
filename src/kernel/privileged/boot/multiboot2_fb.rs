@@ -73,10 +73,6 @@ pub fn get_framebuffer_info() -> Option<&'static FramebufferInfo> {
 }
 
 #[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
@@ -105,10 +101,10 @@ pub fn get_framebuffer_info() -> Option<&'static FramebufferInfo> {
 pub fn parse_framebuffer_tag(tag_data: *const u8, _tag_size: u32) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
-        let addr = *(tag_data as *const u64);
-        let pitch = *((tag_data as *const u32).add(2));
-        let width = *((tag_data as *const u32).add(3));
-        let height = *((tag_data as *const u32).add(4));
+        let addr = *tag_data.cast::<u64>();
+        let pitch = *(tag_data.cast::<u32>().add(2));
+        let width = *(tag_data.cast::<u32>().add(3));
+        let height = *(tag_data.cast::<u32>().add(4));
         let bpp = *(tag_data.add(20));
         let fb_type = *(tag_data.add(21));
 

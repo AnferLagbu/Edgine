@@ -31,14 +31,6 @@ impl AuditLog {
         }
     }
 
-    #[expect(
-        clippy::borrow_as_ptr,
-        reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-    )]
-    #[expect(
-        clippy::ptr_cast_constness,
-        reason = "ptr_cast_constness: *mut T as *const T 是已知安全 (Rust 2024 可用 ptr.cast_const 或 &raw const; 当前优先 expect"
-    )]
     /// 追加一条审计项 (环形覆盖最旧记录)。
     pub fn log(&self, pwm: u64, action: AuditAction, target_pwm: u64, domain: u64, caps: u64) {
         let now = super::bootstrap::pwm_now();
@@ -46,7 +38,7 @@ impl AuditLog {
         // SAFETY: count 已 fetch_add, 后续写不会改变 idx; AuditEntry 不含
         // 重入锁, 多核并发写不同 idx 不会数据竞争; 若 idx 相同 (环形覆盖) 也是
         // 单字节字段级别的无锁覆盖, 接受最后写入语义。
-        let entry = &self.entries[idx] as *const AuditEntry as *mut AuditEntry;
+        let entry = (&raw const self.entries[idx]).cast_mut();
         unsafe {
             (*entry).timestamp = now;
             (*entry).pwm = PwmId(pwm);

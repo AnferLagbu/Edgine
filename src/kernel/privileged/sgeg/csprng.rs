@@ -49,15 +49,11 @@ fn rdrand_u64() -> Option<u64> {
     None
 }
 
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
 fn fallback_entropy_byte(idx: usize) -> u8 {
     use core::sync::atomic::AtomicU64;
     static COUNTER: AtomicU64 = AtomicU64::new(0x5A3C_9E17_F2D8_4B61);
     let tsc = crate::arch!(timestamp());
-    let stack_addr = &tsc as *const _ as u64;
+    let stack_addr = &raw const tsc as u64;
     let counter = COUNTER.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::AcqRel);
     let mut v = tsc
         .wrapping_mul(0x2545_F491_4F6C_DD1D)

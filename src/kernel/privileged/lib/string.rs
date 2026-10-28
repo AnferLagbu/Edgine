@@ -328,10 +328,6 @@ pub unsafe extern "C" fn strcat(dest: *mut i8, src: *const i8) -> *mut i8 {
 /// # Safety
 ///
 /// `ptr` 是有效指针. 若 `n` 非零, 则从 `ptr` 起至少有 `n` 字节可读.
-#[expect(
-    clippy::ptr_cast_constness,
-    reason = "ptr_cast_constness: *mut T as *const T 是已知安全 (Rust 2024 可用 ptr.cast_const 或 &raw const; 当前优先 expect"
-)]
 pub unsafe extern "C" fn strchr(s: *const i8, c: i32) -> *mut i8 {
     unsafe {
         if s.is_null() {
@@ -345,7 +341,7 @@ pub unsafe extern "C" fn strchr(s: *const i8, c: i32) -> *mut i8 {
             let ch = *p;
 
             if ch == target {
-                return p as *mut i8;
+                return p.cast_mut();
             }
 
             if ch == 0 {
@@ -371,10 +367,6 @@ pub unsafe extern "C" fn strchr(s: *const i8, c: i32) -> *mut i8 {
 /// # Safety
 ///
 /// `a` 与 `b` 均为有效指针. 各自至少有 `n` 字节可读.
-#[expect(
-    clippy::ptr_cast_constness,
-    reason = "ptr_cast_constness: *mut T as *const T 是已知安全 (Rust 2024 可用 ptr.cast_const 或 &raw const; 当前优先 expect"
-)]
 pub unsafe extern "C" fn strrchr(s: *const i8, c: i32) -> *mut i8 {
     unsafe {
         if s.is_null() {
@@ -402,7 +394,7 @@ pub unsafe extern "C" fn strrchr(s: *const i8, c: i32) -> *mut i8 {
         if last.is_null() {
             core::ptr::null_mut()
         } else {
-            last as *mut i8
+            last.cast_mut()
         }
     }
 }
@@ -419,10 +411,6 @@ pub unsafe extern "C" fn strrchr(s: *const i8, c: i32) -> *mut i8 {
 /// 找到的子串指针，或 NULL 如果未找到
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_cast_constness,
-    reason = "ptr_cast_constness: *mut T as *const T 是已知安全 (Rust 2024 可用 ptr.cast_const 或 &raw const; 当前优先 expect"
-)]
 ///
 /// # Safety
 ///
@@ -435,7 +423,7 @@ pub unsafe extern "C" fn strstr(haystack: *const i8, needle: *const i8) -> *mut 
 
         // 空子串返回 haystack 本身
         if needle.is_null() || *needle == 0 {
-            return haystack as *mut i8;
+            return haystack.cast_mut();
         }
 
         let mut h = haystack;
@@ -455,7 +443,7 @@ pub unsafe extern "C" fn strstr(haystack: *const i8, needle: *const i8) -> *mut 
                 let n_ch = *n;
 
                 if n_ch == 0 {
-                    return h as *mut i8; // 匹配成功
+                    return h.cast_mut(); // 匹配成功
                 }
 
                 if *h_temp != n_ch {
@@ -491,10 +479,6 @@ pub unsafe extern "C" fn strstr(haystack: *const i8, needle: *const i8) -> *mut 
 /// - 区域不能重叠（否则应使用 memmove）
 /// - dest 有足够空间
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 pub unsafe extern "C" fn memcpy(
     dest: *mut core::ffi::c_void,
     src: *const core::ffi::c_void,
@@ -506,8 +490,8 @@ pub unsafe extern "C" fn memcpy(
             return dest;
         }
 
-        let d = dest as *mut u8;
-        let s = src as *const u8;
+        let d = dest.cast::<u8>();
+        let s = src.cast::<u8>();
 
         for i in 0..n {
             *d.add(i) = *s.add(i);
@@ -530,14 +514,6 @@ pub unsafe extern "C" fn memcpy(
 /// 目标地址
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
-    clippy::ptr_cast_constness,
-    reason = "ptr_cast_constness: *mut T as *const T 是已知安全 (Rust 2024 可用 ptr.cast_const 或 &raw const; 当前优先 expect"
-)]
 ///
 /// # Safety
 ///
@@ -552,11 +528,11 @@ pub unsafe extern "C" fn memmove(
             return dest;
         }
 
-        let d = dest as *mut u8;
-        let s = src as *const u8;
+        let d = dest.cast::<u8>();
+        let s = src.cast::<u8>();
 
         // 判断是否需要反向拷贝（处理重叠区域）
-        if d < s as *mut u8 {
+        if d < s.cast_mut() {
             // 正向拷贝
             for i in 0..n {
                 *d.add(i) = *s.add(i);
@@ -602,7 +578,7 @@ pub unsafe extern "C" fn memset(
         #[cfg(target_arch = "aarch64")]
         {
             let val = crate::privileged::lib::u8_from_i32(c & 0xFF);
-            let mut dst = s as *mut u8;
+            let mut dst = s.cast::<u8>();
             let mut remaining = n;
 
             // 逐字节对齐到 16 字节边界
@@ -641,7 +617,7 @@ pub unsafe extern "C" fn memset(
 
         #[cfg(not(target_arch = "aarch64"))]
         {
-            let p = s as *mut u8;
+            let p = s.cast::<u8>();
             let val = crate::privileged::lib::u8_from_i32(c & 0xFF);
             for i in 0..n {
                 *p.add(i) = val;
@@ -666,10 +642,6 @@ pub unsafe extern "C" fn memset(
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 #[cfg(target_arch = "x86_64")]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 ///
 /// # Safety
 ///
@@ -681,7 +653,7 @@ pub unsafe extern "C" fn memset_optimized(s: *mut u8, c: i32, n: usize) -> *mut 
         }
 
         let val = crate::privileged::lib::u64_from_i32(c & 0xFF); // 转换为 u64 以适配 rax 寄存器
-        let dest = s as *mut u8;
+        let dest = s.cast::<u8>();
 
         // 使用内联汇编调用 REP STOSB
         core::arch::asm!(
@@ -709,10 +681,6 @@ pub unsafe extern "C" fn memset_optimized(s: *mut u8, c: i32, n: usize) -> *mut 
 /// * \>0 - s1 > s2
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 ///
 /// # Safety
 ///
@@ -734,8 +702,8 @@ pub unsafe extern "C" fn memcmp(
             return if s1.is_null() { -1 } else { 1 };
         }
 
-        let p1 = s1 as *const u8;
-        let p2 = s2 as *const u8;
+        let p1 = s1.cast::<u8>();
+        let p2 = s2.cast::<u8>();
 
         for i in 0..n {
             let b1 = *p1.add(i);
@@ -761,14 +729,6 @@ pub unsafe extern "C" fn memcmp(
 /// 找到的字符指针，或 NULL 如果未找到
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
-    clippy::ptr_cast_constness,
-    reason = "ptr_cast_constness: *mut T as *const T 是已知安全 (Rust 2024 可用 ptr.cast_const 或 &raw const; 当前优先 expect"
-)]
 ///
 /// # Safety
 ///
@@ -779,12 +739,12 @@ pub unsafe extern "C" fn memchr(s: *const u8, c: i32, n: usize) -> *mut u8 {
             return core::ptr::null_mut();
         }
 
-        let p = s as *const u8;
+        let p = s.cast::<u8>();
         let target = crate::privileged::lib::u8_from_i32(c & 0xFF);
 
         for i in 0..n {
             if *p.add(i) == target {
-                return p.add(i) as *mut u8;
+                return p.add(i).cast_mut();
             }
         }
 
@@ -806,10 +766,6 @@ pub unsafe extern "C" fn memchr(s: *const u8, c: i32, n: usize) -> *mut u8 {
 /// * `len` - 清零的字节数
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 ///
 /// # Safety
 ///
@@ -821,7 +777,7 @@ pub unsafe extern "C" fn secure_zero(ptr: *mut u8, len: usize) {
         }
 
         // 使用 volatile 指针强制写入，防止编译器优化
-        let p = ptr as *mut core::sync::atomic::AtomicU8;
+        let p = ptr.cast::<core::sync::atomic::AtomicU8>();
 
         for i in 0..len {
             (*p.add(i)).store(0, core::sync::atomic::Ordering::Relaxed);

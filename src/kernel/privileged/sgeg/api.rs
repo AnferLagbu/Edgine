@@ -166,12 +166,8 @@ pub extern "C" fn pwm_find(pwm: u64) -> bool {
 /// 取得指定 PWM 的身份条目只读指针 (不存在时返回空指针)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::ref_as_ptr,
-    reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
-)]
 pub extern "C" fn pwm_find_entry(pwm: u64) -> *const PwmEntry {
-    identity::find(pwm).map_or(core::ptr::null(), |e| e as *const PwmEntry)
+    identity::find(pwm).map_or(core::ptr::null(), core::ptr::from_ref::<PwmEntry>)
 }
 
 /// 取指定 PWM 在指定能力域上的全部能力位 (原始 u64 形式)

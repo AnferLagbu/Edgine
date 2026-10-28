@@ -94,7 +94,7 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
         // count × size_of::<u64>() 清零 32768 字节 (8 页), 覆盖后续物理页
         // (可能含 parent 页表结构页) → parent 页表被清 → fork 崩溃.
         core::ptr::write_bytes(
-            child_pml4_virt as *mut u8,
+            child_pml4_virt.cast::<u8>(),
             0,
             crate::privileged::lib::usize_from_u64(PAGE_SIZE),
         );
@@ -138,7 +138,7 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
         unsafe {
             // B05-55C 根治: cast *mut u8, 否则清零 8 页覆盖后续物理页
             core::ptr::write_bytes(
-                child_pdpt_virt as *mut u8,
+                child_pdpt_virt.cast::<u8>(),
                 0,
                 crate::privileged::lib::usize_from_u64(PAGE_SIZE),
             );
@@ -171,7 +171,7 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
             unsafe {
                 // B05-55C 根治: cast *mut u8, 否则清零 8 页覆盖后续物理页
                 core::ptr::write_bytes(
-                    child_pd_virt as *mut u8,
+                    child_pd_virt.cast::<u8>(),
                     0,
                     crate::privileged::lib::usize_from_u64(PAGE_SIZE),
                 );
@@ -213,7 +213,7 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
                 unsafe {
                     // B05-55C 根治: cast *mut u8, 否则清零 8 页覆盖后续物理页
                     core::ptr::write_bytes(
-                        child_table_virt as *mut u8,
+                        child_table_virt.cast::<u8>(),
                         0,
                         crate::privileged::lib::usize_from_u64(PAGE_SIZE),
                     );

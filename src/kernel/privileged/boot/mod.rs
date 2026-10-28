@@ -180,16 +180,12 @@ pub extern "C" fn boot_set_multiboot_info(magic: u32, ptr: *const u8) {
 
 #[cfg(target_arch = "x86_64")]
 #[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
 fn parse_multiboot1(ptr: *const u8) -> (u64, usize) {
     // SAFETY: `ptr` 由调用方保证指向有效 Multiboot1Info; 只读借用
-    let mbi = unsafe { &*(ptr as *const Multiboot1Info) };
+    let mbi = unsafe { &*ptr.cast::<Multiboot1Info>() };
     let mut mem_size: u64 = 128 * 1024 * 1024;
     let mut mmap_entries: usize = 0;
 
@@ -213,7 +209,10 @@ fn parse_multiboot1(ptr: *const u8) -> (u64, usize) {
             mmap_entries += 1;
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
             current = unsafe {
-                (current as *const u8).add(entry.size as usize + 4) as *const MemoryMapEntry
+                current
+                    .cast::<u8>()
+                    .add(entry.size as usize + 4)
+                    .cast::<MemoryMapEntry>()
             };
         }
 
@@ -227,16 +226,12 @@ fn parse_multiboot1(ptr: *const u8) -> (u64, usize) {
 
 #[cfg(target_arch = "x86_64")]
 #[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
-#[expect(
     clippy::cast_ptr_alignment,
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
 fn parse_multiboot2(ptr: *const u8) -> (u64, usize) {
     // SAFETY: `ptr` 由调用方保证指向有效 u32; 只读借用
-    let total_size = unsafe { *(ptr as *const u32) };
+    let total_size = unsafe { *ptr.cast::<u32>() };
     let mut mem_size: u64 = 128 * 1024 * 1024;
     let mut mmap_entries: usize = 0;
 
@@ -247,9 +242,9 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize) {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         let tag_ptr = unsafe { ptr.add(offset) };
         // SAFETY: `tag_ptr` 由调用方保证指向有效 u32; 只读借用
-        let tag_type = unsafe { *(tag_ptr as *const u32) };
+        let tag_type = unsafe { *tag_ptr.cast::<u32>() };
         // SAFETY: 指针由调用方保证有效, 偏移 1 不越界
-        let tag_size = unsafe { *((tag_ptr as *const u32).add(1)) };
+        let tag_size = unsafe { *(tag_ptr.cast::<u32>().add(1)) };
 
         if tag_type == 0 || tag_size == 0 {
             break;
@@ -260,16 +255,16 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize) {
                 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                 let basic_ptr = unsafe { tag_ptr.add(8) };
                 // SAFETY: `basic_ptr` 由调用方保证指向有效 u32; 只读借用
-                let _mem_lower = unsafe { *(basic_ptr as *const u32) };
+                let _mem_lower = unsafe { *basic_ptr.cast::<u32>() };
                 // SAFETY: 指针由调用方保证有效, 偏移 1 不越界
-                let mem_upper = unsafe { *((basic_ptr as *const u32).add(1)) };
+                let mem_upper = unsafe { *(basic_ptr.cast::<u32>().add(1)) };
                 mem_size = (u64::from(mem_upper) + 1024) * 1024;
             }
             6 => {
                 // SAFETY: `const` 由调用方保证为有效指针; 只读访问
-                let entry_size = unsafe { *(tag_ptr.add(8) as *const u32) };
+                let entry_size = unsafe { *tag_ptr.add(8).cast::<u32>() };
                 // SAFETY: `const` 由调用方保证为有效指针; 只读访问
-                let _entry_version = unsafe { *((tag_ptr.add(8) as *const u32).add(1)) };
+                let _entry_version = unsafe { *(tag_ptr.add(8).cast::<u32>().add(1)) };
                 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                 let entries_start = unsafe { tag_ptr.add(16) };
                 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -281,18 +276,18 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize) {
                 while unsafe { pos.add(entry_size as usize) <= entries_end } {
                     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                     let base = unsafe {
-                        let lo = *(pos as *const u32);
-                        let hi = *((pos as *const u32).add(1));
+                        let lo = *pos.cast::<u32>();
+                        let hi = *(pos.cast::<u32>().add(1));
                         (u64::from(hi) << 32) | u64::from(lo)
                     };
                     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                     let len = unsafe {
-                        let lo = *((pos as *const u32).add(2));
-                        let hi = *((pos as *const u32).add(3));
+                        let lo = *(pos.cast::<u32>().add(2));
+                        let hi = *(pos.cast::<u32>().add(3));
                         (u64::from(hi) << 32) | u64::from(lo)
                     };
                     // SAFETY: 指针由调用方保证有效, 偏移 4 不越界
-                    let mtype = unsafe { *((pos as *const u32).add(4)) };
+                    let mtype = unsafe { *(pos.cast::<u32>().add(4)) };
 
                     if mtype == 1 {
                         let end_addr = base + len;
@@ -325,13 +320,6 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize) {
 
 // 符号桩化 (host-test): kernel_end 取值已分叉, 触发 borrow_as_ptr 的
 // `&_kernel_end as *const u8` 仅存在于真机分支, expect 须同步收窄.
-#[cfg_attr(
-    not(feature = "host-test"),
-    expect(
-        clippy::borrow_as_ptr,
-        reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-    )
-)]
 /// 初始化启动信息子系统, 解析引导器传入的启动参数并返回汇总的 [`BootInfo`]
 pub fn init() -> BootInfo {
     // 符号桩化 (host-test): host 无 _kernel_end 链接脚本符号且不执行裸机引导,
@@ -340,15 +328,9 @@ pub fn init() -> BootInfo {
     // aarch64: 内核区链接于高半区 (VMA = KERNEL_BASE + LMA), 故须减去 KERNEL_BASE.
     // x86_64: 低 VMA 链接 + 高别名运行 (位置计数器未跳转), 符号地址即物理地址.
     #[cfg(all(not(feature = "host-test"), target_arch = "aarch64"))]
-    let kernel_end = {
-        // SAFETY: `_kernel_end` 为链接脚本定义的符号, 只读访问.
-        unsafe { crate::privileged::mm::virt_to_phys(&_kernel_end as *const u8 as u64) }
-    };
+    let kernel_end = crate::privileged::mm::virt_to_phys(&raw const _kernel_end as u64);
     #[cfg(all(not(feature = "host-test"), not(target_arch = "aarch64")))]
-    let kernel_end = {
-        // SAFETY: `_kernel_end` 为链接脚本定义的符号, 只读访问.
-        unsafe { &_kernel_end as *const u8 as u64 }
-    };
+    let kernel_end = &raw const _kernel_end as u64;
     #[cfg(feature = "host-test")]
     let kernel_end = 0u64;
 

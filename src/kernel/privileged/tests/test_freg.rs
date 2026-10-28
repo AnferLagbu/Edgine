@@ -13,10 +13,6 @@ fn test_undo_log_basic() -> TestResult {
     TestResult::Pass
 }
 
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
 fn test_undo_log_record() -> TestResult {
     let mut undo = Box::new(UndoLog::new());
     undo.current_generation = 1;
@@ -24,45 +20,37 @@ fn test_undo_log_record() -> TestResult {
     let mut value: u64 = 42;
     let old = value;
     value = 100;
-    undo.record(&mut value as *mut u64, old);
+    undo.record(&raw mut value, old);
 
     check!(undo.count == 1, "expected 1 entry after record");
     check!(undo.entries[0].generation == 1, "generation mismatch");
     TestResult::Pass
 }
 
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
 fn test_undo_log_dedup() -> TestResult {
     let mut undo = Box::new(UndoLog::new());
     undo.current_generation = 1;
 
     let mut v: u64 = 1;
-    undo.record(&mut v as *mut u64, v);
+    undo.record(&raw mut v, v);
     v = 2;
-    undo.record(&mut v as *mut u64, v);
+    undo.record(&raw mut v, v);
     v = 3;
-    undo.record(&mut v as *mut u64, v);
+    undo.record(&raw mut v, v);
 
     check!(undo.count <= 3, "dedup should limit entries");
     TestResult::Pass
 }
 
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
 fn test_undo_log_rollback() -> TestResult {
     let mut undo = Box::new(UndoLog::new());
     undo.current_generation = 1;
 
     let mut v: u64 = 42;
-    undo.record(&mut v as *mut u64, v);
+    undo.record(&raw mut v, v);
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
-        core::ptr::write_volatile(&mut v, 99);
+        core::ptr::write_volatile(&raw mut v, 99);
     }
 
     check!(undo.count == 1, "should have 1 entry");

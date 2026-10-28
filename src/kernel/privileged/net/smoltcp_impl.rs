@@ -112,14 +112,10 @@ impl Device for EGDFNetDevice {
     where
         Self: 'a;
 
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
     fn receive(&mut self, _timestamp: Instant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
         let n = self
             .ops
-            .try_receive(self.driver_data as *mut u8, &mut self.rx_buf);
+            .try_receive(self.driver_data.cast::<u8>(), &mut self.rx_buf);
         if n <= 0 {
             return None;
         }
@@ -171,7 +167,7 @@ impl TxToken for EGDFTxToken<'_> {
         // 但必须留下可观测痕迹: 计数 + 限频告警, 见 `TX_DROPPED` 文档。
         if self
             .ops
-            .send(self.driver_data as *mut u8, &self.tx_buf[..len])
+            .send(self.driver_data.cast::<u8>(), &self.tx_buf[..len])
             < 0
         {
             let total = TX_DROPPED.fetch_add(1, Ordering::Relaxed) + 1;

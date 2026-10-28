@@ -36,10 +36,6 @@ static CPU_TLB_GEN: [AtomicU64; crate::privileged::config::MAX_CPUS] =
 static TLB_SHOOTDOWN_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// 初始化 SMP 子系统: 登记 BSP 为逻辑索引 0 并置为在线
-#[expect(
-    clippy::ptr_as_ptr,
-    reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-)]
 pub fn init() {
     let bsp_hw_id = crate::arch!(cpu_id());
     CPU_HW_IDS[0].store(bsp_hw_id, Ordering::Release);
@@ -48,7 +44,7 @@ pub fn init() {
 
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
-        crate::privileged::klog::klog_info(c"[SMP] BSP initialized".as_ptr() as *const i8);
+        crate::privileged::klog::klog_info(c"[SMP] BSP initialized".as_ptr().cast::<i8>());
     }
 }
 

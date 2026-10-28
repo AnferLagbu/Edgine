@@ -605,14 +605,10 @@ pub fn vfs_seek_safe(fd: u32, offset: i32, whence: u32) -> i32 {
     vfs_seek(fd, offset, whence)
 }
 
-#[expect(
-    clippy::ref_as_ptr,
-    reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
-)]
 /// Safe 包装: `vfs_readdir`
 pub fn vfs_readdir_safe(fd: u32, entry: &mut super::vfs_types::VfsDirEntry) -> i32 {
     // SAFETY: entry 是调用方拥有的有效可写结构体
-    vfs_readdir(fd, entry as *mut _)
+    vfs_readdir(fd, core::ptr::from_mut(entry))
 }
 
 /// `open(2)` 入口 — 转 [`vfs_open_internal`].
@@ -756,14 +752,10 @@ pub extern "C" fn vfs_fstat(fd: u32, st: *mut VfsStat, _pwm: u64) -> i32 {
     result.unwrap_or(-1)
 }
 
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
 /// Safe 包装: functions 层用, 返回 `VfsStat` 而非 raw pointer.
 pub fn vfs_fstat_safe(fd: u32, pwm: u64) -> Option<VfsStat> {
     let mut st = VfsStat::default();
-    let r = vfs_fstat(fd, &mut st as *mut VfsStat, pwm);
+    let r = vfs_fstat(fd, &raw mut st, pwm);
     if r < 0 { None } else { Some(st) }
 }
 

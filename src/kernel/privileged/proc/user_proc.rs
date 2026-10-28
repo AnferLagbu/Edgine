@@ -142,16 +142,12 @@ pub(crate) mod raw {
         }
 
         #[inline]
-        #[expect(
-            clippy::borrow_as_ptr,
-            reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-        )]
         pub fn set_pid(&self, v: u32) {
             // SAFETY: 调用方保证指针/类型有效; 写入权威 Process
             // 注意: Process::pid 是 ProcessId (newtype), 需要通过 ptr::write 更新
             unsafe {
                 let proc = (*self.0).process.as_ptr();
-                core::ptr::write(&mut (*proc).pid as *mut _, ProcessId(v));
+                core::ptr::write(&raw mut (*proc).pid, ProcessId(v));
             }
         }
 
@@ -480,14 +476,10 @@ pub(crate) mod raw {
         unsafe { elf_data.add(off) }
     }
 
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
     /// 分配内存并清零 (类似 calloc)。
     pub fn alloc_zeroed(size: u64) -> *mut u8 {
         // SAFETY: kmalloc 由 kernel allocator 提供, 调用方负责释放。
-        let ptr = unsafe { kmalloc(size) } as *mut u8;
+        let ptr = unsafe { kmalloc(size) }.cast::<u8>();
         if !ptr.is_null() {
             // SAFETY: ptr 来自 kmalloc, 大小为 size, 清零区间 [ptr, ptr+size) 合法。
             unsafe {
@@ -501,14 +493,6 @@ pub(crate) mod raw {
         ptr
     }
 
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
-    #[expect(
-        clippy::borrow_as_ptr,
-        reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-    )]
     #[expect(
         clippy::cast_ptr_alignment,
         reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
@@ -524,23 +508,19 @@ pub(crate) mod raw {
     /// 已清零的 `UserProcess` 裸指针; `process` 字段已正确指向传入的 `Process`.
     pub fn alloc_user_process(process: NonNull<Process>) -> Option<*mut UserProcess> {
         let size = core::mem::size_of::<UserProcess>() as u64;
-        let ptr = raw::alloc_zeroed(size) as *mut UserProcess;
+        let ptr = raw::alloc_zeroed(size).cast::<UserProcess>();
         if ptr.is_null() {
             None
         } else {
             // SAFETY: ptr 来自 alloc_zeroed, 大小为 size_of::<UserProcess>(), 区间合法.
             //         process NonNull 句柄由调用方保证有效 (INV-USER-PROC-2).
             unsafe {
-                core::ptr::write(&mut (*ptr).process, process);
+                core::ptr::write(&raw mut (*ptr).process, process);
             }
             Some(ptr)
         }
     }
 
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
     #[expect(
         clippy::cast_ptr_alignment,
         reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
@@ -548,14 +528,10 @@ pub(crate) mod raw {
     /// 分配并清零一个 `Process` (用于 process table)。
     pub fn alloc_kernel_process() -> Option<*mut Process> {
         let size = core::mem::size_of::<Process>() as u64;
-        let ptr = raw::alloc_zeroed(size) as *mut Process;
+        let ptr = raw::alloc_zeroed(size).cast::<Process>();
         if ptr.is_null() { None } else { Some(ptr) }
     }
 
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
     /// 释放 `alloc_kernel_process` 分配的 `Process` 内存 (回滚路径专用).
     ///
     /// # Safety (内部)
@@ -568,13 +544,9 @@ pub(crate) mod raw {
             return;
         }
 
-        crate::privileged::mm::kfree(kproc_ptr as *mut u8);
+        crate::privileged::mm::kfree(kproc_ptr.cast::<u8>());
     }
 
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
     /// 释放 `alloc_user_process` 分配的 `UserProcess` 镜像内存 (回滚路径专用).
     ///
     /// # Safety (内部)
@@ -586,7 +558,7 @@ pub(crate) mod raw {
             return;
         }
 
-        crate::privileged::mm::kfree(proc_ptr as *mut u8);
+        crate::privileged::mm::kfree(proc_ptr.cast::<u8>());
     }
 
     /// 从 PID/CR3 构造 `UserProcRef` 用于新创建进程。
@@ -1677,10 +1649,6 @@ impl UserProcManager {
         reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
     )]
     #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
-    #[expect(
         clippy::cast_ptr_alignment,
         reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
     )]
@@ -1703,7 +1671,7 @@ impl UserProcManager {
         crate::klog_boot_info!("[ELF] verify_elf OK, entry={:#x}", verified.entry);
 
         // SAFETY: verify_elf 已通过校验, header 引用安全
-        let header = unsafe { &*(elf_data as *const ElfHeader) };
+        let header = unsafe { &*elf_data.cast::<ElfHeader>() };
 
         // PIE (ET_DYN) 支持: 检测 ELF 类型并计算 load_bias
         let is_pie = verified.is_pie;
@@ -1759,7 +1727,7 @@ impl UserProcManager {
                     return -1;
                 }
                 let phdr = (elf_data.add(crate::privileged::lib::usize_from_u64(phdr_offset)))
-                    as *const ElfPhdr;
+                    .cast::<ElfPhdr>();
 
                 if (*phdr).p_type != PT_LOAD {
                     continue;

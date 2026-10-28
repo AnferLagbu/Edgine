@@ -65,14 +65,6 @@ pub fn clone_syscall(
     clippy::too_many_lines,
     reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
 )]
-#[expect(
-    clippy::ref_as_ptr,
-    reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
-)]
-#[expect(
-    clippy::ptr_cast_constness,
-    reason = "ptr_cast_constness: *mut T as *const T 是已知安全 (Rust 2024 可用 ptr.cast_const 或 &raw const; 当前优先 expect"
-)]
 /// clone 实现 (0 unsafe) — 页表/进程表/用户内存写入全部经 privileged safe API.
 ///
 /// 自 `privileged/syscall/clone.rs` 下沉; 原三处 `unsafe` 用户态 TID 写入改用
@@ -279,9 +271,7 @@ fn clone_impl(
     }
 
     // 注册到进程表
-    api::process_insert(
-        child as *const crate::privileged::proc::Process as *mut crate::privileged::proc::Process,
-    );
+    api::process_insert(core::ptr::from_ref::<crate::privileged::proc::Process>(child).cast_mut());
 
     // CLONE_PARENT_SETTID
     if flags & CLONE_PARENT_SETTID != 0 && parent_tidptr != 0 {
