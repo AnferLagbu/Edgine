@@ -253,7 +253,11 @@ pub mod raw {
         unsafe {
             if keyboard_has_data() {
                 let c = keyboard_get_char();
-                if c > 0 { Some(c as u8) } else { None }
+                if c > 0 {
+                    Some(crate::privileged::lib::u8_from_i32(c))
+                } else {
+                    None
+                }
             } else {
                 None
             }

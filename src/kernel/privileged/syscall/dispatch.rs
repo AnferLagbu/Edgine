@@ -172,7 +172,7 @@ pub unsafe extern "C" fn syscall_dispatch_from_frame(frame: *mut InterruptFrame)
         let a4 = f.r8;
         let a5 = f.r9;
         let result = syscall_dispatch(syscall_num, a0, a1, a2, a3, a4, a5);
-        f.rax = result as u64;
+        f.rax = result.cast_unsigned();
 
         // 返回用户态前检查待投递信号
         // SAFETY: frame 有效, 当前在当前 CPU 的 syscall 上下文
@@ -411,7 +411,7 @@ pub(crate) fn sys_nanosleep(req: u64, rem: u64) -> i64 {
         return Errno::EINVAL.as_ret();
     }
 
-    let total_ns = ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64;
+    let total_ns = ts.tv_sec.cast_unsigned() * 1_000_000_000 + ts.tv_nsec.cast_unsigned();
     if total_ns == 0 {
         return 0;
     }
@@ -427,7 +427,10 @@ pub(crate) fn sys_kill(pid: i32, sig: i32) -> i64 {
     if !(0..=31).contains(&sig) {
         return Errno::EINVAL.as_ret();
     }
-    match crate::privileged::proc::do_signal_send_extended(pid, sig as u8) {
+    match crate::privileged::proc::do_signal_send_extended(
+        pid,
+        crate::privileged::lib::u8_from_i32(sig),
+    ) {
         Ok(_) => 0,
         Err(-1) => Errno::EINVAL.as_ret(),
         Err(-2) => Errno::ESRCH.as_ret(),
@@ -457,7 +460,10 @@ pub(crate) fn sys_rt_sigaction(signum: i32, act: u64, oact: u64) -> i64 {
         if !raw::check_user_buf(oact, 8) {
             return Errno::EFAULT.as_ret();
         }
-        let old = crate::privileged::proc::get_sigaction(pid, signum as u8);
+        let old = crate::privileged::proc::get_sigaction(
+            pid,
+            crate::privileged::lib::u8_from_i32(signum),
+        );
         match old {
             // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
             Some(v) => unsafe { raw::write_u64(oact as *mut u64, v) },
@@ -471,7 +477,11 @@ pub(crate) fn sys_rt_sigaction(signum: i32, act: u64, oact: u64) -> i64 {
         }
         // SAFETY: `const` 由调用方保证为有效指针; 只读访问
         let new_action = unsafe { raw::read_u64(act as *const u64) };
-        match crate::privileged::proc::set_sigaction(pid, signum as u8, new_action) {
+        match crate::privileged::proc::set_sigaction(
+            pid,
+            crate::privileged::lib::u8_from_i32(signum),
+            new_action,
+        ) {
             Some(_) => {}
             None => return Errno::EINVAL.as_ret(),
         }

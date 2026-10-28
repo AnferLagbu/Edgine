@@ -132,7 +132,7 @@ impl SafeProcFs {
         if rc < 0 {
             Err(KernelError::Io)
         } else {
-            Ok(rc as usize)
+            Ok(crate::functions::intcast::usize_from_i32(rc))
         }
     }
 

@@ -73,7 +73,7 @@ pub fn qemu_exit(success: bool) -> ! {
             asm!(
                 "out dx, al",
                 in("dx") 0xf4u16,
-                in("al") exit_code as u8,
+                in("al") crate::privileged::lib::u8_from_i32(exit_code),
                 options(nomem, nostack)
             );
         }

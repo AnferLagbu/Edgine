@@ -41,7 +41,7 @@ impl Inode for TmpFsInode {
         if result < 0 {
             Err(KernelError::Io)
         } else {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         }
     }
 
@@ -53,7 +53,7 @@ impl Inode for TmpFsInode {
         if result < 0 {
             Err(KernelError::Io)
         } else {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         }
     }
 
@@ -81,9 +81,9 @@ impl Inode for TmpFsInode {
             u64::from(fs.inner.get_file_size(self.node_id).unwrap_or(0))
         };
         let new_offset = match whence {
-            VfsSeekWhence::Set => offset as u64,
-            VfsSeekWhence::Cur => current_offset.saturating_add(offset as u64),
-            VfsSeekWhence::End => file_size.saturating_add(offset as u64),
+            VfsSeekWhence::Set => offset.cast_unsigned(),
+            VfsSeekWhence::Cur => current_offset.saturating_add(offset.cast_unsigned()),
+            VfsSeekWhence::End => file_size.saturating_add(offset.cast_unsigned()),
         };
         Ok(new_offset)
     }
@@ -238,7 +238,7 @@ impl FileSystem for TmpFsFileSystem {
         if result < 0 {
             Err(KernelError::Io)
         } else {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         }
     }
 
@@ -256,8 +256,8 @@ impl FileSystem for TmpFsFileSystem {
         if result < 0 {
             Err(KernelError::Io)
         } else {
-            fs.add_used(result as u64);
-            Ok(result as usize)
+            fs.add_used(crate::functions::intcast::u64_from_i32(result));
+            Ok(crate::functions::intcast::usize_from_i32(result))
         }
     }
 

@@ -485,7 +485,7 @@ pub fn is_inotify_fd(fd: i32) -> bool {
 
 /// fd → slot 索引
 fn fd_to_slot(fd: i32) -> usize {
-    (fd - INOTIFY_FD_BASE) as usize
+    crate::functions::intcast::usize_from_i32(fd - INOTIFY_FD_BASE)
 }
 
 /// 通知所有监控指定 inode 的 inotify 实例

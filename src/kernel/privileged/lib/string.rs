@@ -121,7 +121,7 @@ pub unsafe extern "C" fn strcmp(s1: *const i8, s2: *const i8) -> i32 {
             let c2 = *p2;
 
             if c1 == 0 || c2 == 0 || c1 != c2 {
-                return i32::from(c1 as u8) - i32::from(c2 as u8);
+                return i32::from(c1.cast_unsigned()) - i32::from(c2.cast_unsigned());
             }
 
             p1 = p1.add(1);
@@ -169,7 +169,7 @@ pub unsafe extern "C" fn strncmp(s1: *const i8, s2: *const i8, n: usize) -> i32 
             let c2 = *p2;
 
             if c1 == 0 || c2 == 0 || c1 != c2 {
-                return i32::from(c1 as u8) - i32::from(c2 as u8);
+                return i32::from(c1.cast_unsigned()) - i32::from(c2.cast_unsigned());
             }
 
             p1 = p1.add(1);
@@ -605,7 +605,7 @@ pub unsafe extern "C" fn memset(
 
         #[cfg(target_arch = "aarch64")]
         {
-            let val = (c & 0xFF) as u8;
+            let val = crate::privileged::lib::u8_from_i32(c & 0xFF);
             let mut dst = s as *mut u8;
             let mut remaining = n;
 
@@ -646,7 +646,7 @@ pub unsafe extern "C" fn memset(
         #[cfg(not(target_arch = "aarch64"))]
         {
             let p = s as *mut u8;
-            let val = (c & 0xFF) as u8;
+            let val = crate::privileged::lib::u8_from_i32(c & 0xFF);
             for i in 0..n {
                 *p.add(i) = val;
             }
@@ -684,7 +684,7 @@ pub unsafe extern "C" fn memset_optimized(s: *mut u8, c: i32, n: usize) -> *mut 
             return s;
         }
 
-        let val = (c & 0xFF) as u64; // 转换为 u64 以适配 rax 寄存器
+        let val = crate::privileged::lib::u64_from_i32(c & 0xFF); // 转换为 u64 以适配 rax 寄存器
         let dest = s as *mut u8;
 
         // 使用内联汇编调用 REP STOSB
@@ -784,7 +784,7 @@ pub unsafe extern "C" fn memchr(s: *const u8, c: i32, n: usize) -> *mut u8 {
         }
 
         let p = s as *const u8;
-        let target = (c & 0xFF) as u8;
+        let target = crate::privileged::lib::u8_from_i32(c & 0xFF);
 
         for i in 0..n {
             if *p.add(i) == target {

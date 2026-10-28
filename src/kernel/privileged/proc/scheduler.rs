@@ -615,7 +615,10 @@ impl Scheduler {
         PROCESS_TABLE.with_process(pid, |proc| {
             let clamped = nice.clamp(-20, 19);
             let w = nice_to_weight(clamped);
-            proc.nice.store(clamped as u32, Ordering::Release);
+            proc.nice.store(
+                crate::privileged::lib::u32_from_i8(clamped),
+                Ordering::Release,
+            );
             proc.cfs_weight.store(w, Ordering::Release);
         });
     }

@@ -536,7 +536,7 @@ impl SafeDevFs {
         if rc < 0 {
             Err(KernelError::Io)
         } else {
-            Ok(rc as usize)
+            Ok(crate::functions::intcast::usize_from_i32(rc))
         }
     }
 
@@ -553,7 +553,7 @@ impl SafeDevFs {
         if rc < 0 {
             Err(KernelError::Io)
         } else {
-            Ok(rc as usize)
+            Ok(crate::functions::intcast::usize_from_i32(rc))
         }
     }
 
@@ -673,7 +673,7 @@ impl Inode for DevFsInode {
         if result < 0 {
             Err(KernelError::Io)
         } else {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         }
     }
 
@@ -682,7 +682,7 @@ impl Inode for DevFsInode {
         if result < 0 {
             Err(KernelError::Io)
         } else {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         }
     }
 
@@ -767,7 +767,7 @@ impl FileSystem for DevfsData {
         if result < 0 {
             Err(KernelError::Io)
         } else {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         }
     }
 
@@ -776,7 +776,7 @@ impl FileSystem for DevfsData {
         if result < 0 {
             Err(KernelError::Io)
         } else {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         }
     }
 

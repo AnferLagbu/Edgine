@@ -245,12 +245,18 @@ pub unsafe fn init_distributor() -> Result<(), &'static str> {
         //    Group 0 会触发 FIQ, 但 FIQ handler 仅为 unexpected_exception 桩.
         //    使用 Group 1 使中断走 handle_el1h_irq 正常处理路径.
         for i in 0..2 {
-            gicd_write(GICD_IGROUPR + (i as u64 * 4), 0xFFFF_FFFF);
+            gicd_write(
+                GICD_IGROUPR + (crate::privileged::lib::u64_from_i32(i) * 4),
+                0xFFFF_FFFF,
+            );
         }
 
         // 4. 设置中断优先级
         for i in 0..32 {
-            gicd_write(GICD_IPRIORITYR + (i as u64 * 4), 0xA0A0_A0A0);
+            gicd_write(
+                GICD_IPRIORITYR + (crate::privileged::lib::u64_from_i32(i) * 4),
+                0xA0A0_A0A0,
+            );
         }
 
         // 5. 使能 Distributor (Group0 + Group1NS); ARE 已在步骤 2 置位。

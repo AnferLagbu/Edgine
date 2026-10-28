@@ -331,7 +331,7 @@ pub fn proc_getsid(pid: i32) -> i64 {
     let target_pid = if pid == 0 {
         process_get_current_pid()
     } else {
-        pid as u32
+        pid.cast_unsigned()
     };
 
     if target_pid == 0 {
@@ -357,11 +357,15 @@ pub fn proc_setpgid(pid: i32, pgid_arg: i32) -> i64 {
     }
 
     let current_pid = process_get_current_pid();
-    let target_pid = if pid == 0 { current_pid } else { pid as u32 };
+    let target_pid = if pid == 0 {
+        current_pid
+    } else {
+        pid.cast_unsigned()
+    };
     let new_pgid = if pgid_arg == 0 {
         target_pid
     } else {
-        pgid_arg as u32
+        pgid_arg.cast_unsigned()
     };
 
     if target_pid == 0 {
@@ -432,7 +436,7 @@ pub fn proc_getpgid(pid: i32) -> i64 {
     let target_pid = if pid == 0 {
         process_get_current_pid()
     } else {
-        pid as u32
+        pid.cast_unsigned()
     };
     if target_pid == 0 {
         return -3;
@@ -482,7 +486,7 @@ pub fn sys_tiocsctty(fd: i32) -> i64 {
         return -1;
     }
 
-    let dev = fd as u64;
+    let dev = crate::privileged::lib::u64_from_i32(fd);
 
     if SESSION_MANAGER.set_controlling_terminal(sid, dev) {
         0

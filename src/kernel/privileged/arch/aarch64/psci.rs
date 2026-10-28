@@ -132,7 +132,7 @@ pub fn cpu_on(mpidr: u64, entry_pa: u64, context_id: u64) -> Result<(), PsciErro
 /// 检查 PSCI 版本。返回 (major, minor) 或 None。
 fn psci_version() -> Option<(u32, u32)> {
     // SAFETY: PSCI_VERSION 为无入参函数; conduit 由设备树探测, 固件保证可调用.
-    let ver = unsafe { invoke(u64::from(PSCI_VERSION), 0, 0, 0) } as u64;
+    let ver = (unsafe { invoke(u64::from(PSCI_VERSION), 0, 0, 0) }).cast_unsigned();
     if ver == u64::from(u32::MAX) {
         // PSCI 不可用 (固件返回 u32::MAX)
         None

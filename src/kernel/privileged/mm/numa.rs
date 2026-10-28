@@ -150,9 +150,9 @@ impl NumaMempolicy {
 
     fn nodes_from_mask(mask: u64) -> Vec<u32> {
         let mut nodes = Vec::new();
-        for i in 0..64 {
+        for i in 0..64i32 {
             if mask & (1u64 << i) != 0 {
-                nodes.push(i as u32);
+                nodes.push(i.cast_unsigned());
             }
         }
         nodes

@@ -1615,7 +1615,7 @@ pub unsafe extern "C" fn sm_recvmsg(fd: i32, msg: *mut u8, _flags: i32) -> i32 {
             return n;
         }
         // 拆分回 iov
-        let mut left = n as usize;
+        let mut left = crate::privileged::lib::usize_from_i32(n);
         let mut off = 0usize;
         for i in 0..msg_iovlen_us {
             if left == 0 {

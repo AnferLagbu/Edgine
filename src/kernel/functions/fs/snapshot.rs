@@ -20,7 +20,7 @@ pub fn snapshot_create_syscall(name_ptr: u64) -> Result<usize, Errno> {
     let result = crate::functions::fs::unkfs::unkfs::get_unkfs().snapshot_create(&name);
 
     if result >= 0 {
-        Ok(result as usize)
+        Ok(crate::functions::intcast::usize_from_i32(result))
     } else {
         Err(Errno::from_ret(i64::from(result)))
     }
@@ -34,7 +34,7 @@ pub fn snapshot_destroy_syscall(snap_id: u64) -> Result<usize, Errno> {
     let result = crate::functions::fs::unkfs::unkfs::get_unkfs().snapshot_destroy(snap_id);
 
     if result >= 0 {
-        Ok(result as usize)
+        Ok(crate::functions::intcast::usize_from_i32(result))
     } else {
         Err(Errno::from_ret(i64::from(result)))
     }
@@ -48,7 +48,7 @@ pub fn snapshot_rollback_syscall(snap_id: u64) -> Result<usize, Errno> {
     let result = crate::functions::fs::unkfs::unkfs::get_unkfs().snapshot_rollback(snap_id);
 
     if result >= 0 {
-        Ok(result as usize)
+        Ok(crate::functions::intcast::usize_from_i32(result))
     } else {
         Err(Errno::from_ret(i64::from(result)))
     }
@@ -68,7 +68,7 @@ pub fn snapshot_clone_syscall(snap_id: u64, name_ptr: u64) -> Result<usize, Errn
     let result = crate::functions::fs::unkfs::unkfs::get_unkfs().clone_create(snap_id, &name);
 
     if result >= 0 {
-        Ok(result as usize)
+        Ok(crate::functions::intcast::usize_from_i32(result))
     } else {
         Err(Errno::from_ret(i64::from(result)))
     }

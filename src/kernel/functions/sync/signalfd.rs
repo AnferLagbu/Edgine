@@ -57,7 +57,7 @@ pub fn signalfd_syscall(fd: i32, mask_ptr: u64, flags: i32) -> Result<usize, Err
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }
 
@@ -82,7 +82,7 @@ pub fn signalfd_read_syscall(fd: i32, buf: u64) -> Result<usize, Errno> {
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }
 
@@ -103,6 +103,6 @@ pub fn signalfd_close_syscall(fd: i32) -> Result<usize, Errno> {
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }

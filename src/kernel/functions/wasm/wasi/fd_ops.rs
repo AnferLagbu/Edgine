@@ -19,12 +19,12 @@ use crate::functions::wasm::types::{Value, WasmError};
 ///
 /// 当栈弹出参数失败或向解释器栈压入结果失败时返回对应的 `WasmError`.
 pub fn wasi_fd_close(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
     match ctx.fd_table.close(fd) {
         Ok(entry) => {
             // 调用 VFS 关闭底层 fd
             if entry.inner_fd >= 0 {
-                crate::functions::fs::api::vfs_close(entry.inner_fd as u32);
+                crate::functions::fs::api::vfs_close(entry.inner_fd.cast_unsigned());
             }
             interp.stack.push(Value::I32(wasi_success()))?;
         }
@@ -44,10 +44,10 @@ pub fn wasi_fd_close(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
 ///
 /// 当栈弹出参数失败或向解释器栈压入结果失败时返回对应的 `WasmError`.
 pub fn wasi_fd_seek(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
     let offset = interp.stack.pop_i64()? as i32;
-    let whence = interp.stack.pop_i32()? as u32;
-    let new_offset_ptr = interp.stack.pop_i32()? as u32;
+    let whence = interp.stack.pop_i32()?.cast_unsigned();
+    let new_offset_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let entry = match ctx.fd_table.get(fd) {
         Ok(e) => e,
@@ -58,12 +58,13 @@ pub fn wasi_fd_seek(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(
     };
 
     // 调用 VFS seek
-    let result = crate::functions::fs::api::vfs_seek(entry.inner_fd as u32, offset, whence);
+    let result =
+        crate::functions::fs::api::vfs_seek(entry.inner_fd.cast_unsigned(), offset, whence);
 
     if result < 0 {
         interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
     } else {
-        write_u32_to_memory(interp, new_offset_ptr, result as u32);
+        write_u32_to_memory(interp, new_offset_ptr, result.cast_unsigned());
         interp.stack.push(Value::I32(wasi_success()))?;
     }
     Ok(())
@@ -75,8 +76,8 @@ pub fn wasi_fd_seek(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(
 ///
 /// 当栈弹出参数失败、写入线性内存失败或压栈结果失败时返回对应的 `WasmError`.
 pub fn wasi_fd_tell(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
-    let offset_ptr = interp.stack.pop_i32()? as u32;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
+    let offset_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let entry = match ctx.fd_table.get(fd) {
         Ok(e) => e,
@@ -88,7 +89,7 @@ pub fn wasi_fd_tell(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(
 
     // seek(0, SEEK_CUR) 获取当前位置
     let result = crate::functions::fs::api::vfs_seek(
-        entry.inner_fd as u32,
+        entry.inner_fd.cast_unsigned(),
         0,
         1, // SEEK_CUR
     );
@@ -96,7 +97,7 @@ pub fn wasi_fd_tell(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(
     if result < 0 {
         interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
     } else {
-        write_u32_to_memory(interp, offset_ptr, result as u32);
+        write_u32_to_memory(interp, offset_ptr, result.cast_unsigned());
         interp.stack.push(Value::I32(wasi_success()))?;
     }
     Ok(())
@@ -108,7 +109,7 @@ pub fn wasi_fd_tell(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(
 ///
 /// 当栈弹出参数失败或向解释器栈压入结果失败时返回对应的 `WasmError`.
 pub fn wasi_fd_sync(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
 
     match ctx.fd_table.get(fd) {
         Ok(_entry) => {
@@ -142,8 +143,8 @@ pub fn wasi_fd_prestat_get(
     ctx: &mut WasiContext,
     interp: &mut Interpreter,
 ) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
-    let buf_ptr = interp.stack.pop_i32()? as u32;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
+    let buf_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let entry = match ctx.fd_table.get(fd) {
         Ok(e) => e,
@@ -173,9 +174,9 @@ pub fn wasi_fd_prestat_dir_name(
     ctx: &mut WasiContext,
     interp: &mut Interpreter,
 ) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
-    let path_ptr = interp.stack.pop_i32()? as u32;
-    let path_len = interp.stack.pop_i32()? as u32;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
+    let path_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let path_len = interp.stack.pop_i32()?.cast_unsigned();
 
     let entry = match ctx.fd_table.get(fd) {
         Ok(e) => e,
@@ -204,8 +205,8 @@ pub fn wasi_fd_prestat_dir_name(
 ///
 /// 当栈弹出参数失败、写入线性内存失败或压栈结果失败时返回对应的 `WasmError`.
 pub fn wasi_fd_stat_get(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
-    let buf_ptr = interp.stack.pop_i32()? as u32;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
+    let buf_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let entry = match ctx.fd_table.get(fd) {
         Ok(e) => e,
@@ -216,7 +217,8 @@ pub fn wasi_fd_stat_get(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
     };
 
     // 调用 VFS fstat 获取文件信息
-    let Some(stat) = crate::functions::fs::api::vfs_fstat_safe(entry.inner_fd as u32, 0) else {
+    let Some(stat) = crate::functions::fs::api::vfs_fstat_safe(entry.inner_fd.cast_unsigned(), 0)
+    else {
         interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
         return Ok(());
     };
@@ -264,10 +266,10 @@ pub fn wasi_fd_stat_get(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
 /// 当栈弹出参数失败、读取 iovec 失败、线性内存访问越界或压栈结果
 /// 失败时返回对应的 `WasmError`.
 pub fn wasi_fd_read(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
-    let iovs_ptr = interp.stack.pop_i32()? as u32;
-    let iovs_len = interp.stack.pop_i32()? as u32;
-    let nread_ptr = interp.stack.pop_i32()? as u32;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
+    let iovs_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let iovs_len = interp.stack.pop_i32()?.cast_unsigned();
+    let nread_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let entry = match ctx.fd_table.get(fd) {
         Ok(e) => e,
@@ -293,13 +295,13 @@ pub fn wasi_fd_read(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(
             .map_err(|_| WasmError::MemoryOutOfBounds)?;
 
         // 使用 safe wrapper 调用 VFS read
-        let n = crate::functions::fs::api::vfs_read_safe(entry.inner_fd as u32, slice);
+        let n = crate::functions::fs::api::vfs_read_safe(entry.inner_fd.cast_unsigned(), slice);
 
         if n < 0 {
             interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
             return Ok(());
         }
-        total += n as u32;
+        total += n.cast_unsigned();
     }
 
     write_u32_to_memory(interp, nread_ptr, total);
@@ -314,10 +316,10 @@ pub fn wasi_fd_read(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(
 /// 当栈弹出参数失败、读取 iovec 失败、线性内存访问越界或压栈结果
 /// 失败时返回对应的 `WasmError`.
 pub fn wasi_fd_write(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
-    let iovs_ptr = interp.stack.pop_i32()? as u32;
-    let iovs_len = interp.stack.pop_i32()? as u32;
-    let nwritten_ptr = interp.stack.pop_i32()? as u32;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
+    let iovs_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let iovs_len = interp.stack.pop_i32()?.cast_unsigned();
+    let nwritten_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let entry = match ctx.fd_table.get(fd) {
         Ok(e) => e,
@@ -343,13 +345,13 @@ pub fn wasi_fd_write(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
             .map_err(|_| WasmError::MemoryOutOfBounds)?;
 
         // 使用 safe wrapper 调用 VFS write
-        let n = crate::functions::fs::api::vfs_write_safe(entry.inner_fd as u32, slice);
+        let n = crate::functions::fs::api::vfs_write_safe(entry.inner_fd.cast_unsigned(), slice);
 
         if n < 0 {
             interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
             return Ok(());
         }
-        total += n as u32;
+        total += n.cast_unsigned();
     }
 
     write_u32_to_memory(interp, nwritten_ptr, total);
@@ -364,11 +366,11 @@ pub fn wasi_fd_write(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
 /// 当栈弹出参数失败、读取 iovec 失败、线性内存访问越界或压栈结果
 /// 失败时返回对应的 `WasmError`.
 pub fn wasi_fd_pread(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
-    let iovs_ptr = interp.stack.pop_i32()? as u32;
-    let iovs_len = interp.stack.pop_i32()? as u32;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
+    let iovs_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let iovs_len = interp.stack.pop_i32()?.cast_unsigned();
     let offset = interp.stack.pop_i64()? as i32;
-    let nread_ptr = interp.stack.pop_i32()? as u32;
+    let nread_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let entry = match ctx.fd_table.get(fd) {
         Ok(e) => e,
@@ -379,8 +381,8 @@ pub fn wasi_fd_pread(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
     };
 
     // 保存当前位置，seek 到 offset，读取，再 seek 回原位
-    let saved_pos = crate::functions::fs::api::vfs_seek(entry.inner_fd as u32, 0, 1);
-    let _ = crate::functions::fs::api::vfs_seek(entry.inner_fd as u32, offset, 0);
+    let saved_pos = crate::functions::fs::api::vfs_seek(entry.inner_fd.cast_unsigned(), 0, 1);
+    let _ = crate::functions::fs::api::vfs_seek(entry.inner_fd.cast_unsigned(), offset, 0);
 
     let iovecs = read_iovec_from_memory(interp, iovs_ptr, iovs_len)?;
     let mut total = 0u32;
@@ -395,17 +397,18 @@ pub fn wasi_fd_pread(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
             .ok_or(WasmError::MemoryOutOfBounds)?
             .get_slice_mut(iov.buf, iov.len)
             .map_err(|_| WasmError::MemoryOutOfBounds)?;
-        let n = crate::functions::fs::api::vfs_read_safe(entry.inner_fd as u32, slice);
+        let n = crate::functions::fs::api::vfs_read_safe(entry.inner_fd.cast_unsigned(), slice);
         if n < 0 {
-            let _ = crate::functions::fs::api::vfs_seek(entry.inner_fd as u32, saved_pos, 0);
+            let _ =
+                crate::functions::fs::api::vfs_seek(entry.inner_fd.cast_unsigned(), saved_pos, 0);
             interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
             return Ok(());
         }
-        total += n as u32;
+        total += n.cast_unsigned();
     }
 
     // 恢复原位置
-    let _ = crate::functions::fs::api::vfs_seek(entry.inner_fd as u32, saved_pos, 0);
+    let _ = crate::functions::fs::api::vfs_seek(entry.inner_fd.cast_unsigned(), saved_pos, 0);
 
     write_u32_to_memory(interp, nread_ptr, total);
     interp.stack.push(Value::I32(wasi_success()))?;
@@ -419,11 +422,11 @@ pub fn wasi_fd_pread(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
 /// 当栈弹出参数失败、读取 iovec 失败、线性内存访问越界或压栈结果
 /// 失败时返回对应的 `WasmError`.
 pub fn wasi_fd_pwrite(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
-    let iovs_ptr = interp.stack.pop_i32()? as u32;
-    let iovs_len = interp.stack.pop_i32()? as u32;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
+    let iovs_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let iovs_len = interp.stack.pop_i32()?.cast_unsigned();
     let offset = interp.stack.pop_i64()? as i32;
-    let nwritten_ptr = interp.stack.pop_i32()? as u32;
+    let nwritten_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let entry = match ctx.fd_table.get(fd) {
         Ok(e) => e,
@@ -434,8 +437,8 @@ pub fn wasi_fd_pwrite(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
     };
 
     // 保存当前位置，seek 到 offset，写入，再 seek 回原位
-    let saved_pos = crate::functions::fs::api::vfs_seek(entry.inner_fd as u32, 0, 1);
-    let _ = crate::functions::fs::api::vfs_seek(entry.inner_fd as u32, offset, 0);
+    let saved_pos = crate::functions::fs::api::vfs_seek(entry.inner_fd.cast_unsigned(), 0, 1);
+    let _ = crate::functions::fs::api::vfs_seek(entry.inner_fd.cast_unsigned(), offset, 0);
 
     let iovecs = read_iovec_from_memory(interp, iovs_ptr, iovs_len)?;
     let mut total = 0u32;
@@ -450,17 +453,18 @@ pub fn wasi_fd_pwrite(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
             .ok_or(WasmError::MemoryOutOfBounds)?
             .get_slice(iov.buf, iov.len)
             .map_err(|_| WasmError::MemoryOutOfBounds)?;
-        let n = crate::functions::fs::api::vfs_write_safe(entry.inner_fd as u32, slice);
+        let n = crate::functions::fs::api::vfs_write_safe(entry.inner_fd.cast_unsigned(), slice);
         if n < 0 {
-            let _ = crate::functions::fs::api::vfs_seek(entry.inner_fd as u32, saved_pos, 0);
+            let _ =
+                crate::functions::fs::api::vfs_seek(entry.inner_fd.cast_unsigned(), saved_pos, 0);
             interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
             return Ok(());
         }
-        total += n as u32;
+        total += n.cast_unsigned();
     }
 
     // 恢复原位置
-    let _ = crate::functions::fs::api::vfs_seek(entry.inner_fd as u32, saved_pos, 0);
+    let _ = crate::functions::fs::api::vfs_seek(entry.inner_fd.cast_unsigned(), saved_pos, 0);
 
     write_u32_to_memory(interp, nwritten_ptr, total);
     interp.stack.push(Value::I32(wasi_success()))?;
@@ -477,9 +481,9 @@ pub fn wasi_fd_pwrite(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
 ///
 /// 当栈弹出参数失败或向解释器栈压入结果失败时返回对应的 `WasmError`.
 pub fn wasi_fd_allocate(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
-    let offset = interp.stack.pop_i64()? as u64;
-    let len = interp.stack.pop_i64()? as u64;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
+    let offset = interp.stack.pop_i64()?.cast_unsigned();
+    let len = interp.stack.pop_i64()?.cast_unsigned();
 
     let entry = match ctx.fd_table.get(fd) {
         Ok(e) => e,
@@ -493,13 +497,15 @@ pub fn wasi_fd_allocate(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
     let target_size = offset.saturating_add(len);
 
     // 获取当前文件大小
-    let stat = crate::functions::fs::api::vfs_fstat_safe(entry.inner_fd as u32, 0);
+    let stat = crate::functions::fs::api::vfs_fstat_safe(entry.inner_fd.cast_unsigned(), 0);
 
     let current_size = stat.map_or(0, |s| u64::from(s.size));
     if current_size < target_size {
         // 文件需要扩展, 使用 truncate
-        let trunc_result =
-            crate::functions::fs::api::vfs_truncate_internal(entry.inner_fd as u32, target_size);
+        let trunc_result = crate::functions::fs::api::vfs_truncate_internal(
+            entry.inner_fd.cast_unsigned(),
+            target_size,
+        );
         if trunc_result < 0 {
             interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
             return Ok(());
@@ -516,7 +522,7 @@ pub fn wasi_fd_allocate(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
 ///
 /// 当栈弹出参数失败或向解释器栈压入结果失败时返回对应的 `WasmError`.
 pub fn wasi_fd_advise(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
     let _offset = interp.stack.pop_i64()?;
     let _len = interp.stack.pop_i64()?;
     let _advice = interp.stack.pop_i32()?;
@@ -543,8 +549,8 @@ pub fn wasi_fd_advise(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
 ///
 /// 当栈弹出参数失败或向解释器栈压入结果失败时返回对应的 `WasmError`.
 pub fn wasi_fd_renumber(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let from = interp.stack.pop_i32()? as u32;
-    let to = interp.stack.pop_i32()? as u32;
+    let from = interp.stack.pop_i32()?.cast_unsigned();
+    let to = interp.stack.pop_i32()?.cast_unsigned();
 
     match ctx.fd_table.renumber(from, to) {
         Ok(()) => {
@@ -563,7 +569,7 @@ pub fn wasi_fd_renumber(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
 ///
 /// 当栈弹出参数失败或向解释器栈压入结果失败时返回对应的 `WasmError`.
 pub fn wasi_fd_dup(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
 
     let entry = match ctx.fd_table.get(fd) {
         Ok(e) => e,
@@ -601,11 +607,11 @@ pub fn wasi_fd_dup(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<()
 ///
 /// 当栈弹出参数失败、写入线性内存失败或压栈结果失败时返回对应的 `WasmError`.
 pub fn wasi_fd_readdir(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
-    let buf_ptr = interp.stack.pop_i32()? as u32;
-    let buf_len = interp.stack.pop_i32()? as u32;
-    let _cookie = interp.stack.pop_i64()? as u64;
-    let buf_used_ptr = interp.stack.pop_i32()? as u32;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
+    let buf_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let buf_len = interp.stack.pop_i32()?.cast_unsigned();
+    let _cookie = interp.stack.pop_i64()?.cast_unsigned();
+    let buf_used_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let entry = match ctx.fd_table.get(fd) {
         Ok(e) => e,
@@ -617,8 +623,10 @@ pub fn wasi_fd_readdir(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resul
 
     // 调用 VFS readdir
     let mut dir_entry = crate::functions::fs::vfs_types::VfsDirEntry::default();
-    let result =
-        crate::functions::fs::api::vfs_readdir(entry.inner_fd as u32, &mut dir_entry as *mut _);
+    let result = crate::functions::fs::api::vfs_readdir(
+        entry.inner_fd.cast_unsigned(),
+        &mut dir_entry as *mut _,
+    );
 
     if result < 0 {
         write_u32_to_memory(interp, buf_used_ptr, 0);
@@ -644,7 +652,7 @@ pub fn wasi_fd_readdir(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resul
             let _ = mem.write_u8((base + i) as u32, inode_bytes[i as usize]);
         }
         // 写入 next_cookie
-        let cookie_bytes = (result as u64 + 1).to_le_bytes();
+        let cookie_bytes = (crate::functions::intcast::u64_from_i32(result) + 1).to_le_bytes();
         for i in 0..8u64 {
             let _ = mem.write_u8((base + 8 + i) as u32, cookie_bytes[i as usize]);
         }

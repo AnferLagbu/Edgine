@@ -61,7 +61,7 @@ fn is_vfs_file_fd(fd: i32) -> bool {
     if fd < 0 {
         return false;
     }
-    let fd_usize = fd as usize;
+    let fd_usize = crate::functions::intcast::usize_from_i32(fd);
     // 排除特殊 FD 空间
     if (100..116).contains(&fd) {
         return false; // UDS
@@ -121,7 +121,8 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
     }
 
     // in_fd 的 OpenFile handle (offset 读写经 OpenFile 元数据源)
-    let Some(in_handle) = vfs_get_fd_handle(in_fd as usize) else {
+    let Some(in_handle) = vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(in_fd))
+    else {
         return Errno::EBADF.as_ret();
     };
 
@@ -147,7 +148,7 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
 
         // 1. 从 in_fd 读取到 bounce buffer (先临时设定 in_fd 的 offset)
         let _ = OPEN_FILE_TABLE.with_file(in_handle, |of| of.set_offset(offset));
-        let nread = vfs_api::vfs_read_kernel(in_fd as u32, &mut bounce[..chunk]);
+        let nread = vfs_api::vfs_read_kernel(in_fd.cast_unsigned(), &mut bounce[..chunk]);
         if nread < 0 {
             if total_sent == 0 {
                 return i64::from(nread);
@@ -157,10 +158,10 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
         if nread == 0 {
             break; // EOF
         }
-        let nread_usize = nread as usize;
+        let nread_usize = crate::functions::intcast::usize_from_i32(nread);
 
         // 2. 从 bounce buffer 写入 out_fd (VFS 文件与管道端点同一路径)
-        let nwritten = vfs_api::vfs_write_kernel(out_fd as u32, &bounce[..nread_usize]);
+        let nwritten = vfs_api::vfs_write_kernel(out_fd.cast_unsigned(), &bounce[..nread_usize]);
         if nwritten < 0 {
             // 写入失败: in_fd offset 回退到本次读取前, 已发送部分按成功返回
             let _ = OPEN_FILE_TABLE.with_file(in_handle, |of| of.set_offset(offset));
@@ -174,7 +175,7 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
             break;
         }
 
-        let written_usize = nwritten as usize;
+        let written_usize = crate::functions::intcast::usize_from_i32(nwritten);
         // in_fd 实际消费量 = 成功写入量 (部分写时回退多余读取)
         offset += written_usize as u64;
         total_sent += written_usize;
@@ -265,7 +266,7 @@ pub fn sys_splice(
         let chunk = core::cmp::min(BOUNCE_SIZE, len - total_spliced);
 
         // 1. 从 fd_in 读取到 bounce buffer (VFS 文件与管道端点同一路径)
-        let nread = vfs_api::vfs_read_kernel(fd_in as u32, &mut bounce[..chunk]);
+        let nread = vfs_api::vfs_read_kernel(fd_in.cast_unsigned(), &mut bounce[..chunk]);
         if nread < 0 {
             if total_spliced == 0 {
                 return i64::from(nread);
@@ -275,10 +276,10 @@ pub fn sys_splice(
         if nread == 0 {
             break; // EOF / 管道空
         }
-        let nread_usize = nread as usize;
+        let nread_usize = crate::functions::intcast::usize_from_i32(nread);
 
         // 2. 从 bounce buffer 写入 fd_out
-        let nwritten = vfs_api::vfs_write_kernel(fd_out as u32, &bounce[..nread_usize]);
+        let nwritten = vfs_api::vfs_write_kernel(fd_out.cast_unsigned(), &bounce[..nread_usize]);
         if nwritten < 0 {
             if total_spliced == 0 {
                 return i64::from(nwritten);
@@ -289,7 +290,7 @@ pub fn sys_splice(
             break;
         }
 
-        total_spliced += nwritten as usize;
+        total_spliced += crate::functions::intcast::usize_from_i32(nwritten);
 
         // 读取量小于请求量, 说明源 EOF 或 pipe 空
         if nread_usize < chunk {

@@ -37,7 +37,7 @@ pub fn sched_setaffinity_syscall(pid: i32, cpusetsize: u32, mask_ptr: u64) -> i6
     let target_pid = if pid == 0 {
         crate::privileged::proc::process_get_current_pid()
     } else if pid > 0 {
-        pid as u32
+        pid.cast_unsigned()
     } else {
         return Errno::EINVAL.as_ret();
     };
@@ -79,7 +79,7 @@ pub fn sched_getaffinity_syscall(pid: i32, cpusetsize: u32, mask_ptr: u64) -> i6
     let target_pid = if pid == 0 {
         crate::privileged::proc::process_get_current_pid()
     } else if pid > 0 {
-        pid as u32
+        pid.cast_unsigned()
     } else {
         return Errno::EINVAL.as_ret();
     };

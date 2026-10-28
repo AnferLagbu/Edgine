@@ -55,7 +55,7 @@ pub fn nanosleep_syscall(req: u64, rem: u64) -> Result<usize, Errno> {
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }
 

@@ -235,9 +235,9 @@ impl Inode for AnonymousInode {
     fn seek(&self, offset: i64, whence: VfsSeekWhence, current_offset: u64) -> KernelResult<u64> {
         let file_size = u64::from(ANONYMOUS_FS.get_size(self.inode_id).unwrap_or(0));
         let new_offset = match whence {
-            VfsSeekWhence::Set => offset as u64,
-            VfsSeekWhence::Cur => current_offset.saturating_add(offset as u64),
-            VfsSeekWhence::End => file_size.saturating_add(offset as u64),
+            VfsSeekWhence::Set => offset.cast_unsigned(),
+            VfsSeekWhence::Cur => current_offset.saturating_add(offset.cast_unsigned()),
+            VfsSeekWhence::End => file_size.saturating_add(offset.cast_unsigned()),
         };
         Ok(new_offset)
     }
@@ -365,9 +365,9 @@ impl Inode for RamFsInode {
         let ramfs = RAMFS_DATA.lock();
         let file_size = u64::from(ramfs.get_file_size(self.inode_id).unwrap_or(0));
         let new_offset = match whence {
-            VfsSeekWhence::Set => offset as u64,
-            VfsSeekWhence::Cur => current_offset.saturating_add(offset as u64),
-            VfsSeekWhence::End => file_size.saturating_add(offset as u64),
+            VfsSeekWhence::Set => offset.cast_unsigned(),
+            VfsSeekWhence::Cur => current_offset.saturating_add(offset.cast_unsigned()),
+            VfsSeekWhence::End => file_size.saturating_add(offset.cast_unsigned()),
         };
         Ok(new_offset)
     }

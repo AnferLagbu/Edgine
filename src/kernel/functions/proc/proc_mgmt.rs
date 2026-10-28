@@ -36,7 +36,7 @@ pub fn proc_list_syscall(buf_ptr: u64, max_entries: u32) -> i64 {
     let mut count: i32 = 0;
 
     crate::privileged::proc::process_for_each(|proc| {
-        if (count as u32) < max_entries {
+        if count.cast_unsigned() < max_entries {
             let entry = ProcListEntry {
                 pid: proc.pid.0,
                 state: proc.get_state() as u8,
@@ -55,7 +55,7 @@ pub fn proc_list_syscall(buf_ptr: u64, max_entries: u32) -> i64 {
                 },
             };
 
-            let offset = count as u64 * u64::from(entry_size);
+            let offset = crate::functions::intcast::u64_from_i32(count) * u64::from(entry_size);
             if !crate::privileged::syscall::api::write_struct_to_user(buf_ptr + offset, &entry) {
                 return false;
             }

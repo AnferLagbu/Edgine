@@ -108,7 +108,12 @@ pub fn setrlimit_syscall(resource: i32, rlim_ptr: u64) -> i64 {
 
     match crate::privileged::proc::process_with(pid, |proc| {
         let mut rlimit_table = proc.rlimit_table.lock();
-        rlimit_table.set(resource as usize, cur, max, is_privileged)
+        rlimit_table.set(
+            crate::functions::intcast::usize_from_i32(resource),
+            cur,
+            max,
+            is_privileged,
+        )
     }) {
         Some(Ok(())) => 0,
         Some(Err(e)) => e.as_ret(),

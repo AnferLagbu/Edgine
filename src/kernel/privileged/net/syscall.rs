@@ -445,7 +445,13 @@ pub fn recvfrom_syscall(
         return i64::from(n);
     }
     // P0-I-37 修复: 走异常表保护版
-    if safe_copy_to_user(buf_ptr, &stack_buf[..n as usize], n as usize).is_err() {
+    if safe_copy_to_user(
+        buf_ptr,
+        &stack_buf[..crate::privileged::lib::usize_from_i32(n)],
+        crate::privileged::lib::usize_from_i32(n),
+    )
+    .is_err()
+    {
         return Errno::EFAULT.as_ret();
     }
     i64::from(n)

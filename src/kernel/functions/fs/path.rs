@@ -76,7 +76,7 @@ pub fn getcwd_syscall(buf_ptr: u64, size: u64) -> Result<usize, Errno> {
     if n < 0 {
         Err(Errno::from_ret(i64::from(n)))
     } else {
-        Ok(n as usize)
+        Ok(crate::functions::intcast::usize_from_i32(n))
     }
 }
 

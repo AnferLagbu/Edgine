@@ -221,7 +221,7 @@ fn do_coredump(pid: u32, sig: u8, frame_addr: u64) -> bool {
         crate::slog_warn!(Process, "coredump: 打开 {} 失败", core_path);
         return false;
     }
-    let fd = fd as u32;
+    let fd = fd.cast_unsigned();
 
     let mut offset = 0u64;
 

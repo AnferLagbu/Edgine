@@ -86,7 +86,7 @@ impl Value {
     )]
     pub fn as_u32(&self) -> Option<u32> {
         match self {
-            Self::I32(v) => Some(*v as u32),
+            Self::I32(v) => Some((*v).cast_unsigned()),
             _ => None,
         }
     }

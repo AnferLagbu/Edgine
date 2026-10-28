@@ -123,7 +123,7 @@ impl Device for EGDFNetDevice {
         if n <= 0 {
             return None;
         }
-        self.rx_len = n as usize;
+        self.rx_len = crate::privileged::lib::usize_from_i32(n);
         let rx = EGDFRxToken {
             buf: &self.rx_buf[..self.rx_len],
         };
@@ -222,7 +222,7 @@ impl NetworkStack {
     pub fn next_poll_deadline_ns(&mut self, sockets: &SocketSet<'_>) -> Option<u64> {
         self.iface
             .poll_at(smoltcp_now(), sockets)
-            .map(|deadline| deadline.micros().max(0) as u64 * 1_000)
+            .map(|deadline| deadline.micros().max(0).cast_unsigned() * 1_000)
     }
 }
 

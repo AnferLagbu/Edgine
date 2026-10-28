@@ -303,7 +303,7 @@ fn compute_hash(prev: u64, event: &AuditEvent) -> u64 {
     h = (h ^ u64::from(event.session_id)).wrapping_mul(PRIME);
     h = (h ^ u64::from(event.domain_id)).wrapping_mul(PRIME);
     h = (h ^ event.bits).wrapping_mul(PRIME);
-    h = (h ^ (event.result as u64)).wrapping_mul(PRIME);
+    h = (h ^ crate::functions::intcast::u64_from_i32(event.result)).wrapping_mul(PRIME);
     h = (h ^ u64::from(event.kind.tag())).wrapping_mul(PRIME);
     h
 }

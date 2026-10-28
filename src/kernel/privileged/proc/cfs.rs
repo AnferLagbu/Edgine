@@ -50,7 +50,7 @@ pub const NICE_TO_WEIGHT: [u64; 40] = [
 #[inline]
 pub fn nice_to_weight(nice: i8) -> u64 {
     let clamped = nice.clamp(-20, 19);
-    let idx = (clamped + 20) as usize;
+    let idx = crate::privileged::lib::usize_from_i8(clamped + 20);
     NICE_TO_WEIGHT[idx]
 }
 

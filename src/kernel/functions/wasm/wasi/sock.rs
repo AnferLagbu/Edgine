@@ -15,10 +15,10 @@ use crate::functions::wasm::types::{Value, WasmError};
 ///
 /// 当栈弹出参数失败或向解释器栈压入结果失败时返回对应的 `WasmError`.
 pub fn wasi_sock_accept(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
-    let _flags = interp.stack.pop_i32()? as u32;
-    let _addr_ptr = interp.stack.pop_i32()? as u32;
-    let _addr_len_ptr = interp.stack.pop_i32()? as u32;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
+    let _flags = interp.stack.pop_i32()?.cast_unsigned();
+    let _addr_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let _addr_len_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let entry = match ctx.fd_table.get(fd) {
         Ok(e) => e,
@@ -61,9 +61,9 @@ pub fn wasi_sock_accept(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
 /// 当栈弹出参数失败、解释器未配置线性内存或压栈结果失败时
 /// 返回对应的 `WasmError`.
 pub fn wasi_sock_connect(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
-    let addr_ptr = interp.stack.pop_i32()? as u32;
-    let _addr_len = interp.stack.pop_i32()? as u32;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
+    let addr_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let _addr_len = interp.stack.pop_i32()?.cast_unsigned();
 
     let entry = match ctx.fd_table.get(fd) {
         Ok(e) => e,
@@ -113,12 +113,12 @@ pub fn wasi_sock_connect(ctx: &mut WasiContext, interp: &mut Interpreter) -> Res
 ///
 /// 当栈弹出参数失败、读取 iovec 失败或压栈结果失败时返回对应的 `WasmError`.
 pub fn wasi_sock_recv(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
-    let iovs_ptr = interp.stack.pop_i32()? as u32;
-    let iovs_len = interp.stack.pop_i32()? as u32;
-    let _flags = interp.stack.pop_i32()? as u32;
-    let nread_ptr = interp.stack.pop_i32()? as u32;
-    let roflags_ptr = interp.stack.pop_i32()? as u32;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
+    let iovs_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let iovs_len = interp.stack.pop_i32()?.cast_unsigned();
+    let _flags = interp.stack.pop_i32()?.cast_unsigned();
+    let nread_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let roflags_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let entry = match ctx.fd_table.get(fd) {
         Ok(e) => e,
@@ -163,11 +163,11 @@ pub fn wasi_sock_recv(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
 ///
 /// 当栈弹出参数失败、读取 iovec 失败或压栈结果失败时返回对应的 `WasmError`.
 pub fn wasi_sock_send(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let fd = interp.stack.pop_i32()? as u32;
-    let iovs_ptr = interp.stack.pop_i32()? as u32;
-    let iovs_len = interp.stack.pop_i32()? as u32;
-    let _flags = interp.stack.pop_i32()? as u32;
-    let nwritten_ptr = interp.stack.pop_i32()? as u32;
+    let fd = interp.stack.pop_i32()?.cast_unsigned();
+    let iovs_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let iovs_len = interp.stack.pop_i32()?.cast_unsigned();
+    let _flags = interp.stack.pop_i32()?.cast_unsigned();
+    let nwritten_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let entry = match ctx.fd_table.get(fd) {
         Ok(e) => e,

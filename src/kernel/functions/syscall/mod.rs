@@ -168,7 +168,7 @@ pub fn parse_return(rc: i64) -> SyscallResult<u64> {
     if rc < 0 {
         Err(Errno::try_from_i32(-rc as i32).unwrap_or(Errno::EINVAL))
     } else {
-        Ok(rc as u64)
+        Ok(rc.cast_unsigned())
     }
 }
 

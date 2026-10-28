@@ -92,14 +92,14 @@ fn read_path_data(path: &[u8]) -> Result<Vec<u8>, i64> {
         if out.len() + tmp.len() > MAX_FIRMWARE_SIZE {
             return Err(i64::from(FW_ERR_TOO_LARGE));
         }
-        let n = vfs_read_safe(fd as u32, &mut tmp);
+        let n = vfs_read_safe(fd.cast_unsigned(), &mut tmp);
         if n < 0 {
             return Err(i64::from(FW_ERR_IO));
         }
         if n == 0 {
             break;
         }
-        let n = n as usize;
+        let n = crate::functions::intcast::usize_from_i32(n);
         out.extend_from_slice(&tmp[..n]);
     }
     Ok(out)

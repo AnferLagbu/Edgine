@@ -18,9 +18,9 @@ pub fn wasi_clock_time_get(
     _ctx: &mut WasiContext,
     interp: &mut Interpreter,
 ) -> Result<(), WasmError> {
-    let clock_id = interp.stack.pop_i32()? as u32;
+    let clock_id = interp.stack.pop_i32()?.cast_unsigned();
     let _precision = interp.stack.pop_i64()?;
-    let result_ptr = interp.stack.pop_i32()? as u32;
+    let result_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let nanos: u64 = match clock_id {
         CLOCK_MONOTONIC | CLOCK_REALTIME => {
@@ -45,8 +45,8 @@ pub fn wasi_clock_time_get(
 /// 参数: (`buf_ptr`: i32, `buf_len`: i32)
 /// 返回: 0 (成功)
 pub fn wasi_random_get(_ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let buf_ptr = interp.stack.pop_i32()? as u32;
-    let buf_len = interp.stack.pop_i32()? as u32;
+    let buf_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let buf_len = interp.stack.pop_i32()?.cast_unsigned();
 
     if let Some(ref mut mem) = interp.memory {
         for i in 0..buf_len {

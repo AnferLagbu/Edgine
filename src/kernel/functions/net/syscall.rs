@@ -37,7 +37,7 @@ pub fn socket_syscall(domain: i32, sock_type: i32, protocol: i32) -> Result<usiz
             _ => return Err(Errno::EINVAL),
         };
         return uds::socket(st)
-            .map(|fd| fd as usize)
+            .map(crate::functions::intcast::usize_from_i32)
             .map_err(super::unix::UnixSocketError::to_errno);
     }
     // AF_INET (smoltcp)
@@ -45,7 +45,7 @@ pub fn socket_syscall(domain: i32, sock_type: i32, protocol: i32) -> Result<usiz
     if r < 0 {
         Err(Errno::from_ret(r))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i64(r))
     }
 }
 
@@ -77,7 +77,7 @@ pub fn bind_syscall(fd: i32, addr_ptr: u64, addrlen: u32) -> Result<usize, Errno
             if r < 0 {
                 Err(Errno::from_ret(r))
             } else {
-                Ok(r as usize)
+                Ok(crate::functions::intcast::usize_from_i64(r))
             }
         }
         _ => Err(Errno::EAFNOSUPPORT),
@@ -108,7 +108,7 @@ pub fn listen_syscall(fd: i32, backlog: i32) -> Result<usize, Errno> {
     if r < 0 {
         Err(Errno::from_ret(r))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i64(r))
     }
 }
 
@@ -125,14 +125,14 @@ pub fn accept_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> Result<usize,
     }
     if uds::is_uds_fd(fd) {
         return uds::accept(fd)
-            .map(|fd| fd as usize)
+            .map(crate::functions::intcast::usize_from_i32)
             .map_err(super::unix::UnixSocketError::to_errno);
     }
     let r = fw::accept_syscall(fd, addr_ptr, addrlen_ptr);
     if r < 0 {
         Err(Errno::from_ret(r))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i64(r))
     }
 }
 
@@ -162,7 +162,7 @@ pub fn connect_syscall(fd: i32, addr_ptr: u64, addrlen: u32) -> Result<usize, Er
             if r < 0 {
                 Err(Errno::from_ret(r))
             } else {
-                Ok(r as usize)
+                Ok(crate::functions::intcast::usize_from_i64(r))
             }
         }
         _ => Err(Errno::EAFNOSUPPORT),
@@ -204,7 +204,7 @@ pub fn sendto_syscall(
     if r < 0 {
         Err(Errno::from_ret(r))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i64(r))
     }
 }
 
@@ -249,7 +249,7 @@ pub fn recvfrom_syscall(
     if r < 0 {
         Err(Errno::from_ret(r))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i64(r))
     }
 }
 
@@ -272,7 +272,7 @@ pub fn setsockopt_syscall(
     if r < 0 {
         Err(Errno::from_ret(r))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i64(r))
     }
 }
 
@@ -295,7 +295,7 @@ pub fn getsockopt_syscall(
     if r < 0 {
         Err(Errno::from_ret(r))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i64(r))
     }
 }
 
@@ -312,7 +312,7 @@ pub fn getsockname_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> Result<u
     if r < 0 {
         Err(Errno::from_ret(r))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i64(r))
     }
 }
 
@@ -329,7 +329,7 @@ pub fn getpeername_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> Result<u
     if r < 0 {
         Err(Errno::from_ret(r))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i64(r))
     }
 }
 
@@ -346,7 +346,7 @@ pub fn shutdown_syscall(fd: i32, how: i32) -> Result<usize, Errno> {
     if r < 0 {
         Err(Errno::from_ret(r))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i64(r))
     }
 }
 
@@ -436,7 +436,7 @@ pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
     if r < 0 {
         Err(Errno::from_ret(r))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i64(r))
     }
 }
 
@@ -498,7 +498,7 @@ pub fn recvmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
     if r < 0 {
         Err(Errno::from_ret(r))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i64(r))
     }
 }
 
@@ -563,7 +563,8 @@ pub fn socketpair_syscall(
     };
     let (fd0, fd1) = uds::socketpair(st).map_err(super::unix::UnixSocketError::to_errno)?;
     // sv[0]=fd0, sv[1]=fd1: 拼为主机序 u64 一次写回 (低 4 字节落在 sv[0])
-    let packed = ((fd1 as u64) << 32) | u64::from(fd0 as u32);
+    let packed =
+        (crate::functions::intcast::u64_from_i32(fd1) << 32) | u64::from(fd0.cast_unsigned());
     if !raw::write_u64_to_user(sv_ptr, packed) {
         // 写回失败: 两端 FD 已无用户可见入口, 关闭回收
         let _ = uds::close(fd0);
@@ -738,9 +739,10 @@ pub fn recvmmsg_syscall(
         if sec < 0 || !(0..NSEC_PER_SEC).contains(&nsec) {
             return Err(Errno::EINVAL);
         }
-        let rel_ms = (sec as u64)
+        let rel_ms = sec
+            .cast_unsigned()
             .checked_mul(1000)
-            .and_then(|ms| ms.checked_add((nsec as u64) / 1_000_000));
+            .and_then(|ms| ms.checked_add(nsec.cast_unsigned() / 1_000_000));
         let now = crate::privileged::syscall::api::get_ticks();
         // 相对时长或当前 tick 溢出时饱和为"永不超时"
         deadline_ms = rel_ms.and_then(|r| now.checked_add(r)).unwrap_or(u64::MAX);

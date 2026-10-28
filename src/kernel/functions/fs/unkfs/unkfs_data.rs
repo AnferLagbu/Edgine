@@ -1953,9 +1953,9 @@ impl UnkfsData {
             }
         };
         let new_offset = match whence {
-            0 => offset as u64,
-            1 => (cur_offset.cast_signed() + offset) as u64,
-            2 => (obj.size.cast_signed() + offset) as u64,
+            0 => offset.cast_unsigned(),
+            1 => (cur_offset.cast_signed() + offset).cast_unsigned(),
+            2 => (obj.size.cast_signed() + offset).cast_unsigned(),
             _ => return i64::from(KernelError::InvalidArgument.as_i32()),
         };
         {

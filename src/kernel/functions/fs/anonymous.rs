@@ -46,7 +46,7 @@ impl AnonymousFs {
         let mut offset = offset;
         let result = inner.read(node_id, &mut offset, buf, 0);
         if result >= 0 {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         } else {
             Err(KernelError::from_i32(result))
         }
@@ -62,7 +62,7 @@ impl AnonymousFs {
         let mut offset = offset;
         let result = inner.write(node_id, &mut offset, buf, 0);
         if result >= 0 {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         } else {
             Err(KernelError::from_i32(result))
         }

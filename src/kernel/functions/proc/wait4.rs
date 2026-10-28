@@ -141,7 +141,7 @@ fn find_waitable_child(parent_pid: u32, target_pid: i32) -> Option<u32> {
         if target_pid == -1 {
             return Some(child_pid);
         } else if target_pid > 0 {
-            if child_pid == target_pid as u32 {
+            if child_pid == target_pid.cast_unsigned() {
                 return Some(child_pid);
             }
         } else if target_pid == 0 {

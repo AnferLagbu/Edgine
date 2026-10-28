@@ -24,7 +24,7 @@ fn ret_to_result(r: i64) -> Result<usize, Errno> {
     if r < 0 {
         Err(Errno::from_ret(r))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i64(r))
     }
 }
 
@@ -34,9 +34,11 @@ fn ret_to_result(r: i64) -> Result<usize, Errno> {
 /// `dup2` 可显式重定向到这些编号; 标准流语义仅在槽位空闲时生效.
 fn fd_table_has_entry(fd: i32) -> bool {
     fd >= 0
-        && crate::privileged::proc::with_current_fd_table(|t| t.get_handle_id(fd as usize))
-            .flatten()
-            .is_some()
+        && crate::privileged::proc::with_current_fd_table(|t| {
+            t.get_handle_id(crate::functions::intcast::usize_from_i32(fd))
+        })
+        .flatten()
+        .is_some()
 }
 
 /// 管道端点因阻塞被返回 `EAGAIN` 时, 在 `PIPE_LOCK` 之外睡眠等待.
@@ -125,12 +127,12 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
     // 睡眠等待后重试 (见 [`wait_pipe_eagain`]).
     loop {
         let ret = i64::from(crate::functions::fs::api::vfs_read(
-            fd as u32,
+            fd.cast_unsigned(),
             buf as *mut u8,
             count as u32,
         ));
         if ret >= 0 {
-            return Ok(ret as usize);
+            return Ok(crate::functions::intcast::usize_from_i64(ret));
         }
         let errno = Errno::from_ret(ret);
         if errno == Errno::EAGAIN && wait_pipe_eagain(fd, true) {
@@ -210,7 +212,8 @@ pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
             Ok(n) if n > 0 => n,
             _ => break,
         };
-        let n = crate::functions::fs::api::vfs_write_kernel(fd as u32, &kernel_buf[..copied]);
+        let n =
+            crate::functions::fs::api::vfs_write_kernel(fd.cast_unsigned(), &kernel_buf[..copied]);
         if n < 0 {
             let errno = Errno::from_ret(i64::from(n));
             if errno == Errno::EAGAIN && wait_pipe_eagain(fd, false) {
@@ -224,7 +227,7 @@ pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
         if n == 0 {
             break;
         }
-        written += n as usize;
+        written += crate::functions::intcast::usize_from_i32(n);
     }
     Ok(written)
 }
@@ -268,8 +271,8 @@ pub fn pipe2_syscall(fds: u64, flags: i32) -> Result<usize, Errno> {
     let pipefd: [i32; 2] = [rfd, wfd];
     if !crate::privileged::syscall::api::write_struct_to_user(fds, &pipefd) {
         // 用户数组写回失败: 回收刚分配的两个 fd (避免泄漏)
-        crate::functions::fs::api::vfs_close(rfd as u32);
-        crate::functions::fs::api::vfs_close(wfd as u32);
+        crate::functions::fs::api::vfs_close(rfd.cast_unsigned());
+        crate::functions::fs::api::vfs_close(wfd.cast_unsigned());
         return Err(Errno::EFAULT);
     }
     Ok(0)
@@ -283,7 +286,9 @@ pub fn dup_syscall(oldfd: i32) -> Result<usize, Errno> {
     if oldfd < 0 {
         return Err(Errno::EBADF);
     }
-    ret_to_result(i64::from(crate::functions::fs::vfs_dup(oldfd as u32)))
+    ret_to_result(i64::from(crate::functions::fs::vfs_dup(
+        oldfd.cast_unsigned(),
+    )))
 }
 
 /// dup2 系统调用 — 复制文件描述符到 `newfd`
@@ -297,13 +302,13 @@ pub fn dup2_syscall(oldfd: i32, newfd: i32) -> Result<usize, Errno> {
         return Err(Errno::EBADF);
     }
     if oldfd == newfd {
-        return Ok(newfd as usize);
+        return Ok(crate::functions::intcast::usize_from_i32(newfd));
     }
-    let result = crate::functions::fs::vfs_dup2(oldfd as u32, newfd as u32);
+    let result = crate::functions::fs::vfs_dup2(oldfd.cast_unsigned(), newfd.cast_unsigned());
     if result < 0 {
         return Err(Errno::EBADF);
     }
-    Ok(result as usize)
+    Ok(crate::functions::intcast::usize_from_i32(result))
 }
 
 /// dup3 系统调用 (支持 `flags`)
@@ -320,11 +325,11 @@ pub fn dup3_syscall(oldfd: i32, newfd: i32, flags: i32) -> Result<usize, Errno> 
     }
     // flags 当前被忽略 (未实现 O_CLOEXEC 处理)
     let _ = flags;
-    let result = crate::functions::fs::vfs_dup2(oldfd as u32, newfd as u32);
+    let result = crate::functions::fs::vfs_dup2(oldfd.cast_unsigned(), newfd.cast_unsigned());
     if result < 0 {
         return Err(Errno::EBADF);
     }
-    Ok(result as usize)
+    Ok(crate::functions::intcast::usize_from_i32(result))
 }
 
 /// `fcntl` 命令: `F_DUPFD`
@@ -357,12 +362,14 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
             // B-9.5/B-8.3: fd 级标志改源 per-process FdTable.cloexec (权威表);
             // FD_CLOEXEC 为唯一 fd 级标志, 仅当 fd 已分配时返回, 否则 EBADF.
             let result = crate::privileged::proc::with_current_fd_table(|t| {
-                t.get_handle_id(fd as usize)?;
-                Some(if t.is_cloexec(fd as usize) {
-                    FD_CLOEXEC
-                } else {
-                    0
-                })
+                t.get_handle_id(crate::functions::intcast::usize_from_i32(fd))?;
+                Some(
+                    if t.is_cloexec(crate::functions::intcast::usize_from_i32(fd)) {
+                        FD_CLOEXEC
+                    } else {
+                        0
+                    },
+                )
             })
             .flatten();
             match result {
@@ -373,8 +380,11 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
         F_SETFD => {
             // B-9.5/B-8.3: 写入 per-process FdTable.cloexec; fd 未分配返回 EBADF.
             let result = crate::privileged::proc::with_current_fd_table(|t| {
-                t.get_handle_id(fd as usize)?;
-                t.set_cloexec(fd as usize, (arg & FD_CLOEXEC) != 0);
+                t.get_handle_id(crate::functions::intcast::usize_from_i32(fd))?;
+                t.set_cloexec(
+                    crate::functions::intcast::usize_from_i32(fd),
+                    (arg & FD_CLOEXEC) != 0,
+                );
                 Some(0)
             })
             .flatten();
@@ -398,7 +408,9 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
                 };
             }
             // B-9.5: fd 元数据改源 OpenFile (per-process fd 表取 handle_id)
-            let Some(handle_id) = crate::functions::fs::vfs_get_fd_handle(fd as usize) else {
+            let Some(handle_id) = crate::functions::fs::vfs_get_fd_handle(
+                crate::functions::intcast::usize_from_i32(fd),
+            ) else {
                 return Err(Errno::EBADF);
             };
             // 管道端点的 O_NONBLOCK 由 `OpenFile::nonblock` 承载 (独立于文件
@@ -426,7 +438,9 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
                     crate::privileged::net_socket::sm_set_nonblocking(fd, nonblock),
                 ))
             } else {
-                if let Some(handle_id) = crate::functions::fs::vfs_get_fd_handle(fd as usize) {
+                if let Some(handle_id) = crate::functions::fs::vfs_get_fd_handle(
+                    crate::functions::intcast::usize_from_i32(fd),
+                ) {
                     let _ = crate::functions::fs::OPEN_FILE_TABLE.with_file(handle_id, |of| {
                         if of.is_pipe_endpoint() {
                             of.set_nonblock(nonblock);
@@ -492,7 +506,9 @@ fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
 
     // 获取 fd 对应的 inode 号 (B-9.5: per-process fd 表 → OpenFile)
     let ino = {
-        let Some(handle_id) = crate::functions::fs::vfs_get_fd_handle(fd as usize) else {
+        let Some(handle_id) =
+            crate::functions::fs::vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(fd))
+        else {
             return Err(Errno::EBADF);
         };
         match crate::functions::fs::OPEN_FILE_TABLE
@@ -505,16 +521,18 @@ fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
 
     // 计算 l_start (基于 l_whence)
     let start = match l_whence {
-        0 => l_start as u64, // SEEK_SET
+        0 => l_start.cast_unsigned(), // SEEK_SET
         1 => {
             // SEEK_CUR: 当前 offset + l_start (B-9.5: offset 源自共享 OpenFile)
-            let Some(handle_id) = crate::functions::fs::vfs_get_fd_handle(fd as usize) else {
+            let Some(handle_id) = crate::functions::fs::vfs_get_fd_handle(
+                crate::functions::intcast::usize_from_i32(fd),
+            ) else {
                 return Err(Errno::EBADF);
             };
             match crate::functions::fs::OPEN_FILE_TABLE
                 .with_file(handle_id, crate::functions::fs::OpenFile::get_offset)
             {
-                Some(offset) => (offset.cast_signed() + l_start) as u64,
+                Some(offset) => (offset.cast_signed() + l_start).cast_unsigned(),
                 None => return Err(Errno::EBADF),
             }
         }
@@ -531,7 +549,7 @@ fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
     } else if l_len == 0 {
         0 // 到文件末尾
     } else {
-        l_len as u64
+        l_len.cast_unsigned()
     };
 
     let pid = crate::privileged::proc::process_get_current_pid();
@@ -608,21 +626,21 @@ pub fn copy_file_range_syscall(
 
         // 从源 fd 读取 (内核 bounce 缓冲: 不能走用户指针校验路径)
         let read_ret =
-            crate::functions::fs::api::vfs_read_kernel(fd_in as u32, &mut buf[..to_read]);
+            crate::functions::fs::api::vfs_read_kernel(fd_in.cast_unsigned(), &mut buf[..to_read]);
         if read_ret < 0 {
             if total_copied > 0 {
                 return Ok(total_copied);
             }
             return Err(Errno::from_ret(i64::from(read_ret)));
         }
-        let bytes_read = read_ret as usize;
+        let bytes_read = crate::functions::intcast::usize_from_i32(read_ret);
         if bytes_read == 0 {
             break; // EOF
         }
 
         // 写入目标 fd (内核 bounce 缓冲)
         let write_ret =
-            crate::functions::fs::api::vfs_write_kernel(fd_out as u32, &buf[..bytes_read]);
+            crate::functions::fs::api::vfs_write_kernel(fd_out.cast_unsigned(), &buf[..bytes_read]);
         if write_ret < 0 {
             if total_copied > 0 {
                 return Ok(total_copied);
@@ -633,7 +651,7 @@ pub fn copy_file_range_syscall(
         total_copied += bytes_read as usize;
 
         // 如果写入的字节数少于读取的, 停止
-        if (write_ret as usize) < bytes_read {
+        if crate::functions::intcast::usize_from_i32(write_ret) < bytes_read {
             break;
         }
     }
@@ -789,7 +807,7 @@ pub fn preadv_syscall(fd: i32, iov_ptr: u64, iovcnt: u64, pos: i64) -> Result<us
         return Err(Errno::EINVAL);
     }
     let mut total = 0usize;
-    let mut offset = pos as u64;
+    let mut offset = pos.cast_unsigned();
     for (base, len) in iovs {
         if len == 0 {
             continue;
@@ -799,16 +817,21 @@ pub fn preadv_syscall(fd: i32, iov_ptr: u64, iovcnt: u64, pos: i64) -> Result<us
         }
         // 有意窄化: 资源类型转换, 单段长度截断到 u32 (与 vfs_read 一致)
         let count = core::cmp::min(len, u64::from(u32::MAX)) as u32;
-        let n = crate::functions::fs::api::vfs_pread(fd as u32, base as *mut u8, count, offset);
+        let n = crate::functions::fs::api::vfs_pread(
+            fd.cast_unsigned(),
+            base as *mut u8,
+            count,
+            offset,
+        );
         if n < 0 {
             if total > 0 {
                 break;
             }
             return Err(Errno::from_ret(i64::from(n)));
         }
-        total += n as usize;
-        offset += n as u64;
-        if n == 0 || u64::from(n as u32) < len {
+        total += crate::functions::intcast::usize_from_i32(n);
+        offset += crate::functions::intcast::u64_from_i32(n);
+        if n == 0 || u64::from(n.cast_unsigned()) < len {
             break; // EOF 或部分读
         }
     }
@@ -829,7 +852,7 @@ pub fn pwritev_syscall(fd: i32, iov_ptr: u64, iovcnt: u64, pos: i64) -> Result<u
         return Err(Errno::EINVAL);
     }
     let mut total = 0usize;
-    let mut offset = pos as u64;
+    let mut offset = pos.cast_unsigned();
     for (base, len) in iovs {
         if len == 0 {
             continue;
@@ -839,16 +862,21 @@ pub fn pwritev_syscall(fd: i32, iov_ptr: u64, iovcnt: u64, pos: i64) -> Result<u
         }
         // 有意窄化: 资源类型转换, 单段长度截断到 u32 (与 vfs_write 一致)
         let count = core::cmp::min(len, u64::from(u32::MAX)) as u32;
-        let n = crate::functions::fs::api::vfs_pwrite(fd as u32, base as *const u8, count, offset);
+        let n = crate::functions::fs::api::vfs_pwrite(
+            fd.cast_unsigned(),
+            base as *const u8,
+            count,
+            offset,
+        );
         if n < 0 {
             if total > 0 {
                 break;
             }
             return Err(Errno::from_ret(i64::from(n)));
         }
-        total += n as usize;
-        offset += n as u64;
-        if u64::from(n as u32) < len {
+        total += crate::functions::intcast::usize_from_i32(n);
+        offset += crate::functions::intcast::u64_from_i32(n);
+        if u64::from(n.cast_unsigned()) < len {
             break; // 部分写
         }
     }

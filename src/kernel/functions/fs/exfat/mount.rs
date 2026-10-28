@@ -61,9 +61,11 @@ impl Inode for ExfatInode {
 
     fn seek(&self, offset: i64, whence: VfsSeekWhence, current_offset: u64) -> KernelResult<u64> {
         let new_offset = match whence {
-            VfsSeekWhence::Set => offset as u64,
+            VfsSeekWhence::Set => offset.cast_unsigned(),
             // exFAT 简化: 无 size 信息, Cur/End 均按当前偏移起算
-            VfsSeekWhence::Cur | VfsSeekWhence::End => current_offset.saturating_add(offset as u64),
+            VfsSeekWhence::Cur | VfsSeekWhence::End => {
+                current_offset.saturating_add(offset.cast_unsigned())
+            }
         };
         Ok(new_offset)
     }

@@ -283,7 +283,7 @@ pub fn do_signal_send_extended(pid: i32, sig: u8) -> Result<usize, i32> {
     if sig == 0 {
         return match pid {
             p if p > 0 => {
-                if PROCESS_TABLE.get(p as u32).is_some() {
+                if PROCESS_TABLE.get(p.cast_unsigned()).is_some() {
                     Ok(1)
                 } else {
                     Err(-2)
@@ -309,7 +309,7 @@ pub fn do_signal_send_extended(pid: i32, sig: u8) -> Result<usize, i32> {
                 if count > 0 { Ok(count) } else { Err(-2) }
             }
             p if p < -1 => {
-                let target_pgid = (-p) as u32;
+                let target_pgid = (-p).cast_unsigned();
                 let mut count = 0usize;
                 PROCESS_TABLE.for_each(|proc| {
                     let pg = proc.pgid.load(Ordering::SeqCst);
@@ -332,7 +332,7 @@ pub fn do_signal_send_extended(pid: i32, sig: u8) -> Result<usize, i32> {
     match pid {
         p if p > 0 => {
             // 单进程
-            if do_signal_send_inner(p as u32, sig).is_ok() {
+            if do_signal_send_inner(p.cast_unsigned(), sig).is_ok() {
                 Ok(1)
             } else {
                 Err(-2)
@@ -381,7 +381,7 @@ pub fn do_signal_send_extended(pid: i32, sig: u8) -> Result<usize, i32> {
         }
         p if p < -1 => {
             // 广播到 |pid| 进程组
-            let target_pgid = (-p) as u32;
+            let target_pgid = (-p).cast_unsigned();
             let mut count = 0usize;
             PROCESS_TABLE.for_each(|proc| {
                 let pg = proc.pgid.load(Ordering::SeqCst);

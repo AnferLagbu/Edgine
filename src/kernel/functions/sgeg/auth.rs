@@ -153,7 +153,7 @@ fn cap_read_header(header: u64) -> Result<LinuxCapHeader, i64> {
 
 /// `pid` 字段是否指向当前进程 (Linux 中 `0` 表示自身).
 fn cap_pid_is_self(pid: i32) -> bool {
-    pid == 0 || pid as u32 == crate::privileged::proc::process_get_current_pid()
+    pid == 0 || pid.cast_unsigned() == crate::privileged::proc::process_get_current_pid()
 }
 
 /// `capget(header, data)` 策略 — Edgine SYSTEM 域能力导出为 Linux cap ABI

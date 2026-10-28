@@ -111,7 +111,7 @@ impl FutexResult {
         if ret == 0 {
             Self::Woken
         } else if ret > 0 {
-            Self::WokenCount(ret as u32)
+            Self::WokenCount(crate::functions::intcast::low_u32_from_i64(ret))
         } else {
             Self::Pending
         }

@@ -203,12 +203,12 @@ pub fn unpack(data: &[u8]) -> Result<usize, &'static str> {
                 if fd >= 0 {
                     if !entry.data.is_empty() {
                         crate::functions::fs::vfs_write(
-                            fd as u32,
+                            fd.cast_unsigned(),
                             entry.data.as_ptr(),
                             entry.data.len() as u32,
                         );
                     }
-                    crate::functions::fs::vfs_close(fd as u32);
+                    crate::functions::fs::vfs_close(fd.cast_unsigned());
                 }
             }
             CPIO_S_IFLNK => {

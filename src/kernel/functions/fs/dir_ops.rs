@@ -13,16 +13,16 @@
 /// lseek(fd, offset, whence) 策略
 pub fn lseek_syscall(fd: i32, offset: i64, whence: i32) -> i64 {
     i64::from(crate::functions::fs::vfs_seek(
-        fd as u32,
+        fd.cast_unsigned(),
         offset as i32,
-        whence as u32,
+        whence.cast_unsigned(),
     ))
 }
 
 /// getdents(fd, buf, count) 策略
 pub fn getdents_syscall(fd: i32, buf_ptr: u64, _count: u64) -> i64 {
     i64::from(crate::functions::fs::vfs_readdir(
-        fd as u32,
+        fd.cast_unsigned(),
         buf_ptr as *mut crate::functions::fs::VfsDirEntry,
     ))
 }

@@ -452,7 +452,7 @@ pub extern "C" fn proc_exec_replace(
         return -1;
     }
 
-    let new_pid_u32 = new_pid as u32;
+    let new_pid_u32 = new_pid.cast_unsigned();
 
     // 阶段 2: 读取新进程的地址空间信息 (CR3/entry/stack)
     let new_addr_space = USER_PROC_MANAGER

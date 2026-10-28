@@ -212,7 +212,9 @@ pub fn is_pipe_fd(fd: i32) -> bool {
     if fd < 0 {
         return false;
     }
-    let Some(handle_id) = super::handle::vfs_get_fd_handle(fd as usize) else {
+    let Some(handle_id) =
+        super::handle::vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(fd))
+    else {
         return false;
     };
     OPEN_FILE_TABLE
@@ -227,7 +229,8 @@ pub fn pipe_endpoint_of(fd: i32) -> Option<(i32, bool, bool)> {
     if fd < 0 {
         return None;
     }
-    let handle_id = super::handle::vfs_get_fd_handle(fd as usize)?;
+    let handle_id =
+        super::handle::vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(fd))?;
     OPEN_FILE_TABLE
         .with_file(handle_id, |of| {
             of.pipe_endpoint()

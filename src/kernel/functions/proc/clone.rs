@@ -57,7 +57,7 @@ pub fn clone_syscall(
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }
 
@@ -365,7 +365,7 @@ pub fn get_robust_list_syscall(pid: i32, head_ptr: u64, len_ptr: u64) -> Result<
     let target = if pid == 0 {
         crate::privileged::proc::api::process_get_current_pid()
     } else {
-        pid as u32
+        pid.cast_unsigned()
     };
     let (head, len) = crate::privileged::proc::api::process_with(target, |p| {
         (
@@ -401,6 +401,6 @@ pub fn arch_prctl_syscall(code: u64, addr: u64) -> Result<usize, Errno> {
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }

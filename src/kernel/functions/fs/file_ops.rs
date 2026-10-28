@@ -113,7 +113,11 @@ pub fn poll_syscall(fds_ptr: u64, nfds: u32, _timeout: i32) -> i64 {
         }
         if pfd.events & POLLIN != 0 {
             // fd 有效性改由 per-process fd 表判定 (fd → OpenFileTable handle 映射存在即有效)
-            if crate::functions::fs::vfs_get_fd_handle(pfd.fd as usize).is_some() {
+            if crate::functions::fs::vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(
+                pfd.fd,
+            ))
+            .is_some()
+            {
                 pfd.revents |= POLLIN;
                 ready += 1;
             }
@@ -213,8 +217,9 @@ pub fn truncate_syscall(path_ptr: u64, length: i64) -> i64 {
     if fd < 0 {
         return Errno::ENOENT.as_ret();
     }
-    let result = crate::functions::fs::vfs_truncate_internal(fd as u32, length as u64);
-    crate::functions::fs::vfs_close(fd as u32);
+    let result =
+        crate::functions::fs::vfs_truncate_internal(fd.cast_unsigned(), length.cast_unsigned());
+    crate::functions::fs::vfs_close(fd.cast_unsigned());
     if result < 0 { Errno::EIO.as_ret() } else { 0 }
 }
 
@@ -223,7 +228,8 @@ pub fn ftruncate_syscall(fd: i32, length: i64) -> i64 {
     if fd < 0 || length < 0 {
         return Errno::EINVAL.as_ret();
     }
-    let result = crate::functions::fs::vfs_truncate_internal(fd as u32, length as u64);
+    let result =
+        crate::functions::fs::vfs_truncate_internal(fd.cast_unsigned(), length.cast_unsigned());
     if result < 0 { Errno::EIO.as_ret() } else { 0 }
 }
 
@@ -260,12 +266,12 @@ pub fn fallocate_syscall(fd: i32, mode: i32, offset: u64, len: u64) -> i64 {
     };
     // 仅扩展不缩小: 目标大小超过当前 size 时才截断扩展
     let cur_size = crate::functions::fs::api::vfs_fstat_safe(
-        fd as u32,
+        fd.cast_unsigned(),
         crate::privileged::sgeg::pwm_get_current(),
     )
     .map_or(0, |st| u64::from(st.size));
     if end > cur_size {
-        let r = crate::functions::fs::vfs_truncate_internal(fd as u32, end);
+        let r = crate::functions::fs::vfs_truncate_internal(fd.cast_unsigned(), end);
         if r < 0 {
             return Errno::EIO.as_ret();
         }
@@ -283,7 +289,9 @@ pub fn flock_syscall(fd: i32, operation: i32) -> i64 {
 
     // inode 号改由 OpenFile 元数据源提供 (fd → handle → OpenFile.inode_id)
     let ino = {
-        let Some(handle_id) = crate::functions::fs::vfs_get_fd_handle(fd as usize) else {
+        let Some(handle_id) =
+            crate::functions::fs::vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(fd))
+        else {
             return Errno::EBADF.as_ret();
         };
         match crate::functions::fs::OPEN_FILE_TABLE

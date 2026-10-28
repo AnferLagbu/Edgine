@@ -227,7 +227,7 @@ pub fn apply_settimeofday(tv_sec: i64, micros: i64) -> Result<usize, Errno> {
         return Err(Errno::EPERM);
     }
 
-    let ns = tv_sec as u64 * NS_PER_SEC + micros as u64 * NS_PER_USEC;
+    let ns = tv_sec.cast_unsigned() * NS_PER_SEC + micros.cast_unsigned() * NS_PER_USEC;
     if !crate::functions::timer::time_sync::subsystem().set_time(ns) {
         return Err(Errno::EINVAL);
     }
@@ -303,7 +303,7 @@ pub fn clock_nanosleep_wait_ns(
         return Err(Errno::EINVAL);
     }
 
-    let req_ns = tv_sec as u64 * NS_PER_SEC + nanos as u64;
+    let req_ns = tv_sec.cast_unsigned() * NS_PER_SEC + nanos.cast_unsigned();
     Ok(if flags & TIMER_ABSTIME != 0 {
         // 绝对时刻: 目标已过则立即返回 (Linux 不报错)
         req_ns.saturating_sub(now_ns)
@@ -460,7 +460,7 @@ pub fn apply_adjtimex(
         };
         let delta_ns = timeval_to_ns_signed(delta);
         let target = if delta_ns >= 0 {
-            wall_clock_ns().saturating_add(delta_ns as u64)
+            wall_clock_ns().saturating_add(delta_ns.cast_unsigned())
         } else {
             wall_clock_ns().saturating_sub(delta_ns.unsigned_abs())
         };

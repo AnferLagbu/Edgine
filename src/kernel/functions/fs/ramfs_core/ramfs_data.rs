@@ -1406,7 +1406,7 @@ impl RamFsData {
             return None;
         }
 
-        Some(new_offset as u64)
+        Some(new_offset.cast_unsigned())
     }
 
     /// 获取节点文件大小; 节点无效或未使用返回 `None`

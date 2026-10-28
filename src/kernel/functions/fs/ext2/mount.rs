@@ -82,9 +82,9 @@ impl Inode for Ext2Inode {
             u64::from(inode.i_size)
         };
         let new_offset = match whence {
-            VfsSeekWhence::Set => offset as u64,
-            VfsSeekWhence::Cur => current_offset.saturating_add(offset as u64),
-            VfsSeekWhence::End => file_size.saturating_add(offset as u64),
+            VfsSeekWhence::Set => offset.cast_unsigned(),
+            VfsSeekWhence::Cur => current_offset.saturating_add(offset.cast_unsigned()),
+            VfsSeekWhence::End => file_size.saturating_add(offset.cast_unsigned()),
         };
         Ok(new_offset)
     }

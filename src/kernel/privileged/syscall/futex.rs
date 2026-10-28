@@ -257,8 +257,8 @@ pub fn sys_futex(uaddr: u64, op: i32, val: i32, timeout_or_uaddr2: u64, val2: u3
 
     match base_op {
         FUTEX_WAIT | FUTEX_WAIT_BITSET => futex_wait(uaddr, val, timeout_or_uaddr2),
-        FUTEX_WAKE | FUTEX_WAKE_BITSET => futex_wake(uaddr, val as u32),
-        FUTEX_REQUEUE => futex_requeue(uaddr, val as u32, timeout_or_uaddr2, val2),
+        FUTEX_WAKE | FUTEX_WAKE_BITSET => futex_wake(uaddr, val.cast_unsigned()),
+        FUTEX_REQUEUE => futex_requeue(uaddr, val.cast_unsigned(), timeout_or_uaddr2, val2),
         _ => {
             crate::klog_warn!(Sync, "[FUTEX] Unknown op {}", op);
             -(35i64) // -EAGAIN
@@ -281,7 +281,7 @@ fn futex_wait(uaddr: u64, val: i32, _timeout: u64) -> i64 {
     };
 
     // 2. 原子比较: 若不匹配, 立即返回 EAGAIN
-    if current_val != val as u32 {
+    if current_val != val.cast_unsigned() {
         return -(11i64); // -EAGAIN
     }
 

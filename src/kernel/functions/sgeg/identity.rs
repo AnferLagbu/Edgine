@@ -137,7 +137,7 @@ pub fn try_genesis(password: &[u8]) -> PwmResult<PwmId> {
     }
     let rc = sgeg_pwm::pwm_try_genesis(password.as_ptr());
     if rc > 0 {
-        Ok(PwmId(rc as u64))
+        Ok(PwmId(rc.cast_unsigned()))
     } else {
         Err(PwmError::from_i32(rc as i32))
     }
@@ -155,7 +155,7 @@ pub fn create_first_identity(password: &[u8]) -> PwmResult<PwmId> {
     }
     let rc = sgeg_pwm::pwm_create_first_identity(password.as_ptr());
     if rc > 0 {
-        Ok(PwmId(rc as u64))
+        Ok(PwmId(rc.cast_unsigned()))
     } else {
         Err(PwmError::from_i32(rc as i32))
     }
@@ -173,7 +173,7 @@ pub fn create(password: &[u8], note: &[u8], creator: PwmId) -> PwmResult<PwmId> 
     }
     let rc = sgeg_pwm::pwm_create(password.as_ptr(), note.as_ptr(), creator.0);
     if rc > 0 {
-        Ok(PwmId(rc as u64))
+        Ok(PwmId(rc.cast_unsigned()))
     } else {
         Err(PwmError::from_i32(rc as i32))
     }

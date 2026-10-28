@@ -56,7 +56,7 @@ fn s3_poll_deadline_reported_not_dropped() {
     );
     // µs → ns 换算必须夹紧负值: smoltcp 的 Instant 允许表示"已过"的时刻。
     assert!(
-        flat.contains(".map(|deadline|deadline.micros().max(0)asu64*1_000)"),
+        flat.contains(".map(|deadline|deadline.micros().max(0).cast_unsigned()*1_000)"),
         "S-3: 截止期未按 µs→ns 换算 (或丢了非负夹紧)"
     );
     assert!(

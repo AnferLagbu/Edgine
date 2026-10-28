@@ -34,7 +34,9 @@ const USER_ADDR_MAX: u64 = 0x0000_FFFF_FFFF_FFFF;
 pub fn brk_syscall(addr: u64) -> Result<usize, Errno> {
     // addr == 0 是合法查询, 直接委托 (§6.1 下沉 functions/syscall/brk)
     if addr == 0 {
-        return Ok(crate::functions::syscall::brk::sys_brk(0) as usize);
+        return Ok(crate::functions::intcast::usize_from_i64(
+            crate::functions::syscall::brk::sys_brk(0),
+        ));
     }
 
     // 参数验证: 地址不能超过用户空间最大值
@@ -47,6 +49,6 @@ pub fn brk_syscall(addr: u64) -> Result<usize, Errno> {
     if ret < 0 {
         Err(Errno::ENOMEM)
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }

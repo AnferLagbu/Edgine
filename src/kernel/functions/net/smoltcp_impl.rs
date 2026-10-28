@@ -248,7 +248,7 @@ impl SmoltcpNetStack {
 
     /// 检查 fd 是否由 `SmoltcpNetStack` 创建且仍处于活动状态.
     fn is_active_fd(&self, fd: i32) -> bool {
-        let idx = fd as usize;
+        let idx = crate::functions::intcast::usize_from_i32(fd);
         idx < MAX_SOCKETS && self.active_fds[idx]
     }
 
@@ -333,7 +333,7 @@ impl SmoltcpNetStack {
         }
         let rc = fw_net_socket::sm_net_send(fd, buf.as_ptr(), buf.len() as u32, 0);
         if rc >= 0 {
-            Ok(rc as usize)
+            Ok(crate::functions::intcast::usize_from_i32(rc))
         } else {
             Err(NetError::Other)
         }
@@ -350,7 +350,7 @@ impl SmoltcpNetStack {
         }
         let rc = fw_net_socket::sm_net_recv(fd, buf.as_mut_ptr(), buf.len() as u32, 0);
         if rc >= 0 {
-            Ok(rc as usize)
+            Ok(crate::functions::intcast::usize_from_i32(rc))
         } else {
             Err(NetError::Other)
         }
@@ -375,7 +375,7 @@ impl SmoltcpNetStack {
             addrlen,
         );
         if rc >= 0 {
-            Ok(rc as usize)
+            Ok(crate::functions::intcast::usize_from_i32(rc))
         } else {
             Err(NetError::Other)
         }
@@ -407,7 +407,7 @@ impl SmoltcpNetStack {
         if rc >= 0 {
             let ep =
                 sockaddr_to_endpoint(&src[..addrlen as usize]).unwrap_or(NetEndpoint::UNSPECIFIED);
-            Ok((rc as usize, ep))
+            Ok((crate::functions::intcast::usize_from_i32(rc), ep))
         } else {
             Err(NetError::Other)
         }
@@ -419,7 +419,7 @@ impl SmoltcpNetStack {
     ///
     /// 当底层 `sm_net_close` 失败时返回 `Err(NetError::Other)`。
     pub fn close_fd(&mut self, fd: i32) -> Result<()> {
-        let idx = fd as usize;
+        let idx = crate::functions::intcast::usize_from_i32(fd);
         if idx < MAX_SOCKETS {
             self.active_fds[idx] = false;
         }
@@ -504,7 +504,7 @@ impl SmoltcpNetStack {
     pub fn socket_create_fd(&mut self, domain: i32, sock_type: i32) -> Result<i32> {
         let fd = fw_net_socket::sm_net_socket(domain, sock_type, 0);
         if fd >= 0 {
-            let idx = fd as usize;
+            let idx = crate::functions::intcast::usize_from_i32(fd);
             if idx < MAX_SOCKETS {
                 self.active_fds[idx] = true;
             }
@@ -819,7 +819,7 @@ impl NetStack for SmoltcpNetStack {
         }
         // 新 fd 需要映射回 SmoltcpNetStack handle
         // 但由于 accept 不在 SmoltcpNetStack 路径创建, 返回 new_fd 作为 raw handle
-        Ok(SocketHandle::from_raw(new_fd as u32))
+        Ok(SocketHandle::from_raw(new_fd.cast_unsigned()))
     }
 
     /// 发起 TCP 连接到远端端点.
@@ -845,7 +845,7 @@ impl NetStack for SmoltcpNetStack {
         let fd = self.handle_to_fd(h).ok_or(NetError::InvalidHandle)?;
         let rc = fw_net_socket::sm_net_send(fd, buf.as_ptr(), buf.len() as u32, flags);
         if rc >= 0 {
-            Ok(rc as usize)
+            Ok(crate::functions::intcast::usize_from_i32(rc))
         } else {
             Err(NetError::Other)
         }
@@ -859,7 +859,7 @@ impl NetStack for SmoltcpNetStack {
         let fd = self.handle_to_fd(h).ok_or(NetError::InvalidHandle)?;
         let rc = fw_net_socket::sm_net_recv(fd, buf.as_mut_ptr(), buf.len() as u32, flags);
         if rc >= 0 {
-            Ok(rc as usize)
+            Ok(crate::functions::intcast::usize_from_i32(rc))
         } else {
             Err(NetError::Other)
         }
@@ -887,7 +887,7 @@ impl NetStack for SmoltcpNetStack {
             addrlen,
         );
         if rc >= 0 {
-            Ok(rc as usize)
+            Ok(crate::functions::intcast::usize_from_i32(rc))
         } else {
             Err(NetError::Other)
         }
@@ -925,7 +925,7 @@ impl NetStack for SmoltcpNetStack {
                     *ep = parsed;
                 }
             }
-            Ok(rc as usize)
+            Ok(crate::functions::intcast::usize_from_i32(rc))
         } else {
             Err(NetError::Other)
         }

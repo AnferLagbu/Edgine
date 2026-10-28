@@ -191,7 +191,7 @@ impl Interpreter {
             if !seg.offset.is_empty() {
                 if let Ok(Value::I32(offset)) = Self::eval_init_expr(&seg.offset, &self.globals) {
                     if let Some(ref mut mem) = self.memory {
-                        let addr = offset as usize;
+                        let addr = crate::functions::intcast::usize_from_i32(offset);
                         if addr + seg.data.len() <= mem.data.len() {
                             mem.data[addr..addr + seg.data.len()].copy_from_slice(&seg.data);
                         }
@@ -211,7 +211,7 @@ impl Interpreter {
                 continue;
             }
             if let Ok(Value::I32(offset)) = Self::eval_init_expr(&seg.offset, &self.globals) {
-                let base = offset as usize;
+                let base = crate::functions::intcast::usize_from_i32(offset);
                 let table_len = self.tables[table_idx].len();
                 for (i, &func_idx) in seg.func_indices.iter().enumerate() {
                     let target = base + i;
@@ -545,7 +545,7 @@ impl Interpreter {
                     self.advance_pc(1);
                     let pages = self.stack.pop_i32()?;
                     let result = if let Some(ref mut mem) = self.memory {
-                        mem.grow(pages as u32)
+                        mem.grow(pages.cast_unsigned())
                     } else {
                         u32::MAX
                     };
@@ -560,19 +560,27 @@ impl Interpreter {
                 Ok(Opcode::I32Ne) => self.execute_i32_binop(|a, b| i32::from(a != b))?,
                 Ok(Opcode::I32LtS) => self.execute_i32_binop(|a, b| i32::from(a < b))?,
                 Ok(Opcode::I32LtU) => {
-                    self.execute_i32_binop(|a, b| i32::from((a as u32) < (b as u32)))?;
+                    self.execute_i32_binop(|a, b| {
+                        i32::from(a.cast_unsigned() < b.cast_unsigned())
+                    })?;
                 }
                 Ok(Opcode::I32GtS) => self.execute_i32_binop(|a, b| i32::from(a > b))?,
                 Ok(Opcode::I32GtU) => {
-                    self.execute_i32_binop(|a, b| i32::from((a as u32) > (b as u32)))?;
+                    self.execute_i32_binop(|a, b| {
+                        i32::from(a.cast_unsigned() > b.cast_unsigned())
+                    })?;
                 }
                 Ok(Opcode::I32LeS) => self.execute_i32_binop(|a, b| i32::from(a <= b))?,
                 Ok(Opcode::I32LeU) => {
-                    self.execute_i32_binop(|a, b| i32::from((a as u32) <= (b as u32)))?;
+                    self.execute_i32_binop(|a, b| {
+                        i32::from(a.cast_unsigned() <= b.cast_unsigned())
+                    })?;
                 }
                 Ok(Opcode::I32GeS) => self.execute_i32_binop(|a, b| i32::from(a >= b))?,
                 Ok(Opcode::I32GeU) => {
-                    self.execute_i32_binop(|a, b| i32::from((a as u32) >= (b as u32)))?;
+                    self.execute_i32_binop(|a, b| {
+                        i32::from(a.cast_unsigned() >= b.cast_unsigned())
+                    })?;
                 }
 
                 Ok(Opcode::I32Add) => self.execute_i32_binop(i32::wrapping_add)?,
@@ -585,10 +593,18 @@ impl Interpreter {
                 Ok(Opcode::I32And) => self.execute_i32_binop(|a, b| a & b)?,
                 Ok(Opcode::I32Or) => self.execute_i32_binop(|a, b| a | b)?,
                 Ok(Opcode::I32Xor) => self.execute_i32_binop(|a, b| a ^ b)?,
-                Ok(Opcode::I32Shl) => self.execute_i32_binop(|a, b| a.wrapping_shl(b as u32))?,
-                Ok(Opcode::I32ShrS) => self.execute_i32_binop(|a, b| a.wrapping_shr(b as u32))?,
+                Ok(Opcode::I32Shl) => {
+                    self.execute_i32_binop(|a, b| a.wrapping_shl(b.cast_unsigned()))?;
+                }
+                Ok(Opcode::I32ShrS) => {
+                    self.execute_i32_binop(|a, b| a.wrapping_shr(b.cast_unsigned()))?;
+                }
                 Ok(Opcode::I32ShrU) => {
-                    self.execute_i32_binop(|a, b| (a as u32).wrapping_shr(b as u32).cast_signed())?;
+                    self.execute_i32_binop(|a, b| {
+                        a.cast_unsigned()
+                            .wrapping_shr(b.cast_unsigned())
+                            .cast_signed()
+                    })?;
                 }
 
                 Ok(Opcode::I64Add) => self.execute_i64_binop(i64::wrapping_add)?,
@@ -700,8 +716,8 @@ impl Interpreter {
         }
         targets[n] = read_leb128_u32(&frame.code, &mut frame.pc)? as usize;
         let _ = frame;
-        let depth = if index >= 0 && (index as usize) < n {
-            targets[index as usize]
+        let depth = if index >= 0 && crate::functions::intcast::usize_from_i32(index) < n {
+            targets[crate::functions::intcast::usize_from_i32(index)]
         } else {
             targets[n]
         };
@@ -988,7 +1004,7 @@ impl Interpreter {
             return Err(WasmError::DivisionByZero);
         }
         self.stack.push(Value::I32(
-            ((a as u32).wrapping_div(b as u32)).cast_signed(),
+            (a.cast_unsigned().wrapping_div(b.cast_unsigned())).cast_signed(),
         ))?;
         Ok(())
     }
@@ -1015,7 +1031,7 @@ impl Interpreter {
             return Err(WasmError::DivisionByZero);
         }
         self.stack.push(Value::I32(
-            ((a as u32).wrapping_rem(b as u32)).cast_signed(),
+            (a.cast_unsigned().wrapping_rem(b.cast_unsigned())).cast_signed(),
         ))?;
         Ok(())
     }
@@ -1053,7 +1069,7 @@ impl Interpreter {
         let mem_offset = read_leb128_u32(&frame.code, &mut frame.pc)?;
         let _ = frame;
 
-        let base = self.stack.pop_i32()? as u32;
+        let base = self.stack.pop_i32()?.cast_unsigned();
         let addr = base
             .checked_add(mem_offset)
             .ok_or(WasmError::MemoryOutOfBounds)?;
@@ -1077,7 +1093,7 @@ impl Interpreter {
         let mem_offset = read_leb128_u32(&frame.code, &mut frame.pc)?;
         let _ = frame;
 
-        let base = self.stack.pop_i32()? as u32;
+        let base = self.stack.pop_i32()?.cast_unsigned();
         let addr = base
             .checked_add(mem_offset)
             .ok_or(WasmError::MemoryOutOfBounds)?;
@@ -1095,7 +1111,7 @@ impl Interpreter {
         let mem_offset = read_leb128_u32(&frame.code, &mut frame.pc)?;
         let _ = frame;
 
-        let base = self.stack.pop_i32()? as u32;
+        let base = self.stack.pop_i32()?.cast_unsigned();
         let addr = base
             .checked_add(mem_offset)
             .ok_or(WasmError::MemoryOutOfBounds)?;
@@ -1131,7 +1147,7 @@ impl Interpreter {
         let _ = frame;
 
         let value = self.stack.pop_i32()?;
-        let base = self.stack.pop_i32()? as u32;
+        let base = self.stack.pop_i32()?.cast_unsigned();
         let addr = base
             .checked_add(mem_offset)
             .ok_or(WasmError::MemoryOutOfBounds)?;
@@ -1139,7 +1155,7 @@ impl Interpreter {
         let mem = self.memory.as_mut().ok_or(WasmError::MemoryOutOfBounds)?;
         match size {
             4 => {
-                mem.write_u32(addr, value as u32)?;
+                mem.write_u32(addr, value.cast_unsigned())?;
             }
             _ => return Err(WasmError::InternalError),
         }
@@ -1154,13 +1170,13 @@ impl Interpreter {
         let _ = frame;
 
         let value = self.stack.pop_i64()?;
-        let base = self.stack.pop_i32()? as u32;
+        let base = self.stack.pop_i32()?.cast_unsigned();
         let addr = base
             .checked_add(mem_offset)
             .ok_or(WasmError::MemoryOutOfBounds)?;
 
         let mem = self.memory.as_mut().ok_or(WasmError::MemoryOutOfBounds)?;
-        mem.write_u64(addr, value as u64)?;
+        mem.write_u64(addr, value.cast_unsigned())?;
         Ok(())
     }
 
@@ -1172,7 +1188,7 @@ impl Interpreter {
         let _ = frame;
 
         let value = self.stack.pop_i32()?;
-        let base = self.stack.pop_i32()? as u32;
+        let base = self.stack.pop_i32()?.cast_unsigned();
         let addr = base
             .checked_add(mem_offset)
             .ok_or(WasmError::MemoryOutOfBounds)?;
@@ -1180,10 +1196,10 @@ impl Interpreter {
         let mem = self.memory.as_mut().ok_or(WasmError::MemoryOutOfBounds)?;
         match size {
             1 => {
-                mem.write_u8(addr, value as u8)?;
+                mem.write_u8(addr, crate::functions::intcast::u8_from_i32(value))?;
             }
             2 => {
-                mem.write_u16(addr, value as u16)?;
+                mem.write_u16(addr, crate::functions::intcast::u16_from_i32(value))?;
             }
             _ => return Err(WasmError::InternalError),
         }

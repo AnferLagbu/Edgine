@@ -201,7 +201,7 @@ impl Errno {
     ///
     /// 未知/未定义错误码回退为 `EINVAL`.
     pub fn from_ret(ret: i64) -> Self {
-        let errno = (-ret) as u64;
+        let errno = (-ret).cast_unsigned();
         match errno {
             1 => Self::EPERM,
             2 => Self::ENOENT,

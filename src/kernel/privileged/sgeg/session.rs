@@ -272,7 +272,7 @@ pub fn elevate_for_suid(target_pwm: u64) -> bool {
         // 推入提权栈.
         {
             let mut stack = p.session_elev_stack.lock();
-            stack[depth as usize] = snapshot;
+            stack[depth.cast_unsigned()] = snapshot;
         }
         p.session_elev_depth.store(depth + 1, Ordering::Release);
         (true, session_pwm)
@@ -302,7 +302,7 @@ pub fn drop_elevation() -> bool {
             }
             let saved = {
                 let stack = p.session_elev_stack.lock();
-                stack[(depth - 1) as usize]
+                stack[(depth - 1).cast_unsigned()]
             };
             {
                 let mut ctx = p.session.lock();

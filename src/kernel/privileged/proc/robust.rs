@@ -77,7 +77,7 @@ fn walk_robust_list(pid: u32, head_addr: u64) {
         if !crate::privileged::syscall::api::read_struct_from_user(entry, &mut next) {
             break;
         }
-        let uaddr = entry.wrapping_add(head.futex_offset as u64);
+        let uaddr = entry.wrapping_add(head.futex_offset.cast_unsigned());
         handle_futex_word(pid, uaddr);
         entry = next;
     }

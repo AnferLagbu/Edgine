@@ -15,8 +15,8 @@ pub fn wasi_environ_sizes_get(
     ctx: &mut WasiContext,
     interp: &mut Interpreter,
 ) -> Result<(), WasmError> {
-    let count_ptr = interp.stack.pop_i32()? as u32;
-    let buf_size_ptr = interp.stack.pop_i32()? as u32;
+    let count_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let buf_size_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let count = ctx.env.len() as u32;
     let buf_size: u32 = ctx
@@ -36,8 +36,8 @@ pub fn wasi_environ_sizes_get(
 /// 参数: (`environ_ptr`: i32, `buf_ptr`: i32)
 /// 返回: 0 (成功)
 pub fn wasi_environ_get(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let environ_ptr = interp.stack.pop_i32()? as u32;
-    let buf_ptr = interp.stack.pop_i32()? as u32;
+    let environ_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let buf_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let mut offset = 0u32;
     for (i, (key, val)) in ctx.env.iter().enumerate() {
@@ -66,8 +66,8 @@ pub fn wasi_args_sizes_get(
     ctx: &mut WasiContext,
     interp: &mut Interpreter,
 ) -> Result<(), WasmError> {
-    let count_ptr = interp.stack.pop_i32()? as u32;
-    let buf_size_ptr = interp.stack.pop_i32()? as u32;
+    let count_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let buf_size_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let count = ctx.args.len() as u32;
     let buf_size: u32 = ctx
@@ -87,8 +87,8 @@ pub fn wasi_args_sizes_get(
 /// 参数: (`argv_ptr`: i32, `buf_ptr`: i32)
 /// 返回: 0 (成功)
 pub fn wasi_args_get(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let argv_ptr = interp.stack.pop_i32()? as u32;
-    let buf_ptr = interp.stack.pop_i32()? as u32;
+    let argv_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let buf_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let mut offset = 0u32;
     for (i, arg) in ctx.args.iter().enumerate() {

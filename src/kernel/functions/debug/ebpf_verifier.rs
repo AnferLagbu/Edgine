@@ -170,7 +170,7 @@ fn alu_checked_range(
         }
         b0
     } else {
-        imm as u64
+        crate::functions::intcast::u64_from_i32(imm)
     };
     let v = match op_low {
         opcode::ADD => a0.checked_add(b).ok_or(())?,
@@ -257,7 +257,10 @@ impl BpfVerifier for StandardBpfVerifier {
                     // 无条件跳转
                     let target =
                         crate::functions::intcast::i64_from_usize(pc) + 1 + i64::from(insn.off);
-                    if target < 0 || target as usize >= prog.insn_cnt as usize {
+                    if target < 0
+                        || crate::functions::intcast::usize_from_i64(target)
+                            >= prog.insn_cnt as usize
+                    {
                         return VerifyResult::Err(
                             alloc::format!("jump out of bounds at pc={pc}: target={target}")
                                 .into_bytes(),
@@ -274,7 +277,7 @@ impl BpfVerifier for StandardBpfVerifier {
                     }
                 } else if op_low == opcode::CALL {
                     // Helper 调用
-                    let helper_id = insn.imm as u32;
+                    let helper_id = insn.imm.cast_unsigned();
                     if !is_valid_helper(helper_id) {
                         return VerifyResult::Err(
                             alloc::format!("unknown helper {helper_id} at pc={pc}").into_bytes(),
@@ -308,7 +311,10 @@ impl BpfVerifier for StandardBpfVerifier {
                     // 条件跳转
                     let target =
                         crate::functions::intcast::i64_from_usize(pc) + 1 + i64::from(insn.off);
-                    if target < 0 || target as usize >= prog.insn_cnt as usize {
+                    if target < 0
+                        || crate::functions::intcast::usize_from_i64(target)
+                            >= prog.insn_cnt as usize
+                    {
                         return VerifyResult::Err(
                             alloc::format!("conditional jump OOB at pc={pc}: target={target}")
                                 .into_bytes(),
@@ -366,7 +372,9 @@ impl BpfVerifier for StandardBpfVerifier {
                         regs[dst] = regs[src];
                     } else {
                         // B07-18: MOV imm 记录单点常量范围 (供后续 ALU 溢出检测)
-                        regs[dst] = RegState::const_value(insn.imm as u64);
+                        regs[dst] = RegState::const_value(crate::functions::intcast::u64_from_i32(
+                            insn.imm,
+                        ));
                     }
                 } else {
                     // B07-18 规则 13: ALU64 单点常量运算溢出检测.

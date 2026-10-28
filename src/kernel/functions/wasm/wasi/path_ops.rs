@@ -72,15 +72,15 @@ fn wasi_o_flags_to_vfs(o_flags: u32) -> u32 {
 /// 当栈弹出参数失败、路径读取/解析失败或写入线性内存失败时
 /// 返回对应的 `WasmError`.
 pub fn wasi_path_open(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let dirfd = interp.stack.pop_i32()? as u32;
-    let _dirflags = interp.stack.pop_i32()? as u32;
-    let path_ptr = interp.stack.pop_i32()? as u32;
-    let path_len = interp.stack.pop_i32()? as u32;
-    let o_flags = interp.stack.pop_i32()? as u32;
-    let _fs_rights_base = interp.stack.pop_i64()? as u64;
-    let _fs_rights_inheriting = interp.stack.pop_i64()? as u64;
-    let _fd_flags = interp.stack.pop_i32()? as u32;
-    let fd_ptr = interp.stack.pop_i32()? as u32;
+    let dirfd = interp.stack.pop_i32()?.cast_unsigned();
+    let _dirflags = interp.stack.pop_i32()?.cast_unsigned();
+    let path_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let path_len = interp.stack.pop_i32()?.cast_unsigned();
+    let o_flags = interp.stack.pop_i32()?.cast_unsigned();
+    let _fs_rights_base = interp.stack.pop_i64()?.cast_unsigned();
+    let _fs_rights_inheriting = interp.stack.pop_i64()?.cast_unsigned();
+    let _fd_flags = interp.stack.pop_i32()?.cast_unsigned();
+    let fd_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let path = read_path(interp, path_ptr, path_len)?;
     let abs_path = resolve_path(ctx, dirfd, &path)?;
@@ -124,9 +124,9 @@ pub fn wasi_path_create_directory(
     ctx: &mut WasiContext,
     interp: &mut Interpreter,
 ) -> Result<(), WasmError> {
-    let dirfd = interp.stack.pop_i32()? as u32;
-    let path_ptr = interp.stack.pop_i32()? as u32;
-    let path_len = interp.stack.pop_i32()? as u32;
+    let dirfd = interp.stack.pop_i32()?.cast_unsigned();
+    let path_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let path_len = interp.stack.pop_i32()?.cast_unsigned();
 
     let path = read_path(interp, path_ptr, path_len)?;
     let abs_path = resolve_path(ctx, dirfd, &path)?;
@@ -150,9 +150,9 @@ pub fn wasi_path_remove_directory(
     ctx: &mut WasiContext,
     interp: &mut Interpreter,
 ) -> Result<(), WasmError> {
-    let dirfd = interp.stack.pop_i32()? as u32;
-    let path_ptr = interp.stack.pop_i32()? as u32;
-    let path_len = interp.stack.pop_i32()? as u32;
+    let dirfd = interp.stack.pop_i32()?.cast_unsigned();
+    let path_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let path_len = interp.stack.pop_i32()?.cast_unsigned();
 
     let path = read_path(interp, path_ptr, path_len)?;
     let abs_path = resolve_path(ctx, dirfd, &path)?;
@@ -176,9 +176,9 @@ pub fn wasi_path_unlink_file(
     ctx: &mut WasiContext,
     interp: &mut Interpreter,
 ) -> Result<(), WasmError> {
-    let dirfd = interp.stack.pop_i32()? as u32;
-    let path_ptr = interp.stack.pop_i32()? as u32;
-    let path_len = interp.stack.pop_i32()? as u32;
+    let dirfd = interp.stack.pop_i32()?.cast_unsigned();
+    let path_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let path_len = interp.stack.pop_i32()?.cast_unsigned();
 
     let path = read_path(interp, path_ptr, path_len)?;
     let abs_path = resolve_path(ctx, dirfd, &path)?;
@@ -199,11 +199,11 @@ pub fn wasi_path_unlink_file(
 ///
 /// 当栈弹出参数失败或路径读取/解析失败时返回对应的 `WasmError`.
 pub fn wasi_path_symlink(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let old_path_ptr = interp.stack.pop_i32()? as u32;
-    let old_path_len = interp.stack.pop_i32()? as u32;
-    let dirfd = interp.stack.pop_i32()? as u32;
-    let new_path_ptr = interp.stack.pop_i32()? as u32;
-    let new_path_len = interp.stack.pop_i32()? as u32;
+    let old_path_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let old_path_len = interp.stack.pop_i32()?.cast_unsigned();
+    let dirfd = interp.stack.pop_i32()?.cast_unsigned();
+    let new_path_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let new_path_len = interp.stack.pop_i32()?.cast_unsigned();
 
     let old_path = read_path(interp, old_path_ptr, old_path_len)?;
     let new_path = read_path(interp, new_path_ptr, new_path_len)?;
@@ -230,12 +230,12 @@ pub fn wasi_path_readlink(
     ctx: &mut WasiContext,
     interp: &mut Interpreter,
 ) -> Result<(), WasmError> {
-    let dirfd = interp.stack.pop_i32()? as u32;
-    let path_ptr = interp.stack.pop_i32()? as u32;
-    let path_len = interp.stack.pop_i32()? as u32;
-    let buf_ptr = interp.stack.pop_i32()? as u32;
-    let buf_len = interp.stack.pop_i32()? as u32;
-    let buf_used_ptr = interp.stack.pop_i32()? as u32;
+    let dirfd = interp.stack.pop_i32()?.cast_unsigned();
+    let path_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let path_len = interp.stack.pop_i32()?.cast_unsigned();
+    let buf_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let buf_len = interp.stack.pop_i32()?.cast_unsigned();
+    let buf_used_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let path = read_path(interp, path_ptr, path_len)?;
     let abs_path = resolve_path(ctx, dirfd, &path)?;
@@ -249,11 +249,11 @@ pub fn wasi_path_readlink(
     } else {
         // 将结果写回 WASM 线性内存
         if let Some(ref mut mem) = interp.memory {
-            for i in 0..result as usize {
+            for i in 0..crate::functions::intcast::usize_from_i32(result) {
                 let _ = mem.write_u8(buf_ptr + i as u32, link_buf[i]);
             }
         }
-        write_u32_to_memory(interp, buf_used_ptr, result as u32);
+        write_u32_to_memory(interp, buf_used_ptr, result.cast_unsigned());
         interp.stack.push(Value::I32(wasi_success()))?;
     }
     Ok(())
@@ -265,12 +265,12 @@ pub fn wasi_path_readlink(
 ///
 /// 当栈弹出参数失败或路径读取/解析失败时返回对应的 `WasmError`.
 pub fn wasi_path_rename(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let old_dirfd = interp.stack.pop_i32()? as u32;
-    let old_path_ptr = interp.stack.pop_i32()? as u32;
-    let old_path_len = interp.stack.pop_i32()? as u32;
-    let new_dirfd = interp.stack.pop_i32()? as u32;
-    let new_path_ptr = interp.stack.pop_i32()? as u32;
-    let new_path_len = interp.stack.pop_i32()? as u32;
+    let old_dirfd = interp.stack.pop_i32()?.cast_unsigned();
+    let old_path_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let old_path_len = interp.stack.pop_i32()?.cast_unsigned();
+    let new_dirfd = interp.stack.pop_i32()?.cast_unsigned();
+    let new_path_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let new_path_len = interp.stack.pop_i32()?.cast_unsigned();
 
     let old_path = read_path(interp, old_path_ptr, old_path_len)?;
     let new_path = read_path(interp, new_path_ptr, new_path_len)?;
@@ -297,11 +297,11 @@ pub fn wasi_path_filestat_get(
     ctx: &mut WasiContext,
     interp: &mut Interpreter,
 ) -> Result<(), WasmError> {
-    let dirfd = interp.stack.pop_i32()? as u32;
-    let _flags = interp.stack.pop_i32()? as u32;
-    let path_ptr = interp.stack.pop_i32()? as u32;
-    let path_len = interp.stack.pop_i32()? as u32;
-    let buf_ptr = interp.stack.pop_i32()? as u32;
+    let dirfd = interp.stack.pop_i32()?.cast_unsigned();
+    let _flags = interp.stack.pop_i32()?.cast_unsigned();
+    let path_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let path_len = interp.stack.pop_i32()?.cast_unsigned();
+    let buf_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let path = read_path(interp, path_ptr, path_len)?;
     let abs_path = resolve_path(ctx, dirfd, &path)?;
@@ -350,12 +350,12 @@ pub fn wasi_path_filestat_set_times(
     ctx: &mut WasiContext,
     interp: &mut Interpreter,
 ) -> Result<(), WasmError> {
-    let dirfd = interp.stack.pop_i32()? as u32;
-    let _flags = interp.stack.pop_i32()? as u32;
-    let path_ptr = interp.stack.pop_i32()? as u32;
-    let path_len = interp.stack.pop_i32()? as u32;
-    let atim = interp.stack.pop_i64()? as u64;
-    let mtim = interp.stack.pop_i64()? as u64;
+    let dirfd = interp.stack.pop_i32()?.cast_unsigned();
+    let _flags = interp.stack.pop_i32()?.cast_unsigned();
+    let path_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let path_len = interp.stack.pop_i32()?.cast_unsigned();
+    let atim = interp.stack.pop_i64()?.cast_unsigned();
+    let mtim = interp.stack.pop_i64()?.cast_unsigned();
 
     let path = read_path(interp, path_ptr, path_len)?;
     let abs_path = resolve_path(ctx, dirfd, &path)?;
@@ -376,13 +376,13 @@ pub fn wasi_path_filestat_set_times(
 ///
 /// 当栈弹出参数失败或路径读取/解析失败时返回对应的 `WasmError`.
 pub fn wasi_path_link(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
-    let old_dirfd = interp.stack.pop_i32()? as u32;
-    let _old_flags = interp.stack.pop_i32()? as u32;
-    let old_path_ptr = interp.stack.pop_i32()? as u32;
-    let old_path_len = interp.stack.pop_i32()? as u32;
-    let new_dirfd = interp.stack.pop_i32()? as u32;
-    let new_path_ptr = interp.stack.pop_i32()? as u32;
-    let new_path_len = interp.stack.pop_i32()? as u32;
+    let old_dirfd = interp.stack.pop_i32()?.cast_unsigned();
+    let _old_flags = interp.stack.pop_i32()?.cast_unsigned();
+    let old_path_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let old_path_len = interp.stack.pop_i32()?.cast_unsigned();
+    let new_dirfd = interp.stack.pop_i32()?.cast_unsigned();
+    let new_path_ptr = interp.stack.pop_i32()?.cast_unsigned();
+    let new_path_len = interp.stack.pop_i32()?.cast_unsigned();
 
     let old_path = read_path(interp, old_path_ptr, old_path_len)?;
     let new_path = read_path(interp, new_path_ptr, new_path_len)?;

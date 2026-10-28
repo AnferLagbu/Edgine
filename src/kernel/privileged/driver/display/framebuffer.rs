@@ -275,7 +275,12 @@ impl Rect {
         let x2 = (self.x + self.width.cast_signed()).min(other.x + other.width.cast_signed());
         let y2 = (self.y + self.height.cast_signed()).min(other.y + other.height.cast_signed());
 
-        Some(Self::new(x, y, (x2 - x) as u32, (y2 - y) as u32))
+        Some(Self::new(
+            x,
+            y,
+            (x2 - x).cast_unsigned(),
+            (y2 - y).cast_unsigned(),
+        ))
     }
 }
 

@@ -143,12 +143,12 @@ impl Itimerspec {
         let sec = if self.it_value_sec < 0 {
             0u64
         } else {
-            self.it_value_sec as u64
+            self.it_value_sec.cast_unsigned()
         };
         let nsec = if self.it_value_nsec < 0 {
             0u64
         } else {
-            self.it_value_nsec as u64
+            self.it_value_nsec.cast_unsigned()
         };
         // 纳秒溢出保护 (>= 1e9 时折回秒)
         let nsec_norm = nsec.min(999_999_999);
@@ -160,12 +160,12 @@ impl Itimerspec {
         let sec = if self.it_interval_sec < 0 {
             0u64
         } else {
-            self.it_interval_sec as u64
+            self.it_interval_sec.cast_unsigned()
         };
         let nsec = if self.it_interval_nsec < 0 {
             0u64
         } else {
-            self.it_interval_nsec as u64
+            self.it_interval_nsec.cast_unsigned()
         };
         let nsec_norm = nsec.min(999_999_999);
         sec.saturating_mul(1_000_000_000).saturating_add(nsec_norm)
@@ -254,7 +254,7 @@ fn id_to_idx(timer_id: i32) -> Option<usize> {
     if timer_id <= 0 {
         return None;
     }
-    let idx = (timer_id - 1) as usize;
+    let idx = crate::privileged::lib::usize_from_i32(timer_id - 1);
     if idx >= MAX_POSIX_TIMERS {
         return None;
     }
@@ -299,7 +299,7 @@ fn posix_timer_callback(timer: &HrTimer) -> HrTimerRestart {
 
     // SIGEV_SIGNAL: 发送信号 (无需持 TimerManager 锁, do_signal_send 内部独立)
     if slot.sigev_notify == SIGEV_SIGNAL {
-        let sig = slot.sigev_signo as u8;
+        let sig = crate::privileged::lib::u8_from_i32(slot.sigev_signo);
         let pid = slot.owner_pid;
         // 失败 (进程已退出) 静默忽略 — timer_delete 负责清理
         let _ = do_signal_send(pid, sig);

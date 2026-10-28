@@ -164,7 +164,7 @@ pub fn sys_epoll_ctl(epfd: i64, op: i32, fd: i32, event: *const EpollEvent) -> i
         return Errno::EBADF.as_ret();
     }
 
-    let epfd_id = epfd as u64;
+    let epfd_id = epfd.cast_unsigned();
     let mut instances = EPOLL_INSTANCES.lock();
 
     // 查找 epoll 实例
@@ -248,7 +248,9 @@ pub fn sys_epoll_ctl(epfd: i64, op: i32, fd: i32, event: *const EpollEvent) -> i
             }
 
             // 同时从就绪列表移除
-            instances[idx].ready_list.retain(|e| e.data != fd as u64);
+            instances[idx]
+                .ready_list
+                .retain(|e| e.data != crate::privileged::lib::u64_from_i32(fd));
 
             crate::klog_debug!(Sync, "[epoll] DEL fd={} from epfd={}", fd, epfd_id);
         }
@@ -270,7 +272,7 @@ pub fn sys_epoll_wait(epfd: i64, events: *mut EpollEvent, maxevents: i32, timeou
         return Errno::EINVAL.as_ret();
     }
 
-    let epfd_id = epfd as u64;
+    let epfd_id = epfd.cast_unsigned();
     let mut instances = EPOLL_INSTANCES.lock();
 
     // 查找 epoll 实例
@@ -337,7 +339,9 @@ pub fn sys_epoll_wait(epfd: i64, events: *mut EpollEvent, maxevents: i32, timeou
     }
 
     // 复制到用户空间
-    let count = ready_events.len().min(maxevents as usize);
+    let count = ready_events
+        .len()
+        .min(crate::privileged::lib::usize_from_i32(maxevents));
     for i in 0..count {
         // SAFETY: events 指针由 syscall 入口验证
         unsafe {

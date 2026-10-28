@@ -56,7 +56,7 @@ pub fn tcsetpgrp_syscall(_fd: i32, pgid: i32) -> i64 {
     process_for_each(|proc| {
         let pg = proc.pgid.load(Ordering::SeqCst);
         let iter_sid = proc.session_id.load(Ordering::SeqCst);
-        if pg == pgid as u32 && iter_sid == sid {
+        if pg == pgid.cast_unsigned() && iter_sid == sid {
             found = true;
         }
         true
@@ -66,7 +66,7 @@ pub fn tcsetpgrp_syscall(_fd: i32, pgid: i32) -> i64 {
         return Errno::EINVAL.as_ret();
     }
 
-    if crate::privileged::proc::SESSION_MANAGER.set_foreground_pgid(sid, pgid as u32) {
+    if crate::privileged::proc::SESSION_MANAGER.set_foreground_pgid(sid, pgid.cast_unsigned()) {
         0
     } else {
         -1

@@ -108,11 +108,11 @@ pub fn open_syscall(path_ptr: u64, flags: i32, mode: i32) -> Result<usize, Errno
         return Err(Errno::EINVAL);
     }
     let pwm = current_pwm();
-    let r = fw::vfs_open(path_ptr as *const u8, flags as u32, pwm);
+    let r = fw::vfs_open(path_ptr as *const u8, flags.cast_unsigned(), pwm);
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i32(r))
     }
 }
 
@@ -170,7 +170,7 @@ pub fn close_syscall(fd: i32) -> Result<usize, Errno> {
             Ok(0)
         };
     }
-    let r = fw::vfs_close(fd as u32);
+    let r = fw::vfs_close(fd.cast_unsigned());
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))
     } else {

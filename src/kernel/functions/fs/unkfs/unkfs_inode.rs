@@ -30,7 +30,7 @@ impl Inode for UnkfsInode {
         if result < 0 {
             Err(KernelError::Io)
         } else {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         }
     }
 
@@ -40,7 +40,7 @@ impl Inode for UnkfsInode {
         if result < 0 {
             Err(KernelError::Io)
         } else {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         }
     }
 
@@ -76,8 +76,10 @@ impl Inode for UnkfsInode {
 
     fn seek(&self, offset: i64, whence: VfsSeekWhence, current_offset: u64) -> KernelResult<u64> {
         let new_offset = match whence {
-            VfsSeekWhence::Set => offset as u64,
-            VfsSeekWhence::Cur | VfsSeekWhence::End => current_offset.saturating_add(offset as u64),
+            VfsSeekWhence::Set => offset.cast_unsigned(),
+            VfsSeekWhence::Cur | VfsSeekWhence::End => {
+                current_offset.saturating_add(offset.cast_unsigned())
+            }
         };
         Ok(new_offset)
     }
@@ -168,7 +170,9 @@ impl crate::functions::fs::FileSystem for UnkfsData {
     {
         match self.open(rel_path, flags, pwm) {
             Ok(fd) => Ok(alloc::sync::Arc::new(UnkfsInode::new(
-                fd as u32, 0, rel_path,
+                fd.cast_unsigned(),
+                0,
+                rel_path,
             ))),
             Err(e) => Err(e),
         }
@@ -195,7 +199,7 @@ impl crate::functions::fs::FileSystem for UnkfsData {
         if result < 0 {
             Err(KernelError::Io)
         } else {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         }
     }
 
@@ -211,7 +215,7 @@ impl crate::functions::fs::FileSystem for UnkfsData {
         if result < 0 {
             Err(KernelError::Io)
         } else {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         }
     }
 
@@ -356,7 +360,7 @@ impl crate::functions::fs::FileSystem for UnkfsData {
         if result < 0 {
             Err(KernelError::Io)
         } else {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         }
     }
 
@@ -385,7 +389,7 @@ impl crate::functions::fs::FileSystem for UnkfsData {
         if result < 0 {
             Err(KernelError::InvalidArgument)
         } else {
-            Ok(result as u64)
+            Ok(result.cast_unsigned())
         }
     }
 
@@ -433,7 +437,7 @@ impl crate::functions::fs::FileSystem for UnkfsData {
         if result < 0 {
             Err(KernelError::FileNotFound)
         } else {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         }
     }
 
@@ -447,7 +451,7 @@ impl crate::functions::fs::FileSystem for UnkfsData {
         if result < 0 {
             Err(KernelError::FileNotFound)
         } else {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         }
     }
 

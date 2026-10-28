@@ -329,7 +329,11 @@ fn handle_file_fault(
             vma.file_pwm,
         );
         if n > 0 {
-            super::pcache::pcache_fill(vma.inode_id, page_index, &page_buf[..n as usize]);
+            super::pcache::pcache_fill(
+                vma.inode_id,
+                page_index,
+                &page_buf[..crate::privileged::lib::usize_from_i32(n)],
+            );
         }
         // n <= 0 (EOF / 文件短): 保持插入时的零页 (POSIX: mmap 文件尾零填充)
     }

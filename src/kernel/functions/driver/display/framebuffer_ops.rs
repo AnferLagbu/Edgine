@@ -124,10 +124,14 @@ fn fill_impl(canvas: &mut dyn PixelCanvas, color: Color) {
 
 /// 填充矩形区域 (自动裁剪到画布内)
 fn fill_rect_impl(canvas: &mut dyn PixelCanvas, rect: Rect, color: Color) {
-    let x_start = rect.x.max(0) as u32;
-    let y_start = rect.y.max(0) as u32;
-    let x_end = (rect.x + rect.width.cast_signed()).min(canvas.width().cast_signed()) as u32;
-    let y_end = (rect.y + rect.height.cast_signed()).min(canvas.height().cast_signed()) as u32;
+    let x_start = rect.x.max(0).cast_unsigned();
+    let y_start = rect.y.max(0).cast_unsigned();
+    let x_end = (rect.x + rect.width.cast_signed())
+        .min(canvas.width().cast_signed())
+        .cast_unsigned();
+    let y_end = (rect.y + rect.height.cast_signed())
+        .min(canvas.height().cast_signed())
+        .cast_unsigned();
 
     for y in y_start..y_end {
         for x in x_start..x_end {
@@ -142,11 +146,13 @@ fn draw_hline_impl(canvas: &mut dyn PixelCanvas, x: i32, y: i32, length: u32, co
         return;
     }
 
-    let x_start = x.max(0) as u32;
-    let x_end = (x + length.cast_signed()).min(canvas.width().cast_signed()) as u32;
+    let x_start = x.max(0).cast_unsigned();
+    let x_end = (x + length.cast_signed())
+        .min(canvas.width().cast_signed())
+        .cast_unsigned();
 
     for x in x_start..x_end {
-        canvas.set_pixel(x, y as u32, color);
+        canvas.set_pixel(x, y.cast_unsigned(), color);
     }
 }
 
@@ -156,11 +162,13 @@ fn draw_vline_impl(canvas: &mut dyn PixelCanvas, x: i32, y: i32, length: u32, co
         return;
     }
 
-    let y_start = y.max(0) as u32;
-    let y_end = (y + length.cast_signed()).min(canvas.height().cast_signed()) as u32;
+    let y_start = y.max(0).cast_unsigned();
+    let y_end = (y + length.cast_signed())
+        .min(canvas.height().cast_signed())
+        .cast_unsigned();
 
     for y in y_start..y_end {
-        canvas.set_pixel(x as u32, y, color);
+        canvas.set_pixel(x.cast_unsigned(), y, color);
     }
 }
 
@@ -244,7 +252,7 @@ fn draw_circle_impl(canvas: &mut dyn PixelCanvas, cx: i32, cy: i32, radius: u32,
 #[inline]
 fn set_pixel_if_valid(canvas: &mut dyn PixelCanvas, x: i32, y: i32, color: Color) {
     if x >= 0 && x < canvas.width().cast_signed() && y >= 0 && y < canvas.height().cast_signed() {
-        canvas.set_pixel(x as u32, y as u32, color);
+        canvas.set_pixel(x.cast_unsigned(), y.cast_unsigned(), color);
     }
 }
 
@@ -256,10 +264,10 @@ fn fill_circle_impl(canvas: &mut dyn PixelCanvas, cx: i32, cy: i32, radius: u32,
     let mut err = 0;
 
     while x >= y {
-        draw_hline_impl(canvas, cx - x, cy + y, (2 * x) as u32, color);
-        draw_hline_impl(canvas, cx - x, cy - y, (2 * x) as u32, color);
-        draw_hline_impl(canvas, cx - y, cy + x, (2 * y) as u32, color);
-        draw_hline_impl(canvas, cx - y, cy - x, (2 * y) as u32, color);
+        draw_hline_impl(canvas, cx - x, cy + y, (2 * x).cast_unsigned(), color);
+        draw_hline_impl(canvas, cx - x, cy - y, (2 * x).cast_unsigned(), color);
+        draw_hline_impl(canvas, cx - y, cy + x, (2 * y).cast_unsigned(), color);
+        draw_hline_impl(canvas, cx - y, cy - x, (2 * y).cast_unsigned(), color);
 
         y += 1;
         err += 1 + 2 * y;
@@ -329,32 +337,32 @@ fn draw_line_aa_impl(
     let xpxl1 = xend_i;
     let ypxl1 = yend_f as i32;
 
-    let a1 = (rfpart(yend_f) * xgap * 255.0) as u8;
-    let a2 = (fpart(yend_f) * xgap * 255.0) as u8;
+    let a1 = crate::functions::intcast::u8_from_i32((rfpart(yend_f) * xgap * 255.0) as i32);
+    let a2 = crate::functions::intcast::u8_from_i32((fpart(yend_f) * xgap * 255.0) as i32);
     if steep {
         blend_pixel_impl(
             canvas,
-            ypxl1 as u32,
-            xpxl1 as u32,
+            ypxl1.cast_unsigned(),
+            xpxl1.cast_unsigned(),
             Color::new_alpha(color.r, color.g, color.b, a1),
         );
         blend_pixel_impl(
             canvas,
-            (ypxl1 + 1) as u32,
-            xpxl1 as u32,
+            (ypxl1 + 1).cast_unsigned(),
+            xpxl1.cast_unsigned(),
             Color::new_alpha(color.r, color.g, color.b, a2),
         );
     } else {
         blend_pixel_impl(
             canvas,
-            xpxl1 as u32,
-            ypxl1 as u32,
+            xpxl1.cast_unsigned(),
+            ypxl1.cast_unsigned(),
             Color::new_alpha(color.r, color.g, color.b, a1),
         );
         blend_pixel_impl(
             canvas,
-            xpxl1 as u32,
-            (ypxl1 + 1) as u32,
+            xpxl1.cast_unsigned(),
+            (ypxl1 + 1).cast_unsigned(),
             Color::new_alpha(color.r, color.g, color.b, a2),
         );
     }
@@ -368,68 +376,68 @@ fn draw_line_aa_impl(
     let xpxl2 = xend_i;
     let ypxl2 = yend_f as i32;
 
-    let a1 = (rfpart(yend_f) * xgap * 255.0) as u8;
-    let a2 = (fpart(yend_f) * xgap * 255.0) as u8;
+    let a1 = crate::functions::intcast::u8_from_i32((rfpart(yend_f) * xgap * 255.0) as i32);
+    let a2 = crate::functions::intcast::u8_from_i32((fpart(yend_f) * xgap * 255.0) as i32);
     if steep {
         blend_pixel_impl(
             canvas,
-            ypxl2 as u32,
-            xpxl2 as u32,
+            ypxl2.cast_unsigned(),
+            xpxl2.cast_unsigned(),
             Color::new_alpha(color.r, color.g, color.b, a1),
         );
         blend_pixel_impl(
             canvas,
-            (ypxl2 + 1) as u32,
-            xpxl2 as u32,
+            (ypxl2 + 1).cast_unsigned(),
+            xpxl2.cast_unsigned(),
             Color::new_alpha(color.r, color.g, color.b, a2),
         );
     } else {
         blend_pixel_impl(
             canvas,
-            xpxl2 as u32,
-            ypxl2 as u32,
+            xpxl2.cast_unsigned(),
+            ypxl2.cast_unsigned(),
             Color::new_alpha(color.r, color.g, color.b, a1),
         );
         blend_pixel_impl(
             canvas,
-            xpxl2 as u32,
-            (ypxl2 + 1) as u32,
+            xpxl2.cast_unsigned(),
+            (ypxl2 + 1).cast_unsigned(),
             Color::new_alpha(color.r, color.g, color.b, a2),
         );
     }
 
     if steep {
         for x in (xpxl1 + 1)..xpxl2 {
-            let alpha = (rfpart(intery) * 255.0) as u8;
+            let alpha = crate::functions::intcast::u8_from_i32((rfpart(intery) * 255.0) as i32);
             blend_pixel_impl(
                 canvas,
-                intery as u32,
-                x as u32,
+                (intery as i32).cast_unsigned(),
+                x.cast_unsigned(),
                 Color::new_alpha(color.r, color.g, color.b, alpha),
             );
-            let alpha = (fpart(intery) * 255.0) as u8;
+            let alpha = crate::functions::intcast::u8_from_i32((fpart(intery) * 255.0) as i32);
             blend_pixel_impl(
                 canvas,
-                (intery + 1.0) as u32,
-                x as u32,
+                ((intery + 1.0) as i32).cast_unsigned(),
+                x.cast_unsigned(),
                 Color::new_alpha(color.r, color.g, color.b, alpha),
             );
             intery += gradient;
         }
     } else {
         for x in (xpxl1 + 1)..xpxl2 {
-            let alpha = (rfpart(intery) * 255.0) as u8;
+            let alpha = crate::functions::intcast::u8_from_i32((rfpart(intery) * 255.0) as i32);
             blend_pixel_impl(
                 canvas,
-                x as u32,
-                intery as u32,
+                x.cast_unsigned(),
+                (intery as i32).cast_unsigned(),
                 Color::new_alpha(color.r, color.g, color.b, alpha),
             );
-            let alpha = (fpart(intery) * 255.0) as u8;
+            let alpha = crate::functions::intcast::u8_from_i32((fpart(intery) * 255.0) as i32);
             blend_pixel_impl(
                 canvas,
-                x as u32,
-                (intery + 1.0) as u32,
+                x.cast_unsigned(),
+                ((intery + 1.0) as i32).cast_unsigned(),
                 Color::new_alpha(color.r, color.g, color.b, alpha),
             );
             intery += gradient;

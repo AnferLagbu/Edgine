@@ -55,7 +55,7 @@ pub fn timerfd_create_syscall(clockid: i32, flags: i32) -> Result<usize, Errno> 
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }
 
@@ -98,7 +98,7 @@ pub fn timerfd_settime_syscall(
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }
 
@@ -123,7 +123,7 @@ pub fn timerfd_gettime_syscall(fd: i32, curr_value_ptr: u64) -> Result<usize, Er
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }
 
@@ -148,7 +148,7 @@ pub fn timerfd_read_syscall(fd: i32, buf: u64) -> Result<usize, Errno> {
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }
 
@@ -169,6 +169,6 @@ pub fn timerfd_close_syscall(fd: i32) -> Result<usize, Errno> {
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }

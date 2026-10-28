@@ -218,9 +218,10 @@ pub fn sys_timerfd_settime(fd: i32, flags: i32, new_value_ptr: u64, old_value_pt
     let new_value = unsafe { core::ptr::read(new_value_ptr as *const Itimerspec) };
 
     // 校验: it_value 必须非零才能启动 (it_value 全零 = disarm)
-    let value_ns = new_value.it_value_sec as u64 * 1_000_000_000 + new_value.it_value_nsec as u64;
-    let interval_ns =
-        new_value.it_interval_sec as u64 * 1_000_000_000 + new_value.it_interval_nsec as u64;
+    let value_ns = new_value.it_value_sec.cast_unsigned() * 1_000_000_000
+        + new_value.it_value_nsec.cast_unsigned();
+    let interval_ns = new_value.it_interval_sec.cast_unsigned() * 1_000_000_000
+        + new_value.it_interval_nsec.cast_unsigned();
 
     let mut table = TFD_TABLE.lock();
     let slot = &mut table.slots[idx];

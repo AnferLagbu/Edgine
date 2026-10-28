@@ -237,9 +237,9 @@ pub fn save_database() -> i32 {
         return -1;
     }
 
-    let written = vfs_write_safe(fd as u32, &buf[..sz]);
-    vfs_close_safe(fd as u32);
-    if written as usize != sz {
+    let written = vfs_write_safe(fd.cast_unsigned(), &buf[..sz]);
+    vfs_close_safe(fd.cast_unsigned());
+    if crate::functions::intcast::usize_from_i32(written) != sz {
         return -1;
     }
 
@@ -261,9 +261,9 @@ pub fn load_database() -> i32 {
     }
 
     let mut hdr = [0u8; HDR_SZ];
-    let rd = vfs_read_safe(fd as u32, &mut hdr);
+    let rd = vfs_read_safe(fd.cast_unsigned(), &mut hdr);
     if rd < crate::functions::intcast::low_i32_from_usize(HDR_SZ) {
-        vfs_close_safe(fd as u32);
+        vfs_close_safe(fd.cast_unsigned());
         return -1;
     }
 
@@ -272,7 +272,7 @@ pub fn load_database() -> i32 {
         || hdr[2] != DB_MAGIC[2]
         || hdr[3] != DB_MAGIC[3]
     {
-        vfs_close_safe(fd as u32);
+        vfs_close_safe(fd.cast_unsigned());
         return -1;
     }
 
@@ -281,19 +281,19 @@ pub fn load_database() -> i32 {
     let _vmin = r16(&hdr, &mut hp);
     let count = r32(&hdr, &mut hp) as usize;
     if count == 0 || count > MAX_PWM_ENTRIES {
-        vfs_close_safe(fd as u32);
+        vfs_close_safe(fd.cast_unsigned());
         return -1;
     }
 
     let ds = count * if vmaj < 5 { V4_ENTRY_SZ } else { ENTRY_SZ };
     // 安全切片边界: v4 大 count 时 `ds` 可超缓冲, 返回 -1 (对齐 save 路径的守护).
     if ds > BUF_SZ {
-        vfs_close_safe(fd as u32);
+        vfs_close_safe(fd.cast_unsigned());
         return -1;
     }
     let mut data = [0u8; BUF_SZ];
-    let dr = vfs_read_safe(fd as u32, &mut data[..ds]);
-    vfs_close_safe(fd as u32);
+    let dr = vfs_read_safe(fd.cast_unsigned(), &mut data[..ds]);
+    vfs_close_safe(fd.cast_unsigned());
     if dr < crate::functions::intcast::low_i32_from_usize(ds) {
         return -1;
     }

@@ -194,7 +194,7 @@ fn process_vm_rw(
     if pid <= 0 {
         return Err(Errno::ESRCH);
     }
-    let target_pid = pid as u32;
+    let target_pid = pid.cast_unsigned();
     let _target = ProcRef::acquire(target_pid).ok_or(Errno::ESRCH)?;
     let target_pwm = process_get_pwm(target_pid).ok_or(Errno::ESRCH)?;
     if !check_access(target_pid, target_pwm) {

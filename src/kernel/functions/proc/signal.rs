@@ -500,7 +500,7 @@ pub fn kill_syscall(pid: i32, sig: i32) -> Result<usize, crate::privileged::sysc
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }
 
@@ -534,9 +534,9 @@ pub fn tgkill_syscall(
     }
 
     // 目标存在性校验 (tid 在当前模型下即 pid)
-    let target = crate::privileged::proc::api::process_with(thread_id as u32, |p| p.pid)
+    let target = crate::privileged::proc::api::process_with(thread_id.cast_unsigned(), |p| p.pid)
         .ok_or(Errno::ESRCH)?;
-    if target.0 != tgid as u32 {
+    if target.0 != tgid.cast_unsigned() {
         // 无线程组模型下 tid 所属进程的 tgid 即其 pid
         return Err(Errno::ESRCH);
     }
@@ -548,7 +548,7 @@ pub fn tgkill_syscall(
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }
 
@@ -580,7 +580,7 @@ pub fn rt_sigaction_syscall(
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }
 
@@ -608,7 +608,7 @@ pub fn rt_sigprocmask_syscall(
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }
 
@@ -681,7 +681,7 @@ pub fn sigaltstack_syscall(
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }
 

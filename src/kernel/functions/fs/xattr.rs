@@ -30,7 +30,7 @@ pub fn setxattr_syscall(
     );
 
     if r >= 0 {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i32(r))
     } else {
         Err(Errno::from_ret(i64::from(r)))
     }
@@ -60,7 +60,7 @@ pub fn getxattr_syscall(
     );
 
     if r >= 0 {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i32(r))
     } else {
         Err(Errno::from_ret(i64::from(r)))
     }
@@ -88,7 +88,7 @@ pub fn listxattr_syscall(
     );
 
     if r >= 0 {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i32(r))
     } else {
         Err(Errno::from_ret(i64::from(r)))
     }
@@ -110,7 +110,7 @@ pub fn removexattr_syscall(path_ptr: u64, name_ptr: u64, pwm: u64) -> Result<usi
     );
 
     if r >= 0 {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i32(r))
     } else {
         Err(Errno::from_ret(i64::from(r)))
     }

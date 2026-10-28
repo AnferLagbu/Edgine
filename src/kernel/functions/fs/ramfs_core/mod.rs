@@ -123,7 +123,7 @@ impl FileSystem for RamFsFileSystem {
         if result < 0 {
             Err(KernelError::Io)
         } else {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         }
     }
 
@@ -134,7 +134,7 @@ impl FileSystem for RamFsFileSystem {
         if result < 0 {
             Err(KernelError::Io)
         } else {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         }
     }
 
@@ -302,7 +302,7 @@ impl FileSystem for RamFsFileSystem {
         if result < 0 {
             Err(KernelError::Io)
         } else {
-            Ok(result as usize)
+            Ok(crate::functions::intcast::usize_from_i32(result))
         }
     }
 
@@ -335,7 +335,7 @@ impl FileSystem for RamFsFileSystem {
                 if result < 0 {
                     Err(KernelError::Io)
                 } else {
-                    Ok(result as usize)
+                    Ok(crate::functions::intcast::usize_from_i32(result))
                 }
             })
     }

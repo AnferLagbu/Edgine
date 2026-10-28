@@ -229,7 +229,7 @@ pub fn write_i64_to_memory(
     val: i64,
 ) {
     if let Some(ref mut mem) = interp.memory {
-        let _ = mem.write_u64(ptr, val as u64);
+        let _ = mem.write_u64(ptr, val.cast_unsigned());
     }
 }
 
@@ -239,7 +239,7 @@ pub fn write_i32_to_memory(
     ptr: u32,
     val: i32,
 ) {
-    write_u32_to_memory(interp, ptr, val as u32);
+    write_u32_to_memory(interp, ptr, val.cast_unsigned());
 }
 
 /// 向 WASM 线性内存写入字节序列

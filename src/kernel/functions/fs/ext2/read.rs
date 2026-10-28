@@ -35,7 +35,12 @@ impl Ext2Fs {
         let sb_sector = 1024 / 512; // 扇区 2
         let sb_sector_count = 1024 / 512; // 2 扇区
 
-        egdf_blk_read_sectors(device_idx, sb_sector as u64, sb_sector_count, &mut sb_data)?;
+        egdf_blk_read_sectors(
+            device_idx,
+            crate::functions::intcast::u64_from_i32(sb_sector),
+            sb_sector_count,
+            &mut sb_data,
+        )?;
 
         // 解析超级块
         let super_block =

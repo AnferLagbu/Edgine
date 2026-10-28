@@ -320,9 +320,9 @@ impl TimeSyncSubsystem {
 
         let total_adj = offset + freq_compensation;
         if total_adj >= 0 {
-            raw_ns.saturating_add(total_adj as u64)
+            raw_ns.saturating_add(total_adj.cast_unsigned())
         } else {
-            raw_ns.saturating_sub((-total_adj) as u64)
+            raw_ns.saturating_sub((-total_adj).cast_unsigned())
         }
     }
 

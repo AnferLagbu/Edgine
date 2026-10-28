@@ -633,7 +633,7 @@ pub extern "C" fn svc_handler(frame: &mut ExceptionFrame) -> u64 {
         unsafe { crate::privileged::syscall::syscall_dispatch(syscall_num, arg0, arg1, arg2, arg3, arg4, arg5) };
 
     // 返回值写入 x0
-    result as u64
+    result.cast_unsigned()
 }
 
 /// 内核 IRQ 统一分发 (EL1h 与 EL0 两条异常路径的**唯一**实现)。

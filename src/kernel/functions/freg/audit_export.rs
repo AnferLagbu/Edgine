@@ -103,7 +103,7 @@ fn write_i32(buf: &mut [u8], mut v: i32) -> usize {
     let mut tmp = [0u8; 12];
     let mut i = 0;
     while v > 0 && i < tmp.len() {
-        tmp[i] = b'0' + (v % 10) as u8;
+        tmp[i] = b'0' + crate::functions::intcast::u8_from_i32(v % 10);
         v /= 10;
         i += 1;
     }

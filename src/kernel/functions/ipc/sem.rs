@@ -124,7 +124,7 @@ pub fn sem_post_safe(namespace: &mut IpcNamespace, id: IpcId) -> Result<(), i32>
     };
 
     // 增加计数 (不超过最大值)
-    if (sem.count as u32) < sem.max_count {
+    if sem.count.cast_unsigned() < sem.max_count {
         sem.count += 1;
     }
 

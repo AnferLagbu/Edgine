@@ -84,7 +84,7 @@ pub fn fstat_syscall(fd: i32, st_buf_ptr: u64) -> Result<usize, Errno> {
         return Err(Errno::EFAULT);
     }
     let pwm = current_pwm();
-    let stat = fw::vfs_fstat_safe(fd as u32, pwm).ok_or(Errno::EIO)?;
+    let stat = fw::vfs_fstat_safe(fd.cast_unsigned(), pwm).ok_or(Errno::EIO)?;
     if !raw::write_struct_to_user::<VfsStat>(st_buf_ptr, &stat) {
         return Err(Errno::EFAULT);
     }

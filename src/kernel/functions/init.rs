@@ -103,7 +103,9 @@ pub fn launch_first_user_process() -> ! {
                                 "[USER] Entering Ring 3 (init from /init, pid={})...",
                                 pid
                             );
-                            crate::privileged::proc::mechanism::enter_user_process(pid as u32);
+                            crate::privileged::proc::mechanism::enter_user_process(
+                                pid.cast_unsigned(),
+                            );
                         }
                         crate::klog_boot_info!("[USER] /init not found, falling back to init.bin");
                     }
@@ -141,7 +143,7 @@ pub fn launch_first_user_process() -> ! {
 
         crate::privileged::proc::set_init_status(INIT_STATUS_RUNNING);
         crate::klog_boot_info!("[USER] Entering Ring 3 (init pid={})...", pid);
-        crate::privileged::proc::mechanism::enter_user_process(pid as u32);
+        crate::privileged::proc::mechanism::enter_user_process(pid.cast_unsigned());
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -176,7 +178,7 @@ pub fn launch_first_user_process() -> ! {
 
         crate::privileged::proc::set_init_status(INIT_STATUS_RUNNING);
         crate::klog_boot_info!("[USER] Entering EL0 (init pid={})...", pid);
-        crate::privileged::proc::mechanism::enter_user_process(pid as u32);
+        crate::privileged::proc::mechanism::enter_user_process(pid.cast_unsigned());
     }
 
     loop {

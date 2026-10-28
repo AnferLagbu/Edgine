@@ -51,7 +51,7 @@ pub fn mkdir_syscall(path_ptr: u64, _mode: i32) -> Result<usize, Errno> {
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i32(r))
     }
 }
 
@@ -76,7 +76,7 @@ pub fn rmdir_syscall(path_ptr: u64) -> Result<usize, Errno> {
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i32(r))
     }
 }
 
@@ -106,7 +106,7 @@ pub fn chmod_syscall(path_ptr: u64, mode: u32) -> Result<usize, Errno> {
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i32(r))
     }
 }
 
@@ -126,11 +126,11 @@ pub fn fchmod_syscall(fd: i32, mode: u32) -> Result<usize, Errno> {
     if mode > 0o7777 {
         return Err(Errno::EINVAL);
     }
-    let r = fw::vfs_fchmod(fd as u32, mode as u16);
+    let r = fw::vfs_fchmod(fd.cast_unsigned(), mode as u16);
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i32(r))
     }
 }
 

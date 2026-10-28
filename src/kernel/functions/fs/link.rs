@@ -95,7 +95,7 @@ pub fn readlink_syscall(path_ptr: u64, buf_ptr: u64, bufsiz: u64) -> Result<usiz
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))
     } else {
-        Ok(r as usize)
+        Ok(crate::functions::intcast::usize_from_i32(r))
     }
 }
 

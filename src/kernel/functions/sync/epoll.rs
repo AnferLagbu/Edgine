@@ -30,7 +30,7 @@ pub fn epoll_create_syscall(size: i32) -> Result<usize, Errno> {
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }
 
@@ -83,7 +83,7 @@ pub fn epoll_ctl_syscall(
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }
 
@@ -117,7 +117,7 @@ pub fn epoll_wait_syscall(
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
-        Ok(ret as usize)
+        Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }
 

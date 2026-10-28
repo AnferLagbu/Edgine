@@ -179,7 +179,7 @@ pub fn framebuffer_self_test(fb: &mut Framebuffer, font: &Font) -> usize {
         ops.draw_line_aa(fb, 200, prim_y + 80, 310, prim_y + 80, colors::LIGHT_GRAY);
 
         // 验证填充圆
-        if let Some(c) = fb.get_pixel(280, prim_y as u32 + 24) {
+        if let Some(c) = fb.get_pixel(280, prim_y.cast_unsigned() + 24) {
             if c.g < 200 {
                 failures += 1;
             }
@@ -188,7 +188,7 @@ pub fn framebuffer_self_test(fb: &mut Framebuffer, font: &Font) -> usize {
         }
 
         // 验证圆形边框 (中心是背景色，圆上一点是黄色)
-        if let Some(c) = fb.get_pixel(210, prim_y as u32 + 24) {
+        if let Some(c) = fb.get_pixel(210, prim_y.cast_unsigned() + 24) {
             if c.r > 10 || c.g > 10 || c.b > 10 {
                 failures += 1;
             }

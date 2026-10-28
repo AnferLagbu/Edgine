@@ -124,7 +124,7 @@ pub fn fchown_syscall(fd: i32, owner: u64, group: u64) -> Result<usize, Errno> {
     if !sgeg::api::pwm_has_capability(pwm, sgeg::CAP_DOMAIN_FS, FS_CAP_CHOWN) {
         return Err(Errno::EPERM);
     }
-    let r = fw::vfs_fchown(fd as u32, owner, group, pwm);
+    let r = fw::vfs_fchown(fd.cast_unsigned(), owner, group, pwm);
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))
     } else {

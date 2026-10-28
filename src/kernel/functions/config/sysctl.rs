@@ -294,7 +294,7 @@ fn write_i64(buf: &mut [u8], val: i64) -> usize {
     let (neg, abs) = if val < 0 {
         (true, val.unsigned_abs())
     } else {
-        (false, val as u64)
+        (false, val.cast_unsigned())
     };
     let mut pos = 0;
     if neg && !buf.is_empty() {

@@ -268,7 +268,7 @@ static FD_BITMAPS: [AtomicU8; FdSubsystem::COUNT * BITMAP_SIZE] =
 /// V2: 使用位图跟踪槽位占用, 支持 free 后回收.
 pub fn alloc_fd(sub: FdSubsystem) -> Option<i32> {
     let range = FdPlan::range_for(sub);
-    let base = range.base as usize;
+    let base = crate::privileged::lib::usize_from_i32(range.base);
     let capacity = range.capacity as usize;
     let bitmap_offset = sub as usize * BITMAP_SIZE;
 
@@ -294,7 +294,7 @@ pub fn free_fd(sub: FdSubsystem, fd: i32) -> bool {
     if !range.contains(fd) {
         return false;
     }
-    let slot = (fd - range.base) as usize;
+    let slot = crate::privileged::lib::usize_from_i32(fd - range.base);
     let bitmap_offset = sub as usize * BITMAP_SIZE;
     let byte_idx = bitmap_offset + slot / 8;
     let bit_idx = slot % 8;
@@ -379,7 +379,7 @@ pub fn idx_of(fd: i32) -> Option<(FdSubsystem, usize)> {
         let sub = FdSubsystem::from_index(i)?;
         let range = FdPlan::range_for(sub);
         if range.contains(fd) {
-            return Some((sub, (fd - range.base) as usize));
+            return Some((sub, crate::privileged::lib::usize_from_i32(fd - range.base)));
         }
         i += 1;
     }

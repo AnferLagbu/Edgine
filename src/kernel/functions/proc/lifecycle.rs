@@ -18,7 +18,7 @@ pub fn fork_syscall() -> i64 {
 
 /// exit(status) 策略
 pub fn exit_syscall(status: i32) -> i64 {
-    crate::privileged::proc::process_exit(status as u32);
+    crate::privileged::proc::process_exit(status.cast_unsigned());
     0
 }
 

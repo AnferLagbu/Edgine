@@ -132,7 +132,7 @@ pub fn pidfd_open(pid: u32, flags: u32) -> Result<usize, Errno> {
     }
 
     let fd = alloc_entry(pid)?;
-    Ok(fd as usize)
+    Ok(crate::functions::intcast::usize_from_i32(fd))
 }
 
 /// `pidfd_send_signal` — 通过 pidfd 发送信号

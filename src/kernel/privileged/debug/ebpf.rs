@@ -678,7 +678,7 @@ impl BpfHelper {
             helper_id::MAP_UPDATE_ELEM => {
                 // 寄存器分配: r1=map_fd, r2=key_ptr, r3=value_ptr, r4=flags
                 let map_fd = r1 as u32;
-                maps.get(&map_fd).map_or(-(1i64) as u64, |map| {
+                maps.get(&map_fd).map_or((-(1i64)).cast_unsigned(), |map| {
                     let key_size = map.def().key_size as usize;
                     let val_size = map.def().value_size as usize;
                     let key_ptr = r2 as *const u8;
@@ -690,18 +690,22 @@ impl BpfHelper {
                     if map.update(key, value) {
                         0
                     } else {
-                        -(1i64) as u64
+                        (-(1i64)).cast_unsigned()
                     }
                 })
             }
             helper_id::MAP_DELETE_ELEM => {
                 let map_fd = r1 as u32;
-                maps.get(&map_fd).map_or(-(1i64) as u64, |map| {
+                maps.get(&map_fd).map_or((-(1i64)).cast_unsigned(), |map| {
                     let key_size = map.def().key_size as usize;
                     let key_ptr = r2 as *const u8;
                     // SAFETY: 验证器保证 key_ptr 指向有效内存
                     let key = unsafe { core::slice::from_raw_parts(key_ptr, key_size) };
-                    if map.delete(key) { 0 } else { -(1i64) as u64 }
+                    if map.delete(key) {
+                        0
+                    } else {
+                        (-(1i64)).cast_unsigned()
+                    }
                 })
             }
             _ => 0,
@@ -787,7 +791,11 @@ impl BpfInterpreter {
         let op_low = insn.op & 0xf0;
         let use_src = (insn.op & opcode::X) != 0;
 
-        let src_val = if use_src { regs[src] } else { insn.imm as u64 };
+        let src_val = if use_src {
+            regs[src]
+        } else {
+            crate::privileged::lib::u64_from_i32(insn.imm)
+        };
 
         let result = match op_low {
             opcode::ADD => regs[dst].wrapping_add(src_val),
@@ -817,9 +825,14 @@ impl BpfInterpreter {
             opcode::ARSH => {
                 // 算术右移
                 if is_64 {
-                    regs[dst].cast_signed().wrapping_shr(src_val as u32) as u64
+                    regs[dst]
+                        .cast_signed()
+                        .wrapping_shr(src_val as u32)
+                        .cast_unsigned()
                 } else {
-                    (regs[dst] as i32).wrapping_shr(src_val as u32) as u64
+                    crate::privileged::lib::u64_from_i32(
+                        (regs[dst] as i32).wrapping_shr(src_val as u32),
+                    )
                 }
             }
             opcode::END => {
@@ -846,7 +859,8 @@ impl BpfInterpreter {
 
         if op == opcode::LD | opcode::IMM | opcode::DW {
             // 64-bit immediate load (2 条指令)
-            regs[dst] = u64::from(insn.imm as u32) | (u64::from(insn.off as u32) << 32);
+            regs[dst] = u64::from(insn.imm.cast_unsigned())
+                | (u64::from(crate::privileged::lib::u32_from_i16(insn.off)) << 32);
         } else if op == opcode::LD | opcode::ABS | opcode::W {
             // LD_ABS_W: 从 packet 偏移 insn.imm 加载 32-bit
             // 简化: 返回 0
@@ -857,7 +871,7 @@ impl BpfInterpreter {
         } else if op == opcode::LDX | opcode::MEM | opcode::W {
             // LDX_MEM_W: 从 *(u32*)(src + off) 加载
             let src = insn.src() as usize;
-            let addr = regs[src].wrapping_add(i64::from(insn.off) as u64);
+            let addr = regs[src].wrapping_add(i64::from(insn.off).cast_unsigned());
             let ptr = addr as *const u32;
             if !ptr.is_null() {
                 // SAFETY: 验证器保证 addr 指向有效内存 (MapValue/Stack/Ctx)
@@ -865,7 +879,7 @@ impl BpfInterpreter {
             }
         } else if op == opcode::LDX | opcode::MEM | opcode::H {
             let src = insn.src() as usize;
-            let addr = regs[src].wrapping_add(i64::from(insn.off) as u64);
+            let addr = regs[src].wrapping_add(i64::from(insn.off).cast_unsigned());
             let ptr = addr as *const u16;
             if !ptr.is_null() {
                 // SAFETY: 同 LDX_MEM_W
@@ -873,7 +887,7 @@ impl BpfInterpreter {
             }
         } else if op == opcode::LDX | opcode::MEM | opcode::B {
             let src = insn.src() as usize;
-            let addr = regs[src].wrapping_add(i64::from(insn.off) as u64);
+            let addr = regs[src].wrapping_add(i64::from(insn.off).cast_unsigned());
             let ptr = addr as *const u8;
             if !ptr.is_null() {
                 // SAFETY: 同 LDX_MEM_W
@@ -881,7 +895,7 @@ impl BpfInterpreter {
             }
         } else if op == opcode::LDX | opcode::MEM | opcode::DW {
             let src = insn.src() as usize;
-            let addr = regs[src].wrapping_add(i64::from(insn.off) as u64);
+            let addr = regs[src].wrapping_add(i64::from(insn.off).cast_unsigned());
             let ptr = addr as *const u64;
             if !ptr.is_null() {
                 // SAFETY: 同 LDX_MEM_W
@@ -894,7 +908,7 @@ impl BpfInterpreter {
     #[expect(clippy::cast_possible_truncation)]
     fn exec_st(insn: &BpfInsn, regs: &mut [u64; BPF_REG_NUM]) {
         let dst = insn.dst() as usize;
-        let addr = regs[dst].wrapping_add(i64::from(insn.off) as u64);
+        let addr = regs[dst].wrapping_add(i64::from(insn.off).cast_unsigned());
 
         if insn.class() == opcode::ST {
             // ST_IMM: *(size*)(dst + off) = imm
@@ -903,28 +917,43 @@ impl BpfInterpreter {
                     let ptr = addr as *mut u32;
                     if !ptr.is_null() {
                         // SAFETY: 验证器保证 addr 指向有效可写内存 (MapValue/Stack)
-                        unsafe { core::ptr::write_unaligned(ptr, insn.imm as u32) };
+                        unsafe { core::ptr::write_unaligned(ptr, insn.imm.cast_unsigned()) };
                     }
                 }
                 opcode::H => {
                     let ptr = addr as *mut u16;
                     if !ptr.is_null() {
                         // SAFETY: 同上
-                        unsafe { core::ptr::write_unaligned(ptr, insn.imm as u16) };
+                        unsafe {
+                            core::ptr::write_unaligned(
+                                ptr,
+                                crate::privileged::lib::u16_from_i32(insn.imm),
+                            );
+                        };
                     }
                 }
                 opcode::B => {
                     let ptr = addr as *mut u8;
                     if !ptr.is_null() {
                         // SAFETY: 同上
-                        unsafe { core::ptr::write_unaligned(ptr, insn.imm as u8) };
+                        unsafe {
+                            core::ptr::write_unaligned(
+                                ptr,
+                                crate::privileged::lib::u8_from_i32(insn.imm),
+                            );
+                        };
                     }
                 }
                 opcode::DW => {
                     let ptr = addr as *mut u64;
                     if !ptr.is_null() {
                         // SAFETY: 同上
-                        unsafe { core::ptr::write_unaligned(ptr, insn.imm as u64) };
+                        unsafe {
+                            core::ptr::write_unaligned(
+                                ptr,
+                                crate::privileged::lib::u64_from_i32(insn.imm),
+                            );
+                        };
                     }
                 }
                 _ => {}
@@ -984,12 +1013,12 @@ impl BpfInterpreter {
         let is_32 = insn.class() == opcode::JMP32;
 
         match op_low {
-            opcode::JA => Some(
-                (crate::privileged::lib::i64_from_usize(pc) + 1 + i64::from(insn.off)) as usize,
-            ),
+            opcode::JA => Some(crate::privileged::lib::usize_from_i64(
+                crate::privileged::lib::i64_from_usize(pc) + 1 + i64::from(insn.off),
+            )),
             opcode::EXIT => None,
             opcode::CALL => {
-                let helper_id = insn.imm as u32;
+                let helper_id = insn.imm.cast_unsigned();
                 regs[reg::R0] = BpfHelper::execute(
                     helper_id,
                     regs[reg::R1],
@@ -1008,7 +1037,7 @@ impl BpfInterpreter {
                 let src_val = if (insn.op & opcode::X) != 0 {
                     regs[src]
                 } else {
-                    insn.imm as u64
+                    crate::privileged::lib::u64_from_i32(insn.imm)
                 };
                 let taken = if is_32 {
                     Self::eval_cond32(op_low, dst_val as u32, src_val as u32)
@@ -1016,10 +1045,9 @@ impl BpfInterpreter {
                     Self::eval_cond64(op_low, dst_val, src_val)
                 };
                 if taken {
-                    Some(
-                        (crate::privileged::lib::i64_from_usize(pc) + 1 + i64::from(insn.off))
-                            as usize,
-                    )
+                    Some(crate::privileged::lib::usize_from_i64(
+                        crate::privileged::lib::i64_from_usize(pc) + 1 + i64::from(insn.off),
+                    ))
                 } else {
                     Some(pc + 1)
                 }
