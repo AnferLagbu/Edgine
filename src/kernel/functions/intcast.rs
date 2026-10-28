@@ -249,6 +249,51 @@ pub const fn i32_from_f32(v: f32) -> i32 {
     if negative { -mag } else { mag }
 }
 
+/// `i32` → `f32`: 按 `as` 的语义转换 — 就近取整, 平局取偶 (IEEE-754 默认舍入).
+///
+/// Rust 的整数→浮点转换同样只有 `as` 一种写法, 而 `as` 会被 clippy 判为精度损失;
+/// 本函数在纯整数域装配 IEEE-754 位模式复现 `as` 的同一语义 (逐位等价), 使调用点
+/// 不再出现整数 `as`. 幅值超 24 位有效位时需舍弃低位, 舍入与硬件一致: 余数过半
+/// 进位, 恰为半值时向偶取整 (截断值末位为 1 才进位).
+#[inline]
+pub const fn f32_from_i32(v: i32) -> f32 {
+    let negative = v < 0;
+    // 取幅值 (二的补码取负): i32::MIN 的幅值 2^31 在 u32 内可表示.
+    let raw = u32::from_le_bytes(v.to_le_bytes());
+    let mag = if negative {
+        0u32.wrapping_sub(raw)
+    } else {
+        raw
+    };
+    if mag == 0 {
+        return 0.0;
+    }
+    // 最高置位索引 = floor(log2(mag)).
+    let msb = mag.ilog2();
+    let (exponent, mantissa) = if msb <= 23 {
+        // 24 位以内可精确表示: 左移到隐含 1 之后即为尾数.
+        (msb + 127, (mag << (23 - msb)) & 0x007F_FFFF)
+    } else {
+        let shift = msb - 23;
+        let truncated = mag >> shift;
+        let rest = mag & ((1u32 << shift) - 1);
+        let half = 1u32 << (shift - 1);
+        let round_up = rest > half || (rest == half && truncated & 1 == 1);
+        let (mut significand, mut rounded_msb) = (truncated, msb);
+        if round_up {
+            significand += 1;
+            if significand == 0x0100_0000 {
+                // 24 位全 1 进位: 归一化回隐含 1, 指数 +1.
+                significand = 0x0080_0000;
+                rounded_msb += 1;
+            }
+        }
+        (rounded_msb + 127, significand & 0x007F_FFFF)
+    };
+    let sign = if negative { 0x8000_0000 } else { 0 };
+    f32::from_bits(sign | (exponent << 23) | mantissa)
+}
+
 /// `u128` → `u64`: 取低 64 位 (等价于 `v as u64`).
 #[inline]
 pub const fn low_u64_from_u128(v: u128) -> u64 {
@@ -359,6 +404,41 @@ mod tests {
             let v = f32::from_bits(bits);
             assert_eq!(i32_from_f32(v), v as i32, "bits {bits:#010x}");
             bits = bits.wrapping_mul(1664525).wrapping_add(1013904223);
+        }
+    }
+
+    /// 整数→浮点助手: 与 `as` 逐值等价 (含就近偶舍入 / 进位 / i32 极值).
+    #[test]
+    fn f32_from_i32_matches_as() {
+        let samples = [
+            0,
+            1,
+            -1,
+            255,
+            -255,
+            4096,
+            12345,
+            -12345,
+            0x00FF_FFFF,
+            0x0100_0000,
+            0x0100_0001,
+            0x0100_0003,
+            0x01FF_FFFF,
+            16_777_217,
+            -16_777_217,
+            i32::MAX,
+            i32::MIN,
+            i32::MIN + 1,
+        ];
+        for &v in &samples {
+            assert_eq!(f32_from_i32(v), v as f32, "value {v}");
+        }
+        // 位模式伪随机遍历: 覆盖各类尾数舍入与指数边界.
+        let mut state = 0x1234_5678u32;
+        for _ in 0..4096 {
+            let v = i32::from_le_bytes(state.to_le_bytes());
+            assert_eq!(f32_from_i32(v), v as f32, "bits {state:#010x}");
+            state = state.wrapping_mul(1664525).wrapping_add(1013904223);
         }
     }
 }

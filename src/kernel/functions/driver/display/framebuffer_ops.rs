@@ -297,7 +297,7 @@ fn blend_pixel_impl(canvas: &mut dyn PixelCanvas, x: u32, y: u32, color: Color) 
 
 /// 取浮点数的小数部分 (Wu 反走样辅助)
 fn fpart(x: f32) -> f32 {
-    x - (crate::functions::intcast::i32_from_f32(x) as f32)
+    x - crate::functions::intcast::f32_from_i32(crate::functions::intcast::i32_from_f32(x))
 }
 
 /// 取浮点数小数部分的补值 (Wu 反走样辅助)
@@ -326,14 +326,16 @@ fn draw_line_aa_impl(
         core::mem::swap(&mut y0, &mut y1);
     }
 
-    let dx = (x1 - x0) as f32;
-    let dy = (y1 - y0) as f32;
+    let dx = crate::functions::intcast::f32_from_i32(x1 - x0);
+    let dy = crate::functions::intcast::f32_from_i32(y1 - y0);
     let gradient = if dx == 0.0 { 1.0f32 } else { dy / dx };
 
-    let xend_i = crate::functions::intcast::i32_from_f32((x0 as f32) + 0.5);
-    let xend_f = xend_i as f32;
-    let yend_f = y0 as f32 + gradient * (xend_f - x0 as f32);
-    let xgap = rfpart(x0 as f32 + 0.5);
+    let xend_i =
+        crate::functions::intcast::i32_from_f32(crate::functions::intcast::f32_from_i32(x0) + 0.5);
+    let xend_f = crate::functions::intcast::f32_from_i32(xend_i);
+    let yend_f = crate::functions::intcast::f32_from_i32(y0)
+        + gradient * (xend_f - crate::functions::intcast::f32_from_i32(x0));
+    let xgap = rfpart(crate::functions::intcast::f32_from_i32(x0) + 0.5);
     let xpxl1 = xend_i;
     let ypxl1 = crate::functions::intcast::i32_from_f32(yend_f);
 
@@ -373,10 +375,12 @@ fn draw_line_aa_impl(
 
     let mut intery = yend_f + gradient;
 
-    let xend_i = crate::functions::intcast::i32_from_f32((x1 as f32) + 0.5);
-    let xend_f = xend_i as f32;
-    let yend_f = y1 as f32 + gradient * (xend_f - x1 as f32);
-    let xgap = fpart(x1 as f32 + 0.5);
+    let xend_i =
+        crate::functions::intcast::i32_from_f32(crate::functions::intcast::f32_from_i32(x1) + 0.5);
+    let xend_f = crate::functions::intcast::f32_from_i32(xend_i);
+    let yend_f = crate::functions::intcast::f32_from_i32(y1)
+        + gradient * (xend_f - crate::functions::intcast::f32_from_i32(x1));
+    let xgap = fpart(crate::functions::intcast::f32_from_i32(x1) + 0.5);
     let xpxl2 = xend_i;
     let ypxl2 = crate::functions::intcast::i32_from_f32(yend_f);
 

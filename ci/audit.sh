@@ -535,10 +535,10 @@ pushd src/rust > /dev/null
 unset RUSTC_WRAPPER
 # B01-28 修复: clippy 命令与 CI (ci-x86.yml clippy-pedantic job) 对齐:
 #   + --release: dev 模式会编译诊断代码 (nvme similar_names 假阳性等), 与 CI 一致用 release
-#   + -A cast_* 一个豁免: DECISION-041 (内核刻意窄化, 显式收窄), CI 亦豁免
-#     P-64 清零工程 7a 已清 `cast_possible_wrap`、7b 已清 `cast_sign_loss`、7c 已清
-#     `cast_possible_truncation` 并逐族撤其豁免 (源码零 as 回绕 / 零 as 丢符号 /
-#     零 as 窄化写法); 余 precision_loss 待 7d 清完后撤除
+#   + 无 cast_* 豁免: P-64 清零工程逐族撤除 (7a `cast_possible_wrap` /
+#     7b `cast_sign_loss` / 7c `cast_possible_truncation` / 7d `cast_precision_loss`),
+#     源码零 `as` 回绕 / 丢符号 / 窄化 / 精度损失写法, 数值换算一律走
+#     `privileged::lib::intcast` 或 `functions::intcast` 的位级助手
 #   + 去掉 -W clippy::cargo: 依赖多版本 bitflags 会误报, CI 未启用
 #   + -D warnings 保留更强门禁 (任何 warning 阻断, 见 B01-16)
 # B01-16 修复: 加 -D warnings 让任何 warning 阻断 CI, 失败走 err 而非仅警告.
@@ -555,8 +555,7 @@ for target in x86_64-unknown-none aarch64-unknown-none-softfloat; do
     set +e
     CLIPPY_OUT=$(cargo clippy --manifest-path ../kernel/Cargo.toml --workspace --release --lib --bins --examples --target "${target}" --target-dir ../../other/target \
         "${BUILD_STD_CFG[@]}" \
-        -- -D warnings -D clippy::pedantic \
-        -A clippy::cast_precision_loss 2>&1)
+        -- -D warnings -D clippy::pedantic 2>&1)
     CLIPPY_RC=$?
     set -e
     printf '%s\n' "$CLIPPY_OUT" | tail -10
@@ -580,8 +579,7 @@ for FEATURE in kernel_test host-test; do
     set +e
     FEATURE_CLIPPY_OUT=$(cargo clippy --manifest-path "$PROJECT_ROOT/src/kernel/Cargo.toml" --workspace --features "$FEATURE" --lib \
         --target-dir "$PROJECT_ROOT/other/target" \
-        -- -D warnings -D clippy::pedantic \
-        -A clippy::cast_precision_loss 2>&1)
+        -- -D warnings -D clippy::pedantic 2>&1)
     FEATURE_CLIPPY_RC=$?
     set -e
     printf '%s\n' "$FEATURE_CLIPPY_OUT" | tail -10

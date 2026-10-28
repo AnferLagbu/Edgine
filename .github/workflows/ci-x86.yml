@@ -227,37 +227,35 @@ jobs:
             other/target
           key: ${{ runner.os }}-clippy-${{ hashFiles('src/rust/Cargo.toml', 'src/rust/Cargo.lock') }}
 
-      - name: clippy -D pedantic (排除 cast_*)
+      - name: clippy -D pedantic (无 cast_* 豁免)
         working-directory: src/rust
         run: |
           mkdir -p ../../other/build/log
           # 方案 D: clippy 指向 kernel manifest; 方案 B: 注入 build-std
           cargo clippy --manifest-path ../kernel/Cargo.toml --release --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target x86_64-unknown-none --target-dir ../../other/target --lib --bins --examples -- \
             -D clippy::pedantic \
-            -A clippy::cast_precision_loss \
             2>&1 | tee ../../other/build/log/clippy_pedantic.txt | tail -20
           if grep -qE "^error\[|^error:" ../../other/build/log/clippy_pedantic.txt; then
             echo "::error::clippy -D pedantic 失败"
             exit 1
           fi
-          echo "✅ clippy -D pedantic 通过 (cast_* 已豁免, 见 DECISION-041)"
+          echo "✅ clippy -D pedantic 通过"
 
-      - name: clippy aarch64 -D pedantic (排除 cast_*)
+      - name: clippy aarch64 -D pedantic (无 cast_* 豁免)
         working-directory: src/rust
         run: |
           mkdir -p ../../other/build/log
           # 方案 D: clippy 指向 kernel manifest; 方案 B: 注入 build-std
           cargo clippy --manifest-path ../kernel/Cargo.toml --release --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target aarch64-unknown-none-softfloat --target-dir ../../other/target --lib --bins --examples -- \
             -D clippy::pedantic \
-            -A clippy::cast_precision_loss \
             2>&1 | tee ../../other/build/log/clippy_pedantic_aarch64.txt | tail -20
           if grep -qE "^error\[|^error:" ../../other/build/log/clippy_pedantic_aarch64.txt; then
             echo "::error::clippy aarch64 -D pedantic 失败"
             exit 1
           fi
-          echo "✅ clippy aarch64 -D pedantic 通过 (cast_* 已豁免, 见 DECISION-041)"
+          echo "✅ clippy aarch64 -D pedantic 通过"
 
-      - name: clippy kernel_test 维 -D pedantic (排除 cast_*, J-01/G-02)
+      - name: clippy kernel_test 维 -D pedantic (J-01/G-02)
         working-directory: .
         run: |
           mkdir -p other/build/log
@@ -266,7 +264,6 @@ jobs:
           # 方案 D: 指向 kernel manifest
           cargo clippy --manifest-path src/kernel/Cargo.toml --features kernel_test --lib -- \
             -D warnings -D clippy::pedantic \
-            -A clippy::cast_precision_loss \
             2>&1 | tee other/build/log/clippy_pedantic_kernel_test.txt | tail -20
           if grep -qE "^error\[|^error:" other/build/log/clippy_pedantic_kernel_test.txt; then
             echo "::error::clippy kernel_test 维失败"
@@ -274,7 +271,7 @@ jobs:
           fi
           echo "✅ clippy kernel_test 维通过 (host target, J-01)"
 
-      - name: clippy host-test 维 -D pedantic (排除 cast_*, J-01/G-18)
+      - name: clippy host-test 维 -D pedantic (J-01/G-18)
         working-directory: .
         run: |
           mkdir -p other/build/log
@@ -283,7 +280,6 @@ jobs:
           # 方案 D: 指向 kernel manifest
           cargo clippy --manifest-path src/kernel/Cargo.toml --features host-test --lib -- \
             -D warnings -D clippy::pedantic \
-            -A clippy::cast_precision_loss \
             2>&1 | tee other/build/log/clippy_pedantic_host_test.txt | tail -20
           if grep -qE "^error\[|^error:" other/build/log/clippy_pedantic_host_test.txt; then
             echo "::error::clippy host-test 维失败"
