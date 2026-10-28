@@ -16,31 +16,19 @@ use crate::privileged::arch::Arch;
 use crate::privileged::config::MAX_CPUS;
 
 /// 获取当前 CPU ID (APIC ID / `MPIDR_EL1`)。
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn cpu_id() -> u32 {
     <crate::privileged::arch::CurrentArch as Arch>::cpu_id()
 }
 
 /// 获取高精度时间戳 (rdtsc / `CNTVCT_EL0`)。
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn timestamp() -> u64 {
     <crate::privileged::arch::CurrentArch as Arch>::timestamp()
 }
 
 /// CPU 暂停直到中断 (hlt / wfi)。
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn halt() {
     <crate::privileged::arch::CurrentArch as Arch>::halt();
 }
@@ -51,11 +39,7 @@ pub fn halt() {
 /// 添加 `target_cpu < MAX_CPUS` 越界校验。越界 IPI 会发送到不存在的 CPU,
 /// 静默丢失 (无错误返回)。校验后越界直接返回, 调用方需检查返回值或
 /// 在传入前确保索引有效。
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn send_ipi(target_cpu: u32, vector: u8) {
     if target_cpu as usize >= MAX_CPUS {
         // 越界: 静默丢弃 (与原行为一致, 但显式校验避免 silently 失败)
@@ -65,11 +49,7 @@ pub fn send_ipi(target_cpu: u32, vector: u8) {
 }
 
 /// 广播核间中断到所有 CPU。
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn broadcast_ipi(vector: u8) {
     <crate::privileged::arch::CurrentArch as Arch>::broadcast_ipi(vector);
 }
@@ -84,7 +64,7 @@ pub fn broadcast_ipi(vector: u8) {
 /// syscall 中让出 CPU 后, 其内核栈帧被同一核上后续任务的 syscall 覆盖, 恢复时
 /// 局部量与返回地址失真 (D5 缺陷)。
 /// aarch64: 无操作 — `SP_EL1` 由上下文切换直接管理。
-#[inline(always)]
+#[inline]
 pub fn set_kernel_stack(stack: u64) {
     #[cfg(target_arch = "x86_64")]
     {

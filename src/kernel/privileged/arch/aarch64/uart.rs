@@ -33,7 +33,7 @@ pub fn switch_to_high_half() {
 }
 
 /// 获取 PL011 UART 的当前 MMIO 基址。
-#[inline(always)]
+#[inline]
 pub fn base() -> u64 {
     PL011_BASE.load(core::sync::atomic::Ordering::Acquire)
 }
@@ -63,13 +63,13 @@ const UARTLCR_8N1: u32 = 0b11 << 5;
 // 寄存器 I/O
 // ============================================================================
 
-#[inline(always)]
+#[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn read(offset: u64) -> u32 {
     unsafe { read_volatile((base() + offset) as *const u32) }
 }
 
-#[inline(always)]
+#[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn write(offset: u64, val: u32) {
     unsafe {
@@ -118,7 +118,7 @@ pub unsafe fn init() {
 /// # Safety
 ///
 /// 调用者必须确保 UART 已初始化且 PL011_BASE MMIO 区域已映射。
-#[inline(always)]
+#[inline]
 pub unsafe fn putc(c: u8) {
     unsafe {
         // 等待 TX FIFO 非满
@@ -134,7 +134,7 @@ pub unsafe fn putc(c: u8) {
 /// # Safety
 ///
 /// 调用者必须确保 UART 已初始化且 PL011_BASE MMIO 区域已映射。
-#[inline(always)]
+#[inline]
 pub unsafe fn getc() -> u8 {
     unsafe {
         // 等待 RX FIFO 非空

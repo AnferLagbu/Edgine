@@ -81,27 +81,27 @@ const DESC_ADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000;
 
 // ─── 地址提取宏 ───────────────────────────────────────
 
-#[inline(always)]
+#[inline]
 fn l0_index(vaddr: u64) -> usize {
     ((vaddr >> 39) & 0x1FF) as usize
 }
 
-#[inline(always)]
+#[inline]
 fn l1_index(vaddr: u64) -> usize {
     ((vaddr >> 30) & 0x1FF) as usize
 }
 
-#[inline(always)]
+#[inline]
 fn l2_index(vaddr: u64) -> usize {
     ((vaddr >> 21) & 0x1FF) as usize
 }
 
-#[inline(always)]
+#[inline]
 fn l3_index(vaddr: u64) -> usize {
     ((vaddr >> 12) & 0x1FF) as usize
 }
 
-#[inline(always)]
+#[inline]
 fn is_kernel_addr(vaddr: u64) -> bool {
     vaddr >= 0xFFFF_0000_0000_0000
 }
@@ -241,7 +241,7 @@ impl Aarch64Vmm {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     #[expect(
         clippy::unused_self,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
@@ -274,7 +274,7 @@ impl Aarch64Vmm {
         flags
     }
 
-    #[inline(always)]
+    #[inline]
     #[expect(
         clippy::unused_self,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"

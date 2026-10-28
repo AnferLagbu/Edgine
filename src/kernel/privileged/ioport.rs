@@ -62,17 +62,13 @@ impl IoPort {
     }
 
     /// 基端口号
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub fn base(&self) -> u16 {
         self.base
     }
 
     /// 端口名称 (调试用)
-    #[inline(always)]
+    #[inline]
     pub fn name(&self) -> &'static str {
         self.name
     }

@@ -158,11 +158,7 @@ fn current_rcu() -> &'static PerCpuRcu {
     rcu_data(cpu)
 }
 
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 fn rcu_read_lock_impl() {
     let data = current_rcu();
     let nesting = data.nesting.fetch_add(1, Ordering::Acquire);
@@ -171,11 +167,7 @@ fn rcu_read_lock_impl() {
     }
 }
 
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 fn rcu_read_unlock_impl() {
     let data = current_rcu();
     fence(Ordering::Release);
@@ -189,14 +181,10 @@ fn rcu_read_unlock_impl() {
 ///
 /// # Safety
 /// 调用者必须在 RCU 读临界区内
-#[inline(always)]
+#[inline]
 #[expect(
     clippy::borrow_as_ptr,
     reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
 )]
 pub unsafe fn rcu_dereference<T>(ptr: *const T) -> *const T {
     unsafe {
@@ -209,7 +197,7 @@ pub unsafe fn rcu_dereference<T>(ptr: *const T) -> *const T {
 ///
 /// # Safety
 /// 调用者确保旧值在所有 RCU 读者退出前不被释放
-#[inline(always)]
+#[inline]
 pub unsafe fn rcu_assign_pointer<T>(slot: *mut *const T, new_val: *const T) {
     unsafe {
         fence(Ordering::Release);

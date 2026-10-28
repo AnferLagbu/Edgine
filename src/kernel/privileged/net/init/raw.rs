@@ -20,7 +20,7 @@ use smoltcp::wire::IpAddress;
 /// 调用方必须持有 `NET_STATE` 的锁 (通过 `lock()` 或 `try_lock()`).
 /// 返回的引用生命周期为 `'static` (因底层数据在 `static NET_STATE` 中),
 /// 但调用方不得在锁释放后继续使用.
-#[inline(always)]
+#[inline]
 unsafe fn state() -> &'static mut NetState {
     // SAFETY: NET_STATE 是 static, 数据永不移动;
     // 调用方持有锁保证互斥访问.

@@ -57,7 +57,7 @@ pub(crate) fn affinity_pack(mpidr: u64) -> u32 {
 
 impl CoreArch for Aarch64 {
     /// 获取当前核硬件 id: `MPIDR_EL1` 的紧凑亲和编码 (见 `affinity_pack`)。
-    #[inline(always)]
+    #[inline]
     fn cpu_id() -> u32 {
         let mpidr: u64;
         // SAFETY: mrs mpidr_el1 是只读系统寄存器，无副作用。
@@ -68,7 +68,7 @@ impl CoreArch for Aarch64 {
     }
 
     /// 获取高精度时间戳 (CNTPCT_EL0)。
-    #[inline(always)]
+    #[inline]
     fn timestamp() -> u64 {
         let cnt: u64;
         // SAFETY: mrs cntpct_el0 是只读系统寄存器。
@@ -81,7 +81,7 @@ impl CoreArch for Aarch64 {
     /// 序列化时间戳读取: `isb` 上下文同步屏障后读计数器。
     ///
     /// 用于精确时间测量 (TSC 频率校准等), 比 `timestamp()` 慢。
-    #[inline(always)]
+    #[inline]
     fn timestamp_serialized() -> u64 {
         let cnt: u64;
         // SAFETY: isb 是上下文同步屏障 (不声明 nomem, 阻止编译器重排),
@@ -98,7 +98,7 @@ impl CoreArch for Aarch64 {
     }
 
     /// CPU 暂停等待中断 (wfi)。
-    #[inline(always)]
+    #[inline]
     fn halt() {
         // SAFETY: wfi 是标准 CPU 暂停指令，无内存副作用。
         unsafe {
@@ -107,7 +107,7 @@ impl CoreArch for Aarch64 {
     }
 
     /// 全内存屏障 (dsb sy)。
-    #[inline(always)]
+    #[inline]
     fn fence() {
         // SAFETY: dmb sy 是 aarch64 全系统内存屏障。
         unsafe {
@@ -116,7 +116,7 @@ impl CoreArch for Aarch64 {
     }
 
     /// 写内存屏障 (dmb st)。
-    #[inline(always)]
+    #[inline]
     fn fence_w() {
         // SAFETY: dmb st 是 aarch64 写内存屏障。
         unsafe {
@@ -125,7 +125,7 @@ impl CoreArch for Aarch64 {
     }
 
     /// 读内存屏障 (dmb ld)。
-    #[inline(always)]
+    #[inline]
     fn fence_r() {
         // SAFETY: dmb ld 是 aarch64 读内存屏障。
         unsafe {
@@ -138,7 +138,7 @@ impl CoreArch for Aarch64 {
 
 impl InterruptArch for Aarch64 {
     /// 禁用 IRQ (DAIF bit 1) 并返回 DAIF。
-    #[inline(always)]
+    #[inline]
     fn interrupt_disable() -> usize {
         let daif: u64;
         // SAFETY: mrs daif 读取 + msr daifset #2 禁用 IRQ；都使用立即数，
@@ -160,7 +160,7 @@ impl InterruptArch for Aarch64 {
     /// DAIF 位布局 (msr daifclr/daifset 立即数):
     ///   bit 0 = D (Debug mask),  bit 1 = A (SError mask),
     ///   bit 2 = I (IRQ mask),    bit 3 = F (FIQ mask).
-    #[inline(always)]
+    #[inline]
     fn interrupt_restore(flags: usize) {
         // SAFETY: msr daifset/daifclr 是立即数指令, 无内存副作用.
         // flags 由 interrupt_disable 保存的完整 DAIF (低 8 位有效).
@@ -208,7 +208,7 @@ impl InterruptArch for Aarch64 {
     }
 
     /// 启用 IRQ (msr daifclr)。
-    #[inline(always)]
+    #[inline]
     fn interrupt_enable() {
         // SAFETY: msr daifclr #2 启用 IRQ (清除 I 屏蔽位)。
         unsafe {
@@ -217,7 +217,7 @@ impl InterruptArch for Aarch64 {
     }
 
     /// 检查 I (IRQ mask) bit。
-    #[inline(always)]
+    #[inline]
     fn is_interrupt_enabled() -> bool {
         let daif: u64;
         // SAFETY: mrs daif 是只读系统寄存器读取。
@@ -281,7 +281,7 @@ impl InterruptArch for Aarch64 {
 
 impl MmuArch for Aarch64 {
     /// TLBI VA 单页刷新。
-    #[inline(always)]
+    #[inline]
     fn tlb_flush_page(vaddr: usize) {
         // SAFETY: 标准 TLB 单页失效序列；
         // vaddr 是有效内核虚拟地址 (>> 12 取页号)。
@@ -294,7 +294,7 @@ impl MmuArch for Aarch64 {
     }
 
     /// TLBI VMALL 全刷新。
-    #[inline(always)]
+    #[inline]
     fn tlb_flush_all() {
         // SAFETY: 标准 TLB 全失效序列 (VMALL E1)。
         unsafe {
@@ -306,13 +306,13 @@ impl MmuArch for Aarch64 {
     }
 
     /// 读取 TTBR0_EL1。
-    #[inline(always)]
+    #[inline]
     fn read_page_table_base() -> u64 {
         mmu::read_ttbr0()
     }
 
     /// 写入 TTBR0_EL1 + ISB。
-    #[inline(always)]
+    #[inline]
     fn write_page_table_base(paddr: u64) {
         // SAFETY: msr ttbr0_el1 写入新页表基址 + isb 同步流水线。
         unsafe {
@@ -322,7 +322,7 @@ impl MmuArch for Aarch64 {
     }
 
     /// 读取 FAR_EL1。
-    #[inline(always)]
+    #[inline]
     fn read_fault_address() -> usize {
         crate::privileged::lib::usize_from_u64(mmu::read_far())
     }

@@ -427,14 +427,10 @@ impl DmaEngine {
 
     /// 刷新 CPU 缓存以确保 DMA 一致性.
     /// 该函数与架构相关, 对非一致性 DMA 至关重要.
-    #[inline(always)]
+    #[inline]
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
     /// 刷新 CPU 缓存, 使 CPU 写入对设备可见 (一致性 DMA 分配后调用)。
     ///
@@ -519,14 +515,10 @@ impl DmaEngine {
     ///
     /// `x86_64`: 缓存一致, 仅需栅栏 (addr/size 无须使用).
     /// aarch64: 按虚拟地址逐行失效 (DC IVAC).
-    #[inline(always)]
+    #[inline]
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
     fn cache_invalidate(&self, addr: VirtAddr, size: usize) {
         #[cfg(target_arch = "x86_64")]
@@ -570,18 +562,14 @@ impl DmaEngine {
         }
     }
 
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn freg_device() {
         // sfence: 确保所有 store 在 DMA 之前可见
         crate::arch!(fence_w());
         core::sync::atomic::fence(Ordering::SeqCst);
     }
 
-    #[inline(always)]
+    #[inline]
     fn freg_cpu() {
         // lfence: 确保所有 load 反映 DMA 写入
         crate::arch!(fence_r());

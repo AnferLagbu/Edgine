@@ -5,8 +5,8 @@
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 961,
-    "files": 196
+    "sites": 745,
+    "files": 178
   },
   "entries": [
     [
@@ -78,11 +78,6 @@
       "src/kernel/functions/driver/display/controller.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       2
-    ],
-    [
-      "src/kernel/functions/driver/display/dp.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      5
     ],
     [
       "src/kernel/functions/driver/display/dp.rs",
@@ -301,11 +296,6 @@
     ],
     [
       "src/kernel/functions/fs/unkfs/raidz.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/raidz.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       2
     ],
@@ -417,11 +407,6 @@
     [
       "src/kernel/functions/mod.rs",
       "#![allow(clippy::explicit_counter_loop)",
-      1
-    ],
-    [
-      "src/kernel/functions/mod.rs",
-      "#![allow(clippy::inline_always)",
       1
     ],
     [
@@ -796,11 +781,6 @@
     ],
     [
       "src/kernel/lib.rs",
-      "#![allow(clippy::inline_always)",
-      1
-    ],
-    [
-      "src/kernel/lib.rs",
       "#![allow(clippy::let_and_return)",
       1
     ],
@@ -1056,11 +1036,6 @@
     ],
     [
       "src/kernel/privileged/arch/x86_64/gdt.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      1
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/gdt.rs",
       "#[expect(clippy::large_stack_arrays,reason=\"PerCpuGdt的syscall/IST栈数组布局于BSP_GDT/PMM分配的APGDT,非栈上分配\")",
       1
     ],
@@ -1068,16 +1043,6 @@
       "src/kernel/privileged/arch/x86_64/gdt.rs",
       "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
       1
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/mod.rs",
-      "#[cfg_attr( not(feature = \"host-test\"), expect( clippy::inline_always, reason = \"inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect\" ) )]",
-      2
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/mod.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      15
     ],
     [
       "src/kernel/privileged/arch/x86_64/mod.rs",
@@ -1135,11 +1100,6 @@
       1
     ],
     [
-      "src/kernel/privileged/cpu/arch.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      5
-    ],
-    [
       "src/kernel/privileged/cpu/feature.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
@@ -1170,19 +1130,9 @@
       6
     ],
     [
-      "src/kernel/privileged/cpu/msr.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      1
-    ],
-    [
       "src/kernel/privileged/cpu/topology.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       3
-    ],
-    [
-      "src/kernel/privileged/cpu/tsc.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      1
     ],
     [
       "src/kernel/privileged/debug/ebpf.rs",
@@ -1226,18 +1176,8 @@
     ],
     [
       "src/kernel/privileged/dma/engine.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      3
-    ],
-    [
-      "src/kernel/privileged/dma/engine.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       6
-    ],
-    [
-      "src/kernel/privileged/dma_buf.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      4
     ],
     [
       "src/kernel/privileged/driver/display/framebuffer.rs",
@@ -1245,19 +1185,9 @@
       9
     ],
     [
-      "src/kernel/privileged/driver/display/mod.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      1
-    ],
-    [
       "src/kernel/privileged/driver/display/self_test.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
-    ],
-    [
-      "src/kernel/privileged/driver/infra.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      5
     ],
     [
       "src/kernel/privileged/driver/input/keyboard.rs",
@@ -1298,11 +1228,6 @@
       "src/kernel/privileged/driver/uefi.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       5
-    ],
-    [
-      "src/kernel/privileged/driver/virtio/mod.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      1
     ],
     [
       "src/kernel/privileged/driver/virtio/queue.rs",
@@ -1348,11 +1273,6 @@
       "src/kernel/privileged/errno.rs",
       "#![allow(clippy::upper_case_acronyms)",
       1
-    ],
-    [
-      "src/kernel/privileged/frame.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      4
     ],
     [
       "src/kernel/privileged/freg/api.rs",
@@ -1416,11 +1336,6 @@
     ],
     [
       "src/kernel/privileged/idt/idt.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      1
-    ],
-    [
-      "src/kernel/privileged/idt/idt.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是既有API约定(改传值会波及调用点)",
       1
     ],
@@ -1438,11 +1353,6 @@
       "src/kernel/privileged/idt/mod.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
-    ],
-    [
-      "src/kernel/privileged/idt/safety.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      7
     ],
     [
       "src/kernel/privileged/idt/types.rs",
@@ -1466,18 +1376,8 @@
     ],
     [
       "src/kernel/privileged/iomem.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      4
-    ],
-    [
-      "src/kernel/privileged/iomem.rs",
       "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
       3
-    ],
-    [
-      "src/kernel/privileged/ioport.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      1
     ],
     [
       "src/kernel/privileged/ioport.rs",
@@ -1485,23 +1385,8 @@
       6
     ],
     [
-      "src/kernel/privileged/ipc/msgq.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      4
-    ],
-    [
-      "src/kernel/privileged/irqline.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      3
-    ],
-    [
       "src/kernel/privileged/klog/mod.rs",
       "#[allow(clippy::upper_case_acronyms)",
-      1
-    ],
-    [
-      "src/kernel/privileged/klog/mod.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
       1
     ],
     [
@@ -1560,11 +1445,6 @@
       4
     ],
     [
-      "src/kernel/privileged/mm/arch.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      4
-    ],
-    [
       "src/kernel/privileged/mm/cow.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
@@ -1583,11 +1463,6 @@
       "src/kernel/privileged/mm/kmalloc.rs",
       "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
       2
-    ],
-    [
-      "src/kernel/privileged/mm/kmalloc.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      18
     ],
     [
       "src/kernel/privileged/mm/kmalloc.rs",
@@ -1616,11 +1491,6 @@
     ],
     [
       "src/kernel/privileged/mm/kpti.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      5
-    ],
-    [
-      "src/kernel/privileged/mm/kpti.rs",
       "#[expect(clippy::verbose_bit_mask,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
     ],
@@ -1636,11 +1506,6 @@
     ],
     [
       "src/kernel/privileged/mm/mod.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      7
-    ],
-    [
-      "src/kernel/privileged/mm/mod.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       3
     ],
@@ -1648,11 +1513,6 @@
       "src/kernel/privileged/mm/mod.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       12
-    ],
-    [
-      "src/kernel/privileged/mm/pmm.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      4
     ],
     [
       "src/kernel/privileged/mm/pmm.rs",
@@ -1668,11 +1528,6 @@
       "src/kernel/privileged/mm/pressure.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       3
-    ],
-    [
-      "src/kernel/privileged/mm/slab.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      18
     ],
     [
       "src/kernel/privileged/mm/slab.rs",
@@ -1723,11 +1578,6 @@
       "src/kernel/privileged/mm/vmm_aarch64.rs",
       "#[expect(clippy::unused_self,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
       14
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      4
     ],
     [
       "src/kernel/privileged/mm/vmm_x86_64.rs",
@@ -1797,11 +1647,6 @@
     [
       "src/kernel/privileged/mod.rs",
       "#![allow(clippy::explicit_counter_loop)",
-      1
-    ],
-    [
-      "src/kernel/privileged/mod.rs",
-      "#![allow(clippy::inline_always)",
       1
     ],
     [
@@ -2006,11 +1851,6 @@
     ],
     [
       "src/kernel/privileged/net/iface_trait.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      39
-    ],
-    [
-      "src/kernel/privileged/net/iface_trait.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       3
     ],
@@ -2057,11 +1897,6 @@
     [
       "src/kernel/privileged/page_table.rs",
       "#[expect(clippy::uninlined_format_args,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/pci/mod.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
       1
     ],
     [
@@ -2211,11 +2046,6 @@
     ],
     [
       "src/kernel/privileged/proc/user_proc.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      17
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
       "#[expect(clippy::no_effect_underscore_binding,reason=\"no_effect_underscore_binding:let_=expr用于类型推导/副作用;当前优先expect\")",
       1
     ],
@@ -2300,11 +2130,6 @@
       1
     ],
     [
-      "src/kernel/privileged/sync/arch.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      6
-    ],
-    [
       "src/kernel/privileged/sync/atomic.rs",
       "#[expect(clippy::ptr_as_ptr,reason=\"指针类型cast不变constness(e.g.*mutT→*mutU)",
       1
@@ -2333,16 +2158,6 @@
       "src/kernel/privileged/sync/rcu.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
       1
-    ],
-    [
-      "src/kernel/privileged/sync/rcu.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      3
-    ],
-    [
-      "src/kernel/privileged/sync/spinlock.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      2
     ],
     [
       "src/kernel/privileged/sync/spinlock.rs",
@@ -2386,11 +2201,6 @@
     ],
     [
       "src/kernel/privileged/tests/mod.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      1
-    ],
-    [
-      "src/kernel/privileged/tests/mod.rs",
       "#[expect(clippy::large_stack_arrays,reason=\"large_stack_arrays:测试注册表数组存放于staticOnceLock(.bss)",
       1
     ],
@@ -2425,26 +2235,6 @@
       1
     ],
     [
-      "src/kernel/privileged/timer/pit.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      1
-    ],
-    [
-      "src/kernel/privileged/timer/sleep.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      1
-    ],
-    [
-      "src/kernel/privileged/timer/tick.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      1
-    ],
-    [
-      "src/kernel/privileged/userctx.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      9
-    ],
-    [
       "src/kernel/privileged/userptr.rs",
       "#[allow(clippy::should_implement_trait)",
       1
@@ -2453,11 +2243,6 @@
       "src/kernel/privileged/userptr.rs",
       "#[expect(clippy::ptr_cast_constness,reason=\"ptr_cast_constness:*mutTas*constT是已知安全(Rust2024可用ptr.cast_const或&rawconst;当前优先expect\")",
       1
-    ],
-    [
-      "src/kernel/privileged/vmspace.rs",
-      "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
-      2
     ],
     [
       "src/kernel/privileged/vmspace.rs",

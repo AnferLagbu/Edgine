@@ -354,57 +354,37 @@ pub(crate) fn release_frame(phys: PhysAddr) {
 }
 
 /// 页表索引辅助宏
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub const fn pml4_index(addr: u64) -> usize {
     ((addr >> 39) & 0x1FF) as usize
 }
 
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 /// 提取地址的 PDPT (页目录指针表) 索引 (`bits[38:30]`).
 pub const fn pdpt_index(addr: u64) -> usize {
     ((addr >> 30) & 0x1FF) as usize
 }
 
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 /// 提取地址的 PD (页目录) 索引 (`bits[29:21]`).
 pub const fn pd_index(addr: u64) -> usize {
     ((addr >> 21) & 0x1FF) as usize
 }
 
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 /// 提取地址的 PT (页表) 索引 (`bits[20:12]`).
 pub const fn pt_index(addr: u64) -> usize {
     ((addr >> 12) & 0x1FF) as usize
 }
 
 /// 物理地址转虚拟地址 (内核空间)
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub const fn phys_to_virt(phys: u64) -> u64 {
     phys + KERNEL_BASE
 }
 
 /// 虚拟地址转物理地址 (内核空间)
-#[inline(always)]
+#[inline]
 pub const fn virt_to_phys(virt: u64) -> u64 {
     virt - KERNEL_BASE
 }
@@ -516,11 +496,7 @@ impl PhysAddr {
     }
 
     /// 向上对齐到页边界
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
@@ -531,7 +507,7 @@ impl PhysAddr {
     }
 
     /// 向下对齐到页边界
-    #[inline(always)]
+    #[inline]
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
@@ -571,14 +547,10 @@ impl VirtAddr {
     }
 
     /// 向上对齐到页边界
-    #[inline(always)]
+    #[inline]
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
     #[must_use]
     pub fn align_up(&self, align: u64) -> Self {
@@ -586,7 +558,7 @@ impl VirtAddr {
     }
 
     /// 向下对齐到页边界
-    #[inline(always)]
+    #[inline]
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"

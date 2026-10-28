@@ -51,17 +51,13 @@ impl Frame {
     }
 
     /// 物理地址
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub fn phys(&self) -> PhysAddr {
         self.phys
     }
 
     /// Buddy 阶数 (0 = 4KB, 9 = 2MB)
-    #[inline(always)]
+    #[inline]
     pub fn order(&self) -> u8 {
         self.order
     }
@@ -72,11 +68,7 @@ impl Frame {
     }
 
     /// 当前持有者数 (PMM 计数面, 0 = 未计数帧)
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub fn ref_count(&self) -> u32 {
         crate::privileged::mm::api::frame_ref_count(self.phys)
     }
@@ -84,27 +76,19 @@ impl Frame {
     /// 登记一个额外持有者 (如被页表映射、DMA 缓冲引用)。
     ///
     /// 返回 `false` = 帧不处于计数态 (未计数块 / MMIO 地址), 未登记成功。
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub fn inc_ref(&self) -> bool {
         crate::privileged::mm::api::frame_inc(self.phys)
     }
 
     /// 自定义元数据（functions 可挂载任意 usize 值）
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub fn meta(&self) -> usize {
         self.meta
     }
 
     /// 设置自定义元数据
-    #[inline(always)]
+    #[inline]
     pub fn set_meta(&mut self, val: usize) {
         self.meta = val;
     }

@@ -672,7 +672,7 @@ pub fn gdt_init() -> i32 {
         gdt.entries[5] = GdtEntry::tss_low(tss_addr, tss_size);
         gdt.entries[6] = GdtEntry::tss_high(tss_addr);
 
-        gdt_flush(&gdt.ptr);
+        gdt_flush(gdt.ptr);
         tss_flush(SELECTOR_TSS);
 
         // 统一内核栈契约 (D5): `kernel_rsp` 恒为**高半区 VA**.
@@ -820,7 +820,7 @@ pub fn gdt_init_ap(cpu_index: u32) {
         ap.entries[5] = GdtEntry::tss_low(tss_addr, tss_size);
         ap.entries[6] = GdtEntry::tss_high(tss_addr);
 
-        gdt_flush(&ap.ptr);
+        gdt_flush(ap.ptr);
         tss_flush(SELECTOR_TSS);
 
         // AP 由 trampoline 以 CS=0x18 进入长模式, 而内核 per-CPU GDT 的
@@ -981,20 +981,16 @@ pub fn gdt_set_kernel_rsp(rsp: u64) {
 /// 执行 LGDT 指令 (Load Global Descriptor Table Register)
 ///
 /// # Arguments
-/// * `gdt_ptr` - 指向 `GdtPtr` 结构体的引用
+/// * `gdt_ptr` - `GdtPtr` 结构体 (按值传入, 由 `lgdt` 从栈上内存操作数读取)
 ///
 /// # Safety
 /// 此函数修改 GDTR 寄存器, 会立即影响内存分段行为。
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
-unsafe fn gdt_flush(gdt_ptr: &GdtPtr) {
+#[inline]
+unsafe fn gdt_flush(gdt_ptr: GdtPtr) {
     unsafe {
         core::arch::asm!(
             "lgdt [{0}]",
-            in(reg) gdt_ptr,
+            in(reg) &raw const gdt_ptr,
             options(nostack, preserves_flags),
         );
     }
@@ -1007,7 +1003,7 @@ unsafe fn gdt_flush(gdt_ptr: &GdtPtr) {
 ///
 /// # Safety
 /// 此函数加载新的 TSS 到任务寄存器, 会标记 TSS 为 busy。
-#[inline(always)]
+#[inline]
 unsafe fn tss_flush(selector: u16) {
     unsafe {
         core::arch::asm!(

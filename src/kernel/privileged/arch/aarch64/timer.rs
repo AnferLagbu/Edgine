@@ -9,7 +9,7 @@ use core::arch::asm;
 const TIMER_FREQ_HZ: u64 = 62_500_000;
 
 /// 读取当前计数器频率
-#[inline(always)]
+#[inline]
 pub fn read_frequency() -> u64 {
     let freq: u64;
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -22,7 +22,7 @@ pub fn read_frequency() -> u64 {
 /// 设置定时器到期值 (倒计时)
 ///
 /// 向 CNTP_TVAL_EL0 写入 ticks 后触发定时器中断。
-#[inline(always)]
+#[inline]
 pub fn set_timer(ticks: u64) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
@@ -33,7 +33,7 @@ pub fn set_timer(ticks: u64) {
 /// 设置定时器比较值 (绝对时间)
 ///
 /// 向 CNTP_CVAL_EL0 写入绝对计数值, 达到时触发中断。
-#[inline(always)]
+#[inline]
 pub fn set_compare(value: u64) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
@@ -42,7 +42,7 @@ pub fn set_compare(value: u64) {
 }
 
 /// 读取当前计数 (CNTPCT_EL0)
-#[inline(always)]
+#[inline]
 pub fn read_count() -> u64 {
     let cnt: u64;
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -53,7 +53,7 @@ pub fn read_count() -> u64 {
 }
 
 /// 使能定时器 (CNTP_CTL_EL0.ENABLE = 1, IMASK = 0)
-#[inline(always)]
+#[inline]
 pub fn enable() {
     // bit 0: ENABLE, bit 1: IMASK (0=enabled, 1=masked)
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -63,7 +63,7 @@ pub fn enable() {
 }
 
 /// 禁用定时器
-#[inline(always)]
+#[inline]
 pub fn disable() {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
@@ -72,7 +72,7 @@ pub fn disable() {
 }
 
 /// 读取定时器控制寄存器
-#[inline(always)]
+#[inline]
 pub fn read_control() -> u64 {
     let ctl: u64;
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)

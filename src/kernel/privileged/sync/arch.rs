@@ -23,11 +23,7 @@ use crate::privileged::arch::Arch;
 ///
 /// `x86_64`: `pause` 指令
 /// `AArch64`: `yield` 提示指令 (#1)
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn spin_hint() {
     // 使用 fence() 作为通用自旋提示: 强内存屏障防止 CPU 投机执行
     // Phase 2: x86_64 换为专用 pause 指令
@@ -35,21 +31,13 @@ pub fn spin_hint() {
 }
 
 /// 全内存屏障 (mfence / dsb sy)。
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn fence() {
     <crate::privileged::arch::CurrentArch as Arch>::fence();
 }
 
 /// 写内存屏障 (sfence / dmb st)。
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn fence_w() {
     <crate::privileged::arch::CurrentArch as Arch>::fence_w();
 }
@@ -59,11 +47,7 @@ pub fn fence_w() {
 /// # Safety
 ///
 /// 调用方必须确保 `interrupt_restore` 在适当时候被调用以恢复中断状态。
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn interrupt_save() -> usize {
     <crate::privileged::arch::CurrentArch as Arch>::interrupt_disable()
 }
@@ -73,27 +57,19 @@ pub fn interrupt_save() -> usize {
 /// # Safety
 ///
 /// `flags` 必须是从 `interrupt_save()` 获取的值。
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn interrupt_restore(flags: usize) {
     <crate::privileged::arch::CurrentArch as Arch>::interrupt_restore(flags);
 }
 
 /// 启用中断 (sti / msr daifclr)。
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn interrupt_enable() {
     <crate::privileged::arch::CurrentArch as Arch>::interrupt_enable();
 }
 
 /// 检查中断是否已启用。
-#[inline(always)]
+#[inline]
 pub fn is_interrupt_enabled() -> bool {
     <crate::privileged::arch::CurrentArch as Arch>::is_interrupt_enabled()
 }

@@ -261,38 +261,22 @@ impl IoMem {
     }
 
     /// 返回 MMIO 区域物理基地址
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
-    #[inline(always)]
+    #[inline]
     pub fn phys(&self) -> PhysAddr {
         self.phys_base
     }
     /// 返回 MMIO 区域长度 (字节)
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
-    #[inline(always)]
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
     /// 判断 MMIO 区域是否为空
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
-    #[inline(always)]
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
     /// 返回 MMIO 区域名称
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
-    #[inline(always)]
+    #[inline]
     pub fn name(&self) -> &'static str {
         self.name
     }
@@ -304,7 +288,7 @@ impl IoMem {
     /// - 返回的指针类型与 MMIO 寄存器布局一致 (大小/对齐)。
     /// - 仅通过 volatile 访问 (无编译器重排)。
     /// - 不会写出 `IoMem` 自身的字节范围 (offset + `size_of::<T>()` <= self.len)。
-    #[inline(always)]
+    #[inline]
     pub unsafe fn virt_ptr(&self) -> *mut u8 {
         // SAFETY: `self.virt` 是 `IoMem::from_*` 构造时由 `NonNull::new_unchecked`
         // 校验的物理基地址经 MMU 映射后的虚拟地址, 满足 NonNull 契约。

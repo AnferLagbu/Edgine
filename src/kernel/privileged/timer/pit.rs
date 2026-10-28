@@ -85,11 +85,7 @@ static LAST_TICK_COUNT: AtomicU16 = AtomicU16::new(0);
 ///
 /// # Safety
 /// 必须在特权级执行，且端口地址有效。
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 unsafe fn outb(port: u16, value: u8) {
     crate::arch!(outb(port, value));
 }
@@ -98,7 +94,7 @@ unsafe fn outb(port: u16, value: u8) {
 ///
 /// # Safety
 /// 必须在特权级执行，且端口地址有效。
-#[inline(always)]
+#[inline]
 unsafe fn inb(port: u16) -> u8 {
     crate::arch!(inb(port))
 }

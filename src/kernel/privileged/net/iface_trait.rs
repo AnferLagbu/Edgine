@@ -74,37 +74,25 @@ impl SocketHandle {
     pub const INVALID: Self = Self(0);
 
     /// 是否为无效句柄.
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn is_invalid(self) -> bool {
         self.0 == 0
     }
 
     /// 是否为有效句柄.
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn is_valid(self) -> bool {
         self.0 != 0
     }
 
     /// 内部 u32 索引 (P-71: functions 已跨 crate, 需 `pub` 才能访问).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn raw(self) -> u32 {
         self.0
     }
 
     /// 由 functions 内部构造 (来自 smoltcp 句柄的 u32 转换, P-71: 已跨 crate).
-    #[inline(always)]
+    #[inline]
     pub const fn from_raw(raw: u32) -> Self {
         Self(raw)
     }
@@ -158,11 +146,7 @@ pub enum SocketKind {
 
 impl SocketKind {
     /// 是否是内部使用类型 (DHCP/DNS, 用户态不可见).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn is_internal(self) -> bool {
         matches!(self, Self::Dhcpv4 | Self::Dns)
     }
@@ -196,11 +180,7 @@ pub struct NetConfig {
 
 impl NetConfig {
     /// 创建一个空配置 (全 0 / None), 由调用方填充.
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn empty() -> Self {
         Self {
             mac_address: [0; 6],
@@ -212,11 +192,7 @@ impl NetConfig {
     }
 
     /// 是否使用 DHCP 获取 IP (`static_ipv4` 为 None).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn use_dhcp(&self) -> bool {
         self.static_ipv4.is_none()
     }
@@ -241,11 +217,7 @@ pub struct PollOutcome {
 
 impl PollOutcome {
     /// 构造一个空结果 (无事件).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn idle() -> Self {
         Self {
             packet_received: false,
@@ -256,14 +228,10 @@ impl PollOutcome {
     }
 
     /// 是否有任何事件 (用于调度器快速判断).
-    #[inline(always)]
+    #[inline]
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
     pub const fn has_events(&self) -> bool {
         self.packet_received || self.socket_woken || self.dhcp_progressed || self.tx_pending > 0
@@ -301,7 +269,7 @@ pub enum DhcpState {
 
 impl DhcpState {
     /// 是否处于"已配置"状态 (Bound 或 Renewing).
-    #[inline(always)]
+    #[inline]
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
@@ -911,10 +879,6 @@ mod tests {
 
     /// 验证新旧关闭方法语义一致.
     #[test]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
     fn test_netstack_close_vs_socket_close() {
         struct Mock;
         impl NetStack for Mock {}
@@ -971,73 +935,45 @@ impl Ipv4Addr {
     pub const UNSPECIFIED: Self = Self([0, 0, 0, 0]);
 
     /// 构造一个 IPv4 地址.
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn new(o0: u8, o1: u8, o2: u8, o3: u8) -> Self {
         Self([o0, o1, o2, o3])
     }
 
     /// 从 4 元组数组构造.
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn from_octets(octets: [u8; 4]) -> Self {
         Self(octets)
     }
 
     /// 获取 4 元组数组.
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn octets(self) -> [u8; 4] {
         self.0
     }
 
     /// 是否为未指定地址 (0.0.0.0).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn is_unspecified(self) -> bool {
         self.0[0] == 0 && self.0[1] == 0 && self.0[2] == 0 && self.0[3] == 0
     }
 
     /// 提升为统一 `IpAddr` (双栈迁移辅助, DECISION-032).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn into_ip_addr(self) -> IpAddr {
         IpAddr::V4(self)
     }
 }
 
 impl From<[u8; 4]> for Ipv4Addr {
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn from(o: [u8; 4]) -> Self {
         Self(o)
     }
 }
 
 impl From<Ipv4Addr> for [u8; 4] {
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn from(a: Ipv4Addr) -> Self {
         a.0
     }
@@ -1054,11 +990,7 @@ pub struct Ipv4Cidr {
 
 impl Ipv4Cidr {
     /// 构造一个 CIDR.
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn new(address: Ipv4Addr, prefix_len: u8) -> Self {
         Self {
             address,
@@ -1081,11 +1013,7 @@ impl Ipv6Addr {
     pub const LOOPBACK: Self = Self([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
 
     /// 从 8 个 16 位组构造 (每组大端序写入, 与 `std::net::Ipv6Addr` 对齐).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn new(
         o0: u16,
         o1: u16,
@@ -1117,31 +1045,19 @@ impl Ipv6Addr {
     }
 
     /// 从 16 元组数组构造.
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn from_octets(octets: [u8; 16]) -> Self {
         Self(octets)
     }
 
     /// 获取 16 元组数组.
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn octets(self) -> [u8; 16] {
         self.0
     }
 
     /// 是否为未指定地址 (::).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn is_unspecified(self) -> bool {
         let mut i = 0;
         while i < 16 {
@@ -1154,11 +1070,7 @@ impl Ipv6Addr {
     }
 
     /// 是否为环回地址 (`::1`).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn is_loopback(self) -> bool {
         let o = self.0;
         o[0] == 0
@@ -1180,43 +1092,27 @@ impl Ipv6Addr {
     }
 
     /// 是否为组播地址 (最高字节 0xFF).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn is_multicast(self) -> bool {
         self.0[0] == 0xFF
     }
 
     /// 提升为统一 `IpAddr` (双栈迁移辅助, DECISION-032).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn into_ip_addr(self) -> IpAddr {
         IpAddr::V6(self)
     }
 }
 
 impl From<[u8; 16]> for Ipv6Addr {
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn from(o: [u8; 16]) -> Self {
         Self(o)
     }
 }
 
 impl From<Ipv6Addr> for [u8; 16] {
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn from(a: Ipv6Addr) -> Self {
         a.0
     }
@@ -1233,11 +1129,7 @@ pub struct Ipv6Cidr {
 
 impl Ipv6Cidr {
     /// 构造一个 CIDR.
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn new(address: Ipv6Addr, prefix_len: u8) -> Self {
         Self {
             address,
@@ -1260,31 +1152,19 @@ pub enum IpAddr {
 
 impl IpAddr {
     /// 是否为 IPv4 地址.
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn is_v4(self) -> bool {
         matches!(self, Self::V4(_))
     }
 
     /// 是否为 IPv6 地址.
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn is_v6(self) -> bool {
         matches!(self, Self::V6(_))
     }
 
     /// 尝试取 IPv4 地址 (非 V4 返回 None).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn as_v4(self) -> Option<Ipv4Addr> {
         match self {
             Self::V4(v4) => Some(v4),
@@ -1293,11 +1173,7 @@ impl IpAddr {
     }
 
     /// 尝试取 IPv6 地址 (非 V6 返回 None).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn as_v6(self) -> Option<Ipv6Addr> {
         match self {
             Self::V4(_) => None,
@@ -1307,22 +1183,14 @@ impl IpAddr {
 }
 
 impl From<Ipv4Addr> for IpAddr {
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn from(a: Ipv4Addr) -> Self {
         Self::V4(a)
     }
 }
 
 impl From<Ipv6Addr> for IpAddr {
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn from(a: Ipv6Addr) -> Self {
         Self::V6(a)
     }
@@ -1341,21 +1209,13 @@ pub struct NetEndpoint {
 
 impl NetEndpoint {
     /// 构造一个端点 (统一 `IpAddr` 入口).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn new(addr: IpAddr, port: u16) -> Self {
         Self { addr, port }
     }
 
     /// 构造 IPv4 端点 (双栈迁移辅助).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn new_v4(addr: Ipv4Addr, port: u16) -> Self {
         Self {
             addr: IpAddr::V4(addr),
@@ -1364,11 +1224,7 @@ impl NetEndpoint {
     }
 
     /// 构造 IPv6 端点 (双栈迁移辅助).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn new_v6(addr: Ipv6Addr, port: u16) -> Self {
         Self {
             addr: IpAddr::V6(addr),
@@ -1397,21 +1253,13 @@ pub struct NetListenEndpoint {
 
 impl NetListenEndpoint {
     /// 通配地址监听 (0.0.0.0:port).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn wildcard(port: u16) -> Self {
         Self { addr: None, port }
     }
 
     /// 指定地址监听 (统一 `IpAddr` 入口).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn new(addr: IpAddr, port: u16) -> Self {
         Self {
             addr: Some(addr),
@@ -1420,11 +1268,7 @@ impl NetListenEndpoint {
     }
 
     /// 指定 IPv4 地址监听 (双栈迁移辅助).
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub const fn new_v4(addr: Ipv4Addr, port: u16) -> Self {
         Self {
             addr: Some(IpAddr::V4(addr)),
@@ -1433,7 +1277,7 @@ impl NetListenEndpoint {
     }
 
     /// 指定 IPv6 地址监听 (双栈迁移辅助).
-    #[inline(always)]
+    #[inline]
     pub const fn new_v6(addr: Ipv6Addr, port: u16) -> Self {
         Self {
             addr: Some(IpAddr::V6(addr)),

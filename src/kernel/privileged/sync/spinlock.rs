@@ -381,28 +381,20 @@ pub fn restore_interrupts(_flags: &IrqSaveFlags) {}
 
 /// 写内存屏障 (Store freg)
 /// 确保所有写操作对其他 CPU 可见
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn smp_wmb() {
     fence(Ordering::Release);
 }
 
 /// 读内存屏障 (Load freg)
 /// 确保读取到最新值
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn smp_rmb() {
     fence(Ordering::Acquire);
 }
 
 /// 全局内存屏障
-#[inline(always)]
+#[inline]
 pub fn smp_mb() {
     fence(Ordering::SeqCst);
 }

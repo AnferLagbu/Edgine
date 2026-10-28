@@ -163,7 +163,7 @@ impl InterruptFrame {
     /// # Returns
     /// - `true`: user-mode 中断
     /// - `false`: kernel-mode 中断
-    #[inline(always)]
+    #[inline]
     pub fn is_user_mode(&self) -> bool {
         (self.cs & 0x03) == 3
     }

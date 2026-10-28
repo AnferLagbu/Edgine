@@ -267,7 +267,7 @@ impl<T> IrqSpinLock<T> {
     ///
     /// 调用方必须持有本锁 (通过 `lock()` 或 `try_lock()`)，且不得同时通过
     /// `IrqSpinLockGuard` 的 `DerefMut` 借用同一字段。
-    #[inline(always)]
+    #[inline]
     pub unsafe fn data_ptr(&self) -> *mut T {
         // SAFETY: UnsafeCell::get 返回 *mut T，调用方保证互斥访问。
         self.data.get()

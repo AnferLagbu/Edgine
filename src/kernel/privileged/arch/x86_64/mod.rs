@@ -40,7 +40,7 @@ use crate::privileged::arch::{Arch, CoreArch, InterruptArch, MmuArch, SystemArch
 
 impl CoreArch for X8664 {
     /// 获取当前 CPU ID (Local APIC ID)。
-    #[inline(always)]
+    #[inline]
     fn cpu_id() -> u32 {
         // E-04 (2026-09-06): 测试运行器双端适配 — host-test 下无 APIC MMIO,
         // apic::get_id() 读 0xFEE00000 物理地址 → SIGSEGV (host 无映射, 非 panic,
@@ -68,11 +68,7 @@ impl CoreArch for X8664 {
     }
 
     /// 获取高精度时间戳 (rdtsc)。
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn timestamp() -> u64 {
         let lo: u32;
         let hi: u32;
@@ -93,11 +89,7 @@ impl CoreArch for X8664 {
     /// 序列化时间戳读取: `lfence` 确保先前指令全部完成后 `rdtsc` 才执行。
     ///
     /// 用于精确时间测量 (TSC 频率校准等), 比 `timestamp()` 慢。
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn timestamp_serialized() -> u64 {
         let lo: u32;
         let hi: u32;
@@ -116,11 +108,7 @@ impl CoreArch for X8664 {
     }
 
     /// CPU 暂停等待中断 (hlt)。
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn halt() {
         // SAFETY: hlt 暂停 CPU 至下一次中断; 不触及 Rust 可见的内存或寄存器.
         // nomem/nostack 标注正确.
@@ -130,11 +118,7 @@ impl CoreArch for X8664 {
     }
 
     /// 全内存屏障 (mfence)。
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn fence() {
         // SAFETY: mfence 排序所有 load/store; 未声明寄存器 clobber, preserves_flags 正确.
         unsafe {
@@ -143,11 +127,7 @@ impl CoreArch for X8664 {
     }
 
     /// 写内存屏障 (sfence)。
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn fence_w() {
         // SAFETY: sfence orders stores; no memory reads, no stack use.
         unsafe {
@@ -156,11 +136,7 @@ impl CoreArch for X8664 {
     }
 
     /// 读内存屏障 (lfence)。
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn fence_r() {
         // SAFETY: lfence orders loads; correct memory model freg.
         unsafe {
@@ -173,11 +149,7 @@ impl CoreArch for X8664 {
 
 impl InterruptArch for X8664 {
     /// 禁用中断并返回 RFLAGS (含 IF 位)。
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn interrupt_disable() -> usize {
         // E-04 (2026-09-06): 测试运行器双端适配 — host-test 下 cli 为特权指令,
         // 用户态执行 → SIGSEGV. 桩化返回 0 (与 B08-14 sync::disable_interrupts 桩一致).
@@ -210,16 +182,7 @@ impl InterruptArch for X8664 {
     }
 
     /// 恢复中断状态，仅当 flags 中 IF 位为 1 时才启用。
-    #[inline(always)]
-    // E-04 (2026-09-06): host-test 下函数体退化为桩 (无 asm), inline_always
-    // lint 不触发 → 用 cfg_attr 条件化 expect, 避免 unfulfilled_lint_expectations.
-    #[cfg_attr(
-        not(feature = "host-test"),
-        expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )
-    )]
+    #[inline]
     fn interrupt_restore(flags: usize) {
         // E-04 (2026-09-06): 测试运行器双端适配 — host-test 下 sti 为特权指令,
         // 用户态执行 → SIGSEGV. 桩化 no-op (与 B08-14 sync::restore_interrupts 桩一致).
@@ -246,16 +209,7 @@ impl InterruptArch for X8664 {
     }
 
     /// 启用中断 (sti)。
-    #[inline(always)]
-    // E-04 (2026-09-06): host-test 下函数体退化为桩 (无 asm), inline_always
-    // lint 不触发 → 用 cfg_attr 条件化 expect, 避免 unfulfilled_lint_expectations.
-    #[cfg_attr(
-        not(feature = "host-test"),
-        expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )
-    )]
+    #[inline]
     fn interrupt_enable() {
         // E-04 (2026-09-06): 测试运行器双端适配 — host-test 下 sti 为特权指令,
         // 用户态执行 → SIGSEGV (如 do_softirq 内 arch!(interrupt_enable())).
@@ -279,7 +233,7 @@ impl InterruptArch for X8664 {
     }
 
     /// 检查 IF 位 (RFLAGS bit 9)。
-    #[inline(always)]
+    #[inline]
     fn is_interrupt_enabled() -> bool {
         let flags: u64;
         // SAFETY: pushfq/pop 序列仅将 RFLAGS 读入寄存器; 对调用方 flags 保持不变.
@@ -296,14 +250,14 @@ impl InterruptArch for X8664 {
     }
 
     /// 向目标 CPU 发送 IPI (通过 Local APIC)。
-    #[inline(always)]
+    #[inline]
     fn send_ipi(target_cpu: u32, vector: u8) {
         use crate::privileged::arch::x86_64::apic;
         apic::send_ipi(crate::privileged::lib::low_u8_from_u32(target_cpu), vector);
     }
 
     /// 广播 IPI 到所有 CPU (不含自身)。
-    #[inline(always)]
+    #[inline]
     fn broadcast_ipi(vector: u8) {
         use crate::privileged::arch::x86_64::apic;
         apic::broadcast_ipi(vector);
@@ -386,11 +340,7 @@ impl InterruptArch for X8664 {
 
 impl MmuArch for X8664 {
     /// 刷新单个虚拟地址的 TLB (invlpg)。
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn tlb_flush_page(vaddr: usize) {
         // SAFETY: invlpg takes the virtual address in a register and
         // invalidates the TLB entry; the address is a kernel VA.
@@ -404,11 +354,7 @@ impl MmuArch for X8664 {
     }
 
     /// 刷新全部 TLB (重载 CR3)。
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn tlb_flush_all() {
         // SAFETY: 读再写 CR3 触发完整 TLB 刷新; 中间寄存器使用是 GPR 与 CR3 间的直接搬运.
         unsafe {
@@ -422,11 +368,7 @@ impl MmuArch for X8664 {
     }
 
     /// 读取当前页表基地址 (mov rax, cr3)。
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn read_page_table_base() -> u64 {
         let cr3: u64;
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -441,11 +383,7 @@ impl MmuArch for X8664 {
     }
 
     /// 切换页表 (mov to cr3)。
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn write_page_table_base(paddr: u64) {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
@@ -458,7 +396,7 @@ impl MmuArch for X8664 {
     }
 
     /// 读取页故障地址 (mov rax, cr2)。
-    #[inline(always)]
+    #[inline]
     fn read_fault_address() -> usize {
         let cr2: u64;
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -473,7 +411,7 @@ impl MmuArch for X8664 {
     }
 
     /// 进程上下文切换 (`process_switch_asm`)。
-    #[inline(always)]
+    #[inline]
     fn context_switch(from: *mut u8, to: *const u8) {
         // E-04 (2026-09-06): 测试运行器双端适配 — host-test (std) 下无裸机上下文切换.
         // process_switch_asm 由 proc/switch.asm 在裸机构建时汇编链接, host 无此符号,
@@ -535,11 +473,7 @@ impl MmuArch for X8664 {
     }
 
     /// 返回用户态 (iretq)。
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn return_to_user() {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
@@ -703,11 +637,7 @@ enter_user_asm:
 
 impl SystemArch for X8664 {
     /// 向 I/O 端口写入字节 (out dx, al)。
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn outb(port: u16, value: u8) {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
@@ -721,11 +651,7 @@ impl SystemArch for X8664 {
     }
 
     /// 从 I/O 端口读取字节 (in al, dx)。
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn inb(port: u16) -> u8 {
         let value: u8;
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -741,11 +667,7 @@ impl SystemArch for X8664 {
     }
 
     /// 向 I/O 端口写入双字 (out dx, eax)。
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn outl(port: u16, value: u32) {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
@@ -759,7 +681,7 @@ impl SystemArch for X8664 {
     }
 
     /// 从 I/O 端口读取双字 (in eax, dx)。
-    #[inline(always)]
+    #[inline]
     fn inl(port: u16) -> u32 {
         let value: u32;
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)

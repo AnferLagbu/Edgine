@@ -55,10 +55,6 @@ impl CpuFeatures {
 
     /// 打印 CPU 特性信息
     #[cfg(feature = "log")]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
     pub fn log_info(&self) {
         use log::info;
         info!("CPU Features:");
@@ -75,11 +71,7 @@ impl CpuFeatures {
 ///
 /// # Returns
 /// Page Fault 触发时的线性地址
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub unsafe fn read_cr2() -> u64 {
     crate::arch!(read_fault_address()) as u64
 }
@@ -87,11 +79,7 @@ pub unsafe fn read_cr2() -> u64 {
 /// 中断控制函数
 
 /// 禁用中断 (cli)
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 ///
 /// # Safety
 ///
@@ -101,7 +89,7 @@ pub unsafe fn disable_interrupts() {
 }
 
 /// 启用中断 (sti)
-#[inline(always)]
+#[inline]
 ///
 /// # Safety
 ///
@@ -133,11 +121,7 @@ pub fn interrupts_enabled() -> bool {
 /// 内存屏障操作
 
 /// 全局内存屏障 (mfence → Arch trait)
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 ///
 /// # Safety
 ///
@@ -148,7 +132,7 @@ pub unsafe fn memory_fence() {
 }
 
 /// 写内存屏障 (sfence → Arch trait)
-#[inline(always)]
+#[inline]
 ///
 /// # Safety
 ///
@@ -192,11 +176,7 @@ pub fn rdtsc_fence() -> u64 {
 ///
 /// # Safety
 /// port 必须是有效的 I/O 端口地址
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub unsafe fn inb(port: u16) -> u8 {
     crate::arch!(inb(port))
 }
@@ -205,21 +185,13 @@ pub unsafe fn inb(port: u16) -> u8 {
 ///
 /// # Safety
 /// port 必须是有效的 I/O 端口地址
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub unsafe fn outb(port: u16, value: u8) {
     crate::arch!(outb(port, value));
 }
 
 /// I/O 延时 (用于 PIC 初始化序列)
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn io_wait() {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
@@ -228,7 +200,7 @@ pub fn io_wait() {
 }
 
 /// HALT 指令 (暂停 CPU 直到下一个中断)
-#[inline(always)]
+#[inline]
 ///
 /// # Safety
 ///

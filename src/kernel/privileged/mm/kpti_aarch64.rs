@@ -151,13 +151,13 @@ const _: () = assert!(
 // ── 公开 API ──────────────────────────────────────────────────────
 
 /// 返回 KPTI 是否已就绪.
-#[inline(always)]
+#[inline]
 pub fn kpti_is_active() -> bool {
     KPTI_GLOBALS.ready.load(Ordering::Acquire) != 0
 }
 
 /// 记录当前 CPU 的用户进程 TTBR0 物理地址 (由 `enter_user` 在进入 EL0 前调用).
-#[inline(always)]
+#[inline]
 pub fn kpti_set_user_ttbr0(ttbr0: u64) {
     kpti_cpu_state().user_ttbr0.store(ttbr0, Ordering::Release);
 }
@@ -167,7 +167,7 @@ pub fn kpti_set_user_ttbr0(ttbr0: u64) {
 /// 汇编侧改用 [`kpti_bind_cpu`] 写入 `TPIDR_EL1` 的**同一槽地址**寻址, 故 Rust 写
 /// 与汇编读必然落在同一槽 (入口切表前无空闲 GPR 现算 `MPIDR` 索引, 这是把索引
 /// 提前到上电路径的原因)。
-#[inline(always)]
+#[inline]
 fn kpti_cpu_state() -> &'static KptiCpuState {
     let cpu = (crate::privileged::smp::current_cpu_index() as usize) % MAX_CPUS;
     // SAFETY: 索引经 MAX_CPUS 取模, 恒在数组范围内; 静态量生命周期为 'static。
@@ -312,7 +312,7 @@ pub unsafe fn kpti_init(vmm: &super::vmm::Aarch64Vmm, kernel_ttbr1: u64) {
 }
 
 /// KPTI 关闭时的占位: 返回 trampoline TTBR1, 未就绪时退回完整内核 TTBR1.
-#[inline(always)]
+#[inline]
 pub fn kpti_trampoline_ttbr1_or_kernel(kernel_ttbr1: u64) -> u64 {
     let t = KPTI_GLOBALS.tramp_ttbr1.load(Ordering::Acquire);
     if t == 0 { kernel_ttbr1 } else { t }

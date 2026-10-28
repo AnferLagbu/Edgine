@@ -42,7 +42,7 @@
 
 ### 6 trait 抽象
 
-5 条 trait 抽象规则：6.1 策略通过 trait 注入到 functions（机制留 privileged，策略 trait 定义在 privileged::api，实现放 functions）；6.2 trait dispatch 优先静态分发（impl Trait 优于 Box<dyn Trait>，单态化 0 开销）；6.3 trait 方法配 #[inline(always)] 强制内联（0 开销）；6.4 trait 方法 &mut self 而非 &mut dyn（编译期类型已知）；6.5 避免在 poll 路径分配/锁。
+5 条 trait 抽象规则：6.1 策略通过 trait 注入到 functions（机制留 privileged，策略 trait 定义在 privileged::api，实现放 functions）；6.2 trait dispatch 优先静态分发（impl Trait 优于 Box<dyn Trait>，单态化 0 开销）；6.3 trait 方法配 #[inline] 提示内联（0 开销；`#[inline(always)]` 已被 clippy `inline_always` 全仓清零, P-64 第九批）；6.4 trait 方法 &mut self 而非 &mut dyn（编译期类型已知）；6.5 避免在 poll 路径分配/锁。
 
 ### 7 类型与内存
 

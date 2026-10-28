@@ -38,18 +38,14 @@ use crate::klog_info;
 use crate::privileged::sync::OnceLock;
 // 内联硬件操作函数 (避免跨模块导入问题)
 /// 从端口读字节
-#[inline(always)]
+#[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
 unsafe fn port_inb(port: u16) -> u8 {
     crate::arch!(inb(port))
 }
 
 /// 向端口写字节
-#[inline(always)]
+#[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn port_outb(port: u16, value: u8) {
     crate::arch!(outb(port, value));
@@ -115,7 +111,7 @@ unsafe fn read_8259_isr(slave: bool) -> u8 {
 }
 
 /// I/O 等待
-#[inline(always)]
+#[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn io_wait() {
     unsafe {
@@ -152,7 +148,7 @@ unsafe fn remap_pic() {
 }
 
 /// 禁用中断
-#[inline(always)]
+#[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn cli() {
     let _ = crate::arch!(interrupt_disable());

@@ -92,7 +92,7 @@ const INITIAL_STATE: [u32; 8] = [
 ];
 
 /// 右旋运算
-#[inline(always)]
+#[inline]
 fn rotr(x: u32, n: u32) -> u32 {
     x.rotate_right(n)
 }

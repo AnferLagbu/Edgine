@@ -102,7 +102,7 @@ impl UserReadPtr {
     }
 
     /// 长度为零
-    #[inline(always)]
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -181,7 +181,7 @@ impl UserWritePtr {
     }
 
     /// 长度为零
-    #[inline(always)]
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }

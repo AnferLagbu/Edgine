@@ -18,7 +18,7 @@
 //! ```
 //!
 //! # Performance
-//! 关键路径函数已标记 `#[inline(always)]` 以优化性能。
+//! 关键路径函数已标记 `#[inline]` 以优化性能。
 
 use super::tick::{get_ticks, is_initialized, ms_to_ticks};
 use crate::privileged::cpu::read_tsc;
@@ -46,7 +46,7 @@ const NS_PER_MS: u64 = 1_000_000;
 /// // 等待 500 纳秒 (0.5 微秒)
 /// busy_wait_ns(500);
 /// ```
-#[inline(always)]
+#[inline]
 pub fn busy_wait_ns(ns: u64) {
     if ns == 0 {
         return;
@@ -78,11 +78,7 @@ pub fn busy_wait_ns(ns: u64) {
 ///
 /// # Arguments
 /// * `us` - 等待时间 (微秒)
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn busy_wait_us(us: u64) {
     if us == 0 {
         return;
@@ -96,7 +92,7 @@ pub fn busy_wait_us(us: u64) {
 ///
 /// # Arguments
 /// * `ms` - 等待时间 (毫秒)
-#[inline(always)]
+#[inline]
 pub fn busy_wait_ms(ms: u64) {
     if ms == 0 {
         return;

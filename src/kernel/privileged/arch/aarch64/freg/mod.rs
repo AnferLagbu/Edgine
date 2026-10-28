@@ -46,7 +46,7 @@
 ///
 /// 本函数不设置 PANIC_FLAG. 调用者应通过设置 PANIC_FLAG 来指示恢复需求,
 /// 或由 bytes_mut 接口触发 domain 故障.
-#[inline(always)]
+#[inline]
 pub fn freg_trigger_recovery() {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {

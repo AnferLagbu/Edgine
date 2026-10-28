@@ -183,11 +183,7 @@ pub fn is_initialized() -> bool {
 ///
 /// # Safety
 /// 只能从中断上下文调用
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn on_timer_interrupt() {
     // B03-12: tick 计数器 fetch_add 从 Relaxed 改为 AcqRel。
     // AcqRel 保证 (a) 本 CPU 之前写入对其他 CPU 可见 (Release),

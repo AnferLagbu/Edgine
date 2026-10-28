@@ -172,13 +172,13 @@ impl E1000Io {
     // ── 寄存器读写 ──
 
     /// 读取 32 位寄存器
-    #[inline(always)]
+    #[inline]
     pub fn read32(&self, reg: u32) -> u32 {
         self.mmio.read_u32(reg as usize)
     }
 
     /// 写入 32 位寄存器
-    #[inline(always)]
+    #[inline]
     pub fn write32(&self, reg: u32, val: u32) {
         self.mmio.write_u32(reg as usize, val);
     }

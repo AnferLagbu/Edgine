@@ -210,7 +210,7 @@ pub fn register_uds_setsockopt_hook(
 // ============================================================================
 
 /// 把 trait 抽象的 `IpAddr` 翻译成 smoltcp 的 `IpAddress` (双栈, DECISION-032).
-#[inline(always)]
+#[inline]
 pub(crate) fn wire_to_smol(a: crate::privileged::net::iface_trait::IpAddr) -> IpAddress {
     match a {
         crate::privileged::net::iface_trait::IpAddr::V4(v4) => {

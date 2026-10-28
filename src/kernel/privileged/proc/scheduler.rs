@@ -44,7 +44,7 @@ pub(crate) mod raw {
     ///
     /// # Safety
     /// - `ptr` 必须是合法的 `*const Process` 或 0
-    #[inline(always)]
+    #[inline]
     pub unsafe fn update_current_process_ptr(ptr: u64) {
         unsafe {
             // SAFETY: update_current_process_ptr 由调度器汇编路径提供, 供中断/上下文切换调用

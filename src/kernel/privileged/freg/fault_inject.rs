@@ -21,5 +21,5 @@ pub fn maybe_inject_fault(domain_id: u64) {
 
 /// 未启用故障注入特性时的空实现 (始终不注入)。
 #[cfg(not(feature = "fault_injection"))]
-#[inline(always)]
+#[inline]
 pub fn maybe_inject_fault(_domain_id: u64) {}

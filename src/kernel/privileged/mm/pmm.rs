@@ -58,20 +58,12 @@ const RAM_BASE: u64 = 0;
 #[cfg(target_arch = "aarch64")]
 const RAM_BASE: u64 = 0x4000_0000;
 
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 fn phys_to_page(phys: u64) -> u64 {
     (phys - RAM_BASE) / PAGE_SIZE
 }
 
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 fn page_to_phys(page: u64) -> u64 {
     RAM_BASE + page * PAGE_SIZE
 }
@@ -138,11 +130,7 @@ pub(crate) mod raw {
     ///
     /// # Safety
     /// - `ptr` 必须指向 `len` 字节的合法可写区
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub unsafe fn zero_memory(ptr: *mut u8, len: usize) {
         unsafe {
             core::ptr::write_bytes(ptr, 0, len);
@@ -153,7 +141,7 @@ pub(crate) mod raw {
     ///
     /// # Safety
     /// - `ptr` 必须指向 `len` 字节的合法可写区
-    #[inline(always)]
+    #[inline]
     pub unsafe fn fill_memory(ptr: *mut u8, val: u8, len: usize) {
         unsafe {
             core::ptr::write_bytes(ptr, val, len);
@@ -1718,11 +1706,7 @@ impl PhysicalMemoryManager {
     ///
     /// 禁用中断是为了避免当运行在同一 CPU 的中断处理程序
     /// 尝试分配内存时形成死锁.
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     fn acquire_lock(&self) -> IrqSaveFlags {
         let flags = disable_interrupts();
         while self
@@ -1735,7 +1719,7 @@ impl PhysicalMemoryManager {
         flags
     }
 
-    #[inline(always)]
+    #[inline]
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"

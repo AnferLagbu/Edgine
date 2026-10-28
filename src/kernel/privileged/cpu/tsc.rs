@@ -13,11 +13,7 @@
 /// # Note
 /// 在 1GHz CPU 上, 1 个周期 ≈ 1 纳秒。
 /// 在 3GHz CPU 上, 1 个周期 ≈ 0.33 纳秒。
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn read_tsc() -> u64 {
     crate::arch!(timestamp())
 }
@@ -31,7 +27,7 @@ pub fn read_tsc() -> u64 {
 /// 走 `crate::arch!(timestamp_serialized())`:
 /// - x86_64: `lfence` + `rdtsc` (参照 Linux `rdtsc_ordered`)
 /// - aarch64: `isb` + `mrs cntpct_el0`
-#[inline(always)]
+#[inline]
 pub fn read_tsc_serialized() -> u64 {
     crate::arch!(timestamp_serialized())
 }

@@ -27,11 +27,7 @@
 // ============================================================================
 
 /// 向指定端口写入字节 (架构无关: `x86_64` → out, `AArch64` → MMIO)
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 ///
 /// # Safety
 ///
@@ -44,11 +40,7 @@ pub unsafe fn outb(port: u16, value: u8) {
 }
 
 /// 从指定端口读入字节 (架构无关: `x86_64` → in, `AArch64` → MMIO)
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 ///
 /// # Safety
 ///
@@ -60,12 +52,8 @@ pub unsafe fn inb(port: u16) -> u8 {
 }
 
 /// 向指定端口写入字 (`x86_64` 特有, 无 Arch trait 等价方法)
-#[inline(always)]
+#[inline]
 #[cfg(target_arch = "x86_64")]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
 ///
 /// # Safety
 ///
@@ -84,12 +72,8 @@ pub unsafe fn outw(port: u16, value: u16) {
 }
 
 /// 从指定端口读入字 (`x86_64` 特有, 无 Arch trait 等价方法)
-#[inline(always)]
+#[inline]
 #[cfg(target_arch = "x86_64")]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
 ///
 /// # Safety
 ///
@@ -110,11 +94,7 @@ pub unsafe fn inw(port: u16) -> u16 {
 }
 
 /// 向指定端口写入双字 (架构无关: `x86_64` → out, `AArch64` → MMIO)
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 ///
 /// # Safety
 ///
@@ -126,7 +106,7 @@ pub unsafe fn outl(port: u16, value: u32) {
 }
 
 /// 从指定端口读入双字 (架构无关: `x86_64` → in, `AArch64` → MMIO)
-#[inline(always)]
+#[inline]
 ///
 /// # Safety
 ///

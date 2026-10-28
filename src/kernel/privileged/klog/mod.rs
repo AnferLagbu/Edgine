@@ -182,17 +182,13 @@ macro_rules! klog_info_simple { ($($arg:tt)*) => { $crate::klog_info!(Kernel, $(
 mod serial_impl {
     const COM1: u16 = 0x3F8;
 
-    #[inline(always)]
+    #[inline]
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
     unsafe fn port_outb(port: u16, value: u8) {
         crate::arch!(outb(port, value));
     }
 
-    #[inline(always)]
+    #[inline]
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe fn port_inb(port: u16) -> u8 {
         crate::arch!(inb(port))

@@ -145,11 +145,7 @@ const GF_LOG: [u8; 256] = [
     0x4f, 0xae, 0xd5, 0xe9, 0xe6, 0xe7, 0xad, 0xe8, 0x74, 0xd6, 0xf4, 0xea, 0xa8, 0x50, 0x58, 0xaf,
 ];
 
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 fn gf_mul(a: u8, b: u8) -> u8 {
     if a == 0 || b == 0 {
         return 0;
@@ -158,7 +154,7 @@ fn gf_mul(a: u8, b: u8) -> u8 {
     GF_EXP[log_sum as usize]
 }
 
-#[inline(always)]
+#[inline]
 fn gf_inv(a: u8) -> u8 {
     if a == 0 {
         return 0;

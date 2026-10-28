@@ -13,7 +13,7 @@
 ///
 /// # Safety
 /// CPUID 指令本身是安全的, 但返回值的解释需要硬件手册知识。
-#[inline(always)]
+#[inline]
 pub fn cpuid(leaf: u32, subleaf: u32) -> (u32, u32, u32, u32) {
     let (eax, ebx, ecx, edx): (u32, u32, u32, u32);
 

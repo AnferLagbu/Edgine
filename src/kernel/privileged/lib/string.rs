@@ -74,7 +74,7 @@ pub unsafe extern "C" fn strlen(s: *const core::ffi::c_char) -> usize {
 ///
 /// # Returns
 /// 字符串长度
-#[inline(always)]
+#[inline]
 pub fn strlen_safe(s: &[i8]) -> usize {
     let mut len = 0;
 

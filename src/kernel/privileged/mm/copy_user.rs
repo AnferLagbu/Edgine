@@ -52,7 +52,7 @@ const CR4_SMAP_BIT: u64 = 1 << 21;
 
 /// 查询当前 CPU 是否已启用 SMAP (CR4.SMAP=1).
 #[cfg(target_arch = "x86_64")]
-#[inline(always)]
+#[inline]
 fn smap_is_enabled() -> bool {
     let cr4: u64;
     // SAFETY: 读取 CR4 是特权操作, 但无副作用且不改变任何体系结构状态.
@@ -64,7 +64,7 @@ fn smap_is_enabled() -> bool {
 
 /// SAFETY: 调用方保证在 user 内存访问区间内调用, 配对 `smap_end`.
 #[cfg(target_arch = "x86_64")]
-#[inline(always)]
+#[inline]
 pub(crate) unsafe fn smap_begin() {
     if smap_is_enabled() {
         // SAFETY: CR4.SMAP=1 意味着 CPU 必然支持 SMAP, stac 不会触发 #UD.
@@ -76,7 +76,7 @@ pub(crate) unsafe fn smap_begin() {
 
 /// SAFETY: 与 `smap_begin` 配对, 恢复 SMAP 保护.
 #[cfg(target_arch = "x86_64")]
-#[inline(always)]
+#[inline]
 pub(crate) unsafe fn smap_end() {
     if smap_is_enabled() {
         // SAFETY: 同上, CR4.SMAP=1 保证 clac 合法.
@@ -89,12 +89,12 @@ pub(crate) unsafe fn smap_end() {
 // aarch64 上 SMAP 不存在, 提供 no-op stub 以满足统一调用点.
 // SAFETY: no-op, 不会执行任何特权操作, 调用方配对语义不变.
 #[cfg(not(target_arch = "x86_64"))]
-#[inline(always)]
+#[inline]
 pub(crate) unsafe fn smap_begin() {}
 
 // SAFETY: no-op, 不会执行任何特权操作, 调用方配对语义不变.
 #[cfg(not(target_arch = "x86_64"))]
-#[inline(always)]
+#[inline]
 pub(crate) unsafe fn smap_end() {}
 
 use crate::privileged::constants::limits::USER_ADDR_MAX;

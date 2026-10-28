@@ -263,57 +263,37 @@ impl DpIo {
     // ── 寄存器读写 ──
 
     /// 读取 8 位寄存器
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub fn read8(&self, reg: u32) -> u8 {
         self.mmio.read_u8(reg as usize)
     }
 
     /// 写入 8 位寄存器
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub fn write8(&self, reg: u32, val: u8) {
         self.mmio.write_u8(reg as usize, val);
     }
 
     /// 读取 16 位寄存器
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub fn read16(&self, reg: u32) -> u16 {
         self.mmio.read_u16(reg as usize)
     }
 
     /// 写入 16 位寄存器
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub fn write16(&self, reg: u32, val: u16) {
         self.mmio.write_u16(reg as usize, val);
     }
 
     /// 读取 32 位寄存器
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub fn read32(&self, reg: u32) -> u32 {
         self.mmio.read_u32(reg as usize)
     }
 
     /// 写入 32 位寄存器
-    #[inline(always)]
+    #[inline]
     pub fn write32(&self, reg: u32, val: u32) {
         self.mmio.write_u32(reg as usize, val);
     }

@@ -129,34 +129,22 @@ pub(crate) mod raw {
         /// # Safety
         /// - `ptr` 必须为非空, 指向有效 `UserProcess` 分配
         /// - 在 `UserProcRef` 存活期间, 不会被释放
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub unsafe fn new_unchecked(ptr: *mut UserProcess) -> Self {
             Self(ptr)
         }
 
         /// 访问 pid 字段 (委托到 Process)
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn pid(&self) -> u32 {
             // SAFETY: `self` 由调用方保证为有效指针; 通过 process() 访问权威 Process
             unsafe { (*self.0).process().pid.0 }
         }
 
-        #[inline(always)]
+        #[inline]
         #[expect(
             clippy::borrow_as_ptr,
             reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-        )]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
         )]
         pub fn set_pid(&self, v: u32) {
             // SAFETY: 调用方保证指针/类型有效; 写入权威 Process
@@ -168,21 +156,13 @@ pub(crate) mod raw {
         }
 
         /// 访问 entry 字段 (读写)
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn entry(&self) -> u64 {
             // SAFETY: `self` 由调用方保证为有效指针; 只读访问
             unsafe { (*self.0).entry }
         }
 
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn set_entry(&self, v: u64) {
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
             unsafe {
@@ -190,11 +170,7 @@ pub(crate) mod raw {
             }
         }
 
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn set_create_time(&self, v: u64) {
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
             unsafe {
@@ -203,21 +179,13 @@ pub(crate) mod raw {
         }
 
         /// 访问 pwm (委托到 Process)
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn load_pwm(&self) -> u64 {
             // SAFETY: `self` 由调用方保证为有效指针; 通过 process() 访问权威 Process
             unsafe { (*self.0).process().pwm.load(Ordering::SeqCst) }
         }
 
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn store_pwm(&self, v: u64) {
             // SAFETY: 调用方保证指针/类型有效; 写入权威 Process
             unsafe {
@@ -226,21 +194,13 @@ pub(crate) mod raw {
         }
 
         /// 访问 cr3 (委托到 Process)
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn load_cr3(&self) -> u64 {
             // SAFETY: `self` 由调用方保证为有效指针; 通过 process() 访问权威 Process
             unsafe { (*self.0).process().cr3.load(Ordering::SeqCst) }
         }
 
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn store_cr3(&self, v: u64) {
             // SAFETY: 调用方保证指针/类型有效; 写入权威 Process
             unsafe {
@@ -249,21 +209,13 @@ pub(crate) mod raw {
         }
 
         /// 访问 `kernel_stack` (委托到 Process)
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn load_kernel_stack(&self) -> u64 {
             // SAFETY: `self` 由调用方保证为有效指针; 通过 process() 访问权威 Process
             unsafe { (*self.0).process().kernel_stack.load(Ordering::SeqCst) }
         }
 
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn store_kernel_stack(&self, v: u64) {
             // SAFETY: 调用方保证指针/类型有效; 写入权威 Process
             unsafe {
@@ -272,21 +224,13 @@ pub(crate) mod raw {
         }
 
         /// 访问 `user_stack` (委托到 Process)
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn load_user_stack(&self) -> u64 {
             // SAFETY: `self` 由调用方保证为有效指针; 通过 process() 访问权威 Process
             unsafe { (*self.0).process().user_stack.load(Ordering::SeqCst) }
         }
 
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn store_user_stack(&self, v: u64) {
             // SAFETY: 调用方保证指针/类型有效; 写入权威 Process
             unsafe {
@@ -294,21 +238,13 @@ pub(crate) mod raw {
             }
         }
 
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn load_stack_bottom(&self) -> u64 {
             // SAFETY: `self` 由调用方保证为有效指针; 只读访问
             unsafe { (*self.0).stack_bottom.load(Ordering::SeqCst) }
         }
 
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn store_stack_bottom(&self, v: u64) {
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
             unsafe {
@@ -317,11 +253,7 @@ pub(crate) mod raw {
         }
 
         /// 访问 state (委托到 Process)
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn store_state(&self, v: u32) {
             // SAFETY: 调用方保证指针/类型有效; 写入权威 Process
             unsafe {
@@ -330,7 +262,7 @@ pub(crate) mod raw {
         }
 
         /// 加载进程状态 (委托到 Process)
-        #[inline(always)]
+        #[inline]
         pub fn load_state(&self) -> u32 {
             // SAFETY: `self` 由调用方保证为有效指针; 通过 process() 访问权威 Process
             unsafe { (*self.0).process().state.load(Ordering::SeqCst) }

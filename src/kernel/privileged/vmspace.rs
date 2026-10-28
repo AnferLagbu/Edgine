@@ -50,27 +50,19 @@ impl VmSpace {
     }
 
     /// 获取页表根物理地址
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub fn pt_root(&self) -> PhysAddr {
         self.pt_root
     }
 
     /// 是否是内核地址空间
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub fn is_kernel(&self) -> bool {
         self.is_kernel
     }
 
     /// 标记为内核地址空间（保留用于内核 `VmSpace`）
-    #[inline(always)]
+    #[inline]
     pub fn set_kernel(&mut self) {
         self.is_kernel = true;
     }

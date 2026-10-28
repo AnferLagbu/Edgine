@@ -45,20 +45,12 @@ impl IrqLine {
         }
     }
 
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
-    #[inline(always)]
+    #[inline]
     /// 返回该中断线对应的硬件中断请求号 (IRQ)。
     pub fn irq(&self) -> u32 {
         self.irq
     }
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
-    #[inline(always)]
+    #[inline]
     /// 返回该中断线对应的 IDT 中断向量号。
     pub fn vector(&self) -> u8 {
         self.vector
@@ -105,11 +97,7 @@ impl IrqLine {
             .disable_irq(crate::privileged::lib::low_u8_from_u32(self.irq));
     }
 
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
-    #[inline(always)]
+    #[inline]
     /// 返回该中断线是否已注册 ISR。
     pub fn is_registered(&self) -> bool {
         self.registered

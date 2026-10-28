@@ -1757,14 +1757,10 @@ impl VirtualMemoryManager {
         MAX_USER_PAGE_TABLES
     }
 
-    #[inline(always)]
+    #[inline]
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
     /// 获取 VMM 锁 (关中断 + CAS 自旋).
     ///
@@ -1799,14 +1795,10 @@ impl VirtualMemoryManager {
         flags
     }
 
-    #[inline(always)]
+    #[inline]
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
     #[expect(
         clippy::trivially_copy_pass_by_ref,
@@ -1834,29 +1826,21 @@ impl VirtualMemoryManager {
         super::deferred_free::release_tail(shootdown_needed, batch);
     }
 
-    #[inline(always)]
+    #[inline]
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
     unsafe fn read_cr3(&self) -> u64 {
         // SAFETY: Reading CR3 is always safe; returns current page table base
         crate::arch!(read_page_table_base())
     }
 
-    #[inline(always)]
+    #[inline]
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
-    )]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
     // SAFETY: val 必须指向有效 PML4 页表; 调用方保证页表分配后保持有效.
     unsafe fn write_cr3(&self, val: u64) {
@@ -1864,7 +1848,7 @@ impl VirtualMemoryManager {
         crate::arch!(write_page_table_base(val));
     }
 
-    #[inline(always)]
+    #[inline]
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
@@ -1878,7 +1862,7 @@ impl VirtualMemoryManager {
         crate::arch!(tlb_flush_page(crate::privileged::lib::usize_from_u64(addr)));
     }
 
-    #[inline(always)]
+    #[inline]
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"

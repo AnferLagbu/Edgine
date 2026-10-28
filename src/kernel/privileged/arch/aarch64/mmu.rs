@@ -220,7 +220,7 @@ pub fn alloc_user_page_table() -> u64 {
 // 系统寄存器读写 (inline asm)
 // ============================================================================
 
-#[inline(always)]
+#[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn set_ttbr0(val: u64) {
     unsafe {
@@ -229,7 +229,7 @@ unsafe fn set_ttbr0(val: u64) {
     }
 }
 
-#[inline(always)]
+#[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn set_ttbr1(val: u64) {
     unsafe {
@@ -238,7 +238,7 @@ unsafe fn set_ttbr1(val: u64) {
     }
 }
 
-#[inline(always)]
+#[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn set_tcr(val: u64) {
     unsafe {
@@ -247,7 +247,7 @@ unsafe fn set_tcr(val: u64) {
     }
 }
 
-#[inline(always)]
+#[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn set_mair(val: u64) {
     unsafe {
@@ -287,7 +287,7 @@ unsafe fn enable_mmu() {
 // ============================================================================
 
 /// 读取 TTBR0_EL1 (低半区页表基址寄存器)。
-#[inline(always)]
+#[inline]
 pub fn read_ttbr0() -> u64 {
     let val: u64;
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -298,7 +298,7 @@ pub fn read_ttbr0() -> u64 {
 }
 
 /// 读取 TTBR1_EL1 (高半区页表基址寄存器)
-#[inline(always)]
+#[inline]
 pub fn read_ttbr1() -> u64 {
     let val: u64;
     // SAFETY: mrs ttbr1_el1 是只读系统寄存器读取, 无副作用.
@@ -309,7 +309,7 @@ pub fn read_ttbr1() -> u64 {
 }
 
 /// 写入 TTBR0_EL1 并执行 ISB 使改动生效。
-#[inline(always)]
+#[inline]
 pub fn write_ttbr0(val: u64) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
@@ -322,7 +322,7 @@ pub fn write_ttbr0(val: u64) {
 }
 
 /// 按虚拟地址刷新 EL1 的 TLB 条目 (tlbi vaae1)。
-#[inline(always)]
+#[inline]
 pub fn tlbi_vaae1(vaddr: u64) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
@@ -334,7 +334,7 @@ pub fn tlbi_vaae1(vaddr: u64) {
 }
 
 /// 刷新 EL1 的整个 TLB (tlbi vmalle1)。
-#[inline(always)]
+#[inline]
 pub fn tlbi_vmalle1() {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
@@ -346,7 +346,7 @@ pub fn tlbi_vmalle1() {
 }
 
 /// 读取 FAR_EL1 (触发页错误的故障地址寄存器)。
-#[inline(always)]
+#[inline]
 pub fn read_far() -> u64 {
     let val: u64;
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -357,7 +357,7 @@ pub fn read_far() -> u64 {
 }
 
 /// 读取 MAIR_EL1 (内存属性间接寄存器)
-#[inline(always)]
+#[inline]
 pub fn read_mair() -> u64 {
     let val: u64;
     // SAFETY: mrs mair_el1 是只读系统寄存器读取, 无副作用.
@@ -368,7 +368,7 @@ pub fn read_mair() -> u64 {
 }
 
 /// 读取 TCR_EL1 (地址翻译控制寄存器)
-#[inline(always)]
+#[inline]
 pub fn read_tcr() -> u64 {
     let val: u64;
     // SAFETY: mrs tcr_el1 是只读系统寄存器读取, 无副作用.
@@ -379,7 +379,7 @@ pub fn read_tcr() -> u64 {
 }
 
 /// 读取 SCTLR_EL1 (系统控制寄存器, 含 MMU/Cache 使能位)
-#[inline(always)]
+#[inline]
 pub fn read_sctlr() -> u64 {
     let val: u64;
     // SAFETY: mrs sctlr_el1 是只读系统寄存器读取, 无副作用.

@@ -136,47 +136,31 @@ impl DmaStream {
     }
 
     /// CPU 可访问的虚拟地址
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub fn cpu_addr(&self) -> NonNull<u8> {
         self.cpu_addr
     }
 
     /// 设备可访问的物理地址
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub fn dma_addr(&self) -> PhysAddr {
         self.dma_addr
     }
 
     /// 缓冲区大小
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub fn size(&self) -> usize {
         self.size
     }
 
     /// 同步方向
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    #[inline]
     pub fn direction(&self) -> DmaDirection {
         self.direction
     }
 
     /// 当前同步状态
-    #[inline(always)]
+    #[inline]
     pub fn sync_state(&self) -> SyncState {
         self.sync_state
     }

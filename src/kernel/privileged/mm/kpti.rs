@@ -63,11 +63,7 @@ const INVPCID_TYPE_ALL_INCL_GLOBAL: u64 = 2;
 /// # Safety
 ///
 /// 调用方保证 CPU 支持 INVPCID (通过 CPUID.07H:EBX.IVPCID 确认).
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub unsafe fn invpcid(pcid: u64, addr: u64, typ: u64) {
     // INVPCID 描述符: 16 字节, [0:7] PCID, [8:15] 线性地址
     // 在栈上构造描述符, 通过内存操作数传递给 INVPCID.
@@ -89,11 +85,7 @@ pub unsafe fn invpcid(pcid: u64, addr: u64, typ: u64) {
 /// # Safety
 ///
 /// 调用方保证 CPU 支持 INVPCID (通过 CPUID.07H:EBX.IVPCID 确认).
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub unsafe fn invpcid_flush_all() {
     // SAFETY: 调用方保证 CPU 支持 INVPCID; type 2 刷新所有 TLB 条目是安全操作.
     unsafe {
@@ -111,11 +103,7 @@ pub unsafe fn invpcid_flush_all() {
 /// - `vaddr` 必须是页对齐的虚拟地址
 /// - 调用方保证 vaddr 属于当前地址空间或已通过 CR3 切换访问
 /// - CPU 必须支持 INVPCID (通过 CPUID.07H:EBX.IVPCID 确认)
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub unsafe fn invpcid_flush_single(pcid: u16, vaddr: u64) {
     // SAFETY: INVPCID type 0 (by individual address + PCID).
     // 前提: pcid 有效 (0-4095), vaddr 页对齐.
@@ -127,7 +115,7 @@ pub unsafe fn invpcid_flush_single(pcid: u16, vaddr: u64) {
 }
 
 /// CR3 值中嵌入 PCID: PML4 物理地址 | PCID.
-#[inline(always)]
+#[inline]
 pub const fn cr3_with_pcid(pml4_phys: u64, pcid: u64) -> u64 {
     (pml4_phys & 0x000F_FFFF_FFFF_F000) | (pcid & 0xFFF)
 }
@@ -192,27 +180,19 @@ static LAST_KERNEL_PML4: AtomicU64 = AtomicU64::new(0);
 // ── 公开 API ──────────────────────────────────────────────────────
 
 /// 返回 KPTI 是否已就绪 (init 调用完成)。
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn kpti_is_active() -> bool {
     KPTI_READY.load(Ordering::Acquire)
 }
 
 /// 返回 `USER_PML4` 物理地址 (供 COW fork 等路径构造子进程用户页表)。
-#[inline(always)]
-#[expect(
-    clippy::inline_always,
-    reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-)]
+#[inline]
 pub fn kpti_user_pml4() -> u64 {
     USER_PML4.load(Ordering::Acquire)
 }
 
 /// 返回 `KERNEL_PML4` 物理地址 (避免其它模块读 `KERNEL_PML4` 内部符号)。
-#[inline(always)]
+#[inline]
 pub fn kpti_kernel_pml4() -> u64 {
     LAST_KERNEL_PML4.load(Ordering::Acquire)
 }
@@ -980,7 +960,7 @@ pub(super) unsafe fn map_kpti_data_pages(user_pml4: *mut u64) {
 ///
 /// KPTI 关闭时, `USER_PML4` 沿用 `KERNEL_PML4` (无隔离), 此函数返回 `KERNEL_PML4` 物理地址
 /// 以便 `map_to_user_pml4` 等 API 在两条路径都可用。
-#[inline(always)]
+#[inline]
 pub fn kpti_user_pml4_or_kernel(kernel_pml4: u64) -> u64 {
     let up = USER_PML4.load(Ordering::Acquire);
     if up == 0 { kernel_pml4 } else { up }

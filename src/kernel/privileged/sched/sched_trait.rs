@@ -42,7 +42,7 @@ impl Task {
     }
 
     /// 返回任务所属进程的 PID.
-    #[inline(always)]
+    #[inline]
     pub fn pid(&self) -> Pid {
         self.pid
     }

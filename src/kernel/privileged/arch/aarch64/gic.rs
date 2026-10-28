@@ -95,7 +95,7 @@ pub const FREG_RECOVERY_SGI: u32 = 7;
 // 寄存器读写辅助
 // ============================================================================
 
-#[inline(always)]
+#[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn gicd_read(offset: u64) -> u32 {
     unsafe {
@@ -106,7 +106,7 @@ unsafe fn gicd_read(offset: u64) -> u32 {
     }
 }
 
-#[inline(always)]
+#[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn gicd_write(offset: u64, val: u32) {
     unsafe {
@@ -119,7 +119,7 @@ unsafe fn gicd_write(offset: u64, val: u32) {
     }
 }
 
-#[inline(always)]
+#[inline]
 // SAFETY: 调用方保证 base 指向已映射的 GICR 帧 (RD/SGI), 类型有效。
 unsafe fn gicr_read_at(base: u64, offset: u64) -> u32 {
     unsafe {
@@ -130,7 +130,7 @@ unsafe fn gicr_read_at(base: u64, offset: u64) -> u32 {
     }
 }
 
-#[inline(always)]
+#[inline]
 // SAFETY: 调用方保证 base 指向已映射的 GICR 帧 (RD/SGI), 类型有效。
 unsafe fn gicr_write_at(base: u64, offset: u64, val: u32) {
     unsafe {
@@ -140,7 +140,7 @@ unsafe fn gicr_write_at(base: u64, offset: u64, val: u32) {
     }
 }
 
-#[inline(always)]
+#[inline]
 // SAFETY: 调用方保证 base 指向已映射的 GICR 帧, 且 base+offset 处为 64 位 (8 字节对齐) 寄存器。
 unsafe fn gicr_read64_at(base: u64, offset: u64) -> u64 {
     unsafe {
@@ -184,7 +184,7 @@ unsafe fn redist_frames() -> Result<(u64, u64), &'static str> {
     }
 }
 
-#[inline(always)]
+#[inline]
 /// 读取 GICv3 Redistributor SGI 帧寄存器 (启动核 CPU0)。
 ///
 /// # Safety
@@ -660,7 +660,7 @@ static DEVICE_IRQ_HANDLERS: RacyCell<[Option<fn()>; DEVICE_IRQ_TABLE_LEN]> =
 /// # Safety
 ///
 /// 调用前需确保 GICD MMIO 已映射。
-#[inline(always)]
+#[inline]
 unsafe fn gicd_write64(offset: u64, val: u64) {
     unsafe {
         core::arch::asm!("dsb sy");

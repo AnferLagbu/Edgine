@@ -52,21 +52,13 @@ pub mod raw {
         }
 
         /// 获取底层 `NonNull`
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn as_non_null(self) -> NonNull<Message> {
             self.0
         }
 
         /// 读 `next` 字段 (侵入式链表) — 返回裸指针 (null = 无后继)
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn next(&self) -> *mut Message {
             // SAFETY: 调用方保证 self 指向有效 Message。
             // B03-24: Message.next 为 AtomicPtr, 队列操作在持锁下执行, Relaxed 足够.
@@ -78,11 +70,7 @@ pub mod raw {
         }
 
         /// 写 `next` 字段 (null = 无后继)
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn set_next(&self, next: *mut Message) {
             // SAFETY: 同上, self 必须是有效 Message。
             unsafe {
@@ -93,18 +81,14 @@ pub mod raw {
         }
 
         /// 获取 &Message 引用
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
+        #[inline]
         pub fn get(&self) -> &Message {
             // SAFETY: self 指向有效 Message。
             unsafe { &*self.0.as_ptr() }
         }
 
         /// 获取 &mut Message 引用
-        #[inline(always)]
+        #[inline]
         pub fn get_mut(&self) -> &mut Message {
             // SAFETY: self 指向有效 Message, &mut 保证独占。
             unsafe { &mut *self.0.as_ptr() }

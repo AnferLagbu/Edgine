@@ -172,8 +172,6 @@
 #![allow(clippy::must_use_candidate)]
 // 43. Clippy: unreadable_literal — 内核硬件常量 (MMIO 地址/位掩码/魔数) 经常是固定位模式, 加下划线分隔反而降低可读性
 //     与硬件规范直接对齐 (如 0xDEADBEEF, 0x74726976 = "virt" 小端); 改下划线会影响阅读与 SPEC 比对
-// 44. Clippy: inline_always — 内核大量 #[inline(always)] 是性能关键 (中断处理/锁内热路径); 全局保持显式标注
-#![allow(clippy::inline_always)]
 // 45. Clippy: large_stack_arrays — 已迁出 (经脚本逐个审查确认无触发, 移除 allow)
 // 46. Clippy: struct_field_names / pub_underscore_fields — 结构体字段命名约定是模块内风格 (如 page_state 含 page_* 字段); pub _xxx 是内核模块内 convention
 #![allow(clippy::struct_field_names)]
