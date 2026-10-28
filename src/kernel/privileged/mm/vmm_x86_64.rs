@@ -684,8 +684,6 @@ impl VirtualMemoryManager {
     /// 正常情况下不会 panic; 唯一存在的 unwrap 是
     /// `u64::from_le_bytes(buf[2..10].try_into().unwrap())`, 由于切片长度恒为 8 字节,
     /// 该 unwrap 实际不会触发 panic.
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     pub fn create_user_page_table(&self) -> Option<u64> {
         let pmm = get_pmm();
         let pml4_phys = pmm.alloc_page()?;
@@ -693,7 +691,11 @@ impl VirtualMemoryManager {
         // SAFETY: pml4_phys from PMM, phys_to_virt valid; zero for clean state
         let pml4_virt = pml4_phys.to_virt();
         unsafe {
-            core::ptr::write_bytes(pml4_virt.0 as *mut u8, 0, PAGE_SIZE as usize);
+            core::ptr::write_bytes(
+                pml4_virt.0 as *mut u8,
+                0,
+                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            );
         }
 
         let kernel_pml4 = KERNEL_PML4.load(Ordering::Acquire);
@@ -1268,8 +1270,6 @@ impl VirtualMemoryManager {
     }
 
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
@@ -1305,7 +1305,11 @@ impl VirtualMemoryManager {
                     .map_or((core::ptr::null_mut(), false), |page| {
                         let page_virt = page.to_virt();
                         let pt = page_virt.0 as *mut PageTableEntry;
-                        core::ptr::write_bytes(pt as *mut u8, 0, PAGE_SIZE as usize);
+                        core::ptr::write_bytes(
+                            pt as *mut u8,
+                            0,
+                            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                        );
 
                         let split = e.is_huge();
                         if split {
@@ -1372,8 +1376,6 @@ impl VirtualMemoryManager {
     /// 当 PDPT/PD 不存在或 PD 条目未映射时分别返回 `Err("PDPT not present")`,
     /// `Err("PD not present")`, `Err("PD entry not present")`;
     /// 当分配新的页表页失败时返回 `Err("Failed to allocate PT")`.
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::ptr_as_ptr,
         reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
@@ -1435,7 +1437,11 @@ impl VirtualMemoryManager {
                     return Err("Failed to allocate PT");
                 };
                 let pt = pt_page.to_virt().0 as *mut PageTableEntry;
-                core::ptr::write_bytes(pt as *mut u8, 0, PAGE_SIZE as usize);
+                core::ptr::write_bytes(
+                    pt as *mut u8,
+                    0,
+                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                );
 
                 for i in 0..512 {
                     // SAFETY: pt is a full 4KB PT page; add(i) stays in bounds
@@ -1545,8 +1551,6 @@ impl VirtualMemoryManager {
         self.flush_tlb_remote(virt);
     }
 
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::too_many_lines,
         reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
@@ -1567,7 +1571,11 @@ impl VirtualMemoryManager {
 
         // SAFETY: child_pml4_phys from PMM, phys_to_virt valid
         unsafe {
-            core::ptr::write_bytes(child_pml4_base, 0, PAGE_SIZE as usize);
+            core::ptr::write_bytes(
+                child_pml4_base,
+                0,
+                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            );
         }
 
         let kernel_pml4 = KERNEL_PML4.load(Ordering::Acquire);
@@ -1596,7 +1604,11 @@ impl VirtualMemoryManager {
             let child_pdpt = child_pdpt_phys.to_virt().0 as *mut u64;
             // SAFETY: child_pdpt from PMM, phys_to_virt valid
             unsafe {
-                core::ptr::write_bytes(child_pdpt, 0, PAGE_SIZE as usize);
+                core::ptr::write_bytes(
+                    child_pdpt,
+                    0,
+                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                );
             }
 
             let mut child_pml4e = parent_pml4e;
@@ -1625,7 +1637,11 @@ impl VirtualMemoryManager {
                 let child_pd = child_pd_phys.to_virt().0 as *mut u64;
                 // SAFETY: child_pd from PMM
                 unsafe {
-                    core::ptr::write_bytes(child_pd, 0, PAGE_SIZE as usize);
+                    core::ptr::write_bytes(
+                        child_pd,
+                        0,
+                        crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                    );
                 }
 
                 let mut child_pdpte_v = parent_pdpte;
@@ -1674,7 +1690,11 @@ impl VirtualMemoryManager {
                     let child_table = child_table_phys.to_virt().0 as *mut u64;
                     // SAFETY: child_table from PMM
                     unsafe {
-                        core::ptr::write_bytes(child_table, 0, PAGE_SIZE as usize);
+                        core::ptr::write_bytes(
+                            child_table,
+                            0,
+                            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                        );
                     }
 
                     let mut child_pde_v = parent_pde;
@@ -1706,7 +1726,7 @@ impl VirtualMemoryManager {
                             core::ptr::copy_nonoverlapping(
                                 parent_page_virt as *const u8,
                                 child_page_virt as *mut u8,
-                                PAGE_SIZE as usize,
+                                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
                             );
                         }
 
@@ -1845,8 +1865,6 @@ impl VirtualMemoryManager {
     }
 
     #[inline(always)]
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
@@ -1857,12 +1875,10 @@ impl VirtualMemoryManager {
     /// 远程核不可能持有该 VA 的陈旧条目, 远程失效无对象 (若一律登记, 每次新建映射都会
     /// 向全部在线核发一轮 IPI —— 过度失效, 见 docs/plan/tlb-shootdown-epoch.md S-9).
     fn flush_tlb_local(&self, addr: u64) {
-        crate::arch!(tlb_flush_page(addr as usize));
+        crate::arch!(tlb_flush_page(crate::privileged::lib::usize_from_u64(addr)));
     }
 
     #[inline(always)]
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
@@ -1872,7 +1888,7 @@ impl VirtualMemoryManager {
     /// 用于**替换/覆盖既有翻译** (拆除、重映射、巨页拆分、swap 替换) 与**权限变更**
     /// (mprotect / 设 USER 位): 远程核可能已缓存旧条目, 不失效即读到陈旧翻译.
     fn flush_tlb_remote(&self, addr: u64) {
-        crate::arch!(tlb_flush_page(addr as usize));
+        crate::arch!(tlb_flush_page(crate::privileged::lib::usize_from_u64(addr)));
 
         // SIMPLIFIED: 远程失效粒度取全量 `tlb_flush_all` (对端重载 CR3) 而非页级地址载荷;
         // 影响面为 shootdown 触发时远程核全量 TLB 失效 (性能开销, 非正确性问题);

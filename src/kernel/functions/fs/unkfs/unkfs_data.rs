@@ -686,7 +686,7 @@ impl UnkfsData {
             return KernelError::PermissionDenied.as_i32();
         }
         let available = if offset < obj.size {
-            (obj.size - offset) as usize
+            crate::functions::intcast::usize_from_u64(obj.size - offset)
         } else {
             0
         };
@@ -697,8 +697,10 @@ impl UnkfsData {
         let block_offset = (offset / HV_POOL_BLOCK_SIZE) * HV_POOL_BLOCK_SIZE;
         let block_key = UnkfsArcKey::new(0, (obj_id << 40) | block_offset, obj.birth_txg);
         if let Some(data) = self.spa.arc.lookup_slice(&block_key) {
-            let start = (offset - block_offset) as usize;
-            let end = (start + to_read).min(HV_POOL_BLOCK_SIZE as usize);
+            let start = crate::functions::intcast::usize_from_u64(offset - block_offset);
+            let end = (start + to_read).min(crate::functions::intcast::usize_from_u64(
+                HV_POOL_BLOCK_SIZE,
+            ));
             // 缓存条目可能只覆盖已写入的前缀, 超出部分按稀疏块补零.
             let src_end = end.min(data.len());
             let copied = if start < src_end {
@@ -711,7 +713,7 @@ impl UnkfsData {
         } else if self.is_disk_mode() && !obj.bp.is_null() {
             let mut disk_buf = vec![0u8; obj.bp.prop.physical_size as usize];
             if self.spa.read_bp(&obj.bp, &mut disk_buf) == 0 {
-                let start = offset as usize;
+                let start = crate::functions::intcast::usize_from_u64(offset);
                 let end = (start + to_read).min(disk_buf.len());
                 buf[..end - start].copy_from_slice(&disk_buf[start..end]);
                 let arc_key = UnkfsArcKey::new(0, (obj_id << 40) | block_offset, obj.birth_txg);
@@ -801,7 +803,7 @@ impl UnkfsData {
             txg,
             obj_id,
             offset,
-            to_write as u32,
+            crate::functions::intcast::low_u32_from_usize(to_write),
         ));
         {
             let mut fds = self.fds.lock();
@@ -823,7 +825,7 @@ impl UnkfsData {
             |obj_id| {
                 let txg = self.spa.current_txg();
                 self.zil.add_record(UnkfsZilRecord::new_mkdir(txg, 0, name));
-                obj_id as i32
+                crate::functions::intcast::low_i32_from_u64(obj_id)
             },
         )
     }
@@ -1220,7 +1222,7 @@ impl UnkfsData {
             return 0;
         }
 
-        let target_len = obj.size as usize;
+        let target_len = crate::functions::intcast::usize_from_u64(obj.size);
         let to_read = target_len.min(buf.len());
 
         let block_key = UnkfsArcKey::new(0, 0, obj.birth_txg);
@@ -1486,10 +1488,10 @@ impl UnkfsData {
 
         let mut total = 32u32;
         for _ in &objects {
-            total += OBJ_RECORD_SIZE as u32;
+            total += crate::functions::intcast::low_u32_from_usize(OBJ_RECORD_SIZE);
         }
         for (name, _) in &dir_entries {
-            total += 2 + name.len() as u32 + 8;
+            total += 2 + crate::functions::intcast::low_u32_from_usize(name.len()) + 8;
         }
 
         let mut buf = vec![0u8; total as usize];
@@ -1500,10 +1502,18 @@ impl UnkfsData {
         if !Self::write_le32(&mut buf, 4, 1) {
             return None;
         }
-        if !Self::write_le32(&mut buf, 8, objects.len() as u32) {
+        if !Self::write_le32(
+            &mut buf,
+            8,
+            crate::functions::intcast::low_u32_from_usize(objects.len()),
+        ) {
             return None;
         }
-        if !Self::write_le32(&mut buf, 12, dir_entries.len() as u32) {
+        if !Self::write_le32(
+            &mut buf,
+            12,
+            crate::functions::intcast::low_u32_from_usize(dir_entries.len()),
+        ) {
             return None;
         }
         if !Self::write_le64(&mut buf, 16, next_id) {
@@ -1590,7 +1600,11 @@ impl UnkfsData {
             if off + 2 + name_bytes.len() + 8 > buf.len() {
                 return None;
             }
-            if !Self::write_le16(&mut buf, off, name_bytes.len() as u16) {
+            if !Self::write_le16(
+                &mut buf,
+                off,
+                crate::functions::intcast::low_u16_from_usize(name_bytes.len()),
+            ) {
                 return None;
             }
             off += 2;
@@ -1754,7 +1768,7 @@ impl UnkfsData {
                 let obj = UnkfsDmuObject {
                     obj_id,
                     obj_type,
-                    block_size: HV_POOL_BLOCK_SIZE as u32,
+                    block_size: crate::functions::intcast::low_u32_from_u64(HV_POOL_BLOCK_SIZE),
                     nblocks,
                     size,
                     bp: bp_val,
@@ -1890,7 +1904,7 @@ impl UnkfsData {
         let datasets = self.datasets.lock();
         let ds = &datasets[0];
         let txg = self.spa.current_txg();
-        self.snap_mgr.create_snapshot(ds, name, txg) as i32
+        crate::functions::intcast::low_i32_from_u64(self.snap_mgr.create_snapshot(ds, name, txg))
     }
 
     /// 销毁快照
@@ -1930,7 +1944,7 @@ impl UnkfsData {
                 |ds| {
                     ds.init(0);
                     self.datasets.lock().push(ds);
-                    ds_id as i32
+                    crate::functions::intcast::low_i32_from_u64(ds_id)
                 },
             )
     }

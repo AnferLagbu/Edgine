@@ -303,7 +303,7 @@ fn test_uffd_register_arg_validation() -> TestResult {
         Err(_) => return TestResult::Fail("wake should not fail"),
     }
 
-    let full_page = [0u8; PAGE_SIZE as usize];
+    let full_page = [0u8; crate::privileged::lib::usize_from_u64(PAGE_SIZE)];
     check!(
         provide_page(fd, 0x40_0001, None).is_err(),
         "unaligned page should fail"
@@ -344,8 +344,8 @@ fn test_uffd_register_and_fault_flow() -> TestResult {
     let mm = MmStruct::new();
     let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
     let vma = Vma::new(
-        BASE as usize,
-        (BASE + 2 * PAGE_SIZE) as usize,
+        crate::privileged::lib::usize_from_u64(BASE),
+        crate::privileged::lib::usize_from_u64(BASE + 2 * PAGE_SIZE),
         flags,
         VmaType::Anonymous,
     );
@@ -434,7 +434,7 @@ fn uffd_flow_body(fd: i32) -> TestResult {
         "providing a non-pending page should fail"
     );
     // SIMPLIFIED: 单挂起页模型 — 服务线程只能填充当前挂起页
-    let filled = [0x5Au8; PAGE_SIZE as usize];
+    let filled = [0x5Au8; crate::privileged::lib::usize_from_u64(PAGE_SIZE)];
     check!(
         provide_page(fd, BASE, Some(&filled[..])).is_ok(),
         "provide pending page failed"
@@ -454,7 +454,12 @@ fn uffd_flow_body(fd: i32) -> TestResult {
     // 用户地址空间, 测试独占访问, 仅读取校验 staged 数据是否已写入.
     let content_ok = {
         let base_ptr = phys.to_virt().0 as *const u8;
-        let probes = [0usize, 1, 2048, PAGE_SIZE as usize - 1];
+        let probes = [
+            0usize,
+            1,
+            2048,
+            crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1,
+        ];
         probes
             .iter()
             .all(|&i| unsafe { core::ptr::read_volatile(base_ptr.add(i)) } == 0x5A)
@@ -572,7 +577,7 @@ pub(super) fn cow_setup_mapped_page() -> Result<(u64, PhysAddr), &'static str> {
         core::ptr::write_bytes(
             phys.to_virt().0 as *mut u8,
             COW_TEST_BYTE,
-            PAGE_SIZE as usize,
+            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
         );
     }
     Ok((pml4, phys))
@@ -655,7 +660,7 @@ fn test_cow_child_write_isolated_from_parent() -> TestResult {
         core::ptr::write_bytes(
             PhysAddr(new_phys).to_virt().0 as *mut u8,
             COW_TEST_BYTE_CHILD,
-            PAGE_SIZE as usize,
+            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
         );
     }
     // SAFETY: 父帧由 PMM 分配, 内核直接映射可读
@@ -800,13 +805,13 @@ fn test_remove_range_targets_user_table() -> TestResult {
         Err(msg) => return TestResult::Fail(msg),
     };
     let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
-    let va = COW_TEST_VA as usize;
+    let va = crate::privileged::lib::usize_from_u64(COW_TEST_VA);
     // 负向与正向各用独立的 MmStruct: `remove_range` 无条件删除 VMA 描述符,
     // 复用同一实例会让正向找不到 VMA 而失去判别力.
     let mm_neg = MmStruct::new();
     if let Err(e) = mm_neg.insert_vma(Vma::new(
         va,
-        va + PAGE_SIZE as usize,
+        va + crate::privileged::lib::usize_from_u64(PAGE_SIZE),
         flags,
         VmaType::Anonymous,
     )) {
@@ -815,7 +820,11 @@ fn test_remove_range_targets_user_table() -> TestResult {
     }
 
     // 负向控制: cr3 == 0 ⇒ 显式变体不做任何事 (不退化到内核表)
-    mm_neg.remove_range(va, va + PAGE_SIZE as usize, 0);
+    mm_neg.remove_range(
+        va,
+        va + crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+        0,
+    );
     check!(
         vmm_get_physical_in_table(pml4, COW_TEST_VA) == phys.as_u64(),
         "cr3 == 0 不得拆除用户 PTE (fail-closed)"
@@ -826,14 +835,18 @@ fn test_remove_range_targets_user_table() -> TestResult {
     let mm_pos = MmStruct::new();
     if let Err(e) = mm_pos.insert_vma(Vma::new(
         va,
-        va + PAGE_SIZE as usize,
+        va + crate::privileged::lib::usize_from_u64(PAGE_SIZE),
         flags,
         VmaType::Anonymous,
     )) {
         vmm_destroy_page_table(pml4);
         return TestResult::Fail(e);
     }
-    mm_pos.remove_range(va, va + PAGE_SIZE as usize, pml4);
+    mm_pos.remove_range(
+        va,
+        va + crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+        pml4,
+    );
     check!(
         vmm_get_physical_in_table(pml4, COW_TEST_VA) == 0,
         "用户 PTE 必须被拆除"
@@ -879,8 +892,9 @@ fn test_mprotect_targets_user_table() -> TestResult {
     let mm = MmStruct::new();
     let rw = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
     if let Err(e) = mm.insert_vma(Vma::new(
-        va as usize,
-        va as usize + PAGE_SIZE as usize,
+        crate::privileged::lib::usize_from_u64(va),
+        crate::privileged::lib::usize_from_u64(va)
+            + crate::privileged::lib::usize_from_u64(PAGE_SIZE),
         rw,
         VmaType::Anonymous,
     )) {
@@ -891,7 +905,12 @@ fn test_mprotect_targets_user_table() -> TestResult {
     // 改为只读
     let ro = PageFlags::PRESENT | PageFlags::USER;
     if mm
-        .mprotect(va as usize, PAGE_SIZE as usize, ro, pml4)
+        .mprotect(
+            crate::privileged::lib::usize_from_u64(va),
+            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            ro,
+            pml4,
+        )
         .is_err()
     {
         vmm_destroy_page_table(pml4);
@@ -916,7 +935,12 @@ fn test_mprotect_targets_user_table() -> TestResult {
 
     // 改回可写 ⇒ 精确还原
     if mm
-        .mprotect(va as usize, PAGE_SIZE as usize, rw, pml4)
+        .mprotect(
+            crate::privileged::lib::usize_from_u64(va),
+            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            rw,
+            pml4,
+        )
         .is_err()
     {
         vmm_destroy_page_table(pml4);
@@ -1020,12 +1044,13 @@ fn test_frame_dma_buffer_raii_release() -> TestResult {
     let free_before = alloc.free_pages();
 
     // 请求 2 页 (8 KiB) ⇒ 帧阶数应为 1, 缓冲大小按页取整
-    let Some(buf) = nvme_alloc_dma_buffer(2 * PAGE_SIZE as usize) else {
+    let Some(buf) = nvme_alloc_dma_buffer(2 * crate::privileged::lib::usize_from_u64(PAGE_SIZE))
+    else {
         return TestResult::Fail("nvme_alloc_dma_buffer 失败");
     };
     let phys = buf.dma_addr();
     check!(
-        buf.size() == 2 * PAGE_SIZE as usize,
+        buf.size() == 2 * crate::privileged::lib::usize_from_u64(PAGE_SIZE),
         "2 页请求应得到 2 页缓冲 (页取整且阶数同值)"
     );
     check!(alloc.free_pages() == free_before - 2, "分配应取走 2 页");

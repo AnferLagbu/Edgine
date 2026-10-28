@@ -98,7 +98,10 @@ pub fn mmap_syscall(
         return Err(Errno::EINVAL);
     }
 
-    let len_aligned = ((length as usize) + PAGE_SIZE as usize - 1) & !(PAGE_SIZE as usize - 1);
+    let len_aligned = (crate::functions::intcast::usize_from_u64(length)
+        + crate::functions::intcast::usize_from_u64(PAGE_SIZE)
+        - 1)
+        & !(crate::functions::intcast::usize_from_u64(PAGE_SIZE) - 1);
 
     let page_flags = prot_to_vma_flags(prot);
 
@@ -116,7 +119,7 @@ pub fn mmap_syscall(
     // ── 匿名映射 ──
     if map_anonymous {
         let addr = find_or_allocate_addr(mm, addr_hint, len_aligned)?;
-        let aligned_addr = addr & !(PAGE_SIZE as usize - 1);
+        let aligned_addr = addr & !(crate::functions::intcast::usize_from_u64(PAGE_SIZE) - 1);
 
         let final_flags = page_flags | VmaFlags::PRESENT;
         let vma = Vma::new(
@@ -150,7 +153,7 @@ pub fn mmap_syscall(
     let mount_idx = fd_to_mount_idx(fd);
 
     let addr = find_or_allocate_addr(mm, addr_hint, len_aligned)?;
-    let aligned_addr = addr & !(PAGE_SIZE as usize - 1);
+    let aligned_addr = addr & !(crate::functions::intcast::usize_from_u64(PAGE_SIZE) - 1);
 
     let final_flags = if map_shared {
         page_flags | VmaFlags::PRESENT
@@ -185,7 +188,7 @@ fn find_or_allocate_addr(
 ) -> Result<usize, Errno> {
     use crate::privileged::constants::limits::USER_ADDR_MAX;
     if addr_hint != 0 && addr_hint < USER_ADDR_MAX {
-        Ok(addr_hint as usize)
+        Ok(crate::functions::intcast::usize_from_u64(addr_hint))
     } else {
         mm.find_free_range(len_aligned).ok_or(Errno::ENOMEM)
     }
@@ -211,8 +214,8 @@ pub fn munmap_syscall(mm: &MmStruct, addr: u64, length: u64) -> Result<(), Errno
         return Err(Errno::EINVAL);
     }
 
-    let start = addr as usize;
-    let end = start + length as usize;
+    let start = crate::functions::intcast::usize_from_u64(addr);
+    let end = start + crate::functions::intcast::usize_from_u64(length);
 
     // 目标用户页表根: 用户数据页建在进程用户页表上, 拆除必须作用在同一张表.
     let cr3 = crate::privileged::proc::process_get_cr3(
@@ -254,7 +257,7 @@ fn release_file_pages(mm: &MmStruct, start: usize, end: usize, cr3: u64) {
                 vma.inode_id,
                 page_index,
             );
-            addr += PAGE_SIZE as usize;
+            addr += crate::functions::intcast::usize_from_u64(PAGE_SIZE);
         }
     }
 }
@@ -276,8 +279,8 @@ pub fn mprotect_syscall(mm: &MmStruct, addr: u64, length: u64, prot: i32) -> Res
         return Err(Errno::EINVAL);
     }
 
-    let start = addr as usize;
-    let end = start + length as usize;
+    let start = crate::functions::intcast::usize_from_u64(addr);
+    let end = start + crate::functions::intcast::usize_from_u64(length);
     let new_flags = prot_to_vma_flags(prot);
 
     let mut vmas = mm.vmas.lock();

@@ -55,8 +55,6 @@ impl TopologyInfo {
 /// B03-16 语义: 未知厂商 (`CpuVendor::Unknown`) 时跳过所有厂商特定 CPUID
 /// 分支, 回退到"按逻辑线程数假定无超线程" (或超线程时 2 threads/core 假设).
 #[cfg(target_arch = "x86_64")]
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 #[expect(
     clippy::trivially_copy_pass_by_ref,
     reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
@@ -84,7 +82,7 @@ pub(super) fn detect_topology(
             if cores_per_pkg > 0 {
                 topo_out.physical_cores = cores_per_pkg;
 
-                if logical_per_pkg as u8 > cores_per_pkg {
+                if crate::privileged::lib::low_u8_from_u16(logical_per_pkg) > cores_per_pkg {
                     topo_out.hyperthreading_enabled = true;
                 }
             }

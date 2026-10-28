@@ -79,7 +79,7 @@ impl UnkfsZilPersistError {
 
 const ZIL_MAGIC: u32 = 0x5A49_4C31_u32; // "ZIL1"
 const ZIL_TAIL_MAGIC: u32 = 0x454E_4400_u32; // "END\0"
-const ZIL_BLOCK_SIZE: usize = HV_POOL_BLOCK_SIZE as usize;
+const ZIL_BLOCK_SIZE: usize = crate::functions::intcast::usize_from_u64(HV_POOL_BLOCK_SIZE);
 const ZIL_HEADER_SIZE: usize = 64;
 const ZIL_TRAILER_SIZE: usize = 8;
 const ZIL_RECORD_DISK_SIZE: usize = 256;
@@ -158,8 +158,10 @@ impl ZilBlockHeader {
             txg,
             seq_start,
             record_count: 0,
-            record_capacity: ZIL_MAX_RECORDS_PER_BLOCK as u16,
-            total_size: ZIL_BLOCK_SIZE as u32,
+            record_capacity: crate::functions::intcast::low_u16_from_usize(
+                ZIL_MAX_RECORDS_PER_BLOCK,
+            ),
+            total_size: crate::functions::intcast::low_u32_from_usize(ZIL_BLOCK_SIZE),
             header_checksum: 0,
             data_checksum: 0,
             next_block: 0,
@@ -406,7 +408,7 @@ impl UnkfsZilPersist {
         let mut block = vec![0u8; ZIL_BLOCK_SIZE];
 
         let mut header = ZilBlockHeader::new(txg, records[0].seq);
-        header.record_count = count as u16;
+        header.record_count = crate::functions::intcast::low_u16_from_usize(count);
         header.compute_header_checksum();
 
         let header_bytes = header.as_bytes();

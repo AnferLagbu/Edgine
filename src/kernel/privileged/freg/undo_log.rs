@@ -80,7 +80,7 @@ impl UndoLog {
             generation: self.current_generation,
             field_ptr,
             old_value: old_bytes,
-            value_size: size as u8,
+            value_size: crate::privileged::lib::low_u8_from_usize(size),
             checksum,
         };
         self.count += 1;
@@ -161,8 +161,6 @@ impl UndoLog {
         self.compact_keeping(4);
     }
 
-    // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-    #[expect(clippy::cast_possible_truncation)]
     /// 压缩日志, 仅保留最近 `keep_generations` 个代数的条目
     pub fn compact_keeping(&mut self, keep_generations: usize) {
         if self.count == 0 {
@@ -182,7 +180,7 @@ impl UndoLog {
         }
         let keep = keep_generations.min(gen_count);
         if gen_count > keep && keep > 0 {
-            let keep_from = gen_starts[gen_count - keep] as usize;
+            let keep_from = crate::privileged::lib::usize_from_u64(gen_starts[gen_count - keep]);
             let new_count = self.count - keep_from;
             for i in 0..new_count {
                 self.entries[i] = self.entries[keep_from + i];

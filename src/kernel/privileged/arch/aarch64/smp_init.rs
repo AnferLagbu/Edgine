@@ -243,7 +243,7 @@ fn start_ap(mpidr: u64, cpu_index: u32) -> Result<(), ()> {
 /// 并进入本核 idle 调度循环 (装载本核定时器 + `schedule()` 循环)。任一前置步骤
 /// 失败则放弃上线 (不置 `done`, 由 BSP 判定离线)。
 extern "C" fn ap_main(cpu_index: u64) -> ! {
-    let idx = cpu_index as u32;
+    let idx = crate::privileged::lib::low_u32_from_u64(cpu_index);
 
     // 0. 使能本核 FP/SIMD 访问 (CPACR_EL1.FPEN[21:20] = 0b11)。
     //

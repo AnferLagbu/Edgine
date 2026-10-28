@@ -133,12 +133,13 @@ pub fn pit_init(frequency_hz: u32) -> Result<u32, &'static str> {
         return Err("Frequency must be > 0");
     }
 
-    if frequency_hz > PIT_BASE_FREQUENCY as u32 {
+    if frequency_hz > crate::privileged::lib::low_u32_from_u64(PIT_BASE_FREQUENCY) {
         return Err("Frequency exceeds PIT maximum");
     }
 
     // 计算分频值
-    let divisor = (PIT_BASE_FREQUENCY / u64::from(frequency_hz)) as u16;
+    let divisor =
+        crate::privileged::lib::low_u16_from_u64(PIT_BASE_FREQUENCY / u64::from(frequency_hz));
 
     if !(PIT_MIN_COUNT..=PIT_MAX_COUNT).contains(&divisor) {
         return Err("Divisor out of range");
@@ -166,7 +167,8 @@ pub fn pit_init(frequency_hz: u32) -> Result<u32, &'static str> {
     }
 
     // 更新全局状态
-    let actual_freq = (PIT_BASE_FREQUENCY / u64::from(divisor)) as u32;
+    let actual_freq =
+        crate::privileged::lib::low_u32_from_u64(PIT_BASE_FREQUENCY / u64::from(divisor));
     CURRENT_FREQ_HZ.store(actual_freq, Ordering::Relaxed);
     CURRENT_DIVISOR.store(divisor, Ordering::Relaxed);
     LAST_TICK_COUNT.store(divisor, Ordering::Relaxed);

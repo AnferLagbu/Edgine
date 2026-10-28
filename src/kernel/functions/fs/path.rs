@@ -72,7 +72,7 @@ pub fn getcwd_syscall(buf_ptr: u64, size: u64) -> Result<usize, Errno> {
     }
     // SAFETY: buf_ptr 由 check_user_buf 验证为可写
     let buf = buf_ptr as *mut u8;
-    let n = fw::vfs_get_cwd(buf, size as u32);
+    let n = fw::vfs_get_cwd(buf, crate::functions::intcast::low_u32_from_u64(size));
     if n < 0 {
         Err(Errno::from_ret(i64::from(n)))
     } else {

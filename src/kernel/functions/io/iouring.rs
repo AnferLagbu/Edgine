@@ -25,7 +25,10 @@ pub use crate::privileged::io::iouring::*;
 /// (全局实例表 + ID 分配), 本层仅参数转换 + 错误码映射.
 pub fn io_uring_setup_syscall(entries: u64) -> i64 {
     let pid = crate::privileged::proc::process_get_current_pid();
-    match crate::privileged::io::io_uring_setup(entries as u32, pid as u32) {
+    match crate::privileged::io::io_uring_setup(
+        crate::functions::intcast::low_u32_from_u64(entries),
+        pid as u32,
+    ) {
         Ok(id) => i64::from(id),
         Err(e) => e.as_ret(),
     }
@@ -36,7 +39,11 @@ pub fn io_uring_setup_syscall(entries: u64) -> i64 {
 /// T2 批 3 自 privileged 回退层迁移. 委托 privileged 机制 `io_uring_enter`
 /// (处理 SQE → 生成 CQE), 本层仅参数转换 + 错误码映射.
 pub fn io_uring_enter_syscall(id: u64, to_submit: u64, min_complete: u64) -> i64 {
-    match crate::privileged::io::io_uring_enter(id as u32, to_submit as u32, min_complete as u32) {
+    match crate::privileged::io::io_uring_enter(
+        crate::functions::intcast::low_u32_from_u64(id),
+        crate::functions::intcast::low_u32_from_u64(to_submit),
+        crate::functions::intcast::low_u32_from_u64(min_complete),
+    ) {
         Ok(n) => i64::from(n),
         Err(e) => e.as_ret(),
     }

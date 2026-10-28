@@ -269,7 +269,7 @@ pub fn parse_ipv4(s: &str) -> Option<[u8; 4]> {
         if v > 255 {
             return None;
         }
-        out[i] = v as u8;
+        out[i] = crate::functions::intcast::low_u8_from_u32(v);
     }
     if parts.next().is_some() {
         return None;

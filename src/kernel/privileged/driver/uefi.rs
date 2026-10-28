@@ -97,7 +97,6 @@ pub struct EfiTime {
 impl EfiTime {
     // 有意窄化: 用户内存代理, 指针/长度上下文保证
     /// 转换为 Unix 纳秒时间戳 (1970-01-01 为 0 点基准)
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
@@ -111,8 +110,13 @@ impl EfiTime {
         let leap_years = (y - 1) / 4 - (y - 1) / 100 + (y - 1) / 400;
         let is_leap = y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400));
         let extra = u64::from(is_leap && m > 2);
-        let days =
-            y * 365 + leap_years + days_before_month.get(m as usize - 1).unwrap_or(&0) + d + extra;
+        let days = y * 365
+            + leap_years
+            + days_before_month
+                .get(crate::privileged::lib::usize_from_u64(m) - 1)
+                .unwrap_or(&0)
+            + d
+            + extra;
         // 1970-01-01 基准
         let epoch_days = 1970 * 365 + (1970 - 1) / 4 - (1970 - 1) / 100 + (1970 - 1) / 400 + 1;
         let unix_days = days.saturating_sub(epoch_days);
@@ -161,7 +165,7 @@ impl EfiTime {
         Self {
             year,
             month,
-            day: (remaining + 1) as u8,
+            day: crate::privileged::lib::low_u8_from_u64(remaining + 1),
             hour: (time_of_day / 3600) as u8,
             minute: ((time_of_day % 3600) / 60) as u8,
             second: (time_of_day % 60) as u8,
@@ -430,8 +434,10 @@ impl UefiSubsystem {
         self.runtime_services_addr.store(runtime, Ordering::Release);
         self.boot_services_addr.store(boot, Ordering::Release);
         self.config_table_addr.store(config, Ordering::Release);
-        self.config_table_entries
-            .store(entries.min(u64::from(u32::MAX)) as u32, Ordering::Release);
+        self.config_table_entries.store(
+            crate::privileged::lib::low_u32_from_u64(entries.min(u64::from(u32::MAX))),
+            Ordering::Release,
+        );
         self.firmware_vendor_addr.store(vendor, Ordering::Release);
         self.firmware_revision.store(fw_rev, Ordering::Release);
     }

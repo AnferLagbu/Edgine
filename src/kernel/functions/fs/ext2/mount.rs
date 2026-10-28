@@ -329,7 +329,7 @@ impl FileSystem for Ext2FileSystem {
         let fs = fs_guard.as_mut().ok_or(KernelError::NotInitialized)?;
 
         let entries = fs.read_dir(handle)?;
-        let idx = offset as usize;
+        let idx = crate::functions::intcast::usize_from_u64(offset);
 
         if idx >= entries.len() {
             return Ok(false);

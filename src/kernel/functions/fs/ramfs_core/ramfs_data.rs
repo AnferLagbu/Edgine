@@ -266,7 +266,7 @@ impl RamFsData {
                     free_blocks.fetch_add(1, Ordering::SeqCst);
                     return u32::MAX;
                 }
-                return i as u32;
+                return crate::functions::intcast::low_u32_from_usize(i);
             }
         }
         u32::MAX
@@ -274,14 +274,14 @@ impl RamFsData {
 
     fn block_alloc(&mut self) -> u32 {
         for i in 0..RAMFS_MAX_BLOCKS {
-            if self.block_is_free(i as u32) {
-                self.block_set_used(i as u32);
+            if self.block_is_free(crate::functions::intcast::low_u32_from_usize(i)) {
+                self.block_set_used(crate::functions::intcast::low_u32_from_usize(i));
                 // 页池分配失败时回滚, 返回 u32::MAX (与原「无可用块」语义一致)
                 if !self.data_area.zero(i * RAMFS_BLOCK_SIZE, RAMFS_BLOCK_SIZE) {
-                    self.block_set_free(i as u32);
+                    self.block_set_free(crate::functions::intcast::low_u32_from_usize(i));
                     return u32::MAX;
                 }
-                return i as u32;
+                return crate::functions::intcast::low_u32_from_usize(i);
             }
         }
         u32::MAX
@@ -504,10 +504,14 @@ impl RamFsData {
         self.allocate();
         self.data_area.clear();
 
-        self.free_nodes
-            .store((RAMFS_MAX_NODES - 1) as u32, Ordering::SeqCst);
-        self.free_blocks
-            .store(RAMFS_MAX_BLOCKS as u32, Ordering::SeqCst);
+        self.free_nodes.store(
+            crate::functions::intcast::low_u32_from_usize(RAMFS_MAX_NODES - 1),
+            Ordering::SeqCst,
+        );
+        self.free_blocks.store(
+            crate::functions::intcast::low_u32_from_usize(RAMFS_MAX_BLOCKS),
+            Ordering::SeqCst,
+        );
         self.root_node = 1;
 
         let block = self.block_alloc();
@@ -519,7 +523,9 @@ impl RamFsData {
             owner_pwm: 1,
             group_pwm: 1,
             perm: 0o777,
-            size: (2 * core::mem::size_of::<RamFsDirEntry>()) as u32,
+            size: crate::functions::intcast::low_u32_from_usize(
+                2 * core::mem::size_of::<RamFsDirEntry>(),
+            ),
             atime: Self::get_time(),
             mtime: Self::get_time(),
             ctime: Self::get_time(),
@@ -578,14 +584,16 @@ impl RamFsData {
             if !self.nodes[i].used {
                 let block = self.block_alloc();
                 self.nodes[i] = RamFsNode {
-                    node_id: i as u32,
+                    node_id: crate::functions::intcast::low_u32_from_usize(i),
                     file_type,
                     sensitivity: SENSITIVITY_PUBLIC,
                     owner_pwm: pwm,
                     group_pwm: pwm,
                     perm: 0o644,
                     size: if file_type == VfsFileType::Dir as u8 {
-                        (2 * core::mem::size_of::<RamFsDirEntry>()) as u32
+                        crate::functions::intcast::low_u32_from_usize(
+                            2 * core::mem::size_of::<RamFsDirEntry>(),
+                        )
                     } else {
                         0
                     },
@@ -598,8 +606,8 @@ impl RamFsData {
                     link_count: 1,
                     used: true,
                 };
-                self.node_set_used(i as u32);
-                return Some(i as u32);
+                self.node_set_used(crate::functions::intcast::low_u32_from_usize(i));
+                return Some(crate::functions::intcast::low_u32_from_usize(i));
             }
         }
         None
@@ -617,15 +625,16 @@ impl RamFsData {
         let node_size = u64::from(node.size);
 
         while bytes_read < buf.len() && *offset < node_size {
-            let block_idx = (*offset as usize) / RAMFS_BLOCK_SIZE;
-            let block_offset = (*offset as usize) % RAMFS_BLOCK_SIZE;
+            let block_idx = crate::functions::intcast::usize_from_u64(*offset) / RAMFS_BLOCK_SIZE;
+            let block_offset =
+                crate::functions::intcast::usize_from_u64(*offset) % RAMFS_BLOCK_SIZE;
             let mut bytes_to_read = RAMFS_BLOCK_SIZE - block_offset;
 
             if bytes_to_read > buf.len() - bytes_read {
                 bytes_to_read = buf.len() - bytes_read;
             }
-            if bytes_to_read > (node_size - *offset) as usize {
-                bytes_to_read = (node_size - *offset) as usize;
+            if bytes_to_read > crate::functions::intcast::usize_from_u64(node_size - *offset) {
+                bytes_to_read = crate::functions::intcast::usize_from_u64(node_size - *offset);
             }
 
             let block_num = Self::get_or_alloc_block(
@@ -662,8 +671,9 @@ impl RamFsData {
         let mut bytes_written = 0usize;
 
         while bytes_written < buf.len() {
-            let block_idx = (*offset as usize) / RAMFS_BLOCK_SIZE;
-            let block_offset = (*offset as usize) % RAMFS_BLOCK_SIZE;
+            let block_idx = crate::functions::intcast::usize_from_u64(*offset) / RAMFS_BLOCK_SIZE;
+            let block_offset =
+                crate::functions::intcast::usize_from_u64(*offset) % RAMFS_BLOCK_SIZE;
             let mut bytes_to_write = RAMFS_BLOCK_SIZE - block_offset;
 
             if bytes_to_write > buf.len() - bytes_written {
@@ -696,7 +706,8 @@ impl RamFsData {
             *offset += bytes_to_write as u64;
 
             if *offset > u64::from(self.nodes[node_id as usize].size) {
-                self.nodes[node_id as usize].size = *offset as u32;
+                self.nodes[node_id as usize].size =
+                    crate::functions::intcast::low_u32_from_u64(*offset);
             }
         }
 
@@ -735,15 +746,19 @@ impl RamFsData {
         let mut current_offset = offset;
 
         while bytes_read < buf.len() && current_offset < node_size {
-            let block_idx = (current_offset as usize) / RAMFS_BLOCK_SIZE;
-            let block_offset = (current_offset as usize) % RAMFS_BLOCK_SIZE;
+            let block_idx =
+                crate::functions::intcast::usize_from_u64(current_offset) / RAMFS_BLOCK_SIZE;
+            let block_offset =
+                crate::functions::intcast::usize_from_u64(current_offset) % RAMFS_BLOCK_SIZE;
             let mut bytes_to_read = RAMFS_BLOCK_SIZE - block_offset;
 
             if bytes_to_read > buf.len() - bytes_read {
                 bytes_to_read = buf.len() - bytes_read;
             }
-            if bytes_to_read > (node_size - current_offset) as usize {
-                bytes_to_read = (node_size - current_offset) as usize;
+            if bytes_to_read > crate::functions::intcast::usize_from_u64(node_size - current_offset)
+            {
+                bytes_to_read =
+                    crate::functions::intcast::usize_from_u64(node_size - current_offset);
             }
 
             let block_num = Self::get_or_alloc_block(
@@ -789,8 +804,10 @@ impl RamFsData {
         let mut current_offset = offset;
 
         while bytes_written < buf.len() {
-            let block_idx = (current_offset as usize) / RAMFS_BLOCK_SIZE;
-            let block_offset = (current_offset as usize) % RAMFS_BLOCK_SIZE;
+            let block_idx =
+                crate::functions::intcast::usize_from_u64(current_offset) / RAMFS_BLOCK_SIZE;
+            let block_offset =
+                crate::functions::intcast::usize_from_u64(current_offset) % RAMFS_BLOCK_SIZE;
             let mut bytes_to_write = RAMFS_BLOCK_SIZE - block_offset;
 
             if bytes_to_write > buf.len() - bytes_written {
@@ -823,7 +840,8 @@ impl RamFsData {
             current_offset += bytes_to_write as u64;
 
             if current_offset > u64::from(self.nodes[node_id as usize].size) {
-                self.nodes[node_id as usize].size = current_offset as u32;
+                self.nodes[node_id as usize].size =
+                    crate::functions::intcast::low_u32_from_u64(current_offset);
             }
         }
 
@@ -894,8 +912,10 @@ impl RamFsData {
         }
 
         if new_size < old_size && new_size > 0 {
-            let last_block_idx = ((new_size - 1) as usize) / RAMFS_BLOCK_SIZE;
-            let offset_in_block = ((new_size - 1) as usize) % RAMFS_BLOCK_SIZE;
+            let last_block_idx =
+                crate::functions::intcast::usize_from_u64(new_size - 1) / RAMFS_BLOCK_SIZE;
+            let offset_in_block =
+                crate::functions::intcast::usize_from_u64(new_size - 1) % RAMFS_BLOCK_SIZE;
 
             {
                 let block_num = Self::get_or_alloc_block(
@@ -919,8 +939,12 @@ impl RamFsData {
             }
 
             let first_block_to_free =
-                (new_size + RAMFS_BLOCK_SIZE as u64 - 1) as usize / RAMFS_BLOCK_SIZE + 1;
-            let last_block = (old_size + RAMFS_BLOCK_SIZE as u64 - 1) as usize / RAMFS_BLOCK_SIZE;
+                crate::functions::intcast::usize_from_u64(new_size + RAMFS_BLOCK_SIZE as u64 - 1)
+                    / RAMFS_BLOCK_SIZE
+                    + 1;
+            let last_block =
+                crate::functions::intcast::usize_from_u64(old_size + RAMFS_BLOCK_SIZE as u64 - 1)
+                    / RAMFS_BLOCK_SIZE;
 
             {
                 let mut blocks_to_free: Vec<u32> = Vec::new();
@@ -1018,7 +1042,7 @@ impl RamFsData {
         }
 
         let node = &mut self.nodes[node_id as usize];
-        node.size = new_size as u32;
+        node.size = crate::functions::intcast::low_u32_from_u64(new_size);
         node.mtime = Self::get_time();
 
         dcache::icache_invalidate(self.fs_id, node_id);
@@ -1146,7 +1170,8 @@ impl RamFsData {
         entry.set_name(name);
         Self::write_dirent(&mut self.data_area, offset, &entry);
 
-        self.nodes[parent_num as usize].size += dirent_size as u32;
+        self.nodes[parent_num as usize].size +=
+            crate::functions::intcast::low_u32_from_usize(dirent_size);
         self.nodes[parent_num as usize].link_count += 1;
         self.nodes[parent_num as usize].mtime = Self::get_time();
 
@@ -1248,7 +1273,8 @@ impl RamFsData {
         entry.set_name(name);
         Self::write_dirent(&mut self.data_area, offset, &entry);
 
-        self.nodes[parent_num as usize].size += dirent_size as u32;
+        self.nodes[parent_num as usize].size +=
+            crate::functions::intcast::low_u32_from_usize(dirent_size);
         self.nodes[parent_num as usize].link_count += 1;
         self.nodes[parent_num as usize].mtime = Self::get_time();
 
@@ -1474,7 +1500,8 @@ impl RamFsData {
         entry.set_name(name);
         Self::write_dirent(&mut self.data_area, offset, &entry);
 
-        self.nodes[parent_node as usize].size += dirent_size as u32;
+        self.nodes[parent_node as usize].size +=
+            crate::functions::intcast::low_u32_from_usize(dirent_size);
         self.nodes[parent_node as usize].link_count += 1;
         self.nodes[parent_node as usize].mtime = Self::get_time();
         self.nodes[target_node as usize].link_count += 1;
@@ -1546,7 +1573,8 @@ impl RamFsData {
             node.used = true;
         }
         self.symlink_targets[new_id as usize][..target_len].copy_from_slice(target_bytes);
-        self.symlink_lens[new_id as usize] = target_len as u8;
+        self.symlink_lens[new_id as usize] =
+            crate::functions::intcast::low_u8_from_usize(target_len);
 
         let offset = (parent_block as usize) * RAMFS_BLOCK_SIZE + num_entries * dirent_size;
         if offset + dirent_size > self.data_area.capacity_bytes() {
@@ -1563,7 +1591,8 @@ impl RamFsData {
         entry.set_name(name);
         Self::write_dirent(&mut self.data_area, offset, &entry);
 
-        self.nodes[parent_num as usize].size += dirent_size as u32;
+        self.nodes[parent_num as usize].size +=
+            crate::functions::intcast::low_u32_from_usize(dirent_size);
         self.nodes[parent_num as usize].link_count += 1;
         self.nodes[parent_num as usize].mtime = now;
 

@@ -36,7 +36,7 @@ fn pack_u64(buf: &mut [u8], offset: usize, v: u64) {
     if offset + 8 > buf.len() {
         return;
     }
-    pack_u32(buf, offset, v as u32);
+    pack_u32(buf, offset, crate::privileged::lib::low_u32_from_u64(v));
     pack_u32(buf, offset + 4, (v >> 32) as u32);
 }
 
@@ -71,13 +71,37 @@ pub fn encode_boot_image() {
     pack_u32(buf, 0, HEADER_MAGIC);
     pack_u32(buf, 4, 0);
     pack_u32(buf, 8, 0);
-    pack_u32(buf, 12, s.max_cpus as u32);
-    pack_u32(buf, 16, s.max_irqs as u32);
-    pack_u32(buf, 20, s.max_processes as u32);
-    pack_u32(buf, 24, s.max_threads as u32);
+    pack_u32(
+        buf,
+        12,
+        crate::privileged::lib::low_u32_from_usize(s.max_cpus),
+    );
+    pack_u32(
+        buf,
+        16,
+        crate::privileged::lib::low_u32_from_usize(s.max_irqs),
+    );
+    pack_u32(
+        buf,
+        20,
+        crate::privileged::lib::low_u32_from_usize(s.max_processes),
+    );
+    pack_u32(
+        buf,
+        24,
+        crate::privileged::lib::low_u32_from_usize(s.max_threads),
+    );
     pack_u32(buf, 28, s.actual_cpus);
-    pack_u32(buf, 32, s.page_size as u32);
-    pack_u32(buf, 36, s.kaslr_offset as u32);
+    pack_u32(
+        buf,
+        32,
+        crate::privileged::lib::low_u32_from_u64(s.page_size),
+    );
+    pack_u32(
+        buf,
+        36,
+        crate::privileged::lib::low_u32_from_u64(s.kaslr_offset),
+    );
     pack_u32(buf, 40, (s.kaslr_offset >> 32) as u32);
 
     let mut flags = 0u8;

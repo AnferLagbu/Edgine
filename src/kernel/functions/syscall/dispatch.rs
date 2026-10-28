@@ -133,7 +133,9 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         },
         // close_range (T1 G1 实装): 批量关闭 fd
         SYS_close_range => as_ret(crate::functions::fs::io::close_range_syscall(
-            a0 as u32, a1 as u32, a2 as u32,
+            crate::functions::intcast::low_u32_from_u64(a0),
+            crate::functions::intcast::low_u32_from_u64(a1),
+            crate::functions::intcast::low_u32_from_u64(a2),
         )),
         // preadv/pwritev (T1 G1 实装): 显式偏移向量 I/O (pos 为负时 -EINVAL)
         SYS_preadv => match i32::try_from(a0) {
@@ -155,31 +157,60 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
             Err(_) => Errno::EINVAL.as_ret(),
         },
         SYS_open => as_ret(crate::functions::fs::open::open_syscall(
-            a0, a1 as i32, a2 as i32,
+            a0,
+            crate::functions::intcast::low_i32_from_u64(a1),
+            crate::functions::intcast::low_i32_from_u64(a2),
         )),
-        SYS_close => as_ret(crate::functions::fs::open::close_syscall(a0 as i32)),
+        SYS_close => as_ret(crate::functions::fs::open::close_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+        )),
         SYS_stat => as_ret(crate::functions::fs::stat::stat_syscall(a0, a1)),
-        SYS_fstat => as_ret(crate::functions::fs::stat::fstat_syscall(a0 as i32, a1)),
+        SYS_fstat => as_ret(crate::functions::fs::stat::fstat_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+        )),
         SYS_lstat => as_ret(crate::functions::fs::stat::lstat_syscall(a0, a1)),
         // statx (T1 G1 实装): 扩展文件状态 (Linux struct statx)
         SYS_statx => as_ret(crate::functions::fs::stat::statx_syscall(
-            a0 as i32, a1, a2 as u32, a3 as u32, a4,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            crate::functions::intcast::low_u32_from_u64(a2),
+            crate::functions::intcast::low_u32_from_u64(a3),
+            a4,
         )),
         // utimensat (T1 G1 实装): 设置文件时间戳 (仅 AT_FDCWD)
-        SYS_utimensat => {
-            crate::functions::fs::stat::utimensat_syscall(a0 as i32, a1, a2, a3 as i32)
-        }
-        SYS_creat => as_ret(crate::functions::fs::open::creat_syscall(a0, a2 as i32)),
+        SYS_utimensat => crate::functions::fs::stat::utimensat_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            a2,
+            crate::functions::intcast::low_i32_from_u64(a3),
+        ),
+        SYS_creat => as_ret(crate::functions::fs::open::creat_syscall(
+            a0,
+            crate::functions::intcast::low_i32_from_u64(a2),
+        )),
 
         // 文件系统操作
-        SYS_mkdir => as_ret(crate::functions::fs::mode::mkdir_syscall(a0, a1 as i32)),
-        SYS_rmdir => as_ret(crate::functions::fs::mode::rmdir_syscall(a0)),
-        SYS_chmod => as_ret(crate::functions::fs::mode::chmod_syscall(a0, a1 as u32)),
-        SYS_fchmod => as_ret(crate::functions::fs::mode::fchmod_syscall(
-            a0 as i32, a1 as u32,
+        SYS_mkdir => as_ret(crate::functions::fs::mode::mkdir_syscall(
+            a0,
+            crate::functions::intcast::low_i32_from_u64(a1),
         )),
-        SYS_umask => as_ret(crate::functions::fs::mode::umask_syscall(a0 as u32)),
-        SYS_access => as_ret(crate::functions::fs::access::access_syscall(a0, a1 as i32)),
+        SYS_rmdir => as_ret(crate::functions::fs::mode::rmdir_syscall(a0)),
+        SYS_chmod => as_ret(crate::functions::fs::mode::chmod_syscall(
+            a0,
+            crate::functions::intcast::low_u32_from_u64(a1),
+        )),
+        SYS_fchmod => as_ret(crate::functions::fs::mode::fchmod_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_u32_from_u64(a1),
+        )),
+        SYS_umask => as_ret(crate::functions::fs::mode::umask_syscall(
+            crate::functions::intcast::low_u32_from_u64(a0),
+        )),
+        SYS_access => as_ret(crate::functions::fs::access::access_syscall(
+            a0,
+            crate::functions::intcast::low_i32_from_u64(a1),
+        )),
         SYS_unlink => as_ret(crate::functions::fs::access::unlink_syscall(a0)),
         SYS_rename => as_ret(crate::functions::fs::misc::rename_syscall(a0, a1)),
         SYS_symlink => as_ret(crate::functions::fs::link::symlink_syscall(a0, a1)),
@@ -188,32 +219,54 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
 
         // *at() 系列
         SYS_openat => as_ret(crate::functions::fs::open::open_syscall(
-            a1, a2 as i32, a3 as i32,
+            a1,
+            crate::functions::intcast::low_i32_from_u64(a2),
+            crate::functions::intcast::low_i32_from_u64(a3),
         )),
-        SYS_newfstatat => as_ret(crate::functions::fs::stat::fstat_syscall(a1 as i32, a2)),
+        SYS_newfstatat => as_ret(crate::functions::fs::stat::fstat_syscall(
+            crate::functions::intcast::low_i32_from_u64(a1),
+            a2,
+        )),
         SYS_unlinkat => as_ret(crate::functions::fs::access::unlink_syscall(a1)),
         SYS_renameat => as_ret(crate::functions::fs::misc::rename_syscall(a1, a3)),
         SYS_linkat => as_ret(crate::functions::fs::link::link_syscall(a1, a3)),
         SYS_symlinkat => as_ret(crate::functions::fs::link::symlink_syscall(a0, a2)),
         SYS_readlinkat => as_ret(crate::functions::fs::link::readlink_syscall(a1, a2, a3)),
-        SYS_fchmodat => as_ret(crate::functions::fs::mode::chmod_syscall(a1, a2 as u32)),
+        SYS_fchmodat => as_ret(crate::functions::fs::mode::chmod_syscall(
+            a1,
+            crate::functions::intcast::low_u32_from_u64(a2),
+        )),
         SYS_faccessat => as_ret(crate::functions::fs::access::faccessat_syscall(
-            a0 as i32, a1, a2 as i32, a3 as i32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            crate::functions::intcast::low_i32_from_u64(a2),
+            crate::functions::intcast::low_i32_from_u64(a3),
         )),
         SYS_fchown => as_ret(crate::functions::fs::misc::fchown_syscall(
-            a0 as i32, a1, a2,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            a2,
         )),
         // fchownat (T1 G1 实装): dirfd 相对路径 (当前仅 AT_FDCWD)
         SYS_fchownat => crate::functions::fs::file_ops::fchownat_syscall(
-            a0 as i32, a1, a2 as u32, a3 as u32, a4 as i32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            crate::functions::intcast::low_u32_from_u64(a2),
+            crate::functions::intcast::low_u32_from_u64(a3),
+            crate::functions::intcast::low_i32_from_u64(a4),
         ),
 
         // 同步与挂载
         SYS_sync => as_ret(crate::functions::fs::misc::sync_syscall()),
         // fdatasync (分册 9 批次 3): 与 fsync 同语义复用 (VFS 整体同步, 无数据/元数据区分)
-        SYS_fsync | SYS_fdatasync => as_ret(crate::functions::fs::misc::fsync_syscall(a0 as i32)),
+        SYS_fsync | SYS_fdatasync => as_ret(crate::functions::fs::misc::fsync_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+        )),
         SYS_mount => as_ret(crate::functions::fs::mount::mount_syscall(a0, a1, a2)),
-        SYS_umount2 => as_ret(crate::functions::fs::mount::umount2_syscall(a0, a1 as i32)),
+        SYS_umount2 => as_ret(crate::functions::fs::mount::umount2_syscall(
+            a0,
+            crate::functions::intcast::low_i32_from_u64(a1),
+        )),
 
         // 路径
         SYS_getcwd => as_ret(crate::functions::fs::path::getcwd_syscall(a0, a1)),
@@ -224,89 +277,151 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
 
         // 文件描述符操作
         SYS_pipe => as_ret(crate::functions::fs::io::pipe_syscall(a0)),
-        SYS_pipe2 => as_ret(crate::functions::fs::io::pipe2_syscall(a0, a2 as i32)),
-        SYS_dup => as_ret(crate::functions::fs::io::dup_syscall(a0 as i32)),
-        SYS_dup2 => as_ret(crate::functions::fs::io::dup2_syscall(a0 as i32, a1 as i32)),
+        SYS_pipe2 => as_ret(crate::functions::fs::io::pipe2_syscall(
+            a0,
+            crate::functions::intcast::low_i32_from_u64(a2),
+        )),
+        SYS_dup => as_ret(crate::functions::fs::io::dup_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+        )),
+        SYS_dup2 => as_ret(crate::functions::fs::io::dup2_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
+        )),
         SYS_dup3 => as_ret(crate::functions::fs::io::dup3_syscall(
-            a0 as i32, a1 as i32, a2 as i32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
+            crate::functions::intcast::low_i32_from_u64(a2),
         )),
         SYS_fcntl => as_ret(crate::functions::fs::io::fcntl_syscall(
-            a0 as i32, a1 as i32, a2,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
+            a2,
         )),
 
         // 文件操作
-        SYS_ioctl => crate::functions::fs::file_ops::ioctl_syscall(a0 as i32, a1, a2),
-        SYS_poll | SYS_select => {
-            crate::functions::fs::file_ops::poll_syscall(a0, a1 as u32, a2 as i32)
-        }
+        SYS_ioctl => crate::functions::fs::file_ops::ioctl_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            a2,
+        ),
+        SYS_poll | SYS_select => crate::functions::fs::file_ops::poll_syscall(
+            a0,
+            crate::functions::intcast::low_u32_from_u64(a1),
+            crate::functions::intcast::low_i32_from_u64(a2),
+        ),
         // ppoll (T1 G5 实装): poll + timespec 超时 + 临时信号屏蔽字
-        SYS_ppoll => crate::functions::fs::file_ops::ppoll_syscall(a0, a1 as u32, a2, a3, a4),
-        SYS_chown => crate::functions::fs::file_ops::chown_syscall(a0, a1 as u32, a2 as u32),
+        SYS_ppoll => crate::functions::fs::file_ops::ppoll_syscall(
+            a0,
+            crate::functions::intcast::low_u32_from_u64(a1),
+            a2,
+            a3,
+            a4,
+        ),
+        SYS_chown => crate::functions::fs::file_ops::chown_syscall(
+            a0,
+            crate::functions::intcast::low_u32_from_u64(a1),
+            crate::functions::intcast::low_u32_from_u64(a2),
+        ),
         SYS_truncate => crate::functions::fs::file_ops::truncate_syscall(a0, a1.cast_signed()),
-        SYS_ftruncate => {
-            crate::functions::fs::file_ops::ftruncate_syscall(a0 as i32, a1.cast_signed())
-        }
+        SYS_ftruncate => crate::functions::fs::file_ops::ftruncate_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1.cast_signed(),
+        ),
         // fallocate (T1 G1 实装): 预分配 (仅 mode=0, 扩展文件大小)
-        SYS_fallocate => {
-            crate::functions::fs::file_ops::fallocate_syscall(a0 as i32, a1 as i32, a2, a3)
-        }
-        SYS_flock => crate::functions::fs::file_ops::flock_syscall(a0 as i32, a1 as i32),
-        SYS_lseek => {
-            crate::functions::fs::dir_ops::lseek_syscall(a0 as i32, a1.cast_signed(), a2 as i32)
-        }
-        SYS_getdents => crate::functions::fs::dir_ops::getdents_syscall(a0 as i32, a1, a2),
+        SYS_fallocate => crate::functions::fs::file_ops::fallocate_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
+            a2,
+            a3,
+        ),
+        SYS_flock => crate::functions::fs::file_ops::flock_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
+        ),
+        SYS_lseek => crate::functions::fs::dir_ops::lseek_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1.cast_signed(),
+            crate::functions::intcast::low_i32_from_u64(a2),
+        ),
+        SYS_getdents => crate::functions::fs::dir_ops::getdents_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            a2,
+        ),
 
         // inotify
-        SYS_inotify_init1 => crate::functions::fs::inotify::sys_inotify_init1(a0 as i32),
+        SYS_inotify_init1 => crate::functions::fs::inotify::sys_inotify_init1(
+            crate::functions::intcast::low_i32_from_u64(a0),
+        ),
         // inotify_init (T1 G5 实装): 遗留接口, 等价 inotify_init1(0)
         SYS_inotify_init => crate::functions::fs::inotify::sys_inotify_init1(0),
         SYS_inotify_add_watch => crate::functions::fs::inotify::sys_inotify_add_watch(
             a0.cast_signed(),
-            a1 as u32,
-            a2 as u32,
+            crate::functions::intcast::low_u32_from_u64(a1),
+            crate::functions::intcast::low_u32_from_u64(a2),
         ),
-        SYS_inotify_rm_watch => {
-            crate::functions::fs::inotify::sys_inotify_rm_watch(a0.cast_signed(), a1 as i32)
-        }
+        SYS_inotify_rm_watch => crate::functions::fs::inotify::sys_inotify_rm_watch(
+            a0.cast_signed(),
+            crate::functions::intcast::low_i32_from_u64(a1),
+        ),
 
         // 时间与统计
-        SYS_clock_gettime => crate::functions::timer::clock::clock_gettime_syscall(a0 as i32, a1),
+        SYS_clock_gettime => crate::functions::timer::clock::clock_gettime_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+        ),
         SYS_times => as_ret(crate::functions::fs::misc::times_syscall(a0)),
         SYS_time => as_ret(crate::functions::fs::misc::time_syscall(a0)),
-        SYS_getitimer => as_ret(crate::functions::fs::misc::getitimer_syscall(a0 as i32, a1)),
-        SYS_alarm => crate::functions::intcast::i64_from_usize(
-            crate::functions::fs::misc::alarm_syscall(a0 as u32),
-        ),
+        SYS_getitimer => as_ret(crate::functions::fs::misc::getitimer_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+        )),
+        SYS_alarm => {
+            crate::functions::intcast::i64_from_usize(crate::functions::fs::misc::alarm_syscall(
+                crate::functions::intcast::low_u32_from_u64(a0),
+            ))
+        }
         SYS_setitimer => as_ret(crate::functions::fs::misc::setitimer_syscall(
-            a0 as i32, a1, a2,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            a2,
         )),
 
         // 高级文件操作
         SYS_copy_file_range => as_ret(crate::functions::fs::io::copy_file_range_syscall(
-            a0 as i32,
+            crate::functions::intcast::low_i32_from_u64(a0),
             a1,
-            a2 as i32,
+            crate::functions::intcast::low_i32_from_u64(a2),
             a3,
-            a4 as usize,
+            crate::functions::intcast::usize_from_u64(a4),
         )),
         // sendfile / splice (T2 批 3, syscall-followup; 阶段 2-A framekernel):
         // 零拷贝数据传输, 权威实现已完整下沉 functions::fs::sendfile (0 unsafe),
         // 用户指针经 privileged 安全 API, VFS/IPC 经 privileged 公开 safe API.
-        SYS_sendfile => {
-            crate::functions::fs::sendfile::sys_sendfile(a0 as i32, a1 as i32, a2, a3 as usize)
-        }
+        SYS_sendfile => crate::functions::fs::sendfile::sys_sendfile(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
+            a2,
+            crate::functions::intcast::usize_from_u64(a3),
+        ),
         SYS_splice => crate::functions::fs::sendfile::sys_splice(
-            a0 as i32,
+            crate::functions::intcast::low_i32_from_u64(a0),
             a1,
-            a2 as i32,
+            crate::functions::intcast::low_i32_from_u64(a2),
             a3,
-            a4 as usize,
-            a5 as u32,
+            crate::functions::intcast::usize_from_u64(a4),
+            crate::functions::intcast::low_u32_from_u64(a5),
         ),
         SYS_name_to_handle_at => {
             // 显式错误透传: 具体 Errno 而非通用负值 (B05-41 返工)
             match crate::functions::fs::file_handle::name_to_handle_at_syscall(
-                a0 as i32, a1, a2 as i32, a3, a4 as u64, a5 as u32,
+                crate::functions::intcast::low_i32_from_u64(a0),
+                a1,
+                crate::functions::intcast::low_i32_from_u64(a2),
+                a3,
+                a4 as u64,
+                crate::functions::intcast::low_u32_from_u64(a5),
             ) {
                 Ok(v) => v,
                 Err(e) => e.as_ret(),
@@ -315,7 +430,10 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_open_by_handle_at => {
             // 显式错误透传: 具体 Errno 而非通用负值 (B05-41 返工)
             match crate::functions::fs::file_handle::open_by_handle_at_syscall(
-                a0 as i32, a1, a2 as i32, a3 as u32,
+                crate::functions::intcast::low_i32_from_u64(a0),
+                a1,
+                crate::functions::intcast::low_i32_from_u64(a2),
+                crate::functions::intcast::low_u32_from_u64(a3),
             ) {
                 Ok(v) => v,
                 Err(e) => e.as_ret(),
@@ -327,20 +445,20 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
             a0,
             a1,
             a2,
-            a3 as usize,
+            crate::functions::intcast::usize_from_u64(a3),
             a5,
         )),
         SYS_getxattr => as_ret(crate::functions::fs::xattr::getxattr_syscall(
             a0,
             a1,
             a2,
-            a3 as usize,
+            crate::functions::intcast::usize_from_u64(a3),
             a5,
         )),
         SYS_listxattr => as_ret(crate::functions::fs::xattr::listxattr_syscall(
             a0,
             a1,
-            a2 as usize,
+            crate::functions::intcast::usize_from_u64(a2),
             a4,
         )),
         SYS_removexattr => as_ret(crate::functions::fs::xattr::removexattr_syscall(a0, a1, a4)),
@@ -383,18 +501,34 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_getppid => crate::functions::intcast::i64_from_usize(
             crate::functions::proc::info::getppid_syscall(),
         ),
-        SYS_getpgid => as_ret(crate::functions::proc::info::getpgid_syscall(a0 as i32)),
+        SYS_getpgid => as_ret(crate::functions::proc::info::getpgid_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+        )),
         SYS_gettid => {
             crate::functions::intcast::i64_from_usize(crate::functions::proc::info::gettid_syscall())
         }
         SYS_setsid => crate::functions::proc::session::proc_setsid(),
-        SYS_getsid => crate::functions::proc::session::proc_getsid(a0 as i32),
-        SYS_setpgid => crate::functions::proc::session::proc_setpgid(a0 as i32, a1 as i32),
-        SYS_tcgetpgrp => crate::functions::proc::session::tcgetpgrp_syscall(a0 as i32),
-        SYS_tcsetpgrp => crate::functions::proc::session::tcsetpgrp_syscall(a0 as i32, a1 as i32),
+        SYS_getsid => crate::functions::proc::session::proc_getsid(
+            crate::functions::intcast::low_i32_from_u64(a0),
+        ),
+        SYS_setpgid => crate::functions::proc::session::proc_setpgid(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
+        ),
+        SYS_tcgetpgrp => crate::functions::proc::session::tcgetpgrp_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+        ),
+        SYS_tcsetpgrp => crate::functions::proc::session::tcsetpgrp_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
+        ),
 
         // seccomp / prctl (T2 批 2, syscall-followup)
-        SYS_seccomp => crate::functions::proc::seccomp::seccomp_syscall(a0 as u32, a1 as u32, a2),
+        SYS_seccomp => crate::functions::proc::seccomp::seccomp_syscall(
+            crate::functions::intcast::low_u32_from_u64(a0),
+            crate::functions::intcast::low_u32_from_u64(a1),
+            a2,
+        ),
         SYS_prctl => {
             crate::functions::proc::seccomp::prctl_syscall(a0.cast_signed(), a1, a2, a3, a4)
         }
@@ -405,16 +539,23 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
 
         // 信号
         SYS_rt_sigaction => as_ret(crate::functions::proc::signal::rt_sigaction_syscall(
-            a0 as i32, a1, a2,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            a2,
         )),
         SYS_rt_sigprocmask => as_ret(crate::functions::proc::signal::rt_sigprocmask_syscall(
-            a0 as i32, a1, a2,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            a2,
         )),
         SYS_kill => as_ret(crate::functions::proc::signal::kill_syscall(
-            a0 as i32, a1 as i32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
         )),
         SYS_tgkill => as_ret(crate::functions::proc::signal::tgkill_syscall(
-            a0 as i32, a1 as i32, a2 as i32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
+            crate::functions::intcast::low_i32_from_u64(a2),
         )),
         // sigaltstack (分册 9 批次 3): 替代栈注册/查询, 委托 privileged TCB
         SYS_sigaltstack => as_ret(crate::functions::proc::signal::sigaltstack_syscall(a0, a1)),
@@ -423,21 +564,30 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_arch_prctl => as_ret(crate::functions::proc::clone::arch_prctl_syscall(a0, a1)),
 
         // 进程优先级
-        SYS_nice => crate::functions::proc::priority::nice_syscall(a0 as i32),
-        SYS_getpriority => {
-            crate::functions::proc::priority::getpriority_syscall(a0 as i32, a1 as u32)
-        }
-        SYS_setpriority => {
-            crate::functions::proc::priority::setpriority_syscall(a0 as i32, a1 as u32, a2 as i32)
-        }
+        SYS_nice => crate::functions::proc::priority::nice_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+        ),
+        SYS_getpriority => crate::functions::proc::priority::getpriority_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_u32_from_u64(a1),
+        ),
+        SYS_setpriority => crate::functions::proc::priority::setpriority_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_u32_from_u64(a1),
+            crate::functions::intcast::low_i32_from_u64(a2),
+        ),
 
         // CPU 亲和性
-        SYS_sched_setaffinity => {
-            crate::functions::proc::affinity::sched_setaffinity_syscall(a0 as i32, a1 as u32, a2)
-        }
-        SYS_sched_getaffinity => {
-            crate::functions::proc::affinity::sched_getaffinity_syscall(a0 as i32, a1 as u32, a2)
-        }
+        SYS_sched_setaffinity => crate::functions::proc::affinity::sched_setaffinity_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_u32_from_u64(a1),
+            a2,
+        ),
+        SYS_sched_getaffinity => crate::functions::proc::affinity::sched_getaffinity_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_u32_from_u64(a1),
+            a2,
+        ),
 
         // 进程生命周期
         SYS_fork => crate::functions::proc::lifecycle::fork_syscall(),
@@ -445,26 +595,44 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_execve => as_ret(crate::functions::proc::exec::execve_syscall(a0, a1, a2)),
         // execveat (T1 G7): execve 的目录 fd 相对版本 (仅 AT_FDCWD)
         SYS_execveat => as_ret(crate::functions::proc::exec::execveat_syscall(
-            a0 as i32, a1, a2, a3, a4 as i32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            a2,
+            a3,
+            crate::functions::intcast::low_i32_from_u64(a4),
         )),
         // SIMPLIFIED: exit_group 暂等同 exit (B05-43 返工登记); 影响面: 线程组未实现
         // 组级终止, 仅结束当前进程; 何时需扩展: 引入 tgid/线程组基础结构后遍历组内
         // 全部线程终止 (审查 DECISION-071 关联).
-        SYS_exit | SYS_exit_group => crate::functions::proc::lifecycle::exit_syscall(a0 as i32),
+        SYS_exit | SYS_exit_group => crate::functions::proc::lifecycle::exit_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+        ),
         SYS_sched_yield => crate::functions::proc::lifecycle::sched_yield_syscall(),
 
         // 系统信息
-        SYS_getrusage => crate::functions::proc::sysinfo::getrusage_syscall(a0 as i32, a1),
+        SYS_getrusage => crate::functions::proc::sysinfo::getrusage_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+        ),
         SYS_sysinfo => crate::functions::proc::sysinfo::sysinfo_syscall(a0),
-        SYS_getrlimit => crate::functions::proc::sysinfo::getrlimit_syscall(a0 as i32, a1),
-        SYS_setrlimit => crate::functions::proc::sysinfo::setrlimit_syscall(a0 as i32, a1),
+        SYS_getrlimit => crate::functions::proc::sysinfo::getrlimit_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+        ),
+        SYS_setrlimit => crate::functions::proc::sysinfo::setrlimit_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+        ),
         SYS_uname => as_ret(crate::functions::proc::info::uname_syscall(a0)),
         SYS_gettimeofday => as_ret(crate::functions::timer::clock::gettimeofday_syscall(a0)),
         // T1 G6: 时间组 — 墙钟设置 / 时钟调整 / 带时钟源的睡眠
         SYS_settimeofday => as_ret(crate::functions::timer::clock::settimeofday_syscall(a0, a1)),
         SYS_adjtimex => crate::functions::timer::clock::adjtimex_syscall(a0),
         SYS_clock_nanosleep => as_ret(crate::functions::timer::clock::clock_nanosleep_syscall(
-            a0 as i32, a1 as i32, a2, a3,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
+            a2,
+            a3,
         )),
 
         // 定时器
@@ -514,50 +682,76 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
             ))
         }
         SYS_wait4 => as_ret(crate::functions::proc::wait4::wait4_syscall(
-            a0 as i32, a1, a2 as i32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            crate::functions::intcast::low_i32_from_u64(a2),
         )),
         SYS_waitid => as_ret(crate::functions::proc::wait4::waitid_syscall(
-            a0 as i32, a1, a2, a3 as i32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            a2,
+            crate::functions::intcast::low_i32_from_u64(a3),
         )),
         SYS_set_robust_list => as_ret(crate::functions::proc::clone::set_robust_list_syscall(
             a0, a1,
         )),
         SYS_get_robust_list => as_ret(crate::functions::proc::clone::get_robust_list_syscall(
-            a0 as i32, a1, a2,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            a2,
         )),
 
         // 系统信息
-        SYS_reboot => crate::functions::proc::sysinfo::reboot_syscall(a0 as i32),
+        SYS_reboot => crate::functions::proc::sysinfo::reboot_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+        ),
         SYS_sethostname => crate::functions::proc::sysinfo::sethostname_syscall(a0, a1),
         // setdomainname (T1 G7): 与 sethostname 同构, 写入当前进程 UTS namespace
         SYS_setdomainname => crate::functions::proc::sysinfo::setdomainname_syscall(a0, a1),
 
         // memfd
         SYS_memfd_create => as_ret(crate::functions::proc::memfd::memfd_create_syscall(
-            a0, a1 as u32,
+            a0,
+            crate::functions::intcast::low_u32_from_u64(a1),
         )),
 
         // process_vm (T1 G2): 跨进程用户内存向量读写
         SYS_process_vm_readv => as_ret(
             crate::functions::proc::process_vm::process_vm_readv_syscall(
-                a0 as i32, a1, a2, a3, a4, a5,
+                crate::functions::intcast::low_i32_from_u64(a0),
+                a1,
+                a2,
+                a3,
+                a4,
+                a5,
             ),
         ),
         SYS_process_vm_writev => as_ret(
             crate::functions::proc::process_vm::process_vm_writev_syscall(
-                a0 as i32, a1, a2, a3, a4, a5,
+                crate::functions::intcast::low_i32_from_u64(a0),
+                a1,
+                a2,
+                a3,
+                a4,
+                a5,
             ),
         ),
 
         // pidfd
         SYS_pidfd_open => as_ret(crate::functions::proc::pidfd::pidfd_open(
-            a0 as u32, a1 as u32,
+            crate::functions::intcast::low_u32_from_u64(a0),
+            crate::functions::intcast::low_u32_from_u64(a1),
         )),
         SYS_pidfd_send_signal => as_ret(crate::functions::proc::pidfd::pidfd_send_signal(
-            a0 as u32, a1 as i32, a2, a3 as u32,
+            crate::functions::intcast::low_u32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
+            a2,
+            crate::functions::intcast::low_u32_from_u64(a3),
         )),
         SYS_pidfd_getfd => as_ret(crate::functions::proc::pidfd::pidfd_getfd(
-            a0 as u32, a1 as u32, a2 as u32,
+            crate::functions::intcast::low_u32_from_u64(a0),
+            crate::functions::intcast::low_u32_from_u64(a1),
+            crate::functions::intcast::low_u32_from_u64(a2),
         )),
 
         _ => return None,
@@ -575,56 +769,102 @@ fn dispatch_net(num: u64, args: [u64; 6]) -> Option<i64> {
 
     Some(match num {
         SYS_socket => as_ret(crate::functions::net::syscall::socket_syscall(
-            a0 as i32, a1 as i32, a2 as i32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
+            crate::functions::intcast::low_i32_from_u64(a2),
         )),
         SYS_connect => as_ret(crate::functions::net::syscall::connect_syscall(
-            a0 as i32, a1, a2 as u32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            crate::functions::intcast::low_u32_from_u64(a2),
         )),
         SYS_accept => as_ret(crate::functions::net::syscall::accept_syscall(
-            a0 as i32, a1, a2,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            a2,
         )),
         SYS_sendto => as_ret(crate::functions::net::syscall::sendto_syscall(
-            a0 as i32, a1, a2 as u32, a3 as i32, a4, a5 as u32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            crate::functions::intcast::low_u32_from_u64(a2),
+            crate::functions::intcast::low_i32_from_u64(a3),
+            a4,
+            crate::functions::intcast::low_u32_from_u64(a5),
         )),
         SYS_recvfrom => as_ret(crate::functions::net::syscall::recvfrom_syscall(
-            a0 as i32, a1, a2 as u32, a3 as i32, a4, a5,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            crate::functions::intcast::low_u32_from_u64(a2),
+            crate::functions::intcast::low_i32_from_u64(a3),
+            a4,
+            a5,
         )),
         SYS_shutdown => as_ret(crate::functions::net::syscall::shutdown_syscall(
-            a0 as i32, a1 as i32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
         )),
         SYS_bind => as_ret(crate::functions::net::syscall::bind_syscall(
-            a0 as i32, a1, a2 as u32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            crate::functions::intcast::low_u32_from_u64(a2),
         )),
         SYS_listen => as_ret(crate::functions::net::syscall::listen_syscall(
-            a0 as i32, a1 as i32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
         )),
         SYS_sendmsg => as_ret(crate::functions::net::syscall::sendmsg_syscall(
-            a0 as i32, a1, a2 as i32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            crate::functions::intcast::low_i32_from_u64(a2),
         )),
         SYS_recvmsg => as_ret(crate::functions::net::syscall::recvmsg_syscall(
-            a0 as i32, a1, a2 as i32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            crate::functions::intcast::low_i32_from_u64(a2),
         )),
         // recvmmsg/sendmmsg/socketpair (T1 G3 实装): UDS 分流在 functions 层
         SYS_recvmmsg => as_ret(crate::functions::net::syscall::recvmmsg_syscall(
-            a0 as i32, a1, a2 as u32, a3 as u32, a4,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            crate::functions::intcast::low_u32_from_u64(a2),
+            crate::functions::intcast::low_u32_from_u64(a3),
+            a4,
         )),
         SYS_sendmmsg => as_ret(crate::functions::net::syscall::sendmmsg_syscall(
-            a0 as i32, a1, a2 as u32, a3 as u32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            crate::functions::intcast::low_u32_from_u64(a2),
+            crate::functions::intcast::low_u32_from_u64(a3),
         )),
         SYS_socketpair => as_ret(crate::functions::net::syscall::socketpair_syscall(
-            a0 as i32, a1 as i32, a2 as i32, a3,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
+            crate::functions::intcast::low_i32_from_u64(a2),
+            a3,
         )),
         SYS_setsockopt => as_ret(crate::functions::net::syscall::setsockopt_syscall(
-            a0 as i32, a1 as i32, a2 as i32, a3, a4 as u32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
+            crate::functions::intcast::low_i32_from_u64(a2),
+            a3,
+            crate::functions::intcast::low_u32_from_u64(a4),
         )),
         SYS_getsockopt => as_ret(crate::functions::net::syscall::getsockopt_syscall(
-            a0 as i32, a1 as i32, a2 as i32, a3, a4,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
+            crate::functions::intcast::low_i32_from_u64(a2),
+            a3,
+            a4,
         )),
         SYS_getsockname => as_ret(crate::functions::net::syscall::getsockname_syscall(
-            a0 as i32, a1, a2,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            a2,
         )),
         SYS_getpeername => as_ret(crate::functions::net::syscall::getpeername_syscall(
-            a0 as i32, a1, a2,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            a2,
         )),
 
         _ => return None,
@@ -643,13 +883,20 @@ fn dispatch_mm(num: u64, args: [u64; 6]) -> Option<i64> {
     Some(match num {
         // 基础内存管理
         SYS_mprotect => as_ret(crate::functions::mm::mprotect::mprotect_syscall(
-            a0, a1, a2 as i32,
+            a0,
+            a1,
+            crate::functions::intcast::low_i32_from_u64(a2),
         )),
         SYS_brk => as_ret(crate::functions::mm::brk::brk_syscall(a0)),
 
         // mmap 系列
         SYS_mmap => crate::functions::mm::mmap::mmap_syscall_entry(
-            a0, a1, a2 as i32, a3 as i32, a4 as i32, a5,
+            a0,
+            a1,
+            crate::functions::intcast::low_i32_from_u64(a2),
+            crate::functions::intcast::low_i32_from_u64(a3),
+            crate::functions::intcast::low_i32_from_u64(a4),
+            a5,
         ),
         SYS_munmap => crate::functions::mm::mmap::munmap_syscall_entry(a0, a1),
         SYS_mremap => {
@@ -679,16 +926,23 @@ fn dispatch_mm(num: u64, args: [u64; 6]) -> Option<i64> {
 
         // NUMA
         // mbind (T1 G4 实装): 地址范围级 NUMA 策略 (VMA 级落地)
-        SYS_mbind => {
-            crate::functions::mm::numa::mbind_syscall(a0, a1, a2 as u32, a3, a4, a5 as u32)
-        }
+        SYS_mbind => crate::functions::mm::numa::mbind_syscall(
+            a0,
+            a1,
+            crate::functions::intcast::low_u32_from_u64(a2),
+            a3,
+            a4,
+            crate::functions::intcast::low_u32_from_u64(a5),
+        ),
         SYS_get_mempolicy => crate::functions::mm::numa::sys_get_mempolicy(a0, a1),
         SYS_set_mempolicy => crate::functions::mm::numa::sys_set_mempolicy(a0, a1),
         SYS_migrate_pages => crate::functions::mm::numa::sys_migrate_pages(a0),
         SYS_getcpu => crate::functions::mm::numa::sys_getcpu(),
 
         // userfaultfd (T1 G4 实装): 用户态缺页处理 fd (ioctl/read 由 fd 路由分发)
-        SYS_userfaultfd => crate::functions::mm::uffd::userfaultfd_syscall(a0 as u32),
+        SYS_userfaultfd => crate::functions::mm::uffd::userfaultfd_syscall(
+            crate::functions::intcast::low_u32_from_u64(a0),
+        ),
 
         _ => return None,
     })
@@ -707,7 +961,11 @@ fn dispatch_sync(num: u64, args: [u64; 6]) -> Option<i64> {
         // futex
         SYS_futex => {
             match crate::functions::sync::futex::futex_syscall(
-                a0, a1 as i32, a2 as i32, a3, a4 as u32,
+                a0,
+                crate::functions::intcast::low_i32_from_u64(a1),
+                crate::functions::intcast::low_i32_from_u64(a2),
+                a3,
+                crate::functions::intcast::low_u32_from_u64(a4),
             ) {
                 Ok(
                     crate::functions::sync::futex::FutexResult::Woken
@@ -722,50 +980,60 @@ fn dispatch_sync(num: u64, args: [u64; 6]) -> Option<i64> {
         }
 
         // epoll
-        SYS_epoll_create | SYS_epoll_create1 => as_ret(
-            crate::functions::sync::epoll::epoll_create_syscall(a0 as i32),
-        ),
+        SYS_epoll_create | SYS_epoll_create1 => {
+            as_ret(crate::functions::sync::epoll::epoll_create_syscall(
+                crate::functions::intcast::low_i32_from_u64(a0),
+            ))
+        }
         SYS_epoll_ctl => as_ret(crate::functions::sync::epoll::epoll_ctl_syscall(
             a0.cast_signed(),
-            a1 as i32,
-            a2 as i32,
+            crate::functions::intcast::low_i32_from_u64(a1),
+            crate::functions::intcast::low_i32_from_u64(a2),
             a3,
         )),
         SYS_epoll_wait => as_ret(crate::functions::sync::epoll::epoll_wait_syscall(
             a0.cast_signed(),
             a1,
-            a2 as i32,
-            a3 as i32,
+            crate::functions::intcast::low_i32_from_u64(a2),
+            crate::functions::intcast::low_i32_from_u64(a3),
         )),
         // epoll_pwait (T1 G5 实装): epoll_wait + 临时信号屏蔽字 (a4/a5)
         SYS_epoll_pwait => as_ret(crate::functions::sync::epoll::epoll_pwait_syscall(
             a0.cast_signed(),
             a1,
-            a2 as i32,
-            a3 as i32,
+            crate::functions::intcast::low_i32_from_u64(a2),
+            crate::functions::intcast::low_i32_from_u64(a3),
             a4,
             a5,
         )),
 
         // eventfd
         SYS_eventfd | SYS_eventfd2 => as_ret(crate::functions::sync::eventfd::eventfd_syscall(
-            a0, a1 as i32,
+            a0,
+            crate::functions::intcast::low_i32_from_u64(a1),
         )),
 
         // signalfd
         SYS_signalfd | SYS_signalfd4 => as_ret(crate::functions::sync::signalfd::signalfd_syscall(
-            a0 as i32, a1, a2 as i32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            crate::functions::intcast::low_i32_from_u64(a2),
         )),
 
         // timerfd
         SYS_timerfd_create => as_ret(crate::functions::timer::timerfd::timerfd_create_syscall(
-            a0 as i32, a1 as i32,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
         )),
         SYS_timerfd_settime => as_ret(crate::functions::timer::timerfd::timerfd_settime_syscall(
-            a0 as i32, a1 as i32, a2, a3,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a1),
+            a2,
+            a3,
         )),
         SYS_timerfd_gettime => as_ret(crate::functions::timer::timerfd::timerfd_gettime_syscall(
-            a0 as i32, a1,
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
         )),
 
         _ => return None,
@@ -800,40 +1068,67 @@ fn dispatch_sgeg(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_getgid => {
             crate::functions::intcast::i64_from_usize(crate::functions::sgeg::uid::getgid_syscall())
         }
-        SYS_setuid => as_ret(crate::functions::sgeg::uid::setuid_syscall(a0 as u32)),
-        SYS_setgid => as_ret(crate::functions::sgeg::uid::setgid_syscall(a0 as u32)),
+        SYS_setuid => as_ret(crate::functions::sgeg::uid::setuid_syscall(
+            crate::functions::intcast::low_u32_from_u64(a0),
+        )),
+        SYS_setgid => as_ret(crate::functions::sgeg::uid::setgid_syscall(
+            crate::functions::intcast::low_u32_from_u64(a0),
+        )),
         SYS_geteuid => {
             crate::functions::intcast::i64_from_usize(crate::functions::sgeg::uid::geteuid_syscall())
         }
         SYS_getegid => {
             crate::functions::intcast::i64_from_usize(crate::functions::sgeg::uid::getegid_syscall())
         }
-        SYS_seteuid => as_ret(crate::functions::sgeg::uid::seteuid_syscall(a0 as u32)),
-        SYS_setegid => as_ret(crate::functions::sgeg::uid::setegid_syscall(a0 as u32)),
+        SYS_seteuid => as_ret(crate::functions::sgeg::uid::seteuid_syscall(
+            crate::functions::intcast::low_u32_from_u64(a0),
+        )),
+        SYS_setegid => as_ret(crate::functions::sgeg::uid::setegid_syscall(
+            crate::functions::intcast::low_u32_from_u64(a0),
+        )),
         SYS_setreuid => as_ret(crate::functions::sgeg::uid::setreuid_syscall(
-            a0 as u32, a1 as u32,
+            crate::functions::intcast::low_u32_from_u64(a0),
+            crate::functions::intcast::low_u32_from_u64(a1),
         )),
         SYS_setregid => as_ret(crate::functions::sgeg::uid::setregid_syscall(
-            a0 as u32, a1 as u32,
+            crate::functions::intcast::low_u32_from_u64(a0),
+            crate::functions::intcast::low_u32_from_u64(a1),
         )),
 
         // SGEG 认证
         SYS_SGEG_LOGIN => crate::functions::sgeg::auth::auth_login_syscall(a0, a1),
         SYS_SGEG_LOGOUT => crate::functions::sgeg::auth::auth_logout_syscall(),
-        SYS_SGEG_CREATE_IDENTITY => {
-            crate::functions::sgeg::auth::auth_create_syscall(a0, a1, a2 as u8)
-        }
+        SYS_SGEG_CREATE_IDENTITY => crate::functions::sgeg::auth::auth_create_syscall(
+            a0,
+            a1,
+            crate::functions::intcast::low_u8_from_u64(a2),
+        ),
         SYS_SGEG_DELETE_IDENTITY => crate::functions::sgeg::auth::auth_delete_syscall(a0),
         SYS_SGEG_IDENTITY_INFO => crate::functions::sgeg::auth::auth_info_syscall(a0),
         SYS_SGEG_CHANGE_PASSWORD => crate::functions::sgeg::auth::auth_changepw_syscall(a0, a1),
         SYS_SGEG_VERIFY_PASSWORD => crate::functions::sgeg::auth::auth_verify_syscall(a0),
         SYS_SGEG_CREATE_FIRST => crate::functions::sgeg::auth::auth_create_first_syscall(a0),
-        SYS_SGEG_GRANT => crate::functions::sgeg::auth::auth_grant_syscall(a0, a1, a2 as u16, a3),
-        SYS_SGEG_REVOKE => crate::functions::sgeg::auth::auth_revoke_syscall(a0, a1, a2 as u16, a3),
-        SYS_SGEG_CHECK_CAP => {
-            crate::functions::sgeg::auth::auth_check_cap_syscall(a0, a1 as u16, a2)
-        }
-        SYS_SGEG_GET_CAPS => crate::functions::sgeg::auth::auth_get_caps_syscall(a0, a1 as u16),
+        SYS_SGEG_GRANT => crate::functions::sgeg::auth::auth_grant_syscall(
+            a0,
+            a1,
+            crate::functions::intcast::low_u16_from_u64(a2),
+            a3,
+        ),
+        SYS_SGEG_REVOKE => crate::functions::sgeg::auth::auth_revoke_syscall(
+            a0,
+            a1,
+            crate::functions::intcast::low_u16_from_u64(a2),
+            a3,
+        ),
+        SYS_SGEG_CHECK_CAP => crate::functions::sgeg::auth::auth_check_cap_syscall(
+            a0,
+            crate::functions::intcast::low_u16_from_u64(a1),
+            a2,
+        ),
+        SYS_SGEG_GET_CAPS => crate::functions::sgeg::auth::auth_get_caps_syscall(
+            a0,
+            crate::functions::intcast::low_u16_from_u64(a1),
+        ),
         SYS_SGEG_GET_PWM => crate::functions::sgeg::auth::pwm_get_syscall(),
         SYS_SGEG_SET_PWM => crate::functions::sgeg::auth::pwm_set_syscall(a0),
 
@@ -848,40 +1143,61 @@ fn dispatch_sgeg(num: u64, args: [u64; 6]) -> Option<i64> {
         // SGEG 系统信息
         SYS_SGEG_GETHOSTNAME => crate::functions::proc::sysinfo::gethostname_syscall(a0, a1),
         SYS_SGEG_SETHOSTNAME => crate::functions::proc::sysinfo::sethostname_syscall(a0, a1),
-        SYS_SGEG_BOOT_CHECK => crate::functions::proc::sysinfo::boot_check_syscall(a0 as i32),
-        SYS_SGEG_PROC_LIST => crate::functions::proc::proc_mgmt::proc_list_syscall(a0, a1 as u32),
-        SYS_SGEG_PROC_SETPRI => {
-            crate::functions::proc::proc_mgmt::proc_setpri_syscall(a0 as u32, a1 as u32)
-        }
-        SYS_SGEG_PROC_CPUTIME => {
-            crate::functions::proc::proc_mgmt::sgeg_proc_cputime_syscall(a0 as u32)
-        }
+        SYS_SGEG_BOOT_CHECK => crate::functions::proc::sysinfo::boot_check_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+        ),
+        SYS_SGEG_PROC_LIST => crate::functions::proc::proc_mgmt::proc_list_syscall(
+            a0,
+            crate::functions::intcast::low_u32_from_u64(a1),
+        ),
+        SYS_SGEG_PROC_SETPRI => crate::functions::proc::proc_mgmt::proc_setpri_syscall(
+            crate::functions::intcast::low_u32_from_u64(a0),
+            crate::functions::intcast::low_u32_from_u64(a1),
+        ),
+        SYS_SGEG_PROC_CPUTIME => crate::functions::proc::proc_mgmt::sgeg_proc_cputime_syscall(
+            crate::functions::intcast::low_u32_from_u64(a0),
+        ),
         SYS_SGEG_PROC_SLEEP => {
             // 单位约定: 输入为毫秒 (SGEG 策略), 底层 nanosleep 为纳秒.
             const MS_TO_NS: u64 = 1_000_000;
             let ns = a0 * MS_TO_NS;
             as_ret(crate::functions::timer::sleep::nanosleep_syscall(ns, a1))
         }
-        SYS_SGEG_REBOOT => crate::functions::proc::sysinfo::reboot_syscall(a0 as i32),
+        SYS_SGEG_REBOOT => crate::functions::proc::sysinfo::reboot_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+        ),
 
         // 存储设备
         SYS_SGEG_DISK_LIST => as_ret(
-            crate::functions::sgeg::storage::disk::disk_list(a0, a1 as u32).map(|n| n as usize),
+            crate::functions::sgeg::storage::disk::disk_list(
+                a0,
+                crate::functions::intcast::low_u32_from_u64(a1),
+            )
+            .map(|n| n as usize),
         ),
         SYS_SGEG_DISK_INFO => {
-            match crate::functions::sgeg::storage::disk::disk_info(a0 as u32, a1) {
+            match crate::functions::sgeg::storage::disk::disk_info(
+                crate::functions::intcast::low_u32_from_u64(a0),
+                a1,
+            ) {
                 Ok(()) => 0,
                 Err(e) => e.as_ret(),
             }
         }
         SYS_SGEG_DISK_FORMAT => {
-            match crate::functions::sgeg::storage::disk::disk_format(a0 as u32, a1) {
+            match crate::functions::sgeg::storage::disk::disk_format(
+                crate::functions::intcast::low_u32_from_u64(a0),
+                a1,
+            ) {
                 Ok(()) => 0,
                 Err(e) => e.as_ret(),
             }
         }
         SYS_SGEG_DISK_PARTITION => {
-            match crate::functions::sgeg::storage::disk::disk_partition(a0 as u32, a1) {
+            match crate::functions::sgeg::storage::disk::disk_partition(
+                crate::functions::intcast::low_u32_from_u64(a0),
+                a1,
+            ) {
                 Ok(()) => 0,
                 Err(e) => e.as_ret(),
             }
@@ -889,15 +1205,18 @@ fn dispatch_sgeg(num: u64, args: [u64; 6]) -> Option<i64> {
         // T2 批 5: 引导安装 / 热插拔状态 自 privileged 回退层迁移
         // (委托 privileged 机制 sys_boot_install / sys_hotplug_status)
         #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
-        SYS_SGEG_DISK_INSTALL => {
-            crate::functions::sgeg::storage::disk::boot_install_syscall(a0 as u32)
-        }
+        SYS_SGEG_DISK_INSTALL => crate::functions::sgeg::storage::disk::boot_install_syscall(
+            crate::functions::intcast::low_u32_from_u64(a0),
+        ),
         #[cfg(feature = "kernel_test")]
         SYS_SGEG_DISK_INSTALL => Errno::ENOSYS.as_ret(),
-        SYS_SGEG_HOTPLUG_STATUS => {
-            crate::functions::sgeg::storage::disk::hotplug_status_syscall(a0, a1 as u32)
-        }
-        SYS_SGEG_FAT_FORMAT => match crate::functions::sgeg::storage::disk::fat_format(a0 as u32) {
+        SYS_SGEG_HOTPLUG_STATUS => crate::functions::sgeg::storage::disk::hotplug_status_syscall(
+            a0,
+            crate::functions::intcast::low_u32_from_u64(a1),
+        ),
+        SYS_SGEG_FAT_FORMAT => match crate::functions::sgeg::storage::disk::fat_format(
+            crate::functions::intcast::low_u32_from_u64(a0),
+        ) {
             Ok(()) => 0,
             Err(e) => e.as_ret(),
         },

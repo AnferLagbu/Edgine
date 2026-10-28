@@ -357,7 +357,10 @@ impl CpuFreqDriver {
         if (cpu_id as usize) >= indices.len() {
             return false;
         }
-        indices[cpu_id as usize].store(best_idx as u32, Ordering::Release);
+        indices[cpu_id as usize].store(
+            crate::privileged::lib::low_u32_from_usize(best_idx),
+            Ordering::Release,
+        );
         drop(indices);
 
         // 软件表更新后下写硬件调频寄存器 (x86_64 MSR; 其他架构/host-test no-op)
@@ -381,7 +384,10 @@ impl CpuFreqDriver {
                 drop(table);
                 let indices = self.per_cpu_freq_idx.lock();
                 for idx in indices.iter() {
-                    idx.store(last as u32, Ordering::Release);
+                    idx.store(
+                        crate::privileged::lib::low_u32_from_usize(last),
+                        Ordering::Release,
+                    );
                 }
             }
             FreqGovernor::Ondemand => {}
@@ -762,26 +768,32 @@ pub fn sys_pm_dispatch(pm: &PmSubsystem, cmd: u64, a1: u64, a2: u64) -> i64 {
 
     match cmd {
         0 => {
-            let target = SystemPowerState::from_u32(a1 as u32);
+            let target = SystemPowerState::from_u32(crate::privileged::lib::low_u32_from_u64(a1));
             // 挂起需要硬件操作
             pm_suspend(target)
         }
         1 => pm.get_state() as i64,
         2 => {
-            let gov = FreqGovernor::from_u32(a1 as u32);
+            let gov = FreqGovernor::from_u32(crate::privileged::lib::low_u32_from_u64(a1));
             pm.cpufreq.set_governor(gov);
             0
         }
         3 => pm.cpufreq.get_governor() as i64,
         4 => {
-            let cpu = a1 as u32;
-            let max = CpuIdleState::from_u32(a2 as u32);
+            let cpu = crate::privileged::lib::low_u32_from_u64(a1);
+            let max = CpuIdleState::from_u32(crate::privileged::lib::low_u32_from_u64(a2));
             pm.cpuidle.set_max_cstate(cpu, max);
             0
         }
-        5 => i64::from(pm.cpufreq.get_freq(a1 as u32)),
+        5 => i64::from(
+            pm.cpufreq
+                .get_freq(crate::privileged::lib::low_u32_from_u64(a1)),
+        ),
         6 => {
-            if pm.cpufreq.set_freq(a1 as u32, a2 as u32) {
+            if pm.cpufreq.set_freq(
+                crate::privileged::lib::low_u32_from_u64(a1),
+                crate::privileged::lib::low_u32_from_u64(a2),
+            ) {
                 0
             } else {
                 -(22i64) // EINVAL

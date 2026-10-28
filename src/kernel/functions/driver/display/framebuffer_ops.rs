@@ -297,7 +297,7 @@ fn blend_pixel_impl(canvas: &mut dyn PixelCanvas, x: u32, y: u32, color: Color) 
 
 /// 取浮点数的小数部分 (Wu 反走样辅助)
 fn fpart(x: f32) -> f32 {
-    x - (x as i32 as f32)
+    x - (crate::functions::intcast::i32_from_f32(x) as f32)
 }
 
 /// 取浮点数小数部分的补值 (Wu 反走样辅助)
@@ -330,15 +330,19 @@ fn draw_line_aa_impl(
     let dy = (y1 - y0) as f32;
     let gradient = if dx == 0.0 { 1.0f32 } else { dy / dx };
 
-    let xend_i = ((x0 as f32) + 0.5) as i32;
+    let xend_i = crate::functions::intcast::i32_from_f32((x0 as f32) + 0.5);
     let xend_f = xend_i as f32;
     let yend_f = y0 as f32 + gradient * (xend_f - x0 as f32);
     let xgap = rfpart(x0 as f32 + 0.5);
     let xpxl1 = xend_i;
-    let ypxl1 = yend_f as i32;
+    let ypxl1 = crate::functions::intcast::i32_from_f32(yend_f);
 
-    let a1 = crate::functions::intcast::u8_from_i32((rfpart(yend_f) * xgap * 255.0) as i32);
-    let a2 = crate::functions::intcast::u8_from_i32((fpart(yend_f) * xgap * 255.0) as i32);
+    let a1 = crate::functions::intcast::u8_from_i32(crate::functions::intcast::i32_from_f32(
+        rfpart(yend_f) * xgap * 255.0,
+    ));
+    let a2 = crate::functions::intcast::u8_from_i32(crate::functions::intcast::i32_from_f32(
+        fpart(yend_f) * xgap * 255.0,
+    ));
     if steep {
         blend_pixel_impl(
             canvas,
@@ -369,15 +373,19 @@ fn draw_line_aa_impl(
 
     let mut intery = yend_f + gradient;
 
-    let xend_i = ((x1 as f32) + 0.5) as i32;
+    let xend_i = crate::functions::intcast::i32_from_f32((x1 as f32) + 0.5);
     let xend_f = xend_i as f32;
     let yend_f = y1 as f32 + gradient * (xend_f - x1 as f32);
     let xgap = fpart(x1 as f32 + 0.5);
     let xpxl2 = xend_i;
-    let ypxl2 = yend_f as i32;
+    let ypxl2 = crate::functions::intcast::i32_from_f32(yend_f);
 
-    let a1 = crate::functions::intcast::u8_from_i32((rfpart(yend_f) * xgap * 255.0) as i32);
-    let a2 = crate::functions::intcast::u8_from_i32((fpart(yend_f) * xgap * 255.0) as i32);
+    let a1 = crate::functions::intcast::u8_from_i32(crate::functions::intcast::i32_from_f32(
+        rfpart(yend_f) * xgap * 255.0,
+    ));
+    let a2 = crate::functions::intcast::u8_from_i32(crate::functions::intcast::i32_from_f32(
+        fpart(yend_f) * xgap * 255.0,
+    ));
     if steep {
         blend_pixel_impl(
             canvas,
@@ -408,17 +416,21 @@ fn draw_line_aa_impl(
 
     if steep {
         for x in (xpxl1 + 1)..xpxl2 {
-            let alpha = crate::functions::intcast::u8_from_i32((rfpart(intery) * 255.0) as i32);
+            let alpha = crate::functions::intcast::u8_from_i32(
+                crate::functions::intcast::i32_from_f32(rfpart(intery) * 255.0),
+            );
             blend_pixel_impl(
                 canvas,
-                (intery as i32).cast_unsigned(),
+                crate::functions::intcast::i32_from_f32(intery).cast_unsigned(),
                 x.cast_unsigned(),
                 Color::new_alpha(color.r, color.g, color.b, alpha),
             );
-            let alpha = crate::functions::intcast::u8_from_i32((fpart(intery) * 255.0) as i32);
+            let alpha = crate::functions::intcast::u8_from_i32(
+                crate::functions::intcast::i32_from_f32(fpart(intery) * 255.0),
+            );
             blend_pixel_impl(
                 canvas,
-                ((intery + 1.0) as i32).cast_unsigned(),
+                crate::functions::intcast::i32_from_f32(intery + 1.0).cast_unsigned(),
                 x.cast_unsigned(),
                 Color::new_alpha(color.r, color.g, color.b, alpha),
             );
@@ -426,18 +438,22 @@ fn draw_line_aa_impl(
         }
     } else {
         for x in (xpxl1 + 1)..xpxl2 {
-            let alpha = crate::functions::intcast::u8_from_i32((rfpart(intery) * 255.0) as i32);
+            let alpha = crate::functions::intcast::u8_from_i32(
+                crate::functions::intcast::i32_from_f32(rfpart(intery) * 255.0),
+            );
             blend_pixel_impl(
                 canvas,
                 x.cast_unsigned(),
-                (intery as i32).cast_unsigned(),
+                crate::functions::intcast::i32_from_f32(intery).cast_unsigned(),
                 Color::new_alpha(color.r, color.g, color.b, alpha),
             );
-            let alpha = crate::functions::intcast::u8_from_i32((fpart(intery) * 255.0) as i32);
+            let alpha = crate::functions::intcast::u8_from_i32(
+                crate::functions::intcast::i32_from_f32(fpart(intery) * 255.0),
+            );
             blend_pixel_impl(
                 canvas,
                 x.cast_unsigned(),
-                ((intery + 1.0) as i32).cast_unsigned(),
+                crate::functions::intcast::i32_from_f32(intery + 1.0).cast_unsigned(),
                 Color::new_alpha(color.r, color.g, color.b, alpha),
             );
             intery += gradient;

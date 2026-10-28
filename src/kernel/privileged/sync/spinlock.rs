@@ -359,7 +359,9 @@ pub fn disable_interrupts() -> IrqSaveFlags {
 /// 通过 Arch trait 的 `interrupt_restore` 实现，架构无关。
 #[cfg(not(feature = "host-test"))]
 pub fn restore_interrupts(flags: &IrqSaveFlags) {
-    crate::arch!(interrupt_restore(flags.0 as usize));
+    crate::arch!(interrupt_restore(crate::privileged::lib::usize_from_u64(
+        flags.0
+    )));
 }
 
 // B08-14 前置: host-test no-op (与 disable_interrupts host 变体对应).

@@ -132,8 +132,6 @@ impl ProbeResult {
 ///
 /// `slot_hint` 为重插场景下复用的注册表槽位 (`None` 表示首次探测)。
 #[cfg(target_arch = "x86_64")]
-// 有意窄化: EGDF 全局下标当前以 u8 表示块设备编号
-#[expect(clippy::cast_possible_truncation)]
 fn probe_ahci(dev: &crate::privileged::pci::PciDevice, slot_hint: Option<usize>) -> ProbeResult {
     use crate::functions::egdf::register_block_device;
     use crate::privileged::mm::PAGE_SIZE;
@@ -151,7 +149,8 @@ fn probe_ahci(dev: &crate::privileged::pci::PciDevice, slot_hint: Option<usize>)
         return ProbeResult::failed();
     }
 
-    let mmio_base = (bar as usize) & !(PAGE_SIZE as usize - 1);
+    let mmio_base = crate::functions::intcast::usize_from_u64(bar)
+        & !(crate::functions::intcast::usize_from_u64(PAGE_SIZE) - 1);
     slog_info!(
         Driver,
         "AHCI: found at {:02X}:{:02X}.{}, BAR5=0x{:X}",
@@ -161,8 +160,10 @@ fn probe_ahci(dev: &crate::privileged::pci::PciDevice, slot_hint: Option<usize>)
         mmio_base
     );
 
-    let Some(mut controller) = ahci::AhciController::new(mmio_base as u64, PAGE_SIZE as usize)
-    else {
+    let Some(mut controller) = ahci::AhciController::new(
+        mmio_base as u64,
+        crate::functions::intcast::usize_from_u64(PAGE_SIZE),
+    ) else {
         slog_warn!(Driver, "AHCI: controller alloc failed (IoMem), skip");
         return ProbeResult::failed();
     };
@@ -188,14 +189,14 @@ fn probe_ahci(dev: &crate::privileged::pci::PciDevice, slot_hint: Option<usize>)
             let sectors = dev.blk_total_sectors();
             let dev_name = alloc::format!("ahci{ci}-p{pi}");
             let idx = register_block_device(dev_name.leak(), dev, None);
-            drives.push(idx as u8);
+            drives.push(crate::functions::intcast::low_u8_from_u32(idx));
             // 回写端口 → EGDF 下标映射: 端口级热插拔移除时据此墓碑化块设备
             if let Some(port) = AHCI_CONTROLLERS
                 .lock()
                 .get_mut(ci)
                 .and_then(|c| c.get_port(pi))
             {
-                port.set_drive(Some(idx as u8));
+                port.set_drive(Some(crate::functions::intcast::low_u8_from_u32(idx)));
             }
             slog_info!(
                 Driver,
@@ -218,8 +219,6 @@ fn probe_ahci(dev: &crate::privileged::pci::PciDevice, slot_hint: Option<usize>)
 /// `run_selftest` 仅为启动期 (`storage_init`) 置真: MSIX-03 受控自测内部会
 /// 自旋并 `halt()` 等待中断, 不可在软中断 (热插拔重枚举) 上下文执行。
 #[cfg(target_arch = "x86_64")]
-// 有意窄化: EGDF 全局下标当前以 u8 表示块设备编号
-#[expect(clippy::cast_possible_truncation)]
 fn probe_nvme(
     dev: &crate::privileged::pci::PciDevice,
     slot_hint: Option<usize>,
@@ -241,7 +240,8 @@ fn probe_nvme(
         return ProbeResult::failed();
     }
 
-    let mmio_base = (bar as usize) & !(PAGE_SIZE as usize - 1);
+    let mmio_base = crate::functions::intcast::usize_from_u64(bar)
+        & !(crate::functions::intcast::usize_from_u64(PAGE_SIZE) - 1);
     slog_info!(
         Driver,
         "NVMe: found at {:02X}:{:02X}.{}, BAR0=0x{:X}",
@@ -306,7 +306,7 @@ fn probe_nvme(
                 let sectors = dev.blk_total_sectors();
                 let dev_name = alloc::format!("nvme{ci}-ns{nsid}");
                 let idx = register_block_device(dev_name.leak(), dev, None);
-                drives.push(idx as u8);
+                drives.push(crate::functions::intcast::low_u8_from_u32(idx));
                 slog_info!(
                     Driver,
                     "NVMe: ctrl={} nsid={} registered, {} sectors",
@@ -556,8 +556,6 @@ pub fn drives_for_location(location: &DeviceLocation) -> Vec<u8> {
 /// (监听器可能反向访问 `AHCI_CONTROLLERS`)。锁序保持 `PROBED →
 /// AHCI_CONTROLLERS`, 与既有热插拔路径一致。
 #[cfg(target_arch = "x86_64")]
-// 有意窄化: EGDF 全局下标当前以 u8 表示块设备编号
-#[expect(clippy::cast_possible_truncation)]
 fn ahci_port_poll() {
     use crate::functions::egdf::{register_block_device, unregister_block};
     use crate::privileged::driver::hotplug::HOTPLUG_MANAGER;
@@ -604,7 +602,11 @@ fn ahci_port_poll() {
                 continue;
             };
             let dev_name = alloc::format!("ahci{ci}-p{pi}");
-            let idx = register_block_device(dev_name.leak(), dev, None) as u8;
+            let idx = crate::functions::intcast::low_u8_from_u32(register_block_device(
+                dev_name.leak(),
+                dev,
+                None,
+            ));
             if let Some(port) = AHCI_CONTROLLERS
                 .lock()
                 .get_mut(ci)
@@ -704,7 +706,8 @@ fn nvme_msix03_selftest(ci: usize) {
     );
 
     // RAII 句柄: 作用域结束 (含提前 return) 即归还 DMA 缓冲
-    let Some(buf) = nvme_alloc_dma_buffer(PAGE_SIZE as usize) else {
+    let Some(buf) = nvme_alloc_dma_buffer(crate::functions::intcast::usize_from_u64(PAGE_SIZE))
+    else {
         slog_warn!(Driver, "[MSIX-03][functions] DMA alloc failed, skip");
         return;
     };
@@ -815,18 +818,17 @@ pub fn storage_init() {
 ///
 /// 返回探测到的设备数。
 #[cfg(target_arch = "x86_64")]
-// 有意窄化: `detected_device_count` 为 usize, 设备数远小于 u32 上限
-#[expect(clippy::cast_possible_truncation)]
 fn probe_ata() -> u32 {
     use crate::functions::egdf::register_block_device;
 
     let mut ata_found = 0u32;
     if let Some(mut controller) = ata::AtaController::new() {
         if controller.init() {
-            ata_found = controller.detected_device_count() as u32;
+            ata_found =
+                crate::functions::intcast::low_u32_from_usize(controller.detected_device_count());
             // 先入册 (AtaBlockDevice 经注册表查找控制器), 再注册块设备
             ATA_CONTROLLERS.lock().push(controller);
-            for drive in 0..ata::MAX_ATA_DEVICES as u8 {
+            for drive in 0..crate::functions::intcast::low_u8_from_usize(ata::MAX_ATA_DEVICES) {
                 if let Some(dev) = ata::AtaBlockDevice::new(drive) {
                     let sectors = dev.blk_total_sectors();
                     let dev_name = alloc::format!("ata{drive}");

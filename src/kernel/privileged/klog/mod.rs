@@ -364,8 +364,6 @@ const KLOG_LINE_MAX: usize = KLOG_BUF + 48;
 ///
 /// # Safety
 /// `sink` 必须是 `'static` (其内部任何状态都不可被释放).
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 #[expect(
     clippy::ref_as_ptr,
     reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
@@ -379,7 +377,10 @@ pub unsafe fn klog_register_sink(sink: &'static dyn LogSink) -> Option<usize> {
     let mut sinks = LOG_SINKS.lock();
     sinks[idx] = SinkPtr { fat: ptr };
     drop(sinks);
-    LOG_SINK_COUNT.store((idx + 1) as u8, Ordering::SeqCst);
+    LOG_SINK_COUNT.store(
+        crate::privileged::lib::low_u8_from_usize(idx + 1),
+        Ordering::SeqCst,
+    );
     Some(idx)
 }
 

@@ -103,7 +103,7 @@ impl PtyTable {
                     }
                 }
                 // 格式化 ID
-                let id = i as u32;
+                let id = crate::functions::intcast::low_u32_from_usize(i);
                 if id == 0 {
                     if j < MAX_NAME_LEN {
                         self.devices[i].name[j] = b'0';
@@ -124,9 +124,9 @@ impl PtyTable {
                         k += 1;
                     }
                 }
-                self.devices[i].name_len = j as u8;
+                self.devices[i].name_len = crate::functions::intcast::low_u8_from_usize(j);
                 self.count += 1;
-                return Ok(i as u32);
+                return Ok(crate::functions::intcast::low_u32_from_usize(i));
             }
         }
         Err(Errno::ENOMEM)
@@ -224,7 +224,7 @@ pub fn mount_devpts() {
     // 初始化 PTY 表
     let mut table = get_pty_table().lock();
     for i in 0..MAX_PTY_DEVICES {
-        table.devices[i] = PtyDevice::new(i as u32);
+        table.devices[i] = PtyDevice::new(crate::functions::intcast::low_u32_from_usize(i));
     }
     table.count = 0;
 }

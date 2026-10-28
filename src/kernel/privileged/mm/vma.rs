@@ -514,8 +514,6 @@ impl MmStruct {
         }
     }
 
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
@@ -530,7 +528,7 @@ impl MmStruct {
             // 显式变体: 拆除作用在进程用户页表上 (与建立侧同表),
             // 并承担 §8.1 规则 3 的帧持有注销 (frame_dec + 归零才延迟释放).
             vmm.unmap_page_in_table(cr3, VirtAddr(addr as u64));
-            addr += PAGE_SIZE as usize;
+            addr += crate::privileged::lib::usize_from_u64(PAGE_SIZE);
         }
     }
 
@@ -548,7 +546,9 @@ impl MmStruct {
 
         // TASK_SIZE: 64 位用户地址空间上限 (集中于 constants::limits::USER_ADDR_MAX, B05-45)
         // SIMPLIFIED: usize 转换在 64 位系统下无损; 32 位系统需额外 assert (无 32 位目标, 当前可省略)
-        let task_size: usize = crate::privileged::constants::limits::USER_ADDR_MAX as usize;
+        let task_size: usize = crate::privileged::lib::usize_from_u64(
+            crate::privileged::constants::limits::USER_ADDR_MAX,
+        );
 
         if cursor + size <= task_size {
             Some(cursor)
@@ -569,8 +569,6 @@ impl MmStruct {
     ///
     /// # Errors
     /// 当 `len` 为 0 时返回 `EINVAL`; 当 `start + len` 溢出, 或范围内没有任何已映射的 VMA 时返回 `ENOMEM`.
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     pub fn mprotect(
         &self,
         start: usize,
@@ -585,7 +583,8 @@ impl MmStruct {
         }
 
         let end = start.checked_add(len).ok_or(Errno::ENOMEM)?;
-        let end = (end + PAGE_SIZE as usize - 1) & !(PAGE_SIZE as usize - 1); // 页对齐上界
+        let end = (end + crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1)
+            & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1); // 页对齐上界
 
         let mut vmas = self.vmas.lock();
 
@@ -685,21 +684,21 @@ impl MmStruct {
         #[cfg(target_arch = "x86_64")]
         {
             let vmm = crate::privileged::mm::vmm::get_vmm();
-            let page_start = start & !(PAGE_SIZE as usize - 1);
+            let page_start = start & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
             let mut addr = page_start;
             while addr < end {
                 vmm.protect_page_in_table(cr3, VirtAddr(addr as u64), new_flags);
-                addr += PAGE_SIZE as usize;
+                addr += crate::privileged::lib::usize_from_u64(PAGE_SIZE);
             }
         }
         #[cfg(target_arch = "aarch64")]
         {
             let vmm = crate::privileged::mm::vmm::get_vmm();
-            let page_start = start & !(PAGE_SIZE as usize - 1);
+            let page_start = start & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
             let mut addr = page_start;
             while addr < end {
                 vmm.protect_page_in_table(cr3, VirtAddr(addr as u64), new_flags);
-                addr += PAGE_SIZE as usize;
+                addr += crate::privileged::lib::usize_from_u64(PAGE_SIZE);
             }
         }
 
@@ -735,8 +734,6 @@ impl MmStruct {
     /// 当 `old_size` 为 0 或 `flags` 含未实现位 (如 `MREMAP_FIXED`) 时返回 `EINVAL`;
     /// 当旧地址未映射、范围不匹配或原地扩展失败时返回 `EFAULT`;
     /// 当无法找到足够的空闲区 (`find_free_range` 失败) 或插入新 VMA 失败时返回 `ENOMEM`.
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     pub fn mremap(
         &self,
         old_addr: usize,
@@ -758,7 +755,8 @@ impl MmStruct {
             return Err(Errno::EINVAL);
         }
 
-        let old_size_aligned = (old_size + PAGE_SIZE as usize - 1) & !(PAGE_SIZE as usize - 1);
+        let old_size_aligned = (old_size + crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1)
+            & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
 
         // 验证旧 vma 存在且精确覆盖 [old_addr, old_addr+old_size_aligned)
         let old_vma = self.find_vma(old_addr).ok_or(Errno::EFAULT)?;
@@ -772,7 +770,8 @@ impl MmStruct {
             return Ok(0);
         }
 
-        let new_size_aligned = (new_size + PAGE_SIZE as usize - 1) & !(PAGE_SIZE as usize - 1);
+        let new_size_aligned = (new_size + crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1)
+            & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
 
         // 缩小: 截断尾部
         if new_size_aligned <= old_size_aligned {
@@ -844,10 +843,9 @@ impl MmStruct {
     /// # Errors
     /// 当扩展堆时插入的新 VMA 与已有 VMA 重叠且不兼容时, 返回 `Err`
     /// (错误信息来自 `insert_vma`).
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     pub fn set_brk(&self, new_brk: usize, cr3: u64) -> Result<usize, &'static str> {
-        let page_aligned = (new_brk + PAGE_SIZE as usize - 1) & !(PAGE_SIZE as usize - 1);
+        let page_aligned = (new_brk + crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1)
+            & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
 
         let start_brk = self.start_brk.load(Ordering::Acquire);
         let current_brk = self.brk.load(Ordering::Acquire);
@@ -880,8 +878,6 @@ impl MmStruct {
     /// 当 `len` 为 0 或 `advice` 为未实现的建议值时返回 `EINVAL`;
     /// 当 `start + len` 溢出时返回 `ENOMEM`;
     /// 当 PAGEOUT/DONTNEED 目标区域被 `mlock` 锁定而无法回收时返回 `EAGAIN`.
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::too_many_lines,
         reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
@@ -912,7 +908,8 @@ impl MmStruct {
         };
 
         let end_addr = start.checked_add(len).ok_or(Errno::ENOMEM)?;
-        let end_addr = (end_addr + PAGE_SIZE as usize - 1) & !(PAGE_SIZE as usize - 1);
+        let end_addr = (end_addr + crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1)
+            & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
 
         let mut vmas = self.vmas.lock();
         let mut locked = 0usize;
@@ -1071,8 +1068,6 @@ impl MmStruct {
     /// # Errors
     /// 当 `len` 为 0 时返回 `EINVAL`; 当 `start + len` 溢出、范围内没有任何重叠 VMA,
     /// 或累计锁定字节数超过 `RLIMIT_MEMLOCK` 上限时返回 `ENOMEM`.
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     pub fn mlock_range(
         &self,
         start: usize,
@@ -1086,7 +1081,8 @@ impl MmStruct {
         }
 
         let end_addr = start.checked_add(len).ok_or(Errno::ENOMEM)?;
-        let end_addr = (end_addr + PAGE_SIZE as usize - 1) & !(PAGE_SIZE as usize - 1);
+        let end_addr = (end_addr + crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1)
+            & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
 
         // 验证范围在 VMA 中
         let mut total = 0usize;
@@ -1124,7 +1120,7 @@ impl MmStruct {
 
         // 对范围内已触达页设置 LRU locked
         drop(vmas);
-        let page_size = PAGE_SIZE as usize;
+        let page_size = crate::privileged::lib::usize_from_u64(PAGE_SIZE);
         let mut addr = start;
         while addr < end_addr {
             crate::privileged::mm::set_page_locked(addr as u64, true);
@@ -1138,8 +1134,6 @@ impl MmStruct {
     ///
     /// # Errors
     /// 当 `len` 为 0 时返回 `EINVAL`; 当 `start + len` 溢出时返回 `ENOMEM`.
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     pub fn munlock_range(
         &self,
         start: usize,
@@ -1152,7 +1146,8 @@ impl MmStruct {
         }
 
         let end_addr = start.checked_add(len).ok_or(Errno::ENOMEM)?;
-        let end_addr = (end_addr + PAGE_SIZE as usize - 1) & !(PAGE_SIZE as usize - 1);
+        let end_addr = (end_addr + crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1)
+            & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
 
         let mut total = 0usize;
         let mut vmas = self.vmas.lock();
@@ -1172,7 +1167,7 @@ impl MmStruct {
             });
         drop(vmas);
 
-        let page_size = PAGE_SIZE as usize;
+        let page_size = crate::privileged::lib::usize_from_u64(PAGE_SIZE);
         let mut addr = start;
         while addr < end_addr {
             crate::privileged::mm::set_page_locked(addr as u64, false);
@@ -1258,8 +1253,6 @@ impl MmStruct {
     /// # Errors
     /// 当 `len` 为 0 时返回 `EINVAL`; 当 `out_vec` 容量不足以容纳全部页的驻留状态
     /// (`out_vec.len() < n_pages`) 时返回 `ENOMEM`.
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
@@ -1278,7 +1271,7 @@ impl MmStruct {
             return Err(Errno::EINVAL);
         }
 
-        let page_size = PAGE_SIZE as usize;
+        let page_size = crate::privileged::lib::usize_from_u64(PAGE_SIZE);
         let n_pages = (len + page_size - 1) / page_size;
         if out_vec.len() < n_pages {
             return Err(Errno::ENOMEM);
@@ -1342,16 +1335,15 @@ pub fn get_current_mm() -> Option<&'static MmStruct> {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 /// FFI: 查询 `addr` 所在 VMA, 返回 `(start << 32) | flags` (未命中返回 0)
 #[unsafe(no_mangle)]
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn vma_find(mm_ptr: *const MmStruct, addr: u64) -> u64 {
     if mm_ptr.is_null() {
         return 0;
     }
     // SAFETY: `mm_ptr` 由调用方保证为有效指针; 只读访问
     let mm = unsafe { &*mm_ptr };
-    mm.find_vma(addr as usize).map_or(0, |vma| {
-        let flags = vma.flags.bits();
-        ((vma.start as u64) << 32) | flags
-    })
+    mm.find_vma(crate::privileged::lib::usize_from_u64(addr))
+        .map_or(0, |vma| {
+            let flags = vma.flags.bits();
+            ((vma.start as u64) << 32) | flags
+        })
 }

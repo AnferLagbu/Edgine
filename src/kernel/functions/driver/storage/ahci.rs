@@ -561,9 +561,9 @@ impl AhciPort {
 
         self.dma = Some(AhciPortDma {
             cmd_list_virt: handle.cmd_list_virt,
-            cmd_list_low: handle.cmd_list_phys as u32,
+            cmd_list_low: crate::functions::intcast::low_u32_from_u64(handle.cmd_list_phys),
             cmd_list_high: (handle.cmd_list_phys >> 32) as u32,
-            fis_low: handle.fis_phys as u32,
+            fis_low: crate::functions::intcast::low_u32_from_u64(handle.fis_phys),
             fis_high: (handle.fis_phys >> 32) as u32,
             cmd_table_virt: handle.cmd_table_virt,
             cmd_table_phys: handle.cmd_table_phys,
@@ -765,7 +765,8 @@ impl AhciPort {
             return Err(());
         }
 
-        let byte_count = u32::from(count) * SECTOR_SIZE as u32;
+        let byte_count =
+            u32::from(count) * crate::functions::intcast::low_u32_from_usize(SECTOR_SIZE);
 
         // 分配 DMA 缓冲区 (RAII 句柄: 函数返回即归还)
         let Some(buf) =
@@ -813,7 +814,8 @@ impl AhciPort {
             return Err(());
         }
 
-        let byte_count = u32::from(count) * SECTOR_SIZE as u32;
+        let byte_count =
+            u32::from(count) * crate::functions::intcast::low_u32_from_usize(SECTOR_SIZE);
 
         // 分配 DMA 缓冲区 (RAII 句柄: 函数返回即归还)
         let Some(buf) =
@@ -851,7 +853,7 @@ impl AhciPort {
             return Err(());
         }
 
-        let byte_count = SECTOR_SIZE as u32;
+        let byte_count = crate::functions::intcast::low_u32_from_usize(SECTOR_SIZE);
 
         // 分配 DMA 缓冲区 (RAII 句柄: 函数返回即归还)
         let Some(buf) =
@@ -978,7 +980,7 @@ impl AhciHba {
         let mut ports = alloc::vec::Vec::new();
         for i in 0..AHCI_MAX_PORTS {
             if pi & (1 << i) != 0 {
-                ports.push(i as u8);
+                ports.push(crate::functions::intcast::low_u8_from_usize(i));
             }
         }
         ports
@@ -1136,7 +1138,7 @@ impl AhciController {
             if self.port_bitmap & (1u32 << i) == 0 {
                 continue;
             }
-            let mut port = AhciPort::new(i as u8);
+            let mut port = AhciPort::new(crate::functions::intcast::low_u8_from_usize(i));
             Self::bring_up_port(&mut port, &self.hba);
             self.ports.push(port);
         }

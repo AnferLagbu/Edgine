@@ -163,7 +163,7 @@ pub fn gethostname_syscall(buf_ptr: u64, size: u64) -> i64 {
     let mut out = [0u8; 65];
     let len = bytes.len().min(64);
     out[..len].copy_from_slice(&bytes[..len]);
-    let n = (len + 1).min(size as usize);
+    let n = (len + 1).min(crate::functions::intcast::usize_from_u64(size));
     match crate::privileged::mm::copy_user::copy_to_user(buf_ptr, &out[..n], n) {
         Ok(_) => 0,
         Err(()) => Errno::EFAULT.as_ret(),

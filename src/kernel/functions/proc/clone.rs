@@ -336,8 +336,10 @@ pub fn set_robust_list_syscall(head: u64, len: u64) -> Result<usize, Errno> {
     let pid = crate::privileged::proc::api::process_get_current_pid();
     crate::privileged::proc::api::process_with(pid, |p| {
         p.robust_head.store(head, Ordering::Release);
-        p.robust_len
-            .store(ROBUST_LIST_HEAD_SIZE as u32, Ordering::Release);
+        p.robust_len.store(
+            crate::functions::intcast::low_u32_from_u64(ROBUST_LIST_HEAD_SIZE),
+            Ordering::Release,
+        );
     })
     .ok_or(Errno::ESRCH)?;
     Ok(0)

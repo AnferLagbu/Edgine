@@ -197,8 +197,6 @@ fn dns_query_net(name: &str) -> Option<[u8; 4]> {
 }
 
 /// 解析 IPv4 字面量 "a.b.c.d" (无错处理; 不合法返 None)
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub fn parse_ipv4_literal(s: &str) -> Option<[u8; 4]> {
     let mut octets = [0u8; 4];
     let mut idx = 0usize;
@@ -209,7 +207,7 @@ pub fn parse_ipv4_literal(s: &str) -> Option<[u8; 4]> {
             if !has_digit || idx >= 3 || cur > 255 {
                 return None;
             }
-            octets[idx] = cur as u8;
+            octets[idx] = crate::privileged::lib::low_u8_from_u32(cur);
             idx += 1;
             cur = 0;
             has_digit = false;
@@ -223,7 +221,7 @@ pub fn parse_ipv4_literal(s: &str) -> Option<[u8; 4]> {
     if !has_digit || idx != 3 || cur > 255 {
         return None;
     }
-    octets[3] = cur as u8;
+    octets[3] = crate::privileged::lib::low_u8_from_u32(cur);
     Some(octets)
 }
 
@@ -236,8 +234,6 @@ pub fn parse_ipv4_literal(s: &str) -> Option<[u8; 4]> {
 /// - `"a.b.c.d"` → prefix 默认 24
 /// - `"a.b.c.d/16"` → prefix = 16
 /// - 前缀非 0-32 数字 / IP 不合法 → `None`
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub fn parse_cidr(s: &str) -> Option<([u8; 4], u8)> {
     let (ip_part, prefix_part) = match s.split_once('/') {
         Some((ip, pfx)) => (ip, Some(pfx)),
@@ -253,7 +249,7 @@ pub fn parse_cidr(s: &str) -> Option<([u8; 4], u8)> {
             if v > 32 {
                 return None;
             }
-            v as u8
+            crate::privileged::lib::low_u8_from_u32(v)
         }
         None => 24,
     };

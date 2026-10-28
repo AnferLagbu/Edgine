@@ -218,7 +218,7 @@ struct UffdInstance {
     /// `UFFDIO_ZEROPAGE` 语义标记 (暂存区无数据, 填零)
     staged_zero: bool,
     /// `UFFDIO_COPY` 暂存数据 (单页)
-    staged: [u8; PAGE_SIZE as usize],
+    staged: [u8; crate::privileged::lib::usize_from_u64(PAGE_SIZE)],
     /// 已注册区间
     ranges: [UffdRange; MAX_RANGES],
     /// 已注册区间数
@@ -243,7 +243,7 @@ impl UffdInstance {
             fault_page: 0,
             page_state: PendingState::Idle,
             staged_zero: false,
-            staged: [0u8; PAGE_SIZE as usize],
+            staged: [0u8; crate::privileged::lib::usize_from_u64(PAGE_SIZE)],
             ranges: [UffdRange {
                 start: 0,
                 end: 0,
@@ -535,7 +535,7 @@ pub fn provide_page(
         return Err(Errno::EINVAL);
     }
     if let Some(d) = data {
-        if d.len() != PAGE_SIZE as usize {
+        if d.len() != crate::privileged::lib::usize_from_u64(PAGE_SIZE) {
             return Err(Errno::EINVAL);
         }
     }
@@ -662,9 +662,13 @@ pub fn fill_provided_page(page_addr: u64, phys: PhysAddr) -> bool {
     unsafe {
         let dst = phys.to_virt().0 as *mut u8;
         if inst.staged_zero {
-            core::ptr::write_bytes(dst, 0, PAGE_SIZE as usize);
+            core::ptr::write_bytes(dst, 0, crate::privileged::lib::usize_from_u64(PAGE_SIZE));
         } else {
-            core::ptr::copy_nonoverlapping(inst.staged.as_ptr(), dst, PAGE_SIZE as usize);
+            core::ptr::copy_nonoverlapping(
+                inst.staged.as_ptr(),
+                dst,
+                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            );
         }
     }
 

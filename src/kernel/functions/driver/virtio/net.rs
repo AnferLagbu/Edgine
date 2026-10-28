@@ -239,18 +239,15 @@ impl VirtioNetDriver {
         // legacy 传输无 QueueNum 协商, 设备端按 realize 固定 num 推算 vring 布局,
         // 驱动必须全量取 QueueNumMax 对齐, 截断即错位 → 永不回写 used → TX 超时)
         let vq_legacy = is_legacy;
-        // 有意窄化: QueueNumMax 硬件为 u32, QEMU legacy 固定 1024 (2 的幂)
-        #[expect(clippy::cast_possible_truncation)]
         let rx_num = if vq_legacy {
             device.select_queue(RX_QUEUE_INDEX);
-            device.queue_num_max() as u16
+            crate::functions::intcast::low_u16_from_u32(device.queue_num_max())
         } else {
             VQ_SIZE
         };
-        #[expect(clippy::cast_possible_truncation)]
         let tx_num = if vq_legacy {
             device.select_queue(TX_QUEUE_INDEX);
-            device.queue_num_max() as u16
+            crate::functions::intcast::low_u16_from_u32(device.queue_num_max())
         } else {
             VQ_SIZE
         };
@@ -260,7 +257,9 @@ impl VirtioNetDriver {
         // 从配置空间读取 MAC 地址
         let mut mac: [u8; 6] = [0; 6];
         for i in 0..6 {
-            mac[i] = (device.read_config32(NET_CONFIG_MAC + (i & !3)) >> ((i & 3) * 8)) as u8;
+            mac[i] = crate::functions::intcast::low_u8_from_u32(
+                device.read_config32(NET_CONFIG_MAC + (i & !3)) >> ((i & 3) * 8),
+            );
         }
 
         slog_info!(
@@ -275,7 +274,8 @@ impl VirtioNetDriver {
         );
 
         // 读取链路状态
-        let link_status = device.read_config32(NET_CONFIG_STATUS) as u16;
+        let link_status =
+            crate::functions::intcast::low_u16_from_u32(device.read_config32(NET_CONFIG_STATUS));
         let link_up = (link_status & NET_STATUS_LINK_UP) != 0;
         slog_info!(
             Driver,
@@ -434,7 +434,9 @@ impl VirtioNetDriver {
 
     /// 读取当前链路状态 (从配置空间实时读取).
     pub fn read_link_status(&self) -> bool {
-        let status = self.device.read_config32(NET_CONFIG_STATUS) as u16;
+        let status = crate::functions::intcast::low_u16_from_u32(
+            self.device.read_config32(NET_CONFIG_STATUS),
+        );
         (status & NET_STATUS_LINK_UP) != 0
     }
 
@@ -469,9 +471,11 @@ impl VirtioNetDriver {
         dma.write_slice(self.hdr_size, data);
 
         // 准备 TX 描述符 (设备读)
-        let desc_idx = self
-            .tx_vq
-            .prepare_desc(dma.phys_addr(), total as u32, false);
+        let desc_idx = self.tx_vq.prepare_desc(
+            dma.phys_addr(),
+            crate::functions::intcast::low_u32_from_usize(total),
+            false,
+        );
         if desc_idx == 0xFFFF {
             slog_warn!(Driver, "virtio-net: TX 描述符耗尽");
             return Err(());
@@ -550,9 +554,11 @@ impl VirtioNetDriver {
                 slog_warn!(Driver, "virtio-net: RX 缓冲区分配失败 (slot {i})");
                 return;
             };
-            let desc = self
-                .rx_vq
-                .prepare_desc(dma.phys_addr(), RX_BUFFER_SIZE as u32, true);
+            let desc = self.rx_vq.prepare_desc(
+                dma.phys_addr(),
+                crate::functions::intcast::low_u32_from_usize(RX_BUFFER_SIZE),
+                true,
+            );
             if desc == 0xFFFF {
                 return;
             }
@@ -567,9 +573,11 @@ impl VirtioNetDriver {
     /// 回收单个 RX 描述符并复用同槽缓冲区重新填充.
     fn refill_single_rx(&mut self, buf_idx: usize) {
         if let Some(dma) = &self.rx_buffers[buf_idx] {
-            let desc = self
-                .rx_vq
-                .prepare_desc(dma.phys_addr(), RX_BUFFER_SIZE as u32, true);
+            let desc = self.rx_vq.prepare_desc(
+                dma.phys_addr(),
+                crate::functions::intcast::low_u32_from_usize(RX_BUFFER_SIZE),
+                true,
+            );
             if desc != 0xFFFF {
                 self.rx_vq.submit(desc);
                 self.rx_vq.commit_and_kick();

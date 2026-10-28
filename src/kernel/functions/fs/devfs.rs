@@ -763,7 +763,7 @@ impl FileSystem for DevfsData {
 
     fn fs_read(&self, handle: u32, _offset: u64, buf: &mut [u8], _pwm: u64) -> KernelResult<usize> {
         // DevFS read 需要 dev_type, handle 即为 dev_type
-        let result = self.read(handle as u8, buf);
+        let result = self.read(crate::functions::intcast::low_u8_from_u32(handle), buf);
         if result < 0 {
             Err(KernelError::Io)
         } else {
@@ -772,7 +772,7 @@ impl FileSystem for DevfsData {
     }
 
     fn fs_write(&self, handle: u32, _offset: u64, buf: &[u8], _pwm: u64) -> KernelResult<usize> {
-        let result = self.write(handle as u8, buf);
+        let result = self.write(crate::functions::intcast::low_u8_from_u32(handle), buf);
         if result < 0 {
             Err(KernelError::Io)
         } else {
@@ -832,7 +832,7 @@ impl FileSystem for DevfsData {
     }
 
     fn fs_readdir(&self, _handle: u32, offset: u64, entry: &mut VfsDirEntry) -> KernelResult<bool> {
-        match self.readdir(offset as usize) {
+        match self.readdir(crate::functions::intcast::usize_from_u64(offset)) {
             Some((raw_name, dev_type)) => {
                 let end = raw_name
                     .iter()
@@ -843,7 +843,7 @@ impl FileSystem for DevfsData {
                 // 剩余部分填零
                 entry.name[len..].fill(0);
                 entry.file_type = dev_type;
-                entry.node = offset as u32;
+                entry.node = crate::functions::intcast::low_u32_from_u64(offset);
                 Ok(true)
             }
             None => Ok(false),
@@ -857,7 +857,7 @@ impl FileSystem for DevfsData {
         mount_idx: u32,
     ) -> Option<alloc::sync::Arc<dyn crate::functions::fs::inode::Inode>> {
         Some(alloc::sync::Arc::new(DevFsInode::new(
-            inode_id as u8,
+            crate::functions::intcast::low_u8_from_u32(inode_id),
             mount_idx,
         )))
     }

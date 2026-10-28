@@ -86,7 +86,7 @@ pub fn disk_info(disk_id: u32, info_ptr: u64) -> Result<(), Errno> {
     let id = u8::try_from(disk_id).map_err(|_| Errno::EINVAL)?;
     let present = blk::hdd_is_present(id);
     let sectors = if present {
-        blk::hdd_total_sectors(id) as u32
+        crate::functions::intcast::low_u32_from_u64(blk::hdd_total_sectors(id))
     } else {
         0
     };

@@ -63,7 +63,7 @@ pub const MCL_ONFAULT: u32 = 4;
 
 /// `sys_madvise(addr, len, advice) -> 0/-errno` — 对当前地址空间指定区间应用内存建议。
 pub fn sys_madvise(addr: u64, len: u64, advice: u64) -> i64 {
-    let advice = advice as u32;
+    let advice = crate::privileged::lib::low_u32_from_u64(advice);
     if addr == 0 && len == 0 {
         return Errno::EINVAL.as_ret();
     }
@@ -81,10 +81,14 @@ pub fn sys_madvise(addr: u64, len: u64, advice: u64) -> i64 {
         return Errno::EFAULT.as_ret();
     };
 
-    let Some(len_usize) = (len as usize).checked_add(0usize) else {
+    let Some(len_usize) = crate::privileged::lib::usize_from_u64(len).checked_add(0usize) else {
         return Errno::ENOMEM.as_ret();
     };
-    match mm.madvise_range(addr as usize, len_usize, advice) {
+    match mm.madvise_range(
+        crate::privileged::lib::usize_from_u64(addr),
+        len_usize,
+        advice,
+    ) {
         Ok(_) => 0,
         Err(e) => e.as_ret(),
     }
@@ -102,13 +106,13 @@ pub fn sys_mlock(addr: u64, len: u64) -> i64 {
     if len == 0 {
         return 0;
     }
-    let len_usize = len as usize;
+    let len_usize = crate::privileged::lib::usize_from_u64(len);
 
     let Some(mm) = vma_get_current_mm() else {
         return Errno::EFAULT.as_ret();
     };
 
-    match mm.mlock_range(addr as usize, len_usize) {
+    match mm.mlock_range(crate::privileged::lib::usize_from_u64(addr), len_usize) {
         Ok(_) => 0,
         Err(e) => e.as_ret(),
     }
@@ -126,13 +130,13 @@ pub fn sys_munlock(addr: u64, len: u64) -> i64 {
     if len == 0 {
         return 0;
     }
-    let len_usize = len as usize;
+    let len_usize = crate::privileged::lib::usize_from_u64(len);
 
     let Some(mm) = vma_get_current_mm() else {
         return Errno::EFAULT.as_ret();
     };
 
-    match mm.munlock_range(addr as usize, len_usize) {
+    match mm.munlock_range(crate::privileged::lib::usize_from_u64(addr), len_usize) {
         Ok(_) => 0,
         Err(e) => e.as_ret(),
     }
@@ -144,7 +148,7 @@ pub fn sys_munlock(addr: u64, len: u64) -> i64 {
 
 /// `sys_mlockall(flags) -> 0/-errno` — 按 `flags` 锁定当前及未来的内存映射。
 pub fn sys_mlockall(flags: u64) -> i64 {
-    let flags = flags as u32;
+    let flags = crate::privileged::lib::low_u32_from_u64(flags);
     let Some(mm) = vma_get_current_mm() else {
         return Errno::EFAULT.as_ret();
     };
@@ -186,8 +190,8 @@ pub fn sys_mincore(addr: u64, len: u64, vec_ptr: u64) -> i64 {
         return Errno::EFAULT.as_ret();
     }
 
-    let page_size = PAGE_SIZE as usize;
-    let n_pages = ((len as usize) + page_size - 1) / page_size;
+    let page_size = crate::privileged::lib::usize_from_u64(PAGE_SIZE);
+    let n_pages = (crate::privileged::lib::usize_from_u64(len) + page_size - 1) / page_size;
     let buf_bytes = n_pages;
 
     if !userptr::validate_user_buf(vec_ptr, buf_bytes as u64) {
@@ -203,7 +207,11 @@ pub fn sys_mincore(addr: u64, len: u64, vec_ptr: u64) -> i64 {
     }
     let mut stack_buf = [0u8; MAX_STACK_PAGES];
 
-    match mm.mincore_range(addr as usize, len as usize, &mut stack_buf[..n_pages]) {
+    match mm.mincore_range(
+        crate::privileged::lib::usize_from_u64(addr),
+        crate::privileged::lib::usize_from_u64(len),
+        &mut stack_buf[..n_pages],
+    ) {
         Ok(_resident) => {
             // 使用 privileged 的 safe copy_to_user 替代 unsafe copy_nonoverlapping
             match copy_to_user(vec_ptr, &stack_buf[..buf_bytes], buf_bytes) {

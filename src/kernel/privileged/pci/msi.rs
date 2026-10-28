@@ -103,8 +103,6 @@ static MSI_VECTORS: AtomicU32 = AtomicU32::new(0);
 /// 分配一个 MSI 向量
 ///
 /// 返回分配的向量号, 或 None (向量耗尽).
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub fn msi_alloc_vector() -> Option<u8> {
     let mut bitmap = MSI_VECTORS.load(Ordering::Acquire);
     loop {
@@ -114,7 +112,7 @@ pub fn msi_alloc_vector() -> Option<u8> {
         match MSI_VECTORS.compare_exchange(bitmap, new_bitmap, Ordering::AcqRel, Ordering::Acquire)
         {
             Ok(_) => {
-                let vector = MSI_VECTOR_BASE + bit as u8;
+                let vector = MSI_VECTOR_BASE + crate::privileged::lib::low_u8_from_u32(bit);
                 crate::klog_debug!(Driver, "[MSI] Allocated vector {}", vector);
                 return Some(vector);
             }
@@ -189,8 +187,6 @@ pub struct MsiConfig {
 /// 4. 启用 MSI
 ///
 /// 返回 MSI 配置, 或 None (无 MSI 能力/向量耗尽).
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub fn msi_enable(dev: &pci::PciDevice) -> Option<MsiConfig> {
     let cap_offset = pci_find_capability(dev, PCI_CAP_ID_MSI)?;
 
@@ -235,7 +231,7 @@ pub fn msi_enable(dev: &pci::PciDevice) -> Option<MsiConfig> {
         dev.device,
         dev.function,
         cap_offset + data_offset,
-        msg_data as u16,
+        crate::privileged::lib::low_u16_from_u32(msg_data),
     );
 
     // 启用 MSI (设置 Enable 位)

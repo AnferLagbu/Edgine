@@ -490,8 +490,6 @@ impl KmemCache {
     ///
     /// # Arguments
     /// * `obj` - 要释放的对象指针 (必须是从此缓存分配的)
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     pub fn deallocate(&mut self, obj: *mut u8) {
         if obj.is_null() {
             return;
@@ -518,7 +516,7 @@ impl KmemCache {
         }
 
         // 清除位图中的标志位
-        self.clear_bit(slab, obj_idx as u32);
+        self.clear_bit(slab, crate::privileged::lib::low_u32_from_usize(obj_idx));
 
         // 更新计数
         sr.set_active_count(sr.active_count() - 1);
@@ -619,8 +617,6 @@ impl KmemCache {
     // ========================================================================
 
     /// 创建新的 Slab (分配一页物理内存)
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::ptr_as_ptr,
         reason = "page as *mut SlabHeader: pmm_alloc_pages 返回页对齐 *mut u8, 安全 cast"
@@ -630,7 +626,8 @@ impl KmemCache {
         unsafe extern "C" {
             fn pmm_alloc_pages(count: u64) -> *mut u8;
         }
-        let pages_needed = SLAB_DEFAULT_SIZE.div_ceil(PAGE_SIZE as usize);
+        let pages_needed =
+            SLAB_DEFAULT_SIZE.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE));
         // SAFETY: pmm_alloc_pages 返回空 (失败) 或经 KERNEL_BASE 映射的合法页对齐物理地址
         let page = unsafe { pmm_alloc_pages(pages_needed as u64) };
 
@@ -686,8 +683,6 @@ impl KmemCache {
     }
 
     /// 销毁单个 Slab (释放物理页)
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
@@ -703,14 +698,13 @@ impl KmemCache {
             unsafe extern "C" {
                 fn pmm_free_pages(addr: *mut u8, count: u64);
             }
-            let pages_needed = SLAB_DEFAULT_SIZE.div_ceil(PAGE_SIZE as usize);
+            let pages_needed =
+                SLAB_DEFAULT_SIZE.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE));
             // SAFETY: pmm_free_pages 由 PMM 层提供, 释放 destroy_slab 持有的 slab 物理页
             pmm_free_pages(slab as *mut u8, pages_needed as u64);
         }
     }
 
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn find_free_bit(&self, slab: *mut SlabHeader) -> Option<u32> {
         // SAFETY: slab 来自 find_free_bit 调用方, 是合法 Slab 头; lock 持有中.
         let sr = unsafe { SlabRef::new_unchecked(slab) };
@@ -725,7 +719,7 @@ impl KmemCache {
                 continue;
             }
             let bit_idx = byte.trailing_ones();
-            let global_bit = byte_idx as u32 * 8 + bit_idx;
+            let global_bit = crate::privileged::lib::low_u32_from_usize(byte_idx) * 8 + bit_idx;
             if global_bit < sr.obj_count() {
                 return Some(global_bit);
             }
@@ -984,8 +978,6 @@ pub struct SlabCacheSnapshot {
 
 /// 遍历所有通用缓存, 返回每个缓存的统计快照.
 /// `out` 由调用方提供, 最大写入 `out.len()` 项. 返回实际写入数.
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub(crate) fn get_all_cache_snapshots(out: &mut [SlabCacheSnapshot]) -> usize {
     let mut count = 0usize;
     let caches = GENERAL_CACHES.lock();
@@ -996,7 +988,7 @@ pub(crate) fn get_all_cache_snapshots(out: &mut [SlabCacheSnapshot]) -> usize {
         if let Some(cache) = cache_opt {
             let stats = cache.get_stats();
             out[count] = SlabCacheSnapshot {
-                object_size: cache.object_size as u32,
+                object_size: crate::privileged::lib::low_u32_from_usize(cache.object_size),
                 total_objects: stats.total_objects,
                 active_objects: stats.active_objects,
                 total_slabs: stats.total_slabs,

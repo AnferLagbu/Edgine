@@ -281,10 +281,18 @@ impl UnkfsTxgGroup {
             *txg = UnkfsTxg::new(new_txg_id);
             txg.open();
         }
-        self.open_txg.store(new_open as u32, Ordering::Release);
-        self.quiescing_txg.store(old_open as u32, Ordering::Release);
-        self.syncing_txg
-            .store(old_quiescing as u32, Ordering::Release);
+        self.open_txg.store(
+            crate::functions::intcast::low_u32_from_usize(new_open),
+            Ordering::Release,
+        );
+        self.quiescing_txg.store(
+            crate::functions::intcast::low_u32_from_usize(old_open),
+            Ordering::Release,
+        );
+        self.syncing_txg.store(
+            crate::functions::intcast::low_u32_from_usize(old_quiescing),
+            Ordering::Release,
+        );
         self.total_syncs.fetch_add(1, Ordering::Relaxed);
         new_txg_id
     }

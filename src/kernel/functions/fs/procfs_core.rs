@@ -435,14 +435,20 @@ impl ProcfsData {
 
             for info in infos.iter().take(count) {
                 let objperslab = if info.object_size > 0 {
-                    (crate::privileged::mm::PAGE_SIZE as usize / info.object_size as usize) as u32
+                    crate::functions::intcast::low_u32_from_usize(
+                        crate::functions::intcast::usize_from_u64(crate::privileged::mm::PAGE_SIZE)
+                            / info.object_size as usize,
+                    )
                 } else {
                     0
                 };
                 // pagesperslab: 每个 slab 占用的页数, 由 slab 配置决定
-                let pagesperslab = (crate::functions::config::slab::SLAB_DEFAULT_SIZE
-                    / crate::privileged::mm::PAGE_SIZE as usize)
-                    as u32;
+                let pagesperslab = crate::functions::intcast::low_u32_from_usize(
+                    crate::functions::config::slab::SLAB_DEFAULT_SIZE
+                        / crate::functions::intcast::usize_from_u64(
+                            crate::privileged::mm::PAGE_SIZE,
+                        ),
+                );
                 write_str(
                     buf,
                     &mut pos,

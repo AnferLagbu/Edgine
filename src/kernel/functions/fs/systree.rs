@@ -87,7 +87,7 @@ impl SystreeAttr {
         let bytes = name.as_bytes();
         let len = bytes.len().min(MAX_NAME_LEN);
         self.name[..len].copy_from_slice(&bytes[..len]);
-        self.name_len = len as u8;
+        self.name_len = crate::functions::intcast::low_u8_from_usize(len);
     }
 
     /// 获取名称
@@ -151,7 +151,7 @@ impl SystreeNode {
         let bytes = name.as_bytes();
         let len = bytes.len().min(MAX_NAME_LEN);
         self.name[..len].copy_from_slice(&bytes[..len]);
-        self.name_len = len as u8;
+        self.name_len = crate::functions::intcast::low_u8_from_usize(len);
     }
 
     /// 获取名称
@@ -552,7 +552,8 @@ pub fn handle_request(
         1 => {
             // Lookup
             let name = core::str::from_utf8(data).map_err(|_| Errno::EINVAL)?;
-            let node = tree.find_node_by_name(node_id as u32, name);
+            let node =
+                tree.find_node_by_name(crate::functions::intcast::low_u32_from_u64(node_id), name);
             if let Some(n) = node {
                 if buf.len() < 4 {
                     return Err(Errno::EINVAL);
@@ -570,12 +571,20 @@ pub fn handle_request(
         19 => {
             // Read attr
             let name = core::str::from_utf8(data).map_err(|_| Errno::EINVAL)?;
-            tree.read_attr(node_id as u32, name, buf)
+            tree.read_attr(
+                crate::functions::intcast::low_u32_from_u64(node_id),
+                name,
+                buf,
+            )
         }
         20 => {
             // Write attr
             let name = core::str::from_utf8(data).map_err(|_| Errno::EINVAL)?;
-            tree.write_attr(node_id as u32, name, data)?;
+            tree.write_attr(
+                crate::functions::intcast::low_u32_from_u64(node_id),
+                name,
+                data,
+            )?;
             Ok(0)
         }
         _ => Err(Errno::ENOSYS),

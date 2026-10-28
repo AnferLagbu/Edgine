@@ -145,8 +145,10 @@ impl SessionTable {
                     failed_attempts: 0,
                     pid,
                 });
-                self.next_slot
-                    .store(((idx + 1) % SGEG_MAX_SESSIONS) as u32, Ordering::Release);
+                self.next_slot.store(
+                    crate::functions::intcast::low_u32_from_usize((idx + 1) % SGEG_MAX_SESSIONS),
+                    Ordering::Release,
+                );
                 self.active.fetch_add(1, Ordering::AcqRel);
                 return Ok(id);
             }

@@ -111,7 +111,7 @@ impl CgroupNode {
         let bytes = name.as_bytes();
         let len = bytes.len().min(MAX_NAME_LEN);
         self.name[..len].copy_from_slice(&bytes[..len]);
-        self.name_len = len as u8;
+        self.name_len = crate::functions::intcast::low_u8_from_usize(len);
     }
 
     /// 获取名称
@@ -124,7 +124,7 @@ impl CgroupNode {
         let bytes = value.as_bytes();
         let len = bytes.len().min(MAX_VALUE_LEN);
         self.value[..len].copy_from_slice(&bytes[..len]);
-        self.value_len = len as u8;
+        self.value_len = crate::functions::intcast::low_u8_from_usize(len);
     }
 
     /// 获取值
@@ -169,7 +169,7 @@ impl CgroupGroup {
         let bytes = name.as_bytes();
         let len = bytes.len().min(MAX_NAME_LEN);
         self.name[..len].copy_from_slice(&bytes[..len]);
-        self.name_len = len as u8;
+        self.name_len = crate::functions::intcast::low_u8_from_usize(len);
     }
 
     /// 获取名称

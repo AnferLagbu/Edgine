@@ -139,7 +139,9 @@ pub fn try_genesis(password: &[u8]) -> PwmResult<PwmId> {
     if rc > 0 {
         Ok(PwmId(rc.cast_unsigned()))
     } else {
-        Err(PwmError::from_i32(rc as i32))
+        Err(PwmError::from_i32(
+            crate::functions::intcast::low_i32_from_i64(rc),
+        ))
     }
 }
 
@@ -157,7 +159,9 @@ pub fn create_first_identity(password: &[u8]) -> PwmResult<PwmId> {
     if rc > 0 {
         Ok(PwmId(rc.cast_unsigned()))
     } else {
-        Err(PwmError::from_i32(rc as i32))
+        Err(PwmError::from_i32(
+            crate::functions::intcast::low_i32_from_i64(rc),
+        ))
     }
 }
 
@@ -175,7 +179,9 @@ pub fn create(password: &[u8], note: &[u8], creator: PwmId) -> PwmResult<PwmId> 
     if rc > 0 {
         Ok(PwmId(rc.cast_unsigned()))
     } else {
-        Err(PwmError::from_i32(rc as i32))
+        Err(PwmError::from_i32(
+            crate::functions::intcast::low_i32_from_i64(rc),
+        ))
     }
 }
 

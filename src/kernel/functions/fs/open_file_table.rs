@@ -45,7 +45,7 @@ impl OpenFileTable {
         for (i, slot) in files.iter_mut().enumerate() {
             if slot.is_none() {
                 *slot = Some(file);
-                return Some(i as u32);
+                return Some(crate::functions::intcast::low_u32_from_usize(i));
             }
         }
         None

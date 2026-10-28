@@ -726,7 +726,7 @@ impl SignalDecision for StandardSignalPolicy {
         if deliverable == 0 {
             return None;
         }
-        let sig_bit = deliverable.trailing_zeros() as u8;
+        let sig_bit = crate::functions::intcast::low_u8_from_u32(deliverable.trailing_zeros());
         // sig_bit ∈ [1, 63]: 对应信号 1..=63 (bit 0 = sig 1)
         // sig=64 对应 bit 63 (不是 64), u8 上限避免 trailing_zeros()=64 UB
         if sig_bit == 0 || sig_bit >= 64 {

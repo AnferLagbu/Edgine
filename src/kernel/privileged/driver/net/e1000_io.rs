@@ -260,13 +260,13 @@ impl E1000Io {
 
     /// 设置 RX 描述符环物理基地址
     pub fn set_rx_base(&self, phys: u64) {
-        self.write32(E1000_RDBAL, phys as u32);
+        self.write32(E1000_RDBAL, crate::privileged::lib::low_u32_from_u64(phys));
         self.write32(E1000_RDBAH, (phys >> 32) as u32);
     }
 
     /// 设置 TX 描述符环物理基地址
     pub fn set_tx_base(&self, phys: u64) {
-        self.write32(E1000_TDBAL, phys as u32);
+        self.write32(E1000_TDBAL, crate::privileged::lib::low_u32_from_u64(phys));
         self.write32(E1000_TDBAH, (phys >> 32) as u32);
     }
 

@@ -75,11 +75,13 @@ impl NtpTimestamp {
 
     /// 从 Unix 时间 (ns) 转换
     pub fn from_unix_ns(ns: u64) -> Self {
-        let sec = (ns / 1_000_000_000) as u32;
+        let sec = crate::functions::intcast::low_u32_from_u64(ns / 1_000_000_000);
         let remainder = ns % 1_000_000_000;
         let frac = ((remainder as u64 * u64::MAX / 1_000_000_000) >> 32) as u32;
         Self {
-            sec: sec.wrapping_add(NTP_EPOCH_OFFSET as u32),
+            sec: sec.wrapping_add(crate::functions::intcast::low_u32_from_u64(
+                NTP_EPOCH_OFFSET,
+            )),
             frac,
         }
     }
@@ -90,7 +92,12 @@ impl NtpTimestamp {
     )]
     /// 转换为 Unix 时间 (ns)
     pub fn to_unix_ns(&self) -> u64 {
-        let sec = u64::from(self.sec.wrapping_sub(NTP_EPOCH_OFFSET as u32));
+        let sec = u64::from(
+            self.sec
+                .wrapping_sub(crate::functions::intcast::low_u32_from_u64(
+                    NTP_EPOCH_OFFSET,
+                )),
+        );
         let ns = (u64::from(self.frac) * 1_000_000_000) >> 32;
         sec * 1_000_000_000 + ns
     }
@@ -469,7 +476,7 @@ pub fn timesync_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
         }
         3 => {
             // set_ntp_server
-            subsystem().set_ntp_server(a1 as u32);
+            subsystem().set_ntp_server(crate::functions::intcast::low_u32_from_u64(a1));
             0
         }
         4 => {
@@ -490,7 +497,7 @@ pub fn timesync_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
         }
         7 => {
             // set_ptp_domain
-            subsystem().set_ptp_domain(a1 as u8);
+            subsystem().set_ptp_domain(crate::functions::intcast::low_u8_from_u64(a1));
             0
         }
         8 => {

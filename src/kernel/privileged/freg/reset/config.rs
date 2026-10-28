@@ -188,7 +188,8 @@ pub fn increment_bhr_count() -> u32 {
 pub fn get_stats() -> (u32, u32, u32) {
     let bsr_count = BSR_ATTEMPT_COUNT.load(Ordering::SeqCst);
     let bhr_attempts = BHR_ATTEMPT_COUNT.load(Ordering::SeqCst);
-    let last_tick = LAST_RESET_TICK.load(Ordering::SeqCst) as u32;
+    let last_tick =
+        crate::privileged::lib::low_u32_from_u64(LAST_RESET_TICK.load(Ordering::SeqCst));
     (bsr_count, bhr_attempts, last_tick)
 }
 

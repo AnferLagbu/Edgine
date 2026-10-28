@@ -287,7 +287,6 @@ impl RecoveryDomain {
 
     // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
     /// 压入一条 FREG 快照 (环形栈, 超出容量覆盖最旧项)
-    #[expect(clippy::cast_possible_truncation)]
     pub fn push_freg_snapshot(&self, tick: u64) {
         let r#gen = self.freg_generation.load(Ordering::SeqCst);
         let undo_count = self.undo.lock().count;
@@ -299,7 +298,10 @@ impl RecoveryDomain {
             tick,
             undo_offset: undo_count,
         };
-        self.freg_stack_top.store(top as u32 + 1, Ordering::SeqCst);
+        self.freg_stack_top.store(
+            crate::privileged::lib::low_u32_from_usize(top) + 1,
+            Ordering::SeqCst,
+        );
     }
 
     /// 读取回退 `levels_back` 层快照的代数 (无快照时返回 0)
@@ -316,7 +318,6 @@ impl RecoveryDomain {
 
     // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
     /// 登记一个地址范围 `[start, end)`; 表满时返回 `false`
-    #[expect(clippy::cast_possible_truncation)]
     pub fn add_addr_range(&self, start: u64, end: u64) -> bool {
         let count = self.addr_range_count.load(Ordering::SeqCst) as usize;
         if count >= MAX_ADDR_RANGES {
@@ -324,8 +325,10 @@ impl RecoveryDomain {
         }
         let mut ranges = self.addr_ranges.lock();
         ranges[count] = (start, end);
-        self.addr_range_count
-            .store(count as u32 + 1, Ordering::SeqCst);
+        self.addr_range_count.store(
+            crate::privileged::lib::low_u32_from_usize(count) + 1,
+            Ordering::SeqCst,
+        );
         true
     }
 

@@ -160,8 +160,6 @@ struct VgaFbInfo {
 
 /// 通过 Bochs DISPI 端口读取 VGA 帧缓冲分辨率
 #[cfg(target_arch = "x86_64")]
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 fn read_bochs_disp_mode() -> Option<(u32, u32, u8)> {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
@@ -181,7 +179,7 @@ fn read_bochs_disp_mode() -> Option<(u32, u32, u8)> {
         port_outw(VBE_DISPI_PORT_INDEX, VBE_DISPI_INDEX_YRES);
         let yres = u32::from(port_inw(VBE_DISPI_PORT_DATA));
         port_outw(VBE_DISPI_PORT_INDEX, VBE_DISPI_INDEX_BPP);
-        let bpp = port_inw(VBE_DISPI_PORT_DATA) as u8;
+        let bpp = crate::privileged::lib::low_u8_from_u16(port_inw(VBE_DISPI_PORT_DATA));
         if xres == 0 || yres == 0 || bpp == 0 {
             return None;
         }
@@ -196,8 +194,6 @@ fn read_bochs_disp_mode() -> Option<(u32, u32, u8)> {
 /// - `mmio_base` 必须是有效的 VGA BAR0 映射地址
 /// - 偏移计算: `VBE_DISPI_MMIO_BASE` + reg * 2 (每寄存器 2 字节间距)
 #[cfg(target_arch = "x86_64")]
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 unsafe fn read_bochs_disp_mode_mmio(mmio_base: u64) -> Option<(u32, u32, u8)> {
     // SAFETY: 调用方保证 mmio_base 是有效的 VGA BAR0 映射,
     // 偏移在 BAR0 范围内, volatile 访问对 MMIO 寄存器是必需的.
@@ -216,7 +212,7 @@ unsafe fn read_bochs_disp_mode_mmio(mmio_base: u64) -> Option<(u32, u32, u8)> {
         }
         let xres = u32::from(read_reg(VBE_DISPI_INDEX_XRES));
         let yres = u32::from(read_reg(VBE_DISPI_INDEX_YRES));
-        let bpp = read_reg(VBE_DISPI_INDEX_BPP) as u8;
+        let bpp = crate::privileged::lib::low_u8_from_u16(read_reg(VBE_DISPI_INDEX_BPP));
         if xres == 0 || yres == 0 || bpp == 0 {
             return None;
         }
@@ -302,8 +298,6 @@ fn probe_vga_fb_via_pci() -> Option<VgaFbInfo> {
 /// 5. 创建 Framebuffer 实例并自检
 /// # Errors
 /// 未找到可用帧缓冲或创建 Framebuffer 失败时返回 Err。
-// 有意窄化: 用户内存代理, 指针/长度上下文保证
-#[expect(clippy::cast_possible_truncation)]
 pub fn display_init() -> infra::Result<()> {
     crate::klog_boot_info!("[DISPLAY] display_init: probing framebuffer");
 
@@ -358,8 +352,12 @@ pub fn display_init() -> infra::Result<()> {
 
     // SAFETY: 帧缓冲物理地址来自 bootloader, 由 map_framebuffer 恒等映射
     let fb_iomem = unsafe {
-        IoMem::new(PhysAddr(fb_addr), fb_size as usize, "fb")
-            .map_err(|_| DriverError::HardwareError)?
+        IoMem::new(
+            PhysAddr(fb_addr),
+            crate::privileged::lib::usize_from_u64(fb_size),
+            "fb",
+        )
+        .map_err(|_| DriverError::HardwareError)?
     };
 
     let font = font::default_font();

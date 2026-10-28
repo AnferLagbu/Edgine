@@ -201,7 +201,7 @@ pub fn elf_load_with_bias(
     }
 
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    let phdr_base = unsafe { elf_data.add(header.e_phoff as usize) };
+    let phdr_base = unsafe { elf_data.add(crate::privileged::lib::usize_from_u64(header.e_phoff)) };
     let phdr_count = header.e_phnum;
 
     let mut max_vaddr: u64 = 0;
@@ -248,9 +248,11 @@ pub fn elf_load_with_bias(
             .checked_add(phdr.p_memsz)
             .ok_or("ELF: vaddr + memsz overflow")?
             + bias;
-        let vaddr_end = ((vaddr_end_raw + PAGE_SIZE - 1) & !(PAGE_SIZE - 1)) as usize;
-        let filesz = phdr.p_filesz as usize;
-        let file_offset = phdr.p_offset as usize;
+        let vaddr_end = crate::privileged::lib::usize_from_u64(
+            (vaddr_end_raw + PAGE_SIZE - 1) & !(PAGE_SIZE - 1),
+        );
+        let filesz = crate::privileged::lib::usize_from_u64(phdr.p_filesz);
+        let file_offset = crate::privileged::lib::usize_from_u64(phdr.p_offset);
 
         let file_data_end = phdr
             .p_offset
@@ -276,7 +278,7 @@ pub fn elf_load_with_bias(
         }
 
         let vma = Vma::new(
-            vaddr_start as usize,
+            crate::privileged::lib::usize_from_u64(vaddr_start),
             vaddr_end,
             page_flags,
             VmaType::Anonymous,
@@ -296,16 +298,20 @@ pub fn elf_load_with_bias(
             let page_virt = phys.to_virt();
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
             unsafe {
-                core::ptr::write_bytes(page_virt.0 as *mut u8, 0, PAGE_SIZE as usize);
+                core::ptr::write_bytes(
+                    page_virt.0 as *mut u8,
+                    0,
+                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                );
             }
 
-            let copy_start = if (cur as usize) < file_end {
-                file_offset + (cur - vaddr_start) as usize
+            let copy_start = if crate::privileged::lib::usize_from_u64(cur) < file_end {
+                file_offset + crate::privileged::lib::usize_from_u64(cur - vaddr_start)
             } else {
                 file_end
             };
             let copy_len = if copy_start < file_end {
-                (file_end - copy_start).min(PAGE_SIZE as usize)
+                (file_end - copy_start).min(crate::privileged::lib::usize_from_u64(PAGE_SIZE))
             } else {
                 0
             };
@@ -369,7 +375,7 @@ pub fn needs_interp_rewrite(elf_data: *const u8, elf_size: u64) -> bool {
     }
 
     // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
-    let phdr_base = unsafe { elf_data.add(header.e_phoff as usize) };
+    let phdr_base = unsafe { elf_data.add(crate::privileged::lib::usize_from_u64(header.e_phoff)) };
 
     for i in 0..header.e_phnum {
         // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
@@ -382,9 +388,9 @@ pub fn needs_interp_rewrite(elf_data: *const u8, elf_size: u64) -> bool {
         }
 
         // 读取 interp 路径字符串
-        let interp_offset = phdr.p_offset as usize;
-        let interp_len = phdr.p_filesz as usize;
-        if interp_offset + interp_len > elf_size as usize {
+        let interp_offset = crate::privileged::lib::usize_from_u64(phdr.p_offset);
+        let interp_len = crate::privileged::lib::usize_from_u64(phdr.p_filesz);
+        if interp_offset + interp_len > crate::privileged::lib::usize_from_u64(elf_size) {
             continue;
         }
         // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
@@ -424,7 +430,7 @@ pub unsafe fn rewrite_interp_path(elf_data: *mut u8, elf_size: u64) {
             return;
         }
 
-        let phdr_base = elf_data.add(header.e_phoff as usize);
+        let phdr_base = elf_data.add(crate::privileged::lib::usize_from_u64(header.e_phoff));
 
         for i in 0..header.e_phnum {
             let phdr = &*(phdr_base.add(i as usize * core::mem::size_of::<Elf64Phdr>())
@@ -434,9 +440,9 @@ pub unsafe fn rewrite_interp_path(elf_data: *mut u8, elf_size: u64) {
                 continue;
             }
 
-            let interp_offset = phdr.p_offset as usize;
-            let interp_len = phdr.p_filesz as usize;
-            if interp_offset + interp_len > elf_size as usize {
+            let interp_offset = crate::privileged::lib::usize_from_u64(phdr.p_offset);
+            let interp_len = crate::privileged::lib::usize_from_u64(phdr.p_filesz);
+            if interp_offset + interp_len > crate::privileged::lib::usize_from_u64(elf_size) {
                 continue;
             }
 

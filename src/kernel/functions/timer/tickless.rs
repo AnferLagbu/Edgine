@@ -417,7 +417,7 @@ pub fn tickless_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
     match cmd {
         0 => {
             // set_global_mode
-            let mode = TicklessMode::from_u32(a1 as u32);
+            let mode = TicklessMode::from_u32(crate::functions::intcast::low_u32_from_u64(a1));
             subsystem().set_global_mode(mode);
             0
         }
@@ -427,8 +427,8 @@ pub fn tickless_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
         }
         2 => {
             // set_cpu_mode
-            let mode = TicklessMode::from_u32(a2 as u32);
-            if subsystem().set_cpu_mode(a1 as u32, mode) {
+            let mode = TicklessMode::from_u32(crate::functions::intcast::low_u32_from_u64(a2));
+            if subsystem().set_cpu_mode(crate::functions::intcast::low_u32_from_u64(a1), mode) {
                 0
             } else {
                 -(22i64)
@@ -436,7 +436,7 @@ pub fn tickless_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
         }
         3 => {
             // get_cpu_stats
-            match subsystem().get_cpu_stats(a1 as u32) {
+            match subsystem().get_cpu_stats(crate::functions::intcast::low_u32_from_u64(a1)) {
                 Some((enter, exit, idle_ns)) => {
                     // 返回: 高32位=enter_count, 低32位=exit_count
                     // idle_ns 通过第二次调用返回 (简化)
@@ -448,7 +448,10 @@ pub fn tickless_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
         }
         4 => {
             // set_hz
-            if subsystem().set_hz(a1 as u32, a2 as u32) {
+            if subsystem().set_hz(
+                crate::functions::intcast::low_u32_from_u64(a1),
+                crate::functions::intcast::low_u32_from_u64(a2),
+            ) {
                 0
             } else {
                 -(22i64)

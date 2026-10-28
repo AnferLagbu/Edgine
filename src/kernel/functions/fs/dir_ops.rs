@@ -14,7 +14,7 @@
 pub fn lseek_syscall(fd: i32, offset: i64, whence: i32) -> i64 {
     i64::from(crate::functions::fs::vfs_seek(
         fd.cast_unsigned(),
-        offset as i32,
+        crate::functions::intcast::low_i32_from_i64(offset),
         whence.cast_unsigned(),
     ))
 }

@@ -292,7 +292,6 @@ fn measure_bus_hz(counter_hz: u64) -> Result<u64, &'static str> {
 /// 把绝对截止期换算成本核硬件装填值并写入
 // 有意窄化: 硬件装填为 32 位; 超界即饱和到最大值 (对应远超一个 tick 的截止期,
 // 由 tickless 的长睡眠产生, 截断只会提前唤醒, 不会延后).
-#[expect(clippy::cast_possible_truncation)]
 fn write_expiry(deadline: u64) {
     match MODE.load(Ordering::Acquire) {
         MODE_DEADLINE => apic::set_deadline(deadline),
@@ -302,7 +301,9 @@ fn write_expiry(deadline: u64) {
             let delta = deadline.saturating_sub(tick::counter_now());
             // 至少装 1 个计数: 换算向下取整为 0 时会让定时器立即重发 (中断风暴).
             let counts = tick::mul_div_saturating(delta, post_div, counter_hz).max(1);
-            apic::set_timer_count(counts.min(u64::from(u32::MAX)) as u32);
+            apic::set_timer_count(crate::privileged::lib::low_u32_from_u64(
+                counts.min(u64::from(u32::MAX)),
+            ));
         }
         // 未装配 (setup 前的 tick 不可能到达: LVT 在 apic::init 里默认屏蔽)
         _ => {}

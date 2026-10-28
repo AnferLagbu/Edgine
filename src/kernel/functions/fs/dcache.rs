@@ -242,7 +242,7 @@ impl DCache {
         }
 
         let hash = Self::hash_key(fs_id, parent_ino, name);
-        let start = (hash % DCACHE_SIZE as u64) as usize;
+        let start = crate::functions::intcast::usize_from_u64(hash % DCACHE_SIZE as u64);
 
         for distance in 0..DCACHE_SIZE {
             let idx = (start + distance) % DCACHE_SIZE;
@@ -254,7 +254,7 @@ impl DCache {
             }
 
             // Robin Hood: 如果当前条目的探查距离小于我们已走的距离, 不可能再找到
-            if entry.probe_distance < distance as u8 {
+            if entry.probe_distance < crate::functions::intcast::low_u8_from_usize(distance) {
                 return None;
             }
 
@@ -281,13 +281,13 @@ impl DCache {
         }
 
         let hash = Self::hash_key(fs_id, parent_ino, name);
-        let start = (hash % DCACHE_SIZE as u64) as usize;
+        let start = crate::functions::intcast::usize_from_u64(hash % DCACHE_SIZE as u64);
 
         let mut new_entry = DCacheEntry {
             fs_id,
             parent_ino,
             name: [0; DCACHE_NAME_LEN],
-            name_len: name.len() as u8,
+            name_len: crate::functions::intcast::low_u8_from_usize(name.len()),
             ino,
             file_type,
             valid: true,
@@ -428,7 +428,7 @@ impl ICache {
         }
 
         let hash = Self::hash_key(fs_id, ino);
-        let start = (hash % ICACHE_SIZE as u64) as usize;
+        let start = crate::functions::intcast::usize_from_u64(hash % ICACHE_SIZE as u64);
 
         for distance in 0..ICACHE_SIZE {
             let idx = (start + distance) % ICACHE_SIZE;
@@ -438,7 +438,7 @@ impl ICache {
                 return None;
             }
 
-            if entry.probe_distance < distance as u8 {
+            if entry.probe_distance < crate::functions::intcast::low_u8_from_usize(distance) {
                 return None;
             }
 
@@ -472,7 +472,7 @@ impl ICache {
         }
 
         let hash = Self::hash_key(fs_id, ino);
-        let start = (hash % ICACHE_SIZE as u64) as usize;
+        let start = crate::functions::intcast::usize_from_u64(hash % ICACHE_SIZE as u64);
 
         let mut new_entry = ICacheEntry {
             fs_id,
@@ -534,7 +534,7 @@ impl ICache {
         }
 
         let hash = Self::hash_key(fs_id, ino);
-        let start = (hash % ICACHE_SIZE as u64) as usize;
+        let start = crate::functions::intcast::usize_from_u64(hash % ICACHE_SIZE as u64);
 
         for distance in 0..ICACHE_SIZE {
             let idx = (start + distance) % ICACHE_SIZE;
@@ -544,7 +544,7 @@ impl ICache {
                 return;
             }
 
-            if entry.probe_distance < distance as u8 {
+            if entry.probe_distance < crate::functions::intcast::low_u8_from_usize(distance) {
                 return;
             }
 
@@ -590,7 +590,7 @@ impl ICache {
         }
 
         let hash = Self::hash_key(fs_id, ino);
-        let start = (hash % ICACHE_SIZE as u64) as usize;
+        let start = crate::functions::intcast::usize_from_u64(hash % ICACHE_SIZE as u64);
 
         for distance in 0..ICACHE_SIZE {
             let idx = (start + distance) % ICACHE_SIZE;
@@ -600,7 +600,7 @@ impl ICache {
                 return None;
             }
 
-            if entry.probe_distance < distance as u8 {
+            if entry.probe_distance < crate::functions::intcast::low_u8_from_usize(distance) {
                 return None;
             }
 

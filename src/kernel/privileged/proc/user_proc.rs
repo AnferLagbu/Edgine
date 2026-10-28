@@ -443,7 +443,9 @@ pub(crate) mod raw {
 
             vmm_ensure_path_user(vaddr);
 
-            crate::arch!(interrupt_restore(saved_if as usize));
+            crate::arch!(interrupt_restore(crate::privileged::lib::usize_from_u64(
+                saved_if
+            )));
         }
     }
 
@@ -485,7 +487,11 @@ pub(crate) mod raw {
         }
         // SAFETY: page 来自 alloc_phys_page, 大小为 PAGE_SIZE。
         unsafe {
-            memset(page.cast::<core::ffi::c_void>(), 0, PAGE_SIZE as usize);
+            memset(
+                page.cast::<core::ffi::c_void>(),
+                0,
+                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            );
         }
         raw::vmm_map_user_page(cr3, vaddr, page as u64, flags);
         page
@@ -506,7 +512,7 @@ pub(crate) mod raw {
             memcpy(
                 dest.cast::<core::ffi::c_void>(),
                 src.cast::<core::ffi::c_void>(),
-                chunk as usize,
+                crate::privileged::lib::usize_from_u64(chunk),
             );
         }
     }
@@ -529,7 +535,11 @@ pub(crate) mod raw {
         if !page.is_null() {
             // SAFETY: page 来自 alloc_phys_page, 大小为 PAGE_SIZE。
             unsafe {
-                memset(page.cast::<core::ffi::c_void>(), 0, PAGE_SIZE as usize);
+                memset(
+                    page.cast::<core::ffi::c_void>(),
+                    0,
+                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                );
             }
         }
         page
@@ -557,7 +567,11 @@ pub(crate) mod raw {
         if !ptr.is_null() {
             // SAFETY: ptr 来自 kmalloc, 大小为 size, 清零区间 [ptr, ptr+size) 合法。
             unsafe {
-                memset(ptr.cast::<core::ffi::c_void>(), 0, size as usize);
+                memset(
+                    ptr.cast::<core::ffi::c_void>(),
+                    0,
+                    crate::privileged::lib::usize_from_u64(size),
+                );
             }
         }
         ptr
@@ -1621,8 +1635,8 @@ impl UserProcManager {
         crate::klog_boot_info!("[USER] SELF-CHECK: calling enter_user_asm...");
 
         crate::arch!(enter_user(
-            rip_val as usize,
-            rsp_initial as usize,
+            crate::privileged::lib::usize_from_u64(rip_val),
+            crate::privileged::lib::usize_from_u64(rsp_initial),
             0,
             cr3,
             kstack
@@ -1689,7 +1703,7 @@ impl UserProcManager {
         }
 
         let new_sp = stack_top - total as u64;
-        let mut pos = new_sp as usize;
+        let mut pos = crate::privileged::lib::usize_from_u64(new_sp);
 
         // 写入 argc
         let arg_count_off = pos;
@@ -1826,7 +1840,8 @@ impl UserProcManager {
                     Self::rollback_unrun_process(proc_ref);
                     return -1;
                 }
-                let phdr = (elf_data.add(phdr_offset as usize)) as *const ElfPhdr;
+                let phdr = (elf_data.add(crate::privileged::lib::usize_from_u64(phdr_offset)))
+                    as *const ElfPhdr;
 
                 if (*phdr).p_type != PT_LOAD {
                     continue;
@@ -1880,7 +1895,8 @@ impl UserProcManager {
                 }
 
                 if (*phdr).p_filesz > 0 {
-                    let file_offset_bytes = (*phdr).p_offset as usize;
+                    let file_offset_bytes =
+                        crate::privileged::lib::usize_from_u64((*phdr).p_offset);
                     let mut copied: u64 = 0;
                     let first_page_offset = (*phdr).p_vaddr & 0xFFF;
                     let start_idx = page_count.saturating_sub(num_pages as usize);
@@ -1889,7 +1905,8 @@ impl UserProcManager {
                         if copied >= (*phdr).p_filesz {
                             break;
                         }
-                        let page_phys = allocated_pages[start_idx + j as usize];
+                        let page_phys =
+                            allocated_pages[start_idx + crate::privileged::lib::usize_from_u64(j)];
                         if page_phys == 0 {
                             continue;
                         }
@@ -1906,7 +1923,7 @@ impl UserProcManager {
                             page_phys,
                             off_in_page,
                             elf_data,
-                            file_offset_bytes + (copied as usize),
+                            file_offset_bytes + crate::privileged::lib::usize_from_u64(copied),
                             chunk,
                         );
                         copied += chunk;
@@ -1954,9 +1971,9 @@ impl UserProcManager {
             unsafe {
                 memcpy(
                     page.cast::<core::ffi::c_void>(),
-                    code.add((i * PAGE_SIZE) as usize)
+                    code.add(crate::privileged::lib::usize_from_u64(i * PAGE_SIZE))
                         .cast::<core::ffi::c_void>(),
-                    copy_size as usize,
+                    crate::privileged::lib::usize_from_u64(copy_size),
                 );
             }
 

@@ -168,8 +168,10 @@ impl AuditLog {
             hash,
         };
         self.buffer[pos] = node;
-        self.write_pos
-            .store(((pos + 1) % AUDIT_BUFFER_SIZE) as u32, Ordering::Release);
+        self.write_pos.store(
+            crate::functions::intcast::low_u32_from_usize((pos + 1) % AUDIT_BUFFER_SIZE),
+            Ordering::Release,
+        );
         self.last_hash.store(hash, Ordering::Release);
         self.total.fetch_add(1, Ordering::AcqRel);
         idx
@@ -199,7 +201,9 @@ impl AuditLog {
     pub fn verify(&self) -> (bool, Option<u32>) {
         let next = self.next_index.load(Ordering::Acquire);
         // 环形缓冲中仍保留的最早 index
-        let start = next.saturating_sub(AUDIT_BUFFER_SIZE as u32);
+        let start = next.saturating_sub(crate::functions::intcast::low_u32_from_usize(
+            AUDIT_BUFFER_SIZE,
+        ));
         // 首个可校验节点无前驱作参照, 故 prev 用 Option 表示"尚无期望前驱哈希"
         let mut prev: Option<u64> = None;
         for i in start..next {

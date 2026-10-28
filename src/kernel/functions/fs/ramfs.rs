@@ -30,7 +30,8 @@ use crate::functions::fs::ramfs_core::RamFsData;
 
 // functions 层透出的常量 (镜像 kernel/fs/ramfs/ramfs.rs 内部常量)
 /// 内存文件系统的块大小 (等于内核页大小)。
-pub const RAMFS_BLOCK_SIZE: usize = crate::privileged::mm::PAGE_SIZE as usize;
+pub const RAMFS_BLOCK_SIZE: usize =
+    crate::functions::intcast::usize_from_u64(crate::privileged::mm::PAGE_SIZE);
 /// 内存文件系统支持的最大节点数。
 pub const RAMFS_MAX_NODES: usize = 256;
 /// 内存文件系统支持的最大块数。

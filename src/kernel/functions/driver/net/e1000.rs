@@ -149,7 +149,10 @@ mod e1000_impl {
                 return Err(DriverError::HardwareError);
             };
             self.io.set_tx_base(tx_ring.phys_addr());
-            self.io.set_tx_len(tx_ring.len_bytes() as u32);
+            self.io
+                .set_tx_len(crate::functions::intcast::low_u32_from_usize(
+                    tx_ring.len_bytes(),
+                ));
             self.io.set_tx_head_raw(0);
             self.io.set_tx_tail(0);
             self.tx_ring = Some(tx_ring);
@@ -158,10 +161,16 @@ mod e1000_impl {
                 return Err(DriverError::HardwareError);
             };
             self.io.set_rx_base(rx_ring.phys_addr());
-            self.io.set_rx_len(rx_ring.len_bytes() as u32);
+            self.io
+                .set_rx_len(crate::functions::intcast::low_u32_from_usize(
+                    rx_ring.len_bytes(),
+                ));
             self.io.set_rx_head_raw(0);
             // 硬件持有 [head, tail] 之外的描述符; 初始 tail 指向最后一个槽位.
-            self.io.set_rx_tail((E1000_RX_RING_SIZE - 1) as u32);
+            self.io
+                .set_rx_tail(crate::functions::intcast::low_u32_from_usize(
+                    E1000_RX_RING_SIZE - 1,
+                ));
             self.rx_ring = Some(rx_ring);
 
             Ok(())
@@ -181,7 +190,10 @@ mod e1000_impl {
                     | E1000_RCTL_BSIZE_2048,
             );
             self.io.set_mac(self.mac);
-            self.io.set_rx_tail((E1000_RX_RING_SIZE - 1) as u32);
+            self.io
+                .set_rx_tail(crate::functions::intcast::low_u32_from_usize(
+                    E1000_RX_RING_SIZE - 1,
+                ));
             self.io.set_ipg(E1000_IPG_DEFAULT);
             // IMS 不在此处使能: 写掩码即令设备经 INTx/MSI 发中断, 而此时 ISR
             // 尚未注册 (注册在 e1000_net_registration 内), 会形成"已配掩码却
@@ -222,7 +234,10 @@ mod e1000_impl {
             // 保证描述符写入先于 tail 更新对设备可见 (设备随后 DMA 读取).
             core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
             tx_ring.advance_tail();
-            self.io.set_tx_tail(tx_ring.tail() as u32);
+            self.io
+                .set_tx_tail(crate::functions::intcast::low_u32_from_usize(
+                    tx_ring.tail(),
+                ));
             Ok(total_len)
         }
 
@@ -245,7 +260,8 @@ mod e1000_impl {
                     crate::slog_warn!(Driver, "e1000: RX 描述符错误 err=0x{:02X}", err);
                     rx_ring.clear_status(tail);
                     rx_ring.advance_tail();
-                    self.io.set_rx_tail(tail as u32);
+                    self.io
+                        .set_rx_tail(crate::functions::intcast::low_u32_from_usize(tail));
                     continue;
                 }
 
@@ -254,7 +270,8 @@ mod e1000_impl {
                 rx_ring.advance_tail();
                 // RDT 指向刚回收的索引 (= RDH-1), 与 init (RDT=count-1, RDH=0) 同约定;
                 // 若设为 tail+1 会使 RDT==RDH, 硬件可用描述符归零, 后续帧被静默丢弃.
-                self.io.set_rx_tail(tail as u32);
+                self.io
+                    .set_rx_tail(crate::functions::intcast::low_u32_from_usize(tail));
                 return Some(len);
             }
         }

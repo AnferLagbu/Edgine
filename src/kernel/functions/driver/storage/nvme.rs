@@ -475,7 +475,7 @@ impl NvmeController {
             io_queue: NvmeQueuePair::new(IO_QID, u32::from(QUEUE_DEPTH), 0),
             namespace_count: 0,
             namespace_size_lba: 0,
-            lba_format_size: SECTOR_SIZE as u16,
+            lba_format_size: crate::functions::intcast::low_u16_from_usize(SECTOR_SIZE),
             irq_vector: None,
             io_cq_isr_processed: AtomicU64::new(0),
             initialized: false,
@@ -828,7 +828,7 @@ impl NvmeController {
                     self.lba_format_size = if lbads > 0 {
                         1u16 << lbads as u16
                     } else {
-                        SECTOR_SIZE as u16
+                        crate::functions::intcast::low_u16_from_usize(SECTOR_SIZE)
                     };
                 }
 
@@ -939,8 +939,9 @@ impl NvmeController {
         let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
         let buf_dma_addr = buf.dma_addr().as_u64();
 
-        let nlb = ((byte_count + (self.lba_format_size as usize) - 1)
-            / (self.lba_format_size as usize)) as u16;
+        let nlb = crate::functions::intcast::low_u16_from_usize(
+            (byte_count + (self.lba_format_size as usize) - 1) / (self.lba_format_size as usize),
+        );
 
         // 构造读命令
         let mut cmd = fw_nvme::NvmeCommand::read(nsid, lba, nlb, buf_dma_addr);
@@ -986,8 +987,9 @@ impl NvmeController {
         // 复制数据到 DMA 缓冲区
         crate::privileged::driver::storage::nvme_copy_to_dma(buf_vaddr, buffer, byte_count);
 
-        let nlb = ((byte_count + (self.lba_format_size as usize) - 1)
-            / (self.lba_format_size as usize)) as u16;
+        let nlb = crate::functions::intcast::low_u16_from_usize(
+            (byte_count + (self.lba_format_size as usize) - 1) / (self.lba_format_size as usize),
+        );
 
         let mut cmd = fw_nvme::NvmeCommand::write(nsid, lba, nlb, buf_dma_addr);
         cmd.mptr = buf_dma_addr;

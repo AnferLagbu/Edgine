@@ -144,8 +144,6 @@ impl Color {
     }
 
     /// 混合两个颜色 (alpha混合)
-    // 有意窄化: 颜色分量/透明度经规范化计算, 值域 [0,255]
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
@@ -156,9 +154,15 @@ impl Color {
         let inv_alpha = 255 - alpha;
 
         Self {
-            r: ((u32::from(self.r) * alpha + u32::from(other.r) * inv_alpha) / 255) as u8,
-            g: ((u32::from(self.g) * alpha + u32::from(other.g) * inv_alpha) / 255) as u8,
-            b: ((u32::from(self.b) * alpha + u32::from(other.b) * inv_alpha) / 255) as u8,
+            r: crate::privileged::lib::low_u8_from_u32(
+                (u32::from(self.r) * alpha + u32::from(other.r) * inv_alpha) / 255,
+            ),
+            g: crate::privileged::lib::low_u8_from_u32(
+                (u32::from(self.g) * alpha + u32::from(other.g) * inv_alpha) / 255,
+            ),
+            b: crate::privileged::lib::low_u8_from_u32(
+                (u32::from(self.b) * alpha + u32::from(other.b) * inv_alpha) / 255,
+            ),
             a: 255,
         }
     }

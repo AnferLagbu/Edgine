@@ -137,8 +137,13 @@ const _: () = assert!(core::mem::offset_of!(KptiCpuState, tramp_save0) == 8);
 const _: () = assert!(core::mem::offset_of!(KptiCpuState, tramp_save1) == 16);
 const _: () = assert!(core::mem::size_of::<KptiCpuState>() == 24);
 // 载体按页对齐 (汇编 `adrp` 取符号地址; `kpti_init` 按整页映射).
-const _: () = assert!(core::mem::align_of::<KptiCpuStateArray>() >= PAGE_SIZE as usize);
-const _: () = assert!(core::mem::size_of::<KptiCpuStateArray>().is_multiple_of(PAGE_SIZE as usize));
+const _: () = assert!(
+    core::mem::align_of::<KptiCpuStateArray>() >= crate::privileged::lib::usize_from_u64(PAGE_SIZE)
+);
+const _: () = assert!(
+    core::mem::size_of::<KptiCpuStateArray>()
+        .is_multiple_of(crate::privileged::lib::usize_from_u64(PAGE_SIZE))
+);
 
 // 高半区别名基数由 `mm::KERNEL_BASE` 单一提供 (L1-04 收敛: 迁移后二者同值,
 // 不再另设 `HIGH_ALIAS_BASE`), 换算统一走 `mm::phys_to_virt` / `mm::virt_to_phys`.
@@ -247,7 +252,7 @@ pub unsafe fn kpti_init(vmm: &super::vmm::Aarch64Vmm, kernel_ttbr1: u64) {
         core::ptr::write_bytes(
             phys_to_virt(tramp_l0_phys) as *mut u8,
             0,
-            PAGE_SIZE as usize,
+            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
         );
     }
 

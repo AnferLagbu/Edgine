@@ -210,13 +210,17 @@ fn ipv6_cidr_contains(net: &Ipv6Addr, dest: &Ipv6Addr, prefix_len: u8) -> bool {
 /// `sys_route_add` — 从 u32 ABI 参数添加 IPv4 路由 (前缀长度 > 32 返回 `-EINVAL`)
 pub fn sys_route_add(dest_u32: u64, prefix_len: u64, gateway_u32: u64) -> i64 {
     let entry = RouteEntry {
-        dest: IpAddr::V4(Ipv4Addr::from_octets((dest_u32 as u32).to_be_bytes())),
+        dest: IpAddr::V4(Ipv4Addr::from_octets(
+            crate::privileged::lib::low_u32_from_u64(dest_u32).to_be_bytes(),
+        )),
         prefix_len: if prefix_len > 32 {
             return -(Errno::EINVAL as i64);
         } else {
-            prefix_len as u8
+            crate::privileged::lib::low_u8_from_u64(prefix_len)
         },
-        gateway: IpAddr::V4(Ipv4Addr::from_octets((gateway_u32 as u32).to_be_bytes())),
+        gateway: IpAddr::V4(Ipv4Addr::from_octets(
+            crate::privileged::lib::low_u32_from_u64(gateway_u32).to_be_bytes(),
+        )),
         iface: None,
     };
 
@@ -229,13 +233,17 @@ pub fn sys_route_add(dest_u32: u64, prefix_len: u64, gateway_u32: u64) -> i64 {
 /// `sys_route_del` — 从 u32 ABI 参数删除 IPv4 路由 (前缀长度 > 32 返回 `-EINVAL`)
 pub fn sys_route_del(dest_u32: u64, prefix_len: u64, gateway_u32: u64) -> i64 {
     match route_del(
-        IpAddr::V4(Ipv4Addr::from_octets((dest_u32 as u32).to_be_bytes())),
+        IpAddr::V4(Ipv4Addr::from_octets(
+            crate::privileged::lib::low_u32_from_u64(dest_u32).to_be_bytes(),
+        )),
         if prefix_len > 32 {
             return -(Errno::EINVAL as i64);
         } else {
-            prefix_len as u8
+            crate::privileged::lib::low_u8_from_u64(prefix_len)
         },
-        IpAddr::V4(Ipv4Addr::from_octets((gateway_u32 as u32).to_be_bytes())),
+        IpAddr::V4(Ipv4Addr::from_octets(
+            crate::privileged::lib::low_u32_from_u64(gateway_u32).to_be_bytes(),
+        )),
     ) {
         Ok(()) => 0,
         Err(e) => -(e as i64),
@@ -245,7 +253,7 @@ pub fn sys_route_del(dest_u32: u64, prefix_len: u64, gateway_u32: u64) -> i64 {
 /// `sys_route_query` — 查询 IPv4 目标的最长前缀匹配网关 (不可达返回 `-ENETUNREACH`)
 pub fn sys_route_query(dest_u32: u64) -> i64 {
     route_query(IpAddr::V4(Ipv4Addr::from_octets(
-        (dest_u32 as u32).to_be_bytes(),
+        crate::privileged::lib::low_u32_from_u64(dest_u32).to_be_bytes(),
     )))
     .map_or(-(Errno::ENETUNREACH as i64), |result| {
         match result.gateway {

@@ -209,11 +209,15 @@ impl UnkfsVdev {
     /// 打开 vdev: 单盘探测到设备则置健康并回填容量/扇区数, 否则置无法打开.
     pub fn open(&mut self) {
         if self.config.vdev_type == HV_VDEV_TYPE_DISK {
-            let present = block::hdd_is_present(self.config.vdev_id as u8);
+            let present = block::hdd_is_present(crate::functions::intcast::low_u8_from_u16(
+                self.config.vdev_id,
+            ));
             if present {
                 self.state = UnkfsVdevState::Healthy;
                 if self.config.asize == 0 {
-                    self.config.asize = Self::probe_disk_size(self.config.vdev_id as u8);
+                    self.config.asize = Self::probe_disk_size(
+                        crate::functions::intcast::low_u8_from_u16(self.config.vdev_id),
+                    );
                 }
                 if self.config.asize > 0 {
                     self.config.sector_count = self.config.asize / 512;
@@ -227,7 +231,7 @@ impl UnkfsVdev {
     /// 按扇区读取数据 (扣除分区偏移), 缓冲区不足返回 `InvalidArgument`.
     pub fn read_sectors(&mut self, sector: u64, count: u32, buf: &mut [u8]) -> i32 {
         let need_bytes = u64::from(count) * 512;
-        if buf.len() < need_bytes as usize {
+        if buf.len() < crate::functions::intcast::usize_from_u64(need_bytes) {
             return KernelError::InvalidArgument.as_i32();
         }
         let mut offset = 0usize;
@@ -238,7 +242,7 @@ impl UnkfsVdev {
                 break;
             }
             let result = block::hdd_read_sector(
-                self.config.vdev_id as u8,
+                crate::functions::intcast::low_u8_from_u16(self.config.vdev_id),
                 part_start + sec,
                 &mut buf[offset..],
             );
@@ -255,7 +259,7 @@ impl UnkfsVdev {
     /// 按扇区写入数据 (扣除分区偏移), 缓冲区不足返回 `InvalidArgument`.
     pub fn write_sectors(&mut self, sector: u64, count: u32, buf: &[u8]) -> i32 {
         let need_bytes = u64::from(count) * 512;
-        if buf.len() < need_bytes as usize {
+        if buf.len() < crate::functions::intcast::usize_from_u64(need_bytes) {
             return KernelError::InvalidArgument.as_i32();
         }
         let mut offset = 0usize;
@@ -266,7 +270,7 @@ impl UnkfsVdev {
                 break;
             }
             let result = block::hdd_write_sector(
-                self.config.vdev_id as u8,
+                crate::functions::intcast::low_u8_from_u16(self.config.vdev_id),
                 part_start + sec,
                 &buf[offset..],
             );

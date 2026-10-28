@@ -85,7 +85,12 @@ pub fn mprotect_syscall(addr: u64, len: u64, prot: i32) -> Result<usize, Errno> 
 
     // 委托 privileged 层执行页表修改
     vma_get_current_mm().map_or(Err(Errno::ENOMEM), |mm| {
-        match mm.mprotect(addr as usize, len as usize, new_flags, cr3) {
+        match mm.mprotect(
+            crate::functions::intcast::usize_from_u64(addr),
+            crate::functions::intcast::usize_from_u64(len),
+            new_flags,
+            cr3,
+        ) {
             Ok(()) => Ok(0),
             Err(e) => Err(e),
         }

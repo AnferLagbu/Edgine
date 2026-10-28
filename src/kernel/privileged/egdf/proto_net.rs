@@ -38,20 +38,24 @@ impl NetOps {
     ///
     /// # Safety (调用方)
     /// - `driver_data` 必须有效, `data` 在调用期间有效, len 字节。
-    // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-    #[expect(clippy::cast_possible_truncation)]
     pub fn send(&self, driver_data: *mut u8, data: &[u8]) -> i32 {
-        (self.send)(driver_data, data.as_ptr(), data.len() as u32)
+        (self.send)(
+            driver_data,
+            data.as_ptr(),
+            crate::privileged::lib::low_u32_from_usize(data.len()),
+        )
     }
 
     /// 接收网络包 (Framekernel 安全接口)
     ///
     /// # Safety (调用方)
     /// - `driver_data` 必须有效, `buf` 至少 `buf.capacity()` 字节。
-    // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-    #[expect(clippy::cast_possible_truncation)]
     pub fn try_receive(&self, driver_data: *mut u8, buf: &mut [u8]) -> i32 {
-        (self.try_receive)(driver_data, buf.as_mut_ptr(), buf.len() as u32)
+        (self.try_receive)(
+            driver_data,
+            buf.as_mut_ptr(),
+            crate::privileged::lib::low_u32_from_usize(buf.len()),
+        )
     }
 
     /// 获取 MAC 地址 (Framekernel 安全接口)

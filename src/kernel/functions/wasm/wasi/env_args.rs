@@ -18,11 +18,16 @@ pub fn wasi_environ_sizes_get(
     let count_ptr = interp.stack.pop_i32()?.cast_unsigned();
     let buf_size_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
-    let count = ctx.env.len() as u32;
+    let count = crate::functions::intcast::low_u32_from_usize(ctx.env.len());
     let buf_size: u32 = ctx
         .env
         .iter()
-        .map(|(k, v)| k.len() as u32 + 1 + v.len() as u32 + 1) // "key=value\0"
+        .map(|(k, v)| {
+            crate::functions::intcast::low_u32_from_usize(k.len())
+                + 1
+                + crate::functions::intcast::low_u32_from_usize(v.len())
+                + 1
+        }) // "key=value\0"
         .sum();
 
     write_u32_to_memory(interp, count_ptr, count);
@@ -42,16 +47,23 @@ pub fn wasi_environ_get(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
     let mut offset = 0u32;
     for (i, (key, val)) in ctx.env.iter().enumerate() {
         // 写入指针数组 (每个元素指向 buf 中的位置)
-        write_u32_to_memory(interp, environ_ptr + (i as u32) * 4, buf_ptr + offset);
+        write_u32_to_memory(
+            interp,
+            environ_ptr + crate::functions::intcast::low_u32_from_usize(i) * 4,
+            buf_ptr + offset,
+        );
         // 写入 "key=value\0"
         let entry = format!("{key}={val}");
         let bytes = entry.as_bytes();
         if let Some(ref mut mem) = interp.memory {
             for (j, &byte) in bytes.iter().enumerate() {
-                let _ = mem.write_u8(buf_ptr + offset + j as u32, byte);
+                let _ = mem.write_u8(
+                    buf_ptr + offset + crate::functions::intcast::low_u32_from_usize(j),
+                    byte,
+                );
             }
         }
-        offset += bytes.len() as u32 + 1; // +1 for NUL terminator
+        offset += crate::functions::intcast::low_u32_from_usize(bytes.len()) + 1; // +1 for NUL terminator
     }
 
     interp.stack.push(Value::I32(0))?;
@@ -69,11 +81,11 @@ pub fn wasi_args_sizes_get(
     let count_ptr = interp.stack.pop_i32()?.cast_unsigned();
     let buf_size_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
-    let count = ctx.args.len() as u32;
+    let count = crate::functions::intcast::low_u32_from_usize(ctx.args.len());
     let buf_size: u32 = ctx
         .args
         .iter()
-        .map(|a| a.len() as u32 + 1) // "arg\0"
+        .map(|a| crate::functions::intcast::low_u32_from_usize(a.len()) + 1) // "arg\0"
         .sum();
 
     write_u32_to_memory(interp, count_ptr, count);
@@ -93,15 +105,22 @@ pub fn wasi_args_get(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
     let mut offset = 0u32;
     for (i, arg) in ctx.args.iter().enumerate() {
         // 写入指针数组
-        write_u32_to_memory(interp, argv_ptr + (i as u32) * 4, buf_ptr + offset);
+        write_u32_to_memory(
+            interp,
+            argv_ptr + crate::functions::intcast::low_u32_from_usize(i) * 4,
+            buf_ptr + offset,
+        );
         // 写入 "arg\0"
         let bytes = arg.as_bytes();
         if let Some(ref mut mem) = interp.memory {
             for (j, &byte) in bytes.iter().enumerate() {
-                let _ = mem.write_u8(buf_ptr + offset + j as u32, byte);
+                let _ = mem.write_u8(
+                    buf_ptr + offset + crate::functions::intcast::low_u32_from_usize(j),
+                    byte,
+                );
             }
         }
-        offset += bytes.len() as u32 + 1;
+        offset += crate::functions::intcast::low_u32_from_usize(bytes.len()) + 1;
     }
 
     interp.stack.push(Value::I32(0))?;

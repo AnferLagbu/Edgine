@@ -222,7 +222,7 @@ impl UnkfsRaidzMap {
     ///
     /// 返回长度等于 `ncols` 的列向量, 前 `nparity` 项为校验列。
     pub fn generate_parity(&mut self, data: &[u8]) -> Vec<Vec<u8>> {
-        let unit_size = HV_POOL_BLOCK_SIZE as usize;
+        let unit_size = crate::functions::intcast::usize_from_u64(HV_POOL_BLOCK_SIZE);
         let data_cols = self.data_cols();
         if data_cols == 0 {
             return Vec::new();
@@ -281,7 +281,7 @@ impl UnkfsRaidzMap {
             return Some(result);
         }
 
-        let unit_size = HV_POOL_BLOCK_SIZE as usize;
+        let unit_size = crate::functions::intcast::usize_from_u64(HV_POOL_BLOCK_SIZE);
         let data_cols = self.data_cols();
         let total_units = parity_data
             .get(self.nparity)
@@ -373,7 +373,7 @@ impl UnkfsRaidzMap {
 
     /// 复算并比对全部校验列, 一致返回 `true`, 否则返回 `false`。
     pub fn verify_parity(&self, parity_data: &[Vec<u8>]) -> bool {
-        let unit_size = HV_POOL_BLOCK_SIZE as usize;
+        let unit_size = crate::functions::intcast::usize_from_u64(HV_POOL_BLOCK_SIZE);
         let data_cols = self.data_cols();
         if parity_data.len() < self.ncols {
             return false;

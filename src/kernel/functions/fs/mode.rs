@@ -102,7 +102,11 @@ pub fn chmod_syscall(path_ptr: u64, mode: u32) -> Result<usize, Errno> {
         return Err(Errno::EINVAL);
     }
     let pwm = current_pwm();
-    let r = fw::vfs_chmod(path_ptr as *const u8, mode as u16, pwm);
+    let r = fw::vfs_chmod(
+        path_ptr as *const u8,
+        crate::functions::intcast::low_u16_from_u32(mode),
+        pwm,
+    );
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))
     } else {
@@ -126,7 +130,10 @@ pub fn fchmod_syscall(fd: i32, mode: u32) -> Result<usize, Errno> {
     if mode > 0o7777 {
         return Err(Errno::EINVAL);
     }
-    let r = fw::vfs_fchmod(fd.cast_unsigned(), mode as u16);
+    let r = fw::vfs_fchmod(
+        fd.cast_unsigned(),
+        crate::functions::intcast::low_u16_from_u32(mode),
+    );
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))
     } else {

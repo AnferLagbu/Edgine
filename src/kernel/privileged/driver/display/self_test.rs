@@ -23,8 +23,6 @@ use super::framebuffer_ops::current_framebuffer_ops;
 ///
 /// 返回失败像素数（0 = 全部通过）。
 
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 #[expect(
     clippy::too_many_lines,
     reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
@@ -94,7 +92,7 @@ pub fn framebuffer_self_test(fb: &mut Framebuffer, font: &Font) -> usize {
     let gray_y: u32 = 56;
     let gray_len = fw.min(256);
     for x in 0..gray_len {
-        let gray = x as u8;
+        let gray = crate::privileged::lib::low_u8_from_u32(x);
         fb.set_pixel(x, gray_y, Color::new(gray, gray, gray));
     }
 
@@ -131,13 +129,16 @@ pub fn framebuffer_self_test(fb: &mut Framebuffer, font: &Font) -> usize {
             let py = sweep_start + i;
             // red → green → blue 渐变
             let color = if i < sweep_len / 3 {
-                let t = (i * 765 / sweep_len) as u8;
+                let t = crate::privileged::lib::low_u8_from_u32(i * 765 / sweep_len);
                 Color::new(255u8.saturating_sub(t), t, 0)
             } else if i < 2 * sweep_len / 3 {
-                let t = ((i - sweep_len / 3) * 765 / sweep_len) as u8;
+                let t =
+                    crate::privileged::lib::low_u8_from_u32((i - sweep_len / 3) * 765 / sweep_len);
                 Color::new(0, 255u8.saturating_sub(t), t)
             } else {
-                let t = ((i - 2 * sweep_len / 3) * 765 / sweep_len) as u8;
+                let t = crate::privileged::lib::low_u8_from_u32(
+                    (i - 2 * sweep_len / 3) * 765 / sweep_len,
+                );
                 Color::new(t, 0, 255u8.saturating_sub(t))
             };
             fb.set_pixel(px, py, color);

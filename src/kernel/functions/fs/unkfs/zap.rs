@@ -43,7 +43,7 @@ impl UnkfsZapEntry {
         Self {
             name: n,
             value: v,
-            value_len: vlen as u16,
+            value_len: crate::functions::intcast::low_u16_from_usize(vlen),
             hash,
             used: true,
         }
@@ -146,7 +146,7 @@ impl UnkfsZap {
         {
             let vlen = value.len().min(HV_ZAP_MAX_VALUE);
             existing.value[..vlen].copy_from_slice(&value[..vlen]);
-            existing.value_len = vlen as u16;
+            existing.value_len = crate::functions::intcast::low_u16_from_usize(vlen);
             return true;
         }
         entries.push(UnkfsZapEntry::new(name, value));

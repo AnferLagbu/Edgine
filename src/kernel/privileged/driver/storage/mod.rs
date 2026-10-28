@@ -137,7 +137,7 @@ pub fn nvme_register_msix_isr(msi_vector: u8) -> Result<(), &'static str> {
 // ── 队列布局常量 (从 nvme.rs/ahci.rs 的权威定义派生, 避免副本漂移) ──
 
 /// Admin/I/O 队列深度
-const NVME_QD: u32 = nvme::QUEUE_DEPTH as u32;
+const NVME_QD: u32 = crate::privileged::lib::low_u32_from_usize(nvme::QUEUE_DEPTH);
 /// SQ 条目大小
 const NVME_SQ_ENTRY: usize = core::mem::size_of::<nvme::NvmeCommand>();
 /// CQ 条目大小
@@ -206,7 +206,7 @@ fn alloc_dma_buffer(size: usize) -> Option<DmaStream> {
     if size == 0 {
         return None;
     }
-    let pages = size.div_ceil(PAGE_SIZE as usize);
+    let pages = size.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE));
     let frame = BuddyFrameAlloc.alloc_pages(pages)?;
     // 清零: 设备读到的初值必须是已定义数据
     frame.zero();
@@ -484,8 +484,6 @@ impl AhciCmdListHandle {
 }
 
 /// 分配 AHCI 端口 DMA 资源 (命令列表 + FIS 缓冲区 + 命令表)
-// 有意窄化: 用户内存代理, 指针/长度上下文保证
-#[expect(clippy::cast_possible_truncation)]
 pub fn ahci_alloc_port_dma() -> Option<AhciCmdListHandle> {
     use crate::privileged::dma::get_dma;
     use crate::privileged::mm::PAGE_SIZE;
@@ -496,7 +494,7 @@ pub fn ahci_alloc_port_dma() -> Option<AhciCmdListHandle> {
     }
 
     let cmd_list_size = AHCI_CMD_SLOTS * AHCI_CMD_HDR_SIZE;
-    let fis_size = PAGE_SIZE as usize;
+    let fis_size = crate::privileged::lib::usize_from_u64(PAGE_SIZE);
     let cmd_table_size = AHCI_CMD_TBL_SIZE;
 
     let (cmd_list_v, cmd_list_phys) = dma.alloc_coherent(cmd_list_size)?;
@@ -538,8 +536,6 @@ pub fn ahci_copy_from_dma(dst: *mut u8, src_vaddr: u64, len: usize) {
 }
 
 /// 填充 AHCI Command Header (slot 0)
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 pub fn ahci_fill_cmd_header(
     cmd_list_virt: u64,
     slot: u32,
@@ -560,7 +556,8 @@ pub fn ahci_fill_cmd_header(
         // DW1 = PRDBC (已传字节, 硬件维护) 软件清零;
         // DW2/DW3 = 命令表基址低/高 32 位
         addr_of_mut!((*hdr).prdbc).write_volatile(0u32);
-        addr_of_mut!((*hdr).ctba).write_volatile(cmd_table_phys as u32);
+        addr_of_mut!((*hdr).ctba)
+            .write_volatile(crate::privileged::lib::low_u32_from_u64(cmd_table_phys));
         addr_of_mut!((*hdr).ctbau).write_volatile((cmd_table_phys >> 32) as u32);
     }
 }
@@ -579,8 +576,6 @@ pub fn ahci_fill_h2d_fis(cmd_table_virt: u64, fis_src: usize, fis_size: usize) {
 }
 
 /// 填充 AHCI PRDT entry (数据缓冲区物理地址 + 字节数)
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 pub fn ahci_fill_prdt(
     cmd_table_virt: u64,
     entry_index: usize,
@@ -592,7 +587,7 @@ pub fn ahci_fill_prdt(
     unsafe {
         let table = cmd_table_virt as *mut ahci::AhciCommandTable;
         (*table).prdt[entry_index] = ahci::PhysicalRegionDescriptor {
-            dba: data_phys as u32,
+            dba: crate::privileged::lib::low_u32_from_u64(data_phys),
             dbau: (data_phys >> 32) as u32,
             rsvd: 0,
             dbc: (byte_count - 1) | (if ioc { 1u32 << 31 } else { 0 }),

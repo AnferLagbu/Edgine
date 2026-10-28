@@ -144,14 +144,13 @@ impl DynIpcNamespace {
     /// 创建共享内存段并返回其 IPC ID。
     /// # Errors
     /// 大小为 0 或超过最大限制时返回 Err, 物理页分配失败时返回 Err。
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     pub fn shm_create(&self, owner_pid: u32, size: u64) -> Result<IpcId, i32> {
         if size == 0 || size > SHM_MAX_SIZE {
             return Err(-1);
         }
 
-        let pages = (size as usize).div_ceil(PAGE_SIZE as usize);
+        let pages = crate::privileged::lib::usize_from_u64(size)
+            .div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE));
         let phys = crate::privileged::mm::pmm_alloc_pages(pages);
         if phys.is_null() {
             return Err(-3);
@@ -176,13 +175,12 @@ impl DynIpcNamespace {
     /// 销毁指定共享内存段并释放其物理页。
     /// # Errors
     /// 共享内存段 ID 不存在时返回 Err。
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     pub fn shm_destroy(&self, id: IpcId) -> Result<(), i32> {
         let mut segs = self.shm_segs.lock();
         let pos = segs.iter().position(|s| s.id == id).ok_or(-1)?;
         let seg = segs.remove(pos);
-        let pages = (seg.size as usize).div_ceil(PAGE_SIZE as usize);
+        let pages = crate::privileged::lib::usize_from_u64(seg.size)
+            .div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE));
         crate::privileged::mm::pmm_free_pages(seg.phys_addr as *mut u8, pages);
         Ok(())
     }

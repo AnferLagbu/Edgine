@@ -866,8 +866,6 @@ impl PhysicalMemoryManager {
         );
     }
 
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     /// 初始化 buddy 元数据 (bitmap / buddy_meta / FREE_LINKS) 并建立空闲链表
     ///
     /// `reserved_after_kernel`: 内核镜像末尾之后额外预留的字节数 (向上取整到页),
@@ -886,7 +884,7 @@ impl PhysicalMemoryManager {
             .fetch_add(reserved_aligned, Ordering::Relaxed);
 
         let info = self.info.get();
-        let total_pages = info.total_pages as usize;
+        let total_pages = crate::privileged::lib::usize_from_u64(info.total_pages);
         let total_bits = total_pages;
         let bitmap_words = total_bits.div_ceil(32);
         let bitmap_bytes = bitmap_words * 4;
@@ -901,7 +899,8 @@ impl PhysicalMemoryManager {
         let buddy_meta_bytes = total_pages;
         let buddy_meta_phys =
             (bitmap_aligned + bitmap_bytes as u64 + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
-        let buddy_meta_pages = buddy_meta_bytes.div_ceil(PAGE_SIZE as usize) as u64;
+        let buddy_meta_pages =
+            buddy_meta_bytes.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE)) as u64;
 
         // 将 early_current 推过 buddy 元数据
         self.early_current.store(
@@ -915,7 +914,8 @@ impl PhysicalMemoryManager {
         let free_links_bytes = total_pages * 16;
         let free_links_phys =
             (buddy_meta_phys + buddy_meta_pages * PAGE_SIZE + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
-        let free_links_pages = free_links_bytes.div_ceil(PAGE_SIZE as usize) as u64;
+        let free_links_pages =
+            free_links_bytes.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE)) as u64;
 
         // 将 early_current 推过 FREE_LINKS
         self.early_current.store(
@@ -930,7 +930,8 @@ impl PhysicalMemoryManager {
         let counts_bytes = total_pages;
         let counts_phys =
             (free_links_phys + free_links_pages * PAGE_SIZE + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
-        let counts_pages = counts_bytes.div_ceil(PAGE_SIZE as usize) as u64;
+        let counts_pages =
+            counts_bytes.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE)) as u64;
 
         // 将 early_current 推过计数区
         self.early_current.store(
@@ -946,7 +947,8 @@ impl PhysicalMemoryManager {
         let owner_bytes = total_pages * core::mem::size_of::<OwnerIndex>();
         let owner_phys =
             (counts_phys + counts_pages * PAGE_SIZE + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
-        let owner_pages = owner_bytes.div_ceil(PAGE_SIZE as usize) as u64;
+        let owner_pages =
+            owner_bytes.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE)) as u64;
 
         // 将 early_current 推过所有权槽区
         self.early_current.store(
@@ -1008,7 +1010,8 @@ impl PhysicalMemoryManager {
 
         // ---- 在 bitmap 中标记 reserved 区 ----
         let kernel_end_val = self.kernel_end.get();
-        let kernel_pages = phys_to_page(kernel_end_val + PAGE_SIZE - 1) as usize;
+        let kernel_pages =
+            crate::privileged::lib::usize_from_u64(phys_to_page(kernel_end_val + PAGE_SIZE - 1));
         let reserved_pages = (reserved_aligned / PAGE_SIZE) as usize;
         let total_reserved = kernel_pages + reserved_pages;
         for i in 0..total_reserved.min(total_pages) {
@@ -1019,33 +1022,47 @@ impl PhysicalMemoryManager {
         }
 
         // 标记 bitmap 页已用
-        let bmp_start_page = phys_to_page(bitmap_aligned) as usize;
-        let bmp_pages = (bitmap_bytes as u64).div_ceil(PAGE_SIZE) as usize;
+        let bmp_start_page = crate::privileged::lib::usize_from_u64(phys_to_page(bitmap_aligned));
+        let bmp_pages =
+            crate::privileged::lib::usize_from_u64((bitmap_bytes as u64).div_ceil(PAGE_SIZE));
         for i in bmp_start_page..(bmp_start_page + bmp_pages).min(total_pages) {
             self.set_bit(i);
         }
 
         // 标记 buddy-meta 页已用
-        let buddy_start_page = phys_to_page(buddy_meta_phys) as usize;
-        for i in buddy_start_page..(buddy_start_page + buddy_meta_pages as usize).min(total_pages) {
+        let buddy_start_page =
+            crate::privileged::lib::usize_from_u64(phys_to_page(buddy_meta_phys));
+        for i in buddy_start_page
+            ..(buddy_start_page + crate::privileged::lib::usize_from_u64(buddy_meta_pages))
+                .min(total_pages)
+        {
             self.set_bit(i);
         }
 
         // 标记 FREE_LINKS 页已用 (H-02)
-        let fl_start_page = phys_to_page(free_links_phys) as usize;
-        for i in fl_start_page..(fl_start_page + free_links_pages as usize).min(total_pages) {
+        let fl_start_page = crate::privileged::lib::usize_from_u64(phys_to_page(free_links_phys));
+        for i in fl_start_page
+            ..(fl_start_page + crate::privileged::lib::usize_from_u64(free_links_pages))
+                .min(total_pages)
+        {
             self.set_bit(i);
         }
 
         // 标记帧持有计数页已用
-        let counts_start_page = phys_to_page(counts_phys) as usize;
-        for i in counts_start_page..(counts_start_page + counts_pages as usize).min(total_pages) {
+        let counts_start_page = crate::privileged::lib::usize_from_u64(phys_to_page(counts_phys));
+        for i in counts_start_page
+            ..(counts_start_page + crate::privileged::lib::usize_from_u64(counts_pages))
+                .min(total_pages)
+        {
             self.set_bit(i);
         }
 
         // 标记帧所有权槽页已用
-        let owner_start_page = phys_to_page(owner_phys) as usize;
-        for i in owner_start_page..(owner_start_page + owner_pages as usize).min(total_pages) {
+        let owner_start_page = crate::privileged::lib::usize_from_u64(phys_to_page(owner_phys));
+        for i in owner_start_page
+            ..(owner_start_page + crate::privileged::lib::usize_from_u64(owner_pages))
+                .min(total_pages)
+        {
             self.set_bit(i);
         }
 
@@ -1118,7 +1135,10 @@ impl PhysicalMemoryManager {
         match result {
             Some(addr) => {
                 // 单页帧: 分配者即初始持有者, 持有计数置 1 (见 frame_inc/frame_dec)
-                self.frame_counts_write(phys_to_page(addr.0) as usize, 1);
+                self.frame_counts_write(
+                    crate::privileged::lib::usize_from_u64(phys_to_page(addr.0)),
+                    1,
+                );
                 self.note_frame_alloc(addr);
                 self.total_allocs.fetch_add(1, Ordering::Relaxed);
             }
@@ -1138,7 +1158,7 @@ impl PhysicalMemoryManager {
         }
         let flags = self.acquire_lock();
         // 丢弃一个持有者; 仅当无人持有时才真正归还 PMM (未计数帧保持既有归还语义)
-        if self.frame_counts_release(phys_to_page(addr.0) as usize) {
+        if self.frame_counts_release(crate::privileged::lib::usize_from_u64(phys_to_page(addr.0))) {
             self.do_free(addr, 0);
             self.total_frees.fetch_add(1, Ordering::Relaxed);
         }
@@ -1156,7 +1176,7 @@ impl PhysicalMemoryManager {
     /// 即可给全内核 70+ 个分配点自动归因.
     #[track_caller]
     fn note_frame_alloc(&self, addr: PhysAddr) {
-        let pfn = phys_to_page(addr.0) as usize;
+        let pfn = crate::privileged::lib::usize_from_u64(phys_to_page(addr.0));
         if let Some(store) = self.meta_store() {
             store.owner_mark_alloc(
                 pfn,
@@ -1300,8 +1320,8 @@ impl PhysicalMemoryManager {
     /// 映射) 返回 `None` ⇒ 调用方 fail-closed (不计数, 也不报告归零).
     #[inline]
     fn frame_counts_pfn(&self, addr: PhysAddr) -> Option<usize> {
-        let pfn = phys_to_page(addr.0) as usize;
-        (pfn < self.get_total_pages() as usize).then_some(pfn)
+        let pfn = crate::privileged::lib::usize_from_u64(phys_to_page(addr.0));
+        (pfn < crate::privileged::lib::usize_from_u64(self.get_total_pages())).then_some(pfn)
     }
 
     /// 读帧持有计数 (载体未就绪时返回 0 = 未计数)
@@ -1386,7 +1406,10 @@ impl PhysicalMemoryManager {
                 // 其归还/共享不经计数面 (与既有语义一致); 何时需扩展: 出现大页共享
                 // (如透明大页拆分共享) 时按逐页计数扩展, 契约入口 frame_inc/frame_dec 不变.
                 if order == 0 {
-                    self.frame_counts_write(phys_to_page(addr.0) as usize, 1);
+                    self.frame_counts_write(
+                        crate::privileged::lib::usize_from_u64(phys_to_page(addr.0)),
+                        1,
+                    );
                 }
                 // 块头页记归属 (与计数面同粒度: 块内页不逐页追踪)
                 self.note_frame_alloc(addr);
@@ -1412,7 +1435,9 @@ impl PhysicalMemoryManager {
         let flags = self.acquire_lock();
         if order == 0 {
             // 单页路径与 free_page 同语义: 计数归零才归还
-            if self.frame_counts_release(phys_to_page(addr.0) as usize) {
+            if self
+                .frame_counts_release(crate::privileged::lib::usize_from_u64(phys_to_page(addr.0)))
+            {
                 self.do_free(addr, 0);
                 self.total_frees.fetch_add(1, Ordering::Relaxed);
             }
@@ -1448,16 +1473,16 @@ impl PhysicalMemoryManager {
         if !base.as_u64().is_multiple_of(PAGE_SIZE as u64) {
             return Err("PMM reserve_range: base not page-aligned");
         }
-        if !size.is_multiple_of(PAGE_SIZE as usize) {
+        if !size.is_multiple_of(crate::privileged::lib::usize_from_u64(PAGE_SIZE)) {
             return Err("PMM reserve_range: size not page-aligned");
         }
 
-        let start_pfn = phys_to_page(base.as_u64()) as usize;
-        let npages = size / PAGE_SIZE as usize;
+        let start_pfn = crate::privileged::lib::usize_from_u64(phys_to_page(base.as_u64()));
+        let npages = size / crate::privileged::lib::usize_from_u64(PAGE_SIZE);
         let end_pfn = start_pfn
             .checked_add(npages)
             .ok_or("PMM reserve_range: overflow")?;
-        let total_pages = self.info.get().total_pages as usize;
+        let total_pages = crate::privileged::lib::usize_from_u64(self.info.get().total_pages);
         if end_pfn > total_pages {
             return Err("PMM reserve_range: range exceeds PMM size");
         }
@@ -1479,7 +1504,7 @@ impl PhysicalMemoryManager {
             base.as_u64(),
             size,
             npages,
-            (npages * PAGE_SIZE as usize) / 1024
+            (npages * crate::privileged::lib::usize_from_u64(PAGE_SIZE)) / 1024
         );
         Ok(())
     }
@@ -1501,16 +1526,16 @@ impl PhysicalMemoryManager {
         if !base.as_u64().is_multiple_of(PAGE_SIZE as u64) {
             return Err("PMM unreserve_range: base not page-aligned");
         }
-        if !size.is_multiple_of(PAGE_SIZE as usize) {
+        if !size.is_multiple_of(crate::privileged::lib::usize_from_u64(PAGE_SIZE)) {
             return Err("PMM unreserve_range: size not page-aligned");
         }
 
-        let start_pfn = phys_to_page(base.as_u64()) as usize;
-        let npages = size / PAGE_SIZE as usize;
+        let start_pfn = crate::privileged::lib::usize_from_u64(phys_to_page(base.as_u64()));
+        let npages = size / crate::privileged::lib::usize_from_u64(PAGE_SIZE);
         let end_pfn = start_pfn
             .checked_add(npages)
             .ok_or("PMM unreserve_range: overflow")?;
-        let total_pages = self.info.get().total_pages as usize;
+        let total_pages = crate::privileged::lib::usize_from_u64(self.info.get().total_pages);
         if end_pfn > total_pages {
             return Err("PMM unreserve_range: range exceeds PMM size");
         }
@@ -1537,7 +1562,7 @@ impl PhysicalMemoryManager {
             base.as_u64(),
             size,
             npages,
-            (npages * PAGE_SIZE as usize) / 1024
+            (npages * crate::privileged::lib::usize_from_u64(PAGE_SIZE)) / 1024
         );
         Ok(())
     }
@@ -1556,17 +1581,15 @@ impl PhysicalMemoryManager {
     /// # Returns
     /// `Some(PhysAddr)` 找到连续范围, 基址对齐 PAGE_SIZE;
     /// `None` 无足够连续内存.
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     pub fn find_contig_range(&self, size: usize) -> Option<PhysAddr> {
-        if size == 0 || !size.is_multiple_of(PAGE_SIZE as usize) {
+        if size == 0 || !size.is_multiple_of(crate::privileged::lib::usize_from_u64(PAGE_SIZE)) {
             return None;
         }
 
         let flags = self.acquire_lock();
         let result = (|| -> Option<PhysAddr> {
-            let total_pages = self.info.get().total_pages as usize;
-            let npages = size / PAGE_SIZE as usize;
+            let total_pages = crate::privileged::lib::usize_from_u64(self.info.get().total_pages);
+            let npages = size / crate::privileged::lib::usize_from_u64(PAGE_SIZE);
 
             let mut pfn = 0usize;
             while pfn + npages <= total_pages {
@@ -1619,8 +1642,6 @@ impl PhysicalMemoryManager {
         }
     }
 
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     #[track_caller]
     /// 按页规格释放大页 (4KB / 2MB / 1GB).
     ///
@@ -1632,7 +1653,7 @@ impl PhysicalMemoryManager {
             PageSize::Size1G => {
                 let np = (size_type.size() / PAGE_SIZE) as usize;
                 let flags = self.acquire_lock();
-                let start = phys_to_page(addr.0) as usize;
+                let start = crate::privileged::lib::usize_from_u64(phys_to_page(addr.0));
                 for i in 0..np {
                     self.clear_bit(start + i);
                 }
@@ -1759,13 +1780,13 @@ impl PhysicalMemoryManager {
             .map_or(false, |store| store.bitmap_test(bit))
     }
 
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn count_free_pages(&self) -> u64 {
-        let total = self.info.get().total_pages as usize;
+        let total = crate::privileged::lib::usize_from_u64(self.info.get().total_pages);
         let free = self.meta_store().map_or(0, MetaStore::bitmap_count_free);
         // 截断到 total (bitmap 在 total_pages 之外可能还有剩余位)
-        let extra = (self.bitmap_size.get() * 32).saturating_sub(total) as u32;
+        let extra = crate::privileged::lib::low_u32_from_usize(
+            (self.bitmap_size.get() * 32).saturating_sub(total),
+        );
         if extra > 0 {
             free.saturating_sub(u64::from(extra))
         } else {
@@ -1808,8 +1829,6 @@ impl PhysicalMemoryManager {
     ///
     /// `limit_pfn`: 合并块的上界 (不越过该页号). 用于 reserve 压回时防止
     /// 合并吞掉已置位的 reserve 区 (B05-55); do_free 等路径传 `total_pages`.
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn buddy_try_merge(&self, mut pfn: u64, mut order: u8, limit_pfn: u64) -> (u64, u8) {
         let Some(store) = self.meta_store() else {
             return (pfn, order);
@@ -1828,7 +1847,7 @@ impl PhysicalMemoryManager {
             }
 
             // M2: 显式验证伙伴块的 order
-            let buddy_state = store.meta_read(buddy_pfn as usize);
+            let buddy_state = store.meta_read(crate::privileged::lib::usize_from_u64(buddy_pfn));
 
             // 检查 buddy_state 是否为有效的 order 值 (0..=MAX_BUDDY_ORDER)
             // 如果 buddy_state == BUDDY_ALLOCATED (0xFF)，说明已分配，不能合并
@@ -1846,13 +1865,16 @@ impl PhysicalMemoryManager {
 
             // 从空闲链表中移除 buddy
             self.buddy_list_remove(buddy_pfn, order);
-            store.meta_write(buddy_pfn as usize, BUDDY_ALLOCATED);
+            store.meta_write(
+                crate::privileged::lib::usize_from_u64(buddy_pfn),
+                BUDDY_ALLOCATED,
+            );
 
             pfn = core::cmp::min(pfn, buddy_pfn);
             order += 1;
         }
 
-        store.meta_write(pfn as usize, order);
+        store.meta_write(crate::privileged::lib::usize_from_u64(pfn), order);
         (pfn, order)
     }
 
@@ -1866,15 +1888,15 @@ impl PhysicalMemoryManager {
         };
         // 前置断言: pfn 越界 = FREE_LINKS 越界访问
         debug_assert!(pfn < self.info.get().total_pages);
-        let prev = store.links_read_prev(pfn as usize);
-        let next = store.links_read_next(pfn as usize);
+        let prev = store.links_read_prev(crate::privileged::lib::usize_from_u64(pfn));
+        let next = store.links_read_next(crate::privileged::lib::usize_from_u64(pfn));
         if prev == SENTINEL {
             store.heads_set(order, next);
         } else {
-            store.links_set_next(prev as usize, next);
+            store.links_set_next(crate::privileged::lib::usize_from_u64(prev), next);
         }
         if next != SENTINEL {
-            store.links_set_prev(next as usize, prev);
+            store.links_set_prev(crate::privileged::lib::usize_from_u64(next), prev);
         }
     }
 
@@ -1891,8 +1913,8 @@ impl PhysicalMemoryManager {
     fn buddy_list_push(&self, pfn: u64, order: u8) {
         // 强制位图同步: 链表是空闲权威, push 即声明这些页 free
         let npages = 1u64 << u64::from(order);
-        for i in 0..(npages as usize) {
-            self.clear_bit(pfn as usize + i);
+        for i in 0..crate::privileged::lib::usize_from_u64(npages) {
+            self.clear_bit(crate::privileged::lib::usize_from_u64(pfn) + i);
         }
         let Some(store) = self.meta_store() else {
             return;
@@ -1900,10 +1922,10 @@ impl PhysicalMemoryManager {
         // 前置断言: pfn 越界 = FREE_LINKS 越界访问
         debug_assert!(pfn < self.info.get().total_pages);
         let old_head = store.heads_get(order);
-        store.links_set_prev(pfn as usize, SENTINEL);
-        store.links_set_next(pfn as usize, old_head);
+        store.links_set_prev(crate::privileged::lib::usize_from_u64(pfn), SENTINEL);
+        store.links_set_next(crate::privileged::lib::usize_from_u64(pfn), old_head);
         if old_head != SENTINEL {
-            store.links_set_prev(old_head as usize, pfn);
+            store.links_set_prev(crate::privileged::lib::usize_from_u64(old_head), pfn);
         }
         store.heads_set(order, pfn);
     }
@@ -1921,10 +1943,10 @@ impl PhysicalMemoryManager {
         }
         // 前置断言: 索引式链表要求 pfn < total_pages (越界 = OOB 访问)
         debug_assert!(pfn < self.info.get().total_pages);
-        let next = store.links_read_next(pfn as usize);
+        let next = store.links_read_next(crate::privileged::lib::usize_from_u64(pfn));
         store.heads_set(order, next);
         if next != SENTINEL {
-            store.links_set_prev(next as usize, SENTINEL);
+            store.links_set_prev(crate::privileged::lib::usize_from_u64(next), SENTINEL);
         }
         Some(pfn)
     }
@@ -1935,8 +1957,6 @@ impl PhysicalMemoryManager {
     /// 用于 `unreserve_range` / `free_huge_page` 等把先前摘出 buddy 的页归还回池,
     /// 保证空闲链表与位图严格同步.
     /// 调用方必须持有 PMM 锁; 保证范围内各页位图均为 0 (free) 且当前不在空闲链表中.
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn buddy_free_insert_range(&self, start_pfn: u64, npages: u64) {
         // buddy 元数据未就绪 (早期/未初始化阶段) 时, 不操作空闲链表
         if self.meta_store().is_none() {
@@ -1959,7 +1979,8 @@ impl PhysicalMemoryManager {
 
             // 与相邻空闲伙伴合并 (伙伴不满足同阶空闲则停), 然后压入空闲链表
             // limit_pfn = end_pfn: 合并不得越过本范围, 防止吞掉相邻 reserve 区
-            let (merged_pfn, merged_order) = self.buddy_try_merge(cur, order as u8, end_pfn);
+            let (merged_pfn, merged_order) =
+                self.buddy_try_merge(cur, crate::privileged::lib::low_u8_from_u32(order), end_pfn);
             self.buddy_list_push(merged_pfn, merged_order);
 
             // 关键修复 (B05-55): 压回的合并块可能比原块大 (向上合并了伙伴).
@@ -1978,8 +1999,6 @@ impl PhysicalMemoryManager {
     /// 保证空闲链表与位图严格同步, 避免含已分配/预留页的块滞留在空闲链表中,
     /// 否则 buddy_alloc 分裂时会把已占用页 push 回空闲链表, 写坏其内容.
     /// 调用方必须持有 PMM 锁; 保证 [start_pfn, ...) 各页位图当前均为 0 (free).
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn buddy_reserve_pfn_range(&self, start_pfn: u64, npages: u64) {
         let end_pfn = start_pfn + npages;
         // H-03 (2026-09-06): 索引式遍历 — FREE_LINKS 已由 init_bitmap 分配,
@@ -1998,13 +2017,16 @@ impl PhysicalMemoryManager {
             let mut cur = store.heads_get(order);
             while cur != SENTINEL {
                 // H-03: 先存 next 再可能 remove (remove 会改写链表关系)
-                let next = store.links_read_next(cur as usize);
+                let next = store.links_read_next(crate::privileged::lib::usize_from_u64(cur));
                 let block_size = 1u64 << order;
                 if cur < end_pfn && cur + block_size > start_pfn {
                     // 重叠: 整块摘除, 元数据整块标记为已分配 (防止后续错误合并)
                     self.buddy_list_remove(cur, order);
                     for i in 0..block_size {
-                        store.meta_write((cur + i) as usize, BUDDY_ALLOCATED);
+                        store.meta_write(
+                            crate::privileged::lib::usize_from_u64(cur + i),
+                            BUDDY_ALLOCATED,
+                        );
                     }
                     // 不重叠部分暂不压回: 待位图置位后再压回,
                     // 使 buddy_free_insert_range 的合并不会吞掉 reserve 区
@@ -2016,7 +2038,9 @@ impl PhysicalMemoryManager {
         }
 
         // 置位位图并更新统计
-        for i in start_pfn as usize..end_pfn as usize {
+        for i in crate::privileged::lib::usize_from_u64(start_pfn)
+            ..crate::privileged::lib::usize_from_u64(end_pfn)
+        {
             self.set_bit(i);
         }
         self.stats_alloc(npages);
@@ -2035,8 +2059,6 @@ impl PhysicalMemoryManager {
     }
 
     /// 指定阶数执行核心分配.
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn buddy_alloc(&self, order: u8) -> Option<(u64, u8)> {
         if order > MAX_BUDDY_ORDER {
             return None;
@@ -2058,7 +2080,7 @@ impl PhysicalMemoryManager {
 
         let pfn = self.buddy_list_pop(alloc_order)?;
 
-        store.meta_write(pfn as usize, BUDDY_ALLOCATED);
+        store.meta_write(crate::privileged::lib::usize_from_u64(pfn), BUDDY_ALLOCATED);
 
         // 向下分裂, 直至达到请求阶数
         let cur_pfn = pfn;
@@ -2067,16 +2089,17 @@ impl PhysicalMemoryManager {
             cur_order -= 1;
             let buddy_pfn = cur_pfn + (1u64 << cur_order);
             self.buddy_list_push(buddy_pfn, cur_order);
-            store.meta_write(buddy_pfn as usize, cur_order);
+            store.meta_write(crate::privileged::lib::usize_from_u64(buddy_pfn), cur_order);
         }
-        store.meta_write(cur_pfn as usize, BUDDY_ALLOCATED);
+        store.meta_write(
+            crate::privileged::lib::usize_from_u64(cur_pfn),
+            BUDDY_ALLOCATED,
+        );
 
         Some((cur_pfn, order))
     }
 
     /// 主 `do_alloc`: 处理早期分配与 buddy 分配.
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn do_alloc(&self, order: u8) -> Option<PhysAddr> {
         if !self.initialized.load(Ordering::Acquire) {
             return if order == 0 {
@@ -2095,8 +2118,8 @@ impl PhysicalMemoryManager {
         let (pfn, _) = self.buddy_alloc(order)?;
         let addr = page_to_phys(pfn);
         let npages = 1u64 << u64::from(order);
-        for i in 0..(npages as usize) {
-            self.set_bit((pfn as usize) + i);
+        for i in 0..crate::privileged::lib::usize_from_u64(npages) {
+            self.set_bit(crate::privileged::lib::usize_from_u64(pfn) + i);
         }
         self.stats_alloc(npages);
         Some(PhysAddr(addr))
@@ -2106,8 +2129,6 @@ impl PhysicalMemoryManager {
     ///
     /// 异常归还在此处点名归因: 二次释放 / 释放未经分配帧均打印“分配点 + 首次归还点
     /// + 本次归还点”三元组 (见 [`Self::frame_owner`]).
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     #[track_caller]
     fn do_free(&self, addr: PhysAddr, order: u8) {
         if !self.initialized.load(Ordering::Acquire) {
@@ -2124,11 +2145,12 @@ impl PhysicalMemoryManager {
 
         // M1 修复: 在 buddy_ready 前后都检测 double-free
         // 位图约定: 1 = 已分配, 0 = 空闲
-        if !self.test_bit(pfn as usize) {
+        if !self.test_bit(crate::privileged::lib::usize_from_u64(pfn)) {
             // 所有权归因: 帧位已为 0 而再次被归还 —— 两条路径在争同一帧.
             // 不点名则仅表现为“某页提前进了空闲链”的静默腐败 (他方仍在用该帧,
             // 下次分配即可能拿到同一帧 → 映射被当数据页覆写).
-            let (alloc_site, release_site) = self.frame_owner(pfn as usize);
+            let (alloc_site, release_site) =
+                self.frame_owner(crate::privileged::lib::usize_from_u64(pfn));
             let alloc = Self::owner_site_loc(alloc_site);
             let retired = Self::owner_site_loc(release_site);
             let here = Location::caller();
@@ -2149,14 +2171,14 @@ impl PhysicalMemoryManager {
         // 首次归还点入元数据 (保留分配点): 若后续又出现二次归还, 本行就是
         // 告警里的 “first_retire” 字段.
         self.owner_mark_first_release_locked(
-            pfn as usize,
+            crate::privileged::lib::usize_from_u64(pfn),
             core::ptr::from_ref(Location::caller()).cast::<u8>() as u64,
         );
 
         if !self.buddy_ready.load(Ordering::Acquire) {
             let npages = 1u64 << u64::from(order);
-            for i in 0..(npages as usize) {
-                self.clear_bit(pfn as usize + i);
+            for i in 0..crate::privileged::lib::usize_from_u64(npages) {
+                self.clear_bit(crate::privileged::lib::usize_from_u64(pfn) + i);
             }
             self.stats_free(npages);
             return;
@@ -2164,8 +2186,8 @@ impl PhysicalMemoryManager {
 
         // Clear bitmap
         let npages = 1u64 << u64::from(order);
-        for i in 0..(npages as usize) {
-            self.clear_bit(pfn as usize + i);
+        for i in 0..crate::privileged::lib::usize_from_u64(npages) {
+            self.clear_bit(crate::privileged::lib::usize_from_u64(pfn) + i);
         }
 
         // 合并并压入空闲链表 (do_free 无范围限制, limit = total_pages)
@@ -2176,8 +2198,6 @@ impl PhysicalMemoryManager {
     }
 
     /// 扫描所有空闲页 (位未置位), 合并为最大阶的 buddy 块.
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn buddy_init_free_lists(&self, total_pages: usize) {
         let Some(store) = self.meta_store() else {
             return;
@@ -2207,22 +2227,26 @@ impl PhysicalMemoryManager {
                 // (host debug 暴露; release 下 wrap-around 为 UB 碰巧工作).
                 // checked_ilog2: remaining==1 → None → 0 (order-0 单页, 正确语义);
                 // 其余与 `BITS-1-leading_zeros` 恒等.
-                let max_order = (remaining - 1)
-                    .checked_ilog2()
-                    .unwrap_or(0)
-                    .min(u32::from(MAX_BUDDY_ORDER)) as u8;
+                let max_order = crate::privileged::lib::low_u8_from_u32(
+                    (remaining - 1)
+                        .checked_ilog2()
+                        .unwrap_or(0)
+                        .min(u32::from(MAX_BUDDY_ORDER)),
+                );
                 // 寻找 cur 自然对齐 且 2^order ≤ remaining 的最大阶
                 let mut order = max_order;
                 while order > 0 {
                     let size = 1usize << order as usize;
-                    if (cur as usize).is_multiple_of(size) && size <= remaining {
+                    if crate::privileged::lib::usize_from_u64(cur).is_multiple_of(size)
+                        && size <= remaining
+                    {
                         break;
                     }
                     order -= 1;
                 }
                 let block_size = 1usize << order as usize;
 
-                store.meta_write(cur as usize, order);
+                store.meta_write(crate::privileged::lib::usize_from_u64(cur), order);
                 self.buddy_list_push(cur, order);
 
                 cur += block_size as u64;
@@ -2232,10 +2256,8 @@ impl PhysicalMemoryManager {
     }
 
     /// 1GB 页直接对齐分配 (超出 buddy 范围).
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn buddy_direct_alloc_aligned(&self, count: usize, alignment: u64) -> Option<PhysAddr> {
-        let total = self.info.get().total_pages as usize;
+        let total = crate::privileged::lib::usize_from_u64(self.info.get().total_pages);
         let align_pages = (alignment / PAGE_SIZE) as usize;
         let mut i = align_pages; // 跳过 page 0
         while i + count <= total {
@@ -2259,10 +2281,8 @@ impl PhysicalMemoryManager {
     }
 
     /// 回退 bitmap 扫描 (在 init 完成但 buddy 还未就绪, 或 buddy 关闭时使用).
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn alloc_from_bitmap_fallback(&self, count: usize) -> Option<PhysAddr> {
-        let total = self.info.get().total_pages as usize;
+        let total = crate::privileged::lib::usize_from_u64(self.info.get().total_pages);
         for i in 0..total {
             if self.test_bit(i) {
                 continue;

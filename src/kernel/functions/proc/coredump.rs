@@ -208,9 +208,14 @@ fn do_coredump(pid: u32, sig: u8, frame_addr: u64) -> bool {
     }
 
     // 计算 note 段大小与 program header 数量/偏移
-    let note_total = note_size(NOTE_NAMESZ, size_of::<PrStatus>() as u32)
-        + note_size(NOTE_NAMESZ, size_of::<CoreSiginfo>() as u32);
-    let phnum = 1 + segments.len() as u16; // PT_NOTE + PT_LOADs
+    let note_total = note_size(
+        NOTE_NAMESZ,
+        crate::functions::intcast::low_u32_from_usize(size_of::<PrStatus>()),
+    ) + note_size(
+        NOTE_NAMESZ,
+        crate::functions::intcast::low_u32_from_usize(size_of::<CoreSiginfo>()),
+    );
+    let phnum = 1 + crate::functions::intcast::low_u16_from_usize(segments.len()); // PT_NOTE + PT_LOADs
     let note_offset =
         size_of::<Elf64Header>() as u64 + size_of::<Elf64Phdr>() as u64 * u64::from(phnum);
 
@@ -314,7 +319,7 @@ fn build_ehdr(phnum: u16) -> Elf64Header {
     e_ident[0..4].copy_from_slice(&ELFMAG);
     e_ident[4] = ELFCLASS64;
     e_ident[5] = ELFDATA2LSB;
-    e_ident[6] = EV_CURRENT as u8;
+    e_ident[6] = crate::functions::intcast::low_u8_from_u32(EV_CURRENT);
 
     Elf64Header {
         e_ident,
@@ -325,8 +330,8 @@ fn build_ehdr(phnum: u16) -> Elf64Header {
         e_phoff: size_of::<Elf64Header>() as u64,
         e_shoff: 0,
         e_flags: 0,
-        e_ehsize: size_of::<Elf64Header>() as u16,
-        e_phentsize: size_of::<Elf64Phdr>() as u16,
+        e_ehsize: crate::functions::intcast::low_u16_from_usize(size_of::<Elf64Header>()),
+        e_phentsize: crate::functions::intcast::low_u16_from_usize(size_of::<Elf64Phdr>()),
         e_phnum: phnum,
         e_shentsize: 0,
         e_shnum: 0,
@@ -390,7 +395,8 @@ fn build_prstatus(pid: u32, sig: u8, frame_addr: u64) -> PrStatus {
     let _ = process_with(pid, |p| {
         prstatus.pr_ppid = p.parent.map_or(0, |pp| pp.0.cast_signed());
         prstatus.pr_pgrp = p.pgid.load(Ordering::SeqCst).cast_signed();
-        prstatus.pr_sid = p.session_id.load(Ordering::SeqCst) as i32;
+        prstatus.pr_sid =
+            crate::functions::intcast::low_i32_from_u64(p.session_id.load(Ordering::SeqCst));
         prstatus.pr_sigpend = p.signal_pending_get();
         prstatus.pr_utime = p.user_time.load(Ordering::SeqCst);
         prstatus.pr_stime = p.sys_time.load(Ordering::SeqCst);
@@ -408,14 +414,14 @@ fn build_prstatus(pid: u32, sig: u8, frame_addr: u64) -> PrStatus {
 
 /// 写入 `NT_PRSTATUS` note
 fn write_note_prstatus(fd: u32, pid: u32, sig: u8, frame_addr: u64, offset: &mut u64) {
-    let descsz = size_of::<PrStatus>() as u32;
+    let descsz = crate::functions::intcast::low_u32_from_usize(size_of::<PrStatus>());
     write_note_header(fd, descsz, NT_PRSTATUS, offset);
     write_desc(fd, &build_prstatus(pid, sig, frame_addr), offset);
 }
 
 /// 写入 `NT_SIGINFO` note
 fn write_note_siginfo(fd: u32, sig: u8, offset: &mut u64) {
-    let descsz = size_of::<CoreSiginfo>() as u32;
+    let descsz = crate::functions::intcast::low_u32_from_usize(size_of::<CoreSiginfo>());
     write_note_header(fd, descsz, NT_SIGINFO, offset);
     let siginfo = CoreSiginfo {
         si_signo: i32::from(sig),
@@ -459,7 +465,7 @@ fn write_struct<T: Copy>(fd: u32, data: &T, offset: &mut u64) {
 
 /// 写入内存段数据 (按页读取, 按 `core_limit` 实质截断)
 fn write_segment_data(fd: u32, cr3: u64, seg: &CoreSegment, offset: &mut u64, core_limit: u64) {
-    let mut buf = [0u8; PAGE_SIZE as usize];
+    let mut buf = [0u8; crate::functions::intcast::usize_from_u64(PAGE_SIZE)];
     let mut written = 0u64;
     let mut addr = seg.start;
 
@@ -472,7 +478,7 @@ fn write_segment_data(fd: u32, cr3: u64, seg: &CoreSegment, offset: &mut u64, co
         if core_limit != RLIM_INFINITY {
             chunk = chunk.min(core_limit - *offset);
         }
-        let n = chunk as usize;
+        let n = crate::functions::intcast::usize_from_u64(chunk);
 
         // 读取用户内存; 不可读部分写零
         let read = copy_from_user_in_mm(cr3, addr, &mut buf[..n], n).unwrap_or(0);

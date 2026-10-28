@@ -493,9 +493,9 @@ impl<T: ?Sized> PiMutex<T> {
                     max_prio = w.base_priority;
                 }
                 // v2.2: 收集捐赠链 — 每个等待者记录 PID
-                if (i as u8) < 8 {
+                if crate::privileged::lib::low_u8_from_usize(i) < 8 {
                     donor_chain[i] = w.pid;
-                    chain_len = (i as u8) + 1;
+                    chain_len = crate::privileged::lib::low_u8_from_usize(i) + 1;
                 }
             }
             (max_prio, (donor_chain, chain_len))

@@ -156,8 +156,6 @@ fn parse_next_entry(data: &[u8], offset: usize) -> Option<(CpioEntry<'_>, usize)
 /// * `data` - cpio 归档数据切片
 /// # Errors
 /// 归档为空或 cpio 归档格式非法时返回 Err。
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 pub fn unpack(data: &[u8]) -> Result<usize, &'static str> {
     if data.is_empty() {
         return Err("initramfs: empty data");
@@ -205,7 +203,7 @@ pub fn unpack(data: &[u8]) -> Result<usize, &'static str> {
                         crate::functions::fs::vfs_write(
                             fd.cast_unsigned(),
                             entry.data.as_ptr(),
-                            entry.data.len() as u32,
+                            crate::functions::intcast::low_u32_from_usize(entry.data.len()),
                         );
                     }
                     crate::functions::fs::vfs_close(fd.cast_unsigned());

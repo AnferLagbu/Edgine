@@ -110,7 +110,8 @@ fn read_remote_iovecs(
     if iov_ptr == 0 {
         return Err(Errno::EFAULT);
     }
-    let mut iovs = alloc::vec::Vec::with_capacity(iovcnt as usize);
+    let mut iovs =
+        alloc::vec::Vec::with_capacity(crate::functions::intcast::usize_from_u64(iovcnt));
     for i in 0..iovcnt {
         let mut raw = [0u8; 16];
         copy_from_user_in_mm(target_cr3, iov_ptr + i * IOV_ENTRY_SIZE, &mut raw, 16)
@@ -213,8 +214,8 @@ fn process_vm_rw(
     while li < local_iovs.len() && ri < remote_iovs.len() {
         let (l_base, l_len) = local_iovs[li];
         let (r_base, r_len) = remote_iovs[ri];
-        let l_rem = l_len as usize - l_off;
-        let r_rem = r_len as usize - r_off;
+        let l_rem = crate::functions::intcast::usize_from_u64(l_len) - l_off;
+        let r_rem = crate::functions::intcast::usize_from_u64(r_len) - r_off;
         let n = core::cmp::min(l_rem, r_rem);
         if n == 0 {
             // 空段: 跳过 (至少一侧前进, 循环必然收敛)
@@ -240,11 +241,11 @@ fn process_vm_rw(
         total += n;
         l_off += n;
         r_off += n;
-        if l_off == l_len as usize {
+        if l_off == crate::functions::intcast::usize_from_u64(l_len) {
             li += 1;
             l_off = 0;
         }
-        if r_off == r_len as usize {
+        if r_off == crate::functions::intcast::usize_from_u64(r_len) {
             ri += 1;
             r_off = 0;
         }

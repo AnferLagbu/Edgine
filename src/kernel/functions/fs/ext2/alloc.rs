@@ -23,7 +23,8 @@ pub fn alloc_block_in_group(
 
     // 读取块位图
     let bitmap_sector = u64::from(bgd.bg_block_bitmap) * block_size as u64 / 512;
-    let bitmap_sector_count = (block_size / 512).max(1) as u32;
+    let bitmap_sector_count =
+        crate::functions::intcast::low_u32_from_usize((block_size / 512).max(1));
     let mut bitmap_data = alloc::vec![0u8; block_size];
 
     egdf_blk_read_sectors(
@@ -44,7 +45,7 @@ pub fn alloc_block_in_group(
 
         for bit_idx in 0..8 {
             let block_offset = byte_idx * 8 + bit_idx;
-            if block_offset as u32 >= blocks_per_group {
+            if crate::functions::intcast::low_u32_from_usize(block_offset) >= blocks_per_group {
                 break;
             }
 
@@ -60,7 +61,9 @@ pub fn alloc_block_in_group(
                     &bitmap_data,
                 )?;
 
-                return Ok(first_block + block_offset as u32);
+                return Ok(
+                    first_block + crate::functions::intcast::low_u32_from_usize(block_offset)
+                );
             }
         }
     }
@@ -83,7 +86,8 @@ pub fn free_block(
 
     // 读取块位图
     let bitmap_sector = u64::from(bgd.bg_block_bitmap) * block_size as u64 / 512;
-    let bitmap_sector_count = (block_size / 512).max(1) as u32;
+    let bitmap_sector_count =
+        crate::functions::intcast::low_u32_from_usize((block_size / 512).max(1));
     let mut bitmap_data = alloc::vec![0u8; block_size];
 
     egdf_blk_read_sectors(
@@ -124,7 +128,7 @@ pub fn write_block(
     buf[..data.len()].copy_from_slice(data);
 
     let sector = u64::from(block_num) * block_size as u64 / 512;
-    let sector_count = (block_size / 512) as u32;
+    let sector_count = crate::functions::intcast::low_u32_from_usize(block_size / 512);
 
     egdf_blk_write_sectors(device_idx, sector, sector_count, &buf)?;
 
@@ -185,7 +189,7 @@ pub fn write_inode(
     // 计算扇区位置
     let inode_offset = inode_table_block as usize * block_size + index as usize * inode_size;
     let sector = inode_offset / 512;
-    let sector_count = (inode_size / 512).max(1) as u32;
+    let sector_count = crate::functions::intcast::low_u32_from_usize((inode_size / 512).max(1));
 
     egdf_blk_write_sectors(device_idx, sector as u64, sector_count, &inode_data)?;
 
@@ -207,7 +211,8 @@ pub fn alloc_inode_in_group(
 
     // 读取 inode 位图
     let bitmap_sector = u64::from(bgd.bg_inode_bitmap) * block_size as u64 / 512;
-    let bitmap_sector_count = (block_size / 512).max(1) as u32;
+    let bitmap_sector_count =
+        crate::functions::intcast::low_u32_from_usize((block_size / 512).max(1));
     let mut bitmap_data = alloc::vec![0u8; block_size];
 
     egdf_blk_read_sectors(
@@ -228,7 +233,7 @@ pub fn alloc_inode_in_group(
 
         for bit_idx in 0..8 {
             let inode_offset = byte_idx * 8 + bit_idx;
-            if inode_offset as u32 >= inodes_per_group {
+            if crate::functions::intcast::low_u32_from_usize(inode_offset) >= inodes_per_group {
                 break;
             }
 
@@ -244,7 +249,9 @@ pub fn alloc_inode_in_group(
                     &bitmap_data,
                 )?;
 
-                return Ok(first_inode + inode_offset as u32);
+                return Ok(
+                    first_inode + crate::functions::intcast::low_u32_from_usize(inode_offset)
+                );
             }
         }
     }
@@ -267,7 +274,8 @@ pub fn free_inode(
 
     // 读取 inode 位图
     let bitmap_sector = u64::from(bgd.bg_inode_bitmap) * block_size as u64 / 512;
-    let bitmap_sector_count = (block_size / 512).max(1) as u32;
+    let bitmap_sector_count =
+        crate::functions::intcast::low_u32_from_usize((block_size / 512).max(1));
     let mut bitmap_data = alloc::vec![0u8; block_size];
 
     egdf_blk_read_sectors(

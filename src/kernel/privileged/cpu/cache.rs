@@ -50,8 +50,6 @@ impl CacheInfo {
 /// 分支, 保留函数开头的保守默认值 (常见 L1 32KB / L2 256KB / 4-way 等),
 /// 仅补充缓存行大小探测 (标准 leaf 1, 所有 x86-64 通用).
 #[cfg(target_arch = "x86_64")]
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 pub(super) fn detect_cache(
     cache_out: &mut CacheInfo,
     max_std: u32,
@@ -93,12 +91,12 @@ pub(super) fn detect_cache(
                 (3, 2) => {
                     // L2 Unified
                     cache_out.l2_size = size;
-                    cache_out.l2_associativity = assoc as u8;
+                    cache_out.l2_associativity = crate::privileged::lib::low_u8_from_u32(assoc);
                 }
                 (3, 3) => {
                     // L3 Unified
                     cache_out.l3_size = size;
-                    cache_out.l3_associativity = assoc as u8;
+                    cache_out.l3_associativity = crate::privileged::lib::low_u8_from_u32(assoc);
                 }
                 _ => {}
             }
@@ -128,7 +126,8 @@ pub(super) fn detect_cache(
     // 获取缓存行大小 (几乎所有 x86-64 都是 64 字节)
     if max_std >= 1 {
         let (_, ebx, _, _) = cpuid::cpuid(1, 0);
-        cache_out.cache_line_size = (8 * ((ebx >> 8) & 0xFF)) as u16;
+        cache_out.cache_line_size =
+            crate::privileged::lib::low_u16_from_u32(8 * ((ebx >> 8) & 0xFF));
     }
 
     // 最终安全检查

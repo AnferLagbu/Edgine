@@ -404,8 +404,6 @@ pub extern "C" fn vfs_symlink(target: *const u8, linkpath: *const u8, pwm: u64) 
 
 /// readlink(path, buf, bufsiz) — 读取符号链接目标.
 /// E6-5: 通过 trait object 分发
-// 有意窄化: 用户内存代理, 指针/长度上下文保证
-#[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn vfs_readlink(path: *const u8, buf: *mut u8, bufsiz: u64, pwm: u64) -> i32 {
     let _ = pwm;
     let p = ptr_to_str(path);
@@ -425,7 +423,9 @@ pub extern "C" fn vfs_readlink(path: *const u8, buf: *mut u8, bufsiz: u64, pwm: 
     };
     fs_opt.map_or(-1, |fs| {
         // I4: 用户内存经 privileged 安全代理 (范围校验后构造可写视图)
-        let Some(mut user_buf) = UserWritePtr::checked_new(buf, bufsiz as usize) else {
+        let Some(mut user_buf) =
+            UserWritePtr::checked_new(buf, crate::functions::intcast::usize_from_u64(bufsiz))
+        else {
             return -1;
         };
         match fs.fs_readlink(p, user_buf.as_mut_slice()) {

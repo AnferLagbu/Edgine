@@ -560,10 +560,8 @@ pub extern "C" fn kmalloc_validate() -> i32 {
 /// `k_malloc` 的别名 — 与原始 C API 一致: void* `kmalloc(uint64_t` size)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn kmalloc(size: u64) -> *mut u8 {
-    k_malloc(size as usize)
+    k_malloc(crate::privileged::lib::usize_from_u64(size))
 }
 
 /// `k_free` 的别名 — 与原始 C API 一致: void kfree(void* ptr)
@@ -576,10 +574,8 @@ pub extern "C" fn kfree(ptr: *mut u8) {
 /// `k_realloc` 的别名 — 与原始 C API 一致: void* krealloc(void* ptr, `uint64_t` size)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn krealloc(ptr: *mut u8, size: u64) -> *mut u8 {
-    k_realloc(ptr, size as usize)
+    k_realloc(ptr, crate::privileged::lib::usize_from_u64(size))
 }
 
 /// 获取内核堆统计 — 与原始 C API 一致: void `kmalloc_stats(struct` `kmalloc_stats`* stats)

@@ -139,7 +139,11 @@ fn test_process_state_lifecycle() -> TestResult {
         ProcessState::Frozen,
     ];
     for (i, &state) in states.iter().enumerate() {
-        assert_eq_test!(state as u8, i as u8, "state discriminant mismatch");
+        assert_eq_test!(
+            state as u8,
+            crate::privileged::lib::low_u8_from_usize(i),
+            "state discriminant mismatch"
+        );
     }
     TestResult::Pass
 }

@@ -198,9 +198,14 @@ impl IpcLock {
     /// 当管道未打开、无数据可读或底层读失败时以对应的 `IpcError` 返回.
     pub fn pipe_read(&self, fd: PipeFd, buf: &mut [u8]) -> Result<usize, IpcError> {
         let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-        self::pipe::pipe_read_safe(ns, fd.fd, buf, buf.len() as u32)
-            .map(|n| n as usize)
-            .map_err(IpcError::from_i32)
+        self::pipe::pipe_read_safe(
+            ns,
+            fd.fd,
+            buf,
+            crate::functions::intcast::low_u32_from_usize(buf.len()),
+        )
+        .map(|n| n as usize)
+        .map_err(IpcError::from_i32)
     }
 
     #[expect(
@@ -213,9 +218,14 @@ impl IpcLock {
     /// 当管道未打开、缓冲区非法或底层写失败时以对应的 `IpcError` 返回.
     pub fn pipe_write(&self, fd: PipeFd, buf: &[u8]) -> Result<usize, IpcError> {
         let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-        self::pipe::pipe_write_safe(ns, fd.fd, buf, buf.len() as u32)
-            .map(|n| n as usize)
-            .map_err(IpcError::from_i32)
+        self::pipe::pipe_write_safe(
+            ns,
+            fd.fd,
+            buf,
+            crate::functions::intcast::low_u32_from_usize(buf.len()),
+        )
+        .map(|n| n as usize)
+        .map_err(IpcError::from_i32)
     }
 
     #[expect(

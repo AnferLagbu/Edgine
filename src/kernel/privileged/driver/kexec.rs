@@ -428,8 +428,6 @@ pub fn kexec_is_initialized() -> bool {
 ///   7 = `is_initialized()` → 是否已初始化
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn sys_kexec(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     if !kexec_is_initialized() && cmd != 7 {
         return -(11i64); // EAGAIN
@@ -438,9 +436,9 @@ pub extern "C" fn sys_kexec(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     match cmd {
         0 => {
             // load_segment (简化: 仅记录元数据, 不实际复制)
-            let seg_type = KexecSegType::from(a1 as u32);
+            let seg_type = KexecSegType::from(crate::privileged::lib::low_u32_from_u64(a1));
             let dst_addr = a2;
-            let size = a3 as usize;
+            let size = crate::privileged::lib::usize_from_u64(a3);
             let max_size = match seg_type {
                 KexecSegType::Kernel => KEXEC_MAX_KERNEL_SIZE,
                 KexecSegType::Initrd => KEXEC_MAX_INITRD_SIZE,

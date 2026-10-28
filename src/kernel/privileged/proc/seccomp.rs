@@ -342,7 +342,7 @@ pub fn seccomp_check(syscall_nr: u64, args: &[u64; 6]) -> Option<i64> {
 /// 当 `pid` 对应的进程不存在时返回 `ESRCH`.
 pub fn add_rule(pid: u64, rule: SeccompRule) -> Result<(), Errno> {
     PROCESS_TABLE
-        .with_process(pid as u32, |p| {
+        .with_process(crate::privileged::lib::low_u32_from_u64(pid), |p| {
             let mode = p.seccomp.get_mode();
             if mode == SeccompMode::Disabled {
                 p.seccomp

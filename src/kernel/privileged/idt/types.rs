@@ -182,10 +182,8 @@ impl InterruptFrame {
     }
 
     /// 获取错误码的各个位域
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     pub fn error_code_flags(&self) -> ErrorFlags {
-        ErrorFlags::from_bits_truncate(self.err_code as u32)
+        ErrorFlags::from_bits_truncate(crate::privileged::lib::low_u32_from_u64(self.err_code))
     }
 
     /// 打印寄存器状态 (用于调试)
@@ -337,11 +335,11 @@ pub struct IdtPtr {
 
 impl IdtPtr {
     /// 创建新的 IDT 指针
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     pub fn new(base: u64) -> Self {
         Self {
-            limit: (IDT_ENTRIES * core::mem::size_of::<IdtEntry>() - 1) as u16,
+            limit: crate::privileged::lib::low_u16_from_usize(
+                IDT_ENTRIES * core::mem::size_of::<IdtEntry>() - 1,
+            ),
             base,
         }
     }

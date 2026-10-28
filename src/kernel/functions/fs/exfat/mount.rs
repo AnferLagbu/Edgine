@@ -205,14 +205,14 @@ impl FileSystem for ExfatFileSystem {
         let fs = fs_guard.as_ref().ok_or(KernelError::NotInitialized)?;
 
         let entries = fs.read_dir_entries(handle)?;
-        let idx = offset as usize;
+        let idx = crate::functions::intcast::usize_from_u64(offset);
 
         if idx >= entries.len() {
             return Ok(false);
         }
 
         let ext2_entry = &entries[idx];
-        entry.node = idx as u32;
+        entry.node = crate::functions::intcast::low_u32_from_usize(idx);
         entry.file_type = u8::from(ext2_entry.file_attributes() & 0x10 != 0);
         entry.set_name(&alloc::format!("entry_{idx}"));
 

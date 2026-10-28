@@ -50,7 +50,9 @@ pub fn wasi_random_get(_ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
 
     if let Some(ref mut mem) = interp.memory {
         for i in 0..buf_len {
-            let byte = crate::privileged::proc::canary::next_random_u64() as u8;
+            let byte = crate::functions::intcast::low_u8_from_u64(
+                crate::privileged::proc::canary::next_random_u64(),
+            );
             let _ = mem.write_u8(buf_ptr + i, byte);
         }
     }

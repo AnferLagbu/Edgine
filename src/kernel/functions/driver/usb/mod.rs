@@ -83,8 +83,6 @@ const XHCI_DEFAULT_MMIO_SIZE: usize = 0x10000; // 64 KiB
 /// 为每个设备创建 `XhciController` (未初始化, 由注册方触发 `init`).
 ///
 /// 找不到控制器 (返回空 Vec) 或 MMIO 映射失败均跳过, 不视为错误.
-// 有意窄化: 用户内存代理, 指针/长度上下文保证
-#[expect(clippy::cast_possible_truncation)]
 pub fn discover_xhci_controllers() -> Vec<XhciController> {
     // 1. 扫描所有 Serial Bus 设备
     let serial_bus_devs = crate::privileged::pci::find_by_class(PCI_CLASS_SERIAL_BUS);
@@ -113,7 +111,8 @@ pub fn discover_xhci_controllers() -> Vec<XhciController> {
         };
 
         // 4. MMIO 映射大小钳制到默认上限; `XhciController::new` 经 privileged IoMem 安全代理
-        let mmio_size = bar_size.min(XHCI_DEFAULT_MMIO_SIZE as u64) as usize;
+        let mmio_size =
+            crate::functions::intcast::usize_from_u64(bar_size.min(XHCI_DEFAULT_MMIO_SIZE as u64));
         if let Some(ctrl) = XhciController::new(bar_base, mmio_size) {
             controllers.push(ctrl);
         }

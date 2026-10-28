@@ -438,7 +438,7 @@ fn parse_bars_locked(bus: u8, dev: u8, func: u8) -> ([PciBar; 6], usize) {
     let mut i = 0;
 
     while i < 6 {
-        let offset = REG_BAR0 + (i as u8) * 4;
+        let offset = REG_BAR0 + crate::privileged::lib::low_u8_from_usize(i) * 4;
         let bar_lo = read_config_dword_locked(bus, dev, func, offset);
         if bar_lo == 0 || bar_lo == 0xFFFF_FFFF {
             i += 1;

@@ -178,10 +178,12 @@ impl DhcpPolicy for DefaultDhcpPolicy {
                     // 0 表示租期未知, 永不续约
                     return DhcpAction::Continue;
                 }
-                let t1_ms = (u128::from(lease_duration_ms) * u128::from(policy_cfg.renew_t1_ratio)
-                    / 10_000) as u64;
-                let t2_ms = (u128::from(lease_duration_ms) * u128::from(policy_cfg.renew_t2_ratio)
-                    / 10_000) as u64;
+                let t1_ms = crate::functions::intcast::low_u64_from_u128(
+                    u128::from(lease_duration_ms) * u128::from(policy_cfg.renew_t1_ratio) / 10_000,
+                );
+                let t2_ms = crate::functions::intcast::low_u64_from_u128(
+                    u128::from(lease_duration_ms) * u128::from(policy_cfg.renew_t2_ratio) / 10_000,
+                );
                 if elapsed_ms < t1_ms {
                     DhcpAction::Continue
                 } else if elapsed_ms < t2_ms {

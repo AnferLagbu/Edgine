@@ -90,8 +90,6 @@ impl CompositeBlockDevice {
     ///
     /// RAID0 容量 = 各子盘对齐到条带后的最小值 × 子盘数; RAID1 容量 = 各子盘最小值。
     /// 子盘数量为 0、超过上限、任一子盘容量不足时返回 `None`。
-    // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-    #[expect(clippy::cast_possible_truncation)]
     pub fn new(device_type: CompositeType, child_drives: &[u8], stripe_size: u64) -> Option<Self> {
         if child_drives.is_empty() || child_drives.len() > MAX_COMPOSITE_CHILDREN {
             return None;
@@ -138,7 +136,7 @@ impl CompositeBlockDevice {
         Some(Self {
             device_type,
             child_drives: drives,
-            child_count: child_drives.len() as u8,
+            child_count: crate::privileged::lib::low_u8_from_usize(child_drives.len()),
             stripe_sectors,
             total_sectors: total,
             read_round_robin: AtomicU32::new(0),
@@ -146,11 +144,10 @@ impl CompositeBlockDevice {
     }
 
     #[inline]
-    // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-    #[expect(clippy::cast_possible_truncation)]
     fn map_raid0_sector(&self, logical: u64) -> (u8, u64) {
         let stripe = logical / self.stripe_sectors;
-        let child_idx = (stripe % u64::from(self.child_count)) as u8;
+        let child_idx =
+            crate::privileged::lib::low_u8_from_u64(stripe % u64::from(self.child_count));
         let stripe_row = stripe / u64::from(self.child_count);
         let offset = logical % self.stripe_sectors;
         let physical = stripe_row * self.stripe_sectors + offset;
@@ -159,8 +156,6 @@ impl CompositeBlockDevice {
 }
 
 impl BlockDevice for CompositeBlockDevice {
-    // 有意窄化: 用户内存代理, 指针/长度上下文保证
-    #[expect(clippy::cast_possible_truncation)]
     fn blk_read(&mut self, sector: u64, buf: &mut [u8]) -> i32 {
         let num_sectors = (buf.len() / 512) as u64;
         if num_sectors == 0 {
@@ -173,7 +168,8 @@ impl BlockDevice for CompositeBlockDevice {
         match self.device_type {
             CompositeType::Raid0 => {
                 for s in 0..num_sectors {
-                    let chunk = &mut buf[(s * 512) as usize..((s + 1) * 512) as usize];
+                    let chunk = &mut buf[crate::privileged::lib::usize_from_u64(s * 512)
+                        ..crate::privileged::lib::usize_from_u64((s + 1) * 512)];
                     let (drive_idx, phys_sector) = self.map_raid0_sector(sector + s);
                     let ret = egdf_blk_read(drive_idx, phys_sector, chunk);
                     if ret != 0 {
@@ -184,7 +180,8 @@ impl BlockDevice for CompositeBlockDevice {
             }
             CompositeType::Raid1 => {
                 for s in 0..num_sectors {
-                    let chunk = &mut buf[(s * 512) as usize..((s + 1) * 512) as usize];
+                    let chunk = &mut buf[crate::privileged::lib::usize_from_u64(s * 512)
+                        ..crate::privileged::lib::usize_from_u64((s + 1) * 512)];
                     let sector_off = sector + s;
 
                     let start = self.read_round_robin.fetch_add(1, Ordering::Relaxed) as usize
@@ -208,8 +205,6 @@ impl BlockDevice for CompositeBlockDevice {
         }
     }
 
-    // 有意窄化: 用户内存代理, 指针/长度上下文保证
-    #[expect(clippy::cast_possible_truncation)]
     fn blk_write(&mut self, sector: u64, buf: &[u8]) -> i32 {
         let num_sectors = (buf.len() / 512) as u64;
         if num_sectors == 0 {
@@ -222,7 +217,8 @@ impl BlockDevice for CompositeBlockDevice {
         match self.device_type {
             CompositeType::Raid0 => {
                 for s in 0..num_sectors {
-                    let chunk = &buf[(s * 512) as usize..((s + 1) * 512) as usize];
+                    let chunk = &buf[crate::privileged::lib::usize_from_u64(s * 512)
+                        ..crate::privileged::lib::usize_from_u64((s + 1) * 512)];
                     let (drive_idx, phys_sector) = self.map_raid0_sector(sector + s);
                     let ret = egdf_blk_write(drive_idx, phys_sector, chunk);
                     if ret != 0 {
@@ -233,7 +229,8 @@ impl BlockDevice for CompositeBlockDevice {
             }
             CompositeType::Raid1 => {
                 for s in 0..num_sectors {
-                    let chunk = &buf[(s * 512) as usize..((s + 1) * 512) as usize];
+                    let chunk = &buf[crate::privileged::lib::usize_from_u64(s * 512)
+                        ..crate::privileged::lib::usize_from_u64((s + 1) * 512)];
                     let sector_off = sector + s;
 
                     for i in 0..self.child_count as usize {
@@ -274,8 +271,6 @@ impl BlockDevice for CompositeBlockDevice {
     }
 }
 
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 #[expect(
     clippy::too_many_lines,
     reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
@@ -374,7 +369,7 @@ pub fn devtree_probe_composites() -> usize {
                 continue;
             }
 
-            child_drives.push(idx as u8);
+            child_drives.push(crate::privileged::lib::low_u8_from_usize(idx));
         }
 
         if child_drives.is_empty() {
@@ -445,11 +440,9 @@ pub fn devtree_probe_composites() -> usize {
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 /// FFI 入口: 探测并注册设备树中的复合块设备, 返回创建数量.
 pub extern "C" fn composite_probe() -> u32 {
-    devtree_probe_composites() as u32
+    crate::privileged::lib::low_u32_from_usize(devtree_probe_composites())
 }
 
 #[cfg(test)]

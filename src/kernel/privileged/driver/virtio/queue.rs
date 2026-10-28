@@ -104,10 +104,17 @@ pub const fn vring_layout(legacy: bool, num: u16) -> (usize, usize, usize) {
     let desc_bytes = 16 * n;
     let avail_off = desc_bytes;
     let avail_bytes = RING_HEAD_BYTES + 2 * n + 2;
-    let used_align = if legacy { PAGE_SIZE as usize } else { 4 };
+    let used_align = if legacy {
+        crate::privileged::lib::usize_from_u64(PAGE_SIZE)
+    } else {
+        4
+    };
     let used_off = align_up(avail_off + avail_bytes, used_align);
     let used_bytes = RING_HEAD_BYTES + 8 * n + 4;
-    let total = align_up(used_off + used_bytes, PAGE_SIZE as usize);
+    let total = align_up(
+        used_off + used_bytes,
+        crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+    );
     (avail_off, used_off, total)
 }
 
@@ -125,8 +132,6 @@ impl VirtQueue {
     /// 推算 — 布局不一致则设备读到错误 avail/used 地址, 永不回写 used, 即
     /// P-31 TX 超时根因). `num` 必须由调用方按传输形态选定: legacy 取设备
     /// `QueueNumMax` 全量, modern 取驱动协商值.
-    // 有意窄化: 用户内存代理, 指针/长度上下文保证
-    #[expect(clippy::cast_possible_truncation)]
     pub fn new(legacy: bool, num: u16) -> Option<Self> {
         // SAFETY: pmm_alloc_pages 由 PMM 模块提供, 符号与 C ABI 声明一致
         unsafe extern "C" {
@@ -138,7 +143,7 @@ impl VirtQueue {
         }
         let (_avail_off, used_off, total_size) = vring_layout(legacy, num);
         let desc_size = 16 * num as usize;
-        let pages = total_size.div_ceil(PAGE_SIZE as usize);
+        let pages = total_size.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE));
         // SAFETY: extern 函数的参数/返回值类型与 C ABI 声明一致; 调用方保证指针有效
         let mem = unsafe { pmm_alloc_pages(pages as u64) };
         if mem.is_null() {
@@ -240,8 +245,6 @@ impl VirtQueue {
     }
 
     /// 检查是否有已用描述符可用, 有则返回.
-    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(clippy::cast_possible_truncation)]
     pub fn pop_used(&mut self) -> Option<(u16, u32)> {
         // SAFETY: 调用方保证指针有效; used.idx 位于基址偏移 2,
         // 环项 = 头 4B + (idx % num) * size_of(VqUsedElem). 全部 volatile:
@@ -258,7 +261,7 @@ impl VirtQueue {
             ) as *const VqUsedElem;
             let elem = core::ptr::read_volatile(elem_ptr);
             self.last_used_idx = self.last_used_idx.wrapping_add(1);
-            Some((elem.id as u16, elem.len))
+            Some((crate::privileged::lib::low_u16_from_u32(elem.id), elem.len))
         }
     }
 
@@ -313,14 +316,13 @@ impl DmaBuffer {
     ///
     /// 返回 `Some(DmaBuffer)` 表示分配成功, `None` 表示内存不足.
     /// 缓冲区内容初始化为零.
-    // 有意窄化: 用户内存代理, 指针/长度上下文保证
-    #[expect(clippy::cast_possible_truncation)]
     pub fn new(size: usize) -> Option<Self> {
         // SAFETY: pmm_alloc_pages 由 PMM 模块提供, 符号与 C ABI 声明一致
         unsafe extern "C" {
             fn pmm_alloc_pages(count: u64) -> *mut u8;
         }
-        let pages = (size + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
+        let pages = (size + crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1)
+            / crate::privileged::lib::usize_from_u64(PAGE_SIZE);
         // SAFETY: pmm_alloc_pages 由 PMM 模块提供, 参数与返回值类型匹配
         let ptr = unsafe { pmm_alloc_pages(pages as u64) };
         if ptr.is_null() {
@@ -391,12 +393,16 @@ impl DmaBuffer {
     }
 
     /// 向缓冲区 `offset` 处写入一个 u32 (小端).
-    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(clippy::cast_possible_truncation)]
     pub fn write_u32(&mut self, offset: usize, val: u32) {
-        self.write_byte(offset, val as u8);
-        self.write_byte(offset + 1, (val >> 8) as u8);
-        self.write_byte(offset + 2, (val >> 16) as u8);
+        self.write_byte(offset, crate::privileged::lib::low_u8_from_u32(val));
+        self.write_byte(
+            offset + 1,
+            crate::privileged::lib::low_u8_from_u32(val >> 8),
+        );
+        self.write_byte(
+            offset + 2,
+            crate::privileged::lib::low_u8_from_u32(val >> 16),
+        );
         self.write_byte(offset + 3, (val >> 24) as u8);
     }
 
@@ -408,10 +414,8 @@ impl DmaBuffer {
     }
 
     /// 向缓冲区 `offset` 处写入一个 u64 (小端).
-    // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-    #[expect(clippy::cast_possible_truncation)]
     pub fn write_u64(&mut self, offset: usize, val: u64) {
-        self.write_u32(offset, val as u32);
+        self.write_u32(offset, crate::privileged::lib::low_u32_from_u64(val));
         self.write_u32(offset + 4, (val >> 32) as u32);
     }
 

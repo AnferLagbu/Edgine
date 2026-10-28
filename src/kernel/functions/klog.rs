@@ -140,7 +140,7 @@ pub fn render_text(buf: &mut [u8]) -> usize {
         let mut x = v;
         while x > 0 && i > 0 {
             i -= 1;
-            tmp[i] = (x % 10) as u8 + b'0';
+            tmp[i] = crate::functions::intcast::low_u8_from_usize(x % 10) + b'0';
             x /= 10;
         }
         let end = (*p + (20 - i)).min(dst.len());
@@ -197,7 +197,7 @@ pub fn render_json(buf: &mut [u8]) -> usize {
         let mut x = v;
         while x > 0 && i > 0 {
             i -= 1;
-            tmp[i] = (x % 10) as u8 + b'0';
+            tmp[i] = crate::functions::intcast::low_u8_from_usize(x % 10) + b'0';
             x /= 10;
         }
         let end = (*p + (20 - i)).min(dst.len());

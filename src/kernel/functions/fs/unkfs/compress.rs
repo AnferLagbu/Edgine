@@ -40,10 +40,16 @@ fn compress_lz4(data: &[u8]) -> Option<Vec<u8>> {
     let mut output = Vec::with_capacity(src_len + src_len / 255 + 16);
     let mut ip = 0;
     let mut anchor = 0;
-    output.push((src_len & 0xFF) as u8);
-    output.push(((src_len >> 8) & 0xFF) as u8);
-    output.push(((src_len >> 16) & 0xFF) as u8);
-    output.push(((src_len >> 24) & 0xFF) as u8);
+    output.push(crate::functions::intcast::low_u8_from_usize(src_len & 0xFF));
+    output.push(crate::functions::intcast::low_u8_from_usize(
+        (src_len >> 8) & 0xFF,
+    ));
+    output.push(crate::functions::intcast::low_u8_from_usize(
+        (src_len >> 16) & 0xFF,
+    ));
+    output.push(crate::functions::intcast::low_u8_from_usize(
+        (src_len >> 24) & 0xFF,
+    ));
     while ip < src_len {
         let mut match_len = 0;
         let mut ref_pos = 0;
@@ -70,10 +76,14 @@ fn compress_lz4(data: &[u8]) -> Option<Vec<u8>> {
             let mut tok = if literal_len >= 15 {
                 15
             } else {
-                literal_len as u8
+                crate::functions::intcast::low_u8_from_usize(literal_len)
             };
             let ml = match_len - 4;
-            tok |= (if ml >= 15 { 15 } else { ml as u8 }) << 4;
+            tok |= (if ml >= 15 {
+                15
+            } else {
+                crate::functions::intcast::low_u8_from_usize(ml)
+            }) << 4;
             output.push(tok);
             if literal_len >= 15 {
                 let mut remaining = literal_len - 15;
@@ -81,10 +91,10 @@ fn compress_lz4(data: &[u8]) -> Option<Vec<u8>> {
                     output.push(255);
                     remaining -= 255;
                 }
-                output.push(remaining as u8);
+                output.push(crate::functions::intcast::low_u8_from_usize(remaining));
             }
             output.extend_from_slice(&data[anchor..anchor + literal_len]);
-            let offset = (ip - ref_pos) as u16;
+            let offset = crate::functions::intcast::low_u16_from_usize(ip - ref_pos);
             output.push((offset & 0xFF) as u8);
             output.push(((offset >> 8) & 0xFF) as u8);
             if ml >= 15 {
@@ -93,7 +103,7 @@ fn compress_lz4(data: &[u8]) -> Option<Vec<u8>> {
                     output.push(255);
                     remaining -= 255;
                 }
-                output.push(remaining as u8);
+                output.push(crate::functions::intcast::low_u8_from_usize(remaining));
             }
             ip += match_len;
             anchor = ip;
@@ -106,7 +116,7 @@ fn compress_lz4(data: &[u8]) -> Option<Vec<u8>> {
         let tok = if literal_len >= 15 {
             15u8
         } else {
-            literal_len as u8
+            crate::functions::intcast::low_u8_from_usize(literal_len)
         };
         output.push(tok);
         if literal_len >= 15 {
@@ -115,7 +125,7 @@ fn compress_lz4(data: &[u8]) -> Option<Vec<u8>> {
                 output.push(255);
                 remaining -= 255;
             }
-            output.push(remaining as u8);
+            output.push(crate::functions::intcast::low_u8_from_usize(remaining));
         }
         output.extend_from_slice(&data[anchor..src_len]);
     }
@@ -197,10 +207,18 @@ fn compress_rle(data: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     let mut output = Vec::with_capacity(data.len() + 4);
-    output.push((data.len() & 0xFF) as u8);
-    output.push(((data.len() >> 8) & 0xFF) as u8);
-    output.push(((data.len() >> 16) & 0xFF) as u8);
-    output.push(((data.len() >> 24) & 0xFF) as u8);
+    output.push(crate::functions::intcast::low_u8_from_usize(
+        data.len() & 0xFF,
+    ));
+    output.push(crate::functions::intcast::low_u8_from_usize(
+        (data.len() >> 8) & 0xFF,
+    ));
+    output.push(crate::functions::intcast::low_u8_from_usize(
+        (data.len() >> 16) & 0xFF,
+    ));
+    output.push(crate::functions::intcast::low_u8_from_usize(
+        (data.len() >> 24) & 0xFF,
+    ));
     let mut i = 0;
     while i < data.len() {
         let byte = data[i];
@@ -209,7 +227,7 @@ fn compress_rle(data: &[u8]) -> Option<Vec<u8>> {
             count += 1;
         }
         output.push(byte);
-        output.push(count as u8);
+        output.push(crate::functions::intcast::low_u8_from_usize(count));
         i += count;
     }
     if output.len() >= data.len() {
@@ -242,10 +260,18 @@ fn decompress_rle(compressed: &[u8], _expected_size: usize) -> Option<Vec<u8>> {
 
 fn compress_zle(data: &[u8]) -> Option<Vec<u8>> {
     let mut output = Vec::with_capacity(data.len() + 4);
-    output.push((data.len() & 0xFF) as u8);
-    output.push(((data.len() >> 8) & 0xFF) as u8);
-    output.push(((data.len() >> 16) & 0xFF) as u8);
-    output.push(((data.len() >> 24) & 0xFF) as u8);
+    output.push(crate::functions::intcast::low_u8_from_usize(
+        data.len() & 0xFF,
+    ));
+    output.push(crate::functions::intcast::low_u8_from_usize(
+        (data.len() >> 8) & 0xFF,
+    ));
+    output.push(crate::functions::intcast::low_u8_from_usize(
+        (data.len() >> 16) & 0xFF,
+    ));
+    output.push(crate::functions::intcast::low_u8_from_usize(
+        (data.len() >> 24) & 0xFF,
+    ));
     let mut i = 0;
     while i < data.len() {
         if data[i] == 0 {
@@ -254,7 +280,7 @@ fn compress_zle(data: &[u8]) -> Option<Vec<u8>> {
                 count += 1;
             }
             output.push(0);
-            output.push(count as u8);
+            output.push(crate::functions::intcast::low_u8_from_usize(count));
             i += count;
         } else {
             output.push(data[i]);

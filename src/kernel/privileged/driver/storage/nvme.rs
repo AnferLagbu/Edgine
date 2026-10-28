@@ -200,8 +200,6 @@ impl NvmeCommand {
     }
 
     /// 创建 Create I/O Completion Queue 命令
-    // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-    #[expect(clippy::cast_possible_truncation)]
     /// 创建 Create I/O Completion Queue 命令
     ///
     /// `irq_vector` 是 MSI-X Table 中的向量索引（0-based，由 NVMe 设备用作
@@ -219,7 +217,8 @@ impl NvmeCommand {
             mptr: 0,
             prp1: cq_phys,
             prp2: 0,
-            cdw10: ((QUEUE_DEPTH as u32 - 1) << 16) | u32::from(qid),
+            cdw10: ((crate::privileged::lib::low_u32_from_usize(QUEUE_DEPTH) - 1) << 16)
+                | u32::from(qid),
             cdw11: (u32::from(irq_vector) << 16) | (1 | 2), // [31:16]=vector [2:0]=PC+IEN
             cdw12: 0,
             cdw13: 0,
@@ -229,8 +228,6 @@ impl NvmeCommand {
     }
 
     /// 创建 Create I/O Submission Queue 命令
-    // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-    #[expect(clippy::cast_possible_truncation)]
     pub fn create_sq(qid: u16, cqid: u16, sq_phys: u64) -> Self {
         Self {
             opcode: NvmeAdminOpcode::CreateSq as u8,
@@ -242,7 +239,8 @@ impl NvmeCommand {
             mptr: 0,
             prp1: sq_phys,
             prp2: 0,
-            cdw10: ((QUEUE_DEPTH as u32 - 1) << 16) | u32::from(qid),
+            cdw10: ((crate::privileged::lib::low_u32_from_usize(QUEUE_DEPTH) - 1) << 16)
+                | u32::from(qid),
             cdw11: u32::from(cqid) << 16 | 1, // CQID | PC
             cdw12: 0,
             cdw13: 0,

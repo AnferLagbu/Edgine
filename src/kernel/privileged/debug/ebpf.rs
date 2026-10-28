@@ -509,11 +509,9 @@ pub struct BpfProg {
 }
 
 impl BpfProg {
-    // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-    #[expect(clippy::cast_possible_truncation)]
     /// 以程序类型与指令序列创建程序实例, 引用计数初始化为 1.
     pub fn new(prog_type: BpfProgType, insns: Vec<BpfInsn>) -> Self {
-        let insn_cnt = insns.len() as u32;
+        let insn_cnt = crate::privileged::lib::low_u32_from_usize(insns.len());
         Self {
             prog_type,
             insns,
@@ -610,8 +608,6 @@ impl BpfHelper {
     /// - `maps`: Map FD → `Arc<BpfMap>` 映射
     ///
     /// 返回: R0 的值
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::bool_to_int_with_if,
         reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
@@ -659,7 +655,7 @@ impl BpfHelper {
             helper_id::MAP_LOOKUP_ELEM => {
                 // r1 = map_fd, r2 = key_ptr
                 // 简化: 在内核态直接操作, 不做 copy_from_user
-                let map_fd = r1 as u32;
+                let map_fd = crate::privileged::lib::low_u32_from_u64(r1);
                 maps.get(&map_fd).map_or(0, |map| {
                     // key 从 r2 指向的内存读取 (内核态直接访问)
                     let key_size = map.def().key_size as usize;
@@ -677,7 +673,7 @@ impl BpfHelper {
             }
             helper_id::MAP_UPDATE_ELEM => {
                 // 寄存器分配: r1=map_fd, r2=key_ptr, r3=value_ptr, r4=flags
-                let map_fd = r1 as u32;
+                let map_fd = crate::privileged::lib::low_u32_from_u64(r1);
                 maps.get(&map_fd).map_or((-(1i64)).cast_unsigned(), |map| {
                     let key_size = map.def().key_size as usize;
                     let val_size = map.def().value_size as usize;
@@ -695,7 +691,7 @@ impl BpfHelper {
                 })
             }
             helper_id::MAP_DELETE_ELEM => {
-                let map_fd = r1 as u32;
+                let map_fd = crate::privileged::lib::low_u32_from_u64(r1);
                 maps.get(&map_fd).map_or((-(1i64)).cast_unsigned(), |map| {
                     let key_size = map.def().key_size as usize;
                     let key_ptr = r2 as *const u8;
@@ -778,8 +774,6 @@ impl BpfInterpreter {
         regs[reg::R0]
     }
 
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
@@ -810,8 +804,12 @@ impl BpfInterpreter {
             }
             opcode::OR => regs[dst] | src_val,
             opcode::AND => regs[dst] & src_val,
-            opcode::LSH => regs[dst].wrapping_shl(src_val as u32),
-            opcode::RSH => regs[dst].wrapping_shr(src_val as u32),
+            opcode::LSH => {
+                regs[dst].wrapping_shl(crate::privileged::lib::low_u32_from_u64(src_val))
+            }
+            opcode::RSH => {
+                regs[dst].wrapping_shr(crate::privileged::lib::low_u32_from_u64(src_val))
+            }
             opcode::NEG => (!regs[dst]).wrapping_add(1),
             opcode::MOD => {
                 if src_val == 0 {
@@ -827,19 +825,20 @@ impl BpfInterpreter {
                 if is_64 {
                     regs[dst]
                         .cast_signed()
-                        .wrapping_shr(src_val as u32)
+                        .wrapping_shr(crate::privileged::lib::low_u32_from_u64(src_val))
                         .cast_unsigned()
                 } else {
                     crate::privileged::lib::u64_from_i32(
-                        (regs[dst] as i32).wrapping_shr(src_val as u32),
+                        crate::privileged::lib::low_i32_from_u64(regs[dst])
+                            .wrapping_shr(crate::privileged::lib::low_u32_from_u64(src_val)),
                     )
                 }
             }
             opcode::END => {
                 // 字节序转换: 简化为截断
                 match insn.imm {
-                    16 => u64::from(regs[dst] as u16),
-                    32 => u64::from(regs[dst] as u32),
+                    16 => u64::from(crate::privileged::lib::low_u16_from_u64(regs[dst])),
+                    32 => u64::from(crate::privileged::lib::low_u32_from_u64(regs[dst])),
                     _ => regs[dst],
                 }
             }
@@ -849,7 +848,7 @@ impl BpfInterpreter {
         if is_64 {
             regs[dst] = result;
         } else {
-            regs[dst] = u64::from(result as u32);
+            regs[dst] = u64::from(crate::privileged::lib::low_u32_from_u64(result));
         }
     }
 
@@ -904,8 +903,6 @@ impl BpfInterpreter {
         }
     }
 
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn exec_st(insn: &BpfInsn, regs: &mut [u64; BPF_REG_NUM]) {
         let dst = insn.dst() as usize;
         let addr = regs[dst].wrapping_add(i64::from(insn.off).cast_unsigned());
@@ -966,21 +963,36 @@ impl BpfInterpreter {
                     let ptr = addr as *mut u32;
                     if !ptr.is_null() {
                         // SAFETY: 验证器保证 addr 指向有效可写内存
-                        unsafe { core::ptr::write_unaligned(ptr, regs[src] as u32) };
+                        unsafe {
+                            core::ptr::write_unaligned(
+                                ptr,
+                                crate::privileged::lib::low_u32_from_u64(regs[src]),
+                            );
+                        };
                     }
                 }
                 opcode::H => {
                     let ptr = addr as *mut u16;
                     if !ptr.is_null() {
                         // SAFETY: 同上
-                        unsafe { core::ptr::write_unaligned(ptr, regs[src] as u16) };
+                        unsafe {
+                            core::ptr::write_unaligned(
+                                ptr,
+                                crate::privileged::lib::low_u16_from_u64(regs[src]),
+                            );
+                        };
                     }
                 }
                 opcode::B => {
                     let ptr = addr as *mut u8;
                     if !ptr.is_null() {
                         // SAFETY: 同上
-                        unsafe { core::ptr::write_unaligned(ptr, regs[src] as u8) };
+                        unsafe {
+                            core::ptr::write_unaligned(
+                                ptr,
+                                crate::privileged::lib::low_u8_from_u64(regs[src]),
+                            );
+                        };
                     }
                 }
                 opcode::DW => {
@@ -995,8 +1007,6 @@ impl BpfInterpreter {
         }
     }
 
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
@@ -1040,7 +1050,11 @@ impl BpfInterpreter {
                     crate::privileged::lib::u64_from_i32(insn.imm)
                 };
                 let taken = if is_32 {
-                    Self::eval_cond32(op_low, dst_val as u32, src_val as u32)
+                    Self::eval_cond32(
+                        op_low,
+                        crate::privileged::lib::low_u32_from_u64(dst_val),
+                        crate::privileged::lib::low_u32_from_u64(src_val),
+                    )
                 } else {
                     Self::eval_cond64(op_low, dst_val, src_val)
                 };
@@ -1330,8 +1344,6 @@ pub fn bpf_is_initialized() -> bool {
 ///   5 = `PROG_LOAD`
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 #[expect(
     clippy::too_many_lines,
     reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
@@ -1373,7 +1385,7 @@ pub extern "C" fn sys_bpf(cmd: u64, attr: u64, size: u64) -> i64 {
             // SAFETY: attr 指针由 syscall 入口保证有效, size 已校验
             let (map_fd, key_ptr, val_ptr) = unsafe {
                 (
-                    core::ptr::read_unaligned(attr_ptr) as u32,
+                    crate::privileged::lib::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr)),
                     core::ptr::read_unaligned(attr_ptr.add(1)),
                     core::ptr::read_unaligned(attr_ptr.add(2)),
                 )
@@ -1415,7 +1427,7 @@ pub extern "C" fn sys_bpf(cmd: u64, attr: u64, size: u64) -> i64 {
             // SAFETY: attr 指针由 syscall 入口保证有效, size 已校验
             let (map_fd, key_ptr, val_ptr) = unsafe {
                 (
-                    core::ptr::read_unaligned(attr_ptr) as u32,
+                    crate::privileged::lib::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr)),
                     core::ptr::read_unaligned(attr_ptr.add(1)),
                     core::ptr::read_unaligned(attr_ptr.add(2)),
                 )
@@ -1442,7 +1454,7 @@ pub extern "C" fn sys_bpf(cmd: u64, attr: u64, size: u64) -> i64 {
             // SAFETY: attr 指针由 syscall 入口保证有效, size 已校验
             let (map_fd, key_ptr) = unsafe {
                 (
-                    core::ptr::read_unaligned(attr_ptr) as u32,
+                    crate::privileged::lib::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr)),
                     core::ptr::read_unaligned(attr_ptr.add(1)),
                 )
             };
@@ -1466,7 +1478,8 @@ pub extern "C" fn sys_bpf(cmd: u64, attr: u64, size: u64) -> i64 {
             let attr_ptr = attr as *const u64;
             // SAFETY: attr 指针由 syscall 入口保证有效, size 已校验
             let (prog_type, insn_cnt, insns_ptr) = unsafe {
-                let lo = core::ptr::read_unaligned(attr_ptr) as u32;
+                let lo =
+                    crate::privileged::lib::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr));
                 let hi = core::ptr::read_unaligned(attr_ptr.add(0)) >> 32;
                 (lo, hi as u32, core::ptr::read_unaligned(attr_ptr.add(1)))
             };

@@ -273,10 +273,8 @@ impl GdtEntry {
     /// * `tss_addr` - TSS 结构体的 64 位地址
     /// * `tss_size` - TSS 结构体大小 (bytes)
     #[inline]
-    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(clippy::cast_possible_truncation)]
     pub const fn tss_low(tss_addr: u64, tss_size: u16) -> Self {
-        let base_low = tss_addr as u32;
+        let base_low = crate::privileged::lib::low_u32_from_u64(tss_addr);
 
         Self {
             limit_low: tss_size,
@@ -619,8 +617,6 @@ fn trampoline_top_of(gdt: &PerCpuGdt) -> u64 {
 /// 3. 设置 TSS 描述符 (占用2个槽位)
 /// 4. 加载 GDTR (lgdt 指令)
 /// 5. 加载 TR (ltr 指令, 任务寄存器)
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 #[expect(
     clippy::ptr_as_ptr,
     reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
@@ -652,7 +648,9 @@ pub fn gdt_init() -> i32 {
         const IA32_KERNEL_GS_BASE: u32 = 0xC000_0102;
         let gdt = per_cpu_gdt_mut(0);
 
-        gdt.ptr.limit = (core::mem::size_of::<[GdtEntry; GDT_MAX_ENTRIES]>() - 1) as u16;
+        gdt.ptr.limit = crate::privileged::lib::low_u16_from_usize(
+            core::mem::size_of::<[GdtEntry; GDT_MAX_ENTRIES]>() - 1,
+        );
         gdt.ptr.base = gdt.entries.as_ptr() as u64;
 
         init_gdt_entries(&mut gdt.entries);
@@ -662,10 +660,14 @@ pub fn gdt_init() -> i32 {
         // IST 栈顶 / KPTI trampoline 栈顶统一取高半区 VA (理由见 init_stack_tops).
         init_stack_tops(gdt);
 
-        gdt.tss.iomap_base = core::mem::size_of::<super::tss::TaskStateSegment>() as u16;
+        gdt.tss.iomap_base = crate::privileged::lib::low_u16_from_usize(core::mem::size_of::<
+            super::tss::TaskStateSegment,
+        >());
 
         let tss_addr = &gdt.tss as *const _ as u64;
-        let tss_size = (core::mem::size_of::<super::tss::TaskStateSegment>() - 1) as u16;
+        let tss_size = crate::privileged::lib::low_u16_from_usize(
+            core::mem::size_of::<super::tss::TaskStateSegment>() - 1,
+        );
 
         gdt.entries[5] = GdtEntry::tss_low(tss_addr, tss_size);
         gdt.entries[6] = GdtEntry::tss_high(tss_addr);
@@ -761,7 +763,7 @@ pub fn alloc_ap_gdt(cpu_index: u32) -> bool {
         return true;
     }
 
-    let page = crate::privileged::mm::PAGE_SIZE as usize;
+    let page = crate::privileged::lib::usize_from_u64(crate::privileged::mm::PAGE_SIZE);
     let pages = core::mem::size_of::<PerCpuGdt>().div_ceil(page);
     let Some(phys) = crate::privileged::mm::pmm_alloc_pages_phys(pages) else {
         return false;
@@ -783,8 +785,6 @@ pub fn alloc_ap_gdt(cpu_index: u32) -> bool {
 ///
 /// Trampoline 已通过 `lgdt [gdt_ptr]` 加载了 BSP 的 GDT 作为过渡，
 /// 本函数在 AP 进入长模式后调用，为目标 CPU 初始化独立的 GDT + TSS。
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 #[expect(
     clippy::borrow_as_ptr,
     reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
@@ -796,7 +796,9 @@ pub fn gdt_init_ap(cpu_index: u32) {
         const IA32_KERNEL_GS_BASE: u32 = 0xC000_0102;
         let ap = per_cpu_gdt_mut(cpu_index);
 
-        ap.ptr.limit = (core::mem::size_of::<[GdtEntry; GDT_MAX_ENTRIES]>() - 1) as u16;
+        ap.ptr.limit = crate::privileged::lib::low_u16_from_usize(
+            core::mem::size_of::<[GdtEntry; GDT_MAX_ENTRIES]>() - 1,
+        );
         ap.ptr.base = ap.entries.as_ptr() as u64;
 
         init_gdt_entries(&mut ap.entries);
@@ -806,10 +808,14 @@ pub fn gdt_init_ap(cpu_index: u32) {
         // IST 栈顶 / KPTI trampoline 栈顶与 BSP 路径 (gdt_init) 一致, 理由见 init_stack_tops.
         init_stack_tops(ap);
 
-        ap.tss.iomap_base = core::mem::size_of::<super::tss::TaskStateSegment>() as u16;
+        ap.tss.iomap_base = crate::privileged::lib::low_u16_from_usize(core::mem::size_of::<
+            super::tss::TaskStateSegment,
+        >());
 
         let tss_addr = &ap.tss as *const _ as u64;
-        let tss_size = (core::mem::size_of::<super::tss::TaskStateSegment>() - 1) as u16;
+        let tss_size = crate::privileged::lib::low_u16_from_usize(
+            core::mem::size_of::<super::tss::TaskStateSegment>() - 1,
+        );
 
         ap.entries[5] = GdtEntry::tss_low(tss_addr, tss_size);
         ap.entries[6] = GdtEntry::tss_high(tss_addr);

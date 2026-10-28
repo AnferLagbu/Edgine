@@ -81,8 +81,6 @@ impl CommandBlockWrapper {
     /// 创建新的 CBW.
     /// # Errors
     /// SCSI 命令块为空或长度超过最大允许值时返回 Err。
-    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(clippy::cast_possible_truncation)]
     pub fn new(
         tag: u32,
         data_transfer_length: u32,
@@ -101,7 +99,7 @@ impl CommandBlockWrapper {
             flags: if direction_in { 0x80 } else { 0x00 },
             lun,
             cb: cb_arr,
-            cb_length: cb.len() as u8,
+            cb_length: crate::functions::intcast::low_u8_from_usize(cb.len()),
         })
     }
 

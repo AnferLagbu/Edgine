@@ -249,7 +249,7 @@ impl UdsState {
     fn find_free_path(&self) -> Option<u8> {
         for (i, p) in self.paths.iter().enumerate() {
             if !p.used {
-                return Some(i as u8);
+                return Some(crate::functions::intcast::low_u8_from_usize(i));
             }
         }
         None
@@ -259,7 +259,7 @@ impl UdsState {
     fn find_free_socket(&self) -> Option<u8> {
         for (i, s) in self.sockets.iter().enumerate() {
             if s.id == 0 {
-                return Some(i as u8);
+                return Some(crate::functions::intcast::low_u8_from_usize(i));
             }
         }
         None
@@ -278,7 +278,7 @@ impl UdsState {
     fn find_path(&self, path: &[u8]) -> Option<u8> {
         for (i, p) in self.paths.iter().enumerate() {
             if p.used && p.path_len as usize == path.len() && p.path[..path.len()] == *path {
-                return Some(i as u8);
+                return Some(crate::functions::intcast::low_u8_from_usize(i));
             }
         }
         None
@@ -287,7 +287,7 @@ impl UdsState {
     fn socket_idx_by_id(&self, id: u32) -> Option<u8> {
         for (i, s) in self.sockets.iter().enumerate() {
             if s.id == id {
-                return Some(i as u8);
+                return Some(crate::functions::intcast::low_u8_from_usize(i));
             }
         }
         None
@@ -314,7 +314,9 @@ fn alloc_socket_id() -> u32 {
 #[inline]
 fn fd_to_idx(fd: i32) -> Result<u8, UdsError> {
     match crate::privileged::proc::idx_of(fd) {
-        Some((crate::privileged::proc::FdSubsystem::Uds, slot)) => Ok(slot as u8),
+        Some((crate::privileged::proc::FdSubsystem::Uds, slot)) => {
+            Ok(crate::functions::intcast::low_u8_from_usize(slot))
+        }
         _ => Err(UdsError::BadFd),
     }
 }
@@ -366,7 +368,7 @@ pub fn uds_create(sock_type: UnixSockType) -> Result<i32, UdsError> {
 
         let (_sub, slot) = crate::functions::proc::fd_alloc::idx_of(fd).ok_or(UdsError::BadFd)?;
 
-        let idx = slot as u8;
+        let idx = crate::functions::intcast::low_u8_from_usize(slot);
         let id = alloc_socket_id();
         let s = &mut state.sockets[idx as usize];
         s.id = id;
@@ -464,12 +466,12 @@ pub fn uds_bind(fd: i32, path: &[u8]) -> Result<(), UdsError> {
         let pidx = state.find_free_path().ok_or(UdsError::NoMem)?;
         let binding = &mut state.paths[pidx as usize];
         binding.path[..path.len()].copy_from_slice(path);
-        binding.path_len = path.len() as u16;
-        binding.sock_idx = idx as u8;
+        binding.path_len = crate::functions::intcast::low_u16_from_usize(path.len());
+        binding.sock_idx = crate::functions::intcast::low_u8_from_usize(idx);
         binding.used = true;
         let s = &mut state.sockets[idx];
         s.bound_path[..path.len()].copy_from_slice(path);
-        s.bound_path_len = path.len() as u16;
+        s.bound_path_len = crate::functions::intcast::low_u16_from_usize(path.len());
         s.state = UnixSockState::Bound;
         Ok(())
     })
@@ -544,8 +546,8 @@ pub fn uds_accept(fd: i32) -> Result<i32, UdsError> {
         ns.peer = Some(client_id);
         ns.stream_len = 0;
         ns.peer_closed = false;
-        state.sockets[listen_idx].listen_head =
-            (state.sockets[listen_idx].listen_head + 1) % UNIX_LISTEN_BACKLOG as u8;
+        state.sockets[listen_idx].listen_head = (state.sockets[listen_idx].listen_head + 1)
+            % crate::functions::intcast::low_u8_from_usize(UNIX_LISTEN_BACKLOG);
         state.sockets[listen_idx].listen_count -= 1;
         state.sockets[client_idx].peer = Some(id);
         Ok(new_fd)
@@ -591,8 +593,8 @@ pub fn uds_connect(fd: i32, path: &[u8]) -> Result<(), UdsError> {
                 let tail = target.listen_tail as usize;
                 let my_id = state.sockets[idx].id;
                 state.sockets[target_idx].listen_pending[tail] = my_id;
-                state.sockets[target_idx].listen_tail =
-                    (state.sockets[target_idx].listen_tail + 1) % UNIX_LISTEN_BACKLOG as u8;
+                state.sockets[target_idx].listen_tail = (state.sockets[target_idx].listen_tail + 1)
+                    % crate::functions::intcast::low_u8_from_usize(UNIX_LISTEN_BACKLOG);
                 state.sockets[target_idx].listen_count += 1;
                 state.sockets[idx].state = UnixSockState::Connected;
                 state.sockets[idx].bound_path_len = 0;
@@ -645,7 +647,7 @@ pub fn uds_send(fd: i32, data: &[u8]) -> Result<usize, UdsError> {
         }
         peer.stream_buf[peer.stream_len as usize..peer.stream_len as usize + n]
             .copy_from_slice(&data[..n]);
-        peer.stream_len += n as u32;
+        peer.stream_len += crate::functions::intcast::low_u32_from_usize(n);
         // v2 SO_PASSCRED: 对端 passcred=true 时附加 SCM_CREDENTIALS.
         // 简化方案: 凭据追加到 stream_buf 末尾 (POSIX 兼容凭据含 pid/uid/gid).
         // B07-01: 使用当前进程真实凭据, 消除硬编码伪造的 root 凭据.
@@ -752,7 +754,7 @@ pub fn uds_recv(fd: i32, out: &mut [u8]) -> Result<usize, UdsError> {
         if remaining > 0 {
             s.stream_buf.copy_within(n..n + remaining, 0);
         }
-        s.stream_len = remaining as u32;
+        s.stream_len = crate::functions::intcast::low_u32_from_usize(remaining);
         Ok(n)
     })
 }
@@ -775,7 +777,7 @@ pub fn uds_sendto(_fd: i32, data: &[u8], dest_path: &[u8]) -> Result<usize, UdsE
             return Err(UdsError::Invalid);
         }
         target.dgram_buf[..data.len()].copy_from_slice(data);
-        target.dgram_len = data.len() as u32;
+        target.dgram_len = crate::functions::intcast::low_u32_from_usize(data.len());
         target.dgram_pending = true;
         // v2 SO_PASSCRED: 目标 socket 启用时附加 SCM_CREDENTIALS 12 字节
         // B07-01: 使用当前进程真实凭据, 消除硬编码伪造的 root 凭据.
@@ -832,7 +834,7 @@ pub fn uds_send_connected(fd: i32, data: &[u8]) -> Result<usize, UdsError> {
                 return Err(UdsError::Again);
             }
             peer.dgram_buf[..data.len()].copy_from_slice(data);
-            peer.dgram_len = data.len() as u32;
+            peer.dgram_len = crate::functions::intcast::low_u32_from_usize(data.len());
             peer.dgram_pending = true;
             // v2 SO_PASSCRED: 同 uds_sendto, 对端启用时附加 SCM_CREDENTIALS 12 字节
             if peer.passcred && peer.dgram_len as usize + 12 <= UNIX_DGRAM_MAX {
@@ -941,7 +943,8 @@ pub fn uds_close(fd: i32) -> Result<(), UdsError> {
 
         if sock_type == UnixSockType::Stream && state_val == UnixSockState::Listening {
             for i in 0..state.sockets[idx].listen_count {
-                let pos = (state.sockets[idx].listen_head + i) % UNIX_LISTEN_BACKLOG as u8;
+                let pos = (state.sockets[idx].listen_head + i)
+                    % crate::functions::intcast::low_u8_from_usize(UNIX_LISTEN_BACKLOG);
                 let client_id = state.sockets[idx].listen_pending[pos as usize];
                 if let Some(ci) = state.socket_idx_by_id(client_id) {
                     state.sockets[ci as usize] = UnixSocket::empty();

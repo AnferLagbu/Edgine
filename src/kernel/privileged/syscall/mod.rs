@@ -269,13 +269,13 @@ pub mod raw {
     /// 分配 count 个连续物理页。
     /// 委托到 `mm::api::pmm_alloc_pages`.
     pub fn alloc_pages(count: u64) -> *mut u8 {
-        crate::privileged::mm::pmm_alloc_pages(count as usize)
+        crate::privileged::mm::pmm_alloc_pages(crate::privileged::lib::usize_from_u64(count))
     }
 
     /// 释放 count 个连续物理页。
     /// 委托到 `mm::api::pmm_free_pages`.
     pub fn free_pages(addr: *mut u8, count: u64) {
-        crate::privileged::mm::pmm_free_pages(addr, count as usize);
+        crate::privileged::mm::pmm_free_pages(addr, crate::privileged::lib::usize_from_u64(count));
     }
 
     // ============= 时间 =============

@@ -156,8 +156,6 @@ impl SwapArea {
     }
 
     /// 初始化 swap 区: 分配预留内存
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn init(&mut self) -> bool {
         if self.initialized {
             return true;
@@ -168,7 +166,7 @@ impl SwapArea {
         // swap slot_addr 假设物理连续 (storage_virt + slot * PAGE_SIZE),
         // 因此必须保证基址连续范围.
         let pmm_inst = pmm::get_pmm();
-        let swap_bytes = SWAP_MAX_SLOTS * PAGE_SIZE as usize;
+        let swap_bytes = SWAP_MAX_SLOTS * crate::privileged::lib::usize_from_u64(PAGE_SIZE);
 
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         let Some(phys_base) = pmm_inst.find_contig_range(swap_bytes) else {
@@ -239,10 +237,8 @@ impl SwapArea {
     }
 
     /// 释放 slot
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn free_slot(&mut self, slot: u64) {
-        let idx = slot as usize;
+        let idx = crate::privileged::lib::usize_from_u64(slot);
         if idx < SWAP_MAX_SLOTS && self.bitmap[idx] == SlotState::Used as u8 {
             self.bitmap[idx] = SlotState::Free as u8;
             self.used_count -= 1;
@@ -259,8 +255,6 @@ impl SwapArea {
     /// # Safety
     ///
     /// - `src_virt` 必须指向有效的 4KB 数据源
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn write_slot(&self, slot: u64, src_virt: u64) {
         if !self.initialized {
             return;
@@ -268,7 +262,11 @@ impl SwapArea {
         let dst = self.slot_addr(slot) as *mut u8;
         // SAFETY: dst 指向 swap 存储区 (已分配并映射), src 为有效用户页
         unsafe {
-            core::ptr::copy_nonoverlapping(src_virt as *const u8, dst, PAGE_SIZE as usize);
+            core::ptr::copy_nonoverlapping(
+                src_virt as *const u8,
+                dst,
+                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            );
         }
     }
 
@@ -277,8 +275,6 @@ impl SwapArea {
     /// # Safety
     ///
     /// - `dst_virt` 必须指向有效的 4KB 目标页
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn read_slot(&self, slot: u64, dst_virt: u64) {
         if !self.initialized {
             return;
@@ -286,7 +282,11 @@ impl SwapArea {
         let src = self.slot_addr(slot) as *const u8;
         // SAFETY: src 指向 swap 存储区, dst 为有效物理页
         unsafe {
-            core::ptr::copy_nonoverlapping(src, dst_virt as *mut u8, PAGE_SIZE as usize);
+            core::ptr::copy_nonoverlapping(
+                src,
+                dst_virt as *mut u8,
+                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            );
         }
     }
 

@@ -365,7 +365,7 @@ impl Aarch64Vmm {
             ptr::write_bytes(
                 phys_to_virt(paddr.as_u64()) as *mut u8,
                 0,
-                PAGE_SIZE as usize,
+                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
             );
         }
         Some(paddr.as_u64())

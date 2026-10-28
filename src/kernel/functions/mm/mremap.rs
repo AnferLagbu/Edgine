@@ -59,9 +59,9 @@ pub fn mremap_syscall(
     )
     .ok_or(Errno::ENOMEM)?;
     mm.mremap(
-        old_addr as usize,
-        old_size as usize,
-        new_size as usize,
+        crate::functions::intcast::usize_from_u64(old_addr),
+        crate::functions::intcast::usize_from_u64(old_size),
+        crate::functions::intcast::usize_from_u64(new_size),
         flags,
         cr3,
     )

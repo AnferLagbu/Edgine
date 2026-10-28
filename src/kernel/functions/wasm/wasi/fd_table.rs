@@ -250,7 +250,7 @@ pub fn write_bytes_to_memory(
 ) {
     if let Some(ref mut mem) = interp.memory {
         for (i, &byte) in data.iter().enumerate() {
-            let _ = mem.write_u8(ptr + i as u32, byte);
+            let _ = mem.write_u8(ptr + crate::functions::intcast::low_u32_from_usize(i), byte);
         }
     }
 }

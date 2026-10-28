@@ -82,13 +82,11 @@ pub trait PmmPolicy: Send + Sync {
 pub struct FallbackPmmPolicy;
 
 impl PmmPolicy for FallbackPmmPolicy {
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn count_to_order(&self, count: usize, max_order: u8) -> u8 {
         if count <= 1 {
             return 0;
         }
-        let order = (count - 1).bit_width() as u8;
+        let order = crate::privileged::lib::low_u8_from_u32((count - 1).bit_width());
         if order > max_order { max_order } else { order }
     }
 

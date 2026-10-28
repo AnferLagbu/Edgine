@@ -365,14 +365,17 @@ impl<'a> CrossLayerHandler<'a> {
     /// `downgrade_for_tier` 结果实际写回 capability matrix.
     pub fn handle(&mut self, domain_id: u64) -> u32 {
         // 查找记录
-        let idx = (domain_id as usize) % MAX_SERVICE_DOMAINS;
+        let idx = crate::functions::intcast::usize_from_u64(domain_id) % MAX_SERVICE_DOMAINS;
         let rec = &self.records[idx];
         // 事件路径无心跳/依赖上下文, 传 0 (等价原单因子行为); 时间窗口与
         // 依赖因子由上层 health_monitor 的 RecoveryPolicy 决策补充.
         let new_tier = rec.record_failure(self.current_tick, 0, 0);
         // 应用降级: 实际写回 capability matrix (不再丢弃)
         let target = downgrade_for_tier(new_tier);
-        let _ = self.matrix.set(CapDomain(idx as u8), target);
+        let _ = self.matrix.set(
+            CapDomain(crate::functions::intcast::low_u8_from_usize(idx)),
+            target,
+        );
         new_tier
     }
 }

@@ -114,7 +114,7 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
         return ret_to_result(crate::functions::fs::sys_inotify_read(
             i64::from(fd),
             buf as *mut u8,
-            count as usize,
+            crate::functions::intcast::usize_from_u64(count),
         ));
     }
     // T1 G4: userfaultfd 事件读取 (无事件时阻塞等待缺页通知)
@@ -129,7 +129,7 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
         let ret = i64::from(crate::functions::fs::api::vfs_read(
             fd.cast_unsigned(),
             buf as *mut u8,
-            count as u32,
+            crate::functions::intcast::low_u32_from_u64(count),
         ));
         if ret >= 0 {
             return Ok(crate::functions::intcast::usize_from_i64(ret));
@@ -162,7 +162,7 @@ pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
     }
     if (fd == 1 || fd == 2) && !fd_table_has_entry(fd) {
         // 控制台: 分块拷贝用户数据 → 串口输出 (单次处理上限 4KB)
-        let total = (count as usize).min(4096);
+        let total = crate::functions::intcast::usize_from_u64(count).min(4096);
         let mut kernel_buf = [0u8; 256];
         let mut off: usize = 0;
         while off < total {
@@ -179,7 +179,7 @@ pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
                 _ => return Err(Errno::EFAULT),
             }
         }
-        return Ok(count as usize);
+        return Ok(crate::functions::intcast::usize_from_u64(count));
     }
     if crate::privileged::syscall::eventfd::is_eventfd_fd(fd) {
         if count < 8 {
@@ -199,7 +199,7 @@ pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
     //
     // 管道写端在阻塞模式 (未置 `O_NONBLOCK`) 下满缓冲返回 `EAGAIN` ⇒ 在此处
     // 睡眠等待后重试 (见 [`wait_pipe_eagain`]).
-    let total = (count as usize).min(4096);
+    let total = crate::functions::intcast::usize_from_u64(count).min(4096);
     let mut kernel_buf = [0u8; 256];
     let mut written: usize = 0;
     while written < total {
@@ -373,7 +373,7 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
             })
             .flatten();
             match result {
-                Some(bits) => Ok(bits as usize),
+                Some(bits) => Ok(crate::functions::intcast::usize_from_u64(bits)),
                 None => Err(Errno::EBADF),
             }
         }
@@ -427,7 +427,7 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
             }
         }
         F_SETFL => {
-            let nonblock = (arg as i32) & O_NONBLOCK != 0;
+            let nonblock = crate::functions::intcast::low_i32_from_u64(arg) & O_NONBLOCK != 0;
             // D10 (DECISION-092): socket fd 的 O_NONBLOCK 落到 privileged per-slot
             // 阻塞标志; 非 socket fd 沿用既有 no-op, 但管道端点例外 —— 非阻塞位
             // 记录到 `OpenFile::nonblock`, 供 read/write syscall 层切换阻塞路径.
@@ -450,7 +450,7 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
                 Ok(0)
             }
         }
-        F_DUPFD => dup2_syscall(fd, arg as i32),
+        F_DUPFD => dup2_syscall(fd, crate::functions::intcast::low_i32_from_u64(arg)),
         // POSIX record locks (F_SETLK / F_GETLK / F_SETLKW)  // fcntl 文件锁命令
         5 | 6 | 7 => sys_fcntl_posix_lock(fd, cmd, arg),
         _ => Err(Errno::EINVAL),
@@ -560,7 +560,7 @@ fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
             if cmd == F_GETLK {
                 // F_GETLK: 写回冲突锁类型 (offset 0-1) 与 pid (offset 20-23),
                 // 保留结构体其余字段原值.
-                let ct = conflict.lock_type as i16;
+                let ct = crate::functions::intcast::low_i16_from_i32(conflict.lock_type);
                 raw[0..2].copy_from_slice(&ct.to_ne_bytes());
                 let cpid = conflict.pid.cast_signed();
                 raw[20..24].copy_from_slice(&cpid.to_ne_bytes());
@@ -684,7 +684,8 @@ pub(crate) fn read_iovecs(iov_ptr: u64, iovcnt: u64) -> Result<alloc::vec::Vec<(
     if iov_ptr == 0 {
         return Err(Errno::EFAULT);
     }
-    let mut iovs = alloc::vec::Vec::with_capacity(iovcnt as usize);
+    let mut iovs =
+        alloc::vec::Vec::with_capacity(crate::functions::intcast::usize_from_u64(iovcnt));
     for i in 0..iovcnt {
         let mut entry = [0u64; 2];
         if !crate::privileged::syscall::api::read_struct_from_user(iov_ptr + i * 16, &mut entry) {
@@ -713,7 +714,7 @@ pub fn readv_syscall(fd: i32, iov_ptr: u64, iovcnt: u64) -> Result<usize, Errno>
         }
         let n = read_syscall(fd, base, len)?;
         total += n;
-        if n < len as usize {
+        if n < crate::functions::intcast::usize_from_u64(len) {
             break; // EOF 或部分读
         }
     }
@@ -738,7 +739,7 @@ pub fn writev_syscall(fd: i32, iov_ptr: u64, iovcnt: u64) -> Result<usize, Errno
         }
         let n = write_syscall(fd, base, len)?;
         total += n;
-        if n < len as usize {
+        if n < crate::functions::intcast::usize_from_u64(len) {
             break; // 部分写
         }
     }
@@ -779,7 +780,7 @@ pub fn close_range_syscall(first: u32, last: u32, flags: u32) -> Result<usize, E
     ) {
         for (local, _handle) in all {
             // 有意窄化: 本地 fd 编号 (< MAX_FDS_PER_PROCESS) 截断到 u32
-            let fd = local as u32;
+            let fd = crate::functions::intcast::low_u32_from_usize(local);
             if fd >= first && fd <= last {
                 fds.push(fd);
             }
@@ -816,7 +817,8 @@ pub fn preadv_syscall(fd: i32, iov_ptr: u64, iovcnt: u64, pos: i64) -> Result<us
             return Err(Errno::EFAULT);
         }
         // 有意窄化: 资源类型转换, 单段长度截断到 u32 (与 vfs_read 一致)
-        let count = core::cmp::min(len, u64::from(u32::MAX)) as u32;
+        let count =
+            crate::functions::intcast::low_u32_from_u64(core::cmp::min(len, u64::from(u32::MAX)));
         let n = crate::functions::fs::api::vfs_pread(
             fd.cast_unsigned(),
             base as *mut u8,
@@ -861,7 +863,8 @@ pub fn pwritev_syscall(fd: i32, iov_ptr: u64, iovcnt: u64, pos: i64) -> Result<u
             return Err(Errno::EFAULT);
         }
         // 有意窄化: 资源类型转换, 单段长度截断到 u32 (与 vfs_write 一致)
-        let count = core::cmp::min(len, u64::from(u32::MAX)) as u32;
+        let count =
+            crate::functions::intcast::low_u32_from_u64(core::cmp::min(len, u64::from(u32::MAX)));
         let n = crate::functions::fs::api::vfs_pwrite(
             fd.cast_unsigned(),
             base as *const u8,

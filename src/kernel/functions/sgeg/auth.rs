@@ -188,8 +188,8 @@ pub fn capget_syscall(header: u64, data: u64) -> i64 {
         crate::privileged::sgeg::CAP_DOMAIN_SYSTEM,
     );
     let lo = LinuxCapData {
-        effective: caps as u32,
-        permitted: caps as u32,
+        effective: crate::functions::intcast::low_u32_from_u64(caps),
+        permitted: crate::functions::intcast::low_u32_from_u64(caps),
         inheritable: 0,
     };
     let hi = LinuxCapData {

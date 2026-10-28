@@ -543,8 +543,6 @@ pub fn tpm_is_initialized() -> bool {
 ///   3 = `stats()` → (`ok_count` 位于高 32 位 | `fail_count` 位于低 32 位)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn sys_secure_boot(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     match cmd {
         0 => {
@@ -553,7 +551,7 @@ pub extern "C" fn sys_secure_boot(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
                 return -(22i64); // EINVAL
             }
             let image_ptr = a1 as *const u8;
-            let image_len = a2 as usize;
+            let image_len = crate::privileged::lib::usize_from_u64(a2);
             let sig_ptr = a3 as *const [u8; ED25519_SIG_LEN];
             // SAFETY: 指针由 syscall 入口保证有效
             let image = unsafe { core::slice::from_raw_parts(image_ptr, image_len) };
@@ -590,8 +588,6 @@ pub extern "C" fn sys_secure_boot(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
 ///   5 = `is_initialized()` → 是否已初始化
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn sys_tpm(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     if !tpm_is_initialized() && cmd != 5 {
         return -(11i64); // EAGAIN
@@ -600,14 +596,20 @@ pub extern "C" fn sys_tpm(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     match cmd {
         0 => {
             // extend
-            let Some(pcr_idx) = PcrIndex::from_u32(a1 as u32) else {
+            let Some(pcr_idx) = PcrIndex::from_u32(crate::privileged::lib::low_u32_from_u64(a1))
+            else {
                 return -(22i64);
             };
             if a2 == 0 {
                 return -(22i64);
             }
             // SAFETY: 指针由 syscall 入口保证有效
-            let data = unsafe { core::slice::from_raw_parts(a2 as *const u8, a3 as usize) };
+            let data = unsafe {
+                core::slice::from_raw_parts(
+                    a2 as *const u8,
+                    crate::privileged::lib::usize_from_u64(a3),
+                )
+            };
             if tpm_subsystem().extend(pcr_idx, data) {
                 0
             } else {
@@ -616,7 +618,8 @@ pub extern "C" fn sys_tpm(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
         }
         1 => {
             // read_pcr
-            let Some(pcr_idx) = PcrIndex::from_u32(a1 as u32) else {
+            let Some(pcr_idx) = PcrIndex::from_u32(crate::privileged::lib::low_u32_from_u64(a1))
+            else {
                 return -(22i64);
             };
             let pcr = tpm_subsystem().read_pcr(pcr_idx);
@@ -631,8 +634,13 @@ pub extern "C" fn sys_tpm(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
                 return -(22i64);
             }
             // SAFETY: 指针由 syscall 入口保证有效
-            let data = unsafe { core::slice::from_raw_parts(a1 as *const u8, a2 as usize) };
-            match tpm_subsystem().seal(data, a3 as u32) {
+            let data = unsafe {
+                core::slice::from_raw_parts(
+                    a1 as *const u8,
+                    crate::privileged::lib::usize_from_u64(a2),
+                )
+            };
+            match tpm_subsystem().seal(data, crate::privileged::lib::low_u32_from_u64(a3)) {
                 Some(_) => 0,
                 None => -(5i64),
             }
@@ -643,9 +651,14 @@ pub extern "C" fn sys_tpm(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
                 &[]
             } else {
                 // SAFETY: 指针由 syscall 入口保证有效
-                unsafe { core::slice::from_raw_parts(a2 as *const u8, a3 as usize) }
+                unsafe {
+                    core::slice::from_raw_parts(
+                        a2 as *const u8,
+                        crate::privileged::lib::usize_from_u64(a3),
+                    )
+                }
             };
-            let quote = tpm_subsystem().quote(a1 as u32, nonce);
+            let quote = tpm_subsystem().quote(crate::privileged::lib::low_u32_from_u64(a1), nonce);
             let mut bytes = [0u8; 8];
             bytes.copy_from_slice(&quote.quote_hash[..8]);
             i64::from_be_bytes(bytes)

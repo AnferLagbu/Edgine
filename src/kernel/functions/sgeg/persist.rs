@@ -199,8 +199,6 @@ fn deserialize_v4(buf: &[u8], p: &mut usize) -> Option<PwmEntrySnapshot> {
 /// 保存身份表到磁盘 (`/pwm.db`).
 ///
 /// 未修改时直接返回 `0`; 写入成功返回 `0`, IO 失败或缓冲不足返回 `-1`.
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 #[expect(
     clippy::large_stack_arrays,
     reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
@@ -226,7 +224,11 @@ pub fn save_database() -> i32 {
     p += 4;
     w16(&mut buf, &mut p, DB_VER_MAJOR);
     w16(&mut buf, &mut p, DB_VER_MINOR);
-    w32(&mut buf, &mut p, n as u32);
+    w32(
+        &mut buf,
+        &mut p,
+        crate::functions::intcast::low_u32_from_usize(n),
+    );
 
     t.for_each_valid(|snap| {
         serialize(snap, &mut buf, &mut p);

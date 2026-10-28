@@ -405,7 +405,7 @@ impl VgaConsole {
     #[cfg(target_arch = "x86_64")]
     pub fn set_cursor(&self, pos: CursorPos) {
         let pos = pos.clamp();
-        let offset = pos.offset() as u16;
+        let offset = crate::functions::intcast::low_u16_from_usize(pos.offset());
         // 正确访问模式: 先写索引到 CRT Index, 再写数据到 CRT Data
         self.crt.write_u8(0, VGA_REG_CURSOR_LO);
         self.crt.write_u8(1, (offset & 0xFF) as u8);

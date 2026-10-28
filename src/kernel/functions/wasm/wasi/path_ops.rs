@@ -250,7 +250,10 @@ pub fn wasi_path_readlink(
         // 将结果写回 WASM 线性内存
         if let Some(ref mut mem) = interp.memory {
             for i in 0..crate::functions::intcast::usize_from_i32(result) {
-                let _ = mem.write_u8(buf_ptr + i as u32, link_buf[i]);
+                let _ = mem.write_u8(
+                    buf_ptr + crate::functions::intcast::low_u32_from_usize(i),
+                    link_buf[i],
+                );
             }
         }
         write_u32_to_memory(interp, buf_used_ptr, result.cast_unsigned());
@@ -323,13 +326,19 @@ pub fn wasi_path_filestat_get(
             |mem: &mut crate::functions::wasm::runtime::LinearMemory, off: u64, val: u64| {
                 let bytes = val.to_le_bytes();
                 for i in 0..8u64 {
-                    let _ = mem.write_u8((base + off + i) as u32, bytes[i as usize]);
+                    let _ = mem.write_u8(
+                        crate::functions::intcast::low_u32_from_u64(base + off + i),
+                        bytes[crate::functions::intcast::usize_from_u64(i)],
+                    );
                 }
             };
 
         write_u64(mem, 0, u64::from(stat.node_id));
         write_u64(mem, 8, u64::from(stat.node_id));
-        let _ = mem.write_u8((base + 16) as u32, stat.file_type as u8);
+        let _ = mem.write_u8(
+            crate::functions::intcast::low_u32_from_u64(base + 16),
+            stat.file_type as u8,
+        );
         write_u64(mem, 17, 1);
         write_u64(mem, 25, u64::from(stat.size));
         write_u64(mem, 33, stat.atime);

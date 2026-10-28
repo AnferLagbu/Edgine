@@ -25,7 +25,7 @@ pub fn setxattr_syscall(
         path_ptr as *const u8,
         name_ptr as *const u8,
         value_ptr as *const u8,
-        value_len as u32,
+        crate::functions::intcast::low_u32_from_usize(value_len),
         pwm,
     );
 
@@ -55,7 +55,7 @@ pub fn getxattr_syscall(
         path_ptr as *const u8,
         name_ptr as *const u8,
         buf_ptr as *mut u8,
-        buf_len as u32,
+        crate::functions::intcast::low_u32_from_usize(buf_len),
         pwm,
     );
 
@@ -83,7 +83,7 @@ pub fn listxattr_syscall(
     let r = crate::functions::fs::api::vfs_listxattr_internal(
         path_ptr as *const u8,
         buf_ptr as *mut u8,
-        buf_len as u32,
+        crate::functions::intcast::low_u32_from_usize(buf_len),
         pwm,
     );
 

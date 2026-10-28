@@ -71,8 +71,6 @@ pub fn clone_user_page_table_cow(parent_pml4: u64) -> Option<u64> {
     result
 }
 
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 #[expect(
     clippy::too_many_lines,
     reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
@@ -96,7 +94,11 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
         // B05-55C 根治: 必须 cast *mut u8, 否则 *mut u64 的 write_bytes 按
         // count × size_of::<u64>() 清零 32768 字节 (8 页), 覆盖后续物理页
         // (可能含 parent 页表结构页) → parent 页表被清 → fork 崩溃.
-        core::ptr::write_bytes(child_pml4_virt as *mut u8, 0, PAGE_SIZE as usize);
+        core::ptr::write_bytes(
+            child_pml4_virt as *mut u8,
+            0,
+            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+        );
     }
 
     // 装配内核高半区 (KPTI-08 统一入口):
@@ -136,7 +138,11 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
         let child_pdpt_virt = child_pdpt_phys.to_virt().0 as *mut u64;
         unsafe {
             // B05-55C 根治: cast *mut u8, 否则清零 8 页覆盖后续物理页
-            core::ptr::write_bytes(child_pdpt_virt as *mut u8, 0, PAGE_SIZE as usize);
+            core::ptr::write_bytes(
+                child_pdpt_virt as *mut u8,
+                0,
+                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            );
         }
 
         let mut child_pml4e = parent_pml4e;
@@ -165,7 +171,11 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
             let child_pd_virt = child_pd_phys.to_virt().0 as *mut u64;
             unsafe {
                 // B05-55C 根治: cast *mut u8, 否则清零 8 页覆盖后续物理页
-                core::ptr::write_bytes(child_pd_virt as *mut u8, 0, PAGE_SIZE as usize);
+                core::ptr::write_bytes(
+                    child_pd_virt as *mut u8,
+                    0,
+                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                );
             }
 
             let mut child_pdpte = parent_pdpte;
@@ -203,7 +213,11 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
                 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                 unsafe {
                     // B05-55C 根治: cast *mut u8, 否则清零 8 页覆盖后续物理页
-                    core::ptr::write_bytes(child_table_virt as *mut u8, 0, PAGE_SIZE as usize);
+                    core::ptr::write_bytes(
+                        child_table_virt as *mut u8,
+                        0,
+                        crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                    );
                 }
 
                 let mut child_pde = parent_pde;
@@ -436,8 +450,6 @@ pub fn cow_handle_fault(pml4: u64, fault_addr: u64) -> Option<u64> {
 /// 判定与映射同处一个临界区, 故须用 `map_page_in_table_locked` (不自取锁) 与
 /// `release_frame_locked` (不自取锁)。读路径 `get_physical_in_pml4` 只做只读遍历,
 /// 不取 `VMM_LOCK`, 可在持锁下安全调用。
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 fn cow_handle_fault_locked(pml4: u64, fault_addr: u64) -> Option<u64> {
     let vmm_inst = vmm::get_vmm();
     let page_aligned = fault_addr & !(PAGE_SIZE - 1);
@@ -467,7 +479,7 @@ fn cow_handle_fault_locked(pml4: u64, fault_addr: u64) -> Option<u64> {
         core::ptr::copy_nonoverlapping(
             old_virt.0 as *const u8,
             new_virt.0 as *mut u8,
-            PAGE_SIZE as usize,
+            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
         );
     }
 

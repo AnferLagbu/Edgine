@@ -92,19 +92,17 @@ impl IrqLine {
     /// 委托 `IdtManager` 统一路由, 保证投递侧 (IOAPIC vs 8259A) 与 EOI 侧
     /// 判据一致 (见 `idt::legacy_irq_via_ioapic`), 避免 8259A 投递却仅发
     /// LAPIC EOI 导致该类 IRQ 永久停投.
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     pub fn enable(&self) {
-        crate::privileged::idt::IdtManager::instance().enable_irq(self.irq as u8);
+        crate::privileged::idt::IdtManager::instance()
+            .enable_irq(crate::privileged::lib::low_u8_from_u32(self.irq));
     }
 
     /// 禁用该中断线 (mask)
     ///
     /// 委托 `IdtManager` 统一路由 (理由同 `enable`).
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     pub fn disable(&self) {
-        crate::privileged::idt::IdtManager::instance().disable_irq(self.irq as u8);
+        crate::privileged::idt::IdtManager::instance()
+            .disable_irq(crate::privileged::lib::low_u8_from_u32(self.irq));
     }
 
     #[expect(

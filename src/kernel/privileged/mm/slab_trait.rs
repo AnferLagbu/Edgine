@@ -97,8 +97,6 @@ impl SlabPolicy for FallbackSlabPolicy {
         None
     }
 
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn calculate_objects_per_slab(
         &self,
         slab_size: usize,
@@ -109,7 +107,7 @@ impl SlabPolicy for FallbackSlabPolicy {
         let estimated_objects = usable_space / object_size;
         let bitmap_bytes = estimated_objects.div_ceil(8);
         let actual_usable = usable_space - bitmap_bytes;
-        (actual_usable / object_size) as u32
+        crate::privileged::lib::low_u32_from_usize(actual_usable / object_size)
     }
 
     fn select_alloc_source(&self, ctx: SlabPolicyContext) -> SlabAllocSource {

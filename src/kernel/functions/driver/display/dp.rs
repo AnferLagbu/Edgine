@@ -1125,7 +1125,7 @@ impl DpController {
 
         let v_total = if mode.refresh_rate > 0 && mode.pixel_clock_khz > 0 {
             let v_blank = (u32::from(v_active) * 5 / 100).max(1);
-            (u32::from(v_active) + v_blank) as u16
+            crate::functions::intcast::low_u16_from_u32(u32::from(v_active) + v_blank)
         } else {
             v_active + 50
         };
@@ -1133,7 +1133,7 @@ impl DpController {
         let h_total = if mode.refresh_rate > 0 && mode.pixel_clock_khz > 0 {
             let h_total_u32 =
                 (mode.pixel_clock_khz * 1000) / (u32::from(v_total) * u32::from(mode.refresh_rate));
-            h_total_u32.max(u32::from(h_active) + 1) as u16
+            crate::functions::intcast::low_u16_from_u32(h_total_u32.max(u32::from(h_active) + 1))
         } else {
             h_active + 200
         };

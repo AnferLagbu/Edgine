@@ -177,7 +177,7 @@ pub fn vfs_close_cloexec_fds() {
     )
     .unwrap_or_default()
     .into_iter()
-    .map(|i| i as u32)
+    .map(crate::functions::intcast::low_u32_from_usize)
     .collect();
     for fd in targets {
         vfs_close_internal(fd);
@@ -197,7 +197,7 @@ pub fn vfs_close_all_fds() {
     )
     .unwrap_or_default()
     .into_iter()
-    .map(|(local, _)| local as u32)
+    .map(|(local, _)| crate::functions::intcast::low_u32_from_usize(local))
     .collect();
     for fd in targets {
         vfs_close_internal(fd);
@@ -209,10 +209,8 @@ pub fn vfs_close_all_fds() {
 /// 用户路径 (`vfs_read_internal`) 先经 `UserWritePtr` 校验; 内核路径
 /// (`vfs_read_kernel`) 由调用方保证切片有效, 用于管道/sendfile 等内核 bounce
 /// 缓冲 (内核地址无法通过 `UserWritePtr::checked_new`).
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 fn vfs_read_slice(fd_idx: u32, dst: &mut [u8]) -> i32 {
-    let count = dst.len() as u32;
+    let count = crate::functions::intcast::low_u32_from_usize(dst.len());
     // Plan B: 通过 OpenFile 的 Inode trait 执行 I/O
     // 获取 handle_id (B-9.5: 源自 per-process fd 表, 权威表)
     let Some(handle_id) = current_fd_handle(fd_idx as usize) else {
@@ -248,7 +246,8 @@ fn vfs_read_slice(fd_idx: u32, dst: &mut [u8]) -> i32 {
                 let mut all_ok = true;
                 for i in 0..npages {
                     // 4KB 对齐保证该分片落在 dst 内
-                    let part = &mut dst[i * PAGE_SIZE as usize..(i + 1) * PAGE_SIZE as usize];
+                    let part = &mut dst[i * crate::functions::intcast::usize_from_u64(PAGE_SIZE)
+                        ..(i + 1) * crate::functions::intcast::usize_from_u64(PAGE_SIZE)];
                     if !pcache::pcache_read_to_slice(node_id, first_pi + i as u64, part) {
                         all_ok = false;
                         break;
@@ -502,19 +501,23 @@ pub fn vfs_open_safe(path: &str, flags: u32, pwm: u64) -> i32 {
 }
 
 /// Safe 包装: `vfs_read` (接受可变切片)
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 pub fn vfs_read_safe(fd: u32, buf: &mut [u8]) -> i32 {
     // SAFETY: buf 是调用方拥有的有效可写缓冲区
-    vfs_read(fd, buf.as_mut_ptr(), buf.len() as u32)
+    vfs_read(
+        fd,
+        buf.as_mut_ptr(),
+        crate::functions::intcast::low_u32_from_usize(buf.len()),
+    )
 }
 
 /// Safe 包装: `vfs_write` (接受不可变切片)
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 pub fn vfs_write_safe(fd: u32, buf: &[u8]) -> i32 {
     // SAFETY: buf 是调用方拥有的有效只读缓冲区
-    vfs_write(fd, buf.as_ptr(), buf.len() as u32)
+    vfs_write(
+        fd,
+        buf.as_ptr(),
+        crate::functions::intcast::low_u32_from_usize(buf.len()),
+    )
 }
 
 /// Safe 包装: 把 POD 结构体按位写入 fd (供 coredump 等序列化场景)
@@ -684,8 +687,6 @@ pub extern "C" fn vfs_fchown(fd: u32, owner_pwm: u64, group_pwm: u64, pwm: u64) 
     result.unwrap_or(-9)
 }
 
-// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-#[expect(clippy::cast_possible_truncation)]
 /// `lseek(2)` — 调整 fd 当前偏移.
 ///
 /// `whence` 由 [`VfsSeekWhence::from_u32`] 解析; 成功返回新偏移,
@@ -707,7 +708,7 @@ pub extern "C" fn vfs_seek(fd: u32, offset: i32, whence: u32) -> i32 {
             .seek(i64::from(offset), whence, current_offset)
             .map_or_else(KernelError::as_vfs_ret, |new_offset| {
                 open_file.set_offset(new_offset);
-                new_offset as i32
+                crate::functions::intcast::low_i32_from_u64(new_offset)
             })
     });
 

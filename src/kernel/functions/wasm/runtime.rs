@@ -170,7 +170,9 @@ impl LinearMemory {
     ///
     /// 超过上限或页数/字节数溢出时返回 `u32::MAX`(WASM 约定)表示失败.
     pub fn grow(&mut self, additional_pages: u32) -> u32 {
-        let current_pages = (self.data.len() / WASM_PAGE_SIZE as usize) as u32;
+        let current_pages = crate::functions::intcast::low_u32_from_usize(
+            self.data.len() / WASM_PAGE_SIZE as usize,
+        );
         // B07-12: checked_add 防页数回绕 (恶意 huge additional_pages 不再静默回绕增长).
         let Some(new_pages) = current_pages.checked_add(additional_pages) else {
             return u32::MAX;
@@ -190,7 +192,7 @@ impl LinearMemory {
 
     /// 当前内存页数
     pub fn pages(&self) -> u32 {
-        (self.data.len() / WASM_PAGE_SIZE as usize) as u32
+        crate::functions::intcast::low_u32_from_usize(self.data.len() / WASM_PAGE_SIZE as usize)
     }
 
     fn check_access(&self, offset: u32, size: u32) -> Result<usize, WasmError> {

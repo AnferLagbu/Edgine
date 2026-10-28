@@ -137,7 +137,10 @@ fn psci_version() -> Option<(u32, u32)> {
         // PSCI 不可用 (固件返回 u32::MAX)
         None
     } else {
-        Some(((ver >> 16) as u32, (ver & 0xFFFF) as u32))
+        Some((
+            crate::privileged::lib::low_u32_from_u64(ver >> 16),
+            (ver & 0xFFFF) as u32,
+        ))
     }
 }
 

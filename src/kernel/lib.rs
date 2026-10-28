@@ -918,12 +918,16 @@ pub extern "C" fn kernel_init() {
         crate::privileged::proc::cgroup::cgroup_init();
         crate::privileged::mm::numa_init(
             crate::privileged::mm::pmm_get_total_pages() * crate::privileged::mm::PAGE_SIZE,
-            crate::privileged::config::MAX_CPUS as u32,
+            crate::privileged::lib::low_u32_from_usize(crate::privileged::config::MAX_CPUS),
         );
-        crate::privileged::driver::pm_init(crate::privileged::config::MAX_CPUS as u32);
+        crate::privileged::driver::pm_init(crate::privileged::lib::low_u32_from_usize(
+            crate::privileged::config::MAX_CPUS,
+        ));
         crate::privileged::sgeg::sgeg_init();
         crate::functions::proc::shadow_stack::init();
-        crate::functions::timer::tickless::init(crate::privileged::config::MAX_CPUS as u32);
+        crate::functions::timer::tickless::init(crate::privileged::lib::low_u32_from_usize(
+            crate::privileged::config::MAX_CPUS,
+        ));
         crate::functions::timer::time_sync::init();
         crate::functions::driver::kexec::init();
         // SIMPLIFIED: UEFI 系统表地址固定传 0 (= 无 UEFI 固件, runtime services 不启用);

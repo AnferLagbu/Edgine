@@ -102,7 +102,7 @@ pub fn time_syscall(tloc_ptr: u64) -> Result<usize, Errno> {
             return Err(Errno::EFAULT);
         }
     }
-    Ok(ticks as usize)
+    Ok(crate::functions::intcast::usize_from_u64(ticks))
 }
 
 // ============================================================================
@@ -233,7 +233,7 @@ pub fn times_syscall(buf_ptr: u64) -> Result<usize, Errno> {
         }
     }
     // 实时钟返回值: 不允许依赖真实 wall time, 返 clock_ticks 作为单调值
-    Ok(raw::get_ticks() as usize)
+    Ok(crate::functions::intcast::usize_from_u64(raw::get_ticks()))
 }
 
 /// getitimer(which, value) — 读取间隔定时器.

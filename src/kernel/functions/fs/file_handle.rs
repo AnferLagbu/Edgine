@@ -99,8 +99,8 @@ pub fn name_to_handle_at_syscall(
     let mut handle_data = [0u8; FILE_HANDLE_SIZE];
     handle_data[HANDLE_INODE_OFF..HANDLE_INODE_OFF + 4].copy_from_slice(&inode_id.to_le_bytes());
     handle_data[HANDLE_MOUNT_OFF..HANDLE_MOUNT_OFF + 4]
-        .copy_from_slice(&(mount_idx as u32).to_le_bytes());
-    handle_data[HANDLE_TYPE_OFF] = FILE_HANDLE_GHEST_ID as u8;
+        .copy_from_slice(&crate::functions::intcast::low_u32_from_usize(mount_idx).to_le_bytes());
+    handle_data[HANDLE_TYPE_OFF] = crate::functions::intcast::u8_from_i32(FILE_HANDLE_GHEST_ID);
     handle_data[HANDLE_HBYTES_OFF..HANDLE_HBYTES_OFF + 4].copy_from_slice(&8u32.to_le_bytes());
 
     // 写入用户空间
@@ -113,7 +113,7 @@ pub fn name_to_handle_at_syscall(
 
     // 写入 mnt_id
     if mnt_id != 0 {
-        let mnt_data = (mount_idx as u32).to_le_bytes();
+        let mnt_data = crate::functions::intcast::low_u32_from_usize(mount_idx).to_le_bytes();
         copy_to_user(mnt_id, &mnt_data, 4).map_err(|()| Errno::EFAULT)?;
     }
 

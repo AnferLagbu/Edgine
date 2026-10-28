@@ -653,7 +653,7 @@ pub fn sys_cgroup_attach(cg_id: u64, pid: u64) -> i64 {
     if !cgroup_is_initialized() {
         return -(Errno::EINVAL as i64);
     }
-    match cgroup_subsystem().migrate(pid as Pid, cg_id) {
+    match cgroup_subsystem().migrate(crate::privileged::lib::low_u32_from_u64(pid), cg_id) {
         Ok(()) => 0,
         Err(e) => -(e as i64),
     }

@@ -190,7 +190,7 @@ pub fn open_softirq(nr: SoftirqVec, handler: SoftirqHandler) {
 pub fn raise_softirq(nr: SoftirqVec) {
     let cpu = current_cpu_id();
     if cpu < MAX_CPUS {
-        softirq_state(cpu as u32)
+        softirq_state(crate::privileged::lib::low_u32_from_usize(cpu))
             .pending
             .fetch_or(1u64 << nr.to_idx(), Ordering::Release);
     }
@@ -202,7 +202,7 @@ pub fn raise_softirq(nr: SoftirqVec) {
 pub fn raise_softirq_mask(mask: u64) {
     let cpu = current_cpu_id();
     if cpu < MAX_CPUS {
-        softirq_state(cpu as u32)
+        softirq_state(crate::privileged::lib::low_u32_from_usize(cpu))
             .pending
             .fetch_or(mask, Ordering::Release);
     }
@@ -214,7 +214,7 @@ pub fn do_softirq() {
     if cpu >= MAX_CPUS {
         return;
     }
-    let state = softirq_state(cpu as u32);
+    let state = softirq_state(crate::privileged::lib::low_u32_from_usize(cpu));
 
     if state
         .running
@@ -255,7 +255,9 @@ pub fn do_softirq() {
 pub fn in_softirq() -> bool {
     let cpu = current_cpu_id();
     if cpu < MAX_CPUS {
-        softirq_state(cpu as u32).running.load(Ordering::Acquire)
+        softirq_state(crate::privileged::lib::low_u32_from_usize(cpu))
+            .running
+            .load(Ordering::Acquire)
     } else {
         false
     }
@@ -266,7 +268,10 @@ pub fn in_softirq() -> bool {
 pub fn pending_softirq() -> bool {
     let cpu = current_cpu_id();
     if cpu < MAX_CPUS {
-        softirq_state(cpu as u32).pending.load(Ordering::Acquire) != 0
+        softirq_state(crate::privileged::lib::low_u32_from_usize(cpu))
+            .pending
+            .load(Ordering::Acquire)
+            != 0
     } else {
         false
     }

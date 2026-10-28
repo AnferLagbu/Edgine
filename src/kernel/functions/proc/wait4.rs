@@ -304,14 +304,14 @@ pub fn waitid_syscall(idtype: i32, id: u64, infop: u64, options: i32) -> Result<
             if id == 0 || id > PID_MAX {
                 return Err(Errno::EINVAL);
             }
-            id as i32
+            crate::functions::intcast::low_i32_from_u64(id)
         }
         P_PGID => {
             if id == 0 || id > PID_MAX {
                 return Err(Errno::EINVAL);
             }
             // wait_reap 进程组语义: target < -1 → 匹配 pgid == |target|
-            -(id as i32)
+            -crate::functions::intcast::low_i32_from_u64(id)
         }
         _ => return Err(Errno::EINVAL),
     };

@@ -477,15 +477,19 @@ impl VirtioBlkDriver {
         dma: &DmaBuffer,
     ) -> Result<(), ()> {
         // ── 准备描述符链 ──
-        let desc_req = self.vq.prepare_desc(dma_phys, req_size as u32, false);
+        let desc_req = self.vq.prepare_desc(
+            dma_phys,
+            crate::functions::intcast::low_u32_from_usize(req_size),
+            false,
+        );
         let desc_data = self.vq.prepare_desc(
             dma_phys + req_size as u64,
-            data_size as u32,
+            crate::functions::intcast::low_u32_from_usize(data_size),
             req_type == VIRTIO_BLK_T_IN,
         );
         let desc_status = self.vq.prepare_desc(
             dma_phys + (req_size + data_size) as u64,
-            status_size as u32,
+            crate::functions::intcast::low_u32_from_usize(status_size),
             true,
         );
 

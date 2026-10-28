@@ -131,7 +131,8 @@ impl ExfatFs {
         let mut pos = offset;
 
         for cluster in &chain {
-            let mut cluster_data = alloc::vec![0u8; cluster_size as usize];
+            let mut cluster_data =
+                alloc::vec![0u8; crate::functions::intcast::usize_from_u64(cluster_size)];
             super::alloc::read_cluster(
                 self.device_idx,
                 &self.super_block,
@@ -139,8 +140,9 @@ impl ExfatFs {
                 &mut cluster_data,
             )?;
 
-            let offset_in_cluster = (pos % cluster_size) as usize;
-            let available = cluster_size as usize - offset_in_cluster;
+            let offset_in_cluster = crate::functions::intcast::usize_from_u64(pos % cluster_size);
+            let available =
+                crate::functions::intcast::usize_from_u64(cluster_size) - offset_in_cluster;
             let to_read = (buf.len() - bytes_read).min(available);
 
             if to_read > 0 {
@@ -174,7 +176,8 @@ impl ExfatFs {
         let mut pos = offset;
 
         for cluster in &chain {
-            let mut cluster_data = alloc::vec![0u8; cluster_size as usize];
+            let mut cluster_data =
+                alloc::vec![0u8; crate::functions::intcast::usize_from_u64(cluster_size)];
             super::alloc::read_cluster(
                 self.device_idx,
                 &self.super_block,
@@ -182,8 +185,9 @@ impl ExfatFs {
                 &mut cluster_data,
             )?;
 
-            let offset_in_cluster = (pos % cluster_size) as usize;
-            let available = cluster_size as usize - offset_in_cluster;
+            let offset_in_cluster = crate::functions::intcast::usize_from_u64(pos % cluster_size);
+            let available =
+                crate::functions::intcast::usize_from_u64(cluster_size) - offset_in_cluster;
             let to_write = (buf.len() - bytes_written).min(available);
 
             if to_write > 0 {

@@ -541,7 +541,7 @@ fn test_timerfd_create() -> crate::privileged::tests::TestResult {
     let fd2 = sys_timerfd_create(99, 0); // 无效 clockid
     check!(fd2 < 0, "timerfd invalid clockid returns error");
 
-    sys_timerfd_close(fd as i32);
+    sys_timerfd_close(crate::privileged::lib::low_i32_from_i64(fd));
     TestResult::Pass
 }
 
@@ -554,10 +554,15 @@ fn test_timerfd_settime_disarm() -> crate::privileged::tests::TestResult {
 
     // disarm: it_value 全零
     let new_val = Itimerspec::zeroed();
-    let ret = sys_timerfd_settime(fd as i32, 0, (&raw const new_val) as u64, 0);
+    let ret = sys_timerfd_settime(
+        crate::privileged::lib::low_i32_from_i64(fd),
+        0,
+        (&raw const new_val) as u64,
+        0,
+    );
     check!(ret == 0, "timerfd disarm ok");
 
-    sys_timerfd_close(fd as i32);
+    sys_timerfd_close(crate::privileged::lib::low_i32_from_i64(fd));
     TestResult::Pass
 }
 
@@ -570,10 +575,13 @@ fn test_timerfd_read_empty() -> crate::privileged::tests::TestResult {
 
     // 未启动时 read → EAGAIN
     let mut val: u64 = 0;
-    let ret = sys_timerfd_read(fd as i32, (&raw mut val) as u64);
+    let ret = sys_timerfd_read(
+        crate::privileged::lib::low_i32_from_i64(fd),
+        (&raw mut val) as u64,
+    );
     check!(ret < 0, "timerfd read unarmed returns error");
 
-    sys_timerfd_close(fd as i32);
+    sys_timerfd_close(crate::privileged::lib::low_i32_from_i64(fd));
     TestResult::Pass
 }
 

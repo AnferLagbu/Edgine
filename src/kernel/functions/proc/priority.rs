@@ -48,7 +48,8 @@ pub fn priority_to_nice(p: ProcessPriority) -> i32 {
 /// nice(inc) 系统调用策略
 pub fn nice_syscall(inc: i32) -> i64 {
     let pid = crate::privileged::proc::process_get_current_pid();
-    let current_nice = getpriority_syscall(PRIO_PROCESS, pid) as i32;
+    let current_nice =
+        crate::functions::intcast::low_i32_from_i64(getpriority_syscall(PRIO_PROCESS, pid));
     if current_nice < 0 && current_nice != -38 {
         // getpriority 失败 (非 ENOSYS)
         return i64::from(current_nice);

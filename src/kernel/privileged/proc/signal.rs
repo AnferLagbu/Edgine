@@ -583,7 +583,7 @@ pub fn do_signal_deliver(frame: *mut crate::privileged::idt::InterruptFrame) -> 
                 let ss_size = proc.sigaltstack_size.load(Ordering::Acquire);
                 let ss_flags = proc.sigaltstack_flags.load(Ordering::Acquire);
                 let use_alternate = ss_addr != 0
-                    && ss_size as usize >= total
+                    && crate::privileged::lib::usize_from_u64(ss_size) >= total
                     && (ss_flags & SS_DISABLE) == 0
                     && (ss_flags & SS_ONSTACK) == 0;
 
@@ -869,7 +869,7 @@ fn test_signal_pick_next_logic() -> crate::privileged::tests::TestResult {
     let blocked: u64 = 0b0010;
     let deliverable = pending & !blocked;
     assert_eq_test!(deliverable, 0b1000, "deliverable");
-    let sig_bit = deliverable.trailing_zeros() as u8;
+    let sig_bit = crate::privileged::lib::low_u8_from_u32(deliverable.trailing_zeros());
     assert_eq_test!(sig_bit, 3, "lowest bit is 3");
     TestResult::Pass
 }

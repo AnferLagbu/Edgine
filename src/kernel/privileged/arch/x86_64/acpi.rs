@@ -380,15 +380,15 @@ pub fn parse_madt(multiboot2_info_ptr: u64) -> bool {
     false
 }
 
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 fn parse_madt_entries(madt_ptr: u64) {
     // SAFETY: `madt_ptr` 指向已验证有效的 ACPI/BIOS 表头 (长度 ≥ sizeof(MadtHeader)); 只读访问
     let madt = unsafe { &*(madt_ptr as *const MadtHeader) };
     let lapic_base = u64::from(madt.local_apic_addr);
 
-    let entries_start = madt_ptr as usize + core::mem::size_of::<MadtHeader>();
-    let entries_end = madt_ptr as usize + madt.header.length as usize;
+    let entries_start =
+        crate::privileged::lib::usize_from_u64(madt_ptr) + core::mem::size_of::<MadtHeader>();
+    let entries_end =
+        crate::privileged::lib::usize_from_u64(madt_ptr) + madt.header.length as usize;
 
     let mut offset = entries_start;
     while offset + 2 <= entries_end {
@@ -410,7 +410,10 @@ fn parse_madt_entries(madt_ptr: u64) {
                         apic_id: u32::from(lapic.acpi_proc_id),
                         enabled,
                     });
-                    AP_COUNT.store((idx + 1) as u32, Ordering::Release);
+                    AP_COUNT.store(
+                        crate::privileged::lib::low_u32_from_usize(idx + 1),
+                        Ordering::Release,
+                    );
                 }
             }
             MADT_TYPE_IOAPIC => {
@@ -428,7 +431,10 @@ fn parse_madt_entries(madt_ptr: u64) {
                         max_irq: 0, // 初始化时填充
                     };
                     IOAPICS.lock()[idx] = Some(info);
-                    IOAPIC_COUNT.store((idx + 1) as u32, Ordering::Release);
+                    IOAPIC_COUNT.store(
+                        crate::privileged::lib::low_u32_from_usize(idx + 1),
+                        Ordering::Release,
+                    );
                 }
             }
             _ => {}
@@ -496,14 +502,15 @@ pub fn get_ioapic_count() -> u32 {
 }
 
 /// GSI → IOAPIC 路由: 返回 (`ioapic_index`, `local_irq`)
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 pub fn gsi_to_ioapic(gsi: u32) -> Option<(usize, u8)> {
     let ioapics = IOAPICS.lock();
     for (i, ioapic) in ioapics.iter().enumerate() {
         if let Some(info) = ioapic {
             if gsi >= info.gsi_base && gsi < info.gsi_base + u32::from(info.max_irq) {
-                return Some((i, (gsi - info.gsi_base) as u8));
+                return Some((
+                    i,
+                    crate::privileged::lib::low_u8_from_u32(gsi - info.gsi_base),
+                ));
             }
         }
     }
@@ -625,8 +632,6 @@ fn parse_fadt(fadt_ptr: u64) {
 ///
 /// 通过 FADT 的 `PM1a_CNT` 寄存器写入 `SLP_TYP` + `SLP_EN` 实现关机.
 /// QEMU 和大多数硬件支持此方式.
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 pub fn acpi_shutdown() -> ! {
     if !FADT_FOUND.load(Ordering::Acquire) {
         crate::klog_warn!(Acpi, "[ACPI] FADT not found, cannot ACPI shutdown");
@@ -654,10 +659,16 @@ pub fn acpi_shutdown() -> ! {
     if pm1a_cnt != 0 {
         if pm1_cnt_len == 2 {
             // 16-bit I/O 端口 — 使用 outl 写入 32 位 (低 16 位有效)
-            crate::arch!(outl(pm1a_cnt as u16, u32::from(value)));
+            crate::arch!(outl(
+                crate::privileged::lib::low_u16_from_u32(pm1a_cnt),
+                u32::from(value)
+            ));
         } else if pm1_cnt_len == 4 {
             // 32-bit I/O 端口
-            crate::arch!(outl(pm1a_cnt as u16, u32::from(value)));
+            crate::arch!(outl(
+                crate::privileged::lib::low_u16_from_u32(pm1a_cnt),
+                u32::from(value)
+            ));
         }
     }
 
@@ -670,8 +681,6 @@ pub fn acpi_shutdown() -> ! {
 }
 
 /// ACPI 重启
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 pub fn acpi_reboot() -> ! {
     if FADT_FOUND.load(Ordering::Acquire) {
         // SAFETY: `const` 指向 ACPI/BIOS 探测过的物理地址; 只读访问
@@ -690,7 +699,10 @@ pub fn acpi_reboot() -> ! {
         if reset_reg_space == 1 {
             // I/O 端口空间
 
-            crate::arch!(outb(reset_reg_addr as u16, reset_val));
+            crate::arch!(outb(
+                crate::privileged::lib::low_u16_from_u32(reset_reg_addr),
+                reset_val
+            ));
         }
         // 方式2: MMIO 空间 (reset_reg_space == 0)
         else if reset_reg_space == 0 && reset_reg_addr != 0 {
@@ -826,15 +838,15 @@ pub struct DmarDrhdInfo {
 static DMAR_DRHD_LIST: IrqSpinLock<Vec<DmarDrhdInfo>> = IrqSpinLock::new(Vec::new());
 static DMAR_HOST_ADDR_WIDTH: IrqSpinLock<u8> = IrqSpinLock::new(0);
 
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 fn parse_dmar(dmar_ptr: u64) {
     // SAFETY: `dmar_ptr` 指向已验证有效的 ACPI/BIOS 表头 (长度 ≥ sizeof(DmarTable)); 只读访问
     let dmar = unsafe { &*(dmar_ptr as *const DmarTable) };
     *DMAR_HOST_ADDR_WIDTH.lock() = dmar.host_addr_width;
 
-    let entries_start = dmar_ptr as usize + core::mem::size_of::<DmarTable>();
-    let entries_end = dmar_ptr as usize + dmar.header.length as usize;
+    let entries_start =
+        crate::privileged::lib::usize_from_u64(dmar_ptr) + core::mem::size_of::<DmarTable>();
+    let entries_end =
+        crate::privileged::lib::usize_from_u64(dmar_ptr) + dmar.header.length as usize;
 
     let mut offset = entries_start;
     while offset + 4 <= entries_end {

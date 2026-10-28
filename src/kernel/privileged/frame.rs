@@ -67,10 +67,8 @@ impl Frame {
     }
 
     /// 帧大小 (字节)
-    // 有意窄化: 用户内存代理, 指针/长度上下文保证
-    #[expect(clippy::cast_possible_truncation)]
     pub fn size(&self) -> usize {
-        (PAGE_SIZE as usize) << self.order
+        crate::privileged::lib::usize_from_u64(PAGE_SIZE) << self.order
     }
 
     /// 当前持有者数 (PMM 计数面, 0 = 未计数帧)
@@ -127,7 +125,12 @@ impl Frame {
         let ptr = self.as_virt_ptr();
         // SAFETY: Frame 拥有物理页, phys_to_virt 返回唯一内核映射 VA。
         // `&mut self` 保证独占借用, Frame 生命周期内指针有效。
-        unsafe { core::slice::from_raw_parts_mut(ptr, crate::privileged::mm::PAGE_SIZE as usize) }
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                ptr,
+                crate::privileged::lib::usize_from_u64(crate::privileged::mm::PAGE_SIZE),
+            )
+        }
     }
 
     /// 零填充帧内容

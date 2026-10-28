@@ -1840,7 +1840,7 @@ impl Scheduler {
         // P-1 双份计数收敛: 旧形态由本行 `fetch_add` 维护全局计数, 与
         // `timer::tick` 的中断计数并行演化, 两个读数会背离).
         let new_tick = crate::privileged::timer::get_ticks();
-        let per_cpu = per_cpu_for(cpu_id as u32);
+        let per_cpu = per_cpu_for(crate::privileged::lib::low_u32_from_usize(cpu_id));
 
         // P-30 根治: 调度器 tick 与 FREG 恢复解耦 —— 旧形态每 tick 都在本关中断
         // 热路径里 `lock` 全局 RECOVERY_MANAGER 跑 `manager.tick()` 周期 FREG

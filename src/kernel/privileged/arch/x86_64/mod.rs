@@ -174,16 +174,6 @@ impl CoreArch for X8664 {
 impl InterruptArch for X8664 {
     /// 禁用中断并返回 RFLAGS (含 IF 位)。
     #[inline(always)]
-    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    // E-04 (2026-09-06): host-test 下函数体退化为桩 (无 cast), 用 cfg_attr
-    // 条件化 expect, 避免 unfulfilled_lint_expectations.
-    #[cfg_attr(
-        not(feature = "host-test"),
-        expect(
-            clippy::cast_possible_truncation,
-            reason = "cast_possible_truncation: 硬件字段宽度, 寄存器/MMIO 定义保证; 当前优先 expect"
-        )
-    )]
     #[expect(
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
@@ -215,7 +205,7 @@ impl InterruptArch for X8664 {
                     options(nomem, nostack, preserves_flags)
                 );
             }
-            flags as usize
+            crate::privileged::lib::usize_from_u64(flags)
         }
     }
 
@@ -307,11 +297,9 @@ impl InterruptArch for X8664 {
 
     /// 向目标 CPU 发送 IPI (通过 Local APIC)。
     #[inline(always)]
-    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(clippy::cast_possible_truncation)]
     fn send_ipi(target_cpu: u32, vector: u8) {
         use crate::privileged::arch::x86_64::apic;
-        apic::send_ipi(target_cpu as u8, vector);
+        apic::send_ipi(crate::privileged::lib::low_u8_from_u32(target_cpu), vector);
     }
 
     /// 广播 IPI 到所有 CPU (不含自身)。
@@ -471,8 +459,6 @@ impl MmuArch for X8664 {
 
     /// 读取页故障地址 (mov rax, cr2)。
     #[inline(always)]
-    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(clippy::cast_possible_truncation)]
     fn read_fault_address() -> usize {
         let cr2: u64;
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -483,7 +469,7 @@ impl MmuArch for X8664 {
                 options(nostack, preserves_flags)
             );
         }
-        cr2 as usize
+        crate::privileged::lib::usize_from_u64(cr2)
     }
 
     /// 进程上下文切换 (`process_switch_asm`)。

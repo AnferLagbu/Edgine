@@ -109,9 +109,9 @@ fn read_path_data(path: &[u8]) -> Result<Vec<u8>, i64> {
 ///
 /// `a0=node_id`, `a1=path_ptr`, `a2=path_len`, `a3=version`
 pub fn sys_fw_load(a0: u64, a1: u64, a2: u64, a3: u64) -> i64 {
-    let node_id = a0 as u32;
-    let path_len = a2 as usize;
-    let version = a3 as u32;
+    let node_id = crate::functions::intcast::low_u32_from_u64(a0);
+    let path_len = crate::functions::intcast::usize_from_u64(a2);
+    let version = crate::functions::intcast::low_u32_from_u64(a3);
 
     if path_len == 0 || path_len > MAX_PATH_LEN {
         return EINVAL;
@@ -149,14 +149,19 @@ pub fn sys_fw_load(a0: u64, a1: u64, a2: u64, a3: u64) -> i64 {
 ///
 /// `a0=node_id`, `a1=info_ptr`
 pub fn sys_fw_get_info(a0: u64, a1: u64) -> i64 {
-    let node_id = a0 as u32;
+    let node_id = crate::functions::intcast::low_u32_from_u64(a0);
     if !super::check_user_buf(a1, FW_INFO_SIZE as u64) {
         return EFAULT;
     }
     let Some(blob) = devtree_get_firmware(node_id) else {
         return i64::from(FW_ERR_NOT_FOUND);
     };
-    let bytes = fw_info_bytes(blob.size() as u32, blob.name_hash, blob.version, 0);
+    let bytes = fw_info_bytes(
+        crate::functions::intcast::low_u32_from_usize(blob.size()),
+        blob.name_hash,
+        blob.version,
+        0,
+    );
     if write_user_bytes(a1, &bytes) {
         0
     } else {
@@ -170,9 +175,9 @@ pub fn sys_fw_get_info(a0: u64, a1: u64) -> i64 {
 ///
 /// 返回值: 实际拷贝字节数; 失败: 负 errno / `FW_ERR_*`
 pub fn sys_fw_get(a0: u64, a1: u64, a2: u64, a3: u64) -> i64 {
-    let node_id = a0 as u32;
-    let buf_len = a2 as usize;
-    let offset = a3 as usize;
+    let node_id = crate::functions::intcast::low_u32_from_u64(a0);
+    let buf_len = crate::functions::intcast::usize_from_u64(a2);
+    let offset = crate::functions::intcast::usize_from_u64(a3);
 
     if buf_len > MAX_FW_GET_SIZE {
         return i64::from(FW_ERR_TOO_LARGE);
@@ -205,7 +210,7 @@ pub fn sys_fw_get(a0: u64, a1: u64, a2: u64, a3: u64) -> i64 {
 ///
 /// `a0=node_id`
 pub fn sys_fw_detach(a0: u64) -> i64 {
-    let node_id = a0 as u32;
+    let node_id = crate::functions::intcast::low_u32_from_u64(a0);
     if devtree_detach_firmware(node_id) {
         0
     } else {

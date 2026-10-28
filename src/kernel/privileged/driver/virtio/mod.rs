@@ -275,7 +275,10 @@ impl VirtioMmioDevice {
         self.write32(DRIVER_FEATURES_SEL, 1);
         self.write32(DRIVER_FEATURES, (features >> 32) as u32);
         self.write32(DRIVER_FEATURES_SEL, 0);
-        self.write32(DRIVER_FEATURES, features as u32);
+        self.write32(
+            DRIVER_FEATURES,
+            crate::privileged::lib::low_u32_from_u64(features),
+        );
     }
 
     // ── Virtqueue 细粒度配置 ──
@@ -323,10 +326,8 @@ impl VirtioMmioDevice {
     }
 
     /// 设置选中队列的 PFN (legacy 模式).
-    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(clippy::cast_possible_truncation)]
     pub fn setup_queue_legacy(&self, paddr: u64) {
-        let pfn = (paddr >> 12) as u32;
+        let pfn = crate::privileged::lib::low_u32_from_u64(paddr >> 12);
         self.write32(QUEUE_PFN, pfn);
     }
 

@@ -257,7 +257,8 @@ impl UnkfsArc {
     /// 按键查缓存; 命中返回数据共享句柄并更新命中/访问计数, 未命中返回 `None`.
     pub fn lookup(&self, key: &UnkfsArcKey) -> Option<Arc<[u8]>> {
         let mut inner = self.inner.lock();
-        let bucket_idx = (key.hash() as usize) % HV_ARC_HASH_BUCKETS;
+        let bucket_idx =
+            crate::functions::intcast::usize_from_u64(key.hash()) % HV_ARC_HASH_BUCKETS;
         let mut found_idx: Option<usize> = None;
         let mut found_data: Option<Arc<[u8]>> = None;
         let mut promote_to_mfu = false;
@@ -352,7 +353,8 @@ impl UnkfsArc {
             inner.buffers.push(Some(buf));
             inner.buffers.len() - 1
         };
-        let bucket_idx = (key.hash() as usize) % HV_ARC_HASH_BUCKETS;
+        let bucket_idx =
+            crate::functions::intcast::usize_from_u64(key.hash()) % HV_ARC_HASH_BUCKETS;
         inner.hash_table[bucket_idx].push(idx);
         inner.mru.push_back(idx);
         self.stats
@@ -374,7 +376,8 @@ impl UnkfsArc {
     }
 
     fn remove_key(&self, inner: &mut UnkfsArcInner, key: &UnkfsArcKey) {
-        let bucket_idx = (key.hash() as usize) % HV_ARC_HASH_BUCKETS;
+        let bucket_idx =
+            crate::functions::intcast::usize_from_u64(key.hash()) % HV_ARC_HASH_BUCKETS;
         let mut found: Option<usize> = None;
         for (pos, &idx) in inner.hash_table[bucket_idx].iter().enumerate() {
             if let Some(ref buf) = inner.buffers[idx] {
@@ -402,7 +405,8 @@ impl UnkfsArc {
             if inner.mru.len() > inner.p {
                 if let Some(idx) = inner.mru.pop_front() {
                     if let Some(buf) = inner.buffers[idx].take() {
-                        let bucket_idx = (buf.key.hash() as usize) % HV_ARC_HASH_BUCKETS;
+                        let bucket_idx = crate::functions::intcast::usize_from_u64(buf.key.hash())
+                            % HV_ARC_HASH_BUCKETS;
                         inner.hash_table[bucket_idx].retain(|&i| i != idx);
                         inner.ghost_mru.push_back(buf.key);
                         self.stats
@@ -416,7 +420,8 @@ impl UnkfsArc {
                 }
             } else if let Some(idx) = inner.mfu.pop_front() {
                 if let Some(buf) = inner.buffers[idx].take() {
-                    let bucket_idx = (buf.key.hash() as usize) % HV_ARC_HASH_BUCKETS;
+                    let bucket_idx = crate::functions::intcast::usize_from_u64(buf.key.hash())
+                        % HV_ARC_HASH_BUCKETS;
                     inner.hash_table[bucket_idx].retain(|&i| i != idx);
                     inner.ghost_mfu.push_back(buf.key);
                     self.stats

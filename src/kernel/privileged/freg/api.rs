@@ -72,7 +72,7 @@ pub extern "C" fn recovery_freg_maintenance() {
 pub extern "C" fn recovery_domain_register(domain_id: u64) -> i32 {
     // 取 id 低 5 位作为索引 (0..32)。若超出 MAX_RECOVERY_DOMAINS, 失败。
     // 注: 取模而非用全局计数, 避免重启后 slot 已被占用的问题。
-    let idx = (domain_id % MAX_RECOVERY_DOMAINS as u64) as usize;
+    let idx = crate::privileged::lib::usize_from_u64(domain_id % MAX_RECOVERY_DOMAINS as u64);
     let domain: &'static RecoveryDomain = &recovery_domain_pool()[idx];
     // 写回实际 id (池内 const-init 时为 0; 不写回会导致管理器按 id 查找/注销全部失效).
     // 注册均在启动期单线程执行, 原子写保证并发读者看到完整 id.

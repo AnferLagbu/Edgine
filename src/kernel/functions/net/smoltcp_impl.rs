@@ -331,7 +331,12 @@ impl SmoltcpNetStack {
         if !self.is_active_fd(fd) {
             return Err(NetError::InvalidHandle);
         }
-        let rc = fw_net_socket::sm_net_send(fd, buf.as_ptr(), buf.len() as u32, 0);
+        let rc = fw_net_socket::sm_net_send(
+            fd,
+            buf.as_ptr(),
+            crate::functions::intcast::low_u32_from_usize(buf.len()),
+            0,
+        );
         if rc >= 0 {
             Ok(crate::functions::intcast::usize_from_i32(rc))
         } else {
@@ -348,7 +353,12 @@ impl SmoltcpNetStack {
         if !self.is_active_fd(fd) {
             return Err(NetError::InvalidHandle);
         }
-        let rc = fw_net_socket::sm_net_recv(fd, buf.as_mut_ptr(), buf.len() as u32, 0);
+        let rc = fw_net_socket::sm_net_recv(
+            fd,
+            buf.as_mut_ptr(),
+            crate::functions::intcast::low_u32_from_usize(buf.len()),
+            0,
+        );
         if rc >= 0 {
             Ok(crate::functions::intcast::usize_from_i32(rc))
         } else {
@@ -369,7 +379,7 @@ impl SmoltcpNetStack {
         let rc = fw_net_socket::sm_net_sendto(
             fd,
             buf.as_ptr(),
-            buf.len() as u32,
+            crate::functions::intcast::low_u32_from_usize(buf.len()),
             0,
             sin.as_ptr(),
             addrlen,
@@ -399,7 +409,7 @@ impl SmoltcpNetStack {
         let rc = fw_net_socket::sm_net_recvfrom(
             fd,
             buf.as_mut_ptr(),
-            buf.len() as u32,
+            crate::functions::intcast::low_u32_from_usize(buf.len()),
             0,
             src.as_mut_ptr(),
             &mut addrlen,
@@ -440,8 +450,13 @@ impl SmoltcpNetStack {
         if !self.is_active_fd(fd) {
             return Err(NetError::InvalidHandle);
         }
-        let rc =
-            fw_net_socket::sm_net_setsockopt(fd, level, optname, val.as_ptr(), val.len() as u32);
+        let rc = fw_net_socket::sm_net_setsockopt(
+            fd,
+            level,
+            optname,
+            val.as_ptr(),
+            crate::functions::intcast::low_u32_from_usize(val.len()),
+        );
         if rc == 0 {
             Ok(())
         } else {
@@ -468,7 +483,7 @@ impl SmoltcpNetStack {
         if !self.is_active_fd(fd) {
             return Err(NetError::InvalidHandle);
         }
-        let mut out_len = out.len() as u32;
+        let mut out_len = crate::functions::intcast::low_u32_from_usize(out.len());
         let rc =
             fw_net_socket::sm_net_getsockopt(fd, level, optname, out.as_mut_ptr(), &mut out_len);
         if rc == 0 {
@@ -612,7 +627,10 @@ impl NetStack for SmoltcpNetStack {
             let slot_idx = self
                 .find_free_slot()
                 .expect("刚才检查过有空槽位, 现在应该有");
-            self.handle_map[slot_idx] = Some((user_id, slot_idx as u32));
+            self.handle_map[slot_idx] = Some((
+                user_id,
+                crate::functions::intcast::low_u32_from_usize(slot_idx),
+            ));
             self.dhcp_user_id = Some(user_id);
             self.dhcp_state = DhcpState::Discovering;
         } else {
@@ -843,7 +861,12 @@ impl NetStack for SmoltcpNetStack {
             return Err(NetError::NotReady);
         }
         let fd = self.handle_to_fd(h).ok_or(NetError::InvalidHandle)?;
-        let rc = fw_net_socket::sm_net_send(fd, buf.as_ptr(), buf.len() as u32, flags);
+        let rc = fw_net_socket::sm_net_send(
+            fd,
+            buf.as_ptr(),
+            crate::functions::intcast::low_u32_from_usize(buf.len()),
+            flags,
+        );
         if rc >= 0 {
             Ok(crate::functions::intcast::usize_from_i32(rc))
         } else {
@@ -857,7 +880,12 @@ impl NetStack for SmoltcpNetStack {
             return Err(NetError::NotReady);
         }
         let fd = self.handle_to_fd(h).ok_or(NetError::InvalidHandle)?;
-        let rc = fw_net_socket::sm_net_recv(fd, buf.as_mut_ptr(), buf.len() as u32, flags);
+        let rc = fw_net_socket::sm_net_recv(
+            fd,
+            buf.as_mut_ptr(),
+            crate::functions::intcast::low_u32_from_usize(buf.len()),
+            flags,
+        );
         if rc >= 0 {
             Ok(crate::functions::intcast::usize_from_i32(rc))
         } else {
@@ -881,7 +909,7 @@ impl NetStack for SmoltcpNetStack {
         let rc = fw_net_socket::sm_net_sendto(
             fd,
             buf.as_ptr(),
-            buf.len() as u32,
+            crate::functions::intcast::low_u32_from_usize(buf.len()),
             flags,
             sin.as_ptr(),
             addrlen,
@@ -914,7 +942,7 @@ impl NetStack for SmoltcpNetStack {
         let rc = fw_net_socket::sm_net_recvfrom(
             fd,
             buf.as_mut_ptr(),
-            buf.len() as u32,
+            crate::functions::intcast::low_u32_from_usize(buf.len()),
             flags,
             addr_buf.as_mut_ptr(),
             &mut addrlen,

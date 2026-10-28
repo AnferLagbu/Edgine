@@ -90,8 +90,6 @@ impl RecoveryManager {
     }
 
     /// 注册恢复域, 返回其标识; 重复注册 (`core::ptr::eq` 判等) 与表满返回既有标识 / `None`.
-    // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-    #[expect(clippy::cast_possible_truncation)]
     pub fn register(&mut self, domain: &'static RecoveryDomain) -> Option<u64> {
         let count = self.count.load(Ordering::SeqCst) as usize;
         // 指针等价去重: 同一域重复注册会让 tick / 快照 / 回滚路径对同域执行两次
@@ -106,12 +104,15 @@ impl RecoveryManager {
         if count >= MAX_RECOVERY_DOMAINS {
             return None;
         }
-        let id = domain.id() as usize;
+        let id = crate::privileged::lib::usize_from_u64(domain.id());
         if id < DIRECT_MAP_SIZE {
             self.direct_map[id] = Some(domain);
         }
         self.domains[count] = Some(domain);
-        self.count.store(count as u32 + 1, Ordering::SeqCst);
+        self.count.store(
+            crate::privileged::lib::low_u32_from_usize(count) + 1,
+            Ordering::SeqCst,
+        );
         Some(domain.id())
     }
 
@@ -133,7 +134,7 @@ impl RecoveryManager {
         }
         self.count.fetch_sub(1, Ordering::SeqCst);
 
-        let direct_idx = domain_id as usize;
+        let direct_idx = crate::privileged::lib::usize_from_u64(domain_id);
         if direct_idx < DIRECT_MAP_SIZE
             && self.direct_map[direct_idx].is_some_and(|d| core::ptr::eq(d, removed))
         {
@@ -211,10 +212,8 @@ impl RecoveryManager {
     }
 
     /// 按域标识查找恢复域 (`direct_map` 命中则 O(1), 否则线性扫描).
-    // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-    #[expect(clippy::cast_possible_truncation)]
     pub fn find(&self, id: u64) -> Option<&'static RecoveryDomain> {
-        let idx = id as usize;
+        let idx = crate::privileged::lib::usize_from_u64(id);
         if idx < DIRECT_MAP_SIZE {
             self.direct_map[idx]
         } else {
@@ -277,8 +276,6 @@ impl RecoveryManager {
     }
 
     /// 对单个域执行指定深度的回滚, 返回 (回滚条目数, 起始代际, 目标代际, 结果码).
-    // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
@@ -292,7 +289,7 @@ impl RecoveryManager {
     ) -> (usize, u64, u64, i32) {
         let gen_from = dom.freg_generation.load(Ordering::SeqCst);
         let target_gen = if depth > 0 {
-            dom.get_rollback_generation(depth as u32)
+            dom.get_rollback_generation(crate::privileged::lib::low_u32_from_usize(depth))
         } else {
             gen_from
         };

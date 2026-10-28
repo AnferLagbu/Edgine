@@ -280,7 +280,10 @@ impl OverlayFsData {
         let mut offset = 0u64;
         let mut buf = [0u8; COPY_UP_CHUNK];
         while offset < size {
-            let want = core::cmp::min(COPY_UP_CHUNK as u64, size - offset) as usize;
+            let want = crate::functions::intcast::usize_from_u64(core::cmp::min(
+                COPY_UP_CHUNK as u64,
+                size - offset,
+            ));
             let read = lower_inode.read(offset, &mut buf[..want], pwm)?;
             if read == 0 {
                 break;

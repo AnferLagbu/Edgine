@@ -166,7 +166,10 @@ pub use crate::privileged::errno::errno_from_i64;
 /// 当返回码为负值时返回对应的 `Errno`; 无法识别的 errno 回退为 `EINVAL`.
 pub fn parse_return(rc: i64) -> SyscallResult<u64> {
     if rc < 0 {
-        Err(Errno::try_from_i32(-rc as i32).unwrap_or(Errno::EINVAL))
+        Err(
+            Errno::try_from_i32(crate::functions::intcast::low_i32_from_i64(-rc))
+                .unwrap_or(Errno::EINVAL),
+        )
     } else {
         Ok(rc.cast_unsigned())
     }

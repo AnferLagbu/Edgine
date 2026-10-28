@@ -166,7 +166,8 @@ const VFS_FD_WIDTH: usize = super::fd_table::MAX_FDS_PER_PROCESS;
 impl FdPlan {
     /// VFS per-process fd 段 [0, 64) — **仅作重叠校验**, 分配/释放由 `FdTable` 自管,
     /// 不进 `FdSubsystem` 枚举与位图 (方案 C).
-    pub const VFS: FdRange = FdRange::new(0, VFS_FD_WIDTH as u16);
+    pub const VFS: FdRange =
+        FdRange::new(0, crate::privileged::lib::low_u16_from_usize(VFS_FD_WIDTH));
 
     /// Smoltcp FD 空间 (TD-06: 容量从 `cfg_smoltcp_cap()` 派生, 当前默认 256.
     /// 用户可手动修改 `cfg_smoltcp_cap` 至 1024 / 4096, 同步 `privileged/net/init.rs` 的

@@ -44,7 +44,7 @@ pub fn msgq_create_safe(
     mq.tail = AtomicPtr::new(core::ptr::null_mut());
     mq.count = 0;
     mq.max_msgs = MSG_QUEUE_MAX_MSGS;
-    mq.max_size = MSG_MAX_SIZE as u32;
+    mq.max_size = crate::functions::intcast::low_u32_from_usize(MSG_MAX_SIZE);
     mq.flags = 0;
     mq.perm = perm;
 
@@ -162,7 +162,7 @@ pub fn msgq_recv_safe(
     mq.count -= 1;
 
     // 通过 MessageRef 安全读取字段
-    let read_size = msg_ref.get().size as usize;
+    let read_size = crate::functions::intcast::usize_from_u64(msg_ref.get().size);
     let msg_type = msg_ref.get().type_;
     let msg_data = msg_ref.get().data;
     let msg_size = msg_ref.get().size;

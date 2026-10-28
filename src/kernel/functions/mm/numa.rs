@@ -104,7 +104,11 @@ pub fn mbind_syscall(
     };
 
     // 64 位目标下 u64 → usize 无损
-    match mm.set_numa_policy_range(addr as usize, end as usize, policy) {
+    match mm.set_numa_policy_range(
+        crate::functions::intcast::usize_from_u64(addr),
+        crate::functions::intcast::usize_from_u64(end),
+        policy,
+    ) {
         Ok(_) => 0,
         Err(e) => e.as_ret(),
     }

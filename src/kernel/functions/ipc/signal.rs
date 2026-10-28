@@ -33,7 +33,7 @@ use crate::privileged::proc::{
 /// 当 `sig` 超出 1..=32 范围时返回 `Err(-1)`; 当目标进程不存在时返回 `Err(-2)`;
 /// 当发送方无权限向目标进程发送信号时返回 `Err(-3)`.
 pub fn signal_send_safe(sig: u8, target_pid: u32) -> Result<(), i32> {
-    if sig < 1 || sig > IPC_MAX_SIGNALS as u8 {
+    if sig < 1 || sig > crate::functions::intcast::low_u8_from_usize(IPC_MAX_SIGNALS) {
         return Err(-1);
     }
 
@@ -74,7 +74,7 @@ pub fn signal_register_safe(
     _handler: Option<SignalHandlerFn>,
     _flags: u32,
 ) -> Result<(), i32> {
-    if sig < 1 || sig > IPC_MAX_SIGNALS as u8 {
+    if sig < 1 || sig > crate::functions::intcast::low_u8_from_usize(IPC_MAX_SIGNALS) {
         return Err(-1);
     }
 
@@ -95,7 +95,7 @@ pub fn signal_register_safe(
 /// # Errors
 /// 当 `sig` 超出 1..=32 范围时返回 `Err(-1)`.
 pub fn signal_block_safe(sig: u8) -> Result<(), i32> {
-    if sig < 1 || sig > IPC_MAX_SIGNALS as u8 {
+    if sig < 1 || sig > crate::functions::intcast::low_u8_from_usize(IPC_MAX_SIGNALS) {
         return Err(-1);
     }
 
@@ -114,7 +114,7 @@ pub fn signal_block_safe(sig: u8) -> Result<(), i32> {
 /// # Errors
 /// 当 `sig` 超出 1..=32 范围时返回 `Err(-1)`.
 pub fn signal_unblock_safe(sig: u8) -> Result<(), i32> {
-    if sig < 1 || sig > IPC_MAX_SIGNALS as u8 {
+    if sig < 1 || sig > crate::functions::intcast::low_u8_from_usize(IPC_MAX_SIGNALS) {
         return Err(-1);
     }
 

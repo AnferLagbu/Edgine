@@ -184,7 +184,7 @@ impl McastRegistry {
     /// [`Self::leave`] 的差别是不做地址匹配、不报 `NotMember` —— socket 销毁路径
     /// 不应因簿记不一致而失败.
     pub fn force_leave(&mut self, slot: usize, idx: usize) -> bool {
-        let bit = match 1u8.checked_shl(idx as u32) {
+        let bit = match 1u8.checked_shl(crate::privileged::lib::low_u32_from_usize(idx)) {
             Some(b) if idx < MC_MAX_GROUPS => b,
             _ => return false,
         };

@@ -23,7 +23,7 @@ use crate::privileged::proc;
 #[inline(never)]
 pub fn sys_getrandom(arg0: u64, arg1: u64, _arg2: u64) -> i64 {
     let buf = arg0;
-    let len = arg1 as usize;
+    let len = crate::functions::intcast::usize_from_u64(arg1);
     crate::functions::intcast::i64_from_usize(proc::get_random_bytes(buf, len))
 }
 
@@ -46,5 +46,5 @@ pub fn sys_getrandom(arg0: u64, arg1: u64, _arg2: u64) -> i64 {
 /// 的 aarch64 codegen bug. 阻止内联后, 整个链路隔离到独立 codegen 单元.
 #[inline(never)]
 pub fn sys_get_canary(arg0: u64, arg1: u64) -> i64 {
-    proc::write_canary_to_user(arg0, arg1 as usize)
+    proc::write_canary_to_user(arg0, crate::functions::intcast::usize_from_u64(arg1))
 }

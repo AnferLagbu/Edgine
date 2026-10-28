@@ -523,7 +523,11 @@ impl BlockDevice for AtaBlockDevice {
         let Some(controller) = controllers.first() else {
             return -1;
         };
-        match controller.read_sector(self.drive, sector as u32, buf) {
+        match controller.read_sector(
+            self.drive,
+            crate::functions::intcast::low_u32_from_u64(sector),
+            buf,
+        ) {
             Ok(()) => 0,
             Err(()) => -1,
         }
@@ -537,7 +541,11 @@ impl BlockDevice for AtaBlockDevice {
         let Some(controller) = controllers.first() else {
             return -1;
         };
-        match controller.write_sector(self.drive, sector as u32, buf) {
+        match controller.write_sector(
+            self.drive,
+            crate::functions::intcast::low_u32_from_u64(sector),
+            buf,
+        ) {
             Ok(()) => 0,
             Err(()) => -1,
         }

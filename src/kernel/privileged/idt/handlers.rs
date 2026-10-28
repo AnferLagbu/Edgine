@@ -429,14 +429,12 @@ impl ExceptionHandler for GeneralProtectionFaultHandler {
 }
 
 impl GeneralProtectionFaultHandler {
-    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
     fn print_detailed_gpf_info(&self, frame: &InterruptFrame) {
-        let selector = frame.err_code as u16;
+        let selector = crate::privileged::lib::low_u16_from_u64(frame.err_code);
 
         // 解析错误码位域
         let external = selector & 0x01 != 0;

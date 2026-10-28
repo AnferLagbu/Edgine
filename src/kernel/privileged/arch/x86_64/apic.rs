@@ -77,12 +77,10 @@ fn rdmsr(msr: u32) -> u64 {
     (u64::from(high) << 32) | u64::from(low)
 }
 
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 fn wrmsr(msr: u32, value: u64) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
-        core::arch::asm!("wrmsr", in("ecx") msr, in("eax") value as u32, in("edx") (value >> 32) as u32, options(nomem, nostack));
+        core::arch::asm!("wrmsr", in("ecx") msr, in("eax") crate::privileged::lib::low_u32_from_u64(value), in("edx") (value >> 32) as u32, options(nomem, nostack));
     }
 }
 
@@ -180,20 +178,19 @@ fn wait_icr_delivery() {
 }
 
 /// 向目标 APIC 发送 IPI, 等待 ICR 投递完成后返回。
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 pub fn send_ipi(apic_id: u8, vector: u8) {
     if !is_initialized() {
         return;
     }
     apic_write(APIC_ICR_HIGH, u32::from(apic_id) << 24);
-    apic_write(APIC_ICR_LOW, u32::from(vector) | ICR_ASSERT as u32);
+    apic_write(
+        APIC_ICR_LOW,
+        u32::from(vector) | crate::privileged::lib::low_u32_from_u64(ICR_ASSERT),
+    );
     wait_icr_delivery();
 }
 
 /// 向所有其他 CPU 广播 IPI, 等待 ICR 投递完成后返回。
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 pub fn broadcast_ipi(vector: u8) {
     if !is_initialized() {
         return;
@@ -201,7 +198,9 @@ pub fn broadcast_ipi(vector: u8) {
     apic_write(APIC_ICR_HIGH, 0);
     apic_write(
         APIC_ICR_LOW,
-        u32::from(vector) | ICR_ALL_EXCLUDE_SELF as u32 | ICR_ASSERT as u32,
+        u32::from(vector)
+            | crate::privileged::lib::low_u32_from_u64(ICR_ALL_EXCLUDE_SELF)
+            | crate::privileged::lib::low_u32_from_u64(ICR_ASSERT),
     );
     wait_icr_delivery();
 }
@@ -492,8 +491,6 @@ pub fn apic_is_level_triggered(vector: u8) -> bool {
 // ============================================================================
 
 /// 发送带 level 触发模式的 IPI
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 pub fn send_ipi_level(apic_id: u8, vector: u8) {
     if !is_initialized() {
         return;
@@ -501,14 +498,14 @@ pub fn send_ipi_level(apic_id: u8, vector: u8) {
     apic_write(APIC_ICR_HIGH, u32::from(apic_id) << 24);
     apic_write(
         APIC_ICR_LOW,
-        u32::from(vector) | ICR_ASSERT as u32 | ICR_LEVEL as u32,
+        u32::from(vector)
+            | crate::privileged::lib::low_u32_from_u64(ICR_ASSERT)
+            | crate::privileged::lib::low_u32_from_u64(ICR_LEVEL),
     );
     while apic_read(APIC_ICR_LOW) & (1 << 12) != 0 {}
 }
 
 /// 发送带 broadcast 模式的 IPI
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 pub fn broadcast_ipi_level(vector: u8) {
     if !is_initialized() {
         return;
@@ -516,7 +513,10 @@ pub fn broadcast_ipi_level(vector: u8) {
     apic_write(APIC_ICR_HIGH, 0);
     apic_write(
         APIC_ICR_LOW,
-        u32::from(vector) | ICR_ALL_EXCLUDE_SELF as u32 | ICR_ASSERT as u32 | ICR_LEVEL as u32,
+        u32::from(vector)
+            | crate::privileged::lib::low_u32_from_u64(ICR_ALL_EXCLUDE_SELF)
+            | crate::privileged::lib::low_u32_from_u64(ICR_ASSERT)
+            | crate::privileged::lib::low_u32_from_u64(ICR_LEVEL),
     );
     while apic_read(APIC_ICR_LOW) & (1 << 12) != 0 {}
 }

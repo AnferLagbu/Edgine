@@ -41,7 +41,8 @@ pub fn shm_create_safe(
 
     // 计算需要的页数并分配物理内存 (委托 privileged 机制)
     let pages = size.div_ceil(PAGE_SIZE);
-    let phys = crate::privileged::mm::pmm_alloc_pages(pages as usize);
+    let phys =
+        crate::privileged::mm::pmm_alloc_pages(crate::functions::intcast::usize_from_u64(pages));
     if phys.is_null() {
         return Err(-3);
     }
@@ -138,7 +139,10 @@ pub fn shm_destroy_safe(namespace: &mut IpcNamespace, id: IpcId) -> Result<(), i
 
     // 释放物理页 (委托 privileged 机制)
     let pages = shm.size.div_ceil(PAGE_SIZE);
-    crate::privileged::mm::pmm_free_pages(shm.phys_addr as *mut u8, pages as usize);
+    crate::privileged::mm::pmm_free_pages(
+        shm.phys_addr as *mut u8,
+        crate::functions::intcast::usize_from_u64(pages),
+    );
 
     // 清理结构体
     shm.id = 0;

@@ -557,7 +557,9 @@ pub(crate) fn sys_sigaltstack(ss: u64, old_ss: u64) -> i64 {
             }
             // SAFETY: `const` 由调用方保证为有效指针; 只读访问
             let new_addr = unsafe { raw::read_u64(ss as *const u64) };
-            let new_flags_in = unsafe { raw::read_u64((ss + 8) as *const u64) } as u32;
+            let new_flags_in = crate::privileged::lib::low_u32_from_u64(unsafe {
+                raw::read_u64((ss + 8) as *const u64)
+            });
             let new_size = unsafe { raw::read_u64((ss + 16) as *const u64) };
 
             if (new_flags_in & SS_DISABLE) != 0 {
@@ -803,7 +805,7 @@ pub fn sys_fb_open(info_ptr: u64, _flags: u64) -> i64 {
                 fb.width(),
                 fb.height(),
                 fb.pitch(),
-                fb.format().bits_per_pixel() as u8,
+                crate::privileged::lib::low_u8_from_usize(fb.format().bits_per_pixel()),
             )
         }
         None => return Errno::ENODEV.as_ret(),
@@ -912,9 +914,9 @@ pub fn sys_fb_release(vaddr: u64) -> i64 {
 
 #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
 fn write_le32(buf: &mut [u8], offset: usize, val: u32) {
-    buf[offset] = val as u8;
-    buf[offset + 1] = (val >> 8) as u8;
-    buf[offset + 2] = (val >> 16) as u8;
+    buf[offset] = crate::privileged::lib::low_u8_from_u32(val);
+    buf[offset + 1] = crate::privileged::lib::low_u8_from_u32(val >> 8);
+    buf[offset + 2] = crate::privileged::lib::low_u8_from_u32(val >> 16);
     buf[offset + 3] = (val >> 24) as u8;
 }
 
@@ -943,16 +945,24 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
     let stage1 = include_bytes!("../../../../other/build/x86_64/stage1.bin");
     #[cfg(not(target_os = "none"))]
     let stage1: &[u8] = &[];
-    if !crate::privileged::driver::hdd_is_present(disk_id as u8) {
+    if !crate::privileged::driver::hdd_is_present(crate::privileged::lib::low_u8_from_u32(disk_id))
+    {
         return Errno::ENOENT.as_ret();
     }
     let mut mbr = [0u8; 512];
-    if crate::privileged::driver::hdd_read_sector(disk_id as u8, 0, &mut mbr) < 0 {
+    if crate::privileged::driver::hdd_read_sector(
+        crate::privileged::lib::low_u8_from_u32(disk_id),
+        0,
+        &mut mbr,
+    ) < 0
+    {
         return Errno::EIO.as_ret();
     }
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe { core::ptr::copy_nonoverlapping(stage1.as_ptr(), mbr.as_mut_ptr(), 440) };
-    let total_sectors = crate::privileged::driver::hdd_total_sectors(disk_id as u8);
+    let total_sectors = crate::privileged::driver::hdd_total_sectors(
+        crate::privileged::lib::low_u8_from_u32(disk_id),
+    );
     let unkfs_start = BOOT_PART_SECTORS;
     let unkfs_sectors = if total_sectors > u64::from(unkfs_start) + 1 {
         total_sectors - u64::from(unkfs_start)
@@ -969,12 +979,17 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
     let unkfs_len = if unkfs_sectors > 0xFFFF_FFFF {
         0xFFFF_FFFF_u32
     } else {
-        unkfs_sectors as u32
+        crate::privileged::lib::low_u32_from_u64(unkfs_sectors)
     };
     write_le32(&mut mbr, 474, unkfs_len);
     mbr[510] = 0x55;
     mbr[511] = 0xAA;
-    if crate::privileged::driver::hdd_write_sector(disk_id as u8, 0, &mbr) < 0 {
+    if crate::privileged::driver::hdd_write_sector(
+        crate::privileged::lib::low_u8_from_u32(disk_id),
+        0,
+        &mbr,
+    ) < 0
+    {
         return Errno::EIO.as_ret();
     }
     let kernel_ptr = raw::kernel_start_ptr();
@@ -983,7 +998,7 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
         let phys_end = raw::kernel_end_phys(HHDM_OFFSET);
         phys_end - (kernel_ptr as usize)
     };
-    let total_kernel_sectors = kernel_len.div_ceil(512) as u32;
+    let total_kernel_sectors = crate::privileged::lib::low_u32_from_usize(kernel_len.div_ceil(512));
     let max_sectors = 2047u32;
     let copy_sectors = if total_kernel_sectors > max_sectors {
         max_sectors
@@ -1002,7 +1017,12 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
         unsafe {
             core::ptr::copy_nonoverlapping(kernel_ptr.add(offset), buf.as_mut_ptr(), n);
         }
-        if crate::privileged::driver::hdd_write_sector(disk_id as u8, u64::from(1 + s), &buf) < 0 {
+        if crate::privileged::driver::hdd_write_sector(
+            crate::privileged::lib::low_u8_from_u32(disk_id),
+            u64::from(1 + s),
+            &buf,
+        ) < 0
+        {
             return Errno::EIO.as_ret();
         }
     }
@@ -1014,6 +1034,10 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
     write_le32(&mut cfg, 4, BOOT_PART_SECTORS);
     cfg[510] = 0x55;
     cfg[511] = 0xAA;
-    crate::privileged::driver::hdd_write_sector(disk_id as u8, 2046, &cfg);
+    crate::privileged::driver::hdd_write_sector(
+        crate::privileged::lib::low_u8_from_u32(disk_id),
+        2046,
+        &cfg,
+    );
     0
 }

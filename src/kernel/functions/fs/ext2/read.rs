@@ -50,7 +50,8 @@ impl Ext2Fs {
         let bgd_block = u64::from(super_block.bgd_block());
         let block_size = super_block.block_size() as usize;
         let bgd_sector = (bgd_block * block_size as u64) / 512;
-        let bgd_sector_count = (block_size / 512).max(1) as u32;
+        let bgd_sector_count =
+            crate::functions::intcast::low_u32_from_usize((block_size / 512).max(1));
 
         let mut bgd_data = alloc::vec![0u8; block_size];
         egdf_blk_read_sectors(device_idx, bgd_sector, bgd_sector_count, &mut bgd_data)?;
@@ -95,7 +96,7 @@ impl Ext2Fs {
         // 计算扇区位置
         let inode_offset = inode_table_block as usize * block_size + index as usize * inode_size;
         let sector = inode_offset / 512;
-        let sector_count = (inode_size / 512).max(1) as u32;
+        let sector_count = crate::functions::intcast::low_u32_from_usize((inode_size / 512).max(1));
 
         let mut inode_data = alloc::vec![0u8; inode_size];
         egdf_blk_read_sectors(
@@ -122,7 +123,7 @@ impl Ext2Fs {
         let mut data = alloc::vec![0u8; block_size];
 
         let sector = u64::from(block_num) * block_size as u64 / 512;
-        let sector_count = (block_size / 512) as u32;
+        let sector_count = crate::functions::intcast::low_u32_from_usize(block_size / 512);
 
         egdf_blk_read_sectors(self.device_idx, sector, sector_count, &mut data)?;
         Ok(data)
@@ -245,8 +246,8 @@ impl Ext2Fs {
         let mut pos = offset;
 
         while bytes_read < buf.len() && pos < file_size {
-            let block_idx = (pos / block_size) as u32;
-            let block_offset = (pos % block_size) as usize;
+            let block_idx = crate::functions::intcast::low_u32_from_u64(pos / block_size);
+            let block_offset = crate::functions::intcast::usize_from_u64(pos % block_size);
 
             // 获取物理块号
             let block_num = self.get_physical_block(&inode, block_idx)?;
@@ -255,10 +256,10 @@ impl Ext2Fs {
             }
 
             let block_data = self.read_block(block_num)?;
-            let available = block_size as usize - block_offset;
+            let available = crate::functions::intcast::usize_from_u64(block_size) - block_offset;
             let to_read = (buf.len() - bytes_read)
                 .min(available)
-                .min((file_size - pos) as usize);
+                .min(crate::functions::intcast::usize_from_u64(file_size - pos));
 
             buf[bytes_read..bytes_read + to_read]
                 .copy_from_slice(&block_data[block_offset..block_offset + to_read]);
@@ -421,7 +422,7 @@ impl Ext2Fs {
                     self.device_idx,
                     &self.super_block,
                     bgd,
-                    i as u32,
+                    crate::functions::intcast::low_u32_from_usize(i),
                 )?;
                 return Ok(inode_num);
             }
@@ -442,7 +443,7 @@ impl Ext2Fs {
                     self.device_idx,
                     &self.super_block,
                     bgd,
-                    i as u32,
+                    crate::functions::intcast::low_u32_from_usize(i),
                 )?;
                 return Ok(block_num);
             }
@@ -513,8 +514,8 @@ impl Ext2Fs {
         let mut pos = offset;
 
         while bytes_written < buf.len() {
-            let block_idx = (pos / block_size) as u32;
-            let block_offset = (pos % block_size) as usize;
+            let block_idx = crate::functions::intcast::low_u32_from_u64(pos / block_size);
+            let block_offset = crate::functions::intcast::usize_from_u64(pos % block_size);
 
             // 获取或分配物理块
             let block_num = if block_idx < 12 {
@@ -531,15 +532,16 @@ impl Ext2Fs {
             };
 
             // 读取现有块内容（如果需要部分写入）
-            let mut block_data =
-                if block_offset > 0 || buf.len() - bytes_written < block_size as usize {
-                    self.read_block(block_num)?
-                } else {
-                    alloc::vec![0u8; block_size as usize]
-                };
+            let mut block_data = if block_offset > 0
+                || buf.len() - bytes_written < crate::functions::intcast::usize_from_u64(block_size)
+            {
+                self.read_block(block_num)?
+            } else {
+                alloc::vec![0u8; crate::functions::intcast::usize_from_u64(block_size)]
+            };
 
             // 写入数据
-            let available = block_size as usize - block_offset;
+            let available = crate::functions::intcast::usize_from_u64(block_size) - block_offset;
             let to_write = (buf.len() - bytes_written).min(available);
             block_data[block_offset..block_offset + to_write]
                 .copy_from_slice(&buf[bytes_written..bytes_written + to_write]);
@@ -553,12 +555,14 @@ impl Ext2Fs {
 
         // 更新 inode 大小
         let new_size = (offset + bytes_written as u64).max(u64::from(inode.i_size));
-        inode.i_size = new_size as u32;
-        inode.i_mtime = crate::arch!(timestamp()) as u32;
-        inode.i_blocks = ((new_size + u64::from(self.super_block.block_size()) - 1)
-            / u64::from(self.super_block.block_size())
-            * 512
-            / u64::from(self.super_block.block_size())) as u32;
+        inode.i_size = crate::functions::intcast::low_u32_from_u64(new_size);
+        inode.i_mtime = crate::functions::intcast::low_u32_from_u64(crate::arch!(timestamp()));
+        inode.i_blocks = crate::functions::intcast::low_u32_from_u64(
+            (new_size + u64::from(self.super_block.block_size()) - 1)
+                / u64::from(self.super_block.block_size())
+                * 512
+                / u64::from(self.super_block.block_size()),
+        );
 
         self.save_inode(inode_num, &inode)?;
 
@@ -703,12 +707,12 @@ impl Ext2Fs {
         // 构造目录项
         let name_bytes = name.as_bytes();
         let name_len = name_bytes.len().min(255);
-        let rec_len = ((name_len + 8 + 3) & !3) as u16;
+        let rec_len = crate::functions::intcast::low_u16_from_usize((name_len + 8 + 3) & !3);
 
         let mut dir_entry = alloc::vec![0u8; rec_len as usize];
         dir_entry[0..4].copy_from_slice(&child_inode_num.to_le_bytes());
         dir_entry[4..6].copy_from_slice(&rec_len.to_le_bytes());
-        dir_entry[6] = name_len as u8;
+        dir_entry[6] = crate::functions::intcast::low_u8_from_usize(name_len);
         dir_entry[7] = file_type;
         dir_entry[8..8 + name_len].copy_from_slice(&name_bytes[..name_len]);
 
@@ -781,8 +785,9 @@ impl Ext2Fs {
         self.save_block(last_block_num, &block_data)?;
 
         // 更新父目录 inode
-        parent_inode.i_size += entry_len as u32;
-        parent_inode.i_mtime = crate::arch!(timestamp()) as u32;
+        parent_inode.i_size += crate::functions::intcast::low_u32_from_usize(entry_len);
+        parent_inode.i_mtime =
+            crate::functions::intcast::low_u32_from_u64(crate::arch!(timestamp()));
         self.save_inode(parent_inode_num, &parent_inode)?;
 
         Ok(())
@@ -844,7 +849,8 @@ impl Ext2Fs {
                         self.save_block(block_num, &block_data)?;
 
                         // 更新父目录 inode
-                        parent_inode.i_mtime = crate::arch!(timestamp()) as u32;
+                        parent_inode.i_mtime =
+                            crate::functions::intcast::low_u32_from_u64(crate::arch!(timestamp()));
                         self.save_inode(parent_inode_num, &parent_inode)?;
 
                         return Ok(removed_inode);
@@ -883,16 +889,16 @@ impl Ext2Fs {
         // 初始化目录 inode
         let block_size = self.super_block.block_size() as usize;
         let new_block = self.allocate_block()?;
-        let timestamp = crate::arch!(timestamp()) as u32;
+        let timestamp = crate::functions::intcast::low_u32_from_u64(crate::arch!(timestamp()));
 
         let mut i_block = [0u32; 15];
         i_block[0] = new_block;
 
         let new_inode = Ext2Inode {
             i_mode: 0x4000 | 0o755, // 目录，rwxr-xr-x
-            i_size: block_size as u32,
+            i_size: crate::functions::intcast::low_u32_from_usize(block_size),
             i_links_count: 2, // . 和 ..
-            i_blocks: (block_size / 512) as u32,
+            i_blocks: crate::functions::intcast::low_u32_from_usize(block_size / 512),
             i_block,
             i_mtime: timestamp,
             i_ctime: timestamp,
@@ -1015,7 +1021,7 @@ impl Ext2Fs {
         let mut new_inode = Ext2Inode::default();
         new_inode.i_mode = 0xA000 | 0o777; // 符号链接，rwxrwxrwx
         new_inode.i_links_count = 1;
-        new_inode.i_mtime = crate::arch!(timestamp()) as u32;
+        new_inode.i_mtime = crate::functions::intcast::low_u32_from_u64(crate::arch!(timestamp()));
         new_inode.i_ctime = new_inode.i_mtime;
 
         if target_len <= 60 {
@@ -1032,12 +1038,12 @@ impl Ext2Fs {
                     block_data[offset + 3],
                 ]);
             }
-            new_inode.i_size = target_len as u32;
+            new_inode.i_size = crate::functions::intcast::low_u32_from_usize(target_len);
         } else {
             // 大于 60 字节，分配块存储
             let block = self.allocate_block()?;
             new_inode.i_block[0] = block;
-            new_inode.i_size = target_len as u32;
+            new_inode.i_size = crate::functions::intcast::low_u32_from_usize(target_len);
             new_inode.i_blocks = (self.super_block.block_size() / 512) as u32;
 
             let mut block_data = alloc::vec![0u8; self.super_block.block_size() as usize];
@@ -1124,7 +1130,8 @@ impl Ext2Fs {
 
         // 增加链接计数
         target_inode.i_links_count += 1;
-        target_inode.i_ctime = crate::arch!(timestamp()) as u32;
+        target_inode.i_ctime =
+            crate::functions::intcast::low_u32_from_u64(crate::arch!(timestamp()));
         self.save_inode(target_inode_num, &target_inode)?;
 
         // 获取文件类型

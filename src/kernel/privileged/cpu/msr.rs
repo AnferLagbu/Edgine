@@ -57,11 +57,9 @@ pub unsafe fn read_msr(msr: u32) -> u64 {
 /// # Safety
 /// 必须在 Ring 0 调用, 且 MSR 必须存在且可写。
 #[inline(always)]
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 pub unsafe fn write_msr(msr: u32, value: u64) {
     unsafe {
-        let low = value as u32;
+        let low = crate::privileged::lib::low_u32_from_u64(value);
         let high = (value >> 32) as u32;
 
         core::arch::asm!(
@@ -82,8 +80,6 @@ pub unsafe fn write_msr(msr: u32, value: u64) {
 ///
 /// `msr` 是合法的 MSR 索引. 非法索引将触发 #GP 异常.
 /// `low` 和 `high` 是合法可写指针.
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 pub unsafe extern "C" fn cpu_read_msr(msr: u32, low: *mut u32, high: *mut u32) -> i32 {
     unsafe {
         if low.is_null() || high.is_null() {
@@ -97,7 +93,7 @@ pub unsafe extern "C" fn cpu_read_msr(msr: u32, low: *mut u32, high: *mut u32) -
         }
 
         let value = read_msr(msr);
-        *low = value as u32;
+        *low = crate::privileged::lib::low_u32_from_u64(value);
         *high = (value >> 32) as u32;
 
         0

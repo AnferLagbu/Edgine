@@ -45,7 +45,7 @@ pub fn wasi_fd_close(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
 /// 当栈弹出参数失败或向解释器栈压入结果失败时返回对应的 `WasmError`.
 pub fn wasi_fd_seek(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(), WasmError> {
     let fd = interp.stack.pop_i32()?.cast_unsigned();
-    let offset = interp.stack.pop_i64()? as i32;
+    let offset = crate::functions::intcast::low_i32_from_i64(interp.stack.pop_i64()?);
     let whence = interp.stack.pop_i32()?.cast_unsigned();
     let new_offset_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
@@ -159,7 +159,8 @@ pub fn wasi_fd_prestat_get(
         return Ok(());
     }
 
-    let path_len = entry.path.as_ref().unwrap().len() as u32;
+    let path_len =
+        crate::functions::intcast::low_u32_from_usize(entry.path.as_ref().unwrap().len());
     write_u32_to_memory(interp, buf_ptr, path_len);
     interp.stack.push(Value::I32(wasi_success()))?;
     Ok(())
@@ -193,7 +194,10 @@ pub fn wasi_fd_prestat_dir_name(
         return Ok(());
     };
 
-    let copy_len = core::cmp::min(path.len() as u32, path_len) as usize;
+    let copy_len = core::cmp::min(
+        crate::functions::intcast::low_u32_from_usize(path.len()),
+        path_len,
+    ) as usize;
     super::fd_table::write_bytes_to_memory(interp, path_ptr, &path[..copy_len]);
     interp.stack.push(Value::I32(wasi_success()))?;
     Ok(())
@@ -234,7 +238,10 @@ pub fn wasi_fd_stat_get(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
         ) {
             let bytes = val.to_le_bytes();
             for i in 0..8u64 {
-                let _ = mem.write_u8((base + off + i) as u32, bytes[i as usize]);
+                let _ = mem.write_u8(
+                    crate::functions::intcast::low_u32_from_u64(base + off + i),
+                    bytes[crate::functions::intcast::usize_from_u64(i)],
+                );
             }
         }
         let base = u64::from(buf_ptr);
@@ -243,7 +250,10 @@ pub fn wasi_fd_stat_get(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
 
         write_u64_to(mem, base, 0, u64::from(stat.node_id)); // dev
         write_u64_to(mem, base, 8, u64::from(stat.node_id)); // ino
-        let _ = mem.write_u8((base + 16) as u32, stat.file_type as u8); // filetype
+        let _ = mem.write_u8(
+            crate::functions::intcast::low_u32_from_u64(base + 16),
+            stat.file_type as u8,
+        ); // filetype
         write_u64_to(mem, base, 17, 1); // nlink (默认 1)
         write_u64_to(mem, base, 25, u64::from(stat.size)); // size
         write_u64_to(mem, base, 33, stat.atime); // atim
@@ -369,7 +379,7 @@ pub fn wasi_fd_pread(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
     let fd = interp.stack.pop_i32()?.cast_unsigned();
     let iovs_ptr = interp.stack.pop_i32()?.cast_unsigned();
     let iovs_len = interp.stack.pop_i32()?.cast_unsigned();
-    let offset = interp.stack.pop_i64()? as i32;
+    let offset = crate::functions::intcast::low_i32_from_i64(interp.stack.pop_i64()?);
     let nread_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let entry = match ctx.fd_table.get(fd) {
@@ -425,7 +435,7 @@ pub fn wasi_fd_pwrite(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
     let fd = interp.stack.pop_i32()?.cast_unsigned();
     let iovs_ptr = interp.stack.pop_i32()?.cast_unsigned();
     let iovs_len = interp.stack.pop_i32()?.cast_unsigned();
-    let offset = interp.stack.pop_i64()? as i32;
+    let offset = crate::functions::intcast::low_i32_from_i64(interp.stack.pop_i64()?);
     let nwritten_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
     let entry = match ctx.fd_table.get(fd) {
@@ -642,29 +652,48 @@ pub fn wasi_fd_readdir(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resul
         .iter()
         .position(|&b| b == 0)
         .unwrap_or(dir_entry.name.len());
-    let copy_len = name_len.min(buf_len as usize - 19) as u16; // 19 = dirent header size
+    let copy_len =
+        crate::functions::intcast::low_u16_from_usize(name_len.min(buf_len as usize - 19)); // 19 = dirent header size
 
     if let Some(ref mut mem) = interp.memory {
         let base = u64::from(buf_ptr);
         // 写入 inode
         let inode_bytes = u64::from(dir_entry.node).to_le_bytes();
         for i in 0..8u64 {
-            let _ = mem.write_u8((base + i) as u32, inode_bytes[i as usize]);
+            let _ = mem.write_u8(
+                crate::functions::intcast::low_u32_from_u64(base + i),
+                inode_bytes[crate::functions::intcast::usize_from_u64(i)],
+            );
         }
         // 写入 next_cookie
         let cookie_bytes = (crate::functions::intcast::u64_from_i32(result) + 1).to_le_bytes();
         for i in 0..8u64 {
-            let _ = mem.write_u8((base + 8 + i) as u32, cookie_bytes[i as usize]);
+            let _ = mem.write_u8(
+                crate::functions::intcast::low_u32_from_u64(base + 8 + i),
+                cookie_bytes[crate::functions::intcast::usize_from_u64(i)],
+            );
         }
         // 写入 namlen
         let namlen_bytes = copy_len.to_le_bytes();
-        let _ = mem.write_u8((base + 16) as u32, namlen_bytes[0]);
-        let _ = mem.write_u8((base + 17) as u32, namlen_bytes[1]);
+        let _ = mem.write_u8(
+            crate::functions::intcast::low_u32_from_u64(base + 16),
+            namlen_bytes[0],
+        );
+        let _ = mem.write_u8(
+            crate::functions::intcast::low_u32_from_u64(base + 17),
+            namlen_bytes[1],
+        );
         // 写入 filetype
-        let _ = mem.write_u8((base + 18) as u32, dir_entry.file_type as u8);
+        let _ = mem.write_u8(
+            crate::functions::intcast::low_u32_from_u64(base + 18),
+            dir_entry.file_type as u8,
+        );
         // 写入文件名
         for i in 0..copy_len as usize {
-            let _ = mem.write_u8((base + 19 + i as u64) as u32, dir_entry.name[i]);
+            let _ = mem.write_u8(
+                crate::functions::intcast::low_u32_from_u64(base + 19 + i as u64),
+                dir_entry.name[i],
+            );
         }
         write_u32_to_memory(interp, buf_used_ptr, 19 + u32::from(copy_len));
     }

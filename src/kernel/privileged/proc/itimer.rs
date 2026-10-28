@@ -174,7 +174,7 @@ pub fn itimer_alarm(pid: Pid, seconds: u32) -> u32 {
     let value_ns = u64::from(seconds).saturating_mul(NS_PER_SEC);
     let (prev_ns, _) = itimer_real_set(pid, value_ns, 0);
     // POSIX: alarm 返回剩余秒数, 非零剩余不足 1 秒时向上取整为 1 而非 0.
-    prev_ns.div_ceil(NS_PER_SEC) as u32
+    crate::privileged::lib::low_u32_from_u64(prev_ns.div_ceil(NS_PER_SEC))
 }
 
 /// 进程退出钩子: 撤防并释放该 pid 的 `ITIMER_REAL` 槽位.

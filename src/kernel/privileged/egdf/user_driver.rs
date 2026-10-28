@@ -107,8 +107,6 @@ pub fn devtree_bind_user_device(
 /// 解除设备树节点与用户进程的绑定, 并卸载进程虚拟地址空间中映射的设备 MMIO 范围。
 /// # Errors
 /// PWM 缺少 `DEVICE_CAP_BIND` 权限、进程不存在、节点不存在、节点映射的 PID 不匹配或节点未处于可解绑状态时返回 Err。
-// 有意窄化: 用户内存代理, 指针/长度上下文保证
-#[expect(clippy::cast_possible_truncation)]
 pub fn devtree_unbind_user_device(
     node_id: NodeId,
     pid: u32,
@@ -157,7 +155,7 @@ pub fn devtree_unbind_user_device(
             let mut addr = *start;
             while addr < *end {
                 vmm.unmap_page_in_table(cr3, VirtAddr(addr as u64));
-                addr += PAGE_SIZE as usize;
+                addr += crate::privileged::lib::usize_from_u64(PAGE_SIZE);
             }
         }
 
@@ -175,8 +173,6 @@ pub fn devtree_unbind_user_device(
 /// 将设备节点的 MMIO 资源映射到用户进程地址空间, 返回映射基址。
 /// # Errors
 /// PWM 缺少 `DEVICE_CAP_MMIO` 权限、进程或节点不存在、节点映射的 PID 不匹配、节点状态非法、缺少 reg 属性、物理地址或大小非法或内存不足时返回 Err。
-// 有意窄化: 用户内存代理, 指针/长度上下文保证
-#[expect(clippy::cast_possible_truncation)]
 pub fn devtree_map_user_device(
     node_id: NodeId,
     pid: u32,
@@ -213,13 +209,15 @@ pub fn devtree_map_user_device(
         return Err(UserDriverError::new(ERR_NO_MMIO));
     }
 
-    let clamped_size = (size as usize).min(MAX_MMIO_SIZE);
+    let clamped_size = crate::privileged::lib::usize_from_u64(size).min(MAX_MMIO_SIZE);
     if phys_addr.checked_add(clamped_size as u64).is_none() {
         return Err(UserDriverError::new(ERR_NO_MMIO));
     }
-    let pages = clamped_size.div_ceil(PAGE_SIZE as usize);
+    let pages = clamped_size.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE));
 
-    let Some(map_base) = mm.find_free_range(pages * PAGE_SIZE as usize) else {
+    let Some(map_base) =
+        mm.find_free_range(pages * crate::privileged::lib::usize_from_u64(PAGE_SIZE))
+    else {
         return Err(UserDriverError::new(ERR_OOM));
     };
 
@@ -242,19 +240,21 @@ pub fn devtree_map_user_device(
     let vmm = get_vmm();
     for i in 0..pages {
         let page_phys = PhysAddr(phys_addr + (i as u64 * PAGE_SIZE));
-        let page_virt = VirtAddr((map_base + i * PAGE_SIZE as usize) as u64);
+        let page_virt =
+            VirtAddr((map_base + i * crate::privileged::lib::usize_from_u64(PAGE_SIZE)) as u64);
         vmm.map_page_in_table(cr3, page_virt, page_phys, page_flags);
     }
 
     let vma = Vma::new(
         map_base,
-        map_base + pages * PAGE_SIZE as usize,
+        map_base + pages * crate::privileged::lib::usize_from_u64(PAGE_SIZE),
         page_flags,
         VmaType::Device,
     );
     if mm.insert_vma(vma).is_err() {
         for i in 0..pages {
-            let unmap_virt = VirtAddr((map_base + i * PAGE_SIZE as usize) as u64);
+            let unmap_virt =
+                VirtAddr((map_base + i * crate::privileged::lib::usize_from_u64(PAGE_SIZE)) as u64);
             vmm.unmap_page_in_table(cr3, unmap_virt);
         }
         process_dec_ref(pid);
@@ -277,8 +277,6 @@ pub fn devtree_map_user_device(
 /// 解除设备节点的 MMIO 映射, 将指定虚拟地址范围从用户进程地址空间移除。
 /// # Errors
 /// PWM 缺少 `DEVICE_CAP_MMIO` 权限、进程不存在、节点不存在或节点映射的 PID 不匹配时返回 Err。
-// 有意窄化: 用户内存代理, 指针/长度上下文保证
-#[expect(clippy::cast_possible_truncation)]
 pub fn devtree_unmap_user_device(
     node_id: NodeId,
     pid: u32,
@@ -305,7 +303,7 @@ pub fn devtree_unmap_user_device(
         return Ok(());
     }
 
-    let pages = size.div_ceil(PAGE_SIZE as usize);
+    let pages = size.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE));
     if virt_addr.checked_add(size).is_none() {
         return Err(UserDriverError::new(ERR_NO_MMIO));
     }
@@ -325,11 +323,16 @@ pub fn devtree_unmap_user_device(
 
     let vmm = get_vmm();
     for i in 0..pages {
-        let page_virt = VirtAddr((virt_addr + i * PAGE_SIZE as usize) as u64);
+        let page_virt =
+            VirtAddr((virt_addr + i * crate::privileged::lib::usize_from_u64(PAGE_SIZE)) as u64);
         vmm.unmap_page_in_table(cr3, page_virt);
     }
 
-    mm.remove_range(virt_addr, virt_addr + pages * PAGE_SIZE as usize, cr3);
+    mm.remove_range(
+        virt_addr,
+        virt_addr + pages * crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+        cr3,
+    );
 
     devtree_clear_user_mapped(node_id);
 

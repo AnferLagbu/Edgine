@@ -93,8 +93,6 @@ pub fn raw_copy_in(ptr: u64, len: u32) -> Result<alloc::vec::Vec<u8>, Errno> {
 ///
 /// # Errors
 /// 当 `ptr` 无效 (`ptr == 0` 或未通过用户缓冲区校验) 或写入失败时返回 `Errno::EFAULT`.
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub fn raw_copy_out(ptr: u64, len: u32, data: &[u8]) -> Result<u32, Errno> {
     if len == 0 {
         return Ok(0);
@@ -107,7 +105,7 @@ pub fn raw_copy_out(ptr: u64, len: u32, data: &[u8]) -> Result<u32, Errno> {
     if safe_copy_to_user(ptr, &data[..n], n).is_err() {
         return Err(Errno::EFAULT);
     }
-    Ok(n as u32)
+    Ok(crate::privileged::lib::low_u32_from_usize(n))
 }
 
 /// 读取 4 字节 u32
@@ -164,8 +162,6 @@ pub fn raw_read_sun_family(ptr: u64) -> Result<u16, Errno> {
 /// 当 `ptr` 无效、`addrlen` 不足 2 字节或拷贝失败时返回 `Errno::EFAULT`;
 /// 当 `sun_family` 不是 `AF_UNIX` (1) 时返回 `Errno::EAFNOSUPPORT`;
 /// 当路径以 NUL 开头 (空路径) 时返回 `Errno::EINVAL`.
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub fn raw_read_sockaddr_un(ptr: u64, addrlen: u32) -> Result<SockAddrUn, Errno> {
     if ptr == 0 || addrlen < 2 {
         return Err(Errno::EFAULT);
@@ -197,7 +193,7 @@ pub fn raw_read_sockaddr_un(ptr: u64, addrlen: u32) -> Result<SockAddrUn, Errno>
     path[..nul_pos].copy_from_slice(&path_bytes[..nul_pos]);
     Ok(SockAddrUn {
         path,
-        path_len: nul_pos as u16,
+        path_len: crate::privileged::lib::low_u16_from_usize(nul_pos),
     })
 }
 
@@ -205,8 +201,6 @@ pub fn raw_read_sockaddr_un(ptr: u64, addrlen: u32) -> Result<SockAddrUn, Errno>
 ///
 /// # Errors
 /// 当 `ptr`/`addrlen_ptr` 无效或任一用户缓冲区校验失败时返回 `Errno::EFAULT`.
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub fn raw_write_sockaddr_un(ptr: u64, addrlen_ptr: u64, addr: &SockAddrUn) -> Result<(), Errno> {
     if ptr == 0 || addrlen_ptr == 0 {
         return Err(Errno::EFAULT);
@@ -226,7 +220,7 @@ pub fn raw_write_sockaddr_un(ptr: u64, addrlen_ptr: u64, addr: &SockAddrUn) -> R
         return Err(Errno::EFAULT);
     }
     // 写回 addrlen = 110
-    let total = (n + 2) as u32;
+    let total = crate::privileged::lib::low_u32_from_usize(n + 2);
     let total_bytes = total.to_ne_bytes();
     if safe_copy_to_user(addrlen_ptr, &total_bytes, 4).is_err() {
         return Err(Errno::EFAULT);
@@ -356,8 +350,6 @@ pub fn connect_syscall(fd: i32, addr_ptr: u64, _addrlen: u32) -> i64 {
 }
 
 /// sendto / send — 发送数据, 指定目标地址时按族分流, 否则走已连接路径
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub fn sendto_syscall(
     fd: i32,
     buf_ptr: u64,
@@ -374,7 +366,12 @@ pub fn sendto_syscall(
         Err(e) => return e.as_ret(),
     };
     let rc = if dest_ptr == 0 {
-        net_socket::sm_send(fd, data.as_ptr(), data.len() as u32, 0)
+        net_socket::sm_send(
+            fd,
+            data.as_ptr(),
+            crate::privileged::lib::low_u32_from_usize(data.len()),
+            0,
+        )
     } else {
         // 双栈 (DECISION-032): 按 sockaddr 族分流 — 2 = AF_INET, 10 = AF_INET6
         let family = match raw_read_sun_family(dest_ptr) {
@@ -392,14 +389,28 @@ pub fn sendto_syscall(
                 bytes[0..2].copy_from_slice(&(2u16).to_ne_bytes());
                 bytes[2..4].copy_from_slice(&dest.port.to_be_bytes());
                 bytes[4..8].copy_from_slice(&dest.ip);
-                net_socket::sm_sendto(fd, data.as_ptr(), data.len() as u32, 0, bytes.as_ptr(), 8)
+                net_socket::sm_sendto(
+                    fd,
+                    data.as_ptr(),
+                    crate::privileged::lib::low_u32_from_usize(data.len()),
+                    0,
+                    bytes.as_ptr(),
+                    8,
+                )
             }
             10 => {
                 let buf = match raw_read_sockaddr_in6(dest_ptr) {
                     Ok(b) => b,
                     Err(e) => return e.as_ret(),
                 };
-                net_socket::sm_sendto(fd, data.as_ptr(), data.len() as u32, 0, buf.as_ptr(), 28)
+                net_socket::sm_sendto(
+                    fd,
+                    data.as_ptr(),
+                    crate::privileged::lib::low_u32_from_usize(data.len()),
+                    0,
+                    buf.as_ptr(),
+                    28,
+                )
             }
             _ => return Errno::EAFNOSUPPORT.as_ret(),
         }
@@ -408,8 +419,6 @@ pub fn sendto_syscall(
 }
 
 /// recvfrom / recv — 接收数据到用户缓冲区, 并回写对端地址 (D9).
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub fn recvfrom_syscall(
     fd: i32,
     buf_ptr: u64,
@@ -436,7 +445,7 @@ pub fn recvfrom_syscall(
     let n = net_socket::sm_recvfrom(
         fd,
         stack_buf.as_mut_ptr(),
-        want as u32,
+        crate::privileged::lib::low_u32_from_usize(want),
         0,
         src_ptr as *mut u8,
         src_len_ptr as *mut u32,
@@ -458,8 +467,6 @@ pub fn recvfrom_syscall(
 }
 
 /// setsockopt — 设置 socket 选项 (按 valen 全长 copy-in, 覆盖 i32 / timeval / mreq 选项)
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub fn setsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, valen: u32) -> i64 {
     if fd < 0 {
         return Errno::EBADF.as_ret();
@@ -479,7 +486,13 @@ pub fn setsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, valen
             return Errno::EFAULT.as_ret();
         }
     }
-    let rc = net_socket::sm_setsockopt(fd, level, optname, buf.as_ptr(), len as u32);
+    let rc = net_socket::sm_setsockopt(
+        fd,
+        level,
+        optname,
+        buf.as_ptr(),
+        crate::privileged::lib::low_u32_from_usize(len),
+    );
     i64::from(rc)
 }
 

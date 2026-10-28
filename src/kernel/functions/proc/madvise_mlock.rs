@@ -199,7 +199,9 @@ impl MlockError {
             Errno::EAGAIN => Self::Kernel(K::WouldBlock),
             Errno::EPERM => Self::Kernel(K::PermissionDenied),
             Errno::ESRCH => Self::NotMapped,
-            other => Self::Kernel(K::Other(other.as_ret() as i32)),
+            other => Self::Kernel(K::Other(crate::functions::intcast::low_i32_from_i64(
+                other.as_ret(),
+            ))),
         }
     }
 }
@@ -306,7 +308,8 @@ pub fn munlockall() -> MlockResult<()> {
 /// 当 `vec` 长度不足以容纳查询结果时返回 `InvalidArgument`; 底层查询
 /// 返回非零时转换为对应的 `MlockError`.
 pub fn mincore(addr: usize, len: usize, vec: &mut [u8]) -> MlockResult<()> {
-    let expected_pages = (len + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
+    let expected_pages = (len + crate::functions::intcast::usize_from_u64(PAGE_SIZE) - 1)
+        / crate::functions::intcast::usize_from_u64(PAGE_SIZE);
     if vec.len() < expected_pages {
         return Err(MlockError::Kernel(
             crate::functions::error::KernelError::InvalidArgument,

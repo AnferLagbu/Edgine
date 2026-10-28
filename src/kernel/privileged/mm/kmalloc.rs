@@ -453,9 +453,7 @@ pub struct KernelHeap {
 //         所有访问由 IrqSpinLock + 内部原子锁保护.
 unsafe impl Send for KernelHeap {}
 
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
-const EARLY_BUFFER_SIZE: usize = PAGE_SIZE as usize;
+const EARLY_BUFFER_SIZE: usize = crate::privileged::lib::usize_from_u64(PAGE_SIZE);
 
 impl KernelHeap {
     /// 构造未初始化的内核堆 (堆区间为零, 空空闲链表, 统计清零).
@@ -506,8 +504,6 @@ impl KernelHeap {
     }
 
     /// 从内核堆分配内存
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     pub fn allocate(&self, size: usize) -> Option<*mut u8> {
         if size == 0 {
             return None;
@@ -522,7 +518,7 @@ impl KernelHeap {
         let mut result = if self.initialized.load(Ordering::Acquire) {
             self.allocate_first_fit(actual_size)
         } else {
-            self.early_allocate(actual_size as usize)
+            self.early_allocate(crate::privileged::lib::usize_from_u64(actual_size))
         };
 
         result = result.inspect(|ptr| {
@@ -599,8 +595,6 @@ impl KernelHeap {
     }
 
     /// 重新分配内存块
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     pub fn reallocate(&self, ptr: *mut u8, size: usize) -> Option<*mut u8> {
         if size == 0 {
             self.deallocate(ptr);
@@ -620,8 +614,10 @@ impl KernelHeap {
             return None;
         }
 
-        let old_data_size = (header.size() - core::mem::size_of::<HeapHeader>() as u64) as usize;
-        let new_aligned = align_up(size as u64, ALIGNMENT) as usize;
+        let old_data_size = crate::privileged::lib::usize_from_u64(
+            header.size() - core::mem::size_of::<HeapHeader>() as u64,
+        );
+        let new_aligned = crate::privileged::lib::usize_from_u64(align_up(size as u64, ALIGNMENT));
 
         if new_aligned <= old_data_size {
             self.release_lock(&flags);
@@ -800,8 +796,6 @@ impl KernelHeap {
     }
 
     /// 将一个块拆分为两个
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
@@ -810,7 +804,7 @@ impl KernelHeap {
         let original_size = header.size();
         let remaining = original_size - size;
 
-        let second_part = header.adjacent_next(size as usize);
+        let second_part = header.adjacent_next(crate::privileged::lib::usize_from_u64(size));
         second_part.write(HeapHeader::new(remaining, true));
 
         header.set_size(size);
@@ -834,10 +828,8 @@ impl KernelHeap {
         self.coalesce_backward(header)
     }
 
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn coalesce_forward(&self, header: HeaderRef) {
-        let next_addr = header.adjacent_next(header.size() as usize);
+        let next_addr = header.adjacent_next(crate::privileged::lib::usize_from_u64(header.size()));
         // SAFETY: 读取 heap_end, 持有堆锁, 独占访问
         let heap_end = HeapEndRef::new(core::ptr::addr_of!(self.heap_end)).get();
         let heap_end_ptr = heap_end.0 as *mut u8;
@@ -850,8 +842,6 @@ impl KernelHeap {
         }
     }
 
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn coalesce_backward(&self, header: HeaderRef) -> HeaderRef {
         let head = FreeListHeadRef::new(core::ptr::addr_of!(self.free_list_head));
         let mut current = head.get();
@@ -859,7 +849,8 @@ impl KernelHeap {
         while !current.is_null() {
             // SAFETY: current is a valid node in the free list
             let candidate = unsafe { HeaderRef::new_unchecked(current) };
-            let candidate_end = candidate.byte_ptr() as usize + candidate.size() as usize;
+            let candidate_end = candidate.byte_ptr() as usize
+                + crate::privileged::lib::usize_from_u64(candidate.size());
 
             if candidate_end == header.byte_ptr() as usize {
                 self.remove_from_free_list(candidate);
@@ -918,8 +909,6 @@ impl KernelHeap {
     }
 
     /// 通过 VMM/PMM 申请更多页来扩展堆
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     fn expand_heap(&self, size: u64) -> Option<*mut u8> {
         let pages_needed = size.div_ceil(PAGE_SIZE);
         let expand_by = pages_needed * PAGE_SIZE;
@@ -927,7 +916,7 @@ impl KernelHeap {
         let vmm = get_vmm();
         let pmm = get_pmm();
 
-        let phys = pmm.alloc_pages(pages_needed as usize)?;
+        let phys = pmm.alloc_pages(crate::privileged::lib::usize_from_u64(pages_needed))?;
 
         // SAFETY: 读取 heap_end, 当前持有堆锁, 独占访问
         let current_end = HeapEndRef::new(core::ptr::addr_of!(self.heap_end)).get();
@@ -962,7 +951,7 @@ impl KernelHeap {
                     let unmap_virt = VirtAddr(new_start.0 + j * PAGE_SIZE);
                     vmm.unmap_page(unmap_virt);
                 }
-                pmm.free_pages(phys, pages_needed as usize);
+                pmm.free_pages(phys, crate::privileged::lib::usize_from_u64(pages_needed));
                 return None;
             }
         }

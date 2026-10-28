@@ -173,7 +173,7 @@ pub fn ppoll_syscall(
         let ms = sec
             .saturating_mul(1000)
             .saturating_add((nsec + 999_999) / 1_000_000);
-        timeout_ms = ms.min(i64::from(i32::MAX)) as i32;
+        timeout_ms = crate::functions::intcast::low_i32_from_i64(ms.min(i64::from(i32::MAX)));
     }
 
     match crate::functions::proc::signal::with_temporary_sigmask(sigmask_ptr, sigsetsize, || {

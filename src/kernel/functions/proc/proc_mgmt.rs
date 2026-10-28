@@ -32,7 +32,8 @@ pub fn proc_list_syscall(buf_ptr: u64, max_entries: u32) -> i64 {
         return Errno::EFAULT.as_ret();
     }
 
-    let entry_size = core::mem::size_of::<ProcListEntry>() as u32;
+    let entry_size =
+        crate::functions::intcast::low_u32_from_usize(core::mem::size_of::<ProcListEntry>());
     let mut count: i32 = 0;
 
     crate::privileged::proc::process_for_each(|proc| {

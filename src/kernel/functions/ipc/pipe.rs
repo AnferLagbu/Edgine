@@ -138,7 +138,8 @@ pub fn pipe_read_safe(
         }
 
         buf[read_count as usize] = pipe.buffer[pipe.read_pos as usize];
-        pipe.read_pos = (pipe.read_pos + 1) % PIPE_BUFFER_SIZE as u32;
+        pipe.read_pos =
+            (pipe.read_pos + 1) % crate::functions::intcast::low_u32_from_usize(PIPE_BUFFER_SIZE);
         pipe.count -= 1;
         read_count += 1;
 
@@ -186,7 +187,7 @@ pub fn pipe_write_safe(
     let mut written: u32 = 0;
 
     while written < count {
-        if pipe.count >= PIPE_BUFFER_SIZE as u32 {
+        if pipe.count >= crate::functions::intcast::low_u32_from_usize(PIPE_BUFFER_SIZE) {
             // 部分写: 已写入 >0 时返回已写字节数 (调用方据此推进缓冲),
             // 一个字节都写不下才报"缓冲区满".
             if written > 0 {
@@ -196,7 +197,8 @@ pub fn pipe_write_safe(
         }
 
         pipe.buffer[pipe.write_pos as usize] = buf[written as usize];
-        pipe.write_pos = (pipe.write_pos + 1) % PIPE_BUFFER_SIZE as u32;
+        pipe.write_pos =
+            (pipe.write_pos + 1) % crate::functions::intcast::low_u32_from_usize(PIPE_BUFFER_SIZE);
         pipe.count += 1;
         written += 1;
 
@@ -295,7 +297,9 @@ fn pipe_block_on(namespace: &mut IpcNamespace, key: i32, want_read: bool) -> boo
     let ready = if want_read {
         key != pipe.read_key || pipe.count > 0 || pipe.writers == 0
     } else {
-        key != pipe.write_key || pipe.count < PIPE_BUFFER_SIZE as u32 || pipe.readers == 0
+        key != pipe.write_key
+            || pipe.count < crate::functions::intcast::low_u32_from_usize(PIPE_BUFFER_SIZE)
+            || pipe.readers == 0
     };
     if ready {
         return true;

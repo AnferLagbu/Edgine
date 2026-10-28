@@ -304,8 +304,6 @@ pub unsafe fn kpti_exit_to_user() {
 /// 调用方保证: `KERNEL_PML4` 已初始化; PMM 可分配页面; KPTI 全局状态在 boot 阶段被独占写入。
 /// # Panics
 /// 分配 `USER_PML4` 页失败时 panic。
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 #[expect(
     clippy::verbose_bit_mask,
     reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
@@ -328,7 +326,11 @@ pub unsafe fn kpti_init(kernel_pml4: u64) {
     // 2. 清零
     // SAFETY: pmm 分配的页已对齐, 物理页属于内核
     unsafe {
-        core::ptr::write_bytes(user_pml4_virt.0 as *mut u8, 0, PAGE_SIZE as usize);
+        core::ptr::write_bytes(
+            user_pml4_virt.0 as *mut u8,
+            0,
+            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+        );
     }
 
     // 3. [已移除] 原 `USER_PML4[256..512] = KERNEL_PML4[256..512]` 高半区整段复制。
@@ -683,7 +685,6 @@ pub(super) unsafe fn map_text_region_in_user_pml4(
 // 符号桩化 (host-test): 调用点 (map_kpti_data_pages / map_text_region_in_user_pml4)
 // 均已被 cfg 排除, host 下无调用者, 函数整体不编译 (避免 dead_code).
 #[cfg(not(feature = "host-test"))]
-#[expect(clippy::cast_possible_truncation)]
 unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _desc: &str) {
     // SAFETY: 调用方保证 user_pml4 有效; vma/phys 是合法地址;
     // boot 阶段单线程执行, 无并发修改页表. PMM 分配的页已对齐且属于内核.
@@ -703,7 +704,11 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
             assert!(new_page != 0, "[KPTI] map_text_page: alloc PDPT failed");
             let new_page_virt = PhysAddr(new_page).to_virt();
             // SAFETY: new_page 由 PMM 分配, 属于内核; 清零 4KB
-            core::ptr::write_bytes(new_page_virt.0 as *mut u8, 0, PAGE_SIZE as usize);
+            core::ptr::write_bytes(
+                new_page_virt.0 as *mut u8,
+                0,
+                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            );
             // 设置 PML4 项: PRESENT + WRITABLE + USER
             core::ptr::write_volatile(user_pml4.add(pml4_idx as usize), new_page | 0x7);
             new_page
@@ -719,7 +724,11 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
             assert!(new_page != 0, "[KPTI] map_text_page: alloc PD failed");
             let new_page_virt = PhysAddr(new_page).to_virt();
             // SAFETY: new_page 由 PMM 分配, 属于内核; 清零 4KB
-            core::ptr::write_bytes(new_page_virt.0 as *mut u8, 0, PAGE_SIZE as usize);
+            core::ptr::write_bytes(
+                new_page_virt.0 as *mut u8,
+                0,
+                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            );
             core::ptr::write_volatile(pdpt.add(pdpt_idx as usize), new_page | 0x7);
             new_page
         };
@@ -747,11 +756,15 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
                 assert!(new_pt != 0, "[KPTI] map_text_page: alloc PT (split) failed");
                 let new_pt_virt = PhysAddr(new_pt).to_virt();
                 // SAFETY: new_pt 由 PMM 分配; 清零后填充 512 PTE
-                core::ptr::write_bytes(new_pt_virt.0 as *mut u8, 0, PAGE_SIZE as usize);
+                core::ptr::write_bytes(
+                    new_pt_virt.0 as *mut u8,
+                    0,
+                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                );
                 let new_pt_ptr = new_pt_virt.0 as *mut u64;
                 for i in 0..512u64 {
                     core::ptr::write_volatile(
-                        new_pt_ptr.add(i as usize),
+                        new_pt_ptr.add(crate::privileged::lib::usize_from_u64(i)),
                         (huge_base + i * PAGE_SIZE as u64) | pde_flags,
                     );
                 }
@@ -774,7 +787,11 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
             assert!(new_page != 0, "[KPTI] map_text_page: alloc PT failed");
             let new_page_virt = PhysAddr(new_page).to_virt();
             // SAFETY: new_page 由 PMM 分配, 属于内核; 清零 4KB
-            core::ptr::write_bytes(new_page_virt.0 as *mut u8, 0, PAGE_SIZE as usize);
+            core::ptr::write_bytes(
+                new_page_virt.0 as *mut u8,
+                0,
+                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            );
             core::ptr::write_volatile(pd.add(pd_idx as usize), new_page | 0x7);
             new_page
         };

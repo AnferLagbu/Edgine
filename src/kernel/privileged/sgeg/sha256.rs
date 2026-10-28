@@ -219,9 +219,9 @@ pub fn sha256(data: &[u8]) -> [u8; PWM_DIGEST_LEN] {
     let mut hash = [0u8; PWM_DIGEST_LEN];
     for j in 0..8 {
         hash[j * 4] = (state[j] >> 24) as u8;
-        hash[j * 4 + 1] = (state[j] >> 16) as u8;
-        hash[j * 4 + 2] = (state[j] >> 8) as u8;
-        hash[j * 4 + 3] = state[j] as u8;
+        hash[j * 4 + 1] = crate::privileged::lib::low_u8_from_u32(state[j] >> 16);
+        hash[j * 4 + 2] = crate::privileged::lib::low_u8_from_u32(state[j] >> 8);
+        hash[j * 4 + 3] = crate::privileged::lib::low_u8_from_u32(state[j]);
     }
 
     hash

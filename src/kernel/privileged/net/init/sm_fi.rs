@@ -258,8 +258,6 @@ pub(crate) fn endpoint_from_smol(
 ///
 /// # Safety
 /// `addr` 非空时必须指向至少 28 字节可写内存 (V6 路径); `addrlen` 非空时必须指向有效 u32.
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 #[expect(
     clippy::ptr_as_ptr,
     reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
@@ -287,7 +285,12 @@ pub(crate) unsafe fn write_sockaddr(
                 };
                 core::ptr::write(addr as *mut SockaddrIn, sin);
                 if !addrlen.is_null() {
-                    core::ptr::write(addrlen, core::mem::size_of::<SockaddrIn>() as u32);
+                    core::ptr::write(
+                        addrlen,
+                        crate::privileged::lib::low_u32_from_usize(
+                            core::mem::size_of::<SockaddrIn>(),
+                        ),
+                    );
                 }
             }
             crate::privileged::net::iface_trait::IpAddr::V6(v6) => {
@@ -300,7 +303,12 @@ pub(crate) unsafe fn write_sockaddr(
                 };
                 core::ptr::write(addr as *mut SockaddrIn6, sin6);
                 if !addrlen.is_null() {
-                    core::ptr::write(addrlen, core::mem::size_of::<SockaddrIn6>() as u32);
+                    core::ptr::write(
+                        addrlen,
+                        crate::privileged::lib::low_u32_from_usize(
+                            core::mem::size_of::<SockaddrIn6>(),
+                        ),
+                    );
                 }
             }
         }
@@ -1483,8 +1491,6 @@ pub unsafe extern "C" fn sm_recvfrom(
 /// 调用方 (functions) 须先校验可读范围.
 /// `NET_LOCK` 持有; 由 `sys_sendmsg` 分发.
 #[unsafe(no_mangle)]
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 #[expect(
     clippy::ptr_as_ptr,
     reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
@@ -1502,7 +1508,9 @@ pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32
         // 读 Msghdr
         // SAFETY: msg 由 functions 校验可读 56 字节 (u64 Linux x86_64 / aarch64 布局).
         let msg_iov_ptr = core::ptr::read_unaligned(msg.add(16) as *const u64);
-        let msg_iovlen_us = core::ptr::read_unaligned(msg.add(24) as *const u64) as usize;
+        let msg_iovlen_us = crate::privileged::lib::usize_from_u64(core::ptr::read_unaligned(
+            msg.add(24) as *const u64,
+        ));
         if msg_iovlen_us == 0 || msg_iovlen_us > 1024 {
             return -E_INVAL;
         }
@@ -1518,9 +1526,9 @@ pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32
             // SAFETY: msg_iov + i*Iovec(16) 可读 16 字节 (functions 校验 iov 范围).
             let iov_base =
                 core::ptr::read_unaligned((msg_iov_ptr as *const u8).add(i * 16) as *const u64);
-            let iov_len =
-                core::ptr::read_unaligned((msg_iov_ptr as *const u8).add(i * 16 + 8) as *const u64)
-                    as usize;
+            let iov_len = crate::privileged::lib::usize_from_u64(core::ptr::read_unaligned(
+                (msg_iov_ptr as *const u8).add(i * 16 + 8) as *const u64,
+            ));
             bases[i] = iov_base;
             lens[i] = iov_len;
             if iov_base == 0 || iov_len == 0 {
@@ -1550,7 +1558,12 @@ pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32
             );
             off += lens[i];
         }
-        let rc = sm_send(fd, region.as_mut_ptr(), total as u32, 0);
+        let rc = sm_send(
+            fd,
+            region.as_mut_ptr(),
+            crate::privileged::lib::low_u32_from_usize(total),
+            0,
+        );
         rc
     }
 }
@@ -1561,8 +1574,6 @@ pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32
 /// `msg` 必须是有效可写用户指针, functions 校验.
 /// `NET_LOCK` 持有; 由 `sys_recvmsg` 分发.
 #[unsafe(no_mangle)]
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 #[expect(
     clippy::ptr_as_ptr,
     reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
@@ -1577,7 +1588,9 @@ pub unsafe extern "C" fn sm_recvmsg(fd: i32, msg: *mut u8, _flags: i32) -> i32 {
             return -E_BADF;
         }
         let msg_iov_ptr = core::ptr::read_unaligned(msg.add(16) as *const u64);
-        let msg_iovlen_us = core::ptr::read_unaligned(msg.add(24) as *const u64) as usize;
+        let msg_iovlen_us = crate::privileged::lib::usize_from_u64(core::ptr::read_unaligned(
+            msg.add(24) as *const u64,
+        ));
         if msg_iovlen_us == 0 || msg_iovlen_us > 1024 {
             return -E_INVAL;
         }
@@ -1591,9 +1604,9 @@ pub unsafe extern "C" fn sm_recvmsg(fd: i32, msg: *mut u8, _flags: i32) -> i32 {
         for i in 0..msg_iovlen_us {
             let iov_base =
                 core::ptr::read_unaligned((msg_iov_ptr as *const u8).add(i * 16) as *const u64);
-            let iov_len =
-                core::ptr::read_unaligned((msg_iov_ptr as *const u8).add(i * 16 + 8) as *const u64)
-                    as usize;
+            let iov_len = crate::privileged::lib::usize_from_u64(core::ptr::read_unaligned(
+                (msg_iov_ptr as *const u8).add(i * 16 + 8) as *const u64,
+            ));
             bases[i] = iov_base;
             lens[i] = iov_len;
             if iov_base == 0 || iov_len == 0 {
@@ -1610,7 +1623,12 @@ pub unsafe extern "C" fn sm_recvmsg(fd: i32, msg: *mut u8, _flags: i32) -> i32 {
         let Some(region) = crate::privileged::iobuf::IobRegion::alloc(cap) else {
             return -E_NOMEM;
         };
-        let n = sm_recv(fd, region.as_mut_ptr(), cap as u32, 0);
+        let n = sm_recv(
+            fd,
+            region.as_mut_ptr(),
+            crate::privileged::lib::low_u32_from_usize(cap),
+            0,
+        );
         if n <= 0 {
             return n;
         }

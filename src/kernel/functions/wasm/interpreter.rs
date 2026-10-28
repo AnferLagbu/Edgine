@@ -61,11 +61,13 @@ pub struct Interpreter {
 impl Interpreter {
     /// 由 WASM 模块与配置构造解释器 (统计 import 数并初始化全局量与表)
     pub fn new(module: WasmModule, config: InterpreterConfig) -> Self {
-        let import_func_count = module
-            .imports
-            .iter()
-            .filter(|i| matches!(i.desc, ImportKind::Function(_)))
-            .count() as u32;
+        let import_func_count = crate::functions::intcast::low_u32_from_usize(
+            module
+                .imports
+                .iter()
+                .filter(|i| matches!(i.desc, ImportKind::Function(_)))
+                .count(),
+        );
 
         let import_global_count = module
             .imports
@@ -373,7 +375,9 @@ impl Interpreter {
         let func_type = self.get_func_type(func_idx)?.clone();
         let body = self.get_func_body(func_idx)?;
 
-        if self.call_stack.len() as u32 >= self.config.max_call_depth {
+        if crate::functions::intcast::low_u32_from_usize(self.call_stack.len())
+            >= self.config.max_call_depth
+        {
             return Err(WasmError::CallDepthExceeded);
         }
 

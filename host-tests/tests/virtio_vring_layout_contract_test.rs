@@ -107,7 +107,7 @@ fn mmio_queue_num_register_defined_with_setter() {
 fn net_legacy_uses_full_queue_num_max() {
     let src = read(NET_RS);
     assert!(
-        src.contains("device.queue_num_max() as u16"),
+        src.contains("crate::functions::intcast::low_u16_from_u32(device.queue_num_max())"),
         "legacy 必须全量取 QueueNumMax 与设备端固定 num 对齐 (截断即错位)"
     );
     assert!(

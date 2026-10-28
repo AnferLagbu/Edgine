@@ -103,13 +103,16 @@ pub fn ioctl_uffd(fd: i32, request: u64, arg: u64) -> i64 {
             if !read_struct_from_user(arg, &mut cp) {
                 return Errno::EFAULT.as_ret();
             }
-            if cp.len as usize != crate::privileged::mm::PAGE_SIZE as usize {
+            if crate::functions::intcast::usize_from_u64(cp.len)
+                != crate::functions::intcast::usize_from_u64(crate::privileged::mm::PAGE_SIZE)
+            {
                 return Errno::EINVAL.as_ret();
             }
             if !crate::privileged::syscall::raw::check_user_buf(cp.src, cp.len) {
                 return Errno::EFAULT.as_ret();
             }
-            let mut page = [0u8; crate::privileged::mm::PAGE_SIZE as usize];
+            let mut page =
+                [0u8; crate::functions::intcast::usize_from_u64(crate::privileged::mm::PAGE_SIZE)];
             let page_len = page.len();
             match crate::privileged::mm::copy_user::copy_from_user(&mut page, cp.src, page_len) {
                 Ok(n) if n == page_len => {}
@@ -131,7 +134,8 @@ pub fn ioctl_uffd(fd: i32, request: u64, arg: u64) -> i64 {
             if !read_struct_from_user(arg, &mut zp) {
                 return Errno::EFAULT.as_ret();
             }
-            if zp.range.len as usize != crate::privileged::mm::PAGE_SIZE as usize
+            if crate::functions::intcast::usize_from_u64(zp.range.len)
+                != crate::functions::intcast::usize_from_u64(crate::privileged::mm::PAGE_SIZE)
                 || zp.range.start % crate::privileged::mm::PAGE_SIZE != 0
             {
                 return Errno::EINVAL.as_ret();

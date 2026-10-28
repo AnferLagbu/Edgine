@@ -26,7 +26,11 @@ impl UnkfsInode {
 impl Inode for UnkfsInode {
     fn read(&self, _offset: u64, buf: &mut [u8], _pwm: u64) -> KernelResult<usize> {
         let unkfs = get_unkfs();
-        let result = unkfs.read(self.fd, buf, buf.len() as u32);
+        let result = unkfs.read(
+            self.fd,
+            buf,
+            crate::functions::intcast::low_u32_from_usize(buf.len()),
+        );
         if result < 0 {
             Err(KernelError::Io)
         } else {
@@ -36,7 +40,11 @@ impl Inode for UnkfsInode {
 
     fn write(&self, _offset: u64, buf: &[u8], _pwm: u64) -> KernelResult<usize> {
         let unkfs = get_unkfs();
-        let result = unkfs.write(self.fd, buf, buf.len() as u32);
+        let result = unkfs.write(
+            self.fd,
+            buf,
+            crate::functions::intcast::low_u32_from_usize(buf.len()),
+        );
         if result < 0 {
             Err(KernelError::Io)
         } else {
@@ -50,9 +58,9 @@ impl Inode for UnkfsInode {
             .stat(&self.rel_path, pwm)
             .map_or(Err(KernelError::FileNotFound), |obj| {
                 Ok(VfsStat {
-                    node_id: obj.obj_id as u32,
+                    node_id: crate::functions::intcast::low_u32_from_u64(obj.obj_id),
                     mode: obj.pwm_perm,
-                    size: obj.size as u32,
+                    size: crate::functions::intcast::low_u32_from_u64(obj.size),
                     owner_pwm: obj.owner_pwm,
                     group_pwm: obj.group_pwm,
                     perm: obj.pwm_perm,
@@ -195,7 +203,11 @@ impl crate::functions::fs::FileSystem for UnkfsData {
         _pwm: u64,
     ) -> crate::functions::fs::KernelResult<usize> {
         let _ = offset;
-        let result = self.read(handle, buf, buf.len() as u32);
+        let result = self.read(
+            handle,
+            buf,
+            crate::functions::intcast::low_u32_from_usize(buf.len()),
+        );
         if result < 0 {
             Err(KernelError::Io)
         } else {
@@ -211,7 +223,11 @@ impl crate::functions::fs::FileSystem for UnkfsData {
         _pwm: u64,
     ) -> crate::functions::fs::KernelResult<usize> {
         let _ = offset;
-        let result = self.write(handle, buf, buf.len() as u32);
+        let result = self.write(
+            handle,
+            buf,
+            crate::functions::intcast::low_u32_from_usize(buf.len()),
+        );
         if result < 0 {
             Err(KernelError::Io)
         } else {
@@ -227,9 +243,9 @@ impl crate::functions::fs::FileSystem for UnkfsData {
         self.stat(rel_path, pwm)
             .map_or(Err(KernelError::FileNotFound), |obj| {
                 Ok(crate::functions::fs::VfsStat {
-                    node_id: obj.obj_id as u32,
+                    node_id: crate::functions::intcast::low_u32_from_u64(obj.obj_id),
                     mode: obj.pwm_perm,
-                    size: obj.size as u32,
+                    size: crate::functions::intcast::low_u32_from_u64(obj.size),
                     owner_pwm: obj.owner_pwm,
                     group_pwm: obj.group_pwm,
                     perm: obj.pwm_perm,

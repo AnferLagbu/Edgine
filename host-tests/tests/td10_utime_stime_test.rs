@@ -115,7 +115,9 @@ fn test_in_kern_toggle_round_trip() {
         "set 必须走 CURRENT_IN_KERN.store(_, SeqCst)"
     );
     assert!(
-        src.contains("CURRENT_IN_KERN.load(Ordering::SeqCst) as u32"),
+        src.contains(
+            "crate::privileged::lib::low_u32_from_u64(CURRENT_IN_KERN.load(Ordering::SeqCst))"
+        ),
         "get 走 load"
     );
 }

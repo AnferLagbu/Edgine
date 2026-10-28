@@ -434,14 +434,12 @@ unsafe fn net_save() {
 /// Copy newtype, 用 `transmute_copy` 替代 transmute: 编译期强制 size 匹配, 不依赖
 /// repr(transparent) 假设).
 #[inline]
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 fn as_u32_handle(h: smoltcp::iface::SocketHandle) -> u32 {
     // SAFETY: smoltcp::iface::SocketHandle 是单字段 Copy tuple struct (字段类型 usize),
     //         size_of::<SocketHandle>() == size_of::<usize>() 编译期由 transmute_copy 强制.
     //         不要求 repr(transparent) 假设, 避免 W5 记录的 transmute UB 风险.
     let raw: usize = unsafe { core::mem::transmute_copy(&h) };
-    raw as u32
+    crate::privileged::lib::low_u32_from_usize(raw)
 }
 
 /// u32 → `SocketHandle` (作为 `as_u32_handle` 的 companion helper).

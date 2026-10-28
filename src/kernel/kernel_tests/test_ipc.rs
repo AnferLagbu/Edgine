@@ -28,7 +28,14 @@ fn test_pipe_basic() -> TestResult {
     };
 
     let data = [0x41u8; 4];
-    if pipe::pipe_write_safe(&mut ns, wfd, &data, data.len() as u32).is_err() {
+    if pipe::pipe_write_safe(
+        &mut ns,
+        wfd,
+        &data,
+        crate::privileged::lib::low_u32_from_usize(data.len()),
+    )
+    .is_err()
+    {
         return TestResult::Fail("pipe_write failed");
     }
 

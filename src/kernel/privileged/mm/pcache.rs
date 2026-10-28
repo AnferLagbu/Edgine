@@ -42,25 +42,25 @@ use crate::privileged::sync::IrqSpinLock;
 /// 将物理页内容清零
 ///
 /// 用于新分配的物理页初始化, 防止信息泄漏.
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 fn zero_phys_page(phys: PhysAddr) {
     let virt = phys.to_virt();
     // SAFETY: phys 由 PMM 分配, to_virt() 返回有效的内核虚拟地址;
     // 写入 PAGE_SIZE 字节不会越界 (物理页按 PAGE_SIZE 对齐分配).
     unsafe {
-        core::ptr::write_bytes(virt.0 as *mut u8, 0, PAGE_SIZE as usize);
+        core::ptr::write_bytes(
+            virt.0 as *mut u8,
+            0,
+            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+        );
     }
 }
 
 /// 将数据复制到物理页
 ///
 /// 复制长度取 `min(src.len(), PAGE_SIZE)`, 不足部分保持原值 (通常为零).
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 fn copy_to_phys_page(phys: u64, src: &[u8]) {
     let dst_virt = crate::privileged::mm::phys_to_virt(phys);
-    let copy_len = core::cmp::min(src.len(), PAGE_SIZE as usize);
+    let copy_len = core::cmp::min(src.len(), crate::privileged::lib::usize_from_u64(PAGE_SIZE));
     // SAFETY: phys 是 PMM 分配的有效物理页, phys_to_virt 返回有效的内核虚拟地址;
     // copy_len <= PAGE_SIZE, 不会越界; src 是有效切片.
     unsafe {
@@ -71,11 +71,9 @@ fn copy_to_phys_page(phys: u64, src: &[u8]) {
 /// 从物理页复制数据到目标缓冲区
 ///
 /// 复制长度取 `min(dst.len(), PAGE_SIZE)`.
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 fn copy_from_phys_page(phys: u64, dst: &mut [u8]) {
     let src_virt = crate::privileged::mm::phys_to_virt(phys);
-    let copy_len = core::cmp::min(dst.len(), PAGE_SIZE as usize);
+    let copy_len = core::cmp::min(dst.len(), crate::privileged::lib::usize_from_u64(PAGE_SIZE));
     // SAFETY: phys 是 PMM 分配的有效物理页, phys_to_virt 返回有效的内核虚拟地址;
     // copy_len <= PAGE_SIZE, 不会越界; dst 是有效切片.
     unsafe {
@@ -309,13 +307,11 @@ static PAGE_CACHE: [IrqSpinLock<PageCacheBucket>; PCACHE_HASH_BUCKETS] =
     [const { IrqSpinLock::new(PageCacheBucket::new()) }; PCACHE_HASH_BUCKETS];
 
 /// 计算哈希桶索引
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 fn pcache_hash(inode_id: u32, page_index: u64) -> usize {
     let h = u64::from(inode_id)
         .wrapping_mul(0x9E37_79B9_7F4A_7C15)
         .wrapping_add(page_index.wrapping_mul(0x517C_C1B7_2722_0A95));
-    (h as usize) & (PCACHE_HASH_BUCKETS - 1)
+    crate::privileged::lib::usize_from_u64(h) & (PCACHE_HASH_BUCKETS - 1)
 }
 
 // ============================================================================
@@ -459,8 +455,6 @@ pub fn pcache_release_for_va(pml4: u64, va: u64, inode_id: u32, page_index: u64)
 ///
 /// - `dest_virt` 必须指向有效的、已映射的用户空间页
 /// - `phys` 必须是 Page Cache 中的有效物理页
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub unsafe fn pcache_copy_to_user(phys: u64, dest_virt: u64) {
     unsafe {
         let src_virt = crate::privileged::mm::phys_to_virt(phys);
@@ -468,7 +462,7 @@ pub unsafe fn pcache_copy_to_user(phys: u64, dest_virt: u64) {
         core::ptr::copy_nonoverlapping(
             src_virt as *const u8,
             dest_virt as *mut u8,
-            PAGE_SIZE as usize,
+            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
         );
     }
 }
@@ -543,12 +537,18 @@ fn test_pcache_fill_len_clamped() -> crate::privileged::tests::TestResult {
     // fill 的 copy_len 应取 min(src.len(), PAGE_SIZE)
     // 我们通过计算期望 copy_len 验证 (不实际触发 PMM 分配)
     let src_short = [0u8; 100];
-    let expected = core::cmp::min(src_short.len(), PAGE_SIZE as usize);
+    let expected = core::cmp::min(
+        src_short.len(),
+        crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+    );
     check!(expected == 100, "short src copies full");
-    let src_long = [0u8; (PAGE_SIZE as usize) + 1024];
-    let expected2 = core::cmp::min(src_long.len(), PAGE_SIZE as usize);
+    let src_long = [0u8; crate::privileged::lib::usize_from_u64(PAGE_SIZE) + 1024];
+    let expected2 = core::cmp::min(
+        src_long.len(),
+        crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+    );
     check!(
-        expected2 == PAGE_SIZE as usize,
+        expected2 == crate::privileged::lib::usize_from_u64(PAGE_SIZE),
         "long src clamped to PAGE_SIZE"
     );
     TestResult::Pass

@@ -79,17 +79,25 @@ pub fn wasi_sock_connect(ctx: &mut WasiContext, interp: &mut Interpreter) -> Res
     let base = u64::from(addr_ptr);
 
     let read_u16 = |off: u64| -> u16 {
-        let lo = mem.read_u8((base + off) as u32).unwrap_or(0);
-        let hi = mem.read_u8((base + off + 1) as u32).unwrap_or(0);
+        let lo = mem
+            .read_u8(crate::functions::intcast::low_u32_from_u64(base + off))
+            .unwrap_or(0);
+        let hi = mem
+            .read_u8(crate::functions::intcast::low_u32_from_u64(base + off + 1))
+            .unwrap_or(0);
         u16::from_le_bytes([lo, hi])
     };
 
     let sin_port = read_u16(2);
     let sin_addr = [
-        mem.read_u8((base + 4) as u32).unwrap_or(0),
-        mem.read_u8((base + 5) as u32).unwrap_or(0),
-        mem.read_u8((base + 6) as u32).unwrap_or(0),
-        mem.read_u8((base + 7) as u32).unwrap_or(0),
+        mem.read_u8(crate::functions::intcast::low_u32_from_u64(base + 4))
+            .unwrap_or(0),
+        mem.read_u8(crate::functions::intcast::low_u32_from_u64(base + 5))
+            .unwrap_or(0),
+        mem.read_u8(crate::functions::intcast::low_u32_from_u64(base + 6))
+            .unwrap_or(0),
+        mem.read_u8(crate::functions::intcast::low_u32_from_u64(base + 7))
+            .unwrap_or(0),
     ];
 
     let addr = crate::functions::net::socket::SockAddrIn::new(sin_port, sin_addr);
@@ -141,10 +149,13 @@ pub fn wasi_sock_recv(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
             // 将数据写回 WASM 线性内存
             if let Some(ref mut mem) = interp.memory {
                 for (i, &byte) in buf[..n].iter().enumerate() {
-                    let _ = mem.write_u8(iov.buf + i as u32, byte);
+                    let _ = mem.write_u8(
+                        iov.buf + crate::functions::intcast::low_u32_from_usize(i),
+                        byte,
+                    );
                 }
             }
-            total += n as u32;
+            total += crate::functions::intcast::low_u32_from_usize(n);
         } else {
             interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
             return Ok(());
@@ -195,7 +206,11 @@ pub fn wasi_sock_send(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
 
     match crate::functions::net::socket::send(entry.inner_fd, &send_buf) {
         Ok(n) => {
-            write_u32_to_memory(interp, nwritten_ptr, n as u32);
+            write_u32_to_memory(
+                interp,
+                nwritten_ptr,
+                crate::functions::intcast::low_u32_from_usize(n),
+            );
             interp.stack.push(Value::I32(wasi_success()))?;
         }
         Err(_) => {

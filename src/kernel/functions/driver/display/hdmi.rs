@@ -417,7 +417,8 @@ pub fn fill_mock_edid(edid_data: &mut [u8; EDID_MAX_LENGTH]) {
     for i in 0..(EDID_BLOCK_SIZE - 1) {
         checksum = checksum.wrapping_add(edid_data[i]);
     }
-    edid_data[EDID_BLOCK_SIZE - 1] = (256 - checksum as usize) as u8;
+    edid_data[EDID_BLOCK_SIZE - 1] =
+        crate::functions::intcast::low_u8_from_usize(256 - checksum as usize);
 }
 
 // ============================================================================
@@ -693,7 +694,7 @@ pub fn derive_video_timing(mode: &VideoMode) -> VideoTiming {
 
     let v_total = if mode.refresh_rate > 0 && mode.pixel_clock_khz > 0 {
         let v_blank = (u32::from(v_active) * 5 / 100).max(1);
-        (u32::from(v_active) + v_blank) as u16
+        crate::functions::intcast::low_u16_from_u32(u32::from(v_active) + v_blank)
     } else {
         v_active + 50
     };
@@ -701,7 +702,7 @@ pub fn derive_video_timing(mode: &VideoMode) -> VideoTiming {
     let h_total = if mode.refresh_rate > 0 && mode.pixel_clock_khz > 0 {
         let h_total_u32 =
             (mode.pixel_clock_khz * 1000) / (u32::from(v_total) * u32::from(mode.refresh_rate));
-        h_total_u32.max(u32::from(h_active) + 1) as u16
+        crate::functions::intcast::low_u16_from_u32(h_total_u32.max(u32::from(h_active) + 1))
     } else {
         h_active + 200
     };
@@ -742,7 +743,10 @@ pub fn compute_pixel_clock_mul_div(target_khz: u32, base_khz: u32) -> (u8, u8) {
         let err = actual.abs_diff(target_khz);
         if err < best_err {
             best_err = err;
-            best = (mul as u8, div as u8);
+            best = (
+                crate::functions::intcast::low_u8_from_u32(mul),
+                crate::functions::intcast::low_u8_from_u32(div),
+            );
             if err == 0 {
                 break;
             }

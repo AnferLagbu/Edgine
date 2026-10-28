@@ -1082,8 +1082,6 @@ impl Ipv6Addr {
 
     /// 从 8 个 16 位组构造 (每组大端序写入, 与 `std::net::Ipv6Addr` 对齐).
     #[inline(always)]
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
@@ -1100,21 +1098,21 @@ impl Ipv6Addr {
     ) -> Self {
         Self([
             (o0 >> 8) as u8,
-            o0 as u8,
+            crate::privileged::lib::low_u8_from_u16(o0),
             (o1 >> 8) as u8,
-            o1 as u8,
+            crate::privileged::lib::low_u8_from_u16(o1),
             (o2 >> 8) as u8,
-            o2 as u8,
+            crate::privileged::lib::low_u8_from_u16(o2),
             (o3 >> 8) as u8,
-            o3 as u8,
+            crate::privileged::lib::low_u8_from_u16(o3),
             (o4 >> 8) as u8,
-            o4 as u8,
+            crate::privileged::lib::low_u8_from_u16(o4),
             (o5 >> 8) as u8,
-            o5 as u8,
+            crate::privileged::lib::low_u8_from_u16(o5),
             (o6 >> 8) as u8,
-            o6 as u8,
+            crate::privileged::lib::low_u8_from_u16(o6),
             (o7 >> 8) as u8,
-            o7 as u8,
+            crate::privileged::lib::low_u8_from_u16(o7),
         ])
     }
 

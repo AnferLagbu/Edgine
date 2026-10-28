@@ -43,7 +43,10 @@ fn test_fd_plan_constants_match_td01() {
     let src = read_fd_alloc();
     // 方案 C: VFS [0,64) 入重叠校验, Smoltcp 基址紧贴 VFS 上界
     assert!(
-        src.contains("VFS: FdRange = FdRange::new(0, VFS_FD_WIDTH as u16)"),
+        src.contains("pub const VFS: FdRange =")
+            && src.contains(
+                "FdRange::new(0, crate::privileged::lib::low_u16_from_usize(VFS_FD_WIDTH))"
+            ),
         "VFS 段应以基址 0 纳入 FdPlan (方案 C 重叠校验)"
     );
     assert!(

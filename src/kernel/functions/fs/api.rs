@@ -30,9 +30,8 @@ use crate::privileged::mm::PAGE_SIZE;
 /// B2: 4KB 对齐 read 时的 pcache 命中快路径上限 (16 页 = 64KB)
 pub(crate) const PCACHE_FAST_MAX_BYTES: usize = 64 * 1024;
 /// B2: 4KB 对齐 read 时的 pcache 命中快路径下限 (1 页 = 4KB)
-// 有意窄化: 用户内存代理, 指针/长度上下文保证
-#[expect(clippy::cast_possible_truncation)]
-pub(crate) const PCACHE_FAST_MIN_BYTES: usize = PAGE_SIZE as usize;
+pub(crate) const PCACHE_FAST_MIN_BYTES: usize =
+    crate::functions::intcast::usize_from_u64(PAGE_SIZE);
 
 // ============================================================================
 // 对外契约: VFS 通过 `VfsOps` 契约注册 (见 privileged::fs::vfs::ops_trait)

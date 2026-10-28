@@ -88,7 +88,7 @@ impl Pl011Driver {
         while self.regs.read_u32(UARTFR) & UARTFR_RXFE != 0 {
             core::hint::spin_loop();
         }
-        self.regs.read_u32(UARTDR) as u8
+        crate::functions::intcast::low_u8_from_u32(self.regs.read_u32(UARTDR))
     }
 
     /// 写入单个字节 (阻塞, 等待 TX FIFO 非满)。

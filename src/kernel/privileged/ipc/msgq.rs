@@ -152,8 +152,6 @@ pub extern "C" fn ipc_msgq_create(perm: i32) -> IpcId {
 /// `data` 必须是有效可读指针, 至少 `size` 字节, 内存必须在调用期间保持有效。
 /// 由 `sys_msgsnd` 分发, cred 校验已通过。
 #[unsafe(no_mangle)]
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub unsafe extern "C" fn ipc_msgq_send(id: IpcId, type_: u64, data: *const u8, size: u64) -> i32 {
     let ns = super::IPC_NAMESPACE.get_mut();
     let pid = process_get_current_pid();
@@ -162,7 +160,8 @@ pub unsafe extern "C" fn ipc_msgq_send(id: IpcId, type_: u64, data: *const u8, s
         None
     } else {
         // SAFETY: caller guarantees data is valid for size bytes in user memory.
-        let user_data = unsafe { UserReadPtr::new(data, size as usize) };
+        let user_data =
+            unsafe { UserReadPtr::new(data, crate::privileged::lib::usize_from_u64(size)) };
         Some(user_data)
     };
 
@@ -176,7 +175,14 @@ pub unsafe extern "C" fn ipc_msgq_send(id: IpcId, type_: u64, data: *const u8, s
         crate::klog_warn!(Kernel, "IpcStrategy 未注册: ipc_msgq_send");
         return -(Errno::ENOSYS as i32);
     };
-    match s.msgq_send(ns, id, type_, data_slice, size as usize, pid) {
+    match s.msgq_send(
+        ns,
+        id,
+        type_,
+        data_slice,
+        crate::privileged::lib::usize_from_u64(size),
+        pid,
+    ) {
         Ok(()) => 0,
         Err(_) => -1,
     }

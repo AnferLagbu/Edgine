@@ -228,16 +228,12 @@ pub fn on_timer_interrupt() {
 /// `div == 0` 时返回 0 (调用方的未初始化防护); 仅在**最终结果**超 `u64::MAX`
 /// 时饱和截断 (物理上不可达的防御).
 #[inline]
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "cast_possible_truncation: 已先 min(u64::MAX) 饱和, 截断不可能发生; 当前优先 expect"
-)]
 pub(super) fn mul_div_saturating(value: u64, mul: u64, div: u64) -> u64 {
     if div == 0 {
         return 0;
     }
     let product = u128::from(value) * u128::from(mul);
-    (product / u128::from(div)).min(u128::from(u64::MAX)) as u64
+    crate::privileged::lib::low_u64_from_u128((product / u128::from(div)).min(u128::from(u64::MAX)))
 }
 
 /// 读当前架构的硬件自由计数器 (不做序列化屏障)

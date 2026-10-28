@@ -91,8 +91,6 @@ impl GfxConsole {
     /// 3. 显示崩溃消息
     /// 4. 设置光标到横幅下方
     /// 5. 禁用后续滚动，保留崩溃现场
-    // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
-    #[expect(clippy::cast_possible_truncation)]
     pub fn panic_reclaim(&mut self, fb: &mut Framebuffer, msg: &str) {
         PANIC_MODE.store(true, Ordering::Release);
         let fb_w = fb.width();
@@ -114,7 +112,7 @@ impl GfxConsole {
 
         // 3. 横幅文字 "[ KERNEL PANIC ]" — 居中放置
         let banner_text = b"[ KERNEL PANIC ]";
-        let text_px_w = banner_text.len() as u32 * glyph_w;
+        let text_px_w = crate::privileged::lib::low_u32_from_usize(banner_text.len()) * glyph_w;
         let text_x = if fb_w > text_px_w {
             (fb_w - text_px_w) / 2
         } else {
@@ -122,7 +120,7 @@ impl GfxConsole {
         };
         let text_y = glyph_h / 2; // 垂直居中在条内
         for (i, &ch) in banner_text.iter().enumerate() {
-            let px = text_x + i as u32 * glyph_w;
+            let px = text_x + crate::privileged::lib::low_u32_from_usize(i) * glyph_w;
             self.font.render_char(
                 fb,
                 ch as char,

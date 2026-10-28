@@ -191,7 +191,7 @@ impl UnkfsSpaConfig {
             name: n,
             guid: 0,
             ashift: 12,
-            block_size: HV_POOL_BLOCK_SIZE as u32,
+            block_size: crate::functions::intcast::low_u32_from_u64(HV_POOL_BLOCK_SIZE),
             max_vdevs: 8,
             readonly: false,
         }
@@ -280,10 +280,9 @@ impl UnkfsSpa {
 
     /// 获取第一个 vdev 的磁盘 ID (无 vdev 时返回 0)
     fn vdev_0_drive_id(&self) -> u8 {
-        self.vdevs
-            .lock()
-            .first()
-            .map_or(0, |v| v.config.vdev_id as u8)
+        self.vdevs.lock().first().map_or(0, |v| {
+            crate::functions::intcast::low_u8_from_u16(v.config.vdev_id)
+        })
     }
 
     fn read_sector(&self, sector: u32, buf: &mut [u8]) -> i32 {
@@ -341,7 +340,8 @@ impl UnkfsSpa {
         drop(vdevs);
         if asize > 0 {
             let mut ms_list = self.metaslabs.lock();
-            let n_ms = asize.div_ceil(HV_POOL_METASLAB_SIZE) as u32;
+            let n_ms =
+                crate::functions::intcast::low_u32_from_u64(asize.div_ceil(HV_POOL_METASLAB_SIZE));
             for i in 0..n_ms {
                 let ms_start = u64::from(i) * HV_POOL_METASLAB_SIZE + HV_VDEV_LABEL_SIZE;
                 let ms_size = if i < n_ms - 1 {
@@ -349,7 +349,12 @@ impl UnkfsSpa {
                 } else {
                     asize - ms_start + HV_VDEV_LABEL_SIZE
                 };
-                let ms = UnkfsMetaslab::new(ms_list.len() as u32, vdev_id, ms_start, ms_size);
+                let ms = UnkfsMetaslab::new(
+                    crate::functions::intcast::low_u32_from_usize(ms_list.len()),
+                    vdev_id,
+                    ms_start,
+                    ms_size,
+                );
                 ms_list.push(ms);
             }
         }
@@ -385,13 +390,17 @@ impl UnkfsSpa {
         let ms_idx = best_ms_idx?;
         let offset = ms_list[ms_idx].alloc(rounded)?;
         drop(ms_list);
-        let dva = UnkfsDva::new(best_vdev_id, offset, rounded as u32);
+        let dva = UnkfsDva::new(
+            best_vdev_id,
+            offset,
+            crate::functions::intcast::low_u32_from_u64(rounded),
+        );
         let mut bp = UnkfsBlockPointer::null();
         bp.set_dva(0, dva);
         bp.prop.set_cksum_type(kind);
         bp.prop.set_comp_type(comp);
-        bp.prop.logical_size = size as u32;
-        bp.prop.physical_size = rounded as u32;
+        bp.prop.logical_size = crate::functions::intcast::low_u32_from_u64(size);
+        bp.prop.physical_size = crate::functions::intcast::low_u32_from_u64(rounded);
         bp.set_birth(txg);
         self.alloc_count.fetch_add(1, Ordering::Relaxed);
         Some(bp)
@@ -464,7 +473,8 @@ impl UnkfsSpa {
         copy.compute_checksum();
         let ub_bytes = copy.as_bytes();
         let ub_sector =
-            (self.txg_current.load(Ordering::Relaxed) as u32) % HV_UBERBLOCK_COUNT as u32;
+            crate::functions::intcast::low_u32_from_u64(self.txg_current.load(Ordering::Relaxed))
+                % crate::functions::intcast::low_u32_from_usize(HV_UBERBLOCK_COUNT);
         let sector = HV_UBERBLOCK_SECTOR + ub_sector;
         let mut sector_buf = [0u8; 512];
         let copy_len = ub_bytes.len().min(512);
@@ -476,7 +486,7 @@ impl UnkfsSpa {
 
     /// 从最新槽位向前扫描, 返回首个 magic 与校验和均有效的 uberblock.
     pub fn read_uberblock_from_disk(&self) -> Option<UnkfsUberblock> {
-        for i in (0..HV_UBERBLOCK_COUNT as u32).rev() {
+        for i in (0..crate::functions::intcast::low_u32_from_usize(HV_UBERBLOCK_COUNT)).rev() {
             let sector = HV_UBERBLOCK_SECTOR + i;
             let mut sector_buf = [0u8; 512];
             if self.read_sector(sector, &mut sector_buf) != 0 {

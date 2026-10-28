@@ -14,8 +14,6 @@
 /// # Safety
 /// CPUID 指令本身是安全的, 但返回值的解释需要硬件手册知识。
 #[inline(always)]
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 pub fn cpuid(leaf: u32, subleaf: u32) -> (u32, u32, u32, u32) {
     let (eax, ebx, ecx, edx): (u32, u32, u32, u32);
 
@@ -31,7 +29,7 @@ pub fn cpuid(leaf: u32, subleaf: u32) -> (u32, u32, u32, u32) {
             out("edx") edx,
             options(nomem, preserves_flags),
         );
-        ebx = ebx_val as u32;
+        ebx = crate::privileged::lib::low_u32_from_u64(ebx_val);
     }
 
     (eax, ebx, ecx, edx)

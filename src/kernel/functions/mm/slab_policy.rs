@@ -57,7 +57,7 @@ impl SlabPolicy for DefaultSlabPolicy {
         let estimated_objects = usable_space / object_size;
         let bitmap_bytes = estimated_objects.div_ceil(8);
         let actual_usable = usable_space - bitmap_bytes;
-        (actual_usable / object_size) as u32
+        crate::functions::intcast::low_u32_from_usize(actual_usable / object_size)
     }
 
     /// Slab 选择策略: partial → free → new

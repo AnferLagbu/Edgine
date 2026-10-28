@@ -131,7 +131,10 @@ fn copy_in_mm(
     while done < len {
         let cur = user_addr + done as u64;
         let page_off = (cur & (PAGE_SIZE - 1)) as usize;
-        let chunk = core::cmp::min(len - done, PAGE_SIZE as usize - page_off);
+        let chunk = core::cmp::min(
+            len - done,
+            crate::privileged::lib::usize_from_u64(PAGE_SIZE) - page_off,
+        );
 
         let Some(t) = vmm.translate_in_pml4(target_cr3, VirtAddr(cur)) else {
             return Err(());

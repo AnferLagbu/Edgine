@@ -141,7 +141,7 @@ pub fn futex_syscall(
 
     // 3. 错误码解析
     if ret < 0 {
-        let errno = match (-ret) as i32 {
+        let errno = match crate::functions::intcast::low_i32_from_i64(-ret) {
             11 => Errno::EAGAIN, // EAGAIN = 11 (Linux)
             14 => Errno::EFAULT,
             38 => Errno::ENOSYS,

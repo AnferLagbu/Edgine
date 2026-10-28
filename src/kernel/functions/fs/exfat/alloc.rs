@@ -18,8 +18,10 @@ pub fn alloc_cluster(device_idx: u8, super_block: &ExfatSuperBlock) -> Result<u3
 
     // 读取 FAT 表扫描空闲簇
     for cluster in 2..super_block.cluster_count + 2 {
-        let fat_sector = super_block.fat_offset + (cluster * 4) / bytes_per_sector as u32;
-        let fat_offset = (cluster * 4) % bytes_per_sector as u32;
+        let fat_sector = super_block.fat_offset
+            + (cluster * 4) / crate::functions::intcast::low_u32_from_usize(bytes_per_sector);
+        let fat_offset =
+            (cluster * 4) % crate::functions::intcast::low_u32_from_usize(bytes_per_sector);
 
         let mut sector_data = vec![0u8; bytes_per_sector];
         if egdf_blk_read_sectors(device_idx, u64::from(fat_sector), 1, &mut sector_data).is_err() {
@@ -89,7 +91,7 @@ pub fn write_cluster(
         let offset = i * bytes_per_sector;
         egdf_blk_write_sectors(
             device_idx,
-            u64::from(sector + i as u32),
+            u64::from(sector + crate::functions::intcast::low_u32_from_usize(i)),
             1,
             &buf[offset..offset + bytes_per_sector],
         )?;
@@ -124,7 +126,7 @@ pub fn read_cluster(
         let offset = i * bytes_per_sector;
         egdf_blk_read_sectors(
             device_idx,
-            u64::from(sector + i as u32),
+            u64::from(sector + crate::functions::intcast::low_u32_from_usize(i)),
             1,
             &mut temp_buf[offset..offset + bytes_per_sector],
         )?;

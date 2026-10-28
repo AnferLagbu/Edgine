@@ -239,7 +239,11 @@ pub fn recvfrom_syscall(
         let n =
             uds::recvfrom(fd, &mut stack_buf).map_err(super::unix::UnixSocketError::to_errno)?;
         if n > 0 {
-            fw::raw_copy_out(buf_ptr, n as u32, &stack_buf[..n])?;
+            fw::raw_copy_out(
+                buf_ptr,
+                crate::functions::intcast::low_u32_from_usize(n),
+                &stack_buf[..n],
+            )?;
         }
         // v1 简化: 不填 src_addr / addrlen (POSIX 允许)
         let _ = (src_ptr, src_len_ptr);
@@ -385,7 +389,9 @@ pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
     // cmsg 头格式: cmsghdr { cmsg_len: usize (8B), cmsg_level: i32 (4B), cmsg_type: i32 (4B) }
     // 总 16 字节头, 然后是 data (cmsg_len - 16 字节)
     let msg_control_ptr = raw::read_u64_from_user(msg_ptr + 32).ok_or(Errno::EFAULT)?;
-    let msg_controllen_raw = raw::read_u64_from_user(msg_ptr + 40).ok_or(Errno::EFAULT)? as usize;
+    let msg_controllen_raw = crate::functions::intcast::usize_from_u64(
+        raw::read_u64_from_user(msg_ptr + 40).ok_or(Errno::EFAULT)?,
+    );
     if msg_control_ptr != 0 && msg_controllen_raw >= 28 {
         if !raw::check_user_buf(msg_control_ptr, msg_controllen_raw as u64) {
             return Err(Errno::EFAULT);
@@ -412,12 +418,15 @@ pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
         // 解析 cmsg 头序列处理 SCM_RIGHTS
         let mut coff = 0;
         while coff + 16 <= msg_controllen_raw {
-            let cmsg_len = raw::read_u64_from_user(msg_control_ptr + coff as u64)
-                .ok_or(Errno::EFAULT)? as usize;
-            let cmsg_level = raw::read_u64_from_user(msg_control_ptr + coff as u64 + 8)
-                .ok_or(Errno::EFAULT)? as i32;
-            let cmsg_type = raw::read_u64_from_user(msg_control_ptr + coff as u64 + 12)
-                .ok_or(Errno::EFAULT)? as i32;
+            let cmsg_len = crate::functions::intcast::usize_from_u64(
+                raw::read_u64_from_user(msg_control_ptr + coff as u64).ok_or(Errno::EFAULT)?,
+            );
+            let cmsg_level = crate::functions::intcast::low_i32_from_u64(
+                raw::read_u64_from_user(msg_control_ptr + coff as u64 + 8).ok_or(Errno::EFAULT)?,
+            );
+            let cmsg_type = crate::functions::intcast::low_i32_from_u64(
+                raw::read_u64_from_user(msg_control_ptr + coff as u64 + 12).ok_or(Errno::EFAULT)?,
+            );
             if cmsg_len < 16 || cmsg_len > msg_controllen_raw - coff {
                 break;
             }
@@ -475,7 +484,9 @@ pub fn recvmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
     // 框架 fw_recvmsg 把数据搬入 iov, 凭据在 stream/dgram 缓冲里已添加 12 字节.
     // 这里仅在 msg_control 区域写回标准 SCM_CREDENTIALS cmsghdr, 让用户能解析凭据.
     let msg_control_ptr = raw::read_u64_from_user(msg_ptr + 32).ok_or(Errno::EFAULT)?;
-    let msg_controllen = raw::read_u64_from_user(msg_ptr + 40).ok_or(Errno::EFAULT)? as usize;
+    let msg_controllen = crate::functions::intcast::usize_from_u64(
+        raw::read_u64_from_user(msg_ptr + 40).ok_or(Errno::EFAULT)?,
+    );
     if msg_control_ptr != 0 && msg_controllen >= 28 {
         if !raw::check_user_buf(msg_control_ptr, msg_controllen as u64) {
             return Err(Errno::EFAULT);
@@ -648,7 +659,10 @@ fn sendmmsg_uds_entry(fd: i32, entry: u64) -> Result<usize, Errno> {
             return Err(Errno::EMSGSIZE);
         }
         let namelen = raw::read_u64_from_user(entry + MSGHDR_NAMELEN_OFF).ok_or(Errno::EFAULT)?;
-        let addr = fw::raw_read_sockaddr_un(name_ptr, namelen as u32)?;
+        let addr = fw::raw_read_sockaddr_un(
+            name_ptr,
+            crate::functions::intcast::low_u32_from_u64(namelen),
+        )?;
         uds::sendto(fd, &data, &addr).map_err(super::unix::UnixSocketError::to_errno)
     } else {
         // 无目标地址: 已连接发送; 已连接 Dgram 单报上限与路径发送一致
@@ -823,7 +837,7 @@ fn recvmmsg_uds_entry(fd: i32, entry: u64, st: uds::SockType) -> Result<usize, E
         uds::SockType::Stream => uds::UNIX_STREAM_BUF,
         uds::SockType::Dgram => uds::UNIX_DGRAM_MAX,
     };
-    let cap = (total_cap as usize).min(cap_limit);
+    let cap = crate::functions::intcast::usize_from_u64(total_cap).min(cap_limit);
     let mut buf = alloc::vec![0u8; cap];
     let n = match st {
         uds::SockType::Stream => {
@@ -888,8 +902,12 @@ fn copy_out_to_entry_iov(iov_ptr: u64, data: &[u8]) -> Result<(), Errno> {
             continue;
         }
         // take 受剩余数据与段长双重约束, 恒不超过缓冲大小 (u32 可表达)
-        let take = (data.len() - off).min(seg_len as usize);
-        fw::raw_copy_out(base, take as u32, &data[off..off + take])?;
+        let take = (data.len() - off).min(crate::functions::intcast::usize_from_u64(seg_len));
+        fw::raw_copy_out(
+            base,
+            crate::functions::intcast::low_u32_from_usize(take),
+            &data[off..off + take],
+        )?;
         off += take;
         j += 1;
     }

@@ -387,12 +387,10 @@ impl IdtManager {
     /// 当前 IDT stub 实际覆盖 0x40-0x9F (irq16-irq127),
     /// 而 `MSI_VECTOR_COUNT=128` 超出此范围 (0xA0-0xBF), 驱动需在 alloc
     /// 后验证落入实际 stub 范围.
-    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(clippy::cast_possible_truncation)]
     pub fn init_msi_idt(&self, msi_table: &[u64; 112]) {
         let mut state = self.state.lock();
         for (i, &handler_addr) in msi_table.iter().enumerate() {
-            let vector = 0x40 + i as u8;
+            let vector = 0x40 + crate::privileged::lib::low_u8_from_usize(i);
             self.set_gate_internal(
                 &mut state,
                 vector,
@@ -413,11 +411,10 @@ impl IdtManager {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是既有 API 约定 (改传值会波及调用点); 当前优先 expect"
     )]
-    #[expect(clippy::cast_possible_truncation)]
     pub fn init_ipi_idt(&self, ipi_table: &[u64; 2]) {
         let mut state = self.state.lock();
         for (i, &handler_addr) in ipi_table.iter().enumerate() {
-            let vector = 0xFD + i as u8;
+            let vector = 0xFD + crate::privileged::lib::low_u8_from_usize(i);
             self.set_gate_internal(
                 &mut state,
                 vector,
@@ -489,10 +486,8 @@ impl IdtManager {
     }
 
     /// 注册异常处理函数
-    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(clippy::cast_possible_truncation)]
     pub fn set_exception_handler(&self, vector: u8, handler: extern "C" fn(*mut InterruptFrame)) {
-        if vector < IDT_ENTRIES as u8 {
+        if vector < crate::privileged::lib::low_u8_from_usize(IDT_ENTRIES) {
             let mut state = self.state.lock();
             state.handlers[vector as usize] = Some(handler);
         }
@@ -657,8 +652,6 @@ impl IdtManager {
     }
 
     /// 处理异常 (从 `exception_handler` FFI 调用)
-    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(clippy::cast_possible_truncation)]
     pub fn handle_exception(&self, frame: *mut InterruptFrame) {
         if frame.is_null() {
             return;
@@ -666,7 +659,7 @@ impl IdtManager {
 
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
-            let vector = (*frame).int_no as u8;
+            let vector = crate::privileged::lib::low_u8_from_u64((*frame).int_no);
 
             let nesting = self.nested_count.fetch_add(1, Ordering::SeqCst);
             self.current_vector

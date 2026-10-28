@@ -44,7 +44,7 @@ pub fn sys_brk(addr: u64) -> i64 {
         ) else {
             return Errno::ENOMEM.as_ret();
         };
-        match mm.set_brk(addr as usize, cr3) {
+        match mm.set_brk(crate::functions::intcast::usize_from_u64(addr), cr3) {
             Ok(new_brk) => return crate::functions::intcast::i64_from_usize(new_brk),
             Err(_) => return Errno::ENOMEM.as_ret(),
         }
@@ -56,7 +56,7 @@ pub fn sys_brk(addr: u64) -> i64 {
         let extra = addr - current;
         let pages = extra.div_ceil(PAGE_SIZE);
         // 有意窄化: u64 → usize 在 64 位平台无损; pages 由 extra 计算不会溢出
-        let ptr = pmm_alloc_pages(pages as usize);
+        let ptr = pmm_alloc_pages(crate::functions::intcast::usize_from_u64(pages));
         if ptr.is_null() {
             return Errno::ENOMEM.as_ret();
         }

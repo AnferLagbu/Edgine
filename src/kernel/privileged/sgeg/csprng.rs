@@ -49,8 +49,6 @@ fn rdrand_u64() -> Option<u64> {
     None
 }
 
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 #[expect(
     clippy::borrow_as_ptr,
     reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
@@ -69,8 +67,8 @@ fn fallback_entropy_byte(idx: usize) -> u8 {
         .wrapping_add(idx as u64 * 0x517C_C1B7_2722_0A95);
     v = v
         .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-        .wrapping_add(tsc.rotate_left(idx as u32));
-    ((v >> 56) as u8) ^ ((v >> 40) as u8)
+        .wrapping_add(tsc.rotate_left(crate::privileged::lib::low_u32_from_usize(idx)));
+    ((v >> 56) as u8) ^ crate::privileged::lib::low_u8_from_u64(v >> 40)
 }
 
 fn fill_random_bytes(buf: &mut [u8]) {

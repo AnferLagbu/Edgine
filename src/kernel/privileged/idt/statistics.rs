@@ -317,14 +317,12 @@ impl DetailedStatistics {
     }
 
     /// 获取最近 N 条历史记录
-    // 有意窄化: 显式收窄, 调用方保证值域
-    #[expect(clippy::cast_possible_truncation)]
     pub fn get_recent_events(&self, count: usize) -> Vec<InterruptEvent> {
         let history = self.history.lock();
         let count_u64 = count as u64;
         let actual_count = count_u64.min(history.count).min(64) as usize;
         let start_idx = if history.index >= actual_count as u64 {
-            (history.index - actual_count as u64) as usize % 64
+            crate::privileged::lib::usize_from_u64(history.index - actual_count as u64) % 64
         } else {
             0
         };

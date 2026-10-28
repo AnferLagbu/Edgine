@@ -491,5 +491,7 @@ fn timeval_to_ns_signed(tv: Timeval) -> i64 {
     let usec_ns = i128::from(tv.tv_usec) * i128::from(NS_PER_USEC);
     let total = sec_ns + usec_ns;
     // 越界时饱和到 i64 边界 (调用方已在 mode 校验中排除典型越界)
-    total.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
+    crate::functions::intcast::low_i64_from_i128(
+        total.clamp(i128::from(i64::MIN), i128::from(i64::MAX)),
+    )
 }

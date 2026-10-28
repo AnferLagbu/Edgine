@@ -464,8 +464,6 @@ fn parse_hex(s: &[u8], out: &mut u64) -> bool {
     true
 }
 
-// 有意窄化: 用户内存代理, 指针/长度上下文保证
-#[expect(clippy::cast_possible_truncation)]
 fn handle_mem_read(arg: &[u8], out: &mut [u8]) -> Option<usize> {
     let mut comma = 0;
     while comma < arg.len() && arg[comma] != b',' {
@@ -482,7 +480,7 @@ fn handle_mem_read(arg: &[u8], out: &mut [u8]) -> Option<usize> {
     if !parse_hex(&arg[comma + 1..], &mut len) {
         return None;
     }
-    if len > 128 || out.len() < (len as usize) * 2 {
+    if len > 128 || out.len() < crate::privileged::lib::usize_from_u64(len) * 2 {
         return None;
     }
     let mut idx = 0;
@@ -496,8 +494,6 @@ fn handle_mem_read(arg: &[u8], out: &mut [u8]) -> Option<usize> {
     Some(idx)
 }
 
-// 有意窄化: 用户内存代理, 指针/长度上下文保证
-#[expect(clippy::cast_possible_truncation)]
 fn handle_mem_write(arg: &[u8]) -> bool {
     let mut colon = 0;
     while colon < arg.len() && arg[colon] != b':' {
@@ -523,20 +519,20 @@ fn handle_mem_write(arg: &[u8]) -> bool {
     if !parse_hex(&head[comma + 1..], &mut len) {
         return false;
     }
-    if data.len() < (len as usize) * 2 {
+    if data.len() < crate::privileged::lib::usize_from_u64(len) * 2 {
         return false;
     }
     for i in 0..len {
-        let hi = match data[(i * 2) as usize] {
-            b'0'..=b'9' => data[(i * 2) as usize] - b'0',
-            b'a'..=b'f' => data[(i * 2) as usize] - b'a' + 10,
-            b'A'..=b'F' => data[(i * 2) as usize] - b'A' + 10,
+        let hi = match data[crate::privileged::lib::usize_from_u64(i * 2)] {
+            b'0'..=b'9' => data[crate::privileged::lib::usize_from_u64(i * 2)] - b'0',
+            b'a'..=b'f' => data[crate::privileged::lib::usize_from_u64(i * 2)] - b'a' + 10,
+            b'A'..=b'F' => data[crate::privileged::lib::usize_from_u64(i * 2)] - b'A' + 10,
             _ => return false,
         };
-        let lo = match data[(i * 2 + 1) as usize] {
-            b'0'..=b'9' => data[(i * 2 + 1) as usize] - b'0',
-            b'a'..=b'f' => data[(i * 2 + 1) as usize] - b'a' + 10,
-            b'A'..=b'F' => data[(i * 2 + 1) as usize] - b'A' + 10,
+        let lo = match data[crate::privileged::lib::usize_from_u64(i * 2 + 1)] {
+            b'0'..=b'9' => data[crate::privileged::lib::usize_from_u64(i * 2 + 1)] - b'0',
+            b'a'..=b'f' => data[crate::privileged::lib::usize_from_u64(i * 2 + 1)] - b'a' + 10,
+            b'A'..=b'F' => data[crate::privileged::lib::usize_from_u64(i * 2 + 1)] - b'A' + 10,
             _ => return false,
         };
         let byte = (hi << 4) | lo;

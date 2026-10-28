@@ -49,9 +49,7 @@ use alloc::vec::Vec;
 // ============================================================================
 
 /// Shadow Stack 页大小
-// 有意窄化: 用户内存代理, 指针/长度上下文保证
-#[expect(clippy::cast_possible_truncation)]
-pub const SHADOW_STACK_PAGE_SIZE: usize = PAGE_SIZE as usize;
+pub const SHADOW_STACK_PAGE_SIZE: usize = crate::privileged::lib::usize_from_u64(PAGE_SIZE);
 /// Shadow Stack 默认大小 (64KB)
 pub const SHADOW_STACK_DEFAULT_SIZE: usize = 64 * 1024;
 /// Shadow Stack 对齐
@@ -348,8 +346,6 @@ impl CetSubsystem {
     }
 
     /// 为用户线程创建 Shadow Stack
-    // 有意窄化: 用户内存代理, 指针/长度上下文保证
-    #[expect(clippy::cast_possible_truncation)]
     pub fn create_user_shadow_stack(&self, size: usize) -> Option<ShadowStack> {
         if !self.caps.lock().shadow_stack {
             return None;
@@ -361,7 +357,8 @@ impl CetSubsystem {
         };
 
         // 分配 Shadow Stack 物理页
-        let pages_needed = (actual_size + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
+        let pages_needed = (actual_size + crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1)
+            / crate::privileged::lib::usize_from_u64(PAGE_SIZE);
         let phys_addr = crate::privileged::mm::pmm_alloc_pages_phys(pages_needed)?;
 
         // 将物理地址转换为内核虚拟地址
@@ -598,8 +595,6 @@ pub fn cet_is_initialized() -> bool {
 ///   2 = `is_initialized()` → 返回 bool, 是否已初始化
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-// 有意窄化: 显式收窄, 调用方保证值域
-#[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn sys_cet(cmd: u64, a1: u64, _a2: u64) -> i64 {
     match cmd {
         0 => {
@@ -626,7 +621,7 @@ pub extern "C" fn sys_cet(cmd: u64, a1: u64, _a2: u64) -> i64 {
         1 => {
             // create_user_shadow_stack
             cet_subsystem()
-                .create_user_shadow_stack(a1 as usize)
+                .create_user_shadow_stack(crate::privileged::lib::usize_from_u64(a1))
                 .map_or(-(12i64), |ss| ss.get_ssp().cast_signed()) // ENOMEM
         }
         2 => {

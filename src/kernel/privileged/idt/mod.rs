@@ -572,8 +572,6 @@ pub unsafe extern "C" fn exception_handler(frame: *mut InterruptFrame) {
 #[unsafe(no_mangle)]
 #[cfg(target_arch = "x86_64")]
 #[unsafe(link_section = ".kpti_trampoline")]
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 pub unsafe extern "C" fn irq_handler(frame: *mut InterruptFrame) {
     unsafe {
         if frame.is_null() {
@@ -582,7 +580,7 @@ pub unsafe extern "C" fn irq_handler(frame: *mut InterruptFrame) {
 
         let manager = IdtManager::instance();
         let frame_ref = &*frame;
-        let vector = frame_ref.int_no as u8;
+        let vector = crate::privileged::lib::low_u8_from_u64(frame_ref.int_no);
 
         // Lockdep: 标记进入中断上下文 (仅诊断构建; 默认 boot 零开销).
         #[cfg(any(debug_assertions, feature = "lockdep"))]
@@ -602,14 +600,12 @@ pub unsafe extern "C" fn irq_handler(frame: *mut InterruptFrame) {
 /// * `type_attr` - 类型属性标志
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn idt_set_gate(num: u8, handler: u64, selector: u16, type_attr: u8) {
     let manager = IdtManager::instance();
 
     // 直接修改 entries 数组 (需要 Mutex 保护)
     let mut state = manager.state.lock();
-    if num < IDT_ENTRIES as u8 {
+    if num < crate::privileged::lib::low_u8_from_usize(IDT_ENTRIES) {
         state.entries[num as usize] = IdtEntry::new(handler, selector, type_attr);
     }
 }

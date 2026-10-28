@@ -40,7 +40,7 @@ impl PmmPolicy for DefaultPmmPolicy {
         if count <= 1 {
             return 0;
         }
-        let order = (count - 1).bit_width() as u8;
+        let order = crate::functions::intcast::low_u8_from_u32((count - 1).bit_width());
         if order > max_order { max_order } else { order }
     }
 

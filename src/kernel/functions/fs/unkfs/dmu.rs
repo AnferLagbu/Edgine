@@ -113,7 +113,7 @@ impl UnkfsDmuObject {
         Self {
             obj_id,
             obj_type: UnkfsObjType::File,
-            block_size: HV_POOL_BLOCK_SIZE as u32,
+            block_size: crate::functions::intcast::low_u32_from_u64(HV_POOL_BLOCK_SIZE),
             nblocks: 0,
             size: 0,
             bp: UnkfsBlockPointer::null(),
@@ -139,7 +139,7 @@ impl UnkfsDmuObject {
         Self {
             obj_id,
             obj_type: UnkfsObjType::Dir,
-            block_size: HV_POOL_BLOCK_SIZE as u32,
+            block_size: crate::functions::intcast::low_u32_from_u64(HV_POOL_BLOCK_SIZE),
             nblocks: 0,
             size: 0,
             bp: UnkfsBlockPointer::null(),
@@ -165,7 +165,7 @@ impl UnkfsDmuObject {
         Self {
             obj_id,
             obj_type: UnkfsObjType::Zap,
-            block_size: HV_POOL_BLOCK_SIZE as u32,
+            block_size: crate::functions::intcast::low_u32_from_u64(HV_POOL_BLOCK_SIZE),
             nblocks: 0,
             size: 0,
             bp: UnkfsBlockPointer::null(),
@@ -191,7 +191,7 @@ impl UnkfsDmuObject {
         Self {
             obj_id,
             obj_type: UnkfsObjType::Symlink,
-            block_size: HV_POOL_BLOCK_SIZE as u32,
+            block_size: crate::functions::intcast::low_u32_from_u64(HV_POOL_BLOCK_SIZE),
             nblocks: 0,
             size: 0,
             bp: UnkfsBlockPointer::null(),

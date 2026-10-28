@@ -137,7 +137,11 @@ impl InotifyEvent {
         let len = bytes.len().min(INOTIFY_MAX_NAME - 1);
         self.name[..len].copy_from_slice(&bytes[..len]);
         self.name[len] = 0;
-        self.len = if name.is_empty() { 0 } else { (len + 1) as u32 };
+        self.len = if name.is_empty() {
+            0
+        } else {
+            crate::functions::intcast::low_u32_from_usize(len + 1)
+        };
     }
 }
 
@@ -361,7 +365,7 @@ pub fn sys_inotify_init1(flags: i32) -> i64 {
 pub fn sys_inotify_add_watch(fd: i64, ino: u32, mask: u32) -> i64 {
     INOTIFY_OPS.fetch_add(1, Ordering::Relaxed);
 
-    if !is_inotify_fd(fd as i32) || ino == 0 {
+    if !is_inotify_fd(crate::functions::intcast::low_i32_from_i64(fd)) || ino == 0 {
         return Errno::EBADF.as_ret();
     }
 
@@ -369,7 +373,7 @@ pub fn sys_inotify_add_watch(fd: i64, ino: u32, mask: u32) -> i64 {
         return Errno::EINVAL.as_ret();
     }
 
-    let slot = fd_to_slot(fd as i32);
+    let slot = fd_to_slot(crate::functions::intcast::low_i32_from_i64(fd));
     let mut instances = INOTIFY_INSTANCES.lock();
 
     let Some(instance) = instances.iter_mut().find(|i| i.valid && i.slot_idx == slot) else {
@@ -386,11 +390,11 @@ pub fn sys_inotify_add_watch(fd: i64, ino: u32, mask: u32) -> i64 {
 pub fn sys_inotify_rm_watch(fd: i64, wd: i32) -> i64 {
     INOTIFY_OPS.fetch_add(1, Ordering::Relaxed);
 
-    if !is_inotify_fd(fd as i32) {
+    if !is_inotify_fd(crate::functions::intcast::low_i32_from_i64(fd)) {
         return Errno::EBADF.as_ret();
     }
 
-    let slot = fd_to_slot(fd as i32);
+    let slot = fd_to_slot(crate::functions::intcast::low_i32_from_i64(fd));
     let mut instances = INOTIFY_INSTANCES.lock();
 
     let Some(instance) = instances.iter_mut().find(|i| i.valid && i.slot_idx == slot) else {
@@ -418,11 +422,13 @@ pub fn sys_inotify_rm_watch(fd: i64, wd: i32) -> i64 {
 ///
 /// 返回事件列表和总字节数。用户指针写入由 privileged 层处理。
 pub fn inotify_read_events(fd: i64, max_count: usize) -> Option<(Vec<InotifyEvent>, usize)> {
-    if !is_inotify_fd(fd as i32) || max_count < InotifyEvent::FULL_SIZE {
+    if !is_inotify_fd(crate::functions::intcast::low_i32_from_i64(fd))
+        || max_count < InotifyEvent::FULL_SIZE
+    {
         return None;
     }
 
-    let slot = fd_to_slot(fd as i32);
+    let slot = fd_to_slot(crate::functions::intcast::low_i32_from_i64(fd));
     let mut instances = INOTIFY_INSTANCES.lock();
 
     let Some(instance) = instances.iter_mut().find(|i| i.valid && i.slot_idx == slot) else {
@@ -553,11 +559,11 @@ pub fn inotify_notify(ino: u32, mask: u32, name: &str, is_dir: bool) {
 
 /// 释放指定 inotify 实例的所有资源
 pub fn inotify_release(fd: i64) {
-    if !is_inotify_fd(fd as i32) {
+    if !is_inotify_fd(crate::functions::intcast::low_i32_from_i64(fd)) {
         return;
     }
 
-    let slot = fd_to_slot(fd as i32);
+    let slot = fd_to_slot(crate::functions::intcast::low_i32_from_i64(fd));
     let mut instances = INOTIFY_INSTANCES.lock();
 
     if let Some(instance) = instances.iter_mut().find(|i| i.valid && i.slot_idx == slot) {
@@ -568,11 +574,11 @@ pub fn inotify_release(fd: i64) {
 
 /// 检查指定 inotify fd 是否有事件可读 (epoll 集成用)
 pub fn inotify_fd_readable(fd: i64) -> bool {
-    if !is_inotify_fd(fd as i32) {
+    if !is_inotify_fd(crate::functions::intcast::low_i32_from_i64(fd)) {
         return false;
     }
 
-    let slot = fd_to_slot(fd as i32);
+    let slot = fd_to_slot(crate::functions::intcast::low_i32_from_i64(fd));
     let instances = INOTIFY_INSTANCES.lock();
 
     instances

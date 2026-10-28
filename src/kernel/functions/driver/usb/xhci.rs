@@ -680,7 +680,9 @@ impl XhciController {
     /// 全部 254 个地址耗尽时返回 `None`.
     pub fn allocate_address(&mut self) -> Option<u8> {
         for offset in 0..254u16 {
-            let addr = self.next_address_hint.wrapping_add(offset as u8);
+            let addr = self
+                .next_address_hint
+                .wrapping_add(crate::functions::intcast::low_u8_from_u16(offset));
             if addr == 0 || addr == 255 {
                 continue;
             }
@@ -804,7 +806,8 @@ impl TransferRing {
             dma.size(),
         );
 
-        let depth = (dma.size() / core::mem::size_of::<Trb>()) as u32;
+        let depth =
+            crate::functions::intcast::low_u32_from_usize(dma.size() / core::mem::size_of::<Trb>());
 
         Some(Self {
             dma,

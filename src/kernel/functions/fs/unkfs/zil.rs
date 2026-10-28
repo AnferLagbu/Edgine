@@ -9,7 +9,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 /// ZIL 日志环形记录上限 (条).
 pub const HV_ZIL_MAX_RECORDS: usize = 1024;
 /// ZIL 日志记录块大小 (字节), 与存储池块大小一致.
-pub const HV_ZIL_BLOCK_SIZE: usize = HV_POOL_BLOCK_SIZE as usize;
+pub const HV_ZIL_BLOCK_SIZE: usize = crate::functions::intcast::usize_from_u64(HV_POOL_BLOCK_SIZE);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]

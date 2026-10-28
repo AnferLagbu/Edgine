@@ -118,7 +118,7 @@ impl SockAddrUn {
         p[..path.len()].copy_from_slice(path);
         Some(Self {
             path: p,
-            path_len: path.len() as u16,
+            path_len: crate::privileged::lib::low_u16_from_usize(path.len()),
         })
     }
 

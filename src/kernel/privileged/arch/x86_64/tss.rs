@@ -114,7 +114,7 @@ pub const TSS_SIZE: usize = core::mem::size_of::<TaskStateSegment>();
 pub const IST_COUNT: usize = 7;
 
 /// 默认 I/O 位图基址 (设置为 TSS 末尾, 表示无 I/O 位图)
-pub const DEFAULT_IOMAP_BASE: u16 = TSS_SIZE as u16;
+pub const DEFAULT_IOMAP_BASE: u16 = crate::privileged::lib::low_u16_from_usize(TSS_SIZE);
 
 // ============================================================================
 // 方法实现
@@ -218,10 +218,8 @@ impl TaskStateSegment {
 
     /// 检查是否启用了 I/O 位图
     #[inline]
-    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(clippy::cast_possible_truncation)]
     pub fn has_iomap(&self) -> bool {
-        self.iomap_base < TSS_SIZE as u16
+        self.iomap_base < crate::privileged::lib::low_u16_from_usize(TSS_SIZE)
     }
 }
 

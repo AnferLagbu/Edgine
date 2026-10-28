@@ -50,7 +50,9 @@ pub fn domain_flags_set_syscall(flags: u64) -> i64 {
         return Errno::EPERM.as_ret();
     }
     let pid = crate::privileged::proc::process_get_current_pid();
-    let wanted = crate::privileged::sgeg::DomainFlags::from_bits_truncate(flags as u32);
+    let wanted = crate::privileged::sgeg::DomainFlags::from_bits_truncate(
+        crate::functions::intcast::low_u32_from_u64(flags),
+    );
     if crate::privileged::proc::domain_flags_set(pid, wanted) {
         0
     } else {

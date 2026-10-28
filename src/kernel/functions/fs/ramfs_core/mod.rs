@@ -33,7 +33,8 @@ use crate::privileged::sync::IrqSpinLock as Mutex;
 
 pub(crate) const RAMFS_MAX_NODES: usize = 256;
 pub(crate) const RAMFS_MAX_BLOCKS: usize = 2048;
-pub(crate) const RAMFS_BLOCK_SIZE: usize = crate::privileged::mm::PAGE_SIZE as usize;
+pub(crate) const RAMFS_BLOCK_SIZE: usize =
+    crate::functions::intcast::usize_from_u64(crate::privileged::mm::PAGE_SIZE);
 pub(crate) const RAMFS_MAX_ACES: usize = 128;
 pub(crate) const INDIRECT_BLOCKS_PER_BLOCK: usize = RAMFS_BLOCK_SIZE / 4;
 pub(crate) const SENSITIVITY_PUBLIC: u8 = 0;

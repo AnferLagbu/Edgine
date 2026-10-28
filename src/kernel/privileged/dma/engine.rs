@@ -51,8 +51,6 @@ impl DmaEngine {
         self.initialized.store(true, Ordering::Release);
     }
 
-    // 有意窄化: 用户内存代理, 指针/长度上下文保证
-    #[expect(clippy::cast_possible_truncation)]
     /// 关闭引擎: 释放一致性内存、解除 MMIO 映射并清零统计.
     pub fn shutdown(&self) {
         if !self.initialized.load(Ordering::Acquire) {
@@ -65,7 +63,7 @@ impl DmaEngine {
         for m in mappings.drain(..) {
             if m.is_coherent {
                 let pages = (m.size as u64).div_ceil(PAGE_SIZE);
-                pmm_free_pages_phys(m.dma_addr, pages as usize);
+                pmm_free_pages_phys(m.dma_addr, crate::privileged::lib::usize_from_u64(pages));
             }
         }
 
@@ -91,8 +89,6 @@ impl DmaEngine {
 
     /// 分配物理上连续的 DMA 一致性内存.
     /// 返回 `(cpu_virt_addr, dma_phys_addr)`.
-    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(clippy::cast_possible_truncation)]
     pub fn alloc_coherent(&self, size: usize) -> Option<(VirtAddr, PhysAddr)> {
         if size == 0 || !self.initialized.load(Ordering::Acquire) {
             return None;
@@ -100,7 +96,7 @@ impl DmaEngine {
 
         let pages = (size as u64).div_ceil(PAGE_SIZE);
 
-        let Some(phys) = pmm_alloc_pages_phys(pages as usize) else {
+        let Some(phys) = pmm_alloc_pages_phys(crate::privileged::lib::usize_from_u64(pages)) else {
             self.stats.coherence_fails.fetch_add(1, Ordering::Relaxed);
             return None;
         };
@@ -111,7 +107,11 @@ impl DmaEngine {
         // 清零内存
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
-            ptr::write_bytes(virt.0 as *mut u8, 0, (pages * PAGE_SIZE) as usize);
+            ptr::write_bytes(
+                virt.0 as *mut u8,
+                0,
+                crate::privileged::lib::usize_from_u64(pages * PAGE_SIZE),
+            );
         }
 
         // 确保清零对设备可见
@@ -140,8 +140,6 @@ impl DmaEngine {
     }
 
     /// 释放 DMA 一致性内存
-    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(clippy::cast_possible_truncation)]
     pub fn free_coherent(&self, cpu_addr: VirtAddr, size: usize) {
         if size == 0 || cpu_addr.0 == 0 || !self.initialized.load(Ordering::Acquire) {
             return;
@@ -161,7 +159,7 @@ impl DmaEngine {
         let pages = (size as u64).div_ceil(PAGE_SIZE);
 
         if let Some(phys) = phys_addr {
-            pmm_free_pages_phys(phys, pages as usize);
+            pmm_free_pages_phys(phys, crate::privileged::lib::usize_from_u64(pages));
         }
 
         mappings.retain(|m| !(m.cpu_addr == cpu_addr && m.size == size && m.is_coherent));
@@ -377,8 +375,6 @@ impl DmaEngine {
         sglist.total_length = 0;
     }
 
-    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(clippy::cast_possible_truncation)]
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
@@ -398,7 +394,7 @@ impl DmaEngine {
         sglist.entries[idx] = DmaScatterEntry {
             phys_addr: phys.map_or(0, |p| p.0),
             length,
-            page_addr: addr.0 as usize,
+            page_addr: crate::privileged::lib::usize_from_u64(addr.0),
         };
 
         sglist.entry_count += 1;
@@ -488,9 +484,9 @@ impl DmaEngine {
             // 确保 CPU 写入对 DMA 设备可见
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
             unsafe {
-                let start = addr.0 as usize;
+                let start = crate::privileged::lib::usize_from_u64(addr.0);
                 let end = start + size;
-                let cache_line_size = CACHE_LINE_SIZE as usize; // 典型缓存行大小
+                let cache_line_size = crate::privileged::lib::usize_from_u64(CACHE_LINE_SIZE); // 典型缓存行大小
 
                 // 将起始地址向下对齐到缓存行边界
                 let aligned_start = start & !(cache_line_size - 1);
@@ -547,9 +543,9 @@ impl DmaEngine {
             // 失效缓存行, 以便 CPU 从内存读入最新数据
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
             unsafe {
-                let start = addr.0 as usize;
+                let start = crate::privileged::lib::usize_from_u64(addr.0);
                 let end = start + size;
-                let cache_line_size = CACHE_LINE_SIZE as usize;
+                let cache_line_size = crate::privileged::lib::usize_from_u64(CACHE_LINE_SIZE);
                 let aligned_start = start & !(cache_line_size - 1);
 
                 for offset in (aligned_start..end).step_by(cache_line_size) {

@@ -115,6 +115,112 @@ pub const fn low_u32_from_i64(v: i64) -> u32 {
     u32::from_le_bytes([b[0], b[1], b[2], b[3]])
 }
 
+/// `u64` → `usize`: 64 位目标上逐位等价于 `v as usize` (32 位目标编译失败).
+#[inline]
+pub const fn usize_from_u64(v: u64) -> usize {
+    usize::from_le_bytes(v.to_le_bytes())
+}
+
+/// `u64` → `u32`: 取低 32 位 (等价于 `v as u32`).
+#[inline]
+pub const fn low_u32_from_u64(v: u64) -> u32 {
+    let b = v.to_le_bytes();
+    u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+}
+
+/// `usize` → `u32`: 取低 32 位 (等价于 `v as u32`).
+#[inline]
+pub const fn low_u32_from_usize(v: usize) -> u32 {
+    let b = v.to_le_bytes();
+    u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+}
+
+/// `u32` → `u8`: 取低 8 位 (等价于 `v as u8`).
+#[inline]
+pub const fn low_u8_from_u32(v: u32) -> u8 {
+    v.to_le_bytes()[0]
+}
+
+/// `u64` → `u8`: 取低 8 位 (等价于 `v as u8`).
+#[inline]
+pub const fn low_u8_from_u64(v: u64) -> u8 {
+    v.to_le_bytes()[0]
+}
+
+/// `usize` → `u8`: 取低 8 位 (等价于 `v as u8`).
+#[inline]
+pub const fn low_u8_from_usize(v: usize) -> u8 {
+    v.to_le_bytes()[0]
+}
+
+/// `usize` → `u16`: 取低 16 位 (等价于 `v as u16`).
+#[inline]
+pub const fn low_u16_from_usize(v: usize) -> u16 {
+    let b = v.to_le_bytes();
+    u16::from_le_bytes([b[0], b[1]])
+}
+
+/// `u64` → `u16`: 取低 16 位 (等价于 `v as u16`).
+#[inline]
+pub const fn low_u16_from_u64(v: u64) -> u16 {
+    let b = v.to_le_bytes();
+    u16::from_le_bytes([b[0], b[1]])
+}
+
+/// `u64` → `i32`: 取低 32 位后按补码解释 (等价于 `v as i32`).
+#[inline]
+pub const fn low_i32_from_u64(v: u64) -> i32 {
+    let b = v.to_le_bytes();
+    i32::from_le_bytes([b[0], b[1], b[2], b[3]])
+}
+
+/// `i64` → `i32`: 取低 32 位后按补码解释 (等价于 `v as i32`).
+#[inline]
+pub const fn low_i32_from_i64(v: i64) -> i32 {
+    let b = v.to_le_bytes();
+    i32::from_le_bytes([b[0], b[1], b[2], b[3]])
+}
+
+/// `u16` → `u8`: 取低 8 位 (等价于 `v as u8`).
+#[inline]
+pub const fn low_u8_from_u16(v: u16) -> u8 {
+    v.to_le_bytes()[0]
+}
+
+/// `u32` → `u16`: 取低 16 位 (等价于 `v as u16`).
+#[inline]
+pub const fn low_u16_from_u32(v: u32) -> u16 {
+    let b = v.to_le_bytes();
+    u16::from_le_bytes([b[0], b[1]])
+}
+
+/// `i32` → `i8`: 取低 8 位后按补码解释 (等价于 `v as i8`).
+#[inline]
+pub const fn low_i8_from_i32(v: i32) -> i8 {
+    i8::from_le_bytes([v.to_le_bytes()[0]])
+}
+
+/// `i32` → `i16`: 取低 16 位后按补码解释 (等价于 `v as i16`).
+#[inline]
+pub const fn low_i16_from_i32(v: i32) -> i16 {
+    let b = v.to_le_bytes();
+    i16::from_le_bytes([b[0], b[1]])
+}
+
+/// `i128` → `i64`: 取低 64 位后按补码解释 (等价于 `v as i64`).
+#[inline]
+pub const fn low_i64_from_i128(v: i128) -> i64 {
+    let b = v.to_le_bytes();
+    i64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+}
+
+/// `u128` → `u64`: 取低 64 位 (等价于 `v as u64`).
+#[inline]
+pub const fn low_u64_from_u128(v: u128) -> u64 {
+    let b = v.to_le_bytes();
+    u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +267,26 @@ mod tests {
         assert_eq!(usize_from_i64(-1), usize::MAX);
         assert_eq!(usize_from_i8(-1), usize::MAX);
         assert_eq!(u32_from_i16(i16::MIN), 0xFFFF_8000);
+    }
+    /// 窄化助手: 只保留低位, 与 `as` 逐位等价 (含符号位).
+    #[test]
+    fn truncation_helpers_keep_low_bits_only() {
+        assert_eq!(usize_from_u64(u64::MAX), usize::MAX);
+        assert_eq!(low_u32_from_u64(0x1_0000_0001), 1);
+        assert_eq!(low_u32_from_usize(0x1_0000_0001), 1);
+        assert_eq!(low_u8_from_u32(0x1_01), 1);
+        assert_eq!(low_u8_from_u64(0x1_01), 1);
+        assert_eq!(low_u8_from_usize(0x1_01), 1);
+        assert_eq!(low_u16_from_usize(0x1_0001), 1);
+        assert_eq!(low_u16_from_u64(0x1_0001), 1);
+        assert_eq!(low_i32_from_u64(u32::MAX as u64), -1);
+        assert_eq!(low_i32_from_i64(u32::MAX as i64), -1);
+        assert_eq!(low_i8_from_i32(0xFF), -1);
+        assert_eq!(low_u64_from_u128(u128::MAX), u64::MAX);
+        assert_eq!(low_u64_from_u128(0x1_0000_0000_0000_0001), 1);
+        assert_eq!(low_i16_from_i32(0x1_0001), 1);
+        assert_eq!(low_i16_from_i32(i32::MAX), -1);
+        assert_eq!(low_i64_from_i128(i128::MAX), -1);
+        assert_eq!(low_i64_from_i128(0x1_0000_0000_0000_0001), 1);
     }
 }

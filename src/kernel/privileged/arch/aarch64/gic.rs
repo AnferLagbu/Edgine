@@ -423,7 +423,7 @@ pub fn acknowledge() -> u32 {
     unsafe {
         core::arch::asm!("mrs {}, icc_iar1_el1", out(reg) iar);
     }
-    iar as u32
+    crate::privileged::lib::low_u32_from_u64(iar)
 }
 
 /// 中断完成 (EOI)
