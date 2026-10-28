@@ -5,8 +5,8 @@
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 1254,
-    "files": 244
+    "sites": 1186,
+    "files": 225
   },
   "entries": [
     [
@@ -60,11 +60,6 @@
       1
     ],
     [
-      "src/kernel/functions/config/validate.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      2
-    ],
-    [
       "src/kernel/functions/debug/ebpf_verifier.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
@@ -101,11 +96,6 @@
     ],
     [
       "src/kernel/functions/driver/display/dp.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      2
-    ],
-    [
-      "src/kernel/functions/driver/display/dp.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       5
     ],
@@ -118,11 +108,6 @@
       "src/kernel/functions/driver/display/hdmi.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       4
-    ],
-    [
-      "src/kernel/functions/driver/display/hdmi.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
     ],
     [
       "src/kernel/functions/driver/display/hdmi.rs",
@@ -200,16 +185,6 @@
       4
     ],
     [
-      "src/kernel/functions/driver/usb/xhci.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
-    ],
-    [
-      "src/kernel/functions/driver/virtio/blk.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
-    ],
-    [
       "src/kernel/functions/driver/virtio/net.rs",
       "#[expect(clippy::cast_possible_truncation)",
       2
@@ -217,11 +192,6 @@
     [
       "src/kernel/functions/driver/virtio/net.rs",
       "#[expect(clippy::cast_possible_truncation,reason=\"RX缓冲区上限2048字节(RX_BUFFER_SIZE)",
-      1
-    ],
-    [
-      "src/kernel/functions/driver/virtio/net.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
       1
     ],
     [
@@ -250,11 +220,6 @@
       1
     ],
     [
-      "src/kernel/functions/fs/access.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
-    ],
-    [
       "src/kernel/functions/fs/api.rs",
       "#[expect(clippy::cast_possible_truncation)",
       1
@@ -265,19 +230,9 @@
       1
     ],
     [
-      "src/kernel/functions/fs/cgroupfs.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      2
-    ],
-    [
       "src/kernel/functions/fs/configfs.rs",
       "#[expect(clippy::large_stack_arrays,reason=\"large_stack_arrays:大栈数组是性能权衡(避免堆分配)",
       1
-    ],
-    [
-      "src/kernel/functions/fs/configfs.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      2
     ],
     [
       "src/kernel/functions/fs/dcache.rs",
@@ -300,16 +255,6 @@
       1
     ],
     [
-      "src/kernel/functions/fs/devpts.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/exfat/fat.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
-    ],
-    [
       "src/kernel/functions/fs/ext2/inode.rs",
       "#[expect(clippy::no_effect_underscore_binding,reason=\"no_effect_underscore_binding:let_=expr用于类型推导/副作用;当前优先expect\")",
       1
@@ -322,11 +267,6 @@
     [
       "src/kernel/functions/fs/file_ops.rs",
       "#[expect(clippy::struct_field_names,reason=\"struct_field_names:字段名前缀相同是为可读性/调试;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/flock.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
       1
     ],
     [
@@ -355,33 +295,8 @@
       1
     ],
     [
-      "src/kernel/functions/fs/link.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
-    ],
-    [
       "src/kernel/functions/fs/misc.rs",
       "#[expect(clippy::borrow_as_ptr,reason=\"borrow_as_ptr:&varas*constT是已知安全(Rust2024可用&rawconst;替换需追改调用点,当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/misc.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      2
-    ],
-    [
-      "src/kernel/functions/fs/mode.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/mount.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/open.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
       1
     ],
     [
@@ -408,21 +323,6 @@
       "src/kernel/functions/fs/ramfs_core/ramfs_data.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
-    ],
-    [
-      "src/kernel/functions/fs/stat.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/sysfs.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/systree.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      3
     ],
     [
       "src/kernel/functions/fs/unkfs/bp.rs",
@@ -453,11 +353,6 @@
       "src/kernel/functions/fs/unkfs/raidz.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       2
-    ],
-    [
-      "src/kernel/functions/fs/unkfs/snapshot.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
     ],
     [
       "src/kernel/functions/fs/unkfs/unkfs_data.rs",
@@ -503,11 +398,6 @@
       "src/kernel/functions/fs/virtiofs.rs",
       "#[expect(clippy::large_stack_arrays,reason=\"large_stack_arrays:大栈数组是性能权衡(避免堆分配)",
       1
-    ],
-    [
-      "src/kernel/functions/fs/virtiofs.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      3
     ],
     [
       "src/kernel/functions/ipc/mod.rs",
@@ -835,18 +725,8 @@
       1
     ],
     [
-      "src/kernel/functions/proc/table.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      7
-    ],
-    [
       "src/kernel/functions/sgeg/audit.rs",
       "#[expect(clippy::large_stack_arrays,reason=\"large_stack_arrays:大栈数组是性能权衡(避免堆分配)",
-      1
-    ],
-    [
-      "src/kernel/functions/sgeg/audit.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
       1
     ],
     [
@@ -870,11 +750,6 @@
       1
     ],
     [
-      "src/kernel/functions/sgeg/uid.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      4
-    ],
-    [
       "src/kernel/functions/sync/futex.rs",
       "#[expect(clippy::comparison_chain,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
@@ -882,11 +757,6 @@
     [
       "src/kernel/functions/sync/mod.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      1
-    ],
-    [
-      "src/kernel/functions/sync/pi_mutex.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
       1
     ],
     [
@@ -908,16 +778,6 @@
       "src/kernel/functions/wasm/interpreter.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
-    ],
-    [
-      "src/kernel/functions/wasm/interpreter.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      3
-    ],
-    [
-      "src/kernel/functions/wasm/runtime.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      2
     ],
     [
       "src/kernel/functions/wasm/types.rs",
@@ -1515,16 +1375,6 @@
       4
     ],
     [
-      "src/kernel/privileged/driver/bus/mod.rs",
-      "#[expect(clippy::missing_errors_doc,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/bus/mod.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      1
-    ],
-    [
       "src/kernel/privileged/driver/bus/pci.rs",
       "#[expect(clippy::cast_possible_truncation)",
       1
@@ -1590,11 +1440,6 @@
       5
     ],
     [
-      "src/kernel/privileged/driver/input/keyboard.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      3
-    ],
-    [
       "src/kernel/privileged/driver/kexec.rs",
       "#[expect(clippy::cast_possible_truncation)",
       1
@@ -1610,19 +1455,9 @@
       2
     ],
     [
-      "src/kernel/privileged/driver/power.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
-    ],
-    [
       "src/kernel/privileged/driver/storage/mod.rs",
       "#[expect(clippy::cast_possible_truncation)",
       3
-    ],
-    [
-      "src/kernel/privileged/driver/storage/mod.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"签名保留以统一提交路径错误面(admin/I-O提交链一致使用?运算符)",
-      1
     ],
     [
       "src/kernel/privileged/driver/storage/nvme.rs",
@@ -1678,11 +1513,6 @@
       "src/kernel/privileged/egdf/composite.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
       2
-    ],
-    [
-      "src/kernel/privileged/egdf/composite.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
     ],
     [
       "src/kernel/privileged/egdf/devtree.rs",
@@ -1920,11 +1750,6 @@
       2
     ],
     [
-      "src/kernel/privileged/ipc/dynamic.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      2
-    ],
-    [
       "src/kernel/privileged/ipc/msgq.rs",
       "#[expect(clippy::cast_possible_truncation)",
       1
@@ -1943,11 +1768,6 @@
       "src/kernel/privileged/irqline.rs",
       "#[expect(clippy::inline_always,reason=\"inline_always:#[inline(always)",
       3
-    ],
-    [
-      "src/kernel/privileged/irqline.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
     ],
     [
       "src/kernel/privileged/klog/mod.rs",
@@ -2140,11 +1960,6 @@
       12
     ],
     [
-      "src/kernel/privileged/mm/numa.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
-    ],
-    [
       "src/kernel/privileged/mm/page_fault.rs",
       "#[expect(clippy::cast_possible_truncation)",
       7
@@ -2241,28 +2056,18 @@
     ],
     [
       "src/kernel/privileged/mm/vma.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
       "#[expect(clippy::unused_self,reason=\"保留&self签名以便调用点统一用法,不依赖self字段时可改关联函数\")",
       2
     ],
     [
       "src/kernel/privileged/mm/vmm_aarch64.rs",
       "#[expect(clippy::missing_errors_doc,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      3
+      1
     ],
     [
       "src/kernel/privileged/mm/vmm_aarch64.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
       1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_aarch64.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      2
     ],
     [
       "src/kernel/privileged/mm/vmm_aarch64.rs",
@@ -2600,11 +2405,6 @@
       6
     ],
     [
-      "src/kernel/privileged/net/init/sm_fi.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
-      1
-    ],
-    [
       "src/kernel/privileged/net/init/state.rs",
       "#[expect(clippy::missing_errors_doc,reason=\"missing_errors_doc:transition_state返回Result<()",
       1
@@ -2612,11 +2412,6 @@
     [
       "src/kernel/privileged/net/route.rs",
       "#[expect(clippy::trivially_copy_pass_by_ref,reason=\"trivially_copy_pass_by_ref:小类型传引用而非值是API约定(如impltrait)",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/route.rs",
-      "#[expect(clippy::unnecessary_wraps,reason=\"保留Option/Result<()",
       1
     ],
     [

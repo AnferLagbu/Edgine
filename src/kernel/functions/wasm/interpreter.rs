@@ -98,13 +98,16 @@ impl Interpreter {
         let mut memory = None;
         for imp in &module.imports {
             if let ImportKind::Memory(mem_type) = &imp.desc {
-                memory = LinearMemory::new(mem_type.limits.min, cap_max(mem_type.limits.max)).ok();
+                memory = Some(LinearMemory::new(
+                    mem_type.limits.min,
+                    cap_max(mem_type.limits.max),
+                ));
                 break;
             }
         }
         if memory.is_none() {
             if let Some(mem) = module.memories.first() {
-                memory = LinearMemory::new(mem.limits.min, cap_max(mem.limits.max)).ok();
+                memory = Some(LinearMemory::new(mem.limits.min, cap_max(mem.limits.max)));
             }
         }
 
@@ -455,7 +458,7 @@ impl Interpreter {
             match op {
                 Ok(Opcode::Unreachable) => return Err(WasmError::Unreachable),
                 Ok(Opcode::Nop | Opcode::Block | Opcode::Loop) => {
-                    self.advance_pc(1)?;
+                    self.advance_pc(1);
                 }
                 Ok(Opcode::End) => {
                     self.execute_end()?;
@@ -464,7 +467,7 @@ impl Interpreter {
                     }
                 }
                 Ok(Opcode::Return) => {
-                    self.execute_return()?;
+                    self.execute_return();
                     if self.call_stack.is_empty() {
                         return Ok(());
                     }
@@ -493,11 +496,11 @@ impl Interpreter {
                 }
 
                 Ok(Opcode::Drop) => {
-                    self.advance_pc(1)?;
+                    self.advance_pc(1);
                     self.stack.pop()?;
                 }
                 Ok(Opcode::Select) => {
-                    self.advance_pc(1)?;
+                    self.advance_pc(1);
                     let cond = self.stack.pop_i32()?;
                     let val2 = self.stack.pop()?;
                     let val1 = self.stack.pop()?;
@@ -531,7 +534,7 @@ impl Interpreter {
                 Ok(Opcode::I32Store8) => self.execute_memory_store_n(1)?,
                 Ok(Opcode::I32Store16) => self.execute_memory_store_n(2)?,
                 Ok(Opcode::MemorySize) => {
-                    self.advance_pc(1)?;
+                    self.advance_pc(1);
                     let pages = self
                         .memory
                         .as_ref()
@@ -539,10 +542,10 @@ impl Interpreter {
                     self.stack.push(Value::I32(pages as i32))?;
                 }
                 Ok(Opcode::MemoryGrow) => {
-                    self.advance_pc(1)?;
+                    self.advance_pc(1);
                     let pages = self.stack.pop_i32()?;
                     let result = if let Some(ref mut mem) = self.memory {
-                        mem.grow(pages as u32)?
+                        mem.grow(pages as u32)
                     } else {
                         u32::MAX
                     };
@@ -603,15 +606,10 @@ impl Interpreter {
         Ok(())
     }
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
-    fn advance_pc(&mut self, amount: usize) -> Result<(), WasmError> {
+    fn advance_pc(&mut self, amount: usize) {
         if let Some(frame) = self.call_stack.last_mut() {
             frame.pc += amount;
         }
-        Ok(())
     }
 
     fn current_frame_mut(&mut self) -> Result<&mut CallFrame, WasmError> {
@@ -634,18 +632,13 @@ impl Interpreter {
         Ok(())
     }
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
-    fn execute_return(&mut self) -> Result<(), WasmError> {
+    fn execute_return(&mut self) {
         while let Some(frame) = self.call_stack.pop() {
             let arity = frame.arity;
             if arity == 0 {
                 break;
             }
         }
-        Ok(())
     }
 
     fn execute_if(&mut self) -> Result<(), WasmError> {
@@ -681,7 +674,7 @@ impl Interpreter {
         let frame = self.current_frame_mut()?;
         frame.pc += 1;
         let depth = read_leb128_u32(&frame.code, &mut frame.pc)? as usize;
-        self.unwind_to(depth)?;
+        self.unwind_to(depth);
         Ok(())
     }
 
@@ -691,7 +684,7 @@ impl Interpreter {
         frame.pc += 1;
         let depth = read_leb128_u32(&frame.code, &mut frame.pc)? as usize;
         if cond != 0 {
-            self.unwind_to(depth)?;
+            self.unwind_to(depth);
         }
         Ok(())
     }
@@ -712,7 +705,7 @@ impl Interpreter {
         } else {
             targets[n]
         };
-        self.unwind_to(depth)?;
+        self.unwind_to(depth);
         Ok(())
     }
 
@@ -801,16 +794,11 @@ impl Interpreter {
         Ok(())
     }
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
-    fn unwind_to(&mut self, depth: usize) -> Result<(), WasmError> {
+    fn unwind_to(&mut self, depth: usize) {
         let target = self.call_stack.len().saturating_sub(depth + 1);
         while self.call_stack.len() > target {
             self.call_stack.pop();
         }
-        Ok(())
     }
 
     fn skip_block(code: &[u8], mut pc: usize) -> usize {
@@ -964,14 +952,14 @@ impl Interpreter {
     // --- i32 运算 ---
 
     fn execute_i32_unop<F: FnOnce(i32) -> i32>(&mut self, f: F) -> Result<(), WasmError> {
-        self.advance_pc(1)?;
+        self.advance_pc(1);
         let a = self.stack.pop_i32()?;
         self.stack.push(Value::I32(f(a)))?;
         Ok(())
     }
 
     fn execute_i32_binop<F: FnOnce(i32, i32) -> i32>(&mut self, f: F) -> Result<(), WasmError> {
-        self.advance_pc(1)?;
+        self.advance_pc(1);
         let b = self.stack.pop_i32()?;
         let a = self.stack.pop_i32()?;
         self.stack.push(Value::I32(f(a, b)))?;
@@ -979,7 +967,7 @@ impl Interpreter {
     }
 
     fn execute_i32_div_s(&mut self) -> Result<(), WasmError> {
-        self.advance_pc(1)?;
+        self.advance_pc(1);
         let b = self.stack.pop_i32()?;
         let a = self.stack.pop_i32()?;
         if b == 0 {
@@ -993,7 +981,7 @@ impl Interpreter {
     }
 
     fn execute_i32_div_u(&mut self) -> Result<(), WasmError> {
-        self.advance_pc(1)?;
+        self.advance_pc(1);
         let b = self.stack.pop_i32()?;
         let a = self.stack.pop_i32()?;
         if b == 0 {
@@ -1005,7 +993,7 @@ impl Interpreter {
     }
 
     fn execute_i32_rem_s(&mut self) -> Result<(), WasmError> {
-        self.advance_pc(1)?;
+        self.advance_pc(1);
         let b = self.stack.pop_i32()?;
         let a = self.stack.pop_i32()?;
         if b == 0 {
@@ -1019,7 +1007,7 @@ impl Interpreter {
     }
 
     fn execute_i32_rem_u(&mut self) -> Result<(), WasmError> {
-        self.advance_pc(1)?;
+        self.advance_pc(1);
         let b = self.stack.pop_i32()?;
         let a = self.stack.pop_i32()?;
         if b == 0 {
@@ -1033,7 +1021,7 @@ impl Interpreter {
     // --- i64 运算 ---
 
     fn execute_i64_binop<F: FnOnce(i64, i64) -> i64>(&mut self, f: F) -> Result<(), WasmError> {
-        self.advance_pc(1)?;
+        self.advance_pc(1);
         let b = self.stack.pop_i64()?;
         let a = self.stack.pop_i64()?;
         self.stack.push(Value::I64(f(a, b)))?;
@@ -1041,7 +1029,7 @@ impl Interpreter {
     }
 
     fn execute_i64_div_s(&mut self) -> Result<(), WasmError> {
-        self.advance_pc(1)?;
+        self.advance_pc(1);
         let b = self.stack.pop_i64()?;
         let a = self.stack.pop_i64()?;
         if b == 0 {

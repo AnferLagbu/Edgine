@@ -189,22 +189,17 @@ impl CpuIdleDriver {
         self.enabled.store(true, Ordering::Release);
     }
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
     /// 选择最优 C-state (策略部分, 不执行 halt)
-    pub fn select_cstate(&self, cpu_id: u32) -> Option<CpuIdleState> {
+    pub fn select_cstate(&self, cpu_id: u32) -> CpuIdleState {
         if !self.enabled.load(Ordering::Acquire) {
-            return Some(CpuIdleState::C1Halt);
+            return CpuIdleState::C1Halt;
         }
         let stats = self.per_cpu_stats.lock();
         if (cpu_id as usize) >= stats.len() {
-            return Some(CpuIdleState::C1Halt);
+            return CpuIdleState::C1Halt;
         }
         let max_cstate = stats[cpu_id as usize].max_cstate.load(Ordering::Acquire);
-        let idle_state = CpuIdleState::from_u32(max_cstate.min(2));
-        Some(idle_state)
+        CpuIdleState::from_u32(max_cstate.min(2))
     }
 
     /// 获取 CPU 空闲统计
@@ -675,10 +670,7 @@ pub fn arch_halt() {
 ///
 /// 组合策略选择 (functions) + 硬件 halt (privileged)
 pub fn pm_idle(cpu_id: u32) {
-    let idle_state = PM_SUBSYSTEM
-        .cpuidle
-        .select_cstate(cpu_id)
-        .unwrap_or(CpuIdleState::C1Halt);
+    let idle_state = PM_SUBSYSTEM.cpuidle.select_cstate(cpu_id);
 
     let stats = PM_SUBSYSTEM.cpuidle.per_cpu_stats.lock();
     if (cpu_id as usize) < stats.len() {

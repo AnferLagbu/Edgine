@@ -40,7 +40,7 @@ pub fn stat_syscall(path_ptr: u64, st_buf_ptr: u64) -> Result<usize, Errno> {
     if !raw::check_user_buf(st_buf_ptr, VFS_STAT_SIZE) {
         return Err(Errno::EFAULT);
     }
-    let pwm = current_pwm()?;
+    let pwm = current_pwm();
     // privileged safe API: 返回 VfsStat (无 raw pointer 跨边界)
     let stat = fw::vfs_stat_safe(path_ptr as *const u8, pwm).ok_or(Errno::EIO)?;
     // privileged safe API: 写结构体到 user buf, 内部已 check_user_buf
@@ -83,7 +83,7 @@ pub fn fstat_syscall(fd: i32, st_buf_ptr: u64) -> Result<usize, Errno> {
     if !raw::check_user_buf(st_buf_ptr, VFS_STAT_SIZE) {
         return Err(Errno::EFAULT);
     }
-    let pwm = current_pwm()?;
+    let pwm = current_pwm();
     let stat = fw::vfs_fstat_safe(fd as u32, pwm).ok_or(Errno::EIO)?;
     if !raw::write_struct_to_user::<VfsStat>(st_buf_ptr, &stat) {
         return Err(Errno::EFAULT);
@@ -237,7 +237,7 @@ pub fn statx_syscall(
     if !raw::check_user_buf(buf_ptr, stx_size) {
         return Err(Errno::EFAULT);
     }
-    let pwm = current_pwm()?;
+    let pwm = current_pwm();
     let stat = fw::vfs_stat_safe(path_ptr as *const u8, pwm).ok_or(Errno::EIO)?;
     let stx = Statx::from_vfs_stat(&stat);
     if !raw::write_struct_to_user::<Statx>(buf_ptr, &stx) {
@@ -289,11 +289,7 @@ pub fn utimensat_syscall(dirfd: i32, path_ptr: u64, times_ptr: u64, _flags: i32)
 // 内部辅助
 // ============================================================================
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
-/// 取当前进程凭证,无会话时直接返回 EACCES (历史硬编码 `TEST_PWM` 路径已弃用)。
-fn current_pwm() -> Result<u64, Errno> {
-    Ok(sgeg::api::pwm_get_current())
+/// 取当前进程凭证 (历史硬编码 `TEST_PWM` 路径已弃用)。
+fn current_pwm() -> u64 {
+    sgeg::api::pwm_get_current()
 }

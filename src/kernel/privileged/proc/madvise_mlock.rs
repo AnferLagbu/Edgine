@@ -165,10 +165,8 @@ pub fn sys_munlockall() -> i64 {
         return Errno::EFAULT.as_ret();
     };
 
-    match mm.munlock_all() {
-        Ok(()) => 0,
-        Err(e) => e.as_ret(),
-    }
+    mm.munlock_all();
+    0
 }
 
 // ============================================================================

@@ -637,7 +637,7 @@ impl DpController {
             self.aux_read_via_mmio(io, address, length)
         } else {
             // 无硬件 fallback: 返回模拟 DPCD 数据 (保持原行为)
-            self.aux_read_fallback(address, length)
+            Ok(self.aux_read_fallback(address, length))
         }
     }
 
@@ -708,12 +708,8 @@ impl DpController {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
     /// AUX 无硬件 fallback 读取 (保持原行为, 兼容 QEMU).
-    fn aux_read_fallback(&mut self, address: u16, length: u8) -> Result<Vec<u8>, DpError> {
+    fn aux_read_fallback(&mut self, address: u16, length: u8) -> Vec<u8> {
         let mut data = vec![0u8; length as usize];
 
         if address == 0x0000 && length >= 16 {
@@ -726,7 +722,7 @@ impl DpController {
             data[5] = 0x01; // 1 sink
         }
 
-        Ok(data)
+        data
     }
 
     /// AUX通道写操作 (DISPLAY-2.5: TRACK-9B691E 消除).
@@ -1098,7 +1094,7 @@ impl DpController {
 
         if let Some(ref io) = self.io {
             // 真实硬件路径: 写 8 个 16-bit 时序寄存器 + sync + output enable
-            self.write_dp_timing_registers(io, &timing, &mode)?;
+            self.write_dp_timing_registers(io, &timing, &mode);
         } else {
             // 无硬件 fallback: 静默成功
         }
@@ -1165,20 +1161,11 @@ impl DpController {
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
     #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
-    #[expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
     /// 写入 DP 时序 + sync + output enable 寄存器 — 通过 `DpIo` 安全代理, 无 unsafe.
-    fn write_dp_timing_registers(
-        &self,
-        io: &DpIo,
-        timing: &VideoTiming,
-        mode: &VideoMode,
-    ) -> Result<(), DpError> {
+    fn write_dp_timing_registers(&self, io: &DpIo, timing: &VideoTiming, mode: &VideoMode) {
         // 写 8 个 16-bit 时序寄存器
         io.write16(DP_H_TOTAL_REG_OFFSET, timing.h_total);
         io.write16(DP_H_ACTIVE_REG_OFFSET, timing.h_active);
@@ -1203,8 +1190,6 @@ impl DpController {
 
         // 写 output enable (8-bit, bit 0=enable)
         io.write8(DP_OUTPUT_ENABLE_REG_OFFSET, DP_OUTPUT_ENABLE_BIT);
-
-        Ok(())
     }
 
     #[expect(

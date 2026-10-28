@@ -336,34 +336,18 @@ pub fn get_config_fs() -> &'static Mutex<ConfigFs> {
 // safe API
 // ============================================================================
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// 挂载 configfs
-///
-/// # Errors
-/// 当前实现恒返回 `Ok(())`; 内部创建默认目录时的错误被忽略.
-pub fn mount_configfs() -> Result<(), Errno> {
+pub fn mount_configfs() {
     let fs = get_config_fs();
     let mut fs = fs.lock();
     // 创建默认目录
     let _ = fs.create_dir("devices");
     let _ = fs.create_dir("modules");
     let _ = fs.create_dir("groups");
-    Ok(())
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// 卸载 configfs
-///
-/// # Errors
-/// 当前实现恒返回 `Ok(())`; 仅清空目录数据, 不返回错误.
-pub fn umount_configfs() -> Result<(), Errno> {
+pub fn umount_configfs() {
     let mut fs = get_config_fs().lock();
     fs.dir_count = 0;
-    Ok(())
 }

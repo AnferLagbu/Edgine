@@ -64,10 +64,6 @@ impl IrqLine {
         self.vector
     }
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
     /// 注册 ISR 到全局中断表。
     ///
     /// # 安全约束
@@ -83,16 +79,12 @@ impl IrqLine {
     /// 5. 不睡眠 (sleep/yield)
     ///
     /// 若需延迟处理, 通过 `raise_softirq()` 提交到底半部执行。
-    ///
-    /// # Errors
-    /// ISR 注册失败时返回 Err。
-    pub fn on_interrupt(&mut self, handler: InterruptHandler) -> Result<(), &'static str> {
+    pub fn on_interrupt(&mut self, handler: InterruptHandler) {
         // SAFETY: 启动阶段单线程调用, 无竞争。
         unsafe {
             register_isr(self.vector, handler);
         }
         self.registered = true;
-        Ok(())
     }
 
     /// 启用该中断线 (unmask)

@@ -318,9 +318,15 @@ pub extern "C" fn vmm_map_page(virt: u64, phys: u64, flags: u64) -> i32 {
     let phys_addr = PhysAddr(phys);
     let page_flags = PageFlags::from_bits_truncate(flags);
 
+    #[cfg(target_arch = "x86_64")]
     match get_vmm().map_page(virt_addr, phys_addr, page_flags) {
         Ok(()) => 0,
         Err(_) => -1,
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        get_vmm().map_page(virt_addr, phys_addr, page_flags);
+        0
     }
 }
 
@@ -352,9 +358,15 @@ pub extern "C" fn vmm_unmap_page(virt: u64) {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn vmm_split_2mb_page(virt: u64) -> i32 {
+    #[cfg(target_arch = "x86_64")]
     match get_vmm().split_2mb_page(virt) {
         Ok(()) => 0,
         Err(_) => -1,
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        get_vmm().split_2mb_page(virt);
+        0
     }
 }
 

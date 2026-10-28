@@ -100,17 +100,8 @@ pub fn validate_interrupt_config() -> Result<(), ConfigError> {
     Ok(())
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
-/// 跨模块一致性校验.
-///
-/// # Errors
-/// 当前实现为空校验, 总是返回 `Ok(())`, 不会返回错误.
-pub fn validate_cross_module_consistency() -> Result<(), ConfigError> {
-    Ok(())
-}
+/// 跨模块一致性校验 (当前实现为空校验)
+pub fn validate_cross_module_consistency() {}
 
 /// 验证 PCI 子系统已初始化.
 ///
@@ -123,17 +114,8 @@ pub fn validate_pci_subsystem() -> Result<(), ConfigError> {
     Ok(())
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
-/// 验证网络子系统配置一致性.
-///
-/// # Errors
-/// 当前实现为空校验, 总是返回 `Ok(())`, 不会返回错误.
-pub fn validate_network_subsystem() -> Result<(), ConfigError> {
-    Ok(())
-}
+/// 验证网络子系统配置一致性 (当前实现为空校验)
+pub fn validate_network_subsystem() {}
 
 /// 校验所有驱动配置.
 pub fn validate_drivers() -> u32 {
@@ -147,13 +129,7 @@ pub fn validate_drivers() -> u32 {
         }
     }
 
-    match validate_network_subsystem() {
-        Ok(()) => {}
-        Err(e) => {
-            errors += 1;
-            log_config_error(&e);
-        }
-    }
+    validate_network_subsystem();
 
     errors
 }
@@ -199,13 +175,7 @@ pub fn validate_system_config() -> u32 {
         }
     }
 
-    match validate_cross_module_consistency() {
-        Ok(()) => {}
-        Err(e) => {
-            errors += 1;
-            log_config_error(&e);
-        }
-    }
+    validate_cross_module_consistency();
 
     // KASLR 偏移自检
     if let Err(msg) = crate::functions::config::kaslr::validate_kaslr_offset() {
@@ -242,7 +212,8 @@ impl ConfigValidateHook for DefaultConfigValidateHook {
     }
 
     fn validate_network_subsystem(&self) -> Result<(), ConfigError> {
-        validate_network_subsystem()
+        validate_network_subsystem();
+        Ok(())
     }
 }
 

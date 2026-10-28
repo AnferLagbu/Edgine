@@ -210,7 +210,16 @@ impl DmaEngine {
             let page_phys = PhysAddr(phys_addr.0 + i * PAGE_SIZE);
             let page_virt = VirtAddr(virt.0 + i * PAGE_SIZE);
 
-            if get_vmm().map_page(page_virt, page_phys, flags).is_err() {
+            #[cfg(target_arch = "x86_64")]
+            let map_failed = get_vmm().map_page(page_virt, page_phys, flags).is_err();
+            // aarch64 的 map_page 恒成功 (无返回值), 失败分支不参与编译
+            #[cfg(not(target_arch = "x86_64"))]
+            let map_failed = {
+                get_vmm().map_page(page_virt, page_phys, flags);
+                false
+            };
+
+            if map_failed {
                 // Rollback
                 for j in 0..i {
                     let unmap_virt = VirtAddr(virt.0 + j * PAGE_SIZE);

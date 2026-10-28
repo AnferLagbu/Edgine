@@ -45,7 +45,7 @@ pub fn mkdir_syscall(path_ptr: u64, _mode: i32) -> Result<usize, Errno> {
     if !raw::check_user_ptr(path_ptr) {
         return Err(Errno::EFAULT);
     }
-    let pwm = current_pwm()?;
+    let pwm = current_pwm();
     // SAFETY: path_ptr 由 check_user_ptr 验证
     let r = fw::vfs_mkdir(path_ptr as *const u8, pwm);
     if r < 0 {
@@ -71,7 +71,7 @@ pub fn rmdir_syscall(path_ptr: u64) -> Result<usize, Errno> {
     if !raw::check_user_ptr(path_ptr) {
         return Err(Errno::EFAULT);
     }
-    let pwm = current_pwm()?;
+    let pwm = current_pwm();
     let r = fw::vfs_rmdir(path_ptr as *const u8, pwm);
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))
@@ -101,7 +101,7 @@ pub fn chmod_syscall(path_ptr: u64, mode: u32) -> Result<usize, Errno> {
     if mode > 0o7777 {
         return Err(Errno::EINVAL);
     }
-    let pwm = current_pwm()?;
+    let pwm = current_pwm();
     let r = fw::vfs_chmod(path_ptr as *const u8, mode as u16, pwm);
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))
@@ -138,11 +138,7 @@ pub fn fchmod_syscall(fd: i32, mode: u32) -> Result<usize, Errno> {
 // 内部辅助
 // ============================================================================
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
-/// 取当前进程凭证,无会话时直接返回 EACCES (历史硬编码 `TEST_PWM` 路径已弃用)。
-fn current_pwm() -> Result<u64, Errno> {
-    Ok(sgeg::api::pwm_get_current())
+/// 取当前进程凭证 (历史硬编码 `TEST_PWM` 路径已弃用)。
+fn current_pwm() -> u64 {
+    sgeg::api::pwm_get_current()
 }

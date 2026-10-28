@@ -1073,7 +1073,7 @@ impl NvmeController {
             &self.mmio,
             cid,
             io_db_offset,
-        )?;
+        );
         Ok(before)
     }
 

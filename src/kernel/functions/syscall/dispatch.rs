@@ -262,7 +262,7 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_times => as_ret(crate::functions::fs::misc::times_syscall(a0)),
         SYS_time => as_ret(crate::functions::fs::misc::time_syscall(a0)),
         SYS_getitimer => as_ret(crate::functions::fs::misc::getitimer_syscall(a0 as i32, a1)),
-        SYS_alarm => as_ret(crate::functions::fs::misc::alarm_syscall(a0 as u32)),
+        SYS_alarm => crate::functions::fs::misc::alarm_syscall(a0 as u32) as i64,
         SYS_setitimer => as_ret(crate::functions::fs::misc::setitimer_syscall(
             a0 as i32, a1, a2,
         )),
@@ -761,12 +761,12 @@ fn dispatch_sgeg(num: u64, args: [u64; 6]) -> Option<i64> {
 
     Some(match num {
         // 凭证 - UID/GID
-        SYS_getuid => as_ret(crate::functions::sgeg::uid::getuid_syscall()),
-        SYS_getgid => as_ret(crate::functions::sgeg::uid::getgid_syscall()),
+        SYS_getuid => crate::functions::sgeg::uid::getuid_syscall() as i64,
+        SYS_getgid => crate::functions::sgeg::uid::getgid_syscall() as i64,
         SYS_setuid => as_ret(crate::functions::sgeg::uid::setuid_syscall(a0 as u32)),
         SYS_setgid => as_ret(crate::functions::sgeg::uid::setgid_syscall(a0 as u32)),
-        SYS_geteuid => as_ret(crate::functions::sgeg::uid::geteuid_syscall()),
-        SYS_getegid => as_ret(crate::functions::sgeg::uid::getegid_syscall()),
+        SYS_geteuid => crate::functions::sgeg::uid::geteuid_syscall() as i64,
+        SYS_getegid => crate::functions::sgeg::uid::getegid_syscall() as i64,
         SYS_seteuid => as_ret(crate::functions::sgeg::uid::seteuid_syscall(a0 as u32)),
         SYS_setegid => as_ret(crate::functions::sgeg::uid::setegid_syscall(a0 as u32)),
         SYS_setreuid => as_ret(crate::functions::sgeg::uid::setreuid_syscall(

@@ -1890,9 +1890,7 @@ impl UnkfsData {
         let datasets = self.datasets.lock();
         let ds = &datasets[0];
         let txg = self.spa.current_txg();
-        self.snap_mgr
-            .create_snapshot(ds, name, txg)
-            .map_or(KernelError::Io.as_i32(), |id| id as i32)
+        self.snap_mgr.create_snapshot(ds, name, txg) as i32
     }
 
     /// 销毁快照

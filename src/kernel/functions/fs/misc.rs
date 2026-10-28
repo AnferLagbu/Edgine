@@ -39,7 +39,7 @@ pub fn rename_syscall(oldpath_ptr: u64, newpath_ptr: u64) -> Result<usize, Errno
     if oldpath_ptr == newpath_ptr {
         return Err(Errno::EINVAL);
     }
-    let pwm = current_pwm()?;
+    let pwm = current_pwm();
     let r = fw::vfs_rename(oldpath_ptr as *const u8, newpath_ptr as *const u8, pwm);
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))
@@ -118,7 +118,7 @@ pub fn fchown_syscall(fd: i32, owner: u64, group: u64) -> Result<usize, Errno> {
     if fd < 0 {
         return Err(Errno::EBADF);
     }
-    let pwm = current_pwm()?;
+    let pwm = current_pwm();
     // B06-PRE-002: 前置 FS 域 CHOWN 能力校验 — 属主/属组变更是身份安全关键操作,
     // 由专用能力位门控 (与 access/open 路径的 pwm_has_capability 语义一致).
     if !sgeg::api::pwm_has_capability(pwm, sgeg::CAP_DOMAIN_FS, FS_CAP_CHOWN) {
@@ -323,36 +323,23 @@ pub fn setitimer_syscall(which: i32, new_ptr: u64, old_ptr: u64) -> Result<usize
     Ok(0)
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// alarm(seconds) — 设置 SIGALRM 触发间隔 (秒), 返回旧剩余时间 (秒).
 ///
 /// 真实实现: 等价于 `setitimer(ITIMER_REAL, {value=seconds, interval=0})`,
 /// 经 `privileged::proc::itimer` 向 hrtimer 登记纳秒级截止期; 到期时由
 /// `itimer_real_callback` (hardirq 上下文) 经 `do_signal_send(SIGALRM)` 投递信号.
-///
-/// # Errors
-/// 当前实现无失败路径 (`seconds` 参不产生错误), 统一包为 `Ok` 以对齐其他
-/// syscall 代理的返回型状.
-pub fn alarm_syscall(seconds: u32) -> Result<usize, Errno> {
+pub fn alarm_syscall(seconds: u32) -> usize {
     let pid = current_pid();
-    let prev = crate::privileged::proc::itimer_alarm(pid, seconds);
-    Ok(prev as usize)
+    crate::privileged::proc::itimer_alarm(pid, seconds) as usize
 }
 
 // ============================================================================
 // 内部辅助
 // ============================================================================
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
-/// 取当前进程凭证,无会话时直接返回 EACCES (历史硬编码 `TEST_PWM` 路径已弃用)。
-fn current_pwm() -> Result<u64, Errno> {
-    Ok(sgeg::api::pwm_get_current())
+/// 取当前进程凭证 (历史硬编码 `TEST_PWM` 路径已弃用)。
+fn current_pwm() -> u64 {
+    sgeg::api::pwm_get_current()
 }
 
 fn current_pid() -> u32 {

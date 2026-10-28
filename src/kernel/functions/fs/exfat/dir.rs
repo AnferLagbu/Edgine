@@ -128,7 +128,7 @@ impl ExfatDirEntry {
         cluster: u32,
     ) -> Result<Vec<Self>, KernelError> {
         let mut entries = Vec::new();
-        let chain = super::fat::read_fat_chain(device_idx, super_block, cluster)?;
+        let chain = super::fat::read_fat_chain(device_idx, super_block, cluster);
         let cluster_size = super_block.bytes_per_cluster() as usize;
 
         for c in &chain {

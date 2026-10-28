@@ -125,7 +125,7 @@ impl ExfatFs {
         offset: u64,
         buf: &mut [u8],
     ) -> Result<usize, KernelError> {
-        let chain = super::fat::read_fat_chain(self.device_idx, &self.super_block, start_cluster)?;
+        let chain = super::fat::read_fat_chain(self.device_idx, &self.super_block, start_cluster);
         let cluster_size = u64::from(self.super_block.bytes_per_cluster());
         let mut bytes_read = 0;
         let mut pos = offset;
@@ -168,7 +168,7 @@ impl ExfatFs {
         offset: u64,
         buf: &[u8],
     ) -> Result<usize, KernelError> {
-        let chain = super::fat::read_fat_chain(self.device_idx, &self.super_block, start_cluster)?;
+        let chain = super::fat::read_fat_chain(self.device_idx, &self.super_block, start_cluster);
         let cluster_size = u64::from(self.super_block.bytes_per_cluster());
         let mut bytes_written = 0;
         let mut pos = offset;

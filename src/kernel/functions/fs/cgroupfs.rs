@@ -363,15 +363,8 @@ pub fn get_cgroup_fs() -> &'static Mutex<CgroupFs> {
 // safe API
 // ============================================================================
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// 挂载 cgroupfs
-///
-/// # Errors
-/// 当前实现恒返回 `Ok(())`; 内部创建默认组时的错误被忽略.
-pub fn mount_cgroupfs() -> Result<(), Errno> {
+pub fn mount_cgroupfs() {
     let fs = get_cgroup_fs();
     let mut fs = fs.lock();
     // 创建默认组
@@ -379,21 +372,12 @@ pub fn mount_cgroupfs() -> Result<(), Errno> {
     let _ = fs.create_group("system", CgroupController::Memory);
     let _ = fs.create_group("system", CgroupController::Io);
     let _ = fs.create_group("system", CgroupController::Pids);
-    Ok(())
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// 卸载 cgroupfs
-///
-/// # Errors
-/// 当前实现恒返回 `Ok(())`; 仅清空组数据, 不返回错误.
-pub fn umount_cgroupfs() -> Result<(), Errno> {
+pub fn umount_cgroupfs() {
     // 重置为新实例
     // 注意: OnceLock 无法重置, 这里只是清空数据
     let mut fs = get_cgroup_fs().lock();
     fs.group_count = 0;
-    Ok(())
 }

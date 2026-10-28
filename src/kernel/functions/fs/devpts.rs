@@ -219,28 +219,17 @@ pub fn pty_count() -> u32 {
     get_pty_table().lock().count()
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// 挂载 devpts
-///
-/// # Errors
-/// 当前实现恒返回 `Ok(())`; 仅初始化 PTY 表, 不返回错误.
-pub fn mount_devpts() -> Result<(), Errno> {
+pub fn mount_devpts() {
     // 初始化 PTY 表
     let mut table = get_pty_table().lock();
     for i in 0..MAX_PTY_DEVICES {
         table.devices[i] = PtyDevice::new(i as u32);
     }
     table.count = 0;
-    Ok(())
 }
 
 /// 卸载 devpts
-///
-/// # Errors
-/// 错误条件与 [`mount_devpts`] 相同; 当前实现恒返回 `Ok(())`.
-pub fn umount_devpts() -> Result<(), Errno> {
-    mount_devpts()
+pub fn umount_devpts() {
+    mount_devpts();
 }

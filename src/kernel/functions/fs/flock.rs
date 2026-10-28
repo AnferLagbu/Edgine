@@ -542,25 +542,21 @@ pub fn sys_posix_lock(
     }
 
     match cmd {
-        F_GETLK => posix_getlk(pid, ino, lock_type, start, len),
+        F_GETLK => Ok(posix_getlk(pid, ino, lock_type, start, len)),
         F_SETLK | F_SETLKW => posix_setlk(pid, ino, lock_type, start, len, cmd == F_SETLKW),
         _ => Err(PosixLockResult::Invalid),
     }
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 fn posix_getlk(
     pid: u32,
     ino: u32,
     lock_type: i32,
     start: u64,
     len: u64,
-) -> Result<Option<PosixLockConflict>, PosixLockResult> {
+) -> Option<PosixLockConflict> {
     if lock_type == F_UNLCK {
-        return Ok(None);
+        return None;
     }
 
     let table = POSIX_LOCK_TABLE.lock();
@@ -571,22 +567,22 @@ fn posix_getlk(
                     && entry.owner_pid == conflict_pid
                     && PosixLockTable::ranges_overlap(start, len, entry.start, entry.len)
                 {
-                    return Ok(Some(PosixLockConflict {
+                    return Some(PosixLockConflict {
                         pid: conflict_pid,
                         lock_type: conflict_type,
                         start: entry.start,
                         len: entry.len,
-                    }));
+                    });
                 }
             }
-            Ok(Some(PosixLockConflict {
+            Some(PosixLockConflict {
                 pid: conflict_pid,
                 lock_type: conflict_type,
                 start: 0,
                 len: 0,
-            }))
+            })
         }
-        None => Ok(None),
+        None => None,
     }
 }
 

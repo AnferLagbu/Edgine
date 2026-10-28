@@ -178,14 +178,5 @@ pub fn mount_sysfs() -> Result<(), Errno> {
     Ok(())
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// 卸载 /sys
-///
-/// # Errors
-/// 当前实现恒返回 `Ok(())`, 不产生错误.
-pub fn umount_sysfs() -> Result<(), Errno> {
-    Ok(())
-}
+pub fn umount_sysfs() {}

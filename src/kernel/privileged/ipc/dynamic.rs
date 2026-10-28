@@ -194,14 +194,8 @@ impl DynIpcNamespace {
 
     // ─── Message Queue ─────────────────────────────────────
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
     /// 创建消息队列并返回其 IPC ID。
-    /// # Errors
-    /// 队列创建失败时返回 Err。
-    pub fn msgq_create(&self, owner_pid: u32, max_msgs: u32, max_size: u32) -> Result<IpcId, i32> {
+    pub fn msgq_create(&self, owner_pid: u32, max_msgs: u32, max_size: u32) -> IpcId {
         let id = self.allocate_id();
         let mq = MsgQueue {
             id,
@@ -217,7 +211,7 @@ impl DynIpcNamespace {
             perm: 0o666,
         };
         self.msg_queues.lock().push(mq);
-        Ok(id)
+        id
     }
 
     /// 销毁指定消息队列并释放其全部待处理消息。
@@ -256,14 +250,8 @@ impl DynIpcNamespace {
 
     // ─── Semaphore ─────────────────────────────────────────
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
     /// 创建信号量并返回其 IPC ID。
-    /// # Errors
-    /// 信号量创建失败时返回 Err。
-    pub fn sem_create(&self, owner_pid: u32, count: u32, max_count: u32) -> Result<IpcId, i32> {
+    pub fn sem_create(&self, owner_pid: u32, count: u32, max_count: u32) -> IpcId {
         let id = self.allocate_id();
         let sem = Semaphore {
             id,
@@ -275,7 +263,7 @@ impl DynIpcNamespace {
             perm: 0o666,
         };
         self.semaphores.lock().push(sem);
-        Ok(id)
+        id
     }
 
     /// 销毁指定信号量。
@@ -343,12 +331,10 @@ pub extern "C" fn dyn_ipc_pipe_destroy(id: u32) -> i32 {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-/// 创建消息队列 (C ABI 导出, 失败返回 0)
+/// 创建消息队列 (C ABI 导出)
 #[unsafe(no_mangle)]
 pub extern "C" fn dyn_ipc_msgq_create(owner_pid: u32, max_msgs: u32, max_size: u32) -> u32 {
-    get_dyn_ipc()
-        .msgq_create(owner_pid, max_msgs, max_size)
-        .unwrap_or(0)
+    get_dyn_ipc().msgq_create(owner_pid, max_msgs, max_size)
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
@@ -359,12 +345,10 @@ pub extern "C" fn dyn_ipc_shm_create(owner_pid: u32, size: u64) -> u32 {
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-/// 创建信号量 (C ABI 导出, 失败返回 0)
+/// 创建信号量 (C ABI 导出)
 #[unsafe(no_mangle)]
 pub extern "C" fn dyn_ipc_sem_create(owner_pid: u32, count: u32, max_count: u32) -> u32 {
-    get_dyn_ipc()
-        .sem_create(owner_pid, count, max_count)
-        .unwrap_or(0)
+    get_dyn_ipc().sem_create(owner_pid, count, max_count)
 }
 
 #[cfg(test)]
@@ -395,7 +379,7 @@ mod tests {
         let ns = DynIpcNamespace::new();
 
         for _ in 0..100 {
-            let id = ns.msgq_create(1000, 64, 4096).unwrap();
+            let id = ns.msgq_create(1000, 64, 4096);
             assert!(ns.msgq_exists(id));
             assert_eq!(ns.msgq_count(), 1);
             ns.msgq_destroy(id).unwrap();

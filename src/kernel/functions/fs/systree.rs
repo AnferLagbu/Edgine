@@ -333,15 +333,8 @@ impl Systree {
         None
     }
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
-    /// 列出子节点
-    ///
-    /// # Errors
-    /// 当前实现不返回错误; 当缓冲区不足时输出会被截断.
-    pub fn list_children(&self, parent_id: u64, buf: &mut [u8]) -> Result<usize, Errno> {
+    /// 列出子节点 (缓冲区不足时输出会被截断)
+    pub fn list_children(&self, parent_id: u64, buf: &mut [u8]) -> usize {
         let mut offset = 0;
         for i in 0..self.node_count as usize {
             if u64::from(self.nodes[i].parent_id) == parent_id {
@@ -355,7 +348,7 @@ impl Systree {
                 offset += 1;
             }
         }
-        Ok(offset)
+        offset
     }
 
     /// 读取属性
@@ -485,33 +478,17 @@ fn format_u64(mut n: u64) -> [u8; 20] {
 // safe API
 // ============================================================================
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// 挂载 systree
-///
-/// # Errors
-/// 当前实现恒返回 `Ok(())`; 仅初始化根节点, 不返回错误.
-pub fn mount_systree() -> Result<(), Errno> {
+pub fn mount_systree() {
     let tree = get_systree();
     tree.lock().init();
-    Ok(())
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// 卸载 systree
-///
-/// # Errors
-/// 当前实现恒返回 `Ok(())`; 仅清空节点数据, 不返回错误.
-pub fn umount_systree() -> Result<(), Errno> {
+pub fn umount_systree() {
     let mut tree = get_systree().lock();
     tree.node_count = 0;
     tree.next_id = 1;
-    Ok(())
 }
 
 /// 创建节点
@@ -588,7 +565,7 @@ pub fn handle_request(
         }
         27 => {
             // Readdir
-            tree.list_children(node_id, buf)
+            Ok(tree.list_children(node_id, buf))
         }
         19 => {
             // Read attr

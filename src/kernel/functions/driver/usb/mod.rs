@@ -150,7 +150,7 @@ pub fn usb_init() {
     );
 
     for mut ctrl in controllers {
-        let _ = ctrl.init_hardware();
+        ctrl.init_hardware();
         // 所有权移交 functions (Box::leak); EGDF 仅登记裸指针 (非所有权)
         let leaked: &'static mut XhciController = Box::leak(Box::new(ctrl));
         egdf_register(

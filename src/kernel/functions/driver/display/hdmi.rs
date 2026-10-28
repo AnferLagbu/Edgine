@@ -978,21 +978,12 @@ impl HdmiController {
         Ok(())
     }
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
     /// 关闭 HDMI 控制器 (禁用 TMDS 输出)
-    ///
-    /// # Errors
-    ///
-    /// 此函数始终返回 `Ok(())`, 不会返回 `Err`。
-    pub fn shutdown(&mut self) -> Result<(), HdmiError> {
+    pub fn shutdown(&mut self) {
         if let Some(iomem) = &self.iomem {
             iomem.write_u8(TMDS_ENABLE_REG_OFFSET, 0x00);
         }
         self.initialized = false;
-        Ok(())
     }
 
     /// 是否已初始化
@@ -1019,7 +1010,8 @@ impl Driver for HdmiController {
     }
 
     fn shutdown(&mut self) -> DriverResult<()> {
-        HdmiController::shutdown(self).map_err(|_| DriverError::HardwareError)
+        HdmiController::shutdown(self);
+        Ok(())
     }
 
     fn is_ready(&self) -> bool {

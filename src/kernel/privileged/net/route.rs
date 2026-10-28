@@ -110,9 +110,7 @@ pub fn route_add(entry: RouteEntry) -> Result<(), Errno> {
     }
 
     // 同步到 smoltcp 路由表
-    if let Err(e) = sync_route_to_smoltcp(&entry) {
-        return Err(e);
-    }
+    sync_route_to_smoltcp(&entry);
 
     table.push(entry);
     Ok(())
@@ -262,18 +260,12 @@ pub fn sys_route_query(dest_u32: u64) -> i64 {
 // smoltcp 同步 (privileged 机制, 依赖 raw::stack_mut)
 // ============================================================================
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// 将单条路由同步到 smoltcp Routes (双栈: V4/V6 按 family 分发)
 ///
-/// # Errors
-/// 当前实现不会返回 `Err`: 网络未配置、smoltcp 栈不可用或路由 family 不匹配时
-/// 直接返回 `Ok(())` 并忽略该条目.
-pub fn sync_route_to_smoltcp(entry: &RouteEntry) -> Result<(), Errno> {
+/// 网络未配置、smoltcp 栈不可用或路由 family 不匹配时直接忽略该条目.
+pub fn sync_route_to_smoltcp(entry: &RouteEntry) {
     if !NET_CONFIGURED.load(Ordering::Acquire) {
-        return Ok(());
+        return;
     }
 
     #[cfg(not(feature = "kernel_test"))]
@@ -283,7 +275,7 @@ pub fn sync_route_to_smoltcp(entry: &RouteEntry) -> Result<(), Errno> {
         use smoltcp::wire::{IpAddress, IpCidr, Ipv4Address, Ipv4Cidr, Ipv6Address, Ipv6Cidr};
 
         let Some(stack) = raw::stack_mut() else {
-            return Ok(());
+            return;
         };
 
         let (via_router, cidr) = match (entry.gateway, entry.dest) {
@@ -311,7 +303,7 @@ pub fn sync_route_to_smoltcp(entry: &RouteEntry) -> Result<(), Errno> {
                 (IpAddress::Ipv6(gw), IpCidr::Ipv6(cidr))
             }
             // family 不匹配 (如 V4 目标 + V6 网关) — 忽略该条目
-            _ => return Ok(()),
+            _ => return,
         };
 
         stack.iface.routes_mut().update(|routes| {
@@ -323,14 +315,11 @@ pub fn sync_route_to_smoltcp(entry: &RouteEntry) -> Result<(), Errno> {
             };
             let _ = routes.push(route);
         });
-
-        Ok(())
     }
 
     #[cfg(feature = "kernel_test")]
     {
         let _ = entry;
-        Ok(())
     }
 }
 

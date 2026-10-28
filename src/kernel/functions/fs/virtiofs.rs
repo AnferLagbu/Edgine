@@ -244,15 +244,8 @@ impl VirtioFs {
         if found { Ok(()) } else { Err(Errno::ENOENT) }
     }
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
-    /// 列出子节点
-    ///
-    /// # Errors
-    /// 当前实现不返回错误; 当缓冲区不足时输出会被截断.
-    pub fn list_children(&self, parent_id: u64, buf: &mut [u8]) -> Result<usize, Errno> {
+    /// 列出子节点 (缓冲区不足时输出会被截断)
+    pub fn list_children(&self, parent_id: u64, buf: &mut [u8]) -> usize {
         let mut offset = 0;
         for i in 0..self.node_count as usize {
             if self.nodes[i].parent_id == parent_id {
@@ -266,7 +259,7 @@ impl VirtioFs {
                 offset += 1;
             }
         }
-        Ok(offset)
+        offset
     }
 }
 
@@ -288,33 +281,17 @@ pub fn get_virtiofs() -> &'static Mutex<VirtioFs> {
 // safe API
 // ============================================================================
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// 挂载 virtiofs
-///
-/// # Errors
-/// 当前实现恒返回 `Ok(())`; 仅初始化根节点, 不返回错误.
-pub fn mount_virtiofs() -> Result<(), Errno> {
+pub fn mount_virtiofs() {
     let fs = get_virtiofs();
     fs.lock().init();
-    Ok(())
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// 卸载 virtiofs
-///
-/// # Errors
-/// 当前实现恒返回 `Ok(())`; 仅清空节点数据, 不返回错误.
-pub fn umount_virtiofs() -> Result<(), Errno> {
+pub fn umount_virtiofs() {
     let mut fs = get_virtiofs().lock();
     fs.node_count = 0;
     fs.next_id = 1;
-    Ok(())
 }
 
 /// 处理请求
@@ -374,7 +351,7 @@ pub fn handle_request(
             fs.delete_node(node_id)?;
             Ok(0)
         }
-        VirtioFsOp::Readdir => fs.list_children(node_id, buf),
+        VirtioFsOp::Readdir => Ok(fs.list_children(node_id, buf)),
         _ => Err(Errno::ENOSYS),
     }
 }

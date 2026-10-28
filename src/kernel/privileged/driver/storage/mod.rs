@@ -366,14 +366,6 @@ pub fn nvme_submit_io_cmd(
 ///
 /// 仅写 SQ entry + 敲 SQ 门铃, 完成处理由 ISR 侧 [`nvme_drain_completions`]
 /// 执行。`sq_virt` 为 SQ DMA 区域**虚拟地址** (CPU 侧访问)。
-///
-/// # Errors
-///
-/// SQ entry 写入无返回值, 当前恒返 `Ok(())` (签名保留以统一提交路径错误面)。
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "签名保留以统一提交路径错误面 (admin/I-O 提交链一致使用 ? 运算符)"
-)]
 pub fn nvme_submit_io_cmd_noblock(
     sq_virt: u64,
     cmd: nvme::NvmeCommand,
@@ -382,7 +374,7 @@ pub fn nvme_submit_io_cmd_noblock(
     iomem: &IoMem,
     cid: u16,
     io_sq_db_offset: usize,
-) -> Result<(), ()> {
+) {
     // SAFETY: sq_virt 由 DMA 分配保证有效; IoMem 确保 MMIO 安全
     unsafe {
         let sq = sq_virt as *mut nvme::NvmeCommand;
@@ -396,7 +388,6 @@ pub fn nvme_submit_io_cmd_noblock(
         // I/O SQ doorbell
         iomem.write_u32(io_sq_db_offset, new_tail);
     }
-    Ok(())
 }
 
 /// 从 `NVMe` CQ 排空已完成条目 (ISR 侧 0 unsafe 入口, DECISION-H 2 号子步)

@@ -1236,15 +1236,8 @@ impl MmStruct {
         Ok(applied)
     }
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
     /// munlockall: 解除所有 mlock
-    ///
-    /// # Errors
-    /// 当前实现总是返回 `Ok(())`, 不会返回错误.
-    pub fn munlock_all(&self) -> Result<(), crate::privileged::syscall::Errno> {
+    pub fn munlock_all(&self) {
         let mut vmas = self.vmas.lock();
         for v in vmas.iter_mut() {
             v.vm_flags = v
@@ -1255,7 +1248,6 @@ impl MmStruct {
         }
         self.locked_vm.store(0, Ordering::Release);
         self.mlock_all_flags.store(0, Ordering::Release);
-        Ok(())
     }
 
     /// mincore: 查询 [start, len) 范围每页是否驻留

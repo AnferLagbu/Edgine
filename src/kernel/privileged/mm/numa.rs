@@ -118,34 +118,30 @@ impl NumaMempolicy {
         }
     }
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
     /// 根据策略选择分配节点
-    pub fn preferred_node(&self, current_cpu_node: u32) -> Option<u32> {
+    pub fn preferred_node(&self, current_cpu_node: u32) -> u32 {
         let mode = *self.mode.lock();
         let mask = *self.nodemask.lock();
 
         match mode {
-            NumaPolicy::Default => Some(current_cpu_node),
+            NumaPolicy::Default => current_cpu_node,
             NumaPolicy::Bind | NumaPolicy::Preferred => {
                 if mask == 0 {
-                    Some(current_cpu_node)
+                    current_cpu_node
                 } else {
-                    Some(mask.trailing_zeros())
+                    mask.trailing_zeros()
                 }
             }
             NumaPolicy::Interleave => {
                 if mask == 0 {
-                    Some(current_cpu_node)
+                    current_cpu_node
                 } else {
                     let nodes = Self::nodes_from_mask(mask);
                     if nodes.is_empty() {
-                        Some(current_cpu_node)
+                        current_cpu_node
                     } else {
                         let idx = self.interleave_next.fetch_add(1, Ordering::Relaxed);
-                        Some(nodes[idx as usize % nodes.len()])
+                        nodes[idx as usize % nodes.len()]
                     }
                 }
             }
@@ -346,7 +342,7 @@ impl NumaTopology {
     pub fn best_alloc_node(&self, policy: &NumaMempolicy, current_cpu: u32) -> u32 {
         let current_node = self.cpu_to_node(current_cpu);
 
-        policy.preferred_node(current_node).unwrap_or(current_node)
+        policy.preferred_node(current_node)
     }
 
     /// 查找距离最近且有空闲内存的节点

@@ -906,7 +906,7 @@ mod tests {
             panic!("expected IpAddress::Ipv4");
         }
         // 反向翻译 (从 smoltcp 类型)
-        let back = endpoint_from_smol(ep_smol).unwrap();
+        let back = endpoint_from_smol(ep_smol);
         assert_eq!(back.port, 8080);
         assert_eq!(back.addr.as_v4().unwrap().octets(), [10, 0, 2, 15]);
     }

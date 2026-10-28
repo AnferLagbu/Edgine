@@ -157,49 +157,35 @@ pub struct LinearMemory {
 }
 
 impl LinearMemory {
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
-    /// 创建指定初始页数的线性内存.
-    ///
-    /// # Errors
-    ///
-    /// 本函数当前不返回 `Err`(内存分配失败会以 panic 形式暴露).
-    pub fn new(initial_pages: u32, max_pages: Option<u32>) -> Result<Self, WasmError> {
+    /// 创建指定初始页数的线性内存 (内存分配失败会以 panic 形式暴露).
+    pub fn new(initial_pages: u32, max_pages: Option<u32>) -> Self {
         let size = initial_pages as usize * WASM_PAGE_SIZE as usize;
-        Ok(Self {
+        Self {
             data: vec![0u8; size],
             max_pages,
-        })
+        }
     }
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
-    /// 扩展线性内存指定的页数.
+    /// 扩展线性内存指定的页数, 返回扩展前的页数.
     ///
-    /// # Errors
-    ///
-    /// 本函数当前不返回 `Err`; 超过上限或页数/字节数溢出时返回 `u32::MAX`(WASM 约定)表示失败.
-    pub fn grow(&mut self, additional_pages: u32) -> Result<u32, WasmError> {
+    /// 超过上限或页数/字节数溢出时返回 `u32::MAX`(WASM 约定)表示失败.
+    pub fn grow(&mut self, additional_pages: u32) -> u32 {
         let current_pages = (self.data.len() / WASM_PAGE_SIZE as usize) as u32;
         // B07-12: checked_add 防页数回绕 (恶意 huge additional_pages 不再静默回绕增长).
         let Some(new_pages) = current_pages.checked_add(additional_pages) else {
-            return Ok(u32::MAX);
+            return u32::MAX;
         };
         if let Some(max) = self.max_pages {
             if new_pages > max {
-                return Ok(u32::MAX);
+                return u32::MAX;
             }
         }
         // B07-12: checked_mul 防字节数溢出导致 resize panic.
         let Some(new_size) = (new_pages as usize).checked_mul(WASM_PAGE_SIZE as usize) else {
-            return Ok(u32::MAX);
+            return u32::MAX;
         };
         self.data.resize(new_size, 0);
-        Ok(current_pages)
+        current_pages
     }
 
     /// 当前内存页数

@@ -33,7 +33,6 @@
 //! 评估日期: 2026-06-04
 //! Phase 2.1.6 任务: USB/XHCI 驱动迁移
 
-use crate::functions::error::KernelError;
 use crate::privileged::dma_buf::DmaStream;
 use crate::privileged::driver::infra::{DeviceType, Driver, DriverError, Result as DriverResult};
 use crate::privileged::iomem::IoMem;
@@ -639,10 +638,6 @@ impl XhciController {
 
     // ── 初始化序列 (xHCI 规范 §4.3) ──
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
     /// 完整初始化控制器 (reset → start).
     ///
     /// 执行 xHCI 规范 §4.3 初始化序列:
@@ -651,14 +646,7 @@ impl XhciController {
     /// 3. 等待复位完成 (USBSTS.HCRST = 1)
     /// 4. 启动控制器 (USBCMD.RS = 1)
     /// 5. 启用全局中断
-    ///
-    /// # 返回
-    /// - `Ok(())`: 初始化成功
-    /// - `Err`: 超时或控制器无响应
-    ///
-    /// # Errors
-    /// 当控制器软复位、启动或中断使能过程中超时/无响应时返回 `Err`.
-    pub fn init_hardware(&mut self) -> Result<(), KernelError> {
+    pub fn init_hardware(&mut self) {
         // 1. 软复位 (UFCS 消歧: Driver trait 亦有 reset 方法)
         XhciController::reset(self);
         // 2. 启动
@@ -666,7 +654,6 @@ impl XhciController {
         // 3. 启用中断
         self.enable_interrupts();
         self.initialized = true;
-        Ok(())
     }
 
     /// 控制器是否已完成初始化
@@ -1091,7 +1078,8 @@ impl Driver for XhciController {
 
     fn init(&mut self) -> DriverResult<()> {
         // init_hardware 内部完成 reset + start 并置位 initialized
-        self.init_hardware().map_err(|_| DriverError::HardwareError)
+        self.init_hardware();
+        Ok(())
     }
 
     fn shutdown(&mut self) -> DriverResult<()> {

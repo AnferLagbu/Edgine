@@ -48,7 +48,7 @@ pub fn mount_syscall(source_ptr: u64, target_ptr: u64, fstype_ptr: u64) -> Resul
         return Err(Errno::EFAULT);
     }
 
-    let pwm = current_pwm()?;
+    let pwm = current_pwm();
     if !sgeg::api::pwm_has_capability(pwm, 0, 0x01) {
         return Err(Errno::EACCES);
     }
@@ -82,7 +82,7 @@ pub fn umount2_syscall(target_ptr: u64, flags: i32) -> Result<usize, Errno> {
         return Err(Errno::EFAULT);
     }
 
-    let pwm = current_pwm()?;
+    let pwm = current_pwm();
     if !sgeg::api::pwm_has_capability(pwm, 0, 0x01) {
         return Err(Errno::EACCES);
     }
@@ -99,14 +99,10 @@ pub fn umount2_syscall(target_ptr: u64, flags: i32) -> Result<usize, Errno> {
 // 内部辅助
 // ============================================================================
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
-/// 取当前进程凭证,无会话时直接返回 EACCES (历史硬编码 `TEST_PWM` 路径已弃用)。
+/// 取当前进程凭证 (历史硬编码 `TEST_PWM` 路径已弃用)。
 ///
 /// mount/umount2 在调用前还需 `pwm_has_capability(..., CAP_SYS_ADMIN)` 检查,
 /// 这里仅返回原始凭证,真正权限决策交给 capability 模块。
-fn current_pwm() -> Result<u64, Errno> {
-    Ok(sgeg::api::pwm_get_current())
+fn current_pwm() -> u64 {
+    sgeg::api::pwm_get_current()
 }

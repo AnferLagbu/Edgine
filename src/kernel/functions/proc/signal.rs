@@ -294,8 +294,8 @@ pub fn send(pid: crate::privileged::proc::Pid, sig: Signal) -> SignalResult<()> 
     if sig.0 > 63 {
         return Err(SignalError::InvalidArgument);
     }
-    crate::functions::proc::table::signal_set(pid, u32::from(sig.0))
-        .map_err(|_| SignalError::NoSuchProcess)
+    crate::functions::proc::table::signal_set(pid, u32::from(sig.0));
+    Ok(())
 }
 
 /// 检查进程是否有信号待处理
@@ -304,12 +304,8 @@ pub fn pending(pid: crate::privileged::proc::Pid) -> Option<u64> {
 }
 
 /// 清除进程的信号位
-///
-/// # Errors
-///
-/// 当目标进程不存在时返回 `NoSuchProcess`.
-pub fn clear(pid: crate::privileged::proc::Pid, mask: u64) -> SignalResult<()> {
-    crate::functions::proc::table::signal_clear(pid, mask).map_err(|_| SignalError::NoSuchProcess)
+pub fn clear(pid: crate::privileged::proc::Pid, mask: u64) {
+    crate::functions::proc::table::signal_clear(pid, mask);
 }
 
 // ============================================================================

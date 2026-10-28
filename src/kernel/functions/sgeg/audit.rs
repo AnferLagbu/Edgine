@@ -147,15 +147,8 @@ impl AuditLog {
         }
     }
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
-    /// 追加事件
-    ///
-    /// # Errors
-    /// 当追加失败 (如审计缓冲区不可用或校验失败) 时返回 `Err(AuditError)`.
-    pub fn append(&mut self, event: AuditEvent) -> Result<u32, AuditError> {
+    /// 追加事件, 返回分配的事件序号
+    pub fn append(&mut self, event: AuditEvent) -> u32 {
         let idx = self.next_index.fetch_add(1, Ordering::AcqRel);
         let pos = self.write_pos.load(Ordering::Acquire) as usize;
         if self.buffer[pos].index != 0
@@ -179,7 +172,7 @@ impl AuditLog {
             .store(((pos + 1) % AUDIT_BUFFER_SIZE) as u32, Ordering::Release);
         self.last_hash.store(hash, Ordering::Release);
         self.total.fetch_add(1, Ordering::AcqRel);
-        Ok(idx)
+        idx
     }
 
     /// 按 index 查找 (包括已被覆盖的, 需 index < `next_index`)
@@ -381,7 +374,7 @@ mod tests {
             bits: 0,
             result: 0,
         };
-        let idx = log.append(e).unwrap();
+        let idx = log.append(e);
         let got = log.get(idx).unwrap();
         assert_eq!(got.event, e);
         assert_eq!(got.index, idx);
@@ -401,8 +394,7 @@ mod tests {
                 domain_id: 0,
                 bits: 0,
                 result: 0,
-            })
-            .unwrap();
+            });
         }
         let (ok, bad) = log.verify();
         assert!(ok, "expected ok, got bad={:?}", bad);
@@ -420,8 +412,7 @@ mod tests {
                 domain_id: 0,
                 bits: 0,
                 result: 0,
-            })
-            .unwrap();
+            });
         }
         // 篡改: 直接修改 buffer 中第 2 个节点
         log.buffer[2].event.bits = 0xDEADBEEF;
@@ -440,8 +431,7 @@ mod tests {
             domain_id: 0,
             bits: 0,
             result: 0,
-        })
-        .unwrap();
+        });
         log.append(AuditEvent {
             kind: AuditEventKind::LoginFailed,
             tick: 2,
@@ -450,8 +440,7 @@ mod tests {
             domain_id: 0,
             bits: 0,
             result: 0,
-        })
-        .unwrap();
+        });
         log.append(AuditEvent {
             kind: AuditEventKind::Logout,
             tick: 3,
@@ -460,8 +449,7 @@ mod tests {
             domain_id: 0,
             bits: 0,
             result: 0,
-        })
-        .unwrap();
+        });
         let q = log.query_pwm(7);
         // 前两个应是 pwm=7 的事件
         assert!(q[0].is_some());
@@ -480,8 +468,7 @@ mod tests {
             domain_id: 0,
             bits: 0,
             result: 0,
-        })
-        .unwrap();
+        });
         log.append(AuditEvent {
             kind: AuditEventKind::LoginFailed,
             tick: 2,
@@ -490,8 +477,7 @@ mod tests {
             domain_id: 0,
             bits: 0,
             result: 0,
-        })
-        .unwrap();
+        });
         let q = log.query_kind(AuditEventKind::LoginSuccess);
         assert!(q[0].is_some());
         assert_eq!(q[0].unwrap().event.pwm, 1);
@@ -509,8 +495,7 @@ mod tests {
             domain_id: 0,
             bits: 0,
             result: 0,
-        })
-        .unwrap();
+        });
         log.append(AuditEvent {
             kind: AuditEventKind::Logout,
             tick: 2,
@@ -519,8 +504,7 @@ mod tests {
             domain_id: 0,
             bits: 0,
             result: 0,
-        })
-        .unwrap();
+        });
         assert_eq!(log.total(), 2);
     }
 }

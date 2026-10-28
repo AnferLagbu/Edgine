@@ -148,7 +148,7 @@ fn test_dyn_ipc_pipe_no_limit() -> TestResult {
 fn test_dyn_ipc_msgq_growth() -> TestResult {
     let ns = crate::privileged::ipc::dynamic::DynIpcNamespace::new();
     for _ in 0..20 {
-        let id = ns.msgq_create(1000, 64, 4096).unwrap();
+        let id = ns.msgq_create(1000, 64, 4096);
         check!(ns.msgq_exists(id), "msgq exists");
         ns.msgq_destroy(id).unwrap();
     }
@@ -178,7 +178,7 @@ fn test_dyn_ipc_shm_create() -> TestResult {
 
 fn test_dyn_ipc_sem_create() -> TestResult {
     let ns = crate::privileged::ipc::dynamic::DynIpcNamespace::new();
-    let id = ns.sem_create(1000, 1, 10).unwrap();
+    let id = ns.sem_create(1000, 1, 10);
     check!(id != 0, "sem id non-zero");
     ns.sem_destroy(id).unwrap();
     TestResult::Pass

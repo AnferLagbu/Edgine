@@ -412,26 +412,12 @@ impl Aarch64Vmm {
 
     // ─── Kernel Page Map ─────────────────────────────────────────────
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
-    #[expect(
-        clippy::missing_errors_doc,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
-    /// 在内核高半区 L0 表映射单个 4KB 页 (低半区地址 virt >> 48 == 0 直接返回 Ok).
-    pub fn map_page(
-        &self,
-        virt: VirtAddr,
-        phys: PhysAddr,
-        flags: PageFlags,
-    ) -> Result<(), &'static str> {
+    /// 在内核高半区 L0 表映射单个 4KB 页 (低半区地址 virt >> 48 == 0 直接返回).
+    pub fn map_page(&self, virt: VirtAddr, phys: PhysAddr, flags: PageFlags) {
         if virt.as_u64() >> 48 == 0 {
-            return Ok(());
+            return;
         }
         self.map_page_in_table(self.kernel_l0, virt, phys, flags);
-        Ok(())
     }
 
     #[expect(
@@ -450,7 +436,10 @@ impl Aarch64Vmm {
             return Ok(());
         }
         match size_type {
-            PageSize::Size4K => self.map_page(virt, phys, flags),
+            PageSize::Size4K => {
+                self.map_page(virt, phys, flags);
+                Ok(())
+            }
             PageSize::Size2M => {
                 let guard = self.acquire_lock();
 
@@ -709,20 +698,11 @@ impl Aarch64Vmm {
         clippy::unused_self,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
-    #[expect(
-        clippy::missing_errors_doc,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
     /// 拆分 2MB 块映射 (aarch64 上为空操作: 可并存 4KB 页, 仅为与 x86_64 接口对齐).
-    pub fn split_2mb_page(&self, _virt: u64) -> Result<(), &'static str> {
+    pub fn split_2mb_page(&self, _virt: u64) {
         // 在 aarch64 上, L2 块 (2MB) 是块映射的默认.
         // 无需拆分 — 可直接分配 L3 表并使用 4KB 页.
         // 此函数仅为与 x86 兼容而保留.
-        Ok(())
     }
 
     // ─── 页表遍历 / 映射 ───────────────────────────────────────

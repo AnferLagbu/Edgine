@@ -316,14 +316,14 @@ impl VirtioNetDriver {
     /// 配置 vq0 (RX) / vq1 (TX) MMIO 寄存器 → 设置 `DRIVER_OK` → 预填
     /// RX 队列 (refill 在 `DRIVER_OK` 后执行, 与旧 privileged 驱动时序一致)。
     pub fn finalize(&mut self) {
-        let _ = self.setup_queue(
+        self.setup_queue(
             RX_QUEUE_INDEX,
             self.rx_vq.num,
             self.rx_vq.desc_paddr(),
             self.rx_vq.avail_paddr(),
             self.rx_vq.used_paddr(),
         );
-        let _ = self.setup_queue(
+        self.setup_queue(
             TX_QUEUE_INDEX,
             self.tx_vq.num,
             self.tx_vq.desc_paddr(),
@@ -372,10 +372,6 @@ impl VirtioNetDriver {
 
     // ── 队列配置辅助 (通过 VirtioMmioDevice MMIO) ──
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
     /// 配置指定 virtqueue 的 MMIO 寄存器.
     ///
     /// # 参数
@@ -385,12 +381,7 @@ impl VirtioNetDriver {
     /// - `avail_paddr`: available ring 物理地址
     /// - `used_paddr`: used ring 物理地址
     ///
-    /// # 返回
-    /// - `Ok(max_size)`: 队列最大尺寸
-    /// - `Err(())`: 配置失败
-    ///
-    /// # Errors
-    /// 当底层 virtio 设备队列配置失败时返回 `Err(())`.
+    /// 返回队列最大尺寸.
     pub fn setup_queue(
         &self,
         vq_index: u16,
@@ -398,7 +389,7 @@ impl VirtioNetDriver {
         desc_paddr: u64,
         avail_paddr: u64,
         used_paddr: u64,
-    ) -> Result<u32, ()> {
+    ) -> u32 {
         self.device.select_queue(vq_index);
         let max_size = self.device.queue_num_max();
         slog_info!(Driver, "virtio-net: vq{} max_size={}", vq_index, max_size);
@@ -424,7 +415,7 @@ impl VirtioNetDriver {
             slog_info!(Driver, "virtio-net: vq{} ready", vq_index);
         }
 
-        Ok(max_size)
+        max_size
     }
 
     /// 通知设备: 指定队列有新描述符.

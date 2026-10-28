@@ -189,21 +189,9 @@ pub fn get_priority(pid: crate::privileged::proc::Pid) -> Option<ProcessPriority
     with(pid, crate::privileged::proc::process::Process::get_priority)
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
-/// 设置进程优先级
-///
-/// # Errors
-///
-/// 本函数始终返回 `Ok(())`; 若进程不存在则静默忽略.
-pub fn set_priority(
-    pid: crate::privileged::proc::Pid,
-    priority: ProcessPriority,
-) -> TableResult<()> {
+/// 设置进程优先级 (若进程不存在则静默忽略)
+pub fn set_priority(pid: crate::privileged::proc::Pid, priority: ProcessPriority) {
     with_mut(pid, |p| p.set_priority(priority));
-    Ok(())
 }
 
 /// 是否内核进程
@@ -211,18 +199,9 @@ pub fn is_kernel(pid: crate::privileged::proc::Pid) -> Option<bool> {
     with(pid, crate::privileged::proc::process::Process::is_kernel)
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
-/// 设置内核/用户标志
-///
-/// # Errors
-///
-/// 本函数始终返回 `Ok(())`; 若进程不存在则静默忽略.
-pub fn set_kernel(pid: crate::privileged::proc::Pid, is_kernel: bool) -> TableResult<()> {
+/// 设置内核/用户标志 (若进程不存在则静默忽略)
+pub fn set_kernel(pid: crate::privileged::proc::Pid, is_kernel: bool) {
     with_mut(pid, |p| p.set_kernel(is_kernel));
-    Ok(())
 }
 
 /// 获取调度策略
@@ -233,18 +212,9 @@ pub fn get_sched_policy(pid: crate::privileged::proc::Pid) -> Option<SchedPolicy
     )
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
-/// 设置调度策略
-///
-/// # Errors
-///
-/// 本函数始终返回 `Ok(())`; 若进程不存在则静默忽略.
-pub fn set_sched_policy(pid: crate::privileged::proc::Pid, policy: SchedPolicy) -> TableResult<()> {
+/// 设置调度策略 (若进程不存在则静默忽略)
+pub fn set_sched_policy(pid: crate::privileged::proc::Pid, policy: SchedPolicy) {
     with_mut(pid, |p| p.set_sched_policy(policy));
-    Ok(())
 }
 
 /// 获取 RT 优先级 (0-99)
@@ -255,18 +225,9 @@ pub fn get_rt_priority(pid: crate::privileged::proc::Pid) -> Option<u8> {
     )
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
-/// 设置 RT 优先级
-///
-/// # Errors
-///
-/// 本函数始终返回 `Ok(())`; 若进程不存在则静默忽略.
-pub fn set_rt_priority(pid: crate::privileged::proc::Pid, priority: u8) -> TableResult<()> {
+/// 设置 RT 优先级 (若进程不存在则静默忽略)
+pub fn set_rt_priority(pid: crate::privileged::proc::Pid, priority: u8) {
     with_mut(pid, |p| p.set_rt_priority(priority));
-    Ok(())
 }
 
 /// 获取进程 PMM (Per-Memory Mapping) 字节数
@@ -274,36 +235,18 @@ pub fn get_pwm(pid: crate::privileged::proc::Pid) -> Option<u64> {
     with(pid, crate::privileged::proc::process::Process::get_pwm)
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
-/// 设置 PMM
-///
-/// # Errors
-///
-/// 本函数始终返回 `Ok(())`; 若进程不存在则静默忽略.
-pub fn set_pwm(pid: crate::privileged::proc::Pid, pwm: u64) -> TableResult<()> {
+/// 设置 PMM (若进程不存在则静默忽略)
+pub fn set_pwm(pid: crate::privileged::proc::Pid, pwm: u64) {
     with_mut(pid, |p| p.set_pwm(pwm));
-    Ok(())
 }
 
 // ============================================================================
 // 信号
 // ============================================================================
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
-/// 设置待处理信号位
-///
-/// # Errors
-///
-/// 本函数始终返回 `Ok(())`; 若进程不存在则静默忽略.
-pub fn signal_set(pid: crate::privileged::proc::Pid, sig: u32) -> TableResult<()> {
+/// 设置待处理信号位 (若进程不存在则静默忽略)
+pub fn signal_set(pid: crate::privileged::proc::Pid, sig: u32) {
     with_mut(pid, |p| p.signal_pending_set(sig));
-    Ok(())
 }
 
 /// 获取待处理信号位图
@@ -314,18 +257,9 @@ pub fn signal_get(pid: crate::privileged::proc::Pid) -> Option<u64> {
     )
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
-/// 清除待处理信号位
-///
-/// # Errors
-///
-/// 本函数始终返回 `Ok(())`; 若进程不存在则静默忽略.
-pub fn signal_clear(pid: crate::privileged::proc::Pid, mask: u64) -> TableResult<()> {
+/// 清除待处理信号位 (若进程不存在则静默忽略)
+pub fn signal_clear(pid: crate::privileged::proc::Pid, mask: u64) {
     with_mut(pid, |p| p.signal_pending_clear(mask));
-    Ok(())
 }
 
 // ============================================================================

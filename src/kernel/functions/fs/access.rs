@@ -57,7 +57,7 @@ pub fn access_syscall(path_ptr: u64, mode: i32) -> Result<usize, Errno> {
     if !(0..=0o7).contains(&mode) {
         return Err(Errno::EINVAL);
     }
-    let pwm = current_pwm()?;
+    let pwm = current_pwm();
     // DECISION-077 方案 A: 能力制校验 — mode 位映射到 FS 能力域位.
     // 与 open/read/write 路径的 check_permission (ramfs/unkfs) 语义一致:
     // R_OK 对应 `FS_CAP_READ`, W_OK 对应 `FS_CAP_WRITE`, X_OK 对应 `FS_CAP_EXECUTE`.
@@ -118,7 +118,7 @@ pub fn unlink_syscall(path_ptr: u64) -> Result<usize, Errno> {
     if !raw::check_user_ptr(path_ptr) {
         return Err(Errno::EFAULT);
     }
-    let pwm = current_pwm()?;
+    let pwm = current_pwm();
     let r = fw::vfs_unlink(path_ptr as *const u8, pwm);
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))
@@ -131,11 +131,7 @@ pub fn unlink_syscall(path_ptr: u64) -> Result<usize, Errno> {
 // 内部辅助
 // ============================================================================
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
-/// 取当前进程凭证,无会话时直接返回 EACCES (历史硬编码 `TEST_PWM` 路径已弃用)。
-fn current_pwm() -> Result<u64, Errno> {
-    Ok(sgeg::api::pwm_get_current())
+/// 取当前进程凭证 (历史硬编码 `TEST_PWM` 路径已弃用)。
+fn current_pwm() -> u64 {
+    sgeg::api::pwm_get_current()
 }

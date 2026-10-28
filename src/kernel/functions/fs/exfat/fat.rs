@@ -14,19 +14,12 @@ pub const FAT_BAD: u32 = 0xFFFF_FFF7;
 /// FAT 链结束标记 (END of chain)
 pub const FAT_END: u32 = 0x0FFF_FFFF;
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
-/// 从 FAT 表读取簇链
-///
-/// # Errors
-/// 当前实现不返回错误: 底层读取失败时提前结束链并返回已收集的簇.
+/// 从 FAT 表读取簇链 (底层读取失败时提前结束链并返回已收集的簇)
 pub fn read_fat_chain(
     device_idx: u8,
     super_block: &ExfatSuperBlock,
     start_cluster: u32,
-) -> Result<alloc::vec::Vec<u32>, KernelError> {
+) -> alloc::vec::Vec<u32> {
     let mut chain = alloc::vec::Vec::new();
     let mut current = start_cluster;
 
@@ -65,7 +58,7 @@ pub fn read_fat_chain(
         current = entry;
     }
 
-    Ok(chain)
+    chain
 }
 
 /// 写入 FAT 表条目

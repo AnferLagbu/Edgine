@@ -148,17 +148,13 @@ impl CompositeBlockDevice {
     #[inline]
     // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
     #[expect(clippy::cast_possible_truncation)]
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
-    fn map_raid0_sector(&self, logical: u64) -> Option<(u8, u64)> {
+    fn map_raid0_sector(&self, logical: u64) -> (u8, u64) {
         let stripe = logical / self.stripe_sectors;
         let child_idx = (stripe % u64::from(self.child_count)) as u8;
         let stripe_row = stripe / u64::from(self.child_count);
         let offset = logical % self.stripe_sectors;
         let physical = stripe_row * self.stripe_sectors + offset;
-        Some((child_idx, physical))
+        (child_idx, physical)
     }
 }
 
@@ -178,13 +174,10 @@ impl BlockDevice for CompositeBlockDevice {
             CompositeType::Raid0 => {
                 for s in 0..num_sectors {
                     let chunk = &mut buf[(s * 512) as usize..((s + 1) * 512) as usize];
-                    if let Some((drive_idx, phys_sector)) = self.map_raid0_sector(sector + s) {
-                        let ret = egdf_blk_read(drive_idx, phys_sector, chunk);
-                        if ret != 0 {
-                            return ret;
-                        }
-                    } else {
-                        return KernelError::InvalidArgument.as_i32();
+                    let (drive_idx, phys_sector) = self.map_raid0_sector(sector + s);
+                    let ret = egdf_blk_read(drive_idx, phys_sector, chunk);
+                    if ret != 0 {
+                        return ret;
                     }
                 }
                 0
@@ -230,13 +223,10 @@ impl BlockDevice for CompositeBlockDevice {
             CompositeType::Raid0 => {
                 for s in 0..num_sectors {
                     let chunk = &buf[(s * 512) as usize..((s + 1) * 512) as usize];
-                    if let Some((drive_idx, phys_sector)) = self.map_raid0_sector(sector + s) {
-                        let ret = egdf_blk_write(drive_idx, phys_sector, chunk);
-                        if ret != 0 {
-                            return ret;
-                        }
-                    } else {
-                        return KernelError::InvalidArgument.as_i32();
+                    let (drive_idx, phys_sector) = self.map_raid0_sector(sector + s);
+                    let ret = egdf_blk_write(drive_idx, phys_sector, chunk);
+                    if ret != 0 {
+                        return ret;
                     }
                 }
                 0
@@ -477,10 +467,10 @@ mod tests {
             read_round_robin: AtomicU32::new(0),
         };
 
-        assert_eq!(dev.map_raid0_sector(0), Some((0, 0)));
-        assert_eq!(dev.map_raid0_sector(7), Some((0, 7)));
-        assert_eq!(dev.map_raid0_sector(8), Some((1, 0)));
-        assert_eq!(dev.map_raid0_sector(15), Some((1, 7)));
+        assert_eq!(dev.map_raid0_sector(0), (0, 0));
+        assert_eq!(dev.map_raid0_sector(7), (0, 7));
+        assert_eq!(dev.map_raid0_sector(8), (1, 0));
+        assert_eq!(dev.map_raid0_sector(15), (1, 7));
     }
 
     #[test]

@@ -366,22 +366,17 @@ fn wait_output_buffer_full(cmd_port: &IoPort) -> bool {
     false
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// 向 PS/2 控制器发送命令
-fn ps2_send_command(cmd_port: &IoPort, cmd: u8) -> DriverResult<()> {
+fn ps2_send_command(cmd_port: &IoPort, cmd: u8) {
     wait_input_buffer_empty(cmd_port);
     cmd_port.write_u8(0, cmd);
-    Ok(())
 }
 
 /// PS/2 控制器自检
 ///
 /// 发送 0xAA 命令, 期望收到 0x55 表示自检通过。
 fn ps2_self_test(cmd_port: &IoPort, data_port: &IoPort) -> DriverResult<()> {
-    ps2_send_command(cmd_port, 0xAA)?;
+    ps2_send_command(cmd_port, 0xAA);
     match keyboard_read_data(cmd_port, data_port) {
         Some(0x55) => Ok(()), // 自检通过
         _ => Err(DriverError::HardwareError),
@@ -392,22 +387,17 @@ fn ps2_self_test(cmd_port: &IoPort, data_port: &IoPort) -> DriverResult<()> {
 ///
 /// 发送 0xFF 命令重置键盘, 期望收到 0xFA (ACK)。
 fn keyboard_reset(cmd_port: &IoPort, data_port: &IoPort) -> DriverResult<()> {
-    keyboard_send_data(cmd_port, data_port, 0xFF)?;
+    keyboard_send_data(cmd_port, data_port, 0xFF);
     match keyboard_read_data(cmd_port, data_port) {
         Some(0xFA) => Ok(()), // ACK
         _ => Err(DriverError::HardwareError),
     }
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// 向键盘发送数据
-fn keyboard_send_data(cmd_port: &IoPort, data_port: &IoPort, data: u8) -> DriverResult<()> {
+fn keyboard_send_data(cmd_port: &IoPort, data_port: &IoPort, data: u8) {
     wait_input_buffer_empty(cmd_port);
     data_port.write_u8(0, data);
-    Ok(())
 }
 
 /// 从键盘读取数据
@@ -424,10 +414,10 @@ fn keyboard_read_data(cmd_port: &IoPort, data_port: &IoPort) -> Option<u8> {
 )]
 /// 更新键盘 LED 状态
 fn update_leds(cmd_port: &IoPort, data_port: &IoPort, modifiers: &ModifierState) {
-    let _ = keyboard_send_data(cmd_port, data_port, KB_CMD_SET_LED);
+    keyboard_send_data(cmd_port, data_port, KB_CMD_SET_LED);
     // 等待 ACK (0xFA)
     let _ = keyboard_read_data(cmd_port, data_port);
-    let _ = keyboard_send_data(cmd_port, data_port, modifiers.to_led_byte());
+    keyboard_send_data(cmd_port, data_port, modifiers.to_led_byte());
     // 等待 ACK
     let _ = keyboard_read_data(cmd_port, data_port);
 }
@@ -438,8 +428,8 @@ fn update_leds(cmd_port: &IoPort, data_port: &IoPort, modifiers: &ModifierState)
 /// 回复: 1=Set 1, 2=Set 2, 3=Set 3.
 fn query_scancode_set(cmd_port: &IoPort, data_port: &IoPort) -> Option<u8> {
     // 发送 0xF0 0x00 查询
-    let _ = keyboard_send_data(cmd_port, data_port, KB_CMD_SCANCODE);
-    let _ = keyboard_send_data(cmd_port, data_port, 0x00);
+    keyboard_send_data(cmd_port, data_port, KB_CMD_SCANCODE);
+    keyboard_send_data(cmd_port, data_port, 0x00);
     // 等待 ACK (0xFA)
     let _ = keyboard_read_data(cmd_port, data_port);
     // 读取扫描码集回复
@@ -450,8 +440,8 @@ fn query_scancode_set(cmd_port: &IoPort, data_port: &IoPort) -> Option<u8> {
 ///
 /// 发送 0xF0 + `set_number`, 等待 ACK.
 fn switch_scancode_set(cmd_port: &IoPort, data_port: &IoPort, set: u8) -> bool {
-    let _ = keyboard_send_data(cmd_port, data_port, KB_CMD_SCANCODE);
-    let _ = keyboard_send_data(cmd_port, data_port, set);
+    keyboard_send_data(cmd_port, data_port, KB_CMD_SCANCODE);
+    keyboard_send_data(cmd_port, data_port, set);
     // 等待 ACK (0xFA)
     matches!(keyboard_read_data(cmd_port, data_port), Some(0xFA))
 }
@@ -696,10 +686,6 @@ impl KeyboardDriver {
         self.buffer.pop()
     }
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-    )]
     /// 读取一行文本 (阻塞直到遇到 Enter)
     ///
     /// # Arguments
@@ -707,11 +693,8 @@ impl KeyboardDriver {
     /// * `max_len` - 最大长度
     ///
     /// # Returns
-    /// * `Ok(usize)` - 实际读取的字符数 (不含换行符)
-    /// * `Err(DriverError)` - 错误
-    /// # Errors
-    /// 底层字符读取失败时返回 Err。
-    pub fn read_line(&mut self, buffer: &mut [u8], max_len: usize) -> DriverResult<usize> {
+    /// 实际读取的字符数 (不含换行符)
+    pub fn read_line(&mut self, buffer: &mut [u8], max_len: usize) -> usize {
         let mut count: usize = 0;
 
         loop {
@@ -744,7 +727,7 @@ impl KeyboardDriver {
             }
         }
 
-        Ok(count)
+        count
     }
 
     /// 检查缓冲区是否为空

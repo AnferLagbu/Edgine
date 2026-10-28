@@ -23,52 +23,24 @@ use crate::privileged::syscall::Errno;
 // 读类
 // ============================================================================
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// `getuid()` — 取真实 UID
-///
-/// # Errors
-/// 当前实现总是返回 `Ok`, 不会返回错误.
-pub fn getuid_syscall() -> Result<usize, Errno> {
-    Ok(fw::get_current_uid() as usize)
+pub fn getuid_syscall() -> usize {
+    fw::get_current_uid() as usize
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// `getgid()` — 取真实 GID
-///
-/// # Errors
-/// 当前实现总是返回 `Ok`, 不会返回错误.
-pub fn getgid_syscall() -> Result<usize, Errno> {
-    Ok(fw::get_current_gid() as usize)
+pub fn getgid_syscall() -> usize {
+    fw::get_current_gid() as usize
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// `geteuid()` — 取有效 UID
-///
-/// # Errors
-/// 当前实现总是返回 `Ok`, 不会返回错误.
-pub fn geteuid_syscall() -> Result<usize, Errno> {
-    Ok(fw::get_euid() as usize)
+pub fn geteuid_syscall() -> usize {
+    fw::get_euid() as usize
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// `getegid()` — 取有效 GID
-///
-/// # Errors
-/// 当前实现总是返回 `Ok`, 不会返回错误.
-pub fn getegid_syscall() -> Result<usize, Errno> {
-    Ok(fw::get_egid() as usize)
+pub fn getegid_syscall() -> usize {
+    fw::get_egid() as usize
 }
 
 // ============================================================================

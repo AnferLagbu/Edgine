@@ -52,7 +52,7 @@ pub fn free_cluster_chain(
     super_block: &ExfatSuperBlock,
     start_cluster: u32,
 ) -> Result<(), KernelError> {
-    let chain = super::fat::read_fat_chain(device_idx, super_block, start_cluster)?;
+    let chain = super::fat::read_fat_chain(device_idx, super_block, start_cluster);
 
     for cluster in chain {
         super::fat::write_fat_entry(device_idx, super_block, cluster, 0)?;

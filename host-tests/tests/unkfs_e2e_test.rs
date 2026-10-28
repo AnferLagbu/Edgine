@@ -66,9 +66,7 @@ fn e2e_format_write_snapshot_restore() {
 
     // 5) 创建快照
     let snap_mgr = UnkfsSnapshotManager::new();
-    let snap_id = snap_mgr
-        .create_snapshot(&root, "before-restore", 1)
-        .expect("create_snapshot should succeed");
+    let snap_id = snap_mgr.create_snapshot(&root, "before-restore", 1);
     assert!(snap_id > 0, "snap_id 应当 > 0");
 
     // 6) 验证快照存在
@@ -239,7 +237,7 @@ fn e2e_snapshot_root_bp_immutable() {
 
     // 快照
     let snap_mgr = UnkfsSnapshotManager::new();
-    let snap_id = snap_mgr.create_snapshot(&root, "v1", 1).unwrap();
+    let snap_id = snap_mgr.create_snapshot(&root, "v1", 1);
 
     // 写入: 模拟 dataset 内部更新 root_bp (此处仅测试契约, 实际生产由 DMU 改)
     // UnkfsBlockPointer 是 repr(C) 公开字段. 真实 DMU 会写入 DVA/出生 txg 等.

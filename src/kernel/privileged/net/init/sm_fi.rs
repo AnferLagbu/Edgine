@@ -232,23 +232,19 @@ pub(crate) fn endpoint_to_smol(e: crate::privileged::net::iface_trait::NetEndpoi
     }
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
-)]
 /// 把 smoltcp 的 `IpEndpoint` 翻译回 trait 抽象的 `NetEndpoint`.
 pub(crate) fn endpoint_from_smol(
     ep: IpEndpoint,
-) -> Option<crate::privileged::net::iface_trait::NetEndpoint> {
+) -> crate::privileged::net::iface_trait::NetEndpoint {
     match ep.addr {
-        IpAddress::Ipv4(v4) => Some(crate::privileged::net::iface_trait::NetEndpoint::new_v4(
+        IpAddress::Ipv4(v4) => crate::privileged::net::iface_trait::NetEndpoint::new_v4(
             crate::privileged::net::iface_trait::Ipv4Addr::from_octets(v4.octets()),
             ep.port,
-        )),
-        IpAddress::Ipv6(v6) => Some(crate::privileged::net::iface_trait::NetEndpoint::new_v6(
+        ),
+        IpAddress::Ipv6(v6) => crate::privileged::net::iface_trait::NetEndpoint::new_v6(
             crate::privileged::net::iface_trait::Ipv6Addr::from_octets(v6.octets()),
             ep.port,
-        )),
+        ),
     }
 }
 
@@ -886,9 +882,8 @@ unsafe fn sm_accept_locked(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
 
         // 步骤 6: 从已连接会话回写对端地址 (沿用 getsockname/getpeername 直写约定).
         if let Some(remote) = sockets.get::<tcp::Socket>(conn_handle).remote_endpoint() {
-            if let Some(ep) = endpoint_from_smol(remote) {
-                write_sockaddr(addr, addrlen, &ep);
-            }
+            let ep = endpoint_from_smol(remote);
+            write_sockaddr(addr, addrlen, &ep);
         }
 
         // 步骤 7: 返回承载已连接会话的新 fd; 监听槽 L 持续可用.
@@ -1013,9 +1008,7 @@ unsafe fn sm_connect_locked(fd: i32, addr: *const u8, _addrlen: u32) -> i32 {
 
         // D9: UDP connect — 登记对端到 D1 remote 表; 未 bind 时按 D2 分配临时端口并 bind.
         if raw::fd_type(slot) == 2 {
-            let Some(net_remote) = endpoint_from_smol(endpoint) else {
-                return -E_INVAL;
-            };
+            let net_remote = endpoint_from_smol(endpoint);
             raw::set_socket_remote_endpoint(slot, Some(net_remote));
 
             // 已显式 bind (port != 0) 则无需再分配临时端口.
@@ -1431,9 +1424,8 @@ pub unsafe extern "C" fn sm_recvfrom(
                         Some(sock.recv_slice(data).map_or(-E_AGAIN, |(n, meta)| {
                             // 通过 endpoint_from_smol 将 smoltcp IpEndpoint 翻译为 NetEndpoint,
                             // 再写入 sockaddr_in 供用户态读取对端地址.
-                            if let Some(ep) = endpoint_from_smol(meta.endpoint) {
-                                write_sockaddr(addr, addrlen, &ep);
-                            }
+                            let ep = endpoint_from_smol(meta.endpoint);
+                            write_sockaddr(addr, addrlen, &ep);
                             n as i32
                         }))
                     } else if blocking && can_block {
@@ -2278,9 +2270,7 @@ pub unsafe extern "C" fn sm_getsockname(fd: i32, addr: *mut u8, addrlen: *mut u3
             return -E_NOTCONN; // TCP 未 connect
         };
         // 双栈 (DECISION-032): 翻译为 NetEndpoint 后按 V4/V6 分支写 sockaddr_in / sockaddr_in6
-        let Some(ep) = endpoint_from_smol(endpoint) else {
-            return -E_AFNOSUPPORT;
-        };
+        let ep = endpoint_from_smol(endpoint);
         // SAFETY: write_sockaddr 按 ep.addr 分支写对应 sockaddr 结构, addr 已校验非空且 ≥ 28 字节
         write_sockaddr(addr, addrlen, &ep);
         0
@@ -2338,9 +2328,7 @@ pub unsafe extern "C" fn sm_getpeername(fd: i32, addr: *mut u8, addrlen: *mut u3
             return -E_NOTCONN; // TCP 未 connect
         };
         // 双栈 (DECISION-032): 翻译为 NetEndpoint 后按 V4/V6 分支写 sockaddr_in / sockaddr_in6
-        let Some(ep) = endpoint_from_smol(endpoint) else {
-            return -E_AFNOSUPPORT;
-        };
+        let ep = endpoint_from_smol(endpoint);
         // SAFETY: write_sockaddr 按 ep.addr 分支写对应 sockaddr 结构, addr 已校验非空且 ≥ 28 字节
         write_sockaddr(addr, addrlen, &ep);
         0

@@ -938,14 +938,26 @@ impl KernelHeap {
             let page_phys = PhysAddr(phys.as_u64() + i * PAGE_SIZE);
             let page_virt = VirtAddr(new_start.0 + i * PAGE_SIZE);
 
-            if vmm
+            #[cfg(target_arch = "x86_64")]
+            let map_failed = vmm
                 .map_page(
                     page_virt,
                     page_phys,
                     PageFlags::PRESENT | PageFlags::WRITABLE,
                 )
-                .is_err()
-            {
+                .is_err();
+            // aarch64 的 map_page 恒成功 (无返回值), 失败分支不参与编译
+            #[cfg(not(target_arch = "x86_64"))]
+            let map_failed = {
+                vmm.map_page(
+                    page_virt,
+                    page_phys,
+                    PageFlags::PRESENT | PageFlags::WRITABLE,
+                );
+                false
+            };
+
+            if map_failed {
                 for j in 0..i {
                     let unmap_virt = VirtAddr(new_start.0 + j * PAGE_SIZE);
                     vmm.unmap_page(unmap_virt);
