@@ -112,7 +112,7 @@ pub fn msi_alloc_vector() -> Option<u8> {
         match MSI_VECTORS.compare_exchange(bitmap, new_bitmap, Ordering::AcqRel, Ordering::Acquire)
         {
             Ok(_) => {
-                let vector = MSI_VECTOR_BASE + crate::privileged::lib::low_u8_from_u32(bit);
+                let vector = MSI_VECTOR_BASE + crate::privileged::glue::low_u8_from_u32(bit);
                 crate::klog_debug!(Driver, "[MSI] Allocated vector {}", vector);
                 return Some(vector);
             }
@@ -231,7 +231,7 @@ pub fn msi_enable(dev: &pci::PciDevice) -> Option<MsiConfig> {
         dev.device,
         dev.function,
         cap_offset + data_offset,
-        crate::privileged::lib::low_u16_from_u32(msg_data),
+        crate::privileged::glue::low_u16_from_u32(msg_data),
     );
 
     // 启用 MSI (设置 Enable 位)

@@ -350,10 +350,6 @@ pub fn init() -> BootInfo {
     };
 
     #[cfg(target_arch = "aarch64")]
-    #[expect(
-        clippy::map_unwrap_or,
-        reason = "option_env → parse → 默认值链式调用可读性较好; map_or 反而需要反向参数"
-    )]
     let (mem_size, mmap_entries) = {
         // aarch64 不使用 Multiboot 协议, 但需读取字段以消除 dead_code 警告
         let _ = MULTIBOOT_INFO_PTR.lock().0;
@@ -361,8 +357,7 @@ pub fn init() -> BootInfo {
         // 可通过 `AARCH64_MEM_SIZE` 环境/构建变量覆盖.
         let ms: u64 = option_env!("AARCH64_MEM_MB")
             .and_then(|s| s.parse::<u64>().ok())
-            .map(|mb| mb * 1024 * 1024)
-            .unwrap_or(512 * 1024 * 1024);
+            .map_or(512 * 1024 * 1024, |mb| mb * 1024 * 1024);
         (ms, 0)
     };
 

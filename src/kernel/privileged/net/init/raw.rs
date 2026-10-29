@@ -328,7 +328,7 @@ pub unsafe fn udp_tx_meta(fd: usize) -> &'static mut [udp::PacketMetadata; UDP_M
 /// 安全获取 `SocketSet` 指针 (保留为 static mut, 自引用结构)
 pub fn socket_set() -> *mut SocketSet<'static> {
     // SAFETY: SOCKET_SET 在 init_sockets 后已初始化, 调用方在 NET_STATE 锁下.
-    unsafe { SOCKET_SET.as_mut_ptr() }
+    unsafe { (*core::ptr::addr_of_mut!(SOCKET_SET)).as_mut_ptr() }
 }
 
 /// 安全初始化 sockets

@@ -49,10 +49,6 @@ impl AuditLog {
         }
     }
 
-    #[expect(
-        clippy::no_effect_underscore_binding,
-        reason = "no_effect_underscore_binding: let _ = expr 用于类型推导/副作用; 当前优先 expect"
-    )]
     /// 将全部有效审计条目打印到串口。
     pub fn dump(&self) {
         let count = self.count.load(Ordering::Acquire);
@@ -67,7 +63,8 @@ impl AuditLog {
             } else {
                 i
             };
-            let _e = &self.entries[idx];
+            // 审计条目字段经 `serial_println!` (当前为空展开) 消费; 保留索引与格式声明
+            let _ = &self.entries[idx];
             crate::serial_println!(
                 "[AUDIT] t={} pwm={:#x} action={} target={:#x} details={:#x}",
                 e.timestamp,

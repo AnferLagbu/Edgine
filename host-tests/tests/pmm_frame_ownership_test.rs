@@ -146,7 +146,7 @@ fn has_frame_owner_region(init_bitmap_squashed: &str) -> bool {
     let need_all = [
         "total_pages*core::mem::size_of::<OwnerIndex>()",
         "store.setup_owner(layout.owner_phys,layout.owner_bytes)",
-        "letowner_start_page=crate::privileged::lib::usize_from_u64(phys_to_page(layout.owner_phys))",
+        "letowner_start_page=crate::privileged::glue::usize_from_u64(phys_to_page(layout.owner_phys))",
         "self.set_bit(i)",
         "[PMM]FRAME_OWNER",
     ];
@@ -156,7 +156,7 @@ fn has_frame_owner_region(init_bitmap_squashed: &str) -> bool {
 /// 不变式 1 反面: FRAME_COUNTS 与 FRAME_OWNER 尺寸不同源 (手写常量必漂移).
 fn frame_owner_size_is_derived(init_bitmap_squashed: &str) -> bool {
     init_bitmap_squashed
-        .contains("owner_bytes.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE))")
+        .contains("owner_bytes.div_ceil(crate::privileged::glue::usize_from_u64(PAGE_SIZE))")
         && init_bitmap_squashed.contains("owner_phys+owner_pages*PAGE_SIZE+PAGE_SIZE")
 }
 

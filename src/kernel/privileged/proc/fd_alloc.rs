@@ -167,7 +167,7 @@ impl FdPlan {
     /// VFS per-process fd 段 [0, 64) — **仅作重叠校验**, 分配/释放由 `FdTable` 自管,
     /// 不进 `FdSubsystem` 枚举与位图 (方案 C).
     pub const VFS: FdRange =
-        FdRange::new(0, crate::privileged::lib::low_u16_from_usize(VFS_FD_WIDTH));
+        FdRange::new(0, crate::privileged::glue::low_u16_from_usize(VFS_FD_WIDTH));
 
     /// Smoltcp FD 空间 (TD-06: 容量从 `cfg_smoltcp_cap()` 派生, 当前默认 256.
     /// 用户可手动修改 `cfg_smoltcp_cap` 至 1024 / 4096, 同步 `privileged/net/init.rs` 的
@@ -175,7 +175,7 @@ impl FdPlan {
     /// 方案 C: 基址紧贴 VFS 段上界, 与 [0, 64) 不重叠; fd → 槽位索引一律经
     /// `idx_of` 换算 (消费方唯一切换面, fd 对象模型终态工程整体退役该层).
     pub const SMOLTCP: FdRange = FdRange::new(
-        crate::privileged::lib::low_i32_from_usize(VFS_FD_WIDTH),
+        crate::privileged::glue::low_i32_from_usize(VFS_FD_WIDTH),
         256,
     );
 
@@ -269,7 +269,7 @@ static FD_BITMAPS: [AtomicU8; FdSubsystem::COUNT * BITMAP_SIZE] =
 /// V2: 使用位图跟踪槽位占用, 支持 free 后回收.
 pub fn alloc_fd(sub: FdSubsystem) -> Option<i32> {
     let range = FdPlan::range_for(sub);
-    let base = crate::privileged::lib::usize_from_i32(range.base);
+    let base = crate::privileged::glue::usize_from_i32(range.base);
     let capacity = range.capacity as usize;
     let bitmap_offset = sub as usize * BITMAP_SIZE;
 
@@ -281,7 +281,7 @@ pub fn alloc_fd(sub: FdSubsystem) -> Option<i32> {
         if byte & (1 << bit_idx) == 0 {
             // 找到空闲槽位, 标记为占用
             FD_BITMAPS[byte_idx].store(byte | (1 << bit_idx), Ordering::Release);
-            return Some(crate::privileged::lib::low_i32_from_usize(base + i));
+            return Some(crate::privileged::glue::low_i32_from_usize(base + i));
         }
     }
     None
@@ -295,7 +295,7 @@ pub fn free_fd(sub: FdSubsystem, fd: i32) -> bool {
     if !range.contains(fd) {
         return false;
     }
-    let slot = crate::privileged::lib::usize_from_i32(fd - range.base);
+    let slot = crate::privileged::glue::usize_from_i32(fd - range.base);
     let bitmap_offset = sub as usize * BITMAP_SIZE;
     let byte_idx = bitmap_offset + slot / 8;
     let bit_idx = slot % 8;
@@ -349,7 +349,7 @@ pub fn verify_plan() {
 /// `const fn`, 可在静态表初始化与 `panic!` 等不可变上下文中使用.
 #[inline]
 pub const fn fd_at(sub: FdSubsystem, slot: usize) -> i32 {
-    FdPlan::range_for(sub).base + crate::privileged::lib::low_i32_from_usize(slot)
+    FdPlan::range_for(sub).base + crate::privileged::glue::low_i32_from_usize(slot)
 }
 
 /// 给定子系统, 返回最大 slot 数 (用于 `for i in 0..max_slots(sub)` 替代硬编码 `MAX_xxx`)
@@ -380,7 +380,10 @@ pub fn idx_of(fd: i32) -> Option<(FdSubsystem, usize)> {
         let sub = FdSubsystem::from_index(i)?;
         let range = FdPlan::range_for(sub);
         if range.contains(fd) {
-            return Some((sub, crate::privileged::lib::usize_from_i32(fd - range.base)));
+            return Some((
+                sub,
+                crate::privileged::glue::usize_from_i32(fd - range.base),
+            ));
         }
         i += 1;
     }

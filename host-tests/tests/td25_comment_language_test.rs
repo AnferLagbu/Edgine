@@ -408,7 +408,7 @@ fn test_c_code_example_passes() {
     let files = &[(
         "doc.rs",
         "/// struct itimerspec new_val = { .it_interval = {1, 0}, .it_value = {1, 0} };\n\
-         /// syscall(SYS_timer_settime, id, 0, &new_val, NULL);\n\
+         /// syscall(SYS_TIMER_SETTIME, id, 0, &new_val, NULL);\n\
          pub fn f() {}\n",
     )];
     let (code, stdout, stderr) = run_audit_on_fixture(files);

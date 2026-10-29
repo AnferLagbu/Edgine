@@ -353,7 +353,7 @@ impl core::fmt::Display for Errno {
 /// i64 → `Errno` (POSIX: 负数 = -errno)
 pub fn errno_from_i64(rc: i64) -> Option<Errno> {
     if rc < 0 {
-        Errno::try_from_i32(crate::privileged::lib::low_i32_from_i64(-rc))
+        Errno::try_from_i32(crate::privileged::glue::low_i32_from_i64(-rc))
     } else {
         None
     }

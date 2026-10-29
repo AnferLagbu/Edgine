@@ -23,10 +23,6 @@ const POLLOUT: i16 = 4;
 const TIOCGWINSZ: u64 = 0x5413;
 const TCGETS: u64 = 0x5401;
 
-#[expect(
-    clippy::struct_field_names,
-    reason = "struct_field_names: 字段名前缀相同是为可读性/调试; 当前优先 expect"
-)]
 /// ioctl(fd, request, arg) 策略
 ///
 /// fd 路由: userfaultfd (1200 段) → `functions::mm::uffd` 的 `UFFDIO_*` 处理;
@@ -139,7 +135,7 @@ pub fn poll_syscall(fds_ptr: u64, nfds: u32, _timeout: i32) -> i64 {
 /// - `sigmask != NULL` → 等待期间临时替换屏蔽字, 结束后恢复
 ///   (`functions::proc::signal::with_temporary_sigmask`)
 ///
-/// SIMPLIFIED: 超时未阻塞 — 复用 [`poll_syscall`] 的"单次扫描"语义 (既有 `SYS_poll`
+/// SIMPLIFIED: 超时未阻塞 — 复用 [`poll_syscall`] 的"单次扫描"语义 (既有 `SYS_POLL`
 /// 现状: 事件就绪即返回, 否则立即返回 0, timeout 不生效), 解析出的毫秒值仅作为
 /// 参数下传. 影响面: 无就绪事件时 ppoll 立即返回 0 而非等到超时/事件, 用户态
 /// 轮询式多路复用仍可用 (与 `epoll_wait` 的 timeout > 0 缺口一致). 何时需扩展:

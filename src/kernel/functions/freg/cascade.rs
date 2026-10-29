@@ -323,7 +323,7 @@ mod tests {
     fn direction_tcb_isolated() {
         let topo = build_topology();
         let attr = FaultAttribution::Tcb {
-            module: TcbModule::FREG,
+            module: TcbModule::Freg,
         };
         let dir = CascadePolicy::direction(attr, &topo, 2);
         assert_eq!(dir, CascadeDirection::Isolated);

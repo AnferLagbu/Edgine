@@ -42,7 +42,7 @@ impl NetOps {
         (self.send)(
             driver_data,
             data.as_ptr(),
-            crate::privileged::lib::low_u32_from_usize(data.len()),
+            crate::privileged::glue::low_u32_from_usize(data.len()),
         )
     }
 
@@ -54,7 +54,7 @@ impl NetOps {
         (self.try_receive)(
             driver_data,
             buf.as_mut_ptr(),
-            crate::privileged::lib::low_u32_from_usize(buf.len()),
+            crate::privileged::glue::low_u32_from_usize(buf.len()),
         )
     }
 

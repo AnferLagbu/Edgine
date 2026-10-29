@@ -500,7 +500,7 @@ pub fn hrtimer_clock_read() -> u64 {
 /// # Errors
 /// 当 hrtimer 框架尚未初始化 (`HRTIMER_READY == false`) 时返回 `Err(())`.
 pub fn hrtimer_sleep(delay_ns: u64) -> Result<(), ()> {
-    static mut SLEEP_FLAG: AtomicBool = AtomicBool::new(false);
+    static SLEEP_FLAG: AtomicBool = AtomicBool::new(false);
     const SLEEP_WAIT_BOUND: u32 = 1_000_000_000; // ~1s @ 1GHz spin_loop
     if delay_ns == 0 {
         return Ok(());
@@ -514,8 +514,8 @@ pub fn hrtimer_sleep(delay_ns: u64) -> Result<(), ()> {
 
     let mut timer = HrTimer::uninit();
     timer.init(|_t| {
-        // SAFETY: SLEEP_FLAG 由本函数 set up, 回调仅 store true.
-        unsafe { SLEEP_FLAG.store(true, Ordering::Release) };
+        // SLEEP_FLAG 为原子量, 回调仅 store true.
+        SLEEP_FLAG.store(true, Ordering::Release);
         HrTimerRestart::OneShot
     });
 
@@ -523,19 +523,16 @@ pub fn hrtimer_sleep(delay_ns: u64) -> Result<(), ()> {
 
     // 自旋等待. hrtimer_run_queues 会在下一个 tick (或下次硬件定时器中断)
     // 处理到期定时器, 触发回调 set SLEEP_FLAG=true.
-    // SAFETY: SLEEP_FLAG 由本函数 set up, 此处仅 load 检查完成.
     let mut spins: u32 = 0;
-    unsafe {
-        while !SLEEP_FLAG.load(Ordering::Acquire) {
-            core::hint::spin_loop();
-            spins = spins.saturating_add(1);
-            if spins >= SLEEP_WAIT_BOUND {
-                // 兜底: 超时仍按已完成返回, 不让进程卡死
-                break;
-            }
+    while !SLEEP_FLAG.load(Ordering::Acquire) {
+        core::hint::spin_loop();
+        spins = spins.saturating_add(1);
+        if spins >= SLEEP_WAIT_BOUND {
+            // 兜底: 超时仍按已完成返回, 不让进程卡死
+            break;
         }
-        SLEEP_FLAG.store(false, Ordering::Release);
     }
+    SLEEP_FLAG.store(false, Ordering::Release);
     Ok(())
 }
 
@@ -673,11 +670,12 @@ fn test_uninit_state() -> crate::privileged::tests::TestResult {
 fn test_init_and_cancel() -> crate::privileged::tests::TestResult {
     use crate::privileged::tests::{TestResult, assert_eq_test, check};
     static mut TEST_TIMER: HrTimer = HrTimer::uninit();
-    // SAFETY: 测试单线程, 无竞争
+    // SAFETY: 测试单线程, 无竞争; 经 &raw mut 取裸指针避免对 static mut 取引用
     unsafe {
-        TEST_TIMER.init(noop_callback);
-        assert_eq_test!(TEST_TIMER.state(), HrTimerState::Inactive, "after init");
-        let cancelled = hrtimer_cancel(&TEST_TIMER);
+        let timer = &mut *core::ptr::addr_of_mut!(TEST_TIMER);
+        timer.init(noop_callback);
+        assert_eq_test!(timer.state(), HrTimerState::Inactive, "after init");
+        let cancelled = hrtimer_cancel(timer);
         check!(!cancelled, "cancel inactive returns false");
     }
     TestResult::Pass
@@ -717,10 +715,11 @@ fn test_queue_operations() -> crate::privileged::tests::TestResult {
     check!(is_hrtimer_ready(), "initialized");
     assert_eq_test!(hrtimer_pending_count(), 0, "empty queue");
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 调用方保证指针/类型有效; 经 &raw mut 取裸指针避免对 static mut 取引用
     unsafe {
-        T1.init(noop_callback);
-        hrtimer_start(&T1, 1_000_000_000);
+        let timer = &mut *core::ptr::addr_of_mut!(T1);
+        timer.init(noop_callback);
+        hrtimer_start(timer, 1_000_000_000);
     }
     assert_eq_test!(hrtimer_pending_count(), 1, "1 timer");
 
@@ -728,8 +727,8 @@ fn test_queue_operations() -> crate::privileged::tests::TestResult {
     check!(next.is_some(), "has next expiry");
     assert_eq_test!(next.unwrap(), 1_000_000_000, "expiry matches");
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    hrtimer_cancel(unsafe { &T1 });
+    // SAFETY: 经 &raw mut 取裸指针避免对 static mut 取引用
+    hrtimer_cancel(unsafe { &*core::ptr::addr_of!(T1) });
     // 取消后队列在下一次 run_queues 时清理
     hrtimer_run_queues();
     assert_eq_test!(hrtimer_pending_count(), 0, "empty after cancel+run");
@@ -740,14 +739,18 @@ fn test_queue_operations() -> crate::privileged::tests::TestResult {
 fn test_periodic_restart() -> crate::privileged::tests::TestResult {
     use crate::privileged::tests::{TestResult, check};
     static mut T2: HrTimer = HrTimer::uninit();
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 经 &raw mut 取裸指针避免对 static mut 取引用
     unsafe {
-        T2.init(periodic_test_callback);
+        let timer = &mut *core::ptr::addr_of_mut!(T2);
+        timer.init(periodic_test_callback);
         let now = hrtimer_clock_read();
-        hrtimer_start(&T2, now + 1_000_000); // 1ms 后
+        hrtimer_start(timer, now + 1_000_000); // 1ms 后
     }
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    check!(unsafe { T2.is_pending() }, "pending after start");
+    // SAFETY: 经 &raw const 取裸指针避免对 static mut 取引用
+    check!(
+        unsafe { (*core::ptr::addr_of!(T2)).is_pending() },
+        "pending after start"
+    );
 
     // 运行队列 (可能未到期, 但测试回调逻辑)
     hrtimer_run_queues();

@@ -250,7 +250,7 @@ pub fn sys_epoll_ctl(epfd: i64, op: i32, fd: i32, event: *const EpollEvent) -> i
             // 同时从就绪列表移除
             instances[idx]
                 .ready_list
-                .retain(|e| e.data != crate::privileged::lib::u64_from_i32(fd));
+                .retain(|e| e.data != crate::privileged::glue::u64_from_i32(fd));
 
             crate::klog_debug!(Sync, "[epoll] DEL fd={} from epfd={}", fd, epfd_id);
         }
@@ -295,7 +295,7 @@ pub fn sys_epoll_wait(epfd: i64, events: *mut EpollEvent, maxevents: i32, timeou
             // oneshot: 标记已就绪, 不再报告
         }
 
-        if crate::privileged::lib::low_i32_from_usize(ready_events.len()) >= maxevents {
+        if crate::privileged::glue::low_i32_from_usize(ready_events.len()) >= maxevents {
             break;
         }
     }
@@ -328,7 +328,8 @@ pub fn sys_epoll_wait(epfd: i64, events: *mut EpollEvent, maxevents: i32, timeou
                             data: item.data,
                         });
                     }
-                    if crate::privileged::lib::low_i32_from_usize(ready_events.len()) >= maxevents {
+                    if crate::privileged::glue::low_i32_from_usize(ready_events.len()) >= maxevents
+                    {
                         break;
                     }
                 }
@@ -341,7 +342,7 @@ pub fn sys_epoll_wait(epfd: i64, events: *mut EpollEvent, maxevents: i32, timeou
     // 复制到用户空间
     let count = ready_events
         .len()
-        .min(crate::privileged::lib::usize_from_i32(maxevents));
+        .min(crate::privileged::glue::usize_from_i32(maxevents));
     for i in 0..count {
         // SAFETY: events 指针由 syscall 入口验证
         unsafe {
@@ -355,7 +356,7 @@ pub fn sys_epoll_wait(epfd: i64, events: *mut EpollEvent, maxevents: i32, timeou
         epfd_id,
         count
     );
-    crate::privileged::lib::i64_from_usize(count)
+    crate::privileged::glue::i64_from_usize(count)
 }
 
 // ============================================================================

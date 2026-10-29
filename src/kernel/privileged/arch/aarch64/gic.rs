@@ -246,7 +246,7 @@ pub unsafe fn init_distributor() -> Result<(), &'static str> {
         //    使用 Group 1 使中断走 handle_el1h_irq 正常处理路径.
         for i in 0..2 {
             gicd_write(
-                GICD_IGROUPR + (crate::privileged::lib::u64_from_i32(i) * 4),
+                GICD_IGROUPR + (crate::privileged::glue::u64_from_i32(i) * 4),
                 0xFFFF_FFFF,
             );
         }
@@ -254,7 +254,7 @@ pub unsafe fn init_distributor() -> Result<(), &'static str> {
         // 4. 设置中断优先级
         for i in 0..32 {
             gicd_write(
-                GICD_IPRIORITYR + (crate::privileged::lib::u64_from_i32(i) * 4),
+                GICD_IPRIORITYR + (crate::privileged::glue::u64_from_i32(i) * 4),
                 0xA0A0_A0A0,
             );
         }
@@ -423,7 +423,7 @@ pub fn acknowledge() -> u32 {
     unsafe {
         core::arch::asm!("mrs {}, icc_iar1_el1", out(reg) iar);
     }
-    crate::privileged::lib::low_u32_from_u64(iar)
+    crate::privileged::glue::low_u32_from_u64(iar)
 }
 
 /// 中断完成 (EOI)

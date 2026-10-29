@@ -357,9 +357,9 @@ fn parse_madt_entries(madt_ptr: u64) {
     let lapic_base = u64::from(madt.local_apic_addr);
 
     let entries_start =
-        crate::privileged::lib::usize_from_u64(madt_ptr) + core::mem::size_of::<MadtHeader>();
+        crate::privileged::glue::usize_from_u64(madt_ptr) + core::mem::size_of::<MadtHeader>();
     let entries_end =
-        crate::privileged::lib::usize_from_u64(madt_ptr) + madt.header.length as usize;
+        crate::privileged::glue::usize_from_u64(madt_ptr) + madt.header.length as usize;
 
     let mut offset = entries_start;
     while offset + 2 <= entries_end {
@@ -382,7 +382,7 @@ fn parse_madt_entries(madt_ptr: u64) {
                         enabled,
                     });
                     AP_COUNT.store(
-                        crate::privileged::lib::low_u32_from_usize(idx + 1),
+                        crate::privileged::glue::low_u32_from_usize(idx + 1),
                         Ordering::Release,
                     );
                 }
@@ -403,7 +403,7 @@ fn parse_madt_entries(madt_ptr: u64) {
                     };
                     IOAPICS.lock()[idx] = Some(info);
                     IOAPIC_COUNT.store(
-                        crate::privileged::lib::low_u32_from_usize(idx + 1),
+                        crate::privileged::glue::low_u32_from_usize(idx + 1),
                         Ordering::Release,
                     );
                 }
@@ -480,7 +480,7 @@ pub fn gsi_to_ioapic(gsi: u32) -> Option<(usize, u8)> {
             if gsi >= info.gsi_base && gsi < info.gsi_base + u32::from(info.max_irq) {
                 return Some((
                     i,
-                    crate::privileged::lib::low_u8_from_u32(gsi - info.gsi_base),
+                    crate::privileged::glue::low_u8_from_u32(gsi - info.gsi_base),
                 ));
             }
         }
@@ -631,13 +631,13 @@ pub fn acpi_shutdown() -> ! {
         if pm1_cnt_len == 2 {
             // 16-bit I/O 端口 — 使用 outl 写入 32 位 (低 16 位有效)
             crate::arch!(outl(
-                crate::privileged::lib::low_u16_from_u32(pm1a_cnt),
+                crate::privileged::glue::low_u16_from_u32(pm1a_cnt),
                 u32::from(value)
             ));
         } else if pm1_cnt_len == 4 {
             // 32-bit I/O 端口
             crate::arch!(outl(
-                crate::privileged::lib::low_u16_from_u32(pm1a_cnt),
+                crate::privileged::glue::low_u16_from_u32(pm1a_cnt),
                 u32::from(value)
             ));
         }
@@ -671,7 +671,7 @@ pub fn acpi_reboot() -> ! {
             // I/O 端口空间
 
             crate::arch!(outb(
-                crate::privileged::lib::low_u16_from_u32(reset_reg_addr),
+                crate::privileged::glue::low_u16_from_u32(reset_reg_addr),
                 reset_val
             ));
         }
@@ -815,9 +815,9 @@ fn parse_dmar(dmar_ptr: u64) {
     *DMAR_HOST_ADDR_WIDTH.lock() = dmar.host_addr_width;
 
     let entries_start =
-        crate::privileged::lib::usize_from_u64(dmar_ptr) + core::mem::size_of::<DmarTable>();
+        crate::privileged::glue::usize_from_u64(dmar_ptr) + core::mem::size_of::<DmarTable>();
     let entries_end =
-        crate::privileged::lib::usize_from_u64(dmar_ptr) + dmar.header.length as usize;
+        crate::privileged::glue::usize_from_u64(dmar_ptr) + dmar.header.length as usize;
 
     let mut offset = entries_start;
     while offset + 4 <= entries_end {

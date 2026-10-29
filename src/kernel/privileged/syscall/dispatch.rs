@@ -10,9 +10,9 @@ use super::raw;
 use super::types::{
     EG_CGROUP_ATTACH, EG_CGROUP_CREATE, EG_CGROUP_DESTROY, EG_CGROUP_GET_STAT, EG_CGROUP_SET_LIMIT,
     EG_IO_URING_SUBMIT, EG_NF_ADD_RULE, EG_NF_DEL_RULE, EG_PM, EG_ROUTE_ADD, EG_ROUTE_DEL,
-    EG_ROUTE_QUERY, EG_SECURE_BOOT, EG_TPM, Errno, SYS_accept, SYS_bind, SYS_connect,
-    SYS_getpeername, SYS_getsockname, SYS_getsockopt, SYS_listen, SYS_recvfrom, SYS_recvmsg,
-    SYS_sendmsg, SYS_sendto, SYS_setsockopt, SYS_shutdown, SYS_socket,
+    EG_ROUTE_QUERY, EG_SECURE_BOOT, EG_TPM, Errno, SYS_ACCEPT, SYS_BIND, SYS_CONNECT,
+    SYS_GETPEERNAME, SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_LISTEN, SYS_RECVFROM, SYS_RECVMSG,
+    SYS_SENDMSG, SYS_SENDTO, SYS_SETSOCKOPT, SYS_SHUTDOWN, SYS_SOCKET,
 };
 // SYS_SGEG_DISK_INSTALL 分支已迁至 functions (T2 批 5), 编号常量仅在 types.rs 保留
 // (aarch64 生产构建不引用, 与迁移前 cfg 门控语义一致)
@@ -118,7 +118,7 @@ pub unsafe extern "C" fn syscall_dispatch_from_frame(frame: *mut InterruptFrame)
         // rt_sigreturn 特殊处理: 需要直接修改 frame, 不走正常 dispatch
         // Linux x86_64 编号 15 / aarch64 编号 139
         #[cfg(target_arch = "x86_64")]
-        let is_rt_sigreturn = syscall_num == crate::privileged::syscall::types::SYS_rt_sigreturn;
+        let is_rt_sigreturn = syscall_num == crate::privileged::syscall::types::SYS_RT_SIGRETURN;
         #[cfg(target_arch = "aarch64")]
         let is_rt_sigreturn = syscall_num == 139;
 
@@ -245,11 +245,11 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
     // privileged 回退: 处理尚未迁移到 functions 的 syscall
     match num {
         // ==================== 信号 ====================
-        // T3 (syscall-followup): SYS_rt_sigreturn 分支已删除——pre-dispatch 特殊路径
+        // T3 (syscall-followup): SYS_RT_SIGRETURN 分支已删除——pre-dispatch 特殊路径
         // (L89-119) 无条件拦截编号 15 并直接恢复 sigframe 返回, 本分发器永不可达.
 
         // ==================== C7: Seccomp / prctl ====================
-        // T2 批 2 (syscall-followup): SYS_seccomp / SYS_prctl 分支已迁至
+        // T2 批 2 (syscall-followup): SYS_SECCOMP / SYS_PRCTL 分支已迁至
         // functions (functions::proc::seccomp::seccomp_syscall / prctl_syscall).
 
         // ==================== C5: 路由表 ====================
@@ -277,10 +277,10 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         ),
 
         // ==================== C4: io_uring ====================
-        // T2 批 3 (syscall-followup): SYS_io_uring_setup / SYS_io_uring_enter
+        // T2 批 3 (syscall-followup): SYS_IO_URING_SETUP / SYS_IO_URING_ENTER
         // 分支已迁至 functions (functions::io::iouring::io_uring_setup_syscall /
         // io_uring_enter_syscall).
-        // T3 (syscall-followup): SYS_io_uring_register 分支已删除——原实现为恒
+        // T3 (syscall-followup): SYS_IO_URING_REGISTER 分支已删除——原实现为恒
         // ENOSYS 桩 (iouring.rs), 删除后落 `_ =>` 兜底 ENOSYS, 行为不变.
         // 实装注册缓冲区/文件语义时在 functions 层接线 (T2 批 3).
         EG_IO_URING_SUBMIT => dispatch!(
@@ -289,7 +289,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         ),
 
         // ==================== D1: Namespace ====================
-        // T2 批 4 (syscall-followup): SYS_unshare / SYS_setns 分支已迁至
+        // T2 批 4 (syscall-followup): SYS_UNSHARE / SYS_SETNS 分支已迁至
         // functions (functions::proc::namespace::unshare_syscall / setns_syscall).
 
         // ==================== D2: cgroup ====================
@@ -315,7 +315,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         ),
 
         // ==================== D4: eBPF ====================
-        // T2 批 4 (syscall-followup): SYS_bpf 分支已迁至 functions
+        // T2 批 4 (syscall-followup): SYS_BPF 分支已迁至 functions
         // (functions::debug::ebpf::bpf_syscall, 委托 privileged debug::sys_bpf).
 
         // ==================== D5: 电源管理 ====================
@@ -341,7 +341,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         // (functions::timer::time_sync::timesync_syscall, 含 cmd 分发).
 
         // ==================== D10: kexec ====================
-        // T2 批 4 (syscall-followup): SYS_kexec_load 分支已迁至 functions
+        // T2 批 4 (syscall-followup): SYS_KEXEC_LOAD 分支已迁至 functions
         // (functions::driver::kexec::kexec_syscall, 委托 privileged driver::sys_kexec).
 
         // ==================== D11: UEFI ====================
@@ -349,7 +349,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         // (functions::driver::uefi::uefi_syscall, 委托 privileged driver::sys_uefi).
 
         // ==================== 进程 ====================
-        // T2 批 2 (syscall-followup): SYS_tcgetpgrp / SYS_tcsetpgrp 分支已迁至
+        // T2 批 2 (syscall-followup): SYS_TCGETPGRP / SYS_TCSETPGRP 分支已迁至
         // functions (functions::proc::session::tcgetpgrp_syscall / tcsetpgrp_syscall).
 
         // ==================== 网络 (functions 代理) ====================
@@ -358,21 +358,21 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         // 优先命中); 本回退层仅保留 not(net) 哨兵, 禁止新增与 functions 重叠的
         // 真实实现分支 (见 mod.rs 分层契约).
         #[cfg(not(feature = "net"))]
-        SYS_socket | SYS_connect | SYS_accept | SYS_sendto | SYS_recvfrom | SYS_shutdown
-        | SYS_bind | SYS_listen | SYS_sendmsg | SYS_recvmsg | SYS_setsockopt | SYS_getsockopt
-        | SYS_getsockname | SYS_getpeername => {
+        SYS_SOCKET | SYS_CONNECT | SYS_ACCEPT | SYS_SENDTO | SYS_RECVFROM | SYS_SHUTDOWN
+        | SYS_BIND | SYS_LISTEN | SYS_SENDMSG | SYS_RECVMSG | SYS_SETSOCKOPT | SYS_GETSOCKOPT
+        | SYS_GETSOCKNAME | SYS_GETPEERNAME => {
             dispatch!(Errno::ENOSYS.as_ret(), b"net_nosys\0")
         }
 
         // ==================== 时间 ====================
-        // T3 (syscall-followup): SYS_tgkill 分支已删除——原实现忽略 _tgid 且
+        // T3 (syscall-followup): SYS_TGKILL 分支已删除——原实现忽略 _tgid 且
         // 语义错位 (将 tid 当 pid 发信号), 属半成品; 用户态 0 调用方. 恢复
         // ENOSYS 安全态, 实装线程组语义时在 functions 层接线 (T1/T2).
-        // T2 (syscall-followup): SYS_execve / SYS_setrlimit 分支已迁至
+        // T2 (syscall-followup): SYS_EXECVE / SYS_SETRLIMIT 分支已迁至
         // functions (functions::proc::exec / functions::proc::sysinfo).
 
         // ==================== sendfile / splice ====================
-        // T2 批 3 (syscall-followup): SYS_sendfile / SYS_splice 分支已迁至
+        // T2 批 3 (syscall-followup): SYS_SENDFILE / SYS_SPLICE 分支已迁至
         // functions (functions::fs::sendfile::sys_sendfile / sys_splice).
         // 阶段 2-A (framekernel 范式): 该实现已完整下沉 functions (0 unsafe),
         // privileged 侧 sendfile 机制与其 re-export 已删除.
@@ -416,7 +416,7 @@ pub(crate) fn sys_nanosleep(req: u64, rem: u64) -> i64 {
         return 0;
     }
 
-    // 睡眠策略统一由 timer 机制持有 (sleep_ns), 与 SYS_clock_nanosleep 共用
+    // 睡眠策略统一由 timer 机制持有 (sleep_ns), 与 SYS_CLOCK_NANOSLEEP 共用
     crate::privileged::timer::sleep_ns(total_ns);
 
     let _ = rem;
@@ -429,7 +429,7 @@ pub(crate) fn sys_kill(pid: i32, sig: i32) -> i64 {
     }
     match crate::privileged::proc::do_signal_send_extended(
         pid,
-        crate::privileged::lib::u8_from_i32(sig),
+        crate::privileged::glue::u8_from_i32(sig),
     ) {
         Ok(_) => 0,
         Err(-1) => Errno::EINVAL.as_ret(),
@@ -462,7 +462,7 @@ pub(crate) fn sys_rt_sigaction(signum: i32, act: u64, oact: u64) -> i64 {
         }
         let old = crate::privileged::proc::get_sigaction(
             pid,
-            crate::privileged::lib::u8_from_i32(signum),
+            crate::privileged::glue::u8_from_i32(signum),
         );
         match old {
             // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
@@ -479,7 +479,7 @@ pub(crate) fn sys_rt_sigaction(signum: i32, act: u64, oact: u64) -> i64 {
         let new_action = unsafe { raw::read_u64(act as *const u64) };
         match crate::privileged::proc::set_sigaction(
             pid,
-            crate::privileged::lib::u8_from_i32(signum),
+            crate::privileged::glue::u8_from_i32(signum),
             new_action,
         ) {
             Some(_) => {}
@@ -557,7 +557,7 @@ pub(crate) fn sys_sigaltstack(ss: u64, old_ss: u64) -> i64 {
             }
             // SAFETY: `const` 由调用方保证为有效指针; 只读访问
             let new_addr = unsafe { raw::read_u64(ss as *const u64) };
-            let new_flags_in = crate::privileged::lib::low_u32_from_u64(unsafe {
+            let new_flags_in = crate::privileged::glue::low_u32_from_u64(unsafe {
                 raw::read_u64((ss + 8) as *const u64)
             });
             let new_size = unsafe { raw::read_u64((ss + 16) as *const u64) };
@@ -780,10 +780,10 @@ struct FbInfo {
 ///
 /// T2 批 5 (syscall-followup): syscall 策略入口迁至 functions
 /// (functions::driver::fb::fb_open_syscall), 本函数保留为机制库.
-#[expect(
-    clippy::missing_panics_doc,
-    reason = "missing_panics_doc: get_framebuffer 守卫在 fb_addr/ENODEV 前置检查后必有值 (FB 已初始化), unwrap 不会实际触发"
-)]
+///
+/// # Panics
+/// 当帧缓冲已注册 (`get_framebuffer()` 返回 `Some`) 但守卫内部状态为空时
+/// (`as_ref().unwrap()`) panic — 属驱动注册阶段的内部不变量破坏.
 pub fn sys_fb_open(info_ptr: u64, _flags: u64) -> i64 {
     if info_ptr == 0 || !raw::check_user_ptr(info_ptr) {
         return Errno::EFAULT.as_ret();
@@ -805,7 +805,7 @@ pub fn sys_fb_open(info_ptr: u64, _flags: u64) -> i64 {
                 fb.width(),
                 fb.height(),
                 fb.pitch(),
-                crate::privileged::lib::low_u8_from_usize(fb.format().bits_per_pixel()),
+                crate::privileged::glue::low_u8_from_usize(fb.format().bits_per_pixel()),
             )
         }
         None => return Errno::ENODEV.as_ret(),
@@ -918,9 +918,9 @@ pub fn sys_fb_release(vaddr: u64) -> i64 {
 
 #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
 fn write_le32(buf: &mut [u8], offset: usize, val: u32) {
-    buf[offset] = crate::privileged::lib::low_u8_from_u32(val);
-    buf[offset + 1] = crate::privileged::lib::low_u8_from_u32(val >> 8);
-    buf[offset + 2] = crate::privileged::lib::low_u8_from_u32(val >> 16);
+    buf[offset] = crate::privileged::glue::low_u8_from_u32(val);
+    buf[offset + 1] = crate::privileged::glue::low_u8_from_u32(val >> 8);
+    buf[offset + 2] = crate::privileged::glue::low_u8_from_u32(val >> 16);
     buf[offset + 3] = (val >> 24) as u8;
 }
 
@@ -938,7 +938,8 @@ fn boot_install_copy_kernel(disk_id: u32) -> i64 {
         let phys_end = raw::kernel_end_phys(HHDM_OFFSET);
         phys_end - (kernel_ptr as usize)
     };
-    let total_kernel_sectors = crate::privileged::lib::low_u32_from_usize(kernel_len.div_ceil(512));
+    let total_kernel_sectors =
+        crate::privileged::glue::low_u32_from_usize(kernel_len.div_ceil(512));
     let max_sectors = 2047u32;
     let copy_sectors = if total_kernel_sectors > max_sectors {
         max_sectors
@@ -958,7 +959,7 @@ fn boot_install_copy_kernel(disk_id: u32) -> i64 {
             core::ptr::copy_nonoverlapping(kernel_ptr.add(offset), buf.as_mut_ptr(), n);
         }
         if crate::privileged::driver::hdd_write_sector(
-            crate::privileged::lib::low_u8_from_u32(disk_id),
+            crate::privileged::glue::low_u8_from_u32(disk_id),
             u64::from(1 + s),
             &buf,
         ) < 0
@@ -991,13 +992,13 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
     let stage1 = include_bytes!("../../../../other/build/x86_64/stage1.bin");
     #[cfg(not(target_os = "none"))]
     let stage1: &[u8] = &[];
-    if !crate::privileged::driver::hdd_is_present(crate::privileged::lib::low_u8_from_u32(disk_id))
+    if !crate::privileged::driver::hdd_is_present(crate::privileged::glue::low_u8_from_u32(disk_id))
     {
         return Errno::ENOENT.as_ret();
     }
     let mut mbr = [0u8; 512];
     if crate::privileged::driver::hdd_read_sector(
-        crate::privileged::lib::low_u8_from_u32(disk_id),
+        crate::privileged::glue::low_u8_from_u32(disk_id),
         0,
         &mut mbr,
     ) < 0
@@ -1007,7 +1008,7 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe { core::ptr::copy_nonoverlapping(stage1.as_ptr(), mbr.as_mut_ptr(), 440) };
     let total_sectors = crate::privileged::driver::hdd_total_sectors(
-        crate::privileged::lib::low_u8_from_u32(disk_id),
+        crate::privileged::glue::low_u8_from_u32(disk_id),
     );
     let unkfs_start = BOOT_PART_SECTORS;
     let unkfs_sectors = if total_sectors > u64::from(unkfs_start) + 1 {
@@ -1025,13 +1026,13 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
     let unkfs_len = if unkfs_sectors > 0xFFFF_FFFF {
         0xFFFF_FFFF_u32
     } else {
-        crate::privileged::lib::low_u32_from_u64(unkfs_sectors)
+        crate::privileged::glue::low_u32_from_u64(unkfs_sectors)
     };
     write_le32(&mut mbr, 474, unkfs_len);
     mbr[510] = 0x55;
     mbr[511] = 0xAA;
     if crate::privileged::driver::hdd_write_sector(
-        crate::privileged::lib::low_u8_from_u32(disk_id),
+        crate::privileged::glue::low_u8_from_u32(disk_id),
         0,
         &mbr,
     ) < 0
@@ -1051,7 +1052,7 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
     cfg[510] = 0x55;
     cfg[511] = 0xAA;
     crate::privileged::driver::hdd_write_sector(
-        crate::privileged::lib::low_u8_from_u32(disk_id),
+        crate::privileged::glue::low_u8_from_u32(disk_id),
         2046,
         &cfg,
     );

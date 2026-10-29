@@ -330,10 +330,6 @@ impl<'a> SessionManager<'a> {
         }
     }
 
-    #[expect(
-        clippy::match_wildcard_for_single_variants,
-        reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-    )]
     /// 登录流程 (functions 层抽象, 实际密码验证由 `privileged::sgeg::password` 提供)
     pub fn login(
         &mut self,
@@ -369,7 +365,7 @@ impl<'a> SessionManager<'a> {
                 };
                 LoginResult::Success(id)
             }
-            other => LoginResult::Denied(LoginDeny::CapabilityDenied(other)),
+            deny @ PolicyResult::Deny(_) => LoginResult::Denied(LoginDeny::CapabilityDenied(deny)),
         }
     }
 }

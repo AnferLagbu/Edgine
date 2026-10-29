@@ -430,7 +430,7 @@ impl ExceptionHandler for GeneralProtectionFaultHandler {
 
 impl GeneralProtectionFaultHandler {
     fn print_detailed_gpf_info(frame: &InterruptFrame) {
-        let selector = crate::privileged::lib::low_u16_from_u64(frame.err_code);
+        let selector = crate::privileged::glue::low_u16_from_u64(frame.err_code);
 
         // 解析错误码位域
         let external = selector & 0x01 != 0;

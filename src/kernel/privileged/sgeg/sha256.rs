@@ -97,74 +97,72 @@ fn rotr(x: u32, n: u32) -> u32 {
     x.rotate_right(n)
 }
 
-#[expect(
-    clippy::many_single_char_names,
-    reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-)]
 /// 处理单个 512 位块
 fn sha256_transform(state: &mut [u32; 8], block: &[u8; 64]) {
-    let mut w = [0u32; 64];
+    let mut schedule = [0u32; 64];
 
     // 准备消息调度
-    for i in 0..16 {
-        w[i] = (u32::from(block[i * 4]) << 24)
-            | (u32::from(block[i * 4 + 1]) << 16)
-            | (u32::from(block[i * 4 + 2]) << 8)
-            | u32::from(block[i * 4 + 3]);
+    for idx in 0..16 {
+        schedule[idx] = (u32::from(block[idx * 4]) << 24)
+            | (u32::from(block[idx * 4 + 1]) << 16)
+            | (u32::from(block[idx * 4 + 2]) << 8)
+            | u32::from(block[idx * 4 + 3]);
     }
 
-    for i in 16..64 {
-        let s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
-        let s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
-        w[i] = w[i - 16]
+    for idx in 16..64 {
+        let s0 =
+            rotr(schedule[idx - 15], 7) ^ rotr(schedule[idx - 15], 18) ^ (schedule[idx - 15] >> 3);
+        let s1 =
+            rotr(schedule[idx - 2], 17) ^ rotr(schedule[idx - 2], 19) ^ (schedule[idx - 2] >> 10);
+        schedule[idx] = schedule[idx - 16]
             .wrapping_add(s0)
-            .wrapping_add(w[i - 7])
+            .wrapping_add(schedule[idx - 7])
             .wrapping_add(s1);
     }
 
     // 初始化工作变量
-    let mut a = state[0];
-    let mut b = state[1];
-    let mut c = state[2];
-    let mut d = state[3];
-    let mut e = state[4];
-    let mut f = state[5];
-    let mut g = state[6];
-    let mut h = state[7];
+    let mut va = state[0];
+    let mut vb = state[1];
+    let mut vc = state[2];
+    let mut vd = state[3];
+    let mut ve = state[4];
+    let mut vf = state[5];
+    let mut vg = state[6];
+    let mut vh = state[7];
 
     // 压缩函数
-    for i in 0..64 {
-        let s1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
-        let ch = (e & f) ^ ((!e) & g);
-        let t1 = h
+    for idx in 0..64 {
+        let s1 = rotr(ve, 6) ^ rotr(ve, 11) ^ rotr(ve, 25);
+        let ch = (ve & vf) ^ ((!ve) & vg);
+        let t1 = vh
             .wrapping_add(s1)
             .wrapping_add(ch)
-            .wrapping_add(K[i])
-            .wrapping_add(w[i]);
+            .wrapping_add(K[idx])
+            .wrapping_add(schedule[idx]);
 
-        let s0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
-        let maj = (a & b) ^ (a & c) ^ (b & c);
+        let s0 = rotr(va, 2) ^ rotr(va, 13) ^ rotr(va, 22);
+        let maj = (va & vb) ^ (va & vc) ^ (vb & vc);
         let t2 = s0.wrapping_add(maj);
 
-        h = g;
-        g = f;
-        f = e;
-        e = d.wrapping_add(t1);
-        d = c;
-        c = b;
-        b = a;
-        a = t1.wrapping_add(t2);
+        vh = vg;
+        vg = vf;
+        vf = ve;
+        ve = vd.wrapping_add(t1);
+        vd = vc;
+        vc = vb;
+        vb = va;
+        va = t1.wrapping_add(t2);
     }
 
     // 累加压缩结果到当前哈希值
-    state[0] = state[0].wrapping_add(a);
-    state[1] = state[1].wrapping_add(b);
-    state[2] = state[2].wrapping_add(c);
-    state[3] = state[3].wrapping_add(d);
-    state[4] = state[4].wrapping_add(e);
-    state[5] = state[5].wrapping_add(f);
-    state[6] = state[6].wrapping_add(g);
-    state[7] = state[7].wrapping_add(h);
+    state[0] = state[0].wrapping_add(va);
+    state[1] = state[1].wrapping_add(vb);
+    state[2] = state[2].wrapping_add(vc);
+    state[3] = state[3].wrapping_add(vd);
+    state[4] = state[4].wrapping_add(ve);
+    state[5] = state[5].wrapping_add(vf);
+    state[6] = state[6].wrapping_add(vg);
+    state[7] = state[7].wrapping_add(vh);
 }
 
 /// 计算数据的 SHA-256 哈希
@@ -219,9 +217,9 @@ pub fn sha256(data: &[u8]) -> [u8; PWM_DIGEST_LEN] {
     let mut hash = [0u8; PWM_DIGEST_LEN];
     for j in 0..8 {
         hash[j * 4] = (state[j] >> 24) as u8;
-        hash[j * 4 + 1] = crate::privileged::lib::low_u8_from_u32(state[j] >> 16);
-        hash[j * 4 + 2] = crate::privileged::lib::low_u8_from_u32(state[j] >> 8);
-        hash[j * 4 + 3] = crate::privileged::lib::low_u8_from_u32(state[j]);
+        hash[j * 4 + 1] = crate::privileged::glue::low_u8_from_u32(state[j] >> 16);
+        hash[j * 4 + 2] = crate::privileged::glue::low_u8_from_u32(state[j] >> 8);
+        hash[j * 4 + 3] = crate::privileged::glue::low_u8_from_u32(state[j]);
     }
 
     hash

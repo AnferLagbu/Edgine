@@ -229,7 +229,9 @@ pub(super) fn mul_div_saturating(value: u64, mul: u64, div: u64) -> u64 {
         return 0;
     }
     let product = u128::from(value) * u128::from(mul);
-    crate::privileged::lib::low_u64_from_u128((product / u128::from(div)).min(u128::from(u64::MAX)))
+    crate::privileged::glue::low_u64_from_u128(
+        (product / u128::from(div)).min(u128::from(u64::MAX)),
+    )
 }
 
 /// 读当前架构的硬件自由计数器 (不做序列化屏障)

@@ -436,9 +436,9 @@ pub extern "C" fn sys_kexec(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     match cmd {
         0 => {
             // load_segment (简化: 仅记录元数据, 不实际复制)
-            let seg_type = KexecSegType::from(crate::privileged::lib::low_u32_from_u64(a1));
+            let seg_type = KexecSegType::from(crate::privileged::glue::low_u32_from_u64(a1));
             let dst_addr = a2;
-            let size = crate::privileged::lib::usize_from_u64(a3);
+            let size = crate::privileged::glue::usize_from_u64(a3);
             let max_size = match seg_type {
                 KexecSegType::Kernel => KEXEC_MAX_KERNEL_SIZE,
                 KexecSegType::Initrd => KEXEC_MAX_INITRD_SIZE,
@@ -491,7 +491,7 @@ pub extern "C" fn sys_kexec(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
         }
         6 => {
             // get_segment_count
-            crate::privileged::lib::i64_from_usize(kexec_subsystem().get_segment_count())
+            crate::privileged::glue::i64_from_usize(kexec_subsystem().get_segment_count())
         }
         7 => {
             // is_initialized

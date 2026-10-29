@@ -12,7 +12,7 @@
 use super::memory::PAGE_SIZE;
 
 /// Default Slab cache size (4 KiB = one page).
-pub const SLAB_DEFAULT_SIZE: usize = crate::privileged::lib::usize_from_u64(PAGE_SIZE);
+pub const SLAB_DEFAULT_SIZE: usize = crate::privileged::glue::usize_from_u64(PAGE_SIZE);
 
 /// Slab 对象最小尺寸 (字节).
 pub const SLAB_MIN_OBJECT_SIZE: usize = 16;

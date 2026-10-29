@@ -207,15 +207,15 @@ fn ipv6_cidr_contains(net: Ipv6Addr, dest: Ipv6Addr, prefix_len: u8) -> bool {
 pub fn sys_route_add(dest_u32: u64, prefix_len: u64, gateway_u32: u64) -> i64 {
     let entry = RouteEntry {
         dest: IpAddr::V4(Ipv4Addr::from_octets(
-            crate::privileged::lib::low_u32_from_u64(dest_u32).to_be_bytes(),
+            crate::privileged::glue::low_u32_from_u64(dest_u32).to_be_bytes(),
         )),
         prefix_len: if prefix_len > 32 {
             return -(Errno::EINVAL as i64);
         } else {
-            crate::privileged::lib::low_u8_from_u64(prefix_len)
+            crate::privileged::glue::low_u8_from_u64(prefix_len)
         },
         gateway: IpAddr::V4(Ipv4Addr::from_octets(
-            crate::privileged::lib::low_u32_from_u64(gateway_u32).to_be_bytes(),
+            crate::privileged::glue::low_u32_from_u64(gateway_u32).to_be_bytes(),
         )),
         iface: None,
     };
@@ -230,15 +230,15 @@ pub fn sys_route_add(dest_u32: u64, prefix_len: u64, gateway_u32: u64) -> i64 {
 pub fn sys_route_del(dest_u32: u64, prefix_len: u64, gateway_u32: u64) -> i64 {
     match route_del(
         IpAddr::V4(Ipv4Addr::from_octets(
-            crate::privileged::lib::low_u32_from_u64(dest_u32).to_be_bytes(),
+            crate::privileged::glue::low_u32_from_u64(dest_u32).to_be_bytes(),
         )),
         if prefix_len > 32 {
             return -(Errno::EINVAL as i64);
         } else {
-            crate::privileged::lib::low_u8_from_u64(prefix_len)
+            crate::privileged::glue::low_u8_from_u64(prefix_len)
         },
         IpAddr::V4(Ipv4Addr::from_octets(
-            crate::privileged::lib::low_u32_from_u64(gateway_u32).to_be_bytes(),
+            crate::privileged::glue::low_u32_from_u64(gateway_u32).to_be_bytes(),
         )),
     ) {
         Ok(()) => 0,
@@ -249,7 +249,7 @@ pub fn sys_route_del(dest_u32: u64, prefix_len: u64, gateway_u32: u64) -> i64 {
 /// `sys_route_query` — 查询 IPv4 目标的最长前缀匹配网关 (不可达返回 `-ENETUNREACH`)
 pub fn sys_route_query(dest_u32: u64) -> i64 {
     route_query(IpAddr::V4(Ipv4Addr::from_octets(
-        crate::privileged::lib::low_u32_from_u64(dest_u32).to_be_bytes(),
+        crate::privileged::glue::low_u32_from_u64(dest_u32).to_be_bytes(),
     )))
     .map_or(-(Errno::ENETUNREACH as i64), |result| {
         match result.gateway {

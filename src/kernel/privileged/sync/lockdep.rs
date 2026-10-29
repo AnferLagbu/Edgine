@@ -195,7 +195,7 @@ impl LockDepMap {
         // 查找是否已注册同名锁类
         for i in 0..self.class_count {
             if self.classes[i].used && self.classes[i].name == desc.name {
-                return LockClassId(crate::privileged::lib::low_u16_from_usize(i));
+                return LockClassId(crate::privileged::glue::low_u16_from_usize(i));
             }
         }
 
@@ -216,7 +216,7 @@ impl LockDepMap {
             used: true,
         };
         self.class_count += 1;
-        LockClassId(crate::privileged::lib::low_u16_from_usize(id))
+        LockClassId(crate::privileged::glue::low_u16_from_usize(id))
     }
 
     /// 检查并添加依赖边 (from → to)

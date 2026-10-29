@@ -254,7 +254,7 @@ fn id_to_idx(timer_id: i32) -> Option<usize> {
     if timer_id <= 0 {
         return None;
     }
-    let idx = crate::privileged::lib::usize_from_i32(timer_id - 1);
+    let idx = crate::privileged::glue::usize_from_i32(timer_id - 1);
     if idx >= MAX_POSIX_TIMERS {
         return None;
     }
@@ -291,7 +291,7 @@ fn posix_timer_callback(timer: &HrTimer) -> HrTimerRestart {
 
     // SIGEV_SIGNAL: 发送信号 (无需持 TimerManager 锁, do_signal_send 内部独立)
     if slot.sigev_notify == SIGEV_SIGNAL {
-        let sig = crate::privileged::lib::u8_from_i32(slot.sigev_signo);
+        let sig = crate::privileged::glue::u8_from_i32(slot.sigev_signo);
         let pid = slot.owner_pid;
         // 失败 (进程已退出) 静默忽略 — timer_delete 负责清理
         let _ = do_signal_send(pid, sig);
@@ -360,7 +360,7 @@ pub fn sys_timer_create(clockid: i32, sigev_ptr: u64, timer_id_ptr: u64) -> i64 
             // 初始化 hrtimer, 回调 dispatch 通过 slot 内部指针
             slot.timer.init(posix_timer_callback);
 
-            let timer_id = crate::privileged::lib::low_i32_from_usize(i + 1);
+            let timer_id = crate::privileged::glue::low_i32_from_usize(i + 1);
             if !crate::privileged::userptr::write_struct_to_user(timer_id_ptr, &timer_id) {
                 return Errno::EFAULT.as_ret();
             }

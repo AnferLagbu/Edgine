@@ -289,16 +289,21 @@ impl DeviceSnapshotRegistry {
         self.init_captured.load(Ordering::SeqCst) == 1
     }
 
-    #[expect(
-        clippy::iter_without_into_iter,
-        reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-    )]
     /// 返回遍历全部已注册快照的只读迭代器
     pub fn iter(&self) -> DeviceSnapshotIter<'_> {
         DeviceSnapshotIter {
             registry: self,
             index: 0,
         }
+    }
+}
+
+impl<'a> IntoIterator for &'a DeviceSnapshotRegistry {
+    type Item = &'a DeviceSnapshot;
+    type IntoIter = DeviceSnapshotIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 

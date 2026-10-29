@@ -176,10 +176,6 @@ impl UnkfsData {
         discovered
     }
 
-    #[expect(
-        clippy::assigning_clones,
-        reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-    )]
     /// 首次初始化: 探测并挂载磁盘 (磁盘模式) 或建立内存数据集, 幂等.
     pub fn init(&self) {
         // J-03 (2026-09-08, G-10 方案 C): init 幂等化 — 重复 init 不再重建 objset.
@@ -202,7 +198,7 @@ impl UnkfsData {
         self.spa.disk_present.store(has_any_disk, Ordering::Release);
         {
             let mut list = self.drives_discovered.lock();
-            *list = discovered.clone();
+            list.clone_from(&discovered);
         }
 
         // 初始化 SPA (根据是否有磁盘选择 disk / memory 模式)

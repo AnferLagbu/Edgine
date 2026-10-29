@@ -80,7 +80,7 @@ fn rdmsr(msr: u32) -> u64 {
 fn wrmsr(msr: u32, value: u64) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
-        core::arch::asm!("wrmsr", in("ecx") msr, in("eax") crate::privileged::lib::low_u32_from_u64(value), in("edx") (value >> 32) as u32, options(nomem, nostack));
+        core::arch::asm!("wrmsr", in("ecx") msr, in("eax") crate::privileged::glue::low_u32_from_u64(value), in("edx") (value >> 32) as u32, options(nomem, nostack));
     }
 }
 
@@ -185,7 +185,7 @@ pub fn send_ipi(apic_id: u8, vector: u8) {
     apic_write(APIC_ICR_HIGH, u32::from(apic_id) << 24);
     apic_write(
         APIC_ICR_LOW,
-        u32::from(vector) | crate::privileged::lib::low_u32_from_u64(ICR_ASSERT),
+        u32::from(vector) | crate::privileged::glue::low_u32_from_u64(ICR_ASSERT),
     );
     wait_icr_delivery();
 }
@@ -199,8 +199,8 @@ pub fn broadcast_ipi(vector: u8) {
     apic_write(
         APIC_ICR_LOW,
         u32::from(vector)
-            | crate::privileged::lib::low_u32_from_u64(ICR_ALL_EXCLUDE_SELF)
-            | crate::privileged::lib::low_u32_from_u64(ICR_ASSERT),
+            | crate::privileged::glue::low_u32_from_u64(ICR_ALL_EXCLUDE_SELF)
+            | crate::privileged::glue::low_u32_from_u64(ICR_ASSERT),
     );
     wait_icr_delivery();
 }
@@ -499,8 +499,8 @@ pub fn send_ipi_level(apic_id: u8, vector: u8) {
     apic_write(
         APIC_ICR_LOW,
         u32::from(vector)
-            | crate::privileged::lib::low_u32_from_u64(ICR_ASSERT)
-            | crate::privileged::lib::low_u32_from_u64(ICR_LEVEL),
+            | crate::privileged::glue::low_u32_from_u64(ICR_ASSERT)
+            | crate::privileged::glue::low_u32_from_u64(ICR_LEVEL),
     );
     while apic_read(APIC_ICR_LOW) & (1 << 12) != 0 {}
 }
@@ -514,9 +514,9 @@ pub fn broadcast_ipi_level(vector: u8) {
     apic_write(
         APIC_ICR_LOW,
         u32::from(vector)
-            | crate::privileged::lib::low_u32_from_u64(ICR_ALL_EXCLUDE_SELF)
-            | crate::privileged::lib::low_u32_from_u64(ICR_ASSERT)
-            | crate::privileged::lib::low_u32_from_u64(ICR_LEVEL),
+            | crate::privileged::glue::low_u32_from_u64(ICR_ALL_EXCLUDE_SELF)
+            | crate::privileged::glue::low_u32_from_u64(ICR_ASSERT)
+            | crate::privileged::glue::low_u32_from_u64(ICR_LEVEL),
     );
     while apic_read(APIC_ICR_LOW) & (1 << 12) != 0 {}
 }

@@ -145,7 +145,7 @@ pub unsafe extern "C" fn ipc_msgq_send(id: IpcId, type_: u64, data: *const u8, s
     } else {
         // SAFETY: caller guarantees data is valid for size bytes in user memory.
         let user_data =
-            unsafe { UserReadPtr::new(data, crate::privileged::lib::usize_from_u64(size)) };
+            unsafe { UserReadPtr::new(data, crate::privileged::glue::usize_from_u64(size)) };
         Some(user_data)
     };
 
@@ -164,7 +164,7 @@ pub unsafe extern "C" fn ipc_msgq_send(id: IpcId, type_: u64, data: *const u8, s
         id,
         type_,
         data_slice,
-        crate::privileged::lib::usize_from_u64(size),
+        crate::privileged::glue::usize_from_u64(size),
         pid,
     ) {
         Ok(()) => 0,
@@ -227,7 +227,7 @@ pub unsafe extern "C" fn ipc_msgq_recv(
         return -(Errno::ENOSYS as i64);
     };
     s.msgq_recv(ns, id, type_ref, data_ref, size_ref)
-        .map_or(-1, crate::privileged::lib::i64_from_usize)
+        .map_or(-1, crate::privileged::glue::i64_from_usize)
 }
 
 /// FFI: 销毁消息队列

@@ -179,7 +179,7 @@ fn read_bochs_disp_mode() -> Option<(u32, u32, u8)> {
         port_outw(VBE_DISPI_PORT_INDEX, VBE_DISPI_INDEX_YRES);
         let yres = u32::from(port_inw(VBE_DISPI_PORT_DATA));
         port_outw(VBE_DISPI_PORT_INDEX, VBE_DISPI_INDEX_BPP);
-        let bpp = crate::privileged::lib::low_u8_from_u16(port_inw(VBE_DISPI_PORT_DATA));
+        let bpp = crate::privileged::glue::low_u8_from_u16(port_inw(VBE_DISPI_PORT_DATA));
         if xres == 0 || yres == 0 || bpp == 0 {
             return None;
         }
@@ -212,7 +212,7 @@ unsafe fn read_bochs_disp_mode_mmio(mmio_base: u64) -> Option<(u32, u32, u8)> {
         }
         let xres = u32::from(read_reg(VBE_DISPI_INDEX_XRES));
         let yres = u32::from(read_reg(VBE_DISPI_INDEX_YRES));
-        let bpp = crate::privileged::lib::low_u8_from_u16(read_reg(VBE_DISPI_INDEX_BPP));
+        let bpp = crate::privileged::glue::low_u8_from_u16(read_reg(VBE_DISPI_INDEX_BPP));
         if xres == 0 || yres == 0 || bpp == 0 {
             return None;
         }
@@ -354,7 +354,7 @@ pub fn display_init() -> infra::Result<()> {
     let fb_iomem = unsafe {
         IoMem::new(
             PhysAddr(fb_addr),
-            crate::privileged::lib::usize_from_u64(fb_size),
+            crate::privileged::glue::usize_from_u64(fb_size),
             "fb",
         )
         .map_err(|_| DriverError::HardwareError)?

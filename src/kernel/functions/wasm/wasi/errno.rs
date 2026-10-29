@@ -82,12 +82,8 @@ impl WasiErrno {
         self as i32
     }
 
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-    )]
     /// 从 `Edgine` `KernelError` 映射到 WASI errno
-    pub fn from_kernel_error(err: crate::functions::wasm::types::WasmError) -> Self {
+    pub fn from_kernel_error(err: &crate::functions::wasm::types::WasmError) -> Self {
         match err {
             crate::functions::wasm::types::WasmError::MemoryOutOfBounds => Self::Fault,
             _ => Self::Io,

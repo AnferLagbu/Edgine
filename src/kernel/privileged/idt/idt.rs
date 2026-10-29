@@ -250,41 +250,17 @@ impl IdtManager {
     /// * `syscall_handler` - 系统调用门地址
     /// * `isr0x82` - 恢复中断 (int 0x82) 地址
     ///
-    /// # Returns
-    /// - `Ok(())`: 初始化成功
-    #[cfg_attr(
-        target_arch = "aarch64",
-        expect(
-            clippy::unnecessary_wraps,
-            reason = "aarch64 IDT init 占位函数, 直接返回 Ok"
-        )
-    )]
-    /// - `Err(msg)`: 初始化失败
-    /// # Errors
-    /// IDT 初始化失败 (如关键 IST 未配置) 时返回 Err。
+    /// 启动顺序契约 (I-24) 的校验由 x86_64 专属的
+    /// [`Self::validate_boot_order`] 承担, 调用方须在调用本函数前完成校验。
     pub fn init(
         &self,
         isr_table: &[u64; 32],
         irq_table: &[u64; 16],
         syscall_handler: u64,
         isr0x82: u64,
-    ) -> Result<(), &'static str> {
-        // I-24: 启动顺序契约 — TSS init (set_ist[0..4]) 必须在 IDT init 之前完成.
-        // 校验关键 IST (0-3) 已填充非零栈顶, 避免 #DF/NMI/#PF/0x82 触发时切换到 0 栈顶.
-        // 注释格式: IDT IST=N → TSS ist[N-1]
-        //   #DF  (vec 8)  → IDT IST=1 → TSS ist[0]
-        //   NMI  (vec 2)  → IDT IST=2 → TSS ist[1]
-        //   #PF  (vec 14) → IDT IST=4 → TSS ist[3]
-        //   0x82 (恢复)   → IDT IST=3 → TSS ist[2]
-        #[cfg(target_arch = "x86_64")]
-        {
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-            let tss = unsafe { crate::privileged::arch::gdt::get_tss_mut() };
-            if !tss.ist_validated() {
-                return Err("IDT init: TSS IST[0..3] not initialized (call set_ist first)");
-            }
-            crate::klog_info!(Kernel, "IDT init: TSS IST validated ok");
-        }
+    ) {
+        // I-24 启动顺序契约的校验见 x86_64 专属的 `validate_boot_order`
+        // (TSS init (set_ist[0..4]) 必须在 IDT init 之前完成).
 
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
@@ -371,7 +347,27 @@ impl IdtManager {
         unsafe {
             self.load_idt();
         }
+    }
 
+    /// 校验启动顺序契约 (I-24): TSS init (`set_ist[0..4]`) 必须在 IDT init 之前完成.
+    ///
+    /// 校验关键 IST (0-3) 已填充非零栈顶, 避免 #DF/NMI/#PF/0x82 触发时切换到 0 栈顶.
+    /// 注释格式: IDT IST=N → TSS ist[N-1]
+    ///   #DF  (vec 8)  → IDT IST=1 → TSS ist[0]
+    ///   NMI  (vec 2)  → IDT IST=2 → TSS ist[1]
+    ///   #PF  (vec 14) → IDT IST=4 → TSS ist[3]
+    ///   0x82 (恢复)   → IDT IST=3 → TSS ist[2]
+    ///
+    /// # Errors
+    /// 关键 IST (0-3) 未填充非零栈顶时返回 `Err` 的描述文本。
+    #[cfg(target_arch = "x86_64")]
+    pub fn validate_boot_order() -> Result<(), &'static str> {
+        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        let tss = unsafe { crate::privileged::arch::gdt::get_tss_mut() };
+        if !tss.ist_validated() {
+            return Err("IDT init: TSS IST[0..3] not initialized (call set_ist first)");
+        }
+        crate::klog_info!(Kernel, "IDT init: TSS IST validated ok");
         Ok(())
     }
 
@@ -386,7 +382,7 @@ impl IdtManager {
     pub fn init_msi_idt(&self, msi_table: &[u64; 112]) {
         let mut state = self.state.lock();
         for (i, &handler_addr) in msi_table.iter().enumerate() {
-            let vector = 0x40 + crate::privileged::lib::low_u8_from_usize(i);
+            let vector = 0x40 + crate::privileged::glue::low_u8_from_usize(i);
             Self::set_gate_internal(
                 &mut state,
                 vector,
@@ -406,7 +402,7 @@ impl IdtManager {
     pub fn init_ipi_idt(&self, ipi_table: [u64; 2]) {
         let mut state = self.state.lock();
         for (i, &handler_addr) in ipi_table.iter().enumerate() {
-            let vector = 0xFD + crate::privileged::lib::low_u8_from_usize(i);
+            let vector = 0xFD + crate::privileged::glue::low_u8_from_usize(i);
             Self::set_gate_internal(
                 &mut state,
                 vector,
@@ -470,7 +466,7 @@ impl IdtManager {
 
     /// 注册异常处理函数
     pub fn set_exception_handler(&self, vector: u8, handler: extern "C" fn(*mut InterruptFrame)) {
-        if vector < crate::privileged::lib::low_u8_from_usize(IDT_ENTRIES) {
+        if vector < crate::privileged::glue::low_u8_from_usize(IDT_ENTRIES) {
             let mut state = self.state.lock();
             state.handlers[vector as usize] = Some(handler);
         }
@@ -634,7 +630,7 @@ impl IdtManager {
 
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
-            let vector = crate::privileged::lib::low_u8_from_u64((*frame).int_no);
+            let vector = crate::privileged::glue::low_u8_from_u64((*frame).int_no);
 
             let nesting = self.nested_count.fetch_add(1, Ordering::SeqCst);
             self.current_vector

@@ -64,7 +64,7 @@ impl Frame {
 
     /// 帧大小 (字节)
     pub fn size(&self) -> usize {
-        crate::privileged::lib::usize_from_u64(PAGE_SIZE) << self.order
+        crate::privileged::glue::usize_from_u64(PAGE_SIZE) << self.order
     }
 
     /// 当前持有者数 (PMM 计数面, 0 = 未计数帧)
@@ -112,7 +112,7 @@ impl Frame {
         unsafe {
             core::slice::from_raw_parts_mut(
                 ptr,
-                crate::privileged::lib::usize_from_u64(crate::privileged::mm::PAGE_SIZE),
+                crate::privileged::glue::usize_from_u64(crate::privileged::mm::PAGE_SIZE),
             )
         }
     }

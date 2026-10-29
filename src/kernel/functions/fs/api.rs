@@ -24,7 +24,7 @@
 //! - 路径/目录/链接/元数据/cwd 见 [`vfs_path`](super::vfs_path) (本模块 `pub use vfs_path::*`)
 //! - fd 句柄操作 (open/close/read/write/seek/...) 见 [`handle`](super::handle) (本模块
 //!   `pub use handle::*`)
-use crate::privileged::lib::CStrExt;
+use crate::privileged::glue::CStrExt;
 use crate::privileged::mm::PAGE_SIZE;
 
 /// B2: 4KB 对齐 read 时的 pcache 命中快路径上限 (16 页 = 64KB)

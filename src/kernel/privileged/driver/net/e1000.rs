@@ -106,7 +106,7 @@ impl TxRing {
         // SAFETY: tail 在 0..count 范围内; ptr 由 alloc_coherent 分配且大小足够。
         let desc = unsafe { &mut *self.ptr.add(self.tail) };
         desc.addr = self.buf_phys[self.tail];
-        desc.length = crate::privileged::lib::low_u16_from_usize(len);
+        desc.length = crate::privileged::glue::low_u16_from_usize(len);
         desc.cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_IFCS | E1000_TXD_CMD_RS;
         desc.status = 0;
     }

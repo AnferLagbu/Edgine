@@ -483,21 +483,21 @@ impl CgroupSubsystem {
     /// - 指定的 cgroup 不存在 → `ENOENT`
     pub fn remove_cgroup(&self, id: u64) -> Result<(), Errno> {
         if id == 0 {
-            return Err(Errno::EBUSY);
+            return Err(Errno::Ebusy);
         }
 
         let mut groups = self.groups.lock();
         let cg = match groups.get(&id) {
             Some(c) => Arc::clone(c),
-            None => return Err(Errno::ENOENT),
+            None => return Err(Errno::Enoent),
         };
 
         if !cg.procs.lock().is_empty() {
-            return Err(Errno::EBUSY);
+            return Err(Errno::Ebusy);
         }
 
         if !cg.children.lock().is_empty() {
-            return Err(Errno::EBUSY);
+            return Err(Errno::Ebusy);
         }
 
         if let Some(parent) = groups.get(&cg.parent_id) {
@@ -525,7 +525,7 @@ impl CgroupSubsystem {
     /// - 目标 cgroup 不存在 → `ENOENT`
     /// - 目标组附加失败(如容量已满) → `EAGAIN`
     pub fn migrate(&self, pid: Pid, target_id: u64) -> Result<(), Errno> {
-        let target = self.find(target_id).ok_or(Errno::ENOENT)?;
+        let target = self.find(target_id).ok_or(Errno::Enoent)?;
 
         {
             let groups = self.groups.lock();
@@ -540,7 +540,7 @@ impl CgroupSubsystem {
         }
 
         if !target.attach_proc(pid) {
-            return Err(Errno::EAGAIN);
+            return Err(Errno::Eagain);
         }
 
         Ok(())
@@ -565,20 +565,19 @@ impl CgroupSubsystem {
 /// cgroup 子系统错误码 (与 POSIX errno 数值对齐)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u64)]
-#[allow(clippy::upper_case_acronyms)]
 pub enum Errno {
     /// 操作不被允许.
-    EPERM = 1,
+    Eperm = 1,
     /// 目标 cgroup 不存在.
-    ENOENT = 2,
+    Enoent = 2,
     /// 资源暂时不足, 可重试.
-    EAGAIN = 11,
+    Eagain = 11,
     /// 内存不足.
-    ENOMEM = 12,
+    Enomem = 12,
     /// 目标仍被占用 (存在进程或子组).
-    EBUSY = 16,
+    Ebusy = 16,
     /// 参数非法.
-    EINVAL = 22,
+    Einval = 22,
 }
 
 // ============================================================================
@@ -622,13 +621,13 @@ pub fn cgroup_is_initialized() -> bool {
 /// 成功返回新 cgroup id, 初始化未完成或父组非法时返回负错误码。
 pub fn sys_cgroup_create(parent_id: u64, _name_ptr: u64, _name_len: u64) -> i64 {
     if !cgroup_is_initialized() {
-        return -(Errno::EINVAL as i64);
+        return -(Errno::Einval as i64);
     }
 
     let name = alloc::format!("cg_{parent_id}");
     let id = cgroup_subsystem().create_cgroup(parent_id, &name);
     if id == 0 {
-        return -(Errno::EINVAL as i64);
+        return -(Errno::Einval as i64);
     }
     id.cast_signed()
 }
@@ -638,7 +637,7 @@ pub fn sys_cgroup_create(parent_id: u64, _name_ptr: u64, _name_len: u64) -> i64 
 /// 成功返回 0, 初始化未完成或销毁失败时返回负错误码。
 pub fn sys_cgroup_destroy(cg_id: u64) -> i64 {
     if !cgroup_is_initialized() {
-        return -(Errno::EINVAL as i64);
+        return -(Errno::Einval as i64);
     }
     match cgroup_subsystem().remove_cgroup(cg_id) {
         Ok(()) => 0,
@@ -651,9 +650,9 @@ pub fn sys_cgroup_destroy(cg_id: u64) -> i64 {
 /// 成功返回 0, 初始化未完成或迁移失败时返回负错误码。
 pub fn sys_cgroup_attach(cg_id: u64, pid: u64) -> i64 {
     if !cgroup_is_initialized() {
-        return -(Errno::EINVAL as i64);
+        return -(Errno::Einval as i64);
     }
-    match cgroup_subsystem().migrate(crate::privileged::lib::low_u32_from_u64(pid), cg_id) {
+    match cgroup_subsystem().migrate(crate::privileged::glue::low_u32_from_u64(pid), cg_id) {
         Ok(()) => 0,
         Err(e) => -(e as i64),
     }
@@ -665,11 +664,11 @@ pub fn sys_cgroup_attach(cg_id: u64, pid: u64) -> i64 {
 /// 成功返回 0, 初始化未完成或控制器非法时返回负错误码。
 pub fn sys_cgroup_set_limit(cg_id: u64, controller: u64, value: u64) -> i64 {
     if !cgroup_is_initialized() {
-        return -(Errno::EINVAL as i64);
+        return -(Errno::Einval as i64);
     }
 
     let Some(cg) = cgroup_subsystem().find(cg_id) else {
-        return -(Errno::ENOENT as i64);
+        return -(Errno::Enoent as i64);
     };
 
     match controller {
@@ -677,7 +676,7 @@ pub fn sys_cgroup_set_limit(cg_id: u64, controller: u64, value: u64) -> i64 {
         1 => cg.cpu.set_period(value),
         2 => cg.memory.set_limit(value),
         3 => cg.pids.set_max(value),
-        _ => return -(Errno::EINVAL as i64),
+        _ => return -(Errno::Einval as i64),
     }
 
     0
@@ -688,11 +687,11 @@ pub fn sys_cgroup_set_limit(cg_id: u64, controller: u64, value: u64) -> i64 {
 /// `stat_type` 选择统计项, 成功返回非负值, 初始化未完成或项非法时返回负错误码。
 pub fn sys_cgroup_get_stat(cg_id: u64, stat_type: u64) -> i64 {
     if !cgroup_is_initialized() {
-        return -(Errno::EINVAL as i64);
+        return -(Errno::Einval as i64);
     }
 
     let Some(cg) = cgroup_subsystem().find(cg_id) else {
-        return -(Errno::ENOENT as i64);
+        return -(Errno::Enoent as i64);
     };
 
     match stat_type {
@@ -716,6 +715,6 @@ pub fn sys_cgroup_get_stat(cg_id: u64, stat_type: u64) -> i64 {
             .events_fork_fail
             .load(Ordering::Acquire)
             .cast_signed(),
-        _ => -(Errno::EINVAL as i64),
+        _ => -(Errno::Einval as i64),
     }
 }

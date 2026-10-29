@@ -238,7 +238,7 @@ pub fn apply_settimeofday(tv_sec: i64, micros: i64) -> Result<usize, Errno> {
 ///
 /// `flags` 仅支持 `TIMER_ABSTIME`: 置位时 `req` 为指定时钟的绝对时刻,
 /// 未置位时为相对时长; 绝对时刻已过则立即返回. 睡眠执行统一委托
-/// `privileged::timer::sleep_ns` (与 `SYS_nanosleep` 同一机制).
+/// `privileged::timer::sleep_ns` (与 `SYS_NANOSLEEP` 同一机制).
 ///
 /// # Errors
 ///
@@ -247,7 +247,7 @@ pub fn apply_settimeofday(tv_sec: i64, micros: i64) -> Result<usize, Errno> {
 /// - 时钟 ID 不受支持 → `EINVAL`
 /// - `tv_sec` / `tv_nsec` 越界 → `EINVAL`
 ///
-/// SIMPLIFIED: 不支持信号中断提前返回 `EINTR`, 与 `SYS_nanosleep` 基线一致;
+/// SIMPLIFIED: 不支持信号中断提前返回 `EINTR`, 与 `SYS_NANOSLEEP` 基线一致;
 /// 影响面: 等待期间收到信号不会提前唤醒调用者; 何时需扩展: 睡眠机制接入
 /// 可中断等待 (signalfd/信号投递唤醒阻塞队列) 后统一补充.
 pub fn clock_nanosleep_syscall(

@@ -36,8 +36,6 @@
 //! - `functions/proc/` 通过 `pub use privileged::proc::*` 暴露底层能力给 syscall
 //! - 任何 unsafe 改动必须在 `privileged/proc/` 完成, 业务层禁止穿透
 
-#![allow(ambiguous_glob_reexports)]
-
 pub mod api;
 pub mod canary;
 pub mod cfs;
@@ -93,6 +91,10 @@ pub use signal::*;
 pub use signal_trait::*;
 pub use types::*;
 pub use user_proc::*;
+
+// `init` 在 scheduler 与 user_proc 两个 glob 中同名 (P-64 第十五批歧义消除):
+// 显式指定 `proc::init` 取自 user_proc, 调度器入口仍走 `proc::scheduler::init` 显式路径.
+pub use user_proc::init;
 
 // cpu_queue 公共接口 re-export — 避免跨子系统直接访问 proc::cpu_queue 内部
 pub use cpu_queue::init_cpu_queue;

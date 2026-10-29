@@ -50,7 +50,7 @@ fn zero_phys_page(phys: PhysAddr) {
         core::ptr::write_bytes(
             virt.0 as *mut u8,
             0,
-            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            crate::privileged::glue::usize_from_u64(PAGE_SIZE),
         );
     }
 }
@@ -60,7 +60,10 @@ fn zero_phys_page(phys: PhysAddr) {
 /// 复制长度取 `min(src.len(), PAGE_SIZE)`, 不足部分保持原值 (通常为零).
 fn copy_to_phys_page(phys: u64, src: &[u8]) {
     let dst_virt = crate::privileged::mm::phys_to_virt(phys);
-    let copy_len = core::cmp::min(src.len(), crate::privileged::lib::usize_from_u64(PAGE_SIZE));
+    let copy_len = core::cmp::min(
+        src.len(),
+        crate::privileged::glue::usize_from_u64(PAGE_SIZE),
+    );
     // SAFETY: phys 是 PMM 分配的有效物理页, phys_to_virt 返回有效的内核虚拟地址;
     // copy_len <= PAGE_SIZE, 不会越界; src 是有效切片.
     unsafe {
@@ -73,7 +76,10 @@ fn copy_to_phys_page(phys: u64, src: &[u8]) {
 /// 复制长度取 `min(dst.len(), PAGE_SIZE)`.
 fn copy_from_phys_page(phys: u64, dst: &mut [u8]) {
     let src_virt = crate::privileged::mm::phys_to_virt(phys);
-    let copy_len = core::cmp::min(dst.len(), crate::privileged::lib::usize_from_u64(PAGE_SIZE));
+    let copy_len = core::cmp::min(
+        dst.len(),
+        crate::privileged::glue::usize_from_u64(PAGE_SIZE),
+    );
     // SAFETY: phys 是 PMM 分配的有效物理页, phys_to_virt 返回有效的内核虚拟地址;
     // copy_len <= PAGE_SIZE, 不会越界; dst 是有效切片.
     unsafe {
@@ -311,7 +317,7 @@ fn pcache_hash(inode_id: u32, page_index: u64) -> usize {
     let h = u64::from(inode_id)
         .wrapping_mul(0x9E37_79B9_7F4A_7C15)
         .wrapping_add(page_index.wrapping_mul(0x517C_C1B7_2722_0A95));
-    crate::privileged::lib::usize_from_u64(h) & (PCACHE_HASH_BUCKETS - 1)
+    crate::privileged::glue::usize_from_u64(h) & (PCACHE_HASH_BUCKETS - 1)
 }
 
 // ============================================================================
@@ -457,7 +463,7 @@ pub unsafe fn pcache_copy_to_user(phys: u64, dest_virt: u64) {
         core::ptr::copy_nonoverlapping(
             src_virt as *const u8,
             dest_virt as *mut u8,
-            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            crate::privileged::glue::usize_from_u64(PAGE_SIZE),
         );
     }
 }
@@ -534,16 +540,16 @@ fn test_pcache_fill_len_clamped() -> crate::privileged::tests::TestResult {
     let src_short = [0u8; 100];
     let expected = core::cmp::min(
         src_short.len(),
-        crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+        crate::privileged::glue::usize_from_u64(PAGE_SIZE),
     );
     check!(expected == 100, "short src copies full");
-    let src_long = [0u8; crate::privileged::lib::usize_from_u64(PAGE_SIZE) + 1024];
+    let src_long = [0u8; crate::privileged::glue::usize_from_u64(PAGE_SIZE) + 1024];
     let expected2 = core::cmp::min(
         src_long.len(),
-        crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+        crate::privileged::glue::usize_from_u64(PAGE_SIZE),
     );
     check!(
-        expected2 == crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+        expected2 == crate::privileged::glue::usize_from_u64(PAGE_SIZE),
         "long src clamped to PAGE_SIZE"
     );
     TestResult::Pass

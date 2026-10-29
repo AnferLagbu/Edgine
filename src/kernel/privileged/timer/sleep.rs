@@ -171,8 +171,8 @@ pub fn timer_sleep(ms: u64) -> Result<(), i32> {
 ///
 /// 毫秒换算向上取整, 保证实际睡眠时长不低于请求时长 (POSIX 语义).
 ///
-/// 调用方: `privileged::syscall::sys_nanosleep` (SYS_nanosleep) 与
-/// `functions::timer::clock::clock_nanosleep_syscall` (SYS_clock_nanosleep);
+/// 调用方: `privileged::syscall::sys_nanosleep` (SYS_NANOSLEEP) 与
+/// `functions::timer::clock::clock_nanosleep_syscall` (SYS_CLOCK_NANOSLEEP);
 /// 两者共用本函数以避免睡眠策略出现内核内部并行实现.
 ///
 /// # Arguments

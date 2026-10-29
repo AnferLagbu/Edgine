@@ -918,7 +918,7 @@ impl PhysicalMemoryManager {
             .fetch_add(reserved_aligned, Ordering::Relaxed);
 
         let info = self.info.get();
-        let total_pages = crate::privileged::lib::usize_from_u64(info.total_pages);
+        let total_pages = crate::privileged::glue::usize_from_u64(info.total_pages);
         let bitmap_words = total_pages.div_ceil(32);
         let bitmap_bytes = bitmap_words * 4;
 
@@ -933,7 +933,7 @@ impl PhysicalMemoryManager {
         let buddy_meta_phys =
             (bitmap_aligned + bitmap_bytes as u64 + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
         let buddy_meta_pages =
-            buddy_meta_bytes.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE)) as u64;
+            buddy_meta_bytes.div_ceil(crate::privileged::glue::usize_from_u64(PAGE_SIZE)) as u64;
 
         // 将 early_current 推过 buddy 元数据
         self.early_current.store(
@@ -948,7 +948,7 @@ impl PhysicalMemoryManager {
         let free_links_phys =
             (buddy_meta_phys + buddy_meta_pages * PAGE_SIZE + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
         let free_links_pages =
-            free_links_bytes.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE)) as u64;
+            free_links_bytes.div_ceil(crate::privileged::glue::usize_from_u64(PAGE_SIZE)) as u64;
 
         // 将 early_current 推过 FREE_LINKS
         self.early_current.store(
@@ -964,7 +964,7 @@ impl PhysicalMemoryManager {
         let counts_phys =
             (free_links_phys + free_links_pages * PAGE_SIZE + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
         let counts_pages =
-            counts_bytes.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE)) as u64;
+            counts_bytes.div_ceil(crate::privileged::glue::usize_from_u64(PAGE_SIZE)) as u64;
 
         // 将 early_current 推过计数区
         self.early_current.store(
@@ -981,7 +981,7 @@ impl PhysicalMemoryManager {
         let owner_phys =
             (counts_phys + counts_pages * PAGE_SIZE + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
         let owner_pages =
-            owner_bytes.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE)) as u64;
+            owner_bytes.div_ceil(crate::privileged::glue::usize_from_u64(PAGE_SIZE)) as u64;
 
         // 将 early_current 推过所有权槽区
         self.early_current.store(
@@ -1070,7 +1070,7 @@ impl PhysicalMemoryManager {
         // ---- 在 bitmap 中标记 reserved 区 ----
         let kernel_end_val = self.kernel_end.get();
         let kernel_pages =
-            crate::privileged::lib::usize_from_u64(phys_to_page(kernel_end_val + PAGE_SIZE - 1));
+            crate::privileged::glue::usize_from_u64(phys_to_page(kernel_end_val + PAGE_SIZE - 1));
         let reserved_pages = (layout.reserved_aligned / PAGE_SIZE) as usize;
         let total_reserved = kernel_pages + reserved_pages;
         for i in 0..total_reserved.min(layout.total_pages) {
@@ -1082,8 +1082,8 @@ impl PhysicalMemoryManager {
 
         // 标记 bitmap 页已用
         let bmp_start_page =
-            crate::privileged::lib::usize_from_u64(phys_to_page(layout.bitmap_aligned));
-        let bmp_pages = crate::privileged::lib::usize_from_u64(
+            crate::privileged::glue::usize_from_u64(phys_to_page(layout.bitmap_aligned));
+        let bmp_pages = crate::privileged::glue::usize_from_u64(
             (layout.bitmap_bytes as u64).div_ceil(PAGE_SIZE),
         );
         for i in bmp_start_page..(bmp_start_page + bmp_pages).min(layout.total_pages) {
@@ -1092,9 +1092,9 @@ impl PhysicalMemoryManager {
 
         // 标记 buddy-meta 页已用
         let buddy_start_page =
-            crate::privileged::lib::usize_from_u64(phys_to_page(layout.buddy_meta_phys));
+            crate::privileged::glue::usize_from_u64(phys_to_page(layout.buddy_meta_phys));
         for i in buddy_start_page
-            ..(buddy_start_page + crate::privileged::lib::usize_from_u64(layout.buddy_meta_pages))
+            ..(buddy_start_page + crate::privileged::glue::usize_from_u64(layout.buddy_meta_pages))
                 .min(layout.total_pages)
         {
             self.set_bit(i);
@@ -1102,9 +1102,9 @@ impl PhysicalMemoryManager {
 
         // 标记 FREE_LINKS 页已用 (H-02)
         let fl_start_page =
-            crate::privileged::lib::usize_from_u64(phys_to_page(layout.free_links_phys));
+            crate::privileged::glue::usize_from_u64(phys_to_page(layout.free_links_phys));
         for i in fl_start_page
-            ..(fl_start_page + crate::privileged::lib::usize_from_u64(layout.free_links_pages))
+            ..(fl_start_page + crate::privileged::glue::usize_from_u64(layout.free_links_pages))
                 .min(layout.total_pages)
         {
             self.set_bit(i);
@@ -1112,9 +1112,9 @@ impl PhysicalMemoryManager {
 
         // 标记帧持有计数页已用
         let counts_start_page =
-            crate::privileged::lib::usize_from_u64(phys_to_page(layout.counts_phys));
+            crate::privileged::glue::usize_from_u64(phys_to_page(layout.counts_phys));
         for i in counts_start_page
-            ..(counts_start_page + crate::privileged::lib::usize_from_u64(layout.counts_pages))
+            ..(counts_start_page + crate::privileged::glue::usize_from_u64(layout.counts_pages))
                 .min(layout.total_pages)
         {
             self.set_bit(i);
@@ -1122,9 +1122,9 @@ impl PhysicalMemoryManager {
 
         // 标记帧所有权槽页已用
         let owner_start_page =
-            crate::privileged::lib::usize_from_u64(phys_to_page(layout.owner_phys));
+            crate::privileged::glue::usize_from_u64(phys_to_page(layout.owner_phys));
         for i in owner_start_page
-            ..(owner_start_page + crate::privileged::lib::usize_from_u64(layout.owner_pages))
+            ..(owner_start_page + crate::privileged::glue::usize_from_u64(layout.owner_pages))
                 .min(layout.total_pages)
         {
             self.set_bit(i);
@@ -1185,7 +1185,7 @@ impl PhysicalMemoryManager {
             Some(addr) => {
                 // 单页帧: 分配者即初始持有者, 持有计数置 1 (见 frame_inc/frame_dec)
                 self.frame_counts_write(
-                    crate::privileged::lib::usize_from_u64(phys_to_page(addr.0)),
+                    crate::privileged::glue::usize_from_u64(phys_to_page(addr.0)),
                     1,
                 );
                 self.note_frame_alloc(addr);
@@ -1207,7 +1207,9 @@ impl PhysicalMemoryManager {
         }
         let flags = self.acquire_lock();
         // 丢弃一个持有者; 仅当无人持有时才真正归还 PMM (未计数帧保持既有归还语义)
-        if self.frame_counts_release(crate::privileged::lib::usize_from_u64(phys_to_page(addr.0))) {
+        if self.frame_counts_release(crate::privileged::glue::usize_from_u64(phys_to_page(
+            addr.0,
+        ))) {
             self.do_free(addr, 0);
             self.total_frees.fetch_add(1, Ordering::Relaxed);
         }
@@ -1225,7 +1227,7 @@ impl PhysicalMemoryManager {
     /// 即可给全内核 70+ 个分配点自动归因.
     #[track_caller]
     fn note_frame_alloc(&self, addr: PhysAddr) {
-        let pfn = crate::privileged::lib::usize_from_u64(phys_to_page(addr.0));
+        let pfn = crate::privileged::glue::usize_from_u64(phys_to_page(addr.0));
         if let Some(store) = self.meta_store() {
             store.owner_mark_alloc(
                 pfn,
@@ -1369,8 +1371,8 @@ impl PhysicalMemoryManager {
     /// 映射) 返回 `None` ⇒ 调用方 fail-closed (不计数, 也不报告归零).
     #[inline]
     fn frame_counts_pfn(&self, addr: PhysAddr) -> Option<usize> {
-        let pfn = crate::privileged::lib::usize_from_u64(phys_to_page(addr.0));
-        (pfn < crate::privileged::lib::usize_from_u64(self.get_total_pages())).then_some(pfn)
+        let pfn = crate::privileged::glue::usize_from_u64(phys_to_page(addr.0));
+        (pfn < crate::privileged::glue::usize_from_u64(self.get_total_pages())).then_some(pfn)
     }
 
     /// 读帧持有计数 (载体未就绪时返回 0 = 未计数)
@@ -1456,7 +1458,7 @@ impl PhysicalMemoryManager {
                 // (如透明大页拆分共享) 时按逐页计数扩展, 契约入口 frame_inc/frame_dec 不变.
                 if order == 0 {
                     self.frame_counts_write(
-                        crate::privileged::lib::usize_from_u64(phys_to_page(addr.0)),
+                        crate::privileged::glue::usize_from_u64(phys_to_page(addr.0)),
                         1,
                     );
                 }
@@ -1484,9 +1486,9 @@ impl PhysicalMemoryManager {
         let flags = self.acquire_lock();
         if order == 0 {
             // 单页路径与 free_page 同语义: 计数归零才归还
-            if self
-                .frame_counts_release(crate::privileged::lib::usize_from_u64(phys_to_page(addr.0)))
-            {
+            if self.frame_counts_release(crate::privileged::glue::usize_from_u64(phys_to_page(
+                addr.0,
+            ))) {
                 self.do_free(addr, 0);
                 self.total_frees.fetch_add(1, Ordering::Relaxed);
             }
@@ -1522,16 +1524,16 @@ impl PhysicalMemoryManager {
         if !base.as_u64().is_multiple_of(PAGE_SIZE as u64) {
             return Err("PMM reserve_range: base not page-aligned");
         }
-        if !size.is_multiple_of(crate::privileged::lib::usize_from_u64(PAGE_SIZE)) {
+        if !size.is_multiple_of(crate::privileged::glue::usize_from_u64(PAGE_SIZE)) {
             return Err("PMM reserve_range: size not page-aligned");
         }
 
-        let start_pfn = crate::privileged::lib::usize_from_u64(phys_to_page(base.as_u64()));
-        let npages = size / crate::privileged::lib::usize_from_u64(PAGE_SIZE);
+        let start_pfn = crate::privileged::glue::usize_from_u64(phys_to_page(base.as_u64()));
+        let npages = size / crate::privileged::glue::usize_from_u64(PAGE_SIZE);
         let end_pfn = start_pfn
             .checked_add(npages)
             .ok_or("PMM reserve_range: overflow")?;
-        let total_pages = crate::privileged::lib::usize_from_u64(self.info.get().total_pages);
+        let total_pages = crate::privileged::glue::usize_from_u64(self.info.get().total_pages);
         if end_pfn > total_pages {
             return Err("PMM reserve_range: range exceeds PMM size");
         }
@@ -1553,7 +1555,7 @@ impl PhysicalMemoryManager {
             base.as_u64(),
             size,
             npages,
-            (npages * crate::privileged::lib::usize_from_u64(PAGE_SIZE)) / 1024
+            (npages * crate::privileged::glue::usize_from_u64(PAGE_SIZE)) / 1024
         );
         Ok(())
     }
@@ -1575,16 +1577,16 @@ impl PhysicalMemoryManager {
         if !base.as_u64().is_multiple_of(PAGE_SIZE as u64) {
             return Err("PMM unreserve_range: base not page-aligned");
         }
-        if !size.is_multiple_of(crate::privileged::lib::usize_from_u64(PAGE_SIZE)) {
+        if !size.is_multiple_of(crate::privileged::glue::usize_from_u64(PAGE_SIZE)) {
             return Err("PMM unreserve_range: size not page-aligned");
         }
 
-        let start_pfn = crate::privileged::lib::usize_from_u64(phys_to_page(base.as_u64()));
-        let npages = size / crate::privileged::lib::usize_from_u64(PAGE_SIZE);
+        let start_pfn = crate::privileged::glue::usize_from_u64(phys_to_page(base.as_u64()));
+        let npages = size / crate::privileged::glue::usize_from_u64(PAGE_SIZE);
         let end_pfn = start_pfn
             .checked_add(npages)
             .ok_or("PMM unreserve_range: overflow")?;
-        let total_pages = crate::privileged::lib::usize_from_u64(self.info.get().total_pages);
+        let total_pages = crate::privileged::glue::usize_from_u64(self.info.get().total_pages);
         if end_pfn > total_pages {
             return Err("PMM unreserve_range: range exceeds PMM size");
         }
@@ -1611,7 +1613,7 @@ impl PhysicalMemoryManager {
             base.as_u64(),
             size,
             npages,
-            (npages * crate::privileged::lib::usize_from_u64(PAGE_SIZE)) / 1024
+            (npages * crate::privileged::glue::usize_from_u64(PAGE_SIZE)) / 1024
         );
         Ok(())
     }
@@ -1631,14 +1633,14 @@ impl PhysicalMemoryManager {
     /// `Some(PhysAddr)` 找到连续范围, 基址对齐 PAGE_SIZE;
     /// `None` 无足够连续内存.
     pub fn find_contig_range(&self, size: usize) -> Option<PhysAddr> {
-        if size == 0 || !size.is_multiple_of(crate::privileged::lib::usize_from_u64(PAGE_SIZE)) {
+        if size == 0 || !size.is_multiple_of(crate::privileged::glue::usize_from_u64(PAGE_SIZE)) {
             return None;
         }
 
         let flags = self.acquire_lock();
         let result = (|| -> Option<PhysAddr> {
-            let total_pages = crate::privileged::lib::usize_from_u64(self.info.get().total_pages);
-            let npages = size / crate::privileged::lib::usize_from_u64(PAGE_SIZE);
+            let total_pages = crate::privileged::glue::usize_from_u64(self.info.get().total_pages);
+            let npages = size / crate::privileged::glue::usize_from_u64(PAGE_SIZE);
 
             let mut pfn = 0usize;
             while pfn + npages <= total_pages {
@@ -1702,7 +1704,7 @@ impl PhysicalMemoryManager {
             PageSize::Size1G => {
                 let np = (size_type.size() / PAGE_SIZE) as usize;
                 let flags = self.acquire_lock();
-                let start = crate::privileged::lib::usize_from_u64(phys_to_page(addr.0));
+                let start = crate::privileged::glue::usize_from_u64(phys_to_page(addr.0));
                 for i in 0..np {
                     self.clear_bit(start + i);
                 }
@@ -1818,10 +1820,10 @@ impl PhysicalMemoryManager {
     }
 
     fn count_free_pages(&self) -> u64 {
-        let total = crate::privileged::lib::usize_from_u64(self.info.get().total_pages);
+        let total = crate::privileged::glue::usize_from_u64(self.info.get().total_pages);
         let free = self.meta_store().map_or(0, MetaStore::bitmap_count_free);
         // 截断到 total (bitmap 在 total_pages 之外可能还有剩余位)
-        let extra = crate::privileged::lib::low_u32_from_usize(
+        let extra = crate::privileged::glue::low_u32_from_usize(
             (self.bitmap_size.get() * 32).saturating_sub(total),
         );
         if extra > 0 {
@@ -1884,7 +1886,7 @@ impl PhysicalMemoryManager {
             }
 
             // M2: 显式验证伙伴块的 order
-            let buddy_state = store.meta_read(crate::privileged::lib::usize_from_u64(buddy_pfn));
+            let buddy_state = store.meta_read(crate::privileged::glue::usize_from_u64(buddy_pfn));
 
             // 检查 buddy_state 是否为有效的 order 值 (0..=MAX_BUDDY_ORDER)
             // 如果 buddy_state == BUDDY_ALLOCATED (0xFF)，说明已分配，不能合并
@@ -1903,7 +1905,7 @@ impl PhysicalMemoryManager {
             // 从空闲链表中移除 buddy
             self.buddy_list_remove(buddy_pfn, order);
             store.meta_write(
-                crate::privileged::lib::usize_from_u64(buddy_pfn),
+                crate::privileged::glue::usize_from_u64(buddy_pfn),
                 BUDDY_ALLOCATED,
             );
 
@@ -1911,7 +1913,7 @@ impl PhysicalMemoryManager {
             order += 1;
         }
 
-        store.meta_write(crate::privileged::lib::usize_from_u64(pfn), order);
+        store.meta_write(crate::privileged::glue::usize_from_u64(pfn), order);
         (pfn, order)
     }
 
@@ -1925,15 +1927,15 @@ impl PhysicalMemoryManager {
         };
         // 前置断言: pfn 越界 = FREE_LINKS 越界访问
         debug_assert!(pfn < self.info.get().total_pages);
-        let prev = store.links_read_prev(crate::privileged::lib::usize_from_u64(pfn));
-        let next = store.links_read_next(crate::privileged::lib::usize_from_u64(pfn));
+        let prev = store.links_read_prev(crate::privileged::glue::usize_from_u64(pfn));
+        let next = store.links_read_next(crate::privileged::glue::usize_from_u64(pfn));
         if prev == SENTINEL {
             store.heads_set(order, next);
         } else {
-            store.links_set_next(crate::privileged::lib::usize_from_u64(prev), next);
+            store.links_set_next(crate::privileged::glue::usize_from_u64(prev), next);
         }
         if next != SENTINEL {
-            store.links_set_prev(crate::privileged::lib::usize_from_u64(next), prev);
+            store.links_set_prev(crate::privileged::glue::usize_from_u64(next), prev);
         }
     }
 
@@ -1950,8 +1952,8 @@ impl PhysicalMemoryManager {
     fn buddy_list_push(&self, pfn: u64, order: u8) {
         // 强制位图同步: 链表是空闲权威, push 即声明这些页 free
         let npages = 1u64 << u64::from(order);
-        for i in 0..crate::privileged::lib::usize_from_u64(npages) {
-            self.clear_bit(crate::privileged::lib::usize_from_u64(pfn) + i);
+        for i in 0..crate::privileged::glue::usize_from_u64(npages) {
+            self.clear_bit(crate::privileged::glue::usize_from_u64(pfn) + i);
         }
         let Some(store) = self.meta_store() else {
             return;
@@ -1959,10 +1961,10 @@ impl PhysicalMemoryManager {
         // 前置断言: pfn 越界 = FREE_LINKS 越界访问
         debug_assert!(pfn < self.info.get().total_pages);
         let old_head = store.heads_get(order);
-        store.links_set_prev(crate::privileged::lib::usize_from_u64(pfn), SENTINEL);
-        store.links_set_next(crate::privileged::lib::usize_from_u64(pfn), old_head);
+        store.links_set_prev(crate::privileged::glue::usize_from_u64(pfn), SENTINEL);
+        store.links_set_next(crate::privileged::glue::usize_from_u64(pfn), old_head);
         if old_head != SENTINEL {
-            store.links_set_prev(crate::privileged::lib::usize_from_u64(old_head), pfn);
+            store.links_set_prev(crate::privileged::glue::usize_from_u64(old_head), pfn);
         }
         store.heads_set(order, pfn);
     }
@@ -1980,10 +1982,10 @@ impl PhysicalMemoryManager {
         }
         // 前置断言: 索引式链表要求 pfn < total_pages (越界 = OOB 访问)
         debug_assert!(pfn < self.info.get().total_pages);
-        let next = store.links_read_next(crate::privileged::lib::usize_from_u64(pfn));
+        let next = store.links_read_next(crate::privileged::glue::usize_from_u64(pfn));
         store.heads_set(order, next);
         if next != SENTINEL {
-            store.links_set_prev(crate::privileged::lib::usize_from_u64(next), SENTINEL);
+            store.links_set_prev(crate::privileged::glue::usize_from_u64(next), SENTINEL);
         }
         Some(pfn)
     }
@@ -2016,8 +2018,11 @@ impl PhysicalMemoryManager {
 
             // 与相邻空闲伙伴合并 (伙伴不满足同阶空闲则停), 然后压入空闲链表
             // limit_pfn = end_pfn: 合并不得越过本范围, 防止吞掉相邻 reserve 区
-            let (merged_pfn, merged_order) =
-                self.buddy_try_merge(cur, crate::privileged::lib::low_u8_from_u32(order), end_pfn);
+            let (merged_pfn, merged_order) = self.buddy_try_merge(
+                cur,
+                crate::privileged::glue::low_u8_from_u32(order),
+                end_pfn,
+            );
             self.buddy_list_push(merged_pfn, merged_order);
 
             // 关键修复 (B05-55): 压回的合并块可能比原块大 (向上合并了伙伴).
@@ -2054,14 +2059,14 @@ impl PhysicalMemoryManager {
             let mut cur = store.heads_get(order);
             while cur != SENTINEL {
                 // H-03: 先存 next 再可能 remove (remove 会改写链表关系)
-                let next = store.links_read_next(crate::privileged::lib::usize_from_u64(cur));
+                let next = store.links_read_next(crate::privileged::glue::usize_from_u64(cur));
                 let block_size = 1u64 << order;
                 if cur < end_pfn && cur + block_size > start_pfn {
                     // 重叠: 整块摘除, 元数据整块标记为已分配 (防止后续错误合并)
                     self.buddy_list_remove(cur, order);
                     for i in 0..block_size {
                         store.meta_write(
-                            crate::privileged::lib::usize_from_u64(cur + i),
+                            crate::privileged::glue::usize_from_u64(cur + i),
                             BUDDY_ALLOCATED,
                         );
                     }
@@ -2075,8 +2080,8 @@ impl PhysicalMemoryManager {
         }
 
         // 置位位图并更新统计
-        for i in crate::privileged::lib::usize_from_u64(start_pfn)
-            ..crate::privileged::lib::usize_from_u64(end_pfn)
+        for i in crate::privileged::glue::usize_from_u64(start_pfn)
+            ..crate::privileged::glue::usize_from_u64(end_pfn)
         {
             self.set_bit(i);
         }
@@ -2117,7 +2122,10 @@ impl PhysicalMemoryManager {
 
         let pfn = self.buddy_list_pop(alloc_order)?;
 
-        store.meta_write(crate::privileged::lib::usize_from_u64(pfn), BUDDY_ALLOCATED);
+        store.meta_write(
+            crate::privileged::glue::usize_from_u64(pfn),
+            BUDDY_ALLOCATED,
+        );
 
         // 向下分裂, 直至达到请求阶数
         let cur_pfn = pfn;
@@ -2126,10 +2134,13 @@ impl PhysicalMemoryManager {
             cur_order -= 1;
             let buddy_pfn = cur_pfn + (1u64 << cur_order);
             self.buddy_list_push(buddy_pfn, cur_order);
-            store.meta_write(crate::privileged::lib::usize_from_u64(buddy_pfn), cur_order);
+            store.meta_write(
+                crate::privileged::glue::usize_from_u64(buddy_pfn),
+                cur_order,
+            );
         }
         store.meta_write(
-            crate::privileged::lib::usize_from_u64(cur_pfn),
+            crate::privileged::glue::usize_from_u64(cur_pfn),
             BUDDY_ALLOCATED,
         );
 
@@ -2155,8 +2166,8 @@ impl PhysicalMemoryManager {
         let (pfn, _) = self.buddy_alloc(order)?;
         let addr = page_to_phys(pfn);
         let npages = 1u64 << u64::from(order);
-        for i in 0..crate::privileged::lib::usize_from_u64(npages) {
-            self.set_bit(crate::privileged::lib::usize_from_u64(pfn) + i);
+        for i in 0..crate::privileged::glue::usize_from_u64(npages) {
+            self.set_bit(crate::privileged::glue::usize_from_u64(pfn) + i);
         }
         self.stats_alloc(npages);
         Some(PhysAddr(addr))
@@ -2182,12 +2193,12 @@ impl PhysicalMemoryManager {
 
         // M1 修复: 在 buddy_ready 前后都检测 double-free
         // 位图约定: 1 = 已分配, 0 = 空闲
-        if !self.test_bit(crate::privileged::lib::usize_from_u64(pfn)) {
+        if !self.test_bit(crate::privileged::glue::usize_from_u64(pfn)) {
             // 所有权归因: 帧位已为 0 而再次被归还 —— 两条路径在争同一帧.
             // 不点名则仅表现为“某页提前进了空闲链”的静默腐败 (他方仍在用该帧,
             // 下次分配即可能拿到同一帧 → 映射被当数据页覆写).
             let (alloc_site, release_site) =
-                self.frame_owner(crate::privileged::lib::usize_from_u64(pfn));
+                self.frame_owner(crate::privileged::glue::usize_from_u64(pfn));
             let alloc = Self::owner_site_loc(alloc_site);
             let retired = Self::owner_site_loc(release_site);
             let here = Location::caller();
@@ -2208,14 +2219,14 @@ impl PhysicalMemoryManager {
         // 首次归还点入元数据 (保留分配点): 若后续又出现二次归还, 本行就是
         // 告警里的 “first_retire” 字段.
         self.owner_mark_first_release_locked(
-            crate::privileged::lib::usize_from_u64(pfn),
+            crate::privileged::glue::usize_from_u64(pfn),
             core::ptr::from_ref(Location::caller()).cast::<u8>() as u64,
         );
 
         if !self.buddy_ready.load(Ordering::Acquire) {
             let npages = 1u64 << u64::from(order);
-            for i in 0..crate::privileged::lib::usize_from_u64(npages) {
-                self.clear_bit(crate::privileged::lib::usize_from_u64(pfn) + i);
+            for i in 0..crate::privileged::glue::usize_from_u64(npages) {
+                self.clear_bit(crate::privileged::glue::usize_from_u64(pfn) + i);
             }
             self.stats_free(npages);
             return;
@@ -2223,8 +2234,8 @@ impl PhysicalMemoryManager {
 
         // Clear bitmap
         let npages = 1u64 << u64::from(order);
-        for i in 0..crate::privileged::lib::usize_from_u64(npages) {
-            self.clear_bit(crate::privileged::lib::usize_from_u64(pfn) + i);
+        for i in 0..crate::privileged::glue::usize_from_u64(npages) {
+            self.clear_bit(crate::privileged::glue::usize_from_u64(pfn) + i);
         }
 
         // 合并并压入空闲链表 (do_free 无范围限制, limit = total_pages)
@@ -2264,7 +2275,7 @@ impl PhysicalMemoryManager {
                 // (host debug 暴露; release 下 wrap-around 为 UB 碰巧工作).
                 // checked_ilog2: remaining==1 → None → 0 (order-0 单页, 正确语义);
                 // 其余与 `BITS-1-leading_zeros` 恒等.
-                let max_order = crate::privileged::lib::low_u8_from_u32(
+                let max_order = crate::privileged::glue::low_u8_from_u32(
                     (remaining - 1)
                         .checked_ilog2()
                         .unwrap_or(0)
@@ -2274,7 +2285,7 @@ impl PhysicalMemoryManager {
                 let mut order = max_order;
                 while order > 0 {
                     let size = 1usize << order as usize;
-                    if crate::privileged::lib::usize_from_u64(cur).is_multiple_of(size)
+                    if crate::privileged::glue::usize_from_u64(cur).is_multiple_of(size)
                         && size <= remaining
                     {
                         break;
@@ -2283,7 +2294,7 @@ impl PhysicalMemoryManager {
                 }
                 let block_size = 1usize << order as usize;
 
-                store.meta_write(crate::privileged::lib::usize_from_u64(cur), order);
+                store.meta_write(crate::privileged::glue::usize_from_u64(cur), order);
                 self.buddy_list_push(cur, order);
 
                 cur += block_size as u64;
@@ -2294,7 +2305,7 @@ impl PhysicalMemoryManager {
 
     /// 1GB 页直接对齐分配 (超出 buddy 范围).
     fn buddy_direct_alloc_aligned(&self, count: usize, alignment: u64) -> Option<PhysAddr> {
-        let total = crate::privileged::lib::usize_from_u64(self.info.get().total_pages);
+        let total = crate::privileged::glue::usize_from_u64(self.info.get().total_pages);
         let align_pages = (alignment / PAGE_SIZE) as usize;
         let mut i = align_pages; // 跳过 page 0
         while i + count <= total {
@@ -2319,7 +2330,7 @@ impl PhysicalMemoryManager {
 
     /// 回退 bitmap 扫描 (在 init 完成但 buddy 还未就绪, 或 buddy 关闭时使用).
     fn alloc_from_bitmap_fallback(&self, count: usize) -> Option<PhysAddr> {
-        let total = crate::privileged::lib::usize_from_u64(self.info.get().total_pages);
+        let total = crate::privileged::glue::usize_from_u64(self.info.get().total_pages);
         for i in 0..total {
             if self.test_bit(i) {
                 continue;

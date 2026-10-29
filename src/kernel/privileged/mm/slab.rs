@@ -448,7 +448,7 @@ impl KmemCache {
         }
 
         // 清除位图中的标志位
-        self.clear_bit(slab, crate::privileged::lib::low_u32_from_usize(obj_idx));
+        self.clear_bit(slab, crate::privileged::glue::low_u32_from_usize(obj_idx));
 
         // 更新计数
         sr.set_active_count(sr.active_count() - 1);
@@ -555,7 +555,7 @@ impl KmemCache {
             fn pmm_alloc_pages(count: u64) -> *mut u8;
         }
         let pages_needed =
-            SLAB_DEFAULT_SIZE.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE));
+            SLAB_DEFAULT_SIZE.div_ceil(crate::privileged::glue::usize_from_u64(PAGE_SIZE));
         // SAFETY: pmm_alloc_pages 返回空 (失败) 或经 KERNEL_BASE 映射的合法页对齐物理地址
         let page = unsafe { pmm_alloc_pages(pages_needed as u64) };
 
@@ -623,7 +623,7 @@ impl KmemCache {
                 fn pmm_free_pages(addr: *mut u8, count: u64);
             }
             let pages_needed =
-                SLAB_DEFAULT_SIZE.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE));
+                SLAB_DEFAULT_SIZE.div_ceil(crate::privileged::glue::usize_from_u64(PAGE_SIZE));
             // SAFETY: pmm_free_pages 由 PMM 层提供, 释放 destroy_slab 持有的 slab 物理页
             pmm_free_pages(slab.cast::<u8>(), pages_needed as u64);
         }
@@ -643,7 +643,7 @@ impl KmemCache {
                 continue;
             }
             let bit_idx = byte.trailing_ones();
-            let global_bit = crate::privileged::lib::low_u32_from_usize(byte_idx) * 8 + bit_idx;
+            let global_bit = crate::privileged::glue::low_u32_from_usize(byte_idx) * 8 + bit_idx;
             if global_bit < sr.obj_count() {
                 return Some(global_bit);
             }
@@ -908,7 +908,7 @@ pub(crate) fn get_all_cache_snapshots(out: &mut [SlabCacheSnapshot]) -> usize {
         if let Some(cache) = cache_opt {
             let stats = cache.get_stats();
             out[count] = SlabCacheSnapshot {
-                object_size: crate::privileged::lib::low_u32_from_usize(cache.object_size),
+                object_size: crate::privileged::glue::low_u32_from_usize(cache.object_size),
                 total_objects: stats.total_objects,
                 active_objects: stats.active_objects,
                 total_slabs: stats.total_slabs,

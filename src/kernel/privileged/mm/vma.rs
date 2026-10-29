@@ -678,7 +678,7 @@ impl MmStruct {
             super::vmm::get_vmm().unmap_page_in_table(cr3, VirtAddr(addr as u64));
             #[cfg(target_arch = "aarch64")]
             super::vmm::Aarch64Vmm::unmap_page_in_table(cr3, VirtAddr(addr as u64));
-            addr += crate::privileged::lib::usize_from_u64(PAGE_SIZE);
+            addr += crate::privileged::glue::usize_from_u64(PAGE_SIZE);
         }
     }
 
@@ -696,7 +696,7 @@ impl MmStruct {
 
         // TASK_SIZE: 64 位用户地址空间上限 (集中于 constants::limits::USER_ADDR_MAX, B05-45)
         // SIMPLIFIED: usize 转换在 64 位系统下无损; 32 位系统需额外 assert (无 32 位目标, 当前可省略)
-        let task_size: usize = crate::privileged::lib::usize_from_u64(
+        let task_size: usize = crate::privileged::glue::usize_from_u64(
             crate::privileged::constants::limits::USER_ADDR_MAX,
         );
 
@@ -733,8 +733,8 @@ impl MmStruct {
         }
 
         let end = start.checked_add(len).ok_or(Errno::ENOMEM)?;
-        let end = (end + crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1)
-            & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1); // 页对齐上界
+        let end = (end + crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1)
+            & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1); // 页对齐上界
 
         let mut vmas = self.vmas.lock();
 
@@ -831,7 +831,7 @@ impl MmStruct {
         *vmas = fragments;
 
         // 修改页表权限
-        let page_start = start & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
+        let page_start = start & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1);
         let mut addr = page_start;
         while addr < end {
             crate::privileged::mm::Vmm::protect_page_in_table(
@@ -839,7 +839,7 @@ impl MmStruct {
                 VirtAddr(addr as u64),
                 new_flags,
             );
-            addr += crate::privileged::lib::usize_from_u64(PAGE_SIZE);
+            addr += crate::privileged::glue::usize_from_u64(PAGE_SIZE);
         }
 
         Ok(())
@@ -895,8 +895,8 @@ impl MmStruct {
             return Err(Errno::EINVAL);
         }
 
-        let old_size_aligned = (old_size + crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1)
-            & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
+        let old_size_aligned = (old_size + crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1)
+            & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1);
 
         // 验证旧 vma 存在且精确覆盖 [old_addr, old_addr+old_size_aligned)
         let old_vma = self.find_vma(old_addr).ok_or(Errno::EFAULT)?;
@@ -910,8 +910,8 @@ impl MmStruct {
             return Ok(0);
         }
 
-        let new_size_aligned = (new_size + crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1)
-            & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
+        let new_size_aligned = (new_size + crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1)
+            & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1);
 
         // 缩小: 截断尾部
         if new_size_aligned <= old_size_aligned {
@@ -984,8 +984,8 @@ impl MmStruct {
     /// 当扩展堆时插入的新 VMA 与已有 VMA 重叠且不兼容时, 返回 `Err`
     /// (错误信息来自 `insert_vma`).
     pub fn set_brk(&self, new_brk: usize, cr3: u64) -> Result<usize, &'static str> {
-        let page_aligned = (new_brk + crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1)
-            & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
+        let page_aligned = (new_brk + crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1)
+            & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1);
 
         let start_brk = self.start_brk.load(Ordering::Acquire);
         let current_brk = self.brk.load(Ordering::Acquire);
@@ -1044,8 +1044,8 @@ impl MmStruct {
         };
 
         let end_addr = start.checked_add(len).ok_or(Errno::ENOMEM)?;
-        let end_addr = (end_addr + crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1)
-            & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
+        let end_addr = (end_addr + crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1)
+            & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1);
 
         let (locked, touched) = {
             let mut vmas = self.vmas.lock();
@@ -1111,8 +1111,8 @@ impl MmStruct {
         }
 
         let end_addr = start.checked_add(len).ok_or(Errno::ENOMEM)?;
-        let end_addr = (end_addr + crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1)
-            & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
+        let end_addr = (end_addr + crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1)
+            & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1);
 
         // 验证范围在 VMA 中
         let mut total = 0usize;
@@ -1150,7 +1150,7 @@ impl MmStruct {
 
         // 对范围内已触达页设置 LRU locked
         drop(vmas);
-        let page_size = crate::privileged::lib::usize_from_u64(PAGE_SIZE);
+        let page_size = crate::privileged::glue::usize_from_u64(PAGE_SIZE);
         let mut addr = start;
         while addr < end_addr {
             crate::privileged::mm::set_page_locked(addr as u64, true);
@@ -1176,8 +1176,8 @@ impl MmStruct {
         }
 
         let end_addr = start.checked_add(len).ok_or(Errno::ENOMEM)?;
-        let end_addr = (end_addr + crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1)
-            & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
+        let end_addr = (end_addr + crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1)
+            & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1);
 
         let mut total = 0usize;
         let mut vmas = self.vmas.lock();
@@ -1197,7 +1197,7 @@ impl MmStruct {
             });
         drop(vmas);
 
-        let page_size = crate::privileged::lib::usize_from_u64(PAGE_SIZE);
+        let page_size = crate::privileged::glue::usize_from_u64(PAGE_SIZE);
         let mut addr = start;
         while addr < end_addr {
             crate::privileged::mm::set_page_locked(addr as u64, false);
@@ -1296,7 +1296,7 @@ impl MmStruct {
             return Err(Errno::EINVAL);
         }
 
-        let page_size = crate::privileged::lib::usize_from_u64(PAGE_SIZE);
+        let page_size = crate::privileged::glue::usize_from_u64(PAGE_SIZE);
         let n_pages = (len + page_size - 1) / page_size;
         if out_vec.len() < n_pages {
             return Err(Errno::ENOMEM);
@@ -1361,7 +1361,7 @@ pub extern "C" fn vma_find(mm_ptr: *const MmStruct, addr: u64) -> u64 {
     }
     // SAFETY: `mm_ptr` 由调用方保证为有效指针; 只读访问
     let mm = unsafe { &*mm_ptr };
-    mm.find_vma(crate::privileged::lib::usize_from_u64(addr))
+    mm.find_vma(crate::privileged::glue::usize_from_u64(addr))
         .map_or(0, |vma| {
             let flags = vma.flags.bits();
             ((vma.start as u64) << 32) | flags

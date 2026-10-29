@@ -149,8 +149,8 @@ impl DynIpcNamespace {
             return Err(-1);
         }
 
-        let pages = crate::privileged::lib::usize_from_u64(size)
-            .div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE));
+        let pages = crate::privileged::glue::usize_from_u64(size)
+            .div_ceil(crate::privileged::glue::usize_from_u64(PAGE_SIZE));
         let phys = crate::privileged::mm::pmm_alloc_pages(pages);
         if phys.is_null() {
             return Err(-3);
@@ -179,8 +179,8 @@ impl DynIpcNamespace {
         let mut segs = self.shm_segs.lock();
         let pos = segs.iter().position(|s| s.id == id).ok_or(-1)?;
         let seg = segs.remove(pos);
-        let pages = crate::privileged::lib::usize_from_u64(seg.size)
-            .div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE));
+        let pages = crate::privileged::glue::usize_from_u64(seg.size)
+            .div_ceil(crate::privileged::glue::usize_from_u64(PAGE_SIZE));
         crate::privileged::mm::pmm_free_pages(seg.phys_addr as *mut u8, pages);
         Ok(())
     }

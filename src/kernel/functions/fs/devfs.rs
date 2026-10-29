@@ -44,10 +44,6 @@ pub const DEVFS_MAX_NAME: usize = 32;
 /// 设备类型 (强类型枚举, 替代裸 `u8`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-#[expect(
-    clippy::upper_case_acronyms,
-    reason = "设备种类枚举按子系统缩写命名 (SGEG), 与 /dev/sgeg 路径对应"
-)]
 pub enum DevKind {
     /// 空设备 /dev/null
     Null = 0,
@@ -58,7 +54,7 @@ pub enum DevKind {
     /// TTY /dev/tty
     Tty = 3,
     /// SGEG 能力 (PWM) 接口 /dev/sgeg
-    SGEG = 4,
+    Sgeg = 4,
     /// 块设备 (如 /dev/sda)
     Block = 5,
     /// 字符设备 (如 /dev/serial0)
@@ -77,7 +73,7 @@ impl DevKind {
             1 => Some(Self::Zero),
             2 => Some(Self::Console),
             3 => Some(Self::Tty),
-            4 => Some(Self::SGEG),
+            4 => Some(Self::Sgeg),
             5 => Some(Self::Block),
             6 => Some(Self::Char),
             7 => Some(Self::Net),
@@ -90,7 +86,7 @@ impl DevKind {
     pub fn is_virtual(self) -> bool {
         matches!(
             self,
-            Self::Null | Self::Zero | Self::Console | Self::Tty | Self::SGEG
+            Self::Null | Self::Zero | Self::Console | Self::Tty | Self::Sgeg
         )
     }
 
@@ -276,7 +272,7 @@ impl DevfsData {
                 buf.fill(0);
                 crate::functions::intcast::low_i32_from_usize(buf.len())
             }
-            Some(DevKind::SGEG) => {
+            Some(DevKind::Sgeg) => {
                 let pwm = crate::privileged::sgeg::session::get_current_pwm();
                 let euid = crate::privileged::sgeg::session::get_euid();
                 let uid = crate::privileged::sgeg::session::get_current_uid();
@@ -351,7 +347,7 @@ impl DevfsData {
                 crate::privileged::klog::serial_write_bytes(buf);
                 crate::functions::intcast::low_i32_from_usize(buf.len())
             }
-            Some(DevKind::SGEG) => {
+            Some(DevKind::Sgeg) => {
                 let input = core::str::from_utf8(buf).unwrap_or("");
                 let input = input.trim_end_matches(['\n', '\r', '\0']);
                 let mut parts = input.splitn(2, '\n');
@@ -452,7 +448,7 @@ impl DevFile {
             DevKind::Zero => "zero",
             DevKind::Console => "console",
             DevKind::Tty => "tty",
-            DevKind::SGEG => "sgeg",
+            DevKind::Sgeg => "sgeg",
             DevKind::Block | DevKind::Char | DevKind::Net | DevKind::Input => "device",
         }
     }
@@ -613,7 +609,7 @@ pub fn register_standard() {
     let _ = register("zero", DevKind::Zero);
     let _ = register("console", DevKind::Console);
     let _ = register("tty", DevKind::Tty);
-    let _ = register("sgeg", DevKind::SGEG);
+    let _ = register("sgeg", DevKind::Sgeg);
 }
 
 // ============================================================================
@@ -870,7 +866,7 @@ mod tests {
             "register tty"
         );
         assert!(
-            devfs.register_device("sgeg", DevKind::SGEG as u8).is_ok(),
+            devfs.register_device("sgeg", DevKind::Sgeg as u8).is_ok(),
             "register sgeg"
         );
         assert_eq!(devfs.device_count(), 5, "expected 5 standard devices");

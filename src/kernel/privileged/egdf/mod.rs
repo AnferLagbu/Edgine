@@ -408,7 +408,7 @@ pub fn egdf_register_block_dev(
     let idx;
     {
         let mut devices = EGDF_DEVICES.lock();
-        idx = crate::privileged::lib::low_u32_from_usize(devices.len());
+        idx = crate::privileged::glue::low_u32_from_usize(devices.len());
         devices.push(egdf_dev);
     }
     notify_last_registered();
@@ -752,7 +752,7 @@ pub fn egdf_blk_drives() -> Vec<u8> {
         .iter()
         .enumerate()
         .filter(|(_, d)| d.proto == EGDFProto::Block)
-        .map(|(i, _)| crate::privileged::lib::low_u8_from_usize(i))
+        .map(|(i, _)| crate::privileged::glue::low_u8_from_usize(i))
         .collect()
 }
 

@@ -102,18 +102,12 @@ pub enum FutexResult {
 }
 
 impl FutexResult {
-    #[expect(
-        clippy::comparison_chain,
-        reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-    )]
     /// 从 syscall 返回值解析
     pub fn from_ret(ret: i64) -> Self {
-        if ret == 0 {
-            Self::Woken
-        } else if ret > 0 {
-            Self::WokenCount(crate::functions::intcast::low_u32_from_i64(ret))
-        } else {
-            Self::Pending
+        match ret {
+            0 => Self::Woken,
+            r if r > 0 => Self::WokenCount(crate::functions::intcast::low_u32_from_i64(r)),
+            _ => Self::Pending,
         }
     }
 }

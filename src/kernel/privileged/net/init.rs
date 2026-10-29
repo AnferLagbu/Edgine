@@ -90,7 +90,8 @@ unsafe fn init_sockets() {
             return;
         }
         configure_max_sockets();
-        SOCKET_SET.write(SocketSet::new(sockets::socket_storage()));
+        // P-64 第十五批: 经 &raw mut 取裸指针再解引用, 避免对 static mut 直接取引用
+        (*core::ptr::addr_of_mut!(SOCKET_SET)).write(SocketSet::new(sockets::socket_storage()));
         SOCKETS_INITIALIZED.store(true, Ordering::Release);
     }
 }
@@ -100,7 +101,7 @@ unsafe fn init_sockets() {
 /// - 调用前必须已执行 `init_sockets` 完成 `SOCKET_SET` 初始化
 /// - 返回的指针仅在同一线程的 socket 调度上下文内使用, 不得跨线程共享
 unsafe fn socket_set() -> *mut SocketSet<'static> {
-    unsafe { SOCKET_SET.as_mut_ptr() }
+    unsafe { (*core::ptr::addr_of_mut!(SOCKET_SET)).as_mut_ptr() }
 }
 
 /// # Safety
@@ -439,7 +440,7 @@ fn as_u32_handle(h: smoltcp::iface::SocketHandle) -> u32 {
     //         size_of::<SocketHandle>() == size_of::<usize>() 编译期由 transmute_copy 强制.
     //         不要求 repr(transparent) 假设, 避免 W5 记录的 transmute UB 风险.
     let raw: usize = unsafe { core::mem::transmute_copy(&h) };
-    crate::privileged::lib::low_u32_from_usize(raw)
+    crate::privileged::glue::low_u32_from_usize(raw)
 }
 
 /// u32 → `SocketHandle` (作为 `as_u32_handle` 的 companion helper).

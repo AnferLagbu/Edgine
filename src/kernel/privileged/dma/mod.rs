@@ -277,7 +277,7 @@ fn alloc_mmio_virt(size: usize) -> Option<VirtAddr> {
             regions.insert(
                 result,
                 MmioRegion {
-                    size: crate::privileged::lib::usize_from_u64(alloc_size),
+                    size: crate::privileged::glue::usize_from_u64(alloc_size),
                 },
             );
             return Some(result);
@@ -294,7 +294,7 @@ fn alloc_mmio_virt(size: usize) -> Option<VirtAddr> {
     regions.insert(
         result,
         MmioRegion {
-            size: crate::privileged::lib::usize_from_u64(alloc_size),
+            size: crate::privileged::glue::usize_from_u64(alloc_size),
         },
     );
     Some(result)

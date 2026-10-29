@@ -92,7 +92,7 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
         core::ptr::write_bytes(
             child_pml4_virt.cast::<u8>(),
             0,
-            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            crate::privileged::glue::usize_from_u64(PAGE_SIZE),
         );
     }
 
@@ -196,7 +196,7 @@ fn clone_child_pdpt(parent_pml4e: u64, child_pml4_virt: *mut u64, i: usize) -> O
         core::ptr::write_bytes(
             child_pdpt_virt.cast::<u8>(),
             0,
-            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            crate::privileged::glue::usize_from_u64(PAGE_SIZE),
         );
     }
 
@@ -232,7 +232,7 @@ fn clone_child_pd(parent_pdpte: u64, child_pdpt_virt: *mut u64, j: usize) -> Opt
         core::ptr::write_bytes(
             child_pd_virt.cast::<u8>(),
             0,
-            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            crate::privileged::glue::usize_from_u64(PAGE_SIZE),
         );
     }
 
@@ -277,7 +277,7 @@ fn clone_child_pt(parent_pde: u64, child_pd_virt: *mut u64, k: usize) -> Option<
         core::ptr::write_bytes(
             child_table_virt.cast::<u8>(),
             0,
-            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            crate::privileged::glue::usize_from_u64(PAGE_SIZE),
         );
     }
 
@@ -488,7 +488,7 @@ fn cow_handle_fault_locked(pml4: u64, fault_addr: u64) -> Option<u64> {
         core::ptr::copy_nonoverlapping(
             old_virt.0 as *const u8,
             new_virt.0 as *mut u8,
-            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            crate::privileged::glue::usize_from_u64(PAGE_SIZE),
         );
     }
 

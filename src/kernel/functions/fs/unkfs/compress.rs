@@ -14,9 +14,9 @@ pub fn compress(data: &[u8], comp_type: UnkfsCompType) -> Option<Vec<u8>> {
     match comp_type {
         UnkfsCompType::Off => None,
         UnkfsCompType::LZ4 => compress_lz4(data),
-        UnkfsCompType::ZSTD => compress_zstd_fallback(data),
+        UnkfsCompType::Zstd => compress_zstd_fallback(data),
         UnkfsCompType::Gzip1 | UnkfsCompType::Gzip9 => compress_rle(data),
-        UnkfsCompType::ZLE => compress_zle(data),
+        UnkfsCompType::Zle => compress_zle(data),
     }
 }
 
@@ -29,9 +29,9 @@ pub fn decompress(
     match comp_type {
         UnkfsCompType::Off => None,
         UnkfsCompType::LZ4 => decompress_lz4(compressed, expected_size),
-        UnkfsCompType::ZSTD => decompress_zstd_fallback(compressed, expected_size),
+        UnkfsCompType::Zstd => decompress_zstd_fallback(compressed, expected_size),
         UnkfsCompType::Gzip1 | UnkfsCompType::Gzip9 => decompress_rle(compressed, expected_size),
-        UnkfsCompType::ZLE => decompress_zle(compressed, expected_size),
+        UnkfsCompType::Zle => decompress_zle(compressed, expected_size),
     }
 }
 

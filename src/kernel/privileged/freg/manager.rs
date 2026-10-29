@@ -104,13 +104,13 @@ impl RecoveryManager {
         if count >= MAX_RECOVERY_DOMAINS {
             return None;
         }
-        let id = crate::privileged::lib::usize_from_u64(domain.id());
+        let id = crate::privileged::glue::usize_from_u64(domain.id());
         if id < DIRECT_MAP_SIZE {
             self.direct_map[id] = Some(domain);
         }
         self.domains[count] = Some(domain);
         self.count.store(
-            crate::privileged::lib::low_u32_from_usize(count) + 1,
+            crate::privileged::glue::low_u32_from_usize(count) + 1,
             Ordering::SeqCst,
         );
         Some(domain.id())
@@ -134,7 +134,7 @@ impl RecoveryManager {
         }
         self.count.fetch_sub(1, Ordering::SeqCst);
 
-        let direct_idx = crate::privileged::lib::usize_from_u64(domain_id);
+        let direct_idx = crate::privileged::glue::usize_from_u64(domain_id);
         if direct_idx < DIRECT_MAP_SIZE
             && self.direct_map[direct_idx].is_some_and(|d| core::ptr::eq(d, removed))
         {
@@ -213,7 +213,7 @@ impl RecoveryManager {
 
     /// 按域标识查找恢复域 (`direct_map` 命中则 O(1), 否则线性扫描).
     pub fn find(&self, id: u64) -> Option<&'static RecoveryDomain> {
-        let idx = crate::privileged::lib::usize_from_u64(id);
+        let idx = crate::privileged::glue::usize_from_u64(id);
         if idx < DIRECT_MAP_SIZE {
             self.direct_map[idx]
         } else {
@@ -284,7 +284,7 @@ impl RecoveryManager {
     ) -> (usize, u64, u64, i32) {
         let gen_from = dom.freg_generation.load(Ordering::SeqCst);
         let target_gen = if depth > 0 {
-            dom.get_rollback_generation(crate::privileged::lib::low_u32_from_usize(depth))
+            dom.get_rollback_generation(crate::privileged::glue::low_u32_from_usize(depth))
         } else {
             gen_from
         };

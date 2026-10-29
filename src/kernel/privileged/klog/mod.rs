@@ -370,7 +370,7 @@ pub unsafe fn klog_register_sink(sink: &'static dyn LogSink) -> Option<usize> {
     sinks[idx] = SinkPtr { fat: ptr };
     drop(sinks);
     LOG_SINK_COUNT.store(
-        crate::privileged::lib::low_u8_from_usize(idx + 1),
+        crate::privileged::glue::low_u8_from_usize(idx + 1),
         Ordering::SeqCst,
     );
     Some(idx)
@@ -536,7 +536,6 @@ pub enum LogLevel {
 /// 日志分类 (Boot/Kernel/Memory/... 用于输出前缀与过滤).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-#[allow(clippy::upper_case_acronyms)] // IPC 子系统名
 pub enum LogCategory {
     /// 启动阶段。
     Boot = 0,
@@ -555,7 +554,7 @@ pub enum LogCategory {
     /// 系统调用。
     Syscall = 7,
     /// 进程间通信。
-    IPC = 8,
+    Ipc = 8,
     /// 安全子系统。
     Security = 9,
     /// 测试。
@@ -597,7 +596,7 @@ impl LogCategory {
             Self::Net => b"NET",
             Self::Driver => b"DRV",
             Self::Syscall => b"SYSCALL",
-            Self::IPC => b"IPC",
+            Self::Ipc => b"IPC",
             Self::Security => b"SEC",
             Self::Test => b"TEST",
             Self::Sync => b"SYNC",
@@ -859,7 +858,7 @@ pub unsafe extern "C" fn klog_write(
             5 => LogCategory::Net,
             6 => LogCategory::Driver,
             7 => LogCategory::Syscall,
-            8 => LogCategory::IPC,
+            8 => LogCategory::Ipc,
             9 => LogCategory::Security,
             10 => LogCategory::Test,
             11 => LogCategory::Sync,

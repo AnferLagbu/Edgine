@@ -434,7 +434,7 @@ fn parse_bars_locked(bus: u8, dev: u8, func: u8) -> ([PciBar; 6], usize) {
     let mut i = 0;
 
     while i < 6 {
-        let offset = REG_BAR0 + crate::privileged::lib::low_u8_from_usize(i) * 4;
+        let offset = REG_BAR0 + crate::privileged::glue::low_u8_from_usize(i) * 4;
         let bar_lo = read_config_dword_locked(bus, dev, func, offset);
         if bar_lo == 0 || bar_lo == 0xFFFF_FFFF {
             i += 1;
@@ -674,7 +674,7 @@ pub extern "C" fn pci_rust_init() -> i32 {
 /// C FFI: get device count
 #[unsafe(no_mangle)]
 pub extern "C" fn pci_get_device_count() -> i32 {
-    crate::privileged::lib::low_i32_from_usize(device_count())
+    crate::privileged::glue::low_i32_from_usize(device_count())
 }
 
 /// C FFI: 读取配置字 (供 e1000 兜底兼容使用)

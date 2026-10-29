@@ -179,7 +179,7 @@ impl InterruptFrame {
 
     /// 获取错误码的各个位域
     pub fn error_code_flags(&self) -> ErrorFlags {
-        ErrorFlags::from_bits_truncate(crate::privileged::lib::low_u32_from_u64(self.err_code))
+        ErrorFlags::from_bits_truncate(crate::privileged::glue::low_u32_from_u64(self.err_code))
     }
 
     /// 打印寄存器状态 (用于调试)
@@ -325,7 +325,7 @@ impl IdtPtr {
     /// 创建新的 IDT 指针
     pub fn new(base: u64) -> Self {
         Self {
-            limit: crate::privileged::lib::low_u16_from_usize(
+            limit: crate::privileged::glue::low_u16_from_usize(
                 IDT_ENTRIES * core::mem::size_of::<IdtEntry>() - 1,
             ),
             base,

@@ -217,7 +217,7 @@ impl NvmeCommand {
             mptr: 0,
             prp1: cq_phys,
             prp2: 0,
-            cdw10: ((crate::privileged::lib::low_u32_from_usize(QUEUE_DEPTH) - 1) << 16)
+            cdw10: ((crate::privileged::glue::low_u32_from_usize(QUEUE_DEPTH) - 1) << 16)
                 | u32::from(qid),
             cdw11: (u32::from(irq_vector) << 16) | (1 | 2), // [31:16]=vector [2:0]=PC+IEN
             cdw12: 0,
@@ -239,7 +239,7 @@ impl NvmeCommand {
             mptr: 0,
             prp1: sq_phys,
             prp2: 0,
-            cdw10: ((crate::privileged::lib::low_u32_from_usize(QUEUE_DEPTH) - 1) << 16)
+            cdw10: ((crate::privileged::glue::low_u32_from_usize(QUEUE_DEPTH) - 1) << 16)
                 | u32::from(qid),
             cdw11: u32::from(cqid) << 16 | 1, // CQID | PC
             cdw12: 0,

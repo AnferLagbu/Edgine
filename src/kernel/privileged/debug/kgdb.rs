@@ -469,7 +469,7 @@ fn handle_mem_read(arg: &[u8], out: &mut [u8]) -> Option<usize> {
     if !parse_hex(&arg[comma + 1..], &mut len) {
         return None;
     }
-    if len > 128 || out.len() < crate::privileged::lib::usize_from_u64(len) * 2 {
+    if len > 128 || out.len() < crate::privileged::glue::usize_from_u64(len) * 2 {
         return None;
     }
     let mut idx = 0;
@@ -508,20 +508,20 @@ fn handle_mem_write(arg: &[u8]) -> bool {
     if !parse_hex(&head[comma + 1..], &mut len) {
         return false;
     }
-    if data.len() < crate::privileged::lib::usize_from_u64(len) * 2 {
+    if data.len() < crate::privileged::glue::usize_from_u64(len) * 2 {
         return false;
     }
     for i in 0..len {
-        let hi = match data[crate::privileged::lib::usize_from_u64(i * 2)] {
-            b'0'..=b'9' => data[crate::privileged::lib::usize_from_u64(i * 2)] - b'0',
-            b'a'..=b'f' => data[crate::privileged::lib::usize_from_u64(i * 2)] - b'a' + 10,
-            b'A'..=b'F' => data[crate::privileged::lib::usize_from_u64(i * 2)] - b'A' + 10,
+        let hi = match data[crate::privileged::glue::usize_from_u64(i * 2)] {
+            b'0'..=b'9' => data[crate::privileged::glue::usize_from_u64(i * 2)] - b'0',
+            b'a'..=b'f' => data[crate::privileged::glue::usize_from_u64(i * 2)] - b'a' + 10,
+            b'A'..=b'F' => data[crate::privileged::glue::usize_from_u64(i * 2)] - b'A' + 10,
             _ => return false,
         };
-        let lo = match data[crate::privileged::lib::usize_from_u64(i * 2 + 1)] {
-            b'0'..=b'9' => data[crate::privileged::lib::usize_from_u64(i * 2 + 1)] - b'0',
-            b'a'..=b'f' => data[crate::privileged::lib::usize_from_u64(i * 2 + 1)] - b'a' + 10,
-            b'A'..=b'F' => data[crate::privileged::lib::usize_from_u64(i * 2 + 1)] - b'A' + 10,
+        let lo = match data[crate::privileged::glue::usize_from_u64(i * 2 + 1)] {
+            b'0'..=b'9' => data[crate::privileged::glue::usize_from_u64(i * 2 + 1)] - b'0',
+            b'a'..=b'f' => data[crate::privileged::glue::usize_from_u64(i * 2 + 1)] - b'a' + 10,
+            b'A'..=b'F' => data[crate::privileged::glue::usize_from_u64(i * 2 + 1)] - b'A' + 10,
             _ => return false,
         };
         let byte = (hi << 4) | lo;

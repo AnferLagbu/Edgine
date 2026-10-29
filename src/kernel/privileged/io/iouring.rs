@@ -453,16 +453,16 @@ pub fn sys_io_uring_submit_sqe(
     offset_len: u64,
 ) -> i64 {
     let sqe = Sqe {
-        opcode: crate::privileged::lib::low_u8_from_u64(opcode),
-        flags: crate::privileged::lib::low_u8_from_u64(flags),
+        opcode: crate::privileged::glue::low_u8_from_u64(opcode),
+        flags: crate::privileged::glue::low_u8_from_u64(flags),
         user_data,
-        fd: crate::privileged::lib::low_i32_from_u64(fd),
+        fd: crate::privileged::glue::low_i32_from_u64(fd),
         offset: offset_len >> 32,
         addr: 0, // 简化版不传地址
         len: (offset_len & 0xFFFF_FFFF) as u32,
     };
 
-    match io_uring_submit(crate::privileged::lib::low_u32_from_u64(id), sqe) {
+    match io_uring_submit(crate::privileged::glue::low_u32_from_u64(id), sqe) {
         Ok(()) => 0,
         Err(e) => -(e as i64),
     }

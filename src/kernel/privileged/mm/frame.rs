@@ -117,7 +117,7 @@ impl UFrame {
     #[inline]
     pub fn read_pod<T: Pod>(&self, offset: usize) -> Result<T, ()> {
         let size = core::mem::size_of::<T>();
-        if offset.saturating_add(size) > crate::privileged::lib::usize_from_u64(PAGE_SIZE) {
+        if offset.saturating_add(size) > crate::privileged::glue::usize_from_u64(PAGE_SIZE) {
             return Err(());
         }
 
@@ -143,7 +143,7 @@ impl UFrame {
     #[inline]
     pub fn write_pod<T: Pod>(&self, offset: usize, val: &T) -> Result<(), ()> {
         let size = core::mem::size_of::<T>();
-        if offset.saturating_add(size) > crate::privileged::lib::usize_from_u64(PAGE_SIZE) {
+        if offset.saturating_add(size) > crate::privileged::glue::usize_from_u64(PAGE_SIZE) {
             return Err(());
         }
 
@@ -163,7 +163,7 @@ impl UFrame {
     /// 偏移越界或访问用户内存时发生页错误时返回 Err。
     #[inline]
     pub fn read_bytes(&self, offset: usize, buf: &mut [u8]) -> Result<usize, ()> {
-        if offset.saturating_add(buf.len()) > crate::privileged::lib::usize_from_u64(PAGE_SIZE) {
+        if offset.saturating_add(buf.len()) > crate::privileged::glue::usize_from_u64(PAGE_SIZE) {
             return Err(());
         }
         copy_from_user(buf, self.uaddr + offset as u64, buf.len())
@@ -177,7 +177,7 @@ impl UFrame {
     /// 偏移越界或访问用户内存时发生页错误时返回 Err。
     #[inline]
     pub fn write_bytes(&self, offset: usize, data: &[u8]) -> Result<usize, ()> {
-        if offset.saturating_add(data.len()) > crate::privileged::lib::usize_from_u64(PAGE_SIZE) {
+        if offset.saturating_add(data.len()) > crate::privileged::glue::usize_from_u64(PAGE_SIZE) {
             return Err(());
         }
         copy_to_user(self.uaddr + offset as u64, data, data.len())

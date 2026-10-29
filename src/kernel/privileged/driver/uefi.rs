@@ -109,7 +109,7 @@ impl EfiTime {
         let days = y * 365
             + leap_years
             + days_before_month
-                .get(crate::privileged::lib::usize_from_u64(m) - 1)
+                .get(crate::privileged::glue::usize_from_u64(m) - 1)
                 .unwrap_or(&0)
             + d
             + extra;
@@ -161,7 +161,7 @@ impl EfiTime {
         Self {
             year,
             month,
-            day: crate::privileged::lib::low_u8_from_u64(remaining + 1),
+            day: crate::privileged::glue::low_u8_from_u64(remaining + 1),
             hour: (time_of_day / 3600) as u8,
             minute: ((time_of_day % 3600) / 60) as u8,
             second: (time_of_day % 60) as u8,
@@ -431,7 +431,7 @@ impl UefiSubsystem {
         self.boot_services_addr.store(boot, Ordering::Release);
         self.config_table_addr.store(config, Ordering::Release);
         self.config_table_entries.store(
-            crate::privileged::lib::low_u32_from_u64(entries.min(u64::from(u32::MAX))),
+            crate::privileged::glue::low_u32_from_u64(entries.min(u64::from(u32::MAX))),
             Ordering::Release,
         );
         self.firmware_vendor_addr.store(vendor, Ordering::Release);
@@ -664,7 +664,7 @@ pub extern "C" fn sys_uefi(cmd: u64, a1: u64, a2: u64) -> i64 {
         }
         6 => {
             // list_variables → count
-            crate::privileged::lib::i64_from_usize(uefi_subsystem().list_variables().len())
+            crate::privileged::glue::i64_from_usize(uefi_subsystem().list_variables().len())
         }
         7 => {
             // has_uefi

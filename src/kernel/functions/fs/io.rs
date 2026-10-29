@@ -457,10 +457,6 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
     }
 }
 
-#[expect(
-    clippy::comparison_chain,
-    reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-)]
 /// fcntl POSIX record lock 处理
 ///
 /// `arg` 指向用户空间的 `flock` 结构体 (24 字节):
@@ -543,13 +539,11 @@ fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
         _ => return Err(Errno::EINVAL),
     };
 
-    let len = if l_len < 0 {
+    let len = match l_len {
         // 负长度: 从 start 向前锁; v1 简化, 不支持负长度
-        return Err(Errno::EINVAL);
-    } else if l_len == 0 {
-        0 // 到文件末尾
-    } else {
-        l_len.cast_unsigned()
+        l if l < 0 => return Err(Errno::EINVAL),
+        0 => 0, // 到文件末尾
+        l => l.cast_unsigned(),
     };
 
     let pid = crate::privileged::proc::process_get_current_pid();

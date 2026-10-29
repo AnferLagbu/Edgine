@@ -45,516 +45,516 @@ pub const ENOSYS_RET: i64 = -38;
 // ==================== POSIX 标准 syscall 编号 ====================
 
 // 文件 I/O
-/// `SYS_read` — 从文件描述符读取数据
-pub const SYS_read: u64 = 0;
-/// `SYS_write` — 向文件描述符写入数据
-pub const SYS_write: u64 = 1;
-/// `SYS_open` — 打开文件
-pub const SYS_open: u64 = 2;
-/// `SYS_close` — 关闭文件描述符
-pub const SYS_close: u64 = 3;
-/// `SYS_stat` — 按路径获取文件状态
-pub const SYS_stat: u64 = 4;
-/// `SYS_fstat` — 按文件描述符获取文件状态
-pub const SYS_fstat: u64 = 5;
-/// `SYS_lstat` — 获取符号链接自身的状态
-pub const SYS_lstat: u64 = 6;
-/// `SYS_poll` — 等待一组文件描述符的就绪事件
-pub const SYS_poll: u64 = 7;
-/// `SYS_lseek` — 调整文件读写偏移
-pub const SYS_lseek: u64 = 8;
+/// `SYS_READ` — 从文件描述符读取数据
+pub const SYS_READ: u64 = 0;
+/// `SYS_WRITE` — 向文件描述符写入数据
+pub const SYS_WRITE: u64 = 1;
+/// `SYS_OPEN` — 打开文件
+pub const SYS_OPEN: u64 = 2;
+/// `SYS_CLOSE` — 关闭文件描述符
+pub const SYS_CLOSE: u64 = 3;
+/// `SYS_STAT` — 按路径获取文件状态
+pub const SYS_STAT: u64 = 4;
+/// `SYS_FSTAT` — 按文件描述符获取文件状态
+pub const SYS_FSTAT: u64 = 5;
+/// `SYS_LSTAT` — 获取符号链接自身的状态
+pub const SYS_LSTAT: u64 = 6;
+/// `SYS_POLL` — 等待一组文件描述符的就绪事件
+pub const SYS_POLL: u64 = 7;
+/// `SYS_LSEEK` — 调整文件读写偏移
+pub const SYS_LSEEK: u64 = 8;
 
 // 内存管理
-/// `SYS_mmap` — 建立内存映射
-pub const SYS_mmap: u64 = 9;
-/// `SYS_mprotect` — 修改内存映射的保护属性
-pub const SYS_mprotect: u64 = 10;
-/// `SYS_munmap` — 解除内存映射
-pub const SYS_munmap: u64 = 11;
-/// `SYS_brk` — 调整进程数据段上界
-pub const SYS_brk: u64 = 12;
+/// `SYS_MMAP` — 建立内存映射
+pub const SYS_MMAP: u64 = 9;
+/// `SYS_MPROTECT` — 修改内存映射的保护属性
+pub const SYS_MPROTECT: u64 = 10;
+/// `SYS_MUNMAP` — 解除内存映射
+pub const SYS_MUNMAP: u64 = 11;
+/// `SYS_BRK` — 调整进程数据段上界
+pub const SYS_BRK: u64 = 12;
 
 // 信号 (基础存根)
-/// `SYS_rt_sigaction` — 设置信号处理动作 (实时信号)
-pub const SYS_rt_sigaction: u64 = 13;
-/// `SYS_rt_sigprocmask` — 设置信号屏蔽字 (实时信号)
-pub const SYS_rt_sigprocmask: u64 = 14;
-/// `SYS_rt_sigreturn` — 从信号处理函数返回 (实时信号)
-pub const SYS_rt_sigreturn: u64 = 15;
+/// `SYS_RT_SIGACTION` — 设置信号处理动作 (实时信号)
+pub const SYS_RT_SIGACTION: u64 = 13;
+/// `SYS_RT_SIGPROCMASK` — 设置信号屏蔽字 (实时信号)
+pub const SYS_RT_SIGPROCMASK: u64 = 14;
+/// `SYS_RT_SIGRETURN` — 从信号处理函数返回 (实时信号)
+pub const SYS_RT_SIGRETURN: u64 = 15;
 
 // 设备 I/O
-/// `SYS_ioctl` — 设备控制操作
-pub const SYS_ioctl: u64 = 16;
+/// `SYS_IOCTL` — 设备控制操作
+pub const SYS_IOCTL: u64 = 16;
 
 // 文件访问
-/// `SYS_access` — 检查文件访问权限
-pub const SYS_access: u64 = 21;
-/// `SYS_pipe` — 创建匿名管道
-pub const SYS_pipe: u64 = 22;
-/// `SYS_select` — 等待多个文件描述符的就绪事件
-pub const SYS_select: u64 = 23;
-/// `SYS_sched_yield` — 主动让出 CPU
-pub const SYS_sched_yield: u64 = 24;
+/// `SYS_ACCESS` — 检查文件访问权限
+pub const SYS_ACCESS: u64 = 21;
+/// `SYS_PIPE` — 创建匿名管道
+pub const SYS_PIPE: u64 = 22;
+/// `SYS_SELECT` — 等待多个文件描述符的就绪事件
+pub const SYS_SELECT: u64 = 23;
+/// `SYS_SCHED_YIELD` — 主动让出 CPU
+pub const SYS_SCHED_YIELD: u64 = 24;
 
 // 内存重映射
-/// `SYS_mremap` — 调整已有内存映射的大小
-pub const SYS_mremap: u64 = 25;
+/// `SYS_MREMAP` — 调整已有内存映射的大小
+pub const SYS_MREMAP: u64 = 25;
 
 // 文件描述符
-/// `SYS_dup` — 复制文件描述符
-pub const SYS_dup: u64 = 32;
-/// `SYS_dup2` — 复制文件描述符到指定编号
-pub const SYS_dup2: u64 = 33;
+/// `SYS_DUP` — 复制文件描述符
+pub const SYS_DUP: u64 = 32;
+/// `SYS_DUP2` — 复制文件描述符到指定编号
+pub const SYS_DUP2: u64 = 33;
 
 // 进程优先级
-/// `SYS_nice` — 调整进程静态优先级
-pub const SYS_nice: u64 = 34;
+/// `SYS_NICE` — 调整进程静态优先级
+pub const SYS_NICE: u64 = 34;
 
 // 暂停
-/// `SYS_nanosleep` — 高精度休眠
-pub const SYS_nanosleep: u64 = 35;
+/// `SYS_NANOSLEEP` — 高精度休眠
+pub const SYS_NANOSLEEP: u64 = 35;
 
 // ITIMER
-/// `SYS_getitimer` — 读取间隔定时器状态
-pub const SYS_getitimer: u64 = 36;
-/// `SYS_alarm` — 设置进程闹钟
-pub const SYS_alarm: u64 = 37;
-/// `SYS_setitimer` — 设置间隔定时器
-pub const SYS_setitimer: u64 = 38;
+/// `SYS_GETITIMER` — 读取间隔定时器状态
+pub const SYS_GETITIMER: u64 = 36;
+/// `SYS_ALARM` — 设置进程闹钟
+pub const SYS_ALARM: u64 = 37;
+/// `SYS_SETITIMER` — 设置间隔定时器
+pub const SYS_SETITIMER: u64 = 38;
 
 // 进程基础
-/// `SYS_getpid` — 获取当前进程 PID
-pub const SYS_getpid: u64 = 39;
+/// `SYS_GETPID` — 获取当前进程 PID
+pub const SYS_GETPID: u64 = 39;
 
 // 网络 socket
-/// `SYS_socket` — 创建套接字
-pub const SYS_socket: u64 = 41;
-/// `SYS_connect` — 向目标地址发起连接
-pub const SYS_connect: u64 = 42;
-/// `SYS_accept` — 接受连接
-pub const SYS_accept: u64 = 43;
-/// `SYS_sendto` — 发送数据报
-pub const SYS_sendto: u64 = 44;
-/// `SYS_recvfrom` — 接收数据报并获取来源地址
-pub const SYS_recvfrom: u64 = 45;
-/// `SYS_sendmsg` — 以消息头发送数据 (分散/聚集)
-pub const SYS_sendmsg: u64 = 46;
-/// `SYS_recvmsg` — 以消息头接收数据 (分散/聚集)
-pub const SYS_recvmsg: u64 = 47;
-/// `SYS_shutdown` — 关闭套接字的单向或双向通信
-pub const SYS_shutdown: u64 = 48;
-/// `SYS_bind` — 绑定套接字地址
-pub const SYS_bind: u64 = 49;
-/// `SYS_listen` — 将套接字置为监听状态
-pub const SYS_listen: u64 = 50;
-/// `SYS_getsockname` — 获取套接字的本地地址
-pub const SYS_getsockname: u64 = 51;
-/// `SYS_getpeername` — 获取套接字的对端地址
-pub const SYS_getpeername: u64 = 52;
-/// `SYS_setsockopt` — 设置套接字选项
-pub const SYS_setsockopt: u64 = 54;
-/// `SYS_getsockopt` — 读取套接字选项
-pub const SYS_getsockopt: u64 = 55;
+/// `SYS_SOCKET` — 创建套接字
+pub const SYS_SOCKET: u64 = 41;
+/// `SYS_CONNECT` — 向目标地址发起连接
+pub const SYS_CONNECT: u64 = 42;
+/// `SYS_ACCEPT` — 接受连接
+pub const SYS_ACCEPT: u64 = 43;
+/// `SYS_SENDTO` — 发送数据报
+pub const SYS_SENDTO: u64 = 44;
+/// `SYS_RECVFROM` — 接收数据报并获取来源地址
+pub const SYS_RECVFROM: u64 = 45;
+/// `SYS_SENDMSG` — 以消息头发送数据 (分散/聚集)
+pub const SYS_SENDMSG: u64 = 46;
+/// `SYS_RECVMSG` — 以消息头接收数据 (分散/聚集)
+pub const SYS_RECVMSG: u64 = 47;
+/// `SYS_SHUTDOWN` — 关闭套接字的单向或双向通信
+pub const SYS_SHUTDOWN: u64 = 48;
+/// `SYS_BIND` — 绑定套接字地址
+pub const SYS_BIND: u64 = 49;
+/// `SYS_LISTEN` — 将套接字置为监听状态
+pub const SYS_LISTEN: u64 = 50;
+/// `SYS_GETSOCKNAME` — 获取套接字的本地地址
+pub const SYS_GETSOCKNAME: u64 = 51;
+/// `SYS_GETPEERNAME` — 获取套接字的对端地址
+pub const SYS_GETPEERNAME: u64 = 52;
+/// `SYS_SETSOCKOPT` — 设置套接字选项
+pub const SYS_SETSOCKOPT: u64 = 54;
+/// `SYS_GETSOCKOPT` — 读取套接字选项
+pub const SYS_GETSOCKOPT: u64 = 55;
 
 // 进程
-/// `SYS_clone` — 创建进程或线程 (可指定共享资源)
-pub const SYS_clone: u64 = 56;
-/// `SYS_fork` — 复制当前进程
-pub const SYS_fork: u64 = 57;
-/// `SYS_execve` — 加载并执行新程序
-pub const SYS_execve: u64 = 59;
-/// `SYS_exit` — 终止当前线程
-pub const SYS_exit: u64 = 60;
-/// `SYS_wait4` — 等待子进程状态变化并回收
-pub const SYS_wait4: u64 = 61;
-/// `SYS_kill` — 向进程发送信号
-pub const SYS_kill: u64 = 62;
+/// `SYS_CLONE` — 创建进程或线程 (可指定共享资源)
+pub const SYS_CLONE: u64 = 56;
+/// `SYS_FORK` — 复制当前进程
+pub const SYS_FORK: u64 = 57;
+/// `SYS_EXECVE` — 加载并执行新程序
+pub const SYS_EXECVE: u64 = 59;
+/// `SYS_EXIT` — 终止当前线程
+pub const SYS_EXIT: u64 = 60;
+/// `SYS_WAIT4` — 等待子进程状态变化并回收
+pub const SYS_WAIT4: u64 = 61;
+/// `SYS_KILL` — 向进程发送信号
+pub const SYS_KILL: u64 = 62;
 
 // 系统信息
-/// `SYS_uname` — 获取系统标识信息
-pub const SYS_uname: u64 = 63;
+/// `SYS_UNAME` — 获取系统标识信息
+pub const SYS_UNAME: u64 = 63;
 
 // 文件描述符操作
-/// `SYS_fcntl` — 操作文件描述符属性
-pub const SYS_fcntl: u64 = 72;
+/// `SYS_FCNTL` — 操作文件描述符属性
+pub const SYS_FCNTL: u64 = 72;
 
 // 文件截断
-/// `SYS_truncate` — 按路径截断文件长度
-pub const SYS_truncate: u64 = 76;
-/// `SYS_ftruncate` — 按文件描述符截断文件长度
-pub const SYS_ftruncate: u64 = 77;
+/// `SYS_TRUNCATE` — 按路径截断文件长度
+pub const SYS_TRUNCATE: u64 = 76;
+/// `SYS_FTRUNCATE` — 按文件描述符截断文件长度
+pub const SYS_FTRUNCATE: u64 = 77;
 
 // 目录
-/// `SYS_getdents` — 读取目录项
-pub const SYS_getdents: u64 = 78;
+/// `SYS_GETDENTS` — 读取目录项
+pub const SYS_GETDENTS: u64 = 78;
 
 // 路径
-/// `SYS_getcwd` — 获取当前工作目录
-pub const SYS_getcwd: u64 = 79;
-/// `SYS_chdir` — 切换当前工作目录
-pub const SYS_chdir: u64 = 80;
+/// `SYS_GETCWD` — 获取当前工作目录
+pub const SYS_GETCWD: u64 = 79;
+/// `SYS_CHDIR` — 切换当前工作目录
+pub const SYS_CHDIR: u64 = 80;
 
 // 文件重命名
-/// `SYS_rename` — 重命名文件
-pub const SYS_rename: u64 = 82;
+/// `SYS_RENAME` — 重命名文件
+pub const SYS_RENAME: u64 = 82;
 
 // 目录操作
-/// `SYS_mkdir` — 创建目录
-pub const SYS_mkdir: u64 = 83;
-/// `SYS_rmdir` — 删除空目录
-pub const SYS_rmdir: u64 = 84;
+/// `SYS_MKDIR` — 创建目录
+pub const SYS_MKDIR: u64 = 83;
+/// `SYS_RMDIR` — 删除空目录
+pub const SYS_RMDIR: u64 = 84;
 
 // 文件创建
-/// `SYS_creat` — 创建文件 (等价于 open 的 O_CREAT|O_TRUNC)
-pub const SYS_creat: u64 = 85;
+/// `SYS_CREAT` — 创建文件 (等价于 open 的 O_CREAT|O_TRUNC)
+pub const SYS_CREAT: u64 = 85;
 
 // 文件链接
-/// `SYS_link` — 创建硬链接
-pub const SYS_link: u64 = 86;
-/// `SYS_unlink` — 删除目录项
-pub const SYS_unlink: u64 = 87;
-/// `SYS_symlink` — 创建符号链接
-pub const SYS_symlink: u64 = 88;
-/// `SYS_readlink` — 读取符号链接目标
-pub const SYS_readlink: u64 = 89;
+/// `SYS_LINK` — 创建硬链接
+pub const SYS_LINK: u64 = 86;
+/// `SYS_UNLINK` — 删除目录项
+pub const SYS_UNLINK: u64 = 87;
+/// `SYS_SYMLINK` — 创建符号链接
+pub const SYS_SYMLINK: u64 = 88;
+/// `SYS_READLINK` — 读取符号链接目标
+pub const SYS_READLINK: u64 = 89;
 
 // 文件权限
-/// `SYS_chmod` — 修改文件权限
-pub const SYS_chmod: u64 = 90;
-/// `SYS_fchmod` — 按文件描述符修改文件权限
-pub const SYS_fchmod: u64 = 91;
-/// `SYS_chown` — 修改文件属主与属组
-pub const SYS_chown: u64 = 92;
-/// `SYS_fchown` — 按文件描述符修改文件属主与属组
-pub const SYS_fchown: u64 = 93;
+/// `SYS_CHMOD` — 修改文件权限
+pub const SYS_CHMOD: u64 = 90;
+/// `SYS_FCHMOD` — 按文件描述符修改文件权限
+pub const SYS_FCHMOD: u64 = 91;
+/// `SYS_CHOWN` — 修改文件属主与属组
+pub const SYS_CHOWN: u64 = 92;
+/// `SYS_FCHOWN` — 按文件描述符修改文件属主与属组
+pub const SYS_FCHOWN: u64 = 93;
 
 // 文件属性
-/// `SYS_umask` — 设置文件创建权限掩码
-pub const SYS_umask: u64 = 95;
+/// `SYS_UMASK` — 设置文件创建权限掩码
+pub const SYS_UMASK: u64 = 95;
 
 // 时间
-/// `SYS_gettimeofday` — 获取当前时间
-pub const SYS_gettimeofday: u64 = 96;
-/// `SYS_getrlimit` — 获取资源限制
-pub const SYS_getrlimit: u64 = 97;
-/// `SYS_getrusage` — 获取进程资源使用统计
-pub const SYS_getrusage: u64 = 98;
-/// `SYS_sysinfo` — 获取系统整体信息
-pub const SYS_sysinfo: u64 = 99;
+/// `SYS_GETTIMEOFDAY` — 获取当前时间
+pub const SYS_GETTIMEOFDAY: u64 = 96;
+/// `SYS_GETRLIMIT` — 获取资源限制
+pub const SYS_GETRLIMIT: u64 = 97;
+/// `SYS_GETRUSAGE` — 获取进程资源使用统计
+pub const SYS_GETRUSAGE: u64 = 98;
+/// `SYS_SYSINFO` — 获取系统整体信息
+pub const SYS_SYSINFO: u64 = 99;
 
 // 系统
-/// `SYS_times` — 获取进程时间统计
-pub const SYS_times: u64 = 100;
+/// `SYS_TIMES` — 获取进程时间统计
+pub const SYS_TIMES: u64 = 100;
 
 // 用户/组
-/// `SYS_getuid` — 获取真实用户 ID
-pub const SYS_getuid: u64 = 102;
-/// `SYS_getgid` — 获取真实组 ID
-pub const SYS_getgid: u64 = 104;
-/// `SYS_setuid` — 设置真实用户 ID
-pub const SYS_setuid: u64 = 105;
-/// `SYS_setgid` — 设置真实组 ID
-pub const SYS_setgid: u64 = 106;
-/// `SYS_geteuid` — 获取有效用户 ID
-pub const SYS_geteuid: u64 = 107;
-/// `SYS_getegid` — 获取有效组 ID
-pub const SYS_getegid: u64 = 108;
+/// `SYS_GETUID` — 获取真实用户 ID
+pub const SYS_GETUID: u64 = 102;
+/// `SYS_GETGID` — 获取真实组 ID
+pub const SYS_GETGID: u64 = 104;
+/// `SYS_SETUID` — 设置真实用户 ID
+pub const SYS_SETUID: u64 = 105;
+/// `SYS_SETGID` — 设置真实组 ID
+pub const SYS_SETGID: u64 = 106;
+/// `SYS_GETEUID` — 获取有效用户 ID
+pub const SYS_GETEUID: u64 = 107;
+/// `SYS_GETEGID` — 获取有效组 ID
+pub const SYS_GETEGID: u64 = 108;
 
-/// `SYS_seteuid` — 设置有效用户 ID (EG 私有编号)
-pub const SYS_seteuid: u64 = 597; // EG 私有 (x86_64 无独立 seteuid syscall, 与 EG_SETEUID 同值)
-/// `SYS_setegid` — 设置有效组 ID (EG 私有编号)
-pub const SYS_setegid: u64 = 598; // EG 私有 (x86_64 无独立 setegid syscall, 与 EG_SETEGID 同值)
-/// `SYS_setreuid` — 设置真实与有效用户 ID
-pub const SYS_setreuid: u64 = 113;
-/// `SYS_setregid` — 设置真实与有效组 ID
-pub const SYS_setregid: u64 = 114;
+/// `SYS_SETEUID` — 设置有效用户 ID (EG 私有编号)
+pub const SYS_SETEUID: u64 = 597; // EG 私有 (x86_64 无独立 seteuid syscall, 与 EG_SETEUID 同值)
+/// `SYS_SETEGID` — 设置有效组 ID (EG 私有编号)
+pub const SYS_SETEGID: u64 = 598; // EG 私有 (x86_64 无独立 setegid syscall, 与 EG_SETEGID 同值)
+/// `SYS_SETREUID` — 设置真实与有效用户 ID
+pub const SYS_SETREUID: u64 = 113;
+/// `SYS_SETREGID` — 设置真实与有效组 ID
+pub const SYS_SETREGID: u64 = 114;
 
 // 进程组
-/// `SYS_getppid` — 获取父进程 PID
-pub const SYS_getppid: u64 = 110;
-/// `SYS_getpgid` — 获取进程组 ID
-pub const SYS_getpgid: u64 = 121;
-/// `SYS_setsid` — 创建新会话并成为会话首进程
-pub const SYS_setsid: u64 = 112;
-/// `SYS_getsid` — 获取会话 ID
-pub const SYS_getsid: u64 = 124;
-/// `SYS_setpgid` — 设置进程组 ID
-pub const SYS_setpgid: u64 = 109;
+/// `SYS_GETPPID` — 获取父进程 PID
+pub const SYS_GETPPID: u64 = 110;
+/// `SYS_GETPGID` — 获取进程组 ID
+pub const SYS_GETPGID: u64 = 121;
+/// `SYS_SETSID` — 创建新会话并成为会话首进程
+pub const SYS_SETSID: u64 = 112;
+/// `SYS_GETSID` — 获取会话 ID
+pub const SYS_GETSID: u64 = 124;
+/// `SYS_SETPGID` — 设置进程组 ID
+pub const SYS_SETPGID: u64 = 109;
 
 // 进程调度
-/// `SYS_getpriority` — 获取进程 / 线程优先级
-pub const SYS_getpriority: u64 = 140;
-/// `SYS_setpriority` — 设置进程 / 线程优先级
-pub const SYS_setpriority: u64 = 141;
+/// `SYS_GETPRIORITY` — 获取进程 / 线程优先级
+pub const SYS_GETPRIORITY: u64 = 140;
+/// `SYS_SETPRIORITY` — 设置进程 / 线程优先级
+pub const SYS_SETPRIORITY: u64 = 141;
 
 // 文件同步
-/// `SYS_sync` — 回写全部缓存到存储设备
-pub const SYS_sync: u64 = 162;
-/// `SYS_fsync` — 回写指定文件的数据与元数据
-pub const SYS_fsync: u64 = 74;
-/// `SYS_fdatasync` — 回写指定文件的数据
-pub const SYS_fdatasync: u64 = 75;
+/// `SYS_SYNC` — 回写全部缓存到存储设备
+pub const SYS_SYNC: u64 = 162;
+/// `SYS_FSYNC` — 回写指定文件的数据与元数据
+pub const SYS_FSYNC: u64 = 74;
+/// `SYS_FDATASYNC` — 回写指定文件的数据
+pub const SYS_FDATASYNC: u64 = 75;
 
 // 挂载
-/// `SYS_mount` — 挂载文件系统
-pub const SYS_mount: u64 = 165;
-/// `SYS_umount2` — 卸载文件系统
-pub const SYS_umount2: u64 = 166;
+/// `SYS_MOUNT` — 挂载文件系统
+pub const SYS_MOUNT: u64 = 165;
+/// `SYS_UMOUNT2` — 卸载文件系统
+pub const SYS_UMOUNT2: u64 = 166;
 
 // 其他 POSIX
-/// `SYS_gettid` — 获取当前线程 TID
-pub const SYS_gettid: u64 = 186;
-/// `SYS_time` — 获取秒级时间戳
-pub const SYS_time: u64 = 201;
-/// `SYS_clock_gettime` — 读取指定时钟的时间
-pub const SYS_clock_gettime: u64 = 228;
-/// `SYS_exit_group` — 终止进程内所有线程
-pub const SYS_exit_group: u64 = 231;
-/// `SYS_tgkill` — 向指定进程的指定线程发送信号
-pub const SYS_tgkill: u64 = 234;
+/// `SYS_GETTID` — 获取当前线程 TID
+pub const SYS_GETTID: u64 = 186;
+/// `SYS_TIME` — 获取秒级时间戳
+pub const SYS_TIME: u64 = 201;
+/// `SYS_CLOCK_GETTIME` — 读取指定时钟的时间
+pub const SYS_CLOCK_GETTIME: u64 = 228;
+/// `SYS_EXIT_GROUP` — 终止进程内所有线程
+pub const SYS_EXIT_GROUP: u64 = 231;
+/// `SYS_TGKILL` — 向指定进程的指定线程发送信号
+pub const SYS_TGKILL: u64 = 234;
 
 // 同步
-/// `SYS_futex` — 快速用户态互斥原语
-pub const SYS_futex: u64 = 202;
+/// `SYS_FUTEX` — 快速用户态互斥原语
+pub const SYS_FUTEX: u64 = 202;
 // CPU 亲和性 (Linux 兼容号)
-/// `SYS_sched_setaffinity` — 设置线程 CPU 亲和性
-pub const SYS_sched_setaffinity: u64 = 203;
-/// `SYS_sched_getaffinity` — 获取线程 CPU 亲和性
-pub const SYS_sched_getaffinity: u64 = 204;
+/// `SYS_SCHED_SETAFFINITY` — 设置线程 CPU 亲和性
+pub const SYS_SCHED_SETAFFINITY: u64 = 203;
+/// `SYS_SCHED_GETAFFINITY` — 获取线程 CPU 亲和性
+pub const SYS_SCHED_GETAFFINITY: u64 = 204;
 
 // 事件轮询
-/// `SYS_epoll_create` — 创建 epoll 实例
-pub const SYS_epoll_create: u64 = 213;
-/// `SYS_epoll_ctl` — 控制 epoll 关注的事件
-pub const SYS_epoll_ctl: u64 = 233;
-/// `SYS_epoll_wait` — 等待 epoll 事件
-pub const SYS_epoll_wait: u64 = 232;
+/// `SYS_EPOLL_CREATE` — 创建 epoll 实例
+pub const SYS_EPOLL_CREATE: u64 = 213;
+/// `SYS_EPOLL_CTL` — 控制 epoll 关注的事件
+pub const SYS_EPOLL_CTL: u64 = 233;
+/// `SYS_EPOLL_WAIT` — 等待 epoll 事件
+pub const SYS_EPOLL_WAIT: u64 = 232;
 
 // eventfd / signalfd / timerfd (Linux x86_64 标准编号)
-/// `SYS_eventfd` — 创建事件通知 fd
-pub const SYS_eventfd: u64 = 284;
-/// `SYS_eventfd2` — 创建事件通知 fd (带 flags)
-pub const SYS_eventfd2: u64 = 290;
-/// `SYS_signalfd` — 创建信号 fd
-pub const SYS_signalfd: u64 = 282;
-/// `SYS_signalfd4` — 创建信号 fd (带 flags)
-pub const SYS_signalfd4: u64 = 289;
-/// `SYS_timerfd_create` — 创建定时器 fd
-pub const SYS_timerfd_create: u64 = 283;
-/// `SYS_timerfd_settime` — 设置定时器 fd
-pub const SYS_timerfd_settime: u64 = 286;
-/// `SYS_timerfd_gettime` — 读取定时器 fd 的剩余时间
-pub const SYS_timerfd_gettime: u64 = 287;
+/// `SYS_EVENTFD` — 创建事件通知 fd
+pub const SYS_EVENTFD: u64 = 284;
+/// `SYS_EVENTFD2` — 创建事件通知 fd (带 flags)
+pub const SYS_EVENTFD2: u64 = 290;
+/// `SYS_SIGNALFD` — 创建信号 fd
+pub const SYS_SIGNALFD: u64 = 282;
+/// `SYS_SIGNALFD4` — 创建信号 fd (带 flags)
+pub const SYS_SIGNALFD4: u64 = 289;
+/// `SYS_TIMERFD_CREATE` — 创建定时器 fd
+pub const SYS_TIMERFD_CREATE: u64 = 283;
+/// `SYS_TIMERFD_SETTIME` — 设置定时器 fd
+pub const SYS_TIMERFD_SETTIME: u64 = 286;
+/// `SYS_TIMERFD_GETTIME` — 读取定时器 fd 的剩余时间
+pub const SYS_TIMERFD_GETTIME: u64 = 287;
 
 // 内存建议 / 锁定 / mincore (Linux x86_64 标准编号)
-/// `SYS_madvise` — 设置内存区域访问建议
-pub const SYS_madvise: u64 = 28;
-/// `SYS_mincore` — 查询内存页的驻留状态
-pub const SYS_mincore: u64 = 27;
-/// `SYS_mlock` — 锁定内存页禁止换出
-pub const SYS_mlock: u64 = 149;
-/// `SYS_munlock` — 解除内存页锁定
-pub const SYS_munlock: u64 = 150;
-/// `SYS_mlockall` — 锁定进程全部地址空间
-pub const SYS_mlockall: u64 = 151;
-/// `SYS_munlockall` — 解除进程全部地址空间锁定
-pub const SYS_munlockall: u64 = 152;
+/// `SYS_MADVISE` — 设置内存区域访问建议
+pub const SYS_MADVISE: u64 = 28;
+/// `SYS_MINCORE` — 查询内存页的驻留状态
+pub const SYS_MINCORE: u64 = 27;
+/// `SYS_MLOCK` — 锁定内存页禁止换出
+pub const SYS_MLOCK: u64 = 149;
+/// `SYS_MUNLOCK` — 解除内存页锁定
+pub const SYS_MUNLOCK: u64 = 150;
+/// `SYS_MLOCKALL` — 锁定进程全部地址空间
+pub const SYS_MLOCKALL: u64 = 151;
+/// `SYS_MUNLOCKALL` — 解除进程全部地址空间锁定
+pub const SYS_MUNLOCKALL: u64 = 152;
 
 // inotify (Linux x86_64 标准编号)
-/// `SYS_inotify_init` — 创建 inotify 实例
-pub const SYS_inotify_init: u64 = 253;
-/// `SYS_inotify_add_watch` — 添加 inotify 监视
-pub const SYS_inotify_add_watch: u64 = 254;
-/// `SYS_inotify_rm_watch` — 移除 inotify 监视
-pub const SYS_inotify_rm_watch: u64 = 255;
-/// `SYS_inotify_init1` — 创建 inotify 实例 (带 flags)
-pub const SYS_inotify_init1: u64 = 294;
+/// `SYS_INOTIFY_INIT` — 创建 inotify 实例
+pub const SYS_INOTIFY_INIT: u64 = 253;
+/// `SYS_INOTIFY_ADD_WATCH` — 添加 inotify 监视
+pub const SYS_INOTIFY_ADD_WATCH: u64 = 254;
+/// `SYS_INOTIFY_RM_WATCH` — 移除 inotify 监视
+pub const SYS_INOTIFY_RM_WATCH: u64 = 255;
+/// `SYS_INOTIFY_INIT1` — 创建 inotify 实例 (带 flags)
+pub const SYS_INOTIFY_INIT1: u64 = 294;
 
 // POSIX Timer (Linux x86_64 标准编号)
-/// `SYS_timer_create` — 创建 POSIX 定时器
-pub const SYS_timer_create: u64 = 222;
-/// `SYS_timer_settime` — 启动 / 调整 / 停止 POSIX 定时器
-pub const SYS_timer_settime: u64 = 223;
-/// `SYS_timer_gettime` — 读取 POSIX 定时器的剩余时间
-pub const SYS_timer_gettime: u64 = 224;
-/// `SYS_timer_getoverrun` — 读取 POSIX 定时器的溢出次数
-pub const SYS_timer_getoverrun: u64 = 225;
-/// `SYS_timer_delete` — 删除 POSIX 定时器
-pub const SYS_timer_delete: u64 = 226;
-/// `SYS_clock_getres` — 读取指定时钟的分辨率
-pub const SYS_clock_getres: u64 = 229;
+/// `SYS_TIMER_CREATE` — 创建 POSIX 定时器
+pub const SYS_TIMER_CREATE: u64 = 222;
+/// `SYS_TIMER_SETTIME` — 启动 / 调整 / 停止 POSIX 定时器
+pub const SYS_TIMER_SETTIME: u64 = 223;
+/// `SYS_TIMER_GETTIME` — 读取 POSIX 定时器的剩余时间
+pub const SYS_TIMER_GETTIME: u64 = 224;
+/// `SYS_TIMER_GETOVERRUN` — 读取 POSIX 定时器的溢出次数
+pub const SYS_TIMER_GETOVERRUN: u64 = 225;
+/// `SYS_TIMER_DELETE` — 删除 POSIX 定时器
+pub const SYS_TIMER_DELETE: u64 = 226;
+/// `SYS_CLOCK_GETRES` — 读取指定时钟的分辨率
+pub const SYS_CLOCK_GETRES: u64 = 229;
 
 // 熵源 (Linux x86_64 标准编号)
-/// `SYS_getrandom` — 从内核熵源获取随机字节
-pub const SYS_getrandom: u64 = 318;
+/// `SYS_GETRANDOM` — 从内核熵源获取随机字节
+pub const SYS_GETRANDOM: u64 = 318;
 
 // NUMA (Linux x86_64 标准编号)
-/// `SYS_mbind` — 设置内存区域的 NUMA 绑定
-pub const SYS_mbind: u64 = 237;
-/// `SYS_set_mempolicy` — 设置进程默认 NUMA 内存策略
-pub const SYS_set_mempolicy: u64 = 238;
-/// `SYS_get_mempolicy` — 获取 NUMA 内存策略
-pub const SYS_get_mempolicy: u64 = 239;
-/// `SYS_migrate_pages` — 迁移进程页面到目标 NUMA 节点
-pub const SYS_migrate_pages: u64 = 256;
-/// `SYS_getcpu` — 获取当前 CPU 与 NUMA 节点
-pub const SYS_getcpu: u64 = 309;
+/// `SYS_MBIND` — 设置内存区域的 NUMA 绑定
+pub const SYS_MBIND: u64 = 237;
+/// `SYS_SET_MEMPOLICY` — 设置进程默认 NUMA 内存策略
+pub const SYS_SET_MEMPOLICY: u64 = 238;
+/// `SYS_GET_MEMPOLICY` — 获取 NUMA 内存策略
+pub const SYS_GET_MEMPOLICY: u64 = 239;
+/// `SYS_MIGRATE_PAGES` — 迁移进程页面到目标 NUMA 节点
+pub const SYS_MIGRATE_PAGES: u64 = 256;
+/// `SYS_GETCPU` — 获取当前 CPU 与 NUMA 节点
+pub const SYS_GETCPU: u64 = 309;
 
 // 文件 I/O 扩展 (Linux x86_64 标准编号)
-/// `SYS_readv` — 分散读取 (多段缓冲)
-pub const SYS_readv: u64 = 19;
-/// `SYS_writev` — 聚集写入 (多段缓冲)
-pub const SYS_writev: u64 = 20;
-/// `SYS_pread64` — 按偏移读取文件
-pub const SYS_pread64: u64 = 17;
-/// `SYS_pwrite64` — 按偏移写入文件
-pub const SYS_pwrite64: u64 = 18;
-/// `SYS_sendfile` — 在两个文件描述符之间直接传输数据
-pub const SYS_sendfile: u64 = 40;
-/// `SYS_preadv` — 按偏移分散读取
-pub const SYS_preadv: u64 = 295;
-/// `SYS_pwritev` — 按偏移聚集写入
-pub const SYS_pwritev: u64 = 296;
-/// `SYS_preadv2` — 按偏移分散读取 (带 flags)
-pub const SYS_preadv2: u64 = 327;
-/// `SYS_pwritev2` — 按偏移聚集写入 (带 flags)
-pub const SYS_pwritev2: u64 = 328;
-/// `SYS_flock` — 对文件施加咨询锁
-pub const SYS_flock: u64 = 73;
-/// `SYS_fchmodat` — 按目录 fd 修改文件权限
-pub const SYS_fchmodat: u64 = 268;
-/// `SYS_fchownat` — 按目录 fd 修改文件属主与属组
-pub const SYS_fchownat: u64 = 260;
-/// `SYS_newfstatat` — 按目录 fd 获取文件状态
-pub const SYS_newfstatat: u64 = 262;
-/// `SYS_unlinkat` — 按目录 fd 删除目录项
-pub const SYS_unlinkat: u64 = 263;
-/// `SYS_renameat` — 按目录 fd 重命名文件
-pub const SYS_renameat: u64 = 264;
-/// `SYS_renameat2` — 按目录 fd 重命名文件 (带 flags)
-pub const SYS_renameat2: u64 = 316;
-/// `SYS_linkat` — 按目录 fd 创建硬链接
-pub const SYS_linkat: u64 = 265;
-/// `SYS_symlinkat` — 按目录 fd 创建符号链接
-pub const SYS_symlinkat: u64 = 266;
-/// `SYS_readlinkat` — 按目录 fd 读取符号链接目标
-pub const SYS_readlinkat: u64 = 267;
-/// `SYS_faccessat` — 按目录 fd 检查文件访问权限
-pub const SYS_faccessat: u64 = 269;
-/// `SYS_faccessat2` — 按目录 fd 检查文件访问权限 (带 flags)
-pub const SYS_faccessat2: u64 = 439;
-/// `SYS_fchmodat2` — 按目录 fd 修改文件权限 (带 flags)
-pub const SYS_fchmodat2: u64 = 452;
-/// `SYS_statx` — 获取扩展文件状态
-pub const SYS_statx: u64 = 332;
-/// `SYS_copy_file_range` — 在两个文件描述符之间复制文件区间
-pub const SYS_copy_file_range: u64 = 326;
-/// `SYS_name_to_handle_at` — 由路径获取文件句柄
-pub const SYS_name_to_handle_at: u64 = 303;
-/// `SYS_open_by_handle_at` — 由文件句柄打开文件
-pub const SYS_open_by_handle_at: u64 = 304;
-/// `SYS_fallocate` — 预分配文件空间
-pub const SYS_fallocate: u64 = 285;
-/// `SYS_utimensat` — 按目录 fd 设置文件时间戳
-pub const SYS_utimensat: u64 = 280;
-/// `SYS_openat` — 按目录 fd 打开文件
-pub const SYS_openat: u64 = 257;
-/// `SYS_openat2` — 按目录 fd 打开文件 (可扩展参数)
-pub const SYS_openat2: u64 = 437;
-/// `SYS_close_range` — 批量关闭文件描述符区间
-pub const SYS_close_range: u64 = 436;
+/// `SYS_READV` — 分散读取 (多段缓冲)
+pub const SYS_READV: u64 = 19;
+/// `SYS_WRITEV` — 聚集写入 (多段缓冲)
+pub const SYS_WRITEV: u64 = 20;
+/// `SYS_PREAD64` — 按偏移读取文件
+pub const SYS_PREAD64: u64 = 17;
+/// `SYS_PWRITE64` — 按偏移写入文件
+pub const SYS_PWRITE64: u64 = 18;
+/// `SYS_SENDFILE` — 在两个文件描述符之间直接传输数据
+pub const SYS_SENDFILE: u64 = 40;
+/// `SYS_PREADV` — 按偏移分散读取
+pub const SYS_PREADV: u64 = 295;
+/// `SYS_PWRITEV` — 按偏移聚集写入
+pub const SYS_PWRITEV: u64 = 296;
+/// `SYS_PREADV2` — 按偏移分散读取 (带 flags)
+pub const SYS_PREADV2: u64 = 327;
+/// `SYS_PWRITEV2` — 按偏移聚集写入 (带 flags)
+pub const SYS_PWRITEV2: u64 = 328;
+/// `SYS_FLOCK` — 对文件施加咨询锁
+pub const SYS_FLOCK: u64 = 73;
+/// `SYS_FCHMODAT` — 按目录 fd 修改文件权限
+pub const SYS_FCHMODAT: u64 = 268;
+/// `SYS_FCHOWNAT` — 按目录 fd 修改文件属主与属组
+pub const SYS_FCHOWNAT: u64 = 260;
+/// `SYS_NEWFSTATAT` — 按目录 fd 获取文件状态
+pub const SYS_NEWFSTATAT: u64 = 262;
+/// `SYS_UNLINKAT` — 按目录 fd 删除目录项
+pub const SYS_UNLINKAT: u64 = 263;
+/// `SYS_RENAMEAT` — 按目录 fd 重命名文件
+pub const SYS_RENAMEAT: u64 = 264;
+/// `SYS_RENAMEAT2` — 按目录 fd 重命名文件 (带 flags)
+pub const SYS_RENAMEAT2: u64 = 316;
+/// `SYS_LINKAT` — 按目录 fd 创建硬链接
+pub const SYS_LINKAT: u64 = 265;
+/// `SYS_SYMLINKAT` — 按目录 fd 创建符号链接
+pub const SYS_SYMLINKAT: u64 = 266;
+/// `SYS_READLINKAT` — 按目录 fd 读取符号链接目标
+pub const SYS_READLINKAT: u64 = 267;
+/// `SYS_FACCESSAT` — 按目录 fd 检查文件访问权限
+pub const SYS_FACCESSAT: u64 = 269;
+/// `SYS_FACCESSAT2` — 按目录 fd 检查文件访问权限 (带 flags)
+pub const SYS_FACCESSAT2: u64 = 439;
+/// `SYS_FCHMODAT2` — 按目录 fd 修改文件权限 (带 flags)
+pub const SYS_FCHMODAT2: u64 = 452;
+/// `SYS_STATX` — 获取扩展文件状态
+pub const SYS_STATX: u64 = 332;
+/// `SYS_COPY_FILE_RANGE` — 在两个文件描述符之间复制文件区间
+pub const SYS_COPY_FILE_RANGE: u64 = 326;
+/// `SYS_NAME_TO_HANDLE_AT` — 由路径获取文件句柄
+pub const SYS_NAME_TO_HANDLE_AT: u64 = 303;
+/// `SYS_OPEN_BY_HANDLE_AT` — 由文件句柄打开文件
+pub const SYS_OPEN_BY_HANDLE_AT: u64 = 304;
+/// `SYS_FALLOCATE` — 预分配文件空间
+pub const SYS_FALLOCATE: u64 = 285;
+/// `SYS_UTIMENSAT` — 按目录 fd 设置文件时间戳
+pub const SYS_UTIMENSAT: u64 = 280;
+/// `SYS_OPENAT` — 按目录 fd 打开文件
+pub const SYS_OPENAT: u64 = 257;
+/// `SYS_OPENAT2` — 按目录 fd 打开文件 (可扩展参数)
+pub const SYS_OPENAT2: u64 = 437;
+/// `SYS_CLOSE_RANGE` — 批量关闭文件描述符区间
+pub const SYS_CLOSE_RANGE: u64 = 436;
 
 // FD 扩展 (Linux x86_64 标准编号)
-/// `SYS_dup3` — 复制文件描述符到指定编号 (带 flags)
-pub const SYS_dup3: u64 = 292;
-/// `SYS_pipe2` — 创建匿名管道 (带 flags)
-pub const SYS_pipe2: u64 = 293;
-/// `SYS_epoll_create1` — 创建 epoll 实例 (带 flags)
-pub const SYS_epoll_create1: u64 = 291;
-/// `SYS_epoll_pwait` — 等待 epoll 事件 (带信号屏蔽字)
-pub const SYS_epoll_pwait: u64 = 281;
-/// `SYS_epoll_pwait2` — 等待 epoll 事件 (纳秒超时)
-pub const SYS_epoll_pwait2: u64 = 441;
+/// `SYS_DUP3` — 复制文件描述符到指定编号 (带 flags)
+pub const SYS_DUP3: u64 = 292;
+/// `SYS_PIPE2` — 创建匿名管道 (带 flags)
+pub const SYS_PIPE2: u64 = 293;
+/// `SYS_EPOLL_CREATE1` — 创建 epoll 实例 (带 flags)
+pub const SYS_EPOLL_CREATE1: u64 = 291;
+/// `SYS_EPOLL_PWAIT` — 等待 epoll 事件 (带信号屏蔽字)
+pub const SYS_EPOLL_PWAIT: u64 = 281;
+/// `SYS_EPOLL_PWAIT2` — 等待 epoll 事件 (纳秒超时)
+pub const SYS_EPOLL_PWAIT2: u64 = 441;
 
 // select / pselect / ppoll (Linux x86_64 标准编号)
-/// `SYS_pselect6` — 等待文件描述符事件 (带信号屏蔽字)
-pub const SYS_pselect6: u64 = 270;
-/// `SYS_ppoll` — 等待文件描述符事件 (纳秒超时)
-pub const SYS_ppoll: u64 = 271;
+/// `SYS_PSELECT6` — 等待文件描述符事件 (带信号屏蔽字)
+pub const SYS_PSELECT6: u64 = 270;
+/// `SYS_PPOLL` — 等待文件描述符事件 (纳秒超时)
+pub const SYS_PPOLL: u64 = 271;
 
 // 进程扩展 (Linux x86_64 标准编号)
-/// `SYS_set_robust_list` — 设置 robust futex 链表
-pub const SYS_set_robust_list: u64 = 273;
-/// `SYS_get_robust_list` — 获取 robust futex 链表
-pub const SYS_get_robust_list: u64 = 274;
-/// `SYS_pidfd_open` — 由 PID 获取 pidfd
-pub const SYS_pidfd_open: u64 = 434;
-/// `SYS_pidfd_getfd` — 由 pidfd 复制目标进程的文件描述符
-pub const SYS_pidfd_getfd: u64 = 438;
-/// `SYS_pidfd_send_signal` — 经 pidfd 向目标进程发送信号
-pub const SYS_pidfd_send_signal: u64 = 424;
-/// `SYS_clone3` — 创建进程或线程 (可扩展参数)
-pub const SYS_clone3: u64 = 435;
-/// `SYS_execveat` — 按目录 fd 加载并执行新程序
-pub const SYS_execveat: u64 = 322;
-/// `SYS_waitid` — 等待子进程状态变化 (扩展信息)
-pub const SYS_waitid: u64 = 247;
-/// `SYS_process_vm_readv` — 跨进程分散读取内存
-pub const SYS_process_vm_readv: u64 = 310;
-/// `SYS_process_vm_writev` — 跨进程聚集写入内存
-pub const SYS_process_vm_writev: u64 = 311;
+/// `SYS_SET_ROBUST_LIST` — 设置 robust futex 链表
+pub const SYS_SET_ROBUST_LIST: u64 = 273;
+/// `SYS_GET_ROBUST_LIST` — 获取 robust futex 链表
+pub const SYS_GET_ROBUST_LIST: u64 = 274;
+/// `SYS_PIDFD_OPEN` — 由 PID 获取 pidfd
+pub const SYS_PIDFD_OPEN: u64 = 434;
+/// `SYS_PIDFD_GETFD` — 由 pidfd 复制目标进程的文件描述符
+pub const SYS_PIDFD_GETFD: u64 = 438;
+/// `SYS_PIDFD_SEND_SIGNAL` — 经 pidfd 向目标进程发送信号
+pub const SYS_PIDFD_SEND_SIGNAL: u64 = 424;
+/// `SYS_CLONE3` — 创建进程或线程 (可扩展参数)
+pub const SYS_CLONE3: u64 = 435;
+/// `SYS_EXECVEAT` — 按目录 fd 加载并执行新程序
+pub const SYS_EXECVEAT: u64 = 322;
+/// `SYS_WAITID` — 等待子进程状态变化 (扩展信息)
+pub const SYS_WAITID: u64 = 247;
+/// `SYS_PROCESS_VM_READV` — 跨进程分散读取内存
+pub const SYS_PROCESS_VM_READV: u64 = 310;
+/// `SYS_PROCESS_VM_WRITEV` — 跨进程聚集写入内存
+pub const SYS_PROCESS_VM_WRITEV: u64 = 311;
 
 // 内存扩展 (Linux x86_64 标准编号)
-/// `SYS_memfd_create` — 创建匿名内存文件
-pub const SYS_memfd_create: u64 = 319;
-/// `SYS_userfaultfd` — 创建用户态缺页处理 fd
-pub const SYS_userfaultfd: u64 = 323;
+/// `SYS_MEMFD_CREATE` — 创建匿名内存文件
+pub const SYS_MEMFD_CREATE: u64 = 319;
+/// `SYS_USERFAULTFD` — 创建用户态缺页处理 fd
+pub const SYS_USERFAULTFD: u64 = 323;
 
 // 网络扩展 (Linux x86_64 标准编号)
-/// `SYS_recvmmsg` — 批量接收消息
-pub const SYS_recvmmsg: u64 = 299;
-/// `SYS_sendmmsg` — 批量发送消息
-pub const SYS_sendmmsg: u64 = 307;
-/// `SYS_socketpair` — 创建匿名套接字对
-pub const SYS_socketpair: u64 = 53;
-/// `SYS_accept4` — 接受连接 (带 flags)
-pub const SYS_accept4: u64 = 288;
+/// `SYS_RECVMMSG` — 批量接收消息
+pub const SYS_RECVMMSG: u64 = 299;
+/// `SYS_SENDMMSG` — 批量发送消息
+pub const SYS_SENDMMSG: u64 = 307;
+/// `SYS_SOCKETPAIR` — 创建匿名套接字对
+pub const SYS_SOCKETPAIR: u64 = 53;
+/// `SYS_ACCEPT4` — 接受连接 (带 flags)
+pub const SYS_ACCEPT4: u64 = 288;
 
 // 事件扩展 (Linux x86_64 标准编号)
 
 // Seccomp / prctl (Linux x86_64 标准编号)
-/// `SYS_seccomp` — 安装 seccomp 过滤器
-pub const SYS_seccomp: u64 = 317;
-/// `SYS_prctl` — 进程控制操作
-pub const SYS_prctl: u64 = 157;
-/// `SYS_arch_prctl` — 架构相关进程控制 (x86_64 TLS 等)
-pub const SYS_arch_prctl: u64 = 158;
+/// `SYS_SECCOMP` — 安装 seccomp 过滤器
+pub const SYS_SECCOMP: u64 = 317;
+/// `SYS_PRCTL` — 进程控制操作
+pub const SYS_PRCTL: u64 = 157;
+/// `SYS_ARCH_PRCTL` — 架构相关进程控制 (x86_64 TLS 等)
+pub const SYS_ARCH_PRCTL: u64 = 158;
 
 // 安全 / 权限 (Linux x86_64 标准编号)
-/// `SYS_capget` — 获取进程能力集
-pub const SYS_capget: u64 = 125;
-/// `SYS_capset` — 设置进程能力集
-pub const SYS_capset: u64 = 126;
-/// `SYS_pivot_root` — 切换根文件系统
-pub const SYS_pivot_root: u64 = 155;
-/// `SYS_chroot` — 修改进程根目录
-pub const SYS_chroot: u64 = 161;
+/// `SYS_CAPGET` — 获取进程能力集
+pub const SYS_CAPGET: u64 = 125;
+/// `SYS_CAPSET` — 设置进程能力集
+pub const SYS_CAPSET: u64 = 126;
+/// `SYS_PIVOT_ROOT` — 切换根文件系统
+pub const SYS_PIVOT_ROOT: u64 = 155;
+/// `SYS_CHROOT` — 修改进程根目录
+pub const SYS_CHROOT: u64 = 161;
 
 // 时间扩展 (Linux x86_64 标准编号)
-/// `SYS_clock_nanosleep` — 按指定时钟高精度休眠
-pub const SYS_clock_nanosleep: u64 = 230;
-/// `SYS_settimeofday` — 设置系统时间
-pub const SYS_settimeofday: u64 = 164;
-/// `SYS_adjtimex` — 调整系统时钟
-pub const SYS_adjtimex: u64 = 159;
+/// `SYS_CLOCK_NANOSLEEP` — 按指定时钟高精度休眠
+pub const SYS_CLOCK_NANOSLEEP: u64 = 230;
+/// `SYS_SETTIMEOFDAY` — 设置系统时间
+pub const SYS_SETTIMEOFDAY: u64 = 164;
+/// `SYS_ADJTIMEX` — 调整系统时钟
+pub const SYS_ADJTIMEX: u64 = 159;
 
 // 杂项 (Linux x86_64 标准编号)
-/// `SYS_reboot` — 重启或关闭系统
-pub const SYS_reboot: u64 = 169;
-/// `SYS_sethostname` — 设置主机名
-pub const SYS_sethostname: u64 = 170;
-/// `SYS_setdomainname` — 设置域名
-pub const SYS_setdomainname: u64 = 171;
+/// `SYS_REBOOT` — 重启或关闭系统
+pub const SYS_REBOOT: u64 = 169;
+/// `SYS_SETHOSTNAME` — 设置主机名
+pub const SYS_SETHOSTNAME: u64 = 170;
+/// `SYS_SETDOMAINNAME` — 设置域名
+pub const SYS_SETDOMAINNAME: u64 = 171;
 
 // ==================== SGEG 私有 syscall (400-499, 避开 Linux 424-452) ====================
 //
@@ -690,16 +690,16 @@ pub const SYS_FB_RELEASE: u64 = 722;
 
 // ---------- 720-729: 设备 ----------
 // B09-17 (2026-09-14): 编号空间归位补齐 (dispatch/测试实际引用的 Linux 编号)
-/// `SYS_sigaltstack` — 设置信号处理替代栈
-pub const SYS_sigaltstack: u64 = 131;
-/// `SYS_setxattr` — 设置文件扩展属性
-pub const SYS_setxattr: u64 = 188;
-/// `SYS_getxattr` — 读取文件扩展属性
-pub const SYS_getxattr: u64 = 191;
-/// `SYS_listxattr` — 列出文件扩展属性名
-pub const SYS_listxattr: u64 = 194;
-/// `SYS_removexattr` — 删除文件扩展属性
-pub const SYS_removexattr: u64 = 197;
+/// `SYS_SIGALTSTACK` — 设置信号处理替代栈
+pub const SYS_SIGALTSTACK: u64 = 131;
+/// `SYS_SETXATTR` — 设置文件扩展属性
+pub const SYS_SETXATTR: u64 = 188;
+/// `SYS_GETXATTR` — 读取文件扩展属性
+pub const SYS_GETXATTR: u64 = 191;
+/// `SYS_LISTXATTR` — 列出文件扩展属性名
+pub const SYS_LISTXATTR: u64 = 194;
+/// `SYS_REMOVEXATTR` — 删除文件扩展属性
+pub const SYS_REMOVEXATTR: u64 = 197;
 
 // ---------- 730-739: 设备固件加载 ----------
 /// `EG_FW_LOAD` — 从用户态路径加载固件并附着到设备树节点
@@ -881,207 +881,207 @@ pub type SyscallResult<T> = Result<T, Errno>;
 const _: () = {
     // 所有 Linux 标准编号 (0-299 区段)
     const LINUX_NUMS: &[u64] = &[
-        SYS_read,
-        SYS_write,
-        SYS_open,
-        SYS_close,
-        SYS_stat,
-        SYS_fstat,
-        SYS_lstat,
-        SYS_poll,
-        SYS_lseek,
-        SYS_mmap,
-        SYS_mprotect,
-        SYS_munmap,
-        SYS_brk,
-        SYS_rt_sigaction,
-        SYS_rt_sigprocmask,
-        SYS_rt_sigreturn,
-        SYS_ioctl,
-        SYS_access,
-        SYS_pipe,
-        SYS_select,
-        SYS_sched_yield,
-        SYS_mremap,
-        SYS_dup,
-        SYS_dup2,
-        SYS_nanosleep,
-        SYS_getitimer,
-        SYS_alarm,
-        SYS_setitimer,
-        SYS_getpid,
-        SYS_socket,
-        SYS_connect,
-        SYS_accept,
-        SYS_sendto,
-        SYS_recvfrom,
-        SYS_sendmsg,
-        SYS_recvmsg,
-        SYS_shutdown,
-        SYS_bind,
-        SYS_listen,
-        SYS_getsockname,
-        SYS_getpeername,
-        SYS_setsockopt,
-        SYS_getsockopt,
-        SYS_clone,
-        SYS_fork,
-        SYS_execve,
-        SYS_exit,
-        SYS_wait4,
-        SYS_kill,
-        SYS_uname,
-        SYS_fcntl,
-        SYS_flock,
-        SYS_fsync,
-        SYS_fdatasync,
-        SYS_truncate,
-        SYS_ftruncate,
-        SYS_getdents,
-        SYS_getcwd,
-        SYS_chdir,
-        SYS_rename,
-        SYS_mkdir,
-        SYS_rmdir,
-        SYS_creat,
-        SYS_link,
-        SYS_unlink,
-        SYS_symlink,
-        SYS_readlink,
-        SYS_chmod,
-        SYS_fchmod,
-        SYS_chown,
-        SYS_fchown,
-        SYS_umask,
-        SYS_gettimeofday,
-        SYS_getrlimit,
-        SYS_getrusage,
-        SYS_sysinfo,
-        SYS_times,
-        SYS_getuid,
-        SYS_getgid,
-        SYS_setuid,
-        SYS_setgid,
-        SYS_geteuid,
-        SYS_getegid,
-        SYS_setreuid,
-        SYS_setregid,
-        SYS_getppid,
-        SYS_getpgid,
-        SYS_setsid,
-        SYS_getsid,
-        SYS_setpgid,
-        SYS_getpriority,
-        SYS_setpriority,
-        SYS_sync,
-        SYS_mount,
-        SYS_umount2,
-        SYS_gettid,
-        SYS_time,
-        SYS_clock_gettime,
-        SYS_exit_group,
-        SYS_tgkill,
-        SYS_futex,
-        SYS_sched_setaffinity,
-        SYS_sched_getaffinity,
-        SYS_epoll_create,
-        SYS_epoll_ctl,
-        SYS_epoll_wait,
-        SYS_eventfd,
-        SYS_eventfd2,
-        SYS_signalfd,
-        SYS_signalfd4,
-        SYS_timerfd_create,
-        SYS_timerfd_settime,
-        SYS_timerfd_gettime,
-        SYS_madvise,
-        SYS_mincore,
-        SYS_mlock,
-        SYS_munlock,
-        SYS_mlockall,
-        SYS_munlockall,
-        SYS_inotify_init,
-        SYS_inotify_add_watch,
-        SYS_inotify_rm_watch,
-        SYS_inotify_init1,
-        SYS_timer_create,
-        SYS_timer_settime,
-        SYS_timer_gettime,
-        SYS_timer_getoverrun,
-        SYS_timer_delete,
-        SYS_clock_getres,
-        SYS_getrandom,
-        SYS_mbind,
-        SYS_set_mempolicy,
-        SYS_get_mempolicy,
-        SYS_migrate_pages,
-        SYS_getcpu,
-        SYS_readv,
-        SYS_writev,
-        SYS_pread64,
-        SYS_pwrite64,
-        SYS_sendfile,
-        SYS_preadv,
-        SYS_pwritev,
-        SYS_preadv2,
-        SYS_pwritev2,
-        SYS_fchmodat,
-        SYS_fchownat,
-        SYS_newfstatat,
-        SYS_unlinkat,
-        SYS_renameat,
-        SYS_renameat2,
-        SYS_linkat,
-        SYS_symlinkat,
-        SYS_readlinkat,
-        SYS_faccessat,
-        SYS_faccessat2,
-        SYS_fchmodat2,
-        SYS_statx,
-        SYS_copy_file_range,
-        SYS_name_to_handle_at,
-        SYS_open_by_handle_at,
-        SYS_fallocate,
-        SYS_utimensat,
-        SYS_openat,
-        SYS_openat2,
-        SYS_close_range,
-        SYS_dup3,
-        SYS_pipe2,
-        SYS_epoll_create1,
-        SYS_epoll_pwait,
-        SYS_epoll_pwait2,
-        SYS_pselect6,
-        SYS_ppoll,
-        SYS_set_robust_list,
-        SYS_get_robust_list,
-        SYS_pidfd_open,
-        SYS_pidfd_getfd,
-        SYS_pidfd_send_signal,
-        SYS_clone3,
-        SYS_execveat,
-        SYS_waitid,
-        SYS_process_vm_readv,
-        SYS_process_vm_writev,
-        SYS_memfd_create,
-        SYS_userfaultfd,
-        SYS_recvmmsg,
-        SYS_sendmmsg,
-        SYS_socketpair,
-        SYS_accept4,
-        SYS_seccomp,
-        SYS_prctl,
-        SYS_arch_prctl,
-        SYS_capget,
-        SYS_capset,
-        SYS_pivot_root,
-        SYS_chroot,
-        SYS_clock_nanosleep,
-        SYS_settimeofday,
-        SYS_adjtimex,
-        SYS_reboot,
-        SYS_sethostname,
-        SYS_setdomainname,
+        SYS_READ,
+        SYS_WRITE,
+        SYS_OPEN,
+        SYS_CLOSE,
+        SYS_STAT,
+        SYS_FSTAT,
+        SYS_LSTAT,
+        SYS_POLL,
+        SYS_LSEEK,
+        SYS_MMAP,
+        SYS_MPROTECT,
+        SYS_MUNMAP,
+        SYS_BRK,
+        SYS_RT_SIGACTION,
+        SYS_RT_SIGPROCMASK,
+        SYS_RT_SIGRETURN,
+        SYS_IOCTL,
+        SYS_ACCESS,
+        SYS_PIPE,
+        SYS_SELECT,
+        SYS_SCHED_YIELD,
+        SYS_MREMAP,
+        SYS_DUP,
+        SYS_DUP2,
+        SYS_NANOSLEEP,
+        SYS_GETITIMER,
+        SYS_ALARM,
+        SYS_SETITIMER,
+        SYS_GETPID,
+        SYS_SOCKET,
+        SYS_CONNECT,
+        SYS_ACCEPT,
+        SYS_SENDTO,
+        SYS_RECVFROM,
+        SYS_SENDMSG,
+        SYS_RECVMSG,
+        SYS_SHUTDOWN,
+        SYS_BIND,
+        SYS_LISTEN,
+        SYS_GETSOCKNAME,
+        SYS_GETPEERNAME,
+        SYS_SETSOCKOPT,
+        SYS_GETSOCKOPT,
+        SYS_CLONE,
+        SYS_FORK,
+        SYS_EXECVE,
+        SYS_EXIT,
+        SYS_WAIT4,
+        SYS_KILL,
+        SYS_UNAME,
+        SYS_FCNTL,
+        SYS_FLOCK,
+        SYS_FSYNC,
+        SYS_FDATASYNC,
+        SYS_TRUNCATE,
+        SYS_FTRUNCATE,
+        SYS_GETDENTS,
+        SYS_GETCWD,
+        SYS_CHDIR,
+        SYS_RENAME,
+        SYS_MKDIR,
+        SYS_RMDIR,
+        SYS_CREAT,
+        SYS_LINK,
+        SYS_UNLINK,
+        SYS_SYMLINK,
+        SYS_READLINK,
+        SYS_CHMOD,
+        SYS_FCHMOD,
+        SYS_CHOWN,
+        SYS_FCHOWN,
+        SYS_UMASK,
+        SYS_GETTIMEOFDAY,
+        SYS_GETRLIMIT,
+        SYS_GETRUSAGE,
+        SYS_SYSINFO,
+        SYS_TIMES,
+        SYS_GETUID,
+        SYS_GETGID,
+        SYS_SETUID,
+        SYS_SETGID,
+        SYS_GETEUID,
+        SYS_GETEGID,
+        SYS_SETREUID,
+        SYS_SETREGID,
+        SYS_GETPPID,
+        SYS_GETPGID,
+        SYS_SETSID,
+        SYS_GETSID,
+        SYS_SETPGID,
+        SYS_GETPRIORITY,
+        SYS_SETPRIORITY,
+        SYS_SYNC,
+        SYS_MOUNT,
+        SYS_UMOUNT2,
+        SYS_GETTID,
+        SYS_TIME,
+        SYS_CLOCK_GETTIME,
+        SYS_EXIT_GROUP,
+        SYS_TGKILL,
+        SYS_FUTEX,
+        SYS_SCHED_SETAFFINITY,
+        SYS_SCHED_GETAFFINITY,
+        SYS_EPOLL_CREATE,
+        SYS_EPOLL_CTL,
+        SYS_EPOLL_WAIT,
+        SYS_EVENTFD,
+        SYS_EVENTFD2,
+        SYS_SIGNALFD,
+        SYS_SIGNALFD4,
+        SYS_TIMERFD_CREATE,
+        SYS_TIMERFD_SETTIME,
+        SYS_TIMERFD_GETTIME,
+        SYS_MADVISE,
+        SYS_MINCORE,
+        SYS_MLOCK,
+        SYS_MUNLOCK,
+        SYS_MLOCKALL,
+        SYS_MUNLOCKALL,
+        SYS_INOTIFY_INIT,
+        SYS_INOTIFY_ADD_WATCH,
+        SYS_INOTIFY_RM_WATCH,
+        SYS_INOTIFY_INIT1,
+        SYS_TIMER_CREATE,
+        SYS_TIMER_SETTIME,
+        SYS_TIMER_GETTIME,
+        SYS_TIMER_GETOVERRUN,
+        SYS_TIMER_DELETE,
+        SYS_CLOCK_GETRES,
+        SYS_GETRANDOM,
+        SYS_MBIND,
+        SYS_SET_MEMPOLICY,
+        SYS_GET_MEMPOLICY,
+        SYS_MIGRATE_PAGES,
+        SYS_GETCPU,
+        SYS_READV,
+        SYS_WRITEV,
+        SYS_PREAD64,
+        SYS_PWRITE64,
+        SYS_SENDFILE,
+        SYS_PREADV,
+        SYS_PWRITEV,
+        SYS_PREADV2,
+        SYS_PWRITEV2,
+        SYS_FCHMODAT,
+        SYS_FCHOWNAT,
+        SYS_NEWFSTATAT,
+        SYS_UNLINKAT,
+        SYS_RENAMEAT,
+        SYS_RENAMEAT2,
+        SYS_LINKAT,
+        SYS_SYMLINKAT,
+        SYS_READLINKAT,
+        SYS_FACCESSAT,
+        SYS_FACCESSAT2,
+        SYS_FCHMODAT2,
+        SYS_STATX,
+        SYS_COPY_FILE_RANGE,
+        SYS_NAME_TO_HANDLE_AT,
+        SYS_OPEN_BY_HANDLE_AT,
+        SYS_FALLOCATE,
+        SYS_UTIMENSAT,
+        SYS_OPENAT,
+        SYS_OPENAT2,
+        SYS_CLOSE_RANGE,
+        SYS_DUP3,
+        SYS_PIPE2,
+        SYS_EPOLL_CREATE1,
+        SYS_EPOLL_PWAIT,
+        SYS_EPOLL_PWAIT2,
+        SYS_PSELECT6,
+        SYS_PPOLL,
+        SYS_SET_ROBUST_LIST,
+        SYS_GET_ROBUST_LIST,
+        SYS_PIDFD_OPEN,
+        SYS_PIDFD_GETFD,
+        SYS_PIDFD_SEND_SIGNAL,
+        SYS_CLONE3,
+        SYS_EXECVEAT,
+        SYS_WAITID,
+        SYS_PROCESS_VM_READV,
+        SYS_PROCESS_VM_WRITEV,
+        SYS_MEMFD_CREATE,
+        SYS_USERFAULTFD,
+        SYS_RECVMMSG,
+        SYS_SENDMMSG,
+        SYS_SOCKETPAIR,
+        SYS_ACCEPT4,
+        SYS_SECCOMP,
+        SYS_PRCTL,
+        SYS_ARCH_PRCTL,
+        SYS_CAPGET,
+        SYS_CAPSET,
+        SYS_PIVOT_ROOT,
+        SYS_CHROOT,
+        SYS_CLOCK_NANOSLEEP,
+        SYS_SETTIMEOFDAY,
+        SYS_ADJTIMEX,
+        SYS_REBOOT,
+        SYS_SETHOSTNAME,
+        SYS_SETDOMAINNAME,
     ];
     let mut i = 0;
     while i < LINUX_NUMS.len() {
@@ -1179,25 +1179,25 @@ const _: () = {
 };
 
 // B09-17 (2026-09-14): privileged dispatch 回退层引用的 Linux 编号
-/// `SYS_tcgetpgrp` — 获取终端前台进程组
-pub const SYS_tcgetpgrp: u64 = 130;
-/// `SYS_tcsetpgrp` — 设置终端前台进程组
-pub const SYS_tcsetpgrp: u64 = 133;
-/// `SYS_setrlimit` — 设置资源限制
-pub const SYS_setrlimit: u64 = 160;
-/// `SYS_kexec_load` — 加载 kexec 内核映像
-pub const SYS_kexec_load: u64 = 246;
-/// `SYS_splice` — 在管道与文件描述符之间拼接数据
-pub const SYS_splice: u64 = 275;
-/// `SYS_unshare` — 取消共享指定 namespace
-pub const SYS_unshare: u64 = 272;
-/// `SYS_setns` — 加入指定 namespace
-pub const SYS_setns: u64 = 308;
-/// `SYS_bpf` — BPF 程序与映射操作
-pub const SYS_bpf: u64 = 321;
-/// `SYS_io_uring_setup` — 创建 io_uring 实例
-pub const SYS_io_uring_setup: u64 = 425;
-/// `SYS_io_uring_enter` — 提交 / 等待 io_uring 完成
-pub const SYS_io_uring_enter: u64 = 426;
-/// `SYS_io_uring_register` — 注册 io_uring 缓冲区或文件
-pub const SYS_io_uring_register: u64 = 427;
+/// `SYS_TCGETPGRP` — 获取终端前台进程组
+pub const SYS_TCGETPGRP: u64 = 130;
+/// `SYS_TCSETPGRP` — 设置终端前台进程组
+pub const SYS_TCSETPGRP: u64 = 133;
+/// `SYS_SETRLIMIT` — 设置资源限制
+pub const SYS_SETRLIMIT: u64 = 160;
+/// `SYS_KEXEC_LOAD` — 加载 kexec 内核映像
+pub const SYS_KEXEC_LOAD: u64 = 246;
+/// `SYS_SPLICE` — 在管道与文件描述符之间拼接数据
+pub const SYS_SPLICE: u64 = 275;
+/// `SYS_UNSHARE` — 取消共享指定 namespace
+pub const SYS_UNSHARE: u64 = 272;
+/// `SYS_SETNS` — 加入指定 namespace
+pub const SYS_SETNS: u64 = 308;
+/// `SYS_BPF` — BPF 程序与映射操作
+pub const SYS_BPF: u64 = 321;
+/// `SYS_IO_URING_SETUP` — 创建 io_uring 实例
+pub const SYS_IO_URING_SETUP: u64 = 425;
+/// `SYS_IO_URING_ENTER` — 提交 / 等待 io_uring 完成
+pub const SYS_IO_URING_ENTER: u64 = 426;
+/// `SYS_IO_URING_REGISTER` — 注册 io_uring 缓冲区或文件
+pub const SYS_IO_URING_REGISTER: u64 = 427;

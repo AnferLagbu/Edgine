@@ -1,8 +1,6 @@
 #![cfg_attr(not(feature = "host-test"), no_std)]
-// P-71: 模块 `lib` 与 library target 根同名, 触发 special_module_name (原单 crate
-// 下嵌套于 `privileged::lib`, 无此特例). 重命名会改动 privileged::lib 公共路径,
-// 故在 crate 级豁免该命名特例 lint.
-#![allow(special_module_name)]
+// 模块 `glue` 存放 crate 内部的 glue/兼容层. P-64 第十五批按 lint 改名为 `glue`:
+// 原名 `lib` 与 library target 根同名, 会触发 special_module_name.
 // ── P-71: crate 级 lint 豁免 ──────────────────────────────────────────
 // 以下豁免原以 `#![allow(...)]` 写在 glue crate 根 (src/kernel/lib.rs), 单 crate 时覆盖
 // 全树; privileged 独立成 crate 后须各持一份 (lint 属性不跨 crate 继承). 条目与 lib.rs
@@ -10,12 +8,8 @@
 // 不用 Cargo `[lints]` 表: 命令行 `-D clippy::pedantic` 优先级高于 manifest 表, 会让
 // `[lints]` 的 allow 在 ci/audit.sh 里全部失效 (实测 1623 条误报).
 // 详细理由见 lib.rs 各同名条目注释.
-// rustc 家族: C 互操作命名 / FFI 类型 / 全局可变静态
-#![allow(static_mut_refs)]
-#![allow(non_upper_case_globals)]
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-#![allow(improper_ctypes)]
+// P-64 第十五批: rustc 家族 (C 互操作命名 / FFI 类型 / 全局可变静态) 的 crate 级豁免
+// 已全部清除并改码服从 lint, 此处不再保留对应条目.
 // clippy 家族
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 #![allow(clippy::mut_from_ref)]
@@ -146,6 +140,8 @@ pub mod dtb;
 pub mod egdf;
 pub mod freg;
 pub mod fs;
+/// crate 内部的 glue/兼容层模块 (P-64 第十五批由 `lib` 改名, 避免 special_module_name)。
+pub mod glue;
 pub mod idt;
 pub mod iobuf;
 pub mod ipc;
@@ -156,10 +152,6 @@ pub mod klog;
 /// P-71: 本模块原名 `alloc`. 独立成 crate 后, 根级 `alloc` 会与 `extern crate alloc`
 /// 的 crate 绑定同名冲突 (E0260), 故改名 `mem_alloc`, 避免迫使 202 处 `alloc::…` 路径改写.
 pub mod mem_alloc;
-// P-71: 模块名 `lib` 与本 crate 的 library target 根同名, 触发 special_module_name
-// (原单 crate 下嵌套于 `privileged::lib`, 无此特例). 路径保持不变以免影响调用方.
-/// crate 内部的 glue/兼容层模块 (模块名与 library target 根同名)。
-pub mod lib;
 pub mod mm;
 pub mod net;
 pub mod pci;

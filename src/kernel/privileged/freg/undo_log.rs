@@ -80,7 +80,7 @@ impl UndoLog {
             generation: self.current_generation,
             field_ptr,
             old_value: old_bytes,
-            value_size: crate::privileged::lib::low_u8_from_usize(size),
+            value_size: crate::privileged::glue::low_u8_from_usize(size),
             checksum,
         };
         self.count += 1;
@@ -180,7 +180,7 @@ impl UndoLog {
         }
         let keep = keep_generations.min(gen_count);
         if gen_count > keep && keep > 0 {
-            let keep_from = crate::privileged::lib::usize_from_u64(gen_starts[gen_count - keep]);
+            let keep_from = crate::privileged::glue::usize_from_u64(gen_starts[gen_count - keep]);
             let new_count = self.count - keep_from;
             for i in 0..new_count {
                 self.entries[i] = self.entries[keep_from + i];

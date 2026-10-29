@@ -58,11 +58,9 @@ pub struct UnkfsDsProps {
     pub ref_reservation: u64,
 }
 
-impl UnkfsDsProps {
-    // 2026-09-11 实测: default 触发 should_implement_trait, 需豁免
-    #[allow(clippy::should_implement_trait)]
+impl Default for UnkfsDsProps {
     /// 返回 ZFS 风格默认属性: 128 KiB 记录、Fletcher4 校验、开启 atime.
-    pub fn default() -> Self {
+    fn default() -> Self {
         Self {
             record_size: 131_072,
             compression: 0,
@@ -133,8 +131,10 @@ impl UnkfsDataset {
         let b = name.as_bytes();
         let len = b.len().min(HV_DS_MAX_NAME - 1);
         n[..len].copy_from_slice(&b[..len]);
-        let mut props = UnkfsDsProps::default();
-        props.owner_pwm = owner_pwm;
+        let props = UnkfsDsProps {
+            owner_pwm,
+            ..UnkfsDsProps::default()
+        };
         Self {
             ds_id,
             name: n,

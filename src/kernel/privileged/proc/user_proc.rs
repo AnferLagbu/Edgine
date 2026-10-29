@@ -363,7 +363,7 @@ pub(crate) mod raw {
 
             vmm_ensure_path_user(vaddr);
 
-            crate::arch!(interrupt_restore(crate::privileged::lib::usize_from_u64(
+            crate::arch!(interrupt_restore(crate::privileged::glue::usize_from_u64(
                 saved_if
             )));
         }
@@ -410,7 +410,7 @@ pub(crate) mod raw {
             memset(
                 page.cast::<core::ffi::c_void>(),
                 0,
-                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                crate::privileged::glue::usize_from_u64(PAGE_SIZE),
             );
         }
         raw::vmm_map_user_page(cr3, vaddr, page as u64, flags);
@@ -432,7 +432,7 @@ pub(crate) mod raw {
             memcpy(
                 dest.cast::<core::ffi::c_void>(),
                 src.cast::<core::ffi::c_void>(),
-                crate::privileged::lib::usize_from_u64(chunk),
+                crate::privileged::glue::usize_from_u64(chunk),
             );
         }
     }
@@ -458,7 +458,7 @@ pub(crate) mod raw {
                 memset(
                     page.cast::<core::ffi::c_void>(),
                     0,
-                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                    crate::privileged::glue::usize_from_u64(PAGE_SIZE),
                 );
             }
         }
@@ -486,7 +486,7 @@ pub(crate) mod raw {
                 memset(
                     ptr.cast::<core::ffi::c_void>(),
                     0,
-                    crate::privileged::lib::usize_from_u64(size),
+                    crate::privileged::glue::usize_from_u64(size),
                 );
             }
         }
@@ -1048,10 +1048,6 @@ impl UserProcManager {
         ctx.extra_regs = [0; 8];
     }
 
-    #[expect(
-        clippy::no_effect_underscore_binding,
-        reason = "no_effect_underscore_binding: let _ = expr 用于类型推导/副作用; 当前优先 expect"
-    )]
     /// 切换到该进程的地址空间并进入 Ring 3 执行 (不返回)
     pub fn enter(&self, proc: *mut UserProcess) {
         crate::klog_boot_info!("[USER] enter() called with proc={:#X}", proc as u64);
@@ -1078,10 +1074,6 @@ impl UserProcManager {
             rsp_initial,
             cr3
         );
-        let _ss_val = GDT_USER_DATA | 0x03;
-        let _cs_val = GDT_USER_CODE | 0x03;
-        let _rflags_val: u64 = 0x3202;
-
         crate::privileged::cpu::arch::set_kernel_stack(kstack);
 
         // 更新 per-CPU 用户页表 CR3, 使 syscall/中断返回用户态时
@@ -1129,8 +1121,8 @@ impl UserProcManager {
         crate::klog_boot_info!("[USER] SELF-CHECK: calling enter_user_asm...");
 
         crate::arch!(enter_user(
-            crate::privileged::lib::usize_from_u64(rip_val),
-            crate::privileged::lib::usize_from_u64(rsp_initial),
+            crate::privileged::glue::usize_from_u64(rip_val),
+            crate::privileged::glue::usize_from_u64(rsp_initial),
             0,
             cr3,
             kstack
@@ -1639,7 +1631,7 @@ impl UserProcManager {
         }
 
         let new_sp = stack_top - total as u64;
-        let mut pos = crate::privileged::lib::usize_from_u64(new_sp);
+        let mut pos = crate::privileged::glue::usize_from_u64(new_sp);
 
         // 写入 argc
         let arg_count_off = pos;
@@ -1701,7 +1693,7 @@ impl UserProcManager {
         start_idx: usize,
         num_pages: u64,
     ) {
-        let file_offset_bytes = crate::privileged::lib::usize_from_u64(phdr.p_offset);
+        let file_offset_bytes = crate::privileged::glue::usize_from_u64(phdr.p_offset);
         let mut copied: u64 = 0;
         let first_page_offset = phdr.p_vaddr & 0xFFF;
 
@@ -1709,7 +1701,7 @@ impl UserProcManager {
             if copied >= phdr.p_filesz {
                 break;
             }
-            let page_phys = allocated_pages[start_idx + crate::privileged::lib::usize_from_u64(j)];
+            let page_phys = allocated_pages[start_idx + crate::privileged::glue::usize_from_u64(j)];
             if page_phys == 0 {
                 continue;
             }
@@ -1726,7 +1718,7 @@ impl UserProcManager {
                 page_phys,
                 off_in_page,
                 elf_data,
-                file_offset_bytes + crate::privileged::lib::usize_from_u64(copied),
+                file_offset_bytes + crate::privileged::glue::usize_from_u64(copied),
                 chunk,
             );
             copied += chunk;
@@ -1833,7 +1825,7 @@ impl UserProcManager {
             // SAFETY: 调用方保证 elf_data 区间为已校验的 ELF 映像; 上方已拦截
             // phdr 表越界, 故该偏移处的程序头读取仍在区间内.
             let phdr = unsafe {
-                (elf_data.add(crate::privileged::lib::usize_from_u64(phdr_offset)))
+                (elf_data.add(crate::privileged::glue::usize_from_u64(phdr_offset)))
                     .cast::<ElfPhdr>()
                     .read_unaligned()
             };
@@ -1937,9 +1929,9 @@ impl UserProcManager {
             unsafe {
                 memcpy(
                     page.cast::<core::ffi::c_void>(),
-                    code.add(crate::privileged::lib::usize_from_u64(i * PAGE_SIZE))
+                    code.add(crate::privileged::glue::usize_from_u64(i * PAGE_SIZE))
                         .cast::<core::ffi::c_void>(),
-                    crate::privileged::lib::usize_from_u64(copy_size),
+                    crate::privileged::glue::usize_from_u64(copy_size),
                 );
             }
 

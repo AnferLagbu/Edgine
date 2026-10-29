@@ -1,8 +1,8 @@
 //! sigreturn trampoline 机器码契约测试 (P1-I-40)
 //!
 //! 验证:
-//! 1. x86_64 trampoline 编码 = mov eax, 15 + syscall (SYS_rt_sigreturn = 15)
-//! 2. aarch64 trampoline 编码 = movz x8, #139 + svc #0 (SYS_rt_sigreturn = 139)
+//! 1. x86_64 trampoline 编码 = mov eax, 15 + syscall (SYS_RT_SIGRETURN = 15)
+//! 2. aarch64 trampoline 编码 = movz x8, #139 + svc #0 (SYS_RT_SIGRETURN = 139)
 //! 3. 双架构在 host 端通过 union 表达, 跨平台编译期验证
 //!
 //! 主机端测试平台: 借用 host CPU 架构的 trampoline 与固定字节序列做 hex 对比.
@@ -72,7 +72,7 @@ fn x86_64_trampoline_starts_with_mov_eax() {
             SIGRETURN_TRAMPOLINE[3],
             SIGRETURN_TRAMPOLINE[4],
         ]);
-        assert_eq!(imm, 15, "P1-I-40: x86_64 立即数必须是 SYS_rt_sigreturn=15");
+        assert_eq!(imm, 15, "P1-I-40: x86_64 立即数必须是 SYS_RT_SIGRETURN=15");
         // syscall = 0F 05
         assert_eq!(
             SIGRETURN_TRAMPOLINE[5], 0x0F,
@@ -145,7 +145,7 @@ fn aarch64_trampoline_rt_sigreturn_number_is_139() {
             | (SIGRETURN_TRAMPOLINE[3] as u32))
             >> 5
             & 0xFFFF;
-        assert_eq!(decoded, 139, "P1-I-40: aarch64 SYS_rt_sigreturn 必须是 139");
+        assert_eq!(decoded, 139, "P1-I-40: aarch64 SYS_RT_SIGRETURN 必须是 139");
         let _ = imm16; // 防止未使用警告
     }
 }

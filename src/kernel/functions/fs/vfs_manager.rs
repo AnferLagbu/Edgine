@@ -535,14 +535,10 @@ impl VfsManager {
         });
     }
 
-    #[expect(
-        clippy::assigning_clones,
-        reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-    )]
     /// 从最近一次快照恢复挂载表 / cwd / 根前缀 (无快照时为空操作)
     pub fn restore_from_snapshot(&self) {
         if let Some(ref snap) = *self.snapshot.lock() {
-            *self.mounts.lock() = snap.mounts.clone();
+            self.mounts.lock().clone_from(&snap.mounts);
             *self.cwd.lock() = snap.cwd;
             *self.root.lock() = snap.root;
         }

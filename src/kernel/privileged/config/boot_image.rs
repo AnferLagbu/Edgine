@@ -36,7 +36,7 @@ fn pack_u64(buf: &mut [u8], offset: usize, v: u64) {
     if offset + 8 > buf.len() {
         return;
     }
-    pack_u32(buf, offset, crate::privileged::lib::low_u32_from_u64(v));
+    pack_u32(buf, offset, crate::privileged::glue::low_u32_from_u64(v));
     pack_u32(buf, offset + 4, (v >> 32) as u32);
 }
 
@@ -64,9 +64,7 @@ pub fn encode_boot_image() {
     let caps = s.capabilities;
 
     let mut guard = BOOT_IMAGE.lock();
-    // 2026-09-11 实测: &mut *guard 触发 explicit_auto_deref, 需豁免
-    #[allow(clippy::explicit_auto_deref)]
-    let buf: &mut [u8; ENCODED_LEN] = &mut *guard;
+    let buf: &mut [u8; ENCODED_LEN] = &mut guard;
     buf.fill(0);
     pack_u32(buf, 0, HEADER_MAGIC);
     pack_u32(buf, 4, 0);
@@ -74,33 +72,33 @@ pub fn encode_boot_image() {
     pack_u32(
         buf,
         12,
-        crate::privileged::lib::low_u32_from_usize(s.max_cpus),
+        crate::privileged::glue::low_u32_from_usize(s.max_cpus),
     );
     pack_u32(
         buf,
         16,
-        crate::privileged::lib::low_u32_from_usize(s.max_irqs),
+        crate::privileged::glue::low_u32_from_usize(s.max_irqs),
     );
     pack_u32(
         buf,
         20,
-        crate::privileged::lib::low_u32_from_usize(s.max_processes),
+        crate::privileged::glue::low_u32_from_usize(s.max_processes),
     );
     pack_u32(
         buf,
         24,
-        crate::privileged::lib::low_u32_from_usize(s.max_threads),
+        crate::privileged::glue::low_u32_from_usize(s.max_threads),
     );
     pack_u32(buf, 28, s.actual_cpus);
     pack_u32(
         buf,
         32,
-        crate::privileged::lib::low_u32_from_u64(s.page_size),
+        crate::privileged::glue::low_u32_from_u64(s.page_size),
     );
     pack_u32(
         buf,
         36,
-        crate::privileged::lib::low_u32_from_u64(s.kaslr_offset),
+        crate::privileged::glue::low_u32_from_u64(s.kaslr_offset),
     );
     pack_u32(buf, 40, (s.kaslr_offset >> 32) as u32);
 

@@ -116,7 +116,7 @@ fn test_in_kern_toggle_round_trip() {
     );
     assert!(
         src.contains(
-            "crate::privileged::lib::low_u32_from_u64(CURRENT_IN_KERN.load(Ordering::SeqCst))"
+            "crate::privileged::glue::low_u32_from_u64(CURRENT_IN_KERN.load(Ordering::SeqCst))"
         ),
         "get 走 load"
     );

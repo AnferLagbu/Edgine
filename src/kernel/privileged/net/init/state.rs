@@ -175,10 +175,9 @@ pub static NET_STATE: Mutex<NetState> = Mutex::named_lazy("NET_STATE", NetState:
 /// 状态机推进 — 以 CAS 将当前状态从 `from` 迁移到 `to`
 ///
 /// 返回 `Err(())` 表示迁移被拒绝 (CAS 竞争失败、非法回退或已处于 `Failed` 终态)。
-#[expect(
-    clippy::missing_errors_doc,
-    reason = "missing_errors_doc: transition_state 返回 Result<(), ()>; Err 仅表示状态转换被拒绝 (compare_exchange 竞争或非法迁移), 非结构化错误, 语义由调用方按 InitState 自行判定, 当前优先 expect 兑底"
-)]
+///
+/// # Errors
+/// 当 CAS 竞争失败、迁移方向非法 (回退) 或当前已处于 `Failed` 终态时返回 `Err(())`。
 pub fn transition_state(from: InitState, to: InitState) -> Result<(), ()> {
     match G_INIT_STATE.compare_exchange(from as u8, to as u8, Ordering::AcqRel, Ordering::Relaxed) {
         Ok(_) => Ok(()),

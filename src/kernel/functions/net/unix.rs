@@ -614,10 +614,6 @@ pub fn uds_connect(fd: i32, path: &[u8]) -> Result<(), UdsError> {
     })
 }
 
-#[expect(
-    clippy::many_single_char_names,
-    reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-)]
 /// 通过流式 UDS 连接发送数据
 ///
 /// # Errors
@@ -655,13 +651,13 @@ pub fn uds_send(fd: i32, data: &[u8]) -> Result<usize, UdsError> {
             // 序列化 ScmCredentials 到 12 字节 (safe: 字段都是 Copy u32)
             let cred = current_scm_credentials();
             let off = peer.stream_len as usize;
-            let p = cred.pid.to_ne_bytes();
-            let u = cred.uid.to_ne_bytes();
-            let g = cred.gid.to_ne_bytes();
+            let pid_bytes = cred.pid.to_ne_bytes();
+            let uid_bytes = cred.uid.to_ne_bytes();
+            let gid_bytes = cred.gid.to_ne_bytes();
             let mut bytes = [0u8; 12];
-            bytes[0..4].copy_from_slice(&p);
-            bytes[4..8].copy_from_slice(&u);
-            bytes[8..12].copy_from_slice(&g);
+            bytes[0..4].copy_from_slice(&pid_bytes);
+            bytes[4..8].copy_from_slice(&uid_bytes);
+            bytes[8..12].copy_from_slice(&gid_bytes);
             peer.stream_buf[off..off + 12].copy_from_slice(&bytes);
             peer.stream_len += 12;
         }
@@ -785,13 +781,13 @@ pub fn uds_sendto(_fd: i32, data: &[u8], dest_path: &[u8]) -> Result<usize, UdsE
             // 序列化 ScmCredentials (safe u32 字段拼装)
             let cred = current_scm_credentials();
             let off = target.dgram_len as usize;
-            let p = cred.pid.to_ne_bytes();
-            let u = cred.uid.to_ne_bytes();
-            let g = cred.gid.to_ne_bytes();
+            let pid_bytes = cred.pid.to_ne_bytes();
+            let uid_bytes = cred.uid.to_ne_bytes();
+            let gid_bytes = cred.gid.to_ne_bytes();
             let mut bytes = [0u8; 12];
-            bytes[0..4].copy_from_slice(&p);
-            bytes[4..8].copy_from_slice(&u);
-            bytes[8..12].copy_from_slice(&g);
+            bytes[0..4].copy_from_slice(&pid_bytes);
+            bytes[4..8].copy_from_slice(&uid_bytes);
+            bytes[8..12].copy_from_slice(&gid_bytes);
             target.dgram_buf[off..off + 12].copy_from_slice(&bytes);
             target.dgram_len += 12;
         }

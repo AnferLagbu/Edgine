@@ -79,17 +79,13 @@ impl FrameAlloc for BuddyFrameAlloc {
         unsafe { Some(Frame::from_raw(phys, order)) }
     }
 
-    #[expect(
-        clippy::match_wildcard_for_single_variants,
-        reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-    )]
     fn alloc_huge(&self, size: PageSize) -> Option<Frame> {
         use crate::privileged::mm::api;
         let phys = api::pmm_alloc_huge_page_phys(size)?;
         let order = match size {
             PageSize::Size2M => 9u8,
             PageSize::Size1G => 18u8,
-            _ => 0u8,
+            PageSize::Size4K => 0u8,
         };
         // SAFETY: pmm_alloc_huge_page_phys() guarantees unique ownership.
         unsafe { Some(Frame::from_raw(phys, order)) }

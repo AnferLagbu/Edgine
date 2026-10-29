@@ -45,13 +45,13 @@ fn test_fd_plan_constants_match_td01() {
     assert!(
         src.contains("pub const VFS: FdRange =")
             && src.contains(
-                "FdRange::new(0, crate::privileged::lib::low_u16_from_usize(VFS_FD_WIDTH))"
+                "FdRange::new(0, crate::privileged::glue::low_u16_from_usize(VFS_FD_WIDTH))"
             ),
         "VFS 段应以基址 0 纳入 FdPlan (方案 C 重叠校验)"
     );
     assert!(
         src.contains(
-            "SMOLTCP: FdRange = FdRange::new(\n        crate::privileged::lib::low_i32_from_usize(VFS_FD_WIDTH),"
+            "SMOLTCP: FdRange = FdRange::new(\n        crate::privileged::glue::low_i32_from_usize(VFS_FD_WIDTH),"
         ),
         "Smoltcp 范围基址应从 VFS_FD_WIDTH 派生, 与 VFS [0,64) 不重叠 (方案 C)"
     );

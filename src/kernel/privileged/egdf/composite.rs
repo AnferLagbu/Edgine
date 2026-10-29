@@ -128,7 +128,7 @@ impl CompositeBlockDevice {
         Some(Self {
             device_type,
             child_drives: drives,
-            child_count: crate::privileged::lib::low_u8_from_usize(child_drives.len()),
+            child_count: crate::privileged::glue::low_u8_from_usize(child_drives.len()),
             stripe_sectors,
             total_sectors: total,
             read_round_robin: AtomicU32::new(0),
@@ -139,7 +139,7 @@ impl CompositeBlockDevice {
     fn map_raid0_sector(&self, logical: u64) -> (u8, u64) {
         let stripe = logical / self.stripe_sectors;
         let child_idx =
-            crate::privileged::lib::low_u8_from_u64(stripe % u64::from(self.child_count));
+            crate::privileged::glue::low_u8_from_u64(stripe % u64::from(self.child_count));
         let stripe_row = stripe / u64::from(self.child_count);
         let offset = logical % self.stripe_sectors;
         let physical = stripe_row * self.stripe_sectors + offset;
@@ -160,8 +160,8 @@ impl BlockDevice for CompositeBlockDevice {
         match self.device_type {
             CompositeType::Raid0 => {
                 for s in 0..num_sectors {
-                    let chunk = &mut buf[crate::privileged::lib::usize_from_u64(s * 512)
-                        ..crate::privileged::lib::usize_from_u64((s + 1) * 512)];
+                    let chunk = &mut buf[crate::privileged::glue::usize_from_u64(s * 512)
+                        ..crate::privileged::glue::usize_from_u64((s + 1) * 512)];
                     let (drive_idx, phys_sector) = self.map_raid0_sector(sector + s);
                     let ret = egdf_blk_read(drive_idx, phys_sector, chunk);
                     if ret != 0 {
@@ -172,8 +172,8 @@ impl BlockDevice for CompositeBlockDevice {
             }
             CompositeType::Raid1 => {
                 for s in 0..num_sectors {
-                    let chunk = &mut buf[crate::privileged::lib::usize_from_u64(s * 512)
-                        ..crate::privileged::lib::usize_from_u64((s + 1) * 512)];
+                    let chunk = &mut buf[crate::privileged::glue::usize_from_u64(s * 512)
+                        ..crate::privileged::glue::usize_from_u64((s + 1) * 512)];
                     let sector_off = sector + s;
 
                     let start = self.read_round_robin.fetch_add(1, Ordering::Relaxed) as usize
@@ -209,8 +209,8 @@ impl BlockDevice for CompositeBlockDevice {
         match self.device_type {
             CompositeType::Raid0 => {
                 for s in 0..num_sectors {
-                    let chunk = &buf[crate::privileged::lib::usize_from_u64(s * 512)
-                        ..crate::privileged::lib::usize_from_u64((s + 1) * 512)];
+                    let chunk = &buf[crate::privileged::glue::usize_from_u64(s * 512)
+                        ..crate::privileged::glue::usize_from_u64((s + 1) * 512)];
                     let (drive_idx, phys_sector) = self.map_raid0_sector(sector + s);
                     let ret = egdf_blk_write(drive_idx, phys_sector, chunk);
                     if ret != 0 {
@@ -221,8 +221,8 @@ impl BlockDevice for CompositeBlockDevice {
             }
             CompositeType::Raid1 => {
                 for s in 0..num_sectors {
-                    let chunk = &buf[crate::privileged::lib::usize_from_u64(s * 512)
-                        ..crate::privileged::lib::usize_from_u64((s + 1) * 512)];
+                    let chunk = &buf[crate::privileged::glue::usize_from_u64(s * 512)
+                        ..crate::privileged::glue::usize_from_u64((s + 1) * 512)];
                     let sector_off = sector + s;
 
                     for i in 0..self.child_count as usize {
@@ -429,7 +429,7 @@ fn collect_composite_child_drives(children: &[u32]) -> alloc::vec::Vec<u8> {
             continue;
         }
 
-        child_drives.push(crate::privileged::lib::low_u8_from_usize(idx));
+        child_drives.push(crate::privileged::glue::low_u8_from_usize(idx));
     }
 
     child_drives
@@ -439,7 +439,7 @@ fn collect_composite_child_drives(children: &[u32]) -> alloc::vec::Vec<u8> {
 #[unsafe(no_mangle)]
 /// FFI 入口: 探测并注册设备树中的复合块设备, 返回创建数量.
 pub extern "C" fn composite_probe() -> u32 {
-    crate::privileged::lib::low_u32_from_usize(devtree_probe_composites())
+    crate::privileged::glue::low_u32_from_usize(devtree_probe_composites())
 }
 
 #[cfg(test)]

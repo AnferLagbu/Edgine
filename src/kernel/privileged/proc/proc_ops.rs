@@ -148,7 +148,7 @@ pub extern "C" fn proc_set_in_kern(v: u32) {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn proc_get_in_kern() -> u32 {
-    crate::privileged::lib::low_u32_from_u64(CURRENT_IN_KERN.load(Ordering::SeqCst))
+    crate::privileged::glue::low_u32_from_u64(CURRENT_IN_KERN.load(Ordering::SeqCst))
 }
 
 #[repr(C)]
@@ -671,7 +671,7 @@ pub extern "C" fn sys_fork() -> Pid {
             // 而非从顶部向上 (原实现拷 64KB 到 kstack 顶上方, 越界损坏内存).
             // size 取父 kstack 实际大小 (USER_KSTACK_SIZE), 使子进程内核栈初始状态与父一致.
             let kstack_size =
-                crate::privileged::lib::usize_from_u64(super::types::USER_KSTACK_SIZE);
+                crate::privileged::glue::usize_from_u64(super::types::USER_KSTACK_SIZE);
             raw::copy_kstack(
                 child.kernel_stack.load(Ordering::SeqCst) - kstack_size as u64,
                 parent_kstack - kstack_size as u64,
@@ -850,17 +850,14 @@ pub extern "C" fn proc_set_pwm(pid: Pid, pwm: u64) -> i32 {
 // ============================================================================
 
 /// 累加当前进程的 user/sys 时间
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-// 注意: 保持 Rust ABI — 由 tick_accounting 内部调用, TD-10 契约测试
-//       按 Rust ABI 签名匹配该函数.
-#[unsafe(no_mangle)]
-#[expect(clippy::no_mangle_with_rust_abi)]
+// 由 tick_accounting / scheduler 内部以 Rust 路径调用, TD-10 契约测试按 Rust ABI
+// 签名匹配, 无 C 符号导出需求, 故不标 `no_mangle` (P-64 第十五批).
 pub fn proc_account_tick(in_kern: u32) {
     let pid = CURRENT_PROCESS_PTR.load(Ordering::SeqCst);
     if pid == 0 {
         return;
     }
-    PROCESS_TABLE.with_process(crate::privileged::lib::low_u32_from_u64(pid), |p| {
+    PROCESS_TABLE.with_process(crate::privileged::glue::low_u32_from_u64(pid), |p| {
         p.tick_count.fetch_add(1, Ordering::SeqCst);
         if in_kern != 0 {
             p.sys_time.fetch_add(1, Ordering::SeqCst);
@@ -871,10 +868,8 @@ pub fn proc_account_tick(in_kern: u32) {
 }
 
 /// 取得进程的 user/sys 时间 (jiffies 累积).
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-// 注意: 保持 Rust ABI — TD-10 契约测试按 Rust ABI 签名匹配该函数.
-#[unsafe(no_mangle)]
-#[expect(clippy::no_mangle_with_rust_abi)]
+// TD-10 契约测试按 Rust ABI 签名匹配该函数, 无 C 符号导出需求,
+// 故不标 `no_mangle` (P-64 第十五批).
 pub fn proc_get_times(pid: u32, out_user: *mut u64, out_sys: *mut u64) -> i32 {
     if out_user.is_null() || out_sys.is_null() {
         return -1;
@@ -944,7 +939,7 @@ pub extern "C" fn proc_get_rusage(pid: u32, who: i32, out: *mut u8, out_len: u64
         core::ptr::write_unaligned(out.add(8).cast::<i64>(), ut_micros);
         core::ptr::write_unaligned(out.add(16).cast::<i64>(), st_sec);
         core::ptr::write_unaligned(out.add(24).cast::<i64>(), st_micros);
-        let tail = crate::privileged::lib::usize_from_u64(out_len).saturating_sub(32);
+        let tail = crate::privileged::glue::usize_from_u64(out_len).saturating_sub(32);
         if tail > 0 {
             core::ptr::write_bytes(out.add(32), 0u8, tail);
         }

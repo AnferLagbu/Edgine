@@ -119,7 +119,7 @@ impl Device for EGDFNetDevice {
         if n <= 0 {
             return None;
         }
-        self.rx_len = crate::privileged::lib::usize_from_i32(n);
+        self.rx_len = crate::privileged::glue::usize_from_i32(n);
         let rx = EGDFRxToken {
             buf: &self.rx_buf[..self.rx_len],
         };

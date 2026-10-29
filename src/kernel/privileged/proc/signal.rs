@@ -124,12 +124,12 @@ pub struct SignalFrame {
 /// sigreturn trampoline 代码
 ///
 /// # `x86_64` 机器码 (7 字节)
-/// `mov eax, 15` (`SYS_rt_sigreturn` = 15) + `syscall`:
+/// `mov eax, 15` (`SYS_RT_SIGRETURN` = 15) + `syscall`:
 ///   B8 0F 00 00 00     mov eax, 15
 ///   0F 05              syscall
 ///
 /// # aarch64 机器码 (8 字节)
-/// `mov x8, #139` (`SYS_rt_sigreturn` = 139) + `svc #0`:
+/// `mov x8, #139` (`SYS_RT_SIGRETURN` = 139) + `svc #0`:
 ///   D2 80 11 68        movz x8, #139
 ///   D4 00 00 01        svc #0
 ///
@@ -584,7 +584,7 @@ fn signal_frame_base(proc: &super::process::Process, user_rsp: u64, total: usize
     let ss_size = proc.sigaltstack_size.load(Ordering::Acquire);
     let ss_flags = proc.sigaltstack_flags.load(Ordering::Acquire);
     let use_alternate = ss_addr != 0
-        && crate::privileged::lib::usize_from_u64(ss_size) >= total
+        && crate::privileged::glue::usize_from_u64(ss_size) >= total
         && (ss_flags & SS_DISABLE) == 0
         && (ss_flags & SS_ONSTACK) == 0;
 
@@ -898,7 +898,7 @@ fn test_signal_pick_next_logic() -> crate::privileged::tests::TestResult {
     let blocked: u64 = 0b0010;
     let deliverable = pending & !blocked;
     assert_eq_test!(deliverable, 0b1000, "deliverable");
-    let sig_bit = crate::privileged::lib::low_u8_from_u32(deliverable.trailing_zeros());
+    let sig_bit = crate::privileged::glue::low_u8_from_u32(deliverable.trailing_zeros());
     assert_eq_test!(sig_bit, 3, "lowest bit is 3");
     TestResult::Pass
 }

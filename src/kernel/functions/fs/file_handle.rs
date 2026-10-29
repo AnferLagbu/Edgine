@@ -65,7 +65,7 @@ pub fn name_to_handle_at_syscall(
     mnt_id: u64,
     _flags: u32,
 ) -> Result<i64, Errno> {
-    use crate::privileged::lib::CStrExt;
+    use crate::privileged::glue::CStrExt;
     if handle_buf == 0 {
         return Err(Errno::EFAULT);
     }

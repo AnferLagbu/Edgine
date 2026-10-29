@@ -96,13 +96,10 @@ fn test_process_state_name() -> TestResult {
     TestResult::Pass
 }
 
-// 2026-09-11 实测: Ready==Ready 触发 eq_op, 需豁免
-#[allow(clippy::eq_op)]
 fn test_process_state_equality() -> TestResult {
-    check!(
-        ProcessState::Ready == ProcessState::Ready,
-        "same states should be equal"
-    );
+    let ready_a = ProcessState::Ready;
+    let ready_b = ProcessState::Ready;
+    check!(ready_a == ready_b, "same states should be equal");
     check!(
         ProcessState::Ready != ProcessState::Running,
         "different states should not be equal"
@@ -141,7 +138,7 @@ fn test_process_state_lifecycle() -> TestResult {
     for (i, &state) in states.iter().enumerate() {
         assert_eq_test!(
             state as u8,
-            crate::privileged::lib::low_u8_from_usize(i),
+            crate::privileged::glue::low_u8_from_usize(i),
             "state discriminant mismatch"
         );
     }

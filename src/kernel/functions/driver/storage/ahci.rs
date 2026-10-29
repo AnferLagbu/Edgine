@@ -89,88 +89,88 @@ pub const AHCI_MAX_PORTS: usize = 32;
 // ============================================================================
 
 /// Command List Base (低)
-pub const PxCLB: usize = 0x00;
+pub const PX_CLB: usize = 0x00;
 /// Command List Base (高)
-pub const PxCLBU: usize = 0x04;
+pub const PX_CLBU: usize = 0x04;
 /// FIS Base (低)
-pub const PxFB: usize = 0x08;
+pub const PX_FB: usize = 0x08;
 /// FIS Base (高)
-pub const PxFBU: usize = 0x0C;
+pub const PX_FBU: usize = 0x0C;
 /// Interrupt Status
-pub const PxIS: usize = 0x10;
+pub const PX_IS: usize = 0x10;
 /// Interrupt Enable
-pub const PxIE: usize = 0x14;
+pub const PX_IE: usize = 0x14;
 /// Command and Status
-pub const PxCMD: usize = 0x18;
+pub const PX_CMD: usize = 0x18;
 /// 任务文件数据
-pub const PxTFD: usize = 0x20;
+pub const PX_TFD: usize = 0x20;
 /// Signature
-pub const PxSIG: usize = 0x24;
+pub const PX_SIG: usize = 0x24;
 /// SATA Status
-pub const PxSSTS: usize = 0x28;
+pub const PX_SSTS: usize = 0x28;
 /// SATA Control
-pub const PxSCTL: usize = 0x2C;
+pub const PX_SCTL: usize = 0x2C;
 /// SATA Error
-pub const PxSERR: usize = 0x30;
+pub const PX_SERR: usize = 0x30;
 /// SATA Active
-pub const PxSACT: usize = 0x34;
+pub const PX_SACT: usize = 0x34;
 /// Command Issue
-pub const PxCI: usize = 0x38;
+pub const PX_CI: usize = 0x38;
 /// SATA Notification
-pub const PxSNTF: usize = 0x3C;
+pub const PX_SNTF: usize = 0x3C;
 
 // ============================================================================
 // PxCMD 寄存器位
 // ============================================================================
 
 /// 启动 (PxCMD.ST)
-pub const PxCMD_ST: u32 = 1 << 0;
+pub const PX_CMD_ST: u32 = 1 << 0;
 /// FIS 接收使能 (PxCMD.FRE)
-pub const PxCMD_FRE: u32 = 1 << 4;
+pub const PX_CMD_FRE: u32 = 1 << 4;
 /// FIS 接收进行中 (PxCMD.FR)
-pub const PxCMD_FR: u32 = 1 << 14;
+pub const PX_CMD_FR: u32 = 1 << 14;
 /// 命令列表进行中 (PxCMD.CR)
-pub const PxCMD_CR: u32 = 1 << 15;
+pub const PX_CMD_CR: u32 = 1 << 15;
 
 // ============================================================================
 // PxTFD 寄存器位
 // ============================================================================
 
 /// Error (PxTFD.ERR)
-pub const PxTFD_ERR: u32 = 1 << 0;
+pub const PX_TFD_ERR: u32 = 1 << 0;
 /// DRQ (data request)
-pub const PxTFD_DRQ: u32 = 1 << 3;
+pub const PX_TFD_DRQ: u32 = 1 << 3;
 /// Busy
-pub const PxTFD_BSY: u32 = 1 << 7;
+pub const PX_TFD_BSY: u32 = 1 << 7;
 
 // ============================================================================
 // PxSSTS 寄存器位
 // ============================================================================
 
 /// Device Detection (`PxSSTS` `[3:0]`)
-pub const PxSSTS_DET: u32 = 0xF;
+pub const PX_SSTS_DET: u32 = 0xF;
 
 // ============================================================================
 // PxSCTL 寄存器位
 // ============================================================================
 
 /// Device Control (`PxSCTL` `[3:0]`)
-pub const PxSCTL_DET: u32 = 0xF;
+pub const PX_SCTL_DET: u32 = 0xF;
 /// DET=1: 发起 COMRESET (端口复位, 重建 PHY 链路)
-pub const PxSCTL_DET_COMRESET: u32 = 0x1;
+pub const PX_SCTL_DET_COMRESET: u32 = 0x1;
 
 // ============================================================================
 // PxIS 寄存器位
 // ============================================================================
 
 /// D2H Register FIS
-pub const PxIS_DHRS: u32 = 1 << 0;
+pub const PX_IS_DHRS: u32 = 1 << 0;
 /// DMA Setup FIS
-pub const PxIS_DPS: u32 = 1 << 5;
+pub const PX_IS_DPS: u32 = 1 << 5;
 /// 端口连接变更
-pub const PxIS_PCS: u32 = 1 << 9;
+pub const PX_IS_PCS: u32 = 1 << 9;
 /// Task File Error
-pub const PxIS_TFE: u32 = 1 << 30;
+pub const PX_IS_TFE: u32 = 1 << 30;
 
 // ============================================================================
 // 设备签名 (PxSIG)
@@ -344,17 +344,17 @@ impl AhciPort {
 
     /// 读 `PxCLB` (Command List Base Address, 32-bit)
     pub fn cmd_list_base(&self, hba: &AhciHba) -> u32 {
-        self.port_read32(hba, PxCLB)
+        self.port_read32(hba, PX_CLB)
     }
 
     /// 写 `PxCLB`
     pub fn set_cmd_list_base(&self, hba: &AhciHba, val: u32) {
-        self.port_write32(hba, PxCLB, val);
+        self.port_write32(hba, PX_CLB, val);
     }
 
     /// 写 `PxCLBU`
     pub fn set_cmd_list_base_upper(&self, hba: &AhciHba, val: u32) {
-        self.port_write32(hba, PxCLBU, val);
+        self.port_write32(hba, PX_CLBU, val);
     }
 
     /// 设置 Command List 64-bit 物理地址
@@ -365,17 +365,17 @@ impl AhciPort {
 
     /// 读 `PxFB` (FIS Base Address, 32-bit)
     pub fn fis_base(&self, hba: &AhciHba) -> u32 {
-        self.port_read32(hba, PxFB)
+        self.port_read32(hba, PX_FB)
     }
 
     /// 写 `PxFB`
     pub fn set_fis_base(&self, hba: &AhciHba, val: u32) {
-        self.port_write32(hba, PxFB, val);
+        self.port_write32(hba, PX_FB, val);
     }
 
     /// 写 `PxFBU`
     pub fn set_fis_base_upper(&self, hba: &AhciHba, val: u32) {
-        self.port_write32(hba, PxFBU, val);
+        self.port_write32(hba, PX_FBU, val);
     }
 
     /// 设置 FIS 64-bit 物理地址
@@ -386,72 +386,72 @@ impl AhciPort {
 
     /// 读 `PxIS` (Interrupt Status)
     pub fn interrupt_status(&self, hba: &AhciHba) -> u32 {
-        self.port_read32(hba, PxIS)
+        self.port_read32(hba, PX_IS)
     }
 
     /// 应答端口中断 (`PxIS` write-1-to-clear)
     pub fn ack_interrupt(&self, hba: &AhciHba, val: u32) {
-        self.port_write32(hba, PxIS, val);
+        self.port_write32(hba, PX_IS, val);
     }
 
     /// 读 `PxIE` (Interrupt Enable)
     pub fn interrupt_enable(&self, hba: &AhciHba) -> u32 {
-        self.port_read32(hba, PxIE)
+        self.port_read32(hba, PX_IE)
     }
 
     /// 写 `PxIE`
     pub fn set_interrupt_enable(&self, hba: &AhciHba, val: u32) {
-        self.port_write32(hba, PxIE, val);
+        self.port_write32(hba, PX_IE, val);
     }
 
     /// 读 `PxCMD`
     pub fn port_cmd(&self, hba: &AhciHba) -> u32 {
-        self.port_read32(hba, PxCMD)
+        self.port_read32(hba, PX_CMD)
     }
 
     /// 写 `PxCMD`
     pub fn set_port_cmd(&self, hba: &AhciHba, val: u32) {
-        self.port_write32(hba, PxCMD, val);
+        self.port_write32(hba, PX_CMD, val);
     }
 
     /// 读 `PxTFD` (Task File Data)
     pub fn port_tfd(&self, hba: &AhciHba) -> u32 {
-        self.port_read32(hba, PxTFD)
+        self.port_read32(hba, PX_TFD)
     }
 
     /// 读 `PxSIG` (设备签名)
     pub fn port_signature(&self, hba: &AhciHba) -> u32 {
-        self.port_read32(hba, PxSIG)
+        self.port_read32(hba, PX_SIG)
     }
 
     /// 读 `PxSSTS`
     pub fn port_sata_status(&self, hba: &AhciHba) -> SataStatus {
-        SataStatus::from_register(self.port_read32(hba, PxSSTS))
+        SataStatus::from_register(self.port_read32(hba, PX_SSTS))
     }
 
     /// 读 `PxCI` (Command Issue)
     pub fn port_cmd_issue(&self, hba: &AhciHba) -> u32 {
-        self.port_read32(hba, PxCI)
+        self.port_read32(hba, PX_CI)
     }
 
     /// 写 `PxCI` (发布命令)
     pub fn set_port_cmd_issue(&self, hba: &AhciHba, val: u32) {
-        self.port_write32(hba, PxCI, val);
+        self.port_write32(hba, PX_CI, val);
     }
 
     /// 端口是否忙碌 (PxTFD.BSY)
     pub fn port_is_busy(&self, hba: &AhciHba) -> bool {
-        self.port_tfd(hba) & PxTFD_BSY != 0
+        self.port_tfd(hba) & PX_TFD_BSY != 0
     }
 
     /// 端口是否有数据请求 (PxTFD.DRQ)
     pub fn port_has_drq(&self, hba: &AhciHba) -> bool {
-        self.port_tfd(hba) & PxTFD_DRQ != 0
+        self.port_tfd(hba) & PX_TFD_DRQ != 0
     }
 
     /// 端口是否有错误 (PxTFD.ERR)
     pub fn port_has_error(&self, hba: &AhciHba) -> bool {
-        self.port_tfd(hba) & PxTFD_ERR != 0
+        self.port_tfd(hba) & PX_TFD_ERR != 0
     }
 
     // ── 端口操作 ──
@@ -465,8 +465,8 @@ impl AhciPort {
     /// pc ich9-ahci 与 q35 内建 SATA 均复现)。
     pub fn comreset(&self, hba: &AhciHba) {
         // DET=1: 发出 COMRESET 并保持 (真实硬件 PHY 时序要求 >1ms)
-        let sctl = self.port_read32(hba, PxSCTL);
-        self.port_write32(hba, PxSCTL, (sctl & !PxSCTL_DET) | PxSCTL_DET_COMRESET);
+        let sctl = self.port_read32(hba, PX_SCTL);
+        self.port_write32(hba, PX_SCTL, (sctl & !PX_SCTL_DET) | PX_SCTL_DET_COMRESET);
         let mut hold = 1_000_000u32;
         while hold > 0 {
             hold -= 1;
@@ -474,14 +474,14 @@ impl AhciPort {
         }
 
         // DET=0: 释放 COMRESET, 设备开始链路建立
-        let sctl = self.port_read32(hba, PxSCTL);
-        self.port_write32(hba, PxSCTL, sctl & !PxSCTL_DET);
+        let sctl = self.port_read32(hba, PX_SCTL);
+        self.port_write32(hba, PX_SCTL, sctl & !PX_SCTL_DET);
 
         // 轮询 PxSSTS.DET==3 (设备在位 + 通信建立); 超时按设备缺位
         // 处理, 由调用方 detect_device 最终判定
         let mut timeout = 1_000_000u32;
         while timeout > 0 {
-            if SataStatus::from_register(self.port_read32(hba, PxSSTS)).is_connected() {
+            if SataStatus::from_register(self.port_read32(hba, PX_SSTS)).is_connected() {
                 break;
             }
             timeout -= 1;
@@ -498,15 +498,15 @@ impl AhciPort {
     /// 端口扫描判不出设备 (带盘冒烟实证)。
     pub fn enable_fis_receive(&mut self, hba: &AhciHba) -> bool {
         // 清零中断状态
-        self.port_write32(hba, PxIS, 0xFFFF_FFFF);
+        self.port_write32(hba, PX_IS, 0xFFFF_FFFF);
 
         // FRE=1
         let cmd = self.port_cmd(hba);
-        self.set_port_cmd(hba, cmd | PxCMD_FRE);
+        self.set_port_cmd(hba, cmd | PX_CMD_FRE);
 
         // 等待 FR 置位
         let mut timeout = 1_000_000u64;
-        while self.port_cmd(hba) & PxCMD_FR == 0 && timeout > 0 {
+        while self.port_cmd(hba) & PX_CMD_FR == 0 && timeout > 0 {
             timeout -= 1;
             core::hint::spin_loop();
         }
@@ -576,15 +576,15 @@ impl AhciPort {
         }
 
         // 清零中断状态
-        self.port_write32(hba, PxIS, 0xFFFF_FFFF);
+        self.port_write32(hba, PX_IS, 0xFFFF_FFFF);
 
         // 启用 FIS 接收 (FRE)
         let cmd = self.port_cmd(hba);
-        self.set_port_cmd(hba, cmd | PxCMD_FRE);
+        self.set_port_cmd(hba, cmd | PX_CMD_FRE);
 
         // 等待 FR 置位
         let mut timeout = 1_000_000u64;
-        while self.port_cmd(hba) & PxCMD_FR == 0 && timeout > 0 {
+        while self.port_cmd(hba) & PX_CMD_FR == 0 && timeout > 0 {
             timeout -= 1;
             core::hint::spin_loop();
         }
@@ -595,11 +595,11 @@ impl AhciPort {
 
         // 启动命令处理 (ST)
         let cmd = self.port_cmd(hba);
-        self.set_port_cmd(hba, cmd | PxCMD_ST);
+        self.set_port_cmd(hba, cmd | PX_CMD_ST);
 
         // 等待 CR 置位
         timeout = 1_000_000;
-        while self.port_cmd(hba) & PxCMD_CR == 0 && timeout > 0 {
+        while self.port_cmd(hba) & PX_CMD_CR == 0 && timeout > 0 {
             timeout -= 1;
             core::hint::spin_loop();
         }
@@ -620,18 +620,18 @@ impl AhciPort {
 
         // 停止命令处理 (ST=0)
         let cmd = self.port_cmd(hba);
-        self.set_port_cmd(hba, cmd & !PxCMD_ST);
+        self.set_port_cmd(hba, cmd & !PX_CMD_ST);
         let mut timeout = 1_000_000u64;
-        while self.port_cmd(hba) & PxCMD_CR != 0 && timeout > 0 {
+        while self.port_cmd(hba) & PX_CMD_CR != 0 && timeout > 0 {
             timeout -= 1;
             core::hint::spin_loop();
         }
 
         // 停止 FIS 接收 (FRE=0)
         let cmd = self.port_cmd(hba);
-        self.set_port_cmd(hba, cmd & !PxCMD_FRE);
+        self.set_port_cmd(hba, cmd & !PX_CMD_FRE);
         timeout = 1_000_000;
-        while self.port_cmd(hba) & PxCMD_FR != 0 && timeout > 0 {
+        while self.port_cmd(hba) & PX_CMD_FR != 0 && timeout > 0 {
             timeout -= 1;
             core::hint::spin_loop();
         }
@@ -703,7 +703,7 @@ impl AhciPort {
         timeout = 5_000_000;
         while timeout > 0 {
             let is = self.interrupt_status(hba);
-            if is & (PxIS_DHRS | PxIS_DPS | PxIS_PCS | PxIS_TFE) != 0 {
+            if is & (PX_IS_DHRS | PX_IS_DPS | PX_IS_PCS | PX_IS_TFE) != 0 {
                 break;
             }
             timeout -= 1;
@@ -716,7 +716,7 @@ impl AhciPort {
         }
 
         // 7. 检查错误
-        if self.interrupt_status(hba) & PxIS_TFE != 0 {
+        if self.interrupt_status(hba) & PX_IS_TFE != 0 {
             self.clear_port_error_status(hba);
             return Err(());
         }
@@ -733,7 +733,7 @@ impl AhciPort {
     /// PxSERR 状态/诊断位为 W1C, 错误完成后保持置位; 不清除将影响
     /// 端口后续命令处理。PxIS 同步清除避免残留中断状态误判。
     fn clear_port_error_status(&self, hba: &AhciHba) {
-        self.port_write32(hba, PxSERR, 0xFFFF_FFFF);
+        self.port_write32(hba, PX_SERR, 0xFFFF_FFFF);
         self.ack_interrupt(hba, 0xFFFF_FFFF);
     }
 

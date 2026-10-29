@@ -847,10 +847,6 @@ impl ProcfsData {
         result.unwrap_or(-1)
     }
 
-    #[expect(
-        clippy::no_effect_underscore_binding,
-        reason = "no_effect_underscore_binding: let _ = expr 用于类型推导/副作用; 当前优先 expect"
-    )]
     /// 读取进程统计 /proc/[pid]/stat
     fn read_process_stat(pid: u32, buf: &mut [u8]) -> i32 {
         use crate::privileged::proc::api::process_with;
@@ -879,7 +875,6 @@ impl ProcfsData {
             // 使用 create_time 作为进程启动时间 (ticks)
             let start = crate::privileged::proc::api::proc_get_create_time(pid);
             let vsize = 0u64; // 暂时返回 0
-            let _rss = 0u64; // 暂时返回 0
 
             let s = alloc::format!(
                 "{pid} ({name}) {state} {parent_pid} {pid} 0 0 0 0 0 0 {utime} {stime} 0 0 0 {start} 1 0 0 {vsize} 0 0 0 0 0 0 0 0 0 0\n"

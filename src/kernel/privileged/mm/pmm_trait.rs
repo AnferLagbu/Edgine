@@ -86,7 +86,7 @@ impl PmmPolicy for FallbackPmmPolicy {
         if count <= 1 {
             return 0;
         }
-        let order = crate::privileged::lib::low_u8_from_u32((count - 1).bit_width());
+        let order = crate::privileged::glue::low_u8_from_u32((count - 1).bit_width());
         if order > max_order { max_order } else { order }
     }
 

@@ -71,11 +71,10 @@ fn test_active_socket_counting() {
 }
 
 #[test]
-#[allow(clippy::assertions_on_constants)] // 编译期回归断言, 故意用常量
 fn test_old_hardcoded_limit_was_8() {
     // 文档化回归: 旧硬编码 = 8 (8 个并发 socket).
     // 修复后默认 256 (32x), 编译期可调.
     // 本测试仅作回归记录, 不在运行时检查.
     const OLD_MAX_SOCKETS: usize = 8;
-    assert!(MAX_SOCKETS >= OLD_MAX_SOCKETS * 8); // 至少 8 倍
+    assert!(std::hint::black_box(MAX_SOCKETS) >= OLD_MAX_SOCKETS * 8); // 至少 8 倍
 }

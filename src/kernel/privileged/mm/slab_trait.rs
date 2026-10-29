@@ -107,7 +107,7 @@ impl SlabPolicy for FallbackSlabPolicy {
         let estimated_objects = usable_space / object_size;
         let bitmap_bytes = estimated_objects.div_ceil(8);
         let actual_usable = usable_space - bitmap_bytes;
-        crate::privileged::lib::low_u32_from_usize(actual_usable / object_size)
+        crate::privileged::glue::low_u32_from_usize(actual_usable / object_size)
     }
 
     fn select_alloc_source(&self, ctx: SlabPolicyContext) -> SlabAllocSource {

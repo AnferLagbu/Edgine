@@ -334,7 +334,7 @@ pub unsafe extern "C" fn strchr(s: *const i8, c: i32) -> *mut i8 {
             return core::ptr::null_mut();
         }
 
-        let target = crate::privileged::lib::low_i8_from_i32(c);
+        let target = crate::privileged::glue::low_i8_from_i32(c);
         let mut p = s;
 
         loop {
@@ -373,7 +373,7 @@ pub unsafe extern "C" fn strrchr(s: *const i8, c: i32) -> *mut i8 {
             return core::ptr::null_mut();
         }
 
-        let target = crate::privileged::lib::low_i8_from_i32(c);
+        let target = crate::privileged::glue::low_i8_from_i32(c);
         let mut p = s;
         let mut last: *const i8 = core::ptr::null();
 
@@ -577,7 +577,7 @@ pub unsafe extern "C" fn memset(
 
         #[cfg(target_arch = "aarch64")]
         {
-            let val = crate::privileged::lib::u8_from_i32(c & 0xFF);
+            let val = crate::privileged::glue::u8_from_i32(c & 0xFF);
             let mut dst = s.cast::<u8>();
             let mut remaining = n;
 
@@ -618,7 +618,7 @@ pub unsafe extern "C" fn memset(
         #[cfg(not(target_arch = "aarch64"))]
         {
             let p = s.cast::<u8>();
-            let val = crate::privileged::lib::u8_from_i32(c & 0xFF);
+            let val = crate::privileged::glue::u8_from_i32(c & 0xFF);
             for i in 0..n {
                 *p.add(i) = val;
             }
@@ -652,7 +652,7 @@ pub unsafe extern "C" fn memset_optimized(s: *mut u8, c: i32, n: usize) -> *mut 
             return s;
         }
 
-        let val = crate::privileged::lib::u64_from_i32(c & 0xFF); // 转换为 u64 以适配 rax 寄存器
+        let val = crate::privileged::glue::u64_from_i32(c & 0xFF); // 转换为 u64 以适配 rax 寄存器
         let dest = s.cast::<u8>();
 
         // 使用内联汇编调用 REP STOSB
@@ -740,7 +740,7 @@ pub unsafe extern "C" fn memchr(s: *const u8, c: i32, n: usize) -> *mut u8 {
         }
 
         let p = s.cast::<u8>();
-        let target = crate::privileged::lib::u8_from_i32(c & 0xFF);
+        let target = crate::privileged::glue::u8_from_i32(c & 0xFF);
 
         for i in 0..n {
             if *p.add(i) == target {

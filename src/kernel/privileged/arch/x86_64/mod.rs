@@ -48,12 +48,7 @@ impl CoreArch for X8664 {
         // 仅 host-test feature 生效, kernel_test 行为不变.
         #[cfg(feature = "host-test")]
         {
-            // E-04: host 桩分支显式 return, 保持与裸机分支结构对称 (expect 兑底 needless_return)
-            #[expect(
-                clippy::needless_return,
-                reason = "needless_return: host 桩分支显式 return 与裸机分支保持结构对称; 当前优先 expect"
-            )]
-            return 0;
+            0
         }
         #[cfg(not(feature = "host-test"))]
         {
@@ -156,12 +151,7 @@ impl InterruptArch for X8664 {
         // 仅 host-test feature 生效, kernel_test 行为不变.
         #[cfg(feature = "host-test")]
         {
-            // E-04: host 桩分支显式 return, 保持与裸机分支结构对称 (expect 兑底 needless_return)
-            #[expect(
-                clippy::needless_return,
-                reason = "needless_return: host 桩分支显式 return 与裸机分支保持结构对称; 当前优先 expect"
-            )]
-            return 0;
+            0
         }
         #[cfg(not(feature = "host-test"))]
         {
@@ -177,7 +167,7 @@ impl InterruptArch for X8664 {
                     options(nomem, nostack, preserves_flags)
                 );
             }
-            crate::privileged::lib::usize_from_u64(flags)
+            crate::privileged::glue::usize_from_u64(flags)
         }
     }
 
@@ -190,12 +180,6 @@ impl InterruptArch for X8664 {
         #[cfg(feature = "host-test")]
         {
             let _ = flags;
-            // E-04: host 桩分支显式 return, 保持与裸机分支结构对称 (expect 兑底 needless_return)
-            #[expect(
-                clippy::needless_return,
-                reason = "needless_return: host 桩分支显式 return 与裸机分支保持结构对称; 当前优先 expect"
-            )]
-            return;
         }
         #[cfg(not(feature = "host-test"))]
         {
@@ -216,12 +200,7 @@ impl InterruptArch for X8664 {
         // 桩化 no-op. 仅 host-test feature 生效, kernel_test 行为不变.
         #[cfg(feature = "host-test")]
         {
-            // E-04: host 桩分支显式 return, 保持与裸机分支结构对称 (expect 兑底 needless_return)
-            #[expect(
-                clippy::needless_return,
-                reason = "needless_return: host 桩分支显式 return 与裸机分支保持结构对称; 当前优先 expect"
-            )]
-            return;
+            // 桩化 no-op (空块即返回值 ())
         }
         #[cfg(not(feature = "host-test"))]
         {
@@ -253,7 +232,7 @@ impl InterruptArch for X8664 {
     #[inline]
     fn send_ipi(target_cpu: u32, vector: u8) {
         use crate::privileged::arch::x86_64::apic;
-        apic::send_ipi(crate::privileged::lib::low_u8_from_u32(target_cpu), vector);
+        apic::send_ipi(crate::privileged::glue::low_u8_from_u32(target_cpu), vector);
     }
 
     /// 广播 IPI 到所有 CPU (不含自身)。
@@ -407,7 +386,7 @@ impl MmuArch for X8664 {
                 options(nostack, preserves_flags)
             );
         }
-        crate::privileged::lib::usize_from_u64(cr2)
+        crate::privileged::glue::usize_from_u64(cr2)
     }
 
     /// 进程上下文切换 (`process_switch_asm`)。
@@ -420,12 +399,6 @@ impl MmuArch for X8664 {
         #[cfg(feature = "host-test")]
         {
             let _ = (from, to);
-            // E-04: host 桩分支显式 return, 保持与裸机分支结构对称 (expect 兑底 needless_return)
-            #[expect(
-                clippy::needless_return,
-                reason = "needless_return: host 桩分支显式 return 与裸机分支保持结构对称; 当前优先 expect"
-            )]
-            return;
         }
         #[cfg(not(feature = "host-test"))]
         {

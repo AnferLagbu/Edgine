@@ -32,7 +32,7 @@ fn test_pipe_basic() -> TestResult {
         &mut ns,
         wfd,
         &data,
-        crate::privileged::lib::low_u32_from_usize(data.len()),
+        crate::privileged::glue::low_u32_from_usize(data.len()),
     )
     .is_err()
     {

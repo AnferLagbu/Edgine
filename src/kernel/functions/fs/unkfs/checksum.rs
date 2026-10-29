@@ -86,24 +86,20 @@ impl UnkfsChecksum {
         self.value[3] = 0;
     }
 
-    #[expect(
-        clippy::many_single_char_names,
-        reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-    )]
     fn fletcher4(&mut self, data: &[u8]) {
         let (words, _) = data.as_chunks::<8>();
-        let mut a: u64 = 0;
-        let mut b: u64 = 0;
-        let mut c: u64 = 0;
-        let mut d: u64 = 0;
+        let mut va: u64 = 0;
+        let mut vb: u64 = 0;
+        let mut vc: u64 = 0;
+        let mut vd: u64 = 0;
         for chunk in words {
             let w = u64::from_le_bytes([
                 chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
             ]);
-            a = a.wrapping_add(w);
-            b = b.wrapping_add(a);
-            c = c.wrapping_add(b);
-            d = d.wrapping_add(c);
+            va = va.wrapping_add(w);
+            vb = vb.wrapping_add(va);
+            vc = vc.wrapping_add(vb);
+            vd = vd.wrapping_add(vc);
         }
         let rem = data.len() % 8;
         if rem > 0 {
@@ -111,15 +107,15 @@ impl UnkfsChecksum {
             let mut last = [0u8; 8];
             last[..rem].copy_from_slice(&data[start..]);
             let w = u64::from_le_bytes(last);
-            a = a.wrapping_add(w);
-            b = b.wrapping_add(a);
-            c = c.wrapping_add(b);
-            d = d.wrapping_add(c);
+            va = va.wrapping_add(w);
+            vb = vb.wrapping_add(va);
+            vc = vc.wrapping_add(vb);
+            vd = vd.wrapping_add(vc);
         }
-        self.value[0] = a;
-        self.value[1] = b;
-        self.value[2] = c;
-        self.value[3] = d;
+        self.value[0] = va;
+        self.value[1] = vb;
+        self.value[2] = vc;
+        self.value[3] = vd;
     }
 
     fn sha256(&mut self, data: &[u8]) {

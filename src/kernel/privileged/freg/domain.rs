@@ -299,7 +299,7 @@ impl RecoveryDomain {
             undo_offset: undo_count,
         };
         self.freg_stack_top.store(
-            crate::privileged::lib::low_u32_from_usize(top) + 1,
+            crate::privileged::glue::low_u32_from_usize(top) + 1,
             Ordering::SeqCst,
         );
     }
@@ -326,7 +326,7 @@ impl RecoveryDomain {
         let mut ranges = self.addr_ranges.lock();
         ranges[count] = (start, end);
         self.addr_range_count.store(
-            crate::privileged::lib::low_u32_from_usize(count) + 1,
+            crate::privileged::glue::low_u32_from_usize(count) + 1,
             Ordering::SeqCst,
         );
         true

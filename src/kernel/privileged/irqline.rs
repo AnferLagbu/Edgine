@@ -85,7 +85,7 @@ impl IrqLine {
     /// 判据一致 (见 `idt::legacy_irq_via_ioapic`), 避免 8259A 投递却仅发
     /// LAPIC EOI 导致该类 IRQ 永久停投.
     pub fn enable(&self) {
-        crate::privileged::idt::IdtManager::enable_irq(crate::privileged::lib::low_u8_from_u32(
+        crate::privileged::idt::IdtManager::enable_irq(crate::privileged::glue::low_u8_from_u32(
             self.irq,
         ));
     }
@@ -94,7 +94,7 @@ impl IrqLine {
     ///
     /// 委托 `IdtManager` 统一路由 (理由同 `enable`).
     pub fn disable(&self) {
-        crate::privileged::idt::IdtManager::disable_irq(crate::privileged::lib::low_u8_from_u32(
+        crate::privileged::idt::IdtManager::disable_irq(crate::privileged::glue::low_u8_from_u32(
             self.irq,
         ));
     }

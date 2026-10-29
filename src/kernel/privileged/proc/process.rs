@@ -477,7 +477,7 @@ impl Process {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
             let stack = pmm_alloc_pages(
-                (KERNEL_STACK_SIZE / crate::privileged::lib::usize_from_u64(PAGE_SIZE)) as u64,
+                (KERNEL_STACK_SIZE / crate::privileged::glue::usize_from_u64(PAGE_SIZE)) as u64,
             );
             if stack.is_null() {
                 return false;
@@ -568,7 +568,7 @@ impl Process {
 
     /// 读取当前进程状态.
     pub fn get_state(&self) -> ProcessState {
-        ProcessState::from_u8(crate::privileged::lib::low_u8_from_u32(
+        ProcessState::from_u8(crate::privileged::glue::low_u8_from_u32(
             self.state.load(Ordering::SeqCst),
         ))
     }
@@ -670,7 +670,7 @@ impl Process {
 
     /// 读取实时调度优先级.
     pub fn get_rt_priority(&self) -> u8 {
-        crate::privileged::lib::low_u8_from_u32(self.rt_priority.load(Ordering::SeqCst))
+        crate::privileged::glue::low_u8_from_u32(self.rt_priority.load(Ordering::SeqCst))
     }
 
     /// 设置实时调度优先级.
@@ -784,8 +784,8 @@ impl ProcessTable {
             if !bitmap[idx] {
                 bitmap[idx] = true;
                 // 更新下次搜索起点 (环形递增)
-                *search_idx = crate::privileged::lib::low_u32_from_usize((idx + 1) % max);
-                return Some(crate::privileged::lib::low_u32_from_usize(idx));
+                *search_idx = crate::privileged::glue::low_u32_from_usize((idx + 1) % max);
+                return Some(crate::privileged::glue::low_u32_from_usize(idx));
             }
         }
 

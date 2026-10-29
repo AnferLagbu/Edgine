@@ -1,14 +1,14 @@
 //! I-45 补充验收: 用户态 sigaltstack 系统调用, 内核正确记录替代栈参数
 //!
 //! 覆盖契约:
-//! 1. `SYS_sigaltstack = 131` 系统调用号
+//! 1. `SYS_SIGALTSTACK = 131` 系统调用号
 //! 2. `sys_rt_sigreturn` 仅清 `SS_ONSTACK`, 保留 `SS_DISABLE`
 //! 3. host 无当前进程时 `sys_sigaltstack` 返回 -ESRCH (内核真实路径)
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `sigaltstack_op` / `StackT` / `AltStackState` 状态机平行镜像, 改引
 //! 内核真实常量:
-//! - `edgine::kernel::functions::syscall::types::SYS_sigaltstack` (pub const = 131)
+//! - `edgine::kernel::functions::syscall::types::SYS_SIGALTSTACK` (pub const = 131)
 //! - `edgine::kernel::privileged::proc::{SS_ONSTACK, SS_DISABLE}` (pub const)
 //! - `edgine::kernel::privileged::syscall::api::sys_sigaltstack` (pub fn)
 //!
@@ -20,14 +20,14 @@
 //! (`query_only_no_change` / `set_then_query_returns_value` / `disable_clears_addr_size`
 //! 等) 已移除. 状态机真实覆盖由 QEMU 集成测试 (syscall 路径) 承担.
 
-use edgine::kernel::functions::syscall::types::SYS_sigaltstack;
+use edgine::kernel::functions::syscall::types::SYS_SIGALTSTACK;
 use edgine::kernel::privileged::proc::{SS_DISABLE, SS_ONSTACK};
 use edgine::kernel::privileged::syscall::api::sys_sigaltstack;
 
 #[test]
 fn syscall_number_is_546() {
-    // 镜像 [privileged/syscall/types.rs::SYS_sigaltstack] → 内核真实常量
-    assert_eq!(SYS_sigaltstack, 131);
+    // 镜像 [privileged/syscall/types.rs::SYS_SIGALTSTACK] → 内核真实常量
+    assert_eq!(SYS_SIGALTSTACK, 131);
 }
 
 #[test]

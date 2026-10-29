@@ -446,11 +446,11 @@ pub fn sys_nf_add_rule(
     dst_prefix: u64,
     verdict: u64,
 ) -> i64 {
-    let Some(hook) = NfHook::from_u8(crate::privileged::lib::low_u8_from_u64(hook)) else {
+    let Some(hook) = NfHook::from_u8(crate::privileged::glue::low_u8_from_u64(hook)) else {
         return -(Errno::EINVAL as i64);
     };
 
-    let Some(vf) = NfVerdict::from_i32(crate::privileged::lib::low_i32_from_u64(verdict)) else {
+    let Some(vf) = NfVerdict::from_i32(crate::privileged::glue::low_i32_from_u64(verdict)) else {
         return -(Errno::EINVAL as i64);
     };
 
@@ -458,16 +458,16 @@ pub fn sys_nf_add_rule(
         name: alloc::format!("rule_{}", nf_hook_count(hook)),
         src_cidr: if src_prefix > 0 {
             Some((
-                crate::privileged::lib::low_u32_from_u64(src_ip).to_be_bytes(),
-                crate::privileged::lib::low_u8_from_u64(src_prefix),
+                crate::privileged::glue::low_u32_from_u64(src_ip).to_be_bytes(),
+                crate::privileged::glue::low_u8_from_u64(src_prefix),
             ))
         } else {
             None
         },
         dst_cidr: if dst_prefix > 0 {
             Some((
-                crate::privileged::lib::low_u32_from_u64(dst_ip).to_be_bytes(),
-                crate::privileged::lib::low_u8_from_u64(dst_prefix),
+                crate::privileged::glue::low_u32_from_u64(dst_ip).to_be_bytes(),
+                crate::privileged::glue::low_u8_from_u64(dst_prefix),
             ))
         } else {
             None
@@ -489,7 +489,7 @@ pub fn sys_nf_add_rule(
 ///
 /// 当 hook 非法时返回 `-EINVAL`; 成功返回 0, 规则不存在时返回 `-ENOENT`。
 pub fn sys_nf_del_rule(hook: u64, rule_index: u64) -> i64 {
-    let Some(hook) = NfHook::from_u8(crate::privileged::lib::low_u8_from_u64(hook)) else {
+    let Some(hook) = NfHook::from_u8(crate::privileged::glue::low_u8_from_u64(hook)) else {
         return -(Errno::EINVAL as i64);
     };
 

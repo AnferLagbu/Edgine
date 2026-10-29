@@ -73,28 +73,14 @@ pub fn validate_memory_config() -> Result<(), ConfigError> {
 /// 校验中断配置.
 ///
 /// # Errors
-#[cfg_attr(
-    target_arch = "aarch64",
-    expect(
-        clippy::unnecessary_wraps,
-        reason = "aarch64 上 APIC/IOAPIC 检查已禁用, 返回 Ok; x86_64 才真正检查"
-    )
-)]
 /// 在 `x86_64` 上, 当 APIC 与 IOAPIC 均未初始化时返回
 /// `Err(ConfigError::IrqControllerUnavailable)`.
+#[cfg(target_arch = "x86_64")]
 pub fn validate_interrupt_config() -> Result<(), ConfigError> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        let apic_ok = crate::privileged::arch::apic::is_initialized();
-        let ioapic_ok = crate::privileged::arch::ioapic::is_initialized();
-        if !apic_ok && !ioapic_ok {
-            return Err(ConfigError::IrqControllerUnavailable);
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        // GIC 初始化失败已经在 arch 层 panic, 此处只需做软校验
+    let apic_ok = crate::privileged::arch::apic::is_initialized();
+    let ioapic_ok = crate::privileged::arch::ioapic::is_initialized();
+    if !apic_ok && !ioapic_ok {
+        return Err(ConfigError::IrqControllerUnavailable);
     }
 
     Ok(())
@@ -167,6 +153,8 @@ pub fn validate_system_config() -> u32 {
         }
     }
 
+    // aarch64 的 GIC 初始化失败已在 arch 层 panic, 无软件校验项
+    #[cfg(target_arch = "x86_64")]
     match validate_interrupt_config() {
         Ok(()) => {}
         Err(e) => {

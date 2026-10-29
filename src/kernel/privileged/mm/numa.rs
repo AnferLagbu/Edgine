@@ -205,7 +205,7 @@ impl NumaNode {
             return 100;
         }
         let free = self.free_pages.load(Ordering::Acquire);
-        crate::privileged::lib::low_u32_from_u64(free * 100 / total)
+        crate::privileged::glue::low_u32_from_u64(free * 100 / total)
     }
 }
 
@@ -285,7 +285,7 @@ impl NumaTopology {
 
         nodes.push(Arc::new(node));
         self.num_nodes.store(
-            crate::privileged::lib::low_u32_from_usize(nodes.len()),
+            crate::privileged::glue::low_u32_from_usize(nodes.len()),
             Ordering::Release,
         );
     }
@@ -422,7 +422,7 @@ pub fn sys_get_mempolicy(_mode_ptr: u64, _nodemask_ptr: u64) -> i64 {
 
 /// `sys_set_mempolicy` — 设置 NUMA 内存策略
 pub fn sys_set_mempolicy(mode: u64, nodemask: u64) -> i64 {
-    let policy_mode = NumaPolicy::from_u8(crate::privileged::lib::low_u8_from_u64(mode));
+    let policy_mode = NumaPolicy::from_u8(crate::privileged::glue::low_u8_from_u64(mode));
 
     if (policy_mode == NumaPolicy::Bind || policy_mode == NumaPolicy::Interleave) && nodemask == 0 {
         return -(22i64);

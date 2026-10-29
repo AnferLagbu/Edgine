@@ -87,7 +87,7 @@ impl DomainId {
 
     /// 转换为对应的 POSIX uid (截断为 u32).
     pub fn to_uid(self) -> u32 {
-        crate::privileged::lib::low_u32_from_u64(self.0)
+        crate::privileged::glue::low_u32_from_u64(self.0)
     }
 }
 

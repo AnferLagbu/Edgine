@@ -105,7 +105,7 @@ pub fn raw_copy_out(ptr: u64, len: u32, data: &[u8]) -> Result<u32, Errno> {
     if safe_copy_to_user(ptr, &data[..n], n).is_err() {
         return Err(Errno::EFAULT);
     }
-    Ok(crate::privileged::lib::low_u32_from_usize(n))
+    Ok(crate::privileged::glue::low_u32_from_usize(n))
 }
 
 /// 读取 4 字节 u32
@@ -193,7 +193,7 @@ pub fn raw_read_sockaddr_un(ptr: u64, addrlen: u32) -> Result<SockAddrUn, Errno>
     path[..nul_pos].copy_from_slice(&path_bytes[..nul_pos]);
     Ok(SockAddrUn {
         path,
-        path_len: crate::privileged::lib::low_u16_from_usize(nul_pos),
+        path_len: crate::privileged::glue::low_u16_from_usize(nul_pos),
     })
 }
 
@@ -220,7 +220,7 @@ pub fn raw_write_sockaddr_un(ptr: u64, addrlen_ptr: u64, addr: &SockAddrUn) -> R
         return Err(Errno::EFAULT);
     }
     // 写回 addrlen = 110
-    let total = crate::privileged::lib::low_u32_from_usize(n + 2);
+    let total = crate::privileged::glue::low_u32_from_usize(n + 2);
     let total_bytes = total.to_ne_bytes();
     if safe_copy_to_user(addrlen_ptr, &total_bytes, 4).is_err() {
         return Err(Errno::EFAULT);
@@ -369,7 +369,7 @@ pub fn sendto_syscall(
         net_socket::sm_send(
             fd,
             data.as_ptr(),
-            crate::privileged::lib::low_u32_from_usize(data.len()),
+            crate::privileged::glue::low_u32_from_usize(data.len()),
             0,
         )
     } else {
@@ -392,7 +392,7 @@ pub fn sendto_syscall(
                 net_socket::sm_sendto(
                     fd,
                     data.as_ptr(),
-                    crate::privileged::lib::low_u32_from_usize(data.len()),
+                    crate::privileged::glue::low_u32_from_usize(data.len()),
                     0,
                     bytes.as_ptr(),
                     8,
@@ -406,7 +406,7 @@ pub fn sendto_syscall(
                 net_socket::sm_sendto(
                     fd,
                     data.as_ptr(),
-                    crate::privileged::lib::low_u32_from_usize(data.len()),
+                    crate::privileged::glue::low_u32_from_usize(data.len()),
                     0,
                     buf.as_ptr(),
                     28,
@@ -445,7 +445,7 @@ pub fn recvfrom_syscall(
     let n = net_socket::sm_recvfrom(
         fd,
         stack_buf.as_mut_ptr(),
-        crate::privileged::lib::low_u32_from_usize(want),
+        crate::privileged::glue::low_u32_from_usize(want),
         0,
         src_ptr as *mut u8,
         src_len_ptr as *mut u32,
@@ -456,8 +456,8 @@ pub fn recvfrom_syscall(
     // P0-I-37 修复: 走异常表保护版
     if safe_copy_to_user(
         buf_ptr,
-        &stack_buf[..crate::privileged::lib::usize_from_i32(n)],
-        crate::privileged::lib::usize_from_i32(n),
+        &stack_buf[..crate::privileged::glue::usize_from_i32(n)],
+        crate::privileged::glue::usize_from_i32(n),
     )
     .is_err()
     {
@@ -491,7 +491,7 @@ pub fn setsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, valen
         level,
         optname,
         buf.as_ptr(),
-        crate::privileged::lib::low_u32_from_usize(len),
+        crate::privileged::glue::low_u32_from_usize(len),
     );
     i64::from(rc)
 }

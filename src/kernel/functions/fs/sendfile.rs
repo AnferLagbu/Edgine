@@ -12,7 +12,7 @@
 //!
 //! ## 归属 (框内核范式, 阶段 2-A)
 //!
-//! 本模块为 `SYS_sendfile` / `SYS_splice` 的权威实现, 原
+//! 本模块为 `SYS_SENDFILE` / `SYS_SPLICE` 的权威实现, 原
 //! `privileged::syscall::sendfile` 已删除 (机制归 privileged, 功能归 functions).
 //! 用户指针读写经 `privileged::syscall::api` 安全包装 (read/write_u64_to_user),
 //! VFS 数据面经内核缓冲 I/O (`vfs_read_kernel` / `vfs_write_kernel`).

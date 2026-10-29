@@ -186,7 +186,7 @@ fn release_all_uds_bitmap_bits() {
     for i in 0..uds::MAX_UDS_FD {
         let _ = free_fd(
             FdSubsystem::Uds,
-            uds::FD_BASE + crate::privileged::lib::low_i32_from_usize(i),
+            uds::FD_BASE + crate::privileged::glue::low_i32_from_usize(i),
         );
     }
 }

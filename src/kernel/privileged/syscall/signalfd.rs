@@ -298,7 +298,7 @@ pub fn sys_signalfd_read(fd: i32, buf: u64) -> i64 {
     }
 
     crate::klog_debug!(Sync, "[signalfd] Read fd={} signo={}", fd, signo);
-    crate::privileged::lib::i64_from_usize(SIGNALFD_SIGINFO_SIZE)
+    crate::privileged::glue::i64_from_usize(SIGNALFD_SIGINFO_SIZE)
 }
 
 /// signalfd close — 关闭 signalfd
@@ -417,7 +417,7 @@ fn test_signalfd_create() -> crate::privileged::tests::TestResult {
     check!(fd >= 220, "signalfd returns fd >= 220");
 
     // 关闭
-    let ret = sys_signalfd_close(crate::privileged::lib::low_i32_from_i64(fd));
+    let ret = sys_signalfd_close(crate::privileged::glue::low_i32_from_i64(fd));
     check!(ret == 0, "signalfd close returns 0");
 
     TestResult::Pass
@@ -434,13 +434,13 @@ fn test_signalfd_mask_update() -> crate::privileged::tests::TestResult {
     // 更新掩码
     let mask2: u128 = 1u128 << 30; // SIGUSR2
     let ret = sys_signalfd(
-        crate::privileged::lib::low_i32_from_i64(fd),
+        crate::privileged::glue::low_i32_from_i64(fd),
         (&raw const mask2) as u64,
         0,
     );
     check!(ret == fd, "signalfd update returns same fd");
 
-    sys_signalfd_close(crate::privileged::lib::low_i32_from_i64(fd));
+    sys_signalfd_close(crate::privileged::glue::low_i32_from_i64(fd));
     TestResult::Pass
 }
 
@@ -457,7 +457,7 @@ fn test_signalfd_sigkill_filtered() -> crate::privileged::tests::TestResult {
     {
         let table = SFD_TABLE.lock();
         let Some((crate::privileged::proc::FdSubsystem::SignalFd, idx)) =
-            crate::privileged::proc::idx_of(crate::privileged::lib::low_i32_from_i64(fd))
+            crate::privileged::proc::idx_of(crate::privileged::glue::low_i32_from_i64(fd))
         else {
             panic!("signalfd 测试期望 SignalFd 范围内 FD");
         };
@@ -466,7 +466,7 @@ fn test_signalfd_sigkill_filtered() -> crate::privileged::tests::TestResult {
         check!(slot_mask & (1u128 << 9) != 0, "SIGUSR1 still in mask");
     }
 
-    sys_signalfd_close(crate::privileged::lib::low_i32_from_i64(fd));
+    sys_signalfd_close(crate::privileged::glue::low_i32_from_i64(fd));
     TestResult::Pass
 }
 

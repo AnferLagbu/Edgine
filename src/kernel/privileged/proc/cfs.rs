@@ -50,7 +50,7 @@ pub const NICE_TO_WEIGHT: [u64; 40] = [
 #[inline]
 pub fn nice_to_weight(nice: i8) -> u64 {
     let clamped = nice.clamp(-20, 19);
-    let idx = crate::privileged::lib::usize_from_i8(clamped + 20);
+    let idx = crate::privileged::glue::usize_from_i8(clamped + 20);
     NICE_TO_WEIGHT[idx]
 }
 
@@ -69,8 +69,8 @@ pub fn weight_to_nice(weight: u64) -> i8 {
         let diff = w.abs_diff(weight);
         if diff < best_diff {
             best_diff = diff;
-            best = crate::privileged::lib::low_i8_from_i32(
-                crate::privileged::lib::low_i32_from_usize(i) - 20,
+            best = crate::privileged::glue::low_i8_from_i32(
+                crate::privileged::glue::low_i32_from_usize(i) - 20,
             );
         }
     }
@@ -159,10 +159,6 @@ pub struct CfsRunQueue {
 }
 
 impl CfsRunQueue {
-    #[expect(
-        clippy::zero_sized_map_values,
-        reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-    )]
     /// 构造空的 CFS 运行队列
     pub fn new() -> Self {
         Self {
@@ -340,10 +336,6 @@ pub struct DlRunQueue {
 }
 
 impl DlRunQueue {
-    #[expect(
-        clippy::zero_sized_map_values,
-        reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-    )]
     /// 构造空的 Deadline 运行队列
     pub fn new() -> Self {
         Self {

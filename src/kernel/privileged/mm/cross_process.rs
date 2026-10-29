@@ -132,7 +132,7 @@ fn copy_in_mm(
         let page_off = (cur & (PAGE_SIZE - 1)) as usize;
         let chunk = core::cmp::min(
             len - done,
-            crate::privileged::lib::usize_from_u64(PAGE_SIZE) - page_off,
+            crate::privileged::glue::usize_from_u64(PAGE_SIZE) - page_off,
         );
 
         let Some(t) = Vmm::translate_in_pml4(target_cr3, VirtAddr(cur)) else {

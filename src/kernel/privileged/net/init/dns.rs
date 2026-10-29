@@ -207,7 +207,7 @@ pub fn parse_ipv4_literal(s: &str) -> Option<[u8; 4]> {
             if !has_digit || idx >= 3 || cur > 255 {
                 return None;
             }
-            octets[idx] = crate::privileged::lib::low_u8_from_u32(cur);
+            octets[idx] = crate::privileged::glue::low_u8_from_u32(cur);
             idx += 1;
             cur = 0;
             has_digit = false;
@@ -221,7 +221,7 @@ pub fn parse_ipv4_literal(s: &str) -> Option<[u8; 4]> {
     if !has_digit || idx != 3 || cur > 255 {
         return None;
     }
-    octets[3] = crate::privileged::lib::low_u8_from_u32(cur);
+    octets[3] = crate::privileged::glue::low_u8_from_u32(cur);
     Some(octets)
 }
 
@@ -249,7 +249,7 @@ pub fn parse_cidr(s: &str) -> Option<([u8; 4], u8)> {
             if v > 32 {
                 return None;
             }
-            crate::privileged::lib::low_u8_from_u32(v)
+            crate::privileged::glue::low_u8_from_u32(v)
         }
         None => 24,
     };

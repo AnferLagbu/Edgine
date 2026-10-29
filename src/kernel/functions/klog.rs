@@ -36,15 +36,14 @@ pub enum SinkListFormat {
     Json,
 }
 
-#[expect(
-    clippy::case_sensitive_file_extension_comparisons,
-    reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-)]
 /// 解析 procfs 入口名 → 格式选择.
 ///
 /// 规则: 文件名以 `.json` 结尾 → Json; 否则 → Text。
 pub fn parse_format(name: &str) -> SinkListFormat {
-    if name.ends_with(".json") {
+    if name
+        .rsplit_once('.')
+        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("json"))
+    {
         SinkListFormat::Json
     } else {
         SinkListFormat::Text

@@ -161,7 +161,7 @@ pub fn devtree_unbind_user_device(
                     cr3,
                     VirtAddr(addr as u64),
                 );
-                addr += crate::privileged::lib::usize_from_u64(PAGE_SIZE);
+                addr += crate::privileged::glue::usize_from_u64(PAGE_SIZE);
             }
         }
 
@@ -215,14 +215,14 @@ pub fn devtree_map_user_device(
         return Err(UserDriverError::new(ERR_NO_MMIO));
     }
 
-    let clamped_size = crate::privileged::lib::usize_from_u64(size).min(MAX_MMIO_SIZE);
+    let clamped_size = crate::privileged::glue::usize_from_u64(size).min(MAX_MMIO_SIZE);
     if phys_addr.checked_add(clamped_size as u64).is_none() {
         return Err(UserDriverError::new(ERR_NO_MMIO));
     }
-    let pages = clamped_size.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE));
+    let pages = clamped_size.div_ceil(crate::privileged::glue::usize_from_u64(PAGE_SIZE));
 
     let Some(map_base) =
-        mm.find_free_range(pages * crate::privileged::lib::usize_from_u64(PAGE_SIZE))
+        mm.find_free_range(pages * crate::privileged::glue::usize_from_u64(PAGE_SIZE))
     else {
         return Err(UserDriverError::new(ERR_OOM));
     };
@@ -246,20 +246,21 @@ pub fn devtree_map_user_device(
     for i in 0..pages {
         let page_phys = PhysAddr(phys_addr + (i as u64 * PAGE_SIZE));
         let page_virt =
-            VirtAddr((map_base + i * crate::privileged::lib::usize_from_u64(PAGE_SIZE)) as u64);
+            VirtAddr((map_base + i * crate::privileged::glue::usize_from_u64(PAGE_SIZE)) as u64);
         crate::privileged::mm::Vmm::map_page_in_table(cr3, page_virt, page_phys, page_flags);
     }
 
     let vma = Vma::new(
         map_base,
-        map_base + pages * crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+        map_base + pages * crate::privileged::glue::usize_from_u64(PAGE_SIZE),
         page_flags,
         VmaType::Device,
     );
     if mm.insert_vma(vma).is_err() {
         for i in 0..pages {
-            let unmap_virt =
-                VirtAddr((map_base + i * crate::privileged::lib::usize_from_u64(PAGE_SIZE)) as u64);
+            let unmap_virt = VirtAddr(
+                (map_base + i * crate::privileged::glue::usize_from_u64(PAGE_SIZE)) as u64,
+            );
             #[cfg(target_arch = "x86_64")]
             get_vmm().unmap_page_in_table(cr3, unmap_virt);
             #[cfg(target_arch = "aarch64")]
@@ -311,7 +312,7 @@ pub fn devtree_unmap_user_device(
         return Ok(());
     }
 
-    let pages = size.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE));
+    let pages = size.div_ceil(crate::privileged::glue::usize_from_u64(PAGE_SIZE));
     if virt_addr.checked_add(size).is_none() {
         return Err(UserDriverError::new(ERR_NO_MMIO));
     }
@@ -331,7 +332,7 @@ pub fn devtree_unmap_user_device(
 
     for i in 0..pages {
         let page_virt =
-            VirtAddr((virt_addr + i * crate::privileged::lib::usize_from_u64(PAGE_SIZE)) as u64);
+            VirtAddr((virt_addr + i * crate::privileged::glue::usize_from_u64(PAGE_SIZE)) as u64);
         #[cfg(target_arch = "x86_64")]
         get_vmm().unmap_page_in_table(cr3, page_virt);
         #[cfg(target_arch = "aarch64")]
@@ -340,7 +341,7 @@ pub fn devtree_unmap_user_device(
 
     mm.remove_range(
         virt_addr,
-        virt_addr + pages * crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+        virt_addr + pages * crate::privileged::glue::usize_from_u64(PAGE_SIZE),
         cr3,
     );
 
@@ -411,11 +412,8 @@ pub extern "C" fn process_signal_pending_set(pid: u32, sig: u32) {
 /// 进程退出时清理所有 EGDF 设备绑定
 /// 遍历设备树, 清除该进程在所有节点上的 `user_mapped` 标记,
 /// 防止残留标记导致设备节点永远无法被其他进程重新绑定
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-// 注意: 本函数保持 Rust ABI, 因作为 ProcessCleanupFn (Rust fn 指针)
-//       注册到 privileged::process_cleanup, 不能改为 extern "C".
-#[unsafe(no_mangle)]
-#[expect(clippy::no_mangle_with_rust_abi)]
+// 本函数作为 ProcessCleanupFn (Rust fn 指针) 注册到 privileged::process_cleanup,
+// 无 C 符号导出需求, 故不标 `no_mangle` (P-64 第十五批: 消除 no_mangle_with_rust_abi).
 pub fn egdf_process_cleanup(pid: u32) {
     devtree_clear_user_mapped_by_pid(pid);
 }

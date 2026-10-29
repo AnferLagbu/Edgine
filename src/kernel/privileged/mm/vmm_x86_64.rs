@@ -686,7 +686,7 @@ impl VirtualMemoryManager {
             core::ptr::write_bytes(
                 pml4_virt.0 as *mut u8,
                 0,
-                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                crate::privileged::glue::usize_from_u64(PAGE_SIZE),
             );
         }
 
@@ -1279,7 +1279,7 @@ impl VirtualMemoryManager {
                         core::ptr::write_bytes(
                             pt.cast::<u8>(),
                             0,
-                            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                            crate::privileged::glue::usize_from_u64(PAGE_SIZE),
                         );
 
                         let split = e.is_huge();
@@ -1407,7 +1407,7 @@ impl VirtualMemoryManager {
                 core::ptr::write_bytes(
                     pt.cast::<u8>(),
                     0,
-                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                    crate::privileged::glue::usize_from_u64(PAGE_SIZE),
                 );
 
                 for i in 0..512 {
@@ -1537,7 +1537,7 @@ impl VirtualMemoryManager {
             core::ptr::write_bytes(
                 child_pml4_base,
                 0,
-                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                crate::privileged::glue::usize_from_u64(PAGE_SIZE),
             );
         }
 
@@ -1579,7 +1579,7 @@ impl VirtualMemoryManager {
                 core::ptr::write_bytes(
                     child_pdpt,
                     0,
-                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                    crate::privileged::glue::usize_from_u64(PAGE_SIZE),
                 );
             }
 
@@ -1620,7 +1620,7 @@ impl VirtualMemoryManager {
                 core::ptr::write_bytes(
                     child_pd,
                     0,
-                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                    crate::privileged::glue::usize_from_u64(PAGE_SIZE),
                 );
             }
 
@@ -1680,7 +1680,7 @@ impl VirtualMemoryManager {
                 core::ptr::write_bytes(
                     child_table,
                     0,
-                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                    crate::privileged::glue::usize_from_u64(PAGE_SIZE),
                 );
             }
 
@@ -1721,7 +1721,7 @@ impl VirtualMemoryManager {
                 core::ptr::copy_nonoverlapping(
                     parent_page_virt as *const u8,
                     child_page_virt as *mut u8,
-                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                    crate::privileged::glue::usize_from_u64(PAGE_SIZE),
                 );
             }
 
@@ -1825,7 +1825,9 @@ impl VirtualMemoryManager {
     /// 远程核不可能持有该 VA 的陈旧条目, 远程失效无对象 (若一律登记, 每次新建映射都会
     /// 向全部在线核发一轮 IPI —— 过度失效, 见 docs/plan/tlb-shootdown-epoch.md S-9).
     fn flush_tlb_local(addr: u64) {
-        crate::arch!(tlb_flush_page(crate::privileged::lib::usize_from_u64(addr)));
+        crate::arch!(tlb_flush_page(crate::privileged::glue::usize_from_u64(
+            addr
+        )));
     }
 
     #[inline]
@@ -1834,7 +1836,9 @@ impl VirtualMemoryManager {
     /// 用于**替换/覆盖既有翻译** (拆除、重映射、巨页拆分、swap 替换) 与**权限变更**
     /// (mprotect / 设 USER 位): 远程核可能已缓存旧条目, 不失效即读到陈旧翻译.
     fn flush_tlb_remote(addr: u64) {
-        crate::arch!(tlb_flush_page(crate::privileged::lib::usize_from_u64(addr)));
+        crate::arch!(tlb_flush_page(crate::privileged::glue::usize_from_u64(
+            addr
+        )));
 
         // SIMPLIFIED: 远程失效粒度取全量 `tlb_flush_all` (对端重载 CR3) 而非页级地址载荷;
         // 影响面为 shootdown 触发时远程核全量 TLB 失效 (性能开销, 非正确性问题);

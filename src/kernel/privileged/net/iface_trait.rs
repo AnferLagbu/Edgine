@@ -1014,21 +1014,21 @@ impl Ipv6Addr {
     ) -> Self {
         Self([
             (o0 >> 8) as u8,
-            crate::privileged::lib::low_u8_from_u16(o0),
+            crate::privileged::glue::low_u8_from_u16(o0),
             (o1 >> 8) as u8,
-            crate::privileged::lib::low_u8_from_u16(o1),
+            crate::privileged::glue::low_u8_from_u16(o1),
             (o2 >> 8) as u8,
-            crate::privileged::lib::low_u8_from_u16(o2),
+            crate::privileged::glue::low_u8_from_u16(o2),
             (o3 >> 8) as u8,
-            crate::privileged::lib::low_u8_from_u16(o3),
+            crate::privileged::glue::low_u8_from_u16(o3),
             (o4 >> 8) as u8,
-            crate::privileged::lib::low_u8_from_u16(o4),
+            crate::privileged::glue::low_u8_from_u16(o4),
             (o5 >> 8) as u8,
-            crate::privileged::lib::low_u8_from_u16(o5),
+            crate::privileged::glue::low_u8_from_u16(o5),
             (o6 >> 8) as u8,
-            crate::privileged::lib::low_u8_from_u16(o6),
+            crate::privileged::glue::low_u8_from_u16(o6),
             (o7 >> 8) as u8,
-            crate::privileged::lib::low_u8_from_u16(o7),
+            crate::privileged::glue::low_u8_from_u16(o7),
         ])
     }
 

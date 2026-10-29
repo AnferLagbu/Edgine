@@ -64,7 +64,7 @@ impl DmaEngine {
         for m in mappings.drain(..) {
             if m.is_coherent {
                 let pages = (m.size as u64).div_ceil(PAGE_SIZE);
-                pmm_free_pages_phys(m.dma_addr, crate::privileged::lib::usize_from_u64(pages));
+                pmm_free_pages_phys(m.dma_addr, crate::privileged::glue::usize_from_u64(pages));
             }
         }
 
@@ -102,7 +102,8 @@ impl DmaEngine {
 
         let pages = (size as u64).div_ceil(PAGE_SIZE);
 
-        let Some(phys) = pmm_alloc_pages_phys(crate::privileged::lib::usize_from_u64(pages)) else {
+        let Some(phys) = pmm_alloc_pages_phys(crate::privileged::glue::usize_from_u64(pages))
+        else {
             self.stats.coherence_fails.fetch_add(1, Ordering::Relaxed);
             return None;
         };
@@ -116,7 +117,7 @@ impl DmaEngine {
             ptr::write_bytes(
                 virt.0 as *mut u8,
                 0,
-                crate::privileged::lib::usize_from_u64(pages * PAGE_SIZE),
+                crate::privileged::glue::usize_from_u64(pages * PAGE_SIZE),
             );
         }
 
@@ -165,7 +166,7 @@ impl DmaEngine {
         let pages = (size as u64).div_ceil(PAGE_SIZE);
 
         if let Some(phys) = phys_addr {
-            pmm_free_pages_phys(phys, crate::privileged::lib::usize_from_u64(pages));
+            pmm_free_pages_phys(phys, crate::privileged::glue::usize_from_u64(pages));
         }
 
         mappings.retain(|m| !(m.cpu_addr == cpu_addr && m.size == size && m.is_coherent));
@@ -392,7 +393,7 @@ impl DmaEngine {
         sglist.entries[idx] = DmaScatterEntry {
             phys_addr: phys.map_or(0, |p| p.0),
             length,
-            page_addr: crate::privileged::lib::usize_from_u64(addr.0),
+            page_addr: crate::privileged::glue::usize_from_u64(addr.0),
         };
 
         sglist.entry_count += 1;
@@ -470,9 +471,9 @@ impl DmaEngine {
             // 确保 CPU 写入对 DMA 设备可见
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
             unsafe {
-                let start = crate::privileged::lib::usize_from_u64(addr.0);
+                let start = crate::privileged::glue::usize_from_u64(addr.0);
                 let end = start + size;
-                let cache_line_size = crate::privileged::lib::usize_from_u64(CACHE_LINE_SIZE); // 典型缓存行大小
+                let cache_line_size = crate::privileged::glue::usize_from_u64(CACHE_LINE_SIZE); // 典型缓存行大小
 
                 // 将起始地址向下对齐到缓存行边界
                 let aligned_start = start & !(cache_line_size - 1);
@@ -521,9 +522,9 @@ impl DmaEngine {
             // 失效缓存行, 以便 CPU 从内存读入最新数据
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
             unsafe {
-                let start = crate::privileged::lib::usize_from_u64(addr.0);
+                let start = crate::privileged::glue::usize_from_u64(addr.0);
                 let end = start + size;
-                let cache_line_size = crate::privileged::lib::usize_from_u64(CACHE_LINE_SIZE);
+                let cache_line_size = crate::privileged::glue::usize_from_u64(CACHE_LINE_SIZE);
                 let aligned_start = start & !(cache_line_size - 1);
 
                 for offset in (aligned_start..end).step_by(cache_line_size) {

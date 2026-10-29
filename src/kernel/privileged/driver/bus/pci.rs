@@ -48,7 +48,7 @@ impl Driver for PciBusDriver {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pci_init() -> i32 {
-    let count = crate::privileged::lib::low_i32_from_usize(crate::privileged::pci::init());
+    let count = crate::privileged::glue::low_i32_from_usize(crate::privileged::pci::init());
 
     crate::privileged::egdf::egdf_register_driver(
         "pci-bus",

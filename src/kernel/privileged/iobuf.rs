@@ -60,7 +60,7 @@ impl IobRegion {
             // 4MB 上限保护, 防止恶意/错误请求耗尽物理页
             return None;
         }
-        let phys = pmm_alloc_pages(crate::privileged::lib::usize_from_u64(pages));
+        let phys = pmm_alloc_pages(crate::privileged::glue::usize_from_u64(pages));
         if phys.is_null() {
             return None;
         }
@@ -68,8 +68,8 @@ impl IobRegion {
         let vaddr = phys_to_virt(phys as u64) as *mut u8;
         Some(Self {
             vaddr,
-            cap: crate::privileged::lib::usize_from_u64(pages)
-                * crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            cap: crate::privileged::glue::usize_from_u64(pages)
+                * crate::privileged::glue::usize_from_u64(PAGE_SIZE),
             pages,
         })
     }
@@ -113,7 +113,7 @@ impl Drop for IobRegion {
             let phys = (self.vaddr as u64).wrapping_sub(hhdm_offset);
             pmm_free_pages(
                 phys as *mut u8,
-                crate::privileged::lib::usize_from_u64(self.pages),
+                crate::privileged::glue::usize_from_u64(self.pages),
             );
         }
     }

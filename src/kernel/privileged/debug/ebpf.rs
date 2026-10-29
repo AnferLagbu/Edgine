@@ -499,7 +499,7 @@ pub struct BpfProg {
 impl BpfProg {
     /// 以程序类型与指令序列创建程序实例, 引用计数初始化为 1.
     pub fn new(prog_type: BpfProgType, insns: Vec<BpfInsn>) -> Self {
-        let insn_cnt = crate::privileged::lib::low_u32_from_usize(insns.len());
+        let insn_cnt = crate::privileged::glue::low_u32_from_usize(insns.len());
         Self {
             prog_type,
             insns,
@@ -596,10 +596,6 @@ impl BpfHelper {
     /// - `maps`: Map FD → `Arc<BpfMap>` 映射
     ///
     /// 返回: R0 的值
-    #[expect(
-        clippy::bool_to_int_with_if,
-        reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-    )]
     pub fn execute(
         id: u32,
         r1: u64,
@@ -643,7 +639,7 @@ impl BpfHelper {
             helper_id::MAP_LOOKUP_ELEM => {
                 // r1 = map_fd, r2 = key_ptr
                 // 简化: 在内核态直接操作, 不做 copy_from_user
-                let map_fd = crate::privileged::lib::low_u32_from_u64(r1);
+                let map_fd = crate::privileged::glue::low_u32_from_u64(r1);
                 maps.get(&map_fd).map_or(0, |map| {
                     // key 从 r2 指向的内存读取 (内核态直接访问)
                     let key_size = map.def().key_size as usize;
@@ -651,17 +647,13 @@ impl BpfHelper {
                     // SAFETY: 验证器保证 key_ptr 指向有效内存, key_size 与 map 定义一致
                     let key = unsafe { core::slice::from_raw_parts(key_ptr, key_size) };
                     let mut value = alloc::vec![0u8; map.def().value_size as usize];
-                    if map.lookup(key, &mut value) {
-                        // 返回 value 指针 (简化: 返回 1 表示找到)
-                        1
-                    } else {
-                        0
-                    }
+                    // 返回 1 表示找到 (简化: 不返回 value 指针)
+                    u64::from(map.lookup(key, &mut value))
                 })
             }
             helper_id::MAP_UPDATE_ELEM => {
                 // 寄存器分配: r1=map_fd, r2=key_ptr, r3=value_ptr, r4=flags
-                let map_fd = crate::privileged::lib::low_u32_from_u64(r1);
+                let map_fd = crate::privileged::glue::low_u32_from_u64(r1);
                 maps.get(&map_fd).map_or((-(1i64)).cast_unsigned(), |map| {
                     let key_size = map.def().key_size as usize;
                     let val_size = map.def().value_size as usize;
@@ -679,7 +671,7 @@ impl BpfHelper {
                 })
             }
             helper_id::MAP_DELETE_ELEM => {
-                let map_fd = crate::privileged::lib::low_u32_from_u64(r1);
+                let map_fd = crate::privileged::glue::low_u32_from_u64(r1);
                 maps.get(&map_fd).map_or((-(1i64)).cast_unsigned(), |map| {
                     let key_size = map.def().key_size as usize;
                     let key_ptr = r2 as *const u8;
@@ -772,7 +764,7 @@ impl BpfInterpreter {
         let src_val = if use_src {
             regs[src]
         } else {
-            crate::privileged::lib::u64_from_i32(insn.imm)
+            crate::privileged::glue::u64_from_i32(insn.imm)
         };
 
         let result = match op_low {
@@ -789,10 +781,10 @@ impl BpfInterpreter {
             opcode::OR => regs[dst] | src_val,
             opcode::AND => regs[dst] & src_val,
             opcode::LSH => {
-                regs[dst].wrapping_shl(crate::privileged::lib::low_u32_from_u64(src_val))
+                regs[dst].wrapping_shl(crate::privileged::glue::low_u32_from_u64(src_val))
             }
             opcode::RSH => {
-                regs[dst].wrapping_shr(crate::privileged::lib::low_u32_from_u64(src_val))
+                regs[dst].wrapping_shr(crate::privileged::glue::low_u32_from_u64(src_val))
             }
             opcode::NEG => (!regs[dst]).wrapping_add(1),
             opcode::MOD => {
@@ -809,20 +801,20 @@ impl BpfInterpreter {
                 if is_64 {
                     regs[dst]
                         .cast_signed()
-                        .wrapping_shr(crate::privileged::lib::low_u32_from_u64(src_val))
+                        .wrapping_shr(crate::privileged::glue::low_u32_from_u64(src_val))
                         .cast_unsigned()
                 } else {
-                    crate::privileged::lib::u64_from_i32(
-                        crate::privileged::lib::low_i32_from_u64(regs[dst])
-                            .wrapping_shr(crate::privileged::lib::low_u32_from_u64(src_val)),
+                    crate::privileged::glue::u64_from_i32(
+                        crate::privileged::glue::low_i32_from_u64(regs[dst])
+                            .wrapping_shr(crate::privileged::glue::low_u32_from_u64(src_val)),
                     )
                 }
             }
             opcode::END => {
                 // 字节序转换: 简化为截断
                 match insn.imm {
-                    16 => u64::from(crate::privileged::lib::low_u16_from_u64(regs[dst])),
-                    32 => u64::from(crate::privileged::lib::low_u32_from_u64(regs[dst])),
+                    16 => u64::from(crate::privileged::glue::low_u16_from_u64(regs[dst])),
+                    32 => u64::from(crate::privileged::glue::low_u32_from_u64(regs[dst])),
                     _ => regs[dst],
                 }
             }
@@ -832,7 +824,7 @@ impl BpfInterpreter {
         if is_64 {
             regs[dst] = result;
         } else {
-            regs[dst] = u64::from(crate::privileged::lib::low_u32_from_u64(result));
+            regs[dst] = u64::from(crate::privileged::glue::low_u32_from_u64(result));
         }
     }
 
@@ -843,7 +835,7 @@ impl BpfInterpreter {
         if op == opcode::LD | opcode::IMM | opcode::DW {
             // 64-bit immediate load (2 条指令)
             regs[dst] = u64::from(insn.imm.cast_unsigned())
-                | (u64::from(crate::privileged::lib::u32_from_i16(insn.off)) << 32);
+                | (u64::from(crate::privileged::glue::u32_from_i16(insn.off)) << 32);
         } else if op == opcode::LD | opcode::ABS | opcode::W {
             // LD_ABS_W: 从 packet 偏移 insn.imm 加载 32-bit
             // 简化: 返回 0
@@ -908,7 +900,7 @@ impl BpfInterpreter {
                         unsafe {
                             core::ptr::write_unaligned(
                                 ptr,
-                                crate::privileged::lib::u16_from_i32(insn.imm),
+                                crate::privileged::glue::u16_from_i32(insn.imm),
                             );
                         };
                     }
@@ -920,7 +912,7 @@ impl BpfInterpreter {
                         unsafe {
                             core::ptr::write_unaligned(
                                 ptr,
-                                crate::privileged::lib::u8_from_i32(insn.imm),
+                                crate::privileged::glue::u8_from_i32(insn.imm),
                             );
                         };
                     }
@@ -932,7 +924,7 @@ impl BpfInterpreter {
                         unsafe {
                             core::ptr::write_unaligned(
                                 ptr,
-                                crate::privileged::lib::u64_from_i32(insn.imm),
+                                crate::privileged::glue::u64_from_i32(insn.imm),
                             );
                         };
                     }
@@ -950,7 +942,7 @@ impl BpfInterpreter {
                         unsafe {
                             core::ptr::write_unaligned(
                                 ptr,
-                                crate::privileged::lib::low_u32_from_u64(regs[src]),
+                                crate::privileged::glue::low_u32_from_u64(regs[src]),
                             );
                         };
                     }
@@ -962,7 +954,7 @@ impl BpfInterpreter {
                         unsafe {
                             core::ptr::write_unaligned(
                                 ptr,
-                                crate::privileged::lib::low_u16_from_u64(regs[src]),
+                                crate::privileged::glue::low_u16_from_u64(regs[src]),
                             );
                         };
                     }
@@ -974,7 +966,7 @@ impl BpfInterpreter {
                         unsafe {
                             core::ptr::write_unaligned(
                                 ptr,
-                                crate::privileged::lib::low_u8_from_u64(regs[src]),
+                                crate::privileged::glue::low_u8_from_u64(regs[src]),
                             );
                         };
                     }
@@ -1003,8 +995,8 @@ impl BpfInterpreter {
         let is_32 = insn.class() == opcode::JMP32;
 
         match op_low {
-            opcode::JA => Some(crate::privileged::lib::usize_from_i64(
-                crate::privileged::lib::i64_from_usize(pc) + 1 + i64::from(insn.off),
+            opcode::JA => Some(crate::privileged::glue::usize_from_i64(
+                crate::privileged::glue::i64_from_usize(pc) + 1 + i64::from(insn.off),
             )),
             opcode::EXIT => None,
             opcode::CALL => {
@@ -1027,20 +1019,20 @@ impl BpfInterpreter {
                 let src_val = if (insn.op & opcode::X) != 0 {
                     regs[src]
                 } else {
-                    crate::privileged::lib::u64_from_i32(insn.imm)
+                    crate::privileged::glue::u64_from_i32(insn.imm)
                 };
                 let taken = if is_32 {
                     Self::eval_cond32(
                         op_low,
-                        crate::privileged::lib::low_u32_from_u64(dst_val),
-                        crate::privileged::lib::low_u32_from_u64(src_val),
+                        crate::privileged::glue::low_u32_from_u64(dst_val),
+                        crate::privileged::glue::low_u32_from_u64(src_val),
                     )
                 } else {
                     Self::eval_cond64(op_low, dst_val, src_val)
                 };
                 if taken {
-                    Some(crate::privileged::lib::usize_from_i64(
-                        crate::privileged::lib::i64_from_usize(pc) + 1 + i64::from(insn.off),
+                    Some(crate::privileged::glue::usize_from_i64(
+                        crate::privileged::glue::i64_from_usize(pc) + 1 + i64::from(insn.off),
                     ))
                 } else {
                     Some(pc + 1)
@@ -1369,7 +1361,7 @@ fn bpf_cmd_map_lookup_elem(attr: u64, size: u64) -> i64 {
     // SAFETY: attr 指针由 syscall 入口保证有效, size 已校验
     let (map_fd, key_ptr, val_ptr) = unsafe {
         (
-            crate::privileged::lib::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr)),
+            crate::privileged::glue::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr)),
             core::ptr::read_unaligned(attr_ptr.add(1)),
             core::ptr::read_unaligned(attr_ptr.add(2)),
         )
@@ -1411,7 +1403,7 @@ fn bpf_cmd_map_update_elem(attr: u64, size: u64) -> i64 {
     // SAFETY: attr 指针由 syscall 入口保证有效, size 已校验
     let (map_fd, key_ptr, val_ptr) = unsafe {
         (
-            crate::privileged::lib::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr)),
+            crate::privileged::glue::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr)),
             core::ptr::read_unaligned(attr_ptr.add(1)),
             core::ptr::read_unaligned(attr_ptr.add(2)),
         )
@@ -1439,7 +1431,7 @@ fn bpf_cmd_map_delete_elem(attr: u64, size: u64) -> i64 {
     // SAFETY: attr 指针由 syscall 入口保证有效, size 已校验
     let (map_fd, key_ptr) = unsafe {
         (
-            crate::privileged::lib::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr)),
+            crate::privileged::glue::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr)),
             core::ptr::read_unaligned(attr_ptr.add(1)),
         )
     };
@@ -1463,7 +1455,7 @@ fn bpf_cmd_prog_load(attr: u64, size: u64) -> i64 {
     let attr_ptr = attr as *const u64;
     // SAFETY: attr 指针由 syscall 入口保证有效, size 已校验
     let (prog_type, insn_cnt, insns_ptr) = unsafe {
-        let lo = crate::privileged::lib::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr));
+        let lo = crate::privileged::glue::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr));
         let hi = core::ptr::read_unaligned(attr_ptr.add(0)) >> 32;
         (lo, hi as u32, core::ptr::read_unaligned(attr_ptr.add(1)))
     };

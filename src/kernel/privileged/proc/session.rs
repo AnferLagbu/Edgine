@@ -482,7 +482,7 @@ pub fn sys_tiocsctty(fd: i32) -> i64 {
         return -1;
     }
 
-    let dev = crate::privileged::lib::u64_from_i32(fd);
+    let dev = crate::privileged::glue::u64_from_i32(fd);
 
     if SESSION_MANAGER.set_controlling_terminal(sid, dev) {
         0

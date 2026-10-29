@@ -22,7 +22,7 @@
 use crate::functions::fs::api as fw;
 use crate::functions::fs::vfs_manager::VFS_MANAGER;
 use crate::functions::fs::vfs_types::{VFS_MAX_PATH, VfsFileType};
-use crate::privileged::lib::CStrExt;
+use crate::privileged::glue::CStrExt;
 use crate::privileged::syscall::Errno;
 use crate::privileged::syscall::raw;
 

@@ -599,7 +599,7 @@ pub extern "C" fn svc_handler(frame: &mut ExceptionFrame) -> u64 {
     }
 
     // rt_sigreturn 特殊处理: 需要直接修改 frame, 不走正常 dispatch.
-    // aarch64: SYS_rt_sigreturn = 139
+    // aarch64: SYS_RT_SIGRETURN = 139
     // aarch64 信号投递 (do_signal_deliver) 尚未实现, 此拦截为预留.
     // 当信号投递实现后, 从用户栈读取 Aarch64SignalFrame 并恢复 x0-x30/elr/spsr/sp.
     if syscall_num == 139 {
@@ -808,10 +808,6 @@ pub extern "C" fn irq_handler_el0(_frame: &ExceptionFrame) {
 ///   即 EC=0x25 同 EL 数据异常)。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::no_effect_underscore_binding,
-    reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-)]
 pub extern "C" fn sync_exception_handler(frame: &ExceptionFrame) {
     let esr: u64;
     let far: u64;
@@ -822,8 +818,6 @@ pub extern "C" fn sync_exception_handler(frame: &ExceptionFrame) {
         core::arch::asm!("mrs {}, far_el1", out(reg) far);
         core::arch::asm!("mrs {}, elr_el1", out(reg) elr);
     }
-    let _ec = (esr >> 26) & 0x3F;
-
     // 直接 UART 输出以确保能观察同步异常
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
@@ -867,12 +861,10 @@ pub extern "C" fn sync_exception_handler(frame: &ExceptionFrame) {
     // 也不向用户态投递具体信号; 影响: 用户态无法区分 SIGSEGV/SIGILL/SIGBUS (与
     // x86_64 侧"终止而不投递具体信号"现状一致); 何时需扩展: 需要按信号语义投递
     // (信号帧构建 + sigreturn 恢复) 时。
-    #[expect(
-        clippy::verbose_bit_mask,
-        reason = "verbose_bit_mask: `spsr & 0xF == 0` 即 SPSR_EL1.M[3:0] == 0 的位域判据, \
-                  与上方注释同形; 改 trailing_zeros >= 4 反而偏离架构文档, 当前优先 expect"
-    )]
-    if frame.spsr & 0xF == 0 {
+    //
+    // SPSR_EL1.M[3:0] == 0 (EL0t) ⟺ 低 4 位全零 ⟺ `trailing_zeros() >= 4`;
+    // 该判据用于区分 EL0 来源与内核态同 EL 异常 (内核态异常必须停机而非杀进程).
+    if frame.spsr.trailing_zeros() >= 4 {
         let pid = crate::privileged::proc::process_get_current_pid();
         crate::klog_err!(
             Boot,

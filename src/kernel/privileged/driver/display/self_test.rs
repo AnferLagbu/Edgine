@@ -135,7 +135,7 @@ fn check_gray_ramp(fb: &mut Framebuffer, fw: u32) -> usize {
     let gray_y: u32 = 56;
     let gray_len = fw.min(256);
     for x in 0..gray_len {
-        let gray = crate::privileged::lib::low_u8_from_u32(x);
+        let gray = crate::privileged::glue::low_u8_from_u32(x);
         fb.set_pixel(x, gray_y, Color::new(gray, gray, gray));
     }
 
@@ -175,14 +175,14 @@ fn draw_rgb_sweep(fb: &mut Framebuffer, fw: u32, fh: u32) -> usize {
             let py = sweep_start + i;
             // red → green → blue 渐变
             let color = if i < sweep_len / 3 {
-                let t = crate::privileged::lib::low_u8_from_u32(i * 765 / sweep_len);
+                let t = crate::privileged::glue::low_u8_from_u32(i * 765 / sweep_len);
                 Color::new(255u8.saturating_sub(t), t, 0)
             } else if i < 2 * sweep_len / 3 {
                 let t =
-                    crate::privileged::lib::low_u8_from_u32((i - sweep_len / 3) * 765 / sweep_len);
+                    crate::privileged::glue::low_u8_from_u32((i - sweep_len / 3) * 765 / sweep_len);
                 Color::new(0, 255u8.saturating_sub(t), t)
             } else {
-                let t = crate::privileged::lib::low_u8_from_u32(
+                let t = crate::privileged::glue::low_u8_from_u32(
                     (i - 2 * sweep_len / 3) * 765 / sweep_len,
                 );
                 Color::new(t, 0, 255u8.saturating_sub(t))

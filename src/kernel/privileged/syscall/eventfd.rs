@@ -329,7 +329,7 @@ fn test_eventfd_create_read_write() -> crate::privileged::tests::TestResult {
     // 读取: 非 semaphore 模式, 返回 5 并清零
     let mut val: u64 = 0;
     let ret = sys_eventfd_read(
-        crate::privileged::lib::low_i32_from_i64(fd),
+        crate::privileged::glue::low_i32_from_i64(fd),
         (&raw mut val) as u64,
     );
     check!(ret == 8, "eventfd read returns 8");
@@ -337,25 +337,25 @@ fn test_eventfd_create_read_write() -> crate::privileged::tests::TestResult {
 
     // 再次读取: counter=0, EAGAIN
     let ret2 = sys_eventfd_read(
-        crate::privileged::lib::low_i32_from_i64(fd),
+        crate::privileged::glue::low_i32_from_i64(fd),
         (&raw mut val) as u64,
     );
     check!(ret2 < 0, "eventfd read empty returns error");
 
     // 写入 10
-    let ret3 = sys_eventfd_write(crate::privileged::lib::low_i32_from_i64(fd), 10);
+    let ret3 = sys_eventfd_write(crate::privileged::glue::low_i32_from_i64(fd), 10);
     check!(ret3 == 8, "eventfd write returns 8");
 
     // 读取: 返回 10
     let ret4 = sys_eventfd_read(
-        crate::privileged::lib::low_i32_from_i64(fd),
+        crate::privileged::glue::low_i32_from_i64(fd),
         (&raw mut val) as u64,
     );
     check!(ret4 == 8, "eventfd read after write returns 8");
     check!(val == 10, "eventfd read value == 10");
 
     // 关闭
-    let ret5 = sys_eventfd_close(crate::privileged::lib::low_i32_from_i64(fd));
+    let ret5 = sys_eventfd_close(crate::privileged::glue::low_i32_from_i64(fd));
     check!(ret5 == 0, "eventfd close returns 0");
 
     TestResult::Pass
@@ -372,7 +372,7 @@ fn test_eventfd_semaphore() -> crate::privileged::tests::TestResult {
     // 读取: 返回 1, counter=2
     let mut val: u64 = 0;
     let ret = sys_eventfd_read(
-        crate::privileged::lib::low_i32_from_i64(fd),
+        crate::privileged::glue::low_i32_from_i64(fd),
         (&raw mut val) as u64,
     );
     check!(ret == 8, "semaphore read returns 8");
@@ -380,7 +380,7 @@ fn test_eventfd_semaphore() -> crate::privileged::tests::TestResult {
 
     // 再读: 返回 1, counter=1
     let ret2 = sys_eventfd_read(
-        crate::privileged::lib::low_i32_from_i64(fd),
+        crate::privileged::glue::low_i32_from_i64(fd),
         (&raw mut val) as u64,
     );
     check!(ret2 == 8, "semaphore read 2 returns 8");
@@ -388,19 +388,19 @@ fn test_eventfd_semaphore() -> crate::privileged::tests::TestResult {
 
     // 再读: 返回 1, counter=0
     let ret3 = sys_eventfd_read(
-        crate::privileged::lib::low_i32_from_i64(fd),
+        crate::privileged::glue::low_i32_from_i64(fd),
         (&raw mut val) as u64,
     );
     check!(ret3 == 8, "semaphore read 3 returns 8");
 
     // 再读: EAGAIN
     let ret4 = sys_eventfd_read(
-        crate::privileged::lib::low_i32_from_i64(fd),
+        crate::privileged::glue::low_i32_from_i64(fd),
         (&raw mut val) as u64,
     );
     check!(ret4 < 0, "semaphore read empty returns error");
 
-    sys_eventfd_close(crate::privileged::lib::low_i32_from_i64(fd));
+    sys_eventfd_close(crate::privileged::glue::low_i32_from_i64(fd));
     TestResult::Pass
 }
 
@@ -413,17 +413,17 @@ fn test_eventfd_poll() -> crate::privileged::tests::TestResult {
     check!(fd >= 200, "eventfd for poll ok");
 
     // counter=0: 仅 EPOLLOUT
-    let events = eventfd_poll_events(crate::privileged::lib::low_i32_from_i64(fd));
+    let events = eventfd_poll_events(crate::privileged::glue::low_i32_from_i64(fd));
     check!(events & EPOLLIN == 0, "counter=0 not readable");
     check!(events & EPOLLOUT != 0, "counter=0 writable");
 
     // 写入 1: EPOLLIN + EPOLLOUT
-    sys_eventfd_write(crate::privileged::lib::low_i32_from_i64(fd), 1);
-    let events2 = eventfd_poll_events(crate::privileged::lib::low_i32_from_i64(fd));
+    sys_eventfd_write(crate::privileged::glue::low_i32_from_i64(fd), 1);
+    let events2 = eventfd_poll_events(crate::privileged::glue::low_i32_from_i64(fd));
     check!(events2 & EPOLLIN != 0, "counter>0 readable");
     check!(events2 & EPOLLOUT != 0, "counter>0 writable");
 
-    sys_eventfd_close(crate::privileged::lib::low_i32_from_i64(fd));
+    sys_eventfd_close(crate::privileged::glue::low_i32_from_i64(fd));
     TestResult::Pass
 }
 

@@ -72,7 +72,7 @@ pub extern "C" fn recovery_freg_maintenance() {
 pub extern "C" fn recovery_domain_register(domain_id: u64) -> i32 {
     // 取 id 低 5 位作为索引 (0..32)。若超出 MAX_RECOVERY_DOMAINS, 失败。
     // 注: 取模而非用全局计数, 避免重启后 slot 已被占用的问题。
-    let idx = crate::privileged::lib::usize_from_u64(domain_id % MAX_RECOVERY_DOMAINS as u64);
+    let idx = crate::privileged::glue::usize_from_u64(domain_id % MAX_RECOVERY_DOMAINS as u64);
     let domain: &'static RecoveryDomain = &recovery_domain_pool()[idx];
     // 写回实际 id (池内 const-init 时为 0; 不写回会导致管理器按 id 查找/注销全部失效).
     // 注册均在启动期单线程执行, 原子写保证并发读者看到完整 id.
@@ -210,10 +210,8 @@ pub extern "C" fn recovery_was_attempted() -> i32 {
 }
 
 /// 设置指定恢复域的捕获/回滚回调; 成功返回 0, 域不存在返回 -1。
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-// 注意: 保持 Rust ABI — 参数含 `Option<unsafe fn()>` 等非 FFI-safe 类型
-#[unsafe(no_mangle)]
-#[expect(clippy::no_mangle_with_rust_abi)]
+// 保持 Rust ABI — 参数含 `Option<unsafe fn()>` 等非 FFI-safe 类型, 且无 C 符号
+// 导出需求, 故不标 `no_mangle` (P-64 第十五批: 消除 no_mangle_with_rust_abi).
 pub fn recovery_domain_set_cbs(
     domain_id: u64,
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -247,7 +245,7 @@ pub extern "C" fn recovery_undo_record(domain_id: u64, field_ptr: *mut u8, old_v
 pub extern "C" fn recovery_undo_count(domain_id: u64) -> i32 {
     let mgr = super::RECOVERY_MANAGER.lock();
     mgr.find(domain_id).map_or(-1, |dom| {
-        crate::privileged::lib::low_i32_from_usize(dom.undo.lock().count)
+        crate::privileged::glue::low_i32_from_usize(dom.undo.lock().count)
     })
 }
 
@@ -274,7 +272,7 @@ pub extern "C" fn recovery_domain_add_dep(domain_id: u64, dep_id: u64) -> i32 {
 pub extern "C" fn recovery_domain_dep_count(domain_id: u64) -> i32 {
     let mgr = super::RECOVERY_MANAGER.lock();
     mgr.find(domain_id).map_or(-1, |dom| {
-        crate::privileged::lib::low_i32_from_usize(dom.dependency_count())
+        crate::privileged::glue::low_i32_from_usize(dom.dependency_count())
     })
 }
 
@@ -297,7 +295,7 @@ pub extern "C" fn recovery_domain_add_addr_range(domain_id: u64, start: u64, end
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_rollback_log_count() -> i32 {
     let log = super::manager::ROLLBACK_LOG.lock();
-    crate::privileged::lib::low_i32_from_usize(log.iter().filter(|e| e.is_some()).count())
+    crate::privileged::glue::low_i32_from_usize(log.iter().filter(|e| e.is_some()).count())
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作

@@ -551,7 +551,7 @@ pub extern "C" fn sys_secure_boot(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
                 return -(22i64); // EINVAL
             }
             let image_ptr = a1 as *const u8;
-            let image_len = crate::privileged::lib::usize_from_u64(a2);
+            let image_len = crate::privileged::glue::usize_from_u64(a2);
             let sig_ptr = a3 as *const [u8; ED25519_SIG_LEN];
             // SAFETY: 指针由 syscall 入口保证有效
             let image = unsafe { core::slice::from_raw_parts(image_ptr, image_len) };
@@ -596,7 +596,7 @@ pub extern "C" fn sys_tpm(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     match cmd {
         0 => {
             // extend
-            let Some(pcr_idx) = PcrIndex::from_u32(crate::privileged::lib::low_u32_from_u64(a1))
+            let Some(pcr_idx) = PcrIndex::from_u32(crate::privileged::glue::low_u32_from_u64(a1))
             else {
                 return -(22i64);
             };
@@ -607,7 +607,7 @@ pub extern "C" fn sys_tpm(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
             let data = unsafe {
                 core::slice::from_raw_parts(
                     a2 as *const u8,
-                    crate::privileged::lib::usize_from_u64(a3),
+                    crate::privileged::glue::usize_from_u64(a3),
                 )
             };
             if tpm_subsystem().extend(pcr_idx, data) {
@@ -618,7 +618,7 @@ pub extern "C" fn sys_tpm(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
         }
         1 => {
             // read_pcr
-            let Some(pcr_idx) = PcrIndex::from_u32(crate::privileged::lib::low_u32_from_u64(a1))
+            let Some(pcr_idx) = PcrIndex::from_u32(crate::privileged::glue::low_u32_from_u64(a1))
             else {
                 return -(22i64);
             };
@@ -637,10 +637,10 @@ pub extern "C" fn sys_tpm(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
             let data = unsafe {
                 core::slice::from_raw_parts(
                     a1 as *const u8,
-                    crate::privileged::lib::usize_from_u64(a2),
+                    crate::privileged::glue::usize_from_u64(a2),
                 )
             };
-            match tpm_subsystem().seal(data, crate::privileged::lib::low_u32_from_u64(a3)) {
+            match tpm_subsystem().seal(data, crate::privileged::glue::low_u32_from_u64(a3)) {
                 Some(_) => 0,
                 None => -(5i64),
             }
@@ -654,11 +654,11 @@ pub extern "C" fn sys_tpm(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
                 unsafe {
                     core::slice::from_raw_parts(
                         a2 as *const u8,
-                        crate::privileged::lib::usize_from_u64(a3),
+                        crate::privileged::glue::usize_from_u64(a3),
                     )
                 }
             };
-            let quote = tpm_subsystem().quote(crate::privileged::lib::low_u32_from_u64(a1), nonce);
+            let quote = tpm_subsystem().quote(crate::privileged::glue::low_u32_from_u64(a1), nonce);
             let mut bytes = [0u8; 8];
             bytes.copy_from_slice(&quote.quote_hash[..8]);
             i64::from_be_bytes(bytes)

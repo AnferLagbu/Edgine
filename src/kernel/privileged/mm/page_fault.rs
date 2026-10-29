@@ -96,7 +96,7 @@ fn stack_guard_end() -> u64 {
 
 /// 基于给定地址空间 (`MmStruct`) 处理一次缺页, 返回处置结果.
 pub fn handle_page_fault(mm: &MmStruct, info: PageFaultInfo) -> PfResult {
-    let addr = crate::privileged::lib::usize_from_u64(info.fault_addr);
+    let addr = crate::privileged::glue::usize_from_u64(info.fault_addr);
 
     if info.reserved {
         return PfResult::SignalBus;
@@ -125,7 +125,7 @@ pub fn handle_page_fault(mm: &MmStruct, info: PageFaultInfo) -> PfResult {
 /// 汇编在 KPTI 切换前将硬件 CR3 写入此变量.
 pub fn handle_user_page_fault(info: PageFaultInfo) -> PfResult {
     let user_cr3 = super::read_user_cr3_asm();
-    let addr = crate::privileged::lib::usize_from_u64(info.fault_addr);
+    let addr = crate::privileged::glue::usize_from_u64(info.fault_addr);
 
     if info.reserved {
         return PfResult::SignalBus;
@@ -179,7 +179,7 @@ pub fn handle_user_page_fault(info: PageFaultInfo) -> PfResult {
 }
 
 fn handle_stack_expansion_simple(addr: usize, user_cr3: u64) -> PfResult {
-    let page_aligned = addr & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
+    let page_aligned = addr & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1);
 
     if (page_aligned as u64) < stack_guard_end() {
         return PfResult::SignalSegv;
@@ -196,7 +196,7 @@ fn handle_stack_expansion_simple(addr: usize, user_cr3: u64) -> PfResult {
         core::ptr::write_bytes(
             phys_virt.0 as *mut u8,
             0,
-            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            crate::privileged::glue::usize_from_u64(PAGE_SIZE),
         );
     }
 
@@ -218,8 +218,8 @@ fn handle_vma_fault_with_mm(
     info: &PageFaultInfo,
     user_cr3: u64,
 ) -> PfResult {
-    let aligned = crate::privileged::lib::usize_from_u64(info.fault_addr)
-        & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
+    let aligned = crate::privileged::glue::usize_from_u64(info.fault_addr)
+        & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1);
 
     // ── userfaultfd (T1 G4): 已注册区间的匿名页缺页交由用户态处理 ──
     // 仅拦截 not-present 的用户态缺页 (MISSING 模式); COW/文件映射不受影响.
@@ -260,7 +260,7 @@ fn handle_vma_fault_with_mm(
         core::ptr::write_bytes(
             phys_virt.0 as *mut u8,
             0,
-            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            crate::privileged::glue::usize_from_u64(PAGE_SIZE),
         );
     }
 
@@ -321,7 +321,7 @@ fn handle_file_fault(
         // P3-I-19: 传入 mount_idx (vma.mount_idx, mmap 时记录的挂载点)
         // 让 vfs_pread_inode 能走 FileSystem trait 分发而非硬编码 RamFS.
         let file_off = vma.offset + (aligned - vma.start) as u64;
-        let mut page_buf = [0u8; crate::privileged::lib::usize_from_u64(PAGE_SIZE)];
+        let mut page_buf = [0u8; crate::privileged::glue::usize_from_u64(PAGE_SIZE)];
         let n = crate::privileged::fs::current_vfs_ops().pread_inode(
             vma.mount_idx,
             vma.inode_id,
@@ -333,7 +333,7 @@ fn handle_file_fault(
             super::pcache::pcache_fill(
                 vma.inode_id,
                 page_index,
-                &page_buf[..crate::privileged::lib::usize_from_i32(n)],
+                &page_buf[..crate::privileged::glue::usize_from_i32(n)],
             );
         }
         // n <= 0 (EOF / 文件短): 保持插入时的零页 (POSIX: mmap 文件尾零填充)
@@ -380,7 +380,7 @@ fn handle_file_fault(
                 core::ptr::copy_nonoverlapping(
                     src_virt.0 as *const u8,
                     dst_virt.0 as *mut u8,
-                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                    crate::privileged::glue::usize_from_u64(PAGE_SIZE),
                 );
             }
 
@@ -417,7 +417,7 @@ fn is_stack_expansion_candidate(addr: usize) -> bool {
 }
 
 fn handle_stack_expansion(mm: &MmStruct, addr: usize, user_cr3: u64) -> PfResult {
-    let page_aligned = addr & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
+    let page_aligned = addr & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1);
 
     if (page_aligned as u64) < stack_guard_end() {
         return PfResult::SignalSegv;
@@ -438,7 +438,7 @@ fn handle_stack_expansion(mm: &MmStruct, addr: usize, user_cr3: u64) -> PfResult
         core::ptr::write_bytes(
             phys_virt.0 as *mut u8,
             0,
-            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            crate::privileged::glue::usize_from_u64(PAGE_SIZE),
         );
     }
 
@@ -452,7 +452,7 @@ fn handle_stack_expansion(mm: &MmStruct, addr: usize, user_cr3: u64) -> PfResult
 
     let stack_vma = Vma::new(
         page_aligned,
-        page_aligned + crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+        page_aligned + crate::privileged::glue::usize_from_u64(PAGE_SIZE),
         flags,
         VmaType::Stack,
     );
@@ -494,7 +494,7 @@ fn do_cow_copy_with_mm(_mm: &MmStruct, _vma: &Vma, addr: usize, user_cr3: u64) -
         core::ptr::copy_nonoverlapping(
             old_virt.0 as *const u8,
             new_virt.0 as *mut u8,
-            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            crate::privileged::glue::usize_from_u64(PAGE_SIZE),
         );
     }
 

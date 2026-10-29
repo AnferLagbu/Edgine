@@ -240,9 +240,9 @@ impl HotplugManager {
 
         HotplugStatus {
             enabled,
-            slot_count: crate::privileged::lib::low_u32_from_usize(slot_infos.len()),
+            slot_count: crate::privileged::glue::low_u32_from_usize(slot_infos.len()),
             slots: slot_infos,
-            blk_device_count: crate::privileged::lib::low_u32_from_usize(blk_count),
+            blk_device_count: crate::privileged::glue::low_u32_from_usize(blk_count),
             blk_devices: blk_states,
         }
     }

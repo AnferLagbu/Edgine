@@ -130,10 +130,10 @@ pub type ProcResult<T> = Result<T, ProcError>;
 /// 3. Session 管理器 (`SESSION_MANAGER.init` → `pub fn init()`)
 ///
 /// 由启动期 `kernel::init` 调用一次。
-#[expect(
-    clippy::missing_panics_doc,
-    reason = "missing_panics_doc: init 在信号/coredump 策略重复注册时 panic 以暴露启动期配置错误 (privileged 契约: 仅注册一次, 见 B05-36/B05-44)"
-)]
+///
+/// # Panics
+/// 启动期重复注册信号策略或 coredump sink 时 panic (配置错误, 由 privileged
+/// 契约保证仅注册一次)。
 pub fn init() {
     // REVAL-1: 注册 functions 层信号策略
     // 启动期重复注册是配置错误, panic 暴露 (B05-44 返工).

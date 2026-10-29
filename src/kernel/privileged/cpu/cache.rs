@@ -91,12 +91,12 @@ pub(super) fn detect_cache(
                 (3, 2) => {
                     // L2 Unified
                     cache_out.l2_size = size;
-                    cache_out.l2_associativity = crate::privileged::lib::low_u8_from_u32(assoc);
+                    cache_out.l2_associativity = crate::privileged::glue::low_u8_from_u32(assoc);
                 }
                 (3, 3) => {
                     // L3 Unified
                     cache_out.l3_size = size;
-                    cache_out.l3_associativity = crate::privileged::lib::low_u8_from_u32(assoc);
+                    cache_out.l3_associativity = crate::privileged::glue::low_u8_from_u32(assoc);
                 }
                 _ => {}
             }
@@ -127,7 +127,7 @@ pub(super) fn detect_cache(
     if max_std >= 1 {
         let (_, ebx, _, _) = cpuid::cpuid(1, 0);
         cache_out.cache_line_size =
-            crate::privileged::lib::low_u16_from_u32(8 * ((ebx >> 8) & 0xFF));
+            crate::privileged::glue::low_u16_from_u32(8 * ((ebx >> 8) & 0xFF));
     }
 
     // 最终安全检查

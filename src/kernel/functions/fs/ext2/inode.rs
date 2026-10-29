@@ -123,10 +123,6 @@ impl Ext2Inode {
         Some(inode)
     }
 
-    #[expect(
-        clippy::no_effect_underscore_binding,
-        reason = "no_effect_underscore_binding: let _ = expr 用于类型推导/副作用; 当前优先 expect"
-    )]
     /// 获取逻辑块号 (支持直接/间接寻址)
     pub fn get_block(&self, logical: u32, block_size: u32) -> Option<u32> {
         let blocks_per_indirect = block_size / 4;
@@ -137,7 +133,6 @@ impl Ext2Inode {
             if block == 0 { None } else { Some(block) }
         } else if logical < 12 + blocks_per_indirect {
             // 一次间接
-            let _indirect_idx = logical - 12;
             let indirect_block = self.i_block[12];
             if indirect_block == 0 {
                 None
@@ -149,9 +144,6 @@ impl Ext2Inode {
             }
         } else if logical < 12 + blocks_per_indirect + blocks_per_indirect * blocks_per_indirect {
             // 二次间接
-            let double_idx = logical - 12 - blocks_per_indirect;
-            let _indirect_idx = double_idx / blocks_per_indirect;
-            let _block_idx = double_idx % blocks_per_indirect;
             let double_block = self.i_block[13];
             if double_block == 0 {
                 None

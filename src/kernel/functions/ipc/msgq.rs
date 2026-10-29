@@ -193,14 +193,13 @@ pub fn msgq_recv_safe(
     Ok(read_size)
 }
 
-#[expect(
-    clippy::missing_panics_doc,
-    reason = "missing_panics_doc: msgq_destroy_safe 释放消息链表时若 head 指针本应非空却为 null 会 panic (链表不变量被破坏, 见函数内 expect)"
-)]
 /// 销毁消息队列 (策略: 释放所有消息 + 清理结构体)
 ///
 /// # Errors
 /// 当队列不存在时返回 `Err(-1)`.
+///
+/// # Panics
+/// 遍历消息链表时若 `head` 指针非空但无法构造 `NonNull` (毒化指针), panic。
 pub fn msgq_destroy_safe(namespace: &mut IpcNamespace, id: IpcId) -> Result<(), i32> {
     let Some(mq) = msgq_find_by_id(namespace, id) else {
         return Err(-1);

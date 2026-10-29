@@ -12,10 +12,6 @@
 
 use crate::privileged::syscall::Errno;
 
-#[expect(
-    clippy::comparison_chain,
-    reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-)]
 /// `sched_setaffinity(pid`, cpusetsize, mask) 策略
 ///
 /// Linux 兼容 ABI:
@@ -34,12 +30,10 @@ pub fn sched_setaffinity_syscall(pid: i32, cpusetsize: u32, mask_ptr: u64) -> i6
         return Errno::EFAULT.as_ret();
     };
 
-    let target_pid = if pid == 0 {
-        crate::privileged::proc::process_get_current_pid()
-    } else if pid > 0 {
-        pid.cast_unsigned()
-    } else {
-        return Errno::EINVAL.as_ret();
+    let target_pid = match pid {
+        0 => crate::privileged::proc::process_get_current_pid(),
+        p if p > 0 => p.cast_unsigned(),
+        _ => return Errno::EINVAL.as_ret(),
     };
 
     if target_pid == 0 {
@@ -59,10 +53,6 @@ pub fn sched_setaffinity_syscall(pid: i32, cpusetsize: u32, mask_ptr: u64) -> i6
     0
 }
 
-#[expect(
-    clippy::comparison_chain,
-    reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-)]
 /// `sched_getaffinity(pid`, cpusetsize, mask) 策略
 ///
 /// Linux 兼容 ABI:
@@ -76,12 +66,10 @@ pub fn sched_getaffinity_syscall(pid: i32, cpusetsize: u32, mask_ptr: u64) -> i6
         return Errno::EFAULT.as_ret();
     }
 
-    let target_pid = if pid == 0 {
-        crate::privileged::proc::process_get_current_pid()
-    } else if pid > 0 {
-        pid.cast_unsigned()
-    } else {
-        return Errno::EINVAL.as_ret();
+    let target_pid = match pid {
+        0 => crate::privileged::proc::process_get_current_pid(),
+        p if p > 0 => p.cast_unsigned(),
+        _ => return Errno::EINVAL.as_ret(),
     };
 
     if target_pid == 0 {

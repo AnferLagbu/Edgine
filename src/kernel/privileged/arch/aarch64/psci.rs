@@ -138,7 +138,7 @@ fn psci_version() -> Option<(u32, u32)> {
         None
     } else {
         Some((
-            crate::privileged::lib::low_u32_from_u64(ver >> 16),
+            crate::privileged::glue::low_u32_from_u64(ver >> 16),
             (ver & 0xFFFF) as u32,
         ))
     }

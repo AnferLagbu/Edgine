@@ -451,10 +451,6 @@ impl ICache {
     }
 
     /// 插入/更新 inode 缓存
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "too_many_arguments: icache 需完整 VfsStat 字段, 拆结构体收益不抵改动面; 当前优先 expect"
-    )]
     fn insert(
         &mut self,
         fs_id: u32,

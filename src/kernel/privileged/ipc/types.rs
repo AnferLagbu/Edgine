@@ -489,7 +489,7 @@ impl MsgQueue {
             tail: AtomicPtr::new(core::ptr::null_mut()),
             count: 0,
             max_msgs: MSG_QUEUE_MAX_MSGS,
-            max_size: crate::privileged::lib::low_u32_from_usize(MSG_MAX_SIZE),
+            max_size: crate::privileged::glue::low_u32_from_usize(MSG_MAX_SIZE),
             send_wait: WaitQueue::new(),
             recv_wait: WaitQueue::new(),
             flags: 0,

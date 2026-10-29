@@ -10,9 +10,6 @@
 //! 验证调用方语义: 返回 Result<usize, ()>, 失败时调用方必须
 //! 把 EFAULT / SIG_IGN 路径走通.
 
-// 单元素 &[Range] 是 unmapped 区间的合理表示 (测试用单区间), 抑制 clippy 误报
-#![allow(clippy::single_range_in_vec_init)]
-
 // ============================================================================
 // 模型: 异常表保护版 copy API 契约
 // ============================================================================
@@ -63,7 +60,7 @@ fn mock_copy_from_user(
 
 #[test]
 fn coredump_user_buf_mapped_succeeds() {
-    let unmapped: Vec<std::ops::Range<u64>> = vec![];
+    let unmapped: Vec<std::ops::Range<u64>> = Vec::new();
     let mut buf = [0u8; 256];
     let r = mock_copy_from_user(&mut buf, 0x1000, 256, &unmapped);
     assert_eq!(r, CopyOutcome::Ok(256));
@@ -72,7 +69,10 @@ fn coredump_user_buf_mapped_succeeds() {
 #[test]
 fn coredump_user_buf_munmapped_returns_efault() {
     // 用户在 coredump 遍历 VMA 过程中 munmap 了当前段
-    let unmapped: &[std::ops::Range<u64>] = &[0x1000..0x2000];
+    let unmapped: &[std::ops::Range<u64>] = &[std::ops::Range {
+        start: 0x1000,
+        end: 0x2000,
+    }];
     let mut buf = [0u8; 256];
     let r = mock_copy_from_user(&mut buf, 0x1000, 256, unmapped);
     assert_eq!(
@@ -88,7 +88,10 @@ fn coredump_user_buf_munmapped_returns_efault() {
 
 #[test]
 fn socket_send_user_buf_munmapped_returns_efault() {
-    let unmapped: &[std::ops::Range<u64>] = &[0x4000_0000..0x4000_1000];
+    let unmapped: &[std::ops::Range<u64>] = &[std::ops::Range {
+        start: 0x4000_0000,
+        end: 0x4000_1000,
+    }];
     let buf = [0xABu8; 512];
     let r = mock_copy_to_user(0x4000_0000, &buf, 512, unmapped);
     assert_eq!(
@@ -100,7 +103,10 @@ fn socket_send_user_buf_munmapped_returns_efault() {
 
 #[test]
 fn socket_recv_user_buf_munmapped_returns_efault() {
-    let unmapped: &[std::ops::Range<u64>] = &[0x5000_0000..0x5000_1000];
+    let unmapped: &[std::ops::Range<u64>] = &[std::ops::Range {
+        start: 0x5000_0000,
+        end: 0x5000_1000,
+    }];
     let mut buf = [0u8; 512];
     let r = mock_copy_from_user(&mut buf, 0x5000_0000, 512, unmapped);
     assert_eq!(
@@ -113,7 +119,10 @@ fn socket_recv_user_buf_munmapped_returns_efault() {
 #[test]
 fn socket_sockaddr_user_buf_munmapped_returns_efault() {
     // sockaddr_in 仅 8 字节, 跨越 munmap 边界
-    let unmapped: &[std::ops::Range<u64>] = &[0x6000_0004..0x6000_0008];
+    let unmapped: &[std::ops::Range<u64>] = &[std::ops::Range {
+        start: 0x6000_0004,
+        end: 0x6000_0008,
+    }];
     let mut buf = [0u8; 8];
     let r = mock_copy_from_user(&mut buf, 0x6000_0000, 8, unmapped);
     assert_eq!(
@@ -221,7 +230,10 @@ fn signal_stack_mapped_delivers() {
 #[test]
 fn signal_stack_munmapped_rolls_back() {
     // 用户栈在信号投递前被 munmap
-    let unmapped: &[std::ops::Range<u64>] = &[0x7000_0000..0x7000_1000];
+    let unmapped: &[std::ops::Range<u64>] = &[std::ops::Range {
+        start: 0x7000_0000,
+        end: 0x7000_1000,
+    }];
     let sigframe = SignalFrame {
         r15: 0,
         r14: 0,
@@ -259,7 +271,10 @@ fn signal_stack_munmapped_rolls_back() {
 fn signal_trampoline_page_munmapped_rolls_back() {
     // ret_addr 写入成功, 但 trampoline 所在页被 munmap
     // frame_rsp=0x7000_0000, frame_size=184, trampoline 起点 = 0x7000_00C0
-    let unmapped: &[std::ops::Range<u64>] = &[0x7000_00C8..0x7000_00D8];
+    let unmapped: &[std::ops::Range<u64>] = &[std::ops::Range {
+        start: 0x7000_00C8,
+        end: 0x7000_00D8,
+    }];
     let sigframe = SignalFrame {
         r15: 0,
         r14: 0,

@@ -66,7 +66,7 @@ impl SignalDecision for FallbackSignalPolicy {
         if deliverable == 0 {
             return None;
         }
-        let sig_bit = crate::privileged::lib::low_u8_from_u32(deliverable.trailing_zeros());
+        let sig_bit = crate::privileged::glue::low_u8_from_u32(deliverable.trailing_zeros());
         if sig_bit == 0 || sig_bit > 31 {
             return None;
         }

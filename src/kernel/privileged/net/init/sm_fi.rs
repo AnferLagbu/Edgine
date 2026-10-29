@@ -279,7 +279,7 @@ pub(crate) unsafe fn write_sockaddr(
                 if !addrlen.is_null() {
                     core::ptr::write(
                         addrlen,
-                        crate::privileged::lib::low_u32_from_usize(
+                        crate::privileged::glue::low_u32_from_usize(
                             core::mem::size_of::<SockaddrIn>(),
                         ),
                     );
@@ -295,12 +295,8 @@ pub(crate) unsafe fn write_sockaddr(
                 };
                 core::ptr::write_unaligned(addr.cast::<SockaddrIn6>(), sin6);
                 if !addrlen.is_null() {
-                    core::ptr::write(
-                        addrlen,
-                        crate::privileged::lib::low_u32_from_usize(
-                            core::mem::size_of::<SockaddrIn6>(),
-                        ),
-                    );
+                    let size = core::mem::size_of::<SockaddrIn6>();
+                    core::ptr::write(addrlen, crate::privileged::glue::low_u32_from_usize(size));
                 }
             }
         }
@@ -1120,7 +1116,7 @@ pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, flags: i32) 
                         Some(-E_CONNRESET)
                     } else if sock.can_send() || !(blocking && can_block) {
                         Some(sock.send_slice(data).map_or(-E_CONNRESET, |n| {
-                            crate::privileged::lib::low_i32_from_usize(n)
+                            crate::privileged::glue::low_i32_from_usize(n)
                         }))
                     } else {
                         None // 阻塞 fd + 连接存活 + 缓冲满 → 挂起等可写
@@ -1217,7 +1213,7 @@ pub unsafe extern "C" fn sm_recv(fd: i32, buf: *mut u8, len: u32, flags: i32) ->
                     if sock.can_recv() {
                         Some(
                             sock.recv_slice(data)
-                                .map_or(0, crate::privileged::lib::low_i32_from_usize),
+                                .map_or(0, crate::privileged::glue::low_i32_from_usize),
                         )
                     } else if !sock.is_open() {
                         Some(-E_CONNRESET) // 无数据且连接关闭 (沿用旧 eager 语义: 未细分 EOF/RST)
@@ -1231,7 +1227,7 @@ pub unsafe extern "C" fn sm_recv(fd: i32, buf: *mut u8, len: u32, flags: i32) ->
                     let sock = sockets.get_mut::<udp::Socket>(handle);
                     if sock.can_recv() {
                         Some(sock.recv_slice(data).map_or(-E_AGAIN, |(n, _meta)| {
-                            crate::privileged::lib::low_i32_from_usize(n)
+                            crate::privileged::glue::low_i32_from_usize(n)
                         }))
                     } else if blocking && can_block {
                         None
@@ -1329,7 +1325,7 @@ pub unsafe extern "C" fn sm_sendto(
                         Some(-E_CONNRESET)
                     } else if sock.can_send() || !(blocking && can_block) {
                         Some(sock.send_slice(data).map_or(-E_CONNRESET, |n| {
-                            crate::privileged::lib::low_i32_from_usize(n)
+                            crate::privileged::glue::low_i32_from_usize(n)
                         }))
                     } else {
                         None
@@ -1416,7 +1412,7 @@ pub unsafe extern "C" fn sm_recvfrom(
                             // 再写入 sockaddr_in 供用户态读取对端地址.
                             let ep = endpoint_from_smol(meta.endpoint);
                             write_sockaddr(addr, addrlen, &ep);
-                            crate::privileged::lib::low_i32_from_usize(n)
+                            crate::privileged::glue::low_i32_from_usize(n)
                         }))
                     } else if blocking && can_block {
                         None
@@ -1429,7 +1425,7 @@ pub unsafe extern "C" fn sm_recvfrom(
                     if sock.can_recv() {
                         Some(
                             sock.recv_slice(data)
-                                .map_or(0, crate::privileged::lib::low_i32_from_usize),
+                                .map_or(0, crate::privileged::glue::low_i32_from_usize),
                         )
                     } else if !sock.is_open() {
                         Some(-E_CONNRESET)
@@ -1488,7 +1484,7 @@ pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32
         // 读 Msghdr
         // SAFETY: msg 由 functions 校验可读 56 字节 (u64 Linux x86_64 / aarch64 布局).
         let msg_iov_ptr = core::ptr::read_unaligned(msg.add(16).cast::<u64>());
-        let msg_iovlen_us = crate::privileged::lib::usize_from_u64(core::ptr::read_unaligned(
+        let msg_iovlen_us = crate::privileged::glue::usize_from_u64(core::ptr::read_unaligned(
             msg.add(24).cast::<u64>(),
         ));
         if msg_iovlen_us == 0 || msg_iovlen_us > 1024 {
@@ -1506,7 +1502,7 @@ pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32
             // SAFETY: msg_iov + i*Iovec(16) 可读 16 字节 (functions 校验 iov 范围).
             let iov_base =
                 core::ptr::read_unaligned((msg_iov_ptr as *const u8).add(i * 16).cast::<u64>());
-            let iov_len = crate::privileged::lib::usize_from_u64(core::ptr::read_unaligned(
+            let iov_len = crate::privileged::glue::usize_from_u64(core::ptr::read_unaligned(
                 (msg_iov_ptr as *const u8).add(i * 16 + 8).cast::<u64>(),
             ));
             bases[i] = iov_base;
@@ -1541,7 +1537,7 @@ pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32
         let rc = sm_send(
             fd,
             region.as_mut_ptr(),
-            crate::privileged::lib::low_u32_from_usize(total),
+            crate::privileged::glue::low_u32_from_usize(total),
             0,
         );
         rc
@@ -1564,7 +1560,7 @@ pub unsafe extern "C" fn sm_recvmsg(fd: i32, msg: *mut u8, _flags: i32) -> i32 {
             return -E_BADF;
         }
         let msg_iov_ptr = core::ptr::read_unaligned(msg.add(16) as *const u64);
-        let msg_iovlen_us = crate::privileged::lib::usize_from_u64(core::ptr::read_unaligned(
+        let msg_iovlen_us = crate::privileged::glue::usize_from_u64(core::ptr::read_unaligned(
             msg.add(24) as *const u64,
         ));
         if msg_iovlen_us == 0 || msg_iovlen_us > 1024 {
@@ -1580,7 +1576,7 @@ pub unsafe extern "C" fn sm_recvmsg(fd: i32, msg: *mut u8, _flags: i32) -> i32 {
         for i in 0..msg_iovlen_us {
             let iov_base =
                 core::ptr::read_unaligned((msg_iov_ptr as *const u8).add(i * 16).cast::<u64>());
-            let iov_len = crate::privileged::lib::usize_from_u64(core::ptr::read_unaligned(
+            let iov_len = crate::privileged::glue::usize_from_u64(core::ptr::read_unaligned(
                 (msg_iov_ptr as *const u8).add(i * 16 + 8).cast::<u64>(),
             ));
             bases[i] = iov_base;
@@ -1602,14 +1598,14 @@ pub unsafe extern "C" fn sm_recvmsg(fd: i32, msg: *mut u8, _flags: i32) -> i32 {
         let n = sm_recv(
             fd,
             region.as_mut_ptr(),
-            crate::privileged::lib::low_u32_from_usize(cap),
+            crate::privileged::glue::low_u32_from_usize(cap),
             0,
         );
         if n <= 0 {
             return n;
         }
         // 拆分回 iov
-        let mut left = crate::privileged::lib::usize_from_i32(n);
+        let mut left = crate::privileged::glue::usize_from_i32(n);
         let mut off = 0usize;
         for i in 0..msg_iovlen_us {
             if left == 0 {

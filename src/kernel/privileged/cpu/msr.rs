@@ -55,7 +55,7 @@ pub unsafe fn read_msr(msr: u32) -> u64 {
 #[inline]
 pub unsafe fn write_msr(msr: u32, value: u64) {
     unsafe {
-        let low = crate::privileged::lib::low_u32_from_u64(value);
+        let low = crate::privileged::glue::low_u32_from_u64(value);
         let high = (value >> 32) as u32;
 
         core::arch::asm!(
@@ -89,7 +89,7 @@ pub unsafe extern "C" fn cpu_read_msr(msr: u32, low: *mut u32, high: *mut u32) -
         }
 
         let value = read_msr(msr);
-        *low = crate::privileged::lib::low_u32_from_u64(value);
+        *low = crate::privileged::glue::low_u32_from_u64(value);
         *high = (value >> 32) as u32;
 
         0

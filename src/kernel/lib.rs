@@ -81,16 +81,11 @@
 // 声明, 已一并移除, 不再有 unstable 特性走 stable 路径.
 
 // 1. 全局单例模式 - 内核中常见且必要
-#![allow(static_mut_refs)]
 // 32个: TRUST_CHAIN, TOKEN_MANAGER 等全局可变静态
 
 // 2. C 语言兼容性 - 与原有 C 代码保持一致的命名风格
-#![allow(non_upper_case_globals)] // 函数名: kfree, kmalloc 等
-#![allow(non_camel_case_types)] // 类型名: C 互操作裸类型等
-#![allow(non_snake_case)] // 变量名: io_port 等
 
 // 4. FFI 边界 - C/Rust 互操作不可避免
-#![allow(improper_ctypes)]
 // 3个: IrqSaveFlags, FFI 类型
 
 // 5. 安全相关 - 已迁出 (2026-09-26 F9 裁决: 150+ 处冗余 unsafe 块全量清理, 移除 crate 级 allow(unused_unsafe))
@@ -962,7 +957,7 @@ fn boot_deferred_init() {
     // 10.7. 延迟子系统编排 (P-8 init 编排收口) ──────────────────────────
     // 单一编排点按依赖序接线 10 项子系统 init. 此前这 10 项挂在一个
     // `extern "C"` 孤儿入口 `sched_ops::scheduler_init` 内 (无生产调用者),
-    // 后果是它们在生产环境**从未执行**: NUMA 拓扑 (SYS_getcpu / SYS_mbind 等
+    // 后果是它们在生产环境**从未执行**: NUMA 拓扑 (SYS_GETCPU / SYS_MBIND 等
     // 已在 functions dispatch 接线却无拓扑可查), cgroup, PM, SGEG/TPM, CET,
     // Tickless, TimeSync, kexec, UEFI, 以及 tick_query 解耦桥 (P-1 恒返 0 的
     // 成因). 各项 init 均自带幂等守卫 (OnceCell / AtomicBool / is_initialized).
@@ -980,14 +975,14 @@ fn boot_deferred_init() {
     crate::privileged::proc::cgroup::cgroup_init();
     crate::privileged::mm::numa_init(
         crate::privileged::mm::pmm_get_total_pages() * crate::privileged::mm::PAGE_SIZE,
-        crate::privileged::lib::low_u32_from_usize(crate::privileged::config::MAX_CPUS),
+        crate::privileged::glue::low_u32_from_usize(crate::privileged::config::MAX_CPUS),
     );
-    crate::privileged::driver::pm_init(crate::privileged::lib::low_u32_from_usize(
+    crate::privileged::driver::pm_init(crate::privileged::glue::low_u32_from_usize(
         crate::privileged::config::MAX_CPUS,
     ));
     crate::privileged::sgeg::sgeg_init();
     crate::functions::proc::shadow_stack::init();
-    crate::functions::timer::tickless::init(crate::privileged::lib::low_u32_from_usize(
+    crate::functions::timer::tickless::init(crate::privileged::glue::low_u32_from_usize(
         crate::privileged::config::MAX_CPUS,
     ));
     crate::functions::timer::time_sync::init();

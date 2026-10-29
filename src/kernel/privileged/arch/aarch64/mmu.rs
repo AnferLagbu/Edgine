@@ -93,20 +93,20 @@ static mut L2_DEVICE: AlignedPageTable = AlignedPageTable([0; 512]);
 /// - 在设置 TTBR0/TTBR1 前已确保旧映射一致性
 pub unsafe fn init() {
     unsafe {
-        // 清零页表
-        ptr::write_bytes(L0_TABLE.0.as_mut_ptr(), 0, 512);
-        ptr::write_bytes(L1_IDMAP.0.as_mut_ptr(), 0, 512);
-        ptr::write_bytes(L2_DEVICE.0.as_mut_ptr(), 0, 512);
+        // 清零页表 (经 &raw mut 取裸指针, 避免对 static mut 取引用触发 static_mut_refs)
+        ptr::write_bytes((&raw mut L0_TABLE.0).cast::<u64>(), 0, 512);
+        ptr::write_bytes((&raw mut L1_IDMAP.0).cast::<u64>(), 0, 512);
+        ptr::write_bytes((&raw mut L2_DEVICE.0).cast::<u64>(), 0, 512);
 
         // 表内条目存的是**下一级表的物理地址** (硬件按 PA 遍历), 而三张 static
         // 表链接于高半区 (VMA = PA + KERNEL_BASE), 故必须经 virt_to_phys 转换。
         // L0[0] → L1_IDMAP (L0 每项覆盖 512GB, 这里只需一个)
-        L0_TABLE.0[0] = virt_to_phys(L1_IDMAP.0.as_ptr() as u64) | PT_TYPE_TABLE;
+        L0_TABLE.0[0] = virt_to_phys((&raw const L1_IDMAP.0).cast::<u64>() as u64) | PT_TYPE_TABLE;
 
         // L1[0] → L2_DEVICE: 0-1GB 用 L2 2MB 块映射, Device memory 属性
         //   因为 QEMU virt 低 1GB 无 DRAM (只有 GIC@0x08000000, UART@0x09000000),
         //   以 Normal cacheable 属性访问 MMIO 会导致数据异常/挂死。
-        L1_IDMAP.0[0] = virt_to_phys(L2_DEVICE.0.as_ptr() as u64) | PT_TYPE_TABLE;
+        L1_IDMAP.0[0] = virt_to_phys((&raw const L2_DEVICE.0).cast::<u64>() as u64) | PT_TYPE_TABLE;
 
         // L2_DEVICE: 512 个 2MB Device 块, 覆盖 0x00000000 - 0x40000000
         for i in 0..512 {
@@ -118,16 +118,13 @@ pub unsafe fn init() {
         L1_IDMAP.0[1] = 0x4000_0000 | PT_TYPE_BLOCK | PT_AF | PT_ATTR_NORMAL | PT_AP_EL1_RW;
 
         // 设置 TTBR0_EL1 (TTBR 承载表物理地址)
-        set_ttbr0(virt_to_phys(L0_TABLE.0.as_ptr() as u64));
+        set_ttbr0(virt_to_phys((&raw const L0_TABLE.0).cast::<u64>() as u64));
 
         // 设置 TCR_EL1 (Translation Control Register)
         // T0SZ=16 (TTBR0 用 48-bit IPA), T1SZ=16 (TTBR1 用 48-bit IPA)
-        // 4KB 颗粒 (TG0=00, TG1=10), 内部共享, Normal 可缓存
-        // 2026-09-11 实测: 0b00<<14 触发 identity_op, 需豁免
-        #[allow(clippy::identity_op)]
+        // 4KB 颗粒 (TG0=00, TG1=10, TG0 为零值故不出现在或运算中), 内部共享, Normal 可缓存
         let tcr: u64 = 16u64 // T0SZ: 64 - 48 = 16
                   | (16u64 << 16)   // T1SZ: 64 - 48 = 16
-                  | (0b00 << 14)    // TG0: 4KB
                   | (0b10 << 30)    // TG1: 4KB
                   | (0b11 << 12)    // SH0: Inner Shareable
                   | (0b11 << 28)    // SH1: Inner Shareable
@@ -193,7 +190,7 @@ unsafe fn init_kernel_ttbr1() {
     unsafe {
         // 与 TTBR0 共用 4 级根: 高半区别名与恒等映射的各级索引一致, 无需独立表。
         // TTBR 承载表物理地址, 故经 virt_to_phys 转换 (表链接于高半区)。
-        set_ttbr1(virt_to_phys(L0_TABLE.0.as_ptr() as u64));
+        set_ttbr1(virt_to_phys((&raw const L0_TABLE.0).cast::<u64>() as u64));
 
         // 刷新 TLB: MMU 启用后到 TTBR1_EL1 设置前的窗口期,
         // CPU 可能投机翻译 TTBR1 地址 (TTBR1_EL1 旧值为 0),
@@ -213,7 +210,7 @@ pub fn alloc_user_page_table() -> u64 {
     // Phase 6+: 实现每进程独立页表分配
     // 返回值写入 TTBR0_EL1, 必须是表物理地址 (表链接于高半区, 故经 virt_to_phys 转换)。
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    unsafe { virt_to_phys(L0_TABLE.0.as_ptr() as u64) }
+    unsafe { virt_to_phys((&raw const L0_TABLE.0).cast::<u64>() as u64) }
 }
 
 // ============================================================================

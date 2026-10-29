@@ -385,7 +385,7 @@ pub fn attribution_classify_bench(iters: u64) -> u128 {
 /// 构造第 i 个 bench 用故障信号 (奇偶交替 TCB / Service 两类归属).
 fn bench_signal(i: u64) -> FaultSignal {
     if i & 1 == 0 {
-        FaultSignal::tcb(TcbModule::FREG, i)
+        FaultSignal::tcb(TcbModule::Freg, i)
     } else {
         FaultSignal {
             attribution: FaultAttribution::Service {
@@ -1292,11 +1292,9 @@ fn measure<F: Fn(u64) -> u128>(name: &str, category: &str, iters: u64, f: F) -> 
     }
 }
 
-#[allow(clippy::vec_init_then_push)] // 23 项基准测试, vec![] 宏可读性差
 pub fn run_all() -> BenchReport {
-    let mut results = Vec::new();
     // 第三参数 = 该 bench 的执行轮数 (measure 记账用, 同时传给 bench 本体, 单一来源)
-    results.push(measure("page_flags_bits", "mm", 100_000, page_flags_bench));
+    let mut results = vec![measure("page_flags_bits", "mm", 100_000, page_flags_bench)];
     results.push(measure("pte_set_flags", "mm", 100_000, pte_set_flags_bench));
     results.push(measure(
         "iomem_alias_check",
@@ -1529,7 +1527,7 @@ mod tests {
     #[test]
     fn test_recovery_tcb_is_bhr() {
         // G-07: 直引内核 RecoveryPolicy — TCB 故障不可恢复 → 硬重置
-        let s = FaultSignal::tcb(TcbModule::FREG, 0);
+        let s = FaultSignal::tcb(TcbModule::Freg, 0);
         assert_eq!(RecoveryPolicy::decide(&s), RecoveryAction::FREGHardReset);
     }
 

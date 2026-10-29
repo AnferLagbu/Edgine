@@ -138,11 +138,12 @@ const _: () = assert!(core::mem::offset_of!(KptiCpuState, tramp_save1) == 16);
 const _: () = assert!(core::mem::size_of::<KptiCpuState>() == 24);
 // 载体按页对齐 (汇编 `adrp` 取符号地址; `kpti_init` 按整页映射).
 const _: () = assert!(
-    core::mem::align_of::<KptiCpuStateArray>() >= crate::privileged::lib::usize_from_u64(PAGE_SIZE)
+    core::mem::align_of::<KptiCpuStateArray>()
+        >= crate::privileged::glue::usize_from_u64(PAGE_SIZE)
 );
 const _: () = assert!(
     core::mem::size_of::<KptiCpuStateArray>()
-        .is_multiple_of(crate::privileged::lib::usize_from_u64(PAGE_SIZE))
+        .is_multiple_of(crate::privileged::glue::usize_from_u64(PAGE_SIZE))
 );
 
 // 高半区别名基数由 `mm::KERNEL_BASE` 单一提供 (L1-04 收敛: 迁移后二者同值,
@@ -203,14 +204,6 @@ unsafe extern "C" {
     static _vectors_end: u8;
 }
 
-#[expect(
-    clippy::missing_panics_doc,
-    reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-)]
-#[expect(
-    clippy::manual_assert,
-    reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-)]
 /// 初始化 KPTI: 创建**页级最小化**的 trampoline TTBR1 页表.
 ///
 /// trampoline 表 (4 级根) 仅映射 EL0↔EL1 边界真正用到的页 (高半区别名):
@@ -228,6 +221,9 @@ unsafe extern "C" {
 ///
 /// 页表操作走关联函数 (不依赖实例状态), 故本函数可在 `vmm_init` 的
 /// `OnceLock` 初始化**过程中**被调用 —— 此刻全局实例尚不可获取.
+///
+/// # Panics
+/// 分配 trampoline 根表失败 (物理内存耗尽) 时 panic — 此时内核无法安全进入用户态.
 pub unsafe fn kpti_init(kernel_ttbr1: u64) {
     if kpti_is_active() {
         return;
@@ -242,17 +238,18 @@ pub unsafe fn kpti_init(kernel_ttbr1: u64) {
 
     // 2. 分配并清零 trampoline 4 级根表
     let tramp_l0_phys = pmm_alloc_page() as u64;
-    if tramp_l0_phys == 0 {
-        // 不可恢复: KPTI 初始化需要 trampoline 根表, 分配失败意味着内存耗尽,
-        // 内核无法安全进入用户态, 只能停机
-        panic!("[KPTI] failed to allocate trampoline L0 page");
-    }
+    // 不可恢复: KPTI 初始化需要 trampoline 根表, 分配失败意味着内存耗尽,
+    // 内核无法安全进入用户态, 只能停机
+    assert_ne!(
+        tramp_l0_phys, 0,
+        "[KPTI] failed to allocate trampoline L0 page"
+    );
     // SAFETY: pmm 分配的页 4KB 对齐且属内核; phys_to_virt 给出可写内核 VA.
     unsafe {
         core::ptr::write_bytes(
             phys_to_virt(tramp_l0_phys) as *mut u8,
             0,
-            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            crate::privileged::glue::usize_from_u64(PAGE_SIZE),
         );
     }
 

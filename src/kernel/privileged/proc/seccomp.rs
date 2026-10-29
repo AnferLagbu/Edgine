@@ -26,7 +26,7 @@ use crate::privileged::proc::do_signal_send;
 use crate::privileged::proc::process_get_current_pid;
 use crate::privileged::syscall::Errno;
 use crate::privileged::syscall::types::{
-    SYS_exit, SYS_exit_group, SYS_read, SYS_rt_sigreturn, SYS_write,
+    SYS_EXIT, SYS_EXIT_GROUP, SYS_READ, SYS_RT_SIGRETURN, SYS_WRITE,
 };
 
 // ============================================================================
@@ -40,13 +40,13 @@ use crate::privileged::syscall::types::{
 pub const MAX_FILTERS: usize = 4;
 
 // B09-17 (2026-09-14): 白名单数值从 EG_* 私有区 (501+) 归位 Linux 编号 (SYS_*).
-// 原 EG_* 值 (502/503/...) 与用户态实际 syscall 编号 (SYS_read=0 等) 不一致 → 白名单永不命中 (bug).
+// 原 EG_* 值 (502/503/...) 与用户态实际 syscall 编号 (SYS_READ=0 等) 不一致 → 白名单永不命中 (bug).
 const STRICT_ALLOWED: &[u64] = &[
-    SYS_read,         // read
-    SYS_write,        // write
-    SYS_exit,         // exit
-    SYS_exit_group,   // exit_group
-    SYS_rt_sigreturn, // rt_sigreturn
+    SYS_READ,         // read
+    SYS_WRITE,        // write
+    SYS_EXIT,         // exit
+    SYS_EXIT_GROUP,   // exit_group
+    SYS_RT_SIGRETURN, // rt_sigreturn
 ];
 
 // ============================================================================
@@ -342,7 +342,7 @@ pub fn seccomp_check(syscall_nr: u64, args: &[u64; 6]) -> Option<i64> {
 /// 当 `pid` 对应的进程不存在时返回 `ESRCH`.
 pub fn add_rule(pid: u64, rule: SeccompRule) -> Result<(), Errno> {
     PROCESS_TABLE
-        .with_process(crate::privileged::lib::low_u32_from_u64(pid), |p| {
+        .with_process(crate::privileged::glue::low_u32_from_u64(pid), |p| {
             let mode = p.seccomp.get_mode();
             if mode == SeccompMode::Disabled {
                 p.seccomp

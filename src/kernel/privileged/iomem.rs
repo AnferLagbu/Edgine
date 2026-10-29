@@ -69,7 +69,7 @@ impl AliasRegistry {
             return Err("MMIO region overlaps existing region");
         }
         // 存储 (phys, len) 但 end 已被 checked_add 校验不溢出
-        let len = crate::privileged::lib::usize_from_u64(end - phys);
+        let len = crate::privileged::glue::usize_from_u64(end - phys);
         self.entries[self.count] = (phys, len, name);
         self.count += 1;
         Ok(())

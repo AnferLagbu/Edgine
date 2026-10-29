@@ -77,7 +77,7 @@ impl ProcessState {
 
     /// 从 u32 值转换 (兼容 `AtomicU32` 存储)
     pub fn from_u32(value: u32) -> Self {
-        Self::from_u8(crate::privileged::lib::low_u8_from_u32(value))
+        Self::from_u8(crate::privileged::glue::low_u8_from_u32(value))
     }
 
     /// 获取状态名称 (用于日志和调试)

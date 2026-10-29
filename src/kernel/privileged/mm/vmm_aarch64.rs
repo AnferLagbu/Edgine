@@ -35,7 +35,7 @@ const DESC_TYPE_BLOCK: u64 = 0b01; // 块描述符 (L1/L2)
 const DESC_TYPE_PAGE: u64 = 0b11; // 页描述符 (L3, 与 TABLE 位相同)
 
 /// 内存属性索引 (与 mmu.rs 中 MAIR_EL1 设定对应)
-const MAIR_DEVICE_nGnRnE: u64 = 0; // Device memory
+const MAIR_DEVICE_NGNRNE: u64 = 0; // Device memory
 const MAIR_NORMAL_WBWA: u64 = 1; // 普通可缓存内存 (内核)
 const MAIR_NORMAL_NC: u64 = 2; // Normal non-cacheable
 const MAIR_USER_NORMAL: u64 = 4; // 用户页的 Normal WBWA (回写缓存)
@@ -349,7 +349,7 @@ impl Aarch64Vmm {
             ptr::write_bytes(
                 phys_to_virt(paddr.as_u64()) as *mut u8,
                 0,
-                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                crate::privileged::glue::usize_from_u64(PAGE_SIZE),
             );
         }
         Some(paddr.as_u64())
@@ -396,11 +396,11 @@ impl Aarch64Vmm {
         Self::map_page_in_table(self.kernel_l0, virt, phys, flags);
     }
 
-    #[expect(
-        clippy::missing_errors_doc,
-        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-    )]
     /// 在内核高半区映射页, 按 `size_type` 分派 4KB 页映射或 2MB 块映射.
+    ///
+    /// # Errors
+    /// 页表条目写入所需的中间表不可用或目标地址未满足 `size_type` 对齐要求时
+    /// 返回 `Err`。
     pub fn map_huge_page(
         &self,
         virt: VirtAddr,
@@ -1612,7 +1612,7 @@ pub fn desc_physical_addr(descriptor: u64) -> u64 {
 /// 检查描述符是否为设备内存映射 (MAIR index = 0)
 pub fn is_desc_device_memory(descriptor: u64) -> bool {
     let mair_idx = (descriptor >> 2) & 0x7;
-    mair_idx == MAIR_DEVICE_nGnRnE as u64
+    mair_idx == MAIR_DEVICE_NGNRNE as u64
 }
 
 /// 检查描述符是否为非缓存 Normal 内存 (MAIR index = 2)

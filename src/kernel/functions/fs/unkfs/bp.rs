@@ -81,7 +81,6 @@ impl UnkfsDva {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-#[allow(clippy::upper_case_acronyms)] // ZSTD/ZLE/LZ4 压缩算法名
 /// 块的压缩算法类型.
 pub enum UnkfsCompType {
     /// 不压缩.
@@ -89,13 +88,13 @@ pub enum UnkfsCompType {
     /// LZ4 快速压缩.
     LZ4 = 1,
     /// Zstandard 压缩.
-    ZSTD = 2,
+    Zstd = 2,
     /// gzip 最低压缩级别.
     Gzip1 = 3,
     /// gzip 最高压缩级别.
     Gzip9 = 4,
     /// 零长度编码 (整块全零时只存标记).
-    ZLE = 5,
+    Zle = 5,
 }
 
 impl UnkfsCompType {
@@ -103,10 +102,10 @@ impl UnkfsCompType {
     pub fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::LZ4,
-            2 => Self::ZSTD,
+            2 => Self::Zstd,
             3 => Self::Gzip1,
             4 => Self::Gzip9,
-            5 => Self::ZLE,
+            5 => Self::Zle,
             _ => Self::Off,
         }
     }

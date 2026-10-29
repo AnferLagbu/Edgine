@@ -274,7 +274,7 @@ impl GdtEntry {
     /// * `tss_size` - TSS 结构体大小 (bytes)
     #[inline]
     pub const fn tss_low(tss_addr: u64, tss_size: u16) -> Self {
-        let base_low = crate::privileged::lib::low_u32_from_u64(tss_addr);
+        let base_low = crate::privileged::glue::low_u32_from_u64(tss_addr);
 
         Self {
             limit_low: tss_size,
@@ -632,7 +632,7 @@ pub fn gdt_init() -> i32 {
         const IA32_KERNEL_GS_BASE: u32 = 0xC000_0102;
         let gdt = per_cpu_gdt_mut(0);
 
-        gdt.ptr.limit = crate::privileged::lib::low_u16_from_usize(
+        gdt.ptr.limit = crate::privileged::glue::low_u16_from_usize(
             core::mem::size_of::<[GdtEntry; GDT_MAX_ENTRIES]>() - 1,
         );
         gdt.ptr.base = gdt.entries.as_ptr() as u64;
@@ -644,12 +644,12 @@ pub fn gdt_init() -> i32 {
         // IST 栈顶 / KPTI trampoline 栈顶统一取高半区 VA (理由见 init_stack_tops).
         init_stack_tops(gdt);
 
-        gdt.tss.iomap_base = crate::privileged::lib::low_u16_from_usize(core::mem::size_of::<
+        gdt.tss.iomap_base = crate::privileged::glue::low_u16_from_usize(core::mem::size_of::<
             super::tss::TaskStateSegment,
         >());
 
         let tss_addr = &raw const gdt.tss as u64;
-        let tss_size = crate::privileged::lib::low_u16_from_usize(
+        let tss_size = crate::privileged::glue::low_u16_from_usize(
             core::mem::size_of::<super::tss::TaskStateSegment>() - 1,
         );
 
@@ -747,7 +747,7 @@ pub fn alloc_ap_gdt(cpu_index: u32) -> bool {
         return true;
     }
 
-    let page = crate::privileged::lib::usize_from_u64(crate::privileged::mm::PAGE_SIZE);
+    let page = crate::privileged::glue::usize_from_u64(crate::privileged::mm::PAGE_SIZE);
     let pages = core::mem::size_of::<PerCpuGdt>().div_ceil(page);
     let Some(phys) = crate::privileged::mm::pmm_alloc_pages_phys(pages) else {
         return false;
@@ -776,7 +776,7 @@ pub fn gdt_init_ap(cpu_index: u32) {
         const IA32_KERNEL_GS_BASE: u32 = 0xC000_0102;
         let ap = per_cpu_gdt_mut(cpu_index);
 
-        ap.ptr.limit = crate::privileged::lib::low_u16_from_usize(
+        ap.ptr.limit = crate::privileged::glue::low_u16_from_usize(
             core::mem::size_of::<[GdtEntry; GDT_MAX_ENTRIES]>() - 1,
         );
         ap.ptr.base = ap.entries.as_ptr() as u64;
@@ -788,12 +788,12 @@ pub fn gdt_init_ap(cpu_index: u32) {
         // IST 栈顶 / KPTI trampoline 栈顶与 BSP 路径 (gdt_init) 一致, 理由见 init_stack_tops.
         init_stack_tops(ap);
 
-        ap.tss.iomap_base = crate::privileged::lib::low_u16_from_usize(core::mem::size_of::<
+        ap.tss.iomap_base = crate::privileged::glue::low_u16_from_usize(core::mem::size_of::<
             super::tss::TaskStateSegment,
         >());
 
         let tss_addr = &raw const ap.tss as u64;
-        let tss_size = crate::privileged::lib::low_u16_from_usize(
+        let tss_size = crate::privileged::glue::low_u16_from_usize(
             core::mem::size_of::<super::tss::TaskStateSegment>() - 1,
         );
 

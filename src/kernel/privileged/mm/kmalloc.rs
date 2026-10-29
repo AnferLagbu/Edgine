@@ -357,7 +357,7 @@ pub struct KernelHeap {
 //         所有访问由 IrqSpinLock + 内部原子锁保护.
 unsafe impl Send for KernelHeap {}
 
-const EARLY_BUFFER_SIZE: usize = crate::privileged::lib::usize_from_u64(PAGE_SIZE);
+const EARLY_BUFFER_SIZE: usize = crate::privileged::glue::usize_from_u64(PAGE_SIZE);
 
 impl KernelHeap {
     /// 构造未初始化的内核堆 (堆区间为零, 空空闲链表, 统计清零).
@@ -422,7 +422,7 @@ impl KernelHeap {
         let mut result = if self.initialized.load(Ordering::Acquire) {
             self.allocate_first_fit(actual_size)
         } else {
-            self.early_allocate(crate::privileged::lib::usize_from_u64(actual_size))
+            self.early_allocate(crate::privileged::glue::usize_from_u64(actual_size))
         };
 
         result = result.inspect(|ptr| {
@@ -518,10 +518,10 @@ impl KernelHeap {
             return None;
         }
 
-        let old_data_size = crate::privileged::lib::usize_from_u64(
+        let old_data_size = crate::privileged::glue::usize_from_u64(
             header.size() - core::mem::size_of::<HeapHeader>() as u64,
         );
-        let new_aligned = crate::privileged::lib::usize_from_u64(align_up(size as u64, ALIGNMENT));
+        let new_aligned = crate::privileged::glue::usize_from_u64(align_up(size as u64, ALIGNMENT));
 
         if new_aligned <= old_data_size {
             self.release_lock(flags);
@@ -704,7 +704,7 @@ impl KernelHeap {
         let original_size = header.size();
         let remaining = original_size - size;
 
-        let second_part = header.adjacent_next(crate::privileged::lib::usize_from_u64(size));
+        let second_part = header.adjacent_next(crate::privileged::glue::usize_from_u64(size));
         second_part.write(HeapHeader::new(remaining, true));
 
         header.set_size(size);
@@ -729,7 +729,8 @@ impl KernelHeap {
     }
 
     fn coalesce_forward(&self, header: HeaderRef) {
-        let next_addr = header.adjacent_next(crate::privileged::lib::usize_from_u64(header.size()));
+        let next_addr =
+            header.adjacent_next(crate::privileged::glue::usize_from_u64(header.size()));
         // SAFETY: 读取 heap_end, 持有堆锁, 独占访问
         let heap_end = HeapEndRef::new(core::ptr::addr_of!(self.heap_end)).get();
         let heap_end_ptr = heap_end.0 as *mut u8;
@@ -750,7 +751,7 @@ impl KernelHeap {
             // SAFETY: current is a valid node in the free list
             let candidate = unsafe { HeaderRef::new_unchecked(current) };
             let candidate_end = candidate.byte_ptr() as usize
-                + crate::privileged::lib::usize_from_u64(candidate.size());
+                + crate::privileged::glue::usize_from_u64(candidate.size());
 
             if candidate_end == header.byte_ptr() as usize {
                 self.remove_from_free_list(candidate);
@@ -816,7 +817,7 @@ impl KernelHeap {
         let vmm = get_vmm();
         let pmm = get_pmm();
 
-        let phys = pmm.alloc_pages(crate::privileged::lib::usize_from_u64(pages_needed))?;
+        let phys = pmm.alloc_pages(crate::privileged::glue::usize_from_u64(pages_needed))?;
 
         // SAFETY: 读取 heap_end, 当前持有堆锁, 独占访问
         let current_end = HeapEndRef::new(core::ptr::addr_of!(self.heap_end)).get();
@@ -854,7 +855,7 @@ impl KernelHeap {
                     #[cfg(target_arch = "aarch64")]
                     crate::privileged::mm::vmm::Aarch64Vmm::unmap_page(unmap_virt);
                 }
-                pmm.free_pages(phys, crate::privileged::lib::usize_from_u64(pages_needed));
+                pmm.free_pages(phys, crate::privileged::glue::usize_from_u64(pages_needed));
                 return None;
             }
         }

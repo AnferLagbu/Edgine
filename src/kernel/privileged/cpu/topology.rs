@@ -70,7 +70,7 @@ pub(super) fn detect_topology(
             if cores_per_pkg > 0 {
                 topo_out.physical_cores = cores_per_pkg;
 
-                if crate::privileged::lib::low_u8_from_u16(logical_per_pkg) > cores_per_pkg {
+                if crate::privileged::glue::low_u8_from_u16(logical_per_pkg) > cores_per_pkg {
                     topo_out.hyperthreading_enabled = true;
                 }
             }

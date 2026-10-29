@@ -273,7 +273,7 @@ impl VirtioMmioDevice {
         self.write32(DRIVER_FEATURES_SEL, 0);
         self.write32(
             DRIVER_FEATURES,
-            crate::privileged::lib::low_u32_from_u64(features),
+            crate::privileged::glue::low_u32_from_u64(features),
         );
     }
 
@@ -323,7 +323,7 @@ impl VirtioMmioDevice {
 
     /// 设置选中队列的 PFN (legacy 模式).
     pub fn setup_queue_legacy(&self, paddr: u64) {
-        let pfn = crate::privileged::lib::low_u32_from_u64(paddr >> 12);
+        let pfn = crate::privileged::glue::low_u32_from_u64(paddr >> 12);
         self.write32(QUEUE_PFN, pfn);
     }
 

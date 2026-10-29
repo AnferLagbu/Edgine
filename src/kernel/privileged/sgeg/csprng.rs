@@ -63,8 +63,8 @@ fn fallback_entropy_byte(idx: usize) -> u8 {
         .wrapping_add(idx as u64 * 0x517C_C1B7_2722_0A95);
     v = v
         .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-        .wrapping_add(tsc.rotate_left(crate::privileged::lib::low_u32_from_usize(idx)));
-    ((v >> 56) as u8) ^ crate::privileged::lib::low_u8_from_u64(v >> 40)
+        .wrapping_add(tsc.rotate_left(crate::privileged::glue::low_u32_from_usize(idx)));
+    ((v >> 56) as u8) ^ crate::privileged::glue::low_u8_from_u64(v >> 40)
 }
 
 fn fill_random_bytes(buf: &mut [u8]) {

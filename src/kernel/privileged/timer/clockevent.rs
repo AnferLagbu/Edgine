@@ -301,7 +301,7 @@ fn write_expiry(deadline: u64) {
             let delta = deadline.saturating_sub(tick::counter_now());
             // 至少装 1 个计数: 换算向下取整为 0 时会让定时器立即重发 (中断风暴).
             let counts = tick::mul_div_saturating(delta, post_div, counter_hz).max(1);
-            apic::set_timer_count(crate::privileged::lib::low_u32_from_u64(
+            apic::set_timer_count(crate::privileged::glue::low_u32_from_u64(
                 counts.min(u64::from(u32::MAX)),
             ));
         }

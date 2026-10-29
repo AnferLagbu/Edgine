@@ -350,7 +350,7 @@ impl CpuFreqDriver {
             return false;
         }
         indices[cpu_id as usize].store(
-            crate::privileged::lib::low_u32_from_usize(best_idx),
+            crate::privileged::glue::low_u32_from_usize(best_idx),
             Ordering::Release,
         );
         drop(indices);
@@ -377,7 +377,7 @@ impl CpuFreqDriver {
                 let indices = self.per_cpu_freq_idx.lock();
                 for idx in indices.iter() {
                     idx.store(
-                        crate::privileged::lib::low_u32_from_usize(last),
+                        crate::privileged::glue::low_u32_from_usize(last),
                         Ordering::Release,
                     );
                 }
@@ -695,10 +695,6 @@ pub fn pm_idle(cpu_id: u32) {
     }
 }
 
-#[expect(
-    clippy::match_wildcard_for_single_variants,
-    reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-)]
 /// 挂起系统 (组合策略 + 硬件操作)
 pub fn pm_suspend(target: SystemPowerState) -> i64 {
     if let Err(e) = PM_SUBSYSTEM.suspend_prepare(target) {
@@ -715,7 +711,7 @@ pub fn pm_suspend(target: SystemPowerState) -> i64 {
         SystemPowerState::S5SoftOff => {
             arch_shutdown();
         }
-        _ => {}
+        SystemPowerState::S0Working => {}
     }
 
     // 恢复后通知
@@ -760,31 +756,31 @@ pub fn sys_pm_dispatch(pm: &PmSubsystem, cmd: u64, a1: u64, a2: u64) -> i64 {
 
     match cmd {
         0 => {
-            let target = SystemPowerState::from_u32(crate::privileged::lib::low_u32_from_u64(a1));
+            let target = SystemPowerState::from_u32(crate::privileged::glue::low_u32_from_u64(a1));
             // 挂起需要硬件操作
             pm_suspend(target)
         }
         1 => pm.get_state() as i64,
         2 => {
-            let gov = FreqGovernor::from_u32(crate::privileged::lib::low_u32_from_u64(a1));
+            let gov = FreqGovernor::from_u32(crate::privileged::glue::low_u32_from_u64(a1));
             pm.cpufreq.set_governor(gov);
             0
         }
         3 => pm.cpufreq.get_governor() as i64,
         4 => {
-            let cpu = crate::privileged::lib::low_u32_from_u64(a1);
-            let max = CpuIdleState::from_u32(crate::privileged::lib::low_u32_from_u64(a2));
+            let cpu = crate::privileged::glue::low_u32_from_u64(a1);
+            let max = CpuIdleState::from_u32(crate::privileged::glue::low_u32_from_u64(a2));
             pm.cpuidle.set_max_cstate(cpu, max);
             0
         }
         5 => i64::from(
             pm.cpufreq
-                .get_freq(crate::privileged::lib::low_u32_from_u64(a1)),
+                .get_freq(crate::privileged::glue::low_u32_from_u64(a1)),
         ),
         6 => {
             if pm.cpufreq.set_freq(
-                crate::privileged::lib::low_u32_from_u64(a1),
-                crate::privileged::lib::low_u32_from_u64(a2),
+                crate::privileged::glue::low_u32_from_u64(a1),
+                crate::privileged::glue::low_u32_from_u64(a2),
             ) {
                 0
             } else {

@@ -105,7 +105,7 @@ pub const fn vring_layout(legacy: bool, num: u16) -> (usize, usize, usize) {
     let avail_off = desc_bytes;
     let avail_bytes = RING_HEAD_BYTES + 2 * n + 2;
     let used_align = if legacy {
-        crate::privileged::lib::usize_from_u64(PAGE_SIZE)
+        crate::privileged::glue::usize_from_u64(PAGE_SIZE)
     } else {
         4
     };
@@ -113,7 +113,7 @@ pub const fn vring_layout(legacy: bool, num: u16) -> (usize, usize, usize) {
     let used_bytes = RING_HEAD_BYTES + 8 * n + 4;
     let total = align_up(
         used_off + used_bytes,
-        crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+        crate::privileged::glue::usize_from_u64(PAGE_SIZE),
     );
     (avail_off, used_off, total)
 }
@@ -143,7 +143,7 @@ impl VirtQueue {
         }
         let (_avail_off, used_off, total_size) = vring_layout(legacy, num);
         let desc_size = 16 * num as usize;
-        let pages = total_size.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE));
+        let pages = total_size.div_ceil(crate::privileged::glue::usize_from_u64(PAGE_SIZE));
         // SAFETY: extern 函数的参数/返回值类型与 C ABI 声明一致; 调用方保证指针有效
         let mem = unsafe { pmm_alloc_pages(pages as u64) };
         if mem.is_null() {
@@ -261,7 +261,7 @@ impl VirtQueue {
             ) as usize as *const VqUsedElem;
             let elem = core::ptr::read_volatile(elem_ptr);
             self.last_used_idx = self.last_used_idx.wrapping_add(1);
-            Some((crate::privileged::lib::low_u16_from_u32(elem.id), elem.len))
+            Some((crate::privileged::glue::low_u16_from_u32(elem.id), elem.len))
         }
     }
 
@@ -321,8 +321,8 @@ impl DmaBuffer {
         unsafe extern "C" {
             fn pmm_alloc_pages(count: u64) -> *mut u8;
         }
-        let pages = (size + crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1)
-            / crate::privileged::lib::usize_from_u64(PAGE_SIZE);
+        let pages = (size + crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1)
+            / crate::privileged::glue::usize_from_u64(PAGE_SIZE);
         // SAFETY: pmm_alloc_pages 由 PMM 模块提供, 参数与返回值类型匹配
         let ptr = unsafe { pmm_alloc_pages(pages as u64) };
         if ptr.is_null() {
@@ -394,14 +394,14 @@ impl DmaBuffer {
 
     /// 向缓冲区 `offset` 处写入一个 u32 (小端).
     pub fn write_u32(&mut self, offset: usize, val: u32) {
-        self.write_byte(offset, crate::privileged::lib::low_u8_from_u32(val));
+        self.write_byte(offset, crate::privileged::glue::low_u8_from_u32(val));
         self.write_byte(
             offset + 1,
-            crate::privileged::lib::low_u8_from_u32(val >> 8),
+            crate::privileged::glue::low_u8_from_u32(val >> 8),
         );
         self.write_byte(
             offset + 2,
-            crate::privileged::lib::low_u8_from_u32(val >> 16),
+            crate::privileged::glue::low_u8_from_u32(val >> 16),
         );
         self.write_byte(offset + 3, (val >> 24) as u8);
     }
@@ -415,7 +415,7 @@ impl DmaBuffer {
 
     /// 向缓冲区 `offset` 处写入一个 u64 (小端).
     pub fn write_u64(&mut self, offset: usize, val: u64) {
-        self.write_u32(offset, crate::privileged::lib::low_u32_from_u64(val));
+        self.write_u32(offset, crate::privileged::glue::low_u32_from_u64(val));
         self.write_u32(offset + 4, (val >> 32) as u32);
     }
 
@@ -451,14 +451,10 @@ impl DmaBuffer {
 }
 
 impl Drop for DmaBuffer {
-    #[expect(
-        clippy::no_effect_underscore_binding,
-        reason = "no_effect_underscore_binding: let _ = expr 用于类型推导/副作用; 当前优先 expect"
-    )]
     fn drop(&mut self) {
         // 当前 PMM 不提供 pmm_free_pages, 缓冲区生命周期由系统管理.
         // 占位: PMM 增量后接入实际释放. self.pages 记录分配页数供将来使用.
-        let _pages = self.pages;
+        let _ = self.pages;
     }
 }
 

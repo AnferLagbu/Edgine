@@ -95,10 +95,11 @@ fn test_a64_el0_sync_fault_terminates_process() {
     let body = fn_body(&src, "pub extern \"C\" fn sync_exception_handler");
 
     assert!(
-        body.contains("frame.spsr & 0xF == 0"),
-        "aarch64 必须按 SPSR.M[3:0] 识别 EL0 来源 (否则无法区分内核态同 EL 异常)"
+        body.contains("frame.spsr.trailing_zeros() >= 4"),
+        "aarch64 必须按 SPSR.M[3:0] 识别 EL0 来源 (否则无法区分内核态同 EL 异常); \
+         `trailing_zeros() >= 4` 即 M[3:0] == 0 (clippy verbose_bit_mask 口径)"
     );
-    assert_before(&body, "frame.spsr & 0xF == 0", "process_exit");
+    assert_before(&body, "frame.spsr.trailing_zeros() >= 4", "process_exit");
     assert!(
         body.contains("crate::privileged::proc::process_exit(pid)"),
         "EL0 故障分支必须终止当前进程 (与 x86_64 TerminateProcess 口径一致)"

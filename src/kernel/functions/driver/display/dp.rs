@@ -893,10 +893,6 @@ impl DpController {
         Ok(())
     }
 
-    #[expect(
-        clippy::no_effect_underscore_binding,
-        reason = "no_effect_underscore_binding: let _ = expr 用于类型推导/副作用; 当前优先 expect"
-    )]
     /// 轮询 LANE 状态寄存器直到训练完成 (DISPLAY-2.6).
     ///
     /// 读取 `LANE0_1_STATUS` + `LANE2_3_STATUS` (4-lane 时), 等待所有活动 lane 报告
@@ -937,11 +933,11 @@ impl DpController {
             if trained_2lanes {
                 // 读取接收器请求的调整 (用于 phase 2 前的电压/预加重调整)
                 let adjust01 = Self::aux_read_via_mmio(io, aux_address::ADJUST_REQ_LANE0_1, 1)?;
-                let _adjust = adjust01[0]; // 真实硬件应据此调整 transmitter swing/pre-emphasis
+                let _: u8 = adjust01[0]; // 真实硬件应据此调整 transmitter swing/pre-emphasis
                 if matches!(lane_count, LaneCount::Four) {
                     // 4-lane 时还需读取 LANE2/3 的调整请求
                     let adjust23 = Self::aux_read_via_mmio(io, aux_address::ADJUST_REQ_LANE2_3, 1)?;
-                    let _adjust23 = adjust23[0];
+                    let _: u8 = adjust23[0];
                 }
                 return Ok(());
             }

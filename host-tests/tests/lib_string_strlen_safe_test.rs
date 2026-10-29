@@ -10,13 +10,13 @@
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `strlen_impl` / `strlen_safe_impl` 平行实现, 改引内核真实源码
-//! `edgine::kernel::privileged::lib::string::{strlen, strlen_safe}`.
+//! `edgine::kernel::privileged::glue::string::{strlen, strlen_safe}`.
 //! 内核 `strlen` 为 `pub unsafe extern "C" fn` (带 `#[unsafe(no_mangle)]`),
 //! 测试调用需 unsafe 块; 其扫描上限复用 `cstr::MAX_CSTR_LEN` (D1 统一), 测试侧
 //! 直接导入该 pub 常量, 消除镜像常量漂移.
 
-use edgine::kernel::privileged::lib::cstr::MAX_CSTR_LEN;
-use edgine::kernel::privileged::lib::string::{strlen, strlen_safe};
+use edgine::kernel::privileged::glue::cstr::MAX_CSTR_LEN;
+use edgine::kernel::privileged::glue::string::{strlen, strlen_safe};
 
 /// 辅助: 将 Rust 字符串转为以 `\0` 结尾的 C 风格字节数组
 fn to_cstr(s: &str) -> Vec<i8> {

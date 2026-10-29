@@ -972,14 +972,10 @@ impl SmoltcpNetStack {
     /// `DhcpAction` 由调用方决定如何推进 (e.g. 协议栈在 `Continue` 时
     /// 保持现状, 在 `Renew` 时启动续约, 在 `FallbackToStatic` 时切换
     /// 到静态 IP, 在 `GiveUp` 时停机).
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "policy_cfg 需为引用 (受 trait DhcpPolicy::decide 约束); 传值会破坏 trait 协议"
-    )]
     pub fn dhcp_decide<P: DhcpPolicy>(
         &self,
         policy: &P,
-        policy_cfg: &DhcpPolicyConfig,
+        policy_cfg: DhcpPolicyConfig,
         retry_count: u32,
         elapsed_ms: u64,
         lease_duration_ms: u64,
@@ -987,7 +983,7 @@ impl SmoltcpNetStack {
         policy.decide(
             self.dhcp_state,
             &self.config,
-            *policy_cfg,
+            policy_cfg,
             retry_count,
             elapsed_ms,
             lease_duration_ms,
@@ -1009,7 +1005,7 @@ impl SmoltcpNetStack {
             renew_t2_ratio: 8750,
             fallback_to_static: true,
         };
-        self.dhcp_decide(&POLICY, &CFG, retry_count, elapsed_ms, lease_duration_ms)
+        self.dhcp_decide(&POLICY, CFG, retry_count, elapsed_ms, lease_duration_ms)
     }
 
     // ---- DHCP 内部状态追踪 (W6 集成) ----
@@ -1465,7 +1461,7 @@ mod tests {
         // 即便 retry 远超上限, 自定义策略仍返回 Continue
         let policy = AlwaysContinue;
         let pc = DhcpPolicyConfig::default();
-        let action = stack.dhcp_decide(&policy, &pc, 100, 0, 0);
+        let action = stack.dhcp_decide(&policy, pc, 100, 0, 0);
         assert_eq!(action, DhcpAction::Continue);
     }
 

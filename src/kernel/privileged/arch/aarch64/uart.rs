@@ -141,7 +141,7 @@ pub unsafe fn getc() -> u8 {
         while read(UARTFR) & UARTFR_RXFE != 0 {
             core::hint::spin_loop();
         }
-        crate::privileged::lib::low_u8_from_u32(read(UARTDR))
+        crate::privileged::glue::low_u8_from_u32(read(UARTDR))
     }
 }
 

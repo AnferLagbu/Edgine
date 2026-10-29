@@ -30,7 +30,7 @@ use super::PAGE_SIZE;
 use super::{PhysAddr, phys_to_virt, pmm_alloc_page_phys, pmm_free_page_phys, virt_to_phys};
 
 /// 页字节数 (页池的最小分配与寻址粒度)
-const PAGE_BYTES: usize = crate::privileged::lib::usize_from_u64(PAGE_SIZE);
+const PAGE_BYTES: usize = crate::privileged::glue::usize_from_u64(PAGE_SIZE);
 
 /// 分配一个已清零的 4KB 页, 返回其可直接解引用的虚拟地址; 失败返回 `None`.
 #[cfg(not(any(test, feature = "host-test")))]
@@ -40,7 +40,7 @@ fn page_alloc() -> Option<usize> {
     // SAFETY: phys 来自 PMM 已分配页 (排他所有权); phys_to_virt 给出该页在内核
     // 高半区的直接映射别名; 地址按页对齐, 写入范围为本页 PAGE_BYTES 字节, 不越界.
     unsafe { ptr::write_bytes(va as *mut u8, 0, PAGE_BYTES) };
-    Some(crate::privileged::lib::usize_from_u64(va))
+    Some(crate::privileged::glue::usize_from_u64(va))
 }
 
 /// 归还一个由 [`page_alloc`] 分配的页.

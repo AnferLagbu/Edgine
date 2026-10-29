@@ -3,7 +3,7 @@
 //   1. privileged::mm 顶层 re-export 跨进程拷贝原语 (F2: functions 只走顶层 API)
 //   2. cross_process 提供读/写两个 safe 入口, 写入口校验叶子项写位 (I4)
 //   3. functions 侧 process_vm 使用 privileged 代理且 0 unsafe
-//   4. dispatch.rs 把 SYS_process_vm_readv / SYS_process_vm_writev 分发到 functions
+//   4. dispatch.rs 把 SYS_PROCESS_VM_READV / SYS_PROCESS_VM_WRITEV 分发到 functions
 //   5. io.rs 的 read_iovecs / IOV_MAX 对 crate 内可见 (供 process_vm 复用)
 //
 // 注: 静态契约扫描, 不进内核态.
@@ -87,11 +87,11 @@ fn test_process_vm_module_registered() {
 fn test_dispatch_wires_process_vm_syscalls() {
     let src = read(DISPATCH);
     assert!(
-        src.contains("SYS_process_vm_readv")
+        src.contains("SYS_PROCESS_VM_READV")
             && src.contains("process_vm_readv_syscall")
-            && src.contains("SYS_process_vm_writev")
+            && src.contains("SYS_PROCESS_VM_WRITEV")
             && src.contains("process_vm_writev_syscall"),
-        "dispatch 必须把 SYS_process_vm_readv/writev 分发到 functions::proc::process_vm"
+        "dispatch 必须把 SYS_PROCESS_VM_READV/writev 分发到 functions::proc::process_vm"
     );
 }
 

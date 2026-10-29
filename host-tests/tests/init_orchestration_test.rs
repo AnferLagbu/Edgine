@@ -6,7 +6,7 @@
 //! fn scheduler_init()` 挂着 10 项子系统 init (tick_query 注册 / cgroup / numa /
 //! pm / sgeg / CET / tickless / timesync / kexec / uefi), 但全仓无任何调用者 ——
 //! 生产环境这 10 项初始化**从未执行**. 直接后果: NUMA 拓扑从未建立而
-//! `SYS_getcpu`/`SYS_mbind` 已接线; `tick_query` 未注册使 freg 的 `current_tick()`
+//! `SYS_GETCPU`/`SYS_MBIND` 已接线; `tick_query` 未注册使 freg 的 `current_tick()`
 //! 恒返 0 (P-1); `sys_tickless` 未初始化即返错使 EG_TICKLESS/EG_CET/EG_TIMESYNC/
 //! EG_UEFI 四条 syscall 全线失效.
 //!

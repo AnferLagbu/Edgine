@@ -21,7 +21,7 @@
 //! ## 用法
 //!
 //! ```ignore
-//! use crate::privileged::lib::cstr::CStrExt;
+//! use crate::privileged::glue::cstr::CStrExt;
 //!
 //! #[no_mangle]
 //! pub extern "C" fn pwm_login(

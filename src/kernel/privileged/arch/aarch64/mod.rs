@@ -147,7 +147,7 @@ impl InterruptArch for Aarch64 {
             asm!("mrs {}, daif", out(reg) daif);
             asm!("msr daifset, #2");
         }
-        crate::privileged::lib::usize_from_u64(daif)
+        crate::privileged::glue::usize_from_u64(daif)
     }
 
     /// 恢复完整 DAIF 屏蔽位 (D/A/I/F).
@@ -324,7 +324,7 @@ impl MmuArch for Aarch64 {
     /// 读取 FAR_EL1。
     #[inline]
     fn read_fault_address() -> usize {
-        crate::privileged::lib::usize_from_u64(mmu::read_far())
+        crate::privileged::glue::usize_from_u64(mmu::read_far())
     }
 
     /// AArch64 上下文切换 (x19-x30 + SP + TTBR0 + SPSR + ELR)。

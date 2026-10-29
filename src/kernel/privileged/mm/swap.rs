@@ -156,7 +156,7 @@ impl SwapArea {
         // swap slot_addr 假设物理连续 (storage_virt + slot * PAGE_SIZE),
         // 因此必须保证基址连续范围.
         let pmm_inst = pmm::get_pmm();
-        let swap_bytes = SWAP_MAX_SLOTS * crate::privileged::lib::usize_from_u64(PAGE_SIZE);
+        let swap_bytes = SWAP_MAX_SLOTS * crate::privileged::glue::usize_from_u64(PAGE_SIZE);
 
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         let Some(phys_base) = pmm_inst.find_contig_range(swap_bytes) else {
@@ -228,7 +228,7 @@ impl SwapArea {
 
     /// 释放 slot
     fn free_slot(&mut self, slot: u64) {
-        let idx = crate::privileged::lib::usize_from_u64(slot);
+        let idx = crate::privileged::glue::usize_from_u64(slot);
         if idx < SWAP_MAX_SLOTS && self.bitmap[idx] == SlotState::Used as u8 {
             self.bitmap[idx] = SlotState::Free as u8;
             self.used_count -= 1;
@@ -255,7 +255,7 @@ impl SwapArea {
             core::ptr::copy_nonoverlapping(
                 src_virt as *const u8,
                 dst,
-                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                crate::privileged::glue::usize_from_u64(PAGE_SIZE),
             );
         }
     }
@@ -275,7 +275,7 @@ impl SwapArea {
             core::ptr::copy_nonoverlapping(
                 src,
                 dst_virt as *mut u8,
-                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                crate::privileged::glue::usize_from_u64(PAGE_SIZE),
             );
         }
     }

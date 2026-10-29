@@ -29,7 +29,7 @@ pub fn cpuid(leaf: u32, subleaf: u32) -> (u32, u32, u32, u32) {
             out("edx") edx,
             options(nomem, preserves_flags),
         );
-        ebx = crate::privileged::lib::low_u32_from_u64(ebx_val);
+        ebx = crate::privileged::glue::low_u32_from_u64(ebx_val);
     }
 
     (eax, ebx, ecx, edx)

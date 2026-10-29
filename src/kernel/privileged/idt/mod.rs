@@ -397,18 +397,17 @@ pub extern "C" fn idt_init() -> i32 {
     let msi_table: [u64; 112] = stub_addrs(&MSI_STUBS);
     let ipi_table: [u64; 2] = stub_addrs(&IPI_STUBS);
 
-    match manager.init(
+    if let Err(msg) = IdtManager::validate_boot_order() {
+        klog_error!("IDT init failed: {}", msg);
+        return MODULE_INIT_FAILURE;
+    }
+
+    manager.init(
         &isr_table,
         &irq_table,
         stub_addr!(syscall_handler),
         stub_addr!(isr0x82),
-    ) {
-        Ok(()) => {}
-        Err(msg) => {
-            klog_error!("IDT init failed: {}", msg);
-            return MODULE_INIT_FAILURE;
-        }
-    }
+    );
 
     // 编程 MSI 向量 IDT 条目 (0x40-0x7F)
     manager.init_msi_idt(&msi_table);
@@ -456,7 +455,7 @@ pub unsafe extern "C" fn irq_handler(frame: *mut InterruptFrame) {
 
         let manager = IdtManager::instance();
         let frame_ref = &*frame;
-        let vector = crate::privileged::lib::low_u8_from_u64(frame_ref.int_no);
+        let vector = crate::privileged::glue::low_u8_from_u64(frame_ref.int_no);
 
         // Lockdep: 标记进入中断上下文 (仅诊断构建; 默认 boot 零开销).
         #[cfg(any(debug_assertions, feature = "lockdep"))]
@@ -481,7 +480,7 @@ pub extern "C" fn idt_set_gate(num: u8, handler: u64, selector: u16, type_attr: 
 
     // 直接修改 entries 数组 (需要 Mutex 保护)
     let mut state = manager.state.lock();
-    if num < crate::privileged::lib::low_u8_from_usize(IDT_ENTRIES) {
+    if num < crate::privileged::glue::low_u8_from_usize(IDT_ENTRIES) {
         state.entries[num as usize] = IdtEntry::new(handler, selector, type_attr);
     }
 }

@@ -40,31 +40,22 @@ pub fn check_user_boundary(vaddr: VirtAddr, flags: PageFlags) {
 
 /// 检查虚拟地址是否在用户地址空间内 (aarch64 变体, 内核高半区地址不得设 `PAGE_USER`)
 #[cfg(target_arch = "aarch64")]
-#[expect(
-    clippy::uninlined_format_args,
-    reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-)]
 pub fn check_user_boundary(vaddr: VirtAddr, flags: PageFlags) {
     let va = vaddr.as_u64();
     if va >= 0xFFFF_0000_0000_0000 {
         debug_assert!(
             !flags.contains(PageFlags::USER),
-            "PageTableChecker: kernel address 0x{:x} must not have PAGE_USER flag",
-            va
+            "PageTableChecker: kernel address 0x{va:x} must not have PAGE_USER flag"
         );
     }
 }
 
-#[expect(
-    clippy::nonminimal_bool,
-    reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-)]
 /// 检查写可执行页 (W^X 策略)。
 ///
 /// 不允许同时设置 WRITABLE 和执行标志, 防止代码注入。
 pub fn check_wxorx(vaddr: VirtAddr, flags: PageFlags) {
     debug_assert!(
-        !(flags.contains(PageFlags::WRITABLE) && !flags.contains(PageFlags::NX)),
+        !flags.contains(PageFlags::WRITABLE) || flags.contains(PageFlags::NX),
         "PageTableChecker: W^X violation at vaddr 0x{:x}",
         vaddr.as_u64()
     );

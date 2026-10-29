@@ -25,11 +25,11 @@ use crate::privileged::proc::process_get_current_pid;
 use crate::privileged::sgeg::types::DomainFlags;
 use crate::privileged::syscall::Errno;
 use crate::privileged::syscall::types::{
-    SYS_accept, SYS_accept4, SYS_bind, SYS_chmod, SYS_clone, SYS_clone3, SYS_connect, SYS_execve,
-    SYS_execveat, SYS_exit, SYS_exit_group, SYS_fchmod, SYS_fork, SYS_ftruncate, SYS_ioctl,
-    SYS_listen, SYS_mkdir, SYS_mount, SYS_open, SYS_openat, SYS_pwrite64, SYS_read, SYS_recvfrom,
-    SYS_recvmsg, SYS_rename, SYS_renameat, SYS_rt_sigreturn, SYS_sendmsg, SYS_sendto, SYS_socket,
-    SYS_socketpair, SYS_truncate, SYS_umount2, SYS_unlink, SYS_unlinkat, SYS_write, SYS_writev,
+    SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_CHMOD, SYS_CLONE, SYS_CLONE3, SYS_CONNECT, SYS_EXECVE,
+    SYS_EXECVEAT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCHMOD, SYS_FORK, SYS_FTRUNCATE, SYS_IOCTL,
+    SYS_LISTEN, SYS_MKDIR, SYS_MOUNT, SYS_OPEN, SYS_OPENAT, SYS_PWRITE64, SYS_READ, SYS_RECVFROM,
+    SYS_RECVMSG, SYS_RENAME, SYS_RENAMEAT, SYS_RT_SIGRETURN, SYS_SENDMSG, SYS_SENDTO, SYS_SOCKET,
+    SYS_SOCKETPAIR, SYS_TRUNCATE, SYS_UMOUNT2, SYS_UNLINK, SYS_UNLINKAT, SYS_WRITE, SYS_WRITEV,
 };
 use core::sync::atomic::Ordering;
 
@@ -40,52 +40,52 @@ use core::sync::atomic::Ordering;
 /// `NO_FORK` 拒绝集: 进程创建族.
 ///
 /// 本内核未定义 `SYS_vfork`, 故不含该项.
-const FORK_SYSCALLS: &[u64] = &[SYS_clone, SYS_fork, SYS_clone3];
+const FORK_SYSCALLS: &[u64] = &[SYS_CLONE, SYS_FORK, SYS_CLONE3];
 
 /// `NO_EXEC` 拒绝集: 程序装载族.
-const EXEC_SYSCALLS: &[u64] = &[SYS_execve, SYS_execveat];
+const EXEC_SYSCALLS: &[u64] = &[SYS_EXECVE, SYS_EXECVEAT];
 
 /// `NO_NET` 拒绝集: 套接字建立/连接/收发族.
 const NET_SYSCALLS: &[u64] = &[
-    SYS_socket,
-    SYS_socketpair,
-    SYS_connect,
-    SYS_bind,
-    SYS_listen,
-    SYS_accept,
-    SYS_accept4,
-    SYS_sendto,
-    SYS_recvfrom,
-    SYS_sendmsg,
-    SYS_recvmsg,
+    SYS_SOCKET,
+    SYS_SOCKETPAIR,
+    SYS_CONNECT,
+    SYS_BIND,
+    SYS_LISTEN,
+    SYS_ACCEPT,
+    SYS_ACCEPT4,
+    SYS_SENDTO,
+    SYS_RECVFROM,
+    SYS_SENDMSG,
+    SYS_RECVMSG,
 ];
 
 /// `NO_DEVICE` 拒绝集: 设备控制与挂载族.
-const DEVICE_SYSCALLS: &[u64] = &[SYS_ioctl, SYS_mount, SYS_umount2];
+const DEVICE_SYSCALLS: &[u64] = &[SYS_IOCTL, SYS_MOUNT, SYS_UMOUNT2];
 
 /// `READONLY` 拒绝集: 路径/描述符写操作族.
 const WRITE_SYSCALLS: &[u64] = &[
-    SYS_write,
-    SYS_pwrite64,
-    SYS_writev,
-    SYS_truncate,
-    SYS_ftruncate,
-    SYS_rename,
-    SYS_mkdir,
-    SYS_unlink,
-    SYS_chmod,
-    SYS_fchmod,
-    SYS_unlinkat,
-    SYS_renameat,
+    SYS_WRITE,
+    SYS_PWRITE64,
+    SYS_WRITEV,
+    SYS_TRUNCATE,
+    SYS_FTRUNCATE,
+    SYS_RENAME,
+    SYS_MKDIR,
+    SYS_UNLINK,
+    SYS_CHMOD,
+    SYS_FCHMOD,
+    SYS_UNLINKAT,
+    SYS_RENAMEAT,
 ];
 
 /// `SANDBOX` 白名单: 复合位, 仅放行下列调用, 其余一律拒绝.
 const SANDBOX_ALLOWED: &[u64] = &[
-    SYS_read,         // read
-    SYS_write,        // write
-    SYS_exit,         // exit
-    SYS_exit_group,   // exit_group
-    SYS_rt_sigreturn, // rt_sigreturn
+    SYS_READ,         // read
+    SYS_WRITE,        // write
+    SYS_EXIT,         // exit
+    SYS_EXIT_GROUP,   // exit_group
+    SYS_RT_SIGRETURN, // rt_sigreturn
 ];
 
 /// `open`/`openat` 的写意图标志掩码 (Linux ABI).
@@ -103,10 +103,10 @@ const OPEN_WRITE_MASK: u64 = 0o1 | 0o2 | 0o100 | 0o1000 | 0o2000;
 
 /// `open`/`openat` 的标志位是否含写意图.
 ///
-/// `SYS_open(path, flags, mode)` 的 flags 在 `args[1]`;
-/// `SYS_openat(dirfd, path, flags, mode)` 的 flags 在 `args[2]`.
+/// `SYS_OPEN(path, flags, mode)` 的 flags 在 `args[1]`;
+/// `SYS_OPENAT(dirfd, path, flags, mode)` 的 flags 在 `args[2]`.
 fn open_flags_are_write(num: u64, args: &[u64; 6]) -> bool {
-    let flags = if num == SYS_open { args[1] } else { args[2] };
+    let flags = if num == SYS_OPEN { args[1] } else { args[2] };
     flags & OPEN_WRITE_MASK != 0
 }
 
@@ -134,7 +134,7 @@ pub(crate) fn denied_by(flags: DomainFlags, num: u64, args: &[u64; 6]) -> bool {
         if WRITE_SYSCALLS.contains(&num) {
             return true;
         }
-        if (num == SYS_open || num == SYS_openat) && open_flags_are_write(num, args) {
+        if (num == SYS_OPEN || num == SYS_OPENAT) && open_flags_are_write(num, args) {
             return true;
         }
     }
@@ -192,16 +192,16 @@ pub fn domain_flags_set(pid: u32, flags: DomainFlags) -> bool {
 mod tests {
     use super::*;
     // 仅测试断言使用, 不在产线判定表中出现 (避免非测试构建的未使用导入)
-    use crate::privileged::syscall::types::SYS_readv;
+    use crate::privileged::syscall::types::SYS_READV;
 
     /// 无标志 ⇒ 任何调用均放行
     #[test]
     fn test_domain_gate_none_allows_all() {
         let args = [0u64; 6];
-        assert!(!denied_by(DomainFlags::NONE, SYS_clone, &args));
-        assert!(!denied_by(DomainFlags::NONE, SYS_execve, &args));
-        assert!(!denied_by(DomainFlags::NONE, SYS_socket, &args));
-        assert!(!denied_by(DomainFlags::NONE, SYS_write, &args));
+        assert!(!denied_by(DomainFlags::NONE, SYS_CLONE, &args));
+        assert!(!denied_by(DomainFlags::NONE, SYS_EXECVE, &args));
+        assert!(!denied_by(DomainFlags::NONE, SYS_SOCKET, &args));
+        assert!(!denied_by(DomainFlags::NONE, SYS_WRITE, &args));
     }
 
     /// NO_FORK: 仅拒进程创建族, 其余类别不受影响
@@ -210,104 +210,104 @@ mod tests {
     #[test]
     fn test_domain_gate_no_fork() {
         let args = [0u64; 6];
-        assert!(denied_by(DomainFlags::NO_FORK, SYS_clone, &args));
-        assert!(denied_by(DomainFlags::NO_FORK, SYS_fork, &args));
-        assert!(denied_by(DomainFlags::NO_FORK, SYS_clone3, &args));
-        assert!(!denied_by(DomainFlags::NO_FORK, SYS_execve, &args));
-        assert!(!denied_by(DomainFlags::NO_FORK, SYS_read, &args));
+        assert!(denied_by(DomainFlags::NO_FORK, SYS_CLONE, &args));
+        assert!(denied_by(DomainFlags::NO_FORK, SYS_FORK, &args));
+        assert!(denied_by(DomainFlags::NO_FORK, SYS_CLONE3, &args));
+        assert!(!denied_by(DomainFlags::NO_FORK, SYS_EXECVE, &args));
+        assert!(!denied_by(DomainFlags::NO_FORK, SYS_READ, &args));
     }
 
     /// NO_EXEC: 仅拒装载族
     #[test]
     fn test_domain_gate_no_exec() {
         let args = [0u64; 6];
-        assert!(denied_by(DomainFlags::NO_EXEC, SYS_execve, &args));
-        assert!(denied_by(DomainFlags::NO_EXEC, SYS_execveat, &args));
-        assert!(!denied_by(DomainFlags::NO_EXEC, SYS_clone, &args));
+        assert!(denied_by(DomainFlags::NO_EXEC, SYS_EXECVE, &args));
+        assert!(denied_by(DomainFlags::NO_EXEC, SYS_EXECVEAT, &args));
+        assert!(!denied_by(DomainFlags::NO_EXEC, SYS_CLONE, &args));
     }
 
     /// NO_NET: 仅拒网络族
     #[test]
     fn test_domain_gate_no_net() {
         let args = [0u64; 6];
-        assert!(denied_by(DomainFlags::NO_NET, SYS_socket, &args));
-        assert!(denied_by(DomainFlags::NO_NET, SYS_socketpair, &args));
-        assert!(denied_by(DomainFlags::NO_NET, SYS_connect, &args));
-        assert!(denied_by(DomainFlags::NO_NET, SYS_bind, &args));
-        assert!(denied_by(DomainFlags::NO_NET, SYS_listen, &args));
-        assert!(denied_by(DomainFlags::NO_NET, SYS_accept, &args));
-        assert!(denied_by(DomainFlags::NO_NET, SYS_accept4, &args));
-        assert!(denied_by(DomainFlags::NO_NET, SYS_sendto, &args));
-        assert!(denied_by(DomainFlags::NO_NET, SYS_recvfrom, &args));
-        assert!(denied_by(DomainFlags::NO_NET, SYS_sendmsg, &args));
-        assert!(denied_by(DomainFlags::NO_NET, SYS_recvmsg, &args));
-        assert!(!denied_by(DomainFlags::NO_NET, SYS_read, &args));
-        assert!(!denied_by(DomainFlags::NO_NET, SYS_write, &args));
+        assert!(denied_by(DomainFlags::NO_NET, SYS_SOCKET, &args));
+        assert!(denied_by(DomainFlags::NO_NET, SYS_SOCKETPAIR, &args));
+        assert!(denied_by(DomainFlags::NO_NET, SYS_CONNECT, &args));
+        assert!(denied_by(DomainFlags::NO_NET, SYS_BIND, &args));
+        assert!(denied_by(DomainFlags::NO_NET, SYS_LISTEN, &args));
+        assert!(denied_by(DomainFlags::NO_NET, SYS_ACCEPT, &args));
+        assert!(denied_by(DomainFlags::NO_NET, SYS_ACCEPT4, &args));
+        assert!(denied_by(DomainFlags::NO_NET, SYS_SENDTO, &args));
+        assert!(denied_by(DomainFlags::NO_NET, SYS_RECVFROM, &args));
+        assert!(denied_by(DomainFlags::NO_NET, SYS_SENDMSG, &args));
+        assert!(denied_by(DomainFlags::NO_NET, SYS_RECVMSG, &args));
+        assert!(!denied_by(DomainFlags::NO_NET, SYS_READ, &args));
+        assert!(!denied_by(DomainFlags::NO_NET, SYS_WRITE, &args));
     }
 
     /// NO_DEVICE: 仅拒设备控制与挂载族
     #[test]
     fn test_domain_gate_no_device() {
         let args = [0u64; 6];
-        assert!(denied_by(DomainFlags::NO_DEVICE, SYS_ioctl, &args));
-        assert!(denied_by(DomainFlags::NO_DEVICE, SYS_mount, &args));
-        assert!(denied_by(DomainFlags::NO_DEVICE, SYS_umount2, &args));
-        assert!(!denied_by(DomainFlags::NO_DEVICE, SYS_read, &args));
+        assert!(denied_by(DomainFlags::NO_DEVICE, SYS_IOCTL, &args));
+        assert!(denied_by(DomainFlags::NO_DEVICE, SYS_MOUNT, &args));
+        assert!(denied_by(DomainFlags::NO_DEVICE, SYS_UMOUNT2, &args));
+        assert!(!denied_by(DomainFlags::NO_DEVICE, SYS_READ, &args));
     }
 
     /// READONLY: 写类 syscall 与带写意图的 open/openat 被拒, 只读 open 放行
     #[test]
     fn test_domain_gate_readonly() {
         let args = [0u64; 6];
-        assert!(denied_by(DomainFlags::READONLY, SYS_write, &args));
-        assert!(denied_by(DomainFlags::READONLY, SYS_pwrite64, &args));
-        assert!(denied_by(DomainFlags::READONLY, SYS_writev, &args));
-        assert!(denied_by(DomainFlags::READONLY, SYS_truncate, &args));
-        assert!(denied_by(DomainFlags::READONLY, SYS_ftruncate, &args));
-        assert!(denied_by(DomainFlags::READONLY, SYS_rename, &args));
-        assert!(denied_by(DomainFlags::READONLY, SYS_mkdir, &args));
-        assert!(denied_by(DomainFlags::READONLY, SYS_unlink, &args));
-        assert!(denied_by(DomainFlags::READONLY, SYS_chmod, &args));
-        assert!(denied_by(DomainFlags::READONLY, SYS_fchmod, &args));
-        assert!(denied_by(DomainFlags::READONLY, SYS_unlinkat, &args));
-        assert!(denied_by(DomainFlags::READONLY, SYS_renameat, &args));
+        assert!(denied_by(DomainFlags::READONLY, SYS_WRITE, &args));
+        assert!(denied_by(DomainFlags::READONLY, SYS_PWRITE64, &args));
+        assert!(denied_by(DomainFlags::READONLY, SYS_WRITEV, &args));
+        assert!(denied_by(DomainFlags::READONLY, SYS_TRUNCATE, &args));
+        assert!(denied_by(DomainFlags::READONLY, SYS_FTRUNCATE, &args));
+        assert!(denied_by(DomainFlags::READONLY, SYS_RENAME, &args));
+        assert!(denied_by(DomainFlags::READONLY, SYS_MKDIR, &args));
+        assert!(denied_by(DomainFlags::READONLY, SYS_UNLINK, &args));
+        assert!(denied_by(DomainFlags::READONLY, SYS_CHMOD, &args));
+        assert!(denied_by(DomainFlags::READONLY, SYS_FCHMOD, &args));
+        assert!(denied_by(DomainFlags::READONLY, SYS_UNLINKAT, &args));
+        assert!(denied_by(DomainFlags::READONLY, SYS_RENAMEAT, &args));
         // 只读路径不受 READONLY 影响
-        assert!(!denied_by(DomainFlags::READONLY, SYS_read, &args));
-        assert!(!denied_by(DomainFlags::READONLY, SYS_readv, &args));
+        assert!(!denied_by(DomainFlags::READONLY, SYS_READ, &args));
+        assert!(!denied_by(DomainFlags::READONLY, SYS_READV, &args));
         // open(path, O_RDONLY, 0) ⇒ 放行
         assert!(!denied_by(
             DomainFlags::READONLY,
-            SYS_open,
+            SYS_OPEN,
             &[0, 0, 0, 0, 0, 0]
         ));
         // open(path, O_WRONLY, 0) ⇒ 拒绝
         assert!(denied_by(
             DomainFlags::READONLY,
-            SYS_open,
+            SYS_OPEN,
             &[0, 0o1, 0, 0, 0, 0]
         ));
         // openat(dirfd, path, O_RDONLY, 0) ⇒ 放行
         assert!(!denied_by(
             DomainFlags::READONLY,
-            SYS_openat,
+            SYS_OPENAT,
             &[0, 0, 0, 0, 0, 0]
         ));
         // openat(dirfd, path, O_RDWR, 0) ⇒ 拒绝
         assert!(denied_by(
             DomainFlags::READONLY,
-            SYS_openat,
+            SYS_OPENAT,
             &[0, 0, 0o2, 0, 0, 0]
         ));
         // openat(dirfd, path, O_RDONLY|O_CREAT, 0o644) ⇒ 拒绝 (创建隐含写)
         assert!(denied_by(
             DomainFlags::READONLY,
-            SYS_openat,
+            SYS_OPENAT,
             &[0, 0, 0o100, 0o644, 0, 0]
         ));
         // openat(dirfd, path, O_RDONLY|O_APPEND, 0) ⇒ 拒绝 (追加隐含写)
         assert!(denied_by(
             DomainFlags::READONLY,
-            SYS_openat,
+            SYS_OPENAT,
             &[0, 0, 0o2000, 0, 0, 0]
         ));
     }
@@ -316,26 +316,26 @@ mod tests {
     #[test]
     fn test_domain_gate_sandbox_whitelist() {
         let args = [0u64; 6];
-        assert!(!denied_by(DomainFlags::SANDBOX, SYS_read, &args));
-        assert!(!denied_by(DomainFlags::SANDBOX, SYS_write, &args));
-        assert!(!denied_by(DomainFlags::SANDBOX, SYS_exit, &args));
-        assert!(!denied_by(DomainFlags::SANDBOX, SYS_exit_group, &args));
-        assert!(!denied_by(DomainFlags::SANDBOX, SYS_rt_sigreturn, &args));
-        assert!(denied_by(DomainFlags::SANDBOX, SYS_open, &args));
-        assert!(denied_by(DomainFlags::SANDBOX, SYS_clone, &args));
-        assert!(denied_by(DomainFlags::SANDBOX, SYS_socket, &args));
-        assert!(denied_by(DomainFlags::SANDBOX, SYS_ioctl, &args));
+        assert!(!denied_by(DomainFlags::SANDBOX, SYS_READ, &args));
+        assert!(!denied_by(DomainFlags::SANDBOX, SYS_WRITE, &args));
+        assert!(!denied_by(DomainFlags::SANDBOX, SYS_EXIT, &args));
+        assert!(!denied_by(DomainFlags::SANDBOX, SYS_EXIT_GROUP, &args));
+        assert!(!denied_by(DomainFlags::SANDBOX, SYS_RT_SIGRETURN, &args));
+        assert!(denied_by(DomainFlags::SANDBOX, SYS_OPEN, &args));
+        assert!(denied_by(DomainFlags::SANDBOX, SYS_CLONE, &args));
+        assert!(denied_by(DomainFlags::SANDBOX, SYS_SOCKET, &args));
+        assert!(denied_by(DomainFlags::SANDBOX, SYS_IOCTL, &args));
     }
 
     /// 元数据位 (TEMP / SYSTEM) 不参与门控
     #[test]
     fn test_domain_gate_metadata_bits_not_gating() {
         let args = [0u64; 6];
-        assert!(!denied_by(DomainFlags::TEMP, SYS_clone, &args));
-        assert!(!denied_by(DomainFlags::SYSTEM, SYS_ioctl, &args));
+        assert!(!denied_by(DomainFlags::TEMP, SYS_CLONE, &args));
+        assert!(!denied_by(DomainFlags::SYSTEM, SYS_IOCTL, &args));
         assert!(!denied_by(
             DomainFlags::TEMP | DomainFlags::SYSTEM,
-            SYS_socket,
+            SYS_SOCKET,
             &args
         ));
     }

@@ -37,10 +37,10 @@ use super::vmspace::VmSpace;
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn enter_user_mode(vmspace: &VmSpace, ctx: &UserContext) -> ! {
     <crate::privileged::arch::X8664 as Arch>::enter_user(
-        crate::privileged::lib::usize_from_u64(ctx.rip), // ELR/rip
-        crate::privileged::lib::usize_from_u64(ctx.rsp), // stack pointer
-        crate::privileged::lib::usize_from_u64(ctx.rdi), // arg0 (x86_64 calling convention)
-        vmspace.pt_root().0,                             // user_cr3
+        crate::privileged::glue::usize_from_u64(ctx.rip), // ELR/rip
+        crate::privileged::glue::usize_from_u64(ctx.rsp), // stack pointer
+        crate::privileged::glue::usize_from_u64(ctx.rdi), // arg0 (x86_64 calling convention)
+        vmspace.pt_root().0,                              // user_cr3
         0, // kstack: 由 user_proc 直接调用 enter_user 时传入
     )
 }
@@ -52,11 +52,11 @@ pub unsafe fn enter_user_mode(vmspace: &VmSpace, ctx: &UserContext) -> ! {
 /// 契约同 x86_64 版本; `Arch::enter_user` 内部执行 msr sp_el0/elr_el1/spsr_el1 + eret.
 pub unsafe fn enter_user_mode(vmspace: &VmSpace, ctx: &UserContext) -> ! {
     <crate::privileged::arch::Aarch64 as Arch>::enter_user(
-        crate::privileged::lib::usize_from_u64(ctx.elr_el1), // ELR_EL1
-        crate::privileged::lib::usize_from_u64(ctx.sp_el0),  // SP_EL0
-        crate::privileged::lib::usize_from_u64(ctx.x0),      // arg0 (aarch64 calling convention)
-        vmspace.pt_root().0,                                 // user_cr3 (TTBR0)
-        0,                                                   // kstack: aarch64 不需要
+        crate::privileged::glue::usize_from_u64(ctx.elr_el1), // ELR_EL1
+        crate::privileged::glue::usize_from_u64(ctx.sp_el0),  // SP_EL0
+        crate::privileged::glue::usize_from_u64(ctx.x0),      // arg0 (aarch64 calling convention)
+        vmspace.pt_root().0,                                  // user_cr3 (TTBR0)
+        0,                                                    // kstack: aarch64 不需要
     )
 }
 

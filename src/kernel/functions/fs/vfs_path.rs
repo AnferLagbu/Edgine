@@ -118,17 +118,12 @@ pub extern "C" fn vfs_rmdir_internal(path: *const u8, pwm: u64) -> i32 {
     })
 }
 
-#[expect(
-    clippy::no_effect_underscore_binding,
-    reason = "no_effect_underscore_binding: let _ = expr 用于类型推导/副作用; 当前优先 expect"
-)]
 /// `stat(2)` — 按路径取文件属性并写入用户空间.
 ///
 /// uid/gid 经 SGEG 身份表映射后经安全代理写入 (I4); 成功返回 0,
 /// 失败返回 `-1`.
 pub extern "C" fn vfs_stat_internal(path: *const u8, st: *mut VfsStat, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
-    let _pwm = pwm;
     if st.is_null() {
         return -1;
     }

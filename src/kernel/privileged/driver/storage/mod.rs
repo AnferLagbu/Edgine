@@ -137,7 +137,7 @@ pub fn nvme_register_msix_isr(msi_vector: u8) -> Result<(), &'static str> {
 // ── 队列布局常量 (从 nvme.rs/ahci.rs 的权威定义派生, 避免副本漂移) ──
 
 /// Admin/I/O 队列深度
-const NVME_QD: u32 = crate::privileged::lib::low_u32_from_usize(nvme::QUEUE_DEPTH);
+const NVME_QD: u32 = crate::privileged::glue::low_u32_from_usize(nvme::QUEUE_DEPTH);
 /// SQ 条目大小
 const NVME_SQ_ENTRY: usize = core::mem::size_of::<nvme::NvmeCommand>();
 /// CQ 条目大小
@@ -205,7 +205,7 @@ fn alloc_dma_buffer(size: usize) -> Option<DmaStream> {
     if size == 0 {
         return None;
     }
-    let pages = size.div_ceil(crate::privileged::lib::usize_from_u64(PAGE_SIZE));
+    let pages = size.div_ceil(crate::privileged::glue::usize_from_u64(PAGE_SIZE));
     let frame = BuddyFrameAlloc.alloc_pages(pages)?;
     // 清零: 设备读到的初值必须是已定义数据
     frame.zero();
@@ -496,7 +496,7 @@ pub fn ahci_alloc_port_dma() -> Option<AhciCmdListHandle> {
     }
 
     let cmd_list_size = AHCI_CMD_SLOTS * AHCI_CMD_HDR_SIZE;
-    let fis_size = crate::privileged::lib::usize_from_u64(PAGE_SIZE);
+    let fis_size = crate::privileged::glue::usize_from_u64(PAGE_SIZE);
     let cmd_table_size = AHCI_CMD_TBL_SIZE;
 
     let (cmd_list_v, cmd_list_phys) = dma.alloc_coherent(cmd_list_size)?;
@@ -559,7 +559,7 @@ pub fn ahci_fill_cmd_header(
         // DW2/DW3 = 命令表基址低/高 32 位
         addr_of_mut!((*hdr).prdbc).write_volatile(0u32);
         addr_of_mut!((*hdr).ctba)
-            .write_volatile(crate::privileged::lib::low_u32_from_u64(cmd_table_phys));
+            .write_volatile(crate::privileged::glue::low_u32_from_u64(cmd_table_phys));
         addr_of_mut!((*hdr).ctbau).write_volatile((cmd_table_phys >> 32) as u32);
     }
 }
@@ -589,7 +589,7 @@ pub fn ahci_fill_prdt(
     unsafe {
         let table = cmd_table_virt as *mut ahci::AhciCommandTable;
         (*table).prdt[entry_index] = ahci::PhysicalRegionDescriptor {
-            dba: crate::privileged::lib::low_u32_from_u64(data_phys),
+            dba: crate::privileged::glue::low_u32_from_u64(data_phys),
             dbau: (data_phys >> 32) as u32,
             rsvd: 0,
             dbc: (byte_count - 1) | (if ioc { 1u32 << 31 } else { 0 }),

@@ -97,7 +97,7 @@ pub fn init(base_addr: u64) {
         ioapic_write_on(
             base,
             IOREDTBL_BASE + u32::from(irq) * 2,
-            crate::privileged::lib::low_u32_from_u64(
+            crate::privileged::glue::low_u32_from_u64(
                 REDTBL_MASK | DELIVERY_FIXED | (u64::from(irq) + 32),
             ),
         );
@@ -113,7 +113,7 @@ pub fn init(base_addr: u64) {
         });
         drop(ioapics);
         IOAPIC_COUNT.store(
-            crate::privileged::lib::low_u32_from_usize(idx + 1),
+            crate::privileged::glue::low_u32_from_usize(idx + 1),
             Ordering::Release,
         );
     }
@@ -167,7 +167,7 @@ pub fn set_irq_on(
         ioapic_write_on(
             state.base_addr,
             IOREDTBL_BASE + u32::from(local_irq) * 2,
-            crate::privileged::lib::low_u32_from_u64(entry),
+            crate::privileged::glue::low_u32_from_u64(entry),
         );
         ioapic_write_on(
             state.base_addr,
@@ -187,7 +187,7 @@ pub fn mask_irq_gsi(gsi: u32) {
             ioapic_write_on(
                 state.base_addr,
                 reg,
-                val | crate::privileged::lib::low_u32_from_u64(REDTBL_MASK),
+                val | crate::privileged::glue::low_u32_from_u64(REDTBL_MASK),
             );
         }
     }
@@ -203,7 +203,7 @@ pub fn unmask_irq_gsi(gsi: u32) {
             ioapic_write_on(
                 state.base_addr,
                 reg,
-                val & !crate::privileged::lib::low_u32_from_u64(REDTBL_MASK),
+                val & !crate::privileged::glue::low_u32_from_u64(REDTBL_MASK),
             );
         }
     }
@@ -220,13 +220,13 @@ pub fn set_irq_level_gsi(gsi: u32, level_triggered: bool) {
                 ioapic_write_on(
                     state.base_addr,
                     reg,
-                    val | crate::privileged::lib::low_u32_from_u64(REDTBL_LEVEL),
+                    val | crate::privileged::glue::low_u32_from_u64(REDTBL_LEVEL),
                 );
             } else {
                 ioapic_write_on(
                     state.base_addr,
                     reg,
-                    val & !crate::privileged::lib::low_u32_from_u64(REDTBL_LEVEL),
+                    val & !crate::privileged::glue::low_u32_from_u64(REDTBL_LEVEL),
                 );
             }
         }

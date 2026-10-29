@@ -42,11 +42,6 @@
 // `[lints]` 的 allow 在 ci/audit.sh 里全部失效 (实测 1623 条误报).
 // 详细理由见 lib.rs 各同名条目注释.
 // rustc 家族: C 互操作命名 / FFI 类型 / 全局可变静态
-#![allow(static_mut_refs)]
-#![allow(non_upper_case_globals)]
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-#![allow(improper_ctypes)]
 // clippy 家族
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 #![allow(clippy::mut_from_ref)]

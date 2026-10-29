@@ -284,10 +284,6 @@ pub unsafe fn kpti_exit_to_user() {
 /// 调用方保证: `KERNEL_PML4` 已初始化; PMM 可分配页面; KPTI 全局状态在 boot 阶段被独占写入。
 /// # Panics
 /// 分配 `USER_PML4` 页失败时 panic。
-#[expect(
-    clippy::verbose_bit_mask,
-    reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-)]
 pub unsafe fn kpti_init(kernel_pml4: u64) {
     if KPTI_READY.load(Ordering::Acquire) {
         return;
@@ -309,7 +305,7 @@ pub unsafe fn kpti_init(kernel_pml4: u64) {
         core::ptr::write_bytes(
             user_pml4_virt.0 as *mut u8,
             0,
-            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            crate::privileged::glue::usize_from_u64(PAGE_SIZE),
         );
     }
 
@@ -355,7 +351,7 @@ pub unsafe fn kpti_init(kernel_pml4: u64) {
         unsafe {
             core::arch::asm!("mov {0}, cr3", out(reg) cur_cr3, options(nostack, nomem));
         }
-        if cur_cr3 & 0xFFF == 0 {
+        if cur_cr3.trailing_zeros() >= 12 {
             // SAFETY: CR4 写入仅在 boot 阶段, 设置 PCIDE 位.
             unsafe {
                 let cr4: u64;
@@ -687,7 +683,7 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
             core::ptr::write_bytes(
                 new_page_virt.0 as *mut u8,
                 0,
-                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                crate::privileged::glue::usize_from_u64(PAGE_SIZE),
             );
             // 设置 PML4 项: PRESENT + WRITABLE + USER
             core::ptr::write_volatile(user_pml4.add(pml4_idx as usize), new_page | 0x7);
@@ -707,7 +703,7 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
             core::ptr::write_bytes(
                 new_page_virt.0 as *mut u8,
                 0,
-                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                crate::privileged::glue::usize_from_u64(PAGE_SIZE),
             );
             core::ptr::write_volatile(pdpt.add(pdpt_idx as usize), new_page | 0x7);
             new_page
@@ -739,12 +735,12 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
                 core::ptr::write_bytes(
                     new_pt_virt.0 as *mut u8,
                     0,
-                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                    crate::privileged::glue::usize_from_u64(PAGE_SIZE),
                 );
                 let new_pt_ptr = new_pt_virt.0 as *mut u64;
                 for i in 0..512u64 {
                     core::ptr::write_volatile(
-                        new_pt_ptr.add(crate::privileged::lib::usize_from_u64(i)),
+                        new_pt_ptr.add(crate::privileged::glue::usize_from_u64(i)),
                         (huge_base + i * PAGE_SIZE as u64) | pde_flags,
                     );
                 }
@@ -770,7 +766,7 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
             core::ptr::write_bytes(
                 new_page_virt.0 as *mut u8,
                 0,
-                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                crate::privileged::glue::usize_from_u64(PAGE_SIZE),
             );
             core::ptr::write_volatile(pd.add(pd_idx as usize), new_page | 0x7);
             new_page

@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn tcb_fault_always_bhr() {
-        let s = FaultSignal::tcb(TcbModule::FREG, 100);
+        let s = FaultSignal::tcb(TcbModule::Freg, 100);
         assert_eq!(RecoveryPolicy::decide(&s), RecoveryAction::FREGHardReset);
     }
 
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn cross_layer_with_dependents_bbr() {
-        let s = FaultSignal::cross_layer(42, TcbModule::FREG, 100);
+        let s = FaultSignal::cross_layer(42, TcbModule::Freg, 100);
         // 默认 dependents=0 → BSR
         assert_eq!(RecoveryPolicy::decide(&s), RecoveryAction::FREGSoftReset);
     }

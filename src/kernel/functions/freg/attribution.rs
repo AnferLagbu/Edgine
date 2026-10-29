@@ -62,15 +62,11 @@ pub enum FaultAttribution {
 
 /// TCB 模块标识 (用于故障归属定位).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[expect(
-    clippy::upper_case_acronyms,
-    reason = "TCB 归属枚举按子系统缩写命名 (FREG/SGEG), 缩写即语义标识且无更长形式"
-)]
 pub enum TcbModule {
     /// 故障恢复子系统.
-    FREG,
+    Freg,
     /// 服务域引擎子系统.
-    SGEG,
+    Sgeg,
     /// 内存管理子系统.
     Memory,
     /// 同步原语子系统.
@@ -85,9 +81,9 @@ impl TcbModule {
     /// 按模块路径名 (字节串) 推断所属 TCB 模块, 无法识别时归入 `Other`.
     pub const fn from_name(name: &[u8]) -> Self {
         if contains_substr(name, b"freg") {
-            Self::FREG
+            Self::Freg
         } else if contains_substr(name, b"sgeg") {
-            Self::SGEG
+            Self::Sgeg
         } else if contains_substr(name, b"mm") || contains_substr(name, b"pmm") {
             Self::Memory
         } else if contains_substr(name, b"sync") {
@@ -399,7 +395,7 @@ mod tests {
         assert_eq!(
             attr,
             FaultAttribution::Tcb {
-                module: TcbModule::FREG
+                module: TcbModule::Freg
             }
         );
     }
@@ -433,15 +429,15 @@ mod tests {
             attr,
             FaultAttribution::CrossLayer {
                 caller: 42,
-                callee: TcbModule::SGEG
+                callee: TcbModule::Sgeg
             }
         ));
     }
 
     #[test]
     fn tcb_module_from_name() {
-        assert_eq!(TcbModule::from_name(b"privileged::freg"), TcbModule::FREG);
-        assert_eq!(TcbModule::from_name(b"privileged::sgeg"), TcbModule::SGEG);
+        assert_eq!(TcbModule::from_name(b"privileged::freg"), TcbModule::Freg);
+        assert_eq!(TcbModule::from_name(b"privileged::sgeg"), TcbModule::Sgeg);
         assert_eq!(TcbModule::from_name(b"privileged::pmm"), TcbModule::Memory);
         assert_eq!(TcbModule::from_name(b"unknown"), TcbModule::Other);
     }
