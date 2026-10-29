@@ -15,7 +15,7 @@
 //! - VFS 交互: fd → `inode_id` 解析 (属于 functions 层职责)
 //! - 文件映射 Page Cache 引用释放
 
-use crate::privileged::mm::{MmStruct, Vma, VmaType};
+use crate::privileged::mm::{FileBackedVma, MmStruct, Vma, VmaType};
 use crate::privileged::mm::{PAGE_SIZE, PageFlags as VmaFlags};
 use crate::privileged::syscall::Errno;
 
@@ -73,7 +73,25 @@ pub fn fd_to_mount_idx(fd: i32) -> Option<usize> {
 // mmap 策略实现
 // ============================================================================
 
-#[inline]
+/// mmap 请求参数 (syscall 入口解析后的扁平参数集)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MmapRequest {
+    /// 用户地址提示 (0 表示由内核选择)
+    pub addr_hint: u64,
+    /// 映射长度 (字节)
+    pub length: u64,
+    /// 保护标志 (`PROT_*`)
+    pub prot: i32,
+    /// 映射标志 (`MAP_*`)
+    pub flags: i32,
+    /// 文件描述符 (匿名映射时忽略)
+    pub fd: i32,
+    /// 文件偏移 (文件映射时须按页对齐)
+    pub offset: u64,
+    /// 调用者 PWM 标识
+    pub pwm: u64,
+}
+
 /// 执行 mmap 系统调用: 创建匿名或文件内存映射.
 ///
 /// 根据 flags 区分匿名映射与文件映射, 对齐地址后插入 VMA.
@@ -84,41 +102,33 @@ pub fn fd_to_mount_idx(fd: i32) -> Option<usize> {
 /// - `length == 0`、映射同时或都不带 `MAP_SHARED`/`MAP_PRIVATE`、或文件映射 `offset` 未按页对齐 → `EINVAL`
 /// - 文件映射的 `fd` 无效 → `EBADF`
 /// - 地址分配或 VMA 插入失败(内存不足) → `ENOMEM`
-pub fn mmap_syscall(
-    mm: &MmStruct,
-    addr_hint: u64,
-    length: u64,
-    prot: i32,
-    flags: i32,
-    fd: i32,
-    offset: u64,
-    pwm: u64,
-) -> Result<usize, Errno> {
-    if length == 0 {
-        return Err(Errno::EINVAL);
+#[inline]
+pub fn mmap_syscall(mm: &MmStruct, req: MmapRequest) -> Result<usize, Errno> {
+    if req.length == 0 {
+        return Err(Errno::Einval);
     }
 
-    let len_aligned = (crate::functions::intcast::usize_from_u64(length)
+    let len_aligned = (crate::functions::intcast::usize_from_u64(req.length)
         + crate::functions::intcast::usize_from_u64(PAGE_SIZE)
         - 1)
         & !(crate::functions::intcast::usize_from_u64(PAGE_SIZE) - 1);
 
-    let page_flags = prot_to_vma_flags(prot);
+    let page_flags = prot_to_vma_flags(req.prot);
 
-    let map_private = (flags & MAP_PRIVATE) != 0;
-    let map_shared = (flags & MAP_SHARED) != 0;
-    let map_anonymous = (flags & MAP_ANONYMOUS) != 0;
+    let map_private = (req.flags & MAP_PRIVATE) != 0;
+    let map_shared = (req.flags & MAP_SHARED) != 0;
+    let map_anonymous = (req.flags & MAP_ANONYMOUS) != 0;
 
     if map_shared && map_private {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if !map_shared && !map_private {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     // ── 匿名映射 ──
     if map_anonymous {
-        let addr = find_or_allocate_addr(mm, addr_hint, len_aligned)?;
+        let addr = find_or_allocate_addr(mm, req.addr_hint, len_aligned)?;
         let aligned_addr = addr & !(crate::functions::intcast::usize_from_u64(PAGE_SIZE) - 1);
 
         let final_flags = page_flags | VmaFlags::PRESENT;
@@ -130,29 +140,29 @@ pub fn mmap_syscall(
         );
         match mm.insert_vma(vma) {
             Ok(()) => {}
-            Err(_) => return Err(Errno::ENOMEM),
+            Err(_) => return Err(Errno::Enomem),
         }
 
         return Ok(aligned_addr);
     }
 
     // ── 文件映射 ──
-    if fd < 0 {
-        return Err(Errno::EBADF);
+    if req.fd < 0 {
+        return Err(Errno::Ebadf);
     }
 
-    if !offset.is_multiple_of(PAGE_SIZE) {
-        return Err(Errno::EINVAL);
+    if !req.offset.is_multiple_of(PAGE_SIZE) {
+        return Err(Errno::Einval);
     }
 
-    let inode_id = fd_to_inode_id(fd);
+    let inode_id = fd_to_inode_id(req.fd);
     if inode_id == 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
 
-    let mount_idx = fd_to_mount_idx(fd);
+    let mount_idx = fd_to_mount_idx(req.fd);
 
-    let addr = find_or_allocate_addr(mm, addr_hint, len_aligned)?;
+    let addr = find_or_allocate_addr(mm, req.addr_hint, len_aligned)?;
     let aligned_addr = addr & !(crate::functions::intcast::usize_from_u64(PAGE_SIZE) - 1);
 
     let final_flags = if map_shared {
@@ -161,20 +171,20 @@ pub fn mmap_syscall(
         (page_flags | VmaFlags::PRESENT) & !VmaFlags::WRITABLE
     };
 
-    let vma = Vma::file_backed(
-        aligned_addr,
-        aligned_addr + len_aligned,
-        final_flags,
-        offset,
+    let vma = Vma::file_backed(&FileBackedVma {
+        start: aligned_addr,
+        end: aligned_addr + len_aligned,
+        flags: final_flags,
+        offset: req.offset,
         inode_id,
-        pwm,
-        map_shared,
+        pwm: req.pwm,
+        shared: map_shared,
         mount_idx,
-    );
+    });
 
     match mm.insert_vma(vma) {
         Ok(()) => {}
-        Err(_) => return Err(Errno::ENOMEM),
+        Err(_) => return Err(Errno::Enomem),
     }
 
     Ok(aligned_addr)
@@ -190,7 +200,7 @@ fn find_or_allocate_addr(
     if addr_hint != 0 && addr_hint < USER_ADDR_MAX {
         Ok(crate::functions::intcast::usize_from_u64(addr_hint))
     } else {
-        mm.find_free_range(len_aligned).ok_or(Errno::ENOMEM)
+        mm.find_free_range(len_aligned).ok_or(Errno::Enomem)
     }
 }
 
@@ -211,7 +221,7 @@ fn find_or_allocate_addr(
 /// (fail-closed: 不静默退化为操作内核表).
 pub fn munmap_syscall(mm: &MmStruct, addr: u64, length: u64) -> Result<(), Errno> {
     if addr == 0 || length == 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     let start = crate::functions::intcast::usize_from_u64(addr);
@@ -221,7 +231,7 @@ pub fn munmap_syscall(mm: &MmStruct, addr: u64, length: u64) -> Result<(), Errno
     let cr3 = crate::privileged::proc::process_get_cr3(
         crate::privileged::proc::process_get_current_pid(),
     )
-    .ok_or(Errno::ENOMEM)?;
+    .ok_or(Errno::Enomem)?;
 
     release_file_pages(mm, start, end, cr3);
 
@@ -237,7 +247,7 @@ pub fn munmap_syscall(mm: &MmStruct, addr: u64, length: u64) -> Result<(), Errno
 fn release_file_pages(mm: &MmStruct, start: usize, end: usize, cr3: u64) {
     let vmas = mm.vmas.lock();
     for vma in vmas.iter() {
-        if vma.vma_type != VmaType::FileBacked || vma.inode_id == 0 {
+        if vma.kind != VmaType::FileBacked || vma.inode_id == 0 {
             continue;
         }
         if vma.start >= end || vma.end <= start {
@@ -276,7 +286,7 @@ fn release_file_pages(mm: &MmStruct, start: usize, end: usize, cr3: u64) {
 /// 当 `addr == 0` 或 `length == 0` 时返回 `EINVAL`.
 pub fn mprotect_syscall(mm: &MmStruct, addr: u64, length: u64, prot: i32) -> Result<(), Errno> {
     if addr == 0 || length == 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     let start = crate::functions::intcast::usize_from_u64(addr);
@@ -318,6 +328,7 @@ fn prot_to_vma_flags(prot: i32) -> VmaFlags {
 // ============================================================================
 
 /// mmap syscall 策略入口
+#[must_use]
 pub fn mmap_syscall_entry(
     addr: u64,
     size: u64,
@@ -327,11 +338,11 @@ pub fn mmap_syscall_entry(
     offset: u64,
 ) -> i64 {
     if size == 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     let pwm = crate::privileged::sgeg::pwm_get_current();
     if !crate::privileged::sgeg::pwm_has_capability(pwm, 7, 0x01) {
-        return Errno::EACCES.as_ret();
+        return Errno::Eacces.as_ret();
     }
 
     // 无 mm 时走裸页分配路径
@@ -341,19 +352,31 @@ pub fn mmap_syscall_entry(
 
     // 有 mm 时走 VMA 路径
     let Some(mm) = crate::privileged::mm::vma_get_current_mm() else {
-        return Errno::ENOMEM.as_ret();
+        return Errno::Enomem.as_ret();
     };
 
-    match mmap_syscall(mm, addr, size, prot, flags, fd, offset, pwm) {
+    match mmap_syscall(
+        mm,
+        MmapRequest {
+            addr_hint: addr,
+            length: size,
+            prot,
+            flags,
+            fd,
+            offset,
+            pwm,
+        },
+    ) {
         Ok(a) => crate::functions::intcast::i64_from_usize(a),
         Err(e) => e.as_ret(),
     }
 }
 
 /// munmap syscall 策略入口
+#[must_use]
 pub fn munmap_syscall_entry(addr: u64, size: u64) -> i64 {
     if addr == 0 || size == 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     // 无 mm 时走裸页释放路径
@@ -363,7 +386,7 @@ pub fn munmap_syscall_entry(addr: u64, size: u64) -> i64 {
     }
 
     let Some(mm) = crate::privileged::mm::vma_get_current_mm() else {
-        return Errno::ENOMEM.as_ret();
+        return Errno::Enomem.as_ret();
     };
 
     match munmap_syscall(mm, addr, size) {

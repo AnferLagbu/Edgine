@@ -125,6 +125,7 @@ impl TaskStateSegment {
     ///
     /// 所有栈指针和 IST 都为 0, I/O 位图指向 TSS 末尾。
     #[inline]
+    #[must_use]
     pub const fn zeroed() -> Self {
         Self {
             reserved_0: 0,
@@ -158,6 +159,7 @@ impl TaskStateSegment {
 
     /// 获取内核态栈指针
     #[inline]
+    #[must_use]
     pub fn get_kernel_stack(&self) -> u64 {
         self.rsp0
     }
@@ -180,6 +182,7 @@ impl TaskStateSegment {
 
     /// 获取 IST 条目
     #[inline]
+    #[must_use]
     pub fn get_ist(&self, index: usize) -> Option<u64> {
         if index < IST_COUNT {
             Some(self.ist[index])
@@ -193,6 +196,7 @@ impl TaskStateSegment {
     /// IDT init 调用此函数确保 #DF/NMI/#PF/0x82 中断时 IST 栈可用,
     /// 避免 CPU 切换到未初始化的 0 栈顶触发三重故障.
     #[inline]
+    #[must_use]
     pub fn ist_validated(&self) -> bool {
         // IST 0-3: #DF, NMI, #PF, int 0x82
         self.ist[0] != 0 && self.ist[1] != 0 && self.ist[2] != 0 && self.ist[3] != 0
@@ -218,6 +222,7 @@ impl TaskStateSegment {
 
     /// 检查是否启用了 I/O 位图
     #[inline]
+    #[must_use]
     pub fn has_iomap(&self) -> bool {
         self.iomap_base < crate::privileged::glue::low_u16_from_usize(TSS_SIZE)
     }

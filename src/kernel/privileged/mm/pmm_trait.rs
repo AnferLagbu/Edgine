@@ -96,11 +96,9 @@ impl PmmPolicy for FallbackPmmPolicy {
         }
         // 千分比整数运算 (0..=1000), 避免内核侧浮点 (见 docs/plan/aarch64-kernel-fp-free.md)
         let free_permille = ctx.free_pages * 1000 / ctx.total_pages;
-        let fail_permille = if ctx.total_allocs > 0 {
-            ctx.failed_allocs * 1000 / ctx.total_allocs
-        } else {
-            0
-        };
+        let fail_permille = (ctx.failed_allocs * 1000)
+            .checked_div(ctx.total_allocs)
+            .unwrap_or(0);
         // 碎片化评分: 空闲比例低 + 失败率高 = 高碎片化
         // (1 - free_ratio) × 0.7 + fail_ratio × 0.3 的整数展开
         ((1000 - free_permille) * 7 + fail_permille * 3) / 10

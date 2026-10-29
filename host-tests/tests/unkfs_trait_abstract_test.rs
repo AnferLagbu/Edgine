@@ -68,7 +68,9 @@ fn test_unkfs_no_cyclic_sibling_use() {
         "dedup",
         "dmu",
         "dva",
-        "unkfs",
+        // P-64 第十六批: `pub mod unkfs;` 因 `module_inception` 改为
+        // `#[path = "unkfs.rs"] pub mod entry;` (文件名不变, 模块名避开父模块同名).
+        "entry",
         "metaslab",
         "raidz",
         "snapshot",

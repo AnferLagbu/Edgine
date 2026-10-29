@@ -3,6 +3,7 @@ use super::types::{CapBits, CapDomain, PwmFlags};
 use core::sync::atomic::Ordering;
 
 /// 检查 PWM 在指定能力域是否拥有所需能力位; PWM 0 (bootstrap) 恒为真, 身份缺失或被禁用为假。
+#[must_use]
 pub fn check(pwm: u64, domain: CapDomain, required: CapBits) -> bool {
     // PWM 0 是 bootstrap 身份, 拥有全部能力. 内核首个用户进程 (init) 在
     // identity 表初始化前以 PWM 0 运行, 需要绕过能力检查以完成文件系统挂载等
@@ -24,6 +25,7 @@ pub fn check(pwm: u64, domain: CapDomain, required: CapBits) -> bool {
 }
 
 /// 判断操作者 PWM 的权限级别是否严于目标 PWM (级别数值越小特权越高); 操作者为 PWM 0 恒为真。
+#[must_use]
 pub fn check_privilege(operator_pwm: u64, target_pwm: u64) -> bool {
     if operator_pwm == 0 {
         return true;
@@ -43,6 +45,7 @@ pub fn check_privilege(operator_pwm: u64, target_pwm: u64) -> bool {
 }
 
 /// 返回 PWM 的权限级别 (数值越小特权越高); PWM 0 为最高级 0, 身份不存在为 0xFF。
+#[must_use]
 pub fn get_privilege_level(pwm: u64) -> u8 {
     if pwm == 0 {
         return 0; // bootstrap 身份: 最高特权级
@@ -51,6 +54,7 @@ pub fn get_privilege_level(pwm: u64) -> u8 {
 }
 
 /// 返回 PWM 的创建者 PWM; 身份不存在时为 0。
+#[must_use]
 pub fn get_creator(pwm: u64) -> u64 {
     identity::find(pwm).map_or(0, |e| e.creator_pwm.load(Ordering::Acquire))
 }

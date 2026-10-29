@@ -37,6 +37,7 @@ pub struct ResetAuditEntry {
 
 impl ResetAuditEntry {
     /// 构造空审计条目 (const, 供静态初始化)
+    #[must_use]
     pub const fn empty() -> Self {
         Self {
             tick: 0,
@@ -49,8 +50,15 @@ impl ResetAuditEntry {
     }
 }
 
+impl Default for ResetAuditLog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ResetAuditLog {
     /// 构造空审计日志 (const, 供静态初始化)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             entries: [ResetAuditEntry::empty(); MAX_AUDIT_ENTRIES],
@@ -97,6 +105,7 @@ impl ResetAuditLog {
     }
 
     /// 最近一条审计记录 (无记录返回 `None`)
+    #[must_use]
     pub fn last(&self) -> Option<&ResetAuditEntry> {
         if self.count > 0 {
             Some(&self.entries[self.count - 1])
@@ -111,6 +120,7 @@ impl ResetAuditLog {
     }
 
     /// 统计指定恢复层级的记录数
+    #[must_use]
     pub fn count_by_layer(&self, layer: RecoveryLayer) -> usize {
         self.entries[..self.count]
             .iter()
@@ -119,6 +129,7 @@ impl ResetAuditLog {
     }
 
     /// 统计指定恢复结果的记录数
+    #[must_use]
     pub fn count_by_result(&self, result: RecoveryResult) -> usize {
         self.entries[..self.count]
             .iter()

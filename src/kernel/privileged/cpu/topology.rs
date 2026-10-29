@@ -27,6 +27,7 @@ pub struct TopologyInfo {
 impl TopologyInfo {
     /// 获取每物理核心的逻辑线程数
     #[inline]
+    #[must_use]
     pub const fn threads_per_core(self) -> u8 {
         if self.physical_cores > 0 && self.logical_threads >= self.physical_cores {
             self.logical_threads / self.physical_cores
@@ -37,6 +38,7 @@ impl TopologyInfo {
 
     /// 检查是否为单核 CPU
     #[inline]
+    #[must_use]
     pub const fn is_single_core(self) -> bool {
         self.physical_cores <= 1 && self.logical_threads <= 1
     }

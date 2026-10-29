@@ -45,6 +45,7 @@ pub struct GfxConsole {
 
 impl GfxConsole {
     /// 以帧缓冲尺寸与字体创建控制台（不持有帧缓冲）
+    #[must_use]
     pub fn new(width: u32, height: u32, font: &'static Font) -> Self {
         let cols = width / font.glyph_width;
         let rows = height / font.glyph_height;

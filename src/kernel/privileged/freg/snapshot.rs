@@ -34,6 +34,7 @@ pub enum DeviceType {
 
 impl DeviceType {
     /// 由原始 `u32` 值解析设备类型 (未知值回落为 `Unknown`)
+    #[must_use]
     pub fn from_u32(v: u32) -> Self {
         match v {
             1 => Self::Keyboard,
@@ -49,20 +50,12 @@ impl DeviceType {
 
 #[derive(Debug, Clone, Copy)]
 /// 单个设备寄存器的快照 (寄存器偏移 + 值)。
+#[derive(Default)]
 pub struct RegisterState {
     /// 寄存器相对 MMIO 基址的字节偏移
     pub offset: u32,
     /// 寄存器值
     pub value: u32,
-}
-
-impl Default for RegisterState {
-    fn default() -> Self {
-        Self {
-            offset: 0,
-            value: 0,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -88,6 +81,7 @@ pub struct DeviceSnapshot {
 
 impl DeviceSnapshot {
     /// 构造空快照 (无寄存器, 未捕获)
+    #[must_use]
     pub const fn new(
         device_id: u64,
         device_type: DeviceType,
@@ -126,6 +120,7 @@ impl DeviceSnapshot {
     }
 
     /// 判定当前是否未记录任何寄存器
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.register_count == 0
     }
@@ -167,8 +162,15 @@ pub struct DeviceSnapshotRegistry {
     init_captured: AtomicU32,
 }
 
+impl Default for DeviceSnapshotRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DeviceSnapshotRegistry {
     /// 构造空注册表
+    #[must_use]
     pub const fn new() -> Self {
         const NONE: Option<DeviceSnapshot> = None;
         Self {
@@ -191,15 +193,15 @@ impl DeviceSnapshotRegistry {
     /// 按设备 id 注销快照 (末位快照前移填补空洞)
     pub fn unregister(&mut self, device_id: u64) -> bool {
         for i in 0..self.count {
-            if let Some(ref snap) = self.snapshots[i] {
-                if snap.device_id == device_id {
-                    self.snapshots[i] = None;
-                    if i < self.count - 1 {
-                        self.snapshots[i] = self.snapshots[self.count - 1].take();
-                    }
-                    self.count -= 1;
-                    return true;
+            if let Some(ref snap) = self.snapshots[i]
+                && snap.device_id == device_id
+            {
+                self.snapshots[i] = None;
+                if i < self.count - 1 {
+                    self.snapshots[i] = self.snapshots[self.count - 1].take();
                 }
+                self.count -= 1;
+                return true;
             }
         }
         false
@@ -208,10 +210,10 @@ impl DeviceSnapshotRegistry {
     /// 按设备 id 取可变快照引用
     pub fn get_mut(&mut self, device_id: u64) -> Option<&mut DeviceSnapshot> {
         for i in 0..self.count {
-            if let Some(ref snap) = self.snapshots[i] {
-                if snap.device_id == device_id {
-                    return self.snapshots[i].as_mut();
-                }
+            if let Some(ref snap) = self.snapshots[i]
+                && snap.device_id == device_id
+            {
+                return self.snapshots[i].as_mut();
             }
         }
         None
@@ -219,11 +221,11 @@ impl DeviceSnapshotRegistry {
 
     /// 按设备 id 取只读快照引用
     pub fn get(&self, device_id: u64) -> Option<&DeviceSnapshot> {
-        for i in 0..self.count {
-            if let Some(ref snap) = self.snapshots[i] {
-                if snap.device_id == device_id {
-                    return Some(snap);
-                }
+        for slot in &self.snapshots[..self.count] {
+            if let Some(snap) = slot
+                && snap.device_id == device_id
+            {
+                return Some(snap);
             }
         }
         None
@@ -231,10 +233,8 @@ impl DeviceSnapshotRegistry {
 
     /// 捕获全部已注册设备的初始寄存器状态并置位已捕获标志
     pub fn capture_all_init(&mut self, read_fn: fn(u64, u32) -> u32) {
-        for i in 0..self.count {
-            if let Some(ref mut snap) = self.snapshots[i] {
-                snap.capture(read_fn);
-            }
+        for snap in self.snapshots[..self.count].iter_mut().flatten() {
+            snap.capture(read_fn);
         }
         self.init_captured.store(1, Ordering::SeqCst);
     }
@@ -245,8 +245,8 @@ impl DeviceSnapshotRegistry {
         let mut failed = 0usize;
 
         let mut sorted_indices: [usize; MAX_DEVICE_SNAPSHOTS] = [0; MAX_DEVICE_SNAPSHOTS];
-        for i in 0..self.count {
-            sorted_indices[i] = i;
+        for (i, slot) in sorted_indices[..self.count].iter_mut().enumerate() {
+            *slot = i;
         }
 
         for i in 1..self.count {
@@ -380,6 +380,7 @@ pub mod tests {
     use super::{DeviceSnapshot, DeviceSnapshotRegistry, DeviceType};
 
     /// 验证单设备快照的寄存器追加与计数。
+    #[must_use]
     pub fn test_snapshot_basic() -> bool {
         let mut snap = DeviceSnapshot::new(1, DeviceType::Timer, "test_timer", 0xF000, 10);
         snap.add_register(0x00, 0x1234);
@@ -388,6 +389,7 @@ pub mod tests {
     }
 
     /// 验证注册表注册设备后计数递增。
+    #[must_use]
     pub fn test_registry_register() -> bool {
         let mut registry = DeviceSnapshotRegistry::new();
         let snap = DeviceSnapshot::new(1, DeviceType::Keyboard, "kbd", 0x60, 5);

@@ -32,20 +32,20 @@ const VFS_STAT_SIZE: u64 = core::mem::size_of::<VfsStat>() as u64;
 /// 当路径或缓冲区指针为空/越界时返回 `EFAULT`; 当底层 stat 失败时返回 `EIO`.
 pub fn stat_syscall(path_ptr: u64, st_buf_ptr: u64) -> Result<usize, Errno> {
     if path_ptr == 0 || st_buf_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_ptr(path_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_buf(st_buf_ptr, VFS_STAT_SIZE) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let pwm = current_pwm();
     // privileged safe API: 返回 VfsStat (无 raw pointer 跨边界)
-    let stat = fw::vfs_stat_safe(path_ptr as *const u8, pwm).ok_or(Errno::EIO)?;
+    let stat = fw::vfs_stat_safe(path_ptr as *const u8, pwm).ok_or(Errno::Eio)?;
     // privileged safe API: 写结构体到 user buf, 内部已 check_user_buf
     if !raw::write_struct_to_user::<VfsStat>(st_buf_ptr, &stat) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     Ok(0)
 }
@@ -75,18 +75,18 @@ pub fn lstat_syscall(path_ptr: u64, st_buf_ptr: u64) -> Result<usize, Errno> {
 /// 当底层 fstat 失败时返回 `EIO`.
 pub fn fstat_syscall(fd: i32, st_buf_ptr: u64) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     if st_buf_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_buf(st_buf_ptr, VFS_STAT_SIZE) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let pwm = current_pwm();
-    let stat = fw::vfs_fstat_safe(fd.cast_unsigned(), pwm).ok_or(Errno::EIO)?;
+    let stat = fw::vfs_fstat_safe(fd.cast_unsigned(), pwm).ok_or(Errno::Eio)?;
     if !raw::write_struct_to_user::<VfsStat>(st_buf_ptr, &stat) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     Ok(0)
 }
@@ -98,7 +98,7 @@ pub fn fstat_syscall(fd: i32, st_buf_ptr: u64) -> Result<usize, Errno> {
 /// Linux `struct statx` (x86_64, 256 字节) — 扩展文件状态
 ///
 /// SIMPLIFIED: 仅填充基础字段 (mode/uid/gid/size/nlink/ino/时间戳), dev/
-/// rdev/btime/attributes/mnt_id 等置 0; 影响面: 依赖这些字段的调用方语义
+/// `rdev/btime/attributes/mnt_id` 等置 0; 影响面: 依赖这些字段的调用方语义
 /// 不完整; 何时需扩展: VFS 提供 dev/rdev/btime 元数据后补充.
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -229,19 +229,19 @@ pub fn statx_syscall(
 ) -> Result<usize, Errno> {
     let stx_size = core::mem::size_of::<Statx>() as u64;
     if path_ptr == 0 || buf_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_ptr(path_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_buf(buf_ptr, stx_size) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let pwm = current_pwm();
-    let stat = fw::vfs_stat_safe(path_ptr as *const u8, pwm).ok_or(Errno::EIO)?;
+    let stat = fw::vfs_stat_safe(path_ptr as *const u8, pwm).ok_or(Errno::Eio)?;
     let stx = Statx::from_vfs_stat(&stat);
     if !raw::write_struct_to_user::<Statx>(buf_ptr, &stx) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     Ok(0)
 }
@@ -252,13 +252,14 @@ pub fn statx_syscall(
 /// 当前时间 (tick/frequency 换算秒); 非 NULL 时读取用户 `timespec[2]` 数组
 /// (`{sec, nsec}` 各 8 字节), `sec == -1` 表示该时间戳不修改 (Linux 语义,
 /// 内部以 `u64::MAX` 传递). 委托 privileged `vfs_utimensat_safe`.
+#[must_use]
 pub fn utimensat_syscall(dirfd: i32, path_ptr: u64, times_ptr: u64, _flags: i32) -> i64 {
     const AT_FDCWD: i32 = -100;
     if dirfd != AT_FDCWD {
-        return Errno::ENOTSUP.as_ret();
+        return Errno::Enotsup.as_ret();
     }
     if path_ptr == 0 || !raw::check_user_ptr(path_ptr) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     let (atime, mtime) = if times_ptr == 0 {
         // NULL times: 设为当前时间 (Linux utimensat 语义)
@@ -269,7 +270,7 @@ pub fn utimensat_syscall(dirfd: i32, path_ptr: u64, times_ptr: u64, _flags: i32)
         // timespec[2]: {atime{sec,nsec}, mtime{sec,nsec}} = 32 字节 = 4 × u64
         let mut times = [0u64; 4];
         if !crate::privileged::syscall::api::read_struct_from_user(times_ptr, &mut times) {
-            return Errno::EFAULT.as_ret();
+            return Errno::Efault.as_ret();
         }
         let atime_sec = times[0].cast_signed();
         let mtime_sec = times[2].cast_signed();
@@ -278,11 +279,11 @@ pub fn utimensat_syscall(dirfd: i32, path_ptr: u64, times_ptr: u64, _flags: i32)
         (atime_v, mtime_v)
     };
     let Ok(path) = crate::privileged::mm::copy_user::copy_string_from_user(path_ptr, 4096) else {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     };
     let pwm = crate::privileged::sgeg::pwm_get_current();
     let r = crate::functions::fs::vfs_utimensat_safe(&path, atime, mtime, pwm);
-    if r < 0 { Errno::EIO.as_ret() } else { 0 }
+    if r < 0 { Errno::Eio.as_ret() } else { 0 }
 }
 
 // ============================================================================

@@ -20,6 +20,7 @@
 //! - T2-3: Slab 策略提取 (2026-06-19)
 //! - 互补: pmm_trait::PmmPolicy (物理页分配策略)
 
+use crate::functions::error::AlreadyRegistered;
 use crate::privileged::config::{SLAB_MAX_OBJECT_SIZE, SLAB_MIN_OBJECT_SIZE};
 use crate::privileged::mm::slab_trait::{SlabAllocSource, SlabPolicy, SlabPolicyContext};
 
@@ -93,10 +94,10 @@ impl SlabPolicy for DefaultSlabPolicy {
 ///
 /// # Errors
 ///
-/// 当 Slab 策略已被注册时返回 `Err(())`.
-pub fn register_default_slab_policy() -> Result<(), ()> {
+/// 当 Slab 策略已被注册时返回 `Err(AlreadyRegistered)`.
+pub fn register_default_slab_policy() -> Result<(), AlreadyRegistered> {
     static POLICY: DefaultSlabPolicy = DefaultSlabPolicy;
-    crate::privileged::mm::register_slab_policy(&POLICY).map_err(|_| ())
+    crate::privileged::mm::register_slab_policy(&POLICY).map_err(|_| AlreadyRegistered)
 }
 
 // ============================================================================

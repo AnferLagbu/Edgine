@@ -34,6 +34,7 @@ use alloc::vec::Vec;
 use core::mem::size_of;
 use core::sync::atomic::Ordering;
 
+use crate::functions::error::AlreadyRegistered;
 use crate::functions::fs::api::{vfs_close_safe, vfs_open_safe, vfs_write_pod, vfs_write_safe};
 use crate::privileged::mm::{PAGE_SIZE, PageFlags, copy_from_user_in_mm, vma_snapshot_current};
 use crate::privileged::proc::{
@@ -69,7 +70,7 @@ const PF_X: u32 = 1;
 /// 最大转储内存段数
 const MAX_CORE_SEGMENTS: usize = 64;
 
-/// core 文件打开标志: O_WRONLY | O_CREAT | O_TRUNC
+/// core 文件打开标志: `O_WRONLY` | `O_CREAT` | `O_TRUNC`
 const OPEN_FLAGS: u32 = 0x0002 | 0x0100 | 0x0200;
 
 /// note name "CORE\0" 声明长度 (含 NUL, 共 5 字节)
@@ -90,12 +91,14 @@ const REGSET_LEN: usize = 34;
 // ============================================================================
 
 /// `siginfo_t` 简化 (仅用于 core dump note)
+///
+/// 字段顺序对应 Linux `si_signo` / `si_code` / `si_errno`.
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct CoreSiginfo {
-    si_signo: i32,
-    si_code: i32,
-    si_errno: i32,
+    signo: i32,
+    code: i32,
+    errno: i32,
 }
 
 /// 进程状态 note (Linux `elf_prstatus` 布局子集)
@@ -159,14 +162,14 @@ impl CoredumpSink for StandardCoredumpSink {
 
 /// 注册标准核心转储实现到 privileged
 ///
-/// 由 `functions::proc::init()` 调用. 只能成功一次, 后续调用返回 `Err(())`.
+/// 由 `functions::proc::init()` 调用. 只能成功一次, 后续调用返回 `Err(AlreadyRegistered)`.
 ///
 /// # Errors
 ///
-/// 当核心转储实现已被注册时返回 `Err(())`.
-pub fn register_standard_coredump_sink() -> Result<(), ()> {
+/// 当核心转储实现已被注册时返回 `Err(AlreadyRegistered)`.
+pub fn register_standard_coredump_sink() -> Result<(), AlreadyRegistered> {
     static SINK: StandardCoredumpSink = StandardCoredumpSink;
-    register_coredump_sink(&SINK).map_err(|_| ())
+    register_coredump_sink(&SINK).map_err(|_| AlreadyRegistered)
 }
 
 // ============================================================================
@@ -257,7 +260,7 @@ fn do_coredump(pid: u32, sig: u8, frame_addr: u64) -> bool {
         write_segment_data(fd, cr3, seg, &mut offset, core_limit);
     }
 
-    vfs_close_safe(fd);
+    let _ = vfs_close_safe(fd);
     crate::slog_info!(Process, "coredump: 已写 {} 字节 pid={}", offset, pid);
     true
 }
@@ -322,48 +325,48 @@ fn build_ehdr(phnum: u16) -> Elf64Header {
     e_ident[6] = crate::functions::intcast::low_u8_from_u32(EV_CURRENT);
 
     Elf64Header {
-        e_ident,
-        e_type: ET_CORE,
-        e_machine: EM_MACHINE,
-        e_version: EV_CURRENT,
-        e_entry: 0,
-        e_phoff: size_of::<Elf64Header>() as u64,
-        e_shoff: 0,
-        e_flags: 0,
-        e_ehsize: crate::functions::intcast::low_u16_from_usize(size_of::<Elf64Header>()),
-        e_phentsize: crate::functions::intcast::low_u16_from_usize(size_of::<Elf64Phdr>()),
-        e_phnum: phnum,
-        e_shentsize: 0,
-        e_shnum: 0,
-        e_shstrndx: 0,
+        ident: e_ident,
+        ty: ET_CORE,
+        machine: EM_MACHINE,
+        version: EV_CURRENT,
+        entry: 0,
+        phoff: size_of::<Elf64Header>() as u64,
+        shoff: 0,
+        flags: 0,
+        ehsize: crate::functions::intcast::low_u16_from_usize(size_of::<Elf64Header>()),
+        phentsize: crate::functions::intcast::low_u16_from_usize(size_of::<Elf64Phdr>()),
+        phnum,
+        shentsize: 0,
+        shnum: 0,
+        shstrndx: 0,
     }
 }
 
 /// 构建 `PT_NOTE` program header
 fn build_note_phdr(offset: u64, size: u64) -> Elf64Phdr {
     Elf64Phdr {
-        p_type: PT_NOTE,
-        p_flags: 0,
-        p_offset: offset,
-        p_vaddr: 0,
-        p_paddr: 0,
-        p_filesz: size,
-        p_memsz: size,
-        p_align: 4,
+        ty: PT_NOTE,
+        flags: 0,
+        offset,
+        vaddr: 0,
+        paddr: 0,
+        filesz: size,
+        memsz: size,
+        align: 4,
     }
 }
 
 /// 构建 `PT_LOAD` program header
 fn build_load_phdr(seg: &CoreSegment, offset: u64) -> Elf64Phdr {
     Elf64Phdr {
-        p_type: PT_LOAD,
-        p_flags: seg.flags,
-        p_offset: offset,
-        p_vaddr: seg.start,
-        p_paddr: 0,
-        p_filesz: seg.file_size,
-        p_memsz: seg.end - seg.start,
-        p_align: PAGE_SIZE,
+        ty: PT_LOAD,
+        flags: seg.flags,
+        offset,
+        vaddr: seg.start,
+        paddr: 0,
+        filesz: seg.file_size,
+        memsz: seg.end - seg.start,
+        align: PAGE_SIZE,
     }
 }
 
@@ -371,9 +374,9 @@ fn build_load_phdr(seg: &CoreSegment, offset: u64) -> Elf64Phdr {
 fn build_prstatus(pid: u32, sig: u8, frame_addr: u64) -> PrStatus {
     let mut prstatus = PrStatus {
         siginfo: CoreSiginfo {
-            si_signo: i32::from(sig),
-            si_code: 0,
-            si_errno: 0,
+            signo: i32::from(sig),
+            code: 0,
+            errno: 0,
         },
         _pad0: 0,
         pr_cursig: u16::from(sig),
@@ -424,9 +427,9 @@ fn write_note_siginfo(fd: u32, sig: u8, offset: &mut u64) {
     let descsz = crate::functions::intcast::low_u32_from_usize(size_of::<CoreSiginfo>());
     write_note_header(fd, descsz, NT_SIGINFO, offset);
     let siginfo = CoreSiginfo {
-        si_signo: i32::from(sig),
-        si_code: 0,
-        si_errno: 0,
+        signo: i32::from(sig),
+        code: 0,
+        errno: 0,
     };
     write_desc(fd, &siginfo, offset);
 }
@@ -439,7 +442,7 @@ fn write_note_header(fd: u32, descsz: u32, note_type: u32, offset: &mut u64) {
         note_type,
     };
     write_struct(fd, &note, offset);
-    vfs_write_safe(fd, &NOTE_NAME_PADDED);
+    let _ = vfs_write_safe(fd, &NOTE_NAME_PADDED);
     *offset += NOTE_NAME_ALIGNED;
 }
 
@@ -485,7 +488,7 @@ fn write_segment_data(fd: u32, cr3: u64, seg: &CoreSegment, offset: &mut u64, co
         if read < n {
             buf[read..n].fill(0);
         }
-        vfs_write_safe(fd, &buf[..n]);
+        let _ = vfs_write_safe(fd, &buf[..n]);
 
         written += chunk;
         addr += chunk;
@@ -498,7 +501,7 @@ fn pad_zeros(fd: u32, mut n: u64) {
     const ZEROS: [u8; 16] = [0u8; 16];
     while n > 0 {
         let chunk = n.min(16) as usize;
-        vfs_write_safe(fd, &ZEROS[..chunk]);
+        let _ = vfs_write_safe(fd, &ZEROS[..chunk]);
         n -= chunk as u64;
     }
 }
@@ -517,6 +520,7 @@ fn core_limit_for(pid: u32) -> u64 {
 // ============================================================================
 
 /// 检查当前进程是否允许生成 core dump (`RLIMIT_CORE` > 0)
+#[must_use]
 pub fn coredump_allowed() -> bool {
     let pid = process_get_current_pid();
     if pid == 0 {
@@ -532,6 +536,7 @@ pub fn coredump_allowed() -> bool {
 }
 
 /// 获取当前进程的 core dump 大小限制 (`RLIMIT_CORE` 当前值)
+#[must_use]
 pub fn coredump_limit() -> u64 {
     let pid = process_get_current_pid();
     if pid == 0 {
@@ -580,14 +585,14 @@ mod tests {
         expected[4] = ELFCLASS64;
         expected[5] = ELFDATA2LSB;
         expected[6] = EV_CURRENT as u8;
-        assert_eq!(ehdr.e_ident, expected);
-        assert_eq!(ehdr.e_type, ET_CORE);
-        assert_eq!(ehdr.e_machine, EM_MACHINE);
-        assert_eq!(ehdr.e_version, EV_CURRENT);
-        assert_eq!(ehdr.e_phoff, 64);
-        assert_eq!(ehdr.e_ehsize, 64);
-        assert_eq!(ehdr.e_phentsize, 56);
-        assert_eq!(ehdr.e_phnum, 3);
+        assert_eq!(ehdr.ident, expected);
+        assert_eq!(ehdr.ty, ET_CORE);
+        assert_eq!(ehdr.machine, EM_MACHINE);
+        assert_eq!(ehdr.version, EV_CURRENT);
+        assert_eq!(ehdr.phoff, 64);
+        assert_eq!(ehdr.ehsize, 64);
+        assert_eq!(ehdr.phentsize, 56);
+        assert_eq!(ehdr.phnum, 3);
     }
 
     #[test]
@@ -599,14 +604,14 @@ mod tests {
             file_size: 0x2000,
         };
         let phdr = build_load_phdr(&seg, 0x4000);
-        assert_eq!(phdr.p_type, PT_LOAD);
-        assert_eq!(phdr.p_flags, PF_R | PF_X);
-        assert_eq!(phdr.p_offset, 0x4000);
-        assert_eq!(phdr.p_vaddr, 0x1000);
-        assert_eq!(phdr.p_paddr, 0);
-        assert_eq!(phdr.p_filesz, 0x2000);
-        assert_eq!(phdr.p_memsz, 0x2000);
-        assert_eq!(phdr.p_align, PAGE_SIZE);
+        assert_eq!(phdr.ty, PT_LOAD);
+        assert_eq!(phdr.flags, PF_R | PF_X);
+        assert_eq!(phdr.offset, 0x4000);
+        assert_eq!(phdr.vaddr, 0x1000);
+        assert_eq!(phdr.paddr, 0);
+        assert_eq!(phdr.filesz, 0x2000);
+        assert_eq!(phdr.memsz, 0x2000);
+        assert_eq!(phdr.align, PAGE_SIZE);
     }
 
     #[test]
@@ -615,7 +620,7 @@ mod tests {
         let ps = build_prstatus(4321, 11, 0);
         assert_eq!(ps.pr_pid, 4321);
         assert_eq!(ps.pr_cursig, 11);
-        assert_eq!(ps.siginfo.si_signo, 11);
+        assert_eq!(ps.siginfo.signo, 11);
         assert!(ps.regs.iter().all(|&r| r == 0));
     }
 }

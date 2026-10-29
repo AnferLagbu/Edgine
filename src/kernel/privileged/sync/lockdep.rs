@@ -93,11 +93,13 @@ pub enum LockKind {
 
 impl LockKind {
     /// 是否可在中断上下文中安全获取
+    #[must_use]
     pub fn irq_safe(self) -> bool {
         matches!(self, Self::SpinLock | Self::IrqSpinLock)
     }
 
     /// 是否为睡眠锁 (获取时可能 yield)
+    #[must_use]
     pub fn may_sleep(self) -> bool {
         matches!(self, Self::Mutex | Self::PiMutex)
     }
@@ -193,8 +195,8 @@ impl LockDepMap {
     /// 注册锁类, 返回 `LockClassId`
     fn register(&mut self, desc: LockClassDesc) -> LockClassId {
         // 查找是否已注册同名锁类
-        for i in 0..self.class_count {
-            if self.classes[i].used && self.classes[i].name == desc.name {
+        for (i, class) in self.classes[..self.class_count].iter().enumerate() {
+            if class.used && class.name == desc.name {
                 return LockClassId(crate::privileged::glue::low_u16_from_usize(i));
             }
         }
@@ -535,18 +537,19 @@ pub fn acquire(class_id: LockClassId, instance: usize, irq_context: bool) -> boo
         map.class_kind(class_id)
     };
 
-    if let Some(k) = kind {
-        if irq_context && k.may_sleep() {
-            let map = LOCK_DEP_MAP.lock();
-            let name = map.class_name(class_id);
-            lockdep_log!(
-                "lockdep VIOLATION: acquiring sleep lock '{}' ({:?}) in IRQ context!",
-                name,
-                k
-            );
-            map.violation_count.fetch_add(1, Ordering::Relaxed);
-            return false;
-        }
+    if let Some(k) = kind
+        && irq_context
+        && k.may_sleep()
+    {
+        let map = LOCK_DEP_MAP.lock();
+        let name = map.class_name(class_id);
+        lockdep_log!(
+            "lockdep VIOLATION: acquiring sleep lock '{}' ({:?}) in IRQ context!",
+            name,
+            k
+        );
+        map.violation_count.fetch_add(1, Ordering::Relaxed);
+        return false;
     }
 
     // 检查 2/2.5/3 + 压栈: 操作当前 CPU 的 per-CPU 持有锁栈 (仅 lockdep 激活时).
@@ -559,17 +562,17 @@ pub fn acquire(class_id: LockClassId, instance: usize, irq_context: bool) -> boo
                 return false;
             }
             // 检查 2.5: 持有 IRQ 上下文锁时获取 sleep lock → 潜在死锁
-            if !irq_context && stack.any_in_irq() {
-                if let Some(k) = kind {
-                    if k.may_sleep() {
-                        let map = LOCK_DEP_MAP.lock();
-                        let name = map.class_name(class_id);
-                        lockdep_log!(
-                            "lockdep WARNING: acquiring sleep lock '{}' while holding IRQ-context lock",
-                            name
-                        );
-                    }
-                }
+            if !irq_context
+                && stack.any_in_irq()
+                && let Some(k) = kind
+                && k.may_sleep()
+            {
+                let map = LOCK_DEP_MAP.lock();
+                let name = map.class_name(class_id);
+                lockdep_log!(
+                    "lockdep WARNING: acquiring sleep lock '{}' while holding IRQ-context lock",
+                    name
+                );
             }
             // 检查 3: AB-BA 依赖检测 — 对持有栈中每个锁添加 "held → new" 依赖边.
             // 跳过同类边 (同一 class, 不同 instance: per-CPU 数组锁成对持有, 此类边
@@ -639,6 +642,7 @@ pub fn release(class_id: LockClassId, instance: usize) {
 }
 
 /// 查询当前持有锁深度
+#[must_use]
 pub fn held_depth() -> usize {
     #[cfg(any(debug_assertions, feature = "lockdep"))]
     {

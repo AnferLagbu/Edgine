@@ -22,6 +22,10 @@ pub mod dedup;
 pub mod dmu;
 /// 数据虚拟地址 (vdev + 偏移 + 长度) 的表示与编解码.
 pub mod dva;
+/// 模块入口: 文件系统实例的挂载与统一访问 (文件名沿用 `unkfs.rs`, 模块名取 `entry` 以避免
+/// 模块名与父模块同名).
+#[path = "unkfs.rs"]
+pub mod entry;
 /// 分配空间单元 (metaslab): 空闲管理与统计.
 pub mod metaslab;
 /// RAID-Z 级别的数据/校验分条布局与重建.
@@ -32,8 +36,6 @@ pub mod snapshot;
 pub mod spa;
 /// 事务组 (TXG): 写事务聚合与同步状态机.
 pub mod txg;
-/// 模块入口: 文件系统实例的挂载与统一访问.
-pub mod unkfs;
 /// 文件描述符、打开模式与文件数据读写.
 pub mod unkfs_data;
 /// inode 元数据: 属性与数据块引用.

@@ -30,11 +30,6 @@
 //! `tests/` 中的 `framekernel_bench.rs` (经 [[test]] 删除后已移除) 不再作为
 //! 测试入口, 单元测试仅随 lib 编译时运行一次.
 
-#![allow(clippy::not_unsafe_ptr_arg_deref)]
-#![allow(clippy::module_inception)]
-#![allow(clippy::needless_range_loop)]
-#![allow(clippy::explicit_counter_loop)]
-
 // ── 单元测试载体模块 (内联 #[cfg(test)] mod tests) ──
 mod dma_stream;
 

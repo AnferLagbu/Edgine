@@ -96,12 +96,13 @@ fn ap_list() -> &'static IrqSpinLock<Box<[Option<ApInfo>]>> {
 // ============================================================================
 
 /// 搜索 ACPI RSDP 表: 依次尝试 Multiboot2 信息、EBDA 与 BIOS ROM。
+#[must_use]
 pub fn find_rsdp(multiboot2_info_ptr: u64) -> Option<u64> {
     // 1. 尝试从 Multiboot2 info 中获取 RSDP
-    if multiboot2_info_ptr != 0 {
-        if let Some(rsdp) = find_rsdp_from_mb2(multiboot2_info_ptr) {
-            return Some(rsdp);
-        }
+    if multiboot2_info_ptr != 0
+        && let Some(rsdp) = find_rsdp_from_mb2(multiboot2_info_ptr)
+    {
+        return Some(rsdp);
     }
 
     // 2. 扫描 EBDA (Extended BIOS Data Area, 通常在 0x80000-0x9FFFF)
@@ -436,11 +437,13 @@ pub fn get_ap_count() -> u32 {
 }
 
 /// 获取全部 AP 信息列表的克隆快照。
+#[must_use]
 pub fn get_ap_list() -> Box<[Option<ApInfo>]> {
     ap_list().lock().clone()
 }
 
 /// 按下标获取单个 AP 信息。
+#[must_use]
 pub fn get_ap(index: usize) -> Option<ApInfo> {
     ap_list().lock()[index]
 }
@@ -476,13 +479,14 @@ pub fn get_ioapic_count() -> u32 {
 pub fn gsi_to_ioapic(gsi: u32) -> Option<(usize, u8)> {
     let ioapics = IOAPICS.lock();
     for (i, ioapic) in ioapics.iter().enumerate() {
-        if let Some(info) = ioapic {
-            if gsi >= info.gsi_base && gsi < info.gsi_base + u32::from(info.max_irq) {
-                return Some((
-                    i,
-                    crate::privileged::glue::low_u8_from_u32(gsi - info.gsi_base),
-                ));
-            }
+        if let Some(info) = ioapic
+            && gsi >= info.gsi_base
+            && gsi < info.gsi_base + u32::from(info.max_irq)
+        {
+            return Some((
+                i,
+                crate::privileged::glue::low_u8_from_u32(gsi - info.gsi_base),
+            ));
         }
     }
     None
@@ -498,7 +502,7 @@ pub fn get_lapic_base() -> u64 {
     u64::from(madt.local_apic_addr)
 }
 
-/// MADT 解析 C ABI 入口 (转调 parse_madt)
+/// MADT 解析 C ABI 入口 (转调 `parse_madt`)
 #[unsafe(no_mangle)]
 pub extern "C" fn acpi_parse_madt(mb2_ptr: u64) -> bool {
     parse_madt(mb2_ptr)
@@ -611,7 +615,9 @@ pub fn acpi_shutdown() -> ! {
 
         crate::arch!(outl(0x604u16, 0x2000u32));
 
-        loop {}
+        loop {
+            core::hint::spin_loop();
+        }
     }
 
     // SAFETY: `const` 指向 ACPI/BIOS 探测过的物理地址; 只读访问
@@ -648,7 +654,9 @@ pub fn acpi_shutdown() -> ! {
 
     crate::arch!(outl(0x604u16, 0x2000u32));
 
-    loop {}
+    loop {
+        core::hint::spin_loop();
+    }
 }
 
 /// ACPI 重启
@@ -689,7 +697,9 @@ pub fn acpi_reboot() -> ! {
     // 通过键盘控制器脉冲 reset 线路 (端口 0x64, 命令 0xFE)
     crate::arch!(outb(0x64u16, 0xFEu8));
 
-    loop {}
+    loop {
+        core::hint::spin_loop();
+    }
 }
 
 // ============================================================================
@@ -830,24 +840,23 @@ fn parse_dmar(dmar_ptr: u64) {
             break;
         }
 
-        if entry_type == DMAR_TYPE_DRHD {
-            if offset + core::mem::size_of::<DrhdEntry>() <= entries_end {
-                // SAFETY: `offset` 指向已验证有效的 ACPI/BIOS 表头 (长度 ≥ sizeof(DrhdEntry)); 只读访问
-                let drhd = unsafe { &*(offset as *const DrhdEntry) };
-                let info = DmarDrhdInfo {
-                    register_base: drhd.register_base,
-                    segment_number: drhd.segment_number,
-                    include_all: (drhd.flags & 0x01) != 0,
-                };
-                crate::klog_info!(
-                    Acpi,
-                    "[ACPI] DMAR DRHD: reg_base=0x{:X} seg={} include_all={}",
-                    info.register_base,
-                    info.segment_number,
-                    info.include_all
-                );
-                DMAR_DRHD_LIST.lock().push(info);
-            }
+        if entry_type == DMAR_TYPE_DRHD && offset + core::mem::size_of::<DrhdEntry>() <= entries_end
+        {
+            // SAFETY: `offset` 指向已验证有效的 ACPI/BIOS 表头 (长度 ≥ sizeof(DrhdEntry)); 只读访问
+            let drhd = unsafe { &*(offset as *const DrhdEntry) };
+            let info = DmarDrhdInfo {
+                register_base: drhd.register_base,
+                segment_number: drhd.segment_number,
+                include_all: (drhd.flags & 0x01) != 0,
+            };
+            crate::klog_info!(
+                Acpi,
+                "[ACPI] DMAR DRHD: reg_base=0x{:X} seg={} include_all={}",
+                info.register_base,
+                info.segment_number,
+                info.include_all
+            );
+            DMAR_DRHD_LIST.lock().push(info);
         }
 
         offset += entry_len as usize;
@@ -956,7 +965,7 @@ pub fn parse_all_tables(multiboot2_info_ptr: u64) -> bool {
 // ============================================================================
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-/// 全部 ACPI 表解析 C ABI 入口 (转调 parse_all_tables)
+/// 全部 ACPI 表解析 C ABI 入口 (转调 `parse_all_tables`)
 #[unsafe(no_mangle)]
 pub extern "C" fn acpi_parse_all(mb2_ptr: u64) -> bool {
     parse_all_tables(mb2_ptr)

@@ -1,12 +1,12 @@
-//! KPTI (Kernel Page Table Isolation) — AArch64
+//! KPTI (Kernel Page Table Isolation) — `AArch64`
 //!
-//! ARMv8-A Meltdown 缓解: 用户态 (EL0) 运行期间令 TTBR1_EL1 指向**最小化内核页表**
+//! ARMv8-A Meltdown 缓解: 用户态 (EL0) 运行期间令 `TTBR1_EL1` 指向**最小化内核页表**
 //! (trampoline 表), 仅映射异常入口实际用到的页, 缩小内核地址空间在用户态的可见面.
 //!
 //! # 全切换模型 (对齐 x86_64 CR3 语义)
 //!
 //! 内核代码/数据/栈住在 **TTBR1 领地** (高半区); 异常向量表与 KPTI 全局量页经
-//! 高半区别名 (`VA = PA + 高半区基址`) 由 TTBR1_EL1 翻译. 故"用户态隔离"必须
+//! 高半区别名 (`VA = PA + 高半区基址`) 由 `TTBR1_EL1` 翻译. 故"用户态隔离"必须
 //! TTBR0/TTBR1 **同时**切换:
 //!
 //! - **EL0 运行期**: TTBR0 = 用户页表; TTBR1 = trampoline 表 (页级最小化).
@@ -62,11 +62,11 @@ use crate::privileged::mm::virt_to_phys;
 /// 2. 汇编按固定字节偏移访问各字段, 布局由下方 `offset_of!` 静态断言锁定.
 #[repr(C, align(4096))]
 pub struct KptiGlobals {
-    /// Trampoline TTBR1_EL1 物理地址 (EL0 运行期 TTBR1).
+    /// Trampoline `TTBR1_EL1` 物理地址 (EL0 运行期 TTBR1).
     pub tramp_ttbr1: AtomicU64,
-    /// 完整内核 TTBR1_EL1 物理地址 (异常入口切回).
+    /// 完整内核 `TTBR1_EL1` 物理地址 (异常入口切回).
     pub kernel_ttbr1: AtomicU64,
-    /// 内核恒等 TTBR0_EL1 物理地址 (异常入口切回).
+    /// 内核恒等 `TTBR0_EL1` 物理地址 (异常入口切回).
     pub kernel_ttbr0: AtomicU64,
     /// KPTI 是否已初始化 (0 = 未就绪, 1 = 就绪).
     pub ready: AtomicU64,
@@ -97,7 +97,7 @@ const _: () = assert!(core::mem::offset_of!(KptiGlobals, ready) == 24);
 ///   寄存器; 若无暂存槽则被 clobber 的用户值永久丢失 —— 帧尚未压入内核栈).
 #[repr(C)]
 pub struct KptiCpuState {
-    /// 本核当前用户进程 TTBR0_EL1 物理地址.
+    /// 本核当前用户进程 `TTBR0_EL1` 物理地址.
     pub user_ttbr0: AtomicU64,
     /// 入口/出口暂存槽 0: 保住切换序列 clobber 掉的用户 `x4`.
     pub tramp_save0: AtomicU64,
@@ -216,7 +216,7 @@ unsafe extern "C" {
 ///
 /// # Safety
 ///
-/// 调用方保证: `kernel_ttbr1` 是当前 TTBR1_EL1 的有效物理地址; PMM 已初始化;
+/// 调用方保证: `kernel_ttbr1` 是当前 `TTBR1_EL1` 的有效物理地址; PMM 已初始化;
 /// KPTI 全局状态在 boot 阶段被独占写入.
 ///
 /// 页表操作走关联函数 (不依赖实例状态), 故本函数可在 `vmm_init` 的

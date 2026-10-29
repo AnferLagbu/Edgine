@@ -402,18 +402,18 @@ unsafe fn net_save() {
 
         // IP / GW / prefix: 从 stack iface 读取
         if let Some(stack) = raw::stack_mut() {
-            if let Some(cidr) = stack.iface.ip_addrs().first() {
-                if let smoltcp::wire::IpCidr::Ipv4(v4) = cidr {
-                    s.ip = v4.address().octets();
-                    s.prefix_len = v4.prefix_len();
-                }
+            if let Some(cidr) = stack.iface.ip_addrs().first()
+                && let smoltcp::wire::IpCidr::Ipv4(v4) = cidr
+            {
+                s.ip = v4.address().octets();
+                s.prefix_len = v4.prefix_len();
             }
             // smoltcp 0.13 路由 API: get_default_ipv4_route 返回 Option<Route>
-            if let Some(route) = stack.iface.routes().get_default_ipv4_route() {
-                if let smoltcp::wire::IpAddress::Ipv4(gw) = route.via_router {
-                    let oct = gw.octets();
-                    s.gateway = oct;
-                }
+            if let Some(route) = stack.iface.routes().get_default_ipv4_route()
+                && let smoltcp::wire::IpAddress::Ipv4(gw) = route.via_router
+            {
+                let oct = gw.octets();
+                s.gateway = oct;
             }
         }
 
@@ -562,7 +562,7 @@ unsafe fn net_reset() {
 // ============================================================================
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-/// 初始化网络子系统 (C ABI 导出, 由启动流程串行调用; 内部走 InitState 状态机).
+/// 初始化网络子系统 (C ABI 导出, 由启动流程串行调用; 内部走 `InitState` 状态机).
 #[unsafe(no_mangle)]
 pub extern "C" fn eg_net_init() {
     raw::klog_init("--- Network Subsystem Init ---");
@@ -740,10 +740,10 @@ fn apply_static_ip_fallback() {
 fn net_init_register() {
     // 演进 6: 网络 init 完成后做 driver 维度自检
     // DECISION-K: 经 ConfigValidateHook trait 注入 (Option 可空, 未注册跳过)
-    if let Some(hook) = crate::privileged::config::current_config_validate_hook() {
-        if let Err(e) = hook.validate_network_subsystem() {
-            crate::klog_drv_warn!("Network validation: {}", e);
-        }
+    if let Some(hook) = crate::privileged::config::current_config_validate_hook()
+        && let Err(e) = hook.validate_network_subsystem()
+    {
+        crate::klog_drv_warn!("Network validation: {}", e);
     }
 
     crate::privileged::freg::recovery::recovery_domain_register(
@@ -853,6 +853,7 @@ const TOTAL_SLOTS: usize = MAX_SM_FD + MAX_SOCKETS;
 ///
 /// - `Some(u32)`: smoltcp handle (用于 `smol_socket_get`)
 /// - `None`: 创建失败 (`k_malloc` 失败 / 槽位已占用 / `slot_idx` 越界)
+#[must_use]
 pub fn smoltcp_net_stack_socket_open(
     kind: crate::privileged::net::iface_trait::SocketKind,
     slot_idx: usize,
@@ -871,6 +872,7 @@ pub fn smoltcp_net_stack_socket_open(
 ///
 /// 返回 `MAX_SM_FD` (即 `SmoltcpNetStack` 范围的起始索引). functions 层
 /// `SmoltcpNetStack::socket_open` 内部 `smol_slot_idx = slot_base() + handle_map_idx`.
+#[must_use]
 pub fn smoltcp_net_stack_slot_base() -> usize {
     MAX_SM_FD
 }
@@ -879,6 +881,7 @@ pub fn smoltcp_net_stack_slot_base() -> usize {
 ///
 /// 委托给 `raw::smoltcp_net_stack_poll`, 内部持有 `NET_LOCK` 并调用
 /// smoltcp `Interface::poll` + `process_dhcp_events`.
+#[must_use]
 pub fn smoltcp_net_stack_poll() -> crate::privileged::net::iface_trait::PollOutcome {
     raw::smoltcp_net_stack_poll()
 }
@@ -888,6 +891,7 @@ pub fn smoltcp_net_stack_poll() -> crate::privileged::net::iface_trait::PollOutc
 /// 读出 `poll_network` 本次登记的下次轮询截止期 (绝对单调毫秒, 由 smoltcp
 /// `Interface::poll_at` 汇总). `None` = 协议栈无内部定时需求 (只由入向包与
 /// tick 侧 poll 驱动), 与 smoltcp 的 `None` 语义一致.
+#[must_use]
 pub fn smoltcp_net_stack_poll_at_ms() -> Option<u64> {
     poll_timer::net_poll_deadline_ns().map(|ns| ns / 1_000_000)
 }

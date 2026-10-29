@@ -19,7 +19,7 @@ pub const IRQ_BASE: u8 = 32;
 /// 内核 tick 占用的 irq 槽.
 ///
 /// `x86_64`: LAPIC 本地定时器. 取 16 (本地向量段首) 而非沿用 legacy 的 0-15:
-/// legacy 段在 IOAPIC 未启用时属 8259 + LINT0 ExtINT 投递域, 其 EOI 由
+/// legacy 段在 IOAPIC 未启用时属 8259 + LINT0 `ExtINT` 投递域, 其 EOI 由
 /// `send_eoi_legacy()` 发 8259 EOI 而非 LAPIC EOI —— 两者混在同一向量会让
 /// LAPIC ISR 位永不清除, 首个 tick 后本核不再响应任何本地中断.
 /// `handle_irq` 的 `irq >= 16` 分支对该段恒发 LAPIC EOI, 故**一个向量只有
@@ -124,6 +124,7 @@ impl InterruptFrame {
     #[cfg(any(test, feature = "kernel_test"))]
     // J-01 (2026-09-08): 删除 unfulfilled inline_always expect — new_test_frame
     // 无 #[inline(always)] 属性, expect 从不触发 (kernel_test 编译暴露)
+    #[must_use]
     pub fn new_test_frame(int_no: u64, rip: u64, cs: u64) -> Self {
         Self {
             r15: 0,
@@ -164,6 +165,7 @@ impl InterruptFrame {
     /// - `true`: user-mode 中断
     /// - `false`: kernel-mode 中断
     #[inline]
+    #[must_use]
     pub fn is_user_mode(&self) -> bool {
         (self.cs & 0x03) == 3
     }
@@ -173,11 +175,13 @@ impl InterruptFrame {
     /// # Safety
     /// 仅在 Page Fault (#PF) 异常中调用此方法
     #[inline]
+    #[must_use]
     pub unsafe fn fault_address() -> u64 {
         crate::arch!(read_fault_address()) as u64
     }
 
     /// 获取错误码的各个位域
+    #[must_use]
     pub fn error_code_flags(&self) -> ErrorFlags {
         ErrorFlags::from_bits_truncate(crate::privileged::glue::low_u32_from_u64(self.err_code))
     }
@@ -260,6 +264,7 @@ pub struct IdtEntry {
 
 impl IdtEntry {
     /// 创建新的 IDT 门描述符
+    #[must_use]
     pub fn new(handler: u64, selector: u16, type_attr: u8) -> Self {
         Self {
             offset_low: (handler & 0xFFFF) as u16,
@@ -273,6 +278,7 @@ impl IdtEntry {
     }
 
     /// 创建带 IST 索引的 IDT 门描述符
+    #[must_use]
     pub fn new_with_ist(handler: u64, selector: u16, type_attr: u8, ist_index: u8) -> Self {
         Self {
             offset_low: (handler & 0xFFFF) as u16,
@@ -293,11 +299,13 @@ impl IdtEntry {
     }
 
     /// 判断门是否有效 (Present bit set)
+    #[must_use]
     pub fn is_present(self) -> bool {
         (self.type_attr & 0x80) != 0
     }
 
     /// 获取完整的 handler 地址
+    #[must_use]
     pub fn handler_address(self) -> u64 {
         u64::from(self.offset_high) << 32
             | u64::from(self.offset_mid) << 16
@@ -323,6 +331,7 @@ pub struct IdtPtr {
 
 impl IdtPtr {
     /// 创建新的 IDT 指针
+    #[must_use]
     pub fn new(base: u64) -> Self {
         Self {
             limit: crate::privileged::glue::low_u16_from_usize(
@@ -369,6 +378,7 @@ impl Clone for IrqDescriptor {
 
 impl IrqDescriptor {
     /// 创建空的 IRQ 描述符
+    #[must_use]
     pub const fn empty() -> Self {
         Self {
             handler: None,
@@ -400,18 +410,19 @@ pub struct InterruptStatistics {
 impl Default for InterruptStatistics {
     fn default() -> Self {
         // 使用 array::from_fn 需要 nightly，这里用简单的方式
-        let stats = Self {
+
+        Self {
             exception_counts: [const { core::sync::atomic::AtomicU64::new(0) }; 32],
             irq_counts: [const { core::sync::atomic::AtomicU64::new(0) }; 16],
             nested_interrupts: core::sync::atomic::AtomicU64::new(0),
             last_exception_tsc: core::sync::atomic::AtomicU64::new(0),
-        };
-        stats
+        }
     }
 }
 
 impl InterruptStatistics {
     /// 创建新的统计实例
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -527,6 +538,7 @@ pub static IRQ_NAMES: [&str; 16] = [
 ];
 
 /// 获取异常名称
+#[must_use]
 pub fn get_exception_name(vector: u8) -> &'static str {
     if vector < 32 {
         EXCEPTION_NAMES[vector as usize]
@@ -536,6 +548,7 @@ pub fn get_exception_name(vector: u8) -> &'static str {
 }
 
 /// 获取 IRQ 名称
+#[must_use]
 pub fn get_irq_name(irq: u8) -> &'static str {
     if irq < 16 {
         IRQ_NAMES[irq as usize]

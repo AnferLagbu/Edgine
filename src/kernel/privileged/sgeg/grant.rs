@@ -35,6 +35,7 @@ pub fn add_record(record: GrantRecord) -> Result<(), PwmError> {
 }
 
 /// 判断授权记录表中是否存在一条覆盖所需能力的「授权方→被授权方」记录。
+#[must_use]
 pub fn is_grantor(grantor_pwm: u64, grantee_pwm: u64, domain: CapDomain, caps: CapBits) -> bool {
     let guard = grant_records().lock();
     guard.iter().any(|r| {

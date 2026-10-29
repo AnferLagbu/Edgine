@@ -48,14 +48,14 @@ pub const X_OK: i32 = 1;
 /// 当路径不存在或进程缺少对应 FS 能力时返回 `EACCES`.
 pub fn access_syscall(path_ptr: u64, mode: i32) -> Result<usize, Errno> {
     if path_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_ptr(path_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     // mode 仅取低 6 位 (POSIX R|W|X|F)
     if !(0..=0o7).contains(&mode) {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     let pwm = current_pwm();
     // DECISION-077 方案 A: 能力制校验 — mode 位映射到 FS 能力域位.
@@ -74,10 +74,10 @@ pub fn access_syscall(path_ptr: u64, mode: i32) -> Result<usize, Errno> {
     }
     if required_caps != 0 && !sgeg::api::pwm_has_capability(pwm, sgeg::CAP_DOMAIN_FS, required_caps)
     {
-        return Err(Errno::EACCES);
+        return Err(Errno::Eacces);
     }
     // 调用 vfs_stat_safe 验证存在性; 不需要 VfsStat 内容.
-    let _stat = fw::vfs_stat_safe(path_ptr as *const u8, pwm).ok_or(Errno::EACCES)?;
+    let _stat = fw::vfs_stat_safe(path_ptr as *const u8, pwm).ok_or(Errno::Eacces)?;
     Ok(0)
 }
 
@@ -113,10 +113,10 @@ pub fn faccessat_syscall(
 /// 其余错误 (如路径不存在、无权限、目录非空等) 以对应的 `Errno` 返回.
 pub fn unlink_syscall(path_ptr: u64) -> Result<usize, Errno> {
     if path_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_ptr(path_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let pwm = current_pwm();
     let r = fw::vfs_unlink(path_ptr as *const u8, pwm);

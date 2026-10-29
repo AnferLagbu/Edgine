@@ -40,6 +40,7 @@ pub use crate::privileged::egdf::register_block_device;
 ///
 /// 返回 `true` 表示该下标处存在块设备且已成功标记移除; 下标越界 / 非块设备 /
 /// 已移除时返回 `false`。
+#[must_use]
 pub fn unregister_block(drive: u8) -> bool {
     egdf::egdf_unregister_block(drive)
 }
@@ -66,11 +67,13 @@ pub struct NetDevice {
 
 impl NetDevice {
     /// 设备 MAC 地址
+    #[must_use]
     pub fn mac(&self) -> [u8; 6] {
         self.mac
     }
 
     /// 发送网络包, 返回 0 成功 / 负值失败
+    #[must_use]
     pub fn send(&self, data: &[u8]) -> i32 {
         self.ops.send(self.driver_data, data)
     }
@@ -89,6 +92,7 @@ impl NetDevice {
 /// 查找第一个就绪网络设备
 ///
 /// 无就绪网络设备时返回 `None`。
+#[must_use]
 pub fn find_net_device() -> Option<NetDevice> {
     let (ops, driver_data, mac) = egdf::egdf_find_net_device()?;
     Some(NetDevice {
@@ -105,11 +109,13 @@ pub fn find_net_device() -> Option<NetDevice> {
 /// 从第一个就绪输入设备读取一个字符
 ///
 /// 无就绪设备或无数据时返回 `None`。
+#[must_use]
 pub fn input_read() -> Option<u8> {
     egdf::egdf_input_read()
 }
 
 /// 检查第一个就绪输入设备是否有可读数据
+#[must_use]
 pub fn input_has_data() -> bool {
     egdf::egdf_input_has_data()
 }

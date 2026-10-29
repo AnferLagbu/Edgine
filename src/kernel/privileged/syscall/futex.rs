@@ -252,6 +252,7 @@ fn hash_uaddr(uaddr: u64) -> usize {
 // ============================================================================
 
 /// futex 系统调用入口
+#[must_use]
 pub fn sys_futex(uaddr: u64, op: i32, val: i32, timeout_or_uaddr2: u64, val2: u32) -> i64 {
     let base_op = futex_op(op);
 
@@ -327,6 +328,7 @@ fn futex_wait(uaddr: u64, val: i32, _timeout: u64) -> i64 {
 /// `FUTEX_WAKE`: 唤醒等待者
 ///
 /// 公开给 `privileged::proc::robust` 退出路径使用 (robust futex / CLEARTID 唤醒).
+#[must_use]
 pub fn futex_wake(uaddr: u64, max_count: u32) -> i64 {
     if max_count == 0 {
         return 0;

@@ -26,15 +26,15 @@ use crate::privileged::syscall::raw;
 ///
 /// # Errors
 ///
-/// 当 `AF_UNIX` 的 `sock_type` 非 Stream/Dgram 时返回 `Err(Errno::EINVAL)`; 不支持的协议族返回
-/// `Err(Errno::EAFNOSUPPORT)`; 底层创建失败时返回对应的 `Errno`。
+/// 当 `AF_UNIX` 的 `sock_type` 非 Stream/Dgram 时返回 `Err(Errno::Einval)`; 不支持的协议族返回
+/// `Err(Errno::Eafnosupport)`; 底层创建失败时返回对应的 `Errno`。
 pub fn socket_syscall(domain: i32, sock_type: i32, protocol: i32) -> Result<usize, Errno> {
     // AF_UNIX 分流
     if domain == 1 {
         let st = match sock_type {
             1 => uds::SockType::Stream,
             2 => uds::SockType::Dgram,
-            _ => return Err(Errno::EINVAL),
+            _ => return Err(Errno::Einval),
         };
         return uds::socket(st)
             .map(crate::functions::intcast::usize_from_i32)
@@ -55,11 +55,11 @@ pub fn socket_syscall(domain: i32, sock_type: i32, protocol: i32) -> Result<usiz
 ///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::EBADF)`; 用户地址不可读时返回 `Err(Errno::EFAULT)`; 不支持的协议族返回
-/// `Err(Errno::EAFNOSUPPORT)`; 底层 bind 失败时返回对应的 `Errno`。
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 用户地址不可读时返回 `Err(Errno::Efault)`; 不支持的协议族返回
+/// `Err(Errno::Eafnosupport)`; 底层 bind 失败时返回对应的 `Errno`。
 pub fn bind_syscall(fd: i32, addr_ptr: u64, addrlen: u32) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     // Peek sun_family
     let family = fw::raw_read_sun_family(addr_ptr)?;
@@ -80,7 +80,7 @@ pub fn bind_syscall(fd: i32, addr_ptr: u64, addrlen: u32) -> Result<usize, Errno
                 Ok(crate::functions::intcast::usize_from_i64(r))
             }
         }
-        _ => Err(Errno::EAFNOSUPPORT),
+        _ => Err(Errno::Eafnosupport),
     }
 }
 
@@ -90,14 +90,14 @@ pub fn bind_syscall(fd: i32, addr_ptr: u64, addrlen: u32) -> Result<usize, Errno
 ///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::EBADF)`; 当 `backlog` 为负数时返回 `Err(Errno::EINVAL)`;
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 当 `backlog` 为负数时返回 `Err(Errno::Einval)`;
 /// 底层 listen 失败时返回对应的 `Errno`。
 pub fn listen_syscall(fd: i32, backlog: i32) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     if backlog < 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if uds::is_uds_fd(fd) {
         return uds::listen(fd)
@@ -118,10 +118,10 @@ pub fn listen_syscall(fd: i32, backlog: i32) -> Result<usize, Errno> {
 ///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::EBADF)`; 底层 accept 失败 (如无待处理连接) 时返回对应的 `Errno`。
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 底层 accept 失败 (如无待处理连接) 时返回对应的 `Errno`。
 pub fn accept_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     if uds::is_uds_fd(fd) {
         return uds::accept(fd)
@@ -142,11 +142,11 @@ pub fn accept_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> Result<usize,
 ///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::EBADF)`; 用户地址不可读时返回 `Err(Errno::EFAULT)`; 不支持的协议族返回
-/// `Err(Errno::EAFNOSUPPORT)`; 底层 connect 失败时返回对应的 `Errno`。
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 用户地址不可读时返回 `Err(Errno::Efault)`; 不支持的协议族返回
+/// `Err(Errno::Eafnosupport)`; 底层 connect 失败时返回对应的 `Errno`。
 pub fn connect_syscall(fd: i32, addr_ptr: u64, addrlen: u32) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     let family = fw::raw_read_sun_family(addr_ptr)?;
     match family {
@@ -165,7 +165,7 @@ pub fn connect_syscall(fd: i32, addr_ptr: u64, addrlen: u32) -> Result<usize, Er
                 Ok(crate::functions::intcast::usize_from_i64(r))
             }
         }
-        _ => Err(Errno::EAFNOSUPPORT),
+        _ => Err(Errno::Eafnosupport),
     }
 }
 
@@ -175,8 +175,8 @@ pub fn connect_syscall(fd: i32, addr_ptr: u64, addrlen: u32) -> Result<usize, Er
 ///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::EBADF)`; UDS 路径未提供目标地址时返回 `Err(Errno::EDESTADDRREQ)`;
-/// 用户缓冲区不可读时返回 `Err(Errno::EFAULT)`; 底层 sendto 失败时返回对应的 `Errno`。
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; UDS 路径未提供目标地址时返回 `Err(Errno::Edestaddrreq)`;
+/// 用户缓冲区不可读时返回 `Err(Errno::Efault)`; 底层 sendto 失败时返回对应的 `Errno`。
 pub fn sendto_syscall(
     fd: i32,
     buf_ptr: u64,
@@ -186,19 +186,17 @@ pub fn sendto_syscall(
     dest_len: u32,
 ) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     if uds::is_uds_fd(fd) {
         if dest_ptr == 0 {
-            return Err(Errno::EDESTADDRREQ);
+            return Err(Errno::Edestaddrreq);
         }
         // copy-in 用户数据
         let data = fw::raw_copy_in(buf_ptr, len)?;
         // 解析 sockaddr_un
         let addr = fw::raw_read_sockaddr_un(dest_ptr, dest_len)?;
-        return uds::sendto(fd, &data, &addr)
-            .map(|n| n as usize)
-            .map_err(super::unix::UnixSocketError::to_errno);
+        return uds::sendto(fd, &data, &addr).map_err(super::unix::UnixSocketError::to_errno);
     }
     let r = fw::sendto_syscall(fd, buf_ptr, len, flags, dest_ptr, dest_len);
     if r < 0 {
@@ -214,7 +212,7 @@ pub fn sendto_syscall(
 ///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::EBADF)`; 用户缓冲区无效时返回 `Err(Errno::EFAULT)`;
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 用户缓冲区无效时返回 `Err(Errno::Efault)`;
 /// 底层 recvfrom 失败时返回对应的 `Errno`。
 pub fn recvfrom_syscall(
     fd: i32,
@@ -225,14 +223,14 @@ pub fn recvfrom_syscall(
     src_len_ptr: u64,
 ) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     if buf_ptr == 0 || len == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if uds::is_uds_fd(fd) {
         if !raw::check_user_buf(buf_ptr, u64::from(len)) {
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
         // 栈上缓冲接收, 再 copy-out (走 TCB raw_copy_out, 0 unsafe)
         let mut stack_buf = alloc::vec![0u8; len as usize];
@@ -261,7 +259,7 @@ pub fn recvfrom_syscall(
 ///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::EBADF)`; 底层 setsockopt 失败时返回对应的 `Errno`。
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 底层 setsockopt 失败时返回对应的 `Errno`。
 pub fn setsockopt_syscall(
     fd: i32,
     level: i32,
@@ -270,7 +268,7 @@ pub fn setsockopt_syscall(
     valen: u32,
 ) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     let r = fw::setsockopt_syscall(fd, level, optname, val_ptr, valen);
     if r < 0 {
@@ -284,7 +282,7 @@ pub fn setsockopt_syscall(
 ///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::EBADF)`; 底层 getsockopt 失败时返回对应的 `Errno`。
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 底层 getsockopt 失败时返回对应的 `Errno`。
 pub fn getsockopt_syscall(
     fd: i32,
     level: i32,
@@ -293,7 +291,7 @@ pub fn getsockopt_syscall(
     valen_ptr: u64,
 ) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     let r = fw::getsockopt_syscall(fd, level, optname, val_ptr, valen_ptr);
     if r < 0 {
@@ -307,10 +305,10 @@ pub fn getsockopt_syscall(
 ///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::EBADF)`; 底层 getsockname 失败时返回对应的 `Errno`。
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 底层 getsockname 失败时返回对应的 `Errno`。
 pub fn getsockname_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     let r = fw::getsockname_syscall(fd, addr_ptr, addrlen_ptr);
     if r < 0 {
@@ -324,10 +322,10 @@ pub fn getsockname_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> Result<u
 ///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::EBADF)`; 底层 getpeername 失败时返回对应的 `Errno`。
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 底层 getpeername 失败时返回对应的 `Errno`。
 pub fn getpeername_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     let r = fw::getpeername_syscall(fd, addr_ptr, addrlen_ptr);
     if r < 0 {
@@ -341,10 +339,10 @@ pub fn getpeername_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> Result<u
 ///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::EBADF)`; 底层 shutdown 失败时返回对应的 `Errno`。
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 底层 shutdown 失败时返回对应的 `Errno`。
 pub fn shutdown_syscall(fd: i32, how: i32) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     let r = fw::shutdown_syscall(fd, how);
     if r < 0 {
@@ -361,40 +359,40 @@ pub fn shutdown_syscall(fd: i32, how: i32) -> Result<usize, Errno> {
 ///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::EBADF)`; `msg_ptr` 或 `iov` 等用户缓冲区无效时返回 `Err(Errno::EFAULT)`;
-/// 参数不合法 (如 `iovlen` 为 0 或超过上限) 时返回 `Err(Errno::EINVAL)`; 底层 sendmsg 失败时返回对应的 `Errno`。
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; `msg_ptr` 或 `iov` 等用户缓冲区无效时返回 `Err(Errno::Efault)`;
+/// 参数不合法 (如 `iovlen` 为 0 或超过上限) 时返回 `Err(Errno::Einval)`; 底层 sendmsg 失败时返回对应的 `Errno`。
 pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     if msg_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_buf(msg_ptr, 56) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
-    let iov_ptr = raw::read_u64_from_user(msg_ptr + 16).ok_or(Errno::EFAULT)?;
-    let iovlen = raw::read_u64_from_user(msg_ptr + 24).ok_or(Errno::EFAULT)?;
+    let iov_ptr = raw::read_u64_from_user(msg_ptr + 16).ok_or(Errno::Efault)?;
+    let iovlen = raw::read_u64_from_user(msg_ptr + 24).ok_or(Errno::Efault)?;
     if iovlen == 0 || iovlen > 1024 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if iov_ptr == 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
-    let iov_bytes = iovlen.checked_mul(16).ok_or(Errno::EINVAL)?;
+    let iov_bytes = iovlen.checked_mul(16).ok_or(Errno::Einval)?;
     if !raw::check_user_buf(iov_ptr, iov_bytes) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     // v2: UDS cmsg 处理 — 在 fw 调之前注入凭据 (如果对端 passcred)
     // cmsg 头格式: cmsghdr { cmsg_len: usize (8B), cmsg_level: i32 (4B), cmsg_type: i32 (4B) }
     // 总 16 字节头, 然后是 data (cmsg_len - 16 字节)
-    let msg_control_ptr = raw::read_u64_from_user(msg_ptr + 32).ok_or(Errno::EFAULT)?;
+    let msg_control_ptr = raw::read_u64_from_user(msg_ptr + 32).ok_or(Errno::Efault)?;
     let msg_controllen_raw = crate::functions::intcast::usize_from_u64(
-        raw::read_u64_from_user(msg_ptr + 40).ok_or(Errno::EFAULT)?,
+        raw::read_u64_from_user(msg_ptr + 40).ok_or(Errno::Efault)?,
     );
     if msg_control_ptr != 0 && msg_controllen_raw >= 28 {
         if !raw::check_user_buf(msg_control_ptr, msg_controllen_raw as u64) {
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
         // uds_getsockopt_passcred 内部已检查 fd family, 非 UDS 返 0/ENOPROTOOPT.
         let local_passcred = super::unix::uds_getsockopt_passcred(fd) != 0;
@@ -409,23 +407,23 @@ pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
             let pid: u64 = u64::from(crate::privileged::proc::process_get_current_pid());
             let uid: u64 = u64::from(crate::privileged::sgeg::get_current_uid());
             let gid: u64 = u64::from(crate::privileged::sgeg::get_current_gid());
-            raw::write_u64_to_user(msg_control_ptr, 28u64);
-            raw::write_u64_to_user(msg_control_ptr + 8, (2u64 << 32) | 1u64);
-            raw::write_u64_to_user(msg_control_ptr + 16, (pid << 32) | uid);
-            raw::write_u64_to_user(msg_control_ptr + 24, gid);
-            raw::write_u64_to_user(msg_ptr + 40, 28u64);
+            let _ = raw::write_u64_to_user(msg_control_ptr, 28u64);
+            let _ = raw::write_u64_to_user(msg_control_ptr + 8, (2u64 << 32) | 1u64);
+            let _ = raw::write_u64_to_user(msg_control_ptr + 16, (pid << 32) | uid);
+            let _ = raw::write_u64_to_user(msg_control_ptr + 24, gid);
+            let _ = raw::write_u64_to_user(msg_ptr + 40, 28u64);
         }
         // 解析 cmsg 头序列处理 SCM_RIGHTS
         let mut coff = 0;
         while coff + 16 <= msg_controllen_raw {
             let cmsg_len = crate::functions::intcast::usize_from_u64(
-                raw::read_u64_from_user(msg_control_ptr + coff as u64).ok_or(Errno::EFAULT)?,
+                raw::read_u64_from_user(msg_control_ptr + coff as u64).ok_or(Errno::Efault)?,
             );
             let cmsg_level = crate::functions::intcast::low_i32_from_u64(
-                raw::read_u64_from_user(msg_control_ptr + coff as u64 + 8).ok_or(Errno::EFAULT)?,
+                raw::read_u64_from_user(msg_control_ptr + coff as u64 + 8).ok_or(Errno::Efault)?,
             );
             let cmsg_type = crate::functions::intcast::low_i32_from_u64(
-                raw::read_u64_from_user(msg_control_ptr + coff as u64 + 12).ok_or(Errno::EFAULT)?,
+                raw::read_u64_from_user(msg_control_ptr + coff as u64 + 12).ok_or(Errno::Efault)?,
             );
             if cmsg_len < 16 || cmsg_len > msg_controllen_raw - coff {
                 break;
@@ -456,53 +454,53 @@ pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
 ///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::EBADF)`; `msg_ptr` 或 `iov` 等用户缓冲区无效时返回 `Err(Errno::EFAULT)`;
-/// 参数不合法时返回 `Err(Errno::EINVAL)`; 底层 recvmsg 失败时返回对应的 `Errno`。
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; `msg_ptr` 或 `iov` 等用户缓冲区无效时返回 `Err(Errno::Efault)`;
+/// 参数不合法时返回 `Err(Errno::Einval)`; 底层 recvmsg 失败时返回对应的 `Errno`。
 pub fn recvmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     if msg_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_buf(msg_ptr, 56) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
-    let iov_ptr = raw::read_u64_from_user(msg_ptr + 16).ok_or(Errno::EFAULT)?;
-    let iovlen = raw::read_u64_from_user(msg_ptr + 24).ok_or(Errno::EFAULT)?;
+    let iov_ptr = raw::read_u64_from_user(msg_ptr + 16).ok_or(Errno::Efault)?;
+    let iovlen = raw::read_u64_from_user(msg_ptr + 24).ok_or(Errno::Efault)?;
     if iovlen == 0 || iovlen > 1024 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if iov_ptr == 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
-    let iov_bytes = iovlen.checked_mul(16).ok_or(Errno::EINVAL)?;
+    let iov_bytes = iovlen.checked_mul(16).ok_or(Errno::Einval)?;
     if !raw::check_user_buf(iov_ptr, iov_bytes) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     // v2: UDS cmsg 回传 — 写回对端注入的 SCM_CREDENTIALS (对端 passcred 启用时)
     // 框架 fw_recvmsg 把数据搬入 iov, 凭据在 stream/dgram 缓冲里已添加 12 字节.
     // 这里仅在 msg_control 区域写回标准 SCM_CREDENTIALS cmsghdr, 让用户能解析凭据.
-    let msg_control_ptr = raw::read_u64_from_user(msg_ptr + 32).ok_or(Errno::EFAULT)?;
+    let msg_control_ptr = raw::read_u64_from_user(msg_ptr + 32).ok_or(Errno::Efault)?;
     let msg_controllen = crate::functions::intcast::usize_from_u64(
-        raw::read_u64_from_user(msg_ptr + 40).ok_or(Errno::EFAULT)?,
+        raw::read_u64_from_user(msg_ptr + 40).ok_or(Errno::Efault)?,
     );
     if msg_control_ptr != 0 && msg_controllen >= 28 {
         if !raw::check_user_buf(msg_control_ptr, msg_controllen as u64) {
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
         // B07-02: 从 UDS 接收缓冲反序列化真实发送方凭据; 非 UDS / 无凭据
         // 时不伪造 root, 保持 msg_controllen 原样 (无凭据).
         if let Some(cred) = uds::uds_peer_creds(fd) {
             // 写回 SCM_CREDENTIALS cmsghdr + 12 字节凭据 (与 send 路径相同编码)
-            raw::write_u64_to_user(msg_control_ptr, 28u64);
-            raw::write_u64_to_user(msg_control_ptr + 8, (2u64 << 32) | 1u64);
-            raw::write_u64_to_user(
+            let _ = raw::write_u64_to_user(msg_control_ptr, 28u64);
+            let _ = raw::write_u64_to_user(msg_control_ptr + 8, (2u64 << 32) | 1u64);
+            let _ = raw::write_u64_to_user(
                 msg_control_ptr + 16,
                 (u64::from(cred.pid) << 32) | u64::from(cred.uid),
             );
-            raw::write_u64_to_user(msg_control_ptr + 24, u64::from(cred.gid));
-            raw::write_u64_to_user(msg_ptr + 40, 28u64);
+            let _ = raw::write_u64_to_user(msg_control_ptr + 24, u64::from(cred.gid));
+            let _ = raw::write_u64_to_user(msg_ptr + 40, 28u64);
         }
     }
     let r = fw::recvmsg_syscall(fd, msg_ptr, flags);
@@ -517,40 +515,40 @@ pub fn recvmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
 // socketpair / sendmmsg / recvmmsg (T1 G3 实装)
 // ============================================================================
 
-/// mmsghdr 用户态大小 = msghdr (56B) + msg_len (u32) = 64 字节
+/// mmsghdr 用户态大小 = msghdr (56B) + `msg_len` (u32) = 64 字节
 /// (x86_64 与 aarch64 同布局, 8 字节对齐)
 const MMSGHDR_SIZE: u64 = 64;
-/// msghdr.msg_name 偏移
+/// `msghdr.msg_name` 偏移
 const MSGHDR_NAME_OFF: u64 = 0;
-/// msghdr.msg_namelen 偏移
+/// `msghdr.msg_namelen` 偏移
 const MSGHDR_NAMELEN_OFF: u64 = 8;
-/// msghdr.msg_iov 偏移
+/// `msghdr.msg_iov` 偏移
 const MSGHDR_IOV_OFF: u64 = 16;
-/// msghdr.msg_iovlen 偏移
+/// `msghdr.msg_iovlen` 偏移
 const MSGHDR_IOVLEN_OFF: u64 = 24;
-/// msghdr.msg_flags 偏移 (int, 4 字节)
+/// `msghdr.msg_flags` 偏移 (int, 4 字节)
 const MSGHDR_FLAGS_OFF: u64 = 48;
-/// mmsghdr.msg_len 偏移 (unsigned int, 4 字节)
+/// `mmsghdr.msg_len` 偏移 (unsigned int, 4 字节)
 const MMSGHDR_MSGLEN_OFF: u64 = 56;
-/// 单条消息 iov 数量上限 (UIO_MAXIOV)
+/// 单条消息 iov 数量上限 (`UIO_MAXIOV`)
 const UIO_MAXIOV: u64 = 1024;
-/// MSG_TRUNC (数据被截断)
+/// `MSG_TRUNC` (数据被截断)
 const MSG_TRUNC_FLAG: u32 = 0x20;
-/// MSG_DONTWAIT (本次调用非阻塞)
+/// `MSG_DONTWAIT` (本次调用非阻塞)
 const MSG_DONTWAIT_FLAG: u32 = 0x40;
-/// MSG_WAITFORONE (recvmmsg: 首条之后不再阻塞等待)
+/// `MSG_WAITFORONE` (recvmmsg: 首条之后不再阻塞等待)
 const MSG_WAITFORONE_FLAG: u32 = 0x1_0000;
-/// struct timespec.tv_nsec 合法上界 (半开区间)
+/// struct `timespec.tv_nsec` 合法上界 (半开区间)
 const NSEC_PER_SEC: i64 = 1_000_000_000;
 
-/// socketpair(domain, sock_type, protocol, `sv[2]`) — 创建一对互相连接的套接字
+/// socketpair(domain, `sock_type`, protocol, `sv[2]`) — 创建一对互相连接的套接字
 ///
 /// 仅支持 `AF_UNIX(1)` (两端同类型互为 peer, 无路径绑定), FD 写回用户 `sv` (2 × i32)。
 ///
 /// # Errors
 ///
-/// `sv` 指针无效时返回 `Err(Errno::EFAULT)`; 非 `AF_UNIX` 或 `sock_type` 非 Stream/Dgram 时
-/// 返回 `Err(Errno::ENOTSUP)`; `protocol` 非 0 时返回 `Err(Errno::EPROTONOSUPPORT)`;
+/// `sv` 指针无效时返回 `Err(Errno::Efault)`; 非 `AF_UNIX` 或 `sock_type` 非 Stream/Dgram 时
+/// 返回 `Err(Errno::Enotsup)`; `protocol` 非 0 时返回 `Err(Errno::Eprotonosupport)`;
 /// 创建或写回失败时返回对应 `Errno`。
 pub fn socketpair_syscall(
     domain: i32,
@@ -559,18 +557,18 @@ pub fn socketpair_syscall(
     sv_ptr: u64,
 ) -> Result<usize, Errno> {
     if sv_ptr == 0 || !raw::check_user_buf(sv_ptr, 8) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if domain != 1 {
-        return Err(Errno::ENOTSUP);
+        return Err(Errno::Enotsup);
     }
     if protocol != 0 {
-        return Err(Errno::EPROTONOSUPPORT);
+        return Err(Errno::Eprotonosupport);
     }
     let st = match sock_type {
         1 => uds::SockType::Stream,
         2 => uds::SockType::Dgram,
-        _ => return Err(Errno::ENOTSUP),
+        _ => return Err(Errno::Enotsup),
     };
     let (fd0, fd1) = uds::socketpair(st).map_err(super::unix::UnixSocketError::to_errno)?;
     // sv[0]=fd0, sv[1]=fd1: 拼为主机序 u64 一次写回 (低 4 字节落在 sv[0])
@@ -580,7 +578,7 @@ pub fn socketpair_syscall(
         // 写回失败: 两端 FD 已无用户可见入口, 关闭回收
         let _ = uds::close(fd0);
         let _ = uds::close(fd1);
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     Ok(0)
 }
@@ -593,17 +591,17 @@ pub fn socketpair_syscall(
 ///
 /// # Errors
 ///
-/// `fd` 为负时返回 `Err(Errno::EBADF)`; `vlen` 超过 `UIO_MAXIOV` 时返回 `Err(Errno::EINVAL)`;
-/// entry 或 iov 用户缓冲无效时返回 `Err(Errno::EFAULT)`; 首条发送失败透传底层 `Errno`。
+/// `fd` 为负时返回 `Err(Errno::Ebadf)`; `vlen` 超过 `UIO_MAXIOV` 时返回 `Err(Errno::Einval)`;
+/// entry 或 iov 用户缓冲无效时返回 `Err(Errno::Efault)`; 首条发送失败透传底层 `Errno`。
 pub fn sendmmsg_syscall(fd: i32, msgvec_ptr: u64, vlen: u32, flags: u32) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     if vlen == 0 {
         return Ok(0);
     }
     if u64::from(vlen) > UIO_MAXIOV {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     let uds_path = uds::is_uds_fd(fd);
     let mut sent: usize = 0;
@@ -613,7 +611,7 @@ pub fn sendmmsg_syscall(fd: i32, msgvec_ptr: u64, vlen: u32, flags: u32) -> Resu
             if sent > 0 {
                 break;
             }
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
         let r = if uds_path {
             sendmmsg_uds_entry(fd, entry)
@@ -627,7 +625,7 @@ pub fn sendmmsg_syscall(fd: i32, msgvec_ptr: u64, vlen: u32, flags: u32) -> Resu
                 if fw::raw_copy_out(entry + MMSGHDR_MSGLEN_OFF, 4, &len32.to_ne_bytes()).is_err()
                     && sent == 0
                 {
-                    return Err(Errno::EFAULT);
+                    return Err(Errno::Efault);
                 }
                 sent += 1;
             }
@@ -646,19 +644,19 @@ pub fn sendmmsg_syscall(fd: i32, msgvec_ptr: u64, vlen: u32, flags: u32) -> Resu
 ///
 /// # Errors
 ///
-/// iov 参数非法时返回 `Err(Errno::EINVAL)`; 用户缓冲无效时返回 `Err(Errno::EFAULT)`;
-/// 数据报超长时返回 `Err(Errno::EMSGSIZE)`; 底层 UDS 发送失败透传对应 `Errno`。
+/// iov 参数非法时返回 `Err(Errno::Einval)`; 用户缓冲无效时返回 `Err(Errno::Efault)`;
+/// 数据报超长时返回 `Err(Errno::Emsgsize)`; 底层 UDS 发送失败透传对应 `Errno`。
 fn sendmmsg_uds_entry(fd: i32, entry: u64) -> Result<usize, Errno> {
     let data = gather_entry_iov(entry)?;
     let st =
         uds::uds_sock_type(fd).map_err(|e| super::unix::UnixSocketError::from(e).to_errno())?;
-    let name_ptr = raw::read_u64_from_user(entry + MSGHDR_NAME_OFF).ok_or(Errno::EFAULT)?;
+    let name_ptr = raw::read_u64_from_user(entry + MSGHDR_NAME_OFF).ok_or(Errno::Efault)?;
     if name_ptr != 0 {
         // 有目标地址: 按路径发送, 目标为 Dgram, 数据超过单报上限拒绝
         if data.len() > uds::UNIX_DGRAM_MAX {
-            return Err(Errno::EMSGSIZE);
+            return Err(Errno::Emsgsize);
         }
-        let namelen = raw::read_u64_from_user(entry + MSGHDR_NAMELEN_OFF).ok_or(Errno::EFAULT)?;
+        let namelen = raw::read_u64_from_user(entry + MSGHDR_NAMELEN_OFF).ok_or(Errno::Efault)?;
         let addr = fw::raw_read_sockaddr_un(
             name_ptr,
             crate::functions::intcast::low_u32_from_u64(namelen),
@@ -667,7 +665,7 @@ fn sendmmsg_uds_entry(fd: i32, entry: u64) -> Result<usize, Errno> {
     } else {
         // 无目标地址: 已连接发送; 已连接 Dgram 单报上限与路径发送一致
         if st == uds::SockType::Dgram && data.len() > uds::UNIX_DGRAM_MAX {
-            return Err(Errno::EMSGSIZE);
+            return Err(Errno::Emsgsize);
         }
         uds::send_connected(fd, &data).map_err(super::unix::UnixSocketError::to_errno)
     }
@@ -677,30 +675,30 @@ fn sendmmsg_uds_entry(fd: i32, entry: u64) -> Result<usize, Errno> {
 ///
 /// # Errors
 ///
-/// `iovlen` 为 0 或超过 `UIO_MAXIOV` 时返回 `Err(Errno::EINVAL)`; 用户缓冲无效时返回
-/// `Err(Errno::EFAULT)`。
+/// `iovlen` 为 0 或超过 `UIO_MAXIOV` 时返回 `Err(Errno::Einval)`; 用户缓冲无效时返回
+/// `Err(Errno::Efault)`。
 fn gather_entry_iov(entry: u64) -> Result<alloc::vec::Vec<u8>, Errno> {
-    let iov_ptr = raw::read_u64_from_user(entry + MSGHDR_IOV_OFF).ok_or(Errno::EFAULT)?;
-    let iovlen = raw::read_u64_from_user(entry + MSGHDR_IOVLEN_OFF).ok_or(Errno::EFAULT)?;
+    let iov_ptr = raw::read_u64_from_user(entry + MSGHDR_IOV_OFF).ok_or(Errno::Efault)?;
+    let iovlen = raw::read_u64_from_user(entry + MSGHDR_IOVLEN_OFF).ok_or(Errno::Efault)?;
     if iovlen == 0 || iovlen > UIO_MAXIOV || iov_ptr == 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
-    let iov_bytes = iovlen.checked_mul(16).ok_or(Errno::EINVAL)?;
+    let iov_bytes = iovlen.checked_mul(16).ok_or(Errno::Einval)?;
     if !raw::check_user_buf(iov_ptr, iov_bytes) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let mut data = alloc::vec::Vec::new();
     for j in 0..iovlen {
-        let base = raw::read_u64_from_user(iov_ptr + j * 16).ok_or(Errno::EFAULT)?;
-        let seg_len = raw::read_u64_from_user(iov_ptr + j * 16 + 8).ok_or(Errno::EFAULT)?;
+        let base = raw::read_u64_from_user(iov_ptr + j * 16).ok_or(Errno::Efault)?;
+        let seg_len = raw::read_u64_from_user(iov_ptr + j * 16 + 8).ok_or(Errno::Efault)?;
         if seg_len == 0 {
             continue;
         }
         if base == 0 || !raw::check_user_buf(base, seg_len) {
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
         // 单段长度需可经 raw_copy_in 的 u32 长度参数表达
-        let seg_len32 = u32::try_from(seg_len).map_err(|_| Errno::EINVAL)?;
+        let seg_len32 = u32::try_from(seg_len).map_err(|_| Errno::Einval)?;
         let seg = fw::raw_copy_in(base, seg_len32)?;
         data.extend_from_slice(&seg);
     }
@@ -719,8 +717,8 @@ fn gather_entry_iov(entry: u64) -> Result<alloc::vec::Vec<u8>, Errno> {
 ///
 /// # Errors
 ///
-/// `fd` 为负时返回 `Err(Errno::EBADF)`; `vlen` 超过 `UIO_MAXIOV` 或 timeout 字段非法时
-/// 返回 `Err(Errno::EINVAL)`; entry/iov 用户缓冲无效时返回 `Err(Errno::EFAULT)`;
+/// `fd` 为负时返回 `Err(Errno::Ebadf)`; `vlen` 超过 `UIO_MAXIOV` 或 timeout 字段非法时
+/// 返回 `Err(Errno::Einval)`; entry/iov 用户缓冲无效时返回 `Err(Errno::Efault)`;
 /// 首条接收失败透传底层 `Errno`。
 pub fn recvmmsg_syscall(
     fd: i32,
@@ -730,28 +728,28 @@ pub fn recvmmsg_syscall(
     timeout_ptr: u64,
 ) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     if vlen == 0 {
         return Ok(0);
     }
     if u64::from(vlen) > UIO_MAXIOV {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     // timeout 解析: struct timespec { tv_sec: i64, tv_nsec: i64 }, 相对时长
     let mut deadline_ms: u64 = 0;
     if timeout_ptr != 0 {
         if !raw::check_user_buf(timeout_ptr, 16) {
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
-        let sec_raw = raw::read_u64_from_user(timeout_ptr).ok_or(Errno::EFAULT)?;
-        let nsec_raw = raw::read_u64_from_user(timeout_ptr + 8).ok_or(Errno::EFAULT)?;
+        let sec_raw = raw::read_u64_from_user(timeout_ptr).ok_or(Errno::Efault)?;
+        let nsec_raw = raw::read_u64_from_user(timeout_ptr + 8).ok_or(Errno::Efault)?;
         if sec_raw > i64::MAX as u64 || nsec_raw > i64::MAX as u64 {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
         let (sec, nsec) = (sec_raw.cast_signed(), nsec_raw.cast_signed());
         if sec < 0 || !(0..NSEC_PER_SEC).contains(&nsec) {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
         let rel_ms = sec
             .cast_unsigned()
@@ -776,7 +774,7 @@ pub fn recvmmsg_syscall(
             if received > 0 {
                 break;
             }
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
         // 单条接收, 空数据时按阻塞语义 yield 重试直至 deadline
         let r = loop {
@@ -785,11 +783,11 @@ pub fn recvmmsg_syscall(
                 None => recvmsg_syscall(fd, entry, flags.cast_signed()),
             };
             match attempt {
-                Err(Errno::EAGAIN) => {
+                Err(Errno::Eagain) => {
                     let now = crate::privileged::syscall::api::get_ticks();
                     let deadline_passed = timeout_ptr != 0 && now >= deadline_ms;
                     if !blocking || deadline_passed || (waitforone && received > 0) {
-                        break Err(Errno::EAGAIN);
+                        break Err(Errno::Eagain);
                     }
                     crate::privileged::proc::scheduler_yield();
                 }
@@ -803,7 +801,7 @@ pub fn recvmmsg_syscall(
                 if fw::raw_copy_out(entry + MMSGHDR_MSGLEN_OFF, 4, &len32.to_ne_bytes()).is_err()
                     && received == 0
                 {
-                    return Err(Errno::EFAULT);
+                    return Err(Errno::Efault);
                 }
                 received += 1;
             }
@@ -817,18 +815,18 @@ pub fn recvmmsg_syscall(
     }
     if received == 0 {
         // 0 条成功且以 EAGAIN 终止 (deadline 到期 / 非阻塞语义)
-        return Err(Errno::EAGAIN);
+        return Err(Errno::Eagain);
     }
     Ok(received)
 }
 
 /// recvmmsg 单条 UDS entry 接收: 按套接字类型选择接收原语, 数据 copy-out 到各 iov 段
 ///
-/// msg_name 不回填 (与 `recvfrom_syscall` v1 简化一致); msg_flags 逐条写回。
+/// `msg_name` 不回填 (与 `recvfrom_syscall` v1 简化一致); `msg_flags` 逐条写回。
 ///
 /// # Errors
 ///
-/// iov 参数非法时返回 `Err(Errno::EINVAL)`; 用户缓冲无效时返回 `Err(Errno::EFAULT)`;
+/// iov 参数非法时返回 `Err(Errno::Einval)`; 用户缓冲无效时返回 `Err(Errno::Efault)`;
 /// 底层 UDS 接收失败透传对应 `Errno`。
 fn recvmmsg_uds_entry(fd: i32, entry: u64, st: uds::SockType) -> Result<usize, Errno> {
     let (iov_ptr, total_cap) = read_entry_iov_cap(entry)?;
@@ -857,7 +855,7 @@ fn recvmmsg_uds_entry(fd: i32, entry: u64, st: uds::SockType) -> Result<usize, E
         0
     };
     if fw::raw_copy_out(entry + MSGHDR_FLAGS_OFF, 4, &out_flags.to_ne_bytes()).is_err() {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     Ok(n)
 }
@@ -866,21 +864,21 @@ fn recvmmsg_uds_entry(fd: i32, entry: u64, st: uds::SockType) -> Result<usize, E
 ///
 /// # Errors
 ///
-/// `iovlen` 为 0 或超过 `UIO_MAXIOV` 时返回 `Err(Errno::EINVAL)`; 用户缓冲无效时返回
-/// `Err(Errno::EFAULT)`。
+/// `iovlen` 为 0 或超过 `UIO_MAXIOV` 时返回 `Err(Errno::Einval)`; 用户缓冲无效时返回
+/// `Err(Errno::Efault)`。
 fn read_entry_iov_cap(entry: u64) -> Result<(u64, u64), Errno> {
-    let iov_ptr = raw::read_u64_from_user(entry + MSGHDR_IOV_OFF).ok_or(Errno::EFAULT)?;
-    let iovlen = raw::read_u64_from_user(entry + MSGHDR_IOVLEN_OFF).ok_or(Errno::EFAULT)?;
+    let iov_ptr = raw::read_u64_from_user(entry + MSGHDR_IOV_OFF).ok_or(Errno::Efault)?;
+    let iovlen = raw::read_u64_from_user(entry + MSGHDR_IOVLEN_OFF).ok_or(Errno::Efault)?;
     if iovlen == 0 || iovlen > UIO_MAXIOV || iov_ptr == 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
-    let iov_bytes = iovlen.checked_mul(16).ok_or(Errno::EINVAL)?;
+    let iov_bytes = iovlen.checked_mul(16).ok_or(Errno::Einval)?;
     if !raw::check_user_buf(iov_ptr, iov_bytes) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let mut total: u64 = 0;
     for j in 0..iovlen {
-        let seg_len = raw::read_u64_from_user(iov_ptr + j * 16 + 8).ok_or(Errno::EFAULT)?;
+        let seg_len = raw::read_u64_from_user(iov_ptr + j * 16 + 8).ok_or(Errno::Efault)?;
         total = total.saturating_add(seg_len);
     }
     Ok((iov_ptr, total))
@@ -890,13 +888,13 @@ fn read_entry_iov_cap(entry: u64) -> Result<(u64, u64), Errno> {
 ///
 /// # Errors
 ///
-/// iov 段指针无效时返回 `Err(Errno::EFAULT)`。
+/// iov 段指针无效时返回 `Err(Errno::Efault)`。
 fn copy_out_to_entry_iov(iov_ptr: u64, data: &[u8]) -> Result<(), Errno> {
     let mut off = 0usize;
     let mut j: u64 = 0;
     while off < data.len() {
-        let base = raw::read_u64_from_user(iov_ptr + j * 16).ok_or(Errno::EFAULT)?;
-        let seg_len = raw::read_u64_from_user(iov_ptr + j * 16 + 8).ok_or(Errno::EFAULT)?;
+        let base = raw::read_u64_from_user(iov_ptr + j * 16).ok_or(Errno::Efault)?;
+        let seg_len = raw::read_u64_from_user(iov_ptr + j * 16 + 8).ok_or(Errno::Efault)?;
         if seg_len == 0 {
             j += 1;
             continue;

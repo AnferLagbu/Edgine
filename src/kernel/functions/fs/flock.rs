@@ -5,7 +5,7 @@
 //! ## 阶段 4b 归属收敛 (当前权威)
 //!
 //! 自阶段 4b 起 flock/POSIX 锁表实装归 `functions::fs::flock`, privileged
-//! 侧不再持有锁表; 依赖闭包仅 privileged (IrqSpinLock + core 原子), 0 unsafe。
+//! 侧不再持有锁表; 依赖闭包仅 privileged (`IrqSpinLock` + core 原子), 0 unsafe。
 //!
 //! ## DECISION-J 归属反转记录 (2026-09-13) — 已被阶段 4b 取代
 //!
@@ -135,7 +135,7 @@ impl Default for FlockEntry {
 // ============================================================================
 
 /// POSIX 字节范围锁条目
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct PosixLockEntry {
     /// 被锁定的 inode 号
     ino: u32,
@@ -149,19 +149,6 @@ struct PosixLockEntry {
     lock_type: i32,
     /// 有效标志
     valid: bool,
-}
-
-impl Default for PosixLockEntry {
-    fn default() -> Self {
-        Self {
-            ino: 0,
-            owner_pid: 0,
-            start: 0,
-            len: 0,
-            lock_type: 0,
-            valid: false,
-        }
-    }
 }
 
 // ============================================================================
@@ -599,14 +586,13 @@ fn posix_setlk(
     match lock_type {
         F_UNLCK => {
             let mut released = 0u32;
-            for i in 0..POSIX_LOCK_TABLE_SIZE {
-                let entry = &table.entries[i];
+            for entry in &mut table.entries {
                 let should_remove = entry.valid
                     && entry.ino == ino
                     && entry.owner_pid == pid
                     && PosixLockTable::ranges_overlap(start, len, entry.start, entry.len);
                 if should_remove {
-                    table.entries[i] = PosixLockEntry::default();
+                    *entry = PosixLockEntry::default();
                     released += 1;
                 }
             }

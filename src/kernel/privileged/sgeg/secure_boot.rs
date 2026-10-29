@@ -54,11 +54,13 @@ pub const MAX_TRUST_CHAIN_DEPTH: usize = 4;
 use crate::privileged::sgeg::sha256::sha256;
 
 /// 计算 SHA-256 哈希 (标准 32 字节输出, 委托 functions 规范实现)
+#[must_use]
 pub fn sha256_hash(data: &[u8]) -> [u8; SHA256_LEN] {
     sha256(data)
 }
 
 /// SHA-256 扩展 (hash1 || hash2 → hash)
+#[must_use]
 pub fn sha256_extend(a: &[u8; SHA256_LEN], b: &[u8; SHA256_LEN]) -> [u8; SHA256_LEN] {
     let mut combined = [0u8; SHA256_LEN * 2];
     combined[..SHA256_LEN].copy_from_slice(a);
@@ -79,6 +81,7 @@ pub struct Ed25519PubKey {
 
 impl Ed25519PubKey {
     /// 从 32 字节公钥构造
+    #[must_use]
     pub fn new(key: [u8; ED25519_PUBKEY_LEN]) -> Self {
         Self { key }
     }
@@ -88,6 +91,7 @@ impl Ed25519PubKey {
     /// B07-06 (DECISION-078): 使用 ed25519-dalek 真实验证, 替换原占位实现
     /// (签名非全零即视为有效, 攻击者可伪造任意签名通过 Secure Boot).
     /// 采用 `verify_strict` 拒绝非规范 (malleable) 签名, 与 RFC 8032 一致.
+    #[must_use]
     pub fn verify(&self, message: &[u8], signature: &[u8; ED25519_SIG_LEN]) -> bool {
         let Ok(pk) = ed25519_dalek::VerifyingKey::from_bytes(&self.key) else {
             return false;
@@ -157,8 +161,15 @@ pub struct SecureBootSubsystem {
     initialized: AtomicBool,
 }
 
+impl Default for SecureBootSubsystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SecureBootSubsystem {
     /// 构造未启用的安全启动子系统
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             trust_chain: IrqSpinLock::new(Vec::new()),
@@ -314,6 +325,7 @@ pub enum PcrIndex {
 
 impl PcrIndex {
     /// 从原始索引转换为 PCR 枚举 (越界返回 `None`)
+    #[must_use]
     pub fn from_u32(v: u32) -> Option<Self> {
         match v {
             0 => Some(Self::Firmware),
@@ -341,8 +353,15 @@ pub struct TpmSubsystem {
     is_hardware: AtomicBool,
 }
 
+impl Default for TpmSubsystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TpmSubsystem {
     /// 构造未初始化的软件模拟 TPM
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             pcrs: IrqSpinLock::new([[0u8; SHA256_LEN]; PCR_COUNT]),
@@ -428,10 +447,8 @@ impl TpmSubsystem {
         let current_pcrs = self.read_all_pcrs();
         // 检查 pcr_mask 指定的 PCR 是否匹配
         for i in 0..PCR_COUNT {
-            if (sealed.pcr_mask >> i) & 1 == 1 {
-                if current_pcrs[i] != sealed.pcr_snapshot[i] {
-                    return None; // PCR 不匹配
-                }
+            if (sealed.pcr_mask >> i) & 1 == 1 && current_pcrs[i] != sealed.pcr_snapshot[i] {
+                return None; // PCR 不匹配
             }
         }
         Some(sealed.data.clone())
@@ -444,9 +461,9 @@ impl TpmSubsystem {
     pub fn quote(&self, pcr_mask: u32, nonce: &[u8]) -> TpmQuote {
         let all_pcrs = self.read_all_pcrs();
         let mut quote_data = Vec::new();
-        for i in 0..PCR_COUNT {
+        for (i, pcr) in all_pcrs.iter().enumerate() {
             if (pcr_mask >> i) & 1 == 1 {
-                quote_data.extend_from_slice(&all_pcrs[i]);
+                quote_data.extend_from_slice(pcr);
             }
         }
         quote_data.extend_from_slice(nonce);
@@ -506,6 +523,7 @@ pub fn secure_boot_init(pk: Ed25519PubKey) {
 }
 
 /// 获取全局安全启动子系统
+#[must_use]
 pub fn secure_boot_subsystem() -> &'static SecureBootSubsystem {
     &SECURE_BOOT
 }
@@ -516,6 +534,7 @@ pub fn tpm_init() {
 }
 
 /// 获取全局 TPM 子系统
+#[must_use]
 pub fn tpm_subsystem() -> &'static TpmSubsystem {
     &TPM
 }

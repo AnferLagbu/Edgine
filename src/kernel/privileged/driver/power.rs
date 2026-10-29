@@ -60,6 +60,7 @@ pub enum CpuIdleState {
 
 impl CpuIdleState {
     /// 由 `u32` 值构造 C-state (未知值回落 `C0Running`).
+    #[must_use]
     pub fn from_u32(v: u32) -> Self {
         match v {
             1 => Self::C1Halt,
@@ -70,6 +71,7 @@ impl CpuIdleState {
     }
 
     /// 进入该 C-state 的预期延迟 (微秒)
+    #[must_use]
     pub fn latency_us(self) -> u32 {
         match self {
             Self::C0Running => 0,
@@ -80,6 +82,7 @@ impl CpuIdleState {
     }
 
     /// 该 C-state 的功耗节省比例 (0-100)
+    #[must_use]
     pub fn power_saving(self) -> u32 {
         match self {
             Self::C0Running => 0,
@@ -105,8 +108,15 @@ pub struct CpuIdleStats {
     pub max_cstate: AtomicU32,
 }
 
+impl Default for CpuIdleStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CpuIdleStats {
     /// 构造 CPU 空闲统计实例 (各计数清零, 初始状态 `C0Running`).
+    #[must_use]
     pub fn new() -> Self {
         Self {
             current_state: AtomicU32::new(CpuIdleState::C0Running as u32),
@@ -163,8 +173,15 @@ pub struct CpuIdleDriver {
     pub enabled: AtomicBool,
 }
 
+impl Default for CpuIdleDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CpuIdleDriver {
     /// 构造未启用的 `CpuIdle` 驱动 (统计表为空).
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             per_cpu_stats: IrqSpinLock::new(Vec::new()),
@@ -246,6 +263,7 @@ pub enum FreqGovernor {
 
 impl FreqGovernor {
     /// 由 `u32` 值构造频率调节策略 (未知值回落 `Performance`).
+    #[must_use]
     pub fn from_u32(v: u32) -> Self {
         match v {
             1 => Self::Powersave,
@@ -280,8 +298,15 @@ pub struct CpuFreqDriver {
     pub enabled: AtomicBool,
 }
 
+impl Default for CpuFreqDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CpuFreqDriver {
     /// 构造未启用的 `CpuFreq` 驱动 (频率表为空, 默认 `Performance` 策略).
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             freq_table: IrqSpinLock::new(Vec::new()),
@@ -482,6 +507,7 @@ pub enum SystemPowerState {
 
 impl SystemPowerState {
     /// 由 `u32` 值构造系统电源状态 (未知值回落 `S0Working`).
+    #[must_use]
     pub fn from_u32(v: u32) -> Self {
         match v {
             3 => Self::S3SuspendToRam,
@@ -522,8 +548,15 @@ pub struct PmSubsystem {
     pub initialized: AtomicBool,
 }
 
+impl Default for PmSubsystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PmSubsystem {
     /// 构造电源管理子系统实例 (状态 S0, 通知器与驱动为空, 未初始化).
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             state: AtomicU32::new(SystemPowerState::S0Working as u32),
@@ -621,6 +654,7 @@ pub fn pm_init(num_cpus: u32) {
 }
 
 /// 获取全局 PM 子系统
+#[must_use]
 pub fn pm_subsystem() -> &'static PmSubsystem {
     &PM_SUBSYSTEM
 }
@@ -635,6 +669,7 @@ pub fn pm_is_initialized() -> bool {
 // ============================================================================
 
 /// 读取时间戳 (TSC/cntvct)
+#[must_use]
 pub fn read_timestamp() -> u64 {
     #[cfg(target_arch = "x86_64")]
     {

@@ -7,8 +7,8 @@
 //! 原定义于 T6-2 (2026-06-16) 迁至 `functions::proc::types`, 本文件仅
 //! re-export。按"机制持有的数据结构/常量归 privileged"统一判据反转：
 //! PID/TID/ProcessState/Priority/Context 是**进程机制的核心类型**, 被
-//! privileged user_proc/process/scheduler 消费 + functions 广泛消费 —
-//! 属机制项, 迁回 (依赖闭包仅 privileged::config, 反转后同子树)。
+//! privileged `user_proc/process/scheduler` 消费 + functions 广泛消费 —
+//! 属机制项, 迁回 (依赖闭包仅 `privileged::config`, 反转后同子树)。
 //!
 //! functions 侧改 `pub use crate::privileged::proc::types::*`
 //! 保持 API 兼容 (functions→privileged 合法方向)。
@@ -63,6 +63,7 @@ pub enum ProcessState {
 
 impl ProcessState {
     /// 安全的从 u8 值转换为 `ProcessState`
+    #[must_use]
     pub fn from_u8(value: u8) -> Self {
         match value {
             1 => Self::Ready,
@@ -76,11 +77,13 @@ impl ProcessState {
     }
 
     /// 从 u32 值转换 (兼容 `AtomicU32` 存储)
+    #[must_use]
     pub fn from_u32(value: u32) -> Self {
         Self::from_u8(crate::privileged::glue::low_u8_from_u32(value))
     }
 
     /// 获取状态名称 (用于日志和调试)
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Self::Created => "Created",
@@ -94,11 +97,13 @@ impl ProcessState {
     }
 
     /// ✅ 检查进程是否存活 (未终止或僵尸)
+    #[must_use]
     pub fn is_alive(self) -> bool {
         !matches!(self, Self::Zombie | Self::Terminated)
     }
 
     /// ✅ 检查进程是否可以被唤醒 (从 Frozen 解冻后应转到的状态)
+    #[must_use]
     pub fn thaw_target_state(self) -> Option<Self> {
         match self {
             Self::Frozen => Some(Self::Ready), // 默认解冻到 Ready
@@ -126,6 +131,7 @@ pub enum BlockReason {
 
 impl BlockReason {
     /// 由原始 `u8` 值解析阻塞原因 (未知值回落为 `Unknown`)
+    #[must_use]
     pub fn from_u8(value: u8) -> Self {
         match value {
             0 => Self::WaitingForIo,
@@ -138,7 +144,7 @@ impl BlockReason {
     }
 }
 
-/// 进程优先级等级 — 从 Idle 到 RealTime 共五档, 供调度器使用。
+/// 进程优先级等级 — 从 Idle 到 `RealTime` 共五档, 供调度器使用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessPriority {
     /// 空闲级 (最低)
@@ -155,6 +161,7 @@ pub enum ProcessPriority {
 
 impl ProcessPriority {
     /// 由原始 `u32` 值解析优先级 (未知值回落为 `Normal`)
+    #[must_use]
     pub fn from_u32(value: u32) -> Self {
         match value {
             0 => Self::Idle,
@@ -235,21 +242,22 @@ pub struct ProcessContext {
     ///
     /// `process_switch_asm` 仅保存/恢复 r15-r12/rbx/rbp/rax/rip/rsp/rflags/cr3/段,
     /// **不含** rdi/rsi/rdx/rcx/r8-r11. 已运行过的进程返回用户态时, 寄存器来自
-    /// syscall/中断栈上的 InterruptFrame (schedule 后 iretq 恢复), 不受影响.
-    /// 但**首次被调度的进程** (如 fork 的子进程) 由 process_switch_asm 直接 iretq
-    /// 进用户态, 无 InterruptFrame → 这些寄存器是调度器残留. 若用户代码依赖
+    /// syscall/中断栈上的 `InterruptFrame` (schedule 后 iretq 恢复), 不受影响.
+    /// 但**首次被调度的进程** (如 fork 的子进程) 由 `process_switch_asm` 直接 iretq
+    /// 进用户态, 无 `InterruptFrame` → 这些寄存器是调度器残留. 若用户代码依赖
     /// fork 返回后 rdi 等保持父进程值 (如 init 的 write 用 fork 前设置的 rdi=1),
     /// 残留值会导致 syscall 参数错乱 (fd=0 失败).
     ///
-    /// 由 `proc_save_user_regs` 在每次 syscall 入口保存 (取 InterruptFrame 的
+    /// 由 `proc_save_user_regs` 在每次 syscall 入口保存 (取 `InterruptFrame` 的
     /// rdi/rsi/rdx/rcx/r8/r9/r10/r11), fork/clone 复制 context 时继承, 子进程
-    /// 首次切换时由 process_switch_asm 恢复. 布局偏移 672 (fpu_state 144+512,
+    /// 首次切换时由 `process_switch_asm` 恢复. 布局偏移 672 (`fpu_state` 144+512,
     /// fpcr 656, fpsr 664).
     pub extra_regs: [u64; 8],
 }
 
 impl ProcessContext {
     /// 构造全零上下文
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             r15: 0,

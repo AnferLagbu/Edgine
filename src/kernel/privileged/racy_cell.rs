@@ -11,6 +11,7 @@
 //! 参考: Linux kernel `kernel::types::RacyCell`, Asterinas `RacyCell`.
 
 use core::cell::UnsafeCell;
+use core::ops::{Deref, DerefMut};
 
 /// 无锁可变全局容器
 ///
@@ -62,15 +63,16 @@ impl<T> RacyCell<T> {
         }
     }
 
-    /// 获取可变引用
+    /// 获取可变引用 (经 [`RacyCellMut`] 守卫包装)
     ///
     /// 调用方必须保证独占访问。单线程上下文或外部同步保证。
-    pub fn get_mut(&self) -> &mut T {
+    pub fn get_mut(&self) -> RacyCellMut<'_, T> {
         // SAFETY: RacyCell 的 Sync 实现由调用方通过外部同步保证。
         // 在单线程或持有锁的上下文中调用是安全的。
         // `&mut *UnsafeCell::get()` 产生独占引用, 与外部同步原语 (如 SpinLock) 配合
         // 时, 锁的持有期间独占, drop 时释放, 借用检查器接受是因为 UnsafeCell 的特殊规则。
-        unsafe { &mut *self.inner.get() }
+        let value = unsafe { &mut *self.inner.get() };
+        RacyCellMut { value }
     }
 
     /// 读取值(仅适用于 `Copy` 类型)
@@ -154,6 +156,38 @@ impl<T> RacyCell<T> {
         // SAFETY: 调用方保证无并发写; `Option<T>` 借用稳定。
         let opt_ref = unsafe { &*self.inner.get() };
         opt_ref.unpack()
+    }
+}
+
+/// `RacyCell::get_mut` 返回的独占借用守卫
+///
+/// 代替直接返回 `&mut T` 的裸引用: 独占语义仍由调用方通过外部同步保证,
+/// 守卫仅承载该引用并通过 [`Deref`] / [`DerefMut`] 提供与原引用一致的用法.
+/// 需要取出原引用时用 [`Self::into_inner`].
+pub struct RacyCellMut<'a, T> {
+    /// 被守卫的独占引用
+    value: &'a mut T,
+}
+
+impl<'a, T> RacyCellMut<'a, T> {
+    /// 取出守卫内部的独占引用 (消费守卫, 不执行释放动作)
+    #[must_use]
+    pub fn into_inner(self) -> &'a mut T {
+        self.value
+    }
+}
+
+impl<T> Deref for RacyCellMut<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &*self.value
+    }
+}
+
+impl<T> DerefMut for RacyCellMut<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut *self.value
     }
 }
 

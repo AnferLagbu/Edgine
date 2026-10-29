@@ -12,17 +12,20 @@
 //! - 无 unsafe, 无裸指针
 
 /// `fork()` 策略
+#[must_use]
 pub fn fork_syscall() -> i64 {
     i64::from(crate::privileged::proc::sys_fork())
 }
 
 /// exit(status) 策略
+#[must_use]
 pub fn exit_syscall(status: i32) -> i64 {
     crate::privileged::proc::process_exit(status.cast_unsigned());
     0
 }
 
 /// `sched_yield()` 策略
+#[must_use]
 pub fn sched_yield_syscall() -> i64 {
     crate::privileged::proc::scheduler_yield();
     0

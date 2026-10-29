@@ -3,7 +3,7 @@
 //! ARM 电源管理标准接口，通过 SMC/HVC 调用实现关机/重启/次核上电。
 //! 调用通道 (conduit) 由设备树 `/psci` 节点的 `method` 属性决定 (见 `conduit`);
 //! QEMU virt 使用 HVC (PSCI v0.2+), 多数真机使用 SMC。
-//! PSCI_VERSION 返回 (major<<16 | minor<<8 | patch), 取高位/低位都是 u32 已知安全.
+//! `PSCI_VERSION` 返回 (major<<16 | minor<<8 | patch), 取高位/低位都是 u32 已知安全.
 
 use crate::privileged::dtb::{self, PsciMethod};
 
@@ -14,7 +14,7 @@ const PSCI_VERSION: u32 = 0x8400_0000;
 
 /// `CPU_ON` 的 SMC64 函数 ID (ARM PSCI v0.2+)
 ///
-/// 入参: x1 = target_cpu (MPIDR), x2 = entry_point (物理地址), x3 = context_id.
+/// 入参: x1 = `target_cpu` (MPIDR), x2 = `entry_point` (物理地址), x3 = `context_id`.
 pub const PSCI_CPU_ON: u32 = 0xC400_0003;
 
 /// 当前平台的 PSCI conduit; 未探测到时回退 SMC (多数真机固件实现于 EL3).
@@ -26,7 +26,7 @@ fn conduit() -> PsciMethod {
     dtb::psci_method().unwrap_or(PsciMethod::Smc)
 }
 
-/// 按探测到的 conduit 执行 PSCI 调用: x0 = function_id, x1..x3 = 参数, 返回 x0.
+/// 按探测到的 conduit 执行 PSCI 调用: x0 = `function_id`, x1..x3 = 参数, 返回 x0.
 ///
 /// 未使用的参数一律传 0 (PSCI 函数忽略无关寄存器).
 ///
@@ -147,12 +147,9 @@ fn psci_version() -> Option<(u32, u32)> {
 /// PSCI 关机 — 不会返回
 pub fn system_off() -> ! {
     // 尝试 PSCI
-    match psci_version() {
-        Some((_major, _minor)) => {
-            // SAFETY: PSCI 可用 (上一层已校验); SYSTEM_OFF 无额外入参.
-            unsafe { invoke(u64::from(PSCI_SYSTEM_OFF), 0, 0, 0) };
-        }
-        None => {}
+    if let Some((_major, _minor)) = psci_version() {
+        // SAFETY: PSCI 可用 (上一层已校验); SYSTEM_OFF 无额外入参.
+        unsafe { invoke(u64::from(PSCI_SYSTEM_OFF), 0, 0, 0) };
     }
 
     // PSCI 不可用时，触发异常 (通过写入零地址)
@@ -160,17 +157,16 @@ pub fn system_off() -> ! {
     unsafe {
         core::arch::asm!("mov x0, #0; str x0, [x0]", options(nostack));
     }
-    loop {}
+    loop {
+        core::hint::spin_loop();
+    }
 }
 
 /// PSCI 重启 — 不会返回
 pub fn system_reset() -> ! {
-    match psci_version() {
-        Some((_major, _minor)) => {
-            // SAFETY: PSCI 可用 (上一层已校验); SYSTEM_RESET 无额外入参.
-            unsafe { invoke(u64::from(PSCI_SYSTEM_RESET), 0, 0, 0) };
-        }
-        None => {}
+    if let Some((_major, _minor)) = psci_version() {
+        // SAFETY: PSCI 可用 (上一层已校验); SYSTEM_RESET 无额外入参.
+        unsafe { invoke(u64::from(PSCI_SYSTEM_RESET), 0, 0, 0) };
     }
 
     // PSCI 不可用时，fallback
@@ -178,5 +174,7 @@ pub fn system_reset() -> ! {
     unsafe {
         core::arch::asm!("mov x0, #0; str x0, [x0]", options(nostack));
     }
-    loop {}
+    loop {
+        core::hint::spin_loop();
+    }
 }

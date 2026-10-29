@@ -155,7 +155,7 @@ pub use uefi::*;
 ///
 /// 存储设备控制器 (PCI AHCI/NVMe + ATA PIO) 探测/初始化/注册已整体下沉
 /// functions (`functions::driver::storage::storage_init`), 由 crate root
-/// lib.rs 编排调用; privileged 侧不再持有 storage_init。
+/// lib.rs 编排调用; privileged 侧不再持有 `storage_init`。
 pub fn init_all() {
     #[cfg(target_arch = "x86_64")]
     {

@@ -35,6 +35,7 @@ pub use crate::privileged::sync::{LockClassDesc, LockClassId, LockKind};
 ///
 /// 返回全局唯一的 `LockClassId`, 后续 acquire/release 使用此 ID。
 /// 同名锁类只注册一次 (幂等)。
+#[must_use]
 pub fn register_class(name: &'static str, kind: LockKind) -> LockClassId {
     crate::privileged::sync::register_class(LockClassDesc { name, kind })
 }
@@ -54,6 +55,7 @@ pub fn register_class(name: &'static str, kind: LockKind) -> LockClassId {
 /// # 返回
 /// - `true`: 正常
 /// - `false`: 检测到违规 (已打印警告)
+#[must_use]
 pub fn acquire(class_id: LockClassId, instance: usize, irq_context: bool) -> bool {
     crate::privileged::sync::acquire(class_id, instance, irq_context)
 }
@@ -76,26 +78,31 @@ pub fn irq_exit() {
 }
 
 /// 当前是否在中断上下文
+#[must_use]
 pub fn in_irq_context() -> bool {
     crate::privileged::sync::in_irq_context()
 }
 
 /// 查询当前持有锁深度
+#[must_use]
 pub fn held_depth() -> usize {
     crate::privileged::sync::held_depth()
 }
 
 /// 查询已注册锁类数
+#[must_use]
 pub fn num_classes() -> usize {
     crate::privileged::sync::num_classes()
 }
 
 /// 查询检测到的违规数
+#[must_use]
 pub fn num_violations() -> u32 {
     crate::privileged::sync::num_violations()
 }
 
 /// 检查是否已检测到死锁
+#[must_use]
 pub fn deadlock_detected() -> bool {
     crate::privileged::sync::deadlock_detected()
 }

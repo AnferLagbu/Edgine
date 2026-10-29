@@ -52,33 +52,52 @@ pub enum PfResult {
     UffdWait = 5,
 }
 
+/// 缺页错误码中的访问属性 (W/R、U/S、I/D 位)
+#[derive(Debug, Clone, Copy)]
+pub struct AccessFlags {
+    /// 错误码 W/R 位：是否为写访问。
+    pub write: bool,
+    /// 错误码 U/S 位：是否来自用户态。
+    pub user: bool,
+    /// 错误码 I/D 位：是否为取指访问。
+    pub instruction: bool,
+}
+
+/// 缺页错误码中的页状态 (P、RSVD 位)
+#[derive(Debug, Clone, Copy)]
+pub struct FaultPageStatus {
+    /// 错误码 P 位：页是否已存在。
+    pub present: bool,
+    /// 错误码 RSVD 位：是否使用保留位。
+    pub reserved: bool,
+}
+
 /// 缺页错误信息: 故障地址与错误码解码后的标志位.
 #[derive(Debug, Clone, Copy)]
 pub struct PageFaultInfo {
     /// 触发缺页的虚拟地址（CR2）。
     pub fault_addr: u64,
-    /// 错误码 P 位：页是否已存在。
-    pub present: bool,
-    /// 错误码 W/R 位：是否为写访问。
-    pub write: bool,
-    /// 错误码 U/S 位：是否来自用户态。
-    pub user: bool,
-    /// 错误码 RSVD 位：是否使用保留位。
-    pub reserved: bool,
-    /// 错误码 I/D 位：是否为取指访问。
-    pub instruction: bool,
+    /// 访问属性标志 (写 / 用户态 / 取指)。
+    pub access: AccessFlags,
+    /// 页状态标志 (已存在 / 保留位)。
+    pub page: FaultPageStatus,
 }
 
 impl PageFaultInfo {
     /// 由 x86_64 缺页错误码解码出各标志位。
+    #[must_use]
     pub fn from_error_code(fault_addr: u64, error_code: u64) -> Self {
         Self {
             fault_addr,
-            present: error_code & 0x01 != 0,
-            write: error_code & 0x02 != 0,
-            user: error_code & 0x04 != 0,
-            reserved: error_code & 0x08 != 0,
-            instruction: error_code & 0x10 != 0,
+            access: AccessFlags {
+                write: error_code & 0x02 != 0,
+                user: error_code & 0x04 != 0,
+                instruction: error_code & 0x10 != 0,
+            },
+            page: FaultPageStatus {
+                present: error_code & 0x01 != 0,
+                reserved: error_code & 0x08 != 0,
+            },
         }
     }
 }
@@ -98,7 +117,7 @@ fn stack_guard_end() -> u64 {
 pub fn handle_page_fault(mm: &MmStruct, info: PageFaultInfo) -> PfResult {
     let addr = crate::privileged::glue::usize_from_u64(info.fault_addr);
 
-    if info.reserved {
+    if info.page.reserved {
         return PfResult::SignalBus;
     }
 
@@ -112,7 +131,7 @@ pub fn handle_page_fault(mm: &MmStruct, info: PageFaultInfo) -> PfResult {
         return handle_vma_fault_with_mm(mm, &vma, &info, user_cr3);
     }
 
-    if info.user && is_stack_expansion_candidate(addr) {
+    if info.access.user && is_stack_expansion_candidate(addr) {
         return handle_stack_expansion(mm, addr, user_cr3);
     }
 
@@ -127,21 +146,21 @@ pub fn handle_user_page_fault(info: PageFaultInfo) -> PfResult {
     let user_cr3 = super::read_user_cr3_asm();
     let addr = crate::privileged::glue::usize_from_u64(info.fault_addr);
 
-    if info.reserved {
+    if info.page.reserved {
         return PfResult::SignalBus;
     }
 
     // Swap-in: PTE 为 swap entry (present=0 但非零)
-    if !info.present && info.user {
+    if !info.page.present && info.access.user {
         let pml4 = user_cr3;
-        if let Some(pte) = super::Vmm::get_pte_value(pml4, VirtAddr(info.fault_addr)) {
-            if super::swap::is_swap_pte(pte) {
-                let result = super::swap::handle_swap_fault(pml4, info.fault_addr);
-                if result == PfResult::Fixed {
-                    PAGE_FAULT_COUNT.fetch_add(1, Ordering::Relaxed);
-                }
-                return result;
+        if let Some(pte) = super::Vmm::get_pte_value(pml4, VirtAddr(info.fault_addr))
+            && super::swap::is_swap_pte(pte)
+        {
+            let result = super::swap::handle_swap_fault(pml4, info.fault_addr);
+            if result == PfResult::Fixed {
+                PAGE_FAULT_COUNT.fetch_add(1, Ordering::Relaxed);
             }
+            return result;
         }
     }
 
@@ -149,18 +168,18 @@ pub fn handle_user_page_fault(info: PageFaultInfo) -> PfResult {
     // 若 COW 路径先于 VMA 查找, 已 munmap 但 PTE 未刷新的地址会被错误地
     // 授予 WRITABLE 权限 (延迟 TLB 刷新场景下存在安全风险).
     let mm = super::vma::get_current_mm();
-    if let Some(mm) = mm {
-        if let Some(vma) = mm.find_vma(addr) {
-            if vma.is_guard() {
-                return PfResult::SignalSegv;
-            }
-            return handle_vma_fault_with_mm(mm, &vma, &info, user_cr3);
+    if let Some(mm) = mm
+        && let Some(vma) = mm.find_vma(addr)
+    {
+        if vma.is_guard() {
+            return PfResult::SignalSegv;
         }
+        return handle_vma_fault_with_mm(mm, &vma, &info, user_cr3);
     }
 
     // COW: 写已存在但只读的页 (VMA 未覆盖的 fallback 路径,
     // 例如 fork 后子进程写 COW 页但 VMA 尚未同步)
-    if info.write && info.present {
+    if info.access.write && info.page.present {
         let pml4 = user_cr3;
         return match super::cow::cow_handle_fault(pml4, info.fault_addr) {
             Some(_) => {
@@ -171,7 +190,7 @@ pub fn handle_user_page_fault(info: PageFaultInfo) -> PfResult {
         };
     }
 
-    if info.user && is_stack_expansion_candidate(addr) {
+    if info.access.user && is_stack_expansion_candidate(addr) {
         return handle_stack_expansion_simple(addr, user_cr3);
     }
 
@@ -223,8 +242,8 @@ fn handle_vma_fault_with_mm(
 
     // ── userfaultfd (T1 G4): 已注册区间的匿名页缺页交由用户态处理 ──
     // 仅拦截 not-present 的用户态缺页 (MISSING 模式); COW/文件映射不受影响.
-    if info.user && !info.present {
-        let uffd_flags = if info.write {
+    if info.access.user && !info.page.present {
+        let uffd_flags = if info.access.write {
             super::uffd::UFFD_PAGEFAULT_FLAG_WRITE
         } else {
             0
@@ -239,12 +258,12 @@ fn handle_vma_fault_with_mm(
     }
 
     // ── FileBacked VMA: 从 Page Cache 获取缓存页 ──
-    if vma.vma_type == VmaType::FileBacked && vma.inode_id != 0 {
+    if vma.kind == VmaType::FileBacked && vma.inode_id != 0 {
         return handle_file_fault(mm, vma, info, aligned, user_cr3);
     }
 
     // ── COW: 写入只读页 ──
-    if info.write && !vma.flags.contains(PageFlags::WRITABLE) {
+    if info.access.write && !vma.flags.contains(PageFlags::WRITABLE) {
         return do_cow_copy_with_mm(mm, vma, aligned, user_cr3);
     }
 
@@ -352,7 +371,7 @@ fn handle_file_fault(
         );
 
         // 写入时标记脏页
-        if info.write {
+        if info.access.write {
             super::pcache::pcache_mark_dirty(vma.inode_id, page_index);
         }
     } else {
@@ -366,7 +385,7 @@ fn handle_file_fault(
         );
 
         // 写入时 COW: 分配新页, 复制数据, 可写映射
-        if info.write {
+        if info.access.write {
             let pmm_inst = pmm::get_pmm();
             let Some(new_phys) = pmm_inst.alloc_page() else {
                 return PfResult::Oom;
@@ -525,19 +544,19 @@ mod tests {
     fn test_pf_info_from_error_code() {
         let info = PageFaultInfo::from_error_code(0x4000, 0x06);
         assert_eq!(info.fault_addr, 0x4000);
-        assert!(info.write);
-        assert!(info.user);
-        assert!(!info.present);
-        assert!(!info.reserved);
-        assert!(!info.instruction);
+        assert!(info.access.write);
+        assert!(info.access.user);
+        assert!(!info.page.present);
+        assert!(!info.page.reserved);
+        assert!(!info.access.instruction);
     }
 
     #[test]
     fn test_pf_info_not_present() {
         let info = PageFaultInfo::from_error_code(0x1000, 0x00);
-        assert!(!info.present);
-        assert!(!info.write);
-        assert!(!info.user);
+        assert!(!info.page.present);
+        assert!(!info.access.write);
+        assert!(!info.access.user);
     }
 
     #[test]

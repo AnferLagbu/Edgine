@@ -2,8 +2,8 @@
 //!
 //! ## 阶段 4b 变更
 //!
-//! VFS 具象实现 (vfs/api/backend_trait/dcache/flock/handle/inotify/mount/
-//! open_file_table/path/types/inode) 已整体下沉 `functions::fs`; privileged
+//! VFS 具象实现 (`vfs/api/backend_trait/dcache/flock/handle/inotify/mount`/
+//! `open_file_table/path/types/inode`) 已整体下沉 `functions::fs`; privileged
 //! 本模块仅保留:
 //! - `ops_trait`: VFS 操作契约 trait (阶段 4a, DECISION-W)
 //! - `types_pod`: privileged 消费所需的文件类型 POD

@@ -40,7 +40,7 @@ const SVR_ENABLE: u32 = 1 << 8;
 const LVT_MASK: u32 = 1 << 16;
 const LVT_TIMER_PERIODIC: u32 = 1 << 17;
 /// LAPIC 定时器 TSC-Deadline 模式位 (Intel SDM 3-1079): 置 1 后计数器由
-/// `IA32_TSC_DEADLINE` 驱动, LVT Timer_Count 写入被忽略.
+/// `IA32_TSC_DEADLINE` 驱动, LVT `Timer_Count` 写入被忽略.
 const LVT_TIMER_TSC_DEADLINE: u32 = 1 << 18;
 /// `IA32_TSC_DEADLINE` MSR —— deadline 模式下的绝对 TSC 截止期.
 const MSR_TSC_DEADLINE: u32 = 0x6E0;
@@ -136,6 +136,7 @@ pub fn is_initialized() -> bool {
 }
 
 /// 获取本地 APIC ID (未初始化时返回 0)。
+#[must_use]
 pub fn get_id() -> u32 {
     if !is_initialized() {
         return 0;
@@ -144,6 +145,7 @@ pub fn get_id() -> u32 {
 }
 
 /// 获取本地 APIC 版本号低字节 (未初始化时返回 0)。
+#[must_use]
 pub fn get_version() -> u32 {
     if !is_initialized() {
         return 0;
@@ -241,7 +243,7 @@ pub fn set_timer_divisor(divisor: u32) {
 /// 编程本核定时器: 模式 + 投递向量。
 ///
 /// 写 LVT 即解除屏蔽 (mask 位为 0), 屏蔽由 [`mask_timer`] 负责 —— 使"模式
-/// 与向量装配"和"启停"成为两个正交原语, 装配次序由上层 (timer::clockevent) 决定。
+/// 与向量装配"和"启停"成为两个正交原语, 装配次序由上层 (`timer::clockevent`) 决定。
 pub fn program_timer(mode: TimerMode, vector: u8) {
     if !is_initialized() {
         return;
@@ -265,6 +267,7 @@ pub fn mask_timer() {
 ///
 /// 唯一消费者是 tick 源装配失败的诊断路径: 到 `program_timer` 之后 LVT 的实际
 /// 内容决定了"模式没被接受 / 仍被屏蔽 / 向量写错"三种静默失效中到底是哪一种。
+#[must_use]
 pub fn read_timer_lvt() -> u32 {
     if !is_initialized() {
         return 0;
@@ -280,6 +283,7 @@ pub fn set_timer_count(count: u32) {
 }
 
 /// 读取定时器当前剩余计数 (未初始化时返回 0)。
+#[must_use]
 pub fn get_timer_count() -> u32 {
     if !is_initialized() {
         return 0;
@@ -305,6 +309,7 @@ pub fn set_deadline(deadline: u64) {
 /// 把该风险收敛成一个可判定的分支。
 ///
 /// 探测全程保持定时器屏蔽且不带向量号, 不影响已装配的 tick。
+#[must_use]
 pub fn timer_deadline_supported() -> bool {
     if !is_initialized() {
         return false;
@@ -400,21 +405,25 @@ pub fn configure_lint1(mode: u32) {
 }
 
 /// 获取 Fixed 投递模式常量
+#[must_use]
 pub fn delivery_fixed() -> u32 {
     LVT_DELIVERY_FIXED
 }
 
 /// 获取 SMI 投递模式常量
+#[must_use]
 pub fn delivery_smi() -> u32 {
     LVT_DELIVERY_SMI
 }
 
 /// 获取 NMI 投递模式常量
+#[must_use]
 pub fn delivery_nmi() -> u32 {
     LVT_DELIVERY_NMI
 }
 
 /// 获取 `ExtINT` 投递模式常量
+#[must_use]
 pub fn delivery_extint() -> u32 {
     LVT_DELIVERY_EXTINT
 }
@@ -429,6 +438,7 @@ pub fn delivery_extint() -> u32 {
 /// 置 1 表示该向量的中断正在被 CPU 处理 (尚未 EOI).
 ///
 /// 返回 [u32; 8], 索引 i 对应 bit[i*32..(i+1)*32-1].
+#[must_use]
 pub fn apic_read_isr() -> [u32; 8] {
     let mut isr = [0u32; 8];
     for i in 0..8u32 {
@@ -443,6 +453,7 @@ pub fn apic_read_isr() -> [u32; 8] {
 /// 置 1 = 电平触发, 清 0 = 边沿触发.
 ///
 /// 返回 [u32; 8], 索引 i 对应 bit[i*32..(i+1)*32-1].
+#[must_use]
 pub fn apic_read_tmr() -> [u32; 8] {
     let mut tmr = [0u32; 8];
     for i in 0..8u32 {
@@ -457,6 +468,7 @@ pub fn apic_read_tmr() -> [u32; 8] {
 /// 置 1 表示该向量有中断请求等待 CPU 响应.
 ///
 /// 返回 [u32; 8], 索引 i 对应 bit[i*32..(i+1)*32-1].
+#[must_use]
 pub fn apic_read_irr() -> [u32; 8] {
     let mut irr = [0u32; 8];
     for i in 0..8u32 {
@@ -466,6 +478,7 @@ pub fn apic_read_irr() -> [u32; 8] {
 }
 
 /// 查询指定向量是否在 ISR 中 (正在处理)
+#[must_use]
 pub fn apic_is_in_isr(vector: u8) -> bool {
     let reg = vector / 32;
     let bit = vector % 32;
@@ -473,6 +486,7 @@ pub fn apic_is_in_isr(vector: u8) -> bool {
 }
 
 /// 查询指定向量是否在 IRR 中 (待处理)
+#[must_use]
 pub fn apic_is_in_irr(vector: u8) -> bool {
     let reg = vector / 32;
     let bit = vector % 32;
@@ -480,6 +494,7 @@ pub fn apic_is_in_irr(vector: u8) -> bool {
 }
 
 /// 查询指定向量的触发模式 (true = 电平触发, false = 边沿触发)
+#[must_use]
 pub fn apic_is_level_triggered(vector: u8) -> bool {
     let reg = vector / 32;
     let bit = vector % 32;
@@ -522,11 +537,13 @@ pub fn broadcast_ipi_level(vector: u8) {
 }
 
 /// 获取 `ICR_LEVEL` 常量
+#[must_use]
 pub fn icr_level() -> u64 {
     ICR_LEVEL
 }
 
 /// 获取 `ICR_BROADCAST` 常量
+#[must_use]
 pub fn icr_broadcast() -> u64 {
     ICR_BROADCAST
 }

@@ -31,6 +31,7 @@ pub struct ValueStack {
 
 impl ValueStack {
     /// 构造空值栈 (预留 256 个槽位容量)
+    #[must_use]
     pub fn new() -> Self {
         Self {
             data: Vec::with_capacity(256),
@@ -86,16 +87,19 @@ impl ValueStack {
     }
 
     /// 查看栈顶值 (不弹出)
+    #[must_use]
     pub fn peek(&self) -> Option<&Value> {
         self.data.last()
     }
 
     /// 当前栈深度
+    #[must_use]
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
     /// 栈是否为空
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
@@ -108,6 +112,13 @@ impl ValueStack {
     /// 清空值栈
     pub fn clear(&mut self) {
         self.data.clear();
+    }
+}
+
+impl Default for ValueStack {
+    /// 等价于 [`ValueStack::new`] (空值栈)
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -135,6 +146,7 @@ pub struct CallFrame {
 
 impl CallFrame {
     /// 读取 `pc` 处的一个字节 (越界时返回 `None`)
+    #[must_use]
     pub fn read_u8(&self) -> Option<u8> {
         if self.pc < self.code.len() {
             Some(self.code[self.pc])
@@ -158,6 +170,7 @@ pub struct LinearMemory {
 
 impl LinearMemory {
     /// 创建指定初始页数的线性内存 (内存分配失败会以 panic 形式暴露).
+    #[must_use]
     pub fn new(initial_pages: u32, max_pages: Option<u32>) -> Self {
         let size = initial_pages as usize * WASM_PAGE_SIZE as usize;
         Self {
@@ -177,10 +190,10 @@ impl LinearMemory {
         let Some(new_pages) = current_pages.checked_add(additional_pages) else {
             return u32::MAX;
         };
-        if let Some(max) = self.max_pages {
-            if new_pages > max {
-                return u32::MAX;
-            }
+        if let Some(max) = self.max_pages
+            && new_pages > max
+        {
+            return u32::MAX;
         }
         // B07-12: checked_mul 防字节数溢出导致 resize panic.
         let Some(new_size) = (new_pages as usize).checked_mul(WASM_PAGE_SIZE as usize) else {
@@ -191,6 +204,7 @@ impl LinearMemory {
     }
 
     /// 当前内存页数
+    #[must_use]
     pub fn pages(&self) -> u32 {
         crate::functions::intcast::low_u32_from_usize(self.data.len() / WASM_PAGE_SIZE as usize)
     }
@@ -339,19 +353,19 @@ impl LinearMemory {
 /// 解释器资源上限配置
 pub struct InterpreterConfig {
     /// 最大调用深度
-    pub max_call_depth: u32,
+    pub call_depth: u32,
     /// 最大 gas 消耗
-    pub max_gas: u64,
+    pub gas: u64,
     /// 最大内存页数
-    pub max_memory_pages: u32,
+    pub memory_pages: u32,
 }
 
 impl Default for InterpreterConfig {
     fn default() -> Self {
         Self {
-            max_call_depth: 256,
-            max_gas: 10_000_000,
-            max_memory_pages: 256,
+            call_depth: 256,
+            gas: 10_000_000,
+            memory_pages: 256,
         }
     }
 }

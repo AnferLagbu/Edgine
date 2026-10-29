@@ -64,6 +64,7 @@ pub struct UnkfsMetaslab {
 
 impl UnkfsMetaslab {
     /// 构造一个处于 [`UnkfsMsState::Active`] 状态的 metaslab, 位图全部标记为空闲.
+    #[must_use]
     pub fn new(id: u32, vdev_id: u16, start: u64, size: u64) -> Self {
         let nblocks = crate::functions::intcast::low_u32_from_u64(size / HV_MS_BLOCK_SIZE);
         let bitmap_len = (nblocks as usize).div_ceil(64);

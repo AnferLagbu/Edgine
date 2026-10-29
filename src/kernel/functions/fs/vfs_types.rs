@@ -43,11 +43,11 @@ pub use crate::privileged::error::KernelResult;
 /// syscall 返回值转换 — 把 `KernelResult` 折叠为 i32 错误码
 pub trait IntoI32 {
     /// 转换为 syscall 返回码 (`0` = 成功, 负值 = 错误)
-    fn as_i32(self) -> i32;
+    fn as_i32(&self) -> i32;
 }
 
 impl IntoI32 for Result<(), KernelError> {
-    fn as_i32(self) -> i32 {
+    fn as_i32(&self) -> i32 {
         match self {
             Ok(()) => 0,
             Err(e) => e.as_i32(),
@@ -81,7 +81,7 @@ bitflags::bitflags! {
         const TRUNC  = 0x0200;
         /// 写入追加到文件末尾
         const APPEND = 0x0400;
-        /// fd 级 close-on-exec 标志 (对应 O_CLOEXEC, 与 Linux 数值一致);
+        /// fd 级 close-on-exec 标志 (对应 `O_CLOEXEC`, 与 Linux 数值一致);
         /// 由 `vfs_open_internal` 消费后从文件状态标志中剥离.
         const CLOEXEC = 0x0008_0000;
     }
@@ -102,6 +102,7 @@ impl VfsSeekWhence {
     /// 从 u32 构造 `VfsSeekWhence`
     ///
     /// 返回 `None` 表示非法值 (0-2 为合法值)
+    #[must_use]
     pub fn from_u32(value: u32) -> Option<Self> {
         match value {
             0 => Some(Self::Set),
@@ -135,6 +136,7 @@ pub enum FsType {
 
 impl FsType {
     /// 由文件系统名称字符串解析类型 (未知名称映射为 `Unknown`)
+    #[must_use]
     pub fn from_name(name: &str) -> Self {
         match name {
             "ramfs" => Self::RamFs,
@@ -149,6 +151,7 @@ impl FsType {
     }
 
     /// 回写文件系统名称字符串
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::RamFs => "ramfs",
@@ -239,6 +242,7 @@ impl Default for VfsDirEntry {
 
 impl VfsDirEntry {
     /// 创建空白目录项 (节点/类型/名称均为 0)
+    #[must_use]
     pub fn new() -> Self {
         Self {
             node: 0,
@@ -256,6 +260,7 @@ impl VfsDirEntry {
     }
 
     /// 读取名称 (以首个 NUL 为界, 非法 UTF-8 返回空串)
+    #[must_use]
     pub fn get_name(&self) -> &str {
         let end = self
             .name
@@ -536,8 +541,8 @@ pub trait FileSystem: Send + Sync {
     }
     /// 格式化底层介质 (UNKFS 磁盘模式使用).
     ///
-    /// 封装原 privileged fsformat 路径对 UNKFS 内部字段 (drives_discovered/
-    /// disk_drive/partition_start) 的直接访问, 归位 functions 策略
+    /// 封装原 privileged fsformat 路径对 UNKFS 内部字段 (`drives_discovered`/
+    /// `disk_drive/partition_start`) 的直接访问, 归位 functions 策略
     /// (DECISION-K 项 6: 注入归零).
     ///
     /// # Errors
@@ -596,6 +601,7 @@ impl core::fmt::Debug for OpenFile {
             .field("inode_id", &self.inode.node_id())
             .field("offset", &self.offset)
             .field("flags", &self.flags)
+            .field("pwm", &self.pwm)
             .field("refcount", &self.refcount)
             .field("file_type", &self.file_type)
             .field("is_anonymous", &self.is_anonymous)

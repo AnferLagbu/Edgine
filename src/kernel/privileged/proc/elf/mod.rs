@@ -28,60 +28,67 @@ pub mod verify;
 use crate::privileged::mm::{MmStruct, Vma, VmaType};
 use crate::privileged::mm::{PAGE_SIZE, PageFlags, VirtAddr};
 
-/// ELF64 文件头 (Elf64_Ehdr) — 描述文件类型、目标机器、入口地址与各表偏移。
+/// ELF64 文件头 (`Elf64_Ehdr`) — 描述文件类型、目标机器、入口地址与各表偏移。
+///
+/// 字段名对应 C `Elf64_Ehdr` 的 `e_ident` / `e_type` / `e_machine` / `e_version` /
+/// `e_entry` / `e_phoff` / `e_shoff` / `e_flags` / `e_ehsize` / `e_phentsize` /
+/// `e_phnum` / `e_shentsize` / `e_shnum` / `e_shstrndx`（按序仅去前缀, 顺序与类型不变）。
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Elf64Header {
     /// ELF 魔数、文件类、字节序与版本标识 (16 字节).
-    pub e_ident: [u8; 16],
+    pub ident: [u8; 16],
     /// 文件类型 (`ET_EXEC` / `ET_DYN` 等).
-    pub e_type: u16,
+    pub ty: u16,
     /// 目标指令集架构 (`EM_X86_64` / `EM_AARCH64` 等).
-    pub e_machine: u16,
+    pub machine: u16,
     /// ELF 版本号.
-    pub e_version: u32,
+    pub version: u32,
     /// 程序入口虚拟地址.
-    pub e_entry: u64,
+    pub entry: u64,
     /// 程序头表在文件中的偏移.
-    pub e_phoff: u64,
+    pub phoff: u64,
     /// 节头表在文件中的偏移.
-    pub e_shoff: u64,
+    pub shoff: u64,
     /// 处理器相关的标志位.
-    pub e_flags: u32,
+    pub flags: u32,
     /// ELF 文件头自身的大小.
-    pub e_ehsize: u16,
+    pub ehsize: u16,
     /// 单个程序头条目的大小.
-    pub e_phentsize: u16,
+    pub phentsize: u16,
     /// 程序头表条目数量.
-    pub e_phnum: u16,
+    pub phnum: u16,
     /// 单个节头条目的大小.
-    pub e_shentsize: u16,
+    pub shentsize: u16,
     /// 节头表条目数量.
-    pub e_shnum: u16,
+    pub shnum: u16,
     /// 节头字符串表在节头表中的索引.
-    pub e_shstrndx: u16,
+    pub shstrndx: u16,
 }
 
-/// ELF64 程序头 (Elf64_Phdr) — 描述一个程序段 (PT_LOAD 等) 的偏移、地址、大小与权限。
+/// ELF64 程序头 (`Elf64_Phdr`) — 描述一个程序段 (`PT_LOAD` 等) 的偏移、地址、大小与权限。
+///
+/// 字段名对应 C `Elf64_Phdr` 的 `p_type` / `p_flags` / `p_offset` / `p_vaddr` /
+/// `p_paddr` / `p_filesz` / `p_memsz` / `p_align`（按序仅去前缀, 顺序与类型不变）。
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Elf64Phdr {
     /// 段类型 (`PT_LOAD` / `PT_INTERP` / `PT_GNU_STACK` 等).
-    pub p_type: u32,
+    pub ty: u32,
     /// 段权限位 (`PF_R` / `PF_W` / `PF_X`).
-    pub p_flags: u32,
+    pub flags: u32,
     /// 段内容在文件中的偏移.
-    pub p_offset: u64,
+    pub offset: u64,
     /// 段在内存中的虚拟地址.
-    pub p_vaddr: u64,
+    pub vaddr: u64,
     /// 段在内存中的物理地址 (通常与虚拟地址相同).
-    pub p_paddr: u64,
+    pub paddr: u64,
     /// 段在文件中的字节数.
-    pub p_filesz: u64,
+    pub filesz: u64,
     /// 段在内存中的字节数 (可大于文件字节数, 差额置零).
-    pub p_memsz: u64,
+    pub memsz: u64,
     /// 段的对齐要求.
-    pub p_align: u64,
+    pub align: u64,
 }
 
 const PT_LOAD: u32 = 1;
@@ -112,6 +119,7 @@ pub struct ElfLoadResult {
 
 impl ElfLoadResult {
     /// 构造全零的加载结果, 用于错误路径或占位.
+    #[must_use]
     pub const fn empty() -> Self {
         Self {
             entry: 0,
@@ -125,12 +133,16 @@ impl ElfLoadResult {
 
 // P1-I-33: 委托给 `verify::verify_elf` 单一来源
 /// 校验 ELF 数据有效性并返回指向其文件头的引用; 校验失败返回 `None`。
-pub fn elf_validate(elf_data: *const u8, elf_size: u64) -> Option<&'static Elf64Header> {
-    // SAFETY: 调用方保证 elf_data 有效, verify_elf 内部仅读借用
-    let _ = unsafe { verify::verify_elf(elf_data, elf_size) }.ok()?;
+#[must_use]
+pub fn elf_validate(elf_data: &[u8]) -> Option<&'static Elf64Header> {
+    let elf_size = elf_data.len() as u64;
+    // SAFETY: elf_data 是有效切片; verify_elf 仅只读访问其 [0, len) 范围.
+    let _ = unsafe { verify::verify_elf(elf_data.as_ptr(), elf_size) }.ok()?;
 
-    // SAFETY: 已通过 verify_elf 校验; 指针地址转换为分类指针不新增对齐要求
-    Some(unsafe { &*(elf_data as usize as *const Elf64Header) })
+    // SAFETY: 已通过 verify_elf 校验; 切片首地址按 ELF 文件头布局只读解析
+    // (经 `usize` 地址值中转, 避免裸指针直接提升对齐断言).
+    let addr = elf_data.as_ptr() as usize;
+    Some(unsafe { &*(addr as *const Elf64Header) })
 }
 
 /// 加载 ELF 文件到当前进程地址空间 (`ET_EXEC`, 固定地址加载, 等价于 `load_bias = 0`).
@@ -140,12 +152,8 @@ pub fn elf_validate(elf_data: *const u8, elf_size: u64) -> Option<&'static Elf64
 /// `Err("No program headers")`; 当段地址/大小溢出或物理页分配失败 (OOM) 时分别返回
 /// `Err("ELF: vaddr + memsz overflow")`, `Err("ELF: p_offset + p_filesz overflow")`,
 /// `Err("OOM loading ELF")`.
-pub fn elf_load(
-    mm: &MmStruct,
-    elf_data: *const u8,
-    elf_size: u64,
-) -> Result<ElfLoadResult, &'static str> {
-    elf_load_with_bias(mm, elf_data, elf_size, 0)
+pub fn elf_load(mm: &MmStruct, elf_data: &[u8]) -> Result<ElfLoadResult, &'static str> {
+    elf_load_with_bias(mm, elf_data, 0)
 }
 
 /// 加载 ELF 文件到指定地址空间, 支持可选加载偏移 (PIE/ASLR).
@@ -160,26 +168,29 @@ pub fn elf_load(
 /// 当物理页分配失败时返回 `Err("OOM loading ELF")`.
 pub fn elf_load_with_bias(
     mm: &MmStruct,
-    elf_data: *const u8,
-    elf_size: u64,
+    elf_data: &[u8],
     load_bias: u64,
 ) -> Result<ElfLoadResult, &'static str> {
-    let header = elf_validate(elf_data, elf_size).ok_or("Invalid ELF header")?;
+    let elf_size = elf_data.len() as u64;
+    let header = elf_validate(elf_data).ok_or("Invalid ELF header")?;
 
     // PIE (ET_DYN) 需要非零 load_bias; ET_EXEC 使用固定地址
-    let is_pie = header.e_type == ET_DYN;
+    let is_pie = header.ty == ET_DYN;
     let bias = if is_pie { load_bias } else { 0 };
 
-    let entry = header.e_entry + bias;
+    let entry = header.entry + bias;
 
-    if header.e_phoff == 0 || header.e_phnum == 0 {
+    if header.phoff == 0 || header.phnum == 0 {
         return Err("No program headers");
     }
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    let phdr_base =
-        unsafe { elf_data.add(crate::privileged::glue::usize_from_u64(header.e_phoff)) };
-    let phdr_count = header.e_phnum;
+    // SAFETY: elf_data 是有效切片, 偏移 phoff 已经 verify_elf 边界校验.
+    let phdr_base = unsafe {
+        elf_data
+            .as_ptr()
+            .add(crate::privileged::glue::usize_from_u64(header.phoff))
+    };
+    let phdr_count = header.phnum;
 
     let mut max_vaddr: u64 = 0;
     let mut result = ElfLoadResult {
@@ -199,30 +210,30 @@ pub fn elf_load_with_bias(
                 .read_unaligned()
         };
 
-        if phdr.p_filesz > phdr.p_memsz {
+        if phdr.filesz > phdr.memsz {
             continue;
         }
 
-        if phdr.p_type == PT_GNU_STACK {
-            if phdr.p_flags & PF_X != 0 {
+        if phdr.ty == PT_GNU_STACK {
+            if phdr.flags & PF_X != 0 {
                 crate::klog_warn!(
                     Process,
                     "ELF: PT_GNU_STACK requests executable stack (flags={:#x})",
-                    phdr.p_flags
+                    phdr.flags
                 );
             }
             continue;
         }
 
-        if phdr.p_type != PT_LOAD {
+        if phdr.ty != PT_LOAD {
             continue;
         }
 
-        if phdr.p_memsz == 0 {
+        if phdr.memsz == 0 {
             continue;
         }
 
-        let vaddr_end = elf_load_segment(mm, &phdr, bias, elf_data, elf_size)?;
+        let vaddr_end = elf_load_segment(mm, &phdr, bias, elf_data.as_ptr(), elf_size)?;
         if vaddr_end > max_vaddr {
             max_vaddr = vaddr_end;
         }
@@ -247,33 +258,33 @@ fn elf_load_segment(
     elf_data: *const u8,
     elf_size: u64,
 ) -> Result<u64, &'static str> {
-    let vaddr_start = (phdr.p_vaddr + bias) & !(PAGE_SIZE - 1);
+    let vaddr_start = (phdr.vaddr + bias) & !(PAGE_SIZE - 1);
     let vaddr_end_raw = phdr
-        .p_vaddr
-        .checked_add(phdr.p_memsz)
+        .vaddr
+        .checked_add(phdr.memsz)
         .ok_or("ELF: vaddr + memsz overflow")?
         + bias;
     let vaddr_end =
         crate::privileged::glue::usize_from_u64((vaddr_end_raw + PAGE_SIZE - 1) & !(PAGE_SIZE - 1));
-    let filesz = crate::privileged::glue::usize_from_u64(phdr.p_filesz);
-    let file_offset = crate::privileged::glue::usize_from_u64(phdr.p_offset);
+    let filesz = crate::privileged::glue::usize_from_u64(phdr.filesz);
+    let file_offset = crate::privileged::glue::usize_from_u64(phdr.offset);
 
     let file_data_end = phdr
-        .p_offset
-        .checked_add(phdr.p_filesz)
+        .offset
+        .checked_add(phdr.filesz)
         .ok_or("ELF: p_offset + p_filesz overflow")?;
     if file_data_end > elf_size {
         return Ok(0);
     }
 
     let mut page_flags = PageFlags::USER;
-    if phdr.p_flags & PF_R != 0 {
+    if phdr.flags & PF_R != 0 {
         page_flags |= PageFlags::PRESENT;
     }
-    if phdr.p_flags & PF_W != 0 {
+    if phdr.flags & PF_W != 0 {
         page_flags |= PageFlags::WRITABLE;
     }
-    if phdr.p_flags & PF_X == 0 {
+    if phdr.flags & PF_X == 0 {
         page_flags |= PageFlags::NX;
     }
 
@@ -354,20 +365,25 @@ const LINUX_INTERP_PREFIXES: &[&[u8]] = &[
 /// 扫描 ELF program headers, 检测 `PT_INTERP` 是否为 Linux 动态链接器.
 ///
 /// 返回 true 表示需要改写 `PT_INTERP` (Linux 二进制).
-pub fn needs_interp_rewrite(elf_data: *const u8, elf_size: u64) -> bool {
-    let Some(header) = elf_validate(elf_data, elf_size) else {
+#[must_use]
+pub fn needs_interp_rewrite(elf_data: &[u8]) -> bool {
+    let elf_size = elf_data.len() as u64;
+    let Some(header) = elf_validate(elf_data) else {
         return false;
     };
 
-    if header.e_phoff == 0 || header.e_phnum == 0 {
+    if header.phoff == 0 || header.phnum == 0 {
         return false;
     }
 
-    // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
-    let phdr_base =
-        unsafe { elf_data.add(crate::privileged::glue::usize_from_u64(header.e_phoff)) };
+    // SAFETY: elf_data 是有效切片, 偏移 phoff 已经 verify_elf 边界校验
+    let phdr_base = unsafe {
+        elf_data
+            .as_ptr()
+            .add(crate::privileged::glue::usize_from_u64(header.phoff))
+    };
 
-    for i in 0..header.e_phnum {
+    for i in 0..header.phnum {
         // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
         let phdr = unsafe {
             phdr_base
@@ -376,19 +392,20 @@ pub fn needs_interp_rewrite(elf_data: *const u8, elf_size: u64) -> bool {
                 .read_unaligned()
         };
 
-        if phdr.p_type != PT_INTERP || phdr.p_filesz == 0 {
+        if phdr.ty != PT_INTERP || phdr.filesz == 0 {
             continue;
         }
 
         // 读取 interp 路径字符串
-        let interp_offset = crate::privileged::glue::usize_from_u64(phdr.p_offset);
-        let interp_len = crate::privileged::glue::usize_from_u64(phdr.p_filesz);
+        let interp_offset = crate::privileged::glue::usize_from_u64(phdr.offset);
+        let interp_len = crate::privileged::glue::usize_from_u64(phdr.filesz);
         if interp_offset + interp_len > crate::privileged::glue::usize_from_u64(elf_size) {
             continue;
         }
-        // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
-        let interp_path =
-            unsafe { core::slice::from_raw_parts(elf_data.add(interp_offset), interp_len) };
+        // SAFETY: 指针操作在有效范围内 (interp_offset + interp_len 已按 elf_size 校验)
+        let interp_path = unsafe {
+            core::slice::from_raw_parts(elf_data.as_ptr().add(interp_offset), interp_len)
+        };
 
         // 检查是否为 Linux 动态链接器
         for prefix in LINUX_INTERP_PREFIXES {
@@ -407,28 +424,31 @@ pub fn needs_interp_rewrite(elf_data: *const u8, elf_size: u64) -> bool {
 /// `elf_data` 必须指向可写的有效 ELF 数据 (内核拷贝缓冲区).
 pub unsafe fn rewrite_interp_path(elf_data: *mut u8, elf_size: u64) {
     unsafe {
-        let Some(header) = elf_validate(elf_data.cast_const(), elf_size) else {
+        let Some(header) = elf_validate(core::slice::from_raw_parts(
+            elf_data.cast_const(),
+            crate::privileged::glue::usize_from_u64(elf_size),
+        )) else {
             return;
         };
 
-        if header.e_phoff == 0 || header.e_phnum == 0 {
+        if header.phoff == 0 || header.phnum == 0 {
             return;
         }
 
-        let phdr_base = elf_data.add(crate::privileged::glue::usize_from_u64(header.e_phoff));
+        let phdr_base = elf_data.add(crate::privileged::glue::usize_from_u64(header.phoff));
 
-        for i in 0..header.e_phnum {
+        for i in 0..header.phnum {
             let phdr = phdr_base
                 .add(i as usize * core::mem::size_of::<Elf64Phdr>())
                 .cast::<Elf64Phdr>()
                 .read_unaligned();
 
-            if phdr.p_type != PT_INTERP || phdr.p_filesz == 0 {
+            if phdr.ty != PT_INTERP || phdr.filesz == 0 {
                 continue;
             }
 
-            let interp_offset = crate::privileged::glue::usize_from_u64(phdr.p_offset);
-            let interp_len = crate::privileged::glue::usize_from_u64(phdr.p_filesz);
+            let interp_offset = crate::privileged::glue::usize_from_u64(phdr.offset);
+            let interp_len = crate::privileged::glue::usize_from_u64(phdr.filesz);
             if interp_offset + interp_len > crate::privileged::glue::usize_from_u64(elf_size) {
                 continue;
             }
@@ -456,7 +476,7 @@ pub unsafe fn rewrite_interp_path(elf_data: *mut u8, elf_size: u64) {
 /// functions 层通过本 safe 入口完成 `PT_INTERP` 改写, 无需接触裸指针.
 pub fn prepare_elf_image(elf: &mut [u8]) -> bool {
     let size = elf.len() as u64;
-    if !needs_interp_rewrite(elf.as_ptr(), size) {
+    if !needs_interp_rewrite(elf) {
         return false;
     }
     // SAFETY: elf 是可写的有效切片, size 为其真实字节长度;
@@ -475,7 +495,7 @@ mod tests {
     fn test_elf_magic_validation() {
         let mut data = [0u8; 64];
         // Invalid magic
-        assert!(elf_validate(data.as_ptr(), 64).is_none());
+        assert!(elf_validate(&data).is_none());
 
         // Valid magic
         data[0] = 0x7F;
@@ -483,14 +503,14 @@ mod tests {
         data[2] = b'L';
         data[3] = b'F';
         data[4] = 2; // ELFCLASS64
-        assert!(elf_validate(data.as_ptr(), 64).is_none()); // machine=0 not valid
+        assert!(elf_validate(&data).is_none()); // machine=0 not valid
 
         // Set valid machine
         // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
         let hdr = unsafe { &mut *(data.as_mut_ptr() as *mut Elf64Header) };
-        hdr.e_machine = 0x3E; // x86_64
-        hdr.e_phentsize = core::mem::size_of::<Elf64Phdr>() as u16;
-        assert!(elf_validate(data.as_ptr(), 64).is_some());
+        hdr.machine = 0x3E; // x86_64
+        hdr.phentsize = core::mem::size_of::<Elf64Phdr>() as u16;
+        assert!(elf_validate(&data).is_some());
     }
 
     #[test]

@@ -46,14 +46,14 @@ pub extern "C" fn vfs_unlink_internal(path: *const u8, pwm: u64) -> i32 {
     });
 
     // 文件删除成功后, 释放该 inode 上的 POSIX 锁 + inotify 通知
-    if result == 0 {
-        if let Some(ino) = ino_before {
-            crate::functions::fs::flock::posix_lock_release_inode(ino);
-            let (parent_path, name) = split_parent_name(rel_path);
-            let parent_ino = fs_opt.map_or(0, |fs| fs.fs_resolve_path(parent_path).unwrap_or(0));
-            super::inotify::inotify_notify(parent_ino, super::inotify::IN_DELETE, name, false);
-            super::inotify::inotify_notify(ino, super::inotify::IN_DELETE_SELF, "", false);
-        }
+    if result == 0
+        && let Some(ino) = ino_before
+    {
+        crate::functions::fs::flock::posix_lock_release_inode(ino);
+        let (parent_path, name) = split_parent_name(rel_path);
+        let parent_ino = fs_opt.map_or(0, |fs| fs.fs_resolve_path(parent_path).unwrap_or(0));
+        super::inotify::inotify_notify(parent_ino, super::inotify::IN_DELETE, name, false);
+        super::inotify::inotify_notify(ino, super::inotify::IN_DELETE_SELF, "", false);
     }
 
     result
@@ -137,7 +137,8 @@ pub extern "C" fn vfs_stat_internal(path: *const u8, st: *mut VfsStat, pwm: u64)
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
     // E6-4: trait object 分发
-    let result = fs_opt.map_or(-1, |fs| {
+
+    fs_opt.map_or(-1, |fs| {
         fs.fs_stat(rel_path, pwm).map_or(-1, |stat| {
             // sgeg 身份映射: 先算最终 stat 再经 privileged 安全代理写入 (I4)
             let mut stat = stat;
@@ -153,9 +154,7 @@ pub extern "C" fn vfs_stat_internal(path: *const u8, st: *mut VfsStat, pwm: u64)
                 -1
             }
         })
-    });
-
-    result
+    })
 }
 
 /// 设置当前工作目录 (chroot 视图路径).
@@ -199,31 +198,37 @@ pub extern "C" fn vfs_get_cwd_internal(buf: *mut u8, size: u32) -> i32 {
 // ============================================================================
 
 /// Safe 包装: `vfs_mkdir` (接受 &str 路径)
+#[must_use]
 pub fn vfs_mkdir_safe(path: &str, pwm: u64) -> i32 {
     with_cstr(path, |ptr| vfs_mkdir_internal(ptr, pwm))
 }
 
 /// Safe 包装: `vfs_unlink` (接受 &str 路径)
+#[must_use]
 pub fn vfs_unlink_safe(path: &str, pwm: u64) -> i32 {
     with_cstr(path, |ptr| vfs_unlink_internal(ptr, pwm))
 }
 
 /// Safe 包装: `vfs_rmdir` (接受 &str 路径)
+#[must_use]
 pub fn vfs_rmdir_safe(path: &str, pwm: u64) -> i32 {
     with_cstr(path, |ptr| vfs_rmdir_internal(ptr, pwm))
 }
 
 /// Safe 包装: `vfs_symlink` (接受 &str 路径)
+#[must_use]
 pub fn vfs_symlink_safe(target: &str, linkpath: &str, pwm: u64) -> i32 {
     with_cstr(target, |t| with_cstr(linkpath, |l| vfs_symlink(t, l, pwm)))
 }
 
 /// Safe 包装: `vfs_link` (接受 &str 路径)
+#[must_use]
 pub fn vfs_link_safe(oldpath: &str, newpath: &str, pwm: u64) -> i32 {
     with_cstr(oldpath, |o| with_cstr(newpath, |n| vfs_link(o, n, pwm)))
 }
 
 /// Safe 包装: `vfs_rename` (接受 &str 路径)
+#[must_use]
 pub fn vfs_rename_safe(old: &str, new: &str, pwm: u64) -> i32 {
     with_cstr(old, |o| with_cstr(new, |n| vfs_rename(o, n, pwm)))
 }
@@ -236,6 +241,7 @@ pub fn vfs_readlink_safe(path: &str, buf: &mut [u8], pwm: u64) -> i32 {
 }
 
 /// Safe 包装: `vfs_utimensat` (接受 &str 路径)
+#[must_use]
 pub fn vfs_utimensat_safe(path: &str, atime: u64, mtime: u64, pwm: u64) -> i32 {
     with_cstr(path, |ptr| vfs_utimensat(ptr, atime, mtime, pwm))
 }
@@ -249,6 +255,7 @@ pub extern "C" fn vfs_stat(path: *const u8, st: *mut VfsStat, pwm: u64) -> i32 {
 ///
 /// 内部复用 `vfs_stat_internal`, 在 stack 上接收结果, 然后转为 Option 返回.
 /// 服务层拿到 `Option<VfsStat>` 后可安全地用 `write_struct_to_user` 写回 user.
+#[must_use]
 pub fn vfs_stat_safe(path: *const u8, pwm: u64) -> Option<VfsStat> {
     if path.is_null() {
         return None;
@@ -259,6 +266,7 @@ pub fn vfs_stat_safe(path: *const u8, pwm: u64) -> Option<VfsStat> {
 }
 
 /// `mkdir(2)` 入口 — 转 [`vfs_mkdir_internal`].
+#[must_use]
 pub extern "C" fn vfs_mkdir(path: *const u8, pwm: u64) -> i32 {
     vfs_mkdir_internal(path, pwm)
 }
@@ -285,6 +293,7 @@ pub extern "C" fn vfs_chmod(path: *const u8, mode: u16, pwm: u64) -> i32 {
 }
 
 /// `chown(2)` — 按路径修改文件所有者 (不修改所属组).
+#[must_use]
 pub extern "C" fn vfs_chown(path: *const u8, owner_pwm: u64, pwm: u64) -> i32 {
     vfs_chown_ext(path, owner_pwm, 0, pwm)
 }
@@ -338,6 +347,7 @@ pub extern "C" fn vfs_utimensat(path: *const u8, atime: u64, mtime: u64, pwm: u6
 }
 
 /// `unlink(2)` 入口 — 转 [`vfs_unlink_internal`].
+#[must_use]
 pub extern "C" fn vfs_unlink(path: *const u8, pwm: u64) -> i32 {
     vfs_unlink_internal(path, pwm)
 }
@@ -465,6 +475,7 @@ pub extern "C" fn vfs_rename(old: *const u8, new: *const u8, pwm: u64) -> i32 {
 }
 
 /// `rmdir(2)` 入口 — 转 [`vfs_rmdir_internal`].
+#[must_use]
 pub extern "C" fn vfs_rmdir(path: *const u8, pwm: u64) -> i32 {
     vfs_rmdir_internal(path, pwm)
 }
@@ -620,6 +631,7 @@ pub extern "C" fn vfs_removexattr_internal(path: *const u8, name: *const u8, pwm
 ///
 /// # Safety
 /// 调用方必须保证 `ptr` 指向有效的以 null 结尾的 UTF-8 字符串。
+#[must_use]
 pub fn snapshot_get_name(ptr: u64) -> alloc::string::String {
     if ptr == 0 {
         return alloc::string::String::new();

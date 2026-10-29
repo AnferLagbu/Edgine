@@ -18,7 +18,7 @@ pub struct UnkfsDva {
     /// 非零表示该 DVA 属于 gang 块.
     pub gang: u8,
     /// 对齐填充, 保持 16 字节布局.
-    pub _pad: [u8; 1],
+    pub pad: [u8; 1],
 }
 
 impl UnkfsDva {
@@ -26,29 +26,32 @@ impl UnkfsDva {
     pub const BYTES: usize = core::mem::size_of::<Self>();
 
     /// 构造全零的空 DVA.
+    #[must_use]
     pub const fn null() -> Self {
         Self {
             offset: 0,
             asize: 0,
             vdev_id: 0,
             gang: 0,
-            _pad: [0; 1],
+            pad: [0; 1],
         }
     }
 
     /// vdev 编号、偏移与长度均为 0 时视为空 DVA.
+    #[must_use]
     pub fn is_null(self) -> bool {
         self.vdev_id == 0 && self.offset == 0 && self.asize == 0
     }
 
     /// 以 vdev 编号、字节偏移与分配长度构造 DVA.
+    #[must_use]
     pub fn new(vdev_id: u16, offset: u64, asize: u32) -> Self {
         Self {
             vdev_id,
             offset,
             asize,
             gang: 0,
-            _pad: [0; 1],
+            pad: [0; 1],
         }
     }
 
@@ -60,11 +63,13 @@ impl UnkfsDva {
     }
 
     /// 是否为 gang 块成员.
+    #[must_use]
     pub fn is_gang(self) -> bool {
         self.gang != 0
     }
 
     /// E6-6: safe 反序列化
+    #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         if bytes.len() < Self::BYTES {
             return None;
@@ -74,7 +79,7 @@ impl UnkfsDva {
             asize: u32::from_le_bytes(bytes[8..12].try_into().ok()?),
             vdev_id: u16::from_le_bytes(bytes[12..14].try_into().ok()?),
             gang: bytes[14],
-            _pad: [bytes[15]],
+            pad: [bytes[15]],
         })
     }
 }
@@ -99,6 +104,7 @@ pub enum UnkfsCompType {
 
 impl UnkfsCompType {
     /// 由原始类型值解析压缩算法; 未知值按不压缩处理.
+    #[must_use]
     pub fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::LZ4,
@@ -129,6 +135,7 @@ pub enum UnkfsCksumType {
 
 impl UnkfsCksumType {
     /// 由原始类型值解析校验算法; 未知值按不校验处理.
+    #[must_use]
     pub fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::Fletcher2,
@@ -159,7 +166,7 @@ pub struct UnkfsBpProp {
     /// 非零表示块采用反字节序.
     pub byteorder: u8,
     /// 对齐填充, 保持 16 字节布局.
-    pub _pad: [u8; 3],
+    pub pad: [u8; 3],
 }
 
 impl UnkfsBpProp {
@@ -167,6 +174,7 @@ impl UnkfsBpProp {
     pub const BYTES: usize = core::mem::size_of::<Self>();
 
     /// 构造默认属性: 不压缩、Fletcher4 校验、未加密.
+    #[must_use]
     pub const fn default() -> Self {
         Self {
             logical_size: 0,
@@ -176,16 +184,18 @@ impl UnkfsBpProp {
             cksum_type: UnkfsCksumType::Fletcher4 as u8,
             encrypted: 0,
             byteorder: 0,
-            _pad: [0; 3],
+            pad: [0; 3],
         }
     }
 
     /// 把压缩算法编码解析为枚举.
+    #[must_use]
     pub fn comp_type(self) -> UnkfsCompType {
         UnkfsCompType::from_u8(self.comp_type)
     }
 
     /// 把校验算法编码解析为枚举.
+    #[must_use]
     pub fn cksum_type(self) -> UnkfsCksumType {
         UnkfsCksumType::from_u8(self.cksum_type)
     }
@@ -201,6 +211,7 @@ impl UnkfsBpProp {
     }
 
     /// 块是否已加密.
+    #[must_use]
     pub fn is_encrypted(self) -> bool {
         self.encrypted != 0
     }
@@ -211,6 +222,7 @@ impl UnkfsBpProp {
     }
 
     /// E6-6: safe 反序列化
+    #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         if bytes.len() < Self::BYTES {
             return None;
@@ -223,7 +235,7 @@ impl UnkfsBpProp {
             cksum_type: bytes[10],
             encrypted: bytes[11],
             byteorder: bytes[12],
-            _pad: [bytes[13], bytes[14], bytes[15]],
+            pad: [bytes[13], bytes[14], bytes[15]],
         })
     }
 }
@@ -243,11 +255,12 @@ pub struct UnkfsBlockPointer {
     /// 块填充计数, 供校验与调试使用.
     pub fill: u64,
     /// 对齐填充, 保持固定布局.
-    pub _pad: [u64; 2],
+    pub pad: [u64; 2],
 }
 
 impl UnkfsBlockPointer {
     /// 构造全零的空块指针.
+    #[must_use]
     pub const fn null() -> Self {
         Self {
             dva: [UnkfsDva::null(); HV_DVA_MAX],
@@ -255,31 +268,36 @@ impl UnkfsBlockPointer {
             checksum: [0; 4],
             birth_txg: 0,
             fill: 0,
-            _pad: [0; 2],
+            pad: [0; 2],
         }
     }
 
     /// 两份 DVA 均为空时视为空指针.
+    #[must_use]
     pub fn is_null(&self) -> bool {
         self.dva[0].is_null() && self.dva[1].is_null()
     }
 
     /// 无 DVA 且无出生事务组时表示稀疏空洞.
+    #[must_use]
     pub fn is_hole(&self) -> bool {
         self.dva[0].is_null() && self.dva[1].is_null() && self.birth_txg == 0
     }
 
     /// 返回逻辑数据字节数.
+    #[must_use]
     pub fn logical_size(&self) -> u32 {
         self.prop.logical_size
     }
 
     /// 返回落盘后的物理字节数.
+    #[must_use]
     pub fn physical_size(&self) -> u32 {
         self.prop.physical_size
     }
 
     /// 取指定槽位的非空 DVA; 槽位越界或为空时返回 `None`.
+    #[must_use]
     pub fn get_dva(&self, idx: usize) -> Option<&UnkfsDva> {
         if idx < HV_DVA_MAX && !self.dva[idx].is_null() {
             Some(&self.dva[idx])
@@ -301,11 +319,13 @@ impl UnkfsBlockPointer {
     }
 
     /// 层级为 0 且非空洞时表示数据块.
+    #[must_use]
     pub fn is_data(&self) -> bool {
         self.prop.level == 0 && !self.is_hole()
     }
 
     /// 层级大于 0 且非空洞时表示元数据块.
+    #[must_use]
     pub fn is_metadata(&self) -> bool {
         self.prop.level > 0 && !self.is_hole()
     }
@@ -314,11 +334,13 @@ impl UnkfsBlockPointer {
     pub const BYTES: usize = core::mem::size_of::<Self>();
 
     /// 以字节切片视图暴露块指针的序列化内容.
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         zerocopy::IntoBytes::as_bytes(self)
     }
 
     /// E6-6: safe 反序列化, 手动构建替代 unsafe `copy_nonoverlapping`
+    #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         if bytes.len() < Self::BYTES {
             return None;
@@ -326,13 +348,13 @@ impl UnkfsBlockPointer {
         // 安全方式: 逐字段读取, 避免任何 unsafe
         let mut bp = Self::null();
         let mut off = 0usize;
-        for i in 0..HV_DVA_MAX {
-            bp.dva[i] = UnkfsDva::from_bytes(&bytes[off..off + UnkfsDva::BYTES])?;
+        for slot in &mut bp.dva {
+            *slot = UnkfsDva::from_bytes(&bytes[off..off + UnkfsDva::BYTES])?;
             off += UnkfsDva::BYTES;
         }
         bp.prop = UnkfsBpProp::from_bytes(&bytes[off..off + UnkfsBpProp::BYTES])?;
         off += UnkfsBpProp::BYTES;
-        // checksum, birth_txg, fill, _pad 直接从字节切片读取
+        // checksum, birth_txg, fill, pad 直接从字节切片读取
         for i in 0..4 {
             bp.checksum[i] =
                 u64::from_le_bytes(bytes[off + i * 8..off + i * 8 + 8].try_into().ok()?);

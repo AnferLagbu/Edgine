@@ -65,7 +65,8 @@ const STATIC_HOSTS: &[HostEntry] = &[
 ///   `dns_query_net` 契约); 未初始化/无 server/失败均返 `None`
 ///
 /// # 局限 (S2 SIMPLIFIED 口径)
-/// - 查询仅 IPv4 (Type::A), 不支持 AAAA / search domain / 缓存
+/// - 查询仅 IPv4 (`Type::A`), 不支持 AAAA / search domain / 缓存
+#[must_use]
 pub fn dns_resolve(name: &str) -> Option<[u8; 4]> {
     for entry in STATIC_HOSTS {
         if entry.name.eq_ignore_ascii_case(name) {
@@ -125,7 +126,7 @@ pub(crate) fn apply_dns_servers(
 ///
 /// SIMPLIFIED: 同步阻塞语义, 无异步/缓存/AAAA; 影响面: 单次查询串行且最坏
 /// 占用有界自旋窗口; 何时扩展: 用户态真实消费者 (getaddrinfo 类 syscall) 出现
-/// 时改 waker→wait_queue 阻塞 (复用 P5 形状).
+/// 时改 `waker→wait_queue` 阻塞 (复用 P5 形状).
 fn dns_query_net(name: &str) -> Option<[u8; 4]> {
     if !crate::privileged::net::NET_READY.load(Ordering::Acquire) {
         return None;
@@ -160,9 +161,7 @@ fn dns_query_net(name: &str) -> Option<[u8; 4]> {
             core::hint::spin_loop();
         }
         let _guard = NET_STATE.lock();
-        let Some(handle) = raw::dns_handle() else {
-            return None;
-        };
+        let handle = raw::dns_handle()?;
         // SAFETY: 持 NET_STATE 锁; SOCKET_SET 已初始化 (NET_READY=true 契约).
         let sockets = unsafe { &mut *raw::socket_set() };
         let socket = sockets.get_mut::<smoltcp_dns::Socket>(handle);
@@ -197,6 +196,7 @@ fn dns_query_net(name: &str) -> Option<[u8; 4]> {
 }
 
 /// 解析 IPv4 字面量 "a.b.c.d" (无错处理; 不合法返 None)
+#[must_use]
 pub fn parse_ipv4_literal(s: &str) -> Option<[u8; 4]> {
     let mut octets = [0u8; 4];
     let mut idx = 0usize;
@@ -234,6 +234,7 @@ pub fn parse_ipv4_literal(s: &str) -> Option<[u8; 4]> {
 /// - `"a.b.c.d"` → prefix 默认 24
 /// - `"a.b.c.d/16"` → prefix = 16
 /// - 前缀非 0-32 数字 / IP 不合法 → `None`
+#[must_use]
 pub fn parse_cidr(s: &str) -> Option<([u8; 4], u8)> {
     let (ip_part, prefix_part) = match s.split_once('/') {
         Some((ip, pfx)) => (ip, Some(pfx)),

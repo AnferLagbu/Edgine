@@ -25,6 +25,7 @@ unsafe extern "C" {
 // x86_64: 从 isr.asm .bss 中的 USER_CR3_SAVE 读取, 汇编在 KPTI 切换前写入.
 // aarch64: 回退到硬件 CR3 (aarch64 KPTI 实现不同).
 /// 读取中断入口保存的用户态 CR3 (x86_64); aarch64 回退到当前页表.
+#[must_use]
 pub fn read_user_cr3_asm() -> u64 {
     // 符号桩化 (host-test): host 无 isr.asm 的 USER_CR3_SAVE 符号且不执行中断
     // 上下文读取, 常量中性返回 0 (与 E-04 cpu_id 桩同模式).
@@ -142,7 +143,7 @@ pub use api::{
 };
 
 // vma 公共类型 re-export — 避免跨子系统直接访问 mm::vma 内部
-pub use vma::{MmStruct, Vma, VmaType};
+pub use vma::{FileBackedVma, MmStruct, Vma, VmaType};
 
 // swap 公共接口 re-export — 避免跨子系统直接访问 mm::swap 内部
 pub use swap::{kswapd_wakeup, set_page_locked};
@@ -365,36 +366,42 @@ pub(crate) fn release_frame(phys: PhysAddr) {
 
 /// 页表索引辅助宏
 #[inline]
+#[must_use]
 pub const fn pml4_index(addr: u64) -> usize {
     ((addr >> 39) & 0x1FF) as usize
 }
 
 #[inline]
 /// 提取地址的 PDPT (页目录指针表) 索引 (`bits[38:30]`).
+#[must_use]
 pub const fn pdpt_index(addr: u64) -> usize {
     ((addr >> 30) & 0x1FF) as usize
 }
 
 #[inline]
 /// 提取地址的 PD (页目录) 索引 (`bits[29:21]`).
+#[must_use]
 pub const fn pd_index(addr: u64) -> usize {
     ((addr >> 21) & 0x1FF) as usize
 }
 
 #[inline]
 /// 提取地址的 PT (页表) 索引 (`bits[20:12]`).
+#[must_use]
 pub const fn pt_index(addr: u64) -> usize {
     ((addr >> 12) & 0x1FF) as usize
 }
 
 /// 物理地址转虚拟地址 (内核空间)
 #[inline]
+#[must_use]
 pub const fn phys_to_virt(phys: u64) -> u64 {
     phys + KERNEL_BASE
 }
 
 /// 虚拟地址转物理地址 (内核空间)
 #[inline]
+#[must_use]
 pub const fn virt_to_phys(virt: u64) -> u64 {
     virt - KERNEL_BASE
 }
@@ -413,6 +420,7 @@ pub enum PageSize {
 
 impl PageSize {
     /// 返回当前页大小 (字节)
+    #[must_use]
     pub fn size(self) -> u64 {
         match self {
             Self::Size4K => PAGE_SIZE,
@@ -422,6 +430,7 @@ impl PageSize {
     }
 
     /// 返回当前页大小对应的位移量 (log2 字节数)
+    #[must_use]
     pub fn shift(self) -> u64 {
         match self {
             Self::Size4K => PAGE_SHIFT,
@@ -431,6 +440,7 @@ impl PageSize {
     }
 
     /// 检查地址是否按当前页大小正确对齐
+    #[must_use]
     pub fn is_aligned(self, addr: u64) -> bool {
         let mask = self.size() - 1;
         (addr & mask) == 0
@@ -440,6 +450,7 @@ impl PageSize {
 /// 内存信息结构 (与 C 结构体一致)
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
+#[derive(Default)]
 pub struct MemoryInfo {
     /// 物理页总数
     pub total_pages: u64,
@@ -451,19 +462,9 @@ pub struct MemoryInfo {
     pub kernel_end: u64,
 }
 
-impl Default for MemoryInfo {
-    fn default() -> Self {
-        Self {
-            total_pages: 0,
-            free_pages: 0,
-            used_pages: 0,
-            kernel_end: 0,
-        }
-    }
-}
-
 impl MemoryInfo {
     /// 全零构造 (const, 供静态初始化)
+    #[must_use]
     pub const fn const_default() -> Self {
         Self {
             total_pages: 0,
@@ -480,11 +481,13 @@ pub struct PhysAddr(pub u64);
 
 impl PhysAddr {
     /// 由裸物理地址构造
+    #[must_use]
     pub fn new(addr: u64) -> Self {
         Self(addr)
     }
 
     /// 返回裸地址值
+    #[must_use]
     pub fn as_u64(self) -> u64 {
         self.0
     }
@@ -504,6 +507,7 @@ impl PhysAddr {
     }
 
     /// 转为内核空间虚拟地址
+    #[must_use]
     pub fn to_virt(self) -> VirtAddr {
         VirtAddr(phys_to_virt(self.0))
     }
@@ -515,11 +519,13 @@ pub struct VirtAddr(pub u64);
 
 impl VirtAddr {
     /// 由裸虚拟地址构造
+    #[must_use]
     pub fn new(addr: u64) -> Self {
         Self(addr)
     }
 
     /// 返回裸地址值
+    #[must_use]
     pub fn as_u64(self) -> u64 {
         self.0
     }
@@ -539,26 +545,31 @@ impl VirtAddr {
     }
 
     /// 转为物理地址 (假定为内核空间)
+    #[must_use]
     pub fn to_phys(self) -> PhysAddr {
         PhysAddr(virt_to_phys(self.0))
     }
 
     /// 获取该地址的 PML4 索引
+    #[must_use]
     pub fn pml4_idx(self) -> usize {
         pml4_index(self.0)
     }
 
     /// 获取该地址的 PDPT 索引
+    #[must_use]
     pub fn pdpt_idx(self) -> usize {
         pdpt_index(self.0)
     }
 
     /// 获取该地址的 PD 索引
+    #[must_use]
     pub fn pd_idx(self) -> usize {
         pd_index(self.0)
     }
 
     /// 获取该地址的 PT 索引
+    #[must_use]
     pub fn pt_idx(self) -> usize {
         pt_index(self.0)
     }
@@ -595,6 +606,7 @@ pub struct PageTableEntry {
 
 impl PageTableEntry {
     /// 构造全零页表项
+    #[must_use]
     pub fn new() -> Self {
         Self {
             bits: AtomicU64::new(0),
@@ -602,6 +614,7 @@ impl PageTableEntry {
     }
 
     /// 从裸值创建
+    #[must_use]
     pub fn from_value(value: u64) -> Self {
         Self {
             bits: AtomicU64::new(value),
@@ -710,6 +723,7 @@ impl Default for PageTableEntry {
 ///
 /// G1 阶段暂不配置 Write-Combining 缓存模式 (通过 PAT)，
 /// 这不会阻止像素正常显示；WC 优化将在 G3 阶段添加。
+#[must_use]
 pub fn map_framebuffer(phys_addr: u64, size: u64) -> *mut u8 {
     use crate::privileged::mm::get_vmm;
 

@@ -12,3 +12,11 @@
 // B09-12/DECISION-H13 P0-2: KernelError 定义已迁回 privileged (privileged::error),
 // 本处 re-export 保持调用方兼容 (functions→privileged 单向依赖).
 pub use crate::privileged::error::KernelError;
+
+/// 策略/Hook 重复注册错误
+///
+/// functions 层各 `register_*` 注册函数 (pmm/slab/swap/pressure/ipc/config/
+/// coredump/signal/syscall) 的唯一失败原因: 对应的 privileged 槽位已被占用.
+/// 取代此前的 `Result<(), ()>` 裸单元错误, 使调用方可按类型区分失败来源.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlreadyRegistered;

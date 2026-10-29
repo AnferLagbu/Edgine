@@ -53,6 +53,7 @@ pub struct CasIndex {
 
 impl CasIndex {
     /// 创建空索引 (所有映射与计数器归零).
+    #[must_use]
     pub fn new() -> Self {
         Self {
             hash_to_dva: Mutex::new(BTreeMap::new()),
@@ -66,11 +67,11 @@ impl CasIndex {
     /// 按内容哈希查找已有块指针, 命中/未命中分别累加对应计数.
     pub fn lookup(&self, hash: &CasHash) -> Option<UnkfsBlockPointer> {
         let index = self.hash_to_dva.lock();
-        if let Some(dvas) = index.get(hash) {
-            if let Some(bp) = dvas.first() {
-                self.hits.fetch_add(1, Ordering::Relaxed);
-                return Some(*bp);
-            }
+        if let Some(dvas) = index.get(hash)
+            && let Some(bp) = dvas.first()
+        {
+            self.hits.fetch_add(1, Ordering::Relaxed);
+            return Some(*bp);
         }
         self.misses.fetch_add(1, Ordering::Relaxed);
         None
@@ -143,6 +144,13 @@ impl CasIndex {
     }
 }
 
+impl Default for CasIndex {
+    /// 委托 [`CasIndex::new`] 创建空索引.
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static CAS_INDEX: OnceCell<CasIndex> = OnceCell::new();
 
 /// 返回全局 CAS 索引单例 (首次调用时惰性初始化).
@@ -158,6 +166,7 @@ pub fn cas_init() {
 }
 
 /// 在全局索引中按内容哈希查找块指针.
+#[must_use]
 pub fn cas_lookup(hash: &CasHash) -> Option<UnkfsBlockPointer> {
     get_cas().lookup(hash)
 }
@@ -168,31 +177,37 @@ pub fn cas_insert(hash: CasHash, bp: UnkfsBlockPointer) {
 }
 
 /// 递增全局索引中指定哈希的引用计数.
+#[must_use]
 pub fn cas_ref_inc(hash: &CasHash) -> u64 {
     get_cas().ref_inc(hash)
 }
 
 /// 递减全局索引中指定哈希的引用计数.
+#[must_use]
 pub fn cas_ref_dec(hash: &CasHash) -> u64 {
     get_cas().ref_dec(hash)
 }
 
 /// 查询全局索引中指定哈希的引用计数.
+#[must_use]
 pub fn cas_ref_count(hash: &CasHash) -> u64 {
     get_cas().ref_count(hash)
 }
 
 /// 判断指定哈希是否已在全局索引中.
+#[must_use]
 pub fn cas_is_known(hash: &CasHash) -> bool {
     get_cas().is_known(hash)
 }
 
 /// 返回全局索引的 (`hits`, `misses`, `synced`) 统计.
+#[must_use]
 pub fn cas_stats() -> (u64, u64, u64) {
     get_cas().get_stats()
 }
 
 /// 计算数据块的 SHA256 内容哈希.
+#[must_use]
 pub fn sha256(data: &[u8]) -> CasHash {
     let ck = super::checksum::UnkfsChecksum::compute(super::bp::UnkfsCksumType::SHA256, data);
     let mut hash = [0u8; 32];
@@ -204,24 +219,26 @@ pub fn sha256(data: &[u8]) -> CasHash {
 }
 
 /// 校验数据块的 SHA256 是否与期望哈希一致.
+#[must_use]
 pub fn sha256_matches(data: &[u8], expected: &CasHash) -> bool {
     sha256(data) == *expected
 }
 
 /// CAS 感知写入: 计算 SHA256, 检查去重索引, 引用已有块或分配新块
+#[must_use]
 pub fn cas_aware_write(data: &[u8], txg: u64, obj_id: u64) -> Option<super::bp::UnkfsBlockPointer> {
     let hash = sha256(data);
     let cas = get_cas();
 
     if let Some(existing) = cas.lookup(&hash) {
         cas.ref_inc(&hash);
-        crate::functions::fs::unkfs::zil::UnkfsZilRecord::new_dedup_ref(
+        let _ = crate::functions::fs::unkfs::zil::UnkfsZilRecord::new_dedup_ref(
             txg,
             [
-                u64::from_be_bytes(hash[0..8].try_into().unwrap_or_else(|_| [0u8; 8])),
-                u64::from_be_bytes(hash[8..16].try_into().unwrap_or_else(|_| [0u8; 8])),
-                u64::from_be_bytes(hash[16..24].try_into().unwrap_or_else(|_| [0u8; 8])),
-                u64::from_be_bytes(hash[24..32].try_into().unwrap_or_else(|_| [0u8; 8])),
+                u64::from_be_bytes(hash[0..8].try_into().unwrap_or([0u8; 8])),
+                u64::from_be_bytes(hash[8..16].try_into().unwrap_or([0u8; 8])),
+                u64::from_be_bytes(hash[16..24].try_into().unwrap_or([0u8; 8])),
+                u64::from_be_bytes(hash[24..32].try_into().unwrap_or([0u8; 8])),
             ],
             obj_id,
         );
@@ -232,6 +249,7 @@ pub fn cas_aware_write(data: &[u8], txg: u64, obj_id: u64) -> Option<super::bp::
 }
 
 /// 释放一个内容哈希引用; 引用计数归零时返回 `true` (块可真正回收).
+#[must_use]
 pub fn cas_aware_free(hash: &CasHash) -> bool {
     let count = cas_ref_dec(hash);
     count == 0

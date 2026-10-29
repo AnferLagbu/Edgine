@@ -73,6 +73,7 @@ pub enum UdsError {
 
 impl UdsError {
     /// 转为系统调用返回值形式, 即对应 errno 的负值.
+    #[must_use]
     pub fn as_ret(self) -> i32 {
         -(self as i32)
     }
@@ -86,14 +87,15 @@ impl UdsError {
 #[repr(u8)]
 /// UDS 套接字类型.
 pub enum UnixSockType {
-    /// 面向连接的字节流 (SOCK_STREAM).
+    /// 面向连接的字节流 (`SOCK_STREAM`).
     Stream = 1,
-    /// 保留消息边界的数据报 (SOCK_DGRAM).
+    /// 保留消息边界的数据报 (`SOCK_DGRAM`).
     Dgram = 2,
 }
 
 impl UnixSockType {
     /// 由 `socket()` 传入的类型值解析; 非 1 / 2 返回 `None`.
+    #[must_use]
     pub fn from_i32(t: i32) -> Option<Self> {
         match t {
             1 => Some(Self::Stream),
@@ -166,6 +168,7 @@ pub struct UnixSocket {
 
 impl UnixSocket {
     /// 构造全零的空套接字 (类型默认流式, 状态未绑定).
+    #[must_use]
     pub const fn empty() -> Self {
         Self {
             id: 0,
@@ -204,6 +207,7 @@ pub struct UnixPathBinding {
 
 impl UnixPathBinding {
     /// 构造全零的空表项.
+    #[must_use]
     pub const fn empty() -> Self {
         Self {
             path: [0u8; UNIX_PATH_MAX],
@@ -229,6 +233,7 @@ pub struct UdsState {
 
 impl UdsState {
     /// 构造空容器 (不含元素), 字段级堆化前置态.
+    #[must_use]
     pub const fn empty() -> Self {
         Self {
             sockets: Vec::new(),
@@ -537,7 +542,7 @@ pub fn uds_accept(fd: i32) -> Result<i32, UdsError> {
         }
         let client_id = listen.listen_pending[listen.listen_head as usize];
         let client_idx = state.socket_idx_by_id(client_id).ok_or(UdsError::NoMem)? as usize;
-        let new_idx = new_slot as usize;
+        let new_idx = new_slot;
         let id = alloc_socket_id();
         let ns = &mut state.sockets[new_idx];
         ns.id = id;
@@ -910,7 +915,7 @@ pub fn uds_recvfrom_with_creds(
     })
 }
 
-/// 关闭 UDS 套接字并清理其路径绑定、对端关系与 fd_alloc 位图位
+/// 关闭 UDS 套接字并清理其路径绑定、对端关系与 `fd_alloc` 位图位
 ///
 /// # Errors
 ///
@@ -928,13 +933,13 @@ pub fn uds_close(fd: i32) -> Result<(), UdsError> {
         let bound_path_len = s.bound_path_len;
         let peer_id = s.peer;
 
-        if sock_type == UnixSockType::Stream && state_val == UnixSockState::Connected {
-            if let Some(pid) = peer_id {
-                if let Some(pidx) = state.socket_idx_by_id(pid) {
-                    state.sockets[pidx as usize].peer_closed = true;
-                    state.sockets[pidx as usize].peer = None;
-                }
-            }
+        if sock_type == UnixSockType::Stream
+            && state_val == UnixSockState::Connected
+            && let Some(pid) = peer_id
+            && let Some(pidx) = state.socket_idx_by_id(pid)
+        {
+            state.sockets[pidx as usize].peer_closed = true;
+            state.sockets[pidx as usize].peer = None;
         }
 
         if sock_type == UnixSockType::Stream && state_val == UnixSockState::Listening {
@@ -1099,8 +1104,9 @@ pub struct Cmsghdr {
     pub data: [u8; 0], // flex array, 通过指针偏移访问
 }
 
-/// 抽象 namespace 路径解析: `path` `[0]` == 0` 标识 abstract namespace.
+/// 抽象 namespace 路径解析: `path[0]` == 0 标识 abstract namespace.
 /// 返回 `&path[1..]` (去掉前导 0 字节), 其余按文件系统路径处理.
+#[must_use]
 pub fn uds_parse_path(path: &[u8]) -> Option<(&[u8], bool)> {
     if path.is_empty() {
         return None;
@@ -1151,9 +1157,10 @@ pub enum UnixSocketError {
 
 impl UnixSocketError {
     /// 映射为系统调用错误码.
+    #[must_use]
     pub fn to_errno(self) -> Errno {
         match self {
-            Self::PathNotFound => Errno::ENOENT,
+            Self::PathNotFound => Errno::Enoent,
             Self::Kernel(e) => e.as_errno(),
         }
     }
@@ -1188,7 +1195,7 @@ pub type UnixResult<T> = Result<T, UnixSocketError>;
 /// `struct sockaddr_un` 包装
 ///
 /// DECISION-J (2026-09-13): wire 类型迁回 `privileged::net::socket_types` —
-/// 由 privileged TCB raw 桥接 (net/syscall.rs::raw_read/write_sockaddr_un)
+/// 由 privileged TCB raw 桥接 (`net/syscall.rs::raw_read/write_sockaddr_un`)
 /// 从用户内存构造, 属机制的安全导出面。此处 re-export 保持 API 兼容。
 pub use crate::privileged::net::socket_types::SockAddrUn;
 
@@ -1315,6 +1322,7 @@ pub fn unlink(addr: &SockAddrUn) -> UnixResult<()> {
 
 /// 判断 FD 是否落在 UDS 子系统的编号区间内.
 #[inline]
+#[must_use]
 pub fn is_uds_fd(fd: i32) -> bool {
     (FD_BASE..FD_END).contains(&fd)
 }

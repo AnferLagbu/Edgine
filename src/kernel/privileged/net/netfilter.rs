@@ -51,6 +51,7 @@ pub enum NfHook {
 
 impl NfHook {
     /// 按数值解析钩子点, 非法值返回 `None`.
+    #[must_use]
     pub fn from_u8(v: u8) -> Option<Self> {
         match v {
             0 => Some(Self::Prerouting),
@@ -86,6 +87,7 @@ pub enum NfVerdict {
 
 impl NfVerdict {
     /// 按数值解析判定结果, 非法值返回 `None`.
+    #[must_use]
     pub fn from_i32(v: i32) -> Option<Self> {
         match v {
             0 => Some(Self::Accept),
@@ -147,31 +149,32 @@ pub struct NfRule {
 
 impl NfRule {
     /// 判断报文是否命中本规则 (所有已设置的匹配条件取与).
+    #[must_use]
     pub fn matches(&self, pkt: &NfPacketInfo) -> bool {
-        if let Some((net, prefix_len)) = self.src_cidr {
-            if !cidr_match(net, prefix_len, pkt.src_ip) {
-                return false;
-            }
+        if let Some((net, prefix_len)) = self.src_cidr
+            && !cidr_match(net, prefix_len, pkt.src_ip)
+        {
+            return false;
         }
-        if let Some((net, prefix_len)) = self.dst_cidr {
-            if !cidr_match(net, prefix_len, pkt.dst_ip) {
-                return false;
-            }
+        if let Some((net, prefix_len)) = self.dst_cidr
+            && !cidr_match(net, prefix_len, pkt.dst_ip)
+        {
+            return false;
         }
-        if let Some((lo, hi)) = self.src_port_range {
-            if pkt.src_port < lo || pkt.src_port > hi {
-                return false;
-            }
+        if let Some((lo, hi)) = self.src_port_range
+            && (pkt.src_port < lo || pkt.src_port > hi)
+        {
+            return false;
         }
-        if let Some((lo, hi)) = self.dst_port_range {
-            if pkt.dst_port < lo || pkt.dst_port > hi {
-                return false;
-            }
+        if let Some((lo, hi)) = self.dst_port_range
+            && (pkt.dst_port < lo || pkt.dst_port > hi)
+        {
+            return false;
         }
-        if let Some(proto) = self.protocol {
-            if pkt.protocol != proto {
-                return false;
-            }
+        if let Some(proto) = self.protocol
+            && pkt.protocol != proto
+        {
+            return false;
         }
         true
     }
@@ -417,16 +420,19 @@ pub fn unregister_hook(hook: NfHook, callback: NfHookFn) -> Result<(), i32> {
 }
 
 /// 兼容旧调用方的 `hook` 封装, 委托给 [`nf_hook`]
+#[must_use]
 pub fn hook(hook: NfHook, pkt: &NfPacketInfo) -> NfVerdict {
     nf_hook(hook, pkt)
 }
 
 /// 兼容旧调用方的 `hook_count` 封装, 委托给 [`nf_hook_count`]
+#[must_use]
 pub fn hook_count(hook: NfHook) -> usize {
     nf_hook_count(hook)
 }
 
 /// 兼容旧调用方的 `list_rules` 封装, 委托给 [`nf_list_rules`]
+#[must_use]
 pub fn list_rules(hook: NfHook) -> Vec<NfRule> {
     nf_list_rules(hook)
 }
@@ -438,6 +444,7 @@ pub fn list_rules(hook: NfHook) -> Vec<NfRule> {
 /// `sys_nf_add_rule` — 从 u64 syscall 参数构造并添加一条 IPv4 netfilter 规则
 ///
 /// 当 hook 或 verdict 非法时返回 `-EINVAL`; 成功返回 0, 规则数量达上限时返回对应内核错误码。
+#[must_use]
 pub fn sys_nf_add_rule(
     hook: u64,
     src_ip: u64,
@@ -447,11 +454,11 @@ pub fn sys_nf_add_rule(
     verdict: u64,
 ) -> i64 {
     let Some(hook) = NfHook::from_u8(crate::privileged::glue::low_u8_from_u64(hook)) else {
-        return -(Errno::EINVAL as i64);
+        return -(Errno::Einval as i64);
     };
 
     let Some(vf) = NfVerdict::from_i32(crate::privileged::glue::low_i32_from_u64(verdict)) else {
-        return -(Errno::EINVAL as i64);
+        return -(Errno::Einval as i64);
     };
 
     let rule = NfRule {
@@ -488,9 +495,10 @@ pub fn sys_nf_add_rule(
 /// `sys_nf_del_rule` — 按 hook 与规则序号删除 IPv4 netfilter 规则
 ///
 /// 当 hook 非法时返回 `-EINVAL`; 成功返回 0, 规则不存在时返回 `-ENOENT`。
+#[must_use]
 pub fn sys_nf_del_rule(hook: u64, rule_index: u64) -> i64 {
     let Some(hook) = NfHook::from_u8(crate::privileged::glue::low_u8_from_u64(hook)) else {
-        return -(Errno::EINVAL as i64);
+        return -(Errno::Einval as i64);
     };
 
     let name = alloc::format!("rule_{rule_index}");

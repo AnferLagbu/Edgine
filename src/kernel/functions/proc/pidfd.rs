@@ -38,7 +38,7 @@ struct PidFdEntry {
     slot_id: u64,
 }
 
-/// 全局 pidfd → pid 映射表 (OnceLock 延迟初始化, 首个 lock 时创建)
+/// 全局 pidfd → pid 映射表 (`OnceLock` 延迟初始化, 首个 lock 时创建)
 static PIDFD_MAP: OnceLock<Mutex<[Option<PidFdEntry>; PIDFD_CAP]>> = OnceLock::new();
 
 /// 单调递增槽位号 (用于 fd 复用后区分新旧映射)
@@ -68,10 +68,10 @@ fn pidfd_map() -> &'static Mutex<[Option<PidFdEntry>; PIDFD_CAP]> {
 fn alloc_entry(pid: u32) -> Result<i32, Errno> {
     // 先验证进程存在
     if crate::privileged::proc::PROCESS_TABLE.get(pid).is_none() {
-        return Err(Errno::ESRCH);
+        return Err(Errno::Esrch);
     }
 
-    let fd = alloc_fd(FdSubsystem::PidFd).ok_or(Errno::EMFILE)?;
+    let fd = alloc_fd(FdSubsystem::PidFd).ok_or(Errno::Emfile)?;
     let slot_id = NEXT_SLOT_ID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
     let mut map = pidfd_map().lock();
@@ -83,19 +83,20 @@ fn alloc_entry(pid: u32) -> Result<i32, Errno> {
     }
     // 映射表满 (理论不可达: fd 位图与映射表容量一致, 但防御性处理)
     free_fd(FdSubsystem::PidFd, fd);
-    Err(Errno::EMFILE)
+    Err(Errno::Emfile)
 }
 
 /// 释放 pidfd 映射 (由 close 路径调用)
+#[must_use]
 pub fn free_entry(fd: i32) -> bool {
     let mut map = pidfd_map().lock();
     for entry in map.iter_mut() {
-        if let Some(e) = entry {
-            if e.fd == fd {
-                *entry = None;
-                let _ = free_fd(FdSubsystem::PidFd, fd);
-                return true;
-            }
+        if let Some(e) = entry
+            && e.fd == fd
+        {
+            *entry = None;
+            let _ = free_fd(FdSubsystem::PidFd, fd);
+            return true;
         }
     }
     false
@@ -105,16 +106,17 @@ pub fn free_entry(fd: i32) -> bool {
 fn pid_of_fd(fd: i32) -> Option<u32> {
     let map = pidfd_map().lock();
     for entry in map.iter() {
-        if let Some(e) = entry {
-            if e.fd == fd {
-                return Some(e.pid);
-            }
+        if let Some(e) = entry
+            && e.fd == fd
+        {
+            return Some(e.pid);
         }
     }
     None
 }
 
 /// 检查 fd 是否属于 pidfd 空间
+#[must_use]
 pub fn is_pidfd_fd(fd: i32) -> bool {
     matches!(idx_of(fd), Some((FdSubsystem::PidFd, _)))
 }
@@ -128,7 +130,7 @@ pub fn is_pidfd_fd(fd: i32) -> bool {
 /// - 映射表已满 → `EMFILE`
 pub fn pidfd_open(pid: u32, flags: u32) -> Result<usize, Errno> {
     if flags & !PIDFD_NONBLOCK != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     let fd = alloc_entry(pid)?;
@@ -144,10 +146,10 @@ pub fn pidfd_open(pid: u32, flags: u32) -> Result<usize, Errno> {
 /// - 目标进程不存在 → `ESRCH`
 pub fn pidfd_send_signal(pidfd: u32, sig: i32, _siginfo: u64, _flags: u32) -> Result<usize, Errno> {
     if !(1..=63).contains(&sig) {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
-    let pid = pid_of_fd(pidfd.cast_signed()).ok_or(Errno::EBADF)?;
+    let pid = pid_of_fd(pidfd.cast_signed()).ok_or(Errno::Ebadf)?;
 
     // 复用 kill_syscall 的 pid>0 语义 (privileged 内部 4 路径分发)
     let ret = crate::privileged::syscall::api::sys_kill(pid.cast_signed(), sig);
@@ -167,5 +169,5 @@ pub fn pidfd_send_signal(pidfd: u32, sig: i32, _siginfo: u64, _flags: u32) -> Re
 /// 该接口尚未实现, 始终返回 `ENOSYS`.
 pub fn pidfd_getfd(_pidfd: u32, _targetfd: u32, _flags: u32) -> Result<usize, Errno> {
     // 依赖 Task 4 (OpenFile 系统) 完成后实现 (登记分册 9 B09-10)
-    Err(Errno::ENOSYS)
+    Err(Errno::Enosys)
 }

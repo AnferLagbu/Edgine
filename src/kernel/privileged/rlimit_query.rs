@@ -42,6 +42,7 @@ pub fn get_memlock_limit() -> u64 {
 /// 检查 mlock 锁定字节数是否超 `RLIMIT_MEMLOCK`.
 ///
 /// 返回 true 表示超额, mlock 应失败.
+#[must_use]
 pub fn check_memlock_exceeded(current_locked: u64, additional_bytes: u64) -> bool {
     let limit = get_memlock_limit();
     if limit == u64::MAX {

@@ -27,6 +27,7 @@ pub struct ExfatInode {
 
 impl ExfatInode {
     /// 由起始簇号与挂载索引构造 exFAT inode。
+    #[must_use]
     pub fn new(cluster: u32, mount_idx: u32) -> Self {
         Self { cluster, mount_idx }
     }

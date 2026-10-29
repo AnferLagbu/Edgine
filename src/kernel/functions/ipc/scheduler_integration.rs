@@ -163,7 +163,7 @@ pub fn block_with_timeout(wait_queue: &mut WaitQueue, timeout_ms: u64) -> Result
             return Err(-1); // 超时
         }
         // 睡眠一个短时隙后重查 (让出 CPU, 非忙等).
-        hrtimer_sleep(timeout_nanos.min(1_000_000)).map_err(|()| -1)?;
+        hrtimer_sleep(timeout_nanos.min(1_000_000)).map_err(|_| -1)?;
         if wait_queue.count() == 0 {
             return Ok(());
         }

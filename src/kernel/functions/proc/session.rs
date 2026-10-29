@@ -29,6 +29,7 @@ use core::sync::atomic::Ordering;
 ///
 /// T2 批 2 自 privileged 回退层迁移. POSIX 简化语义: `fd` 忽略 (无控制终端
 /// 设备模型), 直接返回当前进程所属会话的前台进程组.
+#[must_use]
 pub fn tcgetpgrp_syscall(_fd: i32) -> i64 {
     i64::from(crate::privileged::proc::get_foreground_pgid())
 }
@@ -39,7 +40,7 @@ pub fn tcgetpgrp_syscall(_fd: i32) -> i64 {
 /// 委托 `SESSION_MANAGER.set_foreground_pgid`. POSIX 简化语义: `fd` 忽略.
 pub fn tcsetpgrp_syscall(_fd: i32, pgid: i32) -> i64 {
     if pgid <= 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     let proc_id = process_get_current_pid();
@@ -63,7 +64,7 @@ pub fn tcsetpgrp_syscall(_fd: i32, pgid: i32) -> i64 {
     });
 
     if !found {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     if crate::privileged::proc::SESSION_MANAGER.set_foreground_pgid(sid, pgid.cast_unsigned()) {

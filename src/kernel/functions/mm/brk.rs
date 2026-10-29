@@ -29,8 +29,8 @@ const USER_ADDR_MAX: u64 = 0x0000_FFFF_FFFF_FFFF;
 ///
 /// # Errors
 ///
-/// - `addr` 超过用户空间最大地址 (`USER_ADDR_MAX`) 时返回 [`Errno::ENOMEM`]
-/// - privileged 层 `sys_brk` 返回负值 (堆扩展失败或越界) 时返回 [`Errno::ENOMEM`]
+/// - `addr` 超过用户空间最大地址 (`USER_ADDR_MAX`) 时返回 [`Errno::Enomem`]
+/// - privileged 层 `sys_brk` 返回负值 (堆扩展失败或越界) 时返回 [`Errno::Enomem`]
 pub fn brk_syscall(addr: u64) -> Result<usize, Errno> {
     // addr == 0 是合法查询, 直接委托 (§6.1 下沉 functions/syscall/brk)
     if addr == 0 {
@@ -41,13 +41,13 @@ pub fn brk_syscall(addr: u64) -> Result<usize, Errno> {
 
     // 参数验证: 地址不能超过用户空间最大值
     if addr > USER_ADDR_MAX {
-        return Err(Errno::ENOMEM);
+        return Err(Errno::Enomem);
     }
 
     // 委托 functions 层 (纯策略)
     let ret = crate::functions::syscall::brk::sys_brk(addr);
     if ret < 0 {
-        Err(Errno::ENOMEM)
+        Err(Errno::Enomem)
     } else {
         Ok(crate::functions::intcast::usize_from_i64(ret))
     }

@@ -22,11 +22,10 @@ use crate::privileged::proc;
 
 /// 校验 ELF 头部
 ///
-/// # Safety
-///
-/// `data` 必须为至少 64 字节的有效切片, 调用期间不释放。
-pub fn elf_validate(data: *const u8, len: u64) -> Option<&'static proc::Elf64Header> {
-    proc::elf_validate(data, len)
+/// `data` 为完整 ELF 镜像字节切片; 长度不足或字段非法时返回 `None`。
+#[must_use]
+pub fn elf_validate(data: &[u8]) -> Option<&'static proc::Elf64Header> {
+    proc::elf_validate(data)
 }
 
 // ============================================================================
@@ -35,20 +34,12 @@ pub fn elf_validate(data: *const u8, len: u64) -> Option<&'static proc::Elf64Hea
 
 /// 加载 ELF 镜像到用户内存空间
 ///
-/// # Safety
-///
-/// - `mm` 必须指向目标进程的有效 `MmStruct`
-/// - 调用方保证 `mm` 在加载期间不被其他线程访问
-/// - `data` 必须为有效切片, 调用期间不释放
+/// `data` 为完整 ELF 镜像字节切片, 调用期间不被修改。
 ///
 /// # Errors
 /// 错误与 `privileged::proc::elf_load` 相同: 包括 `"Invalid ELF header"`,
 /// `"No program headers"`, `"ELF: vaddr + memsz overflow"`,
 /// `"ELF: p_offset + p_filesz overflow"` 与 `"OOM loading ELF"`.
-pub fn elf_load(
-    mm: &MmStruct,
-    data: *const u8,
-    len: u64,
-) -> Result<proc::ElfLoadResult, &'static str> {
-    proc::elf_load(mm, data, len)
+pub fn elf_load(mm: &MmStruct, data: &[u8]) -> Result<proc::ElfLoadResult, &'static str> {
+    proc::elf_load(mm, data)
 }

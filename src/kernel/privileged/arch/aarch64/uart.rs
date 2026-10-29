@@ -1,4 +1,4 @@
-//! PL011 UART 驱动 (ARM PrimeCell UART)
+//! PL011 UART 驱动 (ARM `PrimeCell` UART)
 //!
 //! QEMU virt 机器默认使用 PL011 @ 0x09000000。
 //! 寄存器定义基于 ARM DDI 0183G。
@@ -8,10 +8,10 @@ use core::ptr::{read_volatile, write_volatile};
 
 /// PL011 寄存器基地址
 ///
-/// 初值为 QEMU virt 的物理地址 0x0900_0000 (identity mapping);
+/// 初值为 QEMU virt 的物理地址 `0x0900_0000` (identity mapping);
 /// 引导期若从设备树探测到其他基址, 由 [`set_base`] 覆盖.
 /// 用户态初始化前经 [`switch_to_high_half`] 加 TTBR1 高半区别名
-/// (0xFFFF_0000_0900_0000), 确保在 TTBR0_EL1 切换到用户页表后仍可访问。
+/// (`0xFFFF_0000_0900_0000`), 确保在 `TTBR0_EL1` 切换到用户页表后仍可访问。
 pub static PL011_BASE: core::sync::atomic::AtomicU64 =
     core::sync::atomic::AtomicU64::new(0x0900_0000);
 
@@ -22,7 +22,7 @@ pub fn set_base(pa: u64) {
 
 /// 切换到 TTBR1 高半区地址 (在用户态初始化前调用)
 ///
-/// 对当前基址取高半区别名 (VA = KERNEL_BASE + PA). 因按位或幂等,
+/// 对当前基址取高半区别名 (VA = `KERNEL_BASE` + PA). 因按位或幂等,
 /// 在每次进入 EL0 前重复调用均安全。
 pub fn switch_to_high_half() {
     let current = base();
@@ -85,7 +85,7 @@ unsafe fn write(offset: u64, val: u32) {
 ///
 /// # Safety
 ///
-/// 调用者必须确保在初始化 MMU 之后调用，且 PL011_BASE (0x09000000) 已映射。
+/// 调用者必须确保在初始化 MMU 之后调用，且 `PL011_BASE` (0x09000000) 已映射。
 pub unsafe fn init() {
     unsafe {
         // 1. 禁用 UART
@@ -117,7 +117,7 @@ pub unsafe fn init() {
 ///
 /// # Safety
 ///
-/// 调用者必须确保 UART 已初始化且 PL011_BASE MMIO 区域已映射。
+/// 调用者必须确保 UART 已初始化且 `PL011_BASE` MMIO 区域已映射。
 #[inline]
 pub unsafe fn putc(c: u8) {
     unsafe {
@@ -133,8 +133,9 @@ pub unsafe fn putc(c: u8) {
 ///
 /// # Safety
 ///
-/// 调用者必须确保 UART 已初始化且 PL011_BASE MMIO 区域已映射。
+/// 调用者必须确保 UART 已初始化且 `PL011_BASE` MMIO 区域已映射。
 #[inline]
+#[must_use]
 pub unsafe fn getc() -> u8 {
     unsafe {
         // 等待 RX FIFO 非空

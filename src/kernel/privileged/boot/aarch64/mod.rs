@@ -1,5 +1,5 @@
-//! AArch64 启动模块
+//! `AArch64` 启动模块
 //!
-//! 包含 AArch64 架构的启动入口 (汇编 + Rust)。
+//! 包含 `AArch64` 架构的启动入口 (汇编 + Rust)。
 
 pub mod entry;

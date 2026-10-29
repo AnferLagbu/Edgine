@@ -79,6 +79,7 @@ pub enum TcbModule {
 
 impl TcbModule {
     /// 按模块路径名 (字节串) 推断所属 TCB 模块, 无法识别时归入 `Other`.
+    #[must_use]
     pub const fn from_name(name: &[u8]) -> Self {
         if contains_substr(name, b"freg") {
             Self::Freg
@@ -135,6 +136,7 @@ pub struct AddrRange {
 
 impl AddrRange {
     /// 判断 `addr` 是否落在 `[start, end)` 内.
+    #[must_use]
     pub const fn contains(&self, addr: u64) -> bool {
         addr >= self.start && addr < self.end
     }
@@ -198,6 +200,7 @@ pub struct FaultAttributor;
 
 impl FaultAttributor {
     /// 根据 panic RIP 判定故障归属
+    #[must_use]
     pub fn attribute(panic_rip: u64) -> FaultAttribution {
         // 先查 TCB
         for r in TCB_RANGES {
@@ -224,6 +227,7 @@ impl FaultAttributor {
     ///
     /// 当 functions 函数调用 TCB 函数时, TCB 内部 panic, 需要回溯到
     /// functions 调用栈. 这里使用 `caller_id` (由 `privileged::freg` 提供).
+    #[must_use]
     pub fn attribute_cross(caller_id: u64, callee_panic_rip: u64) -> FaultAttribution {
         // 验证 callee 在 TCB 范围
         for r in TCB_RANGES {
@@ -257,6 +261,7 @@ pub struct DomainFailureRecord {
 
 impl DomainFailureRecord {
     /// 创建指定服务域的失败记录 (所有计数归零, tier 为 0).
+    #[must_use]
     pub const fn new(domain_id: u64) -> Self {
         Self {
             domain_id,
@@ -310,6 +315,7 @@ impl DomainFailureRecord {
 ///
 /// tier 1: 撤销可写能力 (WRITE/SEND/CREATE)
 /// tier 2: 保留只读 + READ/EXEC
+#[must_use]
 pub fn downgrade_for_tier(tier: u32) -> CapBits {
     match tier {
         0 => CapBits::ALL,

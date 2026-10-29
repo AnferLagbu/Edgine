@@ -182,10 +182,10 @@ pub fn sysctl_register(
 ) -> Result<(), SysctlError> {
     let mut guard = SYSCTL_TABLE.lock();
     for slot in guard.iter() {
-        if let Some(entry) = slot {
-            if entry.name == name {
-                return Err(SysctlError::Duplicate);
-            }
+        if let Some(entry) = slot
+            && entry.name == name
+        {
+            return Err(SysctlError::Duplicate);
         }
     }
     let mut entry = SysctlEntry::empty();
@@ -207,10 +207,10 @@ pub fn sysctl_register(
 pub fn sysctl_read(name: &str) -> Option<SysctlValue> {
     let guard = SYSCTL_TABLE.lock();
     for slot in guard.iter() {
-        if let Some(entry) = slot {
-            if entry.name == name {
-                return Some(entry.read());
-            }
+        if let Some(entry) = slot
+            && entry.name == name
+        {
+            return Some(entry.read());
         }
     }
     None
@@ -226,10 +226,10 @@ pub fn sysctl_read(name: &str) -> Option<SysctlValue> {
 pub fn sysctl_write(name: &str, val: SysctlValue) -> Result<(), SysctlError> {
     let guard = SYSCTL_TABLE.lock();
     for slot in guard.iter() {
-        if let Some(entry) = slot {
-            if entry.name == name {
-                return entry.write(val);
-            }
+        if let Some(entry) = slot
+            && entry.name == name
+        {
+            return entry.write(val);
         }
     }
     Err(SysctlError::NotFound)
@@ -241,21 +241,19 @@ pub fn sysctl_write(name: &str, val: SysctlValue) -> Result<(), SysctlError> {
 pub fn sysctl_list(buf: &mut [u8]) -> usize {
     let guard = SYSCTL_TABLE.lock();
     let mut pos = 0;
-    for slot in guard.iter() {
-        if let Some(entry) = slot {
-            if entry.name.is_empty() {
-                continue;
-            }
-            let bytes = entry.name.as_bytes();
-            let need = bytes.len() + 1; // +1 for '\n'
-            if pos + need > buf.len() {
-                break;
-            }
-            buf[pos..pos + bytes.len()].copy_from_slice(bytes);
-            pos += bytes.len();
-            buf[pos] = b'\n';
-            pos += 1;
+    for entry in guard.iter().flatten() {
+        if entry.name.is_empty() {
+            continue;
         }
+        let bytes = entry.name.as_bytes();
+        let need = bytes.len() + 1; // +1 for '\n'
+        if pos + need > buf.len() {
+            break;
+        }
+        buf[pos..pos + bytes.len()].copy_from_slice(bytes);
+        pos += bytes.len();
+        buf[pos] = b'\n';
+        pos += 1;
     }
     pos
 }

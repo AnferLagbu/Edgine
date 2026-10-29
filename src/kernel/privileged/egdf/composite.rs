@@ -24,6 +24,7 @@ pub enum CompositeType {
 
 impl CompositeType {
     /// 返回设备树 compatible 字符串 (`eg,raid0` / `eg,raid1`).
+    #[must_use]
     pub fn compatible_str(self) -> &'static str {
         match self {
             Self::Raid0 => "eg,raid0",
@@ -32,6 +33,7 @@ impl CompositeType {
     }
 
     /// 按 compatible 字符串解析复合类型 (`eg,raid1` 与 `eg,mirror` 均视为 RAID1).
+    #[must_use]
     pub fn from_compatible(compat: &str) -> Option<Self> {
         match compat {
             "eg,raid0" => Some(Self::Raid0),
@@ -41,6 +43,7 @@ impl CompositeType {
     }
 
     /// 返回用于设备名与日志的显示名 (`RAID0` / `RAID1`).
+    #[must_use]
     pub fn display_name(self) -> &'static str {
         match self {
             Self::Raid0 => "RAID0",
@@ -82,6 +85,7 @@ impl CompositeBlockDevice {
     ///
     /// RAID0 容量 = 各子盘对齐到条带后的最小值 × 子盘数; RAID1 容量 = 各子盘最小值。
     /// 子盘数量为 0、超过上限、任一子盘容量不足时返回 `None`。
+    #[must_use]
     pub fn new(device_type: CompositeType, child_drives: &[u8], stripe_size: u64) -> Option<Self> {
         if child_drives.is_empty() || child_drives.len() > MAX_COMPOSITE_CHILDREN {
             return None;
@@ -225,8 +229,8 @@ impl BlockDevice for CompositeBlockDevice {
                         ..crate::privileged::glue::usize_from_u64((s + 1) * 512)];
                     let sector_off = sector + s;
 
-                    for i in 0..self.child_count as usize {
-                        let ret = egdf_blk_write(self.child_drives[i], sector_off, chunk);
+                    for &drive in &self.child_drives[..self.child_count as usize] {
+                        let ret = egdf_blk_write(drive, sector_off, chunk);
                         if ret != 0 {
                             return ret;
                         }
@@ -240,16 +244,16 @@ impl BlockDevice for CompositeBlockDevice {
     fn blk_is_present(&self) -> bool {
         match self.device_type {
             CompositeType::Raid0 => {
-                for i in 0..self.child_count as usize {
-                    if !egdf_blk_is_present(self.child_drives[i]) {
+                for &drive in &self.child_drives[..self.child_count as usize] {
+                    if !egdf_blk_is_present(drive) {
                         return false;
                     }
                 }
                 true
             }
             CompositeType::Raid1 => {
-                for i in 0..self.child_count as usize {
-                    if egdf_blk_is_present(self.child_drives[i]) {
+                for &drive in &self.child_drives[..self.child_count as usize] {
+                    if egdf_blk_is_present(drive) {
                         return true;
                     }
                 }

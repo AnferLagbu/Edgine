@@ -28,6 +28,7 @@ pub struct Ext2Inode {
 
 impl Ext2Inode {
     /// 由 inode 编号与挂载索引构造 ext2 inode。
+    #[must_use]
     pub fn new(inode_num: u32, mount_idx: u32) -> Self {
         Self {
             inode_num,
@@ -56,12 +57,12 @@ impl Inode for Ext2Inode {
         Ok(VfsStat {
             node_id: self.inode_num,
             mode: inode.perm(),
-            uid: u32::from(inode.i_uid),
-            gid: u32::from(inode.i_gid),
-            size: inode.i_size,
-            atime: u64::from(inode.i_atime),
-            mtime: u64::from(inode.i_mtime),
-            ctime: u64::from(inode.i_ctime),
+            uid: u32::from(inode.uid),
+            gid: u32::from(inode.gid),
+            size: inode.size,
+            atime: u64::from(inode.atime),
+            mtime: u64::from(inode.mtime),
+            ctime: u64::from(inode.ctime),
             owner_pwm: 0,
             group_pwm: 0,
             perm: inode.perm(),
@@ -79,7 +80,7 @@ impl Inode for Ext2Inode {
             let mut fs_guard = EXT2_FS.lock();
             let fs = fs_guard.as_mut().ok_or(KernelError::NotInitialized)?;
             let inode = fs.read_inode(self.inode_num)?;
-            u64::from(inode.i_size)
+            u64::from(inode.size)
         };
         let new_offset = match whence {
             VfsSeekWhence::Set => offset.cast_unsigned(),
@@ -90,12 +91,11 @@ impl Inode for Ext2Inode {
     }
 
     fn is_dir(&self) -> bool {
-        if let Some(mut fs_guard) = EXT2_FS.try_lock() {
-            if let Some(fs) = fs_guard.as_mut() {
-                if let Ok(inode) = fs.read_inode(self.inode_num) {
-                    return inode.file_type() == 1; // DIR
-                }
-            }
+        if let Some(mut fs_guard) = EXT2_FS.try_lock()
+            && let Some(fs) = fs_guard.as_mut()
+            && let Ok(inode) = fs.read_inode(self.inode_num)
+        {
+            return inode.file_type() == 1; // DIR
         }
         false
     }
@@ -108,30 +108,30 @@ impl Inode for Ext2Inode {
     /// ## 属主判据 (丙批审查 B1 整改)
     ///
     /// 与 `UnkfsData::set_times` 同判据 (属主或特权级 0). ext2 磁盘 inode 无
-    /// `owner_pwm` 字段, 属主身份改由 `i_uid` 与该 pwm 映射的 uid 比对; 判据与
+    /// `owner_pwm` 字段, 属主身份改由 `uid` 与该 pwm 映射的 uid 比对; 判据与
     /// `save_inode` 同处 `EXT2_FS` 锁域, 不引入二次路径解析 (无 TOCTOU 窗口).
     /// `pwm` 未注册时 `pwm_get_uid` 返回 `u32::MAX` 且特权级为 `0xFF`, 判为拒绝.
     fn set_times(&self, atime: u64, mtime: u64, pwm: u64) -> KernelResult<()> {
         let mut fs_guard = EXT2_FS.lock();
         let fs = fs_guard.as_mut().ok_or(KernelError::NotInitialized)?;
         let mut inode = fs.read_inode(self.inode_num)?;
-        if u32::from(inode.i_uid) != pwm_api::pwm_get_uid(pwm)
+        if u32::from(inode.uid) != pwm_api::pwm_get_uid(pwm)
             && pwm_api::pwm_get_privilege_level(pwm) != 0
         {
             return Err(KernelError::PermissionDenied);
         }
         if atime != u64::MAX {
-            inode.i_atime = u32::try_from(atime).unwrap_or(u32::MAX);
+            inode.atime = u32::try_from(atime).unwrap_or(u32::MAX);
         }
         if mtime != u64::MAX {
-            inode.i_mtime = u32::try_from(mtime).unwrap_or(u32::MAX);
-            // i_ctime = 元数据变更时刻, 语义独立于 i_mtime —— 取**当前秒值**,
+            inode.mtime = u32::try_from(mtime).unwrap_or(u32::MAX);
+            // ctime = 元数据变更时刻, 语义独立于 mtime —— 取**当前秒值**,
             // 换算方式与 `functions/fs/stat.rs::utimensat_syscall` 同源
             // (tick / frequency). 不可改用 TSC 周期计数: 那是周期数而非秒,
             // 落 32 位磁盘字段会被截顶成 `u32::MAX`.
             let now_secs = crate::privileged::syscall::api::get_ticks()
                 / u64::from(crate::privileged::timer::get_frequency());
-            inode.i_ctime = u32::try_from(now_secs).unwrap_or(u32::MAX);
+            inode.ctime = u32::try_from(now_secs).unwrap_or(u32::MAX);
         }
         fs.save_inode(self.inode_num, &inode)
     }
@@ -209,12 +209,12 @@ impl FileSystem for Ext2FileSystem {
         Ok(VfsStat {
             node_id: inode_num,
             mode: inode.perm(),
-            uid: u32::from(inode.i_uid),
-            gid: u32::from(inode.i_gid),
-            size: inode.i_size,
-            atime: u64::from(inode.i_atime),
-            mtime: u64::from(inode.i_mtime),
-            ctime: u64::from(inode.i_ctime),
+            uid: u32::from(inode.uid),
+            gid: u32::from(inode.gid),
+            size: inode.size,
+            atime: u64::from(inode.atime),
+            mtime: u64::from(inode.mtime),
+            ctime: u64::from(inode.ctime),
             owner_pwm: 0,
             group_pwm: 0,
             perm: inode.perm(),
@@ -283,9 +283,9 @@ impl FileSystem for Ext2FileSystem {
 
         // 释放 inode 和块
         let inode = fs.read_inode(inode_num)?;
-        for i in 0..12 {
-            if inode.i_block[i] != 0 {
-                fs.deallocate_block(inode.i_block[i])?;
+        for &block_num in &inode.block[..12] {
+            if block_num != 0 {
+                fs.deallocate_block(block_num)?;
             }
         }
 

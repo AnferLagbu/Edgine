@@ -12,7 +12,7 @@
 //!
 //! functions 侧改 `pub use crate::privileged::proc::cgroup::*`
 //! 保持 API 兼容 (functions→privileged 合法方向)。
-//! 日志使用 privileged::klog::serial_write_bytes (safe API).
+//! 日志使用 `privileged::klog::serial_write_bytes` (safe API).
 
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
@@ -72,8 +72,15 @@ pub struct CpuController {
     pub throttled_time: AtomicU64,
 }
 
+impl Default for CpuController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CpuController {
     /// 构造不限额的控制器: 配额为哨兵值, 周期取默认 1 秒.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             cfs_quota_us: AtomicU64::new(CPU_CFS_QUOTA_MAX),
@@ -139,8 +146,15 @@ pub struct MemoryController {
     pub oom_kill_disable: AtomicU32,
 }
 
+impl Default for MemoryController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryController {
     /// 构造不限额的控制器: 上限为哨兵值, 用量统计归零.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             limit_in_bytes: AtomicU64::new(MEMORY_LIMIT_MAX),
@@ -164,17 +178,18 @@ impl MemoryController {
             if current + bytes > limit {
                 return false;
             }
-            match self.usage_in_bytes.compare_exchange_weak(
-                current,
-                current + bytes,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => {
-                    self.update_max(current + bytes);
-                    return true;
-                }
-                Err(_) => {}
+            if self
+                .usage_in_bytes
+                .compare_exchange_weak(
+                    current,
+                    current + bytes,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                self.update_max(current + bytes);
+                return true;
             }
         }
     }
@@ -207,14 +222,12 @@ impl MemoryController {
             if current <= max {
                 break;
             }
-            match self.max_usage_in_bytes.compare_exchange_weak(
-                max,
-                current,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => break,
-                Err(_) => {}
+            if self
+                .max_usage_in_bytes
+                .compare_exchange_weak(max, current, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                break;
             }
         }
     }
@@ -235,8 +248,15 @@ pub struct PidsController {
     pub events_fork_fail: AtomicU64,
 }
 
+impl Default for PidsController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PidsController {
     /// 构造不限额的控制器: 上限为哨兵值, 计数归零.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             pids_max: AtomicU64::new(PIDS_MAX_DEFAULT),
@@ -258,14 +278,12 @@ impl PidsController {
                 self.events_fork_fail.fetch_add(1, Ordering::Relaxed);
                 return false;
             }
-            match self.current.compare_exchange_weak(
-                cur,
-                cur + 1,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => return true,
-                Err(_) => {}
+            if self
+                .current
+                .compare_exchange_weak(cur, cur + 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return true;
             }
         }
     }
@@ -309,8 +327,15 @@ pub struct IoController {
     pub stat_write_ios: AtomicU64,
 }
 
+impl Default for IoController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IoController {
     /// 构造不限额、统计归零的控制器.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             read_bps_max: AtomicU64::new(u64::MAX),
@@ -366,6 +391,7 @@ pub struct CgroupRq {
 
 impl CgroupRq {
     /// 构造 id=0、名称为 `/` 的根 cgroup.
+    #[must_use]
     pub fn new_root() -> Self {
         Self {
             id: 0,
@@ -381,6 +407,7 @@ impl CgroupRq {
     }
 
     /// 构造带新分配编号的子 cgroup.
+    #[must_use]
     pub fn new_child(name: &str, parent_id: u64) -> Self {
         Self {
             id: alloc_cgroup_id(),
@@ -428,8 +455,15 @@ pub struct CgroupSubsystem {
     root: Arc<CgroupRq>,
 }
 
+impl Default for CgroupSubsystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CgroupSubsystem {
     /// 构造管理器并建立根 cgroup.
+    #[must_use]
     pub fn new() -> Self {
         let root = Arc::new(CgroupRq::new_root());
         let mut groups = BTreeMap::new();
@@ -454,12 +488,11 @@ impl CgroupSubsystem {
             return 0;
         }
 
-        if parent_id != 0 {
-            if let Some(parent) = groups.get(&parent_id) {
-                if parent.parent_id != 0 {
-                    return 0;
-                }
-            }
+        if parent_id != 0
+            && let Some(parent) = groups.get(&parent_id)
+            && parent.parent_id != 0
+        {
+            return 0;
         }
 
         let cg = Arc::new(CgroupRq::new_child(name, parent_id));
@@ -619,6 +652,7 @@ pub fn cgroup_is_initialized() -> bool {
 /// 在指定父 cgroup 下创建子 cgroup。
 ///
 /// 成功返回新 cgroup id, 初始化未完成或父组非法时返回负错误码。
+#[must_use]
 pub fn sys_cgroup_create(parent_id: u64, _name_ptr: u64, _name_len: u64) -> i64 {
     if !cgroup_is_initialized() {
         return -(Errno::Einval as i64);
@@ -635,6 +669,7 @@ pub fn sys_cgroup_create(parent_id: u64, _name_ptr: u64, _name_len: u64) -> i64 
 /// 销毁指定 cgroup。
 ///
 /// 成功返回 0, 初始化未完成或销毁失败时返回负错误码。
+#[must_use]
 pub fn sys_cgroup_destroy(cg_id: u64) -> i64 {
     if !cgroup_is_initialized() {
         return -(Errno::Einval as i64);
@@ -648,6 +683,7 @@ pub fn sys_cgroup_destroy(cg_id: u64) -> i64 {
 /// 将进程 `pid` 迁移到指定 cgroup。
 ///
 /// 成功返回 0, 初始化未完成或迁移失败时返回负错误码。
+#[must_use]
 pub fn sys_cgroup_attach(cg_id: u64, pid: u64) -> i64 {
     if !cgroup_is_initialized() {
         return -(Errno::Einval as i64);
@@ -662,6 +698,7 @@ pub fn sys_cgroup_attach(cg_id: u64, pid: u64) -> i64 {
 ///
 /// `controller`: 0=CFS 配额, 1=CFS 周期, 2=内存, 3=PID 上限。
 /// 成功返回 0, 初始化未完成或控制器非法时返回负错误码。
+#[must_use]
 pub fn sys_cgroup_set_limit(cg_id: u64, controller: u64, value: u64) -> i64 {
     if !cgroup_is_initialized() {
         return -(Errno::Einval as i64);
@@ -685,6 +722,7 @@ pub fn sys_cgroup_set_limit(cg_id: u64, controller: u64, value: u64) -> i64 {
 /// 读取指定 cgroup 的统计值。
 ///
 /// `stat_type` 选择统计项, 成功返回非负值, 初始化未完成或项非法时返回负错误码。
+#[must_use]
 pub fn sys_cgroup_get_stat(cg_id: u64, stat_type: u64) -> i64 {
     if !cgroup_is_initialized() {
         return -(Errno::Einval as i64);

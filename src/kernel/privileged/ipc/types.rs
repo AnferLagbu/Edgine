@@ -188,8 +188,15 @@ pub struct WaitQueue {
     lock: crate::privileged::sync::IrqSpinLock<()>,
 }
 
+impl Default for WaitQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WaitQueue {
     /// 构造全零等待队列 (常量上下文可用)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             items: [const { None }; 4],
@@ -310,8 +317,15 @@ pub struct Pipe {
     pub flags: i32,
 }
 
+impl Default for Pipe {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Pipe {
     /// 构造空管道 (常量上下文可用)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             id: 0,
@@ -361,8 +375,15 @@ pub struct SignalPending {
     pub handlers: [SignalHandler; IPC_MAX_SIGNALS],
 }
 
+impl Default for SignalPending {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SignalPending {
     /// 构造空信号待处理表 (常量上下文可用)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             pending: 0,
@@ -404,8 +425,15 @@ pub struct ShmSegment {
     pub perm: i32,
 }
 
+impl Default for ShmSegment {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ShmSegment {
     /// 构造空共享内存段 (常量上下文可用)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             id: 0,
@@ -432,12 +460,19 @@ pub struct Message {
     pub size: u64,
     /// 消息数据
     pub data: [u8; MSG_MAX_SIZE],
-    /// 下一条消息 (侵入式链表, AtomicPtr 保证 Send/Sync; 队列操作在持锁下执行, Relaxed 足够)
+    /// 下一条消息 (侵入式链表, `AtomicPtr` 保证 Send/Sync; 队列操作在持锁下执行, Relaxed 足够)
     pub next: AtomicPtr<Message>,
+}
+
+impl Default for Message {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Message {
     /// 构造空消息 (常量上下文可用)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             type_: 0,
@@ -457,7 +492,7 @@ pub struct MsgQueue {
     /// 所有者 PID
     pub owner: u32,
 
-    /// 队列头指针 (AtomicPtr: B03-24 根治, 使 IpcNamespace 满足 Send)
+    /// 队列头指针 (`AtomicPtr`: B03-24 根治, 使 `IpcNamespace` 满足 Send)
     pub head: AtomicPtr<Message>,
     /// 队列尾指针
     pub tail: AtomicPtr<Message>,
@@ -479,8 +514,15 @@ pub struct MsgQueue {
     pub perm: i32,
 }
 
+impl Default for MsgQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MsgQueue {
     /// 构造空消息队列 (常量上下文可用)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             id: 0,
@@ -520,8 +562,15 @@ pub struct Semaphore {
     pub perm: i32,
 }
 
+impl Default for Semaphore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Semaphore {
     /// 构造空信号量 (常量上下文可用)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             id: 0,
@@ -538,7 +587,7 @@ impl Semaphore {
 /// IPC 命名空间 (全局资源容器)
 ///
 /// 存储所有 IPC 资源的静态数组。
-/// 内部 NonNull 链表指针仅在持锁时访问 (Mutex 保护每个数组元素),
+/// 内部 `NonNull` 链表指针仅在持锁时访问 (Mutex 保护每个数组元素),
 /// 故 IPC 命名空间整体可安全跨线程传递。
 ///
 /// 资源数组改为堆上 `Vec`, 静态实例经 [`IpcNamespace::empty`] 在 BSS
@@ -560,6 +609,7 @@ impl IpcNamespace {
     /// 创建空命名空间 (所有资源数组为空 `Vec`)。
     ///
     /// 供静态实例 `const` 构造使用; 资源槽位需经 [`IpcNamespace::allocate`] 填充。
+    #[must_use]
     pub const fn empty() -> Self {
         Self {
             pipes: Vec::new(),

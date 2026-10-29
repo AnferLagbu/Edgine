@@ -19,6 +19,7 @@ use crate::privileged::syscall::Errno;
 const PRIO_PROCESS: i32 = 0;
 
 /// nice 值 → `ProcessPriority` 映射
+#[must_use]
 pub fn nice_to_priority(nice: i32) -> ProcessPriority {
     let clamped = nice.clamp(-20, 19);
     if clamped < -10 {
@@ -35,6 +36,7 @@ pub fn nice_to_priority(nice: i32) -> ProcessPriority {
 }
 
 /// `ProcessPriority` → nice 值映射
+#[must_use]
 pub fn priority_to_nice(p: ProcessPriority) -> i32 {
     match p {
         ProcessPriority::RealTime => -20,
@@ -46,6 +48,7 @@ pub fn priority_to_nice(p: ProcessPriority) -> i32 {
 }
 
 /// nice(inc) 系统调用策略
+#[must_use]
 pub fn nice_syscall(inc: i32) -> i64 {
     let pid = crate::privileged::proc::process_get_current_pid();
     let current_nice =
@@ -66,7 +69,7 @@ pub fn nice_syscall(inc: i32) -> i64 {
 /// getpriority(which, who) 系统调用策略
 pub fn getpriority_syscall(which: i32, who: u32) -> i64 {
     if which != PRIO_PROCESS {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     let pid = if who == 0 {
         crate::privileged::proc::process_get_current_pid()
@@ -77,15 +80,16 @@ pub fn getpriority_syscall(which: i32, who: u32) -> i64 {
         pid,
         crate::privileged::proc::process::Process::get_priority,
     ) else {
-        return Errno::ESRCH.as_ret();
+        return Errno::Esrch.as_ret();
     };
     i64::from(priority_to_nice(pri))
 }
 
 /// setpriority(which, who, prio) 系统调用策略
+#[must_use]
 pub fn setpriority_syscall(which: i32, who: u32, prio: i32) -> i64 {
     if which != PRIO_PROCESS {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     let clamped = prio.clamp(-20, 19);
     let pid = if who == 0 {
@@ -96,6 +100,6 @@ pub fn setpriority_syscall(which: i32, who: u32, prio: i32) -> i64 {
     let new_pri = nice_to_priority(clamped);
     match crate::privileged::proc::process_with_mut(pid, |p| p.set_priority(new_pri)) {
         Some(()) => 0,
-        None => Errno::ESRCH.as_ret(),
+        None => Errno::Esrch.as_ret(),
     }
 }

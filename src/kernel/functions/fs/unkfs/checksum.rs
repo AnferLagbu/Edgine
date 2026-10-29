@@ -34,6 +34,7 @@ pub struct UnkfsChecksum {
 
 impl UnkfsChecksum {
     /// 构造指定算法类型的零值校验和.
+    #[must_use]
     pub fn new(kind: UnkfsCksumType) -> Self {
         Self {
             kind,
@@ -42,6 +43,7 @@ impl UnkfsChecksum {
     }
 
     /// 按算法类型对 `data` 计算校验和.
+    #[must_use]
     pub fn compute(kind: UnkfsCksumType, data: &[u8]) -> Self {
         let mut ck = Self::new(kind);
         match kind {
@@ -55,6 +57,7 @@ impl UnkfsChecksum {
     }
 
     /// 用自身算法重算 `data`, 与保存的校验值比较是否一致.
+    #[must_use]
     pub fn verify(&self, data: &[u8]) -> bool {
         let computed = Self::compute(self.kind, data);
         self.value == computed.value
@@ -120,10 +123,10 @@ impl UnkfsChecksum {
 
     fn sha256(&mut self, data: &[u8]) {
         let hash = crate::privileged::sgeg::sha256::sha256(data);
-        self.value[0] = u64::from_be_bytes(hash[0..8].try_into().unwrap_or_else(|_| [0u8; 8]));
-        self.value[1] = u64::from_be_bytes(hash[8..16].try_into().unwrap_or_else(|_| [0u8; 8]));
-        self.value[2] = u64::from_be_bytes(hash[16..24].try_into().unwrap_or_else(|_| [0u8; 8]));
-        self.value[3] = u64::from_be_bytes(hash[24..32].try_into().unwrap_or_else(|_| [0u8; 8]));
+        self.value[0] = u64::from_be_bytes(hash[0..8].try_into().unwrap_or([0u8; 8]));
+        self.value[1] = u64::from_be_bytes(hash[8..16].try_into().unwrap_or([0u8; 8]));
+        self.value[2] = u64::from_be_bytes(hash[16..24].try_into().unwrap_or([0u8; 8]));
+        self.value[3] = u64::from_be_bytes(hash[24..32].try_into().unwrap_or([0u8; 8]));
     }
 }
 

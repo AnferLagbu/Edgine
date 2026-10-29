@@ -79,6 +79,7 @@ pub use pi_mutex::{
 /// 禁用中断并返回保存的 flags
 ///
 /// **调用方约束**: 必须在中断上下文或单 CPU 上下文调用, 配对使用 `restore_interrupts`.
+#[must_use]
 pub fn disable_interrupts() -> IrqSaveFlags {
     crate::privileged::sync::disable_interrupts()
 }
@@ -95,6 +96,7 @@ pub struct IrqDisabled {
 
 impl IrqDisabled {
     /// 进入临界区 (禁用中断)
+    #[must_use]
     pub fn enter() -> Self {
         Self {
             flags: disable_interrupts(),
@@ -132,6 +134,7 @@ pub fn smp_mb() {
 // ============================================================================
 
 /// 当前进程 PID (0 表示内核线程 / 启动期)
+#[must_use]
 pub fn current_pid() -> u32 {
     crate::privileged::proc::process_get_current_pid()
 }
@@ -163,16 +166,18 @@ pub enum SyncError {
 
 impl SyncError {
     /// 映射为 POSIX errno
+    #[must_use]
     pub fn to_errno(self) -> Errno {
         use Errno as E;
         match self {
-            Self::Deadlock => E::EDEADLK,
-            Self::Timeout => E::ETIMEDOUT,
+            Self::Deadlock => E::Edeadlk,
+            Self::Timeout => E::Etimedout,
             Self::Kernel(e) => e.as_errno(),
         }
     }
 
     /// 由 C 风格返回码构造同步错误 (负值为 errno)。
+    #[must_use]
     pub fn from_i32(rc: i32) -> Self {
         use crate::functions::error::KernelError as K;
         match rc {

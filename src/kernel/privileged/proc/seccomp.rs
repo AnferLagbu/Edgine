@@ -6,7 +6,7 @@
 //!
 //! 策略代码 (过滤器 + 规则匹配 + syscall) 于 T1-5 (2026-06-16) 迁至
 //! `functions::proc::seccomp`, 本文件仅 re-export。按统一判据反转：
-//! SeccompState 挂在 Process 结构体 (privileged 进程机制状态), seccomp_check
+//! `SeccompState` 挂在 Process 结构体 (privileged 进程机制状态), `seccomp_check`
 //! 被 privileged syscall 分发路径消费 — 属机制项, 迁回。
 //! 依赖闭包仅 privileged (sync/errno)。
 //!
@@ -35,8 +35,8 @@ use crate::privileged::syscall::types::{
 
 /// 每进程最大 seccomp filter 数 (Linux 语义上限)
 ///
-/// T2 批 2 (syscall-followup): 原 sys_seccomp 策略入口迁至 functions, 本常量
-/// 属机制语义 (seccomp_check 与 functions 策略共用), 保持 privileged 单一权威.
+/// T2 批 2 (syscall-followup): 原 `sys_seccomp` 策略入口迁至 functions, 本常量
+/// 属机制语义 (`seccomp_check` 与 functions 策略共用), 保持 privileged 单一权威.
 pub const MAX_FILTERS: usize = 4;
 
 // B09-17 (2026-09-14): 白名单数值从 EG_* 私有区 (501+) 归位 Linux 编号 (SYS_*).
@@ -69,7 +69,7 @@ pub enum SeccompMode {
 // Seccomp 动作
 // ============================================================================
 
-/// seccomp 命中规则时的动作 (与 Linux SECCOMP_RET_* 语义对应)。
+/// seccomp 命中规则时的动作 (与 Linux `SECCOMP_RET`_* 语义对应)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SeccompAction {
     /// 放行 syscall。
@@ -88,6 +88,7 @@ pub enum SeccompAction {
 
 impl SeccompAction {
     /// 由 Linux `SECCOMP_RET_*` 编码解析动作。
+    #[must_use]
     pub fn from_linux(ret: u32) -> Self {
         match ret & 0xFFFF_0000 {
             0x0000_0000 => Self::KillThread,
@@ -100,6 +101,7 @@ impl SeccompAction {
     }
 
     /// 编码为 Linux `SECCOMP_RET_*` 32 位返回值。
+    #[must_use]
     pub fn to_linux(self) -> u32 {
         match self {
             Self::Allow => 0x7FFF_0000,
@@ -112,10 +114,10 @@ impl SeccompAction {
     }
 }
 
-/// 默认 seccomp 动作 (Linux SECCOMP_RET_ALLOW)
+/// 默认 seccomp 动作 (Linux `SECCOMP_RET_ALLOW`)
 ///
-/// T2 批 2 (syscall-followup): functions 策略入口 (seccomp_syscall) 依赖本常量
-/// 构造初始 filter, 与机制检查 seccomp_check 共用同一权威定义.
+/// T2 批 2 (syscall-followup): functions 策略入口 (`seccomp_syscall`) 依赖本常量
+/// 构造初始 filter, 与机制检查 `seccomp_check` 共用同一权威定义.
 pub const DEFAULT_ACTION: SeccompAction = SeccompAction::Allow;
 
 // ============================================================================
@@ -157,6 +159,7 @@ pub struct ArgComparator {
 
 impl ArgComparator {
     /// 按本比较器的操作符判定参数 `arg` 是否满足条件。
+    #[must_use]
     pub fn evaluate(&self, arg: u64) -> bool {
         match self.op {
             CmpOp::Equal => arg == self.value,
@@ -187,6 +190,7 @@ pub struct SeccompRule {
 
 impl SeccompRule {
     /// 判定本规则是否命中给定 syscall 及其参数。
+    #[must_use]
     pub fn matches(&self, syscall_nr: u64, args: &[u64; 6]) -> bool {
         if self.syscall_nr != syscall_nr {
             return false;
@@ -216,6 +220,7 @@ pub struct SeccompFilter {
 
 impl SeccompFilter {
     /// 由规则列表与默认动作构造过滤器。
+    #[must_use]
     pub fn new(rules: Vec<SeccompRule>, default_action: SeccompAction) -> Self {
         Self {
             rules,
@@ -224,6 +229,7 @@ impl SeccompFilter {
     }
 
     /// 依次匹配规则, 返回首个命中规则的动作, 否则返回默认动作。
+    #[must_use]
     pub fn check(&self, syscall_nr: u64, args: &[u64; 6]) -> SeccompAction {
         for rule in &self.rules {
             if rule.matches(syscall_nr, args) {
@@ -238,7 +244,7 @@ impl SeccompFilter {
 // Per-process Seccomp 状态
 // ============================================================================
 
-/// 每个进程的 seccomp 状态 — 当前模式、过滤器列表与 no_new_privs 标志。
+/// 每个进程的 seccomp 状态 — 当前模式、过滤器列表与 `no_new_privs` 标志。
 pub struct SeccompState {
     /// 当前模式 (`SeccompMode` 的 u8 编码, 原子读写)。
     pub mode: AtomicU8,
@@ -248,8 +254,15 @@ pub struct SeccompState {
     pub no_new_privs: AtomicU8,
 }
 
+impl Default for SeccompState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SeccompState {
     /// 构造默认 (禁用模式, 空过滤器) 的 seccomp 状态。
+    #[must_use]
     pub fn new() -> Self {
         Self {
             mode: AtomicU8::new(SeccompMode::Disabled as u8),
@@ -297,7 +310,7 @@ pub fn seccomp_check(syscall_nr: u64, args: &[u64; 6]) -> Option<i64> {
                 None
             } else {
                 let _ = do_signal_send(pid as Pid, 9);
-                Some(-(Errno::EPERM as i64))
+                Some(-(Errno::Eperm as i64))
             }
         }
         SeccompMode::Filter => {
@@ -319,7 +332,7 @@ pub fn seccomp_check(syscall_nr: u64, args: &[u64; 6]) -> Option<i64> {
                 SeccompAction::Allow | SeccompAction::Log => None,
                 SeccompAction::KillThread | SeccompAction::KillProcess | SeccompAction::Trap => {
                     let _ = do_signal_send(pid as Pid, 31);
-                    Some(-(Errno::EPERM as i64))
+                    Some(-(Errno::Eperm as i64))
                 }
                 SeccompAction::Errno(e) => Some(-i64::from(e)),
             }
@@ -357,5 +370,5 @@ pub fn add_rule(pid: u64, rule: SeccompRule) -> Result<(), Errno> {
             }
             Ok(())
         })
-        .unwrap_or(Err(Errno::ESRCH))
+        .unwrap_or(Err(Errno::Esrch))
 }

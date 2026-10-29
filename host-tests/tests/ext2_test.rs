@@ -80,9 +80,9 @@ fn test_ext2_utimensat_wires_to_disk_inode() {
     );
 
     let set_times = fn_body(&src, "fn set_times(");
-    assert!(set_times.contains("i_atime"), "set_times 必须写 i_atime");
-    assert!(set_times.contains("i_mtime"), "set_times 必须写 i_mtime");
-    assert!(set_times.contains("i_ctime"), "set_times 必须写 i_ctime");
+    assert!(set_times.contains("atime"), "set_times 必须写 atime");
+    assert!(set_times.contains("mtime"), "set_times 必须写 mtime");
+    assert!(set_times.contains("ctime"), "set_times 必须写 ctime");
     assert!(
         set_times.contains("save_inode"),
         "set_times 必须经 save_inode 落盘"
@@ -97,9 +97,9 @@ fn test_ext2_utimensat_wires_to_disk_inode() {
     );
 }
 
-/// 丙批审查 B2 门槛: ext2 `i_ctime` 取值须独立于 `i_mtime`.
+/// 丙批审查 B2 门槛: ext2 `ctime` 取值须独立于 `mtime`.
 ///
-/// 背景: `set_times` 曾直接 `i_ctime = i_mtime`, 丢失"元数据变更时刻"的独立
+/// 背景: `set_times` 曾直接 `ctime = mtime`, 丢失"元数据变更时刻"的独立
 /// 语义. 修复后 ctime 取**当前秒值**, 换算与 `functions/fs/stat.rs::utimensat_syscall`
 /// 同源 (tick / frequency) — 不可用 `crate::arch!(timestamp())` (TSC 周期计数,
 /// 落 32 位磁盘字段会截顶成 `u32::MAX`).
@@ -111,15 +111,15 @@ fn test_ext2_ctime_source_independent_of_mtime() {
     let set_times = fn_body(&src, "fn set_times(");
 
     assert!(
-        !set_times.contains("i_ctime = inode.i_mtime"),
-        "B2: i_ctime 不得直接抄 i_mtime (丢失独立语义)"
+        !set_times.contains("ctime = inode.mtime"),
+        "B2: ctime 不得直接抄 mtime (丢失独立语义)"
     );
     assert!(
         set_times.contains("get_ticks") && set_times.contains("get_frequency"),
-        "B2: i_ctime 必须取当前秒值 (tick / frequency, 与 utimensat_syscall 同源)"
+        "B2: ctime 必须取当前秒值 (tick / frequency, 与 utimensat_syscall 同源)"
     );
     assert!(
         !set_times.contains("arch!(timestamp())"),
-        "B2: i_ctime 不得用 TSC 计数 (落 32 位磁盘字段会截顶成 u32::MAX)"
+        "B2: ctime 不得用 TSC 计数 (落 32 位磁盘字段会截顶成 u32::MAX)"
     );
 }

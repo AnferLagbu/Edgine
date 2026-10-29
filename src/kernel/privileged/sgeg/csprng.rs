@@ -84,13 +84,14 @@ fn fill_random_bytes(buf: &mut [u8]) {
             i += 1;
         }
     } else {
-        for i in 0..buf.len() {
-            buf[i] = fallback_entropy_byte(i);
+        for (i, b) in buf.iter_mut().enumerate() {
+            *b = fallback_entropy_byte(i);
         }
     }
 }
 
 /// 生成 `PWM_SALT_LEN` 字节的随机盐; 优先硬件 RNG, 不可用时回退到 TSC/计数器派生的熵源。
+#[must_use]
 pub fn generate_salt() -> [u8; PWM_SALT_LEN] {
     let mut salt = [0u8; PWM_SALT_LEN];
     fill_random_bytes(&mut salt);

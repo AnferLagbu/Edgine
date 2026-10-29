@@ -14,6 +14,7 @@ pub struct UnkfsInode {
 
 impl UnkfsInode {
     /// 由 fd、挂载索引与相对路径构造 UNKFS inode。
+    #[must_use]
     pub fn new(fd: u32, mount_idx: u32, rel_path: &str) -> Self {
         Self {
             fd,

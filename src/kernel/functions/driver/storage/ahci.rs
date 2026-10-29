@@ -47,6 +47,13 @@ use super::AHCI_CONTROLLERS;
 use crate::slog_info;
 use crate::slog_warn;
 
+/// AHCI 端口命令失败
+///
+/// 涵盖: 端口未初始化/设备缺席、参数非法、DMA 缓冲区分配失败、
+/// 命令提交超时或端口报错 (TFE/`PxSERR`)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AhciError;
+
 // ============================================================================
 // HBA 寄存器偏移
 // ============================================================================
@@ -219,6 +226,7 @@ pub enum AhciDeviceKind {
 
 impl AhciDeviceKind {
     /// 从 `PxSIG` 寄存器解析
+    #[must_use]
     pub fn from_signature(sig: u32) -> Self {
         match sig {
             SATA_SIG_ATA => Self::Ata,
@@ -245,6 +253,7 @@ pub struct SataStatus {
 
 impl SataStatus {
     /// 从 `PxSSTS` 寄存器解析
+    #[must_use]
     pub fn from_register(val: u32) -> Self {
         Self {
             device_detection: (val & 0x0F) as u8,
@@ -253,6 +262,7 @@ impl SataStatus {
     }
 
     /// 设备是否已建立通信 (PxSSTS.DET == 3)
+    #[must_use]
     pub fn is_connected(self) -> bool {
         self.device_detection == 3
     }
@@ -302,6 +312,7 @@ pub struct AhciPort {
 
 impl AhciPort {
     /// 创建端口实例
+    #[must_use]
     pub fn new(port_num: u8) -> Self {
         Self {
             port_num,
@@ -316,6 +327,7 @@ impl AhciPort {
     }
 
     /// 端口对应的 EGDF 块设备下标 (无盘/未注册为 `None`)
+    #[must_use]
     pub fn drive(&self) -> Option<u8> {
         self.drive
     }
@@ -326,6 +338,7 @@ impl AhciPort {
     }
 
     /// 端口 MMIO 基址偏移 (相对 ABAR)
+    #[must_use]
     pub fn port_offset(&self) -> usize {
         self.port_offset
     }
@@ -333,6 +346,7 @@ impl AhciPort {
     // ── 端口寄存器读写 (通过 IoMem) ──
 
     /// 读端口 32 位寄存器 (使用控制器的 `IoMem`)
+    #[must_use]
     pub fn port_read32(&self, hba: &AhciHba, offset: usize) -> u32 {
         hba.port_read32(self.port_num, offset)
     }
@@ -343,6 +357,7 @@ impl AhciPort {
     }
 
     /// 读 `PxCLB` (Command List Base Address, 32-bit)
+    #[must_use]
     pub fn cmd_list_base(&self, hba: &AhciHba) -> u32 {
         self.port_read32(hba, PX_CLB)
     }
@@ -364,6 +379,7 @@ impl AhciPort {
     }
 
     /// 读 `PxFB` (FIS Base Address, 32-bit)
+    #[must_use]
     pub fn fis_base(&self, hba: &AhciHba) -> u32 {
         self.port_read32(hba, PX_FB)
     }
@@ -385,6 +401,7 @@ impl AhciPort {
     }
 
     /// 读 `PxIS` (Interrupt Status)
+    #[must_use]
     pub fn interrupt_status(&self, hba: &AhciHba) -> u32 {
         self.port_read32(hba, PX_IS)
     }
@@ -395,6 +412,7 @@ impl AhciPort {
     }
 
     /// 读 `PxIE` (Interrupt Enable)
+    #[must_use]
     pub fn interrupt_enable(&self, hba: &AhciHba) -> u32 {
         self.port_read32(hba, PX_IE)
     }
@@ -405,6 +423,7 @@ impl AhciPort {
     }
 
     /// 读 `PxCMD`
+    #[must_use]
     pub fn port_cmd(&self, hba: &AhciHba) -> u32 {
         self.port_read32(hba, PX_CMD)
     }
@@ -415,21 +434,25 @@ impl AhciPort {
     }
 
     /// 读 `PxTFD` (Task File Data)
+    #[must_use]
     pub fn port_tfd(&self, hba: &AhciHba) -> u32 {
         self.port_read32(hba, PX_TFD)
     }
 
     /// 读 `PxSIG` (设备签名)
+    #[must_use]
     pub fn port_signature(&self, hba: &AhciHba) -> u32 {
         self.port_read32(hba, PX_SIG)
     }
 
     /// 读 `PxSSTS`
+    #[must_use]
     pub fn port_sata_status(&self, hba: &AhciHba) -> SataStatus {
         SataStatus::from_register(self.port_read32(hba, PX_SSTS))
     }
 
     /// 读 `PxCI` (Command Issue)
+    #[must_use]
     pub fn port_cmd_issue(&self, hba: &AhciHba) -> u32 {
         self.port_read32(hba, PX_CI)
     }
@@ -440,16 +463,19 @@ impl AhciPort {
     }
 
     /// 端口是否忙碌 (PxTFD.BSY)
+    #[must_use]
     pub fn port_is_busy(&self, hba: &AhciHba) -> bool {
         self.port_tfd(hba) & PX_TFD_BSY != 0
     }
 
     /// 端口是否有数据请求 (PxTFD.DRQ)
+    #[must_use]
     pub fn port_has_drq(&self, hba: &AhciHba) -> bool {
         self.port_tfd(hba) & PX_TFD_DRQ != 0
     }
 
     /// 端口是否有错误 (PxTFD.ERR)
+    #[must_use]
     pub fn port_has_error(&self, hba: &AhciHba) -> bool {
         self.port_tfd(hba) & PX_TFD_ERR != 0
     }
@@ -492,8 +518,8 @@ impl AhciPort {
     /// 使能 FIS 接收 (PxCMD.FRE) 并等待设备签名锁存
     ///
     /// COMRESET 后设备在位信息经 D2H Register FIS 上报, HBA 须先开
-    /// FIS 接收引擎 PxSIG 才会被锁存 (AHCI 1.3.1 §3.3.5)。QEMU 于
-    /// PxCMD 写入时惰性补发 init D2H (hw/ide/ahci.c `ahci_init_d2h`,
+    /// FIS 接收引擎 `PxSIG` 才会被锁存 (AHCI 1.3.1 §3.3.5)。QEMU 于
+    /// `PxCMD` 写入时惰性补发 init D2H (hw/ide/ahci.c `ahci_init_d2h`,
     /// 其注释自述为 hack), 不使能 FRE 则 `PxSIG` 恒 `0xFFFFFFFF`,
     /// 端口扫描判不出设备 (带盘冒烟实证)。
     pub fn enable_fis_receive(&mut self, hba: &AhciHba) -> bool {
@@ -650,9 +676,9 @@ impl AhciPort {
         buffer_phys: u64,
         byte_count: u32,
         is_write: bool,
-    ) -> Result<(), ()> {
+    ) -> Result<(), AhciError> {
         let Some(dma) = self.dma.as_ref() else {
-            return Err(());
+            return Err(AhciError);
         };
 
         let slot = 0u32; // 使用 slot 0
@@ -686,7 +712,7 @@ impl AhciPort {
         while self.port_is_busy(hba) || self.port_has_drq(hba) {
             timeout -= 1;
             if timeout == 0 {
-                return Err(());
+                return Err(AhciError);
             }
             core::hint::spin_loop();
         }
@@ -712,17 +738,17 @@ impl AhciPort {
 
         if timeout == 0 {
             self.clear_port_error_status(hba);
-            return Err(());
+            return Err(AhciError);
         }
 
         // 7. 检查错误
         if self.interrupt_status(hba) & PX_IS_TFE != 0 {
             self.clear_port_error_status(hba);
-            return Err(());
+            return Err(AhciError);
         }
         if self.port_has_error(hba) {
             self.clear_port_error_status(hba);
-            return Err(());
+            return Err(AhciError);
         }
 
         Ok(())
@@ -730,7 +756,7 @@ impl AhciPort {
 
     /// 命令失败后的最小错误恢复 (AHCI 1.3.1 §6.4.2)
     ///
-    /// PxSERR 状态/诊断位为 W1C, 错误完成后保持置位; 不清除将影响
+    /// `PxSERR` 状态/诊断位为 W1C, 错误完成后保持置位; 不清除将影响
     /// 端口后续命令处理。PxIS 同步清除避免残留中断状态误判。
     fn clear_port_error_status(&self, hba: &AhciHba) {
         self.port_write32(hba, PX_SERR, 0xFFFF_FFFF);
@@ -741,16 +767,22 @@ impl AhciPort {
     ///
     /// # Errors
     ///
-    /// - 端口未初始化或设备未就绪时返回 `Err(())`
-    /// - `count` 为 0 或超过单命令最大扇区数时返回 `Err(())`
-    /// - DMA 缓冲区分配失败时返回 `Err(())`
-    /// - 命令提交超时、传输错误 (TFE) 或端口出错时返回 `Err(())`
-    pub fn read(&mut self, hba: &AhciHba, lba: u64, count: u16, buffer: *mut u8) -> Result<(), ()> {
+    /// - 端口未初始化或设备未就绪时返回 [`AhciError`]
+    /// - `count` 为 0 或超过单命令最大扇区数时返回 [`AhciError`]
+    /// - DMA 缓冲区分配失败时返回 [`AhciError`]
+    /// - 命令提交超时、传输错误 (TFE) 或端口出错时返回 [`AhciError`]
+    pub fn read(
+        &mut self,
+        hba: &AhciHba,
+        lba: u64,
+        count: u16,
+        buffer: *mut u8,
+    ) -> Result<(), AhciError> {
         if !self.port_initialized || !self.device_present {
-            return Err(());
+            return Err(AhciError);
         }
         if count == 0 || count > MAX_SECTORS_PER_CMD {
-            return Err(());
+            return Err(AhciError);
         }
 
         let byte_count =
@@ -760,7 +792,7 @@ impl AhciPort {
         let Some(buf) =
             crate::privileged::driver::storage::ahci_alloc_dma_buffer(byte_count as usize)
         else {
-            return Err(());
+            return Err(AhciError);
         };
         let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
         let buf_dma_addr = buf.dma_addr().as_u64();
@@ -771,7 +803,7 @@ impl AhciPort {
         // 复制数据到用户 buffer
         if result.is_ok() {
             crate::privileged::driver::storage::ahci_copy_from_dma(
-                buffer,
+                buffer as u64,
                 buf_vaddr,
                 byte_count as usize,
             );
@@ -784,22 +816,22 @@ impl AhciPort {
     ///
     /// # Errors
     ///
-    /// - 端口未初始化或设备未就绪时返回 `Err(())`
-    /// - `count` 为 0 或超过单命令最大扇区数时返回 `Err(())`
-    /// - DMA 缓冲区分配失败时返回 `Err(())`
-    /// - 命令提交超时、传输错误 (TFE) 或端口出错时返回 `Err(())`
+    /// - 端口未初始化或设备未就绪时返回 [`AhciError`]
+    /// - `count` 为 0 或超过单命令最大扇区数时返回 [`AhciError`]
+    /// - DMA 缓冲区分配失败时返回 [`AhciError`]
+    /// - 命令提交超时、传输错误 (TFE) 或端口出错时返回 [`AhciError`]
     pub fn write(
         &mut self,
         hba: &AhciHba,
         lba: u64,
         count: u16,
         buffer: *const u8,
-    ) -> Result<(), ()> {
+    ) -> Result<(), AhciError> {
         if !self.port_initialized || !self.device_present {
-            return Err(());
+            return Err(AhciError);
         }
         if count == 0 || count > MAX_SECTORS_PER_CMD {
-            return Err(());
+            return Err(AhciError);
         }
 
         let byte_count =
@@ -809,7 +841,7 @@ impl AhciPort {
         let Some(buf) =
             crate::privileged::driver::storage::ahci_alloc_dma_buffer(byte_count as usize)
         else {
-            return Err(());
+            return Err(AhciError);
         };
         let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
         let buf_dma_addr = buf.dma_addr().as_u64();
@@ -817,14 +849,13 @@ impl AhciPort {
         // 复制数据到 DMA 缓冲区
         crate::privileged::driver::storage::ahci_copy_to_dma(
             buf_vaddr,
-            buffer,
+            buffer as u64,
             byte_count as usize,
         );
 
         let fis = H2dFis::write_dma(lba, count);
-        let result = self.submit_dma_command(hba, &fis, buf_dma_addr, byte_count, true);
 
-        result
+        self.submit_dma_command(hba, &fis, buf_dma_addr, byte_count, true)
     }
 
     /// ATA IDENTIFY DEVICE (0xEC, PIO-in 经 PRDT 传输)
@@ -834,11 +865,11 @@ impl AhciPort {
     ///
     /// # Errors
     ///
-    /// - 端口未初始化或设备未就绪时返回 `Err(())`
-    /// - DMA 缓冲区分配失败或命令提交失败时返回 `Err(())`
-    pub fn identify(&mut self, hba: &AhciHba, buffer: *mut u8) -> Result<(), ()> {
+    /// - 端口未初始化或设备未就绪时返回 [`AhciError`]
+    /// - DMA 缓冲区分配失败或命令提交失败时返回 [`AhciError`]
+    pub fn identify(&mut self, hba: &AhciHba, buffer: *mut u8) -> Result<(), AhciError> {
         if !self.port_initialized || !self.device_present {
-            return Err(());
+            return Err(AhciError);
         }
 
         let byte_count = crate::functions::intcast::low_u32_from_usize(SECTOR_SIZE);
@@ -847,7 +878,7 @@ impl AhciPort {
         let Some(buf) =
             crate::privileged::driver::storage::ahci_alloc_dma_buffer(byte_count as usize)
         else {
-            return Err(());
+            return Err(AhciError);
         };
         let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
         let buf_dma_addr = buf.dma_addr().as_u64();
@@ -857,7 +888,7 @@ impl AhciPort {
 
         if result.is_ok() {
             crate::privileged::driver::storage::ahci_copy_from_dma(
-                buffer,
+                buffer as u64,
                 buf_vaddr,
                 byte_count as usize,
             );
@@ -884,6 +915,7 @@ impl AhciHba {
     /// # 参数
     /// - `abar_phys`: ABAR MMIO 物理基地址 (来自 PCI BAR5)
     /// - `len`: ABAR MMIO 区域大小 (通常 0x2000 = 8KB)
+    #[must_use]
     pub fn new(abar_phys: u64, len: usize) -> Option<Self> {
         let mmio = IoMem::from_pci_bar(PhysAddr::new(abar_phys), len, "ahci-abar").ok()?;
         Some(Self { mmio })
@@ -893,12 +925,14 @@ impl AhciHba {
 
     /// 读 HBA 能力寄存器 (`GHC_CAP`)
     #[inline]
+    #[must_use]
     pub fn capabilities(&self) -> u32 {
         self.mmio.read_u32(GHC_CAP)
     }
 
     /// 读 GHC 全局控制寄存器
     #[inline]
+    #[must_use]
     pub fn ghc(&self) -> u32 {
         self.mmio.read_u32(GHC_GHC)
     }
@@ -911,6 +945,7 @@ impl AhciHba {
 
     /// 读中断状态 (`GHC_IS`)
     #[inline]
+    #[must_use]
     pub fn interrupt_status(&self) -> u32 {
         self.mmio.read_u32(GHC_IS)
     }
@@ -923,12 +958,14 @@ impl AhciHba {
 
     /// 读已实现端口位图 (`GHC_PI`)
     #[inline]
+    #[must_use]
     pub fn ports_implemented(&self) -> u32 {
         self.mmio.read_u32(GHC_PI)
     }
 
     /// 读 HBA 版本 (`GHC_VS`)
     #[inline]
+    #[must_use]
     pub fn version(&self) -> u32 {
         self.mmio.read_u32(GHC_VS)
     }
@@ -963,6 +1000,7 @@ impl AhciHba {
     }
 
     /// 列出已实现的端口索引
+    #[must_use]
     pub fn implemented_ports(&self) -> alloc::vec::Vec<u8> {
         let pi = self.ports_implemented();
         let mut ports = alloc::vec::Vec::new();
@@ -977,6 +1015,7 @@ impl AhciHba {
     // ── 端口 MMIO 访问 ──
 
     /// 读端口 n 的 32 位寄存器
+    #[must_use]
     pub fn port_read32(&self, port: u8, offset: usize) -> u32 {
         let off = PORT_REG_BASE + (port as usize) * PORT_REG_STRIDE + offset;
         self.mmio.read_u32(off)
@@ -1021,6 +1060,7 @@ pub struct PortChanges {
 
 impl AhciController {
     /// 创建 AHCI 控制器实例
+    #[must_use]
     pub fn new(abar_phys: u64, len: usize) -> Option<Self> {
         let hba = AhciHba::new(abar_phys, len)?;
         Some(Self {
@@ -1032,11 +1072,13 @@ impl AhciController {
     }
 
     /// 获取 HBA 引用
+    #[must_use]
     pub fn hba(&self) -> &AhciHba {
         &self.hba
     }
 
     /// 获取端口数量
+    #[must_use]
     pub fn port_count(&self) -> usize {
         self.ports.len()
     }
@@ -1047,6 +1089,7 @@ impl AhciController {
     }
 
     /// 获取端口 (不可变引用)
+    #[must_use]
     pub fn port(&self, index: usize) -> Option<&AhciPort> {
         self.ports.get(index)
     }
@@ -1055,6 +1098,7 @@ impl AhciController {
     ///
     /// `ports` 按下标与硬件端口号一一对应 (见 [`Self::init_controller`]),
     /// 该映射用于把热插拔事件携带的硬件端口号还原为内部索引。
+    #[must_use]
     pub fn port_index_of(&self, port_num: u8) -> Option<usize> {
         self.ports.iter().position(|p| p.port_num == port_num)
     }
@@ -1155,18 +1199,18 @@ impl AhciController {
             initialized: _,
         } = self;
 
-        for pi in 0..ports.len() {
-            let connected = ports[pi].port_sata_status(hba).is_connected();
-            if connected && !ports[pi].device_present {
-                if Self::bring_up_port(&mut ports[pi], hba) {
-                    changes.added.push((pi, ports[pi].port_num));
+        for (pi, port) in ports.iter_mut().enumerate() {
+            let connected = port.port_sata_status(hba).is_connected();
+            if connected && !port.device_present {
+                if Self::bring_up_port(port, hba) {
+                    changes.added.push((pi, port.port_num));
                 }
-            } else if !connected && ports[pi].device_present {
-                ports[pi].disable(hba);
-                ports[pi].device_present = false;
-                ports[pi].device_kind = AhciDeviceKind::None;
-                if let Some(drive) = ports[pi].drive() {
-                    changes.removed.push((pi, ports[pi].port_num, drive));
+            } else if !connected && port.device_present {
+                port.disable(hba);
+                port.device_present = false;
+                port.device_kind = AhciDeviceKind::None;
+                if let Some(drive) = port.drive() {
+                    changes.removed.push((pi, port.port_num, drive));
                 }
             }
         }
@@ -1187,6 +1231,7 @@ impl AhciController {
     }
 
     /// 控制器是否已初始化
+    #[must_use]
     pub fn is_initialized(&self) -> bool {
         self.initialized
     }
@@ -1254,7 +1299,7 @@ impl AhciBlockDevice {
     /// 单命令直读容量, 取代二分探测 (二分需读越界 LBA 触发设备错误,
     /// TCG 下 24 次命令 × 5M 自旋超时 ≈ 50s, 首次带盘冒烟实证)。
     /// word 100-103 (字节偏移 200..208 LE, u48 有效) 按 de facto 语义
-    /// 取总扇区数 (Linux ata_id_u64(id,100) 直接作 n_sectors)。
+    /// 取总扇区数 (Linux `ata_id_u64(id,100)` 直接作 `n_sectors`)。
     fn probe_disk_size(ci: usize, pi: usize) -> u64 {
         let mut controllers = AHCI_CONTROLLERS.lock();
         let Some(controller) = controllers.get_mut(ci) else {
@@ -1288,7 +1333,7 @@ impl BlockDevice for AhciBlockDevice {
         };
         match port.read(hba, sector, 1, buf.as_mut_ptr()) {
             Ok(()) => 0,
-            Err(()) => -1,
+            Err(_) => -1,
         }
     }
 
@@ -1302,7 +1347,7 @@ impl BlockDevice for AhciBlockDevice {
         };
         match port.write(hba, sector, 1, buf.as_ptr()) {
             Ok(()) => 0,
-            Err(()) => -1,
+            Err(_) => -1,
         }
     }
 
@@ -1310,10 +1355,10 @@ impl BlockDevice for AhciBlockDevice {
         let mut controllers = AHCI_CONTROLLERS.lock();
         controllers
             .get_mut(self.controller_index)
-            .map_or(false, |controller| {
+            .is_some_and(|controller| {
                 controller
                     .split_port_hba(self.port_index)
-                    .map_or(false, |(port, _hba)| port.device_present)
+                    .is_some_and(|(port, _hba)| port.device_present)
             })
     }
 

@@ -111,10 +111,10 @@ impl SwapPolicy for FallbackSwapPolicy {
 
     fn select_victim(&self, entries: &[Option<LruPageInfo>]) -> Option<usize> {
         for (i, entry) in entries.iter().enumerate() {
-            if let Some(e) = entry {
-                if !e.locked {
-                    return Some(i);
-                }
+            if let Some(e) = entry
+                && !e.locked
+            {
+                return Some(i);
             }
         }
         None

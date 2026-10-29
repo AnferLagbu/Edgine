@@ -161,6 +161,7 @@ impl CommandRing {
     ///
     /// 注: 真实硬件应在 `push` 前通过 DMA 映射 ring buffer 获取物理地址,
     ///     并写入 Link TRB 的 parameter 字段. 当前为软件骨架.
+    #[must_use]
     pub fn base_address(&self) -> u64 {
         self.trbs[0].parameter // 占位, 真实硬件由 DMA 映射填充
     }
@@ -168,16 +169,19 @@ impl CommandRing {
     /// 获取 enqueue pointer (供 xHCI CRCR 寄存器使用).
     ///
     /// 返回值应通过 DMA 映射转换为物理地址. 当前为软件偏移.
+    #[must_use]
     pub fn enqueue_pointer(&self) -> usize {
         self.enqueue_index * core::mem::size_of::<Trb>()
     }
 
     /// 获取 ring 大小 (TRB 数).
+    #[must_use]
     pub fn size(&self) -> usize {
         self.trbs.len()
     }
 
     /// 获取当前 cycle state.
+    #[must_use]
     pub fn cycle(&self) -> bool {
         self.cycle
     }
@@ -261,6 +265,7 @@ impl EventRing {
     }
 
     /// 窥视下一个事件 (不消费).
+    #[must_use]
     pub fn peek(&self) -> Option<Trb> {
         let trb = self.trbs[self.dequeue_index];
         let trb_cycle = (trb.control & TRB_CYCLE_BIT) != 0;
@@ -272,16 +277,19 @@ impl EventRing {
     }
 
     /// 获取 dequeue pointer (供 xHCI ERDP 寄存器使用).
+    #[must_use]
     pub fn dequeue_pointer(&self) -> usize {
         self.dequeue_index * core::mem::size_of::<Trb>()
     }
 
     /// 获取 ring 大小 (TRB 数).
+    #[must_use]
     pub fn size(&self) -> usize {
         self.trbs.len()
     }
 
     /// 获取当前 cycle state.
+    #[must_use]
     pub fn cycle(&self) -> bool {
         self.cycle
     }

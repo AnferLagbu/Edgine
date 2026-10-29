@@ -20,6 +20,7 @@ pub struct Ext2DirEntry {
 
 impl Ext2DirEntry {
     /// 从字节切片解析目录项
+    #[must_use]
     pub fn from_bytes(data: &[u8]) -> Option<Self> {
         if data.len() < 8 {
             return None;
@@ -50,12 +51,14 @@ impl Ext2DirEntry {
     }
 
     /// 获取文件名
+    #[must_use]
     pub fn get_name(&self) -> &str {
         let len = self.name_len as usize;
         core::str::from_utf8(&self.name[..len]).unwrap_or("")
     }
 
     /// 目录项实际大小 (对齐到 4 字节)
+    #[must_use]
     pub fn actual_size(&self) -> u16 {
         (u16::from(self.name_len) + 8 + 3) & !3
     }

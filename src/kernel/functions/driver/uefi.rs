@@ -18,16 +18,19 @@ pub fn init(system_table_addr: u64) {
 }
 
 /// UEFI 是否已初始化
+#[must_use]
 pub fn is_initialized() -> bool {
     uefi_is_initialized()
 }
 
 /// 获取全局 UEFI 子系统
+#[must_use]
 pub fn subsystem() -> &'static UefiSubsystem {
     uefi_subsystem()
 }
 
 /// UEFI 系统调用 (安全封装)
+#[must_use]
 pub fn uefi_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
     sys_uefi(cmd, a1, a2)
 }

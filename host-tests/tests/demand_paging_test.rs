@@ -25,7 +25,7 @@
 
 use edgine::kernel::privileged::constants::limits::USER_ADDR_MAX;
 use edgine::kernel::privileged::mm::page_fault::{PageFaultInfo, PfResult};
-use edgine::kernel::privileged::mm::{PageFlags, Vma, VmaType};
+use edgine::kernel::privileged::mm::{FileBackedVma, PageFlags, Vma, VmaType};
 
 // =============================================================================
 // 类型级测试
@@ -45,27 +45,27 @@ fn pf_info_parses_error_code() {
     // 0x06 = present(0) | write(1) | user(1) → 缺页 + 写 + 用户态
     let info = PageFaultInfo::from_error_code(0x4000, 0x06);
     assert_eq!(info.fault_addr, 0x4000);
-    assert!(info.write);
-    assert!(info.user);
-    assert!(!info.present);
-    assert!(!info.reserved);
-    assert!(!info.instruction);
+    assert!(info.access.write);
+    assert!(info.access.user);
+    assert!(!info.page.present);
+    assert!(!info.page.reserved);
+    assert!(!info.access.instruction);
 }
 
 #[test]
 fn pf_info_reserved_bit_detection() {
     // 0x08 = reserved bit set
     let info = PageFaultInfo::from_error_code(0x1000, 0x08);
-    assert!(info.reserved);
-    assert!(!info.write);
+    assert!(info.page.reserved);
+    assert!(!info.access.write);
 }
 
 #[test]
 fn pf_info_not_present() {
     let info = PageFaultInfo::from_error_code(0x1000, 0x00);
-    assert!(!info.present);
-    assert!(!info.write);
-    assert!(!info.user);
+    assert!(!info.page.present);
+    assert!(!info.access.write);
+    assert!(!info.access.user);
 }
 
 #[test]
@@ -99,24 +99,20 @@ fn page_flags_nx_bit_distinct() {
 #[test]
 fn vma_file_backed_fields_roundtrip() {
     // 内核 Vma::file_backed 构造器保留文件后端语义字段
-    let vma = Vma::file_backed(
-        0x1000,
-        0x2000,
-        PageFlags::PRESENT | PageFlags::USER,
-        0x100,
-        42,
-        0xCAFE,
-        true,
-        Some(0),
-    );
+    let vma = Vma::file_backed(&FileBackedVma {
+        start: 0x1000,
+        end: 0x2000,
+        flags: PageFlags::PRESENT | PageFlags::USER,
+        offset: 0x100,
+        inode_id: 42,
+        pwm: 0xCAFE,
+        shared: true,
+        mount_idx: Some(0),
+    });
     assert_eq!(vma.start, 0x1000, "start 保留映射起始地址");
     assert_eq!(vma.end, 0x2000, "end 保留映射结束地址");
     assert_eq!(vma.end - vma.start, 0x1000, "end - start = 映射长度 4KB");
-    assert_eq!(
-        vma.vma_type,
-        VmaType::FileBacked,
-        "vma_type 语义: FileBacked"
-    );
+    assert_eq!(vma.kind, VmaType::FileBacked, "vma_type 语义: FileBacked");
     assert_eq!(vma.inode_id, 42, "inode_id 保留文件后端 inode 编号");
     assert!(vma.shared, "shared 标记共享映射");
     assert_eq!(vma.file_pwm, 0xCAFE, "file_pwm 保留进程凭证");
@@ -133,7 +129,7 @@ fn vma_anonymous_fields_defaults() {
         PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER,
         VmaType::Anonymous,
     );
-    assert_eq!(vma.vma_type, VmaType::Anonymous, "vma_type 语义: Anonymous");
+    assert_eq!(vma.kind, VmaType::Anonymous, "vma_type 语义: Anonymous");
     assert_eq!(vma.inode_id, 0, "匿名映射 inode_id = 0");
     assert!(!vma.shared, "匿名映射默认非共享");
     assert_eq!(vma.file_pwm, 0, "匿名映射 file_pwm = 0");

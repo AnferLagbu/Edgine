@@ -26,6 +26,13 @@ use crate::privileged::driver::virtio::{VIRTIO_F_VERSION_1, VIRTIO_ID_BLOCK, Vir
 use crate::slog_info;
 use crate::slog_warn;
 
+/// `VirtIO` 块设备扇区读写失败
+///
+/// 涵盖: 缓冲区小于扇区大小、DMA 缓冲区分配失败、描述符耗尽、
+/// 设备返回非 `VIRTIO_BLK_S_OK` 状态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VirtioBlkError;
+
 // ============================================================================
 // VirtIO-blk 常量
 // ============================================================================
@@ -104,6 +111,7 @@ pub struct BlkRequest {
 
 impl BlkRequest {
     /// 创建读请求
+    #[must_use]
     pub fn read(lba: u64) -> Self {
         Self {
             req_type: VIRTIO_BLK_T_IN.to_le(),
@@ -113,6 +121,7 @@ impl BlkRequest {
     }
 
     /// 创建写请求
+    #[must_use]
     pub fn write(lba: u64) -> Self {
         Self {
             req_type: VIRTIO_BLK_T_OUT.to_le(),
@@ -122,6 +131,7 @@ impl BlkRequest {
     }
 
     /// 创建刷新请求
+    #[must_use]
     pub fn flush() -> Self {
         Self {
             req_type: VIRTIO_BLK_T_FLUSH.to_le(),
@@ -131,6 +141,7 @@ impl BlkRequest {
     }
 
     /// 请求头大小 (字节)
+    #[must_use]
     pub const fn header_size() -> usize {
         core::mem::size_of::<Self>()
     }
@@ -170,6 +181,7 @@ impl VirtioBlkDriver {
     ///
     /// # 参数
     /// - `device`: 已探测到的 `VirtIO` 设备 (`device_id` 必须为 `VIRTIO_ID_BLOCK`)
+    #[must_use]
     pub fn new(device: VirtioMmioDevice) -> Option<Self> {
         if device.device_id() != VIRTIO_ID_BLOCK {
             slog_warn!(
@@ -259,8 +271,8 @@ impl VirtioBlkDriver {
 
     /// 完成设备初始化并进入 live (§6.4 直接方案 B: 注册前调用).
     ///
-    /// 等价于 privileged VirtioBlk::new 的收尾: 配置 vq0 MMIO 寄存器
-    /// (desc/avail/used 物理地址) + 设置 DRIVER_OK.
+    /// 等价于 privileged `VirtioBlk::new` 的收尾: 配置 vq0 MMIO 寄存器
+    /// (desc/avail/used 物理地址) + 设置 `DRIVER_OK`.
     pub fn finalize(&mut self) {
         let vq_index = 0u16;
         self.device.select_queue(vq_index);
@@ -275,21 +287,25 @@ impl VirtioBlkDriver {
     }
 
     /// 获取 MMIO 设备引用 (用于 `VirtQueue` 配置).
+    #[must_use]
     pub fn device(&self) -> &VirtioMmioDevice {
         &self.device
     }
 
     /// 获取以扇区为单位的总容量.
+    #[must_use]
     pub fn capacity_sectors(&self) -> u64 {
         self.capacity_sectors
     }
 
     /// 获取协商后的特性位.
+    #[must_use]
     pub fn negotiated_features(&self) -> u64 {
         self.negotiated_features
     }
 
     /// 检查是否协商了指定特性.
+    #[must_use]
     pub fn has_feature(&self, feature: u64) -> bool {
         self.negotiated_features & feature != 0
     }
@@ -297,16 +313,19 @@ impl VirtioBlkDriver {
     // ── 配置空间读取 (安全, 通过 VirtioMmioDevice) ──
 
     /// 读取块大小 (仅当 `VIRTIO_BLK_F_BLK_SIZE` 被协商时有效).
+    #[must_use]
     pub fn block_size(&self) -> u32 {
         self.device.read_config32(BLK_CONFIG_BLK_SIZE)
     }
 
     /// 读取最大缓冲区大小 (仅当 `VIRTIO_BLK_F_SIZE_MAX` 被协商时有效).
+    #[must_use]
     pub fn size_max(&self) -> u32 {
         self.device.read_config32(BLK_CONFIG_SIZE_MAX)
     }
 
     /// 读取最大 scatter-gather 段数 (仅当 `VIRTIO_BLK_F_SEG_MAX` 被协商时有效).
+    #[must_use]
     pub fn seg_max(&self) -> u32 {
         self.device.read_config32(BLK_CONFIG_SEG_MAX)
     }
@@ -315,6 +334,7 @@ impl VirtioBlkDriver {
     ///
     /// VirtIO-blk 配置空间偏移 0x10: cylinders(u16) + heads(u8) + sectors(u8)
     /// 通过 `read_config32` 读取对齐的 32 位, 再拆分.
+    #[must_use]
     pub fn geometry(&self) -> BlkGeometry {
         // 偏移 0x10 包含 cylinders(u16) + heads(u8) + sectors(u8), 共 4 字节
         let raw = self.device.read_config32(BLK_CONFIG_GEOM_CYL);
@@ -331,6 +351,7 @@ impl VirtioBlkDriver {
     // ── 中断处理 ──
 
     /// 读取并应答中断状态 (写 1 清除).
+    #[must_use]
     pub fn ack_interrupt(&self) -> u32 {
         let status = self.device.interrupt_status();
         if status != 0 {
@@ -345,12 +366,13 @@ impl VirtioBlkDriver {
     ///
     /// # 参数
     /// - `vq_index`: virtqueue 索引 (blk 通常为 0)
-    /// - `num`: 队列尺寸 (经 QueueNum 协商写入, 须与 VirtQueue 实际布局一致)
+    /// - `num`: 队列尺寸 (经 `QueueNum` 协商写入, 须与 `VirtQueue` 实际布局一致)
     /// - `desc_paddr`: 描述符表物理地址
     /// - `avail_paddr`: available ring 物理地址
     /// - `used_paddr`: used ring 物理地址
     ///
     /// 返回队列最大尺寸.
+    #[must_use]
     pub fn setup_queue(
         &self,
         vq_index: u16,
@@ -383,10 +405,10 @@ impl VirtioBlkDriver {
     /// DMA 缓冲区通过 privileged `DmaBuffer` 分配.
     ///
     /// # Errors
-    /// 当 `buf` 长度小于扇区大小 (`BLK_SECTOR_SIZE`) 或底层 I/O 执行失败时返回 `Err(())`.
-    pub fn read_sector(&mut self, lba: u64, buf: &mut [u8]) -> Result<(), ()> {
+    /// 当 `buf` 长度小于扇区大小 (`BLK_SECTOR_SIZE`) 或底层 I/O 执行失败时返回 [`VirtioBlkError`].
+    pub fn read_sector(&mut self, lba: u64, buf: &mut [u8]) -> Result<(), VirtioBlkError> {
         if buf.len() < BLK_SECTOR_SIZE {
-            return Err(());
+            return Err(VirtioBlkError);
         }
         self.do_sector_io(lba, VIRTIO_BLK_T_IN, buf)
     }
@@ -394,17 +416,22 @@ impl VirtioBlkDriver {
     /// 从调用方缓冲区写入单个扇区 (512 字节).
     ///
     /// # Errors
-    /// 当 `buf` 长度小于扇区大小 (`BLK_SECTOR_SIZE`) 或底层 I/O 执行失败时返回 `Err(())`.
-    pub fn write_sector(&mut self, lba: u64, buf: &[u8]) -> Result<(), ()> {
+    /// 当 `buf` 长度小于扇区大小 (`BLK_SECTOR_SIZE`) 或底层 I/O 执行失败时返回 [`VirtioBlkError`].
+    pub fn write_sector(&mut self, lba: u64, buf: &[u8]) -> Result<(), VirtioBlkError> {
         if buf.len() < BLK_SECTOR_SIZE {
-            return Err(());
+            return Err(VirtioBlkError);
         }
         // 写操作: 将数据拷贝到 DMA, 设备读取
         self.do_sector_io_write(lba, buf)
     }
 
     /// 执行读扇区 I/O (设备 → DMA → buf).
-    fn do_sector_io(&mut self, lba: u64, req_type: u32, buf: &mut [u8]) -> Result<(), ()> {
+    fn do_sector_io(
+        &mut self,
+        lba: u64,
+        req_type: u32,
+        buf: &mut [u8],
+    ) -> Result<(), VirtioBlkError> {
         let req_size = BlkRequest::header_size();
         let data_size = BLK_SECTOR_SIZE;
         let status_size = 1;
@@ -412,7 +439,7 @@ impl VirtioBlkDriver {
 
         let Some(mut dma) = DmaBuffer::new(total_dma) else {
             slog_warn!(Driver, "virtio-blk: DMA 缓冲区分配失败");
-            return Err(());
+            return Err(VirtioBlkError);
         };
         let dma_phys = dma.phys_addr();
 
@@ -432,7 +459,7 @@ impl VirtioBlkDriver {
     }
 
     /// 执行写扇区 I/O (buf → DMA → 设备).
-    fn do_sector_io_write(&mut self, lba: u64, buf: &[u8]) -> Result<(), ()> {
+    fn do_sector_io_write(&mut self, lba: u64, buf: &[u8]) -> Result<(), VirtioBlkError> {
         let req_size = BlkRequest::header_size();
         let data_size = BLK_SECTOR_SIZE;
         let status_size = 1;
@@ -440,7 +467,7 @@ impl VirtioBlkDriver {
 
         let Some(mut dma) = DmaBuffer::new(total_dma) else {
             slog_warn!(Driver, "virtio-blk: DMA 缓冲区分配失败");
-            return Err(());
+            return Err(VirtioBlkError);
         };
         let dma_phys = dma.phys_addr();
 
@@ -475,7 +502,7 @@ impl VirtioBlkDriver {
         status_size: usize,
         req_type: u32,
         dma: &DmaBuffer,
-    ) -> Result<(), ()> {
+    ) -> Result<(), VirtioBlkError> {
         // ── 准备描述符链 ──
         let desc_req = self.vq.prepare_desc(
             dma_phys,
@@ -504,7 +531,7 @@ impl VirtioBlkDriver {
                 self.vq.reclaim_desc(desc_req);
             }
             slog_warn!(Driver, "virtio-blk: 描述符耗尽");
-            return Err(());
+            return Err(VirtioBlkError);
         }
 
         // 链接: req → data → status
@@ -529,7 +556,7 @@ impl VirtioBlkDriver {
                     if status == VIRTIO_BLK_S_IOERR {
                         slog_warn!(Driver, "virtio-blk: I/O 错误");
                     }
-                    return Err(());
+                    return Err(VirtioBlkError);
                 }
                 return Ok(());
             }
@@ -557,14 +584,14 @@ impl crate::privileged::egdf::BlockDevice for VirtioBlkDriver {
     fn blk_read(&mut self, sector: u64, buf: &mut [u8]) -> i32 {
         match self.read_sector(sector, buf) {
             Ok(()) => 0,
-            Err(()) => -1,
+            Err(_) => -1,
         }
     }
 
     fn blk_write(&mut self, sector: u64, buf: &[u8]) -> i32 {
         match self.write_sector(sector, buf) {
             Ok(()) => 0,
-            Err(()) => -1,
+            Err(_) => -1,
         }
     }
 

@@ -31,8 +31,15 @@ unsafe impl Send for DmaEngine {}
 // SAFETY: 同上, 锁保护并发访问.
 unsafe impl Sync for DmaEngine {}
 
+impl Default for DmaEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DmaEngine {
     /// 构造未初始化的 DMA 引擎.
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             initialized: AtomicBool::new(false),
@@ -182,6 +189,7 @@ impl DmaEngine {
     }
 
     /// 获取 CPU 虚拟地址对应的设备 (物理) DMA 地址
+    #[must_use]
     pub fn device_address(cpu_addr: VirtAddr) -> Option<PhysAddr> {
         if cpu_addr.0 == 0 {
             return None;
@@ -402,6 +410,7 @@ impl DmaEngine {
     }
 
     /// 返回散聚表全部条目总长度 (字节).
+    #[must_use]
     pub fn sg_total_length(sglist: &DmaScatterList) -> usize {
         sglist.total_length
     }
@@ -640,6 +649,7 @@ pub type DmaCallback = fn(*const DmaTransfer);
 
 impl DmaTransfer {
     /// 构造一次尚未完成的 DMA 传输请求.
+    #[must_use]
     pub const fn new(src: PhysAddr, dst: PhysAddr, size: usize, dir: DmaDirection) -> Self {
         Self {
             src_addr: src,
@@ -670,6 +680,7 @@ static DMA_TRANSFERS: [core::sync::atomic::AtomicU8; MAX_DMA_TRANSFERS] =
     [const { core::sync::atomic::AtomicU8::new(0) }; MAX_DMA_TRANSFERS];
 
 /// 提交一次同步 DMA 传输请求, 成功返回传输槽位编号.
+#[must_use]
 pub fn submit_transfer(
     src: PhysAddr,
     dst: PhysAddr,
@@ -727,7 +738,7 @@ unsafe fn ioremap(phys: u64, size: usize) -> Option<u64> {
     dma().ioremap(PhysAddr(phys), size).map(|v| v.0)
 }
 
-/// B04-12: 解除 submit_transfer 中创建的 src/dst 临时映射并回收 MMIO 区间.
+/// B04-12: 解除 `submit_transfer` 中创建的 src/dst 临时映射并回收 MMIO 区间.
 ///
 /// 当前实现是同步内存复制近似 (真实硬件 DMA 应通过中断回调触发释放);
 /// 复制完成即刻解除映射, 避免 MMIO 虚拟地址区间泄漏。

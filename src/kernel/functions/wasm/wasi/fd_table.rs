@@ -102,6 +102,7 @@ pub struct WasiFdTable {
 
 impl WasiFdTable {
     /// 创建容量为 `max_fds` 的空 fd 表 (0/1/2 预留给标准流)
+    #[must_use]
     pub fn new(max_fds: u32) -> Self {
         let mut entries = Vec::with_capacity(max_fds as usize);
         entries.resize_with(max_fds as usize, || None);

@@ -216,6 +216,7 @@ pub extern "C" fn pwm_get_capability_raw(pwm: u64, domain: u16) -> u64 {
 /// 2. 新值不得低于 `VIABLE_FLOOR` 域下限 (与 `identity::revoke` 同口径), 返回 -1.
 ///
 /// 仅作用于当前会话 PWM (不接受 pwm 参数), 杜绝跨进程能力篡改.
+#[must_use]
 pub fn pwm_set_current_capability_raw(domain: u16, caps: u64) -> i32 {
     if domain >= 16 {
         return -1;

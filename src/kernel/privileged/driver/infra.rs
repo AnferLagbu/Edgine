@@ -45,6 +45,7 @@ pub unsafe fn outb(port: u16, value: u8) {
 /// # Safety
 ///
 /// `port` 必须是当前特权级 (Ring 0) 可访问的有效 I/O 端口地址.
+#[must_use]
 pub unsafe fn inb(port: u16) -> u8 {
     // SAFETY: 调用方保证 `port` 是内核态可访问的有效 I/O 端口;
     // 读操作返回 CPU 端口值到 u8 (截断高 8 位), 无其他副作用。
@@ -78,6 +79,7 @@ pub unsafe fn outw(port: u16, value: u16) {
 /// # Safety
 ///
 /// `port` 必须是当前特权级 (Ring 0) 可访问的有效 I/O 端口地址.
+#[must_use]
 pub unsafe fn inw(port: u16) -> u16 {
     unsafe {
         // SAFETY: 调用方保证 `port` 是内核态可访问的有效 I/O 端口 (字宽 16-bit);
@@ -111,6 +113,7 @@ pub unsafe fn outl(port: u16, value: u32) {
 /// # Safety
 ///
 /// `port` 必须是当前特权级 (Ring 0) 可访问的有效 I/O 端口地址.
+#[must_use]
 pub unsafe fn inl(port: u16) -> u32 {
     // SAFETY: 调用方保证 `port` 是内核态可访问的有效 I/O 端口 (双字 32-bit);
     // 读操作返回 CPU 端口值, 无其他副作用。

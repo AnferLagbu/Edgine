@@ -27,7 +27,7 @@ const AP_ENTRY_TIMEOUT_LOOPS: usize = 500;
 /// AP 启动握手结构体大小 (字节).
 ///
 /// 必须与 `arch/x86_64/trampoline.asm` 中 `ApStartupInfo` 的汇编布局完全一致.
-/// 编译期断言 `assert_eq_size!` 在 smp_init 加载时强制; 若后续字段重排,
+/// 编译期断言 `assert_eq_size!` 在 `smp_init` 加载时强制; 若后续字段重排,
 /// 链接器/汇编端未同步, 编译立即失败 (见 P1.A + DECISION-050).
 const AP_STARTUP_INFO_SIZE: usize = 54;
 
@@ -336,15 +336,15 @@ extern "C" fn ap_entry(lapic_id: u32) -> ! {
     // 继承。缺失时 `process_switch_asm` 的 fxsave 在 CR4.OSFXSR=0 下触发 #UD →
     // #DF, 使本核首次上下文切换即崩溃离线; SYSCALL MSR 未设则 AP 上用户态首个
     // syscall 跳向无效入口。此处复用 BSP 探测到的特性集合, 仅作用于本核。
-    if let Some(info) = crate::privileged::cpu::get_cpu_info() {
-        if let Err(e) = crate::privileged::cpu::init_msr(&info.features) {
-            crate::klog_err!(
-                Boot,
-                "[SMP] AP cpu_index={} init_msr failed: {}",
-                cpu_index,
-                e
-            );
-        }
+    if let Some(info) = crate::privileged::cpu::get_cpu_info()
+        && let Err(e) = crate::privileged::cpu::init_msr(&info.features)
+    {
+        crate::klog_err!(
+            Boot,
+            "[SMP] AP cpu_index={} init_msr failed: {}",
+            cpu_index,
+            e
+        );
     }
 
     // AP 必须在本核加载 IDT 之后才能开中断: gdt_init_ap 只装 GDT+TSS,
@@ -421,7 +421,7 @@ extern "C" fn ap_entry(lapic_id: u32) -> ! {
     // `hlt` 分离会丢掉窗口内到达的 IPI; `sti; hlt` 是 x86 的经典原子等待序列
     // (STI 影子指令), 对齐 `idle_entry` 手法。
     loop {
-        crate::arch!(interrupt_disable());
+        let _ = crate::arch!(interrupt_disable());
         let _ = crate::privileged::proc::Scheduler::schedule();
         // SAFETY: sti/hlt 在 ring 0 合法; 不读写内存也不修改栈, options 与之一致.
         unsafe {

@@ -3,7 +3,7 @@
 //! 原 init.rs 内联定义 `nic_probe_all`; 抽出为独立子模块后, init.rs 主体
 //! 通过 `probe::nic_probe_all()` 调用 (仅 init 模块内部可见, 不对外暴露).
 //!
-//! 批次 Z ④ (NetOps 安全桥): privileged 旧 `VirtioNet`/`E1000Net` 驱动与
+//! 批次 Z ④ (`NetOps` 安全桥): privileged 旧 `VirtioNet`/`E1000Net` 驱动与
 //! 静态 `NetOps` 表均已删除, 网卡探测改为经 DECISION-K 注册契约槽位单向
 //! 拉取 functions 驱动注册数据 (functions→privileged 单向, privileged 不引用
 //! functions)。

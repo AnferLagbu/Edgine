@@ -102,6 +102,7 @@ pub enum UsbSpeed {
 
 impl UsbSpeed {
     /// 返回该速度的理论带宽 (Mbps); 未知速度返回 0.
+    #[must_use]
     pub fn bandwidth_mbps(self) -> u32 {
         match self {
             Self::Low => 1,
@@ -143,7 +144,7 @@ pub enum DeviceState {
 pub struct DeviceDescriptor {
     /// 描述符自身长度, 固定为 18 字节.
     pub length: u8,
-    /// 描述符类型, 恒为 DescriptorType::Device.
+    /// 描述符类型, 恒为 `DescriptorType::Device`.
     pub descriptor_type: u8,
     /// USB 规范版本号 (BCD 编码, 如 0x0200 代表 USB 2.0).
     pub usb_version: u16,
@@ -198,13 +199,13 @@ impl Default for DeviceDescriptor {
 pub struct ConfigurationDescriptor {
     /// 描述符自身长度, 固定为 9 字节.
     pub length: u8,
-    /// 描述符类型, 恒为 DescriptorType::Configuration.
+    /// 描述符类型, 恒为 `DescriptorType::Configuration`.
     pub descriptor_type: u8,
     /// 该配置下全部描述符 (配置 + 接口 + 端点等) 的总字节数.
     pub total_length: u16,
     /// 该配置包含的接口数量.
     pub num_interfaces: u8,
-    /// SetConfiguration 请求使用的配置标识值 (从 1 开始).
+    /// `SetConfiguration` 请求使用的配置标识值 (从 1 开始).
     pub configuration_value: u8,
     /// 配置名称字符串描述符的索引; 0 表示无.
     pub configuration_index: u8,
@@ -220,7 +221,7 @@ pub struct ConfigurationDescriptor {
 pub struct InterfaceDescriptor {
     /// 描述符自身长度, 固定为 9 字节.
     pub length: u8,
-    /// 描述符类型, 恒为 DescriptorType::Interface.
+    /// 描述符类型, 恒为 `DescriptorType::Interface`.
     pub descriptor_type: u8,
     /// 接口编号 (从 0 开始).
     pub interface_number: u8,
@@ -244,7 +245,7 @@ pub struct InterfaceDescriptor {
 pub struct EndpointDescriptor {
     /// 描述符自身长度, 固定为 7 字节.
     pub length: u8,
-    /// 描述符类型, 恒为 DescriptorType::Endpoint.
+    /// 描述符类型, 恒为 `DescriptorType::Endpoint`.
     pub descriptor_type: u8,
     /// 端点地址: D7=方向 (0=OUT, 1=IN), D3..D0=端点编号.
     pub endpoint_address: u8,
@@ -258,6 +259,7 @@ pub struct EndpointDescriptor {
 
 impl EndpointDescriptor {
     /// 从端点地址提取传输方向.
+    #[must_use]
     pub fn direction(self) -> Direction {
         if self.endpoint_address & 0x80 != 0 {
             Direction::In
@@ -267,11 +269,13 @@ impl EndpointDescriptor {
     }
 
     /// 从端点地址提取端点编号 (0..15).
+    #[must_use]
     pub fn number(self) -> u8 {
         self.endpoint_address & 0x0F
     }
 
     /// 从端点属性提取传输类型.
+    #[must_use]
     pub fn transfer_type(self) -> TransferType {
         match self.attributes & 0x03 {
             1 => TransferType::Isochronous,
@@ -358,7 +362,7 @@ impl From<u8> for DeviceClass {
 pub struct UsbSetupPacket {
     /// 请求类型字节: D7=方向, D6..D5=类型, D4..D0=接收者.
     pub request_type: u8,
-    /// 请求代码; 标准请求见 StandardRequest.
+    /// 请求代码; 标准请求见 `StandardRequest`.
     pub request: u8,
     /// 请求参数 wValue, 含义随请求而定.
     pub value: u16,
@@ -466,6 +470,7 @@ pub struct UsbDevice {
 
 impl UsbDevice {
     /// 以给定 ID 创建未连接状态的设备实例, 其余字段取默认值.
+    #[must_use]
     pub fn new(id: u32) -> Self {
         Self {
             id,
@@ -481,16 +486,19 @@ impl UsbDevice {
     }
 
     /// 由设备描述符的类别字节解析设备类.
+    #[must_use]
     pub fn device_class(&self) -> DeviceClass {
         DeviceClass::from(self.descriptor.device_class)
     }
 
     /// 返回设备描述符中的厂商 ID.
+    #[must_use]
     pub fn vendor_id(&self) -> u16 {
         self.descriptor.vendor_id
     }
 
     /// 返回设备描述符中的产品 ID.
+    #[must_use]
     pub fn product_id(&self) -> u16 {
         self.descriptor.product_id
     }
@@ -557,6 +565,7 @@ pub struct UsbCore {
 
 impl UsbCore {
     /// 创建空的核心管理器: 无已连接设备、无主机控制器、未初始化.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             devices: Vec::new(),
@@ -580,11 +589,11 @@ impl UsbCore {
         let mut result = Ok(());
         'outer: for controller in &mut controllers {
             for port in 0..controller.num_ports() {
-                if controller.port_has_device(port) {
-                    if let Err(e) = self.enumerate_port(controller.as_mut(), port) {
-                        result = Err(e);
-                        break 'outer;
-                    }
+                if controller.port_has_device(port)
+                    && let Err(e) = self.enumerate_port(controller.as_mut(), port)
+                {
+                    result = Err(e);
+                    break 'outer;
                 }
             }
         }
@@ -665,7 +674,7 @@ impl UsbCore {
         let _ = dma.sync_for_cpu();
         let mut descriptor = DeviceDescriptor::default();
         crate::privileged::driver::storage::nvme_copy_from_dma(
-            core::ptr::addr_of_mut!(descriptor).cast::<u8>(),
+            core::ptr::addr_of_mut!(descriptor).cast::<u8>() as u64,
             dma.cpu_addr().as_ptr() as u64,
             desc_size,
         );
@@ -707,11 +716,13 @@ impl UsbCore {
     }
 
     /// 根据类查找设备
+    #[must_use]
     pub fn find_device_by_class(&self, class: DeviceClass) -> Option<&UsbDevice> {
         self.devices.iter().find(|d| d.device_class() == class)
     }
 
     /// 根据VID/PID查找设备
+    #[must_use]
     pub fn find_device_by_vid_pid(&self, vid: u16, pid: u16) -> Option<&UsbDevice> {
         self.devices
             .iter()
@@ -719,6 +730,7 @@ impl UsbCore {
     }
 
     /// 获取设备数量
+    #[must_use]
     pub fn device_count(&self) -> usize {
         self.devices.len()
     }

@@ -20,23 +20,23 @@ use crate::functions::timer::clock::{
 use crate::functions::timer::time_sync::TimeSyncSubsystem;
 
 fn syscall_error_conversion() -> TestResult {
-    assert_eq_test!(Errno::EPERM.as_ret(), -1, "EPERM");
-    assert_eq_test!(Errno::ENOMEM.as_ret(), -12, "ENOMEM");
-    assert_eq_test!(Errno::EINVAL.as_ret(), -22, "EINVAL");
+    assert_eq_test!(Errno::Eperm.as_ret(), -1, "EPERM");
+    assert_eq_test!(Errno::Enomem.as_ret(), -12, "ENOMEM");
+    assert_eq_test!(Errno::Einval.as_ret(), -22, "EINVAL");
     TestResult::Pass
 }
 
 fn syscall_error_from_i64() -> TestResult {
-    assert_eq_test!(errno_from_i64(-1), Some(Errno::EPERM), "from -1");
-    assert_eq_test!(errno_from_i64(-22), Some(Errno::EINVAL), "from -22");
+    assert_eq_test!(errno_from_i64(-1), Some(Errno::Eperm), "from -1");
+    assert_eq_test!(errno_from_i64(-22), Some(Errno::Einval), "from -22");
     assert_eq_test!(errno_from_i64(-999), None, "from -999");
     TestResult::Pass
 }
 
 fn syscall_error_display() -> TestResult {
-    let s = alloc::format!("{}", Errno::EPERM);
+    let s = alloc::format!("{}", Errno::Eperm);
     assert_eq_test!(s.as_str(), "Operation not permitted", "EPERM display");
-    let s = alloc::format!("{}", Errno::ENOSYS);
+    let s = alloc::format!("{}", Errno::Enosys);
     assert_eq_test!(s.as_str(), "Function not implemented", "ENOSYS display");
     TestResult::Pass
 }
@@ -160,27 +160,27 @@ fn settimeofday_apply() -> TestResult {
     // tv 为 NULL: Linux 语义为"只设置时区", 本实装无操作
     check!(settimeofday_syscall(0, 0) == Ok(0), "null tv is no-op");
     check!(
-        settimeofday_syscall(BAD_USER_PTR, 0) == Err(Errno::EFAULT),
+        settimeofday_syscall(BAD_USER_PTR, 0) == Err(Errno::Efault),
         "bad tv → EFAULT"
     );
     check!(
-        settimeofday_syscall(BAD_USER_PTR, BAD_USER_PTR) == Err(Errno::EFAULT),
+        settimeofday_syscall(BAD_USER_PTR, BAD_USER_PTR) == Err(Errno::Efault),
         "bad tv rejected before tz"
     );
 
     // 参数越界 (早于特权判定)
     check!(
-        apply_settimeofday(-1, 0) == Err(Errno::EINVAL),
+        apply_settimeofday(-1, 0) == Err(Errno::Einval),
         "negative sec → EINVAL"
     );
     check!(
-        apply_settimeofday(0, 1_000_000) == Err(Errno::EINVAL),
+        apply_settimeofday(0, 1_000_000) == Err(Errno::Einval),
         "usec out of range → EINVAL"
     );
 
     if crate::privileged::sgeg::get_current_uid() != 0 {
         check!(
-            apply_settimeofday(0, 0) == Err(Errno::EPERM),
+            apply_settimeofday(0, 0) == Err(Errno::Eperm),
             "non-root denied"
         );
         return TestResult::Pass;
@@ -208,15 +208,15 @@ fn settimeofday_apply() -> TestResult {
 /// `clock_nanosleep` 参数校验 + 等待时长策略 (含 `TIMER_ABSTIME`)
 fn clock_nanosleep_policy() -> TestResult {
     check!(
-        clock_nanosleep_syscall(CLOCK_REALTIME, 0, 0, 0) == Err(Errno::EFAULT),
+        clock_nanosleep_syscall(CLOCK_REALTIME, 0, 0, 0) == Err(Errno::Efault),
         "null req → EFAULT"
     );
     check!(
-        clock_nanosleep_syscall(CLOCK_REALTIME, 0x2, 0x1000, 0) == Err(Errno::EINVAL),
+        clock_nanosleep_syscall(CLOCK_REALTIME, 0x2, 0x1000, 0) == Err(Errno::Einval),
         "unknown flags → EINVAL"
     );
     check!(
-        clock_nanosleep_syscall(CLOCK_REALTIME, 0, BAD_USER_PTR, 0) == Err(Errno::EFAULT),
+        clock_nanosleep_syscall(CLOCK_REALTIME, 0, BAD_USER_PTR, 0) == Err(Errno::Efault),
         "out-of-range req → EFAULT"
     );
 
@@ -232,19 +232,19 @@ fn clock_nanosleep_policy() -> TestResult {
         "past absolute deadline"
     );
     check!(
-        clock_nanosleep_wait_ns(CLOCK_MONOTONIC, 0x4, 0, 0) == Err(Errno::EINVAL),
+        clock_nanosleep_wait_ns(CLOCK_MONOTONIC, 0x4, 0, 0) == Err(Errno::Einval),
         "bad flags → EINVAL"
     );
     check!(
-        clock_nanosleep_wait_ns(7, 0, 0, 0) == Err(Errno::EINVAL),
+        clock_nanosleep_wait_ns(7, 0, 0, 0) == Err(Errno::Einval),
         "unsupported clock → EINVAL"
     );
     check!(
-        clock_nanosleep_wait_ns(CLOCK_MONOTONIC, 0, -1, 0) == Err(Errno::EINVAL),
+        clock_nanosleep_wait_ns(CLOCK_MONOTONIC, 0, -1, 0) == Err(Errno::Einval),
         "negative sec → EINVAL"
     );
     check!(
-        clock_nanosleep_wait_ns(CLOCK_MONOTONIC, 0, 0, 1_000_000_000) == Err(Errno::EINVAL),
+        clock_nanosleep_wait_ns(CLOCK_MONOTONIC, 0, 0, 1_000_000_000) == Err(Errno::Einval),
         "nsec out of range → EINVAL"
     );
     TestResult::Pass
@@ -257,17 +257,17 @@ fn adjtimex_policy() -> TestResult {
 
     // 不支持的 mode 位 (ADJ_ESTERROR) / ADJ_SETOFFSET 增量越界 → EINVAL
     check!(
-        apply_adjtimex(0x0008, 0, 0, 0, 0) == Err(Errno::EINVAL),
+        apply_adjtimex(0x0008, 0, 0, 0, 0) == Err(Errno::Einval),
         "unsupported mode bit → EINVAL"
     );
     check!(
-        apply_adjtimex(ADJ_SETOFFSET, 0, 0, 0, 2_000_000) == Err(Errno::EINVAL),
+        apply_adjtimex(ADJ_SETOFFSET, 0, 0, 0, 2_000_000) == Err(Errno::Einval),
         "ADJ_SETOFFSET usec out of range"
     );
 
     if crate::privileged::sgeg::get_current_uid() != 0 {
         check!(
-            apply_adjtimex(ADJ_FREQUENCY, 0, 0, 0, 0) == Err(Errno::EPERM),
+            apply_adjtimex(ADJ_FREQUENCY, 0, 0, 0, 0) == Err(Errno::Eperm),
             "non-root denied"
         );
         return TestResult::Pass;
@@ -343,7 +343,7 @@ fn wall_clock_freq_baseline() -> TestResult {
     TestResult::Pass
 }
 
-/// 渐进调整: `adj_time` 登记的偏移由 tick 机制 (timesync tick_adjust) 消耗
+/// 渐进调整: `adj_time` 登记的偏移由 tick 机制 (timesync `tick_adjust`) 消耗
 fn wall_clock_gradual_adjust() -> TestResult {
     let original = TimeSyncSubsystem::get_adjusted_time_ns();
 
@@ -393,19 +393,19 @@ const AT_EMPTY_PATH: i32 = 0x1000;
 /// `execveat` 参数校验 (flags / dirfd / `AT_EMPTY_PATH`)
 fn execveat_validation() -> TestResult {
     check!(
-        execveat_syscall(AT_FDCWD, BAD_USER_PTR, 0, 0, 0) == Err(Errno::EFAULT),
+        execveat_syscall(AT_FDCWD, BAD_USER_PTR, 0, 0, 0) == Err(Errno::Efault),
         "bad pathname → EFAULT"
     );
     check!(
-        execveat_syscall(-1, BAD_USER_PTR, 0, 0, 0) == Err(Errno::ENOTSUP),
+        execveat_syscall(-1, BAD_USER_PTR, 0, 0, 0) == Err(Errno::Enotsup),
         "non-AT_FDCWD dirfd → ENOTSUP"
     );
     check!(
-        execveat_syscall(AT_FDCWD, BAD_USER_PTR, 0, 0, 0x2000) == Err(Errno::EINVAL),
+        execveat_syscall(AT_FDCWD, BAD_USER_PTR, 0, 0, 0x2000) == Err(Errno::Einval),
         "unknown flag → EINVAL"
     );
     check!(
-        execveat_syscall(AT_FDCWD, BAD_USER_PTR, 0, 0, AT_EMPTY_PATH) == Err(Errno::EFAULT),
+        execveat_syscall(AT_FDCWD, BAD_USER_PTR, 0, 0, AT_EMPTY_PATH) == Err(Errno::Efault),
         "AT_EMPTY_PATH with unreadable pathname → EFAULT"
     );
     TestResult::Pass
@@ -429,9 +429,9 @@ fn setdomainname_validation() -> TestResult {
 
 /// `chroot` 指针校验 (先于特权判定, 保证内核态调用点可确定性验证)
 fn chroot_validation() -> TestResult {
-    check!(chroot_syscall(0) == Err(Errno::EFAULT), "空指针 → EFAULT");
+    check!(chroot_syscall(0) == Err(Errno::Efault), "空指针 → EFAULT");
     check!(
-        chroot_syscall(BAD_USER_PTR) == Err(Errno::EFAULT),
+        chroot_syscall(BAD_USER_PTR) == Err(Errno::Efault),
         "越界指针 → EFAULT"
     );
     TestResult::Pass
@@ -440,36 +440,36 @@ fn chroot_validation() -> TestResult {
 /// `pivot_root` 指针校验 + `new_root`/`put_old` 关系校验
 fn pivot_root_validation() -> TestResult {
     check!(
-        pivot_root_syscall(0, 0) == Err(Errno::EFAULT),
+        pivot_root_syscall(0, 0) == Err(Errno::Efault),
         "空指针 → EFAULT"
     );
     check!(
-        pivot_root_syscall(BAD_USER_PTR, BAD_USER_PTR) == Err(Errno::EFAULT),
+        pivot_root_syscall(BAD_USER_PTR, BAD_USER_PTR) == Err(Errno::Efault),
         "越界指针 → EFAULT"
     );
 
     // 关系校验: new_root 即当前根 → EBUSY
     check!(
-        pivot_root_plan("/", "/old", "/") == Err(Errno::EBUSY),
+        pivot_root_plan("/", "/old", "/") == Err(Errno::Ebusy),
         "new_root == 当前根 → EBUSY"
     );
     check!(
-        pivot_root_plan("/new", "/new/old", "/new") == Err(Errno::EBUSY),
+        pivot_root_plan("/new", "/new/old", "/new") == Err(Errno::Ebusy),
         "new_root == 当前根 (非 /) → EBUSY"
     );
     // put_old 与 new_root 相同 → EINVAL
     check!(
-        pivot_root_plan("/new", "/new", "/") == Err(Errno::EINVAL),
+        pivot_root_plan("/new", "/new", "/") == Err(Errno::Einval),
         "put_old == new_root → EINVAL"
     );
     // put_old 不在 new_root 之下 → EINVAL
     check!(
-        pivot_root_plan("/new", "/other", "/") == Err(Errno::EINVAL),
+        pivot_root_plan("/new", "/other", "/") == Err(Errno::Einval),
         "put_old 不在 new_root 之下 → EINVAL"
     );
     // 前缀相同但非路径下级的边界情形 → EINVAL
     check!(
-        pivot_root_plan("/newroot", "/new/old", "/") == Err(Errno::EINVAL),
+        pivot_root_plan("/newroot", "/new/old", "/") == Err(Errno::Einval),
         "前缀相似但非下级 → EINVAL"
     );
     // 合法关系

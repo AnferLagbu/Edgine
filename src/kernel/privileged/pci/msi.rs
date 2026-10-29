@@ -92,7 +92,7 @@ const MSI_VECTOR_BASE: u8 = 0x40;
 ///
 /// 约束链: IDT MSI stub 仅编程 vector 0x40-0x9F (isr.asm + idt/mod.rs),
 /// `register_msi_irq` 校验 irq ∈ [32,128) (idt.rs)。vector = 0x40 + bit,
-/// 若 bit ≥ 96 则 vector ≥ 0xA0 → irq ≥ 128 → register_msi_irq 拒绝,
+/// 若 bit ≥ 96 则 vector ≥ 0xA0 → irq ≥ 128 → `register_msi_irq` 拒绝,
 /// 分配出的 vector 不可用。故 COUNT 必须 ≤ 96 (与 IDT stub 精确一致)。
 /// 委托人所列 128 与 IDT 不一致 (2026-08-25 接手修复), 扩展 IDT stub 时同步上调。
 const MSI_VECTOR_COUNT: u8 = 96;
@@ -140,6 +140,7 @@ pub fn msi_free_vector(vector: u8) {
 ///
 /// 遍历 Capability 链表, 返回 Capability 的配置空间偏移.
 /// 返回 None 表示未找到.
+#[must_use]
 pub fn pci_find_capability(dev: &pci::PciDevice, cap_id: u8) -> Option<u8> {
     if dev.capabilities_ptr == 0 {
         return None;
@@ -187,6 +188,7 @@ pub struct MsiConfig {
 /// 4. 启用 MSI
 ///
 /// 返回 MSI 配置, 或 None (无 MSI 能力/向量耗尽).
+#[must_use]
 pub fn msi_enable(dev: &pci::PciDevice) -> Option<MsiConfig> {
     let cap_offset = pci_find_capability(dev, PCI_CAP_ID_MSI)?;
 
@@ -332,12 +334,13 @@ pub struct MsixConfig {
 /// 3. 分配向量
 /// 4. 配置 Table Entry
 /// 5. 启用 MSI-X
+#[must_use]
 pub fn msix_enable(dev: &pci::PciDevice, num_vectors: u16) -> Option<MsixConfig> {
     let cap_offset = pci_find_capability(dev, PCI_CAP_ID_MSIX)?;
 
     // 读取 Message Control
     let ctrl = pci::read_config_word(dev.bus, dev.device, dev.function, cap_offset + 0x02);
-    let table_size = ((ctrl & MSIX_CTRL_TSIZE) + 1) as u16;
+    let table_size = (ctrl & MSIX_CTRL_TSIZE) + 1;
     let actual_vectors = num_vectors.min(table_size);
 
     // 解析 Table Offset/BAR
@@ -369,7 +372,7 @@ pub fn msix_enable(dev: &pci::PciDevice, num_vectors: u16) -> Option<MsixConfig>
                     // MSIX-03 修复: MSI-X addr 应含 destination 字段 (bits 19:12 = LAPIC ID).
                     // 此前硬编码 0xFEE00000 (dest=0) 在多 LAPIC 系统上不投递 (QEMU 默认
                     // LAPIC ID=0x01000000 拆 bits 19:12 = 0x10, dest=0 无法匹配任何 CPU).
-                    let lapic_id = crate::privileged::arch::apic::get_id() as u32;
+                    let lapic_id = crate::privileged::arch::apic::get_id();
                     entry.msg_addr_lo = 0xFEE0_0000 | ((lapic_id & 0xFF) << 12);
                     entry.msg_addr_hi = 0;
                 }

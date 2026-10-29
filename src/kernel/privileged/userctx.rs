@@ -112,11 +112,11 @@ pub struct UserContext {
     pub x17: u64,
     /// 通用寄存器 X18
     pub x18: u64,
-    /// 异常返回地址 (ELR_EL1)
+    /// 异常返回地址 (`ELR_EL1`)
     pub elr_el1: u64, // exception link register (返回地址)
-    /// 已保存的程序状态寄存器 (SPSR_EL1)
+    /// 已保存的程序状态寄存器 (`SPSR_EL1`)
     pub spsr_el1: u64, // 已保存的程序状态寄存器 (SPSR)
-    /// 用户态栈指针 (SP_EL0)
+    /// 用户态栈指针 (`SP_EL0`)
     pub sp_el0: u64, // user stack pointer
 }
 
@@ -124,6 +124,7 @@ impl UserContext {
     /// 系统调用号
     #[cfg(target_arch = "x86_64")]
     #[inline]
+    #[must_use]
     pub fn syscall_number(&self) -> u64 {
         self.rax
     }
@@ -131,6 +132,7 @@ impl UserContext {
     #[cfg(target_arch = "aarch64")]
     #[inline]
     /// 系统调用号
+    #[must_use]
     pub fn syscall_number(&self) -> u64 {
         self.x8
     }
@@ -152,6 +154,7 @@ impl UserContext {
     /// 参数 0
     #[cfg(target_arch = "x86_64")]
     #[inline]
+    #[must_use]
     pub fn arg0(&self) -> u64 {
         self.rdi
     }
@@ -159,6 +162,7 @@ impl UserContext {
     #[cfg(target_arch = "aarch64")]
     #[inline]
     /// 参数 0
+    #[must_use]
     pub fn arg0(&self) -> u64 {
         self.x0
     }
@@ -166,6 +170,7 @@ impl UserContext {
     /// 参数 1
     #[cfg(target_arch = "x86_64")]
     #[inline]
+    #[must_use]
     pub fn arg1(&self) -> u64 {
         self.rsi
     }
@@ -173,6 +178,7 @@ impl UserContext {
     #[cfg(target_arch = "aarch64")]
     #[inline]
     /// 参数 1
+    #[must_use]
     pub fn arg1(&self) -> u64 {
         self.x1
     }
@@ -180,6 +186,7 @@ impl UserContext {
     /// 参数 2
     #[cfg(target_arch = "x86_64")]
     #[inline]
+    #[must_use]
     pub fn arg2(&self) -> u64 {
         self.rdx
     }
@@ -187,6 +194,7 @@ impl UserContext {
     #[cfg(target_arch = "aarch64")]
     #[inline]
     /// 参数 2
+    #[must_use]
     pub fn arg2(&self) -> u64 {
         self.x2
     }
@@ -194,6 +202,7 @@ impl UserContext {
     /// 参数 3
     #[cfg(target_arch = "x86_64")]
     #[inline]
+    #[must_use]
     pub fn arg3(&self) -> u64 {
         self.r10
     }
@@ -201,6 +210,7 @@ impl UserContext {
     #[cfg(target_arch = "aarch64")]
     #[inline]
     /// 参数 3
+    #[must_use]
     pub fn arg3(&self) -> u64 {
         self.x3
     }
@@ -208,6 +218,7 @@ impl UserContext {
     /// 参数 4
     #[cfg(target_arch = "x86_64")]
     #[inline]
+    #[must_use]
     pub fn arg4(&self) -> u64 {
         self.r8
     }
@@ -215,6 +226,7 @@ impl UserContext {
     #[cfg(target_arch = "aarch64")]
     #[inline]
     /// 参数 4
+    #[must_use]
     pub fn arg4(&self) -> u64 {
         self.x4
     }
@@ -222,6 +234,7 @@ impl UserContext {
     /// 参数 5
     #[cfg(target_arch = "x86_64")]
     #[inline]
+    #[must_use]
     pub fn arg5(&self) -> u64 {
         self.r9
     }
@@ -229,6 +242,7 @@ impl UserContext {
     #[cfg(target_arch = "aarch64")]
     #[inline]
     /// 参数 5
+    #[must_use]
     pub fn arg5(&self) -> u64 {
         self.x5
     }
@@ -236,6 +250,7 @@ impl UserContext {
     /// 用户态栈指针
     #[cfg(target_arch = "x86_64")]
     #[inline]
+    #[must_use]
     pub fn user_sp(&self) -> u64 {
         self.rsp
     }
@@ -243,6 +258,7 @@ impl UserContext {
     #[cfg(target_arch = "aarch64")]
     #[inline]
     /// 用户态栈指针
+    #[must_use]
     pub fn user_sp(&self) -> u64 {
         self.sp_el0
     }
@@ -250,6 +266,7 @@ impl UserContext {
     /// 用户态返回地址
     #[cfg(target_arch = "x86_64")]
     #[inline]
+    #[must_use]
     pub fn user_ip(&self) -> u64 {
         self.rip
     }
@@ -257,6 +274,7 @@ impl UserContext {
     #[cfg(target_arch = "aarch64")]
     #[inline]
     /// 用户态返回地址
+    #[must_use]
     pub fn user_ip(&self) -> u64 {
         self.elr_el1
     }

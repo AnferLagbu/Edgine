@@ -36,6 +36,9 @@ use super::types::{
 // 解释器
 // ============================================================================
 
+/// 宿主函数签名: 接收解释器可变引用, 返回执行结果
+pub type HostFunction = Box<dyn Fn(&mut Interpreter) -> Result<(), WasmError>>;
+
 /// WASM 解释器 — 字节码执行引擎实例
 pub struct Interpreter {
     /// 操作数栈
@@ -50,7 +53,7 @@ pub struct Interpreter {
     /// 退出码
     pub exit_code: i32,
     module: WasmModule,
-    host_functions: Vec<Box<dyn Fn(&mut Self) -> Result<(), WasmError>>>,
+    host_functions: Vec<HostFunction>,
     import_func_count: u32,
     globals: Vec<Value>,
     tables: Vec<Vec<u32>>,
@@ -60,6 +63,7 @@ pub struct Interpreter {
 
 impl Interpreter {
     /// 由 WASM 模块与配置构造解释器 (统计 import 数并初始化全局量与表)
+    #[must_use]
     pub fn new(module: WasmModule, config: InterpreterConfig) -> Self {
         let import_func_count = crate::functions::intcast::low_u32_from_usize(
             module
@@ -87,13 +91,13 @@ impl Interpreter {
 
         let module_globals = module.globals.clone();
 
-        // B07-12: 把配置的 `max_memory_pages` 硬上限接入内存创建路径 —
+        // B07-12: 把配置的 `memory_pages` 硬上限接入内存创建路径 —
         // 模块声明的 max 与配置上限取交集; 未声明时强制配置上限 (256 页),
         // 防止恶意 bytecode 声明无界 max 后无限增长线性内存 (DoS).
         let cap_max = |declared: Option<u32>| {
             Some(match declared {
-                Some(d) => d.min(config.max_memory_pages),
-                None => config.max_memory_pages,
+                Some(d) => d.min(config.memory_pages),
+                None => config.memory_pages,
             })
         };
 
@@ -107,10 +111,10 @@ impl Interpreter {
                 break;
             }
         }
-        if memory.is_none() {
-            if let Some(mem) = module.memories.first() {
-                memory = Some(LinearMemory::new(mem.limits.min, cap_max(mem.limits.max)));
-            }
+        if memory.is_none()
+            && let Some(mem) = module.memories.first()
+        {
+            memory = Some(LinearMemory::new(mem.limits.min, cap_max(mem.limits.max)));
         }
 
         let import_table_count = module
@@ -147,10 +151,10 @@ impl Interpreter {
 
         for (gi, (_, init_expr)) in module_globals.iter().enumerate() {
             let global_idx = import_global_count + gi;
-            if let Ok(val) = Self::eval_init_expr(init_expr, &interp.globals) {
-                if global_idx < interp.globals.len() {
-                    interp.globals[global_idx] = val;
-                }
+            if let Ok(val) = Self::eval_init_expr(init_expr, &interp.globals)
+                && global_idx < interp.globals.len()
+            {
+                interp.globals[global_idx] = val;
             }
         }
 
@@ -190,14 +194,13 @@ impl Interpreter {
 
     fn apply_data_segments(&mut self) {
         for seg in &self.module.data {
-            if !seg.offset.is_empty() {
-                if let Ok(Value::I32(offset)) = Self::eval_init_expr(&seg.offset, &self.globals) {
-                    if let Some(ref mut mem) = self.memory {
-                        let addr = crate::functions::intcast::usize_from_i32(offset);
-                        if addr + seg.data.len() <= mem.data.len() {
-                            mem.data[addr..addr + seg.data.len()].copy_from_slice(&seg.data);
-                        }
-                    }
+            if !seg.offset.is_empty()
+                && let Ok(Value::I32(offset)) = Self::eval_init_expr(&seg.offset, &self.globals)
+                && let Some(ref mut mem) = self.memory
+            {
+                let addr = crate::functions::intcast::usize_from_i32(offset);
+                if addr + seg.data.len() <= mem.data.len() {
+                    mem.data[addr..addr + seg.data.len()].copy_from_slice(&seg.data);
                 }
             }
         }
@@ -226,7 +229,7 @@ impl Interpreter {
     }
 
     /// 注册匿名 host function (追加到调用表末尾)
-    pub fn register_host_function(&mut self, f: Box<dyn Fn(&mut Self) -> Result<(), WasmError>>) {
+    pub fn register_host_function(&mut self, f: HostFunction) {
         self.host_functions.push(f);
     }
 
@@ -234,12 +237,7 @@ impl Interpreter {
     ///
     /// 注册后，`auto_register_wasi` 可根据 WASM import section 的 module/name
     /// 自动查找并注册到正确的 index 位置。
-    pub fn register_named_host_function(
-        &mut self,
-        module: &str,
-        name: &str,
-        f: Box<dyn Fn(&mut Self) -> Result<(), WasmError>>,
-    ) {
+    pub fn register_named_host_function(&mut self, module: &str, name: &str, f: HostFunction) {
         let idx = self.host_functions.len();
         self.host_functions.push(f);
         self.named_host_functions
@@ -259,18 +257,17 @@ impl Interpreter {
             if let ImportKind::Function(_) = import.desc {
                 let module_name = core::str::from_utf8(&import.module).unwrap_or("");
                 let func_name = core::str::from_utf8(&import.name).unwrap_or("");
-                if module_name == "wasi_snapshot_preview1" {
-                    if let Some(&idx) = self
+                if module_name == "wasi_snapshot_preview1"
+                    && let Some(&idx) = self
                         .named_host_functions
                         .get(&(String::from(module_name), String::from(func_name)))
-                    {
-                        // 确保 host_functions 数组足够大
-                        while self.host_functions.len() <= func_idx as usize {
-                            self.host_functions.push(Box::new(|_| Ok(())));
-                        }
-                        // 交换到正确位置
-                        self.host_functions.swap(func_idx as usize, idx);
+                {
+                    // 确保 host_functions 数组足够大
+                    while self.host_functions.len() <= func_idx as usize {
+                        self.host_functions.push(Box::new(|_| Ok(())));
                     }
+                    // 交换到正确位置
+                    self.host_functions.swap(func_idx as usize, idx);
                 }
                 func_idx += 1;
             }
@@ -376,7 +373,7 @@ impl Interpreter {
         let body = self.get_func_body(func_idx)?;
 
         if crate::functions::intcast::low_u32_from_usize(self.call_stack.len())
-            >= self.config.max_call_depth
+            >= self.config.call_depth
         {
             return Err(WasmError::CallDepthExceeded);
         }
@@ -434,7 +431,7 @@ impl Interpreter {
         while let Some(opcode) = self.fetch_opcode() {
             let op = Opcode::from_byte(opcode).ok_or(WasmError::UnknownOpcode(opcode))?;
             self.gas_used += 1;
-            if self.gas_used > self.config.max_gas {
+            if self.gas_used > self.config.gas {
                 return Err(WasmError::GasExhausted);
             }
             self.execute_op(op, opcode)?;
@@ -714,8 +711,8 @@ impl Interpreter {
         frame.pc += 1;
         let n = read_leb128_u32(&frame.code, &mut frame.pc)? as usize;
         let mut targets = alloc::vec![0usize; n + 1];
-        for i in 0..n {
-            targets[i] = read_leb128_u32(&frame.code, &mut frame.pc)? as usize;
+        for slot in targets.iter_mut().take(n) {
+            *slot = read_leb128_u32(&frame.code, &mut frame.pc)? as usize;
         }
         targets[n] = read_leb128_u32(&frame.code, &mut frame.pc)? as usize;
         let _ = frame;
@@ -826,7 +823,7 @@ impl Interpreter {
             let b = code[pc];
             pc += 1;
             match b {
-                0x02 | 0x03 | 0x04 => depth += 1,
+                0x02..=0x04 => depth += 1,
                 0x0B => depth -= 1,
                 0x10 => {
                     pc += 1;
@@ -846,7 +843,7 @@ impl Interpreter {
             let b = code[pc];
             pc += 1;
             match b {
-                0x02 | 0x03 | 0x04 => depth += 1,
+                0x02..=0x04 => depth += 1,
                 0x0B => {
                     depth -= 1;
                     if depth == 0 {
@@ -876,7 +873,7 @@ impl Interpreter {
             let b = code[pc];
             pc += 1;
             match b {
-                0x02 | 0x03 | 0x04 => depth += 1,
+                0x02..=0x04 => depth += 1,
                 0x0B => depth -= 1,
                 0x10 => {
                     pc += 1;

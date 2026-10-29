@@ -21,6 +21,7 @@ use crate::privileged::proc;
 /// `#[inline(never)]`: 链路上调用 `canary::get_random_bytes` -> `copy_to_user`
 /// (含 inline asm). 阻止内联避开 aarch64 LLVM 22 codegen bug.
 #[inline(never)]
+#[must_use]
 pub fn sys_getrandom(arg0: u64, arg1: u64, _arg2: u64) -> i64 {
     let buf = arg0;
     let len = crate::functions::intcast::usize_from_u64(arg1);
@@ -45,6 +46,7 @@ pub fn sys_getrandom(arg0: u64, arg1: u64, _arg2: u64) -> i64 {
 /// 生成的大函数, 链路上 inline asm 间接导致 rustc 1.97 nightly + LLVM 22
 /// 的 aarch64 codegen bug. 阻止内联后, 整个链路隔离到独立 codegen 单元.
 #[inline(never)]
+#[must_use]
 pub fn sys_get_canary(arg0: u64, arg1: u64) -> i64 {
     proc::write_canary_to_user(arg0, crate::functions::intcast::usize_from_u64(arg1))
 }

@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 //! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 privileged API。
-//! POSIX Timer 系统调用 — functions 层实现 (从 privileged/syscall/posix_timer.rs 下沉, §6.1)
+//! POSIX Timer 系统调用 — functions 层实现 (从 `privileged/syscall/posix_timer.rs` 下沉, §6.1)
 //!
 //! 纯策略包装: 实际 per-process 定时器机制由 privileged `proc::posix_timer` 提供。
 //!
@@ -20,6 +20,7 @@ use crate::privileged::proc as ptimer;
 // ============================================================================
 
 /// `sys_timer_create(clockid, sigev_ptr, timer_id_ptr) -> 0/-errno`
+#[must_use]
 pub fn sys_timer_create(a0: u64, a1: u64, a2: u64) -> i64 {
     ptimer::sys_timer_create(crate::functions::intcast::low_i32_from_u64(a0), a1, a2)
 }
@@ -29,6 +30,7 @@ pub fn sys_timer_create(a0: u64, a1: u64, a2: u64) -> i64 {
 // ============================================================================
 
 /// `sys_timer_settime(timer_id, flags, new_value_ptr, old_value_ptr) -> 0/-errno`
+#[must_use]
 pub fn sys_timer_settime(a0: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     ptimer::sys_timer_settime(
         crate::functions::intcast::low_i32_from_u64(a0),
@@ -43,6 +45,7 @@ pub fn sys_timer_settime(a0: u64, a1: u64, a2: u64, a3: u64) -> i64 {
 // ============================================================================
 
 /// `sys_timer_gettime(timer_id, curr_value_ptr) -> 0/-errno`
+#[must_use]
 pub fn sys_timer_gettime(a0: u64, a1: u64) -> i64 {
     ptimer::sys_timer_gettime(crate::functions::intcast::low_i32_from_u64(a0), a1)
 }
@@ -52,6 +55,7 @@ pub fn sys_timer_gettime(a0: u64, a1: u64) -> i64 {
 // ============================================================================
 
 /// `sys_timer_delete(timer_id) -> 0/-errno`
+#[must_use]
 pub fn sys_timer_delete(a0: u64) -> i64 {
     ptimer::sys_timer_delete(crate::functions::intcast::low_i32_from_u64(a0))
 }
@@ -61,6 +65,7 @@ pub fn sys_timer_delete(a0: u64) -> i64 {
 // ============================================================================
 
 /// `sys_timer_getoverrun(timer_id) -> overrun / -errno`
+#[must_use]
 pub fn sys_timer_getoverrun(a0: u64) -> i64 {
     ptimer::sys_timer_getoverrun(crate::functions::intcast::low_i32_from_u64(a0))
 }
@@ -72,6 +77,7 @@ pub fn sys_timer_getoverrun(a0: u64) -> i64 {
 /// `sys_clock_getres(clockid, res_ptr) -> 0/-errno`
 ///
 /// `res_ptr` 可为 NULL (仅做时钟存在性检查)。
+#[must_use]
 pub fn sys_clock_getres(a0: u64, a1: u64) -> i64 {
     ptimer::sys_clock_getres(crate::functions::intcast::low_i32_from_u64(a0), a1)
 }

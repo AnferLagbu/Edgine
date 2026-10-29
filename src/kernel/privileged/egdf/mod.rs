@@ -128,6 +128,7 @@ pub enum EGDFProto {
 
 impl EGDFProto {
     /// 返回协议类别的短名称 (`block` / `char` / `net` / `input` / `bus` / `other`).
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Block => "block",
@@ -238,7 +239,8 @@ impl EGDFDevice {
     ///
     /// `self.driver_data` 由驱动在 probe 阶段设置. 调用方必须保证
     /// `T` 与 `set_driver_data` 写入时的具体类型一致.
-    pub unsafe fn driver_as_mut<T>(&self) -> &mut T {
+    #[must_use]
+    pub unsafe fn driver_as_mut<T>(&mut self) -> &mut T {
         unsafe { &mut *self.driver_data.cast::<T>() }
     }
 
@@ -248,11 +250,13 @@ impl EGDFDevice {
     ///
     /// `self.driver_data` 由驱动在 probe 阶段设置. 调用方必须保证
     /// `T` 与 `set_driver_data` 写入时的具体类型一致.
+    #[must_use]
     pub unsafe fn driver_as_ref<T>(&self) -> &T {
         unsafe { &*(self.driver_data as *const T) }
     }
 
     /// 取字符设备操作表; 非字符设备返回 `None`.
+    #[must_use]
     pub fn char_ops(&self) -> Option<&'static proto_char::CharOps> {
         match &self.ops {
             Some(EGDFOps::Char(ops)) => Some(ops),
@@ -261,6 +265,7 @@ impl EGDFDevice {
     }
 
     /// 取网络设备操作表; 非网络设备返回 `None`.
+    #[must_use]
     pub fn net_ops(&self) -> Option<&'static proto_net::NetOps> {
         match &self.ops {
             Some(EGDFOps::Net(ops)) => Some(ops),
@@ -269,6 +274,7 @@ impl EGDFDevice {
     }
 
     /// 取输入设备操作表; 非输入设备返回 `None`.
+    #[must_use]
     pub fn input_ops(&self) -> Option<&'static proto_input::InputOps> {
         match &self.ops {
             Some(EGDFOps::Input(ops)) => Some(ops),
@@ -472,13 +478,10 @@ pub fn egdf_find_net_device() -> Option<(
         if dev.state != DeviceState::Ready {
             continue;
         }
-        match &dev.ops {
-            Some(EGDFOps::Net(net_ops)) => {
-                let mut mac = [0u8; 6];
-                net_ops.get_mac(dev.driver_data, &mut mac);
-                return Some((net_ops, dev.driver_data, mac));
-            }
-            _ => {}
+        if let Some(EGDFOps::Net(net_ops)) = &dev.ops {
+            let mut mac = [0u8; 6];
+            net_ops.get_mac(dev.driver_data, &mut mac);
+            return Some((net_ops, dev.driver_data, mac));
         }
     }
     None
@@ -730,6 +733,7 @@ pub fn egdf_blk_name(drive: u8) -> Option<&'static str> {
 }
 
 /// 获取块设备综合信息 (name, `is_present`, `total_sectors`)
+#[must_use]
 pub fn egdf_blk_info(drive: u8) -> (&'static str, bool, u64) {
     let name = egdf_blk_name(drive).unwrap_or("unknown");
     let present = egdf_blk_is_present(drive);
@@ -738,6 +742,7 @@ pub fn egdf_blk_info(drive: u8) -> (&'static str, bool, u64) {
 }
 
 /// 获取块设备数量
+#[must_use]
 pub fn egdf_blk_count() -> usize {
     egdf_count_by_proto(EGDFProto::Block)
 }
@@ -782,12 +787,9 @@ pub fn egdf_char_write(data: &[u8]) {
         if dev.state != DeviceState::Ready {
             continue;
         }
-        match dev.char_ops() {
-            Some(ops) => {
-                ops.write(dev.driver_data, data);
-                return;
-            }
-            None => {}
+        if let Some(ops) = dev.char_ops() {
+            ops.write(dev.driver_data, data);
+            return;
         }
     }
 }
@@ -802,9 +804,8 @@ pub fn egdf_char_read(buf: &mut [u8]) -> usize {
         if dev.state != DeviceState::Ready {
             continue;
         }
-        match dev.char_ops() {
-            Some(ops) => return ops.read(dev.driver_data, buf),
-            None => {}
+        if let Some(ops) = dev.char_ops() {
+            return ops.read(dev.driver_data, buf);
         }
     }
     0
@@ -822,9 +823,8 @@ pub fn egdf_input_read() -> Option<u8> {
         if dev.state != DeviceState::Ready {
             continue;
         }
-        match dev.input_ops() {
-            Some(ops) => return ops.read_char(dev.driver_data),
-            None => {}
+        if let Some(ops) = dev.input_ops() {
+            return ops.read_char(dev.driver_data);
         }
     }
     None
@@ -840,9 +840,8 @@ pub fn egdf_input_has_data() -> bool {
         if dev.state != DeviceState::Ready {
             continue;
         }
-        match dev.input_ops() {
-            Some(ops) => return ops.has_char(dev.driver_data),
-            None => {}
+        if let Some(ops) = dev.input_ops() {
+            return ops.has_char(dev.driver_data);
         }
     }
     false
@@ -851,6 +850,7 @@ pub fn egdf_input_has_data() -> bool {
 // ── 工具 ──
 
 /// 将 `Box` 转换为裸指针 (`Box::into_raw`) 并擦除类型, 所有权移交调用方.
+#[must_use]
 pub fn box_to_raw<T: ?Sized>(b: Box<T>) -> *mut u8 {
     Box::into_raw(b).cast::<u8>()
 }

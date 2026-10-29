@@ -31,6 +31,12 @@ use crate::privileged::ioport::IoPort;
 
 use super::ATA_CONTROLLERS;
 
+/// ATA 扇区读写失败
+///
+/// 涵盖: 驱动器不存在、缓冲区小于 512 字节、设备忙/故障/超时。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AtaError;
+
 // ============================================================================
 // ATA 硬件常量定义
 // ============================================================================
@@ -142,7 +148,7 @@ fn read_alt_status(ctrl: &IoPort) -> u8 {
 }
 
 /// 等待 BSY 位清除
-fn wait_bsy(io: &IoPort, ctrl: &IoPort) -> Result<(), ()> {
+fn wait_bsy(io: &IoPort, ctrl: &IoPort) -> Result<(), AtaError> {
     let mut timeout = ATA_TIMEOUT;
 
     while timeout > 0 {
@@ -153,23 +159,23 @@ fn wait_bsy(io: &IoPort, ctrl: &IoPort) -> Result<(), ()> {
         timeout -= 1;
     }
 
-    Err(())
+    Err(AtaError)
 }
 
 /// 等待 DRQ 置位且 BSY 清除
-fn wait_drq(io: &IoPort, ctrl: &IoPort) -> Result<(), ()> {
+fn wait_drq(io: &IoPort, ctrl: &IoPort) -> Result<(), AtaError> {
     let mut timeout = ATA_TIMEOUT;
 
     while timeout > 0 {
         let status = io.read_u8(ATA_STATUS);
 
         if status & ATA_STATUS_DF != 0 {
-            return Err(());
+            return Err(AtaError);
         }
 
         if status & ATA_STATUS_ERR != 0 {
             let _ = io.read_u8(ATA_ERROR);
-            return Err(());
+            return Err(AtaError);
         }
 
         if status & (ATA_STATUS_DRQ | ATA_STATUS_BSY) == ATA_STATUS_DRQ {
@@ -179,11 +185,11 @@ fn wait_drq(io: &IoPort, ctrl: &IoPort) -> Result<(), ()> {
         timeout -= 1;
     }
 
-    Err(())
+    Err(AtaError)
 }
 
 /// 选择驱动器 (Master/Slave)
-fn select_drive(io: &IoPort, ctrl: &IoPort, slave: bool) -> Result<(), ()> {
+fn select_drive(io: &IoPort, ctrl: &IoPort, slave: bool) -> Result<(), AtaError> {
     io.write_u8(ATA_DRIVE_HEAD, 0xA0 | (u8::from(slave) << 4));
     ata_delay(ctrl);
 
@@ -332,6 +338,7 @@ impl AtaController {
     /// 创建 ATA 控制器实例 (构造端口句柄, 不做硬件访问)
     ///
     /// 端口范围非法时返回 `None`。
+    #[must_use]
     pub fn new() -> Option<Self> {
         // 端口范围来自 PC 规范 (Primary: 0x1F0/0x3F6, Secondary: 0x170/0x376),
         // 不与其他 IoPort 实例重叠 — 契约由调用方保证 (IoPort::new_safe)。
@@ -376,6 +383,7 @@ impl AtaController {
     }
 
     /// 控制器是否已初始化
+    #[must_use]
     pub fn is_initialized(&self) -> bool {
         self.initialized
     }
@@ -383,18 +391,21 @@ impl AtaController {
     /// 检查指定驱动器是否存在
     ///
     /// `drive` 超出 0-3 范围时返回 `false`。
+    #[must_use]
     pub fn disk_present(&self, drive: u8) -> bool {
         self.devices
             .get(drive as usize)
-            .map_or(false, |device| device.present)
+            .is_some_and(|device| device.present)
     }
 
     /// 获取已检测到的驱动器数量
+    #[must_use]
     pub fn detected_device_count(&self) -> usize {
         self.devices.iter().filter(|d| d.present).count()
     }
 
     /// 获取指定驱动器的容量 (512 字节扇区数), 不存在时返回 0
+    #[must_use]
     pub fn total_sectors(&self, drive: u8) -> u64 {
         self.devices
             .get(drive as usize)
@@ -413,12 +424,12 @@ impl AtaController {
     /// 读取单个扇区 (512 字节, LBA28)
     /// # Errors
     /// 驱动器不存在、缓冲区小于 512 字节、或设备忙/故障/超时时返回 `Err`。
-    pub fn read_sector(&self, drive: u8, lba: u32, buffer: &mut [u8]) -> Result<(), ()> {
+    pub fn read_sector(&self, drive: u8, lba: u32, buffer: &mut [u8]) -> Result<(), AtaError> {
         if !self.disk_present(drive) {
-            return Err(());
+            return Err(AtaError);
         }
         if buffer.len() < SECTOR_SIZE {
-            return Err(());
+            return Err(AtaError);
         }
 
         let (io, ctrl) = self.ports_for_drive(drive);
@@ -444,12 +455,12 @@ impl AtaController {
     /// 写入单个扇区 (512 字节, LBA28)
     /// # Errors
     /// 驱动器不存在、缓冲区小于 512 字节、或设备忙/故障/超时时返回 `Err`。
-    pub fn write_sector(&self, drive: u8, lba: u32, buffer: &[u8]) -> Result<(), ()> {
+    pub fn write_sector(&self, drive: u8, lba: u32, buffer: &[u8]) -> Result<(), AtaError> {
         if !self.disk_present(drive) {
-            return Err(());
+            return Err(AtaError);
         }
         if buffer.len() < SECTOR_SIZE {
-            return Err(());
+            return Err(AtaError);
         }
 
         let (io, ctrl) = self.ports_for_drive(drive);
@@ -529,7 +540,7 @@ impl BlockDevice for AtaBlockDevice {
             buf,
         ) {
             Ok(()) => 0,
-            Err(()) => -1,
+            Err(_) => -1,
         }
     }
 
@@ -547,7 +558,7 @@ impl BlockDevice for AtaBlockDevice {
             buf,
         ) {
             Ok(()) => 0,
-            Err(()) => -1,
+            Err(_) => -1,
         }
     }
 
@@ -555,7 +566,7 @@ impl BlockDevice for AtaBlockDevice {
         let controllers = ATA_CONTROLLERS.lock();
         controllers
             .first()
-            .map_or(false, |controller| controller.disk_present(self.drive))
+            .is_some_and(|controller| controller.disk_present(self.drive))
     }
 
     fn blk_total_sectors(&self) -> u64 {

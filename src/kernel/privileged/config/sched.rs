@@ -4,13 +4,13 @@
 //!
 //! 原 SCHED_\* 常量于 T6-9 (2026-06-16) 迁至 `functions::config::sched`, 本文件仅
 //! re-export。按"机制持有的数据结构/常量归 privileged"统一判据反转：`SCHED_*`
-//! 被 privileged proc 调度机制 (user_proc/cfs/scheduler) 直接消费 — 属机制常量,
+//! 被 privileged proc 调度机制 (`user_proc/cfs/scheduler`) 直接消费 — 属机制常量,
 //! 迁回。
 //!
 //! ## DECISION-O ② 收敛单向记录 (2026-09-13)
 //!
 //! `CFS_*` 于 T6-9 与 SCHED_* 一同迁 functions, 当时前提是"仅被 functions
-//! sched_policy 策略消费"。DECISION-J 将 CfsRunQueue/DlRunQueue 反转迁回
+//! `sched_policy` 策略消费"。DECISION-J 将 CfsRunQueue/DlRunQueue 反转迁回
 //! privileged/proc/cfs.rs 后, privileged 机制 (cfs.rs/scheduler.rs/process.rs)
 //! 直接消费 `CFS_*` — 前提失效, 按同一判据迁回本文件; functions 侧改 re-export
 //! (functions→privileged 合法方向), cfs 依赖收敛单向。

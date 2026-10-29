@@ -53,6 +53,7 @@ pub enum CgroupController {
 
 impl CgroupController {
     /// 从名称解析
+    #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "cpu" => Some(Self::Cpu),
@@ -64,6 +65,7 @@ impl CgroupController {
     }
 
     /// 获取控制器名称
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Self::Cpu => "cpu",
@@ -91,8 +93,16 @@ pub struct CgroupNode {
     pub value_len: u8,
 }
 
+impl Default for CgroupNode {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CgroupNode {
     /// 创建空的 cgroup 节点 (名称与值均为零长度)。
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             name: [0u8; MAX_NAME_LEN],
@@ -111,6 +121,7 @@ impl CgroupNode {
     }
 
     /// 获取名称
+    #[must_use]
     pub fn get_name(&self) -> &str {
         core::str::from_utf8(&self.name[..self.name_len as usize]).unwrap_or("")
     }
@@ -124,6 +135,7 @@ impl CgroupNode {
     }
 
     /// 获取值
+    #[must_use]
     pub fn get_value(&self) -> &str {
         core::str::from_utf8(&self.value[..self.value_len as usize]).unwrap_or("")
     }
@@ -150,6 +162,7 @@ pub struct CgroupGroup {
 
 impl CgroupGroup {
     /// 创建空的 cgroup 组, 绑定指定控制器。
+    #[must_use]
     pub const fn new(controller: CgroupController) -> Self {
         Self {
             name: [0u8; MAX_NAME_LEN],
@@ -169,6 +182,7 @@ impl CgroupGroup {
     }
 
     /// 获取名称
+    #[must_use]
     pub fn get_name(&self) -> &str {
         core::str::from_utf8(&self.name[..self.name_len as usize]).unwrap_or("")
     }
@@ -179,7 +193,7 @@ impl CgroupGroup {
     /// 当节点表已满 (`node_count` 达到容量上限) 时返回 `ENOMEM`.
     pub fn add_node(&mut self, node: CgroupNode) -> Result<(), Errno> {
         if self.node_count as usize >= self.nodes.len() {
-            return Err(Errno::ENOMEM);
+            return Err(Errno::Enomem);
         }
         self.nodes[self.node_count as usize] = node;
         self.node_count += 1;
@@ -187,13 +201,11 @@ impl CgroupGroup {
     }
 
     /// 查找节点
+    #[must_use]
     pub fn find_node(&self, name: &str) -> Option<&CgroupNode> {
-        for i in 0..self.node_count as usize {
-            if self.nodes[i].get_name() == name {
-                return Some(&self.nodes[i]);
-            }
-        }
-        None
+        self.nodes[..self.node_count as usize]
+            .iter()
+            .find(|node| node.get_name() == name)
     }
 
     /// 更新节点值
@@ -207,7 +219,7 @@ impl CgroupGroup {
                 return Ok(());
             }
         }
-        Err(Errno::ENOENT)
+        Err(Errno::Enoent)
     }
 }
 
@@ -223,8 +235,16 @@ pub struct CgroupFs {
     pub group_count: u32,
 }
 
+impl Default for CgroupFs {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CgroupFs {
     /// 创建空的 cgroup 文件系统实例。
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             groups: [const { CgroupGroup::new(CgroupController::Cpu) }; MAX_GROUPS],
@@ -239,13 +259,13 @@ impl CgroupFs {
     /// 当已存在同名组时返回 `EEXIST`.
     pub fn create_group(&mut self, name: &str, controller: CgroupController) -> Result<(), Errno> {
         if self.group_count as usize >= MAX_GROUPS {
-            return Err(Errno::ENOMEM);
+            return Err(Errno::Enomem);
         }
 
         // 检查是否已存在
-        for i in 0..self.group_count as usize {
-            if self.groups[i].get_name() == name {
-                return Err(Errno::EEXIST);
+        for group in &self.groups[..self.group_count as usize] {
+            if group.get_name() == name {
+                return Err(Errno::Eexist);
             }
         }
 
@@ -286,17 +306,15 @@ impl CgroupFs {
                 break;
             }
         }
-        if found { Ok(()) } else { Err(Errno::ENOENT) }
+        if found { Ok(()) } else { Err(Errno::Enoent) }
     }
 
     /// 查找组
+    #[must_use]
     pub fn find_group(&self, name: &str) -> Option<&CgroupGroup> {
-        for i in 0..self.group_count as usize {
-            if self.groups[i].get_name() == name {
-                return Some(&self.groups[i]);
-            }
-        }
-        None
+        self.groups[..self.group_count as usize]
+            .iter()
+            .find(|group| group.get_name() == name)
     }
 
     /// 读取节点值
@@ -307,15 +325,15 @@ impl CgroupFs {
     pub fn read_node(&self, group: &str, node: &str, buf: &mut [u8]) -> Result<usize, Errno> {
         let g = if group.is_empty() {
             // 根组不存在, 返回错误
-            return Err(Errno::ENOENT);
+            return Err(Errno::Enoent);
         } else {
-            self.find_group(group).ok_or(Errno::ENOENT)?
+            self.find_group(group).ok_or(Errno::Enoent)?
         };
 
-        let n = g.find_node(node).ok_or(Errno::ENOENT)?;
+        let n = g.find_node(node).ok_or(Errno::Enoent)?;
         let value = n.get_value().as_bytes();
         if buf.len() < value.len() {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
         buf[..value.len()].copy_from_slice(value);
         Ok(value.len())
@@ -328,15 +346,15 @@ impl CgroupFs {
     /// 当 `data` 不是合法 UTF-8 时返回 `EINVAL`.
     pub fn write_node(&mut self, group: &str, node: &str, data: &[u8]) -> Result<(), Errno> {
         let g = if group.is_empty() {
-            return Err(Errno::ENOENT);
+            return Err(Errno::Enoent);
         } else {
             self.groups
                 .iter_mut()
                 .find(|g| g.get_name() == group)
-                .ok_or(Errno::ENOENT)?
+                .ok_or(Errno::Enoent)?
         };
 
-        let value = core::str::from_utf8(data).map_err(|_| Errno::EINVAL)?;
+        let value = core::str::from_utf8(data).map_err(|_| Errno::Einval)?;
         g.update_node(node, value)
     }
 }

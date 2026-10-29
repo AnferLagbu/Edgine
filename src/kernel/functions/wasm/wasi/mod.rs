@@ -55,12 +55,20 @@ pub struct WasiContext {
 
 impl WasiContext {
     /// 构造默认 WASI 运行时上下文 (fd 表容量 256, 空参数与环境)
+    #[must_use]
     pub fn new() -> Self {
         Self {
             fd_table: WasiFdTable::new(256),
             args: Vec::new(),
             env: Vec::new(),
         }
+    }
+}
+
+impl Default for WasiContext {
+    /// 等价于 [`WasiContext::new`] (默认空上下文)
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -71,6 +79,7 @@ pub type WasiFunc = fn(&mut WasiContext, &mut Interpreter) -> Result<(), WasmErr
 ///
 /// 用于 `Interpreter::auto_register_wasi()` 根据 WASM import section
 /// 自动查找并注册对应的 host function。
+#[must_use]
 pub fn wasi_function_table() -> &'static [(&'static str, WasiFunc)] {
     &[
         // G1: 进程控制

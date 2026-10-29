@@ -74,8 +74,15 @@ pub struct AhciCommandHeader {
     pub rsvd: [u32; 4],
 }
 
+impl Default for AhciCommandHeader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AhciCommandHeader {
     /// 构造全零的命令头。
+    #[must_use]
     pub fn new() -> Self {
         Self {
             dw0: 0,
@@ -159,8 +166,15 @@ pub struct H2dFis {
     pub rsvd: [u32; 4],
 }
 
+impl Default for H2dFis {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl H2dFis {
     /// 构造全零的主机到设备 FIS。
+    #[must_use]
     pub fn new() -> Self {
         Self {
             fis_type: 0,
@@ -184,6 +198,7 @@ impl H2dFis {
     }
 
     /// 创建读DMA FIS (LBA48)
+    #[must_use]
     pub fn read_dma(lba: u64, count: u16) -> Self {
         let mut fis = Self::new();
         fis.fis_type = 0x27; // H2D
@@ -202,6 +217,7 @@ impl H2dFis {
     }
 
     /// 创建写DMA FIS (LBA48)
+    #[must_use]
     pub fn write_dma(lba: u64, count: u16) -> Self {
         let mut fis = Self::new();
         fis.fis_type = 0x27;
@@ -220,6 +236,7 @@ impl H2dFis {
     }
 
     /// 创建Identify FIS
+    #[must_use]
     pub fn identify() -> Self {
         let mut fis = Self::new();
         fis.fis_type = 0x27;

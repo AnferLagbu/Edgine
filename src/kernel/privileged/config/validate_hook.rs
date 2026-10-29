@@ -1,20 +1,20 @@
 //! 配置自检策略 trait — 策略-机制分离接口 (DECISION-K 项 2)
 //!
-//! privileged config 机制的启动自检 (validate_system_config / validate_drivers /
-//! validate_pci_subsystem / validate_network_subsystem) 原为 privileged→functions
+//! privileged config 机制的启动自检 (`validate_system_config` / `validate_drivers` /
+//! `validate_pci_subsystem` / `validate_network_subsystem`) 原为 privileged→functions
 //! 直接引用 (经 validate.rs 壳)。按 DECISION-K 统一"机制 init 后立即注册策略"
 //! 启动契约: privileged 定义 `ConfigValidateHook` 契约, functions 实现并注册,
 //! privileged 经 `current_config_validate_hook()` 调用。
 //!
-//! ## 语义 (DECISION-K, 与 IpcStrategy 统一"逻辑错误降级原则")
+//! ## 语义 (DECISION-K, 与 `IpcStrategy` 统一"逻辑错误降级原则")
 //!
 //! - **Option 可空**: `current_config_validate_hook()` 返回 `Option`, 未注册时
-//!   config::init()/pci/net 自检**跳过校验 + 打日志** (validate 是启动增强, 不 panic,
+//!   `config::init()/pci/net` 自检**跳过校验 + 打日志** (validate 是启动增强, 不 panic,
 //!   不进 freg 恢复流程)。
-//! - **注册时序**: 注册在 privileged `config::init()` 之前 (kernel_init 早期, lib.rs
+//! - **注册时序**: 注册在 privileged `config::init()` 之前 (`kernel_init` 早期, lib.rs
 //!   编排), functions validate 依赖闭包轻可极早注册。
 //!
-//! 本文件 0 unsafe (纯 trait + OnceLock).
+//! 本文件 0 unsafe (纯 trait + `OnceLock`).
 
 use super::error::ConfigError;
 

@@ -42,8 +42,15 @@ pub struct CpuQueue {
 
 // 所有字段 (AtomicU32, AtomicBool) 自动实现 Send + Sync.
 
+impl Default for CpuQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CpuQueue {
     /// 构造全零队列状态 (常量上下文可用, 供静态实例落 `.bss`)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             current: AtomicU32::new(0),
@@ -141,6 +148,7 @@ pub fn cpu_queue(cpu_id: u32) -> &'static CpuQueue {
 }
 
 /// 获取当前 CPU 的 [`CpuQueue`] — 按本核 cpu id 索引, 槽位未分配时回退 BSP 队列。
+#[must_use]
 pub fn current_cpu_queue() -> &'static CpuQueue {
     let cpu_id = crate::privileged::smp::get_current_cpu();
     cpu_queue(cpu_id)
@@ -150,6 +158,7 @@ pub fn current_cpu_queue() -> &'static CpuQueue {
 ///
 /// 返回 `false` 表示页池分配失败 —— 此时直接返回, 绝不回退写 BSP 队列,
 /// 由调用方放弃启动该 AP.
+#[must_use]
 pub fn init_cpu_queue(cpu_id: u32, idle_pid: Pid) -> bool {
     if !cpu_queue_alloc(cpu_id) {
         return false;

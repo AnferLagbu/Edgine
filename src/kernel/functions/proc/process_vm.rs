@@ -27,6 +27,7 @@
 
 use crate::functions::fs::io::{IOV_MAX, read_iovecs};
 use crate::privileged::errno::Errno;
+use crate::privileged::error::KernelError;
 use crate::privileged::mm::{
     copy_from_user, copy_from_user_in_mm, copy_to_user, copy_to_user_in_mm, is_user_buf,
 };
@@ -108,14 +109,14 @@ fn read_remote_iovecs(
     iovcnt: u64,
 ) -> Result<alloc::vec::Vec<(u64, u64)>, Errno> {
     if iov_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let mut iovs =
         alloc::vec::Vec::with_capacity(crate::functions::intcast::usize_from_u64(iovcnt));
     for i in 0..iovcnt {
         let mut raw = [0u8; 16];
         copy_from_user_in_mm(target_cr3, iov_ptr + i * IOV_ENTRY_SIZE, &mut raw, 16)
-            .map_err(|()| Errno::EFAULT)?;
+            .map_err(|_| Errno::Efault)?;
         iovs.push((read_u64(&raw[0..8]), read_u64(&raw[8..16])));
     }
     Ok(iovs)
@@ -135,8 +136,14 @@ fn read_u64(bytes: &[u8]) -> u64 {
 ///
 /// # Errors
 ///
-/// 任一侧地址非法 / 页未映射 / 目标页只读 → `Err(())`.
-fn transfer(dir: Direction, target_cr3: u64, l_addr: u64, r_addr: u64, n: usize) -> Result<(), ()> {
+/// 任一侧地址非法 / 页未映射 / 目标页只读 → `Err(KernelError::Fault)`.
+fn transfer(
+    dir: Direction,
+    target_cr3: u64,
+    l_addr: u64,
+    r_addr: u64,
+    n: usize,
+) -> Result<(), KernelError> {
     let mut buf = alloc::vec![0u8; core::cmp::min(n, CHUNK_SIZE)];
     let mut done: usize = 0;
     while done < n {
@@ -184,24 +191,24 @@ fn process_vm_rw(
     dir: Direction,
 ) -> Result<usize, Errno> {
     if flags != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if liovcnt > IOV_MAX || riovcnt > IOV_MAX {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if liovcnt == 0 || riovcnt == 0 {
         return Ok(0);
     }
     if pid <= 0 {
-        return Err(Errno::ESRCH);
+        return Err(Errno::Esrch);
     }
     let target_pid = pid.cast_unsigned();
-    let _target = ProcRef::acquire(target_pid).ok_or(Errno::ESRCH)?;
-    let target_pwm = process_get_pwm(target_pid).ok_or(Errno::ESRCH)?;
+    let _target = ProcRef::acquire(target_pid).ok_or(Errno::Esrch)?;
+    let target_pwm = process_get_pwm(target_pid).ok_or(Errno::Esrch)?;
     if !check_access(target_pid, target_pwm) {
-        return Err(Errno::EPERM);
+        return Err(Errno::Eperm);
     }
-    let target_cr3 = process_get_cr3(target_pid).ok_or(Errno::ESRCH)?;
+    let target_cr3 = process_get_cr3(target_pid).ok_or(Errno::Esrch)?;
 
     let local_iovs = read_iovecs(local_iov, liovcnt)?;
     let remote_iovs = read_remote_iovecs(target_cr3, remote_iov, riovcnt)?;
@@ -233,10 +240,10 @@ fn process_vm_rw(
         let r_addr = r_base.wrapping_add(r_off as u64);
         // 地址范围整体校验: 同时挡住 `base + off` 回绕 (wrapping 后落在用户区之外)
         if !is_user_buf(l_addr, n) || !is_user_buf(r_addr, n) {
-            return partial_or(total, Errno::EFAULT);
+            return partial_or(total, Errno::Efault);
         }
         if transfer(dir, target_cr3, l_addr, r_addr, n).is_err() {
-            return partial_or(total, Errno::EFAULT);
+            return partial_or(total, Errno::Efault);
         }
         total += n;
         l_off += n;
@@ -314,11 +321,11 @@ mod tests {
     fn test_flags_nonzero_einval() {
         assert_eq!(
             process_vm_readv_syscall(1, 0x1000, 1, 0x1000, 1, 1),
-            Err(Errno::EINVAL)
+            Err(Errno::Einval)
         );
         assert_eq!(
             process_vm_writev_syscall(1, 0x1000, 1, 0x1000, 1, 1),
-            Err(Errno::EINVAL)
+            Err(Errno::Einval)
         );
     }
 
@@ -327,11 +334,11 @@ mod tests {
         let over = 4096;
         assert_eq!(
             process_vm_readv_syscall(1, 0x1000, over, 0x1000, 1, 0),
-            Err(Errno::EINVAL)
+            Err(Errno::Einval)
         );
         assert_eq!(
             process_vm_writev_syscall(1, 0x1000, 1, 0x1000, over, 0),
-            Err(Errno::EINVAL)
+            Err(Errno::Einval)
         );
     }
 
@@ -349,11 +356,11 @@ mod tests {
     fn test_invalid_pid_esrch() {
         assert_eq!(
             process_vm_readv_syscall(0, 0x1000, 1, 0x1000, 1, 0),
-            Err(Errno::ESRCH)
+            Err(Errno::Esrch)
         );
         assert_eq!(
             process_vm_writev_syscall(-3, 0x1000, 1, 0x1000, 1, 0),
-            Err(Errno::ESRCH)
+            Err(Errno::Esrch)
         );
     }
 }

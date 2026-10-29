@@ -176,10 +176,10 @@ fn test_uds_err_mapping() -> TestResult {
     TestResult::Pass
 }
 
-/// 位图自清理: 释放全部 UDS fd_alloc 位图位
+/// 位图自清理: 释放全部 UDS `fd_alloc` 位图位
 ///
-/// 防御性隔离: `uds_close` 已修复为回收 fd_alloc 位图 (对齐 pidfd close 模式),
-/// 正常用例结束后位图应为空; 此函数兜底清理失败用例残留 (uds_reset_for_test
+/// 防御性隔离: `uds_close` 已修复为回收 `fd_alloc` 位图 (对齐 pidfd close 模式),
+/// 正常用例结束后位图应为空; 此函数兜底清理失败用例残留 (`uds_reset_for_test`
 /// 后状态表已空, 不存在存活 UDS socket, 全量释放安全), 保证测试可复跑。
 fn release_all_uds_bitmap_bits() {
     use crate::privileged::proc::fd_alloc::{FdSubsystem, free_fd};
@@ -284,9 +284,9 @@ fn test_uds_socketpair_rollback() -> TestResult {
     TestResult::Pass
 }
 
-/// 回归: uds_close 回收 fd_alloc 位图 (预存泄漏修复)
+/// 回归: `uds_close` 回收 `fd_alloc` 位图 (预存泄漏修复)
 ///
-/// 泄漏行为下第 17 次 create 即 NoMem (位图 16 位被前 16 次创建永久占用);
+/// 泄漏行为下第 17 次 create 即 `NoMem` (位图 16 位被前 16 次创建永久占用);
 /// 修复后 create + close 可循环超过容量上限。
 fn test_uds_close_releases_bitmap() -> TestResult {
     use uds::UnixSockType;
@@ -304,7 +304,7 @@ fn test_uds_close_releases_bitmap() -> TestResult {
     TestResult::Pass
 }
 
-/// 回归: uds_sendto 超 UNIX_DGRAM_MAX 拒绝 (越界写防护)
+/// 回归: `uds_sendto` 超 `UNIX_DGRAM_MAX` 拒绝 (越界写防护)
 fn test_uds_sendto_oversize() -> TestResult {
     // 静态区放置越界样本, 避免栈上 8KiB 数组
     static BIG: [u8; uds::UNIX_DGRAM_MAX + 1] = [0u8; uds::UNIX_DGRAM_MAX + 1];

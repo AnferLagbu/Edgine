@@ -57,11 +57,11 @@ use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 /// `MAX_SM_FD` 别名, 避免 `init ↔ wait_queue` 循环依赖). 权威定义见 `net/init.rs`.
 const MAX_SM_FD: usize = crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize;
 
-/// per-fd 等待者槽上限 (定长, no_std 无堆分配, 可进自旋锁临界区).
+/// per-fd 等待者槽上限 (定长, `no_std` 无堆分配, 可进自旋锁临界区).
 ///
 /// SIMPLIFIED: 同一 fd 并发阻塞的等待者超过 `WAITER_SLOTS` 时, `add_waiter`
 /// 返回 false → 消费者回退非阻塞 `-E_AGAIN`; 影响面为病态高并发同 fd 阻塞;
-/// 若需无上限等待者, 待改为 per-fd 动态等待队列 (受 NET_STATE 保护的定长链).
+/// 若需无上限等待者, 待改为 per-fd 动态等待队列 (受 `NET_STATE` 保护的定长链).
 pub const WAITER_SLOTS: usize = 16;
 /// 等待者兴趣方向: 空槽.
 pub const WAITER_NONE: u8 = 0;
@@ -131,8 +131,15 @@ pub struct SocketWaitQueue {
     lock: Mutex<()>,
 }
 
+impl Default for SocketWaitQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SocketWaitQueue {
     /// 构造一个空的等待队列 (全部槽位为空, 无超时死线)。
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             pending: AtomicBool::new(false),

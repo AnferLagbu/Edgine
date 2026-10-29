@@ -12,6 +12,7 @@
 //! `validate_*` 函数经 `ConfigValidateHook` 实现 (`DefaultConfigValidateHook`) 注册,
 //! privileged config::init()/pci/net 自检经 trait 调用。
 
+use crate::functions::error::AlreadyRegistered;
 use crate::privileged::config::ConfigError;
 use crate::privileged::config::{ConfigValidateHook, register_config_validate_hook};
 use crate::privileged::config::{
@@ -104,6 +105,7 @@ pub fn validate_pci_subsystem() -> Result<(), ConfigError> {
 pub fn validate_network_subsystem() {}
 
 /// 校验所有驱动配置.
+#[must_use]
 pub fn validate_drivers() -> u32 {
     let mut errors = 0u32;
 
@@ -125,6 +127,7 @@ pub fn validate_drivers() -> u32 {
 /// # Panics
 /// 在 `debug_assertions` 构建下, 当 CPU 数量超过 `MAX_CPUS` 时触发 `panic!`,
 /// 错误信息为 "CONFIG: CPU count {actual} exceeds `MAX_CPUS` {max}".
+#[must_use]
 pub fn validate_system_config() -> u32 {
     let mut errors = 0u32;
 
@@ -208,12 +211,12 @@ impl ConfigValidateHook for DefaultConfigValidateHook {
 /// 全局默认配置自检策略实例
 static CONFIG_VALIDATE_HOOK: DefaultConfigValidateHook = DefaultConfigValidateHook;
 
-/// 注册默认配置自检策略 (由 lib.rs 编排, privileged config::init() 之前注册)
+/// 注册默认配置自检策略 (由 lib.rs 编排, privileged `config::init()` 之前注册)
 ///
-/// 幂等性: 已注册时返回 `Err(())` (与 pmm/slab/swap policy 注册模式一致).
+/// 幂等性: 已注册时返回 `Err(AlreadyRegistered)` (与 pmm/slab/swap policy 注册模式一致).
 ///
 /// # Errors
-/// 当自检策略已注册时返回 `Err(())`.
-pub fn register_default_config_validate_hook() -> Result<(), ()> {
-    register_config_validate_hook(&CONFIG_VALIDATE_HOOK).map_err(|_| ())
+/// 当自检策略已注册时返回 `Err(AlreadyRegistered)`.
+pub fn register_default_config_validate_hook() -> Result<(), AlreadyRegistered> {
+    register_config_validate_hook(&CONFIG_VALIDATE_HOOK).map_err(|_| AlreadyRegistered)
 }

@@ -54,6 +54,7 @@ impl UserReadPtr {
     ///
     /// 调用方必须确保 `ptr` 指向至少 `len` 字节的有效、已映射、可读的用户态内存，
     /// 且在返回的 `UserReadPtr` 存活期间该内存不会被释放或重新映射。
+    #[must_use]
     pub unsafe fn new(ptr: *const u8, len: usize) -> Self {
         // SAFETY: 此函数标记为 `unsafe fn`, 构造时调用方必须保证 (按 doc comment):
         //   1. `ptr` 是非空且已对齐 (`*const u8` 对齐要求为 1, 总是满足)
@@ -72,18 +73,21 @@ impl UserReadPtr {
     ///
     /// # 返回
     /// 指针为 NULL 或超出用户地址空间范围时返回 `None`。
+    #[must_use]
     pub fn checked_new(ptr: *const u8, len: usize) -> Option<Self> {
         if !validate_user_buf(ptr as u64, len as u64) {
             return None;
         }
-        // SAFETY: validate_user_buf 已校验 ptr 非空且 [ptr, ptr+len) 在用户地址
-        // 空间范围内; 与 `new` 的构造契约一致 (页表映射存在性由调用方/页表机制保证)。
-        Some(unsafe { Self::new(ptr, len) })
+        // validate_user_buf 已校验 ptr 非空且 [ptr, ptr+len) 在用户地址空间范围内,
+        // 构造契约与 `new` 一致 (页表映射存在性由调用方/页表机制保证)。此处直接
+        // 组装结构体 (不解引用), 故无需 unsafe。
+        Some(Self { ptr, len })
     }
 
     /// 以不可变字节切片形式访问用户内存。
     ///
     /// 此方法是安全的，因为构造时的 `unsafe` 契约已保证了指针有效性。
+    #[must_use]
     pub fn as_slice(&self) -> &[u8] {
         // SAFETY: 构造时的 unsafe 契约保证 ptr + len 是有效的用户态内存
         // `slice::from_raw_parts` 要求: 1) ptr 对齐 (u8 = 1, ok), 2) len 字节全可读,
@@ -92,17 +96,20 @@ impl UserReadPtr {
     }
 
     /// 检查指针是否为空。
+    #[must_use]
     pub fn is_null(&self) -> bool {
         self.ptr.is_null()
     }
 
     /// 获取字节长度。
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// 长度为零
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -144,9 +151,10 @@ impl UserWritePtr {
         if !validate_user_buf(ptr as u64, len as u64) {
             return None;
         }
-        // SAFETY: validate_user_buf 已校验 ptr 非空且 [ptr, ptr+len) 在用户地址
-        // 空间范围内; 与 `new` 的构造契约一致 (页表映射存在性由调用方/页表机制保证)。
-        Some(unsafe { Self::new(ptr, len) })
+        // validate_user_buf 已校验 ptr 非空且 [ptr, ptr+len) 在用户地址空间范围内,
+        // 构造契约与 `new` 一致 (页表映射存在性由调用方/页表机制保证)。此处直接
+        // 组装结构体 (不解引用), 故无需 unsafe。
+        Some(Self { ptr, len })
     }
 
     /// 以可变字节切片形式访问用户内存。
@@ -160,6 +168,7 @@ impl UserWritePtr {
     }
 
     /// 以不可变字节切片形式访问用户内存。
+    #[must_use]
     pub fn as_slice(&self) -> &[u8] {
         // SAFETY: 构造时的 unsafe 契约保证 ptr + len 是有效的用户态内存
         // 从 `*mut u8` cast 到 `*const u8` 保持对齐 (1), 借用规则防止并发写
@@ -167,17 +176,20 @@ impl UserWritePtr {
     }
 
     /// 检查指针是否为空。
+    #[must_use]
     pub fn is_null(&self) -> bool {
         self.ptr.is_null()
     }
 
     /// 获取字节长度。
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// 长度为零
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -207,6 +219,7 @@ impl<T> UserRefMut<T> {
     }
 
     /// 检查指针是否为空。
+    #[must_use]
     pub fn is_null(&self) -> bool {
         self.ptr.is_null()
     }
@@ -231,6 +244,7 @@ use crate::privileged::constants::limits::USER_ADDR_MAX;
 
 /// 验证单个用户态指针是否在合法范围.
 #[inline]
+#[must_use]
 pub fn validate_user_ptr(ptr: u64) -> bool {
     ptr > 0 && ptr < USER_ADDR_MAX
 }
@@ -240,9 +254,10 @@ pub fn validate_user_ptr(ptr: u64) -> bool {
 /// # B03-21 修复
 /// 之前 `len == 0` 直接 `return true`, `validate_user_buf(0, 0)` 返回 true
 /// 但 0 是 NULL 指针, 绕过 NULL 检查。现在 `len == 0` 时仍校验 `ptr != 0`。
-/// 语义: 零长度缓冲区只接受 NULL 之外的合法用户指针 (与 Linux copy_from_user
+/// 语义: 零长度缓冲区只接受 NULL 之外的合法用户指针 (与 Linux `copy_from_user`
 /// 行为一致 — 长度 0 时仍要求非 NULL 指针)。
 #[inline]
+#[must_use]
 pub fn validate_user_buf(ptr: u64, len: u64) -> bool {
     if len == 0 {
         // 零长度但要求 ptr 非 NULL (避免 (NULL, 0) 绕过校验)

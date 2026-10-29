@@ -33,6 +33,7 @@ pub enum UnkfsRaidzLevel {
 
 impl UnkfsRaidzLevel {
     /// 返回该冗余级别的校验列数量。
+    #[must_use]
     pub fn parity_cols(self) -> usize {
         match self {
             Self::Single | Self::Mirror => 0,
@@ -43,6 +44,7 @@ impl UnkfsRaidzLevel {
     }
 
     /// 返回该冗余级别可容忍的最大故障列数。
+    #[must_use]
     pub fn max_failures(self) -> usize {
         match self {
             Self::Single => 0,
@@ -169,8 +171,8 @@ fn gf_invert_matrix(mat: &mut [Vec<u8>], n: usize) -> bool {
         }
         pivot[col] = row;
         let inv = gf_inv(mat[col][col]);
-        for j in 0..2 * n {
-            mat[col][j] = gf_mul(mat[col][j], inv);
+        for cell in &mut mat[col][..2 * n] {
+            *cell = gf_mul(*cell, inv);
         }
         for i in 0..n {
             if i == col {
@@ -190,6 +192,7 @@ fn gf_invert_matrix(mat: &mut [Vec<u8>], n: usize) -> bool {
 
 impl UnkfsRaidzMap {
     /// 按冗余级别构造条带映射; 列数会夹取到 [MIN, MAX] 区间。
+    #[must_use]
     pub fn new(level: UnkfsRaidzLevel, ncols: usize, ashift: u8) -> Self {
         let nparity = level.parity_cols();
         Self {
@@ -202,6 +205,7 @@ impl UnkfsRaidzMap {
     }
 
     /// 返回数据列数量 (总列数减去校验列数)。
+    #[must_use]
     pub fn data_cols(&self) -> usize {
         self.ncols.saturating_sub(self.nparity)
     }
@@ -253,6 +257,7 @@ impl UnkfsRaidzMap {
     ///
     /// `parity_data` 为完整条带的各列缓冲, `failed_cols` 为需要重建的列序号;
     /// 成功时返回按数据列顺序拼接的重建结果。
+    #[must_use]
     pub fn reconstruct_data(
         &self,
         parity_data: &[Vec<u8>],
@@ -263,8 +268,12 @@ impl UnkfsRaidzMap {
         }
         if failed_cols.is_empty() {
             let mut result = Vec::new();
-            for col in self.nparity..self.ncols {
-                result.extend_from_slice(&parity_data[col]);
+            for col_data in parity_data
+                .iter()
+                .skip(self.nparity)
+                .take(self.ncols.saturating_sub(self.nparity))
+            {
+                result.extend_from_slice(col_data);
             }
             return Some(result);
         }
@@ -353,13 +362,18 @@ impl UnkfsRaidzMap {
         }
 
         let mut output = Vec::new();
-        for col in self.nparity..self.ncols {
-            output.extend_from_slice(&result[col]);
+        for col_data in result
+            .iter()
+            .skip(self.nparity)
+            .take(self.ncols.saturating_sub(self.nparity))
+        {
+            output.extend_from_slice(col_data);
         }
         Some(output)
     }
 
     /// 复算并比对全部校验列, 一致返回 `true`, 否则返回 `false`。
+    #[must_use]
     pub fn verify_parity(&self, parity_data: &[Vec<u8>]) -> bool {
         let unit_size = crate::functions::intcast::usize_from_u64(HV_POOL_BLOCK_SIZE);
         let data_cols = self.data_cols();
@@ -399,11 +413,13 @@ pub struct UnkfsRaidzEngine;
 
 impl UnkfsRaidzEngine {
     /// 按冗余级别创建一条条带映射。
+    #[must_use]
     pub fn create_stripe(level: UnkfsRaidzLevel, ncols: usize, ashift: u8) -> UnkfsRaidzMap {
         UnkfsRaidzMap::new(level, ncols, ashift)
     }
 
     /// 校验一个块的校验列, 返回清理完成或损坏的诊断结果。
+    #[must_use]
     pub fn scrub_block(map: &UnkfsRaidzMap, parity_data: &[Vec<u8>]) -> UnkfsScrubResult {
         if map.verify_parity(parity_data) {
             UnkfsScrubResult::Clean

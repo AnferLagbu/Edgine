@@ -39,6 +39,7 @@ pub enum ProcEntryKind {
 
 impl ProcEntryKind {
     /// 从 `u8` 解析
+    #[must_use]
     pub fn from_u8(value: u8) -> Option<Self> {
         match value {
             1 => Some(Self::Dir),
@@ -72,6 +73,7 @@ pub struct SafeProcFs {
 
 impl SafeProcFs {
     /// 创建全局 `ProcFS` 代理
+    #[must_use]
     pub fn new() -> Self {
         Self {
             inner: &crate::functions::fs::procfs_core::PROCFS_DATA,
@@ -137,6 +139,7 @@ impl SafeProcFs {
     }
 
     /// 枚举条目
+    #[must_use]
     pub fn readdir(&self, index: usize) -> Option<ProcEntry> {
         let (raw_name, pid, raw_kind) = self.inner.readdir(index)?;
         let kind = ProcEntryKind::from_u8(raw_kind)?;
@@ -149,6 +152,7 @@ impl SafeProcFs {
     }
 
     /// 条目总数
+    #[must_use]
     pub fn entry_count(&self) -> u32 {
         self.inner.entry_count()
     }
@@ -217,6 +221,7 @@ pub fn read(name: &str, buf: &mut [u8]) -> Result<usize, KernelError> {
 }
 
 /// 条目名最大长度
+#[must_use]
 pub const fn max_name_len() -> usize {
     PROCFS_MAX_NAME
 }

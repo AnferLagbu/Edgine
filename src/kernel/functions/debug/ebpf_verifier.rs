@@ -230,10 +230,10 @@ fn verify_program_checks(prog: &BpfProg) -> Option<VerifyResult> {
     }
 
     // 规则 5: 最后一条指令必须是 EXIT
-    if let Some(last) = prog.insns.last() {
-        if last.op != opcode::JMP | opcode::EXIT {
-            return Some(VerifyResult::Err(b"program must end with EXIT".to_vec()));
-        }
+    if let Some(last) = prog.insns.last()
+        && last.op != opcode::JMP | opcode::EXIT
+    {
+        return Some(VerifyResult::Err(b"program must end with EXIT".to_vec()));
     }
 
     None
@@ -262,12 +262,11 @@ fn verify_insn(
         && insn.class() != opcode::ALU64
         && insn.class() != opcode::JMP
         && insn.class() != opcode::JMP32
+        && (insn.class() == opcode::ST || insn.class() == opcode::STX)
     {
-        if insn.class() == opcode::ST || insn.class() == opcode::STX {
-            return Err(VerifyResult::Err(
-                alloc::format!("write to R10 (frame pointer) at pc={pc}").into_bytes(),
-            ));
-        }
+        return Err(VerifyResult::Err(
+            alloc::format!("write to R10 (frame pointer) at pc={pc}").into_bytes(),
+        ));
     }
 
     let class = insn.class();
@@ -394,8 +393,8 @@ fn verify_helper_call(
     // 原实现 R2-R5 未初始化仅 break (不拒绝), 恶意程序可绕过
     // 参数契约调用 helper (如 map 操作缺 key 指针).
     let min_args = helper_min_args(helper_id);
-    for arg_reg in 1..=min_args {
-        if regs[arg_reg].r#type == RegType::NotInit {
+    for (arg_reg, reg_state) in regs.iter().enumerate().skip(1).take(min_args) {
+        if reg_state.r#type == RegType::NotInit {
             return Err(VerifyResult::Err(
                 alloc::format!("helper {helper_id} at pc={pc} requires R{arg_reg} initialized")
                     .into_bytes(),

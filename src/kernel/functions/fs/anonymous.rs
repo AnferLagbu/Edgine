@@ -19,8 +19,16 @@ pub struct AnonymousFs {
     inner: IrqSpinLock<RamFsData>,
 }
 
+impl Default for AnonymousFs {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AnonymousFs {
     /// 创建新的 `AnonymousFs`
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             inner: IrqSpinLock::new(RamFsData::new()),

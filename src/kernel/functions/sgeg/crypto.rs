@@ -51,17 +51,20 @@ impl Salt {
 
     /// 从字节数组构造
     #[inline]
+    #[must_use]
     pub const fn from_bytes(bytes: [u8; SALT_LEN]) -> Self {
         Self(bytes)
     }
 
     /// 生成随机盐 (基于硬件 RDRAND, fallback TSC 派生)
+    #[must_use]
     pub fn generate() -> Self {
         Self(sgeg::csprng::generate_salt())
     }
 
     /// 字节数组视图
     #[inline]
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8; SALT_LEN] {
         &self.0
     }
@@ -90,12 +93,14 @@ impl Sha256Hash {
 
     /// 从字节数组构造
     #[inline]
+    #[must_use]
     pub const fn from_bytes(bytes: [u8; SHA256_LEN]) -> Self {
         Self(bytes)
     }
 
     /// 字节数组视图
     #[inline]
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8; SHA256_LEN] {
         &self.0
     }
@@ -122,12 +127,14 @@ impl PasswordHash {
 
     /// 构造空 (零) 哈希
     #[inline]
+    #[must_use]
     pub const fn new() -> Self {
         Self::ZERO
     }
 
     /// 提取 SHA-256 部分
     #[inline]
+    #[must_use]
     pub fn digest(&self) -> Sha256Hash {
         let mut d = [0u8; SHA256_LEN];
         d.copy_from_slice(&self.full[..SHA256_LEN]);
@@ -136,6 +143,7 @@ impl PasswordHash {
 
     /// 提取盐部分
     #[inline]
+    #[must_use]
     pub fn salt(&self) -> Salt {
         let mut s = [0u8; SALT_LEN];
         s.copy_from_slice(&self.full[SHA256_LEN..SHA256_LEN + SALT_LEN]);
@@ -143,6 +151,7 @@ impl PasswordHash {
     }
 
     /// 从 sha256 + salt 组合
+    #[must_use]
     pub fn from_parts(digest: Sha256Hash, salt: Salt) -> Self {
         let mut full = [0u8; PWM_HASH_LEN];
         full[..SHA256_LEN].copy_from_slice(&digest.0);
@@ -168,6 +177,7 @@ impl Default for PasswordHash {
 ///
 /// **返回**: 32 字节 SHA-256 哈希
 #[inline]
+#[must_use]
 pub fn sha256(data: &[u8]) -> Sha256Hash {
     // B07-07: sgeg::sha256::sha256 返回标准 32 字节, 直接包装.
     Sha256Hash(sgeg::sha256::sha256(data))
@@ -176,6 +186,7 @@ pub fn sha256(data: &[u8]) -> Sha256Hash {
 /// 计算 SHA-256 → 密码哈希 (含盐拉伸)
 ///
 /// 用于 PWM 存储; 输入 = password || salt
+#[must_use]
 pub fn password_hash(password: &[u8], salt: Salt) -> PasswordHash {
     let mut stretched = [0u8; 40 + SALT_LEN];
     let pwd_len = password.len().min(40);
@@ -196,24 +207,28 @@ pub fn password_hash(password: &[u8], salt: Salt) -> PasswordHash {
 ///
 /// **安全**: 不因数据差异而早返回, 防止计时攻击
 // B08-22: 委托 privileged::sgeg::constant_time_eq 权威实现, 消除 functions 侧重复体
+#[must_use]
 pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     sgeg::constant_time_eq(a, b)
 }
 
 /// 常数时间比较 SHA-256 哈希
 #[inline]
+#[must_use]
 pub fn ct_eq_hash(a: Sha256Hash, b: Sha256Hash) -> bool {
     ct_eq(&a.0, &b.0)
 }
 
 /// 常数时间比较盐
 #[inline]
+#[must_use]
 pub fn ct_eq_salt(a: Salt, b: Salt) -> bool {
     ct_eq(&a.0, &b.0)
 }
 
 /// 常数时间比较密码哈希
 #[inline]
+#[must_use]
 pub fn ct_eq_password(a: PasswordHash, b: PasswordHash) -> bool {
     ct_eq(&a.full, &b.full)
 }
@@ -244,17 +259,19 @@ pub enum StorageError {
 
 impl StorageError {
     /// 映射为 POSIX errno
+    #[must_use]
     pub fn to_errno(self) -> Errno {
         use Errno as E;
         match self {
-            Self::BadMagic => E::ENOEXEC,
-            Self::UnsupportedVersion => E::EPROTO,
-            Self::ChecksumMismatch => E::EBADMSG,
+            Self::BadMagic => E::Enoexec,
+            Self::UnsupportedVersion => E::Eproto,
+            Self::ChecksumMismatch => E::Ebadmsg,
             Self::Kernel(e) => e.as_errno(),
         }
     }
 
     /// 从内核 `i32` 错误码翻译
+    #[must_use]
     pub fn from_i32(code: i32) -> Self {
         use crate::functions::error::KernelError as K;
         match code {

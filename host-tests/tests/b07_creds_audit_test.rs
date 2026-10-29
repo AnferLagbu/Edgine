@@ -123,7 +123,7 @@ fn pwm_set_requires_capability() {
         "pwm_set_syscall 必须校验能力位 (B07-05)"
     );
     assert!(
-        auth_src.contains("Errno::EPERM"),
+        auth_src.contains("Errno::Eperm"),
         "pwm_set 无能力应返回 EPERM (B07-05)"
     );
 

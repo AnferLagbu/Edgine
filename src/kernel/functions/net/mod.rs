@@ -134,15 +134,17 @@ pub enum NetError {
 
 impl NetError {
     /// 映射为 POSIX errno
+    #[must_use]
     pub fn to_errno(self) -> Errno {
         use Errno as E;
         match self {
-            Self::NotConfigured => E::ENETDOWN,
+            Self::NotConfigured => E::Enetdown,
             Self::Kernel(e) => e.as_errno(),
         }
     }
 
     /// 由 C ABI 返回码构造 `NetError` (负数按 errno 语义映射, 未知码归入 `Other`)
+    #[must_use]
     pub fn from_i32(rc: i32) -> Self {
         use crate::functions::error::KernelError as K;
         match rc {
@@ -245,7 +247,7 @@ pub fn static_ip(cidr_str: &str, gw_str: &str) -> NetResult<()> {
     gw_c.extend_from_slice(gw_str.as_bytes());
     gw_c.push(0);
 
-    let rc = fw_net_socket::eg_net_static_ip(cidr_c.as_ptr(), gw_c.as_ptr());
+    let rc = fw_net_socket::eg_net_static_ip(cidr_c.as_ptr() as usize, gw_c.as_ptr() as usize);
     if rc == 0 {
         Ok(())
     } else {
@@ -258,16 +260,19 @@ pub fn static_ip(cidr_str: &str, gw_str: &str) -> NetResult<()> {
 // ============================================================================
 
 /// 网络是否已完全初始化
+#[must_use]
 pub fn is_initialized() -> bool {
     init::is_network_initialized()
 }
 
 /// 网络是否已完成 DHCP/Static IP 配置
+#[must_use]
 pub fn is_configured() -> bool {
     init::is_network_configured()
 }
 
 /// 当前初始化状态
+#[must_use]
 pub fn state() -> InitState {
     #[cfg(feature = "kernel_test")]
     {

@@ -15,6 +15,7 @@ pub const FAT_BAD: u32 = 0xFFFF_FFF7;
 pub const FAT_END: u32 = 0x0FFF_FFFF;
 
 /// 从 FAT 表读取簇链 (底层读取失败时提前结束链并返回已收集的簇)
+#[must_use]
 pub fn read_fat_chain(
     device_idx: u8,
     super_block: &ExfatSuperBlock,

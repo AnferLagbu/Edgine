@@ -63,16 +63,19 @@ impl VmFlags {
 
     /// 返回原始位掩码
     #[inline]
+    #[must_use]
     pub const fn bits(self) -> u32 {
         self.0
     }
     /// 由原始位掩码构造 (不校验未定义位)
     #[inline]
+    #[must_use]
     pub const fn from_bits(bits: u32) -> Self {
         Self(bits)
     }
     /// 是否包含 `other` 的全部标志位
     #[inline]
+    #[must_use]
     pub const fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
     }
@@ -90,6 +93,7 @@ impl VmFlags {
     }
     /// 是否不含任何标志位
     #[inline]
+    #[must_use]
     pub const fn is_empty(self) -> bool {
         self.0 == 0
     }
@@ -142,6 +146,7 @@ pub enum VmaType {
 
 impl VmaType {
     /// 由 `u8` 编码还原 VMA 类型 (未知编码退化为 `Guard`)
+    #[must_use]
     pub fn from_u8(v: u8) -> Self {
         match v {
             0 => Self::Anonymous,
@@ -166,7 +171,7 @@ pub struct Vma {
     /// 页表硬件标志
     pub flags: PageFlags,
     /// VMA 类型
-    pub vma_type: VmaType,
+    pub kind: VmaType,
     /// 文件映射在文件内的起始偏移
     pub offset: u64,
     /// 文件映射: inode 编号 (0 = 无文件后端)
@@ -189,14 +194,35 @@ pub struct Vma {
     pub numa: Option<NumaRangePolicy>,
 }
 
+/// 文件映射 VMA 创建参数 (供 [`Vma::file_backed`] 使用)
+pub struct FileBackedVma {
+    /// 区间起始地址 (含, 页对齐)
+    pub start: usize,
+    /// 区间结束地址 (不含)
+    pub end: usize,
+    /// 页表硬件标志
+    pub flags: PageFlags,
+    /// 文件映射在文件内的起始偏移
+    pub offset: u64,
+    /// 文件映射: inode 编号
+    pub inode_id: u32,
+    /// 创建该 VMA 的 pwm (用于 #PF 时 `vfs_pread_inode` 权限校验)
+    pub pwm: u64,
+    /// 是否为 `MAP_SHARED` (true) 或 `MAP_PRIVATE` (false)
+    pub shared: bool,
+    /// 挂载点在 `VFS_MANAGER.mounts` 中的索引
+    pub mount_idx: Option<usize>,
+}
+
 impl Vma {
     /// 创建匿名 VMA (无文件后端、无特殊策略)
-    pub fn new(start: usize, end: usize, flags: PageFlags, vma_type: VmaType) -> Self {
+    #[must_use]
+    pub fn new(start: usize, end: usize, flags: PageFlags, kind: VmaType) -> Self {
         Self {
             start,
             end,
             flags,
-            vma_type,
+            kind,
             offset: 0,
             inode_id: 0,
             shared: false,
@@ -208,12 +234,13 @@ impl Vma {
     }
 
     /// 创建带文件偏移的 VMA (类型固定为 `FileBacked`)
+    #[must_use]
     pub fn with_offset(start: usize, end: usize, flags: PageFlags, offset: u64) -> Self {
         Self {
             start,
             end,
             flags,
-            vma_type: VmaType::FileBacked,
+            kind: VmaType::FileBacked,
             offset,
             inode_id: 0,
             shared: false,
@@ -230,21 +257,23 @@ impl Vma {
     /// `vfs_pread_inode(mount_idx, inode, off, dst, pwm)` 校验文件访问权限,
     /// 避免越权读取其它用户文件. `mount_idx` 决定 #PF miss 时调哪个
     /// `FileSystem` trait (例如 0 → `RamFS`, 1 → `DevFS`).
-    pub fn file_backed(
-        start: usize,
-        end: usize,
-        flags: PageFlags,
-        offset: u64,
-        inode_id: u32,
-        pwm: u64,
-        shared: bool,
-        mount_idx: Option<usize>,
-    ) -> Self {
+    #[must_use]
+    pub fn file_backed(args: &FileBackedVma) -> Self {
+        let FileBackedVma {
+            start,
+            end,
+            flags,
+            offset,
+            inode_id,
+            pwm,
+            shared,
+            mount_idx,
+        } = *args;
         Self {
             start,
             end,
             flags,
-            vma_type: VmaType::FileBacked,
+            kind: VmaType::FileBacked,
             offset,
             inode_id,
             shared,
@@ -257,30 +286,35 @@ impl Vma {
 
     /// 区间字节数 (`end - start`)
     #[inline]
+    #[must_use]
     pub fn size(&self) -> usize {
         self.end - self.start
     }
 
     /// 地址是否落在区间内 (`[start, end)`)
     #[inline]
+    #[must_use]
     pub fn contains(&self, addr: usize) -> bool {
         addr >= self.start && addr < self.end
     }
 
     /// 是否为保护页 VMA
     #[inline]
+    #[must_use]
     pub fn is_guard(&self) -> bool {
-        self.vma_type == VmaType::Guard
+        self.kind == VmaType::Guard
     }
 
     /// 是否为用户栈 VMA
     #[inline]
+    #[must_use]
     pub fn is_stack(&self) -> bool {
-        self.vma_type == VmaType::Stack
+        self.kind == VmaType::Stack
     }
 
     /// VMA 是否被 mlock 锁定 (参与 swap/reclaim 跳过判断)
     #[inline]
+    #[must_use]
     pub fn is_mlocked(&self) -> bool {
         self.vm_flags.contains(VmFlags::MLOCKED)
     }
@@ -334,7 +368,7 @@ fn madvise_flag_covered(
     locked
 }
 
-/// madvise: 拆分前缀 [vma_start, start), 覆盖段 [start, vma_end) 打 `flag`.
+/// madvise: 拆分前缀 [`vma_start`, start), 覆盖段 [start, `vma_end`) 打 `flag`.
 ///
 /// 返回新增锁定字节数; 覆盖区间同时压入 `touched`.
 fn madvise_split_prefix(
@@ -350,7 +384,7 @@ fn madvise_split_prefix(
         start: vma_start,
         end: start,
         flags: vmas[i].flags,
-        vma_type: vmas[i].vma_type,
+        kind: vmas[i].kind,
         offset: vmas[i].offset,
         inode_id: vmas[i].inode_id,
         shared: vmas[i].shared,
@@ -363,7 +397,7 @@ fn madvise_split_prefix(
         start,
         end: vma_end,
         flags: vmas[i].flags,
-        vma_type: vmas[i].vma_type,
+        kind: vmas[i].kind,
         offset: vmas[i].offset + (start - vma_start) as u64,
         inode_id: vmas[i].inode_id,
         shared: vmas[i].shared,
@@ -380,7 +414,7 @@ fn madvise_split_prefix(
     ins_end - ins_start
 }
 
-/// madvise: 拆分后缀 [end_addr, vma_end), 覆盖段 [vma_start, end_addr) 打 `flag`.
+/// madvise: 拆分后缀 [`end_addr`, `vma_end`), 覆盖段 [`vma_start`, `end_addr`) 打 `flag`.
 ///
 /// 返回新增锁定字节数; 覆盖区间同时压入 `touched`.
 fn madvise_split_suffix(
@@ -396,7 +430,7 @@ fn madvise_split_suffix(
         start: vma_start,
         end: end_addr,
         flags: vmas[i].flags,
-        vma_type: vmas[i].vma_type,
+        kind: vmas[i].kind,
         offset: vmas[i].offset,
         inode_id: vmas[i].inode_id,
         shared: vmas[i].shared,
@@ -409,7 +443,7 @@ fn madvise_split_suffix(
         start: end_addr,
         end: vma_end,
         flags: vmas[i].flags,
-        vma_type: vmas[i].vma_type,
+        kind: vmas[i].kind,
         offset: vmas[i].offset + (end_addr - vma_start) as u64,
         inode_id: vmas[i].inode_id,
         shared: vmas[i].shared,
@@ -461,8 +495,15 @@ fn apply_madvise_split(
     (locked, touched)
 }
 
+impl Default for MmStruct {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MmStruct {
     /// 创建空的地址空间描述符
+    #[must_use]
     pub fn new() -> Self {
         Self {
             vmas: Mutex::new(Vec::new()),
@@ -517,9 +558,9 @@ impl MmStruct {
     /// `policy` 为 `None` 表示清除 (Linux `MPOL_DEFAULT` 语义, 回退进程级策略).
     /// 返回被设置的字节数.
     ///
-    /// SIMPLIFIED: 要求 `[start, end)` 被现有 VMA 完整覆盖且不跨 VMA 边界 (无 split_vma);
+    /// SIMPLIFIED: 要求 `[start, end)` 被现有 VMA 完整覆盖且不跨 VMA 边界 (无 `split_vma`);
     /// 空洞或部分重叠一律 `EFAULT`, 不做拆分. 影响面: Linux "按 VMA 边界拆分后部分生效"
-    /// 的调用在此被整体拒绝. 何时需扩展: 引入 split_vma 后改为逐 VMA 拆分处理.
+    /// 的调用在此被整体拒绝. 何时需扩展: 引入 `split_vma` 后改为逐 VMA 拆分处理.
     ///
     /// # Errors
     /// 当 `end <= start`, 或范围未被现有 VMA 完整覆盖时返回 `EFAULT`.
@@ -532,7 +573,7 @@ impl MmStruct {
         use crate::privileged::errno::Errno;
 
         if end <= start {
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
 
         let mut vmas = self.vmas.lock();
@@ -544,12 +585,12 @@ impl MmStruct {
                 continue;
             }
             if vma.start < start || vma.end > end {
-                return Err(Errno::EFAULT);
+                return Err(Errno::Efault);
             }
             covered += vma.end - vma.start;
         }
         if covered != end - start {
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
 
         // 第二遍: 写入策略
@@ -571,10 +612,11 @@ impl MmStruct {
         let mut vmas = self.vmas.lock();
 
         for existing in vmas.iter() {
-            if vma.start < existing.end && vma.end > existing.start {
-                if existing.vma_type != vma.vma_type || existing.flags != vma.flags {
-                    return Err("VMA overlap with incompatible mapping");
-                }
+            if vma.start < existing.end
+                && vma.end > existing.start
+                && (existing.kind != vma.kind || existing.flags != vma.flags)
+            {
+                return Err("VMA overlap with incompatible mapping");
             }
         }
 
@@ -584,7 +626,7 @@ impl MmStruct {
             let existing = &vmas[i];
             // file_pwm 不参与合并语义, 但不同 pwm 的相邻 VMA 不可合并:
             // 合并后用谁的 pwm 调用 vfs_pread_inode 都不严谨 (权限模型).
-            if existing.vma_type != merged.vma_type
+            if existing.kind != merged.kind
                 || existing.flags != merged.flags
                 || existing.file_pwm != merged.file_pwm
             {
@@ -627,7 +669,7 @@ impl MmStruct {
             let vma_start = vmas[i].start;
             let vma_end = vmas[i].end;
             let vma_flags = vmas[i].flags;
-            let vma_type = vmas[i].vma_type;
+            let vma_type = vmas[i].kind;
 
             if vma_end <= start {
                 i += 1;
@@ -729,10 +771,10 @@ impl MmStruct {
         use crate::privileged::errno::Errno;
 
         if len == 0 {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
 
-        let end = start.checked_add(len).ok_or(Errno::ENOMEM)?;
+        let end = start.checked_add(len).ok_or(Errno::Enomem)?;
         let end = (end + crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1)
             & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1); // 页对齐上界
 
@@ -752,17 +794,11 @@ impl MmStruct {
             // 有重叠
             let overlap_start = vma.start.max(start);
             let overlap_end = vma.end.min(end);
-            to_modify.push((
-                overlap_start,
-                overlap_end,
-                vma.start,
-                vma.flags,
-                vma.vma_type,
-            ));
+            to_modify.push((overlap_start, overlap_end, vma.start, vma.flags, vma.kind));
         }
 
         if to_modify.is_empty() {
-            return Err(Errno::ENOMEM); // 没有映射的区域
+            return Err(Errno::Enomem); // 没有映射的区域
         }
 
         // 收集要保留的前后片段
@@ -781,7 +817,7 @@ impl MmStruct {
                     start: vma.start,
                     end: start,
                     flags: vma.flags,
-                    vma_type: vma.vma_type,
+                    kind: vma.kind,
                     offset: vma.offset,
                     inode_id: vma.inode_id,
                     shared: vma.shared,
@@ -799,7 +835,7 @@ impl MmStruct {
                 start: overlap_start,
                 end: overlap_end,
                 flags: new_flags,
-                vma_type: vma.vma_type,
+                kind: vma.kind,
                 offset: vma.offset,
                 inode_id: vma.inode_id,
                 shared: vma.shared,
@@ -815,7 +851,7 @@ impl MmStruct {
                     start: end,
                     end: vma.end,
                     flags: vma.flags,
-                    vma_type: vma.vma_type,
+                    kind: vma.kind,
                     offset: vma.offset,
                     inode_id: vma.inode_id,
                     shared: vma.shared,
@@ -888,20 +924,20 @@ impl MmStruct {
         const MREMAP_MAYMOVE: i32 = 1;
 
         if old_size == 0 {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
         if flags & !MREMAP_MAYMOVE != 0 {
             // 含 MREMAP_FIXED 等未实现位
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
 
         let old_size_aligned = (old_size + crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1)
             & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1);
 
         // 验证旧 vma 存在且精确覆盖 [old_addr, old_addr+old_size_aligned)
-        let old_vma = self.find_vma(old_addr).ok_or(Errno::EFAULT)?;
+        let old_vma = self.find_vma(old_addr).ok_or(Errno::Efault)?;
         if old_vma.start != old_addr || old_vma.end != old_addr + old_size_aligned {
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
 
         // new_size == 0 退化为 munmap
@@ -944,13 +980,13 @@ impl MmStruct {
                     }
                 }
             }
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
 
         // MAYMOVE: 找新空区
         let new_start = self
             .find_free_range(new_size_aligned)
-            .ok_or(Errno::ENOMEM)?;
+            .ok_or(Errno::Enomem)?;
 
         // 删除旧 vma
         self.remove_range(old_addr, old_addr + old_size_aligned, cr3);
@@ -960,7 +996,7 @@ impl MmStruct {
             start: new_start,
             end: new_start + new_size_aligned,
             flags: old_vma.flags,
-            vma_type: old_vma.vma_type,
+            kind: old_vma.kind,
             offset: old_vma.offset,
             inode_id: old_vma.inode_id,
             shared: old_vma.shared,
@@ -969,7 +1005,7 @@ impl MmStruct {
             vm_flags: old_vma.vm_flags,
             numa: old_vma.numa,
         };
-        self.insert_vma(new_vma).map_err(|_| Errno::ENOMEM)?;
+        self.insert_vma(new_vma).map_err(|_| Errno::Enomem)?;
         Ok(new_start)
     }
 
@@ -1027,7 +1063,7 @@ impl MmStruct {
         use crate::privileged::errno::Errno;
 
         if len == 0 {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
 
         // advice → VmFlags bit
@@ -1040,10 +1076,10 @@ impl MmStruct {
             1 => VmFlags::MADV_RANDOM,
             2 => VmFlags::MADV_SEQUENTIAL,
             3 => VmFlags::MADV_WILLNEED,
-            _ => return Err(Errno::EINVAL),
+            _ => return Err(Errno::Einval),
         };
 
-        let end_addr = start.checked_add(len).ok_or(Errno::ENOMEM)?;
+        let end_addr = start.checked_add(len).ok_or(Errno::Enomem)?;
         let end_addr = (end_addr + crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1)
             & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1);
 
@@ -1079,7 +1115,7 @@ impl MmStruct {
             let vmas = self.vmas.lock();
             for v in vmas.iter() {
                 if v.start <= start && v.end >= end && v.is_mlocked() {
-                    return Err(Errno::EAGAIN);
+                    return Err(Errno::Eagain);
                 }
             }
         }
@@ -1107,10 +1143,10 @@ impl MmStruct {
         use crate::privileged::rlimit_query;
 
         if len == 0 {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
 
-        let end_addr = start.checked_add(len).ok_or(Errno::ENOMEM)?;
+        let end_addr = start.checked_add(len).ok_or(Errno::Enomem)?;
         let end_addr = (end_addr + crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1)
             & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1);
 
@@ -1129,13 +1165,13 @@ impl MmStruct {
         }
 
         if total == 0 {
-            return Err(Errno::ENOMEM);
+            return Err(Errno::Enomem);
         }
 
         // RLIMIT_MEMLOCK 检查
         let current = self.locked_vm.load(Ordering::Acquire);
         if rlimit_query::check_memlock_exceeded(current as u64, total as u64) {
-            return Err(Errno::ENOMEM);
+            return Err(Errno::Enomem);
         }
 
         // 标记 VMA MLOCKED + 累计 locked_vm
@@ -1172,10 +1208,10 @@ impl MmStruct {
         use crate::privileged::errno::Errno;
 
         if len == 0 {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
 
-        let end_addr = start.checked_add(len).ok_or(Errno::ENOMEM)?;
+        let end_addr = start.checked_add(len).ok_or(Errno::Enomem)?;
         let end_addr = (end_addr + crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1)
             & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1);
 
@@ -1222,7 +1258,7 @@ impl MmStruct {
         const MCL_ONFAULT: u32 = 4;
 
         if flags & !(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT) != 0 {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
 
         let mut applied = 0u32;
@@ -1231,7 +1267,7 @@ impl MmStruct {
         if flags & MCL_CURRENT != 0 {
             // 锁定所有现有 VMA
             for v in vmas.iter_mut() {
-                if v.vma_type == VmaType::Guard || v.vma_type == VmaType::Device {
+                if v.kind == VmaType::Guard || v.kind == VmaType::Device {
                     continue;
                 }
                 v.vm_flags = v.vm_flags.insert(VmFlags::MLOCKED);
@@ -1293,23 +1329,23 @@ impl MmStruct {
         use crate::privileged::mm::vmm;
 
         if len == 0 {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
 
         let page_size = crate::privileged::glue::usize_from_u64(PAGE_SIZE);
-        let n_pages = (len + page_size - 1) / page_size;
+        let n_pages = len.div_ceil(page_size);
         if out_vec.len() < n_pages {
-            return Err(Errno::ENOMEM);
+            return Err(Errno::Enomem);
         }
 
         let pml4 = vmm::get_current_pml4();
         let mut resident = 0usize;
 
-        for i in 0..n_pages {
+        for (i, slot) in out_vec.iter_mut().enumerate().take(n_pages) {
             let addr = start + i * page_size;
             let pte = crate::privileged::mm::Vmm::get_pte_value(pml4, VirtAddr(addr as u64));
             let present = pte.is_some_and(|p| (p & 1) != 0);
-            out_vec[i] = u8::from(present);
+            *slot = u8::from(present);
             if present {
                 resident += 1;
             }
@@ -1354,8 +1390,11 @@ pub fn get_current_mm() -> Option<&'static MmStruct> {
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 /// FFI: 查询 `addr` 所在 VMA, 返回 `(start << 32) | flags` (未命中返回 0)
+///
+/// # Safety
+/// `mm_ptr` 必须为有效 `MmStruct` 指针 (或 NULL), 且在调用期间不释放。
 #[unsafe(no_mangle)]
-pub extern "C" fn vma_find(mm_ptr: *const MmStruct, addr: u64) -> u64 {
+pub unsafe extern "C" fn vma_find(mm_ptr: *const MmStruct, addr: u64) -> u64 {
     if mm_ptr.is_null() {
         return 0;
     }

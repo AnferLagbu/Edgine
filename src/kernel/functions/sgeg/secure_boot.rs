@@ -21,11 +21,13 @@ pub fn init_secure_boot(pk: Ed25519PubKey) {
 }
 
 /// 安全启动是否已初始化
+#[must_use]
 pub fn is_secure_boot_initialized() -> bool {
     secure_boot_is_initialized()
 }
 
 /// 获取全局安全启动子系统
+#[must_use]
 pub fn secure_boot() -> &'static SecureBootSubsystem {
     secure_boot_subsystem()
 }
@@ -36,31 +38,37 @@ pub fn init_tpm() {
 }
 
 /// TPM 是否已初始化
+#[must_use]
 pub fn is_tpm_initialized() -> bool {
     tpm_is_initialized()
 }
 
 /// 获取全局 TPM 子系统
+#[must_use]
 pub fn tpm() -> &'static TpmSubsystem {
     tpm_subsystem()
 }
 
 /// 安全启动系统调用 (安全封装)
+#[must_use]
 pub fn secure_boot_syscall(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     sys_secure_boot(cmd, a1, a2, a3)
 }
 
 /// TPM 系统调用 (安全封装)
+#[must_use]
 pub fn tpm_syscall(cmd: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     sys_tpm(cmd, a1, a2, a3)
 }
 
 /// SHA-256 哈希 (安全封装)
+#[must_use]
 pub fn hash_sha256(data: &[u8]) -> [u8; SHA256_LEN] {
     sha256_hash(data)
 }
 
 /// SHA-256 扩展 (安全封装)
+#[must_use]
 pub fn hash_sha256_extend(a: &[u8; SHA256_LEN], b: &[u8; SHA256_LEN]) -> [u8; SHA256_LEN] {
     sha256_extend(a, b)
 }

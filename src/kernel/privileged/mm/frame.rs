@@ -23,6 +23,7 @@
 
 use super::PAGE_SIZE;
 use super::copy_user::{copy_from_user, copy_to_user, is_user_buf, is_user_ptr};
+use crate::privileged::error::KernelError;
 
 // ---------------------------------------------------------------------------
 // Pod trait
@@ -90,6 +91,7 @@ impl UFrame {
     ///
     /// 当地址不在用户空间或未页对齐时返回 `None`.
     #[inline]
+    #[must_use]
     pub fn from_user_addr(addr: u64) -> Option<Self> {
         if !is_user_ptr(addr) || !addr.is_multiple_of(PAGE_SIZE) {
             return None;
@@ -104,6 +106,7 @@ impl UFrame {
     /// - `addr` 必须是合法的、页对齐的用户虚拟地址
     /// - 底层页在该 `UFrame` 生命周期内必须保持映射
     #[inline]
+    #[must_use]
     pub unsafe fn from_user_addr_unchecked(addr: u64) -> Self {
         Self { uaddr: addr }
     }
@@ -111,14 +114,14 @@ impl UFrame {
     /// 从帧内指定偏移读取一个 POD 值.
     ///
     /// offset + `size_of::<T>()` 不得超过 `PAGE_SIZE`.
-    /// 页错误或偏移非法时返回 `Err(())`.
+    /// 页错误或偏移非法时返回 `Err(KernelError::Fault)`.
     /// # Errors
     /// 偏移越界或访问用户内存时发生页错误时返回 Err。
     #[inline]
-    pub fn read_pod<T: Pod>(&self, offset: usize) -> Result<T, ()> {
+    pub fn read_pod<T: Pod>(&self, offset: usize) -> Result<T, KernelError> {
         let size = core::mem::size_of::<T>();
         if offset.saturating_add(size) > crate::privileged::glue::usize_from_u64(PAGE_SIZE) {
-            return Err(());
+            return Err(KernelError::Fault);
         }
 
         let mut val = core::mem::MaybeUninit::<T>::uninit();
@@ -137,14 +140,14 @@ impl UFrame {
     /// 将一个 POD 值写入帧内指定偏移.
     ///
     /// offset + `size_of::<T>()` 不得超过 `PAGE_SIZE`.
-    /// 页错误或偏移非法时返回 `Err(())`.
+    /// 页错误或偏移非法时返回 `Err(KernelError::Fault)`.
     /// # Errors
     /// 偏移越界或访问用户内存时发生页错误时返回 Err。
     #[inline]
-    pub fn write_pod<T: Pod>(&self, offset: usize, val: &T) -> Result<(), ()> {
+    pub fn write_pod<T: Pod>(&self, offset: usize, val: &T) -> Result<(), KernelError> {
         let size = core::mem::size_of::<T>();
         if offset.saturating_add(size) > crate::privileged::glue::usize_from_u64(PAGE_SIZE) {
-            return Err(());
+            return Err(KernelError::Fault);
         }
 
         let src =
@@ -162,9 +165,9 @@ impl UFrame {
     /// # Errors
     /// 偏移越界或访问用户内存时发生页错误时返回 Err。
     #[inline]
-    pub fn read_bytes(&self, offset: usize, buf: &mut [u8]) -> Result<usize, ()> {
+    pub fn read_bytes(&self, offset: usize, buf: &mut [u8]) -> Result<usize, KernelError> {
         if offset.saturating_add(buf.len()) > crate::privileged::glue::usize_from_u64(PAGE_SIZE) {
-            return Err(());
+            return Err(KernelError::Fault);
         }
         copy_from_user(buf, self.uaddr + offset as u64, buf.len())
     }
@@ -176,15 +179,16 @@ impl UFrame {
     /// # Errors
     /// 偏移越界或访问用户内存时发生页错误时返回 Err。
     #[inline]
-    pub fn write_bytes(&self, offset: usize, data: &[u8]) -> Result<usize, ()> {
+    pub fn write_bytes(&self, offset: usize, data: &[u8]) -> Result<usize, KernelError> {
         if offset.saturating_add(data.len()) > crate::privileged::glue::usize_from_u64(PAGE_SIZE) {
-            return Err(());
+            return Err(KernelError::Fault);
         }
         copy_to_user(self.uaddr + offset as u64, data, data.len())
     }
 
     /// 返回该帧的用户虚拟地址.
     #[inline]
+    #[must_use]
     pub fn user_addr(&self) -> u64 {
         self.uaddr
     }
@@ -214,6 +218,7 @@ impl USegment {
     ///
     /// 区间不完全位于用户空间时返回 `None`.
     #[inline]
+    #[must_use]
     pub fn from_user_range(addr: u64, len: usize) -> Option<Self> {
         if !is_user_buf(addr, len) {
             return None;
@@ -228,20 +233,21 @@ impl USegment {
     /// - `[addr, addr+len)` 必须是合法的、已映射的、用户可访问的内存
     /// - 映射在该 `USegment` 生命周期内必须保持有效
     #[inline]
+    #[must_use]
     pub unsafe fn from_user_range_unchecked(addr: u64, len: usize) -> Self {
         Self { base: addr, len }
     }
 
     /// 从段内指定偏移读取一个 POD 值.
     ///
-    /// 页错误或偏移越界时返回 `Err(())`.
+    /// 页错误或偏移越界时返回 `Err(KernelError::Fault)`.
     /// # Errors
     /// 偏移越界或访问用户内存时发生页错误时返回 Err。
     #[inline]
-    pub fn read_pod<T: Pod>(&self, offset: usize) -> Result<T, ()> {
+    pub fn read_pod<T: Pod>(&self, offset: usize) -> Result<T, KernelError> {
         let size = core::mem::size_of::<T>();
         if offset.saturating_add(size) > self.len {
-            return Err(());
+            return Err(KernelError::Fault);
         }
 
         let mut val = core::mem::MaybeUninit::<T>::uninit();
@@ -258,14 +264,14 @@ impl USegment {
 
     /// 将一个 POD 值写入段内指定偏移.
     ///
-    /// 页错误或偏移越界时返回 `Err(())`.
+    /// 页错误或偏移越界时返回 `Err(KernelError::Fault)`.
     /// # Errors
     /// 偏移越界或访问用户内存时发生页错误时返回 Err。
     #[inline]
-    pub fn write_pod<T: Pod>(&self, offset: usize, val: &T) -> Result<(), ()> {
+    pub fn write_pod<T: Pod>(&self, offset: usize, val: &T) -> Result<(), KernelError> {
         let size = core::mem::size_of::<T>();
         if offset.saturating_add(size) > self.len {
-            return Err(());
+            return Err(KernelError::Fault);
         }
 
         let src =
@@ -282,7 +288,7 @@ impl USegment {
     /// # Errors
     /// 访问用户内存时发生页错误时返回 Err。
     #[inline]
-    pub fn read_bytes(&self, offset: usize, buf: &mut [u8]) -> Result<usize, ()> {
+    pub fn read_bytes(&self, offset: usize, buf: &mut [u8]) -> Result<usize, KernelError> {
         let max_len = self.len.saturating_sub(offset);
         let copy_len = buf.len().min(max_len);
         if copy_len == 0 {
@@ -297,7 +303,7 @@ impl USegment {
     /// # Errors
     /// 访问用户内存时发生页错误时返回 Err。
     #[inline]
-    pub fn write_bytes(&self, offset: usize, data: &[u8]) -> Result<usize, ()> {
+    pub fn write_bytes(&self, offset: usize, data: &[u8]) -> Result<usize, KernelError> {
         let max_len = self.len.saturating_sub(offset);
         let copy_len = data.len().min(max_len);
         if copy_len == 0 {
@@ -308,18 +314,21 @@ impl USegment {
 
     /// 返回起始用户虚拟地址.
     #[inline]
+    #[must_use]
     pub fn base(&self) -> u64 {
         self.base
     }
 
     /// 返回字节长度.
     #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// 段长度为零时返回 true.
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }

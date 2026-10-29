@@ -68,16 +68,17 @@ pub struct UnkfsUberblock {
     pub checkpoint_txg: u64,
     /// 覆盖本块其余字段的 4×64 位 Fletcher4 校验和.
     pub checksum: [u64; 4],
-    /// 魔数; 等于 HV_SPA_MAGIC 时才视为有效.
+    /// 魔数; 等于 `HV_SPA_MAGIC` 时才视为有效.
     pub magic: u32,
     /// 归属的 PWM (功率/写管理) 域编号.
     pub pwm_domain_id: u16,
     /// 对齐填充, 使块尾保持 8 字节边界.
-    pub _pad: [u8; 2],
+    pub pad: [u8; 2],
 }
 
 impl UnkfsUberblock {
     /// 构造全零的无效 uberblock (magic 为 0).
+    #[must_use]
     pub const fn null() -> Self {
         Self {
             txg: 0,
@@ -89,11 +90,12 @@ impl UnkfsUberblock {
             checksum: [0; 4],
             magic: 0,
             pwm_domain_id: 0,
-            _pad: [0; 2],
+            pad: [0; 2],
         }
     }
 
     /// 魔数匹配时返回 `true`.
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         self.magic == HV_SPA_MAGIC
     }
@@ -106,6 +108,7 @@ impl UnkfsUberblock {
     }
 
     /// 按存储的校验和重算比对, 一致时返回 `true`.
+    #[must_use]
     pub fn verify_checksum(&self) -> bool {
         let mut copy = *self;
         let saved = copy.checksum;
@@ -115,11 +118,13 @@ impl UnkfsUberblock {
     }
 
     /// E6-6: 使用 `IntoBytes` + Immutable derive 编译期验证无 padding, `as_bytes` 为 safe 方法
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         zerocopy::IntoBytes::as_bytes(self)
     }
 
     /// E6-6: safe 反序列化, 逐字段读取替代 unsafe `read_unaligned`
+    #[must_use]
     pub fn from_bytes_unaligned(bytes: &[u8]) -> Option<Self> {
         let size = core::mem::size_of::<Self>();
         if bytes.len() < size {
@@ -156,7 +161,7 @@ impl UnkfsUberblock {
             checksum,
             magic,
             pwm_domain_id,
-            _pad: [0; 2],
+            pad: [0; 2],
         })
     }
 }
@@ -182,6 +187,7 @@ pub struct UnkfsSpaConfig {
 
 impl UnkfsSpaConfig {
     /// 由名称构造默认配置 (ashift=12, 4 KiB 块, 最多 8 个 vdev).
+    #[must_use]
     pub fn new(name: &str) -> Self {
         let mut n = [0u8; HV_POOL_MAX_NAME];
         let b = name.as_bytes();
@@ -202,7 +208,7 @@ impl UnkfsSpaConfig {
 pub struct UnkfsSpa {
     /// 池配置, 由自旋锁保护.
     pub config: Mutex<UnkfsSpaConfig>,
-    /// 池状态 (UnkfsPoolState 的 u8 编码).
+    /// 池状态 (`UnkfsPoolState` 的 u8 编码).
     pub state: AtomicU8,
     /// 当前生效的根元数据块.
     pub uberblock: Mutex<UnkfsUberblock>,
@@ -244,6 +250,7 @@ pub struct UnkfsSpa {
 
 impl UnkfsSpa {
     /// 构造未初始化的空池: 状态 Uninit, 计数与时间戳归零.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             config: Mutex::new(UnkfsSpaConfig::new("")),
@@ -544,6 +551,13 @@ impl UnkfsSpa {
     }
 }
 
+impl Default for UnkfsSpa {
+    /// 委托 [`UnkfsSpa::new`] 构造未初始化的空池.
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // DECISION-080: SPA 纯逻辑断言 (配置名 / uberblock) 以本文件源侧 #[cfg(test)] 为唯一归属.
 #[cfg(test)]
 mod tests {
@@ -581,7 +595,7 @@ mod tests {
             checksum: [0; 4],
             magic: HV_SPA_MAGIC,
             pwm_domain_id: 0,
-            _pad: [0; 2],
+            pad: [0; 2],
         };
         ub.compute_checksum();
         assert!(ub.verify_checksum(), "checksum should verify");

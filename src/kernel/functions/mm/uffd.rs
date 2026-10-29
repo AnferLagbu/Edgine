@@ -29,14 +29,15 @@ const O_NONBLOCK: u32 = 0o4000;
 /// SIMPLIFIED: `O_NONBLOCK` 被接受但无行为差异 — 本实装的 `read()` 语义为
 /// "无事件则阻塞等待" (Linux `O_NONBLOCK` 下应为 `EAGAIN`). 影响面: 非阻塞调用方
 /// 会在无事件时挂起. 何时需扩展: 引入 fd 级状态标志位后按 `O_NONBLOCK` 分支返回 `EAGAIN`.
+#[must_use]
 pub fn userfaultfd_syscall(flags: u32) -> i64 {
     if flags & !(O_CLOEXEC | O_NONBLOCK) != 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     let pid = crate::privileged::proc::process_get_current_pid();
     match crate::privileged::mm::uffd_create(pid) {
         Some(fd) => i64::from(fd),
-        None => Errno::EMFILE.as_ret(),
+        None => Errno::Emfile.as_ret(),
     }
 }
 
@@ -44,6 +45,7 @@ pub fn userfaultfd_syscall(flags: u32) -> i64 {
 ///
 /// 返回值语义与 Linux 一致: 成功返回 0, `UFFDIO_COPY` / `UFFDIO_ZEROPAGE` 的
 /// 实际拷贝长度通过回填用户结构体的 `copy` / `zeropage` 字段返回.
+#[must_use]
 pub fn ioctl_uffd(fd: i32, request: u64, arg: u64) -> i64 {
     match request {
         UFFDIO_API => uffd_negotiate(fd, arg),
@@ -52,7 +54,7 @@ pub fn ioctl_uffd(fd: i32, request: u64, arg: u64) -> i64 {
         UFFDIO_WAKE => uffd_wake(fd, arg),
         UFFDIO_COPY => uffd_copy(fd, arg),
         UFFDIO_ZEROPAGE => uffd_zeropage(fd, arg),
-        _ => Errno::ENOTTY.as_ret(),
+        _ => Errno::Enotty.as_ret(),
     }
 }
 
@@ -60,12 +62,12 @@ pub fn ioctl_uffd(fd: i32, request: u64, arg: u64) -> i64 {
 fn uffd_negotiate(fd: i32, arg: u64) -> i64 {
     let mut io = UffdIoApi::default();
     if !read_struct_from_user(arg, &mut io) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     match crate::privileged::mm::api_negotiate(fd, io.api, io.features) {
         Ok(out) => {
             if !write_struct_to_user(arg, &out) {
-                return Errno::EFAULT.as_ret();
+                return Errno::Efault.as_ret();
             }
             0
         }
@@ -77,7 +79,7 @@ fn uffd_negotiate(fd: i32, arg: u64) -> i64 {
 fn uffd_register(fd: i32, arg: u64) -> i64 {
     let mut reg = UffdIoRegister::default();
     if !read_struct_from_user(arg, &mut reg) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     match crate::privileged::mm::uffd_register(fd, reg.range.start, reg.range.len, reg.mode) {
         Ok(()) => {
@@ -85,7 +87,7 @@ fn uffd_register(fd: i32, arg: u64) -> i64 {
             reg.ioctls =
                 UFFDIO_REGISTER | UFFDIO_UNREGISTER | UFFDIO_WAKE | UFFDIO_COPY | UFFDIO_ZEROPAGE;
             if !write_struct_to_user(arg, &reg) {
-                return Errno::EFAULT.as_ret();
+                return Errno::Efault.as_ret();
             }
             0
         }
@@ -97,7 +99,7 @@ fn uffd_register(fd: i32, arg: u64) -> i64 {
 fn uffd_unregister(fd: i32, arg: u64) -> i64 {
     let mut range = UffdIoRange::default();
     if !read_struct_from_user(arg, &mut range) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     match crate::privileged::mm::uffd_unregister(fd, range.start, range.len) {
         Ok(()) => 0,
@@ -109,7 +111,7 @@ fn uffd_unregister(fd: i32, arg: u64) -> i64 {
 fn uffd_wake(fd: i32, arg: u64) -> i64 {
     let mut range = UffdIoRange::default();
     if !read_struct_from_user(arg, &mut range) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     match crate::privileged::mm::uffd_wake(fd, range.start, range.len) {
         Ok(_) => 0,
@@ -121,28 +123,28 @@ fn uffd_wake(fd: i32, arg: u64) -> i64 {
 fn uffd_copy(fd: i32, arg: u64) -> i64 {
     let mut cp = UffdIoCopy::default();
     if !read_struct_from_user(arg, &mut cp) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     if crate::functions::intcast::usize_from_u64(cp.len)
         != crate::functions::intcast::usize_from_u64(crate::privileged::mm::PAGE_SIZE)
     {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     if !crate::privileged::syscall::raw::check_user_buf(cp.src, cp.len) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     let mut page =
         [0u8; crate::functions::intcast::usize_from_u64(crate::privileged::mm::PAGE_SIZE)];
     let page_len = page.len();
     match crate::privileged::mm::copy_user::copy_from_user(&mut page, cp.src, page_len) {
         Ok(n) if n == page_len => {}
-        _ => return Errno::EFAULT.as_ret(),
+        _ => return Errno::Efault.as_ret(),
     }
     match crate::privileged::mm::provide_page(fd, cp.dst, Some(&page)) {
         Ok(()) => {
             cp.copy = cp.len.cast_signed();
             if !write_struct_to_user(arg, &cp) {
-                return Errno::EFAULT.as_ret();
+                return Errno::Efault.as_ret();
             }
             0
         }
@@ -154,19 +156,19 @@ fn uffd_copy(fd: i32, arg: u64) -> i64 {
 fn uffd_zeropage(fd: i32, arg: u64) -> i64 {
     let mut zp = UffdIoZeropage::default();
     if !read_struct_from_user(arg, &mut zp) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     if crate::functions::intcast::usize_from_u64(zp.range.len)
         != crate::functions::intcast::usize_from_u64(crate::privileged::mm::PAGE_SIZE)
         || zp.range.start % crate::privileged::mm::PAGE_SIZE != 0
     {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     match crate::privileged::mm::provide_page(fd, zp.range.start, None) {
         Ok(()) => {
             zp.zeropage = zp.range.len.cast_signed();
             if !write_struct_to_user(arg, &zp) {
-                return Errno::EFAULT.as_ret();
+                return Errno::Efault.as_ret();
             }
             0
         }
@@ -184,7 +186,7 @@ fn uffd_zeropage(fd: i32, arg: u64) -> i64 {
 /// - 写入用户缓冲区失败 → `EFAULT`; fd 已关闭 → `EBADF`
 pub fn read_event(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
     if count < UFFD_MSG_SIZE as u64 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     let pid = crate::privileged::proc::process_get_current_pid();
     crate::privileged::mm::set_reader(fd, pid);
@@ -192,14 +194,14 @@ pub fn read_event(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
         if let Some(ev) = crate::privileged::mm::pop_event(fd) {
             crate::privileged::mm::clear_reader(fd, pid);
             if !write_struct_to_user(buf, &ev) {
-                return Err(Errno::EFAULT);
+                return Err(Errno::Efault);
             }
             return Ok(UFFD_MSG_SIZE);
         }
         // fd 在阻塞期间被关闭 → 立即返回错误 (避免永久挂起)
         if !crate::privileged::mm::uffd_is_open(fd) {
             crate::privileged::mm::clear_reader(fd, pid);
-            return Err(Errno::EBADF);
+            return Err(Errno::Ebadf);
         }
         // 无就绪事件: 阻塞当前线程, 由 fault_notify 唤醒
         crate::privileged::proc::scheduler_block(

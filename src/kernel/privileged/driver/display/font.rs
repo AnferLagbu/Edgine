@@ -23,6 +23,7 @@ pub struct Font {
 
 impl Font {
     /// 构造内嵌 8x16 位图字体
+    #[must_use]
     pub fn builtin_8x16() -> Self {
         Self {
             data: FONT8X16_DATA,
@@ -100,17 +101,17 @@ impl Font {
 
     /// 带自动换行的文本绘制
     ///
-    /// 当 `x + glyph_width > screen_width` 时自动换到下一行。
-    pub fn render_text_wrapped(
-        &self,
-        fb: &mut Framebuffer,
-        text: &str,
-        mut x: u32,
-        mut y: u32,
-        screen_width: u32,
-        fg: Color,
-        bg: Color,
-    ) {
+    /// 当 `args.x + glyph_width > args.screen_width` 时自动换到下一行。
+    pub fn render_text_wrapped(&self, args: WrappedText<'_>) {
+        let WrappedText {
+            fb,
+            text,
+            mut x,
+            mut y,
+            screen_width,
+            fg,
+            bg,
+        } = args;
         let start_x = x;
 
         for ch in text.chars() {
@@ -129,6 +130,24 @@ impl Font {
             x += advance;
         }
     }
+}
+
+/// 带自动换行文本绘制的参数
+pub struct WrappedText<'a> {
+    /// 目标帧缓冲
+    pub fb: &'a mut Framebuffer,
+    /// 待绘制文本
+    pub text: &'a str,
+    /// 起始 x 坐标
+    pub x: u32,
+    /// 起始 y 坐标
+    pub y: u32,
+    /// 屏幕宽度 (换行阈值)
+    pub screen_width: u32,
+    /// 前景色
+    pub fg: Color,
+    /// 背景色
+    pub bg: Color,
 }
 
 /// 全局默认字体

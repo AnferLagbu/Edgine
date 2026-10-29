@@ -44,7 +44,7 @@ pub const NET_SNAPSHOT_VERSION: u32 = 1;
 /// `net_save` / `net_restore` 按 `0..MAX_SM_FD` 读写本数组, 若本长度短于
 /// `MAX_SM_FD` 会越界 panic (TD-02 曾将 `MAX_SM_FD` 重基为 256 而此处滞留 16 即
 /// 为潜伏崩溃); 故此处不得硬编码, 必须复用 `FdPlan` 单一来源.
-/// 不引用 `net::init::MAX_SM_FD` 别名, 避免 `init ↔ save` 循环依赖 (与 wait_queue 同法).
+/// 不引用 `net::init::MAX_SM_FD` 别名, 避免 `init ↔ save` 循环依赖 (与 `wait_queue` 同法).
 pub const SNAPSHOT_FD_COUNT: usize = crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize;
 /// DNS 槽数
 pub const SNAPSHOT_DNS_COUNT: usize = 4;
@@ -85,6 +85,7 @@ pub struct NetSnapshot {
 
 impl NetSnapshot {
     /// 构造全零快照 (魔数 / 版本 / 校验均未设置).
+    #[must_use]
     pub const fn empty() -> Self {
         Self {
             magic: 0,
@@ -105,6 +106,7 @@ impl NetSnapshot {
     }
 
     /// 校验快照的魔数 / 版本 / 校验和是否一致.
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         self.magic == NET_SNAPSHOT_MAGIC
             && self.version == NET_SNAPSHOT_VERSION
@@ -112,6 +114,7 @@ impl NetSnapshot {
     }
 
     /// 计算快照校验和 (所有字段字节 XOR / 旋转混合, 排除魔数自身).
+    #[must_use]
     pub fn compute_checksum(&self) -> u32 {
         let mut h: u32 = 0xA5A5_5A5A;
         h ^= self.version;

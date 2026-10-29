@@ -244,9 +244,9 @@ pub fn read_edid_block(
     }
 
     // 读 128 字节: 前 127 字节 ACK, 最后 1 字节 NACK
-    for i in 0..127 {
+    for byte in data.iter_mut().take(127) {
         match i2c_read_byte(iomem, ctrl_reg, status_reg, true, &mut elapsed) {
-            Ok(b) => data[i] = b,
+            Ok(b) => *byte = b,
             Err(e) => {
                 let _ = i2c_stop(iomem, ctrl_reg, &mut elapsed);
                 return Err(e);

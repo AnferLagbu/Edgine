@@ -16,6 +16,7 @@ use crate::privileged::proc::canary;
 /// ## 返回
 ///
 /// 写入字节数; 失败 (用户指针非法 / 长度 0) 返回 -1.
+#[must_use]
 pub fn getrandom(buf: u64, len: usize, flags: u32) -> i64 {
     let _ = flags; // 兼容位
     let written = canary::get_random_bytes(buf, len);
@@ -36,6 +37,7 @@ pub fn getrandom(buf: u64, len: usize, flags: u32) -> i64 {
 /// ## 返回
 ///
 /// 0 (成功) / -1 (失败: 长度不足 / 指针非法)
+#[must_use]
 pub fn get_canary(buf: u64, len: usize) -> i64 {
     canary::write_canary_to_user(buf, len)
 }
@@ -46,6 +48,7 @@ pub fn get_canary(buf: u64, len: usize) -> i64 {
 /// ```c
 /// uint64_t c = functions_get_canary_u64();
 /// ```
+#[must_use]
 pub fn get_canary_u64() -> u64 {
     canary::process_get_current_canary()
 }

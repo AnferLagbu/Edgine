@@ -307,6 +307,7 @@ pub struct CondVar {
 
 impl CondVar {
     /// 构造等待者计数为 0 的条件变量
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             waiters: core::sync::atomic::AtomicU32::new(0),

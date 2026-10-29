@@ -9,13 +9,13 @@
 //! T1-1 (2026-06-16) 迁至 `functions::proc::sched_policy`, 本文件仅
 //! re-export。按统一判据反转：CfsRunQueue/DlRunQueue 是 privileged scheduler
 //! 的运行队列机制状态, 权重/vruntime/抢占判定全部操作队列内部字段, 无法
-//! 脱离机制状态独立存在 (同 DECISION-M sys_pm_dispatch 判据: 算法本质是
+//! 脱离机制状态独立存在 (同 DECISION-M `sys_pm_dispatch` 判据: 算法本质是
 //! 机制状态操作) — 迁回。依赖闭包仅 privileged。
 //!
 //! functions 侧改 `pub use crate::privileged::proc::cfs::*`
 //! 保持 API 兼容 (functions→privileged 合法方向)。
 
-use alloc::collections::BTreeMap;
+use alloc::collections::BTreeSet;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::privileged::proc::Pid;
@@ -48,6 +48,7 @@ pub const NICE_TO_WEIGHT: [u64; 40] = [
 
 /// 将 nice 值 (-20..=19) 映射为其 CFS 调度权重; 越界值收敛到端点。
 #[inline]
+#[must_use]
 pub fn nice_to_weight(nice: i8) -> u64 {
     let clamped = nice.clamp(-20, 19);
     let idx = crate::privileged::glue::usize_from_i8(clamped + 20);
@@ -56,6 +57,7 @@ pub fn nice_to_weight(nice: i8) -> u64 {
 
 /// 将 CFS 权重反查为最接近的 nice 值 (-20..=19)。
 #[inline]
+#[must_use]
 pub fn weight_to_nice(weight: u64) -> i8 {
     if weight >= NICE_TO_WEIGHT[0] {
         return -20;
@@ -92,8 +94,15 @@ pub struct DeadlineParams {
     pub period: u64,
 }
 
+impl Default for DeadlineParams {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DeadlineParams {
     /// 构造全零参数 (初始为无效状态)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             runtime: 0,
@@ -103,6 +112,7 @@ impl DeadlineParams {
     }
 
     /// 校验参数是否满足 EDF + CBS 约束
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         self.runtime >= DL_MIN_RUNTIME_TICKS
             && self.deadline >= self.runtime
@@ -111,6 +121,7 @@ impl DeadlineParams {
     }
 
     /// 计算利用率百分比 (`runtime / period * 100`)
+    #[must_use]
     pub fn utilization_pct(&self) -> u64 {
         if self.period == 0 {
             return 0;
@@ -149,7 +160,7 @@ impl DeadlineParams {
 /// 承载 (语义同 Linux 的 `on_rq`: 处于可运行记账中, 上核运行期间仍为 true)。
 pub struct CfsRunQueue {
     /// 可运行任务树, 键 = (vruntime, pid) (IC2 唯一真相)
-    pub tree: BTreeMap<(u64, Pid), ()>,
+    pub tree: BTreeSet<(u64, Pid)>,
     /// 本核 vruntime 下界 (IC3: 单调不减)。字段刻意私有 —— 只允许经
     /// [`Self::floor`] 读、[`Self::advance_floor`] 写, 防止调用点重新引入
     /// "重设"语义。
@@ -158,11 +169,18 @@ pub struct CfsRunQueue {
     pub total_weight: AtomicU64,
 }
 
+impl Default for CfsRunQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CfsRunQueue {
     /// 构造空的 CFS 运行队列
+    #[must_use]
     pub fn new() -> Self {
         Self {
-            tree: BTreeMap::new(),
+            tree: BTreeSet::new(),
             min_vruntime: AtomicU64::new(0),
             total_weight: AtomicU64::new(0),
         }
@@ -186,7 +204,7 @@ impl CfsRunQueue {
     /// 比较对象 (IC1: 与运行任务的 vr 同域, 差值有意义)。
     #[inline]
     pub fn leftmost_vruntime(&self) -> Option<u64> {
-        self.tree.first_key_value().map(|(&(vr, _), ())| vr)
+        self.tree.first().map(|&(vr, _)| vr)
     }
 
     /// 树上的可运行任务数 (不含正在本核运行的任务; IC2 唯一真相)。
@@ -219,7 +237,7 @@ impl CfsRunQueue {
     pub fn enqueue(&mut self, pid: Pid, vruntime: u64, weight: u64, accounted: bool) -> u64 {
         self.remove_pid(pid);
         let placed = self.placement(vruntime);
-        self.tree.insert((placed, pid), ());
+        self.tree.insert((placed, pid));
         if !accounted {
             self.total_weight.fetch_add(weight, Ordering::Release);
         }
@@ -232,7 +250,7 @@ impl CfsRunQueue {
     /// 仅发生在入队去重/阻塞/迁移路径 (非 tick 热路), 优于另存一份 pid→键索引
     /// (那本身就是又一处会背离的记账)。
     fn remove_pid(&mut self, pid: Pid) -> Option<u64> {
-        let key = self.tree.keys().find(|&&(_, p)| p == pid).copied();
+        let key = self.tree.iter().find(|&&(_, p)| p == pid).copied();
         match key {
             Some((vr, _)) => {
                 self.tree.remove(&(vr, pid));
@@ -269,7 +287,7 @@ impl CfsRunQueue {
     /// 拣出最小 vruntime 者。不动记账也不动 floor: 被拣者随即上核运行,
     /// 仍在可运行集中 (语义同 Linux `deactivate_task` 之外的"当前运行任务")。
     pub fn pick_next(&mut self) -> Option<(Pid, u64)> {
-        let (&(vruntime, pid), ()) = self.tree.first_key_value()?;
+        let &(vruntime, pid) = self.tree.first()?;
         self.tree.remove(&(vruntime, pid));
         Some((pid, vruntime))
     }
@@ -281,7 +299,7 @@ impl CfsRunQueue {
     /// 它"。调用方必须已持有本队列的锁 (候选在锁内才保持有效)。
     pub fn leftmost_pids(&self, out: &mut [Pid]) -> usize {
         let mut n = 0usize;
-        for key in self.tree.keys() {
+        for key in &self.tree {
             if n >= out.len() {
                 break;
             }
@@ -315,7 +333,7 @@ impl CfsRunQueue {
 
     /// 摘出树上 vruntime 最大者 (跨核偷取候选), 返回 (pid, vruntime)
     pub fn steal_highest_vruntime(&mut self) -> Option<(Pid, u64)> {
-        let (&(vruntime, pid), ()) = self.tree.last_key_value()?;
+        let &(vruntime, pid) = self.tree.last()?;
         self.tree.remove(&(vruntime, pid));
         Some((pid, vruntime))
     }
@@ -330,16 +348,23 @@ impl CfsRunQueue {
 /// 可运行性判据与 CFS 同款取结构真相 (IC2: 树即真相, 不并行维护计数器)。
 pub struct DlRunQueue {
     /// 截止期任务树, 键 = (绝对截止期, pid)
-    pub tree: BTreeMap<(u64, Pid), ()>,
+    pub tree: BTreeSet<(u64, Pid)>,
     /// 总利用率 (百分比之和)
     pub total_utilization: u64,
 }
 
+impl Default for DlRunQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DlRunQueue {
     /// 构造空的 Deadline 运行队列
+    #[must_use]
     pub fn new() -> Self {
         Self {
-            tree: BTreeMap::new(),
+            tree: BTreeSet::new(),
             total_utilization: 0,
         }
     }
@@ -349,36 +374,38 @@ impl DlRunQueue {
         if self.total_utilization.saturating_add(util_pct) > DL_MAX_UTILIZATION_PCT {
             return false;
         }
-        self.tree.insert((deadline_abs, pid), ());
+        self.tree.insert((deadline_abs, pid));
         self.total_utilization += util_pct;
         true
     }
 
     /// 出队: 仅在树中命中时扣减利用率
     pub fn dequeue(&mut self, pid: Pid, deadline_abs: u64, util_pct: u64) {
-        if self.tree.remove(&(deadline_abs, pid)).is_some() {
+        if self.tree.remove(&(deadline_abs, pid)) {
             self.total_utilization = self.total_utilization.saturating_sub(util_pct);
         }
     }
 
     /// 拣出最早截止期任务, 返回 (pid, 绝对截止期)
     pub fn pick_next(&mut self) -> Option<(Pid, u64)> {
-        let (&(dl_abs, pid), ()) = self.tree.first_key_value()?;
+        let &(dl_abs, pid) = self.tree.first()?;
         self.tree.remove(&(dl_abs, pid));
         Some((pid, dl_abs))
     }
 
     /// 重新插入任务到新的绝对截止期 (周期续期)
     pub fn reinsert(&mut self, pid: Pid, dl_abs: u64) {
-        self.tree.insert((dl_abs, pid), ());
+        self.tree.insert((dl_abs, pid));
     }
 
     /// 树上是否无截止期任务
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.tree.is_empty()
     }
 
     /// 树上的截止期任务数 (结构真相; IC2)。
+    #[must_use]
     pub fn len(&self) -> usize {
         self.tree.len()
     }
@@ -390,6 +417,7 @@ impl DlRunQueue {
 
 /// 计算单 tick 的 vruntime 增量 (权重越大增量越小; 权重为 0 时退化为 nice0 权重)。
 #[inline]
+#[must_use]
 pub fn calc_vruntime_delta(weight: u64) -> u64 {
     // 权重 0 是非法态 (合法权重恒 ≥ `nice_to_weight(19)`=15). 此处按 `NICE0_WEIGHT`
     // "退化权重" 处理, 故增量取 1。**不可**直接返回 `NICE0_WEIGHT` 作为增量: 那会
@@ -407,12 +435,10 @@ pub fn calc_vruntime_delta(weight: u64) -> u64 {
 /// 缩小的最小粒度即让出。若调用方传入跨域的值, `saturating_sub` 会把负差压成
 /// 0 ⇒ 永假 ⇒ 该核永不请求重调度 (S-1 进程饥饿的直接机理)。
 #[inline]
+#[must_use]
 pub fn cfs_should_preempt(curr_vruntime: u64, next_vruntime: u64, weight: u64) -> bool {
-    let threshold = if weight == 0 {
-        MIN_GRANULARITY_TICKS.saturating_mul(NICE0_WEIGHT)
-    } else {
-        MIN_GRANULARITY_TICKS.saturating_mul(NICE0_WEIGHT) / weight
-    };
+    let base = MIN_GRANULARITY_TICKS.saturating_mul(NICE0_WEIGHT);
+    let threshold = base.checked_div(weight).unwrap_or(base);
     curr_vruntime.saturating_sub(next_vruntime) > threshold
 }
 

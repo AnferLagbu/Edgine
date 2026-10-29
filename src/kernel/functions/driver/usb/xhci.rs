@@ -106,6 +106,7 @@ pub struct Trb {
 
 impl Trb {
     /// 创建新 TRB
+    #[must_use]
     pub fn new(parameter: u64, status: u32, control: u32) -> Self {
         Self {
             parameter,
@@ -115,6 +116,7 @@ impl Trb {
     }
 
     /// 提取 TRB 类型 (control`[15:10]`)
+    #[must_use]
     pub fn trb_type(self) -> TrbType {
         let ty = (self.control >> 10) & 0x3F;
         match ty {
@@ -143,6 +145,7 @@ impl Trb {
     }
 
     /// 获取 cycle bit (control`[0]`)
+    #[must_use]
     pub fn cycle_bit(self) -> bool {
         self.control & 1 != 0
     }
@@ -281,21 +284,22 @@ pub const SPEED_SUPER_PLUS: u8 = 5;
 /// 结构参数 1 解析
 #[derive(Debug, Clone, Copy)]
 pub struct StructuralParams1 {
-    /// 最大设备槽位数 (HCSPARAMS1`[3:0]` - 1)
-    pub max_device_slots: u8,
-    /// 最大中断器数 (HCSPARAMS1`[18:8]` - 1)
-    pub max_interrupters: u16,
-    /// 最大端口数 (HCSPARAMS1`[31:24]` - 1)
-    pub max_ports: u8,
+    /// 设备槽位数 (HCSPARAMS1`[3:0]` - 1)
+    pub device_slots: u8,
+    /// 中断器数 (HCSPARAMS1`[18:8]` - 1)
+    pub interrupters: u16,
+    /// 端口数 (HCSPARAMS1`[31:24]` - 1)
+    pub ports: u8,
 }
 
 impl StructuralParams1 {
     /// 从 HCSPARAMS1 寄存器解析
+    #[must_use]
     pub fn from_register(val: u32) -> Self {
         Self {
-            max_device_slots: (val & 0xFF) as u8,
-            max_interrupters: ((val >> 8) & 0x7FF) as u16,
-            max_ports: ((val >> 24) & 0xFF) as u8,
+            device_slots: (val & 0xFF) as u8,
+            interrupters: ((val >> 8) & 0x7FF) as u16,
+            ports: ((val >> 24) & 0xFF) as u8,
         }
     }
 }
@@ -303,28 +307,56 @@ impl StructuralParams1 {
 /// 端口状态
 #[derive(Debug, Clone, Copy)]
 pub struct PortStatus {
-    /// 设备已连接
-    pub connected: bool,
-    /// 端口已使能
-    pub enabled: bool,
-    /// 端口正在复位
-    pub reset: bool,
-    /// 端口已供电
-    pub powered: bool,
+    /// 状态位 (bit0 已连接, bit1 已使能, bit2 正在复位, bit3 已供电)
+    bits: u8,
     /// 速度 (PORTSC`[10:13]` 解码)
     pub speed: u8,
 }
 
 impl PortStatus {
+    /// 设备已连接标志位.
+    const CONNECTED: u8 = 1 << 0;
+    /// 端口已使能标志位.
+    const ENABLED: u8 = 1 << 1;
+    /// 端口正在复位标志位.
+    const RESET: u8 = 1 << 2;
+    /// 端口已供电标志位.
+    const POWERED: u8 = 1 << 3;
+
     /// 从 PORTSC 寄存器解析
+    #[must_use]
     pub fn from_register(val: u32) -> Self {
         Self {
-            connected: val & PORTSC_CCS != 0,
-            enabled: val & PORTSC_PED != 0,
-            reset: val & PORTSC_PR != 0,
-            powered: val & PORTSC_PP != 0,
+            bits: u8::from(val & PORTSC_CCS != 0)
+                | (u8::from(val & PORTSC_PED != 0) << 1)
+                | (u8::from(val & PORTSC_PR != 0) << 2)
+                | (u8::from(val & PORTSC_PP != 0) << 3),
             speed: ((val & PORTSC_SPEED_MASK) >> PORTSC_SPEED_SHIFT) as u8,
         }
+    }
+
+    /// 设备已连接
+    #[must_use]
+    pub const fn connected(self) -> bool {
+        self.bits & Self::CONNECTED != 0
+    }
+
+    /// 端口已使能
+    #[must_use]
+    pub const fn enabled(self) -> bool {
+        self.bits & Self::ENABLED != 0
+    }
+
+    /// 端口正在复位
+    #[must_use]
+    pub const fn reset(self) -> bool {
+        self.bits & Self::RESET != 0
+    }
+
+    /// 端口已供电
+    #[must_use]
+    pub const fn powered(self) -> bool {
+        self.bits & Self::POWERED != 0
     }
 }
 
@@ -365,6 +397,7 @@ impl XhciController {
     /// # 返回
     /// - `Some(XhciController)`: 初始化成功
     /// - `None`: 区域已被占用 (别名检测)
+    #[must_use]
     pub fn new(mmio_phys: u64, len: usize) -> Option<Self> {
         let mmio = IoMem::from_pci_bar(PhysAddr::new(mmio_phys), len, "xhci-bar0").ok()?;
 
@@ -382,8 +415,8 @@ impl XhciController {
             cap_length,
             db_off,
             rts_off,
-            num_ports: params.max_ports,
-            num_slots: params.max_device_slots,
+            num_ports: params.ports,
+            num_slots: params.device_slots,
             initialized: false,
             address_bitmap: [0u8; 32],
             next_address_hint: 1,
@@ -398,6 +431,7 @@ impl XhciController {
 
     /// 通用 32 位读
     #[inline]
+    #[must_use]
     pub fn read32(&self, offset: usize) -> u32 {
         self.mmio.read_u32(offset)
     }
@@ -411,41 +445,49 @@ impl XhciController {
     // ── Capability 寄存器 ──
 
     /// 读 CAPLENGTH
+    #[must_use]
     pub fn cap_length(&self) -> u8 {
         self.cap_length
     }
 
     /// 读 HCI 版本
+    #[must_use]
     pub fn hci_version(&self) -> u16 {
         self.mmio.read_u16(CAP_HCIVERSION)
     }
 
     /// 读 HCSPARAMS1
+    #[must_use]
     pub fn hcs_params1(&self) -> StructuralParams1 {
         StructuralParams1::from_register(self.mmio.read_u32(CAP_HCSPARAMS1))
     }
 
     /// 读 HCSPARAMS2
+    #[must_use]
     pub fn hcs_params2(&self) -> u32 {
         self.mmio.read_u32(CAP_HCSPARAMS2)
     }
 
     /// 读 HCSPARAMS3
+    #[must_use]
     pub fn hcs_params3(&self) -> u32 {
         self.mmio.read_u32(CAP_HCSPARAMS3)
     }
 
     /// 读 HCCPARAMS1
+    #[must_use]
     pub fn hcc_params1(&self) -> u32 {
         self.mmio.read_u32(CAP_HCCPARAMS1)
     }
 
     /// 读 DBOFF
+    #[must_use]
     pub fn db_off(&self) -> u32 {
         self.db_off
     }
 
     /// 读 RTSOFF
+    #[must_use]
     pub fn rts_off(&self) -> u32 {
         self.rts_off
     }
@@ -453,6 +495,7 @@ impl XhciController {
     // ── Operational 寄存器 ──
 
     /// 读 USBCMD
+    #[must_use]
     pub fn usb_cmd(&self) -> u32 {
         self.mmio.read_u32(self.op_base() + OP_USBCMD)
     }
@@ -463,6 +506,7 @@ impl XhciController {
     }
 
     /// 读 USBSTS
+    #[must_use]
     pub fn usb_sts(&self) -> u32 {
         self.mmio.read_u32(self.op_base() + OP_USBSTS)
     }
@@ -473,11 +517,13 @@ impl XhciController {
     }
 
     /// 读 PAGESIZE
+    #[must_use]
     pub fn page_size(&self) -> u32 {
         self.mmio.read_u32(self.op_base() + OP_PAGESIZE)
     }
 
     /// 读 CRCR
+    #[must_use]
     pub fn crcr(&self) -> u64 {
         self.mmio.read_u64(self.op_base() + OP_CRCR)
     }
@@ -488,6 +534,7 @@ impl XhciController {
     }
 
     /// 读 DCBAAP
+    #[must_use]
     pub fn dcbaap(&self) -> u64 {
         self.mmio.read_u64(self.op_base() + OP_DCBAAP)
     }
@@ -498,6 +545,7 @@ impl XhciController {
     }
 
     /// 读 CONFIG
+    #[must_use]
     pub fn config(&self) -> u32 {
         self.mmio.read_u32(self.op_base() + OP_CONFIG)
     }
@@ -554,11 +602,13 @@ impl XhciController {
     }
 
     /// 控制器是否已停止
+    #[must_use]
     pub fn is_halted(&self) -> bool {
         self.usb_sts() & USBSTS_HC_HALTED != 0
     }
 
     /// 是否有端口状态变化 (USBSTS.PCD)
+    #[must_use]
     pub fn has_port_change(&self) -> bool {
         self.usb_sts() & USBSTS_PORT_CHANGE_DETECT != 0
     }
@@ -571,6 +621,7 @@ impl XhciController {
     }
 
     /// 读端口 n 的 PORTSC
+    #[must_use]
     pub fn portsc(&self, port: u8) -> u32 {
         self.mmio.read_u32(self.portsc_offset(port))
     }
@@ -581,16 +632,19 @@ impl XhciController {
     }
 
     /// 读端口状态
+    #[must_use]
     pub fn port_status(&self, port: u8) -> PortStatus {
         PortStatus::from_register(self.portsc(port))
     }
 
     /// 端口是否有设备连接
+    #[must_use]
     pub fn port_connected(&self, port: u8) -> bool {
         self.portsc(port) & PORTSC_CCS != 0
     }
 
     /// 端口是否已使能
+    #[must_use]
     pub fn port_enabled(&self, port: u8) -> bool {
         self.portsc(port) & PORTSC_PED != 0
     }
@@ -649,16 +703,19 @@ impl XhciController {
     }
 
     /// 控制器是否已完成初始化
+    #[must_use]
     pub fn is_initialized(&self) -> bool {
         self.initialized
     }
 
     /// 获取端口数量
+    #[must_use]
     pub fn num_ports(&self) -> u8 {
         self.num_ports
     }
 
     /// 获取设备插槽数量
+    #[must_use]
     pub fn num_slots(&self) -> u8 {
         self.num_slots
     }
@@ -784,6 +841,7 @@ impl TransferRing {
     /// # 返回
     /// - `Some(TransferRing)`: 分配成功
     /// - `None`: DMA 分配失败
+    #[must_use]
     pub fn new(max_trbs: u32) -> Option<Self> {
         let buf_size = (max_trbs as usize) * core::mem::size_of::<Trb>();
         let dma = crate::privileged::driver::storage::nvme_alloc_dma_buffer(buf_size)?;
@@ -806,16 +864,19 @@ impl TransferRing {
     }
 
     /// 获取物理地址 (用于设置 Endpoint Context dequeue pointer).
+    #[must_use]
     pub fn physical_address(&self) -> u64 {
         self.dma.dma_addr().as_u64()
     }
 
     /// 获取当前 enqueue 偏移 (字节), 用于更新 Endpoint Context.
+    #[must_use]
     pub fn enqueue_offset(&self) -> u64 {
         u64::from(self.enqueue_index) * 16 // 每个 TRB 16 字节
     }
 
     /// 获取当前 cycle bit.
+    #[must_use]
     pub fn cycle(&self) -> bool {
         self.cycle
     }
@@ -840,7 +901,11 @@ impl TransferRing {
         // 创建 raw pointer 是 safe 操作; 实际解引用由 privileged 内部 unsafe 完成
         let vaddr = self.dma.cpu_addr().as_ptr() as u64;
         let trb_ptr: *const u8 = (&raw const trb).cast::<u8>();
-        crate::privileged::driver::storage::xhci_write_trb(vaddr, self.enqueue_index, trb_ptr);
+        crate::privileged::driver::storage::xhci_write_trb(
+            vaddr,
+            self.enqueue_index,
+            trb_ptr as u64,
+        );
 
         self.enqueue_index += 1;
 
@@ -851,7 +916,11 @@ impl TransferRing {
                 | u32::from(self.cycle);
             let link_trb = Trb::new(self.dma.dma_addr().as_u64(), 0, link_control);
             let link_ptr: *const u8 = (&raw const link_trb).cast::<u8>();
-            crate::privileged::driver::storage::xhci_write_trb(vaddr, self.enqueue_index, link_ptr);
+            crate::privileged::driver::storage::xhci_write_trb(
+                vaddr,
+                self.enqueue_index,
+                link_ptr as u64,
+            );
             self.enqueue_index = 0;
             self.cycle = !self.cycle;
         }
@@ -1026,6 +1095,7 @@ impl EndpointTransfer {
     /// - `transfer_type`: 传输类型
     /// - `direction`: 传输方向
     /// - `ring_size`: Transfer Ring TRB 数量
+    #[must_use]
     pub fn new(
         endpoint_id: u8,
         transfer_type: UsbTransferType,
@@ -1202,9 +1272,9 @@ mod tests {
     fn test_port_status_decode() {
         let val = PORTSC_CCS | PORTSC_PED | (u32::from(SPEED_HIGH) << PORTSC_SPEED_SHIFT);
         let status = PortStatus::from_register(val);
-        assert!(status.connected);
-        assert!(status.enabled);
-        assert!(!status.reset);
+        assert!(status.connected());
+        assert!(status.enabled());
+        assert!(!status.reset());
         assert_eq!(status.speed, SPEED_HIGH);
     }
 
@@ -1212,8 +1282,8 @@ mod tests {
     fn test_structural_params1_decode() {
         let val = 0x0F | (0x7FF << 8) | (0x10 << 24);
         let params = StructuralParams1::from_register(val);
-        assert_eq!(params.max_device_slots, 0x0F);
-        assert_eq!(params.max_interrupters, 0x7FF);
-        assert_eq!(params.max_ports, 0x10);
+        assert_eq!(params.device_slots, 0x0F);
+        assert_eq!(params.interrupters, 0x7FF);
+        assert_eq!(params.ports, 0x10);
     }
 }

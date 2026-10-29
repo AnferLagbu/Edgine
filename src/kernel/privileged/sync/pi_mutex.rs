@@ -74,7 +74,7 @@ struct HeldLock {
 
 /// 持有登记表: pid → 该进程当前/曾经持有的 PI Mutex 列表。
 /// - lock 成功时登记; 进程退出时按 pid 取出并逐个强制解锁, 然后整体移除。
-/// - 锁序: 走 IrqSpinLock (屏蔽中断), 不嵌套其他锁。
+/// - 锁序: 走 `IrqSpinLock` (屏蔽中断), 不嵌套其他锁。
 static PI_MUTEX_HELD: IrqSpinLock<BTreeMap<u32, alloc::vec::Vec<HeldLock>>> =
     IrqSpinLock::new(BTreeMap::new());
 
@@ -85,7 +85,7 @@ static PI_MUTEX_HELD: IrqSpinLock<BTreeMap<u32, alloc::vec::Vec<HeldLock>>> =
 /// 重建引用只触碰前缀字段, 不读取 `data`, 对任意 `T` 布局兼容。
 ///
 /// # Safety
-/// `ptr` 必须是登记时写入的 PiMutex<T> 地址。生命周期由持有登记表保证:
+/// `ptr` 必须是登记时写入的 `PiMutex`<T> 地址。生命周期由持有登记表保证:
 /// 仅持锁期间登记 (对象存活); 进程退出时对象仍存活 (持锁进程).
 unsafe fn pi_mutex_exit_dispatch(ptr: usize, pid: u32) -> bool {
     // SAFETY: 见函数级说明; `force_unlock_for_exit` 不触碰 `data` 字段.
@@ -309,7 +309,7 @@ impl<T> PiMutex<T> {
         }
     }
 
-    /// 创建命名 PiMutex (release 模式: 忽略名称)
+    /// 创建命名 `PiMutex` (release 模式: 忽略名称)
     #[cfg(not(debug_assertions))]
     pub fn named(_name: &'static str, data: T) -> Self {
         Self::new(data)
@@ -348,8 +348,7 @@ impl<T: ?Sized> PiMutex<T> {
     /// `usize`, 与 [`track_hold`] 的登记键同源.
     #[cfg(debug_assertions)]
     fn lockdep_instance(&self) -> usize {
-        let ptr = core::ptr::from_ref::<Self>(self).cast::<u8>() as usize;
-        ptr
+        core::ptr::from_ref::<Self>(self).cast::<u8>() as usize
     }
 
     /// 获取锁 (阻塞 + 优先级继承)
@@ -584,7 +583,7 @@ impl<T: ?Sized> PiMutex<T> {
     /// 由类型擦除分派 `pi_mutex_exit_dispatch` 在进程退出时调用。
     ///
     /// # 幂等保证
-    /// 同 pid 多次调用不会重复释放 (因为第一次释放后 holder 变 PID_NONE)。
+    /// 同 pid 多次调用不会重复释放 (因为第一次释放后 holder 变 `PID_NONE`)。
     /// 不同 pid 调用是 no-op。
     pub fn force_unlock_for_exit(&self, pid: u32) -> bool {
         if self.inner.holder.load(Ordering::Acquire) != pid {

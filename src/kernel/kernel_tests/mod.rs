@@ -18,8 +18,8 @@ pub mod test_uds;
 /// FS 全局单例初始化 — 测试模式下注册前必须调用.
 ///
 /// 历史 bug (2026-06-25): 缺少 init 会让 `DevFS::mount` 测试触发
-/// "devfs::global() called before init_global()" panic 并卡死.
-/// `init_global` 是幂等的 (OnceCell::get_or_init), 多次调用安全.
+/// "`devfs::global()` called before `init_global()`" panic 并卡死.
+/// `init_global` 是幂等的 (`OnceCell::get_or_init`), 多次调用安全.
 pub fn prepare_test_env() {
     crate::functions::fs::devfs::init_global();
     crate::functions::fs::procfs::init_global();
@@ -42,7 +42,7 @@ pub fn register_tests() {
     register_upper_tests();
 }
 
-/// kernel_test 启动路径的测试入口 (原 `privileged::tests::test_runner_init`).
+/// `kernel_test` 启动路径的测试入口 (原 `privileged::tests::test_runner_init`).
 ///
 /// 页表诊断读取与 `run_all()` 编排依赖 glue 侧可见的 `privileged` 与 `functions`,
 /// 故随跨层注册一并从 TCB 上移.
@@ -88,8 +88,9 @@ pub fn test_runner_init() {
 
 /// host-test 侧测试入口 (原 `privileged::tests::host_test_runner_main`).
 ///
-/// 与 kernel_test 路径共用同一注册编排, 返回汇总供 host-tests 断言 "0 failed".
+/// 与 `kernel_test` 路径共用同一注册编排, 返回汇总供 host-tests 断言 "0 failed".
 #[cfg(feature = "host-test")]
+#[must_use]
 pub fn host_test_runner_main() -> crate::privileged::tests::TestSummary {
     register_tests();
     let r = crate::privileged::tests::runner();

@@ -70,6 +70,7 @@ impl CapDomain {
     pub const RESERVED: Self = Self(15);
 
     /// 域 ID 是否在有效范围 (`< CAP_DOMAINS`) 内
+    #[must_use]
     pub fn is_valid(self) -> bool {
         (self.0 as usize) < CAP_DOMAINS
     }
@@ -87,11 +88,13 @@ impl CapBits {
     pub const ALL: Self = Self(u64::MAX);
 
     /// 是否包含 `other` 的全部置位
+    #[must_use]
     pub fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
     }
 
     /// 是否为空能力位
+    #[must_use]
     pub fn is_empty(self) -> bool {
         self.0 == 0
     }
@@ -174,6 +177,13 @@ pub enum RevokeResult {
     FloorProtected,
 }
 
+/// 能力位设置失败原因
+///
+/// [`CapabilityMatrix::set`] 的唯一失败条件: 域 ID 非法 (超出 [`CAP_DOMAINS`]),
+/// 或矩阵只读 (如 `sessions::InMemoryCaps` 视图).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CapSetError;
+
 /// 能力矩阵抽象 (functions 调用 privileged TCB)
 ///
 /// `privileged::sgeg::AtomicMatrix` 实现此 trait,
@@ -184,8 +194,8 @@ pub trait CapabilityMatrix {
     /// 原子设置某域能力
     ///
     /// # Errors
-    /// 当设置失败 (如原子操作冲突) 时返回 `Err(())`.
-    fn set(&self, domain: CapDomain, bits: CapBits) -> Result<CapBits, ()>;
+    /// 当域 ID 非法或矩阵只读时返回 `Err(CapSetError)`.
+    fn set(&self, domain: CapDomain, bits: CapBits) -> Result<CapBits, CapSetError>;
     /// 比较并交换 (用于 lock-free grant)
     ///
     /// # Errors
@@ -211,22 +221,26 @@ pub struct CapMatrix {
 
 impl CapMatrix {
     /// 空能力位图 (所有域均为 NONE)
+    #[must_use]
     pub const fn empty() -> Self {
         Self {
             bits: [0u64; CAP_DOMAINS],
         }
     }
     /// 全能力位图
+    #[must_use]
     pub const fn all() -> Self {
         Self {
             bits: [u64::MAX; CAP_DOMAINS],
         }
     }
     /// 从域位图构造
+    #[must_use]
     pub const fn from_bits(bits: [u64; CAP_DOMAINS]) -> Self {
         Self { bits }
     }
     /// 取某域位图
+    #[must_use]
     pub fn get(&self, domain: CapDomain) -> CapBits {
         CapBits(self.bits[domain.0 as usize])
     }
@@ -234,6 +248,7 @@ impl CapMatrix {
 
 impl InMemoryMatrix {
     /// 构造全零 (所有域均为空) 的内存能力矩阵
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             rows: [
@@ -258,6 +273,13 @@ impl InMemoryMatrix {
     }
 }
 
+impl Default for InMemoryMatrix {
+    /// 等价于 [`InMemoryMatrix::new`] (全零能力矩阵)
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CapabilityMatrix for InMemoryMatrix {
     fn get(&self, domain: CapDomain) -> Option<CapBits> {
         if !domain.is_valid() {
@@ -268,9 +290,9 @@ impl CapabilityMatrix for InMemoryMatrix {
         ))
     }
 
-    fn set(&self, domain: CapDomain, bits: CapBits) -> Result<CapBits, ()> {
+    fn set(&self, domain: CapDomain, bits: CapBits) -> Result<CapBits, CapSetError> {
         if !domain.is_valid() {
-            return Err(());
+            return Err(CapSetError);
         }
         let old = self.rows[domain.0 as usize].swap(bits.0, Ordering::AcqRel);
         Ok(CapBits(old))
@@ -314,6 +336,7 @@ pub struct PolicyEngine {
 
 impl PolicyEngine {
     /// 构造无状态策略引擎
+    #[must_use]
     pub const fn new() -> Self {
         Self {}
     }
@@ -367,9 +390,9 @@ impl PolicyEngine {
         loop {
             let to_current = to.get(domain).unwrap_or(CapBits::NONE);
             let to_new = to_current | bits;
-            match to.compare_exchange(domain, to_current, to_new) {
-                Ok(_) => return GrantResult::Granted,
-                Err(_) => {} // 重试
+            // CAS 失败 (Err) 时继续重试
+            if to.compare_exchange(domain, to_current, to_new).is_ok() {
+                return GrantResult::Granted;
             }
         }
     }
@@ -394,9 +417,8 @@ impl PolicyEngine {
         loop {
             let current = matrix.get(domain).unwrap_or(CapBits::NONE);
             let new = current.diff(revocable);
-            match matrix.compare_exchange(domain, current, new) {
-                Ok(_) => return RevokeResult::Revoked,
-                Err(_) => {}
+            if matrix.compare_exchange(domain, current, new).is_ok() {
+                return RevokeResult::Revoked;
             }
         }
     }

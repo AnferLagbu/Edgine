@@ -28,16 +28,16 @@ use crate::privileged::syscall::raw;
 /// 其余错误 (如源不存在、无权限等) 以对应的 `Errno` 返回.
 pub fn rename_syscall(oldpath_ptr: u64, newpath_ptr: u64) -> Result<usize, Errno> {
     if oldpath_ptr == 0 || newpath_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_ptr(oldpath_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_ptr(newpath_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if oldpath_ptr == newpath_ptr {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     let pwm = current_pwm();
     let r = fw::vfs_rename(oldpath_ptr as *const u8, newpath_ptr as *const u8, pwm);
@@ -71,7 +71,7 @@ pub fn sync_syscall() -> Result<usize, Errno> {
 /// 当 `fd` 为负数时返回 `EBADF`; 当底层同步失败时以对应的 `Errno` 返回.
 pub fn fsync_syscall(fd: i32) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     // Framekernel 简化: vfs_sync() 同步所有 FS, fsync 等同 sync.
     let r = fw::vfs_sync();
@@ -96,10 +96,10 @@ pub fn time_syscall(tloc_ptr: u64) -> Result<usize, Errno> {
     let ticks = raw::get_ticks();
     if tloc_ptr != 0 {
         if !raw::check_user_buf(tloc_ptr, 8) {
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
         if !raw::write_u64_to_user(tloc_ptr, ticks) {
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
     }
     Ok(crate::functions::intcast::usize_from_u64(ticks))
@@ -116,13 +116,13 @@ pub fn time_syscall(tloc_ptr: u64) -> Result<usize, Errno> {
 /// 返回 `EPERM`; 其余错误 (如无权限等) 以对应的 `Errno` 返回.
 pub fn fchown_syscall(fd: i32, owner: u64, group: u64) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     let pwm = current_pwm();
     // B06-PRE-002: 前置 FS 域 CHOWN 能力校验 — 属主/属组变更是身份安全关键操作,
     // 由专用能力位门控 (与 access/open 路径的 pwm_has_capability 语义一致).
     if !sgeg::api::pwm_has_capability(pwm, sgeg::CAP_DOMAIN_FS, FS_CAP_CHOWN) {
-        return Err(Errno::EPERM);
+        return Err(Errno::Eperm);
     }
     let r = fw::vfs_fchown(fd.cast_unsigned(), owner, group, pwm);
     if r < 0 {
@@ -208,14 +208,14 @@ impl Itimerval {
 /// 当 `buf_ptr` 非空但越界、底层读取失败或写入用户空间失败时返回 `EFAULT`.
 pub fn times_syscall(buf_ptr: u64) -> Result<usize, Errno> {
     if buf_ptr != 0 && !raw::check_user_buf(buf_ptr, 16) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let pid = current_pid();
     let mut utime: u64 = 0;
     let mut stime: u64 = 0;
-    let r = proc_fw::proc_get_times(pid, &raw mut utime, &raw mut stime);
+    let r = proc_fw::proc_get_times(pid, &mut utime, &mut stime);
     if r < 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let tms = Tms {
         utime,
@@ -223,10 +223,8 @@ pub fn times_syscall(buf_ptr: u64) -> Result<usize, Errno> {
         cutime: 0,
         cstime: 0,
     };
-    if buf_ptr != 0 {
-        if !raw::write_struct_to_user(buf_ptr, &tms) {
-            return Err(Errno::EFAULT);
-        }
+    if buf_ptr != 0 && !raw::write_struct_to_user(buf_ptr, &tms) {
+        return Err(Errno::Efault);
     }
     // 实时钟返回值: 不允许依赖真实 wall time, 返 clock_ticks 作为单调值
     Ok(crate::functions::intcast::usize_from_u64(raw::get_ticks()))
@@ -244,13 +242,13 @@ pub fn times_syscall(buf_ptr: u64) -> Result<usize, Errno> {
 /// 当 `which` 为 `ITIMER_VIRTUAL`/`ITIMER_PROF` 时返回 `ENOSYS`.
 pub fn getitimer_syscall(which: i32, value_ptr: u64) -> Result<usize, Errno> {
     if !(0..=3).contains(&which) {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if value_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_buf(value_ptr, core::mem::size_of::<Itimerval>() as u64) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if which == 0 {
         // ITIMER_REAL
@@ -262,12 +260,12 @@ pub fn getitimer_syscall(which: i32, value_ptr: u64) -> Result<usize, Errno> {
             it_value: Timeval::from_ns(remaining_ns),
         };
         if !raw::write_struct_to_user(value_ptr, &iv) {
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
         Ok(0)
     } else {
         // VIRTUAL / PROF 暂未实现
-        Err(Errno::ENOSYS)
+        Err(Errno::Enosys)
     }
 }
 
@@ -282,24 +280,24 @@ pub fn getitimer_syscall(which: i32, value_ptr: u64) -> Result<usize, Errno> {
 /// 当 `new_ptr` 为空/越界、`old_ptr` 越界、读取/写入用户空间失败时返回 `EFAULT`.
 pub fn setitimer_syscall(which: i32, new_ptr: u64, old_ptr: u64) -> Result<usize, Errno> {
     if !(0..=3).contains(&which) {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if which != 0 {
-        return Err(Errno::ENOSYS);
+        return Err(Errno::Enosys);
     }
     if new_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let itimerval_len = core::mem::size_of::<Itimerval>() as u64;
     if !raw::check_user_buf(new_ptr, itimerval_len) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if old_ptr != 0 && !raw::check_user_buf(old_ptr, itimerval_len) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let mut new: Itimerval = Itimerval::zero();
     if !raw::read_struct_from_user(new_ptr, &mut new) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let pid = current_pid();
     let (prev_remaining_ns, prev_interval_ns) = crate::privileged::proc::itimer_real_set(
@@ -313,7 +311,7 @@ pub fn setitimer_syscall(which: i32, new_ptr: u64, old_ptr: u64) -> Result<usize
             it_value: Timeval::from_ns(prev_remaining_ns),
         };
         if !raw::write_struct_to_user(old_ptr, &old_iv) {
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
     }
     Ok(0)
@@ -324,6 +322,7 @@ pub fn setitimer_syscall(which: i32, new_ptr: u64, old_ptr: u64) -> Result<usize
 /// 真实实现: 等价于 `setitimer(ITIMER_REAL, {value=seconds, interval=0})`,
 /// 经 `privileged::proc::itimer` 向 hrtimer 登记纳秒级截止期; 到期时由
 /// `itimer_real_callback` (hardirq 上下文) 经 `do_signal_send(SIGALRM)` 投递信号.
+#[must_use]
 pub fn alarm_syscall(seconds: u32) -> usize {
     let pid = current_pid();
     crate::privileged::proc::itimer_alarm(pid, seconds) as usize

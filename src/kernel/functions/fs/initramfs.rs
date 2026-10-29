@@ -166,7 +166,7 @@ pub fn unpack(data: &[u8]) -> Result<usize, &'static str> {
 
     // 确保根目录存在
     let pwm = 0; // 内核权限
-    let _ = crate::functions::fs::vfs_mkdir(b"/\0".as_ptr(), pwm);
+    let _ = crate::functions::fs::vfs_mkdir(c"/".as_ptr().cast(), pwm);
 
     while offset < data.len() {
         let Some((entry, next_offset)) = parse_next_entry(data, offset) else {
@@ -200,13 +200,13 @@ pub fn unpack(data: &[u8]) -> Result<usize, &'static str> {
                 );
                 if fd >= 0 {
                     if !entry.data.is_empty() {
-                        crate::functions::fs::vfs_write(
+                        let _ = crate::functions::fs::vfs_write(
                             fd.cast_unsigned(),
                             entry.data.as_ptr(),
                             crate::functions::intcast::low_u32_from_usize(entry.data.len()),
                         );
                     }
-                    crate::functions::fs::vfs_close(fd.cast_unsigned());
+                    let _ = crate::functions::fs::vfs_close(fd.cast_unsigned());
                 }
             }
             CPIO_S_IFLNK => {

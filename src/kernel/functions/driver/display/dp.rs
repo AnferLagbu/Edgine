@@ -251,11 +251,13 @@ impl DpIo {
     }
 
     /// 从已有 `IoMem` 创建 DP MMIO 访问器 (供 privileged 构造函数使用).
+    #[must_use]
     pub fn from_iomem(mmio: IoMem) -> Self {
         Self { mmio }
     }
 
     /// 获取底层 `IoMem` 引用
+    #[must_use]
     pub fn mmio(&self) -> &IoMem {
         &self.mmio
     }
@@ -264,6 +266,7 @@ impl DpIo {
 
     /// 读取 8 位寄存器
     #[inline]
+    #[must_use]
     pub fn read8(&self, reg: u32) -> u8 {
         self.mmio.read_u8(reg as usize)
     }
@@ -276,6 +279,7 @@ impl DpIo {
 
     /// 读取 16 位寄存器
     #[inline]
+    #[must_use]
     pub fn read16(&self, reg: u32) -> u16 {
         self.mmio.read_u16(reg as usize)
     }
@@ -288,6 +292,7 @@ impl DpIo {
 
     /// 读取 32 位寄存器
     #[inline]
+    #[must_use]
     pub fn read32(&self, reg: u32) -> u32 {
         self.mmio.read_u32(reg as usize)
     }
@@ -319,6 +324,7 @@ pub enum LinkRate {
 
 impl LinkRate {
     /// 返回链路速率对应的带宽 (10 Mbps 为单位, 即 162 = 1.62 Gbps)
+    #[must_use]
     pub fn bandwidth_gbps(self) -> u32 {
         match self {
             Self::Rbr => 162,
@@ -329,6 +335,7 @@ impl LinkRate {
     }
 
     /// 从 DPCD 原始字节值解析链路速率
+    #[must_use]
     pub fn from_u8(value: u8) -> Option<Self> {
         match value {
             0x06 => Some(Self::Rbr),
@@ -354,6 +361,7 @@ pub enum LaneCount {
 
 impl LaneCount {
     /// 从 DPCD 原始字节值解析通道数
+    #[must_use]
     pub fn from_u8(value: u8) -> Option<Self> {
         match value {
             1 => Some(Self::One),
@@ -392,16 +400,90 @@ pub struct Dpcd {
     pub max_link_rate: LinkRate,
     /// 最大通道数
     pub max_lane_count: LaneCount,
-    /// 是否支持下行扩频
-    pub max_downspread: bool,
-    /// 是否支持MST
-    pub mst_capable: bool,
-    /// 是否支持增强帧
-    pub enhanced_frame_capable: bool,
-    /// TPS3支持
-    pub tps3_supported: bool,
+    /// 能力标志位 (下行扩频 / MST / 增强帧 / TPS3)
+    pub capabilities: DpcdCapabilities,
     /// 接收器数量
     pub sink_count: u8,
+}
+
+/// DPCD 能力标志 (位域封装: 下行扩频 / MST / 增强帧 / TPS3)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DpcdCapabilities {
+    /// 标志位 (bit0 下行扩频, bit1 MST, bit2 增强帧, bit3 TPS3)
+    bits: u8,
+}
+
+impl DpcdCapabilities {
+    /// 下行扩频支持位.
+    const DOWNSPREAD: u8 = 1 << 0;
+    /// MST 支持位.
+    const MST: u8 = 1 << 1;
+    /// 增强帧支持位.
+    const ENHANCED_FRAME: u8 = 1 << 2;
+    /// TPS3 支持位.
+    const TPS3: u8 = 1 << 3;
+
+    /// 空能力集 (四项能力标志全为假).
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self { bits: 0 }
+    }
+
+    /// 置位「下行扩频」标志.
+    #[must_use]
+    pub const fn with_downspread(self, supported: bool) -> Self {
+        Self {
+            bits: self.bits | if supported { Self::DOWNSPREAD } else { 0 },
+        }
+    }
+
+    /// 置位「MST」标志.
+    #[must_use]
+    pub const fn with_mst(self, supported: bool) -> Self {
+        Self {
+            bits: self.bits | if supported { Self::MST } else { 0 },
+        }
+    }
+
+    /// 置位「增强帧」标志.
+    #[must_use]
+    pub const fn with_enhanced_frame(self, supported: bool) -> Self {
+        Self {
+            bits: self.bits | if supported { Self::ENHANCED_FRAME } else { 0 },
+        }
+    }
+
+    /// 置位「TPS3」标志.
+    #[must_use]
+    pub const fn with_tps3(self, supported: bool) -> Self {
+        Self {
+            bits: self.bits | if supported { Self::TPS3 } else { 0 },
+        }
+    }
+
+    /// 是否支持下行扩频.
+    #[must_use]
+    pub const fn has_downspread(self) -> bool {
+        self.bits & Self::DOWNSPREAD != 0
+    }
+
+    /// 是否支持 MST.
+    #[must_use]
+    pub const fn has_mst(self) -> bool {
+        self.bits & Self::MST != 0
+    }
+
+    /// 是否支持增强帧.
+    #[must_use]
+    pub const fn has_enhanced_frame(self) -> bool {
+        self.bits & Self::ENHANCED_FRAME != 0
+    }
+
+    /// 是否支持 TPS3.
+    #[must_use]
+    pub const fn has_tps3(self) -> bool {
+        self.bits & Self::TPS3 != 0
+    }
 }
 
 /// DPCD 解析错误
@@ -445,10 +527,11 @@ impl Dpcd {
             revision,
             max_link_rate,
             max_lane_count,
-            max_downspread: (data[3] & 0x01) != 0,
-            mst_capable: (data[3] & 0x04) != 0,
-            enhanced_frame_capable: (data[2] & 0x80) != 0,
-            tps3_supported: (data[4] & 0x40) != 0,
+            capabilities: DpcdCapabilities::empty()
+                .with_downspread((data[3] & 0x01) != 0)
+                .with_mst((data[3] & 0x04) != 0)
+                .with_enhanced_frame((data[2] & 0x80) != 0)
+                .with_tps3((data[4] & 0x40) != 0),
             sink_count: data[5] & 0x3F,
         })
     }
@@ -529,6 +612,7 @@ impl DpController {
     /// 此模式 `detect_hot_plug` 直接返回 `true` (假设已连接),
     /// 用于 QEMU/QEMU+bochs-vbe 等无真实 DP 控制器的开发环境.
     /// 真实硬件环境请使用 [`DpController::new_with_io`].
+    #[must_use]
     pub fn new(mmio_base_unused: usize) -> Self {
         let _ = mmio_base_unused;
         Self {
@@ -548,6 +632,7 @@ impl DpController {
     /// # 参数
     /// - `io`: `DpIo` 安全 MMIO 访问器 (调用方负责构造)
     /// - `hpd_reg_offset`: HPD 寄存器偏移
+    #[must_use]
     pub fn new_with_io(io: DpIo, hpd_reg_offset: u32) -> Self {
         debug_assert!(
             io.mmio().len() >= REQUIRED_IOMEM_SIZE,
@@ -568,6 +653,7 @@ impl DpController {
     }
 
     /// 创建 `DisplayPort` 控制器实例 (真实硬件, 使用默认 HPD 寄存器偏移).
+    #[must_use]
     pub fn new_with_default_hpd(io: DpIo) -> Self {
         Self::new_with_io(io, DP_HPD_REG_OFFSET)
     }
@@ -1015,6 +1101,7 @@ impl DpController {
     }
 
     /// 获取当前带宽 (Gbps)
+    #[must_use]
     pub fn get_bandwidth_gbps(&self) -> Option<u32> {
         let rate = self.current_link_rate?;
         let lanes = self.current_lane_count?;
@@ -1023,6 +1110,7 @@ impl DpController {
     }
 
     /// 检查链路是否已训练
+    #[must_use]
     pub fn is_link_trained(&self) -> bool {
         self.training_state == TrainingState::Trained
     }
@@ -1120,11 +1208,11 @@ impl DpController {
         io.write16(DP_V_SYNC_PW_REG_OFFSET, timing.v_sync_pulse_width);
 
         // 写 sync polarity (8-bit, bit 0=H, bit 1=V)
-        let sync_pol: u8 = if mode.flags.hsync_positive {
+        let sync_pol: u8 = if mode.flags.hsync_positive() {
             DP_SYNC_POL_H_BIT
         } else {
             0
-        } | if mode.flags.vsync_positive {
+        } | if mode.flags.vsync_positive() {
             DP_SYNC_POL_V_BIT
         } else {
             0
@@ -1136,11 +1224,13 @@ impl DpController {
     }
 
     /// 获取设备名称
+    #[must_use]
     pub fn name() -> &'static str {
         "DisplayPort Controller"
     }
 
     /// 获取连接状态
+    #[must_use]
     pub fn is_connected(&self) -> bool {
         self.connected
     }
@@ -1156,11 +1246,13 @@ impl DpController {
     }
 
     /// 是否已初始化并就绪
+    #[must_use]
     pub fn is_ready(&self) -> bool {
         self.initialized && self.connected && self.is_link_trained()
     }
 
     /// 获取状态字符串
+    #[must_use]
     pub fn status(&self) -> &'static str {
         if !self.initialized {
             "DP not initialized"
@@ -1283,8 +1375,8 @@ mod tests {
         assert_eq!(dpcd.revision, 0x12);
         assert_eq!(dpcd.max_link_rate, LinkRate::Hbr2);
         assert_eq!(dpcd.max_lane_count, LaneCount::Four);
-        assert!(dpcd.max_downspread);
-        assert!(dpcd.enhanced_frame_capable);
+        assert!(dpcd.capabilities.has_downspread());
+        assert!(dpcd.capabilities.has_enhanced_frame());
     }
 
     // DISPLAY-2.5: AUX 通道单元测试
@@ -1466,12 +1558,7 @@ mod tests {
             height: 1080,
             refresh_rate: 60,
             pixel_clock_khz: 148500,
-            flags: super::super::hdmi::VideoModeFlags {
-                interlaced: false,
-                double_scan: false,
-                hsync_positive: false,
-                vsync_positive: false,
-            },
+            flags: super::super::hdmi::VideoModeFlags::NONE,
         };
         let result = ctrl.set_video_mode(mode);
         assert!(matches!(result, Err(DpError::NotInitialized)));
@@ -1488,12 +1575,7 @@ mod tests {
             height: 1080,
             refresh_rate: 60,
             pixel_clock_khz: 148500,
-            flags: super::super::hdmi::VideoModeFlags {
-                interlaced: false,
-                double_scan: false,
-                hsync_positive: false,
-                vsync_positive: false,
-            },
+            flags: super::super::hdmi::VideoModeFlags::NONE,
         };
         let result = ctrl.set_video_mode(mode);
         assert!(matches!(result, Err(DpError::InvalidParameter)));
@@ -1510,12 +1592,7 @@ mod tests {
             height: 0,
             refresh_rate: 60,
             pixel_clock_khz: 148500,
-            flags: super::super::hdmi::VideoModeFlags {
-                interlaced: false,
-                double_scan: false,
-                hsync_positive: false,
-                vsync_positive: false,
-            },
+            flags: super::super::hdmi::VideoModeFlags::NONE,
         };
         let result = ctrl.set_video_mode(mode);
         assert!(matches!(result, Err(DpError::InvalidParameter)));
@@ -1532,12 +1609,7 @@ mod tests {
             height: 1080,
             refresh_rate: 60,
             pixel_clock_khz: 148500,
-            flags: super::super::hdmi::VideoModeFlags {
-                interlaced: false,
-                double_scan: false,
-                hsync_positive: false,
-                vsync_positive: false,
-            },
+            flags: super::super::hdmi::VideoModeFlags::NONE,
         };
         let result = ctrl.set_video_mode(mode);
         assert!(
@@ -1558,12 +1630,7 @@ mod tests {
             height: 2160,
             refresh_rate: 60,
             pixel_clock_khz: 594000,
-            flags: super::super::hdmi::VideoModeFlags {
-                interlaced: false,
-                double_scan: false,
-                hsync_positive: true,
-                vsync_positive: false,
-            },
+            flags: super::super::hdmi::VideoModeFlags::NONE.with_hsync_positive(true),
         };
         let result = ctrl.set_video_mode(mode);
         assert!(result.is_ok());
@@ -1609,12 +1676,7 @@ mod tests {
             height: 1080,
             refresh_rate: 60,
             pixel_clock_khz: 148500,
-            flags: super::super::hdmi::VideoModeFlags {
-                interlaced: false,
-                double_scan: false,
-                hsync_positive: false,
-                vsync_positive: false,
-            },
+            flags: super::super::hdmi::VideoModeFlags::NONE,
         };
         let timing = DpController::derive_dp_video_timing(mode);
         assert_eq!(timing.h_active, 1920);

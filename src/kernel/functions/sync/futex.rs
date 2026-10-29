@@ -43,6 +43,7 @@ pub const FUTEX_PRIVATE_FLAG: i32 = 128;
 // ============================================================================
 
 /// 从 op 提取基础操作 (低 4 位)
+#[must_use]
 pub fn futex_base_op(op: i32) -> i32 {
     op & 0x0F
 }
@@ -59,10 +60,10 @@ pub fn futex_base_op(op: i32) -> i32 {
 /// - `uaddr` 未按 4 字节对齐 → `EINVAL`
 pub fn futex_validate_uaddr(uaddr: u64) -> Result<(), Errno> {
     if uaddr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if uaddr & 0x3 != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     Ok(())
 }
@@ -75,7 +76,7 @@ pub fn futex_validate_uaddr(uaddr: u64) -> Result<(), Errno> {
 pub fn futex_validate_op(op: i32) -> Result<(), Errno> {
     match futex_base_op(op) {
         FUTEX_WAIT | FUTEX_WAIT_BITSET | FUTEX_WAKE | FUTEX_WAKE_BITSET | FUTEX_REQUEUE => Ok(()),
-        _ => Err(Errno::ENOSYS),
+        _ => Err(Errno::Enosys),
     }
 }
 
@@ -103,6 +104,7 @@ pub enum FutexResult {
 
 impl FutexResult {
     /// 从 syscall 返回值解析
+    #[must_use]
     pub fn from_ret(ret: i64) -> Self {
         match ret {
             0 => Self::Woken,
@@ -136,11 +138,11 @@ pub fn futex_syscall(
     // 3. 错误码解析
     if ret < 0 {
         let errno = match crate::functions::intcast::low_i32_from_i64(-ret) {
-            11 => Errno::EAGAIN, // EAGAIN = 11 (Linux)
-            14 => Errno::EFAULT,
-            38 => Errno::ENOSYS,
+            11 => Errno::Eagain, // EAGAIN = 11 (Linux)
+            14 => Errno::Efault,
+            38 => Errno::Enosys,
             // 未识别错误码 (含 22 = EINVAL) 回退为 EINVAL
-            _ => Errno::EINVAL,
+            _ => Errno::Einval,
         };
         return Err(errno);
     }

@@ -68,6 +68,7 @@ pub struct UnkfsZilRecord {
 
 impl UnkfsZilRecord {
     /// 构造一条写入记录.
+    #[must_use]
     pub fn new_write(txg: u64, obj_id: u64, offset: u64, size: u32) -> Self {
         Self {
             rec_type: UnkfsZilRecordType::Write,
@@ -83,6 +84,7 @@ impl UnkfsZilRecord {
     }
 
     /// 构造一条创建记录.
+    #[must_use]
     pub fn new_create(txg: u64, parent_obj: u64, name: &str) -> Self {
         let mut n = [0u8; 128];
         let b = name.as_bytes();
@@ -102,6 +104,7 @@ impl UnkfsZilRecord {
     }
 
     /// 构造一条删除记录.
+    #[must_use]
     pub fn new_remove(txg: u64, parent_obj: u64, name: &str) -> Self {
         let mut n = [0u8; 128];
         let b = name.as_bytes();
@@ -121,6 +124,7 @@ impl UnkfsZilRecord {
     }
 
     /// 构造一条创建目录记录.
+    #[must_use]
     pub fn new_mkdir(txg: u64, parent_obj: u64, name: &str) -> Self {
         let mut n = [0u8; 128];
         let b = name.as_bytes();
@@ -140,6 +144,7 @@ impl UnkfsZilRecord {
     }
 
     /// 构造一条属性修改记录.
+    #[must_use]
     pub fn new_setattr(txg: u64, obj_id: u64) -> Self {
         Self {
             rec_type: UnkfsZilRecordType::SetAttr,
@@ -155,6 +160,7 @@ impl UnkfsZilRecord {
     }
 
     /// 构造一条硬链接记录.
+    #[must_use]
     pub fn new_link(txg: u64, parent_obj: u64, name: &str, obj_id: u64) -> Self {
         let mut n = [0u8; 128];
         let b = name.as_bytes();
@@ -174,6 +180,7 @@ impl UnkfsZilRecord {
     }
 
     /// 构造一条重命名记录 (旧名与新名各占前/后 64 字节).
+    #[must_use]
     pub fn new_rename(txg: u64, parent_obj: u64, old_name: &str, new_name: &str) -> Self {
         let mut n = [0u8; 128];
         let b = old_name.as_bytes();
@@ -196,6 +203,7 @@ impl UnkfsZilRecord {
     }
 
     /// 构造一条符号链接记录 (链接名与目标各占前/后 64 字节).
+    #[must_use]
     pub fn new_symlink(txg: u64, parent_obj: u64, link_name: &str, target: &str) -> Self {
         let mut n = [0u8; 128];
         let b = link_name.as_bytes();
@@ -218,6 +226,7 @@ impl UnkfsZilRecord {
     }
 
     /// 构造一条去重引用增加记录.
+    #[must_use]
     pub fn new_dedup_ref(txg: u64, hash: [u64; 4], obj_id: u64) -> Self {
         Self {
             rec_type: UnkfsZilRecordType::DedupRef,
@@ -233,6 +242,7 @@ impl UnkfsZilRecord {
     }
 
     /// 构造一条去重引用减少记录.
+    #[must_use]
     pub fn new_dedup_unref(txg: u64, hash: [u64; 4]) -> Self {
         Self {
             rec_type: UnkfsZilRecordType::DedupUnref,
@@ -272,6 +282,7 @@ pub struct UnkfsZil {
 
 impl UnkfsZil {
     /// 创建空日志实例 (默认启用).
+    #[must_use]
     pub fn new() -> Self {
         Self {
             records: Mutex::new(Vec::new()),
@@ -358,6 +369,13 @@ impl UnkfsZil {
     /// 当前待提交记录条数.
     pub fn pending_count(&self) -> usize {
         self.records.lock().len()
+    }
+}
+
+impl Default for UnkfsZil {
+    /// 委托 [`UnkfsZil::new`] 创建默认启用的空日志实例.
+    fn default() -> Self {
+        Self::new()
     }
 }
 

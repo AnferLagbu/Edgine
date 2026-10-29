@@ -4,20 +4,20 @@
 //! ## DECISION-J 归属反转记录 (2026-09-13)
 //!
 //! 原定义（P1-I-01/D8 于 2026-06-16 提取到 `functions::proc::fd_table`）按
-//! 统一判据"机制持有的数据结构/常量归 privileged"迁回 — FdTable 是 Process
+//! 统一判据"机制持有的数据结构/常量归 privileged"迁回 — `FdTable` 是 Process
 //! 结构体字段 (privileged 进程机制状态), 被 privileged/proc/process.rs 消费。
 //! privileged/proc 新增 `pub mod fd_table`; process.rs 改引 privileged 本地
 //! 路径。functions 侧改 glob re-export 保持 API 兼容。
 //!
 //! ## 设计
 //!
-//! FD 表仅存储指向 OpenFile 的 handle_id, 不存储 offset/flags.
-//! dup() 通过共享 OpenFile 实现 offset 共享 (POSIX 合规).
+//! FD 表仅存储指向 `OpenFile` 的 `handle_id`, 不存储 offset/flags.
+//! `dup()` 通过共享 `OpenFile` 实现 offset 共享 (POSIX 合规).
 //!
 //! ## 与旧实现的差异
 //!
-//! 旧: entries`[`i`]` = global_fd (i32)
-//! 新: entries`[`i`]` = handle_id (u32) → OpenFile (共享 offset)
+//! 旧: entries`[`i`]` = `global_fd` (i32)
+//! 新: entries`[`i`]` = `handle_id` (u32) → `OpenFile` (共享 offset)
 
 use crate::privileged::sync::IrqSpinLock;
 
@@ -41,6 +41,7 @@ pub struct FdTable {
 
 impl FdTable {
     /// 创建未初始化的 `FdTable`
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             entries: IrqSpinLock::new([u32::MAX; MAX_FDS_PER_PROCESS]),

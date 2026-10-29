@@ -30,7 +30,7 @@ pub trait VfsOps: Send + Sync {
     /// 关闭当前进程标记 CLOEXEC 的 fd (execve 成功路径).
     fn close_cloexec_fds(&self);
 
-    /// 递增指定 OpenFile handle 的引用计数 (fork 继承路径).
+    /// 递增指定 `OpenFile` handle 的引用计数 (fork 继承路径).
     fn inc_open_file_ref(&self, handle_id: u32);
 
     /// 查询 fd 对应的 VFS 文件类型.

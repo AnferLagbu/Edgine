@@ -65,17 +65,21 @@ impl VfsPollPolicy for StandardVfsPollPolicy {
 // 注册函数
 // ============================================================================
 
+/// 标准 VFS 轮询策略注册失败 — 策略已被注册 (注册只能成功一次)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VfsPollPolicyRegisterError;
+
 /// 注册标准 VFS 轮询策略到 privileged
 ///
 /// 由 `functions::fs::init()` 调用. 只能注册一次.
 ///
 /// # Errors
-/// 当注册失败 (如策略已被注册) 时返回 `Err(())`.
-pub fn register_default_vfs_poll_policy() -> Result<(), ()> {
+/// 当注册失败 (如策略已被注册) 时返回 `Err(VfsPollPolicyRegisterError)`.
+pub fn register_default_vfs_poll_policy() -> Result<(), VfsPollPolicyRegisterError> {
     static POLICY: StandardVfsPollPolicy = StandardVfsPollPolicy;
     crate::privileged::fs::vfs_poll_trait::register_vfs_poll_policy(&POLICY)
         .then_some(())
-        .ok_or(())
+        .ok_or(VfsPollPolicyRegisterError)
 }
 
 // ============================================================================

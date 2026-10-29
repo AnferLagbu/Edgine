@@ -98,6 +98,7 @@ pub(crate) unsafe fn smap_begin() {}
 pub(crate) unsafe fn smap_end() {}
 
 use crate::privileged::constants::limits::USER_ADDR_MAX;
+use crate::privileged::error::KernelError;
 
 /// 异常表条目 —— 用于缺页恢复
 #[repr(C)]
@@ -232,15 +233,17 @@ pub fn get_exception_recovery() -> Option<u64> {
 ///
 /// B04-14: `USER_ADDR_MAX = 0x0000_7FFF_FFFF_F000` 已天然排除内核高半区
 /// (含 `MMIO_VIRT_BASE = 0xFFFF9000_00000000+` DMA 代理区), 用户态无法
-/// 通过 copy_from/to_user 访问外设 MMIO 寄存器. 此函数是 I4 (用户内存代理)
+/// 通过 `copy_from/to_user` 访问外设 MMIO 寄存器. 此函数是 I4 (用户内存代理)
 /// 与 I5/I6 (外设 DMA/MMIO) 不变式的唯一交叉检查点.
 #[inline]
+#[must_use]
 pub fn is_user_ptr(ptr: u64) -> bool {
     ptr > 0 && ptr < USER_ADDR_MAX
 }
 
 /// 检查缓冲区 (ptr + len) 是否完全位于用户空间
 #[inline]
+#[must_use]
 pub fn is_user_buf(ptr: u64, len: usize) -> bool {
     if len == 0 {
         return true;
@@ -287,7 +290,7 @@ unsafe fn setup_recovery() -> (u64, Option<u64>) {
             options(nostack, pure, readonly),
         );
 
-        let old_recovery = set_exception_recovery(recovery_label as u64);
+        let old_recovery = set_exception_recovery(recovery_label);
         (recovery_label, old_recovery)
     }
 }
@@ -320,7 +323,7 @@ unsafe fn teardown_recovery(old_recovery: Option<u64>) -> bool {
 /// # 返回
 ///
 /// - `Ok(copied_len)`: 成功复制的字节数
-/// - `Err(())`: 用户指针非法或发生缺页
+/// - `Err(KernelError::Fault)`: 用户指针非法或发生缺页
 ///
 /// # 架构要求
 ///
@@ -331,21 +334,26 @@ unsafe fn teardown_recovery(old_recovery: Option<u64>) -> bool {
 /// # Errors
 /// 用户指针非法、目标缓冲区过小或访问用户内存时发生缺页时返回 Err。
 #[inline(never)]
-pub fn copy_from_user(kernel_dst: &mut [u8], user_src: u64, len: usize) -> Result<usize, ()> {
+pub fn copy_from_user(
+    kernel_dst: &mut [u8],
+    user_src: u64,
+    len: usize,
+) -> Result<usize, KernelError> {
     if len == 0 {
         return Ok(0);
     }
 
     if !is_user_buf(user_src, len) {
-        return Err(());
+        return Err(KernelError::Fault);
     }
 
     if kernel_dst.len() < len {
-        return Err(());
+        return Err(KernelError::Fault);
     }
 
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    let result = unsafe {
+
+    unsafe {
         let src_ptr = user_src as *const u8;
         let dst_ptr = kernel_dst.as_mut_ptr();
 
@@ -358,10 +366,12 @@ pub fn copy_from_user(kernel_dst: &mut [u8], user_src: u64, len: usize) -> Resul
 
         let faulted = teardown_recovery(old_recovery);
 
-        if faulted { Err(()) } else { Ok(len) }
-    };
-
-    result
+        if faulted {
+            Err(KernelError::Fault)
+        } else {
+            Ok(len)
+        }
+    }
 }
 
 /// 从内核复制数据到用户空间
@@ -377,7 +387,7 @@ pub fn copy_from_user(kernel_dst: &mut [u8], user_src: u64, len: usize) -> Resul
 /// # 返回
 ///
 /// - `Ok(copied_len)`: 成功复制的字节数
-/// - `Err(())`: 用户指针非法或发生缺页
+/// - `Err(KernelError::Fault)`: 用户指针非法或发生缺页
 ///
 /// # 架构要求
 ///
@@ -388,21 +398,22 @@ pub fn copy_from_user(kernel_dst: &mut [u8], user_src: u64, len: usize) -> Resul
 /// # Errors
 /// 用户指针非法、源缓冲区过小或访问用户内存时发生缺页时返回 Err。
 #[inline(never)]
-pub fn copy_to_user(user_dst: u64, kernel_src: &[u8], len: usize) -> Result<usize, ()> {
+pub fn copy_to_user(user_dst: u64, kernel_src: &[u8], len: usize) -> Result<usize, KernelError> {
     if len == 0 {
         return Ok(0);
     }
 
     if !is_user_buf(user_dst, len) {
-        return Err(());
+        return Err(KernelError::Fault);
     }
 
     if kernel_src.len() < len {
-        return Err(());
+        return Err(KernelError::Fault);
     }
 
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    let result = unsafe {
+
+    unsafe {
         let src_ptr = kernel_src.as_ptr();
         let dst_ptr = user_dst as *mut u8;
 
@@ -415,10 +426,12 @@ pub fn copy_to_user(user_dst: u64, kernel_src: &[u8], len: usize) -> Result<usiz
 
         let faulted = teardown_recovery(old_recovery);
 
-        if faulted { Err(()) } else { Ok(len) }
-    };
-
-    result
+        if faulted {
+            Err(KernelError::Fault)
+        } else {
+            Ok(len)
+        }
+    }
 }
 
 /// 从用户空间复制以 NUL 结尾的字符串
@@ -426,19 +439,23 @@ pub fn copy_to_user(user_dst: u64, kernel_src: &[u8], len: usize) -> Result<usiz
 /// # 返回
 ///
 /// - `Ok(string)`: 复制出的字符串 (不含 NUL 终止符)
-/// - `Err(())`: 指针非法、未以 NUL 结尾或过长
+/// - `Err(KernelError::Fault)`: 指针非法、未以 NUL 结尾或过长
 /// # Errors
 /// 指针非法、超过最大长度或字符串非 UTF-8 时返回 Err。
 #[inline(never)]
-pub fn copy_string_from_user(user_str: u64, max_len: usize) -> Result<alloc::string::String, ()> {
+pub fn copy_string_from_user(
+    user_str: u64,
+    max_len: usize,
+) -> Result<alloc::string::String, KernelError> {
     if !is_user_ptr(user_str) {
-        return Err(());
+        return Err(KernelError::Fault);
     }
 
     let mut bytes = alloc::vec::Vec::with_capacity(max_len);
 
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    let result = unsafe {
+
+    unsafe {
         let ptr = user_str as *const u8;
 
         let (_recovery_label, old_recovery) = setup_recovery();
@@ -458,13 +475,11 @@ pub fn copy_string_from_user(user_str: u64, max_len: usize) -> Result<alloc::str
         let faulted = teardown_recovery(old_recovery);
 
         if faulted || bytes.len() == max_len {
-            Err(())
+            Err(KernelError::Fault)
         } else {
-            alloc::string::String::from_utf8(bytes).map_err(|_| ())
+            alloc::string::String::from_utf8(bytes).map_err(|_| KernelError::Fault)
         }
-    };
-
-    result
+    }
 }
 
 /// 清除用户空间中某段区域 (填充 0)
@@ -472,21 +487,22 @@ pub fn copy_string_from_user(user_str: u64, max_len: usize) -> Result<alloc::str
 /// # 返回
 ///
 /// - `Ok(cleared_len)`: 已清零的字节数
-/// - `Err(())`: 用户指针非法
+/// - `Err(KernelError::Fault)`: 用户指针非法
 /// # Errors
 /// 用户指针非法或访问用户内存时发生缺页时返回 Err。
 #[inline(never)]
-pub fn clear_user(user_ptr: u64, len: usize) -> Result<usize, ()> {
+pub fn clear_user(user_ptr: u64, len: usize) -> Result<usize, KernelError> {
     if len == 0 {
         return Ok(0);
     }
 
     if !is_user_buf(user_ptr, len) {
-        return Err(());
+        return Err(KernelError::Fault);
     }
 
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    let result = unsafe {
+
+    unsafe {
         let ptr = user_ptr as *mut u8;
 
         let (_recovery_label, old_recovery) = setup_recovery();
@@ -498,10 +514,12 @@ pub fn clear_user(user_ptr: u64, len: usize) -> Result<usize, ()> {
 
         let faulted = teardown_recovery(old_recovery);
 
-        if faulted { Err(()) } else { Ok(len) }
-    };
-
-    result
+        if faulted {
+            Err(KernelError::Fault)
+        } else {
+            Ok(len)
+        }
+    }
 }
 
 /// 获取用户空间字符串长度 (不复制内容)
@@ -509,17 +527,18 @@ pub fn clear_user(user_ptr: u64, len: usize) -> Result<usize, ()> {
 /// # 返回
 ///
 /// - `Ok(len)`: 字符串长度 (不含 NUL 终止符)
-/// - `Err(())`: 指针非法或在 `max_len` 内未找到 NUL 终止符
+/// - `Err(KernelError::Fault)`: 指针非法或在 `max_len` 内未找到 NUL 终止符
 /// # Errors
 /// 指针非法或在最大长度内未找到 NUL 终止符时返回 Err。
 #[inline(never)]
-pub fn strlen_user(user_str: u64, max_len: usize) -> Result<usize, ()> {
+pub fn strlen_user(user_str: u64, max_len: usize) -> Result<usize, KernelError> {
     if !is_user_ptr(user_str) {
-        return Err(());
+        return Err(KernelError::Fault);
     }
 
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    let result = unsafe {
+
+    unsafe {
         let ptr = user_str as *const u8;
 
         let (_recovery_label, old_recovery) = setup_recovery();
@@ -539,15 +558,13 @@ pub fn strlen_user(user_str: u64, max_len: usize) -> Result<usize, ()> {
         let faulted = teardown_recovery(old_recovery);
 
         if faulted {
-            Err(())
+            Err(KernelError::Fault)
         } else if let Some(len) = found_len {
             Ok(len)
         } else {
-            Err(())
+            Err(KernelError::Fault)
         }
-    };
-
-    result
+    }
 }
 
 #[cfg(test)]

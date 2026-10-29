@@ -35,6 +35,7 @@ pub enum RecoveryLayer {
 
 impl RecoveryLayer {
     /// 由 `u32` 编码还原恢复层级 (未知值退化为 `Layer1`)
+    #[must_use]
     pub fn from_u32(v: u32) -> Self {
         match v {
             2 => Self::Layer2,
@@ -58,11 +59,13 @@ pub enum RecoveryResult {
 
 impl RecoveryResult {
     /// 是否为成功结果
+    #[must_use]
     pub fn is_success(self) -> bool {
         matches!(self, Self::Success)
     }
 
     /// 是否需要升级到下一层恢复
+    #[must_use]
     pub fn should_escalate(self) -> bool {
         matches!(self, Self::Escalate)
     }
@@ -78,15 +81,22 @@ pub enum RollbackMode {
     Parallel = 1,
 }
 
+/// 三层恢复开关
+#[derive(Debug, Clone, Copy)]
+pub struct LayerSwitches {
+    /// 是否启用第 1 层 (BBR) 恢复
+    pub layer1: bool,
+    /// 是否启用第 2 层 (BSR) 恢复
+    pub layer2: bool,
+    /// 是否启用第 3 层 (BHR) 恢复
+    pub layer3: bool,
+}
+
 #[derive(Debug)]
 /// 恢复配置: 各层开关、失败阈值、设备超时与并行回滚参数。
 pub struct RecoveryConfig {
-    /// 是否启用第 1 层 (BBR) 恢复
-    pub enable_layer1: bool,
-    /// 是否启用第 2 层 (BSR) 恢复
-    pub enable_layer2: bool,
-    /// 是否启用第 3 层 (BHR) 恢复
-    pub enable_layer3: bool,
+    /// 三层恢复开关
+    pub layers: LayerSwitches,
     /// 第 1 层连续失败阈值 (超过则升级到下一层)
     pub layer1_failure_threshold: u32,
     /// 第 2 层设备操作超时 (tick)
@@ -103,11 +113,14 @@ pub struct RecoveryConfig {
 
 impl RecoveryConfig {
     /// 返回默认配置 (三层全开、串行回滚)
+    #[must_use]
     pub const fn default() -> Self {
         Self {
-            enable_layer1: true,
-            enable_layer2: true,
-            enable_layer3: true,
+            layers: LayerSwitches {
+                layer1: true,
+                layer2: true,
+                layer3: true,
+            },
             layer1_failure_threshold: 5,
             layer2_device_timeout_ticks: 100,
             layer2_max_attempts: 3,
@@ -118,6 +131,7 @@ impl RecoveryConfig {
     }
 
     /// 是否启用并行回滚
+    #[must_use]
     pub fn is_parallel(&self) -> bool {
         matches!(self.rollback_mode, RollbackMode::Parallel)
     }
@@ -196,13 +210,14 @@ pub fn reset_stats() {
 }
 
 // E-03 (2026-09-06): feature 语义拆分 — 纯逻辑测试模块, host-test 下同样编译
-/// 恢复配置与状态机的纯逻辑测试 (kernel_test / host-test 下编译)
+/// 恢复配置与状态机的纯逻辑测试 (`kernel_test` / host-test 下编译)
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod tests {
     // J-01 (2026-09-08): wildcard_imports 清理 — 显式列出本模块使用的 super 符号
     use super::{RecoveryConfig, RecoveryLayer, RecoveryResult, get_stats, reset_stats};
 
     /// 验证恢复结果判定 (成功 / 需升级)
+    #[must_use]
     pub fn test_recovery_result() -> bool {
         let success = RecoveryResult::Success;
         let failed = RecoveryResult::Failed;
@@ -217,6 +232,7 @@ pub mod tests {
     }
 
     /// 验证恢复层级编码值
+    #[must_use]
     pub fn test_recovery_layer() -> bool {
         let layer1 = RecoveryLayer::Layer1;
         let layer2 = RecoveryLayer::Layer2;
@@ -226,15 +242,17 @@ pub mod tests {
     }
 
     /// 验证默认配置的层级开关与阈值
+    #[must_use]
     pub fn test_config_default() -> bool {
         let config = RecoveryConfig::default();
-        config.enable_layer1
-            && config.enable_layer2
-            && config.enable_layer3
+        config.layers.layer1
+            && config.layers.layer2
+            && config.layers.layer3
             && config.layer1_failure_threshold == 5
     }
 
     /// 验证统计清零后各计数为 0
+    #[must_use]
     pub fn test_stats() -> bool {
         reset_stats();
         let (bsr, bhr, tick) = get_stats();

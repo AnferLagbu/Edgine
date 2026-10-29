@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 //! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 privileged API。
-//! ftrace / KGDB 系统调用 — functions 层实现 (从 privileged/syscall/ftrace_kgdb.rs 下沉, §6.2)
+//! ftrace / KGDB 系统调用 — functions 层实现 (从 `privileged/syscall/ftrace_kgdb.rs` 下沉, §6.2)
 //!
 //! ## 编号 (800-809: 内核调试 / 跟踪)
 //!
@@ -75,12 +75,14 @@ fn ftrace_stat_bytes(event_count: u64, overflow_count: u64) -> [u8; FTRACE_STAT_
 }
 
 /// `sys_ftrace_enable`: 启用 ftrace 全局开关
+#[must_use]
 pub fn sys_ftrace_enable() -> i64 {
     ftrace_enable();
     0
 }
 
 /// `sys_ftrace_disable`: 禁用 ftrace 全局开关
+#[must_use]
 pub fn sys_ftrace_disable() -> i64 {
     ftrace_disable();
     0
@@ -90,6 +92,7 @@ pub fn sys_ftrace_disable() -> i64 {
 ///
 /// - `a0`: 用户态指针 (`UserTraceEvent` 布局 48 字节)
 /// - 返回 0 = 成功, 1 = 缓冲区空 (无事件), 负数 = errno
+#[must_use]
 pub fn sys_ftrace_read(a0: u64) -> i64 {
     if !super::check_user_buf(a0, TRACE_EVENT_SIZE as u64) {
         return EFAULT;
@@ -107,6 +110,7 @@ pub fn sys_ftrace_read(a0: u64) -> i64 {
 /// `sys_ftrace_stat`: 拷贝 (`event_count`, `overflow_count`) 到用户态
 ///
 /// - `a0`: 用户态指针 (16 字节, `[u64; 2]` 布局)
+#[must_use]
 pub fn sys_ftrace_stat(a0: u64) -> i64 {
     if !super::check_user_buf(a0, FTRACE_STAT_SIZE as u64) {
         return EFAULT;
@@ -123,6 +127,7 @@ pub fn sys_ftrace_stat(a0: u64) -> i64 {
 ///
 /// - 串口未注册时返回 `ENODEV`
 /// - 串口已注册时: 阻塞与外部 gdb 通信, 收到 c/s/k 后返回 0
+#[must_use]
 pub fn sys_kgdb_enter() -> i64 {
     if !kgdb_serial_ready() {
         return ENODEV;

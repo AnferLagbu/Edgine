@@ -10,7 +10,7 @@
 //! `dns.rs::parse_ipv4_literal` 逻辑重复. 本次重构复用 `dns::` 解析:
 //! - CIDR 部分: `parse_cidr` (新增, 支持可选 /prefix, 默认 24)
 //! - 网关部分: `parse_ipv4_literal` (dns.rs 既有)
-//! 消除两套并行的 IPv4 文本解析实现.
+//!   消除两套并行的 IPv4 文本解析实现.
 
 use core::sync::atomic::Ordering;
 

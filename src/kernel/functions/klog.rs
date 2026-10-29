@@ -39,6 +39,7 @@ pub enum SinkListFormat {
 /// 解析 procfs 入口名 → 格式选择.
 ///
 /// 规则: 文件名以 `.json` 结尾 → Json; 否则 → Text。
+#[must_use]
 pub fn parse_format(name: &str) -> SinkListFormat {
     if name
         .rsplit_once('.')
@@ -68,6 +69,7 @@ pub fn register_defaults() {
 // ============================================================================
 
 /// 已注册 sink 数量.
+#[must_use]
 pub fn count() -> usize {
     privileged_klog::klog_sink_count()
 }
@@ -77,6 +79,7 @@ pub fn count() -> usize {
 /// 名称所有权属于 sink 实现, 调用方持有 `&'static str`, 不可变.
 ///
 /// 本函数是**安全**包装: 内部走 `privileged::klog::klog_sink_name_at`, 上层无 unsafe.
+#[must_use]
 pub fn name_at(idx: usize) -> Option<&'static str> {
     privileged_klog::klog_sink_name_at(idx)
 }

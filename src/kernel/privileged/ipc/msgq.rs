@@ -38,6 +38,7 @@ pub mod raw {
         /// # Safety
         ///
         /// `nn` 必须为 `allocate_message` 返回的有效 `NonNull`。
+        #[must_use]
         pub unsafe fn from_non_null(nn: NonNull<Message>) -> Self {
             Self(nn)
         }
@@ -46,6 +47,7 @@ pub mod raw {
         ///
         /// - 内部 unsafe: 在 `raw` 子模块内已声明 `from_non_null` 边界
         /// - 调用方只需保证 `nn` 是 Some (从 mq.head/mq.tail 取出)
+        #[must_use]
         pub fn from_some(nn: NonNull<Message>) -> Self {
             // SAFETY: nn 来自 `Option::unwrap` (字段由 `allocate_message` 填充, 满足侵入式链表不变量).
             unsafe { Self::from_non_null(nn) }
@@ -53,12 +55,14 @@ pub mod raw {
 
         /// 获取底层 `NonNull`
         #[inline]
+        #[must_use]
         pub fn as_non_null(self) -> NonNull<Message> {
             self.0
         }
 
         /// 读 `next` 字段 (侵入式链表) — 返回裸指针 (null = 无后继)
         #[inline]
+        #[must_use]
         pub fn next(&self) -> *mut Message {
             // SAFETY: 调用方保证 self 指向有效 Message。
             // B03-24: Message.next 为 AtomicPtr, 队列操作在持锁下执行, Relaxed 足够.
@@ -82,15 +86,17 @@ pub mod raw {
 
         /// 获取 &Message 引用
         #[inline]
+        #[must_use]
         pub fn get(&self) -> &Message {
             // SAFETY: self 指向有效 Message。
             unsafe { &*self.0.as_ptr() }
         }
 
-        /// 获取 &mut Message 引用
+        /// 获取 &mut Message 引用 (需独占 `MessageRef`, 故接收 `&mut self`)
         #[inline]
-        pub fn get_mut(&self) -> &mut Message {
-            // SAFETY: self 指向有效 Message, &mut 保证独占。
+        #[must_use]
+        pub fn get_mut(&mut self) -> &mut Message {
+            // SAFETY: self 指向有效 Message, `&mut self` 已保证独占。
             unsafe { &mut *self.0.as_ptr() }
         }
 
@@ -102,6 +108,7 @@ pub mod raw {
     }
 
     /// 分配一个新 `Message` 并包装为 `MessageRef` (集中 unsafe 入口)
+    #[must_use]
     pub fn allocate() -> Option<MessageRef> {
         let msg = Box::new(Message::new());
         // Box::into_raw never returns null; if it somehow did, treat as OOM.
@@ -119,15 +126,15 @@ pub mod raw {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn ipc_msgq_create(perm: i32) -> IpcId {
-    let ns = super::IPC_NAMESPACE.get_mut();
-    let next_id = super::NEXT_IPC_ID.get_mut();
+    let mut ns = super::IPC_NAMESPACE.get_mut();
+    let mut next_id = super::NEXT_IPC_ID.get_mut();
     let pid = process_get_current_pid();
     // DECISION-K: 未注册降级 (返回 0=无效 id, 逻辑错误降级原则, 不 panic)
     let Some(s) = current_ipc_strategy() else {
         crate::klog_warn!(Kernel, "IpcStrategy 未注册: ipc_msgq_create");
         return 0;
     };
-    s.msgq_create(ns, next_id, perm, pid).unwrap_or(0)
+    s.msgq_create(&mut ns, &mut next_id, perm, pid).unwrap_or(0)
 }
 
 /// FFI: 发送消息。
@@ -137,7 +144,7 @@ pub extern "C" fn ipc_msgq_create(perm: i32) -> IpcId {
 /// 由 `sys_msgsnd` 分发, cred 校验已通过。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ipc_msgq_send(id: IpcId, type_: u64, data: *const u8, size: u64) -> i32 {
-    let ns = super::IPC_NAMESPACE.get_mut();
+    let mut ns = super::IPC_NAMESPACE.get_mut();
     let pid = process_get_current_pid();
 
     let slice = if data.is_null() || size == 0 {
@@ -157,10 +164,10 @@ pub unsafe extern "C" fn ipc_msgq_send(id: IpcId, type_: u64, data: *const u8, s
     // DECISION-K: 未注册降级 ENOSYS (逻辑错误降级原则, 不 panic)
     let Some(s) = current_ipc_strategy() else {
         crate::klog_warn!(Kernel, "IpcStrategy 未注册: ipc_msgq_send");
-        return -(Errno::ENOSYS as i32);
+        return -(Errno::Enosys as i32);
     };
     match s.msgq_send(
-        ns,
+        &mut ns,
         id,
         type_,
         data_slice,
@@ -184,7 +191,7 @@ pub unsafe extern "C" fn ipc_msgq_recv(
     data: *mut u8,
     size_out: *mut u64,
 ) -> i64 {
-    let ns = super::IPC_NAMESPACE.get_mut();
+    let mut ns = super::IPC_NAMESPACE.get_mut();
 
     let mut type_slot = if type_out.is_null() {
         None
@@ -224,9 +231,9 @@ pub unsafe extern "C" fn ipc_msgq_recv(
     // DECISION-K: 未注册降级 ENOSYS (逻辑错误降级原则, 不 panic)
     let Some(s) = current_ipc_strategy() else {
         crate::klog_warn!(Kernel, "IpcStrategy 未注册: ipc_msgq_recv");
-        return -(Errno::ENOSYS as i64);
+        return -(Errno::Enosys as i64);
     };
-    s.msgq_recv(ns, id, type_ref, data_ref, size_ref)
+    s.msgq_recv(&mut ns, id, type_ref, data_ref, size_ref)
         .map_or(-1, crate::privileged::glue::i64_from_usize)
 }
 
@@ -234,13 +241,13 @@ pub unsafe extern "C" fn ipc_msgq_recv(
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn ipc_msgq_destroy(id: IpcId) -> i32 {
-    let ns = super::IPC_NAMESPACE.get_mut();
+    let mut ns = super::IPC_NAMESPACE.get_mut();
     // DECISION-K: 未注册降级 ENOSYS (逻辑错误降级原则, 不 panic)
     let Some(s) = current_ipc_strategy() else {
         crate::klog_warn!(Kernel, "IpcStrategy 未注册: ipc_msgq_destroy");
-        return -(Errno::ENOSYS as i32);
+        return -(Errno::Enosys as i32);
     };
-    match s.msgq_destroy(ns, id) {
+    match s.msgq_destroy(&mut ns, id) {
         Ok(()) => 0,
         Err(_) => -1,
     }

@@ -5,8 +5,8 @@
 //! 原策略代码于 T6-17 (2026-06-17) 迁至 `functions::mm::madvise_mlock`, 本文件仅
 //! re-export。按"机制持有的数据结构/常量归 privileged"统一判据反转：`sys_madvise`
 //! 等被 privileged proc 顶层 re-export (proc/mod.rs) + functions proc 包装消费,
-//! 依赖闭包全在 privileged 内 (errno/mm::PAGE_SIZE/copy_user/vma_get_current_mm/
-//! userptr) — 属机制项, 迁回 (同 io_uring 模式)。
+//! 依赖闭包全在 privileged 内 (`errno/mm::PAGE_SIZE/copy_user/vma_get_current_mm`/
+//! userptr) — 属机制项, 迁回 (同 `io_uring` 模式)。
 //!
 //! functions 侧改 `pub use crate::privileged::proc::madvise_mlock::*`
 //! 保持 API 兼容。
@@ -16,7 +16,7 @@
 //! - madvise: 内存访问模式建议 (参数验证 + 委托 privileged)
 //! - mlock/munlock: 物理页锁定/解锁 (参数验证 + 委托 privileged)
 //! - mlockall/munlockall: 进程级锁定 (委托 privileged)
-//! - mincore: 每页驻留性查询 (参数验证 + copy_to_user)
+//! - mincore: 每页驻留性查询 (参数验证 + `copy_to_user`)
 #![deny(missing_docs)]
 
 use crate::privileged::errno::Errno;
@@ -62,27 +62,28 @@ pub const MCL_ONFAULT: u32 = 4;
 // ============================================================================
 
 /// `sys_madvise(addr, len, advice) -> 0/-errno` — 对当前地址空间指定区间应用内存建议。
+#[must_use]
 pub fn sys_madvise(addr: u64, len: u64, advice: u64) -> i64 {
     let advice = crate::privileged::glue::low_u32_from_u64(advice);
     if addr == 0 && len == 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     if addr & (PAGE_SIZE - 1) != 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     if advice > 21 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     if advice == MADV_REMOVE {
         return 0;
     }
 
     let Some(mm) = vma_get_current_mm() else {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     };
 
     let Some(len_usize) = crate::privileged::glue::usize_from_u64(len).checked_add(0usize) else {
-        return Errno::ENOMEM.as_ret();
+        return Errno::Enomem.as_ret();
     };
     match mm.madvise_range(
         crate::privileged::glue::usize_from_u64(addr),
@@ -99,9 +100,10 @@ pub fn sys_madvise(addr: u64, len: u64, advice: u64) -> i64 {
 // ============================================================================
 
 /// `sys_mlock(addr, len) -> 0/-errno` — 锁定指定区间, 防止其被换出。
+#[must_use]
 pub fn sys_mlock(addr: u64, len: u64) -> i64 {
     if addr & (PAGE_SIZE - 1) != 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     if len == 0 {
         return 0;
@@ -109,7 +111,7 @@ pub fn sys_mlock(addr: u64, len: u64) -> i64 {
     let len_usize = crate::privileged::glue::usize_from_u64(len);
 
     let Some(mm) = vma_get_current_mm() else {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     };
 
     match mm.mlock_range(crate::privileged::glue::usize_from_u64(addr), len_usize) {
@@ -123,9 +125,10 @@ pub fn sys_mlock(addr: u64, len: u64) -> i64 {
 // ============================================================================
 
 /// `sys_munlock(addr, len) -> 0/-errno` — 解除指定区间的内存锁定。
+#[must_use]
 pub fn sys_munlock(addr: u64, len: u64) -> i64 {
     if addr & (PAGE_SIZE - 1) != 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     if len == 0 {
         return 0;
@@ -133,7 +136,7 @@ pub fn sys_munlock(addr: u64, len: u64) -> i64 {
     let len_usize = crate::privileged::glue::usize_from_u64(len);
 
     let Some(mm) = vma_get_current_mm() else {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     };
 
     match mm.munlock_range(crate::privileged::glue::usize_from_u64(addr), len_usize) {
@@ -147,10 +150,11 @@ pub fn sys_munlock(addr: u64, len: u64) -> i64 {
 // ============================================================================
 
 /// `sys_mlockall(flags) -> 0/-errno` — 按 `flags` 锁定当前及未来的内存映射。
+#[must_use]
 pub fn sys_mlockall(flags: u64) -> i64 {
     let flags = crate::privileged::glue::low_u32_from_u64(flags);
     let Some(mm) = vma_get_current_mm() else {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     };
 
     match mm.mlock_all(flags) {
@@ -164,9 +168,10 @@ pub fn sys_mlockall(flags: u64) -> i64 {
 // ============================================================================
 
 /// `sys_munlockall() -> 0/-errno` — 解除本进程全部内存锁定。
+#[must_use]
 pub fn sys_munlockall() -> i64 {
     let Some(mm) = vma_get_current_mm() else {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     };
 
     mm.munlock_all();
@@ -178,32 +183,33 @@ pub fn sys_munlockall() -> i64 {
 // ============================================================================
 
 /// `sys_mincore(addr, len, vec_ptr) -> 0/-errno` — 查询区间各页是否驻留, 驻留位图写入 `vec_ptr`。
+#[must_use]
 pub fn sys_mincore(addr: u64, len: u64, vec_ptr: u64) -> i64 {
     const MAX_STACK_PAGES: usize = 1024;
     if addr & (PAGE_SIZE - 1) != 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     if len == 0 {
         return 0;
     }
     if vec_ptr == 0 {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
 
     let page_size = crate::privileged::glue::usize_from_u64(PAGE_SIZE);
-    let n_pages = (crate::privileged::glue::usize_from_u64(len) + page_size - 1) / page_size;
+    let n_pages = crate::privileged::glue::usize_from_u64(len).div_ceil(page_size);
     let buf_bytes = n_pages;
 
     if !userptr::validate_user_buf(vec_ptr, buf_bytes as u64) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
 
     if vma_get_current_mm().is_none() {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
 
     if n_pages > MAX_STACK_PAGES {
-        return Errno::ENOMEM.as_ret();
+        return Errno::Enomem.as_ret();
     }
     let mut stack_buf = [0u8; MAX_STACK_PAGES];
 
@@ -216,7 +222,7 @@ pub fn sys_mincore(addr: u64, len: u64, vec_ptr: u64) -> i64 {
             // 使用 privileged 的 safe copy_to_user 替代 unsafe copy_nonoverlapping
             match copy_to_user(vec_ptr, &stack_buf[..buf_bytes], buf_bytes) {
                 Ok(_) => 0,
-                Err(()) => Errno::EFAULT.as_ret(),
+                Err(_) => Errno::Efault.as_ret(),
             }
         }
         Err(e) => e.as_ret(),

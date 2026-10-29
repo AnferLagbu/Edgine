@@ -81,8 +81,9 @@ pub fn current_cpu_index() -> u32 {
 ///
 /// 语义修正 (RT-002): 本函数历史上直接返回硬件 id (x86: LAPIC id / aarch64:
 /// MPIDR Aff0), 但全部内核调用点都把它当**稠密逻辑索引**用于 per-CPU 数组寻址
-/// (调度器 / softirq / RCU / CpuQueue / TLB 代), 稀疏拓扑下二者不一致会导致
+/// (调度器 / softirq / RCU / `CpuQueue` / TLB 代), 稀疏拓扑下二者不一致会导致
 /// 索引错位。现统一返回逻辑索引。
+#[must_use]
 pub fn get_current_cpu() -> u32 {
     current_cpu_index()
 }
@@ -310,7 +311,7 @@ pub fn tlb_probe_report() {
     TLB_PROBE_OBS_SEQ[cpu].store(seq, Ordering::Release);
 }
 
-/// 统计 [0, cpu_count) 内**远程在线核**尚未报告 `(seq, expect)` 的个数.
+/// 统计 [0, `cpu_count`) 内**远程在线核**尚未报告 `(seq, expect)` 的个数.
 fn tlb_probe_missing(seq: u64, expect: u8, me: u32, cpu_count: u32) -> u32 {
     let mut missing = 0u32;
     for i in 0..cpu_count {
@@ -331,6 +332,7 @@ fn tlb_probe_missing(seq: u64, expect: u8, me: u32, cpu_count: u32) -> u32 {
 /// 不含本核: 驱动侧在重映射前已自行失效本核 TLB, 且引导期 BSP 中断可能关闭,
 /// 自身 IPI 未必即时投递 —— 本核不构成"跨核传播"的证据.
 /// fail-closed: 超时后把未达成核数原样返回 (非 0 即失败), 不以"待定"放行.
+#[must_use]
 pub fn tlb_probe_wait_remotes(seq: u64, expect: u8) -> u32 {
     // 有界自旋: AP 处于 `sti; hlt` 空闲态, IPI 投递为微秒级; 该上界远超所需,
     // 仅在 IPI 真正未送达 (探针要判定的故障) 时耗尽.

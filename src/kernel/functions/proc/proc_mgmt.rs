@@ -27,9 +27,10 @@ struct ProcListEntry {
 }
 
 /// `proc_list(buf`, `max_entries`) 策略
+#[must_use]
 pub fn proc_list_syscall(buf_ptr: u64, max_entries: u32) -> i64 {
     if buf_ptr == 0 || !crate::privileged::syscall::api::validate_user_ptr(buf_ptr) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
 
     let entry_size =
@@ -69,11 +70,13 @@ pub fn proc_list_syscall(buf_ptr: u64, max_entries: u32) -> i64 {
 }
 
 /// `proc_setpri(pid`, priority) 策略
+#[must_use]
 pub fn proc_setpri_syscall(pid: u32, priority: u32) -> i64 {
     i64::from(crate::privileged::proc::proc_set_priority(pid, priority))
 }
 
 /// `sgeg_proc_cputime(pid)` 策略
+#[must_use]
 pub fn sgeg_proc_cputime_syscall(pid: u32) -> i64 {
     let target_pid = if pid == 0 {
         crate::privileged::proc::process_get_current_pid()
@@ -82,7 +85,7 @@ pub fn sgeg_proc_cputime_syscall(pid: u32) -> i64 {
     };
 
     if !crate::privileged::proc::process_exists(target_pid) {
-        return Errno::ESRCH.as_ret();
+        return Errno::Esrch.as_ret();
     }
 
     let cputime = crate::privileged::proc::scheduler_current_cputime();

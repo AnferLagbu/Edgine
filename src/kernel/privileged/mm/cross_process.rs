@@ -19,13 +19,14 @@
 //! ## 写方向的权限校验
 //!
 //! 写目标进程内存时, 必须校验叶子表项可写 ([`super::PageTranslation::writable`]);
-//! 只读页 (如共享 COW 页) 返回 `Err(())`, 避免内核绕过用户态写保护语义去改内容.
+//! 只读页 (如共享 COW 页) 返回 `Err(KernelError::Fault)`, 避免内核绕过用户态写保护语义去改内容.
 //!
-//! SIMPLIFIED: 不打断 COW 只读页 (不触发写时复制), 写只读页一律返回 `Err(())`;
+//! SIMPLIFIED: 不打断 COW 只读页 (不触发写时复制), 写只读页一律返回 `Err(KernelError::Fault)`;
 //! 影响面为「对目标进程只读页的远程写会 EFAULT 而非成功并 COW」; 若后续需对齐
 //! Linux 的 `FOLL_WRITE` 语义, 应在此接入页面 COW 分裂后再写入.
 
 use super::{PAGE_SIZE, VirtAddr, Vmm, is_user_buf};
+use crate::privileged::error::KernelError;
 
 /// 从目标进程的用户内存读取 `len` 字节到内核缓冲区.
 ///
@@ -39,21 +40,21 @@ use super::{PAGE_SIZE, VirtAddr, Vmm, is_user_buf};
 /// # 返回
 ///
 /// - `Ok(len)`: 成功读取的字节数.
-/// - `Err(())`: 目标 CR3 非法 / 地址越界 / 目标页未映射 / 内核缓冲区过小.
+/// - `Err(KernelError::Fault)`: 目标 CR3 非法 / 地址越界 / 目标页未映射 / 内核缓冲区过小.
 ///
 /// # Errors
-/// 目标 CR3 非法、地址越界、目标页未映射或内核缓冲区过小时返回 `Err(())`.
+/// 目标 CR3 非法、地址越界、目标页未映射或内核缓冲区过小时返回 `Err(KernelError::Fault)`.
 pub fn copy_from_user_in_mm(
     target_cr3: u64,
     user_src: u64,
     kernel_dst: &mut [u8],
     len: usize,
-) -> Result<usize, ()> {
+) -> Result<usize, KernelError> {
     if len == 0 {
         return Ok(0);
     }
     if kernel_dst.len() < len {
-        return Err(());
+        return Err(KernelError::Fault);
     }
     // SAFETY: `kernel_dst` 长度已校验 >= len, 仅取裸指针供内部按方向分派;
     // 读取方向下内核侧为**目的**缓冲区, 写入不会越界.
@@ -72,21 +73,21 @@ pub fn copy_from_user_in_mm(
 /// # 返回
 ///
 /// - `Ok(len)`: 成功写入的字节数.
-/// - `Err(())`: 目标 CR3 非法 / 地址越界 / 目标页未映射或只读 / 内核缓冲区过小.
+/// - `Err(KernelError::Fault)`: 目标 CR3 非法 / 地址越界 / 目标页未映射或只读 / 内核缓冲区过小.
 ///
 /// # Errors
-/// 目标 CR3 非法、地址越界、目标页未映射/只读或内核缓冲区过小时返回 `Err(())`.
+/// 目标 CR3 非法、地址越界、目标页未映射/只读或内核缓冲区过小时返回 `Err(KernelError::Fault)`.
 pub fn copy_to_user_in_mm(
     target_cr3: u64,
     user_dst: u64,
     kernel_src: &[u8],
     len: usize,
-) -> Result<usize, ()> {
+) -> Result<usize, KernelError> {
     if len == 0 {
         return Ok(0);
     }
     if kernel_src.len() < len {
-        return Err(());
+        return Err(KernelError::Fault);
     }
     // SAFETY: `kernel_src` 长度已校验 >= len, 仅取裸指针以统一方向分派;
     // 写入方向下内核侧为**源**且只读, 内部实现不会修改其内容.
@@ -106,24 +107,24 @@ pub fn copy_to_user_in_mm(
 ///
 /// # Errors
 ///
-/// - `target_cr3 == 0` 或用户地址 (含 `len`) 越出用户空间 → `Err(())`
-/// - 目标页未映射 → `Err(())`
-/// - 写入只读页 → `Err(())`
+/// - `target_cr3 == 0` 或用户地址 (含 `len`) 越出用户空间 → `Err(KernelError::Fault)`
+/// - 目标页未映射 → `Err(KernelError::Fault)`
+/// - 写入只读页 → `Err(KernelError::Fault)`
 fn copy_in_mm(
     target_cr3: u64,
     user_addr: u64,
     kernel_buf: *mut u8,
     len: usize,
     write_to_target: bool,
-) -> Result<usize, ()> {
+) -> Result<usize, KernelError> {
     if len == 0 {
         return Ok(0);
     }
     if !is_user_buf(user_addr, len) {
-        return Err(());
+        return Err(KernelError::Fault);
     }
     if target_cr3 == 0 {
-        return Err(());
+        return Err(KernelError::Fault);
     }
 
     let mut done: usize = 0;
@@ -136,10 +137,10 @@ fn copy_in_mm(
         );
 
         let Some(t) = Vmm::translate_in_pml4(target_cr3, VirtAddr(cur)) else {
-            return Err(());
+            return Err(KernelError::Fault);
         };
         if write_to_target && !t.writable {
-            return Err(());
+            return Err(KernelError::Fault);
         }
 
         // SAFETY: `t.phys` 由 `translate_in_pml4` 返回, 对应目标进程**已映射**的物理帧;

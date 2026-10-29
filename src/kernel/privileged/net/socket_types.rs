@@ -9,15 +9,15 @@
 //! / `raw_read_sockaddr_un` / `raw_write_sockaddr_un`) 从用户内存 copy-in/copy-out
 //! 直接构造并返回——属"机制的安全导出面" (机制的嘴), 留 privileged。
 //!
-//! 与 fd_alloc/madvise_mlock 同型：privileged 机制持有 + 消费, functions 侧改
+//! 与 `fd_alloc/madvise_mlock` 同型：privileged 机制持有 + 消费, functions 侧改
 //! re-export 保持 API 兼容 (functions→privileged 合法方向)。本文件 0 unsafe。
 //!
 //! ## 内容
 //!
-//! - [`Domain`]: socket 协议族 (AF_UNIX/AF_INET/AF_INET6)
-//! - [`SockType`]: socket 类型 (SOCK_STREAM/SOCK_DGRAM)
+//! - [`Domain`]: socket 协议族 (`AF_UNIX/AF_INET/AF_INET6`)
+//! - [`SockType`]: socket 类型 (`SOCK_STREAM/SOCK_DGRAM`)
 //! - [`SockAddrIn`]: IPv4 地址 (port + 4 字节 IP)
-//! - [`SockAddrUn`]: UDS 地址 (sun_path 包装)
+//! - [`SockAddrUn`]: UDS 地址 (`sun_path` 包装)
 //! - [`UNIX_PATH_MAX`]: POSIX `sun_path` 最大长度
 
 #![deny(missing_docs)]
@@ -40,6 +40,7 @@ pub enum Domain {
 
 impl Domain {
     /// 由协议族判别值构造 (未知值返回 None)
+    #[must_use]
     pub fn from_i32(d: i32) -> Option<Self> {
         match d {
             1 => Some(Self::Unix),
@@ -67,6 +68,7 @@ pub const SOCK_NONBLOCK: i32 = 0o4000;
 
 impl SockType {
     /// 由类型判别值构造 (未知值返回 None)
+    #[must_use]
     pub fn from_i32(t: i32) -> Option<Self> {
         match t {
             1 => Some(Self::Stream),
@@ -91,6 +93,7 @@ pub struct SockAddrIn {
 
 impl SockAddrIn {
     /// 构造 IPv4 Socket 地址
+    #[must_use]
     pub fn new(port: u16, ip: [u8; 4]) -> Self {
         Self { port, ip }
     }
@@ -110,6 +113,7 @@ pub struct SockAddrUn {
 
 impl SockAddrUn {
     /// 由路径字节构造; 空路径或超长返回 None
+    #[must_use]
     pub fn new(path: &[u8]) -> Option<Self> {
         if path.is_empty() || path.len() > UNIX_PATH_MAX {
             return None;
@@ -123,6 +127,7 @@ impl SockAddrUn {
     }
 
     /// 返回有效路径字节切片
+    #[must_use]
     pub fn path_slice(&self) -> &[u8] {
         &self.path[..self.path_len as usize]
     }

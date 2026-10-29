@@ -48,7 +48,7 @@ pub const CAP_DOMAIN_RESERVED: u16 = 15;
 /// SYSTEM 域 bit1 — 设置进程 PWM 身份 (B07-05, DECISION-078 新增专用位)
 ///
 /// `pwm_set` 会改变进程身份, 无既有能力位可精确表达, 故新增专用位而非复用
-/// SYSTEM 域 bit0 (mount/setns 等复用的 CAP_SYS_ADMIN 语义). 任意进程不可
+/// SYSTEM 域 bit0 (mount/setns 等复用的 `CAP_SYS_ADMIN` 语义). 任意进程不可
 /// 自行设置自身 PWM (防任意提权).
 pub const SYSTEM_CAP_SET_PWM: u64 = 1 << 1;
 
@@ -103,13 +103,13 @@ pub const PROC_CAP_WAIT: u64 = 1 << 3;
 /// PROC 域: 创建独立进程
 pub const PROC_CAP_CREATE: u64 = 1 << 4;
 
-/// USER_MGMT 域: 枚举用户
+/// `USER_MGMT` 域: 枚举用户
 pub const USER_MGMT_CAP_LIST: u64 = 1 << 0;
-/// USER_MGMT 域: 创建用户
+/// `USER_MGMT` 域: 创建用户
 pub const USER_MGMT_CAP_CREATE: u64 = 1 << 1;
-/// USER_MGMT 域: 删除用户
+/// `USER_MGMT` 域: 删除用户
 pub const USER_MGMT_CAP_DELETE: u64 = 1 << 2;
-/// USER_MGMT 域: 修改用户属性
+/// `USER_MGMT` 域: 修改用户属性
 pub const USER_MGMT_CAP_MODIFY: u64 = 1 << 3;
 
 /// DEVICE 域: 访问设备 MMIO 区域

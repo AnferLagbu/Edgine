@@ -70,7 +70,7 @@ const SOCK_DGRAM: i32 = 2;
 // D8c: recv/send flags (P5d / DECISION-096); 超时选项 SO_RCVTIMEO/SO_SNDTIMEO
 // 已迁 edgine-abi 单源
 // ============================================================================
-/// `recv`/`send` 族 flags: 本次调用非阻塞 (不挂起, 立即返 -E_AGAIN).
+/// `recv`/`send` 族 flags: 本次调用非阻塞 (不挂起, 立即返 -`E_AGAIN`).
 const MSG_DONTWAIT: i32 = 0x40;
 
 // ============================================================================
@@ -96,9 +96,9 @@ const POLLNVAL: i16 = 32;
 
 /// 把用户态 fd 换算为 Smoltcp 段内部槽位索引。
 ///
-/// 本模块全部 `raw::*` 静态表以**槽位索引空间**运作 (紧凑 [0, MAX_SM_FD)),
+/// 本模块全部 `raw::*` 静态表以**槽位索引空间**运作 (紧凑 [0, `MAX_SM_FD`)),
 /// fd 数值 (含基址偏移) 仅经本函数进入表。这是 `fd_alloc::idx_of` 在本子树的
-/// 唯一切换面: fd 对象模型终态工程 (全局 FdPlan 退役, per-process fd 表接管)
+/// 唯一切换面: fd 对象模型终态工程 (全局 `FdPlan` 退役, per-process fd 表接管)
 /// 时整体改写本函数的调用点即可。
 #[inline]
 fn sm_slot(fd: i32) -> Option<usize> {
@@ -123,15 +123,15 @@ fn net_add_waiter(slot: usize, pid: u32, want: u8, deadline_ns: u64) -> bool {
 /// 消费者在成功返回/放弃阻塞时自行摘除, 否则槽位永久泄漏.
 #[inline]
 fn net_clear_waiter(slot: usize, pid: u32) {
-    if pid != 0 {
-        if let Some(q) = SOCKET_WAIT_QUEUES.get(slot) {
-            q.remove_waiter(pid);
-        }
+    if pid != 0
+        && let Some(q) = SOCKET_WAIT_QUEUES.get(slot)
+    {
+        q.remove_waiter(pid);
     }
 }
 
 /// P5d: 进入阻塞前算绝对超时死线 (纳秒, `hrtimer_clock_read` 单调时钟). `recv=true`
-/// 取 SO_RCVTIMEO, `false` 取 SO_SNDTIMEO. 刻度 0 = 无超时 (返 0, 阻塞至就绪/信号).
+/// 取 `SO_RCVTIMEO`, `false` 取 `SO_SNDTIMEO`. 刻度 0 = 无超时 (返 0, 阻塞至就绪/信号).
 /// 消费者在首次真正挂起时用 `Option::get_or_insert_with` 计算一次, 后续重挂复用
 /// 同一绝对死线 (不因重挂而延长超时).
 ///
@@ -151,7 +151,7 @@ unsafe fn sock_block_deadline(slot: usize, recv: bool) -> u64 {
 
 /// 分配一个 Smoltcp 段 FD 并换算为槽位索引, 返回 `(fd, slot)`.
 ///
-/// 分配失败与换算失败统一返回 `None`; 换算属防御分支 (alloc 段与 sm_slot 换算
+/// 分配失败与换算失败统一返回 `None`; 换算属防御分支 (alloc 段与 `sm_slot` 换算
 /// 同源, 必然成功), 一旦失败先归还 FD 编号避免位图泄漏. 调用点以单一 let-else
 /// 处理 `-E_NFILE`, 分配-回滚逻辑收敛于此不再重复.
 ///
@@ -270,10 +270,10 @@ pub(crate) unsafe fn write_sockaddr(
         match ep.addr {
             crate::privileged::net::iface_trait::IpAddr::V4(v4) => {
                 let sin = SockaddrIn {
-                    sin_family: 2, // AF_INET
-                    sin_port: ep.port.to_be(),
-                    sin_addr: v4.octets(),
-                    sin_zero: [0; 8],
+                    family: 2, // AF_INET
+                    port: ep.port.to_be(),
+                    addr: v4.octets(),
+                    zero: [0; 8],
                 };
                 core::ptr::write_unaligned(addr.cast::<SockaddrIn>(), sin);
                 if !addrlen.is_null() {
@@ -287,11 +287,11 @@ pub(crate) unsafe fn write_sockaddr(
             }
             crate::privileged::net::iface_trait::IpAddr::V6(v6) => {
                 let sin6 = SockaddrIn6 {
-                    sin6_family: 10, // AF_INET6
-                    sin6_port: ep.port.to_be(),
-                    sin6_flowinfo: 0,
-                    sin6_addr: v6.octets(),
-                    sin6_scope_id: 0,
+                    family: 10, // AF_INET6
+                    port: ep.port.to_be(),
+                    flowinfo: 0,
+                    addr: v6.octets(),
+                    scope_id: 0,
                 };
                 core::ptr::write_unaligned(addr.cast::<SockaddrIn6>(), sin6);
                 if !addrlen.is_null() {
@@ -303,22 +303,28 @@ pub(crate) unsafe fn write_sockaddr(
     }
 }
 
+/// POSIX `sockaddr_in` (16 字节, `#[repr(C)]`, 与 Linux 布局一致).
+///
+/// 字段名对应 C `sockaddr_in` 的 `sin_family` / `sin_port` / `sin_addr` / `sin_zero`.
 #[repr(C)]
 struct SockaddrIn {
-    sin_family: u16,
-    sin_port: u16,
-    sin_addr: [u8; 4],
-    sin_zero: [u8; 8],
+    family: u16,
+    port: u16,
+    addr: [u8; 4],
+    zero: [u8; 8],
 }
 
 /// POSIX `sockaddr_in6` (28 字节, `#[repr(C)]`, 与 Linux 布局一致).
+///
+/// 字段名对应 C `sockaddr_in6` 的 `sin6_family` / `sin6_port` / `sin6_flowinfo` /
+/// `sin6_addr` / `sin6_scope_id`.
 #[repr(C)]
 struct SockaddrIn6 {
-    sin6_family: u16,
-    sin6_port: u16,
-    sin6_flowinfo: u32,
-    sin6_addr: [u8; 16],
-    sin6_scope_id: u32,
+    family: u16,
+    port: u16,
+    flowinfo: u32,
+    addr: [u8; 16],
+    scope_id: u32,
 }
 
 /// 从 sockaddr C 结构体解析端点 (W4.4 trait 翻译版本, 双栈).
@@ -344,8 +350,8 @@ pub(crate) unsafe fn parse_endpoint_trait(
         match family {
             2 => {
                 let sin = core::ptr::read_unaligned(addr.cast::<SockaddrIn>());
-                let octets = sin.sin_addr;
-                let port = u16::from_be(sin.sin_port);
+                let octets = sin.addr;
+                let port = u16::from_be(sin.port);
                 Some(crate::privileged::net::iface_trait::NetEndpoint::new_v4(
                     crate::privileged::net::iface_trait::Ipv4Addr::from_octets(octets),
                     port,
@@ -353,8 +359,8 @@ pub(crate) unsafe fn parse_endpoint_trait(
             }
             10 => {
                 let sin6 = core::ptr::read_unaligned(addr.cast::<SockaddrIn6>());
-                let octets = sin6.sin6_addr;
-                let port = u16::from_be(sin6.sin6_port);
+                let octets = sin6.addr;
+                let port = u16::from_be(sin6.port);
                 Some(crate::privileged::net::iface_trait::NetEndpoint::new_v6(
                     crate::privileged::net::iface_trait::Ipv6Addr::from_octets(octets),
                     port,
@@ -370,7 +376,7 @@ pub(crate) unsafe fn parse_endpoint_trait(
 /// 与 `parse_endpoint_trait` 的区别: 本函数返回 smoltcp wire 类型 `IpEndpoint`,
 /// 供 `sm_bind`/`sm_connect`/`sm_sendto` 直接传给 smoltcp socket API;
 /// `parse_endpoint_trait` 返回 trait 抽象 `NetEndpoint`, 供上层 (functions) 使用.
-/// 两者按 `sin_family` 分支逻辑相同 (2=AF_INET / 10=AF_INET6).
+/// 两者按 `sin_family` 分支逻辑相同 (`2=AF_INET` / `10=AF_INET6`).
 ///
 /// # Safety
 /// 同 `parse_endpoint_trait`.
@@ -837,6 +843,8 @@ unsafe fn sm_accept_locked(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
             .is_err()
         {
             sockets.remove(new_handle);
+            // 回滚: conn_slot 的两个 buffer 指针均来自 k_malloc 分配且尚未释放,
+            // 此处归还后立即置 NULL (所在函数体已在 unsafe 块内).
             if !raw::tcp_rx_buf(conn_slot).is_null() {
                 crate::privileged::mm::k_free(raw::tcp_rx_buf(conn_slot));
             }
@@ -1534,13 +1542,13 @@ pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32
             );
             off += lens[i];
         }
-        let rc = sm_send(
+
+        sm_send(
             fd,
             region.as_mut_ptr(),
             crate::privileged::glue::low_u32_from_usize(total),
             0,
-        );
-        rc
+        )
     }
 }
 
@@ -1685,6 +1693,8 @@ pub unsafe extern "C" fn sm_close(fd: i32) -> i32 {
         let sockets = &mut *socket_set();
         sockets.remove(handle);
         // TD-07: smoltcp socket 已 drop, buf 借用结束, 此时 k_free 安全.
+        // 四个 buffer 指针均来自 k_malloc 分配且尚未释放, 归还后立即置 NULL
+        // (所在函数体已在 unsafe 块内).
         if !raw::tcp_rx_buf(slot).is_null() {
             crate::privileged::mm::k_free(raw::tcp_rx_buf(slot));
             raw::set_tcp_rx_buf(slot, core::ptr::null_mut());
@@ -1914,7 +1924,7 @@ fn mc_membership(slot: usize, addr: IpAddress, join: bool) -> i32 {
 ///
 /// 已支持选项:
 /// - `SO_PASSCRED` (`SOL_SOCKET`/16): 路由到 UDS 服务层 (`uds_setsockopt`).
-/// - `SO_RCVTIMEO`(20)/`SO_SNDTIMEO`(21): 收发超时, 参数 `struct timeval` (16 字节: tv_sec i64 + tv_usec i64); 存 ns 于 per-slot (P5d).
+/// - `SO_RCVTIMEO`(20)/`SO_SNDTIMEO`(21): 收发超时, 参数 `struct timeval` (16 字节: `tv_sec` i64 + `tv_usec` i64); 存 ns 于 per-slot (P5d).
 /// - `IP_ADD_MEMBERSHIP`/`IP_DROP_MEMBERSHIP` (`IPPROTO_IP`/35、36) 与
 ///   `IPV6_ADD_MEMBERSHIP`/`IPV6_DROP_MEMBERSHIP` (`IPPROTO_IPV6`/20、21): 组播
 ///   成员管理, 参数 `struct ip_mreq` (8B) / `struct ipv6_mreq` (20B) (P6 / D11).
@@ -1923,7 +1933,7 @@ fn mc_membership(slot: usize, addr: IpAddress, join: bool) -> i32 {
 ///   socket-option-constants-unification 裁定记录).
 /// - `SO_KEEPALIVE` (`SOL_SOCKET`/9, 仅 TCP): 置/清 keep-alive (7200s 缺省间隔).
 /// - `TCP_NODELAY` (`IPPROTO_TCP`/6, 仅 TCP): `val != 0` 关闭 Nagle.
-/// 其余 (`level`, `optname`): `-ENOPROTOOPT`.
+///   其余 (`level`, `optname`): `-ENOPROTOOPT`.
 ///
 /// # Safety
 /// `optval` 必须是 syscall 层提供的有效内核指针 (i32 选项 4 字节 / `SO_RCVTIMEO`、`SO_SNDTIMEO` 的 `struct timeval` 16 字节 / 组播选项的 `ip_mreq` 8 字节、`ipv6_mreq` 20 字节), `optlen` 为其长度。
@@ -2076,7 +2086,7 @@ pub unsafe extern "C" fn sm_setsockopt(
 /// - `SO_RCVTIMEO`(20)/`SO_SNDTIMEO`(21): 回填 `struct timeval` (16 字节, 读自 per-slot ns; P5d).
 /// - `SO_ERROR` (`SOL_SOCKET`/4): 近似恒 0 (见下方 SIMPLIFIED).
 /// - `TCP_NODELAY` (`IPPROTO_TCP`/1, 仅 TCP): Nagle 禁用时 1, 启用时 0.
-/// 其余 (`level`, `optname`): `-ENOPROTOOPT`.
+///   其余 (`level`, `optname`): `-ENOPROTOOPT`.
 ///
 /// # Safety
 /// `optval` 必须是 syscall 层提供的可写内核指针 (i32 选项 ≥ 4 字节 / 超时选项 ≥ 16 字节), `optlen` 为可写内核 u32 指针。

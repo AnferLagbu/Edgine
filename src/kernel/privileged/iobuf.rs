@@ -46,12 +46,13 @@ unsafe impl Send for IobRegion {}
 impl IobRegion {
     /// 按 `want` 字节数 alloc 临时区域. 自动向上页对齐.
     /// 返回 `Some(region)` 成功, `None` 表示 alloc 失败.
+    #[must_use]
     pub fn alloc(want: usize) -> Option<Self> {
         if want == 0 {
             // 0 字节用 1 页 (避免 pages=0 在 free 时语义不清)
             return Self::alloc_pages(1);
         }
-        let pages = ((want as u64) + PAGE_SIZE - 1) / PAGE_SIZE;
+        let pages = (want as u64).div_ceil(PAGE_SIZE);
         Self::alloc_pages(pages)
     }
 
@@ -76,18 +77,21 @@ impl IobRegion {
 
     /// 内核虚拟地址 (用于 `copy_nonoverlapping` 目标/源)
     #[inline]
+    #[must_use]
     pub fn as_mut_ptr(&self) -> *mut u8 {
         self.vaddr
     }
 
     /// 容量 (字节)
     #[inline]
+    #[must_use]
     pub fn capacity(&self) -> usize {
         self.cap
     }
 
     /// 实际分配页数
     #[inline]
+    #[must_use]
     pub fn pages(&self) -> u64 {
         self.pages
     }

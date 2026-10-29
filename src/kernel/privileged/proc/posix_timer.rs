@@ -98,57 +98,65 @@ pub const TFD_TIMER_ABSTIME: i32 = 1;
 ///
 /// 我们只读取前 16 字节 (`sigev_value` + `sigev_signo` + `sigev_notify`),
 /// 其余字段忽略。`#[repr(C)]` 保证与 glibc 布局一致。
+///
+/// 字段名对应 C `sigevent` 的 `sigev_value` / `sigev_signo` / `sigev_notify` /
+/// `sigev_notify_function` / `sigev_notify_attributes`（按序仅去前缀, 顺序与类型不变）。
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Sigevent {
     /// 透传值, 通过 `siginfo.si_value` 回到用户态
-    pub sigev_value: i64,
+    pub value: i64,
     /// 触发时发送的信号
-    pub sigev_signo: i32,
+    pub signo: i32,
     /// 通知方式 (`SIGEV_NONE` / `SIGEV_SIGNAL`)
-    pub sigev_notify: i32,
+    pub notify: i32,
     /// 忽略 (通知函数指针, 我们不支持 `SIGEV_THREAD`)
-    pub sigev_notify_function: u64,
+    pub notify_function: u64,
     /// 忽略
-    pub sigev_notify_attributes: u64,
+    pub notify_attributes: u64,
 }
 
 /// `struct itimerspec` (Linux 兼容)
+///
+/// 字段名对应 C `itimerspec` 的 `it_interval` / `it_value` 两个 `timespec` 的
+/// `tv_sec` / `tv_nsec`（按序仅去前缀, 顺序与类型不变）。
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Itimerspec {
     /// 周期间隔
-    pub it_interval_sec: i64,
+    pub interval_sec: i64,
     /// 周期间隔 (纳秒部分)
-    pub it_interval_nsec: i64,
+    pub interval_nsec: i64,
     /// 初次到期时间
-    pub it_value_sec: i64,
+    pub value_sec: i64,
     /// 初次到期时间 (纳秒部分)
-    pub it_value_nsec: i64,
+    pub value_nsec: i64,
 }
 
 impl Itimerspec {
     /// 构造全零 `itimerspec`
+    #[must_use]
     pub const fn zeroed() -> Self {
         Self {
-            it_interval_sec: 0,
-            it_interval_nsec: 0,
-            it_value_sec: 0,
-            it_value_nsec: 0,
+            interval_sec: 0,
+            interval_nsec: 0,
+            value_sec: 0,
+            value_nsec: 0,
         }
     }
 
     /// 计算 value 字段的总纳秒 (用于启动 hrtimer)
+    #[must_use]
     pub fn value_ns(&self) -> u64 {
-        let sec = if self.it_value_sec < 0 {
+        let sec = if self.value_sec < 0 {
             0u64
         } else {
-            self.it_value_sec.cast_unsigned()
+            self.value_sec.cast_unsigned()
         };
-        let nsec = if self.it_value_nsec < 0 {
+        let nsec = if self.value_nsec < 0 {
             0u64
         } else {
-            self.it_value_nsec.cast_unsigned()
+            self.value_nsec.cast_unsigned()
         };
         // 纳秒溢出保护 (>= 1e9 时折回秒)
         let nsec_norm = nsec.min(999_999_999);
@@ -156,16 +164,17 @@ impl Itimerspec {
     }
 
     /// 计算 interval 字段的总纳秒
+    #[must_use]
     pub fn interval_ns(&self) -> u64 {
-        let sec = if self.it_interval_sec < 0 {
+        let sec = if self.interval_sec < 0 {
             0u64
         } else {
-            self.it_interval_sec.cast_unsigned()
+            self.interval_sec.cast_unsigned()
         };
-        let nsec = if self.it_interval_nsec < 0 {
+        let nsec = if self.interval_nsec < 0 {
             0u64
         } else {
-            self.it_interval_nsec.cast_unsigned()
+            self.interval_nsec.cast_unsigned()
         };
         let nsec_norm = nsec.min(999_999_999);
         sec.saturating_mul(1_000_000_000).saturating_add(nsec_norm)
@@ -315,42 +324,41 @@ pub fn sys_timer_create(clockid: i32, sigev_ptr: u64, timer_id_ptr: u64) -> i64 
     use crate::privileged::errno::Errno;
 
     if clockid != CLOCK_REALTIME && clockid != CLOCK_MONOTONIC {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     // 解析 sigevent
     let mut sigev = Sigevent::default();
     if sigev_ptr != 0 {
         if !crate::privileged::userptr::read_struct_from_user(sigev_ptr, &mut sigev) {
-            return Errno::EFAULT.as_ret();
+            return Errno::Efault.as_ret();
         }
     } else {
-        sigev.sigev_notify = SIGEV_NONE;
+        sigev.notify = SIGEV_NONE;
     }
 
     // 验证 sigev_notify
-    if sigev.sigev_notify != SIGEV_NONE && sigev.sigev_notify != SIGEV_SIGNAL {
-        return Errno::EINVAL.as_ret();
+    if sigev.notify != SIGEV_NONE && sigev.notify != SIGEV_SIGNAL {
+        return Errno::Einval.as_ret();
     }
 
     // SIGEV_SIGNAL 必须指定合法信号
-    if sigev.sigev_notify == SIGEV_SIGNAL && !(1..=31).contains(&sigev.sigev_signo) {
-        return Errno::EINVAL.as_ret();
+    if sigev.notify == SIGEV_SIGNAL && !(1..=31).contains(&sigev.signo) {
+        return Errno::Einval.as_ret();
     }
 
     // 当前进程 pid
     let current_pid = crate::privileged::proc::scheduler::Scheduler::current().unwrap_or(0);
 
     let mut mgr = TIMER_MANAGER.lock();
-    for i in 0..MAX_POSIX_TIMERS {
-        if !mgr.slots[i].used {
-            let slot = &mut mgr.slots[i];
+    for (i, slot) in mgr.slots.iter_mut().enumerate() {
+        if !slot.used {
             slot.used = true;
             slot.owner_pid = current_pid;
             slot.clockid = clockid;
-            slot.sigev_notify = sigev.sigev_notify;
-            slot.sigev_signo = sigev.sigev_signo;
-            slot.sigev_value = sigev.sigev_value;
+            slot.sigev_notify = sigev.notify;
+            slot.sigev_signo = sigev.signo;
+            slot.sigev_value = sigev.value;
             slot.interval_ns = 0;
             slot.expiry_count = AtomicU64::new(0);
             slot.overrun = 0;
@@ -362,7 +370,7 @@ pub fn sys_timer_create(clockid: i32, sigev_ptr: u64, timer_id_ptr: u64) -> i64 
 
             let timer_id = crate::privileged::glue::low_i32_from_usize(i + 1);
             if !crate::privileged::userptr::write_struct_to_user(timer_id_ptr, &timer_id) {
-                return Errno::EFAULT.as_ret();
+                return Errno::Efault.as_ret();
             }
 
             TIMER_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -376,7 +384,7 @@ pub fn sys_timer_create(clockid: i32, sigev_ptr: u64, timer_id_ptr: u64) -> i64 
         }
     }
 
-    Errno::EAGAIN.as_ret()
+    Errno::Eagain.as_ret()
 }
 
 /// `timer_settime` — 启动 / 重置 timer
@@ -390,18 +398,18 @@ pub fn sys_timer_settime(timer_id: i32, flags: i32, new_value_ptr: u64, old_valu
     use crate::privileged::userptr;
 
     let Some(idx) = id_to_idx(timer_id) else {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     };
 
     if flags & !TFD_TIMER_ABSTIME != 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     // 读取新值
     let new_value = if new_value_ptr != 0 {
         let mut v = Itimerspec::zeroed();
         if !userptr::read_struct_from_user(new_value_ptr, &mut v) {
-            return Errno::EFAULT.as_ret();
+            return Errno::Efault.as_ret();
         }
         v
     } else {
@@ -416,7 +424,7 @@ pub fn sys_timer_settime(timer_id: i32, flags: i32, new_value_ptr: u64, old_valu
     let slot = &mut mgr.slots[idx];
 
     if !slot.used {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     // 输出旧值
@@ -429,13 +437,13 @@ pub fn sys_timer_settime(timer_id: i32, flags: i32, new_value_ptr: u64, old_valu
             0
         };
         let old = Itimerspec {
-            it_interval_sec: (slot.interval_ns / 1_000_000_000).cast_signed(),
-            it_interval_nsec: (slot.interval_ns % 1_000_000_000).cast_signed(),
-            it_value_sec: (remaining_ns / 1_000_000_000).cast_signed(),
-            it_value_nsec: (remaining_ns % 1_000_000_000).cast_signed(),
+            interval_sec: (slot.interval_ns / 1_000_000_000).cast_signed(),
+            interval_nsec: (slot.interval_ns % 1_000_000_000).cast_signed(),
+            value_sec: (remaining_ns / 1_000_000_000).cast_signed(),
+            value_nsec: (remaining_ns % 1_000_000_000).cast_signed(),
         };
         if !userptr::write_struct_to_user(old_value_ptr, &old) {
-            return Errno::EFAULT.as_ret();
+            return Errno::Efault.as_ret();
         }
     }
 
@@ -486,18 +494,18 @@ pub fn sys_timer_gettime(timer_id: i32, curr_value_ptr: u64) -> i64 {
     use crate::privileged::userptr;
 
     let Some(idx) = id_to_idx(timer_id) else {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     };
 
     if curr_value_ptr == 0 {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
 
     let mgr = TIMER_MANAGER.lock();
     let slot = &mgr.slots[idx];
 
     if !slot.used {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     let remaining_ns = if slot.armed.load(Ordering::Acquire) {
@@ -507,13 +515,13 @@ pub fn sys_timer_gettime(timer_id: i32, curr_value_ptr: u64) -> i64 {
         0
     };
     let curr = Itimerspec {
-        it_interval_sec: (slot.interval_ns / 1_000_000_000).cast_signed(),
-        it_interval_nsec: (slot.interval_ns % 1_000_000_000).cast_signed(),
-        it_value_sec: (remaining_ns / 1_000_000_000).cast_signed(),
-        it_value_nsec: (remaining_ns % 1_000_000_000).cast_signed(),
+        interval_sec: (slot.interval_ns / 1_000_000_000).cast_signed(),
+        interval_nsec: (slot.interval_ns % 1_000_000_000).cast_signed(),
+        value_sec: (remaining_ns / 1_000_000_000).cast_signed(),
+        value_nsec: (remaining_ns % 1_000_000_000).cast_signed(),
     };
     if !userptr::write_struct_to_user(curr_value_ptr, &curr) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     0
 }
@@ -523,14 +531,14 @@ pub fn sys_timer_delete(timer_id: i32) -> i64 {
     use crate::privileged::errno::Errno;
 
     let Some(idx) = id_to_idx(timer_id) else {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     };
 
     let mut mgr = TIMER_MANAGER.lock();
     let slot = &mut mgr.slots[idx];
 
     if !slot.used {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     if slot.armed.load(Ordering::Acquire) {
@@ -556,14 +564,14 @@ pub fn sys_timer_getoverrun(timer_id: i32) -> i64 {
     use crate::privileged::errno::Errno;
 
     let Some(idx) = id_to_idx(timer_id) else {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     };
 
     let mgr = TIMER_MANAGER.lock();
     let slot = &mgr.slots[idx];
 
     if !slot.used {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     i64::from(slot.overrun)
@@ -573,12 +581,13 @@ pub fn sys_timer_getoverrun(timer_id: i32) -> i64 {
 ///
 /// `Edgine` 内置两种时钟: `CLOCK_REALTIME` (TICK 精度) / `CLOCK_MONOTONIC` (TICK 精度)
 /// 分辨率 = 1 tick = 1ms (hrtimer 配置, 暂以 1ms 作为标称分辨率)。
+#[must_use]
 pub fn sys_clock_getres(clockid: i32, res_ptr: u64) -> i64 {
     use crate::privileged::errno::Errno;
     use crate::privileged::userptr;
 
     if clockid != CLOCK_REALTIME && clockid != CLOCK_MONOTONIC {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     if res_ptr == 0 {
@@ -587,13 +596,13 @@ pub fn sys_clock_getres(clockid: i32, res_ptr: u64) -> i64 {
 
     // 1ms = 1_000_000 ns
     let res = Itimerspec {
-        it_interval_sec: 0,
-        it_interval_nsec: 1_000_000,
-        it_value_sec: 0,
-        it_value_nsec: 1_000_000,
+        interval_sec: 0,
+        interval_nsec: 1_000_000,
+        value_sec: 0,
+        value_nsec: 1_000_000,
     };
     if !userptr::write_struct_to_user(res_ptr, &res) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     0
 }

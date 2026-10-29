@@ -394,7 +394,11 @@ pub(crate) mod raw {
     }
 
     /// 读一个字节 (从用户态指针) - 内部 unsafe 封装。
-    pub fn read_byte_from_user_ptr(src: *const u8, j: usize) -> u8 {
+    ///
+    /// # Safety
+    ///
+    /// `src` 必须指向可读的用户内存, 且 `src + j` 落在同一映射页的可读区间内.
+    pub unsafe fn read_byte_from_user_ptr(src: *const u8, j: usize) -> u8 {
         // SAFETY: 由调用方保证 src 在 [src, src+j+1) 区间内可读。
         unsafe { *src.add(j) }
     }
@@ -497,8 +501,8 @@ pub(crate) mod raw {
     ///
     /// # Arguments
     /// - `process`: 与本 `UserProcess` 镜像关联的权威 `Process` `NonNull` 句柄.
-    ///              构造时写入 `UserProcess::process` 字段, 后续通过
-    ///              `UserProcess::process()` 安全访问.
+    ///   构造时写入 `UserProcess::process` 字段, 后续通过
+    ///   `UserProcess::process()` 安全访问.
     ///
     /// # 返回
     /// 已清零的 `UserProcess` 裸指针; `process` 字段已正确指向传入的 `Process`.
@@ -526,31 +530,37 @@ pub(crate) mod raw {
 
     /// 释放 `alloc_kernel_process` 分配的 `Process` 内存 (回滚路径专用).
     ///
-    /// # Safety (内部)
+    /// # Safety
     /// - `kproc_ptr` 必须为 `alloc_kernel_process` 返回的合法指针, 且未再被使用.
     ///   调用后该指针失效, 不得再次解引用.
     /// - 仅用于 `UserProcManager::create()` 的失败回滚路径; 成功路径下应
     ///   将其所有权转移给 `PROCESS_TABLE.insert` 或 `destroy` 链路.
-    pub fn free_kernel_process(kproc_ptr: *mut Process) {
+    pub unsafe fn free_kernel_process(kproc_ptr: *mut Process) {
         if kproc_ptr.is_null() {
             return;
         }
 
-        crate::privileged::mm::kfree(kproc_ptr.cast::<u8>());
+        // SAFETY: 由本函数的安全契约保证 kproc_ptr 是 alloc_kernel_process 返回且未再使用的指针.
+        unsafe {
+            crate::privileged::mm::kfree(kproc_ptr.cast::<u8>());
+        }
     }
 
     /// 释放 `alloc_user_process` 分配的 `UserProcess` 镜像内存 (回滚路径专用).
     ///
-    /// # Safety (内部)
+    /// # Safety
     /// - `proc_ptr` 必须为 `alloc_user_process` 返回的合法指针, 且未再被使用.
     /// - 必须先于 `free_kernel_process` 调用 (LIFO 反序), 以避免
     ///   `UserProcess::process` `NonNull` 字段成为悬挂指针.
-    pub fn free_user_process(proc_ptr: *mut UserProcess) {
+    pub unsafe fn free_user_process(proc_ptr: *mut UserProcess) {
         if proc_ptr.is_null() {
             return;
         }
 
-        crate::privileged::mm::kfree(proc_ptr.cast::<u8>());
+        // SAFETY: 由本函数的安全契约保证 proc_ptr 是 alloc_user_process 返回且未再使用的指针.
+        unsafe {
+            crate::privileged::mm::kfree(proc_ptr.cast::<u8>());
+        }
     }
 
     /// 从 PID/CR3 构造 `UserProcRef` 用于新创建进程。
@@ -699,8 +709,15 @@ unsafe impl Send for UserProcManager {}
 // SAFETY: 同上, 外部锁保证并发安全.
 unsafe impl Sync for UserProcManager {}
 
+impl Default for UserProcManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UserProcManager {
     /// 构造空的管理器 (映射表为空, 当前进程未设置)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             current: AtomicU64::new(0),
@@ -888,8 +905,12 @@ impl UserProcManager {
             // 失败回滚 (DECISION-027): 页表创建失败, 必须释放已分配的
             // UserProcess + Process 内存. 顺序为 LIFO 反序: 先 UserProcess
             // (避免 process NonNull 字段成为悬挂), 再 Process.
-            raw::free_user_process(proc_ptr);
-            raw::free_kernel_process(kproc_ptr);
+            // SAFETY: proc_ptr / kproc_ptr 均来自上方 alloc_user_process /
+            // alloc_kernel_process 的成功返回, 尚未被其他路径释放; 按 LIFO 反序归还.
+            unsafe {
+                raw::free_user_process(proc_ptr);
+                raw::free_kernel_process(kproc_ptr);
+            }
             return None;
         }
 
@@ -902,8 +923,11 @@ impl UserProcManager {
             {
                 raw::destroy_user_page_table(cr3_val);
             }
-            raw::free_user_process(proc_ptr);
-            raw::free_kernel_process(kproc_ptr);
+            // SAFETY: 同上方回滚路径 — 两个指针均来自成功分配且尚未释放, LIFO 反序归还.
+            unsafe {
+                raw::free_user_process(proc_ptr);
+                raw::free_kernel_process(kproc_ptr);
+            }
             return None;
         }
 
@@ -966,8 +990,11 @@ impl UserProcManager {
             {
                 raw::destroy_user_page_table(cr3_val);
             }
-            raw::free_user_process(proc_ptr);
-            raw::free_kernel_process(kproc_ptr);
+            // SAFETY: 同上方回滚路径 — 两个指针均来自成功分配且尚未释放, LIFO 反序归还.
+            unsafe {
+                raw::free_user_process(proc_ptr);
+                raw::free_kernel_process(kproc_ptr);
+            }
             return None;
         }
         let kstack_top = kstack as u64 + KERNEL_BASE + USER_KSTACK_SIZE;
@@ -1015,16 +1042,21 @@ impl UserProcManager {
     /// 之间若被定时器 tick 抢占, `schedule()` 会选中本进程并以 `process_switch_asm`
     /// 内核分支执行 `mov cr3,0` → #PF → double fault → triple fault.
     ///
-    /// 本方法在入队**之前**把上下文填为有效值 (entry/user_stack/cr3 取自权威
+    /// 本方法在入队**之前**把上下文填为有效值 (`entry/user_stack/cr3` 取自权威
     /// `Process`, 段选择子与 rflags 复用 [`ProcessContext::set_user_mode`](crate::privileged::proc::types::ProcessContext::set_user_mode), 与
     /// `enter_user_asm` 载入的 0x1B/0x23/0x202 逐一对应), 恢复
-    /// "可运行 ⇒ 上下文有效" 不变式, 使此后任意抢占 (含跨核 load_balance / IPI)
+    /// "可运行 ⇒ 上下文有效" 不变式, 使此后任意抢占 (含跨核 `load_balance` / IPI)
     /// 均能经调度器用户态出口正确进入用户态.
     ///
     /// `enter_user_asm` 快路径保持不变: 二者是同一状态的两个入口, 择一胜出结果
     /// 一致 (调度器侧亦执行 `set_kernel_stack` / `gdt_set_user_cr3` /
     /// `map_rsp0_page`, 见 `Scheduler::schedule`).
-    pub fn init_first_entry_context(proc: *mut UserProcess) {
+    ///
+    /// # Safety
+    ///
+    /// `proc` 必须为非空且指向 `USER_PROC_MANAGER` 持有的有效 `UserProcess` 分配;
+    /// 在该分配被卸载释放前调用.
+    pub unsafe fn init_first_entry_context(proc: *mut UserProcess) {
         if proc.is_null() {
             return;
         }
@@ -1049,7 +1081,13 @@ impl UserProcManager {
     }
 
     /// 切换到该进程的地址空间并进入 Ring 3 执行 (不返回)
-    pub fn enter(&self, proc: *mut UserProcess) {
+    ///
+    /// # Safety
+    ///
+    /// `proc` 必须为非空且指向 `USER_PROC_MANAGER` 持有的有效 `UserProcess`;
+    /// 本函数正常路径不返回, 但已在 `<Self as UserProcManager>::enter` 内立即
+    /// 切换执行流, 调用方需保证此刻该分配未被并发卸载.
+    pub unsafe fn enter(&self, proc: *mut UserProcess) {
         crate::klog_boot_info!("[USER] enter() called with proc={:#X}", proc as u64);
         if proc.is_null() {
             crate::klog_boot_info!("[USER] enter() proc is null, returning");
@@ -1292,14 +1330,14 @@ impl UserProcManager {
             crate::privileged::mm::VirtAddr(code_page_virt),
         ) {
             // 通过内核映射读取用户代码页内容
-            let kernel_virt = phys.0 + crate::privileged::mm::KERNEL_BASE as u64;
+            let kernel_virt = phys.0 + crate::privileged::mm::KERNEL_BASE;
             let code_ptr = kernel_virt as *const u8;
             // 读取前 16 字节作为指令样本
             let mut instr_sample = [0u8; 16];
             // SAFETY: code_ptr 指向已映射的物理页 (经 KERNEL_BASE 偏移后内核可访问), 读取 16 字节在页内。
             unsafe {
-                for i in 0..16 {
-                    instr_sample[i] = *code_ptr.add(i);
+                for (i, slot) in instr_sample.iter_mut().enumerate() {
+                    *slot = *code_ptr.add(i);
                 }
             }
             crate::klog_boot_info!(
@@ -1427,7 +1465,7 @@ impl UserProcManager {
         // SAFETY: 调用方保证 table_phys 为有效页表页物理地址; 高半区直接映射使其
         // 内核可读; index < 512 保证不越出该页.
         unsafe {
-            let base = (table_phys + crate::privileged::mm::KERNEL_BASE as u64) as *const u64;
+            let base = (table_phys + crate::privileged::mm::KERNEL_BASE) as *const u64;
             base.add(index).read_volatile()
         }
     }
@@ -1657,12 +1695,13 @@ impl UserProcManager {
             if !argv.is_null() && (i < arg_count) {
                 // SAFETY: argv 由调用方保证, i < arg_count 有效。
                 let src = unsafe { *argv.add(i) };
-                let l = arg_lens[i];
+                let l = arg_lens.get(i).copied().unwrap_or(0);
                 for j in 0..l {
                     let b = if src.is_null() {
                         0u8
                     } else {
-                        raw::read_byte_from_user_ptr(src, j)
+                        // SAFETY: src 由 argv 有效项解引用得到, j < l 且 l 为该字符串长度, 区间可读.
+                        unsafe { raw::read_byte_from_user_ptr(src, j) }
                     };
                     raw::write_user_byte(cr3, str_off + j, b);
                 }
@@ -1693,12 +1732,12 @@ impl UserProcManager {
         start_idx: usize,
         num_pages: u64,
     ) {
-        let file_offset_bytes = crate::privileged::glue::usize_from_u64(phdr.p_offset);
+        let file_offset_bytes = crate::privileged::glue::usize_from_u64(phdr.offset);
         let mut copied: u64 = 0;
-        let first_page_offset = phdr.p_vaddr & 0xFFF;
+        let first_page_offset = phdr.vaddr & 0xFFF;
 
         for j in 0..num_pages {
-            if copied >= phdr.p_filesz {
+            if copied >= phdr.filesz {
                 break;
             }
             let page_phys = allocated_pages[start_idx + crate::privileged::glue::usize_from_u64(j)];
@@ -1708,7 +1747,7 @@ impl UserProcManager {
 
             let off_in_page = if j == 0 { first_page_offset } else { 0 };
             let max_in_page = PAGE_SIZE - off_in_page;
-            let remaining = phdr.p_filesz - copied;
+            let remaining = phdr.filesz - copied;
             let chunk = if max_in_page < remaining {
                 max_in_page
             } else {
@@ -1726,7 +1765,11 @@ impl UserProcManager {
     }
 
     /// 从内存中的 ELF 映像加载用户进程, 返回新 pid (失败为负值)
-    pub fn load_elf_from_memory(&self, elf_data: *const u8, elf_size: u64, pwm: u64) -> i32 {
+    ///
+    /// `elf_addr` 为内核地址空间中的 ELF 映像起始地址 (`usize` 地址值中转,
+    /// 避免以裸指针参数越层传递); 区间有效性由本函数首部校验.
+    pub fn load_elf_from_memory(&self, elf_addr: usize, elf_size: u64, pwm: u64) -> i32 {
+        let elf_data = elf_addr as *const u8;
         crate::klog_boot_info!("[ELF] load_elf_from_memory: entry");
         if elf_data.is_null() || elf_size < core::mem::size_of::<ElfHeader>() as u64 {
             crate::klog_boot_info!("[ELF] load_elf_from_memory: null or too small");
@@ -1811,14 +1854,14 @@ impl UserProcManager {
         let allocated_pages: &mut [u64] = &mut allocated_pages;
         let mut page_count: usize = 0;
 
-        let phnum = header.e_phnum as usize;
+        let phnum = header.phnum as usize;
         if phnum > 256 {
             return None;
         }
 
         for i in 0..phnum {
             let phdr_size = core::mem::size_of::<ElfPhdr>() as u64;
-            let phdr_offset = header.e_phoff + (i as u64) * u64::from(header.e_phentsize);
+            let phdr_offset = header.phoff + (i as u64) * u64::from(header.phentsize);
             if phdr_offset + phdr_size > elf_size {
                 return None;
             }
@@ -1830,20 +1873,20 @@ impl UserProcManager {
                     .read_unaligned()
             };
 
-            if phdr.p_type != PT_LOAD {
+            if phdr.ty != PT_LOAD {
                 continue;
             }
 
-            let vaddr_start = (phdr.p_vaddr + load_bias) & !(PAGE_SIZE - 1);
+            let vaddr_start = (phdr.vaddr + load_bias) & !(PAGE_SIZE - 1);
             let vaddr_end =
-                (phdr.p_vaddr + phdr.p_memsz + load_bias + (PAGE_SIZE - 1)) & !(PAGE_SIZE - 1);
+                (phdr.vaddr + phdr.memsz + load_bias + (PAGE_SIZE - 1)) & !(PAGE_SIZE - 1);
             let num_pages = (vaddr_end - vaddr_start) / PAGE_SIZE;
 
             for j in 0..num_pages {
                 let vaddr = vaddr_start + j * PAGE_SIZE;
 
                 let mut flags = PageFlags::PRESENT | PageFlags::USER;
-                if phdr.p_flags & 0x02 != 0 {
+                if phdr.flags & 0x02 != 0 {
                     flags |= PageFlags::WRITABLE;
                 }
                 let flags = flags.bits();
@@ -1880,7 +1923,7 @@ impl UserProcManager {
                 }
             }
 
-            if phdr.p_filesz > 0 {
+            if phdr.filesz > 0 {
                 let start_idx = page_count.saturating_sub(num_pages as usize);
                 Self::copy_segment_file_data(
                     &phdr,
@@ -1896,7 +1939,11 @@ impl UserProcManager {
     }
 
     /// 从扁平二进制映像创建用户进程, 返回新 pid (失败为负值)
-    pub fn create_from_binary(&self, code: *const u8, code_size: u64, pwm: u64) -> i32 {
+    ///
+    /// # Safety
+    ///
+    /// `code` 必须指向可读的内核内存, `[code, code + code_size)` 区间有效.
+    pub unsafe fn create_from_binary(&self, code: *const u8, code_size: u64, pwm: u64) -> i32 {
         let info = UserProcInfo {
             entry: USER_CODE_BASE,
             name: [0; 64],

@@ -19,7 +19,7 @@
 //! 编译门控: 仅 aarch64 目标, 或被 `host-test` 测试宿主引用时编译
 //! (见 [`super::gic_logic` 的模块声明](super))。
 
-/// `GICD_CTLR` 亲和路由使能掩码 (ARE_S bit4 / ARE_NS bit5)。
+/// `GICD_CTLR` 亲和路由使能掩码 (`ARE_S` bit4 / `ARE_NS` bit5)。
 pub const GICD_CTLR_ARE_MASK: u32 = (1 << 4) | (1 << 5);
 
 /// `GICD_CTLR.EnableGrp0` (bit0) 掩码 — Distributor 初始化用。
@@ -70,8 +70,8 @@ pub const CTLR_RWP_SPIN_LIMIT: u32 = 1_000_000;
 
 /// 判定 `GICD_CTLR` 是否处于亲和路由模式 (ARE=1)。
 ///
-/// `true`  ⇒ SPI 路由走 64 位 `GICD_IROUTER`、SGI 经 `ICC_SGI1R_EL1` 投递 (GICv3 原生);
-/// `false` ⇒ 处于 GICv2 兼容的 8 位 `GICD_ITARGETSR` 模式。
+/// `true`  ⇒ SPI 路由走 64 位 `GICD_IROUTER`、SGI 经 `ICC_SGI1R_EL1` 投递 (`GICv3` 原生);
+/// `false` ⇒ 处于 `GICv2` 兼容的 8 位 `GICD_ITARGETSR` 模式。
 ///
 /// 内核跨核 IPI 与 SPI 分发**均以 ARE=1 为前提**, 故本函数在
 /// [`verify_post_conditions`] 中作为 fail-fast 判据使用, 而非运行期分支条件
@@ -136,7 +136,7 @@ pub fn find_redist_frame(
     None
 }
 
-/// GICv3 初始化后置条件回读判定。
+/// `GICv3` 初始化后置条件回读判定。
 ///
 /// 入参依次为 `GICD_CTLR` / `GICR_WAKER` / `GICR_ISENABLER0` / `ICC_IGRPEN1_EL1`
 /// 的实测值。返回 `Err(原因)` 表示**首个**不满足的后置条件, `Ok(())` 表示全部通过。

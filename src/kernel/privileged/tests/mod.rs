@@ -110,6 +110,7 @@ pub struct TestRunner {
 }
 
 impl TestRunner {
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             registry: IrqSpinLock::new(TestRegistry::new()),
@@ -147,8 +148,7 @@ impl TestRunner {
         // 裸机 (kernel_test) 下其内部即 arch!(interrupt_disable), 语义完全等价.
         let saved_flags = crate::privileged::sync::disable_interrupts();
 
-        for i in 0..total {
-            let tc = reg.cases[i];
+        for (i, tc) in reg.cases.iter().take(total).enumerate() {
             let module = tc.module;
             let name = tc.name;
             let func = tc.func;
@@ -284,6 +284,12 @@ impl TestRunner {
                 }
             }
         }
+    }
+}
+
+impl Default for TestRunner {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

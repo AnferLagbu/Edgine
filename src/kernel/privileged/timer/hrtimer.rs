@@ -45,6 +45,7 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use crate::privileged::error::KernelError;
 use crate::privileged::sync::IrqSpinLock as Mutex;
 use alloc::vec::Vec;
 // ============================================================================
@@ -112,6 +113,7 @@ impl HrTimer {
     /// 创建未初始化的 `HrTimer`
     ///
     /// 必须调用 `init()` 后才能使用。
+    #[must_use]
     pub const fn uninit() -> Self {
         Self {
             expiry_ns: AtomicU64::new(0),
@@ -466,6 +468,7 @@ pub fn hrtimer_pending_count() -> usize {
 ///
 /// - 硬件时基已建立 (`x86_64`: TSC, aarch64: `CNTPCT_EL0`): 计数器粒度 (亚 tick)
 /// - 未建立: tick 粒度 (毫秒级)
+#[must_use]
 pub fn hrtimer_clock_read() -> u64 {
     crate::privileged::timer::tick::get_uptime_ns()
 }
@@ -495,18 +498,18 @@ pub fn hrtimer_clock_read() -> u64 {
 ///
 /// # Returns
 /// * `Ok(())`  - sleep 成功
-/// * `Err(())` - hrtimer 框架未初始化 (`hrtimer_init()` 未调用)
+/// * `Err(KernelError::NotInitialized)` - hrtimer 框架未初始化 (`hrtimer_init()` 未调用)
 ///
 /// # Errors
-/// 当 hrtimer 框架尚未初始化 (`HRTIMER_READY == false`) 时返回 `Err(())`.
-pub fn hrtimer_sleep(delay_ns: u64) -> Result<(), ()> {
+/// 当 hrtimer 框架尚未初始化 (`HRTIMER_READY == false`) 时返回 `Err(KernelError::NotInitialized)`.
+pub fn hrtimer_sleep(delay_ns: u64) -> Result<(), KernelError> {
     static SLEEP_FLAG: AtomicBool = AtomicBool::new(false);
     const SLEEP_WAIT_BOUND: u32 = 1_000_000_000; // ~1s @ 1GHz spin_loop
     if delay_ns == 0 {
         return Ok(());
     }
     if !HRTIMER_READY.load(Ordering::Acquire) {
-        return Err(());
+        return Err(KernelError::NotInitialized);
     }
 
     // 闭包用 static 状态在 ISR (hrtimer 回调) 与调用方 (本函数) 之间传递完成信号.
@@ -762,7 +765,7 @@ fn periodic_test_callback(_timer: &HrTimer) -> HrTimerRestart {
     HrTimerRestart::Periodic
 }
 
-/// 注册高精度定时器 (hrtimer) 测试用例 (kernel_test)
+/// 注册高精度定时器 (hrtimer) 测试用例 (`kernel_test`)
 #[cfg(feature = "kernel_test")]
 pub fn register_hrtimer_tests() {
     use crate::privileged::tests::runner;

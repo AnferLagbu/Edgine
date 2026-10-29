@@ -59,24 +59,24 @@ fn current_pwm() -> u64 {
 /// 验证 open flags 合法: 只接受低 3 位访问模式, 其他位 POSIX 定义.
 fn validate_flags(flags: i32) -> Result<(), Errno> {
     if flags < 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     // 访问模式必须恰好是 O_RDONLY / O_WRONLY / O_RDWR 其一
     let access = flags & 0o3;
     if access > 0o2 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     // O_CREAT 必须配合 O_WRONLY 或 O_RDWR
     if (flags & O_CREAT) != 0 && access == O_RDONLY {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     // O_TRUNC 隐含可写
     if (flags & O_TRUNC) != 0 && access == O_RDONLY {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     // O_DIRECTORY 与 O_CREAT 不能同用
     if (flags & O_DIRECTORY) != 0 && (flags & O_CREAT) != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     Ok(())
 }
@@ -94,10 +94,10 @@ fn validate_flags(flags: i32) -> Result<(), Errno> {
 /// 其余错误 (如文件不存在、无权限、fd 已满等) 以对应的 `Errno` 返回.
 pub fn open_syscall(path_ptr: u64, flags: i32, mode: i32) -> Result<usize, Errno> {
     if path_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_ptr(path_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     validate_flags(flags)?;
     // mode 仅在 O_CREAT 生效, 否则忽略 (POSIX 允许 mode 参数始终存在, 内核忽略)
@@ -105,7 +105,7 @@ pub fn open_syscall(path_ptr: u64, flags: i32, mode: i32) -> Result<usize, Errno
     // 的 open 调用若携带 mode 参数即返回 EINVAL, 违反 POSIX 语义.
     // 修复: 移除该虚假校验, 仅在 O_CREAT 时校验 mode 范围.
     if (flags & O_CREAT) != 0 && !(0..=0o7777).contains(&mode) {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     let pwm = current_pwm();
     let r = fw::vfs_open(path_ptr as *const u8, flags.cast_unsigned(), pwm);
@@ -139,14 +139,14 @@ pub fn creat_syscall(path_ptr: u64, mode: i32) -> Result<usize, Errno> {
 /// 当 `fd` 为负数时返回 `EBADF`; 其余错误 (如 fd 无效等) 以对应的 `Errno` 返回.
 pub fn close_syscall(fd: i32) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     // pidfd 不经过 VFS fd_table, 由 pidfd 子系统自行关闭.
     if crate::functions::proc::pidfd::is_pidfd_fd(fd) {
         if crate::functions::proc::pidfd::free_entry(fd) {
             return Ok(0);
         }
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     // T1 G4: userfaultfd 不经过 VFS fd_table, 由 uffd 机制自行回收
     // (并唤醒阻塞在该 fd 上的缺页进程 / read() 线程).
@@ -154,7 +154,7 @@ pub fn close_syscall(fd: i32) -> Result<usize, Errno> {
         if crate::privileged::mm::uffd_release(fd) {
             return Ok(0);
         }
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     // 方案 C (socket P3): sm socket fd 不在 VFS FdTable 内, vfs_close 对其是
     // no-op (accept 循环 FD 无法回收). FdPlan 命名空间去重叠后 subsystem_of

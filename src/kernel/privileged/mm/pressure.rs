@@ -43,6 +43,7 @@ pub enum MemoryPressure {
 
 impl MemoryPressure {
     /// 由原始 `u8` 值还原压力级别 (未知值回退 `Normal`)。
+    #[must_use]
     pub fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::Warning,
@@ -53,16 +54,19 @@ impl MemoryPressure {
     }
 
     /// 是否处于严重或紧急压力 (`Critical` / `Emergency`)。
+    #[must_use]
     pub fn is_critical(self) -> bool {
         matches!(self, Self::Critical | Self::Emergency)
     }
 
     /// 是否处于紧急压力 (`Emergency`)。
+    #[must_use]
     pub fn is_emergency(self) -> bool {
         matches!(self, Self::Emergency)
     }
 
     /// 压力级别的英文短描述 (用于日志)。
+    #[must_use]
     pub fn description(self) -> &'static str {
         match self {
             Self::Normal => "normal",

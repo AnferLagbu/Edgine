@@ -146,6 +146,13 @@ pub fn get_unkfs() -> &'static UnkfsData {
     })
 }
 
+/// 待序列化的数据集元数据快照: (对象清单, 目录条目清单, 下一个对象编号).
+type SerializeSnapshot = (
+    Vec<UnkfsDmuObject>,
+    Vec<(alloc::string::String, Vec<u8>)>,
+    u64,
+);
+
 impl UnkfsData {
     /// 扫描所有已注册的块设备，返回检测到的驱动器列表 (`drive_id`, `partition_start_lba`)
     /// 对于已格式化的磁盘读取 `Edgine` 签名，对于空白磁盘使用默认分区起始偏移
@@ -324,10 +331,8 @@ impl UnkfsData {
         {
             let datasets = self.datasets.lock();
             let ub_copy = *self.spa.uberblock.lock();
-            if !ub_copy.root_bp.is_null() {
-                if self.deserialize_dataset_metadata(&ub_copy.root_bp) {
-                    has_persisted = true;
-                }
+            if !ub_copy.root_bp.is_null() && self.deserialize_dataset_metadata(&ub_copy.root_bp) {
+                has_persisted = true;
             }
             if !has_persisted {
                 datasets[0].init(0);
@@ -756,11 +761,9 @@ impl UnkfsData {
         else {
             return KernelError::NoSpace.as_i32();
         };
-        if self.is_disk_mode() {
-            if self.spa.write_bp(&new_bp, write_data) != 0 {
-                self.spa.free(&new_bp, txg);
-                return KernelError::Io.as_i32();
-            }
+        if self.is_disk_mode() && self.spa.write_bp(&new_bp, write_data) != 0 {
+            self.spa.free(&new_bp, txg);
+            return KernelError::Io.as_i32();
         }
         obj.cow_bp(new_bp, txg);
         obj.size = (offset + to_write as u64).max(obj.size);
@@ -1092,11 +1095,10 @@ impl UnkfsData {
             if let Some(new_bp) =
                 self.spa
                     .allocate(target_bytes.len() as u64, cksum_type, comp_type, txg)
+                && let Some(mut obj) = ds.objset.get_obj_mut(obj_id)
             {
-                if let Some(mut obj) = ds.objset.get_obj_mut(obj_id) {
-                    obj.bp = new_bp;
-                    ds.objset.update_obj(&obj);
-                }
+                obj.bp = new_bp;
+                ds.objset.update_obj(&obj);
             }
 
             if !ds.link(link_name, obj_id) {
@@ -1337,8 +1339,8 @@ impl UnkfsData {
         }
 
         let mut offset = 0;
-        for i in 0..4 {
-            if obj.data_hash[i] != 0 {
+        for (i, hash) in obj.data_hash.iter().enumerate() {
+            if *hash != 0 {
                 let attr_name = alloc::format!("user.attr{i}\0");
                 let name_bytes = attr_name.as_bytes();
                 if offset + name_bytes.len() <= buf.len() {
@@ -1466,13 +1468,7 @@ impl UnkfsData {
     }
 
     /// 收集待序列化的对象/目录条目快照 (超出安全上限返回 `None`)
-    fn collect_serialize_snapshot(
-        &self,
-    ) -> Option<(
-        Vec<UnkfsDmuObject>,
-        Vec<(alloc::string::String, Vec<u8>)>,
-        u64,
-    )> {
+    fn collect_serialize_snapshot(&self) -> Option<SerializeSnapshot> {
         const MAX_SERIALIZE_OBJECTS: usize = 65536;
         const MAX_SERIALIZE_ENTRIES: usize = 65536;
 

@@ -25,8 +25,16 @@ pub struct OpenFileTable {
     files: IrqSpinLock<[Option<OpenFile>; MAX_OPEN_FILES]>,
 }
 
+impl Default for OpenFileTable {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OpenFileTable {
     /// 创建未初始化的 `OpenFileTable`
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             files: IrqSpinLock::new([const { None }; MAX_OPEN_FILES]),

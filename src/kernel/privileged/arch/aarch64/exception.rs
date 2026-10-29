@@ -1,10 +1,10 @@
-//! AArch64 异常向量表 (Exception Vector Table)
+//! `AArch64` 异常向量表 (Exception Vector Table)
 //!
 //! ARMv8-A 异常级别 EL1 (内核) 异常向量表。
-//! 每个异常类型有 4 个入口: 同异常级别使用 SP_EL0/SP_ELx, 不同异常级别使用 SP_EL0/SP_ELx。
+//! 每个异常类型有 4 个入口: 同异常级别使用 `SP_EL0/SP_ELx`, 不同异常级别使用 `SP_EL0/SP_ELx`。
 //! 本文件 cast 多为异常返回码/中断号转换, 硬件已知安全.
 //!
-//! 向量表布局 (VBAR_EL1):
+//! 向量表布局 (`VBAR_EL1)`:
 //! | 偏移 | 类型 | 级别 | 说明 |
 //! |------|------|------|------|
 //! | +0x000 | Synchronous | EL1t | current EL, SP_EL0 |
@@ -27,7 +27,7 @@
 use core::arch::global_asm;
 use core::sync::atomic::{AtomicU64, Ordering};
 
-/// 定时器中断间隔 (ticks), 在 boot 时由 timer::init() 设置
+/// 定时器中断间隔 (ticks), 在 boot 时由 `timer::init()` 设置
 pub static TIMER_INTERVAL_TICKS: AtomicU64 = AtomicU64::new(0);
 
 // ============================================================================
@@ -506,7 +506,7 @@ unexpected_exception:
 // 异常上下文 (保存/恢复)
 // ============================================================================
 
-/// 异常帧 (保存在 SPSR_EL1 + ELR_EL1)
+/// 异常帧 (保存在 `SPSR_EL1` + `ELR_EL1`)
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct ExceptionFrame {
@@ -567,6 +567,7 @@ unsafe extern "C" {
 /// 该 trampoline 位于 `.vectors` 段 (链接于高半区), 进入 EL0 前 `TTBR0` 仍指向
 /// 内核恒等表、`TTBR1` 指向 tramp 表, 故该高半区地址经 `TTBR1` 可达, 保证切换
 /// `TTBR0` 后当前指令流不被 Prefetch Abort.
+#[must_use]
 pub fn kpti_enter_user_trampoline_high() -> u64 {
     &raw const kpti_enter_user_trampoline as u64
 }
@@ -579,7 +580,7 @@ pub fn kpti_enter_user_trampoline_high() -> u64 {
 ///
 /// EL0 SVC 系统调用处理器。
 /// 从 EL0 通过 `svc #0` 进入。
-/// Edgine aarch64 系统调用约定: x0=syscall_num, x1-x4=args, 返回 x0。
+/// Edgine aarch64 系统调用约定: `x0=syscall_num`, x1-x4=args, 返回 x0。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn svc_handler(frame: &mut ExceptionFrame) -> u64 {
@@ -636,7 +637,7 @@ pub extern "C" fn svc_handler(frame: &mut ExceptionFrame) -> u64 {
     result.cast_unsigned()
 }
 
-/// 内核 IRQ 统一分发 (EL1h 与 EL0 两条异常路径的**唯一**实现)。
+/// 内核 IRQ 统一分发 (`EL1h` 与 EL0 两条异常路径的**唯一**实现)。
 ///
 /// 中断可在核处于 EL1 (内核态) 或 EL0 (用户态) 时到达; SGI/PPI 的**接收语义与
 /// 异常级无关**, 二者必须等价处置。历史缺陷: EL0 路径曾自带一份裁剪过的分发
@@ -781,7 +782,7 @@ fn handle_irq(from_el0: bool) {
 
 /// EL0 IRQ 处理器 (用户态中断入口)。
 ///
-/// 与 EL1h 的 [`irq_handler`] 共用 `handle_irq`: 中断接收语义与异常级无关,
+/// 与 `EL1h` 的 [`irq_handler`] 共用 `handle_irq`: 中断接收语义与异常级无关,
 /// EL0 期到达的内核 SGI (7/13/14) 必须与内核态同样处置 (历史缺陷见 `handle_irq`)。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
@@ -795,7 +796,7 @@ pub extern "C" fn irq_handler_el0(_frame: &ExceptionFrame) {
     crate::privileged::sync::lockdep::irq_exit();
 }
 
-/// 默认同步异常处理 (EL1h / EL0)
+/// 默认同步异常处理 (`EL1h` / EL0)
 ///
 /// 两条调用路径共用本函数: `handle_el1h_sync` (内核态同 EL 异常) 与
 /// `handle_el0_sync` (EL0 非 SVC 同步异常)。行为按异常来源分派:
@@ -910,7 +911,7 @@ unsafe fn exc_puthex(val: u64) {
 // (TLB 失效 = 13, 重新调度 = 14), 与FREG SGI 7 及 timer PPI 30 均不冲突。
 // 使能由每核入口 `gic::init_per_cpu` 统一完成, 本模块只负责接收路由。
 
-/// 默认 IRQ 处理 (EL1h, 内核态中断入口)。
+/// 默认 IRQ 处理 (`EL1h`, 内核态中断入口)。
 ///
 /// 与 EL0 的 [`irq_handler_el0`] 共用 `handle_irq`。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
@@ -924,12 +925,12 @@ pub extern "C" fn irq_handler(_frame: &ExceptionFrame) {
     crate::privileged::sync::lockdep::irq_exit();
 }
 
-/// 默认 FIQ 处理 (EL1h)
+/// 默认 FIQ 处理 (`EL1h`)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn fiq_handler(_frame: &ExceptionFrame) {}
 
-/// 默认 SError 处理 (EL1h)
+/// 默认 `SError` 处理 (`EL1h`)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn serror_handler(_frame: &ExceptionFrame) {
@@ -941,17 +942,17 @@ pub extern "C" fn serror_handler(_frame: &ExceptionFrame) {
     }
 }
 
-/// 设置 VBAR_EL1 指向异常向量表 (仅设寄存器, 不开中断)
+/// 设置 `VBAR_EL1` 指向异常向量表 (仅设寄存器, 不开中断)
 ///
 /// # Safety
 ///
 /// 仅在启动阶段调用，调用前需确保向量表已链接到内核镜像中。
 ///
-/// VBAR_EL1 必须使用 TTBR1 高地址 (0xFFFF_0000_...), 因为进入 EL0 后
-/// TTBR0_EL1 指向用户页表, 低地址无法通过 TTBR0 访问。
-/// 向量表链接于高半区 (VMA = PA + KERNEL_BASE), 符号地址本身即高地址。
+/// `VBAR_EL1` 必须使用 TTBR1 高地址 (`0xFFFF_0000`_...), 因为进入 EL0 后
+/// `TTBR0_EL1` 指向用户页表, 低地址无法通过 TTBR0 访问。
+/// 向量表链接于高半区 (VMA = PA + `KERNEL_BASE`), 符号地址本身即高地址。
 ///
-/// VBAR_EL1 是 **per-CPU** 寄存器: BSP 与每个 AP 均须各自调用本函数.
+/// `VBAR_EL1` 是 **per-CPU** 寄存器: BSP 与每个 AP 均须各自调用本函数.
 /// AP 侧刻意不在此时开中断 (延后至 per-CPU 状态就绪, 见 `smp_init::ap_main`).
 pub unsafe fn init_vectors() {
     unsafe {
@@ -963,7 +964,7 @@ pub unsafe fn init_vectors() {
     }
 }
 
-/// 初始化异常: 设置 VBAR_EL1 指向向量表, 清除 DAIF (开中断)
+/// 初始化异常: 设置 `VBAR_EL1` 指向向量表, 清除 DAIF (开中断)
 ///
 /// # Safety
 ///

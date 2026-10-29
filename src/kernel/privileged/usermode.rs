@@ -49,7 +49,7 @@ pub unsafe fn enter_user_mode(vmspace: &VmSpace, ctx: &UserContext) -> ! {
 /// 进入用户模式 (aarch64 架构版)。
 ///
 /// # SAFETY
-/// 契约同 x86_64 版本; `Arch::enter_user` 内部执行 msr sp_el0/elr_el1/spsr_el1 + eret.
+/// 契约同 x86_64 版本; `Arch::enter_user` 内部执行 msr `sp_el0/elr_el1/spsr_el1` + eret.
 pub unsafe fn enter_user_mode(vmspace: &VmSpace, ctx: &UserContext) -> ! {
     <crate::privileged::arch::Aarch64 as Arch>::enter_user(
         crate::privileged::glue::usize_from_u64(ctx.elr_el1), // ELR_EL1
@@ -68,6 +68,7 @@ pub unsafe fn enter_user_mode(vmspace: &VmSpace, ctx: &UserContext) -> ! {
 /// # 安全约束
 /// - 调用方保证 `num` 是有效的系统调用号。
 /// - 参数 `a0..a3` 来自用户态寄存器, 由 `UserContext` 提取。
+#[must_use]
 pub fn dispatch_syscall(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> i64 {
     // SAFETY: syscall_dispatch 是 unsafe extern "C" 因为处理原始用户态参数.
     // 框架 (TCB) 负责在传递给 functions 之前校验这些参数.

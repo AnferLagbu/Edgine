@@ -131,8 +131,8 @@ pub fn set_blocking(fd: usize, val: bool) {
     }
 }
 
-/// 读取 socket 超时刻度 (P5d / DECISION-096): `recv=true` 取 SO_RCVTIMEO,
-/// `false` 取 SO_SNDTIMEO. 返回单位纳秒, `0` = 无超时. `fd` 为 Smoltcp 段槽位
+/// 读取 socket 超时刻度 (P5d / DECISION-096): `recv=true` 取 `SO_RCVTIMEO`,
+/// `false` 取 `SO_SNDTIMEO`. 返回单位纳秒, `0` = 无超时. `fd` 为 Smoltcp 段槽位
 /// 索引 (与 `blocking` 同空间). 调用方须持有 `NET_STATE` 锁.
 pub fn sock_timeout_ns(fd: usize, recv: bool) -> u64 {
     // SAFETY: 调用方持有 NET_STATE 锁.
@@ -469,6 +469,8 @@ pub fn socket_open_stub(
                 }
                 let tx_ptr = crate::privileged::mm::k_malloc(TCP_BUF_SIZE);
                 if tx_ptr.is_null() {
+                    // 回滚: rx_ptr 来自上方 k_malloc 的有效分配, 尚未释放, 此处归还
+                    // (所在函数体已在 unsafe 块内).
                     crate::privileged::mm::k_free(rx_ptr);
                     return None;
                 }
@@ -495,6 +497,8 @@ pub fn socket_open_stub(
                 }
                 let tx_ptr = crate::privileged::mm::k_malloc(UDP_BUF_SIZE);
                 if tx_ptr.is_null() {
+                    // 回滚: rx_ptr 来自上方 k_malloc 的有效分配, 尚未释放, 此处归还
+                    // (所在函数体已在 unsafe 块内).
                     crate::privileged::mm::k_free(rx_ptr);
                     return None;
                 }
@@ -522,6 +526,8 @@ pub fn socket_open_stub(
                 }
                 let tx_ptr = crate::privileged::mm::k_malloc(UDP_BUF_SIZE);
                 if tx_ptr.is_null() {
+                    // 回滚: rx_ptr 来自上方 k_malloc 的有效分配, 尚未释放, 此处归还
+                    // (所在函数体已在 unsafe 块内).
                     crate::privileged::mm::k_free(rx_ptr);
                     return None;
                 }
@@ -720,6 +726,8 @@ pub fn smoltcp_net_stack_socket_close(slot_idx: usize) -> bool {
         sockets.remove(handle);
 
         // 5. 释放 slab buffer
+        // `tcp_rx_buf` 等四个槽位指针均由 k_malloc 分配且此处仅归还一次;
+        // 归还后立即置 NULL, 不会二次释放 (所在函数体已在 unsafe 块内).
         if !tcp_rx_buf(slot_idx).is_null() {
             crate::privileged::mm::k_free(tcp_rx_buf(slot_idx));
             set_tcp_rx_buf(slot_idx, core::ptr::null_mut());

@@ -37,7 +37,7 @@ pub fn eventfd_syscall(initval: u64, flags: i32) -> Result<usize, Errno> {
     // flags 校验: 只允许已知标志
     let valid_flags = EFD_CLOEXEC | EFD_NONBLOCK | EFD_SEMAPHORE;
     if flags & !valid_flags != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     let ret = crate::privileged::syscall::eventfd::sys_eventfd(initval, flags);
@@ -59,10 +59,10 @@ pub fn eventfd_syscall(initval: u64, flags: i32) -> Result<usize, Errno> {
 /// - 底层 `sys_eventfd_read` 返回负值时转换为对应的 `Errno`
 pub fn eventfd_read_syscall(fd: i32, buf: u64) -> Result<usize, Errno> {
     if !crate::privileged::syscall::eventfd::is_eventfd_fd(fd) {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     if buf == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
 
     let ret = crate::privileged::syscall::eventfd::sys_eventfd_read(fd, buf);
@@ -84,10 +84,10 @@ pub fn eventfd_read_syscall(fd: i32, buf: u64) -> Result<usize, Errno> {
 /// - 底层 `sys_eventfd_write` 返回负值时转换为对应的 `Errno`
 pub fn eventfd_write_syscall(fd: i32, value: u64) -> Result<usize, Errno> {
     if !crate::privileged::syscall::eventfd::is_eventfd_fd(fd) {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     if value == 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     let ret = crate::privileged::syscall::eventfd::sys_eventfd_write(fd, value);
@@ -108,7 +108,7 @@ pub fn eventfd_write_syscall(fd: i32, value: u64) -> Result<usize, Errno> {
 /// - 底层 `sys_eventfd_close` 返回负值时转换为对应的 `Errno`
 pub fn eventfd_close_syscall(fd: i32) -> Result<usize, Errno> {
     if !crate::privileged::syscall::eventfd::is_eventfd_fd(fd) {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
 
     let ret = crate::privileged::syscall::eventfd::sys_eventfd_close(fd);

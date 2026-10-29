@@ -28,6 +28,7 @@ pub struct DependencyLayer {
 
 impl DependencyLayer {
     /// 构造指定层级的空依赖层。
+    #[must_use]
     pub const fn new(level: usize) -> Self {
         Self {
             domains: [0; MAX_DOMAINS_PER_LAYER],
@@ -56,8 +57,15 @@ pub struct DependencyLayers {
     pub count: usize,
 }
 
+impl Default for DependencyLayers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DependencyLayers {
     /// 构造空的依赖分层集合。
+    #[must_use]
     pub const fn new() -> Self {
         const EMPTY_LAYER: DependencyLayer = DependencyLayer::new(0);
         Self {
@@ -71,16 +79,14 @@ impl DependencyLayers {
         if level >= MAX_DEPENDENCY_LAYERS {
             return false;
         }
-        if self.layers[level].count == 0 {
-            if self.count <= level {
-                self.count = level + 1;
-            }
+        if self.layers[level].count == 0 && self.count <= level {
+            self.count = level + 1;
         }
         self.layers[level].add(domain_id)
     }
 }
 
-/// 根据各恢复域的 depends_on 关系计算依赖分层 (拓扑排序)。
+/// 根据各恢复域的 `depends_on` 关系计算依赖分层 (拓扑排序)。
 pub fn compute_dependency_layers() -> DependencyLayers {
     let manager = RECOVERY_MANAGER.lock();
     let domain_count = manager.count.load(Ordering::SeqCst) as usize;
@@ -103,15 +109,15 @@ pub fn compute_dependency_layers() -> DependencyLayers {
                 for slot in deps.iter() {
                     if let Some(dep_id) = *slot {
                         for j in 0..domain_count {
-                            if let Some(d) = &manager.domains[j] {
-                                if d.id() == dep_id {
-                                    if visited[j] {
-                                        max_dep_level = max_dep_level.max(domain_levels[j] + 1);
-                                    } else {
-                                        all_deps_visited = false;
-                                    }
-                                    break;
+                            if let Some(d) = &manager.domains[j]
+                                && d.id() == dep_id
+                            {
+                                if visited[j] {
+                                    max_dep_level = max_dep_level.max(domain_levels[j] + 1);
+                                } else {
+                                    all_deps_visited = false;
                                 }
+                                break;
                             }
                         }
                     }
@@ -135,8 +141,7 @@ pub fn rollback_layer_serial(layer: &DependencyLayer) -> usize {
     let mut total_rolled = 0usize;
     let manager = RECOVERY_MANAGER.lock();
 
-    for i in 0..layer.count {
-        let domain_id = layer.domains[i];
+    for &domain_id in &layer.domains[..layer.count] {
         if let Some(domain) = manager.find(domain_id) {
             let mut undo = domain.undo.lock();
             let rolled = undo.rollback_to(0);
@@ -170,8 +175,7 @@ pub fn rollback_layer_parallel(layer: &DependencyLayer, worker_id: usize) -> usi
 
     let mut total_rolled = 0usize;
 
-    for i in start..end {
-        let domain_id = layer.domains[i];
+    for &domain_id in &layer.domains[start..end] {
         if let Some(domain) = manager.find(domain_id) {
             let mut undo = domain.undo.lock();
             let rolled = undo.rollback_to(0);
@@ -192,17 +196,19 @@ pub fn rollback_all_parallel() -> usize {
     let layers = compute_dependency_layers();
     let mut total_rolled = 0usize;
 
-    for layer_idx in 0..layers.count {
-        let layer = &layers.layers[layer_idx];
-
+    for layer in &layers.layers[..layers.count] {
         if layer.count <= 1 {
             total_rolled += rollback_layer_serial(layer);
         } else {
             let max_workers = config::RECOVERY_CONFIG.parallel_max_workers as usize;
             let mut worker_results = [0usize; 4];
 
-            for worker_id in 0..max_workers.min(4) {
-                worker_results[worker_id] = rollback_layer_parallel(layer, worker_id);
+            for (worker_id, result) in worker_results
+                .iter_mut()
+                .enumerate()
+                .take(max_workers.min(4))
+            {
+                *result = rollback_layer_parallel(layer, worker_id);
             }
 
             total_rolled += worker_results.iter().sum::<usize>();

@@ -1,21 +1,21 @@
-//! AArch64 FREG (Fault Recovery Stack) 实现
+//! `AArch64` FREG (Fault Recovery Stack) 实现
 //!
 //! ## 架构等价
 //!
 //! | x86_64              | aarch64               |
 //! |---------------------|------------------------|
-//! | `int 0x82`          | SGI 7 (via ICC_SGI1R) |
+//! | `int 0x82`          | SGI 7 (via `ICC_SGI1R`) |
 //! | IDT entry 0x82      | IRQ handler intid==7  |
 //! | `iretq` 恢复        | `eret` 恢复           |
-//! | IST2 专用栈         | EL1h SP (独立栈)      |
+//! | IST2 专用栈         | `EL1h` SP (独立栈)      |
 //!
 //! ## 两种触发场景
 //!
 //! 1. **运行时恢复** (`freg_trigger_recovery()`):
 //!    代码调用 → SGI 7 触发 → IRQ handler 执行恢复 → eret 回到调用点
 //!
-//! 2. **Panic 恢复** (panic_handler):
-//!    直接调用 recovery_try_recover_from_panic() 进行域回滚,
+//! 2. **Panic 恢复** (`panic_handler)`:
+//!    直接调用 `recovery_try_recover_from_panic()` 进行域回滚,
 //!    不回现场执行 (panic 不可恢复执行流).
 //!
 //! ## 在 IRQ handler 中的集成
@@ -25,7 +25,7 @@
 //!
 //! ## 依赖
 //!
-//! - GICv3 已初始化 (SGI 7 已使能)
+//! - `GICv3` 已初始化 (SGI 7 已使能)
 //! - FREG域已注册 (PMM / PROC)
 //! - `src/kernel/freg/` 模块可用 (跨架构通用)
 
@@ -42,10 +42,10 @@
 /// 调用者必须在中断使能的环境下调用 (IRQ 已开启).
 /// SGI 会立即触发 IRQ 异常, 在 ISR 中执行恢复逻辑.
 ///
-/// # PANIC_FLAG
+/// # `PANIC_FLAG`
 ///
-/// 本函数不设置 PANIC_FLAG. 调用者应通过设置 PANIC_FLAG 来指示恢复需求,
-/// 或由 bytes_mut 接口触发 domain 故障.
+/// 本函数不设置 `PANIC_FLAG`. 调用者应通过设置 `PANIC_FLAG` 来指示恢复需求,
+/// 或由 `bytes_mut` 接口触发 domain 故障.
 #[inline]
 pub fn freg_trigger_recovery() {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -65,7 +65,7 @@ pub fn freg_trigger_recovery() {
     }
 }
 
-/// SGI FREG恢复处理函数 (由 irq_handler 调用)
+/// SGI FREG恢复处理函数 (由 `irq_handler` 调用)
 ///
 /// 当 IRQ handler 检测到 `intid == FREG_RECOVERY_SGI` 时调用此函数.
 /// 调用 `recovery_try_recover_from_idt()` 执行域级回滚.
@@ -78,8 +78,9 @@ pub fn freg_trigger_recovery() {
 ///
 /// # 注意
 ///
-/// 此函数在 IRQ 上下文 (EL1h) 执行, 不需要额外压栈/出栈.
+/// 此函数在 IRQ 上下文 (`EL1h`) 执行, 不需要额外压栈/出栈.
 /// 如果恢复成功, IRQ handler 正常返回 (eret), 调用点继续执行.
+#[must_use]
 pub fn freg_sgi_handler() -> i32 {
     // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
     unsafe extern "C" {

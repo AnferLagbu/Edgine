@@ -59,7 +59,7 @@ const PCI_CLASS_STORAGE: u8 = 0x01;
 /// PCI AHCI 子类码
 #[cfg(target_arch = "x86_64")]
 const PCI_SUBCLASS_AHCI: u8 = 0x06;
-/// PCI NVMe 子类码
+/// PCI `NVMe` 子类码
 #[cfg(target_arch = "x86_64")]
 const PCI_SUBCLASS_NVME: u8 = 0x08;
 
@@ -101,11 +101,11 @@ static PROBED: Mutex<Vec<ProbedController>> = Mutex::new(Vec::new());
 /// 复用, 避免反复插拔导致注册表无限增长与 MMIO 映射泄漏。
 #[cfg(target_arch = "x86_64")]
 fn install_controller<T>(registry: &mut Vec<T>, slot_hint: Option<usize>, controller: T) -> usize {
-    if let Some(slot) = slot_hint {
-        if slot < registry.len() {
-            registry[slot] = controller;
-            return slot;
-        }
+    if let Some(slot) = slot_hint
+        && slot < registry.len()
+    {
+        registry[slot] = controller;
+        return slot;
     }
     registry.push(controller);
     registry.len() - 1
@@ -177,7 +177,7 @@ fn probe_ahci(dev: &crate::privileged::pci::PciDevice, slot_hint: Option<usize>)
         .filter(|&pi| {
             controller
                 .get_port(pi)
-                .map_or(false, |port| port.device_present)
+                .is_some_and(|port| port.device_present)
         })
         .collect();
 
@@ -214,7 +214,7 @@ fn probe_ahci(dev: &crate::privileged::pci::PciDevice, slot_hint: Option<usize>)
     }
 }
 
-/// 探测单个 NVMe 控制器, 初始化并注册其命名空间的块设备。
+/// 探测单个 `NVMe` 控制器, 初始化并注册其命名空间的块设备。
 ///
 /// `run_selftest` 仅为启动期 (`storage_init`) 置真: MSIX-03 受控自测内部会
 /// 自旋并 `halt()` 等待中断, 不可在软中断 (热插拔重枚举) 上下文执行。
@@ -332,7 +332,7 @@ fn probe_nvme(
 /// 判断台账中的控制器是否仍存在于最新设备表中 (按 BDF 匹配)。
 ///
 /// SIMPLIFIED: 只比对 BDF, 不校验类码; 同一 BDF 被非存储设备复用的场景
-/// 在现实硬件上不会发生, 待出现多级 PCIe 交换机拓扑时再细化。
+/// 在现实硬件上不会发生, 待出现多级 `PCIe` 交换机拓扑时再细化。
 #[cfg(target_arch = "x86_64")]
 fn is_present(
     devices: &[crate::privileged::pci::PciDevice],
@@ -435,7 +435,7 @@ fn remove_stale_controllers(devices: &[crate::privileged::pci::PciDevice]) {
             continue;
         }
         for &drive in &r.drives {
-            unregister_block(drive);
+            let _ = unregister_block(drive);
         }
         r.installed = false;
         slog_info!(
@@ -544,7 +544,7 @@ pub fn drives_for_location(location: DeviceLocation) -> Vec<u8> {
 
 /// AHCI 端口级热插拔轮询 (DECISION-K 辅助轮询回调)。
 ///
-/// SATA 端口插拔不产生 PCIe 热插拔事件, privileged 无法自行探测; 本函数经
+/// SATA 端口插拔不产生 `PCIe` 热插拔事件, privileged 无法自行探测; 本函数经
 /// privileged softirq 周期调用, 逐控制器读 `PxSSTS` 检测端口链路变化, 对新增
 /// 在位端口注册块设备, 对离位端口墓碑化并以统一热插拔事件分发。
 ///
@@ -619,7 +619,7 @@ fn ahci_port_poll() {
 
         let mut to_clear: Vec<usize> = Vec::new();
         for (pi, port_num, drive) in changes.removed {
-            unregister_block(drive);
+            let _ = unregister_block(drive);
             let location = DeviceLocation {
                 bus_type: BusType::Sata,
                 bus,
@@ -649,8 +649,9 @@ fn ahci_port_poll() {
     }
 }
 
-/// aarch64 (QEMU virt) 无 PCIe 热插拔槽位, 恒返回空。
+/// aarch64 (QEMU virt) 无 `PCIe` 热插拔槽位, 恒返回空。
 #[cfg(not(target_arch = "x86_64"))]
+#[must_use]
 pub fn drives_for_location(_location: DeviceLocation) -> Vec<u8> {
     Vec::new()
 }
@@ -659,9 +660,9 @@ pub fn drives_for_location(_location: DeviceLocation) -> Vec<u8> {
 // NVMe MSI-X 中断路径 (DECISION-H storage 专项 2 号子步)
 // ============================================================================
 
-/// NVMe MSI-X ISR functions 分发回调 (注册契约: privileged handler 转发调用)
+/// `NVMe` MSI-X ISR functions 分发回调 (注册契约: privileged handler 转发调用)
 ///
-/// ISR 上下文约束: 仅持 IrqSpinLock (中断安全), 不分配/不睡眠 —
+/// ISR 上下文约束: 仅持 `IrqSpinLock` (中断安全), 不分配/不睡眠 —
 /// 与 privileged 版 `nvme_msix_irq_handler` 的注册表分发同构。
 #[cfg(target_arch = "x86_64")]
 fn nvme_msix_dispatch() {
@@ -676,7 +677,7 @@ fn nvme_msix_dispatch() {
 /// MSIX-03: functions 版受控 MSI-X 中断投递验证 (与 privileged hook 等值)
 ///
 /// 锁内提交 (IF=0 无中断窗口) → 释放锁 → 开 IF 窗口等 ISR 计数变化:
-/// 验证 handle_irq MSI 分支 → LAPIC EOI → 注册契约分发 → functions
+/// 验证 `handle_irq` MSI 分支 → LAPIC EOI → 注册契约分发 → functions
 /// `handle_interrupt` 端到端链路。结果仅记日志 (与 privileged hook 一致)。
 #[cfg(target_arch = "x86_64")]
 fn nvme_msix03_selftest(ci: usize) {
@@ -687,7 +688,7 @@ fn nvme_msix03_selftest(ci: usize) {
     let has_irq = NVME_CONTROLLERS
         .lock()
         .get(ci)
-        .map_or(false, |c| c.irq_vector().is_some());
+        .is_some_and(|c| c.irq_vector().is_some());
     if !has_irq {
         return;
     }
@@ -711,7 +712,7 @@ fn nvme_msix03_selftest(ci: usize) {
         let mut controllers = NVME_CONTROLLERS.lock();
         controllers
             .get_mut(ci)
-            .map_or(Err(()), |c| c.io_submit_isr(cmd))
+            .map_or(Err(nvme::NvmeError), |c| c.io_submit_isr(cmd))
     };
     let Ok(before) = submitted else {
         slog_warn!(Driver, "[MSIX-03][functions] io submit failed, skip");
@@ -750,7 +751,7 @@ fn nvme_msix03_selftest(ci: usize) {
 ///
 /// 首次全量扫描 PCI (见 `storage_scan_with`) 发现 AHCI/NVMe 控制器 →
 /// functions 控制器初始化 → 全局注册表 → `_block` 适配器注册 EGDF。
-/// NVMe 为 MSI-X 中断驱动 (启用/ISR 注册失败回退轮询), 附 MSIX-03 受控自测。
+/// `NVMe` 为 MSI-X 中断驱动 (启用/ISR 注册失败回退轮询), 附 MSIX-03 受控自测。
 /// 随后探测传统 ATA PIO 通道 (经由 privileged `IoPort` safe 代理) 并注册
 /// `ata0-3`。aarch64 (QEMU virt) 无 PCI AHCI/NVMe/ATA, virtio-blk 已由
 /// functions 编排。
@@ -758,7 +759,7 @@ fn nvme_msix03_selftest(ci: usize) {
 /// 同时向 privileged 注册热插拔重枚举回调 (`storage_reenum_hook`): 后续的
 /// 控制器插入/移除由 `storage_rescan` 增量维护, 无需重启。
 ///
-/// SIMPLIFIED: 错误降级为日志不传播 (char_init 同模式, 逻辑错误降级原则)。
+/// SIMPLIFIED: 错误降级为日志不传播 (`char_init` 同模式, 逻辑错误降级原则)。
 #[cfg(target_arch = "x86_64")]
 pub fn storage_init() {
     use crate::privileged::driver::hotplug::{register_aux_poll, register_reenum_hook};
@@ -806,7 +807,7 @@ pub fn storage_init() {
 ///
 /// ATA PIO 经 privileged `IoPort` safe 代理访问端口 (functions 0 unsafe)。
 /// 无 ATA 控制器 (典型: 仅有 AHCI/NVMe 的机器) 时探测落空, 静默跳过。
-/// ATA 通道挂板载/ISA 控制器, 不属 PCIe 热插拔范畴, 故仅启动期执行一次。
+/// ATA 通道挂板载/ISA 控制器, 不属 `PCIe` 热插拔范畴, 故仅启动期执行一次。
 ///
 /// 返回探测到的设备数。
 #[cfg(target_arch = "x86_64")]
@@ -814,25 +815,25 @@ fn probe_ata() -> u32 {
     use crate::functions::egdf::register_block_device;
 
     let mut ata_found = 0u32;
-    if let Some(mut controller) = ata::AtaController::new() {
-        if controller.init() {
-            ata_found =
-                crate::functions::intcast::low_u32_from_usize(controller.detected_device_count());
-            // 先入册 (AtaBlockDevice 经注册表查找控制器), 再注册块设备
-            ATA_CONTROLLERS.lock().push(controller);
-            for drive in 0..crate::functions::intcast::low_u8_from_usize(ata::MAX_ATA_DEVICES) {
-                if let Some(dev) = ata::AtaBlockDevice::new(drive) {
-                    let sectors = dev.blk_total_sectors();
-                    let dev_name = alloc::format!("ata{drive}");
-                    let name_leaked: &'static str = dev_name.leak();
-                    register_block_device(name_leaked, dev, None);
-                    slog_info!(
-                        Driver,
-                        "ATA: drive={} registered, {} sectors",
-                        drive,
-                        sectors
-                    );
-                }
+    if let Some(mut controller) = ata::AtaController::new()
+        && controller.init()
+    {
+        ata_found =
+            crate::functions::intcast::low_u32_from_usize(controller.detected_device_count());
+        // 先入册 (AtaBlockDevice 经注册表查找控制器), 再注册块设备
+        ATA_CONTROLLERS.lock().push(controller);
+        for drive in 0..crate::functions::intcast::low_u8_from_usize(ata::MAX_ATA_DEVICES) {
+            if let Some(dev) = ata::AtaBlockDevice::new(drive) {
+                let sectors = dev.blk_total_sectors();
+                let dev_name = alloc::format!("ata{drive}");
+                let name_leaked: &'static str = dev_name.leak();
+                register_block_device(name_leaked, dev, None);
+                slog_info!(
+                    Driver,
+                    "ATA: drive={} registered, {} sectors",
+                    drive,
+                    sectors
+                );
             }
         }
     }

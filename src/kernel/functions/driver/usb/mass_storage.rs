@@ -104,7 +104,8 @@ impl CommandBlockWrapper {
     }
 
     /// 序列化为 31 字节 little-endian 缓冲.
-    pub fn to_bytes(&self) -> [u8; CBW_LENGTH] {
+    #[must_use]
+    pub fn to_bytes(self) -> [u8; CBW_LENGTH] {
         let mut buf = [0u8; CBW_LENGTH];
         buf[0..4].copy_from_slice(&CBW_SIGNATURE.to_le_bytes());
         buf[4..8].copy_from_slice(&self.tag.to_le_bytes());
@@ -164,11 +165,13 @@ impl CommandStatusWrapper {
     }
 
     /// 是否成功.
+    #[must_use]
     pub fn is_success(self) -> bool {
         self.status == csw_status::SUCCESS
     }
 
     /// 是否为 Phase Error (协议层错误, 通常需 reset recovery).
+    #[must_use]
     pub fn is_phase_error(self) -> bool {
         self.status == csw_status::PHASE_ERROR
     }
@@ -203,6 +206,7 @@ pub mod scsi_op {
 /// - byte 6: Group Number 分组号
 /// - bytes 7..=8: Transfer Length 块数 (blocks, big-endian)
 /// - byte 9: Control
+#[must_use]
 pub fn build_read_10_cmd(lba: u32, blocks: u16) -> [u8; 10] {
     [
         scsi_op::READ_10,
@@ -226,6 +230,7 @@ pub fn build_read_10_cmd(lba: u32, blocks: u16) -> [u8; 10] {
 /// - byte 2: Page Code
 /// - bytes 3..=4: Allocation Length 分配长度 (大端)
 /// - byte 5: Control
+#[must_use]
 pub fn build_inquiry_cmd(allocation_length: u16) -> [u8; 6] {
     [
         scsi_op::INQUIRY,
@@ -238,6 +243,7 @@ pub fn build_inquiry_cmd(allocation_length: u16) -> [u8; 6] {
 }
 
 /// SCSI READ CAPACITY(10) 命令 (10 字节).
+#[must_use]
 pub fn build_read_capacity_10_cmd() -> [u8; 10] {
     [
         scsi_op::READ_CAPACITY_10,
@@ -254,11 +260,13 @@ pub fn build_read_capacity_10_cmd() -> [u8; 10] {
 }
 
 /// SCSI TEST UNIT READY 命令 (6 字节).
+#[must_use]
 pub fn build_test_unit_ready_cmd() -> [u8; 6] {
     [scsi_op::TEST_UNIT_READY, 0x00, 0x00, 0x00, 0x00, 0x00]
 }
 
 /// SCSI REQUEST SENSE 命令 (6 字节).
+#[must_use]
 pub fn build_request_sense_cmd(allocation_length: u8) -> [u8; 6] {
     [
         scsi_op::REQUEST_SENSE,
@@ -332,26 +340,31 @@ impl MassStorageDriver {
     }
 
     /// 获取 Bulk-IN endpoint.
+    #[must_use]
     pub fn bulk_in_endpoint(&self) -> u8 {
         self.bulk_in
     }
 
     /// 获取 Bulk-OUT endpoint.
+    #[must_use]
     pub fn bulk_out_endpoint(&self) -> u8 {
         self.bulk_out
     }
 
     /// 获取 Bulk max packet size.
+    #[must_use]
     pub fn bulk_max_packet(&self) -> u16 {
         self.bulk_max_packet
     }
 
     /// 获取设备地址
+    #[must_use]
     pub fn device_address(&self) -> u8 {
         self.device_address
     }
 
     /// 获取接口编号
+    #[must_use]
     pub fn interface_number(&self) -> u8 {
         self.interface_number
     }

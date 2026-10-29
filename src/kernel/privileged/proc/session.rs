@@ -7,7 +7,7 @@
 //!
 //! 策略代码 (会话管理 + 进程组 + 控制终端规则) 于 T1-6 (2026-06-16) 迁至
 //! `functions::proc::session`, 本文件仅 re-export。按统一判据反转：
-//! 会话/进程组是进程关系机制状态, sys_tcgetpgrp/sys_tcsetpgrp 被 privileged
+//! 会话/进程组是进程关系机制状态, `sys_tcgetpgrp/sys_tcsetpgrp` 被 privileged
 //! syscall dispatch 直接消费 + proc 顶层导出 — 属机制项, 迁回。依赖闭包
 //! 仅 privileged。
 //!
@@ -65,10 +65,12 @@ pub enum SessionState {
 }
 
 /// 会话结构体
+///
+/// 字段名对应 C `session_id`（本结构体原字段名）.
 #[repr(C)]
 pub struct Session {
     /// 会话 ID (SID; 0 表示槽位空闲)
-    pub session_id: core::sync::atomic::AtomicU64,
+    pub sid: core::sync::atomic::AtomicU64,
     /// 创建者 PWM (进程权重管理) 标识
     pub pwm: core::sync::atomic::AtomicU64,
     /// 父会话 SID (0 = 无父会话)
@@ -89,11 +91,18 @@ pub struct Session {
     pub next: core::sync::atomic::AtomicU64,
 }
 
+impl Default for Session {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Session {
     /// 构造全零初始化的会话槽位 (状态为 `Zombie`)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
-            session_id: core::sync::atomic::AtomicU64::new(0),
+            sid: core::sync::atomic::AtomicU64::new(0),
             pwm: core::sync::atomic::AtomicU64::new(0),
             parent_sid: core::sync::atomic::AtomicU64::new(0),
             terminal: core::sync::atomic::AtomicU64::new(0),
@@ -117,8 +126,15 @@ pub struct SessionManager {
     next_session_id: core::sync::atomic::AtomicU64,
 }
 
+impl Default for SessionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SessionManager {
     /// 构造会话管理器 (会话表置空, 会话 ID 从 1 起分配)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             session_table: Mutex::new([const { Session::new() }; MAX_SESSIONS]),
@@ -133,12 +149,7 @@ impl SessionManager {
 
     fn alloc_session(&self) -> Option<usize> {
         let table = self.session_table.lock();
-        for i in 0..MAX_SESSIONS {
-            if table[i].session_id.load(Ordering::SeqCst) == 0 {
-                return Some(i);
-            }
-        }
-        None
+        (0..MAX_SESSIONS).find(|&i| table[i].sid.load(Ordering::SeqCst) == 0)
     }
 
     /// 创建新会话, 返回 `session_id`
@@ -149,7 +160,7 @@ impl SessionManager {
         let mut table = self.session_table.lock();
         let session = &mut table[idx];
 
-        session.session_id.store(sid, Ordering::SeqCst);
+        session.sid.store(sid, Ordering::SeqCst);
         session.pwm.store(pwm, Ordering::SeqCst);
         session.parent_sid.store(0, Ordering::SeqCst);
         session.terminal.store(0, Ordering::SeqCst);
@@ -177,7 +188,7 @@ impl SessionManager {
         let mut table = self.session_table.lock();
         let session = &mut table[idx];
 
-        session.session_id.store(sid, Ordering::SeqCst);
+        session.sid.store(sid, Ordering::SeqCst);
         session.pwm.store(pwm, Ordering::SeqCst);
         session.parent_sid.store(0, Ordering::SeqCst);
         session.terminal.store(0, Ordering::SeqCst);
@@ -199,7 +210,7 @@ impl SessionManager {
             let mut table = self.session_table.lock();
             let session = &mut table[idx];
 
-            session.session_id.store(0, Ordering::SeqCst);
+            session.sid.store(0, Ordering::SeqCst);
             session
                 .state
                 .store(SessionState::Zombie as u32, Ordering::SeqCst);
@@ -216,12 +227,7 @@ impl SessionManager {
 
     fn find_session(&self, session_id: u64) -> Option<usize> {
         let table = self.session_table.lock();
-        for i in 0..MAX_SESSIONS {
-            if table[i].session_id.load(Ordering::SeqCst) == session_id {
-                return Some(i);
-            }
-        }
-        None
+        (0..MAX_SESSIONS).find(|&i| table[i].sid.load(Ordering::SeqCst) == session_id)
     }
 
     /// 按 SID 查找会话槽位索引
@@ -521,9 +527,9 @@ pub fn get_foreground_pgid() -> u32 {
     SESSION_MANAGER.get_foreground_pgid(sid)
 }
 
-/// tcsetpgrp / tcgetpgrp syscall 策略已迁至 functions
-/// (functions::proc::session::tcsetpgrp_syscall / tcgetpgrp_syscall, T2 批 2,
-/// syscall-followup) — 本文件仅保留机制 (SessionManager / 会话进程组查询辅助).
+// tcsetpgrp / tcgetpgrp syscall 策略已迁至 functions
+// (`functions::proc::session::tcsetpgrp_syscall` / `tcgetpgrp_syscall`, T2 批 2,
+// syscall-followup) — 本文件仅保留机制 (`SessionManager` / 会话进程组查询辅助).
 
 /// 向前台进程组发送信号
 pub fn signal_foreground_pgid(sig: u8) {

@@ -24,7 +24,7 @@ use crate::privileged::syscall::raw;
 pub fn umask_syscall(mask: u32) -> Result<usize, Errno> {
     // mask 范围 0..=0o777 (9 bit)
     if mask > 0o777 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     Ok(crate::privileged::sgeg::api::umask_set(mask) as usize)
 }
@@ -40,10 +40,10 @@ pub fn umask_syscall(mask: u32) -> Result<usize, Errno> {
 /// 其余错误 (如路径已存在、无权限等) 以对应的 `Errno` 返回.
 pub fn mkdir_syscall(path_ptr: u64, _mode: i32) -> Result<usize, Errno> {
     if path_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_ptr(path_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let pwm = current_pwm();
     // SAFETY: path_ptr 由 check_user_ptr 验证
@@ -66,10 +66,10 @@ pub fn mkdir_syscall(path_ptr: u64, _mode: i32) -> Result<usize, Errno> {
 /// 其余错误 (如目录不存在、非空、无权限等) 以对应的 `Errno` 返回.
 pub fn rmdir_syscall(path_ptr: u64) -> Result<usize, Errno> {
     if path_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_ptr(path_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let pwm = current_pwm();
     let r = fw::vfs_rmdir(path_ptr as *const u8, pwm);
@@ -92,14 +92,14 @@ pub fn rmdir_syscall(path_ptr: u64) -> Result<usize, Errno> {
 /// 其余错误 (如无权限等) 以对应的 `Errno` 返回.
 pub fn chmod_syscall(path_ptr: u64, mode: u32) -> Result<usize, Errno> {
     if path_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_ptr(path_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     // mode 9 bit 合法
     if mode > 0o7777 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     let pwm = current_pwm();
     let r = fw::vfs_chmod(
@@ -125,10 +125,10 @@ pub fn chmod_syscall(path_ptr: u64, mode: u32) -> Result<usize, Errno> {
 /// 其余错误以对应的 `Errno` 返回.
 pub fn fchmod_syscall(fd: i32, mode: u32) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     if mode > 0o7777 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     let r = fw::vfs_fchmod(
         fd.cast_unsigned(),

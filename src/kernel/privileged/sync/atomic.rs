@@ -22,6 +22,7 @@ pub struct AtomicBool(AtomicU32);
 
 impl AtomicBool {
     /// 创建新的原子布尔值
+    #[must_use]
     pub const fn new(v: bool) -> Self {
         Self(AtomicU32::new(if v { 1 } else { 0 }))
     }

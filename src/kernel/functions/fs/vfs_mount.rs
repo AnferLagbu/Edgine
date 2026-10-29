@@ -98,7 +98,8 @@ pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32
 // 公共 VFS API
 // ============================================================================
 
-/// C ABI 导出: 挂载文件系统 (path / fs_name 为 null 终止的 C 字符串)
+/// C ABI 导出: 挂载文件系统 (path / `fs_name` 为 null 终止的 C 字符串)
+#[must_use]
 pub extern "C" fn vfs_mount(path: *const u8, fs_name: *const u8) -> i32 {
     vfs_mount_internal(path, fs_name)
 }
@@ -106,6 +107,7 @@ pub extern "C" fn vfs_mount(path: *const u8, fs_name: *const u8) -> i32 {
 /// T-05: safe 挂载接口 — functions 层策略调用
 ///
 /// 接受 Rust 字符串切片, 返回 i32 错误码 (0=成功, 负数=errno).
+#[must_use]
 pub fn vfs_mount_safe(path: &str, fs_name: &str) -> i32 {
     // 构造 null 终止的 C 字符串
     let mut path_buf = alloc::vec::Vec::with_capacity(path.len() + 1);
@@ -130,6 +132,7 @@ pub extern "C" fn vfs_umount_internal(path: *const u8, _flags: i32) -> i32 {
 }
 
 /// C ABI 导出: 卸载文件系统 (path 为 null 终止的 C 字符串)
+#[must_use]
 pub extern "C" fn vfs_umount(path: *const u8, flags: i32) -> i32 {
     vfs_umount_internal(path, flags)
 }

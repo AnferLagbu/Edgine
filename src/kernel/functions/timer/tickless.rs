@@ -1,5 +1,5 @@
 #![deny(unsafe_code)]
-//! Tickless (NO_HZ) — 动态时钟中断管理
+//! Tickless (`NO_HZ`) — 动态时钟中断管理
 //!
 //! ## 设计
 //!
@@ -9,17 +9,17 @@
 //!
 //! ### 模式
 //!
-//! 1. **NO_HZ_IDLE**: 空闲 CPU 停止周期 tick (默认)
+//! 1. **`NO_HZ_IDLE`**: 空闲 CPU 停止周期 tick (默认)
 //!    - 进入 idle 时: 计算下一个定时器到期时间, 编程 one-shot
 //!    - 退出 idle 时: 恢复周期 tick
 //!
-//! 2. **NO_HZ_FULL**: 仅有任务的 CPU 也停止 tick (进阶)
+//! 2. **`NO_HZ_FULL`**: 仅有任务的 CPU 也停止 tick (进阶)
 //!    - 适合实时/低延迟场景
-//!    - 需要通过 sched_tick 等机制补充记账
+//!    - 需要通过 `sched_tick` 等机制补充记账
 //!
 //! ### 与 Linux 的差异
 //!
-//! 1. **仅实现 NO_HZ_IDLE**: NO_HZ_FULL 需要更复杂的记账
+//! 1. **仅实现 `NO_HZ_IDLE`**: `NO_HZ_FULL` 需要更复杂的记账
 //! 2. **无 adaptive tick**: 不根据 CPU 数量自动调整
 //! 3. **无 full dynticks**: 不支持完全无 tick 模式
 //!
@@ -66,6 +66,7 @@ pub enum TicklessMode {
 
 impl TicklessMode {
     /// 由 syscall 传入的裸值还原模式 (未知值退化为 `Periodic`)
+    #[must_use]
     pub fn from_u32(v: u32) -> Self {
         match v {
             1 => Self::NoHzIdle,
@@ -102,6 +103,7 @@ pub struct TicklessCpuState {
 
 impl TicklessCpuState {
     /// 构造默认周期模式的 per-CPU 状态
+    #[must_use]
     pub fn new() -> Self {
         Self {
             mode: AtomicU32::new(TicklessMode::Periodic as u32),
@@ -113,6 +115,13 @@ impl TicklessCpuState {
             tickless_enter_count: AtomicU64::new(0),
             tickless_exit_count: AtomicU64::new(0),
         }
+    }
+}
+
+impl Default for TicklessCpuState {
+    /// 等价于 [`TicklessCpuState::new`] (默认周期模式)
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -132,6 +141,7 @@ pub struct TicklessSubsystem {
 
 impl TicklessSubsystem {
     /// 构造空子系统 (per-CPU 表由 [`Self::init`] 按核数填充)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             per_cpu: IrqSpinLock::new(Vec::new()),
@@ -370,6 +380,13 @@ impl TicklessSubsystem {
     }
 }
 
+impl Default for TicklessSubsystem {
+    /// 等价于 [`TicklessSubsystem::new`] (未初始化的空子系统)
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ============================================================================
 // 全局实例
 // ============================================================================
@@ -383,6 +400,7 @@ pub fn init(num_cpus: u32) {
 }
 
 /// 获取全局 Tickless 子系统
+#[must_use]
 pub fn subsystem() -> &'static TicklessSubsystem {
     &TICKLESS
 }
@@ -405,6 +423,7 @@ pub fn is_initialized() -> bool {
 ///   3 = `get_cpu_stats(cpu`: a1) → (enter 位于高 32 位 | exit 位于低 32 位) 或 `idle_time`
 ///   4 = `set_hz(cpu`: a1, hz: a2)
 ///   5 = `is_initialized()` → bool (是否已初始化)
+#[must_use]
 pub fn tickless_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
     if !is_initialized() && cmd != 5 {
         return -(11i64); // EAGAIN

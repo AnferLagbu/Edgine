@@ -27,10 +27,12 @@ pub struct UserDriverError {
 
 impl UserDriverError {
     /// 以负 errno 码构造错误.
+    #[must_use]
     pub const fn new(code: i32) -> Self {
         Self { code }
     }
     /// 返回内部错误码.
+    #[must_use]
     pub const fn code(&self) -> i32 {
         self.code
     }
@@ -131,7 +133,7 @@ pub fn devtree_unbind_user_device(
     let device_ranges: alloc::vec::Vec<(usize, usize)> = {
         let vmas = mm.vmas.lock();
         vmas.iter()
-            .filter(|v| v.vma_type == VmaType::Device)
+            .filter(|v| v.kind == VmaType::Device)
             .map(|v| (v.start, v.end))
             .collect()
     };
@@ -353,6 +355,7 @@ pub fn devtree_unmap_user_device(
 }
 
 /// 向绑定的用户进程投递 IRQ 信号 (SIGUSR1); 未绑定或缺少 IRQ 能力时返回 `false`.
+#[must_use]
 pub fn egdf_forward_irq(node_id: NodeId) -> bool {
     let Some(pid) = devtree_get_user_mapped(node_id) else {
         return false;
@@ -384,7 +387,15 @@ pub extern "C" fn user_driver_bind(node_id: u32, pid: u32, pwm: u64) -> i32 {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 /// FFI 入口: 解除设备节点与用户进程的绑定 (含 MMIO 卸载), 返回 0 或负 errno.
-pub extern "C" fn user_driver_unbind(node_id: u32, pid: u32, pwm: u64, mm: *const MmStruct) -> i32 {
+///
+/// # Safety
+/// `mm` 必须为有效 `MmStruct` 指针 (或 NULL), 且在调用期间不释放。
+pub unsafe extern "C" fn user_driver_unbind(
+    node_id: u32,
+    pid: u32,
+    pwm: u64,
+    mm: *const MmStruct,
+) -> i32 {
     if mm.is_null() {
         return ERR_NOT_FOUND;
     }

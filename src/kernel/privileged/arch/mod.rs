@@ -118,6 +118,7 @@ pub trait CoreArch {
     /// 默认实现与 `timestamp()` 相同; 架构在有专用序列化手段时覆写:
     /// - x86_64: `lfence` + `rdtsc`
     /// - aarch64: `isb` + `mrs cntpct_el0`
+    #[must_use]
     fn timestamp_serialized() -> u64 {
         Self::timestamp()
     }
@@ -164,10 +165,10 @@ pub trait InterruptArch {
     /// 与 [`interrupt_late_init`](InterruptArch::interrupt_late_init) 拆开的原因:
     /// 本核 tick 设备只能由本核装配, 而全局 tick 源参数 (模式 + 每 tick 计数
     /// 增量) 必须在那之前发布; 两者分开后启动序列不存在"AP 先上线、参数未定"
-    /// 的窗口, 无需超时等待与降级分支 (对齐 Linux clocksource 就绪先于 cpu_up)。
+    /// 的窗口, 无需超时等待与降级分支 (对齐 Linux clocksource 就绪先于 `cpu_up`)。
     ///
     /// `x86_64`: MADT 解析 + INIT-SIPI 拉起 AP (AP 在 `ap_entry` 内自装配 LAPIC tick)
-    /// aarch64: PSCI CPU_ON 拉起 AP (AP 在 `ap_main` 内自装配 Generic Timer)
+    /// aarch64: PSCI `CPU_ON` 拉起 AP (AP 在 `ap_main` 内自装配 Generic Timer)
     fn secondary_cpu_bringup();
     /// 向目标 CPU 发送核间中断。
     fn send_ipi(target_cpu: u32, vector: u8);
@@ -200,7 +201,7 @@ pub trait MmuArch {
     ///
     /// # Safety
     /// `from` 和 `to` 必须指向有效的 `ProcessContext` 内存。
-    fn context_switch(from: *mut u8, to: *const u8);
+    unsafe fn context_switch(from: *mut u8, to: *const u8);
     /// 进入用户态执行 (sysret / eret)，此函数不会返回。
     /// `user_cr3` 为用户页表物理地址, 在 iretq 前切换 CR3.
     /// `kstack` 为进程内核栈顶 (高半部分地址), CR3 切换前先切到该栈.
@@ -238,21 +239,24 @@ pub trait SystemArch {
 /// - `CoreArch` → CPU 标识/时间戳/停机/内存栅栏
 /// - `InterruptArch` → 中断禁用/使能/恢复/查询, 发送/广播 IPI
 /// - `MmuArch` → 单页/全表 TLB 刷新, 读写页表基址, 读故障地址,
-///                上下文切换, 进出用户态
+///   上下文切换, 进出用户态
 /// - `SystemArch` → 端口 IO 字节/双字, 关机, 重启
 ///
 /// 新架构移植时，实现子 trait 后加 `impl Arch for MyArch {}` 即可获得完整接口。
 pub trait Arch: CoreArch + InterruptArch + MmuArch + SystemArch {
     // ── 委托到 CoreArch ─────────────────────────────────
     /// 获取当前 CPU ID (委托 `CoreArch::cpu_id`)。
+    #[must_use]
     fn cpu_id() -> u32 {
         <Self as CoreArch>::cpu_id()
     }
     /// 获取高精度时间戳 (委托 `CoreArch::timestamp`)。
+    #[must_use]
     fn timestamp() -> u64 {
         <Self as CoreArch>::timestamp()
     }
     /// 序列化时间戳读取, 确保先前指令全部完成 (委托 `CoreArch::timestamp_serialized`)。
+    #[must_use]
     fn timestamp_serialized() -> u64 {
         <Self as CoreArch>::timestamp_serialized()
     }
@@ -275,6 +279,7 @@ pub trait Arch: CoreArch + InterruptArch + MmuArch + SystemArch {
 
     // ── 委托到 InterruptArch ────────────────────────────
     /// 禁用中断并返回先前状态标志 (委托 `InterruptArch::interrupt_disable`)。
+    #[must_use]
     fn interrupt_disable() -> usize {
         <Self as InterruptArch>::interrupt_disable()
     }
@@ -287,6 +292,7 @@ pub trait Arch: CoreArch + InterruptArch + MmuArch + SystemArch {
         <Self as InterruptArch>::interrupt_enable();
     }
     /// 检查中断是否已启用 (委托 `InterruptArch::is_interrupt_enabled`)。
+    #[must_use]
     fn is_interrupt_enabled() -> bool {
         <Self as InterruptArch>::is_interrupt_enabled()
     }
@@ -321,6 +327,7 @@ pub trait Arch: CoreArch + InterruptArch + MmuArch + SystemArch {
         <Self as MmuArch>::tlb_flush_all();
     }
     /// 读取当前页表基地址 (委托 `MmuArch::read_page_table_base`)。
+    #[must_use]
     fn read_page_table_base() -> u64 {
         <Self as MmuArch>::read_page_table_base()
     }
@@ -329,12 +336,20 @@ pub trait Arch: CoreArch + InterruptArch + MmuArch + SystemArch {
         <Self as MmuArch>::write_page_table_base(paddr);
     }
     /// 读取触发页错误的地址 (委托 `MmuArch::read_fault_address`)。
+    #[must_use]
     fn read_fault_address() -> usize {
         <Self as MmuArch>::read_fault_address()
     }
     /// 保存当前上下文到 `from`, 从 `to` 恢复 (委托 `MmuArch::context_switch`)。
-    fn context_switch(from: *mut u8, to: *const u8) {
-        <Self as MmuArch>::context_switch(from, to);
+    ///
+    /// # Safety
+    /// `from` 和 `to` 必须指向有效的 `ProcessContext` 内存。
+    unsafe fn context_switch(from: *mut u8, to: *const u8) {
+        // SAFETY: 由本函数的安全契约保证 from/to 指向有效 ProcessContext,
+        // 原样传递给 MmuArch::context_switch.
+        unsafe {
+            <Self as MmuArch>::context_switch(from, to);
+        }
     }
     /// 进入用户态执行, 不返回 (委托 `MmuArch::enter_user`)。
     fn enter_user(entry: usize, stack: usize, arg: usize, user_cr3: u64, kstack: u64) -> ! {
@@ -351,6 +366,7 @@ pub trait Arch: CoreArch + InterruptArch + MmuArch + SystemArch {
         <Self as SystemArch>::outb(port, value);
     }
     /// 从 I/O 端口读取字节 (委托 `SystemArch::inb`)。
+    #[must_use]
     fn inb(port: u16) -> u8 {
         <Self as SystemArch>::inb(port)
     }
@@ -359,6 +375,7 @@ pub trait Arch: CoreArch + InterruptArch + MmuArch + SystemArch {
         <Self as SystemArch>::outl(port, value);
     }
     /// 从 I/O 端口读取双字 (委托 `SystemArch::inl`)。
+    #[must_use]
     fn inl(port: u16) -> u32 {
         <Self as SystemArch>::inl(port)
     }
@@ -381,7 +398,7 @@ pub trait Arch: CoreArch + InterruptArch + MmuArch + SystemArch {
 pub type CurrentArch = x86_64::X8664;
 
 #[cfg(target_arch = "aarch64")]
-/// 当前编译目标的架构类型 — AArch64。
+/// 当前编译目标的架构类型 — `AArch64`。
 pub type CurrentArch = aarch64::Aarch64;
 
 // ============================================================================

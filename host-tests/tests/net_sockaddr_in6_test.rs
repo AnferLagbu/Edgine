@@ -2,7 +2,9 @@
 //!
 //! 验收:
 //!   - sm_fi.rs 定义 `SockaddrIn6` (#[repr(C)], 28 字节, 与 Linux 布局一致)
-//!   - SockaddrIn6 字段: sin6_family/sin6_port/sin6_flowinfo/sin6_addr/sin6_scope_id
+//!   - SockaddrIn6 字段: family/port/flowinfo/addr/scope_id
+//!     (P-64 第十六批: clippy `struct_field_names` 要求去掉全体字段共有的 `sin6_`
+//!     前缀, 与 C 结构体的对应关系改由结构体 doc 说明; 布局不变)
 //!   - `write_sockaddr` 按 IpAddr 分支写 sockaddr_in (16B) / sockaddr_in6 (28B)
 //!   - `parse_endpoint_trait` 按 family (2/10) 分支解析端点
 //!   - `endpoint_from_smol` 支持 IpAddress::Ipv6 → NetEndpoint::new_v6
@@ -26,15 +28,12 @@ fn test_sockaddr_in6_struct_defined() {
         src.contains("#[repr(C)]"),
         "SockaddrIn6 缺 #[repr(C)] (C ABI 兼容)"
     );
-    // Linux sockaddr_in6 布局字段
-    assert!(src.contains("sin6_family: u16"), "sin6_family 字段缺失");
-    assert!(src.contains("sin6_port: u16"), "sin6_port 字段缺失");
-    assert!(src.contains("sin6_flowinfo: u32"), "sin6_flowinfo 字段缺失");
-    assert!(
-        src.contains("sin6_addr: [u8; 16]"),
-        "sin6_addr 16 字节字段缺失"
-    );
-    assert!(src.contains("sin6_scope_id: u32"), "sin6_scope_id 字段缺失");
+    // Linux sockaddr_in6 布局字段 (Rust 侧名去 `sin6_` 前缀, 顺序与布局不变)
+    assert!(src.contains("family: u16"), "family 字段缺失");
+    assert!(src.contains("port: u16"), "port 字段缺失");
+    assert!(src.contains("flowinfo: u32"), "flowinfo 字段缺失");
+    assert!(src.contains("addr: [u8; 16]"), "addr 16 字节字段缺失");
+    assert!(src.contains("scope_id: u32"), "scope_id 字段缺失");
 }
 
 #[test]
@@ -46,11 +45,8 @@ fn test_sockaddr_in6_is_28_bytes() {
         src.contains("core::mem::size_of::<SockaddrIn6>()"),
         "write_sockaddr 未用 size_of::<SockaddrIn6>() 回写 addrlen"
     );
-    // AF_INET6 = 10 常量用于 sin6_family
-    assert!(
-        src.contains("sin6_family: 10"),
-        "SockaddrIn6 未写 AF_INET6 (10)"
-    );
+    // AF_INET6 = 10 常量用于 family
+    assert!(src.contains("family: 10"), "SockaddrIn6 未写 AF_INET6 (10)");
 }
 
 #[test]

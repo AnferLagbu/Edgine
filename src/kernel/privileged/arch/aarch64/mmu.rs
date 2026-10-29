@@ -1,8 +1,8 @@
-//! AArch64 MMU / 页表管理
+//! `AArch64` MMU / 页表管理
 //!
 //! 双地址空间:
-//!   - TTBR0_EL1: 用户空间 (0x0000_0000_0000_0000 - 0x0000_FFFF_FFFF_FFFF)
-//!   - TTBR1_EL1: 内核空间 (0xFFFF_0000_0000_0000 - 0xFFFF_FFFF_FFFF_FFFF)
+//!   - `TTBR0_EL1`: 用户空间 (`0x0000_0000_0000_0000` - `0x0000_FFFF_FFFF_FFFF`)
+//!   - `TTBR1_EL1`: 内核空间 (`0xFFFF_0000_0000_0000` - `0xFFFF_FFFF_FFFF_FFFF`)
 //!
 //! 使用 4KB 页粒度, 48-bit VA, 4-level 页表 (T0SZ=T1SZ=16 ⇒ 硬件从 level 0 起遍历)。
 //!
@@ -75,12 +75,12 @@ static mut L2_DEVICE: AlignedPageTable = AlignedPageTable([0; 512]);
 
 /// 初始化 identity mapping (覆盖 0-2GB) 并启用 MMU。
 ///
-/// 同时设置 TTBR1_EL1 覆盖内核高地址空间 (2GB)。
+/// 同时设置 `TTBR1_EL1` 覆盖内核高地址空间 (2GB)。
 ///
 /// 页表层级 (4KB 粒度, 48-bit VA, 4-level):
-///   L0`[0]` → L1_IDMAP
+///   L0`[0]` → `L1_IDMAP`
 ///   
-/// L1`[0]` → L2_DEVICE (2MB 粒度, 全部 Device memory — QEMU virt 低 1GB 无 DRAM)
+/// L1`[0]` → `L2_DEVICE` (2MB 粒度, 全部 Device memory — QEMU virt 低 1GB 无 DRAM)
 /// L1`[1]` → 1GB 块: PA 0x40000000 (DRAM, kernel @ 0x40080000, Normal 内存)
 ///
 /// 所有映射均为 EL1 RW。
@@ -109,9 +109,11 @@ pub unsafe fn init() {
         L1_IDMAP.0[0] = virt_to_phys((&raw const L2_DEVICE.0).cast::<u64>() as u64) | PT_TYPE_TABLE;
 
         // L2_DEVICE: 512 个 2MB Device 块, 覆盖 0x00000000 - 0x40000000
-        for i in 0..512 {
+        // (经 &raw mut 取裸指针后解引用, 避免对 static mut 取引用触发 static_mut_refs)
+        let l2_device = &raw mut L2_DEVICE.0;
+        for (i, entry) in (*l2_device).iter_mut().enumerate() {
             let pa = (i as u64) * L2_BLOCK_SIZE;
-            L2_DEVICE.0[i] = pa | PT_TYPE_BLOCK | PT_AF | PT_ATTR_DEVICE | PT_AP_EL1_RW;
+            *entry = pa | PT_TYPE_BLOCK | PT_AF | PT_ATTR_DEVICE | PT_AP_EL1_RW;
         }
 
         // L1[1]: VA 1-2GB → PA 1-2GB (DRAM, kernel @ 0x40080000, Normal 内存)
@@ -164,11 +166,11 @@ pub unsafe fn init() {
     }
 }
 
-/// 初始化 TTBR1_EL1 内核页表。
+/// 初始化 `TTBR1_EL1` 内核页表。
 ///
 /// TTBR1 覆盖高半区 VA `0xFFFF_0000_0000_0000 - 0xFFFF_FFFF_FFFF_FFFF`。
 /// TCR 中 T1SZ=16 + TG1=4KB ⇒ 高半区 VA 宽 48-bit ⇒ 硬件**从 level 0 开始**遍历,
-/// 因而 TTBR1_EL1 必须指向 4 级根表。
+/// 因而 `TTBR1_EL1` 必须指向 4 级根表。
 ///
 /// 本函数复用 TTBR0 使用的同一 4 级根 [`L0_TABLE`], 依据是:
 /// 高半区别名 `VA = 0xFFFF_0000_0000_0000 + PA` 把 PA 放在 VA`[38:0]`,
@@ -178,11 +180,11 @@ pub unsafe fn init() {
 ///   - `0xFFFF_0000_4000_0000 - 0xFFFF_0000_8000_0000` → DRAM 1GB 块 (Normal;
 ///     含内核代码/数据/BSS/内核栈/异常向量表)
 ///
-/// 历史: 旧实现基于「T1SZ=16 时硬件从 level 1 开始遍历」的错误认知, 令 TTBR1_EL1
+/// 历史: 旧实现基于「T1SZ=16 时硬件从 level 1 开始遍历」的错误认知, 令 `TTBR1_EL1`
 /// 直接指向一张 L1 形态表 (仅填 `[0]`/`[1]`)。实测 (`AT S1E1R` + 根表转储) 表明
 /// 该表被硬件当作 L0 消费: 高半区 DRAM 别名的物理基址被截断为 0
 /// (`0xFFFF_0000_401B_F000` 解析到 PA `0x1BF000` 而非 `0x401BF000`), 导致
-/// VBAR_EL1 指向的异常向量表不可取指 —— 内核从未进入过任何异常/中断处理
+/// `VBAR_EL1` 指向的异常向量表不可取指 —— 内核从未进入过任何异常/中断处理
 /// (串口日志中 `TIMER IRQ` 恒为 0 次)。归因与验证见
 /// docs/plan/kpti-complete-project.md。
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -205,6 +207,7 @@ unsafe fn init_kernel_ttbr1() {
 ///
 /// 为简单实现, 使用 BSS 静态页表。
 /// Phase 6: 每进程独立页表。
+#[must_use]
 pub fn alloc_user_page_table() -> u64 {
     // 返回当前 identity mapping 的 TTBR0
     // Phase 6+: 实现每进程独立页表分配
@@ -253,7 +256,7 @@ unsafe fn set_mair(val: u64) {
     }
 }
 
-/// 启用 MMU: 设置 SCTLR_EL1.M (bit 0) + C (bit 2) + I (bit 12)
+/// 启用 MMU: 设置 `SCTLR_EL1.M` (bit 0) + C (bit 2) + I (bit 12)
 /// P3.B + F-11: 同时启用 D-cache 与 I-cache. ARM ARM 强烈建议启用 MMU 时
 /// 同时启用 C/I cache 以避免 speculative 访问绕过 MMU (CVE 防御).
 /// 历史版本注释 "暂不启用缓存, 后续单独处理" — 本次落地一并启用.
@@ -283,8 +286,9 @@ unsafe fn enable_mmu() {
 // Arch trait 辅助函数 (供 Arch impl 调用)
 // ============================================================================
 
-/// 读取 TTBR0_EL1 (低半区页表基址寄存器)。
+/// 读取 `TTBR0_EL1` (低半区页表基址寄存器)。
 #[inline]
+#[must_use]
 pub fn read_ttbr0() -> u64 {
     let val: u64;
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -294,8 +298,9 @@ pub fn read_ttbr0() -> u64 {
     val
 }
 
-/// 读取 TTBR1_EL1 (高半区页表基址寄存器)
+/// 读取 `TTBR1_EL1` (高半区页表基址寄存器)
 #[inline]
+#[must_use]
 pub fn read_ttbr1() -> u64 {
     let val: u64;
     // SAFETY: mrs ttbr1_el1 是只读系统寄存器读取, 无副作用.
@@ -305,7 +310,7 @@ pub fn read_ttbr1() -> u64 {
     val
 }
 
-/// 写入 TTBR0_EL1 并执行 ISB 使改动生效。
+/// 写入 `TTBR0_EL1` 并执行 ISB 使改动生效。
 #[inline]
 pub fn write_ttbr0(val: u64) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -342,8 +347,9 @@ pub fn tlbi_vmalle1() {
     }
 }
 
-/// 读取 FAR_EL1 (触发页错误的故障地址寄存器)。
+/// 读取 `FAR_EL1` (触发页错误的故障地址寄存器)。
 #[inline]
+#[must_use]
 pub fn read_far() -> u64 {
     let val: u64;
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -353,8 +359,9 @@ pub fn read_far() -> u64 {
     val
 }
 
-/// 读取 MAIR_EL1 (内存属性间接寄存器)
+/// 读取 `MAIR_EL1` (内存属性间接寄存器)
 #[inline]
+#[must_use]
 pub fn read_mair() -> u64 {
     let val: u64;
     // SAFETY: mrs mair_el1 是只读系统寄存器读取, 无副作用.
@@ -364,8 +371,9 @@ pub fn read_mair() -> u64 {
     val
 }
 
-/// 读取 TCR_EL1 (地址翻译控制寄存器)
+/// 读取 `TCR_EL1` (地址翻译控制寄存器)
 #[inline]
+#[must_use]
 pub fn read_tcr() -> u64 {
     let val: u64;
     // SAFETY: mrs tcr_el1 是只读系统寄存器读取, 无副作用.
@@ -375,8 +383,9 @@ pub fn read_tcr() -> u64 {
     val
 }
 
-/// 读取 SCTLR_EL1 (系统控制寄存器, 含 MMU/Cache 使能位)
+/// 读取 `SCTLR_EL1` (系统控制寄存器, 含 MMU/Cache 使能位)
 #[inline]
+#[must_use]
 pub fn read_sctlr() -> u64 {
     let val: u64;
     // SAFETY: mrs sctlr_el1 是只读系统寄存器读取, 无副作用.
@@ -391,6 +400,7 @@ pub fn read_sctlr() -> u64 {
 // ============================================================================
 
 /// 检查页表条目是否允许 EL0 (用户态) 访问
+#[must_use]
 pub fn allows_el0_access(descriptor: u64) -> bool {
     let ap = (descriptor >> 6) & 0x3;
     // AP[1] = 1 表示 EL0 也可访问
@@ -398,6 +408,7 @@ pub fn allows_el0_access(descriptor: u64) -> bool {
 }
 
 /// 获取页表条目的访问权限描述
+#[must_use]
 pub fn describe_ap(descriptor: u64) -> &'static str {
     let ap = (descriptor >> 6) & 0x3;
     match ap {
@@ -409,17 +420,20 @@ pub fn describe_ap(descriptor: u64) -> &'static str {
     }
 }
 
-/// 创建用户态可读写的页表条目 (使用 PT_AP_ALL_RW)
+/// 创建用户态可读写的页表条目 (使用 `PT_AP_ALL_RW`)
+#[must_use]
 pub fn make_user_rw_entry(phys_addr: u64, attr: u64) -> u64 {
     phys_addr | PT_TYPE_BLOCK | PT_AF | attr | PT_AP_ALL_RW
 }
 
-/// 创建内核态可读写的页表条目 (使用 PT_AP_EL1_RW)
+/// 创建内核态可读写的页表条目 (使用 `PT_AP_EL1_RW`)
+#[must_use]
 pub fn make_kernel_rw_entry(phys_addr: u64, attr: u64) -> u64 {
     phys_addr | PT_TYPE_BLOCK | PT_AF | attr | PT_AP_EL1_RW
 }
 
 /// 创建用户态只读的页表条目
+#[must_use]
 pub fn make_user_ro_entry(phys_addr: u64, attr: u64) -> u64 {
     phys_addr | PT_TYPE_BLOCK | PT_AF | attr | 0x3 << 6 // AP_EL1_RO | AP_EL0_RO
 }

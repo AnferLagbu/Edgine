@@ -51,7 +51,7 @@ pub struct Multiboot1Info {
     pub mods_count: u32,
     /// 引导模块数组的物理地址
     pub mods_addr: u32,
-    /// a.out 符号表 (tab_size / str_size / addr / reserved)
+    /// a.out 符号表 (`tab_size` / `str_size` / addr / reserved)
     pub syms: [u32; 4],
     /// 内存映射缓冲区字节长度
     pub mmap_length: u32,
@@ -105,16 +105,19 @@ pub struct MemoryMapEntry {
 
 impl MemoryMapEntry {
     /// 组合高低 32 位得到 64 位基址
+    #[must_use]
     pub fn base_addr(&self) -> u64 {
         u64::from(self.base_addr_high) << 32 | u64::from(self.base_addr_low)
     }
 
     /// 组合高低 32 位得到 64 位区域长度
+    #[must_use]
     pub fn length(&self) -> u64 {
         u64::from(self.length_high) << 32 | u64::from(self.length_low)
     }
 
     /// 判定该区域是否为可用 RAM (`mtype == 1`)
+    #[must_use]
     pub fn is_available(&self) -> bool {
         self.mtype == 1
     }
@@ -131,8 +134,15 @@ pub struct BootInfo {
     pub mmap_entries: usize,
 }
 
+impl Default for BootInfo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BootInfo {
     /// 构造全零初值 (尚未解析引导信息时的占位)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             mem_size: 0,
@@ -294,8 +304,11 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize) {
                 }
             }
             8 => {
-                // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                multiboot2_fb::parse_framebuffer_tag(unsafe { tag_ptr.add(8) }, tag_size);
+                // SAFETY: tag_ptr 指向多引导标签表内有效的 framebuffer 标签
+                // (offset 8 起为 tag 载荷), 调用期间标签表不被释放.
+                unsafe {
+                    multiboot2_fb::parse_framebuffer_tag(tag_ptr.add(8), tag_size);
+                }
             }
             _ => {}
         }

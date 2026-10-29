@@ -94,6 +94,7 @@ pub struct StandardArc(pub UnkfsArc);
 
 impl StandardArc {
     /// 构造新实例 (未初始化)
+    #[must_use]
     pub fn new() -> Self {
         Self(UnkfsArc::new())
     }
@@ -162,7 +163,7 @@ impl ArcCache for StandardArc {
     fn hit_rate(&self) -> u64 {
         let hits = self.hit_count();
         let total = hits + self.miss_count();
-        if total > 0 { hits * 1000 / total } else { 0 }
+        (hits * 1000).checked_div(total).unwrap_or(0)
     }
 }
 

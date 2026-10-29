@@ -42,7 +42,7 @@ const NS_PER_SEC: u64 = 1_000_000_000;
 
 /// 单进程的 `ITIMER_REAL` 槽位
 struct ItimerSlot {
-    /// 嵌入的 hrtimer (回调经 container_of 反推本槽)
+    /// 嵌入的 hrtimer (回调经 `container_of` 反推本槽)
     timer: HrTimer,
     /// 槽位归属进程 (`used` 为真时有效)
     pid: Pid,
@@ -170,6 +170,7 @@ pub fn itimer_real_get(pid: Pid) -> Option<(u64, u64)> {
 ///
 /// 语义与 Linux 一致: 等价于 `setitimer(ITIMER_REAL, {value=seconds,
 /// interval=0})`, 与 `setitimer` 互相覆盖; `seconds == 0` 仅撤防.
+#[must_use]
 pub fn itimer_alarm(pid: Pid, seconds: u32) -> u32 {
     let value_ns = u64::from(seconds).saturating_mul(NS_PER_SEC);
     let (prev_ns, _) = itimer_real_set(pid, value_ns, 0);

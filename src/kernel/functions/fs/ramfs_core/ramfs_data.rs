@@ -15,7 +15,7 @@ use crate::functions::fs::{VFS_MAX_NAME, VfsFileType, VfsSeekWhence, VfsStat};
 use crate::privileged::mm::LazyPageArena;
 use crate::privileged::sgeg::api as pwm_api;
 
-/// RamFS 数据区 — 节点表 / 惰性页池 / 位图 / ACE 表 / 链接目标表
+/// `RamFS` 数据区 — 节点表 / 惰性页池 / 位图 / ACE 表 / 链接目标表
 pub struct RamFsData {
     /// 文件系统实例标识 (dcache/icache 命名空间, 0 = 未挂载)
     ///
@@ -60,12 +60,20 @@ fn alloc_fs_id() -> u32 {
     if id == 0 { 1 } else { id }
 }
 
+impl Default for RamFsData {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RamFsData {
     /// 构造空实例 (各表均为空 `Vec`, 不分配堆内存).
     ///
     /// 供 BSS 静态 (`RAMFS_DATA` / `TMPFS_DATA` / `OVERLAY_FS` / `ANONYMOUS_FS`)
     /// 与 `#[cfg(test)]` 静态常量初始化使用. 真正的表内存由
     /// [`RamFsData::allocate`] 在堆就绪后惰性分配.
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             fs_id: 0,
@@ -392,14 +400,12 @@ impl RamFsData {
 
         let ino = node.node_id;
         for ace in &self.aces {
-            if ace.used && ace.node_id == ino {
-                if ace.pwm == 0 || ace.pwm == pwm {
-                    if (ace.deny_mask & cap) != 0 {
-                        return false;
-                    }
-                    if (ace.allow_mask & cap) != 0 {
-                        return true;
-                    }
+            if ace.used && ace.node_id == ino && (ace.pwm == 0 || ace.pwm == pwm) {
+                if (ace.deny_mask & cap) != 0 {
+                    return false;
+                }
+                if (ace.allow_mask & cap) != 0 {
+                    return true;
                 }
             }
         }
@@ -561,9 +567,7 @@ impl RamFsData {
             return None;
         }
 
-        let Some(node_id) = self.resolve_path(path) else {
-            return None;
-        };
+        let node_id = self.resolve_path(path)?;
 
         if node_id as usize >= RAMFS_MAX_NODES || !self.nodes[node_id as usize].used {
             return None;
@@ -952,14 +956,14 @@ impl RamFsData {
             block_idx,
         );
 
-        if let Some(block_num) = block_num {
-            if block_num != 0 {
-                let start = block_num as usize * RAMFS_BLOCK_SIZE + offset_in_block + 1;
-                let end = ((block_num as usize + 1) * RAMFS_BLOCK_SIZE)
-                    .min(self.data_area.capacity_bytes());
-                if start < end {
-                    self.data_area.zero(start, end - start);
-                }
+        if let Some(block_num) = block_num
+            && block_num != 0
+        {
+            let start = block_num as usize * RAMFS_BLOCK_SIZE + offset_in_block + 1;
+            let end =
+                ((block_num as usize + 1) * RAMFS_BLOCK_SIZE).min(self.data_area.capacity_bytes());
+            if start < end {
+                self.data_area.zero(start, end - start);
             }
         }
     }
@@ -968,10 +972,12 @@ impl RamFsData {
     fn free_blocks_beyond(&mut self, node_id: u32, first_block_to_free: usize, last_block: usize) {
         let mut blocks_to_free: Vec<u32> = Vec::new();
         let node_ref = &self.nodes[node_id as usize];
+        let direct_end = last_block.min(DIRECT_BLOCKS);
+        let direct_start = first_block_to_free.min(direct_end);
 
-        for idx in first_block_to_free..last_block.min(DIRECT_BLOCKS) {
-            if node_ref.direct_blocks[idx] != 0 {
-                blocks_to_free.push(node_ref.direct_blocks[idx]);
+        for &block in &node_ref.direct_blocks[direct_start..direct_end] {
+            if block != 0 {
+                blocks_to_free.push(block);
             }
         }
 
@@ -980,9 +986,9 @@ impl RamFsData {
         }
 
         let node_mut = &mut self.nodes[node_id as usize];
-        for idx in first_block_to_free..last_block.min(DIRECT_BLOCKS) {
-            if node_mut.direct_blocks[idx] != 0 {
-                node_mut.direct_blocks[idx] = 0;
+        for block in &mut node_mut.direct_blocks[direct_start..direct_end] {
+            if *block != 0 {
+                *block = 0;
             }
         }
 
@@ -1027,9 +1033,9 @@ impl RamFsData {
 
         {
             let node = &self.nodes[node_id as usize];
-            for i in 0..DIRECT_BLOCKS {
-                if node.direct_blocks[i] != 0 {
-                    blocks_to_free.push(node.direct_blocks[i]);
+            for &block in &node.direct_blocks {
+                if block != 0 {
+                    blocks_to_free.push(block);
                 }
             }
         }
@@ -1039,9 +1045,9 @@ impl RamFsData {
         }
 
         let node = &mut self.nodes[node_id as usize];
-        for i in 0..DIRECT_BLOCKS {
-            if node.direct_blocks[i] != 0 {
-                node.direct_blocks[i] = 0;
+        for block in &mut node.direct_blocks {
+            if *block != 0 {
+                *block = 0;
             }
         }
 
@@ -1125,9 +1131,7 @@ impl RamFsData {
             return None;
         }
 
-        let Some(parent_num) = self.resolve_path(parent_path) else {
-            return None;
-        };
+        let parent_num = self.resolve_path(parent_path)?;
 
         if parent_num as usize >= RAMFS_MAX_NODES || !self.nodes[parent_num as usize].used {
             return None;

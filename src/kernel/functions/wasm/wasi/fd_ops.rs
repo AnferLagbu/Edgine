@@ -24,7 +24,7 @@ pub fn wasi_fd_close(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
         Ok(entry) => {
             // 调用 VFS 关闭底层 fd
             if entry.inner_fd >= 0 {
-                crate::functions::fs::api::vfs_close(entry.inner_fd.cast_unsigned());
+                let _ = crate::functions::fs::api::vfs_close(entry.inner_fd.cast_unsigned());
             }
             interp.stack.push(Value::I32(wasi_success()))?;
         }
@@ -252,7 +252,7 @@ pub fn wasi_fd_stat_get(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
         write_u64_to(mem, base, 8, u64::from(stat.node_id)); // ino
         let _ = mem.write_u8(
             crate::functions::intcast::low_u32_from_u64(base + 16),
-            stat.file_type as u8,
+            stat.file_type,
         ); // filetype
         write_u64_to(mem, base, 17, 1); // nlink (默认 1)
         write_u64_to(mem, base, 25, u64::from(stat.size)); // size
@@ -680,13 +680,13 @@ pub fn wasi_fd_readdir(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resul
         // 写入 filetype
         let _ = mem.write_u8(
             crate::functions::intcast::low_u32_from_u64(base + 18),
-            dir_entry.file_type as u8,
+            dir_entry.file_type,
         );
         // 写入文件名
-        for i in 0..copy_len as usize {
+        for (i, byte) in dir_entry.name.iter().take(copy_len as usize).enumerate() {
             let _ = mem.write_u8(
                 crate::functions::intcast::low_u32_from_u64(base + 19 + i as u64),
-                dir_entry.name[i],
+                *byte,
             );
         }
         write_u32_to_memory(interp, buf_used_ptr, 19 + u32::from(copy_len));

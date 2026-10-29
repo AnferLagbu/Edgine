@@ -134,7 +134,7 @@ impl<T> IrqSpinLock<T> {
         }
     }
 
-    /// 创建命名 IrqSpinLock (其余构建: 忽略名称)
+    /// 创建命名 `IrqSpinLock` (其余构建: 忽略名称)
     #[cfg(not(any(debug_assertions, feature = "lockdep")))]
     pub fn named(_name: &'static str, data: T) -> Self {
         Self::new(data)
@@ -206,7 +206,7 @@ impl<T> IrqSpinLock<T> {
     /// 不能使用 `lock()` 获取 Guard 再调 `context_switch`, 因为切换后函数
     /// 永不返回 (iretq 到 next 用户态), Guard 的 Drop 不执行 → 锁永久泄漏 →
     /// next 进程运行时 `p.context.lock()` (如 syscall 入口保存寄存器) 自旋死锁。
-    pub unsafe fn get_mut_unchecked(&self) -> &mut T {
+    pub unsafe fn get_mut_unchecked(&mut self) -> &mut T {
         // SAFETY: 调用方保证无并发访问 (见函数文档)
         unsafe { &mut *self.data.get() }
     }
@@ -331,10 +331,10 @@ impl<T> Drop for IrqSpinLockGuard<'_, T> {
         let prev = unsafe { &*self.depth_ptr }.fetch_sub(1, Ordering::Relaxed);
         // SAFETY: 持有 lock_ptr 上的锁, 任何其他访问者都被锁在外; cli 屏蔽中断。
         unsafe { &*self.lock_ptr }.raw_unlock();
-        if prev == 1 {
-            if let Some(flags) = self.prev_if.take() {
-                restore_interrupts(flags);
-            }
+        if prev == 1
+            && let Some(flags) = self.prev_if.take()
+        {
+            restore_interrupts(flags);
         }
     }
 }

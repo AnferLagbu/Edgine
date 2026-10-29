@@ -63,17 +63,19 @@ pub enum PwmError {
 
 impl PwmError {
     /// 映射为 POSIX errno
+    #[must_use]
     pub fn to_errno(self) -> Errno {
         use Errno as E;
         match self {
-            Self::TableFull => E::EAGAIN,
-            Self::InvalidPassword => E::EACCES,
-            Self::WeakPassword => E::EINVAL,
+            Self::TableFull => E::Eagain,
+            Self::InvalidPassword => E::Eacces,
+            Self::WeakPassword => E::Einval,
             Self::Kernel(e) => e.as_errno(),
         }
     }
 
     /// 从内核 `i32` 错误码翻译
+    #[must_use]
     pub fn from_i32(code: i32) -> Self {
         use crate::functions::error::KernelError as K;
         match code {
@@ -118,6 +120,7 @@ pub fn try_load() -> PwmResult<()> {
 }
 
 /// 任何身份是否已存在
+#[must_use]
 pub fn any_identity_exists() -> bool {
     sgeg::api::pwm_any_identity_exists()
 }
@@ -232,6 +235,7 @@ pub fn enable(pwm: PwmId) -> PwmResult<()> {
 // ============================================================================
 
 /// 验证密码 (常数时间比较)
+#[must_use]
 pub fn verify_password(pwm: PwmId, password: &[u8]) -> bool {
     if password.is_empty() {
         return false;
@@ -262,11 +266,13 @@ pub fn change_password(pwm: PwmId, old: &[u8], new: &[u8]) -> PwmResult<()> {
 // ============================================================================
 
 /// PWM 是否存在
+#[must_use]
 pub fn exists(pwm: PwmId) -> bool {
     sgeg::api::pwm_find(pwm.0)
 }
 
 /// 获取 PWM 表项 (返回引用)
+#[must_use]
 pub fn find(pwm: PwmId) -> Option<&'static PwmEntry> {
     sgeg::identity::find(pwm.0)
 }
@@ -276,26 +282,31 @@ pub fn find(pwm: PwmId) -> Option<&'static PwmEntry> {
 // ============================================================================
 
 /// 检查 PWM 是否有指定能力
+#[must_use]
 pub fn has_capability(pwm: PwmId, domain: CapDomain, required: CapBits) -> bool {
     sgeg::api::pwm_has_capability(pwm.0, u16::from(domain.0), required.0)
 }
 
 /// 获取指定域的能力位
+#[must_use]
 pub fn get_capability_raw(pwm: PwmId, domain: CapDomain) -> u64 {
     sgeg::api::pwm_get_capability_raw(pwm.0, u16::from(domain.0))
 }
 
 /// 获取 FS 域能力位
+#[must_use]
 pub fn get_fs_capability(pwm: PwmId) -> u64 {
     sgeg::api::pwm_get_fs_capability(pwm.0)
 }
 
 /// 获取权限等级
+#[must_use]
 pub fn get_privilege_level(pwm: PwmId) -> u8 {
     sgeg::api::pwm_get_privilege_level(pwm.0)
 }
 
 /// 获取创建者 PWM
+#[must_use]
 pub fn get_creator(pwm: PwmId) -> PwmId {
     PwmId(sgeg::api::pwm_get_creator(pwm.0))
 }
@@ -333,6 +344,7 @@ pub fn revoke(revoker: PwmId, target: PwmId, domain: CapDomain, caps: u64) -> Pw
 }
 
 /// 权限检查: 操作者是否能修改 target
+#[must_use]
 pub fn check_privilege(operator: PwmId, target: PwmId) -> bool {
     sgeg::api::pwm_check_privilege(operator.0, target.0)
 }
@@ -356,41 +368,49 @@ pub fn transfer_creator(current: PwmId, target: PwmId, new_creator: PwmId) -> Pw
 // ============================================================================
 
 /// 当前 PWM
+#[must_use]
 pub fn current() -> PwmId {
     PwmId(sgeg::api::pwm_get_current())
 }
 
 /// 是否已登录
+#[must_use]
 pub fn is_logged_in() -> bool {
     sgeg::api::pwm_is_logged_in()
 }
 
 /// 当前 UID
+#[must_use]
 pub fn current_uid() -> u32 {
     sgeg::api::pwm_get_current_uid()
 }
 
 /// 当前 GID
+#[must_use]
 pub fn current_gid() -> u32 {
     sgeg::api::pwm_get_current_gid()
 }
 
 /// EUID
+#[must_use]
 pub fn euid() -> u32 {
     sgeg::api::pwm_get_euid()
 }
 
 /// EGID
+#[must_use]
 pub fn egid() -> u32 {
     sgeg::api::pwm_get_egid()
 }
 
 /// UID / GID
+#[must_use]
 pub fn uid(pwm: PwmId) -> u32 {
     sgeg::api::pwm_get_uid(pwm.0)
 }
 
 /// 查询身份对应的组 ID (GID)。
+#[must_use]
 pub fn gid(pwm: PwmId) -> u32 {
     sgeg::api::pwm_get_gid(pwm.0)
 }
@@ -405,21 +425,25 @@ pub fn logout() {
 // ===========================================================================
 
 /// 为 suid 提权
+#[must_use]
 pub fn elevate_for_suid(target: PwmId) -> bool {
     sgeg::api::pwm_elevate_for_suid(target.0)
 }
 
 /// 撤销提权
+#[must_use]
 pub fn drop_elevation() -> bool {
     sgeg::api::pwm_drop_elevation()
 }
 
 /// 检查是否有提权权限
+#[must_use]
 pub fn has_elevation_authority(target: PwmId) -> bool {
     sgeg::api::pwm_has_elevation_authority(target.0)
 }
 
 /// 尝试设置 UID
+#[must_use]
 pub fn try_setuid(target_uid: u32) -> bool {
     sgeg::api::pwm_try_setuid(target_uid)
 }
@@ -476,6 +500,7 @@ pub fn load_from_disk() -> PwmResult<()> {
 }
 
 /// 是否已修改
+#[must_use]
 pub fn is_modified() -> bool {
     sgeg::api::pwm_is_modified()
 }

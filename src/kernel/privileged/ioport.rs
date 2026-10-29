@@ -57,12 +57,14 @@ impl IoPort {
 
     /// 基端口号
     #[inline]
+    #[must_use]
     pub fn base(&self) -> u16 {
         self.base
     }
 
     /// 端口名称 (调试用)
     #[inline]
+    #[must_use]
     pub fn name(&self) -> &'static str {
         self.name
     }
@@ -80,6 +82,7 @@ impl IoPort {
     /// 端口偏移越界时 panic。
     #[cfg(target_arch = "x86_64")]
     #[inline]
+    #[must_use]
     pub fn read_u8(&self, offset: u16) -> u8 {
         // 不可恢复: I/O 端口偏移越界是编程错误, 调用方必须保证合法偏移
         let port = self
@@ -104,6 +107,7 @@ impl IoPort {
     /// 端口偏移越界时 panic (与 x86 实装同口径校验)。
     #[cfg(target_arch = "aarch64")]
     #[inline]
+    #[must_use]
     pub fn read_u8(&self, offset: u16) -> u8 {
         self.check_offset(offset, 1)
             .expect("IoPort::read_u8: offset+1 越界");
@@ -115,6 +119,7 @@ impl IoPort {
     /// 端口偏移越界时 panic。
     #[cfg(target_arch = "x86_64")]
     #[inline]
+    #[must_use]
     pub fn read_u16(&self, offset: u16) -> u16 {
         // 不可恢复: I/O 端口偏移越界是编程错误
         let port = self
@@ -135,6 +140,7 @@ impl IoPort {
     /// 端口偏移越界时 panic (与 x86 实装同口径校验)。
     #[cfg(target_arch = "aarch64")]
     #[inline]
+    #[must_use]
     pub fn read_u16(&self, offset: u16) -> u16 {
         self.check_offset(offset, 2)
             .expect("IoPort::read_u16: offset+2 越界");
@@ -146,6 +152,7 @@ impl IoPort {
     /// 端口偏移越界时 panic。
     #[cfg(target_arch = "x86_64")]
     #[inline]
+    #[must_use]
     pub fn read_u32(&self, offset: u16) -> u32 {
         // 不可恢复: I/O 端口偏移越界是编程错误
         let port = self
@@ -166,6 +173,7 @@ impl IoPort {
     /// 端口偏移越界时 panic (与 x86 实装同口径校验)。
     #[cfg(target_arch = "aarch64")]
     #[inline]
+    #[must_use]
     pub fn read_u32(&self, offset: u16) -> u32 {
         self.check_offset(offset, 4)
             .expect("IoPort::read_u32: offset+4 越界");
@@ -192,7 +200,7 @@ impl IoPort {
     /// 写入 u8 (aarch64 桩)。
     ///
     /// aarch64 上无 PIO, 编译期由 cfg 关闭实际 PIO 实现。
-    /// 调用方应使用 MMIO 寄存器访问 (IoMem) 替代。
+    /// 调用方应使用 MMIO 寄存器访问 (`IoMem`) 替代。
     ///
     /// # Panics
     /// 端口偏移越界时 panic (与 x86 实装同口径校验)。

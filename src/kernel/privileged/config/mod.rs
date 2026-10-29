@@ -182,10 +182,10 @@ pub fn print_config_table() {
     klog_info!(
         Boot,
         "|   smp={} preempt={} kaslr={} kpti={} freg={}      |",
-        on_off(caps.smp),
-        on_off(caps.preempt),
-        on_off(caps.kaslr),
-        on_off(caps.kpti),
+        on_off(caps.sched.smp),
+        on_off(caps.sched.preempt),
+        on_off(caps.mem.kaslr),
+        on_off(caps.mem.kpti),
         on_off(caps.freg)
     );
     klog_info!(
@@ -238,10 +238,10 @@ pub fn init() {
     klog_info!(
         Boot,
         "  Caps:    smp={} preempt={} kaslr={} kpti={} freg={}",
-        on_off(caps.smp),
-        on_off(caps.preempt),
-        on_off(caps.kaslr),
-        on_off(caps.kpti),
+        on_off(caps.sched.smp),
+        on_off(caps.sched.preempt),
+        on_off(caps.mem.kaslr),
+        on_off(caps.mem.kpti),
         on_off(caps.freg)
     );
 

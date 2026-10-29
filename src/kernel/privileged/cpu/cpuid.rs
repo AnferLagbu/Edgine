@@ -14,6 +14,7 @@
 /// # Safety
 /// CPUID 指令本身是安全的, 但返回值的解释需要硬件手册知识。
 #[inline]
+#[must_use]
 pub fn cpuid(leaf: u32, subleaf: u32) -> (u32, u32, u32, u32) {
     let (eax, ebx, ecx, edx): (u32, u32, u32, u32);
 
@@ -43,18 +44,20 @@ pub fn cpuid(leaf: u32, subleaf: u32) -> (u32, u32, u32, u32) {
 /// # Returns
 /// true - 支持, false - 不支持
 #[inline]
+#[must_use]
 pub fn is_leaf_supported(leaf: u32) -> bool {
     let (max_leaf, _, _, _) = cpuid(0, 0);
     leaf <= max_leaf
 }
 
-/// B03-18: 带 leaf + subleaf 双层校验的 CPUID 查询, 防止 leaf > max_leaf 时
+/// B03-18: 带 leaf + subleaf 双层校验的 CPUID 查询, 防止 leaf > `max_leaf` 时
 /// 读到未定义值（AMD 可能 panic, Intel 返回旧 CPU 的值）。
 ///
 /// # Returns
 /// - `Some((eax, ebx, ecx, edx))` — leaf 在支持范围
-/// - `None` — leaf 超出 max_leaf 或 subleaf 校验失败
+/// - `None` — leaf 超出 `max_leaf` 或 subleaf 校验失败
 #[inline]
+#[must_use]
 pub fn cpuid_checked(leaf: u32, subleaf: u32) -> Option<(u32, u32, u32, u32)> {
     if !is_leaf_supported(leaf) {
         return None;
@@ -92,7 +95,7 @@ mod tests {
         assert!(!is_leaf_supported(0xFFFF_FFFF));
     }
 }
-/// 注册 CPUID 相关内核测试用例 (kernel_test)
+/// 注册 CPUID 相关内核测试用例 (`kernel_test`)
 #[cfg(feature = "kernel_test")]
 pub fn register_cpuid_tests() {
     crate::privileged::tests::arch::register_cpuid_tests();

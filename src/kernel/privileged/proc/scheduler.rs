@@ -73,7 +73,7 @@ const RT_FIFO_WATCHDOG: u64 = 500;
 const KSWAPD_TICK_INTERVAL: u64 = 100;
 
 /// hotplug softirq 唤醒周期 (ticks). 100 ticks @ 1kHz timer = 100ms.
-/// 周期触发热插拔槽位轮询 (softirq 上下文读取 PCIe Slot Status).
+/// 周期触发热插拔槽位轮询 (softirq 上下文读取 `PCIe` Slot Status).
 /// 非热插拔场景下 poll 无任何 PCI 配置空间访问, 开销可忽略.
 const HOTPLUG_TICK_INTERVAL: u64 = 100;
 
@@ -180,6 +180,7 @@ pub enum SchedPolicy {
 
 impl SchedPolicy {
     /// 由原始 `u32` 值解析调度策略 (未知值回落为 `Normal`)
+    #[must_use]
     pub fn from_u32(value: u32) -> Self {
         match value {
             1 => Self::Fifo,
@@ -330,6 +331,7 @@ fn sched_for(cpu_id: u32) -> &'static PerCpuSched {
 /// 初始化指定 `cpu_id` 的 per-CPU 调度状态 (上线前一次性, 幂等).
 ///
 /// 返回 `false` 表示页池分配失败, 由调用方放弃启动该 AP.
+#[must_use]
 pub fn init_per_cpu_sched(cpu_id: u32) -> bool {
     sched_alloc_cpu(cpu_id)
 }
@@ -425,8 +427,15 @@ pub struct Scheduler {
 
 // All fields (Mutex<[PwidQuota; N]>, Mutex<[PwidLimit; N]>, AtomicBool) auto-implement Send + Sync.
 
+impl Default for Scheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Scheduler {
     /// 创建未初始化的全局调度器 (const 上下文可用, 供静态初始化)
+    #[must_use]
     pub const fn new() -> Self {
         const QUOTA_ZERO: PwidQuota = PwidQuota::new();
         const LIMIT_ZERO: PwidLimit = PwidLimit {
@@ -678,9 +687,7 @@ impl Scheduler {
             if let Some(claim) = Self::try_claim_rq(pid) {
                 return Some(claim);
             }
-            if PROCESS_TABLE.get(pid).is_none() {
-                return None;
-            }
+            PROCESS_TABLE.get(pid)?;
             core::hint::spin_loop();
         }
         None
@@ -1280,33 +1287,33 @@ impl Scheduler {
         } else if was_rt {
             let rt_info = PROCESS_TABLE
                 .with_process(current_pid, |p| (p.get_rt_priority(), p.get_sched_policy()));
-            if let Some((rt_priority, policy)) = rt_info {
-                if policy != SchedPolicy::Fifo {
-                    let mut rt_queue = per_cpu.rt_queue.lock();
-                    let mut inserted = false;
-                    for i in 0..rt_queue.len() {
-                        if rt_queue[i].rt_priority < rt_priority {
-                            rt_queue.insert(
-                                i,
-                                RtTaskInfo {
-                                    pid: current_pid,
-                                    rt_priority,
-                                    policy,
-                                    time_slice_remaining: RT_TIME_SLICE,
-                                },
-                            );
-                            inserted = true;
-                            break;
-                        }
+            if let Some((rt_priority, policy)) = rt_info
+                && policy != SchedPolicy::Fifo
+            {
+                let mut rt_queue = per_cpu.rt_queue.lock();
+                let mut inserted = false;
+                for i in 0..rt_queue.len() {
+                    if rt_queue[i].rt_priority < rt_priority {
+                        rt_queue.insert(
+                            i,
+                            RtTaskInfo {
+                                pid: current_pid,
+                                rt_priority,
+                                policy,
+                                time_slice_remaining: RT_TIME_SLICE,
+                            },
+                        );
+                        inserted = true;
+                        break;
                     }
-                    if !inserted {
-                        rt_queue.push_back(RtTaskInfo {
-                            pid: current_pid,
-                            rt_priority,
-                            policy,
-                            time_slice_remaining: RT_TIME_SLICE,
-                        });
-                    }
+                }
+                if !inserted {
+                    rt_queue.push_back(RtTaskInfo {
+                        pid: current_pid,
+                        rt_priority,
+                        policy,
+                        time_slice_remaining: RT_TIME_SLICE,
+                    });
                 }
             }
         } else {
@@ -1329,7 +1336,7 @@ impl Scheduler {
     }
 
     /// 更新切换目标的用户页表与内核栈顶页 (KPTI-08), 使 syscall/中断返回用户态时
-    /// 从 [gs:USER_PML4_OFF] 读取到正确的进程用户页表.
+    /// 从 [`gs:USER_PML4_OFF`] 读取到正确的进程用户页表.
     fn update_user_context(next: Pid, next_kernel_stack: u64) {
         if let Some(user_proc) = super::user_proc::USER_PROC_MANAGER.get(next) {
             super::user_proc::USER_PROC_MANAGER.set_current(Some(user_proc));
@@ -1367,10 +1374,11 @@ impl Scheduler {
             (&raw mut (*p).context).cast::<Mutex<ProcessContext>>()
         });
 
-        let next_ctx_ptr = next_ptr.map_or(core::ptr::null(), |p| {
+        let next_ctx_ptr = next_ptr.map_or(core::ptr::null_mut(), |p| {
             // SAFETY: next_ptr 来自 PROCESS_TABLE.get(), 它返回指向活动
-            // Process 的合法指针. 这里只读取 context 字段地址.
-            unsafe { (&raw const (*p).context).cast::<Mutex<ProcessContext>>() }
+            // Process 的合法指针. 这里只取 context 字段的可写地址 (get_mut_unchecked
+            // 需要 `&mut self`), 与上方 prev 同源同权限.
+            unsafe { (&raw mut (*p).context).cast::<Mutex<ProcessContext>>() }
         });
 
         // `context_switch` 会在**本任务稍后被重新调度上核时返回** —— 恢复点即
@@ -1389,8 +1397,8 @@ impl Scheduler {
             // SAFETY: prev/next_ptr 均派生自 PROCESS_TABLE 中活动的 Process 条目;
             // 单核 + cli 排他, 详见 get_mut_unchecked 文档.
             unsafe {
-                let prev_ctx = core::ptr::addr_of_mut!(*((*prev_ctx_ptr).get_mut_unchecked()));
-                let next_ctx = core::ptr::addr_of!(*((*next_ctx_ptr).get_mut_unchecked()));
+                let prev_ctx = core::ptr::addr_of_mut!(*((&mut *prev_ctx_ptr).get_mut_unchecked()));
+                let next_ctx = core::ptr::addr_of!(*((&mut *next_ctx_ptr).get_mut_unchecked()));
                 crate::arch!(context_switch(prev_ctx.cast::<u8>(), next_ctx.cast::<u8>()));
             }
             // 恢复路径: 本任务已被重新调度上核, 本次切换早已由"切走本任务的那次
@@ -1421,7 +1429,7 @@ impl Scheduler {
         // 本函数开头 cli 排他, 切换期间无并发访问. scratch 为本 CPU 私有槽, 仅
         // 承接被丢弃的 prev 寄存器 (其内容不会被读回).
         unsafe {
-            let next_ctx = core::ptr::addr_of!(*((*next_ctx_ptr).get_mut_unchecked()));
+            let next_ctx = core::ptr::addr_of!(*((&mut *next_ctx_ptr).get_mut_unchecked()));
             let scratch_ctx = per_cpu.scratch_ctx.map_mut(|c| core::ptr::addr_of_mut!(*c));
             crate::arch!(context_switch(
                 scratch_ctx.cast::<u8>(),
@@ -1486,6 +1494,7 @@ impl Scheduler {
     }
 
     /// 本核当前任务 pid; 无任务 (pid 0) 时返回 `None`
+    #[must_use]
     pub fn current() -> Option<Pid> {
         let pid = per_cpu().current.load(Ordering::SeqCst);
         if pid == 0 { None } else { Some(pid) }
@@ -1548,11 +1557,7 @@ impl Scheduler {
                     Some((
                         policy,
                         dl_abs,
-                        if period > 0 {
-                            (runtime * 100) / period
-                        } else {
-                            0
-                        },
+                        (runtime * 100).checked_div(period).unwrap_or(0),
                     ))
                 } else {
                     Some((policy, 0, 0))
@@ -1728,6 +1733,7 @@ impl Scheduler {
     }
 
     /// 读取并清除本核重调度标志 (返回清除前的值)
+    #[must_use]
     pub fn should_reschedule() -> bool {
         per_cpu().need_reschedule.swap(false, Ordering::SeqCst)
     }
@@ -1777,6 +1783,7 @@ impl Scheduler {
     }
 
     /// 本核是否存在可运行任务 (DL/RT/CFS 任一非空)
+    #[must_use]
     pub fn has_runnable() -> bool {
         let per_cpu = per_cpu();
         if !per_cpu.dl_rq.lock().is_empty() {
@@ -1792,6 +1799,7 @@ impl Scheduler {
     }
 
     /// 便捷: 检查是否存在任意可运行任务.
+    #[must_use]
     pub fn has_any_runnable() -> bool {
         Self::has_runnable()
     }
@@ -2015,12 +2023,12 @@ impl Scheduler {
                 }
             });
         }
-        for i in 0..wake_count {
-            Self::unblock(to_wake[i]);
+        for &pid in &to_wake[..wake_count] {
+            Self::unblock(pid);
         }
     }
 
-    /// tick 的 Zombie 回收: 每 REAP_TICK_INTERVAL tick 一轮, 多核下只 CAS 赢家执行
+    /// tick 的 Zombie 回收: 每 `REAP_TICK_INTERVAL` tick 一轮, 多核下只 CAS 赢家执行
     /// (回收路径末端是 `remove_and_free`, 两核同窗对同一 pid 重复执行即 double-free).
     fn tick_reap_zombies(new_tick: u64) {
         let last_reap = LAST_REAP_TICK.load(Ordering::Acquire);
@@ -2049,7 +2057,7 @@ impl Scheduler {
                         })
                         .flatten();
                     let is_zombie = zombie_parent.is_some_and(|parent| {
-                        let parent_alive = parent.map_or(true, |ppid| {
+                        let parent_alive = parent.is_none_or(|ppid| {
                             PROCESS_TABLE
                                 .with_process(ppid.0, |pp| {
                                     let s = pp.get_state();
@@ -2065,16 +2073,16 @@ impl Scheduler {
                     }
                 }
             }
-            for i in 0..reap_count {
-                PROCESS_TABLE.with_process(to_reap[i], |p| {
+            for &pid in &to_reap[..reap_count] {
+                PROCESS_TABLE.with_process(pid, |p| {
                     let _ = p.set_state_safe(ProcessState::Terminated);
                 });
-                PROCESS_TABLE.remove_and_free(to_reap[i]);
+                PROCESS_TABLE.remove_and_free(pid);
             }
         }
     }
 
-    /// tick 的周期性负载均衡: 每 BALANCE_TICK_INTERVAL tick 一轮, 且每轮只有一个核.
+    /// tick 的周期性负载均衡: 每 `BALANCE_TICK_INTERVAL` tick 一轮, 且每轮只有一个核.
     ///
     /// `load_balance` 是 pull 型 (从最忙核偷到**本核**): E-II-b 后每个核都收 tick,
     /// 若各核在同一全局 tick 上各自发起, 就会出现 CPU0 偷 CPU1 同时 CPU1 偷 CPU0
@@ -2105,6 +2113,7 @@ impl Scheduler {
     }
 
     /// 本核实时运行队列中的任务数量
+    #[must_use]
     pub fn get_rt_count() -> usize {
         per_cpu().rt_queue.lock().len()
     }
@@ -2135,6 +2144,7 @@ impl Scheduler {
     /// 策略: 在 allowed cpuset 中选 load 最低的 CPU.
     /// 单核: 直接返回当前 CPU.
     /// 找不到 allowed CPU: 返回 `hint_cpu` (退化路径, 调度器仍可工作).
+    #[must_use]
     pub fn select_cpu_for(pid: Pid, hint_cpu: u32) -> u32 {
         let cpu_count = crate::privileged::smp::get_cpu_count();
         if cpu_count <= 1 {
@@ -2276,8 +2286,7 @@ impl Scheduler {
         let mut cands: [Pid; LOAD_BALANCE_MAX_MOVE] = [0; LOAD_BALANCE_MAX_MOVE];
         let n = src.leftmost_pids(&mut cands);
         let mut moved = 0usize;
-        for i in 0..n {
-            let pid = cands[i];
+        for &pid in &cands[..n] {
             // 非阻塞认领: 已被他人认领者直接放过. 等待即死锁 —— 那个认领者正在等的
             // rq 锁就在我们手里.
             let Some(mut claim) = Self::try_claim_rq(pid) else {

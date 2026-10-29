@@ -33,24 +33,24 @@ use crate::privileged::syscall::raw;
 /// 当缺少 `CAP_SYS_ADMIN` 能力时返回 `EACCES`; 其余错误以对应的 `Errno` 返回.
 pub fn mount_syscall(source_ptr: u64, target_ptr: u64, fstype_ptr: u64) -> Result<usize, Errno> {
     if target_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if fstype_ptr == 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if !raw::check_user_ptr(target_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_buf(fstype_ptr, 1) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if source_ptr != 0 && !raw::check_user_ptr(source_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
 
     let pwm = current_pwm();
     if !sgeg::api::pwm_has_capability(pwm, 0, 0x01) {
-        return Err(Errno::EACCES);
+        return Err(Errno::Eacces);
     }
 
     // 框架端会解析 fstype; 校验则委托 privileged 内置白名单 (ramfs/unkfs/...)
@@ -76,15 +76,15 @@ pub fn mount_syscall(source_ptr: u64, target_ptr: u64, fstype_ptr: u64) -> Resul
 /// 其余错误 (如挂载点不存在等) 以对应的 `Errno` 返回.
 pub fn umount2_syscall(target_ptr: u64, flags: i32) -> Result<usize, Errno> {
     if target_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_ptr(target_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
 
     let pwm = current_pwm();
     if !sgeg::api::pwm_has_capability(pwm, 0, 0x01) {
-        return Err(Errno::EACCES);
+        return Err(Errno::Eacces);
     }
 
     let r = fw::vfs_umount(target_ptr as *const u8, flags);

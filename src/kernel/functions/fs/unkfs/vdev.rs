@@ -50,6 +50,7 @@ pub enum UnkfsVdevState {
 
 impl UnkfsVdevState {
     /// 由编码值还原状态, 未知值归一为 `Unknown`.
+    #[must_use]
     pub fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::Closed,
@@ -93,6 +94,7 @@ pub struct UnkfsVdevConfig {
 
 impl UnkfsVdevConfig {
     /// 构造单盘 vdev 配置, 初始容量取默认值、扇区数待探测.
+    #[must_use]
     pub fn new_disk(vdev_id: u16, path: &str, ashift: u8) -> Self {
         let mut p = [0u8; 64];
         let b = path.as_bytes();
@@ -143,6 +145,7 @@ pub struct UnkfsVdev {
 
 impl UnkfsVdev {
     /// 以配置构造 vdev, 初始状态为已关闭.
+    #[must_use]
     pub fn new(config: UnkfsVdevConfig) -> Self {
         Self {
             config,
@@ -159,6 +162,7 @@ impl UnkfsVdev {
     }
 
     /// 探测指定驱动器的容量 (字节): 优先读注册表, 回退二分扫描, 失败取默认值.
+    #[must_use]
     pub fn probe_disk_size(drive: u8) -> u64 {
         if !block::hdd_is_present(drive) {
             return 0;
@@ -194,11 +198,13 @@ impl UnkfsVdev {
     }
 
     /// 是否处于健康状态.
+    #[must_use]
     pub fn is_healthy(&self) -> bool {
         self.state == UnkfsVdevState::Healthy
     }
 
     /// 是否可读写 (健康或降级).
+    #[must_use]
     pub fn is_available(&self) -> bool {
         matches!(
             self.state,
@@ -234,23 +240,20 @@ impl UnkfsVdev {
         if buf.len() < crate::functions::intcast::usize_from_u64(need_bytes) {
             return KernelError::InvalidArgument.as_i32();
         }
-        let mut offset = 0usize;
-        let mut sec = sector;
         let part_start = u64::from(self.config.partition_start);
-        for _ in 0..count {
+        for i in 0..count {
+            let offset = crate::functions::intcast::usize_from_u64(u64::from(i) * 512);
             if offset + 512 > buf.len() {
                 break;
             }
             let result = block::hdd_read_sector(
                 crate::functions::intcast::low_u8_from_u16(self.config.vdev_id),
-                part_start + sec,
+                part_start + sector + u64::from(i),
                 &mut buf[offset..],
             );
             if result < 0 {
                 return result;
             }
-            sec += 1;
-            offset += 512;
         }
         self.total_reads += 1;
         0
@@ -262,23 +265,20 @@ impl UnkfsVdev {
         if buf.len() < crate::functions::intcast::usize_from_u64(need_bytes) {
             return KernelError::InvalidArgument.as_i32();
         }
-        let mut offset = 0usize;
-        let mut sec = sector;
         let part_start = u64::from(self.config.partition_start);
-        for _ in 0..count {
+        for i in 0..count {
+            let offset = crate::functions::intcast::usize_from_u64(u64::from(i) * 512);
             if offset + 512 > buf.len() {
                 break;
             }
             let result = block::hdd_write_sector(
                 crate::functions::intcast::low_u8_from_u16(self.config.vdev_id),
-                part_start + sec,
+                part_start + sector + u64::from(i),
                 &buf[offset..],
             );
             if result < 0 {
                 return result;
             }
-            sec += 1;
-            offset += 512;
         }
         self.total_writes += 1;
         0

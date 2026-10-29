@@ -21,6 +21,7 @@
 //! - T2-4: Swap 策略完整迁移 (2026-06-19)
 //! - 互补: pmm_trait::PmmPolicy (物理页分配策略)
 
+use crate::functions::error::AlreadyRegistered;
 use crate::privileged::mm::swap_trait::{LruPageInfo, SwapPolicy, SwapPolicyContext};
 
 // ============================================================================
@@ -59,10 +60,10 @@ impl SwapPolicy for DefaultSwapPolicy {
     /// 选择第一个非 locked 的 inactive 条目作为回收候选
     fn select_victim(&self, entries: &[Option<LruPageInfo>]) -> Option<usize> {
         for (i, entry) in entries.iter().enumerate() {
-            if let Some(e) = entry {
-                if !e.locked {
-                    return Some(i);
-                }
+            if let Some(e) = entry
+                && !e.locked
+            {
+                return Some(i);
             }
         }
         None
@@ -75,10 +76,10 @@ impl SwapPolicy for DefaultSwapPolicy {
 ///
 /// # Errors
 ///
-/// 当 Swap 策略已被注册时返回 `Err(())`.
-pub fn register_default_swap_policy() -> Result<(), ()> {
+/// 当 Swap 策略已被注册时返回 `Err(AlreadyRegistered)`.
+pub fn register_default_swap_policy() -> Result<(), AlreadyRegistered> {
     static POLICY: DefaultSwapPolicy = DefaultSwapPolicy;
-    crate::privileged::mm::register_swap_policy(&POLICY).map_err(|_| ())
+    crate::privileged::mm::register_swap_policy(&POLICY).map_err(|_| AlreadyRegistered)
 }
 
 // ============================================================================

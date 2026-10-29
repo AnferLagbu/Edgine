@@ -5,8 +5,8 @@
 //! 原类型定义 (`ConfigSummary`, `KernelCapabilities`) 于 T6-9 (2026-06-16) 迁至
 //! `functions::config::caps`, 本文件仅 re-export + 运行时查询函数。
 //! 按"机制持有的数据结构/常量归 privileged"统一判据反转：`KernelCapabilities`
-//! 被 privileged mm/vmm_x86_64 的 KPTI 决策直接消费、`ConfigSummary` 被 privileged
-//! config 机制 (init/print_config_table) 消费 — 属机制类型, 迁回。
+//! 被 privileged `mm/vmm_x86_64` 的 KPTI 决策直接消费、`ConfigSummary` 被 privileged
+//! config 机制 (`init/print_config_table`) 消费 — 属机制类型, 迁回。
 //!
 //! functions 侧改 `pub use crate::privileged::config::caps::*` 保持 API 兼容。
 //! 本文件 0 unsafe (纯类型 + 编译期 cfg 检测 + 运行时查询函数).
@@ -41,30 +41,49 @@ pub struct ConfigSummary {
     pub capabilities: KernelCapabilities,
 }
 
-/// 编译期 + 运行时能力标志.
+/// 调度相关能力标志.
 #[derive(Debug, Clone, Copy)]
-pub struct KernelCapabilities {
+pub struct SchedCapabilities {
     /// 编译期启用了 SMP.
     pub smp: bool,
     /// Preempt-RT 内核.
     pub preempt: bool,
+}
+
+/// 内存相关能力标志.
+#[derive(Debug, Clone, Copy)]
+pub struct MemCapabilities {
     /// 内核地址空间布局随机化.
     pub kaslr: bool,
     /// `x86_64` KPTI 缓解措施.
     pub kpti: bool,
+}
+
+/// 编译期 + 运行时能力标志.
+#[derive(Debug, Clone, Copy)]
+pub struct KernelCapabilities {
+    /// 调度相关能力 (SMP / Preempt-RT).
+    pub sched: SchedCapabilities,
+    /// 内存相关能力 (KASLR / KPTI).
+    pub mem: MemCapabilities,
     /// `Edgine` FREG 子系统已编译入.
     pub freg: bool,
 }
 
 impl KernelCapabilities {
     /// 从编译期 `cfg` 标志检测能力.
+    #[must_use]
     pub const fn detect() -> Self {
         Self {
-            smp: cfg!(feature = "smp"),
-            preempt: cfg!(feature = "preempt"),
-            kaslr: cfg!(feature = "kaslr"),
-            // 测试模式下禁用 KPTI: 避免 KPTI 初始化修改共享页表导致 bitmap 映射被破坏
-            kpti: cfg!(all(target_arch = "x86_64", not(feature = "kernel_test"))),
+            sched: SchedCapabilities {
+                smp: cfg!(feature = "smp"),
+                preempt: cfg!(feature = "preempt"),
+            },
+            mem: MemCapabilities {
+                kaslr: cfg!(feature = "kaslr"),
+                // 测试模式下禁用 KPTI: 避免 KPTI 初始化修改共享页表导致 bitmap 映射被破坏
+                kpti: cfg!(all(target_arch = "x86_64", not(feature = "kernel_test"))),
+            },
             freg: cfg!(feature = "freg"),
         }
     }
@@ -79,6 +98,7 @@ use super::kaslr::get_kaslr_offset;
 use super::memory::PAGE_SIZE;
 
 /// 获取配置摘要用于调试.
+#[must_use]
 pub fn get_config_summary() -> ConfigSummary {
     ConfigSummary {
         max_cpus: MAX_CPUS,

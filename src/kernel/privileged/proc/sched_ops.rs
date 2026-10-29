@@ -13,7 +13,7 @@
 //! （`.rs` + `.c/.h/.S/.asm/.ld` + `scripts/` `tools/`，剔除注释与 `pub use`）
 //! 确认 24 个零调用者，已按「三合一 + 三档」判据删除：活路径的等价入口分别由
 //! `scheduler_*` 安全 Rust API（per-CPU 进程级）与 `proc_ops::*` 承担。
-//! 保留的 `SCHEDULER` 侧方法本体（RT / quota / limit / should_reschedule 面）
+//! 保留的 `SCHEDULER` 侧方法本体（RT / quota / limit / `should_reschedule` 面）
 //! 登记为「机制已实现、入口待 syscall 接线」，见 `docs/plan/net-e2e-tcp-echo-flakiness.md` §6。
 
 #![deny(missing_docs)]
@@ -27,6 +27,7 @@ use super::types::{BlockReason, Pid, ProcessPriority};
 // ============================================================================
 
 /// 获取当前调度进程的 CPU 时间 (tick 计数).
+#[must_use]
 pub fn scheduler_current_cputime() -> u64 {
     Scheduler::current()
         .and_then(|pid| {

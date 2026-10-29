@@ -254,15 +254,15 @@ fn user_driver_error_mapping() {
     );
 
     // 强类型 → POSIX errno (全分支)。
-    assert_eq!(UserDriverError::NotFound.to_errno(), Errno::ENOENT);
-    assert_eq!(UserDriverError::NotAuthorized.to_errno(), Errno::EPERM);
-    assert_eq!(UserDriverError::PidMismatch.to_errno(), Errno::EPERM);
-    assert_eq!(UserDriverError::InvalidState.to_errno(), Errno::EBUSY);
-    assert_eq!(UserDriverError::NoMmio.to_errno(), Errno::EINVAL);
-    assert_eq!(UserDriverError::Oom.to_errno(), Errno::ENOMEM);
+    assert_eq!(UserDriverError::NotFound.to_errno(), Errno::Enoent);
+    assert_eq!(UserDriverError::NotAuthorized.to_errno(), Errno::Eperm);
+    assert_eq!(UserDriverError::PidMismatch.to_errno(), Errno::Eperm);
+    assert_eq!(UserDriverError::InvalidState.to_errno(), Errno::Ebusy);
+    assert_eq!(UserDriverError::NoMmio.to_errno(), Errno::Einval);
+    assert_eq!(UserDriverError::Oom.to_errno(), Errno::Enomem);
     assert_eq!(
         UserDriverError::Unknown(-99).to_errno(),
-        Errno::EINVAL,
+        Errno::Einval,
         "未知错误应回退 EINVAL (POSIX 约定)"
     );
 }

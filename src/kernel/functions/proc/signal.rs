@@ -96,6 +96,7 @@ pub enum StandardSignal {
 
 impl StandardSignal {
     /// 从原始信号编号构造
+    #[must_use]
     pub fn from_number(n: u8) -> Option<Self> {
         match n {
             1 => Some(Self::Hup),
@@ -134,16 +135,19 @@ impl StandardSignal {
     }
 
     /// 信号编号
+    #[must_use]
     pub fn number(self) -> u8 {
         self as u8
     }
 
     /// 是否可被进程捕获或忽略
+    #[must_use]
     pub fn is_catchable(self) -> bool {
         !matches!(self, Self::Kill | Self::Stop)
     }
 
     /// 是否是核心转储信号 (默认行为)
+    #[must_use]
     pub fn is_core_dump(self) -> bool {
         matches!(
             self,
@@ -171,36 +175,42 @@ impl Signal {
 
     /// 构造标准信号
     #[inline]
+    #[must_use]
     pub const fn standard(s: StandardSignal) -> Self {
         Self(s as u8)
     }
 
     /// 构造 RT 信号 (sig >= 32)
     #[inline]
+    #[must_use]
     pub const fn realtime(rt_num: u8) -> Self {
         Self(rt_num + 32)
     }
 
     /// 原始信号编号
     #[inline]
+    #[must_use]
     pub const fn number(self) -> u8 {
         self.0
     }
 
     /// 是否为标准信号
     #[inline]
+    #[must_use]
     pub fn is_standard(self) -> bool {
         StandardSignal::from_number(self.0).is_some()
     }
 
     /// 是否为 RT 信号 (>= 32)
     #[inline]
+    #[must_use]
     pub fn is_realtime(self) -> bool {
         self.0 >= 32
     }
 
     /// 转位掩码 (用于 `signal_pending_*`)
     #[inline]
+    #[must_use]
     pub fn to_bit(self) -> u64 {
         1u64 << u64::from(self.0)
     }
@@ -227,6 +237,7 @@ pub enum SignalDisposition {
 
 impl SignalDisposition {
     /// POSIX 标准信号默认动作
+    #[must_use]
     pub fn default_for(sig: StandardSignal) -> Self {
         match sig {
             StandardSignal::Chld | StandardSignal::Urg => Self::Ign,
@@ -254,6 +265,7 @@ pub enum SignalAction {
 
 impl SignalAction {
     /// 是否为默认
+    #[must_use]
     pub fn is_default(self) -> bool {
         matches!(self, Self::Default)
     }
@@ -285,7 +297,7 @@ pub type SignalResult<T> = Result<T, SignalError>;
 ///
 /// - 目标进程不存在(`kill(pid, 0)` 检查) → `NoSuchProcess`
 /// - 信号编号 `> 63` → `InvalidArgument`
-/// (sig 上限 63 避开 `1u64 << 64` UB)
+///   (sig 上限 63 避开 `1u64 << 64` UB)
 pub fn send(pid: crate::privileged::proc::Pid, sig: Signal) -> SignalResult<()> {
     if sig == Signal::NONE {
         // POSIX: kill(pid, 0) 仅检查进程存在, 不发送
@@ -299,6 +311,7 @@ pub fn send(pid: crate::privileged::proc::Pid, sig: Signal) -> SignalResult<()> 
 }
 
 /// 检查进程是否有信号待处理
+#[must_use]
 pub fn pending(pid: crate::privileged::proc::Pid) -> Option<u64> {
     crate::functions::proc::table::signal_get(pid)
 }
@@ -460,7 +473,7 @@ mod tests {
         }
         // sigsetsize != 8 → EINVAL (sigmask 非 NULL 时校验)
         match with_temporary_sigmask(BAD_USER_PTR, 4, || Ok(9)) {
-            Err(crate::privileged::syscall::Errno::EINVAL) => {}
+            Err(crate::privileged::syscall::Errno::Einval) => {}
             _ => panic!("sigsetsize != 8 应返回 EINVAL"),
         }
         // 恢复现场 (测试自身不留残余屏蔽字)
@@ -490,7 +503,7 @@ pub fn kill_syscall(pid: i32, sig: i32) -> Result<usize, crate::privileged::sysc
 
     // 验证信号编号 (POSIX kill: 0 = 检查存在, 1..=63 = 标准 + RT 信号)
     if !(0..=63).contains(&sig) {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     // 验证 pid 范围 (POSIX: pid 必须非 0, -1, <-1 之一; pid=0 合法)
     // 原约束 pid <= 0 -> ESRCH 已移除 (TRACK-315B7C 解决)
@@ -527,18 +540,18 @@ pub fn tgkill_syscall(
     use crate::privileged::syscall::Errno;
 
     if tgid <= 0 || thread_id <= 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if !(0..=63).contains(&sig) {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     // 目标存在性校验 (tid 在当前模型下即 pid)
     let target = crate::privileged::proc::api::process_with(thread_id.cast_unsigned(), |p| p.pid)
-        .ok_or(Errno::ESRCH)?;
+        .ok_or(Errno::Esrch)?;
     if target.0 != tgid.cast_unsigned() {
         // 无线程组模型下 tid 所属进程的 tgid 即其 pid
-        return Err(Errno::ESRCH);
+        return Err(Errno::Esrch);
     }
     if sig == 0 {
         return Ok(0);
@@ -570,10 +583,10 @@ pub fn rt_sigaction_syscall(
 
     // 验证信号编号 (SIGKILL=9 和 SIGSTOP=19 不可捕获)
     if !(1..=63).contains(&signum) {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if signum == 9 || signum == 19 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     let ret = crate::privileged::syscall::api::sys_rt_sigaction(signum, act, oact);
@@ -601,7 +614,7 @@ pub fn rt_sigprocmask_syscall(
 
     // 验证 how
     if !(0..=2).contains(&how) {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     let ret = crate::privileged::syscall::api::sys_rt_sigprocmask(how, set, oset);
@@ -641,14 +654,14 @@ where
         return f();
     }
     if sigsetsize != core::mem::size_of::<u64>() as u64 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     let Some(new_mask) = crate::privileged::syscall::api::read_u64_from_user(sigmask_ptr) else {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     };
     let pid = crate::privileged::proc::process_get_current_pid();
     if pid == 0 {
-        return Err(Errno::ESRCH);
+        return Err(Errno::Esrch);
     }
 
     let old_mask = crate::privileged::proc::get_blocked_mask(pid);
@@ -694,6 +707,7 @@ pub fn sigaltstack_syscall(
 // 零成本读取引用解决 (已经是 vtable 一次解析, 后续调用直接通过指针).
 // 本文件实现 StandardSignalPolicy, 在 functions::proc::init() 中注册.
 
+use crate::functions::error::AlreadyRegistered;
 use crate::privileged::proc::SignalDefaultAction;
 use crate::privileged::proc::signal_trait::SignalDecision;
 
@@ -711,7 +725,7 @@ impl SignalDecision for StandardSignalPolicy {
     fn default_action(&self, sig: u8) -> SignalDefaultAction {
         match sig {
             17 | 23 => SignalDefaultAction::Ign,
-            19 | 20 | 21 | 22 => SignalDefaultAction::Stop,
+            19..=22 => SignalDefaultAction::Stop,
             18 => SignalDefaultAction::Cont,
             3 | 4 | 6 | 7 | 8 | 11 | 31 | 24 | 25 => SignalDefaultAction::Core,
             _ => SignalDefaultAction::Term,
@@ -738,14 +752,14 @@ impl SignalDecision for StandardSignalPolicy {
 
 /// 注册标准信号策略到 privileged
 ///
-/// 由 `functions::proc::init()` 调用. 只能成功一次, 后续调用返回 `Err(())`.
+/// 由 `functions::proc::init()` 调用. 只能成功一次, 后续调用返回 `Err(AlreadyRegistered)`.
 /// 启动期重复注册由 `proc::init()` 以 panic 暴露 (B05-44 返工);
 /// 本 API 自身仍返回 `Err` 供运行时调用方降级处理.
 ///
 /// # Errors
 ///
-/// 当标准信号策略已被注册时返回 `Err(())`.
-pub fn register_standard_signal_policy() -> Result<(), ()> {
+/// 当标准信号策略已被注册时返回 `Err(AlreadyRegistered)`.
+pub fn register_standard_signal_policy() -> Result<(), AlreadyRegistered> {
     static POLICY: StandardSignalPolicy = StandardSignalPolicy;
-    crate::privileged::proc::register_signal_decision(&POLICY).map_err(|_| ())
+    crate::privileged::proc::register_signal_decision(&POLICY).map_err(|_| AlreadyRegistered)
 }

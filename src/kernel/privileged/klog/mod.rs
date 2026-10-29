@@ -38,8 +38,15 @@ pub struct KlogWriter {
     buf: [u8; KLOG_BUF],
     pos: usize,
 }
+impl Default for KlogWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl KlogWriter {
     /// 构造空的栈上写入器。
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             buf: [0; KLOG_BUF],
@@ -60,6 +67,7 @@ impl core::fmt::Write for KlogWriter {
 
 impl KlogWriter {
     /// 返回已写入的字节切片。
+    #[must_use]
     pub fn as_slice(&self) -> &[u8] {
         &self.buf[..self.pos]
     }
@@ -411,8 +419,8 @@ pub fn klog_sink_name_at(idx: usize) -> Option<&'static str> {
         return None;
     }
     // SAFETY: idx < n, 满足 klog_sink_at 的契约; 仅取 name() 后立即丢弃 sink 引用.
-    let name = unsafe { klog_sink_at(idx) }.map(LogSink::name);
-    name
+
+    unsafe { klog_sink_at(idx) }.map(LogSink::name)
 }
 
 /// 广播字符串到所有已注册 sink. 空注册表时直接返回.

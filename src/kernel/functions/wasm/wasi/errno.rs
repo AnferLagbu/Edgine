@@ -78,11 +78,13 @@ pub enum WasiErrno {
 
 impl WasiErrno {
     /// 返回 errno 的整数值
+    #[must_use]
     pub fn as_i32(self) -> i32 {
         self as i32
     }
 
     /// 从 `Edgine` `KernelError` 映射到 WASI errno
+    #[must_use]
     pub fn from_kernel_error(err: &crate::functions::wasm::types::WasmError) -> Self {
         match err {
             crate::functions::wasm::types::WasmError::MemoryOutOfBounds => Self::Fault,
@@ -92,11 +94,13 @@ impl WasiErrno {
 }
 
 /// WASI 成功返回值
+#[must_use]
 pub fn wasi_success() -> i32 {
     WasiErrno::Success.as_i32()
 }
 
 /// WASI 错误返回值
+#[must_use]
 pub fn wasi_errno(e: WasiErrno) -> i32 {
     e.as_i32()
 }

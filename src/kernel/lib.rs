@@ -75,7 +75,7 @@
 // ✅ 全局警告抑制配置 (内核开发环境特有)
 // ============================================================================
 
-//! 允许的警告类别 (符合 OS 内核开发最佳实践)
+// 允许的警告类别 (符合 OS 内核开发最佳实践)
 
 // I-09: 移除 `#![allow(stable_features)]` — 该 allow 仅用于 asm feature
 // 声明, 已一并移除, 不再有 unstable 特性走 stable 路径.
@@ -90,96 +90,9 @@
 
 // 5. 安全相关 - 已迁出 (2026-09-26 F9 裁决: 150+ 处冗余 unsafe 块全量清理, 移除 crate 级 allow(unused_unsafe))
 
-// 6. Clippy: 内核代码中原始指针解引用是固有操作，由调用者保证安全性
-#![allow(clippy::not_unsafe_ptr_arg_deref)]
-// 7. Clippy: 内核内部 &self → &mut T 模式（如 Mutex::get_mut、UnsafeCell 包装）
-#![allow(clippy::mut_from_ref)]
-// 8. Clippy: 内核 C 字符串字面量 — 多用于 FFI，接收方类型多样（*const u8/i8/c_char）
-#![allow(clippy::manual_c_str_literals)]
-// 9. Clippy: 内核文档注释风格 — 模块级 doc comment 后空行是既存惯例
-#![allow(clippy::empty_line_after_doc_comments)]
-// 10. Clippy: Result<_, ()> — 内核错误路径使用 () 作为错误值是有意设计
-#![allow(clippy::result_unit_err)]
-// 11. Clippy: module_inception — 内核模块命名（如 fs/unkfs/unkfs.rs）是架构惯例
-#![allow(clippy::module_inception)]
-// 12. Clippy: new_without_default — 内核对象通常不应有无参默认构造
-#![allow(clippy::new_without_default)]
-// 13. Clippy: collapsible_if — 内核路径中的 if 嵌套有时是为了可读性
-#![allow(clippy::collapsible_if)]
-// 14. Clippy: single_match — match 单分支有时比 if-let 更清晰地表明穷尽性
-#![allow(clippy::single_match)]
-// 15. Clippy: too_many_arguments — 内核 API 参数数量由协议决定
-#![allow(clippy::too_many_arguments)]
-// 16. Clippy: type_complexity — 内核类型天然复杂（Box<dyn Fn> 等）
-#![allow(clippy::type_complexity)]
-// 17. Clippy: transmute_ptr_to_ptr — 内核 FFI 中的指针转换是显式约定
-#![allow(clippy::transmute_ptr_to_ptr)]
-// 18. Clippy: missing_transmute_annotations — 部分 transmute 转换缺显式标注, 全局豁免
-#![allow(clippy::missing_transmute_annotations)]
-// 19. Clippy: let_and_return — 内核错误路径中中间变量有助于可读性
-#![allow(clippy::let_and_return)]
-// 20. Clippy: wrong_self_convention — 内核 to_*/as_* 的 self 约定与 std 不同
-#![allow(clippy::wrong_self_convention)]
-// 21. Clippy: needless_range_loop — 内核中部分循环显式索引是有意可读性选择
-#![allow(clippy::needless_range_loop)]
-// 22. Clippy: manual_find — 显式循环比 .find() 在某些场景更清晰
-#![allow(clippy::manual_find)]
-// 23. Clippy: unnecessary_cast — 部分显式 cast 是内核惯例
-#![allow(clippy::unnecessary_cast)]
-// 24. Clippy: double_parens — 已迁出 (经脚本逐个审查确认无触发, 移除 allow)
-// 25. Clippy: unnecessary_lazy_evaluations — 惰性求值显式化是内核可读性选择
-#![allow(clippy::unnecessary_lazy_evaluations)]
-// 26. Clippy: manual_div_ceil
-#![allow(clippy::manual_div_ceil)]
-// 27. Clippy: match_like_matches_macro — 已迁出 (经脚本逐个审查确认无触发, 移除 allow)
-// 28. Clippy: manual_unwrap_or_default / manual_unwrap_or — 显式 match 更清晰
-#![allow(clippy::manual_unwrap_or_default)]
-#![allow(clippy::manual_unwrap_or)]
-// 29. Clippy: unnecessary_map_or — 显式 map_or 可读性更好
-#![allow(clippy::unnecessary_map_or)]
-// 30. Clippy: derivable_impls — 部分内核 impl 有文档注释需要保留
-#![allow(clippy::derivable_impls)]
-// 31. Clippy: manual_checked_ops — 内核显式检查除法更直观
-#![allow(clippy::manual_checked_ops)]
-// 32. Clippy: question_mark — 内核错误路径保留显式 match 更清晰
-#![allow(clippy::question_mark)]
-// 33. Clippy: manual_range_patterns — 显式范围 vs range pattern 可读性各有优劣
-#![allow(clippy::manual_range_patterns)]
-// 34. Clippy: manual_flatten — 显式 if-let 比 .flatten() 更清晰
-#![allow(clippy::manual_flatten)]
-// 35. Clippy: collapsible_match — 保留嵌套 match 结构
-#![allow(clippy::collapsible_match)]
-// 36. Clippy: let_unit_value — 已迁出 (经脚本逐个审查确认无触发, 移除 allow)
-// 37. Clippy: empty_loop — 内核自旋等待
-#![allow(clippy::empty_loop)]
-// 38. Clippy: explicit_counter_loop — 显式计数器在测试代码中更直观
-#![allow(clippy::explicit_counter_loop)]
-// 39. Clippy: pointers_in_nomem_asm_block — 内核 ASM 代码必须传指针
-#![allow(clippy::pointers_in_nomem_asm_block)]
-// 40. Clippy: empty_line_after_outer_attr — 已迁出 (经脚本逐个审查确认无触发, 移除 allow)
-// 41. Clippy: doc_lazy_continuation / doc_overindented_list_items — 内核文档风格
-#![allow(clippy::doc_lazy_continuation)]
-#![allow(clippy::doc_overindented_list_items)]
-// 42. Clippy: must_use_candidate — 内核内部 API 大量返回 Result/Option, 全标注 #[must_use] 会增加 200+ 行噪音
-//     重要公共 API 在函数定义处已加 #[must_use]; 内部 helper 不强制
-#![allow(clippy::must_use_candidate)]
-// 43. Clippy: unreadable_literal — 内核硬件常量 (MMIO 地址/位掩码/魔数) 经常是固定位模式, 加下划线分隔反而降低可读性
-//     与硬件规范直接对齐 (如 0xDEADBEEF, 0x74726976 = "virt" 小端); 改下划线会影响阅读与 SPEC 比对
-// 45. Clippy: large_stack_arrays — 已迁出 (经脚本逐个审查确认无触发, 移除 allow)
-// 46. Clippy: struct_field_names / pub_underscore_fields — 结构体字段命名约定是模块内风格 (如 page_state 含 page_* 字段); pub _xxx 是内核模块内 convention
-#![allow(clippy::struct_field_names)]
-#![allow(clippy::pub_underscore_fields)]
-// 47. Clippy: struct_excessive_bools — 状态标志结构体用多个 bool 字段是常见模式; 当前实现无需重构
-#![allow(clippy::struct_excessive_bools)]
-// 48. Clippy: doc_markdown — 内核文档使用中文 + 硬件术语 (MMIO/MSI/APIC 等) 不加反引号是约定; 阶段 3 已处理部分
-#![allow(clippy::doc_markdown)]
-// 49. Clippy: ptr_as_ptr — 部分 macro (如 klog_fmt) 内部 ptr cast 无法 expect 兜底; 真实代码 expect 已兑底
-// 50. Clippy: cast_ptr_alignment — 已迁出 (字节流解析改 read_unaligned, 已知对齐指针改地址回环, 移除 allow)
-// 51. Clippy: zero_sized_map_values / missing_fields_in_debug — 内核 struct 字段设计选择; 当前实现合理
-#![allow(clippy::zero_sized_map_values)]
-#![allow(clippy::missing_fields_in_debug)]
-// 52. Clippy: cast_lossless — 已迁出 (经脚本逐个审查确认无触发, 移除 allow)
-// 53. Clippy: duplicated_attributes — 已迁出 (经脚本逐个审查确认无触发, 移除 allow)
+// P-64 第十六批: clippy 族 crate 级豁免已全部撤销, 一律改码服从 lint.
+// 历史条目与逐条理由见 docs/plan/net-e2e-tcp-echo-flakiness.md 的 P-64 变更历史.
+// 无需豁免族的清理记录亦在该处 (如 unreadable_literal / large_stack_arrays / cast_ptr_alignment).
 
 // B08-12 注: host-test (std) 下 alloc 经 extern prelude 可见, 此处无条件声明不会产生
 // 重复 lang item — 之前观察到的 E0152 duplicate lang item 是 src/rust/.cargo/config.toml
@@ -277,27 +190,27 @@ fn panic_print_location(info: &PanicInfo) {
     // 诊断 (TRACK-INIT-RING3-PANIC): 先直接输出 panic location (file:line),
     // 绕过 PanicInfo::Display 格式化 (其内部 slice 索引在栈/数据被破坏时
     // 可能递归 panic → 无法看到原始 panic 点). location 是静态字符串, 不分配.
-    if crate::privileged::klog::KLOG_INIT.load(Ordering::Acquire) {
-        if let Some(loc) = info.location() {
-            crate::privileged::klog::serial_write_bytes(b"\n[PANIC LOC] ");
-            crate::privileged::klog::serial_write_bytes(loc.file().as_bytes());
-            crate::privileged::klog::serial_write_bytes(b":");
-            let mut line_buf = [0u8; 16];
-            let mut idx = 16usize;
-            let mut n = u64::from(loc.line());
-            if n == 0 {
-                line_buf[0] = b'0';
-                idx = 0;
-            } else {
-                while n > 0 && idx > 0 {
-                    idx -= 1;
-                    line_buf[idx] = b'0' + (n % 10) as u8;
-                    n /= 10;
-                }
+    if crate::privileged::klog::KLOG_INIT.load(Ordering::Acquire)
+        && let Some(loc) = info.location()
+    {
+        crate::privileged::klog::serial_write_bytes(b"\n[PANIC LOC] ");
+        crate::privileged::klog::serial_write_bytes(loc.file().as_bytes());
+        crate::privileged::klog::serial_write_bytes(b":");
+        let mut line_buf = [0u8; 16];
+        let mut idx = 16usize;
+        let mut n = u64::from(loc.line());
+        if n == 0 {
+            line_buf[0] = b'0';
+            idx = 0;
+        } else {
+            while n > 0 && idx > 0 {
+                idx -= 1;
+                line_buf[idx] = b'0' + (n % 10) as u8;
+                n /= 10;
             }
-            crate::privileged::klog::serial_write_bytes(&line_buf[idx..]);
-            crate::privileged::klog::serial_write_bytes(b"\n");
         }
+        crate::privileged::klog::serial_write_bytes(&line_buf[idx..]);
+        crate::privileged::klog::serial_write_bytes(b"\n");
     }
 }
 
@@ -653,7 +566,7 @@ fn kernel_init_test_arch() {
     #[cfg(target_arch = "x86_64")]
     {
         crate::privileged::cpu::cpu_init();
-        crate::privileged::arch::x86_64::gdt::gdt_init();
+        let _ = crate::privileged::arch::x86_64::gdt::gdt_init();
     }
 
     <crate::privileged::arch::CurrentArch as crate::privileged::arch::Arch>::interrupt_early_init();
@@ -1004,18 +917,18 @@ fn boot_rootfs_and_probes() {
         target_arch = "x86_64"
     ))]
     {
-        let unkfs = crate::functions::fs::unkfs::unkfs::get_unkfs();
+        let unkfs = crate::functions::fs::unkfs::entry::get_unkfs();
         // init() 会自动扫描所有块设备, 发现 Edgine 签名的磁盘并挂载
         unkfs.init();
 
         if unkfs.is_disk_mode() {
-            crate::functions::fs::unkfs::unkfs::get_unkfs()
+            crate::functions::fs::unkfs::entry::get_unkfs()
                 .spa
                 .disk_present
                 .store(true, core::sync::atomic::Ordering::Release);
             let r = crate::functions::fs::api::vfs_mount_internal(b"/".as_ptr(), b"unkfs".as_ptr());
             if r == 0 {
-                let n_drives = crate::functions::fs::unkfs::unkfs::get_unkfs()
+                let n_drives = crate::functions::fs::unkfs::entry::get_unkfs()
                     .drives_discovered
                     .lock()
                     .len() as u64;

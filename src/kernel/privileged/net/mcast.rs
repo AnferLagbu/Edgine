@@ -68,6 +68,7 @@ pub struct McastRegistry {
 
 impl McastRegistry {
     /// 构造空登记表 (`slot_mask` 为空, 须由 [`Self::allocate`] 填充).
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             groups: [None; MC_MAX_GROUPS],
@@ -169,11 +170,13 @@ impl McastRegistry {
     }
 
     /// 取 `slot` 的组成员位图 (供 `close` 路径逐位拆离, 见 [`Self::force_leave`]).
+    #[must_use]
     pub fn slot_bits(&self, slot: usize) -> u8 {
         self.mask_of(slot)
     }
 
     /// 取位图第 `idx` 位对应的组地址 (与 [`Self::slot_bits`] 配套遍历).
+    #[must_use]
     pub fn addr_at(&self, idx: usize) -> Option<IpAddress> {
         self.groups.get(idx).copied().flatten()
     }

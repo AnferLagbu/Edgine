@@ -249,10 +249,11 @@ pub fn wasi_path_readlink(
     } else {
         // 将结果写回 WASM 线性内存
         if let Some(ref mut mem) = interp.memory {
-            for i in 0..crate::functions::intcast::usize_from_i32(result) {
+            let n = crate::functions::intcast::usize_from_i32(result);
+            for (i, byte) in link_buf.iter().take(n).enumerate() {
                 let _ = mem.write_u8(
                     buf_ptr + crate::functions::intcast::low_u32_from_usize(i),
-                    link_buf[i],
+                    *byte,
                 );
             }
         }
@@ -337,7 +338,7 @@ pub fn wasi_path_filestat_get(
         write_u64(mem, 8, u64::from(stat.node_id));
         let _ = mem.write_u8(
             crate::functions::intcast::low_u32_from_u64(base + 16),
-            stat.file_type as u8,
+            stat.file_type,
         );
         write_u64(mem, 17, 1);
         write_u64(mem, 25, u64::from(stat.size));

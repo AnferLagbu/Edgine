@@ -148,6 +148,7 @@ unsafe impl<T: Send + Sync> Sync for OnceLock<T> {}
 
 impl<T> OnceLock<T> {
     /// 创建未初始化的 `OnceLock`。
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             once: InnerOnce::new(),

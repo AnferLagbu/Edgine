@@ -14,6 +14,7 @@
 /// 在 1GHz CPU 上, 1 个周期 ≈ 1 纳秒。
 /// 在 3GHz CPU 上, 1 个周期 ≈ 0.33 纳秒。
 #[inline]
+#[must_use]
 pub fn read_tsc() -> u64 {
     crate::arch!(timestamp())
 }
@@ -28,6 +29,7 @@ pub fn read_tsc() -> u64 {
 /// - x86_64: `lfence` + `rdtsc` (参照 Linux `rdtsc_ordered`)
 /// - aarch64: `isb` + `mrs cntpct_el0`
 #[inline]
+#[must_use]
 pub fn read_tsc_serialized() -> u64 {
     crate::arch!(timestamp_serialized())
 }

@@ -1,18 +1,18 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
-//! RamFS 节点与目录项数据结构 — functions 层安全实现
+//! `RamFS` 节点与目录项数据结构 — functions 层安全实现
 //!
-//! 定义 RamFS 的 inode 节点 (`RamFsNode`)、目录项 (`RamFsDirEntry`) 与
+//! 定义 `RamFS` 的 inode 节点 (`RamFsNode`)、目录项 (`RamFsDirEntry`) 与
 //! 访问控制项 (`RamFsACE`) 的内存布局, 全部为 `Copy` 结构体, 0 unsafe.
 
 use crate::functions::fs::VFS_MAX_NAME;
 
 pub(crate) const DIRECT_BLOCKS: usize = 12;
 
-/// RamFS 节点 (inode) — 文件/目录的元数据与块索引
+/// `RamFS` 节点 (inode) — 文件/目录的元数据与块索引
 #[derive(Debug, Clone, Copy)]
 pub struct RamFsNode {
-    /// 节点编号 (在 RamFS 节点表中的索引)
+    /// 节点编号 (在 `RamFS` 节点表中的索引)
     pub node_id: u32,
     /// 文件类型编码 (对应 `VfsFileType`)
     pub file_type: u8,
@@ -44,8 +44,16 @@ pub struct RamFsNode {
     pub used: bool,
 }
 
+impl Default for RamFsNode {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RamFsNode {
     /// 构造全零的未使用节点
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             node_id: 0,
@@ -67,7 +75,7 @@ impl RamFsNode {
     }
 }
 
-/// RamFS 目录项 — `repr(C)` 序列化布局 (节点号 + 类型 + 名字)
+/// `RamFS` 目录项 — `repr(C)` 序列化布局 (节点号 + 类型 + 名字)
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct RamFsDirEntry {
@@ -79,8 +87,16 @@ pub struct RamFsDirEntry {
     pub name: [u8; VFS_MAX_NAME],
 }
 
+impl Default for RamFsDirEntry {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RamFsDirEntry {
     /// 构造空目录项 (节点号/类型/名字全零)
+    #[must_use]
     pub fn new() -> Self {
         Self {
             node: 0,
@@ -101,6 +117,7 @@ impl RamFsDirEntry {
     ///
     /// # Panics
     /// 当 `offset..offset+4` 或 `offset+8..offset+8+VFS_MAX_NAME` 超出 `data` 长度时发生越界 panic (内部使用 `expect`).
+    #[must_use]
     pub fn read_at(data: &[u8], offset: usize) -> Self {
         let mut entry = Self::new();
         let node_bytes: [u8; 4] = data[offset..offset + 4]
@@ -126,7 +143,7 @@ impl RamFsDirEntry {
     }
 }
 
-/// RamFS 访问控制项 (ACE) — 针对单个节点的 PWM 授权记录
+/// `RamFS` 访问控制项 (ACE) — 针对单个节点的 PWM 授权记录
 #[derive(Debug, Clone, Copy)]
 pub struct RamFsACE {
     /// 作用的目标节点编号
@@ -141,8 +158,16 @@ pub struct RamFsACE {
     pub used: bool,
 }
 
+impl Default for RamFsACE {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RamFsACE {
     /// 构造全零的未使用访问控制项
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             node_id: 0,

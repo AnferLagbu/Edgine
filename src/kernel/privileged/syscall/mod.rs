@@ -47,11 +47,13 @@ pub mod types;
 pub use dispatch::*;
 
 /// 校验单个用户态指针是否落在用户可访问地址范围内.
+#[must_use]
 pub fn validate_user_ptr(ptr: u64) -> bool {
     crate::privileged::userptr::validate_user_ptr(ptr)
 }
 
 /// 校验用户态缓冲区 (基址 + 长度) 是否完整落在用户可访问地址范围内.
+#[must_use]
 pub fn validate_user_buf(ptr: u64, len: u64) -> bool {
     crate::privileged::userptr::validate_user_buf(ptr, len)
 }
@@ -133,11 +135,13 @@ pub mod raw {
     // ============= 用户指针校验（safe 包装） =============
 
     /// 校验单个用户指针是否在合法范围 [1, `USER_ADDR_MAX`)
+    #[must_use]
     pub fn check_user_ptr(ptr: u64) -> bool {
         super::validate_user_ptr(ptr)
     }
 
     /// 校验用户缓冲区 [ptr, ptr+len) 是否完全在用户空间
+    #[must_use]
     pub fn check_user_buf(ptr: u64, len: u64) -> bool {
         crate::privileged::userptr::validate_user_buf(ptr, len)
     }
@@ -166,6 +170,7 @@ pub mod raw {
     /// 读一个 u64。
     /// # Safety
     /// 调用方必须先调用 `check_user_buf(ptr as u64, 8)` 验证。
+    #[must_use]
     pub unsafe fn read_u64(ptr: *const u64) -> u64 {
         // SAFETY: 调用方已验证 ptr 对齐到 8 字节且指向 8 字节可读用户空间。
         unsafe { core::ptr::read_volatile(ptr) }
@@ -198,6 +203,7 @@ pub mod raw {
     }
 
     /// Safe 包装: 写两个 u64 到 user 指针 (`rlim_cur`, `rlim_max`).
+    #[must_use]
     pub fn write_rlimit_to_user(ptr: u64, cur: u64, max: u64) -> bool {
         if ptr == 0 {
             return false;
@@ -213,6 +219,7 @@ pub mod raw {
     /// Safe 包装: 在 functions 层用, 写一个 u64 到 user 指针.
     ///
     /// 调用方无需 unsafe 块. 内部先 `check_user_buf(dst, 8)` 验证.
+    #[must_use]
     pub fn write_u64_to_user(dst_ptr: u64, val: u64) -> bool {
         if dst_ptr == 0 {
             return false;
@@ -247,6 +254,7 @@ pub mod raw {
     /// # Safety
     /// FFI 调用，需在中断上下文。
     #[cfg(all(target_arch = "x86_64", not(feature = "kernel_test")))]
+    #[must_use]
     pub fn read_keyboard_byte() -> Option<u8> {
         // SAFETY: keyboard_has_data 与 keyboard_get_char 是 C-ABI 函数，
         // 调用方保证在中断上下文 (disable_interrupts 已持有)。
@@ -268,6 +276,7 @@ pub mod raw {
 
     /// 分配 count 个连续物理页。
     /// 委托到 `mm::api::pmm_alloc_pages`.
+    #[must_use]
     pub fn alloc_pages(count: u64) -> *mut u8 {
         crate::privileged::mm::pmm_alloc_pages(crate::privileged::glue::usize_from_u64(count))
     }
@@ -282,6 +291,7 @@ pub mod raw {
 
     /// 从用户指针读一个 u64. None 表示失败.
     /// 调用方无需 unsafe 块. 内部校验 + 读.
+    #[must_use]
     pub fn read_u64_from_user(src_ptr: u64) -> Option<u64> {
         if src_ptr == 0 {
             return None;
@@ -296,6 +306,7 @@ pub mod raw {
     /// 读取 tick 计数（1ms 粒度）。
     /// # Safety
     /// FFI 调用，硬件定时器寄存器读取。
+    #[must_use]
     pub fn get_ticks() -> u64 {
         // SAFETY: timer_get_ticks 是 C-ABI 函数，读取 PIT/HPET 计数器，
         // 无副作用。
@@ -312,6 +323,7 @@ pub mod raw {
     #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
     // 符号桩化 (host-test): 触发 borrow_as_ptr 的 `&_kernel_start as *const u8`
     // 仅存在于真机分支, expect 须同步收窄.
+    #[must_use]
     pub fn kernel_start_ptr() -> *const u8 {
         // 符号桩化 (host-test): host 无 _kernel_start 链接脚本符号且不执行
         // sys_boot_install 内核映像布局查询, 常量中性返回 null.
@@ -332,6 +344,7 @@ pub mod raw {
     #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
     // 符号桩化 (host-test): 触发 borrow_as_ptr 的 `&_kernel_end as *const u8`
     // 仅存在于真机分支, expect 须同步收窄.
+    #[must_use]
     pub fn kernel_end_phys(hhdm_offset: usize) -> usize {
         // 符号桩化 (host-test): host 无 _kernel_end 链接脚本符号, 常量中性返回 0.
         #[cfg(not(feature = "host-test"))]
@@ -362,9 +375,11 @@ pub mod raw {
                 "lidt [rdi]",
                 "int 0",
                 in("rdi") &[0u16; 4],
-                options(nostack, nomem)
+                options(nostack)
             );
-            loop {}
+            loop {
+                core::hint::spin_loop();
+            }
         }
     }
 
@@ -377,7 +392,9 @@ pub mod raw {
     pub unsafe fn reboot_via_psci() -> ! {
         unsafe {
             core::arch::asm!("svc #0", in("x0") 0u64, options(nostack));
-            loop {}
+            loop {
+                core::hint::spin_loop();
+            }
         }
     }
 }

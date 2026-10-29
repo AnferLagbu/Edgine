@@ -158,7 +158,7 @@ pub fn domain_gate_check(num: u64, args: &[u64; 6]) -> Option<i64> {
         })
         .unwrap_or(DomainFlags::NONE);
     if denied_by(flags, num, args) {
-        Some(Errno::EPERM.as_ret())
+        Some(Errno::Eperm.as_ret())
     } else {
         None
     }

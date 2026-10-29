@@ -45,12 +45,12 @@ pub trait FsBackend: Send + Sync {
     /// functions 可实现权限检查 (如只允许 root 挂载到 /).
     fn allow_mount(&self, path: &str, fs_name: &str) -> bool;
 
-    /// 创建 RamFS Inode 实例 (工厂钩子, DECISION-K 项 5)
+    /// 创建 `RamFS` Inode 实例 (工厂钩子, DECISION-K 项 5)
     ///
-    /// privileged `RamFsData` (机制) 在 fs_open / fs_create / fs_resolve_inode
+    /// privileged `RamFsData` (机制) 在 `fs_open` / `fs_create` / `fs_resolve_inode`
     /// 中需要产出 Inode trait object; 具象 `RamFsInode` 是 functions 层实现,
     /// privileged 不直接依赖, 经由此钩子由 functions 构造注入.
-    /// `fs_id` 为该 RamFS 实例的 dcache/icache 命名空间标识 (随实例挂载分配).
+    /// `fs_id` 为该 `RamFS` 实例的 dcache/icache 命名空间标识 (随实例挂载分配).
     /// # Errors
     /// 后端未注册或拒绝构造时返回 Err (回退策略 fail-closed)。
     fn make_ramfs_inode(
@@ -132,11 +132,11 @@ pub fn current_fs_backend() -> &'static dyn FsBackend {
 // UNKFS FileSystem 注册表 (DECISION-K 项 6: 注入归零)
 // ============================================================================
 
-/// 全局 UNKFS FileSystem 注册表 — `functions::fs::init` 注册 `UnkfsData` 实例
+/// 全局 UNKFS `FileSystem` 注册表 — `functions::fs::init` 注册 `UnkfsData` 实例
 static UNKFS_FS: crate::privileged::sync::OnceLock<&'static dyn FileSystem> =
     crate::privileged::sync::OnceLock::new();
 
-/// 注册 UNKFS FileSystem 实例 (由 `functions::fs::init` 调用)
+/// 注册 UNKFS `FileSystem` 实例 (由 `functions::fs::init` 调用)
 ///
 /// privileged 挂载/格式化路径经 `unkfs_fs()` 消费 trait object,
 /// 不再反向依赖 functions 具象 `UnkfsData`.
@@ -149,7 +149,7 @@ pub fn register_unkfs_fs(fs: &'static dyn FileSystem) -> Result<(), &'static dyn
     }
 }
 
-/// 获取注册的 UNKFS FileSystem (未注册时返回 None — fail-closed)
+/// 获取注册的 UNKFS `FileSystem` (未注册时返回 None — fail-closed)
 #[inline]
 pub fn unkfs_fs() -> Option<&'static dyn FileSystem> {
     match UNKFS_FS.get() {

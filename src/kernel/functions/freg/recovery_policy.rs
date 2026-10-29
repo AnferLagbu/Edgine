@@ -50,6 +50,7 @@ pub enum RecoveryAction {
 
 impl RecoveryAction {
     /// 转为 `privileged::freg::reset::RecoveryLayer`
+    #[must_use]
     pub fn to_privileged_layer(self) -> Option<u32> {
         // 1 = Layer1 (BBR 栏基), 2 = Layer2 (BSR 栏软), 3 = Layer3 (BHR 栏硬)
         match self {
@@ -61,6 +62,7 @@ impl RecoveryAction {
     }
 
     /// 决策是否需要执行硬件级重置 (BHR)
+    #[must_use]
     pub fn is_hardware_reset(self) -> bool {
         matches!(self, Self::FREGHardReset)
     }
@@ -83,6 +85,7 @@ pub struct FaultSignal {
 
 impl FaultSignal {
     /// 构造服务域故障信号
+    #[must_use]
     pub const fn service(
         domain_id: u64,
         retry_count: u32,
@@ -103,6 +106,7 @@ impl FaultSignal {
     }
 
     /// 构造 TCB 故障信号
+    #[must_use]
     pub const fn tcb(module: TcbModule, tick: u64) -> Self {
         Self {
             attribution: FaultAttribution::Tcb { module },
@@ -114,6 +118,7 @@ impl FaultSignal {
     }
 
     /// 构造跨层故障信号
+    #[must_use]
     pub const fn cross_layer(caller: u64, module: TcbModule, tick: u64) -> Self {
         Self {
             attribution: FaultAttribution::CrossLayer {
@@ -138,6 +143,7 @@ impl RecoveryPolicy {
     pub const DEFAULT: Self = Self;
 
     /// 给定故障信号, 输出恢复动作
+    #[must_use]
     pub fn decide(signal: &FaultSignal) -> RecoveryAction {
         match signal.attribution {
             FaultAttribution::Tcb { .. } => {

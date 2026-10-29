@@ -43,8 +43,7 @@ impl AliasRegistry {
     }
 
     fn check_conflict(&self, phys: u64, end: u64) -> Option<&'static str> {
-        for i in 0..self.count {
-            let (b, l, name) = self.entries[i];
+        for &(b, l, name) in &self.entries[..self.count] {
             // B03-22: 已有 entries 的 l 也可能溢出, 用 saturating_add 但
             // 当发生溢出时 (result 钳到 u64::MAX) 跳过范围比较, 视为冲突
             // (因为溢出范围不可信)。
@@ -262,21 +261,25 @@ impl IoMem {
 
     /// 返回 MMIO 区域物理基地址
     #[inline]
+    #[must_use]
     pub fn phys(&self) -> PhysAddr {
         self.phys_base
     }
     /// 返回 MMIO 区域长度 (字节)
     #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }
     /// 判断 MMIO 区域是否为空
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
     /// 返回 MMIO 区域名称
     #[inline]
+    #[must_use]
     pub fn name(&self) -> &'static str {
         self.name
     }
@@ -289,6 +292,7 @@ impl IoMem {
     /// - 仅通过 volatile 访问 (无编译器重排)。
     /// - 不会写出 `IoMem` 自身的字节范围 (offset + `size_of::<T>()` <= self.len)。
     #[inline]
+    #[must_use]
     pub unsafe fn virt_ptr(&self) -> *mut u8 {
         // SAFETY: `self.virt` 是 `IoMem::from_*` 构造时由 `NonNull::new_unchecked`
         // 校验的物理基地址经 MMU 映射后的虚拟地址, 满足 NonNull 契约。
@@ -311,6 +315,7 @@ impl IoMem {
     /// 读取范围超出 MMIO 区域大小时 panic (生产路径).
     /// 调试构建下 `debug_assert!` 提前触发, 便于单元测试与 early detection.
     #[inline]
+    #[must_use]
     pub fn read_u8(&self, offset: usize) -> u8 {
         debug_assert!(
             self.check_offset(offset, 1).is_ok(),
@@ -329,6 +334,7 @@ impl IoMem {
     /// 读取范围超出 MMIO 区域大小时 panic (生产路径).
     /// 调试构建下 `debug_assert!` 提前触发.
     #[inline]
+    #[must_use]
     pub fn read_u16(&self, offset: usize) -> u16 {
         debug_assert!(
             self.check_offset(offset, 2).is_ok(),
@@ -347,6 +353,7 @@ impl IoMem {
     /// 读取范围超出 MMIO 区域大小时 panic (生产路径).
     /// 调试构建下 `debug_assert!` 提前触发.
     #[inline]
+    #[must_use]
     pub fn read_u32(&self, offset: usize) -> u32 {
         debug_assert!(
             self.check_offset(offset, 4).is_ok(),
@@ -365,6 +372,7 @@ impl IoMem {
     /// 读取范围超出 MMIO 区域大小时 panic (生产路径).
     /// 调试构建下 `debug_assert!` 提前触发.
     #[inline]
+    #[must_use]
     pub fn read_u64(&self, offset: usize) -> u64 {
         debug_assert!(
             self.check_offset(offset, 8).is_ok(),

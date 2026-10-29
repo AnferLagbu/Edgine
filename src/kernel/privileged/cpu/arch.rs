@@ -17,12 +17,14 @@ use crate::privileged::config::MAX_CPUS;
 
 /// 获取当前 CPU ID (APIC ID / `MPIDR_EL1`)。
 #[inline]
+#[must_use]
 pub fn cpu_id() -> u32 {
     <crate::privileged::arch::CurrentArch as Arch>::cpu_id()
 }
 
 /// 获取高精度时间戳 (rdtsc / `CNTVCT_EL0`)。
 #[inline]
+#[must_use]
 pub fn timestamp() -> u64 {
     <crate::privileged::arch::CurrentArch as Arch>::timestamp()
 }

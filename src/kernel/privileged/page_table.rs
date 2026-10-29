@@ -91,7 +91,7 @@ pub fn verify_kernel_code_protection(kernel_text_start: VirtAddr, kernel_text_en
                 "PageTableChecker: kernel code vaddr 0x{addr:x} has null phys mapping"
             );
         }
-        addr += PAGE_SIZE as u64;
+        addr += PAGE_SIZE;
     }
 }
 

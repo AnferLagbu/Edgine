@@ -31,7 +31,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 /// 总线类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BusType {
-    /// PCIe 总线.
+    /// `PCIe` 总线.
     Pcie,
     /// USB 总线.
     Usb,
@@ -100,8 +100,15 @@ pub struct HotplugManager {
     initialized: Mutex<bool>,
 }
 
+impl Default for HotplugManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HotplugManager {
     /// 创建未初始化的管理器 (空槽位表、空监听器表).
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             slots: Mutex::new(Vec::new()),
@@ -216,9 +223,9 @@ impl HotplugManager {
                 device: s.device,
                 function: s.function,
                 slot_number: s.slot_number,
-                presence: s.presence_state,
-                surprise_capable: s.surprise_removal,
-                hotplug_capable: s.hotplug_capable,
+                presence: s.present,
+                surprise_capable: s.hotplug.surprise,
+                hotplug_capable: s.hotplug.capable,
             })
             .collect();
         drop(slots);
@@ -306,7 +313,7 @@ pub static HOTPLUG_MANAGER: HotplugManager = HotplugManager::new();
 ///
 /// functions 层在启动期通过 `register_reenum_hook` 注册回调; privileged 在
 /// 分发每个 `HotplugEvent` 给监听器**之前**调用它, 使 functions 有机会重新
-/// 扫描总线并完成块设备的注册/注销。未注册时 fail-quiet (与 NVMe MSIX
+/// 扫描总线并完成块设备的注册/注销。未注册时 fail-quiet (与 `NVMe` MSIX
 /// dispatch 同模式), 保证 privileged 不依赖任何 functions 符号。
 static HOTPLUG_REENUM_HOOK: OnceLock<fn(&HotplugEvent)> = OnceLock::new();
 

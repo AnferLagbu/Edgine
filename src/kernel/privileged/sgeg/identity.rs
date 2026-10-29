@@ -12,9 +12,10 @@ use super::types::{
 };
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
-/// 常数时间比较两个字节数组 (B08-22: privileged 权威实现, functions::sgeg::crypto::ct_eq 委托本函数)
+/// 常数时间比较两个字节数组 (B08-22: privileged 权威实现, `functions::sgeg::crypto::ct_eq` 委托本函数)
 ///
 /// **安全**: 不因数据差异而早返回, 防止计时攻击
+#[must_use]
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -67,9 +68,16 @@ pub struct IdentityTable {
     lock: AtomicBool,
 }
 
+impl Default for IdentityTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IdentityTable {
     /// 2026-07-02: turn 28 排查 test 86 hang. `[DEFAULT_ENTRY; 256]` (100KB)
     /// 在栈上创建导致栈溢出. 改用 `Vec<PwmEntry>` 直接堆分配.
+    #[must_use]
     pub fn new() -> Self {
         let mut entries = alloc::vec::Vec::with_capacity(MAX_PWM_ENTRIES);
         for _ in 0..MAX_PWM_ENTRIES {
@@ -162,6 +170,7 @@ impl IdentityTable {
     }
 
     /// 由 "密码 + 备注" 派生 64 位 PWM 标识 (SHA-256 前 8 字节, 0 归一为 1)
+    #[must_use]
     pub fn generate_pwm(password: &str, note: &str) -> u64 {
         let mut input = [0u8; 256];
         let mut pos = 0;
@@ -177,8 +186,8 @@ impl IdentityTable {
         }
         let hash = sha256::sha256(&input[..pos]);
         let mut pwm: u64 = 0;
-        for i in 0..8 {
-            pwm = (pwm << 8) | u64::from(hash[i]);
+        for &b in &hash[..8] {
+            pwm = (pwm << 8) | u64::from(b);
         }
         if pwm == 0 {
             pwm = 1;
@@ -191,12 +200,10 @@ impl IdentityTable {
         if pwm == 0 {
             return None;
         }
-        for entry in &self.entries {
-            if entry.pwm.load(Ordering::Acquire) == pwm {
-                return Some(entry);
-            }
-        }
-        None
+        self.entries
+            .iter()
+            .find(|&entry| entry.pwm.load(Ordering::Acquire) == pwm)
+            .map(|v| v as _)
     }
 
     /// 按 PWM 查找身份条目的可变引用 (`pwm == 0` 视为无效, 返回 `None`)
@@ -204,12 +211,9 @@ impl IdentityTable {
         if pwm == 0 {
             return None;
         }
-        for entry in &mut self.entries {
-            if entry.pwm.load(Ordering::Acquire) == pwm {
-                return Some(entry);
-            }
-        }
-        None
+        self.entries
+            .iter_mut()
+            .find(|entry| entry.pwm.load(Ordering::Acquire) == pwm)
     }
 
     /// 按备注 (`note`) 查找身份条目, 跳过未占用槽位
@@ -272,8 +276,8 @@ impl IdentityTable {
 
         let slot = {
             let mut s = None;
-            for i in 0..MAX_PWM_ENTRIES {
-                if !self.entries[i].is_valid() {
+            for (i, entry) in self.entries.iter().enumerate() {
+                if !entry.is_valid() {
                     s = Some(i);
                     break;
                 }
@@ -651,10 +655,10 @@ pub fn get_table() -> &'static IdentityTable {
     })
 }
 
-///
-/// # Safety
-///
-/// **T4-1 已废弃**: 全 Atomic 化后, 所有变更操作改用 &self + 原子写入,
+//
+// # Safety
+//
+// **T4-1 已废弃**: 全 Atomic 化后, 所有变更操作改用 &self + 原子写入,
 // T4-1: get_table_mut 已彻底删除.
 // 原因: 全 Atomic 化后, 所有变更操作改用 &self + 原子写入, 无需 &mut 全局引用.
 // 此前 &mut self 的方法 (create, change_password, bootstrap) 已改为 &self.
@@ -674,8 +678,8 @@ pub fn get_table() -> &'static IdentityTable {
 // 无需 `addr_of!` / `addr_of_mut!`. raw 子模块移除.
 //
 // 历史保留: 此前 raw 子模块实现见 git log, 此处仅作迁移说明.
-
 /// 按 PWM 在全局身份表中查找条目 (便捷入口, 等价于 `get_table().find(pwm)`)
+#[must_use]
 pub fn find(pwm: u64) -> Option<&'static PwmEntry> {
     get_table().find(pwm)
 }

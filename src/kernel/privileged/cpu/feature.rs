@@ -1,7 +1,7 @@
 //! CPU 特性标志集与特性收集模块
 //!
 //! B03-16 拆分 (自 `cpu/mod.rs` 迁出): 承载 `CpuFeatures` 位标志集定义
-//! + 特性收集逻辑 (`collect_features`, 多 CPUID leaf 汇总)。
+//! 与特性收集逻辑 (`collect_features`, 多 CPUID leaf 汇总)。
 //! `CpuFeatures` 类型双架构编译; `collect_features` 仅 x86_64 (依赖 cpuid)。
 
 #[cfg(target_arch = "x86_64")]
@@ -156,36 +156,42 @@ bitflags::bitflags! {
 impl CpuFeatures {
     /// 检查是否为 Intel 处理器 (基于特性组合判断)
     #[inline]
+    #[must_use]
     pub const fn is_intel_style(self) -> bool {
         self.contains(Self::VMX) && !self.contains(Self::SVM)
     }
 
     /// 检查是否为 AMD 处理器
     #[inline]
+    #[must_use]
     pub const fn is_amd_style(self) -> bool {
         self.contains(Self::SVM) && !self.contains(Self::VMX)
     }
 
     /// 检查是否支持 x86-64 长模式
     #[inline]
+    #[must_use]
     pub const fn supports_64bit(self) -> bool {
         self.contains(Self::LM)
     }
 
     /// 检查是否支持 SIMD 向量指令
     #[inline]
+    #[must_use]
     pub fn supports_simd(self) -> bool {
         self.contains(Self::SSE | Self::SSE2)
     }
 
     /// 检查是否支持 AVX/AVX2
     #[inline]
+    #[must_use]
     pub fn supports_avx(self) -> bool {
         self.contains(Self::AVX | Self::AVX2)
     }
 
     /// 检查是否支持虚拟化扩展
     #[inline]
+    #[must_use]
     pub fn supports_virtualization(self) -> bool {
         self.contains(Self::VMX | Self::SVM)
     }

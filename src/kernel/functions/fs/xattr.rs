@@ -18,7 +18,7 @@ pub fn setxattr_syscall(
     pwm: u64,
 ) -> Result<usize, Errno> {
     if path_ptr == 0 || name_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
 
     let r = crate::functions::fs::api::vfs_setxattr_internal(
@@ -48,7 +48,7 @@ pub fn getxattr_syscall(
     pwm: u64,
 ) -> Result<usize, Errno> {
     if path_ptr == 0 || name_ptr == 0 || buf_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
 
     let r = crate::functions::fs::api::vfs_getxattr_internal(
@@ -77,7 +77,7 @@ pub fn listxattr_syscall(
     pwm: u64,
 ) -> Result<usize, Errno> {
     if path_ptr == 0 || buf_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
 
     let r = crate::functions::fs::api::vfs_listxattr_internal(
@@ -100,7 +100,7 @@ pub fn listxattr_syscall(
 /// 当 `path_ptr` 或 `name_ptr` 为空时返回 `EFAULT`; 其余错误 (如属性不存在等) 以对应的 `Errno` 返回.
 pub fn removexattr_syscall(path_ptr: u64, name_ptr: u64, pwm: u64) -> Result<usize, Errno> {
     if path_ptr == 0 || name_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
 
     let r = crate::functions::fs::api::vfs_removexattr_internal(

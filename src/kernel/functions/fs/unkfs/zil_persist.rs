@@ -67,6 +67,7 @@ pub enum UnkfsZilPersistError {
 
 impl UnkfsZilPersistError {
     /// 返回错误的静态字符串标识 (供日志/诊断使用)
+    #[must_use]
     pub fn as_static_str(&self) -> &'static str {
         match self {
             Self::BufferTooShort { .. } => "buffer_too_short",
@@ -150,6 +151,7 @@ const _ASSERT_TRAILER_SIZE: () = {
 
 impl ZilBlockHeader {
     /// 构造指定事务组与首序号的空 block 头
+    #[must_use]
     pub fn new(txg: u64, seq_start: u64) -> Self {
         Self {
             magic: ZIL_MAGIC,
@@ -170,6 +172,7 @@ impl ZilBlockHeader {
     }
 
     /// 头部 magic 与版本号是否合法
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         self.magic == ZIL_MAGIC && self.version >= 1
     }
@@ -181,6 +184,7 @@ impl ZilBlockHeader {
     }
 
     /// 校验头部 CRC32 是否与内容一致
+    #[must_use]
     pub fn verify_header(&self) -> bool {
         let mut copy = *self;
         copy.compute_header_checksum();
@@ -188,11 +192,13 @@ impl ZilBlockHeader {
     }
 
     /// E6-6: 使用 `IntoBytes` + Immutable derive 编译期验证无 padding, `as_bytes` 为 safe 方法
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         zerocopy::IntoBytes::as_bytes(self)
     }
 
     /// E6-6: safe 反序列化, 逐字段读取替代 unsafe 指针转换
+    #[must_use]
     pub fn from_block(block: &[u8]) -> Option<Self> {
         let size = core::mem::size_of::<Self>();
         if block.len() < size {
@@ -221,6 +227,7 @@ impl ZilBlockHeader {
 
 impl ZilBlockTrailer {
     /// 构造空 block 尾 (尾魔数正确, 校验和置 0)
+    #[must_use]
     pub fn new() -> Self {
         Self {
             tail_magic: ZIL_TAIL_MAGIC,
@@ -229,13 +236,22 @@ impl ZilBlockTrailer {
     }
 
     /// 尾部 magic 是否合法
+    #[must_use]
     pub fn is_valid(self) -> bool {
         self.tail_magic == ZIL_TAIL_MAGIC
     }
 
     /// E6-6: 使用 `IntoBytes` + Immutable derive 编译期验证无 padding, `as_bytes` 为 safe 方法
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         zerocopy::IntoBytes::as_bytes(self)
+    }
+}
+
+impl Default for ZilBlockTrailer {
+    /// 委托 [`ZilBlockTrailer::new`] 构造空 block 尾.
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -387,6 +403,7 @@ pub struct UnkfsZilPersist {
 
 impl UnkfsZilPersist {
     /// 构造初始状态 (尚未写入)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             zil_blocks_written: AtomicBool::new(false),
@@ -516,7 +533,15 @@ impl UnkfsZilPersist {
     }
 }
 
+impl Default for UnkfsZilPersist {
+    /// 委托 [`UnkfsZilPersist::new`] 构造初始状态.
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// 公开的 CRC32 包装, 用于单元测试
+#[must_use]
 pub fn crc32_test_wrapper(data: &[u8]) -> u32 {
     crc32_checksum(data)
 }

@@ -78,8 +78,9 @@ unsafe impl Send for RecoveryDomain {}
 unsafe impl Sync for RecoveryDomain {}
 
 impl RecoveryDomain {
-    /// B03-10: 改造为 const fn, 支持静态预分配 (消除 Box::leak 泄漏)。
-    /// IrqSpinLock::new / Atomic*::new 已是 const, 所有字段可在 const 上下文初始化。
+    /// B03-10: 改造为 const fn, 支持静态预分配 (消除 `Box::leak` 泄漏)。
+    /// `IrqSpinLock::new` / Atomic*`::new` 已是 const, 所有字段可在 const 上下文初始化。
+    #[must_use]
     pub const fn new(id: u64) -> Self {
         Self {
             id: AtomicU64::new(id),
@@ -227,10 +228,10 @@ impl RecoveryDomain {
         {
             let mut deps = self.depends_on.lock();
             for slot in deps.iter() {
-                if let Some(existing) = *slot {
-                    if existing == dependency_id {
-                        return true;
-                    }
+                if let Some(existing) = *slot
+                    && existing == dependency_id
+                {
+                    return true;
                 }
             }
             for slot in deps.iter_mut() {
@@ -247,10 +248,10 @@ impl RecoveryDomain {
     pub fn add_depended_by(&self, dependent_id: u64) -> bool {
         let mut deps = self.depended_by.lock();
         for slot in deps.iter() {
-            if let Some(existing) = *slot {
-                if existing == dependent_id {
-                    return true;
-                }
+            if let Some(existing) = *slot
+                && existing == dependent_id
+            {
+                return true;
             }
         }
         for slot in deps.iter_mut() {

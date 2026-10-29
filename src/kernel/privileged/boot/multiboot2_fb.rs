@@ -40,8 +40,15 @@ pub struct FramebufferInfo {
     pub blue_mask_size: u8,
 }
 
+impl Default for FramebufferInfo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FramebufferInfo {
     /// 构造全零初值 (尚未解析 tag 时的占位)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             addr: 0,
@@ -60,6 +67,7 @@ impl FramebufferInfo {
     }
 
     /// 判定帧缓冲信息是否有效 (地址非零且分辨率与位深均大于零)
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         self.addr != 0 && self.width > 0 && self.height > 0 && self.bpp > 0
     }
@@ -94,8 +102,12 @@ pub fn get_framebuffer_info() -> Option<&'static FramebufferInfo> {
 ///   u8   `green_mask_size`
 ///   u8   `blue_field_position`
 ///   u8   `blue_mask_size`
-pub fn parse_framebuffer_tag(tag_data: *const u8, _tag_size: u32) {
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+///
+/// # Safety
+/// `tag_data` 必须指向多引导信息中有效的 framebuffer 标签载荷, 且至少覆盖
+/// 偏移 0..=29 的字节 (type==1 时读取到偏移 29)。
+pub unsafe fn parse_framebuffer_tag(tag_data: *const u8, _tag_size: u32) {
+    // SAFETY: 调用方保证指针/类型有效 (详见 `# Safety`)。
     unsafe {
         let addr = tag_data.cast::<u64>().read_unaligned();
         let pitch = tag_data.add(8).cast::<u32>().read_unaligned();

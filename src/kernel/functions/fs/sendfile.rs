@@ -14,7 +14,7 @@
 //!
 //! 本模块为 `SYS_SENDFILE` / `SYS_SPLICE` 的权威实现, 原
 //! `privileged::syscall::sendfile` 已删除 (机制归 privileged, 功能归 functions).
-//! 用户指针读写经 `privileged::syscall::api` 安全包装 (read/write_u64_to_user),
+//! 用户指针读写经 `privileged::syscall::api` 安全包装 (`read/write_u64_to_user`),
 //! VFS 数据面经内核缓冲 I/O (`vfs_read_kernel` / `vfs_write_kernel`).
 //!
 //! ## FD 类型识别
@@ -110,33 +110,33 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
 
     // in_fd 必须是 VFS 文件
     if !is_vfs_file_fd(in_fd) {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     }
 
     // out_fd 必须是 VFS 文件或 pipe 写端
     let out_is_vfs = is_vfs_file_fd(out_fd);
     let out_is_pipe = is_pipe_fd(out_fd);
     if !out_is_vfs && !out_is_pipe {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     }
 
     // in_fd 的 OpenFile handle (offset 读写经 OpenFile 元数据源)
     let Some(in_handle) = vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(in_fd))
     else {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     };
 
     // 读取用户空间 offset (若提供); 经 privileged 安全 API, 先校验后读取
     let mut offset: u64 = if offset_ptr != 0 {
         match crate::privileged::syscall::api::read_u64_from_user(offset_ptr) {
             Some(v) => v,
-            None => return Errno::EFAULT.as_ret(),
+            None => return Errno::Efault.as_ret(),
         }
     } else {
         // 使用 fd 当前偏移 (OpenFile 元数据源)
         match OPEN_FILE_TABLE.with_file(in_handle, crate::functions::fs::OpenFile::get_offset) {
             Some(off) => off,
-            None => return Errno::EBADF.as_ret(),
+            None => return Errno::Ebadf.as_ret(),
         }
     };
 
@@ -215,6 +215,7 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
 ///
 /// 至少一端必须是 pipe.
 /// 返回实际传输的字节数, 或负的错误码.
+#[must_use]
 pub fn sys_splice(
     fd_in: i32,
     _off_in: u64,
@@ -230,7 +231,7 @@ pub fn sys_splice(
 
     // flags 保留位检查
     if flags & !(SPLICE_F_MOVE | SPLICE_F_NONBLOCK | SPLICE_F_MORE | SPLICE_F_GIFT) != 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     let in_is_pipe = is_pipe_fd(fd_in);
@@ -240,23 +241,23 @@ pub fn sys_splice(
 
     // 至少一端必须是 pipe
     if !in_is_pipe && !out_is_pipe {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     // 输入端必须有效
     if !in_is_pipe && !in_is_vfs {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     }
     // 输出端必须有效
     if !out_is_pipe && !out_is_vfs {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     }
 
     // pipe 读写不需要 IPC 策略: 管道端点同为 VFS fd, 走统一内核缓冲 I/O
 
     // pipe → pipe 不支持 (v1)
     if in_is_pipe && out_is_pipe {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     let mut total_spliced: usize = 0;
@@ -301,7 +302,7 @@ pub fn sys_splice(
     if total_spliced == 0 && len > 0 {
         // 区分 EOF 和 EAGAIN
         if (flags & SPLICE_F_NONBLOCK) != 0 {
-            return Errno::EAGAIN.as_ret();
+            return Errno::Eagain.as_ret();
         }
         return 0; // EOF
     }

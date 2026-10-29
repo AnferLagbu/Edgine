@@ -45,7 +45,7 @@ const SLOTSTS_DLL_STATE_CHANGED: u16 = 1 << 7;
 /// `PCIe` 端口类型 (Capability Register bits 7:4)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PciePortType {
-    /// PCIe 端点设备
+    /// `PCIe` 端点设备
     PcieEndpoint = 0,
     /// 传统端点设备
     LegacyEndpoint = 1,
@@ -55,12 +55,13 @@ pub enum PciePortType {
     UpstreamPort = 5,
     /// 下行端口
     DownstreamPort = 6,
-    /// PCIe 到 PCI 桥
+    /// `PCIe` 到 PCI 桥
     PcieToPciBridge = 7,
 }
 
 impl PciePortType {
     /// 由 Capability Register 解析端口类型 (bits 7:4, 未知值返回 `None`)
+    #[must_use]
     pub fn from_cap_reg(val: u16) -> Option<Self> {
         match (val >> 4) & 0xF {
             0 => Some(Self::PcieEndpoint),
@@ -74,9 +75,30 @@ impl PciePortType {
     }
 
     /// 该端口类型是否支持热插拔 (根端口 / 下行端口)
+    #[must_use]
     pub fn is_hotplug_capable(self) -> bool {
         matches!(self, Self::RootPort | Self::DownstreamPort)
     }
+}
+
+/// 槽位能力位 (`Slot Capabilities` 寄存器解码结果)
+#[derive(Debug, Clone, Copy)]
+pub struct SlotCapabilities {
+    /// 是否具备注意按钮
+    pub attn_button: bool,
+    /// 是否具备电源控制器
+    pub power_controller: bool,
+    /// 是否具备 MRL 传感器
+    pub mrl_sensor: bool,
+}
+
+/// 热插拔特性位
+#[derive(Debug, Clone, Copy)]
+pub struct HotplugTraits {
+    /// 是否支持热插拔
+    pub capable: bool,
+    /// 是否支持意外拔出
+    pub surprise: bool,
 }
 
 /// `PCIe` 热插拔槽位描述
@@ -92,23 +114,18 @@ pub struct PcieHotplugSlot {
     pub slot_number: u8,
     /// 端口类型
     pub port_type: PciePortType,
-    /// 是否具备注意按钮
-    pub attn_button: bool,
-    /// 是否具备电源控制器
-    pub power_controller: bool,
-    /// 是否具备 MRL 传感器
-    pub mrl_sensor: bool,
-    /// 是否支持热插拔
-    pub hotplug_capable: bool,
-    /// 是否支持意外拔出
-    pub surprise_removal: bool,
+    /// 槽位能力位 (注意按钮 / 电源控制器 / MRL 传感器)
+    pub caps: SlotCapabilities,
+    /// 热插拔特性位 (支持热插拔 / 意外拔出)
+    pub hotplug: HotplugTraits,
     /// 当前是否存在设备
-    pub presence_state: bool,
+    pub present: bool,
     pready_events: u16,
 }
 
 impl PcieHotplugSlot {
     /// 查询指定 PCI 设备的 PCI Express Capability 偏移。
+    #[must_use]
     pub fn find_pcie_cap(bus: u8, dev: u8, func: u8) -> Option<u8> {
         let cap_ptr = read_config_byte(bus, dev, func, 0x34);
         if cap_ptr == 0 {
@@ -132,6 +149,7 @@ impl PcieHotplugSlot {
 
     /// 尝试从 PCI 设备检测热插拔槽位能力。
     /// 返回 Some(PcieHotplugSlot) 如果设备是支持热插拔的 Root/Downstream Port。
+    #[must_use]
     pub fn probe(bus: u8, dev: u8, func: u8) -> Option<Self> {
         let cap_off = Self::find_pcie_cap(bus, dev, func)?;
 
@@ -152,12 +170,16 @@ impl PcieHotplugSlot {
             function: func,
             slot_number,
             port_type,
-            attn_button: slotcap & SLOTCAP_ATTN_BTN != 0,
-            power_controller: slotcap & SLOTCAP_PWR_CTRL != 0,
-            mrl_sensor: slotcap & SLOTCAP_MRL_SENSOR != 0,
-            hotplug_capable: slotcap & SLOTCAP_HOTPLUG != 0,
-            surprise_removal: slotcap & SLOTCAP_HOTPLUG_SURPRISE != 0,
-            presence_state: slotsts & SLOTSTS_PRESENCE_STATE != 0,
+            caps: SlotCapabilities {
+                attn_button: slotcap & SLOTCAP_ATTN_BTN != 0,
+                power_controller: slotcap & SLOTCAP_PWR_CTRL != 0,
+                mrl_sensor: slotcap & SLOTCAP_MRL_SENSOR != 0,
+            },
+            hotplug: HotplugTraits {
+                capable: slotcap & SLOTCAP_HOTPLUG != 0,
+                surprise: slotcap & SLOTCAP_HOTPLUG_SURPRISE != 0,
+            },
+            present: slotsts & SLOTSTS_PRESENCE_STATE != 0,
             pready_events: slotsts & 0x3F,
         })
     }
@@ -177,29 +199,33 @@ impl PcieHotplugSlot {
 
         // 检查 PresDet 变化: 设备插入或移除
         if slotsts & SLOTSTS_PRESENCE_DETECT != 0 {
-            self.presence_state = slotsts & SLOTSTS_PRESENCE_STATE != 0;
+            self.present = slotsts & SLOTSTS_PRESENCE_STATE != 0;
         }
 
         changed
     }
 
     /// 是否有设备插入事件
+    #[must_use]
     pub fn has_insertion_event(&self, events: u16) -> bool {
-        events & SLOTSTS_PRESENCE_DETECT != 0 && self.presence_state
+        events & SLOTSTS_PRESENCE_DETECT != 0 && self.present
     }
 
     /// 是否有设备移除事件
+    #[must_use]
     pub fn has_removal_event(&self, events: u16) -> bool {
-        events & SLOTSTS_PRESENCE_DETECT != 0 && !self.presence_state
+        events & SLOTSTS_PRESENCE_DETECT != 0 && !self.present
     }
 
     /// 是否为意外拔出
+    #[must_use]
     pub fn has_surprise_removal(&self, events: u16) -> bool {
-        events & SLOTSTS_DLL_STATE_CHANGED != 0 && !self.presence_state
+        events & SLOTSTS_DLL_STATE_CHANGED != 0 && !self.present
     }
 }
 
 /// 扫描所有 PCI 总线，返回支持热插拔的槽位列表。
+#[must_use]
 pub fn scan_hotplug_slots() -> Vec<PcieHotplugSlot> {
     let devices = super::scan_all_buses();
     let mut slots = Vec::new();

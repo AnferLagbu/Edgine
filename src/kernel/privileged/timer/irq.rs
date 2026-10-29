@@ -124,7 +124,7 @@ mod tests {
     // register_timer_irq_tests 的 "register_interface" 用例 (QEMU 裸机).
 }
 
-/// 注册定时器 IRQ 测试用例 (kernel_test, 仅 x86_64)
+/// 注册定时器 IRQ 测试用例 (`kernel_test`, 仅 x86_64)
 #[cfg(all(feature = "kernel_test", target_arch = "x86_64"))]
 pub fn register_timer_irq_tests() {
     use crate::privileged::tests::{TestFn, TestResult, runner};
@@ -136,8 +136,8 @@ pub fn register_timer_irq_tests() {
         TestResult::Pass
     }
 
-    /// UT-06 (2026-09-24): 自 irq.rs::tests::test_register_timer_irq_interface 迁入 —
-    /// register_timer_irq() 依赖 IDT 就绪 (host 不可用), 仅 kernel_test (QEMU 裸机) 执行.
+    /// UT-06 (2026-09-24): 自 `irq.rs::tests::test_register_timer_irq_interface` 迁入 —
+    /// `register_timer_irq()` 依赖 IDT 就绪 (host 不可用), 仅 `kernel_test` (QEMU 裸机) 执行.
     fn register_interface() -> TestResult {
         // 可能因 IDT 状态返回 Err, 但不应 panic
         let _ = register_timer_irq();

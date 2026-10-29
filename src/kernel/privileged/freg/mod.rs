@@ -109,14 +109,14 @@ pub static PANIC_FLAG: AtomicBool = AtomicBool::new(false);
 // lockdep 可见性 (P-30 引入并保留): 命名 lockdep 类 (named_lazy, 首次 lock() 惰性注册; 非 lockdep 构建零成本).
 // FREG 全子系统的锁此前均为匿名 IrqSpinLock → lockdep 盲区, 正是 P-29 lockdep 运行从未
 // 标记 freg 反向取锁边的原因. 命名后 AB-BA 环检测得以按真名打印确切反向取锁对.
-/// 崩溃现场消息缓冲 (lockdep 命名锁 FREG.PANIC_MSG)
+/// 崩溃现场消息缓冲 (lockdep 命名锁 `FREG.PANIC_MSG`)
 pub static PANIC_MSG: IrqSpinLock<[u8; 128]> =
     IrqSpinLock::named_lazy("FREG.PANIC_MSG", [0u8; 128]);
 /// 崩溃指令指针
 pub static CRASH_RIP: AtomicU64 = AtomicU64::new(0);
 
 // lockdep 可见性 (P-30 引入并保留): FREG 层级-0 锚锁命名, 使其在 lockdep 下按真名参与 AB-BA 环检测 (匿名时为盲区).
-/// FREG 恢复管理器全局实例 (lockdep 命名锁 RECOVERY_MANAGER)
+/// FREG 恢复管理器全局实例 (lockdep 命名锁 `RECOVERY_MANAGER`)
 pub static RECOVERY_MANAGER: IrqSpinLock<RecoveryManager> =
     IrqSpinLock::named_lazy("RECOVERY_MANAGER", RecoveryManager::new());
 /// BSR (阶段回滚) 升级待处理标志

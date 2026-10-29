@@ -21,6 +21,7 @@ pub enum ConfigFormat {
 ///
 /// 规则: 文件名以 `.json` 结尾 → JSON; 否则 → Text. **调用方在 `mount`
 /// 时按需注册两个条目**.
+#[must_use]
 pub fn parse_format(name: &str) -> ConfigFormat {
     if name
         .rsplit_once('.')
@@ -111,13 +112,13 @@ fn write_text(buf: &mut [u8]) -> usize {
     push_bool(buf, &mut pos, s.ioapic_enabled);
     push_str(buf, &mut pos, "\n-- capabilities --\n");
     push_str(buf, &mut pos, "smp:             ");
-    push_bool(buf, &mut pos, caps.smp);
+    push_bool(buf, &mut pos, caps.sched.smp);
     push_str(buf, &mut pos, "\npreempt:         ");
-    push_bool(buf, &mut pos, caps.preempt);
+    push_bool(buf, &mut pos, caps.sched.preempt);
     push_str(buf, &mut pos, "\nkaslr:           ");
-    push_bool(buf, &mut pos, caps.kaslr);
+    push_bool(buf, &mut pos, caps.mem.kaslr);
     push_str(buf, &mut pos, "\nkpti:            ");
-    push_bool(buf, &mut pos, caps.kpti);
+    push_bool(buf, &mut pos, caps.mem.kpti);
     push_str(buf, &mut pos, "\nfreg:         ");
     push_bool(buf, &mut pos, caps.freg);
     push_str(buf, &mut pos, "\n");
@@ -206,13 +207,13 @@ fn write_json(buf: &mut [u8]) -> usize {
     push_field_bool(buf, &mut pos, "ioapic_enabled", s.ioapic_enabled);
     push_str(buf, &mut pos, ",");
     push_str(buf, &mut pos, "\"capabilities\":{");
-    push_field_bool(buf, &mut pos, "smp", caps.smp);
+    push_field_bool(buf, &mut pos, "smp", caps.sched.smp);
     push_str(buf, &mut pos, ",");
-    push_field_bool(buf, &mut pos, "preempt", caps.preempt);
+    push_field_bool(buf, &mut pos, "preempt", caps.sched.preempt);
     push_str(buf, &mut pos, ",");
-    push_field_bool(buf, &mut pos, "kaslr", caps.kaslr);
+    push_field_bool(buf, &mut pos, "kaslr", caps.mem.kaslr);
     push_str(buf, &mut pos, ",");
-    push_field_bool(buf, &mut pos, "kpti", caps.kpti);
+    push_field_bool(buf, &mut pos, "kpti", caps.mem.kpti);
     push_str(buf, &mut pos, ",");
     push_field_bool(buf, &mut pos, "freg", caps.freg);
     push_str(buf, &mut pos, "}");

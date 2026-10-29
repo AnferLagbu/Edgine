@@ -51,6 +51,7 @@ pub enum PropertyValue {
 
 impl PropertyValue {
     /// 以 `u32` 读取属性值; 类型不匹配时返回 `None`.
+    #[must_use]
     pub fn as_u32(&self) -> Option<u32> {
         match self {
             Self::U32(v) => Some(*v),
@@ -59,6 +60,7 @@ impl PropertyValue {
     }
 
     /// 以 `u64` 读取属性值; 类型不匹配时返回 `None`.
+    #[must_use]
     pub fn as_u64(&self) -> Option<u64> {
         match self {
             Self::U64(v) => Some(*v),
@@ -67,6 +69,7 @@ impl PropertyValue {
     }
 
     /// 以 `bool` 读取属性值; 类型不匹配时返回 `None`.
+    #[must_use]
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Self::Bool(v) => Some(*v),
@@ -75,6 +78,7 @@ impl PropertyValue {
     }
 
     /// 以静态字符串读取属性值; 类型不匹配时返回 `None`.
+    #[must_use]
     pub fn as_str(&self) -> Option<&'static str> {
         match self {
             Self::String(s) => Some(s),
@@ -124,6 +128,7 @@ pub struct EGDFNode {
 
 impl EGDFNode {
     /// 创建一个未挂载的节点 (无父节点、无属性、状态为 `Uninit`).
+    #[must_use]
     pub fn new(id: NodeId, name: &'static str, proto: EGDFProto) -> Self {
         Self {
             id,
@@ -146,6 +151,7 @@ impl EGDFNode {
     }
 
     /// 按名称读取属性; 不存在时返回 `None`.
+    #[must_use]
     pub fn get_prop(&self, name: &str) -> Option<&PropertyValue> {
         self.properties.get(name)
     }
@@ -156,6 +162,7 @@ impl EGDFNode {
     }
 
     /// 判断本节点是否声明了给定的 compatible 字符串.
+    #[must_use]
     pub fn matches_compatible(&self, needle: &str) -> bool {
         self.compatible.contains(&needle)
     }
@@ -203,18 +210,17 @@ pub fn devtree_create_node_impl(
     node.parent = parent_id;
 
     if let Some(pid) = parent_id {
-        if let Some(parent) = tree.nodes.iter_mut().find(|n| n.id == pid) {
+        {
+            let parent = tree.nodes.iter_mut().find(|n| n.id == pid)?;
             parent.children.push(id);
-        } else {
-            return None;
         }
     } else {
         let root = ROOT_NODE_ID.load(Ordering::Acquire);
-        if root != 0 {
-            if let Some(root_node) = tree.nodes.iter_mut().find(|n| n.id == root) {
-                root_node.children.push(id);
-                node.parent = Some(root);
-            }
+        if root != 0
+            && let Some(root_node) = tree.nodes.iter_mut().find(|n| n.id == root)
+        {
+            root_node.children.push(id);
+            node.parent = Some(root);
         }
     }
 

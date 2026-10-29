@@ -73,14 +73,14 @@ fn wait_pipe_eagain(fd: i32, want_read: bool) -> bool {
 /// - fd 为 1/2 且无 fd 表条目 → `EBADF`; 其余错误由底层实现以对应 `Errno` 传播.
 pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
     if buf == 0 || count == 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if !raw::check_user_buf(buf, count) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let has_entry = fd_table_has_entry(fd);
     if (fd == 1 || fd == 2) && !has_entry {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     if fd == 0 && !has_entry {
         // stdin: 键盘输入 (x86_64 生产构建); 其余配置无输入源, 返回 EOF
@@ -89,7 +89,7 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
             // copy_to_user: 异常表兜底的 safe 用户内存写入 (1 字节)
             return match crate::privileged::mm::copy_user::copy_to_user(buf, &[c], 1) {
                 Ok(_) => Ok(1),
-                Err(()) => Err(Errno::EFAULT),
+                Err(_) => Err(Errno::Efault),
             };
         }
         return Ok(0);
@@ -135,7 +135,7 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
             return Ok(crate::functions::intcast::usize_from_i64(ret));
         }
         let errno = Errno::from_ret(ret);
-        if errno == Errno::EAGAIN && wait_pipe_eagain(fd, true) {
+        if errno == Errno::Eagain && wait_pipe_eagain(fd, true) {
             continue;
         }
         return Err(errno);
@@ -155,10 +155,10 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
 ///   `Errno` 传播.
 pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
     if buf == 0 || count == 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if !raw::check_user_buf(buf, count) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if (fd == 1 || fd == 2) && !fd_table_has_entry(fd) {
         // 控制台: 分块拷贝用户数据 → 串口输出 (单次处理上限 4KB)
@@ -176,19 +176,19 @@ pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
                     crate::privileged::klog::serial_write_bytes(&kernel_buf[..n]);
                     off += n;
                 }
-                _ => return Err(Errno::EFAULT),
+                _ => return Err(Errno::Efault),
             }
         }
         return Ok(crate::functions::intcast::usize_from_u64(count));
     }
     if crate::privileged::syscall::eventfd::is_eventfd_fd(fd) {
         if count < 8 {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
         let mut val_buf = [0u8; 8];
         match crate::privileged::mm::copy_user::copy_from_user(&mut val_buf, buf, 8) {
             Ok(8) => {}
-            _ => return Err(Errno::EFAULT),
+            _ => return Err(Errno::Efault),
         }
         return ret_to_result(crate::privileged::syscall::eventfd::sys_eventfd_write(
             fd,
@@ -216,7 +216,7 @@ pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
             crate::functions::fs::api::vfs_write_kernel(fd.cast_unsigned(), &kernel_buf[..copied]);
         if n < 0 {
             let errno = Errno::from_ret(i64::from(n));
-            if errno == Errno::EAGAIN && wait_pipe_eagain(fd, false) {
+            if errno == Errno::Eagain && wait_pipe_eagain(fd, false) {
                 continue;
             }
             if written > 0 {
@@ -259,11 +259,11 @@ pub fn pipe_syscall(fds: u64) -> Result<usize, Errno> {
 /// (读/写空满时分别返回 `EAGAIN` 或睡眠等待).
 pub fn pipe2_syscall(fds: u64, flags: i32) -> Result<usize, Errno> {
     if fds == 0 || !raw::check_user_buf(fds, 8) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let allowed = super::open::O_CLOEXEC | O_NONBLOCK;
     if flags & !allowed != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     let (rfd, wfd) =
         super::pipe_fd::create_pair(flags & super::open::O_CLOEXEC != 0, flags & O_NONBLOCK != 0)
@@ -271,9 +271,9 @@ pub fn pipe2_syscall(fds: u64, flags: i32) -> Result<usize, Errno> {
     let pipefd: [i32; 2] = [rfd, wfd];
     if !crate::privileged::syscall::api::write_struct_to_user(fds, &pipefd) {
         // 用户数组写回失败: 回收刚分配的两个 fd (避免泄漏)
-        crate::functions::fs::api::vfs_close(rfd.cast_unsigned());
-        crate::functions::fs::api::vfs_close(wfd.cast_unsigned());
-        return Err(Errno::EFAULT);
+        let _ = crate::functions::fs::api::vfs_close(rfd.cast_unsigned());
+        let _ = crate::functions::fs::api::vfs_close(wfd.cast_unsigned());
+        return Err(Errno::Efault);
     }
     Ok(0)
 }
@@ -284,7 +284,7 @@ pub fn pipe2_syscall(fds: u64, flags: i32) -> Result<usize, Errno> {
 /// 当 `oldfd` 为负数或底层 `vfs_dup` 失败时返回对应 `Errno`.
 pub fn dup_syscall(oldfd: i32) -> Result<usize, Errno> {
     if oldfd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     ret_to_result(i64::from(crate::functions::fs::vfs_dup(
         oldfd.cast_unsigned(),
@@ -299,14 +299,14 @@ pub fn dup_syscall(oldfd: i32) -> Result<usize, Errno> {
 /// 当 `oldfd` 或 `newfd` 为负数, 或底层 `vfs_dup2` 失败时返回 `EBADF`.
 pub fn dup2_syscall(oldfd: i32, newfd: i32) -> Result<usize, Errno> {
     if oldfd < 0 || newfd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     if oldfd == newfd {
         return Ok(crate::functions::intcast::usize_from_i32(newfd));
     }
     let result = crate::functions::fs::vfs_dup2(oldfd.cast_unsigned(), newfd.cast_unsigned());
     if result < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     Ok(crate::functions::intcast::usize_from_i32(result))
 }
@@ -318,16 +318,16 @@ pub fn dup2_syscall(oldfd: i32, newfd: i32) -> Result<usize, Errno> {
 /// (dup3 语义要求两 fd 不同); 底层 `vfs_dup2` 失败返回 `EBADF`.
 pub fn dup3_syscall(oldfd: i32, newfd: i32, flags: i32) -> Result<usize, Errno> {
     if oldfd < 0 || newfd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     if oldfd == newfd {
-        return Err(Errno::EINVAL); // dup3 要求 oldfd != newfd
+        return Err(Errno::Einval); // dup3 要求 oldfd != newfd
     }
     // flags 当前被忽略 (未实现 O_CLOEXEC 处理)
     let _ = flags;
     let result = crate::functions::fs::vfs_dup2(oldfd.cast_unsigned(), newfd.cast_unsigned());
     if result < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     Ok(crate::functions::intcast::usize_from_i32(result))
 }
@@ -346,7 +346,7 @@ const F_SETFL: i32 = 4;
 /// socket fd 的该位经 `net_socket::sm_{set,get}_nonblocking` 落到 privileged per-slot 阻塞标志.
 const O_NONBLOCK: i32 = 0o4000;
 
-/// fd 级 close-on-exec 标志位 (F_GETFD/F_SETFD 的掩码, 与 POSIX `FD_CLOEXEC` 一致)
+/// fd 级 close-on-exec 标志位 (`F_GETFD/F_SETFD` 的掩码, 与 POSIX `FD_CLOEXEC` 一致)
 const FD_CLOEXEC: u64 = 1;
 
 /// fcntl 系统调用
@@ -355,7 +355,7 @@ const FD_CLOEXEC: u64 = 1;
 /// 当 `fd` 为负数时返回 `EBADF`; 各命令的具体错误由对应分支返回.
 pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     match cmd {
         F_GETFD => {
@@ -374,7 +374,7 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
             .flatten();
             match result {
                 Some(bits) => Ok(crate::functions::intcast::usize_from_u64(bits)),
-                None => Err(Errno::EBADF),
+                None => Err(Errno::Ebadf),
             }
         }
         F_SETFD => {
@@ -390,7 +390,7 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
             .flatten();
             match result {
                 Some(_) => Ok(0),
-                None => Err(Errno::EBADF),
+                None => Err(Errno::Ebadf),
             }
         }
         F_GETFL => {
@@ -402,7 +402,7 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
                 == Some(crate::functions::proc::fd_alloc::FdSubsystem::Smoltcp)
             {
                 return match crate::privileged::net_socket::sm_get_nonblocking(fd) {
-                    r if r < 0 => Err(Errno::EBADF),
+                    r if r < 0 => Err(Errno::Ebadf),
                     1 => Ok(O_NONBLOCK as usize),
                     _ => Ok(0),
                 };
@@ -411,7 +411,7 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
             let Some(handle_id) = crate::functions::fs::vfs_get_fd_handle(
                 crate::functions::intcast::usize_from_i32(fd),
             ) else {
-                return Err(Errno::EBADF);
+                return Err(Errno::Ebadf);
             };
             // 管道端点的 O_NONBLOCK 由 `OpenFile::nonblock` 承载 (独立于文件
             // 状态标志), 需回填到 F_GETFL 结果.
@@ -423,7 +423,7 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
                 flags
             }) {
                 Some(flags) => ret_to_result(i64::from(flags)),
-                None => Err(Errno::EBADF),
+                None => Err(Errno::Ebadf),
             }
         }
         F_SETFL => {
@@ -452,8 +452,8 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
         }
         F_DUPFD => dup2_syscall(fd, crate::functions::intcast::low_i32_from_u64(arg)),
         // POSIX record locks (F_SETLK / F_GETLK / F_SETLKW)  // fcntl 文件锁命令
-        5 | 6 | 7 => sys_fcntl_posix_lock(fd, cmd, arg),
-        _ => Err(Errno::EINVAL),
+        5..=7 => sys_fcntl_posix_lock(fd, cmd, arg),
+        _ => Err(Errno::Einval),
     }
 }
 
@@ -484,7 +484,7 @@ fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
     // 直接按偏移手工解码, 保留原始字节以支持 F_GETLK 原地回写未改字段.
     let mut raw = [0u8; FLOCK_STRUCT_SIZE];
     if !crate::privileged::syscall::api::read_struct_from_user(arg, &mut raw) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let l_type = i16::from_ne_bytes([raw[0], raw[1]]);
     let l_whence = i16::from_ne_bytes([raw[2], raw[3]]);
@@ -497,7 +497,7 @@ fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
 
     // 验证 l_type
     if !(0..=2).contains(&l_type) {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     // 获取 fd 对应的 inode 号 (B-9.5: per-process fd 表 → OpenFile)
@@ -505,13 +505,13 @@ fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
         let Some(handle_id) =
             crate::functions::fs::vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(fd))
         else {
-            return Err(Errno::EBADF);
+            return Err(Errno::Ebadf);
         };
         match crate::functions::fs::OPEN_FILE_TABLE
             .with_file(handle_id, crate::functions::fs::OpenFile::inode_id)
         {
             Some(ino) => ino,
-            None => return Err(Errno::EBADF),
+            None => return Err(Errno::Ebadf),
         }
     };
 
@@ -523,25 +523,25 @@ fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
             let Some(handle_id) = crate::functions::fs::vfs_get_fd_handle(
                 crate::functions::intcast::usize_from_i32(fd),
             ) else {
-                return Err(Errno::EBADF);
+                return Err(Errno::Ebadf);
             };
             match crate::functions::fs::OPEN_FILE_TABLE
                 .with_file(handle_id, crate::functions::fs::OpenFile::get_offset)
             {
                 Some(offset) => (offset.cast_signed() + l_start).cast_unsigned(),
-                None => return Err(Errno::EBADF),
+                None => return Err(Errno::Ebadf),
             }
         }
         2 => {
             // SEEK_END: v1 简化, 不支持 (需要文件大小)
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
-        _ => return Err(Errno::EINVAL),
+        _ => return Err(Errno::Einval),
     };
 
     let len = match l_len {
         // 负长度: 从 start 向前锁; v1 简化, 不支持负长度
-        l if l < 0 => return Err(Errno::EINVAL),
+        l if l < 0 => return Err(Errno::Einval),
         0 => 0, // 到文件末尾
         l => l.cast_unsigned(),
     };
@@ -559,17 +559,17 @@ fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
                 let cpid = conflict.pid.cast_signed();
                 raw[20..24].copy_from_slice(&cpid.to_ne_bytes());
                 if !crate::privileged::syscall::api::write_struct_to_user(arg, &raw) {
-                    return Err(Errno::EFAULT);
+                    return Err(Errno::Efault);
                 }
                 Ok(0)
             } else {
                 // F_SETLK / F_SETLKW: 锁被占用
-                Err(Errno::EAGAIN)
+                Err(Errno::Eagain)
             }
         }
-        Err(PosixLockResult::Invalid) => Err(Errno::EINVAL),
-        Err(PosixLockResult::NoSpace) => Err(Errno::ENOLCK),
-        Err(PosixLockResult::WouldBlock) => Err(Errno::EAGAIN),
+        Err(PosixLockResult::Invalid) => Err(Errno::Einval),
+        Err(PosixLockResult::NoSpace) => Err(Errno::Enolck),
+        Err(PosixLockResult::WouldBlock) => Err(Errno::Eagain),
     }
 }
 
@@ -599,7 +599,7 @@ pub fn copy_file_range_syscall(
 ) -> Result<usize, Errno> {
     // 参数验证
     if fd_in < 0 || fd_out < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     if len == 0 {
         return Ok(0);
@@ -670,20 +670,20 @@ pub(crate) const IOV_MAX: u64 = 1024;
 /// - `iov_ptr` 无效或读取失败 → `EFAULT`
 pub(crate) fn read_iovecs(iov_ptr: u64, iovcnt: u64) -> Result<alloc::vec::Vec<(u64, u64)>, Errno> {
     if iovcnt > IOV_MAX {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if iovcnt == 0 {
         return Ok(alloc::vec::Vec::new());
     }
     if iov_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let mut iovs =
         alloc::vec::Vec::with_capacity(crate::functions::intcast::usize_from_u64(iovcnt));
     for i in 0..iovcnt {
         let mut entry = [0u64; 2];
         if !crate::privileged::syscall::api::read_struct_from_user(iov_ptr + i * 16, &mut entry) {
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
         iovs.push((entry[0], entry[1]));
     }
@@ -740,7 +740,7 @@ pub fn writev_syscall(fd: i32, iov_ptr: u64, iovcnt: u64) -> Result<usize, Errno
     Ok(total)
 }
 
-/// close_range(first, last, flags) — 批量关闭 fd (T1 G1 实装)
+/// `close_range(first`, last, flags) — 批量关闭 fd (T1 G1 实装)
 ///
 /// 遍历当前进程 fd 表 `[first, last]` 中占用条目, 逐个 `vfs_close`
 /// (原子 claim-and-clear + inotify/epoll 通知, 机制在 privileged).
@@ -757,14 +757,14 @@ pub fn close_range_syscall(first: u32, last: u32, flags: u32) -> Result<usize, E
     const CLOSE_RANGE_ALLOWED: u32 = CLOSE_RANGE_UNSHARE | CLOSE_RANGE_CLOEXEC;
 
     if first > last {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if flags & !CLOSE_RANGE_ALLOWED != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     // SIMPLIFIED: UNSHARE/CLOEXEC 暂不实现 (见函数文档)
     if flags != 0 {
-        return Err(Errno::ENOSYS);
+        return Err(Errno::Enosys);
     }
 
     // 先收集占用 fd 列表 (释放表锁后再逐个关闭, vfs_close 内部自锁避免死锁)
@@ -782,7 +782,7 @@ pub fn close_range_syscall(first: u32, last: u32, flags: u32) -> Result<usize, E
     }
     let mut closed = 0usize;
     for fd in fds {
-        crate::functions::fs::api::vfs_close(fd);
+        let _ = crate::functions::fs::api::vfs_close(fd);
         closed += 1;
     }
     Ok(closed)
@@ -799,7 +799,7 @@ pub fn close_range_syscall(first: u32, last: u32, flags: u32) -> Result<usize, E
 pub fn preadv_syscall(fd: i32, iov_ptr: u64, iovcnt: u64, pos: i64) -> Result<usize, Errno> {
     let iovs = read_iovecs(iov_ptr, iovcnt)?;
     if pos < 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     let mut total = 0usize;
     let mut offset = pos.cast_unsigned();
@@ -808,7 +808,7 @@ pub fn preadv_syscall(fd: i32, iov_ptr: u64, iovcnt: u64, pos: i64) -> Result<us
             continue;
         }
         if !raw::check_user_buf(base, len) {
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
         // 有意窄化: 资源类型转换, 单段长度截断到 u32 (与 vfs_read 一致)
         let count =
@@ -837,7 +837,7 @@ pub fn preadv_syscall(fd: i32, iov_ptr: u64, iovcnt: u64, pos: i64) -> Result<us
 /// pwritev(fd, iov, iovcnt, pos) — 显式偏移向量写 (T1 G1 实装)
 ///
 /// 逐 iovec 段委托 privileged 机制 `vfs_pwrite` (显式 offset 写, 不更新 fd
-/// 当前偏移, 不受 O_APPEND 影响). 段写得少于请求字节视为部分写提前返回.
+/// 当前偏移, 不受 `O_APPEND` 影响). 段写得少于请求字节视为部分写提前返回.
 ///
 /// # Errors
 /// - `pos` 为负 → `EINVAL`
@@ -845,7 +845,7 @@ pub fn preadv_syscall(fd: i32, iov_ptr: u64, iovcnt: u64, pos: i64) -> Result<us
 pub fn pwritev_syscall(fd: i32, iov_ptr: u64, iovcnt: u64, pos: i64) -> Result<usize, Errno> {
     let iovs = read_iovecs(iov_ptr, iovcnt)?;
     if pos < 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     let mut total = 0usize;
     let mut offset = pos.cast_unsigned();
@@ -854,7 +854,7 @@ pub fn pwritev_syscall(fd: i32, iov_ptr: u64, iovcnt: u64, pos: i64) -> Result<u
             continue;
         }
         if !raw::check_user_buf(base, len) {
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
         // 有意窄化: 资源类型转换, 单段长度截断到 u32 (与 vfs_write 一致)
         let count =

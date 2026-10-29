@@ -102,13 +102,21 @@ pub struct LazyPageArena<const PAGES: usize> {
     slots: [usize; PAGES],
 }
 
+impl<const PAGES: usize> Default for LazyPageArena<PAGES> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const PAGES: usize> LazyPageArena<PAGES> {
     /// 构造空页池 (全部槽位未分配), 可用于 `static` 零初始化.
+    #[must_use]
     pub const fn new() -> Self {
         Self { slots: [0; PAGES] }
     }
 
     /// 容量字节数 (= `PAGES * PAGE_SIZE`).
+    #[must_use]
     pub const fn capacity_bytes(&self) -> usize {
         self.slots.len() * PAGE_BYTES
     }
@@ -200,6 +208,7 @@ impl<const PAGES: usize> LazyPageArena<PAGES> {
     }
 
     /// 读取 4 字节小端 `u32`; 未分配页或越界读为 0.
+    #[must_use]
     pub fn read_u32(&self, offset: usize) -> u32 {
         let mut buf = [0u8; 4];
         self.read(offset, &mut buf);

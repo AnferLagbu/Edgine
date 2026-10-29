@@ -75,24 +75,28 @@ impl SocketHandle {
 
     /// 是否为无效句柄.
     #[inline]
+    #[must_use]
     pub const fn is_invalid(self) -> bool {
         self.0 == 0
     }
 
     /// 是否为有效句柄.
     #[inline]
+    #[must_use]
     pub const fn is_valid(self) -> bool {
         self.0 != 0
     }
 
     /// 内部 u32 索引 (P-71: functions 已跨 crate, 需 `pub` 才能访问).
     #[inline]
+    #[must_use]
     pub const fn raw(self) -> u32 {
         self.0
     }
 
     /// 由 functions 内部构造 (来自 smoltcp 句柄的 u32 转换, P-71: 已跨 crate).
     #[inline]
+    #[must_use]
     pub const fn from_raw(raw: u32) -> Self {
         Self(raw)
     }
@@ -147,6 +151,7 @@ pub enum SocketKind {
 impl SocketKind {
     /// 是否是内部使用类型 (DHCP/DNS, 用户态不可见).
     #[inline]
+    #[must_use]
     pub const fn is_internal(self) -> bool {
         matches!(self, Self::Dhcpv4 | Self::Dns)
     }
@@ -181,6 +186,7 @@ pub struct NetConfig {
 impl NetConfig {
     /// 创建一个空配置 (全 0 / None), 由调用方填充.
     #[inline]
+    #[must_use]
     pub const fn empty() -> Self {
         Self {
             mac_address: [0; 6],
@@ -193,6 +199,7 @@ impl NetConfig {
 
     /// 是否使用 DHCP 获取 IP (`static_ipv4` 为 None).
     #[inline]
+    #[must_use]
     pub const fn use_dhcp(&self) -> bool {
         self.static_ipv4.is_none()
     }
@@ -218,6 +225,7 @@ pub struct PollOutcome {
 impl PollOutcome {
     /// 构造一个空结果 (无事件).
     #[inline]
+    #[must_use]
     pub const fn idle() -> Self {
         Self {
             packet_received: false,
@@ -229,6 +237,7 @@ impl PollOutcome {
 
     /// 是否有任何事件 (用于调度器快速判断).
     #[inline]
+    #[must_use]
     pub const fn has_events(self) -> bool {
         self.packet_received || self.socket_woken || self.dhcp_progressed || self.tx_pending > 0
     }
@@ -239,9 +248,10 @@ impl PollOutcome {
 // ============================================================================
 
 /// DHCP 客户端状态机.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum DhcpState {
     /// 未启动
+    #[default]
     Idle,
     /// Discover 已发送, 等待 Offer
     Discovering,
@@ -266,23 +276,19 @@ pub enum DhcpState {
 impl DhcpState {
     /// 是否处于"已配置"状态 (Bound 或 Renewing).
     #[inline]
+    #[must_use]
     pub const fn is_configured(self) -> bool {
         matches!(self, Self::Bound { .. } | Self::Renewing { .. })
     }
 
     /// 获取已绑定的 IPv4 (若已配置).
     #[inline]
+    #[must_use]
     pub fn ipv4(self) -> Option<[u8; 4]> {
         match self {
             Self::Bound { ipv4, .. } | Self::Renewing { ipv4 } => Some(ipv4),
             _ => None,
         }
-    }
-}
-
-impl Default for DhcpState {
-    fn default() -> Self {
-        Self::Idle
     }
 }
 
@@ -924,30 +930,35 @@ impl Ipv4Addr {
 
     /// 构造一个 IPv4 地址.
     #[inline]
+    #[must_use]
     pub const fn new(o0: u8, o1: u8, o2: u8, o3: u8) -> Self {
         Self([o0, o1, o2, o3])
     }
 
     /// 从 4 元组数组构造.
     #[inline]
+    #[must_use]
     pub const fn from_octets(octets: [u8; 4]) -> Self {
         Self(octets)
     }
 
     /// 获取 4 元组数组.
     #[inline]
+    #[must_use]
     pub const fn octets(self) -> [u8; 4] {
         self.0
     }
 
     /// 是否为未指定地址 (0.0.0.0).
     #[inline]
+    #[must_use]
     pub const fn is_unspecified(self) -> bool {
         self.0[0] == 0 && self.0[1] == 0 && self.0[2] == 0 && self.0[3] == 0
     }
 
     /// 提升为统一 `IpAddr` (双栈迁移辅助, DECISION-032).
     #[inline]
+    #[must_use]
     pub const fn into_ip_addr(self) -> IpAddr {
         IpAddr::V4(self)
     }
@@ -979,6 +990,7 @@ pub struct Ipv4Cidr {
 impl Ipv4Cidr {
     /// 构造一个 CIDR.
     #[inline]
+    #[must_use]
     pub const fn new(address: Ipv4Addr, prefix_len: u8) -> Self {
         Self {
             address,
@@ -1000,18 +1012,11 @@ impl Ipv6Addr {
     /// 环回地址 (`::1`).
     pub const LOOPBACK: Self = Self([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
 
-    /// 从 8 个 16 位组构造 (每组大端序写入, 与 `std::net::Ipv6Addr` 对齐).
+    /// 从 8 个 16 位段数组构造 (每段大端序写入, 与 `std::net::Ipv6Addr` 对齐).
     #[inline]
-    pub const fn new(
-        o0: u16,
-        o1: u16,
-        o2: u16,
-        o3: u16,
-        o4: u16,
-        o5: u16,
-        o6: u16,
-        o7: u16,
-    ) -> Self {
+    #[must_use]
+    pub const fn new(segments: [u16; 8]) -> Self {
+        let [o0, o1, o2, o3, o4, o5, o6, o7] = segments;
         Self([
             (o0 >> 8) as u8,
             crate::privileged::glue::low_u8_from_u16(o0),
@@ -1034,18 +1039,21 @@ impl Ipv6Addr {
 
     /// 从 16 元组数组构造.
     #[inline]
+    #[must_use]
     pub const fn from_octets(octets: [u8; 16]) -> Self {
         Self(octets)
     }
 
     /// 获取 16 元组数组.
     #[inline]
+    #[must_use]
     pub const fn octets(self) -> [u8; 16] {
         self.0
     }
 
     /// 是否为未指定地址 (::).
     #[inline]
+    #[must_use]
     pub const fn is_unspecified(self) -> bool {
         let mut i = 0;
         while i < 16 {
@@ -1059,6 +1067,7 @@ impl Ipv6Addr {
 
     /// 是否为环回地址 (`::1`).
     #[inline]
+    #[must_use]
     pub const fn is_loopback(self) -> bool {
         let o = self.0;
         o[0] == 0
@@ -1081,12 +1090,14 @@ impl Ipv6Addr {
 
     /// 是否为组播地址 (最高字节 0xFF).
     #[inline]
+    #[must_use]
     pub const fn is_multicast(self) -> bool {
         self.0[0] == 0xFF
     }
 
     /// 提升为统一 `IpAddr` (双栈迁移辅助, DECISION-032).
     #[inline]
+    #[must_use]
     pub const fn into_ip_addr(self) -> IpAddr {
         IpAddr::V6(self)
     }
@@ -1118,6 +1129,7 @@ pub struct Ipv6Cidr {
 impl Ipv6Cidr {
     /// 构造一个 CIDR.
     #[inline]
+    #[must_use]
     pub const fn new(address: Ipv6Addr, prefix_len: u8) -> Self {
         Self {
             address,
@@ -1141,18 +1153,21 @@ pub enum IpAddr {
 impl IpAddr {
     /// 是否为 IPv4 地址.
     #[inline]
+    #[must_use]
     pub const fn is_v4(self) -> bool {
         matches!(self, Self::V4(_))
     }
 
     /// 是否为 IPv6 地址.
     #[inline]
+    #[must_use]
     pub const fn is_v6(self) -> bool {
         matches!(self, Self::V6(_))
     }
 
     /// 尝试取 IPv4 地址 (非 V4 返回 None).
     #[inline]
+    #[must_use]
     pub const fn as_v4(self) -> Option<Ipv4Addr> {
         match self {
             Self::V4(v4) => Some(v4),
@@ -1162,6 +1177,7 @@ impl IpAddr {
 
     /// 尝试取 IPv6 地址 (非 V6 返回 None).
     #[inline]
+    #[must_use]
     pub const fn as_v6(self) -> Option<Ipv6Addr> {
         match self {
             Self::V4(_) => None,
@@ -1198,12 +1214,14 @@ pub struct NetEndpoint {
 impl NetEndpoint {
     /// 构造一个端点 (统一 `IpAddr` 入口).
     #[inline]
+    #[must_use]
     pub const fn new(addr: IpAddr, port: u16) -> Self {
         Self { addr, port }
     }
 
     /// 构造 IPv4 端点 (双栈迁移辅助).
     #[inline]
+    #[must_use]
     pub const fn new_v4(addr: Ipv4Addr, port: u16) -> Self {
         Self {
             addr: IpAddr::V4(addr),
@@ -1213,6 +1231,7 @@ impl NetEndpoint {
 
     /// 构造 IPv6 端点 (双栈迁移辅助).
     #[inline]
+    #[must_use]
     pub const fn new_v6(addr: Ipv6Addr, port: u16) -> Self {
         Self {
             addr: IpAddr::V6(addr),
@@ -1242,12 +1261,14 @@ pub struct NetListenEndpoint {
 impl NetListenEndpoint {
     /// 通配地址监听 (0.0.0.0:port).
     #[inline]
+    #[must_use]
     pub const fn wildcard(port: u16) -> Self {
         Self { addr: None, port }
     }
 
     /// 指定地址监听 (统一 `IpAddr` 入口).
     #[inline]
+    #[must_use]
     pub const fn new(addr: IpAddr, port: u16) -> Self {
         Self {
             addr: Some(addr),
@@ -1257,6 +1278,7 @@ impl NetListenEndpoint {
 
     /// 指定 IPv4 地址监听 (双栈迁移辅助).
     #[inline]
+    #[must_use]
     pub const fn new_v4(addr: Ipv4Addr, port: u16) -> Self {
         Self {
             addr: Some(IpAddr::V4(addr)),
@@ -1266,6 +1288,7 @@ impl NetListenEndpoint {
 
     /// 指定 IPv6 地址监听 (双栈迁移辅助).
     #[inline]
+    #[must_use]
     pub const fn new_v6(addr: Ipv6Addr, port: u16) -> Self {
         Self {
             addr: Some(IpAddr::V6(addr)),
@@ -1310,7 +1333,7 @@ mod wire_type_tests {
         assert_eq!(NetEndpoint::UNSPECIFIED.port, 0);
 
         // V6 构造路径
-        let e6 = NetEndpoint::new_v6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 8080);
+        let e6 = NetEndpoint::new_v6(Ipv6Addr::new([0, 0, 0, 0, 0, 0, 0, 1]), 8080);
         assert!(e6.addr.is_v6());
         assert_eq!(e6.port, 8080);
     }
@@ -1326,13 +1349,13 @@ mod wire_type_tests {
         assert_eq!(sp.port, 22);
 
         // V6 构造路径
-        let sp6 = NetListenEndpoint::new_v6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 22);
+        let sp6 = NetListenEndpoint::new_v6(Ipv6Addr::new([0, 0, 0, 0, 0, 0, 0, 1]), 22);
         assert!(sp6.addr.unwrap().is_v6());
     }
 
     #[test]
     fn test_ipv6_addr_constructors() {
-        let loopback = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1);
+        let loopback = Ipv6Addr::new([0, 0, 0, 0, 0, 0, 0, 1]);
         assert_eq!(
             loopback.octets(),
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
@@ -1374,7 +1397,7 @@ mod wire_type_tests {
     #[test]
     fn test_ip_addr_enum() {
         let v4 = Ipv4Addr::new(192, 168, 1, 1);
-        let v6 = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1);
+        let v6 = Ipv6Addr::new([0, 0, 0, 0, 0, 0, 0, 1]);
 
         // From 转换
         let a: IpAddr = v4.into();

@@ -6,7 +6,7 @@
 //! - 已用环 (Used Ring): 设备→驱动的完成环
 //!
 //! 内存布局遵循 `VirtIO` 1.0 规范第 2.6 节 "Split Virtqueues" 与 0.9.5 legacy
-//! 口径: **环尺寸 `num` 为运行时量** (legacy 传输无 QueueNum 协商寄存器,
+//! 口径: **环尺寸 `num` 为运行时量** (legacy 传输无 `QueueNum` 协商寄存器,
 //! 设备端按 realize 时固定的 num 自行推算 avail/used 地址, 驱动布局必须与
 //! 设备推算全量一致, 截断即错位 — P-31 根因).
 
@@ -14,8 +14,8 @@
 
 use crate::privileged::mm::{KERNEL_BASE, PAGE_SIZE};
 
-/// modern 模式下驱动请求的队列尺寸 (经 QueueNum 协商, 可小于设备上限);
-/// 同时是 net 驱动 rx_buffers 槽位容量上限.
+/// modern 模式下驱动请求的队列尺寸 (经 `QueueNum` 协商, 可小于设备上限);
+/// 同时是 net 驱动 `rx_buffers` 槽位容量上限.
 pub const VQ_SIZE: u16 = 32;
 
 /// avail/used 环头部 (`flags: u16 + idx: u16`) 之后即环数组.
@@ -67,11 +67,11 @@ pub const VQ_USED_F_NO_NOTIFY: u16 = 1;
 pub struct VirtQueue {
     /// 描述符表基址 (virt)
     pub desc: *mut VqDesc,
-    /// avail 环基址 (头 4 字节 + `num` 项 u16 环 + used_event 2B).
+    /// avail 环基址 (头 4 字节 + `num` 项 u16 环 + `used_event` 2B).
     pub avail: *mut u8,
-    /// used 环基址 (头 4 字节 + `num` 项 VqUsedElem + avail_event 4B).
+    /// used 环基址 (头 4 字节 + `num` 项 `VqUsedElem` + `avail_event` 4B).
     pub used: *mut u8,
-    /// 环尺寸 (legacy: 设备 QueueNumMax 全量; modern: 驱动 QueueNum 协商值).
+    /// 环尺寸 (legacy: 设备 `QueueNumMax` 全量; modern: 驱动 `QueueNum` 协商值).
     pub num: u16,
     /// 空闲描述符链头
     pub free_head: u16,
@@ -92,13 +92,14 @@ pub struct VirtQueue {
 ///
 /// 返回 `(avail_off, used_off, total_size)`:
 /// - desc 恒在偏移 0, 长 `16*num`;
-/// - avail 紧跟 desc: 长 `4 + 2*num + 2` (头 + 环 + used_event 预留);
+/// - avail 紧跟 desc: 长 `4 + 2*num + 2` (头 + 环 + `used_event` 预留);
 /// - used: legacy 对齐 4096 (`VIRTIO_PCI_VRING_ALIGN`, QEMU legacy 设备端
 ///   同口径推算), modern 对齐 4; 尾部预留 4B `avail_event` (防设备越界写);
 /// - total 向上取整到页.
 ///
 /// 与 QEMU `vring_init_split` / Linux `virtio_ring` 的 legacy 分支一致:
 /// num=1024 时 avail@0x4000 / used@0x5000 (P-31 坐实的驱动侧对齐基准).
+#[must_use]
 pub const fn vring_layout(legacy: bool, num: u16) -> (usize, usize, usize) {
     let n = num as usize;
     let desc_bytes = 16 * n;
@@ -132,6 +133,7 @@ impl VirtQueue {
     /// 推算 — 布局不一致则设备读到错误 avail/used 地址, 永不回写 used, 即
     /// P-31 TX 超时根因). `num` 必须由调用方按传输形态选定: legacy 取设备
     /// `QueueNumMax` 全量, modern 取驱动协商值.
+    #[must_use]
     pub fn new(legacy: bool, num: u16) -> Option<Self> {
         // SAFETY: pmm_alloc_pages 由 PMM 模块提供, 符号与 C ABI 声明一致
         unsafe extern "C" {
@@ -183,14 +185,17 @@ impl VirtQueue {
     }
 
     /// 获取描述符表的物理地址.
+    #[must_use]
     pub fn desc_paddr(&self) -> u64 {
         self.desc_phys
     }
     /// 获取 available ring 的物理地址.
+    #[must_use]
     pub fn avail_paddr(&self) -> u64 {
         self.avail_phys
     }
     /// 获取 used ring 的物理地址.
+    #[must_use]
     pub fn used_paddr(&self) -> u64 {
         self.used_phys
     }
@@ -316,6 +321,7 @@ impl DmaBuffer {
     ///
     /// 返回 `Some(DmaBuffer)` 表示分配成功, `None` 表示内存不足.
     /// 缓冲区内容初始化为零.
+    #[must_use]
     pub fn new(size: usize) -> Option<Self> {
         // SAFETY: pmm_alloc_pages 由 PMM 模块提供, 符号与 C ABI 声明一致
         unsafe extern "C" {
@@ -344,12 +350,14 @@ impl DmaBuffer {
 
     /// 物理地址 (用于 `VirtQueue` 描述符)
     #[inline]
+    #[must_use]
     pub fn phys_addr(&self) -> u64 {
         self.phys
     }
 
     /// 缓冲区总大小
     #[inline]
+    #[must_use]
     pub fn size(&self) -> usize {
         self.size
     }
@@ -360,6 +368,7 @@ impl DmaBuffer {
     /// `offset >= size` 时 panic.
     /// # Panics
     /// offset 超出缓冲区范围时 panic。
+    #[must_use]
     pub fn read_byte(&self, offset: usize) -> u8 {
         assert!(
             offset < self.size,
@@ -384,6 +393,7 @@ impl DmaBuffer {
     }
 
     /// 从缓冲区 `offset` 处读取一个 u32 (小端).
+    #[must_use]
     pub fn read_u32(&self, offset: usize) -> u32 {
         let b0 = u32::from(self.read_byte(offset));
         let b1 = u32::from(self.read_byte(offset + 1));
@@ -407,6 +417,7 @@ impl DmaBuffer {
     }
 
     /// 从缓冲区 `offset` 处读取一个 u64 (小端).
+    #[must_use]
     pub fn read_u64(&self, offset: usize) -> u64 {
         let lo = u64::from(self.read_u32(offset));
         let hi = u64::from(self.read_u32(offset + 4));

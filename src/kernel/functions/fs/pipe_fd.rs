@@ -61,7 +61,7 @@ impl Inode for PipeEndpointInode {
         }
         let count = u32::try_from(buf.len()).unwrap_or(u32::MAX);
         match crate::functions::ipc::pipe::pipe_read_safe(
-            crate::privileged::ipc::IPC_NAMESPACE.get_mut(),
+            &mut crate::privileged::ipc::IPC_NAMESPACE.get_mut(),
             self.key,
             buf,
             count,
@@ -80,7 +80,7 @@ impl Inode for PipeEndpointInode {
         }
         let count = u32::try_from(buf.len()).unwrap_or(u32::MAX);
         match crate::functions::ipc::pipe::pipe_write_safe(
-            crate::privileged::ipc::IPC_NAMESPACE.get_mut(),
+            &mut crate::privileged::ipc::IPC_NAMESPACE.get_mut(),
             self.key,
             buf,
             count,
@@ -136,7 +136,7 @@ impl Drop for PipeEndpointInode {
         // OpenFile 引用计数归零 ⇒ 端点真正关闭; 仅当全部 fd 副本 (dup/fork) 释放后
         // 才会执行, 故对端 EOF / EPIPE 语义由引用计数天然保证.
         let _ = crate::functions::ipc::pipe::pipe_close_safe(
-            crate::privileged::ipc::IPC_NAMESPACE.get_mut(),
+            &mut crate::privileged::ipc::IPC_NAMESPACE.get_mut(),
             self.key,
         );
     }
@@ -245,7 +245,7 @@ pub fn pipe_endpoint_of(fd: i32) -> Option<(i32, bool, bool)> {
 /// (中断上下文 / 无进程上下文 / 等待队列满), 调用方应回退 `EAGAIN`.
 pub fn wait_readable(key: i32) -> bool {
     crate::functions::ipc::pipe::pipe_wait_readable(
-        crate::privileged::ipc::IPC_NAMESPACE.get_mut(),
+        &mut crate::privileged::ipc::IPC_NAMESPACE.get_mut(),
         key,
     )
 }
@@ -255,7 +255,7 @@ pub fn wait_readable(key: i32) -> bool {
 /// 返回值语义同 [`wait_readable`].
 pub fn wait_writable(key: i32) -> bool {
     crate::functions::ipc::pipe::pipe_wait_writable(
-        crate::privileged::ipc::IPC_NAMESPACE.get_mut(),
+        &mut crate::privileged::ipc::IPC_NAMESPACE.get_mut(),
         key,
     )
 }

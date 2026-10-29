@@ -43,7 +43,7 @@ pub struct FirmwareInfo {
     /// 版本号 (0 表示未指定)
     pub version: u32,
     /// 保留字段
-    pub _reserved: u32,
+    pub reserved: u32,
 }
 
 /// 固件 blob (附着在 `EGDFNode` 上)
@@ -59,6 +59,7 @@ pub struct FirmwareBlob {
 
 impl FirmwareBlob {
     /// 构造固件 blob (内容 + 名称 hash + 版本号).
+    #[must_use]
     pub fn new(data: Vec<u8>, name_hash: u32, version: u32) -> Self {
         Self {
             data,
@@ -68,6 +69,7 @@ impl FirmwareBlob {
     }
 
     /// 返回固件内容的字节数.
+    #[must_use]
     pub fn size(&self) -> usize {
         self.data.len()
     }
@@ -76,6 +78,7 @@ impl FirmwareBlob {
 /// FNV-1a 32-bit hash
 ///
 /// 用于固件名快速比对; 用户态与内核态均使用同一算法。
+#[must_use]
 pub fn fnv1a_32(s: &str) -> u32 {
     let mut h: u32 = 0x811C_9DC5;
     for b in s.as_bytes() {
@@ -103,7 +106,7 @@ pub fn devtree_attach_firmware(
     tree.nodes
         .iter_mut()
         .find(|n| n.id == node_id)
-        .map_or(false, |node| {
+        .is_some_and(|node| {
             node.firmware = Some(FirmwareBlob::new(data, name_hash, version));
             true
         })
@@ -126,7 +129,7 @@ pub fn devtree_detach_firmware(node_id: NodeId) -> bool {
     tree.nodes
         .iter_mut()
         .find(|n| n.id == node_id)
-        .map_or(false, |node| node.firmware.take().is_some())
+        .is_some_and(|node| node.firmware.take().is_some())
 }
 
 // ── 错误码 (与 syscall 共享) ──

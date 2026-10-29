@@ -56,6 +56,7 @@ pub struct UnkfsArcKey {
 
 impl UnkfsArcKey {
     /// 以 vdev 编号、偏移与出生事务组构造缓存键.
+    #[must_use]
     pub fn new(vdev_id: u16, offset: u64, birth_txg: u64) -> Self {
         Self {
             vdev_id,
@@ -65,6 +66,7 @@ impl UnkfsArcKey {
     }
 
     /// 计算该键的 64 位 FNV-1a 哈希, 用作哈希桶索引.
+    #[must_use]
     pub fn hash(&self) -> u64 {
         let mut h: u64 = 14_695_981_039_346_656_037;
         h ^= u64::from(self.vdev_id);
@@ -105,6 +107,7 @@ pub struct UnkfsArcBuf {
 
 impl UnkfsArcBuf {
     /// 以键、数据与类型构造缓冲区 (状态 Anon, 引用计数 1).
+    #[must_use]
     pub fn new(key: UnkfsArcKey, data: &[u8], buf_type: UnkfsArcBufType) -> Self {
         Self {
             key,
@@ -172,6 +175,7 @@ pub struct UnkfsArcStats {
 
 impl UnkfsArcStats {
     /// 构造全部计数为 0 的统计集合.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             hits: AtomicU64::new(0),
@@ -188,6 +192,13 @@ impl UnkfsArcStats {
             data_size: AtomicU64::new(0),
             meta_size: AtomicU64::new(0),
         }
+    }
+}
+
+impl Default for UnkfsArcStats {
+    /// 委托 [`UnkfsArcStats::new`] 构造全部计数为 0 的统计集合.
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -216,6 +227,7 @@ pub struct UnkfsArc {
 
 impl UnkfsArc {
     /// 构造空 ARC, 容量取 [`HV_ARC_DEFAULT_SIZE`].
+    #[must_use]
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(UnkfsArcInner {
@@ -264,28 +276,27 @@ impl UnkfsArc {
         let mut promote_to_mfu = false;
 
         for &idx in &inner.hash_table[bucket_idx] {
-            if let Some(ref buf) = inner.buffers[idx] {
-                if buf.key.vdev_id == key.vdev_id
-                    && buf.key.offset == key.offset
-                    && buf.key.birth_txg == key.birth_txg
-                {
-                    self.stats.hits.fetch_add(1, Ordering::Relaxed);
-                    if buf.state == UnkfsArcState::Mru {
-                        self.stats.mru_hits.fetch_add(1, Ordering::Relaxed);
-                    } else if buf.state == UnkfsArcState::Mfu {
-                        self.stats.mfu_hits.fetch_add(1, Ordering::Relaxed);
-                    }
-                    if let Some(ref mut buf) = inner.buffers[idx] {
-                        buf.access_count += 1;
-                        if buf.state == UnkfsArcState::Mru {
-                            promote_to_mfu = true;
-                        }
-                        // ARC 共享句柄: 持有期间缓冲区不会被淘汰回收.
-                        found_data = Some(Arc::clone(&buf.data));
-                    }
-                    found_idx = Some(idx);
-                    break;
+            if let Some(ref buf) = inner.buffers[idx]
+                && buf.key.vdev_id == key.vdev_id
+                && buf.key.offset == key.offset
+                && buf.key.birth_txg == key.birth_txg
+            {
+                self.stats.hits.fetch_add(1, Ordering::Relaxed);
+                if buf.state == UnkfsArcState::Mru {
+                    self.stats.mru_hits.fetch_add(1, Ordering::Relaxed);
+                } else if buf.state == UnkfsArcState::Mfu {
+                    self.stats.mfu_hits.fetch_add(1, Ordering::Relaxed);
                 }
+                if let Some(ref mut buf) = inner.buffers[idx] {
+                    buf.access_count += 1;
+                    if buf.state == UnkfsArcState::Mru {
+                        promote_to_mfu = true;
+                    }
+                    // ARC 共享句柄: 持有期间缓冲区不会被淘汰回收.
+                    found_data = Some(Arc::clone(&buf.data));
+                }
+                found_idx = Some(idx);
+                break;
             }
         }
         if let Some(idx) = found_idx {
@@ -380,14 +391,13 @@ impl UnkfsArc {
             crate::functions::intcast::usize_from_u64(key.hash()) % HV_ARC_HASH_BUCKETS;
         let mut found: Option<usize> = None;
         for (pos, &idx) in inner.hash_table[bucket_idx].iter().enumerate() {
-            if let Some(ref buf) = inner.buffers[idx] {
-                if buf.key.vdev_id == key.vdev_id
-                    && buf.key.offset == key.offset
-                    && buf.key.birth_txg == key.birth_txg
-                {
-                    found = Some(pos);
-                    break;
-                }
+            if let Some(ref buf) = inner.buffers[idx]
+                && buf.key.vdev_id == key.vdev_id
+                && buf.key.offset == key.offset
+                && buf.key.birth_txg == key.birth_txg
+            {
+                found = Some(pos);
+                break;
             }
         }
         if let Some(pos) = found {
@@ -403,35 +413,35 @@ impl UnkfsArc {
     fn evict_if_needed(&self, inner: &mut UnkfsArcInner, _incoming_size: usize) {
         while inner.mru.len() + inner.mfu.len() + 1 > inner.max_size {
             if inner.mru.len() > inner.p {
-                if let Some(idx) = inner.mru.pop_front() {
-                    if let Some(buf) = inner.buffers[idx].take() {
-                        let bucket_idx = crate::functions::intcast::usize_from_u64(buf.key.hash())
-                            % HV_ARC_HASH_BUCKETS;
-                        inner.hash_table[bucket_idx].retain(|&i| i != idx);
-                        inner.ghost_mru.push_back(buf.key);
-                        self.stats
-                            .mru_size
-                            .fetch_sub(buf.size as u64, Ordering::Relaxed);
-                        self.stats
-                            .size
-                            .fetch_sub(buf.size as u64, Ordering::Relaxed);
-                        self.stats.evicts.fetch_add(1, Ordering::Relaxed);
-                    }
-                }
-            } else if let Some(idx) = inner.mfu.pop_front() {
-                if let Some(buf) = inner.buffers[idx].take() {
+                if let Some(idx) = inner.mru.pop_front()
+                    && let Some(buf) = inner.buffers[idx].take()
+                {
                     let bucket_idx = crate::functions::intcast::usize_from_u64(buf.key.hash())
                         % HV_ARC_HASH_BUCKETS;
                     inner.hash_table[bucket_idx].retain(|&i| i != idx);
-                    inner.ghost_mfu.push_back(buf.key);
+                    inner.ghost_mru.push_back(buf.key);
                     self.stats
-                        .mfu_size
+                        .mru_size
                         .fetch_sub(buf.size as u64, Ordering::Relaxed);
                     self.stats
                         .size
                         .fetch_sub(buf.size as u64, Ordering::Relaxed);
                     self.stats.evicts.fetch_add(1, Ordering::Relaxed);
                 }
+            } else if let Some(idx) = inner.mfu.pop_front()
+                && let Some(buf) = inner.buffers[idx].take()
+            {
+                let bucket_idx =
+                    crate::functions::intcast::usize_from_u64(buf.key.hash()) % HV_ARC_HASH_BUCKETS;
+                inner.hash_table[bucket_idx].retain(|&i| i != idx);
+                inner.ghost_mfu.push_back(buf.key);
+                self.stats
+                    .mfu_size
+                    .fetch_sub(buf.size as u64, Ordering::Relaxed);
+                self.stats
+                    .size
+                    .fetch_sub(buf.size as u64, Ordering::Relaxed);
+                self.stats.evicts.fetch_add(1, Ordering::Relaxed);
             }
             if inner.ghost_mru.len() > inner.max_size {
                 inner.ghost_mru.pop_front();
@@ -475,10 +485,10 @@ impl UnkfsArc {
         let inner = self.inner.lock();
         let mut count = 0;
         for slot in &inner.buffers {
-            if let Some(buf) = slot {
-                if buf.dirty {
-                    count += 1;
-                }
+            if let Some(buf) = slot
+                && buf.dirty
+            {
+                count += 1;
             }
         }
         count
@@ -540,6 +550,13 @@ impl UnkfsArc {
     /// 最大容量
     pub fn max_size(&self) -> u64 {
         self.inner.lock().max_size as u64
+    }
+}
+
+impl Default for UnkfsArc {
+    /// 委托 [`UnkfsArc::new`] 构造空 ARC.
+    fn default() -> Self {
+        Self::new()
     }
 }
 

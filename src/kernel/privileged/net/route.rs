@@ -48,6 +48,7 @@ pub struct RouteEntry {
 
 impl RouteEntry {
     /// 构造默认路由 (`::/0` via gateway)
+    #[must_use]
     pub fn default_route(gateway: IpAddr) -> Self {
         let dest = match gateway {
             IpAddr::V4(_) => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
@@ -62,6 +63,7 @@ impl RouteEntry {
     }
 
     /// 是否为默认路由
+    #[must_use]
     pub fn is_default(&self) -> bool {
         self.prefix_len == 0
             && match self.dest {
@@ -94,19 +96,19 @@ static KERNEL_ROUTE_TABLE: IrqSpinLock<Vec<RouteEntry>> = IrqSpinLock::new(Vec::
 ///
 /// # Errors
 ///
-/// 当路由表已满时返回 `Err(Errno::ENOMEM)`; 当存在完全相同的 (dest, `prefix_len`, gateway)
-/// 重复条目时返回 `Err(Errno::EEXIST)`; 同步到 smoltcp 路由表失败时返回对应的内核错误。
+/// 当路由表已满时返回 `Err(Errno::Enomem)`; 当存在完全相同的 (dest, `prefix_len`, gateway)
+/// 重复条目时返回 `Err(Errno::Eexist)`; 同步到 smoltcp 路由表失败时返回对应的内核错误。
 pub fn route_add(entry: RouteEntry) -> Result<(), Errno> {
     let mut table = KERNEL_ROUTE_TABLE.lock();
 
     if table.len() >= MAX_ROUTES {
-        return Err(Errno::ENOMEM);
+        return Err(Errno::Enomem);
     }
 
     if table.iter().any(|r| {
         r.dest == entry.dest && r.prefix_len == entry.prefix_len && r.gateway == entry.gateway
     }) {
-        return Err(Errno::EEXIST);
+        return Err(Errno::Eexist);
     }
 
     // 同步到 smoltcp 路由表
@@ -120,7 +122,7 @@ pub fn route_add(entry: RouteEntry) -> Result<(), Errno> {
 ///
 /// # Errors
 ///
-/// 当路由表中不存在与 (dest, `prefix_len`, gateway) 完全匹配的条目时返回 `Err(Errno::ENOENT)`。
+/// 当路由表中不存在与 (dest, `prefix_len`, gateway) 完全匹配的条目时返回 `Err(Errno::Enoent)`。
 pub fn route_del(dest: IpAddr, prefix_len: u8, gateway: IpAddr) -> Result<(), Errno> {
     let mut table = KERNEL_ROUTE_TABLE.lock();
 
@@ -128,7 +130,7 @@ pub fn route_del(dest: IpAddr, prefix_len: u8, gateway: IpAddr) -> Result<(), Er
         .iter()
         .position(|r| r.dest == dest && r.prefix_len == prefix_len && r.gateway == gateway);
 
-    idx.map_or(Err(Errno::ENOENT), |i| {
+    idx.map_or(Err(Errno::Enoent), |i| {
         table.remove(i);
         rebuild_smoltcp_routes(&table);
         Ok(())
@@ -204,13 +206,14 @@ fn ipv6_cidr_contains(net: Ipv6Addr, dest: Ipv6Addr, prefix_len: u8) -> bool {
 // ============================================================================
 
 /// `sys_route_add` — 从 u32 ABI 参数添加 IPv4 路由 (前缀长度 > 32 返回 `-EINVAL`)
+#[must_use]
 pub fn sys_route_add(dest_u32: u64, prefix_len: u64, gateway_u32: u64) -> i64 {
     let entry = RouteEntry {
         dest: IpAddr::V4(Ipv4Addr::from_octets(
             crate::privileged::glue::low_u32_from_u64(dest_u32).to_be_bytes(),
         )),
         prefix_len: if prefix_len > 32 {
-            return -(Errno::EINVAL as i64);
+            return -(Errno::Einval as i64);
         } else {
             crate::privileged::glue::low_u8_from_u64(prefix_len)
         },
@@ -227,13 +230,14 @@ pub fn sys_route_add(dest_u32: u64, prefix_len: u64, gateway_u32: u64) -> i64 {
 }
 
 /// `sys_route_del` — 从 u32 ABI 参数删除 IPv4 路由 (前缀长度 > 32 返回 `-EINVAL`)
+#[must_use]
 pub fn sys_route_del(dest_u32: u64, prefix_len: u64, gateway_u32: u64) -> i64 {
     match route_del(
         IpAddr::V4(Ipv4Addr::from_octets(
             crate::privileged::glue::low_u32_from_u64(dest_u32).to_be_bytes(),
         )),
         if prefix_len > 32 {
-            return -(Errno::EINVAL as i64);
+            return -(Errno::Einval as i64);
         } else {
             crate::privileged::glue::low_u8_from_u64(prefix_len)
         },
@@ -247,15 +251,16 @@ pub fn sys_route_del(dest_u32: u64, prefix_len: u64, gateway_u32: u64) -> i64 {
 }
 
 /// `sys_route_query` — 查询 IPv4 目标的最长前缀匹配网关 (不可达返回 `-ENETUNREACH`)
+#[must_use]
 pub fn sys_route_query(dest_u32: u64) -> i64 {
     route_query(IpAddr::V4(Ipv4Addr::from_octets(
         crate::privileged::glue::low_u32_from_u64(dest_u32).to_be_bytes(),
     )))
-    .map_or(-(Errno::ENETUNREACH as i64), |result| {
+    .map_or(-(Errno::Enetunreach as i64), |result| {
         match result.gateway {
             IpAddr::V4(v4) => i64::from(u32::from_be_bytes(v4.octets())),
             // V6 路由在 u32 syscall ABI 下不可表达, 视为不可达
-            IpAddr::V6(_) => -(Errno::ENETUNREACH as i64),
+            IpAddr::V6(_) => -(Errno::Enetunreach as i64),
         }
     })
 }

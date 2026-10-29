@@ -42,6 +42,7 @@ pub mod queue;
 
 use crate::klog_info;
 use crate::klog_warn;
+use crate::privileged::error::KernelError;
 use crate::privileged::iomem::IoMem;
 use crate::privileged::mm::PhysAddr;
 
@@ -88,11 +89,11 @@ const STATUS_FAILED: u32 = 0x80;
 
 // ── Device IDs ──
 
-/// VirtIO 块设备 ID
+/// `VirtIO` 块设备 ID
 pub const VIRTIO_ID_BLOCK: u32 = 2;
-/// VirtIO 网络设备 ID
+/// `VirtIO` 网络设备 ID
 pub const VIRTIO_ID_NET: u32 = 1;
-/// VirtIO GPU 设备 ID
+/// `VirtIO` GPU 设备 ID
 pub const VIRTIO_ID_GPU: u32 = 16;
 
 // ── MMIO region ──
@@ -121,7 +122,7 @@ pub struct VirtioMmioDevice {
     pub queue_count: u32,
     /// 厂商 ID (`VendorID` 寄存器).
     pub vendor_id: u32,
-    /// VirtIO 版本 (1=过渡/旧版, 2=现代).
+    /// `VirtIO` 版本 (1=过渡/旧版, 2=现代).
     pub version: u32,
 }
 
@@ -152,6 +153,7 @@ impl VirtioMmioDevice {
     }
 
     /// 探测给定 MMIO 基址的设备是否为合法的 virtio 设备.
+    #[must_use]
     pub fn probe(mmio_base: u64) -> Option<Self> {
         // 为 MMIO 区域创建 IoMem (每个设备 0x200 字节)
         let Ok(iomem) = IoMem::from_pci_bar(PhysAddr::new(mmio_base), 0x200, "virtio-mmio") else {
@@ -198,21 +200,25 @@ impl VirtioMmioDevice {
     // ── 设备查询 ──
 
     /// 设备 ID (1=net, 2=blk, ...).
+    #[must_use]
     pub fn device_id(&self) -> u32 {
         self.device_id
     }
 
-    /// VirtIO 版本 (1=过渡/旧版, 2=现代).
+    /// `VirtIO` 版本 (1=过渡/旧版, 2=现代).
+    #[must_use]
     pub fn version(&self) -> u32 {
         self.version
     }
 
     /// 是否为传统模式 (version == 1).
+    #[must_use]
     pub fn is_legacy(&self) -> bool {
         self.version == 1
     }
 
     /// MMIO 基地址.
+    #[must_use]
     pub fn mmio_base(&self) -> u64 {
         self.iomem.phys().as_u64()
     }
@@ -220,6 +226,7 @@ impl VirtioMmioDevice {
     // ── 设备状态机 (Status 寄存器) ──
 
     /// 读 Status 寄存器.
+    #[must_use]
     pub fn status(&self) -> u32 {
         self.read32(STATUS)
     }
@@ -246,7 +253,8 @@ impl VirtioMmioDevice {
         self.write32(STATUS, STATUS_ACKNOWLEDGE | STATUS_DRIVER);
     }
 
-    /// 进入 FEATURES_OK 状态, 返回设备是否接受特性协商.
+    /// 进入 `FEATURES_OK` 状态, 返回设备是否接受特性协商.
+    #[must_use]
     pub fn features_ok(&self) -> bool {
         self.write32(
             STATUS,
@@ -258,6 +266,7 @@ impl VirtioMmioDevice {
     // ── 特性协商 ──
 
     /// 读设备特性 (全 64 位: sel=0 低 32 位 + sel=1 高 32 位).
+    #[must_use]
     pub fn device_features(&self) -> u64 {
         self.write32(DEVICE_FEATURES_SEL, 0);
         let lo = u64::from(self.read32(DEVICE_FEATURES));
@@ -285,11 +294,12 @@ impl VirtioMmioDevice {
     }
 
     /// 读选中队列的最大尺寸.
+    #[must_use]
     pub fn queue_num_max(&self) -> u32 {
         self.read32(QUEUE_NUM_MAX)
     }
 
-    /// 设置选中队列的尺寸 (modern 模式; 规范序 QueueNum → 地址三段 → QueueReady=1,
+    /// 设置选中队列的尺寸 (modern 模式; 规范序 `QueueNum` → 地址三段 → QueueReady=1,
     /// 必须在 Ready 置位前写入 — QEMU 至 Ready 写时才以已存 num 初始化 vring).
     pub fn set_queue_num(&self, num: u16) {
         self.write32(QUEUE_NUM, u32::from(num));
@@ -312,11 +322,11 @@ impl VirtioMmioDevice {
         self.write64(QUEUE_DEVICE_LOW, QUEUE_DEVICE_HIGH, used_paddr);
     }
 
-    /// 设置 legacy 传输的 GuestPageSize (0.9.5 MMIO 接口).
+    /// 设置 legacy 传输的 `GuestPageSize` (0.9.5 MMIO 接口).
     ///
     /// QEMU 设备端以 `PFN << ctz32(GuestPageSize)` 解析队列基址, 寄存器复位
     /// 默认值为 0 — legacy 驱动若不写本寄存器, 设备会把 PFN 按 2^0 移位误读
-    /// vring 地址 (P-31: TX 超时二层根因). 必须在首次写 QueuePFN 之前调用.
+    /// vring 地址 (P-31: TX 超时二层根因). 必须在首次写 `QueuePFN` 之前调用.
     pub fn set_guest_page_size(&self, size: u32) {
         self.write32(GUEST_PAGE_SIZE, size);
     }
@@ -335,6 +345,7 @@ impl VirtioMmioDevice {
     // ── 中断 ──
 
     /// 读中断状态寄存器.
+    #[must_use]
     pub fn interrupt_status(&self) -> u32 {
         self.read32(INTERRUPT_STATUS)
     }
@@ -351,7 +362,7 @@ impl VirtioMmioDevice {
     /// 4. Set `DRIVER_OK`
     /// # Errors
     /// 设备驱动状态初始化失败时返回 Err。
-    pub fn init(&self) -> Result<(), ()> {
+    pub fn init(&self) -> Result<(), KernelError> {
         // Step 1: Reset
         self.write32(STATUS, 0);
         // 确保设备观察到重置
@@ -390,7 +401,7 @@ impl VirtioMmioDevice {
                 "virtio: device FAILED at {:#x}",
                 self.iomem.phys().as_u64()
             );
-            return Err(());
+            return Err(KernelError::Io);
         }
         if status & STATUS_NEEDS_RESET != 0 {
             klog_warn!(
@@ -398,7 +409,7 @@ impl VirtioMmioDevice {
                 "virtio: device NEEDS_RESET at {:#x}",
                 self.iomem.phys().as_u64()
             );
-            return Err(());
+            return Err(KernelError::Io);
         }
         if status & STATUS_FEATURES_OK == 0 {
             klog_warn!(
@@ -406,7 +417,7 @@ impl VirtioMmioDevice {
                 "virtio: FEATURES_OK rejected at {:#x}",
                 self.iomem.phys().as_u64()
             );
-            return Err(());
+            return Err(KernelError::Io);
         }
 
         Ok(())
@@ -426,11 +437,13 @@ impl VirtioMmioDevice {
     }
 
     /// 从设备特定配置空间读取 (偏移相对于 0x100).
+    #[must_use]
     pub fn read_config32(&self, offset: usize) -> u32 {
         self.read32(0x100 + offset)
     }
 
     /// 从设备特定配置空间读取 64 位值
+    #[must_use]
     pub fn read_config64(&self, offset: usize) -> u64 {
         self.read64(0x100 + offset, 0x100 + offset + 4)
     }

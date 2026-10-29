@@ -186,6 +186,7 @@ pub struct BpfInsn {
 
 impl BpfInsn {
     /// 按操作码、目的/源寄存器编号、偏移与立即数组装一条指令.
+    #[must_use]
     pub fn new(op: u8, dst: u8, src: u8, off: i16, imm: i32) -> Self {
         Self {
             op,
@@ -196,14 +197,17 @@ impl BpfInsn {
     }
 
     /// 取目的寄存器编号 (低 4 位).
+    #[must_use]
     pub fn dst(self) -> u8 {
         self.dst_reg & 0xf
     }
     /// 取源寄存器编号 (高 4 位).
+    #[must_use]
     pub fn src(self) -> u8 {
         (self.dst_reg >> 4) & 0xf
     }
     /// 取指令类码 (操作码低 3 位).
+    #[must_use]
     pub fn class(self) -> u8 {
         self.op & 0x07
     }
@@ -257,6 +261,7 @@ pub enum BpfProgType {
 
 impl BpfProgType {
     /// 由 u32 程序类型值解析枚举; 未知值返回 `None`.
+    #[must_use]
     pub fn from_u32(v: u32) -> Option<Self> {
         match v {
             1 => Some(Self::SocketFilter),
@@ -287,6 +292,7 @@ pub enum BpfMapType {
 
 impl BpfMapType {
     /// 由 u32 Map 类型值解析枚举; 未知值返回 `None`.
+    #[must_use]
     pub fn from_u32(v: u32) -> Option<Self> {
         match v {
             1 => Some(Self::Hash),
@@ -331,6 +337,7 @@ pub enum BpfMap {
 
 impl BpfMap {
     /// 创建新的 BPF Map
+    #[must_use]
     pub fn create(
         map_type: BpfMapType,
         key_size: u32,
@@ -369,7 +376,7 @@ impl BpfMap {
                     return false;
                 }
                 let map = data.lock();
-                map.get(key).map_or(false, |v| {
+                map.get(key).is_some_and(|v| {
                     let copy_len = core::cmp::min(v.len(), value_out.len());
                     value_out[..copy_len].copy_from_slice(&v[..copy_len]);
                     true
@@ -384,7 +391,7 @@ impl BpfMap {
                 };
                 let map = data.lock();
                 if idx < map.len() {
-                    map[idx].as_ref().map_or(false, |v| {
+                    map[idx].as_ref().is_some_and(|v| {
                         let copy_len = core::cmp::min(v.len(), value_out.len());
                         value_out[..copy_len].copy_from_slice(&v[..copy_len]);
                         true
@@ -498,6 +505,7 @@ pub struct BpfProg {
 
 impl BpfProg {
     /// 以程序类型与指令序列创建程序实例, 引用计数初始化为 1.
+    #[must_use]
     pub fn new(prog_type: BpfProgType, insns: Vec<BpfInsn>) -> Self {
         let insn_cnt = crate::privileged::glue::low_u32_from_usize(insns.len());
         Self {
@@ -556,25 +564,40 @@ pub trait BpfVerifier: Sync + Send {
 
 /// Helper 函数 ID
 pub mod helper_id {
-    /// bpf_trace_printk 的 helper 编号.
+    /// `bpf_trace_printk` 的 helper 编号.
     pub const TRACE_PRINTK: u32 = 6;
-    /// bpf_ktime_get_ns 的 helper 编号.
+    /// `bpf_ktime_get_ns` 的 helper 编号.
     pub const KTIME_GET_NS: u32 = 5;
-    /// bpf_get_smp_processor_id 的 helper 编号.
+    /// `bpf_get_smp_processor_id` 的 helper 编号.
     pub const GET_SMP_PROCESSOR: u32 = 8;
-    /// bpf_map_lookup_elem 的 helper 编号.
+    /// `bpf_map_lookup_elem` 的 helper 编号.
     pub const MAP_LOOKUP_ELEM: u32 = 1;
-    /// bpf_map_update_elem 的 helper 编号.
+    /// `bpf_map_update_elem` 的 helper 编号.
     pub const MAP_UPDATE_ELEM: u32 = 2;
-    /// bpf_map_delete_elem 的 helper 编号.
+    /// `bpf_map_delete_elem` 的 helper 编号.
     pub const MAP_DELETE_ELEM: u32 = 3;
 }
 
 /// BPF Helper 函数
 pub struct BpfHelper;
 
+/// BPF helper 调用参数
+pub struct BpfHelperArgs<'a> {
+    /// helper 函数 ID
+    pub id: u32,
+    /// eBPF 寄存器 R1 值
+    pub r1: u64,
+    /// eBPF 寄存器 R2 值
+    pub r2: u64,
+    /// eBPF 寄存器 R3 值
+    pub r3: u64,
+    /// Map FD → `Arc<BpfMap>` 映射
+    pub maps: &'a BTreeMap<u32, Arc<BpfMap>>,
+}
+
 impl BpfHelper {
     /// 检查 helper ID 是否合法
+    #[must_use]
     pub fn is_valid(id: u32) -> bool {
         matches!(
             id,
@@ -590,30 +613,28 @@ impl BpfHelper {
     /// 执行 helper 函数
     ///
     /// # 参数
-    /// - `id`: helper 函数 ID
-    /// - `r1`-`r5`: eBPF 寄存器值
-    /// - `ctx`: 程序上下文
-    /// - `maps`: Map FD → `Arc<BpfMap>` 映射
+    /// - `args.id`: helper 函数 ID
+    /// - `args.r1`-`args.r3`: eBPF 寄存器值
+    /// - `args.maps`: Map FD → `Arc<BpfMap>` 映射
     ///
     /// 返回: R0 的值
-    pub fn execute(
-        id: u32,
-        r1: u64,
-        r2: u64,
-        r3: u64,
-        _r4: u64,
-        _r5: u64,
-        _ctx: &[u8],
-        maps: &BTreeMap<u32, Arc<BpfMap>>,
-    ) -> u64 {
+    #[must_use]
+    pub fn execute(args: &BpfHelperArgs<'_>) -> u64 {
+        let BpfHelperArgs {
+            id,
+            r1,
+            r2,
+            r3,
+            maps,
+        } = *args;
         match id {
             helper_id::KTIME_GET_NS => {
                 // 返回纳秒级时间戳 (使用 TSC 近似)
                 #[cfg(target_arch = "x86_64")]
                 {
                     // SAFETY: rdtsc 是用户态安全指令, 无副作用
-                    let tsc = unsafe { core::arch::x86_64::_rdtsc() };
-                    tsc
+
+                    unsafe { core::arch::x86_64::_rdtsc() }
                 }
                 #[cfg(target_arch = "aarch64")]
                 {
@@ -771,13 +792,7 @@ impl BpfInterpreter {
             opcode::ADD => regs[dst].wrapping_add(src_val),
             opcode::SUB => regs[dst].wrapping_sub(src_val),
             opcode::MUL => regs[dst].wrapping_mul(src_val),
-            opcode::DIV => {
-                if src_val == 0 {
-                    0
-                } else {
-                    regs[dst] / src_val
-                }
-            }
+            opcode::DIV => regs[dst].checked_div(src_val).unwrap_or(0),
             opcode::OR => regs[dst] | src_val,
             opcode::AND => regs[dst] & src_val,
             opcode::LSH => {
@@ -1001,16 +1016,13 @@ impl BpfInterpreter {
             opcode::EXIT => None,
             opcode::CALL => {
                 let helper_id = insn.imm.cast_unsigned();
-                regs[reg::R0] = BpfHelper::execute(
-                    helper_id,
-                    regs[reg::R1],
-                    regs[reg::R2],
-                    regs[reg::R3],
-                    regs[reg::R4],
-                    regs[reg::R5],
-                    &[],
+                regs[reg::R0] = BpfHelper::execute(&BpfHelperArgs {
+                    id: helper_id,
+                    r1: regs[reg::R1],
+                    r2: regs[reg::R2],
+                    r3: regs[reg::R3],
                     maps,
-                );
+                });
                 Some(pc + 1)
             }
             _ => {
@@ -1097,8 +1109,15 @@ pub struct BpfSubsystem {
     verifier: IrqSpinLock<Option<&'static dyn BpfVerifier>>,
 }
 
+impl Default for BpfSubsystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BpfSubsystem {
     /// 构造空的子系统状态: 无 Map、无程序、未初始化、未注册 verifier.
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             maps: IrqSpinLock::new(BTreeMap::new()),
@@ -1289,6 +1308,7 @@ pub fn bpf_init() {
 }
 
 /// 获取全局 BPF 子系统
+#[must_use]
 pub fn bpf_subsystem() -> &'static BpfSubsystem {
     &BPF_SUBSYSTEM
 }

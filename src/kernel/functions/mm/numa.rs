@@ -39,6 +39,7 @@ use crate::privileged::syscall::Errno;
 /// `maxnode > 64` 仅取低 64 位 (节点空间上限 `MAX_NUMA_NODES` = 8).
 /// 影响面: 策略仅写入 VMA 供查询, 已触达页不发生节点迁移. 何时需扩展: PMM 引入
 /// per-node 分区 + 页迁移后, 由分配路径消费策略并实现 MOVE 语义.
+#[must_use]
 pub fn mbind_syscall(
     addr: u64,
     len: u64,
@@ -50,39 +51,39 @@ pub fn mbind_syscall(
     /// `mbind` flags 合法位 (Linux `MPOL_MF_VALID`)
     const MPOL_MF_VALID: u32 = 0xF;
 
-    let page_size = crate::privileged::mm::PAGE_SIZE as u64;
+    let page_size = crate::privileged::mm::PAGE_SIZE;
 
     if len == 0 || !addr.is_multiple_of(page_size) {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     if flags & !MPOL_MF_VALID != 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     let Some(policy_mode) = NumaPolicy::from_linux_mode(mode) else {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     };
 
     // 结束地址溢出 → ENOMEM (与 Linux 一致)
     let Some(end) = addr.checked_add(len) else {
-        return Errno::ENOMEM.as_ret();
+        return Errno::Enomem.as_ret();
     };
 
     let policy = if policy_mode == NumaPolicy::Default {
         // Linux: MPOL_DEFAULT 要求 nodemask 为 NULL
         if nodemask_ptr != 0 {
-            return Errno::EINVAL.as_ret();
+            return Errno::Einval.as_ret();
         }
         None
     } else {
         if nodemask_ptr == 0 {
-            return Errno::EFAULT.as_ret();
+            return Errno::Efault.as_ret();
         }
         if maxnode == 0 {
-            return Errno::EINVAL.as_ret();
+            return Errno::Einval.as_ret();
         }
         let Some(raw) = crate::privileged::syscall::api::read_u64_from_user(nodemask_ptr) else {
-            return Errno::EFAULT.as_ret();
+            return Errno::Efault.as_ret();
         };
         // maxnode >= 64: 节点空间上限 8, 高位无意义, 取低 64 位
         let mask = if maxnode >= 64 {
@@ -91,7 +92,7 @@ pub fn mbind_syscall(
             raw & ((1u64 << maxnode) - 1)
         };
         if mask == 0 && matches!(policy_mode, NumaPolicy::Bind | NumaPolicy::Interleave) {
-            return Errno::EINVAL.as_ret();
+            return Errno::Einval.as_ret();
         }
         Some(NumaRangePolicy {
             mode: policy_mode,
@@ -100,7 +101,7 @@ pub fn mbind_syscall(
     };
 
     let Some(mm) = crate::privileged::mm::vma_get_current_mm() else {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     };
 
     // 64 位目标下 u64 → usize 无损

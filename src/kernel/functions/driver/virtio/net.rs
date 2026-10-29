@@ -26,6 +26,13 @@ use crate::privileged::driver::virtio::{VIRTIO_F_VERSION_1, VIRTIO_ID_NET, Virti
 use crate::slog_info;
 use crate::slog_warn;
 
+/// `VirtIO` 网卡发送失败
+///
+/// 涵盖: 帧为空或超过 65535 字节、TX DMA 缓冲区分配失败、
+/// TX 描述符耗尽、发送超时。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VirtioNetError;
+
 // ============================================================================
 // VirtIO-net 常量
 // ============================================================================
@@ -108,11 +115,13 @@ pub struct VirtioNetHdr {
 
 impl VirtioNetHdr {
     /// 创建空头 (无 GSO, 无校验和卸载)
+    #[must_use]
     pub fn empty() -> Self {
         Self::default()
     }
 
     /// 头大小 (字节)
+    #[must_use]
     pub const fn size() -> usize {
         core::mem::size_of::<Self>()
     }
@@ -148,9 +157,9 @@ pub struct VirtioNetDriver {
     rx_vq: VirtQueue,
     /// TX virtqueue (队列 1)
     tx_vq: VirtQueue,
-    /// RX 缓冲区表 (desc_idx → DmaBuffer), §6.4 迁业务 (privileged rx_buffers 等价)
+    /// RX 缓冲区表 (`desc_idx` → `DmaBuffer`), §6.4 迁业务 (privileged `rx_buffers` 等价)
     ///
-    /// 与 privileged VirtioNet::rx_buffers 同构: `desc_idx == 槽位索引`
+    /// 与 privileged `VirtioNet::rx_buffers` 同构: `desc_idx == 槽位索引`
     /// (refill 按序提交描述符, 设备按序消费, 回收后重提交复用同槽缓冲区).
     rx_buffers: [Option<DmaBuffer>; 32],
 }
@@ -163,6 +172,7 @@ impl VirtioNetDriver {
     ///
     /// # 参数
     /// - `device`: 已探测到的 `VirtIO` 设备 (`device_id` 必须为 `VIRTIO_ID_NET`)
+    #[must_use]
     pub fn new(device: VirtioMmioDevice) -> Option<Self> {
         let is_legacy = Self::probe_device(&device)?;
 
@@ -275,10 +285,10 @@ impl VirtioNetDriver {
         Some((negotiated_v1, hdr_size))
     }
 
-    /// 分配 RX/TX VirtQueue
+    /// 分配 RX/TX `VirtQueue`
     ///
-    /// 布局形态与环尺寸按**传输层**版本选定 (P-31: legacy 传输无 QueueNum 协商,
-    /// 设备端按 realize 固定 num 推算 vring 布局, 驱动必须全量取 QueueNumMax 对齐,
+    /// 布局形态与环尺寸按**传输层**版本选定 (P-31: legacy 传输无 `QueueNum` 协商,
+    /// 设备端按 realize 固定 num 推算 vring 布局, 驱动必须全量取 `QueueNumMax` 对齐,
     /// 截断即错位 → 永不回写 used → TX 超时).
     fn init_queues(device: &VirtioMmioDevice, is_legacy: bool) -> Option<(VirtQueue, VirtQueue)> {
         let vq_legacy = is_legacy;
@@ -302,8 +312,8 @@ impl VirtioNetDriver {
     /// 从配置空间读取 MAC 地址
     fn read_mac(device: &VirtioMmioDevice) -> [u8; 6] {
         let mut mac: [u8; 6] = [0; 6];
-        for i in 0..6 {
-            mac[i] = crate::functions::intcast::low_u8_from_u32(
+        for (i, byte) in mac.iter_mut().enumerate() {
+            *byte = crate::functions::intcast::low_u8_from_u32(
                 device.read_config32(NET_CONFIG_MAC + (i & !3)) >> ((i & 3) * 8),
             );
         }
@@ -348,14 +358,14 @@ impl VirtioNetDriver {
     /// 配置 vq0 (RX) / vq1 (TX) MMIO 寄存器 → 设置 `DRIVER_OK` → 预填
     /// RX 队列 (refill 在 `DRIVER_OK` 后执行, 与旧 privileged 驱动时序一致)。
     pub fn finalize(&mut self) {
-        self.setup_queue(
+        let _ = self.setup_queue(
             RX_QUEUE_INDEX,
             self.rx_vq.num,
             self.rx_vq.desc_paddr(),
             self.rx_vq.avail_paddr(),
             self.rx_vq.used_paddr(),
         );
-        self.setup_queue(
+        let _ = self.setup_queue(
             TX_QUEUE_INDEX,
             self.tx_vq.num,
             self.tx_vq.desc_paddr(),
@@ -368,36 +378,43 @@ impl VirtioNetDriver {
     }
 
     /// 获取 MMIO 设备引用 (用于 `VirtQueue` 配置).
+    #[must_use]
     pub fn device(&self) -> &VirtioMmioDevice {
         &self.device
     }
 
     /// 获取 MAC 地址.
+    #[must_use]
     pub fn mac(&self) -> &[u8; 6] {
         &self.mac
     }
 
     /// 链路是否 UP.
+    #[must_use]
     pub fn link_up(&self) -> bool {
         self.link_up
     }
 
     /// 获取协商后的特性位.
+    #[must_use]
     pub fn negotiated_features(&self) -> u64 {
         self.negotiated_features
     }
 
     /// 检查是否协商了指定特性.
+    #[must_use]
     pub fn has_feature(&self, feature: u64) -> bool {
         self.negotiated_features & feature != 0
     }
 
     /// 获取头大小 (10 或 12 字节).
+    #[must_use]
     pub fn hdr_size(&self) -> usize {
         self.hdr_size
     }
 
     /// 是否为传统模式 (未协商 `VERSION_1`).
+    #[must_use]
     pub fn is_legacy(&self) -> bool {
         self.negotiated_features & VIRTIO_F_VERSION_1 == 0
     }
@@ -408,12 +425,13 @@ impl VirtioNetDriver {
     ///
     /// # 参数
     /// - `vq_index`: virtqueue 索引 (RX=0, TX=1)
-    /// - `num`: 队列尺寸 (modern 经 QueueNum 协商写入; legacy 忽略 — 设备端固定)
+    /// - `num`: 队列尺寸 (modern 经 `QueueNum` 协商写入; legacy 忽略 — 设备端固定)
     /// - `desc_paddr`: 描述符表物理地址
     /// - `avail_paddr`: available ring 物理地址
     /// - `used_paddr`: used ring 物理地址
     ///
     /// 返回队列最大尺寸.
+    #[must_use]
     pub fn setup_queue(
         &self,
         vq_index: u16,
@@ -456,6 +474,7 @@ impl VirtioNetDriver {
     }
 
     /// 读取并应答中断状态.
+    #[must_use]
     pub fn ack_interrupt(&self) -> u32 {
         let status = self.device.interrupt_status();
         if status != 0 {
@@ -465,6 +484,7 @@ impl VirtioNetDriver {
     }
 
     /// 读取当前链路状态 (从配置空间实时读取).
+    #[must_use]
     pub fn read_link_status(&self) -> bool {
         let status = crate::functions::intcast::low_u16_from_u32(
             self.device.read_config32(NET_CONFIG_STATUS),
@@ -480,18 +500,18 @@ impl VirtioNetDriver {
     /// 发送完成后 DMA 缓冲区自动释放.
     ///
     /// # Errors
-    /// 当 `data` 为空或长度超过 65535 时返回 `Err(())`;
-    /// 当 DMA 缓冲区分配失败或设备未接受描述符时也返回 `Err(())`.
-    pub fn send_packet(&mut self, data: &[u8]) -> Result<(), ()> {
+    /// 当 `data` 为空或长度超过 65535 时返回 [`VirtioNetError`];
+    /// 当 DMA 缓冲区分配失败或设备未接受描述符时也返回 [`VirtioNetError`].
+    pub fn send_packet(&mut self, data: &[u8]) -> Result<(), VirtioNetError> {
         if data.is_empty() || data.len() > 65535 {
-            return Err(());
+            return Err(VirtioNetError);
         }
 
         // DMA 缓冲区: VirtIO 头 + 帧数据
         let total = self.hdr_size + data.len();
         let Some(mut dma) = DmaBuffer::new(total) else {
             slog_warn!(Driver, "virtio-net: TX DMA 缓冲区分配失败");
-            return Err(());
+            return Err(VirtioNetError);
         };
 
         // 清零 VirtIO 网络头 (safe: 通过 DmaBuffer)
@@ -510,7 +530,7 @@ impl VirtioNetDriver {
         );
         if desc_idx == 0xFFFF {
             slog_warn!(Driver, "virtio-net: TX 描述符耗尽");
-            return Err(());
+            return Err(VirtioNetError);
         }
 
         // 提交并通知设备
@@ -528,7 +548,7 @@ impl VirtioNetDriver {
             if waited > 100_000 {
                 self.tx_vq.reclaim_desc(desc_idx);
                 slog_warn!(Driver, "virtio-net: TX 超时");
-                return Err(());
+                return Err(VirtioNetError);
             }
             waited += 1;
             core::hint::spin_loop();
@@ -539,7 +559,7 @@ impl VirtioNetDriver {
     ///
     /// 将包数据 (不含 `VirtIO` 头) 复制到 `buf`, 返回实际拷贝的字节数.
     /// 无包可读时返回 0. 内部自动回收并重新填充 RX 描述符 (§6.4 迁业务:
-    /// 完整数据路径, 维护 desc_idx → DmaBuffer 映射, 取代原"返回 0 丢弃"半成品).
+    /// 完整数据路径, 维护 `desc_idx` → `DmaBuffer` 映射, 取代原"返回 0 丢弃"半成品).
     pub fn try_receive(&mut self, buf: &mut [u8]) -> usize {
         let Some((desc_idx, len)) = self.rx_vq.pop_used() else {
             return 0;
@@ -574,7 +594,7 @@ impl VirtioNetDriver {
         copy_len
     }
 
-    /// 用空缓冲区填充 RX virtqueue (§6.4 迁业务: privileged refill_rx 等价).
+    /// 用空缓冲区填充 RX virtqueue (§6.4 迁业务: privileged `refill_rx` 等价).
     ///
     /// 为每个空槽位分配 `DmaBuffer`, 提交设备可写描述符.
     fn refill_rx(&mut self) {
@@ -627,7 +647,7 @@ impl crate::privileged::net::NetDeviceOps for VirtioNetDriver {
     fn send(&mut self, data: &[u8]) -> i32 {
         match self.send_packet(data) {
             Ok(()) => 0,
-            Err(()) => -1,
+            Err(_) => -1,
         }
     }
 
@@ -642,8 +662,8 @@ impl crate::privileged::net::NetDeviceOps for VirtioNetDriver {
         *self.mac()
     }
 
-    /// 中断处理: 读取并回写 InterruptACK 清除设备中断状态 (virtio-mmio
-    /// 无独立中断掩码, 设备在 InterruptStatus != 0 时拉高 IRQ 线)。
+    /// 中断处理: 读取并回写 `InterruptACK` 清除设备中断状态 (virtio-mmio
+    /// 无独立中断掩码, 设备在 `InterruptStatus` != 0 时拉高 IRQ 线)。
     ///
     /// 由 privileged 统一 ISR 在中断上下文调用; 清除中断源后底半部
     /// (`NetRx` softirq) 经 `poll_network` 完成收包。丢弃返回值: 收包不

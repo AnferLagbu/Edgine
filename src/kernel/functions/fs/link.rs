@@ -23,13 +23,13 @@ use crate::privileged::syscall::raw;
 /// 其余错误 (如源不存在、无权限、名称已存在等) 以对应的 `Errno` 返回.
 pub fn link_syscall(oldpath_ptr: u64, newpath_ptr: u64) -> Result<usize, Errno> {
     if oldpath_ptr == 0 || newpath_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_ptr(oldpath_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_ptr(newpath_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let pwm = current_pwm();
     let r = fw::vfs_link(oldpath_ptr as *const u8, newpath_ptr as *const u8, pwm);
@@ -51,13 +51,13 @@ pub fn link_syscall(oldpath_ptr: u64, newpath_ptr: u64) -> Result<usize, Errno> 
 /// 其余错误 (如目标不存在、无权限、名称已存在等) 以对应的 `Errno` 返回.
 pub fn symlink_syscall(target_ptr: u64, linkpath_ptr: u64) -> Result<usize, Errno> {
     if target_ptr == 0 || linkpath_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_ptr(target_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_ptr(linkpath_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let pwm = current_pwm();
     let r = fw::vfs_symlink(target_ptr as *const u8, linkpath_ptr as *const u8, pwm);
@@ -79,16 +79,16 @@ pub fn symlink_syscall(target_ptr: u64, linkpath_ptr: u64) -> Result<usize, Errn
 /// 其余错误 (如路径不是符号链接等) 以对应的 `Errno` 返回.
 pub fn readlink_syscall(path_ptr: u64, buf_ptr: u64, bufsiz: u64) -> Result<usize, Errno> {
     if path_ptr == 0 || buf_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if bufsiz == 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if !raw::check_user_ptr(path_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_buf(buf_ptr, bufsiz) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let pwm = current_pwm();
     let r = fw::vfs_readlink(path_ptr as *const u8, buf_ptr as *mut u8, bufsiz, pwm);

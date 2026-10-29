@@ -347,7 +347,7 @@ fn test_cr3_single_owner_exit_zeroes_once() -> TestResult {
 
 /// cr3 所有权: execve 转移 —— 源清空后源 drop 不得影响目标持有 (G3).
 ///
-/// 与 [proc_ops.rs] `proc_exec_replace` 阶段 4 同形: 所有权随 cr3 移动 (不重新
+/// 与 [`proc_ops.rs`] `proc_exec_replace` 阶段 4 同形: 所有权随 cr3 移动 (不重新
 /// 计数), 源必须清空, 否则源 `Process::drop` 会把目标在用的页表计数减到归零.
 #[cfg(not(feature = "host-test"))]
 fn test_cr3_transfer_source_cleared() -> TestResult {

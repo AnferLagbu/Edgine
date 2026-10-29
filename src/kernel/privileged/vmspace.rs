@@ -40,6 +40,7 @@ impl VmSpace {
     ///
     /// # SAFETY
     /// 调用方确保在合适的分配上下文（初始化早期或进程创建时）。
+    #[must_use]
     pub unsafe fn new() -> Option<Self> {
         let vmm = get_vmm();
         let pt_phys = vmm.create_user_page_table()?;
@@ -51,12 +52,14 @@ impl VmSpace {
 
     /// 获取页表根物理地址
     #[inline]
+    #[must_use]
     pub fn pt_root(&self) -> PhysAddr {
         self.pt_root
     }
 
     /// 是否是内核地址空间
     #[inline]
+    #[must_use]
     pub fn is_kernel(&self) -> bool {
         self.is_kernel
     }
@@ -92,7 +95,7 @@ impl VmSpace {
             flags,
         );
 
-        frame.inc_ref();
+        let _ = frame.inc_ref();
         Ok(())
     }
 
@@ -114,7 +117,7 @@ impl VmSpace {
         }
         let vmm = get_vmm();
         vmm.map_huge_page(vaddr, frame.phys(), flags, PageSize::Size2M)?;
-        frame.inc_ref();
+        let _ = frame.inc_ref();
         Ok(())
     }
 

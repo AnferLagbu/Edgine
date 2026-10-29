@@ -16,7 +16,7 @@
 //! - getpgid: 进程组 ID
 //! - uname: 系统信息
 //!
-//! gettimeofday / clock_gettime 属 functions::timer::clock (B05-26 时间归位).
+//! gettimeofday / `clock_gettime` 属 `functions::timer::clock` (B05-26 时间归位).
 
 use alloc::string::String;
 
@@ -40,16 +40,19 @@ struct Utsname {
 // ============================================================================
 
 /// getpid — 返回当前进程 PID (恒成功)
+#[must_use]
 pub fn getpid_syscall() -> usize {
     api::process_get_current_pid() as usize
 }
 
 /// gettid — 返回当前线程 TID (线程与进程 ID 共享, 等同 getpid)
+#[must_use]
 pub fn gettid_syscall() -> usize {
     api::process_get_current_pid() as usize
 }
 
 /// getppid — 返回父进程 PID (恒成功)
+#[must_use]
 pub fn getppid_syscall() -> usize {
     let pid = api::process_get_current_pid();
     api::proc_get_ppid(pid) as usize
@@ -64,7 +67,7 @@ pub fn getppid_syscall() -> usize {
 /// 当 `pid < 0` 时返回 `EINVAL`; 底层查询失败时返回对应的 `Errno`.
 pub fn getpgid_syscall(pid: i32) -> Result<usize, Errno> {
     if pid < 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     let ret = crate::privileged::proc::proc_getpgid(pid);
     if ret < 0 {
@@ -116,7 +119,7 @@ pub fn uname_syscall(buf: u64) -> Result<usize, Errno> {
     if crate::privileged::syscall::api::write_struct_to_user(buf, &uts) {
         Ok(0)
     } else {
-        Err(Errno::EFAULT)
+        Err(Errno::Efault)
     }
 }
 

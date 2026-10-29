@@ -4,11 +4,11 @@
 //!
 //! ## DECISION-J 归属反转记录 (2026-09-13)
 //!
-//! 策略代码 (OomDaemon + 常量 + tick/stats/disable) 于 2026-06-17 迁至
+//! 策略代码 (`OomDaemon` + 常量 + tick/stats/disable) 于 2026-06-17 迁至
 //! `functions::proc::oomd`, 本文件仅 re-export。按"机制持有的数据结构/常量
 //! 归 privileged"统一判据反转：OOMD 是 privileged scheduler tick 直接驱动的
 //! 机制组件 (scheduler.rs:987 `OOMD.tick()`), 压力级别判定与回收调度是
-//! 调度器机制内联行为 — 属机制项, 迁回 (同 DECISION-M sys_pm_dispatch 判据)。
+//! 调度器机制内联行为 — 属机制项, 迁回 (同 DECISION-M `sys_pm_dispatch` 判据)。
 //!
 //! functions 侧改 `pub use crate::privileged::proc::oomd::*`
 //! 保持 API 兼容 (functions→privileged 合法方向)。
@@ -47,8 +47,15 @@ pub struct OomDaemon {
     enabled: AtomicBool,
 }
 
+impl Default for OomDaemon {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OomDaemon {
     /// 构造 OOM 守护器 (启用状态, 计数清零).
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             last_check: AtomicU64::new(0),
@@ -126,11 +133,10 @@ impl OomDaemon {
                         if better_oom_victim(pid, p.get_state(), cr3, victim_rss, || {
                             candidate_rss = mm_api::count_present_user_pages(cr3);
                             candidate_rss.unwrap_or(victim_rss)
-                        }) {
-                            if let Some(rss) = candidate_rss {
-                                victim_rss = rss;
-                                victim = pid;
-                            }
+                        }) && let Some(rss) = candidate_rss
+                        {
+                            victim_rss = rss;
+                            victim = pid;
                         }
                         true
                     });

@@ -18,26 +18,27 @@ use crate::privileged::syscall::Errno;
 /// - `pid == 0` 表示当前进程
 /// - `cpusetsize` 必须 >= 8 (u64 掩码大小)
 /// - `mask` 用户空间指针, 指向 64-bit 位图
+#[must_use]
 pub fn sched_setaffinity_syscall(pid: i32, cpusetsize: u32, mask_ptr: u64) -> i64 {
     if cpusetsize < 8 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     if mask_ptr == 0 || !crate::privileged::syscall::api::validate_user_buf(mask_ptr, 8) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
 
     let Some(mask) = crate::privileged::syscall::api::read_u64_from_user(mask_ptr) else {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     };
 
     let target_pid = match pid {
         0 => crate::privileged::proc::process_get_current_pid(),
         p if p > 0 => p.cast_unsigned(),
-        _ => return Errno::EINVAL.as_ret(),
+        _ => return Errno::Einval.as_ret(),
     };
 
     if target_pid == 0 {
-        return Errno::ESRCH.as_ret();
+        return Errno::Esrch.as_ret();
     }
 
     let ok = crate::privileged::proc::process_with_mut(target_pid, |p| {
@@ -47,7 +48,7 @@ pub fn sched_setaffinity_syscall(pid: i32, cpusetsize: u32, mask_ptr: u64) -> i6
     .is_some();
 
     if !ok {
-        return Errno::ESRCH.as_ret();
+        return Errno::Esrch.as_ret();
     }
 
     0
@@ -58,22 +59,23 @@ pub fn sched_setaffinity_syscall(pid: i32, cpusetsize: u32, mask_ptr: u64) -> i6
 /// Linux 兼容 ABI:
 /// - `pid == 0` 表示当前进程
 /// - 返回写入的字节数 (8) 成功
+#[must_use]
 pub fn sched_getaffinity_syscall(pid: i32, cpusetsize: u32, mask_ptr: u64) -> i64 {
     if cpusetsize < 8 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     if mask_ptr == 0 || !crate::privileged::syscall::api::validate_user_buf(mask_ptr, 8) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
 
     let target_pid = match pid {
         0 => crate::privileged::proc::process_get_current_pid(),
         p if p > 0 => p.cast_unsigned(),
-        _ => return Errno::EINVAL.as_ret(),
+        _ => return Errno::Einval.as_ret(),
     };
 
     if target_pid == 0 {
-        return Errno::ESRCH.as_ret();
+        return Errno::Esrch.as_ret();
     }
 
     let mask = crate::privileged::proc::process_with(target_pid, |p| {
@@ -83,7 +85,7 @@ pub fn sched_getaffinity_syscall(pid: i32, cpusetsize: u32, mask_ptr: u64) -> i6
     .unwrap_or(u64::MAX);
 
     if !crate::privileged::syscall::api::write_u64_to_user(mask_ptr, mask) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
 
     8

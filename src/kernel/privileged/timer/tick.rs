@@ -331,6 +331,7 @@ pub fn counters_per_tick() -> u64 {
 /// 与 `get_ticks()` / `ANCHOR_COUNTER` 同一坐标系: tick 源的绝对截止期必须落在
 /// 该域, 否则到期判断与时基读数不可比 (x86_64 = TSC, aarch64 = `CNTPCT_EL0`).
 #[inline]
+#[must_use]
 pub fn counter_now() -> u64 {
     counter_read()
 }
@@ -402,6 +403,7 @@ pub fn reset_ticks() {
 /// # Returns
 /// * `u64` - 毫秒数
 #[inline]
+#[must_use]
 pub fn ticks_to_ms(ticks: u64) -> u64 {
     let freq = u64::from(get_frequency());
     if freq == 0 {
@@ -415,6 +417,7 @@ pub fn ticks_to_ms(ticks: u64) -> u64 {
 
 /// 将 ticks 转换为微秒
 #[inline]
+#[must_use]
 pub fn ticks_to_us(ticks: u64) -> u64 {
     let freq = u64::from(get_frequency());
     if freq == 0 {
@@ -426,6 +429,7 @@ pub fn ticks_to_us(ticks: u64) -> u64 {
 
 /// 将 ticks 转换为纳秒
 #[inline]
+#[must_use]
 pub fn ticks_to_ns(ticks: u64) -> u64 {
     let freq = u64::from(get_frequency());
     if freq == 0 {
@@ -437,6 +441,7 @@ pub fn ticks_to_ns(ticks: u64) -> u64 {
 
 /// 将毫秒转换为 ticks (向上取整)
 #[inline]
+#[must_use]
 pub fn ms_to_ticks(ms: u64) -> u64 {
     let freq = u64::from(get_frequency());
     if freq == 0 {
@@ -448,6 +453,7 @@ pub fn ms_to_ticks(ms: u64) -> u64 {
 
 /// 将微秒转换为 ticks (向上取整)
 #[inline]
+#[must_use]
 pub fn us_to_ticks(us: u64) -> u64 {
     let freq = u64::from(get_frequency());
     if freq == 0 {
@@ -480,6 +486,7 @@ pub fn ticks_to_us_fast(ticks: u64) -> u64 {
 /// # Returns
 /// * `u64` - 自启动以来的毫秒数
 #[inline]
+#[must_use]
 pub fn get_uptime_ms() -> u64 {
     ticks_to_ms(get_ticks())
 }
@@ -489,6 +496,7 @@ pub fn get_uptime_ms() -> u64 {
 /// # Returns
 /// * `u64` - 自启动以来的秒数 (截断)
 #[inline]
+#[must_use]
 pub fn get_uptime_s() -> u64 {
     get_uptime_ms() / 1000
 }
@@ -848,7 +856,7 @@ mod tests {
     }
 }
 
-/// 注册定时器 tick 子系统测试用例 (kernel_test)
+/// 注册定时器 tick 子系统测试用例 (`kernel_test`)
 #[cfg(feature = "kernel_test")]
 pub fn register_timer_tick_tests() {
     use crate::privileged::tests::{TestFn, TestResult, runner};

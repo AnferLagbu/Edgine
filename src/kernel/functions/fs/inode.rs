@@ -34,6 +34,7 @@ pub trait Inode: Send + Sync {
     /// - `offset`: 文件内字节偏移
     /// - `buf`: 目标缓冲区
     /// - `pwm`: 权限凭证
+    ///
     /// 返回: 实际读取的字节数
     ///
     /// # Errors
@@ -45,6 +46,7 @@ pub trait Inode: Send + Sync {
     /// - `offset`: 文件内字节偏移
     /// - `buf`: 源数据
     /// - `pwm`: 权限凭证
+    ///
     /// 返回: 实际写入的字节数
     ///
     /// # Errors
@@ -68,6 +70,7 @@ pub trait Inode: Send + Sync {
     /// - `offset`: seek 偏移量 (字节)
     /// - `whence`: 定位基准 (`SEEK_SET/SEEK_CUR/SEEK_END`)
     /// - `current_offset`: 当前文件偏移
+    ///
     /// 返回: 新的文件偏移
     ///
     /// # Errors
@@ -80,6 +83,7 @@ pub trait Inode: Send + Sync {
     /// 读取目录项 (仅目录 Inode 实现)
     ///
     /// - `offset`: 目录偏移 (字节)
+    ///
     /// 返回: (`entry_name`, `file_type`, `has_more`), 失败返回 `KernelError`
     ///
     /// # Errors
@@ -189,12 +193,13 @@ use super::anonymous::ANONYMOUS_FS;
 pub struct AnonymousInode {
     inode_id: u32,
     /// B06-06: `u32::MAX` 为"匿名文件无挂载点"哨兵; 风险路径 (mmap) 已走 `Option<usize>`,
-    /// 本字段透传值全仓库无调用点 (见 OpenFile::mount_idx).
+    /// 本字段透传值全仓库无调用点 (见 `OpenFile::mount_idx`).
     mount_idx: u32,
 }
 
 impl AnonymousInode {
     /// 创建新的匿名 Inode
+    #[must_use]
     pub fn new(inode_id: u32) -> Self {
         Self {
             inode_id,
@@ -273,12 +278,13 @@ impl Inode for AnonymousInode {
 pub struct RamFsInode {
     inode_id: u32,
     mount_idx: u32,
-    /// dcache/icache 命名空间标识 (所属 RamFS 实例)
+    /// dcache/icache 命名空间标识 (所属 `RamFS` 实例)
     fs_id: u32,
 }
 
 impl RamFsInode {
     /// 创建新的 `RamFS` Inode
+    #[must_use]
     pub fn new(inode_id: u32, mount_idx: u32, fs_id: u32) -> Self {
         Self {
             inode_id,
@@ -336,15 +342,17 @@ impl Inode for RamFsInode {
         let st = ramfs.get_stat(self.inode_id, pwm)?;
         // 填充 icache
         crate::functions::fs::dcache::icache_insert(
-            self.fs_id,
-            self.inode_id,
-            st.file_type,
-            st.perm,
-            st.size as u32,
-            st.mtime,
-            st.ctime,
-            st.owner_pwm,
-            st.group_pwm,
+            &crate::functions::fs::dcache::ICacheInsertArgs {
+                fs_id: self.fs_id,
+                ino: self.inode_id,
+                file_type: st.file_type,
+                perm: st.perm,
+                size: st.size,
+                mtime: st.mtime,
+                ctime: st.ctime,
+                owner_pwm: st.owner_pwm,
+                group_pwm: st.group_pwm,
+            },
         );
         Ok(st)
     }
@@ -409,11 +417,13 @@ impl Inode for RamFsInode {
 // ============================================================================
 
 /// 创建匿名 Inode 的 Arc 包装
+#[must_use]
 pub fn new_anonymous_inode(inode_id: u32) -> Arc<dyn Inode> {
     Arc::new(AnonymousInode::new(inode_id))
 }
 
 /// 创建 `RamFS` Inode 的 Arc 包装
+#[must_use]
 pub fn new_ramfs_inode(inode_id: u32, mount_idx: u32, fs_id: u32) -> Arc<dyn Inode> {
     Arc::new(RamFsInode::new(inode_id, mount_idx, fs_id))
 }

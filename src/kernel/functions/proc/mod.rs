@@ -93,15 +93,17 @@ pub enum ProcError {
 
 impl ProcError {
     /// 映射为 POSIX errno
+    #[must_use]
     pub fn to_errno(self) -> Errno {
         use Errno as E;
         match self {
-            Self::Exited => E::ESRCH,
+            Self::Exited => E::Esrch,
             Self::Kernel(e) => e.as_errno(),
         }
     }
 
     /// 由 C 风格返回码构造进程错误 (负值为 errno, 0 视为其他错误)。
+    #[must_use]
     pub fn from_i32(rc: i32) -> Self {
         use crate::functions::error::KernelError as K;
         match rc {
@@ -126,7 +128,7 @@ pub type ProcResult<T> = Result<T, ProcError>;
 ///
 /// **调用顺序** (依赖链):
 /// 1. 进程表 (`PROCESS_TABLE` 常量初始化自动完成, 无需显式 init)
-/// 2. 主调度器 (`SCHEDULER.init`, per-CPU 进程级; 线程级 SchedulerEx 并行实现已移除, P-29 route C)
+/// 2. 主调度器 (`SCHEDULER.init`, per-CPU 进程级; 线程级 `SchedulerEx` 并行实现已移除, P-29 route C)
 /// 3. Session 管理器 (`SESSION_MANAGER.init` → `pub fn init()`)
 ///
 /// 由启动期 `kernel::init` 调用一次。
@@ -164,16 +166,19 @@ pub fn schedule() {
 // ============================================================================
 
 /// 从 u8 值构造 `ProcessState` (安全转换)
+#[must_use]
 pub fn state_from_u8(v: u8) -> ProcessState {
     ProcessState::from_u8(v)
 }
 
 /// 从 u32 值构造 `ProcessState` (兼容 `AtomicU32` 存储)
+#[must_use]
 pub fn state_from_u32(v: u32) -> ProcessState {
     ProcessState::from_u32(v)
 }
 
 /// 从优先级数值构造 `ProcessPriority`
+#[must_use]
 pub fn priority_from_u32(v: u32) -> ProcessPriority {
     ProcessPriority::from_u32(v)
 }

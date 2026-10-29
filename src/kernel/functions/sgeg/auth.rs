@@ -27,33 +27,39 @@
 use crate::privileged::syscall::Errno;
 
 /// `auth_login(password`, note) 策略
+#[must_use]
 pub fn auth_login_syscall(password_ptr: u64, note_ptr: u64) -> i64 {
     crate::privileged::sgeg::pwm_login(note_ptr as *const u8, password_ptr as *const u8)
 }
 
 /// `auth_logout()` 策略
+#[must_use]
 pub fn auth_logout_syscall() -> i64 {
     crate::privileged::sgeg::pwm_logout();
     0
 }
 
 /// `auth_create(password`, note, level) 策略
+#[must_use]
 pub fn auth_create_syscall(password_ptr: u64, note_ptr: u64, _level: u8) -> i64 {
     let creator = crate::privileged::sgeg::pwm_get_current();
     crate::privileged::sgeg::pwm_create(password_ptr as *const u8, note_ptr as *const u8, creator)
 }
 
 /// `auth_delete(target)` 策略
+#[must_use]
 pub fn auth_delete_syscall(target: u64) -> i64 {
     i64::from(crate::privileged::sgeg::pwm_delete(target))
 }
 
 /// `auth_info(target)` 策略
+#[must_use]
 pub fn auth_info_syscall(target: u64) -> i64 {
     i64::from(crate::privileged::sgeg::pwm_get_privilege_level(target))
 }
 
 /// `auth_changepw(old_pw`, `new_pw`) 策略
+#[must_use]
 pub fn auth_changepw_syscall(old_pw_ptr: u64, new_pw_ptr: u64) -> i64 {
     let pwm = crate::privileged::sgeg::pwm_get_current();
     i64::from(crate::privileged::sgeg::pwm_change_password(
@@ -64,6 +70,7 @@ pub fn auth_changepw_syscall(old_pw_ptr: u64, new_pw_ptr: u64) -> i64 {
 }
 
 /// `auth_verify(password)` 策略
+#[must_use]
 pub fn auth_verify_syscall(password_ptr: u64) -> i64 {
     let pwm = crate::privileged::sgeg::pwm_get_current();
     i64::from(crate::privileged::sgeg::pwm_verify_password(
@@ -73,14 +80,16 @@ pub fn auth_verify_syscall(password_ptr: u64) -> i64 {
 }
 
 /// `auth_create_first(password)` 策略
+#[must_use]
 pub fn auth_create_first_syscall(password_ptr: u64) -> i64 {
     if password_ptr == 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     crate::privileged::sgeg::pwm_create_first_identity(password_ptr as *const u8)
 }
 
 /// `auth_grant(grantor`, grantee, domain, caps) 策略
+#[must_use]
 pub fn auth_grant_syscall(grantor: u64, grantee: u64, domain: u16, caps: u64) -> i64 {
     i64::from(crate::privileged::sgeg::pwm_grant(
         grantor, grantee, domain, caps,
@@ -88,6 +97,7 @@ pub fn auth_grant_syscall(grantor: u64, grantee: u64, domain: u16, caps: u64) ->
 }
 
 /// `auth_revoke(revoker`, target, domain, caps) 策略
+#[must_use]
 pub fn auth_revoke_syscall(revoker: u64, target: u64, domain: u16, caps: u64) -> i64 {
     i64::from(crate::privileged::sgeg::pwm_revoke(
         revoker, target, domain, caps,
@@ -95,6 +105,7 @@ pub fn auth_revoke_syscall(revoker: u64, target: u64, domain: u16, caps: u64) ->
 }
 
 /// `auth_check_cap(pwm`, domain, required) 策略
+#[must_use]
 pub fn auth_check_cap_syscall(pwm: u64, domain: u16, required: u64) -> i64 {
     i64::from(crate::privileged::sgeg::pwm_has_capability(
         pwm, domain, required,
@@ -102,6 +113,7 @@ pub fn auth_check_cap_syscall(pwm: u64, domain: u16, required: u64) -> i64 {
 }
 
 /// `auth_get_caps(pwm`, domain) 策略
+#[must_use]
 pub fn auth_get_caps_syscall(pwm: u64, domain: u16) -> i64 {
     crate::privileged::sgeg::pwm_get_capability_raw(pwm, domain).cast_signed()
 }
@@ -134,11 +146,11 @@ struct LinuxCapData {
 /// 仅负责版本协商, `pid` 语义由调用方决定 (capget → `ESRCH`, capset → `EPERM`).
 fn cap_read_header(header: u64) -> Result<LinuxCapHeader, i64> {
     if header == 0 {
-        return Err(Errno::EFAULT.as_ret());
+        return Err(Errno::Efault.as_ret());
     }
     let mut hdr = LinuxCapHeader { version: 0, pid: 0 };
     if !crate::privileged::syscall::api::read_struct_from_user(header, &mut hdr) {
-        return Err(Errno::EFAULT.as_ret());
+        return Err(Errno::Efault.as_ret());
     }
     if hdr.version != LINUX_CAPABILITY_VERSION_3 {
         let fixed = LinuxCapHeader {
@@ -146,7 +158,7 @@ fn cap_read_header(header: u64) -> Result<LinuxCapHeader, i64> {
             pid: hdr.pid,
         };
         let _ = crate::privileged::syscall::api::write_struct_to_user(header, &fixed);
-        return Err(Errno::EINVAL.as_ret());
+        return Err(Errno::Einval.as_ret());
     }
     Ok(hdr)
 }
@@ -170,13 +182,14 @@ fn cap_pid_is_self(pid: i32) -> bool {
 /// - 用户指针非法 → `EFAULT`
 /// - 版本不受支持 → `EINVAL` (并回写受支持版本)
 /// - `pid` 指向他进程 → `ESRCH`
+#[must_use]
 pub fn capget_syscall(header: u64, data: u64) -> i64 {
     let hdr = match cap_read_header(header) {
         Ok(h) => h,
         Err(ret) => return ret,
     };
     if !cap_pid_is_self(hdr.pid) {
-        return Errno::ESRCH.as_ret();
+        return Errno::Esrch.as_ret();
     }
     if data == 0 {
         return 0;
@@ -199,12 +212,12 @@ pub fn capget_syscall(header: u64, data: u64) -> i64 {
     };
 
     let Some(data1) = data.checked_add(core::mem::size_of::<LinuxCapData>() as u64) else {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     };
     if !crate::privileged::syscall::api::write_struct_to_user(data, &lo)
         || !crate::privileged::syscall::api::write_struct_to_user(data1, &hi)
     {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     0
 }
@@ -225,16 +238,17 @@ pub fn capget_syscall(header: u64, data: u64) -> i64 {
 /// - 版本不受支持 → `EINVAL` (并回写受支持版本)
 /// - `pid` 指向他进程 → `EPERM` (禁止跨进程能力篡改)
 /// - 请求集合超出当前值或破坏下限 → `EPERM`
+#[must_use]
 pub fn capset_syscall(header: u64, data: u64) -> i64 {
     let hdr = match cap_read_header(header) {
         Ok(h) => h,
         Err(ret) => return ret,
     };
     if !cap_pid_is_self(hdr.pid) {
-        return Errno::EPERM.as_ret();
+        return Errno::Eperm.as_ret();
     }
     if data == 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     let mut lo = LinuxCapData {
@@ -248,12 +262,12 @@ pub fn capset_syscall(header: u64, data: u64) -> i64 {
         inheritable: 0,
     };
     let Some(data1) = data.checked_add(core::mem::size_of::<LinuxCapData>() as u64) else {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     };
     if !crate::privileged::syscall::api::read_struct_from_user(data, &mut lo)
         || !crate::privileged::syscall::api::read_struct_from_user(data1, &mut hi)
     {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
 
     let permitted = u64::from(lo.permitted) | (u64::from(hi.permitted) << 32);
@@ -265,12 +279,13 @@ pub fn capset_syscall(header: u64, data: u64) -> i64 {
         requested,
     );
     if ret < 0 {
-        return Errno::EPERM.as_ret();
+        return Errno::Eperm.as_ret();
     }
     0
 }
 
 /// `pwm_get()` 策略
+#[must_use]
 pub fn pwm_get_syscall() -> i64 {
     crate::privileged::sgeg::pwm_get_current().cast_signed()
 }
@@ -281,12 +296,13 @@ pub fn pwm_get_syscall() -> i64 {
 /// SYSTEM 域 `SET_PWM` 能力位 (PWM 0/bootstrap 经 `engine::check` 恒全权).
 /// 原实现无任何校验, 任意进程可把自身 PWM 改为 root, 绕过全部 UID/GID 检查
 /// (任意提权漏洞 P0-07).
+#[must_use]
 pub fn pwm_set_syscall(pwm: u64) -> i64 {
     use crate::functions::sgeg::capability::{CAP_DOMAIN_SYSTEM, SYSTEM_CAP_SET_PWM};
     let current = crate::privileged::sgeg::pwm_get_current();
     if !crate::privileged::sgeg::pwm_has_capability(current, CAP_DOMAIN_SYSTEM, SYSTEM_CAP_SET_PWM)
     {
-        return Errno::EPERM.as_ret();
+        return Errno::Eperm.as_ret();
     }
     let pid = crate::privileged::proc::process_get_current_pid();
     i64::from(crate::privileged::proc::proc_set_pwm(pid, pwm))

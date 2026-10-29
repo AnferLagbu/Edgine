@@ -39,15 +39,17 @@ pub enum IpcError {
 
 impl IpcError {
     /// 映射为 POSIX errno
+    #[must_use]
     pub fn to_errno(self) -> Errno {
         use Errno as E;
         match self {
-            Self::InvalidOp => E::EBADF,
+            Self::InvalidOp => E::Ebadf,
             Self::Kernel(e) => e.as_errno(),
         }
     }
 
     /// 由 C ABI 返回码构造 `IpcError` (负数按 errno 语义映射, 未知码归入 `Other`)
+    #[must_use]
     pub fn from_i32(rc: i32) -> Self {
         use crate::functions::error::KernelError as K;
         match rc {
@@ -152,13 +154,22 @@ pub struct IpcNamespaceRef;
 
 impl IpcNamespaceRef {
     /// 构造 IPC 命名空间安全视图
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
 
     /// 获取命名空间锁 (spin, 短临界区)
+    #[must_use]
     pub fn lock() -> IpcLock {
         IpcLock
+    }
+}
+
+impl Default for IpcNamespaceRef {
+    /// 等价于 [`IpcNamespaceRef::new`] (零字段视图)
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -173,9 +184,9 @@ impl IpcLock {
     /// # Errors
     /// 当底层创建失败 (如资源耗尽等) 时以对应的 `IpcError` 返回.
     pub fn pipe_create(current_pid: u32) -> Result<(PipeFd, PipeFd), IpcError> {
-        let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-        let next_id = crate::privileged::ipc::NEXT_IPC_ID.get_mut();
-        self::pipe::pipe_create_safe(ns, next_id, current_pid)
+        let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+        let mut next_id = crate::privileged::ipc::NEXT_IPC_ID.get_mut();
+        self::pipe::pipe_create_safe(&mut ns, &mut next_id, current_pid)
             .map(|(r, w)| (PipeFd { fd: r }, PipeFd { fd: w }))
             .map_err(IpcError::from_i32)
     }
@@ -185,9 +196,9 @@ impl IpcLock {
     /// # Errors
     /// 当管道未打开、无数据可读或底层读失败时以对应的 `IpcError` 返回.
     pub fn pipe_read(fd: PipeFd, buf: &mut [u8]) -> Result<usize, IpcError> {
-        let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+        let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
         self::pipe::pipe_read_safe(
-            ns,
+            &mut ns,
             fd.fd,
             buf,
             crate::functions::intcast::low_u32_from_usize(buf.len()),
@@ -201,9 +212,9 @@ impl IpcLock {
     /// # Errors
     /// 当管道未打开、缓冲区非法或底层写失败时以对应的 `IpcError` 返回.
     pub fn pipe_write(fd: PipeFd, buf: &[u8]) -> Result<usize, IpcError> {
-        let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+        let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
         self::pipe::pipe_write_safe(
-            ns,
+            &mut ns,
             fd.fd,
             buf,
             crate::functions::intcast::low_u32_from_usize(buf.len()),
@@ -217,8 +228,8 @@ impl IpcLock {
     /// # Errors
     /// 当管道未打开或底层关闭失败时以对应的 `IpcError` 返回.
     pub fn pipe_close(fd: PipeFd) -> Result<(), IpcError> {
-        let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-        self::pipe::pipe_close_safe(ns, fd.fd).map_err(IpcError::from_i32)
+        let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+        self::pipe::pipe_close_safe(&mut ns, fd.fd).map_err(IpcError::from_i32)
     }
 
     // ── SHM ──
@@ -228,9 +239,9 @@ impl IpcLock {
     /// # Errors
     /// 当底层创建失败 (如资源耗尽等) 时以对应的 `IpcError` 返回.
     pub fn shm_create(current_pid: u32, size: usize) -> Result<ShmHandle, IpcError> {
-        let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-        let next_id = crate::privileged::ipc::NEXT_IPC_ID.get_mut();
-        self::shm::shm_create_safe(ns, next_id, size as u64, 0, current_pid)
+        let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+        let mut next_id = crate::privileged::ipc::NEXT_IPC_ID.get_mut();
+        self::shm::shm_create_safe(&mut ns, &mut next_id, size as u64, 0, current_pid)
             .map(|id| ShmHandle { id, phys_addr: 0 })
             .map_err(IpcError::from_i32)
     }
@@ -240,8 +251,8 @@ impl IpcLock {
     /// # Errors
     /// 当共享内存段不存在、无权限或底层附加失败时以对应的 `IpcError` 返回.
     pub fn shm_attach(id: IpcId, current_pid: u32) -> Result<ShmHandle, IpcError> {
-        let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-        self::shm::shm_attach_safe(ns, id, current_pid)
+        let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+        self::shm::shm_attach_safe(&mut ns, id, current_pid)
             .map(|phys_addr| ShmHandle { id, phys_addr })
             .map_err(IpcError::from_i32)
     }
@@ -251,8 +262,8 @@ impl IpcLock {
     /// # Errors
     /// 当句柄无效、无权限或底层分离失败时以对应的 `IpcError` 返回.
     pub fn shm_detach(handle: ShmHandle, current_pid: u32) -> Result<(), IpcError> {
-        let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-        self::shm::shm_detach_safe(ns, handle.id, current_pid).map_err(IpcError::from_i32)
+        let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+        self::shm::shm_detach_safe(&mut ns, handle.id, current_pid).map_err(IpcError::from_i32)
     }
 
     /// 删除共享内存段
@@ -260,8 +271,8 @@ impl IpcLock {
     /// # Errors
     /// 当共享内存段不存在或底层删除失败时以对应的 `IpcError` 返回.
     pub fn shm_destroy(id: IpcId) -> Result<(), IpcError> {
-        let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-        self::shm::shm_destroy_safe(ns, id).map_err(IpcError::from_i32)
+        let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+        self::shm::shm_destroy_safe(&mut ns, id).map_err(IpcError::from_i32)
     }
 
     // ── MsgQ ──
@@ -271,9 +282,9 @@ impl IpcLock {
     /// # Errors
     /// 当底层创建失败 (如资源耗尽等) 时以对应的 `IpcError` 返回.
     pub fn msgq_create(current_pid: u32) -> Result<MsgqHandle, IpcError> {
-        let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-        let next_id = crate::privileged::ipc::NEXT_IPC_ID.get_mut();
-        self::msgq::msgq_create_safe(ns, next_id, 0, current_pid)
+        let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+        let mut next_id = crate::privileged::ipc::NEXT_IPC_ID.get_mut();
+        self::msgq::msgq_create_safe(&mut ns, &mut next_id, 0, current_pid)
             .map(MsgqHandle::from)
             .map_err(IpcError::from_i32)
     }
@@ -283,8 +294,8 @@ impl IpcLock {
     /// # Errors
     /// 当队列不存在、队列已满、数据非法或底层发送失败时以对应的 `IpcError` 返回.
     pub fn msgq_send(q: MsgqHandle, data: &[u8], current_pid: u32) -> Result<(), IpcError> {
-        let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-        self::msgq::msgq_send_safe(ns, q.id, 0, Some(data), data.len(), current_pid)
+        let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+        self::msgq::msgq_send_safe(&mut ns, q.id, 0, Some(data), data.len(), current_pid)
             .map_err(IpcError::from_i32)
     }
 
@@ -293,17 +304,16 @@ impl IpcLock {
     /// # Errors
     /// 当队列不存在、队列为空或底层接收失败时以对应的 `IpcError` 返回.
     pub fn msgq_recv(q: MsgqHandle, buf: &mut [u8]) -> Result<usize, IpcError> {
-        let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+        let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
         let mut type_buf = 0u64;
         let mut size_buf = 0u64;
         self::msgq::msgq_recv_safe(
-            ns,
+            &mut ns,
             q.id,
             Some(&mut type_buf),
             Some(buf),
             Some(&mut size_buf),
         )
-        .map(|n| n as usize)
         .map_err(IpcError::from_i32)
     }
 
@@ -312,8 +322,8 @@ impl IpcLock {
     /// # Errors
     /// 当队列不存在或底层销毁失败时以对应的 `IpcError` 返回.
     pub fn msgq_destroy(q: MsgqHandle) -> Result<(), IpcError> {
-        let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-        self::msgq::msgq_destroy_safe(ns, q.id).map_err(IpcError::from_i32)
+        let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+        self::msgq::msgq_destroy_safe(&mut ns, q.id).map_err(IpcError::from_i32)
     }
 
     // ── Semaphore ──
@@ -327,9 +337,9 @@ impl IpcLock {
         max_count: u32,
         current_pid: u32,
     ) -> Result<SemHandle, IpcError> {
-        let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-        let next_id = crate::privileged::ipc::NEXT_IPC_ID.get_mut();
-        sem::sem_create_safe(ns, next_id, initial, max_count, current_pid)
+        let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+        let mut next_id = crate::privileged::ipc::NEXT_IPC_ID.get_mut();
+        sem::sem_create_safe(&mut ns, &mut next_id, initial, max_count, current_pid)
             .map(SemHandle::from)
             .map_err(IpcError::from_i32)
     }
@@ -339,8 +349,8 @@ impl IpcLock {
     /// # Errors
     /// 当信号量不存在或底层等待失败时以对应的 `IpcError` 返回.
     pub fn sem_wait(s: SemHandle) -> Result<(), IpcError> {
-        let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-        sem::sem_wait_safe(ns, s.id).map_err(IpcError::from_i32)
+        let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+        sem::sem_wait_safe(&mut ns, s.id).map_err(IpcError::from_i32)
     }
 
     /// V 操作 (signal/post)
@@ -348,8 +358,8 @@ impl IpcLock {
     /// # Errors
     /// 当信号量不存在或底层释放失败时以对应的 `IpcError` 返回.
     pub fn sem_post(s: SemHandle) -> Result<(), IpcError> {
-        let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-        sem::sem_post_safe(ns, s.id).map_err(IpcError::from_i32)
+        let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+        sem::sem_post_safe(&mut ns, s.id).map_err(IpcError::from_i32)
     }
 
     /// 销毁信号量
@@ -357,8 +367,8 @@ impl IpcLock {
     /// # Errors
     /// 当信号量不存在或底层销毁失败时以对应的 `IpcError` 返回.
     pub fn sem_destroy(s: SemHandle) -> Result<(), IpcError> {
-        let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-        sem::sem_destroy_safe(ns, s.id).map_err(IpcError::from_i32)
+        let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+        sem::sem_destroy_safe(&mut ns, s.id).map_err(IpcError::from_i32)
     }
 }
 
@@ -368,6 +378,7 @@ impl IpcLock {
 
 impl ShmHandle {
     /// 从 ID + 物理地址构造
+    #[must_use]
     pub fn from_id_and_addr(id: IpcId, phys_addr: u64) -> Self {
         Self { id, phys_addr }
     }
@@ -375,6 +386,7 @@ impl ShmHandle {
 
 impl MsgqHandle {
     /// 从内核 `IpcId` 构造
+    #[must_use]
     pub fn from(id: IpcId) -> Self {
         Self { id }
     }
@@ -382,6 +394,7 @@ impl MsgqHandle {
 
 impl SemHandle {
     /// 从内核 `IpcId` 构造
+    #[must_use]
     pub fn from(id: IpcId) -> Self {
         Self { id }
     }

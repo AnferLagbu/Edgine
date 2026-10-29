@@ -164,6 +164,7 @@ pub struct SmoltcpNetStack {
 
 impl SmoltcpNetStack {
     /// 构造一个未初始化的 `SmoltcpNetStack` 实例.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             config: NetConfig::empty(),
@@ -182,12 +183,14 @@ impl SmoltcpNetStack {
 
     /// 是否已初始化.
     #[inline]
+    #[must_use]
     pub const fn is_initialized(&self) -> bool {
         self.initialized
     }
 
     /// 当前配置.
     #[inline]
+    #[must_use]
     pub const fn config(&self) -> &NetConfig {
         &self.config
     }
@@ -233,12 +236,12 @@ impl SmoltcpNetStack {
     /// 从 `handle_map` 反查 privileged 侧 fd (sm_* 函数使用的 fd).
     fn handle_to_fd(&self, h: SocketHandle) -> Option<i32> {
         for (i, slot) in self.handle_map.iter().enumerate() {
-            if let Some((u, _)) = slot {
-                if *u == h.raw() {
-                    return Some(crate::functions::intcast::low_i32_from_usize(
-                        fw_init::smoltcp_net_stack_slot_base() + i,
-                    ));
-                }
+            if let Some((u, _)) = slot
+                && *u == h.raw()
+            {
+                return Some(crate::functions::intcast::low_i32_from_usize(
+                    fw_init::smoltcp_net_stack_slot_base() + i,
+                ));
             }
         }
         None
@@ -262,7 +265,7 @@ impl SmoltcpNetStack {
             return Err(NetError::InvalidHandle);
         }
         let (sin, addrlen) = endpoint_to_sockaddr(addr);
-        let rc = fw_net_socket::sm_net_bind(fd, sin.as_ptr(), addrlen);
+        let rc = fw_net_socket::sm_net_bind(fd, sin.as_ptr() as usize, addrlen);
         if rc == 0 {
             Ok(())
         } else {
@@ -296,7 +299,7 @@ impl SmoltcpNetStack {
         if !self.is_active_fd(fd) {
             return Err(NetError::InvalidHandle);
         }
-        let new_fd = fw_net_socket::sm_net_accept(fd, core::ptr::null_mut(), core::ptr::null_mut());
+        let new_fd = fw_net_socket::sm_net_accept(fd, 0, 0);
         if new_fd >= 0 {
             Ok(new_fd)
         } else {
@@ -314,7 +317,7 @@ impl SmoltcpNetStack {
             return Err(NetError::InvalidHandle);
         }
         let (sin, addrlen) = endpoint_to_sockaddr(addr);
-        let rc = fw_net_socket::sm_net_connect(fd, sin.as_ptr(), addrlen);
+        let rc = fw_net_socket::sm_net_connect(fd, sin.as_ptr() as usize, addrlen);
         if rc == 0 {
             Ok(())
         } else {
@@ -333,7 +336,7 @@ impl SmoltcpNetStack {
         }
         let rc = fw_net_socket::sm_net_send(
             fd,
-            buf.as_ptr(),
+            buf.as_ptr() as usize,
             crate::functions::intcast::low_u32_from_usize(buf.len()),
             0,
         );
@@ -355,7 +358,7 @@ impl SmoltcpNetStack {
         }
         let rc = fw_net_socket::sm_net_recv(
             fd,
-            buf.as_mut_ptr(),
+            buf.as_mut_ptr() as usize,
             crate::functions::intcast::low_u32_from_usize(buf.len()),
             0,
         );
@@ -378,10 +381,10 @@ impl SmoltcpNetStack {
         let (sin, addrlen) = endpoint_to_sockaddr(addr);
         let rc = fw_net_socket::sm_net_sendto(
             fd,
-            buf.as_ptr(),
+            buf.as_ptr() as usize,
             crate::functions::intcast::low_u32_from_usize(buf.len()),
             0,
-            sin.as_ptr(),
+            sin.as_ptr() as usize,
             addrlen,
         );
         if rc >= 0 {
@@ -404,11 +407,11 @@ impl SmoltcpNetStack {
         let mut addrlen = 28u32;
         let rc = fw_net_socket::sm_net_recvfrom(
             fd,
-            buf.as_mut_ptr(),
+            buf.as_mut_ptr() as usize,
             crate::functions::intcast::low_u32_from_usize(buf.len()),
             0,
-            src.as_mut_ptr(),
-            &raw mut addrlen,
+            src.as_mut_ptr() as usize,
+            (&raw mut addrlen) as usize,
         );
         if rc >= 0 {
             let ep =
@@ -450,7 +453,7 @@ impl SmoltcpNetStack {
             fd,
             level,
             optname,
-            val.as_ptr(),
+            val.as_ptr() as usize,
             crate::functions::intcast::low_u32_from_usize(val.len()),
         );
         if rc == 0 {
@@ -480,8 +483,8 @@ impl SmoltcpNetStack {
             fd,
             level,
             optname,
-            out.as_mut_ptr(),
-            &raw mut out_len,
+            out.as_mut_ptr() as usize,
+            (&raw mut out_len) as usize,
         );
         if rc == 0 {
             Ok(out_len as usize)
@@ -746,11 +749,11 @@ impl NetStack for SmoltcpNetStack {
         // 找槽位
         let mut found_idx = None;
         for (i, slot) in self.handle_map.iter().enumerate() {
-            if let Some((u, _)) = slot {
-                if *u == h.raw() {
-                    found_idx = Some(i);
-                    break;
-                }
+            if let Some((u, _)) = slot
+                && *u == h.raw()
+            {
+                found_idx = Some(i);
+                break;
             }
         }
         let Some(idx) = found_idx else {
@@ -785,7 +788,7 @@ impl NetStack for SmoltcpNetStack {
         }
         let fd = self.handle_to_fd(h).ok_or(NetError::InvalidHandle)?;
         let (sin, addrlen) = endpoint_to_sockaddr(addr);
-        let rc = fw_net_socket::sm_net_bind(fd, sin.as_ptr(), addrlen);
+        let rc = fw_net_socket::sm_net_bind(fd, sin.as_ptr() as usize, addrlen);
         if rc == 0 {
             Ok(())
         } else {
@@ -815,14 +818,18 @@ impl NetStack for SmoltcpNetStack {
         let fd = self.handle_to_fd(h).ok_or(NetError::InvalidHandle)?;
         let mut addr_buf = [0u8; 28];
         let mut addrlen = 28u32;
-        let new_fd = fw_net_socket::sm_net_accept(fd, addr_buf.as_mut_ptr(), &raw mut addrlen);
+        let new_fd = fw_net_socket::sm_net_accept(
+            fd,
+            addr_buf.as_mut_ptr() as usize,
+            (&raw mut addrlen) as usize,
+        );
         if new_fd < 0 {
             return Err(NetError::Other);
         }
-        if let Some(ep) = peer {
-            if let Some(parsed) = sockaddr_to_endpoint(&addr_buf[..addrlen as usize]) {
-                *ep = parsed;
-            }
+        if let Some(ep) = peer
+            && let Some(parsed) = sockaddr_to_endpoint(&addr_buf[..addrlen as usize])
+        {
+            *ep = parsed;
         }
         // 新 fd 需要映射回 SmoltcpNetStack handle
         // 但由于 accept 不在 SmoltcpNetStack 路径创建, 返回 new_fd 作为 raw handle
@@ -836,7 +843,7 @@ impl NetStack for SmoltcpNetStack {
         }
         let fd = self.handle_to_fd(h).ok_or(NetError::InvalidHandle)?;
         let (sin, addrlen) = endpoint_to_sockaddr(addr);
-        let rc = fw_net_socket::sm_net_connect(fd, sin.as_ptr(), addrlen);
+        let rc = fw_net_socket::sm_net_connect(fd, sin.as_ptr() as usize, addrlen);
         if rc == 0 {
             Ok(())
         } else {
@@ -852,7 +859,7 @@ impl NetStack for SmoltcpNetStack {
         let fd = self.handle_to_fd(h).ok_or(NetError::InvalidHandle)?;
         let rc = fw_net_socket::sm_net_send(
             fd,
-            buf.as_ptr(),
+            buf.as_ptr() as usize,
             crate::functions::intcast::low_u32_from_usize(buf.len()),
             flags,
         );
@@ -871,7 +878,7 @@ impl NetStack for SmoltcpNetStack {
         let fd = self.handle_to_fd(h).ok_or(NetError::InvalidHandle)?;
         let rc = fw_net_socket::sm_net_recv(
             fd,
-            buf.as_mut_ptr(),
+            buf.as_mut_ptr() as usize,
             crate::functions::intcast::low_u32_from_usize(buf.len()),
             flags,
         );
@@ -897,10 +904,10 @@ impl NetStack for SmoltcpNetStack {
         let (sin, addrlen) = endpoint_to_sockaddr(addr);
         let rc = fw_net_socket::sm_net_sendto(
             fd,
-            buf.as_ptr(),
+            buf.as_ptr() as usize,
             crate::functions::intcast::low_u32_from_usize(buf.len()),
             flags,
-            sin.as_ptr(),
+            sin.as_ptr() as usize,
             addrlen,
         );
         if rc >= 0 {
@@ -926,17 +933,17 @@ impl NetStack for SmoltcpNetStack {
         let mut addrlen = 28u32;
         let rc = fw_net_socket::sm_net_recvfrom(
             fd,
-            buf.as_mut_ptr(),
+            buf.as_mut_ptr() as usize,
             crate::functions::intcast::low_u32_from_usize(buf.len()),
             flags,
-            addr_buf.as_mut_ptr(),
-            &raw mut addrlen,
+            addr_buf.as_mut_ptr() as usize,
+            (&raw mut addrlen) as usize,
         );
         if rc >= 0 {
-            if let Some(ep) = src {
-                if let Some(parsed) = sockaddr_to_endpoint(&addr_buf[..addrlen as usize]) {
-                    *ep = parsed;
-                }
+            if let Some(ep) = src
+                && let Some(parsed) = sockaddr_to_endpoint(&addr_buf[..addrlen as usize])
+            {
+                *ep = parsed;
             }
             Ok(crate::functions::intcast::usize_from_i32(rc))
         } else {
@@ -992,6 +999,7 @@ impl SmoltcpNetStack {
 
     /// 便捷方法: 用默认策略决策.
     #[inline]
+    #[must_use]
     pub fn dhcp_decide_default(
         &self,
         retry_count: u32,
@@ -1076,6 +1084,7 @@ impl SmoltcpNetStack {
     /// `now_ms` 应来自统一的协议栈时间源 (e.g. `hrtimer_clock_read` / `1_000_000`).
     /// 协议栈时间在每次 `record_dhcp_bound` 时记录, 续约阈值基于此计算.
     #[inline]
+    #[must_use]
     pub fn dhcp_decide_at(&self, now_ms: u64) -> DhcpAction {
         let elapsed_ms = if self.dhcp_bound_at_ms == 0 {
             0

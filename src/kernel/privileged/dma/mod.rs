@@ -95,8 +95,15 @@ pub struct DmaScatterList {
     pub direction: u32,
 }
 
+impl Default for DmaScatterList {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DmaScatterList {
     /// 构造空散聚表.
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             entry_count: 0,
@@ -183,8 +190,15 @@ pub struct DmaStats {
     pub current_bytes_used: AtomicU64,
 }
 
+impl Default for DmaStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DmaStats {
     /// 构造全部计数为零的统计实例.
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             total_allocations: AtomicU64::new(0),
@@ -245,7 +259,7 @@ static MMIO_ALLOC: Mutex<BTreeMap<VirtAddr, MmioRegion>> = Mutex::new(BTreeMap::
 
 /// MMIO 区间信息
 ///
-/// 仅存储 size; 虚拟地址是 BTreeMap 的 key, 物理地址由 `DmaEngine::mmio_regions`
+/// 仅存储 size; 虚拟地址是 `BTreeMap` 的 key, 物理地址由 `DmaEngine::mmio_regions`
 /// 单独跟踪 (此处不重复, 避免冗余).
 #[derive(Clone, Copy, Debug)]
 struct MmioRegion {

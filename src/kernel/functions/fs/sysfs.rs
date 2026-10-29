@@ -44,6 +44,7 @@ pub struct SysfsNode {
 
 impl SysfsNode {
     /// 创建只读 sysfs 节点 (默认权限 0o444)。
+    #[must_use]
     pub const fn new(name: &'static str) -> Self {
         Self { name, perm: 0o444 }
     }
@@ -76,12 +77,14 @@ pub const EDGINE_NODES: &[SysfsNode] = &[
 
 /// 静态节点总数
 #[inline]
+#[must_use]
 pub fn node_count() -> usize {
     EDGINE_NODES.len()
 }
 
 /// 节点存在查询
 #[inline]
+#[must_use]
 pub fn has_node(name: &str) -> bool {
     EDGINE_NODES.iter().any(|n| n.name == name)
 }
@@ -102,7 +105,7 @@ pub fn write_node_value(name: &str, buf: &mut [u8]) -> Result<usize, Errno> {
         "uptime_secs" => SysfsValue::Integer(0),
         "version" => SysfsValue::String("edgine-0.1.0"),
         "boot_status" => SysfsValue::Bool(true),
-        _ => return Err(Errno::ENOENT),
+        _ => return Err(Errno::Enoent),
     };
 
     match val {
@@ -110,7 +113,7 @@ pub fn write_node_value(name: &str, buf: &mut [u8]) -> Result<usize, Errno> {
             // 简单十进制: 拆位写入
             let s = format_u64(n);
             if buf.len() < s.len() {
-                return Err(Errno::EINVAL);
+                return Err(Errno::Einval);
             }
             for (i, b) in s.iter().enumerate() {
                 buf[i] = *b;
@@ -120,7 +123,7 @@ pub fn write_node_value(name: &str, buf: &mut [u8]) -> Result<usize, Errno> {
         SysfsValue::String(s) => {
             let bytes = s.as_bytes();
             if buf.len() < bytes.len() {
-                return Err(Errno::EINVAL);
+                return Err(Errno::Einval);
             }
             for (i, b) in bytes.iter().enumerate() {
                 buf[i] = *b;
@@ -130,7 +133,7 @@ pub fn write_node_value(name: &str, buf: &mut [u8]) -> Result<usize, Errno> {
         SysfsValue::Bool(b) => {
             let c = if b { b'1' } else { b'0' };
             if buf.is_empty() {
-                return Err(Errno::EINVAL);
+                return Err(Errno::Einval);
             }
             buf[0] = c;
             Ok(1)
@@ -173,7 +176,7 @@ pub fn mount_sysfs() -> Result<(), Errno> {
     // 真实实现: vfs_mount("/sys", "sysfs")
     // 简化: 计数 + 验证节点表
     if EDGINE_NODES.is_empty() {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     Ok(())
 }

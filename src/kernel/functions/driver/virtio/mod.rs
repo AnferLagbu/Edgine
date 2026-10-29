@@ -27,7 +27,7 @@ pub mod net;
 ///
 /// 扫描 virtio-mmio 区域, 发现网络设备 (`VIRTIO_ID_NET`) 即创建 functions
 /// `VirtioNetDriver`, 完成初始化 (`finalize`: vq0/vq1 MMIO 配置 +
-/// DRIVER_OK + RX 预填) 后经 privileged `register_net_device` 桥接为
+/// `DRIVER_OK` + RX 预填) 后经 privileged `register_net_device` 桥接为
 /// `NetDeviceRegistration`。由 functions 复合探测 `net_functions_probe`
 /// (位于 `functions::driver::net`) 在 e1000 探测失败后回落调用
 /// (启动临界区单线程)。
@@ -35,7 +35,7 @@ pub mod net;
 /// ## 条件编译
 ///
 /// 唯一消费者 `net_functions_probe` 受 `#[cfg(not(feature = "kernel_test"))]`
-/// 门控, 故本函数同样门控以在 kernel_test 构建下不编译, 避免死代码
+/// 门控, 故本函数同样门控以在 `kernel_test` 构建下不编译, 避免死代码
 /// (AGENTS.md §5 F9)。
 #[cfg(not(feature = "kernel_test"))]
 pub(crate) fn virtio_net_registration() -> Option<crate::privileged::net::NetDeviceRegistration> {
@@ -87,10 +87,10 @@ pub(crate) fn virtio_net_registration() -> Option<crate::privileged::net::NetDev
     None
 }
 
-/// 初始化 VirtIO 块设备并注册到 EGDF (§6.4 直接方案 B: functions 权威)
+/// 初始化 `VirtIO` 块设备并注册到 EGDF (§6.4 直接方案 B: functions 权威)
 ///
 /// 探测 virtio-mmio 区域, 为块设备创建 functions `VirtioBlkDriver`,
-/// 完成初始化 (`finalize`: vq0 MMIO 配置 + DRIVER_OK) 后经
+/// 完成初始化 (`finalize`: vq0 MMIO 配置 + `DRIVER_OK`) 后经
 /// `functions::egdf::register_block_device` 注册为块设备。
 ///
 /// privileged 保留: `VirtioMmioDevice` (MMIO 传输机制) + `queue` (DMA 环机制)。

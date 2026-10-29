@@ -1,19 +1,19 @@
-//! AArch64 架构实现
+//! `AArch64` 架构实现
 //!
 //! 子模块:
-//! - context:   上下文切换 (context_switch_asm)
-//! - mmu:       MMU/页表管理 (identity mapping, TTBR0_EL1)
+//! - context:   上下文切换 (`context_switch_asm`)
+//! - mmu:       MMU/页表管理 (identity mapping, `TTBR0_EL1`)
 //! - 寄存器值转换 (DAIF/SPSR/ELR) 多为 u64 ↔ usize 已知安全
-//! - exception: 异常向量表 + handler (VBAR_EL1)
-//! - gic:       GICv3 中断控制器初始化
+//! - exception: 异常向量表 + handler (`VBAR_EL1`)
+//! - gic:       `GICv3` 中断控制器初始化
 //! - psci:      PSCI 电源管理 (关机/重启)
-//! - smp_init:  SMP 次核 (AP) 启动 (BSP init + AP ap_main)
+//! - `smp_init`:  SMP 次核 (AP) 启动 (BSP init + AP `ap_main`)
 //! - timer:     ARM Generic Timer
 //! - uart:      PL011 UART 驱动
 //!
 //! ## 实现状态
 //! - [x] `impl CoreArch for Aarch64` — 基础核心能力
-//! - [x] `impl InterruptArch for Aarch64` — DAIF + GICv3 SGI 中断
+//! - [x] `impl InterruptArch for Aarch64` — DAIF + `GICv3` SGI 中断
 //! - [x] `impl MmuArch for Aarch64` — TTBR0/1 + 上下文切换 + eret
 //! - [x] `impl SystemArch for Aarch64` — PSCI + port IO 桩
 //! - [x] `impl Arch for Aarch64` — 超 trait (空)
@@ -31,7 +31,7 @@ pub mod uart;
 
 use core::arch::asm;
 
-/// AArch64 CPU 架构实现 (Aarch64 结构体)
+/// `AArch64` CPU 架构实现 (Aarch64 结构体)
 pub struct Aarch64;
 
 use crate::privileged::arch::{Arch, CoreArch, InterruptArch, MmuArch, SystemArch};
@@ -67,7 +67,7 @@ impl CoreArch for Aarch64 {
         affinity_pack(mpidr)
     }
 
-    /// 获取高精度时间戳 (CNTPCT_EL0)。
+    /// 获取高精度时间戳 (`CNTPCT_EL0`)。
     #[inline]
     fn timestamp() -> u64 {
         let cnt: u64;
@@ -158,7 +158,7 @@ impl InterruptArch for Aarch64 {
     /// (QEMU 上 `msr daif, Xt` 会挂起, 拆分避免该问题).
     ///
     /// DAIF 位布局 (msr daifclr/daifset 立即数):
-    ///   bit 0 = D (Debug mask),  bit 1 = A (SError mask),
+    ///   bit 0 = D (Debug mask),  bit 1 = A (`SError` mask),
     ///   bit 2 = I (IRQ mask),    bit 3 = F (FIQ mask).
     #[inline]
     fn interrupt_restore(flags: usize) {
@@ -227,11 +227,11 @@ impl InterruptArch for Aarch64 {
         (daif & (1 << 7)) == 0
     }
 
-    /// GICv3 SGI 单播 (ICC_SGI1R_EL1)。
+    /// `GICv3` SGI 单播 (`ICC_SGI1R_EL1`)。
     ///
     /// `target_cpu` 是目标的紧凑亲和 id (见 `affinity_pack`); 本函数把 Aff1/2/3
     /// 填回 `ICC_SGI1R_EL1` 的 `[23:16]`/`[39:32]`/`[55:48]`, 并把 Aff0 编码为
-    /// TargetList 的对应位 (`1 << Aff0`) —— 误置于 `[23:16]` (Aff1) 会寻址到不存在
+    /// `TargetList` 的对应位 (`1 << Aff0`) —— 误置于 `[23:16]` (Aff1) 会寻址到不存在
     /// 的簇, SGI 永不投递。TargetList 仅覆盖簇内 Aff0 ∈ `[0,15]`, 故 Aff0 取低 4 位。
     fn send_ipi(target_cpu: u32, vector: u8) {
         // ICC_SGI1R_EL1 字段: Aff3[55:48], Aff2[39:32], INTID[27:24], Aff1[23:16],
@@ -252,7 +252,7 @@ impl InterruptArch for Aarch64 {
         }
     }
 
-    /// GICv3 SGI 广播 (IRM=1)。
+    /// `GICv3` SGI 广播 (IRM=1)。
     fn broadcast_ipi(vector: u8) {
         let sgi: u64 = (1u64 << 40) | u64::from(vector & 0xF) << 24;
         // SAFETY: msr icc_sgi1r_el1 广播 SGI；IRM bit 40 设置为 1 触发广播。
@@ -271,7 +271,7 @@ impl InterruptArch for Aarch64 {
         crate::privileged::smp::init();
     }
 
-    /// PSCI CPU_ON 拉起次级核; AP 在 `ap_main` 内自装配本核 Generic Timer.
+    /// PSCI `CPU_ON` 拉起次级核; AP 在 `ap_main` 内自装配本核 Generic Timer.
     fn secondary_cpu_bringup() {
         smp_init::init();
     }
@@ -305,13 +305,13 @@ impl MmuArch for Aarch64 {
         }
     }
 
-    /// 读取 TTBR0_EL1。
+    /// 读取 `TTBR0_EL1`。
     #[inline]
     fn read_page_table_base() -> u64 {
         mmu::read_ttbr0()
     }
 
-    /// 写入 TTBR0_EL1 + ISB。
+    /// 写入 `TTBR0_EL1` + ISB。
     #[inline]
     fn write_page_table_base(paddr: u64) {
         // SAFETY: msr ttbr0_el1 写入新页表基址 + isb 同步流水线。
@@ -321,14 +321,17 @@ impl MmuArch for Aarch64 {
         }
     }
 
-    /// 读取 FAR_EL1。
+    /// 读取 `FAR_EL1`。
     #[inline]
     fn read_fault_address() -> usize {
         crate::privileged::glue::usize_from_u64(mmu::read_far())
     }
 
-    /// AArch64 上下文切换 (x19-x30 + SP + TTBR0 + SPSR + ELR)。
-    fn context_switch(from: *mut u8, to: *const u8) {
+    /// `AArch64` 上下文切换 (x19-x30 + SP + TTBR0 + SPSR + ELR)。
+    ///
+    /// # Safety
+    /// `from` 和 `to` 必须指向有效的 `ProcessContext` 内存。
+    unsafe fn context_switch(from: *mut u8, to: *const u8) {
         // SAFETY: context::switch 是底层上下文切换函数；
         // from/to 由调度器提供保证指向有效 Process。
         unsafe {
@@ -417,7 +420,7 @@ impl SystemArch for Aarch64 {
         0xFFFF_FFFF
     }
 
-    /// PSCI SYSTEM_OFF (SMC)。
+    /// PSCI `SYSTEM_OFF` (SMC)。
     fn shutdown() -> ! {
         // SAFETY: smc #0 是 aarch64 安全监控调用；PSCI SYSTEM_OFF
         // 不会返回；loop + wfi 兜底防止固件未实现时的意外返回。
@@ -432,7 +435,7 @@ impl SystemArch for Aarch64 {
         }
     }
 
-    /// PSCI SYSTEM_RESET (SMC)。
+    /// PSCI `SYSTEM_RESET` (SMC)。
     fn reboot() -> ! {
         // SAFETY: smc #0 + PSCI SYSTEM_RESET；不会返回。
         unsafe {

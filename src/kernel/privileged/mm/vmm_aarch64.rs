@@ -1,13 +1,13 @@
-//! AArch64 虚拟内存管理器
+//! `AArch64` 虚拟内存管理器
 //!
 //! 实现与 x86_64 vmm.rs 相同的 FFI 接口, 提供:
-//! - 内核高半区页表 (TTBR1_EL1) 管理
-//! - 用户空间页表 (TTBR0_EL1) 创建/映射
+//! - 内核高半区页表 (`TTBR1_EL1`) 管理
+//! - 用户空间页表 (`TTBR0_EL1`) 创建/映射
 //! - 页表遍历/克隆/销毁
 //!
 //! 架构: ARMv8-A 4KB granule, 48-bit VA
-//! - TTBR0_EL1: 用户空间 (0x0000_0000_0000_0000 .. 0x0000_FFFF_FFFF_FFFF)
-//! - TTBR1_EL1: 内核空间 (0xFFFF_0000_0000_0000 .. 0xFFFF_FFFF_FFFF_FFFF)
+//! - `TTBR0_EL1`: 用户空间 (`0x0000_0000_0000_0000` .. `0x0000_FFFF_FFFF_FFFF`)
+//! - `TTBR1_EL1`: 内核空间 (`0xFFFF_0000_0000_0000` .. `0xFFFF_FFFF_FFFF_FFFF`)
 //!
 //! 页表级: L0 (512GB) → L1 (1GB) → L2 (2MB) → L3 (4KB)
 
@@ -34,7 +34,7 @@ const DESC_TYPE_TABLE: u64 = 0b11; // 表描述符 (L0/L1/L2)
 const DESC_TYPE_BLOCK: u64 = 0b01; // 块描述符 (L1/L2)
 const DESC_TYPE_PAGE: u64 = 0b11; // 页描述符 (L3, 与 TABLE 位相同)
 
-/// 内存属性索引 (与 mmu.rs 中 MAIR_EL1 设定对应)
+/// 内存属性索引 (与 mmu.rs 中 `MAIR_EL1` 设定对应)
 const MAIR_DEVICE_NGNRNE: u64 = 0; // Device memory
 const MAIR_NORMAL_WBWA: u64 = 1; // 普通可缓存内存 (内核)
 const MAIR_NORMAL_NC: u64 = 2; // Normal non-cacheable
@@ -56,7 +56,7 @@ const AF: u64 = 1 << 10;
 const UXN: u64 = 1 << 54; // EL0 不可执行
 const PXN: u64 = 1 << 53; // EL1 不可执行
 
-/// Stage 1 共享性 (位 8 内, 位 9 外) — Stage 1 不严格需要
+// Stage 1 共享性 (位 8 内, 位 9 外) — Stage 1 不严格需要
 
 /// 每级页表项数
 const TABLE_ENTRIES: usize = 512;
@@ -226,14 +226,21 @@ fn try_acquire_lock() -> Option<IrqSaveFlags> {
 
 /// aarch64 虚拟内存管理器 (持有内核 L0 页表与用户页表追踪计数器).
 pub struct Aarch64Vmm {
-    /// Physical address of kernel L0 table (for TTBR1_EL1)
+    /// Physical address of kernel L0 table (for `TTBR1_EL1`)
     kernel_l0: u64,
     /// User page table counter (KPTI 页表隔离追踪)
     next_table_id: core::sync::atomic::AtomicU64,
 }
 
+impl Default for Aarch64Vmm {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Aarch64Vmm {
     /// 构造未初始化的 VMM 实例 (内核 L0 表地址 0, 用户页表计数器 0).
+    #[must_use]
     pub fn new() -> Self {
         Self {
             kernel_l0: 0,
@@ -296,7 +303,7 @@ impl Aarch64Vmm {
 
     // ─── 初始化 ──────────────────────────────────────────────
 
-    /// 初始化内核高半区页表 (TTBR1_EL1).
+    /// 初始化内核高半区页表 (`TTBR1_EL1`).
     /// 不替换 mmu.rs 已建立的低半区恒等映射.
     pub fn init(&self) {
         // 内核 MMU 恒等映射已由 mmu::init() 建立.
@@ -512,7 +519,7 @@ impl Aarch64Vmm {
         // SAFETY: l1 是已验证的 L1 页表基地址; l1_idx < 512.
         unsafe {
             let l1_entry = ptr::read_volatile(l1.add(l1_idx));
-            if (l1_entry & 0b11) == DESC_TYPE_BLOCK as u64 {
+            if (l1_entry & 0b11) == DESC_TYPE_BLOCK {
                 // L1 块映射 (1GB): 修改权限位
                 let paddr = l1_entry & 0x0000_FFFF_FFFF_F000;
                 let new_desc =
@@ -535,7 +542,7 @@ impl Aarch64Vmm {
         // SAFETY: l2 是已验证的 L2 页表基地址; l2_idx < 512.
         unsafe {
             let l2_entry = ptr::read_volatile(l2.add(l2_idx));
-            if (l2_entry & 0b11) == DESC_TYPE_BLOCK as u64 {
+            if (l2_entry & 0b11) == DESC_TYPE_BLOCK {
                 // L2 块映射 (2MB): 修改权限位
                 let paddr = l2_entry & 0x0000_FFFF_FFFF_F000;
                 let new_desc =
@@ -606,7 +613,7 @@ impl Aarch64Vmm {
         // SAFETY: l1 是已验证的 L1 页表基地址; l1_idx < 512.
         unsafe {
             let l1_entry = ptr::read_volatile(l1.add(l1_idx));
-            if (l1_entry & 0b11) == DESC_TYPE_BLOCK as u64 {
+            if (l1_entry & 0b11) == DESC_TYPE_BLOCK {
                 // L1 块映射 (1GB): 修改权限位
                 let paddr = l1_entry & 0x0000_FFFF_FFFF_F000;
                 let new_desc =
@@ -629,7 +636,7 @@ impl Aarch64Vmm {
         // SAFETY: l2 是已验证的 L2 页表基地址; l2_idx < 512.
         unsafe {
             let l2_entry = ptr::read_volatile(l2.add(l2_idx));
-            if (l2_entry & 0b11) == DESC_TYPE_BLOCK as u64 {
+            if (l2_entry & 0b11) == DESC_TYPE_BLOCK {
                 // L2 块映射 (2MB): 修改权限位
                 let paddr = l2_entry & 0x0000_FFFF_FFFF_F000;
                 let new_desc =
@@ -919,7 +926,7 @@ impl Aarch64Vmm {
 
     // ─── 用户页表操作 ──────────────────────────────────
 
-    /// 为用户空间 (TTBR0_EL1) 分配并返回一张干净的 L0 页表物理地址; 分配失败返回 None.
+    /// 为用户空间 (`TTBR0_EL1`) 分配并返回一张干净的 L0 页表物理地址; 分配失败返回 None.
     pub fn create_user_page_table(&self) -> Option<u64> {
         // 为用户空间 (TTBR0_EL1) 分配一张干净的 L0 表
         let user_l0 = Self::alloc_table()?;
@@ -1071,7 +1078,7 @@ impl Aarch64Vmm {
         Some(el1_l0)
     }
 
-    /// 拆除 `user_root` 配套的 EL1 视图: **仅释放视图自身的 L0_el1/L1_el1 两页**.
+    /// 拆除 `user_root` 配套的 EL1 视图: **仅释放视图自身的 `L0_el1/L1_el1` 两页**.
     ///
     /// 不得递归: `L0_el1[170]/[255]` 与 `L1_el1[0] → L2_u` 都与用户视图**共享**,
     /// 递归释放会与 `destroy_page_table` 的用户半区遍历重复释放 (双释放 / UAF).
@@ -1141,7 +1148,7 @@ impl Aarch64Vmm {
         // 用户表中的用户空间地址, 已在 map_page_in_table 中保证项合法
     }
 
-    /// 切换用户页表: 写入 TTBR0_EL1 并执行全局 TLB 失效 (dsb/isb 屏障包裹).
+    /// 切换用户页表: 写入 `TTBR0_EL1` 并执行全局 TLB 失效 (dsb/isb 屏障包裹).
     pub fn switch_page_table(ttbr0: u64) {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
@@ -1158,6 +1165,7 @@ impl Aarch64Vmm {
     }
 
     /// 在内核 L0 表中翻译虚拟地址并返回物理地址 (未映射返回 None).
+    #[must_use]
     pub fn get_physical(virt: VirtAddr) -> Option<PhysAddr> {
         Self::get_physical_in_pml4(get_kernel_pml4(), virt)
     }
@@ -1165,6 +1173,7 @@ impl Aarch64Vmm {
     /// 在指定页表中翻译虚拟地址, 仅返回物理地址 (丢弃叶子项写位).
     ///
     /// 委托 [`Self::translate_in_pml4`], 供仅需物理地址的既有调用点使用.
+    #[must_use]
     pub fn get_physical_in_pml4(root_paddr: u64, virt: VirtAddr) -> Option<PhysAddr> {
         Self::translate_in_pml4(root_paddr, virt).map(|t| t.phys)
     }
@@ -1175,6 +1184,7 @@ impl Aarch64Vmm {
     /// 供跨进程写路径判定目标页可写 (只读页拒绝写入). 未映射返回 `None`.
     ///
     /// 可写判据: 叶子描述符 `AP[2]` (bit 7) == 0 表示可写.
+    #[must_use]
     pub fn translate_in_pml4(root_paddr: u64, virt: VirtAddr) -> Option<PageTranslation> {
         if root_paddr == 0 {
             return None;
@@ -1235,6 +1245,7 @@ impl Aarch64Vmm {
     }
 
     /// 读取 L3 页表项原始值 (用于 swap entry 检测)
+    #[must_use]
     pub fn get_pte_value(root_paddr: u64, virt: VirtAddr) -> Option<u64> {
         let vaddr = virt.as_u64();
 
@@ -1272,8 +1283,8 @@ impl Aarch64Vmm {
 
     /// 直接写入 L3 PTE 原始值 (用于 swap 替换)
     ///
-    /// 沿 L0→L1→L2→L3 找到最终 PTE, 写入 raw_pte 后 TLB invalidate.
-    /// 与 map_page_in_table 的区别: 接受任意 raw PTE (含 swap entry, 即 valid=0).
+    /// 沿 L0→L1→L2→L3 找到最终 PTE, 写入 `raw_pte` 后 TLB invalidate.
+    /// 与 `map_page_in_table` 的区别: 接受任意 raw PTE (含 swap entry, 即 valid=0).
     /// 若任意中间层缺失 (valid=0), 静默返回 (不创建中间页表, swap-out 不应触发缺中间页).
     pub fn set_pte_value(root_paddr: u64, virt: VirtAddr, raw_pte: u64) {
         let vaddr = virt.as_u64();
@@ -1322,6 +1333,7 @@ impl Aarch64Vmm {
     // ─── Clone / Destroy User Page Table ────────────────────────────
 
     /// 复制父进程用户页表 (逐项拷贝 L0 表), 返回子表物理地址; 分配失败返回 None.
+    #[must_use]
     pub fn clone_user_page_table(parent_paddr: u64) -> Option<u64> {
         let child_paddr = Self::alloc_table()?;
 
@@ -1473,7 +1485,7 @@ pub fn get_vmm() -> &'static Aarch64Vmm {
     GLOBAL_VMM.get_or_panic("VMM")
 }
 
-/// 返回 GLOBAL_VMM OnceLock 的内部状态机原始值 (仅用于诊断).
+/// 返回 `GLOBAL_VMM` `OnceLock` 的内部状态机原始值 (仅用于诊断).
 ///
 /// 返回值: 0=未初始化, 1=初始化中, 2=已完成.
 /// 与 `get_vmm()` 不同, 本函数不会 panic, 可在 VMM 初始化前安全调用.
@@ -1481,12 +1493,14 @@ pub fn vmm_debug_state() -> u8 {
     GLOBAL_VMM.debug_state()
 }
 
-/// 返回内核 L0 页表物理地址 (供 TTBR1_EL1 使用).
+/// 返回内核 L0 页表物理地址 (供 `TTBR1_EL1` 使用).
+#[must_use]
 pub fn get_kernel_pml4() -> u64 {
     get_vmm().kernel_l0
 }
 
-/// 返回当前生效的 L0 页表物理地址 (读 TTBR0_EL1; 为 0 时回退内核表).
+/// 返回当前生效的 L0 页表物理地址 (读 `TTBR0_EL1`; 为 0 时回退内核表).
+#[must_use]
 pub fn get_current_pml4() -> u64 {
     let ttbr0: u64;
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -1518,15 +1532,14 @@ pub fn get_current_pml4() -> u64 {
 ///
 /// # 调用约束
 /// 调用方不得在已持 `VMM_LOCK` 的情况下调用本函数.
+#[must_use]
 pub fn count_present_user_pages(root_paddr: u64) -> Option<u64> {
     if root_paddr == 0 {
         return Some(0);
     }
 
     // 非阻塞获取: 锁被占用则不遍历, 直接放弃本轮.
-    let Some(flags) = try_acquire_lock() else {
-        return None;
-    };
+    let flags = try_acquire_lock()?;
 
     let mut pages = 0u64;
     let l0_ptr = phys_to_virt(root_paddr) as *const u64;
@@ -1580,45 +1593,53 @@ pub fn count_present_user_pages(root_paddr: u64) -> Option<u64> {
 // ============================================================================
 
 /// 检查描述符是否有效 (valid bit)
+#[must_use]
 pub fn is_desc_valid(descriptor: u64) -> bool {
     descriptor & DESC_VALID != 0
 }
 
 /// 获取描述符类型
+#[must_use]
 pub fn desc_type(descriptor: u64) -> u64 {
     descriptor & 0x3
 }
 
 /// 检查描述符是否为表描述符
+#[must_use]
 pub fn is_desc_table(descriptor: u64) -> bool {
     (descriptor & 0x3) == DESC_TYPE_TABLE
 }
 
 /// 检查描述符是否为块描述符
+#[must_use]
 pub fn is_desc_block(descriptor: u64) -> bool {
     (descriptor & 0x3) == DESC_TYPE_BLOCK
 }
 
 /// 检查描述符是否为页描述符
+#[must_use]
 pub fn is_desc_page(descriptor: u64) -> bool {
     (descriptor & 0x3) == DESC_TYPE_PAGE
 }
 
 /// 获取描述符中的物理地址 (去除属性位)
+#[must_use]
 pub fn desc_physical_addr(descriptor: u64) -> u64 {
     descriptor & 0x0000_FFFF_FFFF_F000
 }
 
 /// 检查描述符是否为设备内存映射 (MAIR index = 0)
+#[must_use]
 pub fn is_desc_device_memory(descriptor: u64) -> bool {
     let mair_idx = (descriptor >> 2) & 0x7;
-    mair_idx == MAIR_DEVICE_NGNRNE as u64
+    mair_idx == MAIR_DEVICE_NGNRNE
 }
 
 /// 检查描述符是否为非缓存 Normal 内存 (MAIR index = 2)
+#[must_use]
 pub fn is_desc_non_cacheable(descriptor: u64) -> bool {
     let mair_idx = (descriptor >> 2) & 0x7;
-    mair_idx == MAIR_NORMAL_NC as u64
+    mair_idx == MAIR_NORMAL_NC
 }
 
 /// 诊断页表条目

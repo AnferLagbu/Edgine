@@ -60,6 +60,7 @@ pub struct DisplayMode {
 
 impl DisplayMode {
     /// 构造一个显示模式描述 (默认非首选模式)。
+    #[must_use]
     pub fn new(width: u32, height: u32, refresh_rate: u32, pixel_format: PixelFormat) -> Self {
         Self {
             width,
@@ -71,6 +72,7 @@ impl DisplayMode {
     }
 
     /// 计算像素时钟 (kHz)
+    #[must_use]
     pub fn pixel_clock_khz(self) -> u64 {
         // 简化计算，实际需要考虑消隐时间
         let total_pixels = u64::from(self.width) * u64::from(self.height);
@@ -78,6 +80,7 @@ impl DisplayMode {
     }
 
     /// 计算带宽 (MB/s)
+    #[must_use]
     pub fn bandwidth_mbps(self) -> u64 {
         self.pixel_clock_khz() * self.pixel_format.bytes_per_pixel() as u64 / 1000
     }
@@ -116,6 +119,7 @@ pub struct MonitorInfo {
 
 impl MonitorInfo {
     /// 构造一个显示器信息条目 (未连接、未启用, 无显示模式)。
+    #[must_use]
     pub fn new(id: u32, output: DisplayOutput) -> Self {
         Self {
             id,
@@ -141,6 +145,7 @@ impl MonitorInfo {
     }
 
     /// 获取名称
+    #[must_use]
     pub fn get_name(&self) -> &str {
         let end = self.name.iter().position(|&b| b == 0).unwrap_or(32);
         core::str::from_utf8(&self.name[..end]).unwrap_or("Unknown")
@@ -207,6 +212,7 @@ pub struct DisplayManager {
 
 impl DisplayManager {
     /// 创建新的显示管理器
+    #[must_use]
     pub fn new() -> Self {
         Self {
             monitors: Vec::new(),
@@ -218,6 +224,7 @@ impl DisplayManager {
     }
 
     /// 获取设备信息
+    #[must_use]
     pub fn get_info(&self) -> &DeviceInfo {
         &self.info
     }
@@ -265,11 +272,13 @@ impl DisplayManager {
     }
 
     /// 获取显示器数量
+    #[must_use]
     pub fn monitor_count(&self) -> usize {
         self.monitors.len()
     }
 
     /// 获取显示器信息
+    #[must_use]
     pub fn get_monitor(&self, index: usize) -> Option<&MonitorInfo> {
         self.monitors.get(index)
     }
@@ -292,6 +301,7 @@ impl DisplayManager {
     }
 
     /// 获取活动显示器
+    #[must_use]
     pub fn get_active_monitor(&self) -> Option<&MonitorInfo> {
         self.active_monitor.and_then(|i| self.monitors.get(i))
     }
@@ -309,6 +319,7 @@ impl DisplayManager {
     }
 
     /// 获取主显示器
+    #[must_use]
     pub fn get_primary_monitor(&self) -> Option<&MonitorInfo> {
         self.primary_monitor.and_then(|i| self.monitors.get(i))
     }
@@ -323,11 +334,13 @@ impl DisplayManager {
     }
 
     /// 获取连接的显示器数量
+    #[must_use]
     pub fn connected_count(&self) -> usize {
         self.monitors.iter().filter(|m| m.connected).count()
     }
 
     /// 获取启用的显示器数量
+    #[must_use]
     pub fn enabled_count(&self) -> usize {
         self.monitors.iter().filter(|m| m.enabled).count()
     }
@@ -389,6 +402,7 @@ impl DisplayManager {
     }
 
     /// 获取最佳显示模式
+    #[must_use]
     pub fn get_best_mode(&self, index: usize) -> Option<DisplayMode> {
         let monitor = self.monitors.get(index)?;
 

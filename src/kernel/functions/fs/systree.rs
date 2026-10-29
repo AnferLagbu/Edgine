@@ -70,8 +70,16 @@ pub struct SystreeAttr {
     pub write_fn: Option<AttrWriteFn>,
 }
 
+impl Default for SystreeAttr {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SystreeAttr {
     /// 构造一个默认属性项 (权限 0o644, 无读写回调)。
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             name: [0u8; MAX_NAME_LEN],
@@ -91,6 +99,7 @@ impl SystreeAttr {
     }
 
     /// 获取名称
+    #[must_use]
     pub fn get_name(&self) -> &str {
         core::str::from_utf8(&self.name[..self.name_len as usize]).unwrap_or("")
     }
@@ -100,7 +109,7 @@ impl SystreeAttr {
     /// # Errors
     /// 当属性未注册读取回调函数时返回 `EIO`.
     pub fn read(&self, buf: &mut [u8]) -> Result<usize, Errno> {
-        self.read_fn.map_or(Err(Errno::EIO), |f| f(buf))
+        self.read_fn.map_or(Err(Errno::Eio), |f| f(buf))
     }
 
     /// 写入属性值
@@ -108,7 +117,7 @@ impl SystreeAttr {
     /// # Errors
     /// 当属性未注册写入回调函数时返回 `EIO`.
     pub fn write(&self, data: &[u8]) -> Result<(), Errno> {
-        self.write_fn.map_or(Err(Errno::EIO), |f| f(data))
+        self.write_fn.map_or(Err(Errno::Eio), |f| f(data))
     }
 }
 
@@ -135,6 +144,7 @@ pub struct SystreeNode {
 
 impl SystreeNode {
     /// 构造一个空节点 (指定节点 id 与父节点 id)。
+    #[must_use]
     pub const fn new(id: u32, parent_id: u32) -> Self {
         Self {
             id,
@@ -155,6 +165,7 @@ impl SystreeNode {
     }
 
     /// 获取名称
+    #[must_use]
     pub fn get_name(&self) -> &str {
         core::str::from_utf8(&self.name[..self.name_len as usize]).unwrap_or("")
     }
@@ -165,7 +176,7 @@ impl SystreeNode {
     /// 当属性表已满 (`MAX_ATTRS`) 时返回 `ENOMEM`.
     pub fn add_attr(&mut self, attr: SystreeAttr) -> Result<(), Errno> {
         if self.attr_count as usize >= MAX_ATTRS {
-            return Err(Errno::ENOMEM);
+            return Err(Errno::Enomem);
         }
         self.attrs[self.attr_count as usize] = attr;
         self.attr_count += 1;
@@ -173,13 +184,11 @@ impl SystreeNode {
     }
 
     /// 查找属性
+    #[must_use]
     pub fn find_attr(&self, name: &str) -> Option<&SystreeAttr> {
-        for i in 0..self.attr_count as usize {
-            if self.attrs[i].get_name() == name {
-                return Some(&self.attrs[i]);
-            }
-        }
-        None
+        self.attrs[..self.attr_count as usize]
+            .iter()
+            .find(|attr| attr.get_name() == name)
     }
 
     /// 查找属性 (可变)
@@ -208,7 +217,7 @@ impl SystreeNode {
                 break;
             }
         }
-        if found { Ok(()) } else { Err(Errno::ENOENT) }
+        if found { Ok(()) } else { Err(Errno::Enoent) }
     }
 }
 
@@ -226,11 +235,19 @@ pub struct Systree {
     pub next_id: u32,
 }
 
+impl Default for Systree {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Systree {
     /// 构造系统树, 并预置 `MAX_NODES` 个空节点.
     ///
     /// 在 `get_systree()` 的 `OnceLock` 初始化闭包内调用 (堆已就绪),
     /// 逐元素 collect 构造, 避免 BSS 常驻大数组与栈上大临时对象.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             nodes: (0..MAX_NODES).map(|_| SystreeNode::new(0, 0)).collect(),
@@ -253,11 +270,11 @@ impl Systree {
     /// 当父节点不存在时返回 `ENOENT`; 当节点表已满 (`MAX_NODES`) 时返回 `ENOMEM`.
     pub fn create_node(&mut self, parent_id: u32, name: &str) -> Result<u32, Errno> {
         if self.find_node(parent_id).is_none() {
-            return Err(Errno::ENOENT);
+            return Err(Errno::Enoent);
         }
 
         if self.node_count as usize >= MAX_NODES {
-            return Err(Errno::ENOMEM);
+            return Err(Errno::Enomem);
         }
 
         let id = self.next_id;
@@ -278,13 +295,13 @@ impl Systree {
     /// 当节点不存在时返回 `ENOENT`.
     pub fn delete_node(&mut self, id: u32) -> Result<(), Errno> {
         if id == 0 {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
 
         // 检查是否有子节点
-        for i in 0..self.node_count as usize {
-            if self.nodes[i].parent_id == id {
-                return Err(Errno::ENOTEMPTY);
+        for node in &self.nodes[..self.node_count as usize] {
+            if node.parent_id == id {
+                return Err(Errno::Enotempty);
             }
         }
 
@@ -300,17 +317,15 @@ impl Systree {
             }
         }
 
-        if found { Ok(()) } else { Err(Errno::ENOENT) }
+        if found { Ok(()) } else { Err(Errno::Enoent) }
     }
 
     /// 查找节点
+    #[must_use]
     pub fn find_node(&self, id: u32) -> Option<&SystreeNode> {
-        for i in 0..self.node_count as usize {
-            if self.nodes[i].id == id {
-                return Some(&self.nodes[i]);
-            }
-        }
-        None
+        self.nodes[..self.node_count as usize]
+            .iter()
+            .find(|node| node.id == id)
     }
 
     /// 查找节点 (可变)
@@ -324,21 +339,19 @@ impl Systree {
     }
 
     /// 按名称查找节点
+    #[must_use]
     pub fn find_node_by_name(&self, parent_id: u32, name: &str) -> Option<&SystreeNode> {
-        for i in 0..self.node_count as usize {
-            if self.nodes[i].parent_id == parent_id && self.nodes[i].get_name() == name {
-                return Some(&self.nodes[i]);
-            }
-        }
-        None
+        self.nodes[..self.node_count as usize]
+            .iter()
+            .find(|node| node.parent_id == parent_id && node.get_name() == name)
     }
 
     /// 列出子节点 (缓冲区不足时输出会被截断)
     pub fn list_children(&self, parent_id: u64, buf: &mut [u8]) -> usize {
         let mut offset = 0;
-        for i in 0..self.node_count as usize {
-            if u64::from(self.nodes[i].parent_id) == parent_id {
-                let name = self.nodes[i].get_name().as_bytes();
+        for node in &self.nodes[..self.node_count as usize] {
+            if u64::from(node.parent_id) == parent_id {
+                let name = node.get_name().as_bytes();
                 if offset + name.len() + 1 > buf.len() {
                     break;
                 }
@@ -356,8 +369,8 @@ impl Systree {
     /// # Errors
     /// 当节点或属性不存在时返回 `ENOENT`; 当属性未注册读取回调时返回 `EIO`.
     pub fn read_attr(&self, node_id: u32, attr_name: &str, buf: &mut [u8]) -> Result<usize, Errno> {
-        let node = self.find_node(node_id).ok_or(Errno::ENOENT)?;
-        let attr = node.find_attr(attr_name).ok_or(Errno::ENOENT)?;
+        let node = self.find_node(node_id).ok_or(Errno::Enoent)?;
+        let attr = node.find_attr(attr_name).ok_or(Errno::Enoent)?;
         attr.read(buf)
     }
 
@@ -366,12 +379,13 @@ impl Systree {
     /// # Errors
     /// 当节点或属性不存在时返回 `ENOENT`; 当属性未注册写入回调时返回 `EIO`.
     pub fn write_attr(&mut self, node_id: u32, attr_name: &str, data: &[u8]) -> Result<(), Errno> {
-        let node = self.find_node_mut(node_id).ok_or(Errno::ENOENT)?;
-        let attr = node.find_attr(attr_name).ok_or(Errno::ENOENT)?;
+        let node = self.find_node_mut(node_id).ok_or(Errno::Enoent)?;
+        let attr = node.find_attr(attr_name).ok_or(Errno::Enoent)?;
         attr.write(data)
     }
 
     /// 解析路径并查找节点
+    #[must_use]
     pub fn resolve_path(&self, path: &str) -> Option<&SystreeNode> {
         if path == "/" || path.is_empty() {
             return Some(&self.nodes[0]);
@@ -435,7 +449,7 @@ pub fn read_int_attr(value: u64, buf: &mut [u8]) -> Result<usize, Errno> {
     // 找到有效数据的结束位置
     let len = s.iter().position(|&b| b == 0).unwrap_or(20);
     if buf.len() < len {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     buf[..len].copy_from_slice(&s[..len]);
     Ok(len)
@@ -446,9 +460,9 @@ pub fn read_int_attr(value: u64, buf: &mut [u8]) -> Result<usize, Errno> {
 /// # Errors
 /// 当 `data` 不是合法 UTF-8 或无法解析为 `u64` 时返回 `EINVAL`.
 pub fn write_int_attr(data: &[u8]) -> Result<u64, Errno> {
-    let s = core::str::from_utf8(data).map_err(|_| Errno::EINVAL)?;
+    let s = core::str::from_utf8(data).map_err(|_| Errno::Einval)?;
     let s = s.trim();
-    s.parse::<u64>().map_err(|_| Errno::EINVAL)
+    s.parse::<u64>().map_err(|_| Errno::Einval)
 }
 
 /// u64 → ASCII 十进制 (无 alloc)
@@ -508,11 +522,13 @@ pub fn delete_node(id: u32) -> Result<(), Errno> {
 }
 
 /// 查找节点
+#[must_use]
 pub fn find_node(id: u32) -> Option<SystreeNode> {
     get_systree().lock().find_node(id).copied()
 }
 
 /// 按路径查找节点
+#[must_use]
 pub fn resolve_path(path: &str) -> Option<SystreeNode> {
     get_systree().lock().resolve_path(path).copied()
 }
@@ -551,17 +567,17 @@ pub fn handle_request(
     match opcode {
         1 => {
             // Lookup
-            let name = core::str::from_utf8(data).map_err(|_| Errno::EINVAL)?;
+            let name = core::str::from_utf8(data).map_err(|_| Errno::Einval)?;
             let node =
                 tree.find_node_by_name(crate::functions::intcast::low_u32_from_u64(node_id), name);
             if let Some(n) = node {
                 if buf.len() < 4 {
-                    return Err(Errno::EINVAL);
+                    return Err(Errno::Einval);
                 }
                 buf[..4].copy_from_slice(&n.id.to_le_bytes());
                 Ok(4)
             } else {
-                Err(Errno::ENOENT)
+                Err(Errno::Enoent)
             }
         }
         27 => {
@@ -570,7 +586,7 @@ pub fn handle_request(
         }
         19 => {
             // Read attr
-            let name = core::str::from_utf8(data).map_err(|_| Errno::EINVAL)?;
+            let name = core::str::from_utf8(data).map_err(|_| Errno::Einval)?;
             tree.read_attr(
                 crate::functions::intcast::low_u32_from_u64(node_id),
                 name,
@@ -579,7 +595,7 @@ pub fn handle_request(
         }
         20 => {
             // Write attr
-            let name = core::str::from_utf8(data).map_err(|_| Errno::EINVAL)?;
+            let name = core::str::from_utf8(data).map_err(|_| Errno::Einval)?;
             tree.write_attr(
                 crate::functions::intcast::low_u32_from_u64(node_id),
                 name,
@@ -587,6 +603,6 @@ pub fn handle_request(
             )?;
             Ok(0)
         }
-        _ => Err(Errno::ENOSYS),
+        _ => Err(Errno::Enosys),
     }
 }

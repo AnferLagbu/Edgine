@@ -48,7 +48,7 @@ impl SignalDecision for FallbackSignalPolicy {
             // 忽略: CHLD(17), URG(23)
             17 | 23 => SignalDefaultAction::Ign,
             // 停止: STOP(19), TSTP(20), TTIN(21), TTOU(22)
-            19 | 20 | 21 | 22 => SignalDefaultAction::Stop,
+            19..=22 => SignalDefaultAction::Stop,
             // 继续: CONT(18)
             18 => SignalDefaultAction::Cont,
             // 核心转储: QUIT(3), ILL(4), ABRT(6), BUS(7), FPE(8), SEGV(11), SYS(31), XCPU(24), XFSZ(25)

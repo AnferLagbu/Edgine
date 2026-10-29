@@ -126,6 +126,7 @@ pub struct UnkfsDataset {
 
 impl UnkfsDataset {
     /// 以编号、名称与属主创建数据集, 初始状态 Creating、可写.
+    #[must_use]
     pub fn new(ds_id: u64, name: &str, owner_pwm: u64) -> Self {
         let mut n = [0u8; HV_DS_MAX_NAME];
         let b = name.as_bytes();
@@ -217,7 +218,7 @@ impl UnkfsDataset {
         if !self.is_writeable() {
             return false;
         }
-        self.dir_zap.lookup_u64(name).map_or(false, |obj_id| {
+        self.dir_zap.lookup_u64(name).is_some_and(|obj_id| {
             self.objset.free_obj(obj_id);
             self.dir_zap.remove(name);
             true

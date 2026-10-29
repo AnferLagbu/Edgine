@@ -78,20 +78,20 @@ fn test_elf64_header_sizes() -> TestResult {
 }
 
 fn test_elf_validation_null() -> TestResult {
-    let result = crate::privileged::proc::elf_validate(core::ptr::null(), 64);
+    let result = crate::privileged::proc::elf_validate(&[]);
     check!(result.is_none(), "null pointer rejected");
     TestResult::Pass
 }
 
 fn test_elf_validation_small() -> TestResult {
-    let result = crate::privileged::proc::elf_validate(core::ptr::from_ref::<u8>(&0u8), 10);
+    let result = crate::privileged::proc::elf_validate(&[0u8; 10]);
     check!(result.is_none(), "too small rejected");
     TestResult::Pass
 }
 
 fn test_elf_magic_rejected() -> TestResult {
     let data = [0u8; 64];
-    let result = crate::privileged::proc::elf_validate(data.as_ptr(), 64);
+    let result = crate::privileged::proc::elf_validate(&data);
     check!(result.is_none(), "bad magic rejected");
     TestResult::Pass
 }
@@ -101,14 +101,14 @@ fn test_elf_valid_minimal() -> TestResult {
     let data = [0u8; 80]; // 头部 + 预留空间
     // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
     let hdr = unsafe { &mut *(data.as_ptr() as usize as *mut Elf64Header) };
-    hdr.e_ident[0] = 0x7F;
-    hdr.e_ident[1] = b'E';
-    hdr.e_ident[2] = b'L';
-    hdr.e_ident[3] = b'F';
-    hdr.e_ident[4] = 2; // ELFCLASS64
-    hdr.e_machine = 0x3E; // x86_64
-    hdr.e_phentsize = 56; // sizeof(Elf64Phdr)
-    let result = crate::privileged::proc::elf_validate(data.as_ptr(), 80);
+    hdr.ident[0] = 0x7F;
+    hdr.ident[1] = b'E';
+    hdr.ident[2] = b'L';
+    hdr.ident[3] = b'F';
+    hdr.ident[4] = 2; // ELFCLASS64
+    hdr.machine = 0x3E; // x86_64
+    hdr.phentsize = 56; // sizeof(Elf64Phdr)
+    let result = crate::privileged::proc::elf_validate(&data);
     check!(result.is_some(), "valid elf accepted");
     TestResult::Pass
 }

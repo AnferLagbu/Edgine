@@ -177,41 +177,50 @@ pub(crate) fn get_special_key(scancode: u8) -> SpecialKey {
 // 键盘状态结构体
 // ============================================================================
 
+/// 左右成对修饰键 (Shift / Ctrl / Alt) 的按下状态
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ModifierPair {
+    /// 左侧键是否按下
+    pub left: bool,
+    /// 右侧键是否按下
+    pub right: bool,
+}
+
+/// 锁定键 (Caps Lock / Num Lock / Scroll Lock) 的激活状态
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LockKeys {
+    /// Caps Lock 是否激活
+    pub caps: bool,
+    /// Num Lock 是否激活
+    pub num: bool,
+    /// Scroll Lock 是否激活
+    pub scroll: bool,
+}
+
 /// 键盘修饰键状态
 #[derive(Debug, Clone, Copy)]
 pub struct ModifierState {
-    /// 左 Shift 是否按下
-    pub left_shift: bool,
-    /// 右 Shift 是否按下
-    pub right_shift: bool,
-    /// 左 Ctrl 是否按下
-    pub left_ctrl: bool,
-    /// 右 Ctrl 是否按下
-    pub right_ctrl: bool,
-    /// 左 Alt 是否按下
-    pub left_alt: bool,
-    /// 右 Alt 是否按下
-    pub right_alt: bool,
-    /// Caps Lock 是否激活
-    pub caps_lock: bool,
-    /// Num Lock 是否激活
-    pub num_lock: bool,
-    /// Scroll Lock 是否激活
-    pub scroll_lock: bool,
+    /// Shift 键状态
+    pub shift: ModifierPair,
+    /// Ctrl 键状态
+    pub ctrl: ModifierPair,
+    /// Alt 键状态
+    pub alt: ModifierPair,
+    /// 锁定键状态
+    pub locks: LockKeys,
 }
 
 impl Default for ModifierState {
     fn default() -> Self {
         Self {
-            left_shift: false,
-            right_shift: false,
-            left_ctrl: false,
-            right_ctrl: false,
-            left_alt: false,
-            right_alt: false,
-            caps_lock: false,
-            num_lock: true, // 默认开启数字锁定
-            scroll_lock: false,
+            shift: ModifierPair::default(),
+            ctrl: ModifierPair::default(),
+            alt: ModifierPair::default(),
+            locks: LockKeys {
+                caps: false,
+                num: true, // 默认开启数字锁定
+                scroll: false,
+            },
         }
     }
 }
@@ -219,32 +228,36 @@ impl Default for ModifierState {
 impl ModifierState {
     /// 检查是否有 Shift 键按下
     #[inline]
+    #[must_use]
     pub fn shift_pressed(self) -> bool {
-        self.left_shift || self.right_shift
+        self.shift.left || self.shift.right
     }
 
     /// 检查是否有 Ctrl 键按下
     #[inline]
+    #[must_use]
     pub fn ctrl_pressed(self) -> bool {
-        self.left_ctrl || self.right_ctrl
+        self.ctrl.left || self.ctrl.right
     }
 
     /// 检查是否有 Alt 键按下
     #[inline]
+    #[must_use]
     pub fn alt_pressed(self) -> bool {
-        self.left_alt || self.right_alt
+        self.alt.left || self.alt.right
     }
 
     /// 计算 LED 状态字节
+    #[must_use]
     pub fn to_led_byte(self) -> u8 {
         let mut led: u8 = 0;
-        if self.scroll_lock {
+        if self.locks.scroll {
             led |= KB_LED_SCROLL_LOCK;
         }
-        if self.num_lock {
+        if self.locks.num {
             led |= KB_LED_NUM_LOCK;
         }
-        if self.caps_lock {
+        if self.locks.caps {
             led |= KB_LED_CAPS_LOCK;
         }
         led
@@ -529,10 +542,17 @@ impl Driver for KeyboardDriver {
 // 公共 API
 // ============================================================================
 
+impl Default for KeyboardDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl KeyboardDriver {
     /// 创建新的键盘驱动实例
     /// # Panics
     /// PS/2 数据端口或命令端口初始化失败时 panic。
+    #[must_use]
     pub fn new() -> Self {
         // SAFETY: PS/2 数据端口 (0x60) 和命令端口 (0x64) 是标准硬件端口,
         // 由 PC 枚举确定, 不与其他 IoPort 实例重叠.
@@ -559,9 +579,7 @@ impl KeyboardDriver {
     /// * `None` - 无有效数据或特殊按键
     pub fn handle_interrupt(&mut self) -> Option<u8> {
         // 读取 scancode
-        let Some(scancode) = keyboard_read_data(&self.cmd_port, &self.data_port) else {
-            return None;
-        };
+        let scancode = keyboard_read_data(&self.cmd_port, &self.data_port)?;
 
         // 检测释放码 (0xE0 或 0xE1 前缀)
         if scancode == 0xE0 || scancode == 0xE1 {
@@ -578,33 +596,33 @@ impl KeyboardDriver {
                 // 左/右 Shift 键
                 if pressed {
                     if key_code == 0x2A {
-                        self.modifiers.left_shift = true;
+                        self.modifiers.shift.left = true;
                     } else {
-                        self.modifiers.right_shift = true;
+                        self.modifiers.shift.right = true;
                     }
                 } else {
                     if key_code == 0x2A {
-                        self.modifiers.left_shift = false;
+                        self.modifiers.shift.left = false;
                     } else {
-                        self.modifiers.right_shift = false;
+                        self.modifiers.shift.right = false;
                     }
                 }
                 return None;
             }
             0x1D => {
                 // Left Ctrl
-                self.modifiers.left_ctrl = pressed;
+                self.modifiers.ctrl.left = pressed;
                 return None;
             }
             0x38 => {
                 // Left Alt
-                self.modifiers.left_alt = pressed;
+                self.modifiers.alt.left = pressed;
                 return None;
             }
             0x3A => {
                 // Caps Lock
                 if pressed {
-                    self.modifiers.caps_lock = !self.modifiers.caps_lock;
+                    self.modifiers.locks.caps = !self.modifiers.locks.caps;
                     update_leds(&self.cmd_port, &self.data_port, self.modifiers);
                 }
                 return None;
@@ -612,7 +630,7 @@ impl KeyboardDriver {
             0x45 => {
                 // Num Lock
                 if pressed {
-                    self.modifiers.num_lock = !self.modifiers.num_lock;
+                    self.modifiers.locks.num = !self.modifiers.locks.num;
                     update_leds(&self.cmd_port, &self.data_port, self.modifiers);
                 }
                 return None;
@@ -620,7 +638,7 @@ impl KeyboardDriver {
             0x46 => {
                 // Scroll Lock
                 if pressed {
-                    self.modifiers.scroll_lock = !self.modifiers.scroll_lock;
+                    self.modifiers.locks.scroll = !self.modifiers.locks.scroll;
                     update_leds(&self.cmd_port, &self.data_port, self.modifiers);
                 }
                 return None;
@@ -642,7 +660,7 @@ impl KeyboardDriver {
         }
 
         // 转换为 ASCII
-        let ascii = if self.modifiers.shift_pressed() ^ self.modifiers.caps_lock {
+        let ascii = if self.modifiers.shift_pressed() ^ self.modifiers.locks.caps {
             SHIFT_TABLE[key_code as usize]
         } else {
             SCANCODE_TABLE[key_code as usize]
@@ -711,16 +729,19 @@ impl KeyboardDriver {
     }
 
     /// 检查缓冲区是否为空
+    #[must_use]
     pub fn is_buffer_empty(&self) -> bool {
         self.buffer.is_empty()
     }
 
     /// 获取缓冲区中的字符数
+    #[must_use]
     pub fn buffer_length(&self) -> usize {
         self.buffer.len()
     }
 
     /// 获取当前修饰键状态
+    #[must_use]
     pub fn get_modifiers(&self) -> &ModifierState {
         &self.modifiers
     }
@@ -731,6 +752,7 @@ impl KeyboardDriver {
     }
 
     /// 获取设备信息
+    #[must_use]
     pub fn get_info(&self) -> &DeviceInfo {
         &self.info
     }
@@ -768,10 +790,10 @@ pub extern "C" fn keyboard_init() {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn keyboard_irq_handler() {
-    if let Some(mut guard) = KEYBOARD_DEVICE.try_lock() {
-        if let Some(ref mut driver) = *guard {
-            driver.handle_interrupt();
-        }
+    if let Some(mut guard) = KEYBOARD_DEVICE.try_lock()
+        && let Some(ref mut driver) = *guard
+    {
+        driver.handle_interrupt();
     }
 }
 
@@ -847,8 +869,8 @@ mod tests {
         assert!(!mods.shift_pressed());
         assert!(!mods.ctrl_pressed());
         assert!(!mods.alt_pressed());
-        assert!(!mods.caps_lock);
-        assert!(mods.num_lock); // 默认开启
+        assert!(!mods.locks.caps);
+        assert!(mods.locks.num); // 默认开启
     }
 
     #[test]
@@ -856,16 +878,16 @@ mod tests {
         let mut mods = ModifierState::default();
 
         // 测试 Shift
-        mods.left_shift = true;
+        mods.shift.left = true;
         assert!(mods.shift_pressed());
-        mods.right_shift = true;
+        mods.shift.right = true;
         assert!(mods.shift_pressed());
-        mods.left_shift = false;
+        mods.shift.left = false;
         assert!(mods.shift_pressed()); // 右 Shift 仍按下
 
         // 测试 Caps Lock
-        mods.caps_lock = true;
-        assert!(mods.caps_lock);
+        mods.locks.caps = true;
+        assert!(mods.locks.caps);
 
         // LED 字节计算
         let led = mods.to_led_byte();
@@ -952,7 +974,7 @@ extern "C" fn kb_input_irq(driver_data: *mut u8) {
     kb.handle_interrupt();
 }
 
-/// PS/2 键盘的 EGDF `InputOps` 契约实现 (read_char / has_char / handle_irq)
+/// PS/2 键盘的 EGDF `InputOps` 契约实现 (`read_char` / `has_char` / `handle_irq`)
 pub static PS2_KEYBOARD_INPUT_OPS: InputOps = InputOps {
     read_char: kb_input_read,
     has_char: kb_input_has,

@@ -87,7 +87,7 @@ const PCI_CONFIG_DATA: u16 = 0xCFC;
 #[cfg(target_arch = "aarch64")]
 const DEFAULT_ECAM_BASE: u64 = 0x3F00_0000;
 
-/// aarch64 下的 ECAM 基址 (运行时, 可由 init_with_ecam 覆盖).
+/// aarch64 下的 ECAM 基址 (运行时, 可由 `init_with_ecam` 覆盖).
 #[cfg(target_arch = "aarch64")]
 static ECAM_BASE: AtomicU64 = AtomicU64::new(DEFAULT_ECAM_BASE);
 
@@ -256,7 +256,7 @@ pub fn read_config_byte(bus: u8, dev: u8, func: u8, offset: u8) -> u8 {
     read_config_byte_locked(bus, dev, func, offset)
 }
 
-/// B04-05: 已持锁版本, 供 parse_bars 等嵌套调用使用, 避免 IrqSpinLock 不可重入死锁。
+/// B04-05: 已持锁版本, 供 `parse_bars` 等嵌套调用使用, 避免 `IrqSpinLock` 不可重入死锁。
 fn read_config_byte_locked(bus: u8, dev: u8, func: u8, offset: u8) -> u8 {
     #[cfg(target_arch = "x86_64")]
     {
@@ -422,11 +422,11 @@ fn parse_bars(bus: u8, dev: u8, func: u8) -> ([PciBar; 6], usize) {
     parse_bars_locked(bus, dev, func)
 }
 
-/// B04-05: 已持锁版本, parse_bars 通过此函数在持锁状态下访问 _locked PCI API。
+/// B04-05: 已持锁版本, `parse_bars` 通过此函数在持锁状态下访问 _locked PCI API。
 ///
 /// **槽位语义**: `bars[i]` 对应配置空间 BAR i (offset 0x10 + 4*i), 未实现的
 /// BAR 槽位为 `PciBar::empty()` (`bar_type == BarType::None`)。消费者以配置
-/// 空间槽位号索引 (如 AHCI BAR5 / MSI-X BIR table_bar), 空槽由消费者防护
+/// 空间槽位号索引 (如 AHCI BAR5 / MSI-X BIR `table_bar`), 空槽由消费者防护
 /// (`BarType::None` / `base_addr == 0`)。
 fn parse_bars_locked(bus: u8, dev: u8, func: u8) -> ([PciBar; 6], usize) {
     let mut bars = [PciBar::empty(); 6];
@@ -552,6 +552,7 @@ fn scan_bus(bus: u8) -> Vec<PciDevice> {
 }
 
 /// 扫描全部 PCI 总线 (0-255), 返回发现的设备列表.
+#[must_use]
 pub fn scan_all_buses() -> Vec<PciDevice> {
     let mut all = Vec::new();
     for bus in 0..=PCI_MAX_BUS {

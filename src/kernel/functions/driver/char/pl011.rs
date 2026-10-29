@@ -3,7 +3,7 @@
 //!
 //! ARM PL011 UART 驱动 — functions 层安全代理 (MIG-003)
 //!
-//! QEMU virt 机器默认使用 PL011 @ 0x0900_0000, 寄存器定义基于 ARM DDI 0183G。
+//! QEMU virt 机器默认使用 PL011 @ `0x0900_0000`, 寄存器定义基于 ARM DDI 0183G。
 //! 通过 [`IoMem`] 安全代理 MMIO 访问, 100% safe Rust。
 //!
 //! ## 架构 (§6.4 直接方案 B: functions 权威)
@@ -71,6 +71,7 @@ impl Pl011Driver {
     /// # 返回
     /// - `Some`: 构造成功
     /// - `None`: 基址为 0, 或 MMIO 别名冲突 / 校验失败
+    #[must_use]
     pub fn new() -> Option<Self> {
         let base = crate::privileged::driver::pl011_phys_base();
         let regs = IoMem::from_platform_device(PhysAddr(base), PL011_MMIO_LEN, "pl011").ok()?;
@@ -83,7 +84,8 @@ impl Pl011Driver {
     /// 读取单个字节 (阻塞, 等待 RX FIFO 非空)。
     ///
     /// SIMPLIFIED: EGDF char 读写路径当前无生产消费者 (休眠), 本方法暂作为
-    /// 公共 API 供后续 CharOps 安全桥接入, 未被内部调用。
+    /// 公共 API 供后续 `CharOps` 安全桥接入, 未被内部调用。
+    #[must_use]
     pub fn read_byte(&self) -> u8 {
         while self.regs.read_u32(UARTFR) & UARTFR_RXFE != 0 {
             core::hint::spin_loop();
@@ -93,7 +95,7 @@ impl Pl011Driver {
 
     /// 写入单个字节 (阻塞, 等待 TX FIFO 非满)。
     ///
-    /// SIMPLIFIED: 同 [`Self::read_byte`], 暂作为公共 API 供后续 CharOps 安全桥接入。
+    /// SIMPLIFIED: 同 [`Self::read_byte`], 暂作为公共 API 供后续 `CharOps` 安全桥接入。
     pub fn write_byte(&self, c: u8) {
         while self.regs.read_u32(UARTFR) & UARTFR_TXFF != 0 {
             core::hint::spin_loop();

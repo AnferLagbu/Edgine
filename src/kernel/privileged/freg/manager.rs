@@ -78,8 +78,15 @@ pub struct RecoveryManager {
     pub count: AtomicU32,
 }
 
+impl Default for RecoveryManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RecoveryManager {
     /// 构造空的恢复管理器 (无已注册域)
+    #[must_use]
     pub const fn new() -> Self {
         const NONE: Option<&'static RecoveryDomain> = None;
         Self {
@@ -150,8 +157,8 @@ impl RecoveryManager {
             return;
         }
         let count = self.count.load(Ordering::SeqCst) as usize;
-        for i in 0..count {
-            if let Some(dom) = self.domains[i] {
+        for slot in &self.domains[..count] {
+            if let Some(dom) = *slot {
                 if dom.is_active() && current_tick >= dom.next_freg_tick.load(Ordering::SeqCst) {
                     dom.freg_generation.fetch_add(1, Ordering::SeqCst);
                     dom.next_freg_tick
@@ -225,8 +232,8 @@ impl RecoveryManager {
     /// 启动时核对各域的持久化崩溃指纹: 连续失败已达 3 次的域置为 Degraded 并清除指纹.
     pub fn check_boot_fingerprints(&self) {
         let count = self.count.load(Ordering::SeqCst) as usize;
-        for i in 0..count {
-            if let Some(dom) = self.domains[i] {
+        for slot in &self.domains[..count] {
+            if let Some(dom) = *slot {
                 let fp = dom.load_boot_fingerprint();
                 if fp != 0 && dom.consecutive_failures.load(Ordering::SeqCst) >= 3 {
                     crate::klog_ffi!(
@@ -246,11 +253,11 @@ impl RecoveryManager {
     /// 按故障指令地址 (`fault_rip`) 归属到所属恢复域, 返回域标识.
     pub fn locate_domain_by_addr(&self, fault_rip: u64) -> Option<u64> {
         let count = self.count.load(Ordering::SeqCst) as usize;
-        for i in 0..count {
-            if let Some(dom) = self.domains[i] {
-                if dom.contains_addr(fault_rip) {
-                    return Some(dom.id());
-                }
+        for slot in &self.domains[..count] {
+            if let Some(dom) = *slot
+                && dom.contains_addr(fault_rip)
+            {
+                return Some(dom.id());
             }
         }
         None
@@ -263,11 +270,11 @@ impl RecoveryManager {
 
         for mapping in &PANIC_DOMAIN_MAP {
             if msg.len() >= mapping.prefix.len() && msg[..mapping.prefix.len()] == *mapping.prefix {
-                for i in 0..count {
-                    if let Some(dom) = self.domains[i] {
-                        if dom.id() == mapping.domain_id {
-                            return Some(mapping.domain_id);
-                        }
+                for slot in &self.domains[..count] {
+                    if let Some(dom) = *slot
+                        && dom.id() == mapping.domain_id
+                    {
+                        return Some(mapping.domain_id);
                     }
                 }
             }
@@ -327,8 +334,7 @@ impl RecoveryManager {
         let mut visited = [false; MAX_RECOVERY_DOMAINS];
         let mut rolled_back = 0usize;
 
-        let target_idx =
-            (0..count).find(|&i| self.domains[i].map_or(false, |d| d.id() == domain_id));
+        let target_idx = (0..count).find(|&i| self.domains[i].is_some_and(|d| d.id() == domain_id));
 
         if let Some(idx) = target_idx {
             visited[idx] = true;
@@ -340,35 +346,34 @@ impl RecoveryManager {
             let current_id = queue[queue_head];
             queue_head += 1;
 
-            if let Some(dom) = self.find(current_id) {
-                if dom.try_rollback(tick, fingerprint) {
-                    let (entries, _, _, _) =
-                        Self::rollback_domain(dom, tick, fingerprint, rolled_back);
-                    if entries > 0 {
-                        rolled_back += 1;
-                    }
+            if let Some(dom) = self.find(current_id)
+                && dom.try_rollback(tick, fingerprint)
+            {
+                let (entries, _, _, _) = Self::rollback_domain(dom, tick, fingerprint, rolled_back);
+                if entries > 0 {
+                    rolled_back += 1;
+                }
 
-                    let depended_by = dom.depended_by.lock();
-                    for slot in depended_by.iter() {
-                        if let Some(dep_id) = *slot {
-                            // BFS queue overflow guard
-                            if queue_tail >= MAX_RECOVERY_DOMAINS {
-                                crate::klog_ffi!(
-                                    klog_ffi_warn,
-                                    "[FREG] cascade BFS queue overflow at dom={}",
-                                    dep_id
-                                );
-                                break;
-                            }
-                            let dep_idx = (0..count)
-                                .find(|&i| self.domains[i].map_or(false, |d| d.id() == dep_id));
-                            if let Some(di) = dep_idx {
-                                if !visited[di] {
-                                    visited[di] = true;
-                                    queue[queue_tail] = dep_id;
-                                    queue_tail += 1;
-                                }
-                            }
+                let depended_by = dom.depended_by.lock();
+                for slot in depended_by.iter() {
+                    if let Some(dep_id) = *slot {
+                        // BFS queue overflow guard
+                        if queue_tail >= MAX_RECOVERY_DOMAINS {
+                            crate::klog_ffi!(
+                                klog_ffi_warn,
+                                "[FREG] cascade BFS queue overflow at dom={}",
+                                dep_id
+                            );
+                            break;
+                        }
+                        let dep_idx =
+                            (0..count).find(|&i| self.domains[i].is_some_and(|d| d.id() == dep_id));
+                        if let Some(di) = dep_idx
+                            && !visited[di]
+                        {
+                            visited[di] = true;
+                            queue[queue_tail] = dep_id;
+                            queue_tail += 1;
                         }
                     }
                 }

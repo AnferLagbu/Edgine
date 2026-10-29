@@ -27,14 +27,17 @@ pub fn next_random_u64() -> u64 {
         let old = ENTROPY_POOL.load(Ordering::Acquire);
         let bit = (old >> 63) ^ (old >> 62) ^ (old >> 60) ^ (old >> 59);
         let new = (old << 1) | (bit & 1);
-        match ENTROPY_POOL.compare_exchange_weak(old, new, Ordering::AcqRel, Ordering::Acquire) {
-            Ok(_) => return new,
-            Err(_) => {}
+        if ENTROPY_POOL
+            .compare_exchange_weak(old, new, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            return new;
         }
     }
 }
 
 /// 生成 8 字节 canary (低字节强制为 0, Linux/glibc 兼容).
+#[must_use]
 pub fn generate_canary() -> u64 {
     next_random_u64() & 0xFFFF_FFFF_FFFF_FF00
 }
@@ -47,6 +50,7 @@ pub fn set_per_proc_seed(seed: u64) {
 /// 从内核熵源填充用户 buffer.
 ///
 /// 单次最大 256 字节. 返回实际写入字节数; 失败返回 0.
+#[must_use]
 pub fn get_random_bytes(buf: u64, len: usize) -> usize {
     if len == 0 || len > 256 {
         return 0;
@@ -65,15 +69,13 @@ pub fn get_random_bytes(buf: u64, len: usize) -> usize {
         let val = next_random_u64();
         random_bytes[i..len].copy_from_slice(&val.to_le_bytes()[..len - i]);
     }
-    match mm::copy_to_user(buf, &random_bytes[..len], len) {
-        Ok(n) => n,
-        Err(()) => 0,
-    }
+    mm::copy_to_user(buf, &random_bytes[..len], len).unwrap_or_default()
 }
 
 /// 写 8 字节 canary 到用户 buffer.
 ///
 /// 返回 0 (成功) / -1 (失败).
+#[must_use]
 pub fn write_canary_to_user(buf: u64, len: usize) -> i64 {
     if len < 8 {
         return -1;
@@ -85,7 +87,7 @@ pub fn write_canary_to_user(buf: u64, len: usize) -> i64 {
     let bytes = canary.to_le_bytes();
     match mm::copy_to_user(buf, &bytes, 8) {
         Ok(_) => 0,
-        Err(()) => -1,
+        Err(_) => -1,
     }
 }
 

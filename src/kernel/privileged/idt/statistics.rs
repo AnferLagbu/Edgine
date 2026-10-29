@@ -100,8 +100,15 @@ impl Default for InterruptHistory {
     }
 }
 
+impl Default for DetailedStatistics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DetailedStatistics {
     /// 创建新的统计实例
+    #[must_use]
     pub fn new() -> Self {
         // 手动创建 InterruptHistory (因为 const fn 不能调用 Default)
         let history = InterruptHistory {
@@ -366,7 +373,7 @@ impl DetailedStatistics {
 }
 
 // 简单的 Vec 实现 (用于 no_std 环境)
-/// 固定容量 (64) 的栈内简易 Vec, 供 no_std 环境存放中断历史事件.
+/// 固定容量 (64) 的栈内简易 Vec, 供 `no_std` 环境存放中断历史事件.
 pub struct Vec<T> {
     data: [Option<T>; 64],
     len: usize,

@@ -7,7 +7,7 @@
 //! 原定义（T5-4 于 2026-06-16 自 privileged 迁入）按统一判据"机制持有的
 //! 数据结构/常量归 privileged"迁回 `privileged/syscall/types.rs` — syscall
 //! 编号表是用户态 ABI 机制 (编号空间分配 DECISION-037 承载物), 被
-//! privileged dispatch/dispatch_trait 消费, 依赖闭包为空。privileged/syscall
+//! privileged `dispatch/dispatch_trait` 消费, 依赖闭包为空。privileged/syscall
 //! 的 types 为 `pub mod`, 直接 glob re-export, 保持 functions 侧 API 兼容
 //! (functions→privileged 合法方向)。
 

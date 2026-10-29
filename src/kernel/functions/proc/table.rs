@@ -45,12 +45,14 @@ pub struct ProcessHandle {
 impl ProcessHandle {
     /// 构造新句柄
     #[inline]
+    #[must_use]
     pub const fn new(pid: crate::privileged::proc::Pid) -> Self {
         Self { pid }
     }
 
     /// 获取 PID
     #[inline]
+    #[must_use]
     pub const fn pid(self) -> crate::privileged::proc::Pid {
         self.pid
     }
@@ -80,11 +82,12 @@ pub enum TableError {
 
 impl TableError {
     /// 映射为 POSIX errno
+    #[must_use]
     pub fn to_errno(self) -> crate::privileged::syscall::Errno {
         use crate::privileged::syscall::Errno as E;
         match self {
-            Self::TableFull => E::EAGAIN, // 表满, 资源暂时不可用
-            Self::RefCountUnderflow | Self::InvalidStateTransition => E::EINVAL, // 内部状态错误 / 非法状态转换
+            Self::TableFull => E::Eagain, // 表满, 资源暂时不可用
+            Self::RefCountUnderflow | Self::InvalidStateTransition => E::Einval, // 内部状态错误 / 非法状态转换
             Self::Kernel(e) => e.as_errno(),
         }
     }

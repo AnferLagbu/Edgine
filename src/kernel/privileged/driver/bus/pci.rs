@@ -60,10 +60,10 @@ pub extern "C" fn pci_init() -> i32 {
 
     // 演进 6: PCI init 完成后做 driver 维度自检
     // DECISION-K: 经 ConfigValidateHook trait 注入 (Option 可空, 未注册跳过)
-    if let Some(hook) = crate::privileged::config::current_config_validate_hook() {
-        if let Err(e) = hook.validate_pci_subsystem() {
-            crate::klog_drv_warn!("PCI validation: {}", e);
-        }
+    if let Some(hook) = crate::privileged::config::current_config_validate_hook()
+        && let Err(e) = hook.validate_pci_subsystem()
+    {
+        crate::klog_drv_warn!("PCI validation: {}", e);
     }
 
     count

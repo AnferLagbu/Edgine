@@ -3,7 +3,7 @@
 //! 时钟 syscall 策略 — functions 层统一时间模块 (B05-26 归位)
 //!
 //! 集中 `clock_gettime` / `gettimeofday` / `settimeofday` /
-//! `clock_nanosleep` / `adjtimex`, 消除此前分散在 fs/file_ops 与
+//! `clock_nanosleep` / `adjtimex`, 消除此前分散在 `fs/file_ops` 与
 //! proc/info 的职责错位.
 //!
 //! ## 时间基准
@@ -135,12 +135,13 @@ fn has_time_privilege() -> bool {
 /// - `tp` 为空指针 → `EINVAL`
 /// - 时钟 ID 不受支持 → `EINVAL`
 /// - 用户缓冲写入失败 → `EFAULT`
+#[must_use]
 pub fn clock_gettime_syscall(clk_id: i32, tp_ptr: u64) -> i64 {
     if tp_ptr == 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     let Some(ns) = clock_now_ns(clk_id) else {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     };
 
     let t = Timespec {
@@ -149,7 +150,7 @@ pub fn clock_gettime_syscall(clk_id: i32, tp_ptr: u64) -> i64 {
     };
 
     if !crate::privileged::syscall::api::write_struct_to_user(tp_ptr, &t) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     0
 }
@@ -164,7 +165,7 @@ pub fn clock_gettime_syscall(clk_id: i32, tp_ptr: u64) -> i64 {
 /// - `tv` 为空指针或写入失败 → `EFAULT`
 pub fn gettimeofday_syscall(tv: u64) -> Result<usize, Errno> {
     if tv == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
 
     let ns = wall_clock_ns();
@@ -174,7 +175,7 @@ pub fn gettimeofday_syscall(tv: u64) -> Result<usize, Errno> {
     };
 
     if !crate::privileged::syscall::api::write_struct_to_user(tv, &t) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     Ok(0)
 }
@@ -205,10 +206,10 @@ pub fn settimeofday_syscall(tv: u64, tz: u64) -> Result<usize, Errno> {
         tv_usec: 0,
     };
     if !crate::privileged::syscall::api::read_struct_from_user(tv, &mut input) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if tz != 0 && !crate::privileged::syscall::api::validate_user_buf(tz, 8) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     apply_settimeofday(input.tv_sec, input.tv_usec)
 }
@@ -221,15 +222,15 @@ pub fn settimeofday_syscall(tv: u64, tz: u64) -> Result<usize, Errno> {
 /// - 调用者无特权 (euid != 0) → `EPERM`
 pub fn apply_settimeofday(tv_sec: i64, micros: i64) -> Result<usize, Errno> {
     if tv_sec < 0 || !(0..USEC_PER_SEC).contains(&micros) {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if !has_time_privilege() {
-        return Err(Errno::EPERM);
+        return Err(Errno::Eperm);
     }
 
     let ns = tv_sec.cast_unsigned() * NS_PER_SEC + micros.cast_unsigned() * NS_PER_USEC;
     if !crate::functions::timer::time_sync::TimeSyncSubsystem::set_time(ns) {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     Ok(0)
 }
@@ -258,10 +259,10 @@ pub fn clock_nanosleep_syscall(
 ) -> Result<usize, Errno> {
     let _ = rem; // Linux 语义: clock_nanosleep 不回写剩余时间
     if req == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if flags & !TIMER_ABSTIME != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     let mut ts = Timespec {
@@ -269,7 +270,7 @@ pub fn clock_nanosleep_syscall(
         tv_nsec: 0,
     };
     if !crate::privileged::syscall::api::read_struct_from_user(req, &mut ts) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
 
     let wait_ns = clock_nanosleep_wait_ns(clockid, flags, ts.tv_sec, ts.tv_nsec)?;
@@ -294,13 +295,13 @@ pub fn clock_nanosleep_wait_ns(
     nanos: i64,
 ) -> Result<u64, Errno> {
     if flags & !TIMER_ABSTIME != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     let Some(now_ns) = clock_now_ns(clockid) else {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     };
     if tv_sec < 0 || nanos < 0 || nanos >= NS_PER_SEC.cast_signed() {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     let req_ns = tv_sec.cast_unsigned() * NS_PER_SEC + nanos.cast_unsigned();
@@ -331,9 +332,10 @@ pub fn clock_nanosleep_wait_ns(
 /// `ADJ_TIMECONST` / `ADJ_TICK` (返回 `-EINVAL`), 误差估计类回填字段恒为 0,
 /// `precision` 固定 1us; 影响面: ntpd/chronyd 类调优与误差统计不可用;
 /// 何时需扩展: 引入时钟误差估计 (PLL/FLL 二阶环路) 后按 Linux 语义补齐.
+#[must_use]
 pub fn adjtimex_syscall(buf: u64) -> i64 {
     if buf == 0 {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
 
     let mut input = Timex {
@@ -366,7 +368,7 @@ pub fn adjtimex_syscall(buf: u64) -> i64 {
         _pad3: [0; TIMEX_RESERVED_BYTES],
     };
     if !crate::privileged::syscall::api::read_struct_from_user(buf, &mut input) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     let outcome = apply_adjtimex(
         input.modes,
@@ -420,7 +422,7 @@ pub fn adjtimex_syscall(buf: u64) -> i64 {
     };
 
     if !crate::privileged::syscall::api::write_struct_to_user(buf, &payload) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     TIME_OK
 }
@@ -441,13 +443,13 @@ pub fn apply_adjtimex(
     micros: i64,
 ) -> Result<i64, Errno> {
     if modes & !ADJ_SUPPORTED_MODES != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if modes & ADJ_SETOFFSET != 0 && !(-USEC_PER_SEC..USEC_PER_SEC).contains(&micros) {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if !has_time_privilege() {
-        return Err(Errno::EPERM);
+        return Err(Errno::Eperm);
     }
 
     // ADJ_SETOFFSET: 在墙钟上叠加增量 (加性跳变)
@@ -462,7 +464,7 @@ pub fn apply_adjtimex(
         } else {
             wall_clock_ns().saturating_sub(delta_ns.unsigned_abs())
         };
-        crate::functions::timer::time_sync::TimeSyncSubsystem::set_time(target);
+        let _ = crate::functions::timer::time_sync::TimeSyncSubsystem::set_time(target);
     }
 
     // ADJ_OFFSET: 渐进调整 (由 tick 中断按斜率消耗)
@@ -472,12 +474,14 @@ pub fn apply_adjtimex(
         } else {
             offset * NS_PER_USEC.cast_signed()
         };
-        crate::functions::timer::time_sync::TimeSyncSubsystem::adj_time(offset_ns);
+        let _ = crate::functions::timer::time_sync::TimeSyncSubsystem::adj_time(offset_ns);
     }
 
     // ADJ_FREQUENCY: freq 单位 2^-16 ppm → ppb
     if modes & ADJ_FREQUENCY != 0 {
-        crate::functions::timer::time_sync::TimeSyncSubsystem::adj_freq(freq * 1_000 / FREQ_SCALE);
+        let _ = crate::functions::timer::time_sync::TimeSyncSubsystem::adj_freq(
+            freq * 1_000 / FREQ_SCALE,
+        );
     }
 
     Ok(TIME_OK)

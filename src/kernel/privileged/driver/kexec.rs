@@ -114,8 +114,15 @@ pub struct KexecSubsystem {
     initialized: AtomicBool,
 }
 
+impl Default for KexecSubsystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl KexecSubsystem {
     /// 构造一个空闲 (未加载) 的 kexec 子系统实例。
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             state: AtomicU32::new(KexecState::Idle as u32),
@@ -241,7 +248,7 @@ impl KexecSubsystem {
         crate::privileged::driver::shutdown_all();
 
         // 2. 关闭中断
-        crate::arch!(interrupt_disable());
+        let _ = crate::arch!(interrupt_disable());
 
         // 3. 刷新缓存
         Self::flush_caches();
@@ -380,6 +387,7 @@ impl KexecSubsystem {
 
 impl KexecState {
     /// 由 u32 状态码还原 kexec 状态 (未知值按空闲处理)。
+    #[must_use]
     pub fn from_u32(v: u32) -> Self {
         match v {
             1 => Self::Loaded,
@@ -402,6 +410,7 @@ pub fn kexec_init() {
 }
 
 /// 获取全局 kexec 子系统
+#[must_use]
 pub fn kexec_subsystem() -> &'static KexecSubsystem {
     &KEXEC
 }

@@ -24,7 +24,7 @@ pub const MAX_LOCK_CLASSES: usize = 64;
 
 /// 每线程/每 CPU 最大持有锁深度
 ///
-/// **超限行为**: 同 MAX_LOCK_CLASSES, 静默截断.
+/// **超限行为**: 同 `MAX_LOCK_CLASSES`, 静默截断.
 pub const MAX_HELD_LOCKS: usize = 8;
 
 /// 每 PWM 配额表最大条目数 (调度器定额)
@@ -35,10 +35,10 @@ pub const MAX_QUOTAS: usize = 32;
 
 /// 每 PWM 进程数限制表最大条目数 (调度器限额)
 ///
-/// **超限行为**: 同 MAX_QUOTAS, 注册新限制超过上限时返回失败.
+/// **超限行为**: 同 `MAX_QUOTAS`, 注册新限制超过上限时返回失败.
 pub const MAX_LIMITS: usize = 32;
 
-/// fb_mmap 目标虚拟地址上界 (仅 `privileged::syscall::dispatch::sys_fb_mmap` 使用)
+/// `fb_mmap` 目标虚拟地址上界 (仅 `privileged::syscall::dispatch::sys_fb_mmap` 使用)
 ///
 /// **注意**: 该边界 (`0x7FFFFFFFE000`, 2^39 量级) 是帧缓冲映射专用约束,
 /// **不是**用户指针校验边界. 用户指针校验的真实上界见 `USER_ADDR_MAX`.

@@ -367,8 +367,8 @@ pub fn pcache_put(inode_id: u32, page_index: u64) {
 ///
 /// 仅释放无映射持有者的条目 (详见 `PageCacheBucket::invalidate_inode`).
 pub fn pcache_invalidate_inode(inode_id: u32) {
-    for i in 0..PCACHE_HASH_BUCKETS {
-        let mut guard = PAGE_CACHE[i].lock();
+    for bucket in &PAGE_CACHE {
+        let mut guard = bucket.lock();
         guard.invalidate_inode(inode_id);
     }
 }

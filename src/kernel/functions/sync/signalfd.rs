@@ -40,17 +40,17 @@ pub fn signalfd_syscall(fd: i32, mask_ptr: u64, flags: i32) -> Result<usize, Err
     // flags 校验
     let valid_flags = SFD_CLOEXEC | SFD_NONBLOCK;
     if flags & !valid_flags != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     // fd 校验
     if fd != -1 && !crate::privileged::syscall::signalfd::is_signalfd_fd(fd) {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
 
     // mask_ptr 校验
     if mask_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
 
     let ret = crate::privileged::syscall::signalfd::sys_signalfd(fd, mask_ptr, flags);
@@ -72,10 +72,10 @@ pub fn signalfd_syscall(fd: i32, mask_ptr: u64, flags: i32) -> Result<usize, Err
 /// - 底层 `sys_signalfd_read` 返回负值时转换为对应的 `Errno`
 pub fn signalfd_read_syscall(fd: i32, buf: u64) -> Result<usize, Errno> {
     if !crate::privileged::syscall::signalfd::is_signalfd_fd(fd) {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     if buf == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
 
     let ret = crate::privileged::syscall::signalfd::sys_signalfd_read(fd, buf);
@@ -96,7 +96,7 @@ pub fn signalfd_read_syscall(fd: i32, buf: u64) -> Result<usize, Errno> {
 /// - 底层 `sys_signalfd_close` 返回负值时转换为对应的 `Errno`
 pub fn signalfd_close_syscall(fd: i32) -> Result<usize, Errno> {
     if !crate::privileged::syscall::signalfd::is_signalfd_fd(fd) {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
 
     let ret = crate::privileged::syscall::signalfd::sys_signalfd_close(fd);

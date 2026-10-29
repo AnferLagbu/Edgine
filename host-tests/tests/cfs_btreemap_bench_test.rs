@@ -52,11 +52,14 @@ fn bench_cfs_btreemap_1000_tasks_latency() {
     );
 }
 
-/// 验证 BTreeMap 是当前 CFS 数据结构 (防止误改)
+/// 验证有序 BTree 容器是当前 CFS 数据结构 (防止误改)
 #[test]
 fn test_cfs_uses_btreemap_for_vrunqueue() {
-    // 静态契约: privileged/proc/cfs.rs 必须仍使用 BTreeMap<(u64, Pid), ()>
+    // 静态契约: privileged/proc/cfs.rs 必须仍以 (vruntime, pid) 为键的有序树
     // (DECISION-J 2026-09-13: sched_policy 反转迁回 privileged/proc/cfs.rs)
+    // P-64 第十六批: 值类型为 `()` 触发 clippy `zero_sized_map_values`, 按
+    // 「改码服从 lint」改 `BTreeMap<(u64, Pid), ()>` → `BTreeSet<(u64, Pid)>`
+    // (键集合语义等价, 迭代次序与 first()/last() 不变).
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -64,12 +67,12 @@ fn test_cfs_uses_btreemap_for_vrunqueue() {
     let src = std::fs::read_to_string(&path).expect("无法读取 privileged/proc/cfs.rs");
 
     assert!(
-        src.contains("BTreeMap<(u64, Pid), ()>"),
-        "CFS 应使用 BTreeMap<(u64, Pid), ()> 作为 vruntime 树 (I-34 当前实现)"
+        src.contains("BTreeSet<(u64, Pid)>"),
+        "CFS 应使用 BTreeSet<(u64, Pid)> 作为 vruntime 树 (I-34 当前实现)"
     );
     assert!(
-        src.contains("tree: BTreeMap<"),
-        "CfsRunQueue.tree 字段应为 BTreeMap 类型 (I-34 当前实现)"
+        src.contains("tree: BTreeSet<"),
+        "CfsRunQueue.tree 字段应为 BTreeSet 类型 (I-34 当前实现)"
     );
 }
 

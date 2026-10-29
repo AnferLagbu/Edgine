@@ -28,16 +28,16 @@ pub fn memfd_create_syscall(_name_ptr: u64, flags: u32) -> Result<usize, Errno> 
     // 检查 flags 有效性
     let supported_flags = MFD_CLOEXEC | MFD_ALLOW_SEALING | MFD_HUGE_MASK;
     if flags & !supported_flags != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     // 检查是否支持大页 (暂不支持)
     if flags & MFD_HUGE_MASK != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     // 在 AnonymousFs 中分配 inode
-    let inode_id = ANONYMOUS_FS.alloc_inode().ok_or(Errno::ENOMEM)?;
+    let inode_id = ANONYMOUS_FS.alloc_inode().ok_or(Errno::Enomem)?;
 
     // 创建匿名 Inode
     let inode = crate::functions::fs::inode::new_anonymous_inode(inode_id);
@@ -51,7 +51,7 @@ pub fn memfd_create_syscall(_name_ptr: u64, flags: u32) -> Result<usize, Errno> 
     );
 
     // 插入全局 OpenFile 表
-    let handle_id = OPEN_FILE_TABLE.alloc(open_file).ok_or(Errno::ENOMEM)?;
+    let handle_id = OPEN_FILE_TABLE.alloc(open_file).ok_or(Errno::Enomem)?;
 
     // 在当前进程 fd 表中分配 fd (MFD_CLOEXEC 决定该 fd 是否随 exec 关闭)
     let Some(fd) = crate::privileged::proc::with_current_fd_table(|t| {
@@ -60,7 +60,7 @@ pub fn memfd_create_syscall(_name_ptr: u64, flags: u32) -> Result<usize, Errno> 
     .flatten() else {
         // fd 表满或当前进程不可用: 回收已分配的 OpenFile handle, 避免泄漏
         OPEN_FILE_TABLE.close(handle_id);
-        return Err(Errno::ENOMEM);
+        return Err(Errno::Enomem);
     };
 
     Ok(fd)

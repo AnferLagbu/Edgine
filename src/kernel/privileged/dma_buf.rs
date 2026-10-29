@@ -137,30 +137,35 @@ impl DmaStream {
 
     /// CPU 可访问的虚拟地址
     #[inline]
+    #[must_use]
     pub fn cpu_addr(&self) -> NonNull<u8> {
         self.cpu_addr
     }
 
     /// 设备可访问的物理地址
     #[inline]
+    #[must_use]
     pub fn dma_addr(&self) -> PhysAddr {
         self.dma_addr
     }
 
     /// 缓冲区大小
     #[inline]
+    #[must_use]
     pub fn size(&self) -> usize {
         self.size
     }
 
     /// 同步方向
     #[inline]
+    #[must_use]
     pub fn direction(&self) -> DmaDirection {
         self.direction
     }
 
     /// 当前同步状态
     #[inline]
+    #[must_use]
     pub fn sync_state(&self) -> SyncState {
         self.sync_state
     }

@@ -3,7 +3,7 @@
 //! ## 阶段 4b 归属 (VFS 完整下沉 · DECISION-W)
 //!
 //! inotify 实例表/事件队列随 VFS 完整下沉迁入 functions (原 privileged
-//! `vfs/inotify.rs`)。事件队列被 VFS 路径机制内联消费 (vfs_path/handle
+//! `vfs/inotify.rs`)。事件队列被 VFS 路径机制内联消费 (`vfs_path/handle`
 //! 在文件操作路径直接调用 `inotify_notify`)。依赖闭包仅为 privileged 公开
 //! API (IrqSpinLock/Errno/userptr 均为 privileged 安全出口)。
 //!
@@ -116,6 +116,7 @@ impl Default for InotifyEvent {
 
 impl InotifyEvent {
     /// 构造一个全零的 inotify 事件 (无 watch、无事件掩码、无文件名)。
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             wd: 0,
@@ -228,10 +229,7 @@ impl InotifyInstance {
     /// 获取该实例的 fd
     fn fd(&self) -> i32 {
         // TD-02 V3: 通过 fd_alloc 集中计算 FD 编号
-        crate::privileged::proc::fd_at(
-            crate::privileged::proc::FdSubsystem::Inotify,
-            self.slot_idx as usize,
-        )
+        crate::privileged::proc::fd_at(crate::privileged::proc::FdSubsystem::Inotify, self.slot_idx)
     }
 
     /// 检查 fd 是否有效
@@ -287,7 +285,7 @@ impl InotifyInstance {
             .watches
             .iter()
             .position(|w| !w.valid)
-            .ok_or(Errno::ENOSPC)?;
+            .ok_or(Errno::Enospc)?;
 
         let wd = self.next_wd;
         self.next_wd += 1;
@@ -303,7 +301,7 @@ impl InotifyInstance {
 
     /// 移除 watch
     fn remove_watch(&mut self, wd: i32) -> Result<(), Errno> {
-        let idx = self.find_watch_by_wd(wd).ok_or(Errno::EINVAL)?;
+        let idx = self.find_watch_by_wd(wd).ok_or(Errno::Einval)?;
         self.watches[idx] = WatchEntry::default();
         self.watch_count -= 1;
         Ok(())
@@ -338,23 +336,23 @@ pub fn sys_inotify_init1(flags: i32) -> i64 {
     INOTIFY_OPS.fetch_add(1, Ordering::Relaxed);
 
     if flags & !(IN_NONBLOCK | IN_CLOEXEC) != 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     // V2: 使用集中分配器获取 FD
     let Some(fd) = crate::privileged::proc::fd_alloc::alloc_fd(
         crate::privileged::proc::fd_alloc::FdSubsystem::Inotify,
     ) else {
-        return Errno::EMFILE.as_ret();
+        return Errno::Emfile.as_ret();
     };
 
     let Some((_sub, slot_idx)) = crate::privileged::proc::fd_alloc::idx_of(fd) else {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     };
 
     let mut instances = INOTIFY_INSTANCES.lock();
     let Some(slot) = instances.iter_mut().find(|i| !i.valid) else {
-        return Errno::EMFILE.as_ret();
+        return Errno::Emfile.as_ret();
     };
     slot.init(slot_idx);
 
@@ -366,18 +364,18 @@ pub fn sys_inotify_add_watch(fd: i64, ino: u32, mask: u32) -> i64 {
     INOTIFY_OPS.fetch_add(1, Ordering::Relaxed);
 
     if !is_inotify_fd(crate::functions::intcast::low_i32_from_i64(fd)) || ino == 0 {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     }
 
     if mask & IN_ALL_EVENTS == 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     let slot = fd_to_slot(crate::functions::intcast::low_i32_from_i64(fd));
     let mut instances = INOTIFY_INSTANCES.lock();
 
     let Some(instance) = instances.iter_mut().find(|i| i.valid && i.slot_idx == slot) else {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     };
 
     match instance.add_watch(ino, mask) {
@@ -391,14 +389,14 @@ pub fn sys_inotify_rm_watch(fd: i64, wd: i32) -> i64 {
     INOTIFY_OPS.fetch_add(1, Ordering::Relaxed);
 
     if !is_inotify_fd(crate::functions::intcast::low_i32_from_i64(fd)) {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     }
 
     let slot = fd_to_slot(crate::functions::intcast::low_i32_from_i64(fd));
     let mut instances = INOTIFY_INSTANCES.lock();
 
     let Some(instance) = instances.iter_mut().find(|i| i.valid && i.slot_idx == slot) else {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     };
 
     if instance.find_watch_by_wd(wd).is_some() {
@@ -431,9 +429,9 @@ pub fn inotify_read_events(fd: i64, max_count: usize) -> Option<(Vec<InotifyEven
     let slot = fd_to_slot(crate::functions::intcast::low_i32_from_i64(fd));
     let mut instances = INOTIFY_INSTANCES.lock();
 
-    let Some(instance) = instances.iter_mut().find(|i| i.valid && i.slot_idx == slot) else {
-        return None;
-    };
+    let instance = instances
+        .iter_mut()
+        .find(|i| i.valid && i.slot_idx == slot)?;
 
     let mut events = Vec::new();
     let mut written = 0usize;
@@ -459,11 +457,11 @@ pub fn inotify_read_events(fd: i64, max_count: usize) -> Option<(Vec<InotifyEven
 /// 事件出队策略委托到同模块 `inotify_read_events`。
 pub fn sys_inotify_read(fd: i64, buf: *mut u8, count: usize) -> i64 {
     if buf.is_null() || count < InotifyEvent::FULL_SIZE {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     let Some((events, _written)) = inotify_read_events(fd, count) else {
-        return Errno::EAGAIN.as_ret();
+        return Errno::Eagain.as_ret();
     };
 
     let mut written = 0usize;
@@ -483,6 +481,7 @@ pub fn sys_inotify_read(fd: i64, buf: *mut u8, count: usize) -> i64 {
 // ============================================================================
 
 /// 判断 fd 是否属于 inotify FD 空间
+#[must_use]
 pub fn is_inotify_fd(fd: i32) -> bool {
     fd >= INOTIFY_FD_BASE
         && fd
@@ -545,8 +544,8 @@ pub fn inotify_notify(ino: u32, mask: u32, name: &str, is_dir: bool) {
 
     if notified_count > 0 {
         drop(instances);
-        for i in 0..INOTIFY_MAX_INSTANCES {
-            if notified_fds[i] {
+        for (i, &notified) in notified_fds.iter().enumerate() {
+            if notified {
                 // TD-02 V3: 通过 fd_alloc 集中计算 FD 编号
                 crate::privileged::syscall::epoll::epoll_pwake(crate::privileged::proc::fd_at(
                     crate::privileged::proc::FdSubsystem::Inotify,
@@ -584,7 +583,7 @@ pub fn inotify_fd_readable(fd: i64) -> bool {
     instances
         .iter()
         .find(|i| i.valid && i.slot_idx == slot)
-        .map_or(false, |i| i.event_count > 0)
+        .is_some_and(|i| i.event_count > 0)
 }
 
 /// 获取统计信息

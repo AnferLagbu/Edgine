@@ -101,6 +101,7 @@ pub(crate) fn ipv4_from_atomic(v: u32) -> Option<[u8; 4]> {
 /// - 状态机 = HardwareProbed/InterfaceReady 时, 启动 DHCP 握手
 /// - 状态机 = `FullyInitialized` 时, 直接返回 true
 /// - 状态机 = Failed 时, 不重试, 返回 false
+#[must_use]
 pub fn trigger_init() -> bool {
     match get_init_state() {
         InitState::FullyInitialized | InitState::HardwareProbed | InitState::InterfaceReady => {

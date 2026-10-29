@@ -27,9 +27,10 @@ const TCGETS: u64 = 0x5401;
 ///
 /// fd 路由: userfaultfd (1200 段) → `functions::mm::uffd` 的 `UFFDIO_*` 处理;
 /// 其余走终端/设备策略.
+#[must_use]
 pub fn ioctl_syscall(fd: i32, request: u64, arg: u64) -> i64 {
     if arg == 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     // T1 G4: userfaultfd fd 类型路由 (Linux 语义: uffd 的 ioctl 只认 UFFDIO_*)
     if crate::privileged::mm::is_uffd_fd(fd) {
@@ -40,28 +41,29 @@ pub fn ioctl_syscall(fd: i32, request: u64, arg: u64) -> i64 {
             #[repr(C)]
             #[derive(Copy, Clone)]
             struct Winsize {
-                ws_row: u16,
-                ws_col: u16,
-                ws_xpixel: u16,
-                ws_ypixel: u16,
+                row: u16,
+                col: u16,
+                xpixel: u16,
+                ypixel: u16,
             }
             let ws = Winsize {
-                ws_row: 25,
-                ws_col: 80,
-                ws_xpixel: 0,
-                ws_ypixel: 0,
+                row: 25,
+                col: 80,
+                xpixel: 0,
+                ypixel: 0,
             };
             if !crate::privileged::syscall::api::write_struct_to_user(arg, &ws) {
-                return Errno::EFAULT.as_ret();
+                return Errno::Efault.as_ret();
             }
             0
         }
-        TCGETS => Errno::ENOSYS.as_ret(),
-        _ => Errno::ENOTTY.as_ret(),
+        TCGETS => Errno::Enosys.as_ret(),
+        _ => Errno::Enotty.as_ret(),
     }
 }
 
 /// poll(fds, nfds, timeout) 策略
+#[must_use]
 pub fn poll_syscall(fds_ptr: u64, nfds: u32, _timeout: i32) -> i64 {
     #[repr(C)]
     #[derive(Copy, Clone)]
@@ -128,7 +130,7 @@ pub fn poll_syscall(fds_ptr: u64, nfds: u32, _timeout: i32) -> i64 {
     i64::from(ready)
 }
 
-/// ppoll(fds, nfds, tmo_p, sigmask, sigsetsize) 策略 (T1 G5 实装)
+/// ppoll(fds, nfds, `tmo_p`, sigmask, sigsetsize) 策略 (T1 G5 实装)
 ///
 /// `poll` + `timespec` 超时 + 临时信号屏蔽字 (Linux ABI):
 /// - `tmo_p == NULL` → 无限等待; 非 NULL 时解析 `struct timespec` 并校验
@@ -140,6 +142,7 @@ pub fn poll_syscall(fds_ptr: u64, nfds: u32, _timeout: i32) -> i64 {
 /// 参数下传. 影响面: 无就绪事件时 ppoll 立即返回 0 而非等到超时/事件, 用户态
 /// 轮询式多路复用仍可用 (与 `epoll_wait` 的 timeout > 0 缺口一致). 何时需扩展:
 /// hrtimer 定时唤醒接入 poll 等待队列后, 由 `poll_syscall` 消费该 timeout 值.
+#[must_use]
 pub fn ppoll_syscall(
     fds_ptr: u64,
     nfds: u32,
@@ -153,17 +156,17 @@ pub fn ppoll_syscall(
     let mut timeout_ms: i32 = -1;
     if tmo_p != 0 {
         let Some(sec_raw) = crate::privileged::syscall::api::read_u64_from_user(tmo_p) else {
-            return Errno::EFAULT.as_ret();
+            return Errno::Efault.as_ret();
         };
         let Some(nsec_raw) = crate::privileged::syscall::api::read_u64_from_user(tmo_p + 8) else {
-            return Errno::EFAULT.as_ret();
+            return Errno::Efault.as_ret();
         };
         if sec_raw > i64::MAX as u64 || nsec_raw > i64::MAX as u64 {
-            return Errno::EINVAL.as_ret();
+            return Errno::Einval.as_ret();
         }
         let (sec, nsec) = (sec_raw.cast_signed(), nsec_raw.cast_signed());
         if sec < 0 || !(0..NSEC_PER_SEC).contains(&nsec) {
-            return Errno::EINVAL.as_ret();
+            return Errno::Einval.as_ret();
         }
         // 毫秒向上取整; 超 i32 上限饱和 (Linux 由调用方保证取值范围)
         let ms = sec
@@ -181,20 +184,21 @@ pub fn ppoll_syscall(
 }
 
 /// chown(path, uid, gid) 策略
+#[must_use]
 pub fn chown_syscall(path_ptr: u64, uid: u32, gid: u32) -> i64 {
     if path_ptr == 0 || !crate::privileged::syscall::api::validate_user_ptr(path_ptr) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     let path = path_ptr as *const u8;
     let tbl = crate::privileged::sgeg::identity::get_table();
     // B06-02: UID/GID 未注册时返回 EINVAL, 不得默认 root (原 map_or(0, ...) 存在提权漏洞)
     let owner_pwm = match tbl.find_by_uid(uid) {
         Some(e) => e.get_pwm().0,
-        None => return Errno::EINVAL.as_ret(),
+        None => return Errno::Einval.as_ret(),
     };
     let group_pwm = match tbl.find_by_uid(gid) {
         Some(e) => e.get_pwm().0,
-        None => return Errno::EINVAL.as_ret(),
+        None => return Errno::Einval.as_ret(),
     };
     let pwm = crate::privileged::sgeg::pwm_get_current();
     i64::from(crate::functions::fs::vfs_chown_ext(
@@ -203,30 +207,32 @@ pub fn chown_syscall(path_ptr: u64, uid: u32, gid: u32) -> i64 {
 }
 
 /// truncate(path, length) 策略
+#[must_use]
 pub fn truncate_syscall(path_ptr: u64, length: i64) -> i64 {
     if path_ptr == 0 || !crate::privileged::syscall::api::validate_user_ptr(path_ptr) || length < 0
     {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     let path = path_ptr as *const u8;
     let fd = crate::functions::fs::vfs_open(path, 0o2, crate::privileged::sgeg::pwm_get_current());
     if fd < 0 {
-        return Errno::ENOENT.as_ret();
+        return Errno::Enoent.as_ret();
     }
     let result =
         crate::functions::fs::vfs_truncate_internal(fd.cast_unsigned(), length.cast_unsigned());
-    crate::functions::fs::vfs_close(fd.cast_unsigned());
-    if result < 0 { Errno::EIO.as_ret() } else { 0 }
+    let _ = crate::functions::fs::vfs_close(fd.cast_unsigned());
+    if result < 0 { Errno::Eio.as_ret() } else { 0 }
 }
 
 /// ftruncate(fd, length) 策略
+#[must_use]
 pub fn ftruncate_syscall(fd: i32, length: i64) -> i64 {
     if fd < 0 || length < 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     let result =
         crate::functions::fs::vfs_truncate_internal(fd.cast_unsigned(), length.cast_unsigned());
-    if result < 0 { Errno::EIO.as_ret() } else { 0 }
+    if result < 0 { Errno::Eio.as_ret() } else { 0 }
 }
 
 /// `AT_FDCWD` — 相对路径基于当前工作目录 (Linux ABI)
@@ -235,12 +241,13 @@ const AT_FDCWD: i32 = -100;
 /// fchownat(dirfd, path, uid, gid, flags) 策略 (T1 G1 实装)
 ///
 /// SIMPLIFIED: 仅支持 `dirfd == AT_FDCWD` (绝对路径语义, 复用 `chown_syscall`
-/// 的 UID/GID→PWM 查表 + `vfs_chown_ext`); 非 AT_FDCWD 的目录 fd 相对路径
-/// 需 VFS 目录 fd 解析机制, 暂不支持. `flags` (AT_SYMLINK_NOFOLLOW) 忽略
-/// (vfs_chown_ext 不跟随 symlink).
+/// 的 UID/GID→PWM 查表 + `vfs_chown_ext`); 非 `AT_FDCWD` 的目录 fd 相对路径
+/// 需 VFS 目录 fd 解析机制, 暂不支持. `flags` (`AT_SYMLINK_NOFOLLOW`) 忽略
+/// (`vfs_chown_ext` 不跟随 symlink).
+#[must_use]
 pub fn fchownat_syscall(dirfd: i32, path_ptr: u64, uid: u32, gid: u32, _flags: i32) -> i64 {
     if dirfd != AT_FDCWD {
-        return Errno::ENOTSUP.as_ret();
+        return Errno::Enotsup.as_ret();
     }
     chown_syscall(path_ptr, uid, gid)
 }
@@ -248,17 +255,18 @@ pub fn fchownat_syscall(dirfd: i32, path_ptr: u64, uid: u32, gid: u32, _flags: i
 /// fallocate(fd, mode, offset, len) 策略 (T1 G1 实装)
 ///
 /// SIMPLIFIED: 仅支持 `mode == 0` (分配并扩展文件大小到 `offset+len`,
-/// Linux fallocate 默认语义); 其他 mode 标志 (KEEP_SIZE 等) 暂不实现.
+/// Linux fallocate 默认语义); 其他 mode 标志 (`KEEP_SIZE` 等) 暂不实现.
 /// 基于 `vfs_fstat_safe` + `vfs_truncate_internal` (仅扩展不缩小) 近似.
+#[must_use]
 pub fn fallocate_syscall(fd: i32, mode: i32, offset: u64, len: u64) -> i64 {
     if mode != 0 {
-        return Errno::ENOSYS.as_ret();
+        return Errno::Enosys.as_ret();
     }
     if fd < 0 {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     }
     let Some(end) = offset.checked_add(len) else {
-        return Errno::EFBIG.as_ret();
+        return Errno::Efbig.as_ret();
     };
     // 仅扩展不缩小: 目标大小超过当前 size 时才截断扩展
     let cur_size = crate::functions::fs::api::vfs_fstat_safe(
@@ -269,7 +277,7 @@ pub fn fallocate_syscall(fd: i32, mode: i32, offset: u64, len: u64) -> i64 {
     if end > cur_size {
         let r = crate::functions::fs::vfs_truncate_internal(fd.cast_unsigned(), end);
         if r < 0 {
-            return Errno::EIO.as_ret();
+            return Errno::Eio.as_ret();
         }
     }
     0
@@ -280,7 +288,7 @@ pub fn flock_syscall(fd: i32, operation: i32) -> i64 {
     use crate::functions::fs::{FlockResult, sys_flock as do_flock};
 
     if fd < 0 {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     }
 
     // inode 号改由 OpenFile 元数据源提供 (fd → handle → OpenFile.inode_id)
@@ -288,13 +296,13 @@ pub fn flock_syscall(fd: i32, operation: i32) -> i64 {
         let Some(handle_id) =
             crate::functions::fs::vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(fd))
         else {
-            return Errno::EBADF.as_ret();
+            return Errno::Ebadf.as_ret();
         };
         match crate::functions::fs::OPEN_FILE_TABLE
             .with_file(handle_id, crate::functions::fs::OpenFile::inode_id)
         {
             Some(node_id) => node_id,
-            None => return Errno::EBADF.as_ret(),
+            None => return Errno::Ebadf.as_ret(),
         }
     };
 
@@ -302,9 +310,9 @@ pub fn flock_syscall(fd: i32, operation: i32) -> i64 {
 
     match do_flock(fd, operation, pid, ino) {
         FlockResult::Ok => 0,
-        FlockResult::WouldBlock => Errno::EAGAIN.as_ret(),
-        FlockResult::NoSpace => Errno::ENOLCK.as_ret(),
-        FlockResult::Invalid | FlockResult::NotHeld => Errno::EINVAL.as_ret(),
+        FlockResult::WouldBlock => Errno::Eagain.as_ret(),
+        FlockResult::NoSpace => Errno::Enolck.as_ret(),
+        FlockResult::Invalid | FlockResult::NotHeld => Errno::Einval.as_ret(),
     }
 }
 

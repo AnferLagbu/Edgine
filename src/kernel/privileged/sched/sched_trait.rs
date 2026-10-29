@@ -43,17 +43,20 @@ impl Task {
 
     /// 返回任务所属进程的 PID.
     #[inline]
+    #[must_use]
     pub fn pid(&self) -> Pid {
         self.pid
     }
 
     /// 进程名称 (克隆)。
+    #[must_use]
     pub fn name(&self) -> alloc::string::String {
         // SAFETY: Process::name is Mutex<String>.
         unsafe { (*self.proc_ptr).name.lock().clone() }
     }
 
     /// 进程状态 (`AtomicU32`)。
+    #[must_use]
     pub fn state(&self) -> u32 {
         // SAFETY: `Task` 包装了 `*const Process`, 由 `Task::new`/`from_pid` 等构造路径
         // 保证该指针指向有效的 `Process` 实例, 且通过 `&self` 借用保证存活。
@@ -63,12 +66,14 @@ impl Task {
     }
 
     /// 优先级 (`AtomicU32`)。
+    #[must_use]
     pub fn priority(&self) -> u32 {
         // SAFETY: 同 `state` 的契约; 字段是 `AtomicU32`。
         unsafe { (*self.proc_ptr).priority.load(Ordering::Acquire) }
     }
 
     /// 是否为内核线程。
+    #[must_use]
     pub fn is_kernel(&self) -> bool {
         // SAFETY: 同 `state` 的契约; `is_kernel()` 是 `Process` 的 safe 方法, 仅访问
         // 内部 `is_kernel_thread: bool` 字段。
@@ -76,6 +81,7 @@ impl Task {
     }
 
     /// PWM 安全上下文。
+    #[must_use]
     pub fn pwm(&self) -> u64 {
         // SAFETY: 同 `state` 的契约; `get_pwm()` 是 `Process` 的 safe 方法, 读取
         // capability 上下文的 u64 标识符。
@@ -83,24 +89,28 @@ impl Task {
     }
 
     /// 退出码。
+    #[must_use]
     pub fn exit_code(&self) -> u32 {
         // SAFETY: 同 `state` 的契约; 字段是 `AtomicU32`。
         unsafe { (*self.proc_ptr).exit_code.load(Ordering::Acquire) }
     }
 
     /// 累计 CPU 时间 (ticks)。
+    #[must_use]
     pub fn cpu_time_ticks(&self) -> u64 {
         // SAFETY: 同 `state` 的契约; 字段是 `AtomicU64`。
         unsafe { (*self.proc_ptr).cpu_time.load(Ordering::Acquire) }
     }
 
     /// CR3 页表根。
+    #[must_use]
     pub fn cr3(&self) -> u64 {
         // SAFETY: 同 `state` 的契约; 字段是 `AtomicU64` (页表基址, 物理地址)。
         unsafe { (*self.proc_ptr).cr3.load(Ordering::Acquire) }
     }
 
     /// 信号待处理掩码。
+    #[must_use]
     pub fn pending_signals(&self) -> u64 {
         // SAFETY: 同 `state` 的契约; `signal_pending_get()` 是 `Process` 的 safe 方法,
         // 返回 `signal_pending: AtomicU64` 的当前值。

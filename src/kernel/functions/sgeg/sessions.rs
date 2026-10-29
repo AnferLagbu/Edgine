@@ -29,7 +29,7 @@
 
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-use super::policy::{CAP_DOMAINS, CapBits, CapDomain, PolicyEngine, PolicyResult};
+use super::policy::{CAP_DOMAINS, CapBits, CapDomain, CapSetError, PolicyEngine, PolicyResult};
 
 /// 最大并发会话数 (B07-16: 改名消除与 `config::MAX_SESSIONS`(16, POSIX
 /// 进程会话表) 的同名冲突 — 认证会话 vs 进程会话是不同职责)
@@ -87,6 +87,7 @@ pub struct SessionTable {
 
 impl SessionTable {
     /// 构造空会话表 (const, 供静态初始化)
+    #[must_use]
     pub const fn new() -> Self {
         const NONE: Option<Session> = None;
         const EMPTY_CAPS: [CapBits; CAP_DOMAINS] = [CapBits(0); CAP_DOMAINS];
@@ -117,14 +118,15 @@ impl SessionTable {
         let per_pwm: u32 = 8;
         let mut count: u32 = 0;
         for slot in &self.records {
-            if let Some(s) = slot {
-                if s.pwm == pwm && matches!(s.state, SessionState::Active) {
-                    count += 1;
-                    if count >= per_pwm {
-                        return Err(SessionError::Kernel(
-                            crate::functions::error::KernelError::WouldBlock,
-                        ));
-                    }
+            if let Some(s) = slot
+                && s.pwm == pwm
+                && matches!(s.state, SessionState::Active)
+            {
+                count += 1;
+                if count >= per_pwm {
+                    return Err(SessionError::Kernel(
+                        crate::functions::error::KernelError::WouldBlock,
+                    ));
                 }
             }
         }
@@ -159,10 +161,10 @@ impl SessionTable {
     /// 查找会话
     pub fn get(&self, id: SessionId) -> Option<&Session> {
         for s in &self.records {
-            if let Some(s) = s {
-                if s.id == id {
-                    return Some(s);
-                }
+            if let Some(s) = s
+                && s.id == id
+            {
+                return Some(s);
             }
         }
         None
@@ -175,14 +177,14 @@ impl SessionTable {
     /// 当会话不处于活跃状态 (如已结束) 时返回 `Err(SessionError::NotActive)`.
     pub fn heartbeat(&mut self, id: SessionId, current_tick: u64) -> Result<(), SessionError> {
         for slot in &mut self.records {
-            if let Some(s) = slot {
-                if s.id == id {
-                    if !matches!(s.state, SessionState::Active) {
-                        return Err(SessionError::NotActive);
-                    }
-                    s.last_active_tick = current_tick;
-                    return Ok(());
+            if let Some(s) = slot
+                && s.id == id
+            {
+                if !matches!(s.state, SessionState::Active) {
+                    return Err(SessionError::NotActive);
                 }
+                s.last_active_tick = current_tick;
+                return Ok(());
             }
         }
         Err(SessionError::Kernel(
@@ -196,14 +198,14 @@ impl SessionTable {
     /// 当会话不存在时返回 `Err(SessionError::Kernel(KernelError::FileNotFound))`.
     pub fn end(&mut self, id: SessionId, target: SessionState) -> Result<Session, SessionError> {
         for slot in &mut self.records {
-            if let Some(s) = slot {
-                if s.id == id {
-                    let prev = *s;
-                    s.state = target;
-                    self.active.fetch_sub(1, Ordering::AcqRel);
-                    *slot = None; // 释放槽
-                    return Ok(prev);
-                }
+            if let Some(s) = slot
+                && s.id == id
+            {
+                let prev = *s;
+                s.state = target;
+                self.active.fetch_sub(1, Ordering::AcqRel);
+                *slot = None; // 释放槽
+                return Ok(prev);
             }
         }
         Err(SessionError::Kernel(
@@ -215,12 +217,12 @@ impl SessionTable {
     pub fn end_all_for(&mut self, pwm: u64, target: SessionState) -> usize {
         let mut count = 0;
         for slot in &mut self.records {
-            if let Some(s) = slot {
-                if s.pwm == pwm {
-                    s.state = target;
-                    *slot = None;
-                    count += 1;
-                }
+            if let Some(s) = slot
+                && s.pwm == pwm
+            {
+                s.state = target;
+                *slot = None;
+                count += 1;
             }
         }
         if count > 0 {
@@ -233,12 +235,13 @@ impl SessionTable {
     pub fn gc_expired(&mut self, current_tick: u64) -> usize {
         let mut count = 0;
         for slot in &mut self.records {
-            if let Some(s) = slot {
-                if s.expires_tick != 0 && current_tick >= s.expires_tick {
-                    s.state = SessionState::Expired;
-                    *slot = None;
-                    count += 1;
-                }
+            if let Some(s) = slot
+                && s.expires_tick != 0
+                && current_tick >= s.expires_tick
+            {
+                s.state = SessionState::Expired;
+                *slot = None;
+                count += 1;
             }
         }
         if count > 0 {
@@ -255,6 +258,13 @@ impl SessionTable {
     /// 遍历全部活跃会话
     pub fn iter(&self) -> impl Iterator<Item = &Session> {
         self.records.iter().filter_map(|s| s.as_ref())
+    }
+}
+
+impl Default for SessionTable {
+    /// 等价于 [`SessionTable::new`] (空会话表)
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -276,11 +286,12 @@ pub enum SessionError {
 
 impl SessionError {
     /// 映射为 POSIX errno
+    #[must_use]
     pub fn to_errno(self) -> Errno {
         use Errno as E;
         match self {
-            Self::TableFull => E::EAGAIN,
-            Self::NotActive => E::EINVAL,
+            Self::TableFull => E::Eagain,
+            Self::NotActive => E::Einval,
             Self::Kernel(e) => e.as_errno(),
         }
     }
@@ -310,6 +321,27 @@ pub enum LoginDeny {
     TooManySessions,
 }
 
+/// 登录请求 (收拢 [`SessionManager::login`] 的业务参数)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoginRequest {
+    /// 登录 PWM
+    pub pwm: u64,
+    /// 密码校验结果 (来自 `privileged::sgeg::password`)
+    pub password_ok: bool,
+    /// 登录要求的能力位
+    pub required: CapBits,
+    /// 能力校验的目标域
+    pub domain: CapDomain,
+    /// 当前时刻
+    pub current_tick: u64,
+    /// 会话过期时刻 (0 = 不限期)
+    pub expires_tick: u64,
+    /// 会话关联进程 PID
+    pub pid: u32,
+    /// 能力位快照 (按域)
+    pub matrix_caps: [CapBits; CAP_DOMAINS],
+}
+
 /// 登录管理器: 绑定会话表与能力策略, 执行认证流程
 pub struct SessionManager<'a> {
     /// 会话表 (由调用方持有)
@@ -331,29 +363,24 @@ impl<'a> SessionManager<'a> {
     }
 
     /// 登录流程 (functions 层抽象, 实际密码验证由 `privileged::sgeg::password` 提供)
-    pub fn login(
-        &mut self,
-        pwm: u64,
-        password_ok: bool, // 来自 privileged::sgeg::password
-        required: CapBits,
-        domain: CapDomain,
-        current_tick: u64,
-        expires_tick: u64,
-        pid: u32,
-        matrix_caps: [CapBits; CAP_DOMAINS],
-    ) -> LoginResult {
-        if !password_ok {
+    ///
+    /// 业务参数收拢在 [`LoginRequest`] 中.
+    pub fn login(&mut self, req: LoginRequest) -> LoginResult {
+        if !req.password_ok {
             return LoginResult::Denied(LoginDeny::InvalidCredentials);
         }
         // 失败计数: 简化处理 (实际应有 PWM 关联的失败计数表)
         // 检查策略
-        let matrix = InMemoryCaps(matrix_caps);
-        match PolicyEngine::check(&matrix, domain, required) {
+        let matrix = InMemoryCaps(req.matrix_caps);
+        match PolicyEngine::check(&matrix, req.domain, req.required) {
             PolicyResult::Allow => {
-                let id = match self
-                    .table
-                    .create(pwm, matrix_caps, current_tick, expires_tick, pid)
-                {
+                let id = match self.table.create(
+                    req.pwm,
+                    req.matrix_caps,
+                    req.current_tick,
+                    req.expires_tick,
+                    req.pid,
+                ) {
                     Ok(id) => id,
                     Err(
                         SessionError::Kernel(crate::functions::error::KernelError::WouldBlock)
@@ -380,8 +407,8 @@ impl super::policy::CapabilityMatrix for InMemoryCaps {
         }
         Some(self.0[domain.0 as usize])
     }
-    fn set(&self, _domain: CapDomain, _bits: CapBits) -> Result<CapBits, ()> {
-        Err(()) // 只读
+    fn set(&self, _domain: CapDomain, _bits: CapBits) -> Result<CapBits, CapSetError> {
+        Err(CapSetError) // 只读
     }
     fn compare_exchange(
         &self,
@@ -488,7 +515,16 @@ mod tests {
         let p = PolicyEngine::new();
         let mut mgr = SessionManager::new(&mut t, &p);
         let caps = default_caps();
-        let r = mgr.login(1, false, CapBits(0), CapDomain::FS, 100, 0, 0, caps);
+        let r = mgr.login(LoginRequest {
+            pwm: 1,
+            password_ok: false,
+            required: CapBits(0),
+            domain: CapDomain::FS,
+            current_tick: 100,
+            expires_tick: 0,
+            pid: 0,
+            matrix_caps: caps,
+        });
         assert_eq!(r, LoginResult::Denied(LoginDeny::InvalidCredentials));
     }
 
@@ -500,7 +536,16 @@ mod tests {
         let mut caps = default_caps();
         // 不给 FS 任何能力, 但要求 0b0001
         caps[CapDomain::FS.0 as usize] = CapBits(0);
-        let r = mgr.login(1, true, CapBits(0b0001), CapDomain::FS, 100, 0, 0, caps);
+        let r = mgr.login(LoginRequest {
+            pwm: 1,
+            password_ok: true,
+            required: CapBits(0b0001),
+            domain: CapDomain::FS,
+            current_tick: 100,
+            expires_tick: 0,
+            pid: 0,
+            matrix_caps: caps,
+        });
         assert!(matches!(
             r,
             LoginResult::Denied(LoginDeny::CapabilityDenied(_))
@@ -514,7 +559,16 @@ mod tests {
         let mut mgr = SessionManager::new(&mut t, &p);
         let mut caps = default_caps();
         caps[CapDomain::FS.0 as usize] = CapBits(0xFF);
-        let r = mgr.login(1, true, CapBits(0b1000), CapDomain::FS, 100, 0, 0, caps);
+        let r = mgr.login(LoginRequest {
+            pwm: 1,
+            password_ok: true,
+            required: CapBits(0b1000),
+            domain: CapDomain::FS,
+            current_tick: 100,
+            expires_tick: 0,
+            pid: 0,
+            matrix_caps: caps,
+        });
         assert!(matches!(r, LoginResult::Success(_)));
     }
 

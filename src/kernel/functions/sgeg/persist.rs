@@ -29,9 +29,9 @@ const DB_VER_MINOR: u16 = 0;
 
 /// 单条目 v5 磁盘尺寸(字节): pwm(8) + creator(8) + level(1) + flags(2) + caps(16×8) + note(64) + hash(48) + created(8) + expires(8).
 const ENTRY_SZ: usize = 8 + 8 + 1 + 2 + 128 + PWM_NOTE_LEN + PWM_HASH_LEN + 8 + 8;
-/// 单条目 v4 磁盘尺寸: note 段 128 字节, 且无 creator_pwm 字段.
+/// 单条目 v4 磁盘尺寸: note 段 128 字节, 且无 `creator_pwm` 字段.
 const V4_ENTRY_SZ: usize = 8 + 1 + 2 + 128 + 128 + PWM_HASH_LEN + 8 + 8;
-/// 头部尺寸: magic(4) + ver_major(2) + ver_minor(2) + count(4).
+/// 头部尺寸: magic(4) + `ver_major(2)` + `ver_minor(2)` + count(4).
 const HDR_SZ: usize = 4 + 2 + 2 + 4;
 /// 序列化缓冲上限 (头部 + 全表条目).
 const BUF_SZ: usize = 80000;
@@ -104,15 +104,15 @@ fn serialize(snap: &PwmEntrySnapshot, buf: &mut [u8], p: &mut usize) {
     w64(buf, p, snap.creator_pwm);
     w8(buf, p, snap.privilege_level);
     w16(buf, p, snap.flags);
-    for i in 0..16 {
-        w64(buf, p, snap.caps[i]);
+    for &cap in &snap.caps {
+        w64(buf, p, cap);
     }
-    for i in 0..PWM_NOTE_LEN {
-        buf[*p] = snap.note[i];
+    for &b in &snap.note {
+        buf[*p] = b;
         *p += 1;
     }
-    for i in 0..PWM_HASH_LEN {
-        buf[*p] = snap.password_hash[i];
+    for &b in &snap.password_hash {
+        buf[*p] = b;
         *p += 1;
     }
     w64(buf, p, snap.created_time);
@@ -129,8 +129,8 @@ fn deserialize(buf: &[u8], p: &mut usize) -> Option<PwmEntrySnapshot> {
     let privilege_level = r8(buf, p);
     let flags = r16(buf, p);
     let mut caps = [0u64; 16];
-    for i in 0..16 {
-        caps[i] = r64(buf, p);
+    for cap in &mut caps {
+        *cap = r64(buf, p);
     }
     let mut note = [0u8; PWM_NOTE_LEN];
     note.copy_from_slice(&buf[*p..*p + PWM_NOTE_LEN]);
@@ -165,8 +165,8 @@ fn deserialize_v4(buf: &[u8], p: &mut usize) -> Option<PwmEntrySnapshot> {
     let privilege_level = r8(buf, p);
     let flags = r16(buf, p);
     let mut caps = [0u64; 16];
-    for i in 0..16 {
-        caps[i] = r64(buf, p);
+    for cap in &mut caps {
+        *cap = r64(buf, p);
     }
     let mut v4_note = [0u8; 128];
     v4_note.copy_from_slice(&buf[*p..*p + 128]);
@@ -199,6 +199,7 @@ fn deserialize_v4(buf: &[u8], p: &mut usize) -> Option<PwmEntrySnapshot> {
 /// 保存身份表到磁盘 (`/pwm.db`).
 ///
 /// 未修改时直接返回 `0`; 写入成功返回 `0`, IO 失败或缓冲不足返回 `-1`.
+#[must_use]
 pub fn save_database() -> i32 {
     let t = get_table();
     if !t.is_modified() {
@@ -238,7 +239,7 @@ pub fn save_database() -> i32 {
     }
 
     let written = vfs_write_safe(fd.cast_unsigned(), &buf[..sz]);
-    vfs_close_safe(fd.cast_unsigned());
+    let _ = vfs_close_safe(fd.cast_unsigned());
     if crate::functions::intcast::usize_from_i32(written) != sz {
         return -1;
     }
@@ -250,6 +251,7 @@ pub fn save_database() -> i32 {
 /// 从磁盘加载身份表 (`/pwm.db`).
 ///
 /// 文件不存在返回 `0` (视为空库); 校验失败/IO 失败返回 `-1`.
+#[must_use]
 pub fn load_database() -> i32 {
     let fd = vfs_open_safe(DB_PATH, O_RDONLY, 0);
     if fd < 0 {
@@ -259,7 +261,7 @@ pub fn load_database() -> i32 {
     let mut hdr = [0u8; HDR_SZ];
     let rd = vfs_read_safe(fd.cast_unsigned(), &mut hdr);
     if rd < crate::functions::intcast::low_i32_from_usize(HDR_SZ) {
-        vfs_close_safe(fd.cast_unsigned());
+        let _ = vfs_close_safe(fd.cast_unsigned());
         return -1;
     }
 
@@ -268,7 +270,7 @@ pub fn load_database() -> i32 {
         || hdr[2] != DB_MAGIC[2]
         || hdr[3] != DB_MAGIC[3]
     {
-        vfs_close_safe(fd.cast_unsigned());
+        let _ = vfs_close_safe(fd.cast_unsigned());
         return -1;
     }
 
@@ -277,19 +279,19 @@ pub fn load_database() -> i32 {
     let _vmin = r16(&hdr, &mut hp);
     let count = r32(&hdr, &mut hp) as usize;
     if count == 0 || count > MAX_PWM_ENTRIES {
-        vfs_close_safe(fd.cast_unsigned());
+        let _ = vfs_close_safe(fd.cast_unsigned());
         return -1;
     }
 
     let ds = count * if vmaj < 5 { V4_ENTRY_SZ } else { ENTRY_SZ };
     // 安全切片边界: v4 大 count 时 `ds` 可超缓冲, 返回 -1 (对齐 save 路径的守护).
     if ds > BUF_SZ {
-        vfs_close_safe(fd.cast_unsigned());
+        let _ = vfs_close_safe(fd.cast_unsigned());
         return -1;
     }
     let mut data = alloc::vec![0u8; BUF_SZ];
     let dr = vfs_read_safe(fd.cast_unsigned(), &mut data[..ds]);
-    vfs_close_safe(fd.cast_unsigned());
+    let _ = vfs_close_safe(fd.cast_unsigned());
     if dr < crate::functions::intcast::low_i32_from_usize(ds) {
         return -1;
     }
@@ -320,6 +322,7 @@ pub fn load_database() -> i32 {
 }
 
 /// 从磁盘删除身份表文件 (`/pwm.db`).
+#[must_use]
 pub fn remove_database() -> i32 {
     vfs_unlink_safe(DB_PATH, 0)
 }

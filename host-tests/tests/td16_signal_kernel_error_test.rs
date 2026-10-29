@@ -78,8 +78,8 @@ fn kernel_error_exposes_no_such_process() {
         "KernelError::from_i32(3) 必须映射到 NoSuchProcess"
     );
     assert!(
-        src.contains("Self::NoSuchProcess => Errno::ESRCH"),
-        "KernelError::NoSuchProcess 必须反向映射到 Errno::ESRCH"
+        src.contains("Self::NoSuchProcess => Errno::Esrch"),
+        "KernelError::NoSuchProcess 必须反向映射到 Errno::Esrch"
     );
 }
 

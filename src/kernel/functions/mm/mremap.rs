@@ -38,18 +38,18 @@ pub fn mremap_syscall(
     const MREMAP_MAYMOVE: i32 = 1;
     // 1. 参数验证
     if old_addr == 0 || old_size == 0 || new_size == 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if old_addr & 0xFFF != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     // 限制最大搬迁大小: 1 GiB 防止恶意/错误请求耗尽地址空间
     if old_size > MAX_REMAP || new_size > MAX_REMAP {
-        return Err(Errno::ENOMEM);
+        return Err(Errno::Enomem);
     }
     // flags 仅允许 MAYMOVE=1
     if flags & !MREMAP_MAYMOVE != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     // 2. 委托 privileged 层执行搬迁
@@ -57,7 +57,7 @@ pub fn mremap_syscall(
     let cr3 = crate::privileged::proc::process_get_cr3(
         crate::privileged::proc::process_get_current_pid(),
     )
-    .ok_or(Errno::ENOMEM)?;
+    .ok_or(Errno::Enomem)?;
     mm.mremap(
         crate::functions::intcast::usize_from_u64(old_addr),
         crate::functions::intcast::usize_from_u64(old_size),

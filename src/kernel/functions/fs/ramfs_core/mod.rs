@@ -15,7 +15,7 @@
 //! - DECISION-K 项 5: 回迁 privileged, Inode 构造改走 backend 工厂钩子
 //! - VFS 完整下沉: 随 VFS 子系统整体下沉 functions, 挂载点经 `ramfs_fs()` 暴露
 
-/// RamFS 数据区 — 节点表 / 惰性页池 / 位图 / ACE 表
+/// `RamFS` 数据区 — 节点表 / 惰性页池 / 位图 / ACE 表
 pub mod ramfs_data;
 pub mod ramfs_node;
 
@@ -46,10 +46,10 @@ pub(crate) const FS_CAP_CREATE: u64 = 1 << 3;
 // 全局实例
 // ============================================================================
 
-/// 全局 RamFS 挂载树单例 (由 Mutex 保护)。
+/// 全局 `RamFS` 挂载树单例 (由 Mutex 保护)。
 pub static RAMFS_DATA: Mutex<RamFsData> = Mutex::new(RamFsData::new());
 
-/// 初始化 RamFS: 在根路径 `/` 挂载全局实例。
+/// 初始化 `RamFS`: 在根路径 `/` 挂载全局实例。
 pub fn init() {
     let mut ramfs = RAMFS_DATA.lock();
     ramfs.mount("/");
@@ -59,12 +59,12 @@ pub fn init() {
 // FileSystem trait 实现 (Inode 经 backend 钩子由 functions 注入)
 // ============================================================================
 
-/// RamFS FileSystem trait 实现的载体 (无状态句柄)
+/// `RamFS` `FileSystem` trait 实现的载体 (无状态句柄)
 ///
 /// 全局数据经 `RAMFS_DATA` 单例访问, 句柄本身不持有状态.
 pub struct RamFsFileSystem;
 
-/// 经 backend 工厂钩子构造 RamFS Inode (具象实现由 functions 注入)
+/// 经 backend 工厂钩子构造 `RamFS` Inode (具象实现由 functions 注入)
 ///
 /// 后端未注册 (早期启动) 或构造失败时返回 Err, fail-closed.
 fn make_inode(
@@ -163,15 +163,17 @@ impl FileSystem for RamFsFileSystem {
                     .stat(node_id)
                     .inspect(|st| {
                         crate::functions::fs::dcache::icache_insert(
-                            fs_id,
-                            node_id,
-                            st.file_type,
-                            st.perm,
-                            st.size as u32,
-                            st.mtime,
-                            st.ctime,
-                            st.owner_pwm,
-                            st.group_pwm,
+                            &crate::functions::fs::dcache::ICacheInsertArgs {
+                                fs_id,
+                                ino: node_id,
+                                file_type: st.file_type,
+                                perm: st.perm,
+                                size: st.size,
+                                mtime: st.mtime,
+                                ctime: st.ctime,
+                                owner_pwm: st.owner_pwm,
+                                group_pwm: st.group_pwm,
+                            },
                         );
                     })
                     .ok_or(KernelError::FileNotFound)
@@ -429,10 +431,11 @@ impl FileSystem for RamFsFileSystem {
     }
 }
 
-/// RamFS FileSystem 全局实例 (供挂载路径经 `ramfs_fs()` 暴露)
+/// `RamFS` `FileSystem` 全局实例 (供挂载路径经 `ramfs_fs()` 暴露)
 static RAMFS_FS: RamFsFileSystem = RamFsFileSystem;
 
-/// 获取 RamFS FileSystem trait object (VFS 挂载路径用)
+/// 获取 `RamFS` `FileSystem` trait object (VFS 挂载路径用)
+#[must_use]
 pub fn ramfs_fs() -> &'static dyn FileSystem {
     &RAMFS_FS
 }

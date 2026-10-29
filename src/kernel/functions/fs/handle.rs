@@ -128,7 +128,7 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
 
 // 注意: 保持 Rust ABI — vfs_close_internal 为内核内部调用 (fd 表原子回收),
 //        TD-03 契约测试按 Rust ABI 签名匹配该函数体.
-/// 关闭 fd — 原子 claim-and-clear 后释放 OpenFile 引用.
+/// 关闭 fd — 原子 claim-and-clear 后释放 `OpenFile` 引用.
 ///
 /// 幂等: 无进程上下文 / fd 未使用 / 已关闭均返回 0. 关闭路径同时触发
 /// pcache 失效、inotify `IN_CLOSE_*` 通知与 epoll 等待者唤醒.
@@ -170,7 +170,7 @@ pub fn vfs_close_internal(fd_idx: u32) -> i32 {
 ///
 /// 带 `FD_CLOEXEC` 的 fd 在 exec 成功后关闭, 其余保留。
 /// 先收集 CLOEXEC fd 索引再逐个 `vfs_close_internal`, 避免持 `FdTable`
-/// 锁递归 (vfs_close_internal 内部会再次获取同一把锁 → 自锁死)。
+/// 锁递归 (`vfs_close_internal` 内部会再次获取同一把锁 → 自锁死)。
 pub fn vfs_close_cloexec_fds() {
     let targets: alloc::vec::Vec<u32> = crate::privileged::proc::with_current_fd_table(
         crate::privileged::proc::FdTable::get_cloexec_fds,
@@ -186,10 +186,10 @@ pub fn vfs_close_cloexec_fds() {
 
 /// 关闭当前进程 fd 表的全部 fd — 进程退出路径调用。
 ///
-/// B-9.5: per-process fd 表权威化后, 进程退出须逐 fd 释放 OpenFile 引用
+/// B-9.5: per-process fd 表权威化后, 进程退出须逐 fd 释放 `OpenFile` 引用
 /// (递减引用计数) 并触发 pcache 失效 / inotify / fd 通知, 否则全局
 /// `OPEN_FILE_TABLE` 槽位泄漏。先收集 fd 索引再逐个 `vfs_close_internal`,
-/// 避免持 `FdTable` 锁递归 (vfs_close_internal 内部会再次获取同一把锁)。
+/// 避免持 `FdTable` 锁递归 (`vfs_close_internal` 内部会再次获取同一把锁)。
 /// 无进程上下文时为空操作。
 pub fn vfs_close_all_fds() {
     let targets: alloc::vec::Vec<u32> = crate::privileged::proc::with_current_fd_table(
@@ -297,7 +297,7 @@ pub extern "C" fn vfs_read_internal(fd_idx: u32, buf: *mut u8, count: u32) -> i3
 
 /// 内核缓冲读 — 调用方持有内核内存, 不经用户指针校验.
 ///
-/// 供 functions 层内部 I/O 复用 (sendfile/splice/copy_file_range 等).
+/// 供 functions 层内部 I/O 复用 (`sendfile/splice/copy_file_range` 等).
 pub fn vfs_read_kernel(fd: u32, dst: &mut [u8]) -> i32 {
     if dst.is_empty() {
         return KernelError::InvalidArgument.as_vfs_ret();
@@ -347,7 +347,7 @@ pub fn vfs_pread_inode(
 
 /// 截断 fd 对应文件到 `size` 字节.
 ///
-/// 经 OpenFile 的 Inode trait 执行; 成功发 inotify `IN_MODIFY`.
+/// 经 `OpenFile` 的 Inode trait 执行; 成功发 inotify `IN_MODIFY`.
 /// 成功返回 0, fd 无效或后端失败返回负值.
 pub extern "C" fn vfs_truncate_internal(fd: u32, size: u64) -> i32 {
     // B-9.5: 边界由 per-process fd 表 (MAX_FDS_PER_PROCESS) 承担, 不再用
@@ -424,6 +424,7 @@ fn vfs_write_slice(fd_idx: u32, src: &[u8]) -> i32 {
 ///
 /// 用户内存经 `UserReadPtr` 校验 (I4) 后转 `vfs_write_slice`; 成功返回
 /// 写入字节数, 失败返回负 errno.
+#[must_use]
 pub extern "C" fn vfs_write_internal(fd_idx: u32, buf: *const u8, count: u32) -> i32 {
     if buf.is_null() || count == 0 {
         return -1;
@@ -440,8 +441,9 @@ pub extern "C" fn vfs_write_internal(fd_idx: u32, buf: *const u8, count: u32) ->
 /// 内核缓冲写 — 调用方持有内核内存, 不经用户指针校验.
 ///
 /// 供 functions 层内部 I/O 复用 (bounce 缓冲: 管道写 / sendfile / splice /
-/// copy_file_range). 返回值语义同 [`vfs_write_internal`] (负 = -errno,
+/// `copy_file_range`). 返回值语义同 [`vfs_write_internal`] (负 = -errno,
 /// 非负 = 已写字节数, 管道支持部分写).
+#[must_use]
 pub fn vfs_write_kernel(fd: u32, src: &[u8]) -> i32 {
     if src.is_empty() {
         return KernelError::InvalidArgument.as_vfs_ret();
@@ -496,6 +498,7 @@ pub extern "C" fn vfs_readdir_internal(fd: u32, entry: *mut VfsDirEntry) -> i32 
 // ============================================================================
 
 /// Safe 包装: `vfs_open` (接受 &str 路径)
+#[must_use]
 pub fn vfs_open_safe(path: &str, flags: u32, pwm: u64) -> i32 {
     with_cstr(path, |ptr| vfs_open_internal(ptr, flags, pwm))
 }
@@ -511,6 +514,7 @@ pub fn vfs_read_safe(fd: u32, buf: &mut [u8]) -> i32 {
 }
 
 /// Safe 包装: `vfs_write` (接受不可变切片)
+#[must_use]
 pub fn vfs_write_safe(fd: u32, buf: &[u8]) -> i32 {
     // SAFETY: buf 是调用方拥有的有效只读缓冲区
     vfs_write(
@@ -541,7 +545,7 @@ pub fn vfs_write_pod<T: Copy>(fd: u32, val: &T) -> i32 {
 /// pread — 从显式 offset 读取, 不更新 fd 当前偏移 (POSIX pread 语义)
 ///
 /// SIMPLIFIED: 不走 pcache 快路径 (直接 Inode trait 分发), 影响面: 4KB
-/// 对齐大读性能低于 vfs_read 快路径; 何时需扩展: 复用 vfs_read_internal 的
+/// 对齐大读性能低于 `vfs_read` 快路径; 何时需扩展: 复用 `vfs_read_internal` 的
 /// 对齐检测 + pcache 快路径后.
 pub fn vfs_pread(fd: u32, buf: *mut u8, count: u32, offset: u64) -> i32 {
     if buf.is_null() || count == 0 {
@@ -567,7 +571,7 @@ pub fn vfs_pread(fd: u32, buf: *mut u8, count: u32, offset: u64) -> i32 {
 
 /// pwrite — 从显式 offset 写入, 不更新 fd 当前偏移 (POSIX pwrite 语义)
 ///
-/// 忽略 O_APPEND (pwrite 不受 append 模式影响, 写固定 offset).
+/// 忽略 `O_APPEND` (pwrite 不受 append 模式影响, 写固定 offset).
 pub fn vfs_pwrite(fd: u32, buf: *const u8, count: u32, offset: u64) -> i32 {
     if buf.is_null() || count == 0 {
         return -1;
@@ -596,11 +600,13 @@ pub fn vfs_pwrite(fd: u32, buf: *const u8, count: u32, offset: u64) -> i32 {
 }
 
 /// Safe 包装: `vfs_close`
+#[must_use]
 pub fn vfs_close_safe(fd: u32) -> i32 {
     vfs_close(fd)
 }
 
 /// Safe 包装: `vfs_seek`
+#[must_use]
 pub fn vfs_seek_safe(fd: u32, offset: i32, whence: u32) -> i32 {
     vfs_seek(fd, offset, whence)
 }
@@ -612,11 +618,13 @@ pub fn vfs_readdir_safe(fd: u32, entry: &mut super::vfs_types::VfsDirEntry) -> i
 }
 
 /// `open(2)` 入口 — 转 [`vfs_open_internal`].
+#[must_use]
 pub extern "C" fn vfs_open(path: *const u8, flags: u32, pwm: u64) -> i32 {
     vfs_open_internal(path, flags, pwm)
 }
 
 /// `close(2)` 入口 — 转 [`vfs_close_internal`].
+#[must_use]
 pub extern "C" fn vfs_close(fd: u32) -> i32 {
     vfs_close_internal(fd)
 }
@@ -627,6 +635,7 @@ pub extern "C" fn vfs_read(fd: u32, buf: *mut u8, count: u32) -> i32 {
 }
 
 /// `write(2)` 入口 — 转 [`vfs_write_internal`].
+#[must_use]
 pub extern "C" fn vfs_write(fd: u32, buf: *const u8, count: u32) -> i32 {
     vfs_write_internal(fd, buf, count)
 }
@@ -753,6 +762,7 @@ pub extern "C" fn vfs_fstat(fd: u32, st: *mut VfsStat, _pwm: u64) -> i32 {
 }
 
 /// Safe 包装: functions 层用, 返回 `VfsStat` 而非 raw pointer.
+#[must_use]
 pub fn vfs_fstat_safe(fd: u32, pwm: u64) -> Option<VfsStat> {
     let mut st = VfsStat::default();
     let r = vfs_fstat(fd, &raw mut st, pwm);
@@ -764,6 +774,7 @@ pub fn vfs_fstat_safe(fd: u32, pwm: u64) -> Option<VfsStat> {
 // ============================================================================
 
 /// 获取本地 fd 的 `OpenFile` `handle_id` (B-9.5: 源自 per-process fd 表).
+#[must_use]
 pub fn vfs_get_fd_handle(fd_idx: usize) -> Option<u32> {
     current_fd_handle(fd_idx)
 }
@@ -772,7 +783,7 @@ pub fn vfs_get_fd_handle(fd_idx: usize) -> Option<u32> {
 // dup / dup2 — 文件描述符复制
 // ============================================================================
 
-/// `dup(2)` — 复制 fd, 新旧 fd 共享同一 OpenFile (offset/flags 共享).
+/// `dup(2)` — 复制 fd, 新旧 fd 共享同一 `OpenFile` (offset/flags 共享).
 ///
 /// 新 fd 无 CLOEXEC; 源 fd 无效返回 `-EBADF`, fd 表满返回 `-EMFILE`.
 pub extern "C" fn vfs_dup(oldfd: u32) -> i32 {
@@ -798,7 +809,7 @@ pub extern "C" fn vfs_dup(oldfd: u32) -> i32 {
 
 /// `dup2(2)` — 把 `oldfd` 复制到指定 `newfd`, 覆盖其原有打开文件.
 ///
-/// 覆盖前先释放 `newfd` 原有 OpenFile 引用; 结果 fd 无 CLOEXEC.
+/// 覆盖前先释放 `newfd` 原有 `OpenFile` 引用; 结果 fd 无 CLOEXEC.
 /// `oldfd` 无效或 `newfd` 越界返回 `-EBADF`.
 pub extern "C" fn vfs_dup2(oldfd: u32, newfd: u32) -> i32 {
     let old_usize = oldfd as usize;

@@ -83,6 +83,7 @@ pub struct GrantTable {
 
 impl GrantTable {
     /// 构造空委托表 (代数从 1 开始分配)
+    #[must_use]
     pub const fn new() -> Self {
         const EMPTY: GrantRecord = GrantRecord {
             from_pwm: 0,
@@ -125,12 +126,10 @@ impl GrantTable {
         if r#gen == 0 {
             return None;
         }
-        for r in &self.records {
-            if r.generation == r#gen {
-                return Some(r);
-            }
-        }
-        None
+        self.records
+            .iter()
+            .find(|&r| r.generation == r#gen)
+            .map(|v| v as _)
     }
 
     /// 标记撤销 (释放槽) — B07-16: 级联撤销所有以 `r#gen` 为祖先的后代委托.
@@ -221,6 +220,13 @@ impl GrantTable {
     }
 }
 
+impl Default for GrantTable {
+    /// 等价于 [`GrantTable::new`] (空委托表)
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// 委托操作结果
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DelegationResult {
@@ -248,6 +254,27 @@ pub enum DelegationDeny {
     Policy(GrantResult),
 }
 
+/// 委托请求 (收拢 [`DelegationEngine::delegate`] 的业务参数)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DelegationRequest {
+    /// 委托者 PWM
+    pub from_pwm: u64,
+    /// 受托者 PWM
+    pub to_pwm: u64,
+    /// 能力域
+    pub domain: CapDomain,
+    /// 授予的能力位
+    pub bits: CapBits,
+    /// 当前时刻 (用于过期判定)
+    pub current_tick: u64,
+    /// 过期时刻 (0 = 永久)
+    pub expires_tick: u64,
+    /// 父委托的 generation (链式委托的父链, 0 = 根委托)
+    pub parent_gen: u32,
+    /// 是否标记为不可再委托
+    pub non_delegatable: bool,
+}
+
 /// 委托引擎 (绑定一张委托表与一个策略引擎)
 pub struct DelegationEngine<'a> {
     /// 委托记录表
@@ -264,48 +291,41 @@ impl<'a> DelegationEngine<'a> {
 
     /// 委托
     ///
-    /// `parent_gen`: 父委托的 generation (链式委托的父链, 0 = 根委托).
-    /// B07-16: 记录父委托链, 使撤销父委托时级联撤销后代 (权限放大防护).
+    /// 业务参数收拢在 [`DelegationRequest`] 中; `parent_gen` 非 0 时记录父委托链,
+    /// 使撤销父委托时级联撤销后代 (权限放大防护, B07-16).
     pub fn delegate<M: CapabilityMatrix>(
         &mut self,
         from_matrix: &M,
         to_matrix: &mut M,
-        from_pwm: u64,
-        to_pwm: u64,
-        domain: CapDomain,
-        bits: CapBits,
-        current_tick: u64,
-        expires_tick: u64,
-        parent_gen: u32,
-        non_delegatable: bool,
+        req: DelegationRequest,
     ) -> DelegationResult {
-        if from_pwm == to_pwm {
+        if req.from_pwm == req.to_pwm {
             return DelegationResult::Denied(DelegationDeny::SamePwm);
         }
-        if expires_tick != 0 && expires_tick <= current_tick {
+        if req.expires_tick != 0 && req.expires_tick <= req.current_tick {
             return DelegationResult::Denied(DelegationDeny::InvalidExpiry);
         }
         // 若声明父委托, 父必须存在且未被撤销 (防悬空父链).
-        if parent_gen != 0 && !self.table.is_valid(parent_gen, current_tick) {
+        if req.parent_gen != 0 && !self.table.is_valid(req.parent_gen, req.current_tick) {
             return DelegationResult::Denied(DelegationDeny::InvalidExpiry);
         }
-        let grant_res = PolicyEngine::grant(from_matrix, to_matrix, domain, bits);
+        let grant_res = PolicyEngine::grant(from_matrix, to_matrix, req.domain, req.bits);
         match grant_res {
             GrantResult::Granted => {
-                let flags = if non_delegatable {
+                let flags = if req.non_delegatable {
                     GrantFlags::NON_DELEGATABLE
                 } else {
                     GrantFlags::NONE
                 };
                 let rec = GrantRecord {
-                    from_pwm,
-                    to_pwm,
-                    domain,
-                    bits,
-                    created_tick: current_tick,
-                    expires_tick,
+                    from_pwm: req.from_pwm,
+                    to_pwm: req.to_pwm,
+                    domain: req.domain,
+                    bits: req.bits,
+                    created_tick: req.current_tick,
+                    expires_tick: req.expires_tick,
                     generation: 0,
-                    parent_gen,
+                    parent_gen: req.parent_gen,
                     flags,
                 };
                 self.table.add(rec).map_or(
@@ -515,14 +535,16 @@ mod tests {
         let r = eng.delegate(
             &from,
             &mut to,
-            1,
-            2,
-            CapDomain::FS,
-            CapBits(0b1000),
-            100,
-            0,
-            0,
-            false,
+            DelegationRequest {
+                from_pwm: 1,
+                to_pwm: 2,
+                domain: CapDomain::FS,
+                bits: CapBits(0b1000),
+                current_tick: 100,
+                expires_tick: 0,
+                parent_gen: 0,
+                non_delegatable: false,
+            },
         );
         assert!(matches!(r, DelegationResult::Granted { .. }));
         assert_eq!(to.get(CapDomain::FS), Some(CapBits(0b1000)));
@@ -539,14 +561,16 @@ mod tests {
         let r = eng.delegate(
             &from,
             &mut to,
-            1,
-            1,
-            CapDomain::FS,
-            CapBits(0b1000),
-            100,
-            0,
-            0,
-            false,
+            DelegationRequest {
+                from_pwm: 1,
+                to_pwm: 1,
+                domain: CapDomain::FS,
+                bits: CapBits(0b1000),
+                current_tick: 100,
+                expires_tick: 0,
+                parent_gen: 0,
+                non_delegatable: false,
+            },
         );
         assert_eq!(r, DelegationResult::Denied(DelegationDeny::SamePwm));
     }
@@ -563,14 +587,16 @@ mod tests {
         let r = eng.delegate(
             &from,
             &mut to,
-            1,
-            2,
-            CapDomain::FS,
-            CapBits(0b1000),
-            100,
-            50,
-            0,
-            false,
+            DelegationRequest {
+                from_pwm: 1,
+                to_pwm: 2,
+                domain: CapDomain::FS,
+                bits: CapBits(0b1000),
+                current_tick: 100,
+                expires_tick: 50,
+                parent_gen: 0,
+                non_delegatable: false,
+            },
         );
         assert_eq!(r, DelegationResult::Denied(DelegationDeny::InvalidExpiry));
     }
@@ -585,14 +611,16 @@ mod tests {
         let r = eng.delegate(
             &from,
             &mut to,
-            1,
-            2,
-            CapDomain::FS,
-            CapBits(0b1000),
-            100,
-            0,
-            0,
-            false,
+            DelegationRequest {
+                from_pwm: 1,
+                to_pwm: 2,
+                domain: CapDomain::FS,
+                bits: CapBits(0b1000),
+                current_tick: 100,
+                expires_tick: 0,
+                parent_gen: 0,
+                non_delegatable: false,
+            },
         );
         assert!(matches!(
             r,
@@ -611,14 +639,16 @@ mod tests {
         let r = eng.delegate(
             &from,
             &mut to,
-            1,
-            2,
-            CapDomain::FS,
-            CapBits(0b1000),
-            100,
-            0,
-            0,
-            false,
+            DelegationRequest {
+                from_pwm: 1,
+                to_pwm: 2,
+                domain: CapDomain::FS,
+                bits: CapBits(0b1000),
+                current_tick: 100,
+                expires_tick: 0,
+                parent_gen: 0,
+                non_delegatable: false,
+            },
         );
         let r#gen = match r {
             DelegationResult::Granted { r#gen } => r#gen,
@@ -646,14 +676,16 @@ mod tests {
         let r1 = eng.delegate(
             &from,
             &mut to,
-            1,
-            2,
-            CapDomain::FS,
-            CapBits(0b1000),
-            100,
-            0,
-            0,
-            false,
+            DelegationRequest {
+                from_pwm: 1,
+                to_pwm: 2,
+                domain: CapDomain::FS,
+                bits: CapBits(0b1000),
+                current_tick: 100,
+                expires_tick: 0,
+                parent_gen: 0,
+                non_delegatable: false,
+            },
         );
         let gen1 = match r1 {
             DelegationResult::Granted { r#gen } => r#gen,
@@ -663,14 +695,16 @@ mod tests {
         let r2 = eng.delegate(
             &to,
             &mut to2,
-            2,
-            3,
-            CapDomain::FS,
-            CapBits(0b0100),
-            100,
-            0,
-            gen1,
-            false,
+            DelegationRequest {
+                from_pwm: 2,
+                to_pwm: 3,
+                domain: CapDomain::FS,
+                bits: CapBits(0b0100),
+                current_tick: 100,
+                expires_tick: 0,
+                parent_gen: gen1,
+                non_delegatable: false,
+            },
         );
         let gen2 = match r2 {
             DelegationResult::Granted { r#gen } => r#gen,
@@ -698,14 +732,16 @@ mod tests {
         let r = eng.delegate(
             &from,
             &mut to,
-            1,
-            2,
-            CapDomain::FS,
-            CapBits(0b1000),
-            100,
-            0,
-            999,
-            false,
+            DelegationRequest {
+                from_pwm: 1,
+                to_pwm: 2,
+                domain: CapDomain::FS,
+                bits: CapBits(0b1000),
+                current_tick: 100,
+                expires_tick: 0,
+                parent_gen: 999,
+                non_delegatable: false,
+            },
         );
         assert!(matches!(
             r,

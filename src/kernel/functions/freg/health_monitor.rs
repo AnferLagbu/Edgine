@@ -36,6 +36,7 @@ pub struct DomainHealth {
 
 impl DomainHealth {
     /// 构造 "未知但健康" 的初始快照 (零失败, 层级 0)
+    #[must_use]
     pub const fn unknown(domain_id: u64) -> Self {
         Self {
             domain_id,
@@ -47,7 +48,8 @@ impl DomainHealth {
     }
 
     /// 转为 `FaultSignal` (供 Policy 决策)
-    pub const fn to_fault_signal(&self, heartbeat_gap: u64, dependents: u32) -> FaultSignal {
+    #[must_use]
+    pub const fn to_fault_signal(self, heartbeat_gap: u64, dependents: u32) -> FaultSignal {
         FaultSignal {
             attribution: crate::functions::freg::attribution::FaultAttribution::Service {
                 domain_id: self.domain_id,
@@ -141,11 +143,11 @@ impl<'a> HealthMonitor<'a> {
                         quarantine_count += 1;
                     }
                 }
-                RecoveryAction::FREGSoftReset | RecoveryAction::FREGBaseRecovery => {
-                    if downgrade_count < MAX_MONITOR_DOMAINS {
-                        downgrades[downgrade_count] = domain_id;
-                        downgrade_count += 1;
-                    }
+                RecoveryAction::FREGSoftReset | RecoveryAction::FREGBaseRecovery
+                    if downgrade_count < MAX_MONITOR_DOMAINS =>
+                {
+                    downgrades[downgrade_count] = domain_id;
+                    downgrade_count += 1;
                 }
                 _ => {}
             }
@@ -175,6 +177,7 @@ impl<'a> HealthMonitor<'a> {
     }
 
     /// 标记域失败 (供 functions 业务层在请求失败后调用)
+    #[must_use]
     pub fn report_failure(&self, domain_id: u64, tick: u64) -> u32 {
         for rec in self.records.iter() {
             if rec.domain_id == domain_id {

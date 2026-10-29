@@ -26,6 +26,7 @@ impl CpuFeatures {
     /// x86_64: 经 CPUID leaf 0 取最大叶号, 再按 leaf 1 的
     /// EDX bit 9 (APIC) / ECX bit 21 (x2APIC) 解析真实硬件特性.
     /// aarch64: 无 CPUID 指令 (中断控制器为 GIC 而非 APIC), 返回架构中性缺省值.
+    #[must_use]
     pub fn detect() -> Self {
         #[cfg(target_arch = "x86_64")]
         {
@@ -72,11 +73,12 @@ impl CpuFeatures {
 /// # Returns
 /// Page Fault 触发时的线性地址
 #[inline]
+#[must_use]
 pub unsafe fn read_cr2() -> u64 {
     crate::arch!(read_fault_address()) as u64
 }
 
-/// 中断控制函数
+// 中断控制函数
 
 /// 禁用中断 (cli)
 #[inline]
@@ -99,11 +101,12 @@ pub unsafe fn enable_interrupts() {
     crate::arch!(interrupt_enable());
 }
 
-/// RFLAGS 寄存器操作
+// RFLAGS 寄存器操作
 
 /// 读取当前 RFLAGS
 #[inline]
 #[cfg(target_arch = "x86_64")]
+#[must_use]
 pub fn read_rflags() -> u64 {
     let rflags: u64;
     // SAFETY: 内联汇编的寄存器约束与变量类型一致; 无内存副作用; 输出 reg 通过 out(reg) 绑定
@@ -114,11 +117,12 @@ pub fn read_rflags() -> u64 {
 /// 检查中断是否启用 (IF flag)
 #[inline]
 #[cfg(target_arch = "x86_64")]
+#[must_use]
 pub fn interrupts_enabled() -> bool {
     (read_rflags() & (1 << 9)) != 0
 }
 
-/// 内存屏障操作
+// 内存屏障操作
 
 /// 全局内存屏障 (mfence → Arch trait)
 #[inline]
@@ -142,13 +146,14 @@ pub unsafe fn store_fence() {
     crate::arch!(fence_w());
 }
 
-/// TSC 时间戳计数器
+// TSC 时间戳计数器
 
 /// 读取 TSC (时间戳计数器 → Arch trait)
 ///
 /// # Returns
 /// 当前 CPU 周期数 (可用于性能测量)
 #[inline]
+#[must_use]
 pub fn rdtsc() -> u64 {
     crate::arch!(timestamp())
 }
@@ -156,6 +161,7 @@ pub fn rdtsc() -> u64 {
 /// 读取带 fence 的 TSC (更精确)
 #[inline]
 #[cfg(target_arch = "x86_64")]
+#[must_use]
 pub fn rdtsc_fence() -> u64 {
     let tsc: u64;
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -170,13 +176,14 @@ pub fn rdtsc_fence() -> u64 {
     tsc
 }
 
-/// I/O 端口操作 (用于 PIC 控制)
+// I/O 端口操作 (用于 PIC 控制)
 
 /// 从端口读字节
 ///
 /// # Safety
 /// port 必须是有效的 I/O 端口地址
 #[inline]
+#[must_use]
 pub unsafe fn inb(port: u16) -> u8 {
     crate::arch!(inb(port))
 }
@@ -221,11 +228,12 @@ pub fn halt_loop() -> ! {
     }
 }
 
-/// 栈操作辅助
+// 栈操作辅助
 
 /// 保存当前栈帧指针 (RBP)
 #[inline]
 #[cfg(target_arch = "x86_64")]
+#[must_use]
 pub fn save_frame_pointer() -> u64 {
     let rbp: u64;
     // SAFETY: 内联汇编的寄存器约束与变量类型一致; 无内存副作用; 输出 reg 通过 out(reg) 绑定
@@ -236,7 +244,6 @@ pub fn save_frame_pointer() -> u64 {
 /// 安全的空指针检查
 ///
 /// # Arguments
-
 /// 检查地址是否为 null 或低于用户地址下限的无效地址.
 ///
 /// 地址 < `USER_ADDR_FLOOR` (4 KiB) 视为 null 或无效低地址.
@@ -247,6 +254,7 @@ pub fn save_frame_pointer() -> u64 {
 ///
 /// - `true`: 地址为 null 或位于无效低地址区间
 /// - `false`: 地址位于有效区间 (>= `USER_ADDR_FLOOR`)
+#[must_use]
 pub fn is_null_or_invalid(addr: u64) -> bool {
     addr < USER_ADDR_FLOOR
 }
@@ -263,6 +271,7 @@ pub fn is_null_or_invalid(addr: u64) -> bool {
 ///
 /// - `true`: 地址位于用户空间
 /// - `false`: 地址位于内核空间或无效低地址
+#[must_use]
 pub fn is_valid_user_address(addr: u64) -> bool {
     #[cfg(target_arch = "x86_64")]
     {
@@ -284,6 +293,7 @@ pub fn is_valid_user_address(addr: u64) -> bool {
 ///
 /// - `true`: 地址位于内核空间
 /// - `false`: 地址位于用户空间或无效低地址
+#[must_use]
 pub fn is_valid_kernel_address(addr: u64) -> bool {
     addr >= KERNEL_TEXT_BASE
 }

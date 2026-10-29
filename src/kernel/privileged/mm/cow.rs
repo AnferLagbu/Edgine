@@ -63,6 +63,7 @@ fn mark_cow_readonly(entry: u64) -> u64 {
 /// # SMP Safety
 /// 本函数持有 `VMM_LOCK` 保护所有页表修改, 确保多核并发安全。
 /// 函数返回前刷新全部 TLB 条目使被清除 WRITABLE 位的 PTE 失效。
+#[must_use]
 pub fn clone_user_page_table_cow(parent_pml4: u64) -> Option<u64> {
     let guard = super::Vmm::acquire_lock();
     let result = clone_user_page_table_cow_inner(parent_pml4);
@@ -77,9 +78,7 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
 
     let pmm = super::pmm::get_pmm();
     // 阶段 1 的首个分页帧: 此刻尚无任何已建子树, 失败无需回滚
-    let Some(child_pml4_phys) = pmm.alloc_page() else {
-        return None;
-    };
+    let child_pml4_phys = pmm.alloc_page()?;
     let kernel_pml4 = vmm::get_kernel_pml4();
 
     // SAFETY: child_pml4_phys 刚由 PMM 分配, 物理地址有效;
@@ -448,6 +447,7 @@ fn release_child_table_frame(frame: u64) {
 /// (`VMM_LOCK`), 消除"判定与映射之间被他核并发建映射改变帧计数"的 TOCTOU 窗口。
 /// 已持锁的路径必须直接用 `cow_handle_fault_locked`, 否则构成递归加锁
 /// (`VMM_LOCK` 非重入)。
+#[must_use]
 pub fn cow_handle_fault(pml4: u64, fault_addr: u64) -> Option<u64> {
     let lock_flags = super::Vmm::acquire_lock();
     let result = cow_handle_fault_locked(pml4, fault_addr);

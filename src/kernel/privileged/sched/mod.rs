@@ -7,8 +7,8 @@
 //!
 //! [sched_trait.rs:30-117](self/sched_trait.rs) 已完成 `Task` 抽象:
 //! - `Task { proc_ptr: *const Process, pid: Pid }` 安全句柄
-//! - 10 个属性方法 (pid/name/state/priority/is_kernel/pwm/exit_code/
-//!   cpu_time_ticks/cr3/pending_signals) 通过 `Process` Atomic 字段
+//! - 10 个属性方法 (`pid/name/state/priority/is_kernel/pwm/exit_code`/
+//!   `cpu_time_ticks/cr3/pending_signals`) 通过 `Process` Atomic 字段
 //! - `unsafe fn from_raw` + `Send`/`Sync` 显式 unsafe impl
 //! - `Scheduler` trait + `EdgineScheduler` 委托给 `proc::SCHEDULER`
 //!

@@ -12,7 +12,7 @@ pub fn wasi_proc_exit(_ctx: &mut WasiContext, interp: &mut Interpreter) -> Resul
     let code = interp.stack.pop_i32()?;
     interp.exit_code = code;
     // 通过 gas 耗尽强制终止解释器主循环
-    interp.gas_used = interp.config.max_gas;
+    interp.gas_used = interp.config.gas;
     Err(WasmError::Terminated)
 }
 

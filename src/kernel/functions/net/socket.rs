@@ -241,6 +241,7 @@ pub fn poll_all() -> SocketResult<i32> {
 /// 返回 revents 位掩码 (POLLIN/POLLOUT/POLLHUP/POLLERR/POLLNVAL); 非阻塞、无副作用.
 /// 这是终态 `File::poll` 的数值 fd 前影 (见 `docs/design/fd-object-model-design.md` 第四节);
 /// `net_socket` 为 privileged 顶层安全代理, 与 `open.rs` 直调 `sm_close` 同路径.
+#[must_use]
 pub fn poll_fd(fd: i32, events: i16) -> i16 {
     crate::privileged::net_socket::sm_socket_poll(fd, events)
 }
@@ -250,16 +251,17 @@ pub fn poll_fd(fd: i32, events: i16) -> i16 {
 // ============================================================================
 
 /// 解析 "a.b.c.d" 格式 IP 字符串
+#[must_use]
 pub fn parse_ipv4(s: &str) -> Option<[u8; 4]> {
     let mut parts = s.split('.');
     let mut out = [0u8; 4];
-    for i in 0..4 {
+    for octet in &mut out {
         let p = parts.next()?;
         let v: u32 = p.parse().ok()?;
         if v > 255 {
             return None;
         }
-        out[i] = crate::functions::intcast::low_u8_from_u32(v);
+        *octet = crate::functions::intcast::low_u8_from_u32(v);
     }
     if parts.next().is_some() {
         return None;
@@ -268,6 +270,7 @@ pub fn parse_ipv4(s: &str) -> Option<[u8; 4]> {
 }
 
 /// 构造 `SockAddrIn` from IP 字符串 + 端口
+#[must_use]
 pub fn endpoint_from_str(ip: &str, port: u16) -> Option<SockAddrIn> {
     let bytes = parse_ipv4(ip)?;
     Some(SockAddrIn::new(port, bytes))

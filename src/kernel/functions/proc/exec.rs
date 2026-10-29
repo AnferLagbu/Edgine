@@ -20,7 +20,7 @@ const AT_EMPTY_PATH: i32 = 0x1000;
 /// `execveat` 标志: 不跟随 `pathname` 末尾的符号链接
 const AT_SYMLINK_NOFOLLOW: i32 = 0x100;
 
-/// ELF 映像可读上限 (1 MiB) — 阶段 4b 自 privileged::proc::api 下沉
+/// ELF 映像可读上限 (1 MiB) — 阶段 4b 自 `privileged::proc::api` 下沉
 pub(crate) const ELF_MAX_SIZE: usize = 1024 * 1024;
 
 /// execve(path, argv, envp) 系统调用策略
@@ -37,7 +37,7 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
     use crate::privileged::syscall::raw;
 
     if path == 0 || !raw::check_user_ptr(path) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     let _ = envp;
 
@@ -45,21 +45,21 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
     let mut arg_count: u32 = 0;
     if argv != 0 {
         if !raw::check_user_ptr(argv) {
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
         let mut slot = argv;
         loop {
             if !raw::check_user_ptr(slot) {
-                return Err(Errno::EFAULT);
+                return Err(Errno::Efault);
             }
             let Some(entry) = api::read_u64_from_user(slot) else {
-                return Err(Errno::EFAULT);
+                return Err(Errno::Efault);
             };
             if entry == 0 {
                 break;
             }
             if !raw::check_user_ptr(entry) {
-                return Err(Errno::EFAULT);
+                return Err(Errno::Efault);
             }
             arg_count += 1;
             slot += 8;
@@ -80,19 +80,19 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
     let Some(mut elf) =
         crate::functions::fs::api::read_file_to_vec(path as *const u8, current_pwm, ELF_MAX_SIZE)
     else {
-        return Err(Errno::ENOENT);
+        return Err(Errno::Enoent);
     };
     crate::privileged::proc::elf::prepare_elf_image(&mut elf);
 
     // 进程替换 (privileged 机制: ELF 加载 + 地址空间切换)
     let result = crate::privileged::proc::proc_exec_replace(
-        elf.as_ptr(),
+        elf.as_ptr() as u64,
         elf.len() as u64,
-        argv as *const *const u8,
+        argv,
         arg_count,
     );
     if result < 0 {
-        Err(Errno::ENOENT)
+        Err(Errno::Enoent)
     } else {
         Ok(0)
     }
@@ -121,20 +121,20 @@ pub fn execveat_syscall(
     flags: i32,
 ) -> Result<usize, Errno> {
     if flags & !(AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW) != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if dirfd != AT_FDCWD {
-        return Err(Errno::ENOTSUP);
+        return Err(Errno::Enotsup);
     }
 
     // AT_EMPTY_PATH: 空 pathname 表示执行 dirfd 指向的文件自身 (本实装不支持)
     if flags & AT_EMPTY_PATH != 0 {
         let mut first_byte = 0u8;
         if !crate::privileged::syscall::api::read_struct_from_user(pathname, &mut first_byte) {
-            return Err(Errno::EFAULT);
+            return Err(Errno::Efault);
         }
         if first_byte == 0 {
-            return Err(Errno::ENOTSUP);
+            return Err(Errno::Enotsup);
         }
     }
 

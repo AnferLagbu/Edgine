@@ -115,6 +115,7 @@ pub struct SeqLockReadGuard<'a, T> {
 
 impl<T> SeqLockReadGuard<'_, T> {
     /// 复检读期间无写者介入 (序号未变即数据保持一致).
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         compiler_fence(Ordering::Release);
         let seq2 = self.lock.sequence.load(Ordering::Acquire);
@@ -122,12 +123,14 @@ impl<T> SeqLockReadGuard<'_, T> {
     }
 
     /// 直接获取受保护数据的共享引用 (不校验一致性, 一致性由 `is_valid` 负责).
+    #[must_use]
     pub fn get(&self) -> &T {
         // SAFETY: `self` 由调用方保证为有效指针; 只读访问
         unsafe { &*self.lock.data.get() }
     }
 
     /// 校验一致性后返回数据引用; 若读期间发生写入则返回 `None`.
+    #[must_use]
     pub fn get_valid(&self) -> Option<&T> {
         if self.is_valid() {
             Some(self.get())

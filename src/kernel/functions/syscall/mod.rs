@@ -49,12 +49,14 @@ pub struct SyscallNumber(pub u64);
 impl SyscallNumber {
     /// 构造
     #[inline]
+    #[must_use]
     pub const fn new(n: u64) -> Self {
         Self(n)
     }
 
     /// 原始值
     #[inline]
+    #[must_use]
     pub const fn raw(self) -> u64 {
         self.0
     }
@@ -108,6 +110,7 @@ impl SyscallArgs {
 
     /// 构造
     #[inline]
+    #[must_use]
     pub const fn new(a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> Self {
         Self {
             a0,
@@ -121,24 +124,28 @@ impl SyscallArgs {
 
     /// 1 参数
     #[inline]
+    #[must_use]
     pub const fn one(a0: u64) -> Self {
         Self::new(a0, 0, 0, 0, 0, 0)
     }
 
     /// 2 参数
     #[inline]
+    #[must_use]
     pub const fn two(a0: u64, a1: u64) -> Self {
         Self::new(a0, a1, 0, 0, 0, 0)
     }
 
     /// 3 参数
     #[inline]
+    #[must_use]
     pub const fn three(a0: u64, a1: u64, a2: u64) -> Self {
         Self::new(a0, a1, a2, 0, 0, 0)
     }
 
     /// 4 参数
     #[inline]
+    #[must_use]
     pub const fn four(a0: u64, a1: u64, a2: u64, a3: u64) -> Self {
         Self::new(a0, a1, a2, a3, 0, 0)
     }
@@ -168,7 +175,7 @@ pub fn parse_return(rc: i64) -> SyscallResult<u64> {
     if rc < 0 {
         Err(
             Errno::try_from_i32(crate::functions::intcast::low_i32_from_i64(-rc))
-                .unwrap_or(Errno::EINVAL),
+                .unwrap_or(Errno::Einval),
         )
     } else {
         Ok(rc.cast_unsigned())
@@ -180,11 +187,13 @@ pub fn parse_return(rc: i64) -> SyscallResult<u64> {
 // ============================================================================
 
 /// 验证用户态指针
+#[must_use]
 pub fn check_user_ptr(ptr: u64) -> bool {
     syscall::api::validate_user_ptr(ptr)
 }
 
 /// 验证用户态缓冲区
+#[must_use]
 pub fn check_user_buf(ptr: u64, len: u64) -> bool {
     syscall::api::validate_user_buf(ptr, len)
 }
@@ -200,6 +209,7 @@ pub fn check_user_buf(ptr: u64, len: u64) -> bool {
 ///
 /// **返回**:
 /// - syscall 原始返回值 (POSIX: 0/-errno 约定)
+#[must_use]
 pub fn dispatch_from_ctx(ctx: &UserContext) -> i64 {
     let num = ctx.syscall_number();
     let a0 = ctx.arg0();
@@ -212,6 +222,7 @@ pub fn dispatch_from_ctx(ctx: &UserContext) -> i64 {
 }
 
 /// 通过 `SyscallNumber` + `SyscallArgs` 强类型分发
+#[must_use]
 pub fn dispatch(num: SyscallNumber, args: SyscallArgs) -> i64 {
     usermode::dispatch_syscall(num.0, args.a0, args.a1, args.a2, args.a3, args.a4, args.a5)
 }
@@ -290,8 +301,8 @@ mod tests {
 
     #[test]
     fn errno_from_i64_works() {
-        assert_eq!(errno_from_i64(-2), Some(Errno::ENOENT));
-        assert_eq!(errno_from_i64(-14), Some(Errno::EFAULT));
+        assert_eq!(errno_from_i64(-2), Some(Errno::Enoent));
+        assert_eq!(errno_from_i64(-14), Some(Errno::Efault));
         assert_eq!(errno_from_i64(0), None);
         assert_eq!(errno_from_i64(42), None);
     }
@@ -300,7 +311,7 @@ mod tests {
     fn parse_return_works() {
         assert_eq!(parse_return(0), Ok(0));
         assert_eq!(parse_return(42), Ok(42));
-        assert_eq!(parse_return(-2), Err(Errno::ENOENT));
+        assert_eq!(parse_return(-2), Err(Errno::Enoent));
     }
 
     #[test]

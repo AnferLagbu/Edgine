@@ -91,27 +91,80 @@ pub struct VideoMode {
     pub flags: VideoModeFlags,
 }
 
-/// 视频模式标志
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 视频模式标志 (位域封装: 隔行扫描 / 双扫描 / 水平正极性 / 垂直正极性)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct VideoModeFlags {
-    /// 是否隔行扫描.
-    pub interlaced: bool,
-    /// 是否双扫描 (每帧行数减半刷新加倍).
-    pub double_scan: bool,
-    /// 水平同步是否为正极性.
-    pub hsync_positive: bool,
-    /// 垂直同步是否为正极性.
-    pub vsync_positive: bool,
+    /// 标志位 (bit0 隔行, bit1 双扫描, bit2 水平正极性, bit3 垂直正极性)
+    bits: u8,
 }
 
-impl Default for VideoModeFlags {
-    fn default() -> Self {
+impl VideoModeFlags {
+    /// 隔行扫描标志位.
+    const INTERLACED: u8 = 1 << 0;
+    /// 双扫描标志位.
+    const DOUBLE_SCAN: u8 = 1 << 1;
+    /// 水平同步正极性标志位.
+    const HSYNC_POSITIVE: u8 = 1 << 2;
+    /// 垂直同步正极性标志位.
+    const VSYNC_POSITIVE: u8 = 1 << 3;
+
+    /// 全部标志为假 (非隔行 / 非双扫描 / 负极性同步).
+    pub const NONE: Self = Self { bits: 0 };
+
+    /// 置位「隔行扫描」标志.
+    #[must_use]
+    pub const fn with_interlaced(self, enabled: bool) -> Self {
         Self {
-            interlaced: false,
-            double_scan: false,
-            hsync_positive: false,
-            vsync_positive: false,
+            bits: self.bits | if enabled { Self::INTERLACED } else { 0 },
         }
+    }
+
+    /// 置位「双扫描」标志.
+    #[must_use]
+    pub const fn with_double_scan(self, enabled: bool) -> Self {
+        Self {
+            bits: self.bits | if enabled { Self::DOUBLE_SCAN } else { 0 },
+        }
+    }
+
+    /// 置位「水平同步正极性」标志.
+    #[must_use]
+    pub const fn with_hsync_positive(self, enabled: bool) -> Self {
+        Self {
+            bits: self.bits | if enabled { Self::HSYNC_POSITIVE } else { 0 },
+        }
+    }
+
+    /// 置位「垂直同步正极性」标志.
+    #[must_use]
+    pub const fn with_vsync_positive(self, enabled: bool) -> Self {
+        Self {
+            bits: self.bits | if enabled { Self::VSYNC_POSITIVE } else { 0 },
+        }
+    }
+
+    /// 是否隔行扫描.
+    #[must_use]
+    pub const fn interlaced(self) -> bool {
+        self.bits & Self::INTERLACED != 0
+    }
+
+    /// 是否双扫描 (每帧行数减半刷新加倍).
+    #[must_use]
+    pub const fn double_scan(self) -> bool {
+        self.bits & Self::DOUBLE_SCAN != 0
+    }
+
+    /// 水平同步是否为正极性.
+    #[must_use]
+    pub const fn hsync_positive(self) -> bool {
+        self.bits & Self::HSYNC_POSITIVE != 0
+    }
+
+    /// 垂直同步是否为正极性.
+    #[must_use]
+    pub const fn vsync_positive(self) -> bool {
+        self.bits & Self::VSYNC_POSITIVE != 0
     }
 }
 
@@ -213,17 +266,20 @@ pub struct EdidDetailedTiming {
 
 impl EdidDetailedTiming {
     /// 获取水平分辨率
+    #[must_use]
     pub fn horizontal_resolution(self) -> u16 {
         u16::from(self.horizontal_active) | ((u16::from(self.horizontal_active_high) & 0xF0) << 4)
     }
 
     /// 获取垂直分辨率
+    #[must_use]
     pub fn vertical_resolution(self) -> u16 {
         u16::from(self.vertical_active)
             | ((u16::from(self.vertical_active_blanking_high) & 0xF0) << 4)
     }
 
     /// 获取刷新率 (近似)
+    #[must_use]
     pub fn refresh_rate(self) -> u32 {
         if self.pixel_clock == 0 {
             return 60;
@@ -302,10 +358,10 @@ impl Edid {
         manufacturer[3] = 0;
 
         let mut detailed_timings: [Option<EdidDetailedTiming>; 4] = [None, None, None, None];
-        for i in 0..4 {
+        for (i, slot) in detailed_timings.iter_mut().enumerate() {
             let offset = 54 + i * 18;
             if data[offset] != 0 || data[offset + 1] != 0 {
-                detailed_timings[i] = Some(EdidDetailedTiming {
+                *slot = Some(EdidDetailedTiming {
                     pixel_clock: u16::from(data[offset]) | (u16::from(data[offset + 1]) << 8),
                     horizontal_active: data[offset + 2],
                     horizontal_blanking: data[offset + 3],
@@ -361,11 +417,10 @@ impl Edid {
     }
 
     /// 获取首选分辨率
+    #[must_use]
     pub fn preferred_resolution(&self) -> Option<(u16, u16)> {
-        for timing in &self.detailed_timings {
-            if let Some(t) = timing {
-                return Some((t.horizontal_resolution(), t.vertical_resolution()));
-            }
+        if let Some(t) = self.detailed_timings.iter().flatten().next() {
+            return Some((t.horizontal_resolution(), t.vertical_resolution()));
         }
         None
     }
@@ -402,8 +457,8 @@ pub fn fill_mock_edid(edid_data: &mut [u8; EDID_MAX_LENGTH]) {
     edid_data[timing_offset + 7] = 0x1D;
 
     let mut checksum = 0u8;
-    for i in 0..(EDID_BLOCK_SIZE - 1) {
-        checksum = checksum.wrapping_add(edid_data[i]);
+    for byte in edid_data.iter().take(EDID_BLOCK_SIZE - 1) {
+        checksum = checksum.wrapping_add(*byte);
     }
     edid_data[EDID_BLOCK_SIZE - 1] =
         crate::functions::intcast::low_u8_from_usize(256 - checksum as usize);
@@ -414,12 +469,7 @@ pub fn fill_mock_edid(edid_data: &mut [u8; EDID_MAX_LENGTH]) {
 // ============================================================================
 
 /// 默认视频模式标志 (全部 false)
-const DEFAULT_FLAGS: VideoModeFlags = VideoModeFlags {
-    interlaced: false,
-    double_scan: false,
-    hsync_positive: false,
-    vsync_positive: false,
-};
+const DEFAULT_FLAGS: VideoModeFlags = VideoModeFlags::NONE;
 
 /// 标准视频模式列表 (10 个常见分辨率)
 pub const STANDARD_VIDEO_MODES: &[VideoMode] = &[
@@ -654,6 +704,7 @@ const DMT_TIMINGS: &[(u16, u16, u8, VideoTiming)] = &[
 ];
 
 /// 在 DMT lookup table 中查找精确时序参数
+#[must_use]
 pub fn lookup_dmt_timing(mode: VideoMode) -> Option<VideoTiming> {
     for &(w, h, rate, timing) in DMT_TIMINGS {
         if w == mode.width && h == mode.height && rate == mode.refresh_rate {
@@ -664,6 +715,7 @@ pub fn lookup_dmt_timing(mode: VideoMode) -> Option<VideoTiming> {
 }
 
 /// 从 `VideoMode` 派生时序参数 (DMT lookup 优先, 公式 fallback)
+#[must_use]
 pub fn derive_video_timing(mode: VideoMode) -> VideoTiming {
     if let Some(timing) = lookup_dmt_timing(mode) {
         return timing;
@@ -708,6 +760,7 @@ pub fn derive_video_timing(mode: VideoMode) -> VideoTiming {
 // ============================================================================
 
 /// 从目标像素时钟 (kHz) 计算 mul/div 寄存器值
+#[must_use]
 pub fn compute_pixel_clock_mul_div(target_khz: u32, base_khz: u32) -> (u8, u8) {
     if target_khz == 0 || base_khz == 0 {
         return (1, 1);
@@ -763,6 +816,7 @@ pub struct HdmiController {
 
 impl HdmiController {
     /// 创建 HDMI 控制器实例 (fallback 模式, 无硬件)
+    #[must_use]
     pub fn new() -> Self {
         Self {
             iomem: None,
@@ -781,6 +835,7 @@ impl HdmiController {
     /// 调用方必须保证:
     /// - `iomem` 已映射到有效 HDMI 控制器 MMIO 区域
     /// - `iomem.len() >= REQUIRED_IOMEM_SIZE` (0x07A)
+    #[must_use]
     pub fn new_with_iomem(iomem: IoMem, hpd_reg_offset: usize) -> Self {
         debug_assert!(
             iomem.len() >= REQUIRED_IOMEM_SIZE,
@@ -801,6 +856,7 @@ impl HdmiController {
     }
 
     /// 创建 HDMI 控制器实例 (真实硬件, 使用默认 HPD 偏移)
+    #[must_use]
     pub fn new_with_default_hpd(iomem: IoMem) -> Self {
         Self::new_with_iomem(iomem, HPD_STATUS_REG_OFFSET)
     }
@@ -912,10 +968,10 @@ impl HdmiController {
         // 第 3 步: 同步极性 + TMDS 输出使能
         if let Some(iomem) = &self.iomem {
             let mut sync_val = 0u8;
-            if mode.flags.hsync_positive {
+            if mode.flags.hsync_positive() {
                 sync_val |= SYNC_POL_H_BIT;
             }
-            if mode.flags.vsync_positive {
+            if mode.flags.vsync_positive() {
                 sync_val |= SYNC_POL_V_BIT;
             }
             iomem.write_u8(SYNC_POL_REG_OFFSET, sync_val);
@@ -927,6 +983,7 @@ impl HdmiController {
     }
 
     /// 获取支持的视频模式列表
+    #[must_use]
     pub fn get_supported_modes() -> &'static [VideoMode] {
         STANDARD_VIDEO_MODES
     }
@@ -943,13 +1000,13 @@ impl HdmiController {
         }
         if self.connected {
             let _ = self.read_edid();
-            if let Some(ref edid) = self.edid {
-                if let Some((width, height)) = edid.preferred_resolution() {
-                    for mode in STANDARD_VIDEO_MODES {
-                        if mode.width == width && mode.height == height {
-                            self.set_video_mode(*mode)?;
-                            break;
-                        }
+            if let Some(ref edid) = self.edid
+                && let Some((width, height)) = edid.preferred_resolution()
+            {
+                for mode in STANDARD_VIDEO_MODES {
+                    if mode.width == width && mode.height == height {
+                        self.set_video_mode(*mode)?;
+                        break;
                     }
                 }
             }
@@ -967,8 +1024,15 @@ impl HdmiController {
     }
 
     /// 是否已初始化
+    #[must_use]
     pub fn is_initialized(&self) -> bool {
         self.initialized
+    }
+}
+
+impl Default for HdmiController {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

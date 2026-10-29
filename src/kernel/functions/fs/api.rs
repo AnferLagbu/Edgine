@@ -83,6 +83,7 @@ where
 /// `path` 为 null 终止的 C 字符串首地址; `max_size` 为可读上限, 超过则返回
 /// `None` (防止异常 stat 值导致超大分配). stat/open/read 任一环节失败均返回
 /// `None`. `pwm` 用于可访问性判定 (与 syscall 边界一致).
+#[must_use]
 pub fn read_file_to_vec(path: *const u8, pwm: u64, max_size: usize) -> Option<alloc::vec::Vec<u8>> {
     let st = vfs_stat_safe(path, pwm)?;
     let size = usize::try_from(st.size).ok()?;
@@ -96,7 +97,7 @@ pub fn read_file_to_vec(path: *const u8, pwm: u64, max_size: usize) -> Option<al
 
     let mut buf = alloc::vec![0u8; size];
     let n = vfs_read_safe(fd, &mut buf);
-    vfs_close_safe(fd);
+    let _ = vfs_close_safe(fd);
 
     let Ok(n) = usize::try_from(n) else {
         return None;

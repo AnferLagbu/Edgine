@@ -73,6 +73,10 @@ impl SlabAlloc for KmallocSlabAlloc {
         // `get_kmalloc()` 返回全局 kmalloc 堆, `deallocate` 内部按 size class
         // 归还到对应 slab; `_layout` 在当前实现中未使用 (slab 按 size class 路由)
         let heap = crate::privileged::mm::get_kmalloc();
-        heap.deallocate(ptr.as_ptr());
+        // SAFETY: 本函数的安全契约保证 ptr 来自本分配器的 allocate 返回;
+        // 继续由 kmalloc::deallocate 的安全契约兜底.
+        unsafe {
+            heap.deallocate(ptr.as_ptr());
+        }
     }
 }

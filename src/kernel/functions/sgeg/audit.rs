@@ -49,6 +49,7 @@ pub enum AuditEventKind {
 
 impl AuditEventKind {
     /// 数字标签 (用于哈希)
+    #[must_use]
     pub const fn tag(self) -> u8 {
         match self {
             Self::LoginSuccess => 0x01,
@@ -121,6 +122,7 @@ impl AuditLog {
     ///
     /// 缓冲表体量 1024×节点≈80KiB, 高于 64KiB 内核栈: 必须堆分配, 否则每个
     /// 实例都会在栈上物化整表 (clippy `large_stack_arrays` 的指摘点).
+    #[must_use]
     pub fn new() -> Self {
         const EMPTY_NODE: HashChainNode = HashChainNode {
             index: 0,
@@ -181,12 +183,10 @@ impl AuditLog {
         if index >= self.next_index.load(Ordering::Acquire) {
             return None;
         }
-        for n in &self.buffer {
-            if n.index == index {
-                return Some(n);
-            }
-        }
-        None
+        self.buffer
+            .iter()
+            .find(|&n| n.index == index)
+            .map(|v| v as _)
     }
 
     /// 验证哈希链完整性
@@ -212,10 +212,10 @@ impl AuditLog {
             if n.index != i {
                 continue;
             }
-            if let Some(prev_hash) = prev {
-                if n.prev_hash != prev_hash {
-                    return (false, Some(n.index));
-                }
+            if let Some(prev_hash) = prev
+                && n.prev_hash != prev_hash
+            {
+                return (false, Some(n.index));
             }
             let expected = compute_hash(n.prev_hash, &n.event);
             if expected != n.hash {
@@ -269,6 +269,13 @@ impl AuditLog {
     }
 }
 
+impl Default for AuditLog {
+    /// 等价于 [`AuditLog::new`] (空审计日志)
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// 审计错误 — TD-20: 收敛到 `KernelError`, 1 字段 audit 特有 + 1 共享包装 (预留).
 ///
 /// 字段说明:
@@ -284,10 +291,11 @@ pub enum AuditError {
 
 impl AuditError {
     /// 映射为 POSIX errno
+    #[must_use]
     pub fn to_errno(self) -> Errno {
         use Errno as E;
         match self {
-            Self::Full => E::ENOSPC,
+            Self::Full => E::Enospc,
             Self::Kernel(e) => e.as_errno(),
         }
     }
@@ -301,7 +309,7 @@ fn compute_hash(prev: u64, event: &AuditEvent) -> u64 {
     const PRIME: u64 = 0x100_0000_01B3;
 
     let mut h = prev ^ OFFSET;
-    h = (h ^ (event.tick as u64)).wrapping_mul(PRIME);
+    h = (h ^ event.tick).wrapping_mul(PRIME);
     h = (h ^ event.pwm).wrapping_mul(PRIME);
     h = (h ^ u64::from(event.session_id)).wrapping_mul(PRIME);
     h = (h ^ u64::from(event.domain_id)).wrapping_mul(PRIME);

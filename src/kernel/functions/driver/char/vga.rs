@@ -70,6 +70,7 @@ pub const SCREEN_CELLS: usize = SCREEN_WIDTH * SCREEN_HEIGHT;
 /// VGA 16 色调色板
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+#[derive(Default)]
 pub enum Color {
     /// 黑
     Black = 0,
@@ -86,6 +87,7 @@ pub enum Color {
     /// 棕
     Brown = 6,
     /// 浅灰
+    #[default]
     LightGrey = 7,
     /// 深灰
     DarkGrey = 8,
@@ -107,6 +109,7 @@ pub enum Color {
 
 impl Color {
     /// 从 u8 安全转换 (无效值返回 None)
+    #[must_use]
     pub fn from_u8(v: u8) -> Option<Self> {
         match v {
             0 => Some(Self::Black),
@@ -130,12 +133,6 @@ impl Color {
     }
 }
 
-impl Default for Color {
-    fn default() -> Self {
-        Self::LightGrey
-    }
-}
-
 /// VGA 文本属性 (前景色 + 背景色 + 闪烁)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextAttribute {
@@ -149,6 +146,7 @@ pub struct TextAttribute {
 
 impl TextAttribute {
     /// 创建新属性
+    #[must_use]
     pub const fn new(foreground: Color, background: Color) -> Self {
         Self {
             foreground,
@@ -165,6 +163,7 @@ impl TextAttribute {
     }
 
     /// 编码为 u8 (VGA 显存格式)
+    #[must_use]
     pub const fn as_u8(self) -> u8 {
         let fg = self.foreground as u8;
         let bg = (self.background as u8) << 4;
@@ -190,6 +189,7 @@ pub struct VgaCell {
 
 impl VgaCell {
     /// 创建新单元
+    #[must_use]
     pub const fn new(ch: u8, attr: u8) -> Self {
         Self {
             character: ch,
@@ -198,6 +198,7 @@ impl VgaCell {
     }
 
     /// 从 `TextAttribute` 创建
+    #[must_use]
     pub const fn from_attr(ch: u8, attr: TextAttribute) -> Self {
         Self {
             character: ch,
@@ -206,11 +207,13 @@ impl VgaCell {
     }
 
     /// 编码为 u16 (VGA 显存格式: 高字节属性, 低字节字符)
+    #[must_use]
     pub const fn to_u16(self) -> u16 {
         ((self.attribute as u16) << 8) | (self.character as u16)
     }
 
     /// 从 u16 解码
+    #[must_use]
     pub const fn from_u16(v: u16) -> Self {
         Self {
             character: (v & 0xFF) as u8,
@@ -243,6 +246,7 @@ impl CursorPos {
     }
 
     /// 转换为线性偏移
+    #[must_use]
     pub const fn offset(self) -> usize {
         self.y * SCREEN_WIDTH + self.x
     }
@@ -278,6 +282,7 @@ impl VgaConsole {
     /// # 返回
     /// - `Some(VgaConsole)`: 初始化成功
     /// - `None`: 端口/内存注册失败 (重名 / 容量满)
+    #[must_use]
     pub fn new() -> Option<Self> {
         let buffer = IoMem::from_pci_bar(
             PhysAddr::new(VGA_BUFFER_ADDR),
@@ -311,6 +316,7 @@ impl VgaConsole {
 
     /// 读指定单元 (u16 格式: 高属性低字符)
     #[inline]
+    #[must_use]
     pub fn read_cell_raw(&self, pos: CursorPos) -> u16 {
         let pos = pos.clamp();
         let off = pos.offset() * 2;
@@ -326,6 +332,7 @@ impl VgaConsole {
     }
 
     /// 读指定单元 (结构化)
+    #[must_use]
     pub fn read_cell(&self, pos: CursorPos) -> Option<VgaCell> {
         if pos.x >= SCREEN_WIDTH || pos.y >= SCREEN_HEIGHT {
             return None;
@@ -411,6 +418,7 @@ impl VgaConsole {
 
     /// 读硬件光标位置
     #[cfg(target_arch = "x86_64")]
+    #[must_use]
     pub fn cursor(&self) -> CursorPos {
         self.crt.write_u8(0, VGA_REG_CURSOR_LO);
         let lo = u16::from(self.crt.read_u8(1));
@@ -440,11 +448,13 @@ impl VgaConsole {
     }
 
     /// 获取屏幕宽度
+    #[must_use]
     pub const fn width() -> usize {
         SCREEN_WIDTH
     }
 
     /// 获取屏幕高度
+    #[must_use]
     pub const fn height() -> usize {
         SCREEN_HEIGHT
     }

@@ -163,12 +163,19 @@ fn poll_network_uses_try_wake_not_blocking() {
     // 强调 ISR 端用 try_wake (不阻塞), syscall 端才能用阻塞 wake
     let marker = "pub unsafe fn poll_network()";
     let start = src.find(marker).expect("missing poll_network");
-    // 截取整个函数体 (rustfmt 后行变宽 + 属性换行, 2500 不够)
-    let body_end = src[start..]
+    // 截取整个函数体 (rustfmt 后行变宽 + 属性换行, 2500 不够).
+    // 截断点必须落在 UTF-8 字符边界上: 源码含中文注释时按字节截 10000 会
+    // 落在多字节字符内部直接 panic (P-64 第十六批改码移位后实测触发).
+    let tail = &src[start..];
+    let rel_end = tail
         .find("\npub fn ")
-        .or_else(|| src[start..].find("\npub unsafe fn ").map(|i| i + 1))
-        .unwrap_or(src.len());
-    let body = &src[start..start + body_end.min(10000)];
+        .or_else(|| tail.find("\npub unsafe fn ").map(|i| i + 1))
+        .unwrap_or(tail.len());
+    let mut end = rel_end.min(10_000);
+    while !tail.is_char_boundary(end) {
+        end -= 1;
+    }
+    let body = &tail[..end];
     assert!(
         body.contains("q.try_wake("),
         "P2-I-41: poll_network 必须使用 try_wake (非阻塞) 而不是 blocking wake"

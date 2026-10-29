@@ -51,15 +51,15 @@ pub use capability::{
     DEVICE_CAP_DMA, DEVICE_CAP_IRQ, DEVICE_CAP_MMIO,
 };
 pub use grants::{
-    DelegationDeny, DelegationEngine, DelegationResult, GRANT_TABLE_CAPACITY, GrantFlags,
-    GrantRecord, GrantTable,
+    DelegationDeny, DelegationEngine, DelegationRequest, DelegationResult, GRANT_TABLE_CAPACITY,
+    GrantFlags, GrantRecord, GrantTable,
 };
 pub use identity::{PwmError, PwmId, PwmResult};
 pub use policy::{
-    CAP_DOMAINS, CapBits, CapDomain, CapabilityMatrix, DenyReason, GrantResult, InMemoryMatrix,
-    PolicyEngine, PolicyResult, RevokeResult, VIABLE_FLOOR,
+    CAP_DOMAINS, CapBits, CapDomain, CapSetError, CapabilityMatrix, DenyReason, GrantResult,
+    InMemoryMatrix, PolicyEngine, PolicyResult, RevokeResult, VIABLE_FLOOR,
 };
 pub use sessions::{
-    LoginDeny, LoginResult, SGEG_MAX_SESSIONS, Session, SessionError, SessionId, SessionManager,
-    SessionState, SessionTable,
+    LoginDeny, LoginRequest, LoginResult, SGEG_MAX_SESSIONS, Session, SessionError, SessionId,
+    SessionManager, SessionState, SessionTable,
 };

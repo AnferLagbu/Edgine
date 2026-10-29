@@ -17,19 +17,20 @@
 //!
 //! - 已迁移: 文件 I/O (含 read/write, sendfile, splice), 文件系统, 内存管理,
 //!   进程 (含 execve, setrlimit, seccomp, prctl, tcgetpgrp, tcsetpgrp,
-//!   unshare, setns, tgkill, waitid, robust_list), 信号, 网络, 凭证, 同步,
+//!   unshare, setns, tgkill, waitid, `robust_list`), 信号, 网络, 凭证, 同步,
 //!   定时器, 事件轮询,
-//!   eventfd/signalfd/timerfd, io_uring (setup/enter) 与 eBPF (bpf),
-//!   kexec (kexec_load) 等, SGEG 私有 syscall (含 disk_install/hotplug),
-//!   帧缓冲 (fb_open/fb_mmap/fb_release), 存储设备, inotify,
+//!   eventfd/signalfd/timerfd, `io_uring` (setup/enter) 与 eBPF (bpf),
+//!   kexec (`kexec_load`) 等, SGEG 私有 syscall (含 `disk_install/hotplug`),
+//!   帧缓冲 (`fb_open/fb_mmap/fb_release`), 存储设备, inotify,
 //!   内存建议与锁定, 进程创建/等待, 系统信息, CPU 亲和性, 进程优先级,
-//!   设备固件 (fw_load/fw_get/fw_get_info/fw_detach),
-//!   内核调试跟踪 (ftrace_enable/disable/read/stat, kgdb_enter)
+//!   设备固件 (`fw_load/fw_get/fw_get_info/fw_detach`),
+//!   内核调试跟踪 (`ftrace_enable/disable/read/stat`, `kgdb_enter`)
 //! - 待迁移: 路由/Netfilter, cgroup, NUMA, PM, TPM,
 //!   CET, tickless, timesync, UEFI 等
 //!
 //! 评估日期: 2026-06-19
 
+use crate::functions::error::AlreadyRegistered;
 use crate::privileged::syscall::Errno;
 use crate::privileged::syscall::dispatch_trait::{SyscallDispatch, register_syscall_dispatch};
 
@@ -138,20 +139,20 @@ fn dispatch_fs_io(num: u64, args: [u64; 6]) -> Option<i64> {
         // read/write: fd 严格校验 (用户态可传任意 u64, try_from 失败返回 -EINVAL)
         SYS_READ => match i32::try_from(a0) {
             Ok(fd) => as_ret(crate::functions::fs::io::read_syscall(fd, a1, a2)),
-            Err(_) => Errno::EINVAL.as_ret(),
+            Err(_) => Errno::Einval.as_ret(),
         },
         SYS_WRITE => match i32::try_from(a0) {
             Ok(fd) => as_ret(crate::functions::fs::io::write_syscall(fd, a1, a2)),
-            Err(_) => Errno::EINVAL.as_ret(),
+            Err(_) => Errno::Einval.as_ret(),
         },
         // readv/writev (T1 G1 实装): 向量 I/O, 逐 iovec 段委托 read/write
         SYS_READV => match i32::try_from(a0) {
             Ok(fd) => as_ret(crate::functions::fs::io::readv_syscall(fd, a1, a2)),
-            Err(_) => Errno::EINVAL.as_ret(),
+            Err(_) => Errno::Einval.as_ret(),
         },
         SYS_WRITEV => match i32::try_from(a0) {
             Ok(fd) => as_ret(crate::functions::fs::io::writev_syscall(fd, a1, a2)),
-            Err(_) => Errno::EINVAL.as_ret(),
+            Err(_) => Errno::Einval.as_ret(),
         },
         // close_range (T1 G1 实装): 批量关闭 fd
         SYS_CLOSE_RANGE => as_ret(crate::functions::fs::io::close_range_syscall(
@@ -167,7 +168,7 @@ fn dispatch_fs_io(num: u64, args: [u64; 6]) -> Option<i64> {
                 a2,
                 a3.cast_signed(),
             )),
-            Err(_) => Errno::EINVAL.as_ret(),
+            Err(_) => Errno::Einval.as_ret(),
         },
         SYS_PWRITEV => match i32::try_from(a0) {
             Ok(fd) => as_ret(crate::functions::fs::io::pwritev_syscall(
@@ -176,7 +177,7 @@ fn dispatch_fs_io(num: u64, args: [u64; 6]) -> Option<i64> {
                 a2,
                 a3.cast_signed(),
             )),
-            Err(_) => Errno::EINVAL.as_ret(),
+            Err(_) => Errno::Einval.as_ret(),
         },
 
         _ => return None,
@@ -492,7 +493,7 @@ fn dispatch_fs_inotify_time(num: u64, args: [u64; 6]) -> Option<i64> {
     })
 }
 
-/// 高级文件操作 (copy_file_range/sendfile/splice 与 file handle) 系统调用
+/// 高级文件操作 (`copy_file_range/sendfile/splice` 与 file handle) 系统调用
 fn dispatch_fs_adv(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::functions::syscall::types::{
         SYS_COPY_FILE_RANGE, SYS_NAME_TO_HANDLE_AT, SYS_OPEN_BY_HANDLE_AT, SYS_SENDFILE, SYS_SPLICE,
@@ -532,7 +533,7 @@ fn dispatch_fs_adv(num: u64, args: [u64; 6]) -> Option<i64> {
                 a1,
                 crate::functions::intcast::low_i32_from_u64(a2),
                 a3,
-                a4 as u64,
+                a4,
                 crate::functions::intcast::low_u32_from_u64(a5),
             ) {
                 Ok(v) => v,
@@ -865,7 +866,7 @@ fn dispatch_proc_create(num: u64, args: [u64; 6]) -> Option<i64> {
                 tls: 0,
             };
             if !crate::privileged::syscall::api::read_struct_from_user(a0, &mut args) {
-                return Some(Errno::EFAULT.as_ret());
+                return Some(Errno::Efault.as_ret());
             }
             as_ret(crate::functions::proc::clone::clone_syscall(
                 args.flags,
@@ -899,7 +900,7 @@ fn dispatch_proc_create(num: u64, args: [u64; 6]) -> Option<i64> {
     })
 }
 
-/// 系统信息/memfd/process_vm/pidfd 类系统调用
+/// `系统信息/memfd/process_vm/pidfd` 类系统调用
 fn dispatch_proc_misc(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::functions::syscall::types::{
         SYS_MEMFD_CREATE, SYS_PIDFD_GETFD, SYS_PIDFD_OPEN, SYS_PIDFD_SEND_SIGNAL,
@@ -1145,7 +1146,7 @@ fn dispatch_mm(num: u64, args: [u64; 6]) -> Option<i64> {
                             Err(e) => e.as_ret(),
                         }
                     }
-                    Err(_) => Errno::EINVAL.as_ret(),
+                    Err(_) => Errno::Einval.as_ret(),
                 },
                 None => -1,
             }
@@ -1457,13 +1458,10 @@ fn dispatch_sgeg_storage(num: u64, args: [u64; 6]) -> Option<i64> {
 
     Some(match num {
         // 存储设备
-        SYS_SGEG_DISK_LIST => as_ret(
-            crate::functions::sgeg::storage::disk::disk_list(
-                a0,
-                crate::functions::intcast::low_u32_from_u64(a1),
-            )
-            .map(|n| n as usize),
-        ),
+        SYS_SGEG_DISK_LIST => as_ret(crate::functions::sgeg::storage::disk::disk_list(
+            a0,
+            crate::functions::intcast::low_u32_from_u64(a1),
+        )),
         SYS_SGEG_DISK_INFO => {
             match crate::functions::sgeg::storage::disk::disk_info(
                 crate::functions::intcast::low_u32_from_u64(a0),
@@ -1498,7 +1496,7 @@ fn dispatch_sgeg_storage(num: u64, args: [u64; 6]) -> Option<i64> {
             crate::functions::intcast::low_u32_from_u64(a0),
         ),
         #[cfg(feature = "kernel_test")]
-        SYS_SGEG_DISK_INSTALL => Errno::ENOSYS.as_ret(),
+        SYS_SGEG_DISK_INSTALL => Errno::Enosys.as_ret(),
         SYS_SGEG_HOTPLUG_STATUS => crate::functions::sgeg::storage::disk::hotplug_status_syscall(
             a0,
             crate::functions::intcast::low_u32_from_u64(a1),
@@ -1593,8 +1591,8 @@ fn dispatch_other(num: u64, args: [u64; 6]) -> Option<i64> {
 ///
 /// # Errors
 ///
-/// 当分发策略已被注册时返回 `Err(())`.
-pub fn register_functions_dispatch() -> Result<(), ()> {
+/// 当分发策略已被注册时返回 `Err(AlreadyRegistered)`.
+pub fn register_functions_dispatch() -> Result<(), AlreadyRegistered> {
     static POLICY: FunctionsSyscallDispatch = FunctionsSyscallDispatch;
     let r = register_syscall_dispatch(&POLICY);
     crate::privileged::klog::log_info(
@@ -1604,5 +1602,5 @@ pub fn register_functions_dispatch() -> Result<(), ()> {
             if r.is_ok() { "OK" } else { "ERR" }
         ),
     );
-    r.map_err(|_| ())
+    r.map_err(|_| AlreadyRegistered)
 }

@@ -37,6 +37,7 @@ impl IrqLine {
     /// # SAFETY
     /// - irq 必须是有效的中断请求号。
     /// - vector 是 IDT 中断向量号。
+    #[must_use]
     pub unsafe fn new(irq: u32, vector: u8) -> Self {
         Self {
             vector,
@@ -47,11 +48,13 @@ impl IrqLine {
 
     #[inline]
     /// 返回该中断线对应的硬件中断请求号 (IRQ)。
+    #[must_use]
     pub fn irq(&self) -> u32 {
         self.irq
     }
     #[inline]
     /// 返回该中断线对应的 IDT 中断向量号。
+    #[must_use]
     pub fn vector(&self) -> u8 {
         self.vector
     }
@@ -64,10 +67,10 @@ impl IrqLine {
     /// # B03-23 严禁持锁同步原语名单 (含 IrqSpinLock/Mutex/Semaphore)
     /// 中断上下文持锁 = 同 CPU 中断重入死锁。`on_interrupt` 内部不含编译
     /// 期强制, 完全靠以下文档约束:
-    /// 1. 不调任何 Mutex/Semaphore (无论是 std::sync::Mutex 还是 kernel::sync::IrqSpinLock/Mutex)
+    /// 1. 不调任何 Mutex/Semaphore (无论是 `std::sync::Mutex` 还是 `kernel::sync::IrqSpinLock/Mutex`)
     /// 2. 不调任何同步原语的 `lock()`
     /// 3. 不调 `schedule()` / `yield()` (可能持 sched lock)
-    /// 4. 不分配内存 (kmalloc/GFP_KERNEL)
+    /// 4. 不分配内存 (`kmalloc/GFP_KERNEL`)
     /// 5. 不睡眠 (sleep/yield)
     ///
     /// 若需延迟处理, 通过 `raise_softirq()` 提交到底半部执行。
@@ -101,6 +104,7 @@ impl IrqLine {
 
     #[inline]
     /// 返回该中断线是否已注册 ISR。
+    #[must_use]
     pub fn is_registered(&self) -> bool {
         self.registered
     }

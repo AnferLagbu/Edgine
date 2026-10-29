@@ -322,6 +322,7 @@ pub fn get_arbitration_id_on(ioapic_idx: usize) -> u8 {
 }
 
 /// 向后兼容: 读取第一个 IOAPIC 的 ID
+#[must_use]
 pub fn get_id() -> u8 {
     get_id_on(0)
 }
@@ -332,6 +333,7 @@ pub fn set_id(id: u8) {
 }
 
 /// 向后兼容: 读取第一个 IOAPIC 的仲裁 ID
+#[must_use]
 pub fn get_arbitration_id() -> u8 {
     get_arbitration_id_on(0)
 }
@@ -341,26 +343,32 @@ pub fn get_arbitration_id() -> u8 {
 // ============================================================================
 
 /// 返回 Fixed 投递模式常量
+#[must_use]
 pub fn delivery_fixed() -> u64 {
     DELIVERY_FIXED
 }
 /// 返回 Lowest Priority 投递模式常量
+#[must_use]
 pub fn delivery_lowest() -> u64 {
     DELIVERY_LOWEST
 }
 /// 返回 SMI 投递模式常量
+#[must_use]
 pub fn delivery_smi() -> u64 {
     DELIVERY_SMI
 }
 /// 返回 NMI 投递模式常量
+#[must_use]
 pub fn delivery_nmi() -> u64 {
     DELIVERY_NMI
 }
 /// 返回 INIT 投递模式常量
+#[must_use]
 pub fn delivery_init() -> u64 {
     DELIVERY_INIT
 }
 /// 返回 `ExtINT` 投递模式常量 (8259A 兼容)
+#[must_use]
 pub fn delivery_extint() -> u64 {
     DELIVERY_EXTINT
 }

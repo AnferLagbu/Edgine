@@ -119,6 +119,7 @@ impl AccessByte {
 
     /// 创建内核代码段访问字节
     #[inline]
+    #[must_use]
     pub const fn kernel_code() -> Self {
         // P=1, DPL=00, S=1, E=1, RW=1, A=0 => 0x9A
         Self(Self::PRESENT | Self::TYPE_SYSTEM | Self::EXECUTABLE | Self::READABLE_WRITABLE)
@@ -126,6 +127,7 @@ impl AccessByte {
 
     /// 创建内核数据段访问字节
     #[inline]
+    #[must_use]
     pub const fn kernel_data() -> Self {
         // P=1, DPL=00, S=1, E=0, RW=1, A=0 => 0x92
         Self(Self::PRESENT | Self::TYPE_SYSTEM | Self::READABLE_WRITABLE)
@@ -133,6 +135,7 @@ impl AccessByte {
 
     /// 创建用户代码段访问字节 (Ring 3)
     #[inline]
+    #[must_use]
     pub const fn user_code() -> Self {
         // P=1, DPL=11, S=1, E=1, RW=1, A=0 => 0xFA
         Self(
@@ -146,6 +149,7 @@ impl AccessByte {
 
     /// 创建用户数据段访问字节 (Ring 3)
     #[inline]
+    #[must_use]
     pub const fn user_data() -> Self {
         // P=1, DPL=11, S=1, E=0, RW=1, A=0 => 0xF2
         Self(Self::PRESENT | Self::DPL_MASK | Self::TYPE_SYSTEM | Self::READABLE_WRITABLE)
@@ -153,6 +157,7 @@ impl AccessByte {
 
     /// 创建 TSS 访问字节
     #[inline]
+    #[must_use]
     pub const fn tss() -> Self {
         // P=1, DPL=00, S=0 (System), Type=1001 (TSS Available), Busy=0 => 0x89
         Self(0x89)
@@ -178,18 +183,21 @@ impl Granularity {
 
     /// 创建 64-bit 代码段粒度 (4KB 粒度, Long Mode)
     #[inline]
+    #[must_use]
     pub const fn code_64bit() -> Self {
         Self(Self::PAGE_GRANULARITY | Self::LONG_MODE)
     }
 
     /// 创建数据段粒度 (4KB 粒度, 32-bit)
     #[inline]
+    #[must_use]
     pub const fn data_32bit() -> Self {
         Self(Self::PAGE_GRANULARITY | Self::SIZE_32BIT)
     }
 
     /// 创建 TSS 粒度 (字节粒度, 64-bit)
     #[inline]
+    #[must_use]
     pub const fn tss_64bit() -> Self {
         Self(Self::LONG_MODE)
     }
@@ -233,6 +241,7 @@ pub struct GdtEntry {
 impl GdtEntry {
     /// 创建空描述符 (Null Descriptor)
     #[inline]
+    #[must_use]
     pub const fn null() -> Self {
         Self {
             limit_low: 0,
@@ -252,6 +261,7 @@ impl GdtEntry {
     /// * `access` - 访问权限字节
     /// * `gran` - 粒度标志字节
     #[inline]
+    #[must_use]
     pub const fn new_segment(base: u32, limit: u32, access: AccessByte, gran: Granularity) -> Self {
         Self {
             limit_low: (limit & 0xFFFF) as u16,
@@ -273,6 +283,7 @@ impl GdtEntry {
     /// * `tss_addr` - TSS 结构体的 64 位地址
     /// * `tss_size` - TSS 结构体大小 (bytes)
     #[inline]
+    #[must_use]
     pub const fn tss_low(tss_addr: u64, tss_size: u16) -> Self {
         let base_low = crate::privileged::glue::low_u32_from_u64(tss_addr);
 
@@ -288,6 +299,7 @@ impl GdtEntry {
 
     /// 创建 TSS 描述符的高64位 (base`[63:32]`)
     #[inline]
+    #[must_use]
     pub const fn tss_high(tss_addr: u64) -> Self {
         let base_high32 = (tss_addr >> 32) as u32;
 
@@ -323,18 +335,18 @@ pub struct GdtPtr {
 ///
 /// | 偏移 | 字段         | 汇编常量          |
 /// |------|-------------|-------------------|
-/// | 0    | kernel_rsp  | KERNEL_RSP_OFF    |
-/// | 8    | kernel_pml4 | KERNEL_PML4_OFF   |
-/// | 16   | user_pml4   | USER_PML4_OFF     |
-/// | 24   | user_rsp    | USER_RSP_OFF      |
-/// | 32   | trampoline_top | TRAMPOLINE_TOP_OFF |
-/// | 40   | scratch_r12 | SCRATCH_R12_OFF   |
-/// | 48   | scratch_r14 | SCRATCH_R14_OFF   |
-/// | 56   | scratch_r15 | SCRATCH_R15_OFF   |
+/// | 0    | `kernel_rsp`  | `KERNEL_RSP_OFF`    |
+/// | 8    | `kernel_pml4` | `KERNEL_PML4_OFF`   |
+/// | 16   | `user_pml4`   | `USER_PML4_OFF`     |
+/// | 24   | `user_rsp`    | `USER_RSP_OFF`      |
+/// | 32   | `trampoline_top` | `TRAMPOLINE_TOP_OFF` |
+/// | 40   | `scratch_r12` | `SCRATCH_R12_OFF`   |
+/// | 48   | `scratch_r14` | `SCRATCH_R14_OFF`   |
+/// | 56   | `scratch_r15` | `SCRATCH_R15_OFF`   |
 ///
 /// `user_rsp` (TRACK-INIT-RING3-SYSCALL-RET): syscall 入口保存当前用户 RSP,
 /// 供 iretq 帧的 RSP 槽位使用. 与 `kernel_rsp` 分离, 避免覆盖 (原实现复用
-/// `gs:0`, 导致首次 syscall 后 kernel_rsp 丢失, 后续 syscall 用错内核栈).
+/// `gs:0`, 导致首次 syscall 后 `kernel_rsp` 丢失, 后续 syscall 用错内核栈).
 ///
 /// `trampoline_top` (KPTI-08): 本 CPU KPTI trampoline 栈顶 VA (高半区).
 /// `process_switch_asm` 的用户态出口在 `swapgs` 前读入该值, 切换到 trampoline
@@ -342,10 +354,10 @@ pub struct GdtPtr {
 ///
 /// `scratch_r12/r14/r15` (SYSCALL-CLOBBER-R12R14R15): syscall 入口的 KPTI 切
 /// CR3 窗口无可用栈, 需借通用寄存器作临时量; 而 r12/r14/r15 属用户态
-/// callee-saved 寄存器, 直接复用会污染 InterruptFrame, 使 syscall 返回后用户
+/// callee-saved 寄存器, 直接复用会污染 `InterruptFrame`, 使 syscall 返回后用户
 /// r12/r14/r15 变成内核值. 故入口先把三者存入本暂存区 (该页在用户页表中已
 /// 映射, 未切 CR3 也可写), 压帧时再从暂存区取回, 保证用户寄存器跨 syscall
-/// 完整. 仅 syscall_entry 使用, 每次入口写后读, 无跨 CPU 复用.
+/// 完整. 仅 `syscall_entry` 使用, 每次入口写后读, 无跨 CPU 复用.
 #[repr(C)]
 pub struct SyscallPerCpu {
     /// syscall 入口使用的内核栈顶
@@ -367,7 +379,7 @@ pub struct SyscallPerCpu {
 }
 
 /// 每个 CPU 独立的 syscall 内核栈大小 (64KB, syscall 入口与调度切换共用).
-/// 与内核栈容量惯例对齐 (KERNEL_STACK_SIZE / AP_STACK_SIZE 均为 64KB).
+/// 与内核栈容量惯例对齐 (`KERNEL_STACK_SIZE` / `AP_STACK_SIZE` 均为 64KB).
 /// 实证: 8KB 回归测试中 fork 路径三重故障 (脚本 -no-reboot, 日志止于 X),
 /// 64KB 下 fork 连续回归稳定 — d8330ef9 增大栈容量为 fork 必要条件而非临时诊断.
 const PER_CPU_SYSCALL_STACK_SIZE: usize = 65536;
@@ -491,12 +503,12 @@ fn per_cpu_gdt_mut(cpu: u32) -> &'static mut PerCpuGdt {
     let idx = gdt_slot(cpu);
     if idx == 0 {
         // SAFETY: BSP_GDT 为静态实例; 调用方保证该槽位独占访问.
-        return BSP_GDT.get_mut();
+        return BSP_GDT.get_mut().into_inner();
     }
     let ptr = AP_GDT[idx].load(Ordering::Acquire);
     if ptr.is_null() {
         // SAFETY: 回退 BSP GDT 仅用于避免 null 解引用 (见 per_cpu_gdt 的槽位未分配情形).
-        return BSP_GDT.get_mut();
+        return BSP_GDT.get_mut().into_inner();
     }
     // SAFETY: 指针由 alloc_ap_gdt 以 Release 发布; 调用方保证该槽位独占访问.
     unsafe { &mut *ptr }
@@ -609,6 +621,7 @@ fn trampoline_top_of(gdt: &PerCpuGdt) -> u64 {
 /// 3. 设置 TSS 描述符 (占用2个槽位)
 /// 4. 加载 GDTR (lgdt 指令)
 /// 5. 加载 TR (ltr 指令, 任务寄存器)
+#[must_use]
 pub fn gdt_init() -> i32 {
     static OK_MSG: &[u8] = b"GDT and TSS initialized successfully (BSP)\0";
     use crate::privileged::klog::{LogCategory, LogLevel, klog_write};
@@ -855,6 +868,7 @@ pub fn gdt_init_ap(cpu_index: u32) {
 /// 调用方须同时映射 `KERNEL_BASE + 区间` (VMA) 与区间本身 (LMA 恒等): `GS_BASE`
 /// 直接取自 `&gdt.syscall` 的 LMA (见 `gdt_init` 的 `IA32_GS_BASE` 写入), 而
 /// 高半区访问走 VMA。
+#[must_use]
 pub fn per_cpu_gdt_head_range(cpu: u32) -> (u64, u64) {
     let g = per_cpu_gdt(cpu);
     let start = core::ptr::from_ref(g) as u64;
@@ -868,6 +882,7 @@ pub fn per_cpu_gdt_head_range(cpu: u32) -> (u64, u64) {
 /// `TSS.ist[N-1]` 压入异常帧。由**静态布局推导** (而非读 `TSS.ist[]`), 使
 /// `kpti_init` 能在 `gdt_init` 之前调用本函数 —— 那时 `TSS.ist[]` 仍为 0。
 /// 公式与写入 `TSS.ist[]` 的 `init_stack_tops` 同源 (见 `ist_tops_of`)。
+#[must_use]
 pub fn ist_tops_virt(cpu: u32) -> [u64; 4] {
     ist_tops_of(per_cpu_gdt(cpu))
 }
@@ -878,6 +893,7 @@ pub fn ist_tops_virt(cpu: u32) -> [u64; 4] {
 /// `SyscallPerCpu.trampoline_top`, 而本函数由静态布局推导同一值 (见
 /// `trampoline_top_of`), 故"映射的页"与"汇编使用的栈"同源, 且可在 `gdt_init`
 /// 之前调用。
+#[must_use]
 pub fn trampoline_top_virt(cpu: u32) -> u64 {
     trampoline_top_of(per_cpu_gdt(cpu))
 }
@@ -887,6 +903,7 @@ pub fn trampoline_top_virt(cpu: u32) -> u64 {
 /// # Safety
 /// 返回的引用在整个程序生命周期有效。
 #[inline]
+#[must_use]
 pub unsafe fn get_gdt_table() -> &'static [GdtEntry; GDT_MAX_ENTRIES] {
     &current_per_cpu_gdt().entries
 }
@@ -895,6 +912,7 @@ pub unsafe fn get_gdt_table() -> &'static [GdtEntry; GDT_MAX_ENTRIES] {
 ///
 /// Trampoline 在 16→64 过渡时使用此 GDT 加载段寄存器，
 /// 进入长模式后 AP 会切换到自己的 per-CPU GDT。
+#[must_use]
 pub fn get_gdt_ptr() -> &'static GdtPtr {
     &per_cpu_gdt(0).ptr
 }
@@ -904,6 +922,7 @@ pub fn get_gdt_ptr() -> &'static GdtPtr {
 /// # Safety
 /// 应该在初始化后调用, 且注意并发安全。
 #[inline]
+#[must_use]
 pub unsafe fn get_tss_mut() -> &'static mut super::tss::TaskStateSegment {
     &mut current_per_cpu_gdt_mut().tss
 }
@@ -999,7 +1018,7 @@ unsafe fn tss_flush(selector: u16) {
 /// lgdt 仅更新 GDTR, 不重载 CS; CPU 会继续使用 CS 缓存的旧描述符, 直到
 /// 下一次 CS 装载才按新 GDT 校验. AP 经 trampoline 进入长模式时 CS=0x18,
 /// 该值在 trampoline GDT 中是 64-bit 代码段, 但在内核 per-CPU GDT 中
-/// entry[3] (0x18) 是 user_data 数据段, 故装载内核 GDT 后必须重载 CS.
+/// entry[3] (0x18) 是 `user_data` 数据段, 故装载内核 GDT 后必须重载 CS.
 ///
 /// 实现: far return 重载 CS — 依次压入选择子与返回 RIP, `retfq` 先弹 RIP
 /// 再弹 CS. 返回 RIP 用 `lea [rip + 2f]` 取运行时地址 (AP 经 trampoline

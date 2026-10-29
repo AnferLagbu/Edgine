@@ -106,7 +106,7 @@ pub fn sys_eventfd(initval: u64, flags: i32) -> i64 {
     // flags 校验: 只允许已知标志
     let valid_flags = EFD_CLOEXEC | EFD_NONBLOCK | EFD_SEMAPHORE;
     if flags & !valid_flags != 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     let semaphore = (flags & EFD_SEMAPHORE) != 0;
@@ -115,12 +115,12 @@ pub fn sys_eventfd(initval: u64, flags: i32) -> i64 {
     let Some(fd) = crate::privileged::proc::fd_alloc::alloc_fd(
         crate::privileged::proc::fd_alloc::FdSubsystem::EventFd,
     ) else {
-        return Errno::EMFILE.as_ret();
+        return Errno::Emfile.as_ret();
     };
 
     // V2: FD 编号由 alloc_fd 计算 (底层使用 fd_at(EventFd, slot))
     let Some((_sub, slot)) = crate::privileged::proc::fd_alloc::idx_of(fd) else {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     };
 
     let mut table = EFD_TABLE.lock();
@@ -151,18 +151,18 @@ pub fn sys_eventfd(initval: u64, flags: i32) -> i64 {
 /// 返回 8 (成功), 或负 errno
 pub fn sys_eventfd_read(fd: i32, buf: u64) -> i64 {
     let Some(idx) = fd_to_idx(fd) else {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     };
 
     let mut table = EFD_TABLE.lock();
     let slot = &mut table.slots[idx];
 
     if !slot.used {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     }
 
     if slot.counter == 0 {
-        return Errno::EAGAIN.as_ret();
+        return Errno::Eagain.as_ret();
     }
 
     let value = if slot.semaphore {
@@ -178,7 +178,7 @@ pub fn sys_eventfd_read(fd: i32, buf: u64) -> i64 {
 
     // 写入用户空间 (8 字节 u64)
     if buf == 0 {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     // SAFETY: buf 由 syscall 入口验证, 8 字节对齐写入 u64
     unsafe {
@@ -195,23 +195,23 @@ pub fn sys_eventfd_read(fd: i32, buf: u64) -> i64 {
 /// 返回 8 (成功), 或负 errno
 pub fn sys_eventfd_write(fd: i32, value: u64) -> i64 {
     if value == 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     let Some(idx) = fd_to_idx(fd) else {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     };
 
     let mut table = EFD_TABLE.lock();
     let slot = &mut table.slots[idx];
 
     if !slot.used {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     }
 
     // 溢出检查: counter + value > U64_MAX - 1
     if slot.counter > u64::MAX - 1 - value {
-        return Errno::EAGAIN.as_ret();
+        return Errno::Eagain.as_ret();
     }
 
     slot.counter += value;
@@ -231,14 +231,14 @@ pub fn sys_eventfd_write(fd: i32, value: u64) -> i64 {
 /// 释放槽位, 返回 0 或负 errno
 pub fn sys_eventfd_close(fd: i32) -> i64 {
     let Some(idx) = fd_to_idx(fd) else {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     };
 
     let mut table = EFD_TABLE.lock();
     let slot = &mut table.slots[idx];
 
     if !slot.used {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     }
 
     slot.used = false;
@@ -307,6 +307,7 @@ fn fd_to_idx(fd: i32) -> Option<usize> {
 /// 检查 fd 是否属于 eventfd 空间
 ///
 /// TD-02 V4: 改走 `fd_alloc::idx_of`, 不再持有 `EFD_FD_BASE` 字面量 + 算术.
+#[must_use]
 pub fn is_eventfd_fd(fd: i32) -> bool {
     matches!(
         crate::privileged::proc::idx_of(fd),

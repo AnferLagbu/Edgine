@@ -112,8 +112,15 @@ pub struct VirtualMemoryManager {
 // SAFETY: VMM_LOCK 自旋锁保护所有可变状态, 原子计数器使用 Relaxed 顺序 (锁内单写者).
 unsafe impl Sync for VirtualMemoryManager {}
 
+impl Default for VirtualMemoryManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VirtualMemoryManager {
     /// 构造 VMM 实例: 清零页表槽位与统计计数器.
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             user_tables: UnsafeCell::new(
@@ -142,7 +149,9 @@ impl VirtualMemoryManager {
         // (KPTI-08 起不再复制内核高半区; 未激活时退化为整段复制)。
         // 完整功能需要汇编 entry/exit trampoline, 见 kpti.rs 模块顶部文档
         if !super::kpti::kpti_is_active()
-            && crate::privileged::config::KernelCapabilities::detect().kpti
+            && crate::privileged::config::KernelCapabilities::detect()
+                .mem
+                .kpti
         {
             // SAFETY: KERNEL_PML4 已初始化, PMM 可用, KPTI 全局状态在 init 独占
             unsafe {
@@ -497,6 +506,7 @@ impl VirtualMemoryManager {
     /// 在指定页表中翻译虚拟地址, 仅返回物理地址 (丢弃叶子项写位).
     ///
     /// 委托 [`Self::translate_in_pml4`], 供仅需物理地址的既有调用点使用.
+    #[must_use]
     pub fn get_physical_in_pml4(pml4: u64, virt: VirtAddr) -> Option<PhysAddr> {
         Self::translate_in_pml4(pml4, virt).map(|t| t.phys)
     }
@@ -505,6 +515,7 @@ impl VirtualMemoryManager {
     ///
     /// 与 [`Self::get_physical_in_pml4`] 同一遍历逻辑, 额外透出叶子表项的写位,
     /// 供跨进程写路径判定目标页可写 (只读页拒绝写入). 未映射返回 `None`.
+    #[must_use]
     pub fn translate_in_pml4(pml4: u64, virt: VirtAddr) -> Option<PageTranslation> {
         if pml4 == 0 {
             return None;
@@ -575,6 +586,7 @@ impl VirtualMemoryManager {
     /// 读取 PTE 原始值 (用于 swap entry 检测)
     ///
     /// 返回 4KB 页的 PTE 原始值, 若页表层级不存在则返回 None.
+    #[must_use]
     pub fn get_pte_value(pml4: u64, virt: VirtAddr) -> Option<u64> {
         if pml4 == 0 {
             return None;
@@ -1049,10 +1061,10 @@ impl VirtualMemoryManager {
 
         // SAFETY: VMM_LOCK held; only mutation is clearing user_tables slot
         let tables = unsafe { &mut *self.user_tables.get() };
-        for i in 0..MAX_USER_PAGE_TABLES {
-            if tables[i].pml4_phys == pml4 && tables[i].in_use {
-                tables[i].in_use = false;
-                tables[i].pml4_phys = 0;
+        for table in &mut tables[..MAX_USER_PAGE_TABLES] {
+            if table.pml4_phys == pml4 && table.in_use {
+                table.in_use = false;
+                table.pml4_phys = 0;
                 self.user_table_count.fetch_sub(1, Ordering::Relaxed);
                 break;
             }
@@ -1289,11 +1301,7 @@ impl VirtualMemoryManager {
                             // step = HUGE_PAGE_2M_SIZE → PDPT→PD (1GB→2MB), 新 PD 条目需要 HUGE_PAGE
                             let huge_frame = e.frame();
                             let huge_flags = e.flags();
-                            let step = if huge_step > 0 {
-                                huge_step
-                            } else {
-                                PAGE_SIZE as u64
-                            };
+                            let step = if huge_step > 0 { huge_step } else { PAGE_SIZE };
                             let mut new_flags =
                                 (huge_flags & !PageFlags::HUGE_PAGE) | PageFlags::PRESENT;
                             if step == HUGE_PAGE_2M_SIZE {
@@ -1413,7 +1421,7 @@ impl VirtualMemoryManager {
                 for i in 0..512 {
                     // SAFETY: pt is a full 4KB PT page; add(i) stays in bounds
                     let pte = &mut *pt.add(i);
-                    pte.set_frame(PhysAddr(huge_frame.as_u64() + i as u64 * PAGE_SIZE as u64));
+                    pte.set_frame(PhysAddr(huge_frame.as_u64() + i as u64 * PAGE_SIZE));
                     pte.set_flags((huge_flags & !PageFlags::HUGE_PAGE) | PageFlags::PRESENT);
                     pte.set_present(true);
                 }
@@ -1739,8 +1747,8 @@ impl VirtualMemoryManager {
     fn find_free_user_slot(&self) -> usize {
         // SAFETY: Read-only access to user_tables via UnsafeCell under VMM_LOCK.
         let tables = unsafe { &*self.user_tables.get() };
-        for i in 0..MAX_USER_PAGE_TABLES {
-            if !tables[i].in_use {
+        for (i, table) in tables[..MAX_USER_PAGE_TABLES].iter().enumerate() {
+            if !table.in_use {
                 return i;
             }
         }
@@ -1920,6 +1928,7 @@ pub fn get_current_pml4() -> u64 {
 /// 探针随即失去判别力 (字节比对恒为旧值).
 ///
 /// 返回 `true` = 通过 (含单核 / SMP 未启用下的跳过); `false` = 判别性失败.
+#[must_use]
 pub fn tlb_probe_selftest() -> bool {
     use crate::privileged::smp;
 
@@ -2021,15 +2030,14 @@ pub fn tlb_probe_selftest() -> bool {
 ///
 /// # 调用约束
 /// 调用方不得在已持 `VMM_LOCK` 的情况下调用本函数.
+#[must_use]
 pub fn count_present_user_pages(cr3: u64) -> Option<u64> {
     if cr3 == 0 {
         return Some(0);
     }
 
     // 非阻塞获取: 锁被占用则不遍历, 直接放弃本轮.
-    let Some(flags) = try_acquire_lock() else {
-        return None;
-    };
+    let flags = try_acquire_lock()?;
 
     let mut pages = 0u64;
     let pml4_ptr = PhysAddr(cr3).to_virt().0 as *const PageTableEntry;

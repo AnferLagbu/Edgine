@@ -59,6 +59,7 @@ pub fn sched_getaffinity(pid: u32) -> Option<u64> {
 }
 
 /// C2: 检查 CPU 是否在进程 allowed cpuset 中
+#[must_use]
 pub fn is_cpu_allowed(pid: u32, cpu_id: u32) -> bool {
     Scheduler::is_cpu_allowed(pid, cpu_id)
 }
@@ -66,6 +67,7 @@ pub fn is_cpu_allowed(pid: u32, cpu_id: u32) -> bool {
 /// C2: 为进程选择最合适的 CPU
 ///
 /// 策略: 在 allowed cpuset 中选 load 最低的 CPU.
+#[must_use]
 pub fn select_cpu_for(pid: u32, hint_cpu: u32) -> u32 {
     Scheduler::select_cpu_for(pid, hint_cpu)
 }

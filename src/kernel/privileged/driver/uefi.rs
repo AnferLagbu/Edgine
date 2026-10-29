@@ -34,7 +34,7 @@ use alloc::vec::Vec;
 // EFI_SYSTEM_TABLE 布局 (x86_64 UEFI 2.x, 物理地址视图)
 // ============================================================================
 
-/// EFI_SYSTEM_TABLE 签名 — "IBI SYST"
+/// `EFI_SYSTEM_TABLE` 签名 — "IBI SYST"
 pub const EFI_SYSTEM_TABLE_SIGNATURE: u64 = 0x5453_5953_2049_4249;
 
 /// `EFI_TABLE_HEADER.Signature` 偏移 (0x00)
@@ -43,13 +43,13 @@ const ST_OFF_SIGNATURE: u64 = 0x00;
 const ST_OFF_FIRMWARE_VENDOR: u64 = 0x18;
 /// `FirmwareRevision` (UINT32) 偏移 (0x20)
 const ST_OFF_FIRMWARE_REVISION: u64 = 0x20;
-/// `RuntimeServices` (EFI_RUNTIME_SERVICES*) 偏移 (0x58)
+/// `RuntimeServices` (`EFI_RUNTIME_SERVICES`*) 偏移 (0x58)
 const ST_OFF_RUNTIME_SERVICES: u64 = 0x58;
-/// `BootServices` (EFI_BOOT_SERVICES*) 偏移 (0x60)
+/// `BootServices` (`EFI_BOOT_SERVICES`*) 偏移 (0x60)
 const ST_OFF_BOOT_SERVICES: u64 = 0x60;
 /// `NumberOfTableEntries` (UINTN) 偏移 (0x68)
 const ST_OFF_NUM_TABLE_ENTRIES: u64 = 0x68;
-/// `ConfigurationTable` (EFI_CONFIGURATION_TABLE*) 偏移 (0x70)
+/// `ConfigurationTable` (`EFI_CONFIGURATION_TABLE`*) 偏移 (0x70)
 const ST_OFF_CONFIG_TABLE: u64 = 0x70;
 
 // ============================================================================
@@ -97,6 +97,7 @@ pub struct EfiTime {
 impl EfiTime {
     // 有意窄化: 用户内存代理, 指针/长度上下文保证
     /// 转换为 Unix 纳秒时间戳 (1970-01-01 为 0 点基准)
+    #[must_use]
     pub fn to_unix_ns(self) -> u64 {
         // 简化: 转换为秒数
         let days_before_month: [u64; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
@@ -127,6 +128,7 @@ impl EfiTime {
     ///
     /// 供 `set_time` 系统调用 (ns 语义) 与 `get_time` (epoch 基准换算) 使用。
     /// 年份换算以公历推进, 年份达 `u16::MAX` 时截断 (u64 纳秒量程远超 u16 年份)。
+    #[must_use]
     pub fn from_unix_ns(ns: u64) -> Self {
         let secs = ns / 1_000_000_000;
         let nanosecond = (ns % 1_000_000_000) as u32;
@@ -214,6 +216,7 @@ pub enum EfiMemoryType {
 
 impl EfiMemoryType {
     /// 由原始 `u32` 值解析内存类型 (未知值回落为 `Reserved`)
+    #[must_use]
     pub fn from_u32(v: u32) -> Self {
         match v {
             1 => Self::LoaderCode,
@@ -316,11 +319,11 @@ pub struct EfiVariable {
 pub struct UefiSubsystem {
     /// 系统表物理地址
     system_table_addr: AtomicU64,
-    /// EFI_RUNTIME_SERVICES 指针 (从系统表 0x58 提取)
+    /// `EFI_RUNTIME_SERVICES` 指针 (从系统表 0x58 提取)
     runtime_services_addr: AtomicU64,
-    /// EFI_BOOT_SERVICES 指针 (从系统表 0x60 提取)
+    /// `EFI_BOOT_SERVICES` 指针 (从系统表 0x60 提取)
     boot_services_addr: AtomicU64,
-    /// EFI_CONFIGURATION_TABLE 指针 (从系统表 0x70 提取)
+    /// `EFI_CONFIGURATION_TABLE` 指针 (从系统表 0x70 提取)
     config_table_addr: AtomicU64,
     /// 配置表条目数 (从系统表 0x68 提取)
     config_table_entries: AtomicU32,
@@ -342,8 +345,15 @@ pub struct UefiSubsystem {
     has_uefi: AtomicBool,
 }
 
+impl Default for UefiSubsystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UefiSubsystem {
     /// 创建未初始化的 UEFI 子系统 (const 上下文可用, 供静态初始化)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             system_table_addr: AtomicU64::new(0),
@@ -397,10 +407,10 @@ impl UefiSubsystem {
         );
     }
 
-    /// 解析 EFI_SYSTEM_TABLE — 验证签名 + 提取运行时/引导服务与配置表入口。
+    /// 解析 `EFI_SYSTEM_TABLE` — 验证签名 + 提取运行时/引导服务与配置表入口。
     ///
     /// 仅做**只读解析与记录**, 不调用任何 UEFI 运行时服务 (调用需固件仍处
-    /// BootServices 生命周期且内存 1:1 映射). 签名不匹配视为非 EFI 系统表,
+    /// `BootServices` 生命周期且内存 1:1 映射). 签名不匹配视为非 EFI 系统表,
     /// fail-closed: `has_uefi` 置 false, 提取字段保持 0.
     fn parse_system_table(&self, addr: u64) {
         if addr == 0 {
@@ -598,6 +608,7 @@ pub fn uefi_init(system_table_addr: u64) {
 }
 
 /// 获取全局 UEFI 子系统
+#[must_use]
 pub fn uefi_subsystem() -> &'static UefiSubsystem {
     &UEFI
 }

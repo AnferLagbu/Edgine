@@ -33,7 +33,7 @@ pub fn gfx_console_init(console: &'static mut GfxConsole) {
     );
 }
 
-/// 安全访问 GfxConsole (闭包形式).
+/// 安全访问 `GfxConsole` (闭包形式).
 ///
 /// 集中处理 console 指针 + 解引用 unsafe, 并在**帧缓冲锁内**取得
 /// `&mut Framebuffer` 一并无锁外裸访问地交给闭包. 先判 console 是否已初始化,
@@ -94,7 +94,7 @@ pub fn gfx_console_write(msg: &[u8]) {
 /// 此函数在 panic handler 中调用，无论是否初始化都尝试接管。
 /// 优先使用已存在的 `GfxConsole` 实例，如果没有则什么也不做（至少串口已输出）。
 ///
-/// **单核约束**: panic handler 串行触发, 不与其它 with_console 调用并发.
+/// **单核约束**: panic handler 串行触发, 不与其它 `with_console` 调用并发.
 pub fn gfx_console_panic_reclaim(msg: &str) {
     let _ = with_console_try(|c, fb| c.panic_reclaim(fb, msg));
 }

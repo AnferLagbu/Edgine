@@ -91,23 +91,23 @@ pub extern "C" fn ipc_init() {
         ns.allocate();
 
         // 初始化管道等待队列
-        for i in 0..IPC_MAX_PIPES {
-            ns.pipes[i].id = 0;
-            ns.pipes[i].read_wait.init();
-            ns.pipes[i].write_wait.init();
+        for pipe in &mut ns.pipes[..IPC_MAX_PIPES] {
+            pipe.id = 0;
+            pipe.read_wait.init();
+            pipe.write_wait.init();
         }
 
         // 初始化消息队列等待队列
-        for i in 0..IPC_MAX_MSG_QUEUES {
-            ns.msg_queues[i].id = 0;
-            ns.msg_queues[i].send_wait.init();
-            ns.msg_queues[i].recv_wait.init();
+        for queue in &mut ns.msg_queues[..IPC_MAX_MSG_QUEUES] {
+            queue.id = 0;
+            queue.send_wait.init();
+            queue.recv_wait.init();
         }
 
         // 初始化信号量等待队列
-        for i in 0..IPC_MAX_SEMAPHORES {
-            ns.semaphores[i].id = 0;
-            ns.semaphores[i].wait.init();
+        for sem in &mut ns.semaphores[..IPC_MAX_SEMAPHORES] {
+            sem.id = 0;
+            sem.wait.init();
         }
     });
 }

@@ -29,7 +29,7 @@ use crate::privileged::mm::PhysAddr;
 pub(crate) const E1000_CTRL: u32 = 0x0000;
 /// 全局复位 (Global reset, bit26).
 ///
-/// ISSUE-RT-001: 早期误用 bit31 (0x8000_0000). 该位实为 `E1000_CTRL_PHY_RST`
+/// ISSUE-RT-001: 早期误用 bit31 (`0x8000_0000`). 该位实为 `E1000_CTRL_PHY_RST`
 /// (PHY 复位), 82540EM 不会因它触发全局复位, 导致复位轮询超时 -> 初始化失败.
 pub const E1000_CTRL_RST: u32 = 1 << 26;
 /// CTRL.SLU (bit6): 置链路 Up.
@@ -136,7 +136,7 @@ pub const E1000_TIMEOUT: u32 = 100_000;
 /// 安全的 E1000 MMIO 访问器.
 ///
 /// 包装 `IoMem`, 提供所有 E1000 寄存器的类型安全读写.
-/// 该类型原属 functions 层 (B04-19 上移 dma_ring 时一并迁移), B04-AUDIT-005 #4
+/// 该类型原属 functions 层 (B04-19 上移 `dma_ring` 时一并迁移), B04-AUDIT-005 #4
 /// 修复后正式归位 privileged, functions 通过 `use` 引用.
 pub struct E1000Io {
     mmio: IoMem,
@@ -145,11 +145,11 @@ pub struct E1000Io {
 /// `E1000Io` 创建结果.
 ///
 /// functions 层的 `E1000NetDriver` 探测流程调用 `E1000Io::new`, 该函数可能因为
-/// IoMem 映射失败返回错误. 由于 privileged 不依赖 `KernelError` (functions 类型),
+/// `IoMem` 映射失败返回错误. 由于 privileged 不依赖 `KernelError` (functions 类型),
 /// 这里采用独立错误类型, functions 层用 `?` 映射到 `DriverError::HardwareError`.
 #[derive(Debug)]
 pub enum E1000IoError {
-    /// PCI BAR 映射 IoMem 失败
+    /// PCI BAR 映射 `IoMem` 失败
     IoMemMap,
 }
 
@@ -173,6 +173,7 @@ impl E1000Io {
 
     /// 读取 32 位寄存器
     #[inline]
+    #[must_use]
     pub fn read32(&self, reg: u32) -> u32 {
         self.mmio.read_u32(reg as usize)
     }
@@ -188,6 +189,7 @@ impl E1000Io {
     /// 通过 EERD 寄存器读取 EEPROM 字.
     ///
     /// 轮询 EERD.DONE 位, 带超时保护.
+    #[must_use]
     pub fn eeprom_read(&self, addr: u8) -> u16 {
         self.write32(E1000_EERD, (u32::from(addr) << 2) | E1000_EERD_START);
         let mut timeout: u32 = 0;
@@ -205,6 +207,7 @@ impl E1000Io {
     // ── 中断 ──
 
     /// 读取中断原因并应答 (write-1-to-clear)
+    #[must_use]
     pub fn irq_ack(&self) -> u32 {
         let icr = self.read32(E1000_ICR);
         self.write32(E1000_ICR, icr);
@@ -222,11 +225,13 @@ impl E1000Io {
     }
 
     /// 读取中断状态
+    #[must_use]
     pub fn icr(&self) -> u32 {
         self.read32(E1000_ICR)
     }
 
     /// 读取中断掩码
+    #[must_use]
     pub fn ims(&self) -> u32 {
         self.read32(E1000_IMS)
     }
@@ -234,11 +239,13 @@ impl E1000Io {
     // ── 链路状态 ──
 
     /// 链路是否 UP
+    #[must_use]
     pub fn link_is_up(&self) -> bool {
         self.read32(E1000_STATUS) & E1000_STATUS_LU != 0
     }
 
     /// 读取链路速度与双工状态
+    #[must_use]
     pub fn link_status(&self) -> (&'static str, &'static str) {
         let status = self.read32(E1000_STATUS);
         let speed = if status & E1000_STATUS_SPEED_1000 != 0 {
@@ -281,6 +288,7 @@ impl E1000Io {
     }
 
     /// 读取 RX head 指针 (硬件更新)
+    #[must_use]
     pub fn rx_head(&self) -> u32 {
         self.read32(E1000_RDH)
     }
@@ -291,6 +299,7 @@ impl E1000Io {
     }
 
     /// 读取 TX head 指针 (硬件更新)
+    #[must_use]
     pub fn tx_head(&self) -> u32 {
         self.read32(E1000_TDH)
     }
@@ -313,6 +322,7 @@ impl E1000Io {
     // ── 控制寄存器 ──
 
     /// 读取控制寄存器
+    #[must_use]
     pub fn ctrl(&self) -> u32 {
         self.read32(E1000_CTRL)
     }
@@ -323,6 +333,7 @@ impl E1000Io {
     }
 
     /// 读取接收控制寄存器
+    #[must_use]
     pub fn rx_ctl(&self) -> u32 {
         self.read32(E1000_RCTL)
     }
@@ -333,6 +344,7 @@ impl E1000Io {
     }
 
     /// 读取发送控制寄存器
+    #[must_use]
     pub fn tx_ctl(&self) -> u32 {
         self.read32(E1000_TCTL)
     }

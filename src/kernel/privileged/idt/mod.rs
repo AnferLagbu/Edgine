@@ -48,11 +48,11 @@
 
 // 子模块声明
 pub mod handlers; // Phase 3: 异常处理器实现
-pub mod idt; // Phase 2: 核心管理器
 /// T-04: 中断处理决策 trait
 pub mod irq_trait;
 pub mod safety;
 pub mod statistics;
+pub mod table; // Phase 2: 核心管理器
 pub mod types; // Phase 3: 统计与 JSON 导出
 
 // 重新导出核心类型 (方便外部使用)
@@ -84,10 +84,10 @@ pub use safety::{
     is_valid_kernel_address, is_valid_user_address, rdtsc, read_cr2,
 };
 
-pub use idt::IdtManager;
+pub use table::IdtManager;
 
 #[cfg(target_arch = "x86_64")]
-pub use idt::idt_entries_base_lma;
+pub use table::idt_entries_base_lma;
 
 /// 将已初始化的 IDT 加载到当前 CPU (`lidt`).
 ///
@@ -434,7 +434,10 @@ pub extern "C" fn idt_init() -> i32 {
 #[unsafe(link_section = ".kpti_trampoline")]
 pub unsafe extern "C" fn exception_handler(frame: *mut InterruptFrame) {
     let manager = IdtManager::instance();
-    manager.handle_exception(frame);
+    // SAFETY: frame 由 isr.asm 构建, 结构完整且对齐; 与 handle_exception 的安全契约一致.
+    unsafe {
+        manager.handle_exception(frame);
+    }
 }
 
 /// IRQ 处理主入口 (从 isr.asm 调用)

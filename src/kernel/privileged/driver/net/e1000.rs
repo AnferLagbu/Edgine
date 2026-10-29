@@ -40,6 +40,7 @@ impl TxRing {
     /// 4KiB 对齐的 DMA 一致内存 (自动清零 + cache flush), 满足 E1000 硬件 DMA
     /// 读取要求 (与 `RxRing::alloc` 对称)。
     #[cfg(not(feature = "kernel_test"))]
+    #[must_use]
     pub fn alloc(count: usize, buf_size: usize) -> Option<Self> {
         // B04-17: count == 0 或 buf_size == 0 时分配大小为 0, 后续解引用越过
         // 分配边界 → 任意内存读/写。
@@ -76,16 +77,19 @@ impl TxRing {
     }
 
     /// TX 描述符环物理地址 (用于硬件 TDBAL/TDBAH)
+    #[must_use]
     pub fn phys_addr(&self) -> u64 {
         self.phys
     }
 
     /// TX 描述符环字节长度 (用于硬件 TDLEN)
+    #[must_use]
     pub fn len_bytes(&self) -> usize {
         self.count * core::mem::size_of::<E1000TxDesc>()
     }
 
     /// 当前 tail 索引
+    #[must_use]
     pub fn tail(&self) -> usize {
         self.tail
     }
@@ -112,6 +116,7 @@ impl TxRing {
     }
 
     /// 检查指定索引的描述符是否完成 (DD bit)
+    #[must_use]
     pub fn is_done(&self, idx: usize) -> bool {
         // SAFETY: idx 在 0..count 范围内; ptr 已分配。
         let desc = unsafe { &*self.ptr.add(idx) };
@@ -143,6 +148,7 @@ impl RxRing {
     /// 描述符环与每个接收缓冲区均通过 `DmaEngine::alloc_coherent` 分配物理连续、
     /// 4KiB 对齐的 DMA 一致内存 (自动清零 + cache flush), 满足 E1000 硬件要求。
     #[cfg(not(feature = "kernel_test"))]
+    #[must_use]
     pub fn alloc(count: usize, buf_size: usize) -> Option<Self> {
         // B04-17: count == 0 或 buf_size == 0 时分配大小为 0,
         // 后续解引用越过分配边界 → 任意内存读/写。
@@ -174,26 +180,31 @@ impl RxRing {
     }
 
     /// RX 描述符环物理地址 (用于硬件 RDBAL/RDBAH)
+    #[must_use]
     pub fn phys_addr(&self) -> u64 {
         self.phys
     }
 
     /// RX 描述符环字节长度 (用于硬件 RDLEN)
+    #[must_use]
     pub fn len_bytes(&self) -> usize {
         self.count * core::mem::size_of::<E1000RxDesc>()
     }
 
     /// 当前 tail 索引
+    #[must_use]
     pub fn tail(&self) -> usize {
         self.tail
     }
 
     /// 环大小 (描述符个数)
+    #[must_use]
     pub fn count(&self) -> usize {
         self.count
     }
 
     /// 检查指定索引的描述符是否包含就绪数据包 (DD bit)
+    #[must_use]
     pub fn is_done(&self, idx: usize) -> bool {
         // SAFETY: idx 在 0..count 范围内; ptr 已分配。
         let desc = unsafe { &*self.ptr.add(idx) };
@@ -201,6 +212,7 @@ impl RxRing {
     }
 
     /// 检查描述符是否有接收错误
+    #[must_use]
     pub fn has_errors(&self, idx: usize) -> bool {
         // SAFETY: idx 在 0..count 范围内; ptr 已分配。
         let desc = unsafe { &*self.ptr.add(idx) };
@@ -209,6 +221,7 @@ impl RxRing {
     }
 
     /// 获取描述符的接收长度
+    #[must_use]
     pub fn packet_length(&self, idx: usize) -> usize {
         // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
         let desc = unsafe { &*self.ptr.add(idx) };
@@ -216,6 +229,7 @@ impl RxRing {
     }
 
     /// 获取描述符的错误码
+    #[must_use]
     pub fn errors(&self, idx: usize) -> u8 {
         // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
         let desc = unsafe { &*self.ptr.add(idx) };

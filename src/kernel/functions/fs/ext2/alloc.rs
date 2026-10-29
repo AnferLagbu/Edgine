@@ -22,7 +22,7 @@ pub fn alloc_block_in_group(
     let block_size = super_block.block_size() as usize;
 
     // 读取块位图
-    let bitmap_sector = u64::from(bgd.bg_block_bitmap) * block_size as u64 / 512;
+    let bitmap_sector = u64::from(bgd.block_bitmap) * block_size as u64 / 512;
     let bitmap_sector_count =
         crate::functions::intcast::low_u32_from_usize((block_size / 512).max(1));
     let mut bitmap_data = alloc::vec![0u8; block_size];
@@ -85,7 +85,7 @@ pub fn free_block(
     let block_offset = block_num % super_block.s_blocks_per_group;
 
     // 读取块位图
-    let bitmap_sector = u64::from(bgd.bg_block_bitmap) * block_size as u64 / 512;
+    let bitmap_sector = u64::from(bgd.block_bitmap) * block_size as u64 / 512;
     let bitmap_sector_count =
         crate::functions::intcast::low_u32_from_usize((block_size / 512).max(1));
     let mut bitmap_data = alloc::vec![0u8; block_size];
@@ -155,36 +155,36 @@ pub fn write_inode(
     }
 
     let bgd = &block_groups[block_group as usize];
-    let inode_table_block = bgd.bg_inode_table;
+    let inode_table_block = bgd.inode_table;
     let inode_size = super_block.inode_size() as usize;
     let block_size = super_block.block_size() as usize;
 
     // 序列化 inode
     let mut inode_data = alloc::vec![0u8; inode_size];
-    inode_data[0..2].copy_from_slice(&inode.i_mode.to_le_bytes());
-    inode_data[2..4].copy_from_slice(&inode.i_uid.to_le_bytes());
-    inode_data[4..8].copy_from_slice(&inode.i_size.to_le_bytes());
-    inode_data[8..12].copy_from_slice(&inode.i_atime.to_le_bytes());
-    inode_data[12..16].copy_from_slice(&inode.i_ctime.to_le_bytes());
-    inode_data[16..20].copy_from_slice(&inode.i_mtime.to_le_bytes());
-    inode_data[20..24].copy_from_slice(&inode.i_dtime.to_le_bytes());
-    inode_data[24..26].copy_from_slice(&inode.i_gid.to_le_bytes());
-    inode_data[26..28].copy_from_slice(&inode.i_links_count.to_le_bytes());
-    inode_data[28..32].copy_from_slice(&inode.i_blocks.to_le_bytes());
-    inode_data[32..36].copy_from_slice(&inode.i_flags.to_le_bytes());
-    inode_data[36..40].copy_from_slice(&inode.i_osd1.to_le_bytes());
+    inode_data[0..2].copy_from_slice(&inode.mode.to_le_bytes());
+    inode_data[2..4].copy_from_slice(&inode.uid.to_le_bytes());
+    inode_data[4..8].copy_from_slice(&inode.size.to_le_bytes());
+    inode_data[8..12].copy_from_slice(&inode.atime.to_le_bytes());
+    inode_data[12..16].copy_from_slice(&inode.ctime.to_le_bytes());
+    inode_data[16..20].copy_from_slice(&inode.mtime.to_le_bytes());
+    inode_data[20..24].copy_from_slice(&inode.dtime.to_le_bytes());
+    inode_data[24..26].copy_from_slice(&inode.gid.to_le_bytes());
+    inode_data[26..28].copy_from_slice(&inode.links_count.to_le_bytes());
+    inode_data[28..32].copy_from_slice(&inode.blocks.to_le_bytes());
+    inode_data[32..36].copy_from_slice(&inode.flags.to_le_bytes());
+    inode_data[36..40].copy_from_slice(&inode.osd1.to_le_bytes());
 
-    // 写入 i_block 数组
-    for i in 0..15 {
+    // 写入 block 数组
+    for (i, blk) in inode.block.iter().enumerate() {
         let offset = 40 + i * 4;
-        inode_data[offset..offset + 4].copy_from_slice(&inode.i_block[i].to_le_bytes());
+        inode_data[offset..offset + 4].copy_from_slice(&blk.to_le_bytes());
     }
 
-    inode_data[100..104].copy_from_slice(&inode.i_generation.to_le_bytes());
-    inode_data[104..108].copy_from_slice(&inode.i_file_acl.to_le_bytes());
-    inode_data[108..112].copy_from_slice(&inode.i_dir_acl.to_le_bytes());
-    inode_data[112..116].copy_from_slice(&inode.i_faddr.to_le_bytes());
-    inode_data[116..128].copy_from_slice(&inode.i_osd2);
+    inode_data[100..104].copy_from_slice(&inode.generation.to_le_bytes());
+    inode_data[104..108].copy_from_slice(&inode.file_acl.to_le_bytes());
+    inode_data[108..112].copy_from_slice(&inode.dir_acl.to_le_bytes());
+    inode_data[112..116].copy_from_slice(&inode.faddr.to_le_bytes());
+    inode_data[116..128].copy_from_slice(&inode.osd2);
 
     // 计算扇区位置
     let inode_offset = inode_table_block as usize * block_size + index as usize * inode_size;
@@ -210,7 +210,7 @@ pub fn alloc_inode_in_group(
     let block_size = super_block.block_size() as usize;
 
     // 读取 inode 位图
-    let bitmap_sector = u64::from(bgd.bg_inode_bitmap) * block_size as u64 / 512;
+    let bitmap_sector = u64::from(bgd.inode_bitmap) * block_size as u64 / 512;
     let bitmap_sector_count =
         crate::functions::intcast::low_u32_from_usize((block_size / 512).max(1));
     let mut bitmap_data = alloc::vec![0u8; block_size];
@@ -273,7 +273,7 @@ pub fn free_inode(
     let inode_offset = (inode_num - super_block.first_inode()) % super_block.s_inodes_per_group;
 
     // 读取 inode 位图
-    let bitmap_sector = u64::from(bgd.bg_inode_bitmap) * block_size as u64 / 512;
+    let bitmap_sector = u64::from(bgd.inode_bitmap) * block_size as u64 / 512;
     let bitmap_sector_count =
         crate::functions::intcast::low_u32_from_usize((block_size / 512).max(1));
     let mut bitmap_data = alloc::vec![0u8; block_size];

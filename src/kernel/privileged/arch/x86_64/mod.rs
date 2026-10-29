@@ -251,7 +251,7 @@ impl InterruptArch for X8664 {
         // kpti_init 依赖 has_invpcid() → get_cpu_info() → cpu_init
         crate::privileged::cpu::cpu_init();
 
-        crate::privileged::arch::x86_64::gdt::gdt_init();
+        let _ = crate::privileged::arch::x86_64::gdt::gdt_init();
 
         // 配置 SYSCALL/SYSRET 指令
         // 设置 EFER.SCE, STAR, LSTAR (高半部分地址), SFMASK
@@ -390,8 +390,11 @@ impl MmuArch for X8664 {
     }
 
     /// 进程上下文切换 (`process_switch_asm`)。
+    ///
+    /// # Safety
+    /// `from` 和 `to` 必须指向有效的 `ProcessContext` 内存。
     #[inline]
-    fn context_switch(from: *mut u8, to: *const u8) {
+    unsafe fn context_switch(from: *mut u8, to: *const u8) {
         // E-04 (2026-09-06): 测试运行器双端适配 — host-test (std) 下无裸机上下文切换.
         // process_switch_asm 由 proc/switch.asm 在裸机构建时汇编链接, host 无此符号,
         // 直接 extern 调用会链接报 undefined symbol. 桩化为 no-op (host 无硬件切换语义,

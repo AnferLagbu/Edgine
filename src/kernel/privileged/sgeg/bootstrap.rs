@@ -17,6 +17,7 @@ pub struct FirstToken {
 
 impl FirstToken {
     /// 创建新的未使用首次令牌, 记录标识与创建时刻。
+    #[must_use]
     pub fn new(token_id: u64, created_at: u64) -> Self {
         Self {
             token_id,
@@ -30,7 +31,7 @@ static FIRST_TOKEN_USED: AtomicBool = AtomicBool::new(true);
 static FIRST_TOKEN_ID: AtomicU64 = AtomicU64::new(0);
 static FIRST_TOKEN_CREATED: AtomicU64 = AtomicU64::new(0);
 
-/// 生成新的首次令牌: 由 TSC 派生 token_id, 标记为未使用并记录创建时间。
+/// 生成新的首次令牌: 由 TSC 派生 `token_id`, 标记为未使用并记录创建时间。
 pub fn generate_first_token() {
     let token_id = {
         let tsc = crate::arch!(timestamp());
@@ -70,6 +71,7 @@ pub fn grant_from_first_token(
 }
 
 /// 返回当前 PWM 时间戳 (微秒); 计数器频率未登记时直接返回计数器原值。
+#[must_use]
 pub fn pwm_now() -> u64 {
     let tsc = crate::arch!(timestamp());
     // 单一时基: 频率取 `timer::calibration` 登记值, 周期→微秒 走与 tick/hrtimer

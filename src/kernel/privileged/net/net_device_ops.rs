@@ -35,7 +35,7 @@ use crate::privileged::sync::OnceLock;
 // 安全桥 trait
 // ============================================================================
 
-/// 网络设备操作契约 (NetOps 安全桥) — functions 0 unsafe impl
+/// 网络设备操作契约 (`NetOps` 安全桥) — functions 0 unsafe impl
 ///
 /// 每个方法对应 `NetOps` 指针表的一个槽位; privileged 负责将本 trait 的
 /// 方法转发为 extern "C" 回调 (unsafe 转换全部留在 privileged, 见
@@ -66,7 +66,7 @@ pub trait NetDeviceOps: Send {
 // 注册模式一致; 若未来支持动态多实例需改 OnceLock<Box<NetOps>> 表
 /// 为设备类型 `T` 生成 `NetOps` 指针表 (extern "C" 回调 → trait 方法)。
 ///
-/// 返回 `&'static` (Box::leak): 设备注册数量稀少, 表随内核存续;
+/// 返回 `&'static` (`Box::leak)`: 设备注册数量稀少, 表随内核存续;
 /// `handle_irq` 恒 `Some` (trait 默认空实现兜底, IRQ 接线统一)。
 pub fn net_ops_for<T: NetDeviceOps + 'static>() -> &'static NetOps {
     Box::leak(Box::new(NetOps {
@@ -97,7 +97,7 @@ extern "C" fn net_send_impl<T: NetDeviceOps>(
     dev.send(frame)
 }
 
-/// extern "C" try_receive 回调: 转发至 `T: NetDeviceOps::try_receive`。
+/// extern "C" `try_receive` 回调: 转发至 `T: NetDeviceOps::try_receive`。
 extern "C" fn net_recv_impl<T: NetDeviceOps>(
     driver_data: *mut u8,
     buf: *mut u8,
@@ -116,7 +116,7 @@ extern "C" fn net_recv_impl<T: NetDeviceOps>(
     dev.try_receive(rx)
 }
 
-/// extern "C" get_mac 回调: 转发至 `T: NetDeviceOps::get_mac`。
+/// extern "C" `get_mac` 回调: 转发至 `T: NetDeviceOps::get_mac`。
 extern "C" fn net_get_mac_impl<T: NetDeviceOps>(driver_data: *mut u8, mac: *mut [u8; 6]) {
     if driver_data.is_null() {
         return;
@@ -131,7 +131,7 @@ extern "C" fn net_get_mac_impl<T: NetDeviceOps>(driver_data: *mut u8, mac: *mut 
     }
 }
 
-/// extern "C" handle_irq 回调: 转发至 `T: NetDeviceOps::handle_irq`。
+/// extern "C" `handle_irq` 回调: 转发至 `T: NetDeviceOps::handle_irq`。
 extern "C" fn net_irq_impl<T: NetDeviceOps>(driver_data: *mut u8) {
     if driver_data.is_null() {
         return;
@@ -145,13 +145,13 @@ extern "C" fn net_irq_impl<T: NetDeviceOps>(driver_data: *mut u8) {
 // 注册入口 — driver_data 契约 (唯一持有裸指针处)
 // ============================================================================
 
-/// functions 网络设备注册数据 (NetOps 安全桥产物)。
+/// functions 网络设备注册数据 (`NetOps` 安全桥产物)。
 pub struct NetDeviceRegistration {
-    /// NetOps 指针表 (泛型桥产物, 泄漏存续内核生命周期)。
+    /// `NetOps` 指针表 (泛型桥产物, 泄漏存续内核生命周期)。
     pub ops: &'static NetOps,
-    /// 设备裸指针 (Box::into_raw 转移所有权, 内核生命周期存续)。
+    /// 设备裸指针 (`Box::into_raw` 转移所有权, 内核生命周期存续)。
     pub driver_data: *mut core::ffi::c_void,
-    /// MAC 地址 (注册时读取, 供 EGDFNetDevice 构造, 免二次回调)。
+    /// MAC 地址 (注册时读取, 供 `EGDFNetDevice` 构造, 免二次回调)。
     pub mac: [u8; 6],
 }
 
@@ -160,6 +160,7 @@ pub struct NetDeviceRegistration {
 /// 所有权转移: `Box::into_raw` 泄漏设备存续内核生命周期 (与既有设备全局
 /// 实例语义等价); MAC 在转移前经 `Box<T>` 安全读取; 返回的注册数据由
 /// `nic_probe_all` 交 `EGDFNetDevice` 接入 smoltcp。
+#[must_use]
 pub fn register_net_device<T: NetDeviceOps + 'static>(dev: Box<T>) -> NetDeviceRegistration {
     let mac = dev.get_mac();
     let raw = Box::into_raw(dev).cast::<core::ffi::c_void>();
@@ -195,7 +196,7 @@ pub fn net_register_functions_driver(
 ///
 /// 仅被 `net/init/probe.rs::nic_probe_all` 调用, 而 probe 模块在
 /// `kernel_test` 特性下 cfg-out (见 net/mod.rs init 模块声明), 故本函数
-/// 同步 gate, 避免 kernel_test 下 dead code (F9).
+/// 同步 gate, 避免 `kernel_test` 下 dead code (F9).
 #[cfg(not(feature = "kernel_test"))]
 pub(crate) fn net_functions_driver() -> Option<NetDeviceRegistration> {
     NET_FUNCTIONS_DRIVER.get().and_then(|probe| probe())

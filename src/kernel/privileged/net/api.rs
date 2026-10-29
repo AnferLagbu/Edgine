@@ -37,8 +37,8 @@ pub trait NetworkDevice: Send + Sync {
     /// 发送以太网帧
     ///
     /// # Errors
-    /// 当发送失败 (如设备忙、链路断开或缓冲不足) 时返回 `Err(())`.
-    fn transmit(&self, buf: &[u8]) -> Result<(), ()>;
+    /// 当发送失败 (如设备忙、链路断开或缓冲不足) 时返回 `Err(KernelError::Io)`.
+    fn transmit(&self, buf: &[u8]) -> Result<(), KernelError>;
 
     /// 轮询接收 (非阻塞, ISR 安全)
     fn poll(&self);
@@ -50,6 +50,7 @@ pub trait NetworkDevice: Send + Sync {
 
 #[cfg(not(feature = "kernel_test"))]
 use super::init::InitState;
+use crate::privileged::error::KernelError;
 
 /// 轮询网络设备 (由内核主循环或定时器调用)
 ///
@@ -64,18 +65,21 @@ pub fn poll_network() {
 
 /// 查询网络是否已完全初始化
 #[cfg(not(feature = "kernel_test"))]
+#[must_use]
 pub fn is_network_initialized() -> bool {
     super::init::is_network_initialized()
 }
 
 /// 查询网络是否已完成 DHCP 配置
 #[cfg(not(feature = "kernel_test"))]
+#[must_use]
 pub fn is_network_configured() -> bool {
     super::init::is_network_configured()
 }
 
 /// 查询当前初始化状态
 #[cfg(not(feature = "kernel_test"))]
+#[must_use]
 pub fn get_init_state() -> InitState {
     super::init::get_init_state()
 }
@@ -99,6 +103,7 @@ pub fn get_init_state() -> InitState {
 /// - DHCP 配置是异步的, 此函数仅触发握手, 不等待结果
 /// - 若已初始化, 立即返回 true
 #[cfg(not(feature = "kernel_test"))]
+#[must_use]
 pub fn init_network_now() -> bool {
     super::init::trigger_init()
 }
@@ -109,6 +114,7 @@ pub fn init_network_now() -> bool {
 /// - `Some(mac)` — 已初始化, 6 字节大端 MAC
 /// - `None`      — 网络未就绪
 #[cfg(not(feature = "kernel_test"))]
+#[must_use]
 pub fn get_mac_address() -> Option<[u8; 6]> {
     super::init::get_mac_address()
 }
@@ -119,18 +125,21 @@ pub fn get_mac_address() -> Option<[u8; 6]> {
 /// - `Some(ip)` — DHCP/静态配置成功
 /// - `None`     — 仍在配置中或失败
 #[cfg(not(feature = "kernel_test"))]
+#[must_use]
 pub fn get_ipv4_address() -> Option<[u8; 4]> {
     super::init::get_ipv4_address()
 }
 
 /// 查询默认网关 IPv4
 #[cfg(not(feature = "kernel_test"))]
+#[must_use]
 pub fn get_default_gateway() -> Option<[u8; 4]> {
     super::init::get_default_gateway()
 }
 
 /// 查询 DNS 服务器 (最多 3 个)
 #[cfg(not(feature = "kernel_test"))]
+#[must_use]
 pub fn get_dns_servers() -> [Option<[u8; 4]>; 3] {
     super::init::get_dns_servers()
 }
@@ -147,8 +156,9 @@ pub fn get_dns_servers() -> [Option<[u8; 4]>; 3] {
 /// - 网络未就绪 / 无 server / 查询失败均回退 `None`
 ///
 /// # 局限
-/// - 仅支持 IPv4 单地址 (Type::A, 无 AAAA / search domain / 缓存)
+/// - 仅支持 IPv4 单地址 (`Type::A`, 无 AAAA / search domain / 缓存)
 #[cfg(not(feature = "kernel_test"))]
+#[must_use]
 pub fn dns_resolve(name: &str) -> Option<[u8; 4]> {
     super::init::dns_resolve(name)
 }
@@ -165,6 +175,7 @@ pub fn shutdown_network() {
 
 /// 网络状态快照 (给观测 / 调试用, 单次复制, 无锁)
 #[cfg(not(feature = "kernel_test"))]
+#[must_use]
 pub fn status_snapshot() -> super::init::NetStatus {
     super::init::NetStatus::capture()
 }

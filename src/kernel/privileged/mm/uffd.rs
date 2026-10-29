@@ -22,7 +22,7 @@
 //!
 //! ## 阻塞落点 (关键设计)
 //!
-//! #PF 在 x86_64 上走 IDT IST=4 专用栈 (见 `idt::idt::IdtManager::init` 注释),
+//! #PF 在 x86_64 上走 IDT IST=4 专用栈 (见 `idt::table::IdtManager::init` 注释),
 //! **不能**在缺页现场就地切换上下文 (会覆盖 IST 上挂起的异常帧). 因此
 //! `PfResult::UffdWait` 的处理落点为: 仅标记当前进程 `Blocked` + 置
 //! `need_reschedule`, iretq 回用户态; 由下一次 tick 抢占切走 (见
@@ -300,6 +300,7 @@ fn instance_index(fd: i32) -> Option<usize> {
 }
 
 /// 是否为 userfaultfd
+#[must_use]
 pub fn is_uffd_fd(fd: i32) -> bool {
     instance_index(fd).is_some()
 }
@@ -309,6 +310,7 @@ pub fn is_uffd_fd(fd: i32) -> bool {
 // ============================================================================
 
 /// 创建 userfaultfd 实例 (成功返回 fd)
+#[must_use]
 pub fn create(owner_pid: u32) -> Option<i32> {
     use crate::privileged::proc::fd_alloc::{FdSubsystem, alloc_fd};
     let fd = alloc_fd(FdSubsystem::UserFaultFd)?;
@@ -324,6 +326,7 @@ pub fn create(owner_pid: u32) -> Option<i32> {
 }
 
 /// 释放 userfaultfd 实例 (唤醒所有等待者), 返回是否成功释放
+#[must_use]
 pub fn release(fd: i32) -> bool {
     let Some(idx) = instance_index(fd) else {
         return false;
@@ -366,14 +369,14 @@ pub fn api_negotiate(
 ) -> Result<UffdIoApi, crate::privileged::syscall::Errno> {
     use crate::privileged::syscall::Errno;
     let Some(idx) = instance_index(fd) else {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     };
     if api != UFFD_API {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     let mut t = uffd_table().lock();
     if !t[idx].used {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     t[idx].api_negotiated = true;
     // SIMPLIFIED: 未实装 WP/MINOR 与 fork/remap/remove, 请求特性一律忽略 (Linux 会清零
@@ -404,33 +407,33 @@ pub fn register(
 ) -> Result<(), crate::privileged::syscall::Errno> {
     use crate::privileged::syscall::Errno;
     let Some(idx) = instance_index(fd) else {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     };
     if len == 0 || !start.is_multiple_of(PAGE_SIZE) || !len.is_multiple_of(PAGE_SIZE) {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if mode == 0 || mode & UFFDIO_REGISTER_MODE_MISSING == 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
-    let end = start.checked_add(len).ok_or(Errno::EINVAL)?;
-    let start_usize = usize::try_from(start).map_err(|_| Errno::EINVAL)?;
-    let end_usize = usize::try_from(end).map_err(|_| Errno::EINVAL)?;
+    let end = start.checked_add(len).ok_or(Errno::Einval)?;
+    let start_usize = usize::try_from(start).map_err(|_| Errno::Einval)?;
+    let end_usize = usize::try_from(end).map_err(|_| Errno::Einval)?;
     let Some(mm) = crate::privileged::mm::vma_get_current_mm() else {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     };
     if !mm.range_is_mapped(start_usize, end_usize) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
 
     let mut t = uffd_table().lock();
     if !t[idx].used {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     if !t[idx].api_negotiated {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if t[idx].range_count >= MAX_RANGES {
-        return Err(Errno::ENOSPC);
+        return Err(Errno::Enospc);
     }
     let n = t[idx].range_count;
     t[idx].ranges[n] = UffdRange { start, end, mode };
@@ -445,22 +448,22 @@ pub fn register(
 pub fn unregister(fd: i32, start: u64, len: u64) -> Result<(), crate::privileged::syscall::Errno> {
     use crate::privileged::syscall::Errno;
     let Some(idx) = instance_index(fd) else {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     };
-    let end = start.checked_add(len).ok_or(Errno::EINVAL)?;
+    let end = start.checked_add(len).ok_or(Errno::Einval)?;
     let mut t = uffd_table().lock();
     if !t[idx].used {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     let mut found = None;
-    for i in 0..t[idx].range_count {
-        if t[idx].ranges[i].start == start && t[idx].ranges[i].end == end {
+    for (i, range) in t[idx].ranges[..t[idx].range_count].iter().enumerate() {
+        if range.start == start && range.end == end {
             found = Some(i);
             break;
         }
     }
     let Some(i) = found else {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     };
     // 紧凑删除
     let n = t[idx].range_count;
@@ -484,13 +487,13 @@ pub fn unregister(fd: i32, start: u64, len: u64) -> Result<(), crate::privileged
 pub fn wake(fd: i32, start: u64, len: u64) -> Result<bool, crate::privileged::syscall::Errno> {
     use crate::privileged::syscall::Errno;
     let Some(idx) = instance_index(fd) else {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     };
-    let end = start.checked_add(len).ok_or(Errno::EINVAL)?;
+    let end = start.checked_add(len).ok_or(Errno::Einval)?;
     let pid = {
         let mut t = uffd_table().lock();
         if !t[idx].used {
-            return Err(Errno::EBADF);
+            return Err(Errno::Ebadf);
         }
         let page = t[idx].fault_page;
         if t[idx].page_state == PendingState::Idle || page < start || page >= end {
@@ -529,23 +532,23 @@ pub fn provide_page(
 ) -> Result<(), crate::privileged::syscall::Errno> {
     use crate::privileged::syscall::Errno;
     let Some(idx) = instance_index(fd) else {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     };
     if !page_addr.is_multiple_of(PAGE_SIZE) {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
-    if let Some(d) = data {
-        if d.len() != crate::privileged::glue::usize_from_u64(PAGE_SIZE) {
-            return Err(Errno::EINVAL);
-        }
+    if let Some(d) = data
+        && d.len() != crate::privileged::glue::usize_from_u64(PAGE_SIZE)
+    {
+        return Err(Errno::Einval);
     }
     let pid = {
         let mut t = uffd_table().lock();
         if !t[idx].used {
-            return Err(Errno::EBADF);
+            return Err(Errno::Ebadf);
         }
         if t[idx].page_state != PendingState::Waiting || t[idx].fault_page != page_addr {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
         if let Some(d) = data {
             t[idx].staged.copy_from_slice(d);
@@ -581,6 +584,7 @@ pub enum UffdFaultOutcome {
 ///
 /// `page_addr` 必须为页对齐地址; 返回 `Waiting` 时调用方须返回
 /// `PfResult::UffdWait` (由 handlers 层标记阻塞).
+#[must_use]
 pub fn fault_notify(page_addr: u64, flags: u64) -> UffdFaultOutcome {
     let pid = crate::privileged::proc::process_get_current_pid();
     let mut wake_reader = 0u32;
@@ -640,6 +644,7 @@ pub fn fault_notify(page_addr: u64, flags: u64) -> UffdFaultOutcome {
 /// 将已就绪的暂存数据填充到 `phys` 页 (`fault_notify` 返回 `Ready` 后调用)
 ///
 /// 成功后复位挂起状态; 返回是否填充成功 (状态不匹配返回 false).
+#[must_use]
 pub fn fill_provided_page(page_addr: u64, phys: PhysAddr) -> bool {
     let mut t = uffd_table().lock();
     let mut found = None;
@@ -684,6 +689,7 @@ pub fn fill_provided_page(page_addr: u64, phys: PhysAddr) -> bool {
 // ============================================================================
 
 /// 弹出队首事件 (非阻塞)
+#[must_use]
 pub fn pop_event(fd: i32) -> Option<UffdMsgPagefault> {
     let idx = instance_index(fd)?;
     let mut t = uffd_table().lock();
@@ -719,6 +725,7 @@ pub fn clear_reader(fd: i32, pid: u32) {
 }
 
 /// 实例是否仍处于打开状态 (用于 `read()` 阻塞后被 close 唤醒时提前返回)
+#[must_use]
 pub fn is_open(fd: i32) -> bool {
     match instance_index(fd) {
         Some(idx) => uffd_table().lock()[idx].used,
@@ -727,6 +734,7 @@ pub fn is_open(fd: i32) -> bool {
 }
 
 /// 实例是否已握手 `UFFDIO_API` 且有注册区间 (供测试/诊断)
+#[must_use]
 pub fn is_active(fd: i32) -> bool {
     match instance_index(fd) {
         Some(idx) => {

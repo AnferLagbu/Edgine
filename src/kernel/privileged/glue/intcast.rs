@@ -20,6 +20,7 @@
 /// 在 32 位目标上零扩展为 `i64` (无损, 与 `as` 的取值语义一致); 本函数刻意用
 /// 字节搬运实现, 从而让 32 位目标下 `to_le_bytes` 的长度差异不成为编译障碍.
 #[inline]
+#[must_use]
 pub const fn i64_from_usize(v: usize) -> i64 {
     let b = v.to_le_bytes();
     let mut out = [0u8; 8];
@@ -35,6 +36,7 @@ pub const fn i64_from_usize(v: usize) -> i64 {
 ///
 /// 32 位目标与 64 位目标一致: 都是截取最低 4 字节.
 #[inline]
+#[must_use]
 pub const fn low_i32_from_usize(v: usize) -> i32 {
     let b = v.to_le_bytes();
     i32::from_le_bytes([b[0], b[1], b[2], b[3]])
@@ -42,6 +44,7 @@ pub const fn low_i32_from_usize(v: usize) -> i32 {
 
 /// `usize` → `i16`: 取低 16 位后按补码解释 (等价于 `v as i16`).
 #[inline]
+#[must_use]
 pub const fn low_i16_from_usize(v: usize) -> i16 {
     let b = v.to_le_bytes();
     i16::from_le_bytes([b[0], b[1]])
@@ -49,6 +52,7 @@ pub const fn low_i16_from_usize(v: usize) -> i16 {
 
 /// `i32` → `u16`: 取低 16 位后按补码解释 (等价于 `v as u16`).
 #[inline]
+#[must_use]
 pub const fn u16_from_i32(v: i32) -> u16 {
     let b = v.to_le_bytes();
     u16::from_le_bytes([b[0], b[1]])
@@ -56,6 +60,7 @@ pub const fn u16_from_i32(v: i32) -> u16 {
 
 /// `i32` → `u8`: 取低 8 位 (等价于 `v as u8`).
 #[inline]
+#[must_use]
 pub const fn u8_from_i32(v: i32) -> u8 {
     v.to_le_bytes()[0]
 }
@@ -64,6 +69,7 @@ pub const fn u8_from_i32(v: i32) -> u8 {
 ///
 /// 用字节填充实现符号扩展: `From` 家族在 const 上下文尚未稳定.
 #[inline]
+#[must_use]
 pub const fn u32_from_i16(v: i16) -> u32 {
     let b = v.to_le_bytes();
     let s = if v < 0 { 0xFFu8 } else { 0u8 };
@@ -72,6 +78,7 @@ pub const fn u32_from_i16(v: i16) -> u32 {
 
 /// `i8` → `u32`: 符号扩展到 32 位后按无符号解释 (等价于 `v as u32`).
 #[inline]
+#[must_use]
 pub const fn u32_from_i8(v: i8) -> u32 {
     let b = v.to_le_bytes();
     let s = if v < 0 { 0xFFu8 } else { 0u8 };
@@ -80,6 +87,7 @@ pub const fn u32_from_i8(v: i8) -> u32 {
 
 /// `i32` → `u64`: 符号扩展到 64 位后按无符号解释 (等价于 `v as u64`).
 #[inline]
+#[must_use]
 pub const fn u64_from_i32(v: i32) -> u64 {
     let b = v.to_le_bytes();
     let s = if v < 0 { 0xFFu8 } else { 0u8 };
@@ -88,6 +96,7 @@ pub const fn u64_from_i32(v: i32) -> u64 {
 
 /// `i32` → `usize`: 64 位目标上符号扩展后按无符号解释 (等价于 `v as usize`).
 #[inline]
+#[must_use]
 pub const fn usize_from_i32(v: i32) -> usize {
     let b = v.to_le_bytes();
     let s = if v < 0 { 0xFFu8 } else { 0u8 };
@@ -96,12 +105,14 @@ pub const fn usize_from_i32(v: i32) -> usize {
 
 /// `i64` → `usize`: 64 位目标上逐位等价于 `v as usize`.
 #[inline]
+#[must_use]
 pub const fn usize_from_i64(v: i64) -> usize {
     usize::from_le_bytes(v.to_le_bytes())
 }
 
 /// `i8` → `usize`: 符号扩展到 64 位后按无符号解释 (等价于 `v as usize`).
 #[inline]
+#[must_use]
 pub const fn usize_from_i8(v: i8) -> usize {
     let b = v.to_le_bytes();
     let s = if v < 0 { 0xFFu8 } else { 0u8 };
@@ -110,6 +121,7 @@ pub const fn usize_from_i8(v: i8) -> usize {
 
 /// `i64` → `u32`: 取低 32 位后按无符号解释 (等价于 `v as u32`).
 #[inline]
+#[must_use]
 pub const fn low_u32_from_i64(v: i64) -> u32 {
     let b = v.to_le_bytes();
     u32::from_le_bytes([b[0], b[1], b[2], b[3]])
@@ -117,12 +129,14 @@ pub const fn low_u32_from_i64(v: i64) -> u32 {
 
 /// `u64` → `usize`: 64 位目标上逐位等价于 `v as usize` (32 位目标编译失败).
 #[inline]
+#[must_use]
 pub const fn usize_from_u64(v: u64) -> usize {
     usize::from_le_bytes(v.to_le_bytes())
 }
 
 /// `u64` → `u32`: 取低 32 位 (等价于 `v as u32`).
 #[inline]
+#[must_use]
 pub const fn low_u32_from_u64(v: u64) -> u32 {
     let b = v.to_le_bytes();
     u32::from_le_bytes([b[0], b[1], b[2], b[3]])
@@ -130,6 +144,7 @@ pub const fn low_u32_from_u64(v: u64) -> u32 {
 
 /// `usize` → `u32`: 取低 32 位 (等价于 `v as u32`).
 #[inline]
+#[must_use]
 pub const fn low_u32_from_usize(v: usize) -> u32 {
     let b = v.to_le_bytes();
     u32::from_le_bytes([b[0], b[1], b[2], b[3]])
@@ -137,24 +152,28 @@ pub const fn low_u32_from_usize(v: usize) -> u32 {
 
 /// `u32` → `u8`: 取低 8 位 (等价于 `v as u8`).
 #[inline]
+#[must_use]
 pub const fn low_u8_from_u32(v: u32) -> u8 {
     v.to_le_bytes()[0]
 }
 
 /// `u64` → `u8`: 取低 8 位 (等价于 `v as u8`).
 #[inline]
+#[must_use]
 pub const fn low_u8_from_u64(v: u64) -> u8 {
     v.to_le_bytes()[0]
 }
 
 /// `usize` → `u8`: 取低 8 位 (等价于 `v as u8`).
 #[inline]
+#[must_use]
 pub const fn low_u8_from_usize(v: usize) -> u8 {
     v.to_le_bytes()[0]
 }
 
 /// `usize` → `u16`: 取低 16 位 (等价于 `v as u16`).
 #[inline]
+#[must_use]
 pub const fn low_u16_from_usize(v: usize) -> u16 {
     let b = v.to_le_bytes();
     u16::from_le_bytes([b[0], b[1]])
@@ -162,6 +181,7 @@ pub const fn low_u16_from_usize(v: usize) -> u16 {
 
 /// `u64` → `u16`: 取低 16 位 (等价于 `v as u16`).
 #[inline]
+#[must_use]
 pub const fn low_u16_from_u64(v: u64) -> u16 {
     let b = v.to_le_bytes();
     u16::from_le_bytes([b[0], b[1]])
@@ -169,6 +189,7 @@ pub const fn low_u16_from_u64(v: u64) -> u16 {
 
 /// `u64` → `i32`: 取低 32 位后按补码解释 (等价于 `v as i32`).
 #[inline]
+#[must_use]
 pub const fn low_i32_from_u64(v: u64) -> i32 {
     let b = v.to_le_bytes();
     i32::from_le_bytes([b[0], b[1], b[2], b[3]])
@@ -176,6 +197,7 @@ pub const fn low_i32_from_u64(v: u64) -> i32 {
 
 /// `i64` → `i32`: 取低 32 位后按补码解释 (等价于 `v as i32`).
 #[inline]
+#[must_use]
 pub const fn low_i32_from_i64(v: i64) -> i32 {
     let b = v.to_le_bytes();
     i32::from_le_bytes([b[0], b[1], b[2], b[3]])
@@ -183,12 +205,14 @@ pub const fn low_i32_from_i64(v: i64) -> i32 {
 
 /// `u16` → `u8`: 取低 8 位 (等价于 `v as u8`).
 #[inline]
+#[must_use]
 pub const fn low_u8_from_u16(v: u16) -> u8 {
     v.to_le_bytes()[0]
 }
 
 /// `u32` → `u16`: 取低 16 位 (等价于 `v as u16`).
 #[inline]
+#[must_use]
 pub const fn low_u16_from_u32(v: u32) -> u16 {
     let b = v.to_le_bytes();
     u16::from_le_bytes([b[0], b[1]])
@@ -196,12 +220,14 @@ pub const fn low_u16_from_u32(v: u32) -> u16 {
 
 /// `i32` → `i8`: 取低 8 位后按补码解释 (等价于 `v as i8`).
 #[inline]
+#[must_use]
 pub const fn low_i8_from_i32(v: i32) -> i8 {
     i8::from_le_bytes([v.to_le_bytes()[0]])
 }
 
 /// `i32` → `i16`: 取低 16 位后按补码解释 (等价于 `v as i16`).
 #[inline]
+#[must_use]
 pub const fn low_i16_from_i32(v: i32) -> i16 {
     let b = v.to_le_bytes();
     i16::from_le_bytes([b[0], b[1]])
@@ -209,6 +235,7 @@ pub const fn low_i16_from_i32(v: i32) -> i16 {
 
 /// `i128` → `i64`: 取低 64 位后按补码解释 (等价于 `v as i64`).
 #[inline]
+#[must_use]
 pub const fn low_i64_from_i128(v: i128) -> i64 {
     let b = v.to_le_bytes();
     i64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
@@ -216,6 +243,7 @@ pub const fn low_i64_from_i128(v: i128) -> i64 {
 
 /// `u128` → `u64`: 取低 64 位 (等价于 `v as u64`).
 #[inline]
+#[must_use]
 pub const fn low_u64_from_u128(v: u128) -> u64 {
     let b = v.to_le_bytes();
     u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])

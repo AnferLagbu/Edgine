@@ -140,6 +140,7 @@ pub extern "C" fn pmm_free_pages(addr: *mut u8, count: usize) {
 /// `PhysicalMemoryManager::note_frame_alloc`); 同质的 `extern "C"` 包装因 ABI
 /// 限制不能标该属性, 其归因落到本文件可接受.
 #[track_caller]
+#[must_use]
 pub fn pmm_alloc_page_phys() -> Option<super::PhysAddr> {
     get_pmm().alloc_page()
 }
@@ -155,6 +156,7 @@ pub fn pmm_free_page_phys(addr: super::PhysAddr) {
 /// 供需要 `PhysAddr` 类型安全的调用方使用. 归因穿透说明同
 /// [`pmm_alloc_page_phys`].
 #[track_caller]
+#[must_use]
 pub fn pmm_alloc_pages_phys(count: usize) -> Option<super::PhysAddr> {
     get_pmm().alloc_pages(count)
 }
@@ -169,6 +171,7 @@ pub fn pmm_free_pages_phys(addr: super::PhysAddr, count: usize) {
 ///
 /// 返回 `true` = 计数已 +1; `false` = 帧不处于计数态 (未计数块 / MMIO / pfn 越界),
 /// 调用方按 fail-closed 处理 (不得当作登记成功).
+#[must_use]
 pub fn frame_inc(addr: super::PhysAddr) -> bool {
     get_pmm().frame_inc(addr)
 }
@@ -176,11 +179,13 @@ pub fn frame_inc(addr: super::PhysAddr) -> bool {
 /// 注销一个帧持有者, 契约见 `PhysicalMemoryManager::frame_dec`.
 ///
 /// 返回 `true` = 计数归零 (调用方据此归还物理帧), `false` = 仍有持有者或未计数帧.
+#[must_use]
 pub fn frame_dec(addr: super::PhysAddr) -> bool {
     get_pmm().frame_dec(addr)
 }
 
 /// 观测帧持有者数 (0 = 未计数帧), 契约见 `PhysicalMemoryManager::frame_ref_count`.
+#[must_use]
 pub fn frame_ref_count(addr: super::PhysAddr) -> u32 {
     u32::from(get_pmm().frame_ref_count(addr))
 }
@@ -188,6 +193,7 @@ pub fn frame_ref_count(addr: super::PhysAddr) -> u32 {
 /// 分配一个大页 (2MB 或 1GB), 返回物理地址. 归因穿透说明同
 /// [`pmm_alloc_page_phys`].
 #[track_caller]
+#[must_use]
 pub fn pmm_alloc_huge_page_phys(size_type: super::PageSize) -> Option<super::PhysAddr> {
     get_pmm().alloc_huge_page(size_type)
 }
@@ -211,16 +217,21 @@ pub struct SlabStats {
 }
 
 /// 获取 slab 分配器系统级统计
+#[must_use]
 pub fn slab_get_stats() -> SlabStats {
     let mut total_memory = 0u64;
     let mut used_memory = 0u64;
     let mut total_caches = 0u32;
 
-    super::slab::slab_get_system_stats(
-        &raw mut total_memory,
-        &raw mut used_memory,
-        &raw mut total_caches,
-    );
+    // SAFETY: 三个指针均指向本函数栈上的局部变量, 有效且互不重叠;
+    // slab_get_system_stats 仅写入这三个输出位置.
+    unsafe {
+        super::slab::slab_get_system_stats(
+            &raw mut total_memory,
+            &raw mut used_memory,
+            &raw mut total_caches,
+        );
+    }
 
     SlabStats {
         total_memory,
@@ -443,6 +454,7 @@ pub extern "C" fn vmm_create_user_page_table() -> u64 {
 ///
 /// 返回视图根表物理地址; 失败返回 `None`, 调用方须按 fail-closed 处理。
 #[cfg(target_arch = "aarch64")]
+#[must_use]
 pub fn vmm_build_el1_view(user_root: u64) -> Option<u64> {
     get_vmm().build_el1_view(user_root)
 }
@@ -508,20 +520,29 @@ pub extern "C" fn k_malloc(size: usize) -> *mut u8 {
 
 /// 释放 `k_malloc` 分配的内存
 ///
+/// # Safety
+/// `ptr` 必须为 `k_malloc` 返回的、尚未释放的指针 (或 NULL); 调用后不得再使用。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-pub extern "C" fn k_free(ptr: *mut u8) {
+pub unsafe extern "C" fn k_free(ptr: *mut u8) {
     if !ptr.is_null() {
-        get_kmalloc().deallocate(ptr);
+        // SAFETY: 由本函数的安全契约保证 ptr 是 k_malloc 返回的有效分配.
+        unsafe {
+            get_kmalloc().deallocate(ptr);
+        }
     }
 }
 
 /// 重新分配内存块
 ///
+/// # Safety
+/// `ptr` 必须为 `k_malloc` 返回的、尚未释放的指针 (或 NULL); 返回非空新指针后
+/// 原 `ptr` 不得再使用。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-pub extern "C" fn k_realloc(ptr: *mut u8, size: usize) -> *mut u8 {
-    get_kmalloc().reallocate(ptr, size).unwrap_or_default()
+pub unsafe extern "C" fn k_realloc(ptr: *mut u8, size: usize) -> *mut u8 {
+    // SAFETY: 由本函数的安全契约保证 ptr 是 k_malloc 返回的有效分配.
+    unsafe { get_kmalloc().reallocate(ptr, size) }.unwrap_or_default()
 }
 
 /// 初始化内核堆
@@ -540,6 +561,7 @@ pub extern "C" fn kmalloc_dump_stats() {
 }
 
 /// 获取内核堆统计 (使用已有的 `KmallocStats` 结构)
+#[must_use]
 pub fn kmalloc_get_stats() -> super::kmalloc::HeapStats {
     get_kmalloc().get_stats()
 }
@@ -565,17 +587,28 @@ pub extern "C" fn kmalloc(size: u64) -> *mut u8 {
 }
 
 /// `k_free` 的别名 — 与原始 C API 一致: void kfree(void* ptr)
+///
+/// # Safety
+/// `ptr` 必须为 `k_malloc` 返回的、尚未释放的指针 (或 NULL); 调用后不得再使用。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-pub extern "C" fn kfree(ptr: *mut u8) {
-    k_free(ptr);
+pub unsafe extern "C" fn kfree(ptr: *mut u8) {
+    // SAFETY: 由本函数的安全契约转发给 k_free.
+    unsafe {
+        k_free(ptr);
+    }
 }
 
 /// `k_realloc` 的别名 — 与原始 C API 一致: void* krealloc(void* ptr, `uint64_t` size)
+///
+/// # Safety
+/// `ptr` 必须为 `k_malloc` 返回的、尚未释放的指针 (或 NULL); 返回非空新指针后
+/// 原 `ptr` 不得再使用。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-pub extern "C" fn krealloc(ptr: *mut u8, size: u64) -> *mut u8 {
-    k_realloc(ptr, crate::privileged::glue::usize_from_u64(size))
+pub unsafe extern "C" fn krealloc(ptr: *mut u8, size: u64) -> *mut u8 {
+    // SAFETY: 由本函数的安全契约转发给 k_realloc.
+    unsafe { k_realloc(ptr, crate::privileged::glue::usize_from_u64(size)) }
 }
 
 /// 获取内核堆统计 — 与原始 C API 一致: void `kmalloc_stats(struct` `kmalloc_stats`* stats)
@@ -614,6 +647,7 @@ pub extern "C" fn kmalloc_dump() {
 /// 获取当前进程的内存描述符.
 ///
 /// 通过公共 api 层访问, 避免直接引用 `mm::vma::get_current_mm`.
+#[must_use]
 pub fn vma_get_current_mm() -> Option<&'static super::vma::MmStruct> {
     super::vma::get_current_mm()
 }
@@ -660,6 +694,7 @@ fn snapshot_mm(mm: &super::vma::MmStruct) -> Vec<VmaInfo> {
 ///
 /// 无当前 mm 时返回空表. functions 可在持锁语义之外安全遍历返回的纯数据,
 /// 避免直接触碰 `MmStruct::vmas` 的 `Mutex`.
+#[must_use]
 pub fn vma_snapshot_current() -> Vec<VmaInfo> {
     match vma_get_current_mm() {
         Some(mm) => snapshot_mm(mm),
@@ -680,6 +715,7 @@ pub use super::page_fault::{PageFaultInfo, PfResult, handle_page_fault, handle_u
 ///
 /// 单源为 [`crate::privileged::constants::limits::USER_ADDR_MAX`]. functions 层
 /// 缺页策略 (栈顶 = 地址空间上限) 经本函数读取, 不在策略实现里重复架构常量.
+#[must_use]
 pub fn user_addr_max() -> u64 {
     crate::privileged::constants::limits::USER_ADDR_MAX
 }

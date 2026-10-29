@@ -29,6 +29,7 @@ impl VfsFileType {
     /// 从 u8 构造 `VfsFileType`
     ///
     /// 返回 `None` 表示非法值 (0-3 为合法值)
+    #[must_use]
     pub fn from_u8(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::File),
@@ -40,6 +41,7 @@ impl VfsFileType {
     }
 
     /// 转 u8 编码 (与 `from_u8` 互逆)
+    #[must_use]
     pub fn as_u8(self) -> u8 {
         match self {
             Self::File => 0,

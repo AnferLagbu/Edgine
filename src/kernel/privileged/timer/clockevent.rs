@@ -370,7 +370,7 @@ pub fn rearm_local() {
 
 /// 把本核下一个到期改为 `now + delta_ns` 的单次装填 (tickless 进入)
 ///
-/// 装填后 AUTO_CONTINUE 置否: 该到期触发后不再自动续周期 tick, 直到退出
+/// 装填后 `AUTO_CONTINUE` 置否: 该到期触发后不再自动续周期 tick, 直到退出
 /// tickless 时由 [`arm_local`] 重新起算。
 pub fn program_oneshot_ns(delta_ns: u64) {
     if !is_ready() {

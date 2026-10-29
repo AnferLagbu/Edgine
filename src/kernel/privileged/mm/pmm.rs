@@ -7,9 +7,9 @@
 //! - 阶数 0–9 (4 KB – 2 MB 连续块).
 //! - Buddy 元数据建立前使用早期 (线性) 分配器.
 //! - 保留位图用于 reserved 页跟踪和统计.
-//! - 双向链表的索引式空闲链表 (prev/next 存独立 FREE_LINKS 数组,
-//!   16 字节/页, 哨兵 = u64::MAX; 链表关系与物理页内容解耦, host 可测).
-//! - 帧所有权槽存独立 FRAME_OWNER 数组 (16 字节/页: 分配点 + 最近归还点),
+//! - 双向链表的索引式空闲链表 (prev/next 存独立 `FREE_LINKS` 数组,
+//!   16 字节/页, 哨兵 = `u64::MAX`; 链表关系与物理页内容解耦, host 可测).
+//! - 帧所有权槽存独立 `FRAME_OWNER` 数组 (16 字节/页: 分配点 + 最近归还点),
 //!   使“二次释放 / 释放未分配帧”从静默腐败变为可点名归因的告警
 //!   (语义与契约见 `PhysicalMemoryManager::note_frame_retired_site`).
 //! - Buddy 合并使用按页的阶数元数据, 实现 O(1) 伙伴检查.
@@ -165,7 +165,7 @@ pub(crate) mod raw {
 // 以 `Vec<u64>` 惰性模拟 (初始 SENTINEL, 与生产初始态一致).
 // ============================================================================
 
-/// 内存元数据载体接口 — buddy 分配器对 bitmap / buddy_meta / FREE_LINKS 的统一访问
+/// 内存元数据载体接口 — buddy 分配器对 bitmap / `buddy_meta` / `FREE_LINKS` 的统一访问
 ///
 /// # 实现
 /// - [`RawMetaStore`]: 生产实现, 基于 `phys + KERNEL_BASE` 裸指针 (行为不变)
@@ -173,22 +173,22 @@ pub(crate) mod raw {
 ///
 /// # 安全
 /// 所有读写方法都要求调用方持有 PMM 锁 (buddy 算法持锁执行);
-/// `setup_*` 仅在 init_bitmap 单线程启动期调用.
+/// `setup_*` 仅在 `init_bitmap` 单线程启动期调用.
 ///
 /// # Send/Sync
-/// 本 trait 不声明 `Send + Sync` 上界: 载体实现 (含 RefCell 的
+/// 本 trait 不声明 `Send + Sync` 上界: 载体实现 (含 `RefCell` 的
 /// `VecMetaStore`) 的并发安全性由 `PhysicalMemoryManager` 的
 /// `unsafe impl Sync` (PMM 锁互斥保证) 承担.
 pub trait MetaStore {
-    /// 预置 bitmap 载体: 清零 `bytes` 字节并记录区段 (init_bitmap 调用)
+    /// 预置 bitmap 载体: 清零 `bytes` 字节并记录区段 (`init_bitmap` 调用)
     fn setup_bitmap(&mut self, phys: u64, bytes: usize);
-    /// 预置 buddy_meta 载体: 填充 `BUDDY_ALLOCATED` (0xFF) 并记录区段
+    /// 预置 `buddy_meta` 载体: 填充 `BUDDY_ALLOCATED` (0xFF) 并记录区段
     fn setup_meta(&mut self, phys: u64, bytes: usize);
-    /// 预置 FREE_LINKS 载体: 填充 0xFF (=SENTINEL) 并记录区段
+    /// 预置 `FREE_LINKS` 载体: 填充 0xFF (=SENTINEL) 并记录区段
     fn setup_links(&mut self, phys: u64, bytes: usize);
-    /// 预置帧持有计数载体: 清零 `bytes` 字节并记录区段 (init_bitmap 调用)
+    /// 预置帧持有计数载体: 清零 `bytes` 字节并记录区段 (`init_bitmap` 调用)
     fn setup_counts(&mut self, phys: u64, bytes: usize);
-    /// 预置帧所有权载体: 清零 `bytes` 字节并记录区段 (init_bitmap 调用)
+    /// 预置帧所有权载体: 清零 `bytes` 字节并记录区段 (`init_bitmap` 调用)
     fn setup_owner(&mut self, phys: u64, bytes: usize);
 
     /// 置位 bitmap 第 `bit` 位 (载体未就绪/越界时静默跳过)
@@ -200,7 +200,7 @@ pub trait MetaStore {
     /// 统计 bitmap 空闲位数 (清零位个数)
     fn bitmap_count_free(&self) -> u64;
 
-    /// 读 `buddy_meta[idx]` (0xFF=已分配, 0..=MAX_BUDDY_ORDER=空闲块头阶数)
+    /// 读 `buddy_meta[idx]` (0xFF=已分配, `0..=MAX_BUDDY_ORDER=空闲块头阶数`)
     fn meta_read(&self, idx: usize) -> u8;
     /// 写 `buddy_meta[idx]`
     fn meta_write(&self, idx: usize, val: u8);
@@ -232,26 +232,26 @@ pub trait MetaStore {
     fn heads_set(&self, order: u8, pfn: u64);
 }
 
-/// 生产 MetaStore 实现 — 基于 `phys + KERNEL_BASE` 裸指针
+/// 生产 `MetaStore` 实现 — 基于 `phys + KERNEL_BASE` 裸指针
 ///
-/// 与 H-04 改造前的行为完全一致: bitmap 走 AtomicU32 位操作,
-/// buddy_meta / FREE_LINKS 走裸指针读写. 仅在 init_bitmap 中构造
+/// 与 H-04 改造前的行为完全一致: bitmap 走 `AtomicU32` 位操作,
+/// `buddy_meta` / `FREE_LINKS` 走裸指针读写. 仅在 `init_bitmap` 中构造
 /// (buddy 就绪后指针固定, 之后仅在 PMM 锁下访问).
 pub struct RawMetaStore {
     /// bitmap 段虚拟地址 (u32 word 数组, 原子位操作)
     bitmap: Option<NonNull<u32>>,
     /// bitmap 长度 (u32 word 数), 越界位操作静默跳过
     bitmap_words: usize,
-    /// buddy_meta 段虚拟地址 (按页 1 字节)
+    /// `buddy_meta` 段虚拟地址 (按页 1 字节)
     meta: Option<NonNull<u8>>,
     /// 帧持有计数段虚拟地址 (按 pfn 1 字节)
     counts: Option<NonNull<u8>>,
     /// 帧所有权槽段虚拟地址 (按 pfn 1 个 [`OwnerIndex`])
     owner: Option<NonNull<OwnerIndex>>,
-    /// FREE_LINKS 段虚拟地址 (FreeIndex = prev/next 各 u64)
+    /// `FREE_LINKS` 段虚拟地址 (`FreeIndex` = prev/next 各 u64)
     links: Option<NonNull<FreeIndex>>,
     /// 宿主 `PhysicalMemoryManager.buddy_heads` 字段地址
-    /// (init_bitmap 单线程创建时传入, self 不移动, 锁保护下访问)
+    /// (`init_bitmap` 单线程创建时传入, self 不移动, 锁保护下访问)
     heads: *mut [u64; MAX_BUDDY_ORDER as usize + 1],
 }
 
@@ -473,36 +473,37 @@ impl MetaStore for RawMetaStore {
     }
 }
 
-/// host 测试 MetaStore 实现 — 基于 `Vec<u8>` 堆载体 (构造注入)
+/// host 测试 `MetaStore` 实现 — 基于 `Vec<u8>` 堆载体 (构造注入)
 ///
-/// bitmap / buddy_meta / FREE_LINKS 分别用独立 Vec 模拟, `setup_*` 时创建
+/// bitmap / `buddy_meta` / `FREE_LINKS` 分别用独立 Vec 模拟, `setup_*` 时创建
 /// (与生产载体等长), 读写为纯内存操作, 单线程测试语义.
 /// 仅 `host-test` / `test` 配置下编译, 生产二进制不含 (避免死代码).
 #[cfg(any(test, feature = "host-test"))]
 use core::cell::RefCell;
 
 #[cfg(any(test, feature = "host-test"))]
-/// host 测试用 MetaStore: 以堆 `Vec<u8>` 模拟 bitmap / buddy 元数据 / 空闲链等载体.
+/// host 测试用 `MetaStore`: 以堆 `Vec<u8>` 模拟 bitmap / buddy 元数据 / 空闲链等载体.
 pub struct VecMetaStore {
     /// bitmap 载体 (字节数组模拟 u32 word, 小端)
     bitmap: RefCell<Option<Vec<u8>>>,
     /// bitmap 长度 (u32 word 数), 越界位操作静默跳过
     bitmap_words: usize,
-    /// buddy_meta 载体 (按页 1 字节)
+    /// `buddy_meta` 载体 (按页 1 字节)
     meta: RefCell<Option<Vec<u8>>>,
     /// 帧持有计数载体 (按 pfn 1 字节)
     counts: RefCell<Option<Vec<u8>>>,
     /// 帧所有权槽载体 (每项 16 字节 = 分配点/归还点 各 u64)
     owner: RefCell<Option<Vec<u8>>>,
-    /// FREE_LINKS 载体 (每项 16 字节 = prev/next 各 u64)
+    /// `FREE_LINKS` 载体 (每项 16 字节 = prev/next 各 u64)
     links: RefCell<Option<Vec<u8>>>,
-    /// buddy_heads 载体 (每阶一个 u64 pfn; 惰性扩容, 未写阶 = SENTINEL)
+    /// `buddy_heads` 载体 (每阶一个 u64 pfn; 惰性扩容, 未写阶 = SENTINEL)
     heads: RefCell<Vec<u64>>,
 }
 
 #[cfg(any(test, feature = "host-test"))]
 impl VecMetaStore {
     /// 构造空载体的 host 测试 `MetaStore` 实现 (各载体待 `setup_*` 惰性分配).
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             bitmap: RefCell::new(None),
@@ -513,6 +514,14 @@ impl VecMetaStore {
             links: RefCell::new(None),
             heads: RefCell::new(Vec::new()),
         }
+    }
+}
+
+#[cfg(any(test, feature = "host-test"))]
+impl Default for VecMetaStore {
+    /// 等价于 [`VecMetaStore::new`] 的空载体构造.
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -580,10 +589,10 @@ impl MetaStore for VecMetaStore {
 
     fn meta_write(&self, idx: usize, val: u8) {
         let mut meta = self.meta.borrow_mut();
-        if let Some(m) = meta.as_mut() {
-            if let Some(slot) = m.get_mut(idx) {
-                *slot = val;
-            }
+        if let Some(m) = meta.as_mut()
+            && let Some(slot) = m.get_mut(idx)
+        {
+            *slot = val;
         }
     }
 
@@ -607,10 +616,10 @@ impl MetaStore for VecMetaStore {
 
     fn counts_write(&self, idx: usize, val: u8) {
         let mut counts = self.counts.borrow_mut();
-        if let Some(c) = counts.as_mut() {
-            if let Some(slot) = c.get_mut(idx) {
-                *slot = val;
-            }
+        if let Some(c) = counts.as_mut()
+            && let Some(slot) = c.get_mut(idx)
+        {
+            *slot = val;
         }
     }
 
@@ -735,7 +744,7 @@ pub(crate) type MetaStoreImpl = VecMetaStore;
 #[repr(C)]
 pub struct PhysicalMemoryManager {
     // ---- Bitmap (reserved 跟踪 + 统计) ----
-    /// bitmap 长度 (u32 word 数), count_free_pages 的尾部余位修正使用
+    /// bitmap 长度 (u32 word 数), `count_free_pages` 的尾部余位修正使用
     bitmap_size: Cell<usize>,
     mem_size: Cell<u64>,
     kernel_end: Cell<u64>,
@@ -761,10 +770,10 @@ pub struct PhysicalMemoryManager {
     #[cfg(any(test, feature = "kernel_test"))]
     alloc_fail_countdown: AtomicU32,
     // ---- Buddy 分配器 ----
-    /// H-04 (2026-09-09): 内存元数据载体 — 生产为 RawMetaStore (裸指针),
-    /// host 测试经 inject_meta_store 注入 VecMetaStore (`Vec<u8>` 堆载体).
+    /// H-04 (2026-09-09): 内存元数据载体 — 生产为 `RawMetaStore` (裸指针),
+    /// host 测试经 `inject_meta_store` 注入 `VecMetaStore` (`Vec<u8>` 堆载体).
     /// 载体类型经 type alias `MetaStoreImpl` 编译期定死 (无 dyn/vtable).
-    /// init_bitmap 单线程启动期设置; buddy 就绪后仅在 PMM 锁下访问.
+    /// `init_bitmap` 单线程启动期设置; buddy 就绪后仅在 PMM 锁下访问.
     store: UnsafeCell<Option<MetaStoreImpl>>,
     /// 索引式双向链表空闲块头 (存块头 pfn), 每个阶数一个; 空链表头 = SENTINEL
     buddy_heads: UnsafeCell<[u64; MAX_BUDDY_ORDER as usize + 1]>,
@@ -802,10 +811,17 @@ struct MetaLayout {
     reserved_aligned: u64,
 }
 
+impl Default for PhysicalMemoryManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PhysicalMemoryManager {
     /// 构造未初始化的 PMM 实例 (零规模 / 空空闲链表 / 元数据载体待装配).
     ///
     /// 用于全局静态初始化; 实际内存规模与位图交由 `init` 建立.
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             bitmap_size: Cell::new(0),
@@ -835,8 +851,8 @@ impl PhysicalMemoryManager {
     ///
     /// 仅 `host-test` / `test` 配置编译, 生产二进制不含 (避免死代码, F9).
     /// 必须在 `init_bitmap` 之前调用 — 之后 `init_bitmap` 将经该载体建立
-    /// bitmap / buddy_meta / FREE_LINKS 三区, 使 buddy 完整生命周期
-    /// (init_bitmap → alloc/free → 合并) 在 host 侧以同一份算法代码运行,
+    /// bitmap / `buddy_meta` / `FREE_LINKS` 三区, 使 buddy 完整生命周期
+    /// (`init_bitmap` → alloc/free → 合并) 在 host 侧以同一份算法代码运行,
     /// 无测试/生产分叉 (B08-12 路线 C 核心).
     ///
     /// # 安全
@@ -875,7 +891,7 @@ impl PhysicalMemoryManager {
         );
     }
 
-    /// 初始化 buddy 元数据 (bitmap / buddy_meta / FREE_LINKS) 并建立空闲链表
+    /// 初始化 buddy 元数据 (bitmap / `buddy_meta` / `FREE_LINKS`) 并建立空闲链表
     ///
     /// `reserved_after_kernel`: 内核镜像末尾之后额外预留的字节数 (向上取整到页),
     /// 与内核镜像页一起标记为已用, 不可被分配.
@@ -1243,7 +1259,7 @@ impl PhysicalMemoryManager {
     ///
     /// `site` 由调用方在自己的 `#[track_caller]` 上下文里取 `Location::caller()`
     /// 后传入 —— 归因链跨越模块边界 (VMM 退役点 → `defer_free` → 本函数), 在此再取
-    /// 一次 `caller()` 只会落到 deferred_free.rs 自身, 失去归因价值.
+    /// 一次 `caller()` 只会落到 `deferred_free.rs` 自身, 失去归因价值.
     ///
     /// 本入口是**纯观测元数据**, 不参与任何控制逻辑: PMM 锁是本函数内部自持的
     /// (与 `frame_dec` 同法), 载体未就绪 / pfn 越界 / 单例未建立时一律静默跳过.
@@ -1428,7 +1444,7 @@ impl PhysicalMemoryManager {
         let ctx = super::alloc_trait::AllocContext {
             requested_pages: npages,
             free_pages: free,
-            total_pages: self.info.get().total_pages as u64,
+            total_pages: self.info.get().total_pages,
             pressure_level: 0,
             preferred_node: None,
         };
@@ -1511,7 +1527,7 @@ impl PhysicalMemoryManager {
     /// - `size` 必须 > 0 且为 `PAGE_SIZE` 整数倍
     /// - 范围 `[base, base+size)` 必须全部在 PMM 管理的物理 RAM 内
     /// - 调用方负责不与 kernel reserved / bitmap / buddy-meta 区重叠
-    ///   (启动期 init_bitmap 已预留; 运行时新增子系统的预留需自行避让)
+    ///   (启动期 `init_bitmap` 已预留; 运行时新增子系统的预留需自行避让)
     /// - 不可对已分配/已预留的页调本函数 (会破坏 PMM 簿记; 若需共享,
     ///   由调用方加互斥而非依赖本函数)
     ///
@@ -1521,7 +1537,7 @@ impl PhysicalMemoryManager {
         if size == 0 {
             return Err("PMM reserve_range: zero size");
         }
-        if !base.as_u64().is_multiple_of(PAGE_SIZE as u64) {
+        if !base.as_u64().is_multiple_of(PAGE_SIZE) {
             return Err("PMM reserve_range: base not page-aligned");
         }
         if !size.is_multiple_of(crate::privileged::glue::usize_from_u64(PAGE_SIZE)) {
@@ -1564,7 +1580,7 @@ impl PhysicalMemoryManager {
     ///
     /// # 调用契约
     /// - `base`/`size` 必须与之前的 `reserve_range` 调用严格对应
-    /// - 仅对 **reserved** 簿记的页可调 (即 reserve_range 而非 alloc_page 拿的页)
+    /// - 仅对 **reserved** 簿记的页可调 (即 `reserve_range` 而非 `alloc_page` 拿的页)
     /// - 调用方负责确保该范围不再被任何子系统使用 (语义同步)
     /// - 不可撤销 `alloc_page` 拿的页 (会破坏 PMM 簿记, 那是 `free_page` 的范畴)
     ///
@@ -1574,7 +1590,7 @@ impl PhysicalMemoryManager {
         if size == 0 {
             return Err("PMM unreserve_range: zero size");
         }
-        if !base.as_u64().is_multiple_of(PAGE_SIZE as u64) {
+        if !base.as_u64().is_multiple_of(PAGE_SIZE) {
             return Err("PMM unreserve_range: base not page-aligned");
         }
         if !size.is_multiple_of(crate::privileged::glue::usize_from_u64(PAGE_SIZE)) {
@@ -1630,7 +1646,7 @@ impl PhysicalMemoryManager {
     /// - 返回的基址**未**标记为 allocated/reserved (仅查找), 由调用方负责簿记
     ///
     /// # Returns
-    /// `Some(PhysAddr)` 找到连续范围, 基址对齐 PAGE_SIZE;
+    /// `Some(PhysAddr)` 找到连续范围, 基址对齐 `PAGE_SIZE`;
     /// `None` 无足够连续内存.
     pub fn find_contig_range(&self, size: usize) -> Option<PhysAddr> {
         if size == 0 || !size.is_multiple_of(crate::privileged::glue::usize_from_u64(PAGE_SIZE)) {
@@ -1670,8 +1686,8 @@ impl PhysicalMemoryManager {
 
     /// 分配大页 (按 `size_type` 分派到 `alloc_page` / `alloc_pages`).
     ///
-    /// 标 `track_caller` 使 Size4K / Size2M 分支的所有权归因落到真正的分配者;
-    /// Size1G 走 `buddy_direct_alloc_aligned` 直分, 不逐页计数亦不记归属 (同
+    /// 标 `track_caller` 使 `Size4K` / `Size2M` 分支的所有权归因落到真正的分配者;
+    /// `Size1G` 走 `buddy_direct_alloc_aligned` 直分, 不逐页计数亦不记归属 (同
     /// `alloc_pages` 的大块语义).
     #[track_caller]
     pub fn alloc_huge_page(&self, size_type: PageSize) -> Option<PhysAddr> {
@@ -1717,6 +1733,7 @@ impl PhysicalMemoryManager {
     }
 
     /// 判断 `addr` 是否按 `size_type` 的页规格对齐 (大页映射前置校验).
+    #[must_use]
     pub fn is_aligned_for_huge(addr: PhysAddr, size_type: PageSize) -> bool {
         size_type.is_aligned(addr.0)
     }
@@ -1789,7 +1806,7 @@ impl PhysicalMemoryManager {
     /// 访问内存元数据载体 (buddy 就绪后必有; 未 init 时为 None)
     ///
     /// # 安全
-    /// store 仅在 init_bitmap (或 host 测试 inject_meta_store) 中写入一次,
+    /// store 仅在 `init_bitmap` (或 host 测试 `inject_meta_store`) 中写入一次,
     /// 之后为只读路径, 且全部在 PMM 锁保护下访问.
     #[inline]
     fn meta_store(&self) -> Option<&MetaStoreImpl> {
@@ -1816,7 +1833,7 @@ impl PhysicalMemoryManager {
 
     fn test_bit(&self, bit: usize) -> bool {
         self.meta_store()
-            .map_or(false, |store| store.bitmap_test(bit))
+            .is_some_and(|store| store.bitmap_test(bit))
     }
 
     fn count_free_pages(&self) -> u64 {
@@ -1867,7 +1884,7 @@ impl PhysicalMemoryManager {
     /// 返回 (`merged_pfn`, `final_order`).
     ///
     /// `limit_pfn`: 合并块的上界 (不越过该页号). 用于 reserve 压回时防止
-    /// 合并吞掉已置位的 reserve 区 (B05-55); do_free 等路径传 `total_pages`.
+    /// 合并吞掉已置位的 reserve 区 (B05-55); `do_free` 等路径传 `total_pages`.
     fn buddy_try_merge(&self, mut pfn: u64, mut order: u8, limit_pfn: u64) -> (u64, u8) {
         let Some(store) = self.meta_store() else {
             return (pfn, order);
@@ -1919,8 +1936,8 @@ impl PhysicalMemoryManager {
 
     /// 从双向链表中移除一个空闲块.
     ///
-    /// H-01 (2026-09-06): 索引式 — FREE_LINKS[pfn] 读写 prev/next (存 pfn),
-    /// 不再解引用物理页内节点, 不依赖 KERNEL_BASE/物理地址换算.
+    /// H-01 (2026-09-06): 索引式 — `FREE_LINKS`[pfn] 读写 prev/next (存 pfn),
+    /// 不再解引用物理页内节点, 不依赖 `KERNEL_BASE/物理地址换算`.
     fn buddy_list_remove(&self, pfn: u64, order: u8) {
         let Some(store) = self.meta_store() else {
             return;
@@ -1948,7 +1965,7 @@ impl PhysicalMemoryManager {
     /// 若不清除则链表含"在位页" → 二次分配 → 页表/内核数据被覆盖.
     /// 伙伴必须满足 meta=order (空闲) 才会被合并, 故 push 块不含 reserve 区.
     ///
-    /// H-01 (2026-09-06): 索引式 — 写 FREE_LINKS[pfn].prev/next (存 pfn).
+    /// H-01 (2026-09-06): 索引式 — 写 `FREE_LINKS`[pfn].prev/next (存 pfn).
     fn buddy_list_push(&self, pfn: u64, order: u8) {
         // 强制位图同步: 链表是空闲权威, push 即声明这些页 free
         let npages = 1u64 << u64::from(order);
@@ -1971,11 +1988,9 @@ impl PhysicalMemoryManager {
 
     /// 从空闲链表头弹出一个块, 返回 pfn.
     ///
-    /// H-01 (2026-09-06): 索引式 — 读 FREE_LINKS[head].next (存 pfn).
+    /// H-01 (2026-09-06): 索引式 — 读 `FREE_LINKS`[head].next (存 pfn).
     fn buddy_list_pop(&self, order: u8) -> Option<u64> {
-        let Some(store) = self.meta_store() else {
-            return None;
-        };
+        let store = self.meta_store()?;
         let pfn = store.heads_get(order);
         if pfn == SENTINEL {
             return None;
@@ -1990,7 +2005,7 @@ impl PhysicalMemoryManager {
         Some(pfn)
     }
 
-    /// 将 [start_pfn, start_pfn+npages) 范围内已清位图 (free) 的页压回 buddy 空闲链表,
+    /// 将 [`start_pfn`, `start_pfn+npages`) 范围内已清位图 (free) 的页压回 buddy 空闲链表,
     /// 并尝试与相邻空闲块合并.
     ///
     /// 用于 `unreserve_range` / `free_huge_page` 等把先前摘出 buddy 的页归还回池,
@@ -2034,13 +2049,13 @@ impl PhysicalMemoryManager {
         }
     }
 
-    /// 从 buddy 空闲链表摘除与 [start_pfn, start_pfn+npages) 重叠的所有块,
+    /// 从 buddy 空闲链表摘除与 [`start_pfn`, `start_pfn+npages`) 重叠的所有块,
     /// 将块中不重叠的部分重新压回空闲链表, 然后置位该范围的位图并更新统计.
     ///
     /// 用于 `reserve_range` / `buddy_direct_alloc_aligned` 等"位图式"预留:
     /// 保证空闲链表与位图严格同步, 避免含已分配/预留页的块滞留在空闲链表中,
-    /// 否则 buddy_alloc 分裂时会把已占用页 push 回空闲链表, 写坏其内容.
-    /// 调用方必须持有 PMM 锁; 保证 [start_pfn, ...) 各页位图当前均为 0 (free).
+    /// 否则 `buddy_alloc` 分裂时会把已占用页 push 回空闲链表, 写坏其内容.
+    /// 调用方必须持有 PMM 锁; 保证 [`start_pfn`, ...) 各页位图当前均为 0 (free).
     fn buddy_reserve_pfn_range(&self, start_pfn: u64, npages: u64) {
         let end_pfn = start_pfn + npages;
         // H-03 (2026-09-06): 索引式遍历 — FREE_LINKS 已由 init_bitmap 分配,
@@ -2105,9 +2120,7 @@ impl PhysicalMemoryManager {
         if order > MAX_BUDDY_ORDER {
             return None;
         }
-        let Some(store) = self.meta_store() else {
-            return None;
-        };
+        let store = self.meta_store()?;
 
         // 寻找 >= 请求阶数的最小可用阶
         let mut avail_order: Option<u8> = None;

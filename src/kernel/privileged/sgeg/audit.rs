@@ -15,8 +15,15 @@ pub struct AuditLog {
     count: AtomicUsize,
 }
 
+impl Default for AuditLog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AuditLog {
     /// 创建空审计日志。
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             entries: [AuditEntry {
@@ -87,7 +94,7 @@ impl AuditLog {
 pub(crate) static GLOBAL_AUDIT: crate::privileged::sync::IrqSpinLock<AuditLog> =
     crate::privileged::sync::IrqSpinLock::new(AuditLog::new());
 
-/// 向全局审计日志追加一条审计项 (IrqSpinLock 保护)。
+/// 向全局审计日志追加一条审计项 (`IrqSpinLock` 保护)。
 pub fn log(pwm: u64, action: AuditAction, target_pwm: u64, domain: u64, caps: u64) {
     raw::log(pwm, action, target_pwm, domain, caps);
 }
@@ -104,7 +111,7 @@ pub fn dump() {
 pub(crate) mod raw {
     use super::{AuditAction, GLOBAL_AUDIT};
 
-    /// 记录一条审计项 (IrqSpinLock 保护)
+    /// 记录一条审计项 (`IrqSpinLock` 保护)
     pub fn log(pwm: u64, action: AuditAction, target_pwm: u64, domain: u64, caps: u64) {
         GLOBAL_AUDIT
             .lock()

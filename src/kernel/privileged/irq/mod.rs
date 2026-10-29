@@ -62,12 +62,14 @@ pub enum SoftirqVec {
 impl SoftirqVec {
     /// 返回本向量对应的位图索引。
     #[inline]
+    #[must_use]
     pub const fn to_idx(self) -> usize {
         self as usize
     }
 
     /// 由 `u8` 解析软中断向量；未知值返回 `None`。
     #[inline]
+    #[must_use]
     pub fn from_u8(v: u8) -> Option<Self> {
         match v {
             0 => Some(Self::High),
@@ -235,16 +237,16 @@ pub fn do_softirq() {
 
         crate::arch!(interrupt_enable());
 
-        for i in 0..MAX_SOFTIRQS {
+        for (i, slot) in handlers.iter().enumerate() {
             let bit = 1u64 << i;
-            if pending & bit != 0 {
-                if let Some(handler) = handlers[i] {
-                    handler();
-                }
+            if pending & bit != 0
+                && let Some(handler) = *slot
+            {
+                handler();
             }
         }
 
-        crate::arch!(interrupt_disable());
+        let _ = crate::arch!(interrupt_disable());
     }
 
     state.running.store(false, Ordering::Release);
@@ -252,6 +254,7 @@ pub fn do_softirq() {
 
 /// 返回当前 CPU 是否正在执行 softirq.
 #[inline]
+#[must_use]
 pub fn in_softirq() -> bool {
     let cpu = current_cpu_id();
     if cpu < MAX_CPUS {
@@ -265,6 +268,7 @@ pub fn in_softirq() -> bool {
 
 /// 返回当前 CPU 是否存在待处理的 softirq.
 #[inline]
+#[must_use]
 pub fn pending_softirq() -> bool {
     let cpu = current_cpu_id();
     if cpu < MAX_CPUS {

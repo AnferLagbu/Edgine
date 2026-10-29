@@ -58,7 +58,7 @@ const CELLS_MAX: u32 = 4;
 /// 根节点深度 (根节点属性在 depth==1 时被读取)
 const ROOT_DEPTH: usize = 1;
 
-/// GICv3 `reg` 属性中重分发器 (GICR) 所在条目序号 (条目 0 为分发器 GICD)
+/// `GICv3` `reg` 属性中重分发器 (GICR) 所在条目序号 (条目 0 为分发器 GICD)
 const GIC_REDIST_INDEX: usize = 1;
 
 /// `/cpus` 下可枚举的 CPU 上限 (防御畸形设备树造成的越界写)
@@ -91,9 +91,9 @@ pub struct DtbInfo {
     pub memory_size: u64,
     /// UART 寄存器基址
     pub uart_base: Option<u64>,
-    /// GICv3 分发器 (GICD) 基址
+    /// `GICv3` 分发器 (GICD) 基址
     pub gic_dist_base: Option<u64>,
-    /// GICv3 重分发器 (GICR) 基址
+    /// `GICv3` 重分发器 (GICR) 基址
     pub gic_redist_base: Option<u64>,
     /// CPU 拓扑 (`/cpus` 节点); 无该节点或解析失败时为 `None`
     pub cpus: Option<CpuTopology>,
@@ -105,6 +105,7 @@ pub struct DtbInfo {
 ///
 /// 仅当幻数、头部长度与各块边界全部合法时返回结果; 任何越界或截断
 /// 都被视为无效设备树. 返回的 `DtbInfo` 中未发现的资源保持 `None`.
+#[must_use]
 pub fn parse(blob: &[u8]) -> Option<DtbInfo> {
     let mut parser = Parser::new(blob)?;
     parser.run()
@@ -114,6 +115,7 @@ pub fn parse(blob: &[u8]) -> Option<DtbInfo> {
 ///
 /// 调用方往往只能先拿到一个短切片 (头部), 需据此得知完整 blob 长度后再构造
 /// 完整切片. 校验幻数与 `totalsize` 合理性 (不小于头部, 不超过 `FDT_MAX_SIZE`).
+#[must_use]
 pub fn decode_header_prefix(header: &[u8]) -> Option<usize> {
     if read_be32(header, 0)? != FDT_MAGIC {
         return None;

@@ -8,7 +8,7 @@
 //! 纯数据定义 (PWM 类型/能力矩阵/身份条目/审计类型), 0 unsafe.
 //! T6-7 曾于 2026-06-16 提取到 functions; 第二十五批 (DECISION-K 项 5 sgeg
 //! 判据: 持有类型归 privileged — privileged/proc/process.rs 进程表机制持有
-//! PwmContext) 反转归位本文件. functions/sgeg/types.rs 为 re-export 壳.
+//! `PwmContext`) 反转归位本文件. functions/sgeg/types.rs 为 re-export 壳.
 //!
 //! SGEG 权限模型的核心数据结构.
 //! 域身份 (DID) + 能力矩阵 + 身份条目 + 审计类型.
@@ -39,11 +39,13 @@ impl PwmId {
     pub const ZERO: Self = Self(0);
 
     /// 判断该标识是否为已分配 (非零).
+    #[must_use]
     pub fn is_valid(self) -> bool {
         self.0 != 0
     }
 
     /// 取出内部 u64 原始值.
+    #[must_use]
     pub fn as_u64(self) -> u64 {
         self.0
     }
@@ -71,21 +73,25 @@ impl DomainId {
     pub const NOBODY: Self = Self(65534);
 
     /// 判断是否关联了活动域 (非零).
+    #[must_use]
     pub fn is_valid(self) -> bool {
         self.0 != 0
     }
 
     /// 取出内部 u64 原始值.
+    #[must_use]
     pub fn as_u64(self) -> u64 {
         self.0
     }
 
     /// 由 POSIX uid 派生域身份.
+    #[must_use]
     pub fn from_uid(uid: u32) -> Self {
         Self(u64::from(uid))
     }
 
     /// 转换为对应的 POSIX uid (截断为 u32).
+    #[must_use]
     pub fn to_uid(self) -> u32 {
         crate::privileged::glue::low_u32_from_u64(self.0)
     }
@@ -134,7 +140,7 @@ bitflags::bitflags! {
         const NO_NET     = 1 << 2;
         /// 拒绝设备类调用 (ioctl/mount/umount2).
         const NO_DEVICE  = 1 << 3;
-        /// 复合位: 严格白名单, 仅放行 read/write/exit/exit_group/rt_sigreturn.
+        /// 复合位: 严格白名单, 仅放行 `read`/`write`/`exit`/`exit_group`/`rt_sigreturn`.
         const SANDBOX    = 1 << 4;
         /// 拒绝写类调用及带写意图的 open/openat.
         const READONLY   = 1 << 5;
@@ -185,11 +191,13 @@ impl CapDomain {
     pub const RESERVED: Self = Self(15);
 
     /// 转为能力矩阵下标 (对 16 取模, 保证不越界).
+    #[must_use]
     pub fn as_usize(self) -> usize {
         (self.0 as usize) % 16
     }
 
     /// 取出内部 u16 原始值.
+    #[must_use]
     pub fn as_u16(self) -> u16 {
         self.0
     }
@@ -213,11 +221,13 @@ impl CapBits {
     pub const ALL: Self = Self(0xFFFF_FFFF_FFFF_FFFF);
 
     /// 判断当前集合是否完整包含另一集合的全部位.
+    #[must_use]
     pub fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
     }
 
     /// 取出内部 u64 位图.
+    #[must_use]
     pub fn as_u64(self) -> u64 {
         self.0
     }
@@ -378,6 +388,7 @@ impl Default for PwmEntrySnapshot {
 
 impl PwmEntry {
     /// 创建全默认 (未分配) 的条目.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -429,6 +440,7 @@ impl PwmEntry {
     /// 原因: [`AtomicU8`; N] 不能直接借用为 &[u8], 返回 owned &str 需要内部静态缓冲.
     /// 当前实现: 返回静态空串占位. 推荐使用 `note_bytes()` 复制 + 自行转换.
     /// 兼容保留: 签名不变, 行为退化为"返回空串 (新值前为 None)". 调用方应迁移.
+    #[must_use]
     pub fn get_note_str() -> &'static str {
         // T4-1: 静态生命周期 &str, 仅占位 (此 API 已废弃, 推荐 note_bytes/note_equals)
         ""
@@ -624,6 +636,7 @@ impl GrantRecord {
     };
 
     /// 判断记录是否为未占用槽位 (授权方为空).
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.grantor_pwm == PwmId::ZERO
     }
@@ -667,6 +680,7 @@ pub enum PwmError {
 
 impl PwmError {
     /// 取出错误码的 i32 表示 (0 成功, 负值失败).
+    #[must_use]
     pub fn as_i32(self) -> i32 {
         self as i32
     }
@@ -701,6 +715,7 @@ pub enum AuditAction {
 
 impl AuditAction {
     /// 取出动作的 u32 判别式 (与磁盘审计格式一致).
+    #[must_use]
     pub fn as_u32(self) -> u32 {
         self as u32
     }
@@ -721,6 +736,7 @@ pub enum AuditResult {
 
 impl AuditResult {
     /// 取出结果的 u32 判别式 (与磁盘审计格式一致).
+    #[must_use]
     pub fn as_u32(self) -> u32 {
         self as u32
     }

@@ -66,17 +66,19 @@ pub enum FsError {
 
 impl FsError {
     /// 从内核原始 `i32` 错误码还原
+    #[must_use]
     pub fn from_i32(code: i32) -> Self {
         Self::Kernel(crate::functions::error::KernelError::from_i32(code))
     }
 
     /// 映射为 POSIX errno
+    #[must_use]
     pub fn to_errno(self) -> crate::privileged::syscall::Errno {
         use crate::privileged::syscall::Errno as E;
         match self {
-            Self::NotInitialized => E::ENODEV,
-            Self::IoError => E::EIO,
-            Self::Overflow => E::EOVERFLOW,
+            Self::NotInitialized => E::Enodev,
+            Self::IoError => E::Eio,
+            Self::Overflow => E::Eoverflow,
             Self::Kernel(e) => e.as_errno(),
         }
     }
@@ -123,6 +125,7 @@ pub struct FileDescriptor {
 
 impl FileDescriptor {
     /// 创建新描述符
+    #[must_use]
     pub const fn new(node_id: u32, flags: u32, pwm: u64) -> Self {
         Self {
             node_id,
@@ -133,11 +136,13 @@ impl FileDescriptor {
     }
 
     /// 是否只读
+    #[must_use]
     pub const fn is_read_only(&self) -> bool {
         self.flags & 0x0001 != 0 && self.flags & 0x0004 == 0
     }
 
     /// 是否可写
+    #[must_use]
     pub const fn is_writable(&self) -> bool {
         self.flags & 0x0002 != 0 || self.flags & 0x0004 != 0
     }
@@ -157,6 +162,7 @@ pub struct SafeRamFs {
 
 impl SafeRamFs {
     /// 创建未挂载的 `SafeRamFs`
+    #[must_use]
     pub fn new() -> Self {
         Self {
             inner: crate::privileged::sync::IrqSpinLock::new(RamFsData::new()),
@@ -416,18 +422,6 @@ impl SafeRamFs {
 
         // 扫描所有节点 (RamFs 当前未暴露 listdir API, 这里返回空 Vec)
         // 完整实现需要 ramfs 端新增 listdir (后续 Phase 2.2.x)
-        let entries: Vec<VfsDirEntry> = Vec::new();
-        for i in 0..RAMFS_MAX_NODES {
-            let n = &fs.nodes[i];
-            if !n.used {
-                continue;
-            }
-            if n.node_id == node_id {
-                continue; // 跳过自身
-            }
-            let _ = i;
-        }
-        let _ = entries;
         Ok(Vec::new())
     }
 }
@@ -505,11 +499,13 @@ pub fn mkdir(parent: &str, name: &str, pwm: u64) -> FsResult<()> {
 }
 
 /// 解析路径
+#[must_use]
 pub fn resolve(path: &str) -> Option<u32> {
     global().resolve_path(path)
 }
 
 /// 块大小 (常量透传)
+#[must_use]
 pub const fn block_size() -> usize {
     RAMFS_BLOCK_SIZE
 }

@@ -153,21 +153,25 @@ impl BootKeyboardReport {
     }
 
     /// 检查 Ctrl 是否按下.
+    #[must_use]
     pub fn ctrl_pressed(self) -> bool {
         self.modifier & 0x01 != 0 || self.modifier & 0x10 != 0
     }
 
     /// 检查 Shift 是否按下.
+    #[must_use]
     pub fn shift_pressed(self) -> bool {
         self.modifier & 0x02 != 0 || self.modifier & 0x20 != 0
     }
 
     /// 检查 Alt 是否按下.
+    #[must_use]
     pub fn alt_pressed(self) -> bool {
         self.modifier & 0x04 != 0 || self.modifier & 0x40 != 0
     }
 
     /// 返回当前按下的所有 keycode 列表 (去重).
+    #[must_use]
     pub fn pressed_keys(self) -> Vec<u8> {
         let mut keys = Vec::new();
         for &kc in &self.keycodes {
@@ -231,16 +235,19 @@ impl BootMouseReport {
     }
 
     /// Left button 是否按下.
+    #[must_use]
     pub fn left_pressed(self) -> bool {
         self.buttons & 0x01 != 0
     }
 
     /// Right button 是否按下.
+    #[must_use]
     pub fn right_pressed(self) -> bool {
         self.buttons & 0x02 != 0
     }
 
     /// Middle button 是否按下.
+    #[must_use]
     pub fn middle_pressed(self) -> bool {
         self.buttons & 0x04 != 0
     }
@@ -273,6 +280,7 @@ pub enum HidDeviceType {
 
 impl HidDeviceType {
     /// 从 Interface Subclass 字节构造.
+    #[must_use]
     pub fn from_subclass(subclass: u8) -> Self {
         match subclass {
             0 => Self::None,
@@ -297,6 +305,7 @@ pub enum HidProtocolType {
 
 impl HidProtocolType {
     /// 从 Interface Protocol 字节构造.
+    #[must_use]
     pub fn from_protocol(protocol: u8) -> Self {
         match protocol {
             0 => Self::None,
@@ -370,6 +379,7 @@ impl HidDriver {
     /// 构造 `SET_PROTOCOL` Boot Protocol 请求 Setup Packet.
     ///
     /// 真实硬件应通过 Control Transfer (`request_type=0x21`, request=0x0B) 发送.
+    #[must_use]
     pub fn set_protocol_setup(&self, protocol: HidProtocol) -> UsbSetupPacket {
         let mut req = make_set_protocol_request(protocol);
         req.index = u16::from(self.interface_number);
@@ -377,21 +387,25 @@ impl HidDriver {
     }
 
     /// 获取 Interrupt IN endpoint 信息.
+    #[must_use]
     pub fn interrupt_in_endpoint(&self) -> u8 {
         self.interrupt_in_endpoint
     }
 
     /// 获取 Interrupt IN max packet size.
+    #[must_use]
     pub fn interrupt_in_max_packet(&self) -> u16 {
         self.interrupt_in_max_packet
     }
 
     /// 获取接口编号
+    #[must_use]
     pub fn interface_number(&self) -> u8 {
         self.interface_number
     }
 
     /// 获取当前协议.
+    #[must_use]
     pub fn protocol(&self) -> HidProtocol {
         self.protocol
     }
@@ -402,21 +416,25 @@ impl HidDriver {
     }
 
     /// 获取 HID 设备类型.
+    #[must_use]
     pub fn device_type(&self) -> HidDeviceType {
         self.device_type
     }
 
     /// 获取 HID 协议类型.
+    #[must_use]
     pub fn protocol_type(&self) -> HidProtocolType {
         self.protocol_type
     }
 
     /// 检查是否为 Boot Keyboard.
+    #[must_use]
     pub fn is_boot_keyboard(&self) -> bool {
         self.device_type == HidDeviceType::Boot && self.protocol_type == HidProtocolType::Keyboard
     }
 
     /// 检查是否为 Boot Mouse.
+    #[must_use]
     pub fn is_boot_mouse(&self) -> bool {
         self.device_type == HidDeviceType::Boot && self.protocol_type == HidProtocolType::Mouse
     }

@@ -23,7 +23,7 @@ pub fn execute_layered() -> ! {
         config::set_reset_in_progress(true);
     }
 
-    if config::RECOVERY_CONFIG.enable_layer2 {
+    if config::RECOVERY_CONFIG.layers.layer2 {
         config::set_current_layer(RecoveryLayer::Layer2);
 
         match bsr::execute() {
@@ -51,7 +51,7 @@ pub fn execute_layered() -> ! {
         }
     }
 
-    if config::RECOVERY_CONFIG.enable_layer3 {
+    if config::RECOVERY_CONFIG.layers.layer3 {
         config::set_current_layer(RecoveryLayer::Layer3);
         bhr::execute();
     }
@@ -66,7 +66,7 @@ pub fn execute_from_panic(panic_info: &core::panic::PanicInfo<'_>) -> ! {
         "[RECOVERY] Panic detected, initiating layered recovery"
     );
 
-    if config::RECOVERY_CONFIG.enable_layer1 {
+    if config::RECOVERY_CONFIG.layers.layer1 {
         config::set_current_layer(RecoveryLayer::Layer1);
 
         match bbr::execute(panic_info) {
@@ -99,6 +99,7 @@ pub fn execute_from_panic(panic_info: &core::panic::PanicInfo<'_>) -> ! {
 }
 
 /// 仅执行 Layer1 栏基恢复, 返回其结果供调用方决定后续升级。
+#[must_use]
 pub fn try_bbr_first(panic_info: &core::panic::PanicInfo<'_>) -> RecoveryResult {
     bbr::execute(panic_info)
 }

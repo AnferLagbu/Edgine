@@ -32,6 +32,7 @@ pub struct UnkfsZapEntry {
 
 impl UnkfsZapEntry {
     /// 由名字与字节值构造条目 (超出定长槽位的部分截断)
+    #[must_use]
     pub fn new(name: &str, value: &[u8]) -> Self {
         let mut n = [0u8; HV_ZAP_MAX_NAME];
         let mut v = [0u8; HV_ZAP_MAX_VALUE];
@@ -50,6 +51,7 @@ impl UnkfsZapEntry {
     }
 
     /// 以 `&str` 形式返回条目名 (非 UTF-8 时退化为空串)
+    #[must_use]
     pub fn get_name(&self) -> &str {
         let end = self
             .name
@@ -60,11 +62,13 @@ impl UnkfsZapEntry {
     }
 
     /// 返回值的有效字节切片
+    #[must_use]
     pub fn get_value(&self) -> &[u8] {
         &self.value[..self.value_len as usize]
     }
 
     /// 将值按小端解释为 `u64` (不足 8 字节返回 0)
+    #[must_use]
     pub fn get_value_u64(&self) -> u64 {
         if self.value_len as usize >= 8 {
             let mut arr = [0u8; 8];
@@ -76,6 +80,7 @@ impl UnkfsZapEntry {
     }
 
     /// 计算名字的 FNV-1a 64 位哈希
+    #[must_use]
     pub fn hash_name(name: &str) -> u64 {
         let mut h: u64 = 14_695_981_039_346_656_037;
         for &b in name.as_bytes() {
@@ -112,6 +117,7 @@ pub enum UnkfsZapType {
 
 impl UnkfsZap {
     /// 创建默认容量 (`HV_ZAP_MAX_ENTRIES`) 的 micro 表
+    #[must_use]
     pub fn new() -> Self {
         Self {
             entries: Mutex::new(Vec::new()),
@@ -121,6 +127,7 @@ impl UnkfsZap {
     }
 
     /// 按指定容量创建表 (≤64 为 micro, 否则 normal)
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             entries: Mutex::new(Vec::new()),
@@ -189,7 +196,7 @@ impl UnkfsZap {
         let idx = entries
             .iter()
             .position(|e| e.used && e.hash == hash && e.get_name() == name);
-        idx.map_or(false, |i| {
+        idx.is_some_and(|i| {
             entries.remove(i);
             true
         })
@@ -237,6 +244,13 @@ impl UnkfsZap {
     /// 清空全部条目
     pub fn clear(&self) {
         self.entries.lock().clear();
+    }
+}
+
+impl Default for UnkfsZap {
+    /// 委托 [`UnkfsZap::new`] 创建默认容量的 micro 表.
+    fn default() -> Self {
+        Self::new()
     }
 }
 

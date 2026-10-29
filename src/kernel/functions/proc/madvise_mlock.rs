@@ -91,6 +91,7 @@ pub enum Advice {
 
 impl Advice {
     /// 从 Linux 原始 advice 值构造
+    #[must_use]
     pub fn from_u32(v: u32) -> Self {
         match v {
             1 => Self::Random,
@@ -117,6 +118,7 @@ impl Advice {
     }
 
     /// 转换为 privileged 接受的值
+    #[must_use]
     pub fn as_u32(self) -> u32 {
         self as u32
     }
@@ -142,12 +144,14 @@ impl MlockAllFlags {
 
     /// 返回原始位标志
     #[inline]
+    #[must_use]
     pub const fn bits(self) -> u32 {
         self.0
     }
 
     /// 判断是否包含 `other` 的全部位
     #[inline]
+    #[must_use]
     pub const fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
     }
@@ -180,25 +184,27 @@ pub enum MlockError {
 
 impl MlockError {
     /// 映射为 POSIX errno
+    #[must_use]
     pub fn to_errno(self) -> Errno {
         use Errno as E;
         match self {
-            Self::NotMapped => E::ESRCH,
+            Self::NotMapped => E::Esrch,
             Self::Kernel(e) => e.as_errno(),
         }
     }
 
     /// 从 POSIX errno 构造错误
+    #[must_use]
     pub fn from_errno(e: Errno) -> Self {
         use crate::functions::error::KernelError as K;
         match e {
-            Errno::EINVAL => Self::Kernel(K::InvalidArgument),
-            Errno::EFAULT => Self::Kernel(K::Fault),
-            Errno::ENOMEM => Self::Kernel(K::NoMemory),
-            Errno::ENOSPC => Self::Kernel(K::NoSpace),
-            Errno::EAGAIN => Self::Kernel(K::WouldBlock),
-            Errno::EPERM => Self::Kernel(K::PermissionDenied),
-            Errno::ESRCH => Self::NotMapped,
+            Errno::Einval => Self::Kernel(K::InvalidArgument),
+            Errno::Efault => Self::Kernel(K::Fault),
+            Errno::Enomem => Self::Kernel(K::NoMemory),
+            Errno::Enospc => Self::Kernel(K::NoSpace),
+            Errno::Eagain => Self::Kernel(K::WouldBlock),
+            Errno::Eperm => Self::Kernel(K::PermissionDenied),
+            Errno::Esrch => Self::NotMapped,
             other => Self::Kernel(K::Other(crate::functions::intcast::low_i32_from_i64(
                 other.as_ret(),
             ))),

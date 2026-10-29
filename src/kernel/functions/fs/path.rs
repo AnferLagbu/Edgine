@@ -39,10 +39,10 @@ use crate::privileged::syscall::raw;
 /// 当 `path_ptr` 为空或不在用户可访问范围内时返回 `EFAULT`.
 pub fn chdir_syscall(path_ptr: u64) -> Result<usize, Errno> {
     if path_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if !raw::check_user_ptr(path_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     // SAFETY: path_ptr 由 check_user_ptr 验证为可读
     let ptr = path_ptr as *const u8;
@@ -65,10 +65,10 @@ pub fn chdir_syscall(path_ptr: u64) -> Result<usize, Errno> {
 /// 其余错误以对应的 `Errno` 返回.
 pub fn getcwd_syscall(buf_ptr: u64, size: u64) -> Result<usize, Errno> {
     if buf_ptr == 0 || size == 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if !raw::check_user_buf(buf_ptr, size) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     // SAFETY: buf_ptr 由 check_user_buf 验证为可写
     let buf = buf_ptr as *mut u8;
@@ -90,7 +90,7 @@ pub fn getcwd_syscall(buf_ptr: u64, size: u64) -> Result<usize, Errno> {
 fn require_sys_admin() -> Result<u64, Errno> {
     let pwm = crate::privileged::sgeg::session::get_current_pwm();
     if !crate::privileged::sgeg::api::pwm_has_capability(pwm, 0, 0x01) {
-        return Err(Errno::EACCES);
+        return Err(Errno::Eacces);
     }
     Ok(pwm)
 }
@@ -98,23 +98,23 @@ fn require_sys_admin() -> Result<u64, Errno> {
 /// 校验用户路径指针并取 `&str`.
 fn checked_user_path(ptr: u64) -> Result<&'static str, Errno> {
     if ptr == 0 || !raw::check_user_ptr(ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     // ptr 经 check_user_ptr 验证为可读的 NUL 终止用户字符串
     let path = (ptr as *const u8).as_kstr();
     if path.is_empty() {
-        return Err(Errno::ENOENT);
+        return Err(Errno::Enoent);
     }
     Ok(path)
 }
 
-/// 校验路径存在且为目录 (chroot/pivot_root 的共同前置).
+/// 校验路径存在且为目录 (`chroot/pivot_root` 的共同前置).
 fn require_directory(ptr: u64, pwm: u64) -> Result<(), Errno> {
     let Some(st) = fw::vfs_stat_safe(ptr as *const u8, pwm) else {
-        return Err(Errno::ENOENT);
+        return Err(Errno::Enoent);
     };
     if VfsFileType::from_u8(st.file_type) != Some(VfsFileType::Dir) {
-        return Err(Errno::ENOTDIR);
+        return Err(Errno::Enotdir);
     }
     Ok(())
 }
@@ -135,13 +135,13 @@ pub fn chroot_syscall(path_ptr: u64) -> Result<usize, Errno> {
 
     let mut buf = [0u8; VFS_MAX_PATH];
     let Some(real_root) = VFS_MANAGER.resolve_user_path(path, &mut buf) else {
-        return Err(Errno::ENAMETOOLONG);
+        return Err(Errno::Enametoolong);
     };
     VFS_MANAGER.set_root(real_root);
     Ok(0)
 }
 
-/// pivot_root 关系校验 (纯逻辑, 便于直接验证).
+/// `pivot_root` 关系校验 (纯逻辑, 便于直接验证).
 ///
 /// 校验项 (对齐 Linux `pivot_root(2)`):
 /// - `new_root` 等于当前根 → `EBUSY` (不可 pivot 到自身)
@@ -161,10 +161,10 @@ pub fn pivot_root_plan(
     current_root: &str,
 ) -> Result<(), Errno> {
     if new_root_real == current_root {
-        return Err(Errno::EBUSY);
+        return Err(Errno::Ebusy);
     }
     if !is_strictly_under(put_old_real, new_root_real) {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     Ok(())
 }
@@ -179,7 +179,7 @@ fn is_strictly_under(child: &str, parent: &str) -> bool {
         && child.as_bytes().get(parent.len()) == Some(&b'/')
 }
 
-/// pivot_root(new_root, put_old) — 替换视图根。
+/// `pivot_root(new_root`, `put_old`) — 替换视图根。
 ///
 // SIMPLIFIED: 仅切换根前缀, 不摘除旧根挂载点 (无 per-process mount namespace
 // 可摘); 影响面: `put_old` 仅参与关系校验, 旧根经绝对路径仍可达; 何时需扩展:
@@ -202,7 +202,7 @@ pub fn pivot_root_syscall(new_root_ptr: u64, put_old_ptr: u64) -> Result<usize, 
         VFS_MANAGER.resolve_user_path(new_view, &mut new_buf),
         VFS_MANAGER.resolve_user_path(old_view, &mut old_buf),
     ) else {
-        return Err(Errno::ENAMETOOLONG);
+        return Err(Errno::Enametoolong);
     };
 
     let current_root = VFS_MANAGER.get_root();

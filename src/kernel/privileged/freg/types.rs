@@ -53,6 +53,7 @@ pub enum DomainState {
 
 impl DomainState {
     /// 由 u32 编码解析状态; 未知编码返回 `None`。
+    #[must_use]
     pub fn from_u32(v: u32) -> Option<Self> {
         match v {
             0 => Some(Self::Active),
@@ -66,6 +67,7 @@ impl DomainState {
     }
 
     /// 由 u32 编码解析状态, 未知编码回退为 `Quarantined`。
+    #[must_use]
     pub fn from_u32_fallback(v: u32) -> Self {
         Self::from_u32(v).unwrap_or(Self::Quarantined)
     }

@@ -75,6 +75,7 @@ pub struct HeapHeader {
 
 impl HeapHeader {
     /// 构造堆块头: 记录大小与空闲标志, 魔数置 `HEAP_MAGIC`, 链表指针置空.
+    #[must_use]
     pub fn new(size: u64, is_free: bool) -> Self {
         Self {
             size,
@@ -86,6 +87,7 @@ impl HeapHeader {
     }
 
     /// 获取本头部之后的数据区指针
+    #[must_use]
     pub fn data_ptr(&self) -> *mut u8 {
         // SAFETY: self 是对 HeapHeader 的有效引用; 加上 size_of::<Self>()
         // 仍在同一分配块内 (头部紧跟数据).
@@ -359,8 +361,15 @@ unsafe impl Send for KernelHeap {}
 
 const EARLY_BUFFER_SIZE: usize = crate::privileged::glue::usize_from_u64(PAGE_SIZE);
 
+impl Default for KernelHeap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl KernelHeap {
     /// 构造未初始化的内核堆 (堆区间为零, 空空闲链表, 统计清零).
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             heap_start: VirtAddr(0),
@@ -453,7 +462,11 @@ impl KernelHeap {
     }
 
     /// 释放 `k_malloc` 之前分配的内存
-    pub fn deallocate(&self, ptr: *mut u8) {
+    ///
+    /// # Safety
+    /// `ptr` 必须为 `k_malloc` / `allocate` 返回的、尚未释放的指针 (或 NULL);
+    /// 调用后不得再使用该指针。
+    pub unsafe fn deallocate(&self, ptr: *mut u8) {
         if ptr.is_null() {
             return;
         }
@@ -499,9 +512,17 @@ impl KernelHeap {
     }
 
     /// 重新分配内存块
-    pub fn reallocate(&self, ptr: *mut u8, size: usize) -> Option<*mut u8> {
+    ///
+    /// # Safety
+    /// `ptr` 必须为 `k_malloc` / `allocate` 返回的、尚未释放的指针 (或 NULL);
+    /// 返回非空新指针后原 `ptr` 不得再使用。
+    pub unsafe fn reallocate(&self, ptr: *mut u8, size: usize) -> Option<*mut u8> {
         if size == 0 {
-            self.deallocate(ptr);
+            // SAFETY: 由本函数的安全契约保证 ptr 是有效分配或 NULL;
+            // size == 0 语义即释放原块 (与 realloc(ptr, 0) 一致).
+            unsafe {
+                self.deallocate(ptr);
+            }
             return None;
         }
 
@@ -735,11 +756,12 @@ impl KernelHeap {
         let heap_end = HeapEndRef::new(core::ptr::addr_of!(self.heap_end)).get();
         let heap_end_ptr = heap_end.0 as *mut u8;
 
-        if next_addr.byte_ptr() < heap_end_ptr {
-            if next_addr.magic() == HEAP_MAGIC && next_addr.is_free() {
-                self.remove_from_free_list(next_addr);
-                header.set_size(header.size() + next_addr.size());
-            }
+        if next_addr.byte_ptr() < heap_end_ptr
+            && next_addr.magic() == HEAP_MAGIC
+            && next_addr.is_free()
+        {
+            self.remove_from_free_list(next_addr);
+            header.set_size(header.size() + next_addr.size());
         }
     }
 
@@ -980,12 +1002,14 @@ pub fn get_kmalloc_mut() -> crate::privileged::sync::IrqSpinLockGuard<'static, K
 
 /// 将值向上对齐到指定对齐 (必须为 2 的幂)
 #[inline]
+#[must_use]
 pub const fn align_up(value: u64, alignment: u64) -> u64 {
     (value + alignment - 1) & !(alignment - 1)
 }
 
 /// 将值向下对齐到指定对齐 (必须为 2 的幂)
 #[inline]
+#[must_use]
 pub const fn align_down(value: u64, alignment: u64) -> u64 {
     value & !(alignment - 1)
 }

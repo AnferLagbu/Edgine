@@ -48,6 +48,7 @@ pub fn fence_w() {
 ///
 /// 调用方必须确保 `interrupt_restore` 在适当时候被调用以恢复中断状态。
 #[inline]
+#[must_use]
 pub fn interrupt_save() -> usize {
     <crate::privileged::arch::CurrentArch as Arch>::interrupt_disable()
 }
@@ -70,6 +71,7 @@ pub fn interrupt_enable() {
 
 /// 检查中断是否已启用。
 #[inline]
+#[must_use]
 pub fn is_interrupt_enabled() -> bool {
     <crate::privileged::arch::CurrentArch as Arch>::is_interrupt_enabled()
 }

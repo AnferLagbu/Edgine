@@ -27,20 +27,22 @@ use crate::privileged::syscall::Errno;
 ///
 /// T2 批 4 自 privileged 回退层迁移. 委托 `NamespaceSet::unshare` (机制:
 /// 按 flags 为各 ns 创建新实例), functions 仅 errno 映射.
+#[must_use]
 pub fn unshare_syscall(flags: u64) -> i64 {
     let pid = process_get_current_pid();
 
     match process_with_mut(pid, |p| p.namespaces.lock().unshare(flags)) {
         Some(Ok(())) => 0,
         Some(Err(e)) => e.as_ret(),
-        None => Errno::ESRCH.as_ret(),
+        None => Errno::Esrch.as_ret(),
     }
 }
 
-/// setns(ns_type, target_ns_id) 策略 — 切换到目标 namespace
+/// `setns(ns_type`, `target_ns_id`) 策略 — 切换到目标 namespace
 ///
-/// T2 批 4 自 privileged 回退层迁移. 参数解析 (CLONE_NEW_* 标志位与简化枚举
-/// 双语义) + CAP_SYS_ADMIN 特权判定 + 委托 `NamespaceSet::setns_by_type`.
+/// T2 批 4 自 privileged 回退层迁移. 参数解析 (`CLONE_NEW`_* 标志位与简化枚举
+/// 双语义) + `CAP_SYS_ADMIN` 特权判定 + 委托 `NamespaceSet::setns_by_type`.
+#[must_use]
 pub fn setns_syscall(ns_type: u64, target_ns_id: u64) -> i64 {
     // B06-18: 修正原 `1 << (ns_type + 8)` 位运算公式错误 (恒不匹配 CLONE_NEW* 导致
     // from_clone_flag 恒 None)。现直接用 ns_type 匹配: 兼容 CLONE_NEW* 标志位
@@ -55,14 +57,14 @@ pub fn setns_syscall(ns_type: u64, target_ns_id: u64) -> i64 {
             4 => NsType::Pid,
             5 => NsType::Net,
             6 => NsType::Cgroup,
-            _ => return Errno::EINVAL.as_ret(),
+            _ => return Errno::Einval.as_ret(),
         },
     };
 
     // B06-20: setns 切换 namespace 需 CAP_SYS_ADMIN (SYSTEM 域 0x01), 与 mount/umount2 先例一致
     let pwm = crate::privileged::sgeg::pwm_get_current();
     if !crate::privileged::sgeg::pwm_has_capability(pwm, 0, 0x01) {
-        return Errno::EPERM.as_ret();
+        return Errno::Eperm.as_ret();
     }
 
     let pid = process_get_current_pid();
@@ -72,6 +74,6 @@ pub fn setns_syscall(ns_type: u64, target_ns_id: u64) -> i64 {
     }) {
         Some(Ok(())) => 0,
         Some(Err(e)) => e.as_ret(),
-        None => Errno::ESRCH.as_ret(),
+        None => Errno::Esrch.as_ret(),
     }
 }

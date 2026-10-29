@@ -2,7 +2,7 @@
 //!
 //! ## DECISION-J 归属反转记录 (2026-09-12)
 //!
-//! 原常量与全局状态 (`KASLR_BASE_OFFSET` AtomicU64) 于 T6-9 (2026-06-16) 迁至
+//! 原常量与全局状态 (`KASLR_BASE_OFFSET` `AtomicU64`) 于 T6-9 (2026-06-16) 迁至
 //! `functions::config::kaslr`, 本文件仅 re-export。
 //! 按"机制持有的数据结构/常量归 privileged"统一判据反转：`KASLR_BASE_OFFSET` 是
 //! 机制持有的全局状态, 被 privileged config/caps `get_config_summary` 机制消费 —
@@ -10,7 +10,7 @@
 //! 为策略校验, 留在 functions。
 //!
 //! functions 侧改 re-export + 本地保留 `validate_kaslr_offset` 保持 API 兼容。
-//! 本文件 0 unsafe (纯常量 + AtomicU64 全局状态 + 无锁读写).
+//! 本文件 0 unsafe (纯常量 + `AtomicU64` 全局状态 + 无锁读写).
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -47,6 +47,7 @@ pub fn get_kaslr_offset() -> u64 {
 
 /// 检查 `offset` 是否满足 KASLR 对齐要求.
 #[inline]
+#[must_use]
 pub fn is_aligned(offset: u64) -> bool {
     (offset & (KASLR_ALIGN - 1)) == 0
 }

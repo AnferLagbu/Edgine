@@ -5,7 +5,7 @@
 //! ## DECISION-J 归属反转记录 (2026-09-12)
 //!
 //! 原类型定义 (IpcNamespace/Pipe/MsgQueue/ShmSegment/Semaphore/Message/
-//! WaitQueue/WaitQueueItem + IPC_MAX_* 常量) 按统一判据"机制持有的数据结构
+//! WaitQueue/WaitQueueItem + `IPC_MAX`_* 常量) 按统一判据"机制持有的数据结构
 //! 归 privileged、功能实现归 functions"迁回 `privileged/ipc/types.rs`
 //! (被 privileged `IPC_NAMESPACE` 全局机制直接持有)。
 //!

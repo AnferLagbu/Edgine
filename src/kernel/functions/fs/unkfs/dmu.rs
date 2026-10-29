@@ -45,6 +45,7 @@ pub enum UnkfsObjType {
 
 impl UnkfsObjType {
     /// 由原始类型值解析对象类型; 未知值归为 `None`.
+    #[must_use]
     pub fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::File,
@@ -109,6 +110,7 @@ pub struct UnkfsDmuObject {
 
 impl UnkfsDmuObject {
     /// 构造普通文件对象, 默认权限 0644、链接数 1.
+    #[must_use]
     pub fn new_file(obj_id: u64, owner_pwm: u64) -> Self {
         Self {
             obj_id,
@@ -135,6 +137,7 @@ impl UnkfsDmuObject {
     }
 
     /// 构造目录对象, 默认权限 0755、链接数 2.
+    #[must_use]
     pub fn new_dir(obj_id: u64, owner_pwm: u64) -> Self {
         Self {
             obj_id,
@@ -161,6 +164,7 @@ impl UnkfsDmuObject {
     }
 
     /// 构造 ZAP 键值对象.
+    #[must_use]
     pub fn new_zap(obj_id: u64) -> Self {
         Self {
             obj_id,
@@ -187,6 +191,7 @@ impl UnkfsDmuObject {
     }
 
     /// 构造符号链接对象, 默认权限 0777.
+    #[must_use]
     pub fn new_symlink(obj_id: u64, owner_pwm: u64) -> Self {
         Self {
             obj_id,
@@ -213,18 +218,22 @@ impl UnkfsDmuObject {
     }
 
     /// 是否为普通文件.
+    #[must_use]
     pub fn is_file(&self) -> bool {
         self.obj_type == UnkfsObjType::File
     }
     /// 是否为目录.
+    #[must_use]
     pub fn is_dir(&self) -> bool {
         self.obj_type == UnkfsObjType::Dir
     }
     /// 是否为 ZAP 或微 ZAP 对象.
+    #[must_use]
     pub fn is_zap(&self) -> bool {
         self.obj_type == UnkfsObjType::Zap || self.obj_type == UnkfsObjType::ZapMicro
     }
     /// 是否为快照对象.
+    #[must_use]
     pub fn is_snapshot(&self) -> bool {
         self.obj_type == UnkfsObjType::Snapshot
     }
@@ -259,6 +268,7 @@ pub struct UnkfsObjSet {
 
 impl UnkfsObjSet {
     /// 构造空对象集, 根对象编号取 [`HV_DMU_OBJ_ROOT`].
+    #[must_use]
     pub fn new() -> Self {
         Self {
             objects: Mutex::new(Vec::new()),
@@ -327,7 +337,7 @@ impl UnkfsObjSet {
         let mut objs = self.objects.lock();
         objs.iter_mut()
             .find(|o| o.obj_id == obj.obj_id)
-            .map_or(false, |existing| {
+            .is_some_and(|existing| {
                 *existing = *obj;
                 true
             })
@@ -341,6 +351,13 @@ impl UnkfsObjSet {
     /// 统计仍在使用的对象个数.
     pub fn obj_count(&self) -> u64 {
         self.objects.lock().iter().filter(|o| o.used).count() as u64
+    }
+}
+
+impl Default for UnkfsObjSet {
+    /// 委托 [`UnkfsObjSet::new`] 构造空对象集.
+    fn default() -> Self {
+        Self::new()
     }
 }
 

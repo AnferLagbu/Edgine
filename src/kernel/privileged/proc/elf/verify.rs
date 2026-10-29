@@ -46,7 +46,7 @@ pub const ET_DYN: u16 = 3;
 /// 本内核编译期目标架构的 `e_machine` (S-6 防线②).
 ///
 /// 裸机 target 下由 `target_arch` 唯一确定; host 构建 (host-tests 与 kernel 的
-/// host-test / kernel_test 维度) 不绑定单一架构 ⇒ `None`, 使同一套用例能覆盖两
+/// host-test / `kernel_test` 维度) 不绑定单一架构 ⇒ `None`, 使同一套用例能覆盖两
 /// 种机器码的格式校验语义.
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 pub const EXPECTED_E_MACHINE: Option<u16> = Some(EM_X86_64);
@@ -61,6 +61,7 @@ pub const EXPECTED_E_MACHINE: Option<u16> = None;
 ///
 /// - `expected = Some(em)`: 裸机构建, 只接受本目标架构的机器码.
 /// - `expected = None`: host 构建 (不绑定架构), 接受两架构作为格式校验.
+#[must_use]
 pub const fn machine_acceptable(expected: Option<u16>, actual: u16) -> bool {
     match expected {
         Some(em) => em == actual,
@@ -100,33 +101,33 @@ pub unsafe fn verify_elf(elf_data: *const u8, elf_size: u64) -> Result<VerifyRes
     let header = unsafe { elf_data.cast::<Elf64Header>().read_unaligned() };
 
     // magic
-    if &header.e_ident[0..4] != ELF_MAGIC {
+    if &header.ident[0..4] != ELF_MAGIC {
         return Err(VerifyError::BadMagic);
     }
     // class
-    if header.e_ident[4] != ELF_CLASS_64 {
+    if header.ident[4] != ELF_CLASS_64 {
         return Err(VerifyError::BadClass);
     }
     // machine: 必须与本内核编译期目标架构一致 (S-6 防线②). 旧写法只校
     // `∈ {0x3E, 0xB7}`, 使得“嵌 aarch64 用户态的 x86_64 镜像”照样 verify_elf OK,
     // 直到入口 0x400000 执行非法指令才 #PF — 报错点距根因极远.
-    if !machine_acceptable(EXPECTED_E_MACHINE, header.e_machine) {
+    if !machine_acceptable(EXPECTED_E_MACHINE, header.machine) {
         return Err(VerifyError::BadMachine);
     }
     // phentsize
-    if header.e_phentsize as usize != core::mem::size_of::<Elf64Phdr>() {
+    if header.phentsize as usize != core::mem::size_of::<Elf64Phdr>() {
         return Err(VerifyError::BadPhentsize);
     }
     // phnum
-    if header.e_phnum as usize > MAX_PHDR_COUNT {
+    if header.phnum as usize > MAX_PHDR_COUNT {
         return Err(VerifyError::TooManyPhdr);
     }
     // phdr 表边界检查
-    let phdr_table_size = u64::from(header.e_phnum)
-        .checked_mul(u64::from(header.e_phentsize))
+    let phdr_table_size = u64::from(header.phnum)
+        .checked_mul(u64::from(header.phentsize))
         .ok_or(VerifyError::Overflow)?;
     let phdr_end = header
-        .e_phoff
+        .phoff
         .checked_add(phdr_table_size)
         .ok_or(VerifyError::Overflow)?;
     if phdr_end > elf_size {
@@ -134,12 +135,12 @@ pub unsafe fn verify_elf(elf_data: *const u8, elf_size: u64) -> Result<VerifyRes
     }
 
     Ok(VerifyResult {
-        machine: header.e_machine,
-        is_pie: header.e_type == ET_DYN,
-        entry: header.e_entry,
-        phoff: header.e_phoff,
-        phentsize: header.e_phentsize,
-        phnum: header.e_phnum,
+        machine: header.machine,
+        is_pie: header.ty == ET_DYN,
+        entry: header.entry,
+        phoff: header.phoff,
+        phentsize: header.phentsize,
+        phnum: header.phnum,
     })
 }
 

@@ -21,8 +21,8 @@ pub fn locate_domain_from_panic(panic_location: &core::panic::PanicInfo<'_>) -> 
         let addr = core::ptr::from_ref(loc) as u64;
         let count = manager.count.load(Ordering::SeqCst) as usize;
 
-        for i in 0..count {
-            if let Some(domain) = &manager.domains[i] {
+        for slot in &manager.domains[..count] {
+            if let Some(domain) = *slot {
                 let ranges = domain.addr_ranges.lock();
                 let range_count = ranges.len().min(8);
 
@@ -68,6 +68,7 @@ pub fn cascade_rollback(domain_id: u64, tick: u64, fingerprint: u64) -> usize {
 }
 
 /// 执行 Layer1 栏基恢复: 定位 panic 域并级联回滚, 失败则升级。
+#[must_use]
 pub fn execute(panic_info: &core::panic::PanicInfo<'_>) -> RecoveryResult {
     config::set_current_layer(RecoveryLayer::Layer1);
     config::increment_bbr_count();
@@ -101,6 +102,7 @@ pub fn execute(panic_info: &core::panic::PanicInfo<'_>) -> RecoveryResult {
 }
 
 /// 由 panic 位置与消息计算 u64 指纹, 供回滚一致性校验使用。
+#[must_use]
 pub fn compute_fingerprint(panic_info: &core::panic::PanicInfo<'_>) -> u64 {
     let mut hash = 0u64;
 
@@ -132,7 +134,7 @@ pub fn mark_recovered(domain_id: u64) {
 /// 判断指定域是否仍可尝试恢复 (连续失败次数未达 Layer1 阈值)。
 pub fn should_attempt_recovery(domain_id: u64) -> bool {
     let manager = RECOVERY_MANAGER.lock();
-    manager.find(domain_id).map_or(false, |domain| {
+    manager.find(domain_id).is_some_and(|domain| {
         let failures = domain.consecutive_failures.load(Ordering::SeqCst);
         failures < config::RECOVERY_CONFIG.layer1_failure_threshold
     })

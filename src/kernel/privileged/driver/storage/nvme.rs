@@ -38,7 +38,7 @@
 // NVMe 命令定义
 // ============================================================================
 
-/// Admin/I/O 队列深度 (wire 编码共用: create_cq/create_sq 的大小字段编码,
+/// Admin/I/O 队列深度 (wire 编码共用: `create_cq/create_sq` 的大小字段编码,
 /// 亦为 privileged wrapper `NVME_QD` 与 functions 队列分配的唯一来源)
 pub(super) const QUEUE_DEPTH: usize = 64;
 
@@ -114,8 +114,15 @@ pub struct NvmeCommand {
     pub cdw15: u32,
 }
 
+impl Default for NvmeCommand {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NvmeCommand {
     /// 创建全零命令 (调用方随后按操作码填写各字段)
+    #[must_use]
     pub fn new() -> Self {
         Self {
             opcode: 0,
@@ -137,6 +144,7 @@ impl NvmeCommand {
     }
 
     /// 创建读命令
+    #[must_use]
     pub fn read(nsid: u32, slba: u64, nlb: u16, prp1: u64) -> Self {
         Self {
             opcode: NvmeNvmOpcode::Read as u8,
@@ -158,6 +166,7 @@ impl NvmeCommand {
     }
 
     /// 创建写命令
+    #[must_use]
     pub fn write(nsid: u32, slba: u64, nlb: u16, prp1: u64) -> Self {
         Self {
             opcode: NvmeNvmOpcode::Write as u8,
@@ -179,6 +188,7 @@ impl NvmeCommand {
     }
 
     /// 创建 Identify 命令
+    #[must_use]
     pub fn identify(nsid: u32, cns: u8, prp1: u64) -> Self {
         Self {
             opcode: NvmeAdminOpcode::Identify as u8,
@@ -202,10 +212,11 @@ impl NvmeCommand {
     /// 创建 Create I/O Completion Queue 命令
     /// 创建 Create I/O Completion Queue 命令
     ///
-    /// `irq_vector` 是 MSI-X Table 中的向量索引（0-based，由 NVMe 设备用作
+    /// `irq_vector` 是 MSI-X Table 中的向量索引（0-based，由 `NVMe` 设备用作
     /// `msix_notify(pci, vector)` 的索引）。MSI-X enable 后已为该 CQ 分配了
     /// 一个 IDT 向量，driver 需在 cdw11 高 16 位写入与 MSI-X Table entry 一致的
     /// 索引；否则 QEMU 投递向量与 IDT 实际入口不对应 → 中断丢失。
+    #[must_use]
     pub fn create_cq(qid: u16, cq_phys: u64, irq_vector: u16) -> Self {
         Self {
             opcode: NvmeAdminOpcode::CreateCq as u8,
@@ -228,6 +239,7 @@ impl NvmeCommand {
     }
 
     /// 创建 Create I/O Submission Queue 命令
+    #[must_use]
     pub fn create_sq(qid: u16, cqid: u16, sq_phys: u64) -> Self {
         Self {
             opcode: NvmeAdminOpcode::CreateSq as u8,
@@ -270,16 +282,19 @@ pub struct NvmeCompletion {
 
 impl NvmeCompletion {
     /// 阶段标记匹配 = 完成
+    #[must_use]
     pub fn is_completed(self, phase: u16) -> bool {
         (self.status & 0x01) == phase
     }
 
     /// 提取状态码 (status 位 `[30:17]`)
+    #[must_use]
     pub fn status_code(self) -> u16 {
         (self.status >> 1) & 0x7FF
     }
 
     /// 状态码为 0 即命令成功完成
+    #[must_use]
     pub fn is_success(self) -> bool {
         self.status_code() == 0
     }

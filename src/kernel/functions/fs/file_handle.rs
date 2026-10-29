@@ -67,33 +67,33 @@ pub fn name_to_handle_at_syscall(
 ) -> Result<i64, Errno> {
     use crate::privileged::glue::CStrExt;
     if handle_buf == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if handle_type != FILE_HANDLE_GHEST_ID {
-        return Err(Errno::ENOTSUP);
+        return Err(Errno::Enotsup);
     }
 
     // 通过 VFS 解析路径, 获取 inode_id 和 mount_idx
     let path_ptr_raw = path_ptr as *const u8;
     let path = path_ptr_raw.as_kstr();
     if path.is_empty() {
-        return Err(Errno::ENOENT);
+        return Err(Errno::Enoent);
     }
 
     // 用户路径归一化 (chroot / pivot_root 根语义): 视图路径 + 根前缀
     let mut pbuf = [0u8; VFS_MAX_PATH];
     let real_path = VFS_MANAGER
         .resolve_user_path(path, &mut pbuf)
-        .ok_or(Errno::ENOENT)?;
+        .ok_or(Errno::Enoent)?;
 
     let (mount_idx, _fs_type, fs_opt) = VFS_MANAGER
         .resolve_mount_fs(real_path)
-        .ok_or(Errno::ENOENT)?;
-    let fs = fs_opt.ok_or(Errno::ENOENT)?;
+        .ok_or(Errno::Enoent)?;
+    let fs = fs_opt.ok_or(Errno::Enoent)?;
     let rel_path = VFS_MANAGER.get_relative_path(real_path, mount_idx);
 
     // 通过 FileSystem trait 获取 inode_id
-    let inode_id = fs.fs_resolve_path(rel_path).ok_or(Errno::ENOENT)?;
+    let inode_id = fs.fs_resolve_path(rel_path).ok_or(Errno::Enoent)?;
 
     // 构建句柄数据
     let mut handle_data = [0u8; FILE_HANDLE_SIZE];
@@ -109,12 +109,12 @@ pub fn name_to_handle_at_syscall(
         &handle_data[..HANDLE_SERIALIZED_SIZE],
         HANDLE_SERIALIZED_SIZE,
     )
-    .map_err(|()| Errno::EFAULT)?;
+    .map_err(|_| Errno::Efault)?;
 
     // 写入 mnt_id
     if mnt_id != 0 {
         let mnt_data = crate::functions::intcast::low_u32_from_usize(mount_idx).to_le_bytes();
-        copy_to_user(mnt_id, &mnt_data, 4).map_err(|()| Errno::EFAULT)?;
+        copy_to_user(mnt_id, &mnt_data, 4).map_err(|_| Errno::Efault)?;
     }
 
     Ok(0)
@@ -142,48 +142,48 @@ pub fn open_by_handle_at_syscall(
     flags: u32,
 ) -> Result<i64, Errno> {
     if handle_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if handle_type != FILE_HANDLE_GHEST_ID {
-        return Err(Errno::ENOTSUP);
+        return Err(Errno::Enotsup);
     }
 
     // 权限检查: open_by_handle_at 按句柄绕过路径权限打开任意 inode, 属特权操作
     // B06-03: 采用 SYSTEM 域 CAP_SYS_ADMIN (0x01), 与 mount/umount2 先例一致 (functions/fs/mount.rs:52)
     let pwm = crate::privileged::sgeg::session::get_current_pwm();
     if !crate::privileged::sgeg::api::pwm_has_capability(pwm, 0, 0x01) {
-        return Err(Errno::EPERM);
+        return Err(Errno::Eperm);
     }
 
     // 从用户空间读取句柄
     let mut handle_data = [0u8; HANDLE_SERIALIZED_SIZE];
     copy_from_user(&mut handle_data, handle_ptr, HANDLE_SERIALIZED_SIZE)
-        .map_err(|()| Errno::EFAULT)?;
+        .map_err(|_| Errno::Efault)?;
 
     // 提取 inode_id 和 mount_idx
     let inode_id = u32::from_le_bytes(
         handle_data[HANDLE_INODE_OFF..HANDLE_INODE_OFF + 4]
             .try_into()
-            .map_err(|_| Errno::EINVAL)?,
+            .map_err(|_| Errno::Einval)?,
     );
     let mount_idx = u32::from_le_bytes(
         handle_data[HANDLE_MOUNT_OFF..HANDLE_MOUNT_OFF + 4]
             .try_into()
-            .map_err(|_| Errno::EINVAL)?,
+            .map_err(|_| Errno::Einval)?,
     );
     let handle_type_in = i32::from(handle_data[HANDLE_TYPE_OFF]);
 
     if handle_type_in != FILE_HANDLE_GHEST_ID {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     // 验证 mount_idx 有效并获取 FileSystem trait object
     let fs = {
         let mounts = VFS_MANAGER.mounts.lock();
         if (mount_idx as usize) >= mounts.len() || !mounts[mount_idx as usize].used {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
-        mounts[mount_idx as usize].get_fs().ok_or(Errno::EINVAL)?
+        mounts[mount_idx as usize].get_fs().ok_or(Errno::Einval)?
     };
 
     // 通过 FileSystem trait 构造原生 Inode
@@ -192,14 +192,14 @@ pub fn open_by_handle_at_syscall(
     let pwm = crate::privileged::sgeg::session::get_current_pwm();
     let inode: Arc<dyn Inode> = fs
         .fs_resolve_inode(inode_id, mount_idx)
-        .ok_or(Errno::EINVAL)?;
+        .ok_or(Errno::Einval)?;
 
     // 通过 stat 获取 file_type (避免硬编码)
     let file_type = inode.stat(pwm).map_or(0, |s| s.file_type);
     let open_file = OpenFile::new(inode, flags, pwm, file_type);
 
     // 插入全局 OpenFile 表
-    let handle_id = OPEN_FILE_TABLE.alloc(open_file).ok_or(Errno::ENOMEM)?;
+    let handle_id = OPEN_FILE_TABLE.alloc(open_file).ok_or(Errno::Enomem)?;
 
     // 分配 fd (写入当前进程 per-process fd 表)
     let Some(fd_idx) =
@@ -207,7 +207,7 @@ pub fn open_by_handle_at_syscall(
     else {
         // fd 表满或当前进程不可用: 回收已分配的 OpenFile handle, 避免泄漏
         OPEN_FILE_TABLE.close(handle_id);
-        return Err(Errno::EMFILE);
+        return Err(Errno::Emfile);
     };
 
     Ok(crate::functions::intcast::i64_from_usize(fd_idx))

@@ -68,6 +68,7 @@ unsafe extern "C" {
 /// boot 栈位于低半区恒等映射区 (`.bootbss`), 经其高半区别名访问: x86_64 由本函数
 /// 加 `KERNEL_BASE` 别名化, aarch64 的 `stack_bottom` 本身即链接脚本给出的高别名.
 /// 返回 true 表示 canary 未被覆盖 (栈未溢出至栈底).
+#[must_use]
 pub fn check_boot_stack_canary() -> bool {
     // 符号桩化 (host-test): host 无 stack_bottom 汇编符号且无 boot 栈,
     // 常量中性返回 true (canary 完整语义的保守默认).
@@ -118,6 +119,7 @@ pub fn write_boot_stack_canary() {
 }
 
 /// 检查内核栈顶 8 字节处的 canary 是否符合预期; 栈顶非法或地址越界时视为通过。
+#[must_use]
 pub fn kernel_stack_check_canary(stack_top: u64) -> bool {
     if stack_top < 8 {
         return true;
@@ -230,7 +232,7 @@ pub struct Process {
     /// 上下文未保存完就允许别核投送 = 两个核交叠使用同一块进程内核栈.
     pub cfs_on_cpu: AtomicBool,
 
-    /// 截止时间调度 (SCHED_DEADLINE) 的每次激活运行时间预算 (纳秒).
+    /// 截止时间调度 (`SCHED_DEADLINE`) 的每次激活运行时间预算 (纳秒).
     pub dl_runtime: AtomicU64,
     /// 截止时间调度相对截止期 (纳秒).
     pub dl_deadline: AtomicU64,
@@ -354,17 +356,17 @@ pub struct Process {
     /// Per-process TLS 基址 (`x86_64`: `MSR_FS_BASE`, aarch64: `tpidr_el0`)
     ///
     /// `clone(CLONE_SETTLS)` 设置. 当前仅存储, 切换恢复未实装; x86_64 需在
-    /// 切换时写 MSR_FS_BASE、aarch64 写 tpidr_el0 (待用户态线程库出现时实装).
+    /// 切换时写 `MSR_FS_BASE、aarch64` 写 `tpidr_el0` (待用户态线程库出现时实装).
     /// 0 表示未设置.
     pub tls_base: AtomicU64,
 
-    /// CLONE_CHILD_CLEARTID 登记的清除地址
+    /// `CLONE_CHILD_CLEARTID` 登记的清除地址
     ///
     /// 进程退出时向该用户地址写 0 并对其实施 futex 唤醒.
     /// 0 表示未设置.
     pub clear_child_tid: AtomicU64,
 
-    /// set_robust_list 登记的 robust list 头指针 (用户地址)
+    /// `set_robust_list` 登记的 robust list 头指针 (用户地址)
     ///
     /// 进程退出时遍历该链表, 对本进程持有的 futex 置 `FUTEX_OWNER_DIED`
     /// 并唤醒等待者. 0 表示未登记.
@@ -396,6 +398,7 @@ pub struct Process {
 
 impl Process {
     /// 创建指定 PID、名称与父进程的进程控制块, 其余字段取默认值.
+    #[must_use]
     pub fn new(pid: Pid, name: &str, parent: Option<ProcessId>) -> Self {
         Self {
             pid: ProcessId(pid),
@@ -499,7 +502,7 @@ impl Process {
     /// —— x86 SDM, 无法完成内核线程的栈切换, 见 `proc/switch.asm`).
     ///
     /// 因此 `rsp` 必须是可直接使用的真实栈地址: 取 `allocate_kernel_stack()`
-    /// 存下的**高半区**栈顶 (phys + KERNEL_BASE + KERNEL_STACK_SIZE). 该地址与
+    /// 存下的**高半区**栈顶 (phys + `KERNEL_BASE` + `KERNEL_STACK_SIZE`). 该地址与
     /// TSS RSP0 (用户态中断入口栈, 见 `allocate_kernel_stack` 与
     /// `tss_set_kernel_stack`) 是同一个地址, 内核在直接映射区跑栈是既定约定;
     /// 内核线程的 save/restore 对称, 不再有 `add rsp, KERNEL_BASE` 别名修正.
@@ -530,8 +533,8 @@ impl Process {
     /// 初始化内核态 idle 任务首次被调度时的执行上下文 (aarch64).
     ///
     /// aarch64 复用 `ProcessContext` 的字段偏移但语义不同 (见
-    /// `privileged/arch/aarch64/context.rs`): `ds`(96) = SP, `es`(104) = TTBR0_EL1,
-    /// `fs`(112) = SPSR_EL1, `gs`(120) = ELR_EL1. `context_switch_asm` 末尾以
+    /// `privileged/arch/aarch64/context.rs`): `ds`(96) = SP, `es`(104) = `TTBR0_EL1`,
+    /// `fs`(112) = `SPSR_EL1`, `gs`(120) = `ELR_EL1`. `context_switch_asm` 末尾以
     /// `eret` 恢复 SPSR/ELR, 因此把入口写入 ELR、栈顶写入 SP 即可跳入 idle.
     ///
     /// aarch64 内核栈链接于高半区, `allocate_kernel_stack` 已把栈顶转为高半区别名
@@ -757,8 +760,15 @@ unsafe impl Send for ProcessTable {}
 // SAFETY: 同上, Mutex 保证并发安全.
 unsafe impl Sync for ProcessTable {}
 
+impl Default for ProcessTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProcessTable {
     /// 构造空进程表: 全部槽位为空, PID 位图清零, 从 PID 2 开始分配.
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             processes: Mutex::named_lazy("PROCESS_TABLE.processes", [None; MAX_PROCESSES]),
@@ -877,29 +887,26 @@ impl ProcessTable {
         if pid as usize >= MAX_PROCESSES {
             return;
         }
-        match table[pid as usize] {
-            Some(nn) => {
-                // SAFETY: nn is a valid NonNull pointer inserted by insert().
-                let proc = unsafe { nn.as_ref() };
-                proc.pending_free.store(true, Ordering::Release);
-                let prev = proc.dec_ref();
-                if prev == 0 {
-                    table[pid as usize] = None;
-                    drop(table);
-                    // 回收 UserProc 镜像记录 — 必须先于 Process 析构: 镜像 destroy
-                    // 经 cr3 翻译用户栈/释放页表, 而 Process::drop 会销毁该页表
-                    // (INV-USER-PROC #2: 镜像须先于权威 Process 被移除).
-                    crate::privileged::proc::user_proc::USER_PROC_MANAGER.destroy_by_pid(pid);
-                    // SAFETY: nn 由 Box::into_raw 分配, 且我们持有唯一引用 (ref_count 归零).
-                    unsafe {
-                        let boxed = Box::from_raw(nn.as_ptr());
-                        drop(boxed);
-                    }
-                    // M5: 回收 PID
-                    self.free_pid(pid);
+        if let Some(nn) = table[pid as usize] {
+            // SAFETY: nn is a valid NonNull pointer inserted by insert().
+            let proc = unsafe { nn.as_ref() };
+            proc.pending_free.store(true, Ordering::Release);
+            let prev = proc.dec_ref();
+            if prev == 0 {
+                table[pid as usize] = None;
+                drop(table);
+                // 回收 UserProc 镜像记录 — 必须先于 Process 析构: 镜像 destroy
+                // 经 cr3 翻译用户栈/释放页表, 而 Process::drop 会销毁该页表
+                // (INV-USER-PROC #2: 镜像须先于权威 Process 被移除).
+                crate::privileged::proc::user_proc::USER_PROC_MANAGER.destroy_by_pid(pid);
+                // SAFETY: nn 由 Box::into_raw 分配, 且我们持有唯一引用 (ref_count 归零).
+                unsafe {
+                    let boxed = Box::from_raw(nn.as_ptr());
+                    drop(boxed);
                 }
+                // M5: 回收 PID
+                self.free_pid(pid);
             }
-            None => {}
         }
     }
 
@@ -909,7 +916,7 @@ impl ProcessTable {
         if pid as usize >= MAX_PROCESSES {
             return false;
         }
-        table[pid as usize].map_or(false, |nn| {
+        table[pid as usize].is_some_and(|nn| {
             // SAFETY: nn is a valid NonNull pointer inserted by insert().
             let proc_ref = unsafe { nn.as_ref() };
             proc_ref.try_inc_ref()
@@ -922,41 +929,36 @@ impl ProcessTable {
         if pid as usize >= MAX_PROCESSES {
             return;
         }
-        match table[pid as usize] {
-            Some(nn) => {
-                // SAFETY: nn is a valid NonNull pointer inserted by insert().
-                // Mutex 锁保证独占访问.
-                let proc = unsafe { nn.as_ref() };
-                let prev = proc.dec_ref();
-                if prev == 0 && proc.pending_free.load(Ordering::Acquire) {
-                    table[pid as usize] = None;
-                    drop(table);
-                    // 回收 UserProc 镜像记录 (延迟释放分支): 同 remove_and_free,
-                    // 必须在 Process 析构 (销毁页表) 之前移除镜像.
-                    crate::privileged::proc::user_proc::USER_PROC_MANAGER.destroy_by_pid(pid);
-                    // SAFETY: nn 由 Box::into_raw 分配, 且我们持有唯一引用 (ref_count 归零).
-                    unsafe {
-                        let boxed = Box::from_raw(nn.as_ptr());
-                        drop(boxed);
-                    }
-                    // M5: 回收 PID
-                    self.free_pid(pid);
+        if let Some(nn) = table[pid as usize] {
+            // SAFETY: nn is a valid NonNull pointer inserted by insert().
+            // Mutex 锁保证独占访问.
+            let proc = unsafe { nn.as_ref() };
+            let prev = proc.dec_ref();
+            if prev == 0 && proc.pending_free.load(Ordering::Acquire) {
+                table[pid as usize] = None;
+                drop(table);
+                // 回收 UserProc 镜像记录 (延迟释放分支): 同 remove_and_free,
+                // 必须在 Process 析构 (销毁页表) 之前移除镜像.
+                crate::privileged::proc::user_proc::USER_PROC_MANAGER.destroy_by_pid(pid);
+                // SAFETY: nn 由 Box::into_raw 分配, 且我们持有唯一引用 (ref_count 归零).
+                unsafe {
+                    let boxed = Box::from_raw(nn.as_ptr());
+                    drop(boxed);
                 }
+                // M5: 回收 PID
+                self.free_pid(pid);
             }
-            None => {}
         }
     }
 
     /// 遍历所有进程 (回调返回 false 时提前终止)
     pub fn for_each<F: FnMut(&Process) -> bool>(&self, mut f: F) {
         let table = self.processes.lock();
-        for entry in table.iter() {
-            if let Some(nn) = entry {
-                // SAFETY: nn is a valid NonNull pointer inserted by insert().
-                let proc = unsafe { nn.as_ref() };
-                if !f(proc) {
-                    break;
-                }
+        for nn in table.iter().flatten() {
+            // SAFETY: nn is a valid NonNull pointer inserted by insert().
+            let proc = unsafe { nn.as_ref() };
+            if !f(proc) {
+                break;
             }
         }
     }

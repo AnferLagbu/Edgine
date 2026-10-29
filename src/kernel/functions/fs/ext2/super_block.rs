@@ -84,7 +84,7 @@ pub struct Ext2SuperBlock {
     /// 目录预分配块数.
     pub s_prealloc_dir_blocks: u8,
     /// 对齐填充.
-    pub _padding: [u8; 2],
+    pub padding: [u8; 2],
     // journaling
     /// 日志 UUID.
     pub s_journal_uuid: [u8; 16],
@@ -100,7 +100,7 @@ pub struct Ext2SuperBlock {
     /// 默认哈希算法版本.
     pub s_def_hash_version: u8,
     /// 对齐填充.
-    pub _padding2: [u8; 3],
+    pub padding2: [u8; 3],
     // 其他
     /// 默认挂载选项.
     pub s_default_mount_opts: u32,
@@ -108,7 +108,7 @@ pub struct Ext2SuperBlock {
     pub s_first_meta_bg: u32,
     // 保留
     /// 保留区.
-    pub _reserved: [u8; 760],
+    pub reserved: [u8; 760],
 }
 
 impl Ext2SuperBlock {
@@ -118,6 +118,7 @@ impl Ext2SuperBlock {
     pub const EXT2_BASE_OFFSET: u64 = 1024;
 
     /// 从字节切片解析超级块
+    #[must_use]
     pub fn from_bytes(data: &[u8]) -> Option<Self> {
         if data.len() < 1024 {
             return None;
@@ -208,28 +209,30 @@ impl Ext2SuperBlock {
             },
             s_prealloc_blocks: 0,
             s_prealloc_dir_blocks: 0,
-            _padding: [0; 2],
+            padding: [0; 2],
             s_journal_uuid: [0; 16],
             s_journal_inum: 0,
             s_journal_dev: 0,
             s_last_orphan: 0,
             s_hash_seed: [0; 4],
             s_def_hash_version: 0,
-            _padding2: [0; 3],
+            padding2: [0; 3],
             s_default_mount_opts: 0,
             s_first_meta_bg: 0,
-            _reserved: [0; 760],
+            reserved: [0; 760],
         };
 
         Some(sb)
     }
 
     /// 块大小 (字节)
+    #[must_use]
     pub fn block_size(&self) -> u32 {
         1024u32 << self.s_log_block_size
     }
 
     /// inode 大小 (字节)
+    #[must_use]
     pub fn inode_size(&self) -> u16 {
         if self.s_rev_level >= 1 {
             self.s_inode_size
@@ -239,6 +242,7 @@ impl Ext2SuperBlock {
     }
 
     /// 第一个 inode
+    #[must_use]
     pub fn first_inode(&self) -> u32 {
         if self.s_rev_level >= 1 {
             self.s_first_ino
@@ -248,6 +252,7 @@ impl Ext2SuperBlock {
     }
 
     /// 块组描述符表起始块
+    #[must_use]
     pub fn bgd_block(&self) -> u32 {
         if self.s_log_block_size == 0 {
             // 1KB 块: BGD 在第 2 块
@@ -259,8 +264,9 @@ impl Ext2SuperBlock {
     }
 
     /// 块组数量
+    #[must_use]
     pub fn block_group_count(&self) -> u32 {
-        (self.s_blocks_count + self.s_blocks_per_group - 1) / self.s_blocks_per_group
+        self.s_blocks_count.div_ceil(self.s_blocks_per_group)
     }
 }
 
@@ -304,17 +310,17 @@ impl Default for Ext2SuperBlock {
             s_algo_bitmap: 0,
             s_prealloc_blocks: 0,
             s_prealloc_dir_blocks: 0,
-            _padding: [0; 2],
+            padding: [0; 2],
             s_journal_uuid: [0; 16],
             s_journal_inum: 0,
             s_journal_dev: 0,
             s_last_orphan: 0,
             s_hash_seed: [0; 4],
             s_def_hash_version: 0,
-            _padding2: [0; 3],
+            padding2: [0; 3],
             s_default_mount_opts: 0,
             s_first_meta_bg: 0,
-            _reserved: [0; 760],
+            reserved: [0; 760],
         }
     }
 }

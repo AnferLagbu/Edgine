@@ -26,29 +26,28 @@ static PIPE_LOCK: IrqSpinLock<()> = IrqSpinLock::new(());
 /// 在命名空间中查找首个空闲管道槽位.
 ///
 /// 空闲判据为槽位 `id == 0` (未分配); 全部占满时返回 `None`.
+#[must_use]
 pub fn pipe_find_free_index(namespace: &IpcNamespace) -> Option<usize> {
-    for i in 0..IPC_MAX_PIPES {
-        if namespace.pipes[i].id == 0 {
-            return Some(i);
-        }
-    }
-    None
+    namespace
+        .pipes
+        .iter()
+        .take(IPC_MAX_PIPES)
+        .position(|pipe| pipe.id == 0)
 }
 
 /// 按端点 key 查找管道槽位.
 ///
 /// key 为 0 表示"端点已关闭"哨兵, 不匹配任何槽位.
+#[must_use]
 pub fn pipe_find_by_key_index(namespace: &IpcNamespace, key: i32) -> Option<usize> {
     if key == 0 {
         return None;
     }
-    for i in 0..IPC_MAX_PIPES {
-        let pipe = &namespace.pipes[i];
-        if pipe.id != 0 && (pipe.read_key == key || pipe.write_key == key) {
-            return Some(i);
-        }
-    }
-    None
+    namespace
+        .pipes
+        .iter()
+        .take(IPC_MAX_PIPES)
+        .position(|pipe| pipe.id != 0 && (pipe.read_key == key || pipe.write_key == key))
 }
 
 /// 创建管道, 返回 `(读端点 key, 写端点 key)`.

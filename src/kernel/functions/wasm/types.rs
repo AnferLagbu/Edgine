@@ -43,6 +43,7 @@ pub enum ValueType {
 
 impl ValueType {
     /// 按类型标签字节解析值类型; 非法字节返回 `None`。
+    #[must_use]
     pub fn from_byte(b: u8) -> Option<Self> {
         match b {
             0x7F => Some(Self::I32),
@@ -69,6 +70,7 @@ pub enum Value {
 
 impl Value {
     /// 若为 `I32` 则取出 32 位整数, 否则返回 `None`。
+    #[must_use]
     pub fn as_i32(self) -> Option<i32> {
         match self {
             Self::I32(v) => Some(v),
@@ -76,6 +78,7 @@ impl Value {
         }
     }
     /// 若为 `I32` 则按无符号解释取出, 否则返回 `None`。
+    #[must_use]
     pub fn as_u32(self) -> Option<u32> {
         match self {
             Self::I32(v) => Some(v.cast_unsigned()),
@@ -83,6 +86,7 @@ impl Value {
         }
     }
     /// 若为 `I64` 则取出 64 位整数, 否则返回 `None`。
+    #[must_use]
     pub fn as_i64(self) -> Option<i64> {
         match self {
             Self::I64(v) => Some(v),
@@ -91,6 +95,7 @@ impl Value {
     }
 
     /// 返回给定值类型的零值。
+    #[must_use]
     pub fn default_for(ty: ValueType) -> Self {
         match ty {
             ValueType::I32 => Self::I32(0),
@@ -468,6 +473,7 @@ pub enum Opcode {
 
 impl Opcode {
     /// 按操作码字节解析指令; 非法字节返回 `None`。
+    #[must_use]
     pub fn from_byte(b: u8) -> Option<Self> {
         Self::from_control_segment(b)
             .or_else(|| Self::from_memory_segment(b))

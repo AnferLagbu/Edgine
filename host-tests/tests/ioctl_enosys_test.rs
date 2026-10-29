@@ -47,7 +47,7 @@ fn tcgets_stub_returns_enosys_not_zero() {
     let ret = ioctl_syscall(1, TCGETS, arg);
     assert_eq!(
         ret,
-        Errno::ENOSYS.as_ret(),
+        Errno::Enosys.as_ret(),
         "P1-I-39: TCGETS stub 必须返回 -ENOSYS, 实际 = {}",
         ret
     );
@@ -63,7 +63,7 @@ fn tcgets_returns_enosys_for_any_fd() {
         let ret = ioctl_syscall(fd, TCGETS, &*ws as *const Winsize as u64);
         assert_eq!(
             ret,
-            Errno::ENOSYS.as_ret(),
+            Errno::Enosys.as_ret(),
             "P1-I-39: fd={} 调用 TCGETS 必须返回 -ENOSYS",
             fd
         );
@@ -78,13 +78,13 @@ fn unknown_ioctl_returns_enotty() {
     let ret = ioctl_syscall(0, FIONREAD, arg);
     assert_eq!(
         ret,
-        Errno::ENOTTY.as_ret(),
+        Errno::Enotty.as_ret(),
         "P1-I-39: 未知 ioctl 必须返回 -ENOTTY"
     );
     let ret = ioctl_syscall(0, TIOCSETAF, arg);
     assert_eq!(
         ret,
-        Errno::ENOTTY.as_ret(),
+        Errno::Enotty.as_ret(),
         "P1-I-39: 未知 ioctl 必须返回 -ENOTTY"
     );
 }
@@ -95,7 +95,7 @@ fn arg_zero_returns_einval() {
     let ret = ioctl_syscall(0, TIOCGWINSZ, 0);
     assert_eq!(
         ret,
-        Errno::EINVAL.as_ret(),
+        Errno::Einval.as_ret(),
         "P1-I-39: arg=0 必须返回 -EINVAL"
     );
 }
@@ -122,7 +122,7 @@ fn tiocgwinsz_user_ptr_oob_returns_efault() {
     let ret = ioctl_syscall(1, TIOCGWINSZ, kernel_addr);
     assert_eq!(
         ret,
-        Errno::EFAULT.as_ret(),
+        Errno::Efault.as_ret(),
         "P1-I-39: 超 USER_ADDR_MAX 的用户指针必须返回 -EFAULT"
     );
 }

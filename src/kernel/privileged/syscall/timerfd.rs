@@ -62,26 +62,30 @@ pub const CLOCK_MONOTONIC: i32 = 1;
 pub const CLOCK_REALTIME: i32 = 0;
 
 /// itimerspec 结构体 (与 Linux 兼容)
+///
+/// 字段名对应 C `itimerspec` 的 `it_interval` / `it_value` 两个 `timespec` 的
+/// `tv_sec` / `tv_nsec`（按序仅去前缀, 顺序与类型不变）。
 #[repr(C)]
 pub struct Itimerspec {
     /// 间隔时间
-    pub it_interval_sec: i64,
+    pub interval_sec: i64,
     /// 间隔时间纳秒部分 (与秒部分合计为间隔时长)
-    pub it_interval_nsec: i64,
+    pub interval_nsec: i64,
     /// 初次到期时间
-    pub it_value_sec: i64,
+    pub value_sec: i64,
     /// 初次到期时间纳秒部分 (与秒部分合计为绝对到期时刻)
-    pub it_value_nsec: i64,
+    pub value_nsec: i64,
 }
 
 impl Itimerspec {
     /// 构造全零的 itimerspec (无间隔、无到期时间)。
+    #[must_use]
     pub const fn zeroed() -> Self {
         Self {
-            it_interval_sec: 0,
-            it_interval_nsec: 0,
-            it_value_sec: 0,
-            it_value_nsec: 0,
+            interval_sec: 0,
+            interval_nsec: 0,
+            value_sec: 0,
+            value_nsec: 0,
         }
     }
 }
@@ -153,24 +157,24 @@ static TFD_COUNT: AtomicU32 = AtomicU32::new(0);
 pub fn sys_timerfd_create(clockid: i32, flags: i32) -> i64 {
     // clockid 校验
     if clockid != CLOCK_MONOTONIC && clockid != CLOCK_REALTIME {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     // flags 校验
     let valid_flags = TFD_CLOEXEC | TFD_NONBLOCK;
     if flags & !valid_flags != 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     // V2: 使用集中分配器获取 FD
     let Some(fd) = crate::privileged::proc::fd_alloc::alloc_fd(
         crate::privileged::proc::fd_alloc::FdSubsystem::TimerFd,
     ) else {
-        return Errno::EMFILE.as_ret();
+        return Errno::Emfile.as_ret();
     };
 
     let Some((_sub, slot)) = crate::privileged::proc::fd_alloc::idx_of(fd) else {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     };
 
     let mut table = TFD_TABLE.lock();
@@ -201,16 +205,16 @@ pub fn sys_timerfd_create(clockid: i32, flags: i32) -> i64 {
 /// 返回 0 或负 errno
 pub fn sys_timerfd_settime(fd: i32, flags: i32, new_value_ptr: u64, old_value_ptr: u64) -> i64 {
     let Some(idx) = fd_to_idx(fd) else {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     };
 
     // flags 校验
     if flags & !TFD_TIMER_ABSTIME != 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     if new_value_ptr == 0 {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
 
     // 读取新值
@@ -218,16 +222,16 @@ pub fn sys_timerfd_settime(fd: i32, flags: i32, new_value_ptr: u64, old_value_pt
     let new_value = unsafe { core::ptr::read(new_value_ptr as *const Itimerspec) };
 
     // 校验: it_value 必须非零才能启动 (it_value 全零 = disarm)
-    let value_ns = new_value.it_value_sec.cast_unsigned() * 1_000_000_000
-        + new_value.it_value_nsec.cast_unsigned();
-    let interval_ns = new_value.it_interval_sec.cast_unsigned() * 1_000_000_000
-        + new_value.it_interval_nsec.cast_unsigned();
+    let value_ns =
+        new_value.value_sec.cast_unsigned() * 1_000_000_000 + new_value.value_nsec.cast_unsigned();
+    let interval_ns = new_value.interval_sec.cast_unsigned() * 1_000_000_000
+        + new_value.interval_nsec.cast_unsigned();
 
     let mut table = TFD_TABLE.lock();
     let slot = &mut table.slots[idx];
 
     if !slot.used {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     }
 
     // 保存旧值到 old_value_ptr
@@ -239,10 +243,10 @@ pub fn sys_timerfd_settime(fd: i32, flags: i32, new_value_ptr: u64, old_value_pt
             0
         };
         let old = Itimerspec {
-            it_interval_sec: (slot.interval_ns / 1_000_000_000).cast_signed(),
-            it_interval_nsec: (slot.interval_ns % 1_000_000_000).cast_signed(),
-            it_value_sec: (remaining / 1_000_000_000).cast_signed(),
-            it_value_nsec: (remaining % 1_000_000_000).cast_signed(),
+            interval_sec: (slot.interval_ns / 1_000_000_000).cast_signed(),
+            interval_nsec: (slot.interval_ns % 1_000_000_000).cast_signed(),
+            value_sec: (remaining / 1_000_000_000).cast_signed(),
+            value_nsec: (remaining % 1_000_000_000).cast_signed(),
         };
         // SAFETY: old_value_ptr 由 syscall 入口验证
         unsafe {
@@ -306,18 +310,18 @@ pub fn sys_timerfd_settime(fd: i32, flags: i32, new_value_ptr: u64, old_value_pt
 /// 返回 0 或负 errno
 pub fn sys_timerfd_gettime(fd: i32, curr_value_ptr: u64) -> i64 {
     let Some(idx) = fd_to_idx(fd) else {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     };
 
     if curr_value_ptr == 0 {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
 
     let table = TFD_TABLE.lock();
     let slot = &table.slots[idx];
 
     if !slot.used {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     }
 
     let remaining = if slot.armed {
@@ -327,10 +331,10 @@ pub fn sys_timerfd_gettime(fd: i32, curr_value_ptr: u64) -> i64 {
         0
     };
     let curr = Itimerspec {
-        it_interval_sec: (slot.interval_ns / 1_000_000_000).cast_signed(),
-        it_interval_nsec: (slot.interval_ns % 1_000_000_000).cast_signed(),
-        it_value_sec: (remaining / 1_000_000_000).cast_signed(),
-        it_value_nsec: (remaining % 1_000_000_000).cast_signed(),
+        interval_sec: (slot.interval_ns / 1_000_000_000).cast_signed(),
+        interval_nsec: (slot.interval_ns % 1_000_000_000).cast_signed(),
+        value_sec: (remaining / 1_000_000_000).cast_signed(),
+        value_nsec: (remaining % 1_000_000_000).cast_signed(),
     };
 
     // SAFETY: curr_value_ptr 由 syscall 入口验证
@@ -348,18 +352,18 @@ pub fn sys_timerfd_gettime(fd: i32, curr_value_ptr: u64) -> i64 {
 /// 返回 8 (成功), 或负 errno
 pub fn sys_timerfd_read(fd: i32, buf: u64) -> i64 {
     let Some(idx) = fd_to_idx(fd) else {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     };
 
     let mut table = TFD_TABLE.lock();
     let slot = &mut table.slots[idx];
 
     if !slot.used {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     }
 
     if slot.expiry_count == 0 {
-        return Errno::EAGAIN.as_ret();
+        return Errno::Eagain.as_ret();
     }
 
     let count = slot.expiry_count;
@@ -368,7 +372,7 @@ pub fn sys_timerfd_read(fd: i32, buf: u64) -> i64 {
     drop(table);
 
     if buf == 0 {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     // SAFETY: buf 由 syscall 入口验证
     unsafe {
@@ -382,14 +386,14 @@ pub fn sys_timerfd_read(fd: i32, buf: u64) -> i64 {
 /// timerfd close — 关闭 timerfd
 pub fn sys_timerfd_close(fd: i32) -> i64 {
     let Some(idx) = fd_to_idx(fd) else {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     };
 
     let mut table = TFD_TABLE.lock();
     let slot = &mut table.slots[idx];
 
     if !slot.used {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     }
 
     if slot.armed {
@@ -512,6 +516,7 @@ fn fd_to_idx(fd: i32) -> Option<usize> {
 /// 检查 fd 是否属于 timerfd 空间
 ///
 /// TD-15: 改走 `fd_alloc::idx_of`, 不再持有 `TFD_FD_BASE` 字面量 + 算术.
+#[must_use]
 pub fn is_timerfd_fd(fd: i32) -> bool {
     matches!(
         crate::privileged::proc::idx_of(fd),

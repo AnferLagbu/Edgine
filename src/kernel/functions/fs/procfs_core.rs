@@ -30,8 +30,16 @@ pub struct ProcfsEntry {
     pub used: bool,
 }
 
+impl Default for ProcfsEntry {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProcfsEntry {
     /// 构造空条目 (const, 供静态初始化)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             name: [0; PROCFS_MAX_NAME],
@@ -50,8 +58,16 @@ pub struct ProcfsData {
 
 // SAFETY (Framekernel P2.2.3): ProcfsData 全部字段自动 Send + Sync。
 
+impl Default for ProcfsData {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProcfsData {
     /// 构造空 `procfs` 数据 (const, 供静态初始化)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             entries: Mutex::new([const { ProcfsEntry::new() }; PROCFS_MAX_ENTRIES]),
@@ -576,7 +592,7 @@ impl ProcfsData {
         let mut pos = 0usize;
 
         // 获取 UNKFS 池统计
-        let unkfs = crate::functions::fs::unkfs::unkfs::get_unkfs();
+        let unkfs = crate::functions::fs::unkfs::entry::get_unkfs();
         let (allocs, frees, reads, writes) = unkfs.get_stats();
 
         Self::write_str(buf, &mut pos, "allocs: ");
@@ -862,11 +878,11 @@ impl ProcfsData {
             // 用户时间, 系统时间, 子用户时间, 子系统时间, 优先级, nice值,
             // 线程数, 虚拟启动时间, 虚拟内存大小, 常驻集大小
             let state = match proc.state.load(core::sync::atomic::Ordering::SeqCst) {
-                0 | 1 | 2 => "R", // Created/Ready/Running 均显示 R
-                3 => "S",         // Blocked
-                4 => "T",         // Frozen
-                5 => "Z",         // Zombie
-                _ => "X",         // Terminated
+                0..=2 => "R", // Created/Ready/Running 均显示 R
+                3 => "S",     // Blocked
+                4 => "T",     // Frozen
+                5 => "Z",     // Zombie
+                _ => "X",     // Terminated
             };
 
             let parent_pid = proc.parent.map_or(0, |p| p.0);

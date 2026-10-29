@@ -1,4 +1,4 @@
-use super::font::Font;
+use super::font::{Font, WrappedText};
 use super::framebuffer::colors;
 use super::framebuffer::{Color, Framebuffer, Rect};
 use super::framebuffer_ops::current_framebuffer_ops;
@@ -22,7 +22,6 @@ use super::framebuffer_ops::current_framebuffer_ops;
 /// └──────────────────────────────────────────────┘
 ///
 /// 返回失败像素数（0 = 全部通过）。
-
 pub fn framebuffer_self_test(fb: &mut Framebuffer, font: &Font) -> usize {
     let fw = fb.width();
     let fh = fb.height();
@@ -56,21 +55,22 @@ pub fn framebuffer_self_test(fb: &mut Framebuffer, font: &Font) -> usize {
         colors::WHITE,
         colors::BLACK,
     );
-    font.render_text_wrapped(
-        fb,
-        &alloc::format!(
-            "Resolution: {}x{}x{}  Failures: {}",
-            fw,
-            fh,
-            fb.format().bits_per_pixel(),
-            failures
-        ),
-        10,
-        text_y + font.glyph_height,
+    let text = alloc::format!(
+        "Resolution: {}x{}x{}  Failures: {}",
         fw,
-        colors::LIGHT_GRAY,
-        colors::BLACK,
+        fh,
+        fb.format().bits_per_pixel(),
+        failures
     );
+    font.render_text_wrapped(WrappedText {
+        fb,
+        text: &text,
+        x: 10,
+        y: text_y + font.glyph_height,
+        screen_width: fw,
+        fg: colors::LIGHT_GRAY,
+        bg: colors::BLACK,
+    });
 
     failures
 }
@@ -242,10 +242,10 @@ fn draw_primitives(
         }
 
         // 验证圆形边框 (中心是背景色，圆上一点是黄色)
-        if let Some(c) = fb.get_pixel(210, prim_y.cast_unsigned() + 24) {
-            if c.r > 10 || c.g > 10 || c.b > 10 {
-                failures += 1;
-            }
+        if let Some(c) = fb.get_pixel(210, prim_y.cast_unsigned() + 24)
+            && (c.r > 10 || c.g > 10 || c.b > 10)
+        {
+            failures += 1;
         }
     }
 

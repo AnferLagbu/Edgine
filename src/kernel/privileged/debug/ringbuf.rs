@@ -49,6 +49,7 @@ impl<const CAP: usize> RingBuffer<{ CAP }> {
     }
 
     /// 创建空环形缓冲区, 构造期断言容量为 2 的幂
+    #[must_use]
     pub const fn new() -> Self {
         Self::assert_power_of_two();
         Self {
@@ -60,6 +61,7 @@ impl<const CAP: usize> RingBuffer<{ CAP }> {
 
     /// 容量
     #[inline]
+    #[must_use]
     pub const fn capacity() -> usize {
         CAP
     }

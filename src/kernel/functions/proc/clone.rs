@@ -45,12 +45,12 @@ pub fn clone_syscall(
     // CLONE_VM + CLONE_THREAD 必须同时设置 CLONE_SIGHAND (POSIX 线程要求)
     // 注: Rust 中 `&` 优先级高于 `==`, 括号仅为明确语义 (B05-31 审计复核).
     if ((flags & CLONE_VM) != 0 || (flags & CLONE_THREAD) != 0) && (flags & CLONE_SIGHAND) == 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     // child_stack 如果非零, 必须对齐到 16 字节 (x86_64 ABI)
     if child_stack != 0 && !child_stack.is_multiple_of(16) {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     let ret = clone_impl(flags, child_stack, parent_tidptr, child_tidptr, tls);
@@ -81,7 +81,7 @@ fn clone_impl(
     tls: u64,
 ) -> i64 {
     let parent_pid = match api::process_get_current_pid() {
-        0 => return Errno::ECHILD.as_ret(),
+        0 => return Errno::Echild.as_ret(),
         p => p,
     };
 
@@ -105,7 +105,7 @@ fn clone_impl(
 fn clone_fork_path(flags: u64, child_stack: u64, parent_tidptr: u64, child_tidptr: u64) -> i64 {
     let child_pid = api::sys_fork();
     if child_pid == 0 {
-        return Errno::ENOMEM.as_ret();
+        return Errno::Enomem.as_ret();
     }
 
     // 如果指定了 child_stack, 修改子进程的 RSP
@@ -149,7 +149,7 @@ fn clone_fork_path(flags: u64, child_stack: u64, parent_tidptr: u64, child_tidpt
     i64::from(child_pid)
 }
 
-/// CLONE_VM 路径 (创建线程): 分配 PCB → 继承属性/内核栈/上下文 → 注册调度
+/// `CLONE_VM` 路径 (创建线程): 分配 PCB → 继承属性/内核栈/上下文 → 注册调度
 fn clone_vm_path(
     flags: u64,
     child_stack: u64,
@@ -160,17 +160,17 @@ fn clone_vm_path(
 ) -> i64 {
     let parent_cr3 = api::process_with(parent_pid, |p| p.cr3.load(Ordering::SeqCst)).unwrap_or(0);
     if parent_cr3 == 0 {
-        return Errno::ENOMEM.as_ret();
+        return Errno::Enomem.as_ret();
     }
 
     // 分配子进程 PID
     let child_pid = api::proc_alloc_pid();
     if child_pid == 0 {
-        return Errno::ENOMEM.as_ret();
+        return Errno::Enomem.as_ret();
     }
 
     let Some(child_ptr) = vm_child_alloc(parent_pid, child_pid, parent_cr3) else {
-        return Errno::ENOMEM.as_ret();
+        return Errno::Enomem.as_ret();
     };
     let child = raw::process_ref_mut(child_ptr);
 
@@ -277,7 +277,7 @@ fn vm_child_inherit(
     // 分配内核栈
     if !child.allocate_kernel_stack() {
         raw::drop_boxed_process(child_ptr);
-        return Err(Errno::ENOMEM.as_ret());
+        return Err(Errno::Enomem.as_ret());
     }
 
     // 复制父进程的内核栈
@@ -287,7 +287,7 @@ fn vm_child_inherit(
     // 同一偏移, 见 `arch/aarch64/context.rs` 头注释, 故必须按架构分别写)
     let Some(parent_ctx) = api::process_with(parent_pid, |p| *p.context.lock()) else {
         crate::slog_err!(Kernel, "clone: 父进程 {} 在进程表中未找到", parent_pid);
-        return Err(Errno::ESRCH.as_ret());
+        return Err(Errno::Esrch.as_ret());
     };
     vm_child_init_context(child, &parent_ctx, parent_cr3, child_stack, tls);
 
@@ -401,7 +401,7 @@ fn vm_child_register(
 pub fn set_robust_list_syscall(head: u64, len: u64) -> Result<usize, Errno> {
     const ROBUST_LIST_HEAD_SIZE: u64 = 24;
     if len != ROBUST_LIST_HEAD_SIZE {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     let pid = crate::privileged::proc::api::process_get_current_pid();
@@ -412,7 +412,7 @@ pub fn set_robust_list_syscall(head: u64, len: u64) -> Result<usize, Errno> {
             Ordering::Release,
         );
     })
-    .ok_or(Errno::ESRCH)?;
+    .ok_or(Errno::Esrch)?;
     Ok(0)
 }
 
@@ -432,7 +432,7 @@ pub fn set_robust_list_syscall(head: u64, len: u64) -> Result<usize, Errno> {
 /// - 写回失败 → `EFAULT`
 pub fn get_robust_list_syscall(pid: i32, head_ptr: u64, len_ptr: u64) -> Result<usize, Errno> {
     if pid < 0 {
-        return Err(Errno::ESRCH);
+        return Err(Errno::Esrch);
     }
 
     let target = if pid == 0 {
@@ -446,13 +446,13 @@ pub fn get_robust_list_syscall(pid: i32, head_ptr: u64, len_ptr: u64) -> Result<
             p.robust_len.load(Ordering::Acquire),
         )
     })
-    .ok_or(Errno::ESRCH)?;
+    .ok_or(Errno::Esrch)?;
 
     if head_ptr != 0 && !crate::privileged::syscall::api::write_struct_to_user(head_ptr, &head) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     if len_ptr != 0 && !crate::privileged::syscall::api::write_struct_to_user(len_ptr, &len) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
     Ok(0)
 }

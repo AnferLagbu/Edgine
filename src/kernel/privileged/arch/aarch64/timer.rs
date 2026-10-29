@@ -1,6 +1,6 @@
 //! ARM Generic Timer 配置
 //!
-//! ARMv8-A 架构提供 Generic Timer (CNTPCT, CNTFRQ, CNTP_TVAL, CNTP_CTL)。
+//! ARMv8-A 架构提供 Generic Timer (CNTPCT, CNTFRQ, `CNTP_TVAL`, `CNTP_CTL`)。
 //! QEMU virt 机器默认频率约 62.5MHz。
 
 use core::arch::asm;
@@ -10,6 +10,7 @@ const TIMER_FREQ_HZ: u64 = 62_500_000;
 
 /// 读取当前计数器频率
 #[inline]
+#[must_use]
 pub fn read_frequency() -> u64 {
     let freq: u64;
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -21,7 +22,7 @@ pub fn read_frequency() -> u64 {
 
 /// 设置定时器到期值 (倒计时)
 ///
-/// 向 CNTP_TVAL_EL0 写入 ticks 后触发定时器中断。
+/// 向 `CNTP_TVAL_EL0` 写入 ticks 后触发定时器中断。
 #[inline]
 pub fn set_timer(ticks: u64) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -32,7 +33,7 @@ pub fn set_timer(ticks: u64) {
 
 /// 设置定时器比较值 (绝对时间)
 ///
-/// 向 CNTP_CVAL_EL0 写入绝对计数值, 达到时触发中断。
+/// 向 `CNTP_CVAL_EL0` 写入绝对计数值, 达到时触发中断。
 #[inline]
 pub fn set_compare(value: u64) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -41,8 +42,9 @@ pub fn set_compare(value: u64) {
     }
 }
 
-/// 读取当前计数 (CNTPCT_EL0)
+/// 读取当前计数 (`CNTPCT_EL0`)
 #[inline]
+#[must_use]
 pub fn read_count() -> u64 {
     let cnt: u64;
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -52,7 +54,7 @@ pub fn read_count() -> u64 {
     cnt
 }
 
-/// 使能定时器 (CNTP_CTL_EL0.ENABLE = 1, IMASK = 0)
+/// 使能定时器 (`CNTP_CTL_EL0.ENABLE` = 1, IMASK = 0)
 #[inline]
 pub fn enable() {
     // bit 0: ENABLE, bit 1: IMASK (0=enabled, 1=masked)
@@ -73,6 +75,7 @@ pub fn disable() {
 
 /// 读取定时器控制寄存器
 #[inline]
+#[must_use]
 pub fn read_control() -> u64 {
     let ctl: u64;
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -84,8 +87,8 @@ pub fn read_control() -> u64 {
 
 /// 初始化定时器子系统 (延迟启动)
 ///
-/// 读取 CNTFRQ_EL0, 计算 1ms (1000 Hz) 间隔, 但不启动定时器.
-/// 返回 (频率, 间隔ticks)。稍后调用 start_interval() 开始计时.
+/// 读取 `CNTFRQ_EL0`, 计算 1ms (1000 Hz) 间隔, 但不启动定时器.
+/// 返回 (频率, 间隔ticks)。稍后调用 `start_interval()` 开始计时.
 ///
 /// # 与 tick 簿记的配对契约
 ///
@@ -93,6 +96,7 @@ pub fn read_control() -> u64 {
 /// 都是 1000 Hz): `TIMER_FREQ_HZ` 是纳秒/tick 换算的唯一依据, 而本周期决定中断
 /// 实际到达率. 旧实现用 10ms 周期却簿记 1000Hz, 于是每个 IRQ 减 1 的 Deadline
 /// 记账与时间片粒度比名义慢 10 倍 (见 docs/plan S-3 E-II-a).
+#[must_use]
 pub fn init_deferred() -> (u64, u64) {
     let freq = read_frequency();
     let freq = if freq == 0 {
@@ -115,7 +119,7 @@ pub fn init_deferred() -> (u64, u64) {
 
 /// 启动周期性定时器 (必须在 GIC + 调度器初始化之后调用)
 ///
-/// 设置 CNTP_TVAL_EL0 并启用 CNTP_CTL_EL0。
+/// 设置 `CNTP_TVAL_EL0` 并启用 `CNTP_CTL_EL0`。
 pub fn start_interval(interval_ticks: u64) {
     set_timer(interval_ticks);
     enable();
@@ -123,7 +127,7 @@ pub fn start_interval(interval_ticks: u64) {
 
 /// 重新装载定时器 (在中断处理中调用)
 ///
-/// 重新设置 CNTP_TVAL_EL0, 确保下一个中断准时触发。
+/// 重新设置 `CNTP_TVAL_EL0`, 确保下一个中断准时触发。
 pub fn reload(interval_ticks: u64) {
     set_timer(interval_ticks);
     enable();

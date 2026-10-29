@@ -71,26 +71,31 @@ pub fn ftrace_disable() {
 }
 
 /// 查询 ftrace 启用状态
+#[must_use]
 pub fn ftrace_is_enabled() -> bool {
     crate::privileged::debug::ftrace_is_enabled()
 }
 
 /// 累计事件计数
+#[must_use]
 pub fn ftrace_event_count() -> u64 {
     crate::privileged::debug::ftrace_event_count()
 }
 
 /// 累计溢出计数
+#[must_use]
 pub fn ftrace_overflow_count() -> u64 {
     crate::privileged::debug::ftrace_overflow_count()
 }
 
 /// 弹出一条事件 (None = 空)
+#[must_use]
 pub fn ftrace_read_event() -> Option<TraceEvent> {
     crate::privileged::debug::ftrace_pop_event()
 }
 
 /// 注册一个跟踪点 (按名称字符串)
+#[must_use]
 pub fn ftrace_register(name: &'static str) -> bool {
     crate::privileged::debug::ftrace_register_point(fnv1a_32(name.as_bytes()))
 }
@@ -103,6 +108,7 @@ pub fn ftrace_register(name: &'static str) -> bool {
 ///
 /// - 串口未注册时: 返回 false, 不阻塞
 /// - 串口已注册时: 阻塞与外部 gdb 通信, 返回 true 表示 KGDB 已返回
+#[must_use]
 pub fn kgdb_enter() -> bool {
     if !crate::privileged::debug::kgdb_serial_ready() {
         return false;
@@ -113,11 +119,13 @@ pub fn kgdb_enter() -> bool {
 }
 
 /// 当前是否在 KGDB 主循环中
+#[must_use]
 pub fn kgdb_is_active() -> bool {
     crate::privileged::debug::kgdb_active()
 }
 
 /// 串口是否已注册到 KGDB
+#[must_use]
 pub fn kgdb_serial_ready() -> bool {
     crate::privileged::debug::kgdb_serial_ready()
 }

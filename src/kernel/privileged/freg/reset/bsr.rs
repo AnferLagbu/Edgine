@@ -18,8 +18,8 @@ use crate::privileged::freg::RecoveryManager;
 /// 重复加锁 (消除单核故障经恢复风暴逐步加锁放大成持锁窗口膨胀).
 pub fn freeze_all_domains(manager: &RecoveryManager) {
     let count = manager.count.load(Ordering::SeqCst) as usize;
-    for i in 0..count {
-        if let Some(domain) = &manager.domains[i] {
+    for slot in &manager.domains[..count] {
+        if let Some(domain) = *slot {
             domain.set_state(DomainState::Freezing, Ordering::SeqCst);
         }
     }
@@ -28,8 +28,8 @@ pub fn freeze_all_domains(manager: &RecoveryManager) {
 /// 解冻所有恢复域: 恢复为 Active 并清零连续失败计数。
 pub fn unfreeze_all_domains(manager: &RecoveryManager) {
     let count = manager.count.load(Ordering::SeqCst) as usize;
-    for i in 0..count {
-        if let Some(domain) = &manager.domains[i] {
+    for slot in &manager.domains[..count] {
+        if let Some(domain) = *slot {
             domain.set_state(DomainState::Active, Ordering::SeqCst);
             domain.consecutive_failures.store(0, Ordering::SeqCst);
         }
@@ -40,8 +40,8 @@ pub fn unfreeze_all_domains(manager: &RecoveryManager) {
 pub fn rollback_to_init(manager: &RecoveryManager) -> usize {
     let mut total_rolled = 0usize;
     let count = manager.count.load(Ordering::SeqCst) as usize;
-    for i in 0..count {
-        if let Some(domain) = &manager.domains[i] {
+    for slot in &manager.domains[..count] {
+        if let Some(domain) = *slot {
             let mut undo = domain.undo.lock();
             let rolled = undo.rollback_to(0);
             total_rolled += rolled;

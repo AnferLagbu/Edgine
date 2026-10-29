@@ -75,7 +75,7 @@ pub fn init_launch_status() -> u32 {
     INIT_STATUS.load(core::sync::atomic::Ordering::Acquire)
 }
 
-/// 由 functions 层启动编排 (launch_first_user_process) 设置 init 启动状态
+/// 由 functions 层启动编排 (`launch_first_user_process`) 设置 init 启动状态
 pub fn set_init_status(s: u32) {
     INIT_STATUS.store(s, core::sync::atomic::Ordering::Release);
 }
@@ -92,7 +92,7 @@ pub extern "C" fn user_proc_load_elf_from_memory(
     elf_size: u64,
     pwm: u64,
 ) -> i32 {
-    USER_PROC_MANAGER.load_elf_from_memory(elf_data, elf_size, pwm)
+    USER_PROC_MANAGER.load_elf_from_memory(elf_data as usize, elf_size, pwm)
 }
 
 /// 在 ELF 加载完成后, 在用户栈上建立 argv/envp (供 exec 系统调用使用)
@@ -180,14 +180,17 @@ pub extern "C" fn user_proc_enter_by_pid(pid: u32) -> i32 {
             p_kstack
         );
         crate::klog_boot_info!("[USER] calling enter()");
-        USER_PROC_MANAGER.enter(proc);
+        // SAFETY: proc 来自 USER_PROC_MANAGER.get(pid), 分配生命周期由管理器持有.
+        unsafe {
+            USER_PROC_MANAGER.enter(proc);
+        }
         0
     })
 }
 
 /// 进入指定用户进程 (Ring 3 / EL0): 设置当前进程槽位 → 切换用户态.
 ///
-/// L-02 机制入口: functions 层启动编排 (functions::init::launch_first_user_process)
+/// L-02 机制入口: functions 层启动编排 (`functions::init::launch_first_user_process`)
 /// 经此完成进入用户态的最后两步, 无需访问 privileged 内部 `C_CURRENT_PROCESS`.
 ///
 /// 正常路径下 `USER_PROC_MANAGER.enter` 切走不返回; 若返回, 由调用方决定后续.
@@ -209,7 +212,10 @@ pub fn enter_user_process(pid: u32) {
     // 仍需先把 ProcessContext 填成有效用户态上下文 (cr3/rip/rsp), 维持
     // "可运行 ⇒ 上下文有效" 不变式, 使此后任意抢占路径均能正确进入用户态.
     if let Some(proc) = USER_PROC_MANAGER.get(pid) {
-        super::user_proc::UserProcManager::init_first_entry_context(proc);
+        // SAFETY: proc 来自 USER_PROC_MANAGER.get(pid) 且尚未卸载, 分配生命周期有效.
+        unsafe {
+            super::user_proc::UserProcManager::init_first_entry_context(proc);
+        }
     }
 
     user_proc_enter_by_pid(pid);

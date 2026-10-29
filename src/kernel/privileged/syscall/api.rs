@@ -50,21 +50,25 @@ pub use super::types::{
 // ============================================================================
 
 /// 验证用户态指针是否在合法范围内
+#[must_use]
 pub fn validate_user_ptr(ptr: u64) -> bool {
     super::validate_user_ptr(ptr)
 }
 
 /// 验证用户态缓冲区是否在合法范围内
+#[must_use]
 pub fn validate_user_buf(ptr: u64, len: u64) -> bool {
     super::validate_user_buf(ptr, len)
 }
 
 /// 安全写入 u64 到用户空间指针 (先校验后写入)
+#[must_use]
 pub fn write_u64_to_user(ptr: u64, val: u64) -> bool {
     super::raw::write_u64_to_user(ptr, val)
 }
 
 /// 安全从用户空间指针读取 u64 (先校验后读取)
+#[must_use]
 pub fn read_u64_from_user(ptr: u64) -> Option<u64> {
     super::raw::read_u64_from_user(ptr)
 }
@@ -80,49 +84,60 @@ pub fn read_struct_from_user<T: Copy>(ptr: u64, dst: &mut T) -> bool {
 }
 
 /// 安全写入 rlimit (两个 u64) 到用户空间指针
+#[must_use]
 pub fn write_rlimit_to_user(ptr: u64, cur: u64, max: u64) -> bool {
     super::raw::write_rlimit_to_user(ptr, cur, max)
 }
 
 /// 获取系统 ticks 计数 (ms 精度)
+#[must_use]
 pub fn get_ticks() -> u64 {
     super::raw::get_ticks()
 }
 
 /// nanosleep 系统调用实现 (TCB: 操作 hrtimer + 调度器)
+#[must_use]
 pub fn sys_nanosleep(req: u64, rem: u64) -> i64 {
     super::sys_nanosleep(req, rem)
 }
 
 /// kill 系统调用实现 (TCB: 操作进程信号位)
+#[must_use]
 pub fn sys_kill(pid: i32, sig: i32) -> i64 {
     super::sys_kill(pid, sig)
 }
 
 /// `rt_sigaction` 系统调用实现 (TCB: 操作 sigaction 表)
+#[must_use]
 pub fn sys_rt_sigaction(signum: i32, act: u64, oact: u64) -> i64 {
     super::sys_rt_sigaction(signum, act, oact)
 }
 
 /// `rt_sigprocmask` 系统调用实现 (TCB: 操作信号掩码)
+#[must_use]
 pub fn sys_rt_sigprocmask(how: i32, set: u64, oset: u64) -> i64 {
     super::sys_rt_sigprocmask(how, set, oset)
 }
 
 /// P1-I-45: sigaltstack 系统调用实现 (TCB: 替代栈注册/查询)
+#[must_use]
 pub fn sys_sigaltstack(ss: u64, old_ss: u64) -> i64 {
     super::sys_sigaltstack(ss, old_ss)
 }
 
 /// `arch_prctl` 系统调用实现 (TCB: 用户态 TLS 基址读写)
+#[must_use]
 pub fn sys_arch_prctl(code: u64, addr: u64) -> i64 {
     super::sys_arch_prctl(code, addr)
 }
 
 /// reboot 机制: cmd=0 停机, cmd=1 重启 (TCB: 操作 IDT/PSCI)
+#[must_use]
 pub fn reboot_mechanism(cmd: i32) -> i64 {
     match cmd {
-        0 => loop {},
+        0 => loop {
+            core::hint::spin_loop();
+        },
         1 => match () {
             #[cfg(target_arch = "x86_64")]
             // SAFETY: reboot_via_idt 仅在 x86_64 停机/重启路径调用,
@@ -135,11 +150,12 @@ pub fn reboot_mechanism(cmd: i32) -> i64 {
             #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             () => loop {},
         },
-        _ => crate::privileged::syscall::Errno::EINVAL.as_ret(),
+        _ => crate::privileged::syscall::Errno::Einval.as_ret(),
     }
 }
 
 /// mmap 机制: 获取当前进程 mm 或分配裸页 (TCB: 操作页分配器)
+#[must_use]
 pub fn mmap_get_mm_or_alloc(size: u64) -> Option<*mut u8> {
     if crate::privileged::mm::vma_get_current_mm().is_some() {
         return None; // 有 mm, 走 VMA 路径

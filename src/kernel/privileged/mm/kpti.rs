@@ -116,12 +116,14 @@ pub unsafe fn invpcid_flush_single(pcid: u16, vaddr: u64) {
 
 /// CR3 值中嵌入 PCID: PML4 物理地址 | PCID.
 #[inline]
+#[must_use]
 pub const fn cr3_with_pcid(pml4_phys: u64, pcid: u64) -> u64 {
     (pml4_phys & 0x000F_FFFF_FFFF_F000) | (pcid & 0xFFF)
 }
 
 /// 检查 CPU 是否支持 INVPCID.
 #[inline]
+#[must_use]
 pub fn has_invpcid() -> bool {
     crate::privileged::cpu::get_cpu_info().is_some_and(|info| {
         info.features
@@ -131,6 +133,7 @@ pub fn has_invpcid() -> bool {
 
 /// 检查 PCID 是否已启用 (CR4.PCIDE = 1).
 #[inline]
+#[must_use]
 pub fn pcid_is_enabled() -> bool {
     let cr4: u64;
     // SAFETY: 读取 CR4 是特权操作但无副作用, 仅检查 bit 17.
@@ -167,7 +170,7 @@ static KPTI_READY: AtomicBool = AtomicBool::new(false);
 ///
 /// KPTI-08 后本表**不**复制 `KERNEL_PML4[256..511]`: 其高半区只包含
 /// `map_kernel_pages_in_user_pml4` 逐页映射的"入口依赖面"必需页
-/// (entry 区段代码 + USER_CR3_SAVE + per-CPU GDT/TSS/SyscallPerCpu 头页
+/// (entry 区段代码 + `USER_CR3_SAVE` + per-CPU GDT/TSS/SyscallPerCpu 头页
 /// + IDT + per-CPU IST/trampoline 栈顶页), 其余内核页对用户态完全不可见。
 static USER_PML4: AtomicU64 = AtomicU64::new(0);
 
@@ -460,7 +463,7 @@ pub unsafe fn map_kernel_pages_in_user_pml4(user_pml4_phys: u64) {
         let text_start = core::ptr::addr_of!(_kernel_text_start) as u64;
         let trampoline_end = core::ptr::addr_of!(_kpti_trampoline_end) as u64;
         let text_end = core::ptr::addr_of!(_kernel_text_end) as u64;
-        let pages = |from: u64, to: u64| (to - from + PAGE_SIZE as u64 - 1) / PAGE_SIZE as u64;
+        let pages = |from: u64, to: u64| (to - from).div_ceil(PAGE_SIZE);
 
         // 诊断: 打印收窄前后的映射面 (QEMU 日志据此判定收窄生效).
         crate::klog_boot_info!(
@@ -544,10 +547,8 @@ pub unsafe fn map_rsp0_page(user_pml4_phys: u64, kernel_stack_top: u64) {
     // SAFETY: 调用方保证 user_pml4_phys 有效; 目标 VA 属该进程私有页表,
     // 每次切换 PA 值恒定, 无并发写冲突 (见本函数文档).
     unsafe {
-        let top_page = (kernel_stack_top - 1) & !(PAGE_SIZE as u64 - 1);
-        let user_pml4 = PhysAddr(user_pml4_phys & !(PAGE_SIZE as u64 - 1))
-            .to_virt()
-            .0 as *mut u64;
+        let top_page = (kernel_stack_top - 1) & !(PAGE_SIZE - 1);
+        let user_pml4 = PhysAddr(user_pml4_phys & !(PAGE_SIZE - 1)).to_virt().0 as *mut u64;
         map_text_page(
             user_pml4,
             top_page,
@@ -616,14 +617,14 @@ pub(super) unsafe fn map_text_region_in_user_pml4(
         "[KPTI] .text 映射越界: requested end={text_end_phys:#X} > _kpti_trampoline_end={trampoline_end:#X}"
     );
 
-    let page_start_phys = text_start_phys & !(PAGE_SIZE as u64 - 1);
-    let page_end_phys = (text_end_phys + PAGE_SIZE as u64 - 1) & !(PAGE_SIZE as u64 - 1);
+    let page_start_phys = text_start_phys & !(PAGE_SIZE - 1);
+    let page_end_phys = (text_end_phys + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
 
     crate::klog_boot_info!(
         "[KPTI] map_text_region: lma={:#X}-{:#X}, aliases=identity/KERNEL_BASE/linker-vma ({} pages)",
         text_start_phys,
         text_end_phys,
-        (page_end_phys - page_start_phys) / PAGE_SIZE as u64
+        (page_end_phys - page_start_phys) / PAGE_SIZE
     );
 
     // SAFETY: 调用方保证 user_pml4 有效; text_start/text_end 是合法地址范围;
@@ -646,7 +647,7 @@ pub(super) unsafe fn map_text_region_in_user_pml4(
                 FLAGS,
                 "linker _kernel_text_vma alias",
             );
-            phys += PAGE_SIZE as u64;
+            phys += PAGE_SIZE;
         }
     }
 }
@@ -741,7 +742,7 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
                 for i in 0..512u64 {
                     core::ptr::write_volatile(
                         new_pt_ptr.add(crate::privileged::glue::usize_from_u64(i)),
-                        (huge_base + i * PAGE_SIZE as u64) | pde_flags,
+                        (huge_base + i * PAGE_SIZE) | pde_flags,
                     );
                 }
                 // 更新 PDE → 指向新 PT (PS=0, 修改共享 PD, 同时影响内核页表)
@@ -840,7 +841,7 @@ pub(super) unsafe fn map_kpti_data_pages(user_pml4: *mut u64) {
     //    USER_CR3_SAVE 位于 .bss 段, isr.asm 用绝对寻址 `mov [USER_CR3_SAVE], rax`,
     //    访问的虚拟地址是链接低地址 (LMA), 需恒等映射; 另映射两高半区别名.
     let user_cr3_page =
-        core::ptr::addr_of!(super::super::mm::USER_CR3_SAVE_ASM) as u64 & !(PAGE_SIZE as u64 - 1);
+        core::ptr::addr_of!(super::super::mm::USER_CR3_SAVE_ASM) as u64 & !(PAGE_SIZE - 1);
 
     // SAFETY: user_pml4 有效; 页地址来自链接器符号 / 静态布局, 合法;
     // boot 阶段单线程执行或持 VMM_LOCK, 无并发修改.
@@ -873,17 +874,17 @@ pub(super) unsafe fn map_kpti_data_pages(user_pml4: *mut u64) {
     //    IDT 表 256 项 × 16B = 4KB, 但 `IdtState.entries` 之前还有其它字段, 故可能跨页;
     //    这里以区间方式逐页映射.
     let idt_base = crate::privileged::idt::idt_entries_base_lma();
-    let idt_page_start = idt_base & !(PAGE_SIZE as u64 - 1);
+    let idt_page_start = idt_base & !(PAGE_SIZE - 1);
     let idt_len = crate::privileged::idt::IDT_ENTRIES as u64
         * core::mem::size_of::<crate::privileged::idt::IdtEntry>() as u64;
-    let idt_page_end = (idt_base + idt_len + PAGE_SIZE as u64 - 1) & !(PAGE_SIZE as u64 - 1);
+    let idt_page_end = (idt_base + idt_len + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
 
     // SAFETY: user_pml4 有效; IDT 表位于内核静态区, 地址合法; 无并发修改.
     unsafe {
         let mut p = idt_page_start;
         while p < idt_page_end {
             map_text_page(user_pml4, p, p, FLAGS, "IDT entries");
-            p += PAGE_SIZE as u64;
+            p += PAGE_SIZE;
         }
     }
 
@@ -900,8 +901,8 @@ pub(super) unsafe fn map_kpti_data_pages(user_pml4: *mut u64) {
     unsafe {
         for cpu in 0..cpu_count {
             let (head_start, head_end) = crate::privileged::arch::gdt::per_cpu_gdt_head_range(cpu);
-            let mut p = head_start & !(PAGE_SIZE as u64 - 1);
-            let end = (head_end + PAGE_SIZE as u64 - 1) & !(PAGE_SIZE as u64 - 1);
+            let mut p = head_start & !(PAGE_SIZE - 1);
+            let end = (head_end + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
             while p < end {
                 map_text_page(user_pml4, p, p, FLAGS, "GDT head LMA");
                 map_text_page(user_pml4, KERNEL_BASE + p, p, FLAGS, "GDT head KERNEL_BASE");
@@ -913,15 +914,15 @@ pub(super) unsafe fn map_kpti_data_pages(user_pml4: *mut u64) {
                     "GDT head linker VMA",
                 );
                 gdt_head_pages += 1;
-                p += PAGE_SIZE as u64;
+                p += PAGE_SIZE;
             }
 
             // IST0..3 栈顶页: 栈顶页对齐, 故页 = top - PAGE_SIZE.
             for top in crate::privileged::arch::gdt::ist_tops_virt(cpu) {
                 map_text_page(
                     user_pml4,
-                    top - PAGE_SIZE as u64,
-                    top - PAGE_SIZE as u64 - KERNEL_BASE,
+                    top - PAGE_SIZE,
+                    top - PAGE_SIZE - KERNEL_BASE,
                     FLAGS,
                     "IST top page",
                 );
@@ -931,8 +932,8 @@ pub(super) unsafe fn map_kpti_data_pages(user_pml4: *mut u64) {
             let tramp_top = crate::privileged::arch::gdt::trampoline_top_virt(cpu);
             map_text_page(
                 user_pml4,
-                tramp_top - PAGE_SIZE as u64,
-                tramp_top - PAGE_SIZE as u64 - KERNEL_BASE,
+                tramp_top - PAGE_SIZE,
+                tramp_top - PAGE_SIZE - KERNEL_BASE,
                 FLAGS,
                 "trampoline top page",
             );
@@ -944,7 +945,7 @@ pub(super) unsafe fn map_kpti_data_pages(user_pml4: *mut u64) {
         user_cr3_page,
         idt_page_start,
         idt_page_end,
-        (idt_page_end - idt_page_start) / PAGE_SIZE as u64,
+        (idt_page_end - idt_page_start) / PAGE_SIZE,
         gdt_head_pages / u64::from(cpu_count),
         cpu_count
     );

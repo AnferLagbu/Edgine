@@ -68,6 +68,7 @@ pub const GENERAL_CACHE_SIZES: [usize; SLAB_GENERAL_CACHE_NUM] =
 /// ```
 #[derive(Debug)]
 #[repr(C)]
+#[derive(Default)]
 pub(crate) struct SlabHeader {
     /// 对象区域起始地址 (相对于页面起始)
     start_addr: *mut u8,
@@ -84,19 +85,6 @@ pub(crate) struct SlabHeader {
     /// 双向链表指针 (用于挂在 `KmemCache` 的链表中)
     prev: *mut Self,
     next: *mut Self,
-}
-
-impl Default for SlabHeader {
-    fn default() -> Self {
-        Self {
-            start_addr: core::ptr::null_mut(),
-            obj_count: 0,
-            active_count: 0,
-            is_full: false,
-            prev: core::ptr::null_mut(),
-            next: core::ptr::null_mut(),
-        }
-    }
 }
 
 // === E4: unsafe 集中化 — 裸指针子模块 ===
@@ -350,6 +338,7 @@ impl KmemCache {
     }
 
     /// 当前活跃对象数 (已分配未释放)。
+    #[must_use]
     pub fn active_objects(&self) -> u64 {
         self.total_allocs.saturating_sub(self.total_frees)
     }
@@ -508,6 +497,7 @@ impl KmemCache {
     }
 
     /// 获取缓存统计信息
+    #[must_use]
     pub fn get_stats(&self) -> CacheStats {
         let mut total_objects = 0u32;
         let mut active_objects = 0u32;
@@ -822,16 +812,16 @@ pub struct CacheStats {
 impl CacheStats {
     /// 计算命中率 (千分比, 0..=1000)
     #[inline]
+    #[must_use]
     pub fn hit_rate(&self) -> u64 {
-        if self.total_allocs == 0 {
-            0
-        } else {
-            self.cache_hits * 1000 / self.total_allocs
-        }
+        (self.cache_hits * 1000)
+            .checked_div(self.total_allocs)
+            .unwrap_or(0)
     }
 
     /// 计算利用率 (千分比, 0..=1000)
     #[inline]
+    #[must_use]
     pub fn utilization(&self) -> u64 {
         if self.total_objects == 0 {
             0
@@ -971,9 +961,12 @@ pub extern "C" fn slab_free(ptr: *mut u8) {
 }
 
 /// 获取系统级统计信息 (FFI 兼容)
+///
+/// # Safety
+/// 三个输出指针必须指向可写的 `u64` / `u64` / `u32` 内存, 且调用期间不被其他路径并发写入。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-pub extern "C" fn slab_get_system_stats(
+pub unsafe extern "C" fn slab_get_system_stats(
     total_memory: *mut u64,
     used_memory: *mut u64,
     total_caches: *mut u32,
@@ -1025,9 +1018,12 @@ pub extern "C" fn slab_dump_all_caches() {
 }
 
 /// 打印指定缓存的 slab 链表详情 (调试用途)
+///
+/// # Safety
+/// `name` 必须为有效的 NUL 结尾 C 字符串指针, 或 NULL; 调用期间该字符串不被释放。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-pub extern "C" fn slab_dump_cache(name: *const u8) {
+pub unsafe extern "C" fn slab_dump_cache(name: *const u8) {
     // SAFETY: 调用方保证 name 为合法 C 字符串
     let name_str = if name.is_null() {
         klog_slab!("[SLAB] Cache name is null");
@@ -1044,34 +1040,34 @@ pub extern "C" fn slab_dump_cache(name: *const u8) {
 
     let caches = GENERAL_CACHES.lock();
     for i in 0..GENERAL_CACHE_SIZES.len() {
-        if let Some(ref cache) = caches[i] {
-            if cache.name == name_str {
-                klog_slab!(
-                    "[SLAB] Cache '{}': obj_size={} slabs={} active={}",
-                    cache.name,
-                    cache.object_size,
-                    cache.slab_count,
-                    cache.active_objects()
-                );
+        if let Some(ref cache) = caches[i]
+            && cache.name == name_str
+        {
+            klog_slab!(
+                "[SLAB] Cache '{}': obj_size={} slabs={} active={}",
+                cache.name,
+                cache.object_size,
+                cache.slab_count,
+                cache.active_objects()
+            );
 
-                // 遍历 partial 链表显示每个 slab 信息
-                let mut current = cache.slabs_partial;
-                let mut count = 0;
-                while !current.is_null() {
-                    // SAFETY: current 由 slabs_partial 链表保证是合法 Slab 头指针
-                    let sr = unsafe { SlabRef::new_unchecked(current) };
-                    let ptr = sr.as_ptr();
-                    klog_slab!(
-                        "[SLAB]   partial[{}]: obj_count={} active={}",
-                        count,
-                        unsafe { (*ptr).obj_count },
-                        unsafe { (*ptr).active_count }
-                    );
-                    current = sr.next();
-                    count += 1;
-                }
-                return;
+            // 遍历 partial 链表显示每个 slab 信息
+            let mut current = cache.slabs_partial;
+            let mut count = 0;
+            while !current.is_null() {
+                // SAFETY: current 由 slabs_partial 链表保证是合法 Slab 头指针
+                let sr = unsafe { SlabRef::new_unchecked(current) };
+                let ptr = sr.as_ptr();
+                klog_slab!(
+                    "[SLAB]   partial[{}]: obj_count={} active={}",
+                    count,
+                    unsafe { (*ptr).obj_count },
+                    unsafe { (*ptr).active_count }
+                );
+                current = sr.next();
+                count += 1;
             }
+            return;
         }
     }
     klog_slab!("[SLAB] Cache '{}' not found", name_str);

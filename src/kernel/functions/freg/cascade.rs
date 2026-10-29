@@ -65,6 +65,7 @@ pub const MAX_TOPOLOGY_DOMAINS: usize = 16;
 
 impl DomainTopology {
     /// 构造空拓扑
+    #[must_use]
     pub const fn new() -> Self {
         const EMPTY: DomainNode = DomainNode {
             id: 0,
@@ -111,11 +112,13 @@ impl DomainTopology {
     }
 
     /// 查找域节点
+    #[must_use]
     pub fn find(&self, id: u64) -> Option<&DomainNode> {
         self.nodes.iter().take(self.count).find(|n| n.id == id)
     }
 
     /// 计算 `BottomUp` 顺序的恢复队列
+    #[must_use]
     pub fn bottom_up_order(&self, root_id: u64) -> CascadeQueue {
         // 简化实现: 返回根 + 全部子节点 (实际应 BFS)
         let mut q = CascadeQueue::new();
@@ -132,6 +135,7 @@ impl DomainTopology {
     }
 
     /// 计算 `TopDown` 顺序的恢复队列
+    #[must_use]
     pub fn top_down_order(&self, root_id: u64) -> CascadeQueue {
         let mut q = CascadeQueue::new();
         if let Some(root) = self.find(root_id) {
@@ -146,6 +150,13 @@ impl DomainTopology {
     }
 }
 
+impl Default for DomainTopology {
+    /// 等价于 [`DomainTopology::new`] (空拓扑)
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// 级联队列
 #[derive(Debug, Clone, Copy)]
 pub struct CascadeQueue {
@@ -157,6 +168,7 @@ pub struct CascadeQueue {
 
 impl CascadeQueue {
     /// 构造空级联队列
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             order: [0; MAX_TOPOLOGY_DOMAINS],
@@ -172,11 +184,19 @@ impl CascadeQueue {
     }
 }
 
+impl Default for CascadeQueue {
+    /// 等价于 [`CascadeQueue::new`] (空队列)
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// 级联策略决策
 pub struct CascadePolicy;
 
 impl CascadePolicy {
     /// 给定故障域 + 拓扑, 决定级联方向
+    #[must_use]
     pub fn direction(
         attribution: FaultAttribution,
         topo: &DomainTopology,
@@ -213,6 +233,7 @@ impl CascadePolicy {
     /// 编排级联恢复
     ///
     /// 返回: 实际执行的恢复动作 + 队列
+    #[must_use]
     pub fn orchestrate(signal: &FaultSignal, topo: &DomainTopology) -> CascadePlan {
         let action = RecoveryPolicy::decide(signal);
         let direction = Self::direction(signal.attribution, topo, signal.domain_id());
@@ -231,6 +252,7 @@ impl CascadePolicy {
 
 impl FaultSignal {
     /// 从 attribution 提取 `domain_id` (Service 分支)
+    #[must_use]
     pub fn domain_id(&self) -> u64 {
         match self.attribution {
             FaultAttribution::Service { domain_id, .. } => domain_id,

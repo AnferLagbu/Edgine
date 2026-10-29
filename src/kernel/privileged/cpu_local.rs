@@ -25,8 +25,15 @@ pub struct CpuLocal<T: 'static> {
     slots: [UnsafeCell<Option<T>>; MAX_CPUS],
 }
 
+impl<T: 'static> Default for CpuLocal<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> CpuLocal<T> {
     /// 创建空的 Per-CPU 数组（所有槽位初始为 None）。
+    #[must_use]
     pub fn new() -> Self {
         // SAFETY: `UnsafeCell<Option<T>>` 的内部表示是单个 `Option<T>` (含判别符 + 数据)。
         // `core::mem::zeroed()` 把所有字节置 0, 即每个槽位都是 `None`, 这对 `Option<T>`
@@ -71,19 +78,19 @@ impl<T> CpuLocal<T> {
         }
     }
 
-    /// 获取当前 CPU 数据的可变引用。
+    /// 获取当前 CPU 数据的可变引用 (经 [`CpuLocalMut`] 守卫包装)。
     ///
     /// # Panics
     /// 如果当前 CPU 的槽位未初始化。
-    pub fn get_mut(&self) -> &mut T {
+    pub fn get_mut(&self) -> CpuLocalMut<'_, T> {
         let cpu = crate::privileged::smp::current_cpu_index() as usize;
         assert!(cpu < MAX_CPUS);
         // SAFETY: 同 `init_this_cpu` 的 1-3 条款 + `get` 的初始化保证。
         // `&mut *UnsafeCell::get()` 产生独占 `&mut Option<T>`, Rust 借用检查器
         // 接受是因为 UnsafeCell 的特殊规则 (内部可变性 + 单线程独占)。
-        unsafe {
-            let slot = &mut *self.slots[cpu].get();
-            slot.as_mut().expect("CpuLocal: slot not initialized")
+        let slot = unsafe { &mut *self.slots[cpu].get() };
+        CpuLocalMut {
+            value: slot.as_mut().expect("CpuLocal: slot not initialized"),
         }
     }
 
@@ -100,6 +107,38 @@ impl<T> CpuLocal<T> {
             let slot = &mut *self.slots[cpu].get();
             slot.take()
         }
+    }
+}
+
+/// `CpuLocal::get_mut` 返回的独占借用守卫
+///
+/// 代替直接返回 `&mut T` 的裸引用, 独占语义仍由调用方 (per-CPU 独占访问)
+/// 保证; 守卫仅承载该引用并通过 [`Deref`] / [`DerefMut`] 提供原引用用法,
+/// 需要取出原引用时用 [`Self::into_inner`].
+pub struct CpuLocalMut<'a, T> {
+    /// 被守卫的独占引用
+    value: &'a mut T,
+}
+
+impl<'a, T> CpuLocalMut<'a, T> {
+    /// 取出守卫内部的独占引用 (消费守卫, 不执行释放动作)
+    #[must_use]
+    pub fn into_inner(self) -> &'a mut T {
+        self.value
+    }
+}
+
+impl<T> core::ops::Deref for CpuLocalMut<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &*self.value
+    }
+}
+
+impl<T> core::ops::DerefMut for CpuLocalMut<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut *self.value
     }
 }
 

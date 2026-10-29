@@ -3,6 +3,7 @@
 use super::types::{MAX_UNDO_ENTRIES, UndoEntry};
 
 /// 计算 FNV-1a 32 位哈希, 用于撤销记录校验和。
+#[must_use]
 pub fn fnv1a_32(data: &[u8]) -> u32 {
     let mut h: u32 = 2_166_136_261;
     for &b in data {
@@ -29,9 +30,16 @@ pub struct UndoLog {
 unsafe impl Send for UndoLog {}
 unsafe impl Sync for UndoLog {}
 
+impl Default for UndoLog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UndoLog {
     /// B03-10: 改 const fn 支持静态预分配。
-    /// UndoLog 字段全为 const-init (数组 + u32 + null_mut 指针), 无运行时依赖。
+    /// `UndoLog` 字段全为 const-init (数组 + u32 + `null_mut` 指针), 无运行时依赖。
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             entries: [UndoEntry {
@@ -124,8 +132,8 @@ impl UndoLog {
 
             if entry.generation >= keep_gen {
                 let mut already_seen = false;
-                for j in 0..seen_count {
-                    if seen_ptrs[j].0 == ptr {
+                for seen in &seen_ptrs[..seen_count] {
+                    if seen.0 == ptr {
                         already_seen = true;
                         break;
                     }
@@ -169,13 +177,13 @@ impl UndoLog {
         let mut gen_starts: [u64; 16] = [0; 16];
         let mut gen_count = 0;
         let mut prev_gen = u64::MAX;
-        for i in 0..self.count {
-            if self.entries[i].generation != prev_gen {
+        for (i, entry) in self.entries[..self.count].iter().enumerate() {
+            if entry.generation != prev_gen {
                 if gen_count < 16 {
                     gen_starts[gen_count] = i as u64;
                     gen_count += 1;
                 }
-                prev_gen = self.entries[i].generation;
+                prev_gen = entry.generation;
             }
         }
         let keep = keep_generations.min(gen_count);

@@ -35,6 +35,7 @@ pub enum PixelFormat {
 
 impl PixelFormat {
     /// 获取每像素字节数
+    #[must_use]
     pub fn bytes_per_pixel(self) -> usize {
         match self {
             Self::Rgb565 => 2,
@@ -44,6 +45,7 @@ impl PixelFormat {
     }
 
     /// 获取每像素位数
+    #[must_use]
     pub fn bits_per_pixel(self) -> usize {
         self.bytes_per_pixel() * 8
     }
@@ -69,16 +71,19 @@ pub struct Color {
 
 impl Color {
     /// 创建新颜色
+    #[must_use]
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b, a: 255 }
     }
 
     /// 创建带透明度的颜色
+    #[must_use]
     pub const fn new_alpha(r: u8, g: u8, b: u8, a: u8) -> Self {
         Self { r, g, b, a }
     }
 
     /// 转换为RGB565格式
+    #[must_use]
     pub fn to_rgb565(self) -> u16 {
         let r = (u16::from(self.r) >> 3) & 0x1F;
         let g = (u16::from(self.g) >> 2) & 0x3F;
@@ -87,11 +92,13 @@ impl Color {
     }
 
     /// 转换为RGB888格式 (返回u32方便使用)
+    #[must_use]
     pub fn to_rgb888(self) -> u32 {
         (u32::from(self.r) << 16) | (u32::from(self.g) << 8) | u32::from(self.b)
     }
 
     /// 转换为ARGB8888格式
+    #[must_use]
     pub fn to_argb8888(self) -> u32 {
         (u32::from(self.a) << 24)
             | (u32::from(self.r) << 16)
@@ -100,6 +107,7 @@ impl Color {
     }
 
     /// 从RGB565创建颜色
+    #[must_use]
     pub fn from_rgb565(rgb565: u16) -> Self {
         let r = ((rgb565 >> 11) & 0x1F) as u8;
         let g = ((rgb565 >> 5) & 0x3F) as u8;
@@ -114,6 +122,7 @@ impl Color {
     }
 
     /// 从ARGB8888创建颜色
+    #[must_use]
     pub fn from_argb8888(argb: u32) -> Self {
         Self {
             a: ((argb >> 24) & 0xFF) as u8,
@@ -187,6 +196,7 @@ pub struct Point {
 
 impl Point {
     /// 构造点
+    #[must_use]
     pub const fn new(x: i32, y: i32) -> Self {
         Self { x, y }
     }
@@ -207,6 +217,7 @@ pub struct Rect {
 
 impl Rect {
     /// 构造矩形
+    #[must_use]
     pub const fn new(x: i32, y: i32, width: u32, height: u32) -> Self {
         Self {
             x,
@@ -217,6 +228,7 @@ impl Rect {
     }
 
     /// 检查点是否在矩形内
+    #[must_use]
     pub fn contains(self, point: Point) -> bool {
         point.x >= self.x
             && point.x < self.x + self.width.cast_signed()
@@ -225,6 +237,7 @@ impl Rect {
     }
 
     /// 检查是否与另一个矩形相交
+    #[must_use]
     pub fn intersects(self, other: Self) -> bool {
         self.x < other.x + other.width.cast_signed()
             && self.x + self.width.cast_signed() > other.x
@@ -233,6 +246,7 @@ impl Rect {
     }
 
     /// 获取两个矩形的交集
+    #[must_use]
     pub fn intersection(self, other: Self) -> Option<Self> {
         if !self.intersects(other) {
             return None;
@@ -278,6 +292,7 @@ pub struct Framebuffer {
 
 impl Framebuffer {
     /// 创建新的Framebuffer实例
+    #[must_use]
     pub fn new(iomem: IoMem, width: u32, height: u32, pitch: u32, format: PixelFormat) -> Self {
         Self {
             iomem,
@@ -292,33 +307,39 @@ impl Framebuffer {
     }
 
     /// 获取宽度
+    #[must_use]
     pub fn width(&self) -> u32 {
         self.width
     }
 
     /// 获取高度
+    #[must_use]
     pub fn height(&self) -> u32 {
         self.height
     }
 
     /// 获取像素格式
+    #[must_use]
     pub fn format(&self) -> PixelFormat {
         self.format
     }
 
     /// 获取设备信息
+    #[must_use]
     pub fn get_info(&self) -> &DeviceInfo {
         &self.info
     }
 
     /// 获取每行字节数
     #[inline]
+    #[must_use]
     pub fn pitch(&self) -> u32 {
         self.pitch
     }
 
     /// 获取每像素字节数
     #[inline]
+    #[must_use]
     pub fn bytes_per_pixel(&self) -> usize {
         self.bpp
     }
@@ -367,6 +388,7 @@ impl Framebuffer {
     }
 
     /// 获取像素颜色
+    #[must_use]
     pub fn get_pixel(&self, x: u32, y: u32) -> Option<Color> {
         if x >= self.width || y >= self.height {
             return None;

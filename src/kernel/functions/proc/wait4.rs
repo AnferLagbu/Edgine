@@ -49,7 +49,7 @@ pub struct WaitInfo {
 /// 等待结果
 #[derive(Debug)]
 pub enum WaitOutcome {
-    /// 收割成功 (keep_zombie 时不释放子进程 PCB)
+    /// 收割成功 (`keep_zombie` 时不释放子进程 PCB)
     Reaped(WaitInfo),
     /// 有匹配子进程但尚未退出 (仅非阻塞模式返回)
     Running,
@@ -62,7 +62,7 @@ pub enum WaitOutcome {
 /// - `target_pid > 0`: 等待特定 PID 的子进程
 /// - `target_pid == 0`: 等待同进程组任意子进程
 /// - `target_pid == -1`: 等待任意子进程
-/// - `target_pid < -1`: 等待进程组 |target_pid| 内的任意子进程
+/// - `target_pid < -1`: 等待进程组 |`target_pid`| 内的任意子进程
 ///
 /// `non_blocking`: true 时子进程未退出立即返回 `Running`.
 /// `keep_zombie`: true 时读取退出码后保留子进程 Zombie 状态 (WNOWAIT 语义).
@@ -174,21 +174,21 @@ pub fn wait4_syscall(pid: i32, wstatus_ptr: u64, options: i32) -> Result<usize, 
     const PID_MAX: i32 = 0x7FFF;
     const PID_MIN: i32 = -0x8000;
     if !(PID_MIN..=PID_MAX).contains(&pid) {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     let valid_opts = WNOHANG | WUNTRACED | WCONTINUED;
     if options & !valid_opts != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     let current_pid = api::process_get_current_pid();
     if current_pid == 0 {
-        return Err(Errno::ECHILD);
+        return Err(Errno::Echild);
     }
     // wstatus 指针如果为 0, 允许 (调用方不需要状态)
     if wstatus_ptr != 0 && !crate::privileged::syscall::api::validate_user_ptr(wstatus_ptr) {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
 
     let non_blocking = options & WNOHANG != 0;
@@ -199,7 +199,7 @@ pub fn wait4_syscall(pid: i32, wstatus_ptr: u64, options: i32) -> Result<usize, 
                 // 写 wstatus (WIFEXITED | exit_code << 8)
                 let status: i32 = info.exit_code.cast_signed() << 8;
                 if !crate::privileged::syscall::api::write_struct_to_user(wstatus_ptr, &status) {
-                    return Err(Errno::EFAULT);
+                    return Err(Errno::Efault);
                 }
             }
             Ok(info.pid as usize)
@@ -210,7 +210,7 @@ pub fn wait4_syscall(pid: i32, wstatus_ptr: u64, options: i32) -> Result<usize, 
             if non_blocking {
                 Ok(0) // WNOHANG: 无可等待子进程
             } else {
-                Err(Errno::ECHILD)
+                Err(Errno::Echild)
             }
         }
     }
@@ -249,7 +249,7 @@ struct SiginfoChld {
     si_signo: i32,
     /// errno (恒 0)
     si_errno: i32,
-    /// 来源码 (CLD_EXITED)
+    /// 来源码 (`CLD_EXITED`)
     si_code: i32,
     /// 对齐填充
     __pad0: i32,
@@ -269,8 +269,8 @@ struct SiginfoChld {
 
 /// `waitid(idtype, id, infop, options)` 策略 — 等待子进程状态变化
 ///
-/// SIMPLIFIED: 1) `si_code` 恒为 CLD_EXITED — 信号投递路径未记录致死信号
-/// (termsig), 无法区分 CLD_KILLED/CLD_DUMPED; 影响面: 被信号终止的子进程
+/// SIMPLIFIED: 1) `si_code` 恒为 `CLD_EXITED` — 信号投递路径未记录致死信号
+/// (termsig), 无法区分 `CLD_KILLED/CLD_DUMPED`; 影响面: 被信号终止的子进程
 /// siginfo 归类为正常退出; 何时需扩展: 信号投递记录 termsig 至 Process 后映射.
 /// 2) `si_uid` 恒 0 — 无 uid 模型 (SGEG PWM). 3) 拒绝 WSTOPPED/WCONTINUED
 /// (EINVAL) — 无进程 stop/continue 状态跟踪, 作业控制等待不可用.
@@ -287,33 +287,33 @@ pub fn waitid_syscall(idtype: i32, id: u64, infop: u64, options: i32) -> Result<
     const PID_MAX: u64 = 0x7FFF;
     const VALID_OPTS: i32 = WEXITED | WSTOPPED | WCONTINUED | WNOHANG | WNOWAIT;
     if options & !VALID_OPTS != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     // 必须指定等待类别之一 (Linux 语义)
     if options & (WEXITED | WSTOPPED | WCONTINUED) == 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     // 无 stopped/continued 状态跟踪 (见函数级 SIMPLIFIED 注释)
     if options & (WSTOPPED | WCONTINUED) != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     let target: i32 = match idtype {
         P_ALL => -1,
         P_PID => {
             if id == 0 || id > PID_MAX {
-                return Err(Errno::EINVAL);
+                return Err(Errno::Einval);
             }
             crate::functions::intcast::low_i32_from_u64(id)
         }
         P_PGID => {
             if id == 0 || id > PID_MAX {
-                return Err(Errno::EINVAL);
+                return Err(Errno::Einval);
             }
             // wait_reap 进程组语义: target < -1 → 匹配 pgid == |target|
             -crate::functions::intcast::low_i32_from_u64(id)
         }
-        _ => return Err(Errno::EINVAL),
+        _ => return Err(Errno::Einval),
     };
 
     let non_blocking = options & WNOHANG != 0;
@@ -335,14 +335,14 @@ pub fn waitid_syscall(idtype: i32, id: u64, infop: u64, options: i32) -> Result<
                     __pad: [0; 96],
                 };
                 if !crate::privileged::syscall::api::write_struct_to_user(infop, &si) {
-                    return Err(Errno::EFAULT);
+                    return Err(Errno::Efault);
                 }
             }
             Ok(0)
         }
         // WNOHANG: 子进程尚未退出
         WaitOutcome::Running => Ok(0),
-        WaitOutcome::NoChild => Err(Errno::ECHILD),
+        WaitOutcome::NoChild => Err(Errno::Echild),
     }
 }
 
@@ -372,10 +372,10 @@ mod tests {
     #[test]
     fn wait4_rejects_invalid_pid_and_options() {
         // pid 超出 [-32768, 32767] → EINVAL
-        assert!(matches!(wait4_syscall(0x8000, 0, 0), Err(Errno::EINVAL)));
-        assert!(matches!(wait4_syscall(-0x8001, 0, 0), Err(Errno::EINVAL)));
+        assert!(matches!(wait4_syscall(0x8000, 0, 0), Err(Errno::Einval)));
+        assert!(matches!(wait4_syscall(-0x8001, 0, 0), Err(Errno::Einval)));
         // options 含非法位 → EINVAL
-        assert!(matches!(wait4_syscall(-1, 0, 0x10), Err(Errno::EINVAL)));
+        assert!(matches!(wait4_syscall(-1, 0, 0x10), Err(Errno::Einval)));
     }
 
     #[test]
@@ -383,22 +383,22 @@ mod tests {
         // 未指定等待类别 → EINVAL
         assert!(matches!(
             waitid_syscall(P_ALL, 0, 0, WNOHANG),
-            Err(Errno::EINVAL)
+            Err(Errno::Einval)
         ));
         // 含 WSTOPPED (无状态跟踪) → EINVAL
         assert!(matches!(
             waitid_syscall(P_ALL, 0, 0, WSTOPPED),
-            Err(Errno::EINVAL)
+            Err(Errno::Einval)
         ));
         // idtype 非法 → EINVAL
         assert!(matches!(
             waitid_syscall(99, 0, 0, WEXITED),
-            Err(Errno::EINVAL)
+            Err(Errno::Einval)
         ));
         // P_PID 下 id == 0 → EINVAL
         assert!(matches!(
             waitid_syscall(P_PID, 0, 0, WEXITED),
-            Err(Errno::EINVAL)
+            Err(Errno::Einval)
         ));
     }
 }

@@ -58,6 +58,7 @@ pub struct TraceEvent {
 
 impl TraceEvent {
     /// 构造全零事件 (时间戳与所有参数为 0)
+    #[must_use]
     pub const fn zero() -> Self {
         Self {
             timestamp: 0,
@@ -84,8 +85,15 @@ pub struct FtraceState {
     points: [AtomicU64; MAX_TRACE_POINTS],
 }
 
+impl Default for FtraceState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FtraceState {
     /// 构造初始 (禁用) 状态的 `FtraceState`
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             buf: RingBuffer::new(),
@@ -185,6 +193,7 @@ impl FtraceState {
 pub static FTRACE: FtraceState = FtraceState::new();
 
 /// 计算 FNV-1a 32-bit
+#[must_use]
 pub const fn fnv1a_32(s: &[u8]) -> u32 {
     let mut h: u32 = 0x811C_9DC5;
     let mut i = 0;
@@ -198,6 +207,7 @@ pub const fn fnv1a_32(s: &[u8]) -> u32 {
 
 /// 读取 TSC / cntvct (跨架构)
 #[inline]
+#[must_use]
 pub fn rd_timestamp() -> u64 {
     #[cfg(target_arch = "x86_64")]
     {

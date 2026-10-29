@@ -28,6 +28,7 @@ pub const PROT_WRITE: i32 = 0x2;
 pub const PROT_EXEC: i32 = 0x4;
 
 /// 将 POSIX prot 转换为 `PageFlags` (策略决策)
+#[must_use]
 pub fn prot_to_page_flags(prot: i32) -> PageFlags {
     let mut flags = PageFlags::empty();
 
@@ -61,16 +62,16 @@ pub fn prot_to_page_flags(prot: i32) -> PageFlags {
 pub fn mprotect_syscall(addr: u64, len: u64, prot: i32) -> Result<usize, Errno> {
     // 验证 addr 页对齐
     if addr & 0xFFF != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     // 验证 len > 0
     if len == 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     // 验证 prot 合法
     let valid_prot = PROT_NONE | PROT_READ | PROT_WRITE | PROT_EXEC;
     if prot & !valid_prot != 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
 
     // 转换 prot → PageFlags
@@ -81,10 +82,10 @@ pub fn mprotect_syscall(addr: u64, len: u64, prot: i32) -> Result<usize, Errno> 
     let cr3 = crate::privileged::proc::process_get_cr3(
         crate::privileged::proc::process_get_current_pid(),
     )
-    .ok_or(Errno::ENOMEM)?;
+    .ok_or(Errno::Enomem)?;
 
     // 委托 privileged 层执行页表修改
-    vma_get_current_mm().map_or(Err(Errno::ENOMEM), |mm| {
+    vma_get_current_mm().map_or(Err(Errno::Enomem), |mm| {
         match mm.mprotect(
             crate::functions::intcast::usize_from_u64(addr),
             crate::functions::intcast::usize_from_u64(len),

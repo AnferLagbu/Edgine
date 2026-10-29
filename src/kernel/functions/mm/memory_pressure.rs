@@ -34,6 +34,7 @@ pub use crate::privileged::mm::pressure::{
     MemoryPressure, current_pressure, previous_pressure, update_pressure,
 };
 
+use crate::functions::error::AlreadyRegistered;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 // ============================================================================
@@ -58,11 +59,7 @@ pub fn set_thresholds(warning: u64, critical: u64, emergency: u64) {
 ///
 /// 策略: 4 级双阈值状态机 (绝对值 + 百分比).
 fn classify_pressure(free_pages: u64, total_pages: u64) -> MemoryPressure {
-    let ratio = if total_pages > 0 {
-        free_pages * 100 / total_pages
-    } else {
-        100
-    };
+    let ratio = (free_pages * 100).checked_div(total_pages).unwrap_or(100);
 
     let (thr_warn, thr_crit, thr_emer) = (
         FREE_PAGES_THRESHOLD_WARNING.load(Ordering::Acquire),
@@ -85,17 +82,20 @@ fn classify_pressure(free_pages: u64, total_pages: u64) -> MemoryPressure {
 ///
 /// # Errors
 ///
-/// 当分级策略已被注册时返回 `Err(())`.
-pub fn register_pressure_classifier() -> Result<(), ()> {
-    crate::privileged::mm::pressure::register_pressure_classifier(classify_pressure).map_err(|_| ())
+/// 当分级策略已被注册时返回 `Err(AlreadyRegistered)`.
+pub fn register_pressure_classifier() -> Result<(), AlreadyRegistered> {
+    crate::privileged::mm::pressure::register_pressure_classifier(classify_pressure)
+        .map_err(|_| AlreadyRegistered)
 }
 
 /// 查询当前内存压力是否已达临界级 (critical)。
+#[must_use]
 pub fn is_pressure_critical() -> bool {
     current_pressure().is_critical()
 }
 
 /// 查询当前内存压力是否已达紧急级 (emergency)。
+#[must_use]
 pub fn is_pressure_emergency() -> bool {
     current_pressure().is_emergency()
 }
@@ -160,8 +160,8 @@ impl FrameAllocDecision for PressureAwareAllocPolicy {
 ///
 /// # Errors
 ///
-/// 当分配策略已被注册时返回 `Err(())`.
-pub fn register_pressure_aware_policy() -> Result<(), ()> {
+/// 当分配策略已被注册时返回 `Err(AlreadyRegistered)`.
+pub fn register_pressure_aware_policy() -> Result<(), AlreadyRegistered> {
     static POLICY: PressureAwareAllocPolicy = PressureAwareAllocPolicy;
-    crate::privileged::mm::register_alloc_decision(&POLICY).map_err(|_| ())
+    crate::privileged::mm::register_alloc_decision(&POLICY).map_err(|_| AlreadyRegistered)
 }

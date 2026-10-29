@@ -91,11 +91,12 @@ pub struct ShadowStack {
 
 impl ShadowStack {
     /// 创建 Shadow Stack 描述符
+    #[must_use]
     pub fn new(base: u64, size: u64) -> Self {
         Self {
             base,
             size,
-            ssp: AtomicU64::new(base + size as u64), // 栈从高向低增长
+            ssp: AtomicU64::new(base + size), // 栈从高向低增长
             active: AtomicBool::new(false),
         }
     }
@@ -127,7 +128,7 @@ impl ShadowStack {
 
     /// 检查 SSP 是否在有效范围
     pub fn is_ssp_valid(&self, ssp: u64) -> bool {
-        ssp >= self.base && ssp <= self.base + self.size as u64
+        ssp >= self.base && ssp <= self.base + self.size
     }
 }
 
@@ -135,19 +136,33 @@ impl ShadowStack {
 // CET 子系统
 // ============================================================================
 
-/// CET 功能支持标志
-#[derive(Debug, Clone, Copy)]
-pub struct CetCapabilities {
+/// CET CPU 硬件支持能力 (CPUID / ID 寄存器探测结果)
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CetSupport {
     /// 是否支持 Shadow Stack
     pub shadow_stack: bool,
     /// 是否支持 IBT (Indirect Branch Tracking)
     pub ibt: bool,
     /// 是否支持 WRSS (Write to Shadow Stack) 指令
     pub wrss: bool,
+}
+
+/// CET 运行时启用状态
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CetEnabled {
     /// 是否已启用 Shadow Stack
-    pub shadow_stack_enabled: bool,
+    pub shadow_stack: bool,
     /// 是否已启用 IBT
-    pub ibt_enabled: bool,
+    pub ibt: bool,
+}
+
+/// CET 功能支持标志
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CetCapabilities {
+    /// CPU 硬件支持能力
+    pub support: CetSupport,
+    /// 运行时启用状态
+    pub enabled: CetEnabled,
 }
 
 /// CET 子系统
@@ -160,16 +175,27 @@ pub struct CetSubsystem {
     initialized: AtomicBool,
 }
 
+impl Default for CetSubsystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CetSubsystem {
     /// 构造一个未初始化 (能力探测结果全为 false) 的 CET 子系统实例。
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             caps: IrqSpinLock::new(CetCapabilities {
-                shadow_stack: false,
-                ibt: false,
-                wrss: false,
-                shadow_stack_enabled: false,
-                ibt_enabled: false,
+                support: CetSupport {
+                    shadow_stack: false,
+                    ibt: false,
+                    wrss: false,
+                },
+                enabled: CetEnabled {
+                    shadow_stack: false,
+                    ibt: false,
+                },
             }),
             kernel_shadow_stacks: IrqSpinLock::new(Vec::new()),
             initialized: AtomicBool::new(false),
@@ -186,12 +212,12 @@ impl CetSubsystem {
         crate::klog_ffi!(
             klog_ffi_info,
             "[CET] capabilities: shadow_stack={}, ibt={}, wrss={}",
-            caps.shadow_stack,
-            caps.ibt,
-            caps.wrss
+            caps.support.shadow_stack,
+            caps.support.ibt,
+            caps.support.wrss
         );
 
-        if caps.shadow_stack {
+        if caps.support.shadow_stack {
             // 尝试启用内核态 Shadow Stack
             Self::enable_kernel_shadow_stack();
         }
@@ -215,11 +241,15 @@ impl CetSubsystem {
             // aarch64: 检查 ID_AA64ISAR1_EL1 的 PAC/BTI 位
             // 简化: QEMU virt 默认支持 PAC
             CetCapabilities {
-                shadow_stack: true, // PAC 作为等价
-                ibt: true,          // BTI 作为等价
-                wrss: false,
-                shadow_stack_enabled: false,
-                ibt_enabled: false,
+                support: CetSupport {
+                    shadow_stack: true, // PAC 作为等价
+                    ibt: true,          // BTI 作为等价
+                    wrss: false,
+                },
+                enabled: CetEnabled {
+                    shadow_stack: false,
+                    ibt: false,
+                },
             }
         }
     }
@@ -227,27 +257,31 @@ impl CetSubsystem {
     /// 由 CPUID.07H:ECX/EDX 解码 CET 能力 (纯函数, 可单测)。
     ///
     /// Intel SDM 规范 (CPUID.07H.0 结构化扩展功能位):
-    /// - `ECX[7]`  = CET_IBT (间接分支跟踪 Indirect Branch Tracking)
-    /// - `ECX[20]` = CET_SS (影子栈 Shadow Stack)
+    /// - `ECX[7]`  = `CET_IBT` (间接分支跟踪 Indirect Branch Tracking)
+    /// - `ECX[20]` = `CET_SS` (影子栈 Shadow Stack)
     /// - `EDX[14]` = WRSS (用户态影子栈写 User-mode Write to Shadow Stack)
     ///
     /// # 回归约束
-    /// 旧实现误用 `ECX[6]` (PREFETCHWT1) 判 shadow_stack, 会把含 PREFETCHWT1
+    /// 旧实现误用 `ECX[6]` (PREFETCHWT1) 判 `shadow_stack`, 会把含 PREFETCHWT1
     /// 但无 CET 的 CPU 误判为支持 → 触发 `CR4.CET` 写入 #GP (boot 崩溃)。
     /// 本函数是 `enable_kernel_shadow_stack` 写 CR4 前的唯一判定依据。
     #[cfg(target_arch = "x86_64")]
     fn decode_cpuid_caps(ecx: u32, edx: u32) -> CetCapabilities {
         let mut caps = CetCapabilities {
-            shadow_stack: false,
-            ibt: false,
-            wrss: false,
-            shadow_stack_enabled: false,
-            ibt_enabled: false,
+            support: CetSupport {
+                shadow_stack: false,
+                ibt: false,
+                wrss: false,
+            },
+            enabled: CetEnabled {
+                shadow_stack: false,
+                ibt: false,
+            },
         };
-        caps.ibt = (ecx >> 7) & 1 == 1;
-        caps.shadow_stack = (ecx >> 20) & 1 == 1;
-        if caps.shadow_stack {
-            caps.wrss = (edx >> 14) & 1 == 1;
+        caps.support.ibt = (ecx >> 7) & 1 == 1;
+        caps.support.shadow_stack = (ecx >> 20) & 1 == 1;
+        if caps.support.shadow_stack {
+            caps.support.wrss = (edx >> 14) & 1 == 1;
         }
         caps
     }
@@ -309,8 +343,7 @@ impl CetSubsystem {
     pub fn alloc_kernel_shadow_stack(&self, cpu_id: u32) -> Option<u64> {
         // 分配 Shadow Stack 物理页 (与 `create_user_shadow_stack` 同机制,
         // 经 PMM 分配后映射到内核高半区)。
-        let pages_needed =
-            (SHADOW_STACK_DEFAULT_SIZE + SHADOW_STACK_PAGE_SIZE - 1) / SHADOW_STACK_PAGE_SIZE;
+        let pages_needed = SHADOW_STACK_DEFAULT_SIZE.div_ceil(SHADOW_STACK_PAGE_SIZE);
         let phys_addr = crate::privileged::mm::pmm_alloc_pages_phys(pages_needed)?;
         let virt_addr = phys_addr.as_u64() + crate::privileged::mm::KERNEL_BASE;
 
@@ -326,7 +359,7 @@ impl CetSubsystem {
         // x86_64: 设置 IA32_PL0_SSP
         #[cfg(target_arch = "x86_64")]
         {
-            if self.caps.lock().shadow_stack_enabled {
+            if self.caps.lock().enabled.shadow_stack {
                 // SAFETY: 写入 IA32_PL0_SSP 设置内核态 Shadow Stack 指针
                 unsafe {
                     crate::privileged::cpu::msr::write_msr(x86_msrs::IA32_PL0_SSP, ssp);
@@ -339,7 +372,7 @@ impl CetSubsystem {
 
     /// 为用户线程创建 Shadow Stack
     pub fn create_user_shadow_stack(&self, size: usize) -> Option<ShadowStack> {
-        if !self.caps.lock().shadow_stack {
+        if !self.caps.lock().support.shadow_stack {
             return None;
         }
         let actual_size = if size == 0 {
@@ -391,11 +424,11 @@ impl CetSubsystem {
     ///
     /// # Safety
     ///
-    /// 调用方必须确保 `caps.shadow_stack_enabled` 为 true 且 `ssp` 指向有效
+    /// 调用方必须确保 `caps.enabled.shadow_stack` 为 true 且 `ssp` 指向有效
     /// Shadow Stack 内存 (x86_64 实装).
     #[cfg(target_arch = "x86_64")]
     pub unsafe fn configure_user_cet_msr(&self, ssp: u64) {
-        if !self.caps.lock().shadow_stack_enabled {
+        if !self.caps.lock().enabled.shadow_stack {
             return;
         }
 
@@ -438,11 +471,11 @@ impl CetSubsystem {
     ///
     /// # Safety
     ///
-    /// 调用方必须确保 `caps.shadow_stack` 为 true 且 `table_addr` 指向有效的
+    /// 调用方必须确保 `caps.support.shadow_stack` 为 true 且 `table_addr` 指向有效的
     /// SSP 表内存 (16 字节对齐; x86_64 实装).
     #[cfg(target_arch = "x86_64")]
     pub unsafe fn configure_interrupt_ssp_table(&self, table_addr: u64) {
-        if !self.caps.lock().shadow_stack {
+        if !self.caps.lock().support.shadow_stack {
             return;
         }
 
@@ -554,6 +587,7 @@ pub fn cet_init() {
 }
 
 /// 获取全局 CET 子系统
+#[must_use]
 pub fn cet_subsystem() -> &'static CetSubsystem {
     &CET_SUBSYSTEM
 }
@@ -581,19 +615,19 @@ pub extern "C" fn sys_cet(cmd: u64, a1: u64, _a2: u64) -> i64 {
             // capabilities
             let caps = cet_subsystem().capabilities();
             let mut flags: u64 = 0;
-            if caps.shadow_stack {
+            if caps.support.shadow_stack {
                 flags |= 1 << 0;
             }
-            if caps.ibt {
+            if caps.support.ibt {
                 flags |= 1 << 1;
             }
-            if caps.wrss {
+            if caps.support.wrss {
                 flags |= 1 << 2;
             }
-            if caps.shadow_stack_enabled {
+            if caps.enabled.shadow_stack {
                 flags |= 1 << 3;
             }
-            if caps.ibt_enabled {
+            if caps.enabled.ibt {
                 flags |= 1 << 4;
             }
             flags.cast_signed()
@@ -626,21 +660,21 @@ mod tests {
         // ECX[6]=1 (PREFETCHWT1) 但 ECX[20]=0: 不得判定为 shadow_stack 支持
         let no_cet = CetSubsystem::decode_cpuid_caps(1 << 6, 0);
         assert!(
-            !no_cet.shadow_stack,
+            !no_cet.support.shadow_stack,
             "ECX[6] 是 PREFETCHWT1, 不得误判为 CET_SS"
         );
-        assert!(!no_cet.ibt, "ECX[6] 不得误判为 CET_IBT");
+        assert!(!no_cet.support.ibt, "ECX[6] 不得误判为 CET_IBT");
 
         // ECX[20]=1: CET_SS 支持; EDX[14]=1: WRSS
         let cet = CetSubsystem::decode_cpuid_caps(1 << 20, 1 << 14);
-        assert!(cet.shadow_stack, "ECX[20] = CET_SS 应置位");
-        assert!(cet.wrss, "EDX[14] = WRSS 应置位 (CET_SS 下有效)");
-        assert!(!cet.ibt, "ECX[7] 未置位时 IBT 应为 false");
+        assert!(cet.support.shadow_stack, "ECX[20] = CET_SS 应置位");
+        assert!(cet.support.wrss, "EDX[14] = WRSS 应置位 (CET_SS 下有效)");
+        assert!(!cet.support.ibt, "ECX[7] 未置位时 IBT 应为 false");
 
         // ECX[7]=1: CET_IBT, 与 shadow_stack 独立
         let ibt = CetSubsystem::decode_cpuid_caps(1 << 7, 0);
-        assert!(ibt.ibt, "ECX[7] = CET_IBT 应置位");
-        assert!(!ibt.shadow_stack, "IBT 独立于 CET_SS");
-        assert!(!ibt.wrss, "无 CET_SS 时 WRSS 应保持 false");
+        assert!(ibt.support.ibt, "ECX[7] = CET_IBT 应置位");
+        assert!(!ibt.support.shadow_stack, "IBT 独立于 CET_SS");
+        assert!(!ibt.support.wrss, "无 CET_SS 时 WRSS 应保持 false");
     }
 }

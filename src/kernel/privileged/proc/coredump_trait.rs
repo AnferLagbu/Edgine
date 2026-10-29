@@ -82,6 +82,7 @@ pub struct RegSnapshot {
 
 impl RegSnapshot {
     /// 有效寄存器视图 (x86_64 27 项 / aarch64 34 项)
+    #[must_use]
     pub fn as_slice(&self) -> &[u64] {
         &self.regs[..self.len]
     }
@@ -91,6 +92,7 @@ impl RegSnapshot {
 ///
 /// `frame_addr == 0` 时返回 `None`.
 #[cfg(target_arch = "x86_64")]
+#[must_use]
 pub fn read_interrupt_regs(frame_addr: u64) -> Option<RegSnapshot> {
     if frame_addr == 0 {
         return None;
@@ -131,6 +133,7 @@ pub fn read_interrupt_regs(frame_addr: u64) -> Option<RegSnapshot> {
 ///
 /// `frame_addr == 0` 时返回 `None`.
 #[cfg(target_arch = "aarch64")]
+#[must_use]
 pub fn read_interrupt_regs(frame_addr: u64) -> Option<RegSnapshot> {
     if frame_addr == 0 {
         return None;

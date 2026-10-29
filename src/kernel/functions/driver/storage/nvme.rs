@@ -46,6 +46,13 @@ use super::NVME_CONTROLLERS;
 use crate::slog_info;
 use crate::slog_warn;
 
+/// `NVMe` 扇区读写失败
+///
+/// 涵盖: 控制器未初始化、`count` 为 0、DMA 缓冲区分配失败、
+/// I/O 命令提交失败 (队列满、超时或控制器报错)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NvmeError;
+
 // ============================================================================
 // BAR0 寄存器偏移
 // ============================================================================
@@ -151,6 +158,7 @@ pub struct ControllerCapabilities {
 
 impl ControllerCapabilities {
     /// 从 CAP 寄存器解析
+    #[must_use]
     pub fn from_register(val: u64) -> Self {
         let mqes = (val & 0xFFFF) as u16;
         let dstrd = ((val >> 32) & 0xF) as u8;
@@ -176,6 +184,7 @@ pub struct ControllerStatus {
 
 impl ControllerStatus {
     /// 从 CSTS 寄存器解析
+    #[must_use]
     pub fn from_register(val: u32) -> Self {
         Self {
             ready: val & CSTS_RDY != 0,
@@ -219,6 +228,7 @@ pub struct NvmeQueuePair {
 
 impl NvmeQueuePair {
     /// 创建新的队列对
+    #[must_use]
     pub fn new(qid: u16, depth: u32, db_stride: u32) -> Self {
         Self {
             qid,
@@ -235,6 +245,7 @@ impl NvmeQueuePair {
     }
 
     /// 队列是否已创建
+    #[must_use]
     pub fn is_created(&self) -> bool {
         self.created
     }
@@ -245,16 +256,19 @@ impl NvmeQueuePair {
     }
 
     /// 队列 ID
+    #[must_use]
     pub fn id(&self) -> u16 {
         self.qid
     }
 
     /// 队列深度
+    #[must_use]
     pub fn depth(&self) -> u32 {
         self.depth
     }
 
     /// SQ tail
+    #[must_use]
     pub fn sq_tail(&self) -> u32 {
         self.sq_tail
     }
@@ -265,6 +279,7 @@ impl NvmeQueuePair {
     }
 
     /// CQ head
+    #[must_use]
     pub fn cq_head(&self) -> u32 {
         self.cq_head
     }
@@ -275,6 +290,7 @@ impl NvmeQueuePair {
     }
 
     /// Admin CQ phase
+    #[must_use]
     pub fn admin_cq_phase(&self) -> u16 {
         self.admin_cq_phase
     }
@@ -285,6 +301,7 @@ impl NvmeQueuePair {
     }
 
     /// I/O CQ phase
+    #[must_use]
     pub fn io_cq_phase(&self) -> u16 {
         self.io_cq_phase
     }
@@ -309,6 +326,7 @@ impl NvmeQueuePair {
     }
 
     /// 门铃步长
+    #[must_use]
     pub fn db_stride(&self) -> u32 {
         self.db_stride
     }
@@ -371,6 +389,7 @@ pub struct NvmeIdentifyNamespace {
 /// - `mn` — Model Number (offset 24, 40 字节, 空终止 ASCII)
 ///
 /// 数据长度不足时返回 `None`.
+#[must_use]
 pub fn parse_identify_controller(data: &[u8]) -> Option<(u32, [u8; 40])> {
     if data.len() < 520 {
         return None;
@@ -386,9 +405,10 @@ pub fn parse_identify_controller(data: &[u8]) -> Option<(u32, [u8; 40])> {
 /// 返回 `(nsze, flbas, lbaf_data_at_index)`:
 /// - `nsze` — Namespace Size (offset 0, LE u64)
 /// - `flbas` — Formatted LBA size (offset 26)
-/// - `lbaf_data` — LBA Format 0..15 数据 (offset 128 + lbaf_idx*4, LE u32)
+/// - `lbaf_data` — LBA Format 0..15 数据 (offset 128 + `lbaf_idx`*4, LE u32)
 ///
 /// 数据长度不足 192 字节 (LBA Format 表最末项可达 offset 188..192) 时返回 `None`.
+#[must_use]
 pub fn parse_identify_namespace(data: &[u8]) -> Option<(u64, u8, u32)> {
     if data.len() < 192 {
         return None;
@@ -416,7 +436,7 @@ pub fn parse_identify_namespace(data: &[u8]) -> Option<(u64, u8, u32)> {
 pub struct NvmeController {
     /// MMIO 寄存器句柄
     mmio: IoMem,
-    /// 门铃步长 (`1 << DSTRD`, 4 字节门铃槽单位; init_controller 由 CAP 写入)
+    /// 门铃步长 (`1 << DSTRD`, 4 字节门铃槽单位; `init_controller` 由 CAP 写入)
     db_stride: u32,
     /// Admin SQ 虚拟地址 (CPU 侧队列访问, direct-map)
     admin_sq_virt: u64,
@@ -458,6 +478,7 @@ impl NvmeController {
     /// # 参数
     /// - `bar0_phys`: `PCIe` BAR0 MMIO 物理基地址
     /// - `len`: BAR0 MMIO 区域大小 (典型 0x2000)
+    #[must_use]
     pub fn new(bar0_phys: u64, len: usize) -> Option<Self> {
         let mmio = IoMem::from_pci_bar(PhysAddr::new(bar0_phys), len, "nvme-bar0").ok()?;
         Some(Self {
@@ -630,20 +651,20 @@ impl NvmeController {
         let sq_virt = self.admin_sq_virt;
         let cq_virt = self.admin_cq_virt;
         let depth = self.admin_queue.depth();
-        let db_stride = self.admin_queue.db_stride();
 
         // 通过 privileged safe wrapper 执行 unsafe 队列操作
         let result = crate::privileged::driver::storage::nvme_submit_admin_cmd(
-            sq_virt,
-            cq_virt,
-            cmd,
-            &mut self.admin_queue.sq_tail,
-            &mut self.admin_queue.cq_head,
-            &mut self.admin_queue.admin_cq_phase,
-            depth,
-            db_stride,
-            &self.mmio,
-            cid,
+            crate::privileged::driver::storage::NvmeCmdSubmit {
+                cmd_ptr: sq_virt,
+                cq_ptr: cq_virt,
+                cmd,
+                tail: &mut self.admin_queue.sq_tail,
+                cq_head: &mut self.admin_queue.cq_head,
+                phase: &mut self.admin_queue.admin_cq_phase,
+                depth,
+                iomem: &self.mmio,
+                cid,
+            },
         );
 
         match result {
@@ -658,13 +679,13 @@ impl NvmeController {
                     status: 0x0001, // Phase=1, SC=0
                 })
             }
-            Err(()) => Err(()),
+            Err(_) => Err(()),
         }
     }
 
     /// I/O SQ 门铃偏移 (CQ 门铃 = 此值 + 4, 与 submit/ISR 路径共用)
     ///
-    /// 步长取控制器 `db_stride` (init_controller 写入 `1 << DSTRD`);
+    /// 步长取控制器 `db_stride` (`init_controller` 写入 `1 << DSTRD`);
     /// 队列对内 `db_stride` 恒为构造初值 0, 不可用作步长来源。
     fn io_db_offset(&self) -> usize {
         // I/O doorbell offset = DB_BASE + IO_QID * 8 * stride
@@ -672,28 +693,29 @@ impl NvmeController {
     }
 
     /// 提交 I/O 命令并等待完成
-    fn submit_io_cmd(&mut self, cmd: fw_nvme::NvmeCommand) -> Result<(), ()> {
+    fn submit_io_cmd(&mut self, cmd: fw_nvme::NvmeCommand) -> Result<(), NvmeError> {
         let cid = self.io_queue.next_io_cid();
         // CPU 侧队列访问用虚拟地址 (direct-map), 物理地址仅供设备侧命令
         let sq_virt = self.io_sq_virt;
         let cq_virt = self.io_cq_virt;
         let depth = self.io_queue.depth();
-        let db_stride = self.io_queue.db_stride();
         let io_db_offset = self.io_db_offset();
 
         crate::privileged::driver::storage::nvme_submit_io_cmd(
-            sq_virt,
-            cq_virt,
-            cmd,
-            &mut self.io_queue.sq_tail,
-            &mut self.io_queue.cq_head,
-            &mut self.io_queue.io_cq_phase,
-            depth,
-            db_stride,
-            &self.mmio,
-            cid,
+            crate::privileged::driver::storage::NvmeCmdSubmit {
+                cmd_ptr: sq_virt,
+                cq_ptr: cq_virt,
+                cmd,
+                tail: &mut self.io_queue.sq_tail,
+                cq_head: &mut self.io_queue.cq_head,
+                phase: &mut self.io_queue.io_cq_phase,
+                depth,
+                iomem: &self.mmio,
+                cid,
+            },
             io_db_offset,
         )
+        .map_err(|_| NvmeError)
     }
 
     // ── 控制器初始化流程 ──
@@ -718,11 +740,9 @@ impl NvmeController {
         self.db_stride = 1u32 << cap.doorbell_stride;
 
         // 禁用控制器 (如果已启用)
-        if self.is_ready() {
-            if !self.disable_and_wait() {
-                slog_warn!(Driver, "控制器禁用超时");
-                return false;
-            }
+        if self.is_ready() && !self.disable_and_wait() {
+            slog_warn!(Driver, "控制器禁用超时");
+            return false;
         }
 
         // 分配 Admin 队列 DMA 内存 (virt 供 CPU 侧访问, phys 供寄存器写入)
@@ -779,7 +799,11 @@ impl NvmeController {
             // §6.4 storage 专项 0 号子步: 经 privileged DMA 拷贝读取数据字节,
             // 解析 (纯函数) 在 functions 层完成
             let mut data = [0u8; 520];
-            crate::privileged::driver::storage::nvme_copy_from_dma(data.as_mut_ptr(), vaddr, 520);
+            crate::privileged::driver::storage::nvme_copy_from_dma(
+                data.as_mut_ptr() as u64,
+                vaddr,
+                520,
+            );
             if let Some((nn, model)) = parse_identify_controller(&data) {
                 self.namespace_count = nn;
 
@@ -818,7 +842,11 @@ impl NvmeController {
             // §6.4 storage 专项 0 号子步: 经 privileged DMA 拷贝读取数据字节,
             // 解析 (纯函数) 在 functions 层完成
             let mut data = [0u8; 192];
-            crate::privileged::driver::storage::nvme_copy_from_dma(data.as_mut_ptr(), vaddr, 192);
+            crate::privileged::driver::storage::nvme_copy_from_dma(
+                data.as_mut_ptr() as u64,
+                vaddr,
+                192,
+            );
             if let Some((nsze, flbas, lbaf_data)) = parse_identify_namespace(&data) {
                 self.namespace_size_lba = nsze;
 
@@ -917,16 +945,22 @@ impl NvmeController {
     ///
     /// # Errors
     ///
-    /// - 控制器尚未初始化时返回 `Err(())`
-    /// - `count` 为 0 时返回 `Err(())`
-    /// - DMA 缓冲区分配失败时返回 `Err(())`
-    /// - IO 命令提交失败 (队列满、超时或控制器报错) 时返回 `Err(())`
-    pub fn read(&mut self, nsid: u32, lba: u64, count: u16, buffer: *mut u8) -> Result<(), ()> {
+    /// - 控制器尚未初始化时返回 [`NvmeError`]
+    /// - `count` 为 0 时返回 [`NvmeError`]
+    /// - DMA 缓冲区分配失败时返回 [`NvmeError`]
+    /// - IO 命令提交失败 (队列满、超时或控制器报错) 时返回 [`NvmeError`]
+    pub fn read(
+        &mut self,
+        nsid: u32,
+        lba: u64,
+        count: u16,
+        buffer: *mut u8,
+    ) -> Result<(), NvmeError> {
         if !self.initialized {
-            return Err(());
+            return Err(NvmeError);
         }
         if count == 0 {
-            return Err(());
+            return Err(NvmeError);
         }
 
         let byte_count = (count as usize) * self.lba_format_size as usize;
@@ -934,13 +968,13 @@ impl NvmeController {
         // 分配 DMA 缓冲区 (RAII 句柄: 函数返回即归还)
         let Some(buf) = crate::privileged::driver::storage::nvme_alloc_dma_buffer(byte_count)
         else {
-            return Err(());
+            return Err(NvmeError);
         };
         let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
         let buf_dma_addr = buf.dma_addr().as_u64();
 
         let nlb = crate::functions::intcast::low_u16_from_usize(
-            (byte_count + (self.lba_format_size as usize) - 1) / (self.lba_format_size as usize),
+            byte_count.div_ceil(self.lba_format_size as usize),
         );
 
         // 构造读命令
@@ -952,7 +986,11 @@ impl NvmeController {
 
         if result.is_ok() {
             // 从 DMA 缓冲区复制到用户缓冲区
-            crate::privileged::driver::storage::nvme_copy_from_dma(buffer, buf_vaddr, byte_count);
+            crate::privileged::driver::storage::nvme_copy_from_dma(
+                buffer as u64,
+                buf_vaddr,
+                byte_count,
+            );
         }
 
         result
@@ -962,16 +1000,22 @@ impl NvmeController {
     ///
     /// # Errors
     ///
-    /// - 控制器尚未初始化时返回 `Err(())`
-    /// - `count` 为 0 时返回 `Err(())`
-    /// - DMA 缓冲区分配失败时返回 `Err(())`
-    /// - IO 命令提交失败 (队列满、超时或控制器报错) 时返回 `Err(())`
-    pub fn write(&mut self, nsid: u32, lba: u64, count: u16, buffer: *const u8) -> Result<(), ()> {
+    /// - 控制器尚未初始化时返回 [`NvmeError`]
+    /// - `count` 为 0 时返回 [`NvmeError`]
+    /// - DMA 缓冲区分配失败时返回 [`NvmeError`]
+    /// - IO 命令提交失败 (队列满、超时或控制器报错) 时返回 [`NvmeError`]
+    pub fn write(
+        &mut self,
+        nsid: u32,
+        lba: u64,
+        count: u16,
+        buffer: *const u8,
+    ) -> Result<(), NvmeError> {
         if !self.initialized {
-            return Err(());
+            return Err(NvmeError);
         }
         if count == 0 {
-            return Err(());
+            return Err(NvmeError);
         }
 
         let byte_count = (count as usize) * self.lba_format_size as usize;
@@ -979,25 +1023,23 @@ impl NvmeController {
         // 分配 DMA 缓冲区 (RAII 句柄: 函数返回即归还)
         let Some(buf) = crate::privileged::driver::storage::nvme_alloc_dma_buffer(byte_count)
         else {
-            return Err(());
+            return Err(NvmeError);
         };
         let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
         let buf_dma_addr = buf.dma_addr().as_u64();
 
         // 复制数据到 DMA 缓冲区
-        crate::privileged::driver::storage::nvme_copy_to_dma(buf_vaddr, buffer, byte_count);
+        crate::privileged::driver::storage::nvme_copy_to_dma(buf_vaddr, buffer as u64, byte_count);
 
         let nlb = crate::functions::intcast::low_u16_from_usize(
-            (byte_count + (self.lba_format_size as usize) - 1) / (self.lba_format_size as usize),
+            byte_count.div_ceil(self.lba_format_size as usize),
         );
 
         let mut cmd = fw_nvme::NvmeCommand::write(nsid, lba, nlb, buf_dma_addr);
         cmd.mptr = buf_dma_addr;
         cmd.prp2 = 0;
 
-        let result = self.submit_io_cmd(cmd);
-
-        result
+        self.submit_io_cmd(cmd)
     }
 
     // ── 查询 API ──
@@ -1029,6 +1071,7 @@ impl NvmeController {
     /// 仅配置 PCI MSI-X capability 并返回分配的 LAPIC 向量号 (纯 PCI 操作,
     /// 不触碰控制器状态, 故为关联函数); `irq_vector` 由调用方在 ISR 注册
     /// 成功后经 [`Self::set_irq_vector`] 显式置位 (注册失败保持 None = 轮询回退)。
+    #[must_use]
     pub fn enable_msix(dev: &PciDevice) -> Option<u8> {
         use crate::privileged::pci::msi;
         // 启用 MSI-X, 请求 1 个向量 (NVMe 单 I/O CQ 中断, Table entry 0)
@@ -1058,10 +1101,10 @@ impl NvmeController {
     ///
     /// # Errors
     ///
-    /// 控制器未初始化时返回 `Err(())`。
-    pub fn io_submit_isr(&mut self, cmd: fw_nvme::NvmeCommand) -> Result<u64, ()> {
+    /// 控制器未初始化时返回 [`NvmeError`]。
+    pub fn io_submit_isr(&mut self, cmd: fw_nvme::NvmeCommand) -> Result<u64, NvmeError> {
         if !self.initialized {
-            return Err(());
+            return Err(NvmeError);
         }
         let cid = self.io_queue.next_io_cid();
         let before = self.io_cq_isr_processed.load(Ordering::Acquire);
@@ -1081,7 +1124,7 @@ impl NvmeController {
 
     /// 中断处理: 排空 Admin/I-O CQ 完成条目 (与 privileged `handle_interrupt` 等值)
     ///
-    /// 由 MSI-X ISR 经注册契约分发调用, 调用方持注册表锁 (IrqSpinLock,
+    /// 由 MSI-X ISR 经注册契约分发调用, 调用方持注册表锁 (`IrqSpinLock`,
     /// 中断安全)。返回是否有完成条目被处理。
     pub fn handle_interrupt(&mut self) -> bool {
         if !self.initialized {
@@ -1181,7 +1224,7 @@ impl BlockDevice for NvmeBlockDevice {
             .map_or(-1, |controller| {
                 match controller.read(self.namespace_id, sector, 1, buf.as_mut_ptr()) {
                     Ok(()) => 0,
-                    Err(()) => -1,
+                    Err(_) => -1,
                 }
             })
     }
@@ -1193,14 +1236,14 @@ impl BlockDevice for NvmeBlockDevice {
             .map_or(-1, |controller| {
                 match controller.write(self.namespace_id, sector, 1, buf.as_ptr()) {
                     Ok(()) => 0,
-                    Err(()) => -1,
+                    Err(_) => -1,
                 }
             })
     }
 
     fn blk_is_present(&self) -> bool {
         let controllers = NVME_CONTROLLERS.lock();
-        controllers.get(self.controller_index).map_or(false, |c| {
+        controllers.get(self.controller_index).is_some_and(|c| {
             self.namespace_id >= 1
                 && self.namespace_id <= c.namespace_count()
                 && c.namespace_size() > 0

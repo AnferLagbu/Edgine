@@ -39,6 +39,7 @@ pub struct RollbackSummary {
 impl RollbackSummary {
     /// 渲染为单行 (dmesg 友好)
     /// 返回: (96 字节 buffer, 实际写入长度)
+    #[must_use]
     pub fn render_line(&self) -> ([u8; 96], usize) {
         let mut buf = [0u8; 96];
         let prefix = b"[FREG] dom=";
@@ -130,6 +131,7 @@ pub struct AuditExporter {
 
 impl AuditExporter {
     /// 构造空的导出器: buffer 清零, 计数归零
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             output_buf: [0u8; 4096],
@@ -190,6 +192,13 @@ impl AuditExporter {
         log.iter()
             .filter(|e| e.is_some_and(|x| x.result != 0))
             .count()
+    }
+}
+
+impl Default for AuditExporter {
+    /// 等价于 [`AuditExporter::new`] (空 buffer / 计数归零)
+    fn default() -> Self {
+        Self::new()
     }
 }
 

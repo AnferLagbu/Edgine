@@ -444,7 +444,7 @@ pub extern "C" fn spin_unlock_irqrestore(lock: *const SpinLockInner, flags: &Irq
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn spin_lock_irq(lock: *const SpinLockInner) {
-    disable_interrupts();
+    let _ = disable_interrupts();
     spin_lock_raw(lock);
 }
 

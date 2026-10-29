@@ -104,7 +104,7 @@ pub const MCR_OUT2: u8 = 0x08;
 // ============================================================================
 
 /// 波特率
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BaudRate {
     /// 9600 波特.
     Baud9600,
@@ -115,11 +115,13 @@ pub enum BaudRate {
     /// 57600 波特.
     Baud57600,
     /// 115200 波特.
+    #[default]
     Baud115200,
 }
 
 impl BaudRate {
     /// 转换为分频值
+    #[must_use]
     pub const fn divisor(self) -> u16 {
         match self {
             Self::Baud9600 => BAUD_9600,
@@ -131,14 +133,8 @@ impl BaudRate {
     }
 }
 
-impl Default for BaudRate {
-    fn default() -> Self {
-        Self::Baud115200
-    }
-}
-
 /// 数据位
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DataBits {
     /// 5 位数据.
     Bits5,
@@ -147,11 +143,13 @@ pub enum DataBits {
     /// 7 位数据.
     Bits7,
     /// 8 位数据.
+    #[default]
     Bits8,
 }
 
 impl DataBits {
     /// 转换为 LCR 位域
+    #[must_use]
     pub const fn lcr_bits(self) -> u8 {
         match self {
             Self::Bits5 => 0x00,
@@ -162,16 +160,11 @@ impl DataBits {
     }
 }
 
-impl Default for DataBits {
-    fn default() -> Self {
-        Self::Bits8
-    }
-}
-
 /// 停止位
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StopBits {
     /// 1 位停止位.
+    #[default]
     One,
     /// 2 位停止位.
     Two,
@@ -179,6 +172,7 @@ pub enum StopBits {
 
 impl StopBits {
     /// 转换为 LCR 位 (1 或 2)
+    #[must_use]
     pub const fn lcr_bit(self) -> u8 {
         match self {
             Self::One => 0x00,
@@ -187,16 +181,11 @@ impl StopBits {
     }
 }
 
-impl Default for StopBits {
-    fn default() -> Self {
-        Self::One
-    }
-}
-
 /// 校验模式
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ParityMode {
     /// 无校验.
+    #[default]
     None,
     /// 奇校验.
     Odd,
@@ -210,6 +199,7 @@ pub enum ParityMode {
 
 impl ParityMode {
     /// 转换为 LCR 位域
+    #[must_use]
     pub const fn lcr_bits(self) -> u8 {
         match self {
             Self::None => 0x00,
@@ -218,12 +208,6 @@ impl ParityMode {
             Self::Mark => 0x28,
             Self::Space => 0x38,
         }
-    }
-}
-
-impl Default for ParityMode {
-    fn default() -> Self {
-        Self::None
     }
 }
 
@@ -242,6 +226,7 @@ pub struct SerialConfig {
 
 impl SerialConfig {
     /// 创建默认配置 (115200 8N1)
+    #[must_use]
     pub const fn default_115200_8n1() -> Self {
         Self {
             baud_rate: BaudRate::Baud115200,
@@ -271,6 +256,7 @@ pub enum ComPort {
 
 impl ComPort {
     /// 端口基址
+    #[must_use]
     pub const fn base(self) -> u16 {
         match self {
             Self::Com1 => COM1_BASE,
@@ -281,6 +267,7 @@ impl ComPort {
     }
 
     /// 端口名
+    #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
             Self::Com1 => "COM1",
@@ -294,6 +281,10 @@ impl ComPort {
 // ============================================================================
 // 环形缓冲区
 // ============================================================================
+
+/// 环形缓冲区已满 (压入被拒绝, 元素未被写入)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BufferFull;
 
 /// 固定容量环形缓冲区 (用于串口收发中断驱动 I/O)
 pub struct RingBuffer<T> {
@@ -319,10 +310,10 @@ impl<T: Default + Copy> RingBuffer<T> {
     ///
     /// # Errors
     ///
-    /// 当环形缓冲区已满 (`count` 达到 `SERIAL_BUFFER_SIZE`) 时返回 `Err(())`, 元素不会被压入。
-    pub fn push(&mut self, item: T) -> Result<(), ()> {
+    /// 当环形缓冲区已满 (`count` 达到 `SERIAL_BUFFER_SIZE`) 时返回 [`BufferFull`], 元素不会被压入。
+    pub fn push(&mut self, item: T) -> Result<(), BufferFull> {
         if self.count >= SERIAL_BUFFER_SIZE {
-            return Err(());
+            return Err(BufferFull);
         }
         self.buffer[self.tail] = item;
         self.tail = (self.tail + 1) % SERIAL_BUFFER_SIZE;
@@ -389,6 +380,7 @@ impl SerialPort {
     /// # 返回
     /// - `Some(SerialPort)`: 初始化成功
     /// - `None`: 端口已被占用 (`IoPort` 别名检测失败)
+    #[must_use]
     pub fn new(com: ComPort, config: SerialConfig) -> Option<Self> {
         // SAFETY: COM1-COM4 基址是标准 PC 串口映射.
         // IoPort::new 会校验端口范围; 别名检测可避免
@@ -443,18 +435,21 @@ impl SerialPort {
 
     /// 读 LSR 寄存器
     #[inline]
+    #[must_use]
     pub fn line_status(&self) -> u8 {
         self.port.read_u8(UART_LSR)
     }
 
     /// 发送保持寄存器是否空 (可写下一个字节)
     #[inline]
+    #[must_use]
     pub fn is_transmit_ready(&self) -> bool {
         self.line_status() & LSR_TRANSMIT_EMPTY != 0
     }
 
     /// 是否有数据可读 (缓冲区或硬件)
     #[inline]
+    #[must_use]
     pub fn has_data(&self) -> bool {
         !self.rx_buffer.is_empty() || self.line_status() & LSR_DATA_READY != 0
     }
@@ -463,6 +458,7 @@ impl SerialPort {
     ///
     /// 注意: 此函数会自旋等待, 仅应在串口已初始化的驱动循环中使用。
     /// 上层应使用 `try_receive` 避免忙等。
+    #[must_use]
     pub fn receive(&self) -> u8 {
         while !self.has_data() {
             core::hint::spin_loop();
@@ -471,6 +467,7 @@ impl SerialPort {
     }
 
     /// 尝试读一个字节 (非阻塞)
+    #[must_use]
     pub fn try_receive(&self) -> Option<u8> {
         if self.has_data() {
             Some(self.port.read_u8(UART_RBR))
@@ -501,6 +498,7 @@ impl SerialPort {
 
     /// 读 IIR (中断识别寄存器)
     #[inline]
+    #[must_use]
     pub fn interrupt_id(&self) -> u8 {
         self.port.read_u8(UART_IIR)
     }
@@ -516,21 +514,25 @@ impl SerialPort {
     }
 
     /// 获取 COM 端口标识
+    #[must_use]
     pub const fn com(&self) -> ComPort {
         self.com
     }
 
     /// 获取端口基址
+    #[must_use]
     pub const fn base(&self) -> u16 {
         self.com.base()
     }
 
     /// 获取当前配置
+    #[must_use]
     pub const fn config(&self) -> &SerialConfig {
         &self.config
     }
 
     /// 获取端口基址 (别名: `base()`)
+    #[must_use]
     pub const fn base_address(&self) -> u16 {
         self.com.base()
     }
@@ -577,6 +579,7 @@ impl SerialPort {
     }
 
     /// 获取接收缓冲区中待读字节数
+    #[must_use]
     pub fn available_bytes(&self) -> usize {
         self.rx_buffer.len()
     }
@@ -595,12 +598,13 @@ impl SerialPort {
     ///
     /// # Errors
     ///
-    /// 当发送缓冲区已满时返回 `Err(())`, 字节不会被压入。
-    pub fn enqueue_tx(&mut self, byte: u8) -> Result<(), ()> {
+    /// 当发送缓冲区已满时返回 [`BufferFull`], 字节不会被压入。
+    pub fn enqueue_tx(&mut self, byte: u8) -> Result<(), BufferFull> {
         self.tx_buffer.push(byte)
     }
 
     /// 发送缓冲区剩余容量
+    #[must_use]
     pub fn tx_available(&self) -> usize {
         SERIAL_BUFFER_SIZE - self.tx_buffer.len()
     }
@@ -620,7 +624,7 @@ impl crate::privileged::driver::Driver for SerialPort {
         crate::privileged::driver::DeviceType::Char
     }
 
-    /// `SerialPort::new` 已 apply_config, 此处保持幂等
+    /// `SerialPort::new` 已 `apply_config`, 此处保持幂等
     fn init(&mut self) -> Result<(), crate::privileged::driver::DriverError> {
         Ok(())
     }

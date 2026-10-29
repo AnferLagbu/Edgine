@@ -39,6 +39,7 @@ impl DevTreeNodeId {
     pub const ROOT: Self = Self(0);
 
     /// 取出底层 `NodeId` 原始值
+    #[must_use]
     pub fn raw(self) -> NodeId {
         self.0
     }
@@ -64,15 +65,17 @@ pub enum DevTreeError {
 
 impl DevTreeError {
     /// 映射为 POSIX errno
+    #[must_use]
     pub fn to_errno(self) -> Errno {
         use Errno as E;
         match self {
-            Self::ParentNotFound => E::ENODEV,
+            Self::ParentNotFound => E::Enodev,
             Self::Kernel(e) => e.as_errno(),
         }
     }
 
     /// 从 C 风格返回码构造错误 (`-2`/`-22`/`-19` 映射, 其余归 `Other`)
+    #[must_use]
     pub fn from_i32(rc: i32) -> Self {
         use crate::functions::error::KernelError as K;
         match rc {
@@ -94,6 +97,7 @@ use crate::privileged::syscall::Errno;
 // ============================================================================
 
 /// 根节点 ID
+#[must_use]
 pub fn root_id() -> DevTreeNodeId {
     DevTreeNodeId(egdf::devtree::devtree_root_id())
 }
@@ -109,6 +113,7 @@ pub fn find_by_name(name: &str) -> Option<DevTreeNodeId> {
 }
 
 /// 获取节点完整快照
+#[must_use]
 pub fn get_node(id: DevTreeNodeId) -> Option<EGDFNode> {
     egdf::devtree::devtree_get_node(id.0)
 }
@@ -122,6 +127,7 @@ pub fn children(id: DevTreeNodeId) -> Vec<DevTreeNodeId> {
 }
 
 /// 节点总数
+#[must_use]
 pub fn count() -> usize {
     egdf::devtree::devtree_count()
 }
@@ -136,16 +142,19 @@ pub fn walk<F: FnMut(&EGDFNode)>(f: F) {
 // ============================================================================
 
 /// 读取 "reg" 属性的地址部分
+#[must_use]
 pub fn read_addr(id: DevTreeNodeId) -> Option<u64> {
     egdf::devtree::devtree_read_addr(id.0)
 }
 
 /// 读取 "interrupts" 属性的 IRQ 号
+#[must_use]
 pub fn read_irq(id: DevTreeNodeId) -> Option<u32> {
     egdf::devtree::devtree_read_irq(id.0)
 }
 
 /// 获取节点属性映射
+#[must_use]
 pub fn properties(id: DevTreeNodeId) -> Option<BTreeMap<&'static str, PropertyValue>> {
     get_node(id).map(|n| n.properties)
 }
@@ -201,6 +210,7 @@ pub fn clear_user_mapped_by_pid(pid: u32) {
 }
 
 /// 查询节点是否被某个 PID 映射
+#[must_use]
 pub fn get_user_mapped(id: DevTreeNodeId) -> Option<u32> {
     egdf::devtree::devtree_get_user_mapped(id.0)
 }

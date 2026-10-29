@@ -38,6 +38,7 @@ pub struct SpinLock {
 
 impl SpinLock {
     /// 创建新的自旋锁
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             inner: SpinLockInner::new(),
@@ -48,6 +49,7 @@ impl SpinLock {
 
     /// 创建命名自旋锁 (用于调试 + lockdep)
     #[cfg(any(debug_assertions, feature = "lockdep"))]
+    #[must_use]
     pub fn named(name: &'static str) -> Self {
         let class_id = lockdep::register_class(LockClassDesc {
             name,
@@ -73,6 +75,7 @@ impl SpinLock {
 
     /// 创建命名自旋锁 (其余构建: 忽略名称)
     #[cfg(not(any(debug_assertions, feature = "lockdep")))]
+    #[must_use]
     pub fn named(_name: &'static str) -> Self {
         Self::new()
     }
@@ -279,7 +282,7 @@ impl SpinLock {
 
     /// 获取锁并禁用中断 (不保存标志)
     pub fn lock_irq(&mut self) {
-        disable_interrupts();
+        let _ = disable_interrupts();
         self.raw_lock();
     }
 
@@ -333,6 +336,7 @@ impl Default for SpinLock {
 ///
 /// 通过 Arch trait 的 `interrupt_disable` 实现，架构无关。
 #[cfg(not(feature = "host-test"))]
+#[must_use]
 pub fn disable_interrupts() -> IrqSaveFlags {
     IrqSaveFlags(crate::arch!(interrupt_disable()) as u64)
 }
@@ -342,6 +346,7 @@ pub fn disable_interrupts() -> IrqSaveFlags {
 // 在 host 多线程下仍正确互斥. 裸机 (非 host-test) 行为不变.
 #[cfg(feature = "host-test")]
 /// 禁用中断并返回原中断状态 (host-test 下为 no-op).
+#[must_use]
 pub fn disable_interrupts() -> IrqSaveFlags {
     IrqSaveFlags(0)
 }

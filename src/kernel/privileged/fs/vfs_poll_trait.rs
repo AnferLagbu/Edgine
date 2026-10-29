@@ -132,6 +132,7 @@ pub enum VfsPollPolicyRef<'a> {
 
 impl VfsPollPolicyRef<'_> {
     /// 决策事件位
+    #[must_use]
     pub fn events_for(&self, ctx: VfsPollContext) -> u32 {
         if !ctx.valid {
             return match self {

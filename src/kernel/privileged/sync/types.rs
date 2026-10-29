@@ -79,6 +79,7 @@ impl Default for SpinLockInner {
 
 impl SpinLockInner {
     /// 创建新的自旋锁内部状态 (const, 可用于 static)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             locked: AtomicU32::new(0),
@@ -171,6 +172,7 @@ impl Default for MutexInner {
 
 impl MutexInner {
     /// 创建新的互斥锁内部状态
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -214,6 +216,7 @@ impl Default for RwLockInner {
 
 impl RwLockInner {
     /// 创建新的读写锁内部状态
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -240,6 +243,7 @@ pub struct IrqSaveFlags(pub u64);
 
 impl IrqSaveFlags {
     /// 检查中断是否启用 (IF bit = bit 9)
+    #[must_use]
     pub fn interrupts_enabled(self) -> bool {
         (self.0 & (1 << 9)) != 0
     }
@@ -340,7 +344,7 @@ impl<T> Drop for MutexGuard<'_, T> {
 pub struct RwLockReadGuard<'a, T> {
     /// 被保护数据的共享引用
     pub data: &'a T,
-    /// 对应的 RwLock 内部状态
+    /// 对应的 `RwLock` 内部状态
     pub rwlock: &'a RwLockInner,
 }
 
@@ -365,7 +369,7 @@ impl<T> Drop for RwLockReadGuard<'_, T> {
 pub struct RwLockWriteGuard<'a, T> {
     /// 被保护数据的可变引用
     pub data: &'a mut T,
-    /// 对应的 RwLock 内部状态
+    /// 对应的 `RwLock` 内部状态
     pub rwlock: &'a RwLockInner,
 }
 

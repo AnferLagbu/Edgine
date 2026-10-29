@@ -24,11 +24,13 @@ use crate::privileged::egdf::composite;
 ///
 /// # 返回
 /// 成功创建的复合设备数量 (0 表示未发现兼容节点)
+#[must_use]
 pub fn probe() -> usize {
     composite::devtree_probe_composites()
 }
 
 /// 顶层探测入口 (供系统初始化调用)
+#[must_use]
 pub fn probe_init() -> u32 {
     composite::composite_probe()
 }

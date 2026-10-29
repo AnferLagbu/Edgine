@@ -24,6 +24,7 @@
 /// 基址来源为 [`arch::uart::PL011_BASE`](crate::privileged::arch::uart::PL011_BASE),
 /// 启动期可被设备树探测结果覆盖 (见 boot/aarch64 entry)。
 #[cfg(target_arch = "aarch64")]
+#[must_use]
 pub fn pl011_phys_base() -> u64 {
     crate::privileged::arch::uart::base() & !crate::privileged::mm::KERNEL_BASE
 }

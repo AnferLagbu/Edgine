@@ -85,7 +85,7 @@ pub fn msgq_send_safe(
     }
 
     // 分配消息结构体 (委托 privileged 机制)
-    let Some(msg_nn) = raw::allocate() else {
+    let Some(mut msg_nn) = raw::allocate() else {
         return Err(-4);
     };
 
@@ -98,10 +98,11 @@ pub fn msgq_send_safe(
     msg_ref.next.store(core::ptr::null_mut(), Ordering::Relaxed);
 
     // 复制数据 (如果有)
-    if let Some(src) = data {
-        if size > 0 && !src.is_empty() {
-            msg_ref.data[..size].copy_from_slice(&src[..size]);
-        }
+    if let Some(src) = data
+        && size > 0
+        && !src.is_empty()
+    {
+        msg_ref.data[..size].copy_from_slice(&src[..size]);
     }
 
     // 入队 (尾插法)

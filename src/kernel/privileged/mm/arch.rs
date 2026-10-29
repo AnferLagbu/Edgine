@@ -31,6 +31,7 @@ pub fn tlb_flush_all() {
 
 /// 读取当前页表基地址 (CR3 / `TTBR0_EL1`)。
 #[inline]
+#[must_use]
 pub fn read_page_table_base() -> u64 {
     <crate::privileged::arch::CurrentArch as Arch>::read_page_table_base()
 }
@@ -47,6 +48,7 @@ pub fn write_page_table_base(paddr: u64) {
 
 /// 读取触发页错误的地址 (CR2 / `FAR_EL1`)。
 #[inline]
+#[must_use]
 pub fn read_fault_address() -> usize {
     <crate::privileged::arch::CurrentArch as Arch>::read_fault_address()
 }

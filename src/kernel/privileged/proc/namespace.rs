@@ -98,6 +98,7 @@ pub enum NsType {
 
 impl NsType {
     /// 从 `CLONE_NEW`* 标志位推断 `NsType`
+    #[must_use]
     pub fn from_clone_flag(flag: u64) -> Option<Self> {
         match flag {
             CLONE_NEWNS => Some(Self::Mount),
@@ -112,6 +113,7 @@ impl NsType {
     }
 
     /// 获取对应的 `CLONE_NEW`* 标志位
+    #[must_use]
     pub fn to_clone_flag(self) -> u64 {
         match self {
             Self::Mount => CLONE_NEWNS,
@@ -153,8 +155,15 @@ pub struct UtsNamespace {
 /// 默认主机名 (新建 UTS namespace 初值 / 无进程上下文时的 `uname` 回退值)
 pub const UTS_DEFAULT_NODENAME: &[u8] = b"Edgine";
 
+impl Default for UtsNamespace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UtsNamespace {
     /// 创建新的 UTS namespace (默认继承 init 主机名)
+    #[must_use]
     pub fn new() -> Self {
         let mut nodename = [0u8; 65];
         nodename[..UTS_DEFAULT_NODENAME.len()].copy_from_slice(UTS_DEFAULT_NODENAME);
@@ -224,6 +233,7 @@ impl UtsNamespace {
 /// `"edgine-node"`, `gethostname` 硬编码 `"localhost"`, `sethostname` 不存储).
 ///
 /// 返回 `None` 表示当前无进程上下文 (启动早期 / 无进程的 host 测试).
+#[must_use]
 pub fn uts_current() -> Option<Arc<UtsNamespace>> {
     let pid = crate::privileged::proc::process_get_current_pid();
     // 仅暂持 namespaces 锁取出 Arc, UTS 字段锁在调用方按需获取 (避免锁嵌套)
@@ -247,8 +257,15 @@ pub struct IpcNamespace {
     pub sem_max: AtomicU32,
 }
 
+impl Default for IpcNamespace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IpcNamespace {
     /// 创建新的 IPC namespace (使用默认各项数量上限)
+    #[must_use]
     pub fn new() -> Self {
         Self {
             id: alloc_ns_id(),
@@ -290,6 +307,7 @@ pub struct PidNamespace {
 
 impl PidNamespace {
     /// 创建根 PID namespace
+    #[must_use]
     pub fn new_root() -> Self {
         Self {
             id: alloc_ns_id(),
@@ -324,7 +342,7 @@ impl PidNamespace {
 
     /// 在该 namespace 内分配一个 PID
     ///
-    /// B06-23: 当前无调用者 (真实 PID 走 privileged `proc_alloc_pid`, user_proc.rs:2026),
+    /// B06-23: 当前无调用者 (真实 PID 走 privileged `proc_alloc_pid`, `user_proc.rs:2026`),
     /// 计数漂移尚未实际触发。接入时使用方必须与 [`Self::release_pid`] 配对,
     /// 否则 `nr_processes` 只增不减导致计数漂移。
     pub fn alloc_pid(&self) -> u32 {
@@ -358,8 +376,15 @@ pub struct MountNamespace {
     pub root: IrqSpinLock<alloc::string::String>,
 }
 
+impl Default for MountNamespace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MountNamespace {
     /// 创建新的 Mount namespace (根路径为 `/`, 挂载计数 0)
+    #[must_use]
     pub fn new() -> Self {
         Self {
             id: alloc_ns_id(),
@@ -407,6 +432,7 @@ pub struct UserNamespace {
 
 impl UserNamespace {
     /// 创建根 User namespace
+    #[must_use]
     pub fn new_root() -> Self {
         Self {
             id: alloc_ns_id(),
@@ -510,8 +536,15 @@ pub struct NetNamespace {
     pub next_ephemeral_port: AtomicU16,
 }
 
+impl Default for NetNamespace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NetNamespace {
     /// 创建 init (根) network namespace
+    #[must_use]
     pub fn new_init() -> Self {
         Self {
             id: alloc_ns_id(),
@@ -522,6 +555,7 @@ impl NetNamespace {
     }
 
     /// 创建新的 network namespace
+    #[must_use]
     pub fn new() -> Self {
         Self {
             id: alloc_ns_id(),
@@ -555,8 +589,15 @@ pub struct CgroupNamespace {
     pub root_path: IrqSpinLock<alloc::string::String>,
 }
 
+impl Default for CgroupNamespace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CgroupNamespace {
     /// 创建新的 Cgroup namespace (根路径为 `/`)
+    #[must_use]
     pub fn new() -> Self {
         Self {
             id: alloc_ns_id(),
@@ -603,6 +644,7 @@ pub struct NamespaceSet {
 
 impl NamespaceSet {
     /// 创建 init 进程的 namespace 集合 (根 namespace)
+    #[must_use]
     pub fn new_init() -> Self {
         Self {
             uts: Arc::new(UtsNamespace::new()),
@@ -616,6 +658,7 @@ impl NamespaceSet {
     }
 
     /// fork 继承 (默认共享所有 namespace)
+    #[must_use]
     pub fn fork_from(parent: &Self) -> Self {
         Self {
             uts: UtsNamespace::fork_from(&parent.uts),
@@ -629,6 +672,7 @@ impl NamespaceSet {
     }
 
     /// 根据 `clone_flags` 创建新 namespace
+    #[must_use]
     pub fn clone_from(parent: &Self, flags: u64) -> Self {
         let new_ns_flags = flags & CLONE_NEW_ALL;
 
@@ -694,13 +738,13 @@ impl NamespaceSet {
     pub fn unshare(&mut self, flags: u64) -> Result<(), Errno> {
         let new_ns_flags = flags & CLONE_NEW_ALL;
         if new_ns_flags == 0 {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
 
         // B06-22: Linux 语义 — CLONE_NEWUSER 不能与其他 CLONE_NEW* 标志同时使用 (EINVAL)
         if new_ns_flags & CLONE_NEWUSER != 0 && new_ns_flags & (CLONE_NEW_ALL & !CLONE_NEWUSER) != 0
         {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
 
         if new_ns_flags & CLONE_NEWUSER != 0 {
@@ -736,7 +780,7 @@ impl NamespaceSet {
     pub fn setns_by_type(&mut self, ns_type: NsType, target_id: u64) -> Result<(), Errno> {
         let registry = NS_REGISTRY.lock();
         let Some(entry) = registry.find(target_id) else {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         };
 
         match ns_type {
@@ -810,8 +854,15 @@ pub struct NsRegistry {
     entries: Vec<NsRegistryEntry>,
 }
 
+impl Default for NsRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NsRegistry {
     /// 创建空注册表 (const 上下文可用, 供静态初始化)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             entries: Vec::new(),
@@ -833,6 +884,7 @@ impl NsRegistry {
     }
 
     /// 按 ID 查找
+    #[must_use]
     pub fn find(&self, id: u64) -> Option<&NsRegistryEntry> {
         self.entries.iter().find(|e| e.id == id)
     }

@@ -166,6 +166,35 @@ impl Default for ICacheEntry {
 }
 
 // ============================================================================
+// icache 插入参数
+// ============================================================================
+
+/// icache 插入参数 — `ICacheEntry` 的 9 项元数据收拢为结构体 (`too_many_arguments`)
+///
+/// `valid` / `ref_count` / `probe_distance` 由缓存内部维护, 不由调用方提供.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ICacheInsertArgs {
+    /// 文件系统实例标识 (命名空间, 0 = 未挂载)
+    pub fs_id: u32,
+    /// inode 号
+    pub ino: u32,
+    /// 文件类型 (`VfsFileType` as u8)
+    pub file_type: u8,
+    /// 权限
+    pub perm: u16,
+    /// 文件大小
+    pub size: u32,
+    /// 修改时间
+    pub mtime: u64,
+    /// 创建时间
+    pub ctime: u64,
+    /// 所有者 PWM
+    pub owner_pwm: u64,
+    /// 组 PWM
+    pub group_pwm: u64,
+}
+
+// ============================================================================
 // 全局缓存实例
 // ============================================================================
 
@@ -451,35 +480,24 @@ impl ICache {
     }
 
     /// 插入/更新 inode 缓存
-    fn insert(
-        &mut self,
-        fs_id: u32,
-        ino: u32,
-        file_type: u8,
-        perm: u16,
-        size: u32,
-        mtime: u64,
-        ctime: u64,
-        owner_pwm: u64,
-        group_pwm: u64,
-    ) {
-        if ino == EMPTY_INO || ino == NEGATIVE_INO {
+    fn insert(&mut self, args: &ICacheInsertArgs) {
+        if args.ino == EMPTY_INO || args.ino == NEGATIVE_INO {
             return;
         }
 
-        let hash = Self::hash_key(fs_id, ino);
+        let hash = Self::hash_key(args.fs_id, args.ino);
         let start = crate::functions::intcast::usize_from_u64(hash % ICACHE_SIZE as u64);
 
         let mut new_entry = ICacheEntry {
-            fs_id,
-            ino,
-            file_type,
-            perm,
-            size,
-            mtime,
-            ctime,
-            owner_pwm,
-            group_pwm,
+            fs_id: args.fs_id,
+            ino: args.ino,
+            file_type: args.file_type,
+            perm: args.perm,
+            size: args.size,
+            mtime: args.mtime,
+            ctime: args.ctime,
+            owner_pwm: args.owner_pwm,
+            group_pwm: args.group_pwm,
             valid: true,
             ref_count: 0,
             probe_distance: 0,
@@ -502,11 +520,11 @@ impl ICache {
             }
 
             // 已存在: 更新
-            if entry.fs_id == fs_id && entry.ino == ino {
-                entry.file_type = file_type;
-                entry.perm = perm;
-                entry.size = size;
-                entry.mtime = mtime;
+            if entry.fs_id == args.fs_id && entry.ino == args.ino {
+                entry.file_type = args.file_type;
+                entry.perm = args.perm;
+                entry.size = args.size;
+                entry.mtime = args.mtime;
                 entry.valid = true;
                 return;
             }
@@ -749,21 +767,9 @@ pub fn icache_lookup(fs_id: u32, ino: u32) -> Option<ICacheResult> {
 }
 
 /// icache 插入/更新
-pub fn icache_insert(
-    fs_id: u32,
-    ino: u32,
-    file_type: u8,
-    perm: u16,
-    size: u32,
-    mtime: u64,
-    ctime: u64,
-    owner_pwm: u64,
-    group_pwm: u64,
-) {
+pub fn icache_insert(args: &ICacheInsertArgs) {
     let mut icache = ICACHE.lock();
-    icache.insert(
-        fs_id, ino, file_type, perm, size, mtime, ctime, owner_pwm, group_pwm,
-    );
+    icache.insert(args);
 }
 
 /// icache 失效
@@ -843,6 +849,29 @@ pub fn reset_stats() {
 mod tests {
     use super::*;
 
+    /// 构造测试用 icache 插入参数 (时间戳与 PWM 取固定值)
+    fn insert_args(
+        fs_id: u32,
+        ino: u32,
+        file_type: u8,
+        perm: u16,
+        size: u32,
+        mtime: u64,
+        ctime: u64,
+    ) -> ICacheInsertArgs {
+        ICacheInsertArgs {
+            fs_id,
+            ino,
+            file_type,
+            perm,
+            size,
+            mtime,
+            ctime,
+            owner_pwm: 0,
+            group_pwm: 0,
+        }
+    }
+
     #[test]
     fn test_dcache_insert_lookup() {
         let mut dcache = DCache::new();
@@ -917,7 +946,7 @@ mod tests {
     #[test]
     fn test_icache_insert_lookup() {
         let mut icache = ICache::new();
-        icache.insert(0, 10, 1, 0o755, 4096, 1000, 1000, 0, 0);
+        icache.insert(&insert_args(0, 10, 1, 0o755, 4096, 1000, 1000));
         let entry = icache.lookup(0, 10).unwrap();
         assert_eq!(entry.ino, 10);
         assert_eq!(entry.file_type, 1);
@@ -928,8 +957,8 @@ mod tests {
     #[test]
     fn test_icache_fs_instance_isolation() {
         let mut icache = ICache::new();
-        icache.insert(1, 10, 1, 0o644, 512, 1000, 1000, 0, 0);
-        icache.insert(2, 10, 2, 0o755, 4096, 2000, 2000, 0, 0);
+        icache.insert(&insert_args(1, 10, 1, 0o644, 512, 1000, 1000));
+        icache.insert(&insert_args(2, 10, 2, 0o755, 4096, 2000, 2000));
 
         assert_eq!(icache.lookup(1, 10).unwrap().size, 512);
         assert_eq!(icache.lookup(2, 10).unwrap().size, 4096);
@@ -942,7 +971,7 @@ mod tests {
     #[test]
     fn test_icache_invalidate() {
         let mut icache = ICache::new();
-        icache.insert(0, 10, 1, 0o755, 4096, 1000, 1000, 0, 0);
+        icache.insert(&insert_args(0, 10, 1, 0o755, 4096, 1000, 1000));
         icache.invalidate(0, 10);
         assert!(icache.lookup(0, 10).is_none());
     }

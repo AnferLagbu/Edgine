@@ -70,7 +70,7 @@ impl<T> RwLock<T> {
         }
     }
 
-    /// 创建命名 RwLock (release 模式: 忽略名称)
+    /// 创建命名 `RwLock` (release 模式: 忽略名称)
     #[cfg(not(debug_assertions))]
     pub fn named(_name: &'static str, data: T) -> Self {
         Self::new(data)

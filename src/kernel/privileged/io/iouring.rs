@@ -6,7 +6,7 @@
 //! 迁至 `functions::io::iouring`, 本文件仅 re-export。按"机制持有的数据结构/常量
 //! 归 privileged"统一判据反转：`sys_io_uring_*` 被 privileged syscall dispatch
 //! 机制直接调用、`IoUring` 实例由内核持有 — 属机制项, 迁回。依赖闭包全在
-//! privileged 内 (sync::IrqSpinLock + errno::Errno)。
+//! privileged 内 (`sync::IrqSpinLock` + `errno::Errno`)。
 //!
 //! functions 侧改 `pub use crate::privileged::io::iouring::*` 保持 API 兼容。
 
@@ -133,6 +133,7 @@ pub struct RingBuffer<T> {
 
 impl<T: Clone + Default> RingBuffer<T> {
     /// 创建指定容量的环形缓冲区
+    #[must_use]
     pub fn new(capacity: u32) -> Self {
         let cap = capacity.next_power_of_two();
         let mut entries = Vec::with_capacity(cap as usize);
@@ -222,6 +223,7 @@ pub struct IoUring {
 
 impl IoUring {
     /// 创建新的 `io_uring` 实例
+    #[must_use]
     pub fn new(id: u32, ring_size: u32, owner_pid: u32) -> Self {
         Self {
             id,
@@ -242,7 +244,7 @@ impl IoUring {
         if sq.push(sqe) {
             Ok(())
         } else {
-            Err(Errno::EBUSY)
+            Err(Errno::Ebusy)
         }
     }
 
@@ -261,7 +263,7 @@ impl IoUring {
         if cq.push(cqe) {
             Ok(())
         } else {
-            Err(Errno::EBUSY)
+            Err(Errno::Ebusy)
         }
     }
 
@@ -297,7 +299,7 @@ impl IoUring {
     /// 执行单个操作
     fn execute_op(sqe: &Sqe) -> i32 {
         let Some(opcode) = IoOpCode::from_u8(sqe.opcode) else {
-            return -(Errno::EINVAL as i32);
+            return -(Errno::Einval as i32);
         };
 
         match opcode {
@@ -312,7 +314,7 @@ impl IoUring {
             | IoOpCode::Connect
             | IoOpCode::Send
             | IoOpCode::Recv
-            | IoOpCode::Timeout => -(Errno::ENOSYS as i32),
+            | IoOpCode::Timeout => -(Errno::Enosys as i32),
         }
     }
 }
@@ -338,7 +340,7 @@ pub fn io_uring_setup(entries: u32, owner_pid: u32) -> Result<u32, Errno> {
 
     let mut table = URING_TABLE.lock();
     if table.len() >= MAX_URING_INSTANCES {
-        return Err(Errno::ENOMEM);
+        return Err(Errno::Enomem);
     }
 
     let id = NEXT_URING_ID.fetch_add(1, Ordering::SeqCst);
@@ -355,8 +357,8 @@ pub fn io_uring_destroy(id: u32) -> Result<(), Errno> {
     let mut table = URING_TABLE.lock();
     let pos = table
         .iter()
-        .position(|u| u.as_ref().map_or(false, |u| u.id == id));
-    pos.map_or(Err(Errno::EBADF), |i| {
+        .position(|u| u.as_ref().is_some_and(|u| u.id == id));
+    pos.map_or(Err(Errno::Ebadf), |i| {
         table.remove(i);
         Ok(())
     })
@@ -370,9 +372,9 @@ pub fn io_uring_submit(id: u32, sqe: Sqe) -> Result<(), Errno> {
     let table = URING_TABLE.lock();
     let uring = table
         .iter()
-        .find(|u| u.as_ref().map_or(false, |u| u.id == id))
+        .find(|u| u.as_ref().is_some_and(|u| u.id == id))
         .and_then(|u| u.as_ref());
-    uring.map_or(Err(Errno::EBADF), |u| u.submit_sqe(sqe))
+    uring.map_or(Err(Errno::Ebadf), |u| u.submit_sqe(sqe))
 }
 
 /// 进入 `io_uring` (处理待处理请求 + 可选等待)
@@ -385,7 +387,7 @@ pub fn io_uring_enter(id: u32, to_submit: u32, _min_complete: u32) -> Result<u32
     let table = URING_TABLE.lock();
     let uring = table
         .iter()
-        .find(|u| u.as_ref().map_or(false, |u| u.id == id))
+        .find(|u| u.as_ref().is_some_and(|u| u.id == id))
         .and_then(|u| u.as_ref());
 
     // 处理 to_submit 个 SQE
@@ -396,14 +398,14 @@ pub fn io_uring_enter(id: u32, to_submit: u32, _min_complete: u32) -> Result<u32
     process_after_relock(id, to_process)
 }
 
-/// drop(table) 后重新加锁查找并处理 to_process 个 SQE
+/// drop(table) 后重新加锁查找并处理 `to_process` 个 SQE
 fn process_after_relock(id: u32, to_process: u32) -> Result<u32, Errno> {
     let table = URING_TABLE.lock();
     let uring = table
         .iter()
-        .find(|u| u.as_ref().map_or(false, |u| u.id == id))
+        .find(|u| u.as_ref().is_some_and(|u| u.id == id))
         .and_then(|u| u.as_ref());
-    uring.map_or(Err(Errno::EBADF), |u| {
+    uring.map_or(Err(Errno::Ebadf), |u| {
         let mut processed = 0u32;
         for _ in 0..to_process {
             // SAFETY/语义: None 时退出循环是合理 fallback, 等价于 break
@@ -429,7 +431,7 @@ pub fn io_uring_reap(id: u32) -> Option<Cqe> {
     let table = URING_TABLE.lock();
     let uring = table
         .iter()
-        .find(|u| u.as_ref().map_or(false, |u| u.id == id))
+        .find(|u| u.as_ref().is_some_and(|u| u.id == id))
         .and_then(|u| u.as_ref());
     uring.and_then(IoUring::reap_cqe)
 }
@@ -444,6 +446,7 @@ pub fn io_uring_reap(id: u32) -> Option<Cqe> {
 // 以下仅保留 EG_IO_URING_SUBMIT 机制独有入口 (EG_* 归 privileged 回退层).
 
 /// `sys_io_uring_submit_sqe` — 提交单个 SQE
+#[must_use]
 pub fn sys_io_uring_submit_sqe(
     id: u64,
     opcode: u64,

@@ -67,6 +67,7 @@ pub struct SwapEntry(u64);
 
 impl SwapEntry {
     /// 创建 swap entry
+    #[must_use]
     pub fn new(slot: u64) -> Self {
         // Bit 0 = 0 (not present), Bit 1 = 0 (type 0)
         // Slot 存储在 bits 2-55
@@ -74,6 +75,7 @@ impl SwapEntry {
     }
 
     /// 从 PTE 值解析 swap entry
+    #[must_use]
     pub fn from_pte(pte: u64) -> Option<Self> {
         // present = 0 且非零值
         if pte & 1 != 0 || pte == 0 {
@@ -87,16 +89,19 @@ impl SwapEntry {
     }
 
     /// 获取 swap slot 索引
+    #[must_use]
     pub fn slot(self) -> u64 {
         (self.0 >> 2) & 0x003F_FFFF_FFFF_FFFF
     }
 
     /// 转换为 PTE 值
+    #[must_use]
     pub fn to_pte(self) -> u64 {
         self.0
     }
 
     /// 是否为有效的 swap entry
+    #[must_use]
     pub fn is_valid(self) -> bool {
         self.0 != 0
     }
@@ -381,12 +386,12 @@ impl LruList {
         locked: bool,
     ) {
         // 检查是否已在 active 中
-        for i in 0..LRU_CAPACITY {
-            if self.active[i].occupied && self.active[i].virt_addr == virt_addr {
-                self.active[i].dirty = dirty;
+        for entry in &mut self.active {
+            if entry.occupied && entry.virt_addr == virt_addr {
+                entry.dirty = dirty;
                 // locked 单调: 一旦锁定不可解除 (仅清 VMA flag 不影响 LRU 锁)
                 if locked {
-                    self.active[i].locked = true;
+                    entry.locked = true;
                 }
                 return;
             }
@@ -486,15 +491,15 @@ impl LruList {
     /// 用于 mlock 系统调用: 锁定 VMA 范围时遍历 VMA 内每个触达页.
     /// 若该页未在 LRU 跟踪 (未被触达过), 跳过 — locked 状态由 VMA `vm_flags` 承载.
     fn set_locked(&mut self, virt_addr: u64, locked: bool) -> bool {
-        for i in 0..LRU_CAPACITY {
-            if self.active[i].occupied && self.active[i].virt_addr == virt_addr {
-                self.active[i].locked = locked;
+        for entry in &mut self.active {
+            if entry.occupied && entry.virt_addr == virt_addr {
+                entry.locked = locked;
                 return true;
             }
         }
-        for i in 0..LRU_CAPACITY {
-            if self.inactive[i].occupied && self.inactive[i].virt_addr == virt_addr {
-                self.inactive[i].locked = locked;
+        for entry in &mut self.inactive {
+            if entry.occupied && entry.virt_addr == virt_addr {
+                entry.locked = locked;
                 return true;
             }
         }
@@ -503,14 +508,14 @@ impl LruList {
 
     /// 查询某虚拟地址的 LRU 锁定状态
     fn is_locked(&self, virt_addr: u64) -> Option<bool> {
-        for i in 0..LRU_CAPACITY {
-            if self.active[i].occupied && self.active[i].virt_addr == virt_addr {
-                return Some(self.active[i].locked);
+        for entry in &self.active {
+            if entry.occupied && entry.virt_addr == virt_addr {
+                return Some(entry.locked);
             }
         }
-        for i in 0..LRU_CAPACITY {
-            if self.inactive[i].occupied && self.inactive[i].virt_addr == virt_addr {
-                return Some(self.inactive[i].locked);
+        for entry in &self.inactive {
+            if entry.occupied && entry.virt_addr == virt_addr {
+                return Some(entry.locked);
             }
         }
         None
@@ -551,7 +556,7 @@ pub fn swap_init() -> bool {
 
 /// B03-03 + DECISION-050: swap 子系统卸载/回滚入口
 ///
-/// 释放 swap 存储区回 PMM 池 (unreserve_range), 清零状态。
+/// 释放 swap 存储区回 PMM 池 (`unreserve_range`), 清零状态。
 /// 当前生产路径无调用方 (swap 是持久子系统), 但保证可用于:
 /// - host-tests 的 init/deinit 配对测试
 /// - 将来 swap 模块热卸载
@@ -612,6 +617,7 @@ pub fn swap_out(virt_addr: u64, phys_addr: u64, _dirty: bool) -> Option<SwapEntr
 /// - `virt_addr` 必须属于由 pml4 标识的地址空间
 /// - pml4 必须是有效的页表根 (CR3 值)
 /// - `virt_addr` 对应的 PTE 当前必须是 present 页
+#[must_use]
 pub fn swap_out_to_pte(pml4: u64, virt_addr: u64) -> Option<SwapEntry> {
     // 1. 读取当前 PTE 获取物理地址
     let pte = super::Vmm::get_pte_value(pml4, VirtAddr(virt_addr))?;
@@ -685,6 +691,7 @@ pub fn swap_free(entry: SwapEntry) {
 }
 
 /// 检测 PTE 是否为 swap entry
+#[must_use]
 pub fn is_swap_pte(pte: u64) -> bool {
     SwapEntry::from_pte(pte).is_some()
 }
@@ -800,6 +807,7 @@ pub fn swap_info() -> (u64, u64) {
 ///
 /// 当 #PF 检测到 PTE 为 swap entry 时调用.
 /// 分配新物理页, 从 swap 读取数据, 重新建立映射.
+#[must_use]
 pub fn handle_swap_fault(pml4: u64, fault_addr: u64) -> PfResult {
     // 读取当前 PTE
     let Some(pte) = super::Vmm::get_pte_value(pml4, VirtAddr(fault_addr)) else {

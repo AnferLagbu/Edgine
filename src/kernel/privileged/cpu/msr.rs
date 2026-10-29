@@ -28,6 +28,7 @@ pub(crate) const IA32_SFMASK: u32 = 0xC000_0084;
 /// # Safety
 /// 必须在 Ring 0 (内核态) 调用, 否则触发 #GP 异常。
 #[inline]
+#[must_use]
 pub unsafe fn read_msr(msr: u32) -> u64 {
     unsafe {
         let (low, high): (u32, u32);

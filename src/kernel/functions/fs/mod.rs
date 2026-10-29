@@ -183,18 +183,18 @@ static VFS_OPS_IMPL: FunctionsVfsOps = FunctionsVfsOps;
 /// `functions::fs` 初始化 — 注册策略到 privileged (由 crate root 编排点调用)
 ///
 /// 注册内容 (DECISION-K 项 6 注册点前置):
-/// - FsBackend 挂载决策策略 (`register_fs_backend`)
+/// - `FsBackend` 挂载决策策略 (`register_fs_backend`)
 /// - VFS poll 策略 (`register_default_vfs_poll_policy`)
-/// - UNKFS FileSystem 实例 (`register_unkfs_fs`) + 热插拔监听器
-///   (`unkfs_hotplug_register`, HOTPLUG_MANAGER 为自足 static, 时序仅要求
-///   早于首个热插拔中断事件 — kernel_init 早期注册满足)
-/// - VfsOps 契约实现 (`register_vfs_ops`, 阶段 4b: privileged 消费点回呼入口)
+/// - UNKFS `FileSystem` 实例 (`register_unkfs_fs`) + 热插拔监听器
+///   (`unkfs_hotplug_register`, `HOTPLUG_MANAGER` 为自足 static, 时序仅要求
+///   早于首个热插拔中断事件 — `kernel_init` 早期注册满足)
+/// - `VfsOps` 契约实现 (`register_vfs_ops`, 阶段 4b: privileged 消费点回呼入口)
 pub fn init() {
     static POLICY: FunctionsFsBackend = FunctionsFsBackend;
     let _ = register_fs_backend(&POLICY);
     let _ = crate::functions::fs::vfs_poll_policy::register_default_vfs_poll_policy();
-    let _ = register_unkfs_fs(crate::functions::fs::unkfs::unkfs::get_unkfs());
-    crate::functions::fs::unkfs::unkfs::unkfs_hotplug_register();
+    let _ = register_unkfs_fs(crate::functions::fs::unkfs::entry::get_unkfs());
+    crate::functions::fs::unkfs::entry::unkfs_hotplug_register();
     let _ = crate::privileged::fs::register_vfs_ops(&VFS_OPS_IMPL);
 }
 
@@ -206,7 +206,7 @@ pub fn init() {
 
 /// Plan B: Inode trait 顶层 re-export
 pub use inode::Inode;
-/// 全局 OpenFile 表顶层 re-export
+/// 全局 `OpenFile` 表顶层 re-export
 pub use open_file_table::{OPEN_FILE_TABLE, OpenFileTable};
 pub use vfs_manager::*;
 pub use vfs_types::*;

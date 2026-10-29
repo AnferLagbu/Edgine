@@ -134,7 +134,7 @@ static NEXT_EPOLL_ID: core::sync::atomic::AtomicU64 = core::sync::atomic::Atomic
 /// 返回 epoll fd (当前用实例 ID 代替).
 pub fn sys_epoll_create(size: i32) -> i64 {
     if size <= 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     let id = NEXT_EPOLL_ID.fetch_add(1, core::sync::atomic::Ordering::AcqRel);
@@ -156,20 +156,35 @@ pub fn sys_epoll_create(size: i32) -> i64 {
 /// - `EPOLL_CTL_ADD`: 注册 fd
 /// - `EPOLL_CTL_MOD`: 修改 fd 的事件
 /// - `EPOLL_CTL_DEL`: 移除 fd
-pub fn sys_epoll_ctl(epfd: i64, op: i32, fd: i32, event: *const EpollEvent) -> i64 {
-    if epfd <= 0 {
-        return Errno::EBADF.as_ret();
+///
+/// `event` 为用户态 `struct epoll_event` 的地址; `EPOLL_CTL_DEL` 时忽略。
+#[must_use]
+pub fn sys_epoll_ctl(epfd: i64, op: i32, fd: i32, event: u64) -> i64 {
+    if epfd <= 0 || fd < 0 {
+        return Errno::Ebadf.as_ret();
     }
-    if fd < 0 {
-        return Errno::EBADF.as_ret();
+    if op == EPOLL_CTL_DEL {
+        return epoll_ctl_impl(epfd, op, fd, None);
     }
+    if op != EPOLL_CTL_ADD && op != EPOLL_CTL_MOD {
+        return Errno::Einval.as_ret();
+    }
+    // 从用户地址读取事件结构 (I4: 用户内存经 privileged 安全代理读取).
+    let mut ev = EpollEvent { events: 0, data: 0 };
+    if !crate::privileged::userptr::read_struct_from_user(event, &mut ev) {
+        return Errno::Efault.as_ret();
+    }
+    epoll_ctl_impl(epfd, op, fd, Some(ev))
+}
 
+/// `epoll_ctl` 内核实现 (不接触用户内存).
+fn epoll_ctl_impl(epfd: i64, op: i32, fd: i32, event: Option<EpollEvent>) -> i64 {
     let epfd_id = epfd.cast_unsigned();
     let mut instances = EPOLL_INSTANCES.lock();
 
     // 查找 epoll 实例
     let Some(idx) = instances.iter().position(|i| i.id == epfd_id) else {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     };
 
     match op {
@@ -180,14 +195,12 @@ pub fn sys_epoll_ctl(epfd: i64, op: i32, fd: i32, event: *const EpollEvent) -> i
                 .iter()
                 .any(|item| item.fd == fd)
             {
-                return Errno::EEXIST.as_ret();
+                return Errno::Eexist.as_ret();
             }
 
-            // SAFETY: event 指针由 syscall 入口验证
-            let ev = if event.is_null() {
-                return Errno::EFAULT.as_ret();
-            } else {
-                unsafe { core::ptr::read(event) }
+            // 事件结构由 sys_epoll_ctl 从用户地址读取并转入; DEL 路径不应到达此处.
+            let Some(ev) = event else {
+                return Errno::Efault.as_ret();
             };
 
             let ev_events = ev.events;
@@ -213,14 +226,12 @@ pub fn sys_epoll_ctl(epfd: i64, op: i32, fd: i32, event: *const EpollEvent) -> i
         }
         EPOLL_CTL_MOD => {
             let Some(item) = instances[idx].interest_list.iter_mut().find(|i| i.fd == fd) else {
-                return Errno::ENOENT.as_ret();
+                return Errno::Enoent.as_ret();
             };
 
-            let ev = if event.is_null() {
-                return Errno::EFAULT.as_ret();
-            } else {
-                // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                unsafe { core::ptr::read(event) }
+            // 事件结构已由 sys_epoll_ctl 从用户地址读取并转入.
+            let Some(ev) = event else {
+                return Errno::Efault.as_ret();
             };
 
             let ev_events = ev.events;
@@ -244,7 +255,7 @@ pub fn sys_epoll_ctl(epfd: i64, op: i32, fd: i32, event: *const EpollEvent) -> i
             let len_before = instances[idx].interest_list.len();
             instances[idx].interest_list.retain(|i| i.fd != fd);
             if instances[idx].interest_list.len() == len_before {
-                return Errno::ENOENT.as_ret();
+                return Errno::Enoent.as_ret();
             }
 
             // 同时从就绪列表移除
@@ -255,7 +266,7 @@ pub fn sys_epoll_ctl(epfd: i64, op: i32, fd: i32, event: *const EpollEvent) -> i
             crate::klog_debug!(Sync, "[epoll] DEL fd={} from epfd={}", fd, epfd_id);
         }
         _ => {
-            return Errno::EINVAL.as_ret();
+            return Errno::Einval.as_ret();
         }
     }
 
@@ -266,10 +277,11 @@ pub fn sys_epoll_ctl(epfd: i64, op: i32, fd: i32, event: *const EpollEvent) -> i
 ///
 /// `maxevents` 必须大于 0.
 /// `timeout`: -1=无限等待, 0=非阻塞, >0=毫秒超时.
+/// `events` 为用户态 `struct epoll_event` 数组的地址.
 /// 返回就绪事件数, 或错误码.
-pub fn sys_epoll_wait(epfd: i64, events: *mut EpollEvent, maxevents: i32, timeout: i32) -> i64 {
-    if epfd <= 0 || events.is_null() || maxevents <= 0 {
-        return Errno::EINVAL.as_ret();
+pub fn sys_epoll_wait(epfd: i64, events: u64, maxevents: i32, timeout: i32) -> i64 {
+    if epfd <= 0 || events == 0 || maxevents <= 0 {
+        return Errno::Einval.as_ret();
     }
 
     let epfd_id = epfd.cast_unsigned();
@@ -277,7 +289,7 @@ pub fn sys_epoll_wait(epfd: i64, events: *mut EpollEvent, maxevents: i32, timeou
 
     // 查找 epoll 实例
     let Some(idx) = instances.iter().position(|i| i.id == epfd_id) else {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     };
 
     // 扫描 interest_list, 检查哪些 fd 就绪 (完整 VFS poll)
@@ -308,9 +320,9 @@ pub fn sys_epoll_wait(epfd: i64, events: *mut EpollEvent, maxevents: i32, timeou
 
         if current_pid != 0 && timeout == -1 {
             // 1. 挂入 wait_queue (持锁, 避免与 epoll_pwake 竞态)
-            instances[idx].wait_queue.add(WaitQueueItem {
-                pid: current_pid as u32,
-            });
+            instances[idx]
+                .wait_queue
+                .add(WaitQueueItem { pid: current_pid });
             // 2. 释放锁, 再阻塞 (与 futex 模式一致: unlock → block → schedule)
             drop(instances);
 
@@ -343,10 +355,11 @@ pub fn sys_epoll_wait(epfd: i64, events: *mut EpollEvent, maxevents: i32, timeou
     let count = ready_events
         .len()
         .min(crate::privileged::glue::usize_from_i32(maxevents));
-    for i in 0..count {
-        // SAFETY: events 指针由 syscall 入口验证
-        unsafe {
-            core::ptr::write(events.add(i), ready_events[i]);
+    for (i, event) in ready_events[..count].iter().enumerate() {
+        // I4: 逐项经 privileged 安全代理写入用户态数组 (含地址范围校验).
+        let dst = events + (i as u64) * core::mem::size_of::<EpollEvent>() as u64;
+        if !crate::privileged::userptr::write_struct_to_user(dst, event) {
+            return Errno::Efault.as_ret();
         }
     }
 
@@ -543,15 +556,15 @@ fn test_epoll_ctl_add_del() -> crate::privileged::tests::TestResult {
         events: EPOLLIN,
         data: 42,
     };
-    let ret = sys_epoll_ctl(epfd, EPOLL_CTL_ADD, 3, &raw const ev);
+    let ret = epoll_ctl_impl(epfd, EPOLL_CTL_ADD, 3, Some(ev));
     check!(ret == 0, "epoll_ctl ADD ok");
 
     // 重复添加应失败
-    let ret2 = sys_epoll_ctl(epfd, EPOLL_CTL_ADD, 3, &raw const ev);
+    let ret2 = epoll_ctl_impl(epfd, EPOLL_CTL_ADD, 3, Some(ev));
     check!(ret2 < 0, "epoll_ctl ADD duplicate fails");
 
     // 删除
-    let ret3 = sys_epoll_ctl(epfd, EPOLL_CTL_DEL, 3, core::ptr::null());
+    let ret3 = epoll_ctl_impl(epfd, EPOLL_CTL_DEL, 3, None);
     check!(ret3 == 0, "epoll_ctl DEL ok");
 
     TestResult::Pass

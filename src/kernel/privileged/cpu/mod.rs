@@ -94,7 +94,7 @@ pub enum CpuVendor {
     /// 拓扑: 按逻辑线程数回退, 见 `topology::detect_topology`).
     /// 时基不在此列: 计数器频率由 `timer::calibration` 测定后单点登记,
     /// 本模块不再按厂商经验值估计 (旧实现的 2.5/3.0/1.0 GHz 硬编码已删).
-    /// `is_virtualized()` 对 Unknown 返回 true 是保守假设 (VMware 等未收录厂商),
+    /// `is_virtualized()` 对 Unknown 返回 true 是保守假设 (`VMware` 等未收录厂商),
     /// 初始化后调用方应以 `features` 位 (VMX/SVM) 为准.
     Unknown = 255,
 }
@@ -104,6 +104,7 @@ impl CpuVendor {
     ///
     /// # Arguments
     /// * `vendor_str` - 12字节的厂商ID (如 "`GenuineIntel`")
+    #[must_use]
     pub fn from_vendor_string(vendor_str: [u8; VENDOR_STRING_LEN]) -> Self {
         match &vendor_str {
             b"GenuineIntel" => Self::Intel,
@@ -117,6 +118,7 @@ impl CpuVendor {
 
     /// 获取厂商名称 (用于显示)
     #[inline]
+    #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
             Self::Intel => "Intel",
@@ -131,6 +133,7 @@ impl CpuVendor {
 
     /// 是否为虚拟化环境
     #[inline]
+    #[must_use]
     pub const fn is_virtualized(self) -> bool {
         matches!(self, Self::Qemu | Self::Unknown) // Unknown 可能是VMware等
     }
@@ -169,6 +172,7 @@ impl CpuSignature {
     /// - 如果 Family != 0xF, `Effective_Family` = Family
     /// - 如果 Family == 0xF, `Effective_Family` = `Extended_Family` + Family
     #[inline]
+    #[must_use]
     pub const fn effective_family(self) -> u8 {
         if self.family == 0x0F {
             self.ext_family.saturating_add(self.family)
@@ -179,6 +183,7 @@ impl CpuSignature {
 
     /// 计算有效的型号 (同上逻辑)
     #[inline]
+    #[must_use]
     pub const fn effective_model(self) -> u8 {
         if self.family == 0x06 || self.family == 0x0F {
             (self.ext_model << 4).saturating_add(self.model)
@@ -189,6 +194,7 @@ impl CpuSignature {
 
     /// 格式化为人类可读字符串 (如 "6-158-10" 表示 Family 6, Model 158, Stepping 10)
     /// 返回一个静态数组 (避免堆分配)
+    #[must_use]
     pub fn to_string(self) -> [u8; 16] {
         let mut buf = [0u8; 16];
         let fam = self.effective_family();
@@ -281,29 +287,34 @@ impl Default for CpuInfo {
 impl CpuInfo {
     /// 检查是否为 Intel CPU
     #[inline]
+    #[must_use]
     pub const fn is_intel(&self) -> bool {
         matches!(self.vendor, CpuVendor::Intel)
     }
 
     /// 检查是否为 AMD CPU
     #[inline]
+    #[must_use]
     pub const fn is_amd(&self) -> bool {
         matches!(self.vendor, CpuVendor::Amd)
     }
 
     /// 检查是否在虚拟化环境中运行
     #[inline]
+    #[must_use]
     pub fn is_virtualized(&self) -> bool {
         self.vendor.is_virtualized() || self.features.contains(CpuFeatures::VMX | CpuFeatures::SVM)
     }
 
     /// 检查是否支持指定特性
     #[inline]
+    #[must_use]
     pub fn has_feature(&self, feature: CpuFeatures) -> bool {
         self.features.contains(feature)
     }
 
     /// 获取品牌字符串的可读引用 (去除尾部null和空格)
+    #[must_use]
     pub fn brand_name(&self) -> &str {
         let end = self
             .brand_string
@@ -480,7 +491,7 @@ pub extern "C" fn cpu_init() -> i32 {
     0 // 成功
 }
 
-/// AArch64 CPU 初始化 stub — ARMv8-A 在启动代码中已完成 EL 初始化。
+/// `AArch64` CPU 初始化 stub — ARMv8-A 在启动代码中已完成 EL 初始化。
 #[cfg(not(target_arch = "x86_64"))]
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
@@ -495,10 +506,10 @@ pub extern "C" fn cpu_init() -> i32 {
 /// # Returns
 /// * 非 NULL - 指向全局 `CpuInfo` 的指针
 /// * NULL - 未初始化
+///
 /// FFI 导出函数 (C 可调用)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-/// FFI 导出函数 (C 可调用)
 pub extern "C" fn cpu_get_info() -> *const CpuInfo {
     // SAFETY: `as_ref` 是有效的 C ABI 函数指针; 参数列表与声明一致
     get_cpu_info().map_or(core::ptr::null(), core::ptr::from_ref::<CpuInfo>)
@@ -511,7 +522,7 @@ pub extern "C" fn cpu_get_info() -> *const CpuInfo {
 /// FFI 导出函数 (C 可调用)
 pub extern "C" fn cpu_has_feature(feature_bit: u32) -> bool {
     // SAFETY: `as_ref` 是有效的 C ABI 函数指针; 参数列表与声明一致
-    get_cpu_info().map_or(false, |info| {
+    get_cpu_info().is_some_and(|info| {
         info.features
             .contains(CpuFeatures::from_bits_truncate(u128::from(feature_bit)))
     })
@@ -524,7 +535,7 @@ pub extern "C" fn cpu_has_feature(feature_bit: u32) -> bool {
 /// FFI 导出函数 (C 可调用)
 pub extern "C" fn cpu_is_intel() -> bool {
     // SAFETY: `as_ref` 是有效的 C ABI 函数指针; 参数列表与声明一致
-    get_cpu_info().map_or(false, CpuInfo::is_intel)
+    get_cpu_info().is_some_and(CpuInfo::is_intel)
 }
 
 /// 检查是否为 AMD CPU (FFI兼容)
@@ -534,7 +545,7 @@ pub extern "C" fn cpu_is_intel() -> bool {
 /// FFI 导出函数 (C 可调用)
 pub extern "C" fn cpu_is_amd() -> bool {
     // SAFETY: `as_ref` 是有效的 C ABI 函数指针; 参数列表与声明一致
-    get_cpu_info().map_or(false, CpuInfo::is_amd)
+    get_cpu_info().is_some_and(CpuInfo::is_amd)
 }
 
 /// 检查是否在虚拟化环境中 (FFI兼容)
@@ -544,7 +555,7 @@ pub extern "C" fn cpu_is_amd() -> bool {
 /// FFI 导出函数 (C 可调用)
 pub extern "C" fn cpu_is_virtualized() -> bool {
     // SAFETY: `as_ref` 是有效的 C ABI 函数指针; 参数列表与声明一致
-    get_cpu_info().map_or(false, CpuInfo::is_virtualized)
+    get_cpu_info().is_some_and(CpuInfo::is_virtualized)
 }
 
 /// 获取最大标准 CPUID leaf 号 (FFI兼容)
@@ -668,7 +679,7 @@ unsafe extern "C" {
 /// 初始化关键 MSR 寄存器 (FPU/SSE 使能 + SYSCALL 入口 MSR).
 ///
 /// 除 BSP 的 `cpu_init` 调用外, 次核 (AP) 上电路径亦须逐核调用: 这些 MSR
-/// (CR0/CR4 及 IA32_STAR/LSTAR/SFMASK/EFER) 均为 per-logical-processor 状态,
+/// (CR0/CR4 及 `IA32_STAR/LSTAR/SFMASK/EFER`) 均为 per-logical-processor 状态,
 /// BSP 的设置不随 AP 上电继承 (见 `arch/x86_64/smp_init.rs::ap_entry`)。
 #[cfg(target_arch = "x86_64")]
 pub(crate) fn init_msr(features: &CpuFeatures) -> Result<(), &'static str> {
@@ -727,7 +738,7 @@ pub(crate) fn init_msr(features: &CpuFeatures) -> Result<(), &'static str> {
 
             // LSTAR: 64 位 syscall 入口点 (高半部分地址, KPTI 用户页表只映射高半区)
             let entry_addr = syscall_entry as *const () as u64;
-            let entry_hi = entry_addr + crate::privileged::mm::KERNEL_BASE as u64;
+            let entry_hi = entry_addr + crate::privileged::mm::KERNEL_BASE;
             self::msr::write_msr(self::msr::IA32_LSTAR, entry_hi);
 
             // SFMASK: 进入内核时清除 IF (bit 9) 以禁用中断
@@ -768,6 +779,7 @@ fn tsc_hz_from_cpuid_leaf15(eax: u32, ebx: u32, ecx: u32) -> Option<u64> {
 /// * `Some(hz)` - Leaf 0x15 字段有效且换算非零
 /// * `None` - 非 Intel 厂商 / leaf 不存在 / 字段非法 (调用方转 PIT 实测路径)
 #[cfg(target_arch = "x86_64")]
+#[must_use]
 pub fn tsc_nominal_hz() -> Option<u64> {
     let info = get_cpu_info()?;
     // 只采信 Intel Leaf 0x15 的语义: 其他厂商该 leaf 内容不保证是 TSC 频率,
@@ -916,7 +928,7 @@ mod tests {
         assert!(mono.is_single_core());
     }
 }
-/// 注册 CPU 拓扑相关内核测试用例 (kernel_test)
+/// 注册 CPU 拓扑相关内核测试用例 (`kernel_test`)
 #[cfg(feature = "kernel_test")]
 pub fn register_cpu_tests() {
     crate::privileged::tests::arch::register_cpu_tests();

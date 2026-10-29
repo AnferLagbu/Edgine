@@ -12,12 +12,12 @@ use crate::functions::syscall::types::Errno;
 /// 当 `name_ptr` 为空时返回 `EFAULT`; 其余错误 (如重名、底层失败等) 以对应的 `Errno` 返回.
 pub fn snapshot_create_syscall(name_ptr: u64) -> Result<usize, Errno> {
     if name_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
 
     // 通过 privileged 层获取快照名称
     let name = crate::functions::fs::api::snapshot_get_name(name_ptr);
-    let result = crate::functions::fs::unkfs::unkfs::get_unkfs().snapshot_create(&name);
+    let result = crate::functions::fs::unkfs::entry::get_unkfs().snapshot_create(&name);
 
     if result >= 0 {
         Ok(crate::functions::intcast::usize_from_i32(result))
@@ -31,7 +31,7 @@ pub fn snapshot_create_syscall(name_ptr: u64) -> Result<usize, Errno> {
 /// # Errors
 /// 当快照不存在或底层销毁失败时以对应的 `Errno` 返回.
 pub fn snapshot_destroy_syscall(snap_id: u64) -> Result<usize, Errno> {
-    let result = crate::functions::fs::unkfs::unkfs::get_unkfs().snapshot_destroy(snap_id);
+    let result = crate::functions::fs::unkfs::entry::get_unkfs().snapshot_destroy(snap_id);
 
     if result >= 0 {
         Ok(crate::functions::intcast::usize_from_i32(result))
@@ -45,7 +45,7 @@ pub fn snapshot_destroy_syscall(snap_id: u64) -> Result<usize, Errno> {
 /// # Errors
 /// 当快照不存在或底层回滚失败时以对应的 `Errno` 返回.
 pub fn snapshot_rollback_syscall(snap_id: u64) -> Result<usize, Errno> {
-    let result = crate::functions::fs::unkfs::unkfs::get_unkfs().snapshot_rollback(snap_id);
+    let result = crate::functions::fs::unkfs::entry::get_unkfs().snapshot_rollback(snap_id);
 
     if result >= 0 {
         Ok(crate::functions::intcast::usize_from_i32(result))
@@ -60,12 +60,12 @@ pub fn snapshot_rollback_syscall(snap_id: u64) -> Result<usize, Errno> {
 /// 当 `name_ptr` 为空时返回 `EFAULT`; 其余错误 (如克隆名冲突、底层失败等) 以对应的 `Errno` 返回.
 pub fn snapshot_clone_syscall(snap_id: u64, name_ptr: u64) -> Result<usize, Errno> {
     if name_ptr == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
 
     // 通过 privileged 层获取克隆名称
     let name = crate::functions::fs::api::snapshot_get_name(name_ptr);
-    let result = crate::functions::fs::unkfs::unkfs::get_unkfs().clone_create(snap_id, &name);
+    let result = crate::functions::fs::unkfs::entry::get_unkfs().clone_create(snap_id, &name);
 
     if result >= 0 {
         Ok(crate::functions::intcast::usize_from_i32(result))

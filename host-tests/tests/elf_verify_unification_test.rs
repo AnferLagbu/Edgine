@@ -48,7 +48,7 @@ const MAX_PHDR_COUNT: usize = 128;
 // =============================================================================
 
 /// 构造合法 ELF64 header + 任意 phdr 表 (用内核 `Elf64Header` 布局)
-fn make_elf(machine: u16, e_type: u16, phnum: u16, phoff: u64, phentsize: u16) -> Vec<u8> {
+fn make_elf(machine: u16, ty: u16, phnum: u16, phoff: u64, phentsize: u16) -> Vec<u8> {
     let header_size = core::mem::size_of::<Elf64Header>();
     let phdr_table_size = phnum as usize * phentsize as usize;
     let total = header_size + phdr_table_size;
@@ -56,14 +56,14 @@ fn make_elf(machine: u16, e_type: u16, phnum: u16, phoff: u64, phentsize: u16) -
 
     // SAFETY: buf 长度已 ≥ header
     let header = unsafe { &mut *(buf.as_mut_ptr() as *mut Elf64Header) };
-    header.e_ident[0..4].copy_from_slice(ELF_MAGIC);
-    header.e_ident[4] = ELF_CLASS_64;
-    header.e_type = e_type;
-    header.e_machine = machine;
-    header.e_entry = 0x400000;
-    header.e_phoff = phoff;
-    header.e_phentsize = phentsize;
-    header.e_phnum = phnum;
+    header.ident[0..4].copy_from_slice(ELF_MAGIC);
+    header.ident[4] = ELF_CLASS_64;
+    header.ty = ty;
+    header.machine = machine;
+    header.entry = 0x400000;
+    header.phoff = phoff;
+    header.phentsize = phentsize;
+    header.phnum = phnum;
     buf
 }
 
@@ -236,13 +236,13 @@ fn verify_rejects_phdr_out_of_bounds() {
     let mut elf = vec![0u8; 100];
     // SAFETY: 长度 ≥ header
     let header = unsafe { &mut *(elf.as_mut_ptr() as *mut Elf64Header) };
-    header.e_ident[0..4].copy_from_slice(ELF_MAGIC);
-    header.e_ident[4] = ELF_CLASS_64;
-    header.e_type = 2;
-    header.e_machine = EM_X86_64;
-    header.e_phoff = 64;
-    header.e_phentsize = core::mem::size_of::<Elf64Phdr>() as u16;
-    header.e_phnum = 2;
+    header.ident[0..4].copy_from_slice(ELF_MAGIC);
+    header.ident[4] = ELF_CLASS_64;
+    header.ty = 2;
+    header.machine = EM_X86_64;
+    header.phoff = 64;
+    header.phentsize = core::mem::size_of::<Elf64Phdr>() as u16;
+    header.phnum = 2;
     // SAFETY: elf 是完整 host Vec
     assert_eq!(
         unsafe { call_verify_elf(&elf) }.unwrap_err(),

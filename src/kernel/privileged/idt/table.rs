@@ -223,6 +223,7 @@ static IDT_MANAGER_INSTANCE: OnceLock<IdtManager> = OnceLock::new();
 /// 可在 `idt_init` 之前调用: 单例存储位于静态区, 地址链接期确定, 本函数只取
 /// 地址 (不依赖门已填充, `get_or_init` 此处仅做零值初始化)。
 #[cfg(target_arch = "x86_64")]
+#[must_use]
 pub fn idt_entries_base_lma() -> u64 {
     let state = IdtManager::instance().state.lock();
     core::ptr::from_ref(&state.entries).cast::<u8>() as u64
@@ -623,7 +624,10 @@ impl IdtManager {
     }
 
     /// 处理异常 (从 `exception_handler` FFI 调用)
-    pub fn handle_exception(&self, frame: *mut InterruptFrame) {
+    ///
+    /// # Safety
+    /// `frame` 必须指向异常入口构建的、结构完整且对齐的 `InterruptFrame`。
+    pub unsafe fn handle_exception(&self, frame: *mut InterruptFrame) {
         if frame.is_null() {
             return;
         }
@@ -763,7 +767,10 @@ impl IdtManager {
     }
 
     /// 处理 IRQ
-    pub fn handle_irq(&self, frame: *mut InterruptFrame, vector: u8) {
+    ///
+    /// # Safety
+    /// `frame` 必须指向中断入口构建的、结构完整且对齐的 `InterruptFrame`。
+    pub unsafe fn handle_irq(&self, frame: *mut InterruptFrame, vector: u8) {
         // IPI 分支: 必须前置于 `vector - IRQ_BASE` 之前.
         // IRQ_BASE=32, 对 0xFD/0xFE 得 221/222, 越界直索
         // irq_descriptors[128] ⇒ 中断上下文 panic.
@@ -838,20 +845,20 @@ impl IdtManager {
             // - slave 假性 (IRQ15): 仅向 master 发送 EOI (0x20), 不向 slave 发送 (0xA0)
             #[cfg(target_arch = "x86_64")]
             {
-                if let Some(spurious) = detect_spurious_8259_irq(irq) {
-                    if spurious {
-                        SPURIOUS_IRQ_COUNT.fetch_add(1, Ordering::Relaxed);
-                        if irq >= 8 {
-                            // slave 假性: 仅 EOI master, 避免误清 slave 上未决的
-                            // 真实 IRQ
-                            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                            unsafe {
-                                port_outb(0x20, 0x20);
-                            }
+                if let Some(spurious) = detect_spurious_8259_irq(irq)
+                    && spurious
+                {
+                    SPURIOUS_IRQ_COUNT.fetch_add(1, Ordering::Relaxed);
+                    if irq >= 8 {
+                        // slave 假性: 仅 EOI master, 避免误清 slave 上未决的
+                        // 真实 IRQ
+                        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+                        unsafe {
+                            port_outb(0x20, 0x20);
                         }
-                        // master 假性: 不发送 EOI; 两者均跳过 handler / softirq
-                        return;
                     }
+                    // master 假性: 不发送 EOI; 两者均跳过 handler / softirq
+                    return;
                 }
             }
 

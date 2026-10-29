@@ -85,8 +85,15 @@ pub struct DynIpcNamespace {
     pub next_id: Mutex<IpcId>,
 }
 
+impl Default for DynIpcNamespace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DynIpcNamespace {
     /// 构造空的动态 IPC 命名空间 (ID 从 1 开始)
+    #[must_use]
     pub fn new() -> Self {
         Self {
             pipes: Mutex::new(Vec::new()),

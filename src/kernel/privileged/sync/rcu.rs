@@ -37,8 +37,15 @@ pub struct RcuHead {
     pub func: Option<unsafe fn(*mut Self)>,
 }
 
+impl Default for RcuHead {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RcuHead {
     /// 构造未注册回调的 RCU 链表节点 (全零, 常量上下文可用).
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             next: ptr::null_mut(),
@@ -319,6 +326,7 @@ pub unsafe fn call_rcu(head: *mut RcuHead, func: unsafe fn(*mut RcuHead)) {
 }
 
 /// 检查当前上下文是否在 RCU 读临界区内
+#[must_use]
 pub fn rcu_read_lock_held() -> bool {
     current_rcu().nesting.load(Ordering::Acquire) > 0
 }
@@ -426,6 +434,7 @@ pub fn rcu_gp_count() -> u32 {
 }
 
 /// 返回当前 CPU 待处理的 RCU 回调数.
+#[must_use]
 pub fn rcu_callback_count() -> u32 {
     let cpu = crate::privileged::smp::get_current_cpu();
     rcu_data(cpu).callback_count.load(Ordering::Relaxed)

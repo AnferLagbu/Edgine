@@ -9,8 +9,8 @@
 //! ## 安全边界
 //!
 //! - functions 层验证标量参数 (size/op/fd/maxevents)
-//! - 原始指针 (`*const EpollEvent` / `*mut EpollEvent`) 委托给 privileged 层
-//!   (指针合法性由 syscall 入口 `check_user_ptr` 保证)
+//! - 用户态地址 (`u64`) 委托给 privileged 层, 由 `userptr` 安全代理读写
+//!   (地址合法性由 syscall 入口 `check_user_ptr` 保证)
 
 use crate::privileged::syscall::Errno;
 
@@ -24,7 +24,7 @@ use crate::privileged::syscall::Errno;
 /// - 底层 `sys_epoll_create` 返回负值时转换为对应的 `Errno`
 pub fn epoll_create_syscall(size: i32) -> Result<usize, Errno> {
     if size <= 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     let ret = crate::privileged::syscall::epoll::sys_epoll_create(size);
     if ret < 0 {
@@ -55,15 +55,15 @@ pub fn epoll_ctl_syscall(
     const EPOLL_CTL_DEL: i32 = 2;
     const EPOLL_CTL_MOD: i32 = 3;
     if op != EPOLL_CTL_ADD && op != EPOLL_CTL_DEL && op != EPOLL_CTL_MOD {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     // 验证 fd
     if fd < 0 {
-        return Err(Errno::EBADF);
+        return Err(Errno::Ebadf);
     }
     // DEL 操作允许 event 为 null
     if op == EPOLL_CTL_DEL && event == 0 {
-        let ret = crate::privileged::syscall::epoll::sys_epoll_ctl(epfd, op, fd, core::ptr::null());
+        let ret = crate::privileged::syscall::epoll::sys_epoll_ctl(epfd, op, fd, 0);
         return if ret < 0 {
             Err(Errno::from_ret(ret))
         } else {
@@ -72,14 +72,9 @@ pub fn epoll_ctl_syscall(
     }
     // ADD/MOD: event 必须非 null
     if event == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
-    let ret = crate::privileged::syscall::epoll::sys_epoll_ctl(
-        epfd,
-        op,
-        fd,
-        event as *const crate::privileged::syscall::epoll::EpollEvent,
-    );
+    let ret = crate::privileged::syscall::epoll::sys_epoll_ctl(epfd, op, fd, event);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
@@ -103,17 +98,12 @@ pub fn epoll_wait_syscall(
     timeout: i32,
 ) -> Result<usize, Errno> {
     if maxevents <= 0 {
-        return Err(Errno::EINVAL);
+        return Err(Errno::Einval);
     }
     if events == 0 {
-        return Err(Errno::EFAULT);
+        return Err(Errno::Efault);
     }
-    let ret = crate::privileged::syscall::epoll::sys_epoll_wait(
-        epfd,
-        events as *mut crate::privileged::syscall::epoll::EpollEvent,
-        maxevents,
-        timeout,
-    );
+    let ret = crate::privileged::syscall::epoll::sys_epoll_wait(epfd, events, maxevents, timeout);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
@@ -162,12 +152,12 @@ mod tests {
     fn test_epoll_pwait_validation() {
         // maxevents <= 0 → EINVAL (委托 epoll_wait 校验)
         match epoll_pwait_syscall(-1, 0x1000, 0, 0, 0, 0) {
-            Err(Errno::EINVAL) => {}
+            Err(Errno::Einval) => {}
             _ => panic!("maxevents=0 应返回 EINVAL"),
         }
         // maxevents 合法 + epfd 非法 → EINVAL (privileged 层 epfd <= 0)
         match epoll_pwait_syscall(-1, 0x1000, 1, 0, 0, 0) {
-            Err(Errno::EINVAL) => {}
+            Err(Errno::Einval) => {}
             _ => panic!("epfd<0 应返回 EINVAL"),
         }
         // sigmask 越界指针 → 错误先于等待返回

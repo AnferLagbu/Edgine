@@ -19,14 +19,15 @@ use crate::privileged::sync::IrqSpinLock as Mutex;
 // TmpFs Inode — 临时文件 Inode 实现
 // ============================================================================
 
-/// 临时文件 Inode — TmpFS 的 Inode 实现
+/// 临时文件 Inode — `TmpFS` 的 Inode 实现
 pub struct TmpFsInode {
     node_id: u32,
     mount_idx: u32,
 }
 
 impl TmpFsInode {
-    /// 构造 TmpFS Inode
+    /// 构造 `TmpFS` Inode
+    #[must_use]
     pub fn new(node_id: u32, mount_idx: u32) -> Self {
         Self { node_id, mount_idx }
     }
@@ -130,6 +131,7 @@ impl TmpFsData {
     /// 关键约束: `TmpFsData` 内含 `RamFsData`, 其大表 (节点/块/ACE/符号链接)
     /// 已改为惰性堆置, 静态体量主要来自内联页池索引 (`data_area`, 约 16 KiB)。
     /// 故 `fs_mount` 一律就地写字段, 不得按值构造本结构。
+    #[must_use]
     pub const fn empty() -> Self {
         Self {
             inner: RamFsData::new(),
@@ -186,7 +188,7 @@ impl TmpFsData {
 /// tmpfs 文件系统实例 (全局单例, BSS 零构造)
 static TMPFS_DATA: Mutex<TmpFsData> = Mutex::new(TmpFsData::empty());
 
-/// tmpfs FileSystem trait 实现
+/// tmpfs `FileSystem` trait 实现
 pub struct TmpFsFileSystem;
 
 impl FileSystem for TmpFsFileSystem {
@@ -363,10 +365,11 @@ impl FileSystem for TmpFsFileSystem {
     }
 }
 
-/// tmpfs FileSystem 全局实例 (供 functions 注册表经 `tmpfs_fs()` 暴露)
+/// tmpfs `FileSystem` 全局实例 (供 functions 注册表经 `tmpfs_fs()` 暴露)
 static TMPFS_FS: TmpFsFileSystem = TmpFsFileSystem;
 
-/// 获取 tmpfs FileSystem trait object (functions 注册表用)
+/// 获取 tmpfs `FileSystem` trait object (functions 注册表用)
+#[must_use]
 pub fn tmpfs_fs() -> &'static dyn FileSystem {
     &TMPFS_FS
 }

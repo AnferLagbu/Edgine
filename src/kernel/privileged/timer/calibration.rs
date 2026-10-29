@@ -95,6 +95,7 @@ pub enum TimebaseSource {
 
 impl TimebaseSource {
     /// 人类可读标签 (启动日志用)
+    #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
             Self::CpuidNominal => "CPUID 15H",
@@ -246,11 +247,11 @@ pub fn establish_boot_timebase() -> Result<(u64, TimebaseSource), &'static str> 
     #[cfg(target_arch = "x86_64")]
     {
         // 优先级 1: CPU 自己报的标称频率 — 不需等待, 也不受虚拟化计时干扰
-        if let Some(hz) = crate::privileged::cpu::tsc_nominal_hz() {
-            if record_counter_hz(hz).is_ok() {
-                super::tick::establish_timebase(hz)?;
-                return Ok((hz, TimebaseSource::CpuidNominal));
-            }
+        if let Some(hz) = crate::privileged::cpu::tsc_nominal_hz()
+            && record_counter_hz(hz).is_ok()
+        {
+            super::tick::establish_timebase(hz)?;
+            return Ok((hz, TimebaseSource::CpuidNominal));
         }
 
         // 优先级 2: 以 PIT 为参考时钟实测
@@ -313,6 +314,7 @@ pub fn is_calibrated() -> bool {
 /// 频率未知时无法把纳秒折成周期数, 按上限折算算出的周期数只会偏多 —— 硬件忙等待
 /// 的安全方向是"不少于请求时长" (旧实现 `ns * 2` 假设 2 GHz, 真频更高时**少等**,
 /// 使驱动依赖的时序下限失效).
+#[must_use]
 pub fn counter_hz_for_wait() -> u64 {
     hw_counter_frequency_hz().unwrap_or(COUNTER_HZ_MAX)
 }
@@ -344,6 +346,7 @@ pub fn get_calibration_info() -> (Option<u64>, Option<u64>, Option<u64>) {
 /// # Returns
 /// * `Some(u64)` - 纳秒数 (如果频率已登记)
 /// * `None` - 尚未登记
+#[must_use]
 pub fn tsc_to_nanoseconds(cycles: u64) -> Option<u64> {
     let freq_hz = hw_counter_frequency_hz()?;
     Some(super::tick::mul_div_saturating(
@@ -354,16 +357,19 @@ pub fn tsc_to_nanoseconds(cycles: u64) -> Option<u64> {
 }
 
 /// 将 TSC 周期数转换为微秒
+#[must_use]
 pub fn tsc_to_microseconds(cycles: u64) -> Option<u64> {
     tsc_to_nanoseconds(cycles).map(|ns| ns / 1000)
 }
 
 /// 将 TSC 周期数转换为毫秒
+#[must_use]
 pub fn tsc_to_milliseconds(cycles: u64) -> Option<u64> {
     tsc_to_microseconds(cycles).map(|us| us / 1000)
 }
 
 /// 将纳秒转换为计数器周期数
+#[must_use]
 pub fn nanoseconds_to_tsc(ns: u64) -> Option<u64> {
     let freq_hz = hw_counter_frequency_hz()?;
     Some(super::tick::mul_div_saturating(ns, freq_hz, 1_000_000_000))
@@ -377,6 +383,7 @@ pub fn nanoseconds_to_tsc(ns: u64) -> Option<u64> {
 /// # Returns
 /// * `Some(u64)` - 自启动以来的纳秒数
 /// * `None` - 频率尚未登记
+#[must_use]
 pub fn get_time_ns() -> Option<u64> {
     if !is_calibrated() {
         return None;
@@ -386,11 +393,13 @@ pub fn get_time_ns() -> Option<u64> {
 }
 
 /// 获取当前时间 (微秒)
+#[must_use]
 pub fn get_time_us() -> Option<u64> {
     get_time_ns().map(|ns| ns / 1000)
 }
 
 /// 获取当前时间 (毫秒)
+#[must_use]
 pub fn get_time_ms() -> Option<u64> {
     get_time_us().map(|us| us / 1000)
 }
@@ -545,7 +554,7 @@ mod tests {
     }
 }
 
-/// 注册硬件计数器频率测定相关测试用例 (kernel_test)
+/// 注册硬件计数器频率测定相关测试用例 (`kernel_test`)
 #[cfg(feature = "kernel_test")]
 pub fn register_timer_calibration_tests() {
     use crate::privileged::tests::{TestFn, TestResult, runner};

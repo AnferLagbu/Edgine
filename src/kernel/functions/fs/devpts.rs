@@ -56,6 +56,7 @@ pub struct PtyDevice {
 
 impl PtyDevice {
     /// 构造一个未分配的 PTY 设备槽 (空名称)。
+    #[must_use]
     pub const fn new(id: u32) -> Self {
         Self {
             id,
@@ -76,8 +77,16 @@ pub struct PtyTable {
     count: u32,
 }
 
+impl Default for PtyTable {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PtyTable {
     /// 构造全空的 PTY 设备表。
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             devices: [const { PtyDevice::new(0) }; MAX_PTY_DEVICES],
@@ -129,7 +138,7 @@ impl PtyTable {
                 return Ok(crate::functions::intcast::low_u32_from_usize(i));
             }
         }
-        Err(Errno::ENOMEM)
+        Err(Errno::Enomem)
     }
 
     /// 释放 PTY
@@ -138,10 +147,10 @@ impl PtyTable {
     /// 当 `id` 超出范围或对应设备本为未分配状态时返回 `EINVAL`.
     pub fn free(&mut self, id: u32) -> Result<(), Errno> {
         if (id as usize) >= MAX_PTY_DEVICES {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
         if self.devices[id as usize].state == PtyState::Free {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
         self.devices[id as usize].state = PtyState::Free;
         self.count -= 1;
@@ -149,6 +158,7 @@ impl PtyTable {
     }
 
     /// 获取设备
+    #[must_use]
     pub fn get(&self, id: u32) -> Option<&PtyDevice> {
         if (id as usize) >= MAX_PTY_DEVICES {
             return None;
@@ -160,11 +170,13 @@ impl PtyTable {
     }
 
     /// 检查设备是否存在
+    #[must_use]
     pub fn exists(&self, id: u32) -> bool {
         (id as usize) < MAX_PTY_DEVICES && self.devices[id as usize].state != PtyState::Free
     }
 
     /// 获取设备数量
+    #[must_use]
     pub fn count(&self) -> u32 {
         self.count
     }
@@ -205,16 +217,19 @@ pub fn free_pty(id: u32) -> Result<(), Errno> {
 }
 
 /// 获取 PTY 信息
+#[must_use]
 pub fn get_pty(id: u32) -> Option<PtyDevice> {
     get_pty_table().lock().get(id).copied()
 }
 
 /// 检查 PTY 是否存在
+#[must_use]
 pub fn pty_exists(id: u32) -> bool {
     get_pty_table().lock().exists(id)
 }
 
 /// 获取 PTY 数量
+#[must_use]
 pub fn pty_count() -> u32 {
     get_pty_table().lock().count()
 }
@@ -223,8 +238,8 @@ pub fn pty_count() -> u32 {
 pub fn mount_devpts() {
     // 初始化 PTY 表
     let mut table = get_pty_table().lock();
-    for i in 0..MAX_PTY_DEVICES {
-        table.devices[i] = PtyDevice::new(crate::functions::intcast::low_u32_from_usize(i));
+    for (i, device) in table.devices.iter_mut().enumerate() {
+        *device = PtyDevice::new(crate::functions::intcast::low_u32_from_usize(i));
     }
     table.count = 0;
 }

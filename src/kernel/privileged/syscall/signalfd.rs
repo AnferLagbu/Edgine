@@ -74,7 +74,7 @@ pub struct SignalFdSigInfo {
     pub ssi_fd: i32,
     /// 24: 带宽事件 (SIGIO)
     pub ssi_band: u32,
-    /// 28: 定时器 ID (SIGEV_THREAD_ID)
+    /// 28: 定时器 ID (`SIGEV_THREAD_ID`)
     pub ssi_tid: u32,
     /// 32: 定时器溢出计数
     pub ssi_overrun: u32,
@@ -93,11 +93,12 @@ pub struct SignalFdSigInfo {
     /// 72: 触发地址
     pub ssi_addr: u64,
     /// 80-127: 填充到 128 字节
-    pub _pad: [u8; 48],
+    pub pad: [u8; 48],
 }
 
 impl SignalFdSigInfo {
     /// 创建零值 `signalfd_siginfo`
+    #[must_use]
     pub const fn zeroed() -> Self {
         Self {
             ssi_signo: 0,
@@ -116,7 +117,7 @@ impl SignalFdSigInfo {
             ssi_utime: 0,
             ssi_stime: 0,
             ssi_addr: 0,
-            _pad: [0u8; 48],
+            pad: [0u8; 48],
         }
     }
 }
@@ -178,12 +179,12 @@ pub fn sys_signalfd(fd: i32, mask_ptr: u64, flags: i32) -> i64 {
     // flags 校验
     let valid_flags = SFD_CLOEXEC | SFD_NONBLOCK;
     if flags & !valid_flags != 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     // 读取用户空间掩码
     if mask_ptr == 0 {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     // SAFETY: mask_ptr 由 syscall 入口验证
     let sigmask = unsafe { core::ptr::read(mask_ptr as *const u128) };
@@ -194,7 +195,7 @@ pub fn sys_signalfd(fd: i32, mask_ptr: u64, flags: i32) -> i64 {
     // 获取当前 PID
     let current_pid = crate::privileged::proc::process_get_current_pid();
     if current_pid == 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     // 修改已有实例 (持锁块内, 块结束即释放 — 否则下方创建路径的第二次
@@ -206,7 +207,7 @@ pub fn sys_signalfd(fd: i32, mask_ptr: u64, flags: i32) -> i64 {
         {
             // 修改已有实例
             if idx >= SFD_MAX_SLOTS || !table.slots[idx].used {
-                return Errno::EBADF.as_ret();
+                return Errno::Ebadf.as_ret();
             }
             table.slots[idx].sigmask = sigmask;
             crate::klog_debug!(Sync, "[signalfd] Update fd={} mask=0x{:X}", fd, sigmask);
@@ -215,18 +216,18 @@ pub fn sys_signalfd(fd: i32, mask_ptr: u64, flags: i32) -> i64 {
     }
 
     if fd != -1 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     // V2: 使用集中分配器获取 FD (底层使用 fd_at(SignalFd, slot))
     let Some(new_fd) = crate::privileged::proc::fd_alloc::alloc_fd(
         crate::privileged::proc::fd_alloc::FdSubsystem::SignalFd,
     ) else {
-        return Errno::EMFILE.as_ret();
+        return Errno::Emfile.as_ret();
     };
 
     let Some((_sub, slot)) = crate::privileged::proc::fd_alloc::idx_of(new_fd) else {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     };
 
     let mut table = SFD_TABLE.lock();
@@ -250,12 +251,12 @@ pub fn sys_signalfd(fd: i32, mask_ptr: u64, flags: i32) -> i64 {
 /// 返回 128 (成功), 或负 errno
 pub fn sys_signalfd_read(fd: i32, buf: u64) -> i64 {
     let Some(idx) = fd_to_idx(fd) else {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     };
 
     let current_pid = crate::privileged::proc::process_get_current_pid();
     if current_pid == 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     // 获取 sigmask 并检查 pending
@@ -263,7 +264,7 @@ pub fn sys_signalfd_read(fd: i32, buf: u64) -> i64 {
         let table = SFD_TABLE.lock();
         let slot = &table.slots[idx];
         if !slot.used || slot.pid != current_pid {
-            return Errno::EBADF.as_ret();
+            return Errno::Ebadf.as_ret();
         }
         slot.sigmask
     };
@@ -273,7 +274,7 @@ pub fn sys_signalfd_read(fd: i32, buf: u64) -> i64 {
     let ready = pending & sigmask;
 
     if ready == 0 {
-        return Errno::EAGAIN.as_ret();
+        return Errno::Eagain.as_ret();
     }
 
     // 取最低编号信号 (trailing zeros + 1)
@@ -290,7 +291,7 @@ pub fn sys_signalfd_read(fd: i32, buf: u64) -> i64 {
 
     // 写入用户空间
     if buf == 0 {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     // SAFETY: buf 由 syscall 入口验证, 大小足够
     unsafe {
@@ -304,14 +305,14 @@ pub fn sys_signalfd_read(fd: i32, buf: u64) -> i64 {
 /// signalfd close — 关闭 signalfd
 pub fn sys_signalfd_close(fd: i32) -> i64 {
     let Some(idx) = fd_to_idx(fd) else {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     };
 
     let mut table = SFD_TABLE.lock();
     let slot = &mut table.slots[idx];
 
     if !slot.used {
-        return Errno::EBADF.as_ret();
+        return Errno::Ebadf.as_ret();
     }
 
     slot.used = false;
@@ -396,6 +397,7 @@ fn fd_to_idx(fd: i32) -> Option<usize> {
 /// 检查 fd 是否属于 signalfd 空间
 ///
 /// TD-02 V4: 改走 `fd_alloc::idx_of`, 不再持有 `SFD_FD_BASE` 字面量 + 算术.
+#[must_use]
 pub fn is_signalfd_fd(fd: i32) -> bool {
     matches!(
         crate::privileged::proc::idx_of(fd),

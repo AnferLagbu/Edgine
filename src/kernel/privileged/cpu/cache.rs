@@ -33,12 +33,14 @@ pub struct CacheInfo {
 impl CacheInfo {
     /// 获取总缓存容量 (L1+L2+L3, bytes)
     #[inline]
+    #[must_use]
     pub const fn total_size(&self) -> u64 {
         self.l1d_size as u64 + self.l1i_size as u64 + self.l2_size as u64 + self.l3_size as u64
     }
 
     /// 检查是否有 L3 缓存
     #[inline]
+    #[must_use]
     pub const fn has_l3(&self) -> bool {
         self.l3_size > 0
     }

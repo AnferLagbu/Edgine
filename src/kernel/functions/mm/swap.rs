@@ -25,11 +25,13 @@ pub struct SwapSlot(u64);
 
 impl SwapSlot {
     /// 从 slot 索引创建
+    #[must_use]
     pub fn new(slot: u64) -> Self {
         Self(slot)
     }
 
     /// 获取 slot 索引
+    #[must_use]
     pub fn index(self) -> u64 {
         self.0
     }
@@ -50,17 +52,17 @@ pub struct SwapInfo {
 
 impl SwapInfo {
     /// 已使用容量 (字节)
+    #[must_use]
     pub fn used_bytes(self) -> u64 {
         self.total_bytes - self.free_bytes
     }
 
     /// 使用率 (千分比, 0..=1000)
+    #[must_use]
     pub fn usage_ratio(self) -> u64 {
-        if self.total_bytes == 0 {
-            0
-        } else {
-            self.used_bytes() * 1000 / self.total_bytes
-        }
+        (self.used_bytes() * 1000)
+            .checked_div(self.total_bytes)
+            .unwrap_or(0)
     }
 }
 
@@ -69,6 +71,7 @@ impl SwapInfo {
 // ============================================================================
 
 /// 初始化 swap 子系统
+#[must_use]
 pub fn swap_init() -> bool {
     fw_swap::swap_init()
 }
@@ -88,6 +91,7 @@ pub fn kswapd_wakeup() {
 }
 
 /// 检查 kswapd 是否处于 pending (诊断接口)
+#[must_use]
 pub fn kswapd_is_pending() -> bool {
     fw_swap::kswapd_is_pending()
 }
@@ -95,11 +99,13 @@ pub fn kswapd_is_pending() -> bool {
 /// 回收页面 (从 LRU inactive 链表选取并换出)
 ///
 /// 返回实际回收的页面数.
+#[must_use]
 pub fn reclaim_pages(max_count: u32) -> u32 {
     fw_swap::reclaim_pages(max_count)
 }
 
 /// 获取 swap 区使用信息
+#[must_use]
 pub fn swap_info() -> SwapInfo {
     let (total, free) = fw_swap::swap_info();
     SwapInfo {
@@ -120,16 +126,19 @@ pub fn lru_touch(pml4: u64, virt_addr: u64, phys_addr: u64, dirty: bool, locked:
 ///
 /// 返回 true 表示 LRU 中存在该条目 (并已更新), false 表示该页未在 LRU 跟踪
 /// (尚未触达, locked 状态由 VMA `vm_flags` 承载).
+#[must_use]
 pub fn set_page_locked(virt_addr: u64, locked: bool) -> bool {
     fw_swap::set_page_locked(virt_addr, locked)
 }
 
 /// 查询某虚拟地址对应 LRU 条目的 mlock 锁定状态
+#[must_use]
 pub fn is_page_locked(virt_addr: u64) -> Option<bool> {
     fw_swap::is_page_locked(virt_addr)
 }
 
 /// 检测 PTE 是否为 swap entry
+#[must_use]
 pub fn is_swap_pte(pte: u64) -> bool {
     fw_swap::is_swap_pte(pte)
 }

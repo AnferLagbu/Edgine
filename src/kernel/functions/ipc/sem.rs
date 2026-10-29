@@ -168,16 +168,16 @@ pub fn sem_destroy_safe(namespace: &mut IpcNamespace, id: IpcId) -> Result<(), i
 
 /// FFI: 创建信号量
 pub fn ipc_sem_create(count: u32, max_count: u32) -> IpcId {
-    let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-    let next_id = crate::privileged::ipc::NEXT_IPC_ID.get_mut();
+    let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+    let mut next_id = crate::privileged::ipc::NEXT_IPC_ID.get_mut();
     let pid = process_get_current_pid();
-    sem_create_safe(ns, next_id, count, max_count, pid).unwrap_or(0)
+    sem_create_safe(&mut ns, &mut next_id, count, max_count, pid).unwrap_or(0)
 }
 
 /// FFI: 等待信号量 (P 操作)
 pub fn ipc_sem_wait(id: IpcId) -> i32 {
-    let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-    match sem_wait_safe(ns, id) {
+    let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+    match sem_wait_safe(&mut ns, id) {
         Ok(()) => 0,
         Err(_) => -1,
     }
@@ -185,8 +185,8 @@ pub fn ipc_sem_wait(id: IpcId) -> i32 {
 
 /// FFI: 释放信号量 (V 操作)
 pub fn ipc_sem_post(id: IpcId) -> i32 {
-    let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-    match sem_post_safe(ns, id) {
+    let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+    match sem_post_safe(&mut ns, id) {
         Ok(()) => 0,
         Err(_) => -1,
     }
@@ -194,8 +194,8 @@ pub fn ipc_sem_post(id: IpcId) -> i32 {
 
 /// FFI: 销毁信号量
 pub fn ipc_sem_destroy(id: IpcId) -> i32 {
-    let ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
-    match sem_destroy_safe(ns, id) {
+    let mut ns = crate::privileged::ipc::IPC_NAMESPACE.get_mut();
+    match sem_destroy_safe(&mut ns, id) {
         Ok(()) => 0,
         Err(_) => -1,
     }

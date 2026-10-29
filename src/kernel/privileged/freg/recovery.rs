@@ -76,8 +76,15 @@ pub struct RecoveryRegistry {
     pub initialized: bool,
 }
 
+impl Default for RecoveryRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RecoveryRegistry {
     /// 构造空的恢复域注册表 (初始域 ID 从 16 起分配)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             registered: Vec::new(),
@@ -200,11 +207,11 @@ pub(crate) fn order_from_edges(
         // 正向: cur 的依赖
         if let Some(i) = edges.iter().position(|(id, _)| *id == cur) {
             for &dep in edges[i].1 {
-                if let Some(j) = edges.iter().position(|(id, _)| *id == dep) {
-                    if !in_scope[j] {
-                        in_scope[j] = true;
-                        pending.push(dep);
-                    }
+                if let Some(j) = edges.iter().position(|(id, _)| *id == dep)
+                    && !in_scope[j]
+                {
+                    in_scope[j] = true;
+                    pending.push(dep);
                 }
             }
         }

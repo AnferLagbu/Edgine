@@ -56,6 +56,7 @@ pub enum UserDriverError {
 
 impl UserDriverError {
     /// 由 privileged 自定义错误码构造
+    #[must_use]
     pub fn from_code(code: i32) -> Self {
         match code {
             fw::ERR_NOT_FOUND => Self::NotFound,
@@ -69,14 +70,15 @@ impl UserDriverError {
     }
 
     /// 映射为 POSIX errno
+    #[must_use]
     pub fn to_errno(self) -> Errno {
         use Errno as E;
         match self {
-            Self::NotFound => E::ENOENT,
-            Self::NotAuthorized | Self::PidMismatch => E::EPERM,
-            Self::InvalidState => E::EBUSY,
-            Self::NoMmio | Self::Unknown(_) => E::EINVAL,
-            Self::Oom => E::ENOMEM,
+            Self::NotFound => E::Enoent,
+            Self::NotAuthorized | Self::PidMismatch => E::Eperm,
+            Self::InvalidState => E::Ebusy,
+            Self::NoMmio | Self::Unknown(_) => E::Einval,
+            Self::Oom => E::Enomem,
         }
     }
 }
@@ -147,6 +149,7 @@ pub fn unmap(
 ///
 /// 返回 `true` 表示已成功递送信号; `false` 表示节点未绑定用户进程、进程不存在
 /// 或 PWM 缺少 `DEVICE_CAP_IRQ` 能力。
+#[must_use]
 pub fn forward_irq(node_id: NodeId) -> bool {
     fw::egdf_forward_irq(node_id)
 }

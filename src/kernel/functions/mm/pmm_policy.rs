@@ -20,6 +20,7 @@
 //! - T2-2: PMM 策略提取 (2026-06-19)
 //! - 互补: alloc_trait::FrameAllocDecision (分配前决策)
 
+use crate::functions::error::AlreadyRegistered;
 use crate::privileged::mm::pmm_trait::{PmmPolicy, PmmPolicyContext, Watermarks};
 
 // ============================================================================
@@ -55,11 +56,9 @@ impl PmmPolicy for DefaultPmmPolicy {
             return 0;
         }
         let free_permille = ctx.free_pages * 1000 / ctx.total_pages;
-        let fail_permille = if ctx.total_allocs > 0 {
-            ctx.failed_allocs * 1000 / ctx.total_allocs
-        } else {
-            0
-        };
+        let fail_permille = (ctx.failed_allocs * 1000)
+            .checked_div(ctx.total_allocs)
+            .unwrap_or(0);
         ((1000 - free_permille) * 7 + fail_permille * 3) / 10
     }
 
@@ -87,10 +86,10 @@ impl PmmPolicy for DefaultPmmPolicy {
 ///
 /// # Errors
 ///
-/// 当 PMM 策略已被注册时返回 `Err(())`.
-pub fn register_default_pmm_policy() -> Result<(), ()> {
+/// 当 PMM 策略已被注册时返回 `Err(AlreadyRegistered)`.
+pub fn register_default_pmm_policy() -> Result<(), AlreadyRegistered> {
     static POLICY: DefaultPmmPolicy = DefaultPmmPolicy;
-    crate::privileged::mm::register_pmm_policy(&POLICY).map_err(|_| ())
+    crate::privileged::mm::register_pmm_policy(&POLICY).map_err(|_| AlreadyRegistered)
 }
 
 // ============================================================================

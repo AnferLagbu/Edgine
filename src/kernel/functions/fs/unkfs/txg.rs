@@ -83,6 +83,7 @@ pub struct UnkfsTxg {
 
 impl UnkfsTxg {
     /// 以指定编号构造处于 Open 状态的空事务组.
+    #[must_use]
     pub fn new(txg_id: u64) -> Self {
         Self {
             txg_id,
@@ -198,6 +199,7 @@ pub struct UnkfsTxgGroup {
 
 impl UnkfsTxgGroup {
     /// 构造空的事务组环, 三个槽位均未初始化.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             txgs: [const { None }, const { None }, const { None }],
@@ -214,8 +216,8 @@ impl UnkfsTxgGroup {
     /// 以 `start_txg` 为起点初始化三个槽位, 分别置为 Open / Quiescing / Syncing.
     pub fn init(&mut self, start_txg: u64) {
         self.current.store(start_txg, Ordering::Release);
-        for i in 0..HV_TXG_SIZE {
-            self.txgs[i] = Some(UnkfsTxg::new(start_txg + i as u64));
+        for (i, slot) in self.txgs.iter_mut().enumerate() {
+            *slot = Some(UnkfsTxg::new(start_txg + i as u64));
         }
         self.open_txg.store(0, Ordering::Release);
         self.quiescing_txg.store(1, Ordering::Release);
@@ -322,6 +324,13 @@ impl UnkfsTxgGroup {
         if let Some(txg) = self.get_open_txg() {
             txg.add_io(io);
         }
+    }
+}
+
+impl Default for UnkfsTxgGroup {
+    /// 委托 [`UnkfsTxgGroup::new`] 构造空的事务组环.
+    fn default() -> Self {
+        Self::new()
     }
 }
 

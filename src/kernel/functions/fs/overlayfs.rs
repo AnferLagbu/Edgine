@@ -15,12 +15,12 @@ use alloc::string::String;
 /// whiteout 文件标记 (文件名以 "." 开头表示已删除)
 const WHITEOUT_PREFIX: u8 = b'.';
 
-/// copy_up 分块复制块大小 — 用栈缓冲逐块搬运, 避免申请大块临时内存。
+/// `copy_up` 分块复制块大小 — 用栈缓冲逐块搬运, 避免申请大块临时内存。
 const COPY_UP_CHUNK: usize = 4096;
 
 /// 写意图 open 标志掩码 (Linux 原生 flags: `O_WRONLY|O_RDWR|O_TRUNC|O_APPEND`)。
 ///
-/// 命中即触发 copy_up; 仅以 `O_RDONLY` 打开时保持只读直通下层。
+/// 命中即触发 `copy_up`; 仅以 `O_RDONLY` 打开时保持只读直通下层。
 const WRITE_INTENT_MASK: u32 = 0x0001 | 0x0002 | 0x0200 | 0x0400;
 
 /// 拆分路径为 (父目录, 名称) — 与 `ramfs::fs_mkdir` 同构。
@@ -77,7 +77,7 @@ pub struct OverlayMount {
     pub upperdir: String,
     /// 下层目录路径 (只读源)
     pub lowerdir: String,
-    /// 工作层路径 (copy_up 临时存储)
+    /// 工作层路径 (`copy_up` 临时存储)
     pub workdir: String,
     /// 合并后的视图路径
     pub merged: String,
@@ -103,6 +103,7 @@ impl OverlayFsData {
     /// 关键约束: `OverlayFsData` 内含 `upper_data` + `work_data` 两个 `RamFsData`,
     /// 其大表已改为惰性堆置, 静态体量主要来自各自内联页池索引 (`data_area`, 各约
     /// 16 KiB)。故 `fs_mount` 一律就地写字段, 不得按值构造本结构。
+    #[must_use]
     pub const fn empty() -> Self {
         Self {
             mount: OverlayMount {
@@ -159,7 +160,7 @@ impl OverlayFsData {
         full
     }
 
-    /// 定位 lowerdir 中的目标文件, 返回 (下层 FileSystem, 该挂载下的相对路径)。
+    /// 定位 lowerdir 中的目标文件, 返回 (下层 `FileSystem`, 该挂载下的相对路径)。
     ///
     /// lowerdir 必须是真实挂载 (ramfs/tmpfs) 方可解析; 未挂载或注册为
     /// 无 trait object 的旧式 FS 时返回 `None`。
@@ -207,17 +208,17 @@ impl OverlayFsData {
         }
 
         // 3. lowerdir 命中 — 经 VFS_MANAGER 只读查询下层挂载。
-        if let Some((lower_fs, lower_rel)) = self.lower_target(path) {
-            if let Ok(st) = lower_fs.fs_stat(&lower_rel, pwm) {
-                return OverlayEntry {
-                    name: String::from(name),
-                    file_type: st.file_type,
-                    in_upper: false,
-                    is_whiteout: false,
-                    lower_inode: Some(st.node_id),
-                    upper_inode: None,
-                };
-            }
+        if let Some((lower_fs, lower_rel)) = self.lower_target(path)
+            && let Ok(st) = lower_fs.fs_stat(&lower_rel, pwm)
+        {
+            return OverlayEntry {
+                name: String::from(name),
+                file_type: st.file_type,
+                in_upper: false,
+                is_whiteout: false,
+                lower_inode: Some(st.node_id),
+                upper_inode: None,
+            };
         }
 
         // 4. 未命中 — 两层均无此路径。
@@ -231,7 +232,7 @@ impl OverlayFsData {
         }
     }
 
-    /// copy_up: 将文件从 lowerdir 复制到 upperdir
+    /// `copy_up`: 将文件从 lowerdir 复制到 upperdir
     ///
     /// 幂等: upperdir 已存在同名文件时直接返回其节点号。仅支持普通文件
     /// (目录递归复制未实装)。内容以 `COPY_UP_CHUNK` 为块用栈缓冲搬运, 避免
@@ -245,10 +246,10 @@ impl OverlayFsData {
     /// - upperdir 空间不足时返回 `KernelError::NoSpace`。
     pub fn copy_up(&mut self, path: &str, pwm: u64) -> Result<u32, KernelError> {
         // 1. 幂等守卫: upperdir 已存在则直接返回。
-        if let Some(node_id) = self.upper_data.resolve_path(path) {
-            if self.upper_data.nodes[node_id as usize].used {
-                return Ok(node_id);
-            }
+        if let Some(node_id) = self.upper_data.resolve_path(path)
+            && self.upper_data.nodes[node_id as usize].used
+        {
+            return Ok(node_id);
         }
 
         // 2. 定位并打开只读下层文件。
@@ -343,7 +344,7 @@ static OVERLAY_FS: Mutex<OverlayFsData> = Mutex::new(OverlayFsData::empty());
 
 use crate::functions::fs::inode::Inode;
 
-/// OverlayFS 文件 Inode — 委托给 upperdir 的 RamFsData
+/// `OverlayFS` 文件 Inode — 委托给 upperdir 的 `RamFsData`
 pub struct OverlayFsInode {
     node_id: u32,
     mount_idx: u32,
@@ -351,7 +352,8 @@ pub struct OverlayFsInode {
 }
 
 impl OverlayFsInode {
-    /// 由节点 id、挂载索引与文件类型构造 OverlayFS inode。
+    /// 由节点 id、挂载索引与文件类型构造 `OverlayFS` inode。
+    #[must_use]
     pub fn new(node_id: u32, mount_idx: u32, file_type: u8) -> Self {
         Self {
             node_id,
@@ -454,7 +456,7 @@ impl Inode for OverlayFsInode {
 ///
 /// 当 merged 视图中的文件仅存在于 lowerdir 且以只读方式打开时, 由本类型
 /// 直通下层 inode 完成读/属性/寻址, 不触碰 upperdir; 任何写操作显式返回
-/// `ReadOnlyFilesystem`。写打开应改走 copy_up 提升为 `OverlayFsInode`。
+/// `ReadOnlyFilesystem`。写打开应改走 `copy_up` 提升为 `OverlayFsInode`。
 struct OverlayLowerInode {
     /// 下层挂载的真实 inode (经 `FileSystem::fs_open` 取得)
     inner: alloc::sync::Arc<dyn Inode>,
@@ -507,7 +509,7 @@ impl Inode for OverlayLowerInode {
     }
 }
 
-/// overlayfs FileSystem trait 实现
+/// overlayfs `FileSystem` trait 实现
 pub struct OverlayFsFileSystem;
 
 impl FileSystem for OverlayFsFileSystem {
@@ -811,10 +813,11 @@ pub fn init() {
     // overlayfs 需要手动挂载
 }
 
-/// overlayfs FileSystem 全局实例 (供 functions 注册表经 `overlay_fs()` 暴露)
+/// overlayfs `FileSystem` 全局实例 (供 functions 注册表经 `overlay_fs()` 暴露)
 static OVERLAY_FS_INSTANCE: OverlayFsFileSystem = OverlayFsFileSystem;
 
-/// 获取 overlayfs FileSystem trait object (functions 注册表用)
+/// 获取 overlayfs `FileSystem` trait object (functions 注册表用)
+#[must_use]
 pub fn overlay_fs() -> &'static dyn FileSystem {
     &OVERLAY_FS_INSTANCE
 }

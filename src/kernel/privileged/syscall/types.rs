@@ -8,15 +8,12 @@
 //! 原定义于 T5-4 (2026-06-16) 迁至 `functions::syscall::types`, 本文件仅
 //! re-export。按"机制持有的数据结构/常量归 privileged"统一判据反转：
 //! **syscall 编号表是用户态 ABI 机制** (编号空间分配 DECISION-037 承载物,
-//! 用户态程序直接依赖), 被 privileged dispatch/dispatch_trait 消费 +
+//! 用户态程序直接依赖), 被 privileged `dispatch/dispatch_trait` 消费 +
 //! functions dispatch 消费, 依赖闭包为空 (纯 const + type alias, 仅
-//! re-export privileged::errno::Errno) — 属机制项, 迁回 (同 fd_alloc 模式)。
+//! re-export `privileged::errno::Errno`) — 属机制项, 迁回 (同 `fd_alloc` 模式)。
 //!
 //! functions 侧改 `pub use crate::privileged::syscall::types::*`
 //! 保持 API 兼容 (functions→privileged 合法方向)。
-
-// POSIX errno 命名约定 (EAGAIN/EACCES/...) — 全大写缩写是有意的
-#![allow(clippy::upper_case_acronyms)]
 
 /// Syscall 类型定义和常量
 ///
@@ -28,10 +25,9 @@
 ///   600-699 : 网络 / IPC
 ///   700-799 : 设备 / 系统
 ///   800-899 : 扩展
-
 pub const SYSCALL_INT: u8 = 0x80;
 
-/// syscall 编号空间上界 (非 dispatch 数组边界 — dispatch 全为 match, 无 SYSCALL_TABLE).
+/// syscall 编号空间上界 (非 dispatch 数组边界 — dispatch 全为 match, 无 `SYSCALL_TABLE`).
 ///
 /// 覆盖全部 EG_* 扩展区 (0-899), 与 `EG_FTRACE_ENABLE = 800` 等 800 段常量错开,
 /// 避免编号常量语义误导.
@@ -205,7 +201,7 @@ pub const SYS_MKDIR: u64 = 83;
 pub const SYS_RMDIR: u64 = 84;
 
 // 文件创建
-/// `SYS_CREAT` — 创建文件 (等价于 open 的 O_CREAT|O_TRUNC)
+/// `SYS_CREAT` — 创建文件 (等价于 open 的 `O_CREAT|O_TRUNC`)
 pub const SYS_CREAT: u64 = 85;
 
 // 文件链接
@@ -712,12 +708,12 @@ pub const EG_FW_GET_INFO: u64 = 732;
 pub const EG_FW_DETACH: u64 = 733;
 
 // ---------- 740-745: POSIX Timer ----------
-/// 创建 per-process 定时器 (`timer_create`)
-/// 启动 / 调整 / 停止定时器 (`timer_settime`)
-/// 查询定时器剩余时间 (`timer_gettime`)
-/// 释放定时器 (`timer_delete`)
-/// 返回补打次数 (`timer_getoverrun`)
-/// 时钟分辨率 (`clock_getres`)
+// 创建 per-process 定时器 (`timer_create`)
+// 启动 / 调整 / 停止定时器 (`timer_settime`)
+// 查询定时器剩余时间 (`timer_gettime`)
+// 释放定时器 (`timer_delete`)
+// 返回补打次数 (`timer_getoverrun`)
+// 时钟分辨率 (`clock_getres`)
 
 // ---------- 746-747: 熵源 / Stack Canary (P1 #14) ----------
 /// 从内核熵源填充用户 buffer (Linux getrandom 兼容)
@@ -725,12 +721,12 @@ pub const EG_FW_DETACH: u64 = 733;
 pub const EG_GET_CANARY: u64 = 747;
 
 // ---------- 760-765: 内存建议与锁定 (madvise / mlock, P1 #15) ----------
-/// 设置内存区域访问模式建议 (madvise)
-/// 锁定 [addr, addr+len) 物理页禁止换出 (mlock)
-/// 解除锁定 (munlock)
-/// 进程级锁定所有/未来映射 (mlockall)
-/// 解除进程级所有锁定 (munlockall)
-/// 查询每页驻留性 (mincore)
+// 设置内存区域访问模式建议 (madvise)
+// 锁定 [addr, addr+len) 物理页禁止换出 (mlock)
+// 解除锁定 (munlock)
+// 进程级锁定所有/未来映射 (mlockall)
+// 解除进程级所有锁定 (munlockall)
+// 查询每页驻留性 (mincore)
 
 // ---------- 800-809: 内核调试 / 跟踪 (ftrace / KGDB) ----------
 /// 启用 ftrace 全局开关
@@ -746,8 +742,8 @@ pub const EG_KGDB_ENTER: u64 = 804;
 
 // ==================== C7: Seccomp / prctl ====================
 
-/// seccomp — 安装 Seccomp 过滤器
-/// prctl — 进程控制 (`Seccomp/no_new_privs` 子集)
+// seccomp — 安装 Seccomp 过滤器
+// prctl — 进程控制 (`Seccomp/no_new_privs` 子集)
 
 // ==================== C5: 路由表 ====================
 
@@ -767,15 +763,15 @@ pub const EG_NF_DEL_RULE: u64 = 811;
 
 // ==================== C4: io_uring ====================
 
-/// `io_uring_setup` — 创建 `io_uring` 实例
-/// `io_uring_enter` — 提交/等待完成
-/// `io_uring_register` — 注册缓冲区/文件
-/// `io_uring_submit_sqe` — 提交单个 SQE (简化版)
+// `io_uring_setup` — 创建 `io_uring` 实例
+// `io_uring_enter` — 提交/等待完成
+// `io_uring_register` — 注册缓冲区/文件
+// `io_uring_submit_sqe` — 提交单个 SQE (简化版)
 
 // ==================== D1: Namespace ====================
 
-/// unshare — 取消共享指定 namespace
-/// setns — 切换到指定 namespace
+// unshare — 取消共享指定 namespace
+// setns — 切换到指定 namespace
 
 // ==================== D2: cgroup ====================
 
@@ -792,14 +788,14 @@ pub const EG_CGROUP_GET_STAT: u64 = 834;
 
 // ==================== D3: NUMA ====================
 
-/// `get_mempolicy` — 获取 NUMA 内存策略
-/// `set_mempolicy` — 设置 NUMA 内存策略
-/// `migrate_pages` — 迁移进程页面到目标节点
-/// getcpu — 获取当前 CPU 和 NUMA 节点
+// `get_mempolicy` — 获取 NUMA 内存策略
+// `set_mempolicy` — 设置 NUMA 内存策略
+// `migrate_pages` — 迁移进程页面到目标节点
+// getcpu — 获取当前 CPU 和 NUMA 节点
 
 // ==================== D4: eBPF ====================
 
-/// bpf — BPF 系统调用多路复用
+// bpf — BPF 系统调用多路复用
 
 // ==================== D5: 电源管理 ====================
 
@@ -831,7 +827,7 @@ pub const EG_TIMESYNC: u64 = 882;
 
 // ==================== D10: kexec ====================
 
-/// kexec — 直接内核引导系统调用
+// kexec — 直接内核引导系统调用
 
 // ==================== D11: UEFI ====================
 
@@ -840,10 +836,10 @@ pub const EG_UEFI: u64 = 884;
 
 // ==================== D12: 扩展属性 (xattr) ====================
 
-/// setxattr — 设置扩展属性
-/// getxattr — 获取扩展属性
-/// listxattr — 列出扩展属性
-/// removexattr — 删除扩展属性
+// setxattr — 设置扩展属性
+// getxattr — 获取扩展属性
+// listxattr — 列出扩展属性
+// removexattr — 删除扩展属性
 
 // ==================== D13: 快照 (snapshot) ====================
 
@@ -1098,7 +1094,7 @@ const _: () = {
 ///
 /// 每个逻辑 syscall 只列一个代表值; 下列设计别名 (同编号, 由 dispatch 区分语义)
 /// 已从断言中剔除, 避免误判:
-///   - `SYS_FB_*` (720-722, 帧缓冲, EG_FB_* 别名已删 B09-17)
+///   - `SYS_FB_*` (720-722, 帧缓冲, `EG_FB`_* 别名已删 B09-17)
 ///   - `EG_FCHMODAT` == `EG_FCHOWN` (570) / `EG_PIPE2` == `EG_PIPE` (579)
 ///   - `EG_DUP3` == `EG_DUP2` (581) / `EG_SOCKETPAIR` == `EG_SOCKET` (600)
 const _: () = {
@@ -1195,9 +1191,9 @@ pub const SYS_UNSHARE: u64 = 272;
 pub const SYS_SETNS: u64 = 308;
 /// `SYS_BPF` — BPF 程序与映射操作
 pub const SYS_BPF: u64 = 321;
-/// `SYS_IO_URING_SETUP` — 创建 io_uring 实例
+/// `SYS_IO_URING_SETUP` — 创建 `io_uring` 实例
 pub const SYS_IO_URING_SETUP: u64 = 425;
-/// `SYS_IO_URING_ENTER` — 提交 / 等待 io_uring 完成
+/// `SYS_IO_URING_ENTER` — 提交 / 等待 `io_uring` 完成
 pub const SYS_IO_URING_ENTER: u64 = 426;
-/// `SYS_IO_URING_REGISTER` — 注册 io_uring 缓冲区或文件
+/// `SYS_IO_URING_REGISTER` — 注册 `io_uring` 缓冲区或文件
 pub const SYS_IO_URING_REGISTER: u64 = 427;

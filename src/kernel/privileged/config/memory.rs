@@ -111,6 +111,7 @@ pub const KERNEL_STACK_SIZE: usize = 65536;
 /// # Returns
 /// 页对齐的随机偏移 (字节)
 #[inline]
+#[must_use]
 pub fn aslr_random_offset(bits: u64) -> u64 {
     let tsc = crate::privileged::cpu::read_tsc();
     let mask = (1u64 << bits) - 1;
@@ -121,24 +122,28 @@ pub fn aslr_random_offset(bits: u64) -> u64 {
 ///
 /// 栈顶 = `USER_STACK_TOP` - `aslr_random_offset(ASLR_STACK_BITS)`
 #[inline]
+#[must_use]
 pub fn aslr_stack_top() -> u64 {
     USER_STACK_TOP - aslr_random_offset(ASLR_STACK_BITS)
 }
 
 /// 生成带 ASLR 随机偏移的 mmap 基址.
 #[inline]
+#[must_use]
 pub fn aslr_mmap_base() -> u64 {
     USER_MMAP_BASE - aslr_random_offset(ASLR_MMAP_BITS)
 }
 
 /// 生成带 ASLR 随机偏移的堆基址.
 #[inline]
+#[must_use]
 pub fn aslr_heap_base() -> u64 {
     USER_HEAP_BASE + aslr_random_offset(ASLR_HEAP_BITS)
 }
 
 /// 生成带 ASLR 随机偏移的 PIE 加载基址.
 #[inline]
+#[must_use]
 pub fn aslr_pie_base() -> u64 {
     USER_PIE_BASE + aslr_random_offset(ASLR_PIE_BITS)
 }
@@ -204,7 +209,7 @@ fn test_aslr_pie_base_range() -> crate::privileged::tests::TestResult {
     TestResult::Pass
 }
 
-/// 注册 ASLR 相关内核测试用例 (kernel_test)
+/// 注册 ASLR 相关内核测试用例 (`kernel_test`)
 #[cfg(feature = "kernel_test")]
 pub fn register_aslr_tests() {
     use crate::privileged::tests::runner;

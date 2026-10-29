@@ -1,4 +1,4 @@
-//! ConfigSummary 启动期编码为紧凑字节序列 — privileged 机制功能
+//! `ConfigSummary` 启动期编码为紧凑字节序列 — privileged 机制功能
 //!
 //! ## DECISION-J 归属反转记录 (2026-09-12)
 //!
@@ -103,16 +103,16 @@ pub fn encode_boot_image() {
     pack_u32(buf, 40, (s.kaslr_offset >> 32) as u32);
 
     let mut flags = 0u8;
-    if caps.smp {
+    if caps.sched.smp {
         flags |= 1 << 0;
     }
-    if caps.kaslr {
+    if caps.mem.kaslr {
         flags |= 1 << 1;
     }
-    if caps.preempt {
+    if caps.sched.preempt {
         flags |= 1 << 2;
     }
-    if caps.kpti {
+    if caps.mem.kpti {
         flags |= 1 << 3;
     }
     if caps.freg {
@@ -122,16 +122,16 @@ pub fn encode_boot_image() {
     pack_u8(buf, 45, 0);
 
     let mut feature_id: u16 = 0;
-    if caps.smp {
+    if caps.sched.smp {
         feature_id |= 1 << 0;
     }
-    if caps.preempt {
+    if caps.sched.preempt {
         feature_id |= 1 << 1;
     }
-    if caps.kaslr {
+    if caps.mem.kaslr {
         feature_id |= 1 << 2;
     }
-    if caps.kpti {
+    if caps.mem.kpti {
         feature_id |= 1 << 3;
     }
     if caps.freg {
@@ -140,8 +140,8 @@ pub fn encode_boot_image() {
     pack_u16(buf, 46, feature_id);
 
     let mut xor = 0u64;
-    for i in 0..48 {
-        xor ^= u64::from(buf[i]) << ((i & 7) * 8);
+    for (i, &b) in buf[..48].iter().enumerate() {
+        xor ^= u64::from(b) << ((i & 7) * 8);
     }
     pack_u64(buf, 48, xor);
 
@@ -151,6 +151,7 @@ pub fn encode_boot_image() {
 }
 
 /// 编码后的镜像占用字节数.
+#[must_use]
 pub const fn encoded_len() -> usize {
     ENCODED_LEN
 }

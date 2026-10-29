@@ -44,6 +44,7 @@ pub struct UnkfsSnapshot {
 
 impl UnkfsSnapshot {
     /// 构造快照记录 (名称超长截断, 引用计数初始为 1)
+    #[must_use]
     pub fn new(snap_id: u64, ds_id: u64, name: &str, root_bp: UnkfsBlockPointer, txg: u64) -> Self {
         let mut n = [0u8; 128];
         let b = name.as_bytes();
@@ -63,6 +64,7 @@ impl UnkfsSnapshot {
     }
 
     /// 读取快照名称 (非 UTF-8 时返回空串)
+    #[must_use]
     pub fn get_name(&self) -> &str {
         let end = self.name.iter().position(|&b| b == 0).unwrap_or(128);
         core::str::from_utf8(&self.name[..end]).unwrap_or("")
@@ -71,6 +73,7 @@ impl UnkfsSnapshot {
 
 impl UnkfsSnapshotManager {
     /// 构造空快照管理器 (ID 从 1 开始分配)
+    #[must_use]
     pub fn new() -> Self {
         Self {
             snapshots: Mutex::new(Vec::new()),
@@ -162,6 +165,13 @@ impl UnkfsSnapshotManager {
     /// 当前登记的快照总数
     pub fn snapshot_count(&self) -> usize {
         self.snapshots.lock().len()
+    }
+}
+
+impl Default for UnkfsSnapshotManager {
+    /// 委托 [`UnkfsSnapshotManager::new`] 构造空快照管理器.
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -49,6 +49,7 @@ pub enum NumaPolicy {
 
 impl NumaPolicy {
     /// 由判别值构造策略 (未知值回退 `Default`)
+    #[must_use]
     pub fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::Bind,
@@ -63,6 +64,7 @@ impl NumaPolicy {
     /// 注意: Linux 模式编码与本枚举判别值**不同** (`MPOL_PREFERRED = 1` 而
     /// `NumaPolicy::Preferred = 3`), 用户态传入的 mode 必须经本函数映射,
     /// 禁止直接 `from_u8`. 非法值返回 `None`.
+    #[must_use]
     pub fn from_linux_mode(mode: u32) -> Option<Self> {
         match mode {
             MPOL_DEFAULT => Some(Self::Default),
@@ -108,8 +110,15 @@ pub struct NumaMempolicy {
     pub interleave_next: AtomicU32,
 }
 
+impl Default for NumaMempolicy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NumaMempolicy {
     /// 构造默认内存策略 (Default 模式 / 空节点掩码 / 交织索引归零)
+    #[must_use]
     pub fn new() -> Self {
         Self {
             mode: IrqSpinLock::new(NumaPolicy::Default),
@@ -182,6 +191,7 @@ pub struct NumaNode {
 
 impl NumaNode {
     /// 以节点 ID 构造空节点 (CPU 列表与内存区间待后续填充)
+    #[must_use]
     pub fn new(id: u32) -> Self {
         Self {
             id,
@@ -222,8 +232,15 @@ pub struct NumaTopology {
     initialized: AtomicBool,
 }
 
+impl Default for NumaTopology {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NumaTopology {
     /// 构造空拓扑 (常量上下文可用, 供静态实例初始化)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             nodes: IrqSpinLock::new(Vec::new()),
@@ -362,10 +379,10 @@ impl NumaTopology {
         sorted.sort_by_key(|(d, _)| *d);
 
         for (_, node_id) in sorted {
-            if let Some(node) = nodes.iter().find(|n| n.id == node_id) {
-                if node.free_pages.load(Ordering::Acquire) > 0 {
-                    return Some(node_id);
-                }
+            if let Some(node) = nodes.iter().find(|n| n.id == node_id)
+                && node.free_pages.load(Ordering::Acquire) > 0
+            {
+                return Some(node_id);
             }
         }
         None
@@ -388,6 +405,7 @@ pub fn numa_init(total_memory: u64, num_cpus: u32) {
 }
 
 /// 获取全局 NUMA 拓扑引用
+#[must_use]
 pub fn numa_topology() -> &'static NumaTopology {
     &NUMA_TOPOLOGY
 }
@@ -442,11 +460,13 @@ pub fn sys_set_mempolicy(mode: u64, nodemask: u64) -> i64 {
 }
 
 /// `sys_migrate_pages` — 将进程页面迁移到目标节点
+#[must_use]
 pub fn sys_migrate_pages(_target_nodemask: u64) -> i64 {
     0
 }
 
 /// `sys_getcpu` — 获取当前 CPU 和 NUMA 节点
+#[must_use]
 pub fn sys_getcpu() -> i64 {
     let cpu = crate::privileged::smp::current_cpu_index();
     let node = if numa_is_initialized() {
@@ -462,12 +482,12 @@ pub fn sys_getcpu() -> i64 {
 /// SIMPLIFIED: 当前无分配侧消费方 — PMM 为单一全局 buddy (无 per-node 分区),
 /// `pmm.rs` 分配路径未消费 NUMA 策略; 本函数仅作为 `mbind` 策略落地的查询入口.
 /// 影响面: 查询结果暂不影响实际页分配节点. 何时需扩展: PMM 引入 per-node 分区后,
-/// 由分配决策路径 (alloc_trait) 消费本函数.
+/// 由分配决策路径 (`alloc_trait`) 消费本函数.
 pub fn effective_policy_for(addr: usize) -> Option<NumaRangePolicy> {
-    if let Some(mm) = crate::privileged::mm::vma_get_current_mm() {
-        if let Some(p) = mm.numa_policy_at(addr) {
-            return Some(p);
-        }
+    if let Some(mm) = crate::privileged::mm::vma_get_current_mm()
+        && let Some(p) = mm.numa_policy_at(addr)
+    {
+        return Some(p);
     }
 
     let pid = crate::privileged::proc::process_get_current_pid();

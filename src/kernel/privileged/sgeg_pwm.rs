@@ -24,6 +24,7 @@ use crate::privileged::sgeg;
 /// # Safety
 ///
 /// `password` 必须为有效非空切片, 调用期间不释放; 内核读取其内容到 NUL 终止的 C 字符串。
+#[must_use]
 pub fn pwm_try_genesis(password: *const u8) -> i64 {
     sgeg::api::pwm_try_genesis(password)
 }
@@ -33,6 +34,7 @@ pub fn pwm_try_genesis(password: *const u8) -> i64 {
 /// # Safety
 ///
 /// 同 `pwm_try_genesis`。
+#[must_use]
 pub fn pwm_create_first_identity(password: *const u8) -> i64 {
     sgeg::api::pwm_create_first_identity(password)
 }
@@ -42,6 +44,7 @@ pub fn pwm_create_first_identity(password: *const u8) -> i64 {
 /// # Safety
 ///
 /// `password` / `note` 必须为有效切片, 调用期间不释放; 内核会读取 NUL 终止的字节序列。
+#[must_use]
 pub fn pwm_create(password: *const u8, note: *const u8, creator: u64) -> i64 {
     sgeg::api::pwm_create(password, note, creator)
 }
@@ -51,6 +54,7 @@ pub fn pwm_create(password: *const u8, note: *const u8, creator: u64) -> i64 {
 /// # Safety
 ///
 /// `password` 必须为有效非空切片, 调用期间不释放。
+#[must_use]
 pub fn pwm_verify_password(pwm: u64, password: *const u8) -> bool {
     sgeg::api::pwm_verify_password(pwm, password)
 }
@@ -60,6 +64,7 @@ pub fn pwm_verify_password(pwm: u64, password: *const u8) -> bool {
 /// # Safety
 ///
 /// `old` / `new` 必须为有效非空切片, 调用期间不释放。
+#[must_use]
 pub fn pwm_change_password(pwm: u64, old: *const u8, new: *const u8) -> i32 {
     sgeg::api::pwm_change_password(pwm, old, new)
 }

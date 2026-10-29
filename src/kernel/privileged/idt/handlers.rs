@@ -23,7 +23,7 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use super::idt::IdtManager;
+use super::table::IdtManager;
 use super::types::{InterruptFrame, get_exception_name};
 use crate::klog_err;
 use crate::klog_warn;
@@ -57,6 +57,7 @@ pub struct PanicInfo {
 
 impl PanicInfo {
     /// 构造崩溃信息记录
+    #[must_use]
     pub fn new(reason: &'static str, vector: u8, rip: u64) -> Self {
         Self {
             reason,
@@ -101,7 +102,11 @@ pub enum ExceptionCategory {
 /// 异常处理器 trait (对象安全)
 pub trait ExceptionHandler: Send + Sync {
     /// 处理异常并返回恢复动作
-    fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction;
+    ///
+    /// # Safety
+    /// `frame` 必须指向异常入口构建的、结构完整且对齐的 `InterruptFrame`,
+    /// 且调用期间该帧不被其他路径修改。
+    unsafe fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction;
 
     /// 获取异常严重性
     fn severity(&self) -> Severity;
@@ -121,7 +126,9 @@ pub trait ExceptionHandler: Send + Sync {
 pub struct DivisionByZeroHandler;
 
 impl ExceptionHandler for DivisionByZeroHandler {
-    fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
+    // SAFETY: 安全契约继承自 trait 声明 —— `frame` 由调用方保证指向异常入口构建的、
+    // 结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
+    unsafe fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
         // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
         if unsafe { (*frame).is_user_mode() } {
             // User-mode #DE: 安全终止进程
@@ -159,6 +166,7 @@ pub struct PageFaultHandler;
 
 impl PageFaultHandler {
     /// 分析 Page Fault 错误码
+    #[must_use]
     pub fn analyze_error_code(error_code: u64) -> PageFaultAnalysis {
         let present = error_code & 0x01 != 0;
         let write = error_code & 0x02 != 0;
@@ -190,7 +198,9 @@ impl PageFaultHandler {
 }
 
 impl ExceptionHandler for PageFaultHandler {
-    fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
+    // SAFETY: 安全契约继承自 trait 声明 —— `frame` 由调用方保证指向异常入口构建的、
+    // 结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
+    unsafe fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
         // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
         let fault_addr = unsafe { InterruptFrame::fault_address() };
         // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
@@ -296,7 +306,9 @@ impl ExceptionHandler for PageFaultHandler {
 pub struct InvalidOpcodeHandler;
 
 impl ExceptionHandler for InvalidOpcodeHandler {
-    fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
+    // SAFETY: 安全契约继承自 trait 声明 —— `frame` 由调用方保证指向异常入口构建的、
+    // 结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
+    unsafe fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
         // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
         let is_user = unsafe { (*frame).is_user_mode() };
         // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
@@ -393,7 +405,9 @@ pub enum FaultCause {
 pub struct GeneralProtectionFaultHandler;
 
 impl ExceptionHandler for GeneralProtectionFaultHandler {
-    fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
+    // SAFETY: 安全契约继承自 trait 声明 —— `frame` 由调用方保证指向异常入口构建的、
+    // 结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
+    unsafe fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
         // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
         if unsafe { (*frame).is_user_mode() } {
             // User GPF: 终止进程
@@ -463,7 +477,9 @@ pub struct DoubleFaultHandler;
 static DOUBLE_FAULT_COUNT: AtomicU64 = AtomicU64::new(0);
 
 impl ExceptionHandler for DoubleFaultHandler {
-    fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
+    // SAFETY: 安全契约继承自 trait 声明 —— `frame` 由调用方保证指向异常入口构建的、
+    // 结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
+    unsafe fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
         let count = DOUBLE_FAULT_COUNT.fetch_add(1, Ordering::SeqCst);
 
         // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
@@ -513,13 +529,15 @@ pub struct DefaultHandler {
 
 impl DefaultHandler {
     /// 构造指定向量号的默认处理器
+    #[must_use]
     pub fn new(vector: u8) -> Self {
         Self { vector }
     }
 }
 
 impl ExceptionHandler for DefaultHandler {
-    fn handle(&self, _frame: *mut InterruptFrame) -> RecoveryAction {
+    // SAFETY: 安全契约继承自 trait 声明 —— 本实现不访问 `_frame`, 契约由调用方满足.
+    unsafe fn handle(&self, _frame: *mut InterruptFrame) -> RecoveryAction {
         // 默认行为: 尝试域级恢复
         RecoveryAction::DomainRecovery
     }
@@ -551,6 +569,7 @@ fn is_currently_user_mode() -> bool {
 }
 
 /// 异常分发器 (工厂模式 - 返回静态引用以避免 Box 分配)
+#[must_use]
 pub fn create_handler(vector: u8) -> &'static dyn ExceptionHandler {
     static DIV_ZERO: DivisionByZeroHandler = DivisionByZeroHandler;
     static INVALID_OPCODE: InvalidOpcodeHandler = InvalidOpcodeHandler;
@@ -587,8 +606,15 @@ pub struct ExceptionStatisticsCollector {
     panics: AtomicU64,
 }
 
+impl Default for ExceptionStatisticsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ExceptionStatisticsCollector {
     /// 构造全零的统计收集器
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             total_exceptions: AtomicU64::new(0),
@@ -701,6 +727,7 @@ impl ExceptionStatisticsCollector {
 static COLLECTOR: ExceptionStatisticsCollector = ExceptionStatisticsCollector::new();
 
 /// 获取全局统计收集器
+#[must_use]
 pub fn get_collector() -> &'static ExceptionStatisticsCollector {
     &COLLECTOR
 }

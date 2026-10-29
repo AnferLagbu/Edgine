@@ -18,11 +18,12 @@ use crate::privileged::syscall::Errno;
 /// `SYS_SGEG_GET_DOMAIN_FLAGS` — 查询当前进程域标志位掩码
 ///
 /// 返回位掩码 (非负); 进程不存在返回 `ESRCH`.
+#[must_use]
 pub fn domain_flags_get_syscall() -> i64 {
     let pid = crate::privileged::proc::process_get_current_pid();
     match crate::privileged::proc::domain_flags_get(pid) {
         Some(flags) => i64::from(flags.bits()),
-        None => Errno::ESRCH.as_ret(),
+        None => Errno::Esrch.as_ret(),
     }
 }
 
@@ -39,6 +40,7 @@ pub fn domain_flags_get_syscall() -> i64 {
 ///
 /// - 无权限 → `EPERM`
 /// - 当前进程不存在 → `ESRCH`
+#[must_use]
 pub fn domain_flags_set_syscall(flags: u64) -> i64 {
     use crate::functions::sgeg::capability::{CAP_DOMAIN_SYSTEM, SYSTEM_CAP_SET_DOMAIN_FLAGS};
     let current = crate::privileged::sgeg::pwm_get_current();
@@ -47,7 +49,7 @@ pub fn domain_flags_set_syscall(flags: u64) -> i64 {
         CAP_DOMAIN_SYSTEM,
         SYSTEM_CAP_SET_DOMAIN_FLAGS,
     ) {
-        return Errno::EPERM.as_ret();
+        return Errno::Eperm.as_ret();
     }
     let pid = crate::privileged::proc::process_get_current_pid();
     let wanted = crate::privileged::sgeg::DomainFlags::from_bits_truncate(
@@ -56,6 +58,6 @@ pub fn domain_flags_set_syscall(flags: u64) -> i64 {
     if crate::privileged::proc::domain_flags_set(pid, wanted) {
         0
     } else {
-        Errno::ESRCH.as_ret()
+        Errno::Esrch.as_ret()
     }
 }

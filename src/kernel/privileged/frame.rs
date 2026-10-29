@@ -38,9 +38,10 @@ impl Frame {
     /// # SAFETY
     /// 调用方保证 `phys` 是有效的可分配物理地址，
     /// 且未被其他 `Frame` 实例持有。
+    #[must_use]
     pub unsafe fn from_raw(phys: PhysAddr, order: u8) -> Self {
         debug_assert!(
-            phys.as_u64().is_multiple_of(PAGE_SIZE as u64),
+            phys.as_u64().is_multiple_of(PAGE_SIZE),
             "Frame must be page-aligned"
         );
         Self {
@@ -52,23 +53,27 @@ impl Frame {
 
     /// 物理地址
     #[inline]
+    #[must_use]
     pub fn phys(&self) -> PhysAddr {
         self.phys
     }
 
     /// Buddy 阶数 (0 = 4KB, 9 = 2MB)
     #[inline]
+    #[must_use]
     pub fn order(&self) -> u8 {
         self.order
     }
 
     /// 帧大小 (字节)
+    #[must_use]
     pub fn size(&self) -> usize {
         crate::privileged::glue::usize_from_u64(PAGE_SIZE) << self.order
     }
 
     /// 当前持有者数 (PMM 计数面, 0 = 未计数帧)
     #[inline]
+    #[must_use]
     pub fn ref_count(&self) -> u32 {
         crate::privileged::mm::api::frame_ref_count(self.phys)
     }
@@ -77,12 +82,14 @@ impl Frame {
     ///
     /// 返回 `false` = 帧不处于计数态 (未计数块 / MMIO 地址), 未登记成功。
     #[inline]
+    #[must_use]
     pub fn inc_ref(&self) -> bool {
         crate::privileged::mm::api::frame_inc(self.phys)
     }
 
     /// 自定义元数据（functions 可挂载任意 usize 值）
     #[inline]
+    #[must_use]
     pub fn meta(&self) -> usize {
         self.meta
     }
@@ -99,6 +106,7 @@ impl Frame {
     /// 返回 `*mut u8` 无生命周期绑定, Frame Drop 后指针悬挂。
     /// 优先使用 `as_virt_slice()` 安全 API (生命周期绑定 `&self`)。
     /// 仅在 FFI / DMA 等需要 raw pointer 的场景保留。
+    #[must_use]
     pub fn as_virt_ptr(&self) -> *mut u8 {
         crate::privileged::mm::phys_to_virt(self.phys.as_u64()) as *mut u8
     }

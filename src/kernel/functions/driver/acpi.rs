@@ -22,18 +22,21 @@
 
 /// 是否找到 RSDP (Root System Description Pointer)
 #[inline]
+#[must_use]
 pub fn has_rsdp() -> bool {
     crate::privileged::arch::acpi::find_rsdp(0).is_some()
 }
 
 /// 是否解析过 MADT (Multiple APIC Description Table)
 #[inline]
+#[must_use]
 pub fn has_madt() -> bool {
     crate::privileged::arch::acpi::has_madt()
 }
 
 /// 是否解析过 FADT (电源管理)
 #[inline]
+#[must_use]
 pub fn has_fadt() -> bool {
     // B04-21: 委托 privileged::arch::acpi::has_fadt(), 替代原硬编码 `true`.
     // 旧实现未查询框架层 → 即使未解析 FADT 也返回 true, 电源管理走 ACPI 路径
@@ -43,12 +46,14 @@ pub fn has_fadt() -> bool {
 
 /// 是否解析过 HPET (高精度事件定时器)
 #[inline]
+#[must_use]
 pub fn has_hpet() -> bool {
     crate::privileged::arch::acpi::get_hpet_info().is_some()
 }
 
 /// 是否解析过 DMAR (IOMMU DRHD)
 #[inline]
+#[must_use]
 pub fn has_dmar() -> bool {
     // 简化: DMAR 解析与启动日志挂钩, 当前仅返回 false 占位
     false
@@ -60,24 +65,28 @@ pub fn has_dmar() -> bool {
 
 /// 获取 AP (Application Processor) 数量
 #[inline]
+#[must_use]
 pub fn ap_count() -> u32 {
     crate::privileged::arch::acpi::get_ap_count()
 }
 
 /// LAPIC 基址
 #[inline]
+#[must_use]
 pub fn lapic_base() -> u64 {
     crate::privileged::arch::acpi::get_lapic_base()
 }
 
 /// IOAPIC 基址
 #[inline]
+#[must_use]
 pub fn ioapic_addr() -> u64 {
     crate::privileged::arch::acpi::get_ioapic_addr()
 }
 
 /// IOAPIC 全局系统中断基址
 #[inline]
+#[must_use]
 pub fn ioapic_gsib() -> u32 {
     crate::privileged::arch::acpi::get_ioapic_gsib()
 }
@@ -100,6 +109,7 @@ pub struct IoApicInfoSafe {
 }
 
 /// 获取所有 IOAPIC 信息
+#[must_use]
 pub fn ioapic_list() -> [Option<IoApicInfoSafe>; 8] {
     let fw = crate::privileged::arch::acpi::get_ioapics();
     let mut result = [None; 8];
@@ -117,6 +127,7 @@ pub fn ioapic_list() -> [Option<IoApicInfoSafe>; 8] {
 }
 
 /// IOAPIC 数量
+#[must_use]
 pub fn ioapic_count() -> u32 {
     crate::privileged::arch::acpi::get_ioapic_count()
 }
@@ -140,6 +151,7 @@ pub struct HpetInfoSafe {
 
 /// 获取 HPET 信息 (safe 拷贝)
 #[inline]
+#[must_use]
 pub fn hpet_info() -> Option<HpetInfoSafe> {
     crate::privileged::arch::acpi::get_hpet_info().map(|info| HpetInfoSafe {
         base_addr: info.base_addr,
@@ -200,28 +212,118 @@ pub fn acpi_reboot() -> ! {
 /// ACPI 整体状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AcpiStatus {
-    /// 是否找到 RSDP
-    pub has_rsdp: bool,
-    /// 是否解析过 MADT
-    pub has_madt: bool,
-    /// 是否解析过 FADT
-    pub has_fadt: bool,
-    /// 是否解析过 HPET
-    pub has_hpet: bool,
-    /// 是否解析过 DMAR
-    pub has_dmar: bool,
+    /// 已发现/已解析的表标志位
+    pub tables: AcpiTableFlags,
     /// AP (应用处理器) 数量
     pub ap_count: u32,
 }
 
+/// ACPI 表发现状态 (位域封装: RSDP / MADT / FADT / HPET / DMAR)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AcpiTableFlags {
+    /// 标志位 (bit0 RSDP, bit1 MADT, bit2 FADT, bit3 HPET, bit4 DMAR)
+    bits: u8,
+}
+
+impl AcpiTableFlags {
+    /// RSDP 已找到标志位.
+    const RSDP: u8 = 1 << 0;
+    /// MADT 已解析标志位.
+    const MADT: u8 = 1 << 1;
+    /// FADT 已解析标志位.
+    const FADT: u8 = 1 << 2;
+    /// HPET 已解析标志位.
+    const HPET: u8 = 1 << 3;
+    /// DMAR 已解析标志位.
+    const DMAR: u8 = 1 << 4;
+
+    /// 空标志集 (五项发现标志全为假).
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self { bits: 0 }
+    }
+
+    /// 置位「找到 RSDP」标志.
+    #[must_use]
+    pub const fn with_rsdp(self, found: bool) -> Self {
+        Self {
+            bits: self.bits | if found { Self::RSDP } else { 0 },
+        }
+    }
+
+    /// 置位「MADT 已解析」标志.
+    #[must_use]
+    pub const fn with_madt(self, parsed: bool) -> Self {
+        Self {
+            bits: self.bits | if parsed { Self::MADT } else { 0 },
+        }
+    }
+
+    /// 置位「FADT 已解析」标志.
+    #[must_use]
+    pub const fn with_fadt(self, parsed: bool) -> Self {
+        Self {
+            bits: self.bits | if parsed { Self::FADT } else { 0 },
+        }
+    }
+
+    /// 置位「HPET 已解析」标志.
+    #[must_use]
+    pub const fn with_hpet(self, parsed: bool) -> Self {
+        Self {
+            bits: self.bits | if parsed { Self::HPET } else { 0 },
+        }
+    }
+
+    /// 置位「DMAR 已解析」标志.
+    #[must_use]
+    pub const fn with_dmar(self, parsed: bool) -> Self {
+        Self {
+            bits: self.bits | if parsed { Self::DMAR } else { 0 },
+        }
+    }
+
+    /// 是否找到 RSDP.
+    #[must_use]
+    pub const fn rsdp_found(self) -> bool {
+        self.bits & Self::RSDP != 0
+    }
+
+    /// 是否解析过 MADT.
+    #[must_use]
+    pub const fn madt_parsed(self) -> bool {
+        self.bits & Self::MADT != 0
+    }
+
+    /// 是否解析过 FADT.
+    #[must_use]
+    pub const fn fadt_parsed(self) -> bool {
+        self.bits & Self::FADT != 0
+    }
+
+    /// 是否解析过 HPET.
+    #[must_use]
+    pub const fn hpet_parsed(self) -> bool {
+        self.bits & Self::HPET != 0
+    }
+
+    /// 是否解析过 DMAR.
+    #[must_use]
+    pub const fn dmar_parsed(self) -> bool {
+        self.bits & Self::DMAR != 0
+    }
+}
+
 /// 获取 ACPI 整体状态 (供 sysinfo / procfs 使用)
+#[must_use]
 pub fn acpi_status() -> AcpiStatus {
     AcpiStatus {
-        has_rsdp: has_rsdp(),
-        has_madt: has_madt(),
-        has_fadt: has_fadt(),
-        has_hpet: has_hpet(),
-        has_dmar: has_dmar(),
+        tables: AcpiTableFlags::empty()
+            .with_rsdp(has_rsdp())
+            .with_madt(has_madt())
+            .with_fadt(has_fadt())
+            .with_hpet(has_hpet())
+            .with_dmar(has_dmar()),
         ap_count: ap_count(),
     }
 }

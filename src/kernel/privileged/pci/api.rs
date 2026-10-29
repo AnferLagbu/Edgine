@@ -53,16 +53,19 @@ pub const PCI_CMD_BUS_MASTER: u16 = 1 << 2;
 // ============================================================================
 
 /// 读取 PCI 配置空间 1 字节 (转发至 `super` 的持锁实现).
+#[must_use]
 pub fn read_config_byte(bus: u8, dev: u8, func: u8, offset: u8) -> u8 {
     super::read_config_byte(bus, dev, func, offset)
 }
 
 /// 读取 PCI 配置空间 2 字节 (转发至 `super` 的持锁实现).
+#[must_use]
 pub fn read_config_word(bus: u8, dev: u8, func: u8, offset: u8) -> u16 {
     super::read_config_word(bus, dev, func, offset)
 }
 
 /// 读取 PCI 配置空间 4 字节 (转发至 `super` 的持锁实现).
+#[must_use]
 pub fn read_config_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
     super::read_config_dword(bus, dev, func, offset)
 }

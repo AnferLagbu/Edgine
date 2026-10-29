@@ -6,7 +6,7 @@
 //!
 //! 纯算法实现 (SHA-256 哈希), 0 unsafe.
 //! T6-8 曾于 2026-06-16 提取到 functions; 第二十五批 (DECISION-K 项 5 sgeg
-//! 判据: 安全原语归 privileged — privileged/sgeg/secure_boot 直接消费) 反转
+//! 判据: 安全原语归 privileged — `privileged/sgeg/secure_boot` 直接消费) 反转
 //! 归位本文件. functions/sgeg/sha256.rs 为 re-export 壳.
 
 use super::types::PWM_DIGEST_LEN;
@@ -175,6 +175,7 @@ fn sha256_transform(state: &mut [u32; 8], block: &[u8; 64]) {
 ///
 /// B07-07: 返回类型由 `[u8; PWM_HASH_LEN]`(48) 修正为标准 32 字节输出.
 /// 原实现返回 48 字节数组但仅填充前 32 字节, 尾部 16 字节恒 0, 属误导性契约.
+#[must_use]
 pub fn sha256(data: &[u8]) -> [u8; PWM_DIGEST_LEN] {
     let mut state = INITIAL_STATE;
     let len = data.len();

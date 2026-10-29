@@ -9,6 +9,7 @@ pub struct Ext2Bitmap {
 
 impl Ext2Bitmap {
     /// 从字节切片创建位图
+    #[must_use]
     pub fn from_bytes(data: &[u8]) -> Self {
         Self {
             data: data.to_vec(),
@@ -16,6 +17,7 @@ impl Ext2Bitmap {
     }
 
     /// 检查指定位是否已设置
+    #[must_use]
     pub fn is_set(&self, bit: u32) -> bool {
         let byte_idx = (bit / 8) as usize;
         let bit_idx = (bit % 8) as usize;
@@ -28,6 +30,7 @@ impl Ext2Bitmap {
     }
 
     /// 统计已设置的位数
+    #[must_use]
     pub fn count_used(&self) -> u32 {
         let mut count = 0;
         for byte in &self.data {
@@ -37,6 +40,7 @@ impl Ext2Bitmap {
     }
 
     /// 统计未设置的位数
+    #[must_use]
     pub fn count_free(&self, total: u32) -> u32 {
         total - self.count_used()
     }

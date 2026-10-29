@@ -1,7 +1,7 @@
-//! AArch64 上下文切换
+//! `AArch64` 上下文切换
 //!
 //! AAPCS64 callee-saved 寄存器: x19-x30, SP
-//! 系统寄存器: TTBR0_EL1, SP_EL0, SPSR_EL1, ELR_EL1
+//! 系统寄存器: `TTBR0_EL1`, `SP_EL0`, `SPSR_EL1`, `ELR_EL1`
 //!
 //! ## `ProcessContext` 字段语义 (aarch64 复用 x86_64 字段偏移, 偏移以本文件汇编为权威)
 //!
@@ -10,15 +10,15 @@
 //! | 0..72    | r15..rflags | x19..x28 |
 //! | 80       | cr3         | x29 (FP) |
 //! | 88       | cs          | x30 (LR) |
-//! | 96       | ds          | SP_EL1 (内核栈指针) |
+//! | 96       | ds          | `SP_EL1` (内核栈指针) |
 //! | 104      | es          | EL1 侧 TTBR0 (内核可用表: EL1 视图根 / 内核表) |
-//! | 112      | fs          | SPSR_EL1 |
-//! | 120      | gs          | ELR_EL1 |
-//! | 128      | ss          | SP_EL0 (用户栈指针) |
-//! | 136      | fpu_pad    | 用户页表 (EL0 的 TTBR0) |
-//! | 144..656 | fpu_state   | V0-V31 |
+//! | 112      | fs          | `SPSR_EL1` |
+//! | 120      | gs          | `ELR_EL1` |
+//! | 128      | ss          | `SP_EL0` (用户栈指针) |
+//! | 136      | `fpu_pad`    | 用户页表 (EL0 的 TTBR0) |
+//! | 144..656 | `fpu_state`   | V0-V31 |
 //! | 656, 664 | fpcr, fpsr  | FPCR / FPSR |
-//! | 672..728 | extra_regs  | x0..x7 |
+//! | 672..728 | `extra_regs`  | x0..x7 |
 //!
 //! 恢复侧按目标 `SPSR_EL1.M[3:0]` 分派两条路径 (见 `context_switch_asm` 注释):
 //! 内核续跑 (`M != 0`) 与首次进入 EL0 (`M == 0`).
@@ -258,7 +258,7 @@ context_switch_asm:
 // AArch64 上下文结构 (用于编译时验证布局)
 // ============================================================================
 
-/// AArch64 上下文布局 (对应 ProcessContext 偏移)
+/// `AArch64` 上下文布局 (对应 `ProcessContext` 偏移)
 #[repr(C)]
 pub struct Aarch64Context {
     pub x19: u64,        // offset 0 → r15
@@ -287,7 +287,7 @@ unsafe extern "C" {
     pub fn context_switch_asm(prev: *const u64, next: *const u64);
 }
 
-/// 执行上下文切换。from/to 为原始指针 (实际指向 ProcessContext)。
+/// 执行上下文切换。from/to 为原始指针 (实际指向 `ProcessContext`)。
 ///
 /// # Safety
 /// 调用者必须确保两个上下文指针有效且已初始化。

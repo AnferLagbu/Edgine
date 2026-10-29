@@ -2,10 +2,10 @@
 //!
 //! ## DECISION-J 归属反转记录 (2026-09-12)
 //!
-//! 原常量定义 (MAX_CPUS/MAX_IRQS/MAX_PROCESSES 等) 于 T6-9 (2026-06-16) 迁至
+//! 原常量定义 (`MAX_CPUS/MAX_IRQS/MAX_PROCESSES` 等) 于 T6-9 (2026-06-16) 迁至
 //! `functions::config::capacity`, 本文件仅 re-export。
 //! 按"机制持有的数据结构/常量归 privileged"统一判据反转：`MAX_CPUS` 被
-//! privileged smp/cpu_local/rcu/irq 的 `static [T; MAX_CPUS]` per-CPU 数组直接
+//! privileged `smp/cpu_local/rcu/irq` 的 `static [T; MAX_CPUS]` per-CPU 数组直接
 //! 消费、`MAX_IRQS` 被 privileged irq 机制消费 — 属机制容量常量, 迁回。
 //!
 //! functions 侧改 `pub use crate::privileged::config::capacity::*` 保持 API 兼容。

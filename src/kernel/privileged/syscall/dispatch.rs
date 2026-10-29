@@ -17,7 +17,7 @@ use super::types::{
 // SYS_SGEG_DISK_INSTALL 分支已迁至 functions (T2 批 5), 编号常量仅在 types.rs 保留
 // (aarch64 生产构建不引用, 与迁移前 cfg 门控语义一致)
 
-/// fb_mmap 目标虚拟地址上界 — 集中定义于 `privileged::constants::limits`
+/// `fb_mmap` 目标虚拟地址上界 — 集中定义于 `privileged::constants::limits`
 /// (与用户指针校验边界语义不同, 见该常量注释).
 use crate::privileged::constants::limits::FB_MMAP_ADDR_MAX;
 
@@ -361,7 +361,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         SYS_SOCKET | SYS_CONNECT | SYS_ACCEPT | SYS_SENDTO | SYS_RECVFROM | SYS_SHUTDOWN
         | SYS_BIND | SYS_LISTEN | SYS_SENDMSG | SYS_RECVMSG | SYS_SETSOCKOPT | SYS_GETSOCKOPT
         | SYS_GETSOCKNAME | SYS_GETPEERNAME => {
-            dispatch!(Errno::ENOSYS.as_ret(), b"net_nosys\0")
+            dispatch!(Errno::Enosys.as_ret(), b"net_nosys\0")
         }
 
         // ==================== 时间 ====================
@@ -388,7 +388,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         // (机制函数: sys_fb_open / sys_fb_mmap / sys_fb_release).
 
         // 未匹配的 syscall 编号
-        _ => Errno::ENOSYS.as_ret(),
+        _ => Errno::Enosys.as_ret(),
     }
 }
 
@@ -403,12 +403,12 @@ pub(crate) fn sys_nanosleep(req: u64, rem: u64) -> i64 {
         tv_nsec: i64,
     }
     if req == 0 || !raw::check_user_ptr(req) {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     // SAFETY: `const` 由调用方保证为有效指针; 只读访问
     let ts = unsafe { core::ptr::read_volatile(req as *const Timespec) };
     if ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1_000_000_000 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     let total_ns = ts.tv_sec.cast_unsigned() * 1_000_000_000 + ts.tv_nsec.cast_unsigned();
@@ -425,16 +425,16 @@ pub(crate) fn sys_nanosleep(req: u64, rem: u64) -> i64 {
 
 pub(crate) fn sys_kill(pid: i32, sig: i32) -> i64 {
     if !(0..=31).contains(&sig) {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     match crate::privileged::proc::do_signal_send_extended(
         pid,
         crate::privileged::glue::u8_from_i32(sig),
     ) {
         Ok(_) => 0,
-        Err(-1) => Errno::EINVAL.as_ret(),
-        Err(-2) => Errno::ESRCH.as_ret(),
-        Err(_) => Errno::EPERM.as_ret(),
+        Err(-1) => Errno::Einval.as_ret(),
+        Err(-2) => Errno::Esrch.as_ret(),
+        Err(_) => Errno::Eperm.as_ret(),
     }
 }
 
@@ -448,17 +448,17 @@ const SIG_SETMASK: i32 = 2;
 
 pub(crate) fn sys_rt_sigaction(signum: i32, act: u64, oact: u64) -> i64 {
     if !(1..=31).contains(&signum) {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     let pid = match crate::privileged::proc::process_get_current_pid() {
-        0 => return Errno::ESRCH.as_ret(),
+        0 => return Errno::Esrch.as_ret(),
         p => p,
     };
 
     if oact != 0 {
         if !raw::check_user_buf(oact, 8) {
-            return Errno::EFAULT.as_ret();
+            return Errno::Efault.as_ret();
         }
         let old = crate::privileged::proc::get_sigaction(
             pid,
@@ -467,13 +467,13 @@ pub(crate) fn sys_rt_sigaction(signum: i32, act: u64, oact: u64) -> i64 {
         match old {
             // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
             Some(v) => unsafe { raw::write_u64(oact as *mut u64, v) },
-            None => return Errno::EINVAL.as_ret(),
+            None => return Errno::Einval.as_ret(),
         }
     }
 
     if act != 0 {
         if !raw::check_user_buf(act, 8) {
-            return Errno::EFAULT.as_ret();
+            return Errno::Efault.as_ret();
         }
         // SAFETY: `const` 由调用方保证为有效指针; 只读访问
         let new_action = unsafe { raw::read_u64(act as *const u64) };
@@ -483,7 +483,7 @@ pub(crate) fn sys_rt_sigaction(signum: i32, act: u64, oact: u64) -> i64 {
             new_action,
         ) {
             Some(_) => {}
-            None => return Errno::EINVAL.as_ret(),
+            None => return Errno::Einval.as_ret(),
         }
     }
 
@@ -492,13 +492,13 @@ pub(crate) fn sys_rt_sigaction(signum: i32, act: u64, oact: u64) -> i64 {
 
 pub(crate) fn sys_rt_sigprocmask(how: i32, set: u64, oset: u64) -> i64 {
     let pid = match crate::privileged::proc::process_get_current_pid() {
-        0 => return Errno::ESRCH.as_ret(),
+        0 => return Errno::Esrch.as_ret(),
         p => p,
     };
 
     if oset != 0 {
         if !raw::check_user_buf(oset, 8) {
-            return Errno::EFAULT.as_ret();
+            return Errno::Efault.as_ret();
         }
         let old = crate::privileged::proc::get_blocked_mask(pid);
         // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
@@ -507,7 +507,7 @@ pub(crate) fn sys_rt_sigprocmask(how: i32, set: u64, oset: u64) -> i64 {
 
     if set != 0 {
         if !raw::check_user_buf(set, 8) {
-            return Errno::EFAULT.as_ret();
+            return Errno::Efault.as_ret();
         }
         // SAFETY: `const` 由调用方保证为有效指针; 只读访问
         let new_set = unsafe { raw::read_u64(set as *const u64) };
@@ -516,7 +516,7 @@ pub(crate) fn sys_rt_sigprocmask(how: i32, set: u64, oset: u64) -> i64 {
             SIG_BLOCK => old | new_set,
             SIG_UNBLOCK => old & !new_set,
             SIG_SETMASK => new_set,
-            _ => return Errno::EINVAL.as_ret(),
+            _ => return Errno::Einval.as_ret(),
         };
         crate::privileged::proc::set_blocked_mask(
             pid,
@@ -531,14 +531,14 @@ pub(crate) fn sys_sigaltstack(ss: u64, old_ss: u64) -> i64 {
     use crate::privileged::proc::{SS_DISABLE, SS_ONSTACK};
 
     let pid = match crate::privileged::proc::process_get_current_pid() {
-        0 => return Errno::ESRCH.as_ret(),
+        0 => return Errno::Esrch.as_ret(),
         p => p,
     };
 
     let result = crate::privileged::proc::process_with_mut(pid, |proc| {
         if old_ss != 0 {
             if !raw::check_user_buf(old_ss, 24) {
-                return Errno::EFAULT.as_ret();
+                return Errno::Efault.as_ret();
             }
             let cur_addr = proc.sigaltstack_addr.load(Ordering::Acquire);
             let cur_size = proc.sigaltstack_size.load(Ordering::Acquire);
@@ -553,7 +553,7 @@ pub(crate) fn sys_sigaltstack(ss: u64, old_ss: u64) -> i64 {
 
         if ss != 0 {
             if !raw::check_user_buf(ss, 24) {
-                return Errno::EFAULT.as_ret();
+                return Errno::Efault.as_ret();
             }
             // SAFETY: `const` 由调用方保证为有效指针; 只读访问
             let new_addr = unsafe { raw::read_u64(ss as *const u64) };
@@ -579,7 +579,7 @@ pub(crate) fn sys_sigaltstack(ss: u64, old_ss: u64) -> i64 {
         0i64
     });
 
-    result.unwrap_or_else(|| Errno::ESRCH.as_ret())
+    result.unwrap_or_else(|| Errno::Esrch.as_ret())
 }
 
 /// `arch_prctl` 机制实现 (TCB: 用户态 TLS 基址读写).
@@ -592,16 +592,16 @@ pub(crate) fn sys_sigaltstack(ss: u64, old_ss: u64) -> i64 {
 /// aarch64 侧仅归档 `Process.tls_base` (对应 `tpidr_el0`), 当前不写系统寄存器
 /// (与 `clone(CLONE_SETTLS)` 的既有口径一致).
 pub(crate) fn sys_arch_prctl(code: u64, addr: u64) -> i64 {
-    /// `ARCH_SET_FS` 子码 (Linux x86_64): 设置 FS 段基址.
+    /// `ARCH_SET_FS` 子码 (Linux `x86_64)`: 设置 FS 段基址.
     const ARCH_SET_FS: u64 = 0x1002;
-    /// `ARCH_GET_FS` 子码 (Linux x86_64): 查询 FS 段基址.
+    /// `ARCH_GET_FS` 子码 (Linux `x86_64)`: 查询 FS 段基址.
     const ARCH_GET_FS: u64 = 0x1003;
     /// `IA32_FS_BASE` MSR 地址 (用户态 FS 段基址).
     #[cfg(target_arch = "x86_64")]
     const IA32_FS_BASE: u32 = 0xC000_0100;
 
     let pid = match crate::privileged::proc::process_get_current_pid() {
-        0 => return Errno::ESRCH.as_ret(),
+        0 => return Errno::Esrch.as_ret(),
         p => p,
     };
 
@@ -612,7 +612,7 @@ pub(crate) fn sys_arch_prctl(code: u64, addr: u64) -> i64 {
             })
             .is_none()
             {
-                return Errno::ESRCH.as_ret();
+                return Errno::Esrch.as_ret();
             }
             // 当前进程立即生效: 写本 CPU 的 FS 段基址 MSR.
             #[cfg(target_arch = "x86_64")]
@@ -629,15 +629,15 @@ pub(crate) fn sys_arch_prctl(code: u64, addr: u64) -> i64 {
             let Some(base) = crate::privileged::proc::process_with(pid, |proc| {
                 proc.tls_base.load(Ordering::Acquire)
             }) else {
-                return Errno::ESRCH.as_ret();
+                return Errno::Esrch.as_ret();
             };
             // safe 包装: 内部先 check_user_buf 校验 8 字节可写后写入.
             if !raw::write_u64_to_user(addr, base) {
-                return Errno::EFAULT.as_ret();
+                return Errno::Efault.as_ret();
             }
             0
         }
-        _ => Errno::EINVAL.as_ret(),
+        _ => Errno::Einval.as_ret(),
     }
 }
 
@@ -648,15 +648,22 @@ pub(crate) fn sys_arch_prctl(code: u64, addr: u64) -> i64 {
 /// `sys_hotplug_status` — 读取热插拔状态 (机制: 用户 buffer 写入 + 驱动状态读取)
 ///
 /// T2 批 5 (syscall-followup): syscall 策略入口迁至 functions
-/// (functions::sgeg::storage::disk::hotplug_status_syscall), 本函数保留为
-/// 机制库 (unsafe 用户指针写入), 经 privileged::syscall 顶层 re-export 消费.
+/// (`functions::sgeg::storage::disk::hotplug_status_syscall`), 本函数保留为
+/// 机制库 (unsafe 用户指针写入), 经 `privileged::syscall` 顶层 re-export 消费.
 pub fn sys_hotplug_status(buf: *mut u8, buf_size: u32) -> i64 {
     if buf.is_null() || buf_size == 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     if !raw::check_user_buf(buf as u64, u64::from(buf_size)) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
+    // 经 UserWritePtr 把用户裸指针收敛为切片, 后续写入全部走安全索引 (I4 安全代理).
+    let Some(mut user_buf) =
+        crate::privileged::userptr::UserWritePtr::checked_new(buf, buf_size as usize)
+    else {
+        return Errno::Efault.as_ret();
+    };
+    let out = user_buf.as_mut_slice();
 
     let status = crate::privileged::driver::hotplug::HOTPLUG_MANAGER.status();
 
@@ -683,10 +690,7 @@ pub fn sys_hotplug_status(buf: *mut u8, buf_size: u32) -> i64 {
     if offset + 16 > buf_size {
         return i64::from(offset);
     }
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    unsafe {
-        core::ptr::copy_nonoverlapping(header.as_ptr(), buf.add(offset as usize), 16);
-    }
+    out[offset as usize..offset as usize + 16].copy_from_slice(&header);
     offset += 16;
 
     let slot_size: u32 = 8;
@@ -704,14 +708,8 @@ pub fn sys_hotplug_status(buf: *mut u8, buf_size: u32) -> i64 {
             0,
             0,
         ];
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                info.as_ptr(),
-                buf.add(offset as usize),
-                slot_size as usize,
-            );
-        }
+        // slot_size 为 8, 且上方已确认 offset + slot_size <= buf_size, 索引必然在界内.
+        out[offset as usize..offset as usize + slot_size as usize].copy_from_slice(&info);
         offset += slot_size;
     }
 
@@ -738,14 +736,8 @@ pub fn sys_hotplug_status(buf: *mut u8, buf_size: u32) -> i64 {
             0,
             0,
         ];
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                info.as_ptr(),
-                buf.add(offset as usize),
-                dev_size as usize,
-            );
-        }
+        // dev_size 为 16, 且上方已确认 offset + dev_size <= buf_size, 索引必然在界内.
+        out[offset as usize..offset as usize + dev_size as usize].copy_from_slice(&info);
         offset += dev_size;
     }
 
@@ -756,7 +748,7 @@ pub fn sys_hotplug_status(buf: *mut u8, buf_size: u32) -> i64 {
 // 帧缓冲设备
 // ============================================================================
 
-/// fb_mmap 建立的映射记录 (cr3, 起始 vaddr, 页数) — 供 fb_release 解除映射
+/// `fb_mmap` 建立的映射记录 (cr3, 起始 vaddr, 页数) — 供 `fb_release` 解除映射
 ///
 /// SIMPLIFIED: 仅单槽记录 (当前唯一用户 fbterm 单次 mmap); 影响面: 多进程/
 /// 多映射场景 release 仅清最后一条映射; 何时需扩展: 引入 per-process 映射表
@@ -779,20 +771,20 @@ struct FbInfo {
 /// `sys_fb_open` — 查询帧缓冲信息 (机制: FB 驱动读取 + 用户结构写入)
 ///
 /// T2 批 5 (syscall-followup): syscall 策略入口迁至 functions
-/// (functions::driver::fb::fb_open_syscall), 本函数保留为机制库.
+/// (`functions::driver::fb::fb_open_syscall`), 本函数保留为机制库.
 ///
 /// # Panics
 /// 当帧缓冲已注册 (`get_framebuffer()` 返回 `Some`) 但守卫内部状态为空时
 /// (`as_ref().unwrap()`) panic — 属驱动注册阶段的内部不变量破坏.
 pub fn sys_fb_open(info_ptr: u64, _flags: u64) -> i64 {
     if info_ptr == 0 || !raw::check_user_ptr(info_ptr) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
 
     let fb_addr =
         crate::privileged::driver::FB_PHYS_ADDR.load(core::sync::atomic::Ordering::Acquire);
     if fb_addr == 0 {
-        return Errno::ENODEV.as_ret();
+        return Errno::Enodev.as_ret();
     }
 
     let fb_size =
@@ -808,7 +800,7 @@ pub fn sys_fb_open(info_ptr: u64, _flags: u64) -> i64 {
                 crate::privileged::glue::low_u8_from_usize(fb.format().bits_per_pixel()),
             )
         }
-        None => return Errno::ENODEV.as_ret(),
+        None => return Errno::Enodev.as_ret(),
     };
 
     let info = FbInfo {
@@ -830,32 +822,32 @@ pub fn sys_fb_open(info_ptr: u64, _flags: u64) -> i64 {
 /// `sys_fb_mmap` — 建立帧缓冲页映射 (机制: 页表操作)
 ///
 /// T2 批 5 (syscall-followup): syscall 策略入口迁至 functions
-/// (functions::driver::fb::fb_mmap_syscall), 本函数保留为机制库
+/// (`functions::driver::fb::fb_mmap_syscall`), 本函数保留为机制库
 /// (页表映射, unsafe). 成功建立映射后记录到 `FB_MAP_RECORD` 供 release 解除.
 pub fn sys_fb_mmap(target_vaddr: u64, size: u64, _prot: u64) -> i64 {
     if target_vaddr == 0 || target_vaddr & 0xFFF != 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     if target_vaddr > FB_MMAP_ADDR_MAX - size {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     let fb_phys =
         crate::privileged::driver::FB_PHYS_ADDR.load(core::sync::atomic::Ordering::Acquire);
     if fb_phys == 0 {
-        return Errno::ENODEV.as_ret();
+        return Errno::Enodev.as_ret();
     }
 
     let fb_total =
         crate::privileged::driver::FB_PHYS_SIZE.load(core::sync::atomic::Ordering::Acquire);
     if size > fb_total {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     let cr3 = crate::privileged::proc::user_proc::user_entry_cr3
         .load(core::sync::atomic::Ordering::SeqCst);
     if cr3 == 0 {
-        return Errno::ENODEV.as_ret();
+        return Errno::Enodev.as_ret();
     }
 
     let flags = crate::privileged::mm::PageFlags::PRESENT
@@ -886,12 +878,12 @@ pub fn sys_fb_mmap(target_vaddr: u64, size: u64, _prot: u64) -> i64 {
 ///
 /// T2 批 5 (syscall-followup): 自空 stub 实装 — 依 `FB_MAP_RECORD` 解除
 /// `sys_fb_mmap` 建立的映射并清记录. syscall 策略入口迁至 functions
-/// (functions::driver::fb::fb_release_syscall).
+/// (`functions::driver::fb::fb_release_syscall`).
 pub fn sys_fb_release(vaddr: u64) -> i64 {
     let mut record = FB_MAP_RECORD.lock();
     if let Some((cr3, va, pages)) = *record {
         if vaddr != va {
-            return Errno::EINVAL.as_ret();
+            return Errno::Einval.as_ret();
         }
         for i in 0..pages {
             #[cfg(target_arch = "x86_64")]
@@ -908,7 +900,7 @@ pub fn sys_fb_release(vaddr: u64) -> i64 {
         *record = None;
         0
     } else {
-        Errno::EINVAL.as_ret()
+        Errno::Einval.as_ret()
     }
 }
 
@@ -964,7 +956,7 @@ fn boot_install_copy_kernel(disk_id: u32) -> i64 {
             &buf,
         ) < 0
         {
-            return Errno::EIO.as_ret();
+            return Errno::Eio.as_ret();
         }
     }
     0
@@ -974,11 +966,12 @@ fn boot_install_copy_kernel(disk_id: u32) -> i64 {
 /// `sys_boot_install` — 引导安装 (机制: 磁盘扇区写 + stage1/内核拷贝, 仅 x86_64)
 ///
 /// T2 批 5 (syscall-followup): syscall 策略入口迁至 functions
-/// (functions::sgeg::storage::disk::boot_install_syscall), 本函数保留为机制库.
+/// (`functions::sgeg::storage::disk::boot_install_syscall`), 本函数保留为机制库.
+#[must_use]
 pub fn sys_boot_install(disk_id: u32) -> i64 {
     let pwm = crate::privileged::sgeg::pwm_get_current();
     if !crate::privileged::sgeg::pwm_has_capability(pwm, 4, 0) {
-        return Errno::EACCES.as_ret();
+        return Errno::Eacces.as_ret();
     }
     // 产物桩化: stage1.bin 是裸机产物 (other/build/ 被 gitignore, 仅由 make 生成).
     // 路径自带 x86_64 段 (P-10: 内核产物按架构分目录) —— 本函数仅 x86_64 可达,
@@ -994,7 +987,7 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
     let stage1: &[u8] = &[];
     if !crate::privileged::driver::hdd_is_present(crate::privileged::glue::low_u8_from_u32(disk_id))
     {
-        return Errno::ENOENT.as_ret();
+        return Errno::Enoent.as_ret();
     }
     let mut mbr = [0u8; 512];
     if crate::privileged::driver::hdd_read_sector(
@@ -1003,7 +996,7 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
         &mut mbr,
     ) < 0
     {
-        return Errno::EIO.as_ret();
+        return Errno::Eio.as_ret();
     }
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe { core::ptr::copy_nonoverlapping(stage1.as_ptr(), mbr.as_mut_ptr(), 440) };
@@ -1037,7 +1030,7 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
         &mbr,
     ) < 0
     {
-        return Errno::EIO.as_ret();
+        return Errno::Eio.as_ret();
     }
     let rc = boot_install_copy_kernel(disk_id);
     if rc < 0 {
@@ -1051,7 +1044,7 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
     write_le32(&mut cfg, 4, BOOT_PART_SECTORS);
     cfg[510] = 0x55;
     cfg[511] = 0xAA;
-    crate::privileged::driver::hdd_write_sector(
+    let _ = crate::privileged::driver::hdd_write_sector(
         crate::privileged::glue::low_u8_from_u32(disk_id),
         2046,
         &cfg,

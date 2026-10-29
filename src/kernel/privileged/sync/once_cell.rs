@@ -39,8 +39,15 @@ unsafe impl<T: Send> Send for OnceCellStorage<T> {}
 // SAFETY: `&Self` 可跨线程共享引用, 实际访问在 Once 互斥下进行。
 unsafe impl<T: Send + Sync> Sync for OnceCellStorage<T> {}
 
+impl<T> Default for OnceCellStorage<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> OnceCellStorage<T> {
     /// 构造未初始化的存储。
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             value: UnsafeCell::new(MaybeUninit::uninit()),

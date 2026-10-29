@@ -34,6 +34,7 @@ pub struct ExfatDirEntry {
 
 impl ExfatDirEntry {
     /// 从字节切片解析目录项
+    #[must_use]
     pub fn from_bytes(data: &[u8]) -> Option<Self> {
         if data.len() < 32 {
             return None;
@@ -49,21 +50,25 @@ impl ExfatDirEntry {
     }
 
     /// 是否为文件条目
+    #[must_use]
     pub fn is_file(&self) -> bool {
         self.entry_type == DIR_ENTRY_FILE
     }
 
     /// 是否为流扩展 (包含文件名)
+    #[must_use]
     pub fn is_stream(&self) -> bool {
         self.entry_type == DIR_ENTRY_STREAM
     }
 
     /// 是否为空/结束标记
+    #[must_use]
     pub fn is_end(&self) -> bool {
         self.entry_type == DIR_ENTRY_END
     }
 
     /// 获取文件条目的属性
+    #[must_use]
     pub fn file_attributes(&self) -> u16 {
         if self.is_file() {
             u16::from_le_bytes([self.data[1], self.data[2]])
@@ -73,6 +78,7 @@ impl ExfatDirEntry {
     }
 
     /// 获取文件条目的起始簇号
+    #[must_use]
     pub fn first_cluster(&self) -> u32 {
         if self.is_file() || self.is_stream() {
             u32::from_le_bytes([self.data[20], self.data[21], self.data[22], self.data[23]])
@@ -82,6 +88,7 @@ impl ExfatDirEntry {
     }
 
     /// 获取流扩展条目的文件大小
+    #[must_use]
     pub fn stream_length(&self) -> u64 {
         if self.is_stream() {
             u64::from_le_bytes([
@@ -100,6 +107,7 @@ impl ExfatDirEntry {
     }
 
     /// 获取文件条目的有效数据长度
+    #[must_use]
     pub fn valid_length(&self) -> u64 {
         if self.is_file() {
             u64::from_le_bytes([

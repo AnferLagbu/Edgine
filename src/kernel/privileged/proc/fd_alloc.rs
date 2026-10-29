@@ -93,7 +93,7 @@ pub enum FdSubsystem {
     Inotify = 4,
     /// timerfd
     TimerFd = 5,
-    /// pidfd (pidfd_open)
+    /// pidfd (`pidfd_open`)
     PidFd = 6,
     /// userfaultfd (userfaultfd)
     UserFaultFd = 7,
@@ -104,6 +104,7 @@ impl FdSubsystem {
     pub const COUNT: usize = 8;
 
     /// 通过下标获取子系统 (用于 `for i in 0..COUNT { ... }`)
+    #[must_use]
     pub fn from_index(i: usize) -> Option<Self> {
         match i {
             0 => Some(Self::Smoltcp),
@@ -134,21 +135,25 @@ pub struct FdRange {
 
 impl FdRange {
     /// 以基址与容量构造 FD 段
+    #[must_use]
     pub const fn new(base: i32, capacity: u16) -> Self {
         Self { base, capacity }
     }
 
     /// 返回段的排他上界 (base + capacity)
+    #[must_use]
     pub const fn end_exclusive(self) -> i32 {
         self.base + self.capacity as i32
     }
 
     /// 判断 `fd` 是否落在本段内
+    #[must_use]
     pub const fn contains(self, fd: i32) -> bool {
         fd >= self.base && fd < self.end_exclusive()
     }
 
     /// 判断本段与另一段是否重叠
+    #[must_use]
     pub const fn overlaps(self, other: Self) -> bool {
         self.base < other.end_exclusive() && other.base < self.end_exclusive()
     }
@@ -194,13 +199,14 @@ impl FdPlan {
     /// `TimerFd` FD 空间 (TD-15: 历史 240 → 1160, 跳出 smoltcp [0, 256))
     pub const TIMER_FD: FdRange = FdRange::new(1160, 16);
 
-    /// `PidFd` FD 空间 (pidfd_open, 2026: 新增)
+    /// `PidFd` FD 空间 (`pidfd_open`, 2026: 新增)
     pub const PID_FD: FdRange = FdRange::new(1180, 16);
 
     /// `UserFaultFd` FD 空间 (userfaultfd, 2026: 新增)
     pub const USERFAULT_FD: FdRange = FdRange::new(1200, 16);
 
     /// 获取指定子系统的 FD 范围
+    #[must_use]
     pub const fn range_for(sub: FdSubsystem) -> FdRange {
         match sub {
             FdSubsystem::Smoltcp => Self::SMOLTCP,
@@ -230,6 +236,7 @@ impl FdPlan {
     /// 启动期不变量: 任意两个范围不重叠
     ///
     /// 编译期 const fn, 可在测试或启动代码中调用.
+    #[must_use]
     pub const fn ranges_non_overlapping() -> bool {
         let all = Self::ALL;
         let mut i = 0;
@@ -307,6 +314,7 @@ pub fn free_fd(sub: FdSubsystem, fd: i32) -> bool {
 /// 通过 FD 编号反查所属子系统
 ///
 /// 用于 `sys_read/write` 分发: 给定进程可见的 fd, 找到对应子系统.
+#[must_use]
 pub fn subsystem_of(fd: i32) -> Option<FdSubsystem> {
     let mut i = 0;
     while i < FdSubsystem::COUNT {
@@ -348,6 +356,7 @@ pub fn verify_plan() {
 /// V3 替代各子系统的 `*_FD_BASE + i as i32` 模式, 集中表达式, 避免分散的 `base + idx`.
 /// `const fn`, 可在静态表初始化与 `panic!` 等不可变上下文中使用.
 #[inline]
+#[must_use]
 pub const fn fd_at(sub: FdSubsystem, slot: usize) -> i32 {
     FdPlan::range_for(sub).base + crate::privileged::glue::low_i32_from_usize(slot)
 }
@@ -357,6 +366,7 @@ pub const fn fd_at(sub: FdSubsystem, slot: usize) -> i32 {
 /// V3 替代各子系统的 `EFD_MAX_SLOTS` / `SFD_MAX_SLOTS` / `MAX_UDS_FD` / `INOTIFY_MAX_INSTANCES` /
 /// smoltcp `MAX_SM_FD` 等容量常量, 集中表达式, 避免分散字面量.
 #[inline]
+#[must_use]
 pub const fn max_slots(sub: FdSubsystem) -> usize {
     FdPlan::range_for(sub).capacity as usize
 }
@@ -374,6 +384,7 @@ pub const fn max_slots(sub: FdSubsystem) -> usize {
 ///
 /// 验收: 任意 `fd ∈ [base, base + capacity)` 都唯一映射到 `(sub, slot)`.
 #[inline]
+#[must_use]
 pub fn idx_of(fd: i32) -> Option<(FdSubsystem, usize)> {
     let mut i = 0;
     while i < FdSubsystem::COUNT {

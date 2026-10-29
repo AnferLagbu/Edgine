@@ -23,11 +23,13 @@ pub use crate::privileged::egdf::MAX_FIRMWARE_SIZE;
 ///
 /// 返回的 `FirmwareBlob` 是克隆 (数据被克隆, 适合一次性消费);
 /// 驱动应避免在 probe 路径上长期持有引用。
+#[must_use]
 pub fn firmware_request(node_id: NodeId) -> Option<fw::FirmwareBlob> {
     fw::devtree_get_firmware(node_id)
 }
 
 /// 名称 hash 计算 (FNV-1a 32-bit)
+#[must_use]
 pub fn firmware_name_hash(name: &str) -> u32 {
     fw::fnv1a_32(name)
 }

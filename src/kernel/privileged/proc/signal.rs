@@ -181,6 +181,7 @@ pub enum SignalDefaultAction {
 /// 获取标准信号的默认动作
 ///
 /// 委托到 `SignalDecision` trait, functions 可覆盖策略.
+#[must_use]
 pub fn signal_default_action(sig: u8) -> SignalDefaultAction {
     super::signal_trait::current_signal_decision().default_action(sig)
 }
@@ -188,6 +189,7 @@ pub fn signal_default_action(sig: u8) -> SignalDefaultAction {
 /// 信号是否不可捕获/屏蔽
 ///
 /// 委托到 `SignalDecision` trait, functions 可覆盖策略.
+#[must_use]
 pub fn is_uncatchable(sig: u8) -> bool {
     super::signal_trait::current_signal_decision().is_uncatchable(sig)
 }
@@ -423,9 +425,9 @@ fn do_signal_send_inner(pid: u32, sig: u8) -> Result<(), i32> {
 ///
 /// G-11 (2026-09-07): 原广播路径在 `for_each` 回调内调用 `do_signal_send_inner`,
 /// 其内部 `PROCESS_TABLE.get(pid)` 会对同一进程表 Mutex 重入加锁 — 该 Mutex
-/// 并非真递归 (raw_lock 无 owner 重入检测), 持锁回调内重入 → 无限自旋死锁.
+/// 并非真递归 (`raw_lock` 无 owner 重入检测), 持锁回调内重入 → 无限自旋死锁.
 /// 影响面: `kill(0/-1/-pgid, sig)` syscall (dispatch.rs) 与 session 前台组广播
-/// (functions/proc/session.rs) 在生产环境同样会死锁; 由 kernel_test 扩容后首次暴露.
+/// (functions/proc/session.rs) 在生产环境同样会死锁; 由 `kernel_test` 扩容后首次暴露.
 fn do_signal_send_process(proc: &super::process::Process, sig: u8) -> Result<(), i32> {
     // I-52: 显式跳过 Zombie (与 do_signal_send 对齐)
     let state = proc.state.load(Ordering::Acquire);
@@ -634,7 +636,7 @@ fn make_signal_frame(f: &crate::privileged::idt::InterruptFrame, sig: u8) -> Sig
     }
 }
 
-/// 把 [返回地址 | SignalFrame | trampoline] 三件套写到用户栈, 并改写中断帧跳转 handler.
+/// 把 [返回地址 | `SignalFrame` | trampoline] 三件套写到用户栈, 并改写中断帧跳转 handler.
 ///
 /// 返回 `false` 表示用户栈写入失败 (munmap/越界): 中断帧保持原样, 信号未投递.
 fn install_user_signal_frame(
@@ -688,9 +690,9 @@ fn install_user_signal_frame(
 /// 针对"用户 handler"分支: 装配信号帧并改写中断帧, 返回是否已投递.
 ///
 /// 栈帧布局:
-///   frame_rsp+0: 返回地址 (指向 trampoline, handler ret 时弹出)
-///   frame_rsp+8: SignalFrame (保存原始寄存器)
-///   frame_rsp+8+sizeof(SignalFrame): 跳板代码 (`rt_sigreturn` 桩)
+///   `frame_rsp+0`: 返回地址 (指向 trampoline, handler ret 时弹出)
+///   `frame_rsp+8`: `SignalFrame` (保存原始寄存器)
+///   `frame_rsp+8+sizeof(SignalFrame)`: 跳板代码 (`rt_sigreturn` 桩)
 fn deliver_user_handler(
     pid: Pid,
     sig: u8,
@@ -744,6 +746,7 @@ const UNCATCHABLE_SIGNAL_BITS: u64 = (1u64 << SIGKILL) | (1u64 << SIGSTOP);
 /// `SIGKILL`/`SIGSTOP` 位会导致进程永久不可终止 — 任何写入 `blocked_mask`
 /// 的路径都必须经本函数过滤 (单点权威, `rt_sigprocmask` 与 functions 侧
 /// `ppoll`/`epoll_pwait` 的临时掩码替换共用).
+#[must_use]
 pub fn sanitize_blocked_mask(mask: u64) -> u64 {
     mask & !UNCATCHABLE_SIGNAL_BITS
 }

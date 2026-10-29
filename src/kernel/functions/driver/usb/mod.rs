@@ -83,6 +83,7 @@ const XHCI_DEFAULT_MMIO_SIZE: usize = 0x10000; // 64 KiB
 /// 为每个设备创建 `XhciController` (未初始化, 由注册方触发 `init`).
 ///
 /// 找不到控制器 (返回空 Vec) 或 MMIO 映射失败均跳过, 不视为错误.
+#[must_use]
 pub fn discover_xhci_controllers() -> Vec<XhciController> {
     // 1. 扫描所有 Serial Bus 设备
     let serial_bus_devs = crate::privileged::pci::find_by_class(PCI_CLASS_SERIAL_BUS);
@@ -172,7 +173,7 @@ pub fn usb_init() {
 
 /// xHCI 端口变化轮询 (DECISION-K 辅助轮询回调).
 ///
-/// USB 端口插拔不产生 PCIe 热插拔事件, privileged 无法自行探测; 本函数读取各
+/// USB 端口插拔不产生 `PCIe` 热插拔事件, privileged 无法自行探测; 本函数读取各
 /// 控制器 PORTSC 的变化位 (CSC/PEC/OCC/RC), 应答后以统一的热插拔事件分发
 /// (复用重枚举先行的时序)。仅在检测到变化时才触碰事件通路。
 fn usb_port_poll() {

@@ -65,15 +65,17 @@ pub struct NtpTimestamp {
 
 impl NtpTimestamp {
     /// 创建 NTP 时间戳
+    #[must_use]
     pub fn new(sec: u32, frac: u32) -> Self {
         Self { sec, frac }
     }
 
     /// 从 Unix 时间 (ns) 转换
+    #[must_use]
     pub fn from_unix_ns(ns: u64) -> Self {
         let sec = crate::functions::intcast::low_u32_from_u64(ns / 1_000_000_000);
         let remainder = ns % 1_000_000_000;
-        let frac = ((remainder as u64 * u64::MAX / 1_000_000_000) >> 32) as u32;
+        let frac = ((remainder * u64::MAX / 1_000_000_000) >> 32) as u32;
         Self {
             sec: sec.wrapping_add(crate::functions::intcast::low_u32_from_u64(
                 NTP_EPOCH_OFFSET,
@@ -83,6 +85,7 @@ impl NtpTimestamp {
     }
 
     /// 转换为 Unix 时间 (ns)
+    #[must_use]
     pub fn to_unix_ns(self) -> u64 {
         let sec = u64::from(
             self.sec
@@ -129,6 +132,7 @@ pub struct NtpPacket {
 
 impl NtpPacket {
     /// 创建客户端请求包
+    #[must_use]
     pub fn client_request() -> Self {
         Self {
             li_vn_mode: 0x23, // LI=0, VN=4, Mode=3 (client)
@@ -170,6 +174,7 @@ impl NtpResult {
     ///
     /// offset = ((T2 - T1) + (T3 - T4)) / 2
     /// delay  = (T4 - T1) - (T3 - T2)
+    #[must_use]
     pub fn compute(
         t1: NtpTimestamp, // 客户端发送时间
         t2: NtpTimestamp, // 服务器接收时间
@@ -204,11 +209,11 @@ impl NtpResult {
 pub enum PtpMessageType {
     /// Sync 消息
     Sync = 0x0,
-    /// DelayReq 消息
+    /// `DelayReq` 消息
     DelayReq = 0x1,
-    /// FollowUp 消息
+    /// `FollowUp` 消息
     FollowUp = 0x8,
-    /// DelayResp 消息
+    /// `DelayResp` 消息
     DelayResp = 0x9,
     /// Announce 消息
     Announce = 0xB,
@@ -233,6 +238,7 @@ pub struct TimeSyncSubsystem {
 
 impl TimeSyncSubsystem {
     /// 创建时间同步子系统
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             ntp_server: AtomicU32::new(0),
@@ -254,6 +260,7 @@ impl TimeSyncSubsystem {
     }
 
     /// 应用 NTP 同步结果
+    #[must_use]
     pub fn apply_ntp_result(result: &NtpResult) -> bool {
         if !result.valid {
             return false;
@@ -302,6 +309,7 @@ impl TimeSyncSubsystem {
     }
 
     /// 获取调整后的时间 (ns)
+    #[must_use]
     pub fn get_adjusted_time_ns() -> u64 {
         let raw_ns = read_clock_ns();
         let state = clock_adj_state();
@@ -322,6 +330,7 @@ impl TimeSyncSubsystem {
     }
 
     /// 手动设置频率调整 (ppb)
+    #[must_use]
     pub fn adj_freq(ppb: i64) -> bool {
         let state = clock_adj_state();
         let clamped = ppb.clamp(-MAX_FREQ_ADJUST_PPM * 1000, MAX_FREQ_ADJUST_PPM * 1000);
@@ -337,6 +346,7 @@ impl TimeSyncSubsystem {
     }
 
     /// 手动设置时间偏移 (ns, 渐进调整)
+    #[must_use]
     pub fn adj_time(offset_ns: i64) -> bool {
         let clamped = offset_ns.clamp(-MAX_OFFSET_NS, MAX_OFFSET_NS);
         clock_adj_state()
@@ -346,6 +356,7 @@ impl TimeSyncSubsystem {
     }
 
     /// 直接设置系统时间 (ns)
+    #[must_use]
     pub fn set_time(time_ns: u64) -> bool {
         let state = clock_adj_state();
         let current = read_clock_ns();
@@ -378,6 +389,7 @@ impl TimeSyncSubsystem {
     }
 
     /// 获取同步状态
+    #[must_use]
     pub fn get_sync_status() -> (bool, u64, i64, i64) {
         let state = clock_adj_state();
         (
@@ -391,6 +403,13 @@ impl TimeSyncSubsystem {
     /// 是否已初始化
     pub fn is_initialized(&self) -> bool {
         self.initialized.load(Ordering::Acquire)
+    }
+}
+
+impl Default for TimeSyncSubsystem {
+    /// 等价于 [`TimeSyncSubsystem::new`] (未初始化的空子系统)
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -412,6 +431,7 @@ pub fn init() {
 }
 
 /// 获取全局时间同步子系统
+#[must_use]
 pub fn subsystem() -> &'static TimeSyncSubsystem {
     &TIMESYNC
 }
@@ -438,6 +458,7 @@ pub fn is_initialized() -> bool {
 ///   7 = `set_ptp_domain(domain`: a1 as u8)
 ///   8 = `apply_ntp_result(offset_ns`: a1, `delay_ns`: a2) — 简化接口
 ///   9 = `is_initialized()` → bool (是否已初始化)
+#[must_use]
 pub fn timesync_syscall(cmd: u64, a1: u64, a2: u64) -> i64 {
     if !is_initialized() && cmd != 9 {
         return -11; // EAGAIN

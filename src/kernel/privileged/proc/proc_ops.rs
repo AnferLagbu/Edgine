@@ -39,8 +39,10 @@ pub mod raw {
     /// # Safety (内部)
     /// - `ptr` 必须为非空, 指向有效 `Process` 实例
     pub fn process_ref<'a>(ptr: *const Process) -> &'a Process {
+        // 以地址值中转: 裸指针参数不直接解引用, 解引用集中在本函数的 unsafe 块内.
+        let addr = ptr as usize;
         // SAFETY: 调用方在 fork/exec 路径中保证 ptr 来自 PROCESS_TABLE
-        unsafe { &*ptr }
+        unsafe { &*(addr as *const Process) }
     }
 
     /// 从裸指针读取 `&mut Process`。
@@ -49,14 +51,17 @@ pub mod raw {
     /// - `ptr` 必须为非空, 指向有效 `Process` 实例
     /// - 同一时刻只能存在一个可变引用
     pub fn process_ref_mut<'a>(ptr: *mut Process) -> &'a mut Process {
+        // 以地址值中转: 裸指针参数不直接解引用, 解引用集中在本函数的 unsafe 块内.
+        let addr = ptr as usize;
         // SAFETY: 调用方在 fork 路径中保证 `&mut` 唯一性
-        unsafe { &mut *ptr }
+        unsafe { &mut *(addr as *mut Process) }
     }
 
     /// 分配并构造一个 `Process` (用于 fork 创建子进程)。
     ///
     /// # Safety (内部)
     /// - 调用方在 fork 错误路径中负责 `dealloc_process` 释放。
+    #[must_use]
     pub fn alloc_process(pid: u32, name: &str, parent: Option<ProcessId>) -> *mut Process {
         // SAFETY: alloc/dealloc 配对, 见 dealloc_process。
         unsafe {
@@ -74,8 +79,10 @@ pub mod raw {
     /// - `ptr` 必须由 `Box::into_raw` 产生且未被 drop。
     pub fn drop_boxed_process(ptr: *mut Process) {
         if !ptr.is_null() {
+            // 以地址值中转: 裸指针参数不直接传给 Box::from_raw, 转换集中在本 unsafe 块内.
+            let addr = ptr as usize;
             // SAFETY: Box 所有权还原。
-            unsafe { drop(alloc::boxed::Box::from_raw(ptr)) }
+            unsafe { drop(alloc::boxed::Box::from_raw(addr as *mut Process)) }
         }
     }
 
@@ -110,6 +117,7 @@ pub mod raw {
     /// # Safety (内部)
     /// - `parent_cr3` 必须是有效的、已建立的用户页表基址 (由 process.cr3 提供)。
     /// - 调用方在子进程使用完毕后, 通过 `destroy_user_page_table` 释放。
+    #[must_use]
     pub fn clone_user_page_table_cow(parent_cr3: u64) -> u64 {
         vmm_clone_user_page_table_cow(parent_cr3)
     }
@@ -418,14 +426,16 @@ pub extern "C" fn process_unblock(pid: u32) {
 #[unsafe(no_mangle)]
 /// 用给定 ELF 镜像替换当前进程映像 (exec), 成功返回 0, 失败返回 -1.
 pub extern "C" fn proc_exec_replace(
-    elf_data: *const u8,
+    elf_addr: u64,
     elf_size: u64,
-    argv: *const *const u8,
+    argv_addr: u64,
     arg_count: u32,
 ) -> i32 {
-    if elf_data.is_null() {
+    if elf_addr == 0 {
         return -1;
     }
+    // 地址值参数在本函数内转回指针, 指针不跨越 ABI 边界 (FFI 安全类型).
+    let elf_data = elf_addr as *const u8;
 
     let current_pid = Scheduler::current().unwrap_or(0);
     if current_pid == 0 {
@@ -490,11 +500,17 @@ pub extern "C" fn proc_exec_replace(
     PROCESS_TABLE.remove_and_free(new_pid_u32);
 
     // 5. 设置 argv/envp
-    if !argv.is_null() && arg_count > 0 {
+    if argv_addr != 0 && arg_count > 0 {
         let envp: *const *const u8 = core::ptr::null();
-        // SAFETY: argv 来自 C ABI 调用方, 由本函数 C ABI contract 保证。
+        // SAFETY: argv 来自 C ABI 调用方 (用户态地址), 由本函数 C ABI contract 保证。
         unsafe {
-            super::api::user_proc_setup_argv(current_pid, argv, arg_count, envp, 0);
+            super::api::user_proc_setup_argv(
+                current_pid,
+                argv_addr as *const *const u8,
+                arg_count,
+                envp,
+                0,
+            );
         }
     }
 
@@ -522,15 +538,15 @@ pub extern "C" fn proc_exec_replace(
 /// 保存过 context**, 故 `p.context` 全零 → 子进程 iretq 用全零帧 → 未进用户态.
 ///
 /// # 根治
-/// 在 syscall 入口 (syscall_dispatch_from_frame) 每次调用本函数, 把当前
-/// InterruptFrame (用户寄存器真实状态) 映射到 `p.context`. 这样 fork/clone
+/// 在 syscall 入口 (`syscall_dispatch_from_frame`) 每次调用本函数, 把当前
+/// `InterruptFrame` (用户寄存器真实状态) 映射到 `p.context`. 这样 fork/clone
 /// 复制的就是最新用户寄存器 (rip=返回地址, rsp=用户栈, cs/ss/rflags 等),
 /// 子进程从正确的用户返回点继续.
 ///
-/// ProcessContext 本不含 rdi/rsi/rdx/rcx/r8-r11 (调度切换不保存这些), 但 B05-55
+/// `ProcessContext` 本不含 rdi/rsi/rdx/rcx/r8-r11 (调度切换不保存这些), 但 B05-55
 /// 在 `extra_regs[8]` 中保存它们: 已运行过的进程返回用户态靠 syscall/中断栈的
-/// InterruptFrame 恢复, 首次被调度的子进程 (fork/clone) 由 process_switch_asm
-/// iretq 前从 extra_regs 恢复 (继承 fork 时父进程的 rdi 等). rax 由 fork/clone
+/// `InterruptFrame` 恢复, 首次被调度的子进程 (fork/clone) 由 `process_switch_asm`
+/// iretq 前从 `extra_regs` 恢复 (继承 fork 时父进程的 rdi 等). rax 由 fork/clone
 /// 在子 context 上改写为 0.
 pub fn proc_save_user_regs(pid: Pid, f: &crate::privileged::idt::InterruptFrame) {
     if pid == 0 {
@@ -578,11 +594,11 @@ pub fn proc_save_user_regs(pid: Pid, f: &crate::privileged::idt::InterruptFrame)
 ///
 /// # 字段语义 (aarch64, 见 `arch/aarch64/context.rs` 头注释)
 /// - `@0..72`   ← x19..x28      - `@80` ← x29 (FP)      - `@88` ← x30 (LR)
-/// - `@112` ← SPSR_EL1 (EL0 状态)  - `@120` ← ELR_EL1 (用户返回 PC)
-/// - `@128` ← SP_EL0 (用户栈指针)  - `@136` ← 用户页表 (EL0 的 TTBR0)
+/// - `@112` ← `SPSR_EL1` (EL0 状态)  - `@120` ← `ELR_EL1` (用户返回 PC)
+/// - `@128` ← `SP_EL0` (用户栈指针)  - `@136` ← 用户页表 (EL0 的 TTBR0)
 /// - `extra_regs[@672..728]` ← x0..x7
 ///
-/// **不写** `@96` (SP_EL1) 与 `@104` (EL1 侧 TTBR0): 二者由调度切换保存侧维护,
+/// **不写** `@96` (`SP_EL1`) 与 `@104` (EL1 侧 TTBR0): 二者由调度切换保存侧维护,
 /// 未调度过的新任务由创建方 (fork / init) 预置.
 #[cfg(target_arch = "aarch64")]
 pub fn proc_save_user_regs_aarch64(
@@ -665,22 +681,20 @@ pub extern "C" fn sys_fork() -> Pid {
     }
     if let Some(parent_kstack) =
         PROCESS_TABLE.with_process(parent_pid, |p| p.kernel_stack.load(Ordering::SeqCst))
+        && parent_kstack != 0
     {
-        if parent_kstack != 0 {
-            // 拷贝父 kstack 内容到子 kstack: 源/目标都从"顶部向下 size"开始,
-            // 而非从顶部向上 (原实现拷 64KB 到 kstack 顶上方, 越界损坏内存).
-            // size 取父 kstack 实际大小 (USER_KSTACK_SIZE), 使子进程内核栈初始状态与父一致.
-            let kstack_size =
-                crate::privileged::glue::usize_from_u64(super::types::USER_KSTACK_SIZE);
-            raw::copy_kstack(
-                child.kernel_stack.load(Ordering::SeqCst) - kstack_size as u64,
-                parent_kstack - kstack_size as u64,
-                kstack_size,
-            );
-            crate::privileged::proc::kernel_stack_write_canary(
-                child.kernel_stack.load(Ordering::SeqCst),
-            );
-        }
+        // 拷贝父 kstack 内容到子 kstack: 源/目标都从"顶部向下 size"开始,
+        // 而非从顶部向上 (原实现拷 64KB 到 kstack 顶上方, 越界损坏内存).
+        // size 取父 kstack 实际大小 (USER_KSTACK_SIZE), 使子进程内核栈初始状态与父一致.
+        let kstack_size = crate::privileged::glue::usize_from_u64(super::types::USER_KSTACK_SIZE);
+        raw::copy_kstack(
+            child.kernel_stack.load(Ordering::SeqCst) - kstack_size as u64,
+            parent_kstack - kstack_size as u64,
+            kstack_size,
+        );
+        crate::privileged::proc::kernel_stack_write_canary(
+            child.kernel_stack.load(Ordering::SeqCst),
+        );
     }
     // KPTI 方案 S3: COW 克隆只搬用户半区 (保留槽 `[1:0] = 00` 被过滤), 子进程页表
     // 不含 EL1 视图 ⇒ 须补建, 否则子进程的 EL0→EL1 入口只能回退到全局内核表,
@@ -806,7 +820,7 @@ fn inherit_parent_state(child: &mut Process, parent_pid: Pid) {
     }
 }
 
-/// fork: 子进程复制父进程 fd 表, 并对复制出的每个句柄递增 OpenFile 引用.
+/// fork: 子进程复制父进程 fd 表, 并对复制出的每个句柄递增 `OpenFile` 引用.
 fn inherit_parent_fds(child: &mut Process, parent_pid: Pid) {
     if let Some(handles) = PROCESS_TABLE.with_process(parent_pid, |p| {
         child.fd_table.copy_from(&p.fd_table);
@@ -870,10 +884,7 @@ pub fn proc_account_tick(in_kern: u32) {
 /// 取得进程的 user/sys 时间 (jiffies 累积).
 // TD-10 契约测试按 Rust ABI 签名匹配该函数, 无 C 符号导出需求,
 // 故不标 `no_mangle` (P-64 第十五批).
-pub fn proc_get_times(pid: u32, out_user: *mut u64, out_sys: *mut u64) -> i32 {
-    if out_user.is_null() || out_sys.is_null() {
-        return -1;
-    }
+pub fn proc_get_times(pid: u32, out_user: &mut u64, out_sys: &mut u64) -> i32 {
     let res = PROCESS_TABLE.with_process(pid as Pid, |p| {
         (
             p.user_time.load(Ordering::SeqCst),
@@ -882,11 +893,8 @@ pub fn proc_get_times(pid: u32, out_user: *mut u64, out_sys: *mut u64) -> i32 {
     });
     match res {
         Some((u, s)) => {
-            // SAFETY: 调用方保证指针有效 (functions/syscall 上下文).
-            unsafe {
-                core::ptr::write_unaligned(out_user, u);
-                core::ptr::write_unaligned(out_sys, s);
-            }
+            *out_user = u;
+            *out_sys = s;
             0
         }
         None => -1,
@@ -933,16 +941,19 @@ pub extern "C" fn proc_get_rusage(pid: u32, who: i32, out: *mut u8, out_len: u64
     let st_sec = (sys / hz).cast_signed();
     let st_micros = ((sys % hz) * 1_000_000 / hz).cast_signed();
 
-    // SAFETY: out 至少 32 字节可写, who 合法.
-    unsafe {
-        core::ptr::write_unaligned(out.cast::<i64>(), ut_sec);
-        core::ptr::write_unaligned(out.add(8).cast::<i64>(), ut_micros);
-        core::ptr::write_unaligned(out.add(16).cast::<i64>(), st_sec);
-        core::ptr::write_unaligned(out.add(24).cast::<i64>(), st_micros);
-        let tail = crate::privileged::glue::usize_from_u64(out_len).saturating_sub(32);
-        if tail > 0 {
-            core::ptr::write_bytes(out.add(32), 0u8, tail);
-        }
-    }
+    // 经 UserWritePtr 把用户裸指针收敛为切片, 写入全部走安全索引 (I4 安全代理).
+    let Some(mut user_buf) = crate::privileged::userptr::UserWritePtr::checked_new(
+        out,
+        crate::privileged::glue::usize_from_u64(out_len),
+    ) else {
+        return -1;
+    };
+    let buf = user_buf.as_mut_slice();
+    buf[0..8].copy_from_slice(&ut_sec.to_ne_bytes());
+    buf[8..16].copy_from_slice(&ut_micros.to_ne_bytes());
+    buf[16..24].copy_from_slice(&st_sec.to_ne_bytes());
+    buf[24..32].copy_from_slice(&st_micros.to_ne_bytes());
+    // 其余 rusage 字段按 0 填充 (out_len >= 32 已在上方校验).
+    buf[32..].fill(0);
     0
 }

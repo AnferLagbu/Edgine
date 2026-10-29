@@ -33,6 +33,6 @@ pub fn input_init() {
     keyboard::keyboard_init();
 }
 
-/// AArch64 输入初始化 (暂无 PS/2 设备)。
+/// `AArch64` 输入初始化 (暂无 PS/2 设备)。
 #[cfg(not(target_arch = "x86_64"))]
 pub fn input_init() {}

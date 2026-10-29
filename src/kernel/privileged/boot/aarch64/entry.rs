@@ -1,13 +1,13 @@
-//! AArch64 启动入口 (Rust 侧)
+//! `AArch64` 启动入口 (Rust 侧)
 //!
 //! 从 start.S 跳转后的第一个 Rust 函数。负责:
 //!   1. BSS 清零 + 栈 canary 写入
 //!   2. MMU 初始化 (identity mapping + TTBR1, 必须在 UART 之前)
-//!   3. PL011 UART 初始化 (使用 TTBR1 高半区地址 0xFFFF_0000_0900_0000)
+//!   3. PL011 UART 初始化 (使用 TTBR1 高半区地址 `0xFFFF_0000_0900_0000`)
 //!   4. 异常向量表设置
-//!   5. GICv3 初始化 (使用 TTBR1 高半区地址)
+//!   5. `GICv3` 初始化 (使用 TTBR1 高半区地址)
 //!   6. Timer 初始化
-//!   7. 跳转 kernel_init()
+//!   7. 跳转 `kernel_init()`
 
 use crate::privileged::arch::uart;
 use crate::privileged::dtb;
@@ -35,7 +35,7 @@ unsafe extern "C" {
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-/// AArch64 启动入口。
+/// `AArch64` 启动入口。
 ///
 /// # Safety
 ///
@@ -90,7 +90,9 @@ pub unsafe extern "C" fn entry() -> ! {
         let canary_ok = crate::privileged::proc::check_boot_stack_canary();
         if !canary_ok {
             uart::puts("[BOOT] FATAL: canary lost between write and kernel_init!");
-            loop {}
+            loop {
+                core::hint::spin_loop();
+            }
         }
 
         // 4. 初始化异常向量表
@@ -141,7 +143,7 @@ unsafe extern "C" {
 /// 从引导程序传入的设备树探测并覆盖硬件基址
 ///
 /// 读取 `start.S` 保存在 `.bootbss` 中的 DTB 物理地址, 经 TTBR1 高半区别名
-/// 解析出内存 / UART / GICv3 基址, 覆盖各子系统的默认 (QEMU virt) 基址.
+/// 解析出内存 / UART / `GICv3` 基址, 覆盖各子系统的默认 (QEMU virt) 基址.
 /// 任一环节不满足 (无 DTB / 地址越界 / 解析失败) 均返回 `None`, 内核继续沿用
 /// 内置默认值, 保证 QEMU virt 零回归.
 ///

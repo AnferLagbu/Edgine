@@ -63,14 +63,14 @@ impl<T: Snapshot + 'static> RecoverableMutex<T> {
     /// 获取锁并记录字段快照到撤销日志
     pub fn lock(&self) -> IrqSpinLockGuard<'_, T> {
         let guard = self.inner.lock();
-        if self.domain_id != 0 {
-            if let Some(dom) = super::RECOVERY_MANAGER.lock().find(self.domain_id) {
-                let mut undo = dom.undo.lock();
-                undo.current_generation = dom.freg_generation.load(Ordering::SeqCst);
-                let key_ptr = (&raw const *guard).cast_mut();
-                let snapshot = guard.snapshot();
-                undo.record(key_ptr, snapshot);
-            }
+        if self.domain_id != 0
+            && let Some(dom) = super::RECOVERY_MANAGER.lock().find(self.domain_id)
+        {
+            let mut undo = dom.undo.lock();
+            undo.current_generation = dom.freg_generation.load(Ordering::SeqCst);
+            let key_ptr = (&raw const *guard).cast_mut();
+            let snapshot = guard.snapshot();
+            undo.record(key_ptr, snapshot);
         }
         maybe_inject_fault(self.domain_id);
         guard

@@ -108,6 +108,7 @@ fn read_path_data(path: &[u8]) -> Result<Vec<u8>, i64> {
 /// `sys_fw_load`: 从用户态路径读取并附着固件到 node
 ///
 /// `a0=node_id`, `a1=path_ptr`, `a2=path_len`, `a3=version`
+#[must_use]
 pub fn sys_fw_load(a0: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     let node_id = crate::functions::intcast::low_u32_from_u64(a0);
     let path_len = crate::functions::intcast::usize_from_u64(a2);
@@ -148,6 +149,7 @@ pub fn sys_fw_load(a0: u64, a1: u64, a2: u64, a3: u64) -> i64 {
 /// `sys_fw_get_info`: 将 `FirmwareInfo` 写入用户态 info 指针
 ///
 /// `a0=node_id`, `a1=info_ptr`
+#[must_use]
 pub fn sys_fw_get_info(a0: u64, a1: u64) -> i64 {
     let node_id = crate::functions::intcast::low_u32_from_u64(a0);
     if !super::check_user_buf(a1, FW_INFO_SIZE as u64) {
@@ -174,6 +176,7 @@ pub fn sys_fw_get_info(a0: u64, a1: u64) -> i64 {
 /// `a0=node_id`, `a1=buf_ptr`, `a2=buf_len`, `a3=offset`
 ///
 /// 返回值: 实际拷贝字节数; 失败: 负 errno / `FW_ERR_*`
+#[must_use]
 pub fn sys_fw_get(a0: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     let node_id = crate::functions::intcast::low_u32_from_u64(a0);
     let buf_len = crate::functions::intcast::usize_from_u64(a2);
@@ -209,6 +212,7 @@ pub fn sys_fw_get(a0: u64, a1: u64, a2: u64, a3: u64) -> i64 {
 /// `sys_fw_detach`: 移除节点上的固件
 ///
 /// `a0=node_id`
+#[must_use]
 pub fn sys_fw_detach(a0: u64) -> i64 {
     let node_id = crate::functions::intcast::low_u32_from_u64(a0);
     if devtree_detach_firmware(node_id) {

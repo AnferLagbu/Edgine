@@ -50,8 +50,16 @@ impl Clone for VfsMount {
     }
 }
 
+impl Default for VfsMount {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VfsMount {
     /// 构造空挂载点 (未占用, 路径为空, 类型 `Unknown`)
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             path: [0; VFS_MAX_PATH],
@@ -70,6 +78,7 @@ impl VfsMount {
     }
 
     /// 读取挂载路径 (非 UTF-8 时返回空串)
+    #[must_use]
     pub fn get_path(&self) -> &str {
         let end = self
             .path
@@ -85,16 +94,19 @@ impl VfsMount {
     }
 
     /// 读取文件系统类型
+    #[must_use]
     pub fn get_fs_type(&self) -> FsType {
         self.fs_type
     }
 
     /// 读取文件系统类型的名称
+    #[must_use]
     pub fn get_fs_name(&self) -> &str {
         self.fs_type.as_str()
     }
 
     /// E6-4: 获取 trait object (优先于 `fs_type` match)
+    #[must_use]
     pub fn get_fs(&self) -> Option<&'static dyn FileSystem> {
         self.fs
     }
@@ -150,8 +162,16 @@ fn truncate_to_parent(s: &[u8]) -> usize {
     }
 }
 
+impl Default for VfsManager {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VfsManager {
     /// 构造未初始化的管理器 (挂载表全空, 根前缀为 "/")
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             mounts: Mutex::new([
@@ -212,11 +232,9 @@ impl VfsManager {
                 }
             } else if path.starts_with(mount_path) {
                 let next_char = path.as_bytes().get(mount_path.len());
-                if mount_path == "/" || next_char == Some(&b'/') {
-                    if mount_path.len() > best_len {
-                        best_len = mount_path.len();
-                        best_idx = Some(i);
-                    }
+                if (mount_path == "/" || next_char == Some(&b'/')) && mount_path.len() > best_len {
+                    best_len = mount_path.len();
+                    best_idx = Some(i);
                 }
             }
         }
@@ -548,7 +566,7 @@ impl VfsManager {
 /// 全局 VFS 管理器实例
 pub static VFS_MANAGER: VfsManager = VfsManager::new();
 
-/// VFS 子系统初始化 — 注册 freg 回调 + 初始化 VFS_MANAGER
+/// VFS 子系统初始化 — 注册 freg 回调 + 初始化 `VFS_MANAGER`
 ///
 /// 阶段 4b 已下沉 functions; freg 回调经 privileged 机制 (`RECOVERY_MANAGER`) 注册.
 pub fn init() {

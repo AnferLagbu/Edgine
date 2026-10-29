@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-// TD-11/12/13: 把 idt/handlers.rs、idt/idt.rs、timer/mod.rs 里的 5 处
+// TD-11/12/13: 把 idt/handlers.rs、idt/table.rs (原名 idt.rs)、timer/mod.rs 里的 5 处
 // "未接 klog 宏的占位" 全部接上 klog 宏.
 //
 // 验收:
@@ -17,7 +17,8 @@ use std::fs;
 
 const KLOG: &str = "../src/kernel/privileged/klog/mod.rs";
 const HANDLERS: &str = "../src/kernel/privileged/idt/handlers.rs";
-const IDT: &str = "../src/kernel/privileged/idt/idt.rs";
+// P-64 第十六批: `idt/idt.rs` 因 clippy `module_inception` 更名 `idt/table.rs`.
+const IDT: &str = "../src/kernel/privileged/idt/table.rs";
 const KERNEL_LIB: &str = "../src/kernel/lib.rs";
 
 fn read(p: &str) -> String {

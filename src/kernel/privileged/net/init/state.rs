@@ -3,12 +3,13 @@
 //! 原 init.rs 内联定义: `InitState` / `G_INIT_STATE` / `G_*` 配置快照 /
 //! `NetState` / `NET_STATE` / `transition_state` / `set_failed`.
 //! 抽出为独立子模块后, init.rs 通过 `pub use state::*` re-export,
-//! 保持 init 主体与子模块 (raw/sm_fi) 的 `super::NET_STATE` 等引用不变.
+//! 保持 init 主体与子模块 (`raw/sm_fi`) 的 `super::NET_STATE` 等引用不变.
 #![deny(missing_docs)]
 
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 
+use crate::privileged::error::KernelError;
 use crate::privileged::net::iface_trait::NetEndpoint;
 use crate::privileged::net::mcast::McastRegistry;
 use crate::privileged::net::{EGDFNetDevice, NetworkStack};
@@ -85,10 +86,10 @@ pub struct NetState {
     /// `false` = 非阻塞 (`SOCK_NONBLOCK` 或 `fcntl(F_SETFL, O_NONBLOCK)` 置位).
     /// `allocate()` 默认填 `true`; 由 `socket_syscall` / `fcntl` 经 `raw` accessor 改写.
     pub(crate) blocking: Vec<bool>,
-    /// 各 FD 的接收超时 (SO_RCVTIMEO, P5d / DECISION-096): 单位纳秒, `0` = 无超时
+    /// 各 FD 的接收超时 (`SO_RCVTIMEO`, P5d / DECISION-096): 单位纳秒, `0` = 无超时
     /// (阻塞至就绪或被信号打断). `recv`/`recvfrom`/`accept` 进入阻塞前据此算绝对死线.
     pub(crate) recv_timeout_ns: Vec<u64>,
-    /// 各 FD 的发送超时 (SO_SNDTIMEO, P5d / DECISION-096): 单位纳秒, `0` = 无超时.
+    /// 各 FD 的发送超时 (`SO_SNDTIMEO`, P5d / DECISION-096): 单位纳秒, `0` = 无超时.
     /// `send`/`sendto`/`connect` 进入阻塞前据此算绝对死线.
     pub(crate) send_timeout_ns: Vec<u64>,
     /// 组播成员登记表 (P6 / D11 / DECISION-097): per-slot 成员位图 + 每组引用计数.
@@ -113,6 +114,7 @@ impl NetState {
     ///
     /// 必须在访问字段前调用 [`Self::allocate`] 填充 `TOTAL_SLOTS` 项.
     /// 保持 `const fn` 以便 `static NET_STATE` 静态构造.
+    #[must_use]
     pub const fn empty() -> Self {
         Self {
             device: None,
@@ -174,20 +176,20 @@ pub static NET_STATE: Mutex<NetState> = Mutex::named_lazy("NET_STATE", NetState:
 
 /// 状态机推进 — 以 CAS 将当前状态从 `from` 迁移到 `to`
 ///
-/// 返回 `Err(())` 表示迁移被拒绝 (CAS 竞争失败、非法回退或已处于 `Failed` 终态)。
+/// 返回 `Err(KernelError::Busy)` 表示迁移被拒绝 (CAS 竞争失败、非法回退或已处于 `Failed` 终态)。
 ///
 /// # Errors
-/// 当 CAS 竞争失败、迁移方向非法 (回退) 或当前已处于 `Failed` 终态时返回 `Err(())`。
-pub fn transition_state(from: InitState, to: InitState) -> Result<(), ()> {
+/// 当 CAS 竞争失败、迁移方向非法 (回退) 或当前已处于 `Failed` 终态时返回 `Err(KernelError::Busy)`。
+pub fn transition_state(from: InitState, to: InitState) -> Result<(), KernelError> {
     match G_INIT_STATE.compare_exchange(from as u8, to as u8, Ordering::AcqRel, Ordering::Relaxed) {
         Ok(_) => Ok(()),
         Err(current) => {
             if current == InitState::Failed as u8 {
-                Err(())
+                Err(KernelError::Busy)
             } else if current >= to as u8 {
                 Ok(())
             } else {
-                Err(())
+                Err(KernelError::Busy)
             }
         }
     }

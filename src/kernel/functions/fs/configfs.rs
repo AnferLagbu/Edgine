@@ -49,8 +49,16 @@ pub struct ConfigNode {
     pub writable: bool,
 }
 
+impl Default for ConfigNode {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConfigNode {
     /// 创建空的 configfs 节点 (名称与值均为零长度, 默认可写)。
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             name: [0u8; MAX_NAME_LEN],
@@ -70,6 +78,7 @@ impl ConfigNode {
     }
 
     /// 获取名称
+    #[must_use]
     pub fn get_name(&self) -> &str {
         core::str::from_utf8(&self.name[..self.name_len as usize]).unwrap_or("")
     }
@@ -83,6 +92,7 @@ impl ConfigNode {
     }
 
     /// 获取值
+    #[must_use]
     pub fn get_value(&self) -> &str {
         core::str::from_utf8(&self.value[..self.value_len as usize]).unwrap_or("")
     }
@@ -94,7 +104,7 @@ impl ConfigNode {
     pub fn read(&self, buf: &mut [u8]) -> Result<usize, Errno> {
         let value = self.get_value().as_bytes();
         if buf.len() < value.len() {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
         buf[..value.len()].copy_from_slice(value);
         Ok(value.len())
@@ -107,9 +117,9 @@ impl ConfigNode {
     /// 当 `data` 不是合法 UTF-8 时返回 `EINVAL`.
     pub fn write(&mut self, data: &[u8]) -> Result<(), Errno> {
         if !self.writable {
-            return Err(Errno::EPERM);
+            return Err(Errno::Eperm);
         }
-        let value = core::str::from_utf8(data).map_err(|_| Errno::EINVAL)?;
+        let value = core::str::from_utf8(data).map_err(|_| Errno::Einval)?;
         self.set_value(value);
         Ok(())
     }
@@ -132,8 +142,16 @@ pub struct ConfigDir {
     pub node_count: u8,
 }
 
+impl Default for ConfigDir {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConfigDir {
     /// 创建空的 configfs 目录。
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             name: [0u8; MAX_NAME_LEN],
@@ -152,6 +170,7 @@ impl ConfigDir {
     }
 
     /// 获取名称
+    #[must_use]
     pub fn get_name(&self) -> &str {
         core::str::from_utf8(&self.name[..self.name_len as usize]).unwrap_or("")
     }
@@ -162,7 +181,7 @@ impl ConfigDir {
     /// 当节点表已满 (节点数量达到容量上限) 时返回 `ENOMEM`.
     pub fn add_node(&mut self, node: ConfigNode) -> Result<(), Errno> {
         if self.node_count as usize >= self.nodes.len() {
-            return Err(Errno::ENOMEM);
+            return Err(Errno::Enomem);
         }
         self.nodes[self.node_count as usize] = node;
         self.node_count += 1;
@@ -170,13 +189,11 @@ impl ConfigDir {
     }
 
     /// 查找节点
+    #[must_use]
     pub fn find_node(&self, name: &str) -> Option<&ConfigNode> {
-        for i in 0..self.node_count as usize {
-            if self.nodes[i].get_name() == name {
-                return Some(&self.nodes[i]);
-            }
-        }
-        None
+        self.nodes[..self.node_count as usize]
+            .iter()
+            .find(|node| node.get_name() == name)
     }
 
     /// 查找节点 (可变)
@@ -205,7 +222,7 @@ impl ConfigDir {
                 break;
             }
         }
-        if found { Ok(()) } else { Err(Errno::ENOENT) }
+        if found { Ok(()) } else { Err(Errno::Enoent) }
     }
 }
 
@@ -229,13 +246,13 @@ impl ConfigFs {
     /// 当已存在同名目录时返回 `EEXIST`.
     pub fn create_dir(&mut self, name: &str) -> Result<(), Errno> {
         if self.dir_count as usize >= MAX_DIRS {
-            return Err(Errno::ENOMEM);
+            return Err(Errno::Enomem);
         }
 
         // 检查是否已存在
-        for i in 0..self.dir_count as usize {
-            if self.dirs[i].get_name() == name {
-                return Err(Errno::EEXIST);
+        for dir in &self.dirs[..self.dir_count as usize] {
+            if dir.get_name() == name {
+                return Err(Errno::Eexist);
             }
         }
 
@@ -261,17 +278,15 @@ impl ConfigFs {
                 break;
             }
         }
-        if found { Ok(()) } else { Err(Errno::ENOENT) }
+        if found { Ok(()) } else { Err(Errno::Enoent) }
     }
 
     /// 查找目录
+    #[must_use]
     pub fn find_dir(&self, name: &str) -> Option<&ConfigDir> {
-        for i in 0..self.dir_count as usize {
-            if self.dirs[i].get_name() == name {
-                return Some(&self.dirs[i]);
-            }
-        }
-        None
+        self.dirs[..self.dir_count as usize]
+            .iter()
+            .find(|dir| dir.get_name() == name)
     }
 
     /// 查找目录 (可变)
@@ -289,8 +304,8 @@ impl ConfigFs {
     /// # Errors
     /// 当目录或节点不存在时返回 `ENOENT`; 当 `buf` 过小时返回 `EINVAL`.
     pub fn read_node(&self, dir: &str, node: &str, buf: &mut [u8]) -> Result<usize, Errno> {
-        let d = self.find_dir(dir).ok_or(Errno::ENOENT)?;
-        let n = d.find_node(node).ok_or(Errno::ENOENT)?;
+        let d = self.find_dir(dir).ok_or(Errno::Enoent)?;
+        let n = d.find_node(node).ok_or(Errno::Enoent)?;
         n.read(buf)
     }
 
@@ -299,8 +314,8 @@ impl ConfigFs {
     /// # Errors
     /// 当目录或节点不存在时返回 `ENOENT`; 当节点不可写或 `data` 非法时返回 `EPERM`/`EINVAL`.
     pub fn write_node(&mut self, dir: &str, node: &str, data: &[u8]) -> Result<(), Errno> {
-        let d = self.find_dir_mut(dir).ok_or(Errno::ENOENT)?;
-        let n = d.find_node_mut(node).ok_or(Errno::ENOENT)?;
+        let d = self.find_dir_mut(dir).ok_or(Errno::Enoent)?;
+        let n = d.find_node_mut(node).ok_or(Errno::Enoent)?;
         n.write(data)
     }
 }
@@ -321,6 +336,7 @@ static CONFIG_FS: Mutex<ConfigFs> = Mutex::new(ConfigFs {
 });
 
 /// 获取 configfs 文件系统实例
+#[must_use]
 pub fn get_config_fs() -> &'static Mutex<ConfigFs> {
     &CONFIG_FS
 }

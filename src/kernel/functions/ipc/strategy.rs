@@ -15,6 +15,7 @@
 //! `register_default_ipc_strategy()` 注册 → FFI syscall 使用时经
 //! `current_ipc_strategy()` 获取。由 lib.rs 编排 (crate root 双向编排者)。
 
+use crate::functions::error::AlreadyRegistered;
 use crate::functions::ipc::{msgq, shm};
 use crate::privileged::ipc::IpcStrategy;
 use crate::privileged::ipc::types::{IpcId, IpcNamespace};
@@ -93,10 +94,11 @@ static IPC_STRATEGY: DefaultIpcStrategy = DefaultIpcStrategy;
 
 /// 注册默认 IPC 策略 (由 lib.rs 编排调用, 早于任何 IPC syscall)
 ///
-/// 幂等性: 已注册时返回 `Err(())` (与 pmm/slab/swap policy 注册模式一致).
+/// 幂等性: 已注册时返回 `Err(AlreadyRegistered)` (与 pmm/slab/swap policy 注册模式一致).
 ///
 /// # Errors
-/// 当策略已注册时返回 `Err(())`.
-pub fn register_default_ipc_strategy() -> Result<(), ()> {
-    crate::privileged::ipc::strategy::register_ipc_strategy(&IPC_STRATEGY).map_err(|_| ())
+/// 当策略已注册时返回 `Err(AlreadyRegistered)`.
+pub fn register_default_ipc_strategy() -> Result<(), AlreadyRegistered> {
+    crate::privileged::ipc::strategy::register_ipc_strategy(&IPC_STRATEGY)
+        .map_err(|_| AlreadyRegistered)
 }

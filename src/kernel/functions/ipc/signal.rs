@@ -141,6 +141,7 @@ pub fn signal_dispatch_safe() {
 // ============================================================================
 
 /// FFI: 发送信号
+#[must_use]
 pub fn ipc_signal_send(pid: i32, sig: i32) -> i32 {
     match signal_send_safe(
         crate::functions::intcast::u8_from_i32(sig),
@@ -152,6 +153,7 @@ pub fn ipc_signal_send(pid: i32, sig: i32) -> i32 {
 }
 
 /// FFI: 注册信号处理函数
+#[must_use]
 pub fn ipc_signal_register(sig: i32, handler: Option<extern "C" fn(i32)>, flags: u32) -> i32 {
     match signal_register_safe(crate::functions::intcast::u8_from_i32(sig), handler, flags) {
         Ok(()) => 0,
@@ -160,6 +162,7 @@ pub fn ipc_signal_register(sig: i32, handler: Option<extern "C" fn(i32)>, flags:
 }
 
 /// FFI: 屏蔽信号
+#[must_use]
 pub fn ipc_signal_block(sig: i32) -> i32 {
     match signal_block_safe(crate::functions::intcast::u8_from_i32(sig)) {
         Ok(()) => 0,
@@ -168,6 +171,7 @@ pub fn ipc_signal_block(sig: i32) -> i32 {
 }
 
 /// FFI: 解除屏蔽信号
+#[must_use]
 pub fn ipc_signal_unblock(sig: i32) -> i32 {
     match signal_unblock_safe(crate::functions::intcast::u8_from_i32(sig)) {
         Ok(()) => 0,

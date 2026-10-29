@@ -80,7 +80,7 @@ impl Future for AsyncPipeWriter {
         let remaining = &data[self.written..];
 
         match pipe::pipe_write_safe(
-            IPC_NAMESPACE.get_mut(),
+            &mut IPC_NAMESPACE.get_mut(),
             self.pipe_id,
             remaining.as_ptr(),
             remaining.len(),
@@ -142,7 +142,7 @@ impl Future for AsyncPipeReader {
         let mut bytes_read: u64 = 0;
 
         match pipe::pipe_read_safe(
-            IPC_NAMESPACE.get_mut(),
+            &mut IPC_NAMESPACE.get_mut(),
             self.pipe_id,
             buffer.as_mut_ptr(),
             buffer.len(),
@@ -211,7 +211,7 @@ impl Future for AsyncMsgSender {
         };
 
         match msgq::msgq_send_safe(
-            IPC_NAMESPACE.get_mut(),
+            &mut IPC_NAMESPACE.get_mut(),
             this.msgq_id,
             msg.type_,
             Some(&msg.data),
@@ -261,7 +261,7 @@ impl Future for AsyncMsgReceiver {
         let mut recv_msg = Message::new();
 
         match msgq::msgq_recv_safe(
-            IPC_NAMESPACE.get_mut(),
+            &mut IPC_NAMESPACE.get_mut(),
             this.msgq_id,
             this.filter_type.as_mut(),
             Some(&mut recv_msg.data),

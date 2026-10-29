@@ -69,17 +69,19 @@ pub enum ElfError {
 
 impl ElfError {
     /// 映射为 POSIX errno
+    #[must_use]
     pub fn to_errno(self) -> Errno {
         use Errno as E;
         match self {
-            Self::BadMagic | Self::NotElf64 | Self::UnsupportedMachine => E::ENOEXEC,
-            Self::Truncated | Self::PhdrOutOfRange | Self::TooManyPhdr => E::EINVAL,
-            Self::MapFailed => E::ENOMEM,
+            Self::BadMagic | Self::NotElf64 | Self::UnsupportedMachine => E::Enoexec,
+            Self::Truncated | Self::PhdrOutOfRange | Self::TooManyPhdr => E::Einval,
+            Self::MapFailed => E::Enomem,
             Self::Kernel(e) => e.as_errno(),
         }
     }
 
     /// 从内核返回的 `&'static str` 翻译为 `ElfError`
+    #[must_use]
     pub fn from_kernel_str(s: &'static str) -> Self {
         use crate::functions::error::KernelError as K;
         match s {
@@ -119,22 +121,22 @@ pub type ElfResult<T> = Result<T, ElfError>;
 ///
 /// 当 ELF 镜像过短或头部字段非法时返回 `ElfError::Truncated`.
 pub fn validate(elf_data: &[u8]) -> ElfResult<Elf64Header> {
-    let header = proc_elf::elf_validate(elf_data.as_ptr(), elf_data.len() as u64);
+    let header = proc_elf::elf_validate(elf_data);
     header.ok_or(ElfError::Truncated).map(|h| Elf64Header {
-        e_ident: h.e_ident,
-        e_type: h.e_type,
-        e_machine: h.e_machine,
-        e_version: h.e_version,
-        e_entry: h.e_entry,
-        e_phoff: h.e_phoff,
-        e_shoff: h.e_shoff,
-        e_flags: h.e_flags,
-        e_ehsize: h.e_ehsize,
-        e_phentsize: h.e_phentsize,
-        e_phnum: h.e_phnum,
-        e_shentsize: h.e_shentsize,
-        e_shnum: h.e_shnum,
-        e_shstrndx: h.e_shstrndx,
+        ident: h.ident,
+        ty: h.ty,
+        machine: h.machine,
+        version: h.version,
+        entry: h.entry,
+        phoff: h.phoff,
+        shoff: h.shoff,
+        flags: h.flags,
+        ehsize: h.ehsize,
+        phentsize: h.phentsize,
+        phnum: h.phnum,
+        shentsize: h.shentsize,
+        shnum: h.shnum,
+        shstrndx: h.shstrndx,
     })
 }
 
@@ -162,8 +164,7 @@ pub fn validate(elf_data: &[u8]) -> ElfResult<Elf64Header> {
 ///
 /// 当 ELF 加载失败(段越界、内存分配失败等)时返回对应的 `ElfError`.
 pub fn load(mm: &MmStruct, elf_data: &[u8]) -> ElfResult<ElfLoadResult> {
-    proc_elf::elf_load(mm, elf_data.as_ptr(), elf_data.len() as u64)
-        .map_err(ElfError::from_kernel_str)
+    proc_elf::elf_load(mm, elf_data).map_err(ElfError::from_kernel_str)
 }
 
 // ============================================================================
@@ -191,30 +192,35 @@ pub const PF_R: u32 = 4;
 
 /// ELF 头是否合法 (直接布尔, 不返回错误细节)
 #[inline]
+#[must_use]
 pub fn is_valid(elf_data: &[u8]) -> bool {
     validate(elf_data).is_ok()
 }
 
 /// 获取入口地址
 #[inline]
+#[must_use]
 pub fn entry_point(elf_data: &[u8]) -> u64 {
-    validate(elf_data).map_or(0, |h| h.e_entry)
+    validate(elf_data).map_or(0, |h| h.entry)
 }
 
 /// 获取机器类型 (0x3E = `x86_64`, 0xB7 = aarch64)
 #[inline]
+#[must_use]
 pub fn machine(elf_data: &[u8]) -> u16 {
-    validate(elf_data).map_or(0, |h| h.e_machine)
+    validate(elf_data).map_or(0, |h| h.machine)
 }
 
 /// 是否为 64 位 ELF
 #[inline]
+#[must_use]
 pub fn is_64bit(elf_data: &[u8]) -> bool {
     elf_data.len() >= 5 && elf_data[4] == 2
 }
 
 /// 是否为可执行文件 (`e_type` == 2: `ET_EXEC`)
 #[inline]
+#[must_use]
 pub fn is_executable(elf_data: &[u8]) -> bool {
     if elf_data.len() < 16 {
         return false;

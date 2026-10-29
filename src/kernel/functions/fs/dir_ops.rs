@@ -11,6 +11,7 @@
 //! - 无 unsafe, 无裸指针
 
 /// lseek(fd, offset, whence) 策略
+#[must_use]
 pub fn lseek_syscall(fd: i32, offset: i64, whence: i32) -> i64 {
     i64::from(crate::functions::fs::vfs_seek(
         fd.cast_unsigned(),
@@ -20,6 +21,7 @@ pub fn lseek_syscall(fd: i32, offset: i64, whence: i32) -> i64 {
 }
 
 /// getdents(fd, buf, count) 策略
+#[must_use]
 pub fn getdents_syscall(fd: i32, buf_ptr: u64, _count: u64) -> i64 {
     i64::from(crate::functions::fs::vfs_readdir(
         fd.cast_unsigned(),

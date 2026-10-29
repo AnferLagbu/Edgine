@@ -73,7 +73,7 @@ fn specific_errno_values_match_linux() {
 #[test]
 fn enum_variant_values_match_linux() {
     // 抽查 Errno 枚举判别值直接等于 POSIX 编号 (repr(i32))
-    assert_eq!(Errno::EPERM.as_i32(), 1);
-    assert_eq!(Errno::EINVAL.as_i32(), 22);
-    assert_eq!(Errno::EINPROGRESS.as_i32(), 115);
+    assert_eq!(Errno::Eperm.as_i32(), 1);
+    assert_eq!(Errno::Einval.as_i32(), 22);
+    assert_eq!(Errno::Einprogress.as_i32(), 115);
 }

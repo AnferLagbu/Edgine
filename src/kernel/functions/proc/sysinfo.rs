@@ -24,6 +24,7 @@
 use crate::privileged::syscall::Errno;
 
 /// getrusage(who, rusage) 策略
+#[must_use]
 pub fn getrusage_syscall(who: i32, rusage_ptr: u64) -> i64 {
     let pid = crate::privileged::proc::process_get_current_pid();
     i64::from(crate::privileged::proc::proc_get_rusage(
@@ -35,6 +36,7 @@ pub fn getrusage_syscall(who: i32, rusage_ptr: u64) -> i64 {
 }
 
 /// sysinfo(info) 策略
+#[must_use]
 pub fn sysinfo_syscall(info_ptr: u64) -> i64 {
     #[repr(C)]
     #[derive(Copy, Clone)]
@@ -54,7 +56,7 @@ pub fn sysinfo_syscall(info_ptr: u64) -> i64 {
         mem_unit: u32,
     }
     if info_ptr == 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     let ticks = crate::privileged::syscall::api::get_ticks();
@@ -75,30 +77,31 @@ pub fn sysinfo_syscall(info_ptr: u64) -> i64 {
     };
 
     if !crate::privileged::syscall::api::write_struct_to_user(info_ptr, &si) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     0
 }
 
 /// setrlimit(resource, rlim) 策略 — 设置资源限制
 ///
-/// T2 批 1 (syscall-followup): 自 privileged 回退层迁移. RlimitTable 机制
+/// T2 批 1 (syscall-followup): 自 privileged 回退层迁移. `RlimitTable` 机制
 /// 字段仍归 privileged (DECISION-J 第十九批判据), functions 仅做策略:
-/// 指针校验 + 读取 rlim_cur/rlim_max + 特权判定 + 委托表更新.
+/// 指针校验 + 读取 `rlim_cur/rlim_max` + 特权判定 + 委托表更新.
+#[must_use]
 pub fn setrlimit_syscall(resource: i32, rlim_ptr: u64) -> i64 {
     use crate::privileged::proc::rlimit::RLIMIT_NLIMITS;
 
     if rlim_ptr == 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     if !(0..crate::functions::intcast::low_i32_from_usize(RLIMIT_NLIMITS)).contains(&resource) {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     // 从用户空间读取 rlim_cur / rlim_max (16 字节, safe 包装先校验后读)
     let mut vals = [0u64; 2];
     if !crate::privileged::syscall::api::read_struct_from_user(rlim_ptr, &mut vals) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     let (cur, max) = (vals[0], vals[1]);
 
@@ -117,11 +120,12 @@ pub fn setrlimit_syscall(resource: i32, rlim_ptr: u64) -> i64 {
     }) {
         Some(Ok(())) => 0,
         Some(Err(e)) => e.as_ret(),
-        None => Errno::ESRCH.as_ret(),
+        None => Errno::Esrch.as_ret(),
     }
 }
 
 /// getrlimit(resource, rlim) 策略
+#[must_use]
 pub fn getrlimit_syscall(_resource: i32, rlim_ptr: u64) -> i64 {
     #[repr(C)]
     #[derive(Copy, Clone)]
@@ -130,7 +134,7 @@ pub fn getrlimit_syscall(_resource: i32, rlim_ptr: u64) -> i64 {
         rlim_max: u64,
     }
     if rlim_ptr == 0 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
 
     let r = Rlimit {
@@ -139,7 +143,7 @@ pub fn getrlimit_syscall(_resource: i32, rlim_ptr: u64) -> i64 {
     };
 
     if !crate::privileged::syscall::api::write_struct_to_user(rlim_ptr, &r) {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     0
 }
@@ -149,12 +153,13 @@ pub fn getrlimit_syscall(_resource: i32, rlim_ptr: u64) -> i64 {
 /// T1 G7: 原实现恒返回字面量 `"localhost"`, 与 `uname` (硬编码
 /// `"edgine-node"`) / `sethostname` (不存储) 三处各说各话; 现全部收敛到
 /// privileged `UtsNamespace` (单一权威).
+#[must_use]
 pub fn gethostname_syscall(buf_ptr: u64, size: u64) -> i64 {
     if buf_ptr == 0 || size == 0 {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
     let Some(uts) = crate::privileged::proc::namespace::uts_current() else {
-        return Errno::ESRCH.as_ret();
+        return Errno::Esrch.as_ret();
     };
 
     let name = uts.get_nodename();
@@ -166,18 +171,20 @@ pub fn gethostname_syscall(buf_ptr: u64, size: u64) -> i64 {
     let n = (len + 1).min(crate::functions::intcast::usize_from_u64(size));
     match crate::privileged::mm::copy_user::copy_to_user(buf_ptr, &out[..n], n) {
         Ok(_) => 0,
-        Err(()) => Errno::EFAULT.as_ret(),
+        Err(_) => Errno::Efault.as_ret(),
     }
 }
 
 /// sethostname(name, len) 策略
 ///
 /// T1 G7: 原实现仅校验不存储 (主机名无处可去), 现写入当前进程 UTS namespace.
+#[must_use]
 pub fn sethostname_syscall(name_ptr: u64, len: u64) -> i64 {
     set_uts_name_syscall(name_ptr, len, false)
 }
 
 /// setdomainname(name, len) 策略 — 与 `sethostname` 同构 (写入 UTS 域名字段)
+#[must_use]
 pub fn setdomainname_syscall(name_ptr: u64, len: u64) -> i64 {
     set_uts_name_syscall(name_ptr, len, true)
 }
@@ -186,7 +193,7 @@ pub fn setdomainname_syscall(name_ptr: u64, len: u64) -> i64 {
 /// + 委托 privileged `UtsNamespace` 写入.
 fn set_uts_name_syscall(name_ptr: u64, len: u64, domain: bool) -> i64 {
     if name_ptr == 0 || len == 0 || len > 63 {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     }
     // 能力位沿用既有的 SYSTEM 域 UTS 名称设置位 (原 sethostname 字面量 9)
     let pwm = crate::privileged::sgeg::pwm_get_current();
@@ -195,18 +202,18 @@ fn set_uts_name_syscall(name_ptr: u64, len: u64, domain: bool) -> i64 {
         crate::privileged::sgeg::CAP_DOMAIN_SYSTEM,
         crate::privileged::sgeg::SYSTEM_CAP_UTS_SETNAME,
     ) {
-        return Errno::EACCES.as_ret();
+        return Errno::Eacces.as_ret();
     }
     let Ok(n) = usize::try_from(len) else {
-        return Errno::EINVAL.as_ret();
+        return Errno::Einval.as_ret();
     };
     let mut buf = [0u8; 64];
     if crate::privileged::mm::copy_user::copy_from_user(&mut buf[..n], name_ptr, n).is_err() {
-        return Errno::EFAULT.as_ret();
+        return Errno::Efault.as_ret();
     }
 
     let Some(uts) = crate::privileged::proc::namespace::uts_current() else {
-        return Errno::ESRCH.as_ret();
+        return Errno::Esrch.as_ret();
     };
     if domain {
         uts.set_domainname(&buf[..n]);
@@ -217,6 +224,7 @@ fn set_uts_name_syscall(name_ptr: u64, len: u64, domain: bool) -> i64 {
 }
 
 /// `boot_check(check_type)` 策略
+#[must_use]
 pub fn boot_check_syscall(check_type: i32) -> i64 {
     match check_type {
         0 => i64::from(crate::privileged::sgeg::pwm_any_identity_exists()),
@@ -227,10 +235,11 @@ pub fn boot_check_syscall(check_type: i32) -> i64 {
 /// reboot(cmd) 策略
 ///
 /// PWM 权限检查 + 委托 privileged 执行重启机制
+#[must_use]
 pub fn reboot_syscall(cmd: i32) -> i64 {
     let pwm = crate::privileged::sgeg::pwm_get_current();
     if !crate::privileged::sgeg::pwm_has_capability(pwm, 0, 0x01) {
-        return Errno::EACCES.as_ret();
+        return Errno::Eacces.as_ret();
     }
     crate::privileged::syscall::api::reboot_mechanism(cmd)
 }

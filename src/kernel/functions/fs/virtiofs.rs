@@ -68,6 +68,7 @@ pub enum VirtioFsOp {
 
 impl VirtioFsOp {
     /// 从操作码解析
+    #[must_use]
     pub fn from_opcode(opcode: u32) -> Self {
         match opcode {
             3 => Self::GetAttr,
@@ -115,6 +116,7 @@ pub struct VirtioFsNode {
 
 impl VirtioFsNode {
     /// 构造一个 virtiofs 节点 (链接数为 1, 无名称)。
+    #[must_use]
     pub const fn new(id: u64, parent_id: u64, mode: u32) -> Self {
         Self {
             id,
@@ -136,6 +138,7 @@ impl VirtioFsNode {
     }
 
     /// 获取名称
+    #[must_use]
     pub fn get_name(&self) -> &str {
         core::str::from_utf8(&self.name[..self.name_len as usize]).unwrap_or("")
     }
@@ -165,13 +168,11 @@ impl VirtioFs {
     }
 
     /// 查找节点
+    #[must_use]
     pub fn find_node(&self, id: u64) -> Option<&VirtioFsNode> {
-        for i in 0..self.node_count as usize {
-            if self.nodes[i].id == id {
-                return Some(&self.nodes[i]);
-            }
-        }
-        None
+        self.nodes[..self.node_count as usize]
+            .iter()
+            .find(|node| node.id == id)
     }
 
     /// 创建节点
@@ -180,11 +181,11 @@ impl VirtioFs {
     /// 当父节点不存在时返回 `ENOENT`; 当节点表已满 (`MAX_NODES`) 时返回 `ENOMEM`.
     pub fn create_node(&mut self, parent_id: u64, name: &str, mode: u32) -> Result<u64, Errno> {
         if self.find_node(parent_id).is_none() {
-            return Err(Errno::ENOENT);
+            return Err(Errno::Enoent);
         }
 
         if self.node_count as usize >= MAX_NODES {
-            return Err(Errno::ENOMEM);
+            return Err(Errno::Enomem);
         }
 
         let id = self.next_id;
@@ -205,13 +206,13 @@ impl VirtioFs {
     /// 当节点不存在时返回 `ENOENT`.
     pub fn delete_node(&mut self, id: u64) -> Result<(), Errno> {
         if id == 0 {
-            return Err(Errno::EINVAL);
+            return Err(Errno::Einval);
         }
 
         // 检查是否有子节点
-        for i in 0..self.node_count as usize {
-            if self.nodes[i].parent_id == id {
-                return Err(Errno::ENOTEMPTY);
+        for node in &self.nodes[..self.node_count as usize] {
+            if node.parent_id == id {
+                return Err(Errno::Enotempty);
             }
         }
 
@@ -227,15 +228,15 @@ impl VirtioFs {
             }
         }
 
-        if found { Ok(()) } else { Err(Errno::ENOENT) }
+        if found { Ok(()) } else { Err(Errno::Enoent) }
     }
 
     /// 列出子节点 (缓冲区不足时输出会被截断)
     pub fn list_children(&self, parent_id: u64, buf: &mut [u8]) -> usize {
         let mut offset = 0;
-        for i in 0..self.node_count as usize {
-            if self.nodes[i].parent_id == parent_id {
-                let name = self.nodes[i].get_name().as_bytes();
+        for node in &self.nodes[..self.node_count as usize] {
+            if node.parent_id == parent_id {
+                let name = node.get_name().as_bytes();
                 if offset + name.len() + 1 > buf.len() {
                     break;
                 }
@@ -265,6 +266,7 @@ static VIRTIO_FS: Mutex<VirtioFs> = Mutex::new(VirtioFs {
 });
 
 /// 获取 virtiofs 文件系统实例
+#[must_use]
 pub fn get_virtiofs() -> &'static Mutex<VirtioFs> {
     &VIRTIO_FS
 }
@@ -303,39 +305,39 @@ pub fn handle_request(
 
     match op {
         VirtioFsOp::Lookup => {
-            let name = core::str::from_utf8(data).map_err(|_| Errno::EINVAL)?;
+            let name = core::str::from_utf8(data).map_err(|_| Errno::Einval)?;
             // 遍历子节点
-            for i in 0..fs.node_count as usize {
-                if fs.nodes[i].parent_id == node_id && fs.nodes[i].get_name() == name {
+            for node in &fs.nodes[..fs.node_count as usize] {
+                if node.parent_id == node_id && node.get_name() == name {
                     if buf.len() < 8 {
-                        return Err(Errno::EINVAL);
+                        return Err(Errno::Einval);
                     }
-                    buf[..8].copy_from_slice(&fs.nodes[i].id.to_le_bytes());
+                    buf[..8].copy_from_slice(&node.id.to_le_bytes());
                     return Ok(8);
                 }
             }
-            Err(Errno::ENOENT)
+            Err(Errno::Enoent)
         }
         VirtioFsOp::GetAttr => {
             if let Some(node) = fs.find_node(node_id) {
                 if buf.len() < 32 {
-                    return Err(Errno::EINVAL);
+                    return Err(Errno::Einval);
                 }
                 buf[0..4].copy_from_slice(&node.mode.to_le_bytes());
                 buf[4..8].copy_from_slice(&node.nlink.to_le_bytes());
                 buf[8..16].copy_from_slice(&node.size.to_le_bytes());
                 Ok(16)
             } else {
-                Err(Errno::ENOENT)
+                Err(Errno::Enoent)
             }
         }
         VirtioFsOp::Mkdir => {
-            let name = core::str::from_utf8(data).map_err(|_| Errno::EINVAL)?;
+            let name = core::str::from_utf8(data).map_err(|_| Errno::Einval)?;
             fs.create_node(node_id, name, 0o40755)?;
             Ok(0)
         }
         VirtioFsOp::Create => {
-            let name = core::str::from_utf8(data).map_err(|_| Errno::EINVAL)?;
+            let name = core::str::from_utf8(data).map_err(|_| Errno::Einval)?;
             fs.create_node(node_id, name, 0o10_0644)?;
             Ok(0)
         }
@@ -344,6 +346,6 @@ pub fn handle_request(
             Ok(0)
         }
         VirtioFsOp::Readdir => Ok(fs.list_children(node_id, buf)),
-        _ => Err(Errno::ENOSYS),
+        _ => Err(Errno::Enosys),
     }
 }

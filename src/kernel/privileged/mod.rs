@@ -1,57 +1,8 @@
 #![cfg_attr(not(feature = "host-test"), no_std)]
 // 模块 `glue` 存放 crate 内部的 glue/兼容层. P-64 第十五批按 lint 改名为 `glue`:
 // 原名 `lib` 与 library target 根同名, 会触发 special_module_name.
-// ── P-71: crate 级 lint 豁免 ──────────────────────────────────────────
-// 以下豁免原以 `#![allow(...)]` 写在 glue crate 根 (src/kernel/lib.rs), 单 crate 时覆盖
-// 全树; privileged 独立成 crate 后须各持一份 (lint 属性不跨 crate 继承). 条目与 lib.rs
-// 逐项对应 ⇒ 拆分前后豁免面完全一致, 属**迁移**而非新增抑制 (清零工程仍归 P-64).
-// 不用 Cargo `[lints]` 表: 命令行 `-D clippy::pedantic` 优先级高于 manifest 表, 会让
-// `[lints]` 的 allow 在 ci/audit.sh 里全部失效 (实测 1623 条误报).
-// 详细理由见 lib.rs 各同名条目注释.
-// P-64 第十五批: rustc 家族 (C 互操作命名 / FFI 类型 / 全局可变静态) 的 crate 级豁免
-// 已全部清除并改码服从 lint, 此处不再保留对应条目.
-// clippy 家族
-#![allow(clippy::not_unsafe_ptr_arg_deref)]
-#![allow(clippy::mut_from_ref)]
-#![allow(clippy::manual_c_str_literals)]
-#![allow(clippy::empty_line_after_doc_comments)]
-#![allow(clippy::result_unit_err)]
-#![allow(clippy::module_inception)]
-#![allow(clippy::new_without_default)]
-#![allow(clippy::collapsible_if)]
-#![allow(clippy::single_match)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::type_complexity)]
-#![allow(clippy::transmute_ptr_to_ptr)]
-#![allow(clippy::missing_transmute_annotations)]
-#![allow(clippy::let_and_return)]
-#![allow(clippy::wrong_self_convention)]
-#![allow(clippy::needless_range_loop)]
-#![allow(clippy::manual_find)]
-#![allow(clippy::unnecessary_cast)]
-#![allow(clippy::unnecessary_lazy_evaluations)]
-#![allow(clippy::manual_div_ceil)]
-#![allow(clippy::manual_unwrap_or_default)]
-#![allow(clippy::manual_unwrap_or)]
-#![allow(clippy::unnecessary_map_or)]
-#![allow(clippy::derivable_impls)]
-#![allow(clippy::manual_checked_ops)]
-#![allow(clippy::question_mark)]
-#![allow(clippy::manual_range_patterns)]
-#![allow(clippy::manual_flatten)]
-#![allow(clippy::collapsible_match)]
-#![allow(clippy::empty_loop)]
-#![allow(clippy::explicit_counter_loop)]
-#![allow(clippy::pointers_in_nomem_asm_block)]
-#![allow(clippy::doc_lazy_continuation)]
-#![allow(clippy::doc_overindented_list_items)]
-#![allow(clippy::must_use_candidate)]
-#![allow(clippy::struct_field_names)]
-#![allow(clippy::pub_underscore_fields)]
-#![allow(clippy::struct_excessive_bools)]
-#![allow(clippy::doc_markdown)]
-#![allow(clippy::zero_sized_map_values)]
-#![allow(clippy::missing_fields_in_debug)]
+// P-64 第十六批: clippy 族 crate 级豁免已全部撤销, 一律改码服从 lint.
+// 历史条目与逐条理由见 docs/plan/net-e2e-tcp-echo-flakiness.md 的 P-64 变更历史.
 //! Edgine Framekernel — 特权 OS Framework (TCB)
 //!
 //! 这是整个内核中**唯一**允许包含 `unsafe` Rust 代码的模块。
@@ -140,7 +91,7 @@ pub mod dtb;
 pub mod egdf;
 pub mod freg;
 pub mod fs;
-/// crate 内部的 glue/兼容层模块 (P-64 第十五批由 `lib` 改名, 避免 special_module_name)。
+/// crate 内部的 glue/兼容层模块 (P-64 第十五批由 `lib` 改名, 避免 `special_module_name`)。
 pub mod glue;
 pub mod idt;
 pub mod iobuf;

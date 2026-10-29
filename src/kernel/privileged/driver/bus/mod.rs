@@ -34,7 +34,7 @@ pub fn bus_init() -> infra::Result<()> {
     }
 }
 
-/// AArch64 总线初始化 stub — ARM 平台通过设备树/FDT 发现设备，无需 PCI 枚举。
+/// `AArch64` 总线初始化 stub — ARM 平台通过设备树/FDT 发现设备，无需 PCI 枚举。
 #[cfg(not(target_arch = "x86_64"))]
 pub fn bus_init() {
     // ARM 平台使用 FDT (Flattened Device Tree) 或 ACPI 发现设备

@@ -38,8 +38,15 @@ pub struct ClockAdjState {
     synced: AtomicBool,
 }
 
+impl Default for ClockAdjState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ClockAdjState {
     /// 创建零初始化的调整状态
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             freq_adj_ppb: AtomicI64::new(0),
@@ -121,6 +128,7 @@ static CLOCK_ADJ: ClockAdjState = ClockAdjState::new();
 /// 获取全局时钟调整状态
 ///
 /// functions 策略层经此取得安全原子访问面, 完成 NTP 调整/墙钟换算策略.
+#[must_use]
 pub fn clock_adj_state() -> &'static ClockAdjState {
     &CLOCK_ADJ
 }

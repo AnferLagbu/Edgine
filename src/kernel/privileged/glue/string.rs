@@ -75,6 +75,7 @@ pub unsafe extern "C" fn strlen(s: *const core::ffi::c_char) -> usize {
 /// # Returns
 /// 字符串长度
 #[inline]
+#[must_use]
 pub fn strlen_safe(s: &[i8]) -> usize {
     let mut len = 0;
 
@@ -661,7 +662,7 @@ pub unsafe extern "C" fn memset_optimized(s: *mut u8, c: i32, n: usize) -> *mut 
             in("rdi") dest,
             in("rax") val,
             in("rcx") n,
-            options(nostack, nomem)
+            options(nostack)
         );
 
         s
@@ -811,8 +812,8 @@ pub fn safe_memcpy(dest: &mut [u8], src: &[u8]) -> usize {
 /// * `len` - 填充长度（0 表示填充整个缓冲区）
 pub fn safe_memset(buf: &mut [u8], val: u8, len: Option<usize>) {
     let actual_len = len.unwrap_or(buf.len()).min(buf.len());
-    for i in 0..actual_len {
-        buf[i] = val;
+    for b in &mut buf[..actual_len] {
+        *b = val;
     }
 }
 
@@ -822,6 +823,7 @@ pub fn safe_memset(buf: &mut [u8], val: u8, len: Option<usize>) {
 /// * `Ordering::Equal` - 相等
 /// * `Ordering::Less` - a < b  // 标准比较结果枚举
 /// * `Ordering::Greater` - a > b  // 标准比较结果枚举
+#[must_use]
 pub fn safe_memcmp(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
     let min_len = a.len().min(b.len());
 

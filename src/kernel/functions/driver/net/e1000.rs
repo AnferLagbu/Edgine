@@ -3,7 +3,7 @@
 //!
 //! ## 架构分工 (§4.1 归属决策树)
 //!
-//! - **privileged (机制)**: `e1000_io::E1000Io` 提供 MMIO 安全代理 (封装 IoMem);
+//! - **privileged (机制)**: `e1000_io::E1000Io` 提供 MMIO 安全代理 (封装 `IoMem`);
 //!   `e1000::{TxRing, RxRing}` 封装 DMA 描述符环的全部裸指针操作; `privileged::pci`
 //!   提供 PCI 配置空间与 BAR 枚举的安全 API; `privileged::dma` 提供一致性 DMA 内存.
 //! - **functions (功能, 本文件)**: 实现 `NetDeviceOps` 安全桥 trait, 承载 E1000 初始化
@@ -19,7 +19,7 @@
 //! `e1000_impl`, 并仅在该组合下编译; 其余构建提供恒返回 `None` 的探测桩,
 //! 保证调用点 (functions `net_init`) 无需条件编译.
 
-/// E1000 真实实现 (x86_64 且非 kernel_test).
+/// E1000 真实实现 (x86_64 且非 `kernel_test`).
 #[cfg(all(target_arch = "x86_64", not(feature = "kernel_test")))]
 mod e1000_impl {
     use alloc::boxed::Box;
@@ -52,7 +52,7 @@ mod e1000_impl {
     /// BAR0 MMIO 窗口大小 (E1000 规范为 128 KiB).
     const E1000_MMIO_SIZE: usize = 128 * 1024;
 
-    /// PCI 命令寄存器偏移 (privileged::pci 未导出该偏移, 本地定义).
+    /// PCI 命令寄存器偏移 (`privileged::pci` 未导出该偏移, 本地定义).
     const PCI_REG_COMMAND: u8 = 0x04;
 
     /// 单帧最大长度 (> 标准 MTU + 以太网头, 与 RX 缓冲区同量级).
@@ -246,9 +246,7 @@ mod e1000_impl {
         /// 循环跳过带错误的描述符 (回收后继续), 直到取到有效帧或无可用数据.
         fn receive_packet(&mut self, buf: &mut [u8]) -> Option<usize> {
             loop {
-                let Some(rx_ring) = self.rx_ring.as_mut() else {
-                    return None;
-                };
+                let rx_ring = self.rx_ring.as_mut()?;
                 let tail = rx_ring.tail();
                 // head == tail 表示硬件已处理完所有待收描述符.
                 if tail == self.io.rx_head() as usize || !rx_ring.is_done(tail) {
@@ -344,7 +342,7 @@ mod e1000_impl {
     /// 探测 E1000 网卡并构造注册数据 (functions 探测回调).
     ///
     /// 流程: 幂等 `pci::init` → 扫描 PCI 总线 → 匹配 Intel 网络类设备 →
-    /// 校验 BAR0 为 MMIO → 使能 MEMORY_SPACE / BUS_MASTER → 映射 MMIO →
+    /// 校验 BAR0 为 MMIO → 使能 `MEMORY_SPACE` / `BUS_MASTER` → 映射 MMIO →
     /// 读 MAC → 初始化硬件 → 注册.
     pub(crate) fn e1000_net_registration() -> Option<NetDeviceRegistration> {
         let _ = pci::init();
@@ -428,7 +426,7 @@ mod e1000_impl {
 #[cfg(all(target_arch = "x86_64", not(feature = "kernel_test")))]
 pub(crate) use e1000_impl::e1000_net_registration;
 
-/// E1000 探测桩 (非 x86_64 或 kernel_test 构建, 恒返回 `None`).
+/// E1000 探测桩 (非 x86_64 或 `kernel_test` 构建, 恒返回 `None`).
 ///
 /// 保持调用点 (functions `net_init`) 无需条件编译; 该组合下无 PCI 枚举能力,
 /// 故直接报告"未探测到设备".

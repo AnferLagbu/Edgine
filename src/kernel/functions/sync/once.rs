@@ -49,6 +49,7 @@ const DONE: u8 = 2;
 
 impl Once {
     /// 创建新的 `Once`。
+    #[must_use]
     pub fn new() -> Self {
         Self {
             state: AtomicU8::new(UNINITIALIZED),

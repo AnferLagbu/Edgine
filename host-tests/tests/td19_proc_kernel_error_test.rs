@@ -95,15 +95,15 @@ fn elf_error_to_errno_present() {
     }
     // 验证 POSIX 目标: ENOEXEC=8, EINVAL=22, ENOMEM=12
     assert!(
-        block.contains("E::ENOEXEC"),
+        block.contains("E::Enoexec"),
         "ElfError 格式错误应映射 ENOEXEC"
     );
     assert!(
-        block.contains("E::EINVAL"),
+        block.contains("E::Einval"),
         "ElfError 解析错误应映射 EINVAL"
     );
     assert!(
-        block.contains("E::ENOMEM"),
+        block.contains("E::Enomem"),
         "ElfError::MapFailed 应映射 ENOMEM"
     );
 }
@@ -205,7 +205,7 @@ fn mlock_error_to_errno_present() {
         "MlockError::to_errno 必须映射 Kernel"
     );
     assert!(
-        block.contains("E::ESRCH"),
+        block.contains("E::Esrch"),
         "MlockError::NotMapped 应映射 ESRCH"
     );
 }
@@ -303,7 +303,7 @@ fn proc_error_to_errno_present() {
         block.contains("Self::Kernel"),
         "ProcError::to_errno 必须映射 Kernel"
     );
-    assert!(block.contains("E::ESRCH"), "ProcError::Exited 应映射 ESRCH");
+    assert!(block.contains("E::Esrch"), "ProcError::Exited 应映射 ESRCH");
 }
 
 #[test]

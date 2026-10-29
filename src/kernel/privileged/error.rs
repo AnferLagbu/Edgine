@@ -125,6 +125,7 @@ impl core::fmt::Display for KernelError {
 
 impl KernelError {
     /// POSIX errno 强类型映射.
+    #[must_use]
     pub const fn from_i32(rc: i32) -> Self {
         match rc {
             1 => Self::PermissionDenied,
@@ -160,38 +161,39 @@ impl KernelError {
     }
 
     /// 反向映射: 强类型 → POSIX errno.
+    #[must_use]
     pub const fn as_errno(self) -> Errno {
         match self {
-            Self::PermissionDenied => Errno::EPERM,
-            Self::Io => Errno::EIO,
-            Self::FileNotFound => Errno::ENOENT,
-            Self::NoSuchProcess => Errno::ESRCH,
-            Self::BadFd => Errno::EBADF,
-            Self::WouldBlock | Self::NotReady => Errno::EAGAIN,
-            Self::NoMemory => Errno::ENOMEM,
-            Self::Fault => Errno::EFAULT,
-            Self::Busy => Errno::EBUSY,
-            Self::AlreadyExists => Errno::EEXIST,
-            Self::CrossDevice => Errno::EXDEV,
-            Self::NoDevice => Errno::ENODEV,
-            Self::NotADirectory => Errno::ENOTDIR,
-            Self::IsDirectory => Errno::EISDIR,
+            Self::PermissionDenied => Errno::Eperm,
+            Self::Io => Errno::Eio,
+            Self::FileNotFound => Errno::Enoent,
+            Self::NoSuchProcess => Errno::Esrch,
+            Self::BadFd => Errno::Ebadf,
+            Self::WouldBlock | Self::NotReady => Errno::Eagain,
+            Self::NoMemory => Errno::Enomem,
+            Self::Fault => Errno::Efault,
+            Self::Busy => Errno::Ebusy,
+            Self::AlreadyExists => Errno::Eexist,
+            Self::CrossDevice => Errno::Exdev,
+            Self::NoDevice => Errno::Enodev,
+            Self::NotADirectory => Errno::Enotdir,
+            Self::IsDirectory => Errno::Eisdir,
             Self::InvalidArgument | Self::NotInitialized | Self::Overflow | Self::Other(_) => {
-                Errno::EINVAL
+                Errno::Einval
             }
-            Self::ProcessFileLimit => Errno::EMFILE,
-            Self::NoSpace => Errno::ENOSPC,
-            Self::BrokenPipe => Errno::EPIPE,
-            Self::IllegalSeek => Errno::ESPIPE,
-            Self::ReadOnlyFilesystem => Errno::EROFS,
-            Self::NameTooLong => Errno::ENAMETOOLONG,
-            Self::NotSupported => Errno::ENOTSUP,
-            Self::AddrFamilyNotSupported => Errno::EAFNOSUPPORT,
-            Self::AddrInUse => Errno::EADDRINUSE,
-            Self::AddrNotAvailable => Errno::EADDRNOTAVAIL,
-            Self::ConnectionReset => Errno::ECONNRESET,
-            Self::NotConnected => Errno::ENOTCONN,
-            Self::ConnectionRefused => Errno::ECONNREFUSED,
+            Self::ProcessFileLimit => Errno::Emfile,
+            Self::NoSpace => Errno::Enospc,
+            Self::BrokenPipe => Errno::Epipe,
+            Self::IllegalSeek => Errno::Espipe,
+            Self::ReadOnlyFilesystem => Errno::Erofs,
+            Self::NameTooLong => Errno::Enametoolong,
+            Self::NotSupported => Errno::Enotsup,
+            Self::AddrFamilyNotSupported => Errno::Eafnosupport,
+            Self::AddrInUse => Errno::Eaddrinuse,
+            Self::AddrNotAvailable => Errno::Eaddrnotavail,
+            Self::ConnectionReset => Errno::Econnreset,
+            Self::NotConnected => Errno::Enotconn,
+            Self::ConnectionRefused => Errno::Econnrefused,
         }
     }
 }
@@ -213,6 +215,7 @@ impl KernelError {
     ///
     /// 用于替换裸 `return -1`, 让 VFS/syscall 边界传递的"错误"携带明确语义.
     /// 调用方可在 syscall handler 中通过 `-ret` 还原 errno.
+    #[must_use]
     pub const fn as_vfs_ret(self) -> i32 {
         -(self.as_errno().as_i32())
     }
@@ -221,6 +224,7 @@ impl KernelError {
     ///
     /// P-71: `KernelError` 定义迁入本 crate 后, functions 侧的外观 impl 不再合法
     /// (E0116), 故一并归位; 语义与 [`KernelError::as_vfs_ret`] 相同.
+    #[must_use]
     pub const fn as_i32(self) -> i32 {
         self.as_vfs_ret()
     }

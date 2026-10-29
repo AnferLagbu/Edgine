@@ -1,11 +1,11 @@
-//! AArch64 SMP 次核 (AP) 启动
+//! `AArch64` SMP 次核 (AP) 启动
 //!
 //! BSP 在 [`init`] 中依次经 PSCI `CPU_ON` 上电各 AP; 每个 AP 以 MMU 关 / 物理
 //! 地址进入 `boot/aarch64/start.S` 的 `ap_entry_asm` stub (SMP-03), 由 BSP 预写
 //! 的 `ApBootInfo` 槽装入 TTBR0/TTBR1/MAIR/TCR/SCTLR 与本核私有栈, 开 MMU 后
 //! 跳入 `ap_main`。
 //!
-//! 握手协议: BSP 写满槽 → 按 cache line 清至 PoC → PSCI `CPU_ON` → 有界自旋等待
+//! 握手协议: BSP 写满槽 → 按 cache line 清至 `PoC` → PSCI `CPU_ON` → 有界自旋等待
 //! AP 置 `done`。AP 在 GIC/per-CPU 状态登记完毕后置 `done=1`。
 //!
 //! 启动槽符号 `_ap_boot_info`/`ap_entry_asm` 位于低半区 (VMA == PA), 距高半区内核
@@ -21,7 +21,7 @@ const AP_STACK_SIZE: usize = 16 * 1024;
 /// BSP 等待单次 `done` 握手的自旋上界 (轮次)。
 ///
 /// SIMPLIFIED: 以固定轮次忙等替代定时器超时; 影响面: 超时阈值随 CPU 主频浮动,
-///   过短可能误判慢速 AP 离线; 何时需扩展: 引入基于 CNTPCT_EL0 的定时超时。
+///   过短可能误判慢速 AP 离线; 何时需扩展: 引入基于 `CNTPCT_EL0` 的定时超时。
 const DONE_TIMEOUT_LOOPS: u32 = 100_000_000;
 
 /// 次核启动信息槽布局 (与 `boot/aarch64/start.S` 的 `ap_entry_asm` 字节偏移一一对应)。
@@ -29,15 +29,15 @@ const DONE_TIMEOUT_LOOPS: u32 = 100_000_000;
 /// 全部字段为 64 位, 共 10 项 (80 字节), 由编译期断言强制。
 #[repr(C)]
 struct ApBootInfo {
-    /// `[0x00]` TTBR0_EL1 值 (BSP 预写的当前页表基址)。
+    /// `[0x00]` `TTBR0_EL1` 值 (BSP 预写的当前页表基址)。
     ttbr0: u64,
-    /// `[0x08]` TTBR1_EL1 值。
+    /// `[0x08]` `TTBR1_EL1` 值。
     ttbr1: u64,
-    /// `[0x10]` MAIR_EL1 值 (内存属性间接寄存器)。
+    /// `[0x10]` `MAIR_EL1` 值 (内存属性间接寄存器)。
     mair: u64,
-    /// `[0x18]` TCR_EL1 值 (地址翻译控制寄存器)。
+    /// `[0x18]` `TCR_EL1` 值 (地址翻译控制寄存器)。
     tcr: u64,
-    /// `[0x20]` SCTLR_EL1 值 (含 MMU/Cache 使能位)。
+    /// `[0x20]` `SCTLR_EL1` 值 (含 MMU/Cache 使能位)。
     sctlr: u64,
     /// `[0x28]` 本核私有栈顶 (高半区 VA)。
     stack_top: u64,
@@ -90,7 +90,7 @@ fn ap_entry_phys() -> u64 {
     (&raw const ap_entry_asm_alias as u64).wrapping_sub(crate::privileged::mm::KERNEL_BASE)
 }
 
-/// 将 `[ptr, ptr + len)` 覆盖的缓存行清理至 PoC (clean + invalidate) 并执行 `dsb sy`。
+/// 将 `[ptr, ptr + len)` 覆盖的缓存行清理至 `PoC` (clean + invalidate) 并执行 `dsb sy`。
 ///
 /// # Safety
 ///
@@ -362,7 +362,7 @@ extern "C" fn ap_main(cpu_index: u64) -> ! {
         // 不会自行开中断, 必须在此显式开; ②若开中断与 `wfi` 分离, 二者之间到达的
         // 中断会在 `wfi` 前被处理, 随后的 `wfi` 可能错过唤醒 (对齐 `idle_entry`
         // 的 `sti; hlt` 融合手法)。
-        crate::arch!(interrupt_disable());
+        let _ = crate::arch!(interrupt_disable());
         let _ = crate::privileged::proc::Scheduler::schedule();
         // SAFETY: wfi 在 EL1 合法; msr daifclr 为立即数指令, 无内存/栈副作用.
         unsafe {

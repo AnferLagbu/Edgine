@@ -59,15 +59,17 @@ pub enum EGDFError {
 
 impl EGDFError {
     /// 映射为 POSIX errno
+    #[must_use]
     pub fn to_errno(self) -> Errno {
         use Errno as E;
         match self {
-            Self::WrongType => E::ENOTTY,
+            Self::WrongType => E::Enotty,
             Self::Kernel(e) => e.as_errno(),
         }
     }
 
     /// 由底层 `i32` 错误码 (负 errno) 构造错误值
+    #[must_use]
     pub fn from_i32(rc: i32) -> Self {
         use crate::functions::error::KernelError as K;
         match rc {
@@ -101,6 +103,7 @@ pub struct DeviceId(pub u32);
 
 impl DeviceId {
     /// 原始 ID
+    #[must_use]
     pub fn raw(self) -> u32 {
         self.0
     }
@@ -130,6 +133,7 @@ pub enum Proto {
 
 impl Proto {
     /// 协议名称字符串
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Block => "block",
@@ -231,11 +235,13 @@ pub fn register(name: &str, proto: Proto, driver_data: *mut u8) -> EGDFResult<De
 }
 
 /// 按名称查找
+#[must_use]
 pub fn find_by_name(name: &str) -> Option<usize> {
     egdf::egdf_find_by_name(name)
 }
 
 /// 按协议查找第一个
+#[must_use]
 pub fn find_by_proto(proto: Proto) -> Option<usize> {
     let p = match proto {
         Proto::Block => egdf::EGDFProto::Block,
@@ -249,6 +255,7 @@ pub fn find_by_proto(proto: Proto) -> Option<usize> {
 }
 
 /// 列出所有设备
+#[must_use]
 pub fn list() -> Vec<DeviceInfo> {
     let raw = egdf::egdf_list();
     raw.into_iter()
@@ -262,6 +269,7 @@ pub fn list() -> Vec<DeviceInfo> {
 }
 
 /// 设备总数
+#[must_use]
 pub fn count() -> usize {
     egdf::egdf_count()
 }
@@ -269,6 +277,7 @@ pub fn count() -> usize {
 /// 注销设备
 ///
 /// 返回 `true` 表示注销成功 (返回了原驱动数据指针), `false` 表示设备不存在。
+#[must_use]
 pub fn unregister(id: DeviceId) -> bool {
     egdf::egdf_unregister(id.0).is_some()
 }
@@ -333,16 +342,19 @@ pub fn blk_write(drive: u8, sector: u64, buf: &[u8]) -> EGDFResult<()> {
 }
 
 /// 块设备是否存在
+#[must_use]
 pub fn blk_is_present(drive: u8) -> bool {
     egdf::egdf_blk_is_present(drive)
 }
 
 /// 块设备总扇区数
+#[must_use]
 pub fn blk_total_sectors(drive: u8) -> u64 {
     egdf::egdf_blk_total_sectors(drive)
 }
 
 /// 块设备总数
+#[must_use]
 pub fn blk_count() -> usize {
     egdf::egdf_blk_count()
 }

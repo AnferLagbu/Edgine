@@ -5,7 +5,7 @@
 //!
 //! ## 阶段 4b 归属收敛 (当前权威)
 //!
-//! 自阶段 4b 起 DevFS 实装归 `functions::fs` (依 Minimalism 准则下沉),
+//! 自阶段 4b 起 `DevFS` 实装归 `functions::fs` (依 Minimalism 准则下沉),
 //! privileged 侧不再持有设备表。依赖闭包: IrqSpinLock/OnceLock 经
 //! privileged safe API, Inode trait 归 `functions::fs::inode`, 0 unsafe。
 //!
@@ -13,7 +13,7 @@
 //!
 //! 实现曾于 E6-7 (2026-06-10) 迁至 `functions::fs::devfs`, privileged 侧仅
 //! re-export。当时按"机制持有的数据结构归 privileged"统一判据反转, 将
-//! DevFS 设备表 (被 privileged VFS 挂载机制内联消费) 迁回 privileged; 阶段
+//! `DevFS` 设备表 (被 privileged VFS 挂载机制内联消费) 迁回 privileged; 阶段
 //! 4b 依 Minimalism 准则再次下沉 functions, 上述反转已失效。
 //!
 //! ## 设计原则
@@ -67,6 +67,7 @@ pub enum DevKind {
 
 impl DevKind {
     /// 从 `u8` 解析 (容忍未知值, 返回 `None`)
+    #[must_use]
     pub fn from_u8(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::Null),
@@ -83,6 +84,7 @@ impl DevKind {
     }
 
     /// 是否为虚拟设备 (内核内部实现)
+    #[must_use]
     pub fn is_virtual(self) -> bool {
         matches!(
             self,
@@ -91,6 +93,7 @@ impl DevKind {
     }
 
     /// 是否为物理设备 (由 EGDF 驱动提供)
+    #[must_use]
     pub fn is_physical(self) -> bool {
         matches!(self, Self::Block | Self::Char | Self::Net | Self::Input)
     }
@@ -139,8 +142,16 @@ pub struct DevfsDevice {
     pub used: bool,
 }
 
+impl Default for DevfsDevice {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DevfsDevice {
     /// 构造空设备条目。
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             name: [0; DEVFS_MAX_NAME],
@@ -163,8 +174,16 @@ pub struct DevfsData {
 // DevfsData 自动 Send + Sync: IrqSpinLock<T> (privileged) 已实现 unsafe impl Send/Sync,
 // AtomicU32 也是 Send + Sync, 无需手动实现.
 
+impl Default for DevfsData {
+    /// 使用默认构造 (等价于 `Self::new`)。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DevfsData {
     /// 构造空的 `DevFS` 数据实例。
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             devices: Mutex::new([const { DevfsDevice::new() }; DEVFS_MAX_DEVICES]),
@@ -337,6 +356,7 @@ impl DevfsData {
     }
 
     /// 按设备类型写入，返回消耗的字节数（负数为错误码）。
+    #[must_use]
     pub fn write(dev_type: u8, buf: &[u8]) -> i32 {
         match DevKind::from_u8(dev_type) {
             Some(DevKind::Null | DevKind::Zero) => {
@@ -442,6 +462,7 @@ pub struct DevFile {
 impl DevFile {
     /// 设备名 (如 "null", "zero", "console")
     /// 物理设备无固定名称, 返回 "device"
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self.kind {
             DevKind::Null => "null",
@@ -465,6 +486,7 @@ pub struct SafeDevFs {
 
 impl SafeDevFs {
     /// 创建全局 `DevFS` 代理
+    #[must_use]
     pub fn new() -> Self {
         Self { inner: &DEVFS_DATA }
     }
@@ -526,6 +548,7 @@ impl SafeDevFs {
     }
 
     /// 读目录项
+    #[must_use]
     pub fn readdir(&self, index: usize) -> Option<(alloc::string::String, DevKind)> {
         let (raw_name, dev_type) = self.inner.readdir(index)?;
         let kind = DevKind::from_u8(dev_type)?;
@@ -538,6 +561,7 @@ impl SafeDevFs {
     }
 
     /// 设备总数
+    #[must_use]
     pub fn device_count(&self) -> u32 {
         self.inner.device_count()
     }
@@ -595,6 +619,7 @@ pub fn open(path: &str) -> Result<DevFile, KernelError> {
 }
 
 /// 设备名最大长度
+#[must_use]
 pub const fn max_name_len() -> usize {
     DEVFS_MAX_NAME
 }
@@ -627,6 +652,7 @@ pub struct DevFsInode {
 
 impl DevFsInode {
     /// 构造设备文件 Inode。
+    #[must_use]
     pub fn new(dev_type: u8, mount_idx: u32) -> Self {
         Self {
             dev_type,

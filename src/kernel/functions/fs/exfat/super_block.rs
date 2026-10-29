@@ -53,6 +53,7 @@ impl ExfatSuperBlock {
     pub const BOOT_SIGNATURE: u16 = 0xAA55;
 
     /// 从字节切片解析超级块
+    #[must_use]
     pub fn from_bytes(data: &[u8]) -> Option<Self> {
         if data.len() < 512 {
             return None;
@@ -103,26 +104,31 @@ impl ExfatSuperBlock {
     }
 
     /// 每扇区字节数 (1 << `bytes_per_sector_shift`)
+    #[must_use]
     pub fn bytes_per_sector(&self) -> u32 {
         1u32 << self.bytes_per_sector_shift
     }
 
     /// 每簇扇区数 (1 << `sectors_per_cluster_shift`)
+    #[must_use]
     pub fn sectors_per_cluster(&self) -> u32 {
         1u32 << self.sectors_per_cluster_shift
     }
 
     /// 每簇字节数
+    #[must_use]
     pub fn bytes_per_cluster(&self) -> u32 {
         self.bytes_per_sector() * self.sectors_per_cluster()
     }
 
     /// 数据区起始扇区
+    #[must_use]
     pub fn data_start_sector(&self) -> u32 {
         self.cluster_heap_offset
     }
 
     /// 获取逻辑簇号对应的扇区号
+    #[must_use]
     pub fn cluster_to_sector(&self, cluster: u32) -> u32 {
         self.cluster_heap_offset + (cluster - 2) * self.sectors_per_cluster()
     }
