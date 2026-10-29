@@ -181,8 +181,7 @@
 // 48. Clippy: doc_markdown — 内核文档使用中文 + 硬件术语 (MMIO/MSI/APIC 等) 不加反引号是约定; 阶段 3 已处理部分
 #![allow(clippy::doc_markdown)]
 // 49. Clippy: ptr_as_ptr — 部分 macro (如 klog_fmt) 内部 ptr cast 无法 expect 兜底; 真实代码 expect 已兑底
-// 50. Clippy: cast_ptr_alignment — 部分 MMIO 寄存器地址已知对齐 (硬件规范); macro 内 cast_ptr_alignment 无法 expect
-#![allow(clippy::cast_ptr_alignment)]
+// 50. Clippy: cast_ptr_alignment — 已迁出 (字节流解析改 read_unaligned, 已知对齐指针改地址回环, 移除 allow)
 // 51. Clippy: zero_sized_map_values / missing_fields_in_debug — 内核 struct 字段设计选择; 当前实现合理
 #![allow(clippy::zero_sized_map_values)]
 #![allow(clippy::missing_fields_in_debug)]

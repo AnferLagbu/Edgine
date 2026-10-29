@@ -232,15 +232,11 @@ pub fn recovery_domain_set_cbs(
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 /// 记录一条 undo 项 (字段指针 + 旧值); 成功返回 0, 域不存在返回 -1。
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 pub extern "C" fn recovery_undo_record(domain_id: u64, field_ptr: *mut u8, old_val: u64) -> i32 {
     let mgr = super::RECOVERY_MANAGER.lock();
     mgr.find(domain_id).map_or(-1, |dom| {
         let mut undo = dom.undo.lock();
-        undo.record(field_ptr.cast::<u64>(), old_val);
+        undo.record(field_ptr as usize as *mut u64, old_val);
         0
     })
 }

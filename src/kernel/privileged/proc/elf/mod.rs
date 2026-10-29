@@ -124,17 +124,13 @@ impl ElfLoadResult {
 }
 
 // P1-I-33: 委托给 `verify::verify_elf` 单一来源
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 /// 校验 ELF 数据有效性并返回指向其文件头的引用; 校验失败返回 `None`。
 pub fn elf_validate(elf_data: *const u8, elf_size: u64) -> Option<&'static Elf64Header> {
     // SAFETY: 调用方保证 elf_data 有效, verify_elf 内部仅读借用
     let _ = unsafe { verify::verify_elf(elf_data, elf_size) }.ok()?;
 
-    // SAFETY: 已通过 verify_elf 校验
-    Some(unsafe { &*elf_data.cast::<Elf64Header>() })
+    // SAFETY: 已通过 verify_elf 校验; 指针地址转换为分类指针不新增对齐要求
+    Some(unsafe { &*(elf_data as usize as *const Elf64Header) })
 }
 
 /// 加载 ELF 文件到当前进程地址空间 (`ET_EXEC`, 固定地址加载, 等价于 `load_bias = 0`).
@@ -155,10 +151,6 @@ pub fn elf_load(
 #[expect(
     clippy::too_many_lines,
     reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-)]
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
 /// 加载 ELF 文件到指定地址空间, 支持可选加载偏移 (PIE/ASLR).
 ///
@@ -204,9 +196,10 @@ pub fn elf_load_with_bias(
     for i in 0..phdr_count {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         let phdr = unsafe {
-            &*phdr_base
+            phdr_base
                 .add(i as usize * core::mem::size_of::<Elf64Phdr>())
                 .cast::<Elf64Phdr>()
+                .read_unaligned()
         };
 
         if phdr.p_filesz > phdr.p_memsz {
@@ -348,10 +341,6 @@ const LINUX_INTERP_PREFIXES: &[&[u8]] = &[
     b"/lib/ld-musl-aarch64.so.1",
 ];
 
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 /// 扫描 ELF program headers, 检测 `PT_INTERP` 是否为 Linux 动态链接器.
 ///
 /// 返回 true 表示需要改写 `PT_INTERP` (Linux 二进制).
@@ -370,9 +359,10 @@ pub fn needs_interp_rewrite(elf_data: *const u8, elf_size: u64) -> bool {
     for i in 0..header.e_phnum {
         // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
         let phdr = unsafe {
-            &*phdr_base
+            phdr_base
                 .add(i as usize * core::mem::size_of::<Elf64Phdr>())
                 .cast::<Elf64Phdr>()
+                .read_unaligned()
         };
 
         if phdr.p_type != PT_INTERP || phdr.p_filesz == 0 {
@@ -400,10 +390,6 @@ pub fn needs_interp_rewrite(elf_data: *const u8, elf_size: u64) -> bool {
     false
 }
 
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 /// 改写 ELF 数据中的 `PT_INTERP` 路径为 edgine 动态链接器.
 ///
 /// # Safety
@@ -421,8 +407,10 @@ pub unsafe fn rewrite_interp_path(elf_data: *mut u8, elf_size: u64) {
         let phdr_base = elf_data.add(crate::privileged::lib::usize_from_u64(header.e_phoff));
 
         for i in 0..header.e_phnum {
-            let phdr = &*(phdr_base.add(i as usize * core::mem::size_of::<Elf64Phdr>())
-                as *const Elf64Phdr);
+            let phdr = phdr_base
+                .add(i as usize * core::mem::size_of::<Elf64Phdr>())
+                .cast::<Elf64Phdr>()
+                .read_unaligned();
 
             if phdr.p_type != PT_INTERP || phdr.p_filesz == 0 {
                 continue;

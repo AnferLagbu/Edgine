@@ -493,10 +493,6 @@ pub(crate) mod raw {
         ptr
     }
 
-    #[expect(
-        clippy::cast_ptr_alignment,
-        reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-    )]
     /// 分配并构造一个 `UserProcess` 内存, 清零后返回。
     ///
     /// # Arguments
@@ -508,7 +504,7 @@ pub(crate) mod raw {
     /// 已清零的 `UserProcess` 裸指针; `process` 字段已正确指向传入的 `Process`.
     pub fn alloc_user_process(process: NonNull<Process>) -> Option<*mut UserProcess> {
         let size = core::mem::size_of::<UserProcess>() as u64;
-        let ptr = raw::alloc_zeroed(size).cast::<UserProcess>();
+        let ptr = raw::alloc_zeroed(size) as usize as *mut UserProcess;
         if ptr.is_null() {
             None
         } else {
@@ -521,14 +517,10 @@ pub(crate) mod raw {
         }
     }
 
-    #[expect(
-        clippy::cast_ptr_alignment,
-        reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-    )]
     /// 分配并清零一个 `Process` (用于 process table)。
     pub fn alloc_kernel_process() -> Option<*mut Process> {
         let size = core::mem::size_of::<Process>() as u64;
-        let ptr = raw::alloc_zeroed(size).cast::<Process>();
+        let ptr = raw::alloc_zeroed(size) as usize as *mut Process;
         if ptr.is_null() { None } else { Some(ptr) }
     }
 
@@ -1648,10 +1640,6 @@ impl UserProcManager {
         clippy::too_many_lines,
         reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
     )]
-    #[expect(
-        clippy::cast_ptr_alignment,
-        reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-    )]
     /// 从内存中的 ELF 映像加载用户进程, 返回新 pid (失败为负值)
     pub fn load_elf_from_memory(&self, elf_data: *const u8, elf_size: u64, pwm: u64) -> i32 {
         crate::klog_boot_info!("[ELF] load_elf_from_memory: entry");
@@ -1670,8 +1658,8 @@ impl UserProcManager {
         };
         crate::klog_boot_info!("[ELF] verify_elf OK, entry={:#x}", verified.entry);
 
-        // SAFETY: verify_elf 已通过校验, header 引用安全
-        let header = unsafe { &*elf_data.cast::<ElfHeader>() };
+        // SAFETY: verify_elf 已通过校验, header 按值读取安全
+        let header = unsafe { elf_data.cast::<ElfHeader>().read_unaligned() };
 
         // PIE (ET_DYN) 支持: 检测 ELF 类型并计算 load_bias
         let is_pie = verified.is_pie;
@@ -1727,22 +1715,23 @@ impl UserProcManager {
                     return -1;
                 }
                 let phdr = (elf_data.add(crate::privileged::lib::usize_from_u64(phdr_offset)))
-                    .cast::<ElfPhdr>();
+                    .cast::<ElfPhdr>()
+                    .read_unaligned();
 
-                if (*phdr).p_type != PT_LOAD {
+                if phdr.p_type != PT_LOAD {
                     continue;
                 }
 
-                let vaddr_start = ((*phdr).p_vaddr + load_bias) & !(PAGE_SIZE - 1);
-                let vaddr_end = ((*phdr).p_vaddr + (*phdr).p_memsz + load_bias + (PAGE_SIZE - 1))
-                    & !(PAGE_SIZE - 1);
+                let vaddr_start = (phdr.p_vaddr + load_bias) & !(PAGE_SIZE - 1);
+                let vaddr_end =
+                    (phdr.p_vaddr + phdr.p_memsz + load_bias + (PAGE_SIZE - 1)) & !(PAGE_SIZE - 1);
                 let num_pages = (vaddr_end - vaddr_start) / PAGE_SIZE;
 
                 for j in 0..num_pages {
                     let vaddr = vaddr_start + j * PAGE_SIZE;
 
                     let mut flags = PageFlags::PRESENT | PageFlags::USER;
-                    if (*phdr).p_flags & 0x02 != 0 {
+                    if phdr.p_flags & 0x02 != 0 {
                         flags |= PageFlags::WRITABLE;
                     }
                     let flags = flags.bits();
@@ -1780,15 +1769,14 @@ impl UserProcManager {
                     }
                 }
 
-                if (*phdr).p_filesz > 0 {
-                    let file_offset_bytes =
-                        crate::privileged::lib::usize_from_u64((*phdr).p_offset);
+                if phdr.p_filesz > 0 {
+                    let file_offset_bytes = crate::privileged::lib::usize_from_u64(phdr.p_offset);
                     let mut copied: u64 = 0;
-                    let first_page_offset = (*phdr).p_vaddr & 0xFFF;
+                    let first_page_offset = phdr.p_vaddr & 0xFFF;
                     let start_idx = page_count.saturating_sub(num_pages as usize);
 
                     for j in 0..num_pages {
-                        if copied >= (*phdr).p_filesz {
+                        if copied >= phdr.p_filesz {
                             break;
                         }
                         let page_phys =
@@ -1799,7 +1787,7 @@ impl UserProcManager {
 
                         let off_in_page = if j == 0 { first_page_offset } else { 0 };
                         let max_in_page = PAGE_SIZE - off_in_page;
-                        let remaining = (*phdr).p_filesz - copied;
+                        let remaining = phdr.p_filesz - copied;
                         let chunk = if max_in_page < remaining {
                             max_in_page
                         } else {

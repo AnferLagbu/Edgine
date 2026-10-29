@@ -72,10 +72,6 @@ pub fn get_framebuffer_info() -> Option<&'static FramebufferInfo> {
     FB_INFO.get()
 }
 
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 /// 从 Multiboot2 tag 中解析帧缓冲信息
 ///
 /// `tag_data` 指向 tag 的 payload 起始位置 (tag 头部的 type/size 之后)
@@ -101,10 +97,10 @@ pub fn get_framebuffer_info() -> Option<&'static FramebufferInfo> {
 pub fn parse_framebuffer_tag(tag_data: *const u8, _tag_size: u32) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
-        let addr = *tag_data.cast::<u64>();
-        let pitch = *(tag_data.cast::<u32>().add(2));
-        let width = *(tag_data.cast::<u32>().add(3));
-        let height = *(tag_data.cast::<u32>().add(4));
+        let addr = tag_data.cast::<u64>().read_unaligned();
+        let pitch = tag_data.add(8).cast::<u32>().read_unaligned();
+        let width = tag_data.add(12).cast::<u32>().read_unaligned();
+        let height = tag_data.add(16).cast::<u32>().read_unaligned();
         let bpp = *(tag_data.add(20));
         let fb_type = *(tag_data.add(21));
 

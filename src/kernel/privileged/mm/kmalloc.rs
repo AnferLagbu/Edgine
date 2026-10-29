@@ -92,16 +92,12 @@ impl HeapHeader {
         unsafe { (core::ptr::from_ref::<Self>(self) as *mut u8).add(core::mem::size_of::<Self>()) }
     }
 
-    #[expect(
-        clippy::cast_ptr_alignment,
-        reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-    )]
     /// 由数据指针取回头部
     ///
     /// # Safety
     /// 调用方须保证 `data` 由某次合法分配返回
     pub unsafe fn from_data_ptr(data: *mut u8) -> *mut Self {
-        unsafe { data.sub(core::mem::size_of::<Self>()).cast::<Self>() }
+        unsafe { data.sub(core::mem::size_of::<Self>()) as usize as *mut Self }
     }
 }
 
@@ -227,13 +223,9 @@ pub(crate) mod raw {
 
         /// 通过字节偏移计算相邻的下一个头部.
         #[inline]
-        #[expect(
-            clippy::cast_ptr_alignment,
-            reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-        )]
         pub fn adjacent_next(&self, offset: usize) -> Self {
             // SAFETY: 调用方保证偏移仍在堆区范围内
-            unsafe { Self::new_unchecked(self.byte_ptr().add(offset).cast::<HeapHeader>()) }
+            unsafe { Self::new_unchecked(self.byte_ptr().add(offset) as usize as *mut HeapHeader) }
         }
     }
 

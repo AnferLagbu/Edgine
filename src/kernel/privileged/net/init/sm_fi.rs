@@ -258,10 +258,6 @@ pub(crate) fn endpoint_from_smol(
 ///
 /// # Safety
 /// `addr` 非空时必须指向至少 28 字节可写内存 (V6 路径); `addrlen` 非空时必须指向有效 u32.
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 pub(crate) unsafe fn write_sockaddr(
     addr: *mut u8,
     addrlen: *mut u32,
@@ -279,7 +275,7 @@ pub(crate) unsafe fn write_sockaddr(
                     sin_addr: v4.octets(),
                     sin_zero: [0; 8],
                 };
-                core::ptr::write(addr.cast::<SockaddrIn>(), sin);
+                core::ptr::write_unaligned(addr.cast::<SockaddrIn>(), sin);
                 if !addrlen.is_null() {
                     core::ptr::write(
                         addrlen,
@@ -297,7 +293,7 @@ pub(crate) unsafe fn write_sockaddr(
                     sin6_addr: v6.octets(),
                     sin6_scope_id: 0,
                 };
-                core::ptr::write(addr.cast::<SockaddrIn6>(), sin6);
+                core::ptr::write_unaligned(addr.cast::<SockaddrIn6>(), sin6);
                 if !addrlen.is_null() {
                     core::ptr::write(
                         addrlen,
@@ -329,10 +325,6 @@ struct SockaddrIn6 {
     sin6_scope_id: u32,
 }
 
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 /// 从 sockaddr C 结构体解析端点 (W4.4 trait 翻译版本, 双栈).
 ///
 /// 按 `sin_family` 分支: 2 (`AF_INET`) → `SockaddrIn` → V4 端点;
@@ -355,7 +347,7 @@ pub(crate) unsafe fn parse_endpoint_trait(
         let family = core::ptr::read_unaligned(addr.cast::<u16>());
         match family {
             2 => {
-                let sin = &*addr.cast::<SockaddrIn>();
+                let sin = core::ptr::read_unaligned(addr.cast::<SockaddrIn>());
                 let octets = sin.sin_addr;
                 let port = u16::from_be(sin.sin_port);
                 Some(crate::privileged::net::iface_trait::NetEndpoint::new_v4(
@@ -364,7 +356,7 @@ pub(crate) unsafe fn parse_endpoint_trait(
                 ))
             }
             10 => {
-                let sin6 = &*addr.cast::<SockaddrIn6>();
+                let sin6 = core::ptr::read_unaligned(addr.cast::<SockaddrIn6>());
                 let octets = sin6.sin6_addr;
                 let port = u16::from_be(sin6.sin6_port);
                 Some(crate::privileged::net::iface_trait::NetEndpoint::new_v6(

@@ -5,8 +5,8 @@
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 289,
-    "files": 98
+    "sites": 252,
+    "files": 88
   },
   "entries": [
     [
@@ -167,11 +167,6 @@
     [
       "src/kernel/functions/klog.rs",
       "#[expect(clippy::case_sensitive_file_extension_comparisons,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
-      1
-    ],
-    [
-      "src/kernel/functions/mod.rs",
-      "#![allow(clippy::cast_ptr_alignment)",
       1
     ],
     [
@@ -471,11 +466,6 @@
     ],
     [
       "src/kernel/lib.rs",
-      "#![allow(clippy::cast_ptr_alignment)",
-      1
-    ],
-    [
-      "src/kernel/lib.rs",
       "#![allow(clippy::collapsible_if)",
       1
     ],
@@ -735,11 +725,6 @@
       1
     ],
     [
-      "src/kernel/privileged/arch/x86_64/acpi.rs",
-      "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
-      4
-    ],
-    [
       "src/kernel/privileged/arch/x86_64/gdt.rs",
       "#[expect(clippy::large_stack_arrays,reason=\"PerCpuGdt的syscall/IST栈数组布局于BSP_GDT/PMM分配的APGDT,非栈上分配\")",
       1
@@ -756,17 +741,7 @@
     ],
     [
       "src/kernel/privileged/boot/mod.rs",
-      "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
-      2
-    ],
-    [
-      "src/kernel/privileged/boot/mod.rs",
       "#[expect(clippy::map_unwrap_or,reason=\"option_env→parse→默认值链式调用可读性较好;map_or反而需要反向参数\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/boot/multiboot2_fb.rs",
-      "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
       1
     ],
     [
@@ -795,11 +770,6 @@
       1
     ],
     [
-      "src/kernel/privileged/driver/input/keyboard.rs",
-      "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
-      3
-    ],
-    [
       "src/kernel/privileged/driver/power.rs",
       "#[expect(clippy::match_wildcard_for_single_variants,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
@@ -815,11 +785,6 @@
       1
     ],
     [
-      "src/kernel/privileged/egdf/mod.rs",
-      "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
-      2
-    ],
-    [
       "src/kernel/privileged/egdf/user_driver.rs",
       "#[expect(clippy::no_mangle_with_rust_abi)",
       1
@@ -827,11 +792,6 @@
     [
       "src/kernel/privileged/errno.rs",
       "#![allow(clippy::upper_case_acronyms)",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/api.rs",
-      "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
       1
     ],
     [
@@ -855,11 +815,6 @@
       1
     ],
     [
-      "src/kernel/privileged/iomem.rs",
-      "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
-      6
-    ],
-    [
       "src/kernel/privileged/klog/mod.rs",
       "#[allow(clippy::upper_case_acronyms)",
       1
@@ -875,19 +830,9 @@
       1
     ],
     [
-      "src/kernel/privileged/mm/api.rs",
-      "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
-      1
-    ],
-    [
       "src/kernel/privileged/mm/cow.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
-    ],
-    [
-      "src/kernel/privileged/mm/kmalloc.rs",
-      "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
-      2
     ],
     [
       "src/kernel/privileged/mm/kpti.rs",
@@ -917,11 +862,6 @@
     [
       "src/kernel/privileged/mm/vmm_x86_64.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      1
-    ],
-    [
-      "src/kernel/privileged/mod.rs",
-      "#![allow(clippy::cast_ptr_alignment)",
       1
     ],
     [
@@ -1170,11 +1110,6 @@
       1
     ],
     [
-      "src/kernel/privileged/net/init/sm_fi.rs",
-      "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
-      2
-    ],
-    [
       "src/kernel/privileged/net/init/state.rs",
       "#[expect(clippy::missing_errors_doc,reason=\"missing_errors_doc:transition_state返回Result<()",
       1
@@ -1206,27 +1141,12 @@
     ],
     [
       "src/kernel/privileged/proc/elf/mod.rs",
-      "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
-      4
-    ],
-    [
-      "src/kernel/privileged/proc/elf/mod.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/elf/verify.rs",
-      "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
       1
     ],
     [
       "src/kernel/privileged/proc/mod.rs",
       "#![allow(ambiguous_glob_reexports)",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/proc_ops.rs",
-      "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
       1
     ],
     [
@@ -1238,11 +1158,6 @@
       "src/kernel/privileged/proc/scheduler.rs",
       "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       2
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
-      3
     ],
     [
       "src/kernel/privileged/proc/user_proc.rs",
@@ -1277,11 +1192,6 @@
     [
       "src/kernel/privileged/tests/mod.rs",
       "#[expect(clippy::large_stack_arrays,reason=\"large_stack_arrays:测试注册表数组存放于staticOnceLock(.bss)",
-      1
-    ],
-    [
-      "src/kernel/privileged/tests/test_new_features.rs",
-      "#[expect(clippy::cast_ptr_alignment,reason=\"cast_ptr_alignment:指针类型转换对齐假设已知安全(例如硬件MMIO寄存器地址已知对齐;当前优先expect\")",
       1
     ],
     [

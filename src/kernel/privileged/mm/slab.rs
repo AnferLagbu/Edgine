@@ -563,7 +563,7 @@ impl KmemCache {
             return None;
         }
 
-        let slab = page.cast::<SlabHeader>();
+        let slab = page as usize as *mut SlabHeader;
 
         // SAFETY: slab points to a PMM-allocated page
         let sr = unsafe { SlabRef::new_unchecked(slab) };

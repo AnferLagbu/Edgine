@@ -583,10 +583,6 @@ pub extern "C" fn krealloc(ptr: *mut u8, size: u64) -> *mut u8 {
 /// 注: 此为简化版本, 暂不填充结构
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 pub extern "C" fn kmalloc_stats(stats: *mut u8) {
     if stats.is_null() {
         return;
@@ -596,7 +592,7 @@ pub extern "C" fn kmalloc_stats(stats: *mut u8) {
 
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
-        let stats_ptr = stats.cast::<KmallocStats>();
+        let stats_ptr = stats as usize as *mut KmallocStats;
         (*stats_ptr).total_allocs = heap_stats.alloc_count;
         (*stats_ptr).total_frees = heap_stats.free_count;
         (*stats_ptr).current_usage = heap_stats.current_usage;

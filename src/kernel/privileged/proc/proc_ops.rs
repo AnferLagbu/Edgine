@@ -53,10 +53,6 @@ pub mod raw {
         unsafe { &mut *ptr }
     }
 
-    #[expect(
-        clippy::cast_ptr_alignment,
-        reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-    )]
     /// 分配并构造一个 `Process` (用于 fork 创建子进程)。
     ///
     /// # Safety (内部)
@@ -65,7 +61,7 @@ pub mod raw {
         // SAFETY: alloc/dealloc 配对, 见 dealloc_process。
         unsafe {
             let layout = alloc::alloc::Layout::new::<Process>();
-            let ptr = alloc::alloc::alloc(layout).cast::<Process>();
+            let ptr = alloc::alloc::alloc(layout) as usize as *mut Process;
             core::ptr::write(ptr, Process::new(pid, name, parent));
             ptr
         }

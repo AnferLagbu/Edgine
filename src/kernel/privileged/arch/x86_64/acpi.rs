@@ -113,21 +113,17 @@ pub fn find_rsdp(multiboot2_info_ptr: u64) -> Option<u64> {
     scan_bios_rom()
 }
 
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 fn find_rsdp_from_mb2(mb2_ptr: u64) -> Option<u64> {
     let ptr = mb2_ptr as *const u8;
     // SAFETY: `ptr` 指向已验证有效的 ACPI/BIOS 表头 (长度 ≥ sizeof(u32)); 只读访问
-    let total_size = unsafe { *ptr.cast::<u32>() };
+    let total_size = unsafe { ptr.cast::<u32>().read_unaligned() };
 
     let mut offset: usize = 8;
     while offset + 8 <= total_size as usize {
         // SAFETY: 指针指向有效的 ACPI/Multiboot2 表 (长度已校验 ≥ offset / 4+sizeof(u32)); 只读访问
-        let tag_type = unsafe { *(ptr.cast::<u32>().add(offset / 4)) };
+        let tag_type = unsafe { ptr.add(offset).cast::<u32>().read_unaligned() };
         // SAFETY: 指针指向有效的 ACPI/Multiboot2 表 (长度已校验 ≥ offset / 4 + 1+sizeof(u32)); 只读访问
-        let tag_size = unsafe { *(ptr.cast::<u32>().add(offset / 4 + 1)) };
+        let tag_size = unsafe { ptr.add(offset + 4).cast::<u32>().read_unaligned() };
 
         if tag_type == 0 || tag_size == 0 {
             break;
@@ -136,7 +132,7 @@ fn find_rsdp_from_mb2(mb2_ptr: u64) -> Option<u64> {
         // Multiboot2 tag 14 = 旧版 ACPI RSDP, tag 15 = 新版 RSDP
         if tag_type == 14 || tag_type == 15 {
             // SAFETY: 指针指向有效的 ACPI/Multiboot2 表 (长度已校验 ≥ offset / 8 + 1+sizeof(u64)); 只读访问
-            let rsdp_ptr = unsafe { *(ptr.cast::<u64>().add(offset / 8 + 1)) };
+            let rsdp_ptr = unsafe { ptr.add(offset + 8).cast::<u64>().read_unaligned() };
             if is_valid_rsdp(rsdp_ptr) {
                 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                 unsafe {
@@ -213,10 +209,6 @@ fn is_valid_rsdp(addr: u64) -> bool {
 // SDT 解析
 // ============================================================================
 
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 fn get_rsdt(rsdp: u64) -> Option<&'static SdtHeader> {
     let ptr = rsdp as *const u8;
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -224,14 +216,14 @@ fn get_rsdt(rsdp: u64) -> Option<&'static SdtHeader> {
         let revision = ptr.add(15).read_volatile();
         if revision >= 2 {
             // XSDT (64 位指针, 仅在 revision >= 2 中出现)
-            let xsdt_addr = *ptr.add(24).cast::<u64>();
+            let xsdt_addr = ptr.add(24).cast::<u64>().read_unaligned();
             if xsdt_addr != 0 {
                 return Some(&*(xsdt_addr as *const SdtHeader));
             }
         }
 
         // RSDT (32-bit pointers)
-        let rsdt_addr = u64::from(*ptr.add(16).cast::<u32>());
+        let rsdt_addr = u64::from(ptr.add(16).cast::<u32>().read_unaligned());
         if rsdt_addr != 0 {
             Some(&*(rsdt_addr as *const SdtHeader))
         } else {
@@ -294,10 +286,6 @@ struct MadtIoApic {
 // MADT 解析 — 核心公共接口
 // ============================================================================
 
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 /// 解析 ACPI MADT 表, 填充 AP 与 IOAPIC 信息; 成功返回 true。
 pub fn parse_madt(multiboot2_info_ptr: u64) -> bool {
     let Some(rsdp) = find_rsdp(multiboot2_info_ptr) else {
@@ -320,7 +308,8 @@ pub fn parse_madt(multiboot2_info_ptr: u64) -> bool {
     // SAFETY: 指针指向已通过 BIOS/ACPI 探测验证的物理地址; volatile 访问保证不被编译器重排
     let revision = unsafe { rsdp_ptr.add(15).read_volatile() };
     // SAFETY: `const` 指向 ACPI/BIOS 探测过的物理地址; 只读访问
-    let uses_xsdt = revision >= 2 && unsafe { *rsdp_ptr.add(24).cast::<u64>() } != 0;
+    let uses_xsdt =
+        revision >= 2 && unsafe { rsdp_ptr.add(24).cast::<u64>().read_unaligned() } != 0;
 
     let table_count = if uses_xsdt {
         (rsdt_or_xsdt.length - 12) / 8
@@ -336,9 +325,9 @@ pub fn parse_madt(multiboot2_info_ptr: u64) -> bool {
 
         for i in 0..table_count {
             let madt_ptr: u64 = if uses_xsdt {
-                *entries_ptr.add(i * 8).cast::<u64>()
+                entries_ptr.add(i * 8).cast::<u64>().read_unaligned()
             } else {
-                u64::from(*entries_ptr.add(i * 4).cast::<u32>())
+                u64::from(entries_ptr.add(i * 4).cast::<u32>().read_unaligned())
             };
 
             if madt_ptr == 0 {
@@ -886,10 +875,6 @@ pub fn get_dmar_host_addr_width() -> u8 {
 // 统一 SDT 遍历 — 发现所有表
 // ============================================================================
 
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 /// 解析所有 ACPI 表 (MADT + FADT + HPET + DMAR)
 ///
 /// 在内核启动时调用, 替代仅解析 MADT 的 `parse_madt`.
@@ -908,7 +893,8 @@ pub fn parse_all_tables(multiboot2_info_ptr: u64) -> bool {
     // SAFETY: 指针指向已通过 BIOS/ACPI 探测验证的物理地址; volatile 访问保证不被编译器重排
     let revision = unsafe { rsdp_ptr.add(15).read_volatile() };
     // SAFETY: `const` 指向 ACPI/BIOS 探测过的物理地址; 只读访问
-    let uses_xsdt = revision >= 2 && unsafe { *rsdp_ptr.add(24).cast::<u64>() } != 0;
+    let uses_xsdt =
+        revision >= 2 && unsafe { rsdp_ptr.add(24).cast::<u64>().read_unaligned() } != 0;
 
     let table_count = if uses_xsdt {
         (rsdt_or_xsdt.length - 12) / 8
@@ -927,9 +913,9 @@ pub fn parse_all_tables(multiboot2_info_ptr: u64) -> bool {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         let table_ptr: u64 = unsafe {
             if uses_xsdt {
-                *entries_ptr.add(i * 8).cast::<u64>()
+                entries_ptr.add(i * 8).cast::<u64>().read_unaligned()
             } else {
-                u64::from(*entries_ptr.add(i * 4).cast::<u32>())
+                u64::from(entries_ptr.add(i * 4).cast::<u32>().read_unaligned())
             }
         };
 

@@ -157,7 +157,7 @@ impl VirtQueue {
         unsafe {
             core::ptr::write_bytes(mem_virt, 0, total_size);
 
-            let desc_ptr = mem_virt.cast::<VqDesc>();
+            let desc_ptr = mem_virt as usize as *mut VqDesc;
             let avail_ptr = mem_virt.add(desc_size);
             let used_ptr = mem_virt.add(used_off);
 
@@ -225,7 +225,7 @@ impl VirtQueue {
             let slot = self
                 .avail
                 .add(RING_HEAD_BYTES + (self.next_avail_idx as usize % self.num as usize) * 2)
-                .cast::<u16>();
+                as usize as *mut u16;
             core::ptr::write_volatile(slot, desc_head);
         }
         let idx = self.next_avail_idx;
@@ -240,7 +240,7 @@ impl VirtQueue {
             // 全内存屏障: 确保描述符与 ring 写入全局可见
             crate::privileged::sync::arch::fence();
             core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-            core::ptr::write_volatile(self.avail.add(2).cast::<u16>(), self.next_avail_idx);
+            core::ptr::write_volatile(self.avail.add(2) as usize as *mut u16, self.next_avail_idx);
         }
     }
 
@@ -250,7 +250,7 @@ impl VirtQueue {
         // 环项 = 头 4B + (idx % num) * size_of(VqUsedElem). 全部 volatile:
         // 设备 DMA 写入, 普通读可被 spin 循环 CSE 提升致永不可见.
         unsafe {
-            let used_idx = core::ptr::read_volatile(self.used.add(2) as *const u16);
+            let used_idx = core::ptr::read_volatile(self.used.add(2) as usize as *const u16);
             if self.last_used_idx == used_idx {
                 return None;
             }
@@ -258,7 +258,7 @@ impl VirtQueue {
                 RING_HEAD_BYTES
                     + (self.last_used_idx as usize % self.num as usize)
                         * core::mem::size_of::<VqUsedElem>(),
-            ) as *const VqUsedElem;
+            ) as usize as *const VqUsedElem;
             let elem = core::ptr::read_volatile(elem_ptr);
             self.last_used_idx = self.last_used_idx.wrapping_add(1);
             Some((crate::privileged::lib::low_u16_from_u32(elem.id), elem.len))

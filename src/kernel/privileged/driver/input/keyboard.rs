@@ -917,16 +917,12 @@ mod tests {
 
 use crate::privileged::egdf::InputOps;
 
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 extern "C" fn kb_input_read(driver_data: *mut u8) -> *const u8 {
     if driver_data.is_null() {
         return core::ptr::null();
     }
     // SAFETY: driver_data 由 EGDF InputOps 契约保证有效。
-    let kb = unsafe { &mut *driver_data.cast::<KeyboardDriver>() };
+    let kb = unsafe { &mut *(driver_data as usize as *mut KeyboardDriver) };
     kb.read_char().map_or(core::ptr::null(), |b| {
         // 使用原子槽位存放返回值, 调用方在返回后立即拷贝
         KB_READ_SLOT.store(b, Ordering::Relaxed);
@@ -938,29 +934,21 @@ extern "C" fn kb_input_read(driver_data: *mut u8) -> *const u8 {
 use core::sync::atomic::{AtomicU8, Ordering};
 static KB_READ_SLOT: AtomicU8 = AtomicU8::new(0);
 
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 extern "C" fn kb_input_has(driver_data: *mut u8) -> bool {
     if driver_data.is_null() {
         return false;
     }
     // SAFETY: 同上。
-    let kb = unsafe { &*(driver_data as *const KeyboardDriver) };
+    let kb = unsafe { &*(driver_data as usize as *const KeyboardDriver) };
     !kb.is_buffer_empty()
 }
 
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 extern "C" fn kb_input_irq(driver_data: *mut u8) {
     if driver_data.is_null() {
         return;
     }
     // SAFETY: driver_data 由 EGDF InputOps 契约保证有效。
-    let kb = unsafe { &mut *driver_data.cast::<KeyboardDriver>() };
+    let kb = unsafe { &mut *(driver_data as usize as *mut KeyboardDriver) };
     kb.handle_interrupt();
 }
 

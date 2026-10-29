@@ -96,15 +96,11 @@ fn test_elf_magic_rejected() -> TestResult {
     TestResult::Pass
 }
 
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 fn test_elf_valid_minimal() -> TestResult {
     use crate::privileged::proc::Elf64Header;
     let data = [0u8; 80]; // 头部 + 预留空间
     // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
-    let hdr = unsafe { &mut *(data.as_ptr() as *mut Elf64Header) };
+    let hdr = unsafe { &mut *(data.as_ptr() as usize as *mut Elf64Header) };
     hdr.e_ident[0] = 0x7F;
     hdr.e_ident[1] = b'E';
     hdr.e_ident[2] = b'L';

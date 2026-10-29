@@ -68,10 +68,6 @@ pub const fn machine_acceptable(expected: Option<u16>, actual: u16) -> bool {
     }
 }
 
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 /// 验证 ELF 文件头 + program header table 边界
 ///
 /// ## 校验项
@@ -101,7 +97,7 @@ pub unsafe fn verify_elf(elf_data: *const u8, elf_size: u64) -> Result<VerifyRes
     }
 
     // SAFETY: 调用方保证 elf_data 有效, 仅读借用
-    let header = unsafe { &*elf_data.cast::<Elf64Header>() };
+    let header = unsafe { elf_data.cast::<Elf64Header>().read_unaligned() };
 
     // magic
     if &header.e_ident[0..4] != ELF_MAGIC {

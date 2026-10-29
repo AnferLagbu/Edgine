@@ -937,13 +937,9 @@ pub fn egdf_register_driver_with_ops(
     id
 }
 
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 fn driver_from_obj<'a>(ptr: *mut u8) -> &'a mut dyn Driver {
     // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
-    let obj: &mut DriverObject = unsafe { &mut *ptr.cast::<DriverObject>() };
+    let obj: &mut DriverObject = unsafe { &mut *(ptr as usize as *mut DriverObject) };
     // SAFETY: `obj` 由调用方保证为有效指针; 只读访问
     unsafe { &mut *obj.ptr }
 }
@@ -968,10 +964,6 @@ pub fn egdf_init_all() {
     }
 }
 
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 /// 关闭所有就绪且由 EGDF 自持的驱动设备 (调用 `shutdown` 并释放驱动对象).
 pub fn egdf_shutdown_all() {
     let mut devices = EGDF_DEVICES.lock();
@@ -986,7 +978,7 @@ pub fn egdf_shutdown_all() {
             // `egdf_register_driver*` 经 `Box::into_raw(DriverObject)` 写入,
             // 类型一致且归 EGDF 所有; 非空已由上方条件校验。
             unsafe {
-                drop(Box::from_raw(dev.driver_data.cast::<DriverObject>()));
+                drop(Box::from_raw(dev.driver_data as usize as *mut DriverObject));
             }
             dev.driver_data = core::ptr::null_mut();
         }

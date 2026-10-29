@@ -166,7 +166,7 @@ fn start_ap(mpidr: u64, cpu_index: u32) -> Result<(), ()> {
     // SAFETY: Layout::new::<ApStack>() 的 size/align 均由类型保证非零且合法;
     //   alloc_zeroed 返回的指针须显式转回 ApStack.
     let stack = unsafe { alloc::alloc::alloc_zeroed(core::alloc::Layout::new::<ApStack>()) }
-        .cast::<ApStack>();
+        as usize as *mut ApStack;
     if stack.is_null() {
         crate::klog_warn!(Kernel, "[SMP] AP {:#x} stack alloc failed, skip", mpidr);
         return Err(());

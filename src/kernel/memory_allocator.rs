@@ -38,8 +38,7 @@ unsafe impl GlobalAlloc for KernelAllocator {
                 let kmalloc_ptr = kmalloc((size + tag_offset) as u64);
                 if !kmalloc_ptr.is_null() {
                     let raw = kmalloc_ptr.cast::<u8>();
-                    let tag_ptr = raw.cast::<u64>();
-                    *tag_ptr = TAG_KMALLOC;
+                    core::ptr::write_unaligned(raw.cast::<u64>(), TAG_KMALLOC);
                     return raw.add(TAG_SIZE);
                 }
             }
@@ -59,8 +58,7 @@ unsafe impl GlobalAlloc for KernelAllocator {
                 };
                 let virt = (phys.as_u64() + KERNEL_BASE) as *mut u8;
                 if tag_offset > 0 {
-                    let tag_ptr = virt.cast::<u64>();
-                    *tag_ptr = tag;
+                    core::ptr::write_unaligned(virt.cast::<u64>(), tag);
                     virt.add(TAG_SIZE)
                 } else {
                     virt
@@ -71,8 +69,7 @@ unsafe impl GlobalAlloc for KernelAllocator {
                 };
                 let virt = (phys.as_u64() + KERNEL_BASE) as *mut u8;
                 if tag_offset > 0 {
-                    let tag_ptr = virt.cast::<u64>();
-                    *tag_ptr = tag;
+                    core::ptr::write_unaligned(virt.cast::<u64>(), tag);
                     virt.add(TAG_SIZE)
                 } else {
                     virt
@@ -90,7 +87,7 @@ unsafe impl GlobalAlloc for KernelAllocator {
             let size = layout.size();
             if size <= PAGE_THRESHOLD {
                 let raw = ptr.sub(TAG_SIZE);
-                let tag = *(raw as *const u64);
+                let tag = core::ptr::read_unaligned(raw as *const u64);
                 match tag {
                     TAG_PMM_PAGE => {
                         let phys_addr = (raw as u64) - KERNEL_BASE;

@@ -278,7 +278,7 @@ impl MetaStore for RawMetaStore {
         // SAFETY: virt 由 init_bitmap 计算 (phys + KERNEL_BASE 内核映射区),
         // bytes 为该区段长度, 区段已按页对齐且未他用.
         unsafe { raw::zero_memory(virt, bytes) };
-        self.bitmap = NonNull::new(virt.cast::<u32>());
+        self.bitmap = NonNull::new(virt as usize as *mut u32);
         self.bitmap_words = bytes / 4;
     }
 
@@ -293,7 +293,7 @@ impl MetaStore for RawMetaStore {
         let virt = phys_to_virt(phys) as *mut u8;
         // SAFETY: 同上; 0xFF 字节填充 → 每个 u64 字段 = u64::MAX = SENTINEL (链表空态)
         unsafe { raw::fill_memory(virt, 0xFF, bytes) };
-        self.links = NonNull::new(virt.cast::<FreeIndex>());
+        self.links = NonNull::new(virt as usize as *mut FreeIndex);
     }
 
     fn setup_counts(&mut self, phys: u64, bytes: usize) {
@@ -308,7 +308,7 @@ impl MetaStore for RawMetaStore {
         let virt = phys_to_virt(phys) as *mut u8;
         // SAFETY: 同上; 清零 = 两槽均为"无记录"(0), 与帧尚未被 PMM 分配一致
         unsafe { raw::zero_memory(virt, bytes) };
-        self.owner = NonNull::new(virt.cast::<OwnerIndex>());
+        self.owner = NonNull::new(virt as usize as *mut OwnerIndex);
     }
 
     fn bitmap_set(&self, bit: usize) {

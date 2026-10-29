@@ -179,13 +179,9 @@ pub extern "C" fn boot_set_multiboot_info(magic: u32, ptr: *const u8) {
 }
 
 #[cfg(target_arch = "x86_64")]
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 fn parse_multiboot1(ptr: *const u8) -> (u64, usize) {
     // SAFETY: `ptr` 由调用方保证指向有效 Multiboot1Info; 只读借用
-    let mbi = unsafe { &*ptr.cast::<Multiboot1Info>() };
+    let mbi = unsafe { ptr.cast::<Multiboot1Info>().read_unaligned() };
     let mut mem_size: u64 = 128 * 1024 * 1024;
     let mut mmap_entries: usize = 0;
 
@@ -209,10 +205,7 @@ fn parse_multiboot1(ptr: *const u8) -> (u64, usize) {
             mmap_entries += 1;
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
             current = unsafe {
-                current
-                    .cast::<u8>()
-                    .add(entry.size as usize + 4)
-                    .cast::<MemoryMapEntry>()
+                current.cast::<u8>().add(entry.size as usize + 4) as usize as *const MemoryMapEntry
             };
         }
 
@@ -225,13 +218,9 @@ fn parse_multiboot1(ptr: *const u8) -> (u64, usize) {
 }
 
 #[cfg(target_arch = "x86_64")]
-#[expect(
-    clippy::cast_ptr_alignment,
-    reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-)]
 fn parse_multiboot2(ptr: *const u8) -> (u64, usize) {
     // SAFETY: `ptr` 由调用方保证指向有效 u32; 只读借用
-    let total_size = unsafe { *ptr.cast::<u32>() };
+    let total_size = unsafe { ptr.cast::<u32>().read_unaligned() };
     let mut mem_size: u64 = 128 * 1024 * 1024;
     let mut mmap_entries: usize = 0;
 
@@ -242,9 +231,9 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize) {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         let tag_ptr = unsafe { ptr.add(offset) };
         // SAFETY: `tag_ptr` 由调用方保证指向有效 u32; 只读借用
-        let tag_type = unsafe { *tag_ptr.cast::<u32>() };
+        let tag_type = unsafe { tag_ptr.cast::<u32>().read_unaligned() };
         // SAFETY: 指针由调用方保证有效, 偏移 1 不越界
-        let tag_size = unsafe { *(tag_ptr.cast::<u32>().add(1)) };
+        let tag_size = unsafe { tag_ptr.add(4).cast::<u32>().read_unaligned() };
 
         if tag_type == 0 || tag_size == 0 {
             break;
@@ -255,16 +244,16 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize) {
                 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                 let basic_ptr = unsafe { tag_ptr.add(8) };
                 // SAFETY: `basic_ptr` 由调用方保证指向有效 u32; 只读借用
-                let _mem_lower = unsafe { *basic_ptr.cast::<u32>() };
+                let _mem_lower = unsafe { basic_ptr.cast::<u32>().read_unaligned() };
                 // SAFETY: 指针由调用方保证有效, 偏移 1 不越界
-                let mem_upper = unsafe { *(basic_ptr.cast::<u32>().add(1)) };
+                let mem_upper = unsafe { basic_ptr.add(4).cast::<u32>().read_unaligned() };
                 mem_size = (u64::from(mem_upper) + 1024) * 1024;
             }
             6 => {
                 // SAFETY: `const` 由调用方保证为有效指针; 只读访问
-                let entry_size = unsafe { *tag_ptr.add(8).cast::<u32>() };
+                let entry_size = unsafe { tag_ptr.add(8).cast::<u32>().read_unaligned() };
                 // SAFETY: `const` 由调用方保证为有效指针; 只读访问
-                let _entry_version = unsafe { *(tag_ptr.add(8).cast::<u32>().add(1)) };
+                let _entry_version = unsafe { tag_ptr.add(12).cast::<u32>().read_unaligned() };
                 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                 let entries_start = unsafe { tag_ptr.add(16) };
                 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -276,18 +265,18 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize) {
                 while unsafe { pos.add(entry_size as usize) <= entries_end } {
                     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                     let base = unsafe {
-                        let lo = *pos.cast::<u32>();
-                        let hi = *(pos.cast::<u32>().add(1));
+                        let lo = pos.cast::<u32>().read_unaligned();
+                        let hi = pos.add(4).cast::<u32>().read_unaligned();
                         (u64::from(hi) << 32) | u64::from(lo)
                     };
                     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                     let len = unsafe {
-                        let lo = *(pos.cast::<u32>().add(2));
-                        let hi = *(pos.cast::<u32>().add(3));
+                        let lo = pos.add(8).cast::<u32>().read_unaligned();
+                        let hi = pos.add(12).cast::<u32>().read_unaligned();
                         (u64::from(hi) << 32) | u64::from(lo)
                     };
                     // SAFETY: 指针由调用方保证有效, 偏移 4 不越界
-                    let mtype = unsafe { *(pos.cast::<u32>().add(4)) };
+                    let mtype = unsafe { pos.add(16).cast::<u32>().read_unaligned() };
 
                     if mtype == 1 {
                         let end_addr = base + len;
