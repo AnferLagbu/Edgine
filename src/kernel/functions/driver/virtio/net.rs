@@ -164,6 +164,39 @@ impl VirtioNetDriver {
     /// # 参数
     /// - `device`: 已探测到的 `VirtIO` 设备 (`device_id` 必须为 `VIRTIO_ID_NET`)
     pub fn new(device: VirtioMmioDevice) -> Option<Self> {
+        let is_legacy = Self::probe_device(&device)?;
+
+        // Step 4-5: 特性协商 + FEATURES_OK (+ legacy GuestPageSize)
+        let (negotiated_v1, hdr_size) = Self::negotiate_features(&device, is_legacy)?;
+
+        // 分配 RX/TX VirtQueue
+        let (rx_vq, tx_vq) = Self::init_queues(&device, is_legacy)?;
+
+        // 从配置空间读取 MAC 地址与链路状态
+        let mac = Self::read_mac(&device);
+        let link_up = Self::read_link(&device);
+
+        let net = Self {
+            device,
+            mac,
+            link_up,
+            negotiated_features: if negotiated_v1 {
+                VIRTIO_F_VERSION_1 | VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS
+            } else {
+                VIRTIO_NET_F_MAC
+            },
+            hdr_size,
+            rx_vq,
+            tx_vq,
+            rx_buffers: [const { None }; 32],
+        };
+        // RX 预填移至 finalize (队列 MMIO 配置 + DRIVER_OK 之后执行), 与旧
+        // privileged 驱动时序一致 (避免对未配置队列 MMIO notify)
+        Some(net)
+    }
+
+    /// 校验设备 ID 并执行 Reset → ACK → DRIVER 序列, 返回是否 legacy 传输
+    fn probe_device(device: &VirtioMmioDevice) -> Option<bool> {
         if device.device_id() != VIRTIO_ID_NET {
             slog_warn!(
                 Driver,
@@ -192,7 +225,11 @@ impl VirtioNetDriver {
         // Step 3: DRIVER
         device.set_driver();
 
-        // Step 4: 特性协商
+        Some(is_legacy)
+    }
+
+    /// Step 4-5: 特性协商与 `FEATURES_OK` 确认; 返回 (是否协商 `VERSION_1`, 头大小)
+    fn negotiate_features(device: &VirtioMmioDevice, is_legacy: bool) -> Option<(bool, usize)> {
         let dev_features = device.device_features();
         slog_info!(Driver, "virtio-net: 设备特性={:#018x}", dev_features);
 
@@ -235,9 +272,15 @@ impl VirtioNetDriver {
             device.set_guest_page_size(4096);
         }
 
-        // 分配 RX/TX VirtQueue — 布局形态与环尺寸按**传输层**版本选定 (P-31:
-        // legacy 传输无 QueueNum 协商, 设备端按 realize 固定 num 推算 vring 布局,
-        // 驱动必须全量取 QueueNumMax 对齐, 截断即错位 → 永不回写 used → TX 超时)
+        Some((negotiated_v1, hdr_size))
+    }
+
+    /// 分配 RX/TX VirtQueue
+    ///
+    /// 布局形态与环尺寸按**传输层**版本选定 (P-31: legacy 传输无 QueueNum 协商,
+    /// 设备端按 realize 固定 num 推算 vring 布局, 驱动必须全量取 QueueNumMax 对齐,
+    /// 截断即错位 → 永不回写 used → TX 超时).
+    fn init_queues(device: &VirtioMmioDevice, is_legacy: bool) -> Option<(VirtQueue, VirtQueue)> {
         let vq_legacy = is_legacy;
         let rx_num = if vq_legacy {
             device.select_queue(RX_QUEUE_INDEX);
@@ -253,8 +296,11 @@ impl VirtioNetDriver {
         };
         let rx_vq = VirtQueue::new(vq_legacy, rx_num)?;
         let tx_vq = VirtQueue::new(vq_legacy, tx_num)?;
+        Some((rx_vq, tx_vq))
+    }
 
-        // 从配置空间读取 MAC 地址
+    /// 从配置空间读取 MAC 地址
+    fn read_mac(device: &VirtioMmioDevice) -> [u8; 6] {
         let mut mac: [u8; 6] = [0; 6];
         for i in 0..6 {
             mac[i] = crate::functions::intcast::low_u8_from_u32(
@@ -272,8 +318,11 @@ impl VirtioNetDriver {
             mac[4],
             mac[5]
         );
+        mac
+    }
 
-        // 读取链路状态
+    /// 从配置空间读取链路状态
+    fn read_link(device: &VirtioMmioDevice) -> bool {
         let link_status =
             crate::functions::intcast::low_u16_from_u32(device.read_config32(NET_CONFIG_STATUS));
         let link_up = (link_status & NET_STATUS_LINK_UP) != 0;
@@ -282,24 +331,7 @@ impl VirtioNetDriver {
             "virtio-net: 链路 {}",
             if link_up { "UP" } else { "DOWN" }
         );
-
-        let net = Self {
-            device,
-            mac,
-            link_up,
-            negotiated_features: if negotiated_v1 {
-                VIRTIO_F_VERSION_1 | VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS
-            } else {
-                VIRTIO_NET_F_MAC
-            },
-            hdr_size,
-            rx_vq,
-            tx_vq,
-            rx_buffers: [const { None }; 32],
-        };
-        // RX 预填移至 finalize (队列 MMIO 配置 + DRIVER_OK 之后执行), 与旧
-        // privileged 驱动时序一致 (避免对未配置队列 MMIO notify)
-        Some(net)
+        link_up
     }
 
     /// 设置 `DRIVER_OK` (设备进入 live 状态).

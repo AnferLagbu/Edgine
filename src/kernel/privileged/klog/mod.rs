@@ -464,19 +464,6 @@ struct RingBuf {
 
 #[cfg(not(feature = "host-test"))]
 impl RingBuf {
-    #[expect(
-        clippy::large_stack_arrays,
-        reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
-    )]
-    const fn new() -> Self {
-        Self {
-            data: [0; RING_SIZE],
-            head: 0,
-            tail: 0,
-            total: 0,
-        }
-    }
-
     fn push(&mut self, b: u8) {
         self.data[self.tail] = b;
         self.tail = (self.tail + 1) % RING_SIZE;
@@ -501,9 +488,19 @@ struct RingLock {
 #[cfg(not(feature = "host-test"))]
 unsafe impl Sync for RingLock {}
 
+/// 全局环形缓冲 (128KiB 缓冲区常驻 `.bss`).
+///
+/// 缓冲区数组直接写在 `static` 初值里 —— 静态初值不经函数体, 不会被
+/// `large_stack_arrays` 误判为栈上分配 (函数体内构造会额外产生 128KiB 的
+/// 栈临时量再搬入 `.bss`).
 #[cfg(not(feature = "host-test"))]
 static RING: RingLock = RingLock {
-    inner: core::cell::UnsafeCell::new(RingBuf::new()),
+    inner: core::cell::UnsafeCell::new(RingBuf {
+        data: [0; RING_SIZE],
+        head: 0,
+        tail: 0,
+        total: 0,
+    }),
 };
 
 // ============================================================================

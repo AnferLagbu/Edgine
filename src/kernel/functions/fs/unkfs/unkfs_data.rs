@@ -1447,12 +1447,36 @@ impl UnkfsData {
         0
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-    )]
+    /// 序列化数据集元数据为块指针 (仅磁盘模式有效, 失败返回 `None`)
     fn serialize_dataset_metadata(&self, txg: u64) -> Option<UnkfsBlockPointer> {
-        const OBJ_RECORD_SIZE: usize = 222;
+        let (objects, dir_entries, next_id) = self.collect_serialize_snapshot()?;
+        let total = Self::metadata_total_size(&objects, &dir_entries);
+        let buf = Self::encode_metadata(&objects, &dir_entries, next_id, total)?;
+
+        if !self.is_disk_mode() {
+            return None;
+        }
+        let bp = self.spa.allocate(
+            buf.len() as u64,
+            UnkfsCksumType::Fletcher4,
+            UnkfsCompType::Off,
+            txg,
+        )?;
+        if self.spa.write_bp(&bp, &buf) != 0 {
+            self.spa.free(&bp, txg);
+            return None;
+        }
+        Some(bp)
+    }
+
+    /// 收集待序列化的对象/目录条目快照 (超出安全上限返回 `None`)
+    fn collect_serialize_snapshot(
+        &self,
+    ) -> Option<(
+        Vec<UnkfsDmuObject>,
+        Vec<(alloc::string::String, Vec<u8>)>,
+        u64,
+    )> {
         const MAX_SERIALIZE_OBJECTS: usize = 65536;
         const MAX_SERIALIZE_ENTRIES: usize = 65536;
 
@@ -1474,161 +1498,185 @@ impl UnkfsData {
             return None;
         }
 
+        Some((objects, dir_entries, next_id))
+    }
+
+    /// 计算元数据序列化缓冲区的总字节数
+    fn metadata_total_size(
+        objects: &[UnkfsDmuObject],
+        dir_entries: &[(alloc::string::String, Vec<u8>)],
+    ) -> u32 {
+        const OBJ_RECORD_SIZE: usize = 222;
+
         let mut total = 32u32;
-        for _ in &objects {
+        for _ in objects {
             total += crate::functions::intcast::low_u32_from_usize(OBJ_RECORD_SIZE);
         }
-        for (name, _) in &dir_entries {
+        for (name, _) in dir_entries {
             total += 2 + crate::functions::intcast::low_u32_from_usize(name.len()) + 8;
         }
+        total
+    }
 
+    /// 将元数据头、对象记录与目录条目编码进缓冲区 (失败返回 `None`)
+    fn encode_metadata(
+        objects: &[UnkfsDmuObject],
+        dir_entries: &[(alloc::string::String, Vec<u8>)],
+        next_id: u64,
+        total: u32,
+    ) -> Option<Vec<u8>> {
         let mut buf = vec![0u8; total as usize];
         buf[0] = b'H';
         buf[1] = b'V';
         buf[2] = b'M';
         buf[3] = b'1';
-        if !Self::write_le32(&mut buf, 4, 1) {
-            return None;
-        }
-        if !Self::write_le32(
+        if !Self::write_metadata_header(
             &mut buf,
-            8,
             crate::functions::intcast::low_u32_from_usize(objects.len()),
-        ) {
-            return None;
-        }
-        if !Self::write_le32(
-            &mut buf,
-            12,
             crate::functions::intcast::low_u32_from_usize(dir_entries.len()),
+            next_id,
+            total,
         ) {
-            return None;
-        }
-        if !Self::write_le64(&mut buf, 16, next_id) {
-            return None;
-        }
-        if !Self::write_le32(&mut buf, 24, total) {
             return None;
         }
 
         let mut off = 32usize;
-        for obj in &objects {
-            if off + OBJ_RECORD_SIZE > buf.len() {
-                return None;
-            }
-            if !Self::write_le64(&mut buf, off, obj.obj_id) {
-                return None;
-            }
-            off += 8;
-            buf[off] = obj.obj_type as u8;
-            off += 1;
-            if !Self::write_le32(&mut buf, off, obj.block_size) {
-                return None;
-            }
-            off += 4;
-            if !Self::write_le64(&mut buf, off, obj.nblocks) {
-                return None;
-            }
-            off += 8;
-            if !Self::write_le64(&mut buf, off, obj.size) {
-                return None;
-            }
-            off += 8;
-            if off + UnkfsBlockPointer::BYTES > buf.len() {
-                return None;
-            }
-            let bp_bytes = obj.bp.as_bytes();
-            buf[off..off + UnkfsBlockPointer::BYTES].copy_from_slice(bp_bytes);
-            off += UnkfsBlockPointer::BYTES;
-            if !Self::write_le64(&mut buf, off, obj.atime) {
-                return None;
-            }
-            off += 8;
-            if !Self::write_le64(&mut buf, off, obj.mtime) {
-                return None;
-            }
-            off += 8;
-            if !Self::write_le64(&mut buf, off, obj.ctime) {
-                return None;
-            }
-            off += 8;
-            if !Self::write_le64(&mut buf, off, obj.owner_pwm) {
-                return None;
-            }
-            off += 8;
-            if !Self::write_le64(&mut buf, off, obj.group_pwm) {
-                return None;
-            }
-            off += 8;
-            buf[off] = obj.sensitivity;
-            off += 1;
-            if !Self::write_le16(&mut buf, off, obj.pwm_perm) {
-                return None;
-            }
-            off += 2;
-            if !Self::write_le32(&mut buf, off, obj.link_count) {
-                return None;
-            }
-            off += 4;
-            if !Self::write_le32(&mut buf, off, obj.flags) {
-                return None;
-            }
-            off += 4;
-            if !Self::write_le64(&mut buf, off, obj.birth_txg) {
-                return None;
-            }
-            off += 8;
-            buf[off] = u8::from(obj.used);
-            off += 1;
-            off += 1;
+        for obj in objects {
+            off = Self::write_object_record(&mut buf, off, obj)?;
+        }
+        for (name, _value) in dir_entries {
+            off = Self::write_dir_entry_record(&mut buf, off, name)?;
         }
 
-        for (name, _value) in &dir_entries {
-            let name_bytes = name.as_bytes();
-            if off + 2 + name_bytes.len() + 8 > buf.len() {
-                return None;
-            }
-            if !Self::write_le16(
-                &mut buf,
-                off,
-                crate::functions::intcast::low_u16_from_usize(name_bytes.len()),
-            ) {
-                return None;
-            }
-            off += 2;
-            buf[off..off + name_bytes.len()].copy_from_slice(name_bytes);
-            off += name_bytes.len();
-            if !Self::write_le64(&mut buf, off, 0) {
-                return None;
-            }
-        }
-
-        if !self.is_disk_mode() {
-            return None;
-        }
-        let bp = self.spa.allocate(
-            buf.len() as u64,
-            UnkfsCksumType::Fletcher4,
-            UnkfsCompType::Off,
-            txg,
-        )?;
-        if self.spa.write_bp(&bp, &buf) != 0 {
-            self.spa.free(&bp, txg);
-            return None;
-        }
-        Some(bp)
+        Some(buf)
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-    )]
-    fn deserialize_dataset_metadata(&self, bp: &UnkfsBlockPointer) -> bool {
-        const OBJ_RECORD_SIZE: usize = 222;
-        const MAX_DESERIALIZE_OBJECTS: usize = 65536;
-        const MAX_DESERIALIZE_ENTRIES: usize = 65536;
-        const MAX_NAME_LEN: usize = 4096;
+    /// 写入元数据头 (版本/对象数/条目数/`next_id`/总长), 越界返回 `false`
+    fn write_metadata_header(
+        buf: &mut [u8],
+        obj_count: u32,
+        entry_count: u32,
+        next_id: u64,
+        total: u32,
+    ) -> bool {
+        if !Self::write_le32(buf, 4, 1) {
+            return false;
+        }
+        if !Self::write_le32(buf, 8, obj_count) {
+            return false;
+        }
+        if !Self::write_le32(buf, 12, entry_count) {
+            return false;
+        }
+        if !Self::write_le64(buf, 16, next_id) {
+            return false;
+        }
+        if !Self::write_le32(buf, 24, total) {
+            return false;
+        }
+        true
+    }
 
+    /// 写入单条对象记录, 返回下一个写入偏移; 越界返回 `None`
+    fn write_object_record(buf: &mut [u8], mut off: usize, obj: &UnkfsDmuObject) -> Option<usize> {
+        const OBJ_RECORD_SIZE: usize = 222;
+
+        if off + OBJ_RECORD_SIZE > buf.len() {
+            return None;
+        }
+        if !Self::write_le64(buf, off, obj.obj_id) {
+            return None;
+        }
+        off += 8;
+        buf[off] = obj.obj_type as u8;
+        off += 1;
+        if !Self::write_le32(buf, off, obj.block_size) {
+            return None;
+        }
+        off += 4;
+        if !Self::write_le64(buf, off, obj.nblocks) {
+            return None;
+        }
+        off += 8;
+        if !Self::write_le64(buf, off, obj.size) {
+            return None;
+        }
+        off += 8;
+        if off + UnkfsBlockPointer::BYTES > buf.len() {
+            return None;
+        }
+        let bp_bytes = obj.bp.as_bytes();
+        buf[off..off + UnkfsBlockPointer::BYTES].copy_from_slice(bp_bytes);
+        off += UnkfsBlockPointer::BYTES;
+        if !Self::write_le64(buf, off, obj.atime) {
+            return None;
+        }
+        off += 8;
+        if !Self::write_le64(buf, off, obj.mtime) {
+            return None;
+        }
+        off += 8;
+        if !Self::write_le64(buf, off, obj.ctime) {
+            return None;
+        }
+        off += 8;
+        if !Self::write_le64(buf, off, obj.owner_pwm) {
+            return None;
+        }
+        off += 8;
+        if !Self::write_le64(buf, off, obj.group_pwm) {
+            return None;
+        }
+        off += 8;
+        buf[off] = obj.sensitivity;
+        off += 1;
+        if !Self::write_le16(buf, off, obj.pwm_perm) {
+            return None;
+        }
+        off += 2;
+        if !Self::write_le32(buf, off, obj.link_count) {
+            return None;
+        }
+        off += 4;
+        if !Self::write_le32(buf, off, obj.flags) {
+            return None;
+        }
+        off += 4;
+        if !Self::write_le64(buf, off, obj.birth_txg) {
+            return None;
+        }
+        off += 8;
+        buf[off] = u8::from(obj.used);
+        off += 1;
+        off += 1;
+        Some(off)
+    }
+
+    /// 写入单条目录条目记录, 返回下一个写入偏移; 越界返回 `None`
+    fn write_dir_entry_record(buf: &mut [u8], mut off: usize, name: &str) -> Option<usize> {
+        let name_bytes = name.as_bytes();
+        if off + 2 + name_bytes.len() + 8 > buf.len() {
+            return None;
+        }
+        if !Self::write_le16(
+            buf,
+            off,
+            crate::functions::intcast::low_u16_from_usize(name_bytes.len()),
+        ) {
+            return None;
+        }
+        off += 2;
+        buf[off..off + name_bytes.len()].copy_from_slice(name_bytes);
+        off += name_bytes.len();
+        if !Self::write_le64(buf, off, 0) {
+            return None;
+        }
+        off += 8;
+        Some(off)
+    }
+
+    /// 从块指针反序列化数据集元数据, 成功返回 `true`
+    fn deserialize_dataset_metadata(&self, bp: &UnkfsBlockPointer) -> bool {
         if bp.is_null() || !self.is_disk_mode() {
             return false;
         }
@@ -1643,24 +1691,29 @@ impl UnkfsData {
             return false;
         }
 
-        let obj_count = match Self::read_le32(&buf, 8) {
-            Some(v) => v as usize,
-            None => return false,
-        };
-        let zap_count = match Self::read_le32(&buf, 12) {
-            Some(v) => v as usize,
-            None => return false,
-        };
-        let Some(next_obj_id) = Self::read_le64(&buf, 16) else {
+        let Some((obj_count, zap_count, next_obj_id)) = Self::parse_metadata_header(&buf) else {
             return false;
         };
+
+        self.restore_metadata(&buf, obj_count, zap_count, next_obj_id)
+    }
+
+    /// 解析元数据头部的计数与 `next_obj_id` (含上限与长度校验)
+    fn parse_metadata_header(buf: &[u8]) -> Option<(usize, usize, u64)> {
+        const OBJ_RECORD_SIZE: usize = 222;
+        const MAX_DESERIALIZE_OBJECTS: usize = 65536;
+        const MAX_DESERIALIZE_ENTRIES: usize = 65536;
+
+        let obj_count = Self::read_le32(buf, 8)? as usize;
+        let zap_count = Self::read_le32(buf, 12)? as usize;
+        let next_obj_id = Self::read_le64(buf, 16)?;
 
         if obj_count > MAX_DESERIALIZE_OBJECTS || zap_count > MAX_DESERIALIZE_ENTRIES {
             crate::slog_err!(
                 FS,
                 "[UNKFS] deserialize: count exceeds safety limit, possible corruption"
             );
-            return false;
+            return None;
         }
 
         let expected_min =
@@ -1670,145 +1723,145 @@ impl UnkfsData {
                 FS,
                 "[UNKFS] deserialize: buffer too small for declared counts"
             );
-            return false;
+            return None;
         }
+
+        Some((obj_count, zap_count, next_obj_id))
+    }
+
+    /// 用反序列化结果替换对象表与目录索引
+    fn restore_metadata(
+        &self,
+        buf: &[u8],
+        obj_count: usize,
+        zap_count: usize,
+        next_obj_id: u64,
+    ) -> bool {
+        let datasets = self.datasets.lock();
+        let ds = &datasets[0];
+        let mut objs = ds.objset.objects.lock();
+        objs.clear();
 
         let mut off = 32usize;
-        {
-            let ds = &self.datasets.lock()[0];
-            let mut objs = ds.objset.objects.lock();
-            objs.clear();
-            for _ in 0..obj_count {
-                if off + OBJ_RECORD_SIZE > buf.len() {
-                    return false;
-                }
-
-                let Some(obj_id) = Self::read_le64(&buf, off) else {
-                    return false;
-                };
-                off += 8;
-                let obj_type = UnkfsObjType::from_u8(buf[off]);
-                off += 1;
-                let Some(_block_size) = Self::read_le32(&buf, off) else {
-                    return false;
-                };
-                off += 4;
-                let Some(nblocks) = Self::read_le64(&buf, off) else {
-                    return false;
-                };
-                off += 8;
-                let Some(size) = Self::read_le64(&buf, off) else {
-                    return false;
-                };
-                off += 8;
-
-                if off + UnkfsBlockPointer::BYTES > buf.len() {
-                    return false;
-                }
-                let Some(bp_val) =
-                    UnkfsBlockPointer::from_bytes(&buf[off..off + UnkfsBlockPointer::BYTES])
-                else {
-                    return false;
-                };
-                off += UnkfsBlockPointer::BYTES;
-
-                let Some(atime) = Self::read_le64(&buf, off) else {
-                    return false;
-                };
-                off += 8;
-                let Some(mtime) = Self::read_le64(&buf, off) else {
-                    return false;
-                };
-                off += 8;
-                let Some(ctime) = Self::read_le64(&buf, off) else {
-                    return false;
-                };
-                off += 8;
-                let Some(owner_pwm) = Self::read_le64(&buf, off) else {
-                    return false;
-                };
-                off += 8;
-                let Some(group_pwm) = Self::read_le64(&buf, off) else {
-                    return false;
-                };
-                off += 8;
-                let sensitivity = buf[off];
-                off += 1;
-                let Some(pwm_perm) = Self::read_le16(&buf, off) else {
-                    return false;
-                };
-                off += 2;
-                let Some(link_count) = Self::read_le32(&buf, off) else {
-                    return false;
-                };
-                off += 4;
-                let Some(flags) = Self::read_le32(&buf, off) else {
-                    return false;
-                };
-                off += 4;
-                let Some(birth_txg) = Self::read_le64(&buf, off) else {
-                    return false;
-                };
-                off += 8;
-                let used = buf[off] != 0;
-                off += 1;
-                off += 1;
-                let obj = UnkfsDmuObject {
-                    obj_id,
-                    obj_type,
-                    block_size: crate::functions::intcast::low_u32_from_u64(HV_POOL_BLOCK_SIZE),
-                    nblocks,
-                    size,
-                    bp: bp_val,
-                    atime,
-                    mtime,
-                    ctime,
-                    owner_pwm,
-                    group_pwm,
-                    sensitivity,
-                    pwm_perm,
-                    link_count,
-                    flags,
-                    birth_txg,
-                    data_hash: [0; 4],
-                    fill: 0,
-                    dirty: false,
-                    used,
-                };
-                objs.push(obj);
-            }
-            ds.objset.next_obj_id.store(next_obj_id, Ordering::Release);
-
-            ds.dir_zap.clear();
-            for _ in 0..zap_count {
-                if off + 2 > buf.len() {
-                    return false;
-                }
-                let name_len = match Self::read_le16(&buf, off) {
-                    Some(v) => v as usize,
-                    None => return false,
-                };
-                off += 2;
-                if name_len > MAX_NAME_LEN {
-                    crate::slog_err!(
-                        FS,
-                        "[UNKFS] deserialize: name length exceeds limit, possible corruption"
-                    );
-                    return false;
-                }
-                if off + name_len + 8 > buf.len() {
-                    return false;
-                }
-                let name = core::str::from_utf8(&buf[off..off + name_len]).unwrap_or("?");
-                off += name_len;
-                let Some(obj_id) = Self::read_le64(&buf, off) else {
-                    return false;
-                };
-                off += 8;
-                ds.dir_zap.insert_u64(name, obj_id);
-            }
+        for _ in 0..obj_count {
+            let Some((obj, next_off)) = Self::parse_object_record(buf, off) else {
+                return false;
+            };
+            objs.push(obj);
+            off = next_off;
         }
+
+        ds.objset.next_obj_id.store(next_obj_id, Ordering::Release);
+
+        ds.dir_zap.clear();
+        for _ in 0..zap_count {
+            let Some((name, obj_id, next_off)) = Self::parse_dir_entry_record(buf, off) else {
+                return false;
+            };
+            ds.dir_zap.insert_u64(name, obj_id);
+            off = next_off;
+        }
+
         true
+    }
+
+    /// 解析单条对象记录, 返回 (对象, 下一个偏移); 越界或字段缺失返回 `None`
+    fn parse_object_record(buf: &[u8], mut off: usize) -> Option<(UnkfsDmuObject, usize)> {
+        const OBJ_RECORD_SIZE: usize = 222;
+
+        if off + OBJ_RECORD_SIZE > buf.len() {
+            return None;
+        }
+
+        let obj_id = Self::read_le64(buf, off)?;
+        off += 8;
+        let obj_type = UnkfsObjType::from_u8(buf[off]);
+        off += 1;
+        let _block_size = Self::read_le32(buf, off)?;
+        off += 4;
+        let nblocks = Self::read_le64(buf, off)?;
+        off += 8;
+        let size = Self::read_le64(buf, off)?;
+        off += 8;
+
+        if off + UnkfsBlockPointer::BYTES > buf.len() {
+            return None;
+        }
+        let bp_val = UnkfsBlockPointer::from_bytes(&buf[off..off + UnkfsBlockPointer::BYTES])?;
+        off += UnkfsBlockPointer::BYTES;
+
+        let atime = Self::read_le64(buf, off)?;
+        off += 8;
+        let mtime = Self::read_le64(buf, off)?;
+        off += 8;
+        let ctime = Self::read_le64(buf, off)?;
+        off += 8;
+        let owner_pwm = Self::read_le64(buf, off)?;
+        off += 8;
+        let group_pwm = Self::read_le64(buf, off)?;
+        off += 8;
+        let sensitivity = buf[off];
+        off += 1;
+        let pwm_perm = Self::read_le16(buf, off)?;
+        off += 2;
+        let link_count = Self::read_le32(buf, off)?;
+        off += 4;
+        let flags = Self::read_le32(buf, off)?;
+        off += 4;
+        let birth_txg = Self::read_le64(buf, off)?;
+        off += 8;
+        let used = buf[off] != 0;
+        off += 1;
+        off += 1;
+        let obj = UnkfsDmuObject {
+            obj_id,
+            obj_type,
+            block_size: crate::functions::intcast::low_u32_from_u64(HV_POOL_BLOCK_SIZE),
+            nblocks,
+            size,
+            bp: bp_val,
+            atime,
+            mtime,
+            ctime,
+            owner_pwm,
+            group_pwm,
+            sensitivity,
+            pwm_perm,
+            link_count,
+            flags,
+            birth_txg,
+            data_hash: [0; 4],
+            fill: 0,
+            dirty: false,
+            used,
+        };
+        Some((obj, off))
+    }
+
+    /// 解析单条目录条目记录, 返回 (名字, 对象号, 下一个偏移); 失败返回 `None`
+    fn parse_dir_entry_record(buf: &[u8], mut off: usize) -> Option<(&str, u64, usize)> {
+        const MAX_NAME_LEN: usize = 4096;
+
+        if off + 2 > buf.len() {
+            return None;
+        }
+        let name_len = Self::read_le16(buf, off)? as usize;
+        off += 2;
+        if name_len > MAX_NAME_LEN {
+            crate::slog_err!(
+                FS,
+                "[UNKFS] deserialize: name length exceeds limit, possible corruption"
+            );
+            return None;
+        }
+        if off + name_len + 8 > buf.len() {
+            return None;
+        }
+        let name = core::str::from_utf8(&buf[off..off + name_len]).unwrap_or("?");
+        off += name_len;
+        let obj_id = Self::read_le64(buf, off)?;
+        off += 8;
+        Some((name, obj_id, off))
     }
 
     fn write_le16(buf: &mut [u8], off: usize, v: u16) -> bool {

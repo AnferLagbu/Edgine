@@ -883,10 +883,6 @@ impl RamFsData {
         })
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-    )]
     /// 将节点截断到 `new_size`: 收缩时释放尾部块, 归零时释放全部数据块
     pub fn truncate(&mut self, node_id: u32, new_size: u64, pwm: u64) -> i32 {
         if node_id as usize >= RAMFS_MAX_NODES {
@@ -912,133 +908,9 @@ impl RamFsData {
         }
 
         if new_size < old_size && new_size > 0 {
-            let last_block_idx =
-                crate::functions::intcast::usize_from_u64(new_size - 1) / RAMFS_BLOCK_SIZE;
-            let offset_in_block =
-                crate::functions::intcast::usize_from_u64(new_size - 1) % RAMFS_BLOCK_SIZE;
-
-            {
-                let block_num = Self::get_or_alloc_block(
-                    &mut self.nodes[node_id as usize],
-                    &mut self.data_area,
-                    &mut self.block_bitmap,
-                    &self.free_blocks,
-                    last_block_idx,
-                );
-
-                if let Some(block_num) = block_num {
-                    if block_num != 0 {
-                        let start = block_num as usize * RAMFS_BLOCK_SIZE + offset_in_block + 1;
-                        let end = ((block_num as usize + 1) * RAMFS_BLOCK_SIZE)
-                            .min(self.data_area.capacity_bytes());
-                        if start < end {
-                            self.data_area.zero(start, end - start);
-                        }
-                    }
-                }
-            }
-
-            let first_block_to_free =
-                crate::functions::intcast::usize_from_u64(new_size + RAMFS_BLOCK_SIZE as u64 - 1)
-                    / RAMFS_BLOCK_SIZE
-                    + 1;
-            let last_block =
-                crate::functions::intcast::usize_from_u64(old_size + RAMFS_BLOCK_SIZE as u64 - 1)
-                    / RAMFS_BLOCK_SIZE;
-
-            {
-                let mut blocks_to_free: Vec<u32> = Vec::new();
-                let node_ref = &self.nodes[node_id as usize];
-
-                for idx in first_block_to_free..last_block.min(DIRECT_BLOCKS) {
-                    if node_ref.direct_blocks[idx] != 0 {
-                        blocks_to_free.push(node_ref.direct_blocks[idx]);
-                    }
-                }
-
-                for block_num in blocks_to_free {
-                    self.block_set_free(block_num);
-                }
-
-                let node_mut = &mut self.nodes[node_id as usize];
-                for idx in first_block_to_free..last_block.min(DIRECT_BLOCKS) {
-                    if node_mut.direct_blocks[idx] != 0 {
-                        node_mut.direct_blocks[idx] = 0;
-                    }
-                }
-
-                let indirect_block = self.nodes[node_id as usize].indirect_block;
-                if first_block_to_free < DIRECT_BLOCKS + INDIRECT_BLOCKS_PER_BLOCK
-                    && indirect_block != 0
-                {
-                    let indirect_start = first_block_to_free.saturating_sub(DIRECT_BLOCKS);
-                    let indirect_end = last_block
-                        .saturating_sub(DIRECT_BLOCKS)
-                        .min(INDIRECT_BLOCKS_PER_BLOCK);
-                    self.free_indirect_chain(indirect_block, indirect_start, indirect_end);
-
-                    if indirect_start == 0 {
-                        self.nodes[node_id as usize].indirect_block = 0;
-                    }
-                }
-
-                let double_indirect_block = self.nodes[node_id as usize].double_indirect_block;
-                if first_block_to_free >= DIRECT_BLOCKS + INDIRECT_BLOCKS_PER_BLOCK
-                    && double_indirect_block != 0
-                {
-                    let double_indirect_start = first_block_to_free
-                        .saturating_sub(DIRECT_BLOCKS + INDIRECT_BLOCKS_PER_BLOCK);
-                    let double_indirect_end =
-                        last_block.saturating_sub(DIRECT_BLOCKS + INDIRECT_BLOCKS_PER_BLOCK);
-                    self.free_double_indirect_chain(
-                        double_indirect_block,
-                        double_indirect_start,
-                        double_indirect_end,
-                    );
-
-                    if double_indirect_start == 0 {
-                        self.nodes[node_id as usize].double_indirect_block = 0;
-                    }
-                }
-            }
+            self.truncate_shrink(node_id, new_size, old_size);
         } else if new_size == 0 {
-            let mut blocks_to_free: Vec<u32> = Vec::new();
-            let indirect_blk = self.nodes[node_id as usize].indirect_block;
-            let double_indirect_blk = self.nodes[node_id as usize].double_indirect_block;
-
-            {
-                let node = &self.nodes[node_id as usize];
-                for i in 0..DIRECT_BLOCKS {
-                    if node.direct_blocks[i] != 0 {
-                        blocks_to_free.push(node.direct_blocks[i]);
-                    }
-                }
-            }
-
-            for block_num in blocks_to_free {
-                self.block_set_free(block_num);
-            }
-
-            let node = &mut self.nodes[node_id as usize];
-            for i in 0..DIRECT_BLOCKS {
-                if node.direct_blocks[i] != 0 {
-                    node.direct_blocks[i] = 0;
-                }
-            }
-
-            if indirect_blk != 0 {
-                self.free_indirect_chain(indirect_blk, 0, INDIRECT_BLOCKS_PER_BLOCK);
-                self.nodes[node_id as usize].indirect_block = 0;
-            }
-
-            if double_indirect_blk != 0 {
-                self.free_double_indirect_chain(
-                    double_indirect_blk,
-                    0,
-                    INDIRECT_BLOCKS_PER_BLOCK * INDIRECT_BLOCKS_PER_BLOCK,
-                );
-                self.nodes[node_id as usize].double_indirect_block = 0;
-            }
+            self.truncate_zero(node_id);
         }
 
         let node = &mut self.nodes[node_id as usize];
@@ -1048,6 +920,144 @@ impl RamFsData {
         dcache::icache_invalidate(self.fs_id, node_id);
 
         0
+    }
+
+    /// 收缩路径: 归零新长度所在块的尾部, 再释放超出新长度的块
+    fn truncate_shrink(&mut self, node_id: u32, new_size: u64, old_size: u64) {
+        let last_block_idx =
+            crate::functions::intcast::usize_from_u64(new_size - 1) / RAMFS_BLOCK_SIZE;
+        let offset_in_block =
+            crate::functions::intcast::usize_from_u64(new_size - 1) % RAMFS_BLOCK_SIZE;
+
+        self.zero_tail_of_block(node_id, last_block_idx, offset_in_block);
+
+        let first_block_to_free =
+            crate::functions::intcast::usize_from_u64(new_size + RAMFS_BLOCK_SIZE as u64 - 1)
+                / RAMFS_BLOCK_SIZE
+                + 1;
+        let last_block =
+            crate::functions::intcast::usize_from_u64(old_size + RAMFS_BLOCK_SIZE as u64 - 1)
+                / RAMFS_BLOCK_SIZE;
+
+        self.free_blocks_beyond(node_id, first_block_to_free, last_block);
+    }
+
+    /// 将新长度所在块中超出新长度的尾部字节归零
+    fn zero_tail_of_block(&mut self, node_id: u32, block_idx: usize, offset_in_block: usize) {
+        let block_num = Self::get_or_alloc_block(
+            &mut self.nodes[node_id as usize],
+            &mut self.data_area,
+            &mut self.block_bitmap,
+            &self.free_blocks,
+            block_idx,
+        );
+
+        if let Some(block_num) = block_num {
+            if block_num != 0 {
+                let start = block_num as usize * RAMFS_BLOCK_SIZE + offset_in_block + 1;
+                let end = ((block_num as usize + 1) * RAMFS_BLOCK_SIZE)
+                    .min(self.data_area.capacity_bytes());
+                if start < end {
+                    self.data_area.zero(start, end - start);
+                }
+            }
+        }
+    }
+
+    /// 释放 `[first_block_to_free, last_block)` 内的数据块并清理级联索引块
+    fn free_blocks_beyond(&mut self, node_id: u32, first_block_to_free: usize, last_block: usize) {
+        let mut blocks_to_free: Vec<u32> = Vec::new();
+        let node_ref = &self.nodes[node_id as usize];
+
+        for idx in first_block_to_free..last_block.min(DIRECT_BLOCKS) {
+            if node_ref.direct_blocks[idx] != 0 {
+                blocks_to_free.push(node_ref.direct_blocks[idx]);
+            }
+        }
+
+        for block_num in blocks_to_free {
+            self.block_set_free(block_num);
+        }
+
+        let node_mut = &mut self.nodes[node_id as usize];
+        for idx in first_block_to_free..last_block.min(DIRECT_BLOCKS) {
+            if node_mut.direct_blocks[idx] != 0 {
+                node_mut.direct_blocks[idx] = 0;
+            }
+        }
+
+        let indirect_block = self.nodes[node_id as usize].indirect_block;
+        if first_block_to_free < DIRECT_BLOCKS + INDIRECT_BLOCKS_PER_BLOCK && indirect_block != 0 {
+            let indirect_start = first_block_to_free.saturating_sub(DIRECT_BLOCKS);
+            let indirect_end = last_block
+                .saturating_sub(DIRECT_BLOCKS)
+                .min(INDIRECT_BLOCKS_PER_BLOCK);
+            self.free_indirect_chain(indirect_block, indirect_start, indirect_end);
+
+            if indirect_start == 0 {
+                self.nodes[node_id as usize].indirect_block = 0;
+            }
+        }
+
+        let double_indirect_block = self.nodes[node_id as usize].double_indirect_block;
+        if first_block_to_free >= DIRECT_BLOCKS + INDIRECT_BLOCKS_PER_BLOCK
+            && double_indirect_block != 0
+        {
+            let double_indirect_start =
+                first_block_to_free.saturating_sub(DIRECT_BLOCKS + INDIRECT_BLOCKS_PER_BLOCK);
+            let double_indirect_end =
+                last_block.saturating_sub(DIRECT_BLOCKS + INDIRECT_BLOCKS_PER_BLOCK);
+            self.free_double_indirect_chain(
+                double_indirect_block,
+                double_indirect_start,
+                double_indirect_end,
+            );
+
+            if double_indirect_start == 0 {
+                self.nodes[node_id as usize].double_indirect_block = 0;
+            }
+        }
+    }
+
+    /// 归零路径: 释放全部直接块与间接块
+    fn truncate_zero(&mut self, node_id: u32) {
+        let mut blocks_to_free: Vec<u32> = Vec::new();
+        let indirect_blk = self.nodes[node_id as usize].indirect_block;
+        let double_indirect_blk = self.nodes[node_id as usize].double_indirect_block;
+
+        {
+            let node = &self.nodes[node_id as usize];
+            for i in 0..DIRECT_BLOCKS {
+                if node.direct_blocks[i] != 0 {
+                    blocks_to_free.push(node.direct_blocks[i]);
+                }
+            }
+        }
+
+        for block_num in blocks_to_free {
+            self.block_set_free(block_num);
+        }
+
+        let node = &mut self.nodes[node_id as usize];
+        for i in 0..DIRECT_BLOCKS {
+            if node.direct_blocks[i] != 0 {
+                node.direct_blocks[i] = 0;
+            }
+        }
+
+        if indirect_blk != 0 {
+            self.free_indirect_chain(indirect_blk, 0, INDIRECT_BLOCKS_PER_BLOCK);
+            self.nodes[node_id as usize].indirect_block = 0;
+        }
+
+        if double_indirect_blk != 0 {
+            self.free_double_indirect_chain(
+                double_indirect_blk,
+                0,
+                INDIRECT_BLOCKS_PER_BLOCK * INDIRECT_BLOCKS_PER_BLOCK,
+            );
+            self.nodes[node_id as usize].double_indirect_block = 0;
+        }
     }
 
     /// 删除路径对应目录项并释放节点与数据块; 错误返回负错误码

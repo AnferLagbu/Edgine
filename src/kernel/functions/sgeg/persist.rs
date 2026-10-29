@@ -199,10 +199,6 @@ fn deserialize_v4(buf: &[u8], p: &mut usize) -> Option<PwmEntrySnapshot> {
 /// 保存身份表到磁盘 (`/pwm.db`).
 ///
 /// 未修改时直接返回 `0`; 写入成功返回 `0`, IO 失败或缓冲不足返回 `-1`.
-#[expect(
-    clippy::large_stack_arrays,
-    reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
-)]
 pub fn save_database() -> i32 {
     let t = get_table();
     if !t.is_modified() {
@@ -211,7 +207,9 @@ pub fn save_database() -> i32 {
 
     let n = t.valid_count();
     let sz = HDR_SZ + n * ENTRY_SZ;
-    let mut buf = [0u8; BUF_SZ];
+    // 序列化缓冲 78KiB 高于 64KiB 内核栈: 堆分配 (原来在栈上物化整块数组,
+    // 既是 clippy `large_stack_arrays` 的指摘点, 也构成真实的栈溢出风险).
+    let mut buf = alloc::vec![0u8; BUF_SZ];
     if sz > buf.len() {
         return -1;
     }
@@ -252,10 +250,6 @@ pub fn save_database() -> i32 {
 /// 从磁盘加载身份表 (`/pwm.db`).
 ///
 /// 文件不存在返回 `0` (视为空库); 校验失败/IO 失败返回 `-1`.
-#[expect(
-    clippy::large_stack_arrays,
-    reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
-)]
 pub fn load_database() -> i32 {
     let fd = vfs_open_safe(DB_PATH, O_RDONLY, 0);
     if fd < 0 {
@@ -293,7 +287,7 @@ pub fn load_database() -> i32 {
         vfs_close_safe(fd.cast_unsigned());
         return -1;
     }
-    let mut data = [0u8; BUF_SZ];
+    let mut data = alloc::vec![0u8; BUF_SZ];
     let dr = vfs_read_safe(fd.cast_unsigned(), &mut data[..ds]);
     vfs_close_safe(fd.cast_unsigned());
     if dr < crate::functions::intcast::low_i32_from_usize(ds) {

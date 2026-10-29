@@ -271,142 +271,78 @@ impl Ext2Fs {
         Ok(bytes_read)
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-    )]
     /// 获取物理块号 (处理间接寻址)
     fn get_physical_block(&mut self, inode: &Ext2Inode, logical: u32) -> Result<u32, KernelError> {
-        let block_size = self.super_block.block_size();
-        let blocks_per_indirect = block_size / 4;
+        let blocks_per_indirect = self.super_block.block_size() / 4;
 
         if logical < 12 {
             // 直接块
-            Ok(inode.i_block[logical as usize])
-        } else if logical < 12 + blocks_per_indirect {
-            // 一次间接
-            let indirect_block = inode.i_block[12];
-            if indirect_block == 0 {
-                return Ok(0);
-            }
-
-            let idx = logical - 12;
-            let block_data = self.read_block(indirect_block)?;
-            let offset = idx as usize * 4;
-
-            if offset + 4 > block_data.len() {
-                return Ok(0);
-            }
-
-            Ok(u32::from_le_bytes([
-                block_data[offset],
-                block_data[offset + 1],
-                block_data[offset + 2],
-                block_data[offset + 3],
-            ]))
-        } else if logical < 12 + blocks_per_indirect + blocks_per_indirect * blocks_per_indirect {
-            // 二次间接
-            let double_block = inode.i_block[13];
-            if double_block == 0 {
-                return Ok(0);
-            }
-
-            let idx = logical - 12 - blocks_per_indirect;
-            let indirect_idx = idx / blocks_per_indirect;
-            let block_idx = idx % blocks_per_indirect;
-
-            // 读取二级间接块
-            let double_data = self.read_block(double_block)?;
-            let indirect_offset = indirect_idx as usize * 4;
-
-            if indirect_offset + 4 > double_data.len() {
-                return Ok(0);
-            }
-
-            let indirect_block = u32::from_le_bytes([
-                double_data[indirect_offset],
-                double_data[indirect_offset + 1],
-                double_data[indirect_offset + 2],
-                double_data[indirect_offset + 3],
-            ]);
-
-            if indirect_block == 0 {
-                return Ok(0);
-            }
-
-            // 读取一级间接块
-            let indirect_data = self.read_block(indirect_block)?;
-            let block_offset = block_idx as usize * 4;
-
-            if block_offset + 4 > indirect_data.len() {
-                return Ok(0);
-            }
-
-            Ok(u32::from_le_bytes([
-                indirect_data[block_offset],
-                indirect_data[block_offset + 1],
-                indirect_data[block_offset + 2],
-                indirect_data[block_offset + 3],
-            ]))
-        } else {
-            // 三次间接
-            let triple_block = inode.i_block[14];
-            if triple_block == 0 {
-                return Ok(0);
-            }
-
-            let idx =
-                logical - 12 - blocks_per_indirect - blocks_per_indirect * blocks_per_indirect;
-            let l1_idx = idx / (blocks_per_indirect * blocks_per_indirect);
-            let l2_idx = (idx / blocks_per_indirect) % blocks_per_indirect;
-            let l3_idx = idx % blocks_per_indirect;
-
-            // 读取三级间接块
-            let triple_data = self.read_block(triple_block)?;
-            let l1_offset = l1_idx as usize * 4;
-            if l1_offset + 4 > triple_data.len() {
-                return Ok(0);
-            }
-            let l2_block = u32::from_le_bytes([
-                triple_data[l1_offset],
-                triple_data[l1_offset + 1],
-                triple_data[l1_offset + 2],
-                triple_data[l1_offset + 3],
-            ]);
-            if l2_block == 0 {
-                return Ok(0);
-            }
-
-            // 读取二级间接块
-            let l2_data = self.read_block(l2_block)?;
-            let l2_offset = l2_idx as usize * 4;
-            if l2_offset + 4 > l2_data.len() {
-                return Ok(0);
-            }
-            let l3_block = u32::from_le_bytes([
-                l2_data[l2_offset],
-                l2_data[l2_offset + 1],
-                l2_data[l2_offset + 2],
-                l2_data[l2_offset + 3],
-            ]);
-            if l3_block == 0 {
-                return Ok(0);
-            }
-
-            // 读取一级间接块
-            let l3_data = self.read_block(l3_block)?;
-            let l3_offset = l3_idx as usize * 4;
-            if l3_offset + 4 > l3_data.len() {
-                return Ok(0);
-            }
-
-            Ok(u32::from_le_bytes([
-                l3_data[l3_offset],
-                l3_data[l3_offset + 1],
-                l3_data[l3_offset + 2],
-                l3_data[l3_offset + 3],
-            ]))
+            return Ok(inode.i_block[logical as usize]);
         }
+
+        let idx = logical - 12;
+        if idx < blocks_per_indirect {
+            // 一次间接
+            return self.read_indirect_slot(inode.i_block[12], idx);
+        }
+
+        let double_idx = idx - blocks_per_indirect;
+        if double_idx < blocks_per_indirect * blocks_per_indirect {
+            // 二次间接
+            return self.read_double_indirect(inode.i_block[13], double_idx, blocks_per_indirect);
+        }
+
+        // 三次间接
+        self.read_triple_indirect(
+            inode.i_block[14],
+            double_idx - blocks_per_indirect * blocks_per_indirect,
+            blocks_per_indirect,
+        )
+    }
+
+    /// 读取间接块 `block` 中第 `idx` 项的块号 (块未分配或越界返回 0)
+    fn read_indirect_slot(&self, block: u32, idx: u32) -> Result<u32, KernelError> {
+        if block == 0 {
+            return Ok(0);
+        }
+
+        let block_data = self.read_block(block)?;
+        let offset = idx as usize * 4;
+        if offset + 4 > block_data.len() {
+            return Ok(0);
+        }
+
+        Ok(u32::from_le_bytes([
+            block_data[offset],
+            block_data[offset + 1],
+            block_data[offset + 2],
+            block_data[offset + 3],
+        ]))
+    }
+
+    /// 解析二次间接: 先定位一级间接块, 再取其第 `idx` 项
+    fn read_double_indirect(
+        &self,
+        block: u32,
+        idx: u32,
+        blocks_per_indirect: u32,
+    ) -> Result<u32, KernelError> {
+        let indirect_block = self.read_indirect_slot(block, idx / blocks_per_indirect)?;
+        self.read_indirect_slot(indirect_block, idx % blocks_per_indirect)
+    }
+
+    /// 解析三次间接: 三级索引逐层下降定位数据块
+    fn read_triple_indirect(
+        &self,
+        block: u32,
+        idx: u32,
+        blocks_per_indirect: u32,
+    ) -> Result<u32, KernelError> {
+        let l2_block =
+            self.read_indirect_slot(block, idx / (blocks_per_indirect * blocks_per_indirect))?;
+        let l3_block =
+            self.read_indirect_slot(l2_block, (idx / blocks_per_indirect) % blocks_per_indirect)?;
+        self.read_indirect_slot(l3_block, idx % blocks_per_indirect)
     }
 
     /// 分配一个新 inode

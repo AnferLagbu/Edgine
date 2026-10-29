@@ -46,112 +46,131 @@ pub fn userfaultfd_syscall(flags: u32) -> i64 {
 /// 实际拷贝长度通过回填用户结构体的 `copy` / `zeropage` 字段返回.
 pub fn ioctl_uffd(fd: i32, request: u64, arg: u64) -> i64 {
     match request {
-        UFFDIO_API => {
-            let mut io = UffdIoApi::default();
-            if !read_struct_from_user(arg, &mut io) {
-                return Errno::EFAULT.as_ret();
-            }
-            match crate::privileged::mm::api_negotiate(fd, io.api, io.features) {
-                Ok(out) => {
-                    if !write_struct_to_user(arg, &out) {
-                        return Errno::EFAULT.as_ret();
-                    }
-                    0
-                }
-                Err(e) => e.as_ret(),
-            }
-        }
-        UFFDIO_REGISTER => {
-            let mut reg = UffdIoRegister::default();
-            if !read_struct_from_user(arg, &mut reg) {
-                return Errno::EFAULT.as_ret();
-            }
-            match crate::privileged::mm::uffd_register(fd, reg.range.start, reg.range.len, reg.mode)
-            {
-                Ok(()) => {
-                    // Linux 回填 ioctls 支持位图; 本实装注册成功即支持全部已实装 ioctl
-                    reg.ioctls = UFFDIO_REGISTER
-                        | UFFDIO_UNREGISTER
-                        | UFFDIO_WAKE
-                        | UFFDIO_COPY
-                        | UFFDIO_ZEROPAGE;
-                    if !write_struct_to_user(arg, &reg) {
-                        return Errno::EFAULT.as_ret();
-                    }
-                    0
-                }
-                Err(e) => e.as_ret(),
-            }
-        }
-        UFFDIO_UNREGISTER | UFFDIO_WAKE => {
-            let mut range = UffdIoRange::default();
-            if !read_struct_from_user(arg, &mut range) {
-                return Errno::EFAULT.as_ret();
-            }
-            let result = if request == UFFDIO_UNREGISTER {
-                crate::privileged::mm::uffd_unregister(fd, range.start, range.len)
-            } else {
-                crate::privileged::mm::uffd_wake(fd, range.start, range.len).map(|_| ())
-            };
-            match result {
-                Ok(()) => 0,
-                Err(e) => e.as_ret(),
-            }
-        }
-        UFFDIO_COPY => {
-            let mut cp = UffdIoCopy::default();
-            if !read_struct_from_user(arg, &mut cp) {
-                return Errno::EFAULT.as_ret();
-            }
-            if crate::functions::intcast::usize_from_u64(cp.len)
-                != crate::functions::intcast::usize_from_u64(crate::privileged::mm::PAGE_SIZE)
-            {
-                return Errno::EINVAL.as_ret();
-            }
-            if !crate::privileged::syscall::raw::check_user_buf(cp.src, cp.len) {
-                return Errno::EFAULT.as_ret();
-            }
-            let mut page =
-                [0u8; crate::functions::intcast::usize_from_u64(crate::privileged::mm::PAGE_SIZE)];
-            let page_len = page.len();
-            match crate::privileged::mm::copy_user::copy_from_user(&mut page, cp.src, page_len) {
-                Ok(n) if n == page_len => {}
-                _ => return Errno::EFAULT.as_ret(),
-            }
-            match crate::privileged::mm::provide_page(fd, cp.dst, Some(&page)) {
-                Ok(()) => {
-                    cp.copy = cp.len.cast_signed();
-                    if !write_struct_to_user(arg, &cp) {
-                        return Errno::EFAULT.as_ret();
-                    }
-                    0
-                }
-                Err(e) => e.as_ret(),
-            }
-        }
-        UFFDIO_ZEROPAGE => {
-            let mut zp = UffdIoZeropage::default();
-            if !read_struct_from_user(arg, &mut zp) {
-                return Errno::EFAULT.as_ret();
-            }
-            if crate::functions::intcast::usize_from_u64(zp.range.len)
-                != crate::functions::intcast::usize_from_u64(crate::privileged::mm::PAGE_SIZE)
-                || zp.range.start % crate::privileged::mm::PAGE_SIZE != 0
-            {
-                return Errno::EINVAL.as_ret();
-            }
-            match crate::privileged::mm::provide_page(fd, zp.range.start, None) {
-                Ok(()) => {
-                    zp.zeropage = zp.range.len.cast_signed();
-                    if !write_struct_to_user(arg, &zp) {
-                        return Errno::EFAULT.as_ret();
-                    }
-                    0
-                }
-                Err(e) => e.as_ret(),
-            }
-        }
+        UFFDIO_API => uffd_negotiate(fd, arg),
+        UFFDIO_REGISTER => uffd_register(fd, arg),
+        UFFDIO_UNREGISTER => uffd_unregister(fd, arg),
+        UFFDIO_WAKE => uffd_wake(fd, arg),
+        UFFDIO_COPY => uffd_copy(fd, arg),
+        UFFDIO_ZEROPAGE => uffd_zeropage(fd, arg),
         _ => Errno::ENOTTY.as_ret(),
+    }
+}
+
+/// `UFFDIO_API`: 协商 API 版本与特性, 成功时回填用户结构体
+fn uffd_negotiate(fd: i32, arg: u64) -> i64 {
+    let mut io = UffdIoApi::default();
+    if !read_struct_from_user(arg, &mut io) {
+        return Errno::EFAULT.as_ret();
+    }
+    match crate::privileged::mm::api_negotiate(fd, io.api, io.features) {
+        Ok(out) => {
+            if !write_struct_to_user(arg, &out) {
+                return Errno::EFAULT.as_ret();
+            }
+            0
+        }
+        Err(e) => e.as_ret(),
+    }
+}
+
+/// `UFFDIO_REGISTER`: 注册缺页区间, 成功时回填已实装 ioctl 位图
+fn uffd_register(fd: i32, arg: u64) -> i64 {
+    let mut reg = UffdIoRegister::default();
+    if !read_struct_from_user(arg, &mut reg) {
+        return Errno::EFAULT.as_ret();
+    }
+    match crate::privileged::mm::uffd_register(fd, reg.range.start, reg.range.len, reg.mode) {
+        Ok(()) => {
+            // Linux 回填 ioctls 支持位图; 本实装注册成功即支持全部已实装 ioctl
+            reg.ioctls =
+                UFFDIO_REGISTER | UFFDIO_UNREGISTER | UFFDIO_WAKE | UFFDIO_COPY | UFFDIO_ZEROPAGE;
+            if !write_struct_to_user(arg, &reg) {
+                return Errno::EFAULT.as_ret();
+            }
+            0
+        }
+        Err(e) => e.as_ret(),
+    }
+}
+
+/// `UFFDIO_UNREGISTER`: 取消注册缺页区间
+fn uffd_unregister(fd: i32, arg: u64) -> i64 {
+    let mut range = UffdIoRange::default();
+    if !read_struct_from_user(arg, &mut range) {
+        return Errno::EFAULT.as_ret();
+    }
+    match crate::privileged::mm::uffd_unregister(fd, range.start, range.len) {
+        Ok(()) => 0,
+        Err(e) => e.as_ret(),
+    }
+}
+
+/// `UFFDIO_WAKE`: 唤醒区间内的缺页等待者
+fn uffd_wake(fd: i32, arg: u64) -> i64 {
+    let mut range = UffdIoRange::default();
+    if !read_struct_from_user(arg, &mut range) {
+        return Errno::EFAULT.as_ret();
+    }
+    match crate::privileged::mm::uffd_wake(fd, range.start, range.len) {
+        Ok(_) => 0,
+        Err(e) => e.as_ret(),
+    }
+}
+
+/// `UFFDIO_COPY`: 将用户提供的页内容填入缺页地址
+fn uffd_copy(fd: i32, arg: u64) -> i64 {
+    let mut cp = UffdIoCopy::default();
+    if !read_struct_from_user(arg, &mut cp) {
+        return Errno::EFAULT.as_ret();
+    }
+    if crate::functions::intcast::usize_from_u64(cp.len)
+        != crate::functions::intcast::usize_from_u64(crate::privileged::mm::PAGE_SIZE)
+    {
+        return Errno::EINVAL.as_ret();
+    }
+    if !crate::privileged::syscall::raw::check_user_buf(cp.src, cp.len) {
+        return Errno::EFAULT.as_ret();
+    }
+    let mut page =
+        [0u8; crate::functions::intcast::usize_from_u64(crate::privileged::mm::PAGE_SIZE)];
+    let page_len = page.len();
+    match crate::privileged::mm::copy_user::copy_from_user(&mut page, cp.src, page_len) {
+        Ok(n) if n == page_len => {}
+        _ => return Errno::EFAULT.as_ret(),
+    }
+    match crate::privileged::mm::provide_page(fd, cp.dst, Some(&page)) {
+        Ok(()) => {
+            cp.copy = cp.len.cast_signed();
+            if !write_struct_to_user(arg, &cp) {
+                return Errno::EFAULT.as_ret();
+            }
+            0
+        }
+        Err(e) => e.as_ret(),
+    }
+}
+
+/// `UFFDIO_ZEROPAGE`: 以零页填入缺页地址
+fn uffd_zeropage(fd: i32, arg: u64) -> i64 {
+    let mut zp = UffdIoZeropage::default();
+    if !read_struct_from_user(arg, &mut zp) {
+        return Errno::EFAULT.as_ret();
+    }
+    if crate::functions::intcast::usize_from_u64(zp.range.len)
+        != crate::functions::intcast::usize_from_u64(crate::privileged::mm::PAGE_SIZE)
+        || zp.range.start % crate::privileged::mm::PAGE_SIZE != 0
+    {
+        return Errno::EINVAL.as_ret();
+    }
+    match crate::privileged::mm::provide_page(fd, zp.range.start, None) {
+        Ok(()) => {
+            zp.zeropage = zp.range.len.cast_signed();
+            if !write_struct_to_user(arg, &zp) {
+                return Errno::EFAULT.as_ret();
+            }
+            0
+        }
+        Err(e) => e.as_ret(),
     }
 }
 

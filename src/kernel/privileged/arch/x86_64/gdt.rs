@@ -397,36 +397,6 @@ struct PerCpuGdt {
     trampoline_stack: AlignedStack<PER_CPU_TRAMPOLINE_SIZE>,
 }
 
-impl PerCpuGdt {
-    #[expect(
-        clippy::large_stack_arrays,
-        reason = "PerCpuGdt 的 syscall/IST 栈数组布局于 BSP_GDT / PMM 分配的 AP GDT, 非栈上分配"
-    )]
-    const fn new() -> Self {
-        Self {
-            entries: [GdtEntry::null(); GDT_MAX_ENTRIES],
-            ptr: GdtPtr { limit: 0, base: 0 },
-            tss: super::tss::TaskStateSegment::zeroed(),
-            syscall: SyscallPerCpu {
-                kernel_rsp: 0,
-                kernel_pml4: 0,
-                user_pml4: 0,
-                user_rsp: 0,
-                trampoline_top: 0,
-                scratch_r12: 0,
-                scratch_r14: 0,
-                scratch_r15: 0,
-            },
-            syscall_stack: [0u8; PER_CPU_SYSCALL_STACK_SIZE],
-            ist0: AlignedStack([0u8; PER_CPU_IST_SIZE]),
-            ist1: AlignedStack([0u8; PER_CPU_IST_SIZE]),
-            ist2: AlignedStack([0u8; PER_CPU_IST_SIZE]),
-            ist3: AlignedStack([0u8; PER_CPU_IST_SIZE]),
-            trampoline_stack: AlignedStack([0u8; PER_CPU_TRAMPOLINE_SIZE]),
-        }
-    }
-}
-
 // ============================================================================
 // 全局状态 (Per-CPU)
 // ============================================================================
@@ -434,13 +404,35 @@ impl PerCpuGdt {
 /// BSP 的静态 GDT 存储.
 ///
 /// BSP 的 GDT 在启动早期 (页分配器就绪之前) 就必须可用, 故固定为静态实例.
-/// `PerCpuGdt::new()` 全零, 该实例落入 `.bss` (不占镜像 `.data`).
+/// 初值全零, 该实例落入 `.bss` (不占镜像 `.data`); 大数组 (`syscall_stack` /
+/// IST 栈) 直接写在 `static` 初值里 —— 静态初值不经函数体, 不会被
+/// `large_stack_arrays` 误判为栈上分配.
 ///
 /// # Safety 不变量
 ///
 /// - **写入时机**: 仅 `gdt_init` (BSP, 单线程早期) 写入
 /// - **运行时**: 各 CPU 只读访问; BSP 独占本槽位
-static BSP_GDT: RacyCell<PerCpuGdt> = RacyCell::new(PerCpuGdt::new());
+static BSP_GDT: RacyCell<PerCpuGdt> = RacyCell::new(PerCpuGdt {
+    entries: [GdtEntry::null(); GDT_MAX_ENTRIES],
+    ptr: GdtPtr { limit: 0, base: 0 },
+    tss: super::tss::TaskStateSegment::zeroed(),
+    syscall: SyscallPerCpu {
+        kernel_rsp: 0,
+        kernel_pml4: 0,
+        user_pml4: 0,
+        user_rsp: 0,
+        trampoline_top: 0,
+        scratch_r12: 0,
+        scratch_r14: 0,
+        scratch_r15: 0,
+    },
+    syscall_stack: [0u8; PER_CPU_SYSCALL_STACK_SIZE],
+    ist0: AlignedStack([0u8; PER_CPU_IST_SIZE]),
+    ist1: AlignedStack([0u8; PER_CPU_IST_SIZE]),
+    ist2: AlignedStack([0u8; PER_CPU_IST_SIZE]),
+    ist3: AlignedStack([0u8; PER_CPU_IST_SIZE]),
+    trampoline_stack: AlignedStack([0u8; PER_CPU_TRAMPOLINE_SIZE]),
+});
 
 /// AP 的 GDT 物理地址表 (按 `cpu_index` 索引, 槽位 0 保留给 BSP).
 ///
@@ -739,7 +731,7 @@ pub fn gdt_init() -> i32 {
 /// 从 PMM 分配连续物理页并以**低半区物理地址**登记到 `AP_GDT[cpu_index]`:
 /// boot 阶段的恒等映射 (phys 0..4GB) 与 `KERNEL_PML4` 保留的低半区使其在 AP
 /// 运行期始终可访问, 无需 `map_page` (内核高半区映射对已恒等的低地址是冗余的).
-/// 分配到的页清零, 与 `PerCpuGdt::new()` 的等价格式 (全零) 一致.
+/// 分配到的页清零, 与 `BSP_GDT` 的全零初值格式一致.
 ///
 /// 返回 `false` 表示 PMM 分配失败 (无可用页), 调用方应放弃启动该 AP.
 ///

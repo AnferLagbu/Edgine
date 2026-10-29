@@ -140,6 +140,243 @@ pub type CExceptionHandler = extern "C" fn(*mut InterruptFrame);
 /// `x86_64` IRQ wrapper 函数指针类型
 pub type CIrqHandler = extern "C" fn(*mut InterruptFrame);
 
+// SAFETY: isr* / irq* / syscall_handler 等符号由 isr.asm 导出, 签名与 C ABI 声明一致
+#[cfg(target_arch = "x86_64")]
+unsafe extern "C" {
+    fn isr0();
+    fn isr1();
+    fn isr2();
+    fn isr3();
+    fn isr4();
+    fn isr5();
+    fn isr6();
+    fn isr7();
+    fn isr8();
+    fn isr9();
+    fn isr10();
+    fn isr11();
+    fn isr12();
+    fn isr13();
+    fn isr14();
+    fn isr15();
+    fn isr16();
+    fn isr17();
+    fn isr18();
+    fn isr19();
+    fn isr20();
+    fn isr21();
+    fn isr22();
+    fn isr23();
+    fn isr24();
+    fn isr25();
+    fn isr26();
+    fn isr27();
+    fn isr28();
+    fn isr29();
+    fn isr30();
+    fn isr31();
+    fn irq0();
+    fn irq1();
+    fn irq2();
+    fn irq3();
+    fn irq4();
+    fn irq5();
+    fn irq6();
+    fn irq7();
+    fn irq8();
+    fn irq9();
+    fn irq10();
+    fn irq11();
+    fn irq12();
+    fn irq13();
+    fn irq14();
+    fn irq15();
+    // 本地向量 stub (0x30 = IRQ_BASE + TICK_IRQ, LAPIC 定时器 tick)
+    fn irq128();
+    // MSI 向量 stub (0x40-0x9F → irq16-irq127)
+    fn irq16();
+    fn irq17();
+    fn irq18();
+    fn irq19();
+    fn irq20();
+    fn irq21();
+    fn irq22();
+    fn irq23();
+    fn irq24();
+    fn irq25();
+    fn irq26();
+    fn irq27();
+    fn irq28();
+    fn irq29();
+    fn irq30();
+    fn irq31();
+    fn irq32();
+    fn irq33();
+    fn irq34();
+    fn irq35();
+    fn irq36();
+    fn irq37();
+    fn irq38();
+    fn irq39();
+    fn irq40();
+    fn irq41();
+    fn irq42();
+    fn irq43();
+    fn irq44();
+    fn irq45();
+    fn irq46();
+    fn irq47();
+    fn irq48();
+    fn irq49();
+    fn irq50();
+    fn irq51();
+    fn irq52();
+    fn irq53();
+    fn irq54();
+    fn irq55();
+    fn irq56();
+    fn irq57();
+    fn irq58();
+    fn irq59();
+    fn irq60();
+    fn irq61();
+    fn irq62();
+    fn irq63();
+    fn irq64();
+    fn irq65();
+    fn irq66();
+    fn irq67();
+    fn irq68();
+    fn irq69();
+    fn irq70();
+    fn irq71();
+    fn irq72();
+    fn irq73();
+    fn irq74();
+    fn irq75();
+    fn irq76();
+    fn irq77();
+    fn irq78();
+    fn irq79();
+    // MSI 向量 stub 续 (0x80-0x9F → irq80-irq127)
+    fn irq80();
+    fn irq81();
+    fn irq82();
+    fn irq83();
+    fn irq84();
+    fn irq85();
+    fn irq86();
+    fn irq87();
+    fn irq88();
+    fn irq89();
+    fn irq90();
+    fn irq91();
+    fn irq92();
+    fn irq93();
+    fn irq94();
+    fn irq95();
+    fn irq96();
+    fn irq97();
+    fn irq98();
+    fn irq99();
+    fn irq100();
+    fn irq101();
+    fn irq102();
+    fn irq103();
+    fn irq104();
+    fn irq105();
+    fn irq106();
+    fn irq107();
+    fn irq108();
+    fn irq109();
+    fn irq110();
+    fn irq111();
+    fn irq112();
+    fn irq113();
+    fn irq114();
+    fn irq115();
+    fn irq116();
+    fn irq117();
+    fn irq118();
+    fn irq119();
+    fn irq120();
+    fn irq121();
+    fn irq122();
+    fn irq123();
+    fn irq124();
+    fn irq125();
+    fn irq126();
+    fn irq127();
+    // IPI 向量 stub (0xFD TLB 失效 / 0xFE reschedule)
+    fn irq253();
+    fn irq254();
+    fn syscall_handler();
+    fn isr0x82();
+}
+
+/// 异常 stub 表 (异常向量 0-31)
+// SAFETY: 表内符号均由 `isr.asm` 导出, C ABI 声明见上方 `unsafe extern "C"` 块;
+// 此处只取函数指针供 IDT 填补使用, 不在本处调用.
+#[cfg(target_arch = "x86_64")]
+static ISR_STUBS: [unsafe extern "C" fn(); 32] = [
+    isr0, isr1, isr2, isr3, isr4, isr5, isr6, isr7, isr8, isr9, isr10, isr11, isr12, isr13, isr14,
+    isr15, isr16, isr17, isr18, isr19, isr20, isr21, isr22, isr23, isr24, isr25, isr26, isr27,
+    isr28, isr29, isr30, isr31,
+];
+
+/// 传统 IRQ stub 表 (8259/IOAPIC 向量 0x20-0x2F)
+// SAFETY: 表内符号均由 `isr.asm` 导出, C ABI 声明见上方 `unsafe extern "C"` 块;
+// 此处只取函数指针供 IDT 填补使用, 不在本处调用.
+#[cfg(target_arch = "x86_64")]
+static IRQ_STUBS: [unsafe extern "C" fn(); 16] = [
+    irq0, irq1, irq2, irq3, irq4, irq5, irq6, irq7, irq8, irq9, irq10, irq11, irq12, irq13, irq14,
+    irq15,
+];
+
+/// MSI 向量 stub 表 (0x40-0x9F → irq16-irq127, 112 个 stub)
+// SAFETY: 表内符号均由 `isr.asm` 导出, C ABI 声明见上方 `unsafe extern "C"` 块;
+// 此处只取函数指针供 IDT 填补使用, 不在本处调用.
+#[cfg(target_arch = "x86_64")]
+static MSI_STUBS: [unsafe extern "C" fn(); 112] = [
+    irq16, irq17, irq18, irq19, irq20, irq21, irq22, irq23, irq24, irq25, irq26, irq27, irq28,
+    irq29, irq30, irq31, irq32, irq33, irq34, irq35, irq36, irq37, irq38, irq39, irq40, irq41,
+    irq42, irq43, irq44, irq45, irq46, irq47, irq48, irq49, irq50, irq51, irq52, irq53, irq54,
+    irq55, irq56, irq57, irq58, irq59, irq60, irq61, irq62, irq63, irq64, irq65, irq66, irq67,
+    irq68, irq69, irq70, irq71, irq72, irq73, irq74, irq75, irq76, irq77, irq78, irq79, irq80,
+    irq81, irq82, irq83, irq84, irq85, irq86, irq87, irq88, irq89, irq90, irq91, irq92, irq93,
+    irq94, irq95, irq96, irq97, irq98, irq99, irq100, irq101, irq102, irq103, irq104, irq105,
+    irq106, irq107, irq108, irq109, irq110, irq111, irq112, irq113, irq114, irq115, irq116, irq117,
+    irq118, irq119, irq120, irq121, irq122, irq123, irq124, irq125, irq126, irq127,
+];
+
+/// IPI 向量 stub 表 (0xFD TLB 失效 / 0xFE reschedule)
+// SAFETY: 表内符号均由 `isr.asm` 导出, C ABI 声明见上方 `unsafe extern "C"` 块;
+// 此处只取函数指针供 IDT 填补使用, 不在本处调用.
+#[cfg(target_arch = "x86_64")]
+static IPI_STUBS: [unsafe extern "C" fn(); 2] = [irq253, irq254];
+
+/// 取 stub 符号的 `KPTI` 高半区地址 (仅 x86_64; aarch64 的 `KERNEL_BASE` 为 0).
+#[cfg(target_arch = "x86_64")]
+macro_rules! stub_addr {
+    ($f:ident) => {{ ($f as *const ()) as usize as u64 + crate::privileged::mm::KERNEL_BASE }};
+}
+
+/// 将 stub 函数表转换为带 `KPTI` 高半区偏移的地址表.
+///
+/// `KPTI`: x86_64 上 ISR stub 由链接器分配在低半部分地址, 但用户页表只映射了
+/// 高半部分内核空间. 中断在用户态触发时, CPU 从 IDT 取 handler 地址并跳转,
+/// 必须是高半部分地址.
+// SAFETY: 入参是上述 `unsafe extern "C"` 块导出的 stub 符号指针, 仅做
+// 函数指针→地址的数值换算, 不解引用也不调用.
+#[cfg(target_arch = "x86_64")]
+fn stub_addrs<const N: usize>(stubs: &[unsafe extern "C" fn(); N]) -> [u64; N] {
+    let mut addrs = [0u64; N];
+    for (slot, stub) in addrs.iter_mut().zip(stubs.iter()) {
+        *slot = (*stub as *const ()) as usize as u64 + crate::privileged::mm::KERNEL_BASE;
+    }
+    addrs
+}
+
 /// 初始化 IDT 子系统 (FFI 导出函数)
 ///
 /// # Safety
@@ -150,381 +387,21 @@ pub type CIrqHandler = extern "C" fn(*mut InterruptFrame);
 /// - `MODULE_INIT_FAILURE` (-1): 失败
 #[unsafe(no_mangle)]
 #[cfg(target_arch = "x86_64")]
-#[expect(
-    clippy::too_many_lines,
-    reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-)]
 pub extern "C" fn idt_init() -> i32 {
-    // SAFETY: isr* / syscall_handler 等符号由 isr.asm 导出, 签名与 C ABI 声明一致
-    unsafe extern "C" {
-        fn isr0();
-        fn isr1();
-        fn isr2();
-        fn isr3();
-        fn isr4();
-        fn isr5();
-        fn isr6();
-        fn isr7();
-        fn isr8();
-        fn isr9();
-        fn isr10();
-        fn isr11();
-        fn isr12();
-        fn isr13();
-        fn isr14();
-        fn isr15();
-        fn isr16();
-        fn isr17();
-        fn isr18();
-        fn isr19();
-        fn isr20();
-        fn isr21();
-        fn isr22();
-        fn isr23();
-        fn isr24();
-        fn isr25();
-        fn isr26();
-        fn isr27();
-        fn isr28();
-        fn isr29();
-        fn isr30();
-        fn isr31();
-        fn irq0();
-        fn irq1();
-        fn irq2();
-        fn irq3();
-        fn irq4();
-        fn irq5();
-        fn irq6();
-        fn irq7();
-        fn irq8();
-        fn irq9();
-        fn irq10();
-        fn irq11();
-        fn irq12();
-        fn irq13();
-        fn irq14();
-        fn irq15();
-        // 本地向量 stub (0x30 = IRQ_BASE + TICK_IRQ, LAPIC 定时器 tick)
-        fn irq128();
-        // MSI 向量 stub (0x40-0x9F → irq16-irq127)
-        fn irq16();
-        fn irq17();
-        fn irq18();
-        fn irq19();
-        fn irq20();
-        fn irq21();
-        fn irq22();
-        fn irq23();
-        fn irq24();
-        fn irq25();
-        fn irq26();
-        fn irq27();
-        fn irq28();
-        fn irq29();
-        fn irq30();
-        fn irq31();
-        fn irq32();
-        fn irq33();
-        fn irq34();
-        fn irq35();
-        fn irq36();
-        fn irq37();
-        fn irq38();
-        fn irq39();
-        fn irq40();
-        fn irq41();
-        fn irq42();
-        fn irq43();
-        fn irq44();
-        fn irq45();
-        fn irq46();
-        fn irq47();
-        fn irq48();
-        fn irq49();
-        fn irq50();
-        fn irq51();
-        fn irq52();
-        fn irq53();
-        fn irq54();
-        fn irq55();
-        fn irq56();
-        fn irq57();
-        fn irq58();
-        fn irq59();
-        fn irq60();
-        fn irq61();
-        fn irq62();
-        fn irq63();
-        fn irq64();
-        fn irq65();
-        fn irq66();
-        fn irq67();
-        fn irq68();
-        fn irq69();
-        fn irq70();
-        fn irq71();
-        fn irq72();
-        fn irq73();
-        fn irq74();
-        fn irq75();
-        fn irq76();
-        fn irq77();
-        fn irq78();
-        fn irq79();
-        // MSI 向量 stub 续 (0x80-0x9F → irq80-irq127)
-        fn irq80();
-        fn irq81();
-        fn irq82();
-        fn irq83();
-        fn irq84();
-        fn irq85();
-        fn irq86();
-        fn irq87();
-        fn irq88();
-        fn irq89();
-        fn irq90();
-        fn irq91();
-        fn irq92();
-        fn irq93();
-        fn irq94();
-        fn irq95();
-        fn irq96();
-        fn irq97();
-        fn irq98();
-        fn irq99();
-        fn irq100();
-        fn irq101();
-        fn irq102();
-        fn irq103();
-        fn irq104();
-        fn irq105();
-        fn irq106();
-        fn irq107();
-        fn irq108();
-        fn irq109();
-        fn irq110();
-        fn irq111();
-        fn irq112();
-        fn irq113();
-        fn irq114();
-        fn irq115();
-        fn irq116();
-        fn irq117();
-        fn irq118();
-        fn irq119();
-        fn irq120();
-        fn irq121();
-        fn irq122();
-        fn irq123();
-        fn irq124();
-        fn irq125();
-        fn irq126();
-        fn irq127();
-        // IPI 向量 stub (0xFD TLB 失效 / 0xFE reschedule)
-        fn irq253();
-        fn irq254();
-        fn syscall_handler();
-        fn isr0x82();
-    }
     use crate::klog_error;
 
     let manager = IdtManager::instance();
 
-    // 获取 ISR 地址表 (从 isr.asm 导出的符号, 使用 fn 指针)
-
-    // KPTI: x86_64 上 ISR stub 由链接器分配在低半部分地址,
-    // 但用户页表只映射了高半部分内核空间. 中断在用户态触发时,
-    // CPU 从 IDT 取 handler 地址并跳转, 必须是高半部分地址.
-    // aarch64 不需要此偏移 (KERNEL_BASE=0).
-    macro_rules! addr {
-        ($f:ident) => {{
-            let lo = ($f as *const ()) as usize as u64;
-            #[cfg(target_arch = "x86_64")]
-            {
-                lo + crate::privileged::mm::KERNEL_BASE
-            }
-            #[cfg(not(target_arch = "x86_64"))]
-            {
-                lo
-            }
-        }};
-    }
-    let isr_table: [u64; 32] = [
-        addr!(isr0),
-        addr!(isr1),
-        addr!(isr2),
-        addr!(isr3),
-        addr!(isr4),
-        addr!(isr5),
-        addr!(isr6),
-        addr!(isr7),
-        addr!(isr8),
-        addr!(isr9),
-        addr!(isr10),
-        addr!(isr11),
-        addr!(isr12),
-        addr!(isr13),
-        addr!(isr14),
-        addr!(isr15),
-        addr!(isr16),
-        addr!(isr17),
-        addr!(isr18),
-        addr!(isr19),
-        addr!(isr20),
-        addr!(isr21),
-        addr!(isr22),
-        addr!(isr23),
-        addr!(isr24),
-        addr!(isr25),
-        addr!(isr26),
-        addr!(isr27),
-        addr!(isr28),
-        addr!(isr29),
-        addr!(isr30),
-        addr!(isr31),
-    ];
-
-    let irq_table: [u64; 16] = [
-        addr!(irq0),
-        addr!(irq1),
-        addr!(irq2),
-        addr!(irq3),
-        addr!(irq4),
-        addr!(irq5),
-        addr!(irq6),
-        addr!(irq7),
-        addr!(irq8),
-        addr!(irq9),
-        addr!(irq10),
-        addr!(irq11),
-        addr!(irq12),
-        addr!(irq13),
-        addr!(irq14),
-        addr!(irq15),
-    ];
-
-    // MSI 向量 stub 表 (0x40-0x9F → irq16-irq127, 112 个 stub)
-    let msi_table: [u64; 112] = [
-        addr!(irq16),
-        addr!(irq17),
-        addr!(irq18),
-        addr!(irq19),
-        addr!(irq20),
-        addr!(irq21),
-        addr!(irq22),
-        addr!(irq23),
-        addr!(irq24),
-        addr!(irq25),
-        addr!(irq26),
-        addr!(irq27),
-        addr!(irq28),
-        addr!(irq29),
-        addr!(irq30),
-        addr!(irq31),
-        addr!(irq32),
-        addr!(irq33),
-        addr!(irq34),
-        addr!(irq35),
-        addr!(irq36),
-        addr!(irq37),
-        addr!(irq38),
-        addr!(irq39),
-        addr!(irq40),
-        addr!(irq41),
-        addr!(irq42),
-        addr!(irq43),
-        addr!(irq44),
-        addr!(irq45),
-        addr!(irq46),
-        addr!(irq47),
-        addr!(irq48),
-        addr!(irq49),
-        addr!(irq50),
-        addr!(irq51),
-        addr!(irq52),
-        addr!(irq53),
-        addr!(irq54),
-        addr!(irq55),
-        addr!(irq56),
-        addr!(irq57),
-        addr!(irq58),
-        addr!(irq59),
-        addr!(irq60),
-        addr!(irq61),
-        addr!(irq62),
-        addr!(irq63),
-        addr!(irq64),
-        addr!(irq65),
-        addr!(irq66),
-        addr!(irq67),
-        addr!(irq68),
-        addr!(irq69),
-        addr!(irq70),
-        addr!(irq71),
-        addr!(irq72),
-        addr!(irq73),
-        addr!(irq74),
-        addr!(irq75),
-        addr!(irq76),
-        addr!(irq77),
-        addr!(irq78),
-        addr!(irq79),
-        addr!(irq80),
-        addr!(irq81),
-        addr!(irq82),
-        addr!(irq83),
-        addr!(irq84),
-        addr!(irq85),
-        addr!(irq86),
-        addr!(irq87),
-        addr!(irq88),
-        addr!(irq89),
-        addr!(irq90),
-        addr!(irq91),
-        addr!(irq92),
-        addr!(irq93),
-        addr!(irq94),
-        addr!(irq95),
-        addr!(irq96),
-        addr!(irq97),
-        addr!(irq98),
-        addr!(irq99),
-        addr!(irq100),
-        addr!(irq101),
-        addr!(irq102),
-        addr!(irq103),
-        addr!(irq104),
-        addr!(irq105),
-        addr!(irq106),
-        addr!(irq107),
-        addr!(irq108),
-        addr!(irq109),
-        addr!(irq110),
-        addr!(irq111),
-        addr!(irq112),
-        addr!(irq113),
-        addr!(irq114),
-        addr!(irq115),
-        addr!(irq116),
-        addr!(irq117),
-        addr!(irq118),
-        addr!(irq119),
-        addr!(irq120),
-        addr!(irq121),
-        addr!(irq122),
-        addr!(irq123),
-        addr!(irq124),
-        addr!(irq125),
-        addr!(irq126),
-        addr!(irq127),
-    ];
+    let isr_table: [u64; 32] = stub_addrs(&ISR_STUBS);
+    let irq_table: [u64; 16] = stub_addrs(&IRQ_STUBS);
+    let msi_table: [u64; 112] = stub_addrs(&MSI_STUBS);
+    let ipi_table: [u64; 2] = stub_addrs(&IPI_STUBS);
 
     match manager.init(
         &isr_table,
         &irq_table,
-        addr!(syscall_handler),
-        addr!(isr0x82),
+        stub_addr!(syscall_handler),
+        stub_addr!(isr0x82),
     ) {
         Ok(()) => {}
         Err(msg) => {
@@ -539,10 +416,9 @@ pub extern "C" fn idt_init() -> i32 {
     // 编程 tick 本地向量门 (TICK_VECTOR = 0x30): LAPIC 定时器由本核 LVT 直接
     // 投递, 不经 8259/IOAPIC; 与 `register_irq(TICK_IRQ, ..)` 的槽位同一真源.
     // 必须早于任何 `program_timer` 装配 (否则首个 tick 无门 → #GP → #DF).
-    manager.init_local_vector(TICK_VECTOR, addr!(irq128));
+    manager.init_local_vector(TICK_VECTOR, stub_addr!(irq128));
 
     // 编程 IPI 向量 IDT 门 (0xFD TLB 失效 / 0xFE reschedule)
-    let ipi_table: [u64; 2] = [addr!(irq253), addr!(irq254)];
     manager.init_ipi_idt(ipi_table);
 
     MODULE_INIT_SUCCESS

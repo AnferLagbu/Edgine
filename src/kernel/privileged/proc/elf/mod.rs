@@ -148,10 +148,6 @@ pub fn elf_load(
     elf_load_with_bias(mm, elf_data, elf_size, 0)
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-)]
 /// 加载 ELF 文件到指定地址空间, 支持可选加载偏移 (PIE/ASLR).
 ///
 /// `load_bias` = 0 表示 `ET_EXEC` (固定地址加载).
@@ -225,97 +221,9 @@ pub fn elf_load_with_bias(
             continue;
         }
 
-        let vaddr_start = (phdr.p_vaddr + bias) & !(PAGE_SIZE - 1);
-        let vaddr_end_raw = phdr
-            .p_vaddr
-            .checked_add(phdr.p_memsz)
-            .ok_or("ELF: vaddr + memsz overflow")?
-            + bias;
-        let vaddr_end = crate::privileged::lib::usize_from_u64(
-            (vaddr_end_raw + PAGE_SIZE - 1) & !(PAGE_SIZE - 1),
-        );
-        let filesz = crate::privileged::lib::usize_from_u64(phdr.p_filesz);
-        let file_offset = crate::privileged::lib::usize_from_u64(phdr.p_offset);
-
-        let file_data_end = phdr
-            .p_offset
-            .checked_add(phdr.p_filesz)
-            .ok_or("ELF: p_offset + p_filesz overflow")?;
-        if file_data_end > elf_size {
-            continue;
-        }
-
-        if vaddr_end as u64 > max_vaddr {
-            max_vaddr = vaddr_end as u64;
-        }
-
-        let mut page_flags = PageFlags::USER;
-        if phdr.p_flags & PF_R != 0 {
-            page_flags |= PageFlags::PRESENT;
-        }
-        if phdr.p_flags & PF_W != 0 {
-            page_flags |= PageFlags::WRITABLE;
-        }
-        if phdr.p_flags & PF_X == 0 {
-            page_flags |= PageFlags::NX;
-        }
-
-        let vma = Vma::new(
-            crate::privileged::lib::usize_from_u64(vaddr_start),
-            vaddr_end,
-            page_flags,
-            VmaType::Anonymous,
-        );
-        mm.insert_vma(vma).map_err(|_| "VMA insertion failed")?;
-
-        // 复制段数据到物理页
-        let pml4 = crate::privileged::mm::get_current_pml4();
-
-        let file_end = file_offset + filesz;
-        let mut cur = vaddr_start;
-
-        while cur < vaddr_end as u64 {
-            let phys = crate::privileged::mm::pmm_alloc_page_phys().ok_or("OOM loading ELF")?;
-
-            let page_virt = phys.to_virt();
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-            unsafe {
-                core::ptr::write_bytes(
-                    page_virt.0 as *mut u8,
-                    0,
-                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
-                );
-            }
-
-            let copy_start = if crate::privileged::lib::usize_from_u64(cur) < file_end {
-                file_offset + crate::privileged::lib::usize_from_u64(cur - vaddr_start)
-            } else {
-                file_end
-            };
-            let copy_len = if copy_start < file_end {
-                (file_end - copy_start).min(crate::privileged::lib::usize_from_u64(PAGE_SIZE))
-            } else {
-                0
-            };
-
-            if copy_len > 0 {
-                // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        elf_data.add(copy_start),
-                        page_virt.0 as *mut u8,
-                        copy_len,
-                    );
-                }
-            }
-
-            crate::privileged::mm::Vmm::map_page_in_table(
-                pml4,
-                VirtAddr(cur),
-                phys,
-                page_flags | PageFlags::PRESENT,
-            );
-            cur += PAGE_SIZE;
+        let vaddr_end = elf_load_segment(mm, &phdr, bias, elf_data, elf_size)?;
+        if vaddr_end > max_vaddr {
+            max_vaddr = vaddr_end;
         }
     }
 
@@ -325,6 +233,107 @@ pub fn elf_load_with_bias(
     crate::privileged::mm::vma_set_current_mm(core::ptr::from_ref::<MmStruct>(mm));
 
     Ok(result)
+}
+
+/// 加载单个 `PT_LOAD` 段: 建 VMA + 分配物理页 + 拷贝段数据 + 建立映射.
+///
+/// 返回该段的页对齐结束地址 (`vaddr_end`), 供调用方累计 `max_vaddr`;
+/// 返回 0 表示该段数据超出 ELF 文件范围而被跳过 (与调用方 `continue` 等价).
+fn elf_load_segment(
+    mm: &MmStruct,
+    phdr: &Elf64Phdr,
+    bias: u64,
+    elf_data: *const u8,
+    elf_size: u64,
+) -> Result<u64, &'static str> {
+    let vaddr_start = (phdr.p_vaddr + bias) & !(PAGE_SIZE - 1);
+    let vaddr_end_raw = phdr
+        .p_vaddr
+        .checked_add(phdr.p_memsz)
+        .ok_or("ELF: vaddr + memsz overflow")?
+        + bias;
+    let vaddr_end =
+        crate::privileged::lib::usize_from_u64((vaddr_end_raw + PAGE_SIZE - 1) & !(PAGE_SIZE - 1));
+    let filesz = crate::privileged::lib::usize_from_u64(phdr.p_filesz);
+    let file_offset = crate::privileged::lib::usize_from_u64(phdr.p_offset);
+
+    let file_data_end = phdr
+        .p_offset
+        .checked_add(phdr.p_filesz)
+        .ok_or("ELF: p_offset + p_filesz overflow")?;
+    if file_data_end > elf_size {
+        return Ok(0);
+    }
+
+    let mut page_flags = PageFlags::USER;
+    if phdr.p_flags & PF_R != 0 {
+        page_flags |= PageFlags::PRESENT;
+    }
+    if phdr.p_flags & PF_W != 0 {
+        page_flags |= PageFlags::WRITABLE;
+    }
+    if phdr.p_flags & PF_X == 0 {
+        page_flags |= PageFlags::NX;
+    }
+
+    let vma = Vma::new(
+        crate::privileged::lib::usize_from_u64(vaddr_start),
+        vaddr_end,
+        page_flags,
+        VmaType::Anonymous,
+    );
+    mm.insert_vma(vma).map_err(|_| "VMA insertion failed")?;
+
+    // 复制段数据到物理页
+    let pml4 = crate::privileged::mm::get_current_pml4();
+
+    let file_end = file_offset + filesz;
+    let mut cur = vaddr_start;
+
+    while cur < vaddr_end as u64 {
+        let phys = crate::privileged::mm::pmm_alloc_page_phys().ok_or("OOM loading ELF")?;
+
+        let page_virt = phys.to_virt();
+        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        unsafe {
+            core::ptr::write_bytes(
+                page_virt.0 as *mut u8,
+                0,
+                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+            );
+        }
+
+        let copy_start = if crate::privileged::lib::usize_from_u64(cur) < file_end {
+            file_offset + crate::privileged::lib::usize_from_u64(cur - vaddr_start)
+        } else {
+            file_end
+        };
+        let copy_len = if copy_start < file_end {
+            (file_end - copy_start).min(crate::privileged::lib::usize_from_u64(PAGE_SIZE))
+        } else {
+            0
+        };
+
+        if copy_len > 0 {
+            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    elf_data.add(copy_start),
+                    page_virt.0 as *mut u8,
+                    copy_len,
+                );
+            }
+        }
+
+        crate::privileged::mm::Vmm::map_page_in_table(
+            pml4,
+            VirtAddr(cur),
+            phys,
+            page_flags | PageFlags::PRESENT,
+        );
+        cur += PAGE_SIZE;
+    }
+    Ok(vaddr_end as u64)
 }
 
 /// edgine 动态链接器路径 (替代 Linux ld-linux-*.so.2)

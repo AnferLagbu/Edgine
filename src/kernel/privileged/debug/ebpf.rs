@@ -1324,158 +1324,158 @@ pub fn bpf_is_initialized() -> bool {
 ///   5 = `PROG_LOAD`
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-)]
 pub extern "C" fn sys_bpf(cmd: u64, attr: u64, size: u64) -> i64 {
     if !bpf_is_initialized() {
         return -(11i64); // EAGAIN
     }
 
     match cmd {
-        0 => {
-            // BPF_MAP_CREATE
-            // attr 指向: [map_type:u32, key_size:u32, value_size:u32, max_entries:u32]
-            if size < 16 || attr == 0 {
-                return -(22i64);
-            }
-            let attr_ptr = attr as *const u32;
-            // SAFETY: attr 指针由 syscall 入口保证有效, size 已校验 ≥ 16
-            let (map_type, key_size, value_size, max_entries) = unsafe {
-                (
-                    core::ptr::read_unaligned(attr_ptr),
-                    core::ptr::read_unaligned(attr_ptr.add(1)),
-                    core::ptr::read_unaligned(attr_ptr.add(2)),
-                    core::ptr::read_unaligned(attr_ptr.add(3)),
-                )
-            };
-            let Some(mt) = BpfMapType::from_u32(map_type) else {
-                return -(22i64);
-            };
-            bpf_subsystem().map_create(mt, key_size, value_size, max_entries)
-        }
-        1 => {
-            // BPF_MAP_LOOKUP_ELEM
-            // attr 布局: [map_fd:u32, key_ptr:u64, value_ptr:u64]
-            if size < 20 || attr == 0 {
-                return -(22i64);
-            }
-            let attr_ptr = attr as *const u64;
-            // SAFETY: attr 指针由 syscall 入口保证有效, size 已校验
-            let (map_fd, key_ptr, val_ptr) = unsafe {
-                (
-                    crate::privileged::lib::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr)),
-                    core::ptr::read_unaligned(attr_ptr.add(1)),
-                    core::ptr::read_unaligned(attr_ptr.add(2)),
-                )
-            };
-            // 获取 map 的 key_size
-            let key_size = {
-                let maps = bpf_subsystem().maps.lock();
-                match maps.get(&map_fd) {
-                    Some(m) => m.def().key_size as usize,
-                    None => return -(9i64),
-                }
-            };
-            let val_size = {
-                let maps = bpf_subsystem().maps.lock();
-                match maps.get(&map_fd) {
-                    Some(m) => m.def().value_size as usize,
-                    None => return -(9i64),
-                }
-            };
-            // SAFETY: key_ptr 由用户态传入, 大小与 map 定义一致
-            let key = unsafe { core::slice::from_raw_parts(key_ptr as *const u8, key_size) };
-            let mut value = alloc::vec![0u8; val_size];
-            let result = bpf_subsystem().map_lookup_elem(map_fd, key, &mut value);
-            if result == 0 {
-                // SAFETY: val_ptr 由用户态传入, 大小与 map 定义一致
-                unsafe {
-                    core::ptr::copy_nonoverlapping(value.as_ptr(), val_ptr as *mut u8, val_size);
-                }
-            }
-            result
-        }
-        2 => {
-            // BPF_MAP_UPDATE_ELEM
-            // attr 布局: [map_fd:u32, key_ptr:u64, value_ptr:u64, flags:u64]
-            if size < 28 || attr == 0 {
-                return -(22i64);
-            }
-            let attr_ptr = attr as *const u64;
-            // SAFETY: attr 指针由 syscall 入口保证有效, size 已校验
-            let (map_fd, key_ptr, val_ptr) = unsafe {
-                (
-                    crate::privileged::lib::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr)),
-                    core::ptr::read_unaligned(attr_ptr.add(1)),
-                    core::ptr::read_unaligned(attr_ptr.add(2)),
-                )
-            };
-            let (key_size, val_size) = {
-                let maps = bpf_subsystem().maps.lock();
-                match maps.get(&map_fd) {
-                    Some(m) => (m.def().key_size as usize, m.def().value_size as usize),
-                    None => return -(9i64),
-                }
-            };
-            // SAFETY: key_ptr/val_ptr 由用户态传入, 大小与 map 定义一致
-            let key = unsafe { core::slice::from_raw_parts(key_ptr as *const u8, key_size) };
-            // SAFETY: 同上
-            let value = unsafe { core::slice::from_raw_parts(val_ptr as *const u8, val_size) };
-            bpf_subsystem().map_update_elem(map_fd, key, value)
-        }
-        3 => {
-            // BPF_MAP_DELETE_ELEM
-            if size < 12 || attr == 0 {
-                return -(22i64);
-            }
-            let attr_ptr = attr as *const u64;
-            // SAFETY: attr 指针由 syscall 入口保证有效, size 已校验
-            let (map_fd, key_ptr) = unsafe {
-                (
-                    crate::privileged::lib::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr)),
-                    core::ptr::read_unaligned(attr_ptr.add(1)),
-                )
-            };
-            let key_size = {
-                let maps = bpf_subsystem().maps.lock();
-                match maps.get(&map_fd) {
-                    Some(m) => m.def().key_size as usize,
-                    None => return -(9i64),
-                }
-            };
-            // SAFETY: key_ptr 由用户态传入, 大小与 map 定义一致
-            let key = unsafe { core::slice::from_raw_parts(key_ptr as *const u8, key_size) };
-            bpf_subsystem().map_delete_elem(map_fd, key)
-        }
-        5 => {
-            // BPF_PROG_LOAD
-            // attr 布局: [prog_type:u32, insn_cnt:u32, insns_ptr:u64, name:u64]
-            if size < 24 || attr == 0 {
-                return -(22i64);
-            }
-            let attr_ptr = attr as *const u64;
-            // SAFETY: attr 指针由 syscall 入口保证有效, size 已校验
-            let (prog_type, insn_cnt, insns_ptr) = unsafe {
-                let lo =
-                    crate::privileged::lib::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr));
-                let hi = core::ptr::read_unaligned(attr_ptr.add(0)) >> 32;
-                (lo, hi as u32, core::ptr::read_unaligned(attr_ptr.add(1)))
-            };
-            let Some(pt) = BpfProgType::from_u32(prog_type) else {
-                return -(22i64);
-            };
-            if insn_cnt == 0 || insn_cnt > BPF_MAX_INSNS {
-                return -(22i64);
-            }
-            // SAFETY: insns_ptr 由用户态传入, insn_cnt 已校验范围
-            let insns_slice = unsafe {
-                core::slice::from_raw_parts(insns_ptr as *const BpfInsn, insn_cnt as usize)
-            };
-            let insns: Vec<BpfInsn> = insns_slice.to_vec();
-            bpf_subsystem().prog_load(pt, insns)
-        }
+        0 => bpf_cmd_map_create(attr, size),
+        1 => bpf_cmd_map_lookup_elem(attr, size),
+        2 => bpf_cmd_map_update_elem(attr, size),
+        3 => bpf_cmd_map_delete_elem(attr, size),
+        5 => bpf_cmd_prog_load(attr, size),
         _ => -(38i64), // ENOSYS
     }
+}
+
+/// `BPF_MAP_CREATE`: attr 布局 `[map_type:u32, key_size:u32, value_size:u32, max_entries:u32]`
+fn bpf_cmd_map_create(attr: u64, size: u64) -> i64 {
+    if size < 16 || attr == 0 {
+        return -(22i64);
+    }
+    let attr_ptr = attr as *const u32;
+    // SAFETY: attr 指针由 syscall 入口保证有效, size 已校验 ≥ 16
+    let (map_type, key_size, value_size, max_entries) = unsafe {
+        (
+            core::ptr::read_unaligned(attr_ptr),
+            core::ptr::read_unaligned(attr_ptr.add(1)),
+            core::ptr::read_unaligned(attr_ptr.add(2)),
+            core::ptr::read_unaligned(attr_ptr.add(3)),
+        )
+    };
+    let Some(mt) = BpfMapType::from_u32(map_type) else {
+        return -(22i64);
+    };
+    bpf_subsystem().map_create(mt, key_size, value_size, max_entries)
+}
+
+/// `BPF_MAP_LOOKUP_ELEM`: attr 布局 `[map_fd:u32, key_ptr:u64, value_ptr:u64]`
+fn bpf_cmd_map_lookup_elem(attr: u64, size: u64) -> i64 {
+    if size < 20 || attr == 0 {
+        return -(22i64);
+    }
+    let attr_ptr = attr as *const u64;
+    // SAFETY: attr 指针由 syscall 入口保证有效, size 已校验
+    let (map_fd, key_ptr, val_ptr) = unsafe {
+        (
+            crate::privileged::lib::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr)),
+            core::ptr::read_unaligned(attr_ptr.add(1)),
+            core::ptr::read_unaligned(attr_ptr.add(2)),
+        )
+    };
+    // 获取 map 的 key_size
+    let key_size = {
+        let maps = bpf_subsystem().maps.lock();
+        match maps.get(&map_fd) {
+            Some(m) => m.def().key_size as usize,
+            None => return -(9i64),
+        }
+    };
+    let val_size = {
+        let maps = bpf_subsystem().maps.lock();
+        match maps.get(&map_fd) {
+            Some(m) => m.def().value_size as usize,
+            None => return -(9i64),
+        }
+    };
+    // SAFETY: key_ptr 由用户态传入, 大小与 map 定义一致
+    let key = unsafe { core::slice::from_raw_parts(key_ptr as *const u8, key_size) };
+    let mut value = alloc::vec![0u8; val_size];
+    let result = bpf_subsystem().map_lookup_elem(map_fd, key, &mut value);
+    if result == 0 {
+        // SAFETY: val_ptr 由用户态传入, 大小与 map 定义一致
+        unsafe {
+            core::ptr::copy_nonoverlapping(value.as_ptr(), val_ptr as *mut u8, val_size);
+        }
+    }
+    result
+}
+
+/// `BPF_MAP_UPDATE_ELEM`: attr 布局 `[map_fd:u32, key_ptr:u64, value_ptr:u64, flags:u64]`
+fn bpf_cmd_map_update_elem(attr: u64, size: u64) -> i64 {
+    if size < 28 || attr == 0 {
+        return -(22i64);
+    }
+    let attr_ptr = attr as *const u64;
+    // SAFETY: attr 指针由 syscall 入口保证有效, size 已校验
+    let (map_fd, key_ptr, val_ptr) = unsafe {
+        (
+            crate::privileged::lib::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr)),
+            core::ptr::read_unaligned(attr_ptr.add(1)),
+            core::ptr::read_unaligned(attr_ptr.add(2)),
+        )
+    };
+    let (key_size, val_size) = {
+        let maps = bpf_subsystem().maps.lock();
+        match maps.get(&map_fd) {
+            Some(m) => (m.def().key_size as usize, m.def().value_size as usize),
+            None => return -(9i64),
+        }
+    };
+    // SAFETY: key_ptr/val_ptr 由用户态传入, 大小与 map 定义一致
+    let key = unsafe { core::slice::from_raw_parts(key_ptr as *const u8, key_size) };
+    // SAFETY: 同上
+    let value = unsafe { core::slice::from_raw_parts(val_ptr as *const u8, val_size) };
+    bpf_subsystem().map_update_elem(map_fd, key, value)
+}
+
+/// `BPF_MAP_DELETE_ELEM`: attr 布局 `[map_fd:u32, key_ptr:u64]`
+fn bpf_cmd_map_delete_elem(attr: u64, size: u64) -> i64 {
+    if size < 12 || attr == 0 {
+        return -(22i64);
+    }
+    let attr_ptr = attr as *const u64;
+    // SAFETY: attr 指针由 syscall 入口保证有效, size 已校验
+    let (map_fd, key_ptr) = unsafe {
+        (
+            crate::privileged::lib::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr)),
+            core::ptr::read_unaligned(attr_ptr.add(1)),
+        )
+    };
+    let key_size = {
+        let maps = bpf_subsystem().maps.lock();
+        match maps.get(&map_fd) {
+            Some(m) => m.def().key_size as usize,
+            None => return -(9i64),
+        }
+    };
+    // SAFETY: key_ptr 由用户态传入, 大小与 map 定义一致
+    let key = unsafe { core::slice::from_raw_parts(key_ptr as *const u8, key_size) };
+    bpf_subsystem().map_delete_elem(map_fd, key)
+}
+
+/// `BPF_PROG_LOAD`: attr 布局 `[prog_type:u32, insn_cnt:u32, insns_ptr:u64, name:u64]`
+fn bpf_cmd_prog_load(attr: u64, size: u64) -> i64 {
+    if size < 24 || attr == 0 {
+        return -(22i64);
+    }
+    let attr_ptr = attr as *const u64;
+    // SAFETY: attr 指针由 syscall 入口保证有效, size 已校验
+    let (prog_type, insn_cnt, insns_ptr) = unsafe {
+        let lo = crate::privileged::lib::low_u32_from_u64(core::ptr::read_unaligned(attr_ptr));
+        let hi = core::ptr::read_unaligned(attr_ptr.add(0)) >> 32;
+        (lo, hi as u32, core::ptr::read_unaligned(attr_ptr.add(1)))
+    };
+    let Some(pt) = BpfProgType::from_u32(prog_type) else {
+        return -(22i64);
+    };
+    if insn_cnt == 0 || insn_cnt > BPF_MAX_INSNS {
+        return -(22i64);
+    }
+    // SAFETY: insns_ptr 由用户态传入, insn_cnt 已校验范围
+    let insns_slice =
+        unsafe { core::slice::from_raw_parts(insns_ptr as *const BpfInsn, insn_cnt as usize) };
+    let insns: Vec<BpfInsn> = insns_slice.to_vec();
+    bpf_subsystem().prog_load(pt, insns)
 }

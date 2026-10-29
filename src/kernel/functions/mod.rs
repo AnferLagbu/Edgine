@@ -53,7 +53,6 @@
 #![allow(clippy::manual_c_str_literals)]
 #![allow(clippy::empty_line_after_doc_comments)]
 #![allow(clippy::result_unit_err)]
-#![allow(clippy::too_many_lines)]
 #![allow(clippy::module_inception)]
 #![allow(clippy::new_without_default)]
 #![allow(clippy::collapsible_if)]

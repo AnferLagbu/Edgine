@@ -61,10 +61,6 @@ pub fn clone_syscall(
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-)]
 /// clone 实现 (0 unsafe) — 页表/进程表/用户内存写入全部经 privileged safe API.
 ///
 /// 自 `privileged/syscall/clone.rs` 下沉; 原三处 `unsafe` 用户态 TID 写入改用
@@ -91,53 +87,77 @@ fn clone_impl(
 
     // 如果没有 CLONE_VM, 行为等同于 fork
     if flags & CLONE_VM == 0 {
-        let child_pid = api::sys_fork();
-        if child_pid == 0 {
-            return Errno::ENOMEM.as_ret();
-        }
-
-        // 如果指定了 child_stack, 修改子进程的 RSP
-        if child_stack != 0 {
-            let _ = api::process_with_mut(child_pid, |p| {
-                let mut ctx = p.context.lock();
-                ctx.rsp = child_stack;
-            });
-        }
-
-        // CLONE_PARENT_SETTID: 写 TID 到 parent_tidptr
-        if flags & CLONE_PARENT_SETTID != 0 && parent_tidptr != 0 {
-            let tid: i32 = child_pid.cast_signed();
-            let _ = crate::privileged::syscall::api::write_struct_to_user(parent_tidptr, &tid);
-        }
-
-        // CLONE_CHILD_CLEARTID: 登记清除地址, 退出时写 0 并 futex 唤醒.
-        // fork 路径不处理 CLONE_CHILD_SETTID (父上下文写入会落在父地址空间,
-        // 子进程 COW 后不可见; Linux 同样仅在子上下文/共享地址空间写).
-        if flags & CLONE_CHILD_CLEARTID != 0 && child_tidptr != 0 {
-            let _ = api::process_with_mut(child_pid, |p| {
-                p.clear_child_tid
-                    .store(child_tidptr, core::sync::atomic::Ordering::Release);
-            });
-        }
-
-        // D1: CLONE_NEW* — 为子进程创建新 namespace
-        let new_ns_flags = flags & crate::privileged::proc::namespace::CLONE_NEW_ALL;
-        if new_ns_flags != 0 {
-            let _ = api::process_with_mut(child_pid, |p| {
-                let parent_ns = {
-                    // 子进程已通过 fork 继承了父进程的 namespace
-                    // 现在根据 CLONE_NEW* 创建新实例
-                    let current_ns = p.namespaces.lock();
-                    crate::privileged::proc::NamespaceSet::clone_from(&current_ns, new_ns_flags)
-                };
-                *p.namespaces.lock() = parent_ns;
-            });
-        }
-
-        return i64::from(child_pid);
+        return clone_fork_path(flags, child_stack, parent_tidptr, child_tidptr);
     }
 
     // CLONE_VM: 共享地址空间 (创建线程)
+    clone_vm_path(
+        flags,
+        child_stack,
+        parent_tidptr,
+        child_tidptr,
+        tls,
+        parent_pid,
+    )
+}
+
+/// fork 路径 (`flags & CLONE_VM == 0`): 复制地址空间 (COW) 并处理 TID 标志
+fn clone_fork_path(flags: u64, child_stack: u64, parent_tidptr: u64, child_tidptr: u64) -> i64 {
+    let child_pid = api::sys_fork();
+    if child_pid == 0 {
+        return Errno::ENOMEM.as_ret();
+    }
+
+    // 如果指定了 child_stack, 修改子进程的 RSP
+    if child_stack != 0 {
+        let _ = api::process_with_mut(child_pid, |p| {
+            let mut ctx = p.context.lock();
+            ctx.rsp = child_stack;
+        });
+    }
+
+    // CLONE_PARENT_SETTID: 写 TID 到 parent_tidptr
+    if flags & CLONE_PARENT_SETTID != 0 && parent_tidptr != 0 {
+        let tid: i32 = child_pid.cast_signed();
+        let _ = crate::privileged::syscall::api::write_struct_to_user(parent_tidptr, &tid);
+    }
+
+    // CLONE_CHILD_CLEARTID: 登记清除地址, 退出时写 0 并 futex 唤醒.
+    // fork 路径不处理 CLONE_CHILD_SETTID (父上下文写入会落在父地址空间,
+    // 子进程 COW 后不可见; Linux 同样仅在子上下文/共享地址空间写).
+    if flags & CLONE_CHILD_CLEARTID != 0 && child_tidptr != 0 {
+        let _ = api::process_with_mut(child_pid, |p| {
+            p.clear_child_tid
+                .store(child_tidptr, core::sync::atomic::Ordering::Release);
+        });
+    }
+
+    // D1: CLONE_NEW* — 为子进程创建新 namespace
+    let new_ns_flags = flags & crate::privileged::proc::namespace::CLONE_NEW_ALL;
+    if new_ns_flags != 0 {
+        let _ = api::process_with_mut(child_pid, |p| {
+            let parent_ns = {
+                // 子进程已通过 fork 继承了父进程的 namespace
+                // 现在根据 CLONE_NEW* 创建新实例
+                let current_ns = p.namespaces.lock();
+                crate::privileged::proc::NamespaceSet::clone_from(&current_ns, new_ns_flags)
+            };
+            *p.namespaces.lock() = parent_ns;
+        });
+    }
+
+    i64::from(child_pid)
+}
+
+/// CLONE_VM 路径 (创建线程): 分配 PCB → 继承属性/内核栈/上下文 → 注册调度
+fn clone_vm_path(
+    flags: u64,
+    child_stack: u64,
+    parent_tidptr: u64,
+    child_tidptr: u64,
+    tls: u64,
+    parent_pid: u32,
+) -> i64 {
     let parent_cr3 = api::process_with(parent_pid, |p| p.cr3.load(Ordering::SeqCst)).unwrap_or(0);
     if parent_cr3 == 0 {
         return Errno::ENOMEM.as_ret();
@@ -149,6 +169,35 @@ fn clone_impl(
         return Errno::ENOMEM.as_ret();
     }
 
+    let Some(child_ptr) = vm_child_alloc(parent_pid, child_pid, parent_cr3) else {
+        return Errno::ENOMEM.as_ret();
+    };
+    let child = raw::process_ref_mut(child_ptr);
+
+    // 继承父进程属性 / 内核栈 / 上下文 (内核栈分配失败时内部已回滚 PCB)
+    if let Err(ret) = vm_child_inherit(
+        parent_pid,
+        child_ptr,
+        &mut *child,
+        child_pid,
+        parent_cr3,
+        child_stack,
+        tls,
+    ) {
+        return ret;
+    }
+
+    vm_child_register(flags, &mut *child, child_pid, parent_tidptr, child_tidptr);
+
+    i64::from(child_pid)
+}
+
+/// 分配子进程 PCB 并登记父进程 cr3 持有者; 失败返回 `None` (PCB 已回滚)
+fn vm_child_alloc(
+    parent_pid: u32,
+    child_pid: u32,
+    parent_cr3: u64,
+) -> Option<*mut crate::privileged::proc::Process> {
     // 克隆父进程名称
     let name_str = api::process_with(parent_pid, |p| {
         let name = p.name.lock();
@@ -182,9 +231,24 @@ fn clone_impl(
         );
         child.cr3.store(0, Ordering::SeqCst);
         raw::drop_boxed_process(child_ptr);
-        return Errno::ENOMEM.as_ret();
+        return None;
     }
 
+    Some(child_ptr)
+}
+
+/// 继承父进程属性、复制内核栈并初始化子进程上下文
+///
+/// 返回 `Err(ret)` 时 `ret` 即 `clone_impl` 的返回值 (语义与拆分前一致).
+fn vm_child_inherit(
+    parent_pid: u32,
+    child_ptr: *mut crate::privileged::proc::Process,
+    child: &mut crate::privileged::proc::Process,
+    child_pid: u32,
+    parent_cr3: u64,
+    child_stack: u64,
+    tls: u64,
+) -> Result<(), i64> {
     // 复制父进程属性
     let (parent_pwm, parent_sched_policy, parent_rt_priority) =
         api::process_with(parent_pid, |p| {
@@ -213,63 +277,90 @@ fn clone_impl(
     // 分配内核栈
     if !child.allocate_kernel_stack() {
         raw::drop_boxed_process(child_ptr);
-        return Errno::ENOMEM.as_ret();
+        return Err(Errno::ENOMEM.as_ret());
     }
 
     // 复制父进程的内核栈
-    {
-        let parent_kstack =
-            api::process_with(parent_pid, |p| p.kernel_stack.load(Ordering::SeqCst)).unwrap_or(0);
-        let child_kernel_sp = child.kernel_stack.load(Ordering::SeqCst);
-        let stack_size: usize = 65536;
-        raw::copy_kstack(child_kernel_sp, parent_kstack, stack_size);
-        crate::privileged::proc::kernel_stack_write_canary(child_kernel_sp);
-    }
+    vm_child_copy_kstack(parent_pid, child);
 
     // 上下文初始化 (分架构: x86_64 的 cr3/rax/rsp 与 aarch64 的 x29/x25/x27 复用
     // 同一偏移, 见 `arch/aarch64/context.rs` 头注释, 故必须按架构分别写)
     let Some(parent_ctx) = api::process_with(parent_pid, |p| *p.context.lock()) else {
         crate::slog_err!(Kernel, "clone: 父进程 {} 在进程表中未找到", parent_pid);
-        return Errno::ESRCH.as_ret();
+        return Err(Errno::ESRCH.as_ret());
     };
-    {
-        let mut child_ctx = child.context.lock();
-        *child_ctx = parent_ctx;
-        #[cfg(target_arch = "x86_64")]
-        {
-            child_ctx.cr3 = parent_cr3; // 共享 CR3
-            child_ctx.rax = 0; // 子进程返回 0
-            // 如果指定了 child_stack, 修改 RSP
-            if child_stack != 0 {
-                child_ctx.rsp = child_stack;
-            }
-        }
-        #[cfg(target_arch = "aarch64")]
-        {
-            // KPTI-17: 子线程 x0 = 0 (clone 返回值); 用户栈指针在 @128 (SP_EL0).
-            child_ctx.extra_regs[0] = 0;
-            if child_stack != 0 {
-                child_ctx.ss = child_stack;
-            }
-            // SP_EL1 (@96) 必须是子线程**自己的**内核栈顶: 沿用父线程的值会
-            // 让子线程首次陷入 EL1 时把异常帧压进父线程的栈页.
-            child_ctx.ds = child.kernel_stack.load(Ordering::SeqCst) & !0xF;
-            // `fpu_pad`(@136, EL0 的 TTBR0) 与 `es`(@104, EL1 视图根) 随 ctx
-            // 复制而来: 本路径恒共享父线程页表 (上文 cr3 = parent_cr3), 二者
-            // 对父子线程同值, 无需改写.
-        }
+    vm_child_init_context(child, &parent_ctx, parent_cr3, child_stack, tls);
 
-        // CLONE_SETTLS: 设置子进程 TLS 基址
-        // 当前仅存储于 Process.tls_base, 切换恢复未实装; x86_64 需在切换时写
-        // MSR_FS_BASE、aarch64 写 tpidr_el0 (无用户态依赖, 为 Linux 线程
-        // 兼容面预留, 待用户态线程库出现时实装)
-        if tls != 0 {
-            child
-                .tls_base
-                .store(tls, core::sync::atomic::Ordering::Release);
+    Ok(())
+}
+
+/// 复制父进程内核栈并重写栈底 canary
+fn vm_child_copy_kstack(parent_pid: u32, child: &mut crate::privileged::proc::Process) {
+    let parent_kstack =
+        api::process_with(parent_pid, |p| p.kernel_stack.load(Ordering::SeqCst)).unwrap_or(0);
+    let child_kernel_sp = child.kernel_stack.load(Ordering::SeqCst);
+    let stack_size: usize = 65536;
+    raw::copy_kstack(child_kernel_sp, parent_kstack, stack_size);
+    crate::privileged::proc::kernel_stack_write_canary(child_kernel_sp);
+}
+
+/// 初始化子进程上下文 (共享 CR3, 子进程返回 0) 并设置 TLS 基址
+fn vm_child_init_context(
+    child: &mut crate::privileged::proc::Process,
+    parent_ctx: &crate::privileged::proc::ProcessContext,
+    parent_cr3: u64,
+    child_stack: u64,
+    tls: u64,
+) {
+    let mut child_ctx = child.context.lock();
+    *child_ctx = *parent_ctx;
+    // aarch64 的页表根随上下文整体复制 (TTBR0 在 `*child_ctx = *parent_ctx` 中继承),
+    // 故该共享 CR3 入参仅在 x86_64 的显式 CR3 写入路径使用
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = parent_cr3;
+    #[cfg(target_arch = "x86_64")]
+    {
+        child_ctx.cr3 = parent_cr3; // 共享 CR3
+        child_ctx.rax = 0; // 子进程返回 0
+        // 如果指定了 child_stack, 修改 RSP
+        if child_stack != 0 {
+            child_ctx.rsp = child_stack;
         }
     }
+    #[cfg(target_arch = "aarch64")]
+    {
+        // KPTI-17: 子线程 x0 = 0 (clone 返回值); 用户栈指针在 @128 (SP_EL0).
+        child_ctx.extra_regs[0] = 0;
+        if child_stack != 0 {
+            child_ctx.ss = child_stack;
+        }
+        // SP_EL1 (@96) 必须是子线程**自己的**内核栈顶: 沿用父线程的值会
+        // 让子线程首次陷入 EL1 时把异常帧压进父线程的栈页.
+        child_ctx.ds = child.kernel_stack.load(Ordering::SeqCst) & !0xF;
+        // `fpu_pad`(@136, EL0 的 TTBR0) 与 `es`(@104, EL1 视图根) 随 ctx
+        // 复制而来: 本路径恒共享父线程页表 (上文 cr3 = parent_cr3), 二者
+        // 对父子线程同值, 无需改写.
+    }
 
+    // CLONE_SETTLS: 设置子进程 TLS 基址
+    // 当前仅存储于 Process.tls_base, 切换恢复未实装; x86_64 需在切换时写
+    // MSR_FS_BASE、aarch64 写 tpidr_el0 (无用户态依赖, 为 Linux 线程
+    // 兼容面预留, 待用户态线程库出现时实装)
+    if tls != 0 {
+        child
+            .tls_base
+            .store(tls, core::sync::atomic::Ordering::Release);
+    }
+}
+
+/// 注册子进程到进程表、写回 TID 指针并加入就绪队列
+fn vm_child_register(
+    flags: u64,
+    child: &mut crate::privileged::proc::Process,
+    child_pid: u32,
+    parent_tidptr: u64,
+    child_tidptr: u64,
+) {
     // 注册到进程表
     api::process_insert(core::ptr::from_ref::<crate::privileged::proc::Process>(child).cast_mut());
 
@@ -295,16 +386,6 @@ fn clone_impl(
     // 添加到调度器
     let _ = child.set_state_safe(ProcessState::Ready);
     api::scheduler_add_to_run_queue(child_pid);
-
-    crate::slog_debug!(
-        Process,
-        "[clone] parent={} child={} flags=0x{:X} (CLONE_VM)",
-        parent_pid,
-        child_pid,
-        flags
-    );
-
-    i64::from(child_pid)
 }
 
 /// `set_robust_list(head, len)` 策略 — 登记当前进程的 robust futex 链表头

@@ -1049,10 +1049,6 @@ impl UserProcManager {
     }
 
     #[expect(
-        clippy::too_many_lines,
-        reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-    )]
-    #[expect(
         clippy::no_effect_underscore_binding,
         reason = "no_effect_underscore_binding: let _ = expr 用于类型推导/副作用; 当前优先 expect"
     )]
@@ -1119,405 +1115,16 @@ impl UserProcManager {
         // enter_user_asm 在切换 CR3 前已清除所有寄存器 (包括 RBP/RSP),
         // 切换后不会残留低地址引用。
 
-        // 自检式调试: 验证用户页表关键映射
         #[cfg(target_arch = "x86_64")]
-        {
-            // 检查用户代码页 (0x400000) — 含 PTE 权限位自检
-            let code_page_virt = rip_val & !(PAGE_SIZE - 1);
-            if let Some(phys) = crate::privileged::mm::Vmm::get_physical_in_pml4(
-                cr3,
-                crate::privileged::mm::VirtAddr(code_page_virt),
-            ) {
-                crate::klog_boot_info!(
-                    "[USER] SELF-CHECK: user_code virt={:#X} -> phys={:#X} ✓",
-                    code_page_virt,
-                    phys.0
-                );
-                // 检查 PTE 原始值: 验证 PRESENT/USER/NX 位
-                if let Some(pte_raw) = crate::privileged::mm::VirtualMemoryManager::get_pte_value(
-                    cr3,
-                    crate::privileged::mm::VirtAddr(code_page_virt),
-                ) {
-                    let present = (pte_raw & 0x001) != 0;
-                    let writable = (pte_raw & 0x002) != 0;
-                    let user = (pte_raw & 0x004) != 0;
-                    let nx = (pte_raw & (1u64 << 63)) != 0;
-                    crate::klog_boot_info!(
-                        "[USER] SELF-CHECK: user_code PTE={:#018X} P={} W={} U={} NX={} (NX must be 0 for exec)",
-                        pte_raw,
-                        u8::from(present),
-                        u8::from(writable),
-                        u8::from(user),
-                        u8::from(nx)
-                    );
-                    if nx {
-                        crate::klog_boot_info!(
-                            "[USER] SELF-CHECK: *** BUG: user_code page has NX=1! CPU cannot execute! ***"
-                        );
-                    }
-                    if !user {
-                        crate::klog_boot_info!(
-                            "[USER] SELF-CHECK: *** BUG: user_code page has U=0! Ring 3 cannot access! ***"
-                        );
-                    }
-                } else {
-                    crate::klog_boot_info!(
-                        "[USER] SELF-CHECK: user_code PTE: could not read (page table level missing)"
-                    );
-                }
-            } else {
-                crate::klog_boot_info!(
-                    "[USER] SELF-CHECK: user_code virt={:#X} NOT MAPPED ✗",
-                    code_page_virt
-                );
-            }
-
-            // 检查用户栈页 (第一次压栈将访问 rsp - 8 所在页)
-            let first_access_virt = (rsp_initial - 8) & !(PAGE_SIZE - 1);
-            if let Some(phys) = crate::privileged::mm::Vmm::get_physical_in_pml4(
-                cr3,
-                crate::privileged::mm::VirtAddr(first_access_virt),
-            ) {
-                crate::klog_boot_info!(
-                    "[USER] SELF-CHECK: user_stack_first_access virt={:#X} (rsp-8={:#X}) -> phys={:#X} ✓",
-                    first_access_virt,
-                    rsp_initial - 8,
-                    phys.0
-                );
-            } else {
-                crate::klog_boot_info!(
-                    "[USER] SELF-CHECK: user_stack_first_access virt={:#X} (rsp-8={:#X}) NOT MAPPED ✗",
-                    first_access_virt,
-                    rsp_initial - 8
-                );
-            }
-
-            // 检查 guard page (应保持未映射)
-            // 已映射栈页范围 = [stack_bottom, stack_bottom + USER_STACK_SIZE),
-            // guard 页即其下方一页 (stack_bottom - USER_STACK_GUARD).
-            // 注意: `initial_rsp` = 栈顶边界 - 8 (见 `create`), 即 rsp 恒落在栈顶
-            // 已映射页内, 故不能以 "含 rsp 的页" 判定 guard —— 该判据恒报 unexpected.
-            let guard_page = proc_ref
-                .load_stack_bottom()
-                .saturating_sub(USER_STACK_GUARD);
-            if let Some(phys) = crate::privileged::mm::Vmm::get_physical_in_pml4(
-                cr3,
-                crate::privileged::mm::VirtAddr(guard_page),
-            ) {
-                crate::klog_boot_info!(
-                    "[USER] SELF-CHECK: user_stack_guard_page virt={:#X} -> phys={:#X} (unexpected: should be unmapped)",
-                    guard_page,
-                    phys.0
-                );
-            } else {
-                crate::klog_boot_info!(
-                    "[USER] SELF-CHECK: user_stack_guard_page virt={:#X} NOT MAPPED (expected: guard page) ✓",
-                    guard_page
-                );
-            }
-
-            // 检查内核栈页 (RSP0, iretq 帧所在页)
-            let rsp0_check_virt = (kstack - 40) & !(PAGE_SIZE - 1);
-            if let Some(phys) = crate::privileged::mm::Vmm::get_physical_in_pml4(
-                cr3,
-                crate::privileged::mm::VirtAddr(rsp0_check_virt),
-            ) {
-                crate::klog_boot_info!(
-                    "[USER] SELF-CHECK: rsp0_stack virt={:#X} -> phys={:#X} ✓",
-                    rsp0_check_virt,
-                    phys.0
-                );
-            } else {
-                crate::klog_boot_info!(
-                    "[USER] SELF-CHECK: rsp0_stack virt={:#X} NOT MAPPED ✗",
-                    rsp0_check_virt
-                );
-            }
-
-            crate::klog_boot_info!(
-                "[USER] SELF-CHECK: entering user mode with rip={:#X} rsp={:#X} cr3={:#X}",
-                rip_val,
-                rsp_initial,
-                cr3
-            );
-
-            // 扩展自检: 验证 GDT 段描述符
-            // 用户代码段 CS = 0x23 (GDT_USER_CODE | 0x03)
-            // 用户数据段 SS = 0x1B (GDT_USER_DATA | 0x03)
-            crate::klog_boot_info!(
-                "[USER] SELF-CHECK: GDT segments: CS={:#X} (expect 0x23) SS={:#X} (expect 0x1B)",
-                GDT_USER_CODE | 0x03,
-                GDT_USER_DATA | 0x03
-            );
-
-            // 扩展自检: 验证 iretq 帧参数
-            // iretq 从栈上恢复: RIP, CS, RFLAGS, RSP, SS
-            crate::klog_boot_info!(
-                "[USER] SELF-CHECK: iretq frame: RIP={:#X} CS={:#X} RFLAGS={:#X} RSP={:#X} SS={:#X}",
-                rip_val,
-                GDT_USER_CODE | 0x03,
-                0x202,
-                rsp_initial,
-                GDT_USER_DATA | 0x03
-            );
-
-            // 扩展自检: 验证内核栈指针
-            crate::klog_boot_info!(
-                "[USER] SELF-CHECK: kstack={:#X} (high-half, will be used as RSP0)",
-                kstack
-            );
-
-            // 扩展自检: 验证用户代码页内容 (检查是否有有效指令)
-            let code_page_virt = rip_val & !(PAGE_SIZE - 1);
-            if let Some(phys) = crate::privileged::mm::Vmm::get_physical_in_pml4(
-                cr3,
-                crate::privileged::mm::VirtAddr(code_page_virt),
-            ) {
-                // 通过内核映射读取用户代码页内容
-                let kernel_virt = phys.0 + crate::privileged::mm::KERNEL_BASE as u64;
-                let code_ptr = kernel_virt as *const u8;
-                // 读取前 16 字节作为指令样本
-                let mut instr_sample = [0u8; 16];
-                // SAFETY: code_ptr 指向已映射的物理页 (经 KERNEL_BASE 偏移后内核可访问), 读取 16 字节在页内。
-                unsafe {
-                    for i in 0..16 {
-                        instr_sample[i] = *code_ptr.add(i);
-                    }
-                }
-                crate::klog_boot_info!(
-                    "[USER] SELF-CHECK: user_code first 16 bytes: {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}",
-                    instr_sample[0],
-                    instr_sample[1],
-                    instr_sample[2],
-                    instr_sample[3],
-                    instr_sample[4],
-                    instr_sample[5],
-                    instr_sample[6],
-                    instr_sample[7],
-                    instr_sample[8],
-                    instr_sample[9],
-                    instr_sample[10],
-                    instr_sample[11],
-                    instr_sample[12],
-                    instr_sample[13],
-                    instr_sample[14],
-                    instr_sample[15]
-                );
-            }
-        }
-
-        // ═══ 自检式调试: SYSCALL/SYSRET 配置验证 ═══
+        Self::self_check_code_page(cr3, rip_val);
         #[cfg(target_arch = "x86_64")]
-        {
-            const IA32_EFER: u32 = 0xC000_0080;
-            const IA32_STAR: u32 = 0xC000_0081;
-            const IA32_LSTAR: u32 = 0xC000_0082;
-            const IA32_SFMASK: u32 = 0xC000_0084;
-            const IA32_GS_BASE: u32 = 0xC000_0101;
-            const IA32_KERNEL_GS_BASE: u32 = 0xC000_0102;
-
-            // SAFETY: 仅读取 MSR, 无副作用, boot 阶段单线程
-            unsafe {
-                let efer = crate::privileged::cpu::msr::read_msr(IA32_EFER);
-                let star = crate::privileged::cpu::msr::read_msr(IA32_STAR);
-                let lstar = crate::privileged::cpu::msr::read_msr(IA32_LSTAR);
-                let sfmask = crate::privileged::cpu::msr::read_msr(IA32_SFMASK);
-                let gs_base = crate::privileged::cpu::msr::read_msr(IA32_GS_BASE);
-                let kernel_gs_base = crate::privileged::cpu::msr::read_msr(IA32_KERNEL_GS_BASE);
-
-                let sce = (efer & 1) != 0;
-                crate::klog_boot_info!(
-                    "[USER] SELF-CHECK SYSCALL: EFER={:#x} SCE={} STAR={:#x} LSTAR={:#x} SFMASK={:#x}",
-                    efer,
-                    sce,
-                    star,
-                    lstar,
-                    sfmask
-                );
-                if !sce {
-                    crate::klog_boot_info!(
-                        "[USER] SELF-CHECK: *** BUG: EFER.SCE=0! syscall instruction will #UD! ***"
-                    );
-                }
-
-                crate::klog_boot_info!(
-                    "[USER] SELF-CHECK GS (before enter_user_asm): IA32_GS_BASE={:#x} IA32_KERNEL_GS_BASE={:#x}",
-                    gs_base,
-                    kernel_gs_base
-                );
-                if gs_base == 0 && kernel_gs_base == 0 {
-                    crate::klog_boot_info!(
-                        "[USER] SELF-CHECK: *** BUG: Both GS MSRs are 0! swapgs in enter_user_asm will produce GS_BASE=0, syscall_entry [gs:0] will access NULL → #PF → Triple Fault! ***"
-                    );
-                    crate::klog_boot_info!(
-                        "[USER] SELF-CHECK: *** ROOT CAUSE: gdt_init write_msr may have been overwritten, or &gdt.syscall returns 0 ***"
-                    );
-                }
-
-                // 验证 LSTAR 页面在用户页表中映射且可执行
-                let lstar_page = lstar & !(PAGE_SIZE - 1);
-                if let Some(phys) = crate::privileged::mm::Vmm::get_physical_in_pml4(
-                    cr3,
-                    crate::privileged::mm::VirtAddr(lstar_page),
-                ) {
-                    if let Some(pte_raw) =
-                        crate::privileged::mm::VirtualMemoryManager::get_pte_value(
-                            cr3,
-                            crate::privileged::mm::VirtAddr(lstar_page),
-                        )
-                    {
-                        let present = (pte_raw & 0x001) != 0;
-                        let user = (pte_raw & 0x004) != 0;
-                        let nx = (pte_raw & (1u64 << 63)) != 0;
-                        crate::klog_boot_info!(
-                            "[USER] SELF-CHECK LSTAR page: virt={:#x} -> phys={:#x} PTE={:#x} P={} U={} NX={}",
-                            lstar_page,
-                            phys.0,
-                            pte_raw,
-                            u8::from(present),
-                            u8::from(user),
-                            u8::from(nx)
-                        );
-                        // syscall 指令在取指之前已将 CPL 切换到 0,
-                        // 因此 LSTAR 页面 U=0 是正确行为 (内核页面不需要 USER 位).
-                        // 仅当 P=0 或 NX=1 时才是真正的 bug.
-                        if !user {
-                            crate::klog_boot_info!(
-                                "[USER] SELF-CHECK LSTAR page U=0 (expected: syscall switches CPL→0 before instruction fetch)"
-                            );
-                        }
-                        if nx {
-                            crate::klog_boot_info!(
-                                "[USER] SELF-CHECK: *** BUG: LSTAR page NX=1! syscall_entry cannot execute! ***"
-                            );
-                        }
-                    }
-                } else {
-                    crate::klog_boot_info!(
-                        "[USER] SELF-CHECK: *** BUG: LSTAR page {:#x} NOT MAPPED in user page table! syscall from Ring 3 will #PF! ***",
-                        lstar_page
-                    );
-                }
-            }
-        }
-
-        // ═══ 自检式调试: 用户代码页完整页表路径遍历 (检查中间层级 USER 位) ═══
-        // x86_64 页表遍历要求: PML4E→PDPTE→PDE→PTE 每一级都必须有 USER 位,
-        // 否则 Ring 3 访问该页面时触发 #PF, 即使最终 PTE 有 USER 位.
+        Self::self_check_stack_pages(proc_ref, cr3, kstack, rsp_initial);
         #[cfg(target_arch = "x86_64")]
-        {
-            let vaddr = rip_val;
-            let pml4_idx = (vaddr >> 39) & 0x1FF;
-            let pdpt_idx = (vaddr >> 30) & 0x1FF;
-            let pd_idx = (vaddr >> 21) & 0x1FF;
-            let pt_slot_idx = (vaddr >> 12) & 0x1FF;
-
-            // SAFETY: 使用物理地址 + KERNEL_BASE 访问页表, 只读操作
-            unsafe {
-                let pml4_virt = (cr3 + crate::privileged::mm::KERNEL_BASE as u64) as *const u64;
-                let pml4e = pml4_virt.add(pml4_idx as usize).read_volatile();
-                let pml4e_present = (pml4e & 1) != 0;
-                let pml4e_user = (pml4e & 4) != 0;
-                let pml4e_frame = pml4e & 0x000F_FFFF_FFFF_F000;
-                crate::klog_boot_info!(
-                    "[USER] SELF-CHECK PT-WALK user_code {:#x}: PML4E[{}]={:#x} P={} U={} frame={:#x}",
-                    vaddr,
-                    pml4_idx,
-                    pml4e,
-                    u8::from(pml4e_present),
-                    u8::from(pml4e_user),
-                    pml4e_frame
-                );
-                if pml4e_present && !pml4e_user {
-                    crate::klog_boot_info!(
-                        "[USER] SELF-CHECK: *** BUG: PML4E[{}] U=0! Ring 3 cannot traverse to PDPT! ***",
-                        pml4_idx
-                    );
-                }
-
-                if pml4e_present {
-                    let pdpt_virt =
-                        (pml4e_frame + crate::privileged::mm::KERNEL_BASE as u64) as *const u64;
-                    let pdpte = pdpt_virt.add(pdpt_idx as usize).read_volatile();
-                    let pdpte_present = (pdpte & 1) != 0;
-                    let pdpte_user = (pdpte & 4) != 0;
-                    let pdpte_huge = (pdpte & 0x80) != 0;
-                    let pdpte_frame = pdpte & 0x000F_FFFF_FFFF_F000;
-                    crate::klog_boot_info!(
-                        "[USER] SELF-CHECK PT-WALK: PDPTE[{}]={:#x} P={} U={} HUGE={} frame={:#x}",
-                        pdpt_idx,
-                        pdpte,
-                        u8::from(pdpte_present),
-                        u8::from(pdpte_user),
-                        u8::from(pdpte_huge),
-                        pdpte_frame
-                    );
-                    if pdpte_present && !pdpte_user {
-                        crate::klog_boot_info!(
-                            "[USER] SELF-CHECK: *** BUG: PDPTE[{}] U=0! Ring 3 cannot traverse to PD! ***",
-                            pdpt_idx
-                        );
-                    }
-
-                    if pdpte_present && !pdpte_huge {
-                        let pd_virt =
-                            (pdpte_frame + crate::privileged::mm::KERNEL_BASE as u64) as *const u64;
-                        let pde = pd_virt.add(pd_idx as usize).read_volatile();
-                        let pde_present = (pde & 1) != 0;
-                        let pde_user = (pde & 4) != 0;
-                        let pde_huge = (pde & 0x80) != 0;
-                        let pde_frame = pde & 0x000F_FFFF_FFFF_F000;
-                        crate::klog_boot_info!(
-                            "[USER] SELF-CHECK PT-WALK: PDE[{}]={:#x} P={} U={} HUGE={} frame={:#x}",
-                            pd_idx,
-                            pde,
-                            u8::from(pde_present),
-                            u8::from(pde_user),
-                            u8::from(pde_huge),
-                            pde_frame
-                        );
-                        if pde_present && !pde_user {
-                            crate::klog_boot_info!(
-                                "[USER] SELF-CHECK: *** BUG: PDE[{}] U=0! Ring 3 cannot traverse to PT! ***",
-                                pd_idx
-                            );
-                        }
-
-                        if pde_present && !pde_huge {
-                            let pt_page_virt = (pde_frame
-                                + crate::privileged::mm::KERNEL_BASE as u64)
-                                as *const u64;
-                            let pte = pt_page_virt.add(pt_slot_idx as usize).read_volatile();
-                            let leaf_present = (pte & 1) != 0;
-                            let leaf_user = (pte & 4) != 0;
-                            let leaf_nx = (pte & (1u64 << 63)) != 0;
-                            let leaf_frame = pte & 0x000F_FFFF_FFFF_F000;
-                            crate::klog_boot_info!(
-                                "[USER] SELF-CHECK PT-WALK: PTE[{}]={:#x} P={} U={} NX={} frame={:#x}",
-                                pt_slot_idx,
-                                pte,
-                                u8::from(leaf_present),
-                                u8::from(leaf_user),
-                                u8::from(leaf_nx),
-                                leaf_frame
-                            );
-                            if leaf_present && !leaf_user {
-                                crate::klog_boot_info!(
-                                    "[USER] SELF-CHECK: *** BUG: PTE[{}] U=0! Ring 3 cannot access this page! ***",
-                                    pt_slot_idx
-                                );
-                            }
-                            if leaf_present && leaf_nx {
-                                crate::klog_boot_info!(
-                                    "[USER] SELF-CHECK: *** BUG: PTE[{}] NX=1! Ring 3 cannot execute this page! ***",
-                                    pt_slot_idx
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        Self::self_check_enter_params(cr3, kstack, rip_val, rsp_initial);
+        #[cfg(target_arch = "x86_64")]
+        Self::self_check_syscall_msrs(cr3);
+        #[cfg(target_arch = "x86_64")]
+        Self::self_check_pte_walk(cr3, rip_val);
 
         crate::klog_boot_info!("[USER] SELF-CHECK: calling enter_user_asm...");
 
@@ -1528,6 +1135,453 @@ impl UserProcManager {
             cr3,
             kstack
         ));
+    }
+
+    /// 进入用户态前自检: 用户代码页映射与 PTE 权限位 (调试日志, 仅 x86_64).
+    #[cfg(target_arch = "x86_64")]
+    fn self_check_code_page(cr3: u64, rip_val: u64) {
+        // 检查用户代码页 (0x400000) — 含 PTE 权限位自检
+        let code_page_virt = rip_val & !(PAGE_SIZE - 1);
+        if let Some(phys) = crate::privileged::mm::Vmm::get_physical_in_pml4(
+            cr3,
+            crate::privileged::mm::VirtAddr(code_page_virt),
+        ) {
+            crate::klog_boot_info!(
+                "[USER] SELF-CHECK: user_code virt={:#X} -> phys={:#X} ✓",
+                code_page_virt,
+                phys.0
+            );
+            // 检查 PTE 原始值: 验证 PRESENT/USER/NX 位
+            if let Some(pte_raw) = crate::privileged::mm::VirtualMemoryManager::get_pte_value(
+                cr3,
+                crate::privileged::mm::VirtAddr(code_page_virt),
+            ) {
+                let present = (pte_raw & 0x001) != 0;
+                let writable = (pte_raw & 0x002) != 0;
+                let user = (pte_raw & 0x004) != 0;
+                let nx = (pte_raw & (1u64 << 63)) != 0;
+                crate::klog_boot_info!(
+                    "[USER] SELF-CHECK: user_code PTE={:#018X} P={} W={} U={} NX={} (NX must be 0 for exec)",
+                    pte_raw,
+                    u8::from(present),
+                    u8::from(writable),
+                    u8::from(user),
+                    u8::from(nx)
+                );
+                if nx {
+                    crate::klog_boot_info!(
+                        "[USER] SELF-CHECK: *** BUG: user_code page has NX=1! CPU cannot execute! ***"
+                    );
+                }
+                if !user {
+                    crate::klog_boot_info!(
+                        "[USER] SELF-CHECK: *** BUG: user_code page has U=0! Ring 3 cannot access! ***"
+                    );
+                }
+            } else {
+                crate::klog_boot_info!(
+                    "[USER] SELF-CHECK: user_code PTE: could not read (page table level missing)"
+                );
+            }
+        } else {
+            crate::klog_boot_info!(
+                "[USER] SELF-CHECK: user_code virt={:#X} NOT MAPPED ✗",
+                code_page_virt
+            );
+        }
+    }
+
+    /// 进入用户态前自检: 栈页 / guard 页 / RSP0 页映射 (调试日志, 仅 x86_64).
+    #[cfg(target_arch = "x86_64")]
+    fn self_check_stack_pages(proc_ref: UserProcRef, cr3: u64, kstack: u64, rsp_initial: u64) {
+        // 检查用户栈页 (第一次压栈将访问 rsp - 8 所在页)
+        let first_access_virt = (rsp_initial - 8) & !(PAGE_SIZE - 1);
+        if let Some(phys) = crate::privileged::mm::Vmm::get_physical_in_pml4(
+            cr3,
+            crate::privileged::mm::VirtAddr(first_access_virt),
+        ) {
+            crate::klog_boot_info!(
+                "[USER] SELF-CHECK: user_stack_first_access virt={:#X} (rsp-8={:#X}) -> phys={:#X} ✓",
+                first_access_virt,
+                rsp_initial - 8,
+                phys.0
+            );
+        } else {
+            crate::klog_boot_info!(
+                "[USER] SELF-CHECK: user_stack_first_access virt={:#X} (rsp-8={:#X}) NOT MAPPED ✗",
+                first_access_virt,
+                rsp_initial - 8
+            );
+        }
+
+        // 检查 guard page (应保持未映射)
+        // 已映射栈页范围 = [stack_bottom, stack_bottom + USER_STACK_SIZE),
+        // guard 页即其下方一页 (stack_bottom - USER_STACK_GUARD).
+        // 注意: `initial_rsp` = 栈顶边界 - 8 (见 `create`), 即 rsp 恒落在栈顶
+        // 已映射页内, 故不能以 "含 rsp 的页" 判定 guard —— 该判据恒报 unexpected.
+        let guard_page = proc_ref
+            .load_stack_bottom()
+            .saturating_sub(USER_STACK_GUARD);
+        if let Some(phys) = crate::privileged::mm::Vmm::get_physical_in_pml4(
+            cr3,
+            crate::privileged::mm::VirtAddr(guard_page),
+        ) {
+            crate::klog_boot_info!(
+                "[USER] SELF-CHECK: user_stack_guard_page virt={:#X} -> phys={:#X} (unexpected: should be unmapped)",
+                guard_page,
+                phys.0
+            );
+        } else {
+            crate::klog_boot_info!(
+                "[USER] SELF-CHECK: user_stack_guard_page virt={:#X} NOT MAPPED (expected: guard page) ✓",
+                guard_page
+            );
+        }
+
+        // 检查内核栈页 (RSP0, iretq 帧所在页)
+        let rsp0_check_virt = (kstack - 40) & !(PAGE_SIZE - 1);
+        if let Some(phys) = crate::privileged::mm::Vmm::get_physical_in_pml4(
+            cr3,
+            crate::privileged::mm::VirtAddr(rsp0_check_virt),
+        ) {
+            crate::klog_boot_info!(
+                "[USER] SELF-CHECK: rsp0_stack virt={:#X} -> phys={:#X} ✓",
+                rsp0_check_virt,
+                phys.0
+            );
+        } else {
+            crate::klog_boot_info!(
+                "[USER] SELF-CHECK: rsp0_stack virt={:#X} NOT MAPPED ✗",
+                rsp0_check_virt
+            );
+        }
+    }
+
+    /// 进入用户态前自检: 段选择子 / iretq 帧 / 代码页首字节 (调试日志, 仅 x86_64).
+    #[cfg(target_arch = "x86_64")]
+    fn self_check_enter_params(cr3: u64, kstack: u64, rip_val: u64, rsp_initial: u64) {
+        crate::klog_boot_info!(
+            "[USER] SELF-CHECK: entering user mode with rip={:#X} rsp={:#X} cr3={:#X}",
+            rip_val,
+            rsp_initial,
+            cr3
+        );
+
+        // 扩展自检: 验证 GDT 段描述符
+        // 用户代码段 CS = 0x23 (GDT_USER_CODE | 0x03)
+        // 用户数据段 SS = 0x1B (GDT_USER_DATA | 0x03)
+        crate::klog_boot_info!(
+            "[USER] SELF-CHECK: GDT segments: CS={:#X} (expect 0x23) SS={:#X} (expect 0x1B)",
+            GDT_USER_CODE | 0x03,
+            GDT_USER_DATA | 0x03
+        );
+
+        // 扩展自检: 验证 iretq 帧参数
+        // iretq 从栈上恢复: RIP, CS, RFLAGS, RSP, SS
+        crate::klog_boot_info!(
+            "[USER] SELF-CHECK: iretq frame: RIP={:#X} CS={:#X} RFLAGS={:#X} RSP={:#X} SS={:#X}",
+            rip_val,
+            GDT_USER_CODE | 0x03,
+            0x202,
+            rsp_initial,
+            GDT_USER_DATA | 0x03
+        );
+
+        // 扩展自检: 验证内核栈指针
+        crate::klog_boot_info!(
+            "[USER] SELF-CHECK: kstack={:#X} (high-half, will be used as RSP0)",
+            kstack
+        );
+
+        // 扩展自检: 验证用户代码页内容 (检查是否有有效指令)
+        let code_page_virt = rip_val & !(PAGE_SIZE - 1);
+        if let Some(phys) = crate::privileged::mm::Vmm::get_physical_in_pml4(
+            cr3,
+            crate::privileged::mm::VirtAddr(code_page_virt),
+        ) {
+            // 通过内核映射读取用户代码页内容
+            let kernel_virt = phys.0 + crate::privileged::mm::KERNEL_BASE as u64;
+            let code_ptr = kernel_virt as *const u8;
+            // 读取前 16 字节作为指令样本
+            let mut instr_sample = [0u8; 16];
+            // SAFETY: code_ptr 指向已映射的物理页 (经 KERNEL_BASE 偏移后内核可访问), 读取 16 字节在页内。
+            unsafe {
+                for i in 0..16 {
+                    instr_sample[i] = *code_ptr.add(i);
+                }
+            }
+            crate::klog_boot_info!(
+                "[USER] SELF-CHECK: user_code first 16 bytes: {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}",
+                instr_sample[0],
+                instr_sample[1],
+                instr_sample[2],
+                instr_sample[3],
+                instr_sample[4],
+                instr_sample[5],
+                instr_sample[6],
+                instr_sample[7],
+                instr_sample[8],
+                instr_sample[9],
+                instr_sample[10],
+                instr_sample[11],
+                instr_sample[12],
+                instr_sample[13],
+                instr_sample[14],
+                instr_sample[15]
+            );
+        }
+    }
+
+    /// 自检 SYSCALL/SYSRET 相关 MSR 与 LSTAR 页映射 (调试日志, 仅 x86_64).
+    #[cfg(target_arch = "x86_64")]
+    fn self_check_syscall_msrs(cr3: u64) {
+        const IA32_EFER: u32 = 0xC000_0080;
+        const IA32_STAR: u32 = 0xC000_0081;
+        const IA32_LSTAR: u32 = 0xC000_0082;
+        const IA32_SFMASK: u32 = 0xC000_0084;
+        const IA32_GS_BASE: u32 = 0xC000_0101;
+        const IA32_KERNEL_GS_BASE: u32 = 0xC000_0102;
+
+        // SAFETY: 仅读取 MSR, 无副作用, boot 阶段单线程
+        unsafe {
+            let efer = crate::privileged::cpu::msr::read_msr(IA32_EFER);
+            let star = crate::privileged::cpu::msr::read_msr(IA32_STAR);
+            let lstar = crate::privileged::cpu::msr::read_msr(IA32_LSTAR);
+            let sfmask = crate::privileged::cpu::msr::read_msr(IA32_SFMASK);
+            let gs_base = crate::privileged::cpu::msr::read_msr(IA32_GS_BASE);
+            let kernel_gs_base = crate::privileged::cpu::msr::read_msr(IA32_KERNEL_GS_BASE);
+
+            let sce = (efer & 1) != 0;
+            crate::klog_boot_info!(
+                "[USER] SELF-CHECK SYSCALL: EFER={:#x} SCE={} STAR={:#x} LSTAR={:#x} SFMASK={:#x}",
+                efer,
+                sce,
+                star,
+                lstar,
+                sfmask
+            );
+            if !sce {
+                crate::klog_boot_info!(
+                    "[USER] SELF-CHECK: *** BUG: EFER.SCE=0! syscall instruction will #UD! ***"
+                );
+            }
+
+            crate::klog_boot_info!(
+                "[USER] SELF-CHECK GS (before enter_user_asm): IA32_GS_BASE={:#x} IA32_KERNEL_GS_BASE={:#x}",
+                gs_base,
+                kernel_gs_base
+            );
+            if gs_base == 0 && kernel_gs_base == 0 {
+                crate::klog_boot_info!(
+                    "[USER] SELF-CHECK: *** BUG: Both GS MSRs are 0! swapgs in enter_user_asm will produce GS_BASE=0, syscall_entry [gs:0] will access NULL → #PF → Triple Fault! ***"
+                );
+                crate::klog_boot_info!(
+                    "[USER] SELF-CHECK: *** ROOT CAUSE: gdt_init write_msr may have been overwritten, or &gdt.syscall returns 0 ***"
+                );
+            }
+
+            // 验证 LSTAR 页面在用户页表中映射且可执行
+            let lstar_page = lstar & !(PAGE_SIZE - 1);
+            if let Some(phys) = crate::privileged::mm::Vmm::get_physical_in_pml4(
+                cr3,
+                crate::privileged::mm::VirtAddr(lstar_page),
+            ) {
+                if let Some(pte_raw) = crate::privileged::mm::VirtualMemoryManager::get_pte_value(
+                    cr3,
+                    crate::privileged::mm::VirtAddr(lstar_page),
+                ) {
+                    let present = (pte_raw & 0x001) != 0;
+                    let user = (pte_raw & 0x004) != 0;
+                    let nx = (pte_raw & (1u64 << 63)) != 0;
+                    crate::klog_boot_info!(
+                        "[USER] SELF-CHECK LSTAR page: virt={:#x} -> phys={:#x} PTE={:#x} P={} U={} NX={}",
+                        lstar_page,
+                        phys.0,
+                        pte_raw,
+                        u8::from(present),
+                        u8::from(user),
+                        u8::from(nx)
+                    );
+                    // syscall 指令在取指之前已将 CPL 切换到 0,
+                    // 因此 LSTAR 页面 U=0 是正确行为 (内核页面不需要 USER 位).
+                    // 仅当 P=0 或 NX=1 时才是真正的 bug.
+                    if !user {
+                        crate::klog_boot_info!(
+                            "[USER] SELF-CHECK LSTAR page U=0 (expected: syscall switches CPL→0 before instruction fetch)"
+                        );
+                    }
+                    if nx {
+                        crate::klog_boot_info!(
+                            "[USER] SELF-CHECK: *** BUG: LSTAR page NX=1! syscall_entry cannot execute! ***"
+                        );
+                    }
+                }
+            } else {
+                crate::klog_boot_info!(
+                    "[USER] SELF-CHECK: *** BUG: LSTAR page {:#x} NOT MAPPED in user page table! syscall from Ring 3 will #PF! ***",
+                    lstar_page
+                );
+            }
+        }
+    }
+
+    /// 读取一个页表项 (volatile 只读, 物理页经 `KERNEL_BASE` 高半区映射).
+    ///
+    /// # Safety
+    ///
+    /// `table_phys` 必须是有效页表页的物理地址 (页对齐, 512 项), 且 `index < 512`.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn read_pt_entry(table_phys: u64, index: usize) -> u64 {
+        // SAFETY: 调用方保证 table_phys 为有效页表页物理地址; 高半区直接映射使其
+        // 内核可读; index < 512 保证不越出该页.
+        unsafe {
+            let base = (table_phys + crate::privileged::mm::KERNEL_BASE as u64) as *const u64;
+            base.add(index).read_volatile()
+        }
+    }
+
+    /// 自检: 用户代码页页表路径的 PML4 级 (调试日志, 仅 x86_64).
+    #[cfg(target_arch = "x86_64")]
+    fn self_check_pte_walk(cr3: u64, vaddr: u64) {
+        let pml4_idx = ((vaddr >> 39) & 0x1FF) as usize;
+        let pdpt_idx = ((vaddr >> 30) & 0x1FF) as usize;
+        let pd_idx = ((vaddr >> 21) & 0x1FF) as usize;
+        let pt_slot_idx = ((vaddr >> 12) & 0x1FF) as usize;
+
+        // SAFETY: cr3 是本进程有效用户页表 (PML4 物理地址); 只读单个页表项.
+        let pml4e = unsafe { Self::read_pt_entry(cr3, pml4_idx) };
+        let pml4e_present = (pml4e & 1) != 0;
+        let pml4e_user = (pml4e & 4) != 0;
+        let pml4e_frame = pml4e & 0x000F_FFFF_FFFF_F000;
+        crate::klog_boot_info!(
+            "[USER] SELF-CHECK PT-WALK user_code {:#x}: PML4E[{}]={:#x} P={} U={} frame={:#x}",
+            vaddr,
+            pml4_idx,
+            pml4e,
+            u8::from(pml4e_present),
+            u8::from(pml4e_user),
+            pml4e_frame
+        );
+        if pml4e_present && !pml4e_user {
+            crate::klog_boot_info!(
+                "[USER] SELF-CHECK: *** BUG: PML4E[{}] U=0! Ring 3 cannot traverse to PDPT! ***",
+                pml4_idx
+            );
+        }
+        if pml4e_present {
+            // SAFETY: PML4E PRESENT, 其 frame 指向有效 PDPT 页.
+            unsafe {
+                Self::walk_pdpt_level(pml4e_frame, pdpt_idx, pd_idx, pt_slot_idx);
+            }
+        }
+    }
+
+    /// 自检: 页表路径的 PDPT 级 (调试日志, 仅 x86_64).
+    ///
+    /// # Safety
+    ///
+    /// `pdpt_phys` 必须是 `PRESENT` PML4E 的 frame (有效 PDPT 页物理地址).
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn walk_pdpt_level(pdpt_phys: u64, pdpt_idx: usize, pd_idx: usize, pt_slot_idx: usize) {
+        // SAFETY: 调用方保证 pdpt_phys 为有效 PDPT 页物理地址; 只读单个页表项.
+        let pdpte = unsafe { Self::read_pt_entry(pdpt_phys, pdpt_idx) };
+        let pdpte_present = (pdpte & 1) != 0;
+        let pdpte_user = (pdpte & 4) != 0;
+        let pdpte_huge = (pdpte & 0x80) != 0;
+        let pdpte_frame = pdpte & 0x000F_FFFF_FFFF_F000;
+        crate::klog_boot_info!(
+            "[USER] SELF-CHECK PT-WALK: PDPTE[{}]={:#x} P={} U={} HUGE={} frame={:#x}",
+            pdpt_idx,
+            pdpte,
+            u8::from(pdpte_present),
+            u8::from(pdpte_user),
+            u8::from(pdpte_huge),
+            pdpte_frame
+        );
+        if pdpte_present && !pdpte_user {
+            crate::klog_boot_info!(
+                "[USER] SELF-CHECK: *** BUG: PDPTE[{}] U=0! Ring 3 cannot traverse to PD! ***",
+                pdpt_idx
+            );
+        }
+        if pdpte_present && !pdpte_huge {
+            // SAFETY: PDPTE PRESENT 且非 HUGE, 其 frame 指向有效 PD 页.
+            unsafe {
+                Self::walk_pd_level(pdpte_frame, pd_idx, pt_slot_idx);
+            }
+        }
+    }
+
+    /// 自检: 页表路径的 PD 级 (调试日志, 仅 x86_64).
+    ///
+    /// # Safety
+    ///
+    /// `pd_phys` 必须是 `PRESENT` 非 `HUGE` PDPTE 的 frame (有效 PD 页物理地址).
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn walk_pd_level(pd_phys: u64, pd_idx: usize, pt_slot_idx: usize) {
+        // SAFETY: 调用方保证 pd_phys 为有效 PD 页物理地址; 只读单个页表项.
+        let pde = unsafe { Self::read_pt_entry(pd_phys, pd_idx) };
+        let pde_present = (pde & 1) != 0;
+        let pde_user = (pde & 4) != 0;
+        let pde_huge = (pde & 0x80) != 0;
+        let pde_frame = pde & 0x000F_FFFF_FFFF_F000;
+        crate::klog_boot_info!(
+            "[USER] SELF-CHECK PT-WALK: PDE[{}]={:#x} P={} U={} HUGE={} frame={:#x}",
+            pd_idx,
+            pde,
+            u8::from(pde_present),
+            u8::from(pde_user),
+            u8::from(pde_huge),
+            pde_frame
+        );
+        if pde_present && !pde_user {
+            crate::klog_boot_info!(
+                "[USER] SELF-CHECK: *** BUG: PDE[{}] U=0! Ring 3 cannot traverse to PT! ***",
+                pd_idx
+            );
+        }
+        if pde_present && !pde_huge {
+            // SAFETY: PDE PRESENT 且非 HUGE, 其 frame 指向有效 PT 页.
+            unsafe {
+                Self::walk_pt_level(pde_frame, pt_slot_idx);
+            }
+        }
+    }
+
+    /// 自检: 页表路径的 PT 叶子级 (调试日志, 仅 x86_64).
+    ///
+    /// # Safety
+    ///
+    /// `pt_phys` 必须是 `PRESENT` 非 `HUGE` PDE 的 frame (有效 PT 页物理地址).
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn walk_pt_level(pt_phys: u64, pt_slot_idx: usize) {
+        // SAFETY: 调用方保证 pt_phys 为有效 PT 页物理地址; 只读单个页表项.
+        let pte = unsafe { Self::read_pt_entry(pt_phys, pt_slot_idx) };
+        let leaf_present = (pte & 1) != 0;
+        let leaf_user = (pte & 4) != 0;
+        let leaf_nx = (pte & (1u64 << 63)) != 0;
+        let leaf_frame = pte & 0x000F_FFFF_FFFF_F000;
+        crate::klog_boot_info!(
+            "[USER] SELF-CHECK PT-WALK: PTE[{}]={:#x} P={} U={} NX={} frame={:#x}",
+            pt_slot_idx,
+            pte,
+            u8::from(leaf_present),
+            u8::from(leaf_user),
+            u8::from(leaf_nx),
+            leaf_frame
+        );
+        if leaf_present && !leaf_user {
+            crate::klog_boot_info!(
+                "[USER] SELF-CHECK: *** BUG: PTE[{}] U=0! Ring 3 cannot access this page! ***",
+                pt_slot_idx
+            );
+        }
+        if leaf_present && leaf_nx {
+            crate::klog_boot_info!(
+                "[USER] SELF-CHECK: *** BUG: PTE[{}] NX=1! Ring 3 cannot execute this page! ***",
+                pt_slot_idx
+            );
+        }
     }
 
     /// 将 argc/argv/envp 写入用户进程栈
@@ -1636,10 +1690,49 @@ impl UserProcManager {
         new_sp
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-    )]
+    /// 把 `PT_LOAD` 段的文件内容按页回填到本段已分配/复用的物理页.
+    ///
+    /// `allocated_pages[start_idx..]` 是本段的页帧, 页序与 vaddr 递增一致
+    /// (页 0 对应 `phdr.p_vaddr`, 故页内偏移取 `p_vaddr & 0xFFF`).
+    fn copy_segment_file_data(
+        phdr: &ElfPhdr,
+        elf_data: *const u8,
+        allocated_pages: &[u64],
+        start_idx: usize,
+        num_pages: u64,
+    ) {
+        let file_offset_bytes = crate::privileged::lib::usize_from_u64(phdr.p_offset);
+        let mut copied: u64 = 0;
+        let first_page_offset = phdr.p_vaddr & 0xFFF;
+
+        for j in 0..num_pages {
+            if copied >= phdr.p_filesz {
+                break;
+            }
+            let page_phys = allocated_pages[start_idx + crate::privileged::lib::usize_from_u64(j)];
+            if page_phys == 0 {
+                continue;
+            }
+
+            let off_in_page = if j == 0 { first_page_offset } else { 0 };
+            let max_in_page = PAGE_SIZE - off_in_page;
+            let remaining = phdr.p_filesz - copied;
+            let chunk = if max_in_page < remaining {
+                max_in_page
+            } else {
+                remaining
+            };
+            raw::elf_chunk_copy(
+                page_phys,
+                off_in_page,
+                elf_data,
+                file_offset_bytes + crate::privileged::lib::usize_from_u64(copied),
+                chunk,
+            );
+            copied += chunk;
+        }
+    }
+
     /// 从内存中的 ELF 映像加载用户进程, 返回新 pid (失败为负值)
     pub fn load_elf_from_memory(&self, elf_data: *const u8, elf_size: u64, pwm: u64) -> i32 {
         crate::klog_boot_info!("[ELF] load_elf_from_memory: entry");
@@ -1692,123 +1785,122 @@ impl UserProcManager {
             let proc_ref = UserProcRef::new_unchecked(proc);
             let cr3 = proc_ref.load_cr3();
 
-            // P1-I-32 修复: 改用栈上局部数组, 消除 RacyCell 静态分配器在 SMP 下
-            // 多核 execve 并发的数据竞争. 8KB 临时缓冲 (1024×u64) 在调用方栈上
-            // 分配. launch_first_user_process 路径运行在 boot 栈 (128KB) 上,
-            // 剩余空间充足; 退出函数后自动释放, 无锁.
-            // 仍按 phnum>256 截断保护, 单 PT_LOAD 段最大 1024 页.
-            let mut allocated_pages = [0u64; 1024];
-            let allocated_pages: &mut [u64] = &mut allocated_pages;
-            let mut page_count: usize = 0;
-
-            let phnum = header.e_phnum as usize;
-            if phnum > 256 {
+            if Self::load_elf_segments(elf_data, elf_size, &header, load_bias, cr3).is_none() {
                 Self::rollback_unrun_process(proc_ref);
                 return -1;
-            }
-
-            for i in 0..phnum {
-                let phdr_size = core::mem::size_of::<ElfPhdr>() as u64;
-                let phdr_offset = header.e_phoff + (i as u64) * u64::from(header.e_phentsize);
-                if phdr_offset + phdr_size > elf_size {
-                    Self::rollback_unrun_process(proc_ref);
-                    return -1;
-                }
-                let phdr = (elf_data.add(crate::privileged::lib::usize_from_u64(phdr_offset)))
-                    .cast::<ElfPhdr>()
-                    .read_unaligned();
-
-                if phdr.p_type != PT_LOAD {
-                    continue;
-                }
-
-                let vaddr_start = (phdr.p_vaddr + load_bias) & !(PAGE_SIZE - 1);
-                let vaddr_end =
-                    (phdr.p_vaddr + phdr.p_memsz + load_bias + (PAGE_SIZE - 1)) & !(PAGE_SIZE - 1);
-                let num_pages = (vaddr_end - vaddr_start) / PAGE_SIZE;
-
-                for j in 0..num_pages {
-                    let vaddr = vaddr_start + j * PAGE_SIZE;
-
-                    let mut flags = PageFlags::PRESENT | PageFlags::USER;
-                    if phdr.p_flags & 0x02 != 0 {
-                        flags |= PageFlags::WRITABLE;
-                    }
-                    let flags = flags.bits();
-
-                    // 在 aarch64 上, L2_DEVICE 中的 2MB BLOCK 描述符
-                    // 会让 vmm_get_physical_in_table 对未映射的用户地址
-                    // 返回非零. 跳过复用检查, 一律分配.
-                    #[cfg(target_arch = "aarch64")]
-                    let existing_phys: u64 = 0;
-                    #[cfg(not(target_arch = "aarch64"))]
-                    let existing_phys = raw::virt_to_phys(cr3, vaddr);
-
-                    if existing_phys == 0 {
-                        let page = raw::alloc_zeroed_user_page(cr3, vaddr, flags);
-                        if page.is_null() {
-                            // 失败回滚: 已分配的页**不在此逐个归还**. 它们已由
-                            // `alloc_zeroed_user_page` 映射进 cr3, 所有权属地址空间;
-                            // `allocated_pages` 里还混有复用的既有页 (`existing_phys`),
-                            // 逐个 free 会把别人在用的帧抽走. 真正的释放路径是下面的
-                            // 回滚 —— 它把状态标为 `Zombie` 后经权威销毁单源走到
-                            // `destroy_user_page_table` 的 USER leaf 处理.
-                            Self::rollback_unrun_process(proc_ref);
-                            return -1;
-                        }
-                        if page_count < 1024 {
-                            allocated_pages[page_count] = page as u64;
-                            page_count += 1;
-                        }
-                    } else {
-                        // 复用现有页, 记录下来
-                        if page_count < 1024 {
-                            allocated_pages[page_count] = existing_phys;
-                            page_count += 1;
-                        }
-                    }
-                }
-
-                if phdr.p_filesz > 0 {
-                    let file_offset_bytes = crate::privileged::lib::usize_from_u64(phdr.p_offset);
-                    let mut copied: u64 = 0;
-                    let first_page_offset = phdr.p_vaddr & 0xFFF;
-                    let start_idx = page_count.saturating_sub(num_pages as usize);
-
-                    for j in 0..num_pages {
-                        if copied >= phdr.p_filesz {
-                            break;
-                        }
-                        let page_phys =
-                            allocated_pages[start_idx + crate::privileged::lib::usize_from_u64(j)];
-                        if page_phys == 0 {
-                            continue;
-                        }
-
-                        let off_in_page = if j == 0 { first_page_offset } else { 0 };
-                        let max_in_page = PAGE_SIZE - off_in_page;
-                        let remaining = phdr.p_filesz - copied;
-                        let chunk = if max_in_page < remaining {
-                            max_in_page
-                        } else {
-                            remaining
-                        };
-                        raw::elf_chunk_copy(
-                            page_phys,
-                            off_in_page,
-                            elf_data,
-                            file_offset_bytes + crate::privileged::lib::usize_from_u64(copied),
-                            chunk,
-                        );
-                        copied += chunk;
-                    }
-                }
             }
 
             proc_ref.set_entry(entry);
 
             proc_ref.pid().cast_signed()
         }
+    }
+
+    /// 装载 ELF 的 `PT_LOAD` 段: 逐页分配 (或复用) 用户页并复制文件数据.
+    ///
+    /// # Safety
+    ///
+    /// - `elf_data` 必须指向一个已通过 [`super::elf::verify::verify_elf`] 校验的 ELF
+    ///   映像, 且区间 `[elf_data, elf_data + elf_size)` 在调用期可读.
+    /// - `cr3` 必须是新建进程的有效用户页表 (PML4 物理地址).
+    unsafe fn load_elf_segments(
+        elf_data: *const u8,
+        elf_size: u64,
+        header: &ElfHeader,
+        load_bias: u64,
+        cr3: u64,
+    ) -> Option<()> {
+        // P1-I-32 修复: 改用栈上局部数组, 消除 RacyCell 静态分配器在 SMP 下
+        // 多核 execve 并发的数据竞争. 8KB 临时缓冲 (1024×u64) 在调用方栈上
+        // 分配. launch_first_user_process 路径运行在 boot 栈 (128KB) 上,
+        // 剩余空间充足; 退出函数后自动释放, 无锁.
+        // 仍按 phnum>256 截断保护, 单 PT_LOAD 段最大 1024 页.
+        let mut allocated_pages = [0u64; 1024];
+        let allocated_pages: &mut [u64] = &mut allocated_pages;
+        let mut page_count: usize = 0;
+
+        let phnum = header.e_phnum as usize;
+        if phnum > 256 {
+            return None;
+        }
+
+        for i in 0..phnum {
+            let phdr_size = core::mem::size_of::<ElfPhdr>() as u64;
+            let phdr_offset = header.e_phoff + (i as u64) * u64::from(header.e_phentsize);
+            if phdr_offset + phdr_size > elf_size {
+                return None;
+            }
+            // SAFETY: 调用方保证 elf_data 区间为已校验的 ELF 映像; 上方已拦截
+            // phdr 表越界, 故该偏移处的程序头读取仍在区间内.
+            let phdr = unsafe {
+                (elf_data.add(crate::privileged::lib::usize_from_u64(phdr_offset)))
+                    .cast::<ElfPhdr>()
+                    .read_unaligned()
+            };
+
+            if phdr.p_type != PT_LOAD {
+                continue;
+            }
+
+            let vaddr_start = (phdr.p_vaddr + load_bias) & !(PAGE_SIZE - 1);
+            let vaddr_end =
+                (phdr.p_vaddr + phdr.p_memsz + load_bias + (PAGE_SIZE - 1)) & !(PAGE_SIZE - 1);
+            let num_pages = (vaddr_end - vaddr_start) / PAGE_SIZE;
+
+            for j in 0..num_pages {
+                let vaddr = vaddr_start + j * PAGE_SIZE;
+
+                let mut flags = PageFlags::PRESENT | PageFlags::USER;
+                if phdr.p_flags & 0x02 != 0 {
+                    flags |= PageFlags::WRITABLE;
+                }
+                let flags = flags.bits();
+
+                // 在 aarch64 上, L2_DEVICE 中的 2MB BLOCK 描述符
+                // 会让 vmm_get_physical_in_table 对未映射的用户地址
+                // 返回非零. 跳过复用检查, 一律分配.
+                #[cfg(target_arch = "aarch64")]
+                let existing_phys: u64 = 0;
+                #[cfg(not(target_arch = "aarch64"))]
+                let existing_phys = raw::virt_to_phys(cr3, vaddr);
+
+                if existing_phys == 0 {
+                    let page = raw::alloc_zeroed_user_page(cr3, vaddr, flags);
+                    if page.is_null() {
+                        // 失败回滚: 已分配的页**不在此逐个归还**. 它们已由
+                        // `alloc_zeroed_user_page` 映射进 cr3, 所有权属地址空间;
+                        // `allocated_pages` 里还混有复用的既有页 (`existing_phys`),
+                        // 逐个 free 会把别人在用的帧抽走. 真正的释放路径是调用方
+                        // 的 `rollback_unrun_process` —— 它把状态标为 `Zombie` 后
+                        // 经权威销毁单源走到 `destroy_user_page_table` 的 USER leaf 处理.
+                        return None;
+                    }
+                    if page_count < 1024 {
+                        allocated_pages[page_count] = page as u64;
+                        page_count += 1;
+                    }
+                } else {
+                    // 复用现有页, 记录下来
+                    if page_count < 1024 {
+                        allocated_pages[page_count] = existing_phys;
+                        page_count += 1;
+                    }
+                }
+            }
+
+            if phdr.p_filesz > 0 {
+                let start_idx = page_count.saturating_sub(num_pages as usize);
+                Self::copy_segment_file_data(
+                    &phdr,
+                    elf_data,
+                    allocated_pages,
+                    start_idx,
+                    num_pages,
+                );
+            }
+        }
+
+        Some(())
     }
 
     /// 从扁平二进制映像创建用户进程, 返回新 pid (失败为负值)

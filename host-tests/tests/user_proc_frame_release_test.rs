@@ -249,13 +249,25 @@ fn elf_load_rollback_routes_every_failure_site_to_single_source() {
     let src = read(USER_PROC_RS);
     let prod = prod_code(&src);
     let body = item_from(&prod, "pub fn load_elf_from_memory(");
-    // phnum 超限 / phdr 越界 / 装配页 OOM 三个失败点逐个路由, 不接受部分接线.
-    // 调用形如按值传 `UserProcRef` (8 字节 Copy, clippy pedantic 的
-    // trivially_copy_pass_by_ref 要求), 故契约锁不匹配 `&proc_ref` 旧形态.
+    let segments = item_from(&prod, "unsafe fn load_elf_segments(");
+    // 装载失败点已收口为 `load_elf_segments` 的 `None` 返回, 由调用方唯一一处判据统一
+    // 路由到回滚入口 —— 单路由 + 失败点逐个 `return None` 比逐点重复调用更强.
     assert_eq!(
         count(&body, "Self::rollback_unrun_process(proc_ref)"),
+        1,
+        "load_elf_from_memory 必须把装载失败统一路由到回滚入口"
+    );
+    assert!(
+        body.contains(
+            "Self::load_elf_segments(elf_data, elf_size, &header, load_bias, cr3).is_none()"
+        ),
+        "回滚必须挂在装载失败的判据上 (装载成功不得回滚)"
+    );
+    // phnum 超限 / phdr 越界 / 装配页 OOM 三个失败点逐个返回 None, 不接受部分接线.
+    assert_eq!(
+        count(&segments, "return None;"),
         3,
-        "load_elf_from_memory 的三个失败点必须全部走回滚入口 (逐个计数, 防漏接)"
+        "load_elf_segments 的三个装载失败点必须各自返回 None (逐个计数, 防漏接)"
     );
     assert!(
         !src.contains("destroy_raw"),

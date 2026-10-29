@@ -1518,10 +1518,6 @@ impl VirtualMemoryManager {
         Self::flush_tlb_remote(virt);
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-    )]
     /// 以 `parent_pml4` 为模板克隆用户页表 (COW 前置), 返回子页表物理地址.
     ///
     /// `parent_pml4 == 0` 返回 `None`.
@@ -1560,9 +1556,18 @@ impl VirtualMemoryManager {
         // SAFETY: parent_pml4 is a valid user PML4; VMM_LOCK held
         let parent_pml4_virt = PhysAddr(parent_pml4).to_virt().0 as *const u64;
 
+        Self::clone_pml4_user_half(parent_pml4_virt, child_pml4_base)?;
+
+        Self::release_lock(guard);
+        Some(child_pml4_phys.as_u64())
+    }
+
+    /// COW 克隆的 PML4 层: 用户半区 (i = 0..256) 每项分配子 PDPT 并写入子 PML4.
+    fn clone_pml4_user_half(parent_pml4: *const u64, child_pml4: *mut u64) -> Option<()> {
+        let pmm = get_pmm();
         for i in 0..256u16 {
             // SAFETY: i in 0..255 within PML4 page; volatile for hardware-updated bits
-            let parent_pml4e = unsafe { parent_pml4_virt.add(i as usize).read_volatile() };
+            let parent_pml4e = unsafe { parent_pml4.add(i as usize).read_volatile() };
             if (parent_pml4e & 1) == 0 {
                 continue;
             }
@@ -1583,134 +1588,152 @@ impl VirtualMemoryManager {
                 (child_pml4e & 0xFFF) | (child_pdpt_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
             // SAFETY: child_pml4_base 是合法的 4KB PML4 页; volatile 写以保证 TLB 一致性
             unsafe {
-                child_pml4_base.add(i as usize).write_volatile(child_pml4e);
+                child_pml4.add(i as usize).write_volatile(child_pml4e);
             }
 
             // SAFETY: parent_pml4e present → frame bits point to valid PDPT
             let parent_pdpt_virt = (parent_pml4e & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
             let parent_pdpt = parent_pdpt_virt as *const u64;
 
-            for j in 0..512u16 {
-                // SAFETY: j in 0..511 within PDPT page; volatile read
-                let parent_pdpte = unsafe { parent_pdpt.add(j as usize).read_volatile() };
-                if (parent_pdpte & 1) == 0 {
-                    continue;
-                }
-                if (parent_pdpte & 0x80) != 0 {
-                    continue;
-                }
+            Self::clone_pdpt_level(parent_pdpt, child_pdpt)?;
+        }
+        Some(())
+    }
 
-                let child_pd_phys = pmm.alloc_page()?;
-                let child_pd = child_pd_phys.to_virt().0 as *mut u64;
-                // SAFETY: child_pd from PMM
+    /// COW 克隆的 PDPT 层: 跳过 1GB 巨页项, 每项分配子 PD 并写入子 PDPT.
+    fn clone_pdpt_level(parent_pdpt: *const u64, child_pdpt: *mut u64) -> Option<()> {
+        let pmm = get_pmm();
+        for j in 0..512u16 {
+            // SAFETY: j in 0..511 within PDPT page; volatile read
+            let parent_pdpte = unsafe { parent_pdpt.add(j as usize).read_volatile() };
+            if (parent_pdpte & 1) == 0 {
+                continue;
+            }
+            if (parent_pdpte & 0x80) != 0 {
+                continue;
+            }
+
+            let child_pd_phys = pmm.alloc_page()?;
+            let child_pd = child_pd_phys.to_virt().0 as *mut u64;
+            // SAFETY: child_pd from PMM
+            unsafe {
+                core::ptr::write_bytes(
+                    child_pd,
+                    0,
+                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                );
+            }
+
+            let mut child_pdpte_v = parent_pdpte;
+            child_pdpte_v =
+                (child_pdpte_v & 0xFFF) | (child_pd_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
+            // SAFETY: child_pdpt valid; volatile write
+            unsafe {
+                child_pdpt.add(j as usize).write_volatile(child_pdpte_v);
+            }
+
+            // SAFETY: parent_pdpte present → valid PD pointer
+            let parent_pd_virt = (parent_pdpte & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
+            let parent_pd = parent_pd_virt as *const u64;
+
+            Self::clone_pd_level(parent_pd, child_pd)?;
+        }
+        Some(())
+    }
+
+    /// COW 克隆的 PD 层: 2MB 巨页整体深拷贝, 普通项分配子 PT 并写入子 PD.
+    fn clone_pd_level(parent_pd: *const u64, child_pd: *mut u64) -> Option<()> {
+        let pmm = get_pmm();
+        for k in 0..512u16 {
+            // SAFETY: k in 0..511 within PD page; volatile read
+            let parent_pde = unsafe { parent_pd.add(k as usize).read_volatile() };
+            if (parent_pde & 1) == 0 {
+                continue;
+            }
+
+            if (parent_pde & 0x80) != 0 {
+                // 深拷贝 2MB 巨页
+                let huge_phys = pmm.alloc_pages(512)?;
+                let huge_virt = PhysAddr(huge_phys.as_u64()).to_virt().0;
+                // SAFETY: parent_huge is valid 2MB kernel VA
+                let parent_huge = (parent_pde & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
                 unsafe {
-                    core::ptr::write_bytes(
-                        child_pd,
-                        0,
-                        crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                    core::ptr::copy_nonoverlapping(
+                        parent_huge as *const u8,
+                        huge_virt as *mut u8,
+                        2 * 1024 * 1024,
                     );
                 }
-
-                let mut child_pdpte_v = parent_pdpte;
-                child_pdpte_v =
-                    (child_pdpte_v & 0xFFF) | (child_pd_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
-                // SAFETY: child_pdpt valid; volatile write
+                let mut child_pde_v = parent_pde;
+                child_pde_v = (child_pde_v & 0xFFF) | (huge_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
+                // SAFETY: child_pd valid; volatile write
                 unsafe {
-                    child_pdpt.add(j as usize).write_volatile(child_pdpte_v);
+                    child_pd.add(k as usize).write_volatile(child_pde_v);
                 }
+                continue;
+            }
 
-                // SAFETY: parent_pdpte present → valid PD pointer
-                let parent_pd_virt = (parent_pdpte & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
-                let parent_pd = parent_pd_virt as *const u64;
+            let child_table_phys = pmm.alloc_page()?;
+            let child_table = child_table_phys.to_virt().0 as *mut u64;
+            // SAFETY: child_table from PMM
+            unsafe {
+                core::ptr::write_bytes(
+                    child_table,
+                    0,
+                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                );
+            }
 
-                for k in 0..512u16 {
-                    // SAFETY: k in 0..511 within PD page; volatile read
-                    let parent_pde = unsafe { parent_pd.add(k as usize).read_volatile() };
-                    if (parent_pde & 1) == 0 {
-                        continue;
-                    }
+            let mut child_pde_v = parent_pde;
+            child_pde_v =
+                (child_pde_v & 0xFFF) | (child_table_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
+            // SAFETY: child_pd valid; volatile write
+            unsafe {
+                child_pd.add(k as usize).write_volatile(child_pde_v);
+            }
 
-                    if (parent_pde & 0x80) != 0 {
-                        // 深拷贝 2MB 巨页
-                        let huge_phys = pmm.alloc_pages(512)?;
-                        let huge_virt = PhysAddr(huge_phys.as_u64()).to_virt().0;
-                        // SAFETY: parent_huge is valid 2MB kernel VA
-                        let parent_huge = (parent_pde & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
-                        unsafe {
-                            core::ptr::copy_nonoverlapping(
-                                parent_huge as *const u8,
-                                huge_virt as *mut u8,
-                                2 * 1024 * 1024,
-                            );
-                        }
-                        let mut child_pde_v = parent_pde;
-                        child_pde_v =
-                            (child_pde_v & 0xFFF) | (huge_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
-                        // SAFETY: child_pd valid; volatile write
-                        unsafe {
-                            child_pd.add(k as usize).write_volatile(child_pde_v);
-                        }
-                        continue;
-                    }
+            // SAFETY: parent_pde present && !huge → valid PT pointer
+            let parent_table_virt = (parent_pde & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
+            let parent_table = parent_table_virt as *const u64;
 
-                    let child_table_phys = pmm.alloc_page()?;
-                    let child_table = child_table_phys.to_virt().0 as *mut u64;
-                    // SAFETY: child_table from PMM
-                    unsafe {
-                        core::ptr::write_bytes(
-                            child_table,
-                            0,
-                            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
-                        );
-                    }
+            Self::clone_pt_level(parent_table, child_table)?;
+        }
+        Some(())
+    }
 
-                    let mut child_pde_v = parent_pde;
-                    child_pde_v =
-                        (child_pde_v & 0xFFF) | (child_table_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
-                    // SAFETY: child_pd valid; volatile write
-                    unsafe {
-                        child_pd.add(k as usize).write_volatile(child_pde_v);
-                    }
+    /// COW 克隆的 PT 层: 每个存在的叶子项分配子物理页并整体深拷贝.
+    fn clone_pt_level(parent_table: *const u64, child_table: *mut u64) -> Option<()> {
+        let pmm = get_pmm();
+        for l in 0..512u16 {
+            // SAFETY: l in 0..511 within PT page; volatile read
+            let parent_leaf = unsafe { parent_table.add(l as usize).read_volatile() };
+            if (parent_leaf & 1) == 0 {
+                continue;
+            }
 
-                    // SAFETY: parent_pde present && !huge → valid PT pointer
-                    let parent_table_virt = (parent_pde & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
-                    let parent_table = parent_table_virt as *const u64;
+            let child_page_phys = pmm.alloc_page()?;
+            let child_page_virt = PhysAddr(child_page_phys.as_u64()).to_virt().0;
+            // SAFETY: parent_page_virt is valid kernel VA from PTE
+            let parent_page_virt = (parent_leaf & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
 
-                    for l in 0..512u16 {
-                        // SAFETY: l in 0..511 within PT page; volatile read
-                        let parent_leaf = unsafe { parent_table.add(l as usize).read_volatile() };
-                        if (parent_leaf & 1) == 0 {
-                            continue;
-                        }
+            // SAFETY: Both addresses are valid 4KB kernel VAs
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    parent_page_virt as *const u8,
+                    child_page_virt as *mut u8,
+                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+                );
+            }
 
-                        let child_page_phys = pmm.alloc_page()?;
-                        let child_page_virt = PhysAddr(child_page_phys.as_u64()).to_virt().0;
-                        // SAFETY: parent_page_virt is valid kernel VA from PTE
-                        let parent_page_virt = (parent_leaf & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
-
-                        // SAFETY: Both addresses are valid 4KB kernel VAs
-                        unsafe {
-                            core::ptr::copy_nonoverlapping(
-                                parent_page_virt as *const u8,
-                                child_page_virt as *mut u8,
-                                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
-                            );
-                        }
-
-                        let mut child_leaf_v = parent_leaf;
-                        child_leaf_v = (child_leaf_v & 0xFFF)
-                            | (child_page_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
-                        // SAFETY: child_table valid; volatile write
-                        unsafe {
-                            child_table.add(l as usize).write_volatile(child_leaf_v);
-                        }
-                    }
-                }
+            let mut child_leaf_v = parent_leaf;
+            child_leaf_v =
+                (child_leaf_v & 0xFFF) | (child_page_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
+            // SAFETY: child_table valid; volatile write
+            unsafe {
+                child_table.add(l as usize).write_volatile(child_leaf_v);
             }
         }
-
-        Self::release_lock(guard);
-        Some(child_pml4_phys.as_u64())
+        Some(())
     }
 
     fn find_free_user_slot(&self) -> usize {

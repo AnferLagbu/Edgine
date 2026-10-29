@@ -305,15 +305,24 @@ fn rfpart(x: f32) -> f32 {
     1.0f32 - fpart(x)
 }
 
-/// 绘制反走样直线 (Wu 算法)
-fn draw_line_aa_impl(
-    canvas: &mut dyn PixelCanvas,
+/// Wu 反走样直线的几何预处理结果
+struct AaLine {
+    /// 是否以 y 为主轴 (斜率绝对值 > 1)
+    steep: bool,
+    /// 起点横坐标 (已按 steep / 方向归一化)
     x0: i32,
+    /// 起点纵坐标
     y0: i32,
+    /// 终点横坐标
     x1: i32,
+    /// 终点纵坐标
     y1: i32,
-    color: Color,
-) {
+    /// 每列纵向增量
+    gradient: f32,
+}
+
+/// 归一化端点方向 (steep 交换 / 起点在前) 并计算斜率
+fn aa_geometry(x0: i32, y0: i32, x1: i32, y1: i32) -> AaLine {
     let steep = (y1 - y0).abs() > (x1 - x0).abs();
     let (mut x0, mut y0, mut x1, mut y1) = (x0, y0, x1, y1);
 
@@ -330,15 +339,43 @@ fn draw_line_aa_impl(
     let dy = crate::functions::intcast::f32_from_i32(y1 - y0);
     let gradient = if dx == 0.0 { 1.0f32 } else { dy / dx };
 
-    let xend_i =
-        crate::functions::intcast::i32_from_f32(crate::functions::intcast::f32_from_i32(x0) + 0.5);
-    let xend_f = crate::functions::intcast::f32_from_i32(xend_i);
-    let yend_f = crate::functions::intcast::f32_from_i32(y0)
-        + gradient * (xend_f - crate::functions::intcast::f32_from_i32(x0));
-    let xgap = rfpart(crate::functions::intcast::f32_from_i32(x0) + 0.5);
-    let xpxl1 = xend_i;
-    let ypxl1 = crate::functions::intcast::i32_from_f32(yend_f);
+    AaLine {
+        steep,
+        x0,
+        y0,
+        x1,
+        y1,
+        gradient,
+    }
+}
 
+/// 计算端点列 (`xend_i`), 端点纵向位置与 `xgap`
+///
+/// `use_rfpart_gap`: 起点端点取 `rfpart`, 终点端点取 `fpart` (与拆分前口径一致).
+fn aa_endpoint(x: i32, y: i32, gradient: f32, use_rfpart_gap: bool) -> (i32, f32, f32) {
+    let xend_i =
+        crate::functions::intcast::i32_from_f32(crate::functions::intcast::f32_from_i32(x) + 0.5);
+    let xend_f = crate::functions::intcast::f32_from_i32(xend_i);
+    let yend_f = crate::functions::intcast::f32_from_i32(y)
+        + gradient * (xend_f - crate::functions::intcast::f32_from_i32(x));
+    let xgap = if use_rfpart_gap {
+        rfpart(crate::functions::intcast::f32_from_i32(x) + 0.5)
+    } else {
+        fpart(crate::functions::intcast::f32_from_i32(x) + 0.5)
+    };
+    (xend_i, yend_f, xgap)
+}
+
+/// 绘制单个端点 (相邻两像素的 alpha 混合)
+fn blend_endpoint(
+    canvas: &mut dyn PixelCanvas,
+    steep: bool,
+    xpxl: i32,
+    yend_f: f32,
+    xgap: f32,
+    color: Color,
+) {
+    let ypxl = crate::functions::intcast::i32_from_f32(yend_f);
     let a1 = crate::functions::intcast::u8_from_i32(crate::functions::intcast::i32_from_f32(
         rfpart(yend_f) * xgap * 255.0,
     ));
@@ -348,78 +385,44 @@ fn draw_line_aa_impl(
     if steep {
         blend_pixel_impl(
             canvas,
-            ypxl1.cast_unsigned(),
-            xpxl1.cast_unsigned(),
+            ypxl.cast_unsigned(),
+            xpxl.cast_unsigned(),
             Color::new_alpha(color.r, color.g, color.b, a1),
         );
         blend_pixel_impl(
             canvas,
-            (ypxl1 + 1).cast_unsigned(),
-            xpxl1.cast_unsigned(),
+            (ypxl + 1).cast_unsigned(),
+            xpxl.cast_unsigned(),
             Color::new_alpha(color.r, color.g, color.b, a2),
         );
     } else {
         blend_pixel_impl(
             canvas,
-            xpxl1.cast_unsigned(),
-            ypxl1.cast_unsigned(),
+            xpxl.cast_unsigned(),
+            ypxl.cast_unsigned(),
             Color::new_alpha(color.r, color.g, color.b, a1),
         );
         blend_pixel_impl(
             canvas,
-            xpxl1.cast_unsigned(),
-            (ypxl1 + 1).cast_unsigned(),
+            xpxl.cast_unsigned(),
+            (ypxl + 1).cast_unsigned(),
             Color::new_alpha(color.r, color.g, color.b, a2),
         );
     }
+}
 
-    let mut intery = yend_f + gradient;
-
-    let xend_i =
-        crate::functions::intcast::i32_from_f32(crate::functions::intcast::f32_from_i32(x1) + 0.5);
-    let xend_f = crate::functions::intcast::f32_from_i32(xend_i);
-    let yend_f = crate::functions::intcast::f32_from_i32(y1)
-        + gradient * (xend_f - crate::functions::intcast::f32_from_i32(x1));
-    let xgap = fpart(crate::functions::intcast::f32_from_i32(x1) + 0.5);
-    let xpxl2 = xend_i;
-    let ypxl2 = crate::functions::intcast::i32_from_f32(yend_f);
-
-    let a1 = crate::functions::intcast::u8_from_i32(crate::functions::intcast::i32_from_f32(
-        rfpart(yend_f) * xgap * 255.0,
-    ));
-    let a2 = crate::functions::intcast::u8_from_i32(crate::functions::intcast::i32_from_f32(
-        fpart(yend_f) * xgap * 255.0,
-    ));
+/// 绘制两端点之间的内部像素 (逐列插值, `steep` 决定坐标交换)
+fn blend_interior(
+    canvas: &mut dyn PixelCanvas,
+    steep: bool,
+    mut intery: f32,
+    gradient: f32,
+    x_start: i32,
+    x_end: i32,
+    color: Color,
+) {
     if steep {
-        blend_pixel_impl(
-            canvas,
-            ypxl2.cast_unsigned(),
-            xpxl2.cast_unsigned(),
-            Color::new_alpha(color.r, color.g, color.b, a1),
-        );
-        blend_pixel_impl(
-            canvas,
-            (ypxl2 + 1).cast_unsigned(),
-            xpxl2.cast_unsigned(),
-            Color::new_alpha(color.r, color.g, color.b, a2),
-        );
-    } else {
-        blend_pixel_impl(
-            canvas,
-            xpxl2.cast_unsigned(),
-            ypxl2.cast_unsigned(),
-            Color::new_alpha(color.r, color.g, color.b, a1),
-        );
-        blend_pixel_impl(
-            canvas,
-            xpxl2.cast_unsigned(),
-            (ypxl2 + 1).cast_unsigned(),
-            Color::new_alpha(color.r, color.g, color.b, a2),
-        );
-    }
-
-    if steep {
-        for x in (xpxl1 + 1)..xpxl2 {
+        for x in x_start..x_end {
             let alpha = crate::functions::intcast::u8_from_i32(
                 crate::functions::intcast::i32_from_f32(rfpart(intery) * 255.0),
             );
@@ -441,7 +444,7 @@ fn draw_line_aa_impl(
             intery += gradient;
         }
     } else {
-        for x in (xpxl1 + 1)..xpxl2 {
+        for x in x_start..x_end {
             let alpha = crate::functions::intcast::u8_from_i32(
                 crate::functions::intcast::i32_from_f32(rfpart(intery) * 255.0),
             );
@@ -463,6 +466,38 @@ fn draw_line_aa_impl(
             intery += gradient;
         }
     }
+}
+
+/// 绘制反走样直线 (Wu 算法)
+fn draw_line_aa_impl(
+    canvas: &mut dyn PixelCanvas,
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+    color: Color,
+) {
+    let line = aa_geometry(x0, y0, x1, y1);
+
+    // 起点端点
+    let (xpxl1, yend1, xgap1) = aa_endpoint(line.x0, line.y0, line.gradient, true);
+    blend_endpoint(canvas, line.steep, xpxl1, yend1, xgap1, color);
+    let intery = yend1 + line.gradient;
+
+    // 终点端点
+    let (xpxl2, yend2, xgap2) = aa_endpoint(line.x1, line.y1, line.gradient, false);
+    blend_endpoint(canvas, line.steep, xpxl2, yend2, xgap2, color);
+
+    // 内部像素
+    blend_interior(
+        canvas,
+        line.steep,
+        intery,
+        line.gradient,
+        xpxl1 + 1,
+        xpxl2,
+        color,
+    );
 }
 
 // ============================================================================

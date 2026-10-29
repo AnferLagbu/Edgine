@@ -158,8 +158,19 @@ fn barrier_is_set_at_dispatch_before_current_store() {
          本核已经可以被别核观察到该任务'还是 current'; 晚置即留下无人设障的窗口"
     );
     // 负控制: 不得在 `context_switch` 之后才置屏障 (那时别核早已投送成功).
+    // 切换实体已收口到 `context_switch_tail` (schedule 只在末段委托), 故锁两段:
+    // 置位必须早于委托 tail, tail 体内才是真正的寄存器切换.
+    let tail = code_only(&fn_body(&sched, "fn context_switch_tail"));
     assert!(
-        before(&schedule_body, "cfs_on_cpu.store(true", "context_switch("),
+        has(&tail, "context_switch("),
+        "P-21: 上下文切换实体必须留在 `context_switch_tail`"
+    );
+    assert!(
+        before(
+            &schedule_body,
+            "cfs_on_cpu.store(true",
+            "Self::context_switch_tail("
+        ),
         "P-21: 屏障晚于上下文切换即形同虚设"
     );
 }
@@ -289,8 +300,14 @@ fn steal_refuses_barred_candidate_without_unaccounting() {
 fn prev_landing_goes_through_the_single_placement_entry() {
     let sched = code_only(&read_src(SCHED));
     let schedule_body = code_only(&fn_body(&sched, "pub fn schedule"));
+    // prev 收尾已收口到 `requeue_prev` (schedule 只负责委托), 故落地动作锁在该体内.
+    assert!(
+        has(&schedule_body, "Self::requeue_prev(per_cpu, current_pid)"),
+        "P-21: prev 落地必须由 schedule 委托 `requeue_prev`"
+    );
+    let requeue = code_only(&fn_body(&sched, "fn requeue_prev"));
     assert_eq!(
-        occurrences(&schedule_body, "cfs_place_on_inner("),
+        occurrences(&requeue, "cfs_place_on_inner("),
         1,
         "P-21: prev 落地必须走搬定入口 (认领凭证 + 锁序 + 去重 + 落点回写不在之外另起炉灶)"
     );
@@ -309,7 +326,7 @@ fn prev_landing_goes_through_the_single_placement_entry() {
     );
     // 负控制: 旧的裸 `requeue` 与"只持本核锁就投节点"的编程面都不得复活.
     assert!(
-        !has(&schedule_body, ".requeue(") && !has(&sched, "cfs_rq.lock().enqueue("),
+        !has(&sched, ".requeue(") && !has(&sched, "cfs_rq.lock().enqueue("),
         "P-21: 裸 insert / 绕过认领的入队会重新打开双树与漏记账窗口"
     );
     let cfs = code_only(&read_src(CFS));

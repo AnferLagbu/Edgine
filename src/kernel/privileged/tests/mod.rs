@@ -69,22 +69,24 @@ const NOOP_CASE: TestCase = TestCase {
     func: noop_test,
 };
 
+/// 空注册表初始态 (静态数组, 供 `TestRegistry::new` 复用).
+///
+/// 数组体量 40B×640≈25KiB. 若在函数体内写字面量, clippy 的 `large_stack_arrays`
+/// 会按"局部大数组"报出 (而实际物化位置是 static/OnceLock 的 `.bss`); 若写成
+/// `const` 项则转由 `large_const_arrays` 报出. 放在 `static` 里两者都不触发,
+/// `new()` 仅做一次路径读取.
+static NOOP_CASES: [TestCase; MAX_TESTS] = [NOOP_CASE; MAX_TESTS];
+
 struct TestRegistry {
     count: usize,
     cases: [TestCase; MAX_TESTS],
 }
 
 impl TestRegistry {
-    // E-06 (2026-09-07): MAX_TESTS 256→512 后数组 40B×512=20KiB, clippy
-    // large_stack_arrays 误报 — 本数组经 OnceLock 存放于 static (.bss) 非栈.
-    #[expect(
-        clippy::large_stack_arrays,
-        reason = "large_stack_arrays: 测试注册表数组存放于 static OnceLock (.bss) 非栈分配; clippy 对 const fn 内字面量误报, 当前优先 expect"
-    )]
     const fn new() -> Self {
         Self {
             count: 0,
-            cases: [NOOP_CASE; MAX_TESTS],
+            cases: NOOP_CASES,
         }
     }
 

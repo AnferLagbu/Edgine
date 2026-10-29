@@ -429,201 +429,200 @@ impl Interpreter {
         }
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-    )]
+    /// 执行调用栈直至全部帧结束: 取指令 → 计量 gas → 分派单条指令
     fn execute_call_stack(&mut self) -> Result<(), WasmError> {
-        while let Some(frame) = self.call_stack.last() {
-            if frame.pc >= frame.code.len() {
-                break;
-            }
-        }
-
-        while self.call_stack.last().is_some() {
-            let opcode = {
-                let frame = self
-                    .call_stack
-                    .last()
-                    .expect("wasm: call_stack 非空 (while is_some 守护)");
-                if frame.pc >= frame.code.len() {
-                    self.call_stack.pop();
-                    continue;
-                }
-                frame.code[frame.pc]
-            };
-
-            let op = Opcode::from_byte(opcode).ok_or(WasmError::UnknownOpcode(opcode));
+        while let Some(opcode) = self.fetch_opcode() {
+            let op = Opcode::from_byte(opcode).ok_or(WasmError::UnknownOpcode(opcode))?;
             self.gas_used += 1;
             if self.gas_used > self.config.max_gas {
                 return Err(WasmError::GasExhausted);
             }
-
-            match op {
-                Ok(Opcode::Unreachable) => return Err(WasmError::Unreachable),
-                Ok(Opcode::Nop | Opcode::Block | Opcode::Loop) => {
-                    self.advance_pc(1);
-                }
-                Ok(Opcode::End) => {
-                    self.execute_end()?;
-                    if self.call_stack.is_empty() {
-                        return Ok(());
-                    }
-                }
-                Ok(Opcode::Return) => {
-                    self.execute_return();
-                    if self.call_stack.is_empty() {
-                        return Ok(());
-                    }
-                }
-
-                Ok(Opcode::If) => {
-                    self.execute_if()?;
-                }
-                Ok(Opcode::Else) => {
-                    self.execute_else()?;
-                }
-                Ok(Opcode::Br) => {
-                    self.execute_br()?;
-                }
-                Ok(Opcode::BrIf) => {
-                    self.execute_br_if()?;
-                }
-                Ok(Opcode::BrTable) => {
-                    self.execute_br_table()?;
-                }
-                Ok(Opcode::Call) => {
-                    self.execute_call()?;
-                }
-                Ok(Opcode::CallIndirect) => {
-                    return Err(WasmError::Unreachable);
-                }
-
-                Ok(Opcode::Drop) => {
-                    self.advance_pc(1);
-                    self.stack.pop()?;
-                }
-                Ok(Opcode::Select) => {
-                    self.advance_pc(1);
-                    let cond = self.stack.pop_i32()?;
-                    let val2 = self.stack.pop()?;
-                    let val1 = self.stack.pop()?;
-                    self.stack.push(if cond != 0 { val1 } else { val2 })?;
-                }
-
-                Ok(Opcode::LocalGet) => {
-                    self.execute_local_get()?;
-                }
-                Ok(Opcode::LocalSet) => {
-                    self.execute_local_set()?;
-                }
-                Ok(Opcode::LocalTee) => {
-                    self.execute_local_tee()?;
-                }
-                Ok(Opcode::GlobalGet) => {
-                    self.execute_global_get()?;
-                }
-                Ok(Opcode::GlobalSet) => {
-                    self.execute_global_set()?;
-                }
-
-                Ok(Opcode::I32Load) => self.execute_memory_load(4)?,
-                Ok(Opcode::I64Load) => self.execute_memory_load_64()?,
-                Ok(Opcode::I32Load8S) => self.execute_memory_load_ext(1, true)?,
-                Ok(Opcode::I32Load8U) => self.execute_memory_load_ext(1, false)?,
-                Ok(Opcode::I32Load16S) => self.execute_memory_load_ext(2, true)?,
-                Ok(Opcode::I32Load16U) => self.execute_memory_load_ext(2, false)?,
-                Ok(Opcode::I32Store) => self.execute_memory_store(4)?,
-                Ok(Opcode::I64Store) => self.execute_memory_store_64()?,
-                Ok(Opcode::I32Store8) => self.execute_memory_store_n(1)?,
-                Ok(Opcode::I32Store16) => self.execute_memory_store_n(2)?,
-                Ok(Opcode::MemorySize) => {
-                    self.advance_pc(1);
-                    let pages = self
-                        .memory
-                        .as_ref()
-                        .map_or(0, super::runtime::LinearMemory::pages);
-                    self.stack.push(Value::I32(pages.cast_signed()))?;
-                }
-                Ok(Opcode::MemoryGrow) => {
-                    self.advance_pc(1);
-                    let pages = self.stack.pop_i32()?;
-                    let result = if let Some(ref mut mem) = self.memory {
-                        mem.grow(pages.cast_unsigned())
-                    } else {
-                        u32::MAX
-                    };
-                    self.stack.push(Value::I32(result.cast_signed()))?;
-                }
-
-                Ok(Opcode::I32Const) => self.execute_i32_const()?,
-                Ok(Opcode::I64Const) => self.execute_i64_const()?,
-
-                Ok(Opcode::I32Eqz) => self.execute_i32_unop(|a| i32::from(a == 0))?,
-                Ok(Opcode::I32Eq) => self.execute_i32_binop(|a, b| i32::from(a == b))?,
-                Ok(Opcode::I32Ne) => self.execute_i32_binop(|a, b| i32::from(a != b))?,
-                Ok(Opcode::I32LtS) => self.execute_i32_binop(|a, b| i32::from(a < b))?,
-                Ok(Opcode::I32LtU) => {
-                    self.execute_i32_binop(|a, b| {
-                        i32::from(a.cast_unsigned() < b.cast_unsigned())
-                    })?;
-                }
-                Ok(Opcode::I32GtS) => self.execute_i32_binop(|a, b| i32::from(a > b))?,
-                Ok(Opcode::I32GtU) => {
-                    self.execute_i32_binop(|a, b| {
-                        i32::from(a.cast_unsigned() > b.cast_unsigned())
-                    })?;
-                }
-                Ok(Opcode::I32LeS) => self.execute_i32_binop(|a, b| i32::from(a <= b))?,
-                Ok(Opcode::I32LeU) => {
-                    self.execute_i32_binop(|a, b| {
-                        i32::from(a.cast_unsigned() <= b.cast_unsigned())
-                    })?;
-                }
-                Ok(Opcode::I32GeS) => self.execute_i32_binop(|a, b| i32::from(a >= b))?,
-                Ok(Opcode::I32GeU) => {
-                    self.execute_i32_binop(|a, b| {
-                        i32::from(a.cast_unsigned() >= b.cast_unsigned())
-                    })?;
-                }
-
-                Ok(Opcode::I32Add) => self.execute_i32_binop(i32::wrapping_add)?,
-                Ok(Opcode::I32Sub) => self.execute_i32_binop(i32::wrapping_sub)?,
-                Ok(Opcode::I32Mul) => self.execute_i32_binop(i32::wrapping_mul)?,
-                Ok(Opcode::I32DivS) => self.execute_i32_div_s()?,
-                Ok(Opcode::I32DivU) => self.execute_i32_div_u()?,
-                Ok(Opcode::I32RemS) => self.execute_i32_rem_s()?,
-                Ok(Opcode::I32RemU) => self.execute_i32_rem_u()?,
-                Ok(Opcode::I32And) => self.execute_i32_binop(|a, b| a & b)?,
-                Ok(Opcode::I32Or) => self.execute_i32_binop(|a, b| a | b)?,
-                Ok(Opcode::I32Xor) => self.execute_i32_binop(|a, b| a ^ b)?,
-                Ok(Opcode::I32Shl) => {
-                    self.execute_i32_binop(|a, b| a.wrapping_shl(b.cast_unsigned()))?;
-                }
-                Ok(Opcode::I32ShrS) => {
-                    self.execute_i32_binop(|a, b| a.wrapping_shr(b.cast_unsigned()))?;
-                }
-                Ok(Opcode::I32ShrU) => {
-                    self.execute_i32_binop(|a, b| {
-                        a.cast_unsigned()
-                            .wrapping_shr(b.cast_unsigned())
-                            .cast_signed()
-                    })?;
-                }
-
-                Ok(Opcode::I64Add) => self.execute_i64_binop(i64::wrapping_add)?,
-                Ok(Opcode::I64Sub) => self.execute_i64_binop(i64::wrapping_sub)?,
-                Ok(Opcode::I64Mul) => self.execute_i64_binop(i64::wrapping_mul)?,
-                Ok(Opcode::I64DivS) => self.execute_i64_div_s()?,
-                Ok(Opcode::I64And) => self.execute_i64_binop(|a, b| a & b)?,
-                Ok(Opcode::I64Or) => self.execute_i64_binop(|a, b| a | b)?,
-
-                Err(e) => return Err(e),
-                _ => return Err(WasmError::UnknownOpcode(opcode)),
-            }
+            self.execute_op(op, opcode)?;
         }
 
         Ok(())
+    }
+
+    /// 取栈顶帧的下一条指令字节; 当前帧已执行完则弹出, 栈空返回 `None`
+    fn fetch_opcode(&mut self) -> Option<u8> {
+        while let Some(frame) = self.call_stack.last() {
+            if frame.pc < frame.code.len() {
+                return Some(frame.code[frame.pc]);
+            }
+            self.call_stack.pop();
+        }
+        None
+    }
+
+    /// 按 opcode 组分派单条指令; 未实装 opcode 返回 `UnknownOpcode`
+    fn execute_op(&mut self, op: Opcode, opcode: u8) -> Result<(), WasmError> {
+        if let Some(result) = self.execute_control_op(op) {
+            return result;
+        }
+        if let Some(result) = self.execute_var_op(op) {
+            return result;
+        }
+        if let Some(result) = self.execute_memory_op(op) {
+            return result;
+        }
+        if let Some(result) = self.execute_i32_op(op) {
+            return result;
+        }
+        if let Some(result) = self.execute_i64_op(op) {
+            return result;
+        }
+        Err(WasmError::UnknownOpcode(opcode))
+    }
+
+    /// 控制流指令组 (`None` = 不属本组)
+    fn execute_control_op(&mut self, op: Opcode) -> Option<Result<(), WasmError>> {
+        match op {
+            Opcode::Unreachable | Opcode::CallIndirect => Some(Err(WasmError::Unreachable)),
+            Opcode::Nop | Opcode::Block | Opcode::Loop => {
+                self.advance_pc(1);
+                Some(Ok(()))
+            }
+            Opcode::End => Some(self.execute_end()),
+            Opcode::Return => {
+                self.execute_return();
+                Some(Ok(()))
+            }
+            Opcode::If => Some(self.execute_if()),
+            Opcode::Else => Some(self.execute_else()),
+            Opcode::Br => Some(self.execute_br()),
+            Opcode::BrIf => Some(self.execute_br_if()),
+            Opcode::BrTable => Some(self.execute_br_table()),
+            Opcode::Call => Some(self.execute_call()),
+            _ => None,
+        }
+    }
+
+    /// 局部/全局变量与栈操作指令组 (`None` = 不属本组)
+    fn execute_var_op(&mut self, op: Opcode) -> Option<Result<(), WasmError>> {
+        match op {
+            Opcode::Drop => {
+                self.advance_pc(1);
+                Some(self.stack.pop().map(|_| ()))
+            }
+            Opcode::Select => Some(self.execute_select()),
+            Opcode::LocalGet => Some(self.execute_local_get()),
+            Opcode::LocalSet => Some(self.execute_local_set()),
+            Opcode::LocalTee => Some(self.execute_local_tee()),
+            Opcode::GlobalGet => Some(self.execute_global_get()),
+            Opcode::GlobalSet => Some(self.execute_global_set()),
+            _ => None,
+        }
+    }
+
+    /// `select`: 按条件从栈顶两值中选一
+    fn execute_select(&mut self) -> Result<(), WasmError> {
+        self.advance_pc(1);
+        let cond = self.stack.pop_i32()?;
+        let val2 = self.stack.pop()?;
+        let val1 = self.stack.pop()?;
+        self.stack.push(if cond != 0 { val1 } else { val2 })
+    }
+
+    /// 内存读写与内存尺寸指令组 (`None` = 不属本组)
+    fn execute_memory_op(&mut self, op: Opcode) -> Option<Result<(), WasmError>> {
+        match op {
+            Opcode::I32Load => Some(self.execute_memory_load(4)),
+            Opcode::I64Load => Some(self.execute_memory_load_64()),
+            Opcode::I32Load8S => Some(self.execute_memory_load_ext(1, true)),
+            Opcode::I32Load8U => Some(self.execute_memory_load_ext(1, false)),
+            Opcode::I32Load16S => Some(self.execute_memory_load_ext(2, true)),
+            Opcode::I32Load16U => Some(self.execute_memory_load_ext(2, false)),
+            Opcode::I32Store => Some(self.execute_memory_store(4)),
+            Opcode::I64Store => Some(self.execute_memory_store_64()),
+            Opcode::I32Store8 => Some(self.execute_memory_store_n(1)),
+            Opcode::I32Store16 => Some(self.execute_memory_store_n(2)),
+            Opcode::MemorySize => {
+                self.advance_pc(1);
+                let pages = self
+                    .memory
+                    .as_ref()
+                    .map_or(0, super::runtime::LinearMemory::pages);
+                Some(self.stack.push(Value::I32(pages.cast_signed())))
+            }
+            Opcode::MemoryGrow => Some(self.execute_memory_grow()),
+            _ => None,
+        }
+    }
+
+    /// `memory.grow`: 增长线性内存一页数, 失败返回 `u32::MAX`
+    fn execute_memory_grow(&mut self) -> Result<(), WasmError> {
+        self.advance_pc(1);
+        let pages = self.stack.pop_i32()?;
+        let result = if let Some(ref mut mem) = self.memory {
+            mem.grow(pages.cast_unsigned())
+        } else {
+            u32::MAX
+        };
+        self.stack.push(Value::I32(result.cast_signed()))
+    }
+
+    /// 32 位整数常量/比较/算术指令组 (`None` = 不属本组)
+    fn execute_i32_op(&mut self, op: Opcode) -> Option<Result<(), WasmError>> {
+        match op {
+            Opcode::I32Const => Some(self.execute_i32_const()),
+
+            Opcode::I32Eqz => Some(self.execute_i32_unop(|a| i32::from(a == 0))),
+            Opcode::I32Eq => Some(self.execute_i32_binop(|a, b| i32::from(a == b))),
+            Opcode::I32Ne => Some(self.execute_i32_binop(|a, b| i32::from(a != b))),
+            Opcode::I32LtS => Some(self.execute_i32_binop(|a, b| i32::from(a < b))),
+            Opcode::I32LtU => Some(
+                self.execute_i32_binop(|a, b| i32::from(a.cast_unsigned() < b.cast_unsigned())),
+            ),
+            Opcode::I32GtS => Some(self.execute_i32_binop(|a, b| i32::from(a > b))),
+            Opcode::I32GtU => Some(
+                self.execute_i32_binop(|a, b| i32::from(a.cast_unsigned() > b.cast_unsigned())),
+            ),
+            Opcode::I32LeS => Some(self.execute_i32_binop(|a, b| i32::from(a <= b))),
+            Opcode::I32LeU => Some(
+                self.execute_i32_binop(|a, b| i32::from(a.cast_unsigned() <= b.cast_unsigned())),
+            ),
+            Opcode::I32GeS => Some(self.execute_i32_binop(|a, b| i32::from(a >= b))),
+            Opcode::I32GeU => Some(
+                self.execute_i32_binop(|a, b| i32::from(a.cast_unsigned() >= b.cast_unsigned())),
+            ),
+
+            Opcode::I32Add => Some(self.execute_i32_binop(i32::wrapping_add)),
+            Opcode::I32Sub => Some(self.execute_i32_binop(i32::wrapping_sub)),
+            Opcode::I32Mul => Some(self.execute_i32_binop(i32::wrapping_mul)),
+            Opcode::I32DivS => Some(self.execute_i32_div_s()),
+            Opcode::I32DivU => Some(self.execute_i32_div_u()),
+            Opcode::I32RemS => Some(self.execute_i32_rem_s()),
+            Opcode::I32RemU => Some(self.execute_i32_rem_u()),
+            Opcode::I32And => Some(self.execute_i32_binop(|a, b| a & b)),
+            Opcode::I32Or => Some(self.execute_i32_binop(|a, b| a | b)),
+            Opcode::I32Xor => Some(self.execute_i32_binop(|a, b| a ^ b)),
+            Opcode::I32Shl => {
+                Some(self.execute_i32_binop(|a, b| a.wrapping_shl(b.cast_unsigned())))
+            }
+            Opcode::I32ShrS => {
+                Some(self.execute_i32_binop(|a, b| a.wrapping_shr(b.cast_unsigned())))
+            }
+            Opcode::I32ShrU => Some(self.execute_i32_binop(|a, b| {
+                a.cast_unsigned()
+                    .wrapping_shr(b.cast_unsigned())
+                    .cast_signed()
+            })),
+            _ => None,
+        }
+    }
+
+    /// 64 位整数常量/算术指令组 (`None` = 不属本组)
+    fn execute_i64_op(&mut self, op: Opcode) -> Option<Result<(), WasmError>> {
+        match op {
+            Opcode::I64Const => Some(self.execute_i64_const()),
+            Opcode::I64Add => Some(self.execute_i64_binop(i64::wrapping_add)),
+            Opcode::I64Sub => Some(self.execute_i64_binop(i64::wrapping_sub)),
+            Opcode::I64Mul => Some(self.execute_i64_binop(i64::wrapping_mul)),
+            Opcode::I64DivS => Some(self.execute_i64_div_s()),
+            Opcode::I64And => Some(self.execute_i64_binop(|a, b| a & b)),
+            Opcode::I64Or => Some(self.execute_i64_binop(|a, b| a | b)),
+            _ => None,
+        }
     }
 
     fn advance_pc(&mut self, amount: usize) {

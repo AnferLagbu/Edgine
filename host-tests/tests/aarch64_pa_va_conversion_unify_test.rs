@@ -182,8 +182,8 @@ fn test_kmalloc_heap_base_goes_through_kernel_base() {
         let tail = &search[idx..];
         let window = &tail[..tail.len().min(160)];
         assert!(
-            window.contains("KERNEL_BASE + boot_info.kernel_end + 0x200000"),
-            "lib.rs 的 heap_start 必须为 `KERNEL_BASE + boot_info.kernel_end + 0x200000` \
+            window.contains("KERNEL_BASE + boot_info.kernel_end + 0x0020_0000"),
+            "lib.rs 的 heap_start 必须为 `KERNEL_BASE + boot_info.kernel_end + 0x0020_0000` \
              (双架构统一, 不得直取物理地址): {window}"
         );
         found += 1;

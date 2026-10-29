@@ -92,24 +92,46 @@ impl SyscallDispatch for FunctionsSyscallDispatch {
 // ============================================================================
 
 /// 文件系统相关系统调用
+///
+/// M4-fs: 按语义阶段拆分为若干私有 helper, 依次尝试并在首个命中处返回;
+/// 全部未命中返回 None, 交由下一个子系统分发函数处理.
 fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
+    if let Some(ret) = dispatch_fs_io(num, args) {
+        return Some(ret);
+    }
+    if let Some(ret) = dispatch_fs_open(num, args) {
+        return Some(ret);
+    }
+    if let Some(ret) = dispatch_fs_fsops(num, args) {
+        return Some(ret);
+    }
+    if let Some(ret) = dispatch_fs_at(num, args) {
+        return Some(ret);
+    }
+    if let Some(ret) = dispatch_fs_sync_fd(num, args) {
+        return Some(ret);
+    }
+    if let Some(ret) = dispatch_fs_fileops(num, args) {
+        return Some(ret);
+    }
+    if let Some(ret) = dispatch_fs_inotify_time(num, args) {
+        return Some(ret);
+    }
+    if let Some(ret) = dispatch_fs_adv(num, args) {
+        return Some(ret);
+    }
+    if let Some(ret) = dispatch_fs_xattr_snapshot(num, args) {
+        return Some(ret);
+    }
+    None
+}
+
+/// 文件 I/O 基础系统调用 (read/write 与向量 I/O)
+fn dispatch_fs_io(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::functions::syscall::types::{
-        EG_SNAPSHOT_CLONE, EG_SNAPSHOT_CREATE, EG_SNAPSHOT_DESTROY, EG_SNAPSHOT_ROLLBACK,
-        SYS_access, SYS_alarm, SYS_chdir, SYS_chmod, SYS_chown, SYS_chroot, SYS_clock_gettime,
-        SYS_close, SYS_close_range, SYS_copy_file_range, SYS_creat, SYS_dup, SYS_dup2, SYS_dup3,
-        SYS_faccessat, SYS_fallocate, SYS_fchmod, SYS_fchmodat, SYS_fchown, SYS_fchownat,
-        SYS_fcntl, SYS_fdatasync, SYS_flock, SYS_fstat, SYS_fsync, SYS_ftruncate, SYS_getcwd,
-        SYS_getdents, SYS_getitimer, SYS_getxattr, SYS_inotify_add_watch, SYS_inotify_init,
-        SYS_inotify_init1, SYS_inotify_rm_watch, SYS_ioctl, SYS_link, SYS_linkat, SYS_listxattr,
-        SYS_lseek, SYS_lstat, SYS_mkdir, SYS_mount, SYS_name_to_handle_at, SYS_newfstatat,
-        SYS_open, SYS_open_by_handle_at, SYS_openat, SYS_pipe, SYS_pipe2, SYS_pivot_root, SYS_poll,
-        SYS_ppoll, SYS_preadv, SYS_pwritev, SYS_read, SYS_readlink, SYS_readlinkat, SYS_readv,
-        SYS_removexattr, SYS_rename, SYS_renameat, SYS_rmdir, SYS_select, SYS_sendfile,
-        SYS_setitimer, SYS_setxattr, SYS_splice, SYS_stat, SYS_statx, SYS_symlink, SYS_symlinkat,
-        SYS_sync, SYS_time, SYS_times, SYS_truncate, SYS_umask, SYS_umount2, SYS_unlink,
-        SYS_unlinkat, SYS_utimensat, SYS_write, SYS_writev,
+        SYS_close_range, SYS_preadv, SYS_pwritev, SYS_read, SYS_readv, SYS_write, SYS_writev,
     };
-    let [a0, a1, a2, a3, a4, a5] = args;
+    let [a0, a1, a2, a3, _a4, _a5] = args;
 
     Some(match num {
         // 文件 I/O
@@ -156,6 +178,19 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
             )),
             Err(_) => Errno::EINVAL.as_ret(),
         },
+
+        _ => return None,
+    })
+}
+
+/// open/close 与文件状态 (stat 系列) 系统调用
+fn dispatch_fs_open(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{
+        SYS_close, SYS_creat, SYS_fstat, SYS_lstat, SYS_open, SYS_stat, SYS_statx, SYS_utimensat,
+    };
+    let [a0, a1, a2, a3, a4, _a5] = args;
+
+    Some(match num {
         SYS_open => as_ret(crate::functions::fs::open::open_syscall(
             a0,
             crate::functions::intcast::low_i32_from_u64(a1),
@@ -190,6 +225,19 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
             crate::functions::intcast::low_i32_from_u64(a2),
         )),
 
+        _ => return None,
+    })
+}
+
+/// 文件系统操作类系统调用 (目录/权限/链接/重命名)
+fn dispatch_fs_fsops(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{
+        SYS_access, SYS_chmod, SYS_fchmod, SYS_link, SYS_mkdir, SYS_readlink, SYS_rename,
+        SYS_rmdir, SYS_symlink, SYS_umask, SYS_unlink,
+    };
+    let [a0, a1, a2, _a3, _a4, _a5] = args;
+
+    Some(match num {
         // 文件系统操作
         SYS_mkdir => as_ret(crate::functions::fs::mode::mkdir_syscall(
             a0,
@@ -217,6 +265,19 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_readlink => as_ret(crate::functions::fs::link::readlink_syscall(a0, a1, a2)),
         SYS_link => as_ret(crate::functions::fs::link::link_syscall(a0, a1)),
 
+        _ => return None,
+    })
+}
+
+/// `*at()` 系列与文件所有者相关系统调用
+fn dispatch_fs_at(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{
+        SYS_faccessat, SYS_fchmodat, SYS_fchown, SYS_fchownat, SYS_linkat, SYS_newfstatat,
+        SYS_openat, SYS_readlinkat, SYS_renameat, SYS_symlinkat, SYS_unlinkat,
+    };
+    let [a0, a1, a2, a3, a4, _a5] = args;
+
+    Some(match num {
         // *at() 系列
         SYS_openat => as_ret(crate::functions::fs::open::open_syscall(
             a1,
@@ -256,6 +317,19 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
             crate::functions::intcast::low_i32_from_u64(a4),
         ),
 
+        _ => return None,
+    })
+}
+
+/// 同步/挂载/路径与文件描述符操作系统调用
+fn dispatch_fs_sync_fd(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{
+        SYS_chdir, SYS_chroot, SYS_dup, SYS_dup2, SYS_dup3, SYS_fcntl, SYS_fdatasync, SYS_fsync,
+        SYS_getcwd, SYS_mount, SYS_pipe, SYS_pipe2, SYS_pivot_root, SYS_sync, SYS_umount2,
+    };
+    let [a0, a1, a2, _a3, _a4, _a5] = args;
+
+    Some(match num {
         // 同步与挂载
         SYS_sync => as_ret(crate::functions::fs::misc::sync_syscall()),
         // fdatasync (分册 9 批次 3): 与 fsync 同语义复用 (VFS 整体同步, 无数据/元数据区分)
@@ -299,6 +373,19 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
             a2,
         )),
 
+        _ => return None,
+    })
+}
+
+/// 文件操作类系统调用 (ioctl/poll/truncate/flock/lseek/getdents)
+fn dispatch_fs_fileops(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{
+        SYS_chown, SYS_fallocate, SYS_flock, SYS_ftruncate, SYS_getdents, SYS_ioctl, SYS_lseek,
+        SYS_poll, SYS_ppoll, SYS_select, SYS_truncate,
+    };
+    let [a0, a1, a2, a3, a4, _a5] = args;
+
+    Some(match num {
         // 文件操作
         SYS_ioctl => crate::functions::fs::file_ops::ioctl_syscall(
             crate::functions::intcast::low_i32_from_u64(a0),
@@ -350,6 +437,19 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
             a2,
         ),
 
+        _ => return None,
+    })
+}
+
+/// inotify 与时间/统计类系统调用
+fn dispatch_fs_inotify_time(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{
+        SYS_alarm, SYS_clock_gettime, SYS_getitimer, SYS_inotify_add_watch, SYS_inotify_init,
+        SYS_inotify_init1, SYS_inotify_rm_watch, SYS_setitimer, SYS_time, SYS_times,
+    };
+    let [a0, a1, a2, _a3, _a4, _a5] = args;
+
+    Some(match num {
         // inotify
         SYS_inotify_init1 => crate::functions::fs::inotify::sys_inotify_init1(
             crate::functions::intcast::low_i32_from_u64(a0),
@@ -388,6 +488,18 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
             a2,
         )),
 
+        _ => return None,
+    })
+}
+
+/// 高级文件操作 (copy_file_range/sendfile/splice 与 file handle) 系统调用
+fn dispatch_fs_adv(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{
+        SYS_copy_file_range, SYS_name_to_handle_at, SYS_open_by_handle_at, SYS_sendfile, SYS_splice,
+    };
+    let [a0, a1, a2, a3, a4, a5] = args;
+
+    Some(match num {
         // 高级文件操作
         SYS_copy_file_range => as_ret(crate::functions::fs::io::copy_file_range_syscall(
             crate::functions::intcast::low_i32_from_u64(a0),
@@ -440,6 +552,19 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
             }
         }
 
+        _ => return None,
+    })
+}
+
+/// 扩展属性与快照类系统调用
+fn dispatch_fs_xattr_snapshot(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{
+        EG_SNAPSHOT_CLONE, EG_SNAPSHOT_CREATE, EG_SNAPSHOT_DESTROY, EG_SNAPSHOT_ROLLBACK,
+        SYS_getxattr, SYS_listxattr, SYS_removexattr, SYS_setxattr,
+    };
+    let [a0, a1, a2, a3, a4, a5] = args;
+
+    Some(match num {
         // 扩展属性 (B09-17: EG_SETXATTR 890 → SYS_setxattr 188, Linux 编号空间归位)
         SYS_setxattr => as_ret(crate::functions::fs::xattr::setxattr_syscall(
             a0,
@@ -478,20 +603,38 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
 }
 
 /// 进程相关系统调用
+///
+/// M4-proc: 按语义阶段拆分为若干私有 helper, 依次尝试并在首个命中处返回;
+/// 全部未命中返回 None.
 fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
+    if let Some(ret) = dispatch_proc_info(num, args) {
+        return Some(ret);
+    }
+    if let Some(ret) = dispatch_proc_ns_signal(num, args) {
+        return Some(ret);
+    }
+    if let Some(ret) = dispatch_proc_sched(num, args) {
+        return Some(ret);
+    }
+    if let Some(ret) = dispatch_proc_lifecycle(num, args) {
+        return Some(ret);
+    }
+    if let Some(ret) = dispatch_proc_create(num, args) {
+        return Some(ret);
+    }
+    if let Some(ret) = dispatch_proc_misc(num, args) {
+        return Some(ret);
+    }
+    None
+}
+
+/// 进程信息与安全属性 (pid/session 与 seccomp/prctl) 系统调用
+fn dispatch_proc_info(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::functions::syscall::types::{
-        SYS_adjtimex, SYS_arch_prctl, SYS_clock_nanosleep, SYS_clone, SYS_clone3, SYS_execve,
-        SYS_execveat, SYS_exit, SYS_exit_group, SYS_fork, SYS_get_robust_list, SYS_getpgid,
-        SYS_getpid, SYS_getppid, SYS_getpriority, SYS_getrlimit, SYS_getrusage, SYS_getsid,
-        SYS_gettid, SYS_gettimeofday, SYS_kill, SYS_memfd_create, SYS_nanosleep, SYS_nice,
-        SYS_pidfd_getfd, SYS_pidfd_open, SYS_pidfd_send_signal, SYS_prctl, SYS_process_vm_readv,
-        SYS_process_vm_writev, SYS_reboot, SYS_rt_sigaction, SYS_rt_sigprocmask,
-        SYS_sched_getaffinity, SYS_sched_setaffinity, SYS_sched_yield, SYS_seccomp,
-        SYS_set_robust_list, SYS_setdomainname, SYS_sethostname, SYS_setns, SYS_setpgid,
-        SYS_setpriority, SYS_setrlimit, SYS_setsid, SYS_settimeofday, SYS_sigaltstack, SYS_sysinfo,
-        SYS_tcgetpgrp, SYS_tcsetpgrp, SYS_tgkill, SYS_uname, SYS_unshare, SYS_wait4, SYS_waitid,
+        SYS_getpgid, SYS_getpid, SYS_getppid, SYS_getsid, SYS_gettid, SYS_prctl, SYS_seccomp,
+        SYS_setpgid, SYS_setsid, SYS_tcgetpgrp, SYS_tcsetpgrp,
     };
-    let [a0, a1, a2, a3, a4, a5] = args;
+    let [a0, a1, a2, a3, a4, _a5] = args;
 
     Some(match num {
         // 进程信息
@@ -533,6 +676,19 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
             crate::functions::proc::seccomp::prctl_syscall(a0.cast_signed(), a1, a2, a3, a4)
         }
 
+        _ => return None,
+    })
+}
+
+/// namespace/信号/线程本地存储类系统调用
+fn dispatch_proc_ns_signal(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{
+        SYS_arch_prctl, SYS_kill, SYS_rt_sigaction, SYS_rt_sigprocmask, SYS_setns, SYS_sigaltstack,
+        SYS_tgkill, SYS_unshare,
+    };
+    let [a0, a1, a2, _a3, _a4, _a5] = args;
+
+    Some(match num {
         // namespace (T2 批 4, syscall-followup)
         SYS_unshare => crate::functions::proc::namespace::unshare_syscall(a0),
         SYS_setns => crate::functions::proc::namespace::setns_syscall(a0, a1),
@@ -563,6 +719,18 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         // 线程本地存储 (分册 9 批次 3)
         SYS_arch_prctl => as_ret(crate::functions::proc::clone::arch_prctl_syscall(a0, a1)),
 
+        _ => return None,
+    })
+}
+
+/// 进程优先级与 CPU 亲和性系统调用
+fn dispatch_proc_sched(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{
+        SYS_getpriority, SYS_nice, SYS_sched_getaffinity, SYS_sched_setaffinity, SYS_setpriority,
+    };
+    let [a0, a1, a2, _a3, _a4, _a5] = args;
+
+    Some(match num {
         // 进程优先级
         SYS_nice => crate::functions::proc::priority::nice_syscall(
             crate::functions::intcast::low_i32_from_u64(a0),
@@ -589,6 +757,20 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
             a2,
         ),
 
+        _ => return None,
+    })
+}
+
+/// 进程生命周期/系统信息/时钟相关系统调用
+fn dispatch_proc_lifecycle(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{
+        SYS_adjtimex, SYS_clock_nanosleep, SYS_execve, SYS_execveat, SYS_exit, SYS_exit_group,
+        SYS_fork, SYS_getrlimit, SYS_getrusage, SYS_gettimeofday, SYS_nanosleep, SYS_sched_yield,
+        SYS_setrlimit, SYS_settimeofday, SYS_sysinfo, SYS_uname,
+    };
+    let [a0, a1, a2, a3, a4, _a5] = args;
+
+    Some(match num {
         // 进程生命周期
         SYS_fork => crate::functions::proc::lifecycle::fork_syscall(),
         // execve: 进程替换 (path/argv 为用户指针, envp 当前忽略)
@@ -638,6 +820,18 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         // 定时器
         SYS_nanosleep => as_ret(crate::functions::timer::sleep::nanosleep_syscall(a0, a1)),
 
+        _ => return None,
+    })
+}
+
+/// 进程创建/等待与 robust list 系统调用
+fn dispatch_proc_create(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{
+        SYS_clone, SYS_clone3, SYS_get_robust_list, SYS_set_robust_list, SYS_wait4, SYS_waitid,
+    };
+    let [a0, a1, a2, a3, a4, _a5] = args;
+
+    Some(match num {
         // 进程创建/等待
         SYS_clone => as_ret(crate::functions::proc::clone::clone_syscall(
             a0, a1, a2, a3, a4,
@@ -701,6 +895,20 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
             a2,
         )),
 
+        _ => return None,
+    })
+}
+
+/// 系统信息/memfd/process_vm/pidfd 类系统调用
+fn dispatch_proc_misc(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{
+        SYS_memfd_create, SYS_pidfd_getfd, SYS_pidfd_open, SYS_pidfd_send_signal,
+        SYS_process_vm_readv, SYS_process_vm_writev, SYS_reboot, SYS_setdomainname,
+        SYS_sethostname,
+    };
+    let [a0, a1, a2, a3, a4, a5] = args;
+
+    Some(match num {
         // 系统信息
         SYS_reboot => crate::functions::proc::sysinfo::reboot_syscall(
             crate::functions::intcast::low_i32_from_u64(a0),
@@ -759,11 +967,24 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
 }
 
 /// 网络相关系统调用
+///
+/// M4-net: 前段 (连接/收发 UDS 单条消息) 与后段 (批量收发/套接字选项/地址查询)
+/// 各自由私有 helper 承担, 全部未命中返回 None.
 fn dispatch_net(num: u64, args: [u64; 6]) -> Option<i64> {
+    if let Some(ret) = dispatch_net_socket(num, args) {
+        return Some(ret);
+    }
+    if let Some(ret) = dispatch_net_msg(num, args) {
+        return Some(ret);
+    }
+    None
+}
+
+/// 套接字创建/连接/单条消息收发系统调用
+fn dispatch_net_socket(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::functions::syscall::types::{
-        SYS_accept, SYS_bind, SYS_connect, SYS_getpeername, SYS_getsockname, SYS_getsockopt,
-        SYS_listen, SYS_recvfrom, SYS_recvmmsg, SYS_recvmsg, SYS_sendmmsg, SYS_sendmsg, SYS_sendto,
-        SYS_setsockopt, SYS_shutdown, SYS_socket, SYS_socketpair,
+        SYS_accept, SYS_bind, SYS_connect, SYS_listen, SYS_recvfrom, SYS_recvmsg, SYS_sendmsg,
+        SYS_sendto, SYS_shutdown, SYS_socket,
     };
     let [a0, a1, a2, a3, a4, a5] = args;
 
@@ -822,6 +1043,20 @@ fn dispatch_net(num: u64, args: [u64; 6]) -> Option<i64> {
             a1,
             crate::functions::intcast::low_i32_from_u64(a2),
         )),
+
+        _ => return None,
+    })
+}
+
+/// 批量收发/套接字选项/地址查询系统调用
+fn dispatch_net_msg(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{
+        SYS_getpeername, SYS_getsockname, SYS_getsockopt, SYS_recvmmsg, SYS_sendmmsg,
+        SYS_setsockopt, SYS_socketpair,
+    };
+    let [a0, a1, a2, a3, a4, _a5] = args;
+
+    Some(match num {
         // recvmmsg/sendmmsg/socketpair (T1 G3 实装): UDS 分流在 functions 层
         SYS_recvmmsg => as_ret(crate::functions::net::syscall::recvmmsg_syscall(
             crate::functions::intcast::low_i32_from_u64(a0),
@@ -1041,24 +1276,32 @@ fn dispatch_sync(num: u64, args: [u64; 6]) -> Option<i64> {
 }
 
 /// SGEG 私有系统调用
+///
+/// M4-sgeg: 按凭证/认证/系统信息/存储设备四段拆分为私有 helper,
+/// 依次尝试并在首个命中处返回; 全部未命中返回 None.
 fn dispatch_sgeg(num: u64, args: [u64; 6]) -> Option<i64> {
+    if let Some(ret) = dispatch_sgeg_cred(num, args) {
+        return Some(ret);
+    }
+    if let Some(ret) = dispatch_sgeg_auth(num, args) {
+        return Some(ret);
+    }
+    if let Some(ret) = dispatch_sgeg_info(num, args) {
+        return Some(ret);
+    }
+    if let Some(ret) = dispatch_sgeg_storage(num, args) {
+        return Some(ret);
+    }
+    None
+}
+
+/// 凭证 (UID/GID) 相关系统调用
+fn dispatch_sgeg_cred(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::functions::syscall::types::{
-        SYS_SGEG_BOOT_CHECK, SYS_SGEG_CHANGE_PASSWORD, SYS_SGEG_CHECK_CAP, SYS_SGEG_CREATE_FIRST,
-        SYS_SGEG_CREATE_IDENTITY, SYS_SGEG_DELETE_IDENTITY, SYS_SGEG_DISK_FORMAT,
-        SYS_SGEG_DISK_INFO, SYS_SGEG_DISK_LIST, SYS_SGEG_DISK_PARTITION, SYS_SGEG_FAT_FORMAT,
-        SYS_SGEG_GET_CAPS, SYS_SGEG_GET_DOMAIN_FLAGS, SYS_SGEG_GET_PWM, SYS_SGEG_GETHOSTNAME,
-        SYS_SGEG_GRANT, SYS_SGEG_HOTPLUG_STATUS, SYS_SGEG_IDENTITY_INFO, SYS_SGEG_LOGIN,
-        SYS_SGEG_LOGOUT, SYS_SGEG_PROC_CPUTIME, SYS_SGEG_PROC_LIST, SYS_SGEG_PROC_SETPRI,
-        SYS_SGEG_PROC_SLEEP, SYS_SGEG_REBOOT, SYS_SGEG_REVOKE, SYS_SGEG_SET_DOMAIN_FLAGS,
-        SYS_SGEG_SET_PWM, SYS_SGEG_SETHOSTNAME, SYS_SGEG_VERIFY_PASSWORD, SYS_capget, SYS_capset,
         SYS_getegid, SYS_geteuid, SYS_getgid, SYS_getuid, SYS_setegid, SYS_seteuid, SYS_setgid,
         SYS_setregid, SYS_setreuid, SYS_setuid,
     };
-    // SYS_SGEG_DISK_INSTALL 仅 x86_64 (非 kernel_test) 或 kernel_test 模式使用
-    // (aarch64 生产构建走 `_ =>` 兜底 ENOSYS, 与迁移前 privileged cfg 语义一致)
-    #[cfg(any(feature = "kernel_test", target_arch = "x86_64"))]
-    use crate::functions::syscall::types::SYS_SGEG_DISK_INSTALL;
-    let [a0, a1, a2, a3, _a4, _a5] = args;
+    let [a0, a1, _a2, _a3, _a4, _a5] = args;
 
     Some(match num {
         // 凭证 - UID/GID
@@ -1095,6 +1338,22 @@ fn dispatch_sgeg(num: u64, args: [u64; 6]) -> Option<i64> {
             crate::functions::intcast::low_u32_from_u64(a1),
         )),
 
+        _ => return None,
+    })
+}
+
+/// SGEG 认证/能力/域门控系统调用
+fn dispatch_sgeg_auth(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{
+        SYS_SGEG_CHANGE_PASSWORD, SYS_SGEG_CHECK_CAP, SYS_SGEG_CREATE_FIRST,
+        SYS_SGEG_CREATE_IDENTITY, SYS_SGEG_DELETE_IDENTITY, SYS_SGEG_GET_CAPS,
+        SYS_SGEG_GET_DOMAIN_FLAGS, SYS_SGEG_GET_PWM, SYS_SGEG_GRANT, SYS_SGEG_IDENTITY_INFO,
+        SYS_SGEG_LOGIN, SYS_SGEG_LOGOUT, SYS_SGEG_REVOKE, SYS_SGEG_SET_DOMAIN_FLAGS,
+        SYS_SGEG_SET_PWM, SYS_SGEG_VERIFY_PASSWORD, SYS_capget, SYS_capset,
+    };
+    let [a0, a1, a2, a3, _a4, _a5] = args;
+
+    Some(match num {
         // SGEG 认证
         SYS_SGEG_LOGIN => crate::functions::sgeg::auth::auth_login_syscall(a0, a1),
         SYS_SGEG_LOGOUT => crate::functions::sgeg::auth::auth_logout_syscall(),
@@ -1140,6 +1399,19 @@ fn dispatch_sgeg(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_capget => crate::functions::sgeg::auth::capget_syscall(a0, a1),
         SYS_capset => crate::functions::sgeg::auth::capset_syscall(a0, a1),
 
+        _ => return None,
+    })
+}
+
+/// SGEG 系统信息与进程管理类系统调用
+fn dispatch_sgeg_info(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{
+        SYS_SGEG_BOOT_CHECK, SYS_SGEG_GETHOSTNAME, SYS_SGEG_PROC_CPUTIME, SYS_SGEG_PROC_LIST,
+        SYS_SGEG_PROC_SETPRI, SYS_SGEG_PROC_SLEEP, SYS_SGEG_REBOOT, SYS_SGEG_SETHOSTNAME,
+    };
+    let [a0, a1, _a2, _a3, _a4, _a5] = args;
+
+    Some(match num {
         // SGEG 系统信息
         SYS_SGEG_GETHOSTNAME => crate::functions::proc::sysinfo::gethostname_syscall(a0, a1),
         SYS_SGEG_SETHOSTNAME => crate::functions::proc::sysinfo::sethostname_syscall(a0, a1),
@@ -1167,6 +1439,23 @@ fn dispatch_sgeg(num: u64, args: [u64; 6]) -> Option<i64> {
             crate::functions::intcast::low_i32_from_u64(a0),
         ),
 
+        _ => return None,
+    })
+}
+
+/// SGEG 存储设备管理与格式化系统调用
+fn dispatch_sgeg_storage(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{
+        SYS_SGEG_DISK_FORMAT, SYS_SGEG_DISK_INFO, SYS_SGEG_DISK_LIST, SYS_SGEG_DISK_PARTITION,
+        SYS_SGEG_FAT_FORMAT, SYS_SGEG_HOTPLUG_STATUS,
+    };
+    // SYS_SGEG_DISK_INSTALL 仅 x86_64 (非 kernel_test) 或 kernel_test 模式使用
+    // (aarch64 生产构建走 `_ =>` 兜底 ENOSYS, 与迁移前 privileged cfg 语义一致)
+    #[cfg(any(feature = "kernel_test", target_arch = "x86_64"))]
+    use crate::functions::syscall::types::SYS_SGEG_DISK_INSTALL;
+    let [a0, a1, _a2, _a3, _a4, _a5] = args;
+
+    Some(match num {
         // 存储设备
         SYS_SGEG_DISK_LIST => as_ret(
             crate::functions::sgeg::storage::disk::disk_list(

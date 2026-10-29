@@ -23,12 +23,7 @@ use super::framebuffer_ops::current_framebuffer_ops;
 ///
 /// 返回失败像素数（0 = 全部通过）。
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-)]
 pub fn framebuffer_self_test(fb: &mut Framebuffer, font: &Font) -> usize {
-    let mut failures: usize = 0;
     let fw = fb.width();
     let fh = fb.height();
 
@@ -39,9 +34,54 @@ pub fn framebuffer_self_test(fb: &mut Framebuffer, font: &Font) -> usize {
         return 0;
     };
 
-    // ========================================================================
     // 1. 纯色条 (R/G/B/W) — 顶部 48 像素
-    // ========================================================================
+    let mut failures = draw_color_stripes(fb, ops, fw);
+
+    // 2. 256 级灰度渐变 (y=56, 单行)
+    failures += check_gray_ramp(fb, fw);
+
+    // 3. 对角 RGB 渐变 — 从 (0, 64) 到 (fw, 64+fw) 的 sweep
+    failures += draw_rgb_sweep(fb, fw, fh);
+
+    // 4. 图形原语展示 — 在屏幕中下部
+    failures += draw_primitives(fb, ops, fh);
+
+    // 5. 调试文本
+    let text_y: u32 = fh.saturating_sub(40);
+    font.render_text(
+        fb,
+        "Edgine Framebuffer Self-Test v2.0",
+        10,
+        text_y,
+        colors::WHITE,
+        colors::BLACK,
+    );
+    font.render_text_wrapped(
+        fb,
+        &alloc::format!(
+            "Resolution: {}x{}x{}  Failures: {}",
+            fw,
+            fh,
+            fb.format().bits_per_pixel(),
+            failures
+        ),
+        10,
+        text_y + font.glyph_height,
+        fw,
+        colors::LIGHT_GRAY,
+        colors::BLACK,
+    );
+
+    failures
+}
+
+/// 自检第 1 段: 顶部纯色条 (R/G/B/W), 返回失败像素计数.
+fn draw_color_stripes(
+    fb: &mut Framebuffer,
+    ops: &'static dyn super::framebuffer_ops::FramebufferOps,
+    fw: u32,
+) -> usize {
+    let mut failures: usize = 0;
     let stripe_h: u32 = 48;
     let stripe_w: u32 = fw / 4;
 
@@ -86,9 +126,12 @@ pub fn framebuffer_self_test(fb: &mut Framebuffer, font: &Font) -> usize {
         failures += 1;
     }
 
-    // ========================================================================
-    // 2. 256 级灰度渐变 (y=56, 单行)
-    // ========================================================================
+    failures
+}
+
+/// 自检第 2 段: 256 级灰度渐变 (y=56, 单行), 返回失败像素计数.
+fn check_gray_ramp(fb: &mut Framebuffer, fw: u32) -> usize {
+    let mut failures: usize = 0;
     let gray_y: u32 = 56;
     let gray_len = fw.min(256);
     for x in 0..gray_len {
@@ -118,9 +161,12 @@ pub fn framebuffer_self_test(fb: &mut Framebuffer, font: &Font) -> usize {
         failures += 1;
     }
 
-    // ========================================================================
-    // 3. 对角 RGB 渐变 — 从 (0, 64) 到 (fw, 64+fw) 的 sweep
-    // ========================================================================
+    failures
+}
+
+/// 自检第 3 段: 对角 RGB 渐变, 返回失败像素计数.
+fn draw_rgb_sweep(fb: &mut Framebuffer, fw: u32, fh: u32) -> usize {
+    let mut failures: usize = 0;
     if fh > 130 {
         let sweep_start: u32 = 64;
         let sweep_len = fw.min(fh - sweep_start);
@@ -155,9 +201,16 @@ pub fn framebuffer_self_test(fb: &mut Framebuffer, font: &Font) -> usize {
         }
     }
 
-    // ========================================================================
-    // 4. 图形原语展示 — 在屏幕中下部
-    // ========================================================================
+    failures
+}
+
+/// 自检第 4 段: 图形原语 (矩形/直线/圆/填充圆/反走样直线), 返回失败像素计数.
+fn draw_primitives(
+    fb: &mut Framebuffer,
+    ops: &'static dyn super::framebuffer_ops::FramebufferOps,
+    fh: u32,
+) -> usize {
+    let mut failures: usize = 0;
     if fh > 200 {
         let prim_y: i32 = 130;
 
@@ -195,34 +248,6 @@ pub fn framebuffer_self_test(fb: &mut Framebuffer, font: &Font) -> usize {
             }
         }
     }
-
-    // ========================================================================
-    // 5. 调试文本
-    // ========================================================================
-    let text_y: u32 = fh.saturating_sub(40);
-    font.render_text(
-        fb,
-        "Edgine Framebuffer Self-Test v2.0",
-        10,
-        text_y,
-        colors::WHITE,
-        colors::BLACK,
-    );
-    font.render_text_wrapped(
-        fb,
-        &alloc::format!(
-            "Resolution: {}x{}x{}  Failures: {}",
-            fw,
-            fh,
-            fb.format().bits_per_pixel(),
-            failures
-        ),
-        10,
-        text_y + font.glyph_height,
-        fw,
-        colors::LIGHT_GRAY,
-        colors::BLACK,
-    );
 
     failures
 }

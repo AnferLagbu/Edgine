@@ -26,7 +26,7 @@
 //! 未初始化读/合法最小程序/重复 set_verifier.
 
 use crate::privileged::debug::{
-    BPF_MAX_INSNS, BPF_REG_NUM, BPF_STACK_SIZE, BpfProg, BpfVerifier, VerifyResult,
+    BPF_MAX_INSNS, BPF_REG_NUM, BPF_STACK_SIZE, BpfInsn, BpfProg, BpfVerifier, VerifyResult,
 };
 
 /// 寄存器类型 (验证器内部状态, 策略相关, 不导出)
@@ -185,24 +185,10 @@ fn alu_checked_range(
 const BPF_MAX_PATH_DEPTH: u32 = 8;
 
 impl BpfVerifier for StandardBpfVerifier {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-    )]
     fn verify(&self, prog: &BpfProg) -> VerifyResult {
-        // 规则 1: 指令数量
-        if prog.insn_cnt == 0 {
-            return VerifyResult::Err(b"empty program".to_vec());
-        }
-        if prog.insn_cnt > BPF_MAX_INSNS {
-            return VerifyResult::Err(b"program too large".to_vec());
-        }
-
-        // 规则 5: 最后一条指令必须是 EXIT
-        if let Some(last) = prog.insns.last() {
-            if last.op != opcode::JMP | opcode::EXIT {
-                return VerifyResult::Err(b"program must end with EXIT".to_vec());
-            }
+        // 前置校验: 规则 1 (指令数量) + 规则 5 (末条 EXIT)
+        if let Some(err) = verify_program_checks(prog) {
+            return err;
         }
 
         // 初始化寄存器状态
@@ -224,277 +210,370 @@ impl BpfVerifier for StandardBpfVerifier {
                 break;
             }
             visited[pc] = true;
-
-            // 规则 2: 寄存器编号检查
-            let dst = insn.dst() as usize;
-            let src = insn.src() as usize;
-            if dst >= BPF_REG_NUM || src >= BPF_REG_NUM {
-                return VerifyResult::Err(
-                    alloc::format!("invalid register at pc={pc}: dst={dst} src={src}").into_bytes(),
-                );
-            }
-
-            // 规则 7: R10 只读
-            if dst == reg::R10
-                && insn.class() != opcode::ALU
-                && insn.class() != opcode::ALU64
-                && insn.class() != opcode::JMP
-                && insn.class() != opcode::JMP32
-            {
-                if insn.class() == opcode::ST || insn.class() == opcode::STX {
-                    return VerifyResult::Err(
-                        alloc::format!("write to R10 (frame pointer) at pc={pc}").into_bytes(),
-                    );
-                }
-            }
-
-            let class = insn.class();
-
-            // 跳转目标检查
-            if class == opcode::JMP || class == opcode::JMP32 {
-                let op_low = insn.op & 0xf0;
-                if op_low == opcode::JA {
-                    // 无条件跳转
-                    let target =
-                        crate::functions::intcast::i64_from_usize(pc) + 1 + i64::from(insn.off);
-                    if target < 0
-                        || crate::functions::intcast::usize_from_i64(target)
-                            >= prog.insn_cnt as usize
-                    {
-                        return VerifyResult::Err(
-                            alloc::format!("jump out of bounds at pc={pc}: target={target}")
-                                .into_bytes(),
-                        );
-                    }
-                    // 规则 4: 回边检测
-                    if target < crate::functions::intcast::i64_from_usize(pc) {
-                        path_depth += 1;
-                        if path_depth > BPF_MAX_PATH_DEPTH {
-                            return VerifyResult::Err(
-                                alloc::format!("too many backward jumps at pc={pc}").into_bytes(),
-                            );
-                        }
-                    }
-                } else if op_low == opcode::CALL {
-                    // Helper 调用
-                    let helper_id = insn.imm.cast_unsigned();
-                    if !is_valid_helper(helper_id) {
-                        return VerifyResult::Err(
-                            alloc::format!("unknown helper {helper_id} at pc={pc}").into_bytes(),
-                        );
-                    }
-                    // EBPF-3 规则 8: helper 调用前 R1 必须已初始化
-                    // 简化策略: 仅要求 R1 初始化 (即非 NotInit), 不深究类型
-                    // (实际 BPF verifier 会按 helper 签名校验参数类型, 此处简化)
-                    if regs[reg::R1].r#type == RegType::NotInit {
-                        return VerifyResult::Err(
-                            alloc::format!("helper call at pc={pc} with uninitialized R1")
-                                .into_bytes(),
-                        );
-                    }
-                    // B07-18 规则 12: 按 helper 签名校验 R1..Rn 已初始化.
-                    // 原实现 R2-R5 未初始化仅 break (不拒绝), 恶意程序可绕过
-                    // 参数契约调用 helper (如 map 操作缺 key 指针).
-                    let min_args = helper_min_args(helper_id);
-                    for arg_reg in 1..=min_args {
-                        if regs[arg_reg].r#type == RegType::NotInit {
-                            return VerifyResult::Err(
-                                alloc::format!(
-                                    "helper {helper_id} at pc={pc} requires R{arg_reg} initialized"
-                                )
-                                .into_bytes(),
-                            );
-                        }
-                    }
-                    regs[reg::R1] = RegState::scalar();
-                } else if op_low != opcode::EXIT {
-                    // 条件跳转
-                    let target =
-                        crate::functions::intcast::i64_from_usize(pc) + 1 + i64::from(insn.off);
-                    if target < 0
-                        || crate::functions::intcast::usize_from_i64(target)
-                            >= prog.insn_cnt as usize
-                    {
-                        return VerifyResult::Err(
-                            alloc::format!("conditional jump OOB at pc={pc}: target={target}")
-                                .into_bytes(),
-                        );
-                    }
-                    if target < crate::functions::intcast::i64_from_usize(pc) {
-                        path_depth += 1;
-                        if path_depth > BPF_MAX_PATH_DEPTH {
-                            return VerifyResult::Err(
-                                alloc::format!("too many backward jumps at pc={pc}").into_bytes(),
-                            );
-                        }
-                    }
-                }
-
-                // 条件跳转: 检查操作数已初始化
-                if op_low != opcode::JA && op_low != opcode::CALL && op_low != opcode::EXIT {
-                    if insn.op & opcode::X != 0 {
-                        if regs[src].r#type == RegType::NotInit {
-                            return VerifyResult::Err(
-                                alloc::format!("use of uninitialized R{src} at pc={pc}")
-                                    .into_bytes(),
-                            );
-                        }
-                    }
-                    if regs[dst].r#type == RegType::NotInit {
-                        return VerifyResult::Err(
-                            alloc::format!("use of uninitialized R{dst} at pc={pc}").into_bytes(),
-                        );
-                    }
-                }
-            }
-
-            // ALU 操作
-            if class == opcode::ALU || class == opcode::ALU64 {
-                let op_low = insn.op & 0xf0;
-                // MOV 是写 dst 而非读 dst (MOV imm 即为寄存器初始化), 故不要求 dst 已初始化;
-                // 其余 ALU 运算读 dst, 要求已初始化.
-                // (原实现先判 dst NotInit 再判 MOV, 使 `MOV R0, 1` 等全部被误拒;
-                //  2026-09-24 UT-06 修复)
-                if op_low != opcode::MOV && regs[dst].r#type == RegType::NotInit {
-                    return VerifyResult::Err(
-                        alloc::format!("use of uninitialized R{dst} at pc={pc}").into_bytes(),
-                    );
-                }
-                if op_low == opcode::MOV {
-                    if (insn.op & opcode::X) != 0 {
-                        // MOV reg: 复制源类型
-                        if regs[src].r#type == RegType::NotInit {
-                            return VerifyResult::Err(
-                                alloc::format!("use of uninitialized R{src} at pc={pc}")
-                                    .into_bytes(),
-                            );
-                        }
-                        regs[dst] = regs[src];
-                    } else {
-                        // B07-18: MOV imm 记录单点常量范围 (供后续 ALU 溢出检测)
-                        regs[dst] = RegState::const_value(crate::functions::intcast::u64_from_i32(
-                            insn.imm,
-                        ));
-                    }
-                } else {
-                    // B07-18 规则 13: ALU64 单点常量运算溢出检测.
-                    // 原实现一律置 Scalar, 无法拦截 u64::MAX+1 等常量折叠溢出.
-                    if class == opcode::ALU64 {
-                        let src_is_reg = (insn.op & opcode::X) != 0;
-                        if src_is_reg && regs[src].r#type == RegType::NotInit {
-                            return VerifyResult::Err(
-                                alloc::format!("use of uninitialized R{src} at pc={pc}")
-                                    .into_bytes(),
-                            );
-                        }
-                        match alu_checked_range(
-                            op_low,
-                            regs[dst].range,
-                            regs[src].range,
-                            src_is_reg,
-                            insn.imm,
-                        ) {
-                            Ok(range) => regs[dst] = RegState::with_range(range),
-                            Err(()) => {
-                                return VerifyResult::Err(
-                                    alloc::format!("ALU overflow at pc={pc}").into_bytes(),
-                                );
-                            }
-                        }
-                    } else {
-                        // ALU32: 32 位截断运算, 结果范围未知
-                        regs[dst] = RegState::scalar();
-                    }
-                }
-            }
-
-            // LD: 加载到寄存器
-            if class == opcode::LD {
-                // EBPF-4 规则 9: LD 加载 context 偏移越界检查
-                // 简化: 拒绝极端偏移 (off 超出 [-4096, 4096] 范围)
-                // 实际 BPF verifier 会基于 prog_type 校验 ctx 大小
-                if insn.off < -4096 || insn.off > 4096 {
-                    return VerifyResult::Err(
-                        alloc::format!("LD ctx offset out of range at pc={}: off={}", pc, insn.off)
-                            .into_bytes(),
-                    );
-                }
-                regs[dst] = RegState::scalar();
-            }
-            if class == opcode::LDX {
-                if regs[src].r#type == RegType::NotInit {
-                    return VerifyResult::Err(
-                        alloc::format!("use of uninitialized R{src} at pc={pc}").into_bytes(),
-                    );
-                }
-                // EBPF-4 规则 10: LDX 加载要求 src 必须是已知指针 (StackPtr 或 MapValue)
-                // 简化: 拒绝从 scalar 加载 (避免将标量当指针)
-                match regs[src].r#type {
-                    RegType::StackPtr => {
-                        // B07-18 规则 14: 栈读偏移深度验证 — R10 基地址的 off
-                        // 必须在 [-BPF_STACK_SIZE, 0] (R10 指向栈底+512, 负偏移访问栈内).
-                        // 原实现不校验 off, 恶意程序可 [R10+large] 越界读.
-                        if insn.off < -crate::functions::intcast::low_i16_from_usize(BPF_STACK_SIZE)
-                            || insn.off > 0
-                        {
-                            return VerifyResult::Err(
-                                alloc::format!(
-                                    "stack load offset out of range at pc={pc}: off={}",
-                                    insn.off
-                                )
-                                .into_bytes(),
-                            );
-                        }
-                    }
-                    RegType::CtxPtr => {
-                        // 合法: 已知指针
-                    }
-                    _ => {
-                        return VerifyResult::Err(
-                            alloc::format!(
-                                "LDX from non-pointer register R{} at pc={}: type={:?}",
-                                src,
-                                pc,
-                                regs[src].r#type
-                            )
-                            .into_bytes(),
-                        );
-                    }
-                }
-                regs[dst] = RegState::scalar();
-            }
-
-            // ST/STX: 存储操作
-            if class == opcode::ST || class == opcode::STX {
-                if regs[dst].r#type == RegType::NotInit {
-                    return VerifyResult::Err(
-                        alloc::format!("store to uninitialized R{dst} at pc={pc}").into_bytes(),
-                    );
-                }
-                match regs[dst].r#type {
-                    // StackPtr/CtxPtr: 允许写入
-                    RegType::StackPtr | RegType::CtxPtr => {}
-                    _ => {
-                        return VerifyResult::Err(
-                            alloc::format!(
-                                "store to invalid pointer type {:?} at pc={}",
-                                regs[dst].r#type,
-                                pc
-                            )
-                            .into_bytes(),
-                        );
-                    }
-                }
-                if class == opcode::STX && regs[src].r#type == RegType::NotInit {
-                    return VerifyResult::Err(
-                        alloc::format!("use of uninitialized R{src} at pc={pc}").into_bytes(),
-                    );
-                }
+            if let Err(err) = verify_insn(&mut regs, prog, pc, *insn, &mut path_depth) {
+                return err;
             }
         }
 
         VerifyResult::Ok
     }
+}
+
+/// 程序级前置校验 (规则 1: 指令数量; 规则 5: 末条必须 EXIT)
+fn verify_program_checks(prog: &BpfProg) -> Option<VerifyResult> {
+    // 规则 1: 指令数量
+    if prog.insn_cnt == 0 {
+        return Some(VerifyResult::Err(b"empty program".to_vec()));
+    }
+    if prog.insn_cnt > BPF_MAX_INSNS {
+        return Some(VerifyResult::Err(b"program too large".to_vec()));
+    }
+
+    // 规则 5: 最后一条指令必须是 EXIT
+    if let Some(last) = prog.insns.last() {
+        if last.op != opcode::JMP | opcode::EXIT {
+            return Some(VerifyResult::Err(b"program must end with EXIT".to_vec()));
+        }
+    }
+
+    None
+}
+
+/// 单条指令验证 (规则 2/7 前置检查, 之后按指令类别分派)
+fn verify_insn(
+    regs: &mut [RegState; BPF_REG_NUM],
+    prog: &BpfProg,
+    pc: usize,
+    insn: BpfInsn,
+    path_depth: &mut u32,
+) -> Result<(), VerifyResult> {
+    // 规则 2: 寄存器编号检查
+    let dst = insn.dst() as usize;
+    let src = insn.src() as usize;
+    if dst >= BPF_REG_NUM || src >= BPF_REG_NUM {
+        return Err(VerifyResult::Err(
+            alloc::format!("invalid register at pc={pc}: dst={dst} src={src}").into_bytes(),
+        ));
+    }
+
+    // 规则 7: R10 只读
+    if dst == reg::R10
+        && insn.class() != opcode::ALU
+        && insn.class() != opcode::ALU64
+        && insn.class() != opcode::JMP
+        && insn.class() != opcode::JMP32
+    {
+        if insn.class() == opcode::ST || insn.class() == opcode::STX {
+            return Err(VerifyResult::Err(
+                alloc::format!("write to R10 (frame pointer) at pc={pc}").into_bytes(),
+            ));
+        }
+    }
+
+    let class = insn.class();
+
+    // 跳转目标 / helper 调用 / 条件跳转操作数检查
+    if class == opcode::JMP || class == opcode::JMP32 {
+        verify_jump(regs, prog, pc, insn, dst, src, path_depth)?;
+    }
+
+    // ALU 操作
+    if class == opcode::ALU || class == opcode::ALU64 {
+        verify_alu(regs, pc, insn, dst, src, class)?;
+    }
+
+    // LD: 加载到寄存器
+    if class == opcode::LD {
+        verify_ld(regs, pc, insn, dst)?;
+    }
+    if class == opcode::LDX {
+        verify_ldx(regs, pc, insn, dst, src)?;
+    }
+
+    // ST/STX: 存储操作
+    if class == opcode::ST || class == opcode::STX {
+        verify_store(regs, pc, dst, src, class)?;
+    }
+
+    Ok(())
+}
+
+/// 跳转类指令验证 (JA 目标/回边, CALL helper 契约, 条件跳转目标与操作数)
+fn verify_jump(
+    regs: &mut [RegState; BPF_REG_NUM],
+    prog: &BpfProg,
+    pc: usize,
+    insn: BpfInsn,
+    dst: usize,
+    src: usize,
+    path_depth: &mut u32,
+) -> Result<(), VerifyResult> {
+    let op_low = insn.op & 0xf0;
+    if op_low == opcode::JA {
+        // 无条件跳转
+        check_jump_target(prog, pc, insn, "jump out of bounds")?;
+        // 规则 4: 回边检测
+        count_backward_jump(pc, insn, path_depth)?;
+    } else if op_low == opcode::CALL {
+        // Helper 调用
+        verify_helper_call(regs, pc, insn)?;
+    } else if op_low != opcode::EXIT {
+        // 条件跳转
+        check_jump_target(prog, pc, insn, "conditional jump OOB")?;
+        count_backward_jump(pc, insn, path_depth)?;
+    }
+
+    // 条件跳转: 检查操作数已初始化
+    if op_low != opcode::JA && op_low != opcode::CALL && op_low != opcode::EXIT {
+        if insn.op & opcode::X != 0 && regs[src].r#type == RegType::NotInit {
+            return Err(VerifyResult::Err(
+                alloc::format!("use of uninitialized R{src} at pc={pc}").into_bytes(),
+            ));
+        }
+        if regs[dst].r#type == RegType::NotInit {
+            return Err(VerifyResult::Err(
+                alloc::format!("use of uninitialized R{dst} at pc={pc}").into_bytes(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// 校验跳转目标落在程序范围内 (`label` 决定错误文案)
+fn check_jump_target(
+    prog: &BpfProg,
+    pc: usize,
+    insn: BpfInsn,
+    label: &str,
+) -> Result<(), VerifyResult> {
+    let target = crate::functions::intcast::i64_from_usize(pc) + 1 + i64::from(insn.off);
+    if target < 0 || crate::functions::intcast::usize_from_i64(target) >= prog.insn_cnt as usize {
+        return Err(VerifyResult::Err(
+            alloc::format!("{label} at pc={pc}: target={target}").into_bytes(),
+        ));
+    }
+    Ok(())
+}
+
+/// 规则 4: 回边计数 (超过 `BPF_MAX_PATH_DEPTH` 即拒绝)
+fn count_backward_jump(pc: usize, insn: BpfInsn, path_depth: &mut u32) -> Result<(), VerifyResult> {
+    let target = crate::functions::intcast::i64_from_usize(pc) + 1 + i64::from(insn.off);
+    if target < crate::functions::intcast::i64_from_usize(pc) {
+        *path_depth += 1;
+        if *path_depth > BPF_MAX_PATH_DEPTH {
+            return Err(VerifyResult::Err(
+                alloc::format!("too many backward jumps at pc={pc}").into_bytes(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Helper 调用验证 (规则 8: R1 已初始化; 规则 12: 按签名校验 R1..Rn 已初始化)
+fn verify_helper_call(
+    regs: &mut [RegState; BPF_REG_NUM],
+    pc: usize,
+    insn: BpfInsn,
+) -> Result<(), VerifyResult> {
+    let helper_id = insn.imm.cast_unsigned();
+    if !is_valid_helper(helper_id) {
+        return Err(VerifyResult::Err(
+            alloc::format!("unknown helper {helper_id} at pc={pc}").into_bytes(),
+        ));
+    }
+    // EBPF-3 规则 8: helper 调用前 R1 必须已初始化
+    // 简化策略: 仅要求 R1 初始化 (即非 NotInit), 不深究类型
+    // (实际 BPF verifier 会按 helper 签名校验参数类型, 此处简化)
+    if regs[reg::R1].r#type == RegType::NotInit {
+        return Err(VerifyResult::Err(
+            alloc::format!("helper call at pc={pc} with uninitialized R1").into_bytes(),
+        ));
+    }
+    // B07-18 规则 12: 按 helper 签名校验 R1..Rn 已初始化.
+    // 原实现 R2-R5 未初始化仅 break (不拒绝), 恶意程序可绕过
+    // 参数契约调用 helper (如 map 操作缺 key 指针).
+    let min_args = helper_min_args(helper_id);
+    for arg_reg in 1..=min_args {
+        if regs[arg_reg].r#type == RegType::NotInit {
+            return Err(VerifyResult::Err(
+                alloc::format!("helper {helper_id} at pc={pc} requires R{arg_reg} initialized")
+                    .into_bytes(),
+            ));
+        }
+    }
+    // 调用后 R1 视为已初始化的标量
+    regs[reg::R1] = RegState::scalar();
+    Ok(())
+}
+
+/// ALU/ALU64 验证 (MOV 语义 + 单点常量溢出检测)
+fn verify_alu(
+    regs: &mut [RegState; BPF_REG_NUM],
+    pc: usize,
+    insn: BpfInsn,
+    dst: usize,
+    src: usize,
+    class: u8,
+) -> Result<(), VerifyResult> {
+    let op_low = insn.op & 0xf0;
+    // MOV 是写 dst 而非读 dst (MOV imm 即为寄存器初始化), 故不要求 dst 已初始化;
+    // 其余 ALU 运算读 dst, 要求已初始化.
+    // (原实现先判 dst NotInit 再判 MOV, 使 `MOV R0, 1` 等全部被误拒;
+    //  2026-09-24 UT-06 修复)
+    if op_low != opcode::MOV && regs[dst].r#type == RegType::NotInit {
+        return Err(VerifyResult::Err(
+            alloc::format!("use of uninitialized R{dst} at pc={pc}").into_bytes(),
+        ));
+    }
+    if op_low == opcode::MOV {
+        if (insn.op & opcode::X) != 0 {
+            // MOV reg: 复制源类型
+            if regs[src].r#type == RegType::NotInit {
+                return Err(VerifyResult::Err(
+                    alloc::format!("use of uninitialized R{src} at pc={pc}").into_bytes(),
+                ));
+            }
+            regs[dst] = regs[src];
+        } else {
+            // B07-18: MOV imm 记录单点常量范围 (供后续 ALU 溢出检测)
+            regs[dst] = RegState::const_value(crate::functions::intcast::u64_from_i32(insn.imm));
+        }
+    } else {
+        // B07-18 规则 13: ALU64 单点常量运算溢出检测.
+        // 原实现一律置 Scalar, 无法拦截 u64::MAX+1 等常量折叠溢出.
+        if class == opcode::ALU64 {
+            let src_is_reg = (insn.op & opcode::X) != 0;
+            if src_is_reg && regs[src].r#type == RegType::NotInit {
+                return Err(VerifyResult::Err(
+                    alloc::format!("use of uninitialized R{src} at pc={pc}").into_bytes(),
+                ));
+            }
+            match alu_checked_range(
+                op_low,
+                regs[dst].range,
+                regs[src].range,
+                src_is_reg,
+                insn.imm,
+            ) {
+                Ok(range) => regs[dst] = RegState::with_range(range),
+                Err(()) => {
+                    return Err(VerifyResult::Err(
+                        alloc::format!("ALU overflow at pc={pc}").into_bytes(),
+                    ));
+                }
+            }
+        } else {
+            // ALU32: 32 位截断运算, 结果范围未知
+            regs[dst] = RegState::scalar();
+        }
+    }
+    Ok(())
+}
+
+/// LD 验证 (规则 9: context 偏移越界检查)
+fn verify_ld(
+    regs: &mut [RegState; BPF_REG_NUM],
+    pc: usize,
+    insn: BpfInsn,
+    dst: usize,
+) -> Result<(), VerifyResult> {
+    // EBPF-4 规则 9: LD 加载 context 偏移越界检查
+    // 简化: 拒绝极端偏移 (off 超出 [-4096, 4096] 范围)
+    // 实际 BPF verifier 会基于 prog_type 校验 ctx 大小
+    if insn.off < -4096 || insn.off > 4096 {
+        return Err(VerifyResult::Err(
+            alloc::format!("LD ctx offset out of range at pc={pc}: off={}", insn.off).into_bytes(),
+        ));
+    }
+    regs[dst] = RegState::scalar();
+    Ok(())
+}
+
+/// LDX 验证 (规则 10: 源必须是已知指针; 规则 14: 栈读偏移深度)
+fn verify_ldx(
+    regs: &mut [RegState; BPF_REG_NUM],
+    pc: usize,
+    insn: BpfInsn,
+    dst: usize,
+    src: usize,
+) -> Result<(), VerifyResult> {
+    if regs[src].r#type == RegType::NotInit {
+        return Err(VerifyResult::Err(
+            alloc::format!("use of uninitialized R{src} at pc={pc}").into_bytes(),
+        ));
+    }
+    // EBPF-4 规则 10: LDX 加载要求 src 必须是已知指针 (StackPtr 或 MapValue)
+    // 简化: 拒绝从 scalar 加载 (避免将标量当指针)
+    match regs[src].r#type {
+        RegType::StackPtr => {
+            // B07-18 规则 14: 栈读偏移深度验证 — R10 基地址的 off
+            // 必须在 [-BPF_STACK_SIZE, 0] (R10 指向栈底+512, 负偏移访问栈内).
+            // 原实现不校验 off, 恶意程序可 [R10+large] 越界读.
+            if insn.off < -crate::functions::intcast::low_i16_from_usize(BPF_STACK_SIZE)
+                || insn.off > 0
+            {
+                return Err(VerifyResult::Err(
+                    alloc::format!(
+                        "stack load offset out of range at pc={pc}: off={}",
+                        insn.off
+                    )
+                    .into_bytes(),
+                ));
+            }
+        }
+        RegType::CtxPtr => {
+            // 合法: 已知指针
+        }
+        _ => {
+            return Err(VerifyResult::Err(
+                alloc::format!(
+                    "LDX from non-pointer register R{} at pc={}: type={:?}",
+                    src,
+                    pc,
+                    regs[src].r#type
+                )
+                .into_bytes(),
+            ));
+        }
+    }
+    regs[dst] = RegState::scalar();
+    Ok(())
+}
+
+/// ST/STX 验证 (目标必须是可以写指针, STX 源必须已初始化)
+fn verify_store(
+    regs: &[RegState; BPF_REG_NUM],
+    pc: usize,
+    dst: usize,
+    src: usize,
+    class: u8,
+) -> Result<(), VerifyResult> {
+    if regs[dst].r#type == RegType::NotInit {
+        return Err(VerifyResult::Err(
+            alloc::format!("store to uninitialized R{dst} at pc={pc}").into_bytes(),
+        ));
+    }
+    match regs[dst].r#type {
+        // StackPtr/CtxPtr: 允许写入
+        RegType::StackPtr | RegType::CtxPtr => {}
+        _ => {
+            return Err(VerifyResult::Err(
+                alloc::format!(
+                    "store to invalid pointer type {:?} at pc={}",
+                    regs[dst].r#type,
+                    pc
+                )
+                .into_bytes(),
+            ));
+        }
+    }
+    if class == opcode::STX && regs[src].r#type == RegType::NotInit {
+        return Err(VerifyResult::Err(
+            alloc::format!("use of uninitialized R{src} at pc={pc}").into_bytes(),
+        ));
+    }
+    Ok(())
 }
 
 fn is_valid_helper(id: u32) -> bool {

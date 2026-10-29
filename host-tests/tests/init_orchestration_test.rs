@@ -454,7 +454,16 @@ fn test_boot_path_wires_mm_ipc_strategy_proc_in_order() {
     let gate_pos = lib
         .find(gate)
         .unwrap_or_else(|| panic!("真机引导块门控 {gate:?} 必须存在"));
-    let boot = &lib[gate_pos..];
+    // 真机引导按阶段拆为 `kernel_init_boot` 之下的 helper 系列 (helper 依调用序紧随其后),
+    // 扫描面从该入口起 —— 其前的 kernel_test 测试模式入口不在真机路径上.
+    let boot_pos = lib
+        .find("fn kernel_init_boot()")
+        .unwrap_or_else(|| panic!("真机引导入口 fn kernel_init_boot() 必须存在"));
+    assert!(
+        gate_pos < boot_pos,
+        "真机引导入口 kernel_init_boot 必须处于 host/kernel_test 门控之下"
+    );
+    let boot = &lib[boot_pos..];
 
     const MM_INIT: &str = "crate::functions::mm::init();";
     const IPC_INIT: &str = "crate::privileged::ipc::ipc_init();";

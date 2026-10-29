@@ -183,10 +183,6 @@ unsafe fn copy_trampoline() {
 
 #[inline(never)]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-#[expect(
-    clippy::large_stack_arrays,
-    reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
-)]
 unsafe fn start_ap(lapic_id: u32, cpu_index: u32) {
     unsafe {
         if cpu_index as usize >= super::acpi::MAX_CPUS {
@@ -215,12 +211,23 @@ unsafe fn start_ap(lapic_id: u32, cpu_index: u32) {
             return;
         }
 
-        let per_cpu = alloc::boxed::Box::new(ApPerCpu {
-            stack: [0u8; AP_STACK_SIZE],
-        });
+        // AP 栈 (64KiB) 用 alloc_zeroed 直接从内核分配器取清零内存: 既避免在栈上
+        // 先物化整块数组再搬运 (clippy large_stack_arrays 的指摘点), 也保留了
+        // "全零初值" 的等价语义 (`ApPerCpu` 仅含 `[u8; N]` 字段).
+        let layout = core::alloc::Layout::new::<ApPerCpu>();
+        let per_cpu = alloc::alloc::alloc_zeroed(layout).cast::<ApPerCpu>();
+        if per_cpu.is_null() {
+            // 分配失败 (PMM 无可用页): 与 GDT 分配失败同样处置 — 放弃启动本 AP.
+            crate::klog_warn!(
+                Boot,
+                "[SMP] AP cpu_index={} stack alloc failed, skip",
+                cpu_index
+            );
+            return;
+        }
 
-        let stack_top = per_cpu.stack.as_ptr() as u64 + AP_STACK_SIZE as u64;
-        AP_PER_CPU[cpu_index as usize] = Some(alloc::boxed::Box::into_raw(per_cpu));
+        let stack_top = (*per_cpu).stack.as_ptr() as u64 + AP_STACK_SIZE as u64;
+        AP_PER_CPU[cpu_index as usize] = Some(per_cpu);
 
         let cr3_val = crate::privileged::mm::get_kernel_pml4();
         let gdt_ptr = super::gdt::get_gdt_ptr();

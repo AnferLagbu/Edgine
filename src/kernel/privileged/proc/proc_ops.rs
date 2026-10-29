@@ -656,58 +656,8 @@ pub extern "C" fn sys_fork() -> Pid {
     };
     child.cr3.store(child_cr3, Ordering::SeqCst);
     child.pwm.store(0, Ordering::SeqCst);
-    // rlimit
-    if let Some(rlim) = PROCESS_TABLE.with_process(parent_pid, |p| p.rlimit_table.lock().clone()) {
-        *child.rlimit_table.lock() = rlim;
-    }
-    // session/pgid/canary
-    if let Some((sid, pgid, canary)) = PROCESS_TABLE.with_process(parent_pid, |p| {
-        (
-            p.session_id.load(Ordering::SeqCst),
-            p.pgid.load(Ordering::SeqCst),
-            p.stack_canary.load(Ordering::SeqCst),
-        )
-    }) {
-        child.session_id.store(sid, Ordering::SeqCst);
-        child
-            .pgid
-            .store(if pgid == 0 { parent_pid } else { pgid }, Ordering::SeqCst);
-        child.stack_canary.store(canary, Ordering::SeqCst);
-    }
-    // seccomp
-    if let Some((mode, nnp, filters)) = PROCESS_TABLE.with_process(parent_pid, |p| {
-        (
-            p.seccomp.get_mode(),
-            p.seccomp.is_no_new_privs(),
-            p.seccomp.filters.lock().clone(),
-        )
-    }) {
-        child.seccomp.mode.store(mode as u8, Ordering::SeqCst);
-        child
-            .seccomp
-            .no_new_privs
-            .store(u8::from(nnp), Ordering::SeqCst);
-        *child.seccomp.filters.lock() = filters;
-    }
-    // domain flags: 与 seccomp 同口径, 子进程继承父进程域级行为门控标志
-    if let Some(df) =
-        PROCESS_TABLE.with_process(parent_pid, |p| p.domain_flags.load(Ordering::SeqCst))
-    {
-        child.domain_flags.store(df, Ordering::SeqCst);
-    }
-    // namespace: 从父进程继承 (fork_from 仅 7 个 Arc::clone, 无锁交互)
-    // 先提取 NamespaceSet 到局部变量, 再赋值给 child, 避免在 with_process 闭包内操作 child
-    if let Some(parent_ns) = PROCESS_TABLE.with_process(parent_pid, |p| {
-        super::NamespaceSet::fork_from(&p.namespaces.lock())
-    }) {
-        *child.namespaces.lock() = parent_ns;
-    }
-    // cgroup
-    if let Some(cg) =
-        PROCESS_TABLE.with_process(parent_pid, |p| p.cgroup_id.load(Ordering::Acquire))
-    {
-        child.cgroup_id.store(cg, Ordering::Release);
-    }
+    // 继承父进程可继承状态 (rlimit / session / seccomp / 域标志 / cgroup / namespace)
+    inherit_parent_state(child, parent_pid);
     // 内核栈
     if !child.allocate_kernel_stack() {
         raw::drop_boxed_process(child_ptr);
@@ -774,18 +724,7 @@ pub extern "C" fn sys_fork() -> Pid {
     // handle_id 递增 OpenFile 引用 (POSIX: fork 后父子共享同一 open file
     // description, offset/flags 共享; 父进程 fd 表不受影响, 各自退出时递减)。
     // 非 CLONE_FILES 语义, 仅复制句柄映射 (K-03 待办)。
-    if let Some(handles) = PROCESS_TABLE.with_process(parent_pid, |p| {
-        child.fd_table.copy_from(&p.fd_table);
-        p.fd_table
-            .get_all_fds()
-            .into_iter()
-            .map(|(_, hid)| hid)
-            .collect::<alloc::vec::Vec<u32>>()
-    }) {
-        for hid in handles {
-            crate::privileged::fs::current_vfs_ops().inc_open_file_ref(hid);
-        }
-    }
+    inherit_parent_fds(child, parent_pid);
     PROCESS_TABLE.insert(core::ptr::from_ref::<Process>(child).cast_mut());
     // 为子进程创建 UserProc 镜像记录, 使 fork 子进程与父进程同源注册.
     //
@@ -806,6 +745,81 @@ pub extern "C" fn sys_fork() -> Pid {
     let _ = child.set_state_safe(ProcessState::Ready);
     Scheduler::add_to_run_queue(child_pid);
     child_pid
+}
+
+/// fork: 子进程继承父进程的 rlimit / session / pgid / canary / seccomp /
+/// 域标志 / namespace / cgroup.
+///
+/// `with_process` 返回 `None` 表示父进程已不在进程表, 此时静默跳过对应继承.
+fn inherit_parent_state(child: &mut Process, parent_pid: Pid) {
+    // rlimit
+    if let Some(rlim) = PROCESS_TABLE.with_process(parent_pid, |p| p.rlimit_table.lock().clone()) {
+        *child.rlimit_table.lock() = rlim;
+    }
+    // session/pgid/canary
+    if let Some((sid, pgid, canary)) = PROCESS_TABLE.with_process(parent_pid, |p| {
+        (
+            p.session_id.load(Ordering::SeqCst),
+            p.pgid.load(Ordering::SeqCst),
+            p.stack_canary.load(Ordering::SeqCst),
+        )
+    }) {
+        child.session_id.store(sid, Ordering::SeqCst);
+        child
+            .pgid
+            .store(if pgid == 0 { parent_pid } else { pgid }, Ordering::SeqCst);
+        child.stack_canary.store(canary, Ordering::SeqCst);
+    }
+    // seccomp
+    if let Some((mode, nnp, filters)) = PROCESS_TABLE.with_process(parent_pid, |p| {
+        (
+            p.seccomp.get_mode(),
+            p.seccomp.is_no_new_privs(),
+            p.seccomp.filters.lock().clone(),
+        )
+    }) {
+        child.seccomp.mode.store(mode as u8, Ordering::SeqCst);
+        child
+            .seccomp
+            .no_new_privs
+            .store(u8::from(nnp), Ordering::SeqCst);
+        *child.seccomp.filters.lock() = filters;
+    }
+    // domain flags: 与 seccomp 同口径, 子进程继承父进程域级行为门控标志
+    if let Some(df) =
+        PROCESS_TABLE.with_process(parent_pid, |p| p.domain_flags.load(Ordering::SeqCst))
+    {
+        child.domain_flags.store(df, Ordering::SeqCst);
+    }
+    // namespace: 从父进程继承 (fork_from 仅 7 个 Arc::clone, 无锁交互)
+    // 先提取 NamespaceSet 到局部变量, 再赋值给 child, 避免在 with_process 闭包内操作 child
+    if let Some(parent_ns) = PROCESS_TABLE.with_process(parent_pid, |p| {
+        super::NamespaceSet::fork_from(&p.namespaces.lock())
+    }) {
+        *child.namespaces.lock() = parent_ns;
+    }
+    // cgroup
+    if let Some(cg) =
+        PROCESS_TABLE.with_process(parent_pid, |p| p.cgroup_id.load(Ordering::Acquire))
+    {
+        child.cgroup_id.store(cg, Ordering::Release);
+    }
+}
+
+/// fork: 子进程复制父进程 fd 表, 并对复制出的每个句柄递增 OpenFile 引用.
+fn inherit_parent_fds(child: &mut Process, parent_pid: Pid) {
+    if let Some(handles) = PROCESS_TABLE.with_process(parent_pid, |p| {
+        child.fd_table.copy_from(&p.fd_table);
+        p.fd_table
+            .get_all_fds()
+            .into_iter()
+            .map(|(_, hid)| hid)
+            .collect::<alloc::vec::Vec<u32>>()
+    }) {
+        for hid in handles {
+            crate::privileged::fs::current_vfs_ops().inc_open_file_ref(hid);
+        }
+    }
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作

@@ -105,8 +105,6 @@
 #![allow(clippy::empty_line_after_doc_comments)]
 // 10. Clippy: Result<_, ()> — 内核错误路径使用 () 作为错误值是有意设计
 #![allow(clippy::result_unit_err)]
-// rustfmt 整改后函数体行数普遍增长 10-20%, 原 100 行阈值过紧; 放宽至 200
-#![allow(clippy::too_many_lines)]
 // 11. Clippy: module_inception — 内核模块命名（如 fs/unkfs/unkfs.rs）是架构惯例
 #![allow(clippy::module_inception)]
 // 12. Clippy: new_without_default — 内核对象通常不应有无参默认构造
@@ -236,13 +234,51 @@ use core::sync::atomic::Ordering;
 // B08-12: host-test 下 panic 由 std 提供, 内核 panic_handler 仅裸机/内核测试模式生效
 #[cfg(not(feature = "host-test"))]
 #[panic_handler]
-#[expect(
-    clippy::too_many_lines,
-    reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-)]
 fn panic(info: &PanicInfo) -> ! {
     crate::privileged::freg::PANIC_FLAG.store(true, Ordering::SeqCst);
 
+    panic_print_location(info);
+
+    // 修复 (TRACK-INIT-RING3-PANIC): 中断上下文 panic 时禁止分配内存.
+    // 原实现 `alloc::format!` 分配 String → k_malloc → KernelHeap IrqSpinLock,
+    // 若 panic 发生在 IRQ 上下文 (如中断路径内存分配) 会递归 panic → 跳 0x0 #UD.
+    // 改用栈缓冲 CursorWriter (privileged::klog, 纯 core::fmt 不分配) 格式化消息.
+    let mut msg_buf = [0u8; 256];
+    let mut msg_cursor: usize = 0;
+    let _ = core::fmt::write(
+        &mut crate::privileged::klog::CursorWriter::new(&mut msg_buf, &mut msg_cursor),
+        format_args!("{info}"),
+    );
+    let msg: &str = core::str::from_utf8(&msg_buf[..msg_cursor]).unwrap_or("PANIC (fmt failed)");
+    let bytes = msg.as_bytes();
+    let len = bytes.len().min(127);
+    {
+        let mut panic_msg = crate::privileged::freg::PANIC_MSG.lock();
+        panic_msg[..len].copy_from_slice(&bytes[..len]);
+        panic_msg[len] = 0;
+    }
+
+    let (regs, cr2, cr3_val) = panic_capture_registers();
+
+    // 1. 串口输出崩溃信息
+    panic_dump_serial(msg, &regs, cr2, cr3_val);
+
+    // 2. 图形控制台输出崩溃信息
+    panic_dump_gfx(msg, &regs, cr2, cr3_val);
+
+    panic_halt();
+}
+
+/// 崩溃寄存器名表 (顺序与 `panic_capture_registers` 返回的索引一致).
+#[cfg(not(feature = "host-test"))]
+static REG_NAMES: [[u8; 4]; 16] = [
+    *b"RAX ", *b"RBX ", *b"RCX ", *b"RDX ", *b"RSI ", *b"RDI ", *b"RBP ", *b"RSP ", *b"R8  ",
+    *b"R9  ", *b"R10 ", *b"R11 ", *b"R12 ", *b"R13 ", *b"R14 ", *b"R15 ",
+];
+
+/// 输出 panic 位置 (`file:line`) — 静态字符串, 不分配, 栈/数据被破坏时仍可用.
+#[cfg(not(feature = "host-test"))]
+fn panic_print_location(info: &PanicInfo) {
     // 诊断 (TRACK-INIT-RING3-PANIC): 先直接输出 panic location (file:line),
     // 绕过 PanicInfo::Display 格式化 (其内部 slice 索引在栈/数据被破坏时
     // 可能递归 panic → 无法看到原始 panic 点). location 是静态字符串, 不分配.
@@ -268,26 +304,11 @@ fn panic(info: &PanicInfo) -> ! {
             crate::privileged::klog::serial_write_bytes(b"\n");
         }
     }
+}
 
-    // 修复 (TRACK-INIT-RING3-PANIC): 中断上下文 panic 时禁止分配内存.
-    // 原实现 `alloc::format!` 分配 String → k_malloc → KernelHeap IrqSpinLock,
-    // 若 panic 发生在 IRQ 上下文 (如中断路径内存分配) 会递归 panic → 跳 0x0 #UD.
-    // 改用栈缓冲 CursorWriter (privileged::klog, 纯 core::fmt 不分配) 格式化消息.
-    let mut msg_buf = [0u8; 256];
-    let mut msg_cursor: usize = 0;
-    let _ = core::fmt::write(
-        &mut crate::privileged::klog::CursorWriter::new(&mut msg_buf, &mut msg_cursor),
-        format_args!("{info}"),
-    );
-    let msg: &str = core::str::from_utf8(&msg_buf[..msg_cursor]).unwrap_or("PANIC (fmt failed)");
-    let bytes = msg.as_bytes();
-    let len = bytes.len().min(127);
-    {
-        let mut panic_msg = crate::privileged::freg::PANIC_MSG.lock();
-        panic_msg[..len].copy_from_slice(&bytes[..len]);
-        panic_msg[len] = 0;
-    }
-
+/// 抓取崩溃现场寄存器 (仅 x86_64 走 asm, 其余架构保持零值) 与 CR2/CR3.
+#[cfg(not(feature = "host-test"))]
+fn panic_capture_registers() -> ([u64; 16], u64, u64) {
     // 先捕获寄存器状态 — 仅 x86_64 可从 asm 读取, 其余架构保持零值
     #[cfg(target_arch = "x86_64")]
     let mut regs: [u64; 16] = [0; 16];
@@ -315,10 +336,6 @@ fn panic(info: &PanicInfo) -> ! {
     }
     #[cfg(not(target_arch = "x86_64"))]
     let regs: [u64; 16] = [0; 16];
-    let reg_names: [[u8; 4]; 16] = [
-        *b"RAX ", *b"RBX ", *b"RCX ", *b"RDX ", *b"RSI ", *b"RDI ", *b"RBP ", *b"RSP ", *b"R8  ",
-        *b"R9  ", *b"R10 ", *b"R11 ", *b"R12 ", *b"R13 ", *b"R14 ", *b"R15 ",
-    ];
     // cr2/cr3 仅 x86_64 有对应寄存器, 其余架构保持 0
     #[cfg(target_arch = "x86_64")]
     let (cr2, cr3_val): (u64, u64) = unsafe {
@@ -331,14 +348,19 @@ fn panic(info: &PanicInfo) -> ! {
     #[cfg(not(target_arch = "x86_64"))]
     let (cr2, cr3_val): (u64, u64) = (0, 0);
 
-    // 1. 串口输出崩溃信息
+    (regs, cr2, cr3_val)
+}
+
+/// 崩溃串口输出: 消息 + 寄存器/CR2/CR3 十六进制 dump (每 4 个寄存器换行).
+#[cfg(not(feature = "host-test"))]
+fn panic_dump_serial(msg: &str, regs: &[u64; 16], cr2: u64, cr3_val: u64) {
     if crate::privileged::klog::KLOG_INIT.load(Ordering::Acquire) {
         crate::privileged::klog::serial_write_bytes(b"\n========== KERNEL PANIC ==========\n");
         crate::privileged::klog::serial_write_bytes(msg.as_bytes());
         crate::privileged::klog::serial_write_bytes(b"\n--- Register Dump ---\n");
         for i in 0..16 {
             crate::privileged::klog::serial_write_bytes(b"  ");
-            crate::privileged::klog::serial_write_bytes(&reg_names[i]);
+            crate::privileged::klog::serial_write_bytes(&REG_NAMES[i]);
             crate::privileged::klog::serial_write_bytes(b"= 0x");
             let mut hex_buf = [0u8; 16];
             let v = regs[i];
@@ -375,8 +397,11 @@ fn panic(info: &PanicInfo) -> ! {
         }
         crate::privileged::klog::serial_write_bytes(b"\n===================================\n");
     }
+}
 
-    // 2. 图形控制台输出崩溃信息
+/// 崩溃图形控制台输出: 消息 + 寄存器/CR2/CR3 (逐行经 `CursorWriter`, 不分配).
+#[cfg(not(feature = "host-test"))]
+fn panic_dump_gfx(msg: &str, regs: &[u64; 16], cr2: u64, cr3_val: u64) {
     crate::privileged::console::gfx_console_panic_reclaim(msg);
     crate::privileged::console::gfx_console_panic_write("\n--- Register Dump ---\n");
     for i in 0..16 {
@@ -391,7 +416,7 @@ fn panic(info: &PanicInfo) -> ! {
             &mut crate::privileged::klog::CursorWriter::new(&mut line_buf, &mut line_cur),
             format_args!(
                 "  {} = {}\n",
-                core::str::from_utf8(&reg_names[i]).unwrap_or("?? "),
+                core::str::from_utf8(&REG_NAMES[i]).unwrap_or("?? "),
                 core::str::from_utf8(&buf[..cursor]).unwrap_or("?")
             ),
         );
@@ -428,7 +453,11 @@ fn panic(info: &PanicInfo) -> ! {
         let line2 = core::str::from_utf8(&line_buf2[..line_cur2]).unwrap_or("?\n");
         crate::privileged::console::gfx_console_panic_write(line2);
     }
+}
 
+/// 崩溃后停机/恢复: x86_64 触发 `int 0x82` 走 FREG 恢复; aarch64 尝试域回滚后 `wfi`.
+#[cfg(not(feature = "host-test"))]
+fn panic_halt() -> ! {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         core::arch::asm!("int 0x82", options(noreturn));
@@ -498,19 +527,6 @@ fn alloc_error(layout: alloc::alloc::Layout) -> ! {
 /// # Panics
 /// Boot 栈 canary 校验失败 (栈溢出至栈底) 时立即 panic, 断言内核状态不可信.
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-)]
-// 符号桩化 (host-test): 触发 unreadable_literal 的硬件常量位于真机引导块,
-// host-test 维不再触发, expect 须同步收窄.
-#[cfg_attr(
-    not(feature = "host-test"),
-    expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )
-)]
 pub extern "C" fn kernel_init() {
     // 0. KLog — 自举串口驱动, 必须先于所有子系统
     unsafe {
@@ -543,473 +559,527 @@ pub extern "C" fn kernel_init() {
 
     // 测试模式: 跳过常规初始化, 运行单元测试
     #[cfg(feature = "kernel_test")]
-    {
-        // J-01 (2026-09-08): 三个 const 集中块首 (items_after_statements 清理) —
-        // kmalloc 堆大小与 PMM bitmap 间隙布局常量, 供下方初始化步骤使用
-        const KMALLOC_HEAP_SIZE: u64 = 16 * 1024 * 1024;
-        const GAP_SIZE: u64 = 0x200000;
-        const BITMAP_GAP_SIZE: u64 = 0x200000;
-
-        // 测试模式下也校验配置一致性
-        crate::privileged::config::init();
-
-        <crate::privileged::arch::CurrentArch as crate::privileged::arch::InterruptArch>::interrupt_disable(
-        );
-
-        let boot_info = crate::privileged::boot::init();
-        crate::privileged::mm::pmm::pmm_init(boot_info.mem_size, boot_info.kernel_end);
-        crate::privileged::mm::vmm::vmm_init();
-        let heap_start = crate::privileged::mm::VirtAddr(
-            crate::privileged::mm::KERNEL_BASE + boot_info.kernel_end + 0x200000,
-        );
-
-        crate::privileged::mm::kmalloc::get_kmalloc_mut().init(heap_start, KMALLOC_HEAP_SIZE);
-
-        // 诊断: kmalloc init 后检查页表
-        {
-            let read_u64 = |phys: u64, idx: usize| -> u64 {
-                let va = phys + crate::privileged::mm::KERNEL_BASE + idx as u64 * 8;
-                unsafe { core::ptr::read_volatile(va as *const u64) }
-            };
-            let pd24 = read_u64(0x109000, 24);
-            let pd63 = read_u64(0x109000, 63);
-            crate::klog_boot_info!(
-                "[PAGETABLE] after kmalloc: pd[24]=0x{:016X} pd[63]=0x{:016X}",
-                pd24,
-                pd63
-            );
-        }
-        // 必须包含 kernel_end 到 heap_start 之间的 2MB 间隙，
-        // 否则 PMM bitmap 会放在 kmalloc 堆内部，导致 bitmap 与堆数据互相覆盖。
-        // 必须包含 heap_end 到 bitmap 之间的 2MB 间隙，
-        // 否则 bitmap 与 heap 共享同一个 2MB 块，heap 扩展拆分 2MB 巨页时会覆盖 bitmap 的 PTE。
-        // GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE = 0x200000 + 16MB + 0x200000 = 20MB
-        crate::privileged::mm::pmm::pmm_init_bitmap(GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE);
-
-        // 诊断: dump 页表关键条目 (PML4[256]→pdpt_high[0]→pd[24]/[63])
-        {
-            let read_u64 = |phys: u64, idx: usize| -> u64 {
-                let va = phys + crate::privileged::mm::KERNEL_BASE + idx as u64 * 8;
-                unsafe { core::ptr::read_volatile(va as *const u64) }
-            };
-            let pml4_256 = read_u64(0x102000, 256);
-            let pdpt_0 = read_u64(0x104000, 0);
-            let pd24 = read_u64(0x109000, 24);
-            let pd63 = read_u64(0x109000, 63);
-            let pd0 = read_u64(0x109000, 0);
-            crate::klog_boot_info!(
-                "[PAGETABLE] pml4[256]=0x{:016X} pdpt[0]=0x{:016X} pd[0]=0x{:016X} pd[24]=0x{:016X} pd[63]=0x{:016X}",
-                pml4_256,
-                pdpt_0,
-                pd0,
-                pd24,
-                pd63
-            );
-        }
-
-        // I-24 启动顺序契约: GDT/TSS init (set_ist[0..4]) 必须在 IDT init 之前.
-        // cpu_init() 在 gdt_init() 之前调用 (kpti_init 依赖 has_invpcid() → get_cpu_info() → cpu_init).
-        // 正常路径由 interrupt_late_init 处理; 测试模式需显式调用.
-        #[cfg(target_arch = "x86_64")]
-        {
-            crate::privileged::cpu::cpu_init();
-            crate::privileged::arch::x86_64::gdt::gdt_init();
-        }
-
-        <crate::privileged::arch::CurrentArch as crate::privileged::arch::Arch>::interrupt_early_init(
-        );
-        crate::klog_boot_info!("Test mode: interrupt early init done");
-
-        crate::privileged::smp::init();
-        crate::klog_boot_info!("Test mode: SMP BSP registered");
-        crate::privileged::proc::scheduler::init();
-        crate::klog_boot_info!("Test mode: Scheduler ready");
-
-        #[cfg(feature = "fault_injection")]
-        {
-            let rate = option_env!("FAULT_RATE")
-                .and_then(|s| s.parse::<u32>().ok())
-                .unwrap_or(50);
-            crate::privileged::freg::fault_inject::FAULT_INJECTION_RATE
-                .store(rate, core::sync::atomic::Ordering::Relaxed);
-            crate::klog_boot_info!("[CHAOS] Fault injection enabled, rate={}/1000", rate);
-        }
-
-        crate::kernel_tests::test_runner_init();
-        crate::klog_boot_info!("Tests complete");
-
-        let r = crate::privileged::tests::runner();
-        let failed = r.failed.load(Ordering::SeqCst);
-        crate::privileged::debug::qemu_exit(failed == 0);
-    }
+    kernel_init_test_mode();
 
     // 1. Boot Info — 获取内存布局
     // 门控语义 (T1 G7 host 符号桩化): 真机路径 = not(any(kernel_test, host-test)),
     // kt/ht 同属"测试环境" (E-03 约定扩展). host-test 下不编译裸机引导链.
     #[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
+    kernel_init_boot();
+}
+
+/// 测试模式启动路径: 只初始化测试所需机制子系统, 跑完单元测试即 QEMU 退出.
+#[cfg(feature = "kernel_test")]
+fn kernel_init_test_mode() {
+    kernel_init_test_memory();
+    kernel_init_test_arch();
+
+    crate::kernel_tests::test_runner_init();
+    crate::klog_boot_info!("Tests complete");
+
+    let r = crate::privileged::tests::runner();
+    let failed = r.failed.load(Ordering::SeqCst);
+    crate::privileged::debug::qemu_exit(failed == 0);
+}
+
+/// 测试模式内存基线: kmalloc 堆 / PMM 位图布局与页表自检.
+#[cfg(feature = "kernel_test")]
+fn kernel_init_test_memory() {
+    // J-01 (2026-09-08): 三个 const 集中块首 (items_after_statements 清理) —
+    // kmalloc 堆大小与 PMM bitmap 间隙布局常量, 供下方初始化步骤使用
+    const KMALLOC_HEAP_SIZE: u64 = 16 * 1024 * 1024;
+    const GAP_SIZE: u64 = 0x0020_0000;
+    const BITMAP_GAP_SIZE: u64 = 0x0020_0000;
+
+    // 测试模式下也校验配置一致性
+    crate::privileged::config::init();
+
+    <crate::privileged::arch::CurrentArch as crate::privileged::arch::InterruptArch>::interrupt_disable(
+    );
+
+    let boot_info = crate::privileged::boot::init();
+    crate::privileged::mm::pmm::pmm_init(boot_info.mem_size, boot_info.kernel_end);
+    crate::privileged::mm::vmm::vmm_init();
+    let heap_start = crate::privileged::mm::VirtAddr(
+        crate::privileged::mm::KERNEL_BASE + boot_info.kernel_end + 0x0020_0000,
+    );
+
+    crate::privileged::mm::kmalloc::get_kmalloc_mut().init(heap_start, KMALLOC_HEAP_SIZE);
+
+    // 诊断: kmalloc init 后检查页表
     {
-        // kmalloc 堆容量与 PMM 位图预留间隙 (常量前置: 作用域内项目自块起始可见)
-        const KMALLOC_HEAP_SIZE: u64 = 8 * 1024 * 1024; // 8 MB (b4d: 实测全程峰值 16KB, 由 16MB 缩容)
-        const GAP_SIZE: u64 = 0x200000;
-        const BITMAP_GAP_SIZE: u64 = 0x200000;
-
-        let boot_info = crate::privileged::boot::init();
+        let read_u64 = |phys: u64, idx: usize| -> u64 {
+            let va = phys + crate::privileged::mm::KERNEL_BASE + idx as u64 * 8;
+            unsafe { core::ptr::read_volatile(va as *const u64) }
+        };
+        let pd24 = read_u64(0x0010_9000, 24);
+        let pd63 = read_u64(0x0010_9000, 63);
         crate::klog_boot_info!(
-            "Boot info: mem={} MB, kernel_end=0x{:X}",
-            boot_info.mem_size / (1024 * 1024),
-            boot_info.kernel_end
+            "[PAGETABLE] after kmalloc: pd[24]=0x{:016X} pd[63]=0x{:016X}",
+            pd24,
+            pd63
         );
+    }
+    // 必须包含 kernel_end 到 heap_start 之间的 2MB 间隙，
+    // 否则 PMM bitmap 会放在 kmalloc 堆内部，导致 bitmap 与堆数据互相覆盖。
+    // 必须包含 heap_end 到 bitmap 之间的 2MB 间隙，
+    // 否则 bitmap 与 heap 共享同一个 2MB 块，heap 扩展拆分 2MB 巨页时会覆盖 bitmap 的 PTE。
+    // GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE = 0x0020_0000 + 16MB + 0x0020_0000 = 20MB
+    crate::privileged::mm::pmm::pmm_init_bitmap(GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE);
 
-        // 2. PMM — 物理内存管理器初始化
-        crate::privileged::mm::pmm::pmm_init(boot_info.mem_size, boot_info.kernel_end);
-        crate::klog_boot_info!("PMM initialized");
-
-        // 3. VMM — 虚拟内存管理器初始化 (必须在PMM之后)
-        crate::privileged::mm::vmm::vmm_init();
-        crate::klog_boot_info!("VMM initialized");
-
-        // 3.1 VMM 初始化后验证: 确保 GLOBAL_VMM OnceLock 已正确完成初始化.
-        // 若 VMM init 内部静默失败 (如页错误导致 OnceLock 状态停留在 IN_PROGRESS),
-        // 此处提前 panic 并给出明确诊断信息, 避免后续 get_vmm() 时信息不足.
-        let vmm_state = crate::privileged::mm::vmm::vmm_debug_state();
-        assert!(
-            vmm_state == 2,
-            "[VMM] initialization verification failed: OnceLock state={vmm_state} (expected 2=DONE). \
-             VMM init may have panicked or been interrupted."
-        );
-
-        // 4. kmalloc — 内核堆初始化
-        // 双架构统一为 KERNEL_BASE + 物理偏移: 堆的**物理布局**不变
-        // (仍自 kernel_end + 0x200000 起), 仅访问别名改走高半区直射区,
-        // 从而在 TTBR0/CR3 切至 per-process 视图时堆仍经内核高半区可达
-        // (aarch64 原先直取物理地址, 依赖低半区恒等, 见 L1-05)。
-        let heap_start = crate::privileged::mm::VirtAddr(
-            crate::privileged::mm::KERNEL_BASE + boot_info.kernel_end + 0x200000,
-        );
-
-        crate::privileged::mm::kmalloc::get_kmalloc_mut().init(heap_start, KMALLOC_HEAP_SIZE);
-
+    // 诊断: dump 页表关键条目 (PML4[256]→pdpt_high[0]→pd[24]/[63])
+    {
+        let read_u64 = |phys: u64, idx: usize| -> u64 {
+            let va = phys + crate::privileged::mm::KERNEL_BASE + idx as u64 * 8;
+            unsafe { core::ptr::read_volatile(va as *const u64) }
+        };
+        let pml4_256 = read_u64(0x0010_2000, 256);
+        let pdpt_0 = read_u64(0x0010_4000, 0);
+        let pd24 = read_u64(0x0010_9000, 24);
+        let pd63 = read_u64(0x0010_9000, 63);
+        let pd0 = read_u64(0x0010_9000, 0);
         crate::klog_boot_info!(
-            "kmalloc initialized at 0x{:X}, size={} MB",
-            heap_start.0,
-            KMALLOC_HEAP_SIZE / (1024 * 1024)
+            "[PAGETABLE] pml4[256]=0x{:016X} pdpt[0]=0x{:016X} pd[0]=0x{:016X} pd[24]=0x{:016X} pd[63]=0x{:016X}",
+            pml4_256,
+            pdpt_0,
+            pd0,
+            pd24,
+            pd63
         );
+    }
+}
 
-        // 5. PMM Bitmap — 初始化位图分配器
-        // 必须包含 kernel_end 与 heap_start 之间的 2MB 间隙,
-        // 否则 PMM 位图会从 kmalloc 堆内分配
-        // (页 7165+), alloc_table() 清零新分配页表页时会导致堆破坏
-        //
-        // 还必须包含 heap_end 与位图之间的 2MB 间隙,
-        // 否则位图与堆共享 2MB 大页, 堆
-        // 扩容时的 2MB 大页拆分会覆盖位图 PTE.
-        // GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE = 0x200000 + 8MB + 0x200000 = 10MB
-        // 注: 堆扩容自 heap_end 向上映射, 仅能吃到尾部 BITMAP_GAP_SIZE(2MB),
-        // 故堆最大容量 = KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE = 10MB.
-        let reserved_after_kernel = GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE;
-        crate::privileged::mm::pmm::pmm_init_bitmap(reserved_after_kernel);
-        crate::klog_boot_info!("PMM bitmap initialized");
+/// 测试模式架构基线: GDT/TSS → 中断早初始化 → SMP → 调度器 (顺序契约见 I-24).
+#[cfg(feature = "kernel_test")]
+fn kernel_init_test_arch() {
+    // I-24 启动顺序契约: GDT/TSS init (set_ist[0..4]) 必须在 IDT init 之前.
+    // cpu_init() 在 gdt_init() 之前调用 (kpti_init 依赖 has_invpcid() → get_cpu_info() → cpu_init).
+    // 正常路径由 interrupt_late_init 处理; 测试模式需显式调用.
+    #[cfg(target_arch = "x86_64")]
+    {
+        crate::privileged::cpu::cpu_init();
+        crate::privileged::arch::x86_64::gdt::gdt_init();
+    }
 
-        // --- FREG恢复域 (前移至中断使能前, 避免竞态) ---
-        // 在中断使能前注册 PMM + PROC 域, 使定时器 IRQ
-        // 不会与 RECOVERY_MANAGER 自旋锁上的域注册竞态
-        crate::privileged::mm::pmm::pmm_register_freg_domain();
-        crate::privileged::proc::process::proc_register_freg_domain();
-        crate::klog_boot_info!("FREG-stack recovery domains registered (PMM=3, PROC=4)");
+    <crate::privileged::arch::CurrentArch as crate::privileged::arch::Arch>::interrupt_early_init();
+    crate::klog_boot_info!("Test mode: interrupt early init done");
 
-        // 5.5. Swap — 物理内存回收/换出 (B3 完整实现)
-        // 必须在 PMM + VMM + kmalloc 初始化之后 (使用 pmm/vmm 接口)
-        // 必须在 interrupt_late_init 之前 (softirq 注册依赖 IRQ 子系统)
-        // 实际上 softirq 是 static handler 表, 不强制 init 顺序, 但保持 init 流程清晰:
-        //   swap_init (PMM 之后) → kswapd_init (interrupt_late_init 之后, scheduler tick 之前)
-        if crate::functions::mm::swap::swap_init() {
-            crate::klog_boot_info!("Swap subsystem initialized");
-        } else {
-            crate::klog_boot_info!("Swap subsystem init FAILED (degraded mode)");
+    crate::privileged::smp::init();
+    crate::klog_boot_info!("Test mode: SMP BSP registered");
+    crate::privileged::proc::scheduler::init();
+    crate::klog_boot_info!("Test mode: Scheduler ready");
+
+    #[cfg(feature = "fault_injection")]
+    {
+        let rate = option_env!("FAULT_RATE")
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(50);
+        crate::privileged::freg::fault_inject::FAULT_INJECTION_RATE
+            .store(rate, core::sync::atomic::Ordering::Relaxed);
+        crate::klog_boot_info!("[CHAOS] Fault injection enabled, rate={}/1000", rate);
+    }
+}
+
+/// 真机启动路径: 按依赖序推进各子系统, 最后进入用户态 (不返回).
+#[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
+fn kernel_init_boot() {
+    boot_memory_init();
+    boot_policy_init();
+    boot_interrupt_timer_init();
+    boot_core_subsystems_init();
+    boot_driver_init();
+    boot_deferred_init();
+    boot_rootfs_and_probes();
+    boot_syscall_and_launch();
+}
+
+/// 引导内存基线: Boot Info → PMM → VMM 自检 → kmalloc → PMM 位图.
+#[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
+fn boot_memory_init() {
+    // kmalloc 堆容量与 PMM 位图预留间隙 (常量前置: 作用域内项目自块起始可见)
+    const KMALLOC_HEAP_SIZE: u64 = 8 * 1024 * 1024; // 8 MB (b4d: 实测全程峰值 16KB, 由 16MB 缩容)
+    const GAP_SIZE: u64 = 0x0020_0000;
+    const BITMAP_GAP_SIZE: u64 = 0x0020_0000;
+
+    let boot_info = crate::privileged::boot::init();
+    crate::klog_boot_info!(
+        "Boot info: mem={} MB, kernel_end=0x{:X}",
+        boot_info.mem_size / (1024 * 1024),
+        boot_info.kernel_end
+    );
+
+    // 2. PMM — 物理内存管理器初始化
+    crate::privileged::mm::pmm::pmm_init(boot_info.mem_size, boot_info.kernel_end);
+    crate::klog_boot_info!("PMM initialized");
+
+    // 3. VMM — 虚拟内存管理器初始化 (必须在PMM之后)
+    crate::privileged::mm::vmm::vmm_init();
+    crate::klog_boot_info!("VMM initialized");
+
+    // 3.1 VMM 初始化后验证: 确保 GLOBAL_VMM OnceLock 已正确完成初始化.
+    // 若 VMM init 内部静默失败 (如页错误导致 OnceLock 状态停留在 IN_PROGRESS),
+    // 此处提前 panic 并给出明确诊断信息, 避免后续 get_vmm() 时信息不足.
+    let vmm_state = crate::privileged::mm::vmm::vmm_debug_state();
+    assert!(
+        vmm_state == 2,
+        "[VMM] initialization verification failed: OnceLock state={vmm_state} (expected 2=DONE). \
+         VMM init may have panicked or been interrupted."
+    );
+
+    // 4. kmalloc — 内核堆初始化
+    // 双架构统一为 KERNEL_BASE + 物理偏移: 堆的**物理布局**不变
+    // (仍自 kernel_end + 0x0020_0000 起), 仅访问别名改走高半区直射区,
+    // 从而在 TTBR0/CR3 切至 per-process 视图时堆仍经内核高半区可达
+    // (aarch64 原先直取物理地址, 依赖低半区恒等, 见 L1-05)。
+    let heap_start = crate::privileged::mm::VirtAddr(
+        crate::privileged::mm::KERNEL_BASE + boot_info.kernel_end + 0x0020_0000,
+    );
+
+    crate::privileged::mm::kmalloc::get_kmalloc_mut().init(heap_start, KMALLOC_HEAP_SIZE);
+
+    crate::klog_boot_info!(
+        "kmalloc initialized at 0x{:X}, size={} MB",
+        heap_start.0,
+        KMALLOC_HEAP_SIZE / (1024 * 1024)
+    );
+
+    // 5. PMM Bitmap — 初始化位图分配器
+    // 必须包含 kernel_end 与 heap_start 之间的 2MB 间隙,
+    // 否则 PMM 位图会从 kmalloc 堆内分配
+    // (页 7165+), alloc_table() 清零新分配页表页时会导致堆破坏
+    //
+    // 还必须包含 heap_end 与位图之间的 2MB 间隙,
+    // 否则位图与堆共享 2MB 大页, 堆
+    // 扩容时的 2MB 大页拆分会覆盖位图 PTE.
+    // GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE = 0x0020_0000 + 8MB + 0x0020_0000 = 10MB
+    // 注: 堆扩容自 heap_end 向上映射, 仅能吃到尾部 BITMAP_GAP_SIZE(2MB),
+    // 故堆最大容量 = KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE = 10MB.
+    let reserved_after_kernel = GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE;
+    crate::privileged::mm::pmm::pmm_init_bitmap(reserved_after_kernel);
+    crate::klog_boot_info!("PMM bitmap initialized");
+}
+
+/// FREG 恢复域 → Swap → functions 内存策略 → IPC 机制与策略 (全部在中断使能前).
+#[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
+fn boot_policy_init() {
+    // --- FREG恢复域 (前移至中断使能前, 避免竞态) ---
+    // 在中断使能前注册 PMM + PROC 域, 使定时器 IRQ
+    // 不会与 RECOVERY_MANAGER 自旋锁上的域注册竞态
+    crate::privileged::mm::pmm::pmm_register_freg_domain();
+    crate::privileged::proc::process::proc_register_freg_domain();
+    crate::klog_boot_info!("FREG-stack recovery domains registered (PMM=3, PROC=4)");
+
+    // 5.5. Swap — 物理内存回收/换出 (B3 完整实现)
+    // 必须在 PMM + VMM + kmalloc 初始化之后 (使用 pmm/vmm 接口)
+    // 必须在 interrupt_late_init 之前 (softirq 注册依赖 IRQ 子系统)
+    // 实际上 softirq 是 static handler 表, 不强制 init 顺序, 但保持 init 流程清晰:
+    //   swap_init (PMM 之后) → kswapd_init (interrupt_late_init 之后, scheduler tick 之前)
+    if crate::functions::mm::swap::swap_init() {
+        crate::klog_boot_info!("Swap subsystem initialized");
+    } else {
+        crate::klog_boot_info!("Swap subsystem init FAILED (degraded mode)");
+    }
+
+    // 5.6. functions 内存策略注册 (T-02 / DECISION-O)
+    // 位置约束: 在 privileged mm (pmm/vmm/kmalloc) 与 swap_init 之后、中断使能之前.
+    // 此前无调用点, PMM/Slab/Swap/缺页/压力/分配决策策略全部停留在 privileged fallback.
+    crate::functions::mm::init();
+    crate::klog_boot_info!("MM policies registered");
+
+    // 5.7. IPC 机制初始化 (kmalloc 后、中断使能前)
+    // 此前无调用点: IPC_NAMESPACE 的 4 个资源数组保持空 Vec, 首次 pipe()/msgget()
+    // 即越界 panic. 必须在策略注册前填充槽位, 且单线程阶段完成.
+    crate::privileged::ipc::ipc_init();
+    crate::klog_boot_info!("IPC namespace initialized");
+
+    // 5.75. IPC 策略注册契约点 (DECISION-K 2026-09-12: 注册点前置)
+    // 紧随 privileged ipc_init() 后立即 (kernel_init 早期, 删去 VFS 后约束) —
+    // DefaultIpcStrategy 零字段构造 + static 零初始化 + OnceLock 存指针, 注册零
+    // 依赖; 策略方法惰性调用 (用户态 syscall 才执行 *_safe, 彼时 VFS 早已就绪),
+    // 注册点与调用点分离。未注册降级: FFI 返回 ENOSYS + 日志 (逻辑错误降级原则)。
+    crate::functions::ipc::strategy::register_default_ipc_strategy()
+        .expect("ipc strategy registered (kernel_init 早期契约点)");
+}
+
+/// 中断/异常 → kswapd → Timer → 单一时基 → 本核 tick 参数 → 次级核上线.
+#[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
+fn boot_interrupt_timer_init() {
+    // 6. 中断/异常设置
+    <crate::privileged::arch::CurrentArch as crate::privileged::arch::Arch>::interrupt_late_init();
+    crate::klog_boot_info!("Interrupt subsystem ready");
+
+    // 6.5. kswapd softirq 注册 (依赖 IRQ 子系统, scheduler tick 触发 wakeup)
+    crate::functions::mm::swap::kswapd_init();
+
+    // 7. Timer 初始化 (中断延后到网络就绪后启用)
+    // tick 频率取 `timer::DEFAULT_INTERRUPT_FREQ_HZ` 单源: aarch64 的硬件周期
+    // 由同一常量算出 (`arch::aarch64::timer::init_deferred`), 两处不得各写一份.
+    match crate::privileged::timer::timer_init(crate::privileged::timer::DEFAULT_INTERRUPT_FREQ_HZ)
+    {
+        Ok(_freq) => {
+            crate::klog_boot_info!("Timer configured");
+            #[cfg(target_arch = "x86_64")]
+            let _ = crate::privileged::timer::irq::register_timer_irq();
         }
+        Err(msg) => {
+            // TD-13: 定时器初始化失败必须记录, 不允许静默丢弃. 原载体
+            // `timer::timer_init_ffi` 是 0 调用者的 FFI 孤儿入口, 已随 P-8
+            // init 编排收口删除 —— 记录责任由真机路径 (本分支) 承接.
+            crate::klog_err!(Timer, "timer_init failed: {}", msg);
+        }
+    }
 
-        // 5.6. functions 内存策略注册 (T-02 / DECISION-O)
-        // 位置约束: 在 privileged mm (pmm/vmm/kmalloc) 与 swap_init 之后、中断使能之前.
-        // 此前无调用点, PMM/Slab/Swap/缺页/压力/分配决策策略全部停留在 privileged fallback.
-        crate::functions::mm::init();
-        crate::klog_boot_info!("MM policies registered");
+    // 7.5. 单一时基建立 (P-7 接线): 取硬件自由计数器频率 → 登记 → 向 tick 建锚
+    // 位置约束: 必须在 `timer_init` 之后 (建锚需 tick 频率已配置), 在 scheduler
+    // 之前 (调度器的周期判断以单一时基为准). 测定不依赖中断使能: x86_64 走
+    // CPUID Leaf 0x15 标称值 → PIT 通道 0 实测两级回退, aarch64 读 CNTFRQ_EL0
+    // (启动阶段 IF 尚未打开, 旧实现按 tick 中断计数作时间窗口会永久自旋).
+    // 失败不致命: tick 保持中断计数视图, tickless 由 `timebase_is_hardware()` 拦住.
+    match crate::privileged::timer::calibration::establish_boot_timebase() {
+        Ok((hz, source)) => {
+            crate::klog_boot_info!("Timebase: {} Hz ({})", hz, source.label());
+        }
+        Err(msg) => {
+            crate::klog_warn!(Timer, "boot timebase not established: {}", msg);
+        }
+    }
 
-        // 5.7. IPC 机制初始化 (kmalloc 后、中断使能前)
-        // 此前无调用点: IPC_NAMESPACE 的 4 个资源数组保持空 Vec, 首次 pipe()/msgget()
-        // 即越界 panic. 必须在策略注册前填充槽位, 且单线程阶段完成.
-        crate::privileged::ipc::ipc_init();
-        crate::klog_boot_info!("IPC namespace initialized");
+    // 7.6. 本核 tick 设备装配 (E-II-b, 仅 x86_64): 一次性发布全局 tick 源参
+    // 数 (模式 + 每 tick 计数增量) 并装填 BSP 本核. 位置约束: 必须在 7.5 时基登记
+    // 之后 (clockevent 以时基为换算窗口与截止期域), 在 scheduler (步骤 8) 与次级核
+    // 上线 (7.7) 之前. aarch64 无每核 tick 参数标定需求 (Generic Timer 由
+    // `start_interval` 在网络就绪后开跑), 故不占本步.
+    #[cfg(target_arch = "x86_64")]
+    crate::privileged::timer::clockevent::setup();
 
-        // 5.75. IPC 策略注册契约点 (DECISION-K 2026-09-12: 注册点前置)
-        // 紧随 privileged ipc_init() 后立即 (kernel_init 早期, 删去 VFS 后约束) —
-        // DefaultIpcStrategy 零字段构造 + static 零初始化 + OnceLock 存指针, 注册零
-        // 依赖; 策略方法惰性调用 (用户态 syscall 才执行 *_safe, 彼时 VFS 早已就绪),
-        // 注册点与调用点分离。未注册降级: FFI 返回 ENOSYS + 日志 (逻辑错误降级原则)。
-        crate::functions::ipc::strategy::register_default_ipc_strategy()
-            .expect("ipc strategy registered (kernel_init 早期契约点)");
+    // 7.7. 次级核上线 (自步骤 6 的中断子系统初始化拆出). 次序判据: 全局 tick 源参
+    // 数先于 CPU 上线发布 (对齐 Linux clocksource_init → cpu_up) —— LAPIC 是每核
+    // 私有寄存器, 只能由本核装配; AP 在 `ap_entry` 内按已发布参数自装填. 拆开后
+    // 启动序列不存在"AP 先上线、参数未定"的窗口, 无需超时等待与降级分支.
+    <crate::privileged::arch::CurrentArch as crate::privileged::arch::Arch>::secondary_cpu_bringup(
+    );
+    crate::klog_boot_info!("SMP: secondary CPUs online");
+}
 
-        // 6. 中断/异常设置
-        <crate::privileged::arch::CurrentArch as crate::privileged::arch::Arch>::interrupt_late_init(
+/// Scheduler/进程策略 → eBPF → VFS → UDS → 网络栈.
+#[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
+fn boot_core_subsystems_init() {
+    // 8. Scheduler + 进程策略注册
+    // functions::proc::init() 组合: 信号策略 (REVAL-1) + coredump sink (2J-C)
+    // + privileged scheduler::init + session::init. 此前仅调 scheduler::init,
+    // 信号/coredump 策略与 session 初始化从未执行 (全靠 privileged fallback).
+    crate::functions::proc::init();
+    crate::klog_boot_info!("Scheduler ready");
+
+    // 8-1. eBPF — functions::debug::ebpf::init() 注册契约 (DECISION-K 统一
+    // 模式): bpf_init (幂等) + 标准 verifier 注册 (T4-3 Safe Policy
+    // Injection). 预存欠账修复: 此前 verifier 注册位于 scheduler_init FFI
+    // (无生产调用者), 生产环境 verifier 从未注册 — 本行接通注册链路.
+    crate::functions::debug::ebpf::init();
+
+    // 9. VFS
+    // functions::fs::init() — FsBackend 策略 + VFS poll 策略 + UNKFS
+    // FileSystem/热插拔监听器注册 (DECISION-K 项 6 注册点前置)。预存欠账:
+    // 此前 functions::fs::init() 无调用者, make_ramfs_inode 钩子 (第二十三批)
+    // 恒命中 FallbackFsBackend Err(NotInitialized), ramfs open/create 路径
+    // 在生产环境被回退策略拦截 — 本行注册为回归修复。
+    crate::functions::fs::init();
+    crate::functions::fs::vfs_manager::init();
+    crate::klog_boot_info!("VFS ready");
+
+    // 9-1. UDS (AF_UNIX) — Phase C.3
+    crate::functions::net::unix::uds_init();
+    crate::klog_boot_info!("UDS subsystem initialized");
+
+    // 10. Network (smoltcp + 网卡驱动)
+    {
+        // 阶段 3 (驱动双份合并): functions 网络驱动权威 (e1000 + virtio-net
+        // 复合探测) 注册探测回调槽 (functions→privileged 单向), 实际设备
+        // 探测在 eg_net_init → nic_probe_all 经槽位单向拉取。
+        crate::functions::driver::net::net_init();
+
+        crate::privileged::net::init::eg_net_init();
+
+        crate::klog_boot_info!("Network subsystem initialized");
+    }
+}
+
+/// 驱动子系统: 绘图策略 → 驱动总初始化 → 字符/块/存储/USB/显示 → EGDF 统计.
+#[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
+fn boot_driver_init() {
+    // 10-10.6. Driver subsystem init
+    // §6.3 绘图策略下沉: functions 侧帧缓冲绘图算法必须先于 driver init_all
+    // 注册 —— 该链路内 display_init 会执行帧缓冲自检与 GfxConsole 初始化,
+    // 两者均经 privileged::driver::current_framebuffer_ops 消费该策略.
+    crate::functions::driver::display::init_render_policy();
+    crate::privileged::driver::init_all();
+    // §6.4 直接方案 B: 字符设备 (x86_64 vga/serial + aarch64 pl011) 权威迁 functions,
+    // 由 crate root (合法双向编排者) 调用 functions char_init 注册进 EGDF.
+    crate::functions::driver::char::char_init();
+    // §6.4 直接方案 B: virtio-blk 权威迁 functions (aarch64 QEMU -M virt 主战场;
+    // x86_64 走 PCI AHCI/NVMe, 此调用探测 virtio-mmio 无设备即跳过)
+    crate::functions::driver::virtio::blk_init();
+    // DECISION-H storage 专项 3 号子步: PCI AHCI/NVMe 权威迁 functions,
+    // 由 crate root (合法双向编排者) 调用 functions storage_init 接管控制器
+    // 初始化与 EGDF 注册 (privileged storage_init 仅余 ATA 回退路径)。
+    #[cfg(target_arch = "x86_64")]
+    crate::functions::driver::storage::storage_init();
+    // 2-D USB 整体下沉: xHCI 探测/注册权威实装于 functions::driver::usb,
+    // 由 crate root (合法双向编排者) 调用 functions usb_init 接管
+    // PCI 发现 + EGDF 注册 (privileged 侧 usb 模块已删除)。
+    crate::functions::driver::usb::usb_init();
+    // MIG-008 接线补齐: 显示控制器 (HDMI/DP/DisplayManager) 权威实装于
+    // functions::driver::display, 由 crate root (合法双向编排者) 调用
+    // functions display_init 注册工厂回调, 再经 privileged display_probe_controllers
+    // 单向拉取触发 EGDF 注册 (DECISION-K 单向注册契约)。
+    crate::functions::driver::display::display_init();
+    crate::privileged::driver::display_probe_controllers();
+    crate::klog_boot_info!("Driver subsystem initialized");
+    {
+        let egdf_count = crate::privileged::egdf::egdf_count() as u64;
+        let block_count =
+            crate::privileged::egdf::egdf_count_by_proto(crate::privileged::egdf::EGDFProto::Block)
+                as u64;
+        let net_count =
+            crate::privileged::egdf::egdf_count_by_proto(crate::privileged::egdf::EGDFProto::Net)
+                as u64;
+        let input_count =
+            crate::privileged::egdf::egdf_count_by_proto(crate::privileged::egdf::EGDFProto::Input)
+                as u64;
+        crate::klog_boot_info!(
+            "EGDF: {} device(s) [blk={} net={} input={}]",
+            egdf_count,
+            block_count,
+            net_count,
+            input_count
         );
-        crate::klog_boot_info!("Interrupt subsystem ready");
+    }
+}
 
-        // 6.5. kswapd softirq 注册 (依赖 IRQ 子系统, scheduler tick 触发 wakeup)
-        crate::functions::mm::swap::kswapd_init();
+/// 延迟子系统编排 (P-8 init 编排收口): 单一编排点按依赖序接线 10 项子系统 init.
+#[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
+fn boot_deferred_init() {
+    // 10.7. 延迟子系统编排 (P-8 init 编排收口) ──────────────────────────
+    // 单一编排点按依赖序接线 10 项子系统 init. 此前这 10 项挂在一个
+    // `extern "C"` 孤儿入口 `sched_ops::scheduler_init` 内 (无生产调用者),
+    // 后果是它们在生产环境**从未执行**: NUMA 拓扑 (SYS_getcpu / SYS_mbind 等
+    // 已在 functions dispatch 接线却无拓扑可查), cgroup, PM, SGEG/TPM, CET,
+    // Tickless, TimeSync, kexec, UEFI, 以及 tick_query 解耦桥 (P-1 恒返 0 的
+    // 成因). 各项 init 均自带幂等守卫 (OnceCell / AtomicBool / is_initialized).
+    //
+    // 路径选择: 有 functions 安全门面的项一律走门面 (crate root 是唯一合法
+    // 双向编排者), 使门面成为单一路径, 不再与 privileged 直调并存; cgroup /
+    // numa / pm / sgeg 的 functions 侧只是 glob re-export 兼容层 (非门面),
+    // 故直调 privileged 机制.
+    //
+    // 依赖序: PMM (步骤 2/5) → numa; Timer (7) / Scheduler (8) → tick_query /
+    // cgroup / tickless / timesync; 驱动 (10-10.6) → pm / sgeg / kexec /
+    // uefi; **必须早于下方 aarch64 `start_interval`** —— Generic Timer 一旦开跑,
+    // tick 路径就会查 tickless 状态, 未初始化则退化分支不可逆.
+    crate::privileged::tick_query::install_builtin_tick_query();
+    crate::privileged::proc::cgroup::cgroup_init();
+    crate::privileged::mm::numa_init(
+        crate::privileged::mm::pmm_get_total_pages() * crate::privileged::mm::PAGE_SIZE,
+        crate::privileged::lib::low_u32_from_usize(crate::privileged::config::MAX_CPUS),
+    );
+    crate::privileged::driver::pm_init(crate::privileged::lib::low_u32_from_usize(
+        crate::privileged::config::MAX_CPUS,
+    ));
+    crate::privileged::sgeg::sgeg_init();
+    crate::functions::proc::shadow_stack::init();
+    crate::functions::timer::tickless::init(crate::privileged::lib::low_u32_from_usize(
+        crate::privileged::config::MAX_CPUS,
+    ));
+    crate::functions::timer::time_sync::init();
+    crate::functions::driver::kexec::init();
+    // SIMPLIFIED: UEFI 系统表地址固定传 0 (= 无 UEFI 固件, runtime services 不启用);
+    // multiboot2/U-Boot 引导链当前不传递 EFI system table, 影响面 = EG_UEFI 全部
+    // 命令返回未初始化错误; 待 bootloader 接入 EFI 指针后从 boot_info 取真值.
+    crate::functions::driver::uefi::init(0);
+    crate::klog_boot_info!("Deferred subsystems initialized");
+}
 
-        // 7. Timer 初始化 (中断延后到网络就绪后启用)
-        // tick 频率取 `timer::DEFAULT_INTERRUPT_FREQ_HZ` 单源: aarch64 的硬件周期
-        // 由同一常量算出 (`arch::aarch64::timer::init_deferred`), 两处不得各写一份.
-        match crate::privileged::timer::timer_init(
-            crate::privileged::timer::DEFAULT_INTERRUPT_FREQ_HZ,
-        ) {
-            Ok(_freq) => {
-                crate::klog_boot_info!("Timer configured");
-                #[cfg(target_arch = "x86_64")]
-                let _ = crate::privileged::timer::irq::register_timer_irq();
-            }
-            Err(msg) => {
-                // TD-13: 定时器初始化失败必须记录, 不允许静默丢弃. 原载体
-                // `timer::timer_init_ffi` 是 0 调用者的 FFI 孤儿入口, 已随 P-8
-                // init 编排收口删除 —— 记录责任由真机路径 (本分支) 承接.
-                crate::klog_err!(Timer, "timer_init failed: {}", msg);
-            }
-        }
+/// UNKFS/根文件系统挂载 → aarch64 tick 开跑 → 跨核 TLB 失效探针.
+#[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
+fn boot_rootfs_and_probes() {
+    // UNKFS + 磁盘挂载 — BlockDevice 注册表自动发现多块磁盘 (支持 ATA/NVMe/virtio-blk)
+    // 门控语义 (T1 G7): 与上方真机引导块一致, 真机路径 = not(any(kernel_test, host-test)).
+    #[cfg(all(
+        not(any(feature = "kernel_test", feature = "host-test")),
+        target_arch = "x86_64"
+    ))]
+    {
+        let unkfs = crate::functions::fs::unkfs::unkfs::get_unkfs();
+        // init() 会自动扫描所有块设备, 发现 Edgine 签名的磁盘并挂载
+        unkfs.init();
 
-        // 7.5. 单一时基建立 (P-7 接线): 取硬件自由计数器频率 → 登记 → 向 tick 建锚
-        // 位置约束: 必须在 `timer_init` 之后 (建锚需 tick 频率已配置), 在 scheduler
-        // 之前 (调度器的周期判断以单一时基为准). 测定不依赖中断使能: x86_64 走
-        // CPUID Leaf 0x15 标称值 → PIT 通道 0 实测两级回退, aarch64 读 CNTFRQ_EL0
-        // (启动阶段 IF 尚未打开, 旧实现按 tick 中断计数作时间窗口会永久自旋).
-        // 失败不致命: tick 保持中断计数视图, tickless 由 `timebase_is_hardware()` 拦住.
-        match crate::privileged::timer::calibration::establish_boot_timebase() {
-            Ok((hz, source)) => {
-                crate::klog_boot_info!("Timebase: {} Hz ({})", hz, source.label());
-            }
-            Err(msg) => {
-                crate::klog_warn!(Timer, "boot timebase not established: {}", msg);
-            }
-        }
-
-        // 7.6. 本核 tick 设备装配 (E-II-b, 仅 x86_64): 一次性发布全局 tick 源参
-        // 数 (模式 + 每 tick 计数增量) 并装填 BSP 本核. 位置约束: 必须在 7.5 时基登记
-        // 之后 (clockevent 以时基为换算窗口与截止期域), 在 scheduler (步骤 8) 与次级核
-        // 上线 (7.7) 之前. aarch64 无每核 tick 参数标定需求 (Generic Timer 由
-        // `start_interval` 在网络就绪后开跑), 故不占本步.
-        #[cfg(target_arch = "x86_64")]
-        crate::privileged::timer::clockevent::setup();
-
-        // 7.7. 次级核上线 (自步骤 6 的中断子系统初始化拆出). 次序判据: 全局 tick 源参
-        // 数先于 CPU 上线发布 (对齐 Linux clocksource_init → cpu_up) —— LAPIC 是每核
-        // 私有寄存器, 只能由本核装配; AP 在 `ap_entry` 内按已发布参数自装填. 拆开后
-        // 启动序列不存在"AP 先上线、参数未定"的窗口, 无需超时等待与降级分支.
-        <crate::privileged::arch::CurrentArch as crate::privileged::arch::Arch>::secondary_cpu_bringup(
-        );
-        crate::klog_boot_info!("SMP: secondary CPUs online");
-
-        // 8. Scheduler + 进程策略注册
-        // functions::proc::init() 组合: 信号策略 (REVAL-1) + coredump sink (2J-C)
-        // + privileged scheduler::init + session::init. 此前仅调 scheduler::init,
-        // 信号/coredump 策略与 session 初始化从未执行 (全靠 privileged fallback).
-        crate::functions::proc::init();
-        crate::klog_boot_info!("Scheduler ready");
-
-        // 8-1. eBPF — functions::debug::ebpf::init() 注册契约 (DECISION-K 统一
-        // 模式): bpf_init (幂等) + 标准 verifier 注册 (T4-3 Safe Policy
-        // Injection). 预存欠账修复: 此前 verifier 注册位于 scheduler_init FFI
-        // (无生产调用者), 生产环境 verifier 从未注册 — 本行接通注册链路.
-        crate::functions::debug::ebpf::init();
-
-        // 9. VFS
-        // functions::fs::init() — FsBackend 策略 + VFS poll 策略 + UNKFS
-        // FileSystem/热插拔监听器注册 (DECISION-K 项 6 注册点前置)。预存欠账:
-        // 此前 functions::fs::init() 无调用者, make_ramfs_inode 钩子 (第二十三批)
-        // 恒命中 FallbackFsBackend Err(NotInitialized), ramfs open/create 路径
-        // 在生产环境被回退策略拦截 — 本行注册为回归修复。
-        crate::functions::fs::init();
-        crate::functions::fs::vfs_manager::init();
-        crate::klog_boot_info!("VFS ready");
-
-        // 9-1. UDS (AF_UNIX) — Phase C.3
-        crate::functions::net::unix::uds_init();
-        crate::klog_boot_info!("UDS subsystem initialized");
-
-        // 10. Network (smoltcp + 网卡驱动)
-        {
-            // 阶段 3 (驱动双份合并): functions 网络驱动权威 (e1000 + virtio-net
-            // 复合探测) 注册探测回调槽 (functions→privileged 单向), 实际设备
-            // 探测在 eg_net_init → nic_probe_all 经槽位单向拉取。
-            crate::functions::driver::net::net_init();
-
-            crate::privileged::net::init::eg_net_init();
-
-            crate::klog_boot_info!("Network subsystem initialized");
-        }
-
-        // 10-10.6. Driver subsystem init
-        // §6.3 绘图策略下沉: functions 侧帧缓冲绘图算法必须先于 driver init_all
-        // 注册 —— 该链路内 display_init 会执行帧缓冲自检与 GfxConsole 初始化,
-        // 两者均经 privileged::driver::current_framebuffer_ops 消费该策略.
-        crate::functions::driver::display::init_render_policy();
-        crate::privileged::driver::init_all();
-        // §6.4 直接方案 B: 字符设备 (x86_64 vga/serial + aarch64 pl011) 权威迁 functions,
-        // 由 crate root (合法双向编排者) 调用 functions char_init 注册进 EGDF.
-        crate::functions::driver::char::char_init();
-        // §6.4 直接方案 B: virtio-blk 权威迁 functions (aarch64 QEMU -M virt 主战场;
-        // x86_64 走 PCI AHCI/NVMe, 此调用探测 virtio-mmio 无设备即跳过)
-        crate::functions::driver::virtio::blk_init();
-        // DECISION-H storage 专项 3 号子步: PCI AHCI/NVMe 权威迁 functions,
-        // 由 crate root (合法双向编排者) 调用 functions storage_init 接管控制器
-        // 初始化与 EGDF 注册 (privileged storage_init 仅余 ATA 回退路径)。
-        #[cfg(target_arch = "x86_64")]
-        crate::functions::driver::storage::storage_init();
-        // 2-D USB 整体下沉: xHCI 探测/注册权威实装于 functions::driver::usb,
-        // 由 crate root (合法双向编排者) 调用 functions usb_init 接管
-        // PCI 发现 + EGDF 注册 (privileged 侧 usb 模块已删除)。
-        crate::functions::driver::usb::usb_init();
-        // MIG-008 接线补齐: 显示控制器 (HDMI/DP/DisplayManager) 权威实装于
-        // functions::driver::display, 由 crate root (合法双向编排者) 调用
-        // functions display_init 注册工厂回调, 再经 privileged display_probe_controllers
-        // 单向拉取触发 EGDF 注册 (DECISION-K 单向注册契约)。
-        crate::functions::driver::display::display_init();
-        crate::privileged::driver::display_probe_controllers();
-        crate::klog_boot_info!("Driver subsystem initialized");
-        {
-            let egdf_count = crate::privileged::egdf::egdf_count() as u64;
-            let block_count = crate::privileged::egdf::egdf_count_by_proto(
-                crate::privileged::egdf::EGDFProto::Block,
-            ) as u64;
-            let net_count = crate::privileged::egdf::egdf_count_by_proto(
-                crate::privileged::egdf::EGDFProto::Net,
-            ) as u64;
-            let input_count = crate::privileged::egdf::egdf_count_by_proto(
-                crate::privileged::egdf::EGDFProto::Input,
-            ) as u64;
-            crate::klog_boot_info!(
-                "EGDF: {} device(s) [blk={} net={} input={}]",
-                egdf_count,
-                block_count,
-                net_count,
-                input_count
-            );
-        }
-
-        // 10.7. 延迟子系统编排 (P-8 init 编排收口) ──────────────────────────
-        // 单一编排点按依赖序接线 10 项子系统 init. 此前这 10 项挂在一个
-        // `extern "C"` 孤儿入口 `sched_ops::scheduler_init` 内 (无生产调用者),
-        // 后果是它们在生产环境**从未执行**: NUMA 拓扑 (SYS_getcpu / SYS_mbind 等
-        // 已在 functions dispatch 接线却无拓扑可查), cgroup, PM, SGEG/TPM, CET,
-        // Tickless, TimeSync, kexec, UEFI, 以及 tick_query 解耦桥 (P-1 恒返 0 的
-        // 成因). 各项 init 均自带幂等守卫 (OnceCell / AtomicBool / is_initialized).
-        //
-        // 路径选择: 有 functions 安全门面的项一律走门面 (crate root 是唯一合法
-        // 双向编排者), 使门面成为单一路径, 不再与 privileged 直调并存; cgroup /
-        // numa / pm / sgeg 的 functions 侧只是 glob re-export 兼容层 (非门面),
-        // 故直调 privileged 机制.
-        //
-        // 依赖序: PMM (步骤 2/5) → numa; Timer (7) / Scheduler (8) → tick_query /
-        // cgroup / tickless / timesync; 驱动 (10-10.6) → pm / sgeg / kexec /
-        // uefi; **必须早于下方 aarch64 `start_interval`** —— Generic Timer 一旦开跑,
-        // tick 路径就会查 tickless 状态, 未初始化则退化分支不可逆.
-        crate::privileged::tick_query::install_builtin_tick_query();
-        crate::privileged::proc::cgroup::cgroup_init();
-        crate::privileged::mm::numa_init(
-            crate::privileged::mm::pmm_get_total_pages() * crate::privileged::mm::PAGE_SIZE,
-            crate::privileged::lib::low_u32_from_usize(crate::privileged::config::MAX_CPUS),
-        );
-        crate::privileged::driver::pm_init(crate::privileged::lib::low_u32_from_usize(
-            crate::privileged::config::MAX_CPUS,
-        ));
-        crate::privileged::sgeg::sgeg_init();
-        crate::functions::proc::shadow_stack::init();
-        crate::functions::timer::tickless::init(crate::privileged::lib::low_u32_from_usize(
-            crate::privileged::config::MAX_CPUS,
-        ));
-        crate::functions::timer::time_sync::init();
-        crate::functions::driver::kexec::init();
-        // SIMPLIFIED: UEFI 系统表地址固定传 0 (= 无 UEFI 固件, runtime services 不启用);
-        // multiboot2/U-Boot 引导链当前不传递 EFI system table, 影响面 = EG_UEFI 全部
-        // 命令返回未初始化错误; 待 bootloader 接入 EFI 指针后从 boot_info 取真值.
-        crate::functions::driver::uefi::init(0);
-        crate::klog_boot_info!("Deferred subsystems initialized");
-
-        // UNKFS + 磁盘挂载 — BlockDevice 注册表自动发现多块磁盘 (支持 ATA/NVMe/virtio-blk)
-        // 门控语义 (T1 G7): 与上方真机引导块一致, 真机路径 = not(any(kernel_test, host-test)).
-        #[cfg(all(
-            not(any(feature = "kernel_test", feature = "host-test")),
-            target_arch = "x86_64"
-        ))]
-        {
-            let unkfs = crate::functions::fs::unkfs::unkfs::get_unkfs();
-            // init() 会自动扫描所有块设备, 发现 Edgine 签名的磁盘并挂载
-            unkfs.init();
-
-            if unkfs.is_disk_mode() {
-                crate::functions::fs::unkfs::unkfs::get_unkfs()
-                    .spa
-                    .disk_present
-                    .store(true, core::sync::atomic::Ordering::Release);
-                let r =
-                    crate::functions::fs::api::vfs_mount_internal(b"/".as_ptr(), b"unkfs".as_ptr());
-                if r == 0 {
-                    let n_drives = crate::functions::fs::unkfs::unkfs::get_unkfs()
-                        .drives_discovered
-                        .lock()
-                        .len() as u64;
-                    if n_drives > 1 {
-                        crate::klog_boot_info!("Root filesystem: UNKFS ({} drives)", n_drives);
-                    } else {
-                        crate::klog_boot_info!("Root filesystem: UNKFS (disk)");
-                    }
+        if unkfs.is_disk_mode() {
+            crate::functions::fs::unkfs::unkfs::get_unkfs()
+                .spa
+                .disk_present
+                .store(true, core::sync::atomic::Ordering::Release);
+            let r = crate::functions::fs::api::vfs_mount_internal(b"/".as_ptr(), b"unkfs".as_ptr());
+            if r == 0 {
+                let n_drives = crate::functions::fs::unkfs::unkfs::get_unkfs()
+                    .drives_discovered
+                    .lock()
+                    .len() as u64;
+                if n_drives > 1 {
+                    crate::klog_boot_info!("Root filesystem: UNKFS ({} drives)", n_drives);
                 } else {
-                    crate::klog_boot_info!("UNKFS mount failed");
+                    crate::klog_boot_info!("Root filesystem: UNKFS (disk)");
                 }
             } else {
-                crate::klog_boot_info!("UNKFS: running in memory mode (no disk)");
+                crate::klog_boot_info!("UNKFS mount failed");
             }
+        } else {
+            crate::klog_boot_info!("UNKFS: running in memory mode (no disk)");
         }
+    }
 
-        // 启动定时器 (延迟到所有子系统初始化完成后)
-        #[cfg(target_arch = "aarch64")]
-        {
-            let interval = crate::privileged::arch::aarch64::exception::TIMER_INTERVAL_TICKS
-                .load(core::sync::atomic::Ordering::Relaxed);
-            crate::privileged::arch::aarch64::timer::start_interval(interval);
-        }
+    // 启动定时器 (延迟到所有子系统初始化完成后)
+    #[cfg(target_arch = "aarch64")]
+    {
+        let interval = crate::privileged::arch::aarch64::exception::TIMER_INTERVAL_TICKS
+            .load(core::sync::atomic::Ordering::Relaxed);
+        crate::privileged::arch::aarch64::timer::start_interval(interval);
+    }
 
-        // 11-1. 运行期跨核 TLB 失效探针 (S-13) — 多核已上线 (interrupt_late_init
-        // 完成 AP 启动) 且各子系统就绪后一次性自检, 进入用户态前完成.
-        // 判别力来源与注入覆盖见 docs/plan/tlb-shootdown-epoch.md §5 注入 3.
-        #[cfg(target_arch = "x86_64")]
-        if !crate::privileged::mm::tlb_probe_selftest() {
-            crate::klog_kern_warn!(
-                "[SMP] TLB probe FAILED — cross-core TLB invalidation unreliable"
-            );
-        }
+    // 11-1. 运行期跨核 TLB 失效探针 (S-13) — 多核已上线 (interrupt_late_init
+    // 完成 AP 启动) 且各子系统就绪后一次性自检, 进入用户态前完成.
+    // 判别力来源与注入覆盖见 docs/plan/tlb-shootdown-epoch.md §5 注入 3.
+    #[cfg(target_arch = "x86_64")]
+    if !crate::privileged::mm::tlb_probe_selftest() {
+        crate::klog_kern_warn!("[SMP] TLB probe FAILED — cross-core TLB invalidation unreliable");
+    }
+}
 
-        crate::klog_boot_info!("Edgine initialized, entering user mode...");
+/// Syscall 子系统 → 进 Ring 3 前 canary 复核 → 首个用户进程.
+#[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
+fn boot_syscall_and_launch() {
+    crate::klog_boot_info!("Edgine initialized, entering user mode...");
 
-        // 11. Syscall 子系统初始化 (必须在 interrupt_late_init 之后, launch_first_user_process 之前)
-        // 11a. privileged 层: MSR/STAR/LSTAR 配置 + epoll 回调注册
-        crate::privileged::syscall_init::syscall_init();
-        // 11b. functions 层: 系统调用分发策略注册
-        crate::functions::syscall::init();
-        crate::klog_boot_info!("Syscall subsystem ready");
+    // 11. Syscall 子系统初始化 (必须在 interrupt_late_init 之后, launch_first_user_process 之前)
+    // 11a. privileged 层: MSR/STAR/LSTAR 配置 + epoll 回调注册
+    crate::privileged::syscall_init::syscall_init();
+    // 11b. functions 层: 系统调用分发策略注册
+    crate::functions::syscall::init();
+    crate::klog_boot_info!("Syscall subsystem ready");
 
-        // 11.5. 进入 Ring 3 前最终 boot 栈 canary 验证.
-        // 内核初始化全程 (PMM→VMM→kmalloc→中断→调度→网络→VFS→驱动→syscall)
-        // 均在 boot 栈上运行, 此处做最终溢出检测, 确保进入用户态前栈完整性.
-        assert!(
-            crate::privileged::proc::check_boot_stack_canary(),
-            "[BOOT] stack canary corrupted before Ring 3 entry! \
-             Boot stack overflow during kernel init sequence. \
-             Stack size=128KB."
-        );
-        crate::klog_boot_info!("Boot stack canary verified (pre-Ring3)");
+    // 11.5. 进入 Ring 3 前最终 boot 栈 canary 验证.
+    // 内核初始化全程 (PMM→VMM→kmalloc→中断→调度→网络→VFS→驱动→syscall)
+    // 均在 boot 栈上运行, 此处做最终溢出检测, 确保进入用户态前栈完整性.
+    assert!(
+        crate::privileged::proc::check_boot_stack_canary(),
+        "[BOOT] stack canary corrupted before Ring 3 entry! \
+         Boot stack overflow during kernel init sequence. \
+         Stack size=128KB."
+    );
+    crate::klog_boot_info!("Boot stack canary verified (pre-Ring3)");
 
-        // 12. Launch first user process
+    // 12. Launch first user process
 
-        crate::functions::init::launch_first_user_process();
+    crate::functions::init::launch_first_user_process();
 
-        // 不可达: launch_first_user_process 不会返回
-    } // kernel_test 分支结束
+    // 不可达: launch_first_user_process 不会返回
 }

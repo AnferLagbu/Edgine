@@ -928,6 +928,48 @@ fn write_le32(buf: &mut [u8], offset: usize, val: u32) {
 const BOOT_PART_SECTORS: u32 = 16384;
 
 #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
+/// 把内核镜像逐扇区写到启动分区 (扇区 1 起), 最多 `2047` 扇区.
+///
+/// 返回 `0` 成功, 负值 (Errno) 为块设备写失败.
+fn boot_install_copy_kernel(disk_id: u32) -> i64 {
+    let kernel_ptr = raw::kernel_start_ptr();
+    let kernel_len = {
+        const HHDM_OFFSET: usize = 0xFFFF_8000_0000_0000;
+        let phys_end = raw::kernel_end_phys(HHDM_OFFSET);
+        phys_end - (kernel_ptr as usize)
+    };
+    let total_kernel_sectors = crate::privileged::lib::low_u32_from_usize(kernel_len.div_ceil(512));
+    let max_sectors = 2047u32;
+    let copy_sectors = if total_kernel_sectors > max_sectors {
+        max_sectors
+    } else {
+        total_kernel_sectors
+    };
+    for s in 0..copy_sectors {
+        let offset = s as usize * 512;
+        let remaining = kernel_len.saturating_sub(offset);
+        if remaining == 0 {
+            break;
+        }
+        let n = if remaining < 512 { remaining } else { 512 };
+        let mut buf = [0u8; 512];
+        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        unsafe {
+            core::ptr::copy_nonoverlapping(kernel_ptr.add(offset), buf.as_mut_ptr(), n);
+        }
+        if crate::privileged::driver::hdd_write_sector(
+            crate::privileged::lib::low_u8_from_u32(disk_id),
+            u64::from(1 + s),
+            &buf,
+        ) < 0
+        {
+            return Errno::EIO.as_ret();
+        }
+    }
+    0
+}
+
+#[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
 /// `sys_boot_install` — 引导安装 (机制: 磁盘扇区写 + stage1/内核拷贝, 仅 x86_64)
 ///
 /// T2 批 5 (syscall-followup): syscall 策略入口迁至 functions
@@ -996,39 +1038,9 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
     {
         return Errno::EIO.as_ret();
     }
-    let kernel_ptr = raw::kernel_start_ptr();
-    let kernel_len = {
-        const HHDM_OFFSET: usize = 0xFFFF_8000_0000_0000;
-        let phys_end = raw::kernel_end_phys(HHDM_OFFSET);
-        phys_end - (kernel_ptr as usize)
-    };
-    let total_kernel_sectors = crate::privileged::lib::low_u32_from_usize(kernel_len.div_ceil(512));
-    let max_sectors = 2047u32;
-    let copy_sectors = if total_kernel_sectors > max_sectors {
-        max_sectors
-    } else {
-        total_kernel_sectors
-    };
-    for s in 0..copy_sectors {
-        let offset = s as usize * 512;
-        let remaining = kernel_len.saturating_sub(offset);
-        if remaining == 0 {
-            break;
-        }
-        let n = if remaining < 512 { remaining } else { 512 };
-        let mut buf = [0u8; 512];
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        unsafe {
-            core::ptr::copy_nonoverlapping(kernel_ptr.add(offset), buf.as_mut_ptr(), n);
-        }
-        if crate::privileged::driver::hdd_write_sector(
-            crate::privileged::lib::low_u8_from_u32(disk_id),
-            u64::from(1 + s),
-            &buf,
-        ) < 0
-        {
-            return Errno::EIO.as_ret();
-        }
+    let rc = boot_install_copy_kernel(disk_id);
+    if rc < 0 {
+        return rc;
     }
     let mut cfg = [0u8; 512];
     cfg[0] = b'A';

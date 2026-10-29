@@ -145,8 +145,8 @@ fn count(hay: &str, needle: &str) -> usize {
 fn has_frame_owner_region(init_bitmap_squashed: &str) -> bool {
     let need_all = [
         "total_pages*core::mem::size_of::<OwnerIndex>()",
-        "store.setup_owner(owner_phys,owner_bytes)",
-        "letowner_start_page=crate::privileged::lib::usize_from_u64(phys_to_page(owner_phys))",
+        "store.setup_owner(layout.owner_phys,layout.owner_bytes)",
+        "letowner_start_page=crate::privileged::lib::usize_from_u64(phys_to_page(layout.owner_phys))",
         "self.set_bit(i)",
         "[PMM]FRAME_OWNER",
     ];
@@ -229,13 +229,20 @@ fn retire_attribution_bounds_checked(body: &str) -> bool {
 #[test]
 fn frame_owner_region_is_built_and_reserved() {
     let pmm = read(PMM_RS);
-    let body = squash(&prod_code(&fn_body(&pmm, "fn init_bitmap")));
+    // init_bitmap 已按阶段拆为编排体 + 三个 helper (布局推导 / 载体预置 / 位图预留),
+    // 不变式跨这三段成立, 故拼合后判定.
+    let built = squash(&prod_code(&format!(
+        "{}{}{}",
+        fn_body(&pmm, "fn plan_meta_layout"),
+        fn_body(&pmm, "fn install_meta_store"),
+        fn_body(&pmm, "fn mark_reserved_pages"),
+    )));
     assert!(
-        has_frame_owner_region(&body),
+        has_frame_owner_region(&built),
         "init_bitmap 未完整建立 FRAME_OWNER 区 (尺寸推导 / setup_owner / 位图预留 / 日志)"
     );
     assert!(
-        frame_owner_size_is_derived(&body),
+        frame_owner_size_is_derived(&built),
         "FRAME_OWNER 区尺寸与页数必须由 size_of::<OwnerIndex>() 与 PAGE_SIZE 推导"
     );
 }

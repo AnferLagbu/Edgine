@@ -70,10 +70,6 @@ pub fn clone_user_page_table_cow(parent_pml4: u64) -> Option<u64> {
     result
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-)]
 fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
     if parent_pml4 == 0 {
         return None;
@@ -118,136 +114,13 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
         core::ptr::copy_nonoverlapping(kernel_pml4_virt.add(256), child_pml4_virt.add(256), 256);
     }
 
-    // SAFETY: parent_pml4 是已注册用户页表的物理地址
-    let parent_pml4_virt = PhysAddr(parent_pml4).to_virt().0 as *const u64;
-
-    for i in 0..256usize {
-        // SAFETY: 索引 0-255 在 PML4 页范围内; volatile 确保读取真实的页表内容
-        let parent_pml4e = unsafe { parent_pml4_virt.add(i).read_volatile() };
-        if (parent_pml4e & 1) == 0 {
-            continue;
-        }
-
-        // 分配失败即回滚: 释放已建的子树页表帧 (此刻父页表未被改动、未登记任何持有者)
-        let Some(child_pdpt_phys) = pmm.alloc_page() else {
-            free_child_page_table_tree(child_pml4_phys.as_u64());
-            return None;
-        };
-        // SAFETY: 刚分配的页, 通过 KERNEL_BASE 映射有效
-        let child_pdpt_virt = child_pdpt_phys.to_virt().0 as *mut u64;
-        unsafe {
-            // B05-55C 根治: cast *mut u8, 否则清零 8 页覆盖后续物理页
-            core::ptr::write_bytes(
-                child_pdpt_virt.cast::<u8>(),
-                0,
-                crate::privileged::lib::usize_from_u64(PAGE_SIZE),
-            );
-        }
-
-        let mut child_pml4e = parent_pml4e;
-        child_pml4e = (child_pml4e & 0xFFF) | (child_pdpt_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
-        // SAFETY: child_pml4_virt 指向有效 PML4 页
-        unsafe {
-            child_pml4_virt.add(i).write_volatile(child_pml4e);
-        }
-
-        // SAFETY: parent_pml4e 已检验 present, phys_to_virt 映射有效
-        let parent_pdpt_virt =
-            PhysAddr(parent_pml4e & 0x000F_FFFF_FFFF_F000).to_virt().0 as *const u64;
-
-        for j in 0..512usize {
-            // SAFETY: pdpt 索引在页范围内
-            let parent_pdpte = unsafe { parent_pdpt_virt.add(j).read_volatile() };
-            if (parent_pdpte & 1) == 0 || (parent_pdpte & 0x80) != 0 {
-                continue;
-            }
-
-            let Some(child_pd_phys) = pmm.alloc_page() else {
-                free_child_page_table_tree(child_pml4_phys.as_u64());
-                return None;
-            };
-            // SAFETY: 刚分配的页
-            let child_pd_virt = child_pd_phys.to_virt().0 as *mut u64;
-            unsafe {
-                // B05-55C 根治: cast *mut u8, 否则清零 8 页覆盖后续物理页
-                core::ptr::write_bytes(
-                    child_pd_virt.cast::<u8>(),
-                    0,
-                    crate::privileged::lib::usize_from_u64(PAGE_SIZE),
-                );
-            }
-
-            let mut child_pdpte = parent_pdpte;
-            child_pdpte = (child_pdpte & 0xFFF) | (child_pd_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
-            unsafe {
-                child_pdpt_virt.add(j).write_volatile(child_pdpte);
-            }
-
-            let parent_pd_virt =
-                PhysAddr(parent_pdpte & 0x000F_FFFF_FFFF_F000).to_virt().0 as *const u64;
-
-            for k in 0..512usize {
-                // SAFETY: pd 索引在页范围内
-                let parent_pde = unsafe { parent_pd_virt.add(k).read_volatile() };
-                if (parent_pde & 1) == 0 {
-                    continue;
-                }
-
-                if (parent_pde & 0x80) != 0 {
-                    // 2MB huge page: 保持原样, 不参与 COW
-                    let child_pde_v = parent_pde;
-                    // SAFETY: child_pd_virt 指向有效 PD 页
-                    unsafe {
-                        child_pd_virt.add(k).write_volatile(child_pde_v);
-                    }
-                    continue;
-                }
-
-                // 分配失败即回滚: 释放已建的子树页表帧 (此刻父页表未被改动、未登记任何持有者)
-                let Some(child_table_phys) = pmm.alloc_page() else {
-                    free_child_page_table_tree(child_pml4_phys.as_u64());
-                    return None;
-                };
-                let child_table_virt = child_table_phys.to_virt().0 as *mut u64;
-                // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                unsafe {
-                    // B05-55C 根治: cast *mut u8, 否则清零 8 页覆盖后续物理页
-                    core::ptr::write_bytes(
-                        child_table_virt.cast::<u8>(),
-                        0,
-                        crate::privileged::lib::usize_from_u64(PAGE_SIZE),
-                    );
-                }
-
-                let mut child_pde = parent_pde;
-                child_pde =
-                    (child_pde & 0xFFF) | (child_table_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
-                // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                unsafe {
-                    child_pd_virt.add(k).write_volatile(child_pde);
-                }
-
-                // SAFETY: parent_table 物理地址来自有效 PDE (阶段 1 只读该页)
-                let parent_table_virt =
-                    PhysAddr(parent_pde & 0x000F_FFFF_FFFF_F000).to_virt().0 as *const u64;
-
-                // 阶段 1 只建结构: leaf PTE 逐项原值复制 —— 不改父页表、不改子 PTE、
-                // 不登记任何持有者. 使本阶段任一分配失败只需释放已建子树页表帧,
-                // 无需回滚页表内容与帧计数 (父 PTE 清 WRITABLE 与 frame_inc 都在
-                // 阶段 2, 而阶段 2 无分配 ⇒ 不会失败).
-                for l in 0..512usize {
-                    // SAFETY: pt 索引在页范围内
-                    let parent_leaf = unsafe { parent_table_virt.add(l).read_volatile() };
-                    if (parent_leaf & 1) == 0 {
-                        continue;
-                    }
-                    // SAFETY: child_table_virt 指向有效 PT 页, l 在页范围内
-                    unsafe {
-                        child_table_virt.add(l).write_volatile(parent_leaf);
-                    }
-                }
-            }
-        }
+    // 阶段 1: 只建结构 —— 逐级复制 PML4→PDPT→PD→PT 的结构页, leaf PTE 逐项原值复制.
+    // 不改父页表、不改子 PTE、不登记任何持有者. 使本阶段任一分配失败只需释放已建的
+    // 子树页表帧, 无需回滚页表内容与帧计数 (父 PTE 清 WRITABLE 与 frame_inc 都在
+    // 阶段 2, 而阶段 2 无分配 ⇒ 不会失败).
+    if clone_child_user_half(parent_pml4, child_pml4_virt).is_none() {
+        free_child_page_table_tree(child_pml4_phys.as_u64());
+        return None;
     }
 
     // 阶段 2: 无分配的"登记持有者 + 清 WRITABLE". 阶段 1 已保证所有页表帧分配成功,
@@ -290,6 +163,145 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
     crate::arch!(tlb_flush_all());
 
     Some(child_pml4_phys.as_u64())
+}
+
+/// 阶段 1: 在子 PML4 上为父用户半区 (索引 0-255) 的每个 present 项建立子树结构.
+///
+/// 只建结构, 不复制 COW 语义, 也不改动父页表; 分配失败返回 `None`
+/// (已建的子树页表帧由调用方经 `free_child_page_table_tree` 释放).
+fn clone_child_user_half(parent_pml4: u64, child_pml4_virt: *mut u64) -> Option<()> {
+    // SAFETY: parent_pml4 是已注册用户页表的物理地址
+    let parent_pml4_virt = PhysAddr(parent_pml4).to_virt().0 as *const u64;
+
+    for i in 0..256usize {
+        // SAFETY: 索引 0-255 在 PML4 页范围内; volatile 确保读取真实的页表内容
+        let parent_pml4e = unsafe { parent_pml4_virt.add(i).read_volatile() };
+        if (parent_pml4e & 1) == 0 {
+            continue;
+        }
+        clone_child_pdpt(parent_pml4e, child_pml4_virt, i)?;
+    }
+    Some(())
+}
+
+/// 阶段 1 的 PDPT 层: 分配子 PDPT 并挂到子 PML4 的第 `i` 项, 逐项下探 (跳过 1GB 页).
+fn clone_child_pdpt(parent_pml4e: u64, child_pml4_virt: *mut u64, i: usize) -> Option<()> {
+    let pmm = super::pmm::get_pmm();
+    // 分配失败即回滚: 释放已建的子树页表帧 (此刻父页表未被改动、未登记任何持有者)
+    let child_pdpt_phys = pmm.alloc_page()?;
+    // SAFETY: 刚分配的页, 通过 KERNEL_BASE 映射有效
+    let child_pdpt_virt = child_pdpt_phys.to_virt().0 as *mut u64;
+    unsafe {
+        // B05-55C 根治: cast *mut u8, 否则清零 8 页覆盖后续物理页
+        core::ptr::write_bytes(
+            child_pdpt_virt.cast::<u8>(),
+            0,
+            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+        );
+    }
+
+    let child_pml4e = (parent_pml4e & 0xFFF) | (child_pdpt_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
+    // SAFETY: child_pml4_virt 指向有效 PML4 页
+    unsafe {
+        child_pml4_virt.add(i).write_volatile(child_pml4e);
+    }
+
+    // SAFETY: parent_pml4e 已检验 present, phys_to_virt 映射有效
+    let parent_pdpt_virt = PhysAddr(parent_pml4e & 0x000F_FFFF_FFFF_F000).to_virt().0 as *const u64;
+
+    for j in 0..512usize {
+        // SAFETY: pdpt 索引在页范围内
+        let parent_pdpte = unsafe { parent_pdpt_virt.add(j).read_volatile() };
+        if (parent_pdpte & 1) == 0 || (parent_pdpte & 0x80) != 0 {
+            continue;
+        }
+        clone_child_pd(parent_pdpte, child_pdpt_virt, j)?;
+    }
+    Some(())
+}
+
+/// 阶段 1 的 PD 层: 分配子 PD 并挂到子 PDPT 的第 `j` 项;
+/// 2MB 大页原样复制 (不参与 COW), 其余项建立子 PT.
+fn clone_child_pd(parent_pdpte: u64, child_pdpt_virt: *mut u64, j: usize) -> Option<()> {
+    let pmm = super::pmm::get_pmm();
+    let child_pd_phys = pmm.alloc_page()?;
+    // SAFETY: 刚分配的页
+    let child_pd_virt = child_pd_phys.to_virt().0 as *mut u64;
+    unsafe {
+        // B05-55C 根治: cast *mut u8, 否则清零 8 页覆盖后续物理页
+        core::ptr::write_bytes(
+            child_pd_virt.cast::<u8>(),
+            0,
+            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+        );
+    }
+
+    let child_pdpte = (parent_pdpte & 0xFFF) | (child_pd_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
+    // SAFETY: child_pdpt_virt 指向有效 PDPT 页
+    unsafe {
+        child_pdpt_virt.add(j).write_volatile(child_pdpte);
+    }
+
+    // SAFETY: parent_pdpte 已检验 present 且非 1GB 页, phys_to_virt 映射有效
+    let parent_pd_virt = PhysAddr(parent_pdpte & 0x000F_FFFF_FFFF_F000).to_virt().0 as *const u64;
+
+    for k in 0..512usize {
+        // SAFETY: pd 索引在页范围内
+        let parent_pde = unsafe { parent_pd_virt.add(k).read_volatile() };
+        if (parent_pde & 1) == 0 {
+            continue;
+        }
+
+        if (parent_pde & 0x80) != 0 {
+            // 2MB huge page: 保持原样, 不参与 COW
+            // SAFETY: child_pd_virt 指向有效 PD 页
+            unsafe {
+                child_pd_virt.add(k).write_volatile(parent_pde);
+            }
+            continue;
+        }
+
+        clone_child_pt(parent_pde, child_pd_virt, k)?;
+    }
+    Some(())
+}
+
+/// 阶段 1 的 PT 层: 分配子 PT 并挂到子 PD 的第 `k` 项, leaf PTE 逐项原值复制.
+fn clone_child_pt(parent_pde: u64, child_pd_virt: *mut u64, k: usize) -> Option<()> {
+    let pmm = super::pmm::get_pmm();
+    let child_table_phys = pmm.alloc_page()?;
+    // SAFETY: 刚分配的页
+    let child_table_virt = child_table_phys.to_virt().0 as *mut u64;
+    unsafe {
+        // B05-55C 根治: cast *mut u8, 否则清零 8 页覆盖后续物理页
+        core::ptr::write_bytes(
+            child_table_virt.cast::<u8>(),
+            0,
+            crate::privileged::lib::usize_from_u64(PAGE_SIZE),
+        );
+    }
+
+    let child_pde = (parent_pde & 0xFFF) | (child_table_phys.as_u64() & 0x000F_FFFF_FFFF_F000);
+    // SAFETY: child_pd_virt 指向有效 PD 页
+    unsafe {
+        child_pd_virt.add(k).write_volatile(child_pde);
+    }
+
+    // SAFETY: parent_table 物理地址来自有效 PDE (阶段 1 只读该页)
+    let parent_table_virt = PhysAddr(parent_pde & 0x000F_FFFF_FFFF_F000).to_virt().0 as *const u64;
+
+    for l in 0..512usize {
+        // SAFETY: pt 索引在页范围内
+        let parent_leaf = unsafe { parent_table_virt.add(l).read_volatile() };
+        if (parent_leaf & 1) == 0 {
+            continue;
+        }
+        // SAFETY: child_table_virt 指向有效 PT 页, l 在页范围内
+        unsafe {
+            child_table_virt.add(l).write_volatile(parent_leaf);
+        }
+    }
+    Some(())
 }
 
 /// 锁步遍历父子页表在 PD 级以下的 4KB leaf 槽位, 对每个 present leaf 回调

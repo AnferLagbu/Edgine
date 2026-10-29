@@ -281,48 +281,7 @@ pub fn do_signal_send(pid: Pid, sig: u8) -> Result<(), i32> {
 pub fn do_signal_send_extended(pid: i32, sig: u8) -> Result<usize, i32> {
     // sig=0 仅检查存在, 不发信号
     if sig == 0 {
-        return match pid {
-            p if p > 0 => {
-                if PROCESS_TABLE.get(p.cast_unsigned()).is_some() {
-                    Ok(1)
-                } else {
-                    Err(-2)
-                }
-            }
-            0 => {
-                // 至少检查当前进程存在
-                if PROCESS_TABLE
-                    .get(super::scheduler::Scheduler::current().unwrap_or(0))
-                    .is_some()
-                {
-                    Ok(1)
-                } else {
-                    Err(-2)
-                }
-            }
-            -1 => {
-                let mut count = 0usize;
-                PROCESS_TABLE.for_each(|_| {
-                    count += 1;
-                    true
-                });
-                if count > 0 { Ok(count) } else { Err(-2) }
-            }
-            p if p < -1 => {
-                let target_pgid = (-p).cast_unsigned();
-                let mut count = 0usize;
-                PROCESS_TABLE.for_each(|proc| {
-                    let pg = proc.pgid.load(Ordering::SeqCst);
-                    let effective_pgid = if pg == 0 { proc.pid.0 } else { pg };
-                    if effective_pgid == target_pgid {
-                        count += 1;
-                    }
-                    true
-                });
-                if count > 0 { Ok(count) } else { Err(-2) }
-            }
-            _ => Err(-2),
-        };
+        return signal_send_presence(pid);
     }
 
     if !(1..=63).contains(&sig) {
@@ -391,6 +350,55 @@ pub fn do_signal_send_extended(pid: i32, sig: u8) -> Result<usize, i32> {
                     if do_signal_send_process(proc, sig).is_ok() {
                         count += 1;
                     }
+                }
+                true
+            });
+            if count > 0 { Ok(count) } else { Err(-2) }
+        }
+        _ => Err(-2),
+    }
+}
+
+/// `sig == 0` 的"仅检查存在"分支: 不投递任何信号, 只统计匹配目标数.
+///
+/// 目标语义与 `do_signal_send_extended` 的投递分支一致: `pid > 0` 单进程,
+/// `0` 当前进程所在的组/自身, `-1` 全部进程, `< -1` 指定进程组.
+fn signal_send_presence(pid: i32) -> Result<usize, i32> {
+    match pid {
+        p if p > 0 => {
+            if PROCESS_TABLE.get(p.cast_unsigned()).is_some() {
+                Ok(1)
+            } else {
+                Err(-2)
+            }
+        }
+        0 => {
+            // 至少检查当前进程存在
+            if PROCESS_TABLE
+                .get(super::scheduler::Scheduler::current().unwrap_or(0))
+                .is_some()
+            {
+                Ok(1)
+            } else {
+                Err(-2)
+            }
+        }
+        -1 => {
+            let mut count = 0usize;
+            PROCESS_TABLE.for_each(|_| {
+                count += 1;
+                true
+            });
+            if count > 0 { Ok(count) } else { Err(-2) }
+        }
+        p if p < -1 => {
+            let target_pgid = (-p).cast_unsigned();
+            let mut count = 0usize;
+            PROCESS_TABLE.for_each(|proc| {
+                let pg = proc.pgid.load(Ordering::SeqCst);
+                let effective_pgid = if pg == 0 { proc.pid.0 } else { pg };
+                if effective_pgid == target_pgid {
+                    count += 1;
                 }
                 true
             });
@@ -555,117 +563,7 @@ pub fn do_signal_deliver(frame: *mut crate::privileged::idt::InterruptFrame) -> 
                 delivered = true;
             }
             handler_addr => {
-                // 构建信号栈帧并修改 InterruptFrame
-                // SAFETY: frame 由调用方保证有效
-                let f = unsafe { &mut *frame };
-
-                let user_rsp = f.rsp;
-
-                // 栈帧布局:
-                //   frame_rsp+0: 返回地址 (指向 trampoline, handler ret 时弹出)
-                //   frame_rsp+8: SignalFrame (保存原始寄存器)
-                //   frame_rsp+8+sizeof(SignalFrame): trampoline code (rt_sigreturn)  // 信号 trampoline
-                let total = 8 + core::mem::size_of::<SignalFrame>() + SIGRETURN_TRAMPOLINE_SIZE;
-
-                // P1-I-45 修复: 检查 sigaltstack 替代栈.
-                // 若进程通过 sigaltstack 注册了替代栈, 且当前不在替代栈上 (SS_ONSTACK 未置位),
-                // 优先把信号帧写到替代栈顶部, 避免在主栈溢出场景下 double fault.
-                // POSIX SA_ONSTACK 语义.
-                let ss_addr = proc.sigaltstack_addr.load(Ordering::Acquire);
-                let ss_size = proc.sigaltstack_size.load(Ordering::Acquire);
-                let ss_flags = proc.sigaltstack_flags.load(Ordering::Acquire);
-                let use_alternate = ss_addr != 0
-                    && crate::privileged::lib::usize_from_u64(ss_size) >= total
-                    && (ss_flags & SS_DISABLE) == 0
-                    && (ss_flags & SS_ONSTACK) == 0;
-
-                let frame_rsp = if use_alternate {
-                    // 替代栈顶部向下分配
-                    ss_addr + ss_size - total as u64
-                } else if user_rsp >= total as u64 {
-                    user_rsp - total as u64
-                } else {
-                    // 栈溢出, 执行默认动作
-                    do_signal_default_action(pid, sig, frame as u64);
-                    delivered = true;
-                    break;
-                };
-
-                // 标记替代栈为"正在使用", 防止信号重入再次落回主栈
-                if use_alternate {
-                    proc.sigaltstack_flags
-                        .store(ss_flags | SS_ONSTACK, Ordering::Release);
-                }
-
-                // 构建 SignalFrame (保存原始寄存器)
-                let sigframe = SignalFrame {
-                    r15: f.r15,
-                    r14: f.r14,
-                    r13: f.r13,
-                    r12: f.r12,
-                    r11: f.r11,
-                    r10: f.r10,
-                    r9: f.r9,
-                    r8: f.r8,
-                    rdi: f.rdi,
-                    rsi: f.rsi,
-                    rbp: f.rbp,
-                    rdx: f.rdx,
-                    rcx: f.rcx,
-                    rbx: f.rbx,
-                    rax: f.rax,
-                    int_no: f.int_no,
-                    err_code: f.err_code,
-                    rip: f.rip,
-                    cs: f.cs,
-                    rflags: f.rflags,
-                    rsp: f.rsp,
-                    ss: f.ss,
-                    signum: u64::from(sig),
-                };
-
-                // P0-I-38 修复: 信号栈帧写入走异常表保护版 copy_to_user,
-                // 用户栈任意一页失效 (munmap/越界) 时回滚信号投递
-                // (恢复原始栈指针 + 不修改 InterruptFrame), 进程继续运行.
-                let trampoline_start = frame_rsp + 8 + core::mem::size_of::<SignalFrame>() as u64;
-                let ret_addr_bytes = trampoline_start.to_ne_bytes();
-                // SAFETY: sigframe 是本函数栈上的 SignalFrame, 引用有效; 长度 =
-                // size_of::<SignalFrame>(), 完全在 sigframe 内存范围内;
-                // from_raw_parts 仅借用字节视图供 copy_to_user 读取.
-                let sigframe_bytes = unsafe {
-                    core::slice::from_raw_parts(
-                        (&raw const sigframe).cast::<u8>(),
-                        core::mem::size_of::<SignalFrame>(),
-                    )
-                };
-
-                let ok_ret = crate::privileged::mm::copy_to_user(frame_rsp, &ret_addr_bytes, 8);
-                let ok_frame = crate::privileged::mm::copy_to_user(
-                    frame_rsp + 8,
-                    sigframe_bytes,
-                    core::mem::size_of::<SignalFrame>(),
-                );
-                let ok_trampoline = crate::privileged::mm::copy_to_user(
-                    trampoline_start,
-                    &SIGRETURN_TRAMPOLINE,
-                    SIGRETURN_TRAMPOLINE_SIZE,
-                );
-
-                if ok_ret.is_err() || ok_frame.is_err() || ok_trampoline.is_err() {
-                    // 栈帧写入失败 (用户栈 munmap/越界):
-                    // 不修改 InterruptFrame, 也不投递信号, 进程继续运行
-                    // 等待下次信号投递窗口.
-                    break;
-                }
-
-                // 修改 InterruptFrame: 跳转到 handler
-                f.rip = handler_addr;
-                f.rdi = u64::from(sig); // 参数1: signum
-                f.rsi = 0; // 参数2: siginfo (简化: NULL)
-                f.rdx = 0; // 参数3: ucontext (简化: NULL)
-                f.rsp = frame_rsp;
-
-                delivered = true;
+                delivered |= deliver_user_handler(pid, sig, proc, frame, handler_addr);
                 // 一次只投递一个 handler 信号 (sigreturn 后再投递下一个)
                 break;
             }
@@ -673,6 +571,145 @@ pub fn do_signal_deliver(frame: *mut crate::privileged::idt::InterruptFrame) -> 
     }
 
     delivered
+}
+
+/// 计算信号帧在用户栈上的落点 (sigaltstack 优先, 否则主栈).
+///
+/// 返回 `None` 表示主栈剩余空间不足 (栈溢出), 调用方应转默认动作.
+fn signal_frame_base(proc: &super::process::Process, user_rsp: u64, total: usize) -> Option<u64> {
+    // P1-I-45: 检查 sigaltstack 替代栈. 若进程通过 sigaltstack 注册了替代栈,
+    // 且当前不在替代栈上 (SS_ONSTACK 未置位), 优先把信号帧写到替代栈顶部,
+    // 避免在主栈溢出场景下 double fault (POSIX SA_ONSTACK 语义).
+    let ss_addr = proc.sigaltstack_addr.load(Ordering::Acquire);
+    let ss_size = proc.sigaltstack_size.load(Ordering::Acquire);
+    let ss_flags = proc.sigaltstack_flags.load(Ordering::Acquire);
+    let use_alternate = ss_addr != 0
+        && crate::privileged::lib::usize_from_u64(ss_size) >= total
+        && (ss_flags & SS_DISABLE) == 0
+        && (ss_flags & SS_ONSTACK) == 0;
+
+    let frame_rsp = if use_alternate {
+        // 替代栈顶部向下分配
+        ss_addr + ss_size - total as u64
+    } else if user_rsp >= total as u64 {
+        user_rsp - total as u64
+    } else {
+        return None;
+    };
+
+    // 标记替代栈为"正在使用", 防止信号重入再次落回主栈
+    if use_alternate {
+        proc.sigaltstack_flags
+            .store(ss_flags | SS_ONSTACK, Ordering::Release);
+    }
+    Some(frame_rsp)
+}
+
+/// 从当前中断帧快照出用户态信号帧 (`rt_sigreturn` 时据此恢复).
+fn make_signal_frame(f: &crate::privileged::idt::InterruptFrame, sig: u8) -> SignalFrame {
+    SignalFrame {
+        r15: f.r15,
+        r14: f.r14,
+        r13: f.r13,
+        r12: f.r12,
+        r11: f.r11,
+        r10: f.r10,
+        r9: f.r9,
+        r8: f.r8,
+        rdi: f.rdi,
+        rsi: f.rsi,
+        rbp: f.rbp,
+        rdx: f.rdx,
+        rcx: f.rcx,
+        rbx: f.rbx,
+        rax: f.rax,
+        int_no: f.int_no,
+        err_code: f.err_code,
+        rip: f.rip,
+        cs: f.cs,
+        rflags: f.rflags,
+        rsp: f.rsp,
+        ss: f.ss,
+        signum: u64::from(sig),
+    }
+}
+
+/// 把 [返回地址 | SignalFrame | trampoline] 三件套写到用户栈, 并改写中断帧跳转 handler.
+///
+/// 返回 `false` 表示用户栈写入失败 (munmap/越界): 中断帧保持原样, 信号未投递.
+fn install_user_signal_frame(
+    f: &mut crate::privileged::idt::InterruptFrame,
+    frame_rsp: u64,
+    sigframe: &SignalFrame,
+    handler_addr: u64,
+) -> bool {
+    // P0-I-38 修复: 信号栈帧写入走异常表保护版 copy_to_user,
+    // 用户栈任意一页失效 (munmap/越界) 时回滚信号投递
+    // (恢复原始栈指针 + 不修改 InterruptFrame), 进程继续运行.
+    let trampoline_start = frame_rsp + 8 + core::mem::size_of::<SignalFrame>() as u64;
+    let ret_addr_bytes = trampoline_start.to_ne_bytes();
+    // SAFETY: sigframe 由调用方保证指向本函数可读的信号帧; 长度 =
+    // size_of::<SignalFrame>(), 完全在 sigframe 内存范围内;
+    // from_raw_parts 仅借用字节视图供 copy_to_user 读取.
+    let sigframe_bytes = unsafe {
+        core::slice::from_raw_parts(
+            (&raw const *sigframe).cast::<u8>(),
+            core::mem::size_of::<SignalFrame>(),
+        )
+    };
+
+    let ok_ret = crate::privileged::mm::copy_to_user(frame_rsp, &ret_addr_bytes, 8);
+    let ok_frame = crate::privileged::mm::copy_to_user(
+        frame_rsp + 8,
+        sigframe_bytes,
+        core::mem::size_of::<SignalFrame>(),
+    );
+    let ok_trampoline = crate::privileged::mm::copy_to_user(
+        trampoline_start,
+        &SIGRETURN_TRAMPOLINE,
+        SIGRETURN_TRAMPOLINE_SIZE,
+    );
+
+    if ok_ret.is_err() || ok_frame.is_err() || ok_trampoline.is_err() {
+        // 栈帧写入失败 (用户栈 munmap/越界): 不修改 InterruptFrame,
+        // 也不投递信号, 进程继续运行等待下次信号投递窗口.
+        return false;
+    }
+
+    // 修改 InterruptFrame: 跳转到 handler
+    f.rip = handler_addr;
+    f.rdi = sigframe.signum; // 参数1: signum
+    f.rsi = 0; // 参数2: siginfo (简化: NULL)
+    f.rdx = 0; // 参数3: ucontext (简化: NULL)
+    f.rsp = frame_rsp;
+    true
+}
+
+/// 针对"用户 handler"分支: 装配信号帧并改写中断帧, 返回是否已投递.
+///
+/// 栈帧布局:
+///   frame_rsp+0: 返回地址 (指向 trampoline, handler ret 时弹出)
+///   frame_rsp+8: SignalFrame (保存原始寄存器)
+///   frame_rsp+8+sizeof(SignalFrame): 跳板代码 (`rt_sigreturn` 桩)
+fn deliver_user_handler(
+    pid: Pid,
+    sig: u8,
+    proc: &super::process::Process,
+    frame: *mut crate::privileged::idt::InterruptFrame,
+    handler_addr: u64,
+) -> bool {
+    // SAFETY: frame 由调用方保证有效
+    let f = unsafe { &mut *frame };
+
+    let total = 8 + core::mem::size_of::<SignalFrame>() + SIGRETURN_TRAMPOLINE_SIZE;
+    let Some(frame_rsp) = signal_frame_base(proc, f.rsp, total) else {
+        // 栈溢出: 执行默认动作
+        do_signal_default_action(pid, sig, frame as u64);
+        return true;
+    };
+
+    let sigframe = make_signal_frame(f, sig);
+    install_user_signal_frame(f, frame_rsp, &sigframe, handler_addr)
 }
 
 // ============================================================================

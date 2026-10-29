@@ -161,533 +161,66 @@ impl ProcfsData {
     }
 
     /// 读取命名条目内容到 `buf`, 返回写入字节数 (未知条目返回 ENOENT)
-    #[expect(
-        clippy::too_many_lines,
-        reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-    )]
     pub fn read(name: &str, buf: &mut [u8]) -> i32 {
         // /proc/cpuinfo
         if name == "cpuinfo" {
-            let mut pos = 0usize;
-            let write_str = |buf: &mut [u8], pos: &mut usize, s: &str| {
-                let b = s.as_bytes();
-                let end = (*pos + b.len()).min(buf.len());
-                let len = end - *pos;
-                buf[*pos..end].copy_from_slice(&b[..len]);
-                *pos += len;
-            };
-
-            let cpu_info = crate::privileged::cpu::get_cpu_info();
-            match cpu_info {
-                Some(info) => {
-                    write_str(buf, &mut pos, "processor\t: 0\n");
-                    write_str(buf, &mut pos, "vendor_id\t: ");
-                    write_str(buf, &mut pos, info.vendor.name());
-                    write_str(
-                        buf,
-                        &mut pos,
-                        "\ncpu family\t: 6\nmodel\t\t: 142\nmodel name\t: ",
-                    );
-                    write_str(buf, &mut pos, info.brand_name());
-                    write_str(buf, &mut pos, "\nstepping\t: 10\nmicrocode\t: 0xf0\n");
-                    write_str(buf, &mut pos, "cpu MHz\t\t: ");
-                    // 整数商余 (两位小数), 消除内核侧浮点 (见 docs/plan/aarch64-kernel-fp-free.md)
-                    // 频率取单一时基的登记值 (privileged 顶层公共 API; 旧形态读
-                    // `CpuInfo` 里的厂商硬编码估计字段, 该字段已随 P-7 删除).
-                    let hz = crate::privileged::timer::hw_counter_frequency_hz().unwrap_or(0);
-                    let mhz_int = hz / 1_000_000;
-                    let mhz_frac = (hz % 1_000_000) / 10_000;
-                    write_str(buf, &mut pos, &alloc::format!("{mhz_int}.{mhz_frac:02}"));
-                    write_str(buf, &mut pos, "\ncache size\t: ");
-                    let cache_kb = info.cache.l1d_size / 1024;
-                    write_str(buf, &mut pos, &alloc::format!("{cache_kb} KB"));
-                    write_str(buf, &mut pos, "\nphysical id\t: 0\nsiblings\t: ");
-                    write_str(
-                        buf,
-                        &mut pos,
-                        &alloc::format!("{}", info.topology.logical_threads),
-                    );
-                    write_str(buf, &mut pos, "\ncore id\t\t: 0\ncpu cores\t: ");
-                    write_str(
-                        buf,
-                        &mut pos,
-                        &alloc::format!("{}", info.topology.physical_cores),
-                    );
-                    write_str(buf, &mut pos, "\napicid\t\t: 0\napicilid\t: 0\n");
-                    write_str(
-                        buf,
-                        &mut pos,
-                        "flags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology cpuid pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm invpcid_single\n",
-                    );
-                    write_str(buf, &mut pos, "bogomips\t: ");
-                    // bogomips = MHz × 2, 同样整数商余两位小数
-                    let bogo_hz = hz * 2;
-                    let bogo_int = bogo_hz / 1_000_000;
-                    let bogo_frac = (bogo_hz % 1_000_000) / 10_000;
-                    write_str(buf, &mut pos, &alloc::format!("{bogo_int}.{bogo_frac:02}"));
-                    write_str(
-                        buf,
-                        &mut pos,
-                        "\nclflush size\t: 64\ncache_alignment\t: 64\n",
-                    );
-                    write_str(
-                        buf,
-                        &mut pos,
-                        "address sizes\t: 46 bits physical, 48 bits virtual\npower management:\n\n",
-                    );
-                }
-                None => {
-                    write_str(
-                        buf,
-                        &mut pos,
-                        "processor\t: 0\nvendor_id\t: Unknown\ncpu family\t: 0\nmodel\t\t: 0\nmodel name\t: Unknown CPU\n",
-                    );
-                }
-            }
-
-            return crate::functions::intcast::low_i32_from_usize(pos);
+            return Self::read_cpuinfo(buf);
         }
-
         // /proc/meminfo
         if name == "meminfo" {
-            let mut pos = 0usize;
-            let write_str = |buf: &mut [u8], pos: &mut usize, s: &str| {
-                let b = s.as_bytes();
-                let end = (*pos + b.len()).min(buf.len());
-                let len = end - *pos;
-                buf[*pos..end].copy_from_slice(&b[..len]);
-                *pos += len;
-            };
-
-            let total = pmm_api::pmm_get_total_pages() * 4; // KB
-            let free = pmm_api::pmm_get_free_pages() * 4;
-            let used = total - free;
-
-            write_str(buf, &mut pos, "MemTotal:        ");
-            write_str(buf, &mut pos, &alloc::format!("{total} kB"));
-            write_str(buf, &mut pos, "\nMemFree:         ");
-            write_str(buf, &mut pos, &alloc::format!("{free} kB"));
-            write_str(buf, &mut pos, "\nMemAvailable:    ");
-            write_str(buf, &mut pos, &alloc::format!("{free} kB"));
-            write_str(
-                buf,
-                &mut pos,
-                "\nBuffers:         0 kB\nCached:          0 kB\nSwapCached:      0 kB\n",
-            );
-            write_str(buf, &mut pos, "Active:          ");
-            write_str(buf, &mut pos, &alloc::format!("{used} kB"));
-            write_str(
-                buf,
-                &mut pos,
-                "\nInactive:        0 kB\nSwapTotal:       0 kB\nSwapFree:        0 kB\n",
-            );
-            write_str(
-                buf,
-                &mut pos,
-                "Dirty:           0 kB\nWriteback:       0 kB\nAnonPages:       ",
-            );
-            write_str(buf, &mut pos, &alloc::format!("{used} kB"));
-            write_str(
-                buf,
-                &mut pos,
-                "\nMapped:          0 kB\nShmem:           0 kB\nKReclaimable:    0 kB\n",
-            );
-            let slab = slab_get_stats();
-            let slab_kb = (slab.total_memory / 1024) as u64;
-            let slab_used_kb = (slab.used_memory / 1024) as u64;
-            write_str(buf, &mut pos, "Slab:            ");
-            write_str(buf, &mut pos, &alloc::format!("{slab_kb} kB"));
-            write_str(buf, &mut pos, "\nSReclaimable:    ");
-            write_str(buf, &mut pos, &alloc::format!("{slab_used_kb} kB"));
-            write_str(buf, &mut pos, "\nSUnreclaim:      ");
-            write_str(
-                buf,
-                &mut pos,
-                &alloc::format!("{} kB", slab_kb.saturating_sub(slab_used_kb)),
-            );
-            write_str(buf, &mut pos, "\n");
-            write_str(
-                buf,
-                &mut pos,
-                "KernelStack:     0 kB\nPageTables:      0 kB\nNFS_Unstable:    0 kB\n",
-            );
-            write_str(
-                buf,
-                &mut pos,
-                "Bounce:          0 kB\nWritebackTmp:    0 kB\nCommitLimit:     0 kB\n",
-            );
-            let kmalloc = pmm_api::kmalloc_get_stats();
-            let kmalloc_kb = (kmalloc.current_usage / 1024) as u64;
-            write_str(
-                buf,
-                &mut pos,
-                "Committed_AS:    0 kB\nVmallocTotal:    0 kB\nVmallocUsed:     ",
-            );
-            write_str(buf, &mut pos, &alloc::format!("{kmalloc_kb} kB"));
-            write_str(buf, &mut pos, "\n");
-            write_str(
-                buf,
-                &mut pos,
-                "Percpu:          0 kB\nHardwareCorrupted: 0 kB\nAnonHugePages:   0 kB\n",
-            );
-            write_str(
-                buf,
-                &mut pos,
-                "ShmemHugePages:  0 kB\nShmemPmdMapped:  0 kB\nFileHugePages:   0 kB\n",
-            );
-            write_str(
-                buf,
-                &mut pos,
-                "FilePmdMapped:   0 kB\nHugePages_Total: 0\nHugePages_Free:  0\nHugePages_Rsvd:  0\n",
-            );
-            write_str(
-                buf,
-                &mut pos,
-                "HugePages_Surp:  0\nHugepagesize:    2048 kB\nHugetlb:         0 kB\n",
-            );
-            write_str(
-                buf,
-                &mut pos,
-                "DirectMap4k:     0 kB\nDirectMap2M:     0 kB\nDirectMap1G:     0 kB\n",
-            );
-
-            return crate::functions::intcast::low_i32_from_usize(pos);
+            return Self::read_meminfo(buf);
         }
-
         // /proc/version
         if name == "version" {
-            let version = "Edgine version 0.1.0 (edgine@build) (rustc 1.78.0) #1 SMP PREEMPT Mon Jul  6 00:00:00 UTC 2026\n";
-            let bytes = version.as_bytes();
-            let len = bytes.len().min(buf.len());
-            buf[..len].copy_from_slice(&bytes[..len]);
-            return crate::functions::intcast::low_i32_from_usize(len);
+            return Self::read_version(buf);
         }
-
         // /proc/uptime
         if name == "uptime" {
-            let uptime_ms = crate::arch!(timestamp());
-            let uptime_secs = uptime_ms / 1000;
-            let idle_secs = 0u64;
-            let s = alloc::format!("{uptime_secs}.00 {idle_secs} 1\n");
-            let bytes = s.as_bytes();
-            let len = bytes.len().min(buf.len());
-            buf[..len].copy_from_slice(&bytes[..len]);
-            return crate::functions::intcast::low_i32_from_usize(len);
+            return Self::read_uptime(buf);
         }
-
         // /proc/stat
         if name == "stat" {
-            let mut pos = 0usize;
-            let write_str = |buf: &mut [u8], pos: &mut usize, s: &str| {
-                let b = s.as_bytes();
-                let end = (*pos + b.len()).min(buf.len());
-                let len = end - *pos;
-                buf[*pos..end].copy_from_slice(&b[..len]);
-                *pos += len;
-            };
-
-            write_str(buf, &mut pos, "cpu  0 0 0 0 0 0 0 0 0 0\n");
-            write_str(buf, &mut pos, "cpu0 0 0 0 0 0 0 0 0 0 0\n");
-            write_str(
-                buf,
-                &mut pos,
-                "intr 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n",
-            );
-            let ticks = crate::privileged::tick_query::current_tick();
-            write_str(buf, &mut pos, "ctxt 0\n");
-            write_str(buf, &mut pos, "btime 0\n");
-            write_str(buf, &mut pos, "processes 0\n");
-            write_str(buf, &mut pos, "procs_running 1\n");
-            write_str(buf, &mut pos, "procs_blocked 0\n");
-            write_str(
-                buf,
-                &mut pos,
-                &alloc::format!("softirq {ticks} 0 0 0 0 0 0 0 0 0 0\n"),
-            );
-
-            return crate::functions::intcast::low_i32_from_usize(pos);
+            return Self::read_stat(buf);
         }
-
         // /proc/slabinfo
         if name == "slabinfo" {
-            let mut pos = 0usize;
-            let write_str = |buf: &mut [u8], pos: &mut usize, s: &str| {
-                let b = s.as_bytes();
-                let end = (*pos + b.len()).min(buf.len());
-                let len = end - *pos;
-                buf[*pos..end].copy_from_slice(&b[..len]);
-                *pos += len;
-            };
-
-            let mut infos = [SlabCacheInfo {
-                object_size: 0,
-                total_objects: 0,
-                active_objects: 0,
-                total_slabs: 0,
-            }; 16];
-            let count = slab_get_cache_infos(&mut infos);
-
-            write_str(
-                buf,
-                &mut pos,
-                "# <name> <active_objs> <num_objs> <objsize> <objperslab> <pagesperslab>\n",
-            );
-
-            for info in infos.iter().take(count) {
-                let objperslab = if info.object_size > 0 {
-                    crate::functions::intcast::low_u32_from_usize(
-                        crate::functions::intcast::usize_from_u64(crate::privileged::mm::PAGE_SIZE)
-                            / info.object_size as usize,
-                    )
-                } else {
-                    0
-                };
-                // pagesperslab: 每个 slab 占用的页数, 由 slab 配置决定
-                let pagesperslab = crate::functions::intcast::low_u32_from_usize(
-                    crate::functions::config::slab::SLAB_DEFAULT_SIZE
-                        / crate::functions::intcast::usize_from_u64(
-                            crate::privileged::mm::PAGE_SIZE,
-                        ),
-                );
-                write_str(
-                    buf,
-                    &mut pos,
-                    &alloc::format!(
-                        "slab-{} {} {} {} {} {}\n",
-                        info.object_size,
-                        info.active_objects,
-                        info.total_objects,
-                        info.object_size,
-                        objperslab,
-                        pagesperslab,
-                    ),
-                );
-            }
-
-            return crate::functions::intcast::low_i32_from_usize(pos);
+            return Self::read_slabinfo(buf);
         }
-
         // /proc/fs/dcache
         if name == "fs/dcache" {
-            let mut pos = 0usize;
-            let write_str = |buf: &mut [u8], pos: &mut usize, s: &str| {
-                let b = s.as_bytes();
-                let end = (*pos + b.len()).min(buf.len());
-                let len = end - *pos;
-                buf[*pos..end].copy_from_slice(&b[..len]);
-                *pos += len;
-            };
-
-            let (d_hits, d_lookups) = crate::functions::fs::dcache::dcache_hit_rate();
-            let (i_hits, i_lookups) = crate::functions::fs::dcache::icache_hit_rate();
-            let d_count = crate::functions::fs::dcache::dcache_count();
-            let i_count = crate::functions::fs::dcache::icache_count();
-
-            write_str(buf, &mut pos, "dcache_lookups: ");
-            write_str(buf, &mut pos, &alloc::format!("{d_lookups}\n"));
-            write_str(buf, &mut pos, "dcache_hits: ");
-            write_str(buf, &mut pos, &alloc::format!("{d_hits}\n"));
-            write_str(buf, &mut pos, "dcache_entries: ");
-            write_str(buf, &mut pos, &alloc::format!("{d_count}\n"));
-            write_str(buf, &mut pos, "icache_lookups: ");
-            write_str(buf, &mut pos, &alloc::format!("{i_lookups}\n"));
-            write_str(buf, &mut pos, "icache_hits: ");
-            write_str(buf, &mut pos, &alloc::format!("{i_hits}\n"));
-            write_str(buf, &mut pos, "icache_entries: ");
-            write_str(buf, &mut pos, &alloc::format!("{i_count}\n"));
-
-            return crate::functions::intcast::low_i32_from_usize(pos);
+            return Self::read_dcache(buf);
         }
-
         // /proc/fs/unkfs
         if name == "fs/unkfs" {
-            let mut pos = 0usize;
-            let write_str = |buf: &mut [u8], pos: &mut usize, s: &str| {
-                let b = s.as_bytes();
-                let end = (*pos + b.len()).min(buf.len());
-                let len = end - *pos;
-                buf[*pos..end].copy_from_slice(&b[..len]);
-                *pos += len;
-            };
-
-            // 获取 UNKFS 池统计
-            let unkfs = crate::functions::fs::unkfs::unkfs::get_unkfs();
-            let (allocs, frees, reads, writes) = unkfs.get_stats();
-
-            write_str(buf, &mut pos, "allocs: ");
-            write_str(buf, &mut pos, &alloc::format!("{allocs}\n"));
-            write_str(buf, &mut pos, "frees: ");
-            write_str(buf, &mut pos, &alloc::format!("{frees}\n"));
-            write_str(buf, &mut pos, "reads: ");
-            write_str(buf, &mut pos, &alloc::format!("{reads}\n"));
-            write_str(buf, &mut pos, "writes: ");
-            write_str(buf, &mut pos, &alloc::format!("{writes}\n"));
-
-            return crate::functions::intcast::low_i32_from_usize(pos);
+            return Self::read_unkfs(buf);
         }
-
         // /proc/mounts
         if name == "mounts" {
-            let mut pos = 0usize;
-            let write_str = |buf: &mut [u8], pos: &mut usize, s: &str| {
-                let b = s.as_bytes();
-                let end = (*pos + b.len()).min(buf.len());
-                let len = end - *pos;
-                buf[*pos..end].copy_from_slice(&b[..len]);
-                *pos += len;
-            };
-
-            write_str(
-                buf,
-                &mut pos,
-                "proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n",
-            );
-            write_str(
-                buf,
-                &mut pos,
-                "devtmpfs /dev devtmpfs rw,nosuid,relatime 0 0\n",
-            );
-            write_str(
-                buf,
-                &mut pos,
-                "tmpfs /tmp tmpfs rw,nosuid,nodev,relatime 0 0\n",
-            );
-
-            return crate::functions::intcast::low_i32_from_usize(pos);
+            return Self::read_mounts(buf);
         }
-
-        // 检查进程状态 /proc/[pid]/status
-        if name.starts_with('/') && name.ends_with("/status") {
-            let pid_str = &name[1..name.len() - 7];
-            if let Ok(pid) = pid_str.parse::<u32>() {
-                return Self::read_process_status(pid, buf);
-            }
+        // 进程相关条目 /proc/[pid]/status, /cmdline, /fd, /stat
+        if let Some(ret) = Self::read_process_entry(name, buf) {
+            return ret;
         }
-
-        // 检查进程命令行 /proc/[pid]/cmdline
-        if name.starts_with('/') && name.ends_with("/cmdline") {
-            let pid_str = &name[1..name.len() - 8];
-            if let Ok(pid) = pid_str.parse::<u32>() {
-                return Self::read_process_cmdline(pid, buf);
-            }
-        }
-
-        // 检查进程文件描述符 /proc/[pid]/fd
-        if name.starts_with('/') && name.ends_with("/fd") {
-            let pid_str = &name[1..name.len() - 3];
-            if let Ok(pid) = pid_str.parse::<u32>() {
-                return Self::read_process_fd(pid, buf);
-            }
-        }
-
-        // 检查进程统计 /proc/[pid]/stat
-        if name.starts_with('/') && name.ends_with("/stat") && !name.ends_with("/status") {
-            let pid_str = &name[1..name.len() - 5];
-            if let Ok(pid) = pid_str.parse::<u32>() {
-                return Self::read_process_stat(pid, buf);
-            }
-        }
-
         if name == "sys/cpu" {
-            let mut pos = 0usize;
-            let write_str = |buf: &mut [u8], pos: &mut usize, s: &str| {
-                let b = s.as_bytes();
-                let end = (*pos + b.len()).min(buf.len());
-                let len = end - *pos;
-                buf[*pos..end].copy_from_slice(&b[..len]);
-                *pos += len;
-            };
-
-            let cpu_info = crate::privileged::cpu::get_cpu_info();
-            if let Some(info) = cpu_info {
-                write_str(buf, &mut pos, "CPU: ");
-                write_str(buf, &mut pos, info.brand_name());
-                write_str(buf, &mut pos, "\nVendor: ");
-                write_str(buf, &mut pos, info.vendor.name());
-                write_str(buf, &mut pos, "\nCores: ");
-                let cores = info.topology.physical_cores;
-                if cores >= 10 {
-                    buf[pos] = (cores / 10) + b'0';
-                    pos += 1;
-                }
-                buf[pos] = (cores % 10) + b'0';
-                pos += 1;
-                write_str(buf, &mut pos, "\n");
-            } else {
-                let info = b"CPU: x86_64 (Unknown)\nVendor: N/A\nCores: 1\n";
-                let len = info.len().min(buf.len());
-                buf[..len].copy_from_slice(&info[..len]);
-                return crate::functions::intcast::low_i32_from_usize(len);
-            }
-            return crate::functions::intcast::low_i32_from_usize(pos);
+            return Self::read_sys_cpu(buf);
         }
-
         if name == "sys/memory" {
-            let total = pmm_api::pmm_get_total_pages();
-            let free = pmm_api::pmm_get_free_pages();
-            let total_mb = total * 4 / 1024;
-            let free_mb = free * 4 / 1024;
-
-            let mut pos = 0usize;
-            let write_str = |buf: &mut [u8], pos: &mut usize, s: &str| {
-                let b = s.as_bytes();
-                let end = (*pos + b.len()).min(buf.len());
-                let len = end - *pos;
-                buf[*pos..end].copy_from_slice(&b[..len]);
-                *pos += len;
-            };
-            let write_u64 = |buf: &mut [u8], pos: &mut usize, val: u64| {
-                if val == 0 && *pos < buf.len() {
-                    buf[*pos] = b'0';
-                    *pos += 1;
-                    return;
-                }
-                let mut tmp = [0u8; 20];
-                let mut i = 20;
-                let mut v = val;
-                while v > 0 && i > 0 {
-                    i -= 1;
-                    tmp[i] = (v % 10) as u8 + b'0';
-                    v /= 10;
-                }
-                let end = (*pos + (20 - i)).min(buf.len());
-                let len = end - *pos;
-                buf[*pos..end].copy_from_slice(&tmp[i..i + len]);
-                *pos += len;
-            };
-
-            write_str(buf, &mut pos, "Total: ");
-            write_u64(buf, &mut pos, total);
-            write_str(buf, &mut pos, " pages (");
-            write_u64(buf, &mut pos, total_mb);
-            write_str(buf, &mut pos, " MB)\nFree:  ");
-            write_u64(buf, &mut pos, free);
-            write_str(buf, &mut pos, " pages (");
-            write_u64(buf, &mut pos, free_mb);
-            write_str(buf, &mut pos, " MB)\n");
-
-            return crate::functions::intcast::low_i32_from_usize(pos);
+            return Self::read_sys_memory(buf);
         }
-
         if name == "current" {
-            let info = b"PID: 0\nName: kernel\n";
-            let len = info.len().min(buf.len());
-            buf[..len].copy_from_slice(&info[..len]);
-            return crate::functions::intcast::low_i32_from_usize(len);
+            return Self::read_current(buf);
         }
-
         if name == "sys/config" {
             return crate::functions::intcast::low_i32_from_usize(
                 crate::functions::config::procfs::read_sys_config(buf),
             );
         }
-
         if name == "sys/config.json" {
             return crate::functions::intcast::low_i32_from_usize(
                 crate::functions::config::procfs::read_sys_config_json(buf),
             );
         }
-
         // TD-09 V2: /proc/sys/klog/sinks — 运行时 sink 列表
         if name == "sys/klog/sinks" {
             return crate::functions::intcast::low_i32_from_usize(
@@ -702,6 +235,481 @@ impl ProcfsData {
 
         // 未知 entry → ENOENT (VFS 边界约定, 不要返回裸 -1)
         crate::functions::fs::KernelError::FileNotFound.as_i32()
+    }
+
+    /// 将字符串写入 `buf` (超出容量的部分截断, 累计写入位置)
+    fn write_str(buf: &mut [u8], pos: &mut usize, s: &str) {
+        let b = s.as_bytes();
+        let end = (*pos + b.len()).min(buf.len());
+        let len = end - *pos;
+        buf[*pos..end].copy_from_slice(&b[..len]);
+        *pos += len;
+    }
+
+    /// 以十进制写入 `u64` (值为 0 时也写一位, 超出容量的部分截断)
+    fn write_u64(buf: &mut [u8], pos: &mut usize, val: u64) {
+        if val == 0 && *pos < buf.len() {
+            buf[*pos] = b'0';
+            *pos += 1;
+            return;
+        }
+        let mut tmp = [0u8; 20];
+        let mut i = 20;
+        let mut v = val;
+        while v > 0 && i > 0 {
+            i -= 1;
+            tmp[i] = (v % 10) as u8 + b'0';
+            v /= 10;
+        }
+        let end = (*pos + (20 - i)).min(buf.len());
+        let len = end - *pos;
+        buf[*pos..end].copy_from_slice(&tmp[i..i + len]);
+        *pos += len;
+    }
+
+    /// 读取 `/proc/cpuinfo` 内容
+    fn read_cpuinfo(buf: &mut [u8]) -> i32 {
+        let mut pos = 0usize;
+
+        let cpu_info = crate::privileged::cpu::get_cpu_info();
+        match cpu_info {
+            Some(info) => {
+                Self::write_str(buf, &mut pos, "processor\t: 0\n");
+                Self::write_str(buf, &mut pos, "vendor_id\t: ");
+                Self::write_str(buf, &mut pos, info.vendor.name());
+                Self::write_str(
+                    buf,
+                    &mut pos,
+                    "\ncpu family\t: 6\nmodel\t\t: 142\nmodel name\t: ",
+                );
+                Self::write_str(buf, &mut pos, info.brand_name());
+                Self::write_str(buf, &mut pos, "\nstepping\t: 10\nmicrocode\t: 0xf0\n");
+                Self::write_str(buf, &mut pos, "cpu MHz\t\t: ");
+                // 整数商余 (两位小数), 消除内核侧浮点 (见 docs/plan/aarch64-kernel-fp-free.md)
+                // 频率取单一时基的登记值 (privileged 顶层公共 API; 旧形态读
+                // `CpuInfo` 里的厂商硬编码估计字段, 该字段已随 P-7 删除).
+                let hz = crate::privileged::timer::hw_counter_frequency_hz().unwrap_or(0);
+                let mhz_int = hz / 1_000_000;
+                let mhz_frac = (hz % 1_000_000) / 10_000;
+                Self::write_str(buf, &mut pos, &alloc::format!("{mhz_int}.{mhz_frac:02}"));
+                Self::write_str(buf, &mut pos, "\ncache size\t: ");
+                let cache_kb = info.cache.l1d_size / 1024;
+                Self::write_str(buf, &mut pos, &alloc::format!("{cache_kb} KB"));
+                Self::write_str(buf, &mut pos, "\nphysical id\t: 0\nsiblings\t: ");
+                Self::write_str(
+                    buf,
+                    &mut pos,
+                    &alloc::format!("{}", info.topology.logical_threads),
+                );
+                Self::write_str(buf, &mut pos, "\ncore id\t\t: 0\ncpu cores\t: ");
+                Self::write_str(
+                    buf,
+                    &mut pos,
+                    &alloc::format!("{}", info.topology.physical_cores),
+                );
+                Self::write_str(buf, &mut pos, "\napicid\t\t: 0\napicilid\t: 0\n");
+                Self::write_str(
+                    buf,
+                    &mut pos,
+                    "flags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology cpuid pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm invpcid_single\n",
+                );
+                Self::write_str(buf, &mut pos, "bogomips\t: ");
+                // bogomips = MHz × 2, 同样整数商余两位小数
+                let bogo_hz = hz * 2;
+                let bogo_int = bogo_hz / 1_000_000;
+                let bogo_frac = (bogo_hz % 1_000_000) / 10_000;
+                Self::write_str(buf, &mut pos, &alloc::format!("{bogo_int}.{bogo_frac:02}"));
+                Self::write_str(
+                    buf,
+                    &mut pos,
+                    "\nclflush size\t: 64\ncache_alignment\t: 64\n",
+                );
+                Self::write_str(
+                    buf,
+                    &mut pos,
+                    "address sizes\t: 46 bits physical, 48 bits virtual\npower management:\n\n",
+                );
+            }
+            None => {
+                Self::write_str(
+                    buf,
+                    &mut pos,
+                    "processor\t: 0\nvendor_id\t: Unknown\ncpu family\t: 0\nmodel\t\t: 0\nmodel name\t: Unknown CPU\n",
+                );
+            }
+        }
+
+        crate::functions::intcast::low_i32_from_usize(pos)
+    }
+
+    /// 读取 `/proc/meminfo` (内存总量/空闲/使用与 slab 统计)
+    fn read_meminfo(buf: &mut [u8]) -> i32 {
+        let mut pos = 0usize;
+        Self::write_meminfo_memory(buf, &mut pos);
+        Self::write_meminfo_slab(buf, &mut pos);
+        crate::functions::intcast::low_i32_from_usize(pos)
+    }
+
+    /// 写入 `/proc/meminfo` 的内存总量/空闲/使用字段
+    fn write_meminfo_memory(buf: &mut [u8], pos: &mut usize) {
+        let total = pmm_api::pmm_get_total_pages() * 4; // KB
+        let free = pmm_api::pmm_get_free_pages() * 4;
+        let used = total - free;
+
+        Self::write_str(buf, pos, "MemTotal:        ");
+        Self::write_str(buf, pos, &alloc::format!("{total} kB"));
+        Self::write_str(buf, pos, "\nMemFree:         ");
+        Self::write_str(buf, pos, &alloc::format!("{free} kB"));
+        Self::write_str(buf, pos, "\nMemAvailable:    ");
+        Self::write_str(buf, pos, &alloc::format!("{free} kB"));
+        Self::write_str(
+            buf,
+            pos,
+            "\nBuffers:         0 kB\nCached:          0 kB\nSwapCached:      0 kB\n",
+        );
+        Self::write_str(buf, pos, "Active:          ");
+        Self::write_str(buf, pos, &alloc::format!("{used} kB"));
+        Self::write_str(
+            buf,
+            pos,
+            "\nInactive:        0 kB\nSwapTotal:       0 kB\nSwapFree:        0 kB\n",
+        );
+        Self::write_str(
+            buf,
+            pos,
+            "Dirty:           0 kB\nWriteback:       0 kB\nAnonPages:       ",
+        );
+        Self::write_str(buf, pos, &alloc::format!("{used} kB"));
+        Self::write_str(
+            buf,
+            pos,
+            "\nMapped:          0 kB\nShmem:           0 kB\nKReclaimable:    0 kB\n",
+        );
+    }
+
+    /// 写入 `/proc/meminfo` 的 slab/kmalloc 与常量字段
+    fn write_meminfo_slab(buf: &mut [u8], pos: &mut usize) {
+        let slab = slab_get_stats();
+        let slab_kb = (slab.total_memory / 1024) as u64;
+        let slab_used_kb = (slab.used_memory / 1024) as u64;
+        Self::write_str(buf, pos, "Slab:            ");
+        Self::write_str(buf, pos, &alloc::format!("{slab_kb} kB"));
+        Self::write_str(buf, pos, "\nSReclaimable:    ");
+        Self::write_str(buf, pos, &alloc::format!("{slab_used_kb} kB"));
+        Self::write_str(buf, pos, "\nSUnreclaim:      ");
+        Self::write_str(
+            buf,
+            pos,
+            &alloc::format!("{} kB", slab_kb.saturating_sub(slab_used_kb)),
+        );
+        Self::write_str(buf, pos, "\n");
+        Self::write_str(
+            buf,
+            pos,
+            "KernelStack:     0 kB\nPageTables:      0 kB\nNFS_Unstable:    0 kB\n",
+        );
+        Self::write_str(
+            buf,
+            pos,
+            "Bounce:          0 kB\nWritebackTmp:    0 kB\nCommitLimit:     0 kB\n",
+        );
+        let kmalloc = pmm_api::kmalloc_get_stats();
+        let kmalloc_kb = (kmalloc.current_usage / 1024) as u64;
+        Self::write_str(
+            buf,
+            pos,
+            "Committed_AS:    0 kB\nVmallocTotal:    0 kB\nVmallocUsed:     ",
+        );
+        Self::write_str(buf, pos, &alloc::format!("{kmalloc_kb} kB"));
+        Self::write_str(buf, pos, "\n");
+        Self::write_str(
+            buf,
+            pos,
+            "Percpu:          0 kB\nHardwareCorrupted: 0 kB\nAnonHugePages:   0 kB\n",
+        );
+        Self::write_str(
+            buf,
+            pos,
+            "ShmemHugePages:  0 kB\nShmemPmdMapped:  0 kB\nFileHugePages:   0 kB\n",
+        );
+        Self::write_str(
+            buf,
+            pos,
+            "FilePmdMapped:   0 kB\nHugePages_Total: 0\nHugePages_Free:  0\nHugePages_Rsvd:  0\n",
+        );
+        Self::write_str(
+            buf,
+            pos,
+            "HugePages_Surp:  0\nHugepagesize:    2048 kB\nHugetlb:         0 kB\n",
+        );
+        Self::write_str(
+            buf,
+            pos,
+            "DirectMap4k:     0 kB\nDirectMap2M:     0 kB\nDirectMap1G:     0 kB\n",
+        );
+    }
+
+    /// 读取 `/proc/version`
+    fn read_version(buf: &mut [u8]) -> i32 {
+        let version = "Edgine version 0.1.0 (edgine@build) (rustc 1.78.0) #1 SMP PREEMPT Mon Jul  6 00:00:00 UTC 2026\n";
+        let bytes = version.as_bytes();
+        let len = bytes.len().min(buf.len());
+        buf[..len].copy_from_slice(&bytes[..len]);
+        crate::functions::intcast::low_i32_from_usize(len)
+    }
+
+    /// 读取 `/proc/uptime`
+    fn read_uptime(buf: &mut [u8]) -> i32 {
+        let uptime_ms = crate::arch!(timestamp());
+        let uptime_secs = uptime_ms / 1000;
+        let idle_secs = 0u64;
+        let s = alloc::format!("{uptime_secs}.00 {idle_secs} 1\n");
+        let bytes = s.as_bytes();
+        let len = bytes.len().min(buf.len());
+        buf[..len].copy_from_slice(&bytes[..len]);
+        crate::functions::intcast::low_i32_from_usize(len)
+    }
+
+    /// 读取 `/proc/stat`
+    fn read_stat(buf: &mut [u8]) -> i32 {
+        let mut pos = 0usize;
+
+        Self::write_str(buf, &mut pos, "cpu  0 0 0 0 0 0 0 0 0 0\n");
+        Self::write_str(buf, &mut pos, "cpu0 0 0 0 0 0 0 0 0 0 0\n");
+        Self::write_str(
+            buf,
+            &mut pos,
+            "intr 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n",
+        );
+        let ticks = crate::privileged::tick_query::current_tick();
+        Self::write_str(buf, &mut pos, "ctxt 0\n");
+        Self::write_str(buf, &mut pos, "btime 0\n");
+        Self::write_str(buf, &mut pos, "processes 0\n");
+        Self::write_str(buf, &mut pos, "procs_running 1\n");
+        Self::write_str(buf, &mut pos, "procs_blocked 0\n");
+        Self::write_str(
+            buf,
+            &mut pos,
+            &alloc::format!("softirq {ticks} 0 0 0 0 0 0 0 0 0 0\n"),
+        );
+
+        crate::functions::intcast::low_i32_from_usize(pos)
+    }
+
+    /// 读取 `/proc/slabinfo`
+    fn read_slabinfo(buf: &mut [u8]) -> i32 {
+        let mut pos = 0usize;
+
+        let mut infos = [SlabCacheInfo {
+            object_size: 0,
+            total_objects: 0,
+            active_objects: 0,
+            total_slabs: 0,
+        }; 16];
+        let count = slab_get_cache_infos(&mut infos);
+
+        Self::write_str(
+            buf,
+            &mut pos,
+            "# <name> <active_objs> <num_objs> <objsize> <objperslab> <pagesperslab>\n",
+        );
+
+        for info in infos.iter().take(count) {
+            let objperslab = if info.object_size > 0 {
+                crate::functions::intcast::low_u32_from_usize(
+                    crate::functions::intcast::usize_from_u64(crate::privileged::mm::PAGE_SIZE)
+                        / info.object_size as usize,
+                )
+            } else {
+                0
+            };
+            // pagesperslab: 每个 slab 占用的页数, 由 slab 配置决定
+            let pagesperslab = crate::functions::intcast::low_u32_from_usize(
+                crate::functions::config::slab::SLAB_DEFAULT_SIZE
+                    / crate::functions::intcast::usize_from_u64(crate::privileged::mm::PAGE_SIZE),
+            );
+            Self::write_str(
+                buf,
+                &mut pos,
+                &alloc::format!(
+                    "slab-{} {} {} {} {} {}\n",
+                    info.object_size,
+                    info.active_objects,
+                    info.total_objects,
+                    info.object_size,
+                    objperslab,
+                    pagesperslab,
+                ),
+            );
+        }
+
+        crate::functions::intcast::low_i32_from_usize(pos)
+    }
+
+    /// 读取 `/proc/fs/dcache` (dcache/icache 命中率)
+    fn read_dcache(buf: &mut [u8]) -> i32 {
+        let mut pos = 0usize;
+
+        let (d_hits, d_lookups) = crate::functions::fs::dcache::dcache_hit_rate();
+        let (i_hits, i_lookups) = crate::functions::fs::dcache::icache_hit_rate();
+        let d_count = crate::functions::fs::dcache::dcache_count();
+        let i_count = crate::functions::fs::dcache::icache_count();
+
+        Self::write_str(buf, &mut pos, "dcache_lookups: ");
+        Self::write_str(buf, &mut pos, &alloc::format!("{d_lookups}\n"));
+        Self::write_str(buf, &mut pos, "dcache_hits: ");
+        Self::write_str(buf, &mut pos, &alloc::format!("{d_hits}\n"));
+        Self::write_str(buf, &mut pos, "dcache_entries: ");
+        Self::write_str(buf, &mut pos, &alloc::format!("{d_count}\n"));
+        Self::write_str(buf, &mut pos, "icache_lookups: ");
+        Self::write_str(buf, &mut pos, &alloc::format!("{i_lookups}\n"));
+        Self::write_str(buf, &mut pos, "icache_hits: ");
+        Self::write_str(buf, &mut pos, &alloc::format!("{i_hits}\n"));
+        Self::write_str(buf, &mut pos, "icache_entries: ");
+        Self::write_str(buf, &mut pos, &alloc::format!("{i_count}\n"));
+
+        crate::functions::intcast::low_i32_from_usize(pos)
+    }
+
+    /// 读取 `/proc/fs/unkfs` (UNKFS 池统计)
+    fn read_unkfs(buf: &mut [u8]) -> i32 {
+        let mut pos = 0usize;
+
+        // 获取 UNKFS 池统计
+        let unkfs = crate::functions::fs::unkfs::unkfs::get_unkfs();
+        let (allocs, frees, reads, writes) = unkfs.get_stats();
+
+        Self::write_str(buf, &mut pos, "allocs: ");
+        Self::write_str(buf, &mut pos, &alloc::format!("{allocs}\n"));
+        Self::write_str(buf, &mut pos, "frees: ");
+        Self::write_str(buf, &mut pos, &alloc::format!("{frees}\n"));
+        Self::write_str(buf, &mut pos, "reads: ");
+        Self::write_str(buf, &mut pos, &alloc::format!("{reads}\n"));
+        Self::write_str(buf, &mut pos, "writes: ");
+        Self::write_str(buf, &mut pos, &alloc::format!("{writes}\n"));
+
+        crate::functions::intcast::low_i32_from_usize(pos)
+    }
+
+    /// 读取 `/proc/mounts`
+    fn read_mounts(buf: &mut [u8]) -> i32 {
+        let mut pos = 0usize;
+
+        Self::write_str(
+            buf,
+            &mut pos,
+            "proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n",
+        );
+        Self::write_str(
+            buf,
+            &mut pos,
+            "devtmpfs /dev devtmpfs rw,nosuid,relatime 0 0\n",
+        );
+        Self::write_str(
+            buf,
+            &mut pos,
+            "tmpfs /tmp tmpfs rw,nosuid,nodev,relatime 0 0\n",
+        );
+
+        crate::functions::intcast::low_i32_from_usize(pos)
+    }
+
+    /// 分发 `/proc/[pid]/*` 进程条目读取 (未匹配返回 `None`)
+    fn read_process_entry(name: &str, buf: &mut [u8]) -> Option<i32> {
+        if !name.starts_with('/') {
+            return None;
+        }
+
+        // 检查进程状态 /proc/[pid]/status
+        if name.ends_with("/status") {
+            let pid_str = &name[1..name.len() - 7];
+            if let Ok(pid) = pid_str.parse::<u32>() {
+                return Some(Self::read_process_status(pid, buf));
+            }
+        }
+
+        // 检查进程命令行 /proc/[pid]/cmdline
+        if name.ends_with("/cmdline") {
+            let pid_str = &name[1..name.len() - 8];
+            if let Ok(pid) = pid_str.parse::<u32>() {
+                return Some(Self::read_process_cmdline(pid, buf));
+            }
+        }
+
+        // 检查进程文件描述符 /proc/[pid]/fd
+        if name.ends_with("/fd") {
+            let pid_str = &name[1..name.len() - 3];
+            if let Ok(pid) = pid_str.parse::<u32>() {
+                return Some(Self::read_process_fd(pid, buf));
+            }
+        }
+
+        // 检查进程统计 /proc/[pid]/stat
+        if name.ends_with("/stat") && !name.ends_with("/status") {
+            let pid_str = &name[1..name.len() - 5];
+            if let Ok(pid) = pid_str.parse::<u32>() {
+                return Some(Self::read_process_stat(pid, buf));
+            }
+        }
+
+        None
+    }
+
+    /// 读取 `/proc/sys/cpu`
+    fn read_sys_cpu(buf: &mut [u8]) -> i32 {
+        let mut pos = 0usize;
+
+        let cpu_info = crate::privileged::cpu::get_cpu_info();
+        if let Some(info) = cpu_info {
+            Self::write_str(buf, &mut pos, "CPU: ");
+            Self::write_str(buf, &mut pos, info.brand_name());
+            Self::write_str(buf, &mut pos, "\nVendor: ");
+            Self::write_str(buf, &mut pos, info.vendor.name());
+            Self::write_str(buf, &mut pos, "\nCores: ");
+            let cores = info.topology.physical_cores;
+            if cores >= 10 {
+                buf[pos] = (cores / 10) + b'0';
+                pos += 1;
+            }
+            buf[pos] = (cores % 10) + b'0';
+            pos += 1;
+            Self::write_str(buf, &mut pos, "\n");
+        } else {
+            let info = b"CPU: x86_64 (Unknown)\nVendor: N/A\nCores: 1\n";
+            let len = info.len().min(buf.len());
+            buf[..len].copy_from_slice(&info[..len]);
+            return crate::functions::intcast::low_i32_from_usize(len);
+        }
+        crate::functions::intcast::low_i32_from_usize(pos)
+    }
+
+    /// 读取 `/proc/sys/memory`
+    fn read_sys_memory(buf: &mut [u8]) -> i32 {
+        let total = pmm_api::pmm_get_total_pages();
+        let free = pmm_api::pmm_get_free_pages();
+        let total_mb = total * 4 / 1024;
+        let free_mb = free * 4 / 1024;
+
+        let mut pos = 0usize;
+        Self::write_str(buf, &mut pos, "Total: ");
+        Self::write_u64(buf, &mut pos, total);
+        Self::write_str(buf, &mut pos, " pages (");
+        Self::write_u64(buf, &mut pos, total_mb);
+        Self::write_str(buf, &mut pos, " MB)\nFree:  ");
+        Self::write_u64(buf, &mut pos, free);
+        Self::write_str(buf, &mut pos, " pages (");
+        Self::write_u64(buf, &mut pos, free_mb);
+        Self::write_str(buf, &mut pos, " MB)\n");
+
+        crate::functions::intcast::low_i32_from_usize(pos)
+    }
+
+    /// 读取 `/proc/current`
+    fn read_current(buf: &mut [u8]) -> i32 {
+        let info = b"PID: 0\nName: kernel\n";
+        let len = info.len().min(buf.len());
+        buf[..len].copy_from_slice(&info[..len]);
+        crate::functions::intcast::low_i32_from_usize(len)
     }
 
     /// 按索引枚举目录项, 返回 (名称, pid, 条目类型)

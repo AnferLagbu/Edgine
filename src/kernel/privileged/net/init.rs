@@ -563,188 +563,221 @@ unsafe fn net_reset() {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 /// 初始化网络子系统 (C ABI 导出, 由启动流程串行调用; 内部走 InitState 状态机).
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-)]
 pub extern "C" fn eg_net_init() {
+    raw::klog_init("--- Network Subsystem Init ---");
+
+    if !net_enter_probed_state() {
+        return;
+    }
+
+    // 分配 NetState 的各 `TOTAL_SLOTS` 项 (惰性堆置), 以覆盖旧内容实现复位.
+    // 放在状态机确认 (重) 初始化之后, 避免 "already initialized" 早返回时误清空.
+    NET_STATE.lock().allocate();
+
+    raw::klog_msg("Step1: hardware probe");
+
     // SAFETY: 网络初始化由启动流程串行调用, 无并发访问全局状态。
-    unsafe {
-        raw::klog_init("--- Network Subsystem Init ---");
+    let Some(mut nic) = (unsafe { probe::nic_probe_all() }) else {
+        let _ = transition_state(InitState::HardwareProbed, InitState::FullyInitialized);
+        raw::klog_msg("No NIC found, running without network");
+        raw::klog_init("--- Network Subsystem Ready (No Network) ---");
+        return;
+    };
 
-        if transition_state(InitState::Uninitialized, InitState::HardwareProbed).is_err() {
-            let current = G_INIT_STATE.load(Ordering::Acquire);
-            if current == InitState::FullyInitialized as u8 {
-                raw::klog_msg("Network already initialized");
-                return;
-            } else if current == InitState::Failed as u8 {
-                raw::klog_err("Previous initialization failed, retrying...");
-                G_INIT_STATE.store(InitState::Uninitialized as u8, Ordering::Release);
-            } else {
-                raw::klog_err("Invalid init state, aborting");
-                return;
-            }
-            if transition_state(InitState::Uninitialized, InitState::HardwareProbed).is_err() {
-                return;
-            }
-        }
+    raw::klog_msg("Step2: init device hardware");
 
-        // 分配 NetState 的各 `TOTAL_SLOTS` 项 (惰性堆置), 以覆盖旧内容实现复位.
-        // 放在状态机确认 (重) 初始化之后, 避免 "already initialized" 早返回时误清空.
-        NET_STATE.lock().allocate();
+    let mac = nic.mac;
+    let stack = crate::privileged::net::init_stack(&mut nic, mac);
 
-        raw::klog_msg("Step1: hardware probe");
+    {
+        let _guard = NET_STATE.lock();
+        raw::set_device(Some(nic));
+        raw::set_stack(Some(stack));
+    }
 
-        let Some(mut nic) = probe::nic_probe_all() else {
-            let _ = transition_state(InitState::HardwareProbed, InitState::FullyInitialized);
-            raw::klog_msg("No NIC found, running without network");
-            raw::klog_init("--- Network Subsystem Ready (No Network) ---");
-            return;
-        };
+    if transition_state(InitState::HardwareProbed, InitState::InterfaceReady).is_err() {
+        set_failed();
+        raw::klog_err("Failed to transition to InterfaceReady");
+        return;
+    }
 
-        raw::klog_msg("Step2: init device hardware");
+    raw::klog_msg("Step3: init network interface");
+    net_init_open_sockets();
 
-        let mac = nic.mac;
-        let stack = crate::privileged::net::init_stack(&mut nic, mac);
+    crate::privileged::net::NET_READY.store(true, Ordering::Release);
 
-        {
-            let _guard = NET_STATE.lock();
-            raw::set_device(Some(nic));
-            raw::set_stack(Some(stack));
-        }
+    if transition_state(InitState::InterfaceReady, InitState::FullyInitialized).is_err() {
+        set_failed();
+        raw::klog_err("Failed to transition to FullyInitialized");
+        return;
+    }
 
-        if transition_state(InitState::HardwareProbed, InitState::InterfaceReady).is_err() {
-            set_failed();
-            raw::klog_err("Failed to transition to InterfaceReady");
-            return;
-        }
+    net_boot_poll_dhcp();
 
-        raw::klog_msg("Step3: init network interface");
+    if !crate::privileged::net::NET_CONFIGURED.load(Ordering::Acquire) {
+        apply_static_ip_fallback();
+    }
 
-        {
-            let _guard = NET_STATE.lock();
-            raw::init_sockets();
-            let sockets = &mut *raw::socket_set();
-            let dhcp_socket = dhcpv4::Socket::new();
-            let handle = sockets.add(dhcp_socket);
-            raw::set_dhcp_handle(Some(handle));
-            // S2 DNS 客户端接线 (net-feature-alignment.md): 注册 smoltcp dns::Socket.
-            // smoltcp 未启 alloc feature → 查询槽表须由外部借出定长数组;
-            // Box::leak 取 'static (同 sockets.rs::socket_storage 的堆分配先例).
-            // servers 初始为空, 由 DHCP Bound / static fallback 经 apply_dns_servers 注入.
-            let query_slots: &'static mut [Option<smoltcp_dns::DnsQuery>] = alloc::boxed::Box::leak(
-                alloc::boxed::Box::new([const { None }; dns::DNS_QUERY_SLOTS]),
-            );
-            let dns_socket = smoltcp_dns::Socket::new(&[], query_slots);
-            let dns_handle = sockets.add(dns_socket);
-            raw::set_dns_handle(Some(dns_handle));
-        }
+    crate::arch!(interrupt_enable());
 
-        crate::privileged::net::NET_READY.store(true, Ordering::Release);
+    raw::klog_init("--- Network Subsystem Ready ---");
 
-        if transition_state(InitState::InterfaceReady, InitState::FullyInitialized).is_err() {
-            set_failed();
-            raw::klog_err("Failed to transition to FullyInitialized");
-            return;
-        }
+    net_init_register();
+}
 
-        raw::klog_msg("DHCP: boot poll...");
-        for _attempt in 0u32..500 {
+/// 网络初始化状态机: 把 `Uninitialized` 推进到 `HardwareProbed`.
+///
+/// 已完全初始化时返回 `false` (不再重复初始化); `Failed` 时复位状态后重试;
+/// 其余非法状态直接放弃.
+fn net_enter_probed_state() -> bool {
+    if transition_state(InitState::Uninitialized, InitState::HardwareProbed).is_ok() {
+        return true;
+    }
+
+    let current = G_INIT_STATE.load(Ordering::Acquire);
+    if current == InitState::FullyInitialized as u8 {
+        raw::klog_msg("Network already initialized");
+        return false;
+    }
+    if current == InitState::Failed as u8 {
+        raw::klog_err("Previous initialization failed, retrying...");
+        G_INIT_STATE.store(InitState::Uninitialized as u8, Ordering::Release);
+    } else {
+        raw::klog_err("Invalid init state, aborting");
+        return false;
+    }
+
+    transition_state(InitState::Uninitialized, InitState::HardwareProbed).is_ok()
+}
+
+/// 在 `NET_STATE` 锁内注册 DHCP 与 DNS socket (S2 DNS 接线).
+fn net_init_open_sockets() {
+    let _guard = NET_STATE.lock();
+    raw::init_sockets();
+
+    // SAFETY: 网络初始化由启动流程串行调用, 且 `NET_STATE` 已加锁, socket 集合独家访问
+    let sockets = unsafe { &mut *raw::socket_set() };
+
+    let dhcp_socket = dhcpv4::Socket::new();
+    let handle = sockets.add(dhcp_socket);
+    raw::set_dhcp_handle(Some(handle));
+
+    // S2 DNS 客户端接线 (net-feature-alignment.md): 注册 smoltcp dns::Socket.
+    // smoltcp 未启 alloc feature → 查询槽表须由外部借出定长数组;
+    // Box::leak 取 'static (同 sockets.rs::socket_storage 的堆分配先例).
+    // servers 初始为空, 由 DHCP Bound / static fallback 经 apply_dns_servers 注入.
+    let query_slots: &'static mut [Option<smoltcp_dns::DnsQuery>] = alloc::boxed::Box::leak(
+        alloc::boxed::Box::new([const { None }; dns::DNS_QUERY_SLOTS]),
+    );
+    let dns_socket = smoltcp_dns::Socket::new(&[], query_slots);
+    let dns_handle = sockets.add(dns_socket);
+    raw::set_dns_handle(Some(dns_handle));
+}
+
+/// 启动期 DHCP 轮询: 最多 500 次 poll, 取得租约即停 (超时后由 fallback 兜底).
+fn net_boot_poll_dhcp() {
+    raw::klog_msg("DHCP: boot poll...");
+    for _attempt in 0u32..500 {
+        // SAFETY: 网络初始化由启动流程串行调用, 无并发访问全局状态。
+        unsafe {
             poll_network();
-            for _ in 0..50000 {
-                core::hint::spin_loop();
-            }
-            if crate::privileged::net::NET_CONFIGURED.load(Ordering::Acquire) {
-                raw::klog_msg("DHCP: lease acquired");
-                break;
-            }
         }
-
-        if !crate::privileged::net::NET_CONFIGURED.load(Ordering::Acquire) {
-            // I-46: 引用 net::types 中的集中常量, 不再硬编码 10.0.2.15/24/10.0.2.2.
-            use crate::privileged::net::types::{
-                FALLBACK_DNS, FALLBACK_GATEWAY, FALLBACK_IPV4, FALLBACK_PREFIX,
-            };
-            let cidr = IpCidr::Ipv4(smoltcp::wire::Ipv4Cidr::new(
-                smoltcp::wire::Ipv4Address::new(
-                    FALLBACK_IPV4[0],
-                    FALLBACK_IPV4[1],
-                    FALLBACK_IPV4[2],
-                    FALLBACK_IPV4[3],
-                ),
-                FALLBACK_PREFIX,
-            ));
-            let gw = smoltcp::wire::Ipv4Address::new(
-                FALLBACK_GATEWAY[0],
-                FALLBACK_GATEWAY[1],
-                FALLBACK_GATEWAY[2],
-                FALLBACK_GATEWAY[3],
-            );
-            let _guard = NET_STATE.lock();
-            if let Some(stack) = raw::stack_mut() {
-                stack.iface.update_ip_addrs(|addrs| {
-                    let _ = addrs.push(cidr);
-                });
-                let _ = stack.iface.routes_mut().add_default_ipv4_route(gw);
-                crate::privileged::net::NET_CONFIGURED.store(true, Ordering::Release);
-
-                // D1.2: 把 fallback IP/网关写进 G_IPV4/G_GATEWAY, 给 get_* 观测 API
-                G_IPV4.store(u32::from_be_bytes(FALLBACK_IPV4), Ordering::Release);
-                G_GATEWAY.store(u32::from_be_bytes(FALLBACK_GATEWAY), Ordering::Release);
-                // S2 DNS 接线: fallback 路径同步写 G_DNS + 注入 dns::Socket servers,
-                // 否则 dns_query_net 的 G_DNS[0] 短路检查在无 DHCP 环境恒 None.
-                G_DNS[0].store(u32::from_be_bytes(FALLBACK_DNS), Ordering::Release);
-                dns::apply_dns_servers(&mut *raw::socket_set(), raw::dns_handle(), [[0u8; 4]; 3]);
-                raw::klog_msg("Static IP (fallback, see net::types::FALLBACK_*)");
-            }
+        for _ in 0..50000 {
+            core::hint::spin_loop();
         }
-
-        crate::arch!(interrupt_enable());
-
-        raw::klog_init("--- Network Subsystem Ready ---");
-
-        // 演进 6: 网络 init 完成后做 driver 维度自检
-        // DECISION-K: 经 ConfigValidateHook trait 注入 (Option 可空, 未注册跳过)
-        if let Some(hook) = crate::privileged::config::current_config_validate_hook() {
-            if let Err(e) = hook.validate_network_subsystem() {
-                crate::klog_drv_warn!("Network validation: {}", e);
-            }
+        if crate::privileged::net::NET_CONFIGURED.load(Ordering::Acquire) {
+            raw::klog_msg("DHCP: lease acquired");
+            break;
         }
+    }
+}
 
-        crate::privileged::freg::recovery::recovery_domain_register(
-            "net",
-            5,
-            &[],
-            net_save,
-            net_restore,
-            net_reset,
-        );
+/// 无 DHCP 租约时应用静态 IP 兜底配置 (地址来源见 `net::types::FALLBACK_*`).
+fn apply_static_ip_fallback() {
+    // I-46: 引用 net::types 中的集中常量, 不再硬编码 10.0.2.15/24/10.0.2.2.
+    use crate::privileged::net::types::{
+        FALLBACK_DNS, FALLBACK_GATEWAY, FALLBACK_IPV4, FALLBACK_PREFIX,
+    };
+    let cidr = IpCidr::Ipv4(smoltcp::wire::Ipv4Cidr::new(
+        smoltcp::wire::Ipv4Address::new(
+            FALLBACK_IPV4[0],
+            FALLBACK_IPV4[1],
+            FALLBACK_IPV4[2],
+            FALLBACK_IPV4[3],
+        ),
+        FALLBACK_PREFIX,
+    ));
+    let gw = smoltcp::wire::Ipv4Address::new(
+        FALLBACK_GATEWAY[0],
+        FALLBACK_GATEWAY[1],
+        FALLBACK_GATEWAY[2],
+        FALLBACK_GATEWAY[3],
+    );
+    let _guard = NET_STATE.lock();
+    if let Some(stack) = raw::stack_mut() {
+        stack.iface.update_ip_addrs(|addrs| {
+            let _ = addrs.push(cidr);
+        });
+        let _ = stack.iface.routes_mut().add_default_ipv4_route(gw);
+        crate::privileged::net::NET_CONFIGURED.store(true, Ordering::Release);
 
-        // 注册网络 softirq 处理程序
-        crate::privileged::irq::open_softirq(
-            crate::privileged::irq::SoftirqVec::NetRx,
-            net_rx_softirq_handler,
-        );
-        crate::privileged::irq::open_softirq(
-            crate::privileged::irq::SoftirqVec::NetTx,
-            net_tx_softirq_handler,
-        );
-
-        // S2 DNS 接线 (net-feature-alignment.md): 实机验证钩子 —— feature 门控,
-        // KERNEL_FEATURES=dns-selftest 点亮 (仿 lockdep 诊断 feature 先例).
-        // boot 完成后发一次真实查询并 printk; 成败均不阻断 boot (只观测).
-        #[cfg(feature = "dns-selftest")]
-        match dns_resolve("example.com") {
-            Some(ip) => crate::klog_info!(
-                Net,
-                "dns-selftest: example.com -> {}.{}.{}.{}",
-                ip[0],
-                ip[1],
-                ip[2],
-                ip[3]
-            ),
-            None => crate::klog_warn!(Net, "dns-selftest: example.com -> None"),
+        // D1.2: 把 fallback IP/网关写进 G_IPV4/G_GATEWAY, 给 get_* 观测 API
+        G_IPV4.store(u32::from_be_bytes(FALLBACK_IPV4), Ordering::Release);
+        G_GATEWAY.store(u32::from_be_bytes(FALLBACK_GATEWAY), Ordering::Release);
+        // S2 DNS 接线: fallback 路径同步写 G_DNS + 注入 dns::Socket servers,
+        // 否则 dns_query_net 的 G_DNS[0] 短路检查在无 DHCP 环境恒 None.
+        G_DNS[0].store(u32::from_be_bytes(FALLBACK_DNS), Ordering::Release);
+        // SAFETY: 网络初始化由启动流程串行调用, 且 `NET_STATE` 已加锁, socket 集合独家访问
+        unsafe {
+            dns::apply_dns_servers(&mut *raw::socket_set(), raw::dns_handle(), [[0u8; 4]; 3]);
         }
+        raw::klog_msg("Static IP (fallback, see net::types::FALLBACK_*)");
+    }
+}
+
+/// 网络初始化收尾: 配置校验钩子、恢复域注册、softirq handler 注册与 DNS 自检.
+fn net_init_register() {
+    // 演进 6: 网络 init 完成后做 driver 维度自检
+    // DECISION-K: 经 ConfigValidateHook trait 注入 (Option 可空, 未注册跳过)
+    if let Some(hook) = crate::privileged::config::current_config_validate_hook() {
+        if let Err(e) = hook.validate_network_subsystem() {
+            crate::klog_drv_warn!("Network validation: {}", e);
+        }
+    }
+
+    crate::privileged::freg::recovery::recovery_domain_register(
+        "net",
+        5,
+        &[],
+        net_save,
+        net_restore,
+        net_reset,
+    );
+
+    // 注册网络 softirq 处理程序
+    crate::privileged::irq::open_softirq(
+        crate::privileged::irq::SoftirqVec::NetRx,
+        net_rx_softirq_handler,
+    );
+    crate::privileged::irq::open_softirq(
+        crate::privileged::irq::SoftirqVec::NetTx,
+        net_tx_softirq_handler,
+    );
+
+    // S2 DNS 接线 (net-feature-alignment.md): 实机验证钩子 —— feature 门控,
+    // KERNEL_FEATURES=dns-selftest 点亮 (仿 lockdep 诊断 feature 先例).
+    // boot 完成后发一次真实查询并 printk; 成败均不阻断 boot (只观测).
+    #[cfg(feature = "dns-selftest")]
+    match dns_resolve("example.com") {
+        Some(ip) => crate::klog_info!(
+            Net,
+            "dns-selftest: example.com -> {}.{}.{}.{}",
+            ip[0],
+            ip[1],
+            ip[2],
+            ip[3]
+        ),
+        None => crate::klog_warn!(Net, "dns-selftest: example.com -> None"),
     }
 }
 

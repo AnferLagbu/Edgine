@@ -15,7 +15,6 @@
 //! - Linux configfs 文档: Documentation/filesystems/configfs.rst
 
 use crate::privileged::sync::IrqSpinLock as Mutex;
-use crate::privileged::sync::OnceLock;
 use crate::privileged::syscall::Errno;
 
 // ============================================================================
@@ -223,18 +222,6 @@ pub struct ConfigFs {
 }
 
 impl ConfigFs {
-    #[expect(
-        clippy::large_stack_arrays,
-        reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
-    )]
-    /// 创建空的 configfs 实例。
-    pub const fn new() -> Self {
-        Self {
-            dirs: [const { ConfigDir::new() }; MAX_DIRS],
-            dir_count: 0,
-        }
-    }
-
     /// 创建目录
     ///
     /// # Errors
@@ -323,13 +310,19 @@ impl ConfigFs {
 // ============================================================================
 
 /// 全局 configfs 文件系统实例
-static CONFIG_FS: OnceLock<Mutex<ConfigFs>> = OnceLock::new();
+///
+/// 直接以静态初值构造 (`Mutex::new` / `ConfigDir::new` 均为 const): 表体量
+/// 32×2642B≈84KiB, 若改在函数体内构造, 该整表会成为运行时栈临时量 —— 既超出
+/// 64KiB 内核栈, 也正是 clippy `large_stack_arrays` 的指摘点. 静态初值不经
+/// 函数体, 且不再需要运行时搬运.
+static CONFIG_FS: Mutex<ConfigFs> = Mutex::new(ConfigFs {
+    dirs: [const { ConfigDir::new() }; MAX_DIRS],
+    dir_count: 0,
+});
 
 /// 获取 configfs 文件系统实例
 pub fn get_config_fs() -> &'static Mutex<ConfigFs> {
-    CONFIG_FS.get_or_init(|slot| {
-        slot.write(Mutex::new(ConfigFs::new()));
-    })
+    &CONFIG_FS
 }
 
 // ============================================================================

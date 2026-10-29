@@ -193,10 +193,6 @@ impl CpuFeatures {
 
 /// 收集 CPU 特性标志 (多个 CPUID leaf)
 #[cfg(target_arch = "x86_64")]
-#[expect(
-    clippy::too_many_lines,
-    reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-)]
 pub(super) fn collect_features(
     features_out: &mut CpuFeatures,
     brand_out: &mut [u8; super::BRAND_STRING_LEN],
@@ -212,194 +208,212 @@ pub(super) fn collect_features(
 
     // ====== 标准 Leaf 1: 基础特性 (EDX + ECX) ======
     if max_leaf >= 1 {
-        let (_, _, ecx, edx) = cpuid::cpuid(1, 0);
-
-        // 解析 EDX (bits 0-31)
-        let mut feat = CpuFeatures::empty();
-        if edx & (1 << 0) != 0 {
-            feat.insert(CpuFeatures::FPU);
-        }
-        if edx & (1 << 2) != 0 {
-            feat.insert(CpuFeatures::PSE);
-        }
-        if edx & (1 << 3) != 0 {
-            feat.insert(CpuFeatures::TSC);
-        }
-        if edx & (1 << 5) != 0 {
-            feat.insert(CpuFeatures::MSR);
-        }
-        if edx & (1 << 6) != 0 {
-            feat.insert(CpuFeatures::PAE);
-        }
-        if edx & (1 << 9) != 0 {
-            feat.insert(CpuFeatures::APIC);
-        }
-        if edx & (1 << 11) != 0 {
-            feat.insert(CpuFeatures::SEP);
-        }
-        if edx & (1 << 15) != 0 {
-            feat.insert(CpuFeatures::CMOV);
-        }
-        if edx & (1 << 19) != 0 {
-            feat.insert(CpuFeatures::CLFLUSH);
-        }
-        if edx & (1 << 23) != 0 {
-            feat.insert(CpuFeatures::MMX);
-        }
-        if edx & (1 << 24) != 0 {
-            feat.insert(CpuFeatures::FXSR);
-        }
-        if edx & (1 << 25) != 0 {
-            feat.insert(CpuFeatures::SSE);
-        }
-        if edx & (1 << 26) != 0 {
-            feat.insert(CpuFeatures::SSE2);
-        }
-        if edx & (1 << 28) != 0 {
-            feat.insert(CpuFeatures::HTT);
-        }
-
-        // 解析 ECX (bits 32-63)
-        if ecx & (1 << 0) != 0 {
-            feat.insert(CpuFeatures::SSE3);
-        }
-        if ecx & (1 << 5) != 0 {
-            feat.insert(CpuFeatures::VMX);
-        }
-        if ecx & (1 << 6) != 0 {
-            feat.insert(CpuFeatures::SMX);
-        }
-        if ecx & (1 << 9) != 0 {
-            feat.insert(CpuFeatures::SSSE3);
-        }
-        if ecx & (1 << 19) != 0 {
-            feat.insert(CpuFeatures::SSE41);
-        }
-        if ecx & (1 << 20) != 0 {
-            feat.insert(CpuFeatures::SSE42);
-        }
-        if ecx & (1 << 21) != 0 {
-            feat.insert(CpuFeatures::X2APIC);
-        }
-        if ecx & (1 << 23) != 0 {
-            feat.insert(CpuFeatures::POPCNT);
-        }
-        if ecx & (1 << 24) != 0 {
-            feat.insert(CpuFeatures::TSCDEADLINE);
-        }
-        if ecx & (1 << 25) != 0 {
-            feat.insert(CpuFeatures::AES);
-        }
-        if ecx & (1 << 26) != 0 {
-            feat.insert(CpuFeatures::XSAVE);
-        }
-        if ecx & (1 << 27) != 0 {
-            feat.insert(CpuFeatures::OSXSAVE);
-        }
-        if ecx & (1 << 28) != 0 {
-            feat.insert(CpuFeatures::AVX);
-        }
-        if ecx & (1 << 30) != 0 {
-            feat.insert(CpuFeatures::RDRAND);
-        }
-
-        features_out.insert(feat);
+        features_out.insert(parse_leaf1_basic());
     }
 
     // ====== 扩展 Leaf 80000000: 获取扩展范围 ======
     let (max_ext, _, _, _) = cpuid::cpuid(super::CPUID_LEAF_EXT_BASE, 0);
     *max_ext_out = max_ext;
 
-    // ====== 扩展 Leaf 80000001: 扩展特性 (EDX + ECX) ======
+    // ====== 扩展 Leaf 80000001: 扩展特性 (EDX + ECX) + 品牌字符串 ======
     if max_ext >= 0x8000_0001 {
-        let (_, _, ecx, edx) = cpuid::cpuid(0x8000_0001, 0);
-
-        let mut feat = CpuFeatures::empty();
-        if edx & (1 << 11) != 0 {
-            feat.insert(CpuFeatures::SYSCALL);
-        }
-        if edx & (1 << 20) != 0 {
-            feat.insert(CpuFeatures::NX);
-        }
-        if edx & (1 << 26) != 0 {
-            feat.insert(CpuFeatures::PAGE1GB);
-        }
-        if edx & (1 << 27) != 0 {
-            feat.insert(CpuFeatures::RDTSCP);
-        }
-        if edx & (1 << 29) != 0 {
-            feat.insert(CpuFeatures::LM);
-        }
-
-        if ecx & (1 << 0) != 0 { /* LAHF_LM */ }
-        if ecx & (1 << 5) != 0 { /* ABM */ }
-        if ecx & (1 << 6) != 0 { /* SSE4A */ }
-
-        features_out.insert(feat);
-
-        // 品牌字符串 (Leaf 80000002~4)
-        if max_ext >= 0x8000_0004 {
-            let (a, b, c, d) = cpuid::cpuid(0x8000_0002, 0);
-            brand_out[0..16].copy_from_slice(&[a, b, c, d].map(u32::to_le_bytes).concat());
-
-            let (a, b, c, d) = cpuid::cpuid(0x8000_0003, 0);
-            brand_out[16..32].copy_from_slice(&[a, b, c, d].map(u32::to_le_bytes).concat());
-
-            let (a, b, c, d) = cpuid::cpuid(0x8000_0004, 0);
-            brand_out[32..48].copy_from_slice(&[a, b, c, d].map(u32::to_le_bytes).concat());
-
-            brand_out[47] = 0; // null 终止
-        } else {
-            brand_out[..7].copy_from_slice(b"Generic");
-            brand_out[7] = 0;
-        }
+        features_out.insert(parse_ext_leaf(max_ext, brand_out));
     }
 
-    // ====== 高级 Leaf 7 Sub-leaf 0: 高级特性 (EBX) ======
+    // ====== 高级 Leaf 7 Sub-leaf 0: 高级特性 (EBX/ECX) ======
     if max_leaf >= 7 {
-        let (_, ebx, ecx, _) = cpuid::cpuid(7, 0);
-
-        let mut feat = CpuFeatures::empty();
-        if ebx & (1 << 0) != 0 {
-            feat.insert(CpuFeatures::FSGSBASE);
-        }
-        if ebx & (1 << 3) != 0 {
-            feat.insert(CpuFeatures::BMI1);
-        }
-        if ebx & (1 << 5) != 0 {
-            feat.insert(CpuFeatures::AVX2);
-        }
-        if ebx & (1 << 8) != 0 {
-            feat.insert(CpuFeatures::BMI2);
-        }
-        if ebx & (1 << 9) != 0 {
-            feat.insert(CpuFeatures::ERMS);
-        }
-        if ebx & (1 << 16) != 0 {
-            feat.insert(CpuFeatures::AVX512F);
-        }
-        if ebx & (1 << 21) != 0 {
-            feat.insert(CpuFeatures::AVX512IFMA);
-        }
-        if ebx & (1 << 24) != 0 {
-            feat.insert(CpuFeatures::CLWB);
-        }
-        if ebx & (1 << 23) != 0 {
-            feat.insert(CpuFeatures::CLFLUSHOPT);
-        }
-        if ebx & (1 << 29) != 0 {
-            feat.insert(CpuFeatures::SHA);
-        }
-        // P4.B.2: SMEP/SMAP (CPUID Leaf7 ECX bit20/21).
-        // SMEP = Supervisor Mode Execution Prevention: Ring 0 不能执行 USER 页.
-        // SMAP = Supervisor Mode Access Prevention: Ring 0 不能访问 USER 页 (除非 stac).
-        if ecx & (1 << 20) != 0 {
-            feat.insert(CpuFeatures::SMEP);
-        }
-        if ecx & (1 << 21) != 0 {
-            feat.insert(CpuFeatures::SMAP);
-        }
-
-        features_out.insert(feat);
+        features_out.insert(parse_leaf7());
     }
+}
+
+/// 解析标准 Leaf 1 的 EDX/ECX 基础特性位 (FPU..SSE2 / SSE3..RDRAND).
+#[cfg(target_arch = "x86_64")]
+fn parse_leaf1_basic() -> CpuFeatures {
+    let (_, _, ecx, edx) = cpuid::cpuid(1, 0);
+
+    // 解析 EDX (bits 0-31)
+    let mut feat = CpuFeatures::empty();
+    if edx & (1 << 0) != 0 {
+        feat.insert(CpuFeatures::FPU);
+    }
+    if edx & (1 << 2) != 0 {
+        feat.insert(CpuFeatures::PSE);
+    }
+    if edx & (1 << 3) != 0 {
+        feat.insert(CpuFeatures::TSC);
+    }
+    if edx & (1 << 5) != 0 {
+        feat.insert(CpuFeatures::MSR);
+    }
+    if edx & (1 << 6) != 0 {
+        feat.insert(CpuFeatures::PAE);
+    }
+    if edx & (1 << 9) != 0 {
+        feat.insert(CpuFeatures::APIC);
+    }
+    if edx & (1 << 11) != 0 {
+        feat.insert(CpuFeatures::SEP);
+    }
+    if edx & (1 << 15) != 0 {
+        feat.insert(CpuFeatures::CMOV);
+    }
+    if edx & (1 << 19) != 0 {
+        feat.insert(CpuFeatures::CLFLUSH);
+    }
+    if edx & (1 << 23) != 0 {
+        feat.insert(CpuFeatures::MMX);
+    }
+    if edx & (1 << 24) != 0 {
+        feat.insert(CpuFeatures::FXSR);
+    }
+    if edx & (1 << 25) != 0 {
+        feat.insert(CpuFeatures::SSE);
+    }
+    if edx & (1 << 26) != 0 {
+        feat.insert(CpuFeatures::SSE2);
+    }
+    if edx & (1 << 28) != 0 {
+        feat.insert(CpuFeatures::HTT);
+    }
+
+    // 解析 ECX (bits 32-63)
+    if ecx & (1 << 0) != 0 {
+        feat.insert(CpuFeatures::SSE3);
+    }
+    if ecx & (1 << 5) != 0 {
+        feat.insert(CpuFeatures::VMX);
+    }
+    if ecx & (1 << 6) != 0 {
+        feat.insert(CpuFeatures::SMX);
+    }
+    if ecx & (1 << 9) != 0 {
+        feat.insert(CpuFeatures::SSSE3);
+    }
+    if ecx & (1 << 19) != 0 {
+        feat.insert(CpuFeatures::SSE41);
+    }
+    if ecx & (1 << 20) != 0 {
+        feat.insert(CpuFeatures::SSE42);
+    }
+    if ecx & (1 << 21) != 0 {
+        feat.insert(CpuFeatures::X2APIC);
+    }
+    if ecx & (1 << 23) != 0 {
+        feat.insert(CpuFeatures::POPCNT);
+    }
+    if ecx & (1 << 24) != 0 {
+        feat.insert(CpuFeatures::TSCDEADLINE);
+    }
+    if ecx & (1 << 25) != 0 {
+        feat.insert(CpuFeatures::AES);
+    }
+    if ecx & (1 << 26) != 0 {
+        feat.insert(CpuFeatures::XSAVE);
+    }
+    if ecx & (1 << 27) != 0 {
+        feat.insert(CpuFeatures::OSXSAVE);
+    }
+    if ecx & (1 << 28) != 0 {
+        feat.insert(CpuFeatures::AVX);
+    }
+    if ecx & (1 << 30) != 0 {
+        feat.insert(CpuFeatures::RDRAND);
+    }
+
+    feat
+}
+
+/// 解析扩展 Leaf 80000001 的特性位, 并在 Leaf 80000002~4 存在时填充品牌字符串.
+#[cfg(target_arch = "x86_64")]
+fn parse_ext_leaf(max_ext: u32, brand_out: &mut [u8; super::BRAND_STRING_LEN]) -> CpuFeatures {
+    let (_, _, ecx, edx) = cpuid::cpuid(0x8000_0001, 0);
+
+    let mut feat = CpuFeatures::empty();
+    if edx & (1 << 11) != 0 {
+        feat.insert(CpuFeatures::SYSCALL);
+    }
+    if edx & (1 << 20) != 0 {
+        feat.insert(CpuFeatures::NX);
+    }
+    if edx & (1 << 26) != 0 {
+        feat.insert(CpuFeatures::PAGE1GB);
+    }
+    if edx & (1 << 27) != 0 {
+        feat.insert(CpuFeatures::RDTSCP);
+    }
+    if edx & (1 << 29) != 0 {
+        feat.insert(CpuFeatures::LM);
+    }
+
+    if ecx & (1 << 0) != 0 { /* LAHF_LM */ }
+    if ecx & (1 << 5) != 0 { /* ABM */ }
+    if ecx & (1 << 6) != 0 { /* SSE4A */ }
+
+    // 品牌字符串 (Leaf 80000002~4)
+    if max_ext >= 0x8000_0004 {
+        let (a, b, c, d) = cpuid::cpuid(0x8000_0002, 0);
+        brand_out[0..16].copy_from_slice(&[a, b, c, d].map(u32::to_le_bytes).concat());
+
+        let (a, b, c, d) = cpuid::cpuid(0x8000_0003, 0);
+        brand_out[16..32].copy_from_slice(&[a, b, c, d].map(u32::to_le_bytes).concat());
+
+        let (a, b, c, d) = cpuid::cpuid(0x8000_0004, 0);
+        brand_out[32..48].copy_from_slice(&[a, b, c, d].map(u32::to_le_bytes).concat());
+
+        brand_out[47] = 0; // null 终止
+    } else {
+        brand_out[..7].copy_from_slice(b"Generic");
+        brand_out[7] = 0;
+    }
+
+    feat
+}
+
+/// 解析高级 Leaf 7 Sub-leaf 0 的 EBX/ECX 特性位.
+#[cfg(target_arch = "x86_64")]
+fn parse_leaf7() -> CpuFeatures {
+    let (_, ebx, ecx, _) = cpuid::cpuid(7, 0);
+
+    let mut feat = CpuFeatures::empty();
+    if ebx & (1 << 0) != 0 {
+        feat.insert(CpuFeatures::FSGSBASE);
+    }
+    if ebx & (1 << 3) != 0 {
+        feat.insert(CpuFeatures::BMI1);
+    }
+    if ebx & (1 << 5) != 0 {
+        feat.insert(CpuFeatures::AVX2);
+    }
+    if ebx & (1 << 8) != 0 {
+        feat.insert(CpuFeatures::BMI2);
+    }
+    if ebx & (1 << 9) != 0 {
+        feat.insert(CpuFeatures::ERMS);
+    }
+    if ebx & (1 << 16) != 0 {
+        feat.insert(CpuFeatures::AVX512F);
+    }
+    if ebx & (1 << 21) != 0 {
+        feat.insert(CpuFeatures::AVX512IFMA);
+    }
+    if ebx & (1 << 24) != 0 {
+        feat.insert(CpuFeatures::CLWB);
+    }
+    if ebx & (1 << 23) != 0 {
+        feat.insert(CpuFeatures::CLFLUSHOPT);
+    }
+    if ebx & (1 << 29) != 0 {
+        feat.insert(CpuFeatures::SHA);
+    }
+    // P4.B.2: SMEP/SMAP (CPUID Leaf7 ECX bit20/21).
+    // SMEP = Supervisor Mode Execution Prevention: Ring 0 不能执行 USER 页.
+    // SMAP = Supervisor Mode Access Prevention: Ring 0 不能访问 USER 页 (除非 stac).
+    if ecx & (1 << 20) != 0 {
+        feat.insert(CpuFeatures::SMEP);
+    }
+    if ecx & (1 << 21) != 0 {
+        feat.insert(CpuFeatures::SMAP);
+    }
+
+    feat
 }

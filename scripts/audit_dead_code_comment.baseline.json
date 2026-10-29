@@ -5,8 +5,8 @@
     "disposition": "P-53 冻结存量, 全部清除归 P-64 (用户裁定: 另立工程)"
   },
   "totals": {
-    "sites": 252,
-    "files": 88
+    "sites": 213,
+    "files": 64
   },
   "entries": [
     [
@@ -55,11 +55,6 @@
       1
     ],
     [
-      "src/kernel/functions/debug/ebpf_verifier.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      1
-    ],
-    [
       "src/kernel/functions/driver/display/dp.rs",
       "#[expect(clippy::no_effect_underscore_binding,reason=\"no_effect_underscore_binding:let_=expr用于类型推导/副作用;当前优先expect\")",
       1
@@ -67,11 +62,6 @@
     [
       "src/kernel/functions/freg/attribution.rs",
       "#[expect(clippy::upper_case_acronyms,reason=\"TCB归属枚举按子系统缩写命名(FREG/SGEG)",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/configfs.rs",
-      "#[expect(clippy::large_stack_arrays,reason=\"large_stack_arrays:大栈数组是性能权衡(避免堆分配)",
       1
     ],
     [
@@ -90,11 +80,6 @@
       1
     ],
     [
-      "src/kernel/functions/fs/ext2/read.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      1
-    ],
-    [
       "src/kernel/functions/fs/file_ops.rs",
       "#[expect(clippy::struct_field_names,reason=\"struct_field_names:字段名前缀相同是为可读性/调试;当前优先expect\")",
       1
@@ -107,16 +92,6 @@
     [
       "src/kernel/functions/fs/procfs_core.rs",
       "#[expect(clippy::no_effect_underscore_binding,reason=\"no_effect_underscore_binding:let_=expr用于类型推导/副作用;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/procfs_core.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/ramfs_core/ramfs_data.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
     ],
     [
@@ -140,11 +115,6 @@
       1
     ],
     [
-      "src/kernel/functions/fs/unkfs/unkfs_data.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      2
-    ],
-    [
       "src/kernel/functions/fs/vfs_manager.rs",
       "#[expect(clippy::assigning_clones,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
       1
@@ -152,11 +122,6 @@
     [
       "src/kernel/functions/fs/vfs_path.rs",
       "#[expect(clippy::no_effect_underscore_binding,reason=\"no_effect_underscore_binding:let_=expr用于类型推导/副作用;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/functions/fs/virtiofs.rs",
-      "#[expect(clippy::large_stack_arrays,reason=\"large_stack_arrays:大栈数组是性能权衡(避免堆分配)",
       1
     ],
     [
@@ -341,11 +306,6 @@
     ],
     [
       "src/kernel/functions/mod.rs",
-      "#![allow(clippy::too_many_lines)",
-      1
-    ],
-    [
-      "src/kernel/functions/mod.rs",
       "#![allow(clippy::transmute_ptr_to_ptr)",
       1
     ],
@@ -420,24 +380,9 @@
       2
     ],
     [
-      "src/kernel/functions/proc/clone.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      1
-    ],
-    [
       "src/kernel/functions/proc/mod.rs",
       "#[expect(clippy::missing_panics_doc,reason=\"missing_panics_doc:init在信号/coredump策略重复注册时panic以暴露启动期配置错误(privileged契约:仅注册一次,见B05-36/B05-44)",
       1
-    ],
-    [
-      "src/kernel/functions/sgeg/audit.rs",
-      "#[expect(clippy::large_stack_arrays,reason=\"large_stack_arrays:大栈数组是性能权衡(避免堆分配)",
-      1
-    ],
-    [
-      "src/kernel/functions/sgeg/persist.rs",
-      "#[expect(clippy::large_stack_arrays,reason=\"large_stack_arrays:大栈数组是性能权衡(避免堆分配)",
-      2
     ],
     [
       "src/kernel/functions/sgeg/sessions.rs",
@@ -447,16 +392,6 @@
     [
       "src/kernel/functions/sync/futex.rs",
       "#[expect(clippy::comparison_chain,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
-      1
-    ],
-    [
-      "src/kernel/functions/wasm/interpreter.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      1
-    ],
-    [
-      "src/kernel/functions/wasm/types.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
     ],
     [
@@ -636,11 +571,6 @@
     ],
     [
       "src/kernel/lib.rs",
-      "#![allow(clippy::too_many_lines)",
-      1
-    ],
-    [
-      "src/kernel/lib.rs",
       "#![allow(clippy::transmute_ptr_to_ptr)",
       1
     ],
@@ -700,16 +630,6 @@
       1
     ],
     [
-      "src/kernel/lib.rs",
-      "#[cfg_attr( not(feature = \"host-test\"), expect( clippy::unreadable_literal, reason = \"unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect\" ) )]",
-      1
-    ],
-    [
-      "src/kernel/lib.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      2
-    ],
-    [
       "src/kernel/privileged/arch/aarch64/exception.rs",
       "#[expect(clippy::no_effect_underscore_binding,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
       1
@@ -725,19 +645,9 @@
       1
     ],
     [
-      "src/kernel/privileged/arch/x86_64/gdt.rs",
-      "#[expect(clippy::large_stack_arrays,reason=\"PerCpuGdt的syscall/IST栈数组布局于BSP_GDT/PMM分配的APGDT,非栈上分配\")",
-      1
-    ],
-    [
       "src/kernel/privileged/arch/x86_64/mod.rs",
       "#[expect(clippy::needless_return,reason=\"needless_return:host桩分支显式return与裸机分支保持结构对称;当前优先expect\")",
       5
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/smp_init.rs",
-      "#[expect(clippy::large_stack_arrays,reason=\"large_stack_arrays:大栈数组是性能权衡(避免堆分配)",
-      1
     ],
     [
       "src/kernel/privileged/boot/mod.rs",
@@ -750,23 +660,8 @@
       1
     ],
     [
-      "src/kernel/privileged/cpu/feature.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      1
-    ],
-    [
       "src/kernel/privileged/debug/ebpf.rs",
       "#[expect(clippy::bool_to_int_with_if,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
-      1
-    ],
-    [
-      "src/kernel/privileged/debug/ebpf.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/display/self_test.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
     ],
     [
@@ -777,11 +672,6 @@
     [
       "src/kernel/privileged/driver/virtio/queue.rs",
       "#[expect(clippy::no_effect_underscore_binding,reason=\"no_effect_underscore_binding:let_=expr用于类型推导/副作用;当前优先expect\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/composite.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
     ],
     [
@@ -810,28 +700,13 @@
       1
     ],
     [
-      "src/kernel/privileged/idt/mod.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      1
-    ],
-    [
       "src/kernel/privileged/klog/mod.rs",
       "#[allow(clippy::upper_case_acronyms)",
       1
     ],
     [
-      "src/kernel/privileged/klog/mod.rs",
-      "#[expect(clippy::large_stack_arrays,reason=\"large_stack_arrays:大栈数组是性能权衡(避免堆分配)",
-      1
-    ],
-    [
       "src/kernel/privileged/mem_alloc/frame_alloc.rs",
       "#[expect(clippy::match_wildcard_for_single_variants,reason=\"DECISION-043pedantic兜底:当前批量expect兑底;后续可逐处手工重构(改.cast()",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/cow.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
     ],
     [
@@ -850,18 +725,8 @@
       1
     ],
     [
-      "src/kernel/privileged/mm/vma.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      1
-    ],
-    [
       "src/kernel/privileged/mm/vmm_aarch64.rs",
       "#[expect(clippy::missing_errors_doc,reason=\"DECISION-043pedantic兜底:aarch64编译目标特有lint,当前批量expect兑底\")",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
       1
     ],
     [
@@ -1036,11 +901,6 @@
     ],
     [
       "src/kernel/privileged/mod.rs",
-      "#![allow(clippy::too_many_lines)",
-      1
-    ],
-    [
-      "src/kernel/privileged/mod.rs",
       "#![allow(clippy::transmute_ptr_to_ptr)",
       1
     ],
@@ -1105,18 +965,8 @@
       1
     ],
     [
-      "src/kernel/privileged/net/init.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      1
-    ],
-    [
       "src/kernel/privileged/net/init/state.rs",
       "#[expect(clippy::missing_errors_doc,reason=\"missing_errors_doc:transition_state返回Result<()",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/wait_queue.rs",
-      "#[allow(clippy::large_stack_arrays)",
       1
     ],
     [
@@ -1140,11 +990,6 @@
       1
     ],
     [
-      "src/kernel/privileged/proc/elf/mod.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      1
-    ],
-    [
       "src/kernel/privileged/proc/mod.rs",
       "#![allow(ambiguous_glob_reexports)",
       1
@@ -1155,19 +1000,9 @@
       2
     ],
     [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      2
-    ],
-    [
       "src/kernel/privileged/proc/user_proc.rs",
       "#[expect(clippy::no_effect_underscore_binding,reason=\"no_effect_underscore_binding:let_=expr用于类型推导/副作用;当前优先expect\")",
       1
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "#[expect(clippy::too_many_lines,reason=\"函数体超100行(复杂度阈值)",
-      2
     ],
     [
       "src/kernel/privileged/sgeg/audit.rs",
@@ -1187,11 +1022,6 @@
     [
       "src/kernel/privileged/syscall/types.rs",
       "#![allow(clippy::upper_case_acronyms)",
-      1
-    ],
-    [
-      "src/kernel/privileged/tests/mod.rs",
-      "#[expect(clippy::large_stack_arrays,reason=\"large_stack_arrays:测试注册表数组存放于staticOnceLock(.bss)",
       1
     ],
     [

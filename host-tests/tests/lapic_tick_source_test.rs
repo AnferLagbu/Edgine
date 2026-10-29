@@ -298,9 +298,10 @@ fn test_tick_vector_single_source_and_idt_gate() {
     );
 
     // 门编程在 idt_init 路径内, 且用的是同一常量对.
+    // stub 地址统一由 `stub_addr!` 换算 (与 `stub_addrs()` 同一套 fn 指针→高半区地址语义).
     let idt_mod = prod_squashed(IDT_MOD);
     assert!(
-        idt_mod.contains("init_local_vector(TICK_VECTOR,addr!(irq128))"),
+        idt_mod.contains("init_local_vector(TICK_VECTOR,stub_addr!(irq128))"),
         "IDT 未为 TICK_VECTOR 编程门 (首个 tick 无门 → #GP → #DF)"
     );
 }

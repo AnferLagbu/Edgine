@@ -275,20 +275,6 @@ pub struct SocketWaitQueueTable {
 }
 
 impl SocketWaitQueueTable {
-    /// 构造 `MAX_SM_FD` 个空队列的静态表 (const, 常驻 .bss)。
-    // 固定容量表 (MAX_SM_FD) 仅在全局 static `SOCKET_WAIT_QUEUES` 中物化, 常驻
-    // .bss 而非栈; const 构造要求数组字面量在此函数体内展开, clippy 的
-    // large_stack_arrays 仅在 host target (kernel_test/host-test 维) 按放大后的
-    // 元素尺寸报出, x86_64-unknown-none 维不触发 — 故用 allow 而非 expect
-    // (expect 会在 none target 产生 unfulfilled 警告, 破坏 lib 维 0 warning).
-    // 非死代码抑制 (F9 不受影响), 是对静态表设计意图的正当豁免.
-    #[allow(clippy::large_stack_arrays)]
-    pub const fn new() -> Self {
-        Self {
-            queues: [const { SocketWaitQueue::new() }; MAX_SM_FD],
-        }
-    }
-
     /// 取 fd 对应队列 (fd 越界时返回 None)
     pub fn get(&self, fd: usize) -> Option<&SocketWaitQueue> {
         self.queues.get(fd)
@@ -300,7 +286,13 @@ impl SocketWaitQueueTable {
 // ============================================================================
 
 /// 全局 per-fd 等待队列表 (单例, 与 `MAX_SM_FD` 对齐)。
-pub static SOCKET_WAIT_QUEUES: SocketWaitQueueTable = SocketWaitQueueTable::new();
+///
+/// 固定容量表只在 `.bss` 中物化一次: 数组直接写在 `static` 初值里 —— 静态初值
+/// 不经函数体, 既不会被 `large_stack_arrays` 误判为栈上分配, 也不产生运行时
+/// 栈临时量搬运.
+pub static SOCKET_WAIT_QUEUES: SocketWaitQueueTable = SocketWaitQueueTable {
+    queues: [const { SocketWaitQueue::new() }; MAX_SM_FD],
+};
 
 #[cfg(test)]
 mod tests {
@@ -330,7 +322,7 @@ mod tests {
 
     #[test]
     fn table_lookup_bounded() {
-        let t = SocketWaitQueueTable::new();
+        let t = &SOCKET_WAIT_QUEUES;
         assert!(t.get(0).is_some());
         assert!(t.get(MAX_SM_FD - 1).is_some());
         assert!(t.get(MAX_SM_FD).is_none());

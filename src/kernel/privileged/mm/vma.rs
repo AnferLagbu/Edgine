@@ -305,6 +305,162 @@ pub struct MmStruct {
     pub mlock_all_flags: AtomicU32,
 }
 
+/// madvise: 对完全落入 [start, `end_addr`) 的 VMA 原地打 `flag`, 并收集覆盖区间.
+///
+/// 返回锁定字节数; 每个覆盖区间同时压入 `touched`.
+fn madvise_flag_covered(
+    vmas: &mut [Vma],
+    start: usize,
+    end_addr: usize,
+    flag: VmFlags,
+    touched: &mut alloc::vec::Vec<(usize, usize)>,
+) -> usize {
+    let mut locked = 0usize;
+    for vma in vmas.iter_mut() {
+        if vma.end <= start || vma.start >= end_addr {
+            continue;
+        }
+        // 只取重叠部分
+        let ovl_start = vma.start.max(start);
+        let ovl_end = vma.end.min(end_addr);
+
+        // 需要拆分时延后, 简化路径: 整 VMA 覆盖
+        if vma.start >= start && vma.end <= end_addr {
+            vma.vm_flags = vma.vm_flags.insert(flag);
+            locked += ovl_end - ovl_start;
+            touched.push((ovl_start, ovl_end));
+        }
+    }
+    locked
+}
+
+/// madvise: 拆分前缀 [vma_start, start), 覆盖段 [start, vma_end) 打 `flag`.
+///
+/// 返回新增锁定字节数; 覆盖区间同时压入 `touched`.
+fn madvise_split_prefix(
+    vmas: &mut alloc::vec::Vec<Vma>,
+    i: usize,
+    start: usize,
+    flag: VmFlags,
+    touched: &mut alloc::vec::Vec<(usize, usize)>,
+) -> usize {
+    let vma_start = vmas[i].start;
+    let vma_end = vmas[i].end;
+    let prefix = Vma {
+        start: vma_start,
+        end: start,
+        flags: vmas[i].flags,
+        vma_type: vmas[i].vma_type,
+        offset: vmas[i].offset,
+        inode_id: vmas[i].inode_id,
+        shared: vmas[i].shared,
+        file_pwm: vmas[i].file_pwm,
+        mount_idx: vmas[i].mount_idx,
+        vm_flags: vmas[i].vm_flags,
+        numa: vmas[i].numa,
+    };
+    let new = Vma {
+        start,
+        end: vma_end,
+        flags: vmas[i].flags,
+        vma_type: vmas[i].vma_type,
+        offset: vmas[i].offset + (start - vma_start) as u64,
+        inode_id: vmas[i].inode_id,
+        shared: vmas[i].shared,
+        file_pwm: vmas[i].file_pwm,
+        mount_idx: vmas[i].mount_idx,
+        vm_flags: vmas[i].vm_flags.insert(flag),
+        numa: vmas[i].numa,
+    };
+    vmas[i] = prefix;
+    vmas.insert(i + 1, new);
+    let ins_start = vmas[i + 1].start;
+    let ins_end = vmas[i + 1].end;
+    touched.push((ins_start, ins_end));
+    ins_end - ins_start
+}
+
+/// madvise: 拆分后缀 [end_addr, vma_end), 覆盖段 [vma_start, end_addr) 打 `flag`.
+///
+/// 返回新增锁定字节数; 覆盖区间同时压入 `touched`.
+fn madvise_split_suffix(
+    vmas: &mut alloc::vec::Vec<Vma>,
+    i: usize,
+    end_addr: usize,
+    flag: VmFlags,
+    touched: &mut alloc::vec::Vec<(usize, usize)>,
+) -> usize {
+    let vma_start = vmas[i].start;
+    let vma_end = vmas[i].end;
+    let new = Vma {
+        start: vma_start,
+        end: end_addr,
+        flags: vmas[i].flags,
+        vma_type: vmas[i].vma_type,
+        offset: vmas[i].offset,
+        inode_id: vmas[i].inode_id,
+        shared: vmas[i].shared,
+        file_pwm: vmas[i].file_pwm,
+        mount_idx: vmas[i].mount_idx,
+        vm_flags: vmas[i].vm_flags.insert(flag),
+        numa: vmas[i].numa,
+    };
+    let suffix = Vma {
+        start: end_addr,
+        end: vma_end,
+        flags: vmas[i].flags,
+        vma_type: vmas[i].vma_type,
+        offset: vmas[i].offset + (end_addr - vma_start) as u64,
+        inode_id: vmas[i].inode_id,
+        shared: vmas[i].shared,
+        file_pwm: vmas[i].file_pwm,
+        mount_idx: vmas[i].mount_idx,
+        vm_flags: vmas[i].vm_flags,
+        numa: vmas[i].numa,
+    };
+    vmas[i] = new;
+    vmas.insert(i + 1, suffix);
+    let ins_start = vmas[i].start;
+    let ins_end = vmas[i].end;
+    touched.push((ins_start, ins_end));
+    ins_end - ins_start
+}
+
+/// madvise: 对 [start, `end_addr`) 打 `flag`, 跨界 VMA 先拆分为三段再打标.
+///
+/// 返回锁定字节数与需回收区间列表. 简化路径: 完全覆盖者原地打标, 不再拆分.
+fn apply_madvise_split(
+    vmas: &mut alloc::vec::Vec<Vma>,
+    start: usize,
+    end_addr: usize,
+    flag: VmFlags,
+) -> (usize, alloc::vec::Vec<(usize, usize)>) {
+    let mut touched: alloc::vec::Vec<(usize, usize)> = alloc::vec::Vec::new();
+    let mut locked = madvise_flag_covered(vmas, start, end_addr, flag, &mut touched);
+
+    // 跨 VMA 边界的部分: 单独拆分处理
+    let mut i = 0;
+    while i < vmas.len() {
+        let vma_start = vmas[i].start;
+        let vma_end = vmas[i].end;
+        if vma_end <= start || vma_start >= end_addr {
+            i += 1;
+            continue;
+        }
+        // 部分覆盖 [start, end) 范围, 拆分
+        if vma_start < start {
+            locked += madvise_split_prefix(vmas, i, start, flag, &mut touched);
+            i += 2;
+        } else if vma_end > end_addr {
+            locked += madvise_split_suffix(vmas, i, end_addr, flag, &mut touched);
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    (locked, touched)
+}
+
 impl MmStruct {
     /// 创建空的地址空间描述符
     pub fn new() -> Self {
@@ -862,10 +1018,6 @@ impl MmStruct {
     /// 当 `len` 为 0 或 `advice` 为未实现的建议值时返回 `EINVAL`;
     /// 当 `start + len` 溢出时返回 `ENOMEM`;
     /// 当 PAGEOUT/DONTNEED 目标区域被 `mlock` 锁定而无法回收时返回 `EAGAIN`.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-    )]
     pub fn madvise_range(
         &self,
         start: usize,
@@ -895,119 +1047,13 @@ impl MmStruct {
         let end_addr = (end_addr + crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1)
             & !(crate::privileged::lib::usize_from_u64(PAGE_SIZE) - 1);
 
-        let mut vmas = self.vmas.lock();
-        let mut locked = 0usize;
-        let mut touched: alloc::vec::Vec<(usize, usize)> = alloc::vec::Vec::new();
+        let (locked, touched) = {
+            let mut vmas = self.vmas.lock();
+            apply_madvise_split(&mut vmas, start, end_addr, flag)
+        };
 
-        for vma in vmas.iter_mut() {
-            if vma.end <= start || vma.start >= end_addr {
-                continue;
-            }
-            // 只取重叠部分
-            let ovl_start = vma.start.max(start);
-            let ovl_end = vma.end.min(end_addr);
-
-            // 需要拆分时延后, 简化路径: 整 VMA 覆盖
-            if vma.start >= start && vma.end <= end_addr {
-                vma.vm_flags = vma.vm_flags.insert(flag);
-                locked += ovl_end - ovl_start;
-                touched.push((ovl_start, ovl_end));
-            }
-        }
-
-        // 跨 VMA 边界的部分: 单独拆分处理
-        let mut i = 0;
-        while i < vmas.len() {
-            let vma_start = vmas[i].start;
-            let vma_end = vmas[i].end;
-            if vma_end <= start || vma_start >= end_addr {
-                i += 1;
-                continue;
-            }
-            // 部分覆盖 [start, end) 范围, 拆分
-            let prefix_end = start.max(vma_start);
-            let suffix_start = end_addr.min(vma_end);
-            if vma_start < start {
-                // 拆分前缀 [vma_start, start)
-                let prefix = Vma {
-                    start: vma_start,
-                    end: start,
-                    flags: vmas[i].flags,
-                    vma_type: vmas[i].vma_type,
-                    offset: vmas[i].offset,
-                    inode_id: vmas[i].inode_id,
-                    shared: vmas[i].shared,
-                    file_pwm: vmas[i].file_pwm,
-                    mount_idx: vmas[i].mount_idx,
-                    vm_flags: vmas[i].vm_flags,
-                    numa: vmas[i].numa,
-                };
-                let new = Vma {
-                    start,
-                    end: vma_end,
-                    flags: vmas[i].flags,
-                    vma_type: vmas[i].vma_type,
-                    offset: vmas[i].offset + (start - vma_start) as u64,
-                    inode_id: vmas[i].inode_id,
-                    shared: vmas[i].shared,
-                    file_pwm: vmas[i].file_pwm,
-                    mount_idx: vmas[i].mount_idx,
-                    vm_flags: vmas[i].vm_flags.insert(flag),
-                    numa: vmas[i].numa,
-                };
-                vmas[i] = prefix;
-                vmas.insert(i + 1, new);
-                let ins_start = vmas[i + 1].start;
-                let ins_end = vmas[i + 1].end;
-                locked += ins_end - ins_start;
-                touched.push((ins_start, ins_end));
-                i += 2;
-            } else if vma_end > end_addr {
-                // 拆分后缀 [end_addr, vma_end)
-                let new = Vma {
-                    start: vma_start,
-                    end: end_addr,
-                    flags: vmas[i].flags,
-                    vma_type: vmas[i].vma_type,
-                    offset: vmas[i].offset,
-                    inode_id: vmas[i].inode_id,
-                    shared: vmas[i].shared,
-                    file_pwm: vmas[i].file_pwm,
-                    mount_idx: vmas[i].mount_idx,
-                    vm_flags: vmas[i].vm_flags.insert(flag),
-                    numa: vmas[i].numa,
-                };
-                let suffix = Vma {
-                    start: end_addr,
-                    end: vma_end,
-                    flags: vmas[i].flags,
-                    vma_type: vmas[i].vma_type,
-                    offset: vmas[i].offset + (end_addr - vma_start) as u64,
-                    inode_id: vmas[i].inode_id,
-                    shared: vmas[i].shared,
-                    file_pwm: vmas[i].file_pwm,
-                    mount_idx: vmas[i].mount_idx,
-                    vm_flags: vmas[i].vm_flags,
-                    numa: vmas[i].numa,
-                };
-                vmas[i] = new;
-                vmas.insert(i + 1, suffix);
-                let ins_start = vmas[i].start;
-                let ins_end = vmas[i].end;
-                locked += ins_end - ins_start;
-                touched.push((ins_start, ins_end));
-                i += 2;
-            } else {
-                i += 1;
-            }
-
-            // 避免前缀/后缀端点外溢
-            let _ = prefix_end;
-            let _ = suffix_start;
-        }
         // PAGEOUT/DONTNEED 触发实际页面回收
         if flag == VmFlags::MADV_PAGEOUT || flag == VmFlags::MADV_DONTNEED {
-            drop(vmas);
             for (s, e) in touched {
                 self.madvise_evict_range(s, e, flag == VmFlags::MADV_DONTNEED)?;
             }

@@ -99,8 +99,8 @@ pub struct HashChainNode {
 
 /// 审计日志 (环形缓冲 + 哈希链)
 pub struct AuditLog {
-    /// 物理存储
-    buffer: [HashChainNode; AUDIT_BUFFER_SIZE],
+    /// 物理存储 (堆上定长表: 1024 槽 × 节点 ≈ 80KiB, 不放栈上)
+    buffer: alloc::vec::Vec<HashChainNode>,
     /// 已写入索引 (单调递增, 不重用)
     next_index: AtomicU32,
     /// 当前环形写入位置
@@ -117,12 +117,11 @@ pub struct AuditLog {
 pub const AUDIT_BUFFER_SIZE: usize = 1024;
 
 impl AuditLog {
-    #[expect(
-        clippy::large_stack_arrays,
-        reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
-    )]
     /// 构造空审计日志 (全部槽位为占位节点)
-    pub const fn new() -> Self {
+    ///
+    /// 缓冲表体量 1024×节点≈80KiB, 高于 64KiB 内核栈: 必须堆分配, 否则每个
+    /// 实例都会在栈上物化整表 (clippy `large_stack_arrays` 的指摘点).
+    pub fn new() -> Self {
         const EMPTY_NODE: HashChainNode = HashChainNode {
             index: 0,
             event: AuditEvent {
@@ -138,7 +137,7 @@ impl AuditLog {
             hash: 0,
         };
         Self {
-            buffer: [EMPTY_NODE; AUDIT_BUFFER_SIZE],
+            buffer: alloc::vec![EMPTY_NODE; AUDIT_BUFFER_SIZE],
             next_index: AtomicU32::new(0),
             write_pos: AtomicU32::new(0),
             dropped: AtomicU64::new(0),

@@ -393,13 +393,23 @@ fn test_running_task_is_never_stolen() {
 fn test_tick_body_uses_carry_cas_for_every_periodic_side_effect() {
     let sched = prod_squashed(SCHED);
     let tick = fn_body(&sched, "fntick(cpu_id:usize)").expect("Scheduler::tick 不存在");
+    // 周期副作用已按类别拆入 tick 的子步骤 helper (tick 只做编排), 故名额判定覆盖
+    // tick 体 + 各子步骤体: 四处 carry+CAS 各自仍只出现一次.
+    let mut scope = tick.to_string();
+    for sig in [
+        "fntick_periodic(",
+        "fntick_reap_zombies(",
+        "fntick_balance(",
+    ] {
+        scope.push_str(fn_body(&sched, sig).unwrap_or_else(|| panic!("{sig} 不存在")));
+    }
     assert!(
-        !tick.contains("is_multiple_of("),
+        !scope.contains("is_multiple_of("),
         "tick 体重新用 is_multiple_of 判周期: 派生 tick 跳值会整窗漏触发, 且各核同窗各自发起"
     );
     // kswapd / hotplug / reap / balance 四项各一次 CAS 名额.
     assert!(
-        tick.matches("compare_exchange(").count() >= 4,
+        scope.matches("compare_exchange(").count() >= 4,
         "tick 体的每窗口名额不足 4 处 (carry+CAS 收口被削弱)"
     );
     for last in [
@@ -409,7 +419,7 @@ fn test_tick_body_uses_carry_cas_for_every_periodic_side_effect() {
         "LAST_BALANCE_TICK",
     ] {
         assert!(
-            tick.contains(&format!("{last}.load(Ordering::Acquire)")),
+            scope.contains(&format!("{last}.load(Ordering::Acquire)")),
             "tick 体缺少 {last} 的 carry 读数"
         );
     }

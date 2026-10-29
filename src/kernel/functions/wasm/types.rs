@@ -468,11 +468,15 @@ pub enum Opcode {
 
 impl Opcode {
     /// 按操作码字节解析指令; 非法字节返回 `None`。
-    #[expect(
-        clippy::too_many_lines,
-        reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-    )]
     pub fn from_byte(b: u8) -> Option<Self> {
+        Self::from_control_segment(b)
+            .or_else(|| Self::from_memory_segment(b))
+            .or_else(|| Self::from_i32_segment(b))
+            .or_else(|| Self::from_i64_segment(b))
+    }
+
+    /// 控制流/变量段操作码 (`0x00..=0x11`、`0x1A..=0x24`); 非法字节返回 `None`
+    fn from_control_segment(b: u8) -> Option<Self> {
         match b {
             0x00 => Some(Self::Unreachable),
             0x01 => Some(Self::Nop),
@@ -494,6 +498,13 @@ impl Opcode {
             0x22 => Some(Self::LocalTee),
             0x23 => Some(Self::GlobalGet),
             0x24 => Some(Self::GlobalSet),
+            _ => None,
+        }
+    }
+
+    /// 内存/常量段操作码 (`0x28..=0x42`); 非法字节返回 `None`
+    fn from_memory_segment(b: u8) -> Option<Self> {
+        match b {
             0x28 => Some(Self::I32Load),
             0x29 => Some(Self::I64Load),
             0x2C => Some(Self::I32Load8S),
@@ -517,6 +528,13 @@ impl Opcode {
             0x40 => Some(Self::MemoryGrow),
             0x41 => Some(Self::I32Const),
             0x42 => Some(Self::I64Const),
+            _ => None,
+        }
+    }
+
+    /// 32 位整数段操作码 (`0x45..=0x4F`、`0x6A..=0x78`); 非法字节返回 `None`
+    fn from_i32_segment(b: u8) -> Option<Self> {
+        match b {
             0x45 => Some(Self::I32Eqz),
             0x46 => Some(Self::I32Eq),
             0x47 => Some(Self::I32Ne),
@@ -528,17 +546,6 @@ impl Opcode {
             0x4D => Some(Self::I32LeU),
             0x4E => Some(Self::I32GeS),
             0x4F => Some(Self::I32GeU),
-            0x50 => Some(Self::I64Eqz),
-            0x51 => Some(Self::I64Eq),
-            0x52 => Some(Self::I64Ne),
-            0x53 => Some(Self::I64LtS),
-            0x54 => Some(Self::I64LtU),
-            0x55 => Some(Self::I64GtS),
-            0x56 => Some(Self::I64GtU),
-            0x57 => Some(Self::I64LeS),
-            0x58 => Some(Self::I64LeU),
-            0x59 => Some(Self::I64GeS),
-            0x5A => Some(Self::I64GeU),
             0x6A => Some(Self::I32Add),
             0x6B => Some(Self::I32Sub),
             0x6C => Some(Self::I32Mul),
@@ -554,6 +561,25 @@ impl Opcode {
             0x76 => Some(Self::I32ShrU),
             0x77 => Some(Self::I32Rotl),
             0x78 => Some(Self::I32Rotr),
+            _ => None,
+        }
+    }
+
+    /// 64 位整数段操作码 (`0x50..=0x5A`、`0x7C..=0x8A`、`0xA7`/`0xAC`/`0xAD`);
+    /// 非法字节返回 `None`
+    fn from_i64_segment(b: u8) -> Option<Self> {
+        match b {
+            0x50 => Some(Self::I64Eqz),
+            0x51 => Some(Self::I64Eq),
+            0x52 => Some(Self::I64Ne),
+            0x53 => Some(Self::I64LtS),
+            0x54 => Some(Self::I64LtU),
+            0x55 => Some(Self::I64GtS),
+            0x56 => Some(Self::I64GtU),
+            0x57 => Some(Self::I64LeS),
+            0x58 => Some(Self::I64LeU),
+            0x59 => Some(Self::I64GeS),
+            0x5A => Some(Self::I64GeU),
             0x7C => Some(Self::I64Add),
             0x7D => Some(Self::I64Sub),
             0x7E => Some(Self::I64Mul),

@@ -263,10 +263,6 @@ impl BlockDevice for CompositeBlockDevice {
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-)]
 /// 遍历设备树, 为匹配 `eg,raid0`/`eg,raid1` 的节点创建并注册复合块设备, 返回创建数量.
 pub fn devtree_probe_composites() -> usize {
     let composite_compatibles: &[&str] = &["eg,raid0", "eg,raid1"];
@@ -303,66 +299,7 @@ pub fn devtree_probe_composites() -> usize {
             continue;
         }
 
-        let mut child_drives: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
-
-        for &child_id in &children {
-            let Some(child_node) = devtree_get_node(child_id) else {
-                klog_warn!(
-                    Driver,
-                    "EGDF: composite child node {} not found, skipping",
-                    child_id
-                );
-                continue;
-            };
-
-            if child_node.proto != EGDFProto::Block {
-                klog_warn!(
-                    Driver,
-                    "EGDF: composite child '{}' is not a block device, skipping",
-                    child_node.name
-                );
-                continue;
-            }
-
-            let idx: usize = {
-                if let Some(dev_id) = child_node.device_id {
-                    if let Some(i) = egdf_find_by_id(dev_id) {
-                        i
-                    } else {
-                        klog_warn!(
-                            Driver,
-                            "EGDF: child '{}' device_id={} not in registry",
-                            child_node.name,
-                            dev_id
-                        );
-                        continue;
-                    }
-                } else {
-                    if let Some(i) = egdf_find_by_name(child_node.name) {
-                        i
-                    } else {
-                        klog_warn!(
-                            Driver,
-                            "EGDF: child '{}' not found in EGDF registry",
-                            child_node.name
-                        );
-                        continue;
-                    }
-                }
-            };
-
-            if idx > u8::MAX as usize {
-                klog_warn!(
-                    Driver,
-                    "EGDF: child '{}' index {} exceeds u8 range, skipping",
-                    child_node.name,
-                    idx
-                );
-                continue;
-            }
-
-            child_drives.push(crate::privileged::lib::low_u8_from_usize(idx));
-        }
+        let child_drives: alloc::vec::Vec<u8> = collect_composite_child_drives(&children);
 
         if child_drives.is_empty() {
             klog_warn!(
@@ -428,6 +365,74 @@ pub fn devtree_probe_composites() -> usize {
     }
 
     created
+}
+
+/// 收集复合节点下所有可用块设备在 EGDF 注册表中的索引 (`u8` 有界).
+///
+/// 跳过子节点不存在 / 非块设备 / 未注册 / 索引超 `u8` 范围的情况, 各打一行告警.
+fn collect_composite_child_drives(children: &[u32]) -> alloc::vec::Vec<u8> {
+    let mut child_drives: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+
+    for &child_id in children {
+        let Some(child_node) = devtree_get_node(child_id) else {
+            klog_warn!(
+                Driver,
+                "EGDF: composite child node {} not found, skipping",
+                child_id
+            );
+            continue;
+        };
+
+        if child_node.proto != EGDFProto::Block {
+            klog_warn!(
+                Driver,
+                "EGDF: composite child '{}' is not a block device, skipping",
+                child_node.name
+            );
+            continue;
+        }
+
+        let idx: usize = {
+            if let Some(dev_id) = child_node.device_id {
+                if let Some(i) = egdf_find_by_id(dev_id) {
+                    i
+                } else {
+                    klog_warn!(
+                        Driver,
+                        "EGDF: child '{}' device_id={} not in registry",
+                        child_node.name,
+                        dev_id
+                    );
+                    continue;
+                }
+            } else {
+                if let Some(i) = egdf_find_by_name(child_node.name) {
+                    i
+                } else {
+                    klog_warn!(
+                        Driver,
+                        "EGDF: child '{}' not found in EGDF registry",
+                        child_node.name
+                    );
+                    continue;
+                }
+            }
+        };
+
+        if idx > u8::MAX as usize {
+            klog_warn!(
+                Driver,
+                "EGDF: child '{}' index {} exceeds u8 range, skipping",
+                child_node.name,
+                idx
+            );
+            continue;
+        }
+
+        child_drives.push(crate::privileged::lib::low_u8_from_usize(idx));
+    }
+
+    child_drives
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作

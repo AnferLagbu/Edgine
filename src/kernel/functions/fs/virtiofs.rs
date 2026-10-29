@@ -15,7 +15,6 @@
 //! - virtio-fs 文档: docs/virtio-fs.rst
 
 use crate::privileged::sync::IrqSpinLock as Mutex;
-use crate::privileged::sync::OnceLock;
 use crate::privileged::syscall::Errno;
 
 // ============================================================================
@@ -157,19 +156,6 @@ pub struct VirtioFs {
 }
 
 impl VirtioFs {
-    #[expect(
-        clippy::large_stack_arrays,
-        reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
-    )]
-    /// 构造空的 virtiofs 实例 (无节点)。
-    pub const fn new() -> Self {
-        Self {
-            nodes: [const { VirtioFsNode::new(0, 0, 0) }; MAX_NODES],
-            node_count: 0,
-            next_id: 1,
-        }
-    }
-
     /// 初始化根节点
     pub fn init(&mut self) {
         self.nodes[0] = VirtioFsNode::new(0, 0, 0o40755);
@@ -268,13 +254,19 @@ impl VirtioFs {
 // ============================================================================
 
 /// 全局 virtiofs 文件系统实例
-static VIRTIO_FS: OnceLock<Mutex<VirtioFs>> = OnceLock::new();
+///
+/// 直接以静态初值构造 (`Mutex::new` / `VirtioFsNode::new` 均为 const): 节点表
+/// 256×72B≈18KiB, 若改在函数体内构造, 该整表会成为运行时栈临时量 (也正是
+/// clippy `large_stack_arrays` 的指摘点). 静态初值不经函数体, 且不再需要运行时搬运.
+static VIRTIO_FS: Mutex<VirtioFs> = Mutex::new(VirtioFs {
+    nodes: [const { VirtioFsNode::new(0, 0, 0) }; MAX_NODES],
+    node_count: 0,
+    next_id: 1,
+});
 
 /// 获取 virtiofs 文件系统实例
 pub fn get_virtiofs() -> &'static Mutex<VirtioFs> {
-    VIRTIO_FS.get_or_init(|slot| {
-        slot.write(Mutex::new(VirtioFs::new()));
-    })
+    &VIRTIO_FS
 }
 
 // ============================================================================

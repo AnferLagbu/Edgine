@@ -781,6 +781,27 @@ unsafe impl Sync for PhysicalMemoryManager {}
 // SAFETY: 同上, 初始化后只读, 无并发写风险.
 unsafe impl Send for PhysicalMemoryManager {}
 
+/// `init_bitmap` 计算出的元数据区布局 (物理地址 / 字节数 / 页数).
+struct MetaLayout {
+    total_pages: usize,
+    bitmap_words: usize,
+    bitmap_bytes: usize,
+    bitmap_aligned: u64,
+    buddy_meta_phys: u64,
+    buddy_meta_bytes: usize,
+    buddy_meta_pages: u64,
+    free_links_phys: u64,
+    free_links_bytes: usize,
+    free_links_pages: u64,
+    counts_phys: u64,
+    counts_bytes: usize,
+    counts_pages: u64,
+    owner_phys: u64,
+    owner_bytes: usize,
+    owner_pages: u64,
+    reserved_aligned: u64,
+}
+
 impl PhysicalMemoryManager {
     /// 构造未初始化的 PMM 实例 (零规模 / 空空闲链表 / 元数据载体待装配).
     ///
@@ -867,14 +888,38 @@ impl PhysicalMemoryManager {
             return;
         }
 
+        let layout = self.plan_meta_layout(reserved_after_kernel);
+        self.install_meta_store(&layout);
+        let total_reserved = self.mark_reserved_pages(&layout);
+
+        // ---- 从空闲 bitmap 页构建 buddy 空闲链表 ----
+        self.buddy_init_free_lists(layout.total_pages);
+
+        self.buddy_ready.store(true, Ordering::Release);
+        self.initialized.store(true, Ordering::Release);
+
+        let free = self.count_free_pages();
+        klog_pmm!(
+            "[PMM] Buddy ready: {} total, {} free ({} MB), reserved {} pages",
+            layout.total_pages,
+            free,
+            free * 4 / 1024,
+            total_reserved
+        );
+
+        self.update_stats();
+    }
+
+    /// 计算 bitmap / buddy 元数据 / `FREE_LINKS` / 帧持有计数 / 帧所有权槽五区布局,
+    /// 并推进 `early_current`. 返回各区的物理地址与字节数.
+    fn plan_meta_layout(&self, reserved_after_kernel: u64) -> MetaLayout {
         let reserved_aligned = (reserved_after_kernel + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
         self.early_current
             .fetch_add(reserved_aligned, Ordering::Relaxed);
 
         let info = self.info.get();
         let total_pages = crate::privileged::lib::usize_from_u64(info.total_pages);
-        let total_bits = total_pages;
-        let bitmap_words = total_bits.div_ceil(32);
+        let bitmap_words = total_pages.div_ceil(32);
         let bitmap_bytes = bitmap_words * 4;
 
         // ---- Bitmap placement ----
@@ -944,6 +989,29 @@ impl PhysicalMemoryManager {
             Ordering::Relaxed,
         );
 
+        MetaLayout {
+            total_pages,
+            bitmap_words,
+            bitmap_bytes,
+            bitmap_aligned,
+            buddy_meta_phys,
+            buddy_meta_bytes,
+            buddy_meta_pages,
+            free_links_phys,
+            free_links_bytes,
+            free_links_pages,
+            counts_phys,
+            counts_bytes,
+            counts_pages,
+            owner_phys,
+            owner_bytes,
+            owner_pages,
+            reserved_aligned,
+        }
+    }
+
+    /// 建立元数据载体并把五区指针交给 `MetaStoreImpl`, 随后打印各区日志.
+    fn install_meta_store(&self, layout: &MetaLayout) {
         // H-04 (2026-09-09): 三区内存预置统一经 MetaStore 载体 —
         // 生产自动创建 RawMetaStore (基于 phys + KERNEL_BASE 裸指针, 行为不变),
         // host 测试已在 init_bitmap 前经 inject_meta_store 注入 VecMetaStore.
@@ -966,110 +1034,103 @@ impl PhysicalMemoryManager {
             // host-test 下 slot 由 inject_meta_store 预置 (若未注入则 panic, 属错误用法).
             slot.as_mut().expect("[PMM] meta store missing")
         };
-        store.setup_bitmap(bitmap_aligned, bitmap_bytes);
-        store.setup_meta(buddy_meta_phys, buddy_meta_bytes);
-        store.setup_links(free_links_phys, free_links_bytes);
-        store.setup_counts(counts_phys, counts_bytes);
-        store.setup_owner(owner_phys, owner_bytes);
-        self.bitmap_size.set(bitmap_words);
+        store.setup_bitmap(layout.bitmap_aligned, layout.bitmap_bytes);
+        store.setup_meta(layout.buddy_meta_phys, layout.buddy_meta_bytes);
+        store.setup_links(layout.free_links_phys, layout.free_links_bytes);
+        store.setup_counts(layout.counts_phys, layout.counts_bytes);
+        store.setup_owner(layout.owner_phys, layout.owner_bytes);
+        self.bitmap_size.set(layout.bitmap_words);
         klog_pmm!(
             "[PMM] Buddy meta: {} B at 0x{:X}",
-            buddy_meta_bytes,
-            phys_to_virt(buddy_meta_phys)
+            layout.buddy_meta_bytes,
+            phys_to_virt(layout.buddy_meta_phys)
         );
         klog_pmm!(
             "[PMM] FREE_LINKS: {} B at 0x{:X} ({} pages)",
-            free_links_bytes,
-            phys_to_virt(free_links_phys),
-            free_links_pages
+            layout.free_links_bytes,
+            phys_to_virt(layout.free_links_phys),
+            layout.free_links_pages
         );
         klog_pmm!(
             "[PMM] FRAME_COUNTS: {} B at 0x{:X} ({} pages)",
-            counts_bytes,
-            phys_to_virt(counts_phys),
-            counts_pages
+            layout.counts_bytes,
+            phys_to_virt(layout.counts_phys),
+            layout.counts_pages
         );
         klog_pmm!(
             "[PMM] FRAME_OWNER: {} B at 0x{:X} ({} pages)",
-            owner_bytes,
-            phys_to_virt(owner_phys),
-            owner_pages
+            layout.owner_bytes,
+            phys_to_virt(layout.owner_phys),
+            layout.owner_pages
         );
+    }
 
+    /// 在 bitmap 中标记内核镜像 / 预留区 / 元数据五区为已用, 返回预留总页数.
+    fn mark_reserved_pages(&self, layout: &MetaLayout) -> usize {
         // ---- 在 bitmap 中标记 reserved 区 ----
         let kernel_end_val = self.kernel_end.get();
         let kernel_pages =
             crate::privileged::lib::usize_from_u64(phys_to_page(kernel_end_val + PAGE_SIZE - 1));
-        let reserved_pages = (reserved_aligned / PAGE_SIZE) as usize;
+        let reserved_pages = (layout.reserved_aligned / PAGE_SIZE) as usize;
         let total_reserved = kernel_pages + reserved_pages;
-        for i in 0..total_reserved.min(total_pages) {
+        for i in 0..total_reserved.min(layout.total_pages) {
             self.set_bit(i);
         }
-        if total_pages > 0 {
+        if layout.total_pages > 0 {
             self.set_bit(0); // page 0 永远不能被分配出去
         }
 
         // 标记 bitmap 页已用
-        let bmp_start_page = crate::privileged::lib::usize_from_u64(phys_to_page(bitmap_aligned));
-        let bmp_pages =
-            crate::privileged::lib::usize_from_u64((bitmap_bytes as u64).div_ceil(PAGE_SIZE));
-        for i in bmp_start_page..(bmp_start_page + bmp_pages).min(total_pages) {
+        let bmp_start_page =
+            crate::privileged::lib::usize_from_u64(phys_to_page(layout.bitmap_aligned));
+        let bmp_pages = crate::privileged::lib::usize_from_u64(
+            (layout.bitmap_bytes as u64).div_ceil(PAGE_SIZE),
+        );
+        for i in bmp_start_page..(bmp_start_page + bmp_pages).min(layout.total_pages) {
             self.set_bit(i);
         }
 
         // 标记 buddy-meta 页已用
         let buddy_start_page =
-            crate::privileged::lib::usize_from_u64(phys_to_page(buddy_meta_phys));
+            crate::privileged::lib::usize_from_u64(phys_to_page(layout.buddy_meta_phys));
         for i in buddy_start_page
-            ..(buddy_start_page + crate::privileged::lib::usize_from_u64(buddy_meta_pages))
-                .min(total_pages)
+            ..(buddy_start_page + crate::privileged::lib::usize_from_u64(layout.buddy_meta_pages))
+                .min(layout.total_pages)
         {
             self.set_bit(i);
         }
 
         // 标记 FREE_LINKS 页已用 (H-02)
-        let fl_start_page = crate::privileged::lib::usize_from_u64(phys_to_page(free_links_phys));
+        let fl_start_page =
+            crate::privileged::lib::usize_from_u64(phys_to_page(layout.free_links_phys));
         for i in fl_start_page
-            ..(fl_start_page + crate::privileged::lib::usize_from_u64(free_links_pages))
-                .min(total_pages)
+            ..(fl_start_page + crate::privileged::lib::usize_from_u64(layout.free_links_pages))
+                .min(layout.total_pages)
         {
             self.set_bit(i);
         }
 
         // 标记帧持有计数页已用
-        let counts_start_page = crate::privileged::lib::usize_from_u64(phys_to_page(counts_phys));
+        let counts_start_page =
+            crate::privileged::lib::usize_from_u64(phys_to_page(layout.counts_phys));
         for i in counts_start_page
-            ..(counts_start_page + crate::privileged::lib::usize_from_u64(counts_pages))
-                .min(total_pages)
+            ..(counts_start_page + crate::privileged::lib::usize_from_u64(layout.counts_pages))
+                .min(layout.total_pages)
         {
             self.set_bit(i);
         }
 
         // 标记帧所有权槽页已用
-        let owner_start_page = crate::privileged::lib::usize_from_u64(phys_to_page(owner_phys));
+        let owner_start_page =
+            crate::privileged::lib::usize_from_u64(phys_to_page(layout.owner_phys));
         for i in owner_start_page
-            ..(owner_start_page + crate::privileged::lib::usize_from_u64(owner_pages))
-                .min(total_pages)
+            ..(owner_start_page + crate::privileged::lib::usize_from_u64(layout.owner_pages))
+                .min(layout.total_pages)
         {
             self.set_bit(i);
         }
 
-        // ---- 从空闲 bitmap 页构建 buddy 空闲链表 ----
-        self.buddy_init_free_lists(total_pages);
-
-        self.buddy_ready.store(true, Ordering::Release);
-        self.initialized.store(true, Ordering::Release);
-
-        let free = self.count_free_pages();
-        klog_pmm!(
-            "[PMM] Buddy ready: {} total, {} free ({} MB), reserved {} pages",
-            total_pages,
-            free,
-            free * 4 / 1024,
-            total_reserved
-        );
-
-        self.update_stats();
+        total_reserved
     }
 
     /// 武装"分配失败注入": 接下来的 `skip` 次 `alloc_page` 照常成功, 其后一律返回 `None`.
