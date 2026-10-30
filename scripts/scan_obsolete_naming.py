@@ -2,11 +2,14 @@
 """
 废弃命名扫描器 (Obsolete Naming Scanner)
 
-检出仓内对已废弃项目名的任何引用. 受检词 = AntX —— 本仓早期内核与项目的代号,
-2026-10-04 全项目更名后已彻底废弃: 产物名 / GRUB 标题 / QEMU hostname / 安装标记 /
-调试脚本一律并入 Edgine (P-58 裁定「乙・彻底废弃」+「甲・全部并入 Edgine」).
+检出仓内对已废弃项目名的任何引用. 受检词 (NEEDLES): AntX 与 UNKFS.
+- AntX —— 本仓早期内核与项目的代号, 2026-10-04 全项目更名后已彻底废弃: 产物名 /
+  GRUB 标题 / QEMU hostname / 安装标记 / 调试脚本一律并入 Edgine
+  (P-58 裁定「乙・彻底废弃」+「甲・全部并入 Edgine」).
+- UNKFS —— 文件系统旧名, 2026-10-30 全面改名 EGFS (Edgine File System) 后废弃;
+  唯一豁免 = docs/explain/ref-naming.md (职责即记录旧名 → 新名映射链).
 
-## 口径 (P-58 校正后的四条)
+## 口径 (P-58 校正后的四条 + UNKFS 扩围)
 
 1. **范围 = `git ls-files` 列出的全部受控文本文件**, 不按扩展名白名单选文件.
    旧实现只扫 `.rs/.toml/.sh/.py/.md/...`, 于是最集中的产物命名 —— 无扩展名的
@@ -19,6 +22,8 @@
 4. **二值判定**: 无违规退 0; 有违规退 1 并逐条列出; 扫描失败退 2 (fail-closed,
    读取失败不静默 continue). 正常扫描前先跑检测器自检, 自检失败同样退 2 ——
    检测器自己坏了不许给出「零违规」.
+5. **映射文档豁免**: `docs/explain/ref-naming.md` 的职责是记录旧名 → 新名映射链,
+   其中出现废弃名属预期内容, 整文件豁免; 其他 docs/explain 文本照常受检.
 
 ## 用法
 
@@ -39,11 +44,14 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SELF_PATH = Path(__file__).resolve()
 
-NEEDLE = "antx"
+NEEDLES = ("antx", "unkfs")
 # 边界口径: 前后不是 ASCII 字母/数字, 但 `_` / `.` / `-` 都算边界 ⇒
 # `xxx.iso` / `xxx_test.iso` / `.gdbinit.xxx` / `xxx-stage1.asm` 全部命中,
 # 而 `ant` / `antxyz` / `xantx` 不误报.
-PATTERN = re.compile(r"(?i)(?<![a-z0-9])" + NEEDLE + r"(?![a-z0-9])")
+PATTERNS = {
+    needle: re.compile(r"(?i)(?<![a-z0-9])" + needle + r"(?![a-z0-9])")
+    for needle in NEEDLES
+}
 
 HISTORY_PREFIXES = ("docs/plan/", "docs/report/")
 EXCLUDED_PREFIXES = (
@@ -51,18 +59,26 @@ EXCLUDED_PREFIXES = (
     "target/",
     "src/kernel/functions/net/smoltcp/",
 )
+# 命名映射文档: 职责是记录旧名 → 新名, 命中属预期内容 (口径第 5 条)
+MAPPING_DOC = "docs/explain/ref-naming.md"
 BINARY_PROBE_BYTES = 8192
 CONTEXT_CHARS = 120
 
 SELF_TEST_CASES = [
-    ("产物路径形态", "scripts/a.sh", f"other/build/x86_64/{NEEDLE}.iso", 1),
-    ("下划线标识符形态", "Makefile", f"{NEEDLE}_test.iso", 1),
-    ("大写形态", "src/a.rs", NEEDLE.upper(), 1),
-    ("连字符形态", "src/a.asm", f"{NEEDLE}-stage1.asm", 1),
-    ("点前缀形态", "scripts/a.sh", f".gdbinit.{NEEDLE}", 1),
-    ("普通词不误报", "src/a.rs", "ant", 0),
-    ("后缀连写不误报", "src/a.rs", f"{NEEDLE}yz", 0),
-    ("前缀连写不误报", "src/a.rs", f"x{NEEDLE}", 0),
+    ("antx", "产物路径形态", "scripts/a.sh", "other/build/x86_64/antx.iso", 1),
+    ("antx", "下划线标识符形态", "Makefile", "antx_test.iso", 1),
+    ("antx", "大写形态", "src/a.rs", "ANTX", 1),
+    ("antx", "连字符形态", "src/a.asm", "antx-stage1.asm", 1),
+    ("antx", "点前缀形态", "scripts/a.sh", ".gdbinit.antx", 1),
+    ("antx", "普通词不误报", "src/a.rs", "ant", 0),
+    ("antx", "后缀连写不误报", "src/a.rs", "antxyz", 0),
+    ("antx", "前缀连写不误报", "src/a.rs", "xantx", 0),
+    ("unkfs", "模块目录形态", "src/a.rs", "src/kernel/functions/fs/unkfs/mod.rs", 1),
+    ("unkfs", "测试文件名形态", "host-tests/Cargo.toml", "tests/unkfs_test.rs", 1),
+    ("unkfs", "大写形态", "docs/x.md", "UNKFS", 1),
+    ("unkfs", "连字符形态", "scripts/a.sh", "unkfs-stage1.asm", 1),
+    ("unkfs", "后缀连写不误报", "src/a.rs", "unkfsyz", 0),
+    ("unkfs", "前缀连写不误报", "src/a.rs", "xunkfs", 0),
 ]
 
 
@@ -77,17 +93,21 @@ def is_history(rel: str) -> bool:
 
 def scan_text(rel: str, text: str) -> list[dict]:
     """纯函数检测器: 输入 (相对路径, 文本), 输出命中列表 (自检直接调用它)."""
+    if rel == MAPPING_DOC:
+        return []
     hits = []
     for line_no, line in enumerate(text.splitlines(), start=1):
-        for match in PATTERN.finditer(line):
-            hits.append(
-                {
-                    "file": rel,
-                    "line": line_no,
-                    "col": match.start() + 1,
-                    "context": line.strip()[:CONTEXT_CHARS],
-                }
-            )
+        for needle, pattern in PATTERNS.items():
+            for match in pattern.finditer(line):
+                hits.append(
+                    {
+                        "file": rel,
+                        "line": line_no,
+                        "col": match.start() + 1,
+                        "token": needle,
+                        "context": line.strip()[:CONTEXT_CHARS],
+                    }
+                )
     return hits
 
 
@@ -140,10 +160,12 @@ def collect() -> tuple[list[dict], list[dict], int]:
 def self_test() -> list[str]:
     """检测器自检: 真调 scan_text, 不模拟算法 (P-50 ③ 同型要求)."""
     failures = []
-    for label, rel, text, want in SELF_TEST_CASES:
+    for needle, label, rel, text, want in SELF_TEST_CASES:
         got = len(scan_text(rel, text))
         if got != want:
-            failures.append(f"{label}: 期望 {want} 处, 实得 {got} 处")
+            failures.append(f"{needle}/{label}: 期望 {want} 处, 实得 {got} 处")
+    if scan_text(MAPPING_DOC, "NestFS → UNKFS → EGFS"):
+        failures.append(f"映射文档豁免: {MAPPING_DOC} 不应命中")
     for rel in ("docs/plan/x.md", "docs/report/x.md"):
         if not is_history(rel):
             failures.append(f"历史面判定: {rel} 必须 KEEP")
@@ -156,7 +178,7 @@ def self_test() -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="扫描已废弃项目名 (AntX) 的残留引用",
+        description="扫描已废弃项目名 (AntX / UNKFS) 的残留引用",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--json", action="store_true", help="输出 JSON 报告")
@@ -170,7 +192,9 @@ def main() -> int:
                 print(f"自检失败: {msg}", file=sys.stderr)
             return 2
         if args.self_test:
-            print(f"自检通过: {len(SELF_TEST_CASES)} 个判定用例 + 历史面 + 受控文件枚举")
+            print(
+                f"自检通过: {len(SELF_TEST_CASES)} 个判定用例 + 历史面 + 映射文档 + 受控文件枚举"
+            )
             return 0
         violations, kept, scanned = collect()
     except ScanError as exc:
