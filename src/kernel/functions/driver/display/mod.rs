@@ -26,8 +26,8 @@ pub mod framebuffer_ops;
 
 // 重新导出 DisplayPort 公共类型
 pub use dp::{
-    AuxCommand, AuxTransaction, DpController, DpError, DpIo, Dpcd, LaneCount, LinkRate,
-    REQUIRED_IOMEM_SIZE, TrainingState, assert_iomem_size_at_least,
+    AuxCommand, AuxTransaction, DpController, DpError, DpIo, Dpcd, DpcdCapabilities, LaneCount,
+    LinkRate, REQUIRED_IOMEM_SIZE, TrainingState, assert_iomem_size_at_least,
 };
 
 // 帧缓冲绘图策略注册入口 (crate root 在 privileged::driver::init_all 之前调用)
