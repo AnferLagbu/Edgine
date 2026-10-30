@@ -12,7 +12,7 @@
 
 ### 0 铁律（零容忍，违反即拒收）
 
-6 条零容忍规则：F1 functions 层 0 unsafe（#![deny(unsafe_code)] + audit_functions_boundary.py）/ F2 functions 禁止访问 privileged 内部模块（audit_functions_boundary.py 黑名单）/ F3 新增代码禁止引入模块间循环依赖（audit_coupling.py）/ F4 privileged 任何 unsafe 块必须配 // SAFETY: 注释（audit_safety_coverage.py）/ F5 双架构编译 0 warning 0 error（make ARCH=x86_64 && make ARCH=aarch64）/ F6 三审计全部通过（audit_functions_boundary + audit_safety_coverage + audit_deadlock_matrix）。
+硬规则的**编号、条数与定义只有一个持有者**：[AGENTS.md §5 硬规则（零容忍）](../../AGENTS.md#5-硬规则零容忍违反即拒收)。本文不自持 F 表副本（P-70 甲 单源化）——旧副本停在 F6、缺 F7/F8/F9，并把 `audit_deadlock_matrix.py` 错归进 F6 的审计子集（P-68 消掉的编号二义的第二个副本），按编号检索会得到两套答案。同理，**门禁脚本清单**以 AGENTS §2.2 为准、**验证门槛**以 AGENTS §2.3 为准（本地一键判据 = `bash ci/audit.sh full`，裸命令缺省档是 `quick`，不构成验收依据）。本文只承载编码风格与工程纪律条款（下列 1–13 章节）。违反任一硬规则即拒收 PR，不接受"先合并再修"。
 
 ## 如何使用
 
@@ -68,7 +68,7 @@ F3 的边模型口径（`audit_coupling.py`，P-65 乙 收口）：依赖边只�
 
 ### 12 提交检查清单
 
-14 项提交前确认。基础（4 项）：双架构编译 0w0e / 三审计通过 / host-tests 通过 / 文档同步更新（commit message）；耦合与编码（5 项）：无新增 functions 层 unsafe / 无新增跨子系统内部访问 / 无新增循环依赖 / 无硬编码跨子系统常量 / 无顺手修改无关代码；内核安全（5 项）：中断上下文无 sleep 操作 / 原子操作 Ordering 正确 / 资源获取/释放严格配对 / 失败路径 LIFO 反序回滚 / privileged 修改通过 I1-I6 自检。
+14 项提交前确认。基础（4 项）：双架构编译 0w0e / 核心审计全绿（判据 = `bash ci/audit.sh full`，脚本清单见 AGENTS §2.2）/ host-tests 通过 / 文档同步更新（commit message）；耦合与编码（5 项）：无新增 functions 层 unsafe / 无新增跨子系统内部访问 / 无新增循环依赖 / 无硬编码跨子系统常量 / 无顺手修改无关代码；内核安全（5 项）：中断上下文无 sleep 操作 / 原子操作 Ordering 正确 / 资源获取/释放严格配对 / 失败路径 LIFO 反序回滚 / privileged 修改通过 I1-I6 自检。
 
 ### 13 存量问题处理
 
@@ -78,13 +78,13 @@ F3 的边模型口径（`audit_coupling.py`，P-65 乙 收口）：依赖边只�
 
 ### 6 层防护机制
 
-6 层防护。编译期：functions/mod.rs 顶部 #![deny(unsafe_code)] 强制 functions 0 unsafe；静态检查：audit_functions_boundary + audit_safety_coverage + audit_deadlock_matrix + audit_comment_language + audit_coupling + audit_tcb_ratio + audit_invariants 7 个审计脚本；编译验证：双架构 cargo check 0w0e + clippy 0 warning；测试：host-tests + QEMU 集成测试；miri-tests 已删除，UB 检测由 Rust 编译期 + 7 个审计脚本覆盖；人工审查：PR review 流程覆盖本规范 13 章节；文档同步：plan/ + explain/ 两层文档自动维护。
+6 层防护。编译期：functions/mod.rs 顶部 #![deny(unsafe_code)] 强制 functions 0 unsafe；静态检查：审计脚本清单以 AGENTS §2.2 为唯一持有者，本地一键入口 `ci/audit.sh`（本文不复制清单，P-70 甲）；编译验证：双架构 cargo check 0w0e + clippy 0 warning；测试：host-tests + QEMU 集成测试；miri-tests 已删除，UB 检测由 Rust 编译期 + 上述审计腿覆盖；人工审查：PR review 流程覆盖本规范 13 章节；文档同步：plan/ + explain/ 两层文档自动维护。
 
 ## 注意事项
 
 ### 违反铁律即拒收
 
-F1-F6 是硬约束。6 条铁律零容忍，违反即拒收 PR，不接受"先合并再修"。
+AGENTS §5 的硬规则是硬约束，零容忍，违反即拒收 PR，不接受"先合并再修"。编号与条数不在本文重复持有（P-70 甲 单源化，见 §0）。
 
 ### 新代码 100% 合规
 

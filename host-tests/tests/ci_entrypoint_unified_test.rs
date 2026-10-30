@@ -1467,6 +1467,100 @@ fn assert_p65_docs_name_declaration_level_edges() {
     }
 }
 
+/// P-70 甲 结构锁: 硬规则的编号与条数只有一个持有者 (AGENTS §5), 门禁清单只有
+/// AGENTS §2.2 / 门槛只有 §2.3, must-sync 文档一律指向而不复制.
+///
+/// 病灶: `spec-engineering.md` 自持「6 条零容忍规则」副本且把 `audit_deadlock_matrix.py`
+/// 归进 F6「三审计」, 与 AGENTS §5 的 F7/F8/F9 缺席、F6 编号二义同时失真 ⇒ 按编号检索
+/// 会得到两套答案. 本锁同时钉住普查面 (见 [`assert_p70_no_stale_copies_in_must_sync_docs`]).
+#[test]
+fn test_p70_hard_rule_numbers_have_single_holder() {
+    let agents = read(AGENTS_MD);
+    // 只在 §5 段内取数: §2.2 的「对应硬规则」列也写 `| F9 |`, 全文 contains 会被它喂饱.
+    let sec5_at = agents
+        .find("## 5. 硬规则")
+        .unwrap_or_else(|| panic!("AGENTS 缺 §5 硬规则段 —— F 编号的唯一持有者丢失"));
+    let sec5 = &agents[sec5_at..];
+    let sec5 = &sec5[..sec5[1..]
+        .find("\n## ")
+        .map_or(sec5.len() - 1, |idx| idx + 1)];
+    for needle in ["| F1 |", "| F7 |", "| F9 |"] {
+        assert!(
+            sec5.contains(needle),
+            "AGENTS §5 不再是 F 编号的持有者 (`{needle}` 缺失) —— 单源化不能把唯一持有者一起删掉"
+        );
+    }
+
+    let spec = read("../docs/explain/spec-engineering.md");
+    assert!(
+        spec.contains("AGENTS.md#5-硬规则零容忍违反即拒收"),
+        "spec-engineering §0 未给出指向 AGENTS §5 的可跳转链接 —— 删副本后读者无处查编号"
+    );
+    for needle in ["P-70", "不自持 F 表副本", "AGENTS §2.2", "AGENTS §2.3"] {
+        assert!(
+            spec.contains(needle),
+            "spec-engineering 缺 `{needle}` —— 编号/门禁清单/门槛的持有者指向不完整"
+        );
+    }
+    assert!(
+        spec.contains("bash ci/audit.sh full"),
+        "spec-engineering 未写明本地一键判据的档位 —— 裸命令缺省档 quick 不构成验收依据"
+    );
+
+    assert_p70_no_stale_copies_in_must_sync_docs();
+}
+
+/// P-70 全仓普查: must-sync 面 (`docs/explain/` + `docs/design/` + 四份根文档) 不得
+/// 再出现自持的规则条数 / 门禁清单副本, 也不得自持 `| Fn |` 形式的硬规则表.
+///
+/// `docs/plan/` 与 `docs/report/` 属历史快照 (§6 不要求路径/文本新鲜), 不在普查面内.
+fn assert_p70_no_stale_copies_in_must_sync_docs() {
+    const STALE: &[&str] = &["三审计", "F1-F6", "6 条铁律", "6 条零容忍", "7 个审计脚本"];
+    let mut docs = vec![
+        "../AGENTS.md".to_string(),
+        "../README.md".to_string(),
+        "../README.en.md".to_string(),
+        "../docs/README.md".to_string(),
+    ];
+    for dir in ["../docs/explain", "../docs/design"] {
+        let entries = fs::read_dir(dir).unwrap_or_else(|e| panic!("read {dir} failed: {e}"));
+        for entry in entries {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|ext| ext == "md") {
+                docs.push(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+    assert!(
+        docs.len() >= 14,
+        "普查面只有 {} 份文档 —— 目录枚举失败会让普查空转成恒绿",
+        docs.len()
+    );
+    for doc in &docs {
+        let text = read(doc);
+        for needle in STALE {
+            assert!(
+                !text.contains(needle),
+                "{doc} 仍自持 `{needle}` —— 与 AGENTS 的持有者双源 (P-70 病灶)"
+            );
+        }
+        if doc == "../AGENTS.md" {
+            continue;
+        }
+        for (idx, line) in text.lines().enumerate() {
+            let is_f_table = line
+                .trim_start()
+                .strip_prefix("| F")
+                .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
+            assert!(
+                !is_f_table,
+                "{doc}:{} 自持硬规则表 (`| Fn |` 行) —— F 编号只允许 AGENTS §5 持有",
+                idx + 1
+            );
+        }
+    }
+}
+
 /// P-55 结构锁 (乙 + ②四处全修): QEMU 腿缺工具必须进未执行台账, 且四条腿的失败成因
 /// 必须由捕获式退出码给出 (不能把真失败一律打印成「执行异常」).
 ///
