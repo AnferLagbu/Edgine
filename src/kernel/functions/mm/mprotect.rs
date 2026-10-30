@@ -97,3 +97,80 @@ pub fn mprotect_syscall(addr: u64, len: u64, prot: i32) -> Result<usize, Errno> 
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_prot_to_page_flags_bit_matrix() {
+        let none = prot_to_page_flags(PROT_NONE);
+        assert!(
+            !none.contains(PageFlags::PRESENT),
+            "PROT_NONE 不得置 PRESENT"
+        );
+        assert!(!none.contains(PageFlags::WRITABLE));
+        assert!(!none.contains(PageFlags::USER), "PROT_NONE 不得置 USER");
+        assert!(
+            !none.contains(PageFlags::NX),
+            "PROT_NONE 不置 NX —— 该位属于可读映射的取指策略, 对未映射页无意义"
+        );
+
+        let read = prot_to_page_flags(PROT_READ);
+        assert!(read.contains(PageFlags::PRESENT | PageFlags::USER | PageFlags::NX));
+        assert!(!read.contains(PageFlags::WRITABLE), "PROT_READ 不得可写");
+
+        let write = prot_to_page_flags(PROT_WRITE);
+        assert!(
+            write.contains(
+                PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER | PageFlags::NX
+            ),
+            "PROT_WRITE 必须可写且不可执行 (W^X 默认栈)"
+        );
+
+        let exec = prot_to_page_flags(PROT_EXEC);
+        assert!(exec.contains(PageFlags::PRESENT | PageFlags::USER));
+        assert!(
+            !exec.contains(PageFlags::NX),
+            "PROT_EXEC 必须清 NX —— 置 NX 会让取指 #PF"
+        );
+
+        let rwx = prot_to_page_flags(PROT_READ | PROT_WRITE | PROT_EXEC);
+        assert!(rwx.contains(PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER));
+        assert!(!rwx.contains(PageFlags::NX));
+    }
+
+    #[test]
+    fn test_mprotect_syscall_rejects_invalid_args() {
+        assert_eq!(
+            mprotect_syscall(0x1001, 0x1000, PROT_READ),
+            Err(Errno::Einval),
+            "非页对齐 addr 必须 EINVAL"
+        );
+        assert_eq!(
+            mprotect_syscall(0x1000, 0, PROT_READ),
+            Err(Errno::Einval),
+            "len == 0 必须 EINVAL"
+        );
+        assert_eq!(
+            mprotect_syscall(0x1000, 0x1000, 0x8),
+            Err(Errno::Einval),
+            "prot 位外值 (0x8) 必须 EINVAL"
+        );
+        assert_eq!(
+            mprotect_syscall(0x1000, 0x1000, -1),
+            Err(Errno::Einval),
+            "prot 全 1 必须 EINVAL (按无符号位与判定)"
+        );
+    }
+
+    #[test]
+    fn test_mprotect_syscall_needs_current_page_table() {
+        // 参数全部合法 ⇒ 越过校验, 落到进程页表根查询; host 侧无当前进程 ⇒ ENOMEM.
+        // 该断言的意义是「合法参数不会被校验误杀」, 同时钉住 fail-closed (不静默改内核表).
+        assert_eq!(
+            mprotect_syscall(0x1000, 0x1000, PROT_READ),
+            Err(Errno::Enomem)
+        );
+    }
+}

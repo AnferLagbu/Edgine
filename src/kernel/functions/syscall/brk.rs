@@ -64,3 +64,32 @@ pub fn sys_brk(addr: u64) -> i64 {
     BRK.store(addr, Ordering::SeqCst);
     addr.cast_signed()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sys_brk_zero_returns_current_brk() {
+        let cur = sys_brk(0);
+        assert!(cur > 0, "无 MmStruct 时必须回退全局 brk, 实测 {cur}");
+    }
+
+    #[test]
+    fn test_sys_brk_above_user_max_is_enomem() {
+        assert_eq!(
+            sys_brk(USER_ADDR_MAX + 1),
+            Errno::Enomem.as_ret(),
+            "超出 USER_ADDR_MAX 必须返回 -ENOMEM"
+        );
+    }
+
+    #[test]
+    fn test_sys_brk_idempotent_at_current() {
+        let cur = sys_brk(0);
+        assert!(cur > 0, "前提: 零查询必须返回当前 brk, 实测 {cur}");
+        // 目标等于当前值 ⇒ 既不扩张 (不触发分配) 也不收缩, 返回值与全局态都不变.
+        assert_eq!(sys_brk(cur.cast_unsigned()), cur);
+        assert_eq!(sys_brk(0), cur, "等值调用不得改变当前 brk");
+    }
+}

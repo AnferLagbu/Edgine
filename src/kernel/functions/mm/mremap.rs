@@ -66,3 +66,98 @@ pub fn mremap_syscall(
         cr3,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 上限与 `mremap_syscall` 内的同名常量必须同步; 单独持有一份是为了在断言里
+    /// 表达「边界值本身合法」, 而不必暴露函数内部常量.
+    const MAX_REMAP: u64 = 1 << 30;
+
+    fn empty_mm() -> MmStruct {
+        MmStruct::new()
+    }
+
+    #[test]
+    fn test_mremap_rejects_zero_and_unaligned() {
+        let mm = empty_mm();
+        assert_eq!(
+            mremap_syscall(&mm, 0, 0x1000, 0x1000, 0),
+            Err(Errno::Einval),
+            "old_addr == 0 必须 EINVAL"
+        );
+        assert_eq!(
+            mremap_syscall(&mm, 0x1000, 0, 0x1000, 0),
+            Err(Errno::Einval),
+            "old_size == 0 必须 EINVAL"
+        );
+        assert_eq!(
+            mremap_syscall(&mm, 0x1000, 0x1000, 0, 0),
+            Err(Errno::Einval),
+            "new_size == 0 必须 EINVAL"
+        );
+        assert_eq!(
+            mremap_syscall(&mm, 0x1001, 0x1000, 0x1000, 0),
+            Err(Errno::Einval),
+            "非页对齐 old_addr 必须 EINVAL"
+        );
+    }
+
+    #[test]
+    fn test_mremap_size_cap_is_enomem() {
+        let mm = empty_mm();
+        assert_eq!(
+            mremap_syscall(&mm, 0x1000, MAX_REMAP + 1, 0x1000, 0),
+            Err(Errno::Enomem),
+            "超大 old_size 必须 ENOMEM (护栏, 而非 EINVAL)"
+        );
+        assert_eq!(
+            mremap_syscall(&mm, 0x1000, 0x1000, MAX_REMAP + 1, 0),
+            Err(Errno::Enomem),
+            "超大 new_size 必须 ENOMEM"
+        );
+    }
+
+    #[test]
+    fn test_mremap_rejects_unknown_flags() {
+        let mm = empty_mm();
+        assert_eq!(
+            mremap_syscall(&mm, 0x1000, 0x1000, 0x1000, 2),
+            Err(Errno::Einval),
+            "MREMAP_FIXED 未实装, 必须拒绝而不是静默忽略"
+        );
+        assert_eq!(
+            mremap_syscall(&mm, 0x1000, 0x1000, 0x1000, -1),
+            Err(Errno::Einval),
+            "flags 全 1 必须 EINVAL"
+        );
+    }
+
+    #[test]
+    fn test_mremap_size_cap_boundary_is_inclusive() {
+        let mm = empty_mm();
+        // 探针取非法 flags: 容量护栏先拦 ⇒ ENOMEM, 护栏放行 ⇒ flags 校验 ⇒ EINVAL.
+        // 因此 EINVAL 才能证明「上限值本身被接受」; 若把 `>` 改成 `>=`, 这里会变成 ENOMEM 而红.
+        assert_eq!(
+            mremap_syscall(&mm, 0x1000, MAX_REMAP, 0x1000, 2),
+            Err(Errno::Einval),
+            "old_size == MAX_REMAP 必须越过容量护栏 (边界是闭区间)"
+        );
+        assert_eq!(
+            mremap_syscall(&mm, 0x1000, MAX_REMAP + 1, 0x1000, 2),
+            Err(Errno::Enomem),
+            "old_size 超上限必须被容量护栏先拦下"
+        );
+        assert_eq!(
+            mremap_syscall(&mm, 0x1000, 0x1000, MAX_REMAP, 2),
+            Err(Errno::Einval),
+            "new_size == MAX_REMAP 必须越过容量护栏"
+        );
+        assert_eq!(
+            mremap_syscall(&mm, 0x1000, 0x1000, MAX_REMAP + 1, 2),
+            Err(Errno::Enomem),
+            "new_size 超上限必须被容量护栏先拦下"
+        );
+    }
+}

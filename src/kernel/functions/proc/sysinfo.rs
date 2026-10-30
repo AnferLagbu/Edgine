@@ -243,3 +243,59 @@ pub fn reboot_syscall(cmd: i32) -> i64 {
     }
     crate::privileged::syscall::api::reboot_mechanism(cmd)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::privileged::constants::limits::USER_ADDR_MAX;
+    use crate::privileged::proc::rlimit::RLIMIT_NLIMITS;
+
+    /// 上界本身不是合法用户指针 (`validate_user_ptr` 要求 `ptr < USER_ADDR_MAX`),
+    /// 用它触发指针校验分支, 同时不会真的解引用 host 地址空间.
+    const BAD_USER_PTR: u64 = USER_ADDR_MAX;
+
+    #[test]
+    fn test_setrlimit_rejects_null_and_bad_resource() {
+        assert_eq!(
+            setrlimit_syscall(0, 0),
+            Errno::Einval.as_ret(),
+            "rlim_ptr == NULL 必须 EINVAL"
+        );
+        assert_eq!(
+            setrlimit_syscall(-1, BAD_USER_PTR),
+            Errno::Einval.as_ret(),
+            "负 resource 必须 EINVAL"
+        );
+        assert_eq!(
+            setrlimit_syscall(
+                crate::functions::intcast::low_i32_from_usize(RLIMIT_NLIMITS),
+                BAD_USER_PTR
+            ),
+            Errno::Einval.as_ret(),
+            "resource == RLIMIT_NLIMITS 越界必须 EINVAL"
+        );
+    }
+
+    #[test]
+    fn test_setrlimit_bad_user_ptr_is_efault() {
+        assert_eq!(
+            setrlimit_syscall(0, BAD_USER_PTR),
+            Errno::Efault.as_ret(),
+            "合法 resource + 非法用户指针必须 EFAULT (不是 EINVAL, 也不得解引用)"
+        );
+    }
+
+    #[test]
+    fn test_getrlimit_rejects_null_and_bad_ptr() {
+        assert_eq!(
+            getrlimit_syscall(0, 0),
+            Errno::Einval.as_ret(),
+            "rlim_ptr == NULL 必须 EINVAL"
+        );
+        assert_eq!(
+            getrlimit_syscall(0, BAD_USER_PTR),
+            Errno::Efault.as_ret(),
+            "非法用户指针必须 EFAULT"
+        );
+    }
+}

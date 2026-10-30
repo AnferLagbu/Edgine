@@ -52,3 +52,21 @@ pub fn brk_syscall(addr: u64) -> Result<usize, Errno> {
         Ok(crate::functions::intcast::usize_from_i64(ret))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_brk_syscall_zero_is_query_not_error() {
+        // addr == 0 是查询: 无 MmStruct 时回退全局 brk, 必须返回当前值而非错误
+        let cur = brk_syscall(0).expect("addr == 0 必须是合法查询");
+        assert!(cur > 0, "无 MmStruct 时必须回退全局 brk, 实测 {cur}");
+    }
+
+    #[test]
+    fn test_brk_syscall_above_user_max_is_enomem() {
+        assert_eq!(brk_syscall(USER_ADDR_MAX + 1), Err(Errno::Enomem));
+        assert_eq!(brk_syscall(u64::MAX), Err(Errno::Enomem));
+    }
+}
