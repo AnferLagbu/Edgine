@@ -884,9 +884,9 @@ T7 (预存登记)
 
 #### B-6. R1 已分类清单（机器可读区块；B09-21 数据源）
 
-> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**452 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
+> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**442 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
 >
-> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝P-34 退役 `src/rust/edgine-tests` 的去掩蔽批次**：`functions/sync/futex.rs` 的 `is_wait_op`（L50）/ `is_wake_op`（L55）两项零引用 pub fn 先按裁定六①入块**只登记不删**（**452 → 454**），随后**经用户裁定甲・试删**（判据＝语义已由 `privileged/syscall/futex.rs:260-264` 的 `futex_op(op)` 分类分支等价承担，且同文件 `futex_validate_op` 已用 `match futex_base_op` 分档 ⇒ 属重复策略逻辑），删除后从本区块移除 2 条目 ⇒ **454 → 452**；机制成因与三态判据见 [net-e2e-tcp-echo-flakiness.md](./net-e2e-tcp-echo-flakiness.md) §6 **P-41**。**上一轮同步＝R1 未分类 HIGH 治理批次（`docs/plan/net-e2e-tcp-echo-flakiness.md` §6 P-13 / P-18）**：第一步定性发现上一批报出的 45 项未分类 HIGH 中，**25 项为审计工具假阳性**（非零引用，实为有跨文件调用方）——成因＝ `audit_unwired_pub_fn.py` 降级（无 ripgrep）路径的 vendored 排除写成子串匹配 `"smoltcp" in str(rs)`，连带把**非 vendored** 的 `privileged/net/smoltcp_impl.rs` 与 `functions/net/smoltcp_impl.rs` 整份排除在引用索引外，而声明收集侧用的是按路径分量的精确判定 ⇒ 两侧不对称，`net_socket.rs` 的 `sm_net_*` 13 项（唯一调用方恰在被误排文件）与 `smoltcp_impl.rs` 的 `*_fd` 12 项全部被误判零引用。修复＝两条计数路径收敛到单一事实源 `rel_is_vendored()`，并顺手统一计数语义（rg 路径原 `rg -c` 数**匹配行**、Python 路径数**词元出现次数** ⇒ 同一代码在 CI 与本地会报不同名单，现均改为出现次数）。验证＝以 `git ls-files` + `grep -o -w` 搭建**与被测脚本无共用的独立 oracle** 逐名对照，修复后 20/20 全等；误报面消除后 HIGH 45 → 20。**第二步真值处置**：20 项中 1 项 `privileged/arch/x86_64/apic.rs::get_deadline` 经 `git grep HEAD` 判定为**本轮 E-II-b 新增**的零消费者 API ⇒ 按 §5 F9 无豁免本轮直接删除（连带确认 `rdmsr` 仍有其余消费者、全仓零残留引用、`./ci/build.sh x86_64` link passed）⇒ HIGH 20 → 19；余 **19 项均为预存**，按四组定性入块（**只登记不删**，§12.5 未授权不动）：**（一）寄存器读探针 9 项**（`functions/driver/usb/xhci.rs` `hci_version`/`hcs_params2`/`hcs_params3`/`hcc_params1`/`dcbaap` + `privileged/driver/net/e1000_io.rs` `ims`/`tx_head`/`rx_ctl`/`tx_ctl`）——均为 `&self` 的 MMIO 能力/状态读出，属硬件规范完整性面，待接诊断导出路径；**（二）C-FFI 兼容残壳 5 项**（`functions/fs/vfs_mount.rs` `vfs_init`/`vfs_unmount_internal`/`vfs_freg_capture`/`vfs_freg_restore`/`vfs_format_internal`）——`pub extern "C"` 但**无 `#[no_mangle]`** ⇒ 不可能被 C 侧调用，真实入口各自另存（`vfs_init` 下游 `vfs_manager::init()` 由 `src/kernel/lib.rs` 编排直连，故属**同一链的重复包裹**而非 P-8 漏接；其余走 `VFS_MANAGER` 方法 / `*_safe` 门面），与 I-22 已删的 15 个 `unkfs_*_internal` 同族；**（三）机制通道未接功能 2 项**（`xhci.rs::submit_command`（TRB 形参带 `_` 前缀，命令环提交通道半成品）+ `privileged/proc/scheduler.rs::add_rt_task`（RT 策略注册入口））；**（四）策略/输入面 3 项**（`functions/proc/coredump.rs::coredump_allowed`/`::coredump_limit` 待接 `prlimit`/coredump 语义；`privileged/arch/aarch64/uart.rs::getc` 为 console 输入读面）⇒ **438 → 457**，同步后实测 **HIGH=0 / INFO=443**（424 + 19 算术闭合）。**第三步（用户授权本轮顺手删）**：上述第二组「C-FFI 兼容残壳 5 项」经用户裁定**直接删除**（判据：无 `#[no_mangle]` ⇒ 结构上不可能被 C 侧调用；逐项核实真实入口另存 —— VFS 初始化由 `lib.rs` 编排直连 `vfs_manager::init()`，FREG 快照/恢复经 `vfs_manager.rs` 自持的 `vfs_freg_capture_cb`/`vfs_freg_restore_cb` 注册，卸载走 `VFS_MANAGER.unmount`，格式化经 `FileSystem::fs_format` trait 分发）；连带删除其唯一下游包裹 `vfs_init_internal`（删 `vfs_init` 后它即零消费者，§5 F9）⇒ 本区块移除对应 5 条目（`vfs_init_internal` 原本不在区块内）⇒ **457 → 452**；实测 **HIGH=0 / INFO=438**，`./ci/build.sh all` 双架构 0w0e + 两架构 link passed。同批用户裁定 R1 门禁**常开 `--strict`**（已接入 `ci/audit.sh` 的 0.5m 块），并以临时探针作经验性验证：注入一个零引用 `pub fn` ⇒ `rc=1 / HIGH=1`，逐字节还原 ⇒ `rc=0 / HIGH=0`。同批新开 **P-18**：定性过程暴露 R1 **结构性盲区**——`EXEMPT_TRAIT_IMPL` 豁免使 trait impl 方法永不进 R1，而 `NetStack` trait 的 12 个 POSIX 方法（`bind`/`listen`/`accept`/`connect`/`send`/`recv`/`sendto`/`recvfrom`/`close`/`setsockopt`/`getsockopt`/`poll_sockets`）与 `SmoltcpNetStack` 的 12 个 inherent `*_fd` 方法是对同一能力的**两份入口**，实测 syscall 层 `functions/net/socket.rs` 走 `net_stack()` 返回的**具体类型**上的 `*_fd`（全仓无 `dyn NetStack` 用法）⇒ trait 侧那份无生产消费者，但 trait 本身是 `iface_trait.rs` 声明的 framekernel 安全抽象层（`socket_open`/`poll_at`/句柄池在用），收敛方向属决策灰色地带，已上报待裁。**上一轮同步＝P-14 零消费者 API 删除 + E-II-b APIC 标定重写批次**（移除 2 项**因本轮改动而失效**的条目：`src/kernel/privileged/timer/hrtimer.rs::hrtimer_ns_to_cycles`（P-14 删除该零消费者 API，函数已不存在）、`src/kernel/privileged/arch/x86_64/apic.rs::is_timer_calibrated`（E-II-b 删借 PIT 标定后函数不存在）⇒ **440 → 438**。同批实测另有 2 项**预存失效**（`…/proc/cfs.rs::get_load`、`…/proc/cpu_queue.rs::register_sched_softirq`：两者在 HEAD 即已无定义，系 DECISION-099 / ISSUE-RT-004 提交未同步本区块），按 MIG-004 同族先例（预存失效需用户裁决后才清）**本轮保留不动**，已上报待裁 ⇒ 区块当前 stale = 2。门禁接入与 R1 未分类 HIGH 由 18 → 45 的成因（本轮 S-7 / P-8 / P-15 删包装层后暴露真实零引用，属信号诚实化）见 `docs/plan/net-e2e-tcp-echo-flakiness.md` §6 P-13。**上一轮同步＝MIG-004 安全代理批次**（本轮 R1 复核检出 **6 项既有条目失效**并逐项移除：4 项因本工程而失效 —— 3 项 `privileged/egdf/user_driver.rs::{egdf_forward_irq, devtree_map_user_device, devtree_unmap_user_device}` 因 functions `egdf::user_driver` 强类型封装接线后不再零引用、1 项 `functions/egdf/mod.rs::find_net_device` 因函数下沉至 `functions/egdf/proto.rs` 并被 host-tests 调用；另 2 项**预存失效** `privileged/arch/aarch64/gic.rs::{configure_spi_level, enable_spi}`（实为同文件私有 `configure_and_enable_device_spi` 内部调用 ⇒ refs=2）经用户裁决本轮一并清理 ⇒ **446 → 440**；同步改写 `functions/egdf/proto.rs` 头注释、去除与 `char_read`/`char_write` 同名的字面量，使该两项恢复「真零引用」并被本区块正确命中；修复后实测区块 440 ＝ matched 440、stale 0、HIGH 18 不变）。**上一轮同步＝B-6 区块路径漂移清理（**B-13.7**）**（R1 实测检出 43 项**失效条目**并逐项处置：31 项路径更新 `privileged/...`→`functions/...`（文件随框内核迁移下沉、函数仍零引用 ⇒ 原 privileged 路径失效、现报 HIGH），12 项移除（已接线 / 已删 / 已豁免：`privileged/driver/net/e1000_io.rs::install_rings`（已删）、`::set_ctrl` / `::set_ipg` / `::set_rx_ctl` / `::set_tx_ctl`（已被 `functions/driver/net/e1000.rs` 调用）、`privileged/driver/usb/xhci.rs::init_command_ring` / `::recover_endpoint`（已删）、`privileged/timer/tickless.rs::enter_tickless` / `::exit_tickless`（内联测试引用）、`functions/egdf/mod.rs::find_by_proto`（host 测试引用）、`functions/driver/usb/xhci.rs::port_connected` / `::port_status`（内部调用））⇒ **458 → 446**；修复后实测区块 446 ＝ matched 446、stale 0、HIGH 18）。**上一轮同步＝B-12.8 遗留清理批次（**B-13**）**（本批改动**未改变** R1 零引用集合，以 HEAD 独立 worktree 对跑逐项一致 ⇒ 本区块计数**不变（458）**，见 **B-13.6**）。**上一轮同步＝热插拔运行时接线批次（**B-12**）**（4 项因本工程「接线 / 删除」而不再零引用 ⇒ 本区块移除：`privileged/driver/hotplug.rs::hotplug_poll`（函数已不存在，由 `hotplug_wakeup` + softirq 轮询替代）、`functions/driver/usb/xhci.rs::ack_port_change` / `::has_port_change`（已被 `usb_port_poll` 调用）、`privileged/driver/block.rs::mark_removed`（函数已不存在，由 EGDF 墓碑协议 `egdf_blk_is_removed` 替代）⇒ **462 → 458**）。**上一轮同步＝`atomic_stats` feature 删除**（`privileged/sync/atomic.rs` 4 项 `record_*` 随 feature 删除而消失 ⇒ 本区块移除 4 条目，**466 → 462**；处置依据＝按职责判定「非内核所需 + 零履行 + 已有 `*_dump_stats` 等价诊断 idiom」，见 **B-5.2 / B-5.3 G2**）。**更早同步＝per-process fd 表全量下沉（**B-11**）**（10 项因本工程接线 / 删除而不再零引用 ⇒ 本区块移除：`privileged/fs/vfs/handle.rs::vfs_get_fd_handle`（poll 改源）、`privileged/proc/fd_table.rs` 4 项（`get_handle_id` / `is_cloexec` / `set_cloexec` / `get_cloexec_fds` 接线）、`privileged/proc/scheduler.rs::get_current_process`（`with_current_fd_table` 取当前进程）、`functions/fs/process_fd_table.rs` 4 项（Plan B 表文件删除）⇒ **476 → 466**；编辑前实测区块为 **476** 行，区块说明原记 475（差 1，前批计数笔误，本次以实测为准）。另有 2 条**既有偏差**（`privileged/timer/tickless.rs::enter_tickless` / `::exit_tickless`：脚本按名计数，其内联测试即计入引用 ⇒ 恒不在 INFO 集，见上述口径说明②）经本批复核确认，**非本工程引入，不属本批处置面**）。**更早同步＝项 5 批 C「67 项逐项分流」**（21 项判定为可删并已删除 ⇒ 本区块移除对应 21 条目，496 → 475；其余 46 项保留 `pub` 并留块登记，见 **B-10.11**；上一轮为项 2「`kmalloc_slab.rs` 孤岛删除」，被删 2 项原为 HIGH / **未入块** ⇒ 计数不变，见 **B-10.10**；更早为项 5 批 B「豁免面收窄」新增 67 项，429 → 496，见 **B-10.9**）。
+> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**本轮同步＝H-2 甲 台账对账（交接文档 H-7 第 1 步）**：脚本实测 INFO=442 而区块 465 ⇒ 清掉 23 条失效条目（**465 → 442**），同步后实测 442 ＝ matched 442、stale 0、HIGH=0。23 条按失效原因分三类：① **已接线 / 出现真实调用方 10 项**（`functions/driver/uefi.rs::uefi_syscall`、`functions/proc/shadow_stack.rs::cet_syscall`、`functions/timer/sleep.rs::adaptive_sleep`、`functions/timer/tickless.rs::tickless_syscall`、`functions/timer/time_sync.rs::timesync_syscall`、`privileged/proc/signal.rs::has_deliverable_signal`、`privileged/proc/types.rs::set_user_mode`、`privileged/arch/x86_64/apic.rs::apic_is_in_irr` / `::get_timer_count`（`timer/clockevent.rs` 调用）、`privileged/proc/posix_timer.rs::posix_timer_release_pid`（`proc/scheduler.rs` 调用））；② **函数或文件已不存在 8 项**（`functions/fs/egfs/arc.rs::is_referenced`、`privileged/proc/cfs.rs::get_load`（现名 `get_weighted_load`）、`privileged/proc/cpu_queue.rs::register_sched_softirq`、`privileged/proc/scheduler_ex.rs` 4 项（`exit_thread` / `freeze_all` / `thaw_all` / `thread_dump_info`，文件已随 proc 重构移除）、`privileged/proc/thread.rs::get_thread`（文件已移除））；③ **脚本按名计数偏置 5 项**（`privileged/arch/shadow_stack.rs::{configure_interrupt_ssp_table, configure_user_cet_msr}`＝x86_64/aarch64 双 cfg 同形声明各计一次、`privileged/net/netfilter.rs::{hook_count, list_rules}`＝文档注释自指、`privileged/timer/tick.rs::reset_ticks`＝内联测试引用）——③ 类仍是零调用者，但恒不进 INFO 集（「口径说明」① 的既定偏置），登记于此避免后续被当失效条目反复对账。其中 `get_load` / `register_sched_softirq` 即上轮维护段记录的 2 项「预存失效待裁」，本批按用户裁定（交接 H-2 甲）一并清除。**上一轮同步＝P-34 退役 `src/rust/edgine-tests` 的去掩蔽批次**：`functions/sync/futex.rs` 的 `is_wait_op`（L50）/ `is_wake_op`（L55）两项零引用 pub fn 先按裁定六①入块**只登记不删**（**452 → 454**），随后**经用户裁定甲・试删**（判据＝语义已由 `privileged/syscall/futex.rs:260-264` 的 `futex_op(op)` 分类分支等价承担，且同文件 `futex_validate_op` 已用 `match futex_base_op` 分档 ⇒ 属重复策略逻辑），删除后从本区块移除 2 条目 ⇒ **454 → 452**；机制成因与三态判据见 [net-e2e-tcp-echo-flakiness.md](./net-e2e-tcp-echo-flakiness.md) §6 **P-41**。**上一轮同步＝R1 未分类 HIGH 治理批次（`docs/plan/net-e2e-tcp-echo-flakiness.md` §6 P-13 / P-18）**：第一步定性发现上一批报出的 45 项未分类 HIGH 中，**25 项为审计工具假阳性**（非零引用，实为有跨文件调用方）——成因＝ `audit_unwired_pub_fn.py` 降级（无 ripgrep）路径的 vendored 排除写成子串匹配 `"smoltcp" in str(rs)`，连带把**非 vendored** 的 `privileged/net/smoltcp_impl.rs` 与 `functions/net/smoltcp_impl.rs` 整份排除在引用索引外，而声明收集侧用的是按路径分量的精确判定 ⇒ 两侧不对称，`net_socket.rs` 的 `sm_net_*` 13 项（唯一调用方恰在被误排文件）与 `smoltcp_impl.rs` 的 `*_fd` 12 项全部被误判零引用。修复＝两条计数路径收敛到单一事实源 `rel_is_vendored()`，并顺手统一计数语义（rg 路径原 `rg -c` 数**匹配行**、Python 路径数**词元出现次数** ⇒ 同一代码在 CI 与本地会报不同名单，现均改为出现次数）。验证＝以 `git ls-files` + `grep -o -w` 搭建**与被测脚本无共用的独立 oracle** 逐名对照，修复后 20/20 全等；误报面消除后 HIGH 45 → 20。**第二步真值处置**：20 项中 1 项 `privileged/arch/x86_64/apic.rs::get_deadline` 经 `git grep HEAD` 判定为**本轮 E-II-b 新增**的零消费者 API ⇒ 按 §5 F9 无豁免本轮直接删除（连带确认 `rdmsr` 仍有其余消费者、全仓零残留引用、`./ci/build.sh x86_64` link passed）⇒ HIGH 20 → 19；余 **19 项均为预存**，按四组定性入块（**只登记不删**，§12.5 未授权不动）：**（一）寄存器读探针 9 项**（`functions/driver/usb/xhci.rs` `hci_version`/`hcs_params2`/`hcs_params3`/`hcc_params1`/`dcbaap` + `privileged/driver/net/e1000_io.rs` `ims`/`tx_head`/`rx_ctl`/`tx_ctl`）——均为 `&self` 的 MMIO 能力/状态读出，属硬件规范完整性面，待接诊断导出路径；**（二）C-FFI 兼容残壳 5 项**（`functions/fs/vfs_mount.rs` `vfs_init`/`vfs_unmount_internal`/`vfs_freg_capture`/`vfs_freg_restore`/`vfs_format_internal`）——`pub extern "C"` 但**无 `#[no_mangle]`** ⇒ 不可能被 C 侧调用，真实入口各自另存（`vfs_init` 下游 `vfs_manager::init()` 由 `src/kernel/lib.rs` 编排直连，故属**同一链的重复包裹**而非 P-8 漏接；其余走 `VFS_MANAGER` 方法 / `*_safe` 门面），与 I-22 已删的 15 个 `unkfs_*_internal` 同族；**（三）机制通道未接功能 2 项**（`xhci.rs::submit_command`（TRB 形参带 `_` 前缀，命令环提交通道半成品）+ `privileged/proc/scheduler.rs::add_rt_task`（RT 策略注册入口））；**（四）策略/输入面 3 项**（`functions/proc/coredump.rs::coredump_allowed`/`::coredump_limit` 待接 `prlimit`/coredump 语义；`privileged/arch/aarch64/uart.rs::getc` 为 console 输入读面）⇒ **438 → 457**，同步后实测 **HIGH=0 / INFO=443**（424 + 19 算术闭合）。**第三步（用户授权本轮顺手删）**：上述第二组「C-FFI 兼容残壳 5 项」经用户裁定**直接删除**（判据：无 `#[no_mangle]` ⇒ 结构上不可能被 C 侧调用；逐项核实真实入口另存 —— VFS 初始化由 `lib.rs` 编排直连 `vfs_manager::init()`，FREG 快照/恢复经 `vfs_manager.rs` 自持的 `vfs_freg_capture_cb`/`vfs_freg_restore_cb` 注册，卸载走 `VFS_MANAGER.unmount`，格式化经 `FileSystem::fs_format` trait 分发）；连带删除其唯一下游包裹 `vfs_init_internal`（删 `vfs_init` 后它即零消费者，§5 F9）⇒ 本区块移除对应 5 条目（`vfs_init_internal` 原本不在区块内）⇒ **457 → 452**；实测 **HIGH=0 / INFO=438**，`./ci/build.sh all` 双架构 0w0e + 两架构 link passed。同批用户裁定 R1 门禁**常开 `--strict`**（已接入 `ci/audit.sh` 的 0.5m 块），并以临时探针作经验性验证：注入一个零引用 `pub fn` ⇒ `rc=1 / HIGH=1`，逐字节还原 ⇒ `rc=0 / HIGH=0`。同批新开 **P-18**：定性过程暴露 R1 **结构性盲区**——`EXEMPT_TRAIT_IMPL` 豁免使 trait impl 方法永不进 R1，而 `NetStack` trait 的 12 个 POSIX 方法（`bind`/`listen`/`accept`/`connect`/`send`/`recv`/`sendto`/`recvfrom`/`close`/`setsockopt`/`getsockopt`/`poll_sockets`）与 `SmoltcpNetStack` 的 12 个 inherent `*_fd` 方法是对同一能力的**两份入口**，实测 syscall 层 `functions/net/socket.rs` 走 `net_stack()` 返回的**具体类型**上的 `*_fd`（全仓无 `dyn NetStack` 用法）⇒ trait 侧那份无生产消费者，但 trait 本身是 `iface_trait.rs` 声明的 framekernel 安全抽象层（`socket_open`/`poll_at`/句柄池在用），收敛方向属决策灰色地带，已上报待裁。**上一轮同步＝P-14 零消费者 API 删除 + E-II-b APIC 标定重写批次**（移除 2 项**因本轮改动而失效**的条目：`src/kernel/privileged/timer/hrtimer.rs::hrtimer_ns_to_cycles`（P-14 删除该零消费者 API，函数已不存在）、`src/kernel/privileged/arch/x86_64/apic.rs::is_timer_calibrated`（E-II-b 删借 PIT 标定后函数不存在）⇒ **440 → 438**。同批实测另有 2 项**预存失效**（`…/proc/cfs.rs::get_load`、`…/proc/cpu_queue.rs::register_sched_softirq`：两者在 HEAD 即已无定义，系 DECISION-099 / ISSUE-RT-004 提交未同步本区块），按 MIG-004 同族先例（预存失效需用户裁决后才清）**本轮保留不动**，已上报待裁 ⇒ 区块当前 stale = 2。门禁接入与 R1 未分类 HIGH 由 18 → 45 的成因（本轮 S-7 / P-8 / P-15 删包装层后暴露真实零引用，属信号诚实化）见 `docs/plan/net-e2e-tcp-echo-flakiness.md` §6 P-13。**上一轮同步＝MIG-004 安全代理批次**（本轮 R1 复核检出 **6 项既有条目失效**并逐项移除：4 项因本工程而失效 —— 3 项 `privileged/egdf/user_driver.rs::{egdf_forward_irq, devtree_map_user_device, devtree_unmap_user_device}` 因 functions `egdf::user_driver` 强类型封装接线后不再零引用、1 项 `functions/egdf/mod.rs::find_net_device` 因函数下沉至 `functions/egdf/proto.rs` 并被 host-tests 调用；另 2 项**预存失效** `privileged/arch/aarch64/gic.rs::{configure_spi_level, enable_spi}`（实为同文件私有 `configure_and_enable_device_spi` 内部调用 ⇒ refs=2）经用户裁决本轮一并清理 ⇒ **446 → 440**；同步改写 `functions/egdf/proto.rs` 头注释、去除与 `char_read`/`char_write` 同名的字面量，使该两项恢复「真零引用」并被本区块正确命中；修复后实测区块 440 ＝ matched 440、stale 0、HIGH 18 不变）。**上一轮同步＝B-6 区块路径漂移清理（**B-13.7**）**（R1 实测检出 43 项**失效条目**并逐项处置：31 项路径更新 `privileged/...`→`functions/...`（文件随框内核迁移下沉、函数仍零引用 ⇒ 原 privileged 路径失效、现报 HIGH），12 项移除（已接线 / 已删 / 已豁免：`privileged/driver/net/e1000_io.rs::install_rings`（已删）、`::set_ctrl` / `::set_ipg` / `::set_rx_ctl` / `::set_tx_ctl`（已被 `functions/driver/net/e1000.rs` 调用）、`privileged/driver/usb/xhci.rs::init_command_ring` / `::recover_endpoint`（已删）、`privileged/timer/tickless.rs::enter_tickless` / `::exit_tickless`（内联测试引用）、`functions/egdf/mod.rs::find_by_proto`（host 测试引用）、`functions/driver/usb/xhci.rs::port_connected` / `::port_status`（内部调用））⇒ **458 → 446**；修复后实测区块 446 ＝ matched 446、stale 0、HIGH 18）。**上一轮同步＝B-12.8 遗留清理批次（**B-13**）**（本批改动**未改变** R1 零引用集合，以 HEAD 独立 worktree 对跑逐项一致 ⇒ 本区块计数**不变（458）**，见 **B-13.6**）。**上一轮同步＝热插拔运行时接线批次（**B-12**）**（4 项因本工程「接线 / 删除」而不再零引用 ⇒ 本区块移除：`privileged/driver/hotplug.rs::hotplug_poll`（函数已不存在，由 `hotplug_wakeup` + softirq 轮询替代）、`functions/driver/usb/xhci.rs::ack_port_change` / `::has_port_change`（已被 `usb_port_poll` 调用）、`privileged/driver/block.rs::mark_removed`（函数已不存在，由 EGDF 墓碑协议 `egdf_blk_is_removed` 替代）⇒ **462 → 458**）。**上一轮同步＝`atomic_stats` feature 删除**（`privileged/sync/atomic.rs` 4 项 `record_*` 随 feature 删除而消失 ⇒ 本区块移除 4 条目，**466 → 462**；处置依据＝按职责判定「非内核所需 + 零履行 + 已有 `*_dump_stats` 等价诊断 idiom」，见 **B-5.2 / B-5.3 G2**）。**更早同步＝per-process fd 表全量下沉（**B-11**）**（10 项因本工程接线 / 删除而不再零引用 ⇒ 本区块移除：`privileged/fs/vfs/handle.rs::vfs_get_fd_handle`（poll 改源）、`privileged/proc/fd_table.rs` 4 项（`get_handle_id` / `is_cloexec` / `set_cloexec` / `get_cloexec_fds` 接线）、`privileged/proc/scheduler.rs::get_current_process`（`with_current_fd_table` 取当前进程）、`functions/fs/process_fd_table.rs` 4 项（Plan B 表文件删除）⇒ **476 → 466**；编辑前实测区块为 **476** 行，区块说明原记 475（差 1，前批计数笔误，本次以实测为准）。另有 2 条**既有偏差**（`privileged/timer/tickless.rs::enter_tickless` / `::exit_tickless`：脚本按名计数，其内联测试即计入引用 ⇒ 恒不在 INFO 集，见上述口径说明②）经本批复核确认，**非本工程引入，不属本批处置面**）。**更早同步＝项 5 批 C「67 项逐项分流」**（21 项判定为可删并已删除 ⇒ 本区块移除对应 21 条目，496 → 475；其余 46 项保留 `pub` 并留块登记，见 **B-10.11**；上一轮为项 2「`kmalloc_slab.rs` 孤岛删除」，被删 2 项原为 HIGH / **未入块** ⇒ 计数不变，见 **B-10.10**；更早为项 5 批 B「豁免面收窄」新增 67 项，429 → 496，见 **B-10.9**）。
 >
 > **口径说明（2026-10-10 订正）**：本区块与 `audit_unwired_pub_fn.py` 的「零引用」判定均为**按名计数**——ripgrep 路径 `rg -o -w`（每次匹配单独成行）与无 rg 的降级路径（`re.findall(r"\w+")` 词元索引）**语义已统一为词元出现次数**（原 rg 路径写 `rg -c -w` 数的是匹配**行**，与降级路径不同 ⇒ CI 与本地可报不同名单，本轮已收敛），因而仍存在两类已知偏差，本区块**不承诺**与脚本输出逐项等同：① **同名遮蔽**（文档注释 / 局部变量出现同名字符串即计入引用 ⇒ 真零引用项可能**漏报**，实例见 **B-10.3** 的 `slab_init` / `functions/driver/acpi.rs::lapic_base`）；② **已失效条目**（被接线或删除后不再零引用，需人工同步移除；本轮另检出第三类偏差＝脚本自身的文件集过滤错误，见上方维护段，已修）。
 
@@ -912,14 +912,11 @@ src/kernel/privileged/arch/aarch64/timer.rs::read_control
 src/kernel/privileged/arch/aarch64/timer.rs::set_compare
 src/kernel/privileged/arch/aarch64/timer.rs::set_timeout_ms
 src/kernel/privileged/arch/shadow_stack.rs::alloc_kernel_shadow_stack
-src/kernel/privileged/arch/shadow_stack.rs::configure_interrupt_ssp_table
-src/kernel/privileged/arch/shadow_stack.rs::configure_user_cet_msr
 src/kernel/privileged/arch/shadow_stack.rs::is_ssp_valid
 src/kernel/privileged/arch/shadow_stack.rs::set_ssp
 src/kernel/privileged/arch/x86_64/acpi.rs::get_ap
 src/kernel/privileged/arch/x86_64/acpi.rs::get_dmar_drhd_list
 src/kernel/privileged/arch/x86_64/acpi.rs::get_dmar_host_addr_width
-src/kernel/privileged/arch/x86_64/apic.rs::apic_is_in_irr
 src/kernel/privileged/arch/x86_64/apic.rs::apic_is_in_isr
 src/kernel/privileged/arch/x86_64/apic.rs::apic_is_level_triggered
 src/kernel/privileged/arch/x86_64/apic.rs::apic_read_irr
@@ -928,7 +925,6 @@ src/kernel/privileged/arch/x86_64/apic.rs::apic_read_tmr
 src/kernel/privileged/arch/x86_64/apic.rs::broadcast_ipi_level
 src/kernel/privileged/arch/x86_64/apic.rs::configure_lint0
 src/kernel/privileged/arch/x86_64/apic.rs::configure_lint1
-src/kernel/privileged/arch/x86_64/apic.rs::get_timer_count
 src/kernel/privileged/arch/x86_64/apic.rs::get_version
 src/kernel/privileged/arch/x86_64/apic.rs::icr_broadcast
 src/kernel/privileged/arch/x86_64/apic.rs::icr_level
@@ -1052,8 +1048,6 @@ src/kernel/privileged/mm/vmm_aarch64.rs::is_desc_page
 src/kernel/privileged/mm/vmm_aarch64.rs::is_desc_table
 src/kernel/privileged/net/api.rs::init_network_now
 src/kernel/privileged/net/api.rs::status_snapshot
-src/kernel/privileged/net/netfilter.rs::hook_count
-src/kernel/privileged/net/netfilter.rs::list_rules
 src/kernel/privileged/net/route.rs::default_route
 src/kernel/privileged/net/route.rs::route_list
 src/kernel/privileged/page_table.rs::verify_kernel_code_protection
@@ -1069,7 +1063,6 @@ src/kernel/privileged/pci/msi.rs::msix_disable
 src/kernel/privileged/pci/msi.rs::msix_mask_vector
 src/kernel/privileged/pci/msi.rs::msix_unmask_vector
 src/kernel/privileged/proc/canary.rs::set_per_proc_seed
-src/kernel/privileged/proc/cfs.rs::get_load
 src/kernel/privileged/proc/cfs.rs::get_weighted_load
 src/kernel/privileged/proc/cfs.rs::steal_highest_vruntime
 src/kernel/privileged/proc/cgroup.rs::account_read
@@ -1080,11 +1073,9 @@ src/kernel/privileged/proc/cgroup.rs::is_over_limit
 src/kernel/privileged/proc/cgroup.rs::period_reset
 src/kernel/privileged/proc/cgroup.rs::try_charge
 src/kernel/privileged/proc/cgroup.rs::uncharge
-src/kernel/privileged/proc/cpu_queue.rs::register_sched_softirq
 src/kernel/privileged/proc/namespace.rs::map_gid
 src/kernel/privileged/proc/namespace.rs::map_uid
 src/kernel/privileged/proc/namespace.rs::to_clone_flag
-src/kernel/privileged/proc/posix_timer.rs::posix_timer_release_pid
 src/kernel/privileged/proc/process.rs::allocate_user_space
 src/kernel/privileged/proc/process.rs::kernel_stack_check_canary
 src/kernel/privileged/proc/rlimit.rs::check_as_exceeded
@@ -1093,18 +1084,11 @@ src/kernel/privileged/proc/rlimit.rs::check_nproc_exceeded
 src/kernel/privileged/proc/rlimit.rs::get_nofile_limit
 src/kernel/privileged/proc/rlimit.rs::get_stack_limit
 src/kernel/privileged/proc/scheduler.rs::set_deadline_params
-src/kernel/privileged/proc/scheduler_ex.rs::exit_thread
-src/kernel/privileged/proc/scheduler_ex.rs::freeze_all
-src/kernel/privileged/proc/scheduler_ex.rs::thaw_all
-src/kernel/privileged/proc/scheduler_ex.rs::thread_dump_info
 src/kernel/privileged/proc/seccomp.rs::from_linux
 src/kernel/privileged/proc/seccomp.rs::to_linux
 src/kernel/privileged/proc/session.rs::get_session
 src/kernel/privileged/proc/session.rs::signal_foreground_pgid
 src/kernel/privileged/proc/session.rs::sys_tiocsctty
-src/kernel/privileged/proc/signal.rs::has_deliverable_signal
-src/kernel/privileged/proc/thread.rs::get_thread
-src/kernel/privileged/proc/types.rs::set_user_mode
 src/kernel/privileged/proc/types.rs::thaw_target_state
 src/kernel/privileged/proc/user_proc.rs::create_from_binary
 src/kernel/privileged/smp/mod.rs::broadcast_reschedule
@@ -1124,7 +1108,6 @@ src/kernel/privileged/sync/spinlock.rs::lock_irq
 src/kernel/privileged/syscall/epoll.rs::epoll_destroy
 src/kernel/privileged/timer/tick.rs::format_duration
 src/kernel/privileged/timer/tick.rs::get_uptime_tsc
-src/kernel/privileged/timer/tick.rs::reset_ticks
 src/kernel/functions/timer/time_sync.rs::client_request
 src/kernel/privileged/vmspace.rs::map_huge
 src/kernel/functions/freg/audit_export.rs::count_failure
@@ -1204,7 +1187,6 @@ src/kernel/functions/driver/storage/ahci.rs::set_interrupt_enable
 src/kernel/functions/driver/storage/nvme.rs::ring_admin_sq
 src/kernel/functions/driver/storage/nvme.rs::ring_cq_head
 src/kernel/functions/driver/storage/nvme.rs::set_admin_cq_phase
-src/kernel/functions/driver/uefi.rs::uefi_syscall
 src/kernel/functions/driver/usb/mass_storage.rs::build_read_capacity_10_cbw
 src/kernel/functions/driver/usb/mass_storage.rs::build_request_sense_cbw
 src/kernel/functions/driver/usb/ring.rs::dequeue_pointer
@@ -1255,7 +1237,6 @@ src/kernel/functions/fs/handle.rs::vfs_readdir_safe
 src/kernel/functions/fs/handle.rs::vfs_seek_safe
 src/kernel/functions/fs/inotify.rs::inotify_fd_readable
 src/kernel/functions/fs/inotify.rs::inotify_stats
-src/kernel/functions/fs/egfs/arc.rs::is_referenced
 src/kernel/functions/fs/egfs/bp.rs::is_data
 src/kernel/functions/fs/egfs/bp.rs::is_encrypted
 src/kernel/functions/fs/egfs/bp.rs::is_gang
@@ -1331,12 +1312,8 @@ src/kernel/functions/net/unix.rs::uds_recv_with_creds
 src/kernel/functions/proc/canary.rs::get_canary_u64
 src/kernel/functions/proc/elf.rs::is_executable
 src/kernel/functions/proc/mod.rs::priority_from_u32
-src/kernel/functions/proc/shadow_stack.rs::cet_syscall
 src/kernel/functions/proc/signal.rs::cont
 src/kernel/functions/syscall/mod.rs::dispatch_from_ctx_typed
-src/kernel/functions/timer/sleep.rs::adaptive_sleep
-src/kernel/functions/timer/tickless.rs::tickless_syscall
-src/kernel/functions/timer/time_sync.rs::timesync_syscall
 src/kernel/functions/wasm/interpreter.rs::instantiate
 src/kernel/functions/wasm/interpreter.rs::register_host_function
 src/kernel/functions/wasm/types.rs::as_i64
