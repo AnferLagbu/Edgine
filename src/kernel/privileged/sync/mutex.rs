@@ -38,6 +38,7 @@ use super::types::{MutexGuard, MutexInner};
 ///
 /// 当锁被持有时，后续的 `lock()` 调用会让出 CPU，
 /// 允许调度器选择其他就绪进程运行。
+#[repr(C)]
 pub struct Mutex<T: ?Sized> {
     /// 内部状态
     inner: MutexInner,

@@ -136,6 +136,7 @@ impl InnerOnce {
 /// let v = lock.get_or_init(|slot| slot.write(42));
 /// assert_eq!(*v, 42);
 /// ```
+#[repr(C)]
 pub struct OnceLock<T> {
     once: InnerOnce,
     value: UnsafeCell<MaybeUninit<T>>,

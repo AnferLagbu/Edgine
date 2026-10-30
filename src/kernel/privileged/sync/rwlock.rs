@@ -28,6 +28,7 @@ use super::spinlock::{disable_interrupts, restore_interrupts};
 use super::types::{IrqSaveFlags, RwLockInner, RwLockReadGuard, RwLockWriteGuard};
 
 /// 读写锁 (`RwLock`)
+#[repr(C)]
 pub struct RwLock<T: ?Sized> {
     /// 内部状态
     inner: RwLockInner,

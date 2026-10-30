@@ -346,6 +346,8 @@ fi
 # ── 0.5j 内存安全静态防线 audit (repr(C) / volatile / static mut) ──
 # 对应 I2/I5/I6 不变式与 LTO 字段错位防线; 源码级 fail-closed 确定性覆盖.
 # 接线说明: 此前三脚本仅本地可跑、未接入 CI; 现纳入 quick 门禁 (见 AGENTS.md §2.2).
+# P-61 乙: repr_c 已从冻结清单转树级发现式 —— 多字段含 UnsafeCell/Cell/NonNull 必须
+# 带 #[repr(C)]; 单字段偏移恒 0 自动豁免. volatile / static_mut 维持定点.
 # 依赖 set -o pipefail 使 `cmd | tail` 管道正确反映脚本退出码 (B01-16 同源).
 for MEMSAFETY_AUDIT in repr_c volatile_access static_mut; do
     if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_${MEMSAFETY_AUDIT}.py" ]; then

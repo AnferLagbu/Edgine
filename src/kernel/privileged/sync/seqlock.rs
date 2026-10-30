@@ -30,6 +30,7 @@ use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicUsize, Ordering, compiler_fence};
 
 /// 顺序锁 (seqlock): 读多写少场景的无锁读者同步原语.
+#[repr(C)]
 pub struct SeqLock<T> {
     pub(crate) sequence: AtomicUsize,
     data: UnsafeCell<T>,

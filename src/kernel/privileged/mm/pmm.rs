@@ -237,6 +237,7 @@ pub trait MetaStore {
 /// 与 H-04 改造前的行为完全一致: bitmap 走 `AtomicU32` 位操作,
 /// `buddy_meta` / `FREE_LINKS` 走裸指针读写. 仅在 `init_bitmap` 中构造
 /// (buddy 就绪后指针固定, 之后仅在 PMM 锁下访问).
+#[repr(C)]
 pub struct RawMetaStore {
     /// bitmap 段虚拟地址 (u32 word 数组, 原子位操作)
     bitmap: Option<NonNull<u32>>,

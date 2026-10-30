@@ -76,6 +76,7 @@ pub const DMA_MAX_SIZE: u64 = 256 * 1024 * 1024;
 ///
 /// 映射生命周期: alloc → `sync_for_device` → DMA → `sync_for_cpu` → free。
 /// `x86_64` 上 sync 为空操作 (硬件保证一致性)。
+#[repr(C)]
 pub struct DmaStream {
     cpu_addr: NonNull<u8>,
     dma_addr: PhysAddr,

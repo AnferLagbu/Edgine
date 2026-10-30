@@ -107,6 +107,7 @@ fn mmio_virt(phys: u64) -> u64 {
 ///
 /// 创建时核验物理地址范围并注册别名检测;
 /// 运行时所有读/写做边界检查。
+#[repr(C)]
 pub struct IoMem {
     phys_base: PhysAddr,
     len: usize,

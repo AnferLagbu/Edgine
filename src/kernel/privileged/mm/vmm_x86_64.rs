@@ -100,6 +100,7 @@ struct UserPageTable {
 }
 
 /// x86_64 虚拟内存管理器 (管理用户页表槽位与映射 / 缺页统计).
+#[repr(C)]
 pub struct VirtualMemoryManager {
     user_tables: UnsafeCell<[UserPageTable; MAX_USER_PAGE_TABLES]>,
     user_table_count: AtomicUsize,

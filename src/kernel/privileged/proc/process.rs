@@ -743,6 +743,7 @@ impl Drop for Process {
 }
 
 /// 全局进程表 — 以定长数组保存进程槽位, 并用 PID 位图管理编号分配与回收。
+#[repr(C)]
 pub struct ProcessTable {
     processes: Mutex<[Option<NonNull<Process>>; MAX_PROCESSES]>,
     /// PID 位图: true = 已分配, false = 空闲

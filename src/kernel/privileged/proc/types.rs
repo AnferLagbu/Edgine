@@ -187,8 +187,15 @@ bitflags::bitflags! {
 }
 
 /// 进程/线程的 CPU 上下文 — 保存切换时需恢复的通用寄存器、RIP/RSP、CR3 与段寄存器。
+///
+/// `align(16)` 不可省: `switch.asm` 以 `fxsave/fxrstor [ctx + 144]` 读写
+/// `fpu_state`, 而 FXSAVE/FXRSTOR 要求 512 字节区域自身 16 字节对齐. 仅靠
+/// `fpu_pad` 只能把字段偏移钉在 144 (=16×9), 结构体基址若只保证 8 对齐, 内层
+/// 区域仍是 8 mod 16 → #GP. 注意: 不能靠"嵌入位置碰巧 16 对齐"侥幸 —— P-61
+/// 乙给 `IrqSpinLock` 补 `repr(C)` 改变相邻布局后, `PerCpuSched.scratch_ctx`
+/// 的 16 对齐被打破, x86_64 首次 AP 切换在 `fxsave` 处稳定 #GP.
 #[derive(Debug, Clone, Copy)]
-#[repr(C)]
+#[repr(C, align(16))]
 pub struct ProcessContext {
     /// 通用寄存器 r15
     pub r15: u64,
@@ -254,6 +261,13 @@ pub struct ProcessContext {
     /// fpcr 656, fpsr 664).
     pub extra_regs: [u64; 8],
 }
+
+// FXSAVE/FXRSTOR 硬约束 (P-61 乙 暴露): `switch.asm` 以 `[ctx + 144]` 访问
+// `fpu_state`, 要求结构体基址 16 对齐且该字段偏移恒为 144; 任一失效即 #GP.
+const _: () = {
+    assert!(core::mem::align_of::<ProcessContext>() == 16);
+    assert!(core::mem::offset_of!(ProcessContext, fpu_state) == 144);
+};
 
 impl ProcessContext {
     /// 构造全零上下文

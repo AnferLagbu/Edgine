@@ -607,16 +607,17 @@ fn test_p69_leg_manifest_is_reconciled_against_agents() {
 ///   不能读成「扫描零违规」.
 /// - `scripts/tests/audit_selftest.py` 的四个用例在自测文件里**复制**了检测算法,
 ///   检测器退化时自测照样全绿. 真调化后若不进 CI, 等于把 P-49 的「零调用者」换个位置复现.
-/// - `audit_repr_c.py` / `audit_volatile_access.py` / `audit_tlb_receive_order.py` 是
+/// - `audit_repr_c.py` / `audit_volatile_access.py` / `audit_tlb_receive_order.py` 当时是
 ///   冻结清单上的定点回归锁, §2.2 必须写明这一边界, 否则读者会把「清单内 0 违规」
-///   当成「全树无同类风险」.
+///   当成「全树无同类风险」. (P-61 乙 已把 repr(C) 扩为树级发现式; volatile / tlb 仍定点.)
 ///
 /// 判据:
 /// ① 两个审计脚本的 BASES 各含四根, 且扫描循环由 BASES 驱动 (声明但不使用 ⇒ 红);
 /// ② 两脚本都有「覆盖根缺失」fail-closed 出口并点名 P-50 丙;
 /// ③ 自测文件按路径真调检测器 (`spec_from_file_location` + 四个真实入口), 且不再含
 ///    「手动模拟」/「核心检测算法」这类复制实现的痕迹;
-/// ④ §2.2 的定点锁脚注点名三个脚本、冻结清单规模、「非树级防线」与 P-61 案号.
+/// ④ §2.2 的定点锁脚注点名三个脚本、P-61 乙 后的 repr(C) 树级发现式与剩余定点锁
+///    规模（4 字段 / 1 函数）、「非树级防线」与 P-61 案号.
 #[test]
 fn test_p50_audit_scope_and_selftest_are_wired() {
     let agents = read(AGENTS_MD);
@@ -686,7 +687,9 @@ fn test_p50_audit_scope_and_selftest_are_wired() {
         "`audit_repr_c.py`",
         "`audit_volatile_access.py`",
         "`audit_tlb_receive_order.py`",
-        "2 struct / 4 字段 / 1 函数",
+        "4 字段 / 1 函数",
+        "树级发现式",
+        "单字段唯一偏移恒为 0",
         "非树级防线",
         "P-61",
         "`audit_selftest`",
@@ -696,6 +699,71 @@ fn test_p50_audit_scope_and_selftest_are_wired() {
         assert!(
             sec_22.contains(needle),
             "AGENTS.md §2.2 缺 {needle} —— 定点锁边界 (P-50 甲) / 编号口径 (P-68) 或新接线腿未自述"
+        );
+    }
+}
+
+/// P-61 结构锁: repr(C) 审计必须是树级发现式, 且 12 个存量多字段结构体已补标注.
+///
+/// 病灶 (P-61 描述): `audit_repr_c.py` 原判定对象是 2 个冻结 struct —— 清单外
+/// 新增「含 UnsafeCell/Cell/NonNull 字段」的结构体无人防. P-61 乙 改为全仓发现:
+/// 多字段必须有 #[repr(C)] (存在字段重排面), 单字段自动豁免 (唯一偏移恒 0,
+/// repr(C) 是空操作), 不设人工豁免注册表.
+///
+/// 判据:
+/// ① 脚本含树级发现要素与 smoltcp 排除;
+/// ② fail-closed 出口: 扫描根缺失 / 扫描面为空 / 结构体体解析失败 / 钉死结构体缺失;
+/// ③ 原 2 个钉死结构体不得从脚本中消失;
+/// ④ 12 个存量多字段结构体的 #[repr(C)] 必须紧贴定义上方 (发现式不得只是文档宣称).
+#[test]
+fn test_p61_repr_c_is_tree_level_discovery() {
+    let py = read("../scripts/audit_repr_c.py");
+    for needle in [
+        r#"os.path.join(ROOT, "src/kernel")"#,
+        r#"EXCLUDED_DIRS = {"smoltcp"}"#,
+        "RISKY_TYPE_RE",
+        "len(fields) <= 1",
+        "单字段偏移恒 0",
+        "扫描根缺失",
+        "扫描面为空",
+        "结构体体解析失败",
+        "钉死结构体缺失",
+        "PhysicalMemoryManager",
+        "KernelHeap",
+    ] {
+        assert!(
+            py.contains(needle),
+            "audit_repr_c.py 缺树级发现 / fail-closed 要素 {needle} —— P-61 乙 退化为文档宣称"
+        );
+    }
+
+    for (path, name) in [
+        ("../src/kernel/privileged/dma_buf.rs", "DmaStream"),
+        ("../src/kernel/privileged/iomem.rs", "IoMem"),
+        ("../src/kernel/privileged/mm/pmm.rs", "RawMetaStore"),
+        (
+            "../src/kernel/privileged/mm/vmm_x86_64.rs",
+            "VirtualMemoryManager",
+        ),
+        ("../src/kernel/privileged/proc/process.rs", "ProcessTable"),
+        (
+            "../src/kernel/privileged/proc/user_proc.rs",
+            "UserProcManager",
+        ),
+        ("../src/kernel/privileged/sync/once_lock.rs", "OnceLock"),
+        ("../src/kernel/privileged/sync/seqlock.rs", "SeqLock"),
+        (
+            "../src/kernel/privileged/sync/irq_spinlock.rs",
+            "IrqSpinLock",
+        ),
+        ("../src/kernel/privileged/sync/rwlock.rs", "RwLock"),
+        ("../src/kernel/privileged/sync/mutex.rs", "Mutex"),
+        ("../src/kernel/privileged/sync/pi_mutex.rs", "PiMutex"),
+    ] {
+        let src = read(path);
+        assert!(
+            src.contains(&format!("#[repr(C)]\npub struct {name}")),
+            "{path} 的 {name} 缺紧邻 #[repr(C)] —— 发现式准入后存量多字段结构体未补齐"
         );
     }
 }

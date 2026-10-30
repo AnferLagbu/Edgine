@@ -694,6 +694,7 @@ impl UserProcess {
 }
 
 /// 用户进程管理器 — 维护 pid 到 [`UserProcess`] 的映射, 并跟踪当前进程。
+#[repr(C)]
 pub struct UserProcManager {
     current: AtomicU64,
     // 使用 NonNull<UserProcess> 替代 *mut UserProcess,

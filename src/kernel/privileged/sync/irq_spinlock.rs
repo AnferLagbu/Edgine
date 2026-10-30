@@ -51,6 +51,7 @@ const LOCKDEP_CLASS_UNSET: u16 = u16::MAX;
 /// let data = IrqSpinLock::new(0u32);
 /// data.with_mut(|g| *g += 1);
 /// ```
+#[repr(C)]
 pub struct IrqSpinLock<T> {
     /// 底层自旋锁 (放在 `UnsafeCell` 中以便从 &self 调用 `raw_lock`)
     lock: UnsafeCell<SpinLock>,
