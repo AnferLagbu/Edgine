@@ -15,10 +15,19 @@ F3 判据 (P-54 甲+丙a): 两层的禁止循环依赖全部与机器派生基�
 扫描结果导出, 脚本内不保存任何手写环清单或阈值. functions 层没有「允许紧耦合」名单,
 其任一环都进入对账.
 
-边可见性口径 (P-54 实测, 见 §6 P-65): 依赖边只来自单行 `use ...;` 语句 —— 跨行
-use (36 处 / 15 对)、`pub use` (5 处 / 5 对) 与非 use 行的限定调用 (privileged 827 处 /
-145 对, functions 322 处 / 22 对) 都不成边. 三者全扩后禁止环 privileged 4 → 31、
-functions 1 → 5, 属红墙, 故本轮不扩边, 另立 P-65.
+边可见性口径 (P-65 乙 收口): 依赖边 = **声明级** use 语句 —— 单行与跨行的 `use` 以及
+`pub use` 都成边, `//` 行注释与 `/* */` 块注释里的 use 不成边. 原口径只取单行非 pub
+`use ...;`, 于是跨行 use 与 `pub use` 全部漏计: 扩边后 privileged 371 → **411** 处
+(+40)、functions 34 → **35** 处 (+1), 禁止环**对数不变** (privileged 4 对 / functions
+1 对), 但两对的计数被校正 (mm↔proc 2/12 → 2/13、proc↔syscall 5/1 → 7/2) ⇒ 基线随本轮
+`--update-baseline` 重铸 (refs 28 → 32, pairs 5 不变). 非 use 行的**限定调用** (P-54
+探针的 D 类: privileged 827 处 / 145 对, functions 322 处 / 22 对) 仍不成边 —— 那需要
+item 级 (AST / rustc 查询) 解析, 否则宏参数与文档字符串会被算成边, 另立 P-73.
+订正 P-54 探针的一处分类: 该探针称「A+B+C ⇒ privileged 5 对 (新增 config↔tests)」,
+本轮复测 `config → tests` 确有 5 条 use 边 (全在 `config/memory.rs` 的 `#[cfg(test)]`
+内), 但 `tests → config` **零条 use 边** (唯一引用是 `tests/mod.rs:448` 的限定调用
+`crate::privileged::config::memory::register_aslr_tests()`, 属 D 类) ⇒ 声明级扩边不产生
+该环, 它只在 D 类扩边下才成立.
 
 用法: python3 scripts/audit_coupling.py [--update-baseline]
 退出码: 0 = 通过, 1 = 有违规 / 基线不符 / 快照缺失或不自洽
@@ -34,6 +43,9 @@ from pathlib import Path
 
 PRIVILEGED_BASE = Path('src/kernel/privileged')
 FUNCTIONS_BASE = Path('src/kernel/functions')
+# 报告里显示路径的基准根; 提为模块常量以便自测注入临时 fixture 根 (与
+# audit_block_registration.BASE / audit_unsafe.PROJECT_ROOT 同形态).
+KERNEL_ROOT = Path('src/kernel')
 BASELINE_FILE = Path(__file__).resolve().parent / 'audit_coupling.baseline.json'
 
 # privileged 子系统间允许的内部访问白名单
@@ -133,6 +145,48 @@ def get_submodules(base):
     return modules
 
 
+# 声明级 use 语句的起始形态: `use ...` 与 `pub use ...` (可带 pub(crate) 等限定? 仓内
+# 实测无该形态, 故只收裸 pub; 出现新形态时由结构锁的负控制暴露).
+USE_STMT_START = re.compile(r'^\s*(?:pub\s+)?use\s+')
+
+
+def iter_use_statements(rs_file):
+    """逐条产出 (语句起始行号, import 路径); 支持跨行 use 与 `pub use` (P-65 乙).
+
+    注释剥离: `//` 行整行跳过, `/* ... */` 块内的行整段跳过 —— 被注释掉的 use 不成边.
+    读取失败 fail-closed (退 1): 静默跳过会让「文件读不到」与「该文件零边」同形.
+    """
+    try:
+        text = rs_file.read_text(encoding='utf-8', errors='replace')
+    except OSError as exc:
+        print(f'[FAIL-CLOSED] 无法读取待扫描源文件: {rs_file}: {exc}', file=sys.stderr)
+        sys.exit(1)
+    in_block_comment = False
+    pending = None
+    for lineno, line in enumerate(text.splitlines(), 1):
+        stripped = line.strip()
+        if in_block_comment:
+            if '*/' in stripped:
+                in_block_comment = False
+            continue
+        if stripped.startswith('//'):
+            continue
+        if stripped.startswith('/*'):
+            if '*/' not in stripped:
+                in_block_comment = True
+            continue
+        if pending is None:
+            if not USE_STMT_START.match(line):
+                continue
+            pending = [lineno, stripped]
+        else:
+            pending[1] = f'{pending[1]} {stripped}'
+        if ';' not in pending[1]:
+            continue
+        yield pending[0], re.sub(r'^(?:pub\s+)?use\s+', '', pending[1].split(';', 1)[0])
+        pending = None
+
+
 def scan_cross_module_deps(base, layer_name):
     """扫描子模块间的交叉依赖."""
     modules = get_submodules(base)
@@ -142,29 +196,18 @@ def scan_cross_module_deps(base, layer_name):
     for mod in modules:
         mod_dir = base / mod
         for rs_file in sorted(mod_dir.rglob('*.rs')):
-            try:
-                with open(rs_file, 'r', encoding='utf-8', errors='replace') as f:
-                    for lineno, line in enumerate(f, 1):
-                        stripped = line.strip()
-                        if stripped.startswith('//') or stripped.startswith('/*'):
-                            continue
-                        m = re.match(r'^\s*use\s+(.*?);', line)
-                        if not m:
-                            continue
-                        import_path = m.group(1)
-                        for other_mod in modules:
-                            if other_mod == mod:
-                                continue
-                            pattern = f'{layer_name}::{other_mod}'
-                            if pattern in import_path:
-                                dep_matrix[mod][other_mod] += 1
-                                dep_details[mod][other_mod].append({
-                                    'file': str(rs_file.relative_to(Path('src/kernel'))),
-                                    'line': lineno,
-                                    'import': import_path,
-                                })
-            except Exception:
-                continue
+            for lineno, import_path in iter_use_statements(rs_file):
+                for other_mod in modules:
+                    if other_mod == mod:
+                        continue
+                    pattern = f'{layer_name}::{other_mod}'
+                    if pattern in import_path:
+                        dep_matrix[mod][other_mod] += 1
+                        dep_details[mod][other_mod].append({
+                            'file': str(rs_file.relative_to(KERNEL_ROOT)),
+                            'line': lineno,
+                            'import': import_path,
+                        })
 
     return dep_matrix, dep_details
 
@@ -219,8 +262,11 @@ def dump_baseline(entries):
         '_meta': {
             'generated_by': 'python3 scripts/audit_coupling.py --update-baseline',
             '口径': 'privileged + functions 两层禁止循环依赖的冻结清单; 判定按 (层, 模块对) '
-                  '集合与双向 use 边计数, 计数增加/减少同样阻断',
-            'disposition': 'P-54 冻结存量环, 解耦归 F3 后续批次',
+                  '集合与双向**声明级** use / pub use 边计数 (含跨行语句, P-65 乙), '
+                  '计数增加/减少同样阻断',
+            'disposition': 'P-54 冻结存量环, 解耦归 F3 后续批次; P-65 乙 把 `pub use` 与'
+                           '跨行 use 纳入边模型后计数校正 (mm↔proc 2/12→2/13, '
+                           'proc↔syscall 5/1→7/2), 环对数不变; 引用级边 (限定调用) 归 P-73',
         },
         'totals': totals_of(entries),
         'entries': [[layer, a, b, ab, ba]
@@ -282,55 +328,43 @@ def repo_rel(path):
 
 
 def check_internal_access(base, layer_name):
-    """检查跨子系统直接访问内部子模块."""
+    """检查跨子系统直接访问内部子模块 (边提取与循环依赖检测同源, P-65 乙)."""
     issues = []
     modules = get_submodules(base)
 
     for mod in modules:
         mod_dir = base / mod
         for rs_file in sorted(mod_dir.rglob('*.rs')):
-            try:
-                with open(rs_file, 'r', encoding='utf-8', errors='replace') as f:
-                    for lineno, line in enumerate(f, 1):
-                        stripped = line.strip()
-                        if stripped.startswith('//') or stripped.startswith('/*'):
+            for lineno, import_path in iter_use_statements(rs_file):
+                for pattern in INTERNAL_PATTERNS:
+                    # 精确匹配: pattern 必须是完整路径段, 避免 privileged::mm::vma 误匹配
+                    # privileged::mm::vma_get_current_mm (vma 是 vma_get 的前缀但不是路径段)
+                    # 在 pattern 后追加 :: 或匹配到路径末尾
+                    if pattern in import_path:
+                        # 验证 pattern 后面要么是 :: 要么是路径结束
+                        idx = import_path.find(pattern)
+                        end = idx + len(pattern)
+                        if end < len(import_path) and import_path[end:end+2] != '::':
                             continue
-                        m = re.match(r'^\s*use\s+(.*?);', line)
-                        if not m:
+                        # 排除自身模块的内部访问
+                        # e.g. privileged::mm::pmm 被 privileged/mm/ 内部使用是允许的
+                        # pattern 格式: privileged::proc::process → 子系统是 proc (index 1)
+                        target_mod = pattern.split('::')[1] if '::' in pattern else ''
+                        if target_mod == mod:
                             continue
-                        import_path = m.group(1)
-
-                        for pattern in INTERNAL_PATTERNS:
-                            # 精确匹配: pattern 必须是完整路径段, 避免 privileged::mm::vma 误匹配
-                            # privileged::mm::vma_get_current_mm (vma 是 vma_get 的前缀但不是路径段)
-                            # 在 pattern 后追加 :: 或匹配到路径末尾
-                            if pattern in import_path:
-                                # 验证 pattern 后面要么是 :: 要么是路径结束
-                                idx = import_path.find(pattern)
-                                end = idx + len(pattern)
-                                if end < len(import_path) and import_path[end:end+2] != '::':
-                                    continue
-                                # 排除自身模块的内部访问
-                                # e.g. privileged::mm::pmm 被 privileged/mm/ 内部使用是允许的
-                                # pattern 格式: privileged::proc::process → 子系统是 proc (index 1)
-                                target_mod = pattern.split('::')[1] if '::' in pattern else ''
-                                if target_mod == mod:
-                                    continue
-                                # 排除 tests 目录 — 白盒测试允许直接访问内部实现
-                                if mod == 'tests':
-                                    continue
-                                issues.append({
-                                    'file': str(rs_file.relative_to(Path('src/kernel'))),
-                                    'line': lineno,
-                                    'severity': 'HIGH',
-                                    'type': 'INTERNAL_ACCESS',
-                                    'source': mod,
-                                    'target': pattern,
-                                    'import': import_path,
-                                    'message': f'{mod} 直接访问 {pattern} 内部, 应通过公开 API',
-                                })
-            except Exception:
-                continue
+                        # 排除 tests 目录 — 白盒测试允许直接访问内部实现
+                        if mod == 'tests':
+                            continue
+                        issues.append({
+                            'file': str(rs_file.relative_to(KERNEL_ROOT)),
+                            'line': lineno,
+                            'severity': 'HIGH',
+                            'type': 'INTERNAL_ACCESS',
+                            'source': mod,
+                            'target': pattern,
+                            'import': import_path,
+                            'message': f'{mod} 直接访问 {pattern} 内部, 应通过公开 API',
+                        })
 
     return issues
 

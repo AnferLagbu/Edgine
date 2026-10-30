@@ -50,7 +50,7 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 | `audit_functions_boundary.py` | functions 0 unsafe + 顶层 re-export 强制 | F1 + F2 | 强制 |
 | `audit_safety_coverage.py` | privileged unsafe 块 SAFETY 100% 覆盖 | F4 | 强制 |
 | `audit_deadlock_matrix.py` | 锁顺序 + 中断上下文 + 递归锁检测 | 附加门禁（锁顺序/中断上下文专项，P-68） | 强制 |
-| `audit_coupling.py` | 跨模块循环依赖 | F3 | 强制 |
+| `audit_coupling.py` | 跨模块循环依赖（边 = 声明级 `use` / `pub use`，含跨行语句；非 use 行的限定调用不成边，P-73） | F3 | 强制 |
 | `audit_comment_language.py` | 中文注释强制 | F7 | 强制 |
 | `audit_invariants.py` | 6 安全不变式断言 | I1-I6 | 强制 |
 | `audit_once_cell.py` | OnceCell 模式统一 | 附加门禁 | 强制 |

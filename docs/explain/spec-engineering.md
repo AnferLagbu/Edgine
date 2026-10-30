@@ -20,6 +20,8 @@
 
 4 条耦合规则：1.1 跨子系统禁止直接访问内部（子系统 A 调用 B 只能通过 B 的 mod.rs re-export 或 api.rs，不得直接访问 B 的内部子模块）；1.2 禁止隐式依赖传递（A 依赖 B，B 依赖 C，A 不得直接使用 C 的类型/函数除非 A 也显式声明依赖 C）；1.3 禁止 functions 层反向依赖（functions A→functions B→privileged→functions A 形成循环时，必须通过 trait 注入或回调接口解耦）；1.4 禁止跨层传递内部类型（privileged 内部类型如 Process/MmStruct 的裸字段不得作为 functions 公开 API 的参数或返回值，用 PID 或句柄）。
 
+F3 的边模型口径（`audit_coupling.py`，P-65 乙 收口）：依赖边只取**声明级** use 语句 —— 单行与跨行的 `use` 以及 `pub use` 都成边，`//` 行注释与 `/* */` 块注释里的 use 不成边（否则被注释掉的历史导入会造出幽灵环）。非 use 行的**限定调用**（如 `crate::privileged::mm::pmm_get_free_pages()`）目前不成边：把这类引用级边纳入需要 item 级（AST / rustc 查询）解析，否则宏参数与文档字符串会被误算成边，该扩围另立 P-73。禁止环的判据不是阈值而是与机器派生基线 `scripts/audit_coupling.baseline.json` 的双向对账 —— 基线外的新环、任一方向边计数增加、以及环已减弱而快照未同步，三种情形都阻断；快照只能由 `--update-baseline` 从同一份扫描结果重铸，脚本内不保存手写环清单。`privileged` 层的少数底层对（如 `arch↔sync`、`mm↔tests`）列在脚本的允许紧耦合名单里，不进基线；`functions` 层没有该名单，任一环都进对账。
+
 ### 2 禁止硬编码
 
 3 条硬编码规则：2.1 跨子系统常量：子系统 A 中使用的、属于子系统 B 的常量，必须在 privileged::config 或 functions::config 中定义，不得在 A 内部硬编码；2.2 魔数：所有数字常量必须有命名，唯一例外 0/1/-1 等上下文明确的字面量；2.3 字符串路径：文件系统路径、设备名等不得在代码中硬编码，通过配置或参数传入。

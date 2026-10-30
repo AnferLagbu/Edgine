@@ -1323,6 +1323,150 @@ fn test_p54_coupling_judges_both_layers_and_reconciles_baseline() {
     );
 }
 
+/// P-65 乙 结构锁: F3 的依赖边必须是**声明级** use (含 `pub use` 与跨行语句),
+/// 且注释内的 use 不成边.
+///
+/// 病灶: 旧边提取只认单行 `^\s*use\s+(.*?);`, 于是 `pub use` 与跨行 use 全部不成边
+/// (实测 privileged 371 → 411 处 / functions 34 → 35 处), 环计数系统性偏低; 反向风险
+/// 同样真实 —— 若连注释里的历史导入一起算, 会造出幽灵环. 两条都要钉住.
+#[test]
+fn test_p65_coupling_edges_are_declaration_level() {
+    let py = read("../scripts/audit_coupling.py");
+
+    // ① 单一提取入口 + 两个扫描器同源, 旧正则零残留.
+    assert!(
+        py.contains("def iter_use_statements("),
+        "边提取入口 `iter_use_statements` 丢失 —— 跨行 use 与 pub use 会重新不成边"
+    );
+    assert_eq!(
+        py.matches("for lineno, import_path in iter_use_statements(rs_file):")
+            .count(),
+        2,
+        "两个扫描器 (循环依赖 + 内部访问) 必须共用同一个提取入口 —— 否则内部访问仍按旧口径, \
+         与 F3 的边模型分叉"
+    );
+    assert!(
+        !py.contains("re.match(r'^\\s*use\\s+(.*?);', line)"),
+        "旧单行 use 正则仍有残留 —— 它只认非 pub 的单行语句 (P-65 立项病灶)"
+    );
+
+    // ② 跨行累积与 pub use 识别.
+    assert!(
+        py.contains("r'^\\s*(?:pub\\s+)?use\\s+'"),
+        "语句起始判据未覆盖 `pub use` —— re-export 形成的边会丢失"
+    );
+    assert!(
+        py.contains("if ';' not in pending[1]"),
+        "跨行语句的累积判据丢失 —— 多行 use 只会计入首行或直接不成边"
+    );
+
+    // ③ 注释不成边 + 读文件失败 fail-closed.
+    for needle in [
+        "if in_block_comment:",
+        "in_block_comment = True",
+        "if stripped.startswith('//')",
+        "[FAIL-CLOSED] 无法读取待扫描源文件",
+    ] {
+        assert!(
+            py.contains(needle),
+            "audit_coupling.py 缺 `{needle}` —— 注释里的 use 会造出幽灵环, \
+             或读失败被静默吞成「零依赖」全绿"
+        );
+    }
+
+    // ④ 口径必须写进脚本与基线的自述, 否则读者会把「F3 已阻断」读成树级覆盖.
+    for (who, needles) in [
+        ("audit_coupling.py", &["P-65", "P-73", "声明级"][..]),
+        (
+            "audit_coupling.baseline.json",
+            &["P-54", "P-65", "声明级"][..],
+        ),
+    ] {
+        let text = read(&format!("../scripts/{who}"));
+        for needle in needles {
+            assert!(
+                text.contains(needle),
+                "{who} 未点名 `{needle}` —— 边模型口径与存量环承接工程会随重铸丢失"
+            );
+        }
+    }
+
+    assert_p65_selftest_covers_four_shapes();
+    assert_p65_docs_name_declaration_level_edges();
+}
+
+/// P-65 乙 自测腿: fixture 必须同时保留四类形态 (跨行 use / pub use / 行注释 / 块注释),
+/// 否则锁 ③ 的负面无法被自测证明.
+fn assert_p65_selftest_covers_four_shapes() {
+    let st = read("../scripts/tests/audit_selftest.py");
+    assert!(
+        st.contains("def test_coupling_edges("),
+        "自测缺 audit_coupling 腿 —— 边模型的行为只有脚本自述, 无同源证明"
+    );
+    let results_at = st
+        .find("results = [")
+        .unwrap_or_else(|| panic!("audit_selftest.py 缺 main() 的 results 列表"));
+    let results = &st[results_at..];
+    let results = &results[..results
+        .find(']')
+        .unwrap_or_else(|| panic!("results 列表未闭合"))];
+    assert!(
+        results.lines().any(|line| {
+            let item = line.trim();
+            item.starts_with("test_coupling_edges()") && !item.starts_with('#')
+        }),
+        "自测腿未接进 main() 的结果列表 (或被注释掉) —— 写了也不跑"
+    );
+    assert!(
+        st.contains("detector.scan_cross_module_deps("),
+        "自测腿必须真调检测器自身的扫描函数, 不得复制一份平行实现"
+    );
+    assert!(
+        st.contains("got_ab == 3 and got_ba == 1 and len(circular) == 1"),
+        "自测腿的期望读数被放宽 —— 边计数不再被证明 (跨行 use 1 + pub use 1 + 单行 use 1)"
+    );
+    for shape in [
+        "use crate::privileged::beta::{\\n",
+        "pub use crate::privileged::beta::ThingB;",
+        "// use crate::privileged::beta::ThingC;",
+        "/* 历史遗留: 旧实现的导入面",
+    ] {
+        assert!(
+            st.contains(shape),
+            "自测 fixture 缺形态 `{shape}` —— 跨行 / pub use / 行注释 / 块注释四类之一失去证明"
+        );
+    }
+}
+
+/// P-65 丙: 口径必须落进 AGENTS §2.2 与 docs/explain (两者属 §6 必同步文档).
+fn assert_p65_docs_name_declaration_level_edges() {
+    let agents = read(AGENTS_MD);
+    let row = agents
+        .lines()
+        .find(|line| line.contains("`audit_coupling.py`") && line.contains("| F3 |"))
+        .unwrap_or_else(|| panic!("AGENTS §2.2 缺 audit_coupling.py 行"));
+    for needle in ["声明级", "pub use", "跨行", "P-73"] {
+        assert!(
+            row.contains(needle),
+            "AGENTS §2.2 的 F3 行未写明 `{needle}` —— 读者会把「F3 已阻断」读成树级覆盖"
+        );
+    }
+
+    let spec = read("../docs/explain/spec-engineering.md");
+    for needle in [
+        "F3 的边模型口径",
+        "声明级",
+        "限定调用",
+        "P-73",
+        "audit_coupling.baseline.json",
+    ] {
+        assert!(
+            spec.contains(needle),
+            "docs/explain/spec-engineering.md 未写明 F3 边模型 `{needle}`"
+        );
+    }
+}
+
 /// P-55 结构锁 (乙 + ②四处全修): QEMU 腿缺工具必须进未执行台账, 且四条腿的失败成因
 /// 必须由捕获式退出码给出 (不能把真失败一律打印成「执行异常」).
 ///
